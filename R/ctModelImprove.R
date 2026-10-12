@@ -46,14 +46,24 @@
 #'   \item{volatility}{a latent's innovation sd scaled by \code{exp(v *
 #'     eta_m)}: innovations whose size depends on a state.}
 #'   \item{fixed}{a cell fixed at zero freed: a drift cross effect, a
-#'     diffusion or measurement error covariance, a cross loading.}
+#'     diffusion covariance, a cross loading.}
 #'   \item{slow}{a slow process driving a latent through its drift, its effect
 #'     started at one and its persistence at a tenth of the latent's.}
 #'   \item{periodic}{a cycle of the period the adequacy check points to,
 #'     driving every latent with innovations of its own, each subject's
 #'     phase set from the clock at its first row and free to deviate; the
 #'     phase predictors are added to the data.}
-#'   \item{unique}{a process of its own, persistent, loading on one item.}
+#'   \item{unique}{a process of its own, persistent, loading on one item;
+#'     and, where the fixed-cell test points to a measurement error
+#'     covariance, a process the two items share
+#'     (\code{ctModelUniqueProcess(shared = TRUE)}): an error is meant to be
+#'     random, and co-movement within an occasion that the latents' innovation
+#'     covariances do not explain is read as a process faster than the
+#'     occasions.}
+#'   \item{errorcov}{not by default: the measurement error covariance itself
+#'     freed, for designs with a reason for correlated error, such as a method
+#'     the items share. With it, a flagged covariance is freed rather than
+#'     given a shared process.}
 #'   \item{order}{a latent process made second order.}
 #' }
 #'
@@ -213,7 +223,7 @@ ctModelImprove <- function(fit, covariates = NULL,
     st <- if (length(tests)) suppressMessages(ctScoreTest(current, covariates = available,
       tests = tests, form = form, cores = cores, verbose = FALSE)) else NULL
     screens[[step]] <- st
-    proposals <- .ctImproveProposals(st, model, alpha, current)
+    proposals <- .ctImproveProposals(st, model, alpha, current, relax)
     proposals <- proposals[!vapply(proposals, `[[`, '', 'key') %in% rejected]
     structural <- FALSE
     if (!length(proposals)) {
@@ -371,8 +381,10 @@ ctModelImprove <- function(fit, covariates = NULL,
 # What the screen indicates, as edits: one per heterogeneity parameter, state
 # term and fixed cell significant within its family, and one per covariate
 # whose joint test is significant, adding it with effects on the parameters
-# its tests single out.
-.ctImproveProposals <- function(st, model, alpha, current = NULL) {
+# its tests single out. A measurement error covariance becomes a process the
+# two items share, unless `relax` holds 'errorcov'.
+.ctImproveProposals <- function(st, model, alpha, current = NULL,
+  relax = c('unique', 'fixed')) {
   out <- list()
   if (is.null(st)) return(out)
   # The ctFit arguments the current fit was made with, for edits that change
@@ -478,6 +490,19 @@ ctModelImprove <- function(fit, covariates = NULL,
   f <- st$fixed$cells
   if (!is.null(f)) for (r in which(f$p_adj < alpha)) {
     cell <- f[r, ]
+    if (cell$matrix == 'MANIFESTVAR' && !'errorcov' %in% relax) {
+      if (!'unique' %in% relax || !isTRUE(model$continuoustime)) next
+      items <- model$manifestNames[sort(c(cell$row, cell$col))]
+      if (paste0('u_', paste(items, collapse = '_')) %in% model$latentNames) next
+      out[[length(out) + 1L]] <- list(key = paste0('shared:', paste(items, collapse = ',')),
+        family = 'unique', label = paste0(items[1], ' and ', items[2],
+          ' given a process they share'), p = cell$p, rank = cell$p, class = cell$class,
+        start = .ctImproveUniqueStart(model, current, items, shared = TRUE,
+          sign = if (isTRUE(cell$estimate < 0)) -1 else 1),
+        edit = local({ items <- items; function(model, data, covs, args = list())
+          list(model = ctModelUniqueProcess(model, items, shared = TRUE), data = data) }))
+      next
+    }
     out[[length(out) + 1L]] <- list(key = paste0('fixed:', cell$cell), family = 'fixed',
       label = paste0(cell$cell, ' freed'), p = cell$p, rank = cell$p, class = cell$class,
       edit = local({ cell <- cell; function(model, data, covs, args = list()) {
@@ -653,12 +678,15 @@ ctModelImprove <- function(fit, covariates = NULL,
 # a half-life of the median time between a subject's rows, and a stationary
 # variance of a quarter of the item's error variance at the current fit, with
 # the innovation and initial sds that implies, each through the inverse of its
-# transform. NULL, and raw zero, when they cannot be worked out.
-.ctImproveUniqueStart <- function(model, current, item) {
+# transform. NULL, and raw zero, when they cannot be worked out. A process
+# `shared` by `item` (two or more) is placed on the first; each other loading
+# starts where the item gets the same share of its own error variance, with
+# the `sign` of the covariance the screen pointed to.
+.ctImproveUniqueStart <- function(model, current, item, shared = FALSE, sign = 1) {
   if (is.null(current)) return(NULL)
   j <- match(item, model$manifestNames)
-  m1 <- try(ctModelUniqueProcess(model, item), silent = TRUE)
-  if (is.na(j) || inherits(m1, 'try-error')) return(NULL)
+  m1 <- try(ctModelUniqueProcess(model, item, shared = shared), silent = TRUE)
+  if (anyNA(j) || inherits(m1, 'try-error')) return(NULL)
   value <- function(transform, raw) tryCatch(as.numeric(eval(parse(text = transform),
     list(param = raw, log1p_exp = log1p_exp))), error = function(e) NA_real_)
   inverse <- function(transform, target) tryCatch(stats::uniroot(
@@ -669,25 +697,28 @@ ctModelImprove <- function(fit, covariates = NULL,
   gaps <- unlist(lapply(split(d[[model$timeName]], d[[model$subjectIDname]]),
     function(t) diff(sort(t))))
   gap <- stats::median(gaps[is.finite(gaps) & gaps > 0])
-  cell <- model$pars[model$pars$matrix == 'MANIFESTVAR' & model$pars$row == j &
-    model$pars$col == j, , drop = FALSE]
-  sd <- NA_real_
-  if (nrow(cell) == 1L) {
-    if (is.na(cell$param)) sd <- as.numeric(cell$value) else {
-      est <- setNames(.ctFitRawEstimate(current), .ctFitRawParNames(current))
-      sd <- value(cell$transform, est[[cell$param]])
-    }
+  est <- setNames(.ctFitRawEstimate(current), .ctFitRawParNames(current))
+  errsd <- function(jj) {
+    cell <- model$pars[model$pars$matrix == 'MANIFESTVAR' & model$pars$row == jj &
+      model$pars$col == jj, , drop = FALSE]
+    if (nrow(cell) != 1L) return(NA_real_)
+    if (is.na(cell$param)) as.numeric(cell$value) else value(cell$transform, est[[cell$param]])
   }
-  if (!is.finite(gap) || !is.finite(sd) || sd <= 0) return(NULL)
+  sd <- vapply(j, errsd, 0)
+  if (!is.finite(gap) || !all(is.finite(sd)) || any(sd <= 0)) return(NULL)
   rate <- log(2) / gap
-  v <- sd^2 / 4
-  target <- c(DRIFT = -rate, DIFFUSION = sqrt(2 * rate * v), T0VAR = sqrt(v))
+  v <- sd[1]^2 / 4
   u <- length(m1$latentNames)
+  target <- data.frame(matrix = c('DRIFT', 'DIFFUSION', 'T0VAR'), row = u,
+    value = c(-rate, sqrt(2 * rate * v), sqrt(v)))
+  if (isTRUE(shared)) target <- rbind(target, data.frame(matrix = 'LAMBDA', row = j[-1],
+    value = sign * sd[-1] / sd[1]))
   out <- numeric()
-  for (mat in names(target)) {
-    r <- m1$pars[m1$pars$matrix == mat & m1$pars$row == u & m1$pars$col == u, , drop = FALSE]
+  for (k in seq_len(nrow(target))) {
+    r <- m1$pars[m1$pars$matrix == target$matrix[k] & m1$pars$row == target$row[k] &
+      m1$pars$col == u, , drop = FALSE]
     if (nrow(r) != 1L || is.na(r$param)) next
-    raw <- inverse(r$transform, target[[mat]])
+    raw <- inverse(r$transform, target$value[k])
     if (is.finite(raw)) out[r$param] <- raw
   }
   if (length(out)) out else NULL

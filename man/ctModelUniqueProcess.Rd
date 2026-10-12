@@ -4,12 +4,15 @@
 \alias{ctModelUniqueProcess}
 \title{Give indicators processes of their own}
 \usage{
-ctModelUniqueProcess(ctm, items)
+ctModelUniqueProcess(ctm, items, shared = FALSE)
 }
 \arguments{
 \item{ctm}{A model from \code{ctModel(type = 'ct')}.}
 
 \item{items}{Which manifest variables, by name or position.}
+
+\item{shared}{One process for all of \code{items}, named \code{u_} and
+their names joined by \code{_}, rather than one each.}
 }
 \value{
 The extended model.
@@ -34,6 +37,14 @@ time, the other does not.
 The process has no intercept (the item's own carries its level), a free
 initial variance, ctsem's default drift transform, so it is mean reverting,
 and innovations independent of every other latent's.
+
+With \code{shared = TRUE} the items share one process instead, loading on
+the first at one and on the others freely: what moves them together beyond
+the model's other latents. Measurement errors that are correlated within an
+occasion are usually better read this way -- an error is meant to be
+random, and co-movement it does not carry over to the next occasion is a
+process faster than the occasions -- unless the design gives a reason for
+correlated error, such as a method shared by the items.
 }
 \examples{
 m <- ctModel(type = 'ct', manifestNames = c('Y1', 'Y2', 'Y3'),
@@ -43,6 +54,7 @@ m2$latentNames
 p <- m2$pars
 p[p$col \%in\% 2 & p$matrix \%in\% c('LAMBDA', 'DRIFT', 'DIFFUSION'),
   c('matrix', 'row', 'col', 'param', 'value')]
+ctModelUniqueProcess(m, c('Y2', 'Y3'), shared = TRUE)$latentNames
 }
 \seealso{
 \code{\link{ctModelImprove}}, which adds one for the items the

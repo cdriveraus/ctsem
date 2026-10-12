@@ -19,8 +19,18 @@
 #' initial variance, ctsem's default drift transform, so it is mean reverting,
 #' and innovations independent of every other latent's.
 #'
+#' With \code{shared = TRUE} the items share one process instead, loading on
+#' the first at one and on the others freely: what moves them together beyond
+#' the model's other latents. Measurement errors that are correlated within an
+#' occasion are usually better read this way -- an error is meant to be
+#' random, and co-movement it does not carry over to the next occasion is a
+#' process faster than the occasions -- unless the design gives a reason for
+#' correlated error, such as a method shared by the items.
+#'
 #' @param ctm A model from \code{ctModel(type = 'ct')}.
 #' @param items Which manifest variables, by name or position.
+#' @param shared One process for all of \code{items}, named \code{u_} and
+#'   their names joined by \code{_}, rather than one each.
 #' @return The extended model.
 #' @seealso \code{\link{ctModelImprove}}, which adds one for the items the
 #'   adequacy check points to.
@@ -33,7 +43,8 @@
 #' p <- m2$pars
 #' p[p$col %in% 2 & p$matrix %in% c('LAMBDA', 'DRIFT', 'DIFFUSION'),
 #'   c('matrix', 'row', 'col', 'param', 'value')]
-ctModelUniqueProcess <- function(ctm, items) {
+#' ctModelUniqueProcess(m, c('Y2', 'Y3'), shared = TRUE)$latentNames
+ctModelUniqueProcess <- function(ctm, items, shared = FALSE) {
   if (!inherits(ctm, 'ctStanModel')) stop("ctModelUniqueProcess() takes a model ",
     "from ctModel(type = 'ct').", call. = FALSE)
   if (!isTRUE(ctm$continuoustime)) stop("Processes of their own are for continuous ",
@@ -42,16 +53,23 @@ ctModelUniqueProcess <- function(ctm, items) {
   j <- if (is.character(items)) match(items, mn) else as.integer(items)
   if (!length(j) || anyNA(j) || anyDuplicated(j) || any(j < 1L | j > length(mn)))
     stop("items must be distinct manifest variables of the model.", call. = FALSE)
-  newnames <- paste0('u_', mn[j])
+  if (isTRUE(shared) && length(j) < 2L) stop("A shared process needs two items or more.",
+    call. = FALSE)
+  newnames <- if (isTRUE(shared)) paste0('u_', paste(mn[j], collapse = '_')) else
+    paste0('u_', mn[j])
   taken <- newnames[newnames %in% ctm$latentNames]
   if (length(taken)) stop("The model already has ", paste(taken, collapse = ', '), ".",
     call. = FALSE)
   nl <- ctm$n.latent
   ed <- .ctParsLatentEditor(ctm, newnames)
   allnames <- ed$names
-  for (k in seq_along(j)) {
+  for (k in seq_along(newnames)) {
     n <- nl + k
-    ed$fixed('LAMBDA', j[k], n, 1)
+    if (isTRUE(shared)) {
+      ed$fixed('LAMBDA', j[1], n, 1)
+      for (jj in j[-1]) ed$free('LAMBDA', jj, n, paste0('lambda_', mn[jj], '_', allnames[n]),
+        tipred = FALSE)
+    } else ed$fixed('LAMBDA', j[k], n, 1)
     ed$free('DRIFT', n, n, paste0('drift_', allnames[n]), tipred = FALSE)
     ed$free('DIFFUSION', n, n, paste0('diff_', allnames[n]), tipred = FALSE)
     ed$fixed('T0MEANS', n, 1, 0)

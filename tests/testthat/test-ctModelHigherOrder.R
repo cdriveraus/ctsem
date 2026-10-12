@@ -270,6 +270,41 @@ test_that("an item's own process loads on it alone and has its own dynamics", {
   expect_error(ctModelUniqueProcess(m, 'Y9'), 'manifest')
 })
 
+test_that("items can share a process, loading on the first at one and the rest freely", {
+  m <- suppressMessages(ctModel(type = 'ct', silent = TRUE,
+    manifestNames = c('Y1', 'Y2', 'Y3'), latentNames = 'eta',
+    LAMBDA = matrix(c(1, 'l2', 'l3'), 3)))
+  sm <- ctModelUniqueProcess(m, c('Y2', 'Y3'), shared = TRUE)
+  expect_equal(sm$latentNames, c('eta', 'u_Y2_Y3'))
+  mats <- ctModelMatrices(sm)
+  expect_equal(unname(mats$LAMBDA[, 2]), c('0', '1', 'lambda_Y3_u_Y2_Y3'))
+  expect_equal(unname(mats$DRIFT[2, ]), c('0', 'drift_u_Y2_Y3'))
+  expect_equal(unname(mats$DIFFUSION[2, ]), c('0', 'diff_u_Y2_Y3'))
+  expect_equal(unname(mats$T0VAR[2, 2]), 'T0var_u_Y2_Y3')
+  expect_error(ctModelUniqueProcess(m, 'Y2', shared = TRUE), 'two items')
+})
+
+# The search reads a flagged measurement error covariance as a process the
+# items share; freeing the covariance itself is asked for by 'errorcov'.
+test_that("a flagged error covariance is proposed as a shared process unless errorcov", {
+  m <- .ho_ct()
+  st <- list(fixed = list(cells = data.frame(cell = 'MANIFESTVAR[Y2,Y1]',
+    matrix = 'MANIFESTVAR', row = 2L, col = 1L, LM = 30, p = 1e-8, estimate = -0.2,
+    se = 0.04, suggested = 'manifestvar_Y2_Y1', transform = 'param', p_adj = 1e-8,
+    class = 1L, stringsAsFactors = FALSE)))
+  pr <- ctsem:::.ctImproveProposals(st, m, 0.05, NULL,
+    relax = c('heterogeneity', 'fixed', 'unique'))
+  expect_length(pr, 1L)
+  expect_identical(pr[[1]]$family, 'unique')
+  expect_identical(pr[[1]]$label, 'Y1 and Y2 given a process they share')
+  edited <- pr[[1]]$edit(m, NULL, NULL)$model
+  expect_true('u_Y1_Y2' %in% edited$latentNames)
+  pe <- ctsem:::.ctImproveProposals(st, m, 0.05, NULL, relax = c('fixed', 'errorcov'))
+  expect_identical(pe[[1]]$family, 'fixed')
+  expect_identical(pe[[1]]$label, 'MANIFESTVAR[Y2,Y1] freed')
+  expect_length(ctsem:::.ctImproveProposals(st, m, 0.05, NULL, relax = 'fixed'), 0L)
+})
+
 test_that("the fixed-cell screen leaves a latent without innovations as written", {
   cm <- ctModelPeriodicComponent(.ho_ct(), 24, indices = 1, individual = FALSE)
   terms <- ctsem:::.ctScoreFixedModel(cm)$terms

@@ -115,14 +115,24 @@ The relaxations, in the language of the model:
   \item{volatility}{a latent's innovation sd scaled by \code{exp(v *
     eta_m)}: innovations whose size depends on a state.}
   \item{fixed}{a cell fixed at zero freed: a drift cross effect, a
-    diffusion or measurement error covariance, a cross loading.}
+    diffusion covariance, a cross loading.}
   \item{slow}{a slow process driving a latent through its drift, its effect
     started at one and its persistence at a tenth of the latent's.}
   \item{periodic}{a cycle of the period the adequacy check points to,
     driving every latent with innovations of its own, each subject's
     phase set from the clock at its first row and free to deviate; the
     phase predictors are added to the data.}
-  \item{unique}{a process of its own, persistent, loading on one item.}
+  \item{unique}{a process of its own, persistent, loading on one item;
+    and, where the fixed-cell test points to a measurement error
+    covariance, a process the two items share
+    (\code{ctModelUniqueProcess(shared = TRUE)}): an error is meant to be
+    random, and co-movement within an occasion that the latents' innovation
+    covariances do not explain is read as a process faster than the
+    occasions.}
+  \item{errorcov}{not by default: the measurement error covariance itself
+    freed, for designs with a reason for correlated error, such as a method
+    the items share. With it, a flagged covariance is freed rather than
+    given a shared process.}
   \item{order}{a latent process made second order.}
 }
 
