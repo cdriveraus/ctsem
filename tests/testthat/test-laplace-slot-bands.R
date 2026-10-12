@@ -33,8 +33,10 @@
     MANIFESTVAR = "diag", DRIFT = "auto", CINT = matrix(0, 2, 1),
     DIFFUSION = "auto", id = c("subject", "grp"), time = "time",
     tipredDefault = FALSE)))
-  m$pars$indvarying <- ifelse(m$pars$matrix == "MANIFESTMEANS", TRUE,
-    ifelse(m$pars$matrix == "T0MEANS", "subject", FALSE))
+  m$pars$indvarying <- FALSE
+  m$pars$indvarying_grp <- FALSE
+  m$pars$indvarying[m$pars$matrix %in% c("T0MEANS", "MANIFESTMEANS")] <- TRUE
+  m$pars$indvarying_grp[m$pars$matrix == "MANIFESTMEANS"] <- TRUE
   m
 }
 

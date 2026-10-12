@@ -804,19 +804,17 @@ end
 """
     _apply_population_block!(ws, all_params)
 
-Add the population covariance to the initial covariance of the states it
-accounts for.
+Write the population covariance over the states it accounts for.
 
-T0VAR is the model's own initial covariance: what is left of a state's
-variance once a subject's random effects are known. The population block is
-the spread of those effects, so the initial covariance over subjects is the
-sum, which is what the Laplace route integrates to and why this adds rather
-than overwrites. An individually varying T0MEANS gets no carrier state, so
-those indices are not disjoint from the model's own latents, which is why this
-is indexed rather than appended; `T0VARredundancies()` (R) has already fixed
-their free T0VAR cells, leaving the floor on the diagonal and zero elsewhere,
-so a state the block spans covaries with one it does not only where the model
-fixes a T0VAR cell to say so. A carrier state's T0VAR is zero.
+T0VAR is the model own initial covariance and states nothing about a random
+effect. Where a population block exists, each state it accounts for has its
+row and column of the initial covariance dropped and the constructed block
+written in. Dropping first is what makes the two cases come out right: a state
+the block accounts for does not covary with one it does not -- nothing states
+that pair -- while two states the block does span covary through it. An
+individually varying T0MEANS gets no carrier state, so those indices are not
+disjoint from the model own latents, which is why this is indexed rather than
+appended.
 
 No allocation and no extra buffer. `bufferQ` is sized to the state dimension,
 the block is a subset of the states so it is no larger, and `sdcovsqrt2cov!`
@@ -837,8 +835,8 @@ end
     _place_population_block!(P, all_params, indices, range, covmatcode, scale,
         buffer)
 
-Add the constructed population block to the rows and columns of the states it
-accounts for. See `_apply_population_block!` for why the sum.
+Drop the rows and columns of the states the population block accounts for, and
+write the constructed block over them.
 
 Called by the filter and by the summary, deliberately: they used to each build
 the initial covariance their own way, and that is how the two came to disagree
@@ -849,6 +847,14 @@ about what a fit had estimated. One placement, two callers.
     isempty(indices) && return nothing
     k = length(indices)
     raw = reshape(view(all_params, range), k, k)
+    @inbounds for s in indices
+        for j in axes(P, 2)
+            P[s, j] = zero(eltype(P))
+        end
+        for i in axes(P, 1)
+            P[i, s] = zero(eltype(P))
+        end
+    end
     # The buffer's own `Val`, which is `k` by construction (and checked there):
     # `Val(k)` is a runtime value, so the call was a dynamic dispatch boxing the
     # buffer and the `raw` view, twice per subject evaluation.
@@ -858,7 +864,7 @@ about what a fit had estimated. One placement, two callers.
     # popstatescale)` the stan program writes at the one line that places this
     # block.
     @inbounds for b in 1:k, a in 1:k
-        P[indices[a], indices[b]] += scale[a] * scale[b] * buffer.out[a, b]
+        P[indices[a], indices[b]] = scale[a] * scale[b] * buffer.out[a, b]
     end
     return nothing
 end

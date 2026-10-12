@@ -337,9 +337,6 @@ function _quadrature_leaf_rule!(laplace::CTSEMLaplaceObjective, U::Integer,
             E.vectors * ((transpose(E.vectors) * current.gradient) ./
                 max.(E.values, lowest))
         end
-        # A step at roundoff is a mode however large the gradient's roundoff
-        # is; see `_laplace_newton_unit_mode`.
-        issuccess(factorization) && maximum(abs, step) < laplace.inner_tol && break
         accepted = false
         scale = 1.0
         for _ in 1:20
@@ -1100,10 +1097,7 @@ function _laplace_soft_rule_unit(laplace::CTSEMLaplaceObjective,
                 Mz = transpose(Vh) * Mof(ubase .+ Vh * z) * Vh
                 F = _ctsem_cholesky(Matrix(_laplace_symmetrise(Mz)), nh)
                 issuccess(F) || break
-                step = F \ gz
-                z .+= step
-                # At roundoff in the step, as `_laplace_newton_unit_mode` stops.
-                maximum(abs, step) < laplace.inner_tol && break
+                z .+= F \ gz
             end
         end
         uu = ubase .+ Vh * z

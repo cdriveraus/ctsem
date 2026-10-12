@@ -152,9 +152,8 @@ function _metric_from_covariances(ranges::Vector{UnitRange{Int}},
     covariances::Vector{Matrix{Float64}}; jitter::Real=1e-10)
     factors = Vector{Matrix{Float64}}(undef, length(ranges))
     for b in eachindex(ranges)
-        S = covariances[b]
-        k = size(S, 1)
-        S = (S .+ transpose(S)) ./ 2
+        k = size(covariances[b], 1)
+        S = (covariances[b] .+ transpose(covariances[b])) ./ 2
         for i in 1:k
             S[i, i] += jitter
         end
@@ -458,13 +457,12 @@ function ctsem_sample_metric(sampler::CTSEMSampler, values::AbstractVector;
             block.size == 0 && continue
             start = sampler.uoffsets[U] + block.offset + 1
             push!(ranges, start:(start + block.size - 1))
-            candidate = Cdiag === nothing ? Matrix(1.0I, block.size, block.size) :
+            proposed = Cdiag === nothing ? Matrix(1.0I, block.size, block.size) :
                 Matrix(Cdiag[b])
             # Same guard as the population block: a repaired curvature can give
             # a conditional covariance that is not usable as a metric.
-            if !all(isfinite, candidate) || any(candidate[i, i] <= 0 for i in 1:block.size)
-                candidate = Matrix(1.0I, block.size, block.size)
-            end
+            usable = all(isfinite, proposed) && all(proposed[i, i] > 0 for i in 1:block.size)
+            candidate = usable ? proposed : Matrix(1.0I, block.size, block.size)
             # And the same bound: no wider than the effects' prior. A unit whose
             # curvature is near singular at `theta` gives a variance with no
             # limit -- gB2 at SAEM's estimate, 0.2 standard errors from the

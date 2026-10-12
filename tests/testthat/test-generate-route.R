@@ -105,7 +105,8 @@ test_that("a grouping level draws its own effects", {
     T0MEANS = matrix(0), CINT = matrix(0), DRIFT = matrix(-0.5),
     DIFFUSION = matrix(1), MANIFESTVAR = matrix(0.1), T0VAR = matrix(0.5),
     MANIFESTMEANS = matrix("mm"), id = c("subject", "study"))))
-  m$pars$indvarying <- ifelse(m$pars$param %in% "mm", "study", FALSE)
+  m$pars$indvarying <- FALSE
+  m$pars$indvarying_study <- m$pars$param %in% "mm"
   set.seed(1)
   expect_message(d <- ctGenerate(m, n = c(40, 4), Tpoints = 5,
     backend = "julia"), "mm 1 \\[study\\]")

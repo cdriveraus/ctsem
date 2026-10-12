@@ -171,8 +171,8 @@ test_that("a study-level effect takes the Laplace route by default, and meshes",
   # of three subjects each, where the fit above has units of one.
   dat <- .substep_laplace_data()
   dat$study <- (dat$id - 1) %/% 3 + 1
-  # mm's indvarying is TRUE, which with a study level is both levels.
   model <- .substep_laplace_model(id = c("id", "study"))
+  model$pars$indvarying_study <- model$pars$param %in% "mm"
   fit <- withr::with_seed(1, suppressWarnings(suppressMessages(ctFit(dat, model,
     backend = "julia", cores = 1, verbose = 0, optimcontrol = list(estonly = TRUE),
     nlcontrol = list(nsubsteps = "auto", substeptol = 0.02)))))

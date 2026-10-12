@@ -2044,6 +2044,13 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
     # `evaluated`, not `result`: see `ctsem_laplace_optimize`. A closure's
     # assignment binds to the enclosing local of the same name, and the outer
     # L-BFGS result below is called `result`.
+    # Where the fit currently is. The L-BFGS's callback is handed convergence
+    # numbers, not the point they describe, and the stall conjunction has to ask
+    # the transforms what they are doing *at this point*. `fg!` sees every
+    # trial, so the last one it accepted is recorded there and read here.
+    # Made before the closure that writes it: a capture of a local assigned
+    # later is a `Core.Box`.
+    current_x = copy(start_values)
     # Over whichever objective is in force: the fit's own, or a batch of its
     # units (see `_ctsem_batch_plan`), which is the same route over fewer.
     trial_fg! = function (target, F, G, x)
@@ -2103,8 +2110,9 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
         Symbol(newton_curvature)
     finishing = newton && gap_tol > 0 && route_curvature !== nothing &&
         (certify || cheap)
-    handover = finishing && cheap ? max(Float64(gap_tol), Float64(newton_switch)) :
-        Float64(gap_tol)
+    # A Ref: the callback reads it and the resumed stage below lowers it.
+    handover = Ref(finishing && cheap ? max(Float64(gap_tol), Float64(newton_switch)) :
+        Float64(gap_tol))
     # A callback rather than Optim's `show_trace`, which prints one dense line
     # per iteration whatever the model costs -- thousands on a fast one, and on
     # a slow one nothing for minutes. The objective and the gradient norm are
@@ -2150,11 +2158,6 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
     stopped_by_gap = Ref(false)
     stopped_by_stall = Ref(false)
     stopped_by_progress = Ref(false)
-    # Where the fit currently is. The L-BFGS's callback is handed convergence
-    # numbers, not the point they describe, and the stall conjunction has to ask
-    # the transforms what they are doing *at this point*. `fg!` sees every
-    # trial, so the last one it accepted is recorded there and read here.
-    current_x = copy(start_values)
     stall = CTSEMStallWatch(window=stall_window, fraction=stall_fraction,
         cooldown=stall_cooldown, tighten=stall_tighten,
         tightenings=stall_tightenings, carried=stall_carried, alone=stall_alone)
@@ -2185,15 +2188,9 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
         if _due(reporter)
             # Never on a budget stage: its own fraction is exact, and an
             # estimate would replace a correct denominator with a guess.
-            # While a batch is still growing the value is its estimate of the
-            # fit's log posterior from that many units, scaled up, and it moves
-            # with the batch as well as with the step: on the SNSF pilot the
-            # first ten such lines read up to 25,000 above the optimum the fit
-            # certified, so the line says which it is.
             _progress_optimise(reporter, latest.iteration, Int(maxiter),
                 @sprintf("logpost %11.2f", -latest.value),
                 @sprintf("|g| %9.2e", latest.g_norm),
-                (batching() ? (@sprintf("batch %d/%d units", batcher.m, batcher.nunits),) : ())...,
                 _ctsem_optimise_progress_extra(objective)...,
                 _ctsem_forward_progress(forward0, explosive0)...;
                 budget=progress_budget,
@@ -2222,7 +2219,7 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
         # Neither rule while a batch is still growing: its objective is not the
         # fit's, and a batch that has gone quiet is a batch about to grow.
         batching() && return false
-        if handover > 0 && _ctsem_predicted_gain(directional) < handover
+        if handover[] > 0 && _ctsem_predicted_gain(directional) < handover[]
             stopped_by_gap[] = true
             return true
         end
@@ -2430,7 +2427,7 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
         # A hand-over on L-BFGS's proxy rather than at its stopping rule, which
         # the finish checks with its first step (`handback`) where its Hessian
         # is cheap enough to discard.
-        early = handover > gap_tol
+        early = handover[] > gap_tol
         finish = _ctsem_newton_finish(objective, minimizer, f0, G0, fg!;
             tol=gap_tol, maxit=newton_maxit, callback=record,
             iteration0=result.iterations + spent.steps[],
@@ -2460,7 +2457,7 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
         append!(spent.history.alpha, finish.history.alpha)
         append!(spent.history.value, finish.history.value)
         finish = nothing
-        handover = Float64(gap_tol)
+        handover[] = Float64(gap_tol)
         stopped_by_gap[] = false
         resumed = _ctsem_lbfgs(fg!, minimizer; memory=Int(lbfgs_memory),
             diagonal=lbfgs_diagonal, nonmonotone=lbfgs_nonmonotone, gll=Int(lbfgs_gll),
@@ -2493,8 +2490,10 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
     forward_gradients = ctsem_forward_gradients() - forward0
     explosive_passes = ctsem_explosive_passes() - explosive0
     final, explosive = if explosive_passes > 0 || forward_gradients > 0
-        ctsem_explosive_subjects(() -> ctsem_evaluate(objective, minimizer;
-            gradient=true, contributions=true, gradient_method=gradient_method))
+        ctsem_explosive_subjects(let minimizer = minimizer
+            () -> ctsem_evaluate(objective, minimizer; gradient=true,
+                contributions=true, gradient_method=gradient_method)
+        end)
     else
         ctsem_evaluate(objective, minimizer; gradient=true, contributions=true,
             gradient_method=gradient_method), Int[]

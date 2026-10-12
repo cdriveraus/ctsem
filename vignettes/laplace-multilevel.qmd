@@ -198,8 +198,7 @@ Pass `id` a vector, innermost first:
 ```{r model}
 m <- ctModel(type = 'ct', id = c('id', 'study'),
   manifestNames = 'Y1', latentNames = 'eta1', LAMBDA = matrix(1),
-  T0MEANS = matrix('T0m_eta1||id'), CINT = matrix('cint_eta1'),
-  MANIFESTMEANS = matrix(0))
+  CINT = matrix('cint_eta1||TRUE'), MANIFESTMEANS = matrix(0))
 ```
 
 `CINT` is fixed to zero by default in ctsem, with the level carried by
@@ -208,25 +207,25 @@ the process has a genuine equilibrium at $-\text{CINT}/\text{DRIFT}$ for
 individual differences to act on.
 
 A cell's `indvarying` field says at which levels its parameter varies: `TRUE`
-at every level, `FALSE` at none, or the levels by name. Intercepts left
-unspecified vary at every level, so `cint_eta1` varies both between subjects
-and between studies, which is what makes its variance decompose into a
-within-study and a between-study part. `'T0m_eta1||id'` lets the starting
-level vary between subjects only; `'cint_eta1||study'` would vary between
-studies only, with subjects exchangeable within a study. The same field can be
-written by name, `'T0m_eta1, indvarying=id'`, or built with
-`ctPar('T0m_eta1', indvarying = 'id')`. Printing the model says what varies
-where, and what each level will estimate:
+at every level, `FALSE` at none, or the levels by name. `'cint_eta1||TRUE'`
+varies at both, which is what makes its variance decompose into a within-study
+and a between-study part; `'cint_eta1||study'` would vary between studies only,
+with subjects exchangeable within a study. The same field can be written by
+name, `'cint_eta1, indvarying=c(id, study)'`, or built with
+`ctPar('cint_eta1', indvarying = c('id', 'study'))`. Intercepts left
+unspecified -- the `T0MEANS` here -- vary between subjects only. Printing the
+model says what varies where, and what each level will estimate:
 
 ```{r levels-print}
 print(m, matrices = FALSE)
 ```
 
-`m$pars$indvarying` holds the same values, one per cell, and can be edited
-directly -- `TRUE`, `FALSE` or level names, as in a cell. A cell's `sdscale`
-scales the prior on the standard deviation at every level it varies at. Levels
-must be **strictly nested**: every subject belongs to exactly one study. ctsem
-checks this and stops if the data say otherwise.
+The resolved flags are kept in `m$pars` as `indvarying` for the subject level
+and `indvarying_study` for the level above, and can be edited there too. A
+cell's `sdscale` scales the prior on the standard deviation at every level it
+varies at; `sdscale_study` in `m$pars` sets one level alone. Levels must be
+**strictly nested**: every subject belongs to exactly one study. ctsem checks
+this and stops if the data say otherwise.
 
 ## Fitting
 

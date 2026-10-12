@@ -529,13 +529,10 @@
     why <- paste0(", since a typical ", row$unit, "'s own data ",
       if (raised) "would determine " else "determine ", .ctEffectShare(share),
       " of its ", row$effect)
-    # Said the way a user sets it: with levels, `indvarying` lists them, and
-    # FALSE would switch every level off rather than this one.
-    off <- if (length(levels) > 1L) paste0("leaving ", row$level, " out of ",
-      row$effect, "'s indvarying") else paste0("indvarying = FALSE for ", row$effect)
     remedy <- poprank[[as.character(row$level)]]
     remedy <- if (!is.null(remedy)) paste0("Consider ", remedy, ", else ",
-      off, ".") else paste0("Consider ", off, ".")
+      row$switch, " = FALSE for ", row$effect, ".") else
+      paste0("Consider ", row$switch, " = FALSE for ", row$effect, ".")
     paste0("Individual differences in ", name, " are barely determined: ", at,
       ", ", rests, why, ". ", remedy)
   }, character(1))

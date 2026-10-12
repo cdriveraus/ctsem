@@ -44,7 +44,6 @@ plot.ctStanModel<-function(x,rows='all',wait=FALSE,nsamples=1e6, rawpopsd='margi
   x <- ctModelTransformsToNum(x)
   x <- T0VARredundancies(x)
   m<-x$pars
-  varying <- .ctVaryingRows(x)
   highmean=rnorm(nsamples,inddifdevs[2],inddifsd)
   lowmean= rnorm(nsamples,inddifdevs[1],inddifsd)
   if(rows[1]=='all') rows<-which(is.na(m$value) & 
@@ -78,7 +77,7 @@ plot.ctStanModel<-function(x,rows='all',wait=FALSE,nsamples=1e6, rawpopsd='margi
       leg <- c('Pop. mean prior')
       colvec <- c(1)
       
-      if(varying[rowi]){
+      if(m$indvarying[rowi]){
         
         if(inddifdevs[1]=='marginalise'){
           param=stats::rnorm(length(rawpopsdprior),rawpopmeans,rawpopsdprior)

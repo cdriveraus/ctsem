@@ -162,8 +162,8 @@ print.ctStanModel <- function(x, matrices = NULL, ...) {
       paste0(vapply(nonempty, function(v) counts(length(v)), character(1)),
         " (", names(nonempty), ")", collapse = ", "),
       ", on top of the ", length(free), " above.\n", sep = "")
-    cat("  Set the levels with indvarying, in a cell or in pars$indvarying: TRUE,",
-      " FALSE or level names (see ?ctPar).\n", sep = "")
+    cat("  Set the levels with indvarying in a cell: TRUE, FALSE or level names",
+      " (see ?ctPar).\n", sep = "")
   } else {
     cat("\nNo individually varying parameters: a fixed effects model.\n")
   }

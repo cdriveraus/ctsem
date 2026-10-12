@@ -103,13 +103,13 @@ study. A cell says where its parameter varies with the \code{indvarying}
 field (see \code{\link{ctPar}}): \code{TRUE} at every level, \code{FALSE}
 at none, or the names of the levels, so \code{'cint||study'} gives an
 intercept that varies between studies with subjects exchangeable within a
-study, and \code{'cint||subject,study'} (or \code{TRUE}) one that varies at
-both. \code{model$pars$indvarying} holds the same values, one per cell, and
-can be edited directly, with \code{TRUE} again meaning every level; a
-cell's \code{sdscale} applies at every level it varies at. Intercepts
-(\code{T0MEANS}, \code{MANIFESTMEANS}, \code{CINT}) left unspecified vary
-at every level. Levels above the subject require \code{backend='julia'}
-with \code{intoverpop='laplace'}, and the hierarchy must be strictly nested.}
+study, and \code{'cint||subject,study'} one that varies at both. The
+resolved flags are \code{model$pars$indvarying} for the subject level and
+\code{model$pars$indvarying_<idname>} for each level above it. Intercepts
+(\code{T0MEANS}, \code{MANIFESTMEANS}, \code{CINT}) left unspecified vary at
+the subject level only. Levels above the subject require
+\code{backend='julia'} with \code{intoverpop='laplace'}, and the hierarchy
+must be strictly nested.}
 
 \item{time}{character string denoting column name containing timing data. Timing data must be numeric.}
 

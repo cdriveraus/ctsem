@@ -1150,7 +1150,7 @@ ctBackendParMatrices <- function(fit, raw = NULL, tipreds = NULL, state = NULL,
   model <- .ctFitBaseModel(fit)
   levels <- c(model$subjectIDname, model$groupIDnames)
   position <- match(level, levels)
-  params <- .ctVaryingParams(model, .ctVaryingColumns(model)[position:length(levels)])
+  params <- .ctVaryingParams(model, paste0("indvarying_", levels[position:length(levels)]))
   if (!length(params)) stop("Nothing varies between groups of '", level,
     "' or above, so every group's parameters are the population's.", call. = FALSE)
 

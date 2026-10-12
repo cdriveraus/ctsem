@@ -397,9 +397,8 @@ test_that("the wording names the level, its switch, poprank first, and which spr
   expect_match(advice[1L], paste0("at its estimated raw-scale population sd ",
     "of 0.2, the 8 studies carry almost no information about it, since a ",
     "typical study's own data determine almost none of its cint"), fixed = TRUE)
-  # One effect at that level: no lower rank exists, only the switch -- said as
-  # leaving the level out, since FALSE would switch every level off.
-  expect_match(advice[1L], "Consider leaving study out of cint's indvarying.",
+  # One effect at that level: no lower rank exists, only the switch.
+  expect_match(advice[1L], "Consider indvarying_study = FALSE for cint.",
     fixed = TRUE)
   expect_false(grepl("poprank", advice[1L], fixed = TRUE))
   # Measured at the starting spread, and saying so -- both sds by value -- and
@@ -410,7 +409,7 @@ test_that("the wording names the level, its switch, poprank first, and which spr
     "subjects, since a typical subject's own data would determine 2% of its ",
     "t0m"), fixed = TRUE)
   expect_match(advice[2L], paste0("Consider a lower poprank for the id level ",
-    "(now 2), else leaving id out of t0m's indvarying."), fixed = TRUE)
+    "(now 2), else indvarying = FALSE for t0m."), fixed = TRUE)
   # Not where the level cannot be reduced.
   effects$ranks$reducible <- FALSE
   expect_false(any(grepl("poprank", ctsem:::.ctEffectAdvice(effects),

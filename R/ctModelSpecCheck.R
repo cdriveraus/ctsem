@@ -457,12 +457,12 @@
   # sdscale multiplies the prior on a population standard deviation, so it
   # means nothing for a parameter that has no population distribution. It was
   # accepted and dropped.
+  indcols <- grep('^indvarying', names(ctspec), value = TRUE)
   for (i in which(holds)) {
     sd <- ctspec$sdscale[i]
     if (is.na(sd) || sd == 1) next
-    # TRUE or level names vary somewhere; only FALSE, or nothing, does not.
-    iv <- toupper(trimws(as.character(ctspec$indvarying[i])))
-    anyvary <- !is.na(iv) && nzchar(iv) && !iv %in% c('FALSE', 'F')
+    anyvary <- any(vapply(indcols, function(cl)
+      isTRUE(as.logical(ctspec[[cl]][i])), logical(1)))
     if (!anyvary) {
       warning(.ctSpecCellName(ctspec, i), ' sets sdscale ', sd,
         ' but the parameter does not vary over subjects, so there is no ',

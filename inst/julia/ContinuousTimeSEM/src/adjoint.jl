@@ -774,8 +774,9 @@ function ctsem_hessian(objective::CTSEMObjective, values::AbstractVector;
         _ctsem_width_jacobian(gradient_of, x, _CTSEM_HESSIAN_WIDTHS[];
             progress=columns))
     chunksize = min(Int(chunk), n)
-    return _ctsem_symmetrised(_ctsem_reported_jacobian(gradient_of, x,
-        ForwardDiff.Chunk{chunksize}(), columns, n))
+    # A run-time width: behind the barrier, as in `_ctsem_width_jacobian!`.
+    return _ctsem_symmetrised(_ctsem_barrier(_ctsem_reported_jacobian, gradient_of, x,
+        ForwardDiff.Chunk{chunksize}(), columns, n)::Matrix{Float64})
 end
 _ctsem_symmetrised(H::AbstractMatrix) = (H .+ transpose(H)) ./ 2
 

@@ -20,8 +20,7 @@ levels it varies at. With \code{id = c('person', 'couple')} in
 \code{\link{ctModel}}, \code{indvarying = 'couple'} gives a parameter
 that differs between couples but not between the persons within one, and
 \code{TRUE} is the same as \code{c('person', 'couple')}. With a single id
-the two forms mean the same thing. The model's \code{pars$indvarying}
-column holds the same values and may be edited directly.}
+the two forms mean the same thing.}
 
 \item{sdscale}{Multiplier on the population standard deviation's prior, at
 every level where the parameter varies. Only meaningful when it varies.}

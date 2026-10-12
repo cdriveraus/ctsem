@@ -367,8 +367,12 @@ test_that("the note about smoothed trajectories is said where a trajectory is", 
     LAMBDA = matrix(1), T0MEANS = matrix(0), CINT = matrix(0),
     T0VAR = matrix(0.5), MANIFESTMEANS = matrix("mmean"),
     id = c("subject", "study"))))
-  # TRUE is every level of the id: mmean varies between subjects and studies.
-  model$pars$indvarying <- model$pars$param %in% "mmean"
+  model$pars$indvarying <- FALSE
+  model$pars$indvarying[model$pars$param %in% "mmean"] <- TRUE
+  # A grouping level above the subject declares its varying parameters in
+  # `indvarying_<idname>`, the same way the subject level uses `indvarying`.
+  model$pars$indvarying_study <- FALSE
+  model$pars$indvarying_study[model$pars$param %in% "mmean"] <- TRUE
   model
 }
 
@@ -498,33 +502,32 @@ test_that("every level gets the same prior shape, and its own sdscale", {
   # is a property of the design, not something the prior should try to fix.
   expect_equal(spec$scale, rep(1, 6))
 
-  # And a parameter's sdscale scales its population sd at every level.
+  # And a level scales its own population sd rather than borrowing level one's.
   model <- .laplace_nested_model()
-  model$pars$sdscale[model$pars$param %in% "mmean"] <- 3
+  model$pars$sdscale_study[model$pars$param %in% "mmean"] <- 3
   dat <- .laplace_nested_data()
   levels <- suppressMessages(ctFit(dat, model, backend = "julia",
     intoverpop = "laplace", fit = FALSE))$laplace$levels
-  expect_equal(levels[[1]]$sd_scale, 3)
+  expect_equal(levels[[1]]$sd_scale, 1)
   expect_equal(levels[[2]]$sd_scale, 3)
 })
 
-test_that("a grouping id adds no columns, and intercepts vary at every level", {
-  # One indvarying and one sdscale, whatever the id: levels are what the
-  # indvarying values name.
+test_that("a grouping id creates its level columns, defaulting sensibly", {
   model <- .laplace_nested_model()
-  expect_false(any(grepl("^(indvarying|sdscale)_", names(model$pars))))
+  expect_true("sdscale_study" %in% names(model$pars))
+  expect_true("indvarying_study" %in% names(model$pars))
+  # sdscale defaults to the subject level's, which is 1 for free parameters.
+  free <- !is.na(model$pars$param) & is.na(model$pars$value)
+  expect_true(all(model$pars$sdscale_study[free] == 1))
 
-  # Unspecified intercepts are TRUE, which is every level.
+  # An outer level varies only where asked. Defaulting it the way `indvarying`
+  # defaults -- TRUE for T0MEANS, MANIFESTMEANS and CINT -- would make every
+  # model with a grouping id enormously parameterised without the user asking.
   plain <- suppressWarnings(suppressMessages(ctModel(type = "ct",
     manifestNames = "Y1", latentNames = "eta1", LAMBDA = matrix(1),
     id = c("subject", "study"))))
-  resolved <- ctsem:::.ctResolveLevels(plain)$pars
-  intercepts <- resolved$matrix %in% c("T0MEANS", "MANIFESTMEANS", "CINT") &
-    is.na(resolved$value)
-  expect_true(any(intercepts))
-  expect_true(all(resolved$indvarying[intercepts]))
-  expect_true(all(resolved$indvarying_study[intercepts]))
-  expect_false(any(resolved$indvarying_study[!intercepts]))
+  expect_false(any(plain$pars$indvarying_study %in% TRUE))
+  expect_true(any(plain$pars$indvarying %in% TRUE))
 })
 
 test_that("a TI predictor operates at a grouping level when it varies there", {
@@ -564,7 +567,9 @@ test_that("a TI predictor operates at a grouping level when it varies there", {
       T0MEANS = matrix(0), CINT = matrix(0), T0VAR = matrix(0.5),
       MANIFESTMEANS = matrix("mmean"), id = c("subject", "study"),
       TIpredNames = if (withZ) "Z" else NULL)))
-    model$pars$indvarying <- model$pars$param %in% "mmean"
+    model$pars$indvarying <- FALSE
+    model$pars$indvarying[model$pars$param %in% "mmean"] <- TRUE
+    model$pars$indvarying_study[model$pars$param %in% "mmean"] <- TRUE
     if (withZ) {
       model$pars$Z_effect <- FALSE
       model$pars$Z_effect[model$pars$param %in% "mmean"] <- TRUE
@@ -611,7 +616,8 @@ test_that("a TI predictor operates at a grouping level when it varies there", {
     LAMBDA = matrix(1), T0MEANS = matrix(0), CINT = matrix(0),
     T0VAR = matrix(0.5), MANIFESTMEANS = matrix("mmean"),
     id = c("subject", "study"))))
-  model$pars$indvarying <- ifelse(model$pars$param %in% "mmean", "study", FALSE)
+  model$pars$indvarying <- FALSE
+  model$pars$indvarying_study <- model$pars$param %in% "mmean"
   model
 }
 
@@ -624,8 +630,7 @@ test_that("a study level effect needs no subject level effect", {
     T0VAR = matrix(0.5), MANIFESTMEANS = matrix("mmean||study"),
     id = c("subject", "study"))))
   cols <- c("param", "indvarying", "indvarying_study")
-  expect_equal(ctsem:::.ctResolveLevels(bycell)$pars[, cols],
-    ctsem:::.ctResolveLevels(.laplace_studyonly_model())$pars[, cols])
+  expect_equal(bycell$pars[, cols], .laplace_studyonly_model()$pars[, cols])
 
   skip_without_julia()
   dat <- .laplace_nested_data()

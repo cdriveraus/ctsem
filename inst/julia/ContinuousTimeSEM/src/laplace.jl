@@ -3479,19 +3479,6 @@ function _laplace_newton_unit_mode(laplace::CTSEMLaplaceObjective, U::Integer,
         fac.ok || break
         _laplace_block_solve!(step, fac.factors, fac.coupling, blocks,
             current.gradient)
-        # The step, too, says the mode is found: `M^-1 g` is how far it is, in
-        # the effects' own standardised units, whatever the curvature. The
-        # gradient bound alone cannot say so where the curvature is large,
-        # because roundoff in `g` grows with it. A random T0MEANS whose state's
-        # remaining variance is 1e-6 under no measurement error has a
-        # curvature of 1e7, and its unit sat at |g| 3.3e-10 against a
-        # tolerance of 1.4e-10 for 200 iterations with a step of 3e-17, then
-        # failed the trial point. Not from a repaired curvature, whose step
-        # does not measure the distance to a maximum.
-        if !fac.repaired && maximum(abs, step) < laplace.inner_tol
-            converged = true
-            break
-        end
         accepted = false
         # Whether any trial could be evaluated at all, which is what separates
         # "there is nothing left to gain here" from "the step went somewhere
@@ -4342,12 +4329,15 @@ function _laplace_gated_unit_gradient(laplace::CTSEMLaplaceObjective, U::Integer
     # implicit function theorem's matrix; take the mode's derivative from the
     # unshifted one's eigendecomposition instead (it is nonsingular wherever
     # the mode moves smoothly, whatever its signature).
-    dense_inverse = nothing
-    if laplace.mode_repaired[U]
+    # One assignment: `term_of` captures it (a captured local assigned more
+    # than once is a `Core.Box`).
+    dense_inverse = if laplace.mode_repaired[U]
         Ls0 = _laplace_popchols(theta, laplace.spec)
         E = _ctsem_symeig(_laplace_block_dense(_laplace_unit_curvature(laplace, U,
             theta, Ls0, uhat), laplace.units.blocks[U], length(uhat)))
-        dense_inverse = E.vectors * Diagonal(1 ./ E.values) * transpose(E.vectors)
+        E.vectors * Diagonal(1 ./ E.values) * transpose(E.vectors)
+    else
+        nothing
     end
     term_of = function (x)
         S = eltype(x)
@@ -6582,15 +6572,18 @@ function ctsem_laplace_modes(laplace::CTSEMLaplaceObjective, values::AbstractVec
         _laplace_solve_unit_mode!(laplace, U, theta, Ls)
         u = laplace.modes[U]
         blocks = laplace.units.blocks[U]
-        factors = nothing; coupling = nothing
         cross = nothing
+        fac = nothing
         if !isempty(u)
             hybrid && (cross = CTSEMHybridCross{Float64}(length(u),
                 length(laplace.units.members[U])))
             M = _laplace_unit_curvature(laplace, U, theta, Ls, u; hook=cross)
             fac = _laplace_factor_repaired!(M, blocks)
-            factors = fac.factors; coupling = fac.coupling
         end
+        # Assigned once: `conditional` captures both (a captured local assigned
+        # more than once is a `Core.Box`).
+        factors = fac === nothing ? nothing : fac.factors
+        coupling = fac === nothing ? nothing : fac.coupling
         hmodes = hybrid ? _hybrid_member_modes(laplace, U, theta, Ls, u, aws) : nothing
         # Only the diagonal block of the inverse is wanted, so it is solved for
         # a column at a time rather than by inverting the whole curvature --
@@ -7092,8 +7085,9 @@ function _laplace_hessian_columns(laplace::CTSEMLaplaceObjective,
     H = zeros(Float64, n, k)
     k == 0 && return H
     budget = laplace.inner_maxiter
-    base = nothing
-    if warm
+    # One assignment: `restore!` captures it, and a captured local assigned
+    # more than once is a `Core.Box`.
+    base = if warm
         # The modes at `x`, from the origin, which every differencing point
         # then starts from.
         previous = ctsem_set_warm_start!(false)
@@ -7102,7 +7096,9 @@ function _laplace_hessian_columns(laplace::CTSEMLaplaceObjective,
         finally
             ctsem_set_warm_start!(previous)
         end
-        base = deepcopy(laplace.modes)
+        deepcopy(laplace.modes)
+    else
+        nothing
     end
     function restore!()
         base === nothing && return nothing

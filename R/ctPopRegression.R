@@ -172,7 +172,7 @@
 .ctPopRegressionRawPopVarStated <- function(model) {
   popcov <- model[['RAWPOPVAR']]
   if (is.null(popcov) || !length(popcov)) return(character())
-  default <- .ctModelRawPopVar(.ctResolveLevels(model)$pars)
+  default <- .ctModelRawPopVar(model$pars)
   if (is.null(default) || !length(default)) return(character())
   # Only parameters both matrices have. A RAWPOPVAR built for a different set
   # of varying parameters -- `pars$indvarying` edited after `ctModel()`, which

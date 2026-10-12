@@ -231,11 +231,10 @@ T(\theta) \;\approx\; \sum_{m \in U} \ell_m\big(v_m(\theta, \hat u)\big) \;-\; \
 <div class="cell">
 <div class="sourceCode cell-code" id="cb3"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb3-1"><a href="#cb3-1" aria-hidden="true" tabindex="-1"></a>m <span class="ot">&lt;-</span> <span class="fu">ctModel</span>(<span class="at">type =</span> <span class="st">&#39;ct&#39;</span>, <span class="at">id =</span> <span class="fu">c</span>(<span class="st">&#39;id&#39;</span>, <span class="st">&#39;study&#39;</span>),</span>
 <span id="cb3-2"><a href="#cb3-2" aria-hidden="true" tabindex="-1"></a>  <span class="at">manifestNames =</span> <span class="st">&#39;Y1&#39;</span>, <span class="at">latentNames =</span> <span class="st">&#39;eta1&#39;</span>, <span class="at">LAMBDA =</span> <span class="fu">matrix</span>(<span class="dv">1</span>),</span>
-<span id="cb3-3"><a href="#cb3-3" aria-hidden="true" tabindex="-1"></a>  <span class="at">T0MEANS =</span> <span class="fu">matrix</span>(<span class="st">&#39;T0m_eta1||id&#39;</span>), <span class="at">CINT =</span> <span class="fu">matrix</span>(<span class="st">&#39;cint_eta1&#39;</span>),</span>
-<span id="cb3-4"><a href="#cb3-4" aria-hidden="true" tabindex="-1"></a>  <span class="at">MANIFESTMEANS =</span> <span class="fu">matrix</span>(<span class="dv">0</span>))</span></code></pre></div>
+<span id="cb3-3"><a href="#cb3-3" aria-hidden="true" tabindex="-1"></a>  <span class="at">CINT =</span> <span class="fu">matrix</span>(<span class="st">&#39;cint_eta1||TRUE&#39;</span>), <span class="at">MANIFESTMEANS =</span> <span class="fu">matrix</span>(<span class="dv">0</span>))</span></code></pre></div>
 </div>
 <p><code>CINT</code> is fixed to zero by default in ctsem, with the level carried by <code>MANIFESTMEANS</code>. Here it is freed and <code>MANIFESTMEANS</code> fixed instead, so that the process has a genuine equilibrium at <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>−</mi><mtext mathvariant="normal">CINT</mtext><mi>/</mi><mtext mathvariant="normal">DRIFT</mtext></mrow><annotation encoding="application/x-tex">-\text{CINT}/\text{DRIFT}</annotation></semantics></math> for individual differences to act on.</p>
-<p>A cell’s <code>indvarying</code> field says at which levels its parameter varies: <code>TRUE</code> at every level, <code>FALSE</code> at none, or the levels by name. Intercepts left unspecified vary at every level, so <code>cint_eta1</code> varies both between subjects and between studies, which is what makes its variance decompose into a within-study and a between-study part. <code>&#39;T0m_eta1||id&#39;</code> lets the starting level vary between subjects only; <code>&#39;cint_eta1||study&#39;</code> would vary between studies only, with subjects exchangeable within a study. The same field can be written by name, <code>&#39;T0m_eta1, indvarying=id&#39;</code>, or built with <code>ctPar(&#39;T0m_eta1&#39;, indvarying = &#39;id&#39;)</code>. Printing the model says what varies where, and what each level will estimate:</p>
+<p>A cell’s <code>indvarying</code> field says at which levels its parameter varies: <code>TRUE</code> at every level, <code>FALSE</code> at none, or the levels by name. <code>&#39;cint_eta1||TRUE&#39;</code> varies at both, which is what makes its variance decompose into a within-study and a between-study part; <code>&#39;cint_eta1||study&#39;</code> would vary between studies only, with subjects exchangeable within a study. The same field can be written by name, <code>&#39;cint_eta1, indvarying=c(id, study)&#39;</code>, or built with <code>ctPar(&#39;cint_eta1&#39;, indvarying = c(&#39;id&#39;, &#39;study&#39;))</code>. Intercepts left unspecified – the <code>T0MEANS</code> here – vary between subjects only. Printing the model says what varies where, and what each level will estimate:</p>
 <div class="cell">
 <div class="sourceCode cell-code" id="cb4"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb4-1"><a href="#cb4-1" aria-hidden="true" tabindex="-1"></a><span class="fu">print</span>(m, <span class="at">matrices =</span> <span class="cn">FALSE</span>)</span>
 <span id="cb4-2"><a href="#cb4-2" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; ctsem model (continuous time)</span></span>
@@ -249,11 +248,11 @@ T(\theta) \;\approx\; \sum_{m \in U} \ell_m\big(v_m(\theta, \hat u)\big) \;-\; \
 <span id="cb4-10"><a href="#cb4-10" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;   study  cint_eta1</span></span>
 <span id="cb4-11"><a href="#cb4-11" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;   Each level estimates a population covariance over its own parameters:</span></span>
 <span id="cb4-12"><a href="#cb4-12" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;   2 standard deviations and 1 correlation (id), 1 standard deviation (study), on top of the 5 above.</span></span>
-<span id="cb4-13"><a href="#cb4-13" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;   Set the levels with indvarying, in a cell or in pars$indvarying: TRUE, FALSE or level names (see ?ctPar).</span></span>
+<span id="cb4-13"><a href="#cb4-13" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;   Set the levels with indvarying in a cell: TRUE, FALSE or level names (see ?ctPar).</span></span>
 <span id="cb4-14"><a href="#cb4-14" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; </span></span>
 <span id="cb4-15"><a href="#cb4-15" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; Matrices not shown; see model$matrices or ctModelMatrices(model).</span></span></code></pre></div>
 </div>
-<p><code>m$pars$indvarying</code> holds the same values, one per cell, and can be edited directly – <code>TRUE</code>, <code>FALSE</code> or level names, as in a cell. A cell’s <code>sdscale</code> scales the prior on the standard deviation at every level it varies at. Levels must be <strong>strictly nested</strong>: every subject belongs to exactly one study. ctsem checks this and stops if the data say otherwise.</p>
+<p>The resolved flags are kept in <code>m$pars</code> as <code>indvarying</code> for the subject level and <code>indvarying_study</code> for the level above, and can be edited there too. A cell’s <code>sdscale</code> scales the prior on the standard deviation at every level it varies at; <code>sdscale_study</code> in <code>m$pars</code> sets one level alone. Levels must be <strong>strictly nested</strong>: every subject belongs to exactly one study. ctsem checks this and stops if the data say otherwise.</p>
 <h2 id="fitting">Fitting</h2>
 <div class="cell">
 <div class="sourceCode cell-code" id="cb5"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb5-1"><a href="#cb5-1" aria-hidden="true" tabindex="-1"></a>fit <span class="ot">&lt;-</span> <span class="fu">ctFit</span>(dat, m, <span class="at">backend =</span> <span class="st">&#39;julia&#39;</span>, <span class="at">intoverpop =</span> <span class="st">&#39;laplace&#39;</span>, <span class="at">cores =</span> <span class="dv">4</span>)</span></code></pre></div>
@@ -314,24 +313,23 @@ T(\theta) \;\approx\; \sum_{m \in U} \ell_m\big(v_m(\theta, \hat u)\big) \;-\; \
 <span id="cb6-51"><a href="#cb6-51" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;       in sd / unconstrained correlation form; see System Matrices (or</span></span>
 <span id="cb6-52"><a href="#cb6-52" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;       ctSummaryMatrices()) for cor/cov.</span></span>
 <span id="cb6-53"><a href="#cb6-53" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; ------------------------------------------------------------------------</span></span>
-<span id="cb6-54"><a href="#cb6-54" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; Units: 30 id within 5 study</span></span>
-<span id="cb6-55"><a href="#cb6-55" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; Log posterior: -275.45</span></span>
-<span id="cb6-56"><a href="#cb6-56" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; Log likelihood: -274.39</span></span>
-<span id="cb6-57"><a href="#cb6-57" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; Number of parameters: 9</span></span>
-<span id="cb6-58"><a href="#cb6-58" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; AIC: 566.779</span></span>
-<span id="cb6-59"><a href="#cb6-59" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; </span></span>
-<span id="cb6-60"><a href="#cb6-60" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; Convergence: Predicted objective still available at this estimate: 2.52e-09</span></span>
-<span id="cb6-61"><a href="#cb6-61" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;              (joint displacement 7.1e-05 in the information metric). Status:</span></span>
-<span id="cb6-62"><a href="#cb6-62" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;              certified. Exact value: fit$uncertainty$certification$gap.</span></span>
-<span id="cb6-63"><a href="#cb6-63" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; ------------------------------------------------------------------------</span></span>
-<span id="cb6-64"><a href="#cb6-64" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; Uncertainty draws: 1000</span></span>
-<span id="cb6-65"><a href="#cb6-65" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; </span></span>
-<span id="cb6-66"><a href="#cb6-66" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; Note: Julia backend; intervals from ctFitUncertainty(uncertainty=&#39;hessian&#39;)</span></span>
-<span id="cb6-67"><a href="#cb6-67" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;       draws pushed through the transforms. No curvature at the estimate along</span></span>
-<span id="cb6-68"><a href="#cb6-68" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;       mvarY1, so sd, interval and z are NA for that coordinate rather than the</span></span>
-<span id="cb6-69"><a href="#cb6-69" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;       artefact of the projection they would otherwise be. See</span></span>
-<span id="cb6-70"><a href="#cb6-70" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;       fit$uncertainty$intervalcheck and fit$identifiability.</span></span>
-<span id="cb6-71"><a href="#cb6-71" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; ------------------------------------------------------------------------</span></span></code></pre></div>
+<span id="cb6-54"><a href="#cb6-54" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; Log posterior: -275.45</span></span>
+<span id="cb6-55"><a href="#cb6-55" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; Log likelihood: -274.39</span></span>
+<span id="cb6-56"><a href="#cb6-56" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; Number of parameters: 9</span></span>
+<span id="cb6-57"><a href="#cb6-57" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; AIC: 566.779</span></span>
+<span id="cb6-58"><a href="#cb6-58" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; </span></span>
+<span id="cb6-59"><a href="#cb6-59" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; Convergence: Predicted objective still available at this estimate: 2.52e-09</span></span>
+<span id="cb6-60"><a href="#cb6-60" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;              (joint displacement 7.1e-05 in the information metric). Status:</span></span>
+<span id="cb6-61"><a href="#cb6-61" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;              certified. Exact value: fit$uncertainty$certification$gap.</span></span>
+<span id="cb6-62"><a href="#cb6-62" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; ------------------------------------------------------------------------</span></span>
+<span id="cb6-63"><a href="#cb6-63" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; Uncertainty draws: 1000</span></span>
+<span id="cb6-64"><a href="#cb6-64" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; </span></span>
+<span id="cb6-65"><a href="#cb6-65" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; Note: Julia backend; intervals from ctFitUncertainty(uncertainty=&#39;hessian&#39;)</span></span>
+<span id="cb6-66"><a href="#cb6-66" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;       draws pushed through the transforms. No curvature at the estimate along</span></span>
+<span id="cb6-67"><a href="#cb6-67" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;       mvarY1, so sd, interval and z are NA for that coordinate rather than the</span></span>
+<span id="cb6-68"><a href="#cb6-68" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;       artefact of the projection they would otherwise be. See</span></span>
+<span id="cb6-69"><a href="#cb6-69" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;       fit$uncertainty$intervalcheck and fit$identifiability.</span></span>
+<span id="cb6-70"><a href="#cb6-70" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; ------------------------------------------------------------------------</span></span></code></pre></div>
 </div>
 <p>The parts specific to a hierarchy:</p>
 <p><strong><code>Random-effects standard deviations (id)</code></strong> and <strong><code>(study)</code></strong> are the spread of the random effects at each level, on the transformed parameter scale. With more than one level, nothing is reported in an unlabelled block — a bare table would leave it ambiguous whether it described spread between subjects or between studies.</p>

@@ -198,31 +198,23 @@ test_that("a predictor the model does not have is named in the error", {
   DIFFUSION = diag(2), T0VAR = diag(2), CINT = 0, T0MEANS = 0, ...))
 
 .ctPar_levels <- function(m, p) {
-  r <- ctsem:::.ctResolveLevels(m)$pars
-  row <- match(p, r$param)
-  c(person = r$indvarying[row], couple = r$indvarying_couple[row])
+  row <- match(p, m$pars$param)
+  c(person = m$pars$indvarying[row], couple = m$pars$indvarying_couple[row])
 }
 
 test_that("indvarying resolves to every level, none, or the levels named", {
   m <- .ctPar_nested(MANIFESTMEANS = c("m1||TRUE", "m2||couple"),
     DRIFT = c("d1||FALSE", "c12||person,couple", "c21||person", "d2"))
-  # One column, as the cell wrote it: every level is TRUE, none FALSE.
-  expect_false(any(grepl("^(indvarying|sdscale)_", names(m$pars))))
-  value <- function(p) as.character(m$pars$indvarying[match(p, m$pars$param)])
-  expect_equal(value(c("m1", "m2", "d1", "c12", "c21")),
-    c("TRUE", "couple", "FALSE", "TRUE", "person"))
   expect_equal(.ctPar_levels(m, "m1"), c(person = TRUE, couple = TRUE))
   expect_equal(.ctPar_levels(m, "m2"), c(person = FALSE, couple = TRUE))
   expect_equal(.ctPar_levels(m, "d1"), c(person = FALSE, couple = FALSE))
   expect_equal(.ctPar_levels(m, "c12"), c(person = TRUE, couple = TRUE))
   expect_equal(.ctPar_levels(m, "c21"), c(person = TRUE, couple = FALSE))
+  # Unspecified, the defaults: intercepts at the subject level, nothing above.
   expect_equal(.ctPar_levels(m, "d2"), c(person = FALSE, couple = FALSE))
-  # Unspecified intercepts vary at every level.
-  default <- .ctPar_nested(MANIFESTMEANS = c("m1", "m2"))
-  expect_equal(.ctPar_levels(default, "m1"), c(person = TRUE, couple = TRUE))
 })
 
-test_that("the named form, ctPar(), a matrix assignment and the column say the same", {
+test_that("the named form, ctPar() and a matrix assignment say the same", {
   piped <- .ctPar_nested(MANIFESTMEANS = c("m1||person,couple", "m2||couple|0.5"))
   named <- .ctPar_nested(MANIFESTMEANS = c("m1, indvarying=c(person, couple)",
     "m2, indvarying=couple, sdscale=0.5"))
@@ -230,33 +222,21 @@ test_that("the named form, ctPar(), a matrix assignment and the column say the s
     ctPar("m1", indvarying = c("person", "couple")),
     ctPar("m2", indvarying = "couple", sdscale = 0.5)))
   expect_equal(ctPar("m2", indvarying = "couple", sdscale = 0.5), "m2||couple|0.5")
-  cols <- c("param", "indvarying", "sdscale")
+  cols <- c("param", "indvarying", "indvarying_couple", "sdscale", "sdscale_couple")
   rows <- function(m) m$pars[m$pars$matrix %in% "MANIFESTMEANS", cols]
   expect_equal(rows(named), rows(piped))
   expect_equal(rows(helper), rows(piped))
   # sdscale applies wherever the parameter varies.
-  expect_equal(ctsem:::.ctResolveLevels(piped)$pars$sdscale_couple[
-    piped$pars$param %in% "m2"], 0.5)
+  expect_equal(rows(piped)$sdscale_couple[2], 0.5)
 
   assigned <- .ctPar_nested(MANIFESTMEANS = c("m1", "m2"))
   assigned$matrices$MANIFESTMEANS[1, 1] <- "m1||TRUE"
   assigned$matrices$MANIFESTMEANS[2, 1] <- "m2, indvarying=couple, sdscale=0.5"
   expect_equal(rows(assigned), rows(piped))
-
-  # The column edited directly means the same: TRUE every level, names those.
-  edited <- .ctPar_nested(MANIFESTMEANS = c("m1||FALSE", "m2||FALSE"))
-  edited$pars$indvarying[edited$pars$param %in% "m1"] <- TRUE
-  edited$pars$indvarying[edited$pars$param %in% "m2"] <- "couple"
-  expect_equal(.ctPar_levels(edited, "m1"), c(person = TRUE, couple = TRUE))
-  expect_equal(.ctPar_levels(edited, "m2"), c(person = FALSE, couple = TRUE))
-  expect_equal(ctsem:::.ctVaryingParams(edited, "indvarying_couple"), c("m1", "m2"))
-  edited$pars$indvarying[edited$pars$param %in% "m2"] <- "house"
-  expect_error(ctsem:::.ctVaryingParams(edited), "not an id level")
-
   # A cell fixed afterwards varies at no level.
   assigned$matrices$MANIFESTMEANS[2, 1] <- 0
-  expect_false(as.logical(assigned$pars$indvarying[assigned$pars$matrix %in%
-    "MANIFESTMEANS" & assigned$pars$row == 2]))
+  expect_false(assigned$pars$indvarying_couple[assigned$pars$matrix %in%
+    "MANIFESTMEANS" & assigned$pars$row == 2])
 })
 
 test_that("a level the model does not have is named, with the ones it has", {

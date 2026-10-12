@@ -2116,9 +2116,12 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
   invisible(TRUE)
 }
 
-# Which parameters vary at a given level, and the column that says so: the
-# per-level logicals .ctResolveLevels() makes, `indvarying` for the subject and
-# `indvarying_<idname>` above it. The model here is always resolved.
+# Which parameters vary at a given level, and the column that says so.
+#
+# The subject level keeps `indvarying`, unchanged and backward compatible. Each
+# grouping level above it gets `indvarying_<idname>` -- explicit rather than
+# positional, so a model carrying three levels reads as three named columns
+# rather than as a matrix nobody can check by eye.
 .ctJuliaLevelColumn <- function(model, level) {
   if (level == 1L) return("indvarying")
   paste0("indvarying_", model$groupIDnames[level - 1L])
@@ -2769,17 +2772,21 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
   if (length(random_sd_scale) != length(augmented_indices)) {
     stop("Prepared random-effect covariance metadata does not match the augmented state layout.", call. = FALSE)
   }
-  # The population SD and correlation cells below carry no TI-predictor
-  # effects, and their flags are cleared there rather than trusted. They once
-  # reused the T0VAR cells `T0VARredundancies()` (R/ctFit.R) fixes, and a stale
+  # A cell repurposed as a population parameter must not inherit the
+  # TI-predictor effect flags of whatever the user originally wrote there.
+  # `T0VARredundancies()` (R/ctFit.R) fixes the free T0VAR cells that indvarying
+  # T0MEANS makes redundant and clears their `<TIpred>_effect` columns along with
+  # `param`, `transform` and `indvarying`; this function then hands those same
+  # cells to the population SD and correlation parameters below, and clears the
+  # flags again rather than trust that every cell arrived by that route. A stale
   # flag made `.ctJuliaTIEffects()` mint a TI-predictor coefficient for every
   # population parameter -- something the generated Stan model has no
   # counterpart for, since its population block is `rawpopsdbase`/`sqrtpcov`
-  # and takes no TI effects. The consequences were one per backend: the engine
-  # silently estimated those extra coefficients, and `.ctBackendPriorSpec()`
-  # refused the fit outright because its Stan-derived layout was that many
-  # parameters short. They are RAWPOPVAR's own cells now, and T0VAR keeps what
-  # `T0VARredundancies()` wrote, which the engine adds the block to.
+  # and takes no TI effects. The consequences were one per backend: the engine silently
+  # estimated those extra coefficients, and `.ctBackendPriorSpec()` refused the
+  # fit outright because its Stan-derived layout was that many parameters short.
+  # The cells `.ctJuliaPadMatrix()` created are already FALSE; these are the
+  # ones that existed before.
   effect_columns <- grep("_effect$", names(table), value = TRUE)
   covariance_rows <- list()
   # The name of the parameter each varying state carries, read from its T0MEANS
@@ -3531,9 +3538,6 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
   # with it, so they must not differ in how the model is built.
   intoverpop <- match.arg(as.character(intoverpop)[1L],
     c("augmented", "laplace", "none"))
-  # Generation hands a user's model straight here, so the per-level columns
-  # are made here as well as in ctFit(); see .ctResolveLevels().
-  model <- .ctResolveLevels(model)
   # The floor is a property of the Laplace term, so a route without one refuses
   # it by name rather than accepting it and doing something else. Either value:
   # 'total' is no longer what every fit does, so it is not inert elsewhere.

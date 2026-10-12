@@ -273,8 +273,8 @@ test_that("n counts each id level, innermost first", {
 test_that("ctGenerate draws subjects from the population at every level", {
   skip_without_julia()
   m <- .gen_model(id = c("id", "study"))
-  # mm is TRUE, so it varies at both levels; the study level's spread is half.
-  m$RAWPOPVAR_study["mm", "mm"] <- 0.5
+  m$pars$indvarying_study <- m$pars$param %in% "mm"
+  m$pars$sdscale_study[m$pars$param %in% "mm"] <- 0.5
   set.seed(3)
   expect_message(d <- ctGenerate(m, n = c(600, 30), Tpoints = 6,
     backend = "julia"), "mm 1 \\[id\\], mm 0.5 \\[study\\]")

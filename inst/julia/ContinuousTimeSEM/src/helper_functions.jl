@@ -480,8 +480,13 @@ tag is the one built here either way, so a cached config changes no dual type.
 function _ctsem_width_jacobian!(J::AbstractMatrix, f::F, x::AbstractVector,
     n::Integer, width::Integer; whole::Bool=false,
     store::Union{Nothing,AbstractDict}=nothing) where {F}
-    return _ctsem_width_jacobian!(J, _CTSEMLeading(f, Int(n), whole), x,
+    # The width is a run-time value, so this call dispatches at run time
+    # anyway; the barrier stops inference from also walking the whole sweep
+    # for an unknown width, which the package image used to keep. `J` is
+    # filled in place, so it is what is returned.
+    _ctsem_barrier(_ctsem_width_jacobian!, J, _CTSEMLeading(f, Int(n), whole), x,
         Val(Int(width)), store)
+    return J
 end
 
 function _ctsem_width_jacobian!(J::AbstractMatrix, g::G, x::AbstractVector{V},
@@ -508,11 +513,12 @@ function _ctsem_width_jacobian(f::F, x::AbstractVector, widths::Vector{Int};
         progress=nothing) where {F}
     n = length(x)
     width = _ctsem_dual_width(n, widths)
-    width <= n && return _ctsem_reported_jacobian(_CTSEMLeading(f, n), x,
-        ForwardDiff.Chunk{width}(), progress, n)
+    # Behind the barrier for the reason `_ctsem_width_jacobian!` gives.
+    width <= n && return _ctsem_barrier(_ctsem_reported_jacobian, _CTSEMLeading(f, n),
+        x, ForwardDiff.Chunk{width}(), progress, n)::Matrix{eltype(x)}
     xp = vcat(x, zeros(eltype(x), width - n))
-    J = _ctsem_reported_jacobian(_CTSEMLeading(f, n), xp,
-        ForwardDiff.Chunk{width}(), progress, n)
+    J = _ctsem_barrier(_ctsem_reported_jacobian, _CTSEMLeading(f, n), xp,
+        ForwardDiff.Chunk{width}(), progress, n)::Matrix{eltype(x)}
     return J[:, 1:n]
 end
 

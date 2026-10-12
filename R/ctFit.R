@@ -514,33 +514,32 @@ ctStanFitUpdate <- ctFitUpdate
 # The composition a reader might expect -- T0VAR plus the subject effects plus
 # the study effects -- is the *marginal* initial covariance over all
 # individuals, and it is not what T0cov holds. T0cov is conditional on the
-# levels above it: T0VAR plus the subject level population covariance. The
-# study level reaches an individual by moving that individual's parameter
-# values, so adding a study covariance into T0cov as well would count it twice.
+# levels above it: T0VAR for the latents that keep it, and the subject level
+# population covariance for the rest. The study level reaches an individual by
+# moving that individual's parameter values, so adding a study covariance into
+# T0cov as well would count it twice.
 #
 # They are still *fixed* rather than left free, because taking them out of the
-# parameter vector is the whole job of this function, and every route reads
-# them as the same thing: given a subject's effects its initial state is known,
-# and this diagonal is what is left of its variance. Julia's Laplace route and
-# a sampled fit read it so, and Stan's and julia's augmented routes add the
-# population covariance to it, so all of them fit one model. With MANIFESTVAR
-# fixed at zero it is also all of the first observation's innovation variance,
-# so it cannot be zero: a floor, at sd 1e-3 (a variance of 1e-6), negligible
-# beside any population variance worth estimating. A floor that small puts a
-# curvature of 1e6 or more on the Laplace inner solve, which stops on its step
-# for that reason (`_laplace_newton_unit_mode`). Positive for the R-side paths
-# that build a covariance straight from T0VAR too -- ctGenerate(backend='r'),
-# ctGraph, ctModelLatex -- which would meet a singular matrix.
+# parameter vector is the whole job of this function. Stan and julia's
+# augmented route drop these rows and columns where T0cov is assembled and
+# write RAWPOPVAR's entries over them. Julia's Laplace route reads them: given
+# a subject's effects its initial state is known, and this diagonal is what is
+# left of its variance. With MANIFESTVAR fixed at zero it is also all of the
+# first observation's innovation variance, so it is a floor: at sd 1e-6 every
+# subject's inner mode failed to converge, at 1e-3 some still did, and from
+# 3e-3 to 0.1 all converged to the same likelihood -- the effects' population
+# variance absorbs the floor. Hence 0.01 (a variance of 1e-4). Positive for
+# the R-side paths that build a covariance straight from T0VAR too --
+# ctGenerate(backend='r'), ctGraph, ctModelLatex -- which would meet a
+# singular matrix.
 T0VARredundancies <- function(ctm) {
-  # Per-level columns, so `indvarying` below is the subject level's logical.
-  ctm <- .ctResolveLevels(ctm)
   whichT0VAR_T0MEANSindvarying <- ctm$pars$matrix %in% 'T0VAR'  &
     is.na(ctm$pars$value) &
     (ctm$pars$row %in% ctm$pars$row[ctm$pars$matrix %in% 'T0MEANS' & ctm$pars$indvarying] |
         ctm$pars$col %in% ctm$pars$row[ctm$pars$matrix %in% 'T0MEANS' & ctm$pars$indvarying])
   if(any(whichT0VAR_T0MEANSindvarying)){
     message('T0VAR rows/columns for latents with individually varying T0MEANS disabled: RAWPOPVAR gives their covariance.')
-    ctm$pars$value[whichT0VAR_T0MEANSindvarying & ctm$pars$col == ctm$pars$row ] <- 1e-3
+    ctm$pars$value[whichT0VAR_T0MEANSindvarying & ctm$pars$col == ctm$pars$row ] <- 0.01
     ctm$pars$value[whichT0VAR_T0MEANSindvarying & ctm$pars$col != ctm$pars$row ] <- 0
     ctm$pars$param[whichT0VAR_T0MEANSindvarying] <- NA
     ctm$pars$transform[whichT0VAR_T0MEANSindvarying] <- NA
@@ -1344,10 +1343,7 @@ ctFit<-function(datalong, model, stanmodeltext=NA, iter=1000, intoverstates=TRUE
   args$model <- NULL
   args$ctstanmodel <- NULL
 
-  # The working copy carries a logical column per level; the model the fit
-  # keeps as its base (`modelbase`, `ctstanmodelbase`) stays as the user wrote
-  # it. See .ctResolveLevels().
-  ctm <- .ctResolveLevels(ctstanmodel)
+  ctm <- ctstanmodel
 
   # A model saved before the correlation squash moved into the covariance
   # construction still carries it in its own parameter table, so it would be
@@ -1622,9 +1618,8 @@ ctFit<-function(datalong, model, stanmodeltext=NA, iter=1000, intoverstates=TRUE
 
   # An outer level on a route that cannot carry it.
   #
-  # `.ctModelIntOverPop()` reads the subject level's column and nothing else,
-  # so an effect at a study level (`indvarying_study` once resolved, by
-  # .ctResolveLevels()) would be dropped without trace and
+  # `.ctModelIntOverPop()` reads `indvarying` and nothing else, so a study
+  # effect declared in `indvarying_study` would be dropped without trace and
   # the fit would report a single-level model as though that were what was
   # asked for. Refuse by name instead. There is no reason for a lower level to
   # vary before an upper one does -- a study effect with exchangeable subjects

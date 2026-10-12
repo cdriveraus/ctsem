@@ -577,8 +577,8 @@ test_that('a level above the subject gets its own between column', {
     LAMBDA = matrix(1), DRIFT = matrix(-0.5), DIFFUSION = matrix(1),
     MANIFESTVAR = matrix(0.4), CINT = matrix('cint1'), T0MEANS = matrix(0),
     T0VAR = matrix(1), MANIFESTMEANS = matrix(0))
-  # TRUE: CINT varies at both levels.
   model$pars$indvarying <- model$pars$matrix == 'CINT'
+  model$pars$indvarying_study <- model$pars$matrix == 'CINT'
   fit <- suppressWarnings(suppressMessages(ctFit(dat, model, backend = 'julia',
     intoverpop = 'laplace', cores = 1, verbose = 0)))
 
