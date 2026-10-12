@@ -432,3 +432,19 @@ end
         end
     end
 end
+
+@testset "the continuation builds no grid wider than its rules use" begin
+    # A block wider than `product_maxdim` takes the soft rule, whose stiff
+    # complement is built where it is placed; warming a grid per block size
+    # built 5^13 points (over 100 GB) for units of thirteen effects.
+    laplace, values = _fresh_2d3()
+    theta = collect(Float64, values)
+    empty!(ContinuousTimeSEM._GH_GRID_CACHE)
+    o = ctsem_laplace_continuation(laplace, theta; tolerance=0.0, product_maxdim=2,
+        soft_maxdirs=2)
+    @test ctsem_laplace_continuation_info(o).nflagged > 0
+    @test maximum(first, keys(ContinuousTimeSEM._GH_GRID_CACHE)) <= 2
+    # And a grid too large to evaluate is refused, not built.
+    @test_throws ArgumentError ContinuousTimeSEM._gh_grid(13, 5)
+    @test !haskey(ContinuousTimeSEM._GH_GRID_CACHE, (13, 5))
+end

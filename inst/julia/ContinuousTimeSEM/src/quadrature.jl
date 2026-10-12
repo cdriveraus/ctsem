@@ -144,17 +144,28 @@ end
 const _GH_CACHE = Dict{Int,Tuple{Vector{Float64},Vector{Float64}}}()
 const _GH_CACHE_LOCK = ReentrantLock()
 
+# The most points `_gh_grid` builds. Each point is a member evaluation per unit
+# per value, so a rule anywhere near this is already hours a fit; past it the
+# grid alone is gigabytes, since each point is a vector of its own, and is kept
+# for the session. A unit of thirteen effects at five nodes asked for 5^13
+# points -- over 100 GB, on one thread, before a unit was scored.
+const _CTSEM_GH_GRID_MAXPOINTS = 10_000_000
+
 """
     _gh_grid(k, m)
 
 The `k`-dimensional product rule as `(points, logweights)`, with the
 `exp(x^2)` factor that turns the Gauss-Hermite weight into the one an adaptive
-rule wants already folded into the log weight.
+rule wants already folded into the log weight. Refused, with an
+`ArgumentError`, past `_CTSEM_GH_GRID_MAXPOINTS` points.
 """
 function _gh_grid(k::Integer, m::Integer)
     key = (Int(k), Int(m))
     cached = get(_GH_GRID_CACHE, key, nothing)
     cached === nothing || return cached
+    big(m)^k > _CTSEM_GH_GRID_MAXPOINTS && throw(ArgumentError(string(
+        "a product quadrature rule over ", k, " random effects at ", m,
+        " nodes has ", big(m)^k, " points, too many to evaluate")))
     x, w = _gauss_hermite(m)
     npoints = Int(m)^Int(k)
     points = Vector{Vector{Float64}}(undef, npoints)
@@ -176,25 +187,26 @@ end
 const _GH_GRID_CACHE = Dict{Tuple{Int,Int},Tuple{Vector{Vector{Float64}},Vector{Float64}}}()
 
 """
-    _quadrature_warm_caches(laplace, nodes)
+    _quadrature_warm_caches(laplace, nodes, sizes)
 
 Populate the Gauss-Hermite caches for every size this evaluation will ask for.
 
 Called from single-threaded code before the chunk loop spawns, so that
 `_gauss_hermite` and `_gh_grid` are pure reads inside the threads. The set is
-small and known in advance: one node count for the whole call, and one block
-dimension per distinct block size in the unit tree.
+small and known in advance: one node count for the whole call, and the block
+dimensions `sizes` -- by default one per distinct block size in the unit tree,
+which is what the adaptive product rule asks for. A caller whose rule asks for
+fewer passes them: a grid is built in full and kept for the session.
 """
-function _quadrature_warm_caches(laplace::CTSEMLaplaceObjective, nodes::Integer)
+function _quadrature_warm_caches(laplace::CTSEMLaplaceObjective, nodes::Integer,
+    sizes=unique(block.size for blocks in laplace.units.blocks for block in blocks))
     m = Int(nodes)
     _gauss_hermite(m)
     # `_CTSEM_BINARY_NODES` is what the measurement kernels ask for, and it is
     # a different count from the quadrature's own.
     _gauss_hermite(_CTSEM_BINARY_NODES[])
-    seen = Set{Int}()
-    for blocks in laplace.units.blocks, block in blocks
-        k = block.size
-        k >= 1 && !(k in seen) && (push!(seen, k); _gh_grid(k, m))
+    for k in sizes
+        k >= 1 && _gh_grid(k, m)
     end
     return nothing
 end
