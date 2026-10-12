@@ -102,11 +102,8 @@ test_that("the two routes agree on how much each subject's data determine, where
   expect_setequal(colnames(laplace), c("cint", "t0m"))
   expect_setequal(colnames(augmented), c("cint", "t0m"))
   expect_equal(dim(laplace), c(20L, 2L))
-  # Elementwise, per subject and effect. To 1e-5: the Laplace route keeps
-  # T0VARredundancies()' initial-state floor (sd 0.01) under the random t0m,
-  # where the augmented route's population block replaces those T0VAR cells,
-  # and that moves the t0m shares by 3e-6. Without the floor they agree to 1e-8.
-  expect_equal(augmented[, colnames(laplace)], laplace, tolerance = 1e-5)
+  # Elementwise, per subject and effect.
+  expect_equal(augmented[, colnames(laplace)], laplace, tolerance = 1e-6)
   # And the population information built from them: the sum of squared shares.
   table <- info$laplace$table
   expect_equal(table$information[match(colnames(laplace), table$effect)],
