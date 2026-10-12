@@ -341,3 +341,26 @@ test_that("the julia engine places the population block with the same conversion
   expect_true(all(diagonal > 0))
   expect_gt(max(diagonal) / min(diagonal), 10)
 })
+
+test_that("a Laplace fit with MANIFESTVAR fixed at zero evaluates with random T0MEANS", {
+  skip_without_julia()
+  # Given a subject's effects the Laplace route knows its initial state, so the
+  # disabled T0VAR diagonal is all that is left of that state's variance. With
+  # no measurement error it is also all the first observation's innovation
+  # variance. At sd 1e-6 (variance 1e-12) every subject's inner mode failed to
+  # converge and the fit stopped at its starting values.
+  set.seed(4)
+  data <- do.call(rbind, lapply(1:12, function(i) {
+    y <- stats::filter(stats::rnorm(8), 0.6, method = "recursive") + stats::rnorm(1)
+    data.frame(id = i, time = 0:7, Y1 = as.numeric(y))
+  }))
+  model <- suppressMessages(ctModel(type = "ct", manifestNames = "Y1",
+    latentNames = "eta1", LAMBDA = matrix(1), MANIFESTVAR = matrix(0),
+    MANIFESTMEANS = matrix(0), T0MEANS = matrix("t0m"),
+    DRIFT = matrix("drift||TRUE"), DIFFUSION = matrix("diff")))
+  model$pars$indvarying <- model$pars$param %in% c("t0m", "drift")
+  fit <- suppressMessages(suppressWarnings(ctFit(data, model, backend = "julia",
+    priors = TRUE, cores = 1L, optimcontrol = list(estonly = TRUE))))
+  expect_identical(fit$args$resolved$intoverpop, "laplace")
+  expect_true(is.finite(fit$estimate$loglik))
+})
