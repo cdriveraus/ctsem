@@ -1,8 +1,8 @@
 # RAWPOPVAR at every level of the hierarchy, held on the Laplace route.
 #
 # `RAWPOPVAR` states the subject level's population spread and
-# `RAWPOPVAR_<idname>` each grouping level's, as `indvarying_<idname>` and
-# `sdscale_<idname>` already name a level's own columns. A number fixes that
+# `RAWPOPVAR_<idname>` each grouping level's, for the parameters whose
+# `indvarying` names that level (TRUE names every level). A number fixes that
 # raw-scale sd or correlation coordinate. On the Laplace and 'none' routes a
 # fixed entry takes no place in the raw vector: it reaches the engine as index
 # 0 with its raw value, and `_laplace_popchol` builds the covariance from it.
@@ -16,7 +16,6 @@
     MANIFESTVAR = matrix(.3), MANIFESTMEANS = matrix("mm"),
     T0VAR = matrix(1), T0MEANS = matrix(0), CINT = matrix(0))))
   m$pars$indvarying <- m$pars$param %in% "mm"
-  m$pars$indvarying_study <- m$pars$param %in% "mm"
   m
 }
 .rpv_data <- function() data.frame(id = rep(1:8, each = 4),
@@ -32,7 +31,7 @@ test_that("each grouping level has its own RAWPOPVAR", {
   expect_equal(unname(m$RAWPOPVAR_study["mm", "mm"]), "0.3")
   expect_equal(unname(m$RAWPOPVAR["mm", "mm"]), "popsd_mm")
   # A level nothing varies at has none.
-  m$pars$indvarying_study <- FALSE
+  m$pars$indvarying <- ifelse(m$pars$param %in% "mm", "id", FALSE)
   expect_null(ctsem:::.ctModelRawPopVarSync(m)[["RAWPOPVAR_study"]])
 })
 

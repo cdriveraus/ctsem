@@ -221,8 +221,8 @@ test_that("T0cov takes the main latents from T0VAR and the population block from
 # level" would delete a parameter the data can identify, and nothing else in
 # the suite would notice.
 #
-# Note that T0MEANS is indvarying by default, so the no-effect case has to
-# turn it off explicitly -- leaving it alone tests the subject-level case
+# Note that T0MEANS is indvarying by default, at every level, so each case
+# states its levels explicitly -- leaving one alone tests the both-levels case
 # twice, which is how this test first came out green for the wrong reason.
 test_that("only a subject level T0MEANS random effect disables T0VAR", {
   skip_on_cran()
@@ -237,15 +237,14 @@ test_that("only a subject level T0MEANS random effect disables T0VAR", {
 
   m <- mk()
   # the higher level is expressible at all, which the rest of this depends on
-  expect_true("indvarying_study" %in% names(m$pars))
+  expect_true("indvarying_study" %in% names(ctsem:::.ctResolveLevels(m)$pars))
   expect_identical(m$groupIDnames, "study")
 
   nfree <- function(mm) sum(mm$pars$matrix %in% "T0VAR" & is.na(mm$pars$value))
 
   none <- mk(); none$pars$indvarying[none$pars$param %in% "t0a"] <- FALSE
-  subj <- mk(); subj$pars$indvarying[subj$pars$param %in% "t0a"] <- TRUE
-  study <- mk(); study$pars$indvarying[study$pars$param %in% "t0a"] <- FALSE
-  study$pars$indvarying_study[study$pars$param %in% "t0a"] <- TRUE
+  subj <- mk(); subj$pars$indvarying[subj$pars$param %in% "t0a"] <- "id"
+  study <- mk(); study$pars$indvarying[study$pars$param %in% "t0a"] <- "study"
 
   expect_equal(nfree(suppressMessages(ctsem:::T0VARredundancies(none))),
     nfree(none))
@@ -270,7 +269,6 @@ test_that("only a subject level T0MEANS random effect disables T0VAR", {
   # nothing about which T0VAR cells survive.
   both <- mk()
   both$pars$indvarying[both$pars$param %in% "t0a"] <- TRUE
-  both$pars$indvarying_study[both$pars$param %in% "t0a"] <- TRUE
   bothout <- suppressMessages(ctsem:::T0VARredundancies(both))
   bothkept <- bothout$pars[bothout$pars$matrix %in% "T0VAR" &
     is.na(bothout$pars$value), ]
@@ -348,7 +346,10 @@ test_that("a Laplace fit with MANIFESTVAR fixed at zero evaluates with random T0
   # disabled T0VAR diagonal is all that is left of that state's variance. With
   # no measurement error it is also all the first observation's innovation
   # variance. At sd 1e-6 (variance 1e-12) every subject's inner mode failed to
-  # converge and the fit stopped at its starting values.
+  # converge and the fit stopped at its starting values. At the floor's sd
+  # 1e-3 two units did, from this fit's start: a curvature of 1e7 held their
+  # gradient's roundoff above the tolerance, with a step of 3e-17, until the
+  # inner solve stopped on its step as well.
   set.seed(4)
   data <- do.call(rbind, lapply(1:12, function(i) {
     y <- stats::filter(stats::rnorm(8), 0.6, method = "recursive") + stats::rnorm(1)

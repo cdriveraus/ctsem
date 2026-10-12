@@ -97,10 +97,12 @@ test_that("a nested model lists what varies at each level", {
     DRIFT = c("d1", "c12||couple||ctx", "c21", "d2")))
   text <- paste(capture.output(print(m, matrices = FALSE)), collapse = "\n")
   expect_match(text, "Varying parameters, by level")
+  # The unspecified T0MEANS vary at every level, m2 at the person alone and
+  # c12 at the couple alone.
   expect_match(text, "person +T0m_a, T0m_b, m1, m2")
-  expect_match(text, "couple +c12, m1")
+  expect_match(text, "couple +T0m_a, T0m_b, c12, m1")
   # Each level is its own population covariance.
   expect_match(text, "4 standard deviations and 6 correlations \\(person\\)")
-  expect_match(text, "2 standard deviations and 1 correlation \\(couple\\)")
+  expect_match(text, "4 standard deviations and 6 correlations \\(couple\\)")
   expect_match(text, "Predictor effects: c12 \\(ctx\\)")
 })

@@ -160,8 +160,9 @@ test_that("sampled effects are each parameter's natural deviation, at reduced ra
   # plus 4 studies x 1, labelled from the engine's deviation layout.
   nested <- model
   nested$groupIDnames <- "study"
-  nested$pars$indvarying_study <- nested$pars$matrix == "MANIFESTMEANS" &
-    nested$pars$indvarying
+  nested$pars$indvarying <- ifelse(nested$pars$indvarying %in% TRUE,
+    ifelse(nested$pars$matrix == "MANIFESTMEANS", TRUE, nested$subjectIDname),
+    FALSE)
   twolevel <- run(nested)
   expect_length(twolevel$sample$effect_mean, 12L * 2L + 4L)
   expect_false(is.null(twolevel$sample$effectIndex))

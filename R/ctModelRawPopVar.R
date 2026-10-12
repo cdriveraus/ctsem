@@ -149,10 +149,10 @@
 }
 
 # One RAWPOPVAR per level of the hierarchy: `RAWPOPVAR` for the subject level,
-# `RAWPOPVAR_<idname>` for each grouping level, as `indvarying_<idname>` and
-# `sdscale_<idname>` already name a level's own columns. A field per level
-# rather than a list in one field, so `m$RAWPOPVAR_study['mm', 'mm'] <- 0.2`
-# reads like the subject level's own.
+# `RAWPOPVAR_<idname>` for each grouping level, read against that level's
+# column of the resolved model (.ctResolveLevels()). A field per level rather
+# than a list in one field, so `m$RAWPOPVAR_study['mm', 'mm'] <- 0.2` reads
+# like the subject level's own.
 #' @keywords internal
 .ctModelRawPopVarLevels <- function(model) {
   groups <- as.character(model$groupIDnames)
@@ -187,9 +187,11 @@
 #' @keywords internal
 .ctModelRawPopVarSync <- function(model) {
   levels <- .ctModelRawPopVarLevels(model)
+  # Read the levels from per-level columns; the model returned keeps its own.
+  pars <- .ctResolveLevels(model)$pars
   for (l in seq_len(nrow(levels))) {
     field <- levels$field[l]
-    fresh <- .ctModelRawPopVar(model$pars, levels$column[l], levels$suffix[l])
+    fresh <- .ctModelRawPopVar(pars, levels$column[l], levels$suffix[l])
     previous <- model[[field]]
     if (is.null(fresh)) {
       model[[field]] <- NULL

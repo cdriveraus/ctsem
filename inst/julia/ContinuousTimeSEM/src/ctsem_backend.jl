@@ -2188,9 +2188,15 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
         if _due(reporter)
             # Never on a budget stage: its own fraction is exact, and an
             # estimate would replace a correct denominator with a guess.
+            # While a batch is still growing the value is its estimate of the
+            # fit's log posterior from that many units, scaled up, and it moves
+            # with the batch as well as with the step: on the SNSF pilot the
+            # first ten such lines read up to 25,000 above the optimum the fit
+            # certified, so the line says which it is.
             _progress_optimise(reporter, latest.iteration, Int(maxiter),
                 @sprintf("logpost %11.2f", -latest.value),
                 @sprintf("|g| %9.2e", latest.g_norm),
+                (batching() ? (@sprintf("batch %d/%d units", batcher.m, batcher.nunits),) : ())...,
                 _ctsem_optimise_progress_extra(objective)...,
                 _ctsem_forward_progress(forward0, explosive0)...;
                 budget=progress_budget,

@@ -32,10 +32,12 @@
 #
 # `indvarying` says at which levels of the id hierarchy a parameter varies.
 # TRUE is every level the model has and FALSE none; anything else is a list of
-# id names, 'cross||couple' or 'cross||person,couple'. `.ctIndvaryingLevels()`
-# is the one reader of that field, for every way a cell can be written, and it
-# resolves it onto the `indvarying` (subject) and `indvarying_<idname>`
-# columns `pars` keeps. With a single id, TRUE and the id's name mean the same.
+# id names, 'cross||couple' or 'cross||person,couple'. That is also what the
+# model's `pars$indvarying` column holds, one value per row, however it was
+# set -- a cell, ctPar(), or the column edited directly. With a single id, TRUE
+# and the id's name mean the same. `.ctIndvaryingLevels()` is the one reader of
+# a value; `.ctResolveLevels()` (R/ctStanModel.R) turns the column into the
+# per-level logicals the rest of ctsem reads.
 
 #' Write a parameter specification
 #'
@@ -53,7 +55,8 @@
 #'   \code{\link{ctModel}}, \code{indvarying = 'couple'} gives a parameter
 #'   that differs between couples but not between the persons within one, and
 #'   \code{TRUE} is the same as \code{c('person', 'couple')}. With a single id
-#'   the two forms mean the same thing.
+#'   the two forms mean the same thing. The model's \code{pars$indvarying}
+#'   column holds the same values and may be edited directly.
 #' @param sdscale Multiplier on the population standard deviation's prior, at
 #'   every level where the parameter varies. Only meaningful when it varies.
 #' @param tipreds Time-independent predictors acting on this parameter: a
@@ -317,11 +320,26 @@ ctPar <- function(name, transform = NA, indvarying = NA, sdscale = NA,
   stats::setNames(levels %in% value, levels)
 }
 
-# Write a resolved `.ctIndvaryingLevels()` into one row of `pars`.
-.ctIndvaryingSet <- function(pars, row, levels) {
-  pars$indvarying[row] <- levels[[1L]]
-  for (nm in names(levels)[-1L]) pars[[paste0('indvarying_', nm)]][row] <- levels[[nm]]
-  pars
+# What `pars$indvarying` holds for a resolved `.ctIndvaryingLevels()`: TRUE for
+# every level, FALSE for none, and otherwise the levels' names, comma
+# separated as a cell writes them.
+.ctIndvaryingValue <- function(levels) {
+  if (all(levels)) return(TRUE)
+  if (!any(levels)) return(FALSE)
+  paste(names(levels)[levels], collapse = ',')
+}
+
+# The `indvarying` column tidied: logical while every entry is TRUE or FALSE,
+# which is every single-level model; otherwise character, with TRUE and FALSE
+# written as such beside the level names.
+.ctIndvaryingColumn <- function(x) {
+  if (is.logical(x)) return(x)
+  text <- toupper(trimws(as.character(x)))
+  flag <- !is.na(x) & text %in% c('TRUE', 'T', 'FALSE', 'F')
+  if (all(flag | is.na(x))) return(ifelse(is.na(x), NA, text %in% c('TRUE', 'T')))
+  out <- trimws(as.character(x))
+  out[flag] <- ifelse(text[flag] %in% c('TRUE', 'T'), 'TRUE', 'FALSE')
+  out
 }
 
 .ctCellSpecNumeric <- function(value, x) {

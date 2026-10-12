@@ -3479,6 +3479,19 @@ function _laplace_newton_unit_mode(laplace::CTSEMLaplaceObjective, U::Integer,
         fac.ok || break
         _laplace_block_solve!(step, fac.factors, fac.coupling, blocks,
             current.gradient)
+        # The step, too, says the mode is found: `M^-1 g` is how far it is, in
+        # the effects' own standardised units, whatever the curvature. The
+        # gradient bound alone cannot say so where the curvature is large,
+        # because roundoff in `g` grows with it. A random T0MEANS whose state's
+        # remaining variance is 1e-6 under no measurement error has a
+        # curvature of 1e7, and its unit sat at |g| 3.3e-10 against a
+        # tolerance of 1.4e-10 for 200 iterations with a step of 3e-17, then
+        # failed the trial point. Not from a repaired curvature, whose step
+        # does not measure the distance to a maximum.
+        if !fac.repaired && maximum(abs, step) < laplace.inner_tol
+            converged = true
+            break
+        end
         accepted = false
         # Whether any trial could be evaluated at all, which is what separates
         # "there is nothing left to gain here" from "the step went somewhere

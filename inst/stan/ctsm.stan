@@ -765,33 +765,22 @@ if(si==0 || sum(whenmat[54,{5}]) > 0 )Jy=mcalc(Jy,indparams, state,{0}, 54, mats
     
     
  if(si==0 || (sum(whenmat[8,]) + statedep[8]) > 0 ) { // this causes problems but shouldnt -- is t0var being adjusted each iteration when it shouldnt?
-    // T0VAR is the model own initial covariance and nothing else. The
+    // T0VAR is the model own initial covariance: what is left of a state
+    // variance once the random effects of a subject are known. The
     // population covariance is built once, above, from RAWPOPVAR, and the
-    // *constructed* block is placed below -- rather than its raw coordinates
-    // being written in here so that one construction call built both. They
-    // are two matrices with two parameter sets; the only thing T0VAR takes
-    // from the population side is that an indvarying T0MEANS disables its
-    // row and column, and ctFit does that before either backend runs.
+    // *constructed* block is added below, so the initial covariance over
+    // subjects is the sum -- what a fit that does not integrate over the
+    // population, and the julia Laplace route, integrate to. ctFit fixes the
+    // T0VAR cells an indvarying T0MEANS makes redundant before either backend
+    // runs: a floor on the diagonal and zero elsewhere, so an indvarying
+    // T0MEANS covaries with a non-indvarying one only where T0VAR is fixed to
+    // say so, and with an indvarying CINT through this block.
     T0cov = sdcovsqrt2cov(T0VAR,choleskymats); 
     if(intoverpop && nindvarying > 0){ //adjust cov matrix for transforms
-      // Drop the row and column of every latent whose T0MEANS is a random
-      // effect: it has no initial covariance of its own, RAWPOPVAR states it.
-      // Done here rather than left to the zeros ctFit fixes in T0VAR, so it
-      // does not depend on a zero row surviving whichever construction ran.
-      for(ri in 1:size(matsetup)){
-        if(matsetup[ri,7]==1 && matsetup[ri,5]){ //indvarying t0means
-          T0cov[matsetup[ri,1], ] = rep_row_vector(0.0, cols(T0cov));
-          T0cov[, matsetup[ri,1] ] = rep_vector(0.0, rows(T0cov));
-        }
-      }
-      // and write back the entries RAWPOPVAR does span. So an indvarying
-      // T0MEANS does not covary with a non-indvarying one -- nothing states
-      // that pair -- but does covary with an indvarying CINT, since both sit
-      // in this block.
     // The one conversion to state units, here rather than folded into
     // rawpopsd: scaling row i and column j by k_i and k_j is what the
     // carrier states need, and quad_form_diag says so in one line.
-    T0cov[intoverpopindvaryingindex, intoverpopindvaryingindex] = quad_form_diag(rawpopcov, popstatescale);
+    T0cov[intoverpopindvaryingindex, intoverpopindvaryingindex] = T0cov[intoverpopindvaryingindex, intoverpopindvaryingindex] + quad_form_diag(rawpopcov, popstatescale);
     }
  }
   

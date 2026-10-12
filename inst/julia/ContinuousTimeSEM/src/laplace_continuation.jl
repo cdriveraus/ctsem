@@ -270,6 +270,9 @@ function _continuation_complement(fns, base::Vector{Float64}, Vh::Matrix{Float64
         E = _ctsem_symeig(transpose(Vh) * fns.precision(z) * Vh)
         lowest = 1e-8 * max(maximum(abs, E.values), 1.0)
         step = E.vectors * ((transpose(E.vectors) * gh) ./ max.(E.values, lowest))
+        # A step at roundoff is a mode however large the gradient's roundoff
+        # is; see `_laplace_newton_unit_mode`.
+        all(>=(lowest), E.values) && maximum(abs, step) < laplace.inner_tol && break
         accepted = false
         scale = 1.0
         for _ in 1:20
