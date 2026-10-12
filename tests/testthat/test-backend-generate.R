@@ -142,7 +142,7 @@ test_that("ctGenerateFromFit returns what the posterior predictive tools expect"
   for (s in 1:4) {
     base <- matrix(stats::rnorm(nrows), 1L, nrows)
     one <- ctsem:::.ctBackendGenerate(fit, posterior[rows[s], ], base)
-    expect_equal(batched$Y[s, , 1], as.numeric(one$Y))
+    expect_equal(unname(batched$Y[s, , 1]), as.numeric(one$Y))
     expect_equal(batched$llrow[s, ], llrow_of(as.numeric(one$llrow)))
   }
   nz <- ctsem:::.ctBackendStateDimension(fit)
@@ -154,7 +154,7 @@ test_that("ctGenerateFromFit returns what the posterior predictive tools expect"
     z <- stats::rnorm(nz)
     base <- matrix(stats::rnorm(nrows), 1L, nrows)
     one <- ctsem:::.ctBackendGenerateStates(fit, fit$estimate$raw, z, base)
-    expect_equal(batched$Y[s, , 1], as.numeric(one$Y))
+    expect_equal(unname(batched$Y[s, , 1]), as.numeric(one$Y))
     expect_equal(batched$llrow[s, ], llrow_of(as.numeric(one$llrow)))
   }
 })
@@ -468,7 +468,7 @@ test_that("ctGenerateFromFit works on a Laplace fit and matches the augmented ro
     effects <- ctsem:::.ctGeneratePopulationEffects(fit_laplace, raw)
     base <- matrix(stats::rnorm(nrows), 1L, nrows)
     one <- ctsem:::.ctBackendGenerate(fit_laplace, raw, base, effects = effects)
-    expect_equal(batched$Y[s, , 1], as.numeric(one$Y))
+    expect_equal(unname(batched$Y[s, , 1]), as.numeric(one$Y))
   }
   set.seed(8)
   batched <- ctGenerateFromFit(fit_laplace, nsamples = 2, effects = "fitted",
@@ -477,7 +477,7 @@ test_that("ctGenerateFromFit works on a Laplace fit and matches the augmented ro
   for (s in 1:2) {
     base <- matrix(stats::rnorm(nrows), 1L, nrows)
     one <- ctsem:::.ctBackendGenerate(fit_laplace, raw, base)
-    expect_equal(batched$Y[s, , 1], as.numeric(one$Y))
+    expect_equal(unname(batched$Y[s, , 1]), as.numeric(one$Y))
   }
 })
 
