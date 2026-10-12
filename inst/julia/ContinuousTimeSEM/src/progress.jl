@@ -89,12 +89,12 @@ mutable struct CTSEMProgress
     # Where a line goes instead of being printed: an R function, or `nothing`.
     # See `_deliver!`.
     sink::Any
-    # Highest iteration count already shown. A fit can run Optim twice -- the
-    # backtracking fallback continues from where Hager-Zhang stopped -- and the
-    # second run's callback counts from one again, so the printed counter ran
-    # *backwards*: "prior warm-up 2/10" and then "prior warm-up 1/10", which
-    # reads as a fit that lost its place. The work did continue, so the count
-    # is held rather than rewound.
+    # Highest iteration count already shown, so the printed counter never runs
+    # backwards. It did when a fit ran Optim's Hager-Zhang and then a
+    # backtracking fallback whose callback counted from one again: "prior
+    # warm-up 2/10" and then "1/10", which reads as a fit that lost its place.
+    # A resumed L-BFGS stage now continues the count (`iteration0`); the hold
+    # is what guarantees it.
     shown::Int
 end
 

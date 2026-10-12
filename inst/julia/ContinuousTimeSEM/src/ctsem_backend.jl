@@ -1872,9 +1872,9 @@ simply do not identify by pulling the coordinate back and asking whether the
 objective improves. Saturation on its own is a finding and not a failure, and
 only the overshoot disqualifies the fit.
 
-Optim's `g_tol` is an *absolute* gradient bound, and a log likelihood of order
-1e3 puts 1e-8 out of reach however good the fit is -- L-BFGS runs out of line
-search first and reports nothing converged -- so `Optim.g_converged` is kept
+The L-BFGS's `g_tol` is an *absolute* gradient bound, and a log likelihood of
+order 1e3 puts 1e-8 out of reach however good the fit is -- L-BFGS runs out of
+line search first and reports nothing converged -- so its `g_converged` is kept
 only as a sufficient condition, never a necessary one. `finite_gradient` is
 tested explicitly because it can be true at a point whose gradient is NaN, set
 on an earlier iterate, and `NaN <= tolerance` is false: one draw in ten reported
@@ -2043,7 +2043,7 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
     call_log = _ctsem_optimise_log(objective, verbose)
     # `evaluated`, not `result`: see `ctsem_laplace_optimize`. A closure's
     # assignment binds to the enclosing local of the same name, and the outer
-    # Optim result below is called `result`.
+    # L-BFGS result below is called `result`.
     # Over whichever objective is in force: the fit's own, or a batch of its
     # units (see `_ctsem_batch_plan`), which is the same route over fewer.
     trial_fg! = function (target, F, G, x)
@@ -2141,20 +2141,17 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
     # Where the line search records each accepted step's directional
     # derivative, and the finish its exact decrement.
     directional = CTSEMDirectional()
-    # Optim's own `iterations`, `f_calls` and `g_calls` do not survive a
-    # callback stop: measured on a two-latent model, four runs that stopped
-    # after 4, 8 and 10 iterations all reported 1 iteration and 2 gradient
-    # calls, while the trace -- one row per iteration, recorded here -- showed
-    # 5, 9 and 11 rows and log likelihoods five orders apart. So the iteration
-    # count is taken from what this callback saw, which is the same number on a
-    # run that ends any other way.
+    # The iteration count is taken from what this callback saw, which is the
+    # same number however the run ends. (Optim's own `iterations`, `f_calls`
+    # and `g_calls` did not survive a callback stop: four runs on a two-latent
+    # model that stopped after 4, 8 and 10 iterations all reported 1 iteration.
+    # `_ctsem_lbfgs` counts exactly; the callback's count stays the record.)
     seen_iterations = Ref(0)
     stopped_by_gap = Ref(false)
     stopped_by_stall = Ref(false)
     stopped_by_progress = Ref(false)
-    # Where the fit currently is. Optim's callback is handed convergence
-    # numbers, not the point they describe -- `extended_trace` would carry it
-    # but costs a copy of every iterate -- and the stall conjunction has to ask
+    # Where the fit currently is. The L-BFGS's callback is handed convergence
+    # numbers, not the point they describe, and the stall conjunction has to ask
     # the transforms what they are doing *at this point*. `fg!` sees every
     # trial, so the last one it accepted is recorded there and read here.
     current_x = copy(start_values)
@@ -2497,17 +2494,16 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
             gradient_method=gradient_method), Int[]
     end
 
-    # Optim's own `converged` is the disjunction of three criteria, and a line
-    # search that fails on its first try satisfies the `f` one trivially: the
+    # A `converged` that is the disjunction of the L-BFGS's three flags (Optim's
+    # definition) is wrong here: a line search that fails on its first try
+    # satisfies the `f` one trivially: the
     # objective did not change because nothing was accepted. Measured on a
     # 100-subject model, this route stopped with `g_converged=false` and a
     # largest gradient of 3.5e-7 against `g_tol=1e-8` and reported success.
     #
     gradient_norm = isempty(final.gradient) ? 0.0 : maximum(abs, final.gradient)
-    # `max(shown, ...)`: when the backtracking fallback ran and was kept,
-    # `Optim.iterations` describes that second run alone, which can be fewer
-    # than the user already watched go past. The closing line closes what was
-    # on screen.
+    # `max(shown, ...)`: the closing line closes what was on screen, which is
+    # never fewer iterations than the user already watched go past.
     iterations = max(reporter.shown, result.iterations + newton_steps)
     # Running out of iterations is a different outcome from converging, and the
     # closing line used to report both as a bare count. On a stage whose cap is
@@ -2624,13 +2620,10 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
         forward_gradients=forward_gradients,
         explosive_passes=explosive_passes,
         explosive_subjects=isempty(explosive) ? [0] : explosive,
-        # The larger of the two: they agree unless the callback stopped the
-        # run, in which case Optim's is the one that stopped being updated.
+        # The larger of the two, which agree since the L-BFGS became ctsem's
+        # own; kept because the callback's count is the one the trace shows.
         iterations=max(iterations, seen_iterations[]),
-        # Left as Optim reports them, and undercounted for the same reason when
-        # the run was stopped by the callback -- there is no second source for
-        # these, and inventing one would be worse than a number whose limit is
-        # written down. `stopped_by_gap` is what says the run is such a case.
+        # As the L-BFGS counts them, with the later stages' calls added.
         f_calls=result.f_calls + spent.fcalls[] +
             (finish === nothing ? 0 : finish.fcalls),
         g_calls=result.g_calls + spent.gcalls[] +
@@ -2700,9 +2693,7 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
         # A resumed stage stopped on progress alone; see `CTSEMStallWatch`.
         stopped_by_progress=stopped_by_progress[],
         # Whether the run ended because it stopped making progress rather than
-        # because it arrived. `f_calls` and `g_calls` undercount here for the
-        # same reason they do under `stopped_by_gap`: Optim stops updating them
-        # when a callback ends the run.
+        # because it arrived.
         stopped_by_stall=stopped_by_stall[],
         stall_window=Int(stall.window),
         # Which coordinates were flat when it stopped, and how many times the
@@ -2740,8 +2731,9 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
         predicted_gain=_ctsem_predicted_gain(directional),
         gap_tol=Float64(gap_tol),
         linesearch=linesearch,
-        # See `ctsem_laplace_optimize`: `Optim.converged` includes the x and
-        # f criteria, which a line search that stops making progress satisfies
+        # See `ctsem_laplace_optimize`: a disjunction of the L-BFGS's flags
+        # includes the x and f criteria, which a line search that stops making
+        # progress satisfies
         # trivially, so convergence is judged on the gradient alone.
         #
         # `overshot`, not `saturated`. `converged` answers one question -- did

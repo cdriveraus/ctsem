@@ -54,8 +54,8 @@ jobs:
             using Pkg
             Pkg.activate("ci-testenv")
             Pkg.develop(path = "inst/julia/ContinuousTimeSEM")
-            Pkg.add(["DataFrames", "ForwardDiff", "ChainRulesCore", "Optim",
-                     "LineSearches", "ComponentArrays", "FiniteDiff"])
+            Pkg.add(["DataFrames", "ForwardDiff", "ChainRulesCore",
+                     "ComponentArrays", "FiniteDiff"])
             Pkg.precompile()
             println("ENV_READY")'
 

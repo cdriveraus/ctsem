@@ -33,7 +33,7 @@ module ContinuousTimeSEM
 # standard libraries. test-julia-precompile.R fails if a first fit through
 # the bridge starts compiling again.
 import Pkg, REPL, InteractiveUtils
-using ComponentArrays, ForwardDiff, LinearAlgebra, Optim, SpecialFunctions
+using ComponentArrays, ForwardDiff, LinearAlgebra, SpecialFunctions
 
 export hello
 """

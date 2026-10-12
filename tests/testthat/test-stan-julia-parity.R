@@ -603,7 +603,7 @@ test_that("Stan and Julia's actual optimizers converge to the same fit for TD/TI
   # check at either backend's own optimum wouldn't by itself reveal that
   # unless you specifically evaluated at the *other* backend's point, as the
   # investigation that found it had to do). This test instead runs each
-  # backend's own real optimizer (ctsem_optimize's Optim.LBFGS for Julia,
+  # backend's own real optimizer (ctsem_optimize's L-BFGS for Julia,
   # Stan's L-BFGS) on the fixture above.
   fixture <- .parity_optimiser_fixture()
   jf <- .parity_julia_fit()
