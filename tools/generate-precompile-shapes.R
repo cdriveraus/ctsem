@@ -19,10 +19,19 @@
 # changes what it sends -- provided this script is rerun. The test in
 # test-julia-precompile.R is what notices when it has not been.
 #
-# Each model costs build time (roughly its own first-fit compile, once per
-# engine version) and, less obviously, load time in *every* session: the image
-# holds its specialisations whether or not the session fits that shape. So the
-# list is short, and a model earns a place by being a likely first fit.
+# One model per route, and the list should stay that short. A model in the
+# image buys two things: a later fit of its own type compiles nothing, and the
+# code every model on its route shares -- optimiser, kernels on plain arrays,
+# reporting -- is compiled already. The second is most of the value, and the
+# first model of each route delivers all of it: on dev2 (2026-10-12) eight
+# models outside the image compiled for 165-175 s (augmented) or 400-435 s
+# (Laplace) in their first fit with no workload, 55-75 s or 190-215 s with
+# these two, and no less with nine. Every model also costs load time in *every*
+# session, whether or not it fits that model -- about 13 s each on dev2, Julia
+# inserting the image's method-table backedges -- and build time and peak
+# memory once per engine version (two models 8 min and 7 GB, nine 27 min and
+# 16 GB). So a third model has to be measured against that before it goes in:
+# review/PRECOMPILE-workload-2026-10-12.md has the method and the numbers.
 
 root <- file.path(dirname(sub("^--file=", "", grep("^--file=",
   commandArgs(FALSE), value = TRUE)[1])), "..")
@@ -43,122 +52,33 @@ sim_latent <- function(nsub, nobs, drift = -0.3, cints = stats::rnorm(nsub, 0, 0
     data.frame(id = i, time = seq_len(nobs) - 1, eta = eta)
   }))
 }
-indicators <- function(d, names, binary) {
-  for (nm in names) d[[nm]] <- if (binary)
-    stats::rbinom(nrow(d), 1, stats::plogis(d$eta)) else d$eta + stats::rnorm(nrow(d), 0, 0.5)
+indicators <- function(d, names) {
+  for (nm in names) d[[nm]] <- d$eta + stats::rnorm(nrow(d), 0, 0.5)
   d$eta <- NULL
   d
 }
 # One latent, several indicators loading 1, a random continuous intercept.
-cint_model <- function(names, type) {
+cint_model <- function(names) {
   n <- length(names)
   mvar <- diag(0, n)
-  if (type == 0L) for (i in seq_len(n)) mvar[i, i] <- "mvar"
+  for (i in seq_len(n)) mvar[i, i] <- "mvar"
   m <- suppressWarnings(suppressMessages(ctModel(type = "ct", n.latent = 1,
     n.manifest = n, manifestNames = names, latentNames = "eta1",
     LAMBDA = matrix(1, n, 1), MANIFESTMEANS = matrix(0, n, 1),
     CINT = matrix("cint"), T0MEANS = matrix(0), MANIFESTVAR = mvar,
-    manifesttype = rep(type, n))))
+    manifesttype = rep(0L, n))))
   m$pars$indvarying <- m$pars$param %in% "cint"
   m
 }
-# A random drift `-log1p_exp(-raw)`, raw ~ N(1, 1), 40 subjects: the bench's
-# acnonlin data (dev/optimbench/cells.R, ac_data, seed 3) and gated-gaps config
-# A1 (gg_genA, seed 1), copied with their seeds.
-drift_data <- function() {
-  set.seed(3L)
-  drift <- -log1p(exp(-stats::rnorm(40L, 1, 1)))
-  do.call(rbind, lapply(seq_len(40L), function(i) {
-    a <- drift[i]; decay <- exp(a)
-    innovation <- sqrt(0.25 * (exp(2 * a) - 1) / (2 * a))
-    latent <- numeric(8L); latent[1] <- stats::rnorm(1, 0, 1)
-    for (t in seq_len(7L)) latent[t + 1L] <- decay * latent[t] + stats::rnorm(1, 0, innovation)
-    data.frame(id = i, time = seq_len(8L) - 1L, Y1 = latent + stats::rnorm(8L, 0, 0.3))
-  }))
-}
-drift_cint_data <- function(nsub = 40L, ntimes = 6L) {
-  set.seed(1L)
-  baseline <- stats::rnorm(nsub, 2, 2)
-  start <- stats::rnorm(nsub, baseline / 2, 1)
-  raw <- stats::rnorm(nsub, 1 + (baseline - 2) / 2, 1)
-  drift <- -log1p(exp(-raw))
-  do.call(rbind, lapply(seq_len(nsub), function(i) {
-    a <- drift[i]; decay <- exp(a)
-    intercept <- (baseline[i] / a) * (decay - 1)
-    innovation <- sqrt(0.25 * (exp(2 * a) - 1) / (2 * a))
-    latent <- numeric(ntimes); latent[1] <- start[i]
-    for (t in seq_len(ntimes - 1L)) latent[t + 1L] <- decay * latent[t] + intercept +
-      stats::rnorm(1, 0, innovation)
-    data.frame(id = i, time = seq_len(ntimes) - 1L, Y1 = latent + stats::rnorm(ntimes, 0, 0.5))
-  }))
-}
-# One latent, one indicator, a random drift kept negative by its transform:
-# with a fixed zero intercept and initial mean, or a free intercept and the
-# default (random) initial mean.
-drift_model <- function(cint) {
-  if (identical(cint, 0)) {
-    m <- suppressMessages(ctModel(silent = TRUE, type = "ct", CINT = 0,
-      MANIFESTMEANS = 0, LAMBDA = matrix(1), T0MEANS = matrix(0),
-      DRIFT = "drift|-log1p_exp(-param)|TRUE"))
-    m$pars$indvarying <- m$pars$param %in% "drift"
-    return(m)
-  }
-  suppressMessages(ctModel(silent = TRUE, type = "ct", CINT = cint,
-    MANIFESTMEANS = 0, LAMBDA = matrix(1), DRIFT = "drift|-log1p_exp(-param)|TRUE"))
-}
-
-one_latent_model <- function() suppressMessages(ctModel(silent = TRUE, type = "ct",
-  LAMBDA = matrix(1), manifestNames = "Y1", latentNames = "eta1"))
-one_latent_data <- function() {
-  d <- sim_latent(16, 8, cints = rep(0, 16))
-  data.frame(id = d$id, time = d$time, Y1 = d$eta + stats::rnorm(nrow(d), 1, 0.5))
-}
-
 shapes <- list(
-  # One latent, two Gaussian indicators, a random intercept.
-  gaussian_augmented = list(route = "augmented", model = function() cint_model(c("y1", "y2"), 0L),
-    data = function() indicators(sim_latent(8, 6), c("y1", "y2"), FALSE)),
-  gaussian_laplace = list(route = "laplace", model = function() cint_model(c("y1", "y2"), 0L),
-    data = function() indicators(sim_latent(8, 6), c("y1", "y2"), FALSE)),
-  # The same with three binary indicators.
-  binary_augmented = list(route = "augmented", model = function() cint_model(c("b1", "b2", "b3"), 1L),
-    data = function() indicators(sim_latent(8, 6), c("b1", "b2", "b3"), TRUE)),
-  binary_laplace = list(route = "laplace", model = function() cint_model(c("b1", "b2", "b3"), 1L),
-    data = function() indicators(sim_latent(8, 6), c("b1", "b2", "b3"), TRUE)),
-  # Two latents measured one each, random intercepts on both.
-  two_latent_augmented = list(route = "augmented", model = function() {
-    m <- suppressWarnings(suppressMessages(ctModel(type = "ct", n.latent = 2, n.manifest = 2,
-      manifestNames = c("Y1", "Y2"), latentNames = c("eta1", "eta2"), LAMBDA = diag(2),
-      MANIFESTMEANS = matrix(0, 2, 1), CINT = matrix(c("cint1", "cint2")),
-      MANIFESTVAR = matrix(c("mv1", 0, 0, "mv2"), 2))))
-    m$pars$indvarying <- m$pars$param %in% c("cint1", "cint2")
-    m
-  }, data = function() {
-    a <- sim_latent(8, 6); b <- sim_latent(8, 6)
-    data.frame(id = a$id, time = a$time, Y1 = a$eta + stats::rnorm(nrow(a), 0, 0.5),
-      Y2 = b$eta + stats::rnorm(nrow(b), 0, 0.5))
-  }),
-  # One latent, one indicator, individual differences in the drift. Here the
-  # data are not small, because a replay covers the paths its own fit took:
-  # a drift weakly informed by each subject's few observations is what sends
-  # the inner solve down the gated floor and the continuation through its
-  # rounds and, where it converges, its Hessian. Fitted on easy data none of
-  # that ran, and it compiled in the first real fit instead -- 61 s of it on
-  # the bench's gA1.
-  drift_laplace = list(route = "laplace", model = function() drift_model(0),
-    data = drift_data),
-  # The same with a free intercept and the default random initial mean.
-  drift_cint_laplace = list(route = "laplace", model = function() drift_model("cint"),
-    data = drift_cint_data),
-  # One latent and one indicator with the writer's defaults: the filter type
-  # the test suite compiled most often (44 files) and three vignettes compile,
-  # which none of the models above has. Without random effects on the augmented
-  # route (its Hessian), and with the default random T0MEANS and MANIFESTMEANS
-  # on the Laplace route, whose filter is the same type.
-  one_latent_fixed = list(route = "augmented", model = function() {
-    m <- one_latent_model(); m$pars$indvarying <- FALSE; m }, data = one_latent_data),
-  one_latent_laplace = list(route = "laplace", model = one_latent_model,
-    data = one_latent_data)
+  # One latent, two Gaussian indicators, a random intercept, on each route:
+  # `image_model()` in tests/testthat/helper-julia.R, which tests fit so that a
+  # fit costs seconds. Binary indicators of the same count share its filter
+  # type -- indicator kind is a value -- and compile only their own update.
+  gaussian_augmented = list(route = "augmented", model = function() cint_model(c("y1", "y2")),
+    data = function() indicators(sim_latent(8, 6), c("y1", "y2"))),
+  gaussian_laplace = list(route = "laplace", model = function() cint_model(c("y1", "y2")),
+    data = function() indicators(sim_latent(8, 6), c("y1", "y2")))
 )
 only <- Sys.getenv("CTSEM_PRECOMPILE_SHAPES", "")
 if (nzchar(only)) shapes <- shapes[strsplit(only, ",", fixed = TRUE)[[1]]]

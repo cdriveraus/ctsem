@@ -125,10 +125,10 @@ fit_cached <- function(key, expr) {
 #
 # The first fit of a model shape in a Julia session compiles the engine for
 # that shape -- most of a minute, and often most of what a small test costs.
-# The package image compiles a few shapes when it is built
-# (tools/generate-precompile-shapes.R), and a fit of one of them costs seconds
-# in a fresh session: measured on dev2, 5.0 s augmented and 5.9 s Laplace,
-# against about 50 s each for a one-indicator model of the same size. A test
+# The package image compiles this model, on each route, when it is built
+# (tools/generate-precompile-shapes.R), and a fit of it costs seconds in a
+# fresh session: measured on dev2, 5.0 s augmented and 5.9 s Laplace, against
+# about a minute (augmented) and three (Laplace) for a model the image lacks. A test
 # whose subject is not the model -- the session, the bridge, a method's
 # plumbing -- should fit this one.
 #

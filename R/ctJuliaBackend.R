@@ -407,15 +407,14 @@
 #' and compiles the engine, which takes several minutes; later calls in new
 #' sessions reuse both.
 #'
-#' The engine is compiled in advance for a few common small models -- one
-#' latent process with a random intercept and two Gaussian or three binary
-#' indicators, two latent processes with random intercepts, one latent process
-#' with a random drift. The first fit of any other model shape in each R
-#' session compiles code specialised to that model, so it takes longer than
-#' later fits of the same shape: about a minute against two seconds for a small
-#' Gaussian model, and minutes for a Laplace model whose fit reaches the
-#' quadrature correction. This is paid once per shape per session rather than
-#' once per fit; time a fit after one warm-up fit, not from a fresh session.
+#' The engine is compiled in advance for one small model on each route -- one
+#' latent process with two indicators and a random intercept -- and with it the
+#' code that every model on that route shares. The first fit of any other model
+#' shape in each R session compiles the code specialised to that model, so it
+#' takes longer than later fits of the same shape: about a minute for a small
+#' model on the augmented route and three to four minutes on the Laplace route,
+#' against seconds once compiled. This is paid once per shape per session rather
+#' than once per fit; time a fit after one warm-up fit, not from a fresh session.
 #'
 #' Pressing Escape (or Ctrl-C) during a julia fit returns to the R prompt at
 #' once, and keeps the Julia session and everything it has compiled. Julia

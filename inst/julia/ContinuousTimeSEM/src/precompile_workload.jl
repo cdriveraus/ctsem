@@ -1,4 +1,4 @@
-# Compile the whole default fit for a few common model shapes at package build
+# Compile the whole default fit for one model on each route at package build
 # time, rather than in the user's first fit.
 #
 # ## What it replays
@@ -26,10 +26,15 @@
 #
 # ## What it costs
 #
-# Build time, once per engine version: about a first fit's compile per model.
-# And load time in every session, which is easy to miss: the image holds each
-# model's specialisations whether or not the session fits that model, and loading
-# them is most of what `using ContinuousTimeSEM` costs. So the list stays short.
+# Build time, once per engine version: about a first fit's compile per model,
+# on one core -- the replay is serial, and only writing the image afterwards
+# uses `JULIA_IMAGE_THREADS`. And load time in every session, which is easy to
+# miss: the image holds each model's specialisations whether or not the session
+# fits that model, and loading them is most of what `using ContinuousTimeSEM`
+# costs -- about 13 s a model on dev2 against 1.3 s for the engine with no
+# workload, nearly all of it Julia inserting the image's method-table backedges
+# (`insert_backedges` in Base's staticdata.jl). So the list stays short:
+# tools/generate-precompile-shapes.R says why it is one model per route.
 #
 # ## Failure must not be fatal
 #

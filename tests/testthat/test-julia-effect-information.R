@@ -419,9 +419,10 @@ test_that("the wording names the level, its switch, poprank first, and which spr
   expect_length(ctsem:::.ctEffectAdvice(NULL), 0L)
 })
 
-# The bench's acnonlin model (dev/optimbench/cells.R, ac_model), which is the
-# package image's `drift_laplace` shape: a fit costs seconds in a fresh
-# session. Simulated here as the bench simulates it.
+# The bench's acnonlin model (dev/optimbench/cells.R, ac_model), simulated here
+# as the bench simulates it. The package image does not hold its type, so the
+# file's first fit of it compiles for a few minutes; the fits are cached so
+# that this happens once.
 .ei_drift_model <- function() {
   model <- suppressMessages(ctModel(silent = TRUE, type = "ct", CINT = 0,
     MANIFESTMEANS = 0, LAMBDA = matrix(1), T0MEANS = matrix(0),
