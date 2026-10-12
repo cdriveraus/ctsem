@@ -500,7 +500,8 @@ print.ctLaplaceCorrection <- function(x, ...) {
       scale = .ctJuliaNumericVector(se),
       step_tol = as.numeric(control$step_tol)))), silent = TRUE)
   if (inherits(res, "try-error")) {
-    return(failed("the quadrature could not be evaluated"))
+    return(failed(paste0("the quadrature could not be evaluated (",
+      .ctLaplaceTryReason(res), ")")))
   }
   status <- as.character(res$status)
   if (identical(status, "quadrature_failed")) {
@@ -1032,6 +1033,14 @@ print.ctLaplaceCorrection <- function(x, ...) {
     wide = as.numeric(info$nwide)[1L], units = as.numeric(info$nunits)[1L])
 }
 
+# A try-error's message in a phrase: its first line, without the Julia
+# stacktrace that follows an engine error.
+.ctLaplaceTryReason <- function(x) {
+  lines <- strsplit(paste(conditionMessage(attr(x, "condition")), collapse = "\n"),
+    "\n", fixed = TRUE)[[1L]]
+  if (length(lines)) trimws(lines[1L]) else ""
+}
+
 .ctLaplaceContinue <- function(fit, cores = 1L, verbose = 0L,
   control = .ctLaplaceContinueDefaults) {
   started <- proc.time()[["elapsed"]]
@@ -1081,7 +1090,10 @@ print.ctLaplaceCorrection <- function(x, ...) {
     soft_tau = as.numeric(control$soft_tau),
     soft_maxdirs = as.integer(control$soft_maxdirs),
     maxdim = as.integer(control$maxdim)), silent = TRUE)
-  if (inherits(cont, "try-error")) return(failed("the quadrature could not be evaluated"))
+  # The engine's reason, which is what tells an allocation it refused from a
+  # point the model cannot evaluate.
+  if (inherits(cont, "try-error")) return(failed(paste0(
+    "the quadrature could not be evaluated (", .ctLaplaceTryReason(cont), ")")))
   start <- get(module$ctsem_laplace_continuation_info(cont))
   record <- list(method = "quadrature", status = "exact", applied = FALSE,
     nodes = as.integer(start$nodes), tolerance = as.numeric(start$tolerance),
@@ -1181,7 +1193,7 @@ print.ctLaplaceCorrection <- function(x, ...) {
   stages["rounds"] <- since(rounds_started)
   if (inherits(run, "try-error")) {
     return(failed(paste0("a round could not be evaluated (",
-      trimws(as.character(run)), ")")))
+      .ctLaplaceTryReason(run), ")")))
   }
   record$predicted_gain <- as.numeric(run$predicted)
   record$skip_gain <- as.numeric(.ctJuliaOr(control$skip_gain, 0))
