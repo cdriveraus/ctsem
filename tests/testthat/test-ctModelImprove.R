@@ -174,3 +174,28 @@ test_that("a process driven by a slow one gets a slow process, and the search st
   expect_true('slow_eta1' %in% ctsem:::.ctFitBaseModel(imp$fit)$latentNames)
   expect_identical(imp$stopped, 'adequate')
 })
+
+test_that("an item's own process starts persistent, at a quarter of its error variance", {
+  # At raw zero the default drift transform forgets within the hour, which on
+  # prompts hours apart is measurement error: a flat likelihood, from which a
+  # process the Fisher data needed (350 log likelihood units) gained 2.
+  x <- .improve_fit(0, seed = 1L)
+  model <- ctsem:::.ctFitBaseModel(x$fit)
+  start <- ctsem:::.ctImproveUniqueStart(model, x$fit, 'Y1')
+  expect_setequal(names(start), c('drift_u_Y1', 'diff_u_Y1', 'T0var_u_Y1'))
+  m1 <- ctModelUniqueProcess(model, 'Y1')
+  at <- function(mat, par) {
+    r <- m1$pars[m1$pars$matrix == mat & m1$pars$param %in% par, ]
+    eval(parse(text = r$transform), list(param = start[[par]], log1p_exp = ctsem:::log1p_exp))
+  }
+  gaps <- unlist(lapply(split(x$data$time, x$data$id), diff))
+  rate <- log(2) / stats::median(gaps[gaps > 0])
+  mv <- model$pars[model$pars$matrix == 'MANIFESTVAR' & model$pars$row == 1 &
+    model$pars$col == 1, ]
+  est <- setNames(ctsem:::.ctFitRawEstimate(x$fit), ctsem:::.ctFitRawParNames(x$fit))
+  v <- eval(parse(text = mv$transform), list(param = est[[mv$param]],
+    log1p_exp = ctsem:::log1p_exp))^2 / 4
+  expect_equal(at('DRIFT', 'drift_u_Y1'), -rate, tolerance = 1e-6)
+  expect_equal(at('T0VAR', 'T0var_u_Y1')^2, v, tolerance = 1e-6)
+  expect_equal(at('DIFFUSION', 'diff_u_Y1')^2 / (2 * rate), v, tolerance = 1e-6)
+})
