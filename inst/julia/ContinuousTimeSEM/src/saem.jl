@@ -681,8 +681,8 @@ function _saem_loading_factor(A0::Matrix{Float64}, S::Matrix{Float64},
     fx = f(x)
     isfinite(fx) || return nothing
     for _ in 1:25
-        g = ForwardDiff.gradient(f, x)
-        H = ForwardDiff.hessian(f, x)
+        g = _ctsem_gradient(f, x)
+        H = _ctsem_dual_hessian(f, x)
         F = cholesky(Symmetric(-H); check=false)
         step = issuccess(F) ? F \ g : g ./ (abs.(diag(H)) .+ 1.0)
         slope = dot(g, step)

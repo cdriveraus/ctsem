@@ -2834,7 +2834,7 @@ function _laplace_unit_hessian(laplace::CTSEMLaplaceObjective, U::Integer,
             _laplace_scratch_vector!(laplace, S, length(uu), :curv_inner)
             ).gradient
     end
-    H = ForwardDiff.jacobian(inner_of, collect(u))
+    H = _ctsem_jacobian(inner_of, collect(u))
     return (H .+ transpose(H)) ./ 2
 end
 
@@ -3208,7 +3208,7 @@ function _laplace_block_precision(laplace::CTSEMLaplaceObjective, U::Integer,
             [convert(Matrix{S}, L) for L in Ls], uu, ws, members, nothing, mode)
         return [r.gradient[c] for c in columns]
     end
-    A = ForwardDiff.jacobian(gradient_of, collect(Float64, z))
+    A = _ctsem_jacobian(gradient_of, collect(Float64, z))
     return Matrix{Float64}(LinearAlgebra.I, k, k) .- _laplace_symmetrise(A)
 end
 
@@ -4368,7 +4368,7 @@ function _laplace_gated_unit_gradient(laplace::CTSEMLaplaceObjective, U::Integer
         return _laplace_gated_term(laplace, U, x, Lsd, ud, wsd; flagged=true).value
     end
     reach = _laplace_unit_reach(laplace, U, theta, _laplace_popchols(theta, laplace.spec))
-    reach === nothing && return ForwardDiff.gradient(term_of, theta)
+    reach === nothing && return _ctsem_gradient(term_of, theta)
     term_along = function (y)
         S = eltype(y)
         x = Vector{S}(undef, length(theta))
@@ -4382,7 +4382,7 @@ function _laplace_gated_unit_gradient(laplace::CTSEMLaplaceObjective, U::Integer
     end
     gradient = zeros(Float64, length(theta))
     isempty(reach) && return gradient
-    partial = ForwardDiff.gradient(term_along, theta[reach])
+    partial = _ctsem_gradient(term_along, theta[reach])
     @inbounds for (k, t) in enumerate(reach)
         gradient[t] = partial[k]
     end
@@ -5512,7 +5512,7 @@ function _laplace_level_chol_derivatives(values::AbstractVector{Float64},
         end
         return vec(_laplace_popchol(v, level))
     end
-    J = ForwardDiff.jacobian(chol_of, values[positions])
+    J = _ctsem_jacobian(chol_of, values[positions])
     return [Matrix{Float64}(reshape(collect(view(J, :, t)), k, r))
             for t in eachindex(positions)]
 end
@@ -5940,7 +5940,7 @@ function _laplace_nested_gradient(laplace::CTSEMLaplaceObjective,
         end
         return accumulated + _ctsem_log_prior(laplace.objective, x)
     end
-    return ForwardDiff.gradient(total_of, theta)
+    return _ctsem_gradient(total_of, theta)
 end
 
 """
@@ -6428,7 +6428,7 @@ function _laplace_mode_jacobian(laplace::CTSEMLaplaceObjective, theta::Vector{Fl
             end
             return w
         end
-        out[U] = ForwardDiff.jacobian(mode_of, theta)
+        out[U] = _ctsem_jacobian(mode_of, theta)
         if nh == 0
             modes[U] = copy(uhat)
         else
@@ -7357,7 +7357,7 @@ function _laplace_subject_gradients_forward(laplace::CTSEMLaplaceObjective,
     # Rows are *units*, and with a study level a unit is a study rather than a
     # subject: the study effect is shared, so the marginal likelihood does not
     # decompose over its members and there is no per-subject score to report.
-    scores = ForwardDiff.jacobian(terms_of, theta)
+    scores = _ctsem_jacobian(terms_of, theta)
 
     # Each unit carries its share of the prior, so the rows still sum to the
     # full posterior gradient -- the same convention `ctsem_subject_gradients`

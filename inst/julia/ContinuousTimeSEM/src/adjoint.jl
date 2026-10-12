@@ -701,7 +701,7 @@ a central difference only knows the primal's outputs.
 """
 function ctsem_validate_forward_gradient(objective, values::AbstractVector;
     step::Real=1e-6, adjoint::Bool=true)
-    forward = ForwardDiff.gradient(objective, values)
+    forward = _ctsem_gradient(objective, values)
     finite = similar(forward)
     for i in eachindex(values)
         plus = copy(values); minus = copy(values)
@@ -827,7 +827,6 @@ function ctsem_hessian_forward(objective::CTSEMObjective, values::AbstractVector
     n = length(x)
     n == 0 && return zeros(Float64, 0, 0)
     chunksize = chunk > 0 ? min(Int(chunk), n) : ForwardDiff.pickchunksize(n)
-    hessian = ForwardDiff.hessian(objective, x, ForwardDiff.HessianConfig(
-        objective, x, ForwardDiff.Chunk{chunksize}()))
+    hessian = _ctsem_dual_hessian(objective, x, ForwardDiff.Chunk{chunksize}())
     return (hessian .+ transpose(hessian)) ./ 2
 end

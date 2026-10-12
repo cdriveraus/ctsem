@@ -398,9 +398,41 @@ seeds are the ones `ForwardDiff.jacobian` builds, so the numbers are the same.
         ForwardDiff.Partials{N,T}(ntuple(j -> j == i ? one(T) : zero(T), Val(N))))
 
 """`ForwardDiff.gradient(f, x)` under `CTSEMNestedTag`; see there."""
-_ctsem_nested_gradient(f, x::AbstractArray) = ForwardDiff.gradient(f, x,
-    ForwardDiff.GradientConfig(f, x, ForwardDiff.Chunk(x), _ctsem_nested_tag(x)),
-    Val{false}())
+_ctsem_nested_gradient(f::F, x::AbstractArray) where {F} =
+    _ctsem_barrier(_ctsem_nested_gradient_at, f, x, ForwardDiff.Chunk(x))::Vector{eltype(x)}
+
+"""
+    _ctsem_gradient(f, x), _ctsem_jacobian(f, x), _ctsem_dual_hessian(f, x)
+
+`ForwardDiff.gradient`, `jacobian` and `hessian` of `f` at `x`, at the chunk
+and under the tag ForwardDiff picks by default -- the same duals, the same
+numbers -- but behind `_ctsem_barrier`.
+
+ForwardDiff picks the chunk from `length(x)`, a run-time value, so a direct
+call hands its worker a config whose type inference cannot know, and inference
+then walks the whole dual pipeline below it -- the filter, its reverse pass,
+the Laplace inner solve -- for an unknown width. None of that code ever runs
+(the call dispatches to the real width at run time), but it was two thirds of
+a Laplace model's first-fit compile, and the package image kept it
+(review/PRECOMPILE-workload-2026-10-12.md). The barrier costs one dynamic
+dispatch a call, which the call made anyway.
+"""
+_ctsem_gradient(f::F, x::AbstractVector) where {F} =
+    _ctsem_barrier(_ctsem_gradient_at, f, x, ForwardDiff.Chunk(x))::Vector{eltype(x)}
+_ctsem_jacobian(f::F, x::AbstractVector) where {F} =
+    _ctsem_barrier(_ctsem_jacobian_at, f, x, ForwardDiff.Chunk(x))::Matrix{eltype(x)}
+_ctsem_dual_hessian(f::F, x::AbstractVector, chunk=ForwardDiff.Chunk(x)) where {F} =
+    _ctsem_barrier(_ctsem_hessian_at, f, x, chunk)::Matrix{eltype(x)}
+
+_ctsem_gradient_at(f::F, x, chunk::ForwardDiff.Chunk) where {F} =
+    ForwardDiff.gradient(f, x, ForwardDiff.GradientConfig(f, x, chunk))
+_ctsem_jacobian_at(f::F, x, chunk::ForwardDiff.Chunk) where {F} =
+    ForwardDiff.jacobian(f, x, ForwardDiff.JacobianConfig(f, x, chunk))
+_ctsem_hessian_at(f::F, x, chunk::ForwardDiff.Chunk) where {F} =
+    ForwardDiff.hessian(f, x, ForwardDiff.HessianConfig(f, x, chunk))
+_ctsem_nested_gradient_at(f::F, x, chunk::ForwardDiff.Chunk) where {F} =
+    ForwardDiff.gradient(f, x,
+        ForwardDiff.GradientConfig(f, x, chunk, _ctsem_nested_tag(x)), Val{false}())
 
 """
 Dual widths for the forward-mode Jacobians whose input length is a property of

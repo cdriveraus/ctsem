@@ -897,7 +897,7 @@ function ctsem_joint_evaluate(objective::CTSEMObjective, values::AbstractVector,
     target = x -> ctsem_joint_loglikelihood(objective, view(x, 1:npar),
         view(x, (npar + 1):length(x)))
     value = target(packed)
-    grad = gradient ? ForwardDiff.gradient(target, packed) : nothing
+    grad = gradient ? _ctsem_gradient(target, packed) : nothing
 
     layout = _ctsem_state_layout(objective)
     state_prior = -sum(abs2, innovations) / 2 - layout.ndim * log(2pi) / 2
@@ -1401,7 +1401,7 @@ function ctsem_joint_hessian(o::CTSEMJointObjective, x::AbstractVector;
             return _ctsem_joint_subject(o, i, view(v, 1:npar),
                 view(v, (npar + 1):length(v)), 0)
         end
-        block = ForwardDiff.hessian(target, packed)
+        block = _ctsem_dual_hessian(target, packed)
         block = (block .+ transpose(block)) ./ 2
         all(isfinite, block) || return nothing
         Hpp = view(block, 1:npar, 1:npar)

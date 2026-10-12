@@ -798,7 +798,7 @@ function ctsem_evaluate(objective::CTSEMObjective, values::AbstractVector;
         grad = result.gradient
     else
         value = objective(values)
-        grad = gradient ? ForwardDiff.gradient(objective, values) : nothing
+        grad = gradient ? _ctsem_gradient(objective, values) : nothing
     end
     if contributions
         subject = [obj(values) for obj in objective.subject_objectives]
