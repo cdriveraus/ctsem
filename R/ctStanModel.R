@@ -694,7 +694,10 @@ ctModelConvertOMX<-function(ctmodelobj, type='ct',tipredDefault=TRUE){
   .ctCheckModelCycles(ctspec, latentNames, n.latent)
 
   ctspec$indvarying <- as.logical(ctspec$indvarying)
-  
+  # A cell's fields arrive as text, which left the whole column character as
+  # soon as one cell used them.
+  ctspec$sdscale <- as.numeric(ctspec$sdscale)
+
   out<-list(pars=ctspec,n.latent=n.latent,n.manifest=n.manifest,n.TIpred=n.TIpred,n.TDpred=n.TDpred,
     latentNames=latentNames,manifestNames=manifestNames,
     TIpredNames=TIpredNames,TDpredNames=TDpredNames,

@@ -88,3 +88,19 @@ test_that("post-fit functions accept a fit carrying both of its classes", {
   # And the guard still refuses something that is neither.
   expect_error(ctPlotPosterior(list(a = 1)), regexp = "ctStanFit")
 })
+
+test_that("a nested model lists what varies at each level", {
+  m <- suppressMessages(ctModel(type = "ct", manifestNames = c("Y1", "Y2"),
+    latentNames = c("a", "b"), id = c("person", "couple"), LAMBDA = diag(2),
+    TIpredNames = "ctx", tipredDefault = FALSE,
+    MANIFESTMEANS = c("m1||TRUE", "m2||person"),
+    DRIFT = c("d1", "c12||couple||ctx", "c21", "d2")))
+  text <- paste(capture.output(print(m, matrices = FALSE)), collapse = "\n")
+  expect_match(text, "Varying parameters, by level")
+  expect_match(text, "person +T0m_a, T0m_b, m1, m2")
+  expect_match(text, "couple +c12, m1")
+  # Each level is its own population covariance.
+  expect_match(text, "4 standard deviations and 6 correlations \\(person\\)")
+  expect_match(text, "2 standard deviations and 1 correlation \\(couple\\)")
+  expect_match(text, "Predictor effects: c12 \\(ctx\\)")
+})

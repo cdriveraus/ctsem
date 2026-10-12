@@ -329,7 +329,9 @@ test_that("the note about smoothed trajectories is said where a trajectory is", 
   model <- .laplace_test_model()
   dat <- .laplace_test_data(nsubjects = 8, nobs = 5)
 
-  note <- function(messages) sum(grepl("^Laplace fit: trajectories", messages))
+  # Either note: a single-level fit's predicted and updated trajectories are
+  # sequential (laplace_sequential.jl) and say so in their own words.
+  note <- function(messages) sum(grepl("^Laplace fit: (trajectories|predicted)", messages))
 
   # It used to be said by `.ctBackendKalmanRaw`, which is a filter pass rather
   # than a trajectory: every julia fit runs one for its prior residuals,
@@ -620,8 +622,20 @@ test_that("a TI predictor operates at a grouping level when it varies there", {
 }
 
 test_that("a study level effect needs no subject level effect", {
+  # The cell can say it directly, and it is the same model as setting the
+  # columns by hand.
+  bycell <- suppressWarnings(suppressMessages(ctModel(
+    type = "ct", manifestNames = "Y1", latentNames = "eta1",
+    LAMBDA = matrix(1), T0MEANS = matrix(0), CINT = matrix(0),
+    T0VAR = matrix(0.5), MANIFESTMEANS = matrix("mmean||study"),
+    id = c("subject", "study"))))
+  cols <- c("param", "indvarying", "indvarying_study")
+  expect_equal(bycell$pars[, cols], .laplace_studyonly_model()$pars[, cols])
+
   skip_without_julia()
   dat <- .laplace_nested_data()
+  # Ids that are not positions, so a report labelled by position shows.
+  dat$subject <- paste0("p", dat$subject)
   spec <- suppressMessages(ctFit(dat, .laplace_studyonly_model(),
     backend = "julia", intoverpop = "laplace", fit = FALSE))
 
@@ -634,6 +648,24 @@ test_that("a study level effect needs no subject level effect", {
     backend = "julia", intoverpop = "laplace",
     optimcontrol = list(estonly = TRUE)))
   expect_true(is.finite(fit$estimate$loglik))
+
+  # Nothing varies within a study, so each subject's parameters are its
+  # study's: the subject report and the study level report must agree exactly,
+  # and both are labelled by the ids in the data.
+  subjects <- suppressMessages(ctSubjectPars(fit))
+  studies <- suppressMessages(ctSubjectPars(fit, level = "study"))
+  ids <- dimnames(subjects)[[2]]
+  expect_setequal(ids, unique(as.character(dat$subject)))
+  studyof <- as.character(dat$study[match(ids, dat$subject)])
+  expect_equal(dimnames(studies)[["study"]], unique(studyof))
+  expect_equal(unname(subjects[1, , "mmean"]), unname(studies[1, studyof, "mmean"]))
+  expect_gt(stats::sd(studies[1, , "mmean"]), 0)
+  expect_error(ctSubjectPars(fit, level = "study", pointest = FALSE), "pointest=TRUE")
+  expect_error(ctSubjectPars(fit, level = "house"), "one of this model's id levels")
+  expect_setequal(levels(suppressMessages(ctResiduals(fit))$Subject), ids)
+  # The summary says how many units each level's spread is estimated from.
+  expect_equal(suppressMessages(summary(fit))$units, paste(length(ids),
+    "subject within", length(unique(dat$study)), "study"))
 })
 
 test_that("one subject per study reproduces the subject level fit exactly", {

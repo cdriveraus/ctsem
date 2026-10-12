@@ -1073,7 +1073,12 @@ ctBackendParMatrices <- function(fit, raw = NULL, tipreds = NULL, state = NULL,
 # the first line differs, so only the first line is written twice.
 .ctBackendVaryingParameters <- function(spec, cells) {
   regression <- spec$model$popregression
-  varying <- if (!is.null(spec$laplace)) as.integer(spec$laplace$re_index) else
+  # Every level's: a subject's parameters differ from the population's when
+  # anything varies above it too, and a model whose only random effects are a
+  # study's still has a value per subject -- its study's. Reading the subject
+  # level's index alone refused that model as having nothing to report.
+  varying <- if (!is.null(spec$laplace)) c(as.integer(spec$laplace$re_index),
+    unlist(lapply(spec$laplace$levels, function(l) as.integer(l$re_index)))) else
     if (isTRUE(regression$standardised)) {
     # The loading form has no population sd parameters at all: the block is a
     # fixed identity and the loadings carry the spread. So the parameters that
@@ -1949,6 +1954,16 @@ ctBackendParMatrices <- function(fit, raw = NULL, tipreds = NULL, state = NULL,
       "estimated gaps between these, which is what keeps them ordered.")
   }
 
+  # How many units each level of a nested id has: the random-effect tables
+  # above are per level, and nothing else in the summary says how many units
+  # each level's spread was estimated from.
+  base <- .ctFitBaseModel(object)
+  if (length(base$groupIDnames)) {
+    data <- .ctBackendSpec(object)$data
+    levels <- c(base$subjectIDname, base$groupIDnames)
+    counts <- vapply(levels, function(l) length(unique(data[[l]])), integer(1))
+    out$units <- paste(paste(counts, levels), collapse = " within ")
+  }
   logposterior <- object$estimate$logposterior
   if (is.null(logposterior)) logposterior <- object$estimate$loglik
   out$logposterior <- logposterior

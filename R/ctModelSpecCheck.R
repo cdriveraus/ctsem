@@ -466,8 +466,8 @@
     if (!anyvary) {
       warning(.ctSpecCellName(ctspec, i), ' sets sdscale ', sd,
         ' but the parameter does not vary over subjects, so there is no ',
-        'population standard deviation for it to scale. Set indvarying=TRUE ',
-        'as well, or drop the sdscale.', call. = FALSE)
+        'population standard deviation for it to scale. Set indvarying (TRUE, ',
+        'or the id levels it varies at) as well, or drop the sdscale.', call. = FALSE)
     }
   }
 

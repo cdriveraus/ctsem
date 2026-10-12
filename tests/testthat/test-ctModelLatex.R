@@ -343,3 +343,23 @@ test_that("each population mean is printed under its own parameter", {
     expect_equal(shown[named], as.numeric(truth[labels[named]]))
   }
 })
+
+test_that("ctModelLatex shows every level of a nested model", {
+  m <- suppressMessages(ctModel(type = "ct", manifestNames = c("Y1", "Y2"),
+    latentNames = c("a", "b"), id = c("person", "couple"), LAMBDA = diag(2),
+    TIpredNames = "ctx", tipredDefault = FALSE,
+    MANIFESTMEANS = c("m1||TRUE", "m2||person"),
+    DRIFT = c("d1", "c12||couple||ctx", "c21||||ctx=0.3", "d2")))
+  tex <- paste(as.character(suppressMessages(ctModelLatex(m, tex = FALSE,
+    compile = FALSE, open = FALSE))), collapse = "\n")
+  # One labelled zero-mean term per level, the subject's included -- an
+  # unfitted model showed the subject level alone.
+  expect_match(tex, "\\}_\\{\\\\textrm\\{person\\}\\}")
+  expect_match(tex, "\\}_\\{\\\\textrm\\{couple\\}\\}")
+  expect_match(tex, "rawCovcouple", fixed = TRUE)
+  # The covariate effects act on each subject; an absent effect is a zero and
+  # a fixed one its value, neither a raw_ label.
+  expect_match(tex, "raw\\_c12\\_ctx", fixed = TRUE)
+  expect_false(grepl("raw\\_0", tex, fixed = TRUE))
+  expect_match(tex, "Each zero-mean term holds one level")
+})

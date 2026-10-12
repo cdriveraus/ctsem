@@ -518,6 +518,7 @@ summaryCtStanFitLabel <- function(x){
     thresholds = 'Ordinal thresholds',
     thresholdsNote = 'Note',
     popNote = 'Note',
+    units = 'Units',
     loglik = 'Log likelihood',
     npars = 'Number of parameters',
     aic = 'AIC',

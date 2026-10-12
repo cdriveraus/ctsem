@@ -113,7 +113,9 @@ test_that("the same cell works through model$matrices <- ", {
 })
 
 test_that("an unusable field is refused rather than becoming a parameter name", {
-  expect_error(.ctCellSpecToPipe("mm, indvarying=maybe"), "TRUE or FALSE")
+  # Not TRUE or FALSE, so a level name -- which only the model can check.
+  expect_equal(.ctCellSpecToPipe("mm, indvarying=maybe"), "mm||maybe")
+  expect_error(.ctPar_model("mm, indvarying=maybe"), "not an id level")
   expect_error(.ctCellSpecToPipe("mm, sdscale=big"), "must be a number")
   expect_error(.ctCellSpecToPipe("mm, transform=exp(param), transform=param"),
     "given twice")
@@ -182,4 +184,71 @@ test_that("a predictor the model does not have is named in the error", {
   expect_error(nopreds("mm, tipreds=age"),
     "no time independent predictors")
   expect_error(nopreds("mm||||age"), "no time independent predictors")
+})
+
+# --- indvarying names levels ------------------------------------------------
+#
+# With id = c('person', 'couple') a cell says where its parameter varies:
+# TRUE at both levels, FALSE at neither, or the levels by name. Every way of
+# writing a cell has to land on the same two columns.
+
+.ctPar_nested <- function(...) suppressMessages(ctModel(type = "ct",
+  manifestNames = c("Y1", "Y2"), latentNames = c("a", "b"),
+  id = c("person", "couple"), LAMBDA = diag(2), MANIFESTVAR = diag(.3, 2),
+  DIFFUSION = diag(2), T0VAR = diag(2), CINT = 0, T0MEANS = 0, ...))
+
+.ctPar_levels <- function(m, p) {
+  row <- match(p, m$pars$param)
+  c(person = m$pars$indvarying[row], couple = m$pars$indvarying_couple[row])
+}
+
+test_that("indvarying resolves to every level, none, or the levels named", {
+  m <- .ctPar_nested(MANIFESTMEANS = c("m1||TRUE", "m2||couple"),
+    DRIFT = c("d1||FALSE", "c12||person,couple", "c21||person", "d2"))
+  expect_equal(.ctPar_levels(m, "m1"), c(person = TRUE, couple = TRUE))
+  expect_equal(.ctPar_levels(m, "m2"), c(person = FALSE, couple = TRUE))
+  expect_equal(.ctPar_levels(m, "d1"), c(person = FALSE, couple = FALSE))
+  expect_equal(.ctPar_levels(m, "c12"), c(person = TRUE, couple = TRUE))
+  expect_equal(.ctPar_levels(m, "c21"), c(person = TRUE, couple = FALSE))
+  # Unspecified, the defaults: intercepts at the subject level, nothing above.
+  expect_equal(.ctPar_levels(m, "d2"), c(person = FALSE, couple = FALSE))
+})
+
+test_that("the named form, ctPar() and a matrix assignment say the same", {
+  piped <- .ctPar_nested(MANIFESTMEANS = c("m1||person,couple", "m2||couple|0.5"))
+  named <- .ctPar_nested(MANIFESTMEANS = c("m1, indvarying=c(person, couple)",
+    "m2, indvarying=couple, sdscale=0.5"))
+  helper <- .ctPar_nested(MANIFESTMEANS = c(
+    ctPar("m1", indvarying = c("person", "couple")),
+    ctPar("m2", indvarying = "couple", sdscale = 0.5)))
+  expect_equal(ctPar("m2", indvarying = "couple", sdscale = 0.5), "m2||couple|0.5")
+  cols <- c("param", "indvarying", "indvarying_couple", "sdscale", "sdscale_couple")
+  rows <- function(m) m$pars[m$pars$matrix %in% "MANIFESTMEANS", cols]
+  expect_equal(rows(named), rows(piped))
+  expect_equal(rows(helper), rows(piped))
+  # sdscale applies wherever the parameter varies.
+  expect_equal(rows(piped)$sdscale_couple[2], 0.5)
+
+  assigned <- .ctPar_nested(MANIFESTMEANS = c("m1", "m2"))
+  assigned$matrices$MANIFESTMEANS[1, 1] <- "m1||TRUE"
+  assigned$matrices$MANIFESTMEANS[2, 1] <- "m2, indvarying=couple, sdscale=0.5"
+  expect_equal(rows(assigned), rows(piped))
+  # A cell fixed afterwards varies at no level.
+  assigned$matrices$MANIFESTMEANS[2, 1] <- 0
+  expect_false(assigned$pars$indvarying_couple[assigned$pars$matrix %in%
+    "MANIFESTMEANS" & assigned$pars$row == 2])
+})
+
+test_that("a level the model does not have is named, with the ones it has", {
+  expect_error(.ctPar_nested(MANIFESTMEANS = c("m1||house", "m2")),
+    "names house, which is not an id level of this model. Its levels are: person, couple")
+  expect_error(ctPar("m1", indvarying = "person,couple"), "TRUE, FALSE or the names")
+})
+
+test_that("with a single id, TRUE and the id's name are the same", {
+  one <- function(spec) suppressMessages(ctModel(type = "ct",
+    manifestNames = "Y1", latentNames = "a", LAMBDA = matrix(1),
+    DRIFT = matrix(spec)))
+  expect_equal(one("dd||TRUE")$pars, one("dd||id")$pars)
+  expect_true(one("dd||id")$pars$indvarying[one("dd||id")$pars$param %in% "dd"])
 })
