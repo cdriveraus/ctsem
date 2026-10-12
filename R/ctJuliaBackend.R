@@ -2769,21 +2769,17 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
   if (length(random_sd_scale) != length(augmented_indices)) {
     stop("Prepared random-effect covariance metadata does not match the augmented state layout.", call. = FALSE)
   }
-  # A cell repurposed as a population parameter must not inherit the
-  # TI-predictor effect flags of whatever the user originally wrote there.
-  # `T0VARredundancies()` (R/ctFit.R) fixes the free T0VAR cells that indvarying
-  # T0MEANS makes redundant and clears their `<TIpred>_effect` columns along with
-  # `param`, `transform` and `indvarying`; this function then hands those same
-  # cells to the population SD and correlation parameters below, and clears the
-  # flags again rather than trust that every cell arrived by that route. A stale
+  # The population SD and correlation cells below carry no TI-predictor
+  # effects, and their flags are cleared there rather than trusted. They once
+  # reused the T0VAR cells `T0VARredundancies()` (R/ctFit.R) fixes, and a stale
   # flag made `.ctJuliaTIEffects()` mint a TI-predictor coefficient for every
   # population parameter -- something the generated Stan model has no
   # counterpart for, since its population block is `rawpopsdbase`/`sqrtpcov`
-  # and takes no TI effects. The consequences were one per backend: the engine silently
-  # estimated those extra coefficients, and `.ctBackendPriorSpec()` refused the
-  # fit outright because its Stan-derived layout was that many parameters short.
-  # The cells `.ctJuliaPadMatrix()` created are already FALSE; these are the
-  # ones that existed before.
+  # and takes no TI effects. The consequences were one per backend: the engine
+  # silently estimated those extra coefficients, and `.ctBackendPriorSpec()`
+  # refused the fit outright because its Stan-derived layout was that many
+  # parameters short. They are RAWPOPVAR's own cells now, and T0VAR keeps what
+  # `T0VARredundancies()` wrote, which the engine adds the block to.
   effect_columns <- grep("_effect$", names(table), value = TRUE)
   covariance_rows <- list()
   # The name of the parameter each varying state carries, read from its T0MEANS

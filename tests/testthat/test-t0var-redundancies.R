@@ -346,7 +346,10 @@ test_that("a Laplace fit with MANIFESTVAR fixed at zero evaluates with random T0
   # disabled T0VAR diagonal is all that is left of that state's variance. With
   # no measurement error it is also all the first observation's innovation
   # variance. At sd 1e-6 (variance 1e-12) every subject's inner mode failed to
-  # converge and the fit stopped at its starting values.
+  # converge and the fit stopped at its starting values. At the floor's sd
+  # 1e-3 two units did, from this fit's start: a curvature of 1e7 held their
+  # gradient's roundoff above the tolerance, with a step of 3e-17, until the
+  # inner solve stopped on its step as well.
   set.seed(4)
   data <- do.call(rbind, lapply(1:12, function(i) {
     y <- stats::filter(stats::rnorm(8), 0.6, method = "recursive") + stats::rnorm(1)
