@@ -533,6 +533,8 @@ ctStanFitUpdate <- ctFitUpdate
 # ctGenerate(backend='r'), ctGraph, ctModelLatex -- which would meet a
 # singular matrix.
 T0VARredundancies <- function(ctm) {
+  # Per-level columns, so `indvarying` below is the subject level's logical.
+  ctm <- .ctResolveLevels(ctm)
   whichT0VAR_T0MEANSindvarying <- ctm$pars$matrix %in% 'T0VAR'  &
     is.na(ctm$pars$value) &
     (ctm$pars$row %in% ctm$pars$row[ctm$pars$matrix %in% 'T0MEANS' & ctm$pars$indvarying] |
@@ -1343,7 +1345,10 @@ ctFit<-function(datalong, model, stanmodeltext=NA, iter=1000, intoverstates=TRUE
   args$model <- NULL
   args$ctstanmodel <- NULL
 
-  ctm <- ctstanmodel
+  # The working copy carries a logical column per level; the model the fit
+  # keeps as its base (`modelbase`, `ctstanmodelbase`) stays as the user wrote
+  # it. See .ctResolveLevels().
+  ctm <- .ctResolveLevels(ctstanmodel)
 
   # A model saved before the correlation squash moved into the covariance
   # construction still carries it in its own parameter table, so it would be
@@ -1618,8 +1623,9 @@ ctFit<-function(datalong, model, stanmodeltext=NA, iter=1000, intoverstates=TRUE
 
   # An outer level on a route that cannot carry it.
   #
-  # `.ctModelIntOverPop()` reads `indvarying` and nothing else, so a study
-  # effect declared in `indvarying_study` would be dropped without trace and
+  # `.ctModelIntOverPop()` reads the subject level's column and nothing else,
+  # so an effect at a study level (`indvarying_study` once resolved, by
+  # .ctResolveLevels()) would be dropped without trace and
   # the fit would report a single-level model as though that were what was
   # asked for. Refuse by name instead. There is no reason for a lower level to
   # vary before an upper one does -- a study effect with exchangeable subjects

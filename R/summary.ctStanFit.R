@@ -32,10 +32,11 @@ ctFitgetparnamesfromraw <- function(sf){
   names=list()
   ms <- sf$setup$matsetup
   names$popmeans <- unique(ms$parname[ms$when==0 & ms$param > 0 & ms$copyrow ==0])
-  if(sum(sf$ctstanmodelbase$pars$indvarying) > 0){
+  nvarying <- sum(.ctVaryingRows(sf$ctstanmodelbase, 'indvarying'))
+  if(nvarying > 0){
     names$popsd <- paste0(ms$parname[ms$when==0 & ms$param > 0 & ms$copyrow == 0 & ms$indvarying > 0],'_SD')
   } 
-  if(sum(sf$ctstanmodelbase$pars$indvarying) > 1){
+  if(nvarying > 1){
     popcorrmat <- matrix(paste0(gsub('_SD','',rep(names$popsd,times=length(names$popsd))), '_', gsub('_SD','',rep(names$popsd,each=length(names$popsd))),'_corr'),ncol=length(names$popsd),nrow=length(names$popsd))
     names$popcorr <- as.vector(popcorrmat[lower.tri(popcorrmat)])
   } 

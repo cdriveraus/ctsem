@@ -2116,12 +2116,9 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
   invisible(TRUE)
 }
 
-# Which parameters vary at a given level, and the column that says so.
-#
-# The subject level keeps `indvarying`, unchanged and backward compatible. Each
-# grouping level above it gets `indvarying_<idname>` -- explicit rather than
-# positional, so a model carrying three levels reads as three named columns
-# rather than as a matrix nobody can check by eye.
+# Which parameters vary at a given level, and the column that says so: the
+# per-level logicals .ctResolveLevels() makes, `indvarying` for the subject and
+# `indvarying_<idname>` above it. The model here is always resolved.
 .ctJuliaLevelColumn <- function(model, level) {
   if (level == 1L) return("indvarying")
   paste0("indvarying_", model$groupIDnames[level - 1L])
@@ -3538,6 +3535,9 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
   # with it, so they must not differ in how the model is built.
   intoverpop <- match.arg(as.character(intoverpop)[1L],
     c("augmented", "laplace", "none"))
+  # Generation hands a user's model straight here, so the per-level columns
+  # are made here as well as in ctFit(); see .ctResolveLevels().
+  model <- .ctResolveLevels(model)
   # The floor is a property of the Laplace term, so a route without one refuses
   # it by name rather than accepting it and doing something else. Either value:
   # 'total' is no longer what every fit does, so it is not inert elsewhere.

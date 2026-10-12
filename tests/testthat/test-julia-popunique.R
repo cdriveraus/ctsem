@@ -17,7 +17,9 @@
     MANIFESTMEANS = matrix(c("mm1", "mm2", "mm3"), 3, 1),
     T0VAR = matrix(1), T0MEANS = matrix(0), CINT = matrix(0))))
   m$pars$indvarying <- m$pars$param %in% c("mm1", "mm2", "mm3")
-  if ("study" %in% levels) m$pars$indvarying_study <- m$pars$param %in% c("mm1", "mm2")
+  # With a study level: mm1 and mm2 at both levels, mm3 between subjects only.
+  if ("study" %in% levels) m$pars$indvarying <- ifelse(m$pars$param %in%
+    c("mm1", "mm2"), TRUE, ifelse(m$pars$param %in% "mm3", levels[1], FALSE))
   m
 }
 

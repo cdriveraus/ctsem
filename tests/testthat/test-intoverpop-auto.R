@@ -150,8 +150,8 @@ test_that("the routes 'auto' does not change", {
 test_that("an outer level takes laplace without announcing it", {
   skip_on_cran()
   m <- .auto_model("mm", LAMBDA = matrix(1), MANIFESTMEANS = matrix("mm"))
+  # mm's indvarying is TRUE, which with a study level is both levels.
   m$groupIDnames <- "study"
-  m$pars$indvarying_study <- m$pars$param %in% "mm"
   auto <- ctsem:::.ctIntOverPopAuto(m, backend = "julia")
   expect_identical(auto$route, "laplace")
   expect_false(auto$announce)
