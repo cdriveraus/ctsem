@@ -150,7 +150,11 @@
 #' @param form How covariates are screened, as for \code{\link{ctScoreTest}};
 #'   \code{'threshold'} lets the search add a covariate as a step.
 #' @param nsamples Generated datasets for the adequacy checks.
-#' @param cores Cores for fitting and testing.
+#' @param cores Cores for fitting and testing. With two or more, the refits
+#'   of a round run side by side in worker processes, as sampling chains do,
+#'   each with an equal share of \code{cores}: they are independent, and one
+#'   fit uses its cores only partly. \code{options(ctsem.improve.processes =
+#'   FALSE)} runs them one at a time in this session.
 #' @param verbose Report progress.
 #' @return An object of class \code{ctModelImprove}: \code{fit} (the final
 #'   fit), \code{history} (every refit tried: the round, the relaxation, its
@@ -262,12 +266,14 @@ ctModelImprove <- function(fit, covariates = NULL,
     while (length(proposals)) {
       batch <- utils::head(proposals, ntry)
       proposals <- proposals[-seq_along(batch)]
-      for (prop in batch) {
-        say("Round ", step, ": refitting with ", prop$label)
-        edited <- try(prop$edit(model, data, covariates), silent = TRUE)
-        refit <- if (inherits(edited, 'try-error')) edited else
-          try(.ctImproveRefit(current, edited$model, edited$data, cores, prop$start,
-            edited$args), silent = TRUE)
+      edits <- lapply(batch, function(prop) try(prop$edit(model, data, covariates),
+        silent = TRUE))
+      for (prop in batch) say("Round ", step, ": refitting with ", prop$label)
+      refits <- .ctImproveRefits(current, edits, lapply(batch, `[[`, 'start'), cores)
+      for (b in seq_along(batch)) {
+        prop <- batch[[b]]
+        edited <- edits[[b]]
+        refit <- refits[[b]]
         verdict <- .ctImproveCompare(current, refit, criterion, level)
         tried[[length(tried) + 1L]] <- list(prop = prop, refit = refit, edited = edited,
           verdict = verdict)
@@ -748,6 +754,40 @@ ctModelImprove <- function(fit, covariates = NULL,
     if (is.finite(raw)) out[r$param] <- raw
   }
   if (length(out)) out else NULL
+}
+
+# Each edited model refitted (`.ctImproveRefit`), a try-error where the edit
+# or the refit failed. Side by side in worker processes when there are two or
+# more and the cores to share: the refits of a round are independent, and one
+# fit of the Fisher example's model with random dynamics kept about 6 of its
+# 10 cores busy. Each worker takes `cores %/% workers` threads. The pool is the
+# sampling chains' (`.ctBackendWarmWorkers`), which persists, so a later round
+# finds its sessions started and the engine loaded; a fit made there rebuilds
+# its objective in this session when it is next evaluated, the cache being
+# keyed on the specification. One at a time in this session otherwise, or
+# where the pool cannot be had.
+.ctImproveRefits <- function(current, edits, starts, cores) {
+  here <- function(i) if (inherits(edits[[i]], 'try-error')) edits[[i]] else
+    try(.ctImproveRefit(current, edits[[i]]$model, edits[[i]]$data, cores, starts[[i]],
+      edits[[i]]$args), silent = TRUE)
+  ok <- which(!vapply(edits, inherits, logical(1), 'try-error'))
+  workers <- min(length(ok), as.integer(cores))
+  if (workers < 2L || !isTRUE(getOption('ctsem.improve.processes', TRUE)) ||
+      !.ctFitIsJulia(current) || !.ctBackendCanWarm()) return(lapply(seq_along(edits), here))
+  threads <- max(1L, as.integer(cores) %/% workers)
+  handles <- .ctBackendWarmWorkers(current, workers, values = .ctFitRawEstimate(current),
+    threads = threads)
+  if (.ctBackendWarmWait(handles) < 1L) return(lapply(seq_along(edits), here))
+  futures <- lapply(seq_along(edits), function(i) if (!i %in% ok) NULL else
+    tryCatch(future::future(utils::getFromNamespace('.ctImproveRefit', 'ctsem')(current,
+      edits[[i]]$model, edits[[i]]$data, threads, starts[[i]], edits[[i]]$args),
+      seed = TRUE), error = function(e) NULL))
+  lapply(seq_along(edits), function(i) {
+    if (!i %in% ok) return(edits[[i]])
+    if (is.null(futures[[i]])) return(here(i))
+    tryCatch(future::value(futures[[i]]), error = function(e)
+      structure(conditionMessage(e), class = 'try-error', condition = e))
+  })
 }
 
 # Refit with an edited model, prepared as the current fit was and warm started

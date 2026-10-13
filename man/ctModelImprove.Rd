@@ -68,7 +68,11 @@ for \code{\link{ctFitAdequacy}}; by default it scans.}
 
 \item{nsamples}{Generated datasets for the adequacy checks.}
 
-\item{cores}{Cores for fitting and testing.}
+\item{cores}{Cores for fitting and testing. With two or more, the refits
+of a round run side by side in worker processes, as sampling chains do,
+each with an equal share of \code{cores}: they are independent, and one
+fit uses its cores only partly. \code{options(ctsem.improve.processes =
+FALSE)} runs them one at a time in this session.}
 
 \item{verbose}{Report progress.}
 }
