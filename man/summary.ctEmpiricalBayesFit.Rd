@@ -37,8 +37,10 @@ a reconstructed model.}
 }
 \value{
 Compact list containing fit settings, transformed-parameter
-summaries, outlier diagnostics, and transformed-parameter covariance /
-correlation matrices. The subject
+summaries, outlier diagnostics, transformed-parameter covariance /
+correlation matrices, and \code{subjectpars}: each subject's final-pass
+point estimates on the parameters' own scale, one row per subject with its
+id in \code{subject}, unrounded, for comparisons across subjects. The subject
 fit lists, raw estimate matrices, pass maps, and adjusted model remain on
 the original \code{ctEmpiricalBayesFit} object.
 }
