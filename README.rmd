@@ -275,11 +275,13 @@ Stan path.
 | Work an applied example end to end, from theory through simulation to fitting and checking | the [tutorial preprint](https://osf.io/preprints/psyarxiv/4q9ex_v3), with code and materials in the [OSF project](https://osf.io/xh6ue/) |
 | A second, shorter worked start | [ctsem quick start: sunspots and a damped linear oscillator](https://cdriver.netlify.app/post/ctsem-quick-start/) |
 | Get everything ctsem can say about a fit, in one folder | `ctReport(fit)` |
-| The full reference: the model, the priors, every argument | the [hierarchical manual (pdf)](https://cran.r-project.org/web/packages/ctsem/vignettes/hierarchicalmanual.pdf), or `ctDocs()` in R |
+| The full reference: the model, the priors, every argument | the [hierarchical manual (pdf)](https://CRAN.R-project.org/package=ctsem/vignettes/hierarchicalmanual.pdf), or `ctDocs()` in R |
 | Understand and control the uncertainty ctsem reports | [uncertainty vignette](https://github.com/cdriveraus/ctsem/blob/juliaFit/vignettes/uncertainty.qmd) |
 | Build a measurement model: multiple indicators, non-Gaussian items | [measurement models vignette](https://github.com/cdriveraus/ctsem/blob/juliaFit/vignettes/measurement-models.qmd) |
 | Put random effects on parameters by Laplace approximation | [multilevel Laplace vignette](https://github.com/cdriveraus/ctsem/blob/juliaFit/vignettes/laplace-multilevel.qmd) |
-| Fit each subject separately, with the population estimate as a prior | [empirical Bayes vignette](https://cran.r-project.org/web/packages/ctsem/vignettes/empirical-bayes-fitting.html) |
+| Model test items as indicators: item response models over time | [IRT items vignette](https://github.com/cdriveraus/ctsem/blob/juliaFit/vignettes/irt-items.qmd) |
+| Decide whether to treat a rating scale as ordinal or continuous | [ordinal or continuous vignette](https://github.com/cdriveraus/ctsem/blob/juliaFit/vignettes/ordinal-or-continuous.qmd) |
+| Fit each subject separately, with the population estimate as a prior | [empirical Bayes vignette](https://CRAN.R-project.org/package=ctsem/vignettes/empirical-bayes-fitting.html) |
 | Fit discrete time models, and know when the choice matters | [Discrete time models using ctsem?](https://cdriver.netlify.app/post/dtbivariate/) and [Representations of dynamic systems](https://cdriver.netlify.app/post/discretetime/) |
 | Handle an accelerated longitudinal or multiple group design | [Accelerated longitudinal and multiple group designs](https://cdriver.netlify.app/post/accelerated/) |
 | Understand missingness, and filtered against smoothed estimates | [Kalman filter vs smoother](https://cdriver.netlify.app/post/missingdata/) |
