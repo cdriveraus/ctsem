@@ -5,6 +5,7 @@
 \alias{ctFitUpdateModel}
 \alias{ctCheckFit}
 \alias{ctStanUpdModel}
+\alias{ctModelCoverage_check}
 \title{Defunct functions in ctsem}
 \usage{
 ctFitUpdateModel(...)
@@ -12,6 +13,8 @@ ctFitUpdateModel(...)
 ctStanUpdModel(...)
 
 ctCheckFit(...)
+
+ctModelCoverage_check(...)
 }
 \arguments{
 \item{...}{Ignored.}
@@ -25,6 +28,9 @@ Each now stops with a message naming its replacement.
     or \code{\link{ctFitCheckCov}} for the lagged covariance check alone.
   \item \code{ctFitUpdateModel} and \code{ctStanUpdModel}: use
     \code{\link{ctFitUpdate}}, which takes new data and new arguments.
+  \item \code{ctModelCoverage_check}: renamed \code{\link{ctCoverageCheck}},
+    with camelCase arguments (\code{fittingModel}, \code{fitArgs},
+    \code{fitCores}, \code{generateCores}, \code{plotEvery}).
 }
 }
 \keyword{internal}

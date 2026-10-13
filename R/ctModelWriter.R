@@ -32,11 +32,14 @@ simpleStateCheck <- function(x){   #checks if system matrix elements that refere
 #'     or \code{\link{ctFitCheckCov}} for the lagged covariance check alone.
 #'   \item \code{ctFitUpdateModel} and \code{ctStanUpdModel}: use
 #'     \code{\link{ctFitUpdate}}, which takes new data and new arguments.
+#'   \item \code{ctModelCoverage_check}: renamed \code{\link{ctCoverageCheck}},
+#'     with camelCase arguments (\code{fittingModel}, \code{fitArgs},
+#'     \code{fitCores}, \code{generateCores}, \code{plotEvery}).
 #' }
 #'
 #' @param ... Ignored.
 #' @name ctsem-defunct
-#' @aliases ctCheckFit ctFitUpdateModel ctStanUpdModel
+#' @aliases ctCheckFit ctFitUpdateModel ctStanUpdModel ctModelCoverage_check
 #' @keywords internal
 #' @export
 ctFitUpdateModel <- function(...) .Defunct('ctFitUpdate')
@@ -53,6 +56,12 @@ ctCheckFit <- function(...) .Defunct('ctPostPredPlots', msg = paste0(
   "'ctCheckFit' is defunct. Use ctPostPredPlots(fit), whose 'LaggedCovariance' ",
   "and 'MeanTrajectory' panels replace it, or ctFitCheckCov() for the lagged ",
   "covariance check alone."))
+
+#' @rdname ctsem-defunct
+#' @export
+ctModelCoverage_check <- function(...) .Defunct('ctCoverageCheck', msg = paste0(
+  "'ctModelCoverage_check' is defunct. Use ctCoverageCheck(), whose arguments ",
+  "are camelCase: fittingModel, fitArgs, fitCores, generateCores, plotEvery."))
 
 
 
