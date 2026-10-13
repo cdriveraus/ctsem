@@ -270,7 +270,14 @@ test_that("the package image computes what the engine compiled in the session co
   expect_identical(lines$image[1], "workload true")
   expect_identical(lines$session[1], "workload false")
   diffs <- .image_vs_session_diff(lines)
-  expect_gt(length(diffs), 20)
+  # Every captured model compared, a value and a gradient at least: a count
+  # fixed when the workload had nine models failed once it had two.
+  captured <- strsplit(as.character(ctsem:::.ctJuliaEval(paste0("join(sort(string.(",
+    "collect(keys(ContinuousTimeSEM._PRECOMPILE_SHAPES)))), \",\")"))), ",",
+    fixed = TRUE)[[1]]
+  compared <- sub(" .*$", "", names(diffs))
+  expect_setequal(unique(compared), captured)
+  for (m in captured) expect_gte(sum(compared == m), 2, label = paste("quantities compared for", m))
   # Rounding differences are allowed for (the image's code is built for the
   # CPU targets the system image lists, the session's for this CPU); anything
   # the source actually changes is orders of magnitude above this.
