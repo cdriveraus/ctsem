@@ -777,7 +777,11 @@ test_that("a call into a Julia process that has died errors by name, and the nex
     suppressWarnings(try(JuliaConnectoR::stopJulia(), silent = TRUE))
   })
   tools::pskill(as.integer(JuliaConnectoR::juliaEval("getpid()")))
-  for (i in seq_len(100)) {
+  # Up to a minute, ending as soon as the socket reads. Ten seconds was not
+  # enough on a loaded machine: Julia handles SIGTERM before it exits, and on
+  # dev2 with every core busy the socket was still quiet when the check ran,
+  # failing both expectations below.
+  for (i in seq_len(600)) {
     if (isTRUE(socketSelect(list(dead), timeout = 0.1))) break
   }
 

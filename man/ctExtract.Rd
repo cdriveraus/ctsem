@@ -3,7 +3,7 @@
 \name{ctExtract}
 \alias{ctExtract}
 \alias{extract}
-\title{Extract samples from a ctStanFit object}
+\title{Extract samples from a ctsem fit}
 \usage{
 ctExtract(
   object,
@@ -17,7 +17,8 @@ ctExtract(
 )
 }
 \arguments{
-\item{object}{ctStanFit object, samples may be from Stan's HMC, or the importance sampling approach of ctsem.}
+\item{object}{A fit from \code{\link{ctFit}}, on either backend: sampled, or
+optimized with its approximate posterior draws.}
 
 \item{subjectMatrices}{Calculate subject specific system matrices?}
 
@@ -52,7 +53,8 @@ once themselves. \code{\link{ctModelIsNonlinear}} answers whether the point
 matters for this model at all.
 }
 \description{
-Extract samples from a ctStanFit object
+Returns the posterior (or approximate posterior) draws of a fit's
+parameters, as arrays named for the model matrices.
 }
 \examples{
 \donttest{

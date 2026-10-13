@@ -3,12 +3,12 @@
 \name{ctSubjectPars}
 \alias{ctSubjectPars}
 \alias{ctStanSubjectPars}
-\title{Extract an array of subject specific parameters from a ctStanFit object.}
+\title{Extract an array of subject specific parameters from a fit}
 \usage{
 ctSubjectPars(fit, pointest = TRUE, cores = 2, nsamples = "all", level = NULL)
 }
 \arguments{
-\item{fit}{fit object}
+\item{fit}{A fit from \code{\link{ctFit}}.}
 
 \item{pointest}{if TRUE, returns only the set of individual difference parameters
 based on the max a posteriori estimate (or the median if sampling approaches were used).}
@@ -32,7 +32,8 @@ an nsamples by nsubjects by nparams array, with the subjects (or
 groups, for a grouping \code{level}) labelled by their ids in the data.
 }
 \description{
-Extract an array of subject specific parameters from a ctStanFit object.
+Extract an array of subject specific parameters from a fit from
+\code{\link{ctFit}}, on either backend.
 \code{ctStanSubjectPars} is maintained as a backward-compatible alias.
 }
 \details{

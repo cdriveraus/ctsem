@@ -42,6 +42,10 @@
 #' TDpredNames = "TD1", TIpredNames = c("TI1", "TI2","TI3") )
 #'  
 #' print(wide)
+#' @return The wide format data as a matrix, with the absolute time columns
+#'   replaced by the intervals preceding each time point, \code{dT1},
+#'   \code{dT2}, ..., and columns named as \code{\link{ctWideNames}} names
+#'   them.
 #' @export
 
 ctIntervalise<-function(datawide,Tpoints,n.manifest,n.TDpred=0,n.TIpred=0,imputedefs=F,

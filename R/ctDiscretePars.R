@@ -3,7 +3,7 @@
 #' Gets internal stan parameter names of a ctStanFit object sampled via stan based on specified substrings.
 #' \code{ctStanParnames} is maintained as a backward-compatible alias.
 #'
-#' @param x ctStanFit object
+#' @param x ctStanFit object, sampled (\code{ctFit(backend = 'stan', optimize = FALSE)}).
 #' @param substrings vector of character strings, parameter names of the stan model
 #' containing any of these strings will be returned. Useful strings may be 'pop_' for
 #' population means, 'popsd' for population standard deviations,
@@ -30,7 +30,7 @@
 #'  DIFFUSION=matrix(c(0, 0, 0, "diffusion"), ncol=2, nrow=2))
 #'
 #' #fit
-#' ssfit <- ctFit(datalong, ssmodel, optimize=FALSE,
+#' ssfit <- ctFit(datalong, ssmodel, optimize=FALSE, priors=TRUE,
 #'   sampleControl=list(iter=2, chains=1))
 #' ctRawParnames(ssfit,substrings=c('pop_','popsd'))
 #' }
@@ -155,6 +155,9 @@ ctStanParnames <- ctRawParnames
 #'If plot=TRUE, the function will return a ggplot2 object
 #'(and hence needs to be printed if intended to display within a loop).
 #'This can be modified by the various ggplot2 functions, or displayed using print(x).
+#'@return With \code{plot = FALSE}, an array of the discrete time
+#'coefficients, by sample, subject, time interval, row and column; with
+#'\code{plot = TRUE}, a ggplot object.
 #'@aliases ctStanDiscretePars
 #'@export
 ctDiscretePars<-function(fit, subjects='popmean',
@@ -421,8 +424,6 @@ ctDiscreteParsDrift<-function(ctpars,times, impulseType,  standardise,cov=FALSE,
 
   return(ctpars$dtDRIFT)
 }
-
-ctStanDiscreteParsDrift <- ctDiscreteParsDrift
 
 #'ctDiscreteParsPlot
 #'

@@ -31,6 +31,12 @@ for an individual in the input data structure.}
 
 \item{TIpredNames}{vector of character strings giving column names of time independent predictor variables}
 }
+\value{
+A character vector of column names for a wide format dataset: the
+  manifest variables and time dependent predictors at each time point,
+  the intervals \code{dT1}, \code{dT2}, ..., then the time independent
+  predictors.
+}
 \description{
 ctWideNames
 sets default column names for wide ctsem datasets. Primarily intended for internal ctsem usage.

@@ -86,7 +86,7 @@ test_that("post-fit functions accept a fit carrying both of its classes", {
     regexp = NA)
 
   # And the guard still refuses something that is neither.
-  expect_error(ctPlotPosterior(list(a = 1)), regexp = "ctStanFit")
+  expect_error(ctPlotPosterior(list(a = 1)), regexp = "a fit from ctFit")
 })
 
 test_that("a nested model lists what varies at each level", {

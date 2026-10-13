@@ -30,6 +30,9 @@ test_that("coef returns a plain numeric raw parameter vector on both backends", 
   expect_true(is.numeric(stanraw))
   expect_null(dim(stanraw))
   expect_equal(length(stanraw), length(ctsem:::.ctFitRawEstimate(stanfit)))
+  # Labelled as the draws are, so coef(fit)['drift'] reads without counting.
+  expect_equal(names(stanraw), colnames(stanfit$stanfit$rawposterior))
+  expect_equal(unname(stanraw), as.numeric(ctsem:::.ctFitRawEstimate(stanfit)))
 
   skip_without_julia()
   juliafit <- .generics_julia_fit()
@@ -37,6 +40,26 @@ test_that("coef returns a plain numeric raw parameter vector on both backends", 
   expect_true(is.numeric(juliaraw))
   expect_null(dim(juliaraw))
   expect_equal(length(juliaraw), length(ctsem:::.ctFitRawEstimate(juliafit)))
+  expect_false(is.null(names(juliaraw)))
+  expect_false(anyNA(names(juliaraw)))
+})
+
+test_that("vcov returns the raw covariance, labelled as coef is, on both backends", {
+  stanv <- vcov(ctstantestfit)
+  expect_equal(dim(stanv), rep(length(coef(ctstantestfit)), 2))
+  expect_equal(rownames(stanv), names(coef(ctstantestfit)))
+  expect_equal(unname(sqrt(diag(stanv))),
+    unname(apply(ctstantestfit$stanfit$rawposterior, 2, sd)), tolerance = 0.2)
+
+  skip_without_julia()
+  # The cached julia fit is estonly, so it has no uncertainty to return.
+  expect_error(vcov(.generics_julia_fit()), "ctFitUncertainty")
+  # Eight subjects of six rows leave directions flat, which warns; not the point.
+  withse <- suppressWarnings(ctFitUncertainty(.generics_julia_fit(),
+    uncertainty = 'hessian'))
+  juliav <- vcov(withse)
+  expect_equal(rownames(juliav), names(coef(withse)))
+  expect_equal(unname(sqrt(diag(juliav))), unname(withse$estimate$se))
 })
 
 test_that("logLik returns a logLik with df and nobs on both backends", {

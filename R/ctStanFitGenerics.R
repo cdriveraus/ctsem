@@ -17,7 +17,17 @@ coef.ctStanFit <- function(object, ...) {
   # raw draws is what `summary()` reports for it, so it is what is returned
   # here too.
   if (is.null(raw)) raw <- colMeans(ctStanRawSamples(object))
-  as.numeric(raw)
+  .ctFitNameRaw(object, raw)
+}
+
+#' @export
+vcov.ctStanFit <- function(object, ...) {
+  # The covariance the uncertainty step fitted, or for a sampled fit that of
+  # the draws -- the matrix coef()'s standard errors come from either way.
+  cv <- object$stanfit$cov
+  if (is.null(cv) && !is.null(object$stanfit$stanfit) &&
+      length(object$stanfit$stanfit@sim) > 0) cv <- stats::cov(ctStanRawSamples(object))
+  .ctFitNameRawCov(object, cv)
 }
 
 #' @export

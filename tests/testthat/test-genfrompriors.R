@@ -235,6 +235,20 @@ test_that("a model with no Tpoints and no datastruct says what is missing", {
     regexp = 'no design to generate over')
 })
 
+test_that("a model with nothing free says there is no prior to draw from", {
+  skip_on_cran()
+  # It used to fail inside the model setup with "undefined columns selected",
+  # because a model with no transforms never gained the transform value
+  # columns; past that, julia said to use stan and stan threw a raw exception.
+  model <- suppressMessages(ctModel(type = 'ct', manifestNames = 'Y1',
+    latentNames = 'e', LAMBDA = matrix(1), DRIFT = matrix(-.3),
+    DIFFUSION = matrix(1), CINT = matrix(0), MANIFESTMEANS = matrix(0),
+    T0MEANS = matrix(0), T0VAR = matrix(1), MANIFESTVAR = matrix(.3)))
+  expect_error(suppressMessages(ctGenerate(model, n = 3, Tpoints = 4,
+    fromPriors = TRUE, nsamples = 2, cores = 1, backend = 'stan')),
+    regexp = 'no free parameters, so there is no prior')
+})
+
 test_that("a julia fit is generated from through the model it was given", {
   skip_without_julia()
   # A julia fit used to be refused: it carried only the form

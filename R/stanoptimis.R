@@ -690,7 +690,7 @@ tostanarray <- function(flesh, skeleton){
   # rstantools.
   workers <- try(unlist(parallel::clusterEvalQ(cl, paste0(
     as.character(utils::packageVersion('ctsem')), '/',
-    nchar(ctsem:::stanmodels$ctsm@model_code)[1]))), silent = TRUE)
+    nchar(asNamespace('ctsem')$stanmodels$ctsm@model_code)[1]))), silent = TRUE)
   if(inherits(master, 'try-error') || inherits(workers, 'try-error') ||
       !length(workers)) return(invisible(NULL))
   bad <- unique(workers[workers != master])

@@ -423,7 +423,7 @@ for(i in 1:nsubjects){
 
   #generate data
   newdat <- ctGenerate(ctmodelobj = gm,n = 1,burnin = 2,
-    dtmat<-rbind(c(rep(.5,8),3,rep(.5,Tpoints-9))))
+    dtmat=rbind(c(rep(.5,8),3,rep(.5,Tpoints-9))))
   newdat[,'id'] <- i #set id for each subject
   newdat <- cbind(newdat,age[i]) #include time independent predictor
   if(i ==1) {

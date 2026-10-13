@@ -13,6 +13,10 @@ sdpcor2cov(mat, coronly = FALSE, cholesky = FALSE)
 
 \item{cholesky}{Logical. To return the cholesky decomposition instead of full covariance, set to TRUE.}
 }
+\value{
+A covariance matrix; its lower Cholesky factor with
+  \code{cholesky = TRUE}; a correlation matrix with \code{coronly = TRUE}.
+}
 \description{
 Converts a lower triangular matrix with standard deviations on the diagonal and partial correlations on
 lower triangle, to a covariance (or cholesky decomposed covariance)

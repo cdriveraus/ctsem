@@ -16,11 +16,11 @@ ctLOO(
   refit = TRUE,
   casewiseApproximation = FALSE,
   method = c("kfold", "psis"),
-  ndraws = 500
+  nsamples = 500
 )
 }
 \arguments{
-\item{fit}{ctStanfit object}
+\item{fit}{A fit from \code{\link{ctFit}}, on either backend.}
 
 \item{folds}{Number of cross validation splits to use -- 10 folds implies that the
 model is re-fit 10 times, each time to a data set with 1/10 of the observations randomly removed.}
@@ -56,7 +56,7 @@ leave-one-out, available only for \code{backend = 'julia'} fits with
 \code{tol}, \code{keepfirstobs}, \code{leaveOutN}, \code{refit} and
 \code{casewiseApproximation} mean nothing to it and are refused if given.}
 
-\item{ndraws}{Number of importance sampling draws for \code{method = 'psis'}.}
+\item{nsamples}{Number of importance sampling draws for \code{method = 'psis'}.}
 }
 \value{
 For \code{method = 'kfold'}, a list with \code{foldrows},
@@ -77,7 +77,9 @@ For \code{method = 'kfold'}, a list with \code{foldrows},
   \code{note}.
 }
 \description{
-Cross validation for ctsem fits: K fold by refitting, or PSIS for Laplace fits
+Estimates out-of-sample predictive performance, by refitting the model with
+each fold of the data held out in turn or, for a julia Laplace fit, by
+Pareto-smoothed importance sampling without refitting.
 }
 \details{
 Works for \code{backend='julia'} fits as well as stan ones. There,
@@ -88,7 +90,7 @@ update and without a likelihood contribution -- the same thing
 \code{parallelFolds = TRUE} runs up to \code{cores} folds at once, each in a
 background R session with a one-thread Julia, started and compiled for the
 model before the first fold (it needs the \pkg{future} package; the
-sessions persist for the next call, and \code{\link{ctJuliaWorkersStop}}
+sessions persist for the next call, and \code{\link{ctJuliaKill}('workers')}
 releases them). Without it the folds run one at a time on \code{cores}
 threads. Folds are separate fits, so they gain more from processes than
 from threads, except where each fold takes only seconds and starting the

@@ -9,6 +9,9 @@ log1p_exp(x)
 \arguments{
 \item{x}{value to use.}
 }
+\value{
+\code{log(1 + exp(x))}, elementwise.
+}
 \description{
 Maps the stan function so the same code works in R.
 }

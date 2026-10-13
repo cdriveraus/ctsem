@@ -4,6 +4,7 @@
 #' @param iter Number of iterations
 #' @param chains Number of chains
 #' @param ... All the other regular arguments to stan()
+#' @return The stanfit object \code{rstan::sampling} returns.
 #' @export
 #' @details On windows, requires Rtools installed and able to be found by pkgbuild::rtools_path()
 #' @examples

@@ -30,150 +30,14 @@ ctOptimUncertainty(
 )
 }
 \arguments{
-\item{fit}{Optimized \code{ctStanFit} or \code{ctJuliaFit} object. For a
-\code{ctJuliaFit}, every \code{uncertainty} method except
-\code{'fullbootstrap'} is available; that one re-optimises each resample and
-so needs the model rebuilt rather than re-evaluated. \code{uncertainty =
-'sample'} needs \code{backend = 'julia'} specifically -- it is refused by
-name on a \code{ctStanFit}, which samples through \code{ctFit(backend =
-'stan', optimize = FALSE)} instead. A sampled fit of either backend is
-refused by every \emph{other} method: it already carries a posterior, and
-replacing it with a curvature-based approximation would discard it.
-\code{uncertainty = 'sample'} may be run again on an already-sampled fit,
-to draw more, or differently, from where it now stands.}
+\item{fit}{Optimized \code{ctStanFit} or \code{ctJuliaFit} object, or for
+\code{uncertainty = 'sample'} a julia fit that is already sampled.}
 
-\item{uncertainty}{Uncertainty approximation. \code{'hessian'} uses the
-Hessian at the estimate -- exact on julia, which differentiates its own
-gradient, and by finite differences on stan -- \code{'surrogate'} fits a local quadratic
-surrogate around the optimum, \code{'is'} runs adaptive importance sampling
-against the fitted log posterior. Each raw parameter is first walked out on
-both sides of the mode, from 3 to 96 standard errors of the curvature, with
-the other parameters moved to their conditional mode, and a proposal
-component is placed wherever that walk finds a tail the curvature does not
-show -- a skewed one, or one bending away along a ridge the other
-parameters follow, as a variance with few subjects often has. Rounds of
-\code{isitersize} draws from these multivariate t components
-(\code{imisDf}) then add components at the highest-weighted draws until the
-effective sample size reaches \code{isESS} and the Pareto k of the weights
-is below 0.7 (k needs the loo package), each draw weighted against the whole
-mixture. The effective size, k, the evaluations used and which parameters
-had a tail to follow are recorded in
-\code{fit$uncertainty$details$importance_sampling}; k above 0.7 is warned
-of, and so is a parameter whose walk has not fallen off 96 standard errors
-out, which is what an improper posterior looks like. When the Hessian
-covariance is rank deficient the sampling runs in the whitened
-eigen-coordinates of the directions it has curvature in, holding the rest
-at the estimate. It needs the log posterior's gradient for the walk, which
-both backends' fits supply.
-
-The density \code{'is'} weights toward is the fit's own objective. On a
-fit whose random effects are integrated -- \code{intoverpop = 'laplace'}
-or \code{'augmented'} -- that is the approximate marginal posterior the route
-maximised, so the draws correct the normal approximation's shape but keep
-the route's own approximation: where the Laplace approximation is biased
-(random effects on variances, in nonlinear dynamics, or with non-Gaussian
-indicators), \code{'is'} reproduces the bias faithfully. Measured against
-long reference samples on five bench models and two closed forms where
-that approximation is accurate, its worst errors in a posterior sd and in
-the 2.5\% and 97.5\% quantiles were at most those of \code{'sample'} at its
-defaults, in a twentieth to a half of the time; on twenty models including
-those where it is not, it cost 5 to 12 times the fit and was no more
-accurate than the Hessian on balance. \code{'sample'} draws from the exact
-posterior.
-\code{'bootstrap'} uses one-step score bootstrap draws with
-Hessian bread, \code{'fullbootstrap'} resamples subjects and fully
-re-optimizes each sample from the original maximum likelihood or MAP
-estimate using mize L-BFGS, \code{'sandwich'} uses Hessian bread with score
-covariance meat, and \code{'opg'} uses an OPG-style score information
-approximation. \code{'stored'} computes nothing: it redraws
-\code{finishsamples} normal draws from the covariance already on the fit and
-leaves that covariance, the Hessian and the recorded \code{method}
-untouched, marking \code{$uncertainty$settings$redrawn = TRUE}. It is the
-way to change the number of draws, or to reseed them, without paying for the
-covariance again -- the other methods cost at least \code{2 * npar}
-log-probability evaluations, this one costs none -- and it warns if the
-fit's existing draws came from \code{'is'} or \code{'bootstrap'}, which
-normal draws from that covariance do not reproduce.
-\code{'sample'} draws from the genuine posterior by Markov chain Monte
-Carlo -- SAEM's kernel on the joint posterior of parameters and random
-effects, the No-U-Turn sampler otherwise -- through the same runner
-\code{ctFit(backend = 'julia', optimize = FALSE)} uses to fit and sample
-together -- \code{julia}-only, see \code{fit} above. Its settings are
-entries of \code{control} rather than \code{draws}/\code{finishsamples},
-which this method ignores: \code{chains} (default 4), \code{warmup} (500),
-\code{draws} (500), \code{seed}, \code{saveEffects} (FALSE, whether to keep
-every draw of every random effect rather than only their summary; either way
-they are each parameter's deviation from its population value on the raw
-scale, per subject or group, in \code{fit$sample$effects},
-\code{effect_mean} and \code{effect_sd}), and
-\code{processes} (TRUE, one R process per chain). A run stops once every
-parameter's effective sample size reaches \code{minESS} (200) and the
-chains' R-hat is below \code{rhatTarget} (1.01) -- \code{meanESS} adds a
-target for the average -- within a budget of four times \code{draws} per
-chain, or \code{maxDraws} when given; \code{minESS = 0} takes exactly
-\code{draws}. A run that reaches its budget short of the target warns.
-
-Lower targets give a quicker, approximate posterior, and say how
-approximate. A reported quantile's Monte Carlo error is about
-\code{1.96 * 2.1 / sqrt(ESS)} posterior sds at the 5\% and 95\% points (the
-tail ESS) and \code{1.96 * 1.25 / sqrt(ESS)} at the median, and chains
-whose means disagree by \code{d} posterior sds give an R-hat of about
-\code{sqrt(1 + d^2)}; measured on short runs, the error these imply was
-about a third optimistic. So \code{minESS = 50, rhatTarget = 1.07} aims at
-about half a posterior sd at the centre and more in the tails, and the
-defaults at about a fifth at the centre and two fifths in the tails. On the models compared, runs of four chains
-and 100 to 200 draws each overtook the Laplace normal approximation's
-accuracy at two to three times a Laplace fit's time, and were faster and
-more accurate outright where the Laplace fit was slow or biased; short runs
-are limited by whether the chains agree, so R-hat is usually the binding
-check. With \code{processes = TRUE} the chains run in up to \code{cores}
-worker processes, each starting its own Julia session -- a fixed cost of
-some tens of seconds that a run much shorter than a minute does not recover
--- and a worker runs its share of the chains in turn, so four chains at the
-default of two cores run two at a time. \code{processes = FALSE}, or one
-core, keeps the chains in this session, as threads when it has them.
-\code{settleTol} ends warmup early once the metric stops moving (off by
-default, and slower when measured). \code{control$sampler} chooses the
-kernel for the joint posterior: \code{'saem'} (the default there) draws the
-random effects by SAEM's Metropolis-within-Gibbs sweeps and the parameters
-given them by NUTS, with moves that re-express the effects for each level's
-means and scales; \code{'nuts'} runs NUTS on the parameters and every
-random effect at once. Both draw the same posterior, from the same
-placement, and stop by the same rule; SAEM's kernel was the more reliable
-and the faster of the two in comparisons on variance and nested models,
-where NUTS on the joint vector mixes poorly. \code{adapt_metric},
-\code{adapt_effects} and \code{settleTol} belong to NUTS and are refused
-with SAEM's kernel. A marginal target is sampled by NUTS. \code{control$placement} says where the chains
-start: \code{'saem'}, the default on the joint posterior, runs SAEM from the
-fit's estimate -- on the exact marginal posterior, where the fit's optimum is
-the Laplace approximation's -- and starts each chain from SAEM's estimate and
-its draws of the random effects, for either sampler; \code{'fit'} starts them
-around the fit's own estimate, and is the only placement for a marginal
-target, which has no random effects to start. What is sampled is what the
-fit's \code{intoverpop} says, read as \code{ctFit(optimize = FALSE)} reads
-it: the filter's marginal for \code{'augmented'}, the Laplace marginal for a
-fit that named \code{'laplace'} (an approximate posterior whose dimension
-does not grow with the subject count), and the joint posterior over
-population parameters \emph{and} every subject's random effects for
-\code{'none'} or for a Laplace route that \code{intoverpop = 'auto'} chose,
-where the Laplace fit only places the chains. \code{control$intoverpop}
-overrides it in the same words: \code{'none'} for the joint posterior or
-\code{'laplace'} for the Laplace marginal on a Laplace fit;
-\code{'augmented'} needs a fit made that way, and an augmented fit, which
-has no separate random effect to sample, takes nothing else. Missing TI
-predictor values that the fit imputed are sampled too, unless the fit's
-\code{optimcontrol$tipredMissing} or \code{control$tipredMissing} is
-\code{'impute'}. See
-\code{\link{ctJuliaSetup}} for the thread count that decides whether
-chains run concurrently, and \code{\link{ctFit}}'s \code{intoverpop} for
-what each route means.
-
-Every method that produces draws aims for the same effective sample size
-unless told otherwise, 200: \code{minESS} for \code{'sample'} (of the worst
-parameter, since the 2.5\% and 97.5\% quantiles need it for each),
-\code{isESS} for \code{'is'}, and \code{target_ess} for
-\code{\link{ctLaplaceCorrect}} and \code{\link{ctParticleCorrect}} with
-\code{draws = 'imis'}. Each warns when it ends short of its target.}
+\item{uncertainty}{Which method: \code{'hessian'} (the default),
+\code{'surrogate'}, \code{'is'}, \code{'bootstrap'},
+\code{'fullbootstrap'}, \code{'sandwich'}, \code{'opg'}, \code{'stored'},
+or \code{'sample'}. See the Methods section, and Sampling for
+\code{'sample'}.}
 
 \item{draws}{Approximate raw-parameter draw method. \code{'auto'} uses
 empirical draws for \code{uncertainty='bootstrap'} and
@@ -181,12 +45,14 @@ empirical draws for \code{uncertainty='bootstrap'} and
 \code{'normal'} draws from a multivariate normal using the selected
 covariance, \code{'empirical'} uses empirical draws when available, and
 \code{'imis'} runs the importance sampler using the selected covariance as
-proposal. For \code{uncertainty='is'}, \code{draws} is set to \code{'imis'}.}
+proposal. For \code{uncertainty='is'}, \code{draws} is set to \code{'imis'}.
+Not used by \code{'sample'}.}
 
 \item{finishsamples}{Number of approximate raw-parameter samples. If
 \code{NULL}, the existing number of rows in the fit's raw posterior
 (\code{fit$stanfit$rawposterior} for stan, \code{fit$estimate$rawposterior}
-for julia) is reused when available; otherwise 1000 samples are used.}
+for julia) is reused when available; otherwise 1000 samples are used. Not
+used by \code{'sample'}, whose draw count is \code{control$draws}.}
 
 \item{cores}{The most CPU cores the call uses at once, counting every
 process it starts. If \code{NULL}, one core is used, and nothing
@@ -204,14 +70,14 @@ both change the order things are summed in, so results are reproducible at
 \code{cores = 1} and agree to rounding above it.}
 
 \item{control}{List of method-specific options. For \code{uncertainty =
-'sample'} these are the sampler settings described under \code{uncertainty}
-above (\code{chains}, \code{warmup}, \code{draws}, \code{seed},
+'sample'} these are the sampler settings described in the Sampling section
+(\code{chains}, \code{warmup}, \code{draws}, \code{seed},
 \code{saveEffects}, \code{processes}, \code{intoverpop},
-\code{tipredMissing}, \code{sampler},
-\code{placement}, \code{minESS}, \code{meanESS}, \code{rhatTarget},
-\code{maxDraws}, \code{settleTol}, \code{init_scale}, and NUTS's
-\code{maxdepth}, \code{target_accept}, \code{adapt_metric} and
-\code{adapt_effects}); none of the entries below apply to it. For every other method, useful entries include
+\code{tipredMissing}, \code{sampler}, \code{placement}, \code{minESS},
+\code{meanESS}, \code{rhatTarget}, \code{maxDraws}, \code{settleTol},
+\code{init_scale}, and NUTS's \code{maxdepth}, \code{target_accept},
+\code{adapt_metric} and \code{adapt_effects}); none of the entries below
+apply to it. For every other method, useful entries include
 \code{ridge}, \code{hessianStep}, \code{surrogateNpoints},
 \code{surrogateScale}, \code{surrogateProfile},
 \code{surrogateProfileTargetDrop}, \code{surrogateProfileMaxStep},
@@ -228,41 +94,18 @@ and \code{isitersize}. Omitted entries use
 \code{imisTailScale = 1.1} (1.5 and 1.2 on julia), \code{imisDf = 5} (the
 proposal components' t degrees of freedom; \code{Inf} for normal),
 \code{isESS = 200}, and \code{isitersize = 1000}. When
-\code{surrogateNpoints} is \code{NULL}, the
-surrogate uses at least \code{max(4 * npars, 50)} local directions. The
-surrogate is fit in whitened coordinates relative to the proposal covariance.
-Each direction is radially adjusted with a small evaluation budget so that
-the retained points are close to an informative local log-probability drop,
-rather than relying on a random cloud to land in the desired range. With
-\code{surrogateProfile = TRUE}, all fitted surrogate curvature directions
-are then profiled until they reach \code{surrogateProfileTargetDrop}, or the
-surrogate target drop when \code{NULL}. The profile search uses the fitted
-surrogate curvature to choose direction-specific starting distances, so very
-flat directions can be checked beyond \code{surrogateProfileMaxStep} when
-the surrogate itself predicts that a larger distance is needed. If the
-observed profile is still flatter than the fitted surrogate predicted, a
-small magnitude-adjusted expansion budget is used before reporting a missed
-target. \code{parsteps} may be supplied internally to keep stepwise-fixed
-raw parameters fixed while estimating uncertainty for the remaining
-parameters; existing fixed indices from a previous uncertainty calculation
-are retained when no new \code{parsteps} are supplied. It is stan-only,
-since only \code{\link{stanoptimis}} has a stepwise phase to inherit fixed
-parameters from, and is refused rather than ignored on a
-\code{ctJuliaFit}. \code{analyticHessian = FALSE} is julia-only and asks for
-the shared finite-difference Hessian instead of the engine's exact one.
-Hessian-based covariance construction first attempts the unmodified
-\code{solve(-hessian)} covariance and a Cholesky check. It warns when
-numerical repair is needed, such as positive-definite projection, ridge
-flooring of information eigenvalues, or fallback to \code{MASS::ginv};
-diagnostics are stored in
-\code{fit$stanfit$uncertainty$details$covariance}.
-Score-based methods use subject-level score contributions when there are
-at least two subjects; single-subject models warn and use case-level
-contributions. Score-based methods warn when there are fewer than ten
-independent subjects or no more score rows than raw parameters. Full
-bootstrap requires at least two subjects and warns below ten independent
-subjects. Bootstrap-style methods require at least two returned samples /
-refits.}
+\code{surrogateNpoints} is \code{NULL}, the surrogate uses at least
+\code{max(4 * npars, 50)} local directions; \code{surrogateProfile = TRUE}
+profiles every fitted surrogate direction until it reaches
+\code{surrogateProfileTargetDrop} (the surrogate's own target drop when
+\code{NULL}), going beyond \code{surrogateProfileMaxStep} where the
+surrogate predicts a flat direction needs it. \code{parsteps} keeps
+stepwise-fixed raw parameters fixed (stan only).
+\code{analyticHessian = FALSE} (julia only) asks for the finite-difference
+Hessian instead of the engine's exact one. A Hessian covariance that needs
+numerical repair -- positive-definite projection, ridge flooring, or
+\code{MASS::ginv} -- warns, with diagnostics in
+\code{$uncertainty$details$covariance}.}
 
 \item{verbose}{Integer controlling progress detail.}
 
@@ -274,8 +117,8 @@ The fit, of the class it came in as. For every method except
 \code{'sample'}: the resolved method, draw strategy, sample count, cores,
 and non-internal controls are recorded in
 \code{fit$stanfit$uncertainty$settings} for a \code{ctStanFit} and in
-\code{fit$uncertainty$settings} for a \code{ctJuliaFit}; see the backend
-differences above for the other slots each writes. For
+\code{fit$uncertainty$settings} for a \code{ctJuliaFit}; see Backend
+differences for the other slots each writes. For
 \code{uncertainty = 'sample'}: a \code{ctJuliaFit} with
 \code{estimate$rawposterior} holding the draws and \code{$sample} holding
 the chain diagnostics (split R-hat and effective sample size per
@@ -287,11 +130,11 @@ sampled), exactly as \code{ctFit(optimize = FALSE)} returns.
 \description{
 Recomputes the approximate raw-parameter uncertainty for an optimized
 \code{\link{ctFit}} object and refreshes the approximate raw-parameter
-samples. This is the entry point for both backends; \code{ctFit} itself
-calls it to finish an optimized fit. \code{\link{ctOptimUncertainty}} is
-the previous name, kept for fits written against ctsem 3.11.1; the two are
-otherwise identical except that only this one offers
-\code{uncertainty = 'sample'}.
+samples, or samples the posterior by Markov chain Monte Carlo. This is the
+entry point for both backends; \code{ctFit} itself calls it to finish an
+optimized fit. \code{\link{ctOptimUncertainty}} is the previous name, kept
+for code written against ctsem 3.11.1; the two are otherwise identical
+except that only this one offers \code{uncertainty = 'sample'}.
 }
 \details{
 Every method except \code{'sample'} writes \emph{pseudo-posterior} draws to
@@ -300,17 +143,17 @@ log-posterior surface around the optimum, not a sample from the posterior
 itself, and the point estimate stays at the optimum throughout.
 \code{uncertainty = 'sample'} is the other thing, genuine posterior draws
 by Markov chain Monte Carlo, and it is the one method that moves the point
-estimate: \code{$estimate$raw} (or \code{$stanfit$rawest}) becomes the
-posterior mean, the way \code{ctFit(optimize = FALSE)} already reports a
-sampled fit. Everything downstream reads either kind of draw from the same
-slot, so the difference is recorded rather than visible in the shape of the
-result: a curvature-based fit carries \code{$uncertainty$settings}, a
-sampled one carries \code{$sample}, and every method except
-\code{'sample'} itself refuses a fit that already carries a posterior
-rather than replacing its draws with an approximation -- see
-\code{uncertainty = 'sample'} below for what re-sampling one does instead.
+estimate: \code{$estimate$raw} becomes the posterior mean, the way
+\code{ctFit(optimize = FALSE)} reports a sampled fit. Everything downstream
+reads either kind of draw from the same slot, so the difference is recorded
+rather than visible in the shape of the result: a curvature-based fit
+carries \code{$uncertainty$settings}, a sampled one carries \code{$sample}.
+Every method except \code{'sample'} refuses a fit that already carries a
+posterior rather than replacing its draws with an approximation;
+\code{'sample'} may be run again on a sampled fit, to draw more, or
+differently, from where it stands.
 
-To change only the number of draws, use \code{uncertainty='stored'}, which
+To change only the number of draws, use \code{uncertainty = 'stored'}, which
 redraws from the covariance the fit already carries and evaluates no model.
 }
 \section{Functions}{
@@ -322,10 +165,141 @@ respect; new code should prefer \code{ctFitUncertainty}, which is also
 where \code{uncertainty = 'sample'} is documented.
 
 }}
+\section{Methods}{
+
+\describe{
+\item{\code{'hessian'}}{The default: a normal approximation from the Hessian
+at the estimate -- exact on julia, which differentiates its own gradient,
+and by finite differences of the gradient on stan.}
+\item{\code{'surrogate'}}{Fits a local quadratic surrogate to log-posterior
+evaluations around the optimum, in coordinates whitened by the proposal
+covariance. Each direction is adjusted radially so its points land near an
+informative drop, and with \code{surrogateProfile = TRUE} every fitted
+curvature direction is then profiled out to the target drop.}
+\item{\code{'bootstrap'}, \code{'sandwich'}, \code{'opg'}}{Built from
+per-subject score contributions: one-step score bootstrap draws with
+Hessian bread, Hessian bread with score covariance meat, and the outer
+product of the scores. A single-subject model uses case-level
+contributions, with a warning; fewer than ten subjects, or no more score
+rows than parameters, also warn.}
+\item{\code{'fullbootstrap'}}{Resamples subjects and re-optimizes each
+resample from the estimate with mize L-BFGS. Stan only.}
+\item{\code{'is'}}{Adaptive importance sampling against the fit's own
+objective. Each raw parameter is first walked out on both sides of the
+mode, from 3 to 96 standard errors, with the other parameters at their
+conditional mode, and a proposal component is placed wherever that walk
+finds a tail the curvature does not show -- a skewed one, or one bending
+along a ridge, as a variance with few subjects often has. Rounds of
+\code{isitersize} draws from these multivariate t components then add
+components at the highest-weighted draws until the effective sample size
+reaches \code{isESS} and the Pareto k of the weights is below 0.7 (k needs
+the loo package). The effective size, k, the evaluations used and the
+parameters with a tail are recorded in
+\code{fit$uncertainty$details$importance_sampling}; k above 0.7 warns, and
+so does a parameter whose walk has not fallen off by 96 standard errors,
+which is what an improper posterior looks like. A rank deficient Hessian
+covariance is sampled in the directions it has curvature in, holding the
+rest at the estimate.
+
+On a fit whose random effects are integrated (\code{intoverpop =
+'laplace'} or \code{'augmented'}) the objective is the route's approximate
+marginal posterior, so \code{'is'} corrects the shape of the normal
+approximation but keeps the route's own approximation: where the Laplace
+approximation is biased -- random effects on variances, in nonlinear
+dynamics, or with non-Gaussian indicators -- \code{'is'} reproduces the
+bias, and \code{'sample'} is the method that removes it. Expect it to cost
+several times the fit.}
+\item{\code{'stored'}}{Computes nothing: redraws \code{finishsamples} normal
+draws from the covariance already on the fit, leaving the covariance, the
+Hessian and the recorded \code{method} untouched, and marks
+\code{$uncertainty$settings$redrawn = TRUE}. It warns if the existing draws
+came from \code{'is'} or a bootstrap, which normal draws from that
+covariance do not reproduce.}
+\item{\code{'sample'}}{Markov chain Monte Carlo; see the next section.
+\code{backend = 'julia'} only.}
+}
+Every method that produces draws aims for the same effective sample size
+unless told otherwise, 200: \code{minESS} for \code{'sample'} (of the worst
+parameter, since the 2.5\% and 97.5\% quantiles need it for each),
+\code{isESS} for \code{'is'}, and \code{target_ess} for
+\code{\link{ctLaplaceCorrect}} and \code{\link{ctParticleCorrect}} with
+\code{draws = 'imis'}. Each warns when it ends short of its target.
+}
+
+\section{Sampling (\code{uncertainty = 'sample'})}{
+
+Draws from the posterior by Markov chain Monte Carlo, through the same
+runner \code{ctFit(backend = 'julia', optimize = FALSE)} uses, and with the
+same defaults. Its settings are entries of \code{control}, and
+\code{draws} and \code{finishsamples} are not used: \code{chains} (4),
+\code{warmup} (200), \code{draws} (800, after warmup), \code{seed},
+\code{saveEffects} (\code{FALSE}; whether to keep every draw of every random
+effect rather than only their summary -- either way they are each
+parameter's deviation from its population value on the raw scale, per
+subject or group, in \code{fit$sample$effects}, \code{effect_mean} and
+\code{effect_sd}) and \code{processes} (\code{TRUE}).
+
+\emph{What is sampled} is what the fit's \code{intoverpop} says, read as
+\code{ctFit(optimize = FALSE)} reads it: the filter's marginal for
+\code{'augmented'}, the Laplace marginal for a fit that named
+\code{'laplace'} (an approximate posterior whose dimension does not grow
+with the number of subjects), and the joint posterior over population
+parameters \emph{and} every subject's random effects for \code{'none'} or
+for a Laplace route that \code{intoverpop = 'auto'} chose, where the
+Laplace fit only places the chains. \code{control$intoverpop} overrides it
+in the same words: \code{'none'} for the joint posterior or
+\code{'laplace'} for the Laplace marginal on a Laplace fit;
+\code{'augmented'} needs a fit made that way, and an augmented fit takes
+nothing else. Missing TI predictor values that the fit imputed are sampled
+too, unless the fit's \code{optimcontrol$tipredMissing} or
+\code{control$tipredMissing} is \code{'impute'}.
+
+\emph{The kernel.} \code{control$sampler} chooses it for the joint
+posterior: \code{'saem'} (the default there) draws the random effects by
+SAEM's Metropolis-within-Gibbs sweeps and the parameters given them by NUTS,
+with moves that re-express the effects for each level's means and scales;
+\code{'nuts'} runs NUTS on the parameters and every random effect at once.
+Both draw the same posterior; SAEM's kernel was the more reliable and the
+faster in comparisons on variance and nested models, where NUTS on the
+joint vector mixes poorly. A marginal target is sampled by NUTS.
+\code{adapt_metric}, \code{adapt_effects} and \code{settleTol} belong to
+NUTS and are refused with SAEM's kernel. \code{control$placement} says
+where the chains start: \code{'saem'}, the default on the joint posterior,
+runs SAEM from the fit's estimate and starts each chain from SAEM's
+estimate and its draws of the random effects; \code{'fit'} starts them
+around the fit's own estimate, and is the only placement for a marginal
+target.
+
+\emph{When it stops.} A run stops once every parameter's effective sample
+size reaches \code{minESS} (200) and the chains' R-hat is below
+\code{rhatTarget} (1.01) -- \code{meanESS} adds a target for the average --
+within a budget of four times \code{draws} per chain, or \code{maxDraws}
+when given; \code{minESS = 0} takes exactly \code{draws}. A run that
+reaches its budget short of the target warns. \code{settleTol} ends warmup
+early once the metric stops moving (off by default). Lower targets give a
+quicker, approximate posterior, and say how approximate: a reported
+quantile's Monte Carlo error is about \code{1.96 * 2.1 / sqrt(ESS)}
+posterior sds at the 5\% and 95\% points and \code{1.96 * 1.25 / sqrt(ESS)}
+at the median, and chains whose means disagree by \code{d} posterior sds
+give an R-hat of about \code{sqrt(1 + d^2)}. So \code{minESS = 50,
+rhatTarget = 1.07} aims at about half a posterior sd at the centre and more
+in the tails, and the defaults at about a fifth at the centre and two
+fifths in the tails. Short runs are usually limited by whether the chains
+agree, so R-hat is the binding check.
+
+\emph{Processes.} With \code{processes = TRUE} the chains run in up to
+\code{cores} worker processes, each starting its own Julia session -- a
+fixed cost of some tens of seconds that a run much shorter than a minute
+does not recover -- and a worker runs its share of the chains in turn, so
+four chains on two cores run two at a time. \code{processes = FALSE}, or
+one core, keeps the chains in this session. \code{\link{ctJuliaKill}('workers')}
+releases the worker processes, which persist for the next call.
+}
+
 \section{Backend differences}{
 
 The methods are the same on both backends and the covariance they produce is
-comparable, but three things differ and are worth knowing before comparing
+comparable, but some things differ and are worth knowing before comparing
 output.
 
 \emph{Where the result is stored.} A \code{ctStanFit} comes back with
@@ -335,7 +309,7 @@ output.
 \code{fit$estimate$rawposterior} and \code{fit$uncertainty}. Both record the
 resolved settings in \code{$uncertainty$settings}. On both backends the
 draws, the covariance and the standard errors are labelled by raw parameter,
-so \code{fit$estimate$se['drift']} or
+as is \code{coef(fit)}, so \code{fit$estimate$se['drift']} or
 \code{apply(fit$estimate$rawposterior, 2, quantile)} reads without counting
 columns. The two backends spell the population-SD and correlation blocks
 differently (\code{popsd_x}/\code{rawcor_x__y} on julia,
@@ -353,15 +327,12 @@ negligible against the sharpest one is left out of the inversion rather
 than floored at \code{control$ridge}, so the parameters that carry it come
 back with no spread at all instead of a standard error of \code{1/ridge}.
 Floored, that number leaks into the parameters the data \emph{does}
-determine, and by an amount rounding decides: it can differ by a factor of a
-hundred between two fits that reach the same optimum.
-A direction with little curvature along which the likelihood itself is
-measured flat -- within the likelihood-ratio bar of 1.92 over four raw
-units on one side, following the ridge where it curves -- is treated the
-same way whether or not its curvature has yet decayed to negligible, since
-that depends on where along such a ridge the optimiser stopped.
-\code{$uncertainty$cov} records which directions were dropped, and
-\code{fit$identifiability} names the parameters.
+determine, by an amount rounding decides. A direction with little
+curvature along which the likelihood itself is measured flat -- within the
+likelihood-ratio bar of 1.92 over four raw units on one side, following the
+ridge where it curves -- is treated the same way. \code{$uncertainty$cov}
+records which directions were dropped, and \code{fit$identifiability} names
+the parameters.
 
 \emph{Whether the intervals are as wide as the curvature allows.} A julia
 fit carries \code{fit$uncertainty$intervalcheck}: for each raw parameter,
@@ -370,43 +341,59 @@ width that parameter's own curvature supports. Their ratio is 1 when the
 parameter is separable from the rest and grows without bound as it stops
 being; anything past about 100 means the reported width comes from the
 entanglement rather than from the data, and will not repeat between runs.
-The same object answers the opposite question, which the ratio cannot:
 \code{$nullmass} is each coordinate's share of the directions left out of
 the inversion, and \code{$unidentified} names those with enough of it that
-their true asymptotic variance is infinite. Those get almost none of the
-variance the projected inverse has to give, so they would otherwise be
-reported as precisely estimated -- more precisely the more data there is.
-\code{summary()} reports their sd, interval and z as \code{NA}.
+their true asymptotic variance is infinite; \code{summary()} reports their
+sd, interval and z as \code{NA} rather than as precisely estimated.
 
-\emph{Backend-specific arguments.} \code{uncertainty='fullbootstrap'} and
+\emph{Backend-specific arguments.} \code{uncertainty = 'fullbootstrap'} and
 its \code{control$bootstrapFitCores} / \code{control$bootstrapTol}, and
 \code{control$parsteps}, are stan-only and are refused by name on a
-\code{ctJuliaFit}. \code{control$analyticHessian} is julia-only.
-\code{cores} means R worker processes on stan and engine threads on julia
-(see below). The IMIS proposal defaults also differ:
-\code{imisScaleInit = 1.1} and \code{imisTailScale = 1.1} on stan against
-\code{1.5} and \code{1.2} on julia. Both are measured, on different
-regimes: the narrower pair costs fewer evaluations to reach the target
-effective sample size on a well-identified fit, and the wider pair is what
-a small-sample posterior genuinely wider than the Hessian curvature needs
-to be seen at all -- a proposal no wider than the curvature cannot correct
-a posterior wider than it -- which is the setting the julia default was
-raised for. Set them explicitly to compare the two. On either backend, a
-proposal covariance with a raw direction the data does not identify -- an
-individually varying parameter with no individual differences behind it is
-the usual cause -- is sampled in the identified subspace only, holding that
-direction at the estimate rather than manufacturing an importance weight
-for a density that is not one; see \code{uncertainty='is'} below.
-
-Transformed-parameter summaries are refreshed on stan and not on julia,
-which has no parameter-matrix reconstruction through
-\code{rstan::constrain_pars}; the raw-scale covariance and draws are
-complete on both.
+\code{ctJuliaFit}; \code{uncertainty = 'sample'} and
+\code{control$analyticHessian} are julia-only. \code{cores} means R worker
+processes on stan and engine threads on julia. The IMIS proposal defaults
+also differ: \code{imisScaleInit = 1.1} and \code{imisTailScale = 1.1} on
+stan against \code{1.5} and \code{1.2} on julia, the wider pair being what
+a small-sample posterior wider than the Hessian curvature needs to be seen
+at all. Set them explicitly to compare the two. Transformed-parameter
+summaries are refreshed on stan and not on julia; the raw-scale covariance
+and draws are complete on both.
 }
 
+\examples{
+# Redraw from the covariance already on the fit, evaluating no model:
+fit <- ctFitUncertainty(ctstantestfit, uncertainty = 'stored',
+  finishsamples = 200)
+fit$stanfit$uncertainty$settings$redrawn
+
+\donttest{
+# A local quadratic surrogate rather than the Hessian
+fit <- ctFitUncertainty(ctstantestfit, uncertainty = 'surrogate')
+summary(fit)$popmeans
+
+# Needs a working julia backend, so the example is inert where Julia is
+# absent -- including on CRAN, whose check machines have none.
+if (isTRUE(ctJuliaStatus()$available)) {
+  model <- ctModel(type = 'ct', manifestNames = 'Y1', latentNames = 'eta1',
+    LAMBDA = matrix(1))
+  model$pars$indvarying <- FALSE
+  jfit <- ctFit(ctstantestdat, model, backend = 'julia', cores = 1,
+    priors = TRUE)
+  # Posterior draws by MCMC, with lower targets for a quick look
+  jfit <- ctFitUncertainty(jfit, uncertainty = 'sample', cores = 1,
+    control = list(chains = 2, minESS = 50, rhatTarget = 1.05))
+  jfit$sample
+  # Julia keeps running between calls, holding what it has compiled;
+  # this ends it.
+  ctJuliaKill("session")
+}
+}
+}
 \seealso{
 \code{\link{ctFitAddSamples}} is the deprecated stan-only
 predecessor of \code{uncertainty='stored'}. \code{\link{ctFit}} for
 \code{optimize = FALSE}, which reaches \code{uncertainty = 'sample'}
 through the same pipeline that placed the fit being sampled.
+\code{\link{ctLaplaceCheck}} and \code{\link{ctParticleLik}} measure the
+approximations a julia fit's likelihood makes.
 }

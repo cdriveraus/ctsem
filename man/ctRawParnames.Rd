@@ -8,7 +8,7 @@
 ctRawParnames(x, substrings = c("pop_", "popsd"))
 }
 \arguments{
-\item{x}{ctStanFit object}
+\item{x}{ctStanFit object, sampled (\code{ctFit(backend = 'stan', optimize = FALSE)}).}
 
 \item{substrings}{vector of character strings, parameter names of the stan model
 containing any of these strings will be returned. Useful strings may be 'pop_' for
@@ -43,7 +43,7 @@ ssmodel <- ctModel(type='ct', n.latent=2, n.manifest=1,
  DIFFUSION=matrix(c(0, 0, 0, "diffusion"), ncol=2, nrow=2))
 
 #fit
-ssfit <- ctFit(datalong, ssmodel, optimize=FALSE,
+ssfit <- ctFit(datalong, ssmodel, optimize=FALSE, priors=TRUE,
   sampleControl=list(iter=2, chains=1))
 ctRawParnames(ssfit,substrings=c('pop_','popsd'))
 }

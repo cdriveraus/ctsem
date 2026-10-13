@@ -151,7 +151,7 @@
   ok <- TRUE
 
   # The pool outlives this call by design (see above), so nothing in this file
-  # stops it after an ordinary fit. What does: `ctJuliaWorkersStop()`, for a
+  # stops it after an ordinary fit. What does: `ctJuliaKill('workers')`, for a
   # caller that wants the memory back sooner, and this finalizer -- registered
   # once, on the environment this file already uses to remember what it
   # changed -- which releases it when the R session ends, so a long-lived host
@@ -365,26 +365,3 @@
   out
 }
 
-#' Release the warmed sampling worker pool
-#'
-#' \code{\link{ctFitUncertainty}} with \code{uncertainty = 'sample'} and
-#' \code{ctFit(backend = 'julia', optimize = FALSE)} warm a pool of background
-#' R processes ahead of a multi-chain sample, each
-#' one compiled for the model's shape before its chain starts, so the compile
-#' cost overlaps the optimisation that runs first rather than being paid
-#' serially once sampling begins. That pool is deliberately left running
-#' afterwards: \pkg{future}'s \code{multisession} plan persists across calls,
-#' so a later multi-chain sample reuses the same warmed workers instead of
-#' recompiling. Each worker holds its own Julia session, so it is also memory a
-#' caller may want back sooner than the end of the R session, when it is
-#' released automatically.
-#'
-#' Calling this in the middle of a sample that is still using the pool stops
-#' the workers that sample is running in.
-#'
-#' @return \code{NULL}, invisibly.
-#' @seealso \code{\link{ctFitUncertainty}}, \code{\link{ctJuliaSetup}}
-#' @export
-ctJuliaWorkersStop <- function() {
-  invisible(.ctBackendWarmStop(NULL))
-}

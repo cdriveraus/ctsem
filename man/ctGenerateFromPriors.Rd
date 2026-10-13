@@ -77,5 +77,8 @@ and is deprecated with it.
 \donttest{
 #generate and plot samples from prior predictive
 priorpred <- ctGenerateFromPriors(cts = ctstantestfit,cores=2,nsamples = 50)
+# backend = 'auto' generates with julia where it is available. Julia keeps
+# running between calls, holding what it has compiled; this ends it.
+if (isTRUE(ctJuliaStatus()$available)) ctJuliaKill("session")
 }
 }

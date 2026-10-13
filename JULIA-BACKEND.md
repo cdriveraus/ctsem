@@ -134,18 +134,20 @@ accessor (`.ctFitModelObject`, `.ctFitLongData`, `.ctFitIdMap`,
   `ctPredictTIP()`, `ctResiduals()`, `ctACFresiduals()`,
   `ctExtract(subjectMatrices=TRUE)`, `plot()`.
 - **Generation**: `ctGenerateFromFit()`, and with it `ctPostPredData()`,
-  `ctPostPredPlots()`, `ctFitCovCheck()`.
+  `ctPostPredPlots()`, `ctFitCheckCov()`.
 
 **Not supported**: `backend='julia'` refuses, rather than silently ignoring,
-variational Bayes (`vb=TRUE`), data generation through the fit call
-(`gendata=TRUE`), Stan compilation controls (`stanmodeltext`, `compileArgs`,
-`forcerecompile`), manifest types beyond continuous/binary/ordinal/count/censored
-(`manifesttype` outside `0:4`), and `intoverstates=FALSE` together with
-`intoverpop='laplace'`. Also unsupported, without a hard refusal:
-`fullbootstrap` uncertainty, `summary(priorcheck=)`
-(accepted and ignored — it compares posteriors against the *Stan* model's
-prior block), and the prior/posterior-density, trace and interval panels of
-`plot()`. A weakly identified model can still leave folds of `ctLOO()`, or two
+data generation through the fit call (`gendata=TRUE`), Stan compilation
+controls (`stanmodeltext`, `compileArgs`), `savescores` and
+`savesubjectmatrices` (computed after the fit instead), manifest types beyond
+continuous/binary/ordinal/count/censored (`manifesttype` outside `0:4`),
+`covmattransform='rawcorr_indep'`, `intoverstates=FALSE` together with
+`intoverpop='laplace'`, `fullbootstrap` uncertainty, and
+`summary(priorcheck = TRUE)` given explicitly (it compares posteriors against
+the *Stan* model's prior block; the default is accepted). `forcerecompile` is
+honoured: it compiles the model's state-dependent expressions. The
+prior/posterior-density, trace and interval panels of `plot()` are refused by
+name. `vb` is gone from both backends. A weakly identified model can still leave folds of `ctLOO()`, or two
 backends, at raw parameters several units apart for a likelihood difference of
 a percent; the julia optimiser's own defences are its Newton finish and
 certification, the stall retries (`optimcontrol$stallretries`) and opt-in
@@ -207,7 +209,7 @@ Three things are worth knowing:
 Intervals appear only when earned: a fit built with `optimcontrol$estonly=TRUE`
 has one "sample", and the interval columns are omitted rather than filled with a
 zero-width interval that would read as certainty. An ordinary fit has 1000
-draws, because `ctFit()` finishes with `ctOptimUncertainty()`.
+draws, because `ctFit()` finishes with `ctFitUncertainty()`.
 
 ---
 
@@ -263,7 +265,7 @@ re-materialized every model matrix for every draw. Stan was faster for a
 structural reason rather than a clever one — it constrains its draws *once*,
 at fit time, and `summary()` reads the cached `transformedpars` — and the fix
 was to do the same. `ctFit()` now stores the constrained draws on the fit, and
-`ctOptimUncertainty()` refreshes them when it changes the posterior; the cache
+`ctFitUncertainty()` refreshes them when it changes the posterior; the cache
 carries the draws it was built from, so it is checked rather than trusted.
 
 That moves the cost rather than removing it: the constrain step is about
@@ -332,7 +334,7 @@ about ten seconds in Julia compiling the whole reverse pass for dual numbers,
 and it is paid once per model shape per session "—" so a single fit in a fresh
 session is slower, and everything after it is an order of magnitude faster. It
 is announced (`Computing exact Hessian`) rather than left as a mysterious pause,
-and `ctOptimUncertainty(control = list(analyticHessian = FALSE))` returns to the
+and `ctFitUncertainty(control = list(analyticHessian = FALSE))` returns to the
 finite difference. If the engine cannot differentiate at a point, the fallback
 is automatic and warned about, because a worse covariance beats no fit.
 

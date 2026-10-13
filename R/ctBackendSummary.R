@@ -135,6 +135,27 @@
   unlist(ctFitgetparnamesfromraw(fit))
 }
 
+# A raw parameter vector labelled by parameter, as the uncertainty slots
+# already are; what coef() returns on both backends. Left unnamed rather than
+# mislabelled if the names cannot be matched up.
+.ctFitNameRaw <- function(fit, raw) {
+  raw <- as.numeric(raw)
+  nms <- tryCatch(.ctFitRawParNames(fit), error = function(e) NULL)
+  if (length(nms) == length(raw)) names(raw) <- nms
+  raw
+}
+
+# The same for the raw covariance vcov() returns; NULL means the fit carries
+# no uncertainty, which is said rather than returned.
+.ctFitNameRawCov <- function(fit, cv) {
+  if (is.null(cv)) stop("This fit carries no uncertainty; ctFitUncertainty(fit) ",
+    "computes it.", call. = FALSE)
+  cv <- as.matrix(cv)
+  nms <- unname(tryCatch(.ctFitRawParNames(fit), error = function(e) NULL))
+  if (length(nms) == nrow(cv)) dimnames(cv) <- list(nms, nms)
+  cv
+}
+
 # Label the raw-scale uncertainty fields -- the draws, their covariance, and the
 # standard errors read off its diagonal -- with the raw parameter names, so that
 # `fit$estimate$se` or `apply(fit$estimate$rawposterior, 2, quantile)` says which
@@ -1716,7 +1737,8 @@ ctBackendParMatrices <- function(fit, raw = NULL, tipreds = NULL, state = NULL,
   }
   # The thresholds are the ones `.ctSampleWarn()` warns at, so the summary and
   # the fit-time warning cannot disagree about whether a run failed.
-  bad <- (is.finite(worst) && worst > 1.01) ||
+  rhatmax <- .ctSampleRhatCeiling(fit$sample)
+  bad <- (is.finite(worst) && worst > rhatmax) ||
     (!is.na(divergent) && divergent > 0L)
   if (bad) {
     # Not "these are not posterior summaries": a run can mix perfectly in the
@@ -1724,7 +1746,7 @@ ctBackendParMatrices <- function(fit, raw = NULL, tipreds = NULL, state = NULL,
     # commonly does. The reader is sent to the column rather than told to
     # discard the table.
     note <- paste0(note, " The chains have not converged, so any estimate with ",
-      "an R-hat above 1.01 is not a posterior summary. See fit$sample.")
+      "an R-hat above ", rhatmax, " is not a posterior summary. See fit$sample.")
   } else if (is.finite(fewest) && fewest < .ctSampleEssFloor(fit$sample)) {
     note <- paste0(note, " Too few effective draws for reliable intervals.")
   }

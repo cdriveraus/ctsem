@@ -165,18 +165,6 @@
     stringsAsFactors = FALSE)
 }
 
-# The field holding a level's RAWPOPVAR, by level name; the subject level when
-# the name is NULL or the subject id.
-#' @keywords internal
-.ctModelRawPopVarField <- function(model, level = NULL) {
-  levels <- .ctModelRawPopVarLevels(model)
-  if (is.null(level)) return("RAWPOPVAR")
-  hit <- match(level, levels$level)
-  if (is.na(hit)) stop("'", level, "' is not an id level of this model.",
-    call. = FALSE)
-  levels$field[hit]
-}
-
 # Keep a RAWPOPVAR in step with the parameters that are varying now.
 #
 # `indvarying` can change after `ctModel()` returns -- setting it directly is
@@ -216,11 +204,6 @@
 #' @keywords internal
 .ctModelRawPopVarValue <- function(x) {
   suppressWarnings(as.numeric(as.character(x)))
-}
-
-#' @keywords internal
-.ctModelRawPopVarFree <- function(x) {
-  is.na(.ctModelRawPopVarValue(x)) & !is.na(x) & nzchar(as.character(x))
 }
 
 # What a matrix says about the pair `a`, `b`: the diagonal for one parameter,

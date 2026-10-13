@@ -924,7 +924,7 @@ T0VARredundancies <- function(ctm) {
 #'
 #'   #generate data
 #'   newdat <- ctGenerate(ctmodelobj = gm,n = 1,burnin = 2,
-#'     dtmat<-rbind(c(rep(.5,8),3,rep(.5,Tpoints-9))))
+#'     dtmat=rbind(c(rep(.5,8),3,rep(.5,Tpoints-9))))
 #'   newdat[,'id'] <- i #set id for each subject
 #'   newdat <- cbind(newdat,age[i]) #include time independent predictor
 #'   if(i ==1) {
@@ -2450,7 +2450,7 @@ ctFit<-function(datalong, model, stanmodeltext=NA, iter=1000, intoverstates=TRUE
     # genuinely live output, `optimcontrol$callback` is called while the fit
     # runs and can draw whatever it likes.
     if(isTRUE(fit) && !identical(plot, FALSE) && !is.null(juliafit$optim$trace)) {
-      try(ctTracePlot(juliafit), silent=TRUE)
+      try(print(ctTracePlot(juliafit)), silent=TRUE)
     }
     return(juliafit)
   }

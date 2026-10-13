@@ -1,6 +1,10 @@
 #' Cross validation for ctsem fits: K fold by refitting, or PSIS for Laplace fits
 #'
-#' @param fit ctStanfit object
+#' Estimates out-of-sample predictive performance, by refitting the model with
+#' each fold of the data held out in turn or, for a julia Laplace fit, by
+#' Pareto-smoothed importance sampling without refitting.
+#'
+#' @param fit A fit from \code{\link{ctFit}}, on either backend.
 #' @param folds Number of cross validation splits to use -- 10 folds implies that the
 #' model is re-fit 10 times, each time to a data set with 1/10 of the observations randomly removed.
 #' @param cores Number of processor cores to use.
@@ -25,7 +29,7 @@
 #'   \pkg{loo} package. The K-fold arguments \code{folds}, \code{parallelFolds},
 #'   \code{tol}, \code{keepfirstobs}, \code{leaveOutN}, \code{refit} and
 #'   \code{casewiseApproximation} mean nothing to it and are refused if given.
-#' @param ndraws Number of importance sampling draws for \code{method = 'psis'}.
+#' @param nsamples Number of importance sampling draws for \code{method = 'psis'}.
 #'
 #' @details Works for \code{backend='julia'} fits as well as stan ones. There,
 #' a held-out row is withheld by setting its manifest observations to missing
@@ -35,7 +39,7 @@
 #' \code{parallelFolds = TRUE} runs up to \code{cores} folds at once, each in a
 #' background R session with a one-thread Julia, started and compiled for the
 #' model before the first fold (it needs the \pkg{future} package; the
-#' sessions persist for the next call, and \code{\link{ctJuliaWorkersStop}}
+#' sessions persist for the next call, and \code{\link{ctJuliaKill}('workers')}
 #' releases them). Without it the folds run one at a time on \code{cores}
 #' threads. Folds are separate fits, so they gain more from processes than
 #' from threads, except where each fold takes only seconds and starting the
@@ -133,7 +137,7 @@
 ctLOO <- function(fit, folds = 10, cores = 2, parallelFolds = FALSE, tol = 1e-5,
   subjectwise = ifelse(length(unique(.ctFitRowSubject(fit))) >= folds, TRUE, FALSE),
   keepfirstobs = FALSE, leaveOutN = NA, refit = TRUE, casewiseApproximation = FALSE,
-  method = c("kfold", "psis"), ndraws = 500) {
+  method = c("kfold", "psis"), nsamples = 500) {
 
   method <- match.arg(method)
   if (identical(method, "psis")) {
@@ -151,11 +155,11 @@ ctLOO <- function(fit, folds = 10, cores = 2, parallelFolds = FALSE, tol = 1e-5,
         " or use method = 'kfold'.", call. = FALSE)
     }
     if (missing(subjectwise)) subjectwise <- TRUE
-    return(.ctBackendLOOPsis(fit, subjectwise = subjectwise, ndraws = ndraws,
+    return(.ctBackendLOOPsis(fit, subjectwise = subjectwise, ndraws = nsamples,
       cores = cores))
   }
-  if (!missing(ndraws)) {
-    stop("ndraws is used only by method = 'psis'.", call. = FALSE)
+  if (!missing(nsamples)) {
+    stop("nsamples is used only by method = 'psis'.", call. = FALSE)
   }
 
   if(is.na(as.integer(folds))) stop('Folds must be an integer')
@@ -760,7 +764,7 @@ ctLOO <- function(fit, folds = 10, cores = 2, parallelFolds = FALSE, tol = 1e-5,
   }
   ndraws <- suppressWarnings(as.integer(ndraws)[1L])
   if (is.na(ndraws) || ndraws < 50L) {
-    stop("ndraws must be a whole number of at least 50.", call. = FALSE)
+    stop("nsamples must be a whole number of at least 50.", call. = FALSE)
   }
   spec <- .ctBackendSpec(fit)
   # The Laplace posterior is what the draws are corrected to, so they are

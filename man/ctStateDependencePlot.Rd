@@ -10,7 +10,7 @@ ctStateDependencePlot(
   extent = "data",
   gridsize = 25,
   nsamples = 20,
-  probs = c(0.025, 0.5, 0.975),
+  quantiles = c(0.025, 0.5, 0.975),
   state = "asymptotic",
   tipreds = NULL,
   tolerance = 1e-06,
@@ -31,7 +31,7 @@ T0MEANS, or supply a numeric range of length two.}
 \item{nsamples}{Posterior draws for the interval, or 1 for the point
 estimate alone.}
 
-\item{probs}{Three quantiles: lower ribbon, line, upper ribbon.}
+\item{quantiles}{Three quantiles: lower ribbon, line, upper ribbon.}
 
 \item{state}{Where the other latent processes are held: \code{'asymptotic'},
 \code{'mean'}, \code{'T0MEANS'}, or a numeric state.}
@@ -90,6 +90,9 @@ if (isTRUE(ctJuliaStatus()$available)) {
 
   fit <- ctFit(datalong, model, backend = 'julia', cores = 1, verbose = 0)
   ctStateDependencePlot(fit, along = 'eta2', gridsize = 11, nsamples = 5)
+  # Julia keeps running between calls, holding what it has compiled;
+  # this ends it.
+  ctJuliaKill("session")
 }
 }
 }

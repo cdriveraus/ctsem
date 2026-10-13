@@ -18,6 +18,10 @@ ctCollapse(inarray, collapsemargin, collapsefunc, plyr = TRUE, ...)
 
 \item{...}{additional parameters to pass to collapsefunc.}
 }
+\value{
+An array (or vector) with the \code{collapsemargin} dimensions
+  removed, holding \code{collapsefunc} applied over them.
+}
 \description{
 ctCollapse
 Easily collapse an array margin using a specified function.

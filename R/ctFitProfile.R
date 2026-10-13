@@ -59,7 +59,7 @@
 #' others at each, and reports what the likelihood does. This answers the
 #' identification question directly rather than through the curvature at the
 #' estimate, which on a flat direction measures the transform rather than the
-#' data -- see the note in \code{ctOptimUncertainty} on flat directions.
+#' data -- see the note in \code{\link{ctFitUncertainty}} on flat directions.
 #'
 #' Each point is a constrained optimisation, so a profile can discover that the
 #' fit was not at a maximum. When that happens the run stops and the better
@@ -90,7 +90,7 @@
 #'   sessions, walks them at once, each in a background R session with a
 #'   one-thread Julia, started and compiled for the model first (it needs the
 #'   \pkg{future} package; the sessions persist for the next call, and
-#'   \code{\link{ctJuliaWorkersStop}} releases them). \code{TRUE} uses as many
+#'   \code{\link{ctJuliaKill}('workers')} releases them). \code{TRUE} uses as many
 #'   sessions as the fit's \code{cores}, so a one-core fit walks in this
 #'   session. The walks are
 #'   independent, so the profile is the same either way, except that with
@@ -106,10 +106,22 @@
 #'
 #' @examples
 #' \donttest{
+#' # Needs a working julia backend, so the example is inert where Julia is
+#' # absent -- including on CRAN, whose check machines have none.
 #' if (isTRUE(ctJuliaStatus()$available)) {
-#'   # Profile only what the fit itself is unsure about.
-#'   # result <- ctFitProfile(fit, parameters = "flagged")
-#'   # print(result); plot(result)
+#'   model <- ctModel(type = 'ct', manifestNames = 'Y1', latentNames = 'eta1',
+#'     LAMBDA = matrix(1))
+#'   model$pars$indvarying <- FALSE
+#'   fit <- ctFit(ctstantestdat, model, backend = 'julia', cores = 1)
+#'
+#'   # Two named parameters; parameters = "flagged" profiles only those the
+#'   # fit's own diagnostics doubt, and NULL profiles every one.
+#'   result <- ctFitProfile(fit, parameters = c('drift_eta1', 'mm_Y1'))
+#'   print(result)
+#'   plot(result)
+#'   # Julia keeps running between calls, holding what it has compiled;
+#'   # this ends it.
+#'   ctJuliaKill("session")
 #' }
 #' }
 #' @export

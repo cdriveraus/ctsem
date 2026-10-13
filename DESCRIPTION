@@ -32,7 +32,6 @@ BugReports: https://github.com/cdriveraus/ctsem/issues
 Imports:
     cOde,
     data.table (>= 1.12.8),
-    datasets,
     Deriv,
     expm,
     ggplot2,
@@ -79,7 +78,6 @@ Suggests:
     collapse,
     qgam,
     mgcv,
-    papaja,
     future,
     future.apply,
     diagis,

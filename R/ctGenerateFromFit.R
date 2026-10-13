@@ -1,10 +1,10 @@
-#' Add a \code{$generated} object to ctstanfit object, with random data generated from posterior of ctstanfit object
+#' Generate data from a fitted model
 #'
-#' Add a \code{$generated} object to ctstanfit object, with random data
-#' generated from posterior of ctstanfit object.
+#' Adds a \code{$generated} object to a fit, holding random data generated
+#' from the fit's posterior (or its estimate), on either backend.
 #' \code{ctStanGenerateFromFit} is maintained as a backward-compatible alias.
 #'
-#' @param fit ctstanfit object
+#' @param fit A fit from \code{\link{ctFit}}, on either backend.
 #' @param nsamples Positive integer specifying number of datasets to generate. 
 #' @param fullposterior Logical indicating whether to sample from the full posterior (original nsamples) or the posterior mean.
 #' @param verboseErrors if TRUE, print verbose output when errors in generation encountered.
