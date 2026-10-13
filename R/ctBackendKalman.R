@@ -771,8 +771,6 @@ ctBackendKalman <- function(fit, subjects = "all", timestep = "asdata",
       "saveEffects=TRUE to generate from the draws.")
   }
 
-  generated <- array(NA_real_, dim = c(nsamples, nrows, nmanifest))
-  llrow <- matrix(0, nsamples, nrows)
   # Which route generates the states, and it is a choice rather than a
   # consequence.
   #
@@ -796,26 +794,48 @@ ctBackendKalman <- function(fit, subjects = "all", timestep = "asdata",
     isFALSE(fit$args$resolved$intoverstates) else
       !isTRUE(as.logical(intoverstates)[1L])
   nz <- if (statepath) .ctBackendStateDimension(fit) else 0L
+  # New subjects are drawn at each draw's own parameters, so a posterior draw
+  # carries its own population; the engine makes the deviations from these
+  # standard normals (`ctsem_laplace_population_deviations`).
+  neffects <- if (population) .ctGenerateEffectDimension(fit) else 0L
+
+  # Everything random is drawn here, with R's RNG, so `set.seed()` governs the
+  # result -- per draw the random effects, then the innovations, then the
+  # observation deviates, then the engine's own seed, the order
+  # `.ctGenerateJulia` draws them in -- and the draws are then generated in one
+  # engine call, side by side on up to `cores` threads. One call rather than
+  # one a draw, which cost a bridge round trip each, and three on a Laplace fit
+  # drawing new subjects.
+  normals <- if (neffects > 0L) matrix(NA_real_, neffects, nsamples)
+  z <- if (statepath) matrix(NA_real_, nz, nsamples)
+  base <- array(NA_real_, c(nmanifest, nrows, nsamples))
+  seeds <- integer(nsamples)
   for (iteration in seq_len(nsamples)) {
-    # The random effects, then the innovations, then the observation
-    # deviates, matching the order `.ctGenerateJulia` draws them in. New
-    # subjects are drawn at this iteration's parameters, so a posterior draw
-    # carries its own population.
-    drawneffects <- if (population) {
-      .ctGeneratePopulationEffects(fit, samples[iteration, ])
-    } else if (!is.null(fitted)) fitted[iteration, ]
-    z <- if (statepath) stats::rnorm(nz) else NULL
-    base <- matrix(stats::rnorm(nmanifest * nrows), nmanifest, nrows)
-    drawn <- if (statepath) {
-      .ctBackendGenerateStates(fit, samples[iteration, ], z, base,
-        effects = drawneffects)
-    } else .ctBackendGenerate(fit, samples[iteration, ], base,
-      effects = drawneffects)
-    generated[iteration, , ] <- t(matrix(as.numeric(drawn$Y), nmanifest, nrows))
-    llrow[iteration, ] <- as.numeric(drawn$llrow)
+    if (neffects > 0L) normals[, iteration] <- stats::rnorm(neffects)
+    if (statepath) z[, iteration] <- stats::rnorm(nz)
+    base[, , iteration] <- stats::rnorm(nmanifest * nrows)
+    seeds[iteration] <- sample.int(.Machine$integer.max, 1L)
   }
+  module <- .ctJuliaModule(spec$project)
+  # A zero-length vector deadlocks the bridge; a fit with no free parameter
+  # sends one unread element, as `.ctGenerateJulia` does.
+  values <- if (ncol(samples)) t(samples) else matrix(0, 1L, nsamples)
+  arguments <- list(.ctJuliaObjective(fit), .ctJuliaPut(values),
+    .ctJuliaPut(base), .ctJuliaVector(seeds))
+  if (statepath) {
+    arguments$z <- .ctJuliaPut(z)
+    arguments$transition <- .ctJuliaOr(spec$transition, "exponential")
+  }
+  if (neffects > 0L) arguments$normals <- .ctJuliaPut(normals)
+  if (!population && !is.null(fitted)) arguments$effects <- .ctJuliaPut(t(fitted))
+  drawn <- .ctBackendJuliaValue(.ctBackendWithMaxChunks(cores,
+    do.call(module$ctsem_generate_draws, arguments)))
+
+  generated <- aperm(array(as.numeric(drawn$Y), c(nmanifest, nrows, nsamples)),
+    c(3L, 2L, 1L))
   dimnames(generated) <- list(sample = seq_len(nsamples), row = seq_len(nrows),
     manifestNames)
+  llrow <- t(matrix(as.numeric(drawn$llrow), nrows, nsamples))
   llrow[llrow == 0] <- NA
   fit$generated <- list(Y = generated, llrow = llrow)
   fit

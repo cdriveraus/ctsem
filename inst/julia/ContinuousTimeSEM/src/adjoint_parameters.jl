@@ -162,7 +162,7 @@ function _ctsem_complex_transform_supports(transforms, indices::AbstractVector{I
     # `PARS[1,1] * pars.X` cannot be read-free by accident. Reads are recorded
     # structurally, so the actual numbers only need to avoid domain errors.
     probe = RecordingVector(collect(range(0.31, step=0.013, length=nall)))
-    pars = ComponentVector(probe, sp.parameter_axis)
+    pars = CTSEMPars(probe, sp.parameter_axis)
     state = reshape(collect(range(0.23, step=0.011, length=state_dim)), state_dim, 1)
     tdpreds = collect(range(0.19, step=0.007, length=ntdpred))
     predictors = _CTSEMProbePredictors()
@@ -425,7 +425,8 @@ untyped context, every call boxed its context and its result -- on a
 one-effect augmented model 90% of what a gradient allocated, per row.
 """
 function _ctsem_complex_group_pullback!(all_params_bar::AbstractVector,
-    state_bar::AbstractVector, transforms::Tuple, indices::AbstractVector{Int},
+    state_bar::AbstractVector, transforms::Union{Tuple,AbstractVector},
+    indices::AbstractVector{Int},
     supports::AbstractVector{Vector{Int}}, ctx::CTSEMRowContext,
     relevant::AbstractVector{Int}, dual_ctx, ti)
     isempty(indices) && return nothing
@@ -474,6 +475,17 @@ function _group_replay!(written, working, indices, transforms::Tuple, ctx, k::In
     return _group_replay!(written, working, indices, Base.tail(transforms), ctx, k + 1)
 end
 
+# A group of `CTSEMExpr`s is one type, so it is walked by index.
+function _group_replay!(written, working, indices, transforms::Vector{CTSEMExpr}, ctx,
+    k::Int)
+    @inbounds for j in k:length(transforms)
+        value = transforms[j](ctx)
+        written[j] = value
+        working[indices[j]] = value
+    end
+    return nothing
+end
+
 @inline _group_reverse_walk!(all_params_bar, state_bar, ::Tuple{}, indices, supports,
     saved, dual_ctx, dctx, ti, k::Int) = nothing
 
@@ -512,6 +524,138 @@ function _group_reverse_walk!(all_params_bar, state_bar, transforms::Tuple, indi
         indices, supports, saved, dual_ctx, dctx, ti, k - 1)
 end
 
+# An expression knows the states it reads, so it is differentiated against
+# those alone: a random effect's `10*state[k]` once rather than once per state.
+function _group_reverse_walk!(all_params_bar, state_bar, transforms::Vector{CTSEMExpr},
+    indices, supports, saved, dual_ctx, dctx, ti, k::Int)
+    @inbounds for m in k:-1:1
+        transform = transforms[m]
+        idx = indices[m]
+        cotangent = all_params_bar[idx]
+        all_params_bar[idx] = zero(cotangent)
+        if !iszero(cotangent)
+            if transform.form === _XFORM_SCALED_STATE
+                # d(c x)/dx = c, exactly what the seeded dual returns.
+                state_bar[transform.fa] += cotangent * transform.fc
+            else
+                V = eltype(state_bar)
+                n = length(transform.op)
+                if n <= 8
+                    _ctsem_expr_pullback!(all_params_bar, state_bar, transform, dctx, ti,
+                        cotangent, V, ntuple(_ -> zero(V), Val(8)),
+                        Base.setindex(ntuple(_ -> zero(V), Val(8)), one(V), transform.root))
+                else
+                    sc = _ctsem_expr_scratch(V)
+                    g = _ctsem_expr_buffer(sc.b, n)
+                    fill!(view(g, 1:n), zero(V))
+                    g[transform.root] = one(V)
+                    _ctsem_expr_pullback!(all_params_bar, state_bar, transform, dctx, ti,
+                        cotangent, V, _ctsem_expr_buffer(sc.a, n), g)
+                end
+            end
+        end
+        m > 1 && _set_dual_value!(dual_ctx, indices[m - 1], saved[m - 1])
+    end
+    return nothing
+end
+
+"""
+    _ctsem_expr_pullback!(all_params_bar, state_bar, e, dctx, ti, cotangent, V, x, g)
+
+Every partial of expression `e` at the values `dctx` holds, by one pass forward
+over its nodes and one back, in the record's scalar type `V`, each added times
+`cotangent` to the parameter, state and sampled TI predictor it belongs to.
+What the seeded duals (`_dual_param_derivative` and its siblings) compute, at
+one evaluation per input each; the two agree to rounding, not bit for bit,
+since a chain of products is multiplied in the other order. `x` holds the
+node values and `g` their adjoints, tuples or vectors at least as long as the
+expression; `g` arrives zero but for one at the root.
+"""
+function _ctsem_expr_pullback!(all_params_bar, state_bar, e::CTSEMExpr, dctx, ti,
+    cotangent, ::Type{V}, x, g) where {V}
+    n = length(e.op)
+    @inbounds for i in 1:n
+        op = e.op[i]
+        v = if op === _XC
+            convert(V, e.val[i])
+        elseif op === _XP
+            convert(V, ForwardDiff.value(dctx.pars[e.a[i]]))
+        elseif op === _XS
+            convert(V, ForwardDiff.value(dctx.state[e.a[i]]))
+        elseif op === _XTD
+            convert(V, ForwardDiff.value(dctx.tdpreds[e.a[i]]))
+        elseif op === _XTI
+            convert(V, ForwardDiff.value(dctx.tipreds[e.a[i]]))
+        elseif op >= _XADD
+            convert(V, _ctsem_expr_binary(op, x[e.a[i]], x[e.b[i]]))
+        elseif op === _XPOWI
+            convert(V, _ctsem_expr_powi(x[e.a[i]], e.b[i]))
+        else
+            convert(V, _ctsem_expr_unary(op, x[e.a[i]]))
+        end
+        x = _ctsem_expr_put(x, v, i)
+    end
+    @inbounds for i in n:-1:1
+        gi = g[i]
+        iszero(gi) && continue
+        op = e.op[i]
+        op === _XC && continue
+        if op === _XP
+            all_params_bar[e.a[i]] += cotangent * gi
+        elseif op === _XS
+            state_bar[e.a[i]] += cotangent * gi
+        elseif op === _XTI
+            j = e.a[i]
+            ti.sampled[j] && (ti.bar[j] += cotangent * gi)
+        elseif op === _XTD
+            continue
+        elseif op >= _XADD
+            a = e.a[i]
+            b = e.b[i]
+            xa = x[a]
+            xb = x[b]
+            da, db = _ctsem_expr_binary_partials(op, xa, xb, x[i])
+            g = _ctsem_expr_put(g, g[a] + gi * da, a)
+            g = _ctsem_expr_put(g, g[b] + gi * db, b)
+        else
+            a = e.a[i]
+            g = _ctsem_expr_put(g, g[a] + gi * _ctsem_expr_unary_partial(op, x[a], x[i], e.b[i]), a)
+        end
+    end
+    return nothing
+end
+
+# Partials of a binary node with operands `a`, `b` and value `y`.
+@inline function _ctsem_expr_binary_partials(op::UInt8, a, b, y)
+    op === _XMUL && return (b, a)
+    op === _XADD && return (one(a), one(b))
+    op === _XSUB && return (one(a), -one(b))
+    op === _XDIV && return (inv(b), -y / b)
+    op === _XPOW && return (b * a^(b - one(b)), iszero(a) ? zero(a) : y * log(a))
+    # min and max route to the operand they returned, as Base picks it.
+    op === _XMIN && return isless(b, a) ? (zero(a), one(b)) : (one(a), zero(b))
+    return isless(b, a) ? (one(a), zero(b)) : (zero(a), one(b))
+end
+
+# Partial of a unary node with operand `a` and value `y`; `n` is `_XPOWI`'s power.
+@inline function _ctsem_expr_unary_partial(op::UInt8, a, y, n::Int)
+    op === _XPOWI && return n * a^(n - 1)
+    op === _XNEG && return -one(a)
+    op === _XEXP && return y
+    op === _XLOG && return inv(a)
+    op === _XSQRT && return inv(2 * y)
+    op === _XABS && return signbit(a) ? -one(a) : one(a)
+    op === _XLOG1PEXP && return inv_logit(a)
+    op === _XINVLOGIT && return y * (1 - y)
+    op === _XLOGIT && return inv(a * (1 - a))
+    op === _XTANH && return 1 - y^2
+    op === _XLOG1P && return inv(1 + a)
+    op === _XEXPM1 && return y + 1
+    op === _XSIN && return cos(a)
+    op === _XCOS && return -sin(a)
+    return -inv(a^2)
+end
+
 """
     CTSEMDualContext
 
@@ -547,7 +691,7 @@ function CTSEMDualContext(::Type{T}, sp::EKFParameters, state_like) where {T}
     D = ForwardDiff.Dual{Nothing,T,1}
     zero_dual = D(zero(T), ForwardDiff.Partials((zero(T),)))
     data = fill(zero_dual, length(sp.mutables))
-    pars = ComponentVector(data, sp.parameter_axis)
+    pars = CTSEMPars(data, sp.parameter_axis)
     state = similar(state_like, D)
     fill!(state, zero_dual)
     return CTSEMDualContext{D,typeof(pars),typeof(state),T}(data, pars, state,

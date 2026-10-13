@@ -15,7 +15,7 @@
 # in. Writing one means consulting the documentation every time; reading someone
 # else's means counting.
 #
-# `ctParSpec()` builds the same string from named arguments. It is not a new
+# `ctPar()` builds the same string from named arguments. It is not a new
 # specification language -- the output is exactly the string the parser already
 # takes, and hand-written strings keep working -- it just moves the field names
 # from the documentation into the call.
@@ -24,11 +24,20 @@
 # to be called at all. These three specify the same parameter:
 #
 #   'mm||TRUE|0.5'                            the `|` form
-#   ctParSpec('mm', indvarying = TRUE, sdscale = 0.5)
+#   ctPar('mm', indvarying = TRUE, sdscale = 0.5)
 #   'mm, indvarying=TRUE, sdscale=0.5'        the named form, in the cell
 #
 # `.ctCellSpecToPipe()` below normalises the named form to the `|` form, so
 # there stays exactly one thing for the model parser to read.
+#
+# `indvarying` says at which levels of the id hierarchy a parameter varies.
+# TRUE is every level the model has and FALSE none; anything else is a list of
+# id names, 'cross||couple' or 'cross||person,couple'. That is also what the
+# model's `pars$indvarying` column holds, one value per row, however it was
+# set -- a cell, ctPar(), or the column edited directly. With a single id, TRUE
+# and the id's name mean the same. `.ctIndvaryingLevels()` is the one reader of
+# a value; `.ctResolveLevels()` (R/ctStanModel.R) turns the column into the
+# per-level logicals the rest of ctsem reads.
 
 #' Write a parameter specification
 #'
@@ -40,9 +49,16 @@
 #' @param transform Transform expression in terms of \code{param}, e.g.
 #'   \code{'exp(param)'}. Omitted leaves the default for that matrix, which
 #'   depends on the cell -- a variance, a drift diagonal and a mean all differ.
-#' @param indvarying Whether the parameter varies over subjects.
-#' @param sdscale Multiplier on the population standard deviation's prior. Only
-#'   meaningful when \code{indvarying} is TRUE.
+#' @param indvarying Where the parameter varies: \code{TRUE} at every level of
+#'   the model's \code{id} hierarchy, \code{FALSE} at none, or the names of the
+#'   levels it varies at. With \code{id = c('person', 'couple')} in
+#'   \code{\link{ctModel}}, \code{indvarying = 'couple'} gives a parameter
+#'   that differs between couples but not between the persons within one, and
+#'   \code{TRUE} is the same as \code{c('person', 'couple')}. With a single id
+#'   the two forms mean the same thing. The model's \code{pars$indvarying}
+#'   column holds the same values and may be edited directly.
+#' @param sdscale Multiplier on the population standard deviation's prior, at
+#'   every level where the parameter varies. Only meaningful when it varies.
 #' @param tipreds Time-independent predictors acting on this parameter: a
 #'   character vector of names for effects to estimate, e.g. \code{'age'} or
 #'   \code{c('age', 'sex')}. Naming any predictor switches the rest off for
@@ -68,14 +84,16 @@
 #'
 #'   \preformatted{
 #'   MANIFESTMEANS = matrix('mm||TRUE|0.5')
-#'   MANIFESTMEANS = matrix(ctParSpec('mm', indvarying = TRUE, sdscale = 0.5))
+#'   MANIFESTMEANS = matrix(ctPar('mm', indvarying = TRUE, sdscale = 0.5))
 #'   MANIFESTMEANS = matrix('mm, indvarying=TRUE, sdscale=0.5')
 #'   }
 #'
 #'   In the named form, fields are separated by commas (commas inside brackets
 #'   belong to the value, so \code{transform=pnorm(param, 0, 1)} is one field),
-#'   the parameter name comes first, and several predictors are given as
-#'   \code{tipreds=c(age, sex)}. A field name that is not one of the above is
+#'   the parameter name comes first, and several predictors or levels are given
+#'   as \code{tipreds=c(age, sex)} or \code{indvarying=c(person, couple)}; in
+#'   the \code{|} form they are separated by commas, as in
+#'   \code{'cross||person,couple'}. A field name that is not one of the above is
 #'   an error naming the nearest valid field, so a misspelling such as
 #'   \code{topreds=age} is refused rather than becoming part of a parameter
 #'   name. Comparisons are unaffected: a state-dependent cell may contain
@@ -83,15 +101,17 @@
 #'   inside a call belongs to the value it appears in.
 #'
 #' @examples
-#' ctParSpec('mm', indvarying = TRUE)
-#' ctParSpec('drift11', transform = '-exp(param)')
-#' ctParSpec('mm', indvarying = TRUE, tipreds = c('age', 'sex'))
+#' ctPar('mm', indvarying = TRUE)
+#' ctPar('drift11', transform = '-exp(param)')
+#' ctPar('mm', indvarying = TRUE, tipreds = c('age', 'sex'))
+#' # varying between couples only, in a model with id = c('person', 'couple')
+#' ctPar('cross', indvarying = 'couple')
 #'
 #' \dontrun{
 #' # These two models are identical.
 #' model <- ctModel(type = 'ct', n.latent = 1, n.manifest = 1,
 #'   LAMBDA = matrix(1),
-#'   MANIFESTMEANS = matrix(ctParSpec('mm', indvarying = TRUE, sdscale = 0.5)))
+#'   MANIFESTMEANS = matrix(ctPar('mm', indvarying = TRUE, sdscale = 0.5)))
 #'
 #' model <- ctModel(type = 'ct', n.latent = 1, n.manifest = 1,
 #'   LAMBDA = matrix(1),
@@ -100,19 +120,27 @@
 #'
 #' @seealso \code{\link{ctModel}} for the matrices these cells go in.
 #' @export
-ctParSpec <- function(name, transform = NA, indvarying = NA, sdscale = NA,
+ctPar <- function(name, transform = NA, indvarying = NA, sdscale = NA,
   tipreds = NULL) {
 
   if (missing(name) || length(name) != 1L || is.na(name) || !nzchar(name)) {
-    stop("ctParSpec() needs a parameter name.", call. = FALSE)
+    stop("ctPar() needs a parameter name.", call. = FALSE)
   }
   field <- function(x) {
     if (length(x) != 1L || is.na(x)) return("")
     if (is.logical(x)) return(if (x) "TRUE" else "FALSE")
     as.character(x)
   }
-  parts <- c(as.character(name), field(transform), field(indvarying),
-    field(sdscale))
+  # Several levels are one field, comma separated, as a cell writes them; which
+  # names the model's id actually has is checked when the model is built.
+  levels <- if (is.character(indvarying) && length(indvarying)) {
+    if (anyNA(indvarying) || any(grepl("[|,[:space:]]", indvarying))) {
+      stop("ctPar(indvarying=) takes TRUE, FALSE or the names of id levels.",
+        call. = FALSE)
+    }
+    paste(indvarying, collapse = ",")
+  } else field(indvarying)
+  parts <- c(as.character(name), field(transform), levels, field(sdscale))
 
   # NULL is "not stated"; character(0) is "no predictors act on this cell".
   # They are different cells -- the first leaves the model's default alone, the
@@ -122,7 +150,7 @@ ctParSpec <- function(name, transform = NA, indvarying = NA, sdscale = NA,
   tipredsgiven <- !is.null(tipreds)
   if (tipredsgiven) {
     if (!is.character(tipreds)) {
-      stop("ctParSpec(tipreds=) takes predictor names. An effect is estimated; ",
+      stop("ctPar(tipreds=) takes predictor names. An effect is estimated; ",
         "to fix one to a value, set it in the model's matrices afterwards.",
         call. = FALSE)
     }
@@ -141,7 +169,7 @@ ctParSpec <- function(name, transform = NA, indvarying = NA, sdscale = NA,
 
 # --- reading a cell, either way it was written -------------------------------
 #
-# The fields a cell can carry are exactly ctParSpec()'s arguments, in the order
+# The fields a cell can carry are exactly ctPar()'s arguments, in the order
 # the `|` form puts them.
 .ctCellSpecKeys <- c('name', 'transform', 'indvarying', 'sdscale', 'tipreds')
 
@@ -229,7 +257,7 @@ ctParSpec <- function(name, transform = NA, indvarying = NA, sdscale = NA,
         x, "'.", call. = FALSE)
     }
     args[[key]] <- switch(key,
-      indvarying = .ctCellSpecLogical(value, x),
+      indvarying = .ctCellSpecIndvarying(value),
       sdscale = .ctCellSpecNumeric(value, x),
       tipreds = .ctCellSpecNames(value),
       value)
@@ -238,7 +266,7 @@ ctParSpec <- function(name, transform = NA, indvarying = NA, sdscale = NA,
     stop("The parameter specification '", x, "' has no parameter name. It ",
       'comes first, before any named field.', call. = FALSE)
   }
-  do.call(ctParSpec, args)
+  do.call(ctPar, args)
 }
 
 # A misspelled field name is the common case, so say which field was probably
@@ -250,13 +278,67 @@ ctParSpec <- function(name, transform = NA, indvarying = NA, sdscale = NA,
   paste0(" Did you mean '", .ctCellSpecKeys[which.min(d)], "'?")
 }
 
-.ctCellSpecLogical <- function(value, x) {
-  out <- switch(toupper(value), 'TRUE' = TRUE, 'T' = TRUE, 'FALSE' = FALSE,
-    'F' = FALSE, NULL)
-  if (is.null(out)) {
-    stop("indvarying=", value, " in '", x, "' must be TRUE or FALSE.",
-      call. = FALSE)
+# `indvarying=TRUE`, `indvarying=couple` and `indvarying=c(person, couple)`.
+# A single TRUE or FALSE is the logical; anything else is level names, checked
+# against the model's id when the model is built (.ctIndvaryingLevels()).
+.ctCellSpecIndvarying <- function(value) {
+  out <- .ctCellSpecNames(value)
+  if (length(out) == 1L && toupper(out) %in% c('TRUE', 'T', 'FALSE', 'F')) {
+    return(toupper(out) %in% c('TRUE', 'T'))
   }
+  out
+}
+
+# The one reader of an `indvarying` field, however the cell was written: TRUE
+# (or "TRUE") is every level of the model's id, FALSE none, and anything else
+# names the levels -- a character vector, or one string with the names comma
+# separated as the `|` form writes them. Returns a logical per level, named by
+# level, subject first. `levels` is c(subjectIDname, groupIDnames).
+.ctIndvaryingLevels <- function(value, levels, where = NULL) {
+  if (is.character(value)) {
+    value <- trimws(unlist(strsplit(value, ',', fixed = TRUE)))
+    value <- value[nzchar(value)]
+    if (length(value) == 1L && toupper(value) %in% c('TRUE', 'T', 'FALSE', 'F')) {
+      value <- toupper(value) %in% c('TRUE', 'T')
+    }
+  }
+  if (is.logical(value)) {
+    if (length(value) != 1L || is.na(value)) {
+      stop("indvarying", if (!is.null(where)) paste0(" in ", where),
+        " must be TRUE, FALSE or the names of id levels.", call. = FALSE)
+    }
+    return(stats::setNames(rep(value, length(levels)), levels))
+  }
+  unknown <- setdiff(value, levels)
+  if (length(unknown)) {
+    stop("indvarying", if (!is.null(where)) paste0(" in ", where), " names ",
+      paste(unknown, collapse = ", "), ", which ",
+      if (length(unknown) > 1L) "are not id levels" else "is not an id level",
+      " of this model. Its levels are: ", paste(levels, collapse = ", "),
+      " (from ctModel's id argument).", call. = FALSE)
+  }
+  stats::setNames(levels %in% value, levels)
+}
+
+# What `pars$indvarying` holds for a resolved `.ctIndvaryingLevels()`: TRUE for
+# every level, FALSE for none, and otherwise the levels' names, comma
+# separated as a cell writes them.
+.ctIndvaryingValue <- function(levels) {
+  if (all(levels)) return(TRUE)
+  if (!any(levels)) return(FALSE)
+  paste(names(levels)[levels], collapse = ',')
+}
+
+# The `indvarying` column tidied: logical while every entry is TRUE or FALSE,
+# which is every single-level model; otherwise character, with TRUE and FALSE
+# written as such beside the level names.
+.ctIndvaryingColumn <- function(x) {
+  if (is.logical(x)) return(x)
+  text <- toupper(trimws(as.character(x)))
+  flag <- !is.na(x) & text %in% c('TRUE', 'T', 'FALSE', 'F')
+  if (all(flag | is.na(x))) return(ifelse(is.na(x), NA, text %in% c('TRUE', 'T')))
+  out <- trimws(as.character(x))
+  out[flag] <- ifelse(text[flag] %in% c('TRUE', 'T'), 'TRUE', 'FALSE')
   out
 }
 
@@ -312,7 +394,7 @@ ctParSpec <- function(name, transform = NA, indvarying = NA, sdscale = NA,
     }
     if (!nzchar(split[i])) next
     if (identical(key, 'name')) out$param <- split[i]
-    else if (identical(key, 'indvarying')) out$indvarying <- as.logical(split[i])
+    else if (identical(key, 'indvarying')) out$indvarying <- .ctCellSpecIndvarying(split[i])
     else if (identical(key, 'sdscale')) out$sdscale <- as.numeric(split[i])
     else out[[key]] <- split[i]
   }

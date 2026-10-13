@@ -129,9 +129,10 @@ mode.
         return nothing
     end
     running = zero(cot(1))
+    θ̄TH = θ̄ca.THRESHOLDS
     @inbounds for i in length(τ):-1:1
         running += cot(i)
-        θ̄ca.THRESHOLDS[row, i] += running
+        θ̄TH[row, i] += running
     end
     return nothing
 end
@@ -290,9 +291,10 @@ function _reverse_binary!(x̄::Vector{T}, P̄::Matrix{T}, θ̄ca,
             # variance is collapsing, which is where an optimiser most needs
             # the gradient to point somewhere sensible.
             score, _ = _category_score(a, record.y[j], τ, record.kinds[j])
+            θ̄Jy = θ̄ca.Jy
             @inbounds for i in 1:n
                 x̄[i] += score * λ[i]
-                θ̄ca.Jy[row, i] += score * x0[i]
+                θ̄Jy[row, i] += score * x0[i]
             end
             _intercept_cotangent!(θ̄ca, priorbar, record, j, row, prior, score, n)
             # A count's extra is excluded: it is not a parameter of
@@ -381,9 +383,10 @@ function _reverse_binary!(x̄::Vector{T}, P̄::Matrix{T}, θ̄ca,
                     vbar * J[3, 2 + i])
         end
 
+        θ̄Jy = θ̄ca.Jy
         @inbounds for i in 1:n
             x̄[i] += abar * λ[i]
-            θ̄ca.Jy[row, i] += abar * x0[i]
+            θ̄Jy[row, i] += abar * x0[i]
         end
         _intercept_cotangent!(θ̄ca, priorbar, record, j, row, prior, abar, n)
 
@@ -391,7 +394,7 @@ function _reverse_binary!(x̄::Vector{T}, P̄::Matrix{T}, θ̄ca,
         # twice: c's own cotangent below carries only the state and covariance
         # updates.
         @inbounds for i in 1:n
-            θ̄ca.Jy[row, i] += T(2) * bbar * c[i]
+            θ̄Jy[row, i] += T(2) * bbar * c[i]
             for jj in 1:n
                 P̄[i, jj] += bbar * λ[i] * λ[jj]
             end
@@ -406,7 +409,7 @@ function _reverse_binary!(x̄::Vector{T}, P̄::Matrix{T}, θ̄ca,
             for jj in 1:n
                 acc += P0[i, jj] * cbar[jj]
             end
-            θ̄ca.Jy[row, i] += acc
+            θ̄Jy[row, i] += acc
         end
     end
     # The intercepts read the prior, which is the state this cotangent now
@@ -427,9 +430,11 @@ Push the cotangent `μbar` of observation `j`'s intercept, `MANIFESTMEANS[row] +
 @inline function _intercept_cotangent!(θ̄ca, priorbar, record, j::Int, row::Int,
     prior, μbar, n::Int)
     θ̄ca.MANIFESTMEANS[row] += μbar
+    θ̄LAMBDA = θ̄ca.LAMBDA
+    θ̄Jy = θ̄ca.Jy
     @inbounds for i in 1:n
-        θ̄ca.LAMBDA[row, i] += μbar * prior[i]
-        θ̄ca.Jy[row, i] -= μbar * prior[i]
+        θ̄LAMBDA[row, i] += μbar * prior[i]
+        θ̄Jy[row, i] -= μbar * prior[i]
         priorbar[i] += μbar * (record.Lambda[j, i] - record.Jac[j, i])
     end
     return nothing

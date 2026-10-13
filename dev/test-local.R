@@ -11,11 +11,12 @@
 # and the core set of each area the change touches (tt_area(), listed in
 # dev/test-areas.csv), and add the area's extended set when the change is deep.
 #
-# Why a session rather than a script per file. Each R session loads the engine
-# and compiles every model shape its fits use that the package image does not
-# hold -- seconds for the structures the image captures, a minute or more for
-# the rest. A loop of `Rscript -e 'test_file(...)'` calls pays that for every
-# file; one session calling tt() repeatedly pays it once per shape.
+# Files run side by side in worker sessions, each an R session with its own
+# Julia engine: at least ten, or about 80% of the cores no other process is
+# using when that is more. That is a choice for the machine, not the package:
+# CTSEM_TEST_WORKERS (in ~/.Renviron, or for one run) or `workers =` on any of
+# the functions below sets it, and 1 runs everything in this session. A
+# single file runs here, where the engine is already warm.
 #
 # NOT_CRAN is set here because every julia test is skip_on_cran: without it a
 # run reports zero assertions and looks identical to a clean pass.
@@ -42,57 +43,158 @@ message("ready. tt('pattern'), tt_changed(), tt_fast(), tt_area('area')")
 .tt_files <- function() sort(basename(c(Sys.glob("tests/testthat/test-*.R"),
   Sys.glob("tests/testthat/test_*.R"))))
 
-.tt_run <- function(files) {
-  if (!length(files)) { message("no matching test files"); return(invisible(NULL)) }
-  res <- data.frame(file = files, secs = NA_real_, pass = NA_integer_,
-    fail = NA_integer_, skip = NA_integer_, stringsAsFactors = FALSE)
-  for (i in seq_along(files)) {
-    t0 <- Sys.time()
-    r <- try(testthat::test_file(file.path("tests/testthat", files[i]),
-      reporter = "silent"), silent = TRUE)
-    res$secs[i] <- as.numeric(difftime(Sys.time(), t0, units = "secs"))
-    if (inherits(r, "try-error")) {
-      cat(sprintf("%-44s %6.1fs  ABORTED\n", files[i], res$secs[i]))
-      next
-    }
-    d <- as.data.frame(r)
-    # A test that errors is a failure too. It was counted nowhere, so a file
-    # whose one test died before its first expectation printed as ZERO
-    # ASSERTIONS, the flag for a file that skipped, rather than as a failure --
-    # test_behavGenNLcor.R, whose stan compile fails on Windows, read that way.
-    errored <- sum(d$error)
-    res$pass[i] <- sum(d$passed); res$fail[i] <- sum(d$failed) + errored
-    res$skip[i] <- sum(d$skipped)
-    # A file reporting zero assertions is a failure, not a pass: it means every
-    # test skipped, which is what an unset NOT_CRAN or a missing julia looks
-    # like. The reason is printed with it, so a release-tier file skipping for
-    # the reason it states can be told from one that skipped for no good one.
-    flag <- if (res$fail[i] > 0) "FAIL" else
-      if (sum(d$passed) == 0) "ZERO ASSERTIONS" else "ok"
-    cat(sprintf("%-44s %6.1fs  pass=%-5d fail=%-3d skip=%-3d %s\n",
-      files[i], res$secs[i], sum(d$passed), res$fail[i], sum(d$skipped), flag))
-    bad <- d[d$failed > 0 | d$error > 0, "test"]
-    if (length(bad)) cat("    failing:", paste(bad, collapse = " | "), "\n")
-    if (identical(flag, "ZERO ASSERTIONS")) {
-      why <- unlist(lapply(r, function(t) vapply(t$results, function(e)
-        if (inherits(e, "expectation_skip")) conditionMessage(e) else NA_character_,
-        character(1))))
-      why <- unique(why[!is.na(why)])
-      if (length(why)) cat("    skipped:", paste(why, collapse = " | "), "\n")
-    }
-    flush.console()
+# One file, the same in this session or a worker: its counts, the names of the
+# tests that failed, and why it skipped if it ran nothing. A plain function of
+# its argument, because a worker receives it serialised.
+.tt_one <- function(file) {
+  t0 <- Sys.time()
+  r <- try(testthat::test_file(file.path("tests/testthat", file),
+    reporter = "silent"), silent = TRUE)
+  secs <- as.numeric(difftime(Sys.time(), t0, units = "secs"))
+  if (inherits(r, "try-error")) return(list(file = file, secs = secs, aborted = TRUE))
+  d <- as.data.frame(r)
+  why <- unlist(lapply(r, function(t) vapply(t$results, function(e)
+    if (inherits(e, "expectation_skip")) conditionMessage(e) else NA_character_,
+    character(1))))
+  # A test that errors is a failure too. It was counted nowhere, so a file
+  # whose one test died before its first expectation printed as ZERO
+  # ASSERTIONS, the flag for a file that skipped, rather than as a failure --
+  # test_behavGenNLcor.R, whose stan compile fails on Windows, read that way.
+  list(file = file, secs = secs, aborted = FALSE, pass = sum(d$passed),
+    fail = sum(d$failed) + sum(d$error), skip = sum(d$skipped),
+    bad = d[d$failed > 0 | d$error > 0, "test"], why = unique(why[!is.na(why)]))
+}
+
+.tt_report <- function(o) {
+  if (isTRUE(o$aborted)) {
+    cat(sprintf("%-44s %6.1fs  ABORTED\n", o$file, o$secs))
+    return(invisible())
   }
-  cat(sprintf("-- %d file(s), %.0fs, %d pass, %d fail\n", nrow(res),
-    sum(res$secs, na.rm = TRUE), sum(res$pass, na.rm = TRUE),
+  # A file reporting zero assertions is a failure, not a pass: it means every
+  # test skipped, which is what an unset NOT_CRAN or a missing julia looks
+  # like. The reason is printed with it, so a release-tier file skipping for
+  # the reason it states can be told from one that skipped for no good one.
+  flag <- if (o$fail > 0) "FAIL" else if (o$pass == 0) "ZERO ASSERTIONS" else "ok"
+  cat(sprintf("%-44s %6.1fs  pass=%-5d fail=%-3d skip=%-3d %s\n",
+    o$file, o$secs, o$pass, o$fail, o$skip, flag))
+  if (length(o$bad)) cat("    failing:", paste(o$bad, collapse = " | "), "\n")
+  if (identical(flag, "ZERO ASSERTIONS") && length(o$why))
+    cat("    skipped:", paste(o$why, collapse = " | "), "\n")
+  flush.console()
+}
+
+# How many worker sessions to run files in: at least ten, or about 80% of the
+# cores no other process is using when that is more -- a choice for this
+# machine, not the package. CTSEM_TEST_WORKERS, or `workers =`, overrides; 1
+# runs every file in this session, as the loop always did.
+.tt_workers <- function(nfiles) {
+  set <- suppressWarnings(as.integer(Sys.getenv("CTSEM_TEST_WORKERS", "")))
+  cores <- parallel::detectCores(logical = TRUE)
+  n <- if (!is.na(set) && set >= 1L) set else
+    max(10L, as.integer(floor(0.8 * (cores - .tt_busy_cores(cores)))))
+  max(1L, min(n, nfiles))
+}
+
+# Cores other processes are using now: the load average where there is one,
+# the processor load on Windows.
+.tt_busy_cores <- function(cores) {
+  busy <- if (.Platform$OS.type == "windows") {
+    pct <- suppressWarnings(as.numeric(tryCatch(system2("powershell",
+      c("-NoProfile", "-Command", shQuote(type = "cmd", paste("(Get-CimInstance Win32_Processor |",
+        "Measure-Object -Property LoadPercentage -Average).Average"))),
+      stdout = TRUE, stderr = FALSE), error = function(e) NA)))
+    cores * pct[1L] / 100
+  } else if (file.exists("/proc/loadavg")) {
+    as.numeric(strsplit(readLines("/proc/loadavg", 1L), " ")[[1L]][1L])
+  } else {
+    suppressWarnings(as.numeric(tryCatch(strsplit(system2("sysctl",
+      c("-n", "vm.loadavg"), stdout = TRUE), " ")[[1L]][2L],
+      error = function(e) NA)))
+  }
+  if (length(busy) && is.finite(busy[1L])) min(busy[1L], cores) else 0
+}
+
+# A worker: an R session with the tree loaded as this one has it, which starts
+# its own Julia engine when a file first needs one. The environment it inherits
+# carries NOT_CRAN and CTSEM_SLOW_TESTS.
+.tt_worker <- function(root) {
+  w <- callr::r_session$new(wait = TRUE)
+  w$call(function(root) {
+    setwd(root)
+    suppressMessages(devtools::load_all(root, compile = FALSE, quiet = TRUE))
+    invisible(TRUE)
+  }, list(root))
+  w
+}
+
+.tt_run <- function(files, workers = .tt_workers(length(files))) {
+  if (!length(files)) { message("no matching test files"); return(invisible(NULL)) }
+  workers <- max(1L, min(as.integer(workers), length(files)))
+  # Longest first, from the measured timings, so the run does not end on one
+  # long file after the others are done; an untimed file sorts as typical.
+  if (file.exists("dev/test-timings.csv")) {
+    tm <- utils::read.csv("dev/test-timings.csv", stringsAsFactors = FALSE)
+    secs <- tm$secs[match(files, tm$file)]
+    secs[is.na(secs)] <- stats::median(tm$secs, na.rm = TRUE)
+    files <- files[order(-secs)]
+  }
+  t0 <- Sys.time()
+  out <- list()
+  if (workers == 1L) {
+    for (f in files) { out[[f]] <- .tt_one(f); .tt_report(out[[f]]) }
+  } else {
+    message(length(files), " file(s) over ", workers, " worker sessions")
+    root <- normalizePath(".")
+    pool <- vector("list", workers)
+    on.exit(for (w in pool) if (!is.null(w)) try(w$close(), silent = TRUE), add = TRUE)
+    running <- rep(NA_character_, workers)
+    queue <- files
+    for (i in seq_len(workers)) pool[[i]] <- .tt_worker(root)
+    while (length(queue) || any(!is.na(running))) {
+      for (i in seq_len(workers)) {
+        w <- pool[[i]]
+        if (w$poll_process(0) != "ready") next
+        r <- w$read()
+        if (is.null(r)) next
+        if (!is.na(running[i])) {
+          o <- if (is.null(r$error)) r$result else
+            list(file = running[i], secs = NA_real_, aborted = TRUE)
+          out[[running[i]]] <- o
+          .tt_report(o)
+          running[i] <- NA_character_
+        }
+        # A worker that died with its file is replaced, not reused.
+        if (!w$is_alive()) { pool[[i]] <- w <- .tt_worker(root); next }
+        if (length(queue)) {
+          running[i] <- queue[1L]
+          queue <- queue[-1L]
+          w$call(.tt_one, list(running[i]))
+        }
+      }
+      Sys.sleep(0.2)
+    }
+  }
+  res <- do.call(rbind, lapply(out, function(o) data.frame(file = o$file,
+    secs = o$secs, pass = if (isTRUE(o$aborted)) NA_integer_ else o$pass,
+    fail = if (isTRUE(o$aborted)) NA_integer_ else o$fail,
+    skip = if (isTRUE(o$aborted)) NA_integer_ else o$skip,
+    stringsAsFactors = FALSE)))
+  cat(sprintf("-- %d file(s), %.0fs (%.0fs of tests over %d worker(s)), %d pass, %d fail\n",
+    nrow(res), as.numeric(difftime(Sys.time(), t0, units = "secs")),
+    sum(res$secs, na.rm = TRUE), workers, sum(res$pass, na.rm = TRUE),
     sum(res$fail, na.rm = TRUE)))
   invisible(res)
 }
 
 #' Run test files whose name matches a pattern.
-tt <- function(pattern = NULL) {
+tt <- function(pattern = NULL, workers = NULL) {
   f <- .tt_files()
   if (!is.null(pattern)) f <- grep(pattern, f, value = TRUE)
-  .tt_run(f)
+  .tt_go(f, workers)
+}
+
+.tt_go <- function(files, workers) {
+  if (is.null(workers)) .tt_run(files) else .tt_run(files, workers)
 }
 
 #' Run the test files most likely to cover the R files you have edited.
@@ -101,7 +203,7 @@ tt <- function(pattern = NULL) {
 #' which is a heuristic and not a coverage guarantee: it will miss a test that
 #' exercises your change under an unrelated name. It is meant for the inner loop,
 #' not as the check before you commit.
-tt_changed <- function(ref = "HEAD") {
+tt_changed <- function(ref = "HEAD", workers = NULL) {
   changed <- system(paste("git diff --name-only", shQuote(ref), "-- R/"),
     intern = TRUE)
   changed <- c(changed, system("git diff --name-only --cached -- R/", intern = TRUE))
@@ -115,7 +217,7 @@ tt_changed <- function(ref = "HEAD") {
       grepl(s, tolower(x), fixed = TRUE), logical(1)))
   }, logical(1))
   message("changed: ", paste(changed, collapse = ", "))
-  .tt_run(f[keep])
+  .tt_go(f[keep], workers)
 }
 
 #' The quick tier: files that do not fit models, or fit only trivial ones.
@@ -123,7 +225,7 @@ tt_changed <- function(ref = "HEAD") {
 #' Populated from a measured timing pass rather than by guess; see
 #' dev/test-timings.csv. Regenerate that with tt_time() when fixtures change,
 #' since a tier built on stale timings quietly stops being quick.
-tt_fast <- function(max_secs = 20) {
+tt_fast <- function(max_secs = 20, workers = NULL) {
   p <- "dev/test-timings.csv"
   if (!file.exists(p)) {
     stop("no dev/test-timings.csv -- run tt_time() once to measure, ",
@@ -143,7 +245,7 @@ tt_fast <- function(max_secs = 20) {
   # A release-tier file measures as quick because it skipped; it is not quick.
   f <- setdiff(f, .tt_release_only())
   message(length(f), " file(s) under ", max_secs, "s")
-  .tt_run(f)
+  .tt_go(f, workers)
 }
 
 # Files whose every entry in dev/test-areas.csv is the release tier.
@@ -182,7 +284,8 @@ tt_fast <- function(max_secs = 20) {
 #' areas and what each costs, from dev/test-timings.csv. The quick tier runs
 #' first unless `fast = FALSE`: it is about a minute and covers the
 #' specification code every area builds on.
-tt_area <- function(area = NULL, extended = FALSE, fast = TRUE, release = FALSE) {
+tt_area <- function(area = NULL, extended = FALSE, fast = TRUE, release = FALSE,
+  workers = NULL) {
   map <- utils::read.csv("dev/test-areas.csv", stringsAsFactors = FALSE)
   # A file in no area is never selected, which looks exactly like a file that
   # passed; say so, as tt_fast() does for an untimed one.
@@ -234,15 +337,16 @@ tt_area <- function(area = NULL, extended = FALSE, fast = TRUE, release = FALSE)
         paste0(names(blocks), " (", blocks, ")", collapse = ", ")))
   }
   message(length(files), " file(s), about ", minutes(files), " min by dev/test-timings.csv")
-  .tt_run(files)
+  .tt_go(files, workers)
 }
 
 #' Measure every file and write dev/test-timings.csv.
 #'
-#' Do this on a quiet machine. Timings taken while several jobs are running are
-#' not merely noisy, they are wrong by enough to put files in the wrong tier.
+#' Do this on a quiet machine, and one file at a time: timings taken while
+#' several jobs run are not merely noisy, they are wrong by enough to put files
+#' in the wrong tier.
 tt_time <- function() {
-  res <- .tt_run(.tt_files())
+  res <- .tt_run(.tt_files(), workers = 1L)
   utils::write.csv(res[, c("file", "secs", "pass", "fail", "skip")],
     "dev/test-timings.csv", row.names = FALSE)
   message("wrote dev/test-timings.csv")

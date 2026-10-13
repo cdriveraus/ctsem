@@ -199,7 +199,9 @@ end
         H = ctsem_hessian(objective, values; chunk=chunk,
             progress=(done, total, unit) -> push!(seen, (done, total, unit)))
         @test H == ctsem_hessian(objective, values; chunk=chunk)
-        width = chunk > 0 ? chunk : ForwardDiff.pickchunksize(n)
+        # The width the engine picks for `n` (`_CTSEM_HESSIAN_WIDTHS`).
+        width = chunk > 0 ? chunk :
+            ContinuousTimeSEM._ctsem_dual_width(n, ContinuousTimeSEM._CTSEM_HESSIAN_WIDTHS[])
         @test cld(n, width) > 1                 # more than one sweep to report
         @test first.(seen) == [min(k * width, n) for k in 1:cld(n, width)]
         @test all(s -> s[2] == n && s[3] == "parameters", seen)

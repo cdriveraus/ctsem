@@ -524,26 +524,33 @@ ctStanFitUpdate <- ctFitUpdate
 # The composition a reader might expect -- T0VAR plus the subject effects plus
 # the study effects -- is the *marginal* initial covariance over all
 # individuals, and it is not what T0cov holds. T0cov is conditional on the
-# levels above it: T0VAR for the latents that keep it, and the subject level
-# population covariance for the rest. The study level reaches an individual by
-# moving that individual's parameter values, so adding a study covariance into
-# T0cov as well would count it twice.
+# levels above it: T0VAR plus the subject level population covariance. The
+# study level reaches an individual by moving that individual's parameter
+# values, so adding a study covariance into T0cov as well would count it twice.
 #
 # They are still *fixed* rather than left free, because taking them out of the
-# parameter vector is the whole job of this function. Neither backend now reads
-# the values: both drop these rows and columns where T0cov is assembled and
-# write RAWPOPVAR's entries over them. A small positive diagonal rather than
-# zero all the same, because the R-side paths that build a covariance straight
-# from T0VAR -- ctGenerate(backend='r'), ctGraph, ctModelLatex -- would meet a
-# singular matrix, and they are not what this function is about.
+# parameter vector is the whole job of this function, and every route reads
+# them as the same thing: given a subject's effects its initial state is known,
+# and this diagonal is what is left of its variance. Julia's Laplace route and
+# a sampled fit read it so, and Stan's and julia's augmented routes add the
+# population covariance to it, so all of them fit one model. With MANIFESTVAR
+# fixed at zero it is also all of the first observation's innovation variance,
+# so it cannot be zero: a floor, at sd 1e-3 (a variance of 1e-6), negligible
+# beside any population variance worth estimating. A floor that small puts a
+# curvature of 1e6 or more on the Laplace inner solve, which stops on its step
+# for that reason (`_laplace_newton_unit_mode`). Positive for the R-side paths
+# that build a covariance straight from T0VAR too -- ctGenerate(backend='r'),
+# ctGraph, ctModelLatex -- which would meet a singular matrix.
 T0VARredundancies <- function(ctm) {
+  # Per-level columns, so `indvarying` below is the subject level's logical.
+  ctm <- .ctResolveLevels(ctm)
   whichT0VAR_T0MEANSindvarying <- ctm$pars$matrix %in% 'T0VAR'  &
     is.na(ctm$pars$value) &
     (ctm$pars$row %in% ctm$pars$row[ctm$pars$matrix %in% 'T0MEANS' & ctm$pars$indvarying] |
         ctm$pars$col %in% ctm$pars$row[ctm$pars$matrix %in% 'T0MEANS' & ctm$pars$indvarying])
   if(any(whichT0VAR_T0MEANSindvarying)){
     message('T0VAR rows/columns for latents with individually varying T0MEANS disabled: RAWPOPVAR gives their covariance.')
-    ctm$pars$value[whichT0VAR_T0MEANSindvarying & ctm$pars$col == ctm$pars$row ] <- 1e-6
+    ctm$pars$value[whichT0VAR_T0MEANSindvarying & ctm$pars$col == ctm$pars$row ] <- 1e-3
     ctm$pars$value[whichT0VAR_T0MEANSindvarying & ctm$pars$col != ctm$pars$row ] <- 0
     ctm$pars$param[whichT0VAR_T0MEANSindvarying] <- NA
     ctm$pars$transform[whichT0VAR_T0MEANSindvarying] <- NA
@@ -822,8 +829,16 @@ T0VARredundancies <- function(ctm) {
 #' \code{intoverpop='auto'} then chooses; each subject starts from its own
 #' stationary distribution. A latent process whose DRIFT row is fixed at zero
 #' never settles, and is refused.
-#' @param forcerecompile logical. For development purposes.
-#' If TRUE, stan model is recompiled, regardless of apparent need for compilation.
+#' @param forcerecompile logical. For \code{backend='stan'}, recompiles the
+#' stan model regardless of apparent need (for development). For
+#' \code{backend='julia'}, compiles the model's state-dependent expressions --
+#' matrix cells that read a latent state, and their derivatives -- and any
+#' parameter transforms of your own into code for this model, rather than
+#' evaluating them as data. The model's first fit in a session then compiles
+#' for a minute or more, and its gradients run faster: by up to a third for a
+#' heavily nonlinear model (many state-dependent cells, or long formulas in
+#' them), and by little otherwise. Worth it only when such a model's fit takes
+#' many minutes.
 #' @param saveCompile if TRUE and compilation is needed / requested, writes the stan model to
 #' the parent frame as ctsem.compiled (unless that object already exists and is not from ctsem), to avoid unnecessary recompilation.
 #' @param savescores Logical. If TRUE, output from the Kalman filter is saved in output. For datasets with many variables
@@ -1347,7 +1362,10 @@ ctFit<-function(datalong, model, stanmodeltext=NA, iter=1000, intoverstates=TRUE
   args$model <- NULL
   args$ctstanmodel <- NULL
 
-  ctm <- ctstanmodel
+  # The working copy carries a logical column per level; the model the fit
+  # keeps as its base (`modelbase`, `ctstanmodelbase`) stays as the user wrote
+  # it. See .ctResolveLevels().
+  ctm <- .ctResolveLevels(ctstanmodel)
 
   # A model saved before the correlation squash moved into the covariance
   # construction still carries it in its own parameter table, so it would be
@@ -1622,8 +1640,9 @@ ctFit<-function(datalong, model, stanmodeltext=NA, iter=1000, intoverstates=TRUE
 
   # An outer level on a route that cannot carry it.
   #
-  # `.ctModelIntOverPop()` reads `indvarying` and nothing else, so a study
-  # effect declared in `indvarying_study` would be dropped without trace and
+  # `.ctModelIntOverPop()` reads the subject level's column and nothing else,
+  # so an effect at a study level (`indvarying_study` once resolved, by
+  # .ctResolveLevels()) would be dropped without trace and
   # the fit would report a single-level model as though that were what was
   # asked for. Refuse by name instead. There is no reason for a lower level to
   # vary before an upper one does -- a study effect with exchangeable subjects
@@ -2399,7 +2418,7 @@ ctFit<-function(datalong, model, stanmodeltext=NA, iter=1000, intoverstates=TRUE
         if(!optimize && .ctAnyVarying(ctm)) 'none' else
           'augmented'
     juliafit <- .ctFitJuliaBackend(datalong=datalong, model=ctm, prepared_data=standata, inits=inits,
-      cores=cores, optimcontrol=optimcontrol,
+      cores=cores, optimcontrol=optimcontrol, forcerecompile=forcerecompile,
       verbose=verbose, fit=fit, priors=priors, priorscope=priorscope,
       optimize=optimize,
       chains=if(chainsgiven) chains else 4L, iter=iter, control=control,

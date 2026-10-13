@@ -32,8 +32,17 @@ interactive_cores <- 10L
 #cores=10
 arguments <- commandArgs(trailingOnly = TRUE)
 
+# --only=name[,name] renders just those vignettes, by file name without the
+# extension, when one source changed and the rest need not be fitted again.
+only_argument <- grep("^--only=", arguments, value = TRUE)
+arguments <- setdiff(arguments, only_argument)
+only <- if (length(only_argument)) {
+  strsplit(sub("^--only=", "", only_argument[[1L]]), ",", fixed = TRUE)[[1L]]
+} else character()
+
 usage <- function() {
-  cat("Usage: Rscript dev/render-vignettes-parallel.R [--cores N | --cores=N | N]\n")
+  cat("Usage: Rscript dev/render-vignettes-parallel.R [--cores N | --cores=N | N]",
+    "[--only=name[,name]]\n")
 }
 
 if (any(arguments %in% c("-h", "--help"))) {
@@ -201,6 +210,11 @@ render_vignettes <- function(vignettes_dir, output_dir, requested_cores) {
   ))
   if (!length(names)) {
     stop("No .qmd or .Rmd vignettes were found in ", vignettes_dir, ".", call. = FALSE)
+  }
+  if (length(only)) {
+    if (length(setdiff(only, names))) stop("--only names no vignette: ",
+      paste(setdiff(only, names), collapse = ", "), call. = FALSE)
+    names <- intersect(names, only)
   }
 
   # One staged copy of the whole vignettes directory per vignette, so each

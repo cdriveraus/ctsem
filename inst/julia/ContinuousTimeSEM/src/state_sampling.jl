@@ -221,7 +221,8 @@ columns afterwards, so an initial state belongs to `_ctsem_t0_factor!`
 Reading it out of `sdcovsqrt2cov!`'s own scratch buffer would work today and
 would break silently the first time that function reuses the buffer.
 """
-@inline function _ctsem_sdcor_factor!(dest, mat, buffer, dim::Val{d}) where {d}
+@inline function _ctsem_sdcor_factor!(dest, mat, buffer, dim::Union{Int,Val})
+    d = _val(dim)
     constraincorsqrt1_vec!(buffer, mat, 1e-5, dim)
     @inbounds for j in 1:d, i in 1:d
         dest[i, j] = mat[i, i] * buffer.out[i, j]
@@ -278,7 +279,7 @@ end
 
 function _ctsem_state_layout(objective::CTSEMObjective)
     sp = objective.params
-    pars = ComponentVector(zeros(Float64, length(sp.mutables)), sp.parameter_axis)
+    pars = CTSEMPars(zeros(Float64, length(sp.mutables)), sp.parameter_axis)
     nlatent = size(pars.DRIFT, 1)
     nmanifest = size(pars.LAMBDA, 1)
     ndiffusion = isempty(sp.diffusion_state_indices) ? nlatent :
@@ -897,7 +898,7 @@ function ctsem_joint_evaluate(objective::CTSEMObjective, values::AbstractVector,
     target = x -> ctsem_joint_loglikelihood(objective, view(x, 1:npar),
         view(x, (npar + 1):length(x)))
     value = target(packed)
-    grad = gradient ? ForwardDiff.gradient(target, packed) : nothing
+    grad = gradient ? _ctsem_gradient(target, packed) : nothing
 
     layout = _ctsem_state_layout(objective)
     state_prior = -sum(abs2, innovations) / 2 - layout.ndim * log(2pi) / 2
@@ -940,10 +941,14 @@ filter's categorical update is an assumed-density projection: it can move the
 state a long way on one improbable observation, and with an unbounded indicator
 the row after that is drawn from a rate that has already moved. Nothing of the
 kind can happen here, because no observation ever moves a state.
+
+`workspace`, when given, is used for every subject in place of each subject's
+own: `ctsem_generate_draws` runs draws side by side, and two draws of one
+subject must not share that subject's workspace.
 """
 function ctsem_generate_states(objective::CTSEMObjective,
     values::AbstractVecOrMat, z::AbstractVector, base::AbstractMatrix;
-    transition=:exponential, seed::Integer=1)
+    transition=:exponential, seed::Integer=1, workspace=nothing)
     trans = _ctsem_transition(transition)
 
     sp = objective.params
@@ -978,7 +983,8 @@ function ctsem_generate_states(objective::CTSEMObjective,
         gen.offset = layout.rowoffsets[i]
         gen.rng = _ctsem_generate_rng(seed, i)
         persubject && copyto!(parameters, view(values, i, :))
-        ws = _get_or_init_objective_workspace!(sub, Float64)
+        ws = workspace === nothing ? _get_or_init_objective_workspace!(sub, Float64) :
+            workspace
         loglik[i] = _ctsem_state_pass!(ws, parameters, sub.data, sub.timesteps,
             sp, sub.tdpreds, _ctsem_tipred_vector(sub.tipreds, parameters),
             sub.subject, sub.max_timestep,
@@ -986,6 +992,96 @@ function ctsem_generate_states(objective::CTSEMObjective,
     end
     return (Y=gen.out, states=gen.states, llrow=gen.llrow,
         subject_loglik=loglik)
+end
+
+"""
+    ctsem_generate_draws(objective, values, base, seeds; z, effects, normals, transition)
+
+Many datasets in one call. Draw `s` is the dataset `ctsem_generate` -- or,
+given `z`, `ctsem_generate_states` -- makes at column `s` of `values`, with
+`base[:, :, s]`, `seeds[s]`, and column `s` of `z`, `effects` or `normals`:
+the same numbers, since each subject's stream is seeded by its draw's seed and
+its own index whichever task runs it.
+
+One call because the caller is R's posterior predictive, which made a bridge
+round trip a draw, and side by side because the draws are independent: they
+run on up to the subject-chunk ceiling's tasks (`_ctsem_pull_blocks`), each
+with a workspace of its own rather than the objective's per-subject ones,
+which two draws of one subject would share.
+
+On a Laplace objective a draw's subjects sit at its random effects: `effects`,
+natural deviations as `ctsem_generate` takes them; or `normals`, standard
+coordinates made into deviations at that draw's population covariance
+(`ctsem_laplace_population_deviations`), which is a draw of new subjects; or,
+given neither, their conditional modes. Modes are solved one draw at a time,
+because a solve writes the objective's own state, and once for a run of draws
+that share one vector, which a point-estimate predictive is.
+
+Returns `Y`, `nmanifest x nrows x ndraws`, and `llrow`, `nrows x ndraws`.
+"""
+function ctsem_generate_draws(objective::Union{CTSEMObjective,CTSEMLaplaceObjective},
+    values::AbstractMatrix, base::AbstractArray{<:Real,3},
+    seeds::AbstractVector{<:Integer}; z::Union{Nothing,AbstractMatrix}=nothing,
+    effects::Union{Nothing,AbstractMatrix}=nothing,
+    normals::Union{Nothing,AbstractMatrix}=nothing, transition=:exponential)
+    ndraws = size(values, 2)
+    size(base, 3) == ndraws && length(seeds) == ndraws || throw(DimensionMismatch(
+        string("values has ", ndraws, " draws, base ", size(base, 3), " and seeds ",
+            length(seeds))))
+    for (name, x) in (("z", z), ("effects", effects), ("normals", normals))
+        x === nothing || size(x, 2) == ndraws || throw(DimensionMismatch(
+            string(name, " has ", size(x, 2), " draws for ", ndraws)))
+    end
+    laplace = objective isa CTSEMLaplaceObjective
+    laplace || (effects === nothing && normals === nothing) || throw(ArgumentError(
+        "effects and normals are random effects, which only a Laplace objective places"))
+    plain = laplace ? objective.objective : objective
+    modes = laplace && effects === nothing && normals === nothing ?
+        _ctsem_generate_modes(objective, values) : nothing
+
+    nmanifest, nrows = size(base, 1), size(base, 2)
+    Y = fill(NaN, nmanifest, nrows, ndraws)
+    llrow = fill(NaN, nrows, ndraws)
+    nworkers = min(_ctsem_nchunks(ndraws), ndraws)
+    workspaces = [_init_continuous_ekf_workspace(Float64, plain.params)
+        for _ in 1:nworkers]
+    _ctsem_pull_blocks(ndraws, nworkers) do s, w
+        # The caller's task only: the check's throttle is not shared safely.
+        w == 1 && _ctsem_interrupt_check()
+        theta = collect(Float64, view(values, :, s))
+        drawvalues = if modes !== nothing
+            modes[s]
+        elseif effects !== nothing
+            _laplace_filter_values(objective, theta; effects=view(effects, :, s))
+        elseif normals !== nothing
+            _laplace_filter_values(objective, theta;
+                effects=ctsem_laplace_population_deviations(objective, theta,
+                    view(normals, :, s)))
+        else
+            theta
+        end
+        drawn = z === nothing ?
+            ctsem_generate(plain, drawvalues, view(base, :, :, s); seed=seeds[s],
+                workspace=workspaces[w]) :
+            ctsem_generate_states(plain, drawvalues, view(z, :, s),
+                view(base, :, :, s); transition=transition, seed=seeds[s],
+                workspace=workspaces[w])
+        Y[:, :, s] .= drawn.Y
+        llrow[:, s] .= drawn.llrow
+    end
+    return (Y=Y, llrow=llrow)
+end
+
+# Each draw's subjects at their conditional modes, solved in draw order and
+# reused across a run of identical vectors.
+function _ctsem_generate_modes(laplace::CTSEMLaplaceObjective, values::AbstractMatrix)
+    modes = Vector{Matrix{Float64}}(undef, size(values, 2))
+    for s in axes(values, 2)
+        modes[s] = s > 1 && view(values, :, s) == view(values, :, s - 1) ?
+            modes[s - 1] :
+            _laplace_filter_values(laplace, collect(Float64, view(values, :, s)))
+    end
+    return modes
 end
 
 
@@ -1306,7 +1402,7 @@ function ctsem_joint_hessian(o::CTSEMJointObjective, x::AbstractVector;
             return _ctsem_joint_subject(o, i, view(v, 1:npar),
                 view(v, (npar + 1):length(v)), 0)
         end
-        block = ForwardDiff.hessian(target, packed)
+        block = _ctsem_dual_hessian(target, packed)
         block = (block .+ transpose(block)) ./ 2
         all(isfinite, block) || return nothing
         Hpp = view(block, 1:npar, 1:npar)

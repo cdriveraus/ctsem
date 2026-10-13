@@ -37,7 +37,7 @@ skip_on_cran()
     # drift is made indvarying and reaches DRIFT through the default
     # `-(1e-6 + 2*log1p_exp(-2*state[2]))`. One linear cell, one not.
     model <- ctModel(type = 'ct', silent = TRUE, LAMBDA = matrix(1),
-      DRIFT = matrix(ctParSpec('drift', indvarying = TRUE)),
+      DRIFT = matrix(ctPar('drift', indvarying = TRUE)),
       DIFFUSION = matrix(.5), MANIFESTVAR = matrix(.5),
       MANIFESTMEANS = matrix(0), CINT = matrix('cint'),
       T0MEANS = matrix(0), T0VAR = matrix(1))

@@ -882,7 +882,7 @@ function _flush_frechet!(aws)
         if aws.defer_frechet
             _frechet_add!(aws.jax_bar_deferred, L, dt, n)
         else
-            _frechet_add!(ComponentVector(aws.theta_bar, aws.sp.parameter_axis).JAx, L, dt, n)
+            _frechet_add!(CTSEMPars(aws.theta_bar, aws.sp.parameter_axis).JAx, L, dt, n)
         end
     end
     return nothing
@@ -1107,12 +1107,16 @@ function _reverse_predict!(x̄::Vector{T}, P̄::Matrix{T}, θ̄ca,
     end
 
     # --- affine[i] = CINT[i] + Σⱼ (DRIFT[i,j] - JAx[i,j]) x[j]
+    # The cotangent's views bound once, outside the loops that index them.
+    θ̄CINT = θ̄ca.CINT
+    θ̄DRIFT = θ̄ca.DRIFT
+    θ̄JAx = θ̄ca.JAx
     @inbounds for i in 1:naff
-        θ̄ca.CINT[i] += affine_bar[i]
+        θ̄CINT[i] += affine_bar[i]
     end
     @inbounds for j in 1:n, i in 1:naff
         contribution = affine_bar[i] * x[j]
-        θ̄ca.DRIFT[i, j] += contribution
+        θ̄DRIFT[i, j] += contribution
         JAx_bar[i, j] -= contribution
         x̄_new[j] += (record.DRIFT[i, j] - JAx[i, j]) * affine_bar[i]
     end
@@ -1124,7 +1128,7 @@ function _reverse_predict!(x̄::Vector{T}, P̄::Matrix{T}, θ̄ca,
     end
 
     @inbounds for j in 1:n, i in 1:n
-        θ̄ca.JAx[i, j] += JAx_bar[i, j]
+        θ̄JAx[i, j] += JAx_bar[i, j]
     end
 
     # --- A = exp(JAx * dt). The direction is *queued* rather than pushed
@@ -1184,11 +1188,13 @@ function _reverse_stationary!(x̄::Vector{T}, P̄::Matrix{T}, θ̄ca,
         At[i, j] = record.DRIFT[j, i]
     end
     _solve_square_system_generic!(At, w, sc.piv, naff)
+    θ̄CINT = θ̄ca.CINT
+    θ̄DRIFT = θ̄ca.DRIFT
     @inbounds for i in 1:naff
-        θ̄ca.CINT[i] -= w[i]
+        θ̄CINT[i] -= w[i]
     end
     @inbounds for j in 1:naff, i in 1:naff
-        θ̄ca.DRIFT[i, j] -= w[i] * record.mean[j]
+        θ̄DRIFT[i, j] -= w[i] * record.mean[j]
     end
 
     Ad = _rs(sc.kk1, k, k)
@@ -1202,7 +1208,7 @@ function _reverse_stationary!(x̄::Vector{T}, P̄::Matrix{T}, θ̄ca,
     _ctsem_lyap_pullback!(Ād, Q̄d, sc.kk9, sc.kk10, Ad, record.X, X̄,
         aws.lyap_buffer)
     @inbounds for j in 1:k, i in 1:k
-        θ̄ca.DRIFT[dyn[i], dyn[j]] += Ād[i, j]
+        θ̄DRIFT[dyn[i], dyn[j]] += Ād[i, j]
     end
     Qc_bar = _rs(sc.nn5, n, n)
     fill!(Qc_bar, zero(T))
@@ -1231,8 +1237,9 @@ products it used to take lock (`small_linalg.jl`).
 function _reverse_td!(x̄::Vector{T}, P̄::Matrix{T}, θ̄ca,
     record::CTSEMTDRecord{T}, n::Int, sc::CTSEMReverseScratch{T}) where {T}
     td = record.tdpreds
+    θ̄TD = θ̄ca.TDPREDEFFECT
     @inbounds for j in eachindex(td), i in 1:n
-        θ̄ca.TDPREDEFFECT[i, j] += x̄[i] * td[j]
+        θ̄TD[i, j] += x̄[i] * td[j]
     end
     Ps = _symmetrize_into!(_rs(sc.Ps, n, n), P̄)
     Jtd = record.Jtd
@@ -1241,8 +1248,9 @@ function _reverse_td!(x̄::Vector{T}, P̄::Matrix{T}, θ̄ca,
     PJ = _ctsem_mul!(_rs(sc.nn1, n, n), Ps, Jtd)
     Jtd_bar = _ctsem_mulNT!(_rs(sc.nn2, n, n), PJ, record.P_in)
     _ctsem_mul!(Jtd_bar, PJ, record.P_in, one(T), one(T))
+    θ̄Jtd = θ̄ca.Jtd
     @inbounds for j in 1:n, i in 1:n
-        θ̄ca.Jtd[i, j] += Jtd_bar[i, j]
+        θ̄Jtd[i, j] += Jtd_bar[i, j]
     end
     JP = _ctsem_mulTN!(_rs(sc.nn1, n, n), Jtd, Ps)
     _ctsem_mul!(P̄, JP, Jtd)
@@ -1524,11 +1532,14 @@ function _reverse_update!(x̄::Vector{T}, P̄::Matrix{T}, Θ̄::Matrix{T}, θ̄c
     _ctsem_mulTvec!(x̄_new, Λ, ỹ̄, -one(T), one(T))
 
     # --- scatter back into the full-size parameter and Θ cotangents
+    θ̄MM = θ̄ca.MANIFESTMEANS
+    θ̄LAMBDA = θ̄ca.LAMBDA
+    θ̄Jy = θ̄ca.Jy
     @inbounds for i in 1:m
-        θ̄ca.MANIFESTMEANS[o[i]] -= ỹ̄[i]
+        θ̄MM[o[i]] -= ỹ̄[i]
         for j in 1:n
-            θ̄ca.LAMBDA[o[i], j] += Λ̄[i, j]
-            θ̄ca.Jy[o[i], j] += H̄[i, j]
+            θ̄LAMBDA[o[i], j] += Λ̄[i, j]
+            θ̄Jy[o[i], j] += H̄[i, j]
         end
         for j in 1:m
             Θ̄[o[i], o[j]] += R̄[i, j]
@@ -1573,7 +1584,7 @@ function _ctsem_reverse_tape!(tape::CTSEMAdjointTape{T},
     # specific), and reading it would make every `θ̄ca.DRIFT[i,j] +=` in the
     # loop below a dynamic dispatch. Measured at 45% of the whole reverse
     # pass when this was done the other way.
-    θ̄ca = ComponentVector(θ̄, sp.parameter_axis)
+    θ̄ca = CTSEMPars(θ̄, sp.parameter_axis)
     dyn = aws.diffusion_state_indices
 
     for entry_index in length(tape.program):-1:1
@@ -1616,8 +1627,9 @@ function _ctsem_reverse_tape!(tape::CTSEMAdjointTape{T},
         elseif kind === :stationary
             _reverse_stationary!(x̄, P̄, θ̄ca, tape.stationaries[index], dyn, n, aws)
         elseif kind === :init
+            θ̄T0M = θ̄ca.T0MEANS
             @inbounds for i in 1:n
-                θ̄ca.T0MEANS[i] += x̄[i]
+                θ̄T0M[i] += x̄[i]
             end
             fill!(x̄, zero(T))
             # The population block first, while P̄ still holds its
@@ -1674,8 +1686,9 @@ function _ctsem_reverse_tape!(tape::CTSEMAdjointTape{T},
             sym = _symmetrize_into!(_rs(aws.reverse_scratch.sym, n, n), P̄)
             _sdcovsqrt2cov_pullback!(t0var_bar, tape.inits[index].T0VAR, sym, n;
                 scratch=aws.covsqrt_scratch, covmatcode=aws.sp.covmatcode)
+            θ̄T0V = θ̄ca.T0VAR
             @inbounds for j in 1:n, i in 1:n
-                θ̄ca.T0VAR[i, j] += t0var_bar[i, j]
+                θ̄T0V[i, j] += t0var_bar[i, j]
             end
             fill!(P̄, zero(T))
         else
@@ -1836,7 +1849,7 @@ function _reverse_group!(θ̄::Vector{T}, x̄::Vector{T}, record::CTSEMGroupReco
     @inbounds for j in eachindex(relevant)
         working[relevant[j]] = record.params_before[j]
     end
-    pars = ComponentVector(working, sp.parameter_axis)
+    pars = CTSEMPars(working, sp.parameter_axis)
     ctx = CTSEMRowContext(record.state, pars, record.tdpreds, aws.tipreds,
         record.time, record.dt, 1, record.row)
     _ctsem_complex_group_pullback!(θ̄, x̄, transforms, indices, supports, ctx,
@@ -1904,19 +1917,22 @@ function _reverse_predict_discrete!(XBAR::Vector{T}, PBAR::Matrix{T}, THETA,
     _ctsem_mul!(Pbar_new, nn2, A)
 
     # --- dINT[i] = CINT[i] + sum_j (DRIFT[i,j] - JAx[i,j]) x[j]
+    θ̄CINT = THETA.CINT
+    θ̄DRIFT = THETA.DRIFT
+    θ̄JAx = THETA.JAx
     @inbounds for i in 1:n
-        THETA.CINT[i] += dINT_bar[i]
+        θ̄CINT[i] += dINT_bar[i]
     end
     @inbounds for j in 1:n, i in 1:n
         contribution = dINT_bar[i] * x[j]
-        THETA.DRIFT[i, j] += contribution
+        θ̄DRIFT[i, j] += contribution
         JAx_bar[i, j] -= contribution
         xbar_new[j] += (record.DRIFT[i, j] - JAx[i, j]) * dINT_bar[i]
     end
 
     # --- A is JAx itself, so its cotangent simply adds.
     @inbounds for j in 1:n, i in 1:n
-        THETA.JAx[i, j] += JAx_bar[i, j] + Abar[i, j]
+        θ̄JAx[i, j] += JAx_bar[i, j] + Abar[i, j]
     end
 
     # --- dDIFF[D,D] = Qc[D,D]: the cotangent passes straight through, and

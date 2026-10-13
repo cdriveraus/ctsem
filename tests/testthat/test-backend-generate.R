@@ -125,6 +125,38 @@ test_that("ctGenerateFromFit returns what the posterior predictive tools expect"
   fromposterior <- ctGenerateFromFit(fit, nsamples = 10, fullposterior = TRUE,
     cores = 1)
   expect_equal(dim(fromposterior$generated$Y), c(10L, nrows, 1L))
+
+  # Every draw in one engine call, side by side on `cores` threads, is the
+  # data one call a draw makes: the same R draws in the same order, and each
+  # subject's own stream seeded by its draw's seed whatever thread runs it.
+  # Through the filter at a different vector each draw, and along sampled
+  # states, whose subjects each have a workspace of their own one call at a
+  # time and share one per thread here.
+  llrow_of <- function(x) ifelse(x == 0, NA, x)
+  set.seed(5)
+  batched <- ctGenerateFromFit(fit, nsamples = 4, fullposterior = TRUE,
+    cores = 2)$generated
+  set.seed(5)
+  posterior <- fit$estimate$rawposterior
+  rows <- sample(seq_len(nrow(posterior)), 4, replace = 4 > nrow(posterior))
+  for (s in 1:4) {
+    base <- matrix(stats::rnorm(nrows), 1L, nrows)
+    one <- ctsem:::.ctBackendGenerate(fit, posterior[rows[s], ], base)
+    expect_equal(unname(batched$Y[s, , 1]), as.numeric(one$Y))
+    expect_equal(batched$llrow[s, ], llrow_of(as.numeric(one$llrow)))
+  }
+  nz <- ctsem:::.ctBackendStateDimension(fit)
+  set.seed(6)
+  batched <- ctGenerateFromFit(fit, nsamples = 3, intoverstates = FALSE,
+    cores = 2)$generated
+  set.seed(6)
+  for (s in 1:3) {
+    z <- stats::rnorm(nz)
+    base <- matrix(stats::rnorm(nrows), 1L, nrows)
+    one <- ctsem:::.ctBackendGenerateStates(fit, fit$estimate$raw, z, base)
+    expect_equal(unname(batched$Y[s, , 1]), as.numeric(one$Y))
+    expect_equal(batched$llrow[s, ], llrow_of(as.numeric(one$llrow)))
+  }
 })
 
 test_that("the posterior predictive tools run on a backend fit", {
@@ -241,8 +273,8 @@ test_that("n counts each id level, innermost first", {
 test_that("ctGenerate draws subjects from the population at every level", {
   skip_without_julia()
   m <- .gen_model(id = c("id", "study"))
-  m$pars$indvarying_study <- m$pars$param %in% "mm"
-  m$pars$sdscale_study[m$pars$param %in% "mm"] <- 0.5
+  # mm is TRUE, so it varies at both levels; the study level's spread is half.
+  m$RAWPOPVAR_study["mm", "mm"] <- 0.5
   set.seed(3)
   expect_message(d <- ctGenerate(m, n = c(600, 30), Tpoints = 6,
     backend = "julia"), "mm 1 \\[id\\], mm 0.5 \\[study\\]")
@@ -422,6 +454,31 @@ test_that("ctGenerateFromFit works on a Laplace fit and matches the augmented ro
   # Averaged over 20 datasets of new subjects, each subject's mean is near the
   # population's, whatever that subject's data said.
   expect_lt(abs(stats::cor(obs_subject_mean, subject_means(gen_laplace))), 0.6)
+
+  # One engine call against one call a draw, as for the augmented route: new
+  # subjects made in the engine from standard normals at each draw's
+  # population covariance, and the fitted subjects at their conditional modes,
+  # solved once for draws that share the point estimate.
+  raw <- fit_laplace$estimate$raw
+  nrows <- length(fit_laplace$model_spec$times)
+  set.seed(8)
+  batched <- ctGenerateFromFit(fit_laplace, nsamples = 3, cores = 2)$generated
+  set.seed(8)
+  for (s in 1:3) {
+    effects <- ctsem:::.ctGeneratePopulationEffects(fit_laplace, raw)
+    base <- matrix(stats::rnorm(nrows), 1L, nrows)
+    one <- ctsem:::.ctBackendGenerate(fit_laplace, raw, base, effects = effects)
+    expect_equal(unname(batched$Y[s, , 1]), as.numeric(one$Y))
+  }
+  set.seed(8)
+  batched <- ctGenerateFromFit(fit_laplace, nsamples = 2, effects = "fitted",
+    cores = 2)$generated
+  set.seed(8)
+  for (s in 1:2) {
+    base <- matrix(stats::rnorm(nrows), 1L, nrows)
+    one <- ctsem:::.ctBackendGenerate(fit_laplace, raw, base)
+    expect_equal(unname(batched$Y[s, , 1]), as.numeric(one$Y))
+  }
 })
 
 test_that("the posterior predictive tools run on a Laplace backend fit", {

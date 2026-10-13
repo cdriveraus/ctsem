@@ -39,12 +39,12 @@ Workspace for direct packed-system Lyapunov solves.
 This buffer is used for small systems and scalar types such as
 `ForwardDiff.Dual` that are not supported by LAPACK.
 """
-mutable struct LyapKsolveBuffer{TYPE<:Number,D,NTRI} <: AbstractLyapBuffer{TYPE}
+mutable struct LyapKsolveBuffer{TYPE<:Number} <: AbstractLyapBuffer{TYPE}
     ksolve_O::Matrix{TYPE}
     ksolve_triQ::Vector{TYPE}
     ksolve_piv::Vector{Int}
-    ksolve_dim::Val{D}
-    ksolve_system_dim::Val{NTRI}
+    ksolve_dim::Int
+    ksolve_system_dim::Int
     # The `A` whose packed system is currently factored in `ksolve_O`, so a
     # repeated solve against the same `A` reuses the factors -- the same
     # economy `LyapSchurBuffer` makes. The reverse pass solves against one
@@ -55,12 +55,12 @@ mutable struct LyapKsolveBuffer{TYPE<:Number,D,NTRI} <: AbstractLyapBuffer{TYPE}
     valid::Bool
     LyapKsolveBuffer{TYPE}(n::Int) where {TYPE <: Number} = begin
         tri_n = gauss_summation(n)
-        new{TYPE,n,tri_n}(
+        new{TYPE}(
             zeros(TYPE, tri_n, tri_n),
             zeros(TYPE, tri_n),
             zeros(Int, tri_n),
-            Val(n),
-            Val(tri_n),
+            n,
+            tri_n,
             zeros(TYPE, n, n),
             false,
         )
@@ -184,7 +184,9 @@ Solve `A * X + X * A' + Q = 0` using the direct packed `ksolve!` path.
 The solution is written to `X`.
 """
 function my_lyap!(X::AbstractMatrix{TYPE}, A::AbstractMatrix{TYPE}, Q::AbstractMatrix{TYPE},
-    buffer::LyapKsolveBuffer{TYPE,d,ntri}) where {TYPE<:Number,d,ntri}
+    buffer::LyapKsolveBuffer{TYPE}) where {TYPE<:Number}
+    d = buffer.ksolve_dim
+    ntri = buffer.ksolve_system_dim
     # Small BLAS matrices and non-BLAS element types (every ForwardDiff.Dual
     # path) take the packed system. Its LU is kept across calls and rebuilt
     # only when `A` changes; `_blocks_identical` compares Dual partials too,

@@ -166,11 +166,9 @@ sd_sub_cint <- 0.4; sd_sub_t0 <- 0.8; rho <- -0.4
 
 gm <- ctModel(type = 'ct', id = c('id', 'study'),
   manifestNames = 'Y1', latentNames = 'eta1', LAMBDA = matrix(1),
-  T0MEANS = matrix('t0'), CINT = matrix('cint'), DRIFT = matrix(drift),
+  T0MEANS = matrix('t0||id'), CINT = matrix('cint||TRUE'), DRIFT = matrix(drift),
   DIFFUSION = matrix(diffusion), MANIFESTVAR = matrix(merror),
   MANIFESTMEANS = matrix(0), T0VAR = matrix(0))
-gm$pars$indvarying <- gm$pars$param %in% c('t0', 'cint')
-gm$pars$indvarying_study <- gm$pars$param %in% 'cint'
 
 # The population covariances, on the raw scale: T0MEANS and CINT are 10 times
 # their raw parameter, so a covariance is a hundredth of its natural value and
@@ -200,7 +198,8 @@ Pass `id` a vector, innermost first:
 ```{r model}
 m <- ctModel(type = 'ct', id = c('id', 'study'),
   manifestNames = 'Y1', latentNames = 'eta1', LAMBDA = matrix(1),
-  CINT = matrix('cint_eta1'), MANIFESTMEANS = matrix(0))
+  T0MEANS = matrix('T0m_eta1||id'), CINT = matrix('cint_eta1'),
+  MANIFESTMEANS = matrix(0))
 ```
 
 `CINT` is fixed to zero by default in ctsem, with the level carried by
@@ -208,32 +207,26 @@ m <- ctModel(type = 'ct', id = c('id', 'study'),
 the process has a genuine equilibrium at $-\text{CINT}/\text{DRIFT}$ for
 individual differences to act on.
 
-Each id gets its own `indvarying` column. The first id keeps the existing
-unsuffixed name; every additional one is suffixed with the column name:
+A cell's `indvarying` field says at which levels its parameter varies: `TRUE`
+at every level, `FALSE` at none, or the levels by name. Intercepts left
+unspecified vary at every level, so `cint_eta1` varies both between subjects
+and between studies, which is what makes its variance decompose into a
+within-study and a between-study part. `'T0m_eta1||id'` lets the starting
+level vary between subjects only; `'cint_eta1||study'` would vary between
+studies only, with subjects exchangeable within a study. The same field can be
+written by name, `'T0m_eta1, indvarying=id'`, or built with
+`ctPar('T0m_eta1', indvarying = 'id')`. Printing the model says what varies
+where, and what each level will estimate:
 
-```{r columns}
-grep('indvarying|sdscale', names(m$pars), value = TRUE)
+```{r levels-print}
+print(m, matrices = FALSE)
 ```
 
-So `indvarying` declares subject-level effects and `indvarying_study`
-study-level ones. A parameter may vary at several levels at once — `cint_eta1`
-does below, which is what makes its variance decompose into a within-study and
-a between-study part:
-
-```{r declare}
-m$pars$indvarying <- FALSE
-m$pars$indvarying_study <- FALSE
-m$pars$indvarying[m$pars$matrix %in% c('T0MEANS', 'CINT')] <- TRUE
-m$pars$indvarying_study[m$pars$matrix %in% 'CINT'] <- TRUE
-
-m$pars[!is.na(m$pars$param),
-  c('matrix', 'param', 'indvarying', 'indvarying_study')]
-```
-
-`sdscale` and `sdscale_study` scale the prior on each level's standard
-deviations, defaulting to 1. Levels must be **strictly nested**: every subject
-belongs to exactly one study. ctsem checks this and stops if the data say
-otherwise.
+`m$pars$indvarying` holds the same values, one per cell, and can be edited
+directly -- `TRUE`, `FALSE` or level names, as in a cell. A cell's `sdscale`
+scales the prior on the standard deviation at every level it varies at. Levels
+must be **strictly nested**: every subject belongs to exactly one study. ctsem
+checks this and stops if the data say otherwise.
 
 ## Fitting
 
@@ -316,12 +309,12 @@ c(cint = cor(sp[1, , 'cint_eta1'], truth$cint),
 ```
 
 Because `cint_eta1` varies at both levels, its subject estimates carry the study
-structure, and averaging them within study recovers the study effects:
+structure. Each study's own value -- the population value shifted by that
+study's effect, with no subject's on top -- is `level = 'study'`:
 
 ```{r studymeans}
-round(rbind(
-  estimated = tapply(sp[1, , 'cint_eta1'], truth$study, mean),
-  truth = studytruth$cint), 3)
+st <- ctSubjectPars(fit, level = 'study')
+round(rbind(estimated = st[1, , 'cint_eta1'], truth = studytruth$cint), 3)
 ```
 
 ```{r studyplot, fig.height = 4}

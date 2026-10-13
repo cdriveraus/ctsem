@@ -516,10 +516,16 @@
   external <- nzchar(Sys.getenv("JULIACONNECTOR_SERVER", unset = ""))
   if (!started) {
     if (!external) {
-      # Only when nothing is pending: a width `.ctBackendResolveThreads()` has
-      # just provisioned for this call's `cores` is not to be recomputed here,
-      # without them, back down to the default.
-      if (!nzchar(Sys.getenv("JULIA_NUM_THREADS", unset = ""))) .ctJuliaProvision()
+      # Sized by the call starting it, whichever entry point that is, over a
+      # width ctsem provisioned earlier -- a fit that stopped before its
+      # session started leaves one behind; a deliberate one still wins
+      # (`.ctJuliaProvision()`). With no call to go by, a width pending from
+      # `.ctBackendResolveThreads()` is not recomputed back down to the default.
+      cores <- .ctJuliaCallCores()
+      if (!is.na(cores)) .ct_julia_cache$build_cores <- cores
+      if (!is.na(cores) || !nzchar(Sys.getenv("JULIA_NUM_THREADS", unset = ""))) {
+        .ctJuliaProvision(cores)
+      }
       .ctJuliaProvisionBlas()
       .ctJuliaAnnounce()
     }
@@ -550,8 +556,9 @@
 #
 # Julia fixes its thread count when the process starts; a running process can
 # neither gain threads nor shed them. A session is started at the `cores` of
-# the call that starts it, or at the default `cores` when that is more, and a
-# later call asking for more than it has is told so (`.ctBackendResolveThreads()`).
+# the call that starts it (`.ctJuliaCallCores()`), or at the default `cores`
+# when that is more, and a later fit asking for more than it has is told so
+# (`.ctBackendResolveThreads()`).
 #
 # Not wider. Starting every session at `parallelly::availableCores()` and holding
 # each call to its `cores` with the engine's chunk ceiling was tried, and the
@@ -571,6 +578,36 @@
 .ctJuliaDefaultCores <- function() {
   n <- suppressWarnings(as.integer(getOption("mc.cores", 2L))[1L])
   if (is.na(n) || n < 1L) 2L else n
+}
+
+# The `cores` of the call starting a session: the `cores` argument of the
+# outermost ctsem function on the stack that has a usable one, as that function
+# holds it now -- so a `NULL` it has already resolved reads resolved, and one
+# not yet resolved defers to the next call in. NA when no call on the stack
+# says.
+#
+# Read from the stack at the one place a session starts, rather than passed in
+# by each entry point. Only `ctFit` passed its `cores` before a session
+# started, so every other call that can be the first in a fresh R session --
+# `ctFitUncertainty(readRDS(f), cores = 16)`, ctLOO, ctGenerateFromFit and the
+# rest -- started Julia at the default, and ran a `cores = 16` request on two
+# threads. A list of entry points would have to be kept, and a new one would
+# miss it the same way.
+#
+# Outermost, because that is the user's request; an inner call's `cores` is a
+# share of it. A function that refuses `cores` on julia checks `missing()`,
+# which reading the argument here does not change.
+.ctJuliaCallCores <- function() {
+  ns <- topenv(environment(.ctJuliaCallCores))
+  for (i in seq_len(sys.nframe() - 1L)) {
+    fn <- sys.function(i)
+    if (is.primitive(fn) || !identical(topenv(environment(fn)), ns) ||
+        !"cores" %in% names(formals(fn))) next
+    cores <- tryCatch(suppressWarnings(as.integer(get("cores",
+      envir = sys.frame(i), inherits = FALSE))[1L]), error = function(e) NA_integer_)
+    if (!is.na(cores) && cores >= 1L) return(cores)
+  }
+  NA_integer_
 }
 
 # Set the thread count for a session about to start, unless someone chose it:

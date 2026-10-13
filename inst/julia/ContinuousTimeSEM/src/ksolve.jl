@@ -12,7 +12,8 @@ Fill `O` with the packed linear system for the continuous Lyapunov equation.
 The rows and columns of `O` correspond to upper-triangular entries of a
 symmetric unknown `X` in the equation `A * X + X * A'`.
 """
-function _ksolve_system_matrix!(O::AbstractMatrix{T}, A::AbstractMatrix{T}, ::Val{d}) where {T<:Number, d}
+function _ksolve_system_matrix!(O::AbstractMatrix{T}, A::AbstractMatrix{T}, __d::Union{Int,Val}) where {T<:Number}
+    d = _val(__d)
     # d = size(A, 1)
     fill!(O, zero(T))
 
@@ -53,7 +54,7 @@ function _ksolve_system_matrix!(O::AbstractMatrix{T}, A::AbstractMatrix{T}, ::Va
 end
 
 _ksolve_system_matrix!(O::AbstractMatrix{T}, A::AbstractMatrix{T}) where {T<:Number} =
-    _ksolve_system_matrix!(O, A, Val(size(A, 1)))
+    _ksolve_system_matrix!(O, A, size(A, 1))
 
 """
     _ksolve_pack_upper!(triQ, Q)
@@ -63,7 +64,8 @@ Pack the upper triangle of the symmetric matrix `Q` into `triQ`.
 The packing order matches the system matrix produced by
 `_ksolve_system_matrix!`.
 """
-function _ksolve_pack_upper!(triQ::AbstractVector{T}, Q::AbstractMatrix{T}, ::Val{d}) where {T<:Number, d}
+function _ksolve_pack_upper!(triQ::AbstractVector{T}, Q::AbstractMatrix{T}, __d::Union{Int,Val}) where {T<:Number}
+    d = _val(__d)
     # d = size(Q, 1)
     z = 0
     @inbounds for j in 1:d
@@ -76,14 +78,15 @@ function _ksolve_pack_upper!(triQ::AbstractVector{T}, Q::AbstractMatrix{T}, ::Va
 end
 
 _ksolve_pack_upper!(triQ::AbstractVector{T}, Q::AbstractMatrix{T}) where {T<:Number} =
-    _ksolve_pack_upper!(triQ, Q, Val(size(Q, 1)))
+    _ksolve_pack_upper!(triQ, Q, size(Q, 1))
 
 """
     _ksolve_unpack_upper!(AQ, triQ)
 
 Unpack an upper-triangular packed vector into the symmetric matrix `AQ`.
 """
-function _ksolve_unpack_upper!(AQ::AbstractMatrix{T}, triQ::AbstractVector{T}, ::Val{d}) where {T<:Number, d}
+function _ksolve_unpack_upper!(AQ::AbstractMatrix{T}, triQ::AbstractVector{T}, __d::Union{Int,Val}) where {T<:Number}
+    d = _val(__d)
     # d = size(AQ, 1)
     z = 0
     @inbounds for j in 1:d
@@ -97,7 +100,7 @@ function _ksolve_unpack_upper!(AQ::AbstractMatrix{T}, triQ::AbstractVector{T}, :
 end
 
 _ksolve_unpack_upper!(AQ::AbstractMatrix{T}, triQ::AbstractVector{T}) where {T<:Number} =
-    _ksolve_unpack_upper!(AQ, triQ, Val(size(AQ, 1)))
+    _ksolve_unpack_upper!(AQ, triQ, size(AQ, 1))
 
 """
     _solve_square_system!(A, B, piv)
@@ -123,7 +126,8 @@ the difference between a subject loop that threads and one that does not. See
 `small_linalg.jl`, which makes the same trade for the Cholesky.
 """
 function _solve_square_system!(A::AbstractMatrix{T}, B::AbstractVecOrMat{T},
-    piv::AbstractVector{Int}, size_hint::Val{n}) where {T<:LinearAlgebra.BlasFloat, n}
+    piv::AbstractVector{Int}, size_hint::Union{Int,Val}) where {T<:LinearAlgebra.BlasFloat}
+    n = _val(size_hint)
     n <= _CTSEM_SMALL_CHOLESKY[] &&
         return _solve_square_system_generic!(A, B, piv, size_hint)
     return _solve_square_system!(A, B, piv)
@@ -132,7 +136,7 @@ end
 """Every other scalar type -- `ForwardDiff.Dual` above all -- has no LAPACK
 route at any size, so it goes straight to the generic loops."""
 _solve_square_system!(A::AbstractMatrix{T}, B::AbstractVecOrMat{T},
-    piv::AbstractVector{Int}, size_hint::Val) where {T} =
+    piv::AbstractVector{Int}, size_hint::Union{Int,Val}) where {T} =
     _solve_square_system_generic!(A, B, piv, size_hint)
 
 """
@@ -259,7 +263,7 @@ function _solve_square_system!(A::AbstractMatrix, B::AbstractVecOrMat, piv::Abst
     return B
 end
 
-function _solve_square_system!(A::AbstractMatrix, B::AbstractVecOrMat, piv::AbstractVector{Int}, ::Val)
+function _solve_square_system!(A::AbstractMatrix, B::AbstractVecOrMat, piv::AbstractVector{Int}, ::Union{Int,Val})
     return _solve_square_system!(A, B, piv)
 end
 
@@ -342,9 +346,11 @@ function ksolve!(
     O::AbstractMatrix{T},
     triQ::AbstractVector{T},
     piv::AbstractVector{Int},
-    dim::Val{d},
-    system_dim::Val{ntri},
-) where {T<:Number, d, ntri}
+    dim::Union{Int,Val},
+    system_dim::Union{Int,Val},
+) where {T<:Number}
+    d = _val(dim)
+    ntri = _val(system_dim)
     @boundscheck begin
         # d = size(A, 1)
         size(A, 1) == d && size(A, 2) == d || throw(DimensionMismatch("A must be square"))
@@ -373,9 +379,10 @@ function ksolve!(
     O::AbstractMatrix{T},
     triQ::AbstractVector{T},
     piv::AbstractVector{Int},
-    dim::Val{d},
-) where {T<:Number, d}
-    return ksolve!(AQ, A, Q, O, triQ, piv, dim, Val((d * (d + 1)) ÷ 2))
+    dim::Union{Int,Val},
+) where {T<:Number}
+    d = _val(dim)
+    return ksolve!(AQ, A, Q, O, triQ, piv, dim, (d * (d + 1)) ÷ 2)
 end
 
 function ksolve!(
@@ -386,7 +393,7 @@ function ksolve!(
     triQ::AbstractVector{T},
     piv::AbstractVector{Int},
 ) where {T<:Number}
-    return ksolve!(AQ, A, Q, O, triQ, piv, Val(size(A, 1)))
+    return ksolve!(AQ, A, Q, O, triQ, piv, size(A, 1))
 end
 
 """
@@ -396,5 +403,5 @@ Solve the continuous Lyapunov equation using internally allocated pivot storage.
 """
 function ksolve!(AQ::AbstractMatrix{T}, A::AbstractMatrix{T}, Q::AbstractMatrix{T}, O::AbstractMatrix{T}, triQ::AbstractVector{T}) where {T<:Number}
     piv = Vector{Int}(undef, length(triQ))
-    return ksolve!(AQ, A, Q, O, triQ, piv, Val(size(A, 1)))
+    return ksolve!(AQ, A, Q, O, triQ, piv, size(A, 1))
 end

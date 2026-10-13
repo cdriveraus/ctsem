@@ -490,9 +490,12 @@ function _laplace_gated_unit_adjoint(laplace::CTSEMLaplaceObjective, U::Integer,
         for m in eachindex(members), c in 1:layout.q[m]
             z0[layout.offs[m] + c] = modes.dhat[m][c]
         end
-        objf = zz -> _hybrid_joint_objective_gradient(laplace, U, theta, Ls, zz, aws,
-            layout)
-        curvf = zz -> _hybrid_joint_curvature(laplace, U, theta, Ls, zz, layout).diag[1]
+        objf = let layout = layout
+            zz -> _hybrid_joint_objective_gradient(laplace, U, theta, Ls, zz, aws, layout)
+        end
+        curvf = let layout = layout
+            zz -> _hybrid_joint_curvature(laplace, U, theta, Ls, zz, layout).diag[1]
+        end
         dcheck = length(uhat) + length(members) *
             length(laplace.objective.params.hybrid.manifests)
     else
@@ -504,7 +507,11 @@ function _laplace_gated_unit_adjoint(laplace::CTSEMLaplaceObjective, U::Integer,
             Ls, zz), blocks, length(zz))
         dcheck = length(uhat)
     end
-    G = zz -> _laplace_unit_theta_gradient(laplace, U, theta, Ls, dL, positions, zz,
-        layout)
+    # `let`: `layout` is assigned on both branches, and a captured local
+    # assigned more than once is a `Core.Box`.
+    G = let layout = layout
+        zz -> _laplace_unit_theta_gradient(laplace, U, theta, Ls, dL, positions, zz,
+            layout)
+    end
     return _laplace_gated_reverse(laplace, z0, objf, curvf, G, dcheck, npar)
 end

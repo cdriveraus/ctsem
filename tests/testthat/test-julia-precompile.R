@@ -15,6 +15,11 @@
 # asks the real one about both: a fresh session's first fit of a captured model
 # must compile almost nothing.
 #
+# A model's types do not depend on its size or its expressions (the parameter
+# layout, matrix sizes and state-dependent cells are data), so a model the
+# workload never captured is a precompiled shape too, and its first fit should
+# compile as little: the tests ask that of one as well.
+#
 # When either fails, regenerate:  Rscript tools/generate-precompile-shapes.R
 
 # The generator's `gaussian_augmented` / `gaussian_laplace` model: one latent,
@@ -28,6 +33,12 @@
     manifesttype = c(0L, 0L))))
   m$pars$indvarying <- m$pars$param %in% "cint"
   m
+}
+# Not captured: two latents with ctModel's defaults, random effects included.
+.heldout_model <- function() {
+  suppressWarnings(suppressMessages(ctModel(type = "ct", n.latent = 2,
+    n.manifest = 2, manifestNames = c("y1", "y2"), latentNames = c("eta1", "eta2"),
+    LAMBDA = diag(2))))
 }
 .precompile_data <- function(nsub = 20L, nobs = 8L) {
   set.seed(4)
@@ -55,7 +66,12 @@ test_that("the precompiled models still match what ctsem's model writer emits", 
     CINT = matrix("cint"), T0MEANS = matrix(0),
     MANIFESTVAR = matrix(c("mvar", 0, 0, "mvar"), 2), manifesttype = c(0L, 0L))))
   free_loading$pars$indvarying <- free_loading$pars$param %in% "cint"
-  models <- list(captured = .precompile_model(), free_loading = free_loading)
+  models <- list(captured = .precompile_model(), free_loading = free_loading,
+    two_latents = .heldout_model(),
+    state_dependent = suppressWarnings(suppressMessages(ctModel(type = "ct",
+      n.latent = 1, n.manifest = 1, manifestNames = "y1", latentNames = "eta1",
+      LAMBDA = diag(1), PARS = matrix("drift", 1, 1),
+      DRIFT = matrix("PARS[1,1] * (1 + 0.5 * eta1)", 1, 1)))))
   for (route in c("augmented", "laplace")) for (nm in names(models)) {
     spec <- suppressWarnings(suppressMessages(ctFit(.precompile_data(3L, 4L),
       models[[nm]], backend = "julia", fit = FALSE, intoverpop = route)))
@@ -67,7 +83,7 @@ test_that("the precompiled models still match what ctsem's model writer emits", 
       v(nz(as.character(table$predicttransform), "")),
       v(nz(as.character(table$updatetransform), "")),
       v(nz(as.character(table$tdtransform), ""))))
-    expect_true(matched, label = sprintf("the %s gaussian model (%s) is a precompiled shape",
+    expect_true(matched, label = sprintf("the %s model (%s) is a precompiled shape",
       route, nm))
   }
 })
@@ -130,18 +146,14 @@ test_that("every captured model replayed when the engine image was built", {
   expect_identical(missing, "", label = "captured models whose replay failed at build time")
 })
 
-test_that("a fresh session's first fit of a precompiled model compiles almost nothing", {
-  skip_without_julia()
-  # An image built without the workload compiled nothing ahead of time, so its
-  # first fit compiles everything by construction and there is nothing to
-  # measure. The child below inherits the same image.
-  enabled <- tryCatch(isTRUE(ctsem:::.ctJuliaEval(
-    "ContinuousTimeSEM._PRECOMPILE_WORKLOAD_ENABLED")), error = function(e) NA)
-  skip_if(isFALSE(enabled), "engine image built with CTSEM_PRECOMPILE_WORKLOAD=false")
-  # Its own R process, and so its own Julia: this session's Julia has compiled
-  # whatever earlier tests ran, and a first fit is a property of a fresh one.
-  # Most of its time is starting R, ctsem and Julia -- nothing cheaper sees the
-  # bridge's load order, which is what broke this before.
+# A fit of `model` to `data` (functions, deparsed into the child) in a fresh R
+# process, and so a fresh Julia: this session's Julia has compiled whatever
+# earlier tests ran, and a first fit is a property of a fresh one. Most of its
+# time is starting R, ctsem and Julia -- nothing cheaper sees the bridge's load
+# order, which is what broke this before. Returns the engine methods the fit
+# compiled and their compile time, or `NULL` with the child's log when it did
+# not finish.
+.first_fit_compiles <- function(model, data, route) {
   root <- normalizePath(file.path(testthat::test_path(), "..", ".."), mustWork = FALSE)
   from_source <- file.exists(file.path(root, "DESCRIPTION")) &&
     dir.exists(file.path(root, "R"))
@@ -159,12 +171,12 @@ test_that("a fresh session's first fit of a precompiled model compiles almost no
   writeLines(c(
     sprintf("Sys.setenv(JULIACONNECTOR_JULIAOPTS = %s)", deparse(opts)),
     loader,
-    paste(".precompile_model <-", paste(deparse(.precompile_model), collapse = "\n")),
-    paste(".precompile_data <-", paste(deparse(.precompile_data), collapse = "\n")),
+    paste(".model <-", paste(deparse(model), collapse = "\n")),
+    paste(".data <-", paste(deparse(data), collapse = "\n")),
     "suppressMessages(ctJuliaSetup(threads = 1L))",
     sprintf("before <- length(readLines(%s, warn = FALSE))", deparse(trace)),
-    "fit <- suppressWarnings(suppressMessages(ctFit(.precompile_data(),",
-    "  .precompile_model(), backend = 'julia', intoverpop = 'augmented', cores = 1L)))",
+    "fit <- suppressWarnings(suppressMessages(ctFit(.data(), .model(),",
+    sprintf("  backend = 'julia', intoverpop = %s, cores = 1L)))", deparse(route)),
     sprintf("saveRDS(list(before = before, lines = readLines(%s, warn = FALSE),",
       deparse(trace)),
     sprintf("  loglik = fit$estimate$loglik), %s)", deparse(out))), script)
@@ -173,12 +185,8 @@ test_that("a fresh session's first fit of a precompiled model compiles almost no
   log <- withr::with_envvar(c(R_LIBS = paste(.libPaths(), collapse = .Platform$path.sep)),
     suppressWarnings(system2(file.path(R.home("bin"), "Rscript"), shQuote(script),
       stdout = TRUE, stderr = TRUE)))
-  finished <- file.exists(out)
-  expect_true(finished, label = paste(c("the fresh session finished", tail(log, 15)),
-    collapse = "\n"))
-  skip_if(!finished)
+  if (!file.exists(out)) return(list(finished = FALSE, log = log))
   res <- readRDS(out)
-  expect_true(is.finite(res$loglik))
   compiled <- res$lines[-seq_len(res$before)]
   # What the engine itself compiled: its own methods and closures, and keyword
   # calls into them. The bridge compiles a little for new result types, which
@@ -188,12 +196,46 @@ test_that("a fresh session's first fit of a precompiled model compiles almost no
     (startsWith(body, "precompile(Tuple{typeof(Core.kwcall)") &
       grepl(", typeof(ContinuousTimeSEM.", body, fixed = TRUE))
   ms <- suppressWarnings(as.numeric(sub("^#=\\s*([0-9.]+) ms.*", "\\1", compiled)))
-  # A healthy replay leaves a handful; a rotted one, or an image the session
-  # cannot use, leaves hundreds and most of a minute. The bound tells those
-  # apart and is not for tuning.
-  expect_lt(sum(engine), 60, label = sprintf(
-    "engine methods compiled in the first fit (%d, %.1f s of compile in all)",
-    sum(engine), sum(ms, na.rm = TRUE) / 1000))
+  list(finished = TRUE, log = log, loglik = res$loglik, engine = sum(engine),
+    seconds = sum(ms, na.rm = TRUE) / 1000)
+}
+
+# A healthy image leaves a handful; a rotted one, an image the session cannot
+# use, or a model whose types the image lacks, leaves hundreds and most of a
+# minute. The bound tells those apart and is not for tuning.
+.expect_compiles_little <- function(res, what) {
+  expect_true(res$finished, label = paste(c(paste("the fresh session finished:", what),
+    tail(res$log, 15)), collapse = "\n"))
+  if (!isTRUE(res$finished)) return(invisible())
+  expect_true(is.finite(res$loglik))
+  expect_lt(res$engine, 60, label = sprintf(
+    "engine methods compiled in the first fit of %s (%d, %.1f s of compile in all)",
+    what, res$engine, res$seconds))
+}
+
+.skip_without_workload <- function() {
+  # An image built without the workload compiled nothing ahead of time, so its
+  # first fit compiles everything by construction and there is nothing to
+  # measure. The child inherits the same image.
+  enabled <- tryCatch(isTRUE(ctsem:::.ctJuliaEval(
+    "ContinuousTimeSEM._PRECOMPILE_WORKLOAD_ENABLED")), error = function(e) NA)
+  skip_if(isFALSE(enabled), "engine image built with CTSEM_PRECOMPILE_WORKLOAD=false")
+}
+
+test_that("a fresh session's first fit of a precompiled model compiles almost nothing", {
+  skip_without_julia()
+  .skip_without_workload()
+  .expect_compiles_little(.first_fit_compiles(.precompile_model, .precompile_data,
+    "augmented"), "the captured model")
+})
+
+test_that("a fresh session's first fit of a model the workload never saw compiles almost nothing", {
+  skip_without_julia()
+  .skip_without_workload()
+  for (route in c("augmented", "laplace")) {
+    .expect_compiles_little(.first_fit_compiles(.heldout_model, .precompile_data, route),
+      sprintf("a two-latent model on the %s route", route))
+  }
 })
 
 # The engine's numbers from its package image, and from the same source built
@@ -270,7 +312,14 @@ test_that("the package image computes what the engine compiled in the session co
   expect_identical(lines$image[1], "workload true")
   expect_identical(lines$session[1], "workload false")
   diffs <- .image_vs_session_diff(lines)
-  expect_gt(length(diffs), 20)
+  # Every captured model compared, a value and a gradient at least: a count
+  # fixed when the workload had nine models failed once it had two.
+  captured <- strsplit(as.character(ctsem:::.ctJuliaEval(paste0("join(sort(string.(",
+    "collect(keys(ContinuousTimeSEM._PRECOMPILE_SHAPES)))), \",\")"))), ",",
+    fixed = TRUE)[[1]]
+  compared <- sub(" .*$", "", names(diffs))
+  expect_setequal(unique(compared), captured)
+  for (m in captured) expect_gte(sum(compared == m), 2, label = paste("quantities compared for", m))
   # Rounding differences are allowed for (the image's code is built for the
   # CPU targets the system image lists, the session's for this CPU); anything
   # the source actually changes is orders of magnitude above this.

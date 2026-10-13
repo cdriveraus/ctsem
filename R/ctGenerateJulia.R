@@ -257,19 +257,26 @@
   list(handle = handle, raw = raw, varying = varying)
 }
 
+# How many standard normals one draw of every random effect takes; zero when the
+# specification has none.
+.ctGenerateEffectDimension <- function(handle) {
+  spec <- .ctBackendSpec(handle)
+  if (is.null(spec$laplace)) return(0L)
+  module <- .ctJuliaModule(spec$project)
+  as.integer(.ctBackendJuliaValue(
+    module$ctsem_laplace_coordinate_dimension(.ctJuliaObjective(handle))))
+}
+
 # One draw of every random effect from the population, as natural deviations
 # for `effects`. NULL when the specification has none.
 #' @keywords internal
 .ctGeneratePopulationEffects <- function(handle, raw) {
-  spec <- .ctBackendSpec(handle)
-  if (is.null(spec$laplace)) return(NULL)
-  module <- .ctJuliaModule(spec$project)
-  objective <- .ctJuliaObjective(handle)
-  n <- as.integer(.ctBackendJuliaValue(
-    module$ctsem_laplace_coordinate_dimension(objective)))
+  n <- .ctGenerateEffectDimension(handle)
   if (n < 1L) return(NULL)
+  spec <- .ctBackendSpec(handle)
+  module <- .ctJuliaModule(spec$project)
   as.numeric(.ctBackendJuliaValue(module$ctsem_laplace_population_deviations(
-    objective, .ctJuliaNumericVector(as.numeric(raw)),
+    .ctJuliaObjective(handle), .ctJuliaNumericVector(as.numeric(raw)),
     .ctJuliaNumericVector(stats::rnorm(n)))))
 }
 

@@ -349,6 +349,9 @@ function _quadrature_leaf_rule!(laplace::CTSEMLaplaceObjective, U::Integer,
             E.vectors * ((transpose(E.vectors) * current.gradient) ./
                 max.(E.values, lowest))
         end
+        # A step at roundoff is a mode however large the gradient's roundoff
+        # is; see `_laplace_newton_unit_mode`.
+        issuccess(factorization) && maximum(abs, step) < laplace.inner_tol && break
         accepted = false
         scale = 1.0
         for _ in 1:20
@@ -783,7 +786,8 @@ Not on any R path now: it did not finish in 40 minutes on the 800-subject
 AnomAuth model, where it needs 18 quadratures per gradient, and the
 continuation (`ctsem_laplace_continuation`) takes the same objective's
 gradient exactly. Kept as the independent reference the continuation's tests
-compare against, since it shares nothing with it but the rule.
+compare against: it shares the rule and the L-BFGS (`_ctsem_lbfgs`) with it,
+and not the gradient, which here is differenced from the quadrature value.
 """
 function ctsem_laplace_refine(laplace::CTSEMLaplaceObjective,
     values::AbstractVector; nodes::Integer=5, maxiter::Integer=50,
@@ -799,25 +803,34 @@ function ctsem_laplace_refine(laplace::CTSEMLaplaceObjective,
         end
         return isfinite(value) ? -value : invalid
     end
-    gradient! = function (G, x)
-        for j in eachindex(x)
-            h = step * max(1.0, abs(x[j]))
-            plus = copy(x); plus[j] += h
-            minus = copy(x); minus[j] -= h
-            G[j] = (objective(plus) - objective(minus)) / (2h)
+    # `_ctsem_lbfgs`'s contract: `G === nothing` asks for the value alone, and
+    # an invalid point is a huge value with a zero gradient.
+    fg! = function (F, G, x)
+        f = objective(x)
+        G === nothing && return f
+        if f == invalid
+            fill!(G, 0.0)
+        else
+            for j in eachindex(x)
+                h = step * max(1.0, abs(x[j]))
+                plus = copy(x); plus[j] += h
+                minus = copy(x); minus[j] -= h
+                G[j] = (objective(plus) - objective(minus)) / (2h)
+            end
         end
-        return G
+        return f
     end
-    options = Optim.Options(iterations=Int(maxiter), g_tol=g_tol,
-        show_trace=verbose, store_trace=false)
-    result = Optim.optimize(objective, gradient!, start, Optim.LBFGS(), options)
-    minimizer = collect(Optim.minimizer(result))
+    report = verbose ? (state -> (println("refine ", state.iteration, ": ",
+        -state.value, ", |g| ", state.g_norm); false)) : nothing
+    result = _ctsem_lbfgs(fg!, start; maxiter=Int(maxiter), g_tol=g_tol,
+        callback=report)
+    minimizer = result.minimizer
     return (minimizer=minimizer,
-        maximum_loglik=-Optim.minimum(result),
+        maximum_loglik=-result.minimum,
         laplace_start=start,
         shift=minimizer .- start,
-        iterations=Optim.iterations(result),
-        converged=Optim.converged(result),
+        iterations=result.iterations,
+        converged=result.g_converged,
         nodes=Int(nodes))
 end
 
@@ -1103,7 +1116,10 @@ function _laplace_soft_rule_unit(laplace::CTSEMLaplaceObjective,
                 Mz = transpose(Vh) * Mof(ubase .+ Vh * z) * Vh
                 F = _ctsem_cholesky(Matrix(_laplace_symmetrise(Mz)), nh)
                 issuccess(F) || break
-                z .+= F \ gz
+                step = F \ gz
+                z .+= step
+                # At roundoff in the step, as `_laplace_newton_unit_mode` stops.
+                maximum(abs, step) < laplace.inner_tol && break
             end
         end
         uu = ubase .+ Vh * z

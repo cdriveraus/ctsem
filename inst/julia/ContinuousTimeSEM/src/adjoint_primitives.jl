@@ -155,7 +155,7 @@ function _ctsem_expm(A::Matrix{Float64})
     n = size(A, 1)
     Y = Matrix{Float64}(undef, n, n)
     scratch = Matrix{Float64}(undef, n, n)
-    my_exp!(Y, copy(A), scratch, ExpBuffer{Float64}(n), Val(n))
+    my_exp!(Y, copy(A), scratch, ExpBuffer{Float64}(n), n)
     return Y
 end
 
@@ -164,7 +164,7 @@ function _ctsem_expm(A::AbstractMatrix)
     n = size(A, 1)
     Y = Matrix{T}(undef, n, n)
     scratch = Matrix{T}(undef, n, n)
-    my_exp!(Y, Matrix{T}(A), scratch, ExpBuffer{T}(n), Val(n))
+    my_exp!(Y, Matrix{T}(A), scratch, ExpBuffer{T}(n), n)
     return Y
 end
 

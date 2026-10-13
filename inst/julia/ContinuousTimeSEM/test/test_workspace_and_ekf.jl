@@ -145,7 +145,7 @@ end
 @testset "an unwritten parameter slot keeps its sentinel" begin
     base = fixed_one_dimensional_ekf_parameters()
     n = length(base.mutables)
-    probe = ComponentVector(Float64.(1:n), base.parameter_axis)
+    probe = ContinuousTimeSEM.CTSEMPars(Float64.(1:n), base.parameter_axis)
     carrier = Int(probe.PARS[1, 1])
 
     fixed = collect(base.fixed_indices)

@@ -278,7 +278,7 @@ arithmetic on the axis, so a change to the layout cannot leave this returning a
 stale range.
 """
 function _ctsem_component_positions(sp::EKFParameters, name::Symbol)
-    marker = ComponentVector(zeros(Int, length(sp.mutables)), sp.parameter_axis)
+    marker = CTSEMPars(zeros(Int, length(sp.mutables)), sp.parameter_axis)
     getproperty(marker, name) .= 1
     return findall(!iszero, getdata(marker))
 end
@@ -721,7 +721,7 @@ a central difference only knows the primal's outputs.
 """
 function ctsem_validate_forward_gradient(objective, values::AbstractVector;
     step::Real=1e-6, adjoint::Bool=true)
-    forward = ForwardDiff.gradient(objective, values)
+    forward = _ctsem_gradient(objective, values)
     finite = similar(forward)
     for i in eachindex(values)
         plus = copy(values); minus = copy(values)
@@ -788,14 +788,15 @@ function ctsem_hessian(objective::CTSEMObjective, values::AbstractVector;
     gradient_of = y -> ctsem_adjoint_gradient(objective, y).gradient
     columns = progress === nothing ? nothing :
         (done, total) -> progress(done, total, "parameters")
-    # The default width is `pickchunksize`'s unless `ctsem_set_dual_widths!`
-    # asked for buckets; see `_CTSEM_HESSIAN_WIDTHS` for why not by default.
+    # One width for every parameter count (`_CTSEM_HESSIAN_WIDTHS`), so a model
+    # of another size compiles no new dual type.
     chunk > 0 || return _ctsem_symmetrised(
         _ctsem_width_jacobian(gradient_of, x, _CTSEM_HESSIAN_WIDTHS[];
             progress=columns))
     chunksize = min(Int(chunk), n)
-    return _ctsem_symmetrised(_ctsem_reported_jacobian(gradient_of, x,
-        ForwardDiff.Chunk{chunksize}(), columns, n))
+    # A run-time width: behind the barrier, as in `_ctsem_width_jacobian!`.
+    return _ctsem_symmetrised(_ctsem_barrier(_ctsem_reported_jacobian, gradient_of, x,
+        ForwardDiff.Chunk{chunksize}(), columns, n)::Matrix{Float64})
 end
 _ctsem_symmetrised(H::AbstractMatrix) = (H .+ transpose(H)) ./ 2
 
@@ -846,7 +847,6 @@ function ctsem_hessian_forward(objective::CTSEMObjective, values::AbstractVector
     n = length(x)
     n == 0 && return zeros(Float64, 0, 0)
     chunksize = chunk > 0 ? min(Int(chunk), n) : ForwardDiff.pickchunksize(n)
-    hessian = ForwardDiff.hessian(objective, x, ForwardDiff.HessianConfig(
-        objective, x, ForwardDiff.Chunk{chunksize}()))
+    hessian = _ctsem_dual_hessian(objective, x, ForwardDiff.Chunk{chunksize}())
     return (hessian .+ transpose(hessian)) ./ 2
 end

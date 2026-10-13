@@ -34,17 +34,17 @@ Workspace for allocation-conscious matrix exponential computations.
 The buffer stores scaled powers of the input matrix and pivot storage reused by
 `my_exp!`.
 """
-struct ExpBuffer{TYPE<:Number,D}
+struct ExpBuffer{TYPE<:Number}
     As::Matrix{TYPE}
     A2::Matrix{TYPE}
     A4::Matrix{TYPE}
     A6::Matrix{TYPE}
     piv::Vector{Int}
-    dim::Val{D}
-    ExpBuffer{TYPE}(n::Int) where {TYPE <: Number} = new{TYPE,n}(
+    dim::Int
+    ExpBuffer{TYPE}(n::Int) where {TYPE <: Number} = new{TYPE}(
         zeros(TYPE, n, n), zeros(TYPE, n, n), zeros(TYPE, n, n), zeros(TYPE, n, n),
         zeros(Int, n),
-        Val(n),
+        n,
     )
 
 end
@@ -56,7 +56,8 @@ Create an `ExpBuffer` sized and typed from `mat`.
 """
 ExpBuffer(mat::AbstractMatrix) = ExpBuffer{eltype(mat)}(size(mat, 1))
 
-function _opnorm1_noalloc(A::AbstractMatrix{T}, ::Val{d}) where {T<:Number, d}
+function _opnorm1_noalloc(A::AbstractMatrix{T}, __d::Union{Int,Val}) where {T<:Number}
+    d = _val(__d)
     z = zero(_custom_abs(zero(T)))
     max_col_sum = z
     @inbounds for j in 1:d
@@ -82,7 +83,8 @@ function my_exp!(Y::AbstractMatrix{TYPE}, A::AbstractMatrix{TYPE}, W1::AbstractM
     return my_exp!(Y, A, W1, buffer, buffer.dim)
 end
 
-function my_exp!(Y::AbstractMatrix{TYPE}, A::AbstractMatrix{TYPE}, W1::AbstractMatrix{TYPE}, buffer::ExpBuffer{TYPE}, dim::Val{d}) where {TYPE<:Number, d}
+function my_exp!(Y::AbstractMatrix{TYPE}, A::AbstractMatrix{TYPE}, W1::AbstractMatrix{TYPE}, buffer::ExpBuffer{TYPE}, dim::Union{Int,Val}) where {TYPE<:Number}
+    d = _val(dim)
     # Higham (2008) scaling-and-squaring with [13/13] Pade approximant.
     _CTSEM_OPCOUNT.exp[] += 1
     a1 = _opnorm1_noalloc(A, dim)

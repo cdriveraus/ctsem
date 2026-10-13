@@ -273,6 +273,9 @@ function _continuation_complement(fns, base::Vector{Float64}, Vh::Matrix{Float64
         E = _ctsem_symeig(transpose(Vh) * fns.precision(z) * Vh)
         lowest = 1e-8 * max(maximum(abs, E.values), 1.0)
         step = E.vectors * ((transpose(E.vectors) * gh) ./ max.(E.values, lowest))
+        # A step at roundoff is a mode however large the gradient's roundoff
+        # is; see `_laplace_newton_unit_mode`.
+        all(>=(lowest), E.values) && maximum(abs, step) < laplace.inner_tol && break
         accepted = false
         scale = 1.0
         for _ in 1:20
@@ -474,9 +477,13 @@ function _continuation_unit_width(laplace::CTSEMLaplaceObjective, U::Integer)
     blocks = laplace.units.blocks[U]
     isempty(blocks) && return 0
     tree = _quadrature_children(blocks)
-    width(b) = blocks[b].size + maximum((width(c) for c in tree.children[b]); init=0)
-    return maximum((width(r) for r in tree.roots); init=0)
+    return maximum((_continuation_block_width(blocks, tree, r) for r in tree.roots);
+        init=0)
 end
+# Not a local recursive function: a closure that calls itself is a `Core.Box`.
+_continuation_block_width(blocks, tree, b) = blocks[b].size +
+    maximum((_continuation_block_width(blocks, tree, c) for c in tree.children[b]);
+        init=0)
 
 """
     _continuation_unit_rule(laplace, U, theta, Ls, aws, opts)
@@ -1329,20 +1336,22 @@ function _continuation_hessian_scratch(laplace::CTSEMLaplaceObjective, ::Type{S}
     n = Int(npar)
     na = length(layout.active)
     ne = length(layout.entries)
-    vbuf(tag, T=Float64) = _laplace_scratch_vector!(laplace, T, n, tag)
-    mbuf(tag, nrow=n, ncol=n) = _laplace_scratch_matrix!(laplace, Float64, nrow, ncol, tag)
+    # No default arguments: they make a local function call itself, which is a
+    # `Core.Box`.
+    vbuf(tag, T) = _laplace_scratch_vector!(laplace, T, n, tag)
+    mbuf(tag, nrow, ncol) = _laplace_scratch_matrix!(laplace, Float64, nrow, ncol, tag)
     plain = _continuation_scratch(laplace, n)
     return (x=vbuf(:cont_hess_x, S), gradient=vbuf(:cont_hess_gradient, S),
         shift=plain.shift, g=plain.grad, Hs=mbuf(:cont_hess_Hs, na, na),
         C=mbuf(:cont_hess_C, layout.kmax, ne), V=mbuf(:cont_hess_V, na, ne),
-        delta=vbuf(:cont_hess_delta),
-        mean=[vbuf(Symbol(:cont_hess_mean, d)) for d in 1:depth],
-        hess=[mbuf(Symbol(:cont_hess_hess, d)) for d in 1:depth],
-        scatter=[mbuf(Symbol(:cont_hess_scatter, d)) for d in 1:depth],
-        gnode=[vbuf(Symbol(:cont_hess_gnode, d)) for d in 1:depth],
-        hnode=[mbuf(Symbol(:cont_hess_hnode, d)) for d in 1:depth],
-        unit_gradient=vbuf(:cont_hess_unit_gradient),
-        unit_hessian=mbuf(:cont_hess_unit_hessian))
+        delta=vbuf(:cont_hess_delta, Float64),
+        mean=[vbuf(Symbol(:cont_hess_mean, d), Float64) for d in 1:depth],
+        hess=[mbuf(Symbol(:cont_hess_hess, d), n, n) for d in 1:depth],
+        scatter=[mbuf(Symbol(:cont_hess_scatter, d), n, n) for d in 1:depth],
+        gnode=[vbuf(Symbol(:cont_hess_gnode, d), Float64) for d in 1:depth],
+        hnode=[mbuf(Symbol(:cont_hess_hnode, d), n, n) for d in 1:depth],
+        unit_gradient=vbuf(:cont_hess_unit_gradient, Float64),
+        unit_hessian=mbuf(:cont_hess_unit_hessian, n, n))
 end
 
 """

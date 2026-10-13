@@ -55,6 +55,9 @@ function _validate_substep_rule(mesh::AbstractVector, nrows::Int)
     return Int[Int(m) for m in mesh]
 end
 
+_ctsem_float_data(x::AbstractArray{<:Union{Integer,Float32}}) = Float64.(x)
+_ctsem_float_data(x::AbstractArray) = x
+
 function ContinuousEKFObjective(params::EKFParameters, data::Matrix, timesteps::Vector;
     tdpreds::AbstractMatrix=zeros(eltype(data), 0, size(data, 2)),
     # Not typed `::AbstractVector`: a subject with a sampled (missing) TI
@@ -66,6 +69,13 @@ function ContinuousEKFObjective(params::EKFParameters, data::Matrix, timesteps::
     max_timestep=Inf)
     _validate_continuous_ekf_inputs(timesteps, data)
     size(tdpreds, 2) == size(data, 2) || throw(DimensionMismatch("TD predictor columns must match observations"))
+    # Data as Float64 whatever R sent: an integer TD predictor or indicator
+    # column is a different type for the whole filter, which then compiled
+    # again for a model that differed from another only in that.
+    data = _ctsem_float_data(data)
+    timesteps = _ctsem_float_data(timesteps)
+    tdpreds = _ctsem_float_data(tdpreds)
+    tipreds isa AbstractVector{<:Integer} && (tipreds = _ctsem_float_data(tipreds))
     rule = _validate_substep_rule(max_timestep, length(timesteps))
     return ContinuousEKFObjective{typeof(params),typeof(data),typeof(timesteps),typeof(tdpreds),typeof(tipreds),typeof(rule)}(
         nothing, nothing, params, data, timesteps, tdpreds, tipreds, Int(subject), rule)
@@ -228,7 +238,8 @@ end
     return nothing
 end
 
-@inline function _copy_lower_to_upper!(matrix, state_dim::Val{n}) where {n}
+@inline function _copy_lower_to_upper!(matrix, state_dim::Union{Int,Val})
+    n = _val(state_dim)
     @inbounds for col in 1:n
         for row in (col + 1):n
             matrix[col, row] = matrix[row, col]
@@ -476,8 +487,10 @@ nonlinear link, 7.1 under 'augmented' random intercepts; equal to 1e-11 after.
 """
 @inline function _ekf_categorical_offset(pars, i::Int, prior, n::Int)
     μ = pars.MANIFESTMEANS[i]
+    LAMBDA = pars.LAMBDA
+    Jy = pars.Jy
     @inbounds for j in 1:n
-        μ += (pars.LAMBDA[i, j] - pars.Jy[i, j]) * prior[j]
+        μ += (LAMBDA[i, j] - Jy[i, j]) * prior[j]
     end
     return μ
 end
@@ -804,17 +817,19 @@ end
 """
     _apply_population_block!(ws, all_params)
 
-Write the population covariance over the states it accounts for.
+Add the population covariance to the initial covariance of the states it
+accounts for.
 
-T0VAR is the model own initial covariance and states nothing about a random
-effect. Where a population block exists, each state it accounts for has its
-row and column of the initial covariance dropped and the constructed block
-written in. Dropping first is what makes the two cases come out right: a state
-the block accounts for does not covary with one it does not -- nothing states
-that pair -- while two states the block does span covary through it. An
-individually varying T0MEANS gets no carrier state, so those indices are not
-disjoint from the model own latents, which is why this is indexed rather than
-appended.
+T0VAR is the model's own initial covariance: what is left of a state's
+variance once a subject's random effects are known. The population block is
+the spread of those effects, so the initial covariance over subjects is the
+sum, which is what the Laplace route integrates to and why this adds rather
+than overwrites. An individually varying T0MEANS gets no carrier state, so
+those indices are not disjoint from the model's own latents, which is why this
+is indexed rather than appended; `T0VARredundancies()` (R) has already fixed
+their free T0VAR cells, leaving the floor on the diagonal and zero elsewhere,
+so a state the block spans covaries with one it does not only where the model
+fixes a T0VAR cell to say so. A carrier state's T0VAR is zero.
 
 No allocation and no extra buffer. `bufferQ` is sized to the state dimension,
 the block is a subset of the states so it is no larger, and `sdcovsqrt2cov!`
@@ -829,14 +844,14 @@ end
 
 # A square buffer's dimension as the `Val` it was built with.
 @inline _square_dim(buffer::SquareBuffer, k::Int) = buffer.dim
-@inline _square_dim(buffer, k::Int) = Val(k)
+@inline _square_dim(buffer, k::Int) = k
 
 """
     _place_population_block!(P, all_params, indices, range, covmatcode, scale,
         buffer)
 
-Drop the rows and columns of the states the population block accounts for, and
-write the constructed block over them.
+Add the constructed population block to the rows and columns of the states it
+accounts for. See `_apply_population_block!` for why the sum.
 
 Called by the filter and by the summary, deliberately: they used to each build
 the initial covariance their own way, and that is how the two came to disagree
@@ -847,14 +862,6 @@ about what a fit had estimated. One placement, two callers.
     isempty(indices) && return nothing
     k = length(indices)
     raw = reshape(view(all_params, range), k, k)
-    @inbounds for s in indices
-        for j in axes(P, 2)
-            P[s, j] = zero(eltype(P))
-        end
-        for i in axes(P, 1)
-            P[i, s] = zero(eltype(P))
-        end
-    end
     # The buffer's own `Val`, which is `k` by construction (and checked there):
     # `Val(k)` is a runtime value, so the call was a dynamic dispatch boxing the
     # buffer and the `raw` view, twice per subject evaluation.
@@ -864,7 +871,7 @@ about what a fit had estimated. One placement, two callers.
     # popstatescale)` the stan program writes at the one line that places this
     # block.
     @inbounds for b in 1:k, a in 1:k
-        P[indices[a], indices[b]] = scale[a] * scale[b] * buffer.out[a, b]
+        P[indices[a], indices[b]] += scale[a] * scale[b] * buffer.out[a, b]
     end
     return nothing
 end
@@ -912,11 +919,15 @@ function _ctsem_stationary!(P, x, ws, pars)
     ab = ws.affine_buffer
     naff = _val(ab.dim)
 
+    # Views bound once: indexing `pars.DRIFT` in the loop rebuilds the view
+    # from the layout on every iteration.
+    DRIFT = pars.DRIFT
+    CINT = pars.CINT
     @inbounds for j in 1:naff, i in 1:naff
-        ab.intermediate[i, j] = pars.DRIFT[i, j]
+        ab.intermediate[i, j] = DRIFT[i, j]
     end
     @inbounds for i in 1:naff
-        ab.s[i] = -pars.CINT[i]
+        ab.s[i] = -CINT[i]
     end
     _solve_square_system!(ab.intermediate, ab.s, ab.piv, ab.dim)
 
@@ -925,7 +936,7 @@ function _ctsem_stationary!(P, x, ws, pars)
     db = ws.diffusion_buffer
     A = view(ws.discretization_buffer.input, 1:k, 1:k)
     @inbounds for j in 1:k, i in 1:k
-        A[i, j] = pars.DRIFT[dyn[i], dyn[j]]
+        A[i, j] = DRIFT[dyn[i], dyn[j]]
         db.intermediate[i, j] = ws.bufferQ.out[dyn[i], dyn[j]]
     end
     my_lyap!(db.out, A, db.intermediate, ws.lyap_buffer)

@@ -293,8 +293,9 @@ end
 
 function _compute_discrete_time_form!(discrete_ca, buffer, DIFFUSIONcov, pars, Î”t, exp_buffer,
     lyap_buffer, state, diffusion_state_indices, diffusion_buffer,
-    discretization_buffer, dim::Val{d}, cache=nothing,
-    affine_buffer=diffusion_buffer) where {d}
+    discretization_buffer, dim::Union{Int,Val}, cache=nothing,
+    affine_buffer=diffusion_buffer)
+    d = _val(dim)
     # Stan propagates the local affine EKF model, not the raw DRIFT matrix:
     # f(x) = DRIFT * x + CINT, J = JAx, c = f(x) - J * x.
     slot = _exp_cache_lookup(cache, pars.JAx, Î”t, d)
@@ -334,15 +335,20 @@ function _compute_discrete_time_form!(discrete_ca, buffer, DIFFUSIONcov, pars, Î
     # likelihood entirely and the parameter's gradient was exactly zero.
     # Because the block is a leading one, this indexes directly with no gather.
     naff = _val(affine_buffer.dim)
+    # Views bound once: indexing `pars.DRIFT` in a loop rebuilds the view from
+    # the layout on every iteration.
+    DRIFT = pars.DRIFT
+    JAx = pars.JAx
+    CINT = pars.CINT
     @inbounds for i in 1:naff
-        affine = pars.CINT[i]
+        affine = CINT[i]
         for j in 1:d
-            affine += (pars.DRIFT[i, j] - pars.JAx[i, j]) * state[j]
+            affine += (DRIFT[i, j] - JAx[i, j]) * state[j]
         end
         affine_buffer.r[i] = affine
     end
     @inbounds for j in 1:naff, i in 1:naff
-        affine_buffer.intermediate[i, j] = pars.JAx[i, j]
+        affine_buffer.intermediate[i, j] = JAx[i, j]
     end
     @inbounds for i in 1:naff
         correction = -affine_buffer.r[i]
@@ -381,7 +387,7 @@ function _compute_discrete_time_form!(discrete_ca, buffer, DIFFUSIONcov, pars, Î
     @inbounds for j in 1:kdim, i in 1:kdim
         ii = diffusion_state_indices[i]
         jj = diffusion_state_indices[j]
-        discretization_buffer.input[i, j] = pars.JAx[ii, jj]
+        discretization_buffer.input[i, j] = JAx[ii, jj]
         diffusion_buffer.intermediate[i, j] = DIFFUSIONcov[ii, jj]
     end
     dynamic_jacobian = view(discretization_buffer.input, 1:kdim, 1:kdim)
@@ -457,14 +463,18 @@ the offset came out as `-x[i]` and cancelled the state the transition had
 just carried, zeroing every random-effect coordinate at every step.
 """
 function _compute_one_step_form!(discrete_ca, DIFFUSIONcov, pars, state,
-    diffusion_state_indices, dim::Val{d}) where {d}
+    diffusion_state_indices, dim::Union{Int,Val})
+    d = _val(dim)
     copyto!(discrete_ca.eJAx, pars.JAx)
     copyto!(discrete_ca.dDRIFT, pars.JAx)
 
+    DRIFT = pars.DRIFT
+    JAx = pars.JAx
+    CINT = pars.CINT
     @inbounds for i in 1:d
-        affine = pars.CINT[i]
+        affine = CINT[i]
         for j in 1:d
-            affine += (pars.DRIFT[i, j] - pars.JAx[i, j]) * state[j]
+            affine += (DRIFT[i, j] - JAx[i, j]) * state[j]
         end
         discrete_ca.dINT[i] = affine
     end

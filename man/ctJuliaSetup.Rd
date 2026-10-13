@@ -30,9 +30,11 @@ The engine splits its subject loop across them, and \code{ctFit}'s
 setting it here takes effect only if no Julia session is running yet --
 pass \code{force = TRUE} to restart one. \code{NULL}, the default, starts
 a session at \code{getOption("mc.cores", 2)} threads unless
-\code{JULIA_NUM_THREADS} is set; a session started by a fit is instead as
-wide as that fit's \code{cores}, if more. A number given here is also the
-ceiling for any call that sets none. A fit that asks for more cores than
+\code{JULIA_NUM_THREADS} is set; a session started by a call with a
+\code{cores} argument -- a fit, \code{ctFitUncertainty}, \code{ctLOO} and
+the rest -- is instead as wide as that call's \code{cores}, if more. A
+number given here is also the ceiling for any call that sets none. A fit
+that asks for more cores than
 the session has threads says so; see \code{\link{ctFit}}.}
 
 \item{force}{Reconfigure an existing Julia session.}
@@ -62,15 +64,14 @@ The first call downloads and precompiles those dependencies (roughly 120 MB)
 and compiles the engine, which takes several minutes; later calls in new
 sessions reuse both.
 
-The engine is compiled in advance for a few common small models -- one
-latent process with a random intercept and two Gaussian or three binary
-indicators, two latent processes with random intercepts, one latent process
-with a random drift. The first fit of any other model shape in each R
-session compiles code specialised to that model, so it takes longer than
-later fits of the same shape: about a minute against two seconds for a small
-Gaussian model, and minutes for a Laplace model whose fit reaches the
-quadrature correction. This is paid once per shape per session rather than
-once per fit; time a fit after one warm-up fit, not from a fresh session.
+The engine is compiled in advance for one small model on each route -- one
+latent process with two indicators and a random intercept -- and with it the
+code that every model on that route shares. The first fit of any other model
+shape in each R session compiles the code specialised to that model, so it
+takes longer than later fits of the same shape: about a minute for a small
+model on the augmented route and three to four minutes on the Laplace route,
+against seconds once compiled. This is paid once per shape per session rather
+than once per fit; time a fit after one warm-up fit, not from a fresh session.
 
 Pressing Escape (or Ctrl-C) during a julia fit returns to the R prompt at
 once, and keeps the Julia session and everything it has compiled. Julia

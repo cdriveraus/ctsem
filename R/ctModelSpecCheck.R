@@ -6,7 +6,7 @@
 #
 #   a number            fixed, not estimated
 #   a bare name         a free parameter; the same name twice is one parameter
-#   `name|transform|…`  a free parameter with fields (see R/ctParSpec.R)
+#   `name|transform|…`  a free parameter with fields (see R/ctPar.R)
 #   an expression       computed from latent states, tdpreds and PARS cells
 #
 # The classification is silent, so a cell that means one of these and reads as
@@ -457,17 +457,17 @@
   # sdscale multiplies the prior on a population standard deviation, so it
   # means nothing for a parameter that has no population distribution. It was
   # accepted and dropped.
-  indcols <- grep('^indvarying', names(ctspec), value = TRUE)
   for (i in which(holds)) {
     sd <- ctspec$sdscale[i]
     if (is.na(sd) || sd == 1) next
-    anyvary <- any(vapply(indcols, function(cl)
-      isTRUE(as.logical(ctspec[[cl]][i])), logical(1)))
+    # TRUE or level names vary somewhere; only FALSE, or nothing, does not.
+    iv <- toupper(trimws(as.character(ctspec$indvarying[i])))
+    anyvary <- !is.na(iv) && nzchar(iv) && !iv %in% c('FALSE', 'F')
     if (!anyvary) {
       warning(.ctSpecCellName(ctspec, i), ' sets sdscale ', sd,
         ' but the parameter does not vary over subjects, so there is no ',
-        'population standard deviation for it to scale. Set indvarying=TRUE ',
-        'as well, or drop the sdscale.', call. = FALSE)
+        'population standard deviation for it to scale. Set indvarying (TRUE, ',
+        'or the id levels it varies at) as well, or drop the sdscale.', call. = FALSE)
     }
   }
 

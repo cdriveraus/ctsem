@@ -116,6 +116,26 @@ function _ctsem_lbfgs_hmul(M::CTSEMLBFGSMemory, q::AbstractVector, h0::Float64,
     r
 end
 
+# `f(lo) + ... + f(hi)` in the order Base's `sum` adds terms it cannot
+# vectorise: one at a time within blocks of 1024, the halves of a longer range
+# added pairwise. `_ctsem_lbfgs_diagonal!`'s scale summed in this order while
+# its `B` was boxed (untyped); typed, `sum` would vectorise from 16 terms on and
+# round differently, and on a weakly identified model that last bit took the
+# fit down another path to the same maximum. The fixed order keeps fits as they
+# were.
+function _ctsem_sum_inorder(f, lo::Int, hi::Int)
+    hi == lo && return f(lo)
+    if hi - lo < 1024
+        v = f(lo) + f(lo + 1)
+        for i in (lo + 2):hi
+            v += f(i)
+        end
+        return v
+    end
+    mid = lo + (hi - lo) >> 1
+    return _ctsem_sum_inorder(f, lo, mid) + _ctsem_sum_inorder(f, mid + 1, hi)
+end
+
 """
     _ctsem_lbfgs_diagonal!(B, s, y, dinv)
 
@@ -141,11 +161,11 @@ coordinates take steps a thousandth of their own scale; the diagonal learns each
 coordinate's scale from the pairs, as a per-parameter step size would, while the
 two-loop recursion keeps the curvature between coordinates.
 """
-function _ctsem_lbfgs_diagonal!(B, s::Vector{Float64}, y::Vector{Float64},
+function _ctsem_lbfgs_diagonal!(B0, s::Vector{Float64}, y::Vector{Float64},
         dinv::Vector{Float64})
     sy = dot(s, y)
-    B === nothing && (B = [1 / d for d in dinv])
-    scale = sum(i -> y[i]^2 / B[i], eachindex(y)) / sy
+    B = B0 === nothing ? [1 / d for d in dinv] : B0
+    scale = _ctsem_sum_inorder(i -> y[i]^2 / B[i], 1, length(y)) / sy
     isfinite(scale) && scale > 0 && (B .*= scale)
     Bs = B .* s
     sBs = dot(s, Bs)
@@ -193,10 +213,15 @@ function _ctsem_lbfgs(fg!, x0::AbstractVector; memory::Integer=20,
     G = zeros(n)
     fcalls = 0; gcalls = 0
     sizes = Int[]; its = Int[]
-    # The objective in force: the full one, or the current batch.
-    evaluate!(F, Gout, y) = batch === nothing ? fg!(F, Gout, y) :
-        _ctsem_batch_fg!(batch, F, Gout, y)
-    f = evaluate!(0.0, G, x); fcalls += 1; gcalls += 1
+    # The objective in force: the full one, or the current batch. The closures
+    # here take what changes as arguments rather than capturing it: a captured
+    # local assigned more than once is a `Core.Box`, untyped wherever it is
+    # read, and an untyped trial point made inference walk the whole objective
+    # again for `Any` -- most of what the package image held and what loading
+    # it cost (review/PRECOMPILE-workload-2026-10-12.md).
+    evaluate!(b, F, Gout, y) = b === nothing ? fg!(F, Gout, y) :
+        _ctsem_batch_fg!(b, F, Gout, y)
+    f = evaluate!(batch, 0.0, G, x); fcalls += 1; gcalls += 1
     # Iteration 0 only on a run that is a run of its own; a continuation's
     # starting point is the last row its predecessor already recorded.
     stopped = callback !== nothing && iteration0 == 0 &&
@@ -225,7 +250,7 @@ function _ctsem_lbfgs(fg!, x0::AbstractVector; memory::Integer=20,
     # `gll`: Grippo, Lampariello & Lucidi's (1986) rule instead -- a step is
     # judged against the worst of the last `gll` values the steps reached, the
     # acceptance sgd() uses (`_ctsem_sgd`). `recent` is set beside C.
-    reference() = gll > 0 ? maximum(@view recent[max(1, end - gll + 1):end]) : C
+    reference(recent, C) = gll > 0 ? maximum(@view recent[max(1, end - gll + 1):end]) : C
     while !stopped && !gconv && iteration < maxiter
         s = -_ctsem_lbfgs_hmul(M, G, h0, dinv, Dinv)
         # With no curvature pairs the step is the metric's alone, and at a start
@@ -250,9 +275,9 @@ function _ctsem_lbfgs(fg!, x0::AbstractVector; memory::Integer=20,
         alpha = 1.0
         xn = x .+ s
         Gn = similar(G)
-        fn = evaluate!(0.0, Gn, xn); fcalls += 1; gcalls += 1
+        fn = evaluate!(batch, 0.0, Gn, xn); fcalls += 1; gcalls += 1
         have_gradient = true
-        accepted = isfinite(fn) && fn <= reference() + c1 * alpha * dphi
+        accepted = isfinite(fn) && fn <= reference(recent, C) + c1 * alpha * dphi
         k = 0
         while !accepted && k < maxbacktrack
             k += 1
@@ -261,15 +286,15 @@ function _ctsem_lbfgs(fg!, x0::AbstractVector; memory::Integer=20,
             trial = isfinite(fn) && denom > 0 ? -dphi * alpha^2 / denom : 0.5alpha
             alpha = clamp(trial, 0.1alpha, 0.5alpha)
             xn = x .+ alpha .* s
-            fn = evaluate!(0.0, nothing, xn); fcalls += 1
+            fn = evaluate!(batch, 0.0, nothing, xn); fcalls += 1
             have_gradient = false
-            accepted = isfinite(fn) && fn <= reference() + c1 * alpha * dphi
+            accepted = isfinite(fn) && fn <= reference(recent, C) + c1 * alpha * dphi
         end
         # A step accepted on its value alone still needs a usable gradient.
         # When the gradient evaluation is refused (see `trial_fg!`), the step
         # is treated as too long: halved, and tried again with both.
         if accepted && !have_gradient
-            evaluate!(nothing, Gn, xn); gcalls += 1
+            evaluate!(batch, nothing, Gn, xn); gcalls += 1
             have_gradient = true
             while !all(isfinite, Gn)
                 accepted = false
@@ -277,8 +302,8 @@ function _ctsem_lbfgs(fg!, x0::AbstractVector; memory::Integer=20,
                 k += 1
                 alpha *= 0.5
                 xn = x .+ alpha .* s
-                fn = evaluate!(0.0, Gn, xn); fcalls += 1; gcalls += 1
-                accepted = isfinite(fn) && fn <= reference() + c1 * alpha * dphi &&
+                fn = evaluate!(batch, 0.0, Gn, xn); fcalls += 1; gcalls += 1
+                accepted = isfinite(fn) && fn <= reference(recent, C) + c1 * alpha * dphi &&
                     all(isfinite, Gn)
                 accepted && break
             end
@@ -320,12 +345,14 @@ function _ctsem_lbfgs(fg!, x0::AbstractVector; memory::Integer=20,
         # it is the whole data the batch steps aside and the caller's own
         # objective is used from then on.
         if batch !== nothing && !stopped &&
-                _ctsem_batch_step!(batch, x, G, q -> _ctsem_lbfgs_hmul(M, q, h0, dinv, Dinv), iteration)
+                _ctsem_batch_step!(batch, x, G, let h0 = h0, Dinv = Dinv
+                    q -> _ctsem_lbfgs_hmul(M, q, h0, dinv, Dinv)
+                end, iteration)
             if _ctsem_batch_full(batch)
                 sizes = batch.sizes; its = batch.iterations
                 batch = nothing
             end
-            f = evaluate!(0.0, G, x); fcalls += 1; gcalls += 1
+            f = evaluate!(batch, 0.0, G, x); fcalls += 1; gcalls += 1
             gconv = maximum(abs, G; init=0.0) <= g_tol
             # The reference level belongs to the objective it averaged.
             C = f; Q = 1.0; recent = [f]
@@ -416,8 +443,10 @@ function _ctsem_sgd(fg!, x0::AbstractVector; maxiter::Integer=1000,
     step = fill(Float64(step0), n)
     groughness = fill(0.5, n)
     gsmoothroughness = fill(0.1, n)
-    gmemory = 0.6
-    gmemory2 = 0.0
+    # Refs: `accept!` updates both and the loop below reads `gmemory2` (a
+    # captured local assigned more than once is a `Core.Box`, untyped).
+    gmemory = Ref(0.6)
+    gmemory2 = Ref(0.0)
     history = Float64[]
     bestx = copy(x); bestf = f; bestG = copy(G)
     xn = similar(x); Gn = similar(G)
@@ -428,13 +457,13 @@ function _ctsem_sgd(fg!, x0::AbstractVector; maxiter::Integer=1000,
     # with one.
     accept! = function (fnew, gnew, i)
         push!(history, fnew)
-        gmemory2 = gmemory * min(i / warmup, 1)^(1 / 8)
+        gmemory2[] = gmemory[] * min(i / warmup, 1)^(1 / 8)
         rm2 = 0.9 * min(i / warmup, 1)^(1 / 8)
         oldgmid .= gmid
         oldgsmooth .= gsmooth
         @inbounds for k in 1:n
             gmid[k] = (g[k] + gnew[k]) / 2
-            gsmooth[k] = gsmooth[k] * gmemory2 + (1 - gmemory2) * gnew[k]
+            gsmooth[k] = gsmooth[k] * gmemory2[] + (1 - gmemory2[]) * gnew[k]
             groughness[k] = groughness[k] * rm2 + (1 - rm2) *
                 (sign(gmid[k]) != sign(oldgmid[k]))
             gsmoothroughness[k] = gsmoothroughness[k] * rm2 + (1 - rm2) *
@@ -447,7 +476,7 @@ function _ctsem_sgd(fg!, x0::AbstractVector; maxiter::Integer=1000,
             g[k] = gnew[k]
         end
         # The momentum's weight settles at 0.8 once warmed up.
-        (i > 25 && i % 20 == 0) && (gmemory = clamp(gmemory, 0.8, 0.95))
+        (i > 25 && i % 20 == 0) && (gmemory[] = clamp(gmemory[], 0.8, 0.95))
         return nothing
     end
     accept!(-f, -G, 1)
@@ -473,7 +502,7 @@ function _ctsem_sgd(fg!, x0::AbstractVector; maxiter::Integer=1000,
             if !accepted
                 if i > warmup
                     @inbounds for k in 1:n
-                        gsmooth[k] = gsmooth[k] * gmemory2^2 + (1 - gmemory2^2) * g[k]
+                        gsmooth[k] = gsmooth[k] * gmemory2[]^2 + (1 - gmemory2[]^2) * g[k]
                     end
                 end
                 step ./= exp(tries)
@@ -1164,7 +1193,9 @@ function _ctsem_trust_multiplier(curvature::AbstractVector, c::AbstractVector,
     for _ in 1:100
         len = steplength(mu)
         len <= radius * (1 + 1e-6) && break
-        q = sum(i -> c[i]^2 / (curvature[i] + mu)^3, eachindex(c); init=0.0)
+        q = let mu = mu
+            sum(i -> c[i]^2 / (curvature[i] + mu)^3, eachindex(c); init=0.0)
+        end
         mu += (len^2 / q) * (len - radius) / radius
     end
     mu
@@ -1262,7 +1293,11 @@ function _ctsem_newton_finish(objective, x0, f0, G0, fg!; tol::Real=1e-8,
     valueof = value_at === nothing ? (y -> _ctsem_probe_value(objective, y)) :
         value_at
     x = collect(Float64, x0); f = Float64(f0); G = collect(Float64, G0)
-    full_hessians = 0; subset_hessians = 0
+    # The closures below count into Refs and are handed the current point, as
+    # `_ctsem_lbfgs`'s are: a captured local assigned more than once is a
+    # `Core.Box`, and an untyped point sent inference through the objective
+    # for `Any`.
+    full_hessians = Ref(0); subset_hessians = Ref(0)
     # Reports a Hessian this finish forms as it goes, rather than leaving the
     # caller's progress line frozen for as long as forming one takes -- up to
     # 80s on the Laplace fixture that found this, and 15 minutes on a
@@ -1284,7 +1319,7 @@ function _ctsem_newton_finish(objective, x0, f0, G0, fg!; tol::Real=1e-8,
     end
     # Of the minimised objective, as every step below expects.
     # `local`: an assignment to `H` in a closure would rebind the H below.
-    hess(y) = (full_hessians += 1; local Hx = hessof(objective, y);
+    hess(y) = (full_hessians[] += 1; local Hx = hessof(objective, y);
         Hx === nothing ? nothing : -Hx)
     NU = _ctsem_nunits(objective)
     m = min(NU, max(Int(subset_min), ceil(Int, subset * NU)))
@@ -1292,7 +1327,7 @@ function _ctsem_newton_finish(objective, x0, f0, G0, fg!; tol::Real=1e-8,
         _ctsem_subset_objective(objective, sort(randperm(rng, NU)[1:m])) : nothing
     function subhess(y)
         sub === nothing && return hess(y)
-        subset_hessians += 1
+        subset_hessians[] += 1
         local Hs = hessof(sub, y)
         Hs === nothing && return hess(y)
         # The prior's curvature is diagonal and global: take it out of the
@@ -1307,9 +1342,9 @@ function _ctsem_newton_finish(objective, x0, f0, G0, fg!; tol::Real=1e-8,
     end
     step_hessian(y) = curvature === :subset ? subhess(y) : hess(y)
     history = (kind=String[], gain=Float64[], alpha=Float64[], value=Float64[])
-    remember!(kind, g, a) = (push!(history.kind, kind); push!(history.gain, g);
+    remember!(kind, g, a, f) = (push!(history.kind, kind); push!(history.gain, g);
         push!(history.alpha, a); push!(history.value, -f); nothing)
-    fcalls = 0; gcalls = 0
+    fcalls = Ref(0); gcalls = 0
     # The model the steps are taken on: the eigen-decomposition of the matrix
     # they use, with the curvatures described below. Kept until that matrix
     # changes, since a step the trust region refuses is re-solved on it.
@@ -1385,7 +1420,7 @@ function _ctsem_newton_finish(objective, x0, f0, G0, fg!; tol::Real=1e-8,
     # enough step would take an increase of 1e-14, spending a step on a point
     # no different from the one it left. The names inside are `local` so they
     # cannot rebind the finish's own.
-    function trust(Hm, nt, radius)
+    function trust(Hm, nt, radius, x, f, G)
         local floor = max(abs(f), 1.0) * eps()
         local at = nt
         local r = radius
@@ -1393,7 +1428,7 @@ function _ctsem_newton_finish(objective, x0, f0, G0, fg!; tol::Real=1e-8,
         while true
             local xn = x .+ at.step
             local fn = fg!(0.0, nothing, xn)
-            fcalls += 1
+            fcalls[] += 1
             local rho = isfinite(fn) ? (f - fn) / at.predicted : -Inf
             if isfinite(fn) && rho > 1e-4 && f - fn > floor
                 return (ok=true, x=xn, f=fn, rho=rho, nt=at, radius=r)
@@ -1405,7 +1440,7 @@ function _ctsem_newton_finish(objective, x0, f0, G0, fg!; tol::Real=1e-8,
             at = newton(Hm, G, r)
         end
     end
-    report(g) = callback === nothing || callback(CTSEMIterate(iteration0 + steps,
+    report(g, steps, f, G, x) = callback === nothing || callback(CTSEMIterate(iteration0 + steps,
         f, maximum(abs, G; init=0.0), g, x))
     H = step_hessian(x)
     # What the steps are taken against: `H` itself, except that the chord
@@ -1420,8 +1455,8 @@ function _ctsem_newton_finish(objective, x0, f0, G0, fg!; tol::Real=1e-8,
     firstgain = Inf; firstwhole = true; handed = false
     if H === nothing
         return (x=x, f=f, G=G, hessian=nothing, hessian_at=hat, distance=NaN,
-            steps=0, gain=Inf, full_hessians=full_hessians,
-            subset_hessians=subset_hessians, fcalls=0, gcalls=0, escapes=0,
+            steps=0, gain=Inf, full_hessians=full_hessians[],
+            subset_hessians=subset_hessians[], fcalls=0, gcalls=0, escapes=0,
             saddle=false, ladder_tried=false, ladder_gain=0.0,
             probe=_ctsem_no_probe(), history=history, handback=false)
     end
@@ -1482,7 +1517,7 @@ function _ctsem_newton_finish(objective, x0, f0, G0, fg!; tol::Real=1e-8,
                 break
             end
             steps == 0 && (firstgain = gain)
-            trial = trust(Hs, nt, radius)
+            trial = trust(Hs, nt, radius, x, f, G)
             if !trial.ok
                 # The model promises nothing the objective can represent at
                 # any radius: a stale matrix is replaced, and on the exact
@@ -1502,8 +1537,8 @@ function _ctsem_newton_finish(objective, x0, f0, G0, fg!; tol::Real=1e-8,
             dx = trial.x .- x; dg = Gn .- G
             x = trial.x; f = trial.f; G = Gn; steps += 1; at_x = false
             steps == 1 && (firstwhole = trial.nt.whole)
-            remember!("newton", gain, trial.nt.fraction)
-            report(gain)
+            remember!("newton", gain, trial.nt.fraction, f)
+            report(gain, steps, f, G, x)
             # The radius follows how well the model predicted the step's gain:
             # a quarter of the step when it predicted less than a quarter of
             # it, twice the radius when it predicted three quarters and the
@@ -1556,8 +1591,8 @@ function _ctsem_newton_finish(objective, x0, f0, G0, fg!; tol::Real=1e-8,
         # Handed back: the point the step reached, and no final Hessian, since
         # L-BFGS goes on from here and the finish runs again where it stops.
         handed && return (x=x, f=f, G=G, hessian=nothing, hessian_at=hat,
-            distance=NaN, steps=steps, gain=gain, full_hessians=full_hessians,
-            subset_hessians=subset_hessians, fcalls=fcalls, gcalls=gcalls,
+            distance=NaN, steps=steps, gain=gain, full_hessians=full_hessians[],
+            subset_hessians=subset_hessians[], fcalls=fcalls[], gcalls=gcalls,
             escapes=0, saddle=false, ladder_tried=false, ladder_gain=0.0,
             probe=_ctsem_no_probe(), history=history, handback=true)
         H === nothing && break
@@ -1605,14 +1640,14 @@ function _ctsem_newton_finish(objective, x0, f0, G0, fg!; tol::Real=1e-8,
                     nt = newton(H, G, radius)
                     gain = nt === nothing ? Inf : nt.gain
                     (nt === nothing || gain < tol || steps >= maxit + 5) && break
-                    trial = trust(H, nt, radius)
+                    trial = trust(H, nt, radius, x, f, G)
                     trial.ok || break
                     Gn = similar(G)
                     fg!(nothing, Gn, trial.x); gcalls += 1
                     all(isfinite, Gn) || break
                     x = trial.x; f = trial.f; G = Gn; steps += 1; at_x = false
-                    remember!("exact", gain, trial.nt.fraction)
-                    report(gain)
+                    remember!("exact", gain, trial.nt.fraction, f)
+                    report(gain, steps, f, G, x)
                 end
                 # A step on the last round leaves the Hessian one point behind.
                 if !at_x && H !== nothing
@@ -1641,10 +1676,10 @@ function _ctsem_newton_finish(objective, x0, f0, G0, fg!; tol::Real=1e-8,
             escapes >= max_escapes && break
             ladder_tried = true
             tried = _ctsem_saddle_ladder(valueof, x, -f, split, -G; ladder=ladder)
-            fcalls += tried.evaluations
+            fcalls[] += tried.evaluations
             if tried.best !== nothing
                 Gn = similar(G)
-                fn = fg!(0.0, Gn, tried.best.point); fcalls += 1; gcalls += 1
+                fn = fg!(0.0, Gn, tried.best.point); fcalls[] += 1; gcalls += 1
                 # The point the ladder measured, through the optimiser's own
                 # trial path: a point the route refuses a gradient at is not one
                 # to continue from.
@@ -1652,8 +1687,8 @@ function _ctsem_newton_finish(objective, x0, f0, G0, fg!; tol::Real=1e-8,
                     ladder_gain += f - fn
                     x = collect(Float64, tried.best.point); f = fn; G = Gn
                     steps += 1; escapes += 1
-                    remember!("saddle", NaN, tried.best.length)
-                    report(NaN)
+                    remember!("saddle", NaN, tried.best.length, f)
+                    report(NaN, steps, f, G, x)
                     H = hess(x); Hs = H; hat = copy(x); exact = true; at_x = true
                     saddle = false; ladder_tried = false
                     H === nothing && break
@@ -1667,13 +1702,13 @@ function _ctsem_newton_finish(objective, x0, f0, G0, fg!; tol::Real=1e-8,
         # probe can see -- `_ctsem_flat_ladder`, where the route allows it.
         (flat_escape && escapes < max_escapes) || break
         walked = _ctsem_flat_ladder(fg!, x, f, G, split; lengths=probe_lengths)
-        fcalls += walked.fcalls; gcalls += walked.gcalls
+        fcalls[] += walked.fcalls; gcalls += walked.gcalls
         (walked.best !== nothing && f - walked.best.f > escape_gain) || break
         x = collect(Float64, walked.best.point); f = walked.best.f
         G = walked.best.G
         steps += 1; escapes += 1
-        remember!("flat", NaN, walked.best.length)
-        report(NaN)
+        remember!("flat", NaN, walked.best.length, f)
+        report(NaN, steps, f, G, x)
         H = hess(x); Hs = H; hat = copy(x); exact = true; at_x = true
         saddle = false; ladder_tried = false
         H === nothing && break
@@ -1696,12 +1731,12 @@ function _ctsem_newton_finish(objective, x0, f0, G0, fg!; tol::Real=1e-8,
         if norm(residual) > 0
             probed = _ctsem_flat_probe(valueof, x, -f, residual;
                 lengths=probe_lengths)
-            fcalls += probed.evaluations
+            fcalls[] += probed.evaluations
         end
     end
     (x=x, f=f, G=G, hessian=H === nothing ? nothing : -H, hessian_at=hat,
-     distance=distance, steps=steps, gain=gain, full_hessians=full_hessians,
-     subset_hessians=subset_hessians, fcalls=fcalls, gcalls=gcalls,
+     distance=distance, steps=steps, gain=gain, full_hessians=full_hessians[],
+     subset_hessians=subset_hessians[], fcalls=fcalls[], gcalls=gcalls,
      escapes=escapes, saddle=saddle, ladder_tried=ladder_tried,
      ladder_gain=ladder_gain, probe=probed, history=history, handback=false)
 end

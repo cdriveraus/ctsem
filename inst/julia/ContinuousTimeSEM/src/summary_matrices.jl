@@ -41,7 +41,7 @@ Names, row counts, column counts and flat offsets of the engine's own model
 matrices, in the order the parameter table defined them.
 """
 function _ctsem_base_layout(sp::EKFParameters)
-    template = ComponentVector(zeros(length(sp.mutables)), sp.parameter_axis)
+    template = CTSEMPars(zeros(length(sp.mutables)), sp.parameter_axis)
     names = collect(propertynames(template))
     nrows = Int[]
     ncols = Int[]
@@ -78,8 +78,8 @@ simplest kind of model.
 function ctsem_parameter_layout(objective::CTSEMObjective)
     sp = objective.params
     names, nrows, ncols, offsets, nall = _ctsem_base_layout(sp)
-    nlatent = size(getproperty(ComponentVector(zeros(nall), sp.parameter_axis), :DRIFT), 1)
-    nmanifest = size(getproperty(ComponentVector(zeros(nall), sp.parameter_axis), :LAMBDA), 1)
+    nlatent = size(getproperty(CTSEMPars(zeros(nall), sp.parameter_axis), :DRIFT), 1)
+    nmanifest = size(getproperty(CTSEMPars(zeros(nall), sp.parameter_axis), :LAMBDA), 1)
 
     matrix = String.(names)
     nrow = copy(nrows)
@@ -258,7 +258,7 @@ function ctsem_parameter_matrices(objective::CTSEMObjective, values::AbstractMat
         raw = Vector{Float64}(view(values, :, column))
         _materialize_subject_values!(subject_values, raw, sp, ti)
         _materialize_all_params!(all_params, subject_values, sp)
-        pars = ComponentVector(all_params, sp.parameter_axis)
+        pars = CTSEMPars(all_params, sp.parameter_axis)
         # A stationary model's T0MEANS is the stationary mean, so that is what
         # this column reports and where its state-dependent cells are evaluated
         # by default. The predict group runs first for the reason it does in

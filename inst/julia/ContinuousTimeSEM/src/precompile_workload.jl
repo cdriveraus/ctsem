@@ -1,5 +1,5 @@
-# Compile the whole default fit for a few common model shapes at package build
-# time, rather than in the user's first fit.
+# Compile the whole default fit for a model on each route, Gaussian and
+# categorical, at package build time, rather than in the user's first fit.
 #
 # ## What it replays
 #
@@ -15,21 +15,30 @@
 # first version of this file got four details of it wrong and compiled a shape
 # no fit asks for.
 #
-# ## Why a model type can be shared at all
+# ## Why one model covers the others
 #
-# A model's type carries its transform closures, and `_regular_transform_closure`
-# lifts the parameter index out of each, so a closure's type depends on its
-# template rather than on which parameter it reads. A model is therefore typed by
-# its matrix dimensions and the set of templates it uses, not by its layout, and
-# one captured model covers every model of the same dimensions and templates.
-# Anything else still compiles on first use.
+# A model's type does not depend on the model. Its parameter layout is data
+# (`CTSEMLayout`), matrix sizes are run-time integers, state-dependent cells and
+# non-default parameter transforms are `CTSEMExpr`s, the default parameter
+# transforms are one closure group each in every spec, subject data are Float64,
+# and the Hessian has one dual width. So the code a captured fit compiles is the
+# code every model on its route runs. What still differs between models: a
+# categorical indicator (a workspace type, so Gaussian fits carry none of its
+# code -- hence a categorical model per route here), a Laplace unit with more
+# than four random effects (the next curvature width), and an expression outside
+# `CTSEMExpr`'s vocabulary (its own closure).
 #
 # ## What it costs
 #
-# Build time, once per engine version: about a first fit's compile per model.
-# And load time in every session, which is easy to miss: the image holds each
-# model's specialisations whether or not the session fits that model, and loading
-# them is most of what `using ContinuousTimeSEM` costs. So the list stays short.
+# Build time, once per engine version: about a first fit's compile per model,
+# on one core -- the replay is serial, and only writing the image afterwards
+# uses `JULIA_IMAGE_THREADS`. And load time in every session, which is easy to
+# miss: the image holds each model's specialisations whether or not the session
+# fits that model, and loading them is Julia inserting the image's method-table
+# backedges (`insert_backedges` in Base's staticdata.jl). Models of one kind on
+# one route share nearly all their code, so a second one adds little to either,
+# and covers nothing a fit needs: tools/generate-precompile-shapes.R says why
+# the list is one model per route and indicator kind.
 #
 # ## Failure must not be fatal
 #

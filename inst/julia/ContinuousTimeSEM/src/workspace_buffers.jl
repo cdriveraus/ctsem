@@ -4,7 +4,7 @@ using LinearAlgebra
 ################################################################################
 # Workspace struct and initialization functions for continuous-time EKF
 ################################################################################
-struct SquareBuffer{T,N}
+struct SquareBuffer{T}
     s::Vector{T}
     ss::Vector{T}
     r::Vector{T}
@@ -12,8 +12,8 @@ struct SquareBuffer{T,N}
     intermediate::Matrix{T}
     out::Matrix{T}
     piv::Vector{Int}
-    dim::Val{N}
-    SquareBuffer{T}(n::Int) where {T} = new{T,n}(
+    dim::Int
+    SquareBuffer{T}(n::Int) where {T} = new{T}(
         zeros(T, n),
         zeros(T, n),
         zeros(T, n),
@@ -21,7 +21,7 @@ struct SquareBuffer{T,N}
         zeros(T, n, n),
         zeros(T, n, n),
         zeros(Int, n),
-        Val(n),
+        n,
     )
 end
 
@@ -45,23 +45,26 @@ Create reusable storage for continuous-to-discrete EKF quantities.
 The returned `ComponentVector` contains discrete drift, intercept, asymptotic
 diffusion, and discrete diffusion matrices.
 """
+struct DiscreteCA{T}
+    eJAx::Matrix{T}
+    dDRIFT::Matrix{T}
+    dINT::Vector{T}
+    asym_DIFFUSION::Matrix{T}
+    dDIFFUSION::Matrix{T}
+end
+
 @inline function _make_discrete_ca_buffer(::Type{T}, n::Int) where {T}
-    return ComponentVector(
-        eJAx = zeros(T, n, n),
-        dDRIFT = zeros(T, n, n),
-        dINT = zeros(T, n),
-        asym_DIFFUSION = zeros(T, n, n),
-        dDIFFUSION = zeros(T, n, n),
-    )
+    return DiscreteCA{T}(zeros(T, n, n), zeros(T, n, n), zeros(T, n),
+        zeros(T, n, n), zeros(T, n, n))
 end
 
 """Reusable workspace for exact block-exponential discretization."""
-struct DiscretizationBuffer{T,D,EB}
+struct DiscretizationBuffer{T,EB}
     input::Matrix{T}
     output::Matrix{T}
     scratch::Matrix{T}
     exp_buffer::EB
-    dim::Val{D}
+    dim::Int
     # The series kernels for a pivot small against the interval, and the
     # record of which of them the last discretisation used; see
     # `series_discretization.jl`.
@@ -71,7 +74,7 @@ end
 function _make_discretization_buffer(::Type{T}, n::Int) where {T}
     dim = 2 * n
     return DiscretizationBuffer(zeros(T, dim, dim), zeros(T, dim, dim),
-        zeros(T, dim, dim), ExpBuffer{T}(dim), Val(dim), SeriesKernelBuffer(T, n))
+        zeros(T, dim, dim), ExpBuffer{T}(dim), dim, SeriesKernelBuffer(T, n))
 end
 
 """
@@ -164,15 +167,15 @@ The workspace holds materialized parameters, structured parameter views, matrix
 factorizations, covariance buffers, and log-likelihood scratch storage for one
 scalar type.
 """
-struct ContinuousEKFWorkspace{T, N, M, PARS, BQ, BTHETA, DCA, EBUF, LBUF, DIFBUF, DBUF, DSI, ST, DCACHE, BPOP, AFBUF, CAT}
+struct ContinuousEKFWorkspace{T, PARS, BQ, BTHETA, DCA, EBUF, LBUF, DIFBUF, DBUF, DSI, ST, DCACHE, BPOP, AFBUF, CAT}
     all_params::Vector{T}
     subject_values::Vector{T}
     pars::PARS
     predict_param_indices::Vector{Int}
     update_param_indices::Vector{Int}
     td_param_indices::Vector{Int}
-    state_dim::Val{N}
-    manifest_dim::Val{M}
+    state_dim::Int
+    manifest_dim::Int
     bufferQ::BQ
     bufferΘ::BTHETA
     discrete_ca::DCA
@@ -404,7 +407,7 @@ function _init_continuous_ekf_workspace(::Type{T}, sp::EKFParameters) where {T}
     # Structured parameter view used throughout the EKF loop. Every evaluation
     # overwrites this wholesale from `all_params`, so the fill is only ever
     # read if some path forgets to -- which is the reason it is a sentinel.
-    pars = ComponentVector(fill(T(UNSET_PARAMETER), length(sp.mutables)), sp.parameter_axis)
+    pars = CTSEMPars(fill(T(UNSET_PARAMETER), length(sp.mutables)), sp.parameter_axis)
 
     # Indices of transforms applied in predict/update phases.
     predict_param_indices = findall(sp.predict_transforms_indices)
@@ -470,8 +473,8 @@ function _init_continuous_ekf_workspace(::Type{T}, sp::EKFParameters) where {T}
         predict_param_indices,
         update_param_indices,
         td_param_indices,
-        Val(n),
-        Val(m),
+        n,
+        m,
         bufferQ,
         bufferΘ,
         discrete_ca,

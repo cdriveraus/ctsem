@@ -2,6 +2,13 @@
 # SAEM: the exact marginal posterior mode, by stochastic approximation
 ################################################################################
 #
+# Two algorithms share this file and its state. `ctsem_saem` is SAEM, an
+# optimiser: a phase `ctsem_optimize` runs first when asked
+# (`optimcontrol$saem`), and what places the joint samplers' chains
+# (`_saem_placement`). `ctsem_saem_sample`, in the second half, is not SAEM:
+# it is a data-augmentation sampler that draws the effects with SAEM's E-step
+# and draws theta where SAEM steps it (its own header, below).
+#
 # Why this exists. The Laplace route maximises an approximation to each unit's
 # integral over its random effects, and that approximation fails where a
 # unit's posterior is not near-Gaussian: at a flat-topped posterior the
@@ -72,30 +79,84 @@
 # tenth of a standard error on the fixtures, is the same at every rate from
 # 0.3 to 0.01, so it is the full step's, not the average's.
 #
-# No phases and no step-size schedule. The steps never shrink; the estimate is
-# the average of the last half of the iterates (suffix averaging), which
-# forgets the transient without being told where it ended and averages the
-# Monte Carlo noise away after it. The run stops once the iterates have
-# stopped travelling (`_saem_trend`): every parameter's change between the
-# last two quarters of the run is within its own Monte Carlo noise, measured
-# from batch means, or else under a tenth of a standard error, so a parameter
-# creeping along a flat direction toward a boundary does not hold the run
-# open. A full step leaves the stationary average a little off the exact mode
-# where the score is nonlinear in the parameters; the optimiser's finish and
-# certification (`ctsem_optimize`), which follow, remove that and are the one
-# serious check of convergence.
+# Where this departs from textbook SAEM, and what each departure costs.
 #
-# What was built and measured before this, and removed. A burn-in ended by a
-# plateau test fired a thousand iterations early on the SNSF pilot. Kesten's
-# rule (a parameter's step shrinking with its sign changes) shrank every step
-# from the first iterations, because Monte Carlo noise flips the signs as often
-# as crossing the optimum does, and froze 12 nats short on config A1. Constant
-# steps in the fixed-u augmentation alone wandered there for 10000 iterations:
-# 98 per cent of the information about the CINT mean is missing in it, so it
-# moves at EM's pace. Louis' identity for the marginal curvature failed for the
-# same reason -- the marginal information is then the difference of two
-# matrices a hundred times larger, and its Monte Carlo error was as large as
-# itself.
+# The M-step steps theta rather than solving for it. Textbook SAEM (Delyon,
+# Lavielle and Moulines 1999) keeps a stochastic average of the complete-data
+# sufficient statistics and maximises in closed form, which needs an
+# exponential-family complete-data model. Drift and diffusion reach the
+# likelihood through the filter's matrix exponentials and are not that, so
+# theta itself takes a scoring step on the complete-data score (above), and
+# the step cap, the lagged information and the ascent condition
+# (`_saem_ascend!`) come with it. Only the level means and scales, a
+# Gaussian's given the effects, keep a closed form, in the centred half.
+#
+# No step-size schedule. Textbook SAEM takes full steps through a burn-in and
+# then decreasing ones (gamma_k -> 0, sum gamma_k infinite, sum gamma_k^2
+# finite), and the decrease is what makes its own iterate converge. Here the
+# steps never shrink, and the estimate is the average of the last half of the
+# iterates (suffix averaging), which forgets the transient without being told
+# where it ended and averages the Monte Carlo noise away after it. The
+# decrease has to begin after the transient -- begun early, it leaves the
+# iterate unable to travel the rest of the way -- and both automatic switches
+# tried began it early. A burn-in ended by a plateau test fired a thousand
+# iterations early on the SNSF pilot. Kesten's rule (a parameter's step
+# shrinking with its sign changes) shrank every step from the first
+# iterations, because Monte Carlo noise flips the signs as often as crossing
+# the optimum does, and froze 12 nats short on config A1. What constant steps
+# cost: the average loses the noise but not a full step's offset -- the
+# stationary average sits a little off the exact mode where the score is
+# nonlinear in the parameters, about a tenth of a standard error on the
+# fixtures -- and the stop below bounds the iterates' travel, not the
+# average's Monte Carlo error, which along a weakly identified direction can
+# be large enough to decide between maxima
+# (review/SAEM-fell-short-2026-10-05.md). The phased version this replaced,
+# with a decaying step, also got further in fewer iterations on the SNSF
+# pilot. So the estimate is a start for the finish, not a final point, and a
+# second phase begun where the stop below fires did not make it one, in any of
+# three forms measured on the SAEM-fell-short model
+# (review/SAEM-smooth-2026-10-13.md; branch saem-smooth). A decreasing gain on
+# this step froze the directions where information is missing, leaving the
+# estimate 1.8 nats short where the first phase had. Stochastic Newton on the
+# Laplace Hessian moved them, but multiplied the fixed-u score's noise by the
+# inverse marginal information and ended 12-71 nats short. Accelerating by the
+# rate read off the iterates' lag-one autocorrelation ended 48-137 short: the
+# E-step chain's own persistence dominates that autocorrelation, so nearly
+# every direction looked slow. Moving those directions quickly means moving
+# them on the one augmentation that informs them, whose noise is the missing
+# information itself.
+#
+# The stop. The run stops once the iterates have stopped travelling
+# (`_saem_trend`): every parameter's change between the last two quarters of
+# the run is within its own Monte Carlo noise, measured from batch means, or
+# else under a tenth of a standard error, so a parameter creeping along a flat
+# direction toward a boundary does not hold the run open.
+#
+# The finish is on the Laplace objective. Nothing evaluates the exact
+# marginal posterior deterministically for every model -- estimating it is
+# SAEM's job -- and the optimiser's finish (Newton on the exact Hessian), its
+# certification and the Hessian's standard errors each need an objective that
+# is deterministic and differentiable. The Laplace objective with its gated
+# floor is the one every model has; from SAEM's point the finish removes the
+# step's offset and noise, and it is the one serious check of convergence.
+# What it costs: where the Laplace mode and the exact one differ, the finish
+# returns to the Laplace mode. The quadrature correction after it
+# (`laplace_correct`) continues the fit with quadrature in place of Laplace
+# for each unit of at most five effects whose values differ; a wider unit -- a
+# nested study with its people -- keeps the Laplace term, and there SAEM's own
+# estimate, better on the exact likelihood than the Laplace optimum on the
+# bench's gN1 and gN3, is given back (review/SAEM-aecm-2026-10-02.md). So in
+# the optimiser SAEM chooses which maximum the finish climbs, and ctFit checks
+# that choice against a finish from the fit's own start, on the
+# quadrature-corrected objective. An estimate free of the Laplace error is the
+# sampler's to give.
+#
+# Two more measured failures. Constant steps in the fixed-u augmentation alone
+# wandered on config A1 for 10000 iterations: 98 per cent of the information
+# about the CINT mean is missing in it, so it moves at EM's pace. Louis'
+# identity for the marginal curvature failed for the same reason -- the
+# marginal information is then the difference of two matrices a hundred times
+# larger, and its Monte Carlo error was as large as itself.
 #
 # Reproducibility. Every move draws from a stream seeded by (seed, iteration,
 # unit, chain, block), never from a shared generator, and every quantity a task
@@ -681,8 +742,8 @@ function _saem_loading_factor(A0::Matrix{Float64}, S::Matrix{Float64},
     fx = f(x)
     isfinite(fx) || return nothing
     for _ in 1:25
-        g = ForwardDiff.gradient(f, x)
-        H = ForwardDiff.hessian(f, x)
+        g = _ctsem_gradient(f, x)
+        H = _ctsem_dual_hessian(f, x)
         F = cholesky(Symmetric(-H); check=false)
         step = issuccess(F) ? F \ g : g ./ (abs.(diag(H)) .+ 1.0)
         slope = dot(g, step)
@@ -1102,14 +1163,26 @@ _ctsem_saem_phase(laplace::CTSEMLaplaceObjective, start; kwargs...) =
     ctsem_saem(laplace, start; kwargs...)
 
 ################################################################################
-# The SAEM sampler: draws of the joint posterior, placed and stopped as NUTS is
+# Data augmentation on SAEM's kernel: draws of the joint posterior, placed and
+# stopped as NUTS is
 ################################################################################
 #
-# SAEM's iterates are not posterior draws -- their spread is the algorithm's
-# Monte Carlo noise -- but its draws of the effects are conditional posterior
-# draws, and drawing theta given the effects instead of stepping it toward the
-# maximum makes the whole iteration a sampler of the joint posterior of theta
-# and u (states filtered). Every move below leaves that posterior invariant:
+# This is not SAEM, though it runs on SAEM's state and sweeps and keeps the
+# name in the code (`ctsem_saem_sample`, `sampler = 'saem'`). SAEM's iterates
+# are not posterior draws -- their spread is the algorithm's Monte Carlo
+# noise -- but its draws of the effects are conditional posterior draws, and
+# drawing theta given the effects instead of stepping it toward the maximum
+# turns the iteration into data augmentation (Tanner and Wong 1987), the
+# hierarchical Gibbs sampler, of the joint posterior of theta and u (states
+# filtered). It is to SAEM what data augmentation is to EM, and its moves
+# pair with the optimiser's the same way: the centred and fixed-u steps of
+# AECM become the interweaving of Yu and Meng (2011), a step to a maximum
+# becomes a draw. NONMEM's METHOD=BAYES has the same shape (effects by
+# Metropolis-Hastings, population parameters drawn given them) and is commonly
+# run from an earlier SAEM or importance-sampling estimate, as this is placed
+# by SAEM. There is no step-size question here: no stochastic approximation is
+# left, and the chains' spread is the posterior's.
+# Every move below leaves that posterior invariant:
 #
 #   * the effects: SAEM's Metropolis-within-Gibbs sweeps (`_saem_sweep!`),
 #     their scales adapted in warmup and fixed after it;
@@ -1860,10 +1933,10 @@ end
 """
     ctsem_saem_sample(laplace, values; kwargs...)
 
-Sample the joint posterior over population parameters and random effects with
-SAEM's kernel (see the header above): the effects by SAEM's sweeps, theta given
-them by NUTS, the population means and scales by moves that re-express the
-effects. The counterpart of `ctsem_sample`, which runs NUTS on the whole joint
+Sample the joint posterior over population parameters and random effects by
+data augmentation on SAEM's kernel (see the header above): the effects by
+SAEM's sweeps, theta given them by NUTS, the population means and scales by
+moves that re-express the effects. The counterpart of `ctsem_sample`, which runs NUTS on the whole joint
 vector at once; this one never forms that vector's trajectory, so its cost per
 iteration grows with the subjects' filters rather than with a joint tree.
 

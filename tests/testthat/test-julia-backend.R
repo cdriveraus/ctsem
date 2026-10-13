@@ -42,6 +42,28 @@ test_that("Julia default initial values match Stan's small random raw initializa
   expect_equal(ctsem:::.ctJuliaInitialValues(2, c(.1, -.2)), c(.1, -.2))
 })
 
+test_that("forcerecompile reaches the julia spec and the objective it builds", {
+  # Fit-free: the spec, and the inputs every objective is built from.
+  nl <- function(drift) suppressWarnings(suppressMessages(ctModel(type = "ct",
+    n.latent = 2, n.manifest = 2, manifestNames = c("Y1", "Y2"),
+    latentNames = c("eta1", "eta2"), LAMBDA = diag(2),
+    PARS = matrix(paste0("p", 1:4), 4, 1), DRIFT = drift)))
+  heavy <- nl(matrix(c("-PARS[1,1]*(1 + 0.3*eta1^2)", "PARS[2,1]*eta1",
+    "PARS[3,1]*eta2", "-PARS[4,1]*(1 + 0.2*eta1*eta2)"), 2, 2))
+  set.seed(1)
+  dat <- data.frame(id = rep(1:4, each = 5), time = rep(0:4, 4),
+    Y1 = stats::rnorm(20), Y2 = stats::rnorm(20))
+  spec_of <- function(m, ...) suppressWarnings(suppressMessages(ctFit(dat, m,
+    backend = "julia", fit = FALSE, ...)))
+  compiled <- spec_of(heavy, forcerecompile = TRUE)
+  expect_true(isTRUE(compiled$compiletransforms))
+  expect_true(isTRUE(ctsem:::.ctJuliaObjectiveInputs(compiled)$ekf$compile_transforms))
+  plain <- spec_of(heavy)
+  expect_null(plain$compiletransforms)
+  expect_null(ctsem:::.ctJuliaObjectiveInputs(plain)$ekf$compile_transforms)
+
+})
+
 test_that("Julia backend rejects unsupported capabilities before session startup", {
   model <- ctModel(
     type = "ct", LAMBDA = diag(1), DRIFT = matrix("drift", 1, 1),
@@ -58,7 +80,9 @@ test_that("Julia backend rejects unsupported capabilities before session startup
   binary <- model
   binary$manifesttype <- 1L
   expect_error(unsupported(gendata = TRUE), "generation")
-  expect_error(unsupported(forcerecompile = TRUE), "Stan compilation controls")
+  expect_error(unsupported(compileArgs = list(verbose = TRUE)), "Stan compilation controls")
+  # Honoured on julia: it compiles the model's expressions.
+  expect_no_error(unsupported(forcerecompile = TRUE))
   # Binary is supported now -- the filter integrates the observation rather
   # than linearising it -- so what is refused is anything beyond it.
   expect_no_error(unsupported(model = binary))

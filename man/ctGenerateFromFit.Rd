@@ -24,7 +24,8 @@ ctGenerateFromFit(
 
 \item{verboseErrors}{if TRUE, print verbose output when errors in generation encountered.}
 
-\item{cores}{Number of cpu cores to use.}
+\item{cores}{Number of cpu cores to use: R worker processes for a stan fit,
+and for a julia fit the engine threads its draws are generated on.}
 
 \item{intoverstates}{For \code{backend='julia'} fits: which route generates
 the latent states. \code{'fit'} (the default) mirrors the fit, so a

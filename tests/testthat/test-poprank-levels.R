@@ -29,16 +29,12 @@ levelmodel <- function() {
     MANIFESTMEANS = matrix(paste0("mm_", 1:3), 3, 1), MANIFESTVAR = "diag",
     DRIFT = "auto", CINT = matrix(0, 3, 1), DIFFUSION = "auto",
     id = c("burst", "subject", "study"), time = "time", tipredDefault = FALSE)))
-  m$pars$indvarying <- FALSE
-  m$pars$indvarying_subject <- FALSE
-  m$pars$indvarying_study <- FALSE
   diagonal <- m$pars$row == m$pars$col
-  m$pars$indvarying[m$pars$matrix == "T0MEANS"] <- TRUE
   wide <- (m$pars$matrix == "MANIFESTMEANS") |
     (m$pars$matrix == "DRIFT" & diagonal) |
     (m$pars$matrix == "DIFFUSION" & diagonal)
-  m$pars$indvarying_subject[wide & is.na(m$pars$value)] <- TRUE
-  m$pars$indvarying_study[wide & is.na(m$pars$value)] <- TRUE
+  m$pars$indvarying <- ifelse(m$pars$matrix == "T0MEANS", "burst",
+    ifelse(wide & is.na(m$pars$value), "subject,study", FALSE))
   m
 }
 
@@ -163,8 +159,7 @@ test_that("off laplace a named rank may name the subject level and no other", {
   # a rank naming another level would have been read as a number for this one.
   d <- levelframe()
   m <- levelmodel()
-  m$pars$indvarying_subject <- FALSE
-  m$pars$indvarying_study <- FALSE
+  m$pars$indvarying <- ifelse(m$pars$matrix == "T0MEANS", "burst", FALSE)
   augmented <- function(...) suppressWarnings(suppressMessages(ctFit(d, m,
     backend = "julia", intoverpop = "augmented", cores = 1, fit = FALSE, ...)))
   expect_error(augmented(poprank = c(study = 2)), "subject level \\('burst'\\) alone")

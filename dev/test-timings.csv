@@ -31,7 +31,7 @@
 "test-ctModelLatex.R",214.4,37,0,0
 "test-ctNetwork.R",8.1,112,0,0
 "test-ctOptimUncertainty.R",4.3,171,0,0
-"test-ctParSpec.R",0.9,53,0,0
+"test-ctPar.R",0.9,53,0,0
 "test-ctRaschExampleTest.R",304.6,33,0,0
 "test-ctReport.R",103.6,181,0,0
 "test-ctStanModel-matrices.R",0.3,22,0,0

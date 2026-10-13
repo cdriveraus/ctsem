@@ -45,18 +45,19 @@ function ctsem_cov_cache_reset_counts()
     return nothing
 end
 
-struct CovCache{T,D}
+struct CovCache{T}
     keys::Vector{Matrix{T}}
     outs::Vector{Matrix{T}}
     nslots::Base.RefValue{Int}
     nextslot::Base.RefValue{Int}
+    d::Int
     # Which construction this table's entries were built under; see below.
     code::Int
 end
 
-CovCache{T,D}(code::Int) where {T,D} = CovCache{T,D}(
+CovCache{T}(D::Int, code::Int) where {T} = CovCache{T}(
     [zeros(T, D, D) for _ in 1:_COVCACHE_SLOTS],
-    [zeros(T, D, D) for _ in 1:_COVCACHE_SLOTS], Ref(0), Ref(1), code)
+    [zeros(T, D, D) for _ in 1:_COVCACHE_SLOTS], Ref(0), Ref(1), D, code)
 
 # The construction in force is part of the key. Without it an entry built under
 # one route is served under the other, which a switch mid-session -- every
@@ -86,7 +87,8 @@ CovCache{T,D}(code::Int) where {T,D} = CovCache{T,D}(
 # type, dimension and construction actually used -- a handful -- and each step
 # is a type test. That is cheaper than the allocation it replaces, let alone
 # than the construction either one is in front of.
-function _covcache(::Type{T}, ::Val{d}, code::Int) where {T,d}
+function _covcache(::Type{T}, __d::Union{Int,Val}, code::Int) where {T}
+    d = _val(__d)
     store = _ctsem_scratch()
     caches = get(store, _COVCACHE_TLS_KEY, nothing)
     if caches === nothing
@@ -95,18 +97,19 @@ function _covcache(::Type{T}, ::Val{d}, code::Int) where {T,d}
     end
     list = caches::Vector{Any}
     for e in list
-        if e isa CovCache{T,d} && e.code == code
+        if e isa CovCache{T} && e.d == d && e.code == code
             return e
         end
     end
-    c = CovCache{T,d}(code)
+    c = CovCache{T}(d, code)
     push!(list, c)
     return c
 end
 
 # The whole of `mat` is the key: the diagonal carries the standard deviations
 # and the lower triangle the off-diagonal coordinates, and both feed the result.
-@inline function _covcache_lookup(c::CovCache{T,D}, mat, ::Val{d}) where {T,D,d}
+@inline function _covcache_lookup(c::CovCache{T}, mat, __d::Union{Int,Val}) where {T}
+    d = _val(__d)
     @inbounds for e in 1:c.nslots[]
         k = c.keys[e]
         same = true
@@ -121,7 +124,8 @@ end
     return 0
 end
 
-@inline function _covcache_store!(c::CovCache{T,D}, mat, out, ::Val{d}) where {T,D,d}
+@inline function _covcache_store!(c::CovCache{T}, mat, out, __d::Union{Int,Val}) where {T}
+    d = _val(__d)
     slot = c.nextslot[]
     @inbounds begin
         for j in 1:d, i in 1:d

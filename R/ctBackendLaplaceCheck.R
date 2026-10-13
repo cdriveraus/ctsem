@@ -163,6 +163,23 @@ ctLaplaceCheck <- function(fit, nodes = 5L, correction = TRUE, step = 1e-3,
       call. = FALSE)
   }
   do_correction <- isTRUE(correction) && !is.null(hessian)
+
+  # Say what it will cost before starting. The quadrature recurses over the
+  # levels, so one evaluation is a subject filter pass per node of every
+  # level's grid above it: nsubjects * nodes^(sum of each level's random
+  # effects). A nested model multiplies the exponents, and the correction
+  # repeats the whole thing 2 * npar times -- a two-level model of 48
+  # subjects with 4 + 3 effects and 33 parameters ran for hours, silently.
+  ks <- vapply(fit$model_spec$laplace$levels, function(l)
+    max(0L, as.integer(l$nrandom)), 1L)
+  passes <- nsubjects * as.numeric(nodes)^sum(ks)
+  total <- passes * if (do_correction) 2 * length(est) + 1 else 1
+  if (total > 1e6) message("ctLaplaceCheck: about ", signif(total, 2),
+    " subject filter passes (", nodes, " nodes per random effect",
+    if (do_correction) paste0(", ", 2 * length(est) + 1,
+      " quadrature evaluations for the correction") else "", "). ",
+    if (do_correction) "correction=FALSE or " else "", "fewer nodes is quicker.")
+
   # A fit the default correction already moved is not at a Laplace optimum, so
   # the gap gradient alone is not the quadrature objective's gradient there:
   # the Laplace gradient is added, and `delta` is a further step from the

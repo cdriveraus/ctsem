@@ -1,5 +1,3 @@
-using Optim
-
 # Execute a Julia function repeatedly behind a single JuliaConnectoR call. The
 # last result is returned so the compiler cannot discard the calls. Keeping the
 # loop on the Julia side amortizes the fixed R-to-Julia bridge latency.
@@ -185,82 +183,6 @@ function cts_benchmark_res_and_grad_subjects_cached(benchmark_workspace, values)
         result .+= subject_result.gradient
     end
     return (value = total, gradient = result)
-end
-
-# Optim minimizes, while the SEM target is a log-likelihood to maximize. This
-# fg! callback therefore returns the negative summed likelihood and writes the
-# negative summed gradient into the Optim gradient buffer.
-function cts_benchmark_negative_loglikelihood_fg_cached!(F, G, values, benchmark_workspace)
-    if G === nothing
-        if F === nothing
-            return nothing
-        end
-        return -cts_benchmark_res_and_grad_subjects_cached(benchmark_workspace, values).value
-    end
-
-    if F === nothing
-        gradient = cts_benchmark_grad_subjects_cached(benchmark_workspace, values)
-        @. G = -gradient
-        return nothing
-    end
-
-    result = cts_benchmark_res_and_grad_subjects_cached(benchmark_workspace, values)
-    @. G = -result.gradient
-    return -result.value
-end
-
-# Construct the reusable Optim objective for the cached multi-subject EKF
-# likelihood. The initial vector defines the parameter dimension and element
-# type used by Optim.
-function cts_benchmark_cached_objective(initial_values, benchmark_workspace)
-    fg! = let benchmark_workspace = benchmark_workspace
-        (F, G, values) -> cts_benchmark_negative_loglikelihood_fg_cached!(
-            F,
-            G,
-            values,
-            benchmark_workspace,
-        )
-    end
-    return Optim.OnceDifferentiable(Optim.only_fg!(fg!), initial_values)
-end
-
-# Optimize the summed Julia EKF log-likelihood with LBFGS and return plain
-# values that JuliaConnectoR can expose cleanly to R.
-function cts_benchmark_optimize_cached(initial_values, benchmark_workspace, max_iterations::Integer = 5000)
-    starting_values = copy(initial_values)
-    objective = cts_benchmark_cached_objective(starting_values, benchmark_workspace)
-    result = Optim.optimize(
-        objective,
-        starting_values,
-        Optim.LBFGS(),
-        Optim.Options(iterations = max_iterations),
-    )
-
-    return (
-        minimizer = Optim.minimizer(result),
-        minimum = Optim.minimum(result),
-        maximum = -Optim.minimum(result),
-        iterations = Optim.iterations(result),
-        converged = Optim.converged(result),
-    )
-end
-
-# Time the full Julia optimization procedure. This is the Julia-side analogue of
-# the system.time(ctStanFit(..., optimize = TRUE)) call below.
-function cts_benchmark_time_optimize_cached(initial_values, benchmark_workspace, max_iterations::Integer = 5000)
-    GC.gc()
-    start_time = time_ns()
-    result = cts_benchmark_optimize_cached(initial_values, benchmark_workspace, max_iterations)
-    elapsed = (time_ns() - start_time) / 1e9
-
-    return (
-        elapsed = elapsed,
-        minimizer = result.minimizer,
-        minimum = result.minimum,
-        maximum = result.maximum,
-        iterations = result.iterations,
-        converged = result.converged,
-    )
 end
 
 # Integrate the fitted deterministic state equation without measurement

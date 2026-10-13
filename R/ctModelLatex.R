@@ -1,12 +1,15 @@
-ctModelBuildPopCov <- function(ctm,linearise){ #for latex
-  ctm <- T0VARredundancies(ctm)
+# One level's population covariance, as labels: `column` is `indvarying` for
+# the subject level or `indvarying_<idname>` for a grouping level above it,
+# and `label` names the matrix the entries belong to.
+ctModelBuildPopCov <- function(ctm,linearise,column='indvarying',label='PCov'){ #for latex
+  ctm <- suppressMessages(T0VARredundancies(ctm))
   ctm$pars <- .ctModelCleanctspec(ctm$pars)
   freepars <- !is.na(ctm$pars$param) &
     !grepl('\\W', gsub('.', '', ctm$pars$param, fixed=TRUE)) &
     !ctm$pars$param %in% ctm$latentNames
-  pars <- unique(ctm$pars$param[ctm$pars$indvarying & freepars])
+  pars <- unique(ctm$pars$param[ctm$pars[[column]] %in% TRUE & freepars])
   d=length(pars)
-  m <- matrix(paste0(ifelse(linearise,'','raw'),'PCov_',rep(1:d,d),'_',rep(1:d,each=d)),d,d,dimnames = list(pars,pars))
+  m <- matrix(paste0(ifelse(linearise,'','raw'),label,'_',rep(1:d,d),'_',rep(1:d,each=d)),d,d,dimnames = list(pars,pars))
   m[upper.tri(m)]=t(m)[upper.tri(m)]
   return(m)
 }
@@ -356,6 +359,16 @@ ctModelLatexMathElement <- function(x){
   keep <- !is.na(index)
   out[index[keep], index[keep]] <- cov[keep, keep, drop=FALSE]
   out
+}
+
+# A level's symbolic covariance labelled by where its entries sit in the
+# displayed matrix, so `Cov_3_2` is row 3 and column 2 of what the reader sees
+# rather than of the level's own smaller matrix before it was expanded.
+.ctLatexRelabelCov <- function(cov, label) {
+  islabel <- matrix(is.na(suppressWarnings(as.numeric(cov))), nrow(cov))
+  i <- pmax(row(cov), col(cov)); j <- pmin(row(cov), col(cov))
+  cov[islabel] <- paste0(label, '_', i[islabel], '_', j[islabel])
+  cov
 }
 
 bmatrix = function(x, digits=NULL,nottext=FALSE, ...) {
@@ -802,9 +815,23 @@ ctModelLatex<- function(x,matrixnames=TRUE,digits=3,linearise=inherits(x,'ctStan
     
     if(!inherits(x,c('ctStanFit','ctJuliaFit'))){ #construct pop effects
       popcov <- ctModelBuildPopCov(ctmodel,linearise=linearise)
+      # Each grouping level above the subject is its own population, as it is
+      # for a fit below: a zero-mean term of its own, labelled by its id.
+      extracov <- list()
+      for(g in ctmodel$groupIDnames){
+        levelcov <- ctModelBuildPopCov(ctmodel, linearise=linearise,
+          column=paste0('indvarying_',g), label=paste0('Cov',g))
+        if(nrow(levelcov)) extracov[[g]] <- levelcov
+      }
       if(ctmodel$n.TIpred > 0) timat <- ctModelBuildTIeffects(ctmodel) else timat <- diag(0,0)
-      if(!linearise) timat[,] <- paste0('raw_',timat)
-      popmeans<-paste0(ifelse(linearise,'','raw_'),unique(c(rownames(popcov),rownames(timat))))
+      # Labels only: an absent effect is a zero and a fixed one its value, not a
+      # parameter called raw_0 or raw_0.3.
+      if(!linearise){
+        islabel <- is.na(suppressWarnings(as.numeric(timat)))
+        timat[islabel] <- paste0('raw_',timat[islabel])
+      }
+      popmeans<-paste0(ifelse(linearise,'','raw_'),unique(c(rownames(popcov),
+        unlist(lapply(extracov,rownames)),rownames(timat))))
       ctmodel<-T0VARredundancies(ctmodel)
       ctmodel <- c(ctmodel,listOfMatrices(ctmodel$pars)) 
     }
@@ -850,7 +877,14 @@ ctModelLatex<- function(x,matrixnames=TRUE,digits=3,linearise=inherits(x,'ctStan
     }
     
     dopop <- doti||dopopcov
-    
+
+    # An unfitted model's grouping levels are labels; number them as shown.
+    if(!inherits(x,c('ctStanFit','ctJuliaFit')) && length(extracov)){
+      extracov <- stats::setNames(lapply(names(extracov), function(g)
+        .ctLatexRelabelCov(extracov[[g]], paste0(ifelse(linearise,'','raw'),'Cov',g))),
+        names(extracov))
+    }
+
     ### this section replaced t0var fixed values with params, seemed broken...
     # if(!'ctStanFit' %in% class(x)){ #if a model
     #   
@@ -1083,8 +1117,14 @@ ctModelLatex<- function(x,matrixnames=TRUE,digits=3,linearise=inherits(x,'ctStan
                texPrep(colnames(popcov)),'}_i')),nottext=TRUE)," 
             }_{\\vect{\\phi}(i)} ",ifelse(linearise,"\\approx","\\sim"),
     ifelse(linearise,"","\\textrm{tform}\\left\\{"),
-    " \\mathrm{N} \\left(
-              ",bmatrix(popmeans),", ", bmatrix(popcov)," \\right) ",
+    # With levels above the subject, every level is a zero-mean term labelled
+    # by its id, the subject's included, so none of them reads as the whole
+    # population spread.
+    if(length(extracov)) paste0(" ",bmatrix(popmeans),
+      " + \\underbrace{\\mathrm{N} \\left( \\mathbf{0}, ",bmatrix(popcov),
+      " \\right)}_{\\textrm{",texPrep(if(is.null(ctmodel$subjectIDname)) 'subject'
+        else ctmodel$subjectIDname),"}}") else paste0(" \\mathrm{N} \\left(
+              ",bmatrix(popmeans),", ", bmatrix(popcov)," \\right) "),
     if(length(extracov)) paste0(vapply(seq_along(extracov), function(l)
       paste0(" + \\underbrace{\\mathrm{N} \\left( \\mathbf{0}, ",
         bmatrix(extracov[[l]])," \\right)}_{\\textrm{",
@@ -1105,7 +1145,8 @@ ctModelLatex<- function(x,matrixnames=TRUE,digits=3,linearise=inherits(x,'ctStan
       if(includeNote) paste0("&\\textrm{Note: } UcorSDtoChol\\textrm{ converts lower tri matrix of standard deviations and unconstrained correlations to Cholesky factor,} \\\\
 &UcorSDtoCov =\\textrm{ transposed cross product of UcorSDtoChol, to give covariance, See Driver \\& Voelkle (2018) p11.} \\\\",
         if(dopop) paste0("&\\textrm{Individual specific notation (subscript i) only shown for subject parameter distribution -- pop. means shown elsewhere.} \\\\
-",if(linearise) "&\\textrm{Linearised approximation of subject parameter distribution shown.} \\\\"),
+",if(linearise) "&\\textrm{Linearised approximation of subject parameter distribution shown.} \\\\",
+          if(length(extracov)) "&\\textrm{Each zero-mean term holds one level's random effects, shared by every subject within the same unit of that level; covariate effects act on each subject.} \\\\"),
         # Only for a model that has such cells: for every other model this line
         # would be a caveat about something the reader cannot see.
         if(isTRUE(nrow(contextcells) > 0)) "&\\textrm{Cells depending on the latent state or a time dependent predictor keep their expression, with estimates substituted for parameter labels.} \\\\",

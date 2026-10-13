@@ -306,8 +306,8 @@ gg_modelN <- function() {
     latentNames = "eta1", LAMBDA = matrix(1), MANIFESTMEANS = matrix(0),
     CINT = matrix("cint"), DRIFT = matrix("drift|-log1p_exp(-param)"),
     T0VAR = matrix(0.5), id = c("subject", "study"), silent = TRUE)))
-  m$pars$indvarying <- m$pars$param %in% c("drift", "cint")
-  m$pars$indvarying_study <- m$pars$param %in% "cint"
+  m$pars$indvarying <- ifelse(m$pars$param %in% "cint", TRUE,
+    ifelse(m$pars$param %in% "drift", "subject", FALSE))
   m
 }
 

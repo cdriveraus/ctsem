@@ -86,10 +86,12 @@ end
 
 """`f .= DRIFT x + CINT` over the first `n` states, with the matrices as they stand."""
 @inline function _ctsem_affine_field!(f, pars, x, n::Int)
+    DRIFT = pars.DRIFT
+    CINT = pars.CINT
     @inbounds for i in 1:n
-        acc = pars.CINT[i]
+        acc = CINT[i]
         for j in 1:n
-            acc += pars.DRIFT[i, j] * x[j]
+            acc += DRIFT[i, j] * x[j]
         end
         f[i] = acc
     end
@@ -120,10 +122,11 @@ function _record_substep_defect!(rec::CTSEMSubstepRecorder{T}, ws, pars, sp, all
     # Defect against the linearisation the step used (JAx is restored above).
     P = ws.P_predict.data
     worst = zero(T)
+    JAx = pars.JAx
     @inbounds for i in 1:n
         r = rec.f1[i] - rec.f0[i]
         for j in 1:n
-            r -= pars.JAx[i, j] * (x1[j] - x0[j])
+            r -= JAx[i, j] * (x1[j] - x0[j])
         end
         err = abs(r) * h / 2
         scale = sqrt(max(P[i, i], zero(T)) + T(1e-12))

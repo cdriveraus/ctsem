@@ -407,15 +407,14 @@
 #' and compiles the engine, which takes several minutes; later calls in new
 #' sessions reuse both.
 #'
-#' The engine is compiled in advance for a few common small models -- one
-#' latent process with a random intercept and two Gaussian or three binary
-#' indicators, two latent processes with random intercepts, one latent process
-#' with a random drift. The first fit of any other model shape in each R
-#' session compiles code specialised to that model, so it takes longer than
-#' later fits of the same shape: about a minute against two seconds for a small
-#' Gaussian model, and minutes for a Laplace model whose fit reaches the
-#' quadrature correction. This is paid once per shape per session rather than
-#' once per fit; time a fit after one warm-up fit, not from a fresh session.
+#' The engine is compiled in advance for one small model on each route -- one
+#' latent process with two indicators and a random intercept -- and with it the
+#' code that every model on that route shares. The first fit of any other model
+#' shape in each R session compiles the code specialised to that model, so it
+#' takes longer than later fits of the same shape: about a minute for a small
+#' model on the augmented route and three to four minutes on the Laplace route,
+#' against seconds once compiled. This is paid once per shape per session rather
+#' than once per fit; time a fit after one warm-up fit, not from a fresh session.
 #'
 #' Pressing Escape (or Ctrl-C) during a julia fit returns to the R prompt at
 #' once, and keeps the Julia session and everything it has compiled. Julia
@@ -444,9 +443,11 @@
 #'   setting it here takes effect only if no Julia session is running yet --
 #'   pass \code{force = TRUE} to restart one. \code{NULL}, the default, starts
 #'   a session at \code{getOption("mc.cores", 2)} threads unless
-#'   \code{JULIA_NUM_THREADS} is set; a session started by a fit is instead as
-#'   wide as that fit's \code{cores}, if more. A number given here is also the
-#'   ceiling for any call that sets none. A fit that asks for more cores than
+#'   \code{JULIA_NUM_THREADS} is set; a session started by a call with a
+#'   \code{cores} argument -- a fit, \code{ctFitUncertainty}, \code{ctLOO} and
+#'   the rest -- is instead as wide as that call's \code{cores}, if more. A
+#'   number given here is also the ceiling for any call that sets none. A fit
+#'   that asks for more cores than
 #'   the session has threads says so; see \code{\link{ctFit}}.
 #' @param force Reconfigure an existing Julia session.
 #' @param agree \code{TRUE} to consent to instantiating the engine's Julia
@@ -1344,7 +1345,9 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
   if (isTRUE(gendata)) failures <- c(failures, paste0("generation through ",
     "the fit call (gendata=TRUE); use ctGenerate(), or ctGenerateFromFit() ",
     "on a fit"))
-  if (!is.na(stanmodeltext)[1] || length(compileArgs) > 0L || isTRUE(forcerecompile)) failures <- c(failures, "Stan compilation controls (stanmodeltext, compileArgs, forcerecompile)")
+  # `forcerecompile` is honoured on julia: it compiles the model's expressions
+  # (`.ctJuliaObjectiveInputs`).
+  if (!is.na(stanmodeltext)[1] || length(compileArgs) > 0L) failures <- c(failures, "Stan compilation controls (stanmodeltext, compileArgs)")
   # Stored on a stan fit at fit time; the julia path computes them after the
   # fit instead, and accepting the flag would promise output it never writes.
   saved <- c("savescores", "savesubjectmatrices")[c(isTRUE(savescores),
@@ -2115,12 +2118,9 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
   invisible(TRUE)
 }
 
-# Which parameters vary at a given level, and the column that says so.
-#
-# The subject level keeps `indvarying`, unchanged and backward compatible. Each
-# grouping level above it gets `indvarying_<idname>` -- explicit rather than
-# positional, so a model carrying three levels reads as three named columns
-# rather than as a matrix nobody can check by eye.
+# Which parameters vary at a given level, and the column that says so: the
+# per-level logicals .ctResolveLevels() makes, `indvarying` for the subject and
+# `indvarying_<idname>` above it. The model here is always resolved.
 .ctJuliaLevelColumn <- function(model, level) {
   if (level == 1L) return("indvarying")
   paste0("indvarying_", model$groupIDnames[level - 1L])
@@ -2771,21 +2771,17 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
   if (length(random_sd_scale) != length(augmented_indices)) {
     stop("Prepared random-effect covariance metadata does not match the augmented state layout.", call. = FALSE)
   }
-  # A cell repurposed as a population parameter must not inherit the
-  # TI-predictor effect flags of whatever the user originally wrote there.
-  # `T0VARredundancies()` (R/ctFit.R) fixes the free T0VAR cells that indvarying
-  # T0MEANS makes redundant and clears their `<TIpred>_effect` columns along with
-  # `param`, `transform` and `indvarying`; this function then hands those same
-  # cells to the population SD and correlation parameters below, and clears the
-  # flags again rather than trust that every cell arrived by that route. A stale
+  # The population SD and correlation cells below carry no TI-predictor
+  # effects, and their flags are cleared there rather than trusted. They once
+  # reused the T0VAR cells `T0VARredundancies()` (R/ctFit.R) fixes, and a stale
   # flag made `.ctJuliaTIEffects()` mint a TI-predictor coefficient for every
   # population parameter -- something the generated Stan model has no
   # counterpart for, since its population block is `rawpopsdbase`/`sqrtpcov`
-  # and takes no TI effects. The consequences were one per backend: the engine silently
-  # estimated those extra coefficients, and `.ctBackendPriorSpec()` refused the
-  # fit outright because its Stan-derived layout was that many parameters short.
-  # The cells `.ctJuliaPadMatrix()` created are already FALSE; these are the
-  # ones that existed before.
+  # and takes no TI effects. The consequences were one per backend: the engine
+  # silently estimated those extra coefficients, and `.ctBackendPriorSpec()`
+  # refused the fit outright because its Stan-derived layout was that many
+  # parameters short. They are RAWPOPVAR's own cells now, and T0VAR keeps what
+  # `T0VARredundancies()` wrote, which the engine adds the block to.
   effect_columns <- grep("_effect$", names(table), value = TRUE)
   covariance_rows <- list()
   # The name of the parameter each varying state carries, read from its T0MEANS
@@ -3537,6 +3533,9 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
   # with it, so they must not differ in how the model is built.
   intoverpop <- match.arg(as.character(intoverpop)[1L],
     c("augmented", "laplace", "none"))
+  # Generation hands a user's model straight here, so the per-level columns
+  # are made here as well as in ctFit(); see .ctResolveLevels().
+  model <- .ctResolveLevels(model)
   # The floor is a property of the Laplace term, so a route without one refuses
   # it by name rather than accepting it and doing something else. Either value:
   # 'total' is no longer what every fit does, so it is not inert elsewhere.
@@ -3776,10 +3775,12 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
 # Say so, once, when a model shape is about to be compiled for.
 #
 # `ctsem_transforms_cached()` reports whether every transform expression in this
-# model already has a closure. If they all do, the compiled filter is reused and
-# the first evaluation is immediate; if any is new, the specialisation happens
-# on the first evaluation and takes tens of seconds.
-.ctJuliaAnnounceCompilation <- function(module, table) {
+# model is either data to the engine (`CTSEMExpr`, so the model shares the
+# compiled filter) or already has a closure. If so the first evaluation is
+# immediate; if any needs a new closure -- an expression outside the
+# vocabulary, or every one when the fit asked for `forcerecompile` -- the
+# filter specialises on the first evaluation and takes tens of seconds.
+.ctJuliaAnnounceCompilation <- function(module, table, compile = FALSE) {
   free <- .ctJuliaNoNA(as.integer(table$parnumber), 0L) > 0L
   # A free cell with no transform of its own compiles `param[n]`, exactly as
   # `ekf_from_columns` writes it -- so the query has to say the same thing.
@@ -3795,7 +3796,8 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
   cached <- isTRUE(tryCatch(
     .ctBackendJuliaValue(module$ctsem_transforms_cached(
       .ctJuliaVector(if (length(regular)) regular else ""),
-      .ctJuliaVector(if (length(complex)) complex else ""))),
+      .ctJuliaVector(if (length(complex)) complex else ""),
+      compile = isTRUE(compile))),
     error = function(e) FALSE))
   if (cached) return(invisible(FALSE))
   # No duration promised. It ranges from a few seconds when the precompiled
@@ -3957,6 +3959,10 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
   # Sent only when set, so every other model hashes and builds exactly as it
   # did.
   if (isTRUE(spec$stationary)) arguments$stationary <- TRUE
+  # Transforms compiled per model rather than evaluated as data
+  # (`ctFit(forcerecompile = TRUE)`). Here, so a compiled and an interpreted
+  # objective of one model are different cache entries.
+  if (isTRUE(spec$compiletransforms)) arguments$compile_transforms <- TRUE
   # How many leading states are genuine dynamics rather than the static
   # coordinates the random-effect augmentation appended. The engine runs the
   # continuous form's intercept solve over that block, because JAx is exactly
@@ -4187,13 +4193,13 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
   if (!is.null(cached)) return(cached)
   module <- .ctJuliaModule(spec$project)
   marshal <- function(args) lapply(args, .ctJuliaMarshal)
-  # A model shape Julia has not seen mints new closure types for its transform
-  # expressions, and the whole filter specialises again for them -- tens of
-  # seconds, once, and indistinguishable from a hang if nothing says so. The
-  # engine is asked first so the message comes before the wait rather than
-  # after it.
+  # A transform expression that needs a closure mints a new type, and the
+  # whole filter specialises again for it -- tens of seconds, once, and
+  # indistinguishable from a hang if nothing says so. The engine is asked first
+  # so the message comes before the wait rather than after it.
   .ctJuliaAnnounceCompilation(module,
-    as.data.frame(spec$parameter_table, stringsAsFactors = FALSE))
+    as.data.frame(spec$parameter_table, stringsAsFactors = FALSE),
+    compile = isTRUE(spec$compiletransforms))
   params <- do.call(module$ekf_from_columns, marshal(inputs$ekf))
   objective <- do.call(module$ctsem_objective,
     c(list(params), marshal(inputs$objective)))
@@ -4396,6 +4402,10 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
 # nothing to put back. It is read only when there is a ceiling to set, because
 # reading it is a `juliaEval` and `juliaEval` *starts* a session when none is
 # running -- capping nothing must not be the thing that launches the engine.
+#
+# The same read gives the session's thread count, so this is also where a call
+# other than a fit hears that the session is narrower than it asked for
+# (`.ctBackendReportShortfall()`); a fit has heard already, before it began.
 .ctBackendSetMaxChunks <- function(chunks) {
   chunks <- suppressWarnings(as.integer(chunks)[1L])
   if (is.na(chunks) || chunks < 1L) return(NA_integer_)
@@ -4407,11 +4417,33 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
   # for the region's duration -- a ctExtract(cores = 8) on a fit restored into a
   # new session would run at the default.
   .ctJuliaModule(.ct_julia_cache$project)
-  previous <- tryCatch(as.integer(.ctBackendJuliaValue(.ctJuliaEval(
-    "ContinuousTimeSEM.ctsem_max_chunks().max_chunks"))), error = function(e) NA_integer_)
+  state <- tryCatch(as.integer(.ctBackendJuliaValue(.ctJuliaEval(paste0(
+    "let s = ContinuousTimeSEM.ctsem_max_chunks(); ",
+    "[s.max_chunks, s.nthreads] end")))), error = function(e) integer())
+  if (length(state) != 2L) state <- c(NA_integer_, NA_integer_)
+  .ctBackendReportShortfall(chunks, threads = state[2L],
+    requested = .ctJuliaCallCores())
   try(.ctJuliaCall("ContinuousTimeSEM.ctsem_set_max_chunks!", chunks),
     silent = TRUE)
-  previous
+  state[1L]
+}
+
+# Say so when a running session has fewer threads than a region would use of
+# what its call asked for. The region runs at up to `chunks`, the call asked
+# for `requested` (`.ctJuliaCallCores()`), and only the lesser of the two can
+# fall short: a region held below its call on purpose -- an inner fit at one
+# core under a wider call -- is short of nothing, and a call that asked for
+# nothing is not told. Only ctFit's `cores` restarts a session
+# (`.ctBackendResolveThreads()`); a call this far in holds Julia objects a
+# restart would end.
+.ctBackendReportShortfall <- function(chunks, threads, requested) {
+  requested <- suppressWarnings(as.integer(requested)[1L])
+  wanted <- min(suppressWarnings(as.integer(chunks)[1L]), requested)
+  threads <- suppressWarnings(as.integer(threads)[1L])
+  if (!is.na(wanted) && !is.na(threads) && threads < wanted) {
+    .ctBackendReportThreads(requested, threads)
+  }
+  invisible(NULL)
 }
 
 .ctBackendRestoreMaxChunks <- function(previous) {
@@ -5294,14 +5326,14 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
   optimcontrol = list(), verbose = 0L, fit = TRUE,
   priors = FALSE, priorscope = NULL,
   intoverpop = "augmented", optimize = TRUE, chains = 4L,
-  iter = 2000L, control = list(), intoverstates = TRUE) {
+  iter = 2000L, control = list(), intoverstates = TRUE, forcerecompile = FALSE) {
   .ctJuliaInterruptSafe(.ctFitJuliaBackendImpl(datalong = datalong,
     model = model, prepared_data = prepared_data, inits = inits, cores = cores,
     optimcontrol = optimcontrol,
     verbose = verbose, fit = fit, priors = priors, priorscope = priorscope,
     intoverpop = intoverpop,
     optimize = optimize, chains = chains, iter = iter, control = control,
-    intoverstates = intoverstates))
+    intoverstates = intoverstates, forcerecompile = forcerecompile))
 }
 
 #' @keywords internal
@@ -5310,7 +5342,7 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
   optimcontrol = list(), verbose = 0L, fit = TRUE,
   priors = FALSE, priorscope = NULL,
   intoverpop = "augmented", optimize = TRUE, chains = 4L,
-  iter = 2000L, control = list(), intoverstates = TRUE) {
+  iter = 2000L, control = list(), intoverstates = TRUE, forcerecompile = FALSE) {
   # The engine environment and a session restart are ctJuliaSetup()'s own
   # `project` and `force = TRUE`; the per-fit copies of both were a second
   # spelling of an exported function, so a fit uses whatever session is set up.
@@ -5384,6 +5416,10 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
         .ctJuliaOr(optimcontrol$laplace_floor, .ctJuliaLaplaceFloorDefault)
         else optimcontrol$laplace_floor))
   model_spec$tipredMissing <- tipredMissing
+  # On the spec, so every objective built from it -- this fit's, a saved fit's
+  # prediction, a sampling worker's -- compiles or interprets alike. Set only
+  # when asked, so every other spec hashes as it did.
+  if (isTRUE(forcerecompile)) model_spec$compiletransforms <- TRUE
   .ctJuliaTIMissingCheck(model_spec)
   .ctJuliaTIMissingWarn(model_spec, optimize = optimize,
     sampled = if (isTRUE(optimize)) identical(tipredMissing, "sample") else
