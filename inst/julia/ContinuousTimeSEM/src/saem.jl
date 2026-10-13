@@ -112,10 +112,19 @@
 # be large enough to decide between maxima
 # (review/SAEM-fell-short-2026-10-05.md). The phased version this replaced,
 # with a decaying step, also got further in fewer iterations on the SNSF
-# pilot. So the estimate is a start for the finish, not a final point. A
-# decrease begun when the stop below fires -- a calibrated test of what the
-# plateau test guessed at -- with the run then stopped on the average's own
-# precision, would make it one.
+# pilot. So the estimate is a start for the finish, not a final point, and a
+# second phase begun where the stop below fires did not make it one, in any of
+# three forms measured on the SAEM-fell-short model
+# (review/SAEM-smooth-2026-10-13.md; branch saem-smooth). A decreasing gain on
+# this step froze the directions where information is missing, leaving the
+# estimate 1.8 nats short where the first phase had. Stochastic Newton on the
+# Laplace Hessian moved them, but multiplied the fixed-u score's noise by the
+# inverse marginal information and ended 12-71 nats short. Accelerating by the
+# rate read off the iterates' lag-one autocorrelation ended 48-137 short: the
+# E-step chain's own persistence dominates that autocorrelation, so nearly
+# every direction looked slow. Moving those directions quickly means moving
+# them on the one augmentation that informs them, whose noise is the missing
+# information itself.
 #
 # The stop. The run stops once the iterates have stopped travelling
 # (`_saem_trend`): every parameter's change between the last two quarters of
