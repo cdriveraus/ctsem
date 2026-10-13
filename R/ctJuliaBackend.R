@@ -4328,6 +4328,9 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
 #'   prepared <- ctFit(ctstantestdat, model, backend = 'julia', fit = FALSE)
 #'   start <- ctJuliaEvaluate(prepared, pars = rep(0, 6), cores = 1)
 #'   str(start)
+#'   # Julia keeps running between calls, holding what it has compiled;
+#'   # this ends it.
+#'   ctJuliaKill("session")
 #' }
 #' }
 #' @export
@@ -6532,6 +6535,9 @@ print.ctJuliaFit <- function(x, ...) {
 #'   model$pars$indvarying <- FALSE
 #'   fit <- ctFit(data, model, backend = 'julia', cores = 1)
 #'   plot(fit, wait = FALSE)
+#'   # Julia keeps running between calls, holding what it has compiled;
+#'   # this ends it.
+#'   ctJuliaKill("session")
 #' }
 #' }
 #' @export

@@ -77,6 +77,9 @@
 #'
 #'   fit <- ctFit(datalong, model, backend = 'julia', cores = 1, verbose = 0)
 #'   ctStateDependencePlot(fit, along = 'eta2', gridsize = 11, nsamples = 5)
+#'   # Julia keeps running between calls, holding what it has compiled;
+#'   # this ends it.
+#'   ctJuliaKill("session")
 #' }
 #' }
 #' @seealso \code{\link{ctContextDependence}}, \code{\link{ctPhasePortrait}}

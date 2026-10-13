@@ -85,12 +85,11 @@ jobs:
       # installed here so that the julia examples, which are guarded on
       # ctJuliaStatus() and inert everywhere else, run too.
       BUILD_VIGNETTES: ${{ github.event_name == 'workflow_dispatch' && inputs.vignettes == true }}
-      # --as-cran stops an example that leaves a connection open. A julia
-      # example leaves its Julia session's socket open by design -- the session
-      # persists between calls, which is what keeps its compiled code -- so
-      # with Julia installed every julia example would fail on it. CRAN has no
-      # Julia, and the routine runs here have none, so they keep the check.
-      _R_CHECK_CONNECTIONS_LEFT_OPEN_: ${{ (github.event_name == 'workflow_dispatch' && inputs.vignettes == true) && 'false' || 'true' }}
+      # --as-cran stops an example that leaves a connection open, and sets
+      # _R_CHECK_CONNECTIONS_LEFT_OPEN_ itself, so it cannot be turned off
+      # here. A julia example therefore ends with ctJuliaKill('session'):
+      # the session persists between calls by design, and its socket is the
+      # connection the check would find.
     steps:
       - uses: actions/checkout@v5
       - uses: r-lib/actions/setup-pandoc@v2

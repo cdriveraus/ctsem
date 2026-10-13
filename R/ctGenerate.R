@@ -354,6 +354,9 @@ ctModeltoNumeric <- function(ctmodelobj){
 #' \donttest{
 #' #generate and plot samples from prior predictive
 #' priorpred <- ctGenerateFromPriors(cts = ctstantestfit,cores=2,nsamples = 50)
+#' # backend = 'auto' generates with julia where it is available. Julia keeps
+#' # running between calls, holding what it has compiled; this ends it.
+#' if (isTRUE(ctJuliaStatus()$available)) ctJuliaKill("session")
 #'}
 ctGenerateFromPriors <- function(cts,datastruct=NA, is=FALSE,
   fullposterior=TRUE, nsamples=200, parsonly=FALSE,cores=2,
@@ -522,6 +525,9 @@ ctStanGenerate <- ctGenerateFromPriors
 #' priorpred <- ctGenerate(generatingModel, fromPriors = TRUE, Tpoints = 6,
 #'   n = 10, nsamples = 20, cores = 2)
 #' str(priorpred$Y)
+#' # backend = 'auto' generates with julia where it is available. Julia keeps
+#' # running between calls, holding what it has compiled; this ends it.
+#' if (isTRUE(ctJuliaStatus()$available)) ctJuliaKill("session")
 #' }
 #' @return From the R generator, a long format matrix with one row per subject
 #'   and time point, or wide format with \code{wide = TRUE}. From the julia

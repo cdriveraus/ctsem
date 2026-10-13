@@ -59,6 +59,9 @@ if (isTRUE(ctJuliaStatus()$available)) {
   prepared <- ctFit(ctstantestdat, model, backend = 'julia', fit = FALSE)
   start <- ctJuliaEvaluate(prepared, pars = rep(0, 6), cores = 1)
   str(start)
+  # Julia keeps running between calls, holding what it has compiled;
+  # this ends it.
+  ctJuliaKill("session")
 }
 }
 }

@@ -189,5 +189,8 @@ if (isTRUE(ctJuliaStatus()$available)) {
 priorpred <- ctGenerate(generatingModel, fromPriors = TRUE, Tpoints = 6,
   n = 10, nsamples = 20, cores = 2)
 str(priorpred$Y)
+# backend = 'auto' generates with julia where it is available. Julia keeps
+# running between calls, holding what it has compiled; this ends it.
+if (isTRUE(ctJuliaStatus()$available)) ctJuliaKill("session")
 }
 }

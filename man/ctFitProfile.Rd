@@ -92,6 +92,9 @@ if (isTRUE(ctJuliaStatus()$available)) {
   result <- ctFitProfile(fit, parameters = c('drift_eta1', 'mm_Y1'))
   print(result)
   plot(result)
+  # Julia keeps running between calls, holding what it has compiled;
+  # this ends it.
+  ctJuliaKill("session")
 }
 }
 }

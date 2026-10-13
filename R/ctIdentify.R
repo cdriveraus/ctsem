@@ -276,6 +276,9 @@
 #'
 #'   result <- ctIdentify(datalong, model, cores = 1)
 #'   print(result)
+#'   # Julia keeps running between calls, holding what it has compiled;
+#'   # this ends it.
+#'   ctJuliaKill("session")
 #' }
 #' }
 #'

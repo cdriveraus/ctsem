@@ -383,6 +383,9 @@ if (isTRUE(ctJuliaStatus()$available)) {
   jfit <- ctFitUncertainty(jfit, uncertainty = 'sample', cores = 1,
     control = list(chains = 2, minESS = 50, rhatTarget = 1.05))
   jfit$sample
+  # Julia keeps running between calls, holding what it has compiled;
+  # this ends it.
+  ctJuliaKill("session")
 }
 }
 }

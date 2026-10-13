@@ -40,6 +40,9 @@ if (isTRUE(ctJuliaStatus()$available)) {
   model$pars$indvarying <- FALSE
   fit <- ctFit(data, model, backend = 'julia', cores = 1)
   plot(fit, wait = FALSE)
+  # Julia keeps running between calls, holding what it has compiled;
+  # this ends it.
+  ctJuliaKill("session")
 }
 }
 }

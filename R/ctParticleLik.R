@@ -63,6 +63,9 @@
 #'   # should be within a few standard errors of zero.
 #'   check <- ctParticleLik(fit, particles = 1000, substeps = 5)
 #'   check[c('loglik', 'se', 'fit_loglik', 'difference')]
+#'   # Julia keeps running between calls, holding what it has compiled;
+#'   # this ends it.
+#'   ctJuliaKill("session")
 #' }
 #' }
 #' @export
