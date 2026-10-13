@@ -392,3 +392,10 @@ test_that("a model's cycles are not proposed again, nor given slow processes or 
   expect_false(any(grepl('cycle_(cos|sin)', labels)))
   expect_true(all(c('eta1 driven by a slow process', 'eta1 made second order') %in% labels))
 })
+
+test_that("the state dependence screen writes no terms into a clock's drift", {
+  cm <- ctModelPeriodicComponent(.ho_ct(), 24, indices = 1:2, individual = FALSE)
+  terms <- ctsem:::.ctScoreStateModel(cm)$terms
+  expect_setequal(unique(terms$equation), c('eta1', 'eta2'))
+  expect_true(any(grepl('cycle_cos', terms$by)))
+})

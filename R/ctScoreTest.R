@@ -1145,7 +1145,11 @@ ctScoreTest <- function(fit, covariates = NULL,
     if (order >= 3L) for (l in m:nl) monomials[[length(monomials) + 1L]] <- c(k, m, l)
   }
   terms <- list()
-  for (i in seq_len(nl)) for (mono in monomials) {
+  # Equations of latents with innovations of their own: a cycle's clock turns
+  # as written, and a term in its drift kept one search's clock wandering. The
+  # clock's states stay among the monomials: a drift varying with the time of
+  # day is a question to ask.
+  for (i in .ctImproveNoisyLatents(model)) for (mono in monomials) {
     terms[[length(terms) + 1L]] <- data.frame(name = paste0('ctscoreterm',
       length(terms) + 1L), equation = latent[i], i = i, k = mono[1L],
       by = paste(latent[mono[-1L]], collapse = '*'),
