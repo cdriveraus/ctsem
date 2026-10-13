@@ -139,6 +139,18 @@ end
             @test threaded_adjoint.gradient ≈ serial_adjoint.gradient rtol = 1e-12
             @test threaded_forward ≈ serial_forward rtol = 1e-12
         end
+
+        # A gradient lends each subject its chunk's exponential table and takes
+        # it back. Left in place, every subject one worker had run shared that
+        # worker's table, and a later threaded value pass that put two of them
+        # on different threads raced on it: a wrong log likelihood, different
+        # each time. Structural, so it holds at any thread count.
+        ContinuousTimeSEM.ctsem_set_max_chunks!(4)
+        ctsem_adjoint_gradient(objective, values)
+        ContinuousTimeSEM.ctsem_subject_gradients(objective, values)
+        tables = [o.value_ws.discretization_cache.exp_table
+            for o in objective.subject_objectives]
+        @test allunique(objectid.(tables))
     finally
         ContinuousTimeSEM.ctsem_set_max_chunks!(original)
     end
