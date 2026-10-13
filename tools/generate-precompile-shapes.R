@@ -19,19 +19,19 @@
 # changes what it sends -- provided this script is rerun. The test in
 # test-julia-precompile.R is what notices when it has not been.
 #
-# One model per route, and the list should stay that short. A model in the
-# image buys two things: a later fit of its own type compiles nothing, and the
-# code every model on its route shares -- optimiser, kernels on plain arrays,
-# reporting -- is compiled already. The second is most of the value, and the
-# first model of each route delivers all of it: on dev2 (2026-10-12) eight
-# models outside the image compiled for 165-175 s (augmented) or 400-435 s
-# (Laplace) in their first fit with no workload, 55-75 s or 190-215 s with
-# these two, and no less with nine. Every model also costs load time in *every*
-# session, whether or not it fits that model -- about 13 s each on dev2, Julia
-# inserting the image's method-table backedges -- and build time and peak
-# memory once per engine version (two models 8 min and 7 GB, nine 27 min and
-# 16 GB). So a third model has to be measured against that before it goes in:
-# review/PRECOMPILE-workload-2026-10-12.md has the method and the numbers.
+# One model per route and indicator kind, and the list should stay that short.
+# A model's type does not depend on its size, layout or expressions (see the
+# header of inst/julia/ContinuousTimeSEM/src/precompile_workload.jl), so the
+# code one captured fit compiles is the code every model of its route and kind
+# runs: a second Gaussian model on a route compiles about a second's worth on
+# dev2 (2026-10-13) where it used to compile a minute or more. What differs is
+# whether an indicator is categorical -- a filter workspace type, so that
+# Gaussian fits carry none of that code -- hence a binary and an ordinal model
+# here, which share it. Every model costs build time and peak memory once per
+# engine version and load time in every session (Julia inserting the image's
+# method-table backedges), so another has to be measured against that before
+# it goes in: review/PRECOMPILE-workload-2026-10-12.md and
+# review/PRECOMPILE-general-types-2026-10-13.md have the method and the numbers.
 
 root <- file.path(dirname(sub("^--file=", "", grep("^--file=",
   commandArgs(FALSE), value = TRUE)[1])), "..")
@@ -70,15 +70,42 @@ cint_model <- function(names) {
   m$pars$indvarying <- m$pars$param %in% "cint"
   m
 }
+# The same with categorical indicators: binary (1) or four-category ordinal (2).
+categorical <- function(d, names, type) {
+  for (nm in names) d[[nm]] <- if (type == 1L) {
+    stats::rbinom(nrow(d), 1, stats::plogis(d$eta))
+  } else as.integer(cut(d$eta + stats::rlogis(nrow(d)), c(-Inf, -1, 0.4, 1.9, Inf)))
+  d$eta <- NULL
+  d
+}
+categorical_model <- function(names, type) {
+  n <- length(names)
+  args <- list(type = "ct", n.latent = 1, n.manifest = n, manifestNames = names,
+    latentNames = "eta1", LAMBDA = matrix(1, n, 1), CINT = matrix("cint"),
+    T0MEANS = matrix(0), MANIFESTVAR = diag(0, n), manifesttype = rep(type, n))
+  if (type == 1L) args$MANIFESTMEANS <- matrix(0, n, 1)
+  if (type == 2L) args$ncategories <- rep(4L, n)
+  m <- suppressWarnings(suppressMessages(do.call(ctModel, args)))
+  m$pars$indvarying <- m$pars$param %in% "cint"
+  m
+}
 shapes <- list(
   # One latent, two Gaussian indicators, a random intercept, on each route:
   # `image_model()` in tests/testthat/helper-julia.R, which tests fit so that a
-  # fit costs seconds. Binary indicators of the same count share its filter
-  # type -- indicator kind is a value -- and compile only their own update.
+  # fit costs seconds.
   gaussian_augmented = list(route = "augmented", model = function() cint_model(c("y1", "y2")),
     data = function() indicators(sim_latent(8, 6), c("y1", "y2"))),
   gaussian_laplace = list(route = "laplace", model = function() cint_model(c("y1", "y2")),
-    data = function() indicators(sim_latent(8, 6), c("y1", "y2")))
+    data = function() indicators(sim_latent(8, 6), c("y1", "y2"))),
+  # A model with a categorical indicator is a different filter workspace type
+  # -- the categorical update is gated on it, so Gaussian fits do not carry
+  # that code -- so each route needs one. Binary and ordinal share it.
+  binary_augmented = list(route = "augmented",
+    model = function() categorical_model(c("b1", "b2"), 1L),
+    data = function() categorical(sim_latent(8, 6), c("b1", "b2"), 1L)),
+  ordinal_laplace = list(route = "laplace",
+    model = function() categorical_model(c("o1", "o2"), 2L),
+    data = function() categorical(sim_latent(10, 6), c("o1", "o2"), 2L))
 )
 only <- Sys.getenv("CTSEM_PRECOMPILE_SHAPES", "")
 if (nzchar(only)) shapes <- shapes[strsplit(only, ",", fixed = TRUE)[[1]]]

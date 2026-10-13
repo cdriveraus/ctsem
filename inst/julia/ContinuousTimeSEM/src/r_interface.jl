@@ -136,9 +136,15 @@ literal indices, minting its own specialisation. That is the right trade for a
 cell that appears once or twice in a model, and it is why the fall-through is a
 deliberate branch rather than a guess.
 """
-function _regular_transform_closure(expression::AbstractString)
+function _regular_transform_closure(expression::AbstractString; compile::Bool=false)
     text = String(expression)
     index = _regular_transform_index(text)
+    # Outside the default templates: an expression, so the model's type does
+    # not depend on it (transform_expr.jl) -- unless asked to compile.
+    if !compile && (index === nothing || !_ctsem_default_template(text))
+        e = _ctsem_regular_expr(text)
+        e === nothing || return e
+    end
     index === nothing && return _transform_closure(generate_transform_string(text))
     # `invokelatest` because the maker may have been `eval`ed into this module a
     # moment ago, and a method compiled after the current frame started is not
@@ -189,7 +195,7 @@ reuses the compiled filter and evaluates immediately; one with a new expression
 mints new closure types and specialises the whole pipeline again, which takes
 tens of seconds and is worth saying out loud rather than looking like a hang.
 """
-function ctsem_transforms_cached(regular, complex=String[])
+function ctsem_transforms_cached(regular, complex=String[]; compile::Bool=false)
     lock(_TRANSFORM_CACHE_LOCK) do
         # The cache is keyed by the *lambda* the builder compiles, not by the
         # expression the caller wrote, so the same wrapping has to be applied
@@ -202,12 +208,15 @@ function ctsem_transforms_cached(regular, complex=String[])
             # index lifted out -- see `_regular_transform_closure` -- so the
             # question is whether this expression's template is known, not
             # whether this exact expression has been seen.
+            compile || _ctsem_default_template(expression) ||
+                _ctsem_regular_expr(expression) === nothing || continue
             haskey(_TRANSFORM_CACHE, _regular_transform_key(expression)) ||
                 return false
         end
         for source in complex
             expression = String(source)
             isempty(expression) && continue
+            compile || _ctsem_expr(expression, nothing) === nothing || continue
             haskey(_TRANSFORM_CACHE,
                 generate_complex_transform_string(expression)) || return false
         end
@@ -401,11 +410,19 @@ column vectors, one entry per model-matrix cell.
   * `stationary` — `true` to start the latent processes from the distribution
     DRIFT, CINT and DIFFUSION settle into, in place of T0MEANS and T0VAR. See
     `_ctsem_stationary!` for what it requires of the model.
+  * `compile_transforms` — `true` to compile every state-dependent cell and
+    every parameter transform outside the default templates into its own
+    closure, as the engine did before transforms were data. The model then
+    has its own type and compiles the filter for itself on first use; its
+    transforms then cost what compiled code costs, which for a model of many
+    large state-dependent cells can be well worth the compile.
 
-Expression strings are `Meta.parse`d and `eval`ed into closures here, once per
-*distinct expression* rather than once per model -- see `_transform_closure`
-for why that distinction is worth tens of seconds. That is what makes this
-engine model-agnostic without a compile step.
+State-dependent cells, and parameter transforms outside the default
+templates, are held as `CTSEMExpr` data (transform_expr.jl), so a model's type
+does not depend on them and a model of a new shape reuses the code every other
+model compiled. An expression outside that vocabulary, and every one under
+`compile_transforms`, is `Meta.parse`d and `eval`ed into a closure, once per
+distinct expression (`_transform_closure`).
 """
 function ekf_from_columns(matrix, row, col, parnumber, value, transform,
     predicttransform, updatetransform, tdtransform;
@@ -416,7 +433,8 @@ function ekf_from_columns(matrix, row, col, parnumber, value, transform,
     censormax=Float64[], covmatcode::Int=0, population_indices=Int[],
     population_covmatcode::Union{Nothing,Integer}=nothing,
     population_scale=Float64[], affine_dim::Int=0, stationary::Bool=false,
-    ti_fixed_value=Float64[], ti_tail_offset::Integer=0, n_tipreds::Integer=0)
+    ti_fixed_value=Float64[], ti_tail_offset::Integer=0, n_tipreds::Integer=0,
+    compile_transforms::Bool=false)
 
     n = length(matrix)
     length(row) == n && length(col) == n ||
@@ -452,37 +470,46 @@ function ekf_from_columns(matrix, row, col, parnumber, value, transform,
     map_from = map_from[par_pos]
 
     # Regular (population) transforms.
-    reg_tfs = ComponentVector(Vector{Function}(undef, n), axis)
+    reg_tfs = ComponentVector(Vector{Any}(undef, n), axis)
     @inbounds for i in 1:n
         pn = regular_parnumber[i]
         pn == 0 && continue
         expression = isempty(regular_text[i]) ? "param[$(pn)]" : regular_text[i]
         @view(reg_tfs[Symbol(matrix[i])])[Int(row[i]), Int(col[i])] =
-            _regular_transform_closure(expression)
+            _regular_transform_closure(expression; compile=compile_transforms)
     end
     tfs_pos = par_pos
     reg_tfs = getdata(reg_tfs)[tfs_pos]
 
     # State-dependent transforms, split by the point in the row at which the
     # forward filter needs them to be current.
-    predict_tfs = ComponentVector(Array{Function}(undef, n), axis)
-    update_tfs = ComponentVector(Array{Function}(undef, n), axis)
-    td_tfs = ComponentVector(Array{Function}(undef, n), axis)
+    # Each held as a `CTSEMExpr` when it is in that vocabulary, so the model's
+    # type does not depend on its expressions (transform_expr.jl); otherwise,
+    # or when asked, compiled into a closure.
+    layout = CTSEMLayout(retrieve_layout(matrix, row, col)...)
+    complex_transform(source) = begin
+        e = compile_transforms ? nothing : _ctsem_expr(source, layout)
+        e === nothing || return e
+        _transform_closure(_ctsem_flat_cells(generate_complex_transform_string(source), layout))
+    end
+    predict_tfs = ComponentVector(Array{Any}(undef, n), axis)
+    update_tfs = ComponentVector(Array{Any}(undef, n), axis)
+    td_tfs = ComponentVector(Array{Any}(undef, n), axis)
     @inbounds for i in 1:n
         target_row = Int(row[i])
         target_col = Int(col[i])
         name = Symbol(matrix[i])
         if !isempty(predicttransform[i])
             @view(predict_tfs[name])[target_row, target_col] =
-                _transform_closure(generate_complex_transform_string(String(predicttransform[i])))
+                complex_transform(String(predicttransform[i]))
         end
         if !isempty(updatetransform[i])
             @view(update_tfs[name])[target_row, target_col] =
-                _transform_closure(generate_complex_transform_string(String(updatetransform[i])))
+                complex_transform(String(updatetransform[i]))
         end
         if !isempty(tdtransform[i])
             @view(td_tfs[name])[target_row, target_col] =
-                _transform_closure(generate_complex_transform_string(String(tdtransform[i])))
+                complex_transform(String(tdtransform[i]))
         end
     end
 
@@ -519,7 +546,7 @@ function ekf_from_columns(matrix, row, col, parnumber, value, transform,
     end
 
     return EKFParameters(par_pos, tfs_pos, ptf_pos, utf_pos, ttf_pos,
-        reg_tfs, predict_tfs, update_tfs, td_tfs, map_from, axis,
+        reg_tfs, predict_tfs, update_tfs, td_tfs, map_from, layout,
         fixed_positions, fixed_values, Int.(ti_parameter),
         Int.(ti_predictor), Int.(ti_coefficient), Int.(diffusion_state_indices),
         continuous_time, Int.(manifesttype), Int.(ncategories),
@@ -533,6 +560,37 @@ function ekf_from_columns(matrix, row, col, parnumber, value, transform,
 end
 
 const _CTSEM_TIPRED_REF = r"\btipreds\s*\[\s*(\d+)\s*\]"
+
+const _CTSEM_CELL_REF = r"ctx\.pars\.([A-Za-z_][A-Za-z0-9_]*)\[\s*(\d+)\s*(?:,\s*(\d+)\s*)?\]"
+
+"""
+    _ctsem_flat_cells(text, layout)
+
+A compiled transform's source with each `ctx.pars.M[i, j]` read as
+`ctx.pars[k]`, `k` the cell's place in the flat parameter vector. The named
+read looks the layout up and builds a view every time it runs, where the
+ComponentArrays axis this replaced made it a constant offset: a transform
+compiled from the named form ran slower than the same cell as a `CTSEMExpr`,
+which resolves its cells at build time. A cell the layout does not have is
+left as written, so it fails where it always did.
+"""
+function _ctsem_flat_cells(text::AbstractString, layout::CTSEMLayout)
+    return replace(String(text), _CTSEM_CELL_REF => function (ref)
+        m = match(_CTSEM_CELL_REF, ref)
+        i = _layout_index(layout, Symbol(m.captures[1]))
+        i == 0 && return ref
+        nr = layout.nrows[i]
+        nc = layout.ncols[i]
+        r = parse(Int, m.captures[2])
+        if m.captures[3] === nothing
+            1 <= r <= nr * nc || return ref
+            return string("ctx.pars[", layout.first[i] + r - 1, "]")
+        end
+        c = parse(Int, m.captures[3])
+        (1 <= r <= nr && 1 <= c <= nc) || return ref
+        return string("ctx.pars[", layout.first[i] + (c - 1) * nr + (r - 1), "]")
+    end)
+end
 
 """
     _ctsem_ti_tail_rendering(transform, parnumber, offset, ntipreds)

@@ -116,6 +116,9 @@ function _group_regular_transforms(transforms::Vector{Any}, mutables::BitVector)
     for T in _default_template_types()
         T in types || push!(types, T)
     end
+    # Every other template is an expression (`_ctsem_regular_expr`), and that
+    # group too is carried empty when unused.
+    CTSEMExpr in types || push!(types, CTSEMExpr)
     sort!(types; by = string)
     groups = Any[]
     gcells = Vector{Int}[]
@@ -197,6 +200,116 @@ axis used to view the flattened parameter vector as named model matrices.
 # `regular_group_cells` and `regular_group_tf` carry, per group member, where its
 # result belongs in `all_params` and which position it held in the original
 # order -- the latter because the reverse pass indexes its supports that way.
+# ---- The parameter vector's layout, as data ----------------------------------
+#
+# A ComponentArrays axis spells every matrix's name, shape and offset into the
+# type, so two models of different size are different types and every function
+# that touches the parameter vector compiled once per model. `CTSEMLayout` keeps
+# the same facts in fields, and `CTSEMPars` answers `pars.DRIFT` with a view of
+# one concrete type whatever the model. The names the engine reads are fixed
+# slots, resolved at compile time when the name is a literal (`_matrix_slot`);
+# any other name a parameter table carries is found by search.
+
+const _CTSEM_MATRIX_SLOTS = (:PARS, :T0MEANS, :LAMBDA, :DRIFT, :DIFFUSION,
+    :MANIFESTVAR, :MANIFESTMEANS, :CINT, :T0VAR, :TDPREDEFFECT, :JAx, :Jy, :Jtd,
+    :THRESHOLDS, :ASYMPTOTES, :RESPONSE, :RAWPOPVAR)
+
+@eval @inline function _matrix_slot(s::Symbol)
+    $([:(s === $(QuoteNode(n)) && return $i) for (i, n) in enumerate(_CTSEM_MATRIX_SLOTS)]...)
+    return 0
+end
+
+struct CTSEMLayout
+    names::Vector{Symbol}
+    first::Vector{Int}
+    nrows::Vector{Int}
+    ncols::Vector{Int}
+    # For each of `_CTSEM_MATRIX_SLOTS`, its index in `names`, or 0.
+    slot::Vector{Int}
+    total::Int
+end
+
+function CTSEMLayout(names, nrows, ncols, ranges)
+    syms = Symbol[Symbol(n) for n in names]
+    slot = zeros(Int, length(_CTSEM_MATRIX_SLOTS))
+    for (i, s) in enumerate(syms)
+        k = _matrix_slot(s)
+        k > 0 && (slot[k] = i)
+    end
+    total = isempty(ranges) ? 0 : maximum(last, ranges)
+    return CTSEMLayout(syms, Int[Base.first(r) for r in ranges], Int.(nrows), Int.(ncols),
+        slot, total)
+end
+
+"""
+The layout a ComponentArrays `Axis` describes (`retrieve_axes`): what a caller
+building `EKFParameters` by hand -- the engine's tests -- has at hand.
+"""
+function CTSEMLayout(ax::ComponentArrays.Axis)
+    names = Symbol[]
+    nr = Int[]
+    nc = Int[]
+    ranges = UnitRange{Int}[]
+    for (name, va) in pairs(ComponentArrays.indexmap(ax))
+        r = ComponentArrays.viewindex(va)
+        r = r isa Integer ? (r:r) : UnitRange{Int}(r)
+        sz = va isa ComponentArrays.ViewAxis ? size(va.ax) : (length(r),)
+        push!(names, name)
+        push!(nr, sz[1])
+        push!(nc, length(sz) > 1 ? sz[2] : 1)
+        push!(ranges, r)
+    end
+    return CTSEMLayout(names, nr, nc, ranges)
+end
+_ctsem_layout(l::CTSEMLayout) = l
+_ctsem_layout(ax::ComponentArrays.Axis) = CTSEMLayout(ax)
+
+@inline function _layout_index(l::CTSEMLayout, s::Symbol)
+    k = _matrix_slot(s)
+    k > 0 && return @inbounds l.slot[k]
+    i = findfirst(==(s), l.names)
+    return i === nothing ? 0 : i
+end
+
+"""
+    CTSEMPars(data, layout)
+
+The flat parameter vector `data` with named, shaped access to its matrices:
+`p.DRIFT` is a view. An `AbstractVector`, so indexing, broadcasting and
+`copyto!` act on `data`; `getdata(p)` is `data` itself.
+"""
+struct CTSEMPars{T,V<:AbstractVector{T}} <: AbstractVector{T}
+    data::V
+    layout::CTSEMLayout
+end
+
+Base.size(p::CTSEMPars) = size(getfield(p, :data))
+Base.IndexStyle(::Type{<:CTSEMPars}) = IndexLinear()
+Base.@propagate_inbounds Base.getindex(p::CTSEMPars, i::Int) = getfield(p, :data)[i]
+Base.@propagate_inbounds Base.setindex!(p::CTSEMPars, v, i::Int) = (getfield(p, :data)[i] = v)
+ComponentArrays.getdata(p::CTSEMPars) = getfield(p, :data)
+# Aliasing checks (`unalias`, broadcasting) ask what memory an array holds: the
+# data's, not an identity hashed from the whole struct.
+Base.dataids(p::CTSEMPars) = Base.dataids(getfield(p, :data))
+
+@noinline _ctsem_no_matrix(s) = throw(ArgumentError("the model has no matrix $(s)"))
+
+@inline function Base.getproperty(p::CTSEMPars, s::Symbol)
+    (s === :data || s === :layout) && return getfield(p, s)
+    l = getfield(p, :layout)
+    i = _layout_index(l, s)
+    i == 0 && _ctsem_no_matrix(s)
+    @inbounds begin
+        f = l.first[i]
+        nr = l.nrows[i]
+        nc = l.ncols[i]
+    end
+    return reshape(view(getfield(p, :data), f:(f + nr * nc - 1)), nr, nc)
+end
+
+Base.hasproperty(p::CTSEMPars, s::Symbol) = _layout_index(getfield(p, :layout), s) != 0
+Base.propertynames(p::CTSEMPars, private::Bool=false) = Tuple(getfield(p, :layout).names)
+
 struct EKFParameters{RG,PT,UT,TT,AX,FV}
     mutables::BitVector
     transform_indices::Vector{Bool}
@@ -388,12 +501,13 @@ struct EKFParameters{RG,PT,UT,TT,AX,FV}
             "match. A mismatch usually means the optional positional " *
             "arguments are one slot out."))
 
+        parameter_axis = _ctsem_layout(parameter_axis)
         regular_vector = Vector{Any}(collect(regular_transforms))
         regular_groups, regular_group_cells, regular_group_tf =
             _group_regular_transforms(regular_vector, BitVector(mutables))
-        predict_transforms_tuple = Tuple(predict_transforms)
-        update_transforms_tuple = Tuple(update_transforms)
-        td_transforms_tuple = Tuple(td_transforms)
+        predict_transforms_tuple = _ctsem_transform_container(predict_transforms)
+        update_transforms_tuple = _ctsem_transform_container(update_transforms)
+        td_transforms_tuple = _ctsem_transform_container(td_transforms)
         fixed_values_vector = _concrete_float_vector(fixed_values)
 
         # Creation of the EKFParameters struct with the appropriate types for each field

@@ -111,7 +111,7 @@ row-normalised correlation square root, 1 a factor, 2 Fisher z inside a
 matrix exponential.
 """
 function sdcovsqrt2cov!(buffer, mat, choleskymats)
-    return sdcovsqrt2cov!(buffer, mat, choleskymats, Val(size(mat, 1)))
+    return sdcovsqrt2cov!(buffer, mat, choleskymats, size(mat, 1))
 end
 
 # The buffer's dimension must be the matrix's. It is not a lower bound: the
@@ -124,14 +124,16 @@ end
 # workspace_buffers.jl, so a method dispatching on `SquareBuffer` cannot even
 # be defined (`UndefVarError: SquareBuffer not defined`). One integer load is
 # not a cost worth a specialisation next to an O(d^3) construction.
-@inline function _check_buffer_dim(buffer, ::Val{d}) where {d}
+@inline function _check_buffer_dim(buffer, __d::Union{Int,Val})
+    d = _val(__d)
     n = size(buffer.out, 1)
     n == d && return nothing
     throw(DimensionMismatch(
         "sdcovsqrt2cov! buffer is $(n)x$(n) for a $(d)x$(d) matrix"))
 end
 
-function sdcovsqrt2cov!(buffer, mat, choleskymats, dim::Val{d}) where {d}
+function sdcovsqrt2cov!(buffer, mat, choleskymats, dim::Union{Int,Val})
+    d = _val(dim)
     _check_buffer_dim(buffer, dim)
     T = eltype(buffer.out)
     if _CTSEM_COV_CACHE[]
@@ -162,7 +164,8 @@ which construction is in force, and one place to look is how that stays true.
 """
 @inline _effective_covmatcode(choleskymats) = Int(choleskymats)
 
-function _sdcovsqrt2cov_uncached!(buffer, mat, choleskymats, dim::Val{d}) where {d}
+function _sdcovsqrt2cov_uncached!(buffer, mat, choleskymats, dim::Union{Int,Val})
+    d = _val(dim)
     # 2 is covmattransform='z', 1 is 'cholesky', 0 and -1 the correlation
     # square root -- the same codes the stan path reads from
     # `standata$choleskymats`, and the z implementations agree to 3e-16.
@@ -261,10 +264,11 @@ The constrained square-root factor is written to `buffer.out`; the vectors in
 `buffer` hold intermediate row sums, scales, and row norms.
 """
 function constraincorsqrt1_vec!(buffer, sym_mat, epsilon = 1e-5)
-    return constraincorsqrt1_vec!(buffer, sym_mat, epsilon, Val(size(sym_mat, 1)))
+    return constraincorsqrt1_vec!(buffer, sym_mat, epsilon, size(sym_mat, 1))
 end
 
-function constraincorsqrt1_vec!(buffer, sym_mat, epsilon, ::Val{d}) where {d}
+function constraincorsqrt1_vec!(buffer, sym_mat, epsilon, __d::Union{Int,Val})
+    d = _val(__d)
     S = eltype(sym_mat)
     e = convert(S, epsilon)
 

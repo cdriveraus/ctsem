@@ -11,7 +11,7 @@ Workspace for `my_exp_frechet!`: the scaled inputs, the even powers of the
 scaled matrix and their Fréchet counterparts, the Padé pieces for both, and two
 scratch matrices. Eighteen `n × n` matrices in all.
 """
-struct ExpFrechetBuffer{TYPE<:Number,D}
+struct ExpFrechetBuffer{TYPE<:Number}
     As::Matrix{TYPE}
     Es::Matrix{TYPE}
     A2::Matrix{TYPE}
@@ -31,9 +31,9 @@ struct ExpFrechetBuffer{TYPE<:Number,D}
     T1::Matrix{TYPE}
     T2::Matrix{TYPE}
     piv::Vector{Int}
-    dim::Val{D}
-    ExpFrechetBuffer{TYPE}(n::Int) where {TYPE<:Number} = new{TYPE,n}(
-        (zeros(TYPE, n, n) for _ in 1:18)..., zeros(Int, n), Val(n))
+    dim::Int
+    ExpFrechetBuffer{TYPE}(n::Int) where {TYPE<:Number} = new{TYPE}(
+        (zeros(TYPE, n, n) for _ in 1:18)..., zeros(Int, n), n)
 end
 
 # Al-Mohy & Higham (2009), Table 6.1: the largest norm at which the degree-13
@@ -71,8 +71,9 @@ code with the engine's own LU -- which is what `ctsem_hessian` needs when it
 differentiates the adjoint.
 """
 function my_exp_frechet!(Y::AbstractMatrix{TYPE}, L::AbstractMatrix{TYPE},
-    A::AbstractMatrix, E::AbstractMatrix, buf::ExpFrechetBuffer{TYPE,d}) where {TYPE<:Number,d}
+    A::AbstractMatrix, E::AbstractMatrix, buf::ExpFrechetBuffer{TYPE}) where {TYPE<:Number}
     dim = buf.dim
+    d = dim
     As, Es = buf.As, buf.Es
     @inbounds for j in 1:d, i in 1:d
         As[i, j] = A[i, j]

@@ -819,8 +819,16 @@ T0VARredundancies <- function(ctm) {
 #' \code{intoverpop='auto'} then chooses; each subject starts from its own
 #' stationary distribution. A latent process whose DRIFT row is fixed at zero
 #' never settles, and is refused.
-#' @param forcerecompile logical. For development purposes.
-#' If TRUE, stan model is recompiled, regardless of apparent need for compilation.
+#' @param forcerecompile logical. For \code{backend='stan'}, recompiles the
+#' stan model regardless of apparent need (for development). For
+#' \code{backend='julia'}, compiles the model's state-dependent expressions --
+#' matrix cells that read a latent state, and their derivatives -- and any
+#' parameter transforms of your own into code for this model, rather than
+#' evaluating them as data. The model's first fit in a session then compiles
+#' for a minute or more, and its gradients run faster: by up to a third for a
+#' heavily nonlinear model (many state-dependent cells, or long formulas in
+#' them), and by little otherwise. Worth it only when such a model's fit takes
+#' many minutes.
 #' @param saveCompile if TRUE and compilation is needed / requested, writes the stan model to
 #' the parent frame as ctsem.compiled (unless that object already exists and is not from ctsem), to avoid unnecessary recompilation.
 #' @param savescores Logical. If TRUE, output from the Kalman filter is saved in output. For datasets with many variables
@@ -2400,7 +2408,7 @@ ctFit<-function(datalong, model, stanmodeltext=NA, iter=1000, intoverstates=TRUE
         if(!optimize && .ctAnyVarying(ctm)) 'none' else
           'augmented'
     juliafit <- .ctFitJuliaBackend(datalong=datalong, model=ctm, prepared_data=standata, inits=inits,
-      cores=cores, optimcontrol=optimcontrol,
+      cores=cores, optimcontrol=optimcontrol, forcerecompile=forcerecompile,
       verbose=verbose, fit=fit, priors=priors, priorscope=priorscope,
       optimize=optimize,
       chains=if(chainsgiven) chains else 4L, iter=iter, control=control,

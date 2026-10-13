@@ -918,7 +918,7 @@ function _laplace_popchol(values::AbstractVector{T}, level::CTSEMLaplaceLevel) w
     # values and not partials. One construction per outer evaluation per level
     # is not a path worth caching anyway.
     buffer = _make_square_buffer(T, k)
-    _sdcovsqrt2cov_uncached!(buffer, base, level.covmatcode, Val(k))
+    _sdcovsqrt2cov_uncached!(buffer, base, level.covmatcode, k)
     order = level.order
     if length(order) == k
         Sigma = Matrix(Symmetric(buffer.out, :L))

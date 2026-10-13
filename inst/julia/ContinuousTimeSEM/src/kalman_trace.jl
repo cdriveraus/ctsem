@@ -742,7 +742,7 @@ function _ctsem_subject_matrices(objective::CTSEMObjective, trace::CTSEMKalmanTr
     layout = ctsem_parameter_layout(objective)
     nsubjects = length(trace.subject_params)
     out = zeros(Float64, layout.size, nsubjects)
-    pars = ComponentVector(zeros(Float64, length(sp.mutables)), sp.parameter_axis)
+    pars = CTSEMPars(zeros(Float64, length(sp.mutables)), sp.parameter_axis)
     for i in 1:nsubjects
         copyto!(getdata(pars), trace.subject_params[i])
         @inbounds for k in 1:trace.nlatent

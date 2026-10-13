@@ -1345,7 +1345,9 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
   if (isTRUE(gendata)) failures <- c(failures, paste0("generation through ",
     "the fit call (gendata=TRUE); use ctGenerate(), or ctGenerateFromFit() ",
     "on a fit"))
-  if (!is.na(stanmodeltext)[1] || length(compileArgs) > 0L || isTRUE(forcerecompile)) failures <- c(failures, "Stan compilation controls (stanmodeltext, compileArgs, forcerecompile)")
+  # `forcerecompile` is honoured on julia: it compiles the model's expressions
+  # (`.ctJuliaObjectiveInputs`).
+  if (!is.na(stanmodeltext)[1] || length(compileArgs) > 0L) failures <- c(failures, "Stan compilation controls (stanmodeltext, compileArgs)")
   # Stored on a stan fit at fit time; the julia path computes them after the
   # fit instead, and accepting the flag would promise output it never writes.
   saved <- c("savescores", "savesubjectmatrices")[c(isTRUE(savescores),
@@ -3773,10 +3775,12 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
 # Say so, once, when a model shape is about to be compiled for.
 #
 # `ctsem_transforms_cached()` reports whether every transform expression in this
-# model already has a closure. If they all do, the compiled filter is reused and
-# the first evaluation is immediate; if any is new, the specialisation happens
-# on the first evaluation and takes tens of seconds.
-.ctJuliaAnnounceCompilation <- function(module, table) {
+# model is either data to the engine (`CTSEMExpr`, so the model shares the
+# compiled filter) or already has a closure. If so the first evaluation is
+# immediate; if any needs a new closure -- an expression outside the
+# vocabulary, or every one when the fit asked for `forcerecompile` -- the
+# filter specialises on the first evaluation and takes tens of seconds.
+.ctJuliaAnnounceCompilation <- function(module, table, compile = FALSE) {
   free <- .ctJuliaNoNA(as.integer(table$parnumber), 0L) > 0L
   # A free cell with no transform of its own compiles `param[n]`, exactly as
   # `ekf_from_columns` writes it -- so the query has to say the same thing.
@@ -3792,7 +3796,8 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
   cached <- isTRUE(tryCatch(
     .ctBackendJuliaValue(module$ctsem_transforms_cached(
       .ctJuliaVector(if (length(regular)) regular else ""),
-      .ctJuliaVector(if (length(complex)) complex else ""))),
+      .ctJuliaVector(if (length(complex)) complex else ""),
+      compile = isTRUE(compile))),
     error = function(e) FALSE))
   if (cached) return(invisible(FALSE))
   # No duration promised. It ranges from a few seconds when the precompiled
@@ -3954,6 +3959,10 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
   # Sent only when set, so every other model hashes and builds exactly as it
   # did.
   if (isTRUE(spec$stationary)) arguments$stationary <- TRUE
+  # Transforms compiled per model rather than evaluated as data
+  # (`ctFit(forcerecompile = TRUE)`). Here, so a compiled and an interpreted
+  # objective of one model are different cache entries.
+  if (isTRUE(spec$compiletransforms)) arguments$compile_transforms <- TRUE
   # How many leading states are genuine dynamics rather than the static
   # coordinates the random-effect augmentation appended. The engine runs the
   # continuous form's intercept solve over that block, because JAx is exactly
@@ -4184,13 +4193,13 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
   if (!is.null(cached)) return(cached)
   module <- .ctJuliaModule(spec$project)
   marshal <- function(args) lapply(args, .ctJuliaMarshal)
-  # A model shape Julia has not seen mints new closure types for its transform
-  # expressions, and the whole filter specialises again for them -- tens of
-  # seconds, once, and indistinguishable from a hang if nothing says so. The
-  # engine is asked first so the message comes before the wait rather than
-  # after it.
+  # A transform expression that needs a closure mints a new type, and the
+  # whole filter specialises again for it -- tens of seconds, once, and
+  # indistinguishable from a hang if nothing says so. The engine is asked first
+  # so the message comes before the wait rather than after it.
   .ctJuliaAnnounceCompilation(module,
-    as.data.frame(spec$parameter_table, stringsAsFactors = FALSE))
+    as.data.frame(spec$parameter_table, stringsAsFactors = FALSE),
+    compile = isTRUE(spec$compiletransforms))
   params <- do.call(module$ekf_from_columns, marshal(inputs$ekf))
   objective <- do.call(module$ctsem_objective,
     c(list(params), marshal(inputs$objective)))
@@ -5317,14 +5326,14 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
   optimcontrol = list(), verbose = 0L, fit = TRUE,
   priors = FALSE, priorscope = NULL,
   intoverpop = "augmented", optimize = TRUE, chains = 4L,
-  iter = 2000L, control = list(), intoverstates = TRUE) {
+  iter = 2000L, control = list(), intoverstates = TRUE, forcerecompile = FALSE) {
   .ctJuliaInterruptSafe(.ctFitJuliaBackendImpl(datalong = datalong,
     model = model, prepared_data = prepared_data, inits = inits, cores = cores,
     optimcontrol = optimcontrol,
     verbose = verbose, fit = fit, priors = priors, priorscope = priorscope,
     intoverpop = intoverpop,
     optimize = optimize, chains = chains, iter = iter, control = control,
-    intoverstates = intoverstates))
+    intoverstates = intoverstates, forcerecompile = forcerecompile))
 }
 
 #' @keywords internal
@@ -5333,7 +5342,7 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
   optimcontrol = list(), verbose = 0L, fit = TRUE,
   priors = FALSE, priorscope = NULL,
   intoverpop = "augmented", optimize = TRUE, chains = 4L,
-  iter = 2000L, control = list(), intoverstates = TRUE) {
+  iter = 2000L, control = list(), intoverstates = TRUE, forcerecompile = FALSE) {
   # The engine environment and a session restart are ctJuliaSetup()'s own
   # `project` and `force = TRUE`; the per-fit copies of both were a second
   # spelling of an exported function, so a fit uses whatever session is set up.
@@ -5407,6 +5416,10 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
         .ctJuliaOr(optimcontrol$laplace_floor, .ctJuliaLaplaceFloorDefault)
         else optimcontrol$laplace_floor))
   model_spec$tipredMissing <- tipredMissing
+  # On the spec, so every objective built from it -- this fit's, a saved fit's
+  # prediction, a sampling worker's -- compiles or interprets alike. Set only
+  # when asked, so every other spec hashes as it did.
+  if (isTRUE(forcerecompile)) model_spec$compiletransforms <- TRUE
   .ctJuliaTIMissingCheck(model_spec)
   .ctJuliaTIMissingWarn(model_spec, optimize = optimize,
     sampled = if (isTRUE(optimize)) identical(tipredMissing, "sample") else

@@ -55,6 +55,9 @@ function _validate_substep_rule(mesh::AbstractVector, nrows::Int)
     return Int[Int(m) for m in mesh]
 end
 
+_ctsem_float_data(x::AbstractArray{<:Union{Integer,Float32}}) = Float64.(x)
+_ctsem_float_data(x::AbstractArray) = x
+
 function ContinuousEKFObjective(params::EKFParameters, data::Matrix, timesteps::Vector;
     tdpreds::AbstractMatrix=zeros(eltype(data), 0, size(data, 2)),
     # Not typed `::AbstractVector`: a subject with a sampled (missing) TI
@@ -66,6 +69,13 @@ function ContinuousEKFObjective(params::EKFParameters, data::Matrix, timesteps::
     max_timestep=Inf)
     _validate_continuous_ekf_inputs(timesteps, data)
     size(tdpreds, 2) == size(data, 2) || throw(DimensionMismatch("TD predictor columns must match observations"))
+    # Data as Float64 whatever R sent: an integer TD predictor or indicator
+    # column is a different type for the whole filter, which then compiled
+    # again for a model that differed from another only in that.
+    data = _ctsem_float_data(data)
+    timesteps = _ctsem_float_data(timesteps)
+    tdpreds = _ctsem_float_data(tdpreds)
+    tipreds isa AbstractVector{<:Integer} && (tipreds = _ctsem_float_data(tipreds))
     rule = _validate_substep_rule(max_timestep, length(timesteps))
     return ContinuousEKFObjective{typeof(params),typeof(data),typeof(timesteps),typeof(tdpreds),typeof(tipreds),typeof(rule)}(
         nothing, nothing, params, data, timesteps, tdpreds, tipreds, Int(subject), rule)
@@ -228,7 +238,8 @@ end
     return nothing
 end
 
-@inline function _copy_lower_to_upper!(matrix, state_dim::Val{n}) where {n}
+@inline function _copy_lower_to_upper!(matrix, state_dim::Union{Int,Val})
+    n = _val(state_dim)
     @inbounds for col in 1:n
         for row in (col + 1):n
             matrix[col, row] = matrix[row, col]
@@ -476,8 +487,10 @@ nonlinear link, 7.1 under 'augmented' random intercepts; equal to 1e-11 after.
 """
 @inline function _ekf_categorical_offset(pars, i::Int, prior, n::Int)
     μ = pars.MANIFESTMEANS[i]
+    LAMBDA = pars.LAMBDA
+    Jy = pars.Jy
     @inbounds for j in 1:n
-        μ += (pars.LAMBDA[i, j] - pars.Jy[i, j]) * prior[j]
+        μ += (LAMBDA[i, j] - Jy[i, j]) * prior[j]
     end
     return μ
 end
@@ -831,7 +844,7 @@ end
 
 # A square buffer's dimension as the `Val` it was built with.
 @inline _square_dim(buffer::SquareBuffer, k::Int) = buffer.dim
-@inline _square_dim(buffer, k::Int) = Val(k)
+@inline _square_dim(buffer, k::Int) = k
 
 """
     _place_population_block!(P, all_params, indices, range, covmatcode, scale,
@@ -906,11 +919,15 @@ function _ctsem_stationary!(P, x, ws, pars)
     ab = ws.affine_buffer
     naff = _val(ab.dim)
 
+    # Views bound once: indexing `pars.DRIFT` in the loop rebuilds the view
+    # from the layout on every iteration.
+    DRIFT = pars.DRIFT
+    CINT = pars.CINT
     @inbounds for j in 1:naff, i in 1:naff
-        ab.intermediate[i, j] = pars.DRIFT[i, j]
+        ab.intermediate[i, j] = DRIFT[i, j]
     end
     @inbounds for i in 1:naff
-        ab.s[i] = -pars.CINT[i]
+        ab.s[i] = -CINT[i]
     end
     _solve_square_system!(ab.intermediate, ab.s, ab.piv, ab.dim)
 
@@ -919,7 +936,7 @@ function _ctsem_stationary!(P, x, ws, pars)
     db = ws.diffusion_buffer
     A = view(ws.discretization_buffer.input, 1:k, 1:k)
     @inbounds for j in 1:k, i in 1:k
-        A[i, j] = pars.DRIFT[dyn[i], dyn[j]]
+        A[i, j] = DRIFT[dyn[i], dyn[j]]
         db.intermediate[i, j] = ws.bufferQ.out[dyn[i], dyn[j]]
     end
     my_lyap!(db.out, A, db.intermediate, ws.lyap_buffer)

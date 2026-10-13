@@ -474,8 +474,8 @@ smallest pivot of the packed system's LU, or, on the Schur route, the smallest
 `|s_ii + s_jj|` over the Schur factor's diagonal -- the eigenvalue sums the
 operator divides by, a 2x2 block contributing its real part twice.
 """
-_series_lyap_conditioning(buffer::LyapKsolveBuffer{T,d,ntri}) where {T,d,ntri} =
-    _series_min_pivot(buffer.ksolve_O, ntri)
+_series_lyap_conditioning(buffer::LyapKsolveBuffer{T}) where {T} =
+    _series_min_pivot(buffer.ksolve_O, buffer.ksolve_system_dim)
 
 function _series_lyap_conditioning(buffer::LyapSchurBuffer)
     S = buffer.S

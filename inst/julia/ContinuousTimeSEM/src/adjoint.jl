@@ -278,7 +278,7 @@ arithmetic on the axis, so a change to the layout cannot leave this returning a
 stale range.
 """
 function _ctsem_component_positions(sp::EKFParameters, name::Symbol)
-    marker = ComponentVector(zeros(Int, length(sp.mutables)), sp.parameter_axis)
+    marker = CTSEMPars(zeros(Int, length(sp.mutables)), sp.parameter_axis)
     getproperty(marker, name) .= 1
     return findall(!iszero, getdata(marker))
 end
@@ -768,8 +768,8 @@ function ctsem_hessian(objective::CTSEMObjective, values::AbstractVector;
     gradient_of = y -> ctsem_adjoint_gradient(objective, y).gradient
     columns = progress === nothing ? nothing :
         (done, total) -> progress(done, total, "parameters")
-    # The default width is `pickchunksize`'s unless `ctsem_set_dual_widths!`
-    # asked for buckets; see `_CTSEM_HESSIAN_WIDTHS` for why not by default.
+    # One width for every parameter count (`_CTSEM_HESSIAN_WIDTHS`), so a model
+    # of another size compiles no new dual type.
     chunk > 0 || return _ctsem_symmetrised(
         _ctsem_width_jacobian(gradient_of, x, _CTSEM_HESSIAN_WIDTHS[];
             progress=columns))

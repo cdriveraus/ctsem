@@ -50,6 +50,8 @@ Return the absolute value of the primal part of a dual number.
 @inline _custom_abs(x::ForwardDiff.Dual) = abs(ForwardDiff.value(x))
 
 @inline _val(::Val{N}) where {N} = N
+# A dimension may arrive as an Int: the general-types prototype.
+@inline _val(n::Int) = n
 
 """
     _isapprox_default_rtol(T)
@@ -83,7 +85,8 @@ function add_diag!(mat, val::Number)
     return add_diag!(mat, val, Val(min(size(mat, 1), size(mat, 2))))
 end
 
-function add_diag!(mat, val::Number, ::Val{d}) where {d}
+function add_diag!(mat, val::Number, __d::Union{Int,Val})
+    d = _val(__d)
     @boundscheck begin
         size(mat, 1) >= d || throw(DimensionMismatch("matrix row count must be at least d"))
         size(mat, 2) >= d || throw(DimensionMismatch("matrix column count must be at least d"))
@@ -100,10 +103,11 @@ end
 Add `vals[i]` to the `i`th diagonal entry of `mat` in place.
 """
 function add_diag!(mat, vals::AbstractVector)
-    return add_diag!(mat, vals, Val(length(vals)))
+    return add_diag!(mat, vals, length(vals))
 end
 
-function add_diag!(mat, vals::AbstractVector, ::Val{d}) where {d}
+function add_diag!(mat, vals::AbstractVector, __d::Union{Int,Val})
+    d = _val(__d)
     @boundscheck begin
         length(vals) == d || throw(DimensionMismatch("vals length must match d"))
         size(mat, 1) >= d || throw(DimensionMismatch("matrix row count must be at least d"))
@@ -124,16 +128,18 @@ This manual implementation is used for `SubArray`-backed EKF buffers where
 `mul!` is not suitable.
 """
 function _matvec_mul!(y::AbstractVector, A::AbstractMatrix, x::AbstractVector)
-    return _matvec_mul!(y, A, x, Val(size(A, 1)), Val(size(A, 2)))
+    return _matvec_mul!(y, A, x, size(A, 1), size(A, 2))
 end
 
 function _matvec_mul!(
     y::AbstractVector,
     A::AbstractMatrix,
     x::AbstractVector,
-    ::Val{rows},
-    ::Val{cols},
-) where {rows, cols}
+    __rows::Union{Int,Val},
+    __cols::Union{Int,Val},
+)
+    rows = _val(__rows)
+    cols = _val(__cols)
     @boundscheck begin
         size(A, 1) == rows && length(y) == rows || throw(DimensionMismatch("A*y output size mismatch"))
         size(A, 2) == cols && length(x) == cols || throw(DimensionMismatch("A*x input size mismatch"))
@@ -156,16 +162,18 @@ Compute `y .= A * x[:, 1]` without allocating temporaries.
 The matrix input must have exactly one column.
 """
 function _matvec_mul!(y::AbstractVector, A::AbstractMatrix, x::AbstractMatrix)
-    return _matvec_mul!(y, A, x, Val(size(A, 1)), Val(size(A, 2)))
+    return _matvec_mul!(y, A, x, size(A, 1), size(A, 2))
 end
 
 function _matvec_mul!(
     y::AbstractVector,
     A::AbstractMatrix,
     x::AbstractMatrix,
-    ::Val{rows},
-    ::Val{cols},
-) where {rows, cols}
+    __rows::Union{Int,Val},
+    __cols::Union{Int,Val},
+)
+    rows = _val(__rows)
+    cols = _val(__cols)
     @boundscheck begin
         size(A, 1) == rows && length(y) == rows || throw(DimensionMismatch("A*y output size mismatch"))
         size(x, 2) == 1 || throw(DimensionMismatch("x must be a column matrix"))
@@ -187,17 +195,20 @@ end
 Compute `C .= A * B'` for BLAS-compatible strided matrices.
 """
 function _mul_right_transpose!(C::StridedMatrix{T}, A::StridedMatrix{T}, B::StridedMatrix{T}) where {T<:LinearAlgebra.BlasFloat}
-    return _mul_right_transpose!(C, A, B, Val(size(C, 1)), Val(size(C, 2)), Val(size(A, 2)))
+    return _mul_right_transpose!(C, A, B, size(C, 1), size(C, 2), size(A, 2))
 end
 
 function _mul_right_transpose!(
     C::StridedMatrix{T},
     A::StridedMatrix{T},
     B::StridedMatrix{T},
-    ::Val{rows},
-    ::Val{cols},
-    ::Val{inner},
-) where {T<:LinearAlgebra.BlasFloat, rows, cols, inner}
+    __rows::Union{Int,Val},
+    __cols::Union{Int,Val},
+    __inner::Union{Int,Val},
+) where {T<:LinearAlgebra.BlasFloat}
+    rows = _val(__rows)
+    cols = _val(__cols)
+    inner = _val(__inner)
     @boundscheck begin
         size(C, 1) == rows && size(A, 1) == rows || throw(DimensionMismatch("A row count must match C row count"))
         size(C, 2) == cols && size(B, 1) == cols || throw(DimensionMismatch("B row count must match C column count"))
@@ -214,17 +225,20 @@ end
 Compute `C .= A * B'` with explicit loops for generic numeric matrices.
 """
 function _mul_right_transpose!(C::AbstractMatrix{T}, A::AbstractMatrix{T}, B::AbstractMatrix{T}) where {T<:Number}
-    return _mul_right_transpose!(C, A, B, Val(size(C, 1)), Val(size(C, 2)), Val(size(A, 2)))
+    return _mul_right_transpose!(C, A, B, size(C, 1), size(C, 2), size(A, 2))
 end
 
 function _mul_right_transpose!(
     C::AbstractMatrix{T},
     A::AbstractMatrix{T},
     B::AbstractMatrix{T},
-    ::Val{rows},
-    ::Val{cols},
-    ::Val{inner},
-) where {T<:Number, rows, cols, inner}
+    __rows::Union{Int,Val},
+    __cols::Union{Int,Val},
+    __inner::Union{Int,Val},
+) where {T<:Number}
+    rows = _val(__rows)
+    cols = _val(__cols)
+    inner = _val(__inner)
     @boundscheck begin
         size(C, 1) == rows && size(A, 1) == rows || throw(DimensionMismatch("A row count must match C row count"))
         size(C, 2) == cols && size(B, 1) == cols || throw(DimensionMismatch("B row count must match C column count"))
@@ -257,17 +271,19 @@ function _isapprox_matrix_noalloc(
     rtol::Real=_isapprox_default_rtol(promote_type(eltype(A), eltype(B))),
 )
     size(A) == size(B) || return false
-    return _isapprox_matrix_noalloc(A, B, Val(size(A, 1)), Val(size(A, 2)); atol=atol, rtol=rtol)
+    return _isapprox_matrix_noalloc(A, B, size(A, 1), size(A, 2); atol=atol, rtol=rtol)
 end
 
 function _isapprox_matrix_noalloc(
     A::AbstractMatrix,
     B::AbstractMatrix,
-    ::Val{rows},
-    ::Val{cols};
+    __rows::Union{Int,Val},
+    __cols::Union{Int,Val};
     atol::Real=0.0,
     rtol::Real=_isapprox_default_rtol(promote_type(eltype(A), eltype(B))),
-) where {rows, cols}
+)
+    rows = _val(__rows)
+    cols = _val(__cols)
     @boundscheck begin
         size(A, 1) == rows && size(B, 1) == rows || return false
         size(A, 2) == cols && size(B, 2) == cols || return false
@@ -284,7 +300,9 @@ function _isapprox_matrix_noalloc(
     return true
 end
 
-function _matrix_equal_noalloc(A::AbstractMatrix, B::AbstractMatrix, ::Val{rows}, ::Val{cols}) where {rows, cols}
+function _matrix_equal_noalloc(A::AbstractMatrix, B::AbstractMatrix, __rows::Union{Int,Val}, __cols::Union{Int,Val})
+    rows = _val(__rows)
+    cols = _val(__cols)
     @boundscheck begin
         size(A, 1) == rows && size(B, 1) == rows || return false
         size(A, 2) == cols && size(B, 2) == cols || return false
@@ -304,7 +322,7 @@ For dual-number matrices, exact equality is required so derivative information
 is preserved.
 """
 @inline _can_reuse_same_exponential(A::AbstractMatrix{<:ForwardDiff.Dual}, B::AbstractMatrix{<:ForwardDiff.Dual}) = A == B
-@inline _can_reuse_same_exponential(A::AbstractMatrix{<:ForwardDiff.Dual}, B::AbstractMatrix{<:ForwardDiff.Dual}, dim::Val{d}) where {d} =
+@inline _can_reuse_same_exponential(A::AbstractMatrix{<:ForwardDiff.Dual}, B::AbstractMatrix{<:ForwardDiff.Dual}, dim) =
     _matrix_equal_noalloc(A, B, dim, dim)
 
 """
@@ -313,7 +331,7 @@ is preserved.
 Return whether two ordinary matrices are close enough to share an exponential.
 """
 @inline _can_reuse_same_exponential(A::AbstractMatrix, B::AbstractMatrix) = _isapprox_matrix_noalloc(A, B)
-@inline _can_reuse_same_exponential(A::AbstractMatrix, B::AbstractMatrix, dim::Val{d}) where {d} =
+@inline _can_reuse_same_exponential(A::AbstractMatrix, B::AbstractMatrix, dim) =
     _isapprox_matrix_noalloc(A, B, dim, dim)
 
 
@@ -449,15 +467,17 @@ The extra lanes of a padded input are zero seeds on inputs the function
 ignores, so the result is the same Jacobian. An empty list is `pickchunksize`.
 `ctsem_set_dual_widths!` sets both lists.
 
-The Hessian's list is empty by default: measured on dev1 (job H2), a padded
-lane costs 5-12% of a small model's Hessian, and a binary model's 5 parameters
-at width 8 cost 31% more (7.4 -> 9.8 ms; even buckets 2, 4, ..., 12: +8%, and
-+12% for 7 Gaussian parameters at 8), so no bucketing both kept a Hessian
-within 10% and made every parameter count free. The curvature's buckets cost
-a Laplace evaluation 2% (one or two random effects, Gaussian) to 8% (one,
-ordinal) and make one to four random effects per unit a single type.
+The Hessian takes one width, 12, for every parameter count. A padded lane
+costs 5-12% of a small model's Hessian, and a binary model's 5 parameters at
+width 8 cost 31% more (dev1, job H2: 7.4 -> 9.8 ms) -- milliseconds, a few
+times a fit -- where each width the session had not run compiled the filter
+and its reverse pass again, about 37 s on dev2 for a model whose every other
+type the package image already holds, since the model's other types no longer
+depend on its size. The curvature's buckets cost a Laplace evaluation 2% (one
+or two random effects, Gaussian) to 8% (one, ordinal) and make one to four
+random effects per unit a single type.
 """
-const _CTSEM_HESSIAN_WIDTHS = Ref(Int[])
+const _CTSEM_HESSIAN_WIDTHS = Ref(Int[12])
 const _CTSEM_CURVATURE_WIDTHS = Ref(Int[4, 8, 12])
 
 export ctsem_set_dual_widths!

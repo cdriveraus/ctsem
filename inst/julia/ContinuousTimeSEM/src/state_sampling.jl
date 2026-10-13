@@ -221,7 +221,8 @@ columns afterwards, so an initial state belongs to `_ctsem_t0_factor!`
 Reading it out of `sdcovsqrt2cov!`'s own scratch buffer would work today and
 would break silently the first time that function reuses the buffer.
 """
-@inline function _ctsem_sdcor_factor!(dest, mat, buffer, dim::Val{d}) where {d}
+@inline function _ctsem_sdcor_factor!(dest, mat, buffer, dim::Union{Int,Val})
+    d = _val(dim)
     constraincorsqrt1_vec!(buffer, mat, 1e-5, dim)
     @inbounds for j in 1:d, i in 1:d
         dest[i, j] = mat[i, i] * buffer.out[i, j]
@@ -278,7 +279,7 @@ end
 
 function _ctsem_state_layout(objective::CTSEMObjective)
     sp = objective.params
-    pars = ComponentVector(zeros(Float64, length(sp.mutables)), sp.parameter_axis)
+    pars = CTSEMPars(zeros(Float64, length(sp.mutables)), sp.parameter_axis)
     nlatent = size(pars.DRIFT, 1)
     nmanifest = size(pars.LAMBDA, 1)
     ndiffusion = isempty(sp.diffusion_state_indices) ? nlatent :

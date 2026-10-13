@@ -246,8 +246,16 @@ starts the chains there.}
 
 \item{compileArgs}{List of arguments to pass to \code{\link[rstan]{stan_model}} for compilation of the Stan model.}
 
-\item{forcerecompile}{logical. For development purposes.
-If TRUE, stan model is recompiled, regardless of apparent need for compilation.}
+\item{forcerecompile}{logical. For \code{backend='stan'}, recompiles the
+stan model regardless of apparent need (for development). For
+\code{backend='julia'}, compiles the model's state-dependent expressions --
+matrix cells that read a latent state, and their derivatives -- and any
+parameter transforms of your own into code for this model, rather than
+evaluating them as data. The model's first fit in a session then compiles
+for a minute or more, and its gradients run faster: by up to a third for a
+heavily nonlinear model (many state-dependent cells, or long formulas in
+them), and by little otherwise. Worth it only when such a model's fit takes
+many minutes.}
 
 \item{saveCompile}{if TRUE and compilation is needed / requested, writes the stan model to
 the parent frame as ctsem.compiled (unless that object already exists and is not from ctsem), to avoid unnecessary recompilation.}

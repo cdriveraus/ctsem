@@ -74,7 +74,7 @@ end
 # DIFFUSION, MANIFESTVAR); a few more slots cost only a comparison each.
 const _EXPM_CACHE_SLOTS = 6
 
-struct ExpmCovScratch{T,D}
+struct ExpmCovScratch{T}
     A::Matrix{T}
     Y::Matrix{T}
     W1::Matrix{T}
@@ -85,8 +85,8 @@ struct ExpmCovScratch{T,D}
     M2::Matrix{T}
     g::Vector{T}
     yd::Vector{T}
-    eb::ExpBuffer{T,D}
-    fb::ExpFrechetBuffer{T,D}
+    eb::ExpBuffer{T}
+    fb::ExpFrechetBuffer{T}
     # Content-keyed cache: `Atab` holds the key and `Ytab` the exponential.
     Atab::Vector{Matrix{T}}
     Ytab::Vector{Matrix{T}}
@@ -94,9 +94,9 @@ struct ExpmCovScratch{T,D}
     nextslot::Base.RefValue{Int}
 end
 
-function ExpmCovScratch{T,D}() where {T,D}
+function ExpmCovScratch{T}(D::Int) where {T}
     mk() = [zeros(T, D, D) for _ in 1:_EXPM_CACHE_SLOTS]
-    ExpmCovScratch{T,D}(zeros(T, D, D), zeros(T, D, D), zeros(T, D, D),
+    ExpmCovScratch{T}(zeros(T, D, D), zeros(T, D, D), zeros(T, D, D),
         zeros(T, D, D), zeros(T, D, D), zeros(T, D, D), zeros(T, D, D),
         zeros(T, D, D), zeros(T, D), zeros(T, D),
         ExpBuffer{T}(D), ExpFrechetBuffer{T}(D),
@@ -121,18 +121,26 @@ end
 # task per shape; a parallel region's workers borrow their store from a pool
 # that outlives them (`_ctsem_scratch`), so it is built once per worker, not
 # once per evaluation.
-function _expm_cov_scratch(::Type{T}, ::Val{d}) where {T,d}
-    store = _ctsem_scratch()
-    key = (:expm_cov_scratch, T, d)
-    sc = get(store, key, nothing)
+#
+# Keyed by a singleton per element type holding a table by dimension, as the
+# transpose buffers are (`_ctsem_transpose_buffer`): a key tuple holding the
+# type and a run-time dimension is built on the heap at every call.
+struct _CTSEMExpmCovKey{T} end
+
+function _expm_cov_scratch(::Type{T}, __d::Union{Int,Val}) where {T}
+    d = _val(__d)
+    table = get!(Dict{Int,ExpmCovScratch{T}}, _ctsem_scratch(),
+        _CTSEMExpmCovKey{T}())::Dict{Int,ExpmCovScratch{T}}
+    sc = get(table, d, nothing)
     if sc === nothing
-        sc = ExpmCovScratch{T,d}()
-        store[key] = sc
+        sc = ExpmCovScratch{T}(d)
+        table[d] = sc
     end
-    return sc::ExpmCovScratch{T,d}
+    return sc
 end
 
-@inline function _blocks_equal(A::AbstractMatrix, B::AbstractMatrix, ::Val{d}) where {d}
+@inline function _blocks_equal(A::AbstractMatrix, B::AbstractMatrix, __d::Union{Int,Val})
+    d = _val(__d)
     @inbounds for j in 1:d, i in 1:d
         A[i, j] == B[i, j] || return false
     end
@@ -140,7 +148,8 @@ end
 end
 
 # A is hollow symmetric, read from mat's lower triangle.
-@inline function _fill_hollow!(A, mat, ::Val{d}, ::Type{T}) where {d,T}
+@inline function _fill_hollow!(A, mat, __d::Union{Int,Val}, ::Type{T}) where {T}
+    d = _val(__d)
     @inbounds for j in 1:d, i in 1:d
         A[i, j] = i == j ? zero(T) : (i > j ? T(mat[i, j]) : T(mat[j, i]))
     end
@@ -178,16 +187,17 @@ end
 
 Index of the cache slot holding `exp(A)` for this `A`, filling it on a miss.
 """
-function _expm_cov_slot!(sc::ExpmCovScratch{T,D}, A, ::Val{d}) where {T,D,d}
+function _expm_cov_slot!(sc::ExpmCovScratch{T}, A, __d::Union{Int,Val}) where {T}
+    d = _val(__d)
     _EXPM_COV_CALLS[] += 1
     @inbounds for e in 1:sc.nslots[]
-        _blocks_equal(sc.Atab[e], A, Val(d)) && return e
+        _blocks_equal(sc.Atab[e], A, d) && return e
     end
     _EXPM_COV_MISSES[] += 1
     slot = sc.nextslot[]
     @inbounds begin
         copyto!(sc.Atab[slot], A)
-        my_exp!(sc.Ytab[slot], A, sc.W1, sc.eb, Val(d))
+        my_exp!(sc.Ytab[slot], A, sc.W1, sc.eb, d)
     end
     sc.nslots[] = max(sc.nslots[], slot)
     sc.nextslot[] = slot == _EXPM_CACHE_SLOTS ? 1 : slot + 1
@@ -206,7 +216,8 @@ pullback's 30 x 30 Frechet derivative was 35% of a Laplace gradient
 (the SNSF pilot, dev1). Deep, not on values: an off-diagonal parameter that
 happens to sit at 0 still has a derivative, which the general route keeps.
 """
-@inline function _expm_cov_diagonal(A, ::Val{d}) where {d}
+@inline function _expm_cov_diagonal(A, __d::Union{Int,Val})
+    d = _val(__d)
     @inbounds for j in 1:d, i in 1:d
         _zero_deep(A[i, j]) || return false
     end
@@ -219,18 +230,19 @@ end
 Write `D * normalise(exp(A)) * D` into `buffer.out`, where `D` is `mat`'s
 diagonal and `A` is hollow symmetric from `mat`'s lower triangle.
 """
-function sdcovexpm2cov!(buffer, mat, ::Val{d}) where {d}
+function sdcovexpm2cov!(buffer, mat, __d::Union{Int,Val})
+    d = _val(__d)
     T = eltype(buffer.out)
-    sc = _expm_cov_scratch(T, Val(d))
+    sc = _expm_cov_scratch(T, d)
     A = sc.A
-    _fill_hollow!(A, mat, Val(d), T)
-    if _expm_cov_diagonal(A, Val(d))
+    _fill_hollow!(A, mat, d, T)
+    if _expm_cov_diagonal(A, d)
         @inbounds for j in 1:d, i in 1:d
             buffer.out[i, j] = i == j ? T(mat[i, i])^2 : zero(T)
         end
         return nothing
     end
-    slot = _expm_cov_slot!(sc, A, Val(d))
+    slot = _expm_cov_slot!(sc, A, d)
     Y = sc.Ytab[slot]
     yd, g = sc.yd, sc.g
     @inbounds for i in 1:d
@@ -254,18 +266,17 @@ function _sdcovexpm2cov_pullback!(mat_bar::AbstractMatrix, mat::AbstractMatrix,
         cov_bar::AbstractMatrix, d::Int)
     d == 0 && return mat_bar
     all(iszero, cov_bar) && return mat_bar
-    # One dynamic dispatch per call to reach the specialised body, rather than a
-    # boxed field access for every read inside it.
-    return _sdcovexpm2cov_pullback!(mat_bar, mat, cov_bar, Val(d))
+    return _sdcovexpm2cov_pullback_body!(mat_bar, mat, cov_bar, d)
 end
 
-function _sdcovexpm2cov_pullback!(mat_bar::AbstractMatrix, mat::AbstractMatrix,
-        cov_bar::AbstractMatrix, ::Val{d}) where {d}
+function _sdcovexpm2cov_pullback_body!(mat_bar::AbstractMatrix, mat::AbstractMatrix,
+        cov_bar::AbstractMatrix, __d::Union{Int,Val})
+    d = _val(__d)
     T = promote_type(eltype(mat), eltype(cov_bar))
-    sc = _expm_cov_scratch(T, Val(d))
+    sc = _expm_cov_scratch(T, d)
     A = sc.A
-    _fill_hollow!(A, mat, Val(d), T)
-    if _expm_cov_diagonal(A, Val(d))
+    _fill_hollow!(A, mat, d, T)
+    if _expm_cov_diagonal(A, d)
         # The general route below at A = 0, where Y = I, the normalisation is
         # the identity and the Frechet map is too: the diagonal gets
         # 2 cbar_ii s_i, and each off-diagonal coordinate the pair's cotangent
@@ -279,7 +290,7 @@ function _sdcovexpm2cov_pullback!(mat_bar::AbstractMatrix, mat::AbstractMatrix,
         end
         return mat_bar
     end
-    slot = _expm_cov_slot!(sc, A, Val(d))
+    slot = _expm_cov_slot!(sc, A, d)
     Y = sc.Ytab[slot]
     yd = sc.yd
     @inbounds for i in 1:d

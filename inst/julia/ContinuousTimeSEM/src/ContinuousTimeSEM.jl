@@ -73,6 +73,7 @@ include("parameters.jl")
 include("cov_cache.jl")
 include("constrain_cor_sqrt.jl")
 include("r_interface.jl")
+include("transform_expr.jl")
 # Socket options for the R bridge. No engine code depends on it, so it can sit
 # anywhere; here it is beside the rest of the R-facing surface.
 include("bridge_tuning.jl")
