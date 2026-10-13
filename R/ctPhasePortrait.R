@@ -130,7 +130,6 @@
 #'   0 for none.
 #' @param plot If FALSE, return the field, nullclines and trajectories as data
 #'   rather than a plot.
-#' @param ... Ignored.
 #' @return A ggplot, or when \code{plot=FALSE} a list with \code{field}, the
 #'   \code{latents} on the plane, \code{stateLabel} naming where the off-plane
 #'   processes were held, the \code{held} process names, and \code{nullclines},
@@ -143,7 +142,7 @@
 #' @export
 ctPhasePortrait <- function(fit, latents = 1:2, extent = "data", gridsize = 15,
   state = "asymptotic", tipreds = NULL, nullclines = TRUE, fixedpoint = TRUE,
-  trajectories = 0, plot = TRUE, ...) {
+  trajectories = 0, plot = TRUE) {
 
   model <- .ctFitModelObject(fit)
   latentNames <- model$latentNames
