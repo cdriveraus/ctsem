@@ -5,6 +5,8 @@
 #' @param id character string denoting column of data containing numeric identifier for each subject.
 #' @param dT character string denoting column of data containing time interval preceding observations in that row.
 #' @param startoffset Number of units of time to offset by when converting.
+#' @return \code{datalong}, with the interval column \code{dT} replaced by
+#'   absolute times and renamed \code{time}.
 #' @export
 ctDeintervalise<-function(datalong,id='id', dT='dT',startoffset=0){
 

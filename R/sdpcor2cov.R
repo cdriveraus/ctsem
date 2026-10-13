@@ -11,6 +11,8 @@
 #' print(testmat)
 #' covmat <- sdpcor2cov(testmat) #convert to covariance
 #' cov2cor(covmat) #convert covariance to correlation
+#' @return A covariance matrix; its lower Cholesky factor with
+#'   \code{cholesky = TRUE}; a correlation matrix with \code{coronly = TRUE}.
 #' @export
 sdpcor2cov <- function(mat, coronly=FALSE, cholesky=FALSE){ 
   

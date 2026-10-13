@@ -42,6 +42,10 @@ If false, graphs are plotted one after another without waiting.}
 \item{...}{Parameters to pass to ctFit. \code{cores = x} will speed things up,
 where x is the number of cpu cores to use.}
 }
+\value{
+With \code{plot = TRUE}, \code{NULL} invisibly, having drawn the
+  plots; with \code{plot = FALSE}, a list of ggplot objects.
+}
 \description{
 Plots prior and posterior distributions of model parameters in a ctStanModel or ctStanFit object.
 \code{ctStanPlotPost} is maintained as a backward-compatible alias.

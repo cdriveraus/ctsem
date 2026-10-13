@@ -65,6 +65,12 @@ which occurred at the earliest observation time of the entire sample.}
 If greater than 0, all first observations are NA, with distance of 
 startoffset to first recorded observation.}
 }
+\value{
+The wide format data as a matrix, with the absolute time columns
+  replaced by the intervals preceding each time point, \code{dT1},
+  \code{dT2}, ..., and columns named as \code{\link{ctWideNames}} names
+  them.
+}
 \description{
 Converts absolute times to intervals for wide format ctsem panel data
 }

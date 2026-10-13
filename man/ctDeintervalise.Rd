@@ -15,6 +15,10 @@ ctDeintervalise(datalong, id = "id", dT = "dT", startoffset = 0)
 
 \item{startoffset}{Number of units of time to offset by when converting.}
 }
+\value{
+\code{datalong}, with the interval column \code{dT} replaced by
+  absolute times and renamed \code{time}.
+}
 \description{
 Converts intervals in ctsem long format data to absolute time
 }

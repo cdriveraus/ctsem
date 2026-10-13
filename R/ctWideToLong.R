@@ -32,6 +32,10 @@
 #'  head(long,22)
 #'
 #' 
+#' @return A long format matrix, one row per subject and time point, with the
+#'   id, the time interval \code{dT} (absolute times are restored by
+#'   \code{\link{ctDeintervalise}}), the manifest variables and the
+#'   predictors.
 #' @export
 
 ctWideToLong<-function(datawide,Tpoints,n.manifest,n.TDpred=0, n.TIpred=0, 

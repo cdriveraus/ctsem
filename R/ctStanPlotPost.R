@@ -22,6 +22,8 @@
 #' \donttest{
 #' ctPlotPosterior(ctstantestfit, rows=3:4)
 #' }
+#' @return With \code{plot = TRUE}, \code{NULL} invisibly, having drawn the
+#'   plots; with \code{plot = FALSE}, a list of ggplot objects.
 #' @aliases ctStanPlotPost
 #' @export
 

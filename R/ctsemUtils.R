@@ -206,6 +206,8 @@ makeNumericIDs <- function(datalong,idName='id',timeName='time'){
 #' @examples
 #' testarray <- array(rnorm(900,2,1),dim=c(100,3,3))
 #' ctCollapse(testarray,1,mean)
+#' @return An array (or vector) with the \code{collapsemargin} dimensions
+#'   removed, holding \code{collapsefunc} applied over them.
 #' @export
 ctCollapse<-function(inarray,collapsemargin,collapsefunc,plyr=TRUE,...){
   indims<-dim(inarray)
@@ -233,6 +235,7 @@ rl<-function(x) { #robust logical - wrap checks likely to return NA's in this
 #'
 #' @examples
 #' inv_logit(-3)
+#' @return \code{1 / (1 + exp(-x))}, elementwise.
 #' @export
 inv_logit<-function(x) {
   1/(1+exp(-x))
@@ -246,6 +249,7 @@ inv_logit<-function(x) {
 #'
 #' @examples
 #' log1p_exp(-3)
+#' @return \code{log(1 + exp(x))}, elementwise.
 #' @export
 log1p_exp <- function(x) log1p(exp(x))
 
@@ -374,6 +378,10 @@ ctPoly <- function(x,y,ylow,yhigh,steps=20,...){
 #' @param manifestNames vector of character strings giving column names of manifest indicator variables
 #' @param TDpredNames vector of character strings giving column names of time dependent predictor variables
 #' @param TIpredNames vector of character strings giving column names of time independent predictor variables
+#' @return A character vector of column names for a wide format dataset: the
+#'   manifest variables and time dependent predictors at each time point,
+#'   the intervals \code{dT1}, \code{dT2}, ..., then the time independent
+#'   predictors.
 #' @export
 
 ctWideNames<-function(n.manifest,Tpoints,n.TDpred=0,n.TIpred=0,manifestNames='auto',TDpredNames='auto',TIpredNames='auto'){

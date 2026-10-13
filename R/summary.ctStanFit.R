@@ -99,6 +99,12 @@ ctStanRawSamples<-function(fit){
 #'#posterior median over all subjects (also reflects mean of unconstrained pars)
 #'ctSummaryMatrices(ctstantestfit)
 #'}
+#'@return A named list of matrices, each summarised over the posterior (or
+#'approximate posterior) draws by \code{calcfunc}: the model's own
+#'(\code{DRIFT}, \code{DIFFUSION}, \code{LAMBDA}, ...), the covariances
+#'built from them (\code{DIFFUSIONcov}, \code{MANIFESTcov}, \code{T0cov}),
+#'the asymptotic \code{asymCINT} and \code{asymDIFFUSIONcov}, and
+#'\code{dtDRIFT} at \code{timeinterval}.
 #'@aliases ctStanContinuousPars
 #'@export
 # `state` is part of the generic, not an extra the julia method happens to

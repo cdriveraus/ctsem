@@ -33,6 +33,12 @@ ctWideToLong(
 
 \item{TIpredNames}{Character vector of time independent predictor names.}
 }
+\value{
+A long format matrix, one row per subject and time point, with the
+  id, the time interval \code{dT} (absolute times are restored by
+  \code{\link{ctDeintervalise}}), the manifest variables and the
+  predictors.
+}
 \description{
 ctWideToLong
 Convert ctsem wide to long format

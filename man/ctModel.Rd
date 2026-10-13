@@ -208,6 +208,13 @@ predictor effects, which is the way to exclude a parameter under
 
 \item{PARS}{for types 'ct' and 'dt' only. May be of any structure, only needed to contain extra parameters for certain non-linear models.}
 }
+\value{
+For \code{type = 'ct'} or \code{'dt'}, a model of class
+  \code{ctStanModel}: \code{$pars} holds one row per matrix cell, and
+  \code{$matrices} the same cells as matrices, editable either way. For
+  \code{type = 'omx'}, a list of matrices of class \code{ctsemInit}, for
+  \code{\link{ctGenerate}} or \code{\link{ctModelConvertOMX}}.
+}
 \description{
 This function is used to specify a continuous time structural equation model, 
 which can then be fit to data with function \code{\link{ctFit}}.

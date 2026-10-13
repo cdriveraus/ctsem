@@ -109,6 +109,14 @@ raw zero.}
 
 \item{n.subjects}{Deprecated; use \code{n}.}
 }
+\value{
+From the R generator, a long format matrix with one row per subject
+  and time point, or wide format with \code{wide = TRUE}. From the julia
+  generator, the same long format, carrying the attributes described under
+  Generating values. With \code{fromPriors = TRUE}, a list: \code{Y}, an
+  \code{nsamples} by data rows by manifest variables array of generated
+  data, and \code{llrow}, the matching array of row log likelihoods.
+}
 \description{
 This function generates data according to the specified ctsem model object.
 }

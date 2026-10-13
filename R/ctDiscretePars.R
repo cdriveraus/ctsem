@@ -155,6 +155,9 @@ ctStanParnames <- ctRawParnames
 #'If plot=TRUE, the function will return a ggplot2 object
 #'(and hence needs to be printed if intended to display within a loop).
 #'This can be modified by the various ggplot2 functions, or displayed using print(x).
+#'@return With \code{plot = FALSE}, an array of the discrete time
+#'coefficients, by sample, subject, time interval, row and column; with
+#'\code{plot = TRUE}, a ggplot object.
 #'@aliases ctStanDiscretePars
 #'@export
 ctDiscretePars<-function(fit, subjects='popmean',

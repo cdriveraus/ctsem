@@ -10,6 +10,10 @@
 #' @param TDpredNames vector of character strings giving column names of time dependent predictor variables
 #' @param TIpredNames vector of character strings giving column names of time independent predictor variables
 #' @details Time column must be numeric
+#' @return A wide format matrix, one row per subject: each manifest variable
+#'   and time dependent predictor at each time point (\code{Y1_T0},
+#'   \code{Y1_T1}, ...), the observation times \code{T0}, \code{T1}, ...,
+#'   then the time independent predictors.
 #' @export 
 #' @importFrom data.table data.table
 #' @seealso \code{\link{ctIntervalise}}
