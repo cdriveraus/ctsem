@@ -3,20 +3,28 @@
 \name{ctsem-defunct}
 \alias{ctsem-defunct}
 \alias{ctFitUpdateModel}
+\alias{ctCheckFit}
 \alias{ctStanUpdModel}
 \title{Defunct functions in ctsem}
 \usage{
 ctFitUpdateModel(...)
 
 ctStanUpdModel(...)
+
+ctCheckFit(...)
 }
 \arguments{
 \item{...}{Ignored.}
 }
 \description{
-`ctFitUpdateModel` and its alias `ctStanUpdModel` are defunct. They wrote
-`match.call()` into `fit$args`, which since the split of that slot into
-`$input` and `$resolved` left the returned fit unreadable by every consumer
-of it. Use \code{\link{ctFitUpdate}}, which takes new data and new arguments.
+These functions were part of ctsem 3.11.1 and have since been removed.
+Each now stops with a message naming its replacement.
+\itemize{
+  \item \code{ctCheckFit}: use \code{\link{ctPostPredPlots}}, whose
+    \code{'LaggedCovariance'} and \code{'MeanTrajectory'} panels replace it,
+    or \code{\link{ctFitCheckCov}} for the lagged covariance check alone.
+  \item \code{ctFitUpdateModel} and \code{ctStanUpdModel}: use
+    \code{\link{ctFitUpdate}}, which takes new data and new arguments.
+}
 }
 \keyword{internal}

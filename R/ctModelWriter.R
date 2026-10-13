@@ -24,14 +24,19 @@ simpleStateCheck <- function(x){   #checks if system matrix elements that refere
 
 #' Defunct functions in ctsem
 #'
-#' `ctFitUpdateModel` and its alias `ctStanUpdModel` are defunct. They wrote
-#' `match.call()` into `fit$args`, which since the split of that slot into
-#' `$input` and `$resolved` left the returned fit unreadable by every consumer
-#' of it. Use \code{\link{ctFitUpdate}}, which takes new data and new arguments.
+#' These functions were part of ctsem 3.11.1 and have since been removed.
+#' Each now stops with a message naming its replacement.
+#' \itemize{
+#'   \item \code{ctCheckFit}: use \code{\link{ctPostPredPlots}}, whose
+#'     \code{'LaggedCovariance'} and \code{'MeanTrajectory'} panels replace it,
+#'     or \code{\link{ctFitCheckCov}} for the lagged covariance check alone.
+#'   \item \code{ctFitUpdateModel} and \code{ctStanUpdModel}: use
+#'     \code{\link{ctFitUpdate}}, which takes new data and new arguments.
+#' }
 #'
 #' @param ... Ignored.
 #' @name ctsem-defunct
-#' @aliases ctFitUpdateModel ctStanUpdModel
+#' @aliases ctCheckFit ctFitUpdateModel ctStanUpdModel
 #' @keywords internal
 #' @export
 ctFitUpdateModel <- function(...) .Defunct('ctFitUpdate')
@@ -39,6 +44,15 @@ ctFitUpdateModel <- function(...) .Defunct('ctFitUpdate')
 #' @rdname ctsem-defunct
 #' @export
 ctStanUpdModel <- function(...) .Defunct('ctFitUpdate')
+
+# ctCheckFit was exported in 3.11.1; without this a call written against that
+# release would fail with "could not find function" and no pointer onward.
+#' @rdname ctsem-defunct
+#' @export
+ctCheckFit <- function(...) .Defunct('ctPostPredPlots', msg = paste0(
+  "'ctCheckFit' is defunct. Use ctPostPredPlots(fit), whose 'LaggedCovariance' ",
+  "and 'MeanTrajectory' panels replace it, or ctFitCheckCov() for the lagged ",
+  "covariance check alone."))
 
 
 
@@ -253,6 +267,10 @@ ctModelTransformsToNum<-function(ctm){
   rownames(ctm$pars)=1:nrow(ctm$pars)
   newrows <- which(!is.na(ctm$pars$transform))
   if(length(newrows) ==0){
+    # No transforms means no free parameters. The value columns are still read
+    # downstream (.ctModelMatSetup()), and a model of fixed values failed there
+    # with "undefined columns selected" -- ctGenerate(fromPriors = TRUE) on it.
+    for(cl in setdiff(transformvaluecols, colnames(ctm$pars))) ctm$pars[[cl]] <- NA_real_
     return(ctm)
   } else{
     eqs <- ctm$pars$transform[newrows]

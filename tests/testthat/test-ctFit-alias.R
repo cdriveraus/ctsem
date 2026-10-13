@@ -61,3 +61,8 @@ test_that("the defunct model-update stubs error and name their replacement", {
   expect_error(ctFitUpdateModel(), 'defunct')
   expect_error(ctStanUpdModel(), 'defunct')
 })
+
+test_that("ctCheckFit, exported in 3.11.1, stops and names its replacement", {
+  expect_error(ctCheckFit(ctstantestfit), 'defunct')
+  expect_error(ctCheckFit(ctstantestfit), 'ctPostPredPlots')
+})

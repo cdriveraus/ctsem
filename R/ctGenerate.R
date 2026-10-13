@@ -163,6 +163,14 @@ ctModeltoNumeric <- function(ctmodelobj){
 
   prepared <- do.call(ctFit, args)
 
+  # With nothing free there is no prior to draw from; each backend otherwise
+  # failed further in, julia saying to use stan and stan with a raw exception.
+  nfree <- if(backend == 'julia') .ctBackendNpar(.ctBackendSpec(prepared)) else
+    as.integer(prepared$standata$nparams)
+  if(!length(nfree) || nfree < 1L) stop(
+    'This model has no free parameters, so there is no prior to draw from. ',
+    'ctGenerate(model) generates from the values it fixes.', call.=FALSE)
+
   if(backend == 'julia'){
     spec <- .ctBackendSpec(prepared)
     if(is.null(spec$priors) || !length(spec$priors$index)) stop(
