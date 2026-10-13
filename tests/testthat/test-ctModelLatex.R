@@ -352,14 +352,22 @@ test_that("ctModelLatex shows every level of a nested model", {
     DRIFT = c("d1", "c12||couple||ctx", "c21||||ctx=0.3", "d2")))
   tex <- paste(as.character(suppressMessages(ctModelLatex(m, tex = FALSE,
     compile = FALSE, open = FALSE))), collapse = "\n")
-  # One labelled zero-mean term per level, the subject's included -- an
-  # unfitted model showed the subject level alone.
-  expect_match(tex, "\\}_\\{\\\\textrm\\{person\\}\\}")
-  expect_match(tex, "\\}_\\{\\\\textrm\\{couple\\}\\}")
-  expect_match(tex, "rawCovcouple", fixed = TRUE)
+  # A deviation term per level, the subject's included -- an unfitted model
+  # showed the subject level alone -- subscripted by the nesting.
+  expect_match(tex, "\\vect{u}^{\\textrm{person}}_{ij}", fixed = TRUE)
+  expect_match(tex, "\\vect{u}^{\\textrm{couple}}_{j}", fixed = TRUE)
+  expect_match(tex, "\\text{c12}_{ij}", fixed = TRUE)
+  # Each level's covariance over its own parameters, numbered as shown: the
+  # couple level spans the intercepts (TRUE by default, every level), m1 and
+  # c12, so four -- not a matrix over every parameter padded with zeros.
+  expect_match(tex, "rawCovcouple\\_4\\_4", fixed = TRUE)
+  expect_false(grepl("rawCovcouple\\_5", tex, fixed = TRUE))
+  # T0VAR cells the random T0MEANS make redundant are not parameters here,
+  # as they are not in a fit.
+  expect_false(grepl("T0var", tex, fixed = TRUE))
   # The covariate effects act on each subject; an absent effect is a zero and
   # a fixed one its value, neither a raw_ label.
   expect_match(tex, "raw\\_c12\\_ctx", fixed = TRUE)
   expect_false(grepl("raw\\_0", tex, fixed = TRUE))
-  expect_match(tex, "Each zero-mean term holds one level")
+  expect_match(tex, "A level's random effects are shared")
 })
