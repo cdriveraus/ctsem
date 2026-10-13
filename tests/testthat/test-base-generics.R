@@ -30,6 +30,9 @@ test_that("coef returns a plain numeric raw parameter vector on both backends", 
   expect_true(is.numeric(stanraw))
   expect_null(dim(stanraw))
   expect_equal(length(stanraw), length(ctsem:::.ctFitRawEstimate(stanfit)))
+  # Labelled as the draws are, so coef(fit)['drift'] reads without counting.
+  expect_equal(names(stanraw), colnames(stanfit$stanfit$rawposterior))
+  expect_equal(unname(stanraw), as.numeric(ctsem:::.ctFitRawEstimate(stanfit)))
 
   skip_without_julia()
   juliafit <- .generics_julia_fit()
@@ -37,6 +40,8 @@ test_that("coef returns a plain numeric raw parameter vector on both backends", 
   expect_true(is.numeric(juliaraw))
   expect_null(dim(juliaraw))
   expect_equal(length(juliaraw), length(ctsem:::.ctFitRawEstimate(juliafit)))
+  expect_false(is.null(names(juliaraw)))
+  expect_false(anyNA(names(juliaraw)))
 })
 
 test_that("logLik returns a logLik with df and nobs on both backends", {

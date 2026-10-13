@@ -20,7 +20,7 @@ ctLOO(
 )
 }
 \arguments{
-\item{fit}{ctStanfit object}
+\item{fit}{A fit from \code{\link{ctFit}}, on either backend.}
 
 \item{folds}{Number of cross validation splits to use -- 10 folds implies that the
 model is re-fit 10 times, each time to a data set with 1/10 of the observations randomly removed.}
@@ -77,7 +77,9 @@ For \code{method = 'kfold'}, a list with \code{foldrows},
   \code{note}.
 }
 \description{
-Cross validation for ctsem fits: K fold by refitting, or PSIS for Laplace fits
+Estimates out-of-sample predictive performance, by refitting the model with
+each fold of the data held out in turn or, for a julia Laplace fit, by
+Pareto-smoothed importance sampling without refitting.
 }
 \details{
 Works for \code{backend='julia'} fits as well as stan ones. There,

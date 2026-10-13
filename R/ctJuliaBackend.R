@@ -407,14 +407,15 @@
 #' and compiles the engine, which takes several minutes; later calls in new
 #' sessions reuse both.
 #'
-#' The engine is compiled in advance for one small model on each route -- one
-#' latent process with two indicators and a random intercept -- and with it the
-#' code that every model on that route shares. The first fit of any other model
-#' shape in each R session compiles the code specialised to that model, so it
-#' takes longer than later fits of the same shape: about a minute for a small
-#' model on the augmented route and three to four minutes on the Laplace route,
-#' against seconds once compiled. This is paid once per shape per session rather
-#' than once per fit; time a fit after one warm-up fit, not from a fresh session.
+#' The engine is compiled in advance, by fitting a small model on each route,
+#' and every model of a route runs that same compiled code: a model's sizes,
+#' parameters and state-dependent cells are data to the engine rather than part
+#' of its types. So the first fit of a new model in a session compiles little,
+#' and takes seconds more than later fits rather than minutes. A model with a
+#' categorical indicator, or a Laplace unit with more than four random effects,
+#' compiles a little more the first time. \code{ctFit(forcerecompile = TRUE)}
+#' compiles a heavily state-dependent model's expressions for faster gradients,
+#' at a minute or more of compile.
 #'
 #' Pressing Escape (or Ctrl-C) during a julia fit returns to the R prompt at
 #' once, and keeps the Julia session and everything it has compiled. Julia
@@ -433,9 +434,6 @@
 #' @param project Optional local ContinuousTimeSEM.jl checkout to use instead of
 #'   the copy that ships with ctsem. Rarely needed: the engine is part of ctsem
 #'   and is edited in place under \code{inst/julia/}.
-#' @param revision Ignored; retained for backward compatibility. The engine is
-#'   part of ctsem, and the version \code{ctJuliaStatus()} reports is a hash of
-#'   its source rather than something selectable.
 #' @param julia_bin Optional Julia binary directory.
 #' @param threads Number of Julia threads, fixed for the life of the session.
 #'   The engine splits its subject loop across them, and \code{ctFit}'s
@@ -456,8 +454,13 @@
 #'   otherwise; see \code{\link{ctJuliaInstall}}.
 #' @return A Julia-engine status list, invisibly.
 #' @seealso \code{\link{ctJuliaInstall}}, \code{\link{ctJuliaStatus}}
+#' @examples
+#' \dontrun{
+#' ctJuliaSetup()                         # prepare the engine, asking first
+#' ctJuliaSetup(threads = 8, force = TRUE) # restart the session wider
+#' }
 #' @export
-ctJuliaSetup <- function(project = NULL, revision = "locked", julia_bin = NULL,
+ctJuliaSetup <- function(project = NULL, julia_bin = NULL,
   threads = NULL, force = FALSE, agree = NULL) {
   .ctJuliaRequire()
   if (isTRUE(force)) .ctJuliaClearSession()
@@ -650,6 +653,9 @@ ctJuliaSetup <- function(project = NULL, revision = "locked", julia_bin = NULL,
 #'   the \code{engine} version (a hash of the engine source shipped with this
 #'   ctsem, which is also what its cached project directory is keyed on), and
 #'   the number of \code{threads} in a running session.
+#' @examples
+#' status <- ctJuliaStatus()
+#' status$available
 #' @export
 ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
   connectoR <- requireNamespace("JuliaConnectoR", quietly = TRUE)
@@ -4273,10 +4279,21 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
   out
 }
 
-#' Evaluate a prepared Julia ctsem likelihood
-#' @param object A \code{ctJuliaModel} or \code{ctJuliaFit}.
-#' @param pars Unconstrained parameters; defaults to the fitted estimate.
-#' @param gradient Return an analytic/automatic-differentiation gradient.
+#' Evaluate a julia model's likelihood and gradient at given parameters
+#'
+#' Evaluates the objective the julia backend optimises -- the log likelihood,
+#' with the random effects integrated as the model's \code{intoverpop} route
+#' integrates them -- at a vector of raw (unconstrained) parameters, and its
+#' gradient. For checking a fit, profiling by hand, or handing ctsem's
+#' likelihood to an optimiser or sampler of your own.
+#'
+#' @param object A fit from \code{ctFit(..., backend = 'julia')}, or a model
+#'   prepared without fitting by \code{ctFit(..., backend = 'julia', fit =
+#'   FALSE)} (class \code{ctJuliaModel}).
+#' @param pars Raw (unconstrained) parameters, in the order of
+#'   \code{coef(fit)}; defaults to a fit's estimate, and must be given for a
+#'   prepared model.
+#' @param gradient Also return the gradient with respect to \code{pars}.
 #' @param contributions Return subject and row contribution details when available.
 #' @param gradient_method Either "adjoint" (reverse mode, the default) or
 #'   "forward" (ForwardDiff). Both compute the same gradient. "adjoint" costs
@@ -4284,15 +4301,24 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
 #'   faster than "forward" at every model size measured, by a margin that
 #'   grows with the parameter count. See \code{optimcontrol$gradient} in
 #'   \code{ctFit}.
-#' @param cores Engine subject-chunk ceiling for this one evaluation, restored
-#'   afterwards. This call used to run outside any ceiling, at the session's
-#'   full thread width: harmless on its own, but it left the worker pool at
-#'   full width behind it, which let unrelated later work -- an in-process
-#'   sampler's chains among them -- run wider than its own \code{cores} asked
-#'   for. See \code{.ctBackendWithMaxChunks()}. \code{NA} sets none and
-#'   evaluates under the ceiling already in force, for a caller that has set
-#'   one around a run of evaluations.
-#' @return A list containing log likelihood and, when requested, gradient.
+#' @param cores The most engine threads this evaluation uses, restored
+#'   afterwards. \code{NA} leaves the ceiling already in force, for a caller
+#'   that has set one around a run of evaluations.
+#' @return A list containing the log likelihood and, when requested, the
+#'   gradient and the contributions.
+#' @examples
+#' \donttest{
+#' # Needs a working julia backend, so the example is inert where Julia is
+#' # absent -- including on CRAN, whose check machines have none.
+#' if (isTRUE(ctJuliaStatus()$available)) {
+#'   model <- ctModel(type = 'ct', manifestNames = 'Y1', latentNames = 'eta1',
+#'     LAMBDA = matrix(1))
+#'   model$pars$indvarying <- FALSE
+#'   prepared <- ctFit(ctstantestdat, model, backend = 'julia', fit = FALSE)
+#'   start <- ctJuliaEvaluate(prepared, pars = rep(0, 6), cores = 1)
+#'   str(start)
+#' }
+#' }
 #' @export
 ctJuliaEvaluate <- function(object, pars = NULL, gradient = TRUE, contributions = FALSE,
   gradient_method = c("adjoint", "forward"), cores = 2L) {
@@ -4309,6 +4335,8 @@ ctJuliaEvaluate <- function(object, pars = NULL, gradient = TRUE, contributions 
   .ctJuliaGet(result)
 }
 
+#' @rdname summary.ctStanFit
+#' @method summary ctJuliaFit
 #' @export
 summary.ctJuliaFit <- function(object, timeinterval = 1, digits = 3, parmatrices = TRUE,
   priorcheck = TRUE, residualcov = TRUE, ...) {
@@ -6526,7 +6554,7 @@ plot.ctJuliaFit <- function(x, types = "all", wait = TRUE, ...) {
 }
 
 #' @export
-coef.ctJuliaFit <- function(object, ...) object$estimate$raw
+coef.ctJuliaFit <- function(object, ...) .ctFitNameRaw(object, object$estimate$raw)
 
 #' @export
 logLik.ctJuliaFit <- function(object, ...) {

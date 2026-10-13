@@ -26,6 +26,9 @@ released automatically.
 Calling this in the middle of a sample that is still using the pool stops
 the workers that sample is running in.
 }
+\examples{
+ctJuliaWorkersStop() # nothing to do when no pool is running
+}
 \seealso{
 \code{\link{ctFitUncertainty}}, \code{\link{ctJuliaSetup}}
 }

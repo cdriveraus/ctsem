@@ -200,9 +200,8 @@
 #'
 #' @param datalong Long format data, as for \code{\link{ctFit}}.
 #' @param model Model from \code{\link{ctModel}}.
-#' @param ctstanmodel Deprecated. Use \code{model}.
 #' @param inits Optional evaluation point. Supplying one uses that single point
-#'   and disables the comparison across points described above.
+#'   and disables the comparison across points described in Details.
 #' @param nstart Number of points to evaluate. The first is the origin of the
 #'   unconstrained space; the rest are dispersed draws around it.
 #' @param spread Standard deviation of the additional evaluation points on the
@@ -283,18 +282,9 @@
 #' @export
 ctIdentify <- function(datalong, model, inits = NULL, nstart = 3L,
   spread = 0.5, priors = FALSE, intoverpop = "augmented", cores = 1L,
-  verbose = 0L, rtol = 1e-13, seed = 1L, ctstanmodel) {
+  verbose = 0L, rtol = 1e-13, seed = 1L) {
 
-  if(missing(model)){
-    if(missing(ctstanmodel)) stop('model must be supplied')
-    warning('ctstanmodel argument is deprecated, use model instead')
-    model <- ctstanmodel
-  } else if(!missing(ctstanmodel)) {
-    stop('Use only one of model or deprecated ctstanmodel')
-  }
-  ctstanmodel <- model
-
-  spec <- .ctFitJuliaBackend(datalong, ctstanmodel, fit = FALSE,
+  spec <- .ctFitJuliaBackend(datalong, model, fit = FALSE,
     priors = priors, intoverpop = intoverpop, cores = cores, verbose = verbose)
   # Under `cores` for the rest of this function, as the optimiser and the
   # uncertainty phase are. Every point below is a separate engine call

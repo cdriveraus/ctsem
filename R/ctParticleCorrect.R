@@ -56,20 +56,20 @@
 #' Two ways to obtain the draws. \code{draws = 'reweight'} (the default) weights
 #' one batch of draws, and what the batch is depends on how the fit's own draws
 #' were made, which is read from the fit's record. After a curvature method
-#' (\code{\link{ctOptimUncertainty}} with \code{'hessian'}, \code{'opg'},
+#' (\code{\link{ctFitUncertainty}} with \code{'hessian'}, \code{'opg'},
 #' \code{'sandwich'} or \code{'surrogate'}) the batch is drawn afresh from a
 #' normal around the estimate \code{scale} times wider than the fit's
 #' covariance, and the weights correct both the normal approximation and the
 #' filter's. The fit's own draws are not reused, because a proposal no wider
 #' than the curvature cannot correct a posterior wider than it. After
-#' \code{ctOptimUncertainty(uncertainty = 'is')}, a bootstrap, or
+#' \code{ctFitUncertainty(uncertainty = 'is')}, a bootstrap, or
 #' \code{\link{ctFitUncertainty}} with \code{uncertainty = 'sample'}, the fit's
 #' draws already sit on the filter posterior, so they are reused and the
 #' weight is the likelihood ratio alone. \code{draws
 #' = 'imis'} draws afresh, adaptively, from a mixture that starts at the fit's
 #' covariance and moves toward the particle posterior, at one particle-filter
 #' evaluation per proposal draw; it is the same sampler
-#' \code{ctOptimUncertainty(uncertainty = 'is')} and \code{\link{ctLaplaceCorrect}}
+#' \code{ctFitUncertainty(uncertainty = 'is')} and \code{\link{ctLaplaceCorrect}}
 #' use, and the remedy when one batch leaves too few effective draws.
 #'
 #' The cost is one particle-filter evaluation per draw, so this takes minutes to

@@ -6,7 +6,6 @@
 \usage{
 ctJuliaSetup(
   project = NULL,
-  revision = "locked",
   julia_bin = NULL,
   threads = NULL,
   force = FALSE,
@@ -17,10 +16,6 @@ ctJuliaSetup(
 \item{project}{Optional local ContinuousTimeSEM.jl checkout to use instead of
 the copy that ships with ctsem. Rarely needed: the engine is part of ctsem
 and is edited in place under \code{inst/julia/}.}
-
-\item{revision}{Ignored; retained for backward compatibility. The engine is
-part of ctsem, and the version \code{ctJuliaStatus()} reports is a hash of
-its source rather than something selectable.}
 
 \item{julia_bin}{Optional Julia binary directory.}
 
@@ -64,14 +59,15 @@ The first call downloads and precompiles those dependencies (roughly 120 MB)
 and compiles the engine, which takes several minutes; later calls in new
 sessions reuse both.
 
-The engine is compiled in advance for one small model on each route -- one
-latent process with two indicators and a random intercept -- and with it the
-code that every model on that route shares. The first fit of any other model
-shape in each R session compiles the code specialised to that model, so it
-takes longer than later fits of the same shape: about a minute for a small
-model on the augmented route and three to four minutes on the Laplace route,
-against seconds once compiled. This is paid once per shape per session rather
-than once per fit; time a fit after one warm-up fit, not from a fresh session.
+The engine is compiled in advance, by fitting a small model on each route,
+and every model of a route runs that same compiled code: a model's sizes,
+parameters and state-dependent cells are data to the engine rather than part
+of its types. So the first fit of a new model in a session compiles little,
+and takes seconds more than later fits rather than minutes. A model with a
+categorical indicator, or a Laplace unit with more than four random effects,
+compiles a little more the first time. \code{ctFit(forcerecompile = TRUE)}
+compiles a heavily state-dependent model's expressions for faster gradients,
+at a minute or more of compile.
 
 Pressing Escape (or Ctrl-C) during a julia fit returns to the R prompt at
 once, and keeps the Julia session and everything it has compiled. Julia
@@ -87,6 +83,12 @@ If \pkg{JuliaConnectoR} or Julia itself is missing, this offers to install it
 rather than failing -- the same thing \code{\link{ctJuliaInstall}} does, which
 is the function to reach for when setting the backend up deliberately, or
 from a script.
+}
+\examples{
+\dontrun{
+ctJuliaSetup()                         # prepare the engine, asking first
+ctJuliaSetup(threads = 8, force = TRUE) # restart the session wider
+}
 }
 \seealso{
 \code{\link{ctJuliaInstall}}, \code{\link{ctJuliaStatus}}

@@ -26,3 +26,16 @@ Available on the Julia backend, which records the trace during the
   fit and returns it as \code{fit$optim$trace}. For output while a fit is still
   running, see \code{optimcontrol$callback} in \code{\link{ctFit}}.
 }
+\examples{
+\donttest{
+# Needs a working julia backend, so the example is inert where Julia is
+# absent -- including on CRAN, whose check machines have none.
+if (isTRUE(ctJuliaStatus()$available)) {
+  model <- ctModel(type = 'ct', manifestNames = 'Y1', latentNames = 'eta1',
+    LAMBDA = matrix(1))
+  model$pars$indvarying <- FALSE
+  fit <- ctFit(ctstantestdat, model, backend = 'julia', cores = 1)
+  ctTracePlot(fit)
+}
+}
+}

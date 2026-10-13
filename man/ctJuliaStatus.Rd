@@ -27,3 +27,7 @@ safe to call on a machine with no Julia and no \pkg{JuliaConnectoR}, where it
 says so rather than erroring. \code{\link{ctJuliaInstall}} supplies whatever
 it reports as missing.
 }
+\examples{
+status <- ctJuliaStatus()
+status$available
+}

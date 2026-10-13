@@ -17,7 +17,7 @@ coef.ctStanFit <- function(object, ...) {
   # raw draws is what `summary()` reports for it, so it is what is returned
   # here too.
   if (is.null(raw)) raw <- colMeans(ctStanRawSamples(object))
-  as.numeric(raw)
+  .ctFitNameRaw(object, raw)
 }
 
 #' @export

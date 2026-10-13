@@ -135,6 +135,16 @@
   unlist(ctFitgetparnamesfromraw(fit))
 }
 
+# A raw parameter vector labelled by parameter, as the uncertainty slots
+# already are; what coef() returns on both backends. Left unnamed rather than
+# mislabelled if the names cannot be matched up.
+.ctFitNameRaw <- function(fit, raw) {
+  raw <- as.numeric(raw)
+  nms <- tryCatch(.ctFitRawParNames(fit), error = function(e) NULL)
+  if (length(nms) == length(raw)) names(raw) <- nms
+  raw
+}
+
 # Label the raw-scale uncertainty fields -- the draws, their covariance, and the
 # standard errors read off its diagonal -- with the raw parameter names, so that
 # `fit$estimate$se` or `apply(fit$estimate$rawposterior, 2, quantile)` says which

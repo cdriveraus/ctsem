@@ -384,6 +384,8 @@
 #'
 #' @return \code{NULL}, invisibly.
 #' @seealso \code{\link{ctFitUncertainty}}, \code{\link{ctJuliaSetup}}
+#' @examples
+#' ctJuliaWorkersStop() # nothing to do when no pool is running
 #' @export
 ctJuliaWorkersStop <- function() {
   invisible(.ctBackendWarmStop(NULL))

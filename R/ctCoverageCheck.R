@@ -1,5 +1,5 @@
-#' Coverage Check Function
-#' 
+#' Check interval coverage by simulation
+#'
 #' Performs a coverage check analysis by generating data from a model, fitting it multiple times
 #' with different fit arguments, and plotting the results. Works with \code{fitArgs}/
 #' \code{fittingModel} combinations that fit with either \code{backend='stan'} (the
@@ -19,9 +19,22 @@
 #' @param generateCores Number of cores for \code{\link{ctGenerateFromFit}}
 #' when generating replicated datasets, at most \code{cores}. Defaults to
 #' \code{fitCores}; set it explicitly to use more cores for generation.
-#' @param plotEvery Print plots every n iterations (default = 10)
+#' @param plotEvery Print plots every n iterations; by default every 10, or
+#' every \code{cores} iterations when that is more.
 #' 
 #' @return A list containing the results data.table and final plots
+#' @examples
+#' \dontrun{
+#' # Does the Hessian interval cover as often as it says? 100 datasets
+#' # generated from the fit to ctstantestdat, each fitted twice.
+#' model <- ctModel(type = 'ct', manifestNames = 'Y1', latentNames = 'eta1',
+#'   LAMBDA = matrix(1))
+#' check <- ctCoverageCheck(ctstantestdat, model, niter = 100,
+#'   fitArgs = list(
+#'     hessian = list(optimcontrol = list(uncertainty = 'hessian')),
+#'     bootstrap = list(optimcontrol = list(uncertainty = 'bootstrap'))),
+#'   cores = 4)
+#' }
 #' @export
 
 ctCoverageCheck <- function(initialData, fittingModel, niter, fitArgs, 

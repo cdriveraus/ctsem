@@ -74,6 +74,22 @@ difference you care about (raise \code{particles}, or set \code{replicates}
 for an empirical standard error), and doubling \code{substeps} should not
 move the answer.
 }
+\examples{
+\donttest{
+# Needs a working julia backend, so the example is inert where Julia is
+# absent -- including on CRAN, whose check machines have none.
+if (isTRUE(ctJuliaStatus()$available)) {
+  model <- ctModel(type = 'ct', manifestNames = 'Y1', latentNames = 'eta1',
+    LAMBDA = matrix(1))
+  model$pars$indvarying <- FALSE
+  fit <- ctFit(ctstantestdat, model, backend = 'julia', cores = 1)
+  # A linear Gaussian model, where the filter is exact: the difference
+  # should be within a few standard errors of zero.
+  check <- ctParticleLik(fit, particles = 1000, substeps = 5)
+  check[c('loglik', 'se', 'fit_loglik', 'difference')]
+}
+}
+}
 \seealso{
 \code{\link{ctParticleCorrect}} applies the correction this
   measures, to the fit's posterior draws.
