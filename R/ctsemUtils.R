@@ -257,7 +257,7 @@ log1p_exp <- function(x) log1p(exp(x))
 ctDensityList<-function(x,xlimsindex='all',ylimsindex='all',cut=FALSE,plot=FALSE,
   grouplabels=names(x),
   ylab='Density',
-  xlab='Par. Value',probs=c(.05,.95),main='',colvec=NA){
+  xlab='Par. Value',probs=c(.05,.95),main='',colvec=NA,smoothness=1){
   
   if(all(xlimsindex=='all')) xlimsindex <- 1:length(x)
 
@@ -280,7 +280,7 @@ ctDensityList<-function(x,xlimsindex='all',ylimsindex='all',cut=FALSE,plot=FALSE
     })
 
   denslist<-lapply(1:length(x),function(xi) {
-    bw=exp(log(bw[xi]) + (mean(log(bw))-log(bw[xi]))*.3)
+    bw=smoothness*exp(log(bw[xi]) + (mean(log(bw))-log(bw[xi]))*.3)
     d=stats::density(x[[xi]],bw=bw,n=5000,from=xlims[1],to=xlims[2],na.rm=TRUE)
     return(d)
   })

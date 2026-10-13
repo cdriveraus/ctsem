@@ -268,9 +268,9 @@ ctModeltoNumeric <- function(ctmodelobj){
 # The spec accounts for every free parameter or refuses to be built, so there
 # is no unnamed remainder; the zero-filled matrix is there to make that
 # assumption visible rather than to be relied on.
-.ctPriorRawDraws <- function(standata, npar, nsamples){
+.ctPriorRawDraws <- function(standata, npar, nsamples,
+  spec = .ctBackendPriorSpec(standata, npar)){
   .ctPriorRejectUnsamplable(standata)
-  spec <- .ctBackendPriorSpec(standata, npar)
   sdvec <- spec$scale / sqrt(spec$weight)
   draws <- matrix(0, nrow = nsamples, ncol = npar)
   draws[, spec$index] <- stats::rnorm(nsamples * length(spec$index)) *

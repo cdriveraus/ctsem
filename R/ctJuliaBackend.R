@@ -5573,10 +5573,8 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
   # nothing to place the rest of the vector, which is what this stage is for.
   warmspec <- function() {
     spec <- model_spec
-    spec$priors <- try(if (!is.null(model_spec$laplace))
-      .ctBackendLaplacePriorSpec(prepared_data, model_spec$laplace, npar)
-      else .ctBackendPriorSpec(prepared_data, npar,
-        nextra = NROW(model_spec$ti_missing)), silent = TRUE)
+    spec$priors <- try(.ctJuliaFullPriorSpec(model_spec, prepared_data, npar),
+      silent = TRUE)
     if (inherits(spec$priors, "try-error") || !length(spec$priors$index))
       return(NULL)
     spec
@@ -6573,6 +6571,18 @@ plot.ctJuliaFit <- function(x, types = "all", wait = TRUE, ...) {
 
 #' @export
 coef.ctJuliaFit <- function(object, ...) .ctFitNameRaw(object, object$estimate$raw)
+
+# ctsem's N(0,1) raw prior on every coordinate of a julia model's parameter
+# vector -- what `priors = TRUE` builds -- whatever prior the model was fitted
+# with: the prior warm-up starts from it, and ctPlotPosterior() draws it.
+# `.ctBackendLaplacePriorSpec` maps it across levels on the Laplace route and
+# refuses a shape it cannot map rather than mis-assigning it.
+.ctJuliaFullPriorSpec <- function(model_spec, prepared_data, npar) {
+  if (!is.null(model_spec$laplace))
+    .ctBackendLaplacePriorSpec(prepared_data, model_spec$laplace, npar)
+  else .ctBackendPriorSpec(prepared_data, npar,
+    nextra = NROW(model_spec$ti_missing))
+}
 
 # The uncertainty step's covariance; on a sampled fit that is the draws' own.
 #' @export
