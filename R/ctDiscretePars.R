@@ -422,8 +422,6 @@ ctDiscreteParsDrift<-function(ctpars,times, impulseType,  standardise,cov=FALSE,
   return(ctpars$dtDRIFT)
 }
 
-ctStanDiscreteParsDrift <- ctDiscreteParsDrift
-
 #'ctDiscreteParsPlot
 #'
 #'Plots the output from \code{\link{ctDiscretePars}}, for model implied regression strengths at specified times for continuous time models fit with ctStanFit.
