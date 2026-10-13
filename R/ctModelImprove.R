@@ -54,16 +54,18 @@
 #'     phase set from the clock at its first row and free to deviate; the
 #'     phase predictors are added to the data.}
 #'   \item{unique}{a process of its own, persistent, loading on one item;
-#'     and, where the fixed-cell test points to a measurement error
-#'     covariance, a process the two items share
+#'     and, where the \code{pairs} family finds two items' errors correlated
+#'     within an occasion, a process the two share
 #'     (\code{ctModelUniqueProcess(shared = TRUE)}): an error is meant to be
 #'     random, and co-movement within an occasion that the latents' innovation
 #'     covariances do not explain is read as a process faster than the
-#'     occasions.}
-#'   \item{errorcov}{not by default: the measurement error covariance itself
-#'     freed, for designs with a reason for correlated error, such as a method
-#'     the items share. With it, a flagged covariance is freed rather than
-#'     given a shared process.}
+#'     occasions. Like the other structural changes it is tried once the
+#'     score tests indicate nothing, ranked against them by the check's
+#'     evidence, so that it does not absorb misfit that belongs to a cycle or
+#'     to one item's own process.}
+#'   \item{errorcov}{not by default: a measurement error covariance the score
+#'     test flags is freed, for designs with a reason for correlated error,
+#'     such as a method the items share, and no shared process is proposed.}
 #'   \item{order}{a latent process made second order.}
 #' }
 #'
@@ -234,7 +236,7 @@ ctModelImprove <- function(fit, covariates = NULL,
         if (ad$adequate) { stopped <- 'adequate'; break }
         if (!is.null(close) && isTRUE(ad$close_fit)) { stopped <- 'close fit'; break }
       } else { stopped <- 'nothing indicated'; break }
-      proposals <- .ctImproveStructural(model, relax, candidates, ad, current)
+      proposals <- .ctImproveStructural(model, relax, candidates, ad, current, alpha)
       proposals <- proposals[!vapply(proposals, `[[`, '', 'key') %in% rejected]
       structural <- TRUE
       if (!length(proposals)) { stopped <- 'not adequate, nothing left to try'; break }
@@ -381,8 +383,9 @@ ctModelImprove <- function(fit, covariates = NULL,
 # What the screen indicates, as edits: one per heterogeneity parameter, state
 # term and fixed cell significant within its family, and one per covariate
 # whose joint test is significant, adding it with effects on the parameters
-# its tests single out. A measurement error covariance becomes a process the
-# two items share, unless `relax` holds 'errorcov'.
+# its tests single out. A measurement error covariance is freed only with
+# 'errorcov' in `relax`; otherwise the pairs family's evidence proposes a
+# process the items share, at the structural stage (`.ctImproveStructural`).
 .ctImproveProposals <- function(st, model, alpha, current = NULL,
   relax = c('unique', 'fixed')) {
   out <- list()
@@ -490,19 +493,7 @@ ctModelImprove <- function(fit, covariates = NULL,
   f <- st$fixed$cells
   if (!is.null(f)) for (r in which(f$p_adj < alpha)) {
     cell <- f[r, ]
-    if (cell$matrix == 'MANIFESTVAR' && !'errorcov' %in% relax) {
-      if (!'unique' %in% relax || !isTRUE(model$continuoustime)) next
-      items <- model$manifestNames[sort(c(cell$row, cell$col))]
-      if (paste0('u_', paste(items, collapse = '_')) %in% model$latentNames) next
-      out[[length(out) + 1L]] <- list(key = paste0('shared:', paste(items, collapse = ',')),
-        family = 'unique', label = paste0(items[1], ' and ', items[2],
-          ' given a process they share'), p = cell$p, rank = cell$p, class = cell$class,
-        start = .ctImproveUniqueStart(model, current, items, shared = TRUE,
-          sign = if (isTRUE(cell$estimate < 0)) -1 else 1),
-        edit = local({ items <- items; function(model, data, covs, args = list())
-          list(model = ctModelUniqueProcess(model, items, shared = TRUE), data = data) }))
-      next
-    }
+    if (cell$matrix == 'MANIFESTVAR' && !'errorcov' %in% relax) next
     out[[length(out) + 1L]] <- list(key = paste0('fixed:', cell$cell), family = 'fixed',
       label = paste0(cell$cell, ' freed'), p = cell$p, rank = cell$p, class = cell$class,
       edit = local({ cell <- cell; function(model, data, covs, args = list()) {
@@ -525,12 +516,13 @@ ctModelImprove <- function(fit, covariates = NULL,
 # adequacy check's evidence for it, the latent's own standardised updates
 # still positively correlated over some time gap (the smallest such p), and
 # goes first where there is any; the rest rank alike.
-.ctImproveStructural <- function(model, relax, candidates, ad, current = NULL) {
+.ctImproveStructural <- function(model, relax, candidates, ad, current = NULL,
+  alpha = 0.05) {
   out <- list()
   # A cycle the periodic family found, at the period its strongest positive
   # statistic names, driving every latent that has innovations of its own.
   if ('periodic' %in% relax && isTRUE(model$continuoustime)) {
-    cyc <- .ctImprovePeriodicEvidence(ad)
+    cyc <- .ctImprovePeriodicEvidence(ad, .ctModelCyclePeriods(model))
     if (!is.null(cyc)) {
       name <- 'cycle'
       while (any(startsWith(c(model$latentNames, model$TIpredNames), paste0(name, '_'))))
@@ -561,10 +553,38 @@ ctModelImprove <- function(fit, covariates = NULL,
           list(model = ctModelUniqueProcess(model, item), data = data) }))
     }
   }
+  # Two items whose errors are correlated within an occasion (the pairs
+  # family), given a process they share: the reading of a measurement error
+  # covariance unless 'errorcov' frees the covariance at the screen. On the
+  # own-evidence scale, the pair's p times the pairs tested, and only where
+  # that is below alpha, since pairs grow with the square of the items.
+  if ('unique' %in% relax && !'errorcov' %in% relax && isTRUE(model$continuoustime)) {
+    s <- if (is.null(ad)) NULL else ad$statistics
+    pr <- if (is.null(s)) NULL else s[s$family == 'pairs' & is.finite(s$z), , drop = FALSE]
+    for (r in seq_len(if (is.null(pr)) 0L else nrow(pr))) {
+      items <- strsplit(pr$statistic[r], ':', fixed = TRUE)[[1]]
+      if (length(items) != 2L || !all(items %in% model$manifestNames)) next
+      items <- model$manifestNames[sort(match(items, model$manifestNames))]
+      if (paste0('u_', paste(items, collapse = '_')) %in% model$latentNames) next
+      evidence <- min(1, pr$p[r] * nrow(pr))
+      if (!isTRUE(evidence < alpha)) next
+      out[[length(out) + 1L]] <- list(key = paste0('shared:', paste(items, collapse = ',')),
+        family = 'unique', label = paste0(items[1], ' and ', items[2],
+          ' given a process they share'), p = evidence, rank = evidence,
+        start = .ctImproveUniqueStart(model, current, items, shared = TRUE,
+          sign = if (pr$z[r] < 0) -1 else 1),
+        edit = local({ items <- items; function(model, data, covs, args = list())
+          list(model = ctModelUniqueProcess(model, items, shared = TRUE), data = data) }))
+    }
+  }
+  # A slow process or a second order for a latent with innovations of its
+  # own: not for a cycle's clock, which turns as written, nor for the level
+  # of a process already second order.
+  noisy <- .ctImproveNoisyLatents(model)
   if ('slow' %in% relax && isTRUE(model$continuoustime)) {
     lat <- model$latentNames
     for (i in seq_along(lat)) {
-      if (grepl('^slow_', lat[i]) || paste0('slow_', lat[i]) %in% lat ||
+      if (!i %in% noisy || grepl('^slow_', lat[i]) || paste0('slow_', lat[i]) %in% lat ||
           lat[i] %in% paste0('d', lat)) next
       evidence <- .ctImproveSlowEvidence(ad, lat[i])
       out[[length(out) + 1L]] <- list(key = paste0('slow:', lat[i]), family = 'slow',
@@ -577,7 +597,7 @@ ctModelImprove <- function(fit, covariates = NULL,
   }
   if ('order' %in% relax && isTRUE(model$continuoustime)) {
     for (i in seq_len(model$n.latent)) {
-      if (paste0('d', model$latentNames[i]) %in% model$latentNames) next
+      if (!i %in% noisy || paste0('d', model$latentNames[i]) %in% model$latentNames) next
       out[[length(out) + 1L]] <- list(key = paste0('order:', model$latentNames[i]),
         family = 'order', label = paste0(model$latentNames[i], ' made second order'),
         p = NA_real_, rank = 1, edit = local({ i <- i; function(model, data, covs,
@@ -619,12 +639,18 @@ ctModelImprove <- function(fit, covariates = NULL,
 # scanned -- on the terms an item's or a latent's own correlations are ranked
 # by (`.ctImproveOwnEvidence`). The family's p, which the bootstrap floors at
 # 1 / (nboot + 1), put a daily rhythm at z = 11 behind every item process on
-# the Fisher data. NULL when the family did not run or found no positive one.
-.ctImprovePeriodicEvidence <- function(ad) {
+# the Fisher data. Periods within one per cent of one in `exclude` -- a cycle
+# the model has -- are passed over: a second 24 hour clock was proposed after
+# the first was kept. NULL when the family did not run or found no positive
+# statistic at another period.
+.ctImprovePeriodicEvidence <- function(ad, exclude = numeric()) {
   if (is.null(ad) || is.null(ad$families)) return(NULL)
   f <- ad$families[ad$families$family == 'periodic', , drop = FALSE]
   s <- ad$statistics[ad$statistics$family == 'periodic' & is.finite(ad$statistics$z) &
     ad$statistics$z > 0, , drop = FALSE]
+  at <- as.numeric(sub('.* period ', '', s$statistic))
+  s <- s[is.finite(at) & !vapply(at, function(a) any(abs(a - exclude) <= 0.01 * a),
+    logical(1)), , drop = FALSE]
   if (!nrow(f) || !nrow(s)) return(NULL)
   best <- which.max(s$z)
   period <- as.numeric(sub('.* period ', '', s$statistic[best]))

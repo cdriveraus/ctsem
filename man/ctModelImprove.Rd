@@ -123,16 +123,18 @@ The relaxations, in the language of the model:
     phase set from the clock at its first row and free to deviate; the
     phase predictors are added to the data.}
   \item{unique}{a process of its own, persistent, loading on one item;
-    and, where the fixed-cell test points to a measurement error
-    covariance, a process the two items share
+    and, where the \code{pairs} family finds two items' errors correlated
+    within an occasion, a process the two share
     (\code{ctModelUniqueProcess(shared = TRUE)}): an error is meant to be
     random, and co-movement within an occasion that the latents' innovation
     covariances do not explain is read as a process faster than the
-    occasions.}
-  \item{errorcov}{not by default: the measurement error covariance itself
-    freed, for designs with a reason for correlated error, such as a method
-    the items share. With it, a flagged covariance is freed rather than
-    given a shared process.}
+    occasions. Like the other structural changes it is tried once the
+    score tests indicate nothing, ranked against them by the check's
+    evidence, so that it does not absorb misfit that belongs to a cycle or
+    to one item's own process.}
+  \item{errorcov}{not by default: a measurement error covariance the score
+    test flags is freed, for designs with a reason for correlated error,
+    such as a method the items share, and no shared process is proposed.}
   \item{order}{a latent process made second order.}
 }
 

@@ -284,25 +284,32 @@ test_that("items can share a process, loading on the first at one and the rest f
   expect_error(ctModelUniqueProcess(m, 'Y2', shared = TRUE), 'two items')
 })
 
-# The search reads a flagged measurement error covariance as a process the
-# items share; freeing the covariance itself is asked for by 'errorcov'.
-test_that("a flagged error covariance is proposed as a shared process unless errorcov", {
+# The search reads errors correlated within an occasion as a process the items
+# share, proposed at the structural stage from the pairs family; the score
+# test's error covariance is freed only when 'errorcov' asks for it.
+test_that("correlated errors get a shared process from the checks; errorcov frees the cell", {
   m <- .ho_ct()
   st <- list(fixed = list(cells = data.frame(cell = 'MANIFESTVAR[Y2,Y1]',
     matrix = 'MANIFESTVAR', row = 2L, col = 1L, LM = 30, p = 1e-8, estimate = -0.2,
     se = 0.04, suggested = 'manifestvar_Y2_Y1', transform = 'param', p_adj = 1e-8,
     class = 1L, stringsAsFactors = FALSE)))
-  pr <- ctsem:::.ctImproveProposals(st, m, 0.05, NULL,
-    relax = c('heterogeneity', 'fixed', 'unique'))
-  expect_length(pr, 1L)
-  expect_identical(pr[[1]]$family, 'unique')
-  expect_identical(pr[[1]]$label, 'Y1 and Y2 given a process they share')
-  edited <- pr[[1]]$edit(m, NULL, NULL)$model
-  expect_true('u_Y1_Y2' %in% edited$latentNames)
+  expect_length(ctsem:::.ctImproveProposals(st, m, 0.05, NULL,
+    relax = c('heterogeneity', 'fixed', 'unique')), 0L)
   pe <- ctsem:::.ctImproveProposals(st, m, 0.05, NULL, relax = c('fixed', 'errorcov'))
   expect_identical(pe[[1]]$family, 'fixed')
   expect_identical(pe[[1]]$label, 'MANIFESTVAR[Y2,Y1] freed')
-  expect_length(ctsem:::.ctImproveProposals(st, m, 0.05, NULL, relax = 'fixed'), 0L)
+  ad <- list(statistics = data.frame(family = c('pairs', 'residuals'),
+    statistic = c('Y1:Y2', 'Y1~Y1 gap <=3'), z = c(-6, -1), p = c(2e-9, 0.3),
+    stringsAsFactors = FALSE))
+  pr <- ctsem:::.ctImproveStructural(m, 'unique', NULL, ad, NULL, 0.05)
+  expect_length(pr, 1L)
+  expect_identical(pr[[1]]$label, 'Y1 and Y2 given a process they share')
+  expect_equal(pr[[1]]$p, 2e-9)
+  expect_true('u_Y1_Y2' %in% pr[[1]]$edit(m, NULL, NULL)$model$latentNames)
+  expect_length(ctsem:::.ctImproveStructural(m, c('unique', 'errorcov'), NULL, ad, NULL,
+    0.05), 0L)
+  ad$statistics$p[1] <- 0.06
+  expect_length(ctsem:::.ctImproveStructural(m, 'unique', NULL, ad, NULL, 0.05), 0L)
 })
 
 test_that("the fixed-cell screen leaves a latent without innovations as written", {
@@ -364,4 +371,24 @@ test_that("an innovation sd is scaled by a state through PARS, other cells untou
   vm <- ctsem:::.ctScoreVolatilityModel(m)
   expect_equal(nrow(vm$terms), 4L)
   expect_setequal(paste(vm$terms$i, vm$terms$m), c('1 1', '1 2', '2 1', '2 2'))
+})
+
+test_that("a model's cycles are not proposed again, nor given slow processes or a second order", {
+  cm <- ctModelPeriodicComponent(.ho_ct(), 24, indices = 1:2, individual = FALSE)
+  expect_equal(ctsem:::.ctModelCyclePeriods(cm), 24)
+  expect_equal(ctsem:::.ctModelCyclePeriods(.ho_ct()), numeric())
+  ad <- list(families = data.frame(family = 'periodic', p = 1e-4),
+    statistics = data.frame(family = 'periodic',
+      statistic = c('latent eta1 period 24', 'latent eta1 period 12'), z = c(8, 4),
+      p = c(1e-15, 3e-5), stringsAsFactors = FALSE))
+  # The strongest period the model lacks, not the one it has.
+  expect_equal(ctsem:::.ctImprovePeriodicEvidence(ad)$period, 24)
+  expect_equal(ctsem:::.ctImprovePeriodicEvidence(ad, 24)$period, 12)
+  expect_null(ctsem:::.ctImprovePeriodicEvidence(ad, c(24, 12)))
+  pr <- ctsem:::.ctImproveStructural(cm, c('periodic', 'slow', 'order'), NULL, ad, NULL, 0.05)
+  labels <- vapply(pr, `[[`, '', 'label')
+  expect_true('a cycle of period 12' %in% labels)
+  expect_false('a cycle of period 24' %in% labels)
+  expect_false(any(grepl('cycle_(cos|sin)', labels)))
+  expect_true(all(c('eta1 driven by a slow process', 'eta1 made second order') %in% labels))
 })

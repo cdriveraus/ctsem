@@ -123,3 +123,20 @@ ctPeriodicPhases <- function(datalong, period, name = 'cycle', id = 'id', time =
   datalong[[paste0(name, '_sin0')]] <- sin(2 * pi * t0 / period)
   datalong
 }
+
+# The periods of the cycles a model already has: each clock pair
+# ctModelPeriodicComponent() adds, <name>_cos and <name>_sin, turning at
+# DRIFT[<name>_sin, <name>_cos] = 2 pi / period.
+.ctModelCyclePeriods <- function(model) {
+  lat <- model$latentNames
+  out <- numeric()
+  for (c in which(endsWith(lat, '_cos'))) {
+    s <- match(paste0(sub('_cos$', '', lat[c]), '_sin'), lat)
+    if (is.na(s)) next
+    r <- model$pars[model$pars$matrix == 'DRIFT' & model$pars$row == s &
+      model$pars$col == c, , drop = FALSE]
+    w <- suppressWarnings(as.numeric(r$value))
+    if (length(w) == 1L && is.finite(w) && w > 0) out <- c(out, 2 * pi / w)
+  }
+  out
+}
