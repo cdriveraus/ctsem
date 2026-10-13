@@ -6557,6 +6557,10 @@ plot.ctJuliaFit <- function(x, types = "all", wait = TRUE, ...) {
 #' @export
 coef.ctJuliaFit <- function(object, ...) .ctFitNameRaw(object, object$estimate$raw)
 
+# The uncertainty step's covariance; on a sampled fit that is the draws' own.
+#' @export
+vcov.ctJuliaFit <- function(object, ...) .ctFitNameRawCov(object, object$estimate$cov)
+
 #' @export
 logLik.ctJuliaFit <- function(object, ...) {
   # `object$data` is now the sentinel-cleaned `standata` structure (a list,

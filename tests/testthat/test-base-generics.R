@@ -44,6 +44,24 @@ test_that("coef returns a plain numeric raw parameter vector on both backends", 
   expect_false(anyNA(names(juliaraw)))
 })
 
+test_that("vcov returns the raw covariance, labelled as coef is, on both backends", {
+  stanv <- vcov(ctstantestfit)
+  expect_equal(dim(stanv), rep(length(coef(ctstantestfit)), 2))
+  expect_equal(rownames(stanv), names(coef(ctstantestfit)))
+  expect_equal(unname(sqrt(diag(stanv))),
+    unname(apply(ctstantestfit$stanfit$rawposterior, 2, sd)), tolerance = 0.2)
+
+  skip_without_julia()
+  # The cached julia fit is estonly, so it has no uncertainty to return.
+  expect_error(vcov(.generics_julia_fit()), "ctFitUncertainty")
+  # Eight subjects of six rows leave directions flat, which warns; not the point.
+  withse <- suppressWarnings(ctFitUncertainty(.generics_julia_fit(),
+    uncertainty = 'hessian'))
+  juliav <- vcov(withse)
+  expect_equal(rownames(juliav), names(coef(withse)))
+  expect_equal(unname(sqrt(diag(juliav))), unname(withse$estimate$se))
+})
+
 test_that("logLik returns a logLik with df and nobs on both backends", {
   stanll <- logLik(ctstantestfit)
   expect_s3_class(stanll, 'logLik')

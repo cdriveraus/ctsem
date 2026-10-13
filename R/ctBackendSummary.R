@@ -145,6 +145,17 @@
   raw
 }
 
+# The same for the raw covariance vcov() returns; NULL means the fit carries
+# no uncertainty, which is said rather than returned.
+.ctFitNameRawCov <- function(fit, cv) {
+  if (is.null(cv)) stop("This fit carries no uncertainty; ctFitUncertainty(fit) ",
+    "computes it.", call. = FALSE)
+  cv <- as.matrix(cv)
+  nms <- unname(tryCatch(.ctFitRawParNames(fit), error = function(e) NULL))
+  if (length(nms) == nrow(cv)) dimnames(cv) <- list(nms, nms)
+  cv
+}
+
 # Label the raw-scale uncertainty fields -- the draws, their covariance, and the
 # standard errors read off its diagonal -- with the raw parameter names, so that
 # `fit$estimate$se` or `apply(fit$estimate$rawposterior, 2, quantile)` says which
