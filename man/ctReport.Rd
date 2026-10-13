@@ -89,6 +89,34 @@ than their own curvature (they sit on a ridge with other parameters). It is a
 conditional slice, not a profile likelihood, which is why it is cheap enough
 to run by default; \code{identification} names the ridge directions.
 }
+\section{Checking a fit -- which function answers what}{
+
+\describe{
+\item{Can the data inform every parameter?}{\code{\link{ctIdentify}} before
+  fitting; \code{fit$identifiability} and \code{\link{ctFitProfile}} after.}
+\item{Did the optimiser, or the sampler, get there?}{\code{print(fit)} says
+  whether it converged, \code{summary(fit)} adds R-hat and effective sample
+  sizes for a sampled fit, and \code{\link{ctTracePlot}} draws the
+  optimiser's trace or each chain's draws.}
+\item{How far did the data move each parameter from its prior?}{
+  \code{\link{ctPlotPosterior}}.}
+\item{Does data generated from the fit look like the data?}{
+  \code{\link{ctPostPredPlots}}, and \code{\link{ctFitCheckCov}} for the
+  lagged covariances, split by a group or predictor if wanted.}
+\item{Are the one-step-ahead errors what the model says they are?}{
+  \code{\link{ctResiduals}} and \code{\link{ctACFresiduals}}.}
+\item{Does a richer model fit better, or predict better?}{
+  \code{\link{ctChisqTest}} for nested models, \code{\link{ctLOO}} for
+  out-of-sample prediction.}
+\item{How much do the julia engine's approximations cost?}{
+  \code{\link{ctLaplaceCheck}} for the Laplace approximation of random
+  effects, \code{\link{ctParticleLik}} for the filter's Gaussian
+  approximation of the states.}
+\item{Do the intervals cover as often as they claim?}{
+  \code{\link{ctCoverageCheck}}, by simulation.}
+}
+}
+
 \examples{
 \donttest{
 f <- ctReport(ctstantestfit, folder = file.path(tempdir(), 'ctReport'),
