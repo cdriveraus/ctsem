@@ -150,11 +150,13 @@
 #' @param form How covariates are screened, as for \code{\link{ctScoreTest}};
 #'   \code{'threshold'} lets the search add a covariate as a step.
 #' @param nsamples Generated datasets for the adequacy checks.
-#' @param cores Cores for fitting and testing. With two or more, the refits
-#'   of a round run side by side in worker processes, as sampling chains do,
-#'   each with an equal share of \code{cores}: they are independent, and one
-#'   fit uses its cores only partly. \code{options(ctsem.improve.processes =
-#'   FALSE)} runs them one at a time in this session.
+#' @param cores Cores for fitting and testing. With two or more, once a
+#'   refit has taken longer than half a minute, the refits of later rounds run
+#'   side by side in worker processes, as sampling chains do, each with an
+#'   equal share of \code{cores}: they are independent, one fit uses its cores
+#'   only partly, and a worker takes about half a minute to start.
+#'   \code{options(ctsem.improve.processes = FALSE)} keeps them in this
+#'   session.
 #' @param verbose Report progress.
 #' @return An object of class \code{ctModelImprove}: \code{fit} (the final
 #'   fit), \code{history} (every refit tried: the round, the relaxation, its
@@ -216,6 +218,7 @@ ctModelImprove <- function(fit, covariates = NULL,
   history <- list(); screens <- list(); rejected <- character()
   ad <- NULL
   stopped <- 'maxsteps'
+  slowest <- 0
   for (step in seq_len(maxsteps)) {
     model <- .ctFitBaseModel(current)
     available <- if (is.null(covariates)) NULL else
@@ -269,7 +272,9 @@ ctModelImprove <- function(fit, covariates = NULL,
       edits <- lapply(batch, function(prop) try(prop$edit(model, data, covariates),
         silent = TRUE))
       for (prop in batch) say("Round ", step, ": refitting with ", prop$label)
-      refits <- .ctImproveRefits(current, edits, lapply(batch, `[[`, 'start'), cores)
+      refits <- .ctImproveRefits(current, edits, lapply(batch, `[[`, 'start'), cores,
+        slowest)
+      slowest <- max(slowest, attr(refits, 'seconds'))
       for (b in seq_along(batch)) {
         prop <- batch[[b]]
         edited <- edits[[b]]
@@ -757,37 +762,49 @@ ctModelImprove <- function(fit, covariates = NULL,
 }
 
 # Each edited model refitted (`.ctImproveRefit`), a try-error where the edit
-# or the refit failed. Side by side in worker processes when there are two or
-# more and the cores to share: the refits of a round are independent, and one
-# fit of the Fisher example's model with random dynamics kept about 6 of its
-# 10 cores busy. Each worker takes `cores %/% workers` threads. The pool is the
-# sampling chains' (`.ctBackendWarmWorkers`), which persists, so a later round
-# finds its sessions started and the engine loaded; a fit made there rebuilds
-# its objective in this session when it is next evaluated, the cache being
-# keyed on the specification. One at a time in this session otherwise, or
-# where the pool cannot be had.
-.ctImproveRefits <- function(current, edits, starts, cores) {
-  here <- function(i) if (inherits(edits[[i]], 'try-error')) edits[[i]] else
-    try(.ctImproveRefit(current, edits[[i]]$model, edits[[i]]$data, cores, starts[[i]],
-      edits[[i]]$args), silent = TRUE)
+# or the refit failed, with the longest refit made in this session as
+# attribute `seconds`. Side by side in worker processes when there are two or
+# more, the cores to share, and a refit has already taken `slowest` seconds
+# above 30: the refits of a round are independent, and one fit of the Fisher
+# example's model with random dynamics kept about 6 of its 10 cores busy. The
+# threshold is the restarts' (`.ctBackendRestarts`): a worker takes 30-60 s
+# to start, and three refits of a few seconds each took 46 s in fresh workers
+# against 27 s here. Each worker takes `cores %/% workers` threads. The pool
+# is the sampling chains' (`.ctBackendWarmWorkers`), which persists, so later
+# rounds find it started; a fit made there rebuilds its objective in this
+# session when it is next evaluated, the cache being keyed on the
+# specification.
+.ctImproveRefits <- function(current, edits, starts, cores, slowest = 0) {
+  seconds <- 0
+  here <- function(i) {
+    if (inherits(edits[[i]], 'try-error')) return(edits[[i]])
+    started <- proc.time()[['elapsed']]
+    out <- try(.ctImproveRefit(current, edits[[i]]$model, edits[[i]]$data, cores,
+      starts[[i]], edits[[i]]$args), silent = TRUE)
+    seconds <<- max(seconds, proc.time()[['elapsed']] - started)
+    out
+  }
+  inhere <- function() structure(lapply(seq_along(edits), here), seconds = seconds)
   ok <- which(!vapply(edits, inherits, logical(1), 'try-error'))
   workers <- min(length(ok), as.integer(cores))
-  if (workers < 2L || !isTRUE(getOption('ctsem.improve.processes', TRUE)) ||
-      !.ctFitIsJulia(current) || !.ctBackendCanWarm()) return(lapply(seq_along(edits), here))
+  if (workers < 2L || !isTRUE(slowest > 30) ||
+      !isTRUE(getOption('ctsem.improve.processes', TRUE)) ||
+      !.ctFitIsJulia(current) || !.ctBackendCanWarm()) return(inhere())
   threads <- max(1L, as.integer(cores) %/% workers)
   handles <- .ctBackendWarmWorkers(current, workers, values = .ctFitRawEstimate(current),
     threads = threads)
-  if (.ctBackendWarmWait(handles) < 1L) return(lapply(seq_along(edits), here))
+  if (.ctBackendWarmWait(handles) < 1L) return(inhere())
   futures <- lapply(seq_along(edits), function(i) if (!i %in% ok) NULL else
     tryCatch(future::future(utils::getFromNamespace('.ctImproveRefit', 'ctsem')(current,
       edits[[i]]$model, edits[[i]]$data, threads, starts[[i]], edits[[i]]$args),
       seed = TRUE), error = function(e) NULL))
-  lapply(seq_along(edits), function(i) {
+  out <- lapply(seq_along(edits), function(i) {
     if (!i %in% ok) return(edits[[i]])
     if (is.null(futures[[i]])) return(here(i))
     tryCatch(future::value(futures[[i]]), error = function(e)
       structure(conditionMessage(e), class = 'try-error', condition = e))
   })
+  structure(out, seconds = seconds)
 }
 
 # Refit with an edited model, prepared as the current fit was and warm started
