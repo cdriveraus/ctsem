@@ -29,7 +29,7 @@
 #'   \pkg{loo} package. The K-fold arguments \code{folds}, \code{parallelFolds},
 #'   \code{tol}, \code{keepfirstobs}, \code{leaveOutN}, \code{refit} and
 #'   \code{casewiseApproximation} mean nothing to it and are refused if given.
-#' @param ndraws Number of importance sampling draws for \code{method = 'psis'}.
+#' @param nsamples Number of importance sampling draws for \code{method = 'psis'}.
 #'
 #' @details Works for \code{backend='julia'} fits as well as stan ones. There,
 #' a held-out row is withheld by setting its manifest observations to missing
@@ -137,7 +137,7 @@
 ctLOO <- function(fit, folds = 10, cores = 2, parallelFolds = FALSE, tol = 1e-5,
   subjectwise = ifelse(length(unique(.ctFitRowSubject(fit))) >= folds, TRUE, FALSE),
   keepfirstobs = FALSE, leaveOutN = NA, refit = TRUE, casewiseApproximation = FALSE,
-  method = c("kfold", "psis"), ndraws = 500) {
+  method = c("kfold", "psis"), nsamples = 500) {
 
   method <- match.arg(method)
   if (identical(method, "psis")) {
@@ -155,11 +155,11 @@ ctLOO <- function(fit, folds = 10, cores = 2, parallelFolds = FALSE, tol = 1e-5,
         " or use method = 'kfold'.", call. = FALSE)
     }
     if (missing(subjectwise)) subjectwise <- TRUE
-    return(.ctBackendLOOPsis(fit, subjectwise = subjectwise, ndraws = ndraws,
+    return(.ctBackendLOOPsis(fit, subjectwise = subjectwise, ndraws = nsamples,
       cores = cores))
   }
-  if (!missing(ndraws)) {
-    stop("ndraws is used only by method = 'psis'.", call. = FALSE)
+  if (!missing(nsamples)) {
+    stop("nsamples is used only by method = 'psis'.", call. = FALSE)
   }
 
   if(is.na(as.integer(folds))) stop('Folds must be an integer')
@@ -764,7 +764,7 @@ ctLOO <- function(fit, folds = 10, cores = 2, parallelFolds = FALSE, tol = 1e-5,
   }
   ndraws <- suppressWarnings(as.integer(ndraws)[1L])
   if (is.na(ndraws) || ndraws < 50L) {
-    stop("ndraws must be a whole number of at least 50.", call. = FALSE)
+    stop("nsamples must be a whole number of at least 50.", call. = FALSE)
   }
   spec <- .ctBackendSpec(fit)
   # The Laplace posterior is what the draws are corrected to, so they are

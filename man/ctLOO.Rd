@@ -16,7 +16,7 @@ ctLOO(
   refit = TRUE,
   casewiseApproximation = FALSE,
   method = c("kfold", "psis"),
-  ndraws = 500
+  nsamples = 500
 )
 }
 \arguments{
@@ -56,7 +56,7 @@ leave-one-out, available only for \code{backend = 'julia'} fits with
 \code{tol}, \code{keepfirstobs}, \code{leaveOutN}, \code{refit} and
 \code{casewiseApproximation} mean nothing to it and are refused if given.}
 
-\item{ndraws}{Number of importance sampling draws for \code{method = 'psis'}.}
+\item{nsamples}{Number of importance sampling draws for \code{method = 'psis'}.}
 }
 \value{
 For \code{method = 'kfold'}, a list with \code{foldrows},

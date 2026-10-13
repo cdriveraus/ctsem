@@ -141,9 +141,9 @@ test_that("PSIS leave-one-subject-out matches the exact integral over the popula
   expect_length(est, 2L)
 
   set.seed(4)
-  psis <- suppressWarnings(ctLOO(fit, method = "psis", ndraws = 1000))
+  psis <- suppressWarnings(ctLOO(fit, method = "psis", nsamples = 1000))
   set.seed(4)
-  more <- suppressWarnings(ctLOO(fit, method = "psis", ndraws = 4000))
+  more <- suppressWarnings(ctLOO(fit, method = "psis", nsamples = 4000))
   expect_s3_class(psis, "ctLOOpsis")
   expect_equal(nrow(psis$pointwise), 16L)
   expect_equal(psis$ndropped, 0L)
@@ -185,10 +185,10 @@ test_that("PSIS leave-one-row-out matches a grid over each subject's intercept",
   est <- as.numeric(fit$estimate$raw)
   set.seed(5)
   psis <- suppressWarnings(ctLOO(fit, method = "psis", subjectwise = FALSE,
-    ndraws = 1000))
+    nsamples = 1000))
   set.seed(5)
   more <- suppressWarnings(ctLOO(fit, method = "psis", subjectwise = FALSE,
-    ndraws = 4000))
+    nsamples = 4000))
   expect_identical(psis$level, "row")
   expect_equal(nrow(psis$pointwise), nrow(ctsem:::.ctBackendSpec(fit)$data))
 
@@ -241,7 +241,7 @@ test_that("PSIS is refused by name where it does not apply", {
   expect_error(ctLOO(fit, method = "psis", folds = 3), "folds is not used")
   expect_error(ctLOO(fit, method = "psis", refit = FALSE, leaveOutN = 2),
     "leaveOutN, refit are not used")
-  expect_error(ctLOO(fit, ndraws = 100), "ndraws is used only by method = 'psis'")
+  expect_error(ctLOO(fit, nsamples = 100), "nsamples is used only by method = 'psis'")
 
   estonly <- fit
   estonly$estimate$cov <- NULL
