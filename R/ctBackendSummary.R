@@ -1726,7 +1726,8 @@ ctBackendParMatrices <- function(fit, raw = NULL, tipreds = NULL, state = NULL,
   }
   # The thresholds are the ones `.ctSampleWarn()` warns at, so the summary and
   # the fit-time warning cannot disagree about whether a run failed.
-  bad <- (is.finite(worst) && worst > 1.01) ||
+  rhatmax <- .ctSampleRhatCeiling(fit$sample)
+  bad <- (is.finite(worst) && worst > rhatmax) ||
     (!is.na(divergent) && divergent > 0L)
   if (bad) {
     # Not "these are not posterior summaries": a run can mix perfectly in the
@@ -1734,7 +1735,7 @@ ctBackendParMatrices <- function(fit, raw = NULL, tipreds = NULL, state = NULL,
     # commonly does. The reader is sent to the column rather than told to
     # discard the table.
     note <- paste0(note, " The chains have not converged, so any estimate with ",
-      "an R-hat above 1.01 is not a posterior summary. See fit$sample.")
+      "an R-hat above ", rhatmax, " is not a posterior summary. See fit$sample.")
   } else if (is.finite(fewest) && fewest < .ctSampleEssFloor(fit$sample)) {
     note <- paste0(note, " Too few effective draws for reliable intervals.")
   }
