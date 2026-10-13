@@ -151,8 +151,9 @@
 #'   \code{'threshold'} lets the search add a covariate as a step.
 #' @param nsamples Generated datasets for the adequacy checks.
 #' @param cores Cores for fitting and testing. With two or more, once a
-#'   refit has taken longer than half a minute, the refits of later rounds run
-#'   side by side in worker processes, as sampling chains do, each with an
+#'   refit has taken longer than half a minute, the refits of later rounds,
+#'   of pruning and of a held-out confirmation run side by side in worker
+#'   processes, \code{ntry} at a time, as sampling chains do, each with an
 #'   equal share of \code{cores}: they are independent, one fit uses its cores
 #'   only partly, and a worker takes about half a minute to start.
 #'   \code{options(ctsem.improve.processes = FALSE)} keeps them in this
@@ -310,30 +311,14 @@ ctModelImprove <- function(fit, covariates = NULL,
   # others and refitted; if the fuller model is not better by the criterion,
   # the change goes.
   if (isTRUE(prune) && length(kept) > 1L) {
-    k <- 1L
-    while (k <= length(kept) && length(kept) > 1L) {
-      say("Pruning: refitting without ", kept[[k]]$label)
-      rebuilt <- try({
-        r <- .ctImproveRebuild(.ctFitBaseModel(fit), startdata, kept[-k], covariates)
-        .ctImproveRefit(current, r$model, r$data, cores, args = r$args)
-      }, silent = TRUE)
-      verdict <- if (inherits(rebuilt, 'try-error')) list(accept = TRUE,
-        dloglik = NA_real_, dpar = NA_integer_, value = NA_real_,
-        note = 'refit without it failed; kept') else
-        .ctImproveCompare(rebuilt, current, criterion, alpha)
-      drop <- !isTRUE(verdict$accept)
-      history[[length(history) + 1L]] <- data.frame(round = NA_integer_,
-        family = 'prune', change = paste0('drop ', kept[[k]]$label), screen_p = NA_real_,
-        dloglik = if (is.finite(verdict$dloglik)) -verdict$dloglik else NA_real_,
-        dpar = if (is.finite(verdict$dpar)) -verdict$dpar else NA_integer_,
-        criterion = verdict$value, kept = drop, note = verdict$note,
-        stringsAsFactors = FALSE)
-      if (drop) {
-        say("Pruning: dropped ", kept[[k]]$label)
-        r <- .ctImproveRebuild(.ctFitBaseModel(fit), startdata, kept[-k], covariates)
-        current <- rebuilt; data <- r$data; extraargs <- r$args; kept <- kept[-k]; ad <- NULL
-      } else k <- k + 1L
+    pruned <- .ctImprovePrune(.ctFitBaseModel(fit), current, kept, startdata, covariates,
+      criterion, alpha, cores, ntry, slowest, say)
+    history <- c(history, pruned$history)
+    slowest <- pruned$slowest
+    if (length(pruned$kept) < length(kept)) {
+      current <- pruned$current; data <- pruned$data; extraargs <- pruned$args; ad <- NULL
     }
+    kept <- pruned$kept
   }
   if (isTRUE(adequacy) && is.null(ad)) {
     model <- .ctFitBaseModel(current)
@@ -348,15 +333,20 @@ ctModelImprove <- function(fit, covariates = NULL,
   if (!is.null(held) && length(kept)) {
     say("Confirming ", length(kept), " change(s) on the ", length(held), " held-out subjects")
     holddata <- alldata[alldata[[idname]] %in% held, , drop = FALSE]
-    full <- .ctImproveRebuild(.ctFitBaseModel(fit), holddata, kept, covariates)
-    fullfit <- try(.ctImproveRefit(current, full$model, full$data, cores, args = full$args),
-      silent = TRUE)
+    # The model with every change and the model without each one, refitted
+    # to the held-out subjects: independent refits, side by side when refits
+    # go to workers, `ntry` at a time.
+    rebuilt <- lapply(c(list(seq_along(kept)), lapply(seq_along(kept), function(k)
+      seq_along(kept)[-k])), function(idx) try(.ctImproveRebuild(.ctFitBaseModel(fit),
+        holddata, kept[idx], covariates), silent = TRUE))
+    refits <- .ctImproveRefits(current, rebuilt, vector('list', length(rebuilt)), cores,
+      slowest, width = ntry)
+    fullfit <- refits[[1]]
     confirmation <- do.call(rbind, lapply(seq_along(kept), function(k) {
-      without <- .ctImproveRebuild(.ctFitBaseModel(fit), holddata, kept[-k], covariates)
-      w <- try(.ctImproveRefit(current, without$model, without$data, cores,
-        args = without$args), silent = TRUE)
-      verdict <- if (inherits(fullfit, 'try-error')) list(dloglik = NA_real_,
-        dpar = NA_integer_, value = NA_real_, accept = NA, note = 'refit failed') else
+      w <- refits[[k + 1L]]
+      verdict <- if (inherits(fullfit, 'try-error') || inherits(w, 'try-error'))
+        list(dloglik = NA_real_, dpar = NA_integer_, value = NA_real_, accept = NA,
+          note = 'refit failed') else
         .ctImproveCompare(w, fullfit, 'LR', alpha)
       data.frame(change = kept[[k]]$label, dloglik = verdict$dloglik, dpar = verdict$dpar,
         p = verdict$value, confirmed = isTRUE(verdict$accept), note = verdict$note,
@@ -376,6 +366,53 @@ ctModelImprove <- function(fit, covariates = NULL,
     adequacy = ad, confirmation = confirmation, stopped = stopped, start = fit,
     selected = selected,
     holdout = held), class = 'ctModelImprove')
+}
+
+# The pruning pass: each kept change in turn, the base model rebuilt without
+# it and refitted, and the change dropped if the fuller model is not better
+# by the criterion. Until a change is dropped every refit is compared against
+# the same model, so they are independent: `ntry` at a time run side by side
+# when refits go to workers (`.ctImproveSideBySide`), and after a drop the
+# rest of that batch, compared against the model it replaced, is refitted
+# again. Otherwise one at a time, since there a batch would make refits a
+# drop then discards. The decisions are the one-at-a-time pass's either way.
+.ctImprovePrune <- function(base, current, kept, startdata, covariates, criterion, alpha,
+    cores, ntry, slowest = 0, say = function(...) invisible()) {
+  history <- list(); data <- NULL; args <- NULL
+  k <- 1L
+  while (k <= length(kept) && length(kept) > 1L) {
+    width <- if (.ctImproveSideBySide(current, ntry, cores, slowest)) as.integer(ntry) else 1L
+    ks <- seq.int(k, min(length(kept), k + width - 1L))
+    rebuilt <- lapply(ks, function(j) try(.ctImproveRebuild(base, startdata, kept[-j],
+      covariates), silent = TRUE))
+    for (j in ks) say("Pruning: refitting without ", kept[[j]]$label)
+    refits <- .ctImproveRefits(current, rebuilt, vector('list', length(ks)), cores, slowest)
+    slowest <- max(slowest, attr(refits, 'seconds'))
+    for (i in seq_along(ks)) {
+      j <- ks[i]
+      verdict <- if (inherits(refits[[i]], 'try-error')) list(accept = TRUE,
+        dloglik = NA_real_, dpar = NA_integer_, value = NA_real_,
+        note = 'refit without it failed; kept') else
+        .ctImproveCompare(refits[[i]], current, criterion, alpha)
+      drop <- !isTRUE(verdict$accept)
+      history[[length(history) + 1L]] <- data.frame(round = NA_integer_,
+        family = 'prune', change = paste0('drop ', kept[[j]]$label), screen_p = NA_real_,
+        dloglik = if (is.finite(verdict$dloglik)) -verdict$dloglik else NA_real_,
+        dpar = if (is.finite(verdict$dpar)) -verdict$dpar else NA_integer_,
+        criterion = verdict$value, kept = drop, note = verdict$note,
+        stringsAsFactors = FALSE)
+      k <- j + 1L
+      if (drop) {
+        say("Pruning: dropped ", kept[[j]]$label)
+        current <- refits[[i]]; data <- rebuilt[[i]]$data; args <- rebuilt[[i]]$args
+        kept <- kept[-j]
+        k <- j
+        break
+      }
+    }
+  }
+  list(current = current, kept = kept, data = data, args = args, history = history,
+    slowest = slowest)
 }
 
 # The base model with a sequence of kept changes applied, for some data: the
@@ -773,8 +810,10 @@ ctModelImprove <- function(fit, covariates = NULL,
 # is the sampling chains' (`.ctBackendWarmWorkers`), which persists, so later
 # rounds find it started; a fit made there rebuilds its objective in this
 # session when it is next evaluated, the cache being keyed on the
-# specification.
-.ctImproveRefits <- function(current, edits, starts, cores, slowest = 0) {
+# specification. At most `width` workers: past that a refit waits for a free
+# one (`future()` blocks), and each worker's Julia holds its own objective,
+# several GB on the Fisher example.
+.ctImproveRefits <- function(current, edits, starts, cores, slowest = 0, width = Inf) {
   seconds <- 0
   here <- function(i) {
     if (inherits(edits[[i]], 'try-error')) return(edits[[i]])
@@ -786,10 +825,8 @@ ctModelImprove <- function(fit, covariates = NULL,
   }
   inhere <- function() structure(lapply(seq_along(edits), here), seconds = seconds)
   ok <- which(!vapply(edits, inherits, logical(1), 'try-error'))
-  workers <- min(length(ok), as.integer(cores))
-  if (workers < 2L || !isTRUE(slowest > 30) ||
-      !isTRUE(getOption('ctsem.improve.processes', TRUE)) ||
-      !.ctFitIsJulia(current) || !.ctBackendCanWarm()) return(inhere())
+  if (!.ctImproveSideBySide(current, min(length(ok), width), cores, slowest)) return(inhere())
+  workers <- min(length(ok), as.integer(cores), width)
   threads <- max(1L, as.integer(cores) %/% workers)
   handles <- .ctBackendWarmWorkers(current, workers, values = .ctFitRawEstimate(current),
     threads = threads)
@@ -805,6 +842,15 @@ ctModelImprove <- function(fit, covariates = NULL,
       structure(conditionMessage(e), class = 'try-error', condition = e))
   })
   structure(out, seconds = seconds)
+}
+
+# Whether `.ctImproveRefits` would send `n` refits to worker processes rather
+# than make them here: two or more of them and of the cores, a refit here has
+# taken over 30 s, and the fit is on julia with a pool to hand.
+.ctImproveSideBySide <- function(current, n, cores, slowest) {
+  min(n, as.integer(cores)) >= 2L && isTRUE(slowest > 30) &&
+    isTRUE(getOption('ctsem.improve.processes', TRUE)) &&
+    .ctFitIsJulia(current) && .ctBackendCanWarm()
 }
 
 # Refit with an edited model, prepared as the current fit was and warm started

@@ -199,3 +199,44 @@ test_that("an item's own process starts persistent, at a quarter of its error va
   expect_equal(at('T0VAR', 'T0var_u_Y1')^2, v, tolerance = 1e-6)
   expect_equal(at('DIFFUSION', 'diff_u_Y1')^2 / (2 * rate), v, tolerance = 1e-6)
 })
+
+test_that("pruning side by side makes the decisions pruning one at a time does", {
+  # No fits: each model is the labels of the changes it carries. b and d are
+  # each redundant while the other is kept, e always: one at a time, b goes
+  # and then d is needed. A batch compared against the full model would drop
+  # both, so after a drop the rest of a batch has to be refitted.
+  changes <- lapply(c('a', 'b', 'c', 'd', 'e'), function(l) list(label = l))
+  calls <- 0L
+  testthat::local_mocked_bindings(
+    .ctImproveRebuild = function(model, data, kept, covariates)
+      list(model = vapply(kept, `[[`, '', 'label'), data = NULL, args = list()),
+    .ctImproveRefits = function(current, edits, starts, cores, slowest = 0, width = Inf) {
+      calls <<- calls + length(edits)
+      structure(lapply(edits, function(e) list(labels = e$model)), seconds = 0)
+    },
+    .ctImproveCompare = function(current, refit, criterion, alpha) {
+      gone <- setdiff(refit$labels, current$labels)
+      redundant <- gone == 'e' || (gone == 'b' && 'd' %in% current$labels) ||
+        (gone == 'd' && 'b' %in% current$labels)
+      list(accept = !redundant, dloglik = if (redundant) 0.1 else 10, dpar = 1L,
+        value = if (redundant) 0.5 else 1e-4, score = 0, note = '')
+    })
+  prune <- function(sidebyside) {
+    testthat::local_mocked_bindings(.ctImproveSideBySide = function(...) sidebyside)
+    calls <<- 0L
+    out <- ctsem:::.ctImprovePrune(NULL, list(labels = letters[1:5]), changes, NULL, NULL,
+      'LR', 0.05, cores = 6L, ntry = 3L)
+    out$refits <- calls
+    out
+  }
+  one <- prune(FALSE)
+  batched <- prune(TRUE)
+  expect_identical(vapply(one$kept, `[[`, '', 'label'), c('a', 'c', 'd'))
+  expect_identical(one$current$labels, c('a', 'c', 'd'))
+  expect_identical(one$refits, 5L)
+  expect_identical(batched$kept, one$kept)
+  expect_identical(batched$current, one$current)
+  expect_identical(do.call(rbind, batched$history), do.call(rbind, one$history))
+  # a, b, c side by side; b goes, so c, d, e against the model without it.
+  expect_identical(batched$refits, 6L)
+})

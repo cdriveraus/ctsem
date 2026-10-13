@@ -69,8 +69,9 @@ for \code{\link{ctFitAdequacy}}; by default it scans.}
 \item{nsamples}{Generated datasets for the adequacy checks.}
 
 \item{cores}{Cores for fitting and testing. With two or more, once a
-refit has taken longer than half a minute, the refits of later rounds run
-side by side in worker processes, as sampling chains do, each with an
+refit has taken longer than half a minute, the refits of later rounds,
+of pruning and of a held-out confirmation run side by side in worker
+processes, \code{ntry} at a time, as sampling chains do, each with an
 equal share of \code{cores}: they are independent, one fit uses its cores
 only partly, and a worker takes about half a minute to start.
 \code{options(ctsem.improve.processes = FALSE)} keeps them in this
