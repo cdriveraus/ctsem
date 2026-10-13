@@ -50,7 +50,10 @@ test_that("ctEmpiricalBayesFit summary reports transformed parameter summaries",
   expect_null(s$raw)
   expect_null(s$originalraw)
   expect_named(s, c('overview','popmeans','initialpopmeans','outliers',
-    'correlations','covariances','settings','note'))
+    'correlations','covariances','subjectpars','settings','note'))
+  # Each subject's final-pass estimates, by id.
+  expect_equal(s$subjectpars$subject, c('1','2','3'))
+  expect_equal(s$subjectpars$drift, c(9, 10, 11))
   printed <- capture.output(print(s))
   expect_true(any(grepl('Final EB-prior transformed parameter summary', printed)))
   expect_false(any(grepl('adjustedmodel', printed)))
