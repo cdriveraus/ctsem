@@ -16,7 +16,9 @@
 #     julia --project=. test/runtests_parallel.jl          # all files
 #     julia --project=. test/runtests_parallel.jl laplace  # files matching
 #
-# `CTSEM_TEST_WORKERS` caps the process count; it defaults to the core count.
+# Processes: at least ten, or about 80% of the cores no other process is using
+# when that is more -- a choice for the machine, not the package.
+# `CTSEM_TEST_WORKERS` sets it.
 
 using Printf
 
@@ -45,7 +47,21 @@ const KNOWN_SECONDS = Dict(
     "test_subject_gradients.jl" => 11, "test_summary_matrices.jl" => 6)
 sort!(files; by = f -> -get(KNOWN_SECONDS, f, 20))
 
-workers = parse(Int, get(ENV, "CTSEM_TEST_WORKERS", string(Sys.CPU_THREADS)))
+"""Cores other processes are using now, from the CPU counters a second apart."""
+function busy_cores()
+    times(c) = (sum(getfield(c, Symbol(k)) for k in
+        ("cpu_times!user", "cpu_times!nice", "cpu_times!sys", "cpu_times!irq")),
+        getfield(c, Symbol("cpu_times!idle")))
+    a = map(times, Sys.cpu_info())
+    sleep(1.0)
+    b = map(times, Sys.cpu_info())
+    work = sum(y[1] - x[1] for (x, y) in zip(a, b))
+    idle = sum(y[2] - x[2] for (x, y) in zip(a, b))
+    return work + idle > 0 ? Sys.CPU_THREADS * work / (work + idle) : 0.0
+end
+
+workers = haskey(ENV, "CTSEM_TEST_WORKERS") ? parse(Int, ENV["CTSEM_TEST_WORKERS"]) :
+    max(10, floor(Int, 0.8 * (Sys.CPU_THREADS - busy_cores())))
 workers = clamp(workers, 1, length(files))
 @printf("%d files over %d processes\n", length(files), workers)
 
