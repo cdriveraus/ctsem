@@ -270,8 +270,11 @@
 
   npar <- length(fit$estimate$raw)
   chains <- max(1L, as.integer(.ctJuliaOr(control$chains, 4L))[1L])
-  warmup <- max(0L, as.integer(.ctJuliaOr(control$warmup, 500L))[1L])
-  draws <- max(1L, as.integer(.ctJuliaOr(control$draws, 500L))[1L])
+  # The defaults ctFit(optimize = FALSE) resolves `iter = 1000` to, so the two
+  # entry points to this sampler mean the same thing when nothing is said:
+  # 200 is where step-size adaptation has converged and the chains agree.
+  warmup <- max(0L, as.integer(.ctJuliaOr(control$warmup, 200L))[1L])
+  draws <- max(1L, as.integer(.ctJuliaOr(control$draws, 800L))[1L])
   seed <- as.integer(.ctJuliaOr(control$seed, 20260828L))
   saveEffects <- isTRUE(.ctJuliaOr(control$saveEffects, FALSE))
   processes <- isTRUE(.ctJuliaOr(control$processes, TRUE))
