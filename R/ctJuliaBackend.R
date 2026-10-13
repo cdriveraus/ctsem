@@ -652,7 +652,9 @@ ctJuliaSetup <- function(project = NULL, julia_bin = NULL,
 #'   the \code{julia_bin} directory in use and the \code{julia} version there,
 #'   the \code{engine} version (a hash of the engine source shipped with this
 #'   ctsem, which is also what its cached project directory is keyed on), and
-#'   the number of \code{threads} in a running session.
+#'   the number of \code{threads} in a running session (\code{NA} when none is
+#'   running: this never starts one, so it leaves the session's width to the
+#'   first call that needs it).
 #' @examples
 #' status <- ctJuliaStatus()
 #' status$available
@@ -664,14 +666,23 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
   # A running session can be asked its own version; only a Julia that has never
   # started needs a subprocess spawned to find out. One that has died is let go
   # first, so this reports on a new one rather than waiting on the old.
-  version <- if (connectoR) {
+  #
+  # Never a session started here. Asking one that was not running for its
+  # version used to start it, at mc.cores threads -- and a session's thread
+  # count is fixed when it starts, so `if (ctJuliaStatus()$available)` before
+  # `ctFit(cores = 8)`, the guard every julia example uses, left the fit at two.
+  # It also left a connection open, which R CMD check's example harness counts
+  # as an error on any machine with Julia.
+  running <- connectoR && isTRUE(tryCatch({
     try(.ctJuliaCheckAlive(), silent = TRUE)
-    tryCatch(as.character(.ctJuliaEval("string(VERSION)")),
-      error = function(e) NA_character_)
-  } else NA_character_
-  available <- !is.na(version)
-  if (!available) version <- .ctJuliaBinVersion(julia_bin)
-  threads <- if (available) {
+    .ctJuliaSessionRunning()
+  }, error = function(e) FALSE))
+  version <- if (running) tryCatch(as.character(.ctJuliaEval("string(VERSION)")),
+    error = function(e) NA_character_) else NA_character_
+  if (is.na(version) && !is.null(julia_bin)) version <- .ctJuliaCachedVersion(julia_bin)
+  available <- connectoR && (running || isTRUE(tryCatch(.ctJuliaStartable(),
+    error = function(e) FALSE)))
+  threads <- if (running) {
     tryCatch(as.integer(.ctJuliaEval("Threads.nthreads()")),
       error = function(e) NA_integer_)
   } else NA_integer_
