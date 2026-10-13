@@ -90,7 +90,7 @@ update and without a likelihood contribution -- the same thing
 \code{parallelFolds = TRUE} runs up to \code{cores} folds at once, each in a
 background R session with a one-thread Julia, started and compiled for the
 model before the first fold (it needs the \pkg{future} package; the
-sessions persist for the next call, and \code{\link{ctJuliaWorkersStop}}
+sessions persist for the next call, and \code{\link{ctJuliaKill}('workers')}
 releases them). Without it the folds run one at a time on \code{cores}
 threads. Folds are separate fits, so they gain more from processes than
 from threads, except where each fold takes only seconds and starting the

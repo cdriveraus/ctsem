@@ -14,8 +14,10 @@ ctJuliaKill(
 \item{which}{Which to stop: \code{"orphaned"} (the default) for processes
 whose R session has ended; \code{"session"} for this R session's engine,
 which the next julia call replaces with a new one (losing what it had
-compiled); \code{"workers"} for this session's sampling workers;
-\code{"mine"} for all three; \code{"all"} for every process listed,
+compiled); \code{"workers"} for this session's sampling workers --
+the pool of background R sessions that sampling with
+\code{processes = TRUE} warms and keeps for the next call, released
+here with their Julia processes; \code{"mine"} for all three; \code{"all"} for every process listed,
 including the engines of other running R sessions, which then fail.}
 
 \item{pid}{Process ids to stop instead of choosing by \code{which}. Only

@@ -90,7 +90,7 @@
 #'   sessions, walks them at once, each in a background R session with a
 #'   one-thread Julia, started and compiled for the model first (it needs the
 #'   \pkg{future} package; the sessions persist for the next call, and
-#'   \code{\link{ctJuliaWorkersStop}} releases them). \code{TRUE} uses as many
+#'   \code{\link{ctJuliaKill}('workers')} releases them). \code{TRUE} uses as many
 #'   sessions as the fit's \code{cores}, so a one-core fit walks in this
 #'   session. The walks are
 #'   independent, so the profile is the same either way, except that with

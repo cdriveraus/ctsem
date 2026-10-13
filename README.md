@@ -420,8 +420,7 @@ any of them.
 | `ctJuliaInstall` | install Julia, the bridge package, and the engine’s dependencies |
 | `ctJuliaStatus` | report whether the Julia backend is available |
 | `ctJuliaSetup` | configure the Julia session: its thread count, or a particular Julia installation |
-| `ctJuliaProcesses`, `ctJuliaKill` | list, and stop, the Julia processes ctsem has started |
-| `ctJuliaWorkersStop` | release the warmed sampling worker pool |
+| `ctJuliaProcesses`, `ctJuliaKill` | list, and stop, the Julia processes ctsem has started, and release the sampling worker pool |
 
 ## Getting help
 

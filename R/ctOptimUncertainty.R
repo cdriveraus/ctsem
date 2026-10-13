@@ -2482,7 +2482,7 @@ ctOptimFitLpgFunc <- function(fit, cores=1){
 #' fixed cost of some tens of seconds that a run much shorter than a minute
 #' does not recover -- and a worker runs its share of the chains in turn, so
 #' four chains on two cores run two at a time. \code{processes = FALSE}, or
-#' one core, keeps the chains in this session. \code{\link{ctJuliaWorkersStop}}
+#' one core, keeps the chains in this session. \code{\link{ctJuliaKill}('workers')}
 #' releases the worker processes, which persist for the next call.
 #'
 #' @section Backend differences:

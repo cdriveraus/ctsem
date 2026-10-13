@@ -93,7 +93,7 @@
   # their worker process" rather than as a pool that was not there.
   if (.ctBackendWarmWait(handles, verbose = verbose) < 1L) {
     warning("No sampling worker process could prepare this model, so the ",
-      "chains ran in this session. ctJuliaWorkersStop() clears the pool if it ",
+      "chains ran in this session. ctJuliaKill('workers') clears the pool if it ",
       "was left behind by an interrupted run.", call. = FALSE)
     return(NULL)
   }
