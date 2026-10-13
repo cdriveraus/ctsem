@@ -46,7 +46,7 @@ ctPlotPosterior<-function(obj, rows='all', npp=4,priorwidth=TRUE,
   if(inherits(obj, 'ctStanModel')) stop('ctPlotPosterior() needs a fit, ',
     'which has a posterior; plot(model) plots the priors of a model on its own.',
     call. = FALSE)
-  if(!inherits(obj, c('ctStanFit','ctJuliaFit'))) stop('obj must be a fit from ctFit().',
+  if(!inherits(obj, 'ctStanFit') && !.ctFitIsJulia(obj)) stop('obj must be a fit from ctFit().',
     call. = FALSE)
   if(.ctFitIsJulia(obj) && ...length()) stop('ctPlotPosterior() passes ... to the ',
     'stan prior preparation; a backend=\'julia\' fit takes no further arguments.',
