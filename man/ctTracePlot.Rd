@@ -2,29 +2,36 @@
 % Please edit documentation in R/ctTracePlot.R
 \name{ctTracePlot}
 \alias{ctTracePlot}
-\title{Plot a fit's optimisation trace}
+\title{Plot how a fit reached its estimate}
 \usage{
-ctTracePlot(fit, which = NULL, ...)
+ctTracePlot(fit, which = NULL, plot = TRUE)
 }
 \arguments{
 \item{fit}{A fit from \code{\link{ctFit}} with the Julia backend.}
 
-\item{which}{Which panels to draw. Defaults to every column the trace has
-besides the iteration index.}
+\item{which}{Which panels to draw: trace columns (\code{'objective'},
+\code{'gradient_norm'}, \code{'inner_converged'}) for an optimized fit,
+parameter names for a sampled one. Defaults to all of them.}
 
-\item{...}{Passed to \code{plot}.}
+\item{plot}{If \code{FALSE}, return the data rather than a plot: the trace
+for an optimized fit, one row per draw and parameter for a sampled one.}
 }
 \value{
-The trace, invisibly.
+A ggplot, or with \code{plot = FALSE} a data frame.
 }
 \description{
-Draws the log posterior and the gradient norm against iteration, from the
-record the engine kept while fitting.
+For an optimized fit, draws the log posterior and the gradient norm against
+iteration, from the record the engine kept while fitting. For a sampled fit,
+draws each chain's draws of every population mean and standard deviation,
+on the scale \code{summary()} reports them on, so chains that have not
+settled on one distribution can be seen.
 }
 \details{
-Available on the Julia backend, which records the trace during the
-  fit and returns it as \code{fit$optim$trace}. For output while a fit is still
-  running, see \code{optimcontrol$callback} in \code{\link{ctFit}}.
+The Julia backend records the optimisation trace during the fit and
+  returns it as \code{fit$optim$trace}. For output while a fit is still
+  running, see \code{optimcontrol$callback} in \code{\link{ctFit}}. The
+  chains of a sampled stan fit are drawn by \code{plot(fit, types =
+  'trace')}.
 }
 \examples{
 \donttest{

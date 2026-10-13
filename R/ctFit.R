@@ -2450,7 +2450,7 @@ ctFit<-function(datalong, model, stanmodeltext=NA, iter=1000, intoverstates=TRUE
     # genuinely live output, `optimcontrol$callback` is called while the fit
     # runs and can draw whatever it likes.
     if(isTRUE(fit) && !identical(plot, FALSE) && !is.null(juliafit$optim$trace)) {
-      try(ctTracePlot(juliafit), silent=TRUE)
+      try(print(ctTracePlot(juliafit)), silent=TRUE)
     }
     return(juliafit)
   }

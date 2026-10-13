@@ -9,7 +9,10 @@
 \arguments{
 \item{x}{Fit object from \code{ctFit(..., backend='julia')}.}
 
-\item{types}{Vector of plot types: 'all', 'regression', 'kalman'.}
+\item{types}{Vector of plot types: 'all', 'regression', 'kalman',
+'priorcheck', 'trace'. 'all' leaves out 'regression' for a discrete time
+model, 'priorcheck' for a fit with no posterior draws, and 'trace' for a
+fit with nothing to trace.}
 
 \item{wait}{Logical. Pause between plots?}
 
@@ -20,14 +23,16 @@
 Nothing. Generates plots.
 }
 \description{
-The \code{backend='julia'} counterpart of \code{\link{plot.ctStanFit}}, and a
-subset of it: the two plot types that describe a fitted model rather than a
-sampler. \code{'regression'} plots model implied regression coefficients
-against the time interval via \code{\link{ctDiscretePars}}, and
-\code{'kalman'} plots expectations via \code{\link{ctPredict}}. The remaining
-types \code{plot.ctStanFit} offers -- prior/posterior densities, traces,
-intervals -- all read Stan's own sample object, which an optimized julia fit
-has no analogue of.
+The \code{backend='julia'} counterpart of \code{\link{plot.ctStanFit}}.
+\code{'regression'} plots model implied regression coefficients against the
+time interval via \code{\link{ctDiscretePars}}, \code{'kalman'} plots
+expectations via \code{\link{ctPredict}}, \code{'priorcheck'} plots each
+population parameter's prior against its posterior via
+\code{\link{ctPlotPosterior}}, and \code{'trace'} plots how the fit reached
+its estimate via \code{\link{ctTracePlot}}: the optimiser's trace, or each
+chain's draws for a sampled fit. Stan's own density and interval plots of a
+sampled fit (\code{'density'}, \code{'intervals'}) have no julia
+counterpart; \code{'priorcheck'} shows the posterior densities.
 }
 \examples{
 \donttest{

@@ -125,16 +125,50 @@ test_that("ctTracePlot draws, and refuses a fit with no trace", {
   fit <- .trace_fit()
   file <- file.path(tempdir(), "ctsem-trace-test.png")
   on.exit(unlink(file), add = TRUE)
-  grDevices::png(file, width = 600, height = 500)
   result <- ctTracePlot(fit)
+  expect_s3_class(result, "ggplot")
+  grDevices::png(file, width = 600, height = 500)
+  print(result)
   grDevices::dev.off()
   expect_true(file.exists(file))
   expect_gt(file.info(file)$size, 0)
-  expect_s3_class(result, "data.frame")
+  trace <- ctTracePlot(fit, plot = FALSE)
+  expect_s3_class(trace, "data.frame")
+  expect_equal(nrow(trace), nrow(fit$optim$trace))
 
   bare <- fit
   bare$optim$trace <- NULL
   expect_error(ctTracePlot(bare), "no optimisation trace")
+  expect_error(ctTracePlot(ctstantestfit), "types = 'trace'")
+})
+
+test_that("a sampled fit's trace is each chain's draws, and plot() offers it", {
+  skip_without_julia()
+  model <- suppressMessages(ctModel(type = "ct", manifestNames = "Y1",
+    latentNames = "eta1", LAMBDA = matrix(1)))
+  model$pars$indvarying <- FALSE
+  fit <- suppressMessages(ctFit(ctstantestdat, model, backend = "julia",
+    cores = 1, priors = TRUE))
+  sampled <- suppressWarnings(suppressMessages(ctFitUncertainty(fit, "sample",
+    cores = 1, control = list(chains = 2, minESS = 50, rhatTarget = 1.1,
+      processes = FALSE))))
+  draws <- ctTracePlot(sampled, plot = FALSE)
+  expect_equal(levels(draws$chain), c("1", "2"))
+  expect_equal(nrow(draws),
+    nrow(sampled$estimate$rawposterior) * nlevels(draws$parameter))
+  # The draws summary() reports, on its scale.
+  expect_equal(mean(draws$value[draws$parameter == "drift_eta1"]),
+    summary(sampled)$popmeans["drift_eta1", "mean"], tolerance = 1e-3)
+  expect_s3_class(ctTracePlot(sampled, which = "drift_eta1"), "ggplot")
+  expect_error(ctTracePlot(sampled, which = "nope"), "Not a population parameter")
+
+  file <- file.path(tempdir(), "ctsem-plot-julia-test.pdf")
+  on.exit(unlink(file), add = TRUE)
+  grDevices::pdf(file)
+  expect_no_error(suppressMessages(plot(sampled, types = c("priorcheck", "trace"),
+    wait = FALSE)))
+  grDevices::dev.off()
+  expect_error(plot(sampled, types = "density"), "'priorcheck' shows")
 })
 
 test_that("a callback that is not a function is refused before fitting", {

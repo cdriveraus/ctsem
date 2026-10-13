@@ -35,7 +35,7 @@ test_that("ctPlotPosterior draws a julia fit's posterior from the draws summary(
   expect_length(drift$quantities, 1L)
 
   plots <- ctPlotPosterior(fit, plot = FALSE, priorsamples = 2000)
-  expect_true(all(vapply(plots, ggplot2::is.ggplot, logical(1))))
+  expect_true(all(vapply(plots, inherits, logical(1), what = "ggplot")))
   # Four parameters a page by default, and `npp` is honoured.
   expect_length(plots, ceiling(length(pars) / 4))
   expect_length(ctPlotPosterior(fit, plot = FALSE, priorsamples = 500, npp = 13), 1L)

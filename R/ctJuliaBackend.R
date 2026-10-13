@@ -6506,17 +6506,22 @@ print.ctJuliaFit <- function(x, ...) {
 
 #' Plots for ctJuliaFit objects
 #'
-#' The \code{backend='julia'} counterpart of \code{\link{plot.ctStanFit}}, and a
-#' subset of it: the two plot types that describe a fitted model rather than a
-#' sampler. \code{'regression'} plots model implied regression coefficients
-#' against the time interval via \code{\link{ctDiscretePars}}, and
-#' \code{'kalman'} plots expectations via \code{\link{ctPredict}}. The remaining
-#' types \code{plot.ctStanFit} offers -- prior/posterior densities, traces,
-#' intervals -- all read Stan's own sample object, which an optimized julia fit
-#' has no analogue of.
+#' The \code{backend='julia'} counterpart of \code{\link{plot.ctStanFit}}.
+#' \code{'regression'} plots model implied regression coefficients against the
+#' time interval via \code{\link{ctDiscretePars}}, \code{'kalman'} plots
+#' expectations via \code{\link{ctPredict}}, \code{'priorcheck'} plots each
+#' population parameter's prior against its posterior via
+#' \code{\link{ctPlotPosterior}}, and \code{'trace'} plots how the fit reached
+#' its estimate via \code{\link{ctTracePlot}}: the optimiser's trace, or each
+#' chain's draws for a sampled fit. Stan's own density and interval plots of a
+#' sampled fit (\code{'density'}, \code{'intervals'}) have no julia
+#' counterpart; \code{'priorcheck'} shows the posterior densities.
 #'
 #' @param x Fit object from \code{ctFit(..., backend='julia')}.
-#' @param types Vector of plot types: 'all', 'regression', 'kalman'.
+#' @param types Vector of plot types: 'all', 'regression', 'kalman',
+#'   'priorcheck', 'trace'. 'all' leaves out 'regression' for a discrete time
+#'   model, 'priorcheck' for a fit with no posterior draws, and 'trace' for a
+#'   fit with nothing to trace.
 #' @param wait Logical. Pause between plots?
 #' @param ... Passed through to \code{\link{ctDiscretePars}} and
 #'   \code{\link{ctPredict}}. Beware clashes when \code{types='all'}.
@@ -6540,16 +6545,19 @@ print.ctJuliaFit <- function(x, ...) {
 #' }
 #' @export
 plot.ctJuliaFit <- function(x, types = "all", wait = TRUE, ...) {
-  available <- c("regression", "kalman")
+  available <- c("regression", "kalman", "priorcheck", "trace")
   if (identical(types[1L], "all")) {
     types <- available
-    if (!isTRUE(.ctFitModelObject(x)$continuoustime)) types <- "kalman"
+    if (!isTRUE(.ctFitModelObject(x)$continuoustime)) types <- setdiff(types, "regression")
+    if (NROW(x$estimate$rawposterior) < 2L) types <- setdiff(types, "priorcheck")
+    if (is.null(x$sample) && !NROW(x$optim$trace)) types <- setdiff(types, "trace")
   }
   unknown <- setdiff(types, available)
   if (length(unknown)) {
     stop("plot types ", paste0("'", unknown, "'", collapse = ", "),
-      " need Stan's sample object; backend='julia' offers ",
-      paste0("'", available, "'", collapse = ", "), ".", call. = FALSE)
+      " are Stan's own plots of its sample object; backend='julia' offers ",
+      paste0("'", available, "'", collapse = ", "), ", and 'priorcheck' ",
+      "shows the posterior densities.", call. = FALSE)
   }
   waitf <- function() {
     if (!isTRUE(wait) || !length(types)) return(TRUE)
@@ -6565,6 +6573,18 @@ plot.ctJuliaFit <- function(x, types = "all", wait = TRUE, ...) {
   if ("kalman" %in% types) {
     message("Plotting expectations from ctPredict")
     print(ctPredict(x, plot = TRUE, ...))
+    types <- types[types != "kalman"]
+    if (!waitf()) return(invisible(NULL))
+  }
+  if ("priorcheck" %in% types) {
+    message("Plotting prior and posterior distributions using ctPlotPosterior")
+    ctPlotPosterior(x, wait = wait)
+    types <- types[types != "priorcheck"]
+    if (!waitf()) return(invisible(NULL))
+  }
+  if ("trace" %in% types) {
+    message("Plotting how the fit reached its estimate using ctTracePlot")
+    print(ctTracePlot(x))
   }
   invisible(NULL)
 }
