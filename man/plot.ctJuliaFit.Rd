@@ -37,7 +37,8 @@ if (isTRUE(ctJuliaStatus()$available)) {
   data <- ctstantestdat
   model <- ctModel(type = 'ct', manifestNames = 'Y1', latentNames = 'eta1',
     LAMBDA = matrix(1))
-  fit <- ctFit(data, model, backend = 'julia')
+  model$pars$indvarying <- FALSE
+  fit <- ctFit(data, model, backend = 'julia', cores = 1)
   plot(fit, wait = FALSE)
 }
 }
