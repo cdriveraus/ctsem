@@ -4480,6 +4480,12 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
 # is performance-only, but it makes a timing depend on history, which is exactly
 # what makes one impossible to reproduce.
 .ctBackendWithMaxChunks <- function(chunks, expr) {
+  # With no Julia here at all there is no engine work to bound, and setting the
+  # ceiling would start the setup only to fail it: a stored julia fit's
+  # extract, summaries and LaTeX are R work on the draws it carries. Anything in
+  # `expr` that does need the engine says Julia is missing itself.
+  if (!isTRUE(.ctJuliaSessionRunning()) &&
+      !isTRUE(tryCatch(.ctJuliaStartable(), error = function(e) FALSE))) return(expr)
   previous <- .ctBackendSetMaxChunks(chunks)
   on.exit(.ctBackendRestoreMaxChunks(previous), add = TRUE)
   expr

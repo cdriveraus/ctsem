@@ -173,6 +173,32 @@ test_that("a model still prepares on a machine with no Julia at all", {
     "Julia was not found")
 })
 
+test_that("a stored julia fit reports without Julia, and says so where it cannot", {
+  # A fit read on a machine with no Julia -- every CRAN machine: the extract and
+  # the LaTeX are R work on the draws the fit carries, and setting the engine's
+  # thread ceiling first used to make them demand Julia. What does need the
+  # engine says Julia is missing, not "No admissable samples!?".
+  skip_without_julia()
+  skip_if(interactive())
+  model <- suppressWarnings(ctModel(type = "ct", manifestNames = "Y1",
+    latentNames = "eta1", LAMBDA = matrix(1)))
+  fit <- suppressWarnings(suppressMessages(ctFit(ctstantestdat, model,
+    backend = "julia", cores = 1, verbose = 0)))
+  suppressMessages(ctJuliaKill("session"))
+  withr::local_envvar(CTSEM_JULIA_AGREE = "no")
+  bin <- ctsem:::.ctJuliaBin
+  assignInNamespace(".ctJuliaBin", function(julia_bin = NULL) NULL, ns = "ctsem")
+  on.exit(assignInNamespace(".ctJuliaBin", bin, ns = "ctsem"), add = TRUE)
+  expect_false(ctJuliaStatus()$available)
+
+  extract <- ctExtract(fit)
+  expect_true(all(c("pop_DRIFT", "popmeans") %in% names(extract)))
+  expect_type(ctModelLatex(fit, compile = FALSE, open = FALSE,
+    folder = withr::local_tempdir()), "character")
+  expect_error(suppressMessages(ctSubjectPars(fit)),
+    "Julia was not found")
+})
+
 test_that("ctJuliaStatus reports rather than errors, and installs nothing", {
   # It is what a user reaches for when the backend will not start, so it has to
   # work on the machine where nothing else does.

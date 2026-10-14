@@ -546,6 +546,16 @@ ctGenerate<-function(ctmodelobj,n=100,burnin=0,dtmean=1,logdtsd=0,dtmat=NA,
     .Deprecated(msg = 'ctGenerate(n.subjects = ) is deprecated; use n.')
     n <- n.subjects
   }
+  # A fit's `$model` is the specification prepared for fitting, with random
+  # effects added as extra states, and the generator's matrices no longer
+  # conform to it -- it failed with "non-conformable arguments". Said by name,
+  # with where the model as given is kept.
+  if(!is.null(ctmodelobj$modelmats)) stop(
+    "This model has been prepared for fitting, so it is not one ctGenerate() ",
+    "can generate from. Use the model as given to ctFit(), which a fit keeps ",
+    "as fit$modelbase (backend = 'julia') or fit$ctstanmodelbase ",
+    "(backend = 'stan'), or ctGenerateFromFit(fit) to generate from the ",
+    "fitted values.", call. = FALSE)
 
   # The prior predictive is a different question about the same model -- what
   # could the data look like, before the model has seen any -- so it lives

@@ -502,10 +502,17 @@ ctBackendParMatrices <- function(fit, raw = NULL, tipreds = NULL, state = NULL,
       # smallest of the eight.
       scores <- try(.ctBackendKalmanRaw(spec, samples[iteration, ],
         subjectmatrices = TRUE, fields = "subject_loglik"), silent = TRUE)
-      if (inherits(scores, "try-error")) NULL else scores$subject_matrices
+      if (inherits(scores, "try-error")) scores else scores$subject_matrices
     })
-    admissable <- !vapply(computed, is.null, logical(1L))
-    if (!any(admissable)) stop("No admissable samples!?", call. = FALSE)
+    failed <- vapply(computed, inherits, logical(1L), "try-error")
+    # When no draw survives the cause is rarely the draws -- Julia missing, or
+    # the engine failing -- so the first draw's own error says what it is.
+    # "No admissable samples!?" sent a user without Julia looking at the fit.
+    if (all(failed)) stop("None of the ", length(computed), " draws could be ",
+      "evaluated. The first failed with: ",
+      conditionMessage(attr(computed[[1L]], "condition")), call. = FALSE)
+    computed[failed] <- list(NULL)
+    admissable <- !failed
     if (any(!admissable)) {
       message(round(mean(!admissable) * 100, 1), "% of samples inadmissable")
       samples <- samples[admissable, , drop = FALSE]
