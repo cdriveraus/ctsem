@@ -134,7 +134,7 @@
 }
 
 .ctBackendKalmanRaw <- function(fit, raw, subjectmatrices = TRUE,
-  randomEffects = NULL, fields = NULL, sequential = FALSE) {
+  randomEffects = NULL, fields = NULL, sequential = FALSE, subjects = NULL) {
   raw <- as.numeric(raw)
   spec <- .ctBackendSpec(fit)
   module <- .ctJuliaModule(spec$project)
@@ -142,6 +142,8 @@
   arguments <- list(.ctJuliaObjective(fit, hybrid = hybrid), .ctJuliaNumericVector(raw),
     subject_matrices = isTRUE(subjectmatrices))
   if (length(fields)) arguments$fields <- .ctJuliaVector(as.character(fields))
+  # Only these subjects are filtered; every other row comes back NaN.
+  if (length(subjects)) arguments$subjects <- .ctJuliaVector(as.integer(subjects))
   from <- 1L
 
   # The Laplace route is the same call with two more keywords: which levels of

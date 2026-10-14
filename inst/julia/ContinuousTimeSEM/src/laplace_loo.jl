@@ -15,7 +15,7 @@
 #                                conditional on the population parameters.
 
 """
-    ctsem_laplace_unit_terms(laplace, draws)
+    ctsem_laplace_unit_terms(laplace, draws; subjects=nothing)
 
 The Laplace objective without gradient at every column of `draws`
 (`npar x ndraws`), returning
@@ -30,30 +30,66 @@ non-finite term -- comes back with a `NaN` value rather than an error, so the
 caller can drop it and say how many it dropped. Only the linear algebra and
 domain failures a proposal draw in the tails can provoke are treated that way;
 anything else is a bug and is rethrown.
+
+`subjects`, when given, scores only the units holding those subjects, by the
+same mode solve and term the evaluation uses; `value` is then `NaN` and every
+other unit's term `NaN`, and `converged` covers the scored units. A
+leave-one-subject-out fold reads its held-out subject's unit and nothing else.
 """
-function ctsem_laplace_unit_terms(laplace::CTSEMLaplaceObjective, draws::AbstractMatrix)
+function ctsem_laplace_unit_terms(laplace::CTSEMLaplaceObjective, draws::AbstractMatrix;
+    subjects=nothing)
     ndraws = size(draws, 2)
     nunits = length(laplace.units.members)
     value = fill(NaN, ndraws)
     terms = fill(NaN, nunits, ndraws)
     converged = fill(false, ndraws)
+    unit = _laplace_unit_of_subject(laplace)
+    # A bare integer when R sends one subject, so iterate rather than index.
+    chosen = subjects === nothing ? Int[] : unique(Int[unit[Int(i)] for i in subjects])
     for s in 1:ndraws
-        result = try
-            ctsem_laplace_evaluate(laplace, collect(Float64, view(draws, :, s));
-                gradient=false)
+        theta = collect(Float64, view(draws, :, s))
+        ok = try
+            if subjects === nothing
+                result = ctsem_laplace_evaluate(laplace, theta; gradient=false)
+                value[s] = result.value
+                terms[:, s] .= result.unit_loglik
+                converged[s] = result.converged
+            else
+                converged[s] = _laplace_unit_terms_of!(view(terms, :, s), laplace,
+                    theta, chosen)
+            end
+            true
         catch err
             err isa Union{DomainError,LinearAlgebra.PosDefException,
                 LinearAlgebra.SingularException,LinearAlgebra.LAPACKException} ||
                 rethrow()
-            nothing
+            false
         end
-        result === nothing && continue
-        value[s] = result.value
-        terms[:, s] .= result.unit_loglik
-        converged[s] = result.converged
+        if !ok
+            terms[:, s] .= NaN
+            converged[s] = false
+        end
     end
-    return (value=value, unit_loglik=terms, converged=converged,
-        unit=_laplace_unit_of_subject(laplace))
+    return (value=value, unit_loglik=terms, converged=converged, unit=unit)
+end
+
+"""
+Units `chosen`'s terms at `theta` into `terms`, by the evaluation's own mode
+solve and term (`_laplace_unit_term`), and whether every one's mode was found.
+"""
+function _laplace_unit_terms_of!(terms::AbstractVector{Float64},
+    laplace::CTSEMLaplaceObjective, theta::Vector{Float64}, chosen::Vector{Int})
+    _laplace_check_indices(laplace, length(theta))
+    _laplace_ensure_pool!(laplace)
+    Ls = _laplace_popchols(theta, laplace.spec)
+    aws = _laplace_workspace!(laplace, Float64, length(theta))
+    ok = true
+    for U in chosen
+        _laplace_solve_unit_mode!(laplace, U, theta, Ls, aws)
+        terms[U] = _laplace_unit_term(laplace, U, theta, Ls, laplace.modes[U], aws)
+        ok &= laplace.inner_converged[U]
+    end
+    return ok
 end
 
 """The unit each subject belongs to, in subject order."""

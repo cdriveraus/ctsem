@@ -6249,9 +6249,11 @@ function _laplace_restrict_levels(laplace::CTSEMLaplaceObjective, U::Integer,
 end
 
 """
-    ctsem_kalman(laplace, values; from_level=1, subject_matrices=true, subject_values=nothing)
+    ctsem_kalman(laplace, values; from_level=1, subject_matrices=true, subject_values=nothing,
+                 subjects=nothing)
 
 Filter a Laplace fit with each subject at its own realized parameters.
+`subjects` filters only those subjects, as for the plain objective.
 
 `from_level` selects which levels of random effect are included: 1 (the
 default) gives each subject its own estimate, 2 gives study-level effects only
@@ -6282,11 +6284,11 @@ exactly as it does in the fit.
 """
 function ctsem_kalman(laplace::CTSEMLaplaceObjective, values::AbstractVector;
     from_level::Integer=1, subject_matrices::Bool=true, fields=String[],
-    subject_values::Union{Nothing,AbstractMatrix}=nothing)
+    subject_values::Union{Nothing,AbstractMatrix}=nothing, subjects=nothing)
     persubject = _laplace_filter_values(laplace, values; from_level=from_level,
         subject_values=subject_values)
     return ctsem_kalman(laplace.objective, persubject;
-        subject_matrices=subject_matrices, fields=fields)
+        subject_matrices=subject_matrices, fields=fields, subjects=subjects)
 end
 
 """

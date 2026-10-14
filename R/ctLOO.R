@@ -113,7 +113,9 @@
 #'   \code{foldpars}, \code{insampleLogLikRow}, \code{LogLikRowFolds},
 #'   \code{outsampleLogLikRow}, \code{insampleLogLik}, \code{outsampleLogLik}
 #'   and entropy and standard deviation summaries, and \code{processes},
-#'   whether the folds ran in worker processes. \code{scoring} is added
+#'   whether the folds ran in worker processes. On a julia fit a fold scores
+#'   only the subjects it holds out, so its column of \code{LogLikRowFolds} is
+#'   \code{NA} for every other subject's rows. \code{scoring} is added
 #'   whenever the folds were refit, naming what was scored and that they are
 #'   uncertified (see Details); an \code{intoverpop = 'laplace'} fit also adds
 #'   \code{insampleLogLikSubject} and \code{outsampleLogLikSubject}. For
@@ -398,7 +400,8 @@ ctLOO <- function(fit, folds = 10, cores = getOption("mc.cores", 2L), parallelFo
 # observation by five units moved the score of an *earlier* row of the same
 # subject from -0.82 to -1.54, through the mode alone. The mechanism is the one
 # `ctKalman(removeObs=)` uses; see `.ctBackendKalmanSpec`.
-.ctBackendRowLoglik <- function(fit, pars, modesFrom = NULL) {
+# `subjects`, when given, scores those subjects' rows only; the rest are NA.
+.ctBackendRowLoglik <- function(fit, pars, modesFrom = NULL, subjects = NULL) {
   spec <- .ctBackendAsModel(.ctBackendSpec(fit))
   if (!is.null(modesFrom)) {
     idname <- .ctFitModelObject(fit)$subjectIDname
@@ -410,19 +413,25 @@ ctLOO <- function(fit, folds = 10, cores = getOption("mc.cores", 2L), parallelFo
     attr(spec, "laplaceSource") <- .ctBackendAsModel(modesFrom)
     attr(spec, "laplaceSubjects") <- map
   }
-  as.numeric(.ctBackendKalmanRaw(spec, pars, subjectmatrices = FALSE,
-    fields = "llrow")$llrow)
+  llrow <- as.numeric(.ctBackendKalmanRaw(spec, pars, subjectmatrices = FALSE,
+    fields = "llrow", subjects = subjects)$llrow)
+  if (length(subjects)) llrow[!(.ctFitRowSubject(fit) %in% subjects)] <- NA_real_
+  llrow
 }
 
 # The Laplace objective at each column of `draws` (`npar x ndraws`), with each
 # unit's own term. A unit is the outermost level of random effect: a subject in
 # a one-level model, a group in a nested one. One bridge call for all columns.
-.ctBackendLaplaceUnitTerms <- function(spec, draws) {
+# `subjects`, when given, scores only the units holding them: no value, and
+# every other unit's term NA.
+.ctBackendLaplaceUnitTerms <- function(spec, draws, subjects = NULL) {
   draws <- as.matrix(draws)
   storage.mode(draws) <- "double"
   module <- .ctJuliaModule(spec$project)
-  res <- .ctBackendJuliaValue(module$ctsem_laplace_unit_terms(
-    .ctJuliaObjective(.ctBackendAsModel(spec), hybrid = TRUE), .ctJuliaPut(draws)))
+  arguments <- list(.ctJuliaObjective(.ctBackendAsModel(spec), hybrid = TRUE),
+    .ctJuliaPut(draws))
+  if (length(subjects)) arguments$subjects <- .ctJuliaVector(as.integer(subjects))
+  res <- .ctBackendJuliaValue(do.call(module$ctsem_laplace_unit_terms, arguments))
   list(value = as.numeric(res$value),
     unit_loglik = matrix(as.numeric(res$unit_loglik), ncol = ncol(draws)),
     converged = as.logical(res$converged), unit = as.integer(res$unit))
@@ -693,18 +702,23 @@ ctLOO <- function(fit, folds = 10, cores = getOption("mc.cores", 2L), parallelFo
   # Scored against the *full* data, so the held-out rows have a likelihood to
   # report; the Stan path restores `dokalmanrows` before this step for the
   # same reason. When `leaveOutN` is used without refitting, the in-sample
-  # likelihoods are the ones wanted, and they are the same call.
-  modesFrom <- if (laplace && withheld) trainingfit$model_spec else NULL
-  out <- list(llrow = .ctBackendRowLoglik(fit, pars, modesFrom = modesFrom),
-    pars = pars)
+  # likelihoods are the ones wanted, and they are the same call. Only the
+  # subjects holding a held-out row are scored: the fold reads nothing else,
+  # and scoring everyone made leaving one subject out quadratic in subjects.
+  held <- unique(rowsubject[heldout])
   if (subjectlevel) {
-    full <- .ctBackendLaplaceUnitTerms(spec, pars)
-    train <- .ctBackendLaplaceUnitTerms(trainingfit$model_spec, pars)
-    out$subject <- .ctBackendLOOHeldSubjects(full, train,
-      unique(rowsubject[heldout]))
-    out$converged <- isTRUE(all(full$converged)) && isTRUE(all(train$converged))
+    # A subject fold on a Laplace fit scores the held-out units' marginals,
+    # not rows (see `.ctBackendLOO()`), so no row pass is made.
+    full <- .ctBackendLaplaceUnitTerms(spec, pars, subjects = held)
+    train <- .ctBackendLaplaceUnitTerms(trainingfit$model_spec, pars,
+      subjects = held)
+    return(list(llrow = rep(NA_real_, length(rowsubject)), pars = pars,
+      subject = .ctBackendLOOHeldSubjects(full, train, held),
+      converged = isTRUE(all(full$converged)) && isTRUE(all(train$converged))))
   }
-  out
+  modesFrom <- if (laplace && withheld) trainingfit$model_spec else NULL
+  list(llrow = .ctBackendRowLoglik(fit, pars, modesFrom = modesFrom,
+    subjects = held), pars = pars)
 }
 
 

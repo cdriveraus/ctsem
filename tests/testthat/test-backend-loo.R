@@ -40,11 +40,19 @@
     CINT = matrix(0, 1, 1)))
 }
 
+.loo_cache <- new.env(parent = emptyenv())
+.loo_fit <- function() {
+  if (is.null(.loo_cache$fit)) {
+    .loo_cache$fit <- suppressMessages(ctFit(.loo_data(), .loo_model(),
+      backend = "julia", verbose = 0, optimcontrol = list(estonly = TRUE)))
+  }
+  .loo_cache$fit
+}
+
 test_that("ctLOO runs on a julia fit and reports the same structure as Stan's", {
   skip_without_julia()
   data <- .loo_data()
-  fit <- suppressMessages(ctFit(data, .loo_model(), backend = "julia", verbose = 0,
-    optimcontrol = list(estonly = TRUE)))
+  fit <- .loo_fit()
 
   set.seed(4)
   out <- suppressMessages(ctLOO(fit, folds = 3, cores = 1))
@@ -92,9 +100,7 @@ test_that("without refitting, the out-of-sample likelihoods are the in-sample on
   # the out-of-sample vector fold by fold must reconstruct the in-sample one
   # exactly. Any error in which rows a fold owns shows up here as a mismatch,
   # with no optimizer noise to hide behind.
-  data <- .loo_data()
-  fit <- suppressMessages(ctFit(data, .loo_model(), backend = "julia", verbose = 0,
-    optimcontrol = list(estonly = TRUE)))
+  fit <- .loo_fit()
 
   set.seed(5)
   out <- suppressMessages(ctLOO(fit, folds = 4, cores = 1, refit = FALSE))
@@ -102,6 +108,16 @@ test_that("without refitting, the out-of-sample likelihoods are the in-sample on
   outsample <- as.numeric(out$outsampleLogLikRow)
   observed <- !is.na(insample)
   expect_equal(outsample[observed], insample[observed])
+
+  # A fold filters only the subjects it holds out: every other subject's rows
+  # are not scored at all, and the equality above says the held-out ones are
+  # scored as the full pass scores them.
+  rowsubject <- .ctFitRowSubject(fit)
+  for (k in seq_along(out$foldrows)) {
+    held <- rowsubject %in% rowsubject[out$foldrows[[k]]]
+    expect_false(anyNA(out$LogLikRowFolds[[k]][held & observed]))
+    expect_true(all(is.na(out$LogLikRowFolds[[k]][!held])))
+  }
 })
 
 test_that("julia and Stan cross-validate to the same answer", {

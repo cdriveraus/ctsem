@@ -63,7 +63,9 @@ For \code{method = 'kfold'}, a list with \code{foldrows},
   \code{foldpars}, \code{insampleLogLikRow}, \code{LogLikRowFolds},
   \code{outsampleLogLikRow}, \code{insampleLogLik}, \code{outsampleLogLik}
   and entropy and standard deviation summaries, and \code{processes},
-  whether the folds ran in worker processes. \code{scoring} is added
+  whether the folds ran in worker processes. On a julia fit a fold scores
+  only the subjects it holds out, so its column of \code{LogLikRowFolds} is
+  \code{NA} for every other subject's rows. \code{scoring} is added
   whenever the folds were refit, naming what was scored and that they are
   uncertified (see Details); an \code{intoverpop = 'laplace'} fit also adds
   \code{insampleLogLikSubject} and \code{outsampleLogLikSubject}. For
