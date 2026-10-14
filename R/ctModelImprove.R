@@ -76,6 +76,16 @@
 #' loads on vary together. Relaxations the score tests cannot tell apart (the same
 #' \code{class}) are not refitted in the same round.
 #'
+#' Each random effect the search adds brings its correlations with the others,
+#' and with many effects for few subjects the data no longer determine them.
+#' When a kept change leaves the fit's curvature weak or negative along the
+#' population covariance (\code{fit$identifiability}), the covariance is
+#' refitted at one rank lower (\code{poprank}), starting from its leading
+#' dimensions, and the lower rank kept unless the likelihood ratio test needs
+#' the dropped dimension; it steps down until the fit is identified. Later
+#' random effects then load on the shared dimensions, and later heterogeneity
+#' results give own variances. Single-level models only.
+#'
 #' When the search stops, each change kept is tried out again, by refitting
 #' without it (\code{prune}), and dropped if the others make it redundant.
 #'
@@ -163,7 +173,8 @@
 #'   fit), \code{history} (every refit tried: the round, the relaxation, its
 #'   screening p-value, the change in log likelihood and parameters, the
 #'   criterion's verdict, and whether it was kept; a pruning row, \code{family}
-#'   \code{'prune'}, says whether the change was dropped), \code{screens} (the score
+#'   \code{'prune'}, says whether the change was dropped, and a \code{'rank'} row
+#'   whether the lower rank was kept), \code{screens} (the score
 #'   tests of each round), \code{adequacy} (the final checks),
 #'   \code{confirmation} (with \code{holdout}: each kept change's likelihood
 #'   ratio test on the held-out subjects), and \code{stopped} (why the search
@@ -305,13 +316,22 @@ ctModelImprove <- function(fit, covariates = NULL,
     history[[length(history) - length(tried) + best]]$kept <- TRUE
     ad <- NULL
     say("Round ", step, ": kept ", tried[[best]]$prop$label)
+    # A kept random effect can leave the population covariance more than the
+    # data determine: then the rank comes down until the likelihood needs it.
+    ranked <- .ctImproveRankStep(.ctFitBaseModel(fit), current, kept, startdata, covariates,
+      criterion, alpha, cores, say, label = paste0("Round ", step, ": "), round = step)
+    history <- c(history, ranked$history)
+    if (ranked$changed) {
+      current <- ranked$current; kept <- ranked$kept; data <- ranked$data
+      extraargs <- ranked$args
+    }
   }
   # Backward: a change kept early can be made redundant by one kept later --
   # a random effect on a parameter whose variation a covariate then explains.
   # Each kept change in turn, the model is rebuilt from the start with all the
   # others and refitted; if the fuller model is not better by the criterion,
   # the change goes.
-  if (isTRUE(prune) && length(kept) > 1L) {
+  if (isTRUE(prune) && sum(vapply(kept, .ctImprovePrunable, logical(1))) > 1L) {
     pruned <- .ctImprovePrune(.ctFitBaseModel(fit), current, kept, startdata, covariates,
       criterion, alpha, cores, ntry, slowest, say)
     history <- c(history, pruned$history)
@@ -369,6 +389,10 @@ ctModelImprove <- function(fit, covariates = NULL,
     holdout = held), class = 'ctModelImprove')
 }
 
+# Whether pruning may try dropping a kept change: a rank change may not
+# (`.ctImproveRankChange`).
+.ctImprovePrunable <- function(p) !isFALSE(p$prunable)
+
 # The pruning pass: each kept change in turn, the base model rebuilt without
 # it and refitted, and the change dropped if the fuller model is not better
 # by the criterion. Until a change is dropped every refit is compared against
@@ -381,9 +405,11 @@ ctModelImprove <- function(fit, covariates = NULL,
     cores, ntry, slowest = 0, say = function(...) invisible()) {
   history <- list(); data <- NULL; args <- NULL
   k <- 1L
-  while (k <= length(kept) && length(kept) > 1L) {
+  while (k <= length(kept) && sum(vapply(kept, .ctImprovePrunable, logical(1))) > 1L) {
     width <- if (.ctImproveSideBySide(current, ntry, cores, slowest)) as.integer(ntry) else 1L
-    ks <- seq.int(k, min(length(kept), k + width - 1L))
+    ks <- seq.int(k, length(kept))
+    ks <- utils::head(ks[vapply(kept[ks], .ctImprovePrunable, logical(1))], width)
+    if (!length(ks)) break
     rebuilt <- lapply(ks, function(j) try(.ctImproveRebuild(base, startdata, kept[-j],
       covariates), silent = TRUE))
     for (j in ks) say("Pruning: refitting without ", kept[[j]]$label)
@@ -416,12 +442,130 @@ ctModelImprove <- function(fit, covariates = NULL,
     slowest = slowest)
 }
 
+# Whether a fit leaves its population covariance unidentified: a weak or
+# negative direction of its curvature (`fit$identifiability$directions`) made
+# mostly of the covariance's own parameters. With eleven random effects for 40
+# people the Fisher example's search reached a fit whose information along 55
+# correlations was about 2.5 against 4e6 elsewhere, with one direction negative:
+# the estimation correction then took more than each row-level statistic's
+# whole variance, and nothing downstream of that fit could be trusted.
+.ctImproveWeakCovariance <- function(fit) {
+  dirs <- fit$identifiability$directions
+  if (!length(dirs)) return(FALSE)
+  any(vapply(dirs, function(d) {
+    p <- as.character(d$parameters)
+    length(p) > 0L && mean(grepl('^(popsd_|rawcor_|poploading_|popunique_)', p)) >= 0.5
+  }, logical(1)))
+}
+
+# Rank-r loadings with L L' the best rank-r approximation of the covariance S:
+# its leading eigen-directions, rotated so that L[p, q] = 0 for p < q, the
+# echelon form the engine reads (`_laplace_poploading`).
+.ctImproveEchelonLoadings <- function(S, r) {
+  S <- (S + t(S)) / 2
+  e <- eigen(S, symmetric = TRUE)
+  B <- e$vectors[, seq_len(r), drop = FALSE] %*%
+    diag(sqrt(pmax(e$values[seq_len(r)], 0)), r)
+  Q <- qr.Q(qr(t(B[seq_len(r), , drop = FALSE])))
+  L <- B %*% Q
+  L[upper.tri(L)] <- 0
+  L
+}
+
+# Raw starting values for a fit of the current model at population rank r:
+# the current fit's raw-scale population covariance (`ctsem_laplace_popcov`)
+# by echelon loadings, each row divided by its effect's sdscale, named as the
+# engine names them. Without it every loading would start at zero, the random
+# effects with no spread at all.
+.ctImproveRankStart <- function(current, r) {
+  spec <- current$model_spec
+  module <- .ctJuliaModule(spec$project)
+  est <- .ctFitRawEstimate(current)
+  S <- as.matrix(.ctBackendJuliaValue(module$ctsem_laplace_popcov(
+    .ctJuliaObjective(current), .ctJuliaNumericVector(est), 1L)))
+  nm <- as.character(.ctFitRawParNames(current))
+  pars <- sub('^popsd_', '', grep('^popsd_', nm, value = TRUE))
+  if (length(pars) != nrow(S)) return(NULL)
+  model <- .ctFitBaseModel(current)
+  scale <- suppressWarnings(as.numeric(model$pars$sdscale[match(pars, model$pars$param)]))
+  scale[!is.finite(scale) | scale <= 0] <- 1
+  L <- .ctImproveEchelonLoadings(S, r) / scale
+  out <- unlist(lapply(seq_len(r), function(q) stats::setNames(L[q:nrow(L), q],
+    paste0('poploading_', pars[q:nrow(L)], '_dim', q))))
+  out
+}
+
+# The number of parameters varying over subjects in a model.
+.ctImproveNvarying <- function(model) {
+  length(unique(model$pars$param[as.logical(model$pars$indvarying) %in% TRUE &
+    !is.na(model$pars$param)]))
+}
+
+# A change that sets the population covariance's rank: kept like any other, so
+# a rebuild carries it, applied after every other change (`.ctImproveRebuild`)
+# so that it sees how many parameters vary by then, and never pruned -- undoing
+# it adds parameters rather than removing them. A rank no longer below the
+# number varying is the full covariance.
+.ctImproveRankChange <- function(r) list(key = 'rank', family = 'rank', p = NA_real_,
+  label = paste0('population covariance of rank ', r), prunable = FALSE,
+  edit = local({ r <- r; function(model, data, covs, args = list()) {
+    k <- .ctImproveNvarying(model)
+    list(model = model, data = data, args = list(poprank = if (r < k) r else NA))
+  } }))
+
+# While the current fit leaves its population covariance unidentified, refit
+# it one rank lower, starting from the current covariance's leading
+# dimensions, and keep the lower rank unless the likelihood says the dropped
+# dimension is needed: the fuller fit better by the criterion. Single-level
+# models only, and not below the varying T0MEANS a rank must keep. Returns the
+# current fit and kept changes, and a history row for each refit.
+.ctImproveRankStep <- function(base, current, kept, startdata, covariates, criterion,
+    alpha, cores, say = function(...) invisible(), label = '', round = NA_integer_) {
+  history <- list(); data <- NULL; args <- NULL; changed <- FALSE
+  repeat {
+    if (!.ctImproveWeakCovariance(current)) break
+    model <- .ctFitBaseModel(current)
+    if (length(model$groupIDnames)) break
+    k <- .ctImproveNvarying(model)
+    replay <- .ctFitReplayArgs(current)
+    r <- suppressWarnings(as.integer(replay$poprank))
+    if (!length(r) || is.na(r) || r >= k) r <- k
+    t0 <- sum(as.logical(model$pars$indvarying) %in% TRUE & model$pars$matrix %in% 'T0MEANS')
+    if (r - 1L < max(1L, t0)) break
+    change <- .ctImproveRankChange(r - 1L)
+    say(label, "the population covariance is not identified; refitting at rank ", r - 1L)
+    nonrank <- Filter(function(p) !identical(p$family, 'rank'), kept)
+    rebuilt <- try(.ctImproveRebuild(base, startdata, c(nonrank, list(change)), covariates),
+      silent = TRUE)
+    start <- if (inherits(rebuilt, 'try-error')) NULL else
+      tryCatch(.ctImproveRankStart(current, r - 1L), error = function(e) NULL)
+    refit <- if (inherits(rebuilt, 'try-error')) rebuilt else try(.ctImproveRefit(current,
+      rebuilt$model, rebuilt$data, cores, start, rebuilt$args), silent = TRUE)
+    verdict <- if (inherits(refit, 'try-error')) list(accept = TRUE, dloglik = NA_real_,
+      dpar = NA_integer_, value = NA_real_, note = 'refit at the lower rank failed') else
+      .ctImproveCompare(refit, current, criterion, alpha)
+    lower <- !isTRUE(verdict$accept)
+    history[[length(history) + 1L]] <- data.frame(round = round, family = 'rank',
+      change = change$label, screen_p = NA_real_,
+      dloglik = if (is.finite(verdict$dloglik)) -verdict$dloglik else NA_real_,
+      dpar = if (is.finite(verdict$dpar)) -verdict$dpar else NA_integer_,
+      criterion = verdict$value, kept = lower, note = verdict$note, stringsAsFactors = FALSE)
+    if (!lower) break
+    say(label, "kept ", change$label)
+    current <- refit; kept <- c(nonrank, list(change)); changed <- TRUE
+    data <- rebuilt$data; args <- rebuilt$args
+  }
+  list(current = current, kept = kept, data = data, args = args, history = history,
+    changed = changed)
+}
+
 # The base model with a sequence of kept changes applied, for some data: the
 # model, the data the changes need (added covariates), and the ctFit
 # arguments they change (popunique, poprank).
 .ctImproveRebuild <- function(model, data, kept, covariates) {
   args <- list()
-  for (p in kept) {
+  rank <- vapply(kept, function(p) identical(p$family, 'rank'), logical(1))
+  for (p in c(kept[!rank], kept[rank])) {
     e <- p$edit(model, data, covariates, args)
     model <- e$model; data <- e$data
     if (!is.null(e$args)) args <- utils::modifyList(args, e$args)

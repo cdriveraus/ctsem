@@ -240,3 +240,58 @@ test_that("pruning side by side makes the decisions pruning one at a time does",
   # a, b, c side by side; b goes, so c, d, e against the model without it.
   expect_identical(batched$refits, 6L)
 })
+
+test_that("a rank change starts at the best low-rank covariance, applies last and is never pruned", {
+  # No fits. The loadings a lower rank starts from: the echelon form the engine
+  # reads, reproducing the covariance's best rank-r approximation.
+  set.seed(2)
+  A <- matrix(stats::rnorm(25), 5)
+  S <- crossprod(A) + diag(5)
+  L <- ctsem:::.ctImproveEchelonLoadings(S, 3L)
+  expect_identical(dim(L), c(5L, 3L))
+  expect_equal(L[upper.tri(L)], rep(0, sum(upper.tri(L))))
+  e <- eigen(S, symmetric = TRUE)
+  expect_equal(tcrossprod(L), e$vectors[, 1:3] %*% diag(e$values[1:3]) %*% t(e$vectors[, 1:3]),
+    tolerance = 1e-10)
+
+  # A weak direction counts against the covariance when it is mostly the
+  # covariance's own parameters.
+  dir <- function(p) list(identifiability = list(directions = list(list(parameters = p))))
+  expect_true(ctsem:::.ctImproveWeakCovariance(dir(c('rawcor_a__b', 'popsd_a', 'drift'))))
+  expect_false(ctsem:::.ctImproveWeakCovariance(dir(c('drift', 'diff', 'rawcor_a__b'))))
+  expect_false(ctsem:::.ctImproveWeakCovariance(list()))
+
+  # Rebuilt, a rank change comes after the change that adds a random effect, so
+  # it counts that effect: a rank below the number varying is kept, and one
+  # that is not is the full covariance.
+  m <- suppressMessages(ctModel(type = 'ct', manifestNames = 'Y1', latentNames = 'eta1',
+    LAMBDA = matrix(1)))
+  k <- ctsem:::.ctImproveNvarying(m)
+  add <- list(family = 'heterogeneity', label = 'drift varying',
+    edit = function(model, data, covs, args = list()) {
+      model$pars$indvarying[model$pars$param %in% 'drift_eta1'] <- TRUE
+      list(model = model, data = data)
+    })
+  rank <- ctsem:::.ctImproveRankChange(k)
+  expect_identical(ctsem:::.ctImproveRebuild(m, NULL, list(rank, add), NULL)$args$poprank, k)
+  expect_true(is.na(ctsem:::.ctImproveRebuild(m, NULL, list(rank), NULL)$args$poprank))
+
+  # Pruning never tries to drop it: undoing a rank adds parameters.
+  changes <- list(list(label = 'a'), rank, list(label = 'b'))
+  tried <- character()
+  testthat::local_mocked_bindings(
+    .ctImproveSideBySide = function(...) FALSE,
+    .ctImproveRebuild = function(model, data, kept, covariates)
+      list(model = vapply(kept, `[[`, '', 'label'), data = NULL, args = list()),
+    .ctImproveRefits = function(current, edits, starts, cores, slowest = 0, width = Inf) {
+      tried <<- c(tried, vapply(edits, function(e) paste(e$model, collapse = '+'), ''))
+      structure(lapply(edits, function(e) list(labels = e$model)), seconds = 0)
+    },
+    .ctImproveCompare = function(current, refit, criterion, alpha)
+      list(accept = TRUE, dloglik = 10, dpar = 1L, value = 1e-4, score = 0, note = ''))
+  out <- ctsem:::.ctImprovePrune(NULL, list(labels = c('a', rank$label, 'b')), changes,
+    NULL, NULL, 'LR', 0.05, cores = 1L, ntry = 3L)
+  expect_identical(length(out$history), 2L)
+  expect_identical(vapply(out$kept, `[[`, '', 'label'), c('a', rank$label, 'b'))
+  expect_true(all(grepl(rank$label, tried, fixed = TRUE)))
+})

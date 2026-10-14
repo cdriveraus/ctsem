@@ -84,7 +84,8 @@ An object of class \code{ctModelImprove}: \code{fit} (the final
   fit), \code{history} (every refit tried: the round, the relaxation, its
   screening p-value, the change in log likelihood and parameters, the
   criterion's verdict, and whether it was kept; a pruning row, \code{family}
-  \code{'prune'}, says whether the change was dropped), \code{screens} (the score
+  \code{'prune'}, says whether the change was dropped, and a \code{'rank'} row
+  whether the lower rank was kept), \code{screens} (the score
   tests of each round), \code{adequacy} (the final checks),
   \code{confirmation} (with \code{holdout}: each kept change's likelihood
   ratio test on the held-out subjects), and \code{stopped} (why the search
@@ -151,6 +152,16 @@ variance of its own (\code{popunique}); without reduced rank, a
 significant \code{dimension} test makes the parameters its direction
 loads on vary together. Relaxations the score tests cannot tell apart (the same
 \code{class}) are not refitted in the same round.
+
+Each random effect the search adds brings its correlations with the others,
+and with many effects for few subjects the data no longer determine them.
+When a kept change leaves the fit's curvature weak or negative along the
+population covariance (\code{fit$identifiability}), the covariance is
+refitted at one rank lower (\code{poprank}), starting from its leading
+dimensions, and the lower rank kept unless the likelihood ratio test needs
+the dropped dimension; it steps down until the fit is identified. Later
+random effects then load on the shared dimensions, and later heterogeneity
+results give own variances. Single-level models only.
 
 When the search stops, each change kept is tried out again, by refitting
 without it (\code{prune}), and dropped if the others make it redundant.
