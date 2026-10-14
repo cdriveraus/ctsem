@@ -321,3 +321,26 @@ test_that("stability along a predicted state finds a drift that depends on it", 
     verbose = FALSE, nboot = 99))
   expect_null(st0$instability)
 })
+
+test_that("an innovation sd that varies over people refuses volatility alone", {
+  # The volatility terms move each innovation sd into PARS, which orders the
+  # random effects first, so with the drift varying too the extended model's
+  # correlations are not the fit's. That once refused state dependence and
+  # fixed cells with it, from the sixth round of the Fisher search on.
+  # The structure is what is tested, not power: twenty people.
+  d <- .score_data('het', nsub = 20L)
+  m <- .score_model()
+  m$pars$indvarying[m$pars$param %in% c('drift_eta1', 'diff_eta1')] <- TRUE
+  # These data have no spread in the innovations, so its sd sits at the floor
+  # and the fit says so; the model's shape is all that matters here.
+  fit <- fit_cached('scoretest het random sd', suppressWarnings(suppressMessages(ctFit(
+    d[, c('id', 'time', 'Y1')], m, backend = 'julia', intoverpop = 'laplace',
+    cores = 1, verbose = 0))))
+  expect_warning(st <- suppressMessages(ctScoreTest(fit,
+    tests = c('statedependence', 'volatility'), cores = 1, verbose = FALSE)),
+    'volatility: An innovation sd varies over people')
+  expect_false(is.null(st$statedependence))
+  expect_null(st$volatility)
+  expect_match(st$info$errors[['volatility']], 'innovation sd varies')
+  expect_null(st$info$errors[['statedependence and volatility']])
+})

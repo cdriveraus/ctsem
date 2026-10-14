@@ -432,6 +432,10 @@ ctScoreTest <- function(fit, covariates = NULL,
     out$statedependence <- ext$statedependence
     out$volatility <- ext$volatility
     out$fixed <- ext$fixed
+    if (!is.null(ext$refused)) {
+      out$info$errors$volatility <- ext$refused
+      warning("volatility: ", ext$refused, call. = FALSE)
+    }
   })
   if ('instability' %in% tests) attempt('instability', {
     say("Row scores for the stability tests")
@@ -1361,38 +1365,60 @@ ctScoreTest <- function(fit, covariates = NULL,
   if (is.null(base)) stop("This fit does not carry the model it was built from, ",
     "so the extended model cannot be prepared. Refit with this version of ctsem.",
     call. = FALSE)
-  model <- base
-  state <- vol <- fixed <- NULL
-  if ('statedependence' %in% families) {
-    state <- .ctScoreStateModel(model, order)
-    model <- state$model
-  }
-  if ('volatility' %in% families) {
-    vol <- .ctScoreVolatilityModel(model)
-    model <- vol$model
-  }
-  if ('fixed' %in% families) {
-    fixed <- .ctScoreFixedModel(model)
-    model <- fixed$model
-  }
-  names_new <- c(state$terms$name, vol$terms$name, fixed$terms$name)
-  if (!length(names_new)) return(list(statedependence = NULL, volatility = NULL,
-    fixed = NULL))
-  args <- .ctFitReplayArgs(fit)
-  args$model <- model
-  args$fit <- FALSE
-  args$inits <- NULL
-  args$datalong <- .ctFitLongData(fit)
-  args$intoverpop <- .ctBackendIntOverPop(spec)
-  args$verbose <- 0
-  spec2 <- suppressMessages(suppressWarnings(do.call(ctFit, args)))
   nm1 <- as.character(.ctFitRawParNames(fit))
-  nm2 <- as.character(.ctBackendRawParameterNames(list(model_spec = spec2),
-    .ctBackendNpar(spec2)))
-  lost <- setdiff(nm1, nm2)
-  if (length(lost) || anyDuplicated(nm2)) stop("The extended model's parameters ",
-    "do not line up with the fit's (", paste(lost, collapse = ', '), "). ",
-    "State dependence and fixed cells cannot be tested for this model.", call. = FALSE)
+  prepare <- function(families) {
+    model <- base
+    state <- vol <- fixed <- NULL
+    if ('statedependence' %in% families) {
+      state <- .ctScoreStateModel(model, order)
+      model <- state$model
+    }
+    if ('volatility' %in% families) {
+      vol <- .ctScoreVolatilityModel(model)
+      model <- vol$model
+    }
+    if ('fixed' %in% families) {
+      fixed <- .ctScoreFixedModel(model)
+      model <- fixed$model
+    }
+    names_new <- c(state$terms$name, vol$terms$name, fixed$terms$name)
+    if (!length(names_new)) return(list(names_new = names_new))
+    args <- .ctFitReplayArgs(fit)
+    args$model <- model
+    args$fit <- FALSE
+    args$inits <- NULL
+    args$datalong <- .ctFitLongData(fit)
+    args$intoverpop <- .ctBackendIntOverPop(spec)
+    args$verbose <- 0
+    spec2 <- suppressMessages(suppressWarnings(do.call(ctFit, args)))
+    nm2 <- as.character(.ctBackendRawParameterNames(list(model_spec = spec2),
+      .ctBackendNpar(spec2)))
+    list(state = state, vol = vol, fixed = fixed, names_new = names_new, spec2 = spec2,
+      nm2 = nm2, lost = setdiff(nm1, nm2), lined = !length(setdiff(nm1, nm2)) &&
+        !anyDuplicated(nm2))
+  }
+  # The volatility terms move each innovation sd into PARS, and random effects
+  # are ordered PARS first, so an sd that varies over people moves ahead of the
+  # effects before it and the extended model's correlations are not the fit's.
+  # The other families leave every parameter where it was, so they are tested
+  # without volatility rather than not at all.
+  refused <- NULL
+  p <- prepare(families)
+  if (length(p$names_new) && !p$lined && 'volatility' %in% families &&
+      length(families) > 1L) {
+    refused <- paste0("An innovation sd varies over people, which the extended ",
+      "model cannot carry (", paste(p$lost, collapse = ', '), "); volatility is not ",
+      "tested for this model.")
+    families <- setdiff(families, 'volatility')
+    p <- prepare(families)
+  }
+  if (!length(p$names_new)) return(list(statedependence = NULL, volatility = NULL,
+    fixed = NULL, refused = refused))
+  if (!p$lined) stop("The extended model's parameters do not line up with the ",
+    "fit's (", paste(p$lost, collapse = ', '), "), so ", paste(families, collapse = ', '),
+    " cannot be tested for this model.", call. = FALSE)
+  state <- p$state; vol <- p$vol; fixed <- p$fixed
+  names_new <- p$names_new; spec2 <- p$spec2; nm2 <- p$nm2
   if (!setequal(setdiff(nm2, nm1), names_new)) stop("The extended model added ",
     "parameters other than its terms: ", paste(setdiff(setdiff(nm2, nm1), names_new),
       collapse = ', '), call. = FALSE)
@@ -1411,7 +1437,7 @@ ctScoreTest <- function(fit, covariates = NULL,
   if (!isTRUE(abs(ev$value - value1 - offset) <= 1e-6 * max(1, abs(value1)))) stop(
     "The extended model does not reproduce the fit at zero (log likelihood ",
     signif(ev$value - offset, 8), " against ", signif(value1, 8), "), so its scores are ",
-    "not the fit's. State dependence and fixed cells cannot be tested for this model.",
+    "not the fit's and ", paste(families, collapse = ', '), " cannot be tested for this model.",
     call. = FALSE)
   grad <- setNames(as.numeric(ev$gradient), nm2)
   theta <- match(nm1, nm2)
@@ -1506,6 +1532,7 @@ ctScoreTest <- function(fit, covariates = NULL,
     out$fixed <- list(cells = table[order(table$p, -table$LM), , drop = FALSE],
       joint = jointtest(idx, 'all'))
   }
+  out$refused <- refused
   out
 }
 
