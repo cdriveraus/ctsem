@@ -447,8 +447,14 @@ of its cotangent lands on that row through the per-subject
 `_ctsem_parameter_layer!`, a cell reading it through `_ctsem_tipred_scatter!`,
 and its imputation density's term is added to the same row
 (`_ctsem_prior_scores!`).
+
+`prior = false` leaves the prior out of the rows -- each is then subject `i`'s
+log likelihood gradient alone, which is what removing subject `i` removes
+(`ctLOO(casewiseApproximation = TRUE)`); a refit keeps the whole prior. The
+value is the objective either way.
 """
-function ctsem_subject_gradients(objective::CTSEMObjective, values::AbstractVector{T}) where {T}
+function ctsem_subject_gradients(objective::CTSEMObjective, values::AbstractVector{T};
+    prior::Bool=true) where {T}
     subjects = objective.subject_objectives
     nsubjects = length(subjects)
     npars = length(values)
@@ -470,7 +476,7 @@ function ctsem_subject_gradients(objective::CTSEMObjective, values::AbstractVect
         valid[c] || return (value=badvalue[c], scores=fill(T(NaN), nsubjects, npars))
     end
 
-    _ctsem_prior_scores!(scores, objective, values)
+    prior && _ctsem_prior_scores!(scores, objective, values)
     return (value=sum(totals) + _ctsem_log_prior(objective, values), scores=scores)
 end
 

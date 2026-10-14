@@ -247,13 +247,16 @@ test_that("PSIS is refused by name where it does not apply", {
   estonly$estimate$cov <- NULL
   expect_error(ctLOO(estonly, method = "psis"), "carries no covariance")
 
-  # A julia fit without Laplace random effects.
+  # A julia fit without Laplace random effects leaves subjects out by the
+  # filter's terms, so it needs the covariance too; rows it cannot leave out.
   fixed <- .lool_model()
   fixed$pars$indvarying <- FALSE
   plain <- suppressMessages(ctFit(.lool_data(nsubjects = 4), fixed,
     backend = "julia", verbose = 0,
     optimcontrol = list(estonly = TRUE)))
-  expect_error(ctLOO(plain, method = "psis"), "intoverpop = 'laplace'")
+  expect_error(ctLOO(plain, method = "psis"), "carries no covariance")
+  expect_error(ctLOO(plain, method = "psis", subjectwise = FALSE),
+    "leaves one row out only on an optimized fit with intoverpop = 'laplace'")
   # A stan fit.
-  expect_error(ctLOO(ctstantestfit, method = "psis"), "intoverpop = 'laplace'")
+  expect_error(ctLOO(ctstantestfit, method = "psis"), "needs a backend = 'julia' fit")
 })

@@ -782,11 +782,14 @@
 
 # The score matrix `ctOptimScoreMatrix()`/`bootstrapHessian()` consume, from the
 # engines' own per-subject adjoint contributions rather than by re-initialising
-# a model per subject the way `scorecalc()` must for Stan.
-.ctBackendScoreMatrix <- function(fit, est) {
+# a model per subject the way `scorecalc()` must for Stan. One row per unit:
+# subject, or under the Laplace layer outermost group. `prior = FALSE` leaves
+# out each row's share of the prior, for what removing a unit removes.
+.ctBackendScoreMatrix <- function(fit, est, prior = TRUE) {
   module <- .ctJuliaModule(fit$model_spec$project)
   result <- .ctJuliaGet(module$ctsem_subject_gradients(
-    .ctJuliaObjective(fit, hybrid = TRUE), .ctJuliaVector(as.numeric(est))))
+    .ctJuliaObjective(fit, hybrid = TRUE), .ctJuliaVector(as.numeric(est)),
+    prior = isTRUE(prior)))
   scores <- as.matrix(result$scores)
   if (any(!is.finite(scores))) {
     stop("The engine returned non-finite per-subject scores at the estimate; ",

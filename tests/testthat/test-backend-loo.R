@@ -115,15 +115,15 @@ test_that("without refitting, the out-of-sample likelihoods are the in-sample on
     expect_equal(out$LogLikRowFolds[[k]], insample)
   }
 
-  # casewiseApproximation steps by whole subjects' scores along the fit's
-  # covariance, so it refuses row folds and a fit without a covariance (this
-  # one is estonly) rather than returning something else under its name.
-  expect_error(ctLOO(fit, folds = 4, subjectwise = FALSE,
-    casewiseApproximation = TRUE), "needs subject folds")
-  expect_error(ctLOO(fit, leaveOutN = 2, casewiseApproximation = TRUE),
-    "needs subject folds")
+  # casewiseApproximation steps along the fit's covariance, so it refuses a
+  # fit without one (this one is estonly) rather than returning something else
+  # under its name, whatever the folds; and its bar is a number or a switch.
   expect_error(suppressMessages(ctLOO(fit, folds = 4,
     casewiseApproximation = TRUE)), "has no covariance")
+  expect_error(suppressMessages(ctLOO(fit, folds = 4, subjectwise = FALSE,
+    casewiseApproximation = TRUE)), "has no covariance")
+  expect_error(ctLOO(fit, folds = 4, casewiseApproximation = -1),
+    "one non-negative influence bar")
 })
 
 test_that("julia and Stan cross-validate to the same answer", {

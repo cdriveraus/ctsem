@@ -801,7 +801,11 @@ function ctsem_evaluate(objective::CTSEMObjective, values::AbstractVector;
         grad = gradient ? _ctsem_gradient(objective, values) : nothing
     end
     if contributions
-        subject = [obj(values) for obj in objective.subject_objectives]
+        subject = eltype(values) === Float64 ?
+            _ctsem_subject_logliks!(
+                Vector{Float64}(undef, length(objective.subject_objectives)),
+                objective, Vector{Float64}(values)) :
+            [obj(values) for obj in objective.subject_objectives]
         return (value=value, gradient=grad, subject_loglik=subject,
             row_loglik=_ctsem_row_loglikelihood(objective, values))
     end
@@ -1008,6 +1012,78 @@ function ctsem_evaluate_batch_gradient(objective, values::AbstractMatrix)
         probe.gradient === nothing || (out[2:end, j] .= probe.gradient)
     end
     return out
+end
+
+export ctsem_subject_loglik_batch
+
+"""
+    ctsem_subject_loglik_batch(objective::CTSEMObjective, values::AbstractMatrix)
+
+Every subject's log likelihood, and the objective, at each column of `values`,
+in one bridge call: row 1 the objective (the log posterior the fit maximised),
+row `i + 1` subject `i`'s log likelihood -- its marginal over whatever random
+effects the filter carries as states. A column the model cannot evaluate comes
+back `-Inf` in row 1 and `NaN` below, as `ctsem_evaluate_batch` refuses one.
+
+For leave-one-subject-out by Pareto-smoothed importance sampling
+(`ctLOO(method = 'psis')` on the filter's route), which needs exactly these
+numbers at a few hundred draws -- of a proposal or of a sampled posterior: the
+objective to weight a proposal's draw to the posterior, a subject's own term
+to take that subject out. One pass per draw, threaded over subjects as the
+objective itself is, where a refit per subject costs a whole optimisation
+each.
+"""
+function ctsem_subject_loglik_batch(objective::CTSEMObjective, values::AbstractMatrix)
+    ncol = size(values, 2)
+    ncol >= 1 || throw(ArgumentError("values must have at least one column"))
+    nsubjects = length(objective.subject_objectives)
+    out = fill(NaN, nsubjects + 1, ncol)
+    for j in 1:ncol
+        _ctsem_interrupt_check()
+        v = Vector{Float64}(view(values, :, j))
+        column = view(out, 2:(nsubjects + 1), j)
+        ok = try
+            _ctsem_subject_logliks!(column, objective, v)
+            out[1, j] = sum(column) + _ctsem_log_prior(objective, v)
+            isfinite(out[1, j])
+        catch err
+            _ctsem_must_propagate(err) && rethrow()
+            false
+        end
+        if !ok
+            out[1, j] = -Inf
+            column .= NaN
+        end
+    end
+    return out
+end
+
+"""
+    _ctsem_subject_logliks!(column, objective, values)
+
+Each subject's term of `objective(values)`, written into `column`, over the
+same chunks and threads the objective's own evaluation uses. Shared by the
+batch above and `ctsem_evaluate(; contributions=true)`.
+"""
+function _ctsem_subject_logliks!(column::AbstractVector{Float64},
+    objective::CTSEMObjective, values::Vector{Float64})
+    subjects = objective.subject_objectives
+    nsubjects = length(subjects)
+    nchunks = _ctsem_nchunks(nsubjects)
+    if nchunks <= 1
+        @inbounds for i in 1:nsubjects
+            column[i] = subjects[i](values)
+        end
+        return column
+    end
+    nblocks = _ctsem_nblocks(nsubjects, nchunks)
+    ranges = _ctsem_chunk_ranges(nsubjects, nblocks)
+    _ctsem_pull_blocks(nblocks, nchunks) do b, _
+        @inbounds for i in ranges[b]
+            column[i] = subjects[i](values)
+        end
+    end
+    return column
 end
 
 """

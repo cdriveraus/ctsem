@@ -51,6 +51,7 @@
 "test-tdeffectvariation_covtest.R","laplace","release"
 "test-backend-loo.R","loo","core"
 "test-ctLOO.R","loo","core"
+"test-julia-loo-approx.R","loo","core"
 "test-julia-loo-laplace.R","loo","extended"
 "test-backend-optimgap.R","optimiser","core"
 "test-ctFitProfile.R","optimiser","core"
