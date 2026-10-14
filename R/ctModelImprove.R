@@ -177,7 +177,8 @@ ctModelImprove <- function(fit, covariates = NULL,
     'unique', 'periodic', 'order'),
   candidates = NULL, alpha = 0.05, maxsteps = 10L, ntry = 3L,
   criterion = c('LR', 'AIC', 'BIC'), adequacy = TRUE, prune = TRUE,
-  close = NULL, holdout = 0, form = 'auto', periods = NULL, nsamples = 100L, cores = 2L,
+  close = NULL, holdout = 0, form = 'auto', periods = NULL, nsamples = 100L,
+  cores = getOption('mc.cores', 2L),
   verbose = TRUE) {
   if (!.ctFitIsJulia(fit)) stop("ctModelImprove() needs a fit from ",
     "ctFit(backend = 'julia').", call. = FALSE)

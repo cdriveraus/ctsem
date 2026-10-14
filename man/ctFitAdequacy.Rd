@@ -20,7 +20,7 @@ ctFitAdequacy(
   nsamples = 100,
   lags = 0:3,
   nboot = 1999L,
-  cores = 2
+  cores = getOption("mc.cores", 2L)
 )
 }
 \arguments{

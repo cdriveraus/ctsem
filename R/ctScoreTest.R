@@ -309,7 +309,8 @@ ctScoreTest <- function(fit, covariates = NULL,
   tests = c('heterogeneity', 'covariates', 'statedependence', 'volatility', 'fixed',
     'instability'),
   form = c('auto', 'linear', 'spline', 'factor', 'threshold'), df = 3, parameters = NULL,
-  order = 2L, variance = c('robust', 'model'), nboot = 1999L, cores = 2L,
+  order = 2L, variance = c('robust', 'model'), nboot = 1999L,
+  cores = getOption('mc.cores', 2L),
   verbose = TRUE) {
   if (!.ctFitIsJulia(fit)) stop("ctScoreTest() needs a fit from ",
     "ctFit(backend = 'julia'). Refit on that backend to use it.", call. = FALSE)

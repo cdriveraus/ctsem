@@ -15,7 +15,7 @@ ctScoreTest(
   order = 2L,
   variance = c("robust", "model"),
   nboot = 1999L,
-  cores = 2L,
+  cores = getOption("mc.cores", 2L),
   verbose = TRUE
 )
 }

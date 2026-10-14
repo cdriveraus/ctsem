@@ -21,7 +21,7 @@ ctModelImprove(
   form = "auto",
   periods = NULL,
   nsamples = 100L,
-  cores = 2L,
+  cores = getOption("mc.cores", 2L),
   verbose = TRUE
 )
 }
