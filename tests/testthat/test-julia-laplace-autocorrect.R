@@ -175,14 +175,12 @@ test_that("print says so only when the estimate moved materially", {
   expect_false(any(grepl("corrected by quadrature", capture.output(print(fits$off)))))
 })
 
-test_that("the post-hoc functions do not apply the correction twice", {
+test_that("sampling against the quadrature does not apply the correction twice", {
   skip_without_julia()
   fits <- .ac_fits("nonlinear")
   on <- fits$on
-  expect_error(ctLaplaceCorrect(on), "already corrected")
-  expect_error(ctLaplaceCorrect(on, draws = "keep"), "already corrected")
-  expect_error(ctLaplaceCorrect(on, draws = "imis", correct_estimate = TRUE),
-    "already corrected")
+  expect_error(ctFitUncertainty(on, "is", control = list(likelihood = "quadrature",
+    correctEstimate = TRUE)), "already corrected")
 
   # The check reports relative to the corrected point: its gap is there, and
   # its correction is the further step, smaller than the one already taken.
@@ -206,8 +204,15 @@ test_that("the post-hoc functions do not apply the correction twice", {
     as.numeric(fits$off$optim$gradient)))
   expect_equal(offcheck$parameters$delta + leftover,
     on$laplace$correction$first_delta, tolerance = 1e-8)
-  handcorrected <- ctLaplaceCorrect(fits$off, finishsamples = 50)
+  # And sampling against the quadrature from the uncorrected fit takes that
+  # step first, so its proposal is centred where the target is.
+  set.seed(1)
+  handcorrected <- suppressWarnings(ctFitUncertainty(fits$off, "is",
+    finishsamples = 20, control = list(likelihood = "quadrature",
+      isitersize = 20, imisMaxIter = 1L, isESS = 10)))
   expect_s3_class(handcorrected$laplace_correction, "ctLaplaceCorrection")
+  expect_equal(as.numeric(handcorrected$estimate$raw),
+    as.numeric(handcorrected$laplace_correction$check$corrected))
 })
 
 test_that("cross-validation uses the Laplace optimum of a corrected fit", {

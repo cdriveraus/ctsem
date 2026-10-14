@@ -828,3 +828,40 @@
   if (any(!is.finite(hessian))) return(NULL)
   hessian
 }
+
+# `ctFitUncertainty(fit, 'is', control = list(likelihood = ...))`: importance
+# sampling against a likelihood the fit did not maximise -- the adaptive
+# Gauss-Hermite integral over a Laplace fit's random effects, or the particle
+# filter for a filter fit. The two samplers own their densities and their
+# records (`.ctLaplaceCorrect()`, `.ctParticleCorrect()`); this maps the 'is'
+# controls the three targets share onto them, so one entry point replaces the
+# draws behind a fit's intervals whichever density they are drawn against.
+.ctBackendUncertaintyLikelihoods <- c("fit", "quadrature", "particle")
+
+.ctBackendUncertaintyLikelihood <- function(fit, likelihood, finishsamples,
+  cores, control, verbose) {
+  own <- switch(likelihood, quadrature = "nodes",
+    particle = c("particles", "substeps", "transition", "seed"))
+  shared <- c(isESS = "target_ess", isitersize = "nbatch",
+    imisMaxIter = "maxiter", imisScaleInit = "scale",
+    correctEstimate = "correct_estimate")
+  unknown <- setdiff(names(control), c(own, names(shared)))
+  if (length(unknown)) {
+    stop("control$", unknown[1L], " is not used with likelihood = '",
+      likelihood, "'. Its settings are ",
+      paste(c(own, names(shared)), collapse = ", "), ".", call. = FALSE)
+  }
+  args <- c(list(fit = fit, finishsamples = finishsamples, cores = cores,
+    verbose = verbose), control[intersect(names(control), own)])
+  for (name in intersect(names(control), names(shared))) {
+    args[[shared[[name]]]] <- control[[name]]
+  }
+  fit <- do.call(if (identical(likelihood, "quadrature")) .ctLaplaceCorrect else
+    .ctParticleCorrect, args)
+  # The record every other method writes, so `summary()` and a later
+  # `uncertainty = 'stored'` describe these draws rather than the pass before.
+  fit$uncertainty$settings <- list(method = "is", draws = "imis",
+    finishsamples = nrow(fit$estimate$rawposterior), cores = cores,
+    control = c(list(likelihood = likelihood), control))
+  fit
+}

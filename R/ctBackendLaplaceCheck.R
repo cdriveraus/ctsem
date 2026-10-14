@@ -223,8 +223,9 @@ ctLaplaceCheck <- function(fit, nodes = 5L, correction = TRUE, step = 1e-3,
   # unchanged; see R/ctFitGap.R.
   verdict <- .ctFitGap("quadrature", gap = gap, nsubjects = nsubjects,
     remedy = paste0("A gap that matters means the Laplace approximation is ",
-      "limiting the fit rather than the data; ctLaplaceCorrect() moves the ",
-      "estimate, and ctFitUncertainty(fit, 'sample', control = list(intoverpop = ",
+      "limiting the fit rather than the data; ctFitUncertainty(fit, 'is', ",
+      "control = list(likelihood = 'quadrature')) samples against the exact ",
+      "integral, and ctFitUncertainty(fit, 'sample', control = list(intoverpop = ",
       "'none')) avoids the approximation entirely."))
   out <- list(verdict = verdict,
     gap = gap, quadrature = quadrature, laplace = laplacevalue,

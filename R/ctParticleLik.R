@@ -48,7 +48,8 @@
 #'   their difference; \code{replicates}, the individual estimates;
 #'   \code{ess_min}, the smallest effective sample size any row saw; and the
 #'   settings.
-#' @seealso \code{\link{ctParticleCorrect}} applies the correction this
+#' @seealso \code{\link{ctFitUncertainty}} with \code{uncertainty = 'is'} and
+#'   \code{control = list(likelihood = 'particle')} applies the correction this
 #'   measures, to the fit's posterior draws.
 #' @examples
 #' \donttest{
@@ -124,8 +125,9 @@ ctParticleLik <- function(fit, particles = 2000, substeps = 20,
     gap = mean(estimates) - fit_loglik, gap_se = se,
     nsubjects = .ctFitNsubjects(fit),
     remedy = paste0("A resolved positive gap means the filter's Gaussian ",
-      "assumption is costing likelihood; ctParticleCorrect() reweights the ",
-      "posterior against the particle filter."))
+      "assumption is costing likelihood; ctFitUncertainty(fit, 'is', control = ",
+      "list(likelihood = 'particle')) samples the posterior against the ",
+      "particle filter."))
   list(verdict = verdict,
     loglik = mean(estimates), se = se, fit_loglik = fit_loglik,
     difference = mean(estimates) - fit_loglik, rows = rows, replicates = estimates,

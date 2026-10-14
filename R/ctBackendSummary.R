@@ -169,7 +169,8 @@
 # naming one backend and not the other is exactly the "accepted on one backend,
 # ignored on the other" trap. Hence one helper, called from every writer that
 # would otherwise leave them bare -- `.ctBackendUncertainty()`,
-# `ctOptimUncertainty()`, `ctLaplaceCorrect()` and `ctFit()`.
+# `ctOptimUncertainty()`, `.ctLaplaceCorrect()`, `.ctParticleCorrect()` and
+# `ctFit()`.
 # `ctFitUncertainty(fit, uncertainty = 'sample')` is the exception and needs no
 # call: it names its draws where it builds them and
 # takes the covariance and the standard errors from that named matrix.
@@ -1668,19 +1669,14 @@ ctBackendParMatrices <- function(fit, raw = NULL, tipreds = NULL, state = NULL,
 #
 # Three things have to hold before `n_eff` and `Rhat` mean anything: the fit
 # sampled, it recorded how the draws are grouped, and the draws being summarised
-# are still those draws. The third is not decoration -- `ctParticleCorrect()`
-# replaces `estimate$rawposterior` with draws that have no chain structure, and
-# a between-chain variance computed over those would be a number with nothing
-# behind it. (`ctOptimUncertainty()` would do the same, and refuses a sampled
-# fit outright rather than reach here.)
+# are still those draws. The third is not decoration -- a between-chain
+# variance computed over draws with no chain structure would be a number with
+# nothing behind it. (`ctFitUncertainty()` would replace them so, and refuses a
+# sampled fit outright for every method but 'sample' rather than reach here.)
 #' @keywords internal
 .ctBackendSummaryChains <- function(fit, samples) {
   diagnostics <- fit$sample
   if (is.null(diagnostics)) return(NULL)
-  # `ctParticleCorrect()` reweights the draws against the particle-filter
-  # likelihood, which keeps the row count and destroys the chain ordering. The
-  # count matching is therefore not enough on its own.
-  if (!is.null(fit$particle_correction)) return(NULL)
   # The chain count, or, when chains run in worker processes differ in length,
   # the draws of each: every reader below uses this only as how the rows are
   # grouped (`.ctBackendDrawDiagnostics()`).
@@ -1766,10 +1762,8 @@ ctBackendParMatrices <- function(fit, raw = NULL, tipreds = NULL, state = NULL,
   flat <- constrained$flat
 
   # Non-NULL only for a Hamiltonian sample, and only while the draws still are
-  # the ones the sampler produced: a later `ctOptimUncertainty()` or
-  # `ctParticleCorrect()` replaces `rawposterior` with draws that have no chains,
-  # and `n_eff` and `Rhat` computed over those would be arithmetic rather than a
-  # diagnostic.
+  # the ones the sampler produced: draws with no chains would make `n_eff` and
+  # `Rhat` arithmetic rather than a diagnostic.
   chains <- .ctBackendSummaryChains(object, samples)
   # Which raw coordinates the reported covariance has no width for, so every
   # table below can mark its own rows as it builds them.
@@ -2024,12 +2018,8 @@ ctBackendParMatrices <- function(fit, raw = NULL, tipreds = NULL, state = NULL,
     out[[if (isTRUE(object$args$resolved$optimize %in% FALSE)) "nsamples" else "ndraws"]] <-
       nrow(object$estimate$rawposterior)
   }
-  out$uncertaintyNote <- if (has_posterior && !is.null(object$particle_correction)) {
-    # The draws were corrected after the uncertainty pass, so naming that pass's
-    # method would describe draws the fit no longer carries.
-    paste0("Julia backend; intervals from draws corrected by ctParticleCorrect() ",
-      "against the particle-filter likelihood, pushed through the transforms.")
-  } else if (!is.null(chains)) {
+  likelihood <- object$uncertainty$settings$control$likelihood
+  out$uncertaintyNote <- if (!is.null(chains)) {
     # A sampled fit ran no uncertainty pass, and saying it did was not a
     # cosmetic slip: `uncertainty$settings$method` is NULL on this route, so the
     # note read "intervals from ctOptimUncertainty(uncertainty='')" -- a normal
@@ -2039,7 +2029,9 @@ ctBackendParMatrices <- function(fit, raw = NULL, tipreds = NULL, state = NULL,
       ") pushed through the transforms.")
   } else if (has_posterior) {
     paste0("Julia backend; intervals from ctFitUncertainty(uncertainty='",
-      object$uncertainty$settings$method, "') draws pushed through the transforms.")
+      object$uncertainty$settings$method, "'", if (length(likelihood))
+        paste0(", likelihood='", likelihood, "'"),
+      ") draws pushed through the transforms.")
   } else {
     paste0("Julia backend; point estimates only. ",
       "Run ctFitUncertainty() for standard errors and intervals.")

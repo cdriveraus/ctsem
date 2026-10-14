@@ -1,10 +1,12 @@
-# `ctLaplaceCorrect()`: applying the correction `ctLaplaceCheck()` measures.
+# `ctFitUncertainty(fit, 'is', control = list(likelihood = 'quadrature'))`:
+# importance sampling against the quadrature posterior, after the correction
+# `ctLaplaceCheck()` measures.
 #
 # The engine's suite proves the quadrature and the Newton step. What is left for
 # here is that applying them changes the fit in the ways claimed and in no
-# others: that a fit where Laplace is exact comes back untouched, that the cheap
-# path really is only a recentring, and that each way of asking for something
-# unsupported refuses rather than returning something that looks like an answer.
+# others: that a fit where Laplace is exact keeps its estimate, that the record
+# says what was done, and that each way of asking for something unsupported
+# refuses rather than returning something that looks like an answer.
 
 # A random effect on an identity-transformed parameter. Laplace is exact for
 # that integrand, so there is nothing to correct -- which makes it the sharpest
@@ -48,96 +50,95 @@
   get("fit", envir = .correct_cache, inherits = FALSE)
 }
 
-test_that("a fit where Laplace is exact comes back with its estimate intact", {
+# A short run: one round of 40 quadrature evaluations is enough to show the
+# machinery working end to end, and not to pin a posterior.
+.quadrature_is <- function(fit, ...) {
+  suppressWarnings(ctFitUncertainty(fit, uncertainty = "is", finishsamples = 60,
+    control = list(likelihood = "quadrature", nodes = 5, isitersize = 40,
+      imisMaxIter = 1L, isESS = 20, ...)))
+}
+
+test_that("a fit where Laplace is exact keeps its estimate, and records what was done", {
   skip_without_julia()
+  skip_if_not_installed('mvtnorm'); skip_if_not_installed('diagis')
   fit <- .correct_fit()
   before <- as.numeric(fit$estimate$raw)
-  se <- as.numeric(fit$estimate$se)
 
-  corrected <- ctLaplaceCorrect(fit, draws = "normal", nodes = 5,
-    finishsamples = 100)
-
-  expect_s3_class(corrected$laplace_correction, "ctLaplaceCorrection")
+  set.seed(9)
+  corrected <- .quadrature_is(fit)
+  record <- corrected$laplace_correction
+  expect_s3_class(record, "ctLaplaceCorrection")
   # Not merely small: the gap gradient here is floating-point noise, so the
   # correction should be at the level of the arithmetic rather than at the
   # level of the parameter.
-  expect_lt(max(abs(corrected$laplace_correction$check$parameters$delta_se)), 1e-4)
+  expect_lt(max(abs(record$check$parameters$delta_se)), 1e-4)
   expect_equal(as.numeric(corrected$estimate$raw), before, tolerance = 1e-6)
-  expect_equal(corrected$laplace_correction$before$raw, before)
-})
+  expect_equal(record$before$raw, before)
+  expect_true(record$corrected_estimate)
 
-test_that("draws='normal' recentres without touching the width", {
-  skip_without_julia()
-  fit <- .correct_fit()
-  corrected <- ctLaplaceCorrect(fit, draws = "normal", nodes = 5,
-    finishsamples = 100)
-
-  # The cheap path corrects the location and says so. Its covariance is the
-  # fit's own, so any change here would mean it had quietly done more.
-  expect_equal(as.matrix(corrected$estimate$cov), as.matrix(fit$estimate$cov))
-  expect_identical(corrected$laplace_correction$draws, "normal")
-  expect_true(is.na(corrected$laplace_correction$ess))
-  # Draws are redrawn even when the estimate does not move, so that they and
-  # the constrained draws describe one point rather than two.
-  expect_equal(nrow(corrected$estimate$rawposterior), 100L)
-  expect_false(is.null(corrected$transformedpars))
-})
-
-test_that("draws='keep' says the intervals no longer describe the estimate", {
-  skip_without_julia()
-  fit <- .correct_fit()
-  # Silent here only because Laplace is exact for this model, so the estimate
-  # does not actually move; the warning is conditional on it having moved.
-  kept <- suppressWarnings(ctLaplaceCorrect(fit, draws = "keep", nodes = 5))
-  expect_identical(kept$laplace_correction$draws, "keep")
-  expect_equal(as.matrix(kept$estimate$cov), as.matrix(fit$estimate$cov))
-})
-
-test_that("draws='imis' samples against the quadrature posterior", {
-  skip_without_julia()
-  skip_if_not_installed('mvtnorm'); skip_if_not_installed('diagis')
-  skip_if_not_installed('gridExtra'); skip_if_not_installed('ggplot2')
-  fit <- .correct_fit()
-
-  set.seed(9)
-  corrected <- suppressWarnings(ctLaplaceCorrect(fit, draws = "imis", nodes = 5,
-    nbatch = 40, maxiter = 1L, target_ess = 20, finishsamples = 60))
-  expect_identical(corrected$laplace_correction$draws, "imis")
-  expect_true(is.finite(corrected$laplace_correction$ess) &&
-    corrected$laplace_correction$ess > 0)
+  expect_identical(record$draws, "imis")
+  expect_true(is.finite(record$ess) && record$ess > 0)
   expect_equal(nrow(corrected$estimate$rawposterior), 60L)
   expect_equal(ncol(corrected$estimate$rawposterior), length(fit$estimate$raw))
   expect_false(is.null(corrected$uncertainty$imis))
   expect_equal(unname(corrected$estimate$se), unname(sqrt(diag(corrected$estimate$cov))))
   # This fixture is exactly the case Laplace is exact for (see the file
   # comment), so there is no flat direction to whiten here; the point of the
-  # test is that the shared IMIS core still runs end to end against the
-  # quadrature density through this entry point, not that whitening triggers.
+  # test is that the shared IMIS core runs end to end against the quadrature
+  # density through this entry point, not that whitening triggers.
   expect_null(attr(corrected$uncertainty$imis, 'subspace'))
+
+  # The record every method writes, so summaries describe these draws.
+  settings <- corrected$uncertainty$settings
+  expect_identical(settings$method, "is")
+  expect_identical(settings$draws, "imis")
+  expect_identical(settings$control$likelihood, "quadrature")
+  expect_identical(corrected$uncertainty$draws, "imis")
+  expect_match(suppressMessages(summary(corrected))$uncertaintyNote,
+    "likelihood='quadrature'", fixed = TRUE)
+  expect_output(print(record), "importance sampled against the quadrature")
 })
 
-test_that("correct_estimate=FALSE leaves the point where it was", {
+test_that("correctEstimate = FALSE leaves the point where it was", {
   skip_without_julia()
+  skip_if_not_installed('mvtnorm'); skip_if_not_installed('diagis')
   fit <- .correct_fit()
-  same <- ctLaplaceCorrect(fit, draws = "normal", nodes = 5,
-    finishsamples = 100, correct_estimate = FALSE)
+  set.seed(10)
+  same <- .quadrature_is(fit, correctEstimate = FALSE)
   expect_equal(as.numeric(same$estimate$raw), as.numeric(fit$estimate$raw))
   expect_false(same$laplace_correction$corrected_estimate)
+  expect_output(print(same$laplace_correction), "left at the uncorrected point")
 })
 
-test_that("it refuses the fits it cannot correct", {
+test_that("requests it cannot serve are refused by name", {
   skip_without_julia()
-  expect_error(ctLaplaceCorrect(list()), "backend='julia'")
+  fit <- .correct_fit()
+  # Only 'is' samples, so only 'is' takes a likelihood.
+  expect_error(ctFitUncertainty(fit, "hessian",
+    control = list(likelihood = "quadrature")), "applies to uncertainty = 'is'")
+  # Each likelihood takes its own settings and the shared ones, nothing else.
+  expect_error(ctFitUncertainty(fit, "is",
+    control = list(likelihood = "quadrature", particles = 100)),
+    "control$particles is not used with likelihood = 'quadrature'", fixed = TRUE)
+  expect_error(ctFitUncertainty(fit, "is", control = list(likelihood = "exact")),
+    "should be one of")
+  # The quadrature and particle filter are the julia engine's.
+  expect_error(ctFitUncertainty(ctstantestfit, "is",
+    control = list(likelihood = "quadrature")), "only available for backend='julia'")
 
   augmented <- suppressMessages(ctFit(.correct_test_data(),
     .correct_test_model(), backend = "julia", intoverpop = "augmented",
     optimcontrol = list(estonly = TRUE)))
-  expect_error(ctLaplaceCorrect(augmented), "intoverpop='laplace'")
+  expect_error(ctFitUncertainty(augmented, "is",
+    control = list(likelihood = "quadrature")), "intoverpop = 'laplace'",
+    fixed = TRUE)
 
   # Without uncertainty there is no curvature to take the Newton step against,
-  # which is a different failure from the fit being the wrong kind.
+  # and no first proposal, which is a different failure from the fit being the
+  # wrong kind.
   estonly <- suppressMessages(ctFit(.correct_test_data(),
     .correct_test_model(), backend = "julia", intoverpop = "laplace",
     optimcontrol = list(estonly = TRUE)))
-  expect_error(ctLaplaceCorrect(estonly), "covariance")
+  expect_error(ctFitUncertainty(estonly, "is",
+    control = list(likelihood = "quadrature")), "covariance")
 })
