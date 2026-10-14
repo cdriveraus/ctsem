@@ -80,28 +80,29 @@ observation-index pair, then averaged over observation-index pairs.
 \examples{
 \donttest{
 # Lagged correlations for all manifest variables, lags 0 to 3.
-ctFitCheckCov(ctstantestfit, cor = TRUE, lags = 0:3, plot = TRUE)
+ctFitCheckCov(ctstantestfit, cor = TRUE, lags = 0:3, plot = TRUE, cores = 1)
 
 # Lagged covariances for one manifest variable.
 ctFitCheckCov(ctstantestfit, cor = FALSE, variables = "Y1", lags = 0:5,
-  plot = FALSE)
+  plot = FALSE, cores = 1)
 
 # Split the diagnostic by a time independent predictor in the fitted data.
-gg <- ctFitCheckCov(ctstantestfit, cor = TRUE, splitby = "TI1", lags = 0:3)
+gg <- ctFitCheckCov(ctstantestfit, cor = TRUE, splitby = "TI1", lags = 0:3,
+  cores = 1)
 print(gg[[1]])
 
 # Use an external subject-level variable for the split.
 splitdat <- unique(data.frame(ctstantestdat)[, "id", drop = FALSE])
 splitdat$group <- rep(c("a", "b"), length.out = nrow(splitdat))
 ctFitCheckCov(ctstantestfit, splitby = "group", splitdata = splitdat,
-  lags = 0:2)
+  lags = 0:2, cores = 1)
 
 # Split observations into early and late periods within each subject.
 dat <- data.table::as.data.table(data.frame(ctstantestdat))
 dat[, period := ifelse(time <= stats::median(time, na.rm = TRUE),
   "early", "late"), by = id]
 ctFitCheckCov(ctstantestfit, data = dat, splitby = "period",
-  split = "factor", lags = 0:2)
+  split = "factor", lags = 0:2, cores = 1)
 }
 }
 \seealso{

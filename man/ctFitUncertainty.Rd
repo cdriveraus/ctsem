@@ -395,7 +395,7 @@ fit$stanfit$uncertainty$settings$redrawn
 
 \donttest{
 # A local quadratic surrogate rather than the Hessian
-fit <- ctFitUncertainty(ctstantestfit, uncertainty = 'surrogate')
+fit <- ctFitUncertainty(ctstantestfit, uncertainty = 'surrogate', cores = 1)
 summary(fit)$popmeans
 
 # Needs a working julia backend, so the example is inert where Julia is
