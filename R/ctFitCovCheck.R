@@ -258,15 +258,21 @@ ctFitCheckCov <- function(fit, cor = TRUE, plot = TRUE, splitby = NULL,
   if(any(is.na(varidx))) varidx <- match(variables, ctmb$manifestNames)
   
   # The generated datasets stacked under the observed rows' structure, one
-  # copy per sample, for the one pass above.
+  # copy per sample, for the one pass above -- in blocks of about two million
+  # rows, so a large study's two hundred datasets do not have to sit in
+  # memory together, stacked and paired at every lag, at once.
   basedat <- dat[, c(idname, 'WhichObs', '.splitgroup'), with = FALSE]
-  gd <- basedat[rep(seq_len(nrow(basedat)), times = length(samples))]
-  gd[, sample := rep(samples, each = nrow(basedat))]
-  for(vi in seq_along(variables)) {
-    set(gd, j = variables[vi], value = as.vector(t(matrix(
-      fit$generated$Y[samples, , varidx[vi]], nrow = length(samples)))))
-  }
-  gens <- .lag_summary(gd)
+  blocksize <- max(1L, floor(2e6 / nrow(basedat)))
+  blocks <- split(samples, ceiling(seq_along(samples) / blocksize))
+  gens <- rbindlist(lapply(blocks, function(block) {
+    gd <- basedat[rep(seq_len(nrow(basedat)), times = length(block))]
+    gd[, sample := rep(block, each = nrow(basedat))]
+    for(vi in seq_along(variables)) {
+      set(gd, j = variables[vi], value = as.vector(t(matrix(
+        fit$generated$Y[block, , varidx[vi]], nrow = length(block)))))
+    }
+    .lag_summary(gd)
+  }))
 
   gensum <- gens[, .(
     q025 = stats::quantile(value, .025, na.rm = TRUE),
