@@ -192,11 +192,11 @@
 #'   passes, which filter each subject at effects solved once from the whole
 #'   record rather than row by row -- several times cheaper, and approximate
 #'   (on a pilot-shaped model it recovered the distribution family's misfit,
-#'   z 5.3 against 5.6 exact and 1.8 uncorrected, and half the latent
-#'   family's). Where random effects reach the dynamics or the variances its
-#'   derivatives of the row-level statistics are not the sequential ones', so
-#'   there it projects only the unit-level families (distribution, fit,
-#'   effects, scores) and leaves the rest unprojected, which is conservative;
+#'   z 5.3 against 5.6 exact and 1.8 uncorrected). Where random effects reach
+#'   the dynamics or the variances, either projects only the unit-level
+#'   families (distribution, fit, effects, scores) and leaves the error-based
+#'   ones unprojected: there their projected variance was unreliable, while
+#'   unprojected they held their level on data generated from the model;
 #'   \code{'opg'} uses the outer product of the scores, valid when
 #'   units outnumber parameters many times; \code{'none'} ignores estimation,
 #'   which is conservative, and for the distribution family can hide a strong
@@ -991,20 +991,29 @@ ctFitAdequacy <- function(fit, covariates = NULL,
   if (is.null(Gamma) && !is.null(plugin) && (method == 'plugin' ||
       (method == 'auto' && stored))) {
     Gamma <- differences(plugin); used <- 'plugin'
-    # Where the random effects reach the dynamics, the plug-in derivatives of
-    # the row-level statistics are not the sequential ones': on two factors
-    # with person-varying drift (59 correct models), the latent family
-    # rejected 15 per cent at .05 projected with them, 5 unprojected, 2 with
-    # the exact derivatives. There the row-level statistics are left
-    # unprojected, which is conservative, and the unit-level ones, which need
-    # the projection most, keep it. Not when the budget stopped the
-    # differences (`auto`), which leaves no Gamma.
-    if (!is.null(Gamma) && .ctAdequacyApproximate(fit, mixture = FALSE)) {
-      rowlevel <- is.finite(colSums(mom$V0))
-      if (any(rowlevel)) {
-        Gamma[rowlevel, ] <- 0
-        used <- 'plugin (unit-level families)'
-      }
+  }
+  # Where the random effects reach the dynamics or the variances, the
+  # row-level statistics are left unprojected, however Gamma was had, and the
+  # unit-level ones keep the projection. The plug-in derivatives of the
+  # row-level statistics are not the sequential ones': on two factors with
+  # person-varying drift (59 correct models) the latent family rejected 15 per
+  # cent at .05 projected with them, 5 unprojected. The exact ones fare no
+  # better since the errors there come from the mixture predictive while the
+  # scores and Hessian come from the Laplace objective, so the identity the
+  # projected variance V0 - Gamma I^-1 Gamma' rests on need not hold: on 100
+  # datasets from two processes with person-varying drift and innovations
+  # fitted to 40 people (the adequacy tutorial's Fisher example), it left 66
+  # per cent of the row-level statistics without a variance and put 19 per
+  # cent of the rest beyond 1.96, where unprojected 5.2 per cent were. The
+  # unit-level statistics, which take their variance from the units' spread,
+  # held 5.0 per cent projected with the exact derivatives, 10.6 with the
+  # plug-in ones, and 9 unprojected. Not when the budget stopped the
+  # differences (`auto`), which leaves no Gamma.
+  if (!is.null(Gamma) && .ctAdequacyApproximate(fit, mixture = FALSE)) {
+    rowlevel <- is.finite(colSums(mom$V0))
+    if (any(rowlevel)) {
+      Gamma[rowlevel, ] <- 0
+      used <- paste(used, '(unit-level families)')
     }
   }
   if (!is.null(Gamma)) {

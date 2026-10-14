@@ -343,3 +343,27 @@ test_that("an innovation sd that varies over people is still tested for volatili
   expect_false(is.null(st$statedependence))
   expect_false(is.null(st$volatility))
 })
+
+test_that("where effects reach the dynamics, only the unit-level families are projected", {
+  # There the errors come from the mixture predictive and the scores from the
+  # Laplace objective, and the row-level statistics' projected variance was
+  # unreliable while unprojected they held their level (.ctAdequacyProject).
+  # The same fit as above, cached.
+  d <- .score_data('het', nsub = 20L)
+  m <- .score_model()
+  m$pars$indvarying[m$pars$param %in% c('drift_eta1', 'diff_eta1')] <- TRUE
+  fit <- fit_cached('scoretest het random sd', suppressWarnings(suppressMessages(ctFit(
+    d[, c('id', 'time', 'Y1')], m, backend = 'julia', intoverpop = 'laplace',
+    cores = 1, verbose = 0))))
+  expect_true(ctsem:::.ctAdequacyApproximate(fit, mixture = FALSE))
+  check <- function(projection) suppressMessages(ctFitAdequacy(fit,
+    families = c('residuals', 'distribution'), projection = projection, cores = 1, nboot = 199))
+  exact <- check('derivative')
+  plain <- check('none')
+  expect_identical(exact$projection, 'derivative (unit-level families)')
+  rowlevel <- exact$statistics$family == 'residuals'
+  expect_true(any(rowlevel) && any(exact$statistics$family == 'distribution'))
+  # The mixture's draws are seeded, so unprojected statistics match exactly.
+  expect_equal(exact$statistics$z[rowlevel], plain$statistics$z[rowlevel])
+  expect_false(isTRUE(all.equal(exact$statistics$z[!rowlevel], plain$statistics$z[!rowlevel])))
+})
