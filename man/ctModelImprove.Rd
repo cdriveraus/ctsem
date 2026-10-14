@@ -21,6 +21,7 @@ ctModelImprove(
   form = "auto",
   periods = NULL,
   nsamples = 100L,
+  projection = "auto",
   cores = getOption("mc.cores", 2L),
   verbose = TRUE
 )
@@ -67,6 +68,9 @@ to confirm its changes on.}
 for \code{\link{ctFitAdequacy}}; by default it scans.}
 
 \item{nsamples}{Generated datasets for the adequacy checks.}
+
+\item{projection}{How the adequacy checks remove the estimation, as for
+\code{\link{ctFitAdequacy}}.}
 
 \item{cores}{Cores for fitting and testing. With two or more, once a
 refit has taken longer than five minutes, the refits of later rounds,

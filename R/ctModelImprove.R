@@ -160,6 +160,8 @@
 #' @param form How covariates are screened, as for \code{\link{ctScoreTest}};
 #'   \code{'threshold'} lets the search add a covariate as a step.
 #' @param nsamples Generated datasets for the adequacy checks.
+#' @param projection How the adequacy checks remove the estimation, as for
+#'   \code{\link{ctFitAdequacy}}.
 #' @param cores Cores for fitting and testing. With two or more, once a
 #'   refit has taken longer than five minutes, the refits of later rounds,
 #'   of pruning and of a held-out confirmation run side by side in worker
@@ -189,7 +191,7 @@ ctModelImprove <- function(fit, covariates = NULL,
   candidates = NULL, alpha = 0.05, maxsteps = 10L, ntry = 3L,
   criterion = c('LR', 'AIC', 'BIC'), adequacy = TRUE, prune = TRUE,
   close = NULL, holdout = 0, form = 'auto', periods = NULL, nsamples = 100L,
-  cores = getOption('mc.cores', 2L),
+  projection = 'auto', cores = getOption('mc.cores', 2L),
   verbose = TRUE) {
   if (!.ctFitIsJulia(fit)) stop("ctModelImprove() needs a fit from ",
     "ctFit(backend = 'julia').", call. = FALSE)
@@ -252,7 +254,8 @@ ctModelImprove <- function(fit, covariates = NULL,
       if (isTRUE(adequacy)) {
         say("Round ", step, ": nothing indicated; checking adequacy")
         ad <- ctFitAdequacy(current, covariates = available, periods = periods,
-          nsamples = nsamples, alpha = alpha, close = if (is.null(close)) 0.05 else close, cores = cores)
+          nsamples = nsamples, alpha = alpha, close = if (is.null(close)) 0.05 else close,
+          projection = projection, cores = cores)
         if (ad$adequate) { stopped <- 'adequate'; break }
         if (!is.null(close) && isTRUE(ad$close_fit)) { stopped <- 'close fit'; break }
       } else { stopped <- 'nothing indicated'; break }
@@ -348,7 +351,8 @@ ctModelImprove <- function(fit, covariates = NULL,
         drop = FALSE]
     if (!is.null(available) && ncol(available) < 2L) available <- NULL
     ad <- ctFitAdequacy(current, covariates = available, periods = periods,
-      nsamples = nsamples, alpha = alpha, close = if (is.null(close)) 0.05 else close, cores = cores)
+      nsamples = nsamples, alpha = alpha, close = if (is.null(close)) 0.05 else close,
+      projection = projection, cores = cores)
   }
   confirmation <- NULL
   if (!is.null(held) && length(kept)) {
