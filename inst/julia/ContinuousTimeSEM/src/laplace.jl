@@ -2741,7 +2741,19 @@ non-Gaussian enough to matter.
 """
 const _LAPLACE_PROBE_SOFT = 3.5
 
-"""Widest unit probed: the quadrature's `maxdim`, for the same reason of cost."""
+"""
+Widest unit whose soft directions are probed: the quadrature's `maxdim`, for the
+same reason of cost. Every unit, whatever its width, is probed from its
+reflection. Wider units used to get no probe at all, and Newton from the origin
+then decided their mode alone: on the Fisher example's eighth round a person
+with nine effects reached the better of two modes at the estimate and one 2.4
+lower a tenth of a finite-difference step away, the fit having stopped on the
+edge of the origin's basin, so every derivative through that point carried the
+jump. The reflection found the better mode there, as did one soft direction of
+five. Probing the five softest directions as well cost 1.6 to 2.1 times the
+evaluation on the bench's wide units (nested studies, bigre) and changed none of
+their fits.
+"""
 const _LAPLACE_PROBE_MAXDIM = 5
 
 """
@@ -3268,10 +3280,10 @@ end
 
 Newton's method on `g_U`, from the origin -- or from the retained mode for
 unit `U` when `retain` is true, which by default it is when
-`ctsem_set_warm_start!` has asked for that -- and then, for a unit
-no wider than `_LAPLACE_PROBE_MAXDIM`, from points along that mode's soft
-directions, keeping the mode with the largest Laplace term
-(`_laplace_probe_modes`).
+`ctsem_set_warm_start!` has asked for that -- and then from its reflection
+through the origin and, for a unit no wider than `_LAPLACE_PROBE_MAXDIM`, from
+points along that mode's soft directions, keeping the mode with the largest
+Laplace term (`_laplace_probe_modes`).
 
 `g_U` is a log likelihood minus a quadratic, so its curvature is negative
 definite near the mode and Newton is the right method; away from the mode, and
@@ -3343,7 +3355,7 @@ function _laplace_solve_unit_mode!(laplace::CTSEMLaplaceObjective, U::Integer,
             best = cold
         end
     end
-    if _LAPLACE_MODE_PROBES[] && best.converged && 0 < d <= _LAPLACE_PROBE_MAXDIM
+    if _LAPLACE_MODE_PROBES[] && best.converged && d > 0
         best = _laplace_probe_modes(laplace, U, values, Ls, aws, best)
     end
     laplace.modes[U] = best.u
@@ -3455,7 +3467,7 @@ function _laplace_newton_unit_mode(laplace::CTSEMLaplaceObjective, U::Integer,
     # one step from the mode, so its directions are the mode's. The slot's
     # scratch, so read it before the next solve on this slot.
     curvature = nothing
-    keep = _LAPLACE_MODE_PROBES[] && d <= _LAPLACE_PROBE_MAXDIM
+    keep = _LAPLACE_MODE_PROBES[]
     current = _laplace_unit_objective_gradient(laplace, U, values, Ls, u, aws,
         gcur)
     if !isfinite(current.value) && any(!iszero, u)
@@ -3582,8 +3594,9 @@ end
 The unit's mode with the largest Laplace term among `found`, the one Newton
 reached from the origin, and those Newton reaches from `_LAPLACE_PROBE_REACH`
 posterior sds either way (at most three prior sds) along each of `found`'s soft
-directions -- precision below `_LAPLACE_PROBE_SOFT`, a negative one included --
-and from `-found.u`, its reflection through the origin.
+directions -- precision below `_LAPLACE_PROBE_SOFT`, a negative one included,
+for a unit no wider than `_LAPLACE_PROBE_MAXDIM` -- and from `-found.u`, its
+reflection through the origin.
 
 Why. Where `g_U` has two maxima, Newton from the origin reaches whichever one
 the origin's basin holds, and as the parameters move the basin's edge crosses
@@ -3653,7 +3666,8 @@ function _laplace_probe_modes(laplace::CTSEMLaplaceObjective, U::Integer,
     all(isfinite, E.values) || return found
     # The values ascend, so the soft directions are the first `nsoft`.
     nsoft = 0
-    while nsoft < d && E.values[nsoft + 1] < _LAPLACE_PROBE_SOFT
+    while d <= _LAPLACE_PROBE_MAXDIM && nsoft < d &&
+            E.values[nsoft + 1] < _LAPLACE_PROBE_SOFT
         nsoft += 1
     end
     reflected = any(!iszero, found.u)
