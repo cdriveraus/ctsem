@@ -5826,6 +5826,12 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
     substeps <- remesh(start[seq_len(npar)])
     if (!is.null(jointobjective)) start <- c(start[seq_len(npar)], numeric(nstate))
   }
+  # The engine loaded first, so a first fit's install and compile -- minutes,
+  # once per machine -- is not counted as this fit's own time, which says how
+  # slow work repeating the fit would be (`.ctWorkerFitSeconds`). Counted, it
+  # made a profile on a fresh CI runner start worker sessions for a fit of
+  # seconds.
+  invisible(.ctJuliaModule(model_spec$project))
   optimise_started <- proc.time()[["elapsed"]]
   result <- .ctJuliaOptimise(model_spec, start, optimcontrol = optimcontrol,
     gradient = gradient, cores = cores, verbose = verbose,
