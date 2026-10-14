@@ -5,7 +5,13 @@
 \alias{ctStanSubjectPars}
 \title{Extract an array of subject specific parameters from a fit}
 \usage{
-ctSubjectPars(fit, pointest = TRUE, cores = 2, nsamples = "all", level = NULL)
+ctSubjectPars(
+  fit,
+  pointest = TRUE,
+  cores = getOption("mc.cores", 2L),
+  nsamples = "all",
+  level = NULL
+)
 }
 \arguments{
 \item{fit}{A fit from \code{\link{ctFit}}.}

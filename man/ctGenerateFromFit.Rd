@@ -10,7 +10,7 @@ ctGenerateFromFit(
   nsamples = 200,
   fullposterior = FALSE,
   verboseErrors = FALSE,
-  cores = 2,
+  cores = getOption("mc.cores", 2L),
   intoverstates = "fit",
   effects = c("population", "fitted")
 )

@@ -10,7 +10,7 @@ ctEmpiricalBayesFit(
   subjects = "all",
   priors = TRUE,
   optimize = TRUE,
-  cores = 2,
+  cores = getOption("mc.cores", 2L),
   subjectFitArgs = list(),
   Npasses = 2,
   ebUse = c("rawest", "rawposterior"),

@@ -57,7 +57,7 @@ ctModeltoNumeric <- function(ctmodelobj){
 # because it is on CRAN, and `ctPlotPosterior()` reaches here directly for
 # `parsonly`, which generating data does not expose.
 .ctGenerateFromPriors <- function(cts,datastruct=NA,
-  fullposterior=TRUE, nsamples=200, parsonly=FALSE,cores=2,
+  fullposterior=TRUE, nsamples=200, parsonly=FALSE,cores=getOption("mc.cores", 2L),
   backend=c('auto','julia','stan'),
   n.subjects=20, Tpoints=NULL, dtmean=1){
 
@@ -359,7 +359,7 @@ ctModeltoNumeric <- function(ctmodelobj){
 #' if (isTRUE(ctJuliaStatus()$available)) ctJuliaKill("session")
 #'}
 ctGenerateFromPriors <- function(cts,datastruct=NA, is=FALSE,
-  fullposterior=TRUE, nsamples=200, parsonly=FALSE,cores=2,
+  fullposterior=TRUE, nsamples=200, parsonly=FALSE,cores=getOption("mc.cores", 2L),
   backend=c('auto','julia','stan'),
   n.subjects=20, Tpoints=NULL, dtmean=1){
 
@@ -539,7 +539,7 @@ ctStanGenerate <- ctGenerateFromPriors
 
 ctGenerate<-function(ctmodelobj,n=100,burnin=0,dtmean=1,logdtsd=0,dtmat=NA,
   Tpoints=NULL, wide=FALSE, backend=c('auto','r','julia','stan'),
-  intoverstates='auto', fromPriors=FALSE, nsamples=200, datastruct=NA, cores=2,
+  intoverstates='auto', fromPriors=FALSE, nsamples=200, datastruct=NA, cores=getOption("mc.cores", 2L),
   popmeans=NULL, n.subjects){
   backend <- match.arg(backend)
   if(!missing(n.subjects)){

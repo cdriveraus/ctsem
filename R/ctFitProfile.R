@@ -85,16 +85,15 @@
 #' @param level confidence level setting the likelihood-ratio bar.
 #' @param maxiter iteration cap for each constrained optimisation.
 #' @param verbose 0 for silence, 1 to report each point as it is computed.
-#' @param processes \code{FALSE} (the default) walks each parameter's two
-#'   sides one after another in this session. \code{TRUE}, or a number of
-#'   sessions, walks them at once, each in a background R session with a
-#'   one-thread Julia, started and compiled for the model first (it needs the
-#'   \pkg{future} package; the sessions persist for the next call, and
-#'   \code{\link{ctJuliaKill}('workers')} releases them). \code{TRUE} uses as many
-#'   sessions as the fit's \code{cores}, so a one-core fit walks in this
-#'   session. The walks are
-#'   independent, so the profile is the same either way, except that with
-#'   processes every walk finishes before \code{$better} is reported.
+#' @param cores The most CPU cores the profile uses at once. With more than
+#'   one, the walks -- each parameter's two sides -- run up to \code{cores} at
+#'   a time, each in a background R session with a one-thread Julia, started
+#'   and compiled for the model first (it needs the \pkg{future} package; the
+#'   sessions persist for the next call, and
+#'   \code{\link{ctJuliaKill}('workers')} releases them). With one, they run
+#'   one after another in this session. The walks are independent, so the
+#'   profile is the same either way, except that with several sessions every
+#'   walk finishes before \code{$better} is reported.
 #'
 #' @return An object of class \code{ctFitProfile}, which
 #'   \code{print} and \code{plot} both understand. \code{$profile} is one row
@@ -115,8 +114,10 @@
 #'   fit <- ctFit(ctstantestdat, model, backend = 'julia', cores = 1)
 #'
 #'   # Two named parameters; parameters = "flagged" profiles only those the
-#'   # fit's own diagnostics doubt, and NULL profiles every one.
-#'   result <- ctFitProfile(fit, parameters = c('drift_eta1', 'mm_Y1'))
+#'   # fit's own diagnostics doubt, and NULL profiles every one. One core walks
+#'   # them in this session rather than starting a session per walk.
+#'   result <- ctFitProfile(fit, parameters = c('drift_eta1', 'mm_Y1'),
+#'     cores = 1)
 #'   print(result)
 #'   plot(result)
 #'   # Julia keeps running between calls, holding what it has compiled;
@@ -126,7 +127,8 @@
 #' }
 #' @export
 ctFitProfile <- function(fit, parameters = NULL, points = 8L, step = NULL,
-  growth = 1.6, level = 0.95, maxiter = 500L, verbose = 0, processes = FALSE) {
+  growth = 1.6, level = 0.95, maxiter = 500L, verbose = 0,
+  cores = getOption("mc.cores", 2L)) {
   # `.ctFitIsJulia()` is the named predicate for this question; the class
   # literal is the same question spelled out, and `test-duplication-ratchet.R`
   # counts the spellings that are not.
@@ -152,7 +154,7 @@ ctFitProfile <- function(fit, parameters = NULL, points = 8L, step = NULL,
   optimcontrol <- utils::modifyList(.ctFitProfileOptimcontrol(fit),
     list(certify = FALSE))
   gradient <- .ctJuliaOr(optimcontrol$gradient, "adjoint")
-  cores <- suppressWarnings(as.integer(fit$args$resolved$cores)[1L])
+  cores <- suppressWarnings(as.integer(cores)[1L])
   if (!length(cores) || is.na(cores) || cores < 1L) cores <- 1L
   estimate <- as.numeric(fit$estimate$raw)
   npar <- length(estimate)
@@ -189,19 +191,18 @@ ctFitProfile <- function(fit, parameters = NULL, points = 8L, step = NULL,
 
   # One walk per parameter and side. Each starts from the fit and continues
   # from its own last point, so the walks are independent: in this session
-  # they run in order and stop at the first `better`; with `processes` they run
-  # at once (`.ctBackendWorkerMap()`), and the first `better` in that same
-  # order is the one reported.
+  # they run in order and stop at the first `better`; with more than one core
+  # they run at once (`.ctBackendWorkerMap()`), and the first `better` in that
+  # same order is the one reported.
   context <- list(fit = fit, spec = spec, optimcontrol = optimcontrol,
     gradient = gradient, cores = cores, estimate = estimate, steps = steps,
     points = points, growth = growth, bar = bar, base = base$value,
     maxiter = maxiter, verbose = verbose, names = names)
   walks <- unlist(lapply(index, function(k) lapply(c(-1, 1), function(side)
     list(k = k, side = side))), recursive = FALSE)
-  # The fit's `cores` is every core it may use at once, so `TRUE` never
-  # starts more sessions than that; a number is the caller's own count.
-  workers <- if (isTRUE(processes)) cores else
-    if (is.numeric(processes)) as.integer(processes)[1L] else 0L
+  # `cores` is every core the call may use at once, so it never starts more
+  # one-thread sessions than that.
+  workers <- min(cores, length(walks))
   walked <- NULL
   if (isTRUE(workers >= 2L) && length(walks) > 1L) {
     context$cores <- 1L

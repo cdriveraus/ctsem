@@ -11,7 +11,7 @@ ctFitUncertainty(
     "opg", "stored", "sample"),
   draws = c("auto", "normal", "empirical", "imis"),
   finishsamples = NULL,
-  cores = NULL,
+  cores = getOption("mc.cores", 2L),
   control = list(),
   verbose = 0,
   ...
@@ -23,7 +23,7 @@ ctOptimUncertainty(
     "opg", "stored"),
   draws = c("auto", "normal", "empirical", "imis"),
   finishsamples = NULL,
-  cores = NULL,
+  cores = getOption("mc.cores", 2L),
   control = list(),
   verbose = 0,
   ...
@@ -55,11 +55,8 @@ for julia) is reused when available; otherwise 1000 samples are used. Not
 used by \code{'sample'}, whose draw count is \code{control$draws}.}
 
 \item{cores}{The most CPU cores the call uses at once, counting every
-process it starts. If \code{NULL}, one core is used, and nothing
-is parallelised unless a value above one is asked for -- except for
-\code{'sample'}, which takes \code{getOption("mc.cores", 2)} as
-\code{ctFit} does, and shares it between at most that many worker
-processes, which run the chains. On a
+process it starts. \code{'sample'} shares them between at most that many
+worker processes, which run the chains. On a
 \code{ctStanFit} these are R worker processes: each
 log-probability/gradient evaluation is split across subjects and reassembled,
 and score contributions and transformed quantities use them too. On a
@@ -102,7 +99,11 @@ profiles every fitted surrogate direction until it reaches
 surrogate predicts a flat direction needs it. \code{parsteps} keeps
 stepwise-fixed raw parameters fixed (stan only).
 \code{analyticHessian = FALSE} (julia only) asks for the finite-difference
-Hessian instead of the engine's exact one. A Hessian covariance that needs
+Hessian instead of the engine's exact one. \code{likelihood} (\code{'fit'},
+\code{'quadrature'} or \code{'particle'}, julia only) is the density
+\code{'is'} samples against, with \code{nodes}, \code{particles},
+\code{substeps}, \code{transition}, \code{seed} and
+\code{correctEstimate} as described under Methods. A Hessian covariance that needs
 numerical repair -- positive-definite projection, ridge flooring, or
 \code{MASS::ginv} -- warns, with diagnostics in
 \code{$uncertainty$details$covariance}.}
@@ -140,10 +141,12 @@ except that only this one offers \code{uncertainty = 'sample'}.
 Every method except \code{'sample'} writes \emph{pseudo-posterior} draws to
 \code{$rawposterior}: a sample from a covariance fitted to the
 log-posterior surface around the optimum, not a sample from the posterior
-itself, and the point estimate stays at the optimum throughout.
+itself, and the point estimate stays at the optimum -- unless \code{'is'}
+samples against a more exact likelihood than the fit's
+(\code{control$likelihood}), when it moves to the corrected point.
 \code{uncertainty = 'sample'} is the other thing, genuine posterior draws
-by Markov chain Monte Carlo, and it is the one method that moves the point
-estimate: \code{$estimate$raw} becomes the posterior mean, the way
+by Markov chain Monte Carlo, and it moves the point estimate too:
+\code{$estimate$raw} becomes the posterior mean, the way
 \code{ctFit(optimize = FALSE)} reports a sampled fit. Everything downstream
 reads either kind of draw from the same slot, so the difference is recorded
 rather than visible in the shape of the result: a curvature-based fit
@@ -203,12 +206,37 @@ rest at the estimate.
 
 On a fit whose random effects are integrated (\code{intoverpop =
 'laplace'} or \code{'augmented'}) the objective is the route's approximate
-marginal posterior, so \code{'is'} corrects the shape of the normal
-approximation but keeps the route's own approximation: where the Laplace
-approximation is biased -- random effects on variances, in nonlinear
-dynamics, or with non-Gaussian indicators -- \code{'is'} reproduces the
-bias, and \code{'sample'} is the method that removes it. Expect it to cost
-several times the fit.}
+marginal posterior, so by default \code{'is'} corrects the shape of the
+normal approximation but keeps the route's own approximation: where the
+Laplace approximation is biased -- random effects on variances, in
+nonlinear dynamics, or with non-Gaussian indicators -- \code{'is'}
+reproduces the bias. Expect it to cost several times the fit.
+
+\code{control$likelihood} (julia only) chooses a more exact density to
+sample against. \code{'quadrature'}, for a Laplace fit, integrates each
+unit's random effects by adaptive Gauss-Hermite quadrature
+(\code{control$nodes} per effect, 5 by default), the integral
+\code{\link{ctLaplaceCheck}} measures the Laplace term against.
+\code{'particle'}, for a fit on the filter's route, replaces the filter's
+Gaussian likelihood by a particle filter's (\code{control$particles}, 1000;
+\code{substeps}, 10; \code{transition}, \code{'exponential'} or
+\code{'euler'}; \code{seed}, 1, with draw \code{i} using \code{seed + i -
+1}), the likelihood \code{\link{ctParticleLik}} measures the filter
+against; its Monte Carlo noise widens the weights without biasing them. Each
+draw costs one quadrature or particle-filter evaluation, so this takes
+minutes to hours where the check took seconds. The proposal starts from the
+fit's covariance widened by \code{imisScaleInit} (1.5), runs at most
+\code{imisMaxIter} (10) rounds of \code{isitersize} draws (200, or
+\code{finishsamples} if more, for quadrature), and the estimate moves to
+the corrected point: the quadrature posterior's Newton step from a fit made
+with \code{optimcontrol$laplace_correct = FALSE} (a fit corrected when it
+was fitted stays where it is), or the weighted posterior mean against the
+particle filter. \code{correctEstimate = FALSE} keeps it. What was done is
+recorded, and prints, in \code{fit$laplace_correction} or
+\code{fit$particle_correction}. Where too few effective draws survive the
+approximation is too far from the target to repair by reweighting, and
+\code{'sample'} with \code{control = list(intoverpop = 'none')} is the
+answer instead.}
 \item{\code{'stored'}}{Computes nothing: redraws \code{finishsamples} normal
 draws from the covariance already on the fit, leaving the covariance, the
 Hessian and the recorded \code{method} untouched, and marks
@@ -220,10 +248,9 @@ covariance do not reproduce.}
 }
 Every method that produces draws aims for the same effective sample size
 unless told otherwise, 200: \code{minESS} for \code{'sample'} (of the worst
-parameter, since the 2.5\% and 97.5\% quantiles need it for each),
-\code{isESS} for \code{'is'}, and \code{target_ess} for
-\code{\link{ctLaplaceCorrect}} and \code{\link{ctParticleCorrect}} with
-\code{draws = 'imis'}. Each warns when it ends short of its target.
+parameter, since the 2.5\% and 97.5\% quantiles need it for each) and
+\code{isESS} for \code{'is'}, whatever its likelihood. Each warns when it
+ends short of its target.
 }
 
 \section{Sampling (\code{uncertainty = 'sample'})}{
@@ -368,7 +395,7 @@ fit$stanfit$uncertainty$settings$redrawn
 
 \donttest{
 # A local quadratic surrogate rather than the Hessian
-fit <- ctFitUncertainty(ctstantestfit, uncertainty = 'surrogate')
+fit <- ctFitUncertainty(ctstantestfit, uncertainty = 'surrogate', cores = 1)
 summary(fit)$popmeans
 
 # Needs a working julia backend, so the example is inert where Julia is
@@ -395,5 +422,6 @@ predecessor of \code{uncertainty='stored'}. \code{\link{ctFit}} for
 \code{optimize = FALSE}, which reaches \code{uncertainty = 'sample'}
 through the same pipeline that placed the fit being sampled.
 \code{\link{ctLaplaceCheck}} and \code{\link{ctParticleLik}} measure the
-approximations a julia fit's likelihood makes.
+approximations a julia fit's likelihood makes, which \code{'is'} with
+\code{control$likelihood} corrects.
 }

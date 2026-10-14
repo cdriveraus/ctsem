@@ -4335,7 +4335,7 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
 #' }
 #' @export
 ctJuliaEvaluate <- function(object, pars = NULL, gradient = TRUE, contributions = FALSE,
-  gradient_method = c("adjoint", "forward"), cores = 2L) {
+  gradient_method = c("adjoint", "forward"), cores = getOption("mc.cores", 2L)) {
   gradient_method <- match.arg(gradient_method)
   if (!inherits(object, c("ctJuliaModel", "ctJuliaFit"))) stop("object must be a ctJuliaModel or ctJuliaFit", call. = FALSE)
   if (is.null(pars)) {
@@ -4377,7 +4377,7 @@ summary.ctJuliaFit <- function(object, timeinterval = 1, digits = 3, parmatrices
 }
 
 #' @export
-ctExtract.ctJuliaFit <- function(object, subjectMatrices = FALSE, cores = 2,
+ctExtract.ctJuliaFit <- function(object, subjectMatrices = FALSE, cores = getOption("mc.cores", 2L),
   nsamples = "all", subjects = "all", state = NULL, realid = TRUE, ...) {
   if (!"all" %in% subjects)
     subjects <- sort(as.vector(.ctResolveSubjects(object, subjects, realid)))

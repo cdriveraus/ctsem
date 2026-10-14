@@ -9,7 +9,7 @@ ctReport(
   folder = "ctReport",
   components = "default",
   nsamples = 200,
-  cores = 1,
+  cores = getOption("mc.cores", 2L),
   quantiles = c(0.025, 0.5, 0.975),
   times = "auto",
   timeinterval = 1,
@@ -41,8 +41,7 @@ uncertainty, and by data generation for \code{covcheck} and
 \code{postpred}.}
 
 \item{cores}{Cores for the components that can use more than one
-(\code{discretepars}, \code{covcheck}, \code{postpred}, \code{crossval}).
-Defaults to 1: nothing parallelises unless asked.}
+(\code{discretepars}, \code{covcheck}, \code{postpred}, \code{crossval}).}
 
 \item{quantiles}{Quantiles for the parameter matrices and the discrete
 parameter plots.}

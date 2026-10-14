@@ -11,7 +11,7 @@ ctParticleLik(
   transition = c("exponential", "euler"),
   seed = 1,
   replicates = 1,
-  cores = NULL
+  cores = getOption("mc.cores", 2L)
 )
 }
 \arguments{
@@ -94,6 +94,7 @@ if (isTRUE(ctJuliaStatus()$available)) {
 }
 }
 \seealso{
-\code{\link{ctParticleCorrect}} applies the correction this
+\code{\link{ctFitUncertainty}} with \code{uncertainty = 'is'} and
+  \code{control = list(likelihood = 'particle')} applies the correction this
   measures, to the fit's posterior draws.
 }

@@ -284,7 +284,7 @@
 #'
 #' @export
 ctIdentify <- function(datalong, model, inits = NULL, nstart = 3L,
-  spread = 0.5, priors = FALSE, intoverpop = "augmented", cores = 1L,
+  spread = 0.5, priors = FALSE, intoverpop = "augmented", cores = getOption("mc.cores", 2L),
   verbose = 0L, rtol = 1e-13, seed = 1L) {
 
   spec <- .ctFitJuliaBackend(datalong, model, fit = FALSE,

@@ -1,4 +1,4 @@
-# The two structure panels added in 3.12.0 when the ctFitCheck() dashboard was
+# The two structure panels added in 4.0.0 when the ctFitCheck() dashboard was
 # removed and what was worth keeping in it moved into ctPostPredPlots().
 #
 # MeanTrajectory restores a panel lost when the two posterior predictive

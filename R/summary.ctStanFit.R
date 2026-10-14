@@ -178,7 +178,7 @@ ctStanContinuousPars <- ctSummaryMatrices
 #' indpars <- ctSubjectPars(ctstantestfit)
 #' dimnames(indpars)
 #' plot(indpars[1,,'cint1'],indpars[1,,'cint2'])
-ctSubjectPars <- function(fit,pointest=TRUE,cores=2,nsamples='all',level=NULL){
+ctSubjectPars <- function(fit,pointest=TRUE,cores=getOption("mc.cores", 2L),nsamples='all',level=NULL){
 
   # `cores` is a stan-path argument: with pointest=FALSE it is handed to
   # ctExtract() to rebuild the subject matrices across R worker processes.

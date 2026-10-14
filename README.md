@@ -399,12 +399,12 @@ any of them.
 | `ctPostPredPlots` | posterior predictive comparison of implied and observed data |
 | `ctFitCheckCov` | lagged covariance diagnostics |
 | `ctCoverageCheck` | generate from a model, refit repeatedly, and check parameter recovery |
-| `ctParticleLik`, `ctParticleCorrect` | measure the filter’s approximation error against a particle filter, and correct the draws for it |
+| `ctParticleLik` | measure the filter’s approximation error against a particle filter; `ctFitUncertainty(fit, 'is', control = list(likelihood = 'particle'))` corrects the draws for it |
 | `ctACF`, `ctACFresiduals` | continuous time autocorrelation, of the data and of the residuals |
 | `ctChisqTest` | compare two nested fits |
 | `ctLOO` | cross validation: k fold by refitting, or PSIS for Laplace fits |
 | `ctFitProfile` | profile likelihood of chosen parameters, for identification and intervals |
-| `ctLaplaceCheck`, `ctLaplaceCorrect` | measure, and correct, the Laplace approximation error for random effects |
+| `ctLaplaceCheck` | measure the Laplace approximation error for random effects; `likelihood = 'quadrature'` corrects the draws for it |
 
 **Generate data**
 

@@ -588,7 +588,7 @@
     #
     # 2, not 1? The Laplace draw has the right shape and the wrong width: Laplace understates spread
     # wherever the posterior is skewed or heavy-tailed, which is the case
-    # `ctLaplaceCorrect` exists to repair. Starting every chain from that
+    # `likelihood = 'quadrature'` exists to repair. Starting every chain from that
     # narrower distribution makes R-hat compare chains that began already
     # agreeing, so it reads low exactly where the approximation is worst and the
     # diagnostic is needed most. Over-dispersing costs a little warmup and

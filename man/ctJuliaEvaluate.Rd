@@ -10,7 +10,7 @@ ctJuliaEvaluate(
   gradient = TRUE,
   contributions = FALSE,
   gradient_method = c("adjoint", "forward"),
-  cores = 2L
+  cores = getOption("mc.cores", 2L)
 )
 }
 \arguments{

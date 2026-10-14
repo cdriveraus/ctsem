@@ -165,8 +165,9 @@ test_that("the default is the quadrature correction, and the fit-time one is the
   posthoc <- .ctLaplaceAutoCorrect(fits$off)
   expect_identical(posthoc$estimate$raw, fits$step$estimate$raw)
   expect_identical(posthoc$estimate$loglik, fits$step$estimate$loglik)
-  # And the post-hoc functions will not apply a correction a second time.
-  expect_error(ctLaplaceCorrect(fits$default), "already corrected")
+  # And sampling against the quadrature will not apply it a second time.
+  expect_error(ctFitUncertainty(fits$default, "is", control = list(
+    likelihood = "quadrature", correctEstimate = TRUE)), "already corrected")
 })
 
 test_that("the continuation lands at the exact marginal's optimum, closer than the step", {

@@ -875,8 +875,9 @@ autoTIpredsFunc <- function(cl, standata, sm, optimArgs, parsteps, optimcores, c
 } # end ti pred auto function
 
 # Adaptive importance sampling from the curvature at the estimate, for
-# `uncertainty = 'is'`, `ctLaplaceCorrect(draws = 'imis')` and
-# `ctParticleCorrect(draws = 'imis')`.
+# `uncertainty = 'is'`, against the fit's own objective or, through
+# `.ctLaplaceCorrect()` and `.ctParticleCorrect()`, against the quadrature or
+# particle-filter likelihood.
 #
 # Three stages, each of which answers a failure measured against long NUTS
 # runs (job M, dev2, 2026-09-29):

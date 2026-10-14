@@ -12,7 +12,7 @@ ctIdentify(
   spread = 0.5,
   priors = FALSE,
   intoverpop = "augmented",
-  cores = 1L,
+  cores = getOption("mc.cores", 2L),
   verbose = 0L,
   rtol = 1e-13,
   seed = 1L

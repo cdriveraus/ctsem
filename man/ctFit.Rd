@@ -90,7 +90,7 @@ MANIFESTVAR or LAMBDA, a non-affine transform, a parameter entering another
 cell's expression, a non-Gaussian indicator, or a grouping level above the
 subject (see \code{id} in \code{\link{ctModel}}). A choice of
 \code{'laplace'} is announced, and \code{fit$args$resolved$intoverpopreason}
-records why. Before 3.12.0 \code{TRUE} always meant \code{'augmented'}.
+records why. Before 4.0.0 \code{TRUE} always meant \code{'augmented'}.
 
 \code{'augmented'} makes each random effect a state of the filter; variation
 on a DIFFUSION or MANIFESTVAR parameter is then only partly identified, and

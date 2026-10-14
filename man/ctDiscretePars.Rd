@@ -14,7 +14,7 @@ ctDiscretePars(
   standardise = FALSE,
   cov = FALSE,
   plot = FALSE,
-  cores = 2,
+  cores = getOption("mc.cores", 2L),
   state = NULL,
   method = "linearise",
   realid = TRUE,

@@ -19,136 +19,43 @@
 # gradient, which is why this costs one quadrature evaluation per draw rather
 # than the `2 * npar` a gradient would.
 
-#' Correct a Laplace fit's estimate and posterior draws by quadrature
-#'
-#' Applies the first-order correction \code{\link{ctLaplaceCheck}} measures, so
-#' that the returned fit reports the corrected estimate and every downstream
-#' summary follows from it. Optionally also redraws the posterior sample by
-#' importance sampling against the adaptive Gauss-Hermite posterior rather than
-#' the Laplace approximation to it.
-#'
-#' The two are separate because they cost very different amounts. Correcting the
-#' estimate is one Newton step and costs \code{2 * npar} quadrature evaluations
-#' whatever the model size. Importance sampling costs one quadrature evaluation
-#' \emph{per draw}, which for a normal request is three orders of magnitude
-#' more. Nobody should have to pay the second price to get the first, so
-#' \code{draws='normal'} is the default: the estimate is corrected, and the
-#' draws are recentred on it carrying the curvature the fit already had.
-#'
-#' \code{intoverpop='laplace'} replaces each unit's integral over its random
-#' effects by a single Gaussian fitted at the mode. Where that is inexact the
-#' error is not constant -- it grows with the population scale, so it tilts the
-#' profile rather than shifting it, and both the estimate and the width of the
-#' interval around it are affected. On a simulated model with a random DRIFT the
-#' population standard deviation's correction is about 0.9 standard errors,
-#' which is the whole of that parameter's under-coverage.
-#'
-#' The estimate moves by one Newton step against the curvature already computed
-#' for the standard errors. What that fixes is the \emph{location}: with
-#' \code{draws='normal'} the interval is the fit's own width, recentred. With
-#' \code{draws='imis'} the draws come instead from incremental mixture
-#' importance sampling against the quadrature posterior, which corrects the shape
-#' as well, with the proposal centred at the \emph{corrected} point -- a proposal
-#' centred at the uncorrected estimate is displaced from its target by the bias
-#' being corrected, and a displaced proposal is what importance sampling handles
-#' least well.
-#'
-#' Under \code{draws='imis'}, read \code{ess} on the result. Importance sampling
-#' reports its own reliability, and a low effective sample size means the
-#' corrected draws are carried by a few points and the interval should not be
-#' trusted. When that happens the approximation is too far from the target to
-#' repair by reweighting, and \code{\link{ctFitUncertainty}} with
-#' \code{uncertainty = 'sample'} on the joint posterior
-#' (\code{control = list(intoverpop = 'none')}) is the answer rather than this.
-#'
-#' Laplace fits are now corrected when they are fitted, by default
-#' (\code{optimcontrol$laplace_correct}, see \code{\link{ctFit}}): the estimate
-#' moves and the draws are recentred exactly as \code{draws='normal'} does here.
-#' On such a fit (\code{fit$laplace$correction$applied}) this function refuses
-#' anything that would apply the step a second time. \code{draws='imis'} is
-#' still available there, and redraws around the corrected estimate without
-#' moving it. To correct by hand instead, refit with
-#' \code{laplace_correct = FALSE}.
-#'
-#' @param fit A \code{ctJuliaFit} fitted with \code{intoverpop='laplace'}, with
-#'   uncertainty already computed -- the correction needs the Hessian and the
-#'   proposal needs the covariance.
-#' @param draws How to obtain the posterior draws behind the fit's intervals.
-#'   \code{'normal'} (the default) recentres normal draws on the corrected
-#'   estimate, keeping the fit's covariance: cheap, and it corrects the location
-#'   but not the shape. \code{'imis'} importance samples against the quadrature
-#'   posterior, correcting both, at one quadrature evaluation per draw.
-#'   \code{'keep'} corrects the estimate and leaves the existing draws alone,
-#'   which is only sensible when the draws are about to be replaced anyway.
-#' @param nodes Quadrature nodes per random effect, as in
-#'   \code{\link{ctLaplaceCheck}}. Cost is \code{nodes^k} process log
-#'   likelihoods per block for every evaluation, so this is the main cost
-#'   control.
-#' @param finishsamples Draws to return. Defaults to as many as the fit already
-#'   carries.
-#' @param scale \code{draws='imis'} only. Proposal scale multiplier on the
-#'   fit's covariance. Above one by default: the Hessian covariance is typically
-#'   \emph{narrower} than the posterior, and a proposal narrower than its target
-#'   cannot correct it.
-#' @param target_ess \code{draws='imis'} only. Effective sample size at which
-#'   sampling stops; 200 by default, the target every draw-producing route
-#'   shares (see \code{\link{ctFitUncertainty}}). Ending short of it, at
-#'   \code{maxiter}, is warned about.
-#' @param nbatch \code{draws='imis'} only. Draws per importance-sampling
-#'   iteration.
-#' @param maxiter \code{draws='imis'} only. Iteration cap.
-#' @param correct_estimate Move the point estimate to the corrected point. When
-#'   \code{FALSE} only the draws are redrawn, which is occasionally what you
-#'   want when comparing.
-#' @param cores Engine threads for the quadrature.
-#' @param verbose Integer; 1 or more prints progress.
-#'
-#' @return The fit, with \code{estimate$raw} at the corrected point,
-#'   \code{estimate$rawposterior} and \code{transformedpars} redrawn around it
-#'   (and \code{estimate$cov} and \code{estimate$se} replaced too under
-#'   \code{draws='imis'}), and a \code{laplace_correction} entry recording what
-#'   was done: the \code{ctLaplaceCheck} it was based on, which draws were used,
-#'   the effective sample size where one applies, and the estimate before
-#'   correction.
-#'
-#' @seealso \code{\link{ctLaplaceCheck}} measures without applying.
-#'   \code{\link{ctFitUncertainty}} (\code{uncertainty = 'sample'}, with
-#'   \code{control = list(intoverpop = 'none')}) removes the approximation
-#'   instead of correcting it.
-#'
-#' @examples
-#' \dontrun{
-#' fit <- ctFit(data, model, backend = 'julia', intoverpop = 'laplace')
-#'
-#' corrected <- ctLaplaceCorrect(fit)              # estimate corrected, cheap
-#' corrected$laplace_correction                    # gap, corrections in se
-#' summary(corrected)                              # intervals about the corrected point
-#'
-#' # Correct the shape of the posterior too, at one quadrature evaluation per draw
-#' resampled <- ctLaplaceCorrect(fit, draws = 'imis')
-#' resampled$laplace_correction$ess                # check before trusting it
-#' }
-#' @export
-ctLaplaceCorrect <- function(fit, draws = c("normal", "imis", "keep"),
-  nodes = 5L, finishsamples = NULL,
+# `ctFitUncertainty(fit, 'is', control = list(likelihood = 'quadrature'))`.
+#
+# Importance sampling against the adaptive Gauss-Hermite posterior rather than
+# the Laplace approximation to it, with the proposal centred at the corrected
+# point -- a proposal centred at the uncorrected estimate is displaced from its
+# target by the bias being corrected, and a displaced proposal is what
+# importance sampling handles least well. A fit the fit-time correction
+# (`optimcontrol$laplace_correct`) already moved is redrawn around its
+# estimate without moving it again; a fit made with `laplace_correct = FALSE`
+# takes the one Newton step `ctLaplaceCheck()` forms first, unless
+# `correct_estimate = FALSE`.
+#
+# `nodes` is the quadrature's nodes per random effect; its cost is `nodes^k`
+# process log likelihoods per block for every evaluation, so it is the main
+# cost control. `scale` multiplies the fit's covariance for the first proposal,
+# above one because the Hessian covariance is typically narrower than the
+# posterior and a proposal narrower than its target cannot correct it.
+#
+# Returns the fit with the draws, covariance and standard errors replaced, the
+# estimate at the corrected point where it moved, and `laplace_correction`
+# recording the check it was based on, the effective sample size and the
+# estimate before.
+.ctLaplaceCorrect <- function(fit, nodes = 5L, finishsamples = NULL,
   scale = 1.5, target_ess = 200, nbatch = NULL, maxiter = 10L,
   correct_estimate = TRUE, cores = NULL, verbose = 0L) {
 
-  draws <- match.arg(draws)
-
-  if (!inherits(fit, "ctJuliaFit")) {
-    stop("ctLaplaceCorrect applies to backend='julia' fits.", call. = FALSE)
-  }
   if (is.null(fit$model_spec$laplace)) {
-    stop("ctLaplaceCorrect applies to fits made with intoverpop='laplace'. ",
-      "The augmented route carries the random effects in the state and has no ",
-      "separate integral to correct.", call. = FALSE)
+    stop("likelihood = 'quadrature' applies to fits made with ",
+      "intoverpop = 'laplace'. The augmented route carries the random effects ",
+      "in the state and has no separate integral to take by quadrature; ",
+      "likelihood = 'particle' is its exact reference.", call. = FALSE)
   }
   covariance <- fit$estimate$cov
   if (is.null(covariance) || !all(is.finite(as.matrix(covariance)))) {
-    stop("ctLaplaceCorrect needs the fit's parameter covariance: the ",
-      "correction is a Newton step against the curvature computed for the ",
-      "standard errors. Run ctFitUncertainty(fit) first, or refit without ",
+    stop("likelihood = 'quadrature' needs the fit's parameter covariance: it ",
+      "is the first proposal, and the correction is a Newton step against it. ",
+      "Run ctFitUncertainty(fit) first, or refit without ",
       "optimcontrol$estonly.", call. = FALSE)
   }
   est <- as.numeric(fit$estimate$raw)
@@ -156,18 +63,16 @@ ctLaplaceCorrect <- function(fit, draws = c("normal", "imis", "keep"),
 
   # A fit the fit-time correction (optimcontrol$laplace_correct, either
   # method) already moved must not be moved again: this would be a second
-  # correction of the same error. What is still worth asking for
-  # there is the shape, so draws='imis' redraws around the corrected estimate
-  # and leaves it where it is; anything that would move the estimate or only
-  # recentre the draws is refused, because that is what was already done.
+  # correction of the same error. What is still worth asking for there is the
+  # shape, so the draws are redrawn around the corrected estimate and it stays
+  # where it is; asking to move it is refused.
   already <- .ctLaplaceIsCorrected(fit)
   if (already) {
-    if (!identical(draws, "imis") ||
-        (!missing(correct_estimate) && isTRUE(correct_estimate))) {
+    if (!missing(correct_estimate) && isTRUE(correct_estimate)) {
       stop("This fit was already corrected by quadrature when it was fitted ",
-        "(fit$laplace$correction), so ctLaplaceCorrect() would correct it ",
-        "twice. Use draws='imis' to redraw around the corrected estimate, or ",
-        "refit with optimcontrol$laplace_correct = FALSE to correct by hand.",
+        "(fit$laplace$correction), so moving the estimate again would correct ",
+        "it twice. Drop correctEstimate to redraw around the corrected ",
+        "estimate, or refit with optimcontrol$laplace_correct = FALSE.",
         call. = FALSE)
     }
     correct_estimate <- FALSE
@@ -211,109 +116,71 @@ ctLaplaceCorrect <- function(fit, draws = c("normal", "imis", "keep"),
   }
   if (is.null(nbatch)) nbatch <- max(200L, as.integer(finishsamples))
 
-  # Correcting the estimate and resampling the posterior are separate jobs with
-  # very different prices, so they are separately chosen. The correction is one
-  # Newton step and costs `2 * npar` quadrature evaluations however many draws
-  # are involved. Importance sampling costs one quadrature evaluation *per
-  # draw*, which is three orders of magnitude more on a typical request --
-  # worth it when the shape of the posterior matters, and not something to make
-  # anyone pay for a corrected point estimate.
-  is_res <- NULL
-  ess <- NA_real_
-  paretok <- NA_real_
-  newcov <- as.matrix(covariance)
-  samples <- fit$estimate$rawposterior
-
-  if (identical(draws, "imis")) {
-    if (verbose > 0) message("Importance sampling against the quadrature ",
-      "posterior (", nodes, " nodes, ", nbatch, " draws per iteration)")
-    # `.ctOptimImisDraws()` is shared with `ctParticleCorrect()` and with the
-    # uncertainty stage's `uncertainty='is'`: same `imis_is` call, same weighted
-    # covariance with an unweighted fallback, same effective-size check. What is
-    # this function's own is the density (`quadlp`) and the remedy named below.
-    #
-    # The proposal is already widened by `scale^2` here, so `scaleInit = 1`
-    # rather than compounding two scalings.
-    drawn <- .ctOptimImisDraws(quadlp, centre = centre,
-      cov = as.matrix(covariance) * scale^2,
-      finishsamples = finishsamples, nbatch = nbatch, target_ess = target_ess,
-      maxiter = maxiter, scaleInit = 1, tailScale = 1.2, df = Inf,
-      verbose = verbose,
-      # Said plainly rather than left in a list nobody prints. A corrected
-      # interval resting on a handful of effective draws is worse than the
-      # uncorrected one, because it looks like it has been improved.
-      remedy = paste0("Treat the corrected interval as indicative. ",
-        "ctFitUncertainty(fit, 'sample', control = list(intoverpop = 'none')) ",
-        "samples the joint posterior directly ",
-        "and does not rely on the approximation being close."))
-    is_res <- drawn$is_res
-    samples <- drawn$samples
-    if (is.null(samples) || !nrow(samples)) {
-      stop("Importance sampling returned no usable draws against the ",
-        "quadrature posterior. The Laplace approximation is likely too far ",
-        "from the target to repair by reweighting; use ",
-        "ctFitUncertainty(fit, 'sample', control = list(intoverpop = 'none')) ",
-        "instead.",
-        call. = FALSE)
-    }
-    newcov <- drawn$cov
-    ess <- drawn$ess
-    paretok <- drawn$k
-  } else if (identical(draws, "normal")) {
-    # The centre is corrected and the width is not: these draws carry the
-    # Laplace curvature, moved to the corrected point. That is the honest
-    # description of what one Newton step buys, and it is the right default --
-    # the location error is what `ctLaplaceCheck` measures and what tilts an
-    # estimate, while correcting the *shape* costs a quadrature evaluation per
-    # draw and is asked for with `draws='imis'`.
-    samples <- ctOptimNormalDraws(centre, newcov, finishsamples)
+  if (verbose > 0) message("Importance sampling against the quadrature ",
+    "posterior (", nodes, " nodes, ", nbatch, " draws per iteration)")
+  # `.ctOptimImisDraws()` is shared with `.ctParticleCorrect()` and with
+  # `uncertainty='is'` against the fit's own objective: same `imis_is` call,
+  # same weighted covariance with an unweighted fallback, same effective-size
+  # check. What is this function's own is the density (`quadlp`) and the
+  # remedy named below.
+  #
+  # The proposal is already widened by `scale^2` here, so `scaleInit = 1`
+  # rather than compounding two scalings.
+  drawn <- .ctOptimImisDraws(quadlp, centre = centre,
+    cov = as.matrix(covariance) * scale^2,
+    finishsamples = finishsamples, nbatch = nbatch, target_ess = target_ess,
+    maxiter = maxiter, scaleInit = 1, tailScale = 1.2, df = Inf,
+    verbose = verbose,
+    # Said plainly rather than left in a list nobody prints. A corrected
+    # interval resting on a handful of effective draws is worse than the
+    # uncorrected one, because it looks like it has been improved.
+    remedy = paste0("Treat the corrected interval as indicative. ",
+      "ctFitUncertainty(fit, 'sample', control = list(intoverpop = 'none')) ",
+      "samples the joint posterior directly ",
+      "and does not rely on the approximation being close."))
+  is_res <- drawn$is_res
+  samples <- drawn$samples
+  if (is.null(samples) || !nrow(samples)) {
+    stop("Importance sampling returned no usable draws against the ",
+      "quadrature posterior. The Laplace approximation is likely too far ",
+      "from the target to repair by reweighting; use ",
+      "ctFitUncertainty(fit, 'sample', control = list(intoverpop = 'none')) ",
+      "instead.",
+      call. = FALSE)
   }
+  newcov <- drawn$cov
+  ess <- drawn$ess
+  paretok <- drawn$k
 
   before <- list(raw = est, cov = fit$estimate$cov, se = fit$estimate$se)
   if (isTRUE(correct_estimate)) fit$estimate$raw <- centre
-  if (!identical(draws, "keep")) {
-    fit$estimate$cov <- newcov
-    fit$estimate$se <- sqrt(diag(newcov))
-    fit$estimate$rawposterior <- samples
-    fit <- .ctFitNameRawUncertainty(fit)
-    # The constrained draws describe whatever raw draws they were built from,
-    # so they are refreshed here rather than left to disagree with the ones
-    # above.
-    fit$transformedpars <- .ctBackendConstrain(fit)
-  } else if (isTRUE(correct_estimate)) {
-    # The estimate moved and the draws did not, so they now describe a point
-    # the fit no longer reports. Saying so is better than leaving it to be
-    # discovered in a summary.
-    warning("The estimate was corrected but draws='keep' left the posterior ",
-      "draws as they were, so intervals still describe the uncorrected point. ",
-      "Use draws='normal' to recentre them.", call. = FALSE)
-  }
+  fit$estimate$cov <- newcov
+  fit$estimate$se <- sqrt(diag(newcov))
+  fit$estimate$rawposterior <- samples
+  fit <- .ctFitNameRawUncertainty(fit)
+  # The constrained draws describe whatever raw draws they were built from, so
+  # they are refreshed here rather than left to disagree with the ones above.
+  fit$transformedpars <- .ctBackendConstrain(fit)
   fit$laplace_correction <- list(
-    check = check, nodes = as.integer(nodes), ess = ess, draws = draws,
+    check = check, nodes = as.integer(nodes), ess = ess, draws = "imis",
     effective_fraction = if (is.finite(ess)) ess / nrow(samples) else NA_real_,
-    corrected_estimate = isTRUE(correct_estimate),
+    corrected_estimate = isTRUE(correct_estimate), corrected_when_fitted = already,
     proposal_scale = scale, before = before,
     largest_delta_se = if (is.null(check$parameters)) NA_real_ else
       max(abs(check$parameters$delta_se), na.rm = TRUE))
   class(fit$laplace_correction) <- "ctLaplaceCorrection"
-  if (!is.null(fit$uncertainty) && !identical(draws, "keep")) {
+  if (!is.null(fit$uncertainty)) {
     fit$uncertainty$cov <- newcov
     # The draws on the fit are now importance-sampled, so the record of how
     # they were made has to say so. Downstream code reads these to describe the
     # fit, and leaving them at whatever the original uncertainty pass wrote
     # would have every summary claim normal draws around a Hessian covariance.
-    fit$uncertainty$draws <- draws
-    if (!is.null(fit$uncertainty$settings)) {
-      fit$uncertainty$settings$draws <- draws
-      fit$uncertainty$settings$finishsamples <- nrow(samples)
-    }
-    if (!is.null(is_res)) {
-      fit$uncertainty$proposal_cov <- as.matrix(covariance) * scale^2
-      fit$uncertainty$imis <- is_res
-      fit$uncertainty$details$importance_sampling <- list(ess = ess,
-        pareto_k = paretok, df_used = is_res$df_used,
-        covariance = "weighted importance-sampling covariance")
-    }
+    fit$uncertainty$draws <- "imis"
+    fit$uncertainty$proposal_cov <- as.matrix(covariance) * scale^2
+    fit$uncertainty$imis <- is_res
+    fit$uncertainty$details$importance_sampling <- list(ess = ess,
+      pareto_k = paretok, df_used = is_res$df_used,
+      covariance = "weighted importance-sampling covariance")
     fit$uncertainty$details$laplace_correction <- list(
       nodes = as.integer(nodes), ess = ess,
       target = "adaptive Gauss-Hermite posterior")
@@ -329,16 +196,17 @@ print.ctLaplaceCorrection <- function(x, ...) {
     " (", format(x$check$gap_per_subject, digits = 3), " per subject)\n", sep = "")
   cat("  largest correction    ", format(x$largest_delta_se, digits = 3),
     " standard errors\n", sep = "")
-  cat("  draws                 ", x$draws,
-    if (identical(x$draws, "normal"))
-      "  (recentred; width is the fit's own curvature)" else "", "\n", sep = "")
+  cat("  draws                 importance sampled against the quadrature ",
+    "posterior\n", sep = "")
   if (is.finite(x$ess)) {
     cat("  effective sample size ", format(x$ess, digits = 4),
       if (is.finite(x$effective_fraction))
         paste0(" (", format(100 * x$effective_fraction, digits = 3), "% of draws)")
       else "", "\n", sep = "")
   }
-  if (!x$corrected_estimate) {
+  if (isTRUE(x$corrected_when_fitted)) {
+    cat("  estimate as corrected when fitted; draws redrawn around it\n")
+  } else if (!x$corrected_estimate) {
     cat("  estimate left at the uncorrected point; draws redrawn only\n")
   }
   invisible(x)
@@ -566,7 +434,8 @@ print.ctLaplaceCorrection <- function(x, ...) {
   }
   # Applied. The draws are moved by the step and not redrawn, so they keep the
   # Laplace curvature's shape -- recentred, not reshaped, which is what
-  # `draws='imis'` in ctLaplaceCorrect() is for.
+  # `ctFitUncertainty(fit, 'is', control = list(likelihood = 'quadrature'))`
+  # is for.
   record$applied <- TRUE
   record$material <- isTRUE(max(abs(delta_se), na.rm = TRUE) >= control$material)
   record$draws <- "recentred"

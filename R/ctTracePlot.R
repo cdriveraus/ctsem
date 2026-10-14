@@ -93,13 +93,12 @@ ctTracePlot <- function(fit, which = NULL, plot = TRUE) {
 # Each chain's draws of the population means and sds, natural scale. The rows
 # of `estimate$rawposterior` are the chains' draws one chain after another,
 # which `.ctBackendSummaryChains()` recovers -- and refuses when the order no
-# longer holds, as after ctParticleCorrect() reweights them.
+# longer holds.
 .ctTracePlotChains <- function(fit, which, plot) {
   samples <- .ctBackendRawSamples(fit)
   chains <- .ctBackendSummaryChains(fit, samples)
   if (is.null(chains)) stop("This fit's draws no longer carry the order of the ",
-    "chains they came from (ctParticleCorrect() reweights them, for instance), ",
-    "so there is no chain to trace.", call. = FALSE)
+    "chains they came from, so there is no chain to trace.", call. = FALSE)
   lengths <- if (length(chains) > 1L) chains else
     rep(nrow(samples) %/% chains, chains)
   draws <- list(.ctBackendPopMeanSamples(fit, samples = samples)$values)
