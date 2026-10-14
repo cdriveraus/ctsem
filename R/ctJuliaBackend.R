@@ -2261,10 +2261,8 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
   } else if (!is.null(model$modelmats$matsetup)) {
     setup <- as.data.frame(model$modelmats$matsetup)
     values <- as.data.frame(model$modelmats$matvalues)
-    rows <- which(as.integer(setup$indvarying) > 0L & as.integer(setup$param) > 0L)
-    rows <- rows[!duplicated(as.integer(setup$param)[rows])]
-    varying <- as.integer(setup$param)[rows]
-    sdscale <- as.numeric(values$sdscale)[rows]
+    varying <- .ctIndvaryingIndex(setup[as.integer(setup$param) > 0L, , drop = FALSE])
+    sdscale <- as.numeric(values$sdscale)[match(varying, as.integer(setup$param))]
   } else {
     # Neither, which is a model straight from `ctModel()`. `ctFit()` always
     # supplies both -- it builds `modelmats` and hands `.ctPrepareData()`'s

@@ -432,10 +432,6 @@ ctScoreTest <- function(fit, covariates = NULL,
     out$statedependence <- ext$statedependence
     out$volatility <- ext$volatility
     out$fixed <- ext$fixed
-    if (!is.null(ext$refused)) {
-      out$info$errors$volatility <- ext$refused
-      warning("volatility: ", ext$refused, call. = FALSE)
-    }
   })
   if ('instability' %in% tests) attempt('instability', {
     say("Row scores for the stability tests")
@@ -1194,7 +1190,7 @@ ctScoreTest <- function(fit, covariates = NULL,
     }
     r
   }
-  added <- list()
+  added <- list(); moved <- list()
   for (eq in unique(i)) {
     cell <- which(pars$matrix %in% 'CINT' & pars$row == eq)
     if (length(cell) != 1L) stop("The model has no CINT cell for latent ", eq,
@@ -1208,7 +1204,7 @@ ctScoreTest <- function(fit, covariates = NULL,
       value <- suppressWarnings(as.numeric(pars$value[cell]))
       expr <- if (is.na(value) || value == 0) sum_i else paste0(value, ' + ', sum_i)
     } else if (grepl('^[A-Za-z.][A-Za-z0-9._]*$', current) && !current %in% latent) {
-      added[[length(added) + 1L]] <- parsrow(current, from = pars[cell, , drop = FALSE])
+      moved[[as.character(cell)]] <- parsrow(current, from = pars[cell, , drop = FALSE])
       expr <- paste0(current, ' + ', sum_i)
     } else {
       expr <- paste0('(', current, ') + ', sum_i)
@@ -1220,9 +1216,22 @@ ctScoreTest <- function(fit, covariates = NULL,
     for (e in effects) pars[[e]][cell] <- 'FALSE'
     for (l in levelflags) pars[[l]][cell] <- FALSE
   }
-  model$pars <- rbind(pars, do.call(rbind, added))
-  rownames(model$pars) <- NULL
+  model$pars <- .ctInsertMovedRows(pars, moved, added)
   model
+}
+
+# `pars` with each row of `moved` -- a cell's own parameter taken into PARS,
+# named by that cell's row -- placed straight after the cell, and the `added`
+# rows at the end. Random effects are ordered as their parameters are
+# declared (`.ctIndvaryingIndex`), so a moved parameter keeps its place among
+# them and the extended model's correlation coordinates stay the fit's.
+.ctInsertMovedRows <- function(pars, moved, added) {
+  at <- as.integer(names(moved))
+  out <- rbind(pars, do.call(rbind, unname(moved)), do.call(rbind, added))
+  out <- out[order(c(seq_len(nrow(pars)), at + 0.5, nrow(pars) + seq_along(added))), ,
+    drop = FALSE]
+  rownames(out) <- NULL
+  out
 }
 
 # The fitted model with each latent's innovation sd scaled by exp(sum over
@@ -1266,7 +1275,7 @@ ctScoreTest <- function(fit, covariates = NULL,
     }
     r
   }
-  added <- list()
+  added <- list(); moved <- list()
   for (eq in unique(i)) {
     cell <- which(pars$matrix %in% 'DIFFUSION' & pars$row == eq & pars$col == eq)
     if (length(cell) != 1L) stop("The model has no DIFFUSION cell for latent ", eq,
@@ -1279,7 +1288,7 @@ ctScoreTest <- function(fit, covariates = NULL,
     if (is.na(current) || !nzchar(current)) {
       expr <- paste0(as.numeric(pars$value[cell]), ' * ', scale)
     } else if (grepl('^[A-Za-z.][A-Za-z0-9._]*$', current) && !current %in% latent) {
-      added[[length(added) + 1L]] <- parsrow(current, from = pars[cell, , drop = FALSE])
+      moved[[as.character(cell)]] <- parsrow(current, from = pars[cell, , drop = FALSE])
       expr <- paste0(current, ' * ', scale)
     } else {
       expr <- paste0('(', current, ') * ', scale)
@@ -1291,8 +1300,7 @@ ctScoreTest <- function(fit, covariates = NULL,
     for (e in effects) pars[[e]][cell] <- 'FALSE'
     for (l in levelflags) pars[[l]][cell] <- FALSE
   }
-  model$pars <- rbind(pars, do.call(rbind, added))
-  rownames(model$pars) <- NULL
+  model$pars <- .ctInsertMovedRows(pars, moved, added)
   model
 }
 
@@ -1365,60 +1373,38 @@ ctScoreTest <- function(fit, covariates = NULL,
   if (is.null(base)) stop("This fit does not carry the model it was built from, ",
     "so the extended model cannot be prepared. Refit with this version of ctsem.",
     call. = FALSE)
+  model <- base
+  state <- vol <- fixed <- NULL
+  if ('statedependence' %in% families) {
+    state <- .ctScoreStateModel(model, order)
+    model <- state$model
+  }
+  if ('volatility' %in% families) {
+    vol <- .ctScoreVolatilityModel(model)
+    model <- vol$model
+  }
+  if ('fixed' %in% families) {
+    fixed <- .ctScoreFixedModel(model)
+    model <- fixed$model
+  }
+  names_new <- c(state$terms$name, vol$terms$name, fixed$terms$name)
+  if (!length(names_new)) return(list(statedependence = NULL, volatility = NULL,
+    fixed = NULL))
+  args <- .ctFitReplayArgs(fit)
+  args$model <- model
+  args$fit <- FALSE
+  args$inits <- NULL
+  args$datalong <- .ctFitLongData(fit)
+  args$intoverpop <- .ctBackendIntOverPop(spec)
+  args$verbose <- 0
+  spec2 <- suppressMessages(suppressWarnings(do.call(ctFit, args)))
   nm1 <- as.character(.ctFitRawParNames(fit))
-  prepare <- function(families) {
-    model <- base
-    state <- vol <- fixed <- NULL
-    if ('statedependence' %in% families) {
-      state <- .ctScoreStateModel(model, order)
-      model <- state$model
-    }
-    if ('volatility' %in% families) {
-      vol <- .ctScoreVolatilityModel(model)
-      model <- vol$model
-    }
-    if ('fixed' %in% families) {
-      fixed <- .ctScoreFixedModel(model)
-      model <- fixed$model
-    }
-    names_new <- c(state$terms$name, vol$terms$name, fixed$terms$name)
-    if (!length(names_new)) return(list(names_new = names_new))
-    args <- .ctFitReplayArgs(fit)
-    args$model <- model
-    args$fit <- FALSE
-    args$inits <- NULL
-    args$datalong <- .ctFitLongData(fit)
-    args$intoverpop <- .ctBackendIntOverPop(spec)
-    args$verbose <- 0
-    spec2 <- suppressMessages(suppressWarnings(do.call(ctFit, args)))
-    nm2 <- as.character(.ctBackendRawParameterNames(list(model_spec = spec2),
-      .ctBackendNpar(spec2)))
-    list(state = state, vol = vol, fixed = fixed, names_new = names_new, spec2 = spec2,
-      nm2 = nm2, lost = setdiff(nm1, nm2), lined = !length(setdiff(nm1, nm2)) &&
-        !anyDuplicated(nm2))
-  }
-  # The volatility terms move each innovation sd into PARS, and random effects
-  # are ordered PARS first, so an sd that varies over people moves ahead of the
-  # effects before it and the extended model's correlations are not the fit's.
-  # The other families leave every parameter where it was, so they are tested
-  # without volatility rather than not at all.
-  refused <- NULL
-  p <- prepare(families)
-  if (length(p$names_new) && !p$lined && 'volatility' %in% families &&
-      length(families) > 1L) {
-    refused <- paste0("An innovation sd varies over people, which the extended ",
-      "model cannot carry (", paste(p$lost, collapse = ', '), "); volatility is not ",
-      "tested for this model.")
-    families <- setdiff(families, 'volatility')
-    p <- prepare(families)
-  }
-  if (!length(p$names_new)) return(list(statedependence = NULL, volatility = NULL,
-    fixed = NULL, refused = refused))
-  if (!p$lined) stop("The extended model's parameters do not line up with the ",
-    "fit's (", paste(p$lost, collapse = ', '), "), so ", paste(families, collapse = ', '),
-    " cannot be tested for this model.", call. = FALSE)
-  state <- p$state; vol <- p$vol; fixed <- p$fixed
-  names_new <- p$names_new; spec2 <- p$spec2; nm2 <- p$nm2
+  nm2 <- as.character(.ctBackendRawParameterNames(list(model_spec = spec2),
+    .ctBackendNpar(spec2)))
+  lost <- setdiff(nm1, nm2)
+  if (length(lost) || anyDuplicated(nm2)) stop("The extended model's parameters ",
+    "do not line up with the fit's (", paste(lost, collapse = ', '), "), so ",
+    paste(families, collapse = ', '), " cannot be tested for this model.", call. = FALSE)
   if (!setequal(setdiff(nm2, nm1), names_new)) stop("The extended model added ",
     "parameters other than its terms: ", paste(setdiff(setdiff(nm2, nm1), names_new),
       collapse = ', '), call. = FALSE)
@@ -1532,7 +1518,6 @@ ctScoreTest <- function(fit, covariates = NULL,
     out$fixed <- list(cells = table[order(table$p, -table$LM), , drop = FALSE],
       joint = jointtest(idx, 'all'))
   }
-  out$refused <- refused
   out
 }
 

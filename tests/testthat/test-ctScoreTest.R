@@ -322,11 +322,12 @@ test_that("stability along a predicted state finds a drift that depends on it", 
   expect_null(st0$instability)
 })
 
-test_that("an innovation sd that varies over people refuses volatility alone", {
-  # The volatility terms move each innovation sd into PARS, which orders the
-  # random effects first, so with the drift varying too the extended model's
-  # correlations are not the fit's. That once refused state dependence and
-  # fixed cells with it, from the sixth round of the Fisher search on.
+test_that("an innovation sd that varies over people is still tested for volatility", {
+  # The volatility terms move each innovation sd into PARS. While random effects
+  # took matsetup's order, which puts PARS first, that moved a varying sd ahead
+  # of the drift's effect, the extended model's correlations were not the
+  # fit's, and state dependence, volatility and fixed cells were all refused:
+  # on the Fisher search, from round 6 to the end.
   # The structure is what is tested, not power: twenty people.
   d <- .score_data('het', nsub = 20L)
   m <- .score_model()
@@ -336,11 +337,9 @@ test_that("an innovation sd that varies over people refuses volatility alone", {
   fit <- fit_cached('scoretest het random sd', suppressWarnings(suppressMessages(ctFit(
     d[, c('id', 'time', 'Y1')], m, backend = 'julia', intoverpop = 'laplace',
     cores = 1, verbose = 0))))
-  expect_warning(st <- suppressMessages(ctScoreTest(fit,
-    tests = c('statedependence', 'volatility'), cores = 1, verbose = FALSE)),
-    'volatility: An innovation sd varies over people')
+  st <- suppressMessages(ctScoreTest(fit, tests = c('statedependence', 'volatility'),
+    cores = 1, verbose = FALSE))
+  expect_null(st$info$errors)
   expect_false(is.null(st$statedependence))
-  expect_null(st$volatility)
-  expect_match(st$info$errors[['volatility']], 'innovation sd varies')
-  expect_null(st$info$errors[['statedependence and volatility']])
+  expect_false(is.null(st$volatility))
 })
