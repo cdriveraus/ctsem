@@ -44,7 +44,7 @@
 #' @param gridsize Points along the range. One engine call each.
 #' @param nsamples Posterior draws for the interval, or 1 for the point
 #'   estimate alone.
-#' @param probs Three quantiles: lower ribbon, line, upper ribbon.
+#' @param quantiles Three quantiles: lower ribbon, line, upper ribbon.
 #' @param state Where the other latent processes are held: \code{'asymptotic'},
 #'   \code{'mean'}, \code{'T0MEANS'}, or a numeric state.
 #' @param tipreds Time independent predictor values, or NULL for the population.
@@ -77,12 +77,15 @@
 #'
 #'   fit <- ctFit(datalong, model, backend = 'julia', cores = 1, verbose = 0)
 #'   ctStateDependencePlot(fit, along = 'eta2', gridsize = 11, nsamples = 5)
+#'   # Julia keeps running between calls, holding what it has compiled;
+#'   # this ends it.
+#'   ctJuliaKill("session")
 #' }
 #' }
 #' @seealso \code{\link{ctContextDependence}}, \code{\link{ctPhasePortrait}}
 #' @export
 ctStateDependencePlot <- function(fit, along = 1, extent = "data", gridsize = 25,
-  nsamples = 20, probs = c(.025, .5, .975), state = "asymptotic", tipreds = NULL,
+  nsamples = 20, quantiles = c(.025, .5, .975), state = "asymptotic", tipreds = NULL,
   tolerance = 1e-6, plot = TRUE) {
 
   if (!inherits(fit, "ctJuliaFit")) stop(call. = FALSE, paste0(
@@ -136,13 +139,13 @@ ctStateDependencePlot <- function(fit, along = 1, extent = "data", gridsize = 25
     do.call(rbind, lapply(.ctStateDependenceMatrices, function(name) {
       block <- arrays[[paste0("pop_", name)]]
       if (is.null(block) || length(dim(block)) != 3L) return(NULL)
-      quantiles <- apply(block, c(2L, 3L), stats::quantile, probs = probs,
+      q <- apply(block, c(2L, 3L), stats::quantile, probs = quantiles,
         na.rm = TRUE)
       expand <- expand.grid(row = seq_len(dim(block)[2L]), col = seq_len(dim(block)[3L]))
       data.frame(matrix = name, row = expand$row, col = expand$col,
         along = grid[i],
-        lower = as.numeric(quantiles[1L, , ]), middle = as.numeric(quantiles[2L, , ]),
-        upper = as.numeric(quantiles[3L, , ]), stringsAsFactors = FALSE)
+        lower = as.numeric(q[1L, , ]), middle = as.numeric(q[2L, , ]),
+        upper = as.numeric(q[3L, , ]), stringsAsFactors = FALSE)
     }))
   }))
 
@@ -188,7 +191,7 @@ ctStateDependencePlot <- function(fit, along = 1, extent = "data", gridsize = 25
     ggplot2::labs(x = latentNames[along], y = "Parameter value",
       title = paste0("Matrix cells as functions of ", latentNames[along]),
       subtitle = paste0("Other processes held at ", resolved$label,
-        ". Ribbon: ", probs[1L] * 100, "-", probs[3L] * 100, "% of draws."),
+        ". Ribbon: ", quantiles[1L] * 100, "-", quantiles[3L] * 100, "% of draws."),
       caption = if(is.null(vsub)) NULL else
         paste(strwrap(vsub, width = 105), collapse = "\n")) +
     ggplot2::theme_minimal() +

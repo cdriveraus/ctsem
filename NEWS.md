@@ -2,35 +2,47 @@
 
 
 
-### 3.12.0 (development)
+## 14/10/2026
+### 4.0.0
 
-- `ctFit()` now applies ctsem's `normal(0,1)` raw priors to the random effect correlations by default, `priors='randomCorr'`. `priors=TRUE` for priors on every parameter and `priors=FALSE` for none, as before. Julia backend only; `backend='stan'` is unchanged.
-- Covariance matrices are now parameterised by a matrix logarithm rather than a correlation square root, so every positive definite matrix is reachable. Use `mymodel$covmattransform='rawcorr'` for the previous parameterisation, which a comparison against stan or a stored fit needs.
-- Adaptive importance sampling for `uncertainty='is'`, finding skewed and curved posterior tails the curvature at the estimate misses and warning when the Pareto k of its weights exceeds 0.7; its effective sample target is now 200, `optimcontrol$isESS=100` for the previous.
-- New `backend='julia'` option for `ctFit()`, using a Julia extended-Kalman-filter engine with a hand-written reverse-mode adjoint for the gradient. `ctJuliaInstall()` supplies whatever is missing -- the bridge package, Julia itself, and the engine's dependencies -- asking before it downloads anything. The engine ships inside ctsem, so no repository access is needed.
--Describe intoverpop and poprank!
-- `intoverpop=TRUE` now integrates random effects out by the Laplace approximation wherever the augmented filter is not exact for the model (nonlinear or variance effects, non-Gaussian indicators, nested levels), and by the augmented filter otherwise; `intoverpop='augmented'` for the previous behaviour. Julia backend only.
-- `poprank` may now be set per grouping level under `intoverpop='laplace'`, as `poprank=c(study=2)`, restricting that level's population covariance to a loading matrix of the given rank.
-- Individual variation on DIFFUSION or MANIFESTVAR is now estimated through a reduced-rank population covariance, spanned by the individually varying parameters that reach the observation mean -- the only part of that covariance `intoverpop='augmented'` identifies. `poprank=NA` estimates the full covariance as before, and a smaller rank is an explicit approximation. Julia backend only.
-- Posterior predictive checking is consolidated into `ctPostPredPlots()`, with clearer plots and an explanatory note on each panel that can be switched off. New panels for the mean trajectory over time, banded for both the spread in the data and the uncertainty in its mean, and for the lagged covariance structure. 
-- Model matrix cells accept a named form as well as the pipe separated one, so `'mm, indvarying=TRUE, sdscale=0.5'` and `'mm||TRUE|0.5'` mean the same thing. `ctPar()` builds either from named arguments, and with nested ids `indvarying` names the levels a parameter varies at.
-- Fixed: a parameter named in several cells whose default transforms differ, such as a DRIFT diagonal and an off-diagonal, was transformed differently in each cell, so the cells were not equal. This is now refused, and the message shows how to share the parameter through `PARS`.
-- `ctModelCoverage_check()` is renamed `ctCoverageCheck()`, with camelCase arguments to match the rest of the package. The old name is not retained.
-- Fixed: standard errors along a direction the data does not identify were computed by flooring the information matrix and inverting, which produced an arbitrary finite width set by rounding rather than by the data, and could inflate the intervals of well determined parameters alongside it. Such directions are now excluded, parameters lying along them are reported as unidentified rather than given a spread, and `fit$uncertainty$intervalcheck` reports each standard error against the width that parameter's own curvature supports.
-- Fixed: computing quantities from more than one posterior draw with `cores > 1` stopped with a raw Stan exception whenever the first draw was one the model could not evaluate, and otherwise returned the remaining draws in an order that did not match the samples they came from. This affected `ctGenerateFromPriors()`, `ctKalman()`, `ctPredict()` and `plot()`, intermittently.
-- `ctGenerate()` gains `fromPriors=TRUE`, which draws the parameters from the model's priors and returns `nsamples` datasets rather than one -- the prior predictive, asked of a model alone. It needs no fitted model and no data: with no `datastruct`, a balanced design of `n` subjects at `Tpoints` occasions is used. `backend` chooses which engine turns the draws into data. `ctGenerateFromPriors()` is deprecated in its favour; it now draws from the prior directly rather than fitting the model to an empty dataset to approximate it, and a model using `laplaceprior` is refused by name where before it was silently drawn from a normal approximation.
-- `ctGenerate()` gains `backend='julia'`, which draws each subject's parameters from the population the model states, at every grouping level, and simulates the process and its measurement exactly, so random effects, nonlinear dynamics and binary, ordinal or count indicators are all generated. Free parameters sit at their prior centre unless `popmeans` states them, and population spread is `sdscale` on the raw scale. The default remains the R generator, used unless the model needs julia.
-- `ctGenerate()`'s `n.subjects` is now `n`, which takes one count per id level for a nested model; `n.subjects` still works, with a deprecation warning.
-- Fixed: fitting with `backend='stan'` and `optimcontrol$estonly=TRUE` failed for any model with time independent predictors, which also stopped `ctLOO()` on such models.
-- Fixed: a time independent predictor effect fixed to a value in a parameter's tipreds field, such as `age=0.5`, was ignored by `backend='stan'`, which fitted the model without it. It is now refused there, and fitted by `backend='julia'`.
-- Fixed: `ctACF()` and `ctACFresiduals()` dropped lag 0 from cross correlations as well as from autocorrelations, so the contemporaneous correlation between variables -- often the largest -- was missing from both the returned table and the plot. Autocorrelations still start from the first non-zero lag.
-- ACF plots from `ctACF()`, `ctACFresiduals()` and `plotctACF()` now fit a precision weighted spline by default, `method='weighted'`: the full data estimate at each time interval, weighted by the inverse of its bootstrap variance. A precisely estimated peak is followed while scatter consistent with its standard errors is smoothed away, where the previous quantile spline over the pooled bootstrap samples smoothed every interval alike -- a residual cross correlation of .41 at lag 0 was drawn at .05. The full data estimates are also drawn as points. `method='quantile'` for the previous plot. Needs `nboot > 1`; without bootstrap samples the plot falls back to the samples as before.
-- `ctFit(stationary=TRUE)` works again, with `backend='julia'`: each subject's latent processes start from the stationary distribution of its DRIFT, CINT and DIFFUSION in place of T0MEANS and T0VAR.
-- `ctDiscretePars()` plots now state in the title which impulse and which scale produced them, rather than leaving `standardise` and the impulse type to be remembered from the call.
-- The `observational` argument of `ctDiscretePars()` and `ctNetwork()` is deprecated in favour of `impulseType`, which names what the impulse is rather than what the study design was: `'unit'` (the default, an impulse of one to a single process) replaces `observational=FALSE`, `'observed'` replaces `observational=TRUE`, and `'shock'` and `'orthogonal'` are unchanged.
-- `ctDiscretePars()`, `ctPredictTIP()`, `ctExtract()`, `ctKalmanArray()` and `ctVarianceDecomposition()` now take subjects as the ids in the data, as `ctPredict()` does, reading integers that are not ids as ctsem's numbering 1 to N, with a message. `realid=FALSE` for the previous behaviour.
-- Fixed: `ctDiscretePars()` given subjects out of ascending order labelled each subject's results with another subject's id.
-- Fixed: values in a data column that do not read as numbers were treated as missing, without a word; `ctFit()` now stops and names them. Numbers stored as text are used as numbers.
+A major release: ctsem gains a second estimation engine, written in Julia, which most of what is new below needs. `backend='stan'` remains the default and fits as before.
+
+- New `backend='julia'` for `ctFit()`: an extended Kalman filter engine with an exact gradient and Hessian, threaded over subjects. `ctJuliaInstall()` sets up whatever is missing, asking before it downloads anything, and `ctJuliaStatus()`, `ctJuliaSetup()`, `ctJuliaProcesses()` and `ctJuliaKill()` manage its sessions.
+- Random effects on any parameter -- variances, nonlinear dynamics and non-Gaussian indicators included -- are integrated by a Laplace approximation (`intoverpop='laplace'`, chosen automatically where the augmented filter is not exact), corrected by adaptive quadrature when fitted. Julia backend only.
+- Nested grouping levels, as `id=c('person','couple')`, with each parameter's `indvarying` naming the levels it varies at and `poprank` set per level. Julia backend only.
+- Ordinal, count and censored indicators, and lower and upper asymptotes for binary ones (`ASYMPTOTES` in `ctModel()`). Julia backend only.
+- Posterior sampling with `ctFit(backend='julia', optimize=FALSE)`, or after an optimised fit with `ctFitUncertainty(fit, 'sample')`, running until target effective sample sizes and R-hat are reached.
+- `ctFitUncertainty()` is the new name of `ctOptimUncertainty()`, which remains, and adds `'sample'`, `'stored'` to redraw from the covariance a fit carries, and importance sampling against the quadrature or particle filter likelihood (`control$likelihood`).
+- On the julia backend, missing values of time independent predictors are imputed when optimising and sampled when sampling, and `nlcontrol$nsubsteps='auto'` sets a nonlinear model's integration steps from its own error.
+- `ctFit(stationary=TRUE)` works again, with `backend='julia'`.
+- Model matrix cells accept a named form, `'mm, indvarying=TRUE, sdscale=0.5'`, as well as `'mm||TRUE|0.5'`; `ctPar()` builds either, and `ctCov()` writes a covariance matrix as cells.
+- Covariance matrices are parameterised by a matrix logarithm, so every positive definite matrix is reachable; `model$covmattransform='rawcorr'` for the previous parameterisation.
+- A parameter named in cells whose default transforms differ, such as a DRIFT diagonal and an off-diagonal, is now refused rather than transformed differently in each.
+- New checks: `ctReport()` runs the reporting and checking functions over a fit and writes a folder; `ctIdentify()` and `ctFitProfile()` for identification, on the julia backend; `ctLaplaceCheck()` and `ctParticleLik()` for the approximations a julia fit makes; `ctTracePlot()` for a julia fit's optimisation or chains.
+- New views of the dynamics: `ctNetwork()` and `ctNetworkPlot()`, `ctPhasePortrait()`, `ctStateDependencePlot()` and `ctVarianceDecomposition()`.
+- Posterior predictive checking is consolidated in `ctPostPredPlots()`, with panels for the mean trajectory and the lagged covariance; `ctFitCovCheck()` is renamed `ctFitCheckCov()`, the old name still available, and splits by group.
+- `ctLOO(method='psis')` cross-validates a Laplace fit without refitting.
+- `coef()`, `vcov()`, `logLik()` and `print()` for fits from either backend; `summary()`, `plot()` and `ctPlotPosterior()` for julia fits.
+- `ctGenerate(fromPriors=TRUE)` draws datasets from a model's prior predictive, without a fit or data, and `ctGenerateFromPriors()` is deprecated in its favour; `ctGenerate(backend='julia')` generates random effects at every level, nonlinear dynamics and non-Gaussian indicators.
+- `ctGenerate()`'s `n.subjects` is now `n`, one count per id level; `n.subjects` still works, with a warning.
+- ACF plots fit a precision weighted spline by default, `method='weighted'`; `method='quantile'` for the previous plot.
+- Functions that run fits or engine loops default to `cores=getOption('mc.cores', 2)`, as `ctFit()` does. For `ctOptimUncertainty()`, `ctFitCovCheck()` and `ctKalmanArray()` that is up from one; `cores=1` for the previous behaviour.
+- When sampling, `ctFit()` uses `getOption('mc.cores', 2)` cores by default rather than one per chain; `cores='maxneeded'` for the previous behaviour.
+- `uncertainty='is'` samples adaptively, finding skewed and curved tails the curvature misses, and warns when the Pareto k of its weights exceeds 0.7; its effective sample target is now 200, `optimcontrol$isESS=100` for the previous.
+- `ctDiscretePars()`, `ctPredictTIP()`, `ctExtract()` and `ctKalmanArray()` take subjects as the ids in the data, as `ctPredict()` does; `realid=FALSE` for the previous behaviour.
+- `ctDiscretePars()`'s `observational` is deprecated in favour of `impulseType`: `'unit'` replaces `observational=FALSE` and `'observed'` replaces `observational=TRUE`.
+- `ctFit()`'s `iter`, `chains` and `control` are deprecated in favour of entries of `sampleControl`, and still honoured with a warning.
+- `ctModelCoverage_check()` is renamed `ctCoverageCheck()`, with camelCase arguments; the old name is defunct.
+- `ctCheckFit()` is defunct; `ctPostPredPlots()` and `ctFitCheckCov()` replace it.
+- `ctFitUpdateModel()` and `ctStanUpdModel()` are defunct; use `ctFitUpdate()`.
+- The `vb` argument of `ctFit()` (Stan's variational inference) is removed.
+- Fixed: standard errors along a direction the data do not identify were set by rounding rather than by the data, and could inflate those of other parameters; such parameters are now reported as unidentified.
+- Fixed: computing quantities over several posterior draws with `cores > 1` could stop with a Stan exception, or return draws out of order, in `ctGenerateFromPriors()`, `ctKalman()`, `ctPredict()` and `plot()`.
+- Fixed: `backend='stan'` with `optimcontrol$estonly=TRUE` failed for models with time independent predictors, which also stopped `ctLOO()`.
+- Fixed: a time independent predictor effect fixed to a value, such as `age=0.5`, was ignored by `backend='stan'`; it is now refused there, and fitted by `backend='julia'`.
+- Fixed: `ctACF()` and `ctACFresiduals()` dropped lag 0 from cross correlations.
+- Fixed: `ctDiscretePars()` given subjects out of ascending order labelled each subject's results with another's id.
+- Fixed: data values that do not read as numbers were treated as missing; `ctFit()` now stops and names them.
 
 ## 29/6/2026
 ### 3.11.0

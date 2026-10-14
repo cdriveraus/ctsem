@@ -57,7 +57,7 @@ ctModeltoNumeric <- function(ctmodelobj){
 # because it is on CRAN, and `ctPlotPosterior()` reaches here directly for
 # `parsonly`, which generating data does not expose.
 .ctGenerateFromPriors <- function(cts,datastruct=NA,
-  fullposterior=TRUE, nsamples=200, parsonly=FALSE,cores=2,
+  fullposterior=TRUE, nsamples=200, parsonly=FALSE,cores=getOption("mc.cores", 2L),
   backend=c('auto','julia','stan'),
   n.subjects=20, Tpoints=NULL, dtmean=1){
 
@@ -163,6 +163,14 @@ ctModeltoNumeric <- function(ctmodelobj){
 
   prepared <- do.call(ctFit, args)
 
+  # With nothing free there is no prior to draw from; each backend otherwise
+  # failed further in, julia saying to use stan and stan with a raw exception.
+  nfree <- if(backend == 'julia') .ctBackendNpar(.ctBackendSpec(prepared)) else
+    as.integer(prepared$standata$nparams)
+  if(!length(nfree) || nfree < 1L) stop(
+    'This model has no free parameters, so there is no prior to draw from. ',
+    'ctGenerate(model) generates from the values it fixes.', call.=FALSE)
+
   if(backend == 'julia'){
     spec <- .ctBackendSpec(prepared)
     if(is.null(spec$priors) || !length(spec$priors$index)) stop(
@@ -260,9 +268,9 @@ ctModeltoNumeric <- function(ctmodelobj){
 # The spec accounts for every free parameter or refuses to be built, so there
 # is no unnamed remainder; the zero-filled matrix is there to make that
 # assumption visible rather than to be relied on.
-.ctPriorRawDraws <- function(standata, npar, nsamples){
+.ctPriorRawDraws <- function(standata, npar, nsamples,
+  spec = .ctBackendPriorSpec(standata, npar)){
   .ctPriorRejectUnsamplable(standata)
-  spec <- .ctBackendPriorSpec(standata, npar)
   sdvec <- spec$scale / sqrt(spec$weight)
   draws <- matrix(0, nrow = nsamples, ncol = npar)
   draws[, spec$index] <- stats::rnorm(nsamples * length(spec$index)) *
@@ -346,9 +354,12 @@ ctModeltoNumeric <- function(ctmodelobj){
 #' \donttest{
 #' #generate and plot samples from prior predictive
 #' priorpred <- ctGenerateFromPriors(cts = ctstantestfit,cores=2,nsamples = 50)
+#' # backend = 'auto' generates with julia where it is available. Julia keeps
+#' # running between calls, holding what it has compiled; this ends it.
+#' if (isTRUE(ctJuliaStatus()$available)) ctJuliaKill("session")
 #'}
 ctGenerateFromPriors <- function(cts,datastruct=NA, is=FALSE,
-  fullposterior=TRUE, nsamples=200, parsonly=FALSE,cores=2,
+  fullposterior=TRUE, nsamples=200, parsonly=FALSE,cores=getOption("mc.cores", 2L),
   backend=c('auto','julia','stan'),
   n.subjects=20, Tpoints=NULL, dtmean=1){
 
@@ -514,12 +525,21 @@ ctStanGenerate <- ctGenerateFromPriors
 #' priorpred <- ctGenerate(generatingModel, fromPriors = TRUE, Tpoints = 6,
 #'   n = 10, nsamples = 20, cores = 2)
 #' str(priorpred$Y)
+#' # backend = 'auto' generates with julia where it is available. Julia keeps
+#' # running between calls, holding what it has compiled; this ends it.
+#' if (isTRUE(ctJuliaStatus()$available)) ctJuliaKill("session")
 #' }
+#' @return From the R generator, a long format matrix with one row per subject
+#'   and time point, or wide format with \code{wide = TRUE}. From the julia
+#'   generator, the same long format, carrying the attributes described under
+#'   Generating values. With \code{fromPriors = TRUE}, a list: \code{Y}, an
+#'   \code{nsamples} by data rows by manifest variables array of generated
+#'   data, and \code{llrow}, the matching array of row log likelihoods.
 #' @export
 
 ctGenerate<-function(ctmodelobj,n=100,burnin=0,dtmean=1,logdtsd=0,dtmat=NA,
   Tpoints=NULL, wide=FALSE, backend=c('auto','r','julia','stan'),
-  intoverstates='auto', fromPriors=FALSE, nsamples=200, datastruct=NA, cores=2,
+  intoverstates='auto', fromPriors=FALSE, nsamples=200, datastruct=NA, cores=getOption("mc.cores", 2L),
   popmeans=NULL, n.subjects){
   backend <- match.arg(backend)
   if(!missing(n.subjects)){

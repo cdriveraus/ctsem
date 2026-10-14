@@ -605,7 +605,7 @@ ctPostPredPlots <- function(fit, panels = 'all', variables = NULL,
     mid <- obsF <- gensub <- obssub <- NULL
     variable <- row <- id <- nout <- Nobs <- se <- NULL
     MeanLo <- MeanMid <- MeanHi <- ObsLo <- ObsHi <- TimeMid <- NULL
-    Observed <- m <- rowbin <- NULL
+    Observed <- m <- rowbin <- x <- NULL
   }
 
   dat <- ctPostPredData(fit, residuals = residuals, nsamples = nsamples)

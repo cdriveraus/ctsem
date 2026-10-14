@@ -492,7 +492,7 @@ ctEBfitArgsOptimDefaults <- function(fitargs, stochastic=FALSE,
 #' summary(eb)
 #' }
 ctEmpiricalBayesFit <- function(datalong, model, subjects='all',
-  priors=TRUE, optimize=TRUE, cores=2, subjectFitArgs=list(), Npasses=2,
+  priors=TRUE, optimize=TRUE, cores=getOption("mc.cores", 2L), subjectFitArgs=list(), Npasses=2,
   ebUse=c('rawest','rawposterior'), ebRobust=TRUE, ebOutlierMAD=6, ebOutlierQuantiles=c(.025,.975),
   ebWinsorize=TRUE, minsd=1e-6, verbose=0, progress=TRUE, ...){
 
@@ -665,8 +665,10 @@ ctEmpiricalBayesFit <- function(datalong, model, subjects='all',
 #' @param ... Unused.
 #'
 #' @return Compact list containing fit settings, transformed-parameter
-#' summaries, outlier diagnostics, and transformed-parameter covariance /
-#' correlation matrices. The subject
+#' summaries, outlier diagnostics, transformed-parameter covariance /
+#' correlation matrices, and \code{subjectpars}: each subject's final-pass
+#' point estimates on the parameters' own scale, one row per subject with its
+#' id in \code{subject}, unrounded, for comparisons across subjects. The subject
 #' fit lists, raw estimate matrices, pass maps, and adjusted model remain on
 #' the original \code{ctEmpiricalBayesFit} object.
 #' @method summary ctEmpiricalBayesFit
@@ -702,6 +704,14 @@ summary.ctEmpiricalBayesFit <- function(object, use=c('rawest','rawposterior'),
 
   initialtransformed <- ctEBtransformedRaw(initialraw, object$subjectmodel, parnames)
   finaltransformed <- ctEBtransformedRaw(originalraw, object$subjectmodel, parnames)
+  # One row per subject whichever `use` pools the summaries: point estimates,
+  # since posterior draws would give a row per draw.
+  subjectraw <- if(use == 'rawest') originalraw else ctEBmapRaw(
+    ctEBrawMatrix(object$fits, parnames=parnames, use='rawest'), rawmap)
+  subjectpars <- data.frame(subject=rownames(subjectraw),
+    ctEBtransformedRaw(subjectraw, object$subjectmodel, parnames),
+    check.names=FALSE, stringsAsFactors=FALSE)
+  rownames(subjectpars) <- NULL
   popmeans <- ctEBtransformedStats(finaltransformed, probs=probs)
   initialpopmeans <- ctEBtransformedStats(initialtransformed, probs=probs)
 
@@ -741,6 +751,7 @@ summary.ctEmpiricalBayesFit <- function(object, use=c('rawest','rawposterior'),
     covariances=list(
       initial=round(initialcov, digits),
       final=round(finalcov, digits)),
+    subjectpars=subjectpars,
     settings=list(
       use=use,
       ebUse=object$ebUse,
@@ -777,5 +788,6 @@ print.summary.ctEmpiricalBayesFit <- function(x, ...){
     cat('\nFinal transformed parameter correlation:\n')
     print(x$correlations$final)
   }
+  if(!is.null(x$subjectpars)) cat('\nEach subject\'s estimates: $subjectpars of this summary.\n')
   invisible(x)
 }

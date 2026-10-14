@@ -9,6 +9,9 @@ inv_logit(x)
 \arguments{
 \item{x}{value to calculate the inverse logit for.}
 }
+\value{
+\code{1 / (1 + exp(-x))}, elementwise.
+}
 \description{
 Maps the stan function so the same code works in R.
 }

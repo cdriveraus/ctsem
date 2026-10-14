@@ -99,6 +99,12 @@ ctStanRawSamples<-function(fit){
 #'#posterior median over all subjects (also reflects mean of unconstrained pars)
 #'ctSummaryMatrices(ctstantestfit)
 #'}
+#'@return A named list of matrices, each summarised over the posterior (or
+#'approximate posterior) draws by \code{calcfunc}: the model's own
+#'(\code{DRIFT}, \code{DIFFUSION}, \code{LAMBDA}, ...), the covariances
+#'built from them (\code{DIFFUSIONcov}, \code{MANIFESTcov}, \code{T0cov}),
+#'the asymptotic \code{asymCINT} and \code{asymDIFFUSIONcov}, and
+#'\code{dtDRIFT} at \code{timeinterval}.
 #'@aliases ctStanContinuousPars
 #'@export
 # `state` is part of the generic, not an extra the julia method happens to
@@ -139,12 +145,13 @@ ctStanContinuousPars <- ctSummaryMatrices
 
 
 
-#' Extract an array of subject specific parameters from a ctStanFit object.
+#' Extract an array of subject specific parameters from a fit
 #'
-#' Extract an array of subject specific parameters from a ctStanFit object.
+#' Extract an array of subject specific parameters from a fit from
+#' \code{\link{ctFit}}, on either backend.
 #' \code{ctStanSubjectPars} is maintained as a backward-compatible alias.
 #'
-#' @param fit fit object
+#' @param fit A fit from \code{\link{ctFit}}.
 #' @param pointest if TRUE, returns only the set of individual difference parameters
 #' based on the max a posteriori estimate (or the median if sampling approaches were used).
 #' @param cores Number of cores to use. \code{backend='stan'} only -- a julia fit already
@@ -171,7 +178,7 @@ ctStanContinuousPars <- ctSummaryMatrices
 #' indpars <- ctSubjectPars(ctstantestfit)
 #' dimnames(indpars)
 #' plot(indpars[1,,'cint1'],indpars[1,,'cint2'])
-ctSubjectPars <- function(fit,pointest=TRUE,cores=2,nsamples='all',level=NULL){
+ctSubjectPars <- function(fit,pointest=TRUE,cores=getOption("mc.cores", 2L),nsamples='all',level=NULL){
 
   # `cores` is a stan-path argument: with pointest=FALSE it is handed to
   # ctExtract() to rebuild the subject matrices across R worker processes.
@@ -288,17 +295,24 @@ getparnames <- function(fit,reonly=FALSE, subjvariationonly=FALSE, popstatesonly
   return(parnames)
 }
 
-#' summary.ctStanFit
+#' Summarise a ctsem fit
 #'
-#' Summarise a ctStanFit object that was fit using \code{\link{ctFit}}.
-#' 
-#' @param object fit object from \code{\link{ctFit}}, of class ctStanFit.
+#' Summarise a fit from \code{\link{ctFit}}, on either backend: population
+#' parameters with their uncertainty, random-effect spreads and correlations,
+#' time independent predictor effects, the parameter matrices, and the log
+#' likelihood and AIC.
+#'
+#' @param object fit object from \code{\link{ctFit}}, of class \code{ctStanFit}
+#' or \code{ctJuliaFit}.
 #' @param timeinterval positive numeric indicating time interval to use for discrete time parameter calculations
-#' reported in summary. 
+#' reported in summary.
 #' @param digits integer denoting number of digits to report.
 #' @param parmatrices if TRUE, also return additional parameter matrices -- can be slow to compute
 #' for large models with many samples.
-#' @param priorcheck Whether or not to use \code{priorchecking} to compare posterior mean and sd to prior mean and sd.
+#' @param priorcheck Whether or not to use \code{priorchecking} to compare
+#'   posterior mean and sd to prior mean and sd. \code{backend='stan'} only: a
+#'   julia fit carries no prior block to compare against, and refuses
+#'   \code{priorcheck = TRUE} given explicitly.
 #' @param residualcov Whether or not to show standardised residual covariance. Takes a little longer to compute.
 #' @param ... Additional arguments to pass to \code{priorcheckreport}, such as \code{meanlim}, or \code{sdlim}.
 #' @return List containing summary items, with a \code{print} method for readable console and knitr output.

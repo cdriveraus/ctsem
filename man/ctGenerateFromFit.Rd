@@ -3,20 +3,20 @@
 \name{ctGenerateFromFit}
 \alias{ctGenerateFromFit}
 \alias{ctStanGenerateFromFit}
-\title{Add a \code{$generated} object to ctstanfit object, with random data generated from posterior of ctstanfit object}
+\title{Generate data from a fitted model}
 \usage{
 ctGenerateFromFit(
   fit,
   nsamples = 200,
   fullposterior = FALSE,
   verboseErrors = FALSE,
-  cores = 2,
+  cores = getOption("mc.cores", 2L),
   intoverstates = "fit",
   effects = c("population", "fitted")
 )
 }
 \arguments{
-\item{fit}{ctstanfit object}
+\item{fit}{A fit from \code{\link{ctFit}}, on either backend.}
 
 \item{nsamples}{Positive integer specifying number of datasets to generate.}
 
@@ -64,8 +64,8 @@ original time and missingness structure, and \code{llrow}, each generated
 row's log likelihood.
 }
 \description{
-Add a \code{$generated} object to ctstanfit object, with random data
-generated from posterior of ctstanfit object.
+Adds a \code{$generated} object to a fit, holding random data generated
+from the fit's posterior (or its estimate), on either backend.
 \code{ctStanGenerateFromFit} is maintained as a backward-compatible alias.
 }
 \examples{

@@ -1,10 +1,10 @@
-#' Add a \code{$generated} object to ctstanfit object, with random data generated from posterior of ctstanfit object
+#' Generate data from a fitted model
 #'
-#' Add a \code{$generated} object to ctstanfit object, with random data
-#' generated from posterior of ctstanfit object.
+#' Adds a \code{$generated} object to a fit, holding random data generated
+#' from the fit's posterior (or its estimate), on either backend.
 #' \code{ctStanGenerateFromFit} is maintained as a backward-compatible alias.
 #'
-#' @param fit ctstanfit object
+#' @param fit A fit from \code{\link{ctFit}}, on either backend.
 #' @param nsamples Positive integer specifying number of datasets to generate. 
 #' @param fullposterior Logical indicating whether to sample from the full posterior (original nsamples) or the posterior mean.
 #' @param verboseErrors if TRUE, print verbose output when errors in generation encountered.
@@ -47,7 +47,7 @@
 #' @examples
 #' gen <- ctGenerateFromFit(ctstantestfit, nsamples=3,fullposterior=TRUE,cores=1)
 #' plot(gen$generated$Y[3,,2],type='l') #Third random data sample, 2nd manifest var, all time points. 
-ctGenerateFromFit<-function(fit,nsamples=200,fullposterior=FALSE, verboseErrors=FALSE,cores=2,
+ctGenerateFromFit<-function(fit,nsamples=200,fullposterior=FALSE, verboseErrors=FALSE,cores=getOption("mc.cores", 2L),
   intoverstates='fit', effects=c('population','fitted')){
   
   # The julia engine generates from the same forward pass it filters with,

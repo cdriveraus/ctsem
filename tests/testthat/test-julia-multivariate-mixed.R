@@ -130,9 +130,10 @@ test_that("the Laplace correction handles more than one random effect", {
   # so it takes the first of three seeded starts that converges.
   #
   # Fitted with laplace_correct = FALSE because the first half tests the
-  # post-hoc function, which refuses a fit the default correction already
-  # moved; the indicators are ordinal and binary, so here it does. The
-  # default fit, from the same start, is the second half.
+  # check's own first step, which on a fit the default correction already
+  # moved is the further step from there; the indicators are ordinal and
+  # binary, so here it does. The default fit, from the same start, is the
+  # second half.
   fit <- NULL
   for (seed in 1:3) {
     set.seed(seed)
@@ -146,11 +147,9 @@ test_that("the Laplace correction handles more than one random effect", {
   # Two random effects per unit means the quadrature is a `nodes^2` product
   # rule over the block rather than a line of nodes, which is the part of the
   # recursion a one-random-effect model never exercises.
-  corrected <- suppressWarnings(ctLaplaceCorrect(fit, draws = "normal",
-    nodes = 5, finishsamples = 100))
-  expect_s3_class(corrected$laplace_correction, "ctLaplaceCorrection")
-  expect_true(all(is.finite(as.numeric(corrected$estimate$raw))))
-  check <- corrected$laplace_correction$check
+  check <- suppressWarnings(ctLaplaceCheck(fit, nodes = 5))
+  expect_s3_class(check, "ctLaplaceCheck")
+  expect_true(all(is.finite(as.numeric(check$corrected))))
 
   # This fixture's random-intercept covariance is rank deficient, and the
   # correction is expected to say so rather than to report 0.

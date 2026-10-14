@@ -122,9 +122,9 @@ is. Read `dropped_directions` alongside it rather than on its own — a
 direction the data does not identify well enough to correct along is also
 reported as a zero correction, and the two look the same in `delta_se` even
 though one means "fine" and the other means "not estimable here".
-`ctLaplaceCorrect()` applies the correction to a fit made with
-`laplace_correct = FALSE`, or importance samples against the quadrature
-posterior (`draws = 'imis'`).
+`ctFitUncertainty(fit, 'is', control = list(likelihood = 'quadrature'))`
+importance samples against the quadrature posterior, correcting the shape of
+the intervals as well as their centre.
 
 The correction moves the estimate and its curvature; the intervals are still
 a normal approximation at a mode, which understates the skew a population

@@ -19,11 +19,17 @@ A list describing the selected Julia engine: whether it is
   the \code{julia_bin} directory in use and the \code{julia} version there,
   the \code{engine} version (a hash of the engine source shipped with this
   ctsem, which is also what its cached project directory is keyed on), and
-  the number of \code{threads} in a running session.
+  the number of \code{threads} in a running session (\code{NA} when none is
+  running: this never starts one, so it leaves the session's width to the
+  first call that needs it).
 }
 \description{
 Reports what \code{backend='julia'} would find, and installs nothing: it is
 safe to call on a machine with no Julia and no \pkg{JuliaConnectoR}, where it
 says so rather than erroring. \code{\link{ctJuliaInstall}} supplies whatever
 it reports as missing.
+}
+\examples{
+status <- ctJuliaStatus()
+status$available
 }

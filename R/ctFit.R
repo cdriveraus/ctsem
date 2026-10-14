@@ -680,7 +680,7 @@ T0VARredundancies <- function(ctm) {
 #' cell's expression, a non-Gaussian indicator, or a grouping level above the
 #' subject (see \code{id} in \code{\link{ctModel}}). A choice of
 #' \code{'laplace'} is announced, and \code{fit$args$resolved$intoverpopreason}
-#' records why. Before 3.12.0 \code{TRUE} always meant \code{'augmented'}.
+#' records why. Before 4.0.0 \code{TRUE} always meant \code{'augmented'}.
 #'
 #' \code{'augmented'} makes each random effect a state of the filter; variation
 #' on a DIFFUSION or MANIFESTVAR parameter is then only partly identified, and
@@ -934,7 +934,7 @@ T0VARredundancies <- function(ctm) {
 #'
 #'   #generate data
 #'   newdat <- ctGenerate(ctmodelobj = gm,n = 1,burnin = 2,
-#'     dtmat<-rbind(c(rep(.5,8),3,rep(.5,Tpoints-9))))
+#'     dtmat=rbind(c(rep(.5,8),3,rep(.5,Tpoints-9))))
 #'   newdat[,'id'] <- i #set id for each subject
 #'   newdat <- cbind(newdat,age[i]) #include time independent predictor
 #'   if(i ==1) {
@@ -1593,7 +1593,7 @@ ctFit<-function(datalong, model, stanmodeltext=NA, iter=1000, intoverstates=TRUE
   # TRUE asks for the random effects to be integrated out, as it always has,
   # and since there are now two ways to do that it takes the one the model
   # suits: the rule 'auto' applies when optimizing, whatever `optimize` is.
-  # Before 3.12.0 it meant 'augmented', the only way there was.
+  # Before 4.0.0 it meant 'augmented', the only way there was.
   if(isTRUE(intoverpop)){
     auto <- .ctIntOverPopAuto(ctm, backend = backend, optimize = TRUE,
       intoverstates = intoverstates)
@@ -2339,7 +2339,7 @@ ctFit<-function(datalong, model, stanmodeltext=NA, iter=1000, intoverstates=TRUE
   # Reached only when the caller asks for 'maxneeded' by name. It is not a
   # default and must not become one: it resolves to the whole machine, and CRAN
   # allows at most two cores unless the user has asked for more. It was the
-  # `optimize=FALSE` default until 3.12.0.
+  # `optimize=FALSE` default until 4.0.0.
   #
   # Resolved here rather than after the julia branch below, which returns before
   # ever reaching the old resolution site: the string arrived at
@@ -2460,7 +2460,7 @@ ctFit<-function(datalong, model, stanmodeltext=NA, iter=1000, intoverstates=TRUE
     # genuinely live output, `optimcontrol$callback` is called while the fit
     # runs and can draw whatever it likes.
     if(isTRUE(fit) && !identical(plot, FALSE) && !is.null(juliafit$optim$trace)) {
-      try(ctTracePlot(juliafit), silent=TRUE)
+      try(print(ctTracePlot(juliafit)), silent=TRUE)
     }
     return(juliafit)
   }

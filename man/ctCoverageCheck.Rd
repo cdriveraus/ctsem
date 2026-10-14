@@ -2,14 +2,14 @@
 % Please edit documentation in R/ctCoverageCheck.R
 \name{ctCoverageCheck}
 \alias{ctCoverageCheck}
-\title{Coverage Check Function}
+\title{Check interval coverage by simulation}
 \usage{
 ctCoverageCheck(
   initialData,
   fittingModel,
   niter,
   fitArgs,
-  cores = 2,
+  cores = getOption("mc.cores", 2L),
   fitCores = 1,
   generateCores = fitCores,
   plotEvery = max(c(10, cores))
@@ -37,7 +37,8 @@ entry so that worker fits cannot take more than their share.}
 when generating replicated datasets, at most \code{cores}. Defaults to
 \code{fitCores}; set it explicitly to use more cores for generation.}
 
-\item{plotEvery}{Print plots every n iterations (default = 10)}
+\item{plotEvery}{Print plots every n iterations; by default every 10, or
+every \code{cores} iterations when that is more.}
 }
 \value{
 A list containing the results data.table and final plots
@@ -47,4 +48,17 @@ Performs a coverage check analysis by generating data from a model, fitting it m
 with different fit arguments, and plotting the results. Works with \code{fitArgs}/
 \code{fittingModel} combinations that fit with either \code{backend='stan'} (the
 \code{\link{ctFit}} default) or \code{backend='julia'}.
+}
+\examples{
+\dontrun{
+# Does the Hessian interval cover as often as it says? 100 datasets
+# generated from the fit to ctstantestdat, each fitted twice.
+model <- ctModel(type = 'ct', manifestNames = 'Y1', latentNames = 'eta1',
+  LAMBDA = matrix(1))
+check <- ctCoverageCheck(ctstantestdat, model, niter = 100,
+  fitArgs = list(
+    hessian = list(optimcontrol = list(uncertainty = 'hessian')),
+    bootstrap = list(optimcontrol = list(uncertainty = 'bootstrap'))),
+  cores = 4)
+}
 }

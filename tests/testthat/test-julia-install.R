@@ -183,6 +183,21 @@ test_that("ctJuliaStatus reports rather than errors, and installs nothing", {
   expect_match(status$engine, "^[0-9a-f]{12}$")
 })
 
+test_that("ctJuliaStatus starts no session, so it leaves the session's width to the first call", {
+  # It used to ask a Julia it had just started for its version, at mc.cores
+  # threads; the guard `if (ctJuliaStatus()$available)` before a cores = 8 fit
+  # then left the fit at two, and R CMD check counted the open connection it
+  # left as an example error.
+  skip_without_julia()
+  ctsem:::.ctJuliaClearSession()
+  expect_false(ctsem:::.ctJuliaSessionRunning())
+  status <- ctJuliaStatus()
+  expect_true(status$available)
+  expect_false(is.na(status$julia))
+  expect_true(is.na(status$threads))
+  expect_false(ctsem:::.ctJuliaSessionRunning())
+})
+
 test_that("ctJuliaSetup declines to instantiate the engine's Julia dependencies without consent", {
   # Pkg.instantiate() is the network-touching step inside ctJuliaSetup(), and on
   # a machine that already has the environment instantiated -- every other test

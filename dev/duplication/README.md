@@ -3,7 +3,7 @@
 Three dependency-free base-R scripts. Run from the `ctsem/` package root.
 
 They exist because "duplicated" here usually does not mean "copy-pasted".
-`ctLaplaceCorrect` and `ctParticleCorrect` are one algorithm written twice and
+`.ctLaplaceCorrect` and `.ctParticleCorrect` are one algorithm written twice and
 share almost no text; `.ctBackendAugmentedPopulation` and
 `.ctBackendPopRegressionPopulation` take the same four arguments and return the
 same list and read nothing alike. D1 and D2 find that shape. D3 finds

@@ -173,7 +173,7 @@
 #'
 #' @examples 
 #' k=ctKalmanArray(ctstantestfit,subjectpars=TRUE,collapsefunc=mean)
-ctKalmanArray <- function(fit,nsamples=NA,pointest=TRUE, collapsefunc=NA,cores=1,
+ctKalmanArray <- function(fit,nsamples=NA,pointest=TRUE, collapsefunc=NA,cores=getOption("mc.cores", 2L),
   subjects='all', timestep='asdata',maxtime='asdata',
   standardisederrors=FALSE, subjectpars=TRUE, indvarstates=FALSE,removeObs=F,realid=TRUE,...){
   if(!identical(subjects,'all') && inherits(fit,'ctFit'))

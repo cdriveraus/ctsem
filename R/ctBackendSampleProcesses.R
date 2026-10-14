@@ -93,7 +93,7 @@
   # their worker process" rather than as a pool that was not there.
   if (.ctBackendWarmWait(handles, verbose = verbose) < 1L) {
     warning("No sampling worker process could prepare this model, so the ",
-      "chains ran in this session. ctJuliaWorkersStop() clears the pool if it ",
+      "chains ran in this session. ctJuliaKill('workers') clears the pool if it ",
       "was left behind by an interrupted run.", call. = FALSE)
     return(NULL)
   }
@@ -209,7 +209,8 @@
     return(NULL)
   }
   .ctBackendPoolChains(fit, target, drawn, chains, warmup, draws, saveEffects,
-    ess_target = .ctBackendSampleTargetESS(control))
+    ess_target = .ctBackendSampleTargetESS(control),
+    rhat_target = .ctBackendSampleTargetRhat(control))
 }
 
 # The parent's half of the stopping rule when chains are in worker processes.
@@ -737,7 +738,7 @@
 # multi-chain fit -- which is the default -- reported no random effects at all.
 #' @keywords internal
 .ctBackendPoolChains <- function(fit, target, drawn, chains, warmup, draws,
-  saveEffects = FALSE, ess_target = NA_real_) {
+  saveEffects = FALSE, ess_target = NA_real_, rhat_target = 1.01) {
   mats <- lapply(drawn, function(d) as.matrix(d$draws))
   npar <- as.integer(target$npar)
   kept <- nrow(mats[[1]])
@@ -826,7 +827,7 @@
   out <- .ctBackendSampleAssemble(fit, result, npar, keepeffects,
     as.integer(chains), warmup, ndraws, target$hessian,
     target$estimate[seq_len(npar)], marginal = isTRUE(target$marginal),
-    ess_target = ess_target)
+    ess_target = ess_target, rhat_target = rhat_target)
   # Recorded after the fact because it changes nothing about the draws and
   # everything about how they were produced.
   out$uncertainty$settings$processes <- TRUE

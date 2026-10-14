@@ -28,6 +28,6 @@ Plot the results of ctFitCheckCov.
 }
 \examples{
 \dontrun{
-ctFitCovCheckPlot(ctFitCheckCov(ctstantestfit,cor=TRUE,plot=FALSE),maxlag=3)
+ctFitCovCheckPlot(ctFitCheckCov(ctstantestfit,cor=TRUE,plot=FALSE,cores=1),maxlag=3)
 }
 }

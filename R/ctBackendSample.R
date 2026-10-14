@@ -270,8 +270,11 @@
 
   npar <- length(fit$estimate$raw)
   chains <- max(1L, as.integer(.ctJuliaOr(control$chains, 4L))[1L])
-  warmup <- max(0L, as.integer(.ctJuliaOr(control$warmup, 500L))[1L])
-  draws <- max(1L, as.integer(.ctJuliaOr(control$draws, 500L))[1L])
+  # The defaults ctFit(optimize = FALSE) resolves `iter = 1000` to, so the two
+  # entry points to this sampler mean the same thing when nothing is said:
+  # 200 is where step-size adaptation has converged and the chains agree.
+  warmup <- max(0L, as.integer(.ctJuliaOr(control$warmup, 200L))[1L])
+  draws <- max(1L, as.integer(.ctJuliaOr(control$draws, 800L))[1L])
   seed <- as.integer(.ctJuliaOr(control$seed, 20260828L))
   saveEffects <- isTRUE(.ctJuliaOr(control$saveEffects, FALSE))
   processes <- isTRUE(.ctJuliaOr(control$processes, TRUE))
@@ -585,7 +588,7 @@
     #
     # 2, not 1? The Laplace draw has the right shape and the wrong width: Laplace understates spread
     # wherever the posterior is skewed or heavy-tailed, which is the case
-    # `ctLaplaceCorrect` exists to repair. Starting every chain from that
+    # `likelihood = 'quadrature'` exists to repair. Starting every chain from that
     # narrower distribution makes R-hat compare chains that began already
     # agreeing, so it reads low exactly where the approximation is worst and the
     # diagnostic is needed most. Over-dispersing costs a little warmup and
@@ -790,6 +793,13 @@
 #' @keywords internal
 .ctBackendSampleTargetESS <- function(control) {
   .ctJuliaOr(.ctBackendSampleControl(control)$min_ess, NA_real_)
+}
+
+# The R-hat a run stopped at, as recorded on the fit (`$sample$rhat_target`);
+# 1.01 unless `rhatTarget` said otherwise, as in the engine's stopping rule.
+#' @keywords internal
+.ctBackendSampleTargetRhat <- function(control) {
+  as.numeric(.ctJuliaOr(.ctBackendSampleControl(control)$rhat_target, 1.01))
 }
 
 # Call the engine's sampler, and return what it returned.
@@ -1025,7 +1035,8 @@
     isTRUE(saveEffects) && !isTRUE(target$marginal), as.integer(chains), warmup,
     as.integer(result$ndraws), target$hessian,
     target$estimate[seq_len(target$npar)], marginal = isTRUE(target$marginal),
-    ess_target = .ctBackendSampleTargetESS(control))
+    ess_target = .ctBackendSampleTargetESS(control),
+    rhat_target = .ctBackendSampleTargetRhat(control))
 }
 
 # How many of up to `n` thinned posterior draws have a subject whose
@@ -1066,7 +1077,8 @@
 # is the same, and was worth having in one place rather than two that drift.
 #' @keywords internal
 .ctBackendSampleAssemble <- function(fit, result, npar, saveEffects, chains,
-  warmup, draws, hessian, startvalues, marginal = FALSE, ess_target = NA_real_) {
+  warmup, draws, hessian, startvalues, marginal = FALSE, ess_target = NA_real_,
+  rhat_target = 1.01) {
 
   # The row count is `ndim` when the effects were saved and `npar` when they
   # were not, so it is read off the result rather than assumed -- reshaping an
@@ -1192,6 +1204,7 @@
   # The effective size the run aimed for, so the verdict, the warning and the
   # summary judge it against that rather than against a number of their own.
   out$sample$ess_target <- as.numeric(ess_target)[1L]
+  out$sample$rhat_target <- as.numeric(rhat_target)[1L]
   # The verdict, kept on the fit rather than only shouted once. A warning is
   # seen by whoever is at the console at the time and by nobody afterwards --
   # and `suppressWarnings()` around a fitting call, which any batch script has,
@@ -1251,8 +1264,10 @@
       paste(utils::head(flat, 5), collapse = ", ")))
   }
   worst <- suppressWarnings(max(diagnostics$rhat, na.rm = TRUE))
-  if (is.finite(worst) && worst > 1.01) {
-    problems <- c(problems, paste0("largest R-hat ", signif(worst, 4)))
+  rhatmax <- .ctSampleRhatCeiling(diagnostics)
+  if (is.finite(worst) && worst > rhatmax) {
+    problems <- c(problems, paste0("largest R-hat ", signif(worst, 4),
+      if (rhatmax != 1.01) paste0(" (target ", rhatmax, ")") else ""))
   }
   fewest <- .ctSampleFewest(diagnostics)
   if (is.finite(fewest) && fewest < .ctSampleEssFloor(diagnostics)) {
@@ -1272,7 +1287,7 @@
   converged <- if (!is.finite(worst)) {
     problems <- c(problems, "R-hat could not be computed for any parameter")
     NA
-  } else !(worst > 1.01 || (!is.na(divergent) && divergent > 0L))
+  } else !(worst > rhatmax || (!is.na(divergent) && divergent > 0L))
   list(converged = converged, problems = problems)
 }
 
@@ -1309,6 +1324,18 @@
 .ctSampleEssFloor <- function(diagnostics) {
   target <- suppressWarnings(as.numeric(diagnostics$ess_target)[1L])
   if (length(target) && is.finite(target) && target > 0) target else 100
+}
+
+# The largest R-hat a run should end with: the target it stopped by
+# (`$rhat_target`, from `rhatTarget`), or 1.01 for a fit sampled before the
+# target was recorded. A run asked for a looser target -- the quick,
+# approximate posterior the documentation describes -- is judged by it, as its
+# effective size is by `.ctSampleEssFloor()`, rather than warned about for
+# meeting it. One rule for the verdict, the warning and the summary's note.
+#' @keywords internal
+.ctSampleRhatCeiling <- function(diagnostics) {
+  target <- suppressWarnings(as.numeric(diagnostics$rhat_target)[1L])
+  if (length(target) && is.finite(target) && target > 1) target else 1.01
 }
 
 # The three failures worth interrupting for, in the order a user should read
@@ -1351,7 +1378,7 @@
       "parameter. See fit$estimate$rawposterior.", call. = FALSE)
   }
   worst <- suppressWarnings(max(diagnostics$rhat, na.rm = TRUE))
-  if (is.finite(worst) && worst > 1.01) {
+  if (is.finite(worst) && worst > .ctSampleRhatCeiling(diagnostics)) {
     # Naming the arguments, because "run longer" is advice the reader then has
     # to go and look up. Both entry points land here and they are controlled
     # differently: `ctFit` takes `iter`, which counts warmup and sampling

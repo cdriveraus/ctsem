@@ -80,10 +80,16 @@ jobs:
       # the string "true", so 'false' is the CRAN configuration and unset is
       # not.
       NOT_CRAN: 'false'
-      # Julia is installed, and the vignettes therefore executed, only when the
-      # vignettes are being built. Three of the four use backend='julia' with no
-      # eval guard, which is how runs 214 and 215 died in R CMD build.
+      # The full pre-release variant. The julia vignettes ship pre-rendered
+      # (vignettes/*.html.asis), so building them needs no Julia; Julia is
+      # installed here so that the julia examples, which are guarded on
+      # ctJuliaStatus() and inert everywhere else, run too.
       BUILD_VIGNETTES: ${{ github.event_name == 'workflow_dispatch' && inputs.vignettes == true }}
+      # --as-cran stops an example that leaves a connection open, and sets
+      # _R_CHECK_CONNECTIONS_LEFT_OPEN_ itself, so it cannot be turned off
+      # here. A julia example therefore ends with ctJuliaKill('session'):
+      # the session persists between calls by design, and its socket is the
+      # connection the check would find.
     steps:
       - uses: actions/checkout@v5
       - uses: r-lib/actions/setup-pandoc@v2

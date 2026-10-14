@@ -36,6 +36,14 @@ whose matrices are the same everywhere.}
 
 \item{...}{arguments passed to the method for the fit's backend.}
 }
+\value{
+A named list of matrices, each summarised over the posterior (or
+approximate posterior) draws by \code{calcfunc}: the model's own
+(\code{DRIFT}, \code{DIFFUSION}, \code{LAMBDA}, ...), the covariances
+built from them (\code{DIFFUSIONcov}, \code{MANIFESTcov}, \code{T0cov}),
+the asymptotic \code{asymCINT} and \code{asymDIFFUSIONcov}, and
+\code{dtDRIFT} at \code{timeinterval}.
+}
 \description{
 Summarise model-implied parameter matrices from a ctsem fit object.
 \code{ctStanContinuousPars} is maintained as a backward-compatible alias.

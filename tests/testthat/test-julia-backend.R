@@ -528,7 +528,7 @@ test_that("the construction code map resolves every accepted name and no other",
   expect_equal(code("rawcorr"), 0L)
   expect_equal(code("cholesky"), 1L)
   expect_equal(code("z"), 2L)
-  # No covmattransform at all is the pre-3.12 shape, and it means 'rawcorr'.
+  # No covmattransform at all is the pre-4.0 shape, and it means 'rawcorr'.
   expect_equal(ctsem:::.ctCovMatCode(list()), 0L)
   # And an unknown name errors rather than resolving: it means the validation
   # has drifted from this table, which must not resolve to a construction by
@@ -777,7 +777,11 @@ test_that("a call into a Julia process that has died errors by name, and the nex
     suppressWarnings(try(JuliaConnectoR::stopJulia(), silent = TRUE))
   })
   tools::pskill(as.integer(JuliaConnectoR::juliaEval("getpid()")))
-  for (i in seq_len(100)) {
+  # Up to a minute, ending as soon as the socket reads. Ten seconds was not
+  # enough on a loaded machine: Julia handles SIGTERM before it exits, and on
+  # dev2 with every core busy the socket was still quiet when the check ran,
+  # failing both expectations below.
+  for (i in seq_len(600)) {
     if (isTRUE(socketSelect(list(dead), timeout = 0.1))) break
   }
 

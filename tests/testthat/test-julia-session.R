@@ -256,7 +256,7 @@ test_that("starting and stopping the warmed pool leaves no workers behind", {
 
   # The exported release function, not the internal one directly: this is the
   # documented way a caller gets the workers back.
-  ctJuliaWorkersStop()
+  suppressMessages(ctJuliaKill("workers"))
   expect_equal(future::nbrOfWorkers(), 1L)
   expect_true(inherits(future::plan(), "sequential"))
 })

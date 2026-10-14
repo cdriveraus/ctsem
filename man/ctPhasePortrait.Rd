@@ -14,8 +14,7 @@ ctPhasePortrait(
   nullclines = TRUE,
   fixedpoint = TRUE,
   trajectories = 0,
-  plot = TRUE,
-  ...
+  plot = TRUE
 )
 }
 \arguments{
@@ -45,8 +44,6 @@ so cost is quadratic in this.}
 
 \item{plot}{If FALSE, return the field, nullclines and trajectories as data
 rather than a plot.}
-
-\item{...}{Ignored.}
 }
 \value{
 A ggplot, or when \code{plot=FALSE} a list with \code{field}, the

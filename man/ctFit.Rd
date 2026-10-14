@@ -90,7 +90,7 @@ MANIFESTVAR or LAMBDA, a non-affine transform, a parameter entering another
 cell's expression, a non-Gaussian indicator, or a grouping level above the
 subject (see \code{id} in \code{\link{ctModel}}). A choice of
 \code{'laplace'} is announced, and \code{fit$args$resolved$intoverpopreason}
-records why. Before 3.12.0 \code{TRUE} always meant \code{'augmented'}.
+records why. Before 4.0.0 \code{TRUE} always meant \code{'augmented'}.
 
 \code{'augmented'} makes each random effect a state of the filter; variation
 on a DIFFUSION or MANIFESTVAR parameter is then only partly identified, and
@@ -423,7 +423,7 @@ for(i in 1:nsubjects){
 
   #generate data
   newdat <- ctGenerate(ctmodelobj = gm,n = 1,burnin = 2,
-    dtmat<-rbind(c(rep(.5,8),3,rep(.5,Tpoints-9))))
+    dtmat=rbind(c(rep(.5,8),3,rep(.5,Tpoints-9))))
   newdat[,'id'] <- i #set id for each subject
   newdat <- cbind(newdat,age[i]) #include time independent predictor
   if(i ==1) {

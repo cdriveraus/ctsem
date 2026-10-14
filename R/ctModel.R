@@ -290,6 +290,11 @@
 #' LAMBDA=diag(2))
 #'
 #' 
+#' @return For \code{type = 'ct'} or \code{'dt'}, a model of class
+#'   \code{ctStanModel}: \code{$pars} holds one row per matrix cell, and
+#'   \code{$matrices} the same cells as matrices, editable either way. For
+#'   \code{type = 'omx'}, a list of matrices of class \code{ctsemInit}, for
+#'   \code{\link{ctGenerate}} or \code{\link{ctModelConvertOMX}}.
 #' @export
 
 ctModel<-function(LAMBDA, type='ct',n.manifest = 'auto', n.latent='auto', Tpoints=NULL, 

@@ -337,7 +337,7 @@ test_that('the historical logical argument still selects the right two', {
   expect_equal(ctsem:::.ctCompanionType(FALSE), 'unit')
   expect_equal(ctsem:::.ctCompanionType(TRUE), 'observed')
   expect_equal(ctsem:::.ctCompanionType('shock'), 'shock')
-  # And the pre-3.12.0 names, which a saved object and a deprecated
+  # And the pre-4.0.0 names, which a saved object and a deprecated
   # observational= both still arrive with.
   expect_equal(ctsem:::.ctCompanionType('experimental'), 'unit')
   expect_equal(ctsem:::.ctCompanionType('observational'), 'observed')
@@ -429,7 +429,7 @@ test_that('observed impulses and standardise give the cross-correlation', {
 })
 # ctDiscretePars(standardise=) ------------------------------------------------
 #
-# standardise=TRUE is the default from 3.12.0, so what it divides by is now
+# standardise=TRUE is the default from 4.0.0, so what it divides by is now
 # load bearing for anyone who calls the function at all. The continuous time
 # algebra is pinned above; this is the discrete time counterpart, which uses a
 # different stationary variance (X = A X A' + Q rather than the continuous

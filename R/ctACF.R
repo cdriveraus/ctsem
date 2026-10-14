@@ -343,7 +343,8 @@ plotctACF <- function(ctacfobj,df='auto',quantiles=c(.025,.5,.975),
     if(!estimateSpline) message('No quantile estimates available; plotting ACF samples instead.')
   }
   if(estimateSpline){
-    ctacfobj <- ctacfobj[abs(TimeInterval) < min(tail(sort(unique(TimeInterval)),reducedXlim)),] #drop the ends of the spline
+    #drop the ends of the spline; reducedXlim = 0 drops nothing (min() of an empty vector warned)
+    if(reducedXlim > 0) ctacfobj <- ctacfobj[abs(TimeInterval) < min(tail(sort(unique(TimeInterval)),reducedXlim)),]
     gg <- ggplot(ctacfobj,aes(y=!!sym(paste0('Q',quantiles[2]*100,'%')),
       x=TimeInterval))+
       geom_ribbon(aes(ymin=!!sym(paste0('Q',quantiles[1]*100,'%')),

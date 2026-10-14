@@ -5,9 +5,10 @@
 test_that("every draw-producing route defaults to the same effective sample size", {
   target <- ctsem:::.ctEssTarget
   expect_identical(target, 200)
-  # The exported corrections write the number out in their signatures.
-  expect_identical(formals(ctsem::ctLaplaceCorrect)$target_ess, target)
-  expect_identical(formals(ctsem::ctParticleCorrect)$target_ess, target)
+  # The quadrature and particle samplers write the number out in their
+  # signatures.
+  expect_identical(formals(ctsem:::.ctLaplaceCorrect)$target_ess, target)
+  expect_identical(formals(ctsem:::.ctParticleCorrect)$target_ess, target)
   # The internal ones name it.
   expect_identical(eval(formals(ctsem:::.ctOptimImisDraws)$target_ess,
     asNamespace("ctsem")), target)
@@ -68,6 +69,31 @@ test_that("a sample that ends short of its target says so, and one without a tar
     "Raise sampleControl\\$maxDraws.*past the 500 draws per chain")
   expect_warning(ctsem:::.ctSampleWarn(rough(NA_real_)),
     "Raise the draw count -- iter in ctFit \\(now 700")
+})
+
+test_that("a run is judged by the R-hat target it stopped by", {
+  # rhatTarget = 1.07 is the documented quick, approximate posterior. A run
+  # that met it used to warn that its chains had not agreed and to raise the
+  # budget, because the warning, the verdict and the summary held 1.01.
+  diag <- function(rhat, target) list(chains = 4L, warmup = 200L, draws = 100L,
+    divergent = 0L, rhat = c(a = 1.001, b = rhat), ess = c(a = 900, b = 900),
+    saturated = 0L, max_depth = 10L, unidentified = character(0),
+    ess_target = 50, rhat_target = target)
+  ceiling <- ctsem:::.ctSampleRhatCeiling
+  expect_identical(ceiling(diag(1.04, 1.07)), 1.07)
+  expect_identical(ceiling(diag(1.04, NULL)), 1.01)
+  expect_identical(ceiling(list()), 1.01)
+  # Met: no warning, converged.
+  expect_no_warning(ctsem:::.ctSampleWarn(diag(1.04, 1.07)))
+  expect_true(ctsem:::.ctSampleDiagnosis(diag(1.04, 1.07))$converged)
+  # Missed: warned, and the problem names the target.
+  expect_warning(ctsem:::.ctSampleWarn(diag(1.09, 1.07)), "Largest R-hat is 1.09")
+  expect_match(ctsem:::.ctSampleDiagnosis(diag(1.09, 1.07))$problems,
+    "largest R-hat 1.09 \\(target 1.07\\)")
+  expect_false(ctsem:::.ctSampleDiagnosis(diag(1.09, 1.07))$converged)
+  # A fit sampled before the target was recorded keeps 1.01.
+  expect_warning(ctsem:::.ctSampleWarn(diag(1.04, NULL)), "Largest R-hat is 1.04")
+  expect_false(ctsem:::.ctSampleDiagnosis(diag(1.04, NULL))$converged)
 })
 
 test_that("importance sampling that ends short of its target says so, not only below half of it", {

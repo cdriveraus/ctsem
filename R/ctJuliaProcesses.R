@@ -298,8 +298,10 @@ ctJuliaProcesses <- function(interval = 0.5) {
 #' @param which Which to stop: \code{"orphaned"} (the default) for processes
 #'   whose R session has ended; \code{"session"} for this R session's engine,
 #'   which the next julia call replaces with a new one (losing what it had
-#'   compiled); \code{"workers"} for this session's sampling workers;
-#'   \code{"mine"} for all three; \code{"all"} for every process listed,
+#'   compiled); \code{"workers"} for this session's sampling workers --
+#'   the pool of background R sessions that sampling with
+#'   \code{processes = TRUE} warms and keeps for the next call, released
+#'   here with their Julia processes; \code{"mine"} for all three; \code{"all"} for every process listed,
 #'   including the engines of other running R sessions, which then fail.
 #' @param pid Process ids to stop instead of choosing by \code{which}. Only
 #'   processes \code{ctJuliaProcesses()} lists can be stopped this way.
@@ -317,6 +319,11 @@ ctJuliaProcesses <- function(interval = 0.5) {
 ctJuliaKill <- function(which = c("orphaned", "session", "workers", "mine", "all"),
   pid = NULL, ask = interactive()) {
   which <- match.arg(which)
+  # The warmed sampling pool is this session's whether or not its workers'
+  # Julia processes are listed yet -- a worker that has not started its Julia
+  # still holds an R session -- so asking for the workers releases it first.
+  if (is.null(pid) && which %in% c("workers", "mine", "all"))
+    try(.ctBackendWarmStop(NULL), silent = TRUE)
   procs <- ctJuliaProcesses(interval = 0)
   children <- function(sel) {
     parents <- procs$pid[sel]

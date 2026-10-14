@@ -11,7 +11,7 @@ ctLaplaceCheck(
   step = 0.001,
   refine = FALSE,
   maxiter = 50L,
-  cores = NULL,
+  cores = getOption("mc.cores", 2L),
   verbose = 0L
 )
 }

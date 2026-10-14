@@ -224,7 +224,7 @@ Two pieces of syntax recur everywhere and are worth unpacking:
 
   The same cell can be written positionally, with `|` separating the fields in that
   order: `'cint ||||Diet_2,Diet_3,Diet_4'` builds an identical model. That is the
-  form the manual and older code use, and `ctParSpec()` writes it for you from named
+  form the manual and older code use, and `ctPar()` writes it for you from named
   arguments.
 
 ```{r chicktipreds}
@@ -275,11 +275,13 @@ Stan path.
 | Work an applied example end to end, from theory through simulation to fitting and checking | the [tutorial preprint](https://osf.io/preprints/psyarxiv/4q9ex_v3), with code and materials in the [OSF project](https://osf.io/xh6ue/) |
 | A second, shorter worked start | [ctsem quick start: sunspots and a damped linear oscillator](https://cdriver.netlify.app/post/ctsem-quick-start/) |
 | Get everything ctsem can say about a fit, in one folder | `ctReport(fit)` |
-| The full reference: the model, the priors, every argument | the [hierarchical manual (pdf)](https://cran.r-project.org/web/packages/ctsem/vignettes/hierarchicalmanual.pdf), or `ctDocs()` in R |
+| The full reference: the model, the priors, every argument | the [hierarchical manual (pdf)](https://CRAN.R-project.org/package=ctsem/vignettes/hierarchicalmanual.pdf), or `ctDocs()` in R |
 | Understand and control the uncertainty ctsem reports | [uncertainty vignette](https://github.com/cdriveraus/ctsem/blob/juliaFit/vignettes/uncertainty.qmd) |
 | Build a measurement model: multiple indicators, non-Gaussian items | [measurement models vignette](https://github.com/cdriveraus/ctsem/blob/juliaFit/vignettes/measurement-models.qmd) |
 | Put random effects on parameters by Laplace approximation | [multilevel Laplace vignette](https://github.com/cdriveraus/ctsem/blob/juliaFit/vignettes/laplace-multilevel.qmd) |
-| Fit each subject separately, with the population estimate as a prior | [empirical Bayes vignette](https://cran.r-project.org/web/packages/ctsem/vignettes/empirical-bayes-fitting.html) |
+| Model test items as indicators: item response models over time | [IRT items vignette](https://github.com/cdriveraus/ctsem/blob/juliaFit/vignettes/irt-items.qmd) |
+| Decide whether to treat a rating scale as ordinal or continuous | [ordinal or continuous vignette](https://github.com/cdriveraus/ctsem/blob/juliaFit/vignettes/ordinal-or-continuous.qmd) |
+| Fit each subject separately, with the population estimate as a prior | [empirical Bayes vignette](https://CRAN.R-project.org/package=ctsem/vignettes/empirical-bayes-fitting.html) |
 | Fit discrete time models, and know when the choice matters | [Discrete time models using ctsem?](https://cdriver.netlify.app/post/dtbivariate/) and [Representations of dynamic systems](https://cdriver.netlify.app/post/discretetime/) |
 | Handle an accelerated longitudinal or multiple group design | [Accelerated longitudinal and multiple group designs](https://cdriver.netlify.app/post/accelerated/) |
 | Understand missingness, and filtered against smoothed estimates | [Kalman filter vs smoother](https://cdriver.netlify.app/post/missingdata/) |
@@ -304,7 +306,8 @@ The functions most users need, by task. `?name` gives the details for any of the
 | `model$matrices` | view and edit the specification in matrix form, e.g. `model$matrices$DRIFT[1, 2] <- 'cross'` |
 | `ctModelHigherOrder` | raise the order of a model, for instance to allow oscillation |
 | `ctModelConvertOMX` | convert an old OpenMx style (`type = 'omx'`) model object |
-| `ctParSpec` | write a cell specification from named arguments |
+| `ctPar` | write a cell specification from named arguments |
+| `ctCov` | write a covariance matrix as the cells a model reads |
 | `ctIdentify` | check which parameters a dataset can inform, before fitting |
 
 **Prepare data**
@@ -320,8 +323,7 @@ The functions most users need, by task. `?name` gives the details for any of the
 | | |
 |---|---|
 | `ctFit` | fit a model: maximum likelihood, maximum a posteriori, or sampling |
-| `ctFitUpdate`, `ctFitUpdateModel` | refit with changed data or specification, without recompiling |
-| `ctFitAddSamples` | add posterior samples to an existing fit |
+| `ctFitUpdate` | refit with changed data or arguments, without recompiling |
 | `ctFitUncertainty` | compute a fit's uncertainty: Hessian, bootstrap or importance sampling, or (`uncertainty = 'sample'`) the exact posterior of a Julia backend fit, sampled |
 | `ctEmpiricalBayesFit` | subject-wise fits with the population estimate as a prior |
 
@@ -340,6 +342,7 @@ The functions most users need, by task. `?name` gives the details for any of the
 | `ctPhasePortrait` | phase portrait of the fitted dynamics |
 | `ctStateDependencePlot` | how model matrix cells vary with a latent state, for nonlinear models |
 | `ctTracePlot` | the optimisation trace of a fit |
+| `ctVarianceDecomposition` | split each indicator's variance into between person, process and measurement parts |
 
 **Predict**
 
@@ -354,21 +357,21 @@ The functions most users need, by task. `?name` gives the details for any of the
 | | |
 |---|---|
 | `ctReport` | run the reporting and fit-checking functions over a fit and write a folder, with an index saying how to read each file |
-| `ctPostPredict` | posterior predictive comparison of implied and observed data |
+| `ctPostPredPlots` | posterior predictive comparison of implied and observed data |
 | `ctFitCheckCov` | lagged covariance diagnostics |
 | `ctCoverageCheck` | generate from a model, refit repeatedly, and check parameter recovery |
-| `ctParticleLik`, `ctParticleCorrect` | measure the filter's approximation error against a particle filter, and correct the draws for it |
+| `ctParticleLik` | measure the filter's approximation error against a particle filter; `ctFitUncertainty(fit, 'is', control = list(likelihood = 'particle'))` corrects the draws for it |
 | `ctACF`, `ctACFresiduals` | continuous time autocorrelation, of the data and of the residuals |
 | `ctChisqTest` | compare two nested fits |
-| `ctLOO` | k fold cross validation |
-| `ctLaplaceCheck`, `ctLaplaceCorrect` | measure, and correct, the Laplace approximation error for random effects |
+| `ctLOO` | cross validation: k fold by refitting, or PSIS for Laplace fits |
+| `ctFitProfile` | profile likelihood of chosen parameters, for identification and intervals |
+| `ctLaplaceCheck` | measure the Laplace approximation error for random effects; `likelihood = 'quadrature'` corrects the draws for it |
 
 **Generate data**
 
 | | |
 |---|---|
-| `ctGenerate` | from a model with fixed parameter values |
-| `ctGenerateFromPriors` | from a model with free parameters, drawing from the priors |
+| `ctGenerate` | from a model, at its fixed parameter values, or (`fromPriors = TRUE`) drawing them from the priors |
 | `ctGenerateFromFit` | from a fitted model |
 
 **Julia backend**
@@ -377,8 +380,8 @@ The functions most users need, by task. `?name` gives the details for any of the
 |---|---|
 | `ctJuliaInstall` | install Julia, the bridge package, and the engine's dependencies |
 | `ctJuliaStatus` | report whether the Julia backend is available |
-| `ctJuliaSetup` | point ctsem at a particular Julia installation |
-| `ctJuliaWorkersStop` | release the warmed sampling worker pool |
+| `ctJuliaSetup` | configure the Julia session: its thread count, or a particular Julia installation |
+| `ctJuliaProcesses`, `ctJuliaKill` | list, and stop, the Julia processes ctsem has started, and release the sampling worker pool |
 
 ## Getting help
 
@@ -400,11 +403,11 @@ style model objects. Otherwise:
 
 | old | new |
 |---|---|
-| `ctStanGenerate()` | `ctGenerateFromPriors()` |
+| `ctStanGenerate()` | `ctGenerate(fromPriors = TRUE)` |
 | `ctStanGenerateFromFit()` | `ctGenerateFromFit()` |
 | `ctStanKalman()` | `ctKalmanArray()` |
 | `ctStanPlotPost()` | `ctPlotPosterior()` |
-| `ctStanPostPredict()` | `ctPostPredict()` |
+| `ctStanPostPredict()` | `ctPostPredPlots()` |
 | `ctStanSubjectPars()` | `ctSubjectPars()` |
 | `ctStanTIpredeffects()` | `ctTIpredEffects()` |
 | `ctStanFitUpdate()` | `ctFitUpdate()` |
@@ -412,6 +415,8 @@ style model objects. Otherwise:
 | `ctStanDiscreteParsPlot()` | `ctDiscreteParsPlot()` |
 | `ctStanContinuousPars()` | `ctSummaryMatrices()` |
 | `ctStanParnames()` | `ctRawParnames()` |
+| `ctOptimUncertainty()` (3.11.1) | `ctFitUncertainty()` |
+| `ctFitCovCheck()` (3.11.1) | `ctFitCheckCov()` |
 
 </details>
 

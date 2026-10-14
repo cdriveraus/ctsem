@@ -2,7 +2,7 @@
 % Please edit documentation in R/ctJuliaBackend.R
 \name{ctJuliaEvaluate}
 \alias{ctJuliaEvaluate}
-\title{Evaluate a prepared Julia ctsem likelihood}
+\title{Evaluate a julia model's likelihood and gradient at given parameters}
 \usage{
 ctJuliaEvaluate(
   object,
@@ -10,15 +10,19 @@ ctJuliaEvaluate(
   gradient = TRUE,
   contributions = FALSE,
   gradient_method = c("adjoint", "forward"),
-  cores = 2L
+  cores = getOption("mc.cores", 2L)
 )
 }
 \arguments{
-\item{object}{A \code{ctJuliaModel} or \code{ctJuliaFit}.}
+\item{object}{A fit from \code{ctFit(..., backend = 'julia')}, or a model
+prepared without fitting by \code{ctFit(..., backend = 'julia', fit =
+FALSE)} (class \code{ctJuliaModel}).}
 
-\item{pars}{Unconstrained parameters; defaults to the fitted estimate.}
+\item{pars}{Raw (unconstrained) parameters, in the order of
+\code{coef(fit)}; defaults to a fit's estimate, and must be given for a
+prepared model.}
 
-\item{gradient}{Return an analytic/automatic-differentiation gradient.}
+\item{gradient}{Also return the gradient with respect to \code{pars}.}
 
 \item{contributions}{Return subject and row contribution details when available.}
 
@@ -29,18 +33,35 @@ faster than "forward" at every model size measured, by a margin that
 grows with the parameter count. See \code{optimcontrol$gradient} in
 \code{ctFit}.}
 
-\item{cores}{Engine subject-chunk ceiling for this one evaluation, restored
-afterwards. This call used to run outside any ceiling, at the session's
-full thread width: harmless on its own, but it left the worker pool at
-full width behind it, which let unrelated later work -- an in-process
-sampler's chains among them -- run wider than its own \code{cores} asked
-for. See \code{.ctBackendWithMaxChunks()}. \code{NA} sets none and
-evaluates under the ceiling already in force, for a caller that has set
-one around a run of evaluations.}
+\item{cores}{The most engine threads this evaluation uses, restored
+afterwards. \code{NA} leaves the ceiling already in force, for a caller
+that has set one around a run of evaluations.}
 }
 \value{
-A list containing log likelihood and, when requested, gradient.
+A list containing the log likelihood and, when requested, the
+  gradient and the contributions.
 }
 \description{
-Evaluate a prepared Julia ctsem likelihood
+Evaluates the objective the julia backend optimises -- the log likelihood,
+with the random effects integrated as the model's \code{intoverpop} route
+integrates them -- at a vector of raw (unconstrained) parameters, and its
+gradient. For checking a fit, profiling by hand, or handing ctsem's
+likelihood to an optimiser or sampler of your own.
+}
+\examples{
+\donttest{
+# Needs a working julia backend, so the example is inert where Julia is
+# absent -- including on CRAN, whose check machines have none.
+if (isTRUE(ctJuliaStatus()$available)) {
+  model <- ctModel(type = 'ct', manifestNames = 'Y1', latentNames = 'eta1',
+    LAMBDA = matrix(1))
+  model$pars$indvarying <- FALSE
+  prepared <- ctFit(ctstantestdat, model, backend = 'julia', fit = FALSE)
+  start <- ctJuliaEvaluate(prepared, pars = rep(0, 6), cores = 1)
+  str(start)
+  # Julia keeps running between calls, holding what it has compiled;
+  # this ends it.
+  ctJuliaKill("session")
+}
+}
 }

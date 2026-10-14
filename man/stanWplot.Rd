@@ -15,6 +15,9 @@ stanWplot(object, iter = 2000, chains = 4, ...)
 
 \item{...}{All the other regular arguments to stan()}
 }
+\value{
+The stanfit object \code{rstan::sampling} returns.
+}
 \description{
 Runs stan, and plots sampling information while sampling.
 }

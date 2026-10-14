@@ -1,6 +1,10 @@
-#' Extract samples from a ctStanFit object
+#' Extract samples from a ctsem fit
 #'
-#' @param object ctStanFit object, samples may be from Stan's HMC, or the importance sampling approach of ctsem.
+#' Returns the posterior (or approximate posterior) draws of a fit's
+#' parameters, as arrays named for the model matrices.
+#'
+#' @param object A fit from \code{\link{ctFit}}, on either backend: sampled, or
+#' optimized with its approximate posterior draws.
 #' @param subjectMatrices Calculate subject specific system matrices?
 #' @param cores Only used if subjectMatrices = TRUE . For faster computation use more cores.
 #' @param nsamples either 'all' or an integer denoting number of random samples to extract.
@@ -31,11 +35,11 @@
 #' attr(e, 'evaluatedAt')
 #' }
 #' @export
-ctExtract <- function(object, subjectMatrices=FALSE, cores=2, nsamples='all', subjects='all',
+ctExtract <- function(object, subjectMatrices=FALSE, cores=getOption("mc.cores", 2L), nsamples='all', subjects='all',
   state=NULL, realid=TRUE, ...) UseMethod("ctExtract")
 
 #' @export
-ctExtract.ctStanFit <- function(object,subjectMatrices=FALSE,cores=2,nsamples='all', subjects='all',
+ctExtract.ctStanFit <- function(object,subjectMatrices=FALSE,cores=getOption("mc.cores", 2L),nsamples='all', subjects='all',
   state=NULL, realid=TRUE, ...){
   # inherits(), not class() %in%: a fit carries both 'ctStanFit' and 'ctFit'
   # since the ctFit rename, and `if` on a length-2 condition is an error in

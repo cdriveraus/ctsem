@@ -12,11 +12,10 @@ ctIdentify(
   spread = 0.5,
   priors = FALSE,
   intoverpop = "augmented",
-  cores = 1L,
+  cores = getOption("mc.cores", 2L),
   verbose = 0L,
   rtol = 1e-13,
-  seed = 1L,
-  ctstanmodel
+  seed = 1L
 )
 }
 \arguments{
@@ -25,7 +24,7 @@ ctIdentify(
 \item{model}{Model from \code{\link{ctModel}}.}
 
 \item{inits}{Optional evaluation point. Supplying one uses that single point
-and disables the comparison across points described above.}
+and disables the comparison across points described in Details.}
 
 \item{nstart}{Number of points to evaluate. The first is the origin of the
 unconstrained space; the rest are dispersed draws around it.}
@@ -60,8 +59,6 @@ calls give identical output. The session's random stream is restored
 afterwards, so this neither depends on it nor disturbs it. \code{NULL}
 draws from the session stream instead, which makes the result depend on
 where that had got to.}
-
-\item{ctstanmodel}{Deprecated. Use \code{model}.}
 }
 \value{
 An object of class \code{ctIdentify} with \code{$parameters} (names
@@ -130,6 +127,9 @@ if (isTRUE(ctJuliaStatus()$available)) {
 
   result <- ctIdentify(datalong, model, cores = 1)
   print(result)
+  # Julia keeps running between calls, holding what it has compiled;
+  # this ends it.
+  ctJuliaKill("session")
 }
 }
 

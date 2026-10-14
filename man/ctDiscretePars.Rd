@@ -14,7 +14,7 @@ ctDiscretePars(
   standardise = FALSE,
   cov = FALSE,
   plot = FALSE,
-  cores = 2,
+  cores = getOption("mc.cores", 2L),
   state = NULL,
   method = "linearise",
   realid = TRUE,
@@ -112,6 +112,11 @@ subjects, 1 to N, with a message. If FALSE, they are read as that numbering.}
 
 \item{observational}{Deprecated. Use \code{impulseType}: \code{FALSE} is
 \code{'unit'} and \code{TRUE} is \code{'observed'}.}
+}
+\value{
+With \code{plot = FALSE}, an array of the discrete time
+coefficients, by sample, subject, time interval, row and column; with
+\code{plot = TRUE}, a ggplot object.
 }
 \description{
 Calculate model implied regressions for a sequence of time intervals (if ct) or steps (if dt) based on
