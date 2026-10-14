@@ -390,6 +390,44 @@
   .ctJuliaVersionOk(.ctJuliaCachedVersion(bin))
 }
 
+# Could a julia fit run here now, without installing or asking anything? A
+# Julia that reports a version is not enough: a runner's juliaup shim printed
+# one and then could not load its own system image, and a Julia without the
+# engine's packages starts but cannot load the engine, and installing them
+# needs consent an example or a check cannot give. So a one-off `julia`
+# process -- not a session: it pins no thread count, holds no connection and
+# exits -- confirms both that Julia runs and that every package the engine
+# depends on is installed, without loading the engine (which could mean
+# precompiling it for minutes). Once per binary and R session. "ok", "absent"
+# (Julia runs, the packages are not there) or "broken" (Julia did not run).
+.ctJuliaEngineInstalled <- function(bin) {
+  known <- .ct_julia_cache$engine_installed
+  if (!is.null(known[[bin]])) return(known[[bin]])
+  env_dir <- .ctJuliaEnvDir()
+  project <- if (file.exists(file.path(env_dir, "Project.toml"))) env_dir else
+    system.file("julia", "ContinuousTimeSEM", package = "ctsem")
+  if (!nzchar(project)) return("broken")
+  script <- tempfile(fileext = ".jl")
+  on.exit(unlink(script), add = TRUE)
+  writeLines(c(
+    "import TOML",
+    "deps = keys(get(TOML.parsefile(Base.active_project()), \"deps\", Dict()))",
+    "absent = [d for d in deps if (id = Base.identify_package(d);",
+    "  id === nothing || Base.locate_package(id) === nothing)]",
+    "print(isempty(absent) ? \"CTSEM-ENGINE-DEPS-OK\" : \"CTSEM-ENGINE-DEPS-ABSENT\")"),
+    script)
+  out <- tryCatch(suppressWarnings(system2(file.path(bin, .ctJuliaExeName()),
+    c("--startup-file=no", "--history-file=no",
+      paste0("--project=", shQuote(project)), shQuote(script)),
+    stdout = TRUE, stderr = FALSE, timeout = 120)),
+    error = function(e) character())
+  state <- if (any(grepl("CTSEM-ENGINE-DEPS-OK", out, fixed = TRUE))) "ok" else
+    if (any(grepl("CTSEM-ENGINE-DEPS-ABSENT", out, fixed = TRUE))) "absent" else
+      "broken"
+  .ct_julia_cache$engine_installed <- c(known, stats::setNames(list(state), bin))
+  state
+}
+
 #' Configure the Julia engine used by ctsem
 #'
 #' Prepares the copy of ContinuousTimeSEM.jl that ships inside this ctsem
@@ -648,7 +686,12 @@ ctJuliaSetup <- function(project = NULL, julia_bin = NULL,
 #'
 #' @inheritParams ctJuliaSetup
 #' @return A list describing the selected Julia engine: whether it is
-#'   \code{available}, whether the \code{connectoR} bridge package is installed,
+#'   \code{available} -- a julia fit could run now without asking anything,
+#'   which needs a Julia that starts and the engine's Julia packages installed,
+#'   or consent to install them given in advance with
+#'   \code{CTSEM_JULIA_AGREE=yes} (checked by a short \code{julia} process,
+#'   once per session, never a session) -- whether the \code{connectoR} bridge
+#'   package is installed,
 #'   the \code{julia_bin} directory in use and the \code{julia} version there,
 #'   the \code{engine} version (a hash of the engine source shipped with this
 #'   ctsem, which is also what its cached project directory is keyed on), and
@@ -680,8 +723,20 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
   version <- if (running) tryCatch(as.character(.ctJuliaEval("string(VERSION)")),
     error = function(e) NA_character_) else NA_character_
   if (is.na(version) && !is.null(julia_bin)) version <- .ctJuliaCachedVersion(julia_bin)
-  available <- connectoR && (running || isTRUE(tryCatch(.ctJuliaStartable(),
-    error = function(e) FALSE)))
+  # Whether a julia fit could run now without asking anything: the engine
+  # loaded in a running session, or a Julia that starts and has the engine's
+  # packages (`.ctJuliaEngineInstalled`) or consent given in advance to install
+  # them. This is the guard the julia examples run under, so on a machine where
+  # a fit would stop to ask -- or where `julia` is a shim that cannot start --
+  # it has to say no.
+  engine <- if (connectoR && !is.null(julia_bin) && !(running &&
+      !is.null(.ct_julia_cache$module)) && isTRUE(tryCatch(.ctJuliaStartable(),
+        error = function(e) FALSE)))
+    tryCatch(.ctJuliaEngineInstalled(julia_bin), error = function(e) "broken") else NA
+  available <- connectoR && ((running && !is.null(.ct_julia_cache$module)) ||
+    nzchar(Sys.getenv("JULIACONNECTOR_SERVER", unset = "")) ||
+    identical(engine, "ok") ||
+    (identical(engine, "absent") && .ctJuliaAgreedInAdvance()))
   threads <- if (running) {
     tryCatch(as.integer(.ctJuliaEval("Threads.nthreads()")),
       error = function(e) NA_integer_)

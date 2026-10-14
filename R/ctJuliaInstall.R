@@ -153,11 +153,17 @@
 # underlying question -- can a blocking, console-reading call reach a human
 # here. Using raw `interactive()` here risked `askYesNo()` blocking a Shiny
 # server process with no console to read from.
+# Consent given before anything asks: `CTSEM_JULIA_AGREE=yes`.
+.ctJuliaAgreedInAdvance <- function() {
+  tolower(trimws(Sys.getenv("CTSEM_JULIA_AGREE", unset = ""))) %in%
+    c("yes", "true", "1")
+}
+
 .ctJuliaAgreed <- function(agree, prompt) {
   if (isTRUE(agree)) return(TRUE)
   if (isFALSE(agree)) return(FALSE)
+  if (.ctJuliaAgreedInAdvance()) return(TRUE)
   configured <- tolower(trimws(Sys.getenv("CTSEM_JULIA_AGREE", unset = "")))
-  if (configured %in% c("yes", "true", "1")) return(TRUE)
   if (configured %in% c("no", "false", "0")) return(FALSE)
   if (!.ctProgressConsole()) return(FALSE)
   message(prompt)

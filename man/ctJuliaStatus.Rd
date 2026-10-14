@@ -15,7 +15,12 @@ and is edited in place under \code{inst/julia/}.}
 }
 \value{
 A list describing the selected Julia engine: whether it is
-  \code{available}, whether the \code{connectoR} bridge package is installed,
+  \code{available} -- a julia fit could run now without asking anything,
+  which needs a Julia that starts and the engine's Julia packages installed,
+  or consent to install them given in advance with
+  \code{CTSEM_JULIA_AGREE=yes} (checked by a short \code{julia} process,
+  once per session, never a session) -- whether the \code{connectoR} bridge
+  package is installed,
   the \code{julia_bin} directory in use and the \code{julia} version there,
   the \code{engine} version (a hash of the engine source shipped with this
   ctsem, which is also what its cached project directory is keyed on), and

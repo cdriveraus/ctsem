@@ -198,6 +198,31 @@ test_that("ctJuliaStatus starts no session, so it leaves the session's width to 
   expect_false(ctsem:::.ctJuliaSessionRunning())
 })
 
+test_that("ctJuliaStatus says available only where a julia fit would run without asking", {
+  # Reporting a Julia that printed a version was not enough: on a CI runner a
+  # juliaup shim printed one and could not start, and a Julia with none of the
+  # engine's packages made the first guarded example stop to ask for consent.
+  skip_without_julia()
+  ctsem:::.ctJuliaClearSession()
+  cache <- ctsem:::.ct_julia_cache
+  withr::defer(assign("engine_installed", NULL, envir = cache))
+  bin <- ctJuliaStatus()$julia_bin
+  # None of the engine's packages in this depot.
+  assign("engine_installed", NULL, envir = cache)
+  withr::local_envvar(JULIA_DEPOT_PATH = withr::local_tempdir(),
+    CTSEM_JULIA_AGREE = "no")
+  expect_identical(ctsem:::.ctJuliaEngineInstalled(bin), "absent")
+  expect_false(ctJuliaStatus()$available)
+  # Consent given in advance: a fit would install them without asking.
+  withr::local_envvar(CTSEM_JULIA_AGREE = "yes")
+  expect_true(ctJuliaStatus()$available)
+  expect_false(ctsem:::.ctJuliaSessionRunning())
+  # A binary directory whose julia cannot run.
+  fake <- withr::local_tempdir()
+  file.create(file.path(fake, ctsem:::.ctJuliaExeName()))
+  expect_identical(ctsem:::.ctJuliaEngineInstalled(fake), "broken")
+})
+
 test_that("ctJuliaSetup declines to instantiate the engine's Julia dependencies without consent", {
   # Pkg.instantiate() is the network-touching step inside ctJuliaSetup(), and on
   # a machine that already has the environment instantiated -- every other test
