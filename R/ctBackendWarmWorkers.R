@@ -20,6 +20,31 @@
 # Nothing here is required for a fit to work. Every failure path returns `NULL`
 # or `0`, and the caller samples with threads instead.
 
+# Worker processes are for very slow work only.
+#
+# A worker is another R session: seconds to start for R and Stan work (it
+# loads ctsem and re-initialises the model) and up to a minute for Julia (a
+# session, and its compile). It repays that only where the work runs for
+# minutes, so the kind of work decides, not `cores` alone: fits, chains and
+# refits may use workers; generating, extracting, summarising, scores and
+# Hessians stay in the session, threaded by the engine on julia. Where the
+# size of the work is known before it runs, these say what "minutes" is;
+# nothing times a pilot of the work to decide. ctFitCheckCov at two cores
+# started two workers per call and took 62 s where the session took 7.
+#
+# A fit whose own optimisation ran this long (`fit$optim$seconds`, julia) has
+# restarts and profile walks worth spreading over workers. 30 s let fits of a
+# minute start workers that cost about what they saved.
+.ctWorkerFitSeconds <- 300
+# Constraining a stan draw costs about one density evaluation, 19 us a data
+# row on the two-latent test fit, so this many draw-rows is minutes.
+.ctWorkerDrawRows <- 1e7
+# Importance sampling evaluates a stan density thousands of times; from this
+# many data rows that runs for minutes in the session.
+.ctWorkerDataRows <- 2000
+# Stan per-subject scores re-initialise the model once per subject.
+.ctWorkerSubjects <- 2000
+
 # Holds what this file changes globally, so it can be put back.
 .ct_warm_state <- new.env(parent = emptyenv())
 

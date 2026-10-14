@@ -569,7 +569,10 @@ stan_constrainsamples<-function(sm,standata, samples,cores=2, cl=NA,
   if(onlyfirstrow) standata$dokalmanrows <- as.integer(c(1,diff(standata$subject)))
   
   if(!quiet) message('Computing quantities for ', nrow(samples),' samples...')
-  if(nrow(samples)==1) cores <- 1
+  # Workers only for a job of minutes (`.ctWorkerDrawRows`), or when the caller
+  # hands over a cluster it already has.
+  if(all(is.na(cl)) && nrow(samples) * standata$ndatapoints < .ctWorkerDrawRows)
+    cores <- 1
   
   if(cores > 1) {
     if(all(is.na(cl))){

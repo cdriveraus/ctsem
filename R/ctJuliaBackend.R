@@ -5829,19 +5829,19 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
   # an earlier version had, which carefulfit made redundant; this is for a
   # likelihood with more than one basin, where the start decides.
   restarts <- NULL
+  fitseconds <- proc.time()[["elapsed"]] - optimise_started
   nrestarts <- if (is.null(jointobjective)) .ctBackendRestartsWanted(result,
     if (is.null(correction)) NULL else correction$certification, optimcontrol,
     inits, intoverstates) else 0L
   if (nrestarts > 0L) {
     reporting <- .ctBackendReporting(verbose)
-    elapsed <- proc.time()[["elapsed"]] - optimise_started
     if (reporting) message("Not converged; trying ", nrestarts,
       " random restarts. Esc or Ctrl-C stops them and keeps this fit.")
     restarts <- .ctBackendRestarts(model_spec, start[seq_len(npar)], npar,
       nrestarts, optimcontrol, gradient,
-      # Worker processes cost 30-60 s to start, which a small fit does not
-      # repay; they are for fits that took a while themselves.
-      cores = if (elapsed > 30) cores else 1L,
+      # Workers only when each restart is a very slow fit; see
+      # `.ctWorkerFitSeconds`.
+      cores = if (fitseconds > .ctWorkerFitSeconds) cores else 1L,
       current = as.numeric(result$maximum_loglik)[1L], report = reporting)
     if (!is.null(restarts$best)) {
       result <- restarts$best
@@ -6201,6 +6201,9 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
         "correlation. See fit$laplace$boundary.", call. = FALSE)
     }
   }
+  # How long the optimisation took before any restarts, which says how slow
+  # work repeating it would be (`.ctWorkerFitSeconds`).
+  out$optim$seconds <- fitseconds
   if (!is.null(restarts)) {
     # One row per random start: its log posterior, whether it converged, and
     # which (if any) replaced the first fit.

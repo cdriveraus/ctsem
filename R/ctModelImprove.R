@@ -151,7 +151,7 @@
 #'   \code{'threshold'} lets the search add a covariate as a step.
 #' @param nsamples Generated datasets for the adequacy checks.
 #' @param cores Cores for fitting and testing. With two or more, once a
-#'   refit has taken longer than half a minute, the refits of later rounds,
+#'   refit has taken longer than five minutes, the refits of later rounds,
 #'   of pruning and of a held-out confirmation run side by side in worker
 #'   processes, \code{ntry} at a time, as sampling chains do, each with an
 #'   equal share of \code{cores}: they are independent, one fit uses its cores
@@ -799,21 +799,21 @@ ctModelImprove <- function(fit, covariates = NULL,
   if (length(out)) out else NULL
 }
 
-# Each edited model refitted (`.ctImproveRefit`), a try-error where the edit
-# or the refit failed, with the longest refit made in this session as
-# attribute `seconds`. Side by side in worker processes when there are two or
-# more, the cores to share, and a refit has already taken `slowest` seconds
-# above 30: the refits of a round are independent, and one fit of the Fisher
-# example's model with random dynamics kept about 6 of its 10 cores busy. The
-# threshold is the restarts' (`.ctBackendRestarts`): a worker takes 30-60 s
-# to start, and three refits of a few seconds each took 46 s in fresh workers
-# against 27 s here. Each worker takes `cores %/% workers` threads. The pool
-# is the sampling chains' (`.ctBackendWarmWorkers`), which persists, so later
-# rounds find it started; a fit made there rebuilds its objective in this
-# session when it is next evaluated, the cache being keyed on the
-# specification. At most `width` workers: past that a refit waits for a free
-# one (`future()` blocks), and each worker's Julia holds its own objective,
-# several GB on the Fisher example.
+# Each edited model refitted (`.ctImproveRefit`), a try-error where the edit or
+# the refit failed, with the longest refit made in this session as attribute
+# `seconds`. Side by side in worker processes when there are two or more, the
+# cores to share, and a refit has already taken `slowest` seconds above
+# `.ctWorkerFitSeconds`: the refits of a round are independent, and one fit of
+# the Fisher example's model with random dynamics kept about 6 of its 10 cores
+# busy. The threshold is the one every worker decision shares: a worker takes
+# 30-60 s to start, and three refits of a few seconds each took 46 s in fresh
+# workers against 27 s here. Each worker takes `cores %/% workers` threads. The
+# pool is the sampling chains' (`.ctBackendWarmWorkers`), which persists, so
+# later rounds find it started; a fit made there rebuilds its objective in this
+# session when it is next evaluated, the cache being keyed on the specification.
+# At most `width` workers: past that a refit waits for a free one (`future()`
+# blocks), and each worker's Julia holds its own objective, several GB on the
+# Fisher example.
 .ctImproveRefits <- function(current, edits, starts, cores, slowest = 0, width = Inf) {
   seconds <- 0
   here <- function(i) {
@@ -847,9 +847,10 @@ ctModelImprove <- function(fit, covariates = NULL,
 
 # Whether `.ctImproveRefits` would send `n` refits to worker processes rather
 # than make them here: two or more of them and of the cores, a refit here has
-# taken over 30 s, and the fit is on julia with a pool to hand.
+# taken longer than `.ctWorkerFitSeconds`, and the fit is on julia with a pool
+# to hand.
 .ctImproveSideBySide <- function(current, n, cores, slowest) {
-  min(n, as.integer(cores)) >= 2L && isTRUE(slowest > 30) &&
+  min(n, as.integer(cores)) >= 2L && isTRUE(slowest > .ctWorkerFitSeconds) &&
     isTRUE(getOption('ctsem.improve.processes', TRUE)) &&
     .ctFitIsJulia(current) && .ctBackendCanWarm()
 }

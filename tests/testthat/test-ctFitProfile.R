@@ -312,7 +312,12 @@ test_that("a profile of a simple identified parameter routes through the fit's o
   # without checking anything (as test-julia-sample.R's processes test says).
   both <- c("drift", "diff")
   serial <- ctFitProfile(fit, parameters = both, points = 4L, cores = 1)
-  viaprocess <- suppressMessages(ctFitProfile(fit, parameters = both,
+  # Sessions start only for a fit that took minutes; this one is told it did.
+  slow <- fit
+  slow$optim$seconds <- 1e4
+  expect_false(isTRUE(suppressMessages(ctFitProfile(fit, parameters = "drift",
+    points = 2L, cores = 2))$processes))
+  viaprocess <- suppressMessages(ctFitProfile(slow, parameters = both,
     points = 4L, cores = 2))
   skip_if_not(isTRUE(viaprocess$processes),
     "cores = 2 fell back to walking in this session")

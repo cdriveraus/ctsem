@@ -69,7 +69,7 @@ for \code{\link{ctFitAdequacy}}; by default it scans.}
 \item{nsamples}{Generated datasets for the adequacy checks.}
 
 \item{cores}{Cores for fitting and testing. With two or more, once a
-refit has taken longer than half a minute, the refits of later rounds,
+refit has taken longer than five minutes, the refits of later rounds,
 of pruning and of a held-out confirmation run side by side in worker
 processes, \code{ntry} at a time, as sampling chains do, each with an
 equal share of \code{cores}: they are independent, one fit uses its cores
