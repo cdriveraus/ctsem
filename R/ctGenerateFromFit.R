@@ -109,7 +109,6 @@ ctGenerateFromFit<-function(fit,nsamples=200,fullposterior=FALSE, verboseErrors=
     genm <- stanmodels$ctsmgen
   }
   message('Generating data from ',ifelse(fullposterior,'posterior', 'posterior mean'))
-  message('Using ',cores,'/', parallel::detectCores(),' logical CPU cores')
   standata <- fit$standata
   # standata$intoverstates=0L #why doesnt this work??
   standata$savescores <- 0L #have to disable for data generation in same structure as original

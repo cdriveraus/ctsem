@@ -56,15 +56,17 @@ used by \code{'sample'}, whose draw count is \code{control$draws}.}
 
 \item{cores}{The most CPU cores the call uses at once, counting every
 process it starts. \code{'sample'} shares them between at most that many
-worker processes, which run the chains. On a
-\code{ctStanFit} these are R worker processes: each
-log-probability/gradient evaluation is split across subjects and reassembled,
-and score contributions and transformed quantities use them too. On a
-\code{ctJuliaFit} there is no R cluster; the value becomes the engine's
-subject-loop chunk ceiling for the duration of the call, and the engine caps
-it at its own thread count. Neither route changes what is computed, though
-both change the order things are summed in, so results are reproducible at
-\code{cores = 1} and agree to rounding above it.}
+worker processes, which run the chains. On a \code{ctJuliaFit} there is no
+R cluster; the value becomes the engine's subject-loop chunk ceiling for the
+duration of the call, and the engine caps it at its own thread count. A
+\code{ctStanFit} has no threads, so more than one core means R worker
+processes, which take seconds to start and are used only for work slow
+enough to repay that: the refits of \code{'fullbootstrap'}, and
+\code{'is'} on data of a few thousand rows or more, where each
+log-probability evaluation is split across subjects. Everything else runs in
+this session. Neither route changes what is computed, though both change the
+order things are summed in, so results are reproducible at \code{cores = 1}
+and agree to rounding above it.}
 
 \item{control}{List of method-specific options. For \code{uncertainty =
 'sample'} these are the sampler settings described in the Sampling section
@@ -395,7 +397,7 @@ fit$stanfit$uncertainty$settings$redrawn
 
 \donttest{
 # A local quadratic surrogate rather than the Hessian
-fit <- ctFitUncertainty(ctstantestfit, uncertainty = 'surrogate', cores = 1)
+fit <- ctFitUncertainty(ctstantestfit, uncertainty = 'surrogate')
 summary(fit)$popmeans
 
 # Needs a working julia backend, so the example is inert where Julia is
