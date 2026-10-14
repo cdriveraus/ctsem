@@ -8,7 +8,7 @@
 ctExtract(
   object,
   subjectMatrices = FALSE,
-  cores = 2,
+  cores = getOption("mc.cores", 2L),
   nsamples = "all",
   subjects = "all",
   state = NULL,

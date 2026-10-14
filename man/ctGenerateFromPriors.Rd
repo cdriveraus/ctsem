@@ -12,7 +12,7 @@ ctGenerateFromPriors(
   fullposterior = TRUE,
   nsamples = 200,
   parsonly = FALSE,
-  cores = 2,
+  cores = getOption("mc.cores", 2L),
   backend = c("auto", "julia", "stan"),
   n.subjects = 20,
   Tpoints = NULL,

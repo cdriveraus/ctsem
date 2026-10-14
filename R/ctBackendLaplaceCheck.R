@@ -127,7 +127,7 @@
 #' }
 #' @export
 ctLaplaceCheck <- function(fit, nodes = 5L, correction = TRUE, step = 1e-3,
-  refine = FALSE, maxiter = 50L, cores = NULL, verbose = 0L) {
+  refine = FALSE, maxiter = 50L, cores = getOption("mc.cores", 2L), verbose = 0L) {
 
   if (!inherits(fit, "ctJuliaFit")) {
     stop("ctLaplaceCheck applies to backend='julia' fits.", call. = FALSE)

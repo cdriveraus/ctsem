@@ -11,7 +11,7 @@ ctParticleLik(
   transition = c("exponential", "euler"),
   seed = 1,
   replicates = 1,
-  cores = NULL
+  cores = getOption("mc.cores", 2L)
 )
 }
 \arguments{

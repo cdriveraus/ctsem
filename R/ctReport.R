@@ -1012,7 +1012,6 @@
 #'   \code{postpred}.
 #' @param cores Cores for the components that can use more than one
 #'   (\code{discretepars}, \code{covcheck}, \code{postpred}, \code{crossval}).
-#'   Defaults to 1: nothing parallelises unless asked.
 #' @param quantiles Quantiles for the parameter matrices and the discrete
 #'   parameter plots.
 #' @param times Interval grid for \code{discretepars}. \code{'auto'} uses zero
@@ -1077,7 +1076,7 @@
 #' }
 #' @export
 ctReport <- function(fit, folder = "ctReport", components = "default",
-  nsamples = 200, cores = 1, quantiles = c(.025, .5, .975), times = "auto",
+  nsamples = 200, cores = getOption("mc.cores", 2L), quantiles = c(.025, .5, .975), times = "auto",
   timeinterval = 1, nsubjects = 6, lags = 0:3, folds = 10, profilepoints = 9,
   verbose = TRUE) {
 

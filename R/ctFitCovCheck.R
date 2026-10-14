@@ -71,7 +71,7 @@
 #' }
 ctFitCheckCov <- function(fit, cor = TRUE, plot = TRUE, splitby = NULL,
   data = NULL, lags = 0:10, variables = NULL, splitdata = data, split = NULL,
-  breaks = 2, nsamples = NULL, minpairn = 10, cores = 1,
+  breaks = 2, nsamples = NULL, minpairn = 10, cores = getOption("mc.cores", 2L),
   keep = c("summary", "samples")) {
 
   if(!inherits(fit,c('ctStanFit','ctJuliaFit'))) stop('Not a ctsem fit object')

@@ -11,7 +11,7 @@ ctFitUncertainty(
     "opg", "stored", "sample"),
   draws = c("auto", "normal", "empirical", "imis"),
   finishsamples = NULL,
-  cores = NULL,
+  cores = getOption("mc.cores", 2L),
   control = list(),
   verbose = 0,
   ...
@@ -23,7 +23,7 @@ ctOptimUncertainty(
     "opg", "stored"),
   draws = c("auto", "normal", "empirical", "imis"),
   finishsamples = NULL,
-  cores = NULL,
+  cores = getOption("mc.cores", 2L),
   control = list(),
   verbose = 0,
   ...
@@ -55,11 +55,8 @@ for julia) is reused when available; otherwise 1000 samples are used. Not
 used by \code{'sample'}, whose draw count is \code{control$draws}.}
 
 \item{cores}{The most CPU cores the call uses at once, counting every
-process it starts. If \code{NULL}, one core is used, and nothing
-is parallelised unless a value above one is asked for -- except for
-\code{'sample'}, which takes \code{getOption("mc.cores", 2)} as
-\code{ctFit} does, and shares it between at most that many worker
-processes, which run the chains. On a
+process it starts. \code{'sample'} shares them between at most that many
+worker processes, which run the chains. On a
 \code{ctStanFit} these are R worker processes: each
 log-probability/gradient evaluation is split across subjects and reassembled,
 and score contributions and transformed quantities use them too. On a

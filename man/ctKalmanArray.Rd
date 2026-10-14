@@ -10,7 +10,7 @@ ctKalmanArray(
   nsamples = NA,
   pointest = TRUE,
   collapsefunc = NA,
-  cores = 1,
+  cores = getOption("mc.cores", 2L),
   subjects = "all",
   timestep = "asdata",
   maxtime = "asdata",

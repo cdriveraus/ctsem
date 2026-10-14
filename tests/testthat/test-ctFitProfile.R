@@ -194,7 +194,7 @@ test_that("a profile separates a determined parameter from one on a flat ray", {
   refit <- function(from) suppressMessages(ctFit(data, model, backend = "julia",
     verbose = 0, inits = from, optimcontrol = list(estonly = TRUE)))
   profile <- function(fit) ctFitProfile(fit,
-    parameters = c("auto1", "diff_eta2_eta1"), points = 6L)
+    parameters = c("auto1", "diff_eta2_eta1"), points = 6L, cores = 1)
   fit <- refit(fitted$estimate$raw)
   out <- profile(fit)
   for (round in 1:2) {
@@ -290,7 +290,7 @@ test_that("a profile of a simple identified parameter routes through the fit's o
   fit <- suppressMessages(ctFit(data, model, backend = "julia", verbose = 0,
     optimcontrol = list(estonly = TRUE)))
 
-  out <- ctFitProfile(fit, parameters = "drift", points = 8L)
+  out <- ctFitProfile(fit, parameters = "drift", points = 8L, cores = 1)
   # A cleanly identified parameter on a well conditioned fit: the fit's own
   # estimate stands up to the fuller rigor a profile point now gets.
   expect_null(out$better)
@@ -311,11 +311,11 @@ test_that("a profile of a simple identified parameter routes through the fit's o
   # uninstalled tree, and the fallback compared against itself would pass
   # without checking anything (as test-julia-sample.R's processes test says).
   both <- c("drift", "diff")
-  serial <- ctFitProfile(fit, parameters = both, points = 4L)
+  serial <- ctFitProfile(fit, parameters = both, points = 4L, cores = 1)
   viaprocess <- suppressMessages(ctFitProfile(fit, parameters = both,
-    points = 4L, processes = 2))
+    points = 4L, cores = 2))
   skip_if_not(isTRUE(viaprocess$processes),
-    "processes = 2 fell back to walking in this session")
+    "cores = 2 fell back to walking in this session")
   columns <- c("parameter", "side", "value", "loglik")
   expect_equal(viaprocess$profile[, columns], serial$profile[, columns],
     tolerance = 1e-6)

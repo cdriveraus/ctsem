@@ -18,7 +18,7 @@ ctGenerate(
   fromPriors = FALSE,
   nsamples = 200,
   datastruct = NA,
-  cores = 2,
+  cores = getOption("mc.cores", 2L),
   popmeans = NULL,
   n.subjects
 )

@@ -333,7 +333,7 @@
 }
 
 # Independent jobs in the warmed worker pool: cross-validation folds
-# (`ctLOO(parallelFolds = TRUE)`), profile walks (`ctFitProfile(processes =
+# (`ctLOO(parallelFolds = TRUE)`), profile walks (`ctFitProfile(cores =
 # TRUE)`). Separate fits parallelise better as processes than as threads inside
 # one fit -- the subject loop's threads share one objective and its
 # synchronisation, a process shares nothing -- so a job here runs whole in one

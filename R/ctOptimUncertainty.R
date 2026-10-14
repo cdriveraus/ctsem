@@ -2606,11 +2606,8 @@ ctOptimFitLpgFunc <- function(fit, cores=1){
 #' for julia) is reused when available; otherwise 1000 samples are used. Not
 #' used by \code{'sample'}, whose draw count is \code{control$draws}.
 #' @param cores The most CPU cores the call uses at once, counting every
-#' process it starts. If \code{NULL}, one core is used, and nothing
-#' is parallelised unless a value above one is asked for -- except for
-#' \code{'sample'}, which takes \code{getOption("mc.cores", 2)} as
-#' \code{ctFit} does, and shares it between at most that many worker
-#' processes, which run the chains. On a
+#' process it starts. \code{'sample'} shares them between at most that many
+#' worker processes, which run the chains. On a
 #' \code{ctStanFit} these are R worker processes: each
 #' log-probability/gradient evaluation is split across subjects and reassembled,
 #' and score contributions and transformed quantities use them too. On a
@@ -2717,7 +2714,7 @@ ctFitUncertainty <- function(fit,
   uncertainty=c('hessian','surrogate','is','bootstrap','fullbootstrap',
     'sandwich','opg','stored','sample'),
   draws=c('auto','normal','empirical','imis'), finishsamples=NULL,
-  cores=NULL, control=list(), verbose=0, ...){
+  cores=getOption("mc.cores", 2L), control=list(), verbose=0, ...){
   
   # `...` used to swallow whatever reached it: `chains = 4` here, meant for
   # `control`, ran the method with its own defaults and said nothing.
@@ -2819,7 +2816,7 @@ ctFitUncertainty <- function(fit,
       finishsamples <- if(!is.null(fit$estimate$rawposterior))
         nrow(fit$estimate$rawposterior) else 1000
     }
-    if(is.null(cores)) cores <- 1L
+    if(is.null(cores)) cores <- getOption("mc.cores", 2L)
     cores <- max(1L, suppressWarnings(as.integer(cores[1])))
     if(is.na(cores)) cores <- 1L
     if(uncertainty == 'stored') return(.ctOptimStoredRedraw(fit,
@@ -2862,7 +2859,7 @@ ctFitUncertainty <- function(fit,
     finishsamples <- if(!is.null(fit$stanfit$rawposterior))
       nrow(fit$stanfit$rawposterior) else 1000
   }
-  if(is.null(cores)) cores <- 1
+  if(is.null(cores)) cores <- getOption("mc.cores", 2L)
   cores <- suppressWarnings(as.integer(cores[1]))
   if(!is.finite(cores) || is.na(cores) || cores < 1) cores <- 1L
   # Before `ctOptimFitLpgFunc()`, which reinitialises the stan model object,
@@ -2990,7 +2987,7 @@ ctOptimUncertainty <- function(fit,
   uncertainty=c('hessian','surrogate','is','bootstrap','fullbootstrap',
     'sandwich','opg','stored'),
   draws=c('auto','normal','empirical','imis'), finishsamples=NULL,
-  cores=NULL, control=list(), verbose=0, ...){
+  cores=getOption("mc.cores", 2L), control=list(), verbose=0, ...){
   uncertainty <- match.arg(uncertainty)
   ctFitUncertainty(fit, uncertainty=uncertainty, draws=draws,
     finishsamples=finishsamples, cores=cores, control=control,

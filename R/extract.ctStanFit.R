@@ -35,11 +35,11 @@
 #' attr(e, 'evaluatedAt')
 #' }
 #' @export
-ctExtract <- function(object, subjectMatrices=FALSE, cores=2, nsamples='all', subjects='all',
+ctExtract <- function(object, subjectMatrices=FALSE, cores=getOption("mc.cores", 2L), nsamples='all', subjects='all',
   state=NULL, realid=TRUE, ...) UseMethod("ctExtract")
 
 #' @export
-ctExtract.ctStanFit <- function(object,subjectMatrices=FALSE,cores=2,nsamples='all', subjects='all',
+ctExtract.ctStanFit <- function(object,subjectMatrices=FALSE,cores=getOption("mc.cores", 2L),nsamples='all', subjects='all',
   state=NULL, realid=TRUE, ...){
   # inherits(), not class() %in%: a fit carries both 'ctStanFit' and 'ctFit'
   # since the ctFit rename, and `if` on a length-2 condition is an error in

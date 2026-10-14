@@ -71,7 +71,7 @@
 #' }
 #' @export
 ctParticleLik <- function(fit, particles = 2000, substeps = 20,
-  transition = c("exponential", "euler"), seed = 1, replicates = 1, cores = NULL) {
+  transition = c("exponential", "euler"), seed = 1, replicates = 1, cores = getOption("mc.cores", 2L)) {
   if (!inherits(fit, "ctJuliaFit")) {
     stop("ctParticleLik needs a fit from ctFit(..., backend = 'julia').", call. = FALSE)
   }

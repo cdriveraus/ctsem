@@ -163,7 +163,7 @@ ctStanParnames <- ctRawParnames
 ctDiscretePars<-function(fit, subjects='popmean',
   times=seq(from=0,to=10,by=.1),
   nsamples=200,impulseType='unit',standardise=FALSE,
-  cov=FALSE, plot=FALSE,cores=2,state=NULL,method='linearise',realid=TRUE,...,
+  cov=FALSE, plot=FALSE,cores=getOption("mc.cores", 2L),state=NULL,method='linearise',realid=TRUE,...,
   ctstanfitobj, observational){
 
   if(missing(fit)){

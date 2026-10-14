@@ -18,7 +18,7 @@ ctFitCheckCov(
   breaks = 2,
   nsamples = NULL,
   minpairn = 10,
-  cores = 1,
+  cores = getOption("mc.cores", 2L),
   keep = c("summary", "samples")
 )
 }

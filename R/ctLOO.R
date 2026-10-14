@@ -134,7 +134,7 @@
 #' \donttest{
 #' ctLOO(ctstantestfit)
 #' }
-ctLOO <- function(fit, folds = 10, cores = 2, parallelFolds = FALSE, tol = 1e-5,
+ctLOO <- function(fit, folds = 10, cores = getOption("mc.cores", 2L), parallelFolds = FALSE, tol = 1e-5,
   subjectwise = ifelse(length(unique(.ctFitRowSubject(fit))) >= folds, TRUE, FALSE),
   keepfirstobs = FALSE, leaveOutN = NA, refit = TRUE, casewiseApproximation = FALSE,
   method = c("kfold", "psis"), nsamples = 500) {
