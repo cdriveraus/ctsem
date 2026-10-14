@@ -33,8 +33,10 @@
 #'   called.
 #' @param minpairn Minimum number of complete paired observations required for
 #'   an empirical or generated lagged covariance/correlation.
-#' @param cores Number of cores to use for generating data and summarising
-#'   generated samples.
+#' @param cores Cores for generating the data when \code{fit} carries none:
+#'   engine threads for a julia fit, and for a stan fit worker processes, which
+#'   start only for a job large enough to repay them. The summary of the
+#'   generated datasets is computed in this session.
 #' @param keep If `"samples"`, draw-level model diagnostics are attached as the
 #'   `"samples"` attribute of the returned data.
 #' @return Either a plot/list of plots (default, given by `ctFitCovCheckPlot`) or
@@ -46,29 +48,28 @@
 #' @examples
 #' \donttest{
 #' # Lagged correlations for all manifest variables, lags 0 to 3.
-#' ctFitCheckCov(ctstantestfit, cor = TRUE, lags = 0:3, plot = TRUE, cores = 1)
+#' ctFitCheckCov(ctstantestfit, cor = TRUE, lags = 0:3, plot = TRUE)
 #' 
 #' # Lagged covariances for one manifest variable.
 #' ctFitCheckCov(ctstantestfit, cor = FALSE, variables = "Y1", lags = 0:5,
-#'   plot = FALSE, cores = 1)
+#'   plot = FALSE)
 #'
 #' # Split the diagnostic by a time independent predictor in the fitted data.
-#' gg <- ctFitCheckCov(ctstantestfit, cor = TRUE, splitby = "TI1", lags = 0:3,
-#'   cores = 1)
+#' gg <- ctFitCheckCov(ctstantestfit, cor = TRUE, splitby = "TI1", lags = 0:3)
 #' print(gg[[1]])
 #'
 #' # Use an external subject-level variable for the split.
 #' splitdat <- unique(data.frame(ctstantestdat)[, "id", drop = FALSE])
 #' splitdat$group <- rep(c("a", "b"), length.out = nrow(splitdat))
 #' ctFitCheckCov(ctstantestfit, splitby = "group", splitdata = splitdat,
-#'   lags = 0:2, cores = 1)
+#'   lags = 0:2)
 #'
 #' # Split observations into early and late periods within each subject.
 #' dat <- data.table::as.data.table(data.frame(ctstantestdat))
 #' dat[, period := ifelse(time <= stats::median(time, na.rm = TRUE),
 #'   "early", "late"), by = id]
 #' ctFitCheckCov(ctstantestfit, data = dat, splitby = "period",
-#'   split = "factor", lags = 0:2, cores = 1)
+#'   split = "factor", lags = 0:2)
 #' }
 ctFitCheckCov <- function(fit, cor = TRUE, plot = TRUE, splitby = NULL,
   data = NULL, lags = 0:10, variables = NULL, splitdata = data, split = NULL,
@@ -178,64 +179,65 @@ ctFitCheckCov <- function(fit, cor = TRUE, plot = TRUE, splitby = NULL,
     out
   }
   
-  .pair_stat <- function(x, y){
-    ok <- stats::complete.cases(x, y)
-    n <- sum(ok)
-    if(n < minpairn) return(list(value = NA_real_, n = n))
-    x <- x[ok]
-    y <- y[ok]
-    if(cor) {
-      if(stats::sd(x) == 0 || stats::sd(y) == 0) return(list(value = NA_real_, n = n))
-      return(list(value = suppressWarnings(stats::cor(x, y)), n = n))
-    }
-    list(value = stats::cov(x, y), n = n)
-  }
-  
-  .lagged_stat <- function(d, xcol, ycol){
-    bytime <- d[, {
-      st <- .pair_stat(get(xcol), get(ycol))
-      .(timevalue = st$value, timen = st$n)
-    }, by = WhichObs]
-    list(value = mean(bytime$timevalue, na.rm = TRUE),
-      n = sum(bytime$timen, na.rm = TRUE),
-      ntime = sum(!is.na(bytime$timevalue)))
-  }
-  
-  .lag_summary <- function(d, sample = NA_integer_){
-    out <- vector('list', length(lags))
+  # Every dataset at once -- the generated ones by `sample`, the observed one as
+  # sample NA -- rather than one at a time. Each statistic is assembled from
+  # grouped sums, which data.table computes in C and threads, so the cost no
+  # longer grows with an R loop over datasets, and no worker process is needed:
+  # the ones a loop over datasets used to start cost more to start than the
+  # whole summary takes now. Two passes, deviations from each group's means
+  # and then their sums, so the values are cov() and cor() to rounding rather
+  # than the one-pass formula's cancellation. A time with fewer than
+  # `minpairn` complete pairs gives NA but its pairs still count in `n`, and a
+  # sample and split with no pairs at all gives NaN, n 0, as before.
+  .lag_summary <- function(d){
+    keys <- c('sample', idname, 'WhichObs')
+    samplelevels <- unique(d$sample)
+    splitlevels <- unique(d$.splitgroup)
+    grid <- CJ(sample = samplelevels, split = splitlevels, sorted = FALSE)
+    out <- list()
     for(li in seq_along(lags)){
       lagi <- lags[li]
-      cur <- d[, c(idname, 'WhichObs', '.splitgroup', variables), with = FALSE]
-      lagd <- d[, c(idname, 'WhichObs', variables), with = FALSE]
+      cur <- d[, c(keys, '.splitgroup', variables), with = FALSE]
+      lagd <- d[, c(keys, variables), with = FALSE]
       lagd[, WhichObs := WhichObs + lagi]
       setnames(lagd, variables, paste0('.lag_', variables))
-      paird <- merge(cur, lagd, by = c(idname, 'WhichObs'), all = FALSE,
-        sort = FALSE, allow.cartesian = FALSE)
-      splitlevels <- unique(d$.splitgroup)
-      rowout <- vector('list', length(variables) * length(variables) *
-          length(splitlevels))
-      ri <- 0L
-      for(si in splitlevels){
-        sdat <- paird[.splitgroup == si]
-        for(rv in variables){
-          for(cv in variables){
-            st <- .lagged_stat(sdat, rv, paste0('.lag_', cv))
-            ri <- ri + 1L
-            rowout[[ri]] <- data.table(sample = sample, rowvar = rv, colvar = cv,
-              lag = lagi, split = si, value = st$value, n = st$n,
-              ntime = st$ntime)
-          }
-        }
+      paird <- merge(cur, lagd, by = keys, all = FALSE, sort = FALSE,
+        allow.cartesian = FALSE)
+      for(ri in seq_along(variables)) for(ci in seq_along(variables)){
+        p <- paird[, .(sample, split = .splitgroup, WhichObs,
+          x = get(variables[ri]), y = get(paste0('.lag_', variables[ci])))]
+        p <- p[!is.na(x) & !is.na(y) & !is.na(split)]
+        p[, `:=`(dx = x - mean(x), dy = y - mean(y)), by = .(sample, split, WhichObs)]
+        p[, `:=`(dxy = dx * dy, dxx = dx * dx, dyy = dy * dy)]
+        bytime <- p[, .(n = .N, sxy = sum(dxy), sxx = sum(dxx), syy = sum(dyy)),
+          by = .(sample, split, WhichObs)]
+        if(cor) {
+          bytime[, value := ifelse(sxx > 0 & syy > 0,
+            pmin(1, pmax(-1, sxy / sqrt(sxx * syy))), NA_real_)]
+        } else bytime[, value := sxy / (n - 1)]
+        bytime[n < minpairn, value := NA_real_]
+        stat <- bytime[, .(value = mean(value, na.rm = TRUE), n = sum(n),
+          ntime = sum(!is.na(value))), by = .(sample, split)]
+        stat <- stat[grid, on = .(sample, split)]
+        stat[is.na(n), `:=`(value = NaN, n = 0L, ntime = 0L)]
+        out[[length(out) + 1L]] <- stat[, .(sample, rowvar = variables[ri],
+          colvar = variables[ci], lag = lagi, split, value, n, ntime,
+          .order = ((match(sample, samplelevels) * length(lags) + li) *
+              length(splitlevels) + match(split, splitlevels)) *
+            length(variables)^2 + (ri - 1L) * length(variables) + ci)]
       }
-      out[[li]] <- rbindlist(rowout)
     }
-    rbindlist(out)
+    out <- rbindlist(out)
+    setorder(out, .order)
+    out[, .order := NULL]
+    out
   }
-  
+
   dat <- .prepare_data(data)
   splitgroups <- .split_groups(dat, splitdata)
   splitmergeby <- intersect(c(idname, 'WhichObs'), names(splitgroups))
   dat <- merge(dat, splitgroups, by = splitmergeby, all.x = TRUE, sort = FALSE)
+  dat[, sample := NA_integer_]
   emp <- .lag_summary(dat)
   setnames(emp, c('value', 'n', 'ntime'), c('empirical', 'n_empirical',
     'ntime_empirical'))
@@ -255,30 +257,17 @@ ctFitCheckCov <- function(fit, cor = TRUE, plot = TRUE, splitby = NULL,
   varidx <- match(variables, dimnames(fit$generated$Y)[[3]])
   if(any(is.na(varidx))) varidx <- match(variables, ctmb$manifestNames)
   
+  # The generated datasets stacked under the observed rows' structure, one
+  # copy per sample, for the one pass above.
   basedat <- dat[, c(idname, 'WhichObs', '.splitgroup'), with = FALSE]
-  .generated_one <- function(i){
-    gd <- copy(basedat)
-    ymat <- matrix(aperm(fit$generated$Y[i, , varidx, drop = FALSE], c(2, 1, 3)),
-      ncol = length(varidx))
-    ydt <- as.data.table(ymat)
-    setnames(ydt, variables)
-    gd[, (variables) := ydt]
-    .lag_summary(gd, sample = i)
+  gd <- basedat[rep(seq_len(nrow(basedat)), times = length(samples))]
+  gd[, sample := rep(samples, each = nrow(basedat))]
+  for(vi in seq_along(variables)) {
+    set(gd, j = variables[vi], value = as.vector(t(matrix(
+      fit$generated$Y[samples, , varidx[vi]], nrow = length(samples)))))
   }
-  
-  cores <- min(cores, length(samples))
-  if(cores > 1L && requireNamespace('future.apply', quietly = TRUE) &&
-      requireNamespace('future', quietly = TRUE)) {
-    oldplan <- future::plan()
-    on.exit(future::plan(oldplan), add = TRUE)
-    future::plan(future::multisession, workers = cores)
-    gens <- rbindlist(future.apply::future_lapply(samples, .generated_one,
-      future.seed = TRUE))
-  } else {
-    if(cores > 1L) warning('future and future.apply are required for parallel ctFitCheckCov summaries; using one core')
-    gens <- rbindlist(lapply(samples, .generated_one))
-  }
-  
+  gens <- .lag_summary(gd)
+
   gensum <- gens[, .(
     q025 = stats::quantile(value, .025, na.rm = TRUE),
     q50 = stats::quantile(value, .5, na.rm = TRUE),
@@ -332,7 +321,7 @@ ctFitCovCheck <- ctFitCheckCov
 #' @return ggplot object.
 #' @examples
 #' \dontrun{
-#' ctFitCovCheckPlot(ctFitCheckCov(ctstantestfit,cor=TRUE,plot=FALSE,cores=1),maxlag=3)
+#' ctFitCovCheckPlot(ctFitCheckCov(ctstantestfit,cor=TRUE,plot=FALSE),maxlag=3)
 #' }
 #' @export
 #'  

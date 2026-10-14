@@ -58,30 +58,37 @@ scorecalc <- function(standata, est, stanmodel, subjectsonly = TRUE,
     return(scores_subject)
   }
   
-  # Parallel processing: compute gradients for all subjects
-  # rscript_libs: without it a worker searches its own default .libPaths(),
-  # not the caller's, so the exported ctsem internals below (stan_reinitsf
-  # etc.) can resolve against a different install than the one running this
-  # code -- the same failure mode makeClusterID() (stanoptimis.R) was fixed
-  # for. It narrows that gap rather than closing it, so
-  # .ctClusterCheckBuild() below reports a build the workers do not share.
-  # library(ctsem) is loaded explicitly too, since the closures exported just
-  # below reference the ctsem namespace directly rather than requesting it.
-  cl <- parallelly::makeClusterPSOCK(cores, rscript_libs = .libPaths())
-  on.exit(parallel::stopCluster(cl), add = TRUE)
-  parallel::clusterEvalQ(cl, suppressPackageStartupMessages(library(ctsem)))
-  .ctClusterCheckBuild(cl)
-  parallel::clusterExport(cl, c("standata", "est", "stanmodel", "subjectsonly", "compute_subject_gradients",
-    "stan_reinitsf", "whichsubjectpars", "standatact_specificsubjects"),envir=environment())
+  # In this session, as every subject's gradient is about one evaluation;
+  # workers only for very many subjects (`.ctWorkerSubjects`). This started a
+  # worker even at `cores = 1`, 3.6 s for the 30 subjects of the test fit.
+  if (cores <= 1 || standata$nsubjects < .ctWorkerSubjects) {
+    scores <- lapply(seq_len(standata$nsubjects), compute_subject_gradients)
+  } else {
+    # Parallel processing: compute gradients for all subjects
+    # rscript_libs: without it a worker searches its own default .libPaths(),
+    # not the caller's, so the exported ctsem internals below (stan_reinitsf
+    # etc.) can resolve against a different install than the one running this
+    # code -- the same failure mode makeClusterID() (stanoptimis.R) was fixed
+    # for. It narrows that gap rather than closing it, so
+    # .ctClusterCheckBuild() below reports a build the workers do not share.
+    # library(ctsem) is loaded explicitly too, since the closures exported just
+    # below reference the ctsem namespace directly rather than requesting it.
+    cl <- parallelly::makeClusterPSOCK(cores, rscript_libs = .libPaths())
+    on.exit(parallel::stopCluster(cl), add = TRUE)
+    parallel::clusterEvalQ(cl, suppressPackageStartupMessages(library(ctsem)))
+    .ctClusterCheckBuild(cl)
+    parallel::clusterExport(cl, c("standata", "est", "stanmodel", "subjectsonly", "compute_subject_gradients",
+      "stan_reinitsf", "whichsubjectpars", "standatact_specificsubjects"),envir=environment())
 
-  group_size <- ceiling(standata$nsubjects / length(cl))
-  
-  # Create groups
-  task_chunks <- split(1:standata$nsubjects, ceiling(seq_along(1:standata$nsubjects) / group_size))
-  # Parallel execution
-  scores <- do.call(c, parallel::parLapply(cl, task_chunks, function(chunk) {
-    lapply(chunk, compute_subject_gradients)
-  }))
+    group_size <- ceiling(standata$nsubjects / length(cl))
+    
+    # Create groups
+    task_chunks <- split(1:standata$nsubjects, ceiling(seq_along(1:standata$nsubjects) / group_size))
+    # Parallel execution
+    scores <- do.call(c, parallel::parLapply(cl, task_chunks, function(chunk) {
+      lapply(chunk, compute_subject_gradients)
+    }))
+  }
   
   
   # Combine results if subjectsonly is TRUE

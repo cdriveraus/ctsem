@@ -85,15 +85,16 @@
 #' @param level confidence level setting the likelihood-ratio bar.
 #' @param maxiter iteration cap for each constrained optimisation.
 #' @param verbose 0 for silence, 1 to report each point as it is computed.
-#' @param cores The most CPU cores the profile uses at once. With more than
-#'   one, the walks -- each parameter's two sides -- run up to \code{cores} at
-#'   a time, each in a background R session with a one-thread Julia, started
-#'   and compiled for the model first (it needs the \pkg{future} package; the
-#'   sessions persist for the next call, and
-#'   \code{\link{ctJuliaKill}('workers')} releases them). With one, they run
-#'   one after another in this session. The walks are independent, so the
-#'   profile is the same either way, except that with several sessions every
-#'   walk finishes before \code{$better} is reported.
+#' @param cores The most CPU cores the profile uses at once. The walks -- each
+#'   parameter's two sides -- run one after another in this session, on that
+#'   many engine threads. Only when the fit itself took more than five minutes
+#'   to optimise do they run up to \code{cores} at a time instead, each in a
+#'   background R session with a one-thread Julia (it needs the \pkg{future}
+#'   package; the sessions persist for the next call, and
+#'   \code{\link{ctJuliaKill}('workers')} releases them): a session costs up to
+#'   a minute to start. The walks are independent, so the profile is the same
+#'   either way, except that with several sessions every walk finishes before
+#'   \code{$better} is reported.
 #'
 #' @return An object of class \code{ctFitProfile}, which
 #'   \code{print} and \code{plot} both understand. \code{$profile} is one row
@@ -114,10 +115,8 @@
 #'   fit <- ctFit(ctstantestdat, model, backend = 'julia', cores = 1)
 #'
 #'   # Two named parameters; parameters = "flagged" profiles only those the
-#'   # fit's own diagnostics doubt, and NULL profiles every one. One core walks
-#'   # them in this session rather than starting a session per walk.
-#'   result <- ctFitProfile(fit, parameters = c('drift_eta1', 'mm_Y1'),
-#'     cores = 1)
+#'   # fit's own diagnostics doubt, and NULL profiles every one.
+#'   result <- ctFitProfile(fit, parameters = c('drift_eta1', 'mm_Y1'))
 #'   print(result)
 #'   plot(result)
 #'   # Julia keeps running between calls, holding what it has compiled;
@@ -200,9 +199,10 @@ ctFitProfile <- function(fit, parameters = NULL, points = 8L, step = NULL,
     maxiter = maxiter, verbose = verbose, names = names)
   walks <- unlist(lapply(index, function(k) lapply(c(-1, 1), function(side)
     list(k = k, side = side))), recursive = FALSE)
-  # `cores` is every core the call may use at once, so it never starts more
-  # one-thread sessions than that.
-  workers <- min(cores, length(walks))
+  # Sessions only for a very slow fit (`.ctWorkerFitSeconds`), and never more
+  # one-thread sessions than `cores`, which is every core the call may use.
+  workers <- if (isTRUE(fit$optim$seconds > .ctWorkerFitSeconds))
+    min(cores, length(walks)) else 0L
   walked <- NULL
   if (isTRUE(workers >= 2L) && length(walks) > 1L) {
     context$cores <- 1L

@@ -60,8 +60,10 @@ called.}
 \item{minpairn}{Minimum number of complete paired observations required for
 an empirical or generated lagged covariance/correlation.}
 
-\item{cores}{Number of cores to use for generating data and summarising
-generated samples.}
+\item{cores}{Cores for generating the data when \code{fit} carries none:
+engine threads for a julia fit, and for a stan fit worker processes, which
+start only for a job large enough to repay them. The summary of the
+generated datasets is computed in this session.}
 
 \item{keep}{If `"samples"`, draw-level model diagnostics are attached as the
 `"samples"` attribute of the returned data.}
@@ -80,29 +82,28 @@ observation-index pair, then averaged over observation-index pairs.
 \examples{
 \donttest{
 # Lagged correlations for all manifest variables, lags 0 to 3.
-ctFitCheckCov(ctstantestfit, cor = TRUE, lags = 0:3, plot = TRUE, cores = 1)
+ctFitCheckCov(ctstantestfit, cor = TRUE, lags = 0:3, plot = TRUE)
 
 # Lagged covariances for one manifest variable.
 ctFitCheckCov(ctstantestfit, cor = FALSE, variables = "Y1", lags = 0:5,
-  plot = FALSE, cores = 1)
+  plot = FALSE)
 
 # Split the diagnostic by a time independent predictor in the fitted data.
-gg <- ctFitCheckCov(ctstantestfit, cor = TRUE, splitby = "TI1", lags = 0:3,
-  cores = 1)
+gg <- ctFitCheckCov(ctstantestfit, cor = TRUE, splitby = "TI1", lags = 0:3)
 print(gg[[1]])
 
 # Use an external subject-level variable for the split.
 splitdat <- unique(data.frame(ctstantestdat)[, "id", drop = FALSE])
 splitdat$group <- rep(c("a", "b"), length.out = nrow(splitdat))
 ctFitCheckCov(ctstantestfit, splitby = "group", splitdata = splitdat,
-  lags = 0:2, cores = 1)
+  lags = 0:2)
 
 # Split observations into early and late periods within each subject.
 dat <- data.table::as.data.table(data.frame(ctstantestdat))
 dat[, period := ifelse(time <= stats::median(time, na.rm = TRUE),
   "early", "late"), by = id]
 ctFitCheckCov(ctstantestfit, data = dat, splitby = "period",
-  split = "factor", lags = 0:2, cores = 1)
+  split = "factor", lags = 0:2)
 }
 }
 \seealso{
