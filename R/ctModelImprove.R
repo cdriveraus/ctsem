@@ -1003,9 +1003,11 @@ ctModelImprove <- function(fit, covariates = NULL,
     .ctFitIsJulia(current) && .ctBackendCanWarm()
 }
 
-# Refit with an edited model, prepared as the current fit was and warm started
-# from its estimates, matched by name; new parameters start at zero, or where
-# the proposal says (`start`, by raw name). A warm start can still fail -- a
+# Refit with an edited model, prepared as the current fit was but on `cores`,
+# and warm started from its estimates, matched by name; new parameters start at
+# zero, or where the proposal says (`start`, by raw name). A worker's refit gets
+# its share of the cores; replaying the fit's own `cores` gave each worker all
+# of them. A warm start can still fail -- a
 # new random effect at an arbitrary scale can leave a Laplace unit's inner mode
 # unconverged at the start, which ended two of three refits in testing -- so a
 # refit that fails from there is tried once from ctsem's own start.
@@ -1015,6 +1017,7 @@ ctModelImprove <- function(fit, covariates = NULL,
   if (length(extra)) args <- utils::modifyList(args, extra)
   args$model <- model
   args$datalong <- data
+  args$cores <- cores
   args$verbose <- 0
   args$fit <- FALSE
   args$inits <- NULL
