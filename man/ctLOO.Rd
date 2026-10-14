@@ -46,7 +46,13 @@ Leaving 2 out would result in 3 folds (starting at rows 1,2,3), each containing 
 \item{refit}{if FALSE, do not optimise parameters for the new data set,
 just compute the likelihoods etc from the original parameters}
 
-\item{casewiseApproximation}{if TRUE, use a bootstrapped gradient contributions approach to approximate the cross validation parameters -- much faster but less reliable.}
+\item{casewiseApproximation}{if TRUE, each fold's refit is replaced by one
+Newton step from the full estimate: the held-out subjects' score
+contributions times the fit's covariance. Much faster, and close to the
+refit when no fold moves the estimate far; it has no diagnostic of its own.
+It removes whole subjects, so it needs subject folds (\code{subjectwise =
+TRUE}, no \code{leaveOutN}) and a fit with a covariance, and on a julia
+fit whose random effects are above the subject it is refused.}
 
 \item{method}{\code{'kfold'} (the default) refits the model once per fold.
 \code{'psis'} is refit-free Pareto-smoothed importance sampling
@@ -63,9 +69,7 @@ For \code{method = 'kfold'}, a list with \code{foldrows},
   \code{foldpars}, \code{insampleLogLikRow}, \code{LogLikRowFolds},
   \code{outsampleLogLikRow}, \code{insampleLogLik}, \code{outsampleLogLik}
   and entropy and standard deviation summaries, and \code{processes},
-  whether the folds ran in worker processes. On a julia fit a fold scores
-  only the subjects it holds out, so its column of \code{LogLikRowFolds} is
-  \code{NA} for every other subject's rows. \code{scoring} is added
+  whether the folds ran in worker processes. \code{scoring} is added
   whenever the folds were refit, naming what was scored and that they are
   uncertified (see Details); an \code{intoverpop = 'laplace'} fit also adds
   \code{insampleLogLikSubject} and \code{outsampleLogLikSubject}. For

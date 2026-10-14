@@ -20,7 +20,13 @@
 #' Leaving 2 out would result in 3 folds (starting at rows 1,2,3), each containing one third of the data.
 #' @param refit if FALSE, do not optimise parameters for the new data set,
 #' just compute the likelihoods etc from the original parameters
-#' @param casewiseApproximation if TRUE, use a bootstrapped gradient contributions approach to approximate the cross validation parameters -- much faster but less reliable.
+#' @param casewiseApproximation if TRUE, each fold's refit is replaced by one
+#'   Newton step from the full estimate: the held-out subjects' score
+#'   contributions times the fit's covariance. Much faster, and close to the
+#'   refit when no fold moves the estimate far; it has no diagnostic of its own.
+#'   It removes whole subjects, so it needs subject folds (\code{subjectwise =
+#'   TRUE}, no \code{leaveOutN}) and a fit with a covariance, and on a julia
+#'   fit whose random effects are above the subject it is refused.
 #' @param tol tolerance for optimisation of refitted samples, can generally be more relaxed than the tolerance used for fitting initially.
 #' @param method \code{'kfold'} (the default) refits the model once per fold.
 #'   \code{'psis'} is refit-free Pareto-smoothed importance sampling
@@ -113,9 +119,7 @@
 #'   \code{foldpars}, \code{insampleLogLikRow}, \code{LogLikRowFolds},
 #'   \code{outsampleLogLikRow}, \code{insampleLogLik}, \code{outsampleLogLik}
 #'   and entropy and standard deviation summaries, and \code{processes},
-#'   whether the folds ran in worker processes. On a julia fit a fold scores
-#'   only the subjects it holds out, so its column of \code{LogLikRowFolds} is
-#'   \code{NA} for every other subject's rows. \code{scoring} is added
+#'   whether the folds ran in worker processes. \code{scoring} is added
 #'   whenever the folds were refit, naming what was scored and that they are
 #'   uncertified (see Details); an \code{intoverpop = 'laplace'} fit also adds
 #'   \code{insampleLogLikSubject} and \code{outsampleLogLikSubject}. For
@@ -165,6 +169,15 @@ ctLOO <- function(fit, folds = 10, cores = getOption("mc.cores", 2L), parallelFo
   }
 
   if(is.na(as.integer(folds))) stop('Folds must be an integer')
+  # The step subtracts each held-out subject's whole score, so a fold that
+  # holds out only some of a subject's rows would be approximated as one that
+  # holds out all of them. The Stan path stopped there with an undefined
+  # `scores`; the julia path returned the wrong step.
+  if (isTRUE(casewiseApproximation) &&
+      (!isTRUE(subjectwise) || !all(is.na(leaveOutN)))) {
+    stop("casewiseApproximation removes whole subjects, so it needs subject ",
+      "folds: subjectwise = TRUE and no leaveOutN.", call. = FALSE)
+  }
 
   # backend='julia' withholds rows at the data level rather than through
   # `standata$dokalmanrows`, and refits with the engine's own optimizer; see
@@ -400,8 +413,7 @@ ctLOO <- function(fit, folds = 10, cores = getOption("mc.cores", 2L), parallelFo
 # observation by five units moved the score of an *earlier* row of the same
 # subject from -0.82 to -1.54, through the mode alone. The mechanism is the one
 # `ctKalman(removeObs=)` uses; see `.ctBackendKalmanSpec`.
-# `subjects`, when given, scores those subjects' rows only; the rest are NA.
-.ctBackendRowLoglik <- function(fit, pars, modesFrom = NULL, subjects = NULL) {
+.ctBackendRowLoglik <- function(fit, pars, modesFrom = NULL) {
   spec <- .ctBackendAsModel(.ctBackendSpec(fit))
   if (!is.null(modesFrom)) {
     idname <- .ctFitModelObject(fit)$subjectIDname
@@ -413,10 +425,8 @@ ctLOO <- function(fit, folds = 10, cores = getOption("mc.cores", 2L), parallelFo
     attr(spec, "laplaceSource") <- .ctBackendAsModel(modesFrom)
     attr(spec, "laplaceSubjects") <- map
   }
-  llrow <- as.numeric(.ctBackendKalmanRaw(spec, pars, subjectmatrices = FALSE,
-    fields = "llrow", subjects = subjects)$llrow)
-  if (length(subjects)) llrow[!(.ctFitRowSubject(fit) %in% subjects)] <- NA_real_
-  llrow
+  as.numeric(.ctBackendKalmanRaw(spec, pars, subjectmatrices = FALSE,
+    fields = "llrow")$llrow)
 }
 
 # The Laplace objective at each column of `draws` (`npar x ndraws`), with each
@@ -493,16 +503,44 @@ ctLOO <- function(fit, folds = 10, cores = getOption("mc.cores", 2L), parallelFo
   withheld <- all(is.na(leaveOutN)) || isTRUE(refit)
   subjectlevel <- laplace && isTRUE(subjectwise) && all(is.na(leaveOutN))
 
+  # In sample, at the estimate. A fold that is not refit and takes no modes
+  # from its training rows scores exactly this, so it reads it from here.
+  insample <- .ctBackendRowLoglik(fit, est)
+  # Each unit's term at the estimate, and the unit each subject is in.
+  fitted <- if (subjectlevel) .ctBackendLaplaceUnitTerms(spec, est) else NULL
+
   # Score-based approximation, when asked for: one Newton step away from the
   # estimate using the held-out subjects' own score contributions and the
   # fitted covariance. Same construction as the Stan path, and the engine
   # produces the scores directly rather than by re-initialising per subject.
+  # Without casewiseApproximation the step is only a refit's start. Either way
+  # it removes whole subjects, so only subject folds take it (ctLOO() refuses
+  # casewiseApproximation otherwise), and only a fold that is refit.
   scores <- NULL
-  if (isTRUE(casewiseApproximation) || (subjectwise && isTRUE(refit))) {
+  covariance <- fit$estimate$cov
+  stepping <- isTRUE(casewiseApproximation) && isTRUE(refit)
+  if (isTRUE(subjectwise) && all(is.na(leaveOutN)) && isTRUE(refit)) {
     scores <- try(.ctBackendScoreMatrix(fit, est), silent = TRUE)
+    # A Laplace fit's score rows are its units. Where each unit is one subject
+    # they are reordered to subjects; above the subject, one subject's share
+    # of its group's score is not available, and the step cannot be taken.
+    if (!inherits(scores, "try-error") && !is.null(fitted)) {
+      scores <- if (all(tabulate(fitted$unit) == 1L)) {
+        scores[fitted$unit, , drop = FALSE]
+      } else structure("the scores are per group, not per subject",
+        class = "try-error")
+    }
+    if (stepping && (inherits(scores, "try-error") || is.null(covariance))) {
+      stop("casewiseApproximation needs per-subject scores and the fit's ",
+        "covariance, and ", if (is.null(covariance)) {
+          "this fit has no covariance (fit with estonly = FALSE, or run ctFitUncertainty())"
+        } else if (!is.null(attr(scores, "condition"))) {
+          conditionMessage(attr(scores, "condition"))
+        } else as.character(scores), ". Use casewiseApproximation = FALSE.",
+        call. = FALSE)
+    }
     if (inherits(scores, "try-error")) scores <- NULL
   }
-  covariance <- fit$estimate$cov
 
   # Everything a fold reads, in one list, so a fold can run in a worker
   # process as well as here (`.ctBackendLOOFold()`).
@@ -510,7 +548,7 @@ ctLOO <- function(fit, folds = 10, cores = getOption("mc.cores", 2L), parallelFo
     rowsubject = rowsubject, refit = refit,
     casewiseApproximation = casewiseApproximation, laplace = laplace,
     withheld = withheld, subjectlevel = subjectlevel, scores = scores,
-    covariance = covariance, tol = tol, cores = cores)
+    covariance = covariance, tol = tol, cores = cores, insample = insample)
   jobs <- function(context) lapply(seq_len(folds), function(foldi)
     list(heldout = samplerows[[foldi]], context = context))
   # `parallelFolds`: each fold whole in a worker process with a one-thread
@@ -536,7 +574,7 @@ ctLOO <- function(fit, folds = 10, cores = getOption("mc.cores", 2L), parallelFo
       call. = FALSE)
   }
 
-  llrow <- .ctBackendRowLoglik(fit, est)
+  llrow <- insample
   llrow[llrow == 0] <- NA
   llrowSubject <- vapply(subjects, function(s)
     sum(llrow[rowsubject == s], na.rm = TRUE), numeric(1L))
@@ -557,7 +595,6 @@ ctLOO <- function(fit, folds = 10, cores = getOption("mc.cores", 2L), parallelFo
       warning("The inner mode solve did not converge in ", unconverged, " of ",
         sum(usable), " folds; their subject values are approximate.", call. = FALSE)
     }
-    fitted <- .ctBackendLaplaceUnitTerms(spec, est)
     size <- tabulate(fitted$unit, nbins = nrow(fitted$unit_loglik))
     insampleSubject <- fitted$unit_loglik[fitted$unit, 1L] / size[fitted$unit]
     insampleTotal <- sum(fitted$unit_loglik[, 1L])
@@ -631,6 +668,11 @@ ctLOO <- function(fit, folds = 10, cores = getOption("mc.cores", 2L), parallelFo
     out$scoring <- if (is.null(out$scoring)) uncertified else
       paste0(out$scoring, "; ", uncertified)
   }
+  if (isTRUE(refit) && isTRUE(casewiseApproximation)) {
+    stepped <- "folds are not refit: one Newton step from the full estimate"
+    out$scoring <- if (is.null(out$scoring)) stepped else
+      paste0(out$scoring, "; ", stepped)
+  }
   out
 }
 
@@ -663,10 +705,7 @@ ctLOO <- function(fit, folds = 10, cores = getOption("mc.cores", 2L), parallelFo
     start <- est
     if (!is.null(scores) && !is.null(covariance)) {
       held <- unique(rowsubject[heldout])
-      held <- held[held <= nrow(scores)]
-      if (length(held)) {
-        start <- as.numeric(est - covariance %*% colSums(scores[held, , drop = FALSE]))
-      }
+      start <- as.numeric(est - covariance %*% colSums(scores[held, , drop = FALSE]))
     }
     if (isTRUE(casewiseApproximation)) {
       pars <- start
@@ -699,26 +738,25 @@ ctLOO <- function(fit, folds = 10, cores = getOption("mc.cores", 2L), parallelFo
       pars <- as.numeric(result$minimizer)
     }
   }
-  # Scored against the *full* data, so the held-out rows have a likelihood to
-  # report; the Stan path restores `dokalmanrows` before this step for the
-  # same reason. When `leaveOutN` is used without refitting, the in-sample
-  # likelihoods are the ones wanted, and they are the same call. Only the
-  # subjects holding a held-out row are scored: the fold reads nothing else,
-  # and scoring everyone made leaving one subject out quadratic in subjects.
-  held <- unique(rowsubject[heldout])
+  # Every row scored against the *full* data, so the held-out rows have a
+  # likelihood to report and the rest are each fold's in-sample rows, as the
+  # Stan path's are (it restores `dokalmanrows` before this step). When
+  # `leaveOutN` is used without refitting, the in-sample likelihoods are the
+  # ones wanted, and they are the same call -- one already made, when the
+  # parameters are the estimate and no modes come from the training rows.
+  modesFrom <- if (laplace && withheld) trainingfit$model_spec else NULL
+  out <- list(llrow = if (!isTRUE(refit) && is.null(modesFrom)) ctx$insample else
+    .ctBackendRowLoglik(fit, pars, modesFrom = modesFrom), pars = pars)
   if (subjectlevel) {
-    # A subject fold on a Laplace fit scores the held-out units' marginals,
-    # not rows (see `.ctBackendLOO()`), so no row pass is made.
+    # The held-out units' marginals, and no other unit's: nothing reads them.
+    held <- unique(rowsubject[heldout])
     full <- .ctBackendLaplaceUnitTerms(spec, pars, subjects = held)
     train <- .ctBackendLaplaceUnitTerms(trainingfit$model_spec, pars,
       subjects = held)
-    return(list(llrow = rep(NA_real_, length(rowsubject)), pars = pars,
-      subject = .ctBackendLOOHeldSubjects(full, train, held),
-      converged = isTRUE(all(full$converged)) && isTRUE(all(train$converged))))
+    out$subject <- .ctBackendLOOHeldSubjects(full, train, held)
+    out$converged <- isTRUE(all(full$converged)) && isTRUE(all(train$converged))
   }
-  modesFrom <- if (laplace && withheld) trainingfit$model_spec else NULL
-  list(llrow = .ctBackendRowLoglik(fit, pars, modesFrom = modesFrom,
-    subjects = held), pars = pars)
+  out
 }
 
 

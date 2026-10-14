@@ -109,15 +109,21 @@ test_that("without refitting, the out-of-sample likelihoods are the in-sample on
   observed <- !is.na(insample)
   expect_equal(outsample[observed], insample[observed])
 
-  # A fold filters only the subjects it holds out: every other subject's rows
-  # are not scored at all, and the equality above says the held-out ones are
-  # scored as the full pass scores them.
-  rowsubject <- .ctFitRowSubject(fit)
+  # Each fold reports every row, as the Stan path does: here all of them at
+  # the estimate.
   for (k in seq_along(out$foldrows)) {
-    held <- rowsubject %in% rowsubject[out$foldrows[[k]]]
-    expect_false(anyNA(out$LogLikRowFolds[[k]][held & observed]))
-    expect_true(all(is.na(out$LogLikRowFolds[[k]][!held])))
+    expect_equal(out$LogLikRowFolds[[k]], insample)
   }
+
+  # casewiseApproximation steps by whole subjects' scores along the fit's
+  # covariance, so it refuses row folds and a fit without a covariance (this
+  # one is estonly) rather than returning something else under its name.
+  expect_error(ctLOO(fit, folds = 4, subjectwise = FALSE,
+    casewiseApproximation = TRUE), "needs subject folds")
+  expect_error(ctLOO(fit, leaveOutN = 2, casewiseApproximation = TRUE),
+    "needs subject folds")
+  expect_error(suppressMessages(ctLOO(fit, folds = 4,
+    casewiseApproximation = TRUE)), "has no covariance")
 })
 
 test_that("julia and Stan cross-validate to the same answer", {

@@ -591,15 +591,10 @@ function _kalman_smooth!(trace::CTSEMKalmanTrace{T}, ws, first::Int,
 end
 
 """
-    ctsem_kalman(objective, values; subject_matrices=true, fields, subjects)
+    ctsem_kalman(objective, values; subject_matrices=true)
 
 Prior, filtered and smoothed states and observations for every data row, plus
 each subject's own model matrices.
-
-`subjects`, when given, names the subjects to filter (indices into the
-objective's); every other subject is skipped, its rows `NaN` and its
-`subject_loglik` `NaN`. A cross-validation fold reads its held-out subjects'
-rows and no one else's.
 
 `values` is one raw parameter vector, used for every subject -- or a matrix
 whose row `i` is subject `i`'s own. The second form is what a Laplace fit needs,
@@ -620,7 +615,7 @@ latent state with no drift and no diffusion, so the smoothed t0 estimate of that
 state is the subject's value for it.
 """
 function ctsem_kalman(objective::CTSEMObjective, values::AbstractVecOrMat;
-    subject_matrices::Bool=true, fields=String[], subjects=nothing)
+    subject_matrices::Bool=true, fields=String[])
 
     sp = objective.params
     persubject = values isa AbstractMatrix
@@ -635,29 +630,15 @@ function ctsem_kalman(objective::CTSEMObjective, values::AbstractVecOrMat;
     n = _val(ws.state_dim)
     m = _val(ws.manifest_dim)
     nall = length(sp.mutables)
-    everyone = objective.subject_objectives
-    nrows = sum(size(sub.data, 2) for sub in everyone)
-    # A bare integer when R sends one subject, so iterate rather than index.
-    wanted = trues(length(everyone))
-    if subjects !== nothing
-        fill!(wanted, false)
-        for i in subjects
-            wanted[Int(i)] = true
-        end
-    end
+    subjects = objective.subject_objectives
+    nrows = sum(size(sub.data, 2) for sub in subjects)
 
-    trace = CTSEMKalmanTrace(Float64, n, m, nrows, length(everyone), nall)
-    loglik = zeros(Float64, length(everyone))
+    trace = CTSEMKalmanTrace(Float64, n, m, nrows, length(subjects), nall)
+    loglik = zeros(Float64, length(subjects))
 
     offset = 0
-    for (i, sub) in enumerate(everyone)
+    for (i, sub) in enumerate(subjects)
         nobs = size(sub.data, 2)
-        if !wanted[i]
-            trace.llrow[(offset + 1):(offset + nobs)] .= NaN
-            loglik[i] = NaN
-            offset += nobs
-            continue
-        end
         trace.offset = offset
         trace.current_subject = i
         persubject && copyto!(raw, view(values, i, :))
