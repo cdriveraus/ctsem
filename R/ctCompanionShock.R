@@ -56,7 +56,7 @@
 
 .ctCompanionTypes <- c("unit", "observed", "shock", "orthogonal")
 
-# Accepted but not advertised: the pre-3.12.0 vocabulary, which named the first
+# Accepted but not advertised: the pre-4.0.0 vocabulary, which named the first
 # two after the design that would produce them rather than after what the
 # column of C does. Kept because `observational=` is deprecated rather than
 # removed, and because a saved object carries the old string.

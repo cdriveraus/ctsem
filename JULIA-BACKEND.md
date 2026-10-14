@@ -123,9 +123,10 @@ accessor (`.ctFitModelObject`, `.ctFitLongData`, `.ctFitIdMap`,
   `fullbootstrap`, which re-optimises each resample and so needs the model
   rebuilt rather than re-evaluated.
 - **Cross validation**: `ctLOO()`, including `subjectwise`, `leaveOutN`,
-  `keepfirstobs`, `refit=FALSE` and `casewiseApproximation`. Not
-  `parallelFolds`, which is ignored: the engine threads its own subject loop,
-  so each fold already uses every core.
+  `keepfirstobs`, `refit=FALSE` and `casewiseApproximation`;
+  `parallelFolds=TRUE` runs up to `cores` folds at once in one-thread worker
+  sessions, and `method='psis'` cross-validates a Laplace fit without
+  refitting.
 - **Per-subject scores**: the adjoint already computes them; the rows sum to the
   full gradient to 1e-16.
 - **Summaries**: `summary()`, `ctSummaryMatrices()`, `ctExtract()`,
@@ -145,9 +146,9 @@ continuous/binary/ordinal/count/censored (`manifesttype` outside `0:4`),
 `intoverpop='laplace'`, `fullbootstrap` uncertainty, and
 `summary(priorcheck = TRUE)` given explicitly (it compares posteriors against
 the *Stan* model's prior block; the default is accepted). `forcerecompile` is
-honoured: it compiles the model's state-dependent expressions. The
-prior/posterior-density, trace and interval panels of `plot()` are refused by
-name. `vb` is gone from both backends. A weakly identified model can still leave folds of `ctLOO()`, or two
+honoured: it compiles the model's state-dependent expressions. `plot()`
+draws the regression, Kalman, prior-check and trace panels and refuses any
+other by name. `vb` is gone from both backends. A weakly identified model can still leave folds of `ctLOO()`, or two
 backends, at raw parameters several units apart for a likelihood difference of
 a percent; the julia optimiser's own defences are its Newton finish and
 certification, the stall retries (`optimcontrol$stallretries`) and opt-in

@@ -528,7 +528,7 @@ test_that("the construction code map resolves every accepted name and no other",
   expect_equal(code("rawcorr"), 0L)
   expect_equal(code("cholesky"), 1L)
   expect_equal(code("z"), 2L)
-  # No covmattransform at all is the pre-3.12 shape, and it means 'rawcorr'.
+  # No covmattransform at all is the pre-4.0 shape, and it means 'rawcorr'.
   expect_equal(ctsem:::.ctCovMatCode(list()), 0L)
   # And an unknown name errors rather than resolving: it means the validation
   # has drifted from this table, which must not resolve to a construction by

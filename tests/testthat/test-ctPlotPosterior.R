@@ -1,4 +1,4 @@
-# ctPlotPosterior() on a julia fit. It refused one until 3.12.0; it now draws
+# ctPlotPosterior() on a julia fit. It refused one until 4.0.0; it now draws
 # the julia fit's posterior through the transforms summary() reads it with, and
 # the full raw prior through the same transforms, so what it plots can be
 # checked against summary() and against a transform whose prior is known.

@@ -3,9 +3,9 @@
 # It is reachable two ways: on its own, which is the way that takes a `splitby`
 # group, and as the LaggedCovariance panel of ctPostPredPlots(), which is
 # tested in test-postpred-panels.R. The ctFitCheck() dashboard that used to
-# wrap it was removed in 3.12.0.
+# wrap it was removed in 4.0.0.
 #
-# ctFitCovCheck is the pre-3.12 name, kept as an alias.
+# ctFitCovCheck is the pre-4.0 name, kept as an alias.
 
 test_that("the old name is still exported and identical to the new one", {
   expect_identical(ctFitCovCheck, ctFitCheckCov)
