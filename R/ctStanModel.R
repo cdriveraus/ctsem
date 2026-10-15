@@ -970,7 +970,7 @@ ctStanModel <- ctModelConvertOMX
   # Single stationary elements need it for the latents their moments are
   # solved over (`.ctStationaryElements`).
   stationaryrows <- if(isTRUE(as.logical(model$stationary)))
-    seq_len(model$n.latent) else which(model$t0stationary$closure)
+    seq_len(model$n.latent) else which(model$t0stationary$closure %in% TRUE)
   dynamics <- if(length(stationaryrows))
     c('DRIFT', 'CINT', 'DIFFUSION') else character(0)
   hit <- home[matrixname[home] %in% dynamics & pars$row[home] %in% stationaryrows]

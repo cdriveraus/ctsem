@@ -150,8 +150,6 @@ struct CTSEMCholesky{T,M<:AbstractMatrix{T}}
     ok::Bool
 end
 
-"""Factorize `A`'s leading `d x d` block *in place* (`_ctsem_cholesky!`) and wrap
-the result: `A` holds the factor afterwards, so copy it first if it is read again."""
 """
     _ctsem_right_solve_lower!(Y, L, b)
 
@@ -209,6 +207,8 @@ function _ctsem_left_solve_lower_t!(Y, L, b::Int)
     return Y
 end
 
+"""Factorize `A`'s leading `d x d` block *in place* (`_ctsem_cholesky!`) and wrap
+the result: `A` holds the factor afterwards, so copy it first if it is read again."""
 @inline function _ctsem_cholesky(A::AbstractMatrix, d::Integer)
     ok = _ctsem_cholesky!(A, Int(d))
     return CTSEMCholesky(A, Int(d), ok)
