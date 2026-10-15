@@ -42,10 +42,11 @@ for the likelihood ratio decision, and for adequacy.}
 
 \item{maxsteps}{Most refit rounds.}
 
-\item{ntry}{Refits tried at once: a round refits the strongest \code{ntry}
-proposals. When those come from the adequacy check and none improves the
-fit, the next \code{ntry} are tried, and so on until one does or none is
-left, since the check does not change until the model does.}
+\item{ntry}{Proposals from the score tests refitted in a round, at most:
+one at a time, the strongest first, keeping the first that improves the
+fit. Proposals from the adequacy check are tried the same way until one
+improves or none is left, since the check does not change until the model
+does. Pruning and a held-out confirmation refit this many side by side.}
 
 \item{criterion}{\code{'LR'}, \code{'AIC'} or \code{'BIC'}.}
 
@@ -73,11 +74,11 @@ for \code{\link{ctFitAdequacy}}; by default it scans.}
 \code{\link{ctFitAdequacy}}.}
 
 \item{cores}{Cores for fitting and testing. With two or more, once a
-refit has taken longer than five minutes, the refits of later rounds,
-of pruning and of a held-out confirmation run side by side in worker
-processes, \code{ntry} at a time, as sampling chains do, each with an
-equal share of \code{cores}: they are independent, one fit uses its cores
-only partly, and a worker takes about half a minute to start.
+refit has taken longer than five minutes, the refits of pruning and of a
+held-out confirmation run side by side in worker processes, \code{ntry}
+at a time, as sampling chains do, each with an equal share of
+\code{cores}: they are independent, one fit uses its cores only partly,
+and a worker takes about half a minute to start.
 \code{options(ctsem.improve.processes = FALSE)} keeps them in this
 session.}
 
