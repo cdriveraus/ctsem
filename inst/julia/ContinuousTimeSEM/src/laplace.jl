@@ -2834,7 +2834,7 @@ function _laplace_unit_hessian(laplace::CTSEMLaplaceObjective, U::Integer,
             _laplace_scratch_vector!(laplace, S, length(uu), :curv_inner)
             ).gradient
     end
-    H = _ctsem_jacobian(inner_of, collect(u))
+    H = _ctsem_jacobian(inner_of, collect(u), _CTSEM_CURVATURE_WIDTHS[])
     return (H .+ transpose(H)) ./ 2
 end
 
@@ -3208,7 +3208,7 @@ function _laplace_block_precision(laplace::CTSEMLaplaceObjective, U::Integer,
             [convert(Matrix{S}, L) for L in Ls], uu, ws, members, nothing, mode)
         return [r.gradient[c] for c in columns]
     end
-    A = _ctsem_jacobian(gradient_of, collect(Float64, z))
+    A = _ctsem_jacobian(gradient_of, collect(Float64, z), _CTSEM_CURVATURE_WIDTHS[])
     return Matrix{Float64}(LinearAlgebra.I, k, k) .- _laplace_symmetrise(A)
 end
 

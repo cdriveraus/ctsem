@@ -433,32 +433,67 @@ _ctsem_nested_gradient(f::F, x::AbstractArray) where {F} =
     _ctsem_barrier(_ctsem_nested_gradient_at, f, x, ForwardDiff.Chunk(x))::Vector{eltype(x)}
 
 """
-    _ctsem_gradient(f, x), _ctsem_jacobian(f, x), _ctsem_dual_hessian(f, x)
+    _ctsem_gradient(f, x[, widths]), _ctsem_jacobian(f, x[, widths]),
+    _ctsem_dual_hessian(f, x[, chunk; widths])
 
-`ForwardDiff.gradient`, `jacobian` and `hessian` of `f` at `x`, at the chunk
-and under the tag ForwardDiff picks by default -- the same duals, the same
-numbers -- but behind `_ctsem_barrier`.
+`ForwardDiff.gradient`, `jacobian` and `hessian` of `f` at `x`, at a dual
+width from `widths` (`_ctsem_dual_width`) rather than `length(x)`, behind
+`_ctsem_barrier`. `widths` is `_CTSEM_HESSIAN_WIDTHS[]` for an input as long
+as the parameters; a caller over a unit's random effects passes
+`_CTSEM_CURVATURE_WIDTHS[]`. An input shorter than its width is padded with
+zeros `f` never reads (`_CTSEMLeading`, which also gives one `f` one tag type
+at every width), and the padding's rows and columns are dropped from the
+result: the same numbers. An explicit `chunk` to `_ctsem_dual_hessian` is used
+as it is.
 
-ForwardDiff picks the chunk from `length(x)`, a run-time value, so a direct
-call hands its worker a config whose type inference cannot know, and inference
-then walks the whole dual pipeline below it -- the filter, its reverse pass,
-the Laplace inner solve -- for an unknown width. None of that code ever runs
-(the call dispatches to the real width at run time), but it was two thirds of
-a Laplace model's first-fit compile, and the package image kept it
-(review/PRECOMPILE-workload-2026-10-12.md). The barrier costs one dynamic
+A width is a type, so ForwardDiff's own choice, the input length up to 12,
+compiled everything these differentiate -- the filter, its reverse pass, the
+Laplace unit term with its inner solve -- again for every parameter count. In
+the engine's tests, whose ForwardDiff oracles run over fixtures of several
+sizes, compiling was nearly all of the time: test_laplace.jl ran in 3.5 s
+once compiled, after 1711 s of compiling.
+
+The barrier, because the width is a run-time value: a direct call hands its
+worker a config whose type inference cannot know, and inference then walks the
+whole dual pipeline below it for an unknown width. None of that code ever runs,
+but it was two thirds of a Laplace model's first-fit compile, and the package
+image kept it (review/PRECOMPILE-workload-2026-10-12.md). It costs one dynamic
 dispatch a call, which the call made anyway.
 """
-_ctsem_gradient(f::F, x::AbstractVector) where {F} =
-    _ctsem_barrier(_ctsem_gradient_at, f, x, ForwardDiff.Chunk(x))::Vector{eltype(x)}
-_ctsem_jacobian(f::F, x::AbstractVector) where {F} =
-    _ctsem_barrier(_ctsem_jacobian_at, f, x, ForwardDiff.Chunk(x))::Matrix{eltype(x)}
-_ctsem_dual_hessian(f::F, x::AbstractVector, chunk=ForwardDiff.Chunk(x)) where {F} =
-    _ctsem_barrier(_ctsem_hessian_at, f, x, chunk)::Matrix{eltype(x)}
+function _ctsem_gradient(f::F, x::AbstractVector,
+        widths::Vector{Int}=_CTSEM_HESSIAN_WIDTHS[]) where {F}
+    n = length(x)
+    n == 0 && return zeros(eltype(x), 0)
+    w = _ctsem_dual_width(n, widths)
+    g = _CTSEMLeading(f, n)
+    w <= n && return _ctsem_barrier(_ctsem_gradient_at, g, x,
+        ForwardDiff.Chunk{w}())::Vector{eltype(x)}
+    xp = vcat(x, zeros(eltype(x), w - n))
+    full = _ctsem_barrier(_ctsem_gradient_at, g, xp,
+        ForwardDiff.Chunk{w}())::Vector{eltype(x)}
+    return full[1:n]
+end
+_ctsem_jacobian(f::F, x::AbstractVector,
+    widths::Vector{Int}=_CTSEM_HESSIAN_WIDTHS[]) where {F} =
+    _ctsem_width_jacobian(f, x, widths)
+function _ctsem_dual_hessian(f::F, x::AbstractVector, chunk=nothing;
+        widths::Vector{Int}=_CTSEM_HESSIAN_WIDTHS[]) where {F}
+    chunk === nothing || return _ctsem_barrier(_ctsem_hessian_at, f, x,
+        chunk)::Matrix{eltype(x)}
+    n = length(x)
+    n == 0 && return zeros(eltype(x), 0, 0)
+    w = _ctsem_dual_width(n, widths)
+    g = _CTSEMLeading(f, n)
+    w <= n && return _ctsem_barrier(_ctsem_hessian_at, g, x,
+        ForwardDiff.Chunk{w}())::Matrix{eltype(x)}
+    xp = vcat(x, zeros(eltype(x), w - n))
+    full = _ctsem_barrier(_ctsem_hessian_at, g, xp,
+        ForwardDiff.Chunk{w}())::Matrix{eltype(x)}
+    return full[1:n, 1:n]
+end
 
 _ctsem_gradient_at(f::F, x, chunk::ForwardDiff.Chunk) where {F} =
     ForwardDiff.gradient(f, x, ForwardDiff.GradientConfig(f, x, chunk))
-_ctsem_jacobian_at(f::F, x, chunk::ForwardDiff.Chunk) where {F} =
-    ForwardDiff.jacobian(f, x, ForwardDiff.JacobianConfig(f, x, chunk))
 _ctsem_hessian_at(f::F, x, chunk::ForwardDiff.Chunk) where {F} =
     ForwardDiff.hessian(f, x, ForwardDiff.HessianConfig(f, x, chunk))
 _ctsem_nested_gradient_at(f::F, x, chunk::ForwardDiff.Chunk) where {F} =

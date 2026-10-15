@@ -482,7 +482,9 @@ function _ctsem_forward_subject_gradient_impl!(g, so, values, mode::Int=0,
         ws.hyb.dfix = convert(Vector{eltype(x)}, collect(dfix))
         return _ekf_run(ws, so, x, _ctsem_tipred_vector(so.tipreds, x), nothing)
     end
-    ForwardDiff.gradient!(g, f, values)
+    # At a bucketed width (`_ctsem_gradient`), not ForwardDiff's own, which
+    # compiled the filter again for each parameter count.
+    copyto!(g, _ctsem_gradient(f, values))
     return nothing
 end
 
