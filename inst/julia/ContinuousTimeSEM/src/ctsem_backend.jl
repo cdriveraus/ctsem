@@ -1646,6 +1646,23 @@ function _ctsem_metric(precondition, n::Integer)
     Diagonal(scale .^ 2)
 end
 
+"""
+    _ctsem_lbfgs_inverse(inverse, n)
+
+A caller's initial inverse Hessian for L-BFGS (`_ctsem_lbfgs`'s `inverse`),
+symmetrised, or `nothing` where it is not one: not `n` by `n`, not finite, or
+not positive definite, since a direction it gives would then not descend. The
+optimiser then learns its curvature from the pairs, as without one.
+"""
+function _ctsem_lbfgs_inverse(inverse, n::Integer)
+    inverse === nothing && return nothing
+    H = Matrix{Float64}(inverse)
+    (size(H) == (n, n) && all(isfinite, H)) || return nothing
+    H = (H .+ transpose(H)) ./ 2
+    isposdef(Symmetric(H)) || return nothing
+    H
+end
+
 """What the whole run has gained, and what its last `window` iterations did.
 
 Only for reporting: `_ctsem_stalled` computes both itself rather than calling
@@ -2083,7 +2100,10 @@ that hand-over was early gives the point back to L-BFGS, which runs on to its
 own stopping rule before the finish runs again -- where the Hessian is cheap
 enough to discard (`_ctsem_hessian_cost` within `newton_maxit`), and otherwise
 walks on it; `newton_reuse` and `flat_rtol`
-are the finish's rules, passed from R so one number serves both sides. The stall
+are the finish's rules, passed from R so one number serves both sides.
+`lbfgs_inverse` is an initial inverse Hessian for L-BFGS (`_ctsem_lbfgs`'s
+`inverse`), as a fit's covariance is for refitting it to part of its data; one
+that is not positive definite is not used (`_ctsem_lbfgs_inverse`). The stall
 watch's `stall_carried` and `stall_alone` are set only on a stage resumed after
 a certification (see `CTSEMStallWatch`).
 
@@ -2104,7 +2124,7 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
     progress::Bool=verbose, progress_label::AbstractString="optimise",
     progress_budget::Bool=false, progress_every::Real=0.0,
     gap_tol::Real=0.0, converge_tol::Real=1e-6,
-    precondition=nothing, initial_alpha::Real=0.1,
+    precondition=nothing, lbfgs_inverse=nothing, initial_alpha::Real=0.1,
     overshoot_probe=_CTSEM_OVERSHOOT_PROBE[],
     stall_window::Integer=80, stall_fraction::Real=1e-2,
     stall_cooldown::Integer=30, stall_tighten::Real=0.1,
@@ -2407,10 +2427,11 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
     end
     sgd_iterations = sgd_result === nothing ? 0 : sgd_result.iterations
     # See optimiser.jl for why this is not Optim any more.
+    inverse = _ctsem_lbfgs_inverse(lbfgs_inverse, length(start_values))
     result = _ctsem_lbfgs(fg!, lbfgs_start; memory=Int(lbfgs_memory),
         diagonal=lbfgs_diagonal, nonmonotone=lbfgs_nonmonotone, gll=Int(lbfgs_gll),
         metric=_ctsem_metric(precondition, length(start_values)),
-        initial_alpha=Float64(initial_alpha),
+        inverse=inverse, initial_alpha=Float64(initial_alpha),
         maxiter=max(0, Int(maxiter) - sgd_iterations),
         g_tol=g_tol, f_tol=f_tol, x_tol=x_tol, callback=watch,
         directional=directional, batch=batcher, iteration0=sgd_iterations)
@@ -2555,7 +2576,7 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
         resumed = _ctsem_lbfgs(fg!, minimizer; memory=Int(lbfgs_memory),
             diagonal=lbfgs_diagonal, nonmonotone=lbfgs_nonmonotone, gll=Int(lbfgs_gll),
             metric=_ctsem_metric(precondition, length(start_values)),
-            initial_alpha=Float64(initial_alpha),
+            inverse=inverse, initial_alpha=Float64(initial_alpha),
             maxiter=max(0, Int(maxiter) - result.iterations - spent.steps[]),
             g_tol=g_tol, f_tol=f_tol, x_tol=x_tol, callback=watch,
             directional=directional, iteration0=result.iterations + spent.steps[])

@@ -1043,7 +1043,7 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
     "Calling again starts a new one.", call. = FALSE)
 }
 
-# The objective cache, read and written only through these two.
+# The objective cache, read and written only through these three.
 #
 # The read is where the staleness check has to happen: `.ctJuliaObjective()`
 # answers from the cache without ever asking for the module, so a check placed
@@ -1057,6 +1057,26 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
 .ctJuliaCacheStore <- function(key, objective) {
   assign(key, objective, envir = .ct_julia_cache$objectives)
   objective
+}
+
+# Drops a specification's objectives from the cache -- the one whose own
+# variances the filter integrates (`hybrid = TRUE`) and the one without -- so
+# that once no caller holds them, R's collector releases the proxies and
+# JuliaConnectoR lets go of them. For an objective built for data no later
+# call will see again, a cross-validation fold's training data, which the
+# cache would otherwise hold for the rest of the session with every workspace
+# it grew.
+.ctJuliaForgetObjective <- function(object) {
+  spec <- if (inherits(object, "ctJuliaFit")) object$model_spec else object
+  for (hybrid in c(FALSE, TRUE)) {
+    variant <- spec
+    if (!hybrid && !is.null(variant$laplace$hybrid)) variant$laplace$hybrid <- NULL
+    key <- .ctJuliaObjectiveKey(variant)
+    if (exists(key, envir = .ct_julia_cache$objectives, inherits = FALSE)) {
+      rm(list = key, envir = .ct_julia_cache$objectives)
+    }
+  }
+  invisible(NULL)
 }
 
 .ctJuliaTuneBridge <- function() {
@@ -4882,7 +4902,7 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
 .ctJuliaOptimise <- function(model_spec, start, optimcontrol = list(),
   gradient = "adjoint", cores = 1L, verbose = 0L, maxiter = NULL,
   callback = NULL, objective = NULL, progress_label = NULL,
-  progress_budget = FALSE, pin = NULL, carried = NULL) {
+  progress_budget = FALSE, pin = NULL, carried = NULL, inverse = NULL) {
   spec <- structure(model_spec, class = c("ctJuliaModel", "ctFitModel"))
   # A caller may hand in the objective to maximise. `intoverstates=FALSE` does,
   # passing the joint one over `[theta; z]`; everything below is unchanged by
@@ -4988,8 +5008,10 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
     # A certificate without the Hessian for the doors that need no standard
     # errors (conjugate gradients on Hessian-vector products, plan P8) was
     # considered and not built, because those doors form no Hessian to save:
-    # folds and profile points pass `certify = FALSE`, which zeroes `gap_tol`
-    # and with it the finish; `estonly` forms none on the Laplace route and on
+    # profile points pass `certify = FALSE`, which zeroes `gap_tol` and with it
+    # the finish, and ctLOO's folds set a gap rule of their own, start L-BFGS
+    # from the fit's covariance and leave the finish off (`.ctBackendLOOFold()`);
+    # `estonly` forms none on the Laplace route and on
     # the augmented only the finish's exact ones, which its Newton steps need
     # (optimiser bench at juliaFit 908b068d, dev1: no Hessian in any Laplace
     # estonly cell). Restarts form one each, as the finish's metric; they are
@@ -5005,6 +5027,14 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
     precondition = if (identical(optimcontrol$precondition, FALSE)) NULL else
       .ctJuliaVector(.ctJuliaParameterScale(model_spec,
         at = as.numeric(start), npar = length(as.numeric(start)))),
+    # A curvature the caller already holds near `start`, as L-BFGS's initial
+    # inverse Hessian (`_ctsem_lbfgs`'s `inverse`): a fit's covariance, for a
+    # refit to part of its data (ctLOO's folds).
+    lbfgs_inverse = if (!is.null(inverse)) {
+      inverse <- as.matrix(inverse)
+      storage.mode(inverse) <- "double"
+      inverse
+    },
     # The line search's first step, in the metric's own norm (see
     # `_ctsem_lbfgs` in optimiser.jl). Guards against a first step landing deep
     # inside a flat transform before any curvature has been learned -- a full

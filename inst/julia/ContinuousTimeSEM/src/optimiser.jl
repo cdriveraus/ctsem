@@ -91,11 +91,12 @@ _ctsem_lbfgs_reset!(M::CTSEMLBFGSMemory) =
 # diagonal (all ones for no metric). With no pairs, returns `h0 * D^-1 q`.
 # `diagonal`, when given, is the initial inverse Hessian itself, one scale per
 # coordinate (`_ctsem_lbfgs_diagonal!`), in place of the metric's shape times
-# the latest pair's one secant ratio.
+# the latest pair's one secant ratio; or a whole matrix the caller supplied
+# (`_ctsem_lbfgs`'s `inverse`), taken as it is, with or without pairs.
 function _ctsem_lbfgs_hmul(M::CTSEMLBFGSMemory, q::AbstractVector, h0::Float64,
         dinv::Vector{Float64}, diagonal=nothing)
     k = length(M.S)
-    k == 0 && return h0 .* dinv .* q
+    k == 0 && return diagonal isa AbstractMatrix ? diagonal * q : h0 .* dinv .* q
     r = collect(Float64, q)
     a = Vector{Float64}(undef, k)
     @inbounds for i in k:-1:1
@@ -106,6 +107,8 @@ function _ctsem_lbfgs_hmul(M::CTSEMLBFGSMemory, q::AbstractVector, h0::Float64,
         y = M.Y[k]
         gamma = dot(M.S[k], y) / sum(i -> y[i]^2 * dinv[i], eachindex(y))
         r .= gamma .* dinv .* r
+    elseif diagonal isa AbstractMatrix
+        r = diagonal * r
     else
         r .= diagonal .* r
     end
@@ -196,13 +199,23 @@ directional derivative `g's` of each step taken, which is what
 
 `batch`, when given, is a `CTSEMBatch` whose `fg!` and `scores` replace the
 full-data ones while it is smaller than the data; see `_ctsem_batch_step!`.
+
+`inverse`, when given, is the initial inverse Hessian, a whole matrix: the
+curvature a caller already holds near `x0`, as a fit's covariance is for a
+refit to slightly different data. The pairs correct it as they would the
+learned diagonal, which it replaces (`diagonal` is then ignored). From an
+inverse that is close, the first step is nearly the Newton step and what each
+step predicts it gains is nearly what is left, which is what the gap rule reads
+(`_ctsem_predicted_gain`); learned from the pairs alone, that prediction was a
+hundredth of what was left on a 433-parameter model.
 """
 function _ctsem_lbfgs(fg!, x0::AbstractVector; memory::Integer=20,
         metric=nothing, initial_alpha::Real=0.1, maxiter::Integer=1000,
         g_tol::Real=1e-8, f_tol::Real=0.0, x_tol::Real=0.0,
         callback=nothing, directional=nothing, batch=nothing,
         c1::Real=1e-4, maxbacktrack::Integer=40, iteration0::Integer=0,
-        diagonal::Bool=false, nonmonotone::Real=0.0, gll::Integer=0)
+        diagonal::Bool=false, nonmonotone::Real=0.0, gll::Integer=0,
+        inverse::Union{Nothing,Matrix{Float64}}=nothing)
     n = length(x0)
     x = collect(Float64, x0)
     dinv = metric === nothing ? ones(n) : begin
@@ -244,7 +257,8 @@ function _ctsem_lbfgs(fg!, x0::AbstractVector; memory::Integer=20,
     # below the recent level, which lets a step cross a curved valley that a
     # monotone search would cut short. `eta = 0` makes `C` the last value: the
     # search is then exactly the monotone Armijo one.
-    B = nothing; Dinv = nothing
+    B = nothing; Dinv = inverse
+    learn = diagonal && inverse === nothing
     eta = clamp(Float64(nonmonotone), 0.0, 1.0)
     C = f; Q = 1.0; recent = [f]
     # `gll`: Grippo, Lampariello & Lucidi's (1986) rule instead -- a step is
@@ -267,7 +281,7 @@ function _ctsem_lbfgs(fg!, x0::AbstractVector; memory::Integer=20,
             # Not a descent direction: the memory has gone bad. Start it again.
             isempty(M.S) && (lsfail = true; break)
             _ctsem_lbfgs_reset!(M); h0 = Float64(initial_alpha) / max(metric_norm(G), eps())
-            B = nothing; Dinv = nothing; C = f; Q = 1.0; recent = [f]
+            B = nothing; Dinv = inverse; C = f; Q = 1.0; recent = [f]
             continue
         end
         # The first trial carries the gradient too: most steps are accepted
@@ -314,7 +328,7 @@ function _ctsem_lbfgs(fg!, x0::AbstractVector; memory::Integer=20,
                 retried = true
                 _ctsem_lbfgs_reset!(M)
                 h0 = Float64(initial_alpha) / max(metric_norm(G), eps())
-                B = nothing; Dinv = nothing; C = f; Q = 1.0; recent = [f]
+                B = nothing; Dinv = inverse; C = f; Q = 1.0; recent = [f]
                 continue
             end
             lsfail = true
@@ -327,7 +341,7 @@ function _ctsem_lbfgs(fg!, x0::AbstractVector; memory::Integer=20,
         fconv = abs(fn - f) <= f_tol * abs(fn)
         xconv = maximum(abs, step; init=0.0) <= x_tol
         dG = Gn .- G
-        if _ctsem_lbfgs_push!(M, step, dG) && diagonal
+        if _ctsem_lbfgs_push!(M, step, dG) && learn
             B = _ctsem_lbfgs_diagonal!(B, step, dG, dinv)
             Dinv = 1 ./ B
         end

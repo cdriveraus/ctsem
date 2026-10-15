@@ -75,6 +75,23 @@ test_that("ctLOO runs on a julia fit and reports the same structure as Stan's", 
   # exercise, and it is only true if the held-out rows were genuinely withheld
   # from the refit rather than merely re-scored afterwards.
   expect_lt(out$outsampleLogLik, out$insampleLogLik)
+
+  # Each fold says how it was reached, and leaves nothing in the session's
+  # objective cache: its training objective leaves when the fold ends. Other
+  # folds (a different seed) would otherwise add three more, each holding the
+  # workspaces it grew for the rest of the session.
+  expect_identical(nrow(out$foldoptim), 3L)
+  expect_true(all(out$foldoptim$method == "refit"))
+  expect_true(all(out$foldoptim$iterations >= 0L & out$foldoptim$gradients >= 1L))
+  # These folds converge by the folds' own stopping rule, so the warning for
+  # folds that do not stays quiet.
+  expect_true(all(out$foldoptim$converged))
+  cached <- function() length(ls(.ct_julia_cache$objectives))
+  n <- cached()
+  set.seed(5)
+  other <- suppressMessages(ctLOO(fit, folds = 3, cores = 1))
+  expect_false(identical(other$foldrows, out$foldrows))
+  expect_identical(cached(), n)
   expect_false(out$processes)
 
   # The same folds in worker processes (`parallelFolds`) give the same answer:
@@ -93,6 +110,31 @@ test_that("ctLOO runs on a julia fit and reports the same structure as Stan's", 
     tolerance = 1e-6)
 })
 
+test_that("a fold's refit takes the fit's covariance as its curvature", {
+  skip_without_julia()
+  # A fold forms no Hessian of its own: L-BFGS starts from the fit's
+  # covariance as its inverse Hessian, and the Newton finish is off. The
+  # optimiser is mocked, and what is checked is what each fold asks of it;
+  # test-julia-loo-approx.R refits folds this way against converged refits.
+  fit <- .loo_fit()
+  npar <- length(fit$estimate$raw)
+  fit$estimate$cov <- diag(0.5, npar)
+  seen <- list()
+  local_mocked_bindings(.ctJuliaOptimise = function(model_spec, start,
+      optimcontrol = list(), ..., inverse = NULL) {
+    seen[[length(seen) + 1L]] <<- list(newton = optimcontrol$newton,
+      inverse = inverse)
+    list(minimizer = start, iterations = 0L, g_calls = 1L, converged = TRUE)
+  })
+  set.seed(4)
+  suppressMessages(ctLOO(fit, folds = 2, cores = 1))
+  expect_length(seen, 2L)
+  for (x in seen) {
+    expect_false(x$newton)
+    expect_equal(x$inverse, diag(0.5, npar))
+  }
+})
+
 test_that("without refitting, the out-of-sample likelihoods are the in-sample ones", {
   skip_without_julia()
   # The sharpest available check on the bookkeeping: with `refit=FALSE` every
@@ -108,6 +150,8 @@ test_that("without refitting, the out-of-sample likelihoods are the in-sample on
   outsample <- as.numeric(out$outsampleLogLikRow)
   observed <- !is.na(insample)
   expect_equal(outsample[observed], insample[observed])
+  # Nothing was optimised, so there is no record of how.
+  expect_null(out$foldoptim)
 
   # Each fold reports every row, as the Stan path does: here all of them at
   # the estimate.

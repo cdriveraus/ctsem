@@ -172,7 +172,12 @@
 #'   \code{foldpars}, \code{insampleLogLikRow}, \code{LogLikRowFolds},
 #'   \code{outsampleLogLikRow}, \code{insampleLogLik}, \code{outsampleLogLik}
 #'   and entropy and standard deviation summaries, and \code{processes},
-#'   whether the folds ran in worker processes. On a julia fit with
+#'   whether the folds ran in worker processes. When a julia fit's folds are
+#'   refit, \code{foldoptim} has a row per fold: \code{method} (\code{'refit'}
+#'   or \code{'step'}), and for a refit the optimiser's \code{iterations},
+#'   \code{gradients}, \code{converged}, \code{gain} (what it was predicted
+#'   still to gain, in log likelihood, when it stopped) and \code{seconds}; a
+#'   warning counts the refits that stopped without converging. With
 #'   \code{casewiseApproximation}, \code{foldinfluence} and
 #'   \code{foldstepped} give each fold's influence and whether it was stepped
 #'   rather than refit. \code{scoring} is added
@@ -731,6 +736,19 @@ ctLOO <- function(fit, folds = 10, cores = getOption("mc.cores", 2L), parallelFo
   # does not get; an augmented fit's folds get the same caveat and this is the
   # only place a user reads it.
   foldstepped <- vapply(folded[usable], function(x) isTRUE(x$stepped), logical(1L))
+  # How each refit fold was reached: refit (with the optimiser's iterations,
+  # gradients, verdict, remaining gain and time) or stepped.
+  if (isTRUE(refit)) {
+    out$foldoptim <- do.call(rbind, lapply(folded[usable], function(x)
+      as.data.frame(x$optim, stringsAsFactors = FALSE)))
+    unfinished <- sum(out$foldoptim$method == "refit" &
+      !out$foldoptim$converged, na.rm = TRUE)
+    if (unfinished) {
+      warning(unfinished, " of ", nrow(out$foldoptim), " folds' refits ",
+        "stopped without converging, so their out-of-sample values may be ",
+        "off; see foldoptim.", call. = FALSE)
+    }
+  }
   if (stepping) {
     out$foldinfluence <- vapply(folded[usable], function(x)
       as.numeric(x$influence)[1L], numeric(1L))
@@ -820,8 +838,19 @@ ctLOO <- function(fit, folds = 10, cores = getOption("mc.cores", 2L), parallelFo
     if (is.null(trainingfit)) trainingfit <<- .ctFitReplaceData(fit, training)
     trainingfit
   }
+  # No later call sees this fold's training data, so its objectives leave the
+  # cache with the fold (`.ctJuliaForgetObjective()`), and a collection lets
+  # R release their proxies now rather than whenever it next collects.
+  on.exit(if (!is.null(trainingfit)) {
+    .ctJuliaForgetObjective(trainingfit)
+    trainingfit <- NULL
+    invisible(gc(verbose = FALSE))
+  }, add = TRUE)
   influence <- NA_real_
   stepped <- FALSE
+  optim <- list(method = if (isTRUE(refit)) "refit" else "none",
+    iterations = NA_integer_, gradients = NA_integer_, converged = NA,
+    gain = NA_real_, seconds = NA_real_)
   if (isTRUE(refit)) {
     start <- est
     removed <- .ctLOOFoldScore(ctx, heldout,
@@ -835,6 +864,7 @@ ctLOO <- function(fit, folds = 10, cores = getOption("mc.cores", 2L), parallelFo
       influence < ctx$casewiseBar
     if (stepped) {
       pars <- start
+      optim$method <- "step"
     } else {
       # `tol` means the same thing here as it does on the stan branch above
       # and as `optimcontrol$tol` does in ctFit(): the objective tolerance.
@@ -863,16 +893,45 @@ ctLOO <- function(fit, folds = 10, cores = getOption("mc.cores", 2L), parallelFo
       # `saem` and `stochastic` off for the same kind of reason: both are
       # phases for a stage that starts away from the optimum, and a fold
       # starts at the full fit's estimate.
+      #
+      # The fold's curvature is the fit's: L-BFGS starts from the fit's
+      # covariance as its inverse Hessian (`inverse`), and the Newton finish,
+      # which would form a Hessian of the fold's own, is off. Removing a fold
+      # changes the curvature by about its share of the data, and the pairs
+      # correct that. Without it each fold paid for curvature twice over: on
+      # the filter route a gap rule starts the finish, and on a 433-parameter
+      # model its three exact Hessians took 21 of a fold's 25 minutes; with
+      # the finish off and no starting curvature, L-BFGS's own prediction of
+      # the remaining gain was a hundredth of the truth, and the fold stopped
+      # 0.15 short in held-out log likelihood after 281 gradients. A fit
+      # without a covariance (`estonly`) has no curvature to lend, and its
+      # folds learn theirs from the pairs alone.
+      began <- proc.time()[["elapsed"]]
       result <- try(.ctJuliaOptimise(trainingFit()$model_spec, start,
         optimcontrol = utils::modifyList(
           as.list(fit$args$resolved$optimcontrol),
           c(if (!is.null(tol)) list(tol = tol),
             list(certify = FALSE, saem = FALSE, stochastic = FALSE,
-              innergaptol = .ctLOOFoldGain))),
-        cores = cores),
+              innergaptol = .ctLOOFoldGain, newton = FALSE))),
+        cores = cores, inverse = covariance),
         silent = TRUE)
       if (inherits(result, "try-error")) return(NULL)
       pars <- as.numeric(result$minimizer)
+      optim$iterations <- as.integer(.ctJuliaOr(result$iterations, NA))[1L]
+      optim$gradients <- as.integer(.ctJuliaOr(result$g_calls, NA))[1L]
+      # The engine's `converged` judges against the fit's own tolerance, which
+      # a fold is not asked to meet; a fold has converged when it stopped by
+      # its own rule, judged as the engine judges the fit's: not stalled, not
+      # overshot, and a predicted or last gain within `gap_tol`.
+      gain <- as.numeric(.ctJuliaOr(result$predicted_gain, NA))[1L]
+      last <- as.numeric(.ctJuliaOr(result$last_gain, NA))[1L]
+      bar <- as.numeric(.ctJuliaOr(result$gap_tol, .ctLOOFoldGain))[1L]
+      optim$converged <- isTRUE(result$converged) ||
+        (!isTRUE(result$stalled) && !isTRUE(result$overshot) &&
+          isTRUE(is.finite(as.numeric(result$gradient_norm)[1L])) &&
+          any(c(gain, last) <= bar, na.rm = TRUE))
+      optim$gain <- gain
+      optim$seconds <- proc.time()[["elapsed"]] - began
     }
   }
   # Every row scored against the *full* data, so the held-out rows have a
@@ -895,7 +954,7 @@ ctLOO <- function(fit, folds = 10, cores = getOption("mc.cores", 2L), parallelFo
   out <- list(llrow = if (deferred || rowless) rep(NA_real_, length(rowsubject)) else
     if (!isTRUE(refit) && is.null(modesFrom)) ctx$insample else
     .ctBackendRowLoglik(fit, pars, modesFrom = modesFrom), pars = pars,
-    influence = influence, stepped = stepped, deferred = deferred)
+    influence = influence, stepped = stepped, deferred = deferred, optim = optim)
   if (subjectlevel) {
     # The held-out units' marginals, and no other unit's: nothing reads them.
     held <- unique(rowsubject[heldout])

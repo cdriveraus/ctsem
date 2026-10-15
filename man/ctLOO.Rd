@@ -81,7 +81,12 @@ For \code{method = 'kfold'}, a list with \code{foldrows},
   \code{foldpars}, \code{insampleLogLikRow}, \code{LogLikRowFolds},
   \code{outsampleLogLikRow}, \code{insampleLogLik}, \code{outsampleLogLik}
   and entropy and standard deviation summaries, and \code{processes},
-  whether the folds ran in worker processes. On a julia fit with
+  whether the folds ran in worker processes. When a julia fit's folds are
+  refit, \code{foldoptim} has a row per fold: \code{method} (\code{'refit'}
+  or \code{'step'}), and for a refit the optimiser's \code{iterations},
+  \code{gradients}, \code{converged}, \code{gain} (what it was predicted
+  still to gain, in log likelihood, when it stopped) and \code{seconds}; a
+  warning counts the refits that stopped without converging. With
   \code{casewiseApproximation}, \code{foldinfluence} and
   \code{foldstepped} give each fold's influence and whether it was stepped
   rather than refit. \code{scoring} is added
