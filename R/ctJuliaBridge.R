@@ -83,6 +83,11 @@
     }
     .ctJuliaSettle(wire)
   }
+  # A process that died between calls -- killed while idle -- is found here,
+  # before anything is sent, and is replaced by the call after this one as it
+  # always was; only a death once a call is under way holds off a new session
+  # (`.ctJuliaLost()`). One poll of the socket, which returns at once.
+  .ctJuliaCheckAlive()
   .ctJuliaEnsureStarted(wire)
   result <- .ctJuliaExchange(wire, name, args)
   .ctJuliaReleaseRefs(wire)
@@ -473,8 +478,9 @@
 # had just exhausted the machine. A 17,687-subject fit was killed at 82 GB on
 # a shared box three times over that way, taking memory from whatever else ran
 # there each time. A task callback clears the record when the top-level call
-# ends, so running it again starts afresh. A session found dead between calls
-# (`.ctJuliaCheckAlive()`) is not recorded: nothing was running in it.
+# ends, so running it again starts afresh. A session found dead before a call
+# is sent (`.ctJuliaCheckAlive()`, in `.ctJuliaCall()`) is not recorded:
+# nothing was running in it.
 .ctJuliaLost <- function(name) {
   .ctJuliaForgetSession()
   if (requireNamespace("JuliaConnectoR", quietly = TRUE)) {
