@@ -3285,6 +3285,15 @@ through the origin and, for a unit no wider than `_LAPLACE_PROBE_MAXDIM`, from
 points along that mode's soft directions, keeping the mode with the largest
 Laplace term (`_laplace_probe_modes`).
 
+A solve that `ctsem_set_warm_start!` started from a retained mode is not
+probed. Those warm starts are the differencing schemes' (the Hessian's
+columns, the continuation's Hessian): their base point was solved from the
+origin and probed, and every differenced point belongs in the basin the base
+chose, since the derivative there is that mode's. A probe can only cost time
+or, switching basin between a column's two points, difference across the
+jump. On the Fisher example's final model (11 effects a person) the probes
+made each gradient 1.6 times slower.
+
 `g_U` is a log likelihood minus a quadratic, so its curvature is negative
 definite near the mode and Newton is the right method; away from the mode, and
 for a nonlinear process model, it need not be. Two guards, both visible in the
@@ -3315,6 +3324,7 @@ function _laplace_solve_unit_mode!(laplace::CTSEMLaplaceObjective, U::Integer,
     started_warm = any(!iszero, retained)
     warm = _laplace_newton_unit_mode(laplace, U, values, Ls, aws, retained)
     best = warm
+    fromwarm = started_warm
     # The start is the origin, and that is not a detail of the iteration: it is
     # what makes the value a function of theta.
     #
@@ -3353,9 +3363,11 @@ function _laplace_solve_unit_mode!(laplace::CTSEMLaplaceObjective, U::Integer,
         if cold.converged || (isfinite(cold.value) &&
                 (!isfinite(best.value) || cold.value > best.value))
             best = cold
+            fromwarm = false
         end
     end
-    if _LAPLACE_MODE_PROBES[] && best.converged && d > 0
+    if _LAPLACE_MODE_PROBES[] && best.converged && d > 0 &&
+            !(fromwarm && _LAPLACE_WARM_START[])
         best = _laplace_probe_modes(laplace, U, values, Ls, aws, best)
     end
     laplace.modes[U] = best.u
