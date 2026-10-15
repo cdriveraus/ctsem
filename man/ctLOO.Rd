@@ -150,7 +150,7 @@ row fold, or a subject inside a group -- the difference between its score on
 the full and on the training data, at one gradient of the training objective
 per fold. The prior stays, as it does in a refit. This is the one-step
 (infinitesimal jackknife) approximation to the refit; its error grows faster
-than the step. A fold's influence \code{s' cov s} measures the step in
+than the step. A fold's influence \code{t(s) \%*\% cov \%*\% s} measures the step in
 posterior standard deviations squared, and a number given as
 \code{casewiseApproximation} refits exactly every fold whose influence is at
 or above it, so the approximation is used only where the step is short.
@@ -186,9 +186,13 @@ that moves the estimate. Two levels:
   posterior it describes, so it is not done for a fit sampled jointly over
   parameters and random effects (\code{intoverpop = 'none'}), whose unit
   terms are Laplace approximations to the sampled marginal. When the normal
-  approximation itself misses the posterior (\code{proposal_k} above 0.7)
-  every unit's estimate is unreliable, and a warning says to sample the fit
-  and use its draws instead.
+  approximation itself misses the posterior (\code{proposal_k}, printed,
+  above 0.7) every unit's estimate is unreliable, and a warning says to
+  sample the fit and use its draws instead. No warning is not proof the
+  approximation is good: k is estimated too low from few draws, so a value
+  approaching 0.7, or a posterior you expect to be skewed (an outlying
+  subject, a variance near zero), is worth rerunning with more
+  \code{nsamples} or on a sampled fit.
   \item \code{subjectwise = FALSE}, on an optimized
   \code{intoverpop = 'laplace'} fit only: leave one row out, conditional on the
   estimated population parameters and integrating over each unit's random

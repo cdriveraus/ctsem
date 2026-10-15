@@ -98,6 +98,7 @@
 "test-ctPar.R","spec","core"
 "test-ctStanModel-matrices.R","spec","core"
 "test-duplication-ratchet.R","spec","core"
+"test-rd-parse.R","spec","core"
 "test-fixed-value-spec.R","spec","core"
 "test-intervalise.R","spec","core"
 "test-julia-fit-shape.R","spec","core"
