@@ -15,6 +15,7 @@ ctScoreTest(
   order = 2L,
   variance = c("robust", "model"),
   nboot = 1999L,
+  exact = 5L,
   cores = getOption("mc.cores", 2L),
   verbose = TRUE
 )
@@ -55,6 +56,14 @@ section on variance.}
 
 \item{nboot}{Bootstrap resamples for the robust p-values.}
 
+\item{exact}{For \code{statedependence}, \code{volatility} and
+\code{fixed} with the robust variance: how many of each family's terms
+have the fit's estimation removed exactly, which takes two evaluations of
+the extended model per term. Every term is first tested on its scores
+without that correction, which is conservative, and the strongest
+\code{exact} by that test are then corrected (\code{projected} in the
+tables). \code{Inf} corrects every term.}
+
 \item{cores}{Engine cores for the evaluations.}
 
 \item{verbose}{Report progress.}
@@ -74,7 +83,8 @@ An object of class \code{ctScoreTest}: a list with
   \code{joint}, per ordering), and \code{info} (the
   route, the number of subjects and parameters, the variance used, and
   \code{errors}, why any family was not tested). Tables carry \code{class}
-  where relaxations are alike.
+  where relaxations are alike, and the extended families' \code{projected},
+  whether a term's estimation was removed exactly (see \code{exact}).
 }
 \description{
 Tests, from one fitted model and without refitting it, whether the model

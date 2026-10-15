@@ -251,6 +251,13 @@
 #' @param variance \code{'robust'} (the default) or \code{'model'}; see the
 #'   section on variance.
 #' @param nboot Bootstrap resamples for the robust p-values.
+#' @param exact For \code{statedependence}, \code{volatility} and
+#'   \code{fixed} with the robust variance: how many of each family's terms
+#'   have the fit's estimation removed exactly, which takes two evaluations of
+#'   the extended model per term. Every term is first tested on its scores
+#'   without that correction, which is conservative, and the strongest
+#'   \code{exact} by that test are then corrected (\code{projected} in the
+#'   tables). \code{Inf} corrects every term.
 #' @param cores Engine cores for the evaluations.
 #' @param verbose Report progress.
 #' @return An object of class \code{ctScoreTest}: a list with
@@ -267,7 +274,8 @@
 #'   \code{joint}, per ordering), and \code{info} (the
 #'   route, the number of subjects and parameters, the variance used, and
 #'   \code{errors}, why any family was not tested). Tables carry \code{class}
-#'   where relaxations are alike.
+#'   where relaxations are alike, and the extended families' \code{projected},
+#'   whether a term's estimation was removed exactly (see \code{exact}).
 #' @references Boos, D. D. (1992). On generalized score tests. The American
 #'   Statistician, 46, 327-333.
 #'
@@ -309,7 +317,7 @@ ctScoreTest <- function(fit, covariates = NULL,
   tests = c('heterogeneity', 'covariates', 'statedependence', 'volatility', 'fixed',
     'instability'),
   form = c('auto', 'linear', 'spline', 'factor', 'threshold'), df = 3, parameters = NULL,
-  order = 2L, variance = c('robust', 'model'), nboot = 1999L,
+  order = 2L, variance = c('robust', 'model'), nboot = 1999L, exact = 5L,
   cores = getOption('mc.cores', 2L),
   verbose = TRUE) {
   if (!.ctFitIsJulia(fit)) stop("ctScoreTest() needs a fit from ",
@@ -341,6 +349,8 @@ ctScoreTest <- function(fit, covariates = NULL,
   form <- if (missing(form)) 'auto' else match.arg(form, several.ok = TRUE)
   say <- function(...) if (isTRUE(verbose)) message(...)
   variance <- match.arg(variance)
+  if (!is.numeric(exact) || length(exact) != 1L || is.na(exact) || exact < 0)
+    stop("exact is a number of terms, 0 or more (Inf for every term).", call. = FALSE)
   if (variance == 'robust' && .ctFitNsubjects(fit) < 20L) {
     say("Fewer than 20 subjects: using the model-based variance.")
     variance <- 'model'
@@ -429,7 +439,7 @@ ctScoreTest <- function(fit, covariates = NULL,
     say("Preparing the model extended at zero (", paste(extended, collapse = ', '), ")")
     information <- if (!is.null(pieces)) -pieces$Hsum else NULL
     ext <- .ctScoreExtended(fit, est, extended, information, order = order,
-      variance = variance, nboot = nboot, cores = cores)
+      variance = variance, nboot = nboot, cores = cores, exact = exact)
     out$statedependence <- ext$statedependence
     out$volatility <- ext$volatility
     out$fixed <- ext$fixed
@@ -1368,7 +1378,7 @@ ctScoreTest <- function(fit, covariates = NULL,
 # fitted parameters are the contributions. One model for both families, so
 # one compile of the extended shape.
 .ctScoreExtended <- function(fit, est, families, information = NULL, order = 2L,
-  variance = 'robust', nboot = 1999L, cores = 2L) {
+  variance = 'robust', nboot = 1999L, cores = 2L, exact = Inf) {
   spec <- fit$model_spec
   base <- .ctFitBaseModel(fit)
   if (is.null(base)) stop("This fit does not carry the model it was built from, ",
@@ -1431,36 +1441,66 @@ ctScoreTest <- function(fit, covariates = NULL,
   delta <- match(names_new, nm2)
   module <- .ctJuliaModule(spec$project)
   objective <- .ctJuliaObjective(spec2, hybrid = TRUE)
-  Hc <- .ctBackendWithMaxChunks(cores, as.matrix(.ctBackendJuliaValue(
-    module$ctsem_hessian_columns(objective, .ctJuliaNumericVector(as.numeric(x2)),
-      .ctJuliaVector(as.integer(delta))))))
-  if (priored) Hc[cbind(delta, seq_along(delta))] <- Hc[cbind(delta, seq_along(delta))] + 1
+  robust <- variance == 'robust'
+  units <- if (robust) as.matrix(.ctBackendWithMaxChunks(cores, .ctJuliaGet(
+    module$ctsem_subject_gradients(objective, .ctJuliaVector(as.numeric(x2)))))$scores) else
+    NULL
+  # Which terms are projected exactly. The projection needs the Hessian's
+  # column along each term, two evaluations of the extended model apiece, and
+  # those are what these families cost: 84 state-dependence terms on a
+  # six-latent model took 17 minutes, where every term's score, one per unit,
+  # is a single gradient pass. So with the robust variance each family's terms
+  # are first ranked on their unprojected scores and only the strongest
+  # `exact` projected. An unprojected statistic is the same sum (the fitted
+  # parameters' scores sum to zero at the estimate) over a variance that the
+  # projection, under the model, can only reduce: conservative, and it ranks
+  # the terms the projection then sharpens. The model variance needs every
+  # column.
+  family <- rep(c('statedependence', 'volatility', 'fixed'),
+    c(length(state$terms$name), length(vol$terms$name), length(fixed$terms$name)))
+  chosen <- seq_along(delta)
+  if (robust && length(delta) && is.finite(exact)) {
+    raw <- units[, delta, drop = FALSE]
+    spread <- colSums(sweep(raw, 2, colMeans(raw))^2) * nrow(raw) / (nrow(raw) - 1)
+    lm0 <- ifelse(spread > 0, grad[delta]^2 / spread, 0)
+    chosen <- sort(unlist(lapply(split(seq_along(delta), family), function(i)
+      i[order(-lm0[i])][seq_len(min(exact, length(i)))]), use.names = FALSE))
+  }
   if (is.null(information)) information <- -.ctBackendHessian(fit, est)
   Iinv <- .ctScorePinv(information)$inv
-  Idt <- -t(Hc[theta, , drop = FALSE])
-  Idd <- -Hc[delta, , drop = FALSE]
-  Idd <- (Idd + t(Idd)) / 2
-  A <- Idt %*% Iinv
+  A <- matrix(0, length(delta), length(theta))
+  vm <- rep(NA_real_, length(delta))
+  Vmodel <- NULL
+  if (length(chosen)) {
+    Hc <- .ctBackendWithMaxChunks(cores, as.matrix(.ctBackendJuliaValue(
+      module$ctsem_hessian_columns(objective, .ctJuliaNumericVector(as.numeric(x2)),
+        .ctJuliaVector(as.integer(delta[chosen]))))))
+    if (priored) Hc[cbind(delta[chosen], seq_along(chosen))] <-
+      Hc[cbind(delta[chosen], seq_along(chosen))] + 1
+    Idt <- -t(Hc[theta, , drop = FALSE])
+    Idd <- -Hc[delta[chosen], , drop = FALSE]
+    Idd <- (Idd + t(Idd)) / 2
+    A[chosen, ] <- Idt %*% Iinv
+    Vmodel <- Idd - A[chosen, , drop = FALSE] %*% t(Idt)
+    Vmodel <- (Vmodel + t(Vmodel)) / 2
+    vm[chosen] <- diag(Vmodel)
+  }
   Ustar <- grad[delta] - as.numeric(A %*% grad[theta])
-  Vmodel <- Idd - A %*% t(Idt)
-  Vmodel <- (Vmodel + t(Vmodel)) / 2
   V <- Vmodel
   Cstar <- NULL
-  if (variance == 'robust') {
-    units <- .ctBackendWithMaxChunks(cores, .ctJuliaGet(module$ctsem_subject_gradients(
-      objective, .ctJuliaVector(as.numeric(x2)))))
-    units <- as.matrix(units$scores)
+  if (robust) {
     Cstar <- units[, delta, drop = FALSE] - units[, theta, drop = FALSE] %*% t(A)
     V <- .ctScoreSpread(Cstar)
   }
   v <- diag(V)
-  vm <- diag(Vmodel)
   per <- data.frame(LM = ifelse(v > 0, Ustar^2 / v, NA_real_),
     # One term at a time, the fitted parameters free: the expected parameter
     # change. NA where the fitted model's curvature cannot size it -- a strong
-    # departure can leave the projected information indefinite.
-    estimate = ifelse(vm > 0, Ustar / vm, NA_real_),
-    se = ifelse(vm > 0, sqrt(pmax(v, 0)) / vm, NA_real_))
+    # departure can leave the projected information indefinite -- and for a
+    # term not projected.
+    estimate = ifelse(!is.na(vm) & vm > 0, Ustar / vm, NA_real_),
+    se = ifelse(!is.na(vm) & vm > 0, sqrt(pmax(v, 0)) / vm, NA_real_),
+    projected = seq_along(delta) %in% chosen)
   per$p <- stats::pchisq(per$LM, 1, lower.tail = FALSE)
   jointtest <- function(idx, label) {
     j <- .ctScorePinv(V[idx, idx, drop = FALSE])
@@ -1480,7 +1520,7 @@ ctScoreTest <- function(fit, covariates = NULL,
         terms$by, ifelse(is.na(terms$other), '', paste0(', or DRIFT[',
           latent[terms$i], ',', latent[pmax(1L, terms$other)], '] with ',
           latent[terms$k]))),
-      per[idx, c('LM', 'p', 'estimate', 'se')], stringsAsFactors = FALSE)
+      per[idx, c('LM', 'p', 'estimate', 'se', 'projected')], stringsAsFactors = FALSE)
     table$p_adj <- .ctScoreBH(table$p)
     if (!is.null(Cstar)) table$class <- .ctScoreClasses(Cstar[, idx, drop = FALSE])
     table$i <- terms$i; table$k <- terms$k
@@ -1497,8 +1537,8 @@ ctScoreTest <- function(fit, covariates = NULL,
     idx <- length(state$terms$name) + seq_len(nrow(vol$terms))
     terms <- vol$terms
     table <- data.frame(term = paste0('sd(', terms$equation, ') x exp(v * ', terms$by, ')'),
-      equation = terms$equation, by = terms$by, per[idx, c('LM', 'p', 'estimate', 'se')],
-      stringsAsFactors = FALSE)
+      equation = terms$equation, by = terms$by,
+      per[idx, c('LM', 'p', 'estimate', 'se', 'projected')], stringsAsFactors = FALSE)
     table$p_adj <- .ctScoreBH(table$p)
     if (!is.null(Cstar)) table$class <- .ctScoreClasses(Cstar[, idx, drop = FALSE])
     table$i <- terms$i; table$m <- terms$m
@@ -1512,7 +1552,7 @@ ctScoreTest <- function(fit, covariates = NULL,
     idx <- length(state$terms$name) + length(vol$terms$name) + seq_len(nrow(fixed$terms))
     terms <- fixed$terms
     table <- data.frame(cell = terms$cell, matrix = terms$matrix, row = terms$row,
-      col = terms$col, per[idx, c('LM', 'p', 'estimate', 'se')],
+      col = terms$col, per[idx, c('LM', 'p', 'estimate', 'se', 'projected')],
       suggested = terms$suggested, transform = terms$transform, stringsAsFactors = FALSE)
     table$p_adj <- .ctScoreBH(table$p)
     if (!is.null(Cstar)) table$class <- .ctScoreClasses(Cstar[, idx, drop = FALSE])
