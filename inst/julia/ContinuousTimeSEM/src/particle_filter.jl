@@ -279,13 +279,14 @@ function _ctsem_particle_subject!(sub, sp, x::Vector{Float64}, N::Int, nsubsteps
     # an augmented state has its spread in RAWPOPVAR, and built from T0VAR alone
     # every particle started that coordinate at the population mean. A
     # stationary model runs the predict group first, as the filter does.
-    if sp.stationary
+    if sp.stationary || _stationary_elements_on(sp.stationary_elements)
         copyto!(ws.state, pars.T0MEANS)
         apply_complex_transforms_at_indices!(all_params, ws.predict_param_indices,
             sp.predict_transforms, CTSEMRowContext(ws.state, pars,
                 view(tdpreds, :, 1), tipreds, ts[1], zero(T), subject, 1))
     end
-    _ctsem_t0_factor!(factor, ws, pars, all_params, sp.stationary)
+    _ctsem_t0_factor!(factor, ws, pars, all_params, sp.stationary,
+        sp.stationary_elements)
     @inbounds for p in 1:N
         randn!(rng, view(z, 1:n))
         for i in 1:n

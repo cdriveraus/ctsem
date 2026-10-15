@@ -129,6 +129,7 @@ end
 @inline _begin_predict!(::CTSEMKalmanTrace, args...) = nothing
 @inline _record_predict!(::CTSEMKalmanTrace, args...) = nothing
 @inline _record_stationary!(::CTSEMKalmanTrace, args...) = nothing
+@inline _record_stationary_elements!(::CTSEMKalmanTrace, args...) = nothing
 
 ################################################################################
 # Response-scale reporting for non-Gaussian manifest variables

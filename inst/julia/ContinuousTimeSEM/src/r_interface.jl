@@ -410,6 +410,12 @@ column vectors, one entry per model-matrix cell.
   * `stationary` — `true` to start the latent processes from the distribution
     DRIFT, CINT and DIFFUSION settle into, in place of T0MEANS and T0VAR. See
     `_ctsem_stationary!` for what it requires of the model.
+  * `stationary_mean`, `stationary_block`, `stationary_closure` — single
+    initial conditions at their stationary values instead
+    (`CTSEMStationaryElements`), each one entry per latent: whether its
+    T0MEANS cell is marked; the block its marked T0VAR cells belong to, or 0;
+    and whether its moments are needed, the marked latents and every latent
+    that drives them.
   * `compile_transforms` — `true` to compile every state-dependent cell and
     every parameter transform outside the default templates into its own
     closure, as the engine did before transforms were data. The model then
@@ -434,7 +440,8 @@ function ekf_from_columns(matrix, row, col, parnumber, value, transform,
     population_covmatcode::Union{Nothing,Integer}=nothing,
     population_scale=Float64[], affine_dim::Int=0, stationary::Bool=false,
     ti_fixed_value=Float64[], ti_tail_offset::Integer=0, n_tipreds::Integer=0,
-    compile_transforms::Bool=false)
+    compile_transforms::Bool=false, stationary_mean=Int[], stationary_block=Int[],
+    stationary_closure=Int[])
 
     n = length(matrix)
     length(row) == n && length(col) == n ||
@@ -545,7 +552,7 @@ function ekf_from_columns(matrix, row, col, parnumber, value, transform,
         slot === nothing ? (0:-1) : branges[slot]
     end
 
-    return EKFParameters(par_pos, tfs_pos, ptf_pos, utf_pos, ttf_pos,
+    sp = EKFParameters(par_pos, tfs_pos, ptf_pos, utf_pos, ttf_pos,
         reg_tfs, predict_tfs, update_tfs, td_tfs, map_from, layout,
         fixed_positions, fixed_values, Int.(ti_parameter),
         Int.(ti_predictor), Int.(ti_coefficient), Int.(diffusion_state_indices),
@@ -557,6 +564,30 @@ function ekf_from_columns(matrix, row, col, parnumber, value, transform,
             Int(population_covmatcode),
         Float64.(population_scale), affine_dim, stationary,
         Float64.(ti_fixed_value), ti_tail)
+    _ctsem_set_stationary_elements!(sp.stationary_elements, stationary_mean,
+        stationary_block, stationary_closure)
+    return sp
+end
+
+"""
+    _ctsem_set_stationary_elements!(se, mean, block, closure)
+
+Fill `CTSEMStationaryElements` from R's per-latent vectors: nonzero `mean`
+entries mark T0MEANS cells, equal nonzero `block` entries put latents in one
+T0VAR block, nonzero `closure` entries are the latents whose moments are
+needed. Nothing when `closure` is empty.
+"""
+function _ctsem_set_stationary_elements!(se::CTSEMStationaryElements, mean, block,
+        closure)
+    isempty(closure) && return se
+    se.inclosure = Vector{Bool}(closure .!= 0)
+    se.means = findall(!=(0), mean)
+    ids = sort(unique(filter(!=(0), Int.(block))))
+    se.blocks = [findall(==(id), Int.(block)) for id in ids]
+    all(i -> se.inclosure[i], se.means) && all(B -> all(i -> se.inclosure[i], B),
+        se.blocks) || throw(ArgumentError(
+        "every latent with a stationary element must be in the closure"))
+    return se
 end
 
 const _CTSEM_TIPRED_REF = r"\btipreds\s*\[\s*(\d+)\s*\]"

@@ -248,6 +248,10 @@ function ctsem_parameter_matrices(objective::CTSEMObjective, values::AbstractMat
     ntdpred = size(first(objective.subject_objectives).tdpreds, 1)
 
     out = zeros(Float64, layout.size, size(values, 2))
+    # Single stationary elements are placed by the filter's own functions, on
+    # a workspace of the summary's.
+    elements = _stationary_elements_on(sp.stationary_elements) ?
+        _init_continuous_ekf_workspace(Float64, sp) : nothing
     subject_values = Vector{Float64}(undef, size(values, 1))
     # Sentinel-filled for the same reason as the EKF workspace: this path
     # runs all three transform groups, so a cell in none of them and
@@ -265,12 +269,17 @@ function ctsem_parameter_matrices(objective::CTSEMObjective, values::AbstractMat
         # the filter: a DRIFT or CINT cell written by a transform has no value
         # until it has. Those cells read no state, so the placeholder state is
         # harmless.
-        if sp.stationary
+        if sp.stationary || elements !== nothing
             first_state = Vector{Float64}(vec(pars.T0MEANS))
             apply_complex_transforms_at_indices!(getdata(pars), predict_indices,
                 sp.predict_transforms, CTSEMRowContext(first_state, pars,
                     zeros(Float64, ntdpred), ti, Float64(time), Float64(dt), 1, 1))
-            _ctsem_stationary_mean!(pars, sp)
+            if sp.stationary
+                _ctsem_stationary_mean!(pars, sp)
+            elseif !_ctsem_stationary_elements_mean!(pars.T0MEANS, elements, pars,
+                    sp.stationary_elements)
+                pars.T0MEANS[sp.stationary_elements.means] .= NaN
+            end
         end
 
         # `state` names where the real processes are, and nothing else. The
@@ -300,7 +309,7 @@ function ctsem_parameter_matrices(objective::CTSEMObjective, values::AbstractMat
         apply_complex_transforms_at_indices!(getdata(pars), update_indices,
             sp.update_transforms, context)
 
-        _ctsem_pack_matrices!(view(out, :, column), pars, sp, layout)
+        _ctsem_pack_matrices!(view(out, :, column), pars, sp, layout, elements)
     end
     isempty(rows) && return out
     selected = Int.(rows)
@@ -344,7 +353,8 @@ Split out because there are two ways to arrive at a materialized parameter
 vector -- transform it from a raw vector, or take the one a subject's filter
 pass ended with (see `kalman_trace.jl`) -- and only the first half differs.
 """
-function _ctsem_pack_matrices!(column, pars, sp::EKFParameters, layout)
+function _ctsem_pack_matrices!(column, pars, sp::EKFParameters, layout,
+        elements=nothing)
     nall = length(getdata(pars))
     column[1:nall] .= getdata(pars)
 
@@ -383,6 +393,13 @@ function _ctsem_pack_matrices!(column, pars, sp::EKFParameters, layout)
         t0cov[1:naff, :] .= 0.0
         t0cov[:, 1:naff] .= 0.0
         t0cov[dyn, dyn] .= asym_diffusion[dyn, dyn]
+    elseif _stationary_elements_on(sp.stationary_elements)
+        # The marked blocks, by the filter's own congruence. Its workspace is
+        # the caller's when there is one, and otherwise one of this column's.
+        ws = elements === nothing ? _init_continuous_ekf_workspace(Float64, sp) :
+            elements
+        _ctsem_stationary_elements_cov!(t0cov, ws, pars, sp.stationary_elements) ||
+            fill!(t0cov, NaN)
     end
 
     derived = (diffusioncov, manifestcov, t0cov, asym_diffusion, asym_cint)

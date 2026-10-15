@@ -673,13 +673,14 @@ function _ctsem_state_pass!(ws, params::AbstractVector{T}, data::AbstractMatrix,
     # alone silently did. A stationary model runs the predict group first, as
     # the filter does, so the stationary moments read DRIFT, CINT and DIFFUSION
     # at their values; they read no state, so the placeholder one is harmless.
-    if sp.stationary
+    if sp.stationary || _stationary_elements_on(sp.stationary_elements)
         copyto!(ws.state, pars.T0MEANS)
         apply_complex_transforms_at_indices!(all_params, ws.predict_param_indices,
             sp.predict_transforms, CTSEMRowContext(ws.state, pars,
                 view(tdpreds, :, 1), tipreds, timesteps[1], zero(T), subject, 1))
     end
-    _ctsem_t0_factor!(factor, ws, pars, all_params, sp.stationary)
+    _ctsem_t0_factor!(factor, ws, pars, all_params, sp.stationary,
+        sp.stationary_elements)
     at = zoffset
     @inbounds for i in 1:n
         acc = T(pars.T0MEANS[i])

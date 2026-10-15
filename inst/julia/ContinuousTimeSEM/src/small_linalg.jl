@@ -152,6 +152,63 @@ end
 
 """Factorize `A`'s leading `d x d` block *in place* (`_ctsem_cholesky!`) and wrap
 the result: `A` holds the factor afterwards, so copy it first if it is read again."""
+"""
+    _ctsem_right_solve_lower!(Y, L, b)
+
+`Y <- Y L^-1` in place, for `b` by `b` `Y` and lower-triangular `L` with a
+nonzero diagonal: each row by back substitution.
+"""
+function _ctsem_right_solve_lower!(Y, L, b::Int)
+    @inbounds for r in 1:b
+        for j in b:-1:1
+            s = Y[r, j]
+            for p in (j + 1):b
+                s -= Y[r, p] * L[p, j]
+            end
+            Y[r, j] = s / L[j, j]
+        end
+    end
+    return Y
+end
+
+"""
+    _ctsem_right_solve_lower_t!(Y, L, b)
+
+`Y <- Y L^-T` in place, for `b` by `b` `Y` and lower-triangular `L` with a
+nonzero diagonal: each row by forward substitution.
+"""
+function _ctsem_right_solve_lower_t!(Y, L, b::Int)
+    @inbounds for r in 1:b
+        for j in 1:b
+            s = Y[r, j]
+            for p in 1:(j - 1)
+                s -= Y[r, p] * L[j, p]
+            end
+            Y[r, j] = s / L[j, j]
+        end
+    end
+    return Y
+end
+
+"""
+    _ctsem_left_solve_lower_t!(Y, L, b)
+
+`Y <- L^-T Y` in place, for `b` by `b` `Y` and lower-triangular `L` with a
+nonzero diagonal: each column by back substitution.
+"""
+function _ctsem_left_solve_lower_t!(Y, L, b::Int)
+    @inbounds for c in 1:b
+        for i in b:-1:1
+            s = Y[i, c]
+            for p in (i + 1):b
+                s -= L[p, i] * Y[p, c]
+            end
+            Y[i, c] = s / L[i, i]
+        end
+    end
+    return Y
+end
+
 @inline function _ctsem_cholesky(A::AbstractMatrix, d::Integer)
     ok = _ctsem_cholesky!(A, Int(d))
     return CTSEMCholesky(A, Int(d), ok)

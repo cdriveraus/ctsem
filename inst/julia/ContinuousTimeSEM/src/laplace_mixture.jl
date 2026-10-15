@@ -91,6 +91,7 @@ end
 @inline _begin_predict!(::CTSEMMixtureTrace, args...) = nothing
 @inline _record_predict!(::CTSEMMixtureTrace, args...) = nothing
 @inline _record_stationary!(::CTSEMMixtureTrace, args...) = nothing
+@inline _record_stationary_elements!(::CTSEMMixtureTrace, args...) = nothing
 @inline _record_transition!(::CTSEMMixtureTrace, args...) = nothing
 @inline _record_td_transition!(::CTSEMMixtureTrace, args...) = nothing
 

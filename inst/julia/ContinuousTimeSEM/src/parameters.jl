@@ -171,6 +171,35 @@ CTSEMHybrid() = CTSEMHybrid(Int[], Int[], Int[], Float64[], Float64[])
 _hybrid_on(h::CTSEMHybrid) = !isempty(h.manifests)
 
 """
+    CTSEMStationaryElements
+
+Single initial conditions started at their stationary values: T0MEANS cells,
+and blocks of T0VAR cells, that the model names 'stationary'
+(`_ctsem_stationary_elements_mean!`, `_ctsem_stationary_elements_cov!`). Every
+other initial condition is T0MEANS and T0VAR as written. `stationary = TRUE`
+is the whole of both, and the two are not combined.
+
+  * `inclosure` -- per latent, whether its stationary moments are needed: the
+    marked latents and every latent that drives them through DRIFT. The set is
+    shut under driving, so its dynamics are autonomous and its moments exist
+    whatever the latents outside it do.
+  * `means` -- the latents whose T0MEANS cell is marked.
+  * `blocks` -- the latents whose T0VAR cells are marked, grouped: one latent
+    whose diagonal alone is, or several whose cells among themselves all are.
+
+Empty, and off, unless R sent the marks (`ekf_from_columns`).
+"""
+mutable struct CTSEMStationaryElements
+    inclosure::Vector{Bool}
+    means::Vector{Int}
+    blocks::Vector{Vector{Int}}
+end
+CTSEMStationaryElements() = CTSEMStationaryElements(Bool[], Int[], Vector{Int}[])
+_stationary_elements_on(s::CTSEMStationaryElements) = !isempty(s.inclosure)
+# None, for callers that have no model's to pass. Never filled.
+const _CTSEM_NO_STATIONARY_ELEMENTS = CTSEMStationaryElements()
+
+"""
     EKFParameters
 
 Container for parameter metadata used by the continuous-time EKF routines.
@@ -443,6 +472,10 @@ struct EKFParameters{RG,PT,UT,TT,AX,FV}
     # Deviations the filter integrates itself; see `CTSEMHybrid`. Empty unless a
     # Laplace objective filled it. Declared last and supplied last.
     hybrid::CTSEMHybrid
+    # Single initial conditions at their stationary values; see
+    # `CTSEMStationaryElements`. Empty unless R sent the marks. Declared last
+    # and supplied last.
+    stationary_elements::CTSEMStationaryElements
 
     # The constructor ensures that the provided vectors are of the correct types and converts them if necessary.
     function EKFParameters(
@@ -559,6 +592,7 @@ struct EKFParameters{RG,PT,UT,TT,AX,FV}
                 Vector{Float64}(ti_fixed_values),
             ti_tail,
             CTSEMHybrid(),
+            CTSEMStationaryElements(),
         )
     end
 end

@@ -210,13 +210,19 @@ end
 The stationary initial moments, `_ctsem_stationary!`: the drift over the
 leading block of genuine dynamics, the mean it gave, the covariance over the
 diffusion states, and the raw DIFFUSION, which keys the deferred diffusion
-pullback exactly as a prediction's does.
+pullback exactly as a prediction's does. For single stationary elements
+(`_ctsem_stationary_elements_cov!`) also the initial covariance before them,
+and the packed factors and congruence they used; `0` by `0` otherwise.
 """
 mutable struct CTSEMStationaryRecord{T}
     DRIFT::Matrix{T}
     mean::Vector{T}
     X::Matrix{T}
     DIFFUSION::Matrix{T}
+    Pold::Matrix{T}
+    LX::Matrix{T}
+    LP::Matrix{T}
+    M::Matrix{T}
 end
 
 """
@@ -594,6 +600,7 @@ end
 @inline _begin_predict!(::Nothing, args...) = nothing
 @inline _record_predict!(::Nothing, args...) = nothing
 @inline _record_stationary!(::Nothing, args...) = nothing
+@inline _record_stationary_elements!(::Nothing, args...) = nothing
 
 function _record_subject_values!(tape::CTSEMAdjointTape, subject_values)
     resize!(tape.subject_values, length(subject_values))
@@ -648,9 +655,52 @@ function _record_stationary!(tape::CTSEMAdjointTape{T}, ws, pars) where {T}
         record.DIFFUSION = _tape_fill!(record.DIFFUSION, diffusion)
     else
         push!(tape.stationaries, CTSEMStationaryRecord{T}(Matrix{T}(drift),
-            Vector{T}(mean), Matrix{T}(X), Matrix{T}(diffusion)))
+            Vector{T}(mean), Matrix{T}(X), Matrix{T}(diffusion), zeros(T, 0, 0),
+            zeros(T, 0, 0), zeros(T, 0, 0), zeros(T, 0, 0)))
     end
     _tape_push!(tape, :stationary, index)
+    return nothing
+end
+
+"""
+    _record_stationary_elements!(tape, ws, pars)
+
+Record the single stationary elements just after they were placed: the mean
+in `ws.affine_buffer.s`, the covariance in `ws.diffusion_buffer.out`, and the
+initial covariance before them, the factors and the congruence in
+`ws.discretization_buffer`, where `_ctsem_stationary_elements_cov!` left them.
+What a model without means or blocks never computed is recorded and never read.
+"""
+function _record_stationary_elements!(tape::CTSEMAdjointTape{T}, ws, pars) where {T}
+    index = (tape.nstationaries += 1)
+    n = _val(ws.state_dim)
+    naff = _val(ws.affine_buffer.dim)
+    k = length(ws.diffusion_state_indices)
+    buf = ws.discretization_buffer
+    drift = view(pars.DRIFT, 1:naff, 1:naff)
+    mean = view(ws.affine_buffer.s, 1:naff)
+    X = view(ws.diffusion_buffer.out, 1:k, 1:k)
+    diffusion = view(pars.DIFFUSION, 1:n, 1:n)
+    pold = view(buf.input, 1:n, (n + 1):(2n))
+    lx = view(buf.output, 1:n, 1:n)
+    lp = view(buf.output, 1:n, (n + 1):(2n))
+    m = view(buf.scratch, 1:n, 1:n)
+    if index <= length(tape.stationaries)
+        record = tape.stationaries[index]
+        record.DRIFT = _tape_fill!(record.DRIFT, drift)
+        record.mean = _tape_fill!(record.mean, mean)
+        record.X = _tape_fill!(record.X, X)
+        record.DIFFUSION = _tape_fill!(record.DIFFUSION, diffusion)
+        record.Pold = _tape_fill!(record.Pold, pold)
+        record.LX = _tape_fill!(record.LX, lx)
+        record.LP = _tape_fill!(record.LP, lp)
+        record.M = _tape_fill!(record.M, m)
+    else
+        push!(tape.stationaries, CTSEMStationaryRecord{T}(Matrix{T}(drift),
+            Vector{T}(mean), Matrix{T}(X), Matrix{T}(diffusion), Matrix{T}(pold),
+            Matrix{T}(lx), Matrix{T}(lp), Matrix{T}(m)))
+    end
+    _tape_push!(tape, :stationary_elements, index)
     return nothing
 end
 
@@ -1228,6 +1278,194 @@ function _reverse_stationary!(x̄::Vector{T}, P̄::Matrix{T}, θ̄ca,
 end
 
 """
+    _reverse_stationary_elements!(x̄, P̄, θ̄ca, record, dyn, n, aws, se)
+
+Undo `_ctsem_stationary_elements_mean!` and `_ctsem_stationary_elements_cov!`.
+
+  * the mean, `m = -A \\ c` over the closure system (`_ctsem_closure_drift`):
+    `w = A' \\ m̄`, `m̄` the marked latents' cotangents, which end here; then
+    `c̄ -= w` and `Ā -= w m'` within the closure. The decoupled entries are
+    constants.
+  * the covariance, `P = M P₀ M'`, `M` block diagonal with `M_B = Lx Lp⁻¹`:
+    `P̄₀ = M' P̄ M`, `M̄ = (P̄ + P̄') M P₀` on each block, `L̄x = M̄ Lp⁻ᵀ` and
+    `L̄p = -M' L̄x`, then the two Cholesky pullbacks (`_ctsem_chol_pullback!`):
+    `Lp`'s into `P̄₀`, `Lx`'s into the stationary covariance's cotangent,
+    which goes through the Lyapunov pullback as in `_reverse_stationary!`,
+    within the closure.
+"""
+function _reverse_stationary_elements!(x̄::Vector{T}, P̄::Matrix{T}, θ̄ca,
+    record::CTSEMStationaryRecord{T}, dyn::AbstractVector{Int}, n::Int, aws,
+    se::CTSEMStationaryElements) where {T}
+    sc = aws.reverse_scratch
+    naff = aws.affine_dim
+    k = length(dyn)
+    inclosure = se.inclosure
+    θ̄CINT = θ̄ca.CINT
+    θ̄DRIFT = θ̄ca.DRIFT
+
+    if !isempty(se.means)
+        w = _rs(sc.av1, naff)
+        At = _rs(sc.aa1, naff, naff)
+        fill!(w, zero(T))
+        @inbounds for i in se.means
+            w[i] = x̄[i]
+            x̄[i] = zero(T)
+        end
+        @inbounds for j in 1:naff, i in 1:naff
+            At[i, j] = _ctsem_closure_drift(record.DRIFT, inclosure, j, i)
+        end
+        _solve_square_system_generic!(At, w, sc.piv, naff)
+        @inbounds for i in 1:naff
+            _ctsem_in_closure(inclosure, i) || continue
+            θ̄CINT[i] -= w[i]
+            for j in 1:naff
+                _ctsem_in_closure(inclosure, j) || continue
+                θ̄DRIFT[i, j] -= w[i] * record.mean[j]
+            end
+        end
+    end
+    isempty(se.blocks) && return nothing
+
+    Pold = record.Pold
+    M = record.M
+    G = _rs(sc.nn1, n, n)
+    @inbounds for j in 1:n, i in 1:n
+        G[i, j] = P̄[i, j] + P̄[j, i]
+    end
+    # Y = M P₀: the blocks' rows transformed, the rest as they were.
+    Y = _rs(sc.nn2, n, n)
+    @inbounds for j in 1:n, i in 1:n
+        Y[i, j] = Pold[i, j]
+    end
+    o = 0
+    for B in se.blocks
+        b = length(B)
+        r = (o + 1):(o + b)
+        mb = view(M, r, r)
+        @inbounds for j in 1:n, p in 1:b
+            s = zero(T)
+            for q in 1:p
+                s += mb[p, q] * Pold[B[q], j]
+            end
+            Y[B[p], j] = s
+        end
+        o += b
+    end
+    # M̄ on each block, packed as M is: the block's rows of G times its
+    # columns of Y.
+    Mbar = _rs(sc.nn3, n, n)
+    o = 0
+    for B in se.blocks
+        b = length(B)
+        r = (o + 1):(o + b)
+        mbar = view(Mbar, r, r)
+        @inbounds for q in 1:b, p in 1:b
+            s = zero(T)
+            for l in 1:n
+                s += G[B[p], l] * Y[l, B[q]]
+            end
+            mbar[p, q] = s
+        end
+        o += b
+    end
+    # P̄₀ = M' P̄ M: the blocks' rows, then their columns.
+    tmp = _rs(sc.nn4, n, n)
+    o = 0
+    for B in se.blocks
+        b = length(B)
+        r = (o + 1):(o + b)
+        mb = view(M, r, r)
+        @inbounds for j in 1:n, p in 1:b
+            s = zero(T)
+            for q in p:b
+                s += mb[q, p] * P̄[B[q], j]
+            end
+            tmp[p, j] = s
+        end
+        @inbounds for j in 1:n, p in 1:b
+            P̄[B[p], j] = tmp[p, j]
+        end
+        o += b
+    end
+    o = 0
+    for B in se.blocks
+        b = length(B)
+        r = (o + 1):(o + b)
+        mb = view(M, r, r)
+        @inbounds for i in 1:n, p in 1:b
+            s = zero(T)
+            for q in p:b
+                s += P̄[i, B[q]] * mb[q, p]
+            end
+            tmp[p, i] = s
+        end
+        @inbounds for i in 1:n, p in 1:b
+            P̄[i, B[p]] = tmp[p, i]
+        end
+        o += b
+    end
+    # The factors' pullbacks: Lp's into P̄₀, Lx's into the stationary
+    # covariance's cotangent over the diffusion states.
+    X̄ = _rs(sc.kk4, k, k)
+    fill!(X̄, zero(T))
+    o = 0
+    for B in se.blocks
+        b = length(B)
+        r = (o + 1):(o + b)
+        lx = view(record.LX, r, r)
+        lp = view(record.LP, r, r)
+        mb = view(M, r, r)
+        mbar = view(Mbar, r, r)
+        Lxbar = _rs(sc.Abar, b, b)
+        Lpbar = _rs(sc.Pbar_new, b, b)
+        W = _rs(sc.Ps, b, b)
+        Ab = _rs(sc.nn5, b, b)
+        @inbounds for q in 1:b, p in 1:b
+            Lxbar[p, q] = mbar[p, q]
+        end
+        _ctsem_right_solve_lower_t!(Lxbar, lp, b)
+        @inbounds for q in 1:b, p in 1:b
+            s = zero(T)
+            for l in p:b
+                s += mb[l, p] * Lxbar[l, q]
+            end
+            Lpbar[p, q] = -s
+        end
+        _ctsem_chol_pullback!(Ab, lp, Lpbar, b, W)
+        @inbounds for q in 1:b, p in 1:b
+            P̄[B[p], B[q]] += Ab[p, q]
+        end
+        _ctsem_chol_pullback!(Ab, lx, Lxbar, b, W)
+        @inbounds for q in 1:b, p in 1:b
+            pp = findfirst(==(B[p]), dyn)
+            qq = findfirst(==(B[q]), dyn)
+            (pp === nothing || qq === nothing) && continue
+            X̄[pp, qq] += Ab[p, q]
+        end
+        o += b
+    end
+
+    Ad = _rs(sc.kk1, k, k)
+    @inbounds for j in 1:k, i in 1:k
+        Ad[i, j] = _ctsem_closure_drift(record.DRIFT, inclosure, dyn[i], dyn[j])
+    end
+    Ād = sc.kk7
+    Q̄d = sc.kk8
+    _ctsem_lyap_pullback!(Ād, Q̄d, sc.kk9, sc.kk10, Ad, record.X, X̄,
+        aws.lyap_buffer)
+    Qc_bar = _rs(sc.nn5, n, n)
+    fill!(Qc_bar, zero(T))
+    @inbounds for j in 1:k, i in 1:k
+        (_ctsem_in_closure(inclosure, dyn[i]) &&
+            _ctsem_in_closure(inclosure, dyn[j])) || continue
+        θ̄DRIFT[dyn[i], dyn[j]] += Ād[i, j]
+        Qc_bar[dyn[i], dyn[j]] = Q̄d[i, j]
+    end
+    _defer_diffusion!(aws, record.DIFFUSION, Qc_bar, θ̄ca, n)
+    return nothing
+end
+
+"""
 Undo one TD-predictor impulse: `x⁺ = x + TDPREDEFFECT td`, `P⁺ = Jtd P Jtd'`.
 
 Temporaries from `sc` and products by the engine's kernels, as in
@@ -1626,6 +1864,9 @@ function _ctsem_reverse_tape!(tape::CTSEMAdjointTape{T},
             fill!(Θ̄, zero(T))
         elseif kind === :stationary
             _reverse_stationary!(x̄, P̄, θ̄ca, tape.stationaries[index], dyn, n, aws)
+        elseif kind === :stationary_elements
+            _reverse_stationary_elements!(x̄, P̄, θ̄ca, tape.stationaries[index], dyn,
+                n, aws, sp.stationary_elements)
         elseif kind === :init
             θ̄T0M = θ̄ca.T0MEANS
             @inbounds for i in 1:n

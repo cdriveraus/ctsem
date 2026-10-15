@@ -830,15 +830,17 @@ T0VARredundancies <- function(ctm) {
 #' stationary distribution. A latent process whose DRIFT row is fixed at zero
 #' never settles, and is refused.
 #'
-#' To start only some latents there, or only their mean or their variance,
-#' name those T0MEANS cells, or the T0VAR diagonal cells, \code{'stationary'}
-#' in the model (\code{backend='julia'}): the mean becomes \code{-CINT /
-#' DRIFT} and the standard deviation \code{sd / sqrt(-2 DRIFT)}, for the
-#' latent's own DRIFT, CINT and DIFFUSION diagonal, and every other initial
-#' condition stays as written, its covariances with the other states
-#' included. For a latent no other latent drives, whose stationary moments
-#' are its own; one that others drive is refused, its moments being the joint
-#' system's.
+#' To start only some initial conditions there, name those cells
+#' \code{'stationary'} in the model (\code{backend='julia'}); every other
+#' initial condition stays as written. A T0MEANS cell takes its entry of the
+#' stationary mean, asymCINT. A T0VAR diagonal cell gives its latent the
+#' stationary variance, asymDIFFUSION's diagonal, keeping that latent's
+#' T0VAR correlations with the others. A T0VAR off-diagonal cell gives the
+#' pair the stationary covariance, and needs both their variances, and every
+#' covariance among the latents it joins, named too. The stationary moments
+#' are those of the marked latents and every latent that drives them, so a
+#' latent driven by others works, and DRIFT, CINT and DIFFUSION need to be
+#' fixed within each subject only for those.
 #' @param forcerecompile logical. For \code{backend='stan'}, recompiles the
 #' stan model regardless of apparent need (for development). For
 #' \code{backend='julia'}, compiles the model's state-dependent expressions --
@@ -1428,10 +1430,10 @@ ctFit<-function(datalong, model, stanmodeltext=NA, iter=1000, intoverstates=TRUE
   # be stationary in.
   if(!isTRUE(stationary) && !isFALSE(stationary)) stop(
     'stationary must be TRUE or FALSE.', call. = FALSE)
-  # Single elements: a T0MEANS cell or a T0VAR diagonal cell named
-  # 'stationary', rewritten here as the closed form of its stationary moment
-  # (`.ctStationaryElements`). Under stationary = TRUE every T0 cell is
-  # written over below, so there is nothing to rewrite.
+  # Single elements: T0MEANS or T0VAR cells named 'stationary', which the
+  # engine starts at their stationary values (`.ctStationaryElements`). Under
+  # stationary = TRUE every T0 cell is written over below, so there are none.
+  ctm$t0stationary <- NULL
   if(any(ctm$pars$param %in% 'stationary') && !stationary) {
     if(!identical(backend, 'julia')) stop(
       "A 'stationary' T0MEANS or T0VAR cell needs backend = 'julia'.", call. = FALSE)

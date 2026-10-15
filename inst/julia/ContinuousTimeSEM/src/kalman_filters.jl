@@ -959,6 +959,163 @@ function _ctsem_stationary!(P, x, ws, pars)
     return true
 end
 
+@inline _ctsem_in_closure(inclosure::Vector{Bool}, i::Int) =
+    i <= length(inclosure) && @inbounds(inclosure[i])
+
+"""
+    _ctsem_closure_drift(DRIFT, inclosure, i, j)
+
+Entry `(i, j)` of the drift the stationary elements are solved with: DRIFT
+within the closure (`CTSEMStationaryElements`), and every state outside it
+decoupled, with a rate of one and no input. The closure is shut under driving,
+so the system this makes is block diagonal and its closure block is the
+closure's own autonomous system: the moments solved over the whole of it are
+the closure's, whatever the states outside it do -- a random walk, a trait, a
+process that never settles -- where the undecoupled system has none.
+"""
+@inline function _ctsem_closure_drift(DRIFT, inclosure::Vector{Bool}, i::Int, j::Int)
+    (_ctsem_in_closure(inclosure, i) && _ctsem_in_closure(inclosure, j)) &&
+        return @inbounds DRIFT[i, j]
+    return (i == j && !_ctsem_in_closure(inclosure, i)) ? -one(eltype(DRIFT)) :
+        zero(eltype(DRIFT))
+end
+
+"""Entry `(i, j)`, by latent, of a covariance held over the diffusion states
+`dyn`: zero for a latent outside them, which no noise reaches."""
+@inline function _ctsem_dyn_entry(X, dyn, i::Int, j::Int)
+    p = findfirst(==(i), dyn)
+    q = findfirst(==(j), dyn)
+    (p === nothing || q === nothing) && return zero(eltype(X))
+    return @inbounds X[p, q]
+end
+
+"""
+    _ctsem_stationary_elements_mean!(x, ws, pars, se)
+
+The marked T0MEANS cells at their stationary values, asymCINT: `-DRIFT \\ CINT`
+over the closure system (`_ctsem_closure_drift`), written over `x` at the
+marked latents only. The whole solution stays in `ws.affine_buffer.s`, where
+the record reads it. `false` when the closure's drift is singular.
+"""
+function _ctsem_stationary_elements_mean!(x, ws, pars, se::CTSEMStationaryElements)
+    isempty(se.means) && return true
+    ab = ws.affine_buffer
+    naff = _val(ab.dim)
+    inclosure = se.inclosure
+    DRIFT = pars.DRIFT
+    CINT = pars.CINT
+    @inbounds for j in 1:naff, i in 1:naff
+        ab.intermediate[i, j] = _ctsem_closure_drift(DRIFT, inclosure, i, j)
+    end
+    @inbounds for i in 1:naff
+        ab.s[i] = _ctsem_in_closure(inclosure, i) ? -CINT[i] : zero(eltype(ab.s))
+    end
+    _solve_square_system!(ab.intermediate, ab.s, ab.piv, ab.dim)
+    @inbounds for i in se.means
+        isfinite(ab.s[i]) || return false
+    end
+    @inbounds for i in se.means
+        x[i] = ab.s[i]
+    end
+    return true
+end
+
+"""
+    _ctsem_stationary_elements_cov!(P, ws, pars, se)
+
+The marked T0VAR cells at their stationary values, asymDIFFUSION's: each block
+of `se.blocks` has its covariance replaced by the stationary one, solved over
+the closure system as the mean is, through the congruence `P <- M P M'` with
+`M = Lx Lp^-1` on the block's rows, `Lx` and `Lp` the Cholesky factors of the
+stationary block and of `P`'s. The block becomes the stationary one exactly,
+its covariances with every other state are carried along, and `P` stays a
+covariance whatever T0VAR's free cells hold. For a block of one latent this
+scales its row and column, keeping T0VAR's correlations.
+
+Scratch: the diffusion and Lyapunov buffers as `_ctsem_stationary!` uses them,
+and `ws.discretization_buffer`, twice the state dimension square: `input`'s
+leading block for the drift and its right half for `P` as it was, `output` for
+the two factors and `scratch` for `M` and the rows in transit, each packed
+block after block down the diagonal, where the record reads them. `false` when
+the closure's drift is unstable or `P`'s block is not positive definite.
+"""
+function _ctsem_stationary_elements_cov!(P, ws, pars, se::CTSEMStationaryElements)
+    isempty(se.blocks) && return true
+    T = eltype(P)
+    n = _val(ws.state_dim)
+    dyn = ws.diffusion_state_indices
+    k = length(dyn)
+    inclosure = se.inclosure
+    DRIFT = pars.DRIFT
+    ContinuousTimeSEM.sdcovsqrt2cov!(ws.bufferQ, pars.DIFFUSION, ws.covmatcode,
+        ws.state_dim)
+    db = ws.diffusion_buffer
+    buf = ws.discretization_buffer
+    A = view(buf.input, 1:k, 1:k)
+    @inbounds for j in 1:k, i in 1:k
+        A[i, j] = _ctsem_closure_drift(DRIFT, inclosure, dyn[i], dyn[j])
+        db.intermediate[i, j] = (_ctsem_in_closure(inclosure, dyn[i]) &&
+            _ctsem_in_closure(inclosure, dyn[j])) ? ws.bufferQ.out[dyn[i], dyn[j]] :
+            zero(T)
+    end
+    my_lyap!(db.out, A, db.intermediate, ws.lyap_buffer)
+    _ctsem_semidefinite(db.out, db.intermediate, k) || return false
+
+    Pold = view(buf.input, 1:n, (n + 1):(2n))
+    @inbounds for j in 1:n, i in 1:n
+        Pold[i, j] = P[i, j]
+    end
+    LX = view(buf.output, 1:n, 1:n)
+    LP = view(buf.output, 1:n, (n + 1):(2n))
+    M = view(buf.scratch, 1:n, 1:n)
+    rows = view(buf.scratch, 1:n, (n + 1):(2n))
+    o = 0
+    for B in se.blocks
+        b = length(B)
+        r = (o + 1):(o + b)
+        lx = view(LX, r, r)
+        lp = view(LP, r, r)
+        mb = view(M, r, r)
+        @inbounds for q in 1:b, p in 1:b
+            lx[p, q] = _ctsem_dyn_entry(db.out, dyn, B[p], B[q])
+            lp[p, q] = Pold[B[p], B[q]]
+        end
+        _ctsem_lower_chol!(lx, b)
+        _ctsem_lower_chol!(lp, b) || return false
+        @inbounds for q in 1:b, p in 1:b
+            if p < q
+                lx[p, q] = zero(T)
+                lp[p, q] = zero(T)
+            end
+            mb[p, q] = lx[p, q]
+        end
+        _ctsem_right_solve_lower!(mb, lp, b)
+        # The block's rows, then its columns; `M` is lower triangular.
+        @inbounds for j in 1:n, p in 1:b
+            s = zero(T)
+            for q in 1:p
+                s += mb[p, q] * P[B[q], j]
+            end
+            rows[p, j] = s
+        end
+        @inbounds for j in 1:n, p in 1:b
+            P[B[p], j] = rows[p, j]
+        end
+        @inbounds for i in 1:n, p in 1:b
+            s = zero(T)
+            for q in 1:p
+                s += P[i, B[q]] * mb[p, q]
+            end
+            rows[p, i] = s
+        end
+        @inbounds for i in 1:n, p in 1:b
+            P[i, B[p]] = rows[p, i]
+        end
+        o += b
+    end
+    return true
+end
+
 """
     _ctsem_semidefinite(X, scratch, k)
 
@@ -1046,11 +1203,14 @@ semi-definite factorisation a carrier state with no diffusion of its own needs.
 and writes the stationary mean over `pars.T0MEANS`, which is what both callers
 read the initial mean from; the caller runs the predict group first. A system
 with no stationary distribution leaves `dest` NaN, which both callers' density
-turns into an invalid point.
+turns into an invalid point. `elements`, the model's single stationary
+elements (`CTSEMStationaryElements`), are placed the same way when it has any.
 """
 @inline function _ctsem_t0_factor!(dest, ws, pars, all_params,
-        stationary::Bool=false)
-    if isempty(ws.population_indices) && !stationary
+        stationary::Bool=false,
+        elements::CTSEMStationaryElements=_CTSEM_NO_STATIONARY_ELEMENTS)
+    onelements = _stationary_elements_on(elements)
+    if isempty(ws.population_indices) && !stationary && !onelements
         return _ctsem_sdcor_factor!(dest, pars.T0VAR, ws.bufferQ, ws.state_dim)
     end
     n = _val(ws.state_dim)
@@ -1064,6 +1224,11 @@ turns into an invalid point.
         ws.population_range, ws.population_covmatcode, ws.population_scale,
         ws.population_buffer)
     if stationary && !_ctsem_stationary!(dest, pars.T0MEANS, ws, pars)
+        fill!(dest, eltype(dest)(NaN))
+        return dest
+    end
+    if onelements && !(_ctsem_stationary_elements_mean!(pars.T0MEANS, ws, pars,
+            elements) && _ctsem_stationary_elements_cov!(dest, ws, pars, elements))
         fill!(dest, eltype(dest)(NaN))
         return dest
     end
@@ -1165,7 +1330,7 @@ function _extended_kalman_filter_continuous!(
     # reference ctx.dt or ctx.time at all.
     first_context = CTSEMRowContext(ws.state, pars, view(tdpreds, :, 1), tipreds,
         timesteps[1], zero(eltype(params)), Int(subject), 1)
-    if sp.stationary
+    if sp.stationary || _stationary_elements_on(sp.stationary_elements)
         # The predict group once more ahead of the ordinary one, so a DRIFT,
         # CINT or DIFFUSION cell written by a transform holds its value when the
         # stationary moments read it. Those cells read no state (R refuses
@@ -1177,9 +1342,17 @@ function _extended_kalman_filter_continuous!(
         _record_group!(trace, 1, ws.predict_param_indices, all_params, first_context)
         apply_complex_transforms_at_indices!(all_params, ws.predict_param_indices,
             sp.predict_transforms, first_context)
-        _ctsem_stationary!(ws.P_predict.data, ws.state, ws, pars) ||
-            return _invalid_ekf_loglikelihood(ws)
-        _record_stationary!(trace, ws, pars)
+        if sp.stationary
+            _ctsem_stationary!(ws.P_predict.data, ws.state, ws, pars) ||
+                return _invalid_ekf_loglikelihood(ws)
+            _record_stationary!(trace, ws, pars)
+        else
+            se = sp.stationary_elements
+            (_ctsem_stationary_elements_mean!(ws.state, ws, pars, se) &&
+                _ctsem_stationary_elements_cov!(ws.P_predict.data, ws, pars, se)) ||
+                return _invalid_ekf_loglikelihood(ws)
+            _record_stationary_elements!(trace, ws, pars)
+        end
     end
     _record_group!(trace, 1, ws.predict_param_indices, all_params, first_context)
     apply_complex_transforms_at_indices!(all_params, ws.predict_param_indices, sp.predict_transforms, first_context)

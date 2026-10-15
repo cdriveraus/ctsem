@@ -149,15 +149,17 @@ those matrices are allowed with \code{intoverpop='laplace'}, which
 stationary distribution. A latent process whose DRIFT row is fixed at zero
 never settles, and is refused.
 
-To start only some latents there, or only their mean or their variance,
-name those T0MEANS cells, or the T0VAR diagonal cells, \code{'stationary'}
-in the model (\code{backend='julia'}): the mean becomes \code{-CINT /
-DRIFT} and the standard deviation \code{sd / sqrt(-2 DRIFT)}, for the
-latent's own DRIFT, CINT and DIFFUSION diagonal, and every other initial
-condition stays as written, its covariances with the other states
-included. For a latent no other latent drives, whose stationary moments
-are its own; one that others drive is refused, its moments being the joint
-system's.}
+To start only some initial conditions there, name those cells
+\code{'stationary'} in the model (\code{backend='julia'}); every other
+initial condition stays as written. A T0MEANS cell takes its entry of the
+stationary mean, asymCINT. A T0VAR diagonal cell gives its latent the
+stationary variance, asymDIFFUSION's diagonal, keeping that latent's
+T0VAR correlations with the others. A T0VAR off-diagonal cell gives the
+pair the stationary covariance, and needs both their variances, and every
+covariance among the latents it joins, named too. The stationary moments
+are those of the marked latents and every latent that drives them, so a
+latent driven by others works, and DRIFT, CINT and DIFFUSION need to be
+fixed within each subject only for those.}
 
 \item{plot}{if TRUE, for sampling, a Shiny program is launched upon fitting to interactively plot samples.
 May struggle with many (e.g., > 5000) parameters. For optimizing, the optimisation trace is plotted --
