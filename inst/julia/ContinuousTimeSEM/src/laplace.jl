@@ -6062,10 +6062,17 @@ function ctsem_laplace_subject_values(laplace::CTSEMLaplaceObjective,
     values::AbstractVector; from_level::Integer=1, ti_effects::Bool=true)
     theta = collect(Float64, values)
     Ls = _laplace_popchols(theta, laplace.spec)
-    shifted = _laplace_shifted_values(laplace, theta, Ls, function (U)
+    # Every unit's mode on the pool, as an evaluation solves them: each writes
+    # only its own `laplace.modes[U]`, and the slot its task holds. Solved one
+    # unit after another, the plug-in Kalman passes an adequacy check makes,
+    # two a parameter, ran on one core -- 28 s each on the Fisher example's
+    # six-latent, 11-effect model, 97 minutes in all.
+    _laplace_parallel(laplace, eachindex(laplace.units.members)) do U
         _laplace_solve_unit_mode!(laplace, U, theta, Ls)
-        return _laplace_restrict_levels(laplace, U, laplace.modes[U], from_level)
-    end)
+        return true
+    end
+    shifted = _laplace_shifted_values(laplace, theta, Ls, U ->
+        _laplace_restrict_levels(laplace, U, laplace.modes[U], from_level))
     # Deviations the subject filter integrates (`CTSEMHybrid`), at their
     # conditional modes given each subject's whole record and its effects'
     # modes: the subject level's own, so only where that level is kept.

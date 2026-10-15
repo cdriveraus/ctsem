@@ -289,7 +289,7 @@ ctFitAdequacy <- function(fit, covariates = NULL,
     # only for the families that read them: the effect distribution does not.
     neederr <- length(setdiff(c(moments, intersect(families, 'dependence')), 'effects')) > 0
     t0 <- proc.time()[['elapsed']]
-    err <- if (neederr) .ctAdequacyErrors(fit) else NULL
+    err <- if (neederr) .ctAdequacyErrors(fit, cores = cores) else NULL
     setup <- if (neederr) .ctAdequacySetup(err, gaps, periods,
       if ('tvcovariates' %in% moments) .ctAdequacyTVCovariates(fit, err, tvcovariates)) else NULL
     if (!is.null(err$ess) && any(is.finite(err$ess)) && min(err$ess, na.rm = TRUE) < 20)
@@ -313,7 +313,8 @@ ctFitAdequacy <- function(fit, covariates = NULL,
       # projection can difference them all; at the estimate the errors are
       # already in hand.
       momentsAt <- function(x, errx = NULL, sequential = TRUE) {
-        if (is.null(errx) && neederr) errx <- .ctAdequacyErrors(fit, x, sequential = sequential)
+        if (is.null(errx) && neederr) errx <- .ctAdequacyErrors(fit, x, sequential = sequential,
+          cores = cores)
         .ctAdequacyMomentsAll(fit, x, errx, setup, moments, extra, cores)
       }
       mom <- momentsAt(est, err)
@@ -383,7 +384,8 @@ ctFitAdequacy <- function(fit, covariates = NULL,
 # correctly specified model. On the Laplace route
 # the predictions are each unit's from its earlier rows alone (sequential), as
 # the errors must be for their independence over rows to hold.
-.ctAdequacyErrors <- function(fit, raw = NULL, sequential = TRUE) {
+.ctAdequacyErrors <- function(fit, raw = NULL, sequential = TRUE,
+  cores = getOption('mc.cores', 2L)) {
   # Where the delta-method sequential predictions are approximate and the
   # model's exact predictive can be had instead, the latter
   # (.ctAdequacyApproximate).
@@ -400,9 +402,10 @@ ctFitAdequacy <- function(fit, covariates = NULL,
   if (.ctFitIsJulia(fit)) {
     if (is.null(raw)) raw <- .ctFitRawEstimate(fit)
     spec <- .ctBackendSpec(fit)
-    k <- suppressMessages(.ctBackendKalmanRaw(fit, raw, subjectmatrices = FALSE,
+    k <- suppressMessages(.ctBackendWithMaxChunks(cores, .ctBackendKalmanRaw(fit, raw,
+      subjectmatrices = FALSE,
       fields = if (categorical) c('pitlower', 'pitupper') else 'subject',
-      sequential = if (mixture) 'mixture' else sequential, compact = TRUE))
+      sequential = if (mixture) 'mixture' else sequential, compact = TRUE)))
     nrows <- length(spec$times)
     Y <- matrix(t(spec$manifest_data), nrows, m)
     yp <- matrix(k$y1, nrows, m)
@@ -969,7 +972,17 @@ ctFitAdequacy <- function(fit, covariates = NULL,
   # `auto` finds the first parameter's pair would put the whole over budget --
   # timed there rather than on the base pass, which pays the compile on a
   # session's first call.
-  differences <- function(f) {
+  # `warm`: each point's random-effect modes start from the last point's, as
+  # the Hessian's columns do, rather than from the origin with the probes for
+  # another mode -- every point is within a step of the estimate, in the basin
+  # the estimate's modes chose. For the plug-in passes, which solve every
+  # unit's modes; the mixture passes keep their own starts.
+  differences <- function(f, warm = FALSE) {
+    if (warm && .ctFitIsJulia(fit)) {
+      module <- .ctJuliaModule(fit$model_spec$project)
+      previous <- module$`ctsem_set_warm_start!`(TRUE)
+      on.exit(module$`ctsem_set_warm_start!`(isTRUE(previous)), add = TRUE)
+    }
     G <- matrix(0, ncol(mom$M), p)
     for (k in seq_len(p)) {
       started <- proc.time()[['elapsed']]
@@ -990,7 +1003,7 @@ ctFitAdequacy <- function(fit, covariates = NULL,
   }
   if (is.null(Gamma) && !is.null(plugin) && (method == 'plugin' ||
       (method == 'auto' && stored))) {
-    Gamma <- differences(plugin); used <- 'plugin'
+    Gamma <- differences(plugin, warm = TRUE); used <- 'plugin'
   }
   # Where the random effects reach the dynamics or the variances, the
   # row-level statistics are left unprojected, however Gamma was had, and the

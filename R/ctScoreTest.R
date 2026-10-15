@@ -1093,7 +1093,7 @@ ctScoreTest <- function(fit, covariates = NULL,
   p <- length(est)
   all <- if (p <= maxall) seq_len(p) else tested
   R <- .ctBackendRowScores(fit, est, diag(p)[, all, drop = FALSE], cores)
-  err <- .ctAdequacyErrors(fit)
+  err <- .ctAdequacyErrors(fit, cores = cores)
   okrow <- apply(is.finite(R), 1, all)
   R[!okrow, ] <- 0
   Tc <- match(tested, all)
