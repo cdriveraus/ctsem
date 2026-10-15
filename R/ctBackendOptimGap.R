@@ -47,9 +47,9 @@
 #
 #   unknown        the curvature could not be decomposed, or the gap is not a
 #                  number, so nothing is claimed either way
-#   notmaximum     the overshoot probe found better, or a direction has genuine
-#                  negative curvature: the point is a saddle whatever the gap
-#                  says
+#   notmaximum     the overshoot probe found better, or a direction has
+#                  negative curvature the saddle ladder found a gain along or
+#                  could not walk: the point is a saddle whatever the gap says
 #   notstationary  a flat direction with a live gradient: stepping along it
 #                  gains likelihood, so this is not a maximum, and the gap
 #                  cannot see it because that direction was excluded
@@ -65,6 +65,18 @@
 # `certified`, and `fit$identifiability` is what names it -- so the old word
 # claimed a verdict this status does not make. A stored fit may still carry it;
 # `.ctBackendCertificationStatus()` reads it as the new one.
+#
+# Negative curvature is measured too. A direction whose curvature is zero by
+# symmetry -- a population loading the data fix the length of and not the
+# direction, among dimensions nothing else informs -- comes out of the Hessian
+# at rounding of either sign, and the bar below calls any of them past -1e-8 of
+# the largest a saddle. On the SNSF pilot that was -0.016 against 1.2e6, a
+# third past the bar, with three twins of the same direction positive; on the
+# same model's full data its twin came out a third inside and certified. So a
+# negative direction the engine's saddle ladder walked on both sides and found
+# no more than the tolerance along (`.ctBackendSaddleFlat()`) is read as the
+# flat direction it was measured to be, and the probe and the identifiability
+# report take it from there; one it could not walk is still a saddle.
 #
 # `notstationary` and `saturated` were one status, and they are not one
 # finding: the first is a fit nobody should use and the second is a fit with a
@@ -196,6 +208,50 @@
   .ctBackendProbeFields(out, length(direction))
 }
 
+# What the saddle ladder measured at the returned point, off an engine result
+# (`newton_saddle_walked`, `newton_saddle_gain`): the negative directions it
+# walked and the most it found along them. NULL when the result has no such
+# record -- an engine from before it, a fake in a test -- which
+# `.ctBackendCertify()` reads as not measured.
+#' @keywords internal
+.ctBackendSaddleFields <- function(r) {
+  walked <- suppressWarnings(as.integer(r[["newton_saddle_walked"]])[1L])
+  if (!length(walked) || is.na(walked)) return(NULL)
+  list(walked = walked,
+    gain = suppressWarnings(as.numeric(r[["newton_saddle_gain"]])[1L]))
+}
+
+# Whether the saddle ladder measured every direction of negative curvature --
+# both sides of each, at its shortest rung at least -- and found no more than
+# `tolerance` along any. `saddle` is `.ctBackendSaddleFields()`'s, or a
+# certification record carrying `saddle_walked` and `saddle_gain`.
+#' @keywords internal
+.ctBackendSaddleFlat <- function(saddle, nnegative, tolerance) {
+  if (!is.list(saddle)) return(FALSE)
+  walked <- suppressWarnings(as.integer(.ctJuliaOr(saddle[["walked"]],
+    saddle[["saddle_walked"]]))[1L])
+  gain <- suppressWarnings(as.numeric(.ctJuliaOr(saddle[["gain"]],
+    saddle[["saddle_gain"]]))[1L])
+  isTRUE(nnegative > 0L) && isTRUE(walked >= nnegative) &&
+    isTRUE(is.finite(gain) && gain <= tolerance)
+}
+
+# The saddle ladder at a point, for a certification R assembles from a Hessian
+# it holds (`ctsem_saddle_probe`): no step, every negative direction walked.
+# NULL when the engine could not, which `.ctBackendCertify()` reads as not
+# measured.
+#' @keywords internal
+.ctBackendSaddleProbe <- function(module, objective, at, hessian, ascent = NULL) {
+  hessian <- as.matrix(hessian)
+  storage.mode(hessian) <- "double"
+  out <- try(.ctJuliaGet(module$ctsem_saddle_probe(objective,
+    .ctJuliaNumericVector(as.numeric(at)), .ctJuliaPut(hessian),
+    ascent = if (is.null(ascent)) NULL else .ctJuliaNumericVector(ascent))),
+    silent = TRUE)
+  if (inherits(out, "try-error")) return(NULL)
+  .ctBackendSaddleFields(out)
+}
+
 # The probe's numbers off an engine result, in the shape `.ctBackendCertify()`
 # reads, or NULL when it did not run. The engine never sends an empty vector --
 # it would hang the bridge -- so `probe_ran` is what says there is a direction.
@@ -275,7 +331,7 @@
 # and the probe, which is what keeps it testable without a fit.
 #' @keywords internal
 .ctBackendCertify <- function(gap, probe = NULL, tolerance = 0.01,
-  saturated = FALSE, overshot = FALSE, parnames = NULL) {
+  saturated = FALSE, overshot = FALSE, parnames = NULL, saddle = NULL) {
   if (is.null(gap) || !isTRUE(gap$ok)) {
     return(list(status = "unknown", certified = FALSE,
       reason = "the curvature at the estimate could not be decomposed"))
@@ -285,9 +341,16 @@
     return(list(status = "notmaximum", certified = FALSE,
       reason = "the optimizer overstepped into a flat region of a transform"))
   }
-  if (isTRUE(gap$nnegative > 0L)) {
+  # Negative curvature the saddle ladder walked and found nothing along is
+  # rounding on a flat direction (see the head of this file); it falls through
+  # to the probe, which covers it, as a flat direction does.
+  if (isTRUE(gap$nnegative > 0L) &&
+      !.ctBackendSaddleFlat(saddle, gap$nnegative, tolerance)) {
+    gain <- if (is.list(saddle)) suppressWarnings(as.numeric(saddle$gain)[1L]) else NA
     return(list(status = "notmaximum", certified = FALSE,
-      reason = paste0(gap$nnegative, " direction",
+      reason = if (isTRUE(gain > tolerance)) paste0("the likelihood rises by ",
+        signif(gain, 2), " along a direction of negative curvature, so this ",
+        "point is not a maximum") else paste0(gap$nnegative, " direction",
         if (gap$nnegative > 1L) "s have" else " has",
         " negative curvature, so this point is not a maximum")))
   }
@@ -571,9 +634,17 @@
   parnames <- try(.ctBackendRawParameterNames(fit, length(gradient)),
     silent = TRUE)
   if (inherits(parnames, "try-error")) parnames <- NULL
+  saddle <- NULL
+  if (isTRUE(gap$nnegative > 0L)) {
+    spec <- .ctBackendSpec(fit)
+    saddle <- .ctBackendSaddleProbe(.ctJuliaModule(spec$project),
+      .ctJuliaObjective(fit, hybrid = TRUE), fit$estimate$raw, hessian,
+      ascent = gradient)
+  }
   .ctBackendCertificationRecord(gap, probe, tolerance = tolerance,
     saturated = isTRUE(fit$optim$saturated),
-    overshot = isTRUE(fit$optim$overshot), parnames = parnames)
+    overshot = isTRUE(fit$optim$overshot), parnames = parnames,
+    saddle = saddle)
 }
 
 # The certification list a fit carries, from the gap and the probe.
@@ -585,9 +656,10 @@
 # a reader of the other: the first attempt at `$verdict` got a NULL that way.
 #' @keywords internal
 .ctBackendCertificationRecord <- function(gap, probe, tolerance = 0.01,
-  saturated = FALSE, overshot = FALSE, parnames = NULL) {
+  saturated = FALSE, overshot = FALSE, parnames = NULL, saddle = NULL) {
   verdict <- .ctBackendCertify(gap, probe, tolerance = tolerance,
-    saturated = saturated, overshot = overshot, parnames = parnames)
+    saturated = saturated, overshot = overshot, parnames = parnames,
+    saddle = saddle)
   out <- list(status = verdict$status, certified = verdict$certified,
     reason = verdict$reason, tolerance = tolerance,
     # The same `$verdict` shape `ctLaplaceCheck()` and `ctParticleLik()` report;
@@ -597,6 +669,10 @@
   c(out, .ctBackendProbeRecord(probe, parnames),
     list(ntrusted = gap$ntrusted, nflat = gap$nflat, nnegative = gap$nnegative,
       lambda_min = gap$lambda_min, negative_vector = gap$negative_vector,
+      # What the saddle ladder measured along the negative directions: how many
+      # it walked and the most it found. 0 and NA when it did not run.
+      saddle_walked = if (is.list(saddle)) saddle$walked else 0L,
+      saddle_gain = if (is.list(saddle)) saddle$gain else NA_real_,
       # The displacement the gap predicts, kept so a caller can try it without
       # decomposing the Hessian again.
       step = gap$step))
@@ -935,7 +1011,8 @@
   distance <- suppressWarnings(as.numeric(result$hessian_distance)[1L])
   list(hessian = hessian, evaluated_at = at,
     distance = if (length(distance) && is.finite(distance)) distance else 0,
-    probe = .ctBackendProbeFields(result, npar), hessians = 0L)
+    probe = .ctBackendProbeFields(result, npar),
+    saddle = .ctBackendSaddleFields(result), hessians = 0L)
 }
 
 # The same numbers at a point the optimiser left without a finish: the engine's
@@ -973,6 +1050,7 @@
   }
   list(hessian = hessian, evaluated_at = est, distance = 0,
     probe = .ctBackendProbeFields(out, npar),
+    saddle = .ctBackendSaddleFields(out),
     hessians = as.integer(.ctJuliaOr(out$newton_hessians, 1L)))
 }
 
@@ -1057,7 +1135,8 @@
       as.numeric(result$gradient)[seq_len(npar)])
     certification <- .ctBackendCertificationRecord(gap, endgame$probe,
       tolerance = tolerance, saturated = isTRUE(result$saturated),
-      overshot = isTRUE(result$overshot), parnames = parnames)
+      overshot = isTRUE(result$overshot), parnames = parnames,
+      saddle = endgame$saddle)
     status <- certification$status
     if (!status %in% c("suboptimal", "notmaximum")) break
     if (attempt > as.integer(maxtries) || is.null(optimise)) break

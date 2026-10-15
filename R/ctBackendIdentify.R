@@ -65,7 +65,7 @@
 #' @keywords internal
 .ctBackendIdentifiability <- function(hessian, parnames = NULL, rtol = 1e-8,
   nullmass = .ctNullMassBar(), fit = NULL, at = NULL, metric = NULL,
-  vectors = FALSE, screen = NULL) {
+  vectors = FALSE, screen = NULL, certification = NULL) {
   empty <- list(nweak = 0L, condition = NA_real_, directions = list(),
     parameters = character())
   # The random-effect information check (`.ctEffectInformation()`) is part of
@@ -175,7 +175,15 @@
     # as negative fired "this is not a maximum" on ordinary fits sitting at
     # their optimum with a gradient of 5e-10, which is how a warning worth
     # reading gets ignored.
-    negative = sum(values < -rtol * scale),
+    #
+    # And not where the certification of this same curvature walked the
+    # negative directions with the saddle ladder and found them flat
+    # (`.ctBackendSaddleFlat()`): those are directions the data do not
+    # determine, counted in `nweak` already, whose curvature came out at
+    # rounding on the negative side.
+    negative = if (.ctBackendSaddleFlat(certification,
+      sum(values < -rtol * scale), .ctJuliaOr(certification[["tolerance"]], 0)))
+      0L else sum(values < -rtol * scale),
     directions = directions,
     parameters = parameters)
   # What the likelihood was asked, when it was: the bar, the ladder and the

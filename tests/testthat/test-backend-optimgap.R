@@ -70,6 +70,44 @@ test_that("negative curvature is counted and reported as not a maximum", {
   expect_match(verdict$reason, "negative curvature")
 })
 
+test_that("negative curvature the saddle ladder measured flat is a flat direction", {
+  # A direction whose curvature is zero by symmetry comes out of the Hessian at
+  # rounding of either sign; on the SNSF pilot it decided between a certified
+  # fit and "not a maximum" by which side. Walked on both sides and found flat,
+  # it is the flat direction it was measured to be, and the probe decides.
+  out <- ctsem:::.ctBackendOptimGap(-diag(c(4, -1e-3)), c(0, 0))
+  expect_equal(out$nnegative, 1L)
+  flat <- list(walked = 1L, gain = 0)
+  expect_equal(ctsem:::.ctBackendCertify(out, probe = list(gain = 0),
+    tolerance = 1e-6, saddle = flat)$status, "certified")
+  expect_equal(ctsem:::.ctBackendCertify(out, probe = list(gain = 0.5),
+    tolerance = 1e-6, saddle = flat)$status, "notstationary")
+  # A gain along it is a saddle, and the reason says what was measured.
+  rising <- ctsem:::.ctBackendCertify(out, probe = list(gain = 0),
+    tolerance = 1e-6, saddle = list(walked = 1L, gain = 0.03))
+  expect_equal(rising$status, "notmaximum")
+  expect_match(rising$reason, "rises by 0.03", fixed = TRUE)
+  # Not walked, or not every negative direction walked: still a saddle.
+  expect_equal(ctsem:::.ctBackendCertify(out, probe = list(gain = 0),
+    tolerance = 1e-6, saddle = list(walked = 0L, gain = 0))$status,
+    "notmaximum")
+  two <- ctsem:::.ctBackendOptimGap(-diag(c(4, -1e-3, -2e-3)), c(0, 0, 0))
+  expect_equal(ctsem:::.ctBackendCertify(two, probe = list(gain = 0),
+    tolerance = 1e-6, saddle = flat)$status, "notmaximum")
+  # The identifiability report on the same curvature counts it as a direction
+  # the data do not determine, not as a saddle.
+  record <- ctsem:::.ctBackendCertificationRecord(out, list(gain = 0),
+    tolerance = 1e-6, saddle = flat)
+  expect_equal(record$saddle_walked, 1L)
+  hessian <- -diag(c(4, -1e-3))
+  measured <- ctsem:::.ctBackendIdentifiability(hessian, c("a", "b"),
+    certification = record)
+  expect_equal(measured$negative, 0L)
+  expect_equal(measured$nweak, 1L)
+  expect_equal(ctsem:::.ctBackendIdentifiability(hessian, c("a", "b"))$negative,
+    1L)
+})
+
 test_that("a small gap with a live flat direction is not certified", {
   # The case the projection alone would certify: nothing to gain where the
   # curvature is trusted, and a whole log likelihood unit available where it
@@ -433,6 +471,24 @@ test_that("a flat direction that still gains stops, and so does a saddle the fin
     tolerance = 1e-6, maxtries = 1L, optimise = once)
   expect_equal(resumed, 1L)
   expect_equal(out$corrections[[1L]]$status, "notmaximum")
+})
+
+test_that("a saddle the finish measured flat is certified, and not resumed", {
+  never <- function(from, carried) stop("resumed")
+  # The finish walked the one negative direction and found nothing along it.
+  rounding <- .fake_result(diag(c(-4, 1e-3)), c(0, 0), value = -100,
+    newton_saddle = TRUE, newton_ladder_tried = TRUE,
+    newton_saddle_walked = 1L, newton_saddle_gain = 0)
+  done <- ctsem:::.ctBackendCorrectResult(rounding, spec = list(), npar = 2L,
+    tolerance = 1e-6, optimise = never)
+  expect_equal(done$certification$status, "certified")
+  expect_equal(done$certification$saddle_walked, 1L)
+  expect_length(done$corrections, 0L)
+  # One it found a gain along and could not take is a saddle.
+  rounding$newton_saddle_gain <- 0.2
+  kept <- ctsem:::.ctBackendCorrectResult(rounding, spec = list(), npar = 2L,
+    tolerance = 1e-6, optimise = never)
+  expect_equal(kept$certification$status, "notmaximum")
 })
 
 test_that("the probe the finish ran is what the certification reads", {

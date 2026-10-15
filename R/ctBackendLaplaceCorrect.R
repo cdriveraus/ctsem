@@ -1202,8 +1202,13 @@ print.ctLaplaceCorrection <- function(x, ...) {
     # eigenbasis, and the probe walked that: three values of the hybrid, a
     # fifteenth of ord4's correction, and a gain of 0 on every converged
     # continuation of the bench (controbust-c2a67356). A negative direction
-    # makes the verdict `notmaximum` whatever a probe finds.
-    if (isTRUE(gap$ok) && isTRUE(gap$nflat > 0L) &&
+    # is walked by the saddle ladder first, and is a saddle unless that found
+    # it flat, when the probe covers it as it does a flat one.
+    saddle <- NULL
+    if (isTRUE(gap$ok) && isTRUE(gap$nnegative > 0L)) {
+      saddle <- .ctBackendSaddleProbe(module, cont, x, hc, ascent = gradient)
+    }
+    if (isTRUE(gap$ok) && isTRUE(gap$nflat > 0L || gap$nnegative > 0L) &&
         isTRUE(gap$residual_norm > 0)) {
       out <- try(get(module$ctsem_flat_probe(cont, .ctJuliaNumericVector(x),
         .ctJuliaNumericVector(gap$residual))), silent = TRUE)
@@ -1216,7 +1221,7 @@ print.ctLaplaceCorrection <- function(x, ...) {
     # met its own stopping rule is not a failure to converge.
     certification <- .ctBackendCertificationRecord(gap, probe, tolerance = run$bar,
       saturated = isTRUE(fit$optim$saturated), overshot = FALSE,
-      parnames = parnames)
+      parnames = parnames, saddle = saddle)
     record$certification <- certification
     record$hessian <- hc
     stages["certification"] <- since(certification_started)
