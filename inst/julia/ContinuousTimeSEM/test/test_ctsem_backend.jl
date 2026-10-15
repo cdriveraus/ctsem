@@ -960,6 +960,74 @@ end
     @test stuck.saddle
     @test stuck.ladder_tried
     @test stuck.x == [0.0, 0.0]
+    # ... and that it measured nothing there, which is not the same as finding
+    # nothing.
+    @test stuck.saddle_walked == 0
+end
+
+@testset "the saddle ladder walks every negative direction, and says which it measured" begin
+    # Two directions of negative curvature by the Hessian given: the more
+    # negative (x) is flat in fact -- quartic, as a direction whose curvature is
+    # zero by symmetry and comes out at rounding of either sign -- and the other
+    # (y) a real saddle. Walking the most negative only found nothing there.
+    split = ContinuousTimeSEM._ctsem_information_split(diagm([-2.0, -1.0, 3.0]))
+    @test count(split.negative) == 2
+    up = p -> -p[1]^4 + p[2]^2 - p[3]^2
+    out = ContinuousTimeSEM._ctsem_saddle_ladder(up, zeros(3), 0.0, split, zeros(3))
+    @test out.best !== nothing
+    @test out.best.point[1] == 0.0
+    @test out.best.point[2] != 0.0
+    @test out.walked == 2
+    # Flat along both: nothing proposed, and both measured.
+    flat = p -> -p[1]^4 - p[2]^4 - p[3]^2
+    none = ContinuousTimeSEM._ctsem_saddle_ladder(flat, zeros(3), 0.0, split,
+        zeros(3); enough = Inf)
+    @test none.best === nothing
+    @test none.walked == 2
+    # A route that refuses every point off the start measured nothing.
+    refused = ContinuousTimeSEM._ctsem_saddle_ladder(
+        p -> all(iszero, p) ? 0.0 : -Inf, zeros(3), 0.0, split, zeros(3))
+    @test refused.best === nothing
+    @test refused.walked == 0
+    # The walk stops after a direction that gains more than `enough`.
+    both = p -> p[1]^2 + p[2]^2 - p[3]^2
+    first = ContinuousTimeSEM._ctsem_saddle_ladder(both, zeros(3), 0.0, split,
+        zeros(3))
+    @test first.walked == 1
+    @test first.best.point[1] != 0.0
+end
+
+@testset "negative curvature that is rounding is measured flat, with or without a step" begin
+    # Maximised: -x^2/2 - y^4/4, a maximum at the origin and flat in y to second
+    # order, with its Hessian given 1e-3 the wrong side of zero in y. The ladder
+    # walks y, finds nothing, and the point comes back with that measurement
+    # for the certification to read.
+    f = p -> -0.5 * p[1]^2 - 0.25 * p[2]^4
+    hm = [-1.0 0.0; 0.0 1e-3]
+    m = _endgame_mock(f; h = p -> hm)
+    out = _endgame_run(m, [0.0, 0.0]; escape_gain = 1e-6)
+    @test out.saddle
+    @test out.ladder_tried
+    @test out.escapes == 0
+    @test out.saddle_walked == 1
+    @test out.saddle_gain == 0.0
+    @test out.x == [0.0, 0.0]
+    # The same numbers without a step, as `ctsem_endgame` takes them.
+    still = _endgame_run(m, [0.0, 0.0]; take_steps = false)
+    @test still.saddle_walked == 1
+    @test still.saddle_gain == 0.0
+    # And from a Hessian R holds.
+    held = ContinuousTimeSEM.ctsem_saddle_probe(m, [0.0, 0.0], hm)
+    @test held.newton_saddle_walked == 1
+    @test held.newton_saddle_gain == 0.0
+    @test ContinuousTimeSEM.ctsem_saddle_probe(m, [0.0, 0.0],
+        [-1.0 0.0; 0.0 -1.0]).newton_saddle_walked == 0
+    # A real saddle measured without a step says what it found, and stays put.
+    real = _endgame_mock(p -> -0.5 * p[1]^2 + 0.5 * p[2]^2 - 0.25 * p[2]^4)
+    there = _endgame_run(real, [0.0, 0.0]; take_steps = false)
+    @test there.saddle_walked == 1
+    @test there.saddle_gain ≈ 0.25
+    @test there.x == [0.0, 0.0]
 end
 
 # A plateau on a curved ridge, as test-julia-convergence.R's random walks have

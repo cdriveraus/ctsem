@@ -6479,7 +6479,8 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
   out$identifiability <- .ctBackendIdentifiability(out$uncertainty$hessian,
     rawnames, fit = out,
     at = .ctJuliaOr(out$uncertainty$evaluated_at, out$estimate$raw),
-    screen = out$uncertainty$details$flatdirections)
+    screen = out$uncertainty$details$flatdirections,
+    certification = out$uncertainty$certification)
   # `$uncertainty$intervalcheck` is attached by `.ctBackendUncertainty()`, so
   # it describes whichever method ran; it is only warned about here. A separate
   # question from identifiability: a direction can be flat enough to ruin every

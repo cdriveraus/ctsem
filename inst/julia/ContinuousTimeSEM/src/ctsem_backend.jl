@@ -2757,11 +2757,15 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
             NaN : finish.distance,
         # The saddle record: whether the final point still has a direction of
         # negative curvature, whether the ladder was tried at it, how many
-        # escapes the ladder made on the way, and what they gained.
+        # escapes the ladder made on the way, and what they gained; and at the
+        # final point, how many negative directions the ladder measured and the
+        # most it found along them, which `.ctBackendCertify()` reads.
         newton_saddle=finish === nothing ? false : finish.saddle,
         newton_ladder_tried=finish === nothing ? false : finish.ladder_tried,
         newton_escapes=finish === nothing ? 0 : finish.escapes,
         newton_escape_gain=finish === nothing ? 0.0 : finish.ladder_gain,
+        newton_saddle_walked=finish === nothing ? 0 : finish.saddle_walked,
+        newton_saddle_gain=finish === nothing ? NaN : finish.saddle_gain,
         # What the directions the final Hessian does not trust are worth, by
         # the route's own predicate: the probe `.ctBackendCertify()` reads.
         # `probe_ran` false and a `[0.0]` direction when there was nothing to
