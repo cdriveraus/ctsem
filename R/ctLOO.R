@@ -29,7 +29,13 @@
 #'   folds whose influence is below it and refits the rest (see Details). Needs an optimized fit with
 #'   a covariance; on a stan fit, subject folds and \code{TRUE} or
 #'   \code{FALSE} only.
-#' @param tol tolerance for optimisation of refitted samples, can generally be more relaxed than the tolerance used for fitting initially.
+#' @param tol objective tolerance for each fold's refit. On a stan fit it
+#'   defaults to 1e-5. On a julia fit a fold by default stops once a step is
+#'   predicted to gain less than 1e-4 in log likelihood, which keeps each
+#'   held-out subject's error to about 0.014 times the square root of its
+#'   influence (see \code{casewiseApproximation}); an objective tolerance
+#'   stops it while the gradient can still be large, and at 1e-5 moved one
+#'   40-subject model's out-of-sample log likelihood by 1 in total.
 #' @param method \code{'kfold'} (the default) refits the model once per fold.
 #'   \code{'psis'} is refit-free Pareto-smoothed importance sampling
 #'   leave-one-out for \code{backend = 'julia'} fits (see Details); it needs
@@ -38,7 +44,10 @@
 #'   \code{casewiseApproximation} mean nothing to it and are refused if given.
 #' @param nsamples Number of importance sampling draws for \code{method =
 #'   'psis'}. A sampled fit's posterior draws are used instead: all of them,
-#'   or thinned to \code{nsamples} when it is given.
+#'   or thinned to \code{nsamples} when it is given. Fewer draws estimate the
+#'   Pareto k of a heavy-tailed correction too low: on one fit with an
+#'   outlying subject the proposal's k read 0.54 at 1000 draws and 0.83 at
+#'   4000.
 #'
 #' @details Works for \code{backend='julia'} fits as well as stan ones. There,
 #' a held-out row is withheld by setting its manifest observations to missing
@@ -180,10 +189,10 @@
 #' \donttest{
 #' ctLOO(ctstantestfit)
 #' }
-ctLOO <- function(fit, folds = 10, cores = getOption("mc.cores", 2L), parallelFolds = FALSE, tol = 1e-5,
+ctLOO <- function(fit, folds = 10, cores = getOption("mc.cores", 2L), parallelFolds = FALSE, tol = NULL,
   subjectwise = ifelse(length(unique(.ctFitRowSubject(fit))) >= folds, TRUE, FALSE),
   keepfirstobs = FALSE, leaveOutN = NA, refit = TRUE, casewiseApproximation = FALSE,
-  method = c("kfold", "psis"), nsamples = 500) {
+  method = c("kfold", "psis"), nsamples = 1000) {
 
   method <- match.arg(method)
   if (identical(method, "psis")) {
@@ -234,6 +243,7 @@ ctLOO <- function(fit, folds = 10, cores = getOption("mc.cores", 2L), parallelFo
 
   if (!'ctStanFit' %in% class(fit) || !length(fit$stanfit$stanfit@sim) == 0) 
     stop('Not an optimized ctStanFit object')
+  if (is.null(tol)) tol <- 1e-5
   
   message('Using ', cores, '/', parallel::detectCores(), ' available CPU cores')
   if(all(is.na(leaveOutN))){
@@ -727,6 +737,10 @@ ctLOO <- function(fit, folds = 10, cores = getOption("mc.cores", 2L), parallelFo
   out
 }
 
+# A refit fold stops once a step is predicted to gain less than this, in log
+# likelihood: see the refit in `.ctBackendLOOFold()`.
+.ctLOOFoldGain <- 1e-4
+
 # `casewiseApproximation` as an influence bar: a fold whose step is shorter is
 # stepped, the rest are refit. TRUE steps every fold, FALSE none.
 .ctLOOCasewiseBar <- function(x) {
@@ -809,6 +823,14 @@ ctLOO <- function(fit, folds = 10, cores = getOption("mc.cores", 2L), parallelFo
       # and as `optimcontrol$tol` does in ctFit(): the objective tolerance.
       # It used to be handed to the engine's gradient criterion instead, so
       # the same argument relaxed two different things depending on backend.
+      # Unless given it is not set. The fold stops instead once a step is
+      # predicted to gain less than 1e-4 (`innergaptol`, in log likelihood):
+      # a remaining gain G moves a held-out unit's term by at most about
+      # sqrt(2 G h), h its influence, so 0.014 sqrt(h). Against converged
+      # refits on a 40-subject random intercept with an outlier, that was
+      # 1e-4 typically and 0.014 at worst, at the cost of the old objective
+      # tolerance of 1e-5 (0.003 and 0.13), where converging took 23 times
+      # as long; on a random-drift model 1e-5 was off by 1 in total.
       #
       # `certify = FALSE` is explicit rather than inherited, because a fold
       # is never certified or corrected after this call (see the comment on
@@ -819,14 +841,17 @@ ctLOO <- function(fit, folds = 10, cores = getOption("mc.cores", 2L), parallelFo
       # `.ctBackendInnerGapTol()`, which aims the optimiser's cheap stopping
       # rule inside the certification tolerance only because something will
       # spend a Hessian closing the rest of the gap; nothing does that for a
-      # fold, so the rule should not assume it.
+      # fold, so the rule is set for the fold's own purpose (above) rather
+      # than inherited.
       # `saem` and `stochastic` off for the same kind of reason: both are
       # phases for a stage that starts away from the optimum, and a fold
       # starts at the full fit's estimate.
       result <- try(.ctJuliaOptimise(trainingFit()$model_spec, start,
         optimcontrol = utils::modifyList(
           as.list(fit$args$resolved$optimcontrol),
-          list(tol = tol, certify = FALSE, saem = FALSE, stochastic = FALSE)),
+          c(if (!is.null(tol)) list(tol = tol),
+            list(certify = FALSE, saem = FALSE, stochastic = FALSE,
+              innergaptol = .ctLOOFoldGain))),
         cores = cores),
         silent = TRUE)
       if (inherits(result, "try-error")) return(NULL)

@@ -9,14 +9,14 @@ ctLOO(
   folds = 10,
   cores = getOption("mc.cores", 2L),
   parallelFolds = FALSE,
-  tol = 1e-05,
+  tol = NULL,
   subjectwise = ifelse(length(unique(.ctFitRowSubject(fit))) >= folds, TRUE, FALSE),
   keepfirstobs = FALSE,
   leaveOutN = NA,
   refit = TRUE,
   casewiseApproximation = FALSE,
   method = c("kfold", "psis"),
-  nsamples = 500
+  nsamples = 1000
 )
 }
 \arguments{
@@ -30,7 +30,13 @@ model is re-fit 10 times, each time to a data set with 1/10 of the observations 
 \item{parallelFolds}{compute folds in parallel or use cores to finish single folds faster.
 parallelFolds will use folds times as much memory.}
 
-\item{tol}{tolerance for optimisation of refitted samples, can generally be more relaxed than the tolerance used for fitting initially.}
+\item{tol}{objective tolerance for each fold's refit. On a stan fit it
+defaults to 1e-5. On a julia fit a fold by default stops once a step is
+predicted to gain less than 1e-4 in log likelihood, which keeps each
+held-out subject's error to about 0.014 times the square root of its
+influence (see \code{casewiseApproximation}); an objective tolerance
+stops it while the gradient can still be large, and at 1e-5 moved one
+40-subject model's out-of-sample log likelihood by 1 in total.}
 
 \item{subjectwise}{drop random subjects instead of data rows? With
 \code{method = 'psis'} this chooses the level instead -- leave one subject
@@ -65,7 +71,10 @@ the \pkg{loo} package. The K-fold arguments \code{folds}, \code{parallelFolds},
 
 \item{nsamples}{Number of importance sampling draws for \code{method =
 'psis'}. A sampled fit's posterior draws are used instead: all of them,
-or thinned to \code{nsamples} when it is given.}
+or thinned to \code{nsamples} when it is given. Fewer draws estimate the
+Pareto k of a heavy-tailed correction too low: on one fit with an
+outlying subject the proposal's k read 0.54 at 1000 draws and 0.83 at
+4000.}
 }
 \value{
 For \code{method = 'kfold'}, a list with \code{foldrows},
