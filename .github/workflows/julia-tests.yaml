@@ -144,8 +144,10 @@ jobs:
             r <- test_dir("tests/testthat", package = "ctsem", load_package = "installed",
                           filter = s$filter, reporter = "summary", stop_on_failure = FALSE)
             d <- as.data.frame(r)
-            # Every test's time: the slowest in the job summary, all of them
-            # kept as an artifact (below), as the engine suite does.
+            # The time of every test: the slowest in the job summary, all of
+            # them kept as an artifact (below), as the engine suite does. No
+            # apostrophe anywhere in this R: it is inside a single-quoted
+            # shell string, and one ends the string.
             times <- d[, c("file", "test", "real")]
             utils::write.csv(times, sprintf("r-test-timings-shard%d.csv", n),
                 row.names = FALSE)
