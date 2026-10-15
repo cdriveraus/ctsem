@@ -34,12 +34,12 @@ log1p_exp(x) = x > 0 ? x + log1p(exp(-x)) : log1p(exp(x))
 
 The logistic function and its inverse.
 
-ctsem writes these out longhand (`1/(1+exp(-x))`) in the transforms it
-generates, so nothing currently needs them -- but the C++ engine's expression
-parser accepts them by name, and the two engines should accept the same
-vocabulary rather than differing over which spellings of the same function work.
+Symbolic Jacobian cells use `inv_logit` for every logistic they differentiate
+(`ctJacobian`, R), so it is written not to overflow: from the side where `exp`
+is at most 1. `1 / (1 + exp(-x))` was right in value everywhere, but below
+x = -709 `exp(-x)` is Inf, and a dual number's partial through it is Inf / Inf.
 """
-inv_logit(x) = 1 / (1 + exp(-x))
+inv_logit(x) = x >= 0 ? inv(1 + exp(-x)) : (e = exp(x); e / (1 + e))
 logit(x) = log(x / (1 - x))
 
 """

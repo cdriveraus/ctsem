@@ -28,16 +28,77 @@ unfoldmats <- function(ml){
   return(ml)
 }
 
-# #replace inverse logit - problematic for complex parameters, now unneeded
-# inv_logit_gsub <- function(x){
-#   try=0
-#   while(try < 20 && any(grepl('\\<inv_logit\\((.*)\\)',x) | grepl('\\blog1p_exp\\((.*)\\)',x))){ 
-#     try <- try + 1
-#     x <- gsub('\\<inv_logit\\((.*)\\)','1/\\(1+exp\\(-\\(\\1\\)\\)\\)',x)
-#     x <- gsub('\\<log1p_exp\\((.*)\\)','log1p\\(exp\\(\\1\\)\\)',x)
-#   }
-#   return(x)
-# }
+# Logistics in the form whose symbolic derivative stays finite.
+#
+# Deriv's quotient rule turns `x / (1 + exp(a))` -- and `inv_logit(a)`, whose
+# body it differentiates when it has no rule for it -- into terms shaped
+# `exp(a) / (1 + exp(a))^2`. Its value is right, 0 once the square overflows
+# at a > 354, but any derivative on `a` then makes the partial Inf / Inf, so the
+# exact Hessian of a model with a steep step in a state (a questionnaire's
+# form change in age) failed, and the fit fell back to differences. So a
+# Jacobian's function has every such quotient written with `inv_logit` before
+# it is differentiated, and `.ctWithStableDerivRules()` differentiates
+# `inv_logit` to a product of two and `log1p_exp` to one: finite at any `a`,
+# given an `inv_logit` that is (the engine's, and Stan's, are). Text with
+# nothing to rewrite is returned as it came, so numbers are not re-deparsed.
+.ctStableLogistic <- function(text) {
+  stripped <- function(e) {
+    while (is.call(e) && identical(e[[1]], as.name("("))) e <- e[[2]]
+    e
+  }
+  # `a` when `d` is `1 + exp(a)` or `exp(a) + 1`, else NULL.
+  exponent <- function(d) {
+    d <- stripped(d)
+    if (!is.call(d) || !identical(d[[1]], as.name("+")) || length(d) != 3L) return(NULL)
+    for (k in 2:3) {
+      one <- d[[5L - k]]
+      e <- stripped(d[[k]])
+      if (is.numeric(one) && identical(as.numeric(one), 1) && is.call(e) &&
+          identical(e[[1]], as.name("exp")) && length(e) == 2L) return(e[[2]])
+    }
+    NULL
+  }
+  changed <- FALSE
+  walk <- function(e) {
+    if (!is.call(e)) return(e)
+    for (i in seq_along(e)[-1L]) e[[i]] <- walk(e[[i]])
+    if (!identical(e[[1]], as.name("/")) || length(e) != 3L) return(e)
+    a <- exponent(e[[3]])
+    if (is.null(a)) return(e)
+    changed <<- TRUE
+    x <- stripped(e[[2]])
+    if (is.call(x) && identical(x[[1]], as.name("exp")) && length(x) == 2L &&
+        identical(x[[2]], a)) return(call("inv_logit", a))
+    step <- call("inv_logit", call("-", call("(", a)))
+    if (is.numeric(x) && identical(as.numeric(x), 1)) return(step)
+    call("*", call("(", e[[2]]), step)
+  }
+  parsed <- walk(str2lang(text))
+  if (!changed) return(text)
+  # Fifteen digits unless a number needs more to come back exactly.
+  written <- function(control) gsub(" ", "", paste(deparse(parsed,
+    width.cutoff = 500L, control = control), collapse = ""), fixed = TRUE)
+  out <- written(c("keepNA", "keepInteger", "niceNames", "showAttributes"))
+  if (identical(str2lang(out), parsed)) out else written("digits17")
+}
+
+# `expr` with Deriv differentiating `inv_logit` and `log1p_exp` by rules that
+# do not overflow (see `.ctStableLogistic()`), rather than through their bodies.
+# Deriv's rule table is its own and other code may use it, so the rules are
+# added for this call and the table put back as it was.
+.ctWithStableDerivRules <- function(expr) {
+  rules <- Deriv::drule
+  added <- c("inv_logit", "log1p_exp")
+  previous <- mget(added, envir = rules, ifnotfound = list(NULL), inherits = FALSE)
+  on.exit(for (name in added) {
+    if (is.null(previous[[name]])) {
+      if (exists(name, envir = rules, inherits = FALSE)) rm(list = name, envir = rules)
+    } else assign(name, previous[[name]], envir = rules)
+  }, add = TRUE)
+  assign("inv_logit", alist(x = inv_logit(x) * inv_logit(-x)), envir = rules)
+  assign("log1p_exp", alist(x = inv_logit(x)), envir = rules)
+  expr
+}
 
 ctJacobian <- function(m,types=c('J0','JAx','Jtd','Jy'),simplify=TRUE ){
   
@@ -56,8 +117,6 @@ ctJacobian <- function(m,types=c('J0','JAx','Jtd','Jy'),simplify=TRUE ){
   #     # m$pars$param[ri] <- gsub('param',m$pars$param[ri],m$pars$transform[ri])
   #   } else if(!grepl('[',m$pars$param[ri],fixed=TRUE) && !is.na(m$pars$param[ri])) m$pars$param[ri] <- paste0(m$pars$matrix[ri],'[',m$pars$row[ri],',',m$pars$col[ri],']')
   # }
-  
-  # m$pars$param <- inv_logit_gsub(m$pars$param) #replace inv_logit with known functions for differentiation
   
   mats <- listOfMatrices(m$pars)
   matnames <- names(.ctMatricesList(unsafe=TRUE)$base)
@@ -138,12 +197,13 @@ ctJacobian <- function(m,types=c('J0','JAx','Jtd','Jy'),simplify=TRUE ){
     fn = gsub("[", "___leftsquarebracket___", fn, fixed = TRUE)
     fn = gsub("]", "___rightsquarebracket___", fn, fixed = TRUE)
     
-    # 3): calculate Jacobian of fn symbolically
-    # J  = jacobianSymb(fn, state)
-    J = sapply(state,function(statei){ #use Deriv package to calculate Jacobian to handle new functions
+    # 3): calculate Jacobian of fn symbolically, with logistics in the form
+    # whose derivative stays finite (`.ctStableLogistic()`).
+    fn = vapply(fn, .ctStableLogistic, character(1))
+    J = .ctWithStableDerivRules(sapply(state,function(statei){ #use Deriv package to calculate Jacobian to handle new functions
         sapply(fn, function(fni){
         Deriv::Deriv(fni, statei,cache.exp = FALSE)
-      })})
+      })}))
     # browser()
     # 4): create Jacobian list in STAN format
     # J = sapply(J,Simplify)
