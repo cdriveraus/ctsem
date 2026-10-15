@@ -29,12 +29,14 @@ variance (the effect carries its scale), correlated with those of the other
 slow processes, including ones added earlier, and not with the fast ones.
 It has no loadings and no intercept, and no individual variation or
 predictor effects. It starts where it has been running long enough to
-forget its start: mean zero, its stationary variance, \code{1 / (2 |a|)}
-for persistence \code{a}, and uncorrelated with the other states. Its
-persistence is declared in \code{PARS}, so that the initial variance can
-read it. Left free, its initial variance and covariances were barely
-identified with 40 people, ran to large raw values, and set off the
-optimiser's overshoot check, which then cost most of every refit.
+forget its start: mean zero and its stationary variance, \code{1 / (2 |a|)}
+for persistence \code{a}, declared in \code{PARS} so that the initial
+variance can read it. Its initial covariance with the latent it drives is
+free -- that latent follows it, so the two start related -- and with the
+other states zero. Left free, the initial mean, variance and every
+covariance were barely identified with 40 people and ran to large raw
+values; fixing the covariance with the driven latent at zero as well cost
+14 log likelihood units on the Fisher data.
 
 The effect has to start away from zero. At zero neither the slow process nor
 its effect has a gradient, so an optimiser started there stays. When
