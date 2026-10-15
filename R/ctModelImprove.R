@@ -264,17 +264,8 @@ ctModelImprove <- function(fit, covariates = NULL,
       proposals <- proposals[!vapply(proposals, `[[`, '', 'key') %in% rejected]
       structural <- TRUE
       if (!length(proposals)) { stopped <- 'not adequate, nothing left to try'; break }
-      tries <- length(proposals)
-      say("Round ", step, ": scoring ", tries, " structural proposal(s)")
-      scored <- .ctImproveScoreStructural(current, proposals, data, covariates, cores)
-      proposals <- scored$proposals
-      for (sk in scored$skipped) {
-        history[[length(history) + 1L]] <- data.frame(round = step, family = sk$family,
-          change = sk$label, screen_p = sk$p, dloglik = NA_real_, dpar = NA_integer_,
-          criterion = NA_real_, kept = FALSE, note = sk$note, stringsAsFactors = FALSE)
-        rejected <- c(rejected, sk$key)
-      }
-      if (!length(proposals)) { stopped <- 'not adequate, no proposal scored'; break }
+      say("Round ", step, ": scoring ", length(proposals), " structural proposal(s)")
+      proposals <- .ctImproveScoreStructural(current, proposals, data, covariates, cores)
     }
     # Ranked by each test's own asymptotic p-value: the bootstrap's floors at
     # 1 / (nboot + 1), and strong signals would tie there. Of relaxations the
@@ -299,7 +290,7 @@ ctModelImprove <- function(fit, covariates = NULL,
       paste(p$family, p$class), '')
     proposals <- proposals[is.na(cls) | !duplicated(cls)]
     if (!structural) proposals <- utils::head(proposals, ntry)
-    level <- alpha / if (structural) tries else length(proposals)
+    level <- alpha / length(proposals)
     tried <- list()
     ok <- logical()
     while (length(proposals)) {
@@ -933,55 +924,48 @@ ctModelImprove <- function(fit, covariates = NULL,
   out
 }
 
-# Structural proposals scored at the current fit, before any is refitted: a
-# score test of each, from the model extended by it at the point where it has
-# no effect. A cycle's clock turns as written, so its couplings into the
-# processes have an ordinary score at zero: their joint robust test, with the
-# estimation removed exactly from the few couplings by the Hessian's columns
-# along them. A process added at no effect -- a slow process uncoupled, a
-# process of an item's own with no variance -- has a zero first derivative
-# there, so its test is of the second, along the proposal's own start (its
-# effect parameters scaled by kappa, the rest at their starts): each unit's
-# log likelihood at kappa = 0.1 against the fit's gives the curvature
-# q_i = 2 (l_i(0.1) - l_i(0)) / 0.01, and the one-sided test is of their sum,
-# the score for kappa^2, on their spread over units (Chesher, 1984). The start
-# itself gives the gain the refit begins with, a lower bound on its likelihood
-# ratio. Proposals are ranked by these p-values; one whose statistic points
-# the wrong way (p >= 0.5) is not refitted. Second order and candidate models
-# have no such point and keep their place. Each test costs a model prepared
-# and a few evaluations, where a refit of the Fisher example's late models
-# took the better part of an hour.
+# Structural proposals ranked at the current fit, before any is refitted, by
+# how much likelihood each gains with nothing else moved. A cycle's clock turns
+# as written, so its couplings into the processes have an ordinary score at
+# zero: their joint robust test, with the estimation removed exactly from the
+# few couplings by the Hessian's columns along them, ranks it by that
+# statistic, about twice the gain a refit would find. A process added at no
+# effect -- a slow process uncoupled, a process of an item's own with no
+# variance -- is moved along its proposal's start, its effect parameters
+# scaled by kappa and the rest at their starts, and its gain is the best log
+# likelihood over a grid of small kappa against the fit's: a lower bound on
+# the refit's, since the refit can only do better. The start itself is no
+# guide -- a slow process at it lost 2500 units on the Fisher data, where its
+# refit gained 51 -- and a gain grows from zero roughly linearly, not as the
+# second derivative a variance component's score test assumes, so neither a
+# single small step nor that test ranks it. Scored proposals are tried first,
+# in order of twice their gain or their statistic; the rest (second order,
+# candidate models) keep their place after them. Each score costs a model
+# prepared and a few evaluations, where a refit of the Fisher example's late
+# models took the better part of an hour.
 .ctImproveScoreStructural <- function(current, proposals, data, covariates, cores) {
-  skipped <- list()
-  if (!.ctFitIsJulia(current)) return(list(proposals = proposals, skipped = skipped))
+  if (!.ctFitIsJulia(current)) return(proposals)
   est <- .ctFitRawEstimate(current)
   nm1 <- as.character(.ctFitRawParNames(current))
   base <- tryCatch(as.numeric(ctJuliaEvaluate(current, est, gradient = FALSE,
     contributions = TRUE, cores = cores)$subject_loglik), error = function(e) NULL)
-  keep <- rep(TRUE, length(proposals))
   for (k in seq_along(proposals)) {
     prop <- proposals[[k]]
     if (!isTRUE(prop$family %in% c('periodic', 'slow', 'unique'))) next
     sc <- tryCatch(.ctImproveStructuralTest(current, prop, data, covariates, cores, est,
       nm1, base), error = function(e) NULL)
-    if (is.null(sc) || !is.finite(sc$p)) next
-    proposals[[k]]$p <- sc$p
-    proposals[[k]]$rank <- sc$p
+    if (is.null(sc) || !is.finite(sc$lr)) next
+    proposals[[k]]$rank <- -max(sc$lr, 0) - 1
     proposals[[k]]$scored <- sc
-    if (sc$p >= 0.5) {
-      keep[k] <- FALSE
-      skipped[[length(skipped) + 1L]] <- list(key = prop$key, family = prop$family,
-        label = prop$label, p = sc$p, note = sprintf(
-          'not refitted: score test p = %.3g%s', sc$p, if (is.finite(sc$gain))
-            sprintf(', gain at its start %.3g', sc$gain) else ''))
-    }
   }
-  list(proposals = proposals[keep], skipped = skipped)
+  proposals
 }
 
-# One structural proposal's score test (`.ctImproveScoreStructural`): its p,
-# the statistic, and for an added process the gain at its start. NULL where
-# the extended model cannot be prepared or does not reproduce the fit.
+# One structural proposal's score (`.ctImproveScoreStructural`): `lr`, the
+# statistic it is ranked by (a cycle's robust score statistic, or twice a
+# process's gain over the kappa grid), with the cycle's p or the process's
+# gain and the kappa it was found at. NULL where the extended model cannot be
+# prepared or does not reproduce the fit.
 .ctImproveStructuralTest <- function(current, prop, data, covariates, cores, est, nm1, base) {
   model <- .ctFitBaseModel(current)
   e <- prop$edit(model, data, covariates)
@@ -1020,7 +1004,8 @@ ctModelImprove <- function(fit, covariates = NULL,
     j <- .ctScorePinv(.ctScoreSpread(C))
     if (!j$rank) return(NULL)
     stat <- as.numeric(t(U) %*% j$inv %*% U)
-    return(list(p = .ctScoreBoot(C, 999L), statistic = stat, df = j$rank, gain = NA_real_))
+    return(list(lr = stat, p = .ctScoreBoot(C, 999L), df = j$rank, gain = NA_real_,
+      kappa = NA_real_))
   }
   # An added process: its effect parameters scaled by kappa along the start.
   start <- prop$start
@@ -1033,27 +1018,27 @@ ctModelImprove <- function(fit, covariates = NULL,
   effect <- cells$matrix %in% c('DIFFUSION', 'T0VAR') |
     (cells$matrix %in% 'DRIFT' & !cells$row %in% newlat & cells$col %in% newlat)
   if (!any(effect)) return(NULL)
+  tr <- as.character(cells$transform)
+  tr[is.na(tr) | !nzchar(tr)] <- 'param'
   at <- function(kappa) {
     x <- x0
     x[names(start)[!effect]] <- start[!effect]
-    for (q in which(effect)) {
-      tr <- as.character(cells$transform[q])
-      if (is.na(tr) || !nzchar(tr)) tr <- 'param'
-      x[names(start)[q]] <- inverse(tr, kappa * value(tr, start[[q]]))
-    }
+    for (q in which(effect)) x[names(start)[q]] <- inverse(tr[q], kappa * value(tr[q], start[[q]]))
     x
   }
-  units <- function(x) as.numeric(ctJuliaEvaluate(sp$spec, x, gradient = FALSE,
-    contributions = TRUE, cores = cores)$subject_loglik)
-  kappa <- 0.1
-  q <- 2 * (units(at(kappa)) - base) / kappa^2
-  if (length(q) != length(base) || any(!is.finite(q))) return(NULL)
-  c2 <- q / 2
-  v <- stats::var(c2) * length(c2)
-  if (!is.finite(v) || v <= 0) return(NULL)
-  z <- sum(c2) / sqrt(v)
-  gain <- tryCatch(sum(units(at(1)) - base), error = function(e) NA_real_)
-  list(p = stats::pnorm(z, lower.tail = FALSE), statistic = z, df = 1L, gain = gain)
+  # Both signs where every effect parameter can take them (a coupling), else
+  # the positive side (a standard deviation).
+  symmetric <- all(vapply(which(effect), function(q) isTRUE(abs(value(tr[q], -1) +
+    value(tr[q], 1)) < 1e-8), logical(1)))
+  grid <- c(0.001, 0.003, 0.01, 0.03, 0.1)
+  if (symmetric) grid <- c(grid, -grid)
+  gains <- vapply(grid, function(kappa) tryCatch(sum(as.numeric(ctJuliaEvaluate(sp$spec,
+    at(kappa), gradient = FALSE, contributions = TRUE, cores = cores)$subject_loglik) - base),
+    error = function(e) NA_real_), 0)
+  if (!any(is.finite(gains))) return(NULL)
+  best <- which.max(gains)
+  list(lr = 2 * gains[best], p = NA_real_, df = NA_integer_, gain = gains[best],
+    kappa = grid[best])
 }
 
 # The adequacy check's evidence for a slow process in latent `name`: the
