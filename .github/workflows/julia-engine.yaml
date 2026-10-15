@@ -29,10 +29,10 @@ concurrency:
 jobs:
   engine-tests:
     runs-on: ubuntu-latest
-    # The suite takes about 22 minutes on a 23-core box, single- or
-    # multi-threaded, so a hosted runner needs room beyond the 6-hour default
-    # only if it is much slower. This cap is a guard against a hang.
-    timeout-minutes: 90
+    # The suite takes about 22 minutes on a 23-core box, and on a hosted
+    # runner about 82 after 8 of setup (2026-10-15; test_laplace.jl alone 46).
+    # This cap is a guard against a hang: at 90 it cut ordinary runs off.
+    timeout-minutes: 150
     steps:
       - uses: actions/checkout@v5
 
