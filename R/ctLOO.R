@@ -1368,6 +1368,14 @@ print.ctLOOpsis <- function(x, ...) {
   refined <- sum(x$pointwise$refined, na.rm = TRUE)
   if (refined) cat(";", refined, "redrawn from the leave-one-out step")
   cat("\n")
+  # How well the normal approximation the draws came from covers the
+  # posterior: NA for a sampled fit, one per unit at the row level.
+  proposal <- suppressWarnings(max(x$proposal_k, na.rm = TRUE))
+  if (is.finite(proposal)) {
+    cat(sprintf("  Pareto k of the normal approximation%s: %.2f%s\n",
+      if (length(x$proposal_k) > 1L) " (largest unit)" else "", proposal,
+      if (proposal > 0.7) ", too high: it misses the posterior's tails" else ""))
+  }
   cat(" ", x$note, "\n")
   invisible(x)
 }
