@@ -1014,16 +1014,20 @@ function ctsem_evaluate_batch_gradient(objective, values::AbstractMatrix)
     return out
 end
 
-export ctsem_subject_loglik_batch
+export ctsem_unit_terms
 
 """
-    ctsem_subject_loglik_batch(objective::CTSEMObjective, values::AbstractMatrix)
+    ctsem_unit_terms(objective::CTSEMObjective, draws::AbstractMatrix)
 
-Every subject's log likelihood, and the objective, at each column of `values`,
-in one bridge call: row 1 the objective (the log posterior the fit maximised),
-row `i + 1` subject `i`'s log likelihood -- its marginal over whatever random
-effects the filter carries as states. A column the model cannot evaluate comes
-back `-Inf` in row 1 and `NaN` below, as `ctsem_evaluate_batch` refuses one.
+Every subject's log likelihood, and the objective, at each column of `draws`,
+in one bridge call: `value` the objective (the log posterior the fit
+maximised), `unit_loglik` (`nsubjects x ndraws`) each subject's log likelihood
+-- its marginal over whatever random effects the filter carries as states --
+`converged` whether the column could be evaluated, and `unit` the unit each
+subject is: itself, since the filter's route has no level above the subject.
+A column the model cannot evaluate comes back `NaN`. The Laplace layer's
+method (laplace_loo.jl) returns the same fields for its units, so a caller
+asks for units' terms without asking which route it holds.
 
 For leave-one-subject-out by Pareto-smoothed importance sampling
 (`ctLOO(method = 'psis')` on the filter's route), which needs exactly these
@@ -1033,29 +1037,34 @@ to take that subject out. One pass per draw, threaded over subjects as the
 objective itself is, where a refit per subject costs a whole optimisation
 each.
 """
-function ctsem_subject_loglik_batch(objective::CTSEMObjective, values::AbstractMatrix)
-    ncol = size(values, 2)
-    ncol >= 1 || throw(ArgumentError("values must have at least one column"))
+function ctsem_unit_terms(objective::CTSEMObjective, draws::AbstractMatrix)
+    ncol = size(draws, 2)
+    ncol >= 1 || throw(ArgumentError("draws must have at least one column"))
     nsubjects = length(objective.subject_objectives)
-    out = fill(NaN, nsubjects + 1, ncol)
+    value = fill(NaN, ncol)
+    terms = fill(NaN, nsubjects, ncol)
+    converged = fill(false, ncol)
     for j in 1:ncol
         _ctsem_interrupt_check()
-        v = Vector{Float64}(view(values, :, j))
-        column = view(out, 2:(nsubjects + 1), j)
+        v = Vector{Float64}(view(draws, :, j))
+        column = view(terms, :, j)
         ok = try
             _ctsem_subject_logliks!(column, objective, v)
-            out[1, j] = sum(column) + _ctsem_log_prior(objective, v)
-            isfinite(out[1, j])
+            value[j] = sum(column) + _ctsem_log_prior(objective, v)
+            isfinite(value[j])
         catch err
             _ctsem_must_propagate(err) && rethrow()
             false
         end
-        if !ok
-            out[1, j] = -Inf
+        if ok
+            converged[j] = true
+        else
+            value[j] = NaN
             column .= NaN
         end
     end
-    return out
+    return (value=value, unit_loglik=terms, converged=converged,
+        unit=collect(1:nsubjects))
 end
 
 """

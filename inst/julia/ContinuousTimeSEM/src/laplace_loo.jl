@@ -5,7 +5,7 @@
 # draws through one bridge call: a round trip costs ~41 ms, and a per-draw loop
 # from R would spend most of its time there.
 #
-#   ctsem_laplace_unit_terms     the Laplace objective at each column of a
+#   ctsem_unit_terms             the Laplace objective at each column of a
 #                                matrix of population parameter draws, with
 #                                each unit's own term -- leave one *unit* out.
 #   ctsem_laplace_effect_draws   draws of each unit's random effects from the
@@ -15,7 +15,7 @@
 #                                conditional on the population parameters.
 
 """
-    ctsem_laplace_unit_terms(laplace, draws; subjects=nothing)
+    ctsem_unit_terms(laplace, draws; subjects=nothing)
 
 The Laplace objective without gradient at every column of `draws`
 (`npar x ndraws`), returning
@@ -36,7 +36,7 @@ same mode solve and term the evaluation uses; `value` is then `NaN` and every
 other unit's term `NaN`, and `converged` covers the scored units. A
 leave-one-subject-out fold reads its held-out subject's unit and nothing else.
 """
-function ctsem_laplace_unit_terms(laplace::CTSEMLaplaceObjective, draws::AbstractMatrix;
+function ctsem_unit_terms(laplace::CTSEMLaplaceObjective, draws::AbstractMatrix;
     subjects=nothing)
     ndraws = size(draws, 2)
     nunits = length(laplace.units.members)
@@ -285,4 +285,4 @@ function _laplace_effect_posterior(laplace::CTSEMLaplaceObjective, U::Integer,
     return (ok=true, mean=mean, cov=cov, items=items)
 end
 
-export ctsem_laplace_unit_terms, ctsem_laplace_effect_draws
+export ctsem_laplace_effect_draws

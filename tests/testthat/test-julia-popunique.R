@@ -518,7 +518,7 @@ test_that("leave-one-out and linearised draws through the hybrid are the layer's
   }
   at <- cbind(x, x + rnorm(length(x), 0, 0.05))
   terms <- lapply(objectives, function(o) ctsem:::.ctBackendJuliaValue(
-    module$ctsem_laplace_unit_terms(o, ctsem:::.ctJuliaPut(at))))
+    module$ctsem_unit_terms(o, ctsem:::.ctJuliaPut(at))))
   expect_equal(as.numeric(terms$hybrid$unit_loglik),
     as.numeric(terms$layer$unit_loglik), tolerance = 1e-8)
   # Subject parameters at parameter draws, each subject's modes linearised

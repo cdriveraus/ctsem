@@ -484,19 +484,22 @@ ctLOO <- function(fit, folds = 10, cores = getOption("mc.cores", 2L), parallelFo
     fields = "llrow")$llrow)
 }
 
-# The Laplace objective at each column of `draws` (`npar x ndraws`), with each
-# unit's own term. A unit is the outermost level of random effect: a subject in
-# a one-level model, a group in a nested one. One bridge call for all columns.
-# `subjects`, when given, scores only the units holding them: no value, and
-# every other unit's term NA.
-.ctBackendLaplaceUnitTerms <- function(spec, draws, subjects = NULL) {
+# Each unit's log likelihood (`unit_loglik`, units x draws) and the log
+# posterior (`value`) at each column of `draws` (`npar x ndraws`), whether each
+# draw could be evaluated, and the unit each subject is in. A unit is the
+# outermost level of random effect: a subject on the filter's route, which has
+# no other, and a subject or group under the Laplace layer. The engine's
+# `ctsem_unit_terms` has a method for each objective, so this does not ask
+# which it holds. One bridge call for all columns. `subjects`, Laplace layer
+# only, scores just the units holding them: no value, every other unit NA.
+.ctBackendUnitTerms <- function(spec, draws, subjects = NULL) {
   draws <- as.matrix(draws)
   storage.mode(draws) <- "double"
   module <- .ctJuliaModule(spec$project)
   arguments <- list(.ctJuliaObjective(.ctBackendAsModel(spec), hybrid = TRUE),
     .ctJuliaPut(draws))
   if (length(subjects)) arguments$subjects <- .ctJuliaVector(as.integer(subjects))
-  res <- .ctBackendJuliaValue(do.call(module$ctsem_laplace_unit_terms, arguments))
+  res <- .ctBackendJuliaValue(do.call(module$ctsem_unit_terms, arguments))
   list(value = as.numeric(res$value),
     unit_loglik = matrix(as.numeric(res$unit_loglik), ncol = ncol(draws)),
     converged = as.logical(res$converged), unit = as.integer(res$unit))
@@ -562,7 +565,7 @@ ctLOO <- function(fit, folds = 10, cores = getOption("mc.cores", 2L), parallelFo
   # from its training rows scores exactly this, so it reads it from here.
   insample <- .ctBackendRowLoglik(fit, est)
   # Each unit's term at the estimate, and the unit each subject is in.
-  fitted <- if (subjectlevel) .ctBackendLaplaceUnitTerms(spec, est) else NULL
+  fitted <- if (subjectlevel) .ctBackendUnitTerms(spec, est) else NULL
 
   # One Newton step from the estimate by the held-out data's score
   # (`.ctLOOFoldScore()`): a fold's answer under casewiseApproximation, below
@@ -592,7 +595,7 @@ ctLOO <- function(fit, folds = 10, cores = getOption("mc.cores", 2L), parallelFo
       scores <- NULL
     } else {
       unitOf <- if (!is.null(fitted)) fitted$unit else if (!is.null(spec$laplace)) {
-        .ctBackendLaplaceUnitTerms(spec, est, subjects = 1L)$unit
+        .ctBackendUnitTerms(spec, est, subjects = 1L)$unit
       } else seq_along(subjects)
     }
   }
@@ -892,8 +895,8 @@ ctLOO <- function(fit, folds = 10, cores = getOption("mc.cores", 2L), parallelFo
   if (subjectlevel) {
     # The held-out units' marginals, and no other unit's: nothing reads them.
     held <- unique(rowsubject[heldout])
-    full <- .ctBackendLaplaceUnitTerms(spec, pars, subjects = held)
-    train <- .ctBackendLaplaceUnitTerms(trainingFit()$model_spec, pars,
+    full <- .ctBackendUnitTerms(spec, pars, subjects = held)
+    train <- .ctBackendUnitTerms(trainingFit()$model_spec, pars,
       subjects = held)
     out$subject <- .ctBackendLOOHeldSubjects(full, train, held)
     out$converged <- isTRUE(all(full$converged)) && isTRUE(all(train$converged))
@@ -1050,26 +1053,6 @@ ctLOO <- function(fit, folds = 10, cores = getOption("mc.cores", 2L), parallelFo
     level = level, note = note)
   class(out) <- "ctLOOpsis"
   out
-}
-
-# Each unit's log likelihood (`unit_loglik`, units x draws) and the log
-# posterior (`value`) at each column of `draws`, whether each draw could be
-# evaluated, and the unit each subject is in: the Laplace layer's units where
-# the random effects are coordinates, the filter's subjects where they are
-# states -- that route has no level above the subject.
-.ctBackendUnitTerms <- function(spec, draws) {
-  if (!is.null(spec$laplace)) return(.ctBackendLaplaceUnitTerms(spec, draws))
-  draws <- as.matrix(draws)
-  storage.mode(draws) <- "double"
-  module <- .ctJuliaModule(spec$project)
-  res <- .ctBackendJuliaValue(module$ctsem_subject_loglik_batch(
-    .ctJuliaObjective(.ctBackendAsModel(spec)), .ctJuliaPut(draws)))
-  res <- matrix(as.numeric(res), ncol = ncol(draws))
-  value <- res[1L, ]
-  ok <- is.finite(value)
-  value[!ok] <- NaN
-  list(value = value, unit_loglik = res[-1L, , drop = FALSE], converged = ok,
-    unit = seq_len(nrow(res) - 1L))
 }
 
 # Normal draws around `centre` with covariance `scale^2 covariance`, and their
