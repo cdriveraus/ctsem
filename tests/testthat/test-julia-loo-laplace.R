@@ -50,7 +50,7 @@
 }
 
 .lool_unit_terms <- function(fit, pars = fit$estimate$raw) {
-  ctsem:::.ctBackendUnitTerms(ctsem:::.ctBackendSpec(fit),
+  ctsem:::.ctBackendLaplaceUnitTerms(ctsem:::.ctBackendSpec(fit),
     matrix(as.numeric(pars), ncol = 1L))
 }
 
@@ -156,7 +156,7 @@ test_that("PSIS leave-one-subject-out matches the exact integral over the popula
   axis <- seq(-9, 9, length.out = 91)
   nodes <- as.matrix(expand.grid(a = axis, b = axis))
   grid <- est + eig$vectors %*% (sqrt(eig$values) * t(nodes))
-  terms <- ctsem:::.ctBackendUnitTerms(ctsem:::.ctBackendSpec(fit), grid)
+  terms <- ctsem:::.ctBackendLaplaceUnitTerms(ctsem:::.ctBackendSpec(fit), grid)
   expect_true(all(is.finite(terms$value)))
   lse <- ctsem:::.ctLogSumExp
   exact <- vapply(seq_len(16), function(i)

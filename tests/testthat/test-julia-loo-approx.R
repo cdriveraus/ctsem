@@ -242,7 +242,7 @@ test_that("casewise inside a group steps by the subject's share of its group's s
     priors = TRUE, verbose = 0)))
   spec <- .ctBackendSpec(fit)
   est <- .ctLaplaceOptimum(fit)
-  units <- .ctBackendUnitTerms(spec, est)
+  units <- .ctBackendLaplaceUnitTerms(spec, est)
   expect_equal(nrow(units$unit_loglik), 6L)
 
   # What leaving subject 3 out removes is its contribution to its study's
@@ -259,8 +259,8 @@ test_that("casewise inside a group steps by the subject's share of its group's s
   removed <- .ctLOOFoldScore(ctx, heldout, training = function() trainfit)
   U <- units$unit[3]
   contribution <- function(p) {
-    .ctBackendUnitTerms(spec, p)$unit_loglik[U, 1] -
-      .ctBackendUnitTerms(trainfit$model_spec, p)$unit_loglik[U, 1]
+    .ctBackendLaplaceUnitTerms(spec, p)$unit_loglik[U, 1] -
+      .ctBackendLaplaceUnitTerms(trainfit$model_spec, p)$unit_loglik[U, 1]
   }
   h <- 1e-4
   fd <- vapply(seq_along(est), function(j) {
