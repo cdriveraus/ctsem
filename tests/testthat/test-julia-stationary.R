@@ -229,6 +229,10 @@ test_that("'stationary' elements are refused where they are not single latents' 
   # An off-diagonal covariance.
   expect_error(prep(.stat_elements(T0VAR = matrix(c("t0aa", "stationary", 0, "t0bb"), 2, 2))),
     "Only T0MEANS cells and the diagonal of T0VAR")
+  # A random initial mean with a stationary variance.
+  random <- .stat_elements(T0MEANS = matrix(c("t0a", "t0b"), 2, 1))
+  random$pars$indvarying[random$pars$param %in% "t0a"] <- TRUE
+  expect_error(prep(random), "Name T0MEANS\\[1\\] 'stationary' too")
   expect_error(suppressMessages(ctFit(dat, .stat_elements(), backend = "stan", fit = FALSE)),
     "needs backend = 'julia'")
 })

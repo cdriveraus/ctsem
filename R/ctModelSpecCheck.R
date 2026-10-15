@@ -282,7 +282,9 @@
   parslabels <- .ctSpecParsLabels(ctspec)
   simplename <- !is.na(ctspec$param) & is.na(ctspec$value) &
     !grepl('\\W', gsub('.', '', ctspec$param, fixed = TRUE))
-  isref <- ctspec$param %in% c(latentNames, TDpredNames) |
+  # 'stationary' marks an initial condition ctFit rewrites
+  # (`.ctStationaryElements`); it names no parameter.
+  isref <- ctspec$param %in% c(latentNames, TDpredNames, 'stationary') |
     (ctspec$param %in% parslabels & !(ctspec$matrix %in% 'PARS'))
   holds <- simplename & !is.na(isref) & !isref
 

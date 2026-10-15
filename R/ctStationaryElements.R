@@ -96,7 +96,8 @@
     if (length(kv) && isTRUE(mark[kv])) {
       if (length(km) && isTRUE(as.logical(p$indvarying[km]))) stop("T0VAR[", i, ",", i,
         "] is 'stationary' while T0MEANS[", i, "] varies over subjects; a random ",
-        "initial mean takes the initial variance its random effect implies.", call. = FALSE)
+        "initial mean takes the initial variance its random effect implies. Name T0MEANS[",
+        i, "] 'stationary' too, or set its indvarying to FALSE.", call. = FALSE)
       sd <- value('DIFFUSION', i, i, 'innovation sd')
       expression(kv, paste0('(', sd, ') / sqrt(-2 * (', drift, '))'))
     }
