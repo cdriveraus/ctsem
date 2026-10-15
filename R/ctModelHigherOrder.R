@@ -194,22 +194,10 @@ ctModelHigherOrder <- function(ctm, indices,diffusion=TRUE, crosseffects=FALSE,c
     k <- at(m, fr, fc)
     if (length(k)) put(m, tr, tc, pars[k, , drop = FALSE]) else fixed(m, tr, tc, 0)
   }
-  # A parameter declared in PARS, for expressions in other cells to read by
-  # name, in the next free PARS row; and a cell holding such an expression (a
-  # calc: its own transform is not applied).
-  declare <- function(name, transform) {
-    rows <- pars$row[pars$matrix %in% 'PARS']
+  # An initial condition at its stationary value (`.ctStationaryElements`).
+  stationary <- function(m, r, c) {
     rec <- template
-    rec$param <- name; rec$value <- NA_real_; rec$transform <- transform
-    rec$indvarying <- FALSE
-    if ('sdscale' %in% names(rec)) rec$sdscale <- 1
-    for (e in effects) rec[[e]] <- 'FALSE'
-    for (l in levelflags) rec[[l]] <- FALSE
-    put('PARS', if (length(rows)) max(rows) + 1L else 1L, 1L, rec)
-  }
-  expression <- function(m, r, c, text) {
-    rec <- template
-    rec$param <- text; rec$value <- NA_real_; rec$transform <- NA_character_
+    rec$param <- 'stationary'; rec$value <- NA_real_; rec$transform <- NA_character_
     rec$indvarying <- FALSE
     if ('sdscale' %in% names(rec)) rec$sdscale <- NA_real_
     for (e in effects) rec[[e]] <- 'FALSE'
@@ -232,6 +220,6 @@ ctModelHigherOrder <- function(ctm, indices,diffusion=TRUE, crosseffects=FALSE,c
     ctm$n.latent <- N
     ctm
   }
-  list(fixed = fixed, free = free, copy = copy, declare = declare, expression = expression,
-    finish = finish, names = allnames)
+  list(fixed = fixed, free = free, copy = copy, stationary = stationary, finish = finish,
+    names = allnames)
 }

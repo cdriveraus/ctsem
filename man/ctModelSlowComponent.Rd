@@ -28,15 +28,12 @@ A slow process has an estimated persistence of its own, innovations of unit
 variance (the effect carries its scale), correlated with those of the other
 slow processes, including ones added earlier, and not with the fast ones.
 It has no loadings and no intercept, and no individual variation or
-predictor effects. It starts where it has been running long enough to
-forget its start: mean zero and its stationary variance, \code{1 / (2 |a|)}
-for persistence \code{a}, declared in \code{PARS} so that the initial
-variance can read it. Its initial covariance with the latent it drives is
-free -- that latent follows it, so the two start related -- and with the
-other states zero. Left free, the initial mean, variance and every
-covariance were barely identified with 40 people and ran to large raw
-values; fixing the covariance with the driven latent at zero as well cost
-14 log likelihood units on the Fisher data.
+predictor effects. Its initial mean and variance are its stationary ones
+(\code{T0MEANS} and the \code{T0VAR} diagonal \code{'stationary'}, see
+\code{\link{ctFit}}): zero and \code{1 / (2 |a|)} for persistence
+\code{a}. Its initial covariance with the latent it drives is free -- that
+latent follows it, so the two start related -- and with the other states
+zero.
 
 The effect has to start away from zero. At zero neither the slow process nor
 its effect has a gradient, so an optimiser started there stays. When

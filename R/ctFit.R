@@ -829,6 +829,16 @@ T0VARredundancies <- function(ctm) {
 #' \code{intoverpop='auto'} then chooses; each subject starts from its own
 #' stationary distribution. A latent process whose DRIFT row is fixed at zero
 #' never settles, and is refused.
+#'
+#' To start only some latents there, or only their mean or their variance,
+#' name those T0MEANS cells, or the T0VAR diagonal cells, \code{'stationary'}
+#' in the model (\code{backend='julia'}): the mean becomes \code{-CINT /
+#' DRIFT} and the standard deviation \code{sd / sqrt(-2 DRIFT)}, for the
+#' latent's own DRIFT, CINT and DIFFUSION diagonal, and every other initial
+#' condition stays as written, its covariances with the other states
+#' included. For a latent no other latent drives, whose stationary moments
+#' are its own; one that others drive is refused, its moments being the joint
+#' system's.
 #' @param forcerecompile logical. For \code{backend='stan'}, recompiles the
 #' stan model regardless of apparent need (for development). For
 #' \code{backend='julia'}, compiles the model's state-dependent expressions --
@@ -1418,10 +1428,15 @@ ctFit<-function(datalong, model, stanmodeltext=NA, iter=1000, intoverstates=TRUE
   # be stationary in.
   if(!isTRUE(stationary) && !isFALSE(stationary)) stop(
     'stationary must be TRUE or FALSE.', call. = FALSE)
-  if(any(ctm$pars$param %in% 'stationary')) stop(
-    "Naming a T0MEANS or T0VAR cell 'stationary' is no longer supported; ",
-    "use stationary = TRUE, which applies to every latent process.",
-    call. = FALSE)
+  # Single elements: a T0MEANS cell or a T0VAR diagonal cell named
+  # 'stationary', rewritten here as the closed form of its stationary moment
+  # (`.ctStationaryElements`). Under stationary = TRUE every T0 cell is
+  # written over below, so there is nothing to rewrite.
+  if(any(ctm$pars$param %in% 'stationary') && !stationary) {
+    if(!identical(backend, 'julia')) stop(
+      "A 'stationary' T0MEANS or T0VAR cell needs backend = 'julia'.", call. = FALSE)
+    ctm <- .ctStationaryElements(ctm)
+  }
   if(stationary) {
     if(!identical(backend, 'julia')) stop(
       "stationary = TRUE needs backend = 'julia'.", call. = FALSE)

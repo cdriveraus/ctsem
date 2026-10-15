@@ -151,11 +151,10 @@ test_that("a slow process drives its latent through the drift and nothing else",
   expect_equal(as.numeric(mats$CINT[3, 1]), 0)
   # Unit innovations, independent of the fast ones.
   expect_equal(unname(mats$DIFFUSION[3, ]), c('0', '0', '1'))
-  # It starts from its stationary variance, read from its persistence, and
-  # from a free covariance with the latent it drives; zero with the other.
-  expect_equal(unname(mats$T0VAR[3, ]), c('T0var_slow_eta1_eta1', '0',
-    '1 / sqrt(-2 * drift_slow_eta1)'))
-  expect_equal(as.numeric(mats$T0MEANS[3, 1]), 0)
+  # It starts from its stationary mean and variance, and from a free
+  # covariance with the latent it drives; zero with the other.
+  expect_equal(unname(mats$T0VAR[3, ]), c('T0var_slow_eta1_eta1', '0', 'stationary'))
+  expect_identical(unname(mats$T0MEANS[3, 1]), 'stationary')
   p <- sm$pars
   slowcells <- p[(p$row == 3 & p$matrix %in% c('DRIFT', 'T0MEANS', 'T0VAR')) |
     (p$col == 3 & p$matrix == 'DRIFT'), ]
@@ -164,9 +163,8 @@ test_that("a slow process drives its latent through the drift and nothing else",
   # where the model's default would add them.
   expect_false(any(free$indvarying))
   for (e in grep('_effect$', names(p), value = TRUE)) expect_true(all(free[[e]] == 'FALSE'))
-  # The persistence is declared in PARS, which the drift and the initial
-  # variance read, with ctsem's default drift transform.
-  expect_identical(p$transform[p$matrix == 'PARS' & p$param %in% 'drift_slow_eta1'],
+  # The persistence takes ctsem's default drift transform.
+  expect_identical(free$transform[free$param == 'drift_slow_eta1'],
     .ctModelDefaultFreePar('DRIFT', 3L, 3L, TRUE)$transform)
   # The latents it was not asked for are untouched.
   cells <- function(q) { q <- q[q$matrix == 'DRIFT' & q$row <= 2 & q$col <= 2, ]
@@ -269,8 +267,7 @@ test_that("an item's own process loads on it alone and has its own dynamics", {
   expect_equal(as.numeric(mats$T0MEANS[2:3, 1]), c(0, 0))
   # Each starts from its stationary distribution: the variance its persistence
   # and innovations imply.
-  expect_equal(unname(diag(mats$T0VAR)[2:3]), c('diff_u_Y2 / sqrt(-2 * drift_u_Y2)',
-    'diff_u_Y3 / sqrt(-2 * drift_u_Y3)'))
+  expect_equal(unname(diag(mats$T0VAR)[2:3]), c('stationary', 'stationary'))
   expect_equal(ctModelMatrices(ctModelUniqueProcess(m, 2))$LAMBDA[, 2], mats$LAMBDA[, 2])
   expect_error(ctModelUniqueProcess(um, 'Y2'), 'already has')
   expect_error(ctModelUniqueProcess(m, 'Y9'), 'manifest')
@@ -286,7 +283,7 @@ test_that("items can share a process, loading on the first at one and the rest f
   expect_equal(unname(mats$LAMBDA[, 2]), c('0', '1', 'lambda_Y3_u_Y2_Y3'))
   expect_equal(unname(mats$DRIFT[2, ]), c('0', 'drift_u_Y2_Y3'))
   expect_equal(unname(mats$DIFFUSION[2, ]), c('0', 'diff_u_Y2_Y3'))
-  expect_equal(unname(mats$T0VAR[2, 2]), 'diff_u_Y2_Y3 / sqrt(-2 * drift_u_Y2_Y3)')
+  expect_equal(unname(mats$T0VAR[2, 2]), 'stationary')
   expect_error(ctModelUniqueProcess(m, 'Y2', shared = TRUE), 'two items')
 })
 

@@ -147,7 +147,17 @@ latent states or on time dependent predictors. Individual differences in
 those matrices are allowed with \code{intoverpop='laplace'}, which
 \code{intoverpop='auto'} then chooses; each subject starts from its own
 stationary distribution. A latent process whose DRIFT row is fixed at zero
-never settles, and is refused.}
+never settles, and is refused.
+
+To start only some latents there, or only their mean or their variance,
+name those T0MEANS cells, or the T0VAR diagonal cells, \code{'stationary'}
+in the model (\code{backend='julia'}): the mean becomes \code{-CINT /
+DRIFT} and the standard deviation \code{sd / sqrt(-2 DRIFT)}, for the
+latent's own DRIFT, CINT and DIFFUSION diagonal, and every other initial
+condition stays as written, its covariances with the other states
+included. For a latent no other latent drives, whose stationary moments
+are its own; one that others drive is refused, its moments being the joint
+system's.}
 
 \item{plot}{if TRUE, for sampling, a Shiny program is launched upon fitting to interactively plot samples.
 May struggle with many (e.g., > 5000) parameters. For optimizing, the optimisation trace is plotted --

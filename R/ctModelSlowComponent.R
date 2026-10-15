@@ -12,15 +12,12 @@
 #' variance (the effect carries its scale), correlated with those of the other
 #' slow processes, including ones added earlier, and not with the fast ones.
 #' It has no loadings and no intercept, and no individual variation or
-#' predictor effects. It starts where it has been running long enough to
-#' forget its start: mean zero and its stationary variance, \code{1 / (2 |a|)}
-#' for persistence \code{a}, declared in \code{PARS} so that the initial
-#' variance can read it. Its initial covariance with the latent it drives is
-#' free -- that latent follows it, so the two start related -- and with the
-#' other states zero. Left free, the initial mean, variance and every
-#' covariance were barely identified with 40 people and ran to large raw
-#' values; fixing the covariance with the driven latent at zero as well cost
-#' 14 log likelihood units on the Fisher data.
+#' predictor effects. Its initial mean and variance are its stationary ones
+#' (\code{T0MEANS} and the \code{T0VAR} diagonal \code{'stationary'}, see
+#' \code{\link{ctFit}}): zero and \code{1 / (2 |a|)} for persistence
+#' \code{a}. Its initial covariance with the latent it drives is free -- that
+#' latent follows it, so the two start related -- and with the other states
+#' zero.
 #'
 #' The effect has to start away from zero. At zero neither the slow process nor
 #' its effect has a gradient, so an optimiser started there stays. When
@@ -62,16 +59,14 @@ ctModelSlowComponent <- function(ctm, indices = seq_len(ctm$n.latent)) {
   slow <- c(grep('^slow_', names0), nl + seq_along(indices))
   for (k in seq_along(indices)) {
     i <- indices[k]; n <- nl + k
-    persistence <- paste0('drift_', allnames[n])
-    ed$declare(persistence, .ctModelDefaultFreePar('DRIFT', n, n, TRUE)$transform)
-    ed$expression('DRIFT', n, n, persistence)
+    ed$free('DRIFT', n, n, paste0('drift_', allnames[n]), tipred = FALSE)
     ed$free('DRIFT', i, n, paste0('drift_', names0[i], '_', allnames[n]), tipred = FALSE)
     ed$fixed('DIFFUSION', n, n, 1)
     for (s in slow[slow < n]) ed$free('DIFFUSION', n, s,
       paste0('diff_', allnames[n], '_', allnames[s]), tipred = FALSE)
-    ed$fixed('T0MEANS', n, 1, 0)
+    ed$stationary('T0MEANS', n, 1)
     ed$free('T0VAR', n, i, paste0('T0var_', allnames[n], '_', names0[i]), tipred = FALSE)
-    ed$expression('T0VAR', n, n, paste0('1 / sqrt(-2 * ', persistence, ')'))
+    ed$stationary('T0VAR', n, n)
   }
   ed$finish()
 }

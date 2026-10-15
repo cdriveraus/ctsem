@@ -1130,22 +1130,16 @@ ctModelImprove <- function(fit, covariates = NULL,
   rate <- log(2) / gap
   v <- sd[1]^2 / 4
   u <- length(m1$latentNames)
-  target <- data.frame(matrix = c('DRIFT', 'DIFFUSION', 'T0VAR'), row = u,
-    value = c(-rate, sqrt(2 * rate * v), sqrt(v)))
+  # The initial variance is the stationary one these imply (ctModelUniqueProcess).
+  target <- data.frame(matrix = c('DRIFT', 'DIFFUSION'), row = u,
+    value = c(-rate, sqrt(2 * rate * v)))
   if (isTRUE(shared)) target <- rbind(target, data.frame(matrix = 'LAMBDA', row = j[-1],
     value = sign * sd[-1] / sd[1]))
   out <- numeric()
-  declared <- m1$pars[m1$pars$matrix %in% 'PARS', , drop = FALSE]
   for (k in seq_len(nrow(target))) {
     r <- m1$pars[m1$pars$matrix == target$matrix[k] & m1$pars$row == target$row[k] &
       m1$pars$col == u, , drop = FALSE]
     if (nrow(r) != 1L || is.na(r$param)) next
-    # A cell that reads a parameter declared in PARS (the process's persistence
-    # and innovation sd) starts that parameter through its own transform; one
-    # that is an expression of others (its stationary initial variance) has
-    # nothing to start.
-    if (r$param %in% declared$param) r <- declared[match(r$param, declared$param), , drop = FALSE]
-    if (is.na(r$transform)) next
     raw <- inverse(r$transform, target$value[k])
     if (is.finite(raw)) out[r$param] <- raw
   }

@@ -137,11 +137,100 @@ test_that("stationary = TRUE is refused where there is no one distribution to st
   static$pars$value[rows] <- 0
   expect_error(prep(static), "DRIFT is fixed at zero for b")
 
-  # The per-cell spelling the option once had.
+  # A single element of a latent another drives: a's DRIFT row reads PARS.
   named <- .stat_model()
   named$pars$param[named$pars$matrix %in% "T0MEANS"] <- "stationary"
   expect_error(suppressMessages(ctFit(dat, named, backend = "julia",
-    fit = FALSE)), "no longer supported")
+    fit = FALSE)), "no other latent drives, and a is driven")
+})
+
+# Single elements: a T0MEANS cell or a T0VAR diagonal cell named 'stationary'.
+# Latent a is driven by nothing, b by a.
+.stat_elements <- function(T0MEANS = matrix(c("stationary", "t0b"), 2, 1),
+    T0VAR = matrix(c("stationary", "t0ab", 0, "t0bb"), 2, 2)) {
+  m <- suppressWarnings(suppressMessages(ctModel(type = "ct", LAMBDA = diag(2),
+    latentNames = c("a", "b"), manifestNames = c("y1", "y2"),
+    DRIFT = matrix(c("d11", "d21", 0, "d22"), 2, 2), MANIFESTMEANS = matrix(0, 2, 1),
+    MANIFESTVAR = diag(.3, 2), CINT = matrix(c("c1", "c2"), 2, 1),
+    T0MEANS = T0MEANS, T0VAR = T0VAR, silent = TRUE)))
+  m$pars$indvarying <- FALSE
+  m
+}
+
+test_that("a 'stationary' T0 element starts only that latent's mean or variance there", {
+  dat <- .stat_data()[, c("id", "time", "y1", "y2")]
+  spec <- suppressMessages(ctFit(dat, .stat_elements(), backend = "julia", fit = FALSE))
+  expect_false(isTRUE(spec$stationary))
+  npar <- ctsem:::.ctBackendNpar(spec)
+  set.seed(7)
+  raw <- stats::rnorm(npar, 0, .3)
+  k <- ctsem:::.ctJuliaCall("ContinuousTimeSEM.ctsem_kalman",
+    ctsem:::.ctJuliaObjective(spec), ctsem:::.ctJuliaNumericVector(raw))
+  get <- .stat_matrices(spec, raw)
+  A <- get("DRIFT"); Q <- get("DIFFUSIONcov"); cint <- as.numeric(get("CINT"))
+  # a starts at its own stationary mean and variance; b at its parameters; and
+  # their covariance is T0VAR's correlation at a's stationary sd -- which is
+  # what the summary reports too.
+  expect_equal(k$eta[1, 1, 1], -cint[1] / A[1, 1], tolerance = 1e-8)
+  expect_equal(k$etacov[1, 1, 1, 1], Q[1, 1] / (-2 * A[1, 1]), tolerance = 1e-8)
+  expect_equal(k$eta[1, 1, 2], as.numeric(get("T0MEANS"))[2], tolerance = 1e-10)
+  expect_equal(k$etacov[1, 1, , ], get("T0cov"), tolerance = 1e-10)
+  expect_gt(abs(get("T0cov")[1, 2]), 1e-6)
+  # The latent's own parameters are declared in PARS, which the cells read.
+  pars <- spec$parameter_table
+  expect_true(all(c("d11", "c1") %in% pars$param[pars$matrix %in% "PARS"]))
+
+  # The reverse pass through the rewritten cells.
+  adjoint <- as.numeric(ctJuliaEvaluate(spec, raw, gradient = TRUE,
+    gradient_method = "adjoint")$gradient)
+  forward <- as.numeric(ctJuliaEvaluate(spec, raw, gradient = TRUE,
+    gradient_method = "forward")$gradient)
+  expect_equal(adjoint, forward, tolerance = 1e-9)
+
+  # Only what is named: the mean alone leaves a's variance a parameter.
+  meanonly <- suppressMessages(ctFit(dat, .stat_elements(T0VAR = matrix(c("t0aa", "t0ab", 0,
+    "t0bb"), 2, 2)), backend = "julia", fit = FALSE))
+  names <- as.character(ctsem:::.ctBackendRawParameterNames(list(model_spec = meanonly),
+    ctsem:::.ctBackendNpar(meanonly)))
+  expect_true("t0aa" %in% names)
+  expect_false(any(c("T0mean_a", "t0a") %in% names))
+})
+
+test_that("a single latent with both elements named starts as stationary = TRUE does", {
+  dat <- .stat_data()[, c("id", "time", "y1")]
+  one <- function(T0MEANS, T0VAR) {
+    m <- suppressWarnings(suppressMessages(ctModel(type = "ct", LAMBDA = diag(1),
+      latentNames = "a", manifestNames = "y1", DRIFT = matrix("d11"),
+      DIFFUSION = matrix("q11"), CINT = matrix("c1"), MANIFESTMEANS = matrix(0),
+      MANIFESTVAR = matrix(.3), T0MEANS = T0MEANS, T0VAR = T0VAR, silent = TRUE)))
+    m$pars$indvarying <- FALSE
+    m
+  }
+  elements <- suppressMessages(ctFit(dat, one(matrix("stationary"), matrix("stationary")),
+    backend = "julia", fit = FALSE))
+  whole <- suppressMessages(ctFit(dat, one(matrix("t0m"), matrix("t0v")), backend = "julia",
+    fit = FALSE, stationary = TRUE))
+  named <- function(spec) as.character(ctsem:::.ctBackendRawParameterNames(
+    list(model_spec = spec), ctsem:::.ctBackendNpar(spec)))
+  ne <- named(elements); nw <- named(whole)
+  expect_setequal(ne, nw)
+  set.seed(8)
+  raw <- setNames(stats::rnorm(length(nw), 0, .3), nw)
+  expect_equal(ctJuliaEvaluate(elements, raw[ne], gradient = FALSE)$value,
+    ctJuliaEvaluate(whole, raw[nw], gradient = FALSE)$value, tolerance = 1e-10)
+})
+
+test_that("'stationary' elements are refused where they are not single latents' own", {
+  dat <- .stat_data(4)[, c("id", "time", "y1", "y2")]
+  prep <- function(m, ...) suppressMessages(ctFit(dat, m, backend = "julia", fit = FALSE, ...))
+  # b is driven by a.
+  expect_error(prep(.stat_elements(T0MEANS = matrix(c("t0a", "stationary"), 2, 1))),
+    "b is driven through DRIFT\\[2,1\\]")
+  # An off-diagonal covariance.
+  expect_error(prep(.stat_elements(T0VAR = matrix(c("t0aa", "stationary", 0, "t0bb"), 2, 2))),
+    "Only T0MEANS cells and the diagonal of T0VAR")
+  expect_error(suppressMessages(ctFit(dat, .stat_elements(), backend = "stan", fit = FALSE)),
+    "needs backend = 'julia'")
 })
 
 test_that("random effects on the dynamics take the route that keeps them fixed per subject", {
