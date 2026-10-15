@@ -40,3 +40,4 @@
 ^vignettes/.*\.qmd$
 ^vignettes/.*_files$
 ^vignettes/\.quarto$
+^lib$
