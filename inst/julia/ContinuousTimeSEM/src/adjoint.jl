@@ -491,10 +491,11 @@ function _ctsem_subject_gradient_chunk!(scores::Matrix{T}, totals::Vector{T},
     try
         @inbounds for i in range
             subject_objective = subjects[i]
-            ws = _get_or_init_objective_workspace!(subject_objective, T)
-        # One exponential table for the chunk: a linear model's `exp(JAx * dt)`
-        # is the same for every subject at the same interval.
-        ws.discretization_cache.exp_table = aws.exp_table
+            # The task's filter workspace, as in `_ctsem_adjoint_chunk!`.
+            ws = aws.ekf_ws
+            # One exponential table for the chunk: a linear model's
+            # `exp(JAx * dt)` is the same for every subject at the same interval.
+            ws.discretization_cache.exp_table = aws.exp_table
             tape = _tape_reset!(aws.tape)
             # The concrete numeric row this evaluation reads: identity for a
             # plain `Vector{Float64}` (see `_ctsem_tipred_vector`), or the
@@ -574,7 +575,13 @@ function _ctsem_adjoint_chunk!(gradient::Vector{T}, totals::Vector{T},
 
     @inbounds for i in range
         subject_objective = subjects[i]
-        ws = _get_or_init_objective_workspace!(subject_objective, T)
+        # The task's filter workspace, which this chunk's adjoint workspace
+        # carries at its own element type (the Laplace route filters through
+        # it too): a workspace depends on the shared parameters, never on the
+        # subject. A subject's own cached one, as here before, left a copy per
+        # subject, and under `ctsem_hessian` a dual copy per subject 13 times
+        # the size, kept for the session -- 15 GB on a 1046-subject model.
+        ws = aws.ekf_ws
         # One exponential table for the chunk: a linear model's `exp(JAx * dt)`
         # is the same for every subject at the same interval.
         ws.discretization_cache.exp_table = aws.exp_table

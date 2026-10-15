@@ -619,8 +619,9 @@ const _CTSEM_SCRATCH_LOCK = Threads.SpinLock()
     _ctsem_scratch()
 
 The store the engine's per-task caches live in: the covariance and
-exponential caches (`_covcache`, `_expm_cov_scratch`) and the transpose
-buffers (`_ctsem_transpose_buffer`). A worker spawned by a parallel region
+exponential caches (`_covcache`, `_expm_cov_scratch`), the transpose
+buffers (`_ctsem_transpose_buffer`), and the filter workspace subjects run in
+(`_get_or_init_objective_workspace!`). A worker spawned by a parallel region
 borrows one from a pool for its lifetime (`_ctsem_with_scratch`); any other
 task uses its own task-local storage.
 
