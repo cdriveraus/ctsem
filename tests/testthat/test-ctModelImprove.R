@@ -106,6 +106,21 @@ test_that("a covariate the model lacks is added, an unrelated one is not, and th
   expect_gt(imp$fit$estimate$loglik, x$fit$estimate$loglik)
   expect_identical(imp$stopped, 'adequate')
   expect_output(print(imp), 'stopped because adequate')
+
+  # Pruning keeps a change the fit plainly needs without refitting: the random
+  # intercept, whose spread here is many standard errors from zero, by a Wald
+  # test of its sd at zero past twice the likelihood ratio bar.
+  model <- ctsem:::.ctFitBaseModel(x$fit)
+  fixed <- model
+  fixed$pars$indvarying[fixed$pars$matrix %in% 'MANIFESTMEANS'] <- FALSE
+  needed <- ctsem:::.ctImprovePruneNeeded(x$fit, list(family = 'heterogeneity'),
+    list(model = fixed, data = x$data[, c('id', 'time', 'Y1')], args = list()), 1L, 'LR', 0.05)
+  expect_true(needed$needed)
+  expect_gte(needed$dpar, 1L)
+  expect_gt(needed$W, needed$bar)
+  # A change with no absent value to test is refitted instead.
+  expect_null(ctsem:::.ctImprovePruneNeeded(x$fit, list(family = 'slow'),
+    list(model = fixed, data = x$data, args = list()), 1L, 'LR', 0.05))
 })
 
 test_that("a correct model stops at once", {
@@ -253,6 +268,12 @@ test_that("a rank change starts at the best low-rank covariance, applies last an
   e <- eigen(S, symmetric = TRUE)
   expect_equal(tcrossprod(L), e$vectors[, 1:3] %*% diag(e$values[1:3]) %*% t(e$vectors[, 1:3]),
     tolerance = 1e-10)
+
+  # The rank a step goes straight to: the smallest whose dropped dimensions
+  # carry under 5 per cent of the correlation matrix's trace.
+  B <- matrix(stats::rnorm(10), 5)
+  expect_identical(ctsem:::.ctImproveRankFromCov(tcrossprod(B) + diag(1e-3, 5)), 2L)
+  expect_identical(ctsem:::.ctImproveRankFromCov(diag(5)), 5L)
 
   # A weak direction counts against the covariance when it is mostly the
   # covariance's own parameters.

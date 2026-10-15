@@ -615,6 +615,11 @@ ctModelImprove <- function(fit, covariates = NULL,
   module <- .ctJuliaModule(current$model_spec$project)
   S <- as.matrix(.ctBackendJuliaValue(module$ctsem_laplace_popcov(
     .ctJuliaObjective(current), .ctJuliaNumericVector(.ctFitRawEstimate(current)), 1L)))
+  .ctImproveRankFromCov(S, share)
+}
+
+# The rule `.ctImproveRankTarget` applies to a covariance S.
+.ctImproveRankFromCov <- function(S, share = 0.05) {
   e <- eigen(stats::cov2cor((S + t(S)) / 2), symmetric = TRUE, only.values = TRUE)$values
   which(1 - cumsum(e) / sum(e) < share)[1]
 }
