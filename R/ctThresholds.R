@@ -412,6 +412,7 @@ NULL
 .ctDataCensored <- function(datalong, ctm) {
   censored <- which(ctm$manifesttype %in% 4)
   if (!length(censored)) return(invisible(NULL))
+  scaled <- .ctResponseRows(ctm$pars)
   for (i in censored) {
     name <- ctm$manifestNames[i]
     v <- datalong[[name]]
@@ -428,6 +429,14 @@ NULL
     if (any(v > upper + 1e-8)) stop('censored variable ', name, ' has values ',
       'above its censormax of ', upper, ' (max ', max(v), '). A censored ',
       'value is recorded *at* the limit, not past it', call. = FALSE)
+    # The response transform is anchored at the floor, or at 0 without one,
+    # and exists only above one unit below that anchor; the engine's
+    # derivatives evaluate it even at a power fixed at 1.
+    if (i %in% scaled && !is.finite(lower) && any(v <= -1)) stop('censored ',
+      'variable ', name, ' has a RESPONSE scale but no censormin, so its ',
+      'transform is anchored at 0 and defined only above -1, and its values ',
+      'reach ', min(v), '. Give it a censormin (the floor of its scale)',
+      call. = FALSE)
     atlimit <- sum(v <= lower + 1e-8) + sum(v >= upper - 1e-8)
     if (atlimit == 0) warning('censored variable ', name, ' has no ',
       'observations at either limit, so the censoring never applies and the ',

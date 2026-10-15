@@ -223,6 +223,56 @@ test_that("the exact Hessian of a censored model exists and is right", {
   expect_equal(hessian, differenced, tolerance = 1e-5)
 })
 
+test_that("a censored indicator with no floor differentiates below -1", {
+  skip_without_julia()
+  # Without RESPONSE the response transform is the identity, but its power
+  # arrived as a dual one wherever the measurement was differentiated, so the
+  # general transform ran and `log1p` threw on every value at or below -1: no
+  # gradient, no scores, no Hessian, for a standardised indicator censored
+  # only at its maximum.
+  d <- .censored_data(nsubjects = 12, nobs = 6, lower = -Inf, upper = 3.5)
+  d$y <- d$y - 3
+  expect_gt(sum(d$y < -1), 5)
+  handle <- suppressWarnings(suppressMessages(ctFit(d,
+    .censored_model(lower = -Inf, upper = 0.5), backend = "julia",
+    intoverpop = "augmented", fit = FALSE, cores = 1L)))
+  npar <- max(handle$parameter_table$parnumber, na.rm = TRUE)
+  set.seed(3)
+  at <- stats::rnorm(npar, 0, 0.25)
+  gradient <- function(x) as.numeric(ctJuliaEvaluate(handle, x, gradient = TRUE)$gradient)
+  adjoint <- gradient(at)
+  eps <- 1e-5
+  differenced <- vapply(seq_len(npar), function(i) {
+    up <- at; up[i] <- up[i] + eps
+    down <- at; down[i] <- down[i] - eps
+    (as.numeric(ctJuliaEvaluate(handle, up)$value) -
+        as.numeric(ctJuliaEvaluate(handle, down)$value)) / (2 * eps)
+  }, numeric(1))
+  expect_equal(adjoint, differenced, tolerance = 1e-5)
+  # The per-subject scores ctIdentify and casewise leave-one-out read.
+  module <- .ctJuliaModule(handle$project)
+  scores <- as.matrix(.ctJuliaGet(module$ctsem_subject_gradients(
+    .ctJuliaObjective(handle, hybrid = TRUE), .ctJuliaVector(at),
+    prior = FALSE))$scores)
+  expect_equal(colSums(scores), adjoint, tolerance = 1e-8)
+  hessian <- .ctBackendHessianAt(handle, at)
+  expect_true(all(is.finite(hessian)))
+  expect_equal(hessian[, 1], (gradient(replace(at, 1, at[1] + eps)) -
+    gradient(replace(at, 1, at[1] - eps))) / (2 * eps), tolerance = 1e-5)
+
+  # With RESPONSE the transform is real, anchored at 0 without a floor and
+  # defined only above -1, so such data is refused by name.
+  scaled <- suppressWarnings(suppressMessages(ctModel(type = "ct",
+    n.latent = 1, n.manifest = 1, manifestNames = "y", latentNames = "eta1",
+    manifesttype = 4L, censormin = -Inf, censormax = 0.5,
+    RESPONSE = c(0.1, NA), LAMBDA = matrix(1), MANIFESTMEANS = matrix("mm"),
+    CINT = matrix(0), T0MEANS = matrix(0), MANIFESTVAR = matrix("mvar"))))
+  scaled$pars$indvarying <- FALSE
+  expect_identical(.ctResponseRows(scaled$pars), 1L)
+  expect_error(suppressWarnings(suppressMessages(ctFit(d, scaled,
+    backend = "julia", fit = FALSE))), "no censormin")
+})
+
 test_that("a censored model recovers what generated it", {
   skip_without_julia()
   fit <- suppressWarnings(suppressMessages(ctFit(.censored_data(nsubjects = 50,

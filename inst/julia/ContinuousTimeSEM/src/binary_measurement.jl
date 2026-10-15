@@ -661,9 +661,15 @@ response transform (`_response_transform`), as `RESPONSE` holds them. `(0, 1)`
 -- a value recorded exactly, on a linear scale -- for a row that carries only
 three extras, which is every model without a RESPONSE matrix. Returned as they
 are, for the reason `_censor_limits` gives.
+
+The default power is a plain `1.0`, never `one(T)`: `_is_linear_power` takes
+any dual number for a parameter, whatever its value, so a dual one sent every
+gradient of a model without RESPONSE through the general transform, whose
+`log1p(r - origin)` throws at or below `origin - 1` -- a quarter of the values
+of a standardised indicator with no censormin.
 """
 @inline function _censor_response(extras, ::Type{T}) where {T}
-    length(extras) >= 5 || return (zero(T), one(T))
+    length(extras) >= 5 || return (zero(T), one(_primal_type(T)))
     return (extras[4], extras[5])
 end
 
@@ -680,8 +686,10 @@ the forms differ only in which intervals of the common scale their responses
 stand for (`_response_interval`). `power = 1` is the identity; below one the
 transform is concave, so the latent response moves less per recorded unit high
 on the scale and the recorded value moves faster there; `power = 0` is the
-log, whose inverse is the exponential link. Monotone for every power wherever
-`r > origin - 1`, which every recorded value is.
+log, whose inverse is the exponential link. Defined, and monotone for every
+power, only where `r > origin - 1`: every recorded value with a floor, and
+without one (origin 0) only values above -1, which ctFit checks for a model
+with RESPONSE.
 """
 @inline function _response_transform(r, origin::Real, power)
     _is_linear_power(power) && return r
