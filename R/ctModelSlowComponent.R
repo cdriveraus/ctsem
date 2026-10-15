@@ -12,8 +12,13 @@
 #' variance (the effect carries its scale), correlated with those of the other
 #' slow processes, including ones added earlier, and not with the fast ones.
 #' It has no loadings and no intercept, and no individual variation or
-#' predictor effects. Its initial mean, initial variance and initial
-#' covariances with the other states are free.
+#' predictor effects. It starts where it has been running long enough to
+#' forget its start: mean zero, its stationary variance, \code{1 / (2 |a|)}
+#' for persistence \code{a}, and uncorrelated with the other states. Its
+#' persistence is declared in \code{PARS}, so that the initial variance can
+#' read it. Left free, its initial variance and covariances were barely
+#' identified with 40 people, ran to large raw values, and set off the
+#' optimiser's overshoot check, which then cost most of every refit.
 #'
 #' The effect has to start away from zero. At zero neither the slow process nor
 #' its effect has a gradient, so an optimiser started there stays. When
@@ -55,14 +60,15 @@ ctModelSlowComponent <- function(ctm, indices = seq_len(ctm$n.latent)) {
   slow <- c(grep('^slow_', names0), nl + seq_along(indices))
   for (k in seq_along(indices)) {
     i <- indices[k]; n <- nl + k
-    ed$free('DRIFT', n, n, paste0('drift_', allnames[n]), tipred = FALSE)
+    persistence <- paste0('drift_', allnames[n])
+    ed$declare(persistence, .ctModelDefaultFreePar('DRIFT', n, n, TRUE)$transform)
+    ed$expression('DRIFT', n, n, persistence)
     ed$free('DRIFT', i, n, paste0('drift_', names0[i], '_', allnames[n]), tipred = FALSE)
     ed$fixed('DIFFUSION', n, n, 1)
     for (s in slow[slow < n]) ed$free('DIFFUSION', n, s,
       paste0('diff_', allnames[n], '_', allnames[s]), tipred = FALSE)
-    ed$free('T0MEANS', n, 1, paste0('T0mean_', allnames[n]), tipred = FALSE)
-    for (j in seq_len(n)) ed$free('T0VAR', n, j, if (j == n) paste0('T0var_', allnames[n]) else
-      paste0('T0var_', allnames[n], '_', allnames[j]), tipred = FALSE)
+    ed$fixed('T0MEANS', n, 1, 0)
+    ed$expression('T0VAR', n, n, paste0('1 / sqrt(-2 * ', persistence, ')'))
   }
   ed$finish()
 }

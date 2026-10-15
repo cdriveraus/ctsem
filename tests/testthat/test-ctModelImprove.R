@@ -197,10 +197,12 @@ test_that("an item's own process starts persistent, at a quarter of its error va
   x <- .improve_fit(0, seed = 1L)
   model <- ctsem:::.ctFitBaseModel(x$fit)
   start <- ctsem:::.ctImproveUniqueStart(model, x$fit, 'Y1')
-  expect_setequal(names(start), c('drift_u_Y1', 'diff_u_Y1', 'T0var_u_Y1'))
+  # Its persistence and innovation sd, declared in PARS; it starts from its
+  # stationary distribution, so its initial variance has no start of its own.
+  expect_setequal(names(start), c('drift_u_Y1', 'diff_u_Y1'))
   m1 <- ctModelUniqueProcess(model, 'Y1')
-  at <- function(mat, par) {
-    r <- m1$pars[m1$pars$matrix == mat & m1$pars$param %in% par, ]
+  at <- function(par) {
+    r <- m1$pars[m1$pars$matrix == 'PARS' & m1$pars$param %in% par, ]
     eval(parse(text = r$transform), list(param = start[[par]], log1p_exp = ctsem:::log1p_exp))
   }
   gaps <- unlist(lapply(split(x$data$time, x$data$id), diff))
@@ -210,9 +212,11 @@ test_that("an item's own process starts persistent, at a quarter of its error va
   est <- setNames(ctsem:::.ctFitRawEstimate(x$fit), ctsem:::.ctFitRawParNames(x$fit))
   v <- eval(parse(text = mv$transform), list(param = est[[mv$param]],
     log1p_exp = ctsem:::log1p_exp))^2 / 4
-  expect_equal(at('DRIFT', 'drift_u_Y1'), -rate, tolerance = 1e-6)
-  expect_equal(at('T0VAR', 'T0var_u_Y1')^2, v, tolerance = 1e-6)
-  expect_equal(at('DIFFUSION', 'diff_u_Y1')^2 / (2 * rate), v, tolerance = 1e-6)
+  expect_equal(at('drift_u_Y1'), -rate, tolerance = 1e-6)
+  expect_equal(at('diff_u_Y1')^2 / (2 * rate), v, tolerance = 1e-6)
+  t0 <- m1$pars$param[m1$pars$matrix == 'T0VAR' & m1$pars$row == 2 & m1$pars$col == 2]
+  expect_equal(eval(parse(text = t0), list(diff_u_Y1 = at('diff_u_Y1'),
+    drift_u_Y1 = at('drift_u_Y1')))^2, v, tolerance = 1e-6)
 })
 
 test_that("pruning side by side makes the decisions pruning one at a time does", {

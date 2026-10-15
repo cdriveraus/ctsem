@@ -28,8 +28,13 @@ A slow process has an estimated persistence of its own, innovations of unit
 variance (the effect carries its scale), correlated with those of the other
 slow processes, including ones added earlier, and not with the fast ones.
 It has no loadings and no intercept, and no individual variation or
-predictor effects. Its initial mean, initial variance and initial
-covariances with the other states are free.
+predictor effects. It starts where it has been running long enough to
+forget its start: mean zero, its stationary variance, \code{1 / (2 |a|)}
+for persistence \code{a}, and uncorrelated with the other states. Its
+persistence is declared in \code{PARS}, so that the initial variance can
+read it. Left free, its initial variance and covariances were barely
+identified with 40 people, ran to large raw values, and set off the
+optimiser's overshoot check, which then cost most of every refit.
 
 The effect has to start away from zero. At zero neither the slow process nor
 its effect has a gradient, so an optimiser started there stays. When

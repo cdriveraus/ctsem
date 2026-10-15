@@ -34,9 +34,12 @@ latents, whose dynamics it then distorts. The specific process and the
 measurement error are told apart by persistence: the one carries over
 time, the other does not.
 
-The process has no intercept (the item's own carries its level), a free
-initial variance, ctsem's default drift transform, so it is mean reverting,
-and innovations independent of every other latent's.
+The process has no intercept (the item's own carries its level), ctsem's
+default drift transform, so it is mean reverting, and innovations
+independent of every other latent's. It starts from its stationary
+distribution: mean zero and the variance its persistence and innovations
+imply, \code{s^2 / (2 |a|)}, read from the two parameters declared in
+\code{PARS}.
 
 With \code{shared = TRUE} the items share one process instead, loading on
 the first at one and on the others freely: what moves them together beyond

@@ -896,8 +896,13 @@ ctModelImprove <- function(fit, covariates = NULL,
   }
   # A slow process or a second order for a latent with innovations of its
   # own: not for a cycle's clock, which turns as written, nor for the level
-  # of a process already second order.
+  # of a process already second order, nor for a process a change added (a
+  # slow process, an item's own), which starts from the stationary
+  # distribution of the first-order process it is: the cluster's search
+  # spent a round refitting an item process driven by a slow one, and dev1's
+  # two on slow processes made second order, none of them kept.
   noisy <- .ctImproveNoisyLatents(model)
+  noisy <- noisy[!grepl('^(slow|u)_', model$latentNames[noisy])]
   if ('slow' %in% relax && isTRUE(model$continuoustime)) {
     lat <- model$latentNames
     for (i in seq_along(lat)) {
@@ -1130,10 +1135,17 @@ ctModelImprove <- function(fit, covariates = NULL,
   if (isTRUE(shared)) target <- rbind(target, data.frame(matrix = 'LAMBDA', row = j[-1],
     value = sign * sd[-1] / sd[1]))
   out <- numeric()
+  declared <- m1$pars[m1$pars$matrix %in% 'PARS', , drop = FALSE]
   for (k in seq_len(nrow(target))) {
     r <- m1$pars[m1$pars$matrix == target$matrix[k] & m1$pars$row == target$row[k] &
       m1$pars$col == u, , drop = FALSE]
     if (nrow(r) != 1L || is.na(r$param)) next
+    # A cell that reads a parameter declared in PARS (the process's persistence
+    # and innovation sd) starts that parameter through its own transform; one
+    # that is an expression of others (its stationary initial variance) has
+    # nothing to start.
+    if (r$param %in% declared$param) r <- declared[match(r$param, declared$param), , drop = FALSE]
+    if (is.na(r$transform)) next
     raw <- inverse(r$transform, target$value[k])
     if (is.finite(raw)) out[r$param] <- raw
   }
