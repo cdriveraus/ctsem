@@ -465,15 +465,32 @@
   invisible(NULL)
 }
 
-# The socket ended mid-call: Julia has gone.
+# The socket ended mid-call: Julia has gone, killed or crashed -- on Linux most
+# often by the out-of-memory killer. No new session starts until the top-level
+# call that was running returns (`.ctJuliaEnsureStarted()`): every stage of a
+# fit that catches its own errors -- a warm-up, a stall escape, a fold, a
+# comparison run -- would otherwise start one and rebuild the objective that
+# had just exhausted the machine. A 17,687-subject fit was killed at 82 GB on
+# a shared box three times over that way, taking memory from whatever else ran
+# there each time. A task callback clears the record when the top-level call
+# ends, so running it again starts afresh. A session found dead between calls
+# (`.ctJuliaCheckAlive()`) is not recorded: nothing was running in it.
 .ctJuliaLost <- function(name) {
   .ctJuliaForgetSession()
   if (requireNamespace("JuliaConnectoR", quietly = TRUE)) {
     suppressWarnings(try(JuliaConnectoR::stopJulia(), silent = TRUE))
   }
-  stop("The Julia session ended while running ", sub("^.*[.:]", "", name),
-    "; its process is no longer running. Calling again starts a new one.",
-    call. = FALSE)
+  name <- sub("^.*[.:]", "", name)
+  if (is.null(.ct_julia_cache$lost)) {
+    addTaskCallback(function(...) {
+      .ct_julia_cache$lost <- NULL
+      FALSE
+    }, name = "ctsem-julia-lost")
+  }
+  .ct_julia_cache$lost <- name
+  stop("The Julia session ended while running ", name, ": its process was ",
+    "killed or crashed, often for lack of memory. No new session starts ",
+    "until this call returns; run it again to start one.", call. = FALSE)
 }
 
 # Julia ends when R does -- JuliaConnectoR's own exit finalizer closes the
@@ -514,6 +531,11 @@
     return(invisible(FALSE))
   }
   external <- nzchar(Sys.getenv("JULIACONNECTOR_SERVER", unset = ""))
+  if (!started && !is.null(.ct_julia_cache$lost)) {
+    stop("The Julia session ended while running ", .ct_julia_cache$lost,
+      " earlier in this call, and no new one starts until the call returns; ",
+      "run it again to start one.", call. = FALSE)
+  }
   if (!started) {
     if (!external) {
       # Sized by the call starting it, whichever entry point that is, over a
