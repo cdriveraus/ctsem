@@ -144,6 +144,20 @@ jobs:
             r <- test_dir("tests/testthat", package = "ctsem", load_package = "installed",
                           filter = s$filter, reporter = "summary", stop_on_failure = FALSE)
             d <- as.data.frame(r)
+            # Every test's time: the slowest in the job summary, all of them
+            # kept as an artifact (below), as the engine suite does.
+            times <- d[, c("file", "test", "real")]
+            utils::write.csv(times, sprintf("r-test-timings-shard%d.csv", n),
+                row.names = FALSE)
+            summ <- Sys.getenv("GITHUB_STEP_SUMMARY")
+            if (nzchar(summ)) {
+              slow <- head(times[order(-times$real), ], 15)
+              cat(sprintf("### Shard %d: %.1f min of tests, the slowest\n\n", n,
+                  sum(times$real) / 60), "| file | test | seconds |\n|---|---|---:|\n",
+                  sprintf("| %s | %s | %.1f |\n", slow$file,
+                      gsub("|", "/", slow$test, fixed = TRUE), slow$real),
+                  sep = "", file = summ, append = TRUE)
+            }
             cat(sprintf("\nTIER2 shard %d pass=%d fail=%d error=%d skip=%d\n",
                 n, sum(d$passed), sum(d$failed), sum(d$error), sum(d$skipped)))
             jl <- d[grepl("^test-(julia|backend|stan-julia)", d$file), , drop = FALSE]
@@ -192,6 +206,14 @@ jobs:
             if (any(grepl("Julia is not available|JuliaConnectoR", why))) {
               stop("julia tests skipped in the tier that installs Julia")
             }'
+
+      - name: Keep the timings
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: r-test-timings-shard${{ matrix.shard }}
+          path: r-test-timings-shard${{ matrix.shard }}.csv
+          if-no-files-found: ignore
 
   # One check to require, rather than four that a shard count change renames.
   julia-tests-complete:
