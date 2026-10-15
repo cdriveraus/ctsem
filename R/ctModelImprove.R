@@ -264,7 +264,8 @@ ctModelImprove <- function(fit, covariates = NULL,
       proposals <- proposals[!vapply(proposals, `[[`, '', 'key') %in% rejected]
       structural <- TRUE
       if (!length(proposals)) { stopped <- 'not adequate, nothing left to try'; break }
-      say("Round ", step, ": scoring ", length(proposals), " structural proposal(s)")
+      if (any(vapply(proposals, function(p) identical(p$family, 'periodic'), logical(1))))
+        say("Round ", step, ": scoring the cycle")
       proposals <- .ctImproveScoreStructural(current, proposals, data, covariates, cores)
     }
     # Ranked by each test's own asymptotic p-value: the bootstrap's floors at
@@ -924,49 +925,41 @@ ctModelImprove <- function(fit, covariates = NULL,
   out
 }
 
-# Structural proposals ranked at the current fit, before any is refitted, by
-# how much likelihood each gains with nothing else moved. A cycle's clock turns
-# as written, so its couplings into the processes have an ordinary score at
-# zero: their joint robust test, with the estimation removed exactly from the
-# few couplings by the Hessian's columns along them, ranks it by that
-# statistic, about twice the gain a refit would find. A process added at no
-# effect -- a slow process uncoupled, a process of an item's own with no
-# variance -- is moved along its proposal's start, its effect parameters
-# scaled by kappa and the rest at their starts, and its gain is the best log
-# likelihood over a grid of small kappa against the fit's: a lower bound on
-# the refit's, since the refit can only do better. The start itself is no
-# guide -- a slow process at it lost 2500 units on the Fisher data, where its
-# refit gained 51 -- and a gain grows from zero roughly linearly, not as the
-# second derivative a variance component's score test assumes, so neither a
-# single small step nor that test ranks it. Scored proposals are tried first,
-# in order of twice their gain or their statistic; the rest (second order,
-# candidate models) keep their place after them. Each score costs a model
-# prepared and a few evaluations, where a refit of the Fisher example's late
-# models took the better part of an hour.
+# A cycle proposal scored at the current fit, before any refit, and tried
+# first if it scores. Its clock turns as written, so its couplings into the
+# processes have an ordinary score at zero: their joint robust test, with the
+# estimation removed exactly from the few couplings by the Hessian's columns
+# along them. The statistic, about twice the gain a refit would find, ranks it
+# ahead of the proposals that keep the adequacy check's ranking.
+#
+# Processes added at no effect -- a slow process uncoupled, a process of an
+# item's own with no variance -- are not scored: their gain is not local. On
+# the Fisher search's eighth round a slow process for each affect lost
+# likelihood at every step along its start with the rest of the model held
+# (-0.11 and -0.21 at the smallest, 1/1000 of its coupling), where their
+# refits gained 51 and 25: the slow component pays only once the process's
+# own persistence and noise give way to it, a region a test at the current
+# fit cannot see. Ranked by such a test, the best change would be tried last.
 .ctImproveScoreStructural <- function(current, proposals, data, covariates, cores) {
   if (!.ctFitIsJulia(current)) return(proposals)
   est <- .ctFitRawEstimate(current)
   nm1 <- as.character(.ctFitRawParNames(current))
-  base <- tryCatch(as.numeric(ctJuliaEvaluate(current, est, gradient = FALSE,
-    contributions = TRUE, cores = cores)$subject_loglik), error = function(e) NULL)
   for (k in seq_along(proposals)) {
     prop <- proposals[[k]]
-    if (!isTRUE(prop$family %in% c('periodic', 'slow', 'unique'))) next
-    sc <- tryCatch(.ctImproveStructuralTest(current, prop, data, covariates, cores, est,
-      nm1, base), error = function(e) NULL)
-    if (is.null(sc) || !is.finite(sc$lr)) next
-    proposals[[k]]$rank <- -max(sc$lr, 0) - 1
+    if (!identical(prop$family, 'periodic')) next
+    sc <- tryCatch(.ctImproveCycleScore(current, prop, data, covariates, cores, est, nm1),
+      error = function(e) NULL)
+    if (is.null(sc) || !is.finite(sc$statistic)) next
+    proposals[[k]]$rank <- -sc$statistic - 1
     proposals[[k]]$scored <- sc
   }
   proposals
 }
 
-# One structural proposal's score (`.ctImproveScoreStructural`): `lr`, the
-# statistic it is ranked by (a cycle's robust score statistic, or twice a
-# process's gain over the kappa grid), with the cycle's p or the process's
-# gain and the kappa it was found at. NULL where the extended model cannot be
-# prepared or does not reproduce the fit.
-.ctImproveStructuralTest <- function(current, prop, data, covariates, cores, est, nm1, base) {
+# A cycle proposal's score test (`.ctImproveScoreStructural`): the robust
+# statistic, its degrees of freedom and bootstrap p. NULL where the extended
+# model cannot be prepared or does not reproduce the fit at zero coupling.
+.ctImproveCycleScore <- function(current, prop, data, covariates, cores, est, nm1) {
   model <- .ctFitBaseModel(current)
   e <- prop$edit(model, data, covariates)
   sp <- .ctImproveSpec(current, e$model, e$data, cores, e$args)
@@ -975,70 +968,34 @@ ctModelImprove <- function(fit, covariates = NULL,
   x0 <- stats::setNames(numeric(length(nm2)), nm2)
   x0[nm1] <- est
   pars <- e$model$pars
-  module <- .ctJuliaModule(current$model_spec$project)
   newlat <- which(!e$model$latentNames %in% model$latentNames)
-  if (prop$family == 'periodic') {
-    # The couplings into the processes, at zero, where the extended model must
-    # reproduce the fit -- up to the normal(0, 1) prior's constant for each new
-    # parameter, with priors on every parameter.
-    new <- setdiff(nm2, nm1)
-    at <- pars[match(new, pars$param), , drop = FALSE]
-    test <- new[at$matrix %in% 'DRIFT' & !at$row %in% newlat & at$col %in% newlat]
-    if (!length(test)) return(NULL)
-    value1 <- ctJuliaEvaluate(current, est, gradient = FALSE, cores = cores)$value
-    offset <- if (isTRUE(current$args$resolved$priors)) length(new) * stats::dnorm(0, log = TRUE) else 0
-    ev <- ctJuliaEvaluate(sp$spec, x0, gradient = TRUE, cores = cores)
-    if (!isTRUE(abs(ev$value - value1 - offset) <= 1e-6 * max(1, abs(value1)))) return(NULL)
-    objective <- .ctJuliaObjective(sp$spec, hybrid = TRUE)
-    units <- as.matrix(.ctBackendWithMaxChunks(cores, .ctJuliaGet(module$ctsem_subject_gradients(
-      objective, .ctJuliaVector(as.numeric(x0)))))$scores)
-    theta <- match(nm1, nm2); delta <- match(test, nm2)
-    Hc <- .ctBackendWithMaxChunks(cores, as.matrix(.ctBackendJuliaValue(
-      module$ctsem_hessian_columns(objective, .ctJuliaNumericVector(as.numeric(x0)),
-        .ctJuliaVector(as.integer(delta))))))
-    Iinv <- .ctScorePinv(-.ctBackendHessian(current, est))$inv
-    A <- -t(Hc[theta, , drop = FALSE]) %*% Iinv
-    grad <- as.numeric(ev$gradient)
-    U <- grad[delta] - as.numeric(A %*% grad[theta])
-    C <- units[, delta, drop = FALSE] - units[, theta, drop = FALSE] %*% t(A)
-    j <- .ctScorePinv(.ctScoreSpread(C))
-    if (!j$rank) return(NULL)
-    stat <- as.numeric(t(U) %*% j$inv %*% U)
-    return(list(lr = stat, p = .ctScoreBoot(C, 999L), df = j$rank, gain = NA_real_,
-      kappa = NA_real_))
-  }
-  # An added process: its effect parameters scaled by kappa along the start.
-  start <- prop$start
-  if (is.null(base) || !length(start) || !all(names(start) %in% nm2)) return(NULL)
-  value <- function(transform, raw) as.numeric(eval(parse(text = transform),
-    list(param = raw, log1p_exp = log1p_exp)))
-  inverse <- function(transform, target) stats::uniroot(function(r)
-    value(transform, r) - target, c(-30, 30), tol = 1e-12)$root
-  cells <- pars[match(names(start), pars$param), , drop = FALSE]
-  effect <- cells$matrix %in% c('DIFFUSION', 'T0VAR') |
-    (cells$matrix %in% 'DRIFT' & !cells$row %in% newlat & cells$col %in% newlat)
-  if (!any(effect)) return(NULL)
-  tr <- as.character(cells$transform)
-  tr[is.na(tr) | !nzchar(tr)] <- 'param'
-  at <- function(kappa) {
-    x <- x0
-    x[names(start)[!effect]] <- start[!effect]
-    for (q in which(effect)) x[names(start)[q]] <- inverse(tr[q], kappa * value(tr[q], start[[q]]))
-    x
-  }
-  # Both signs where every effect parameter can take them (a coupling), else
-  # the positive side (a standard deviation).
-  symmetric <- all(vapply(which(effect), function(q) isTRUE(abs(value(tr[q], -1) +
-    value(tr[q], 1)) < 1e-8), logical(1)))
-  grid <- c(0.001, 0.003, 0.01, 0.03, 0.1)
-  if (symmetric) grid <- c(grid, -grid)
-  gains <- vapply(grid, function(kappa) tryCatch(sum(as.numeric(ctJuliaEvaluate(sp$spec,
-    at(kappa), gradient = FALSE, contributions = TRUE, cores = cores)$subject_loglik) - base),
-    error = function(e) NA_real_), 0)
-  if (!any(is.finite(gains))) return(NULL)
-  best <- which.max(gains)
-  list(lr = 2 * gains[best], p = NA_real_, df = NA_integer_, gain = gains[best],
-    kappa = grid[best])
+  new <- setdiff(nm2, nm1)
+  at <- pars[match(new, pars$param), , drop = FALSE]
+  test <- new[at$matrix %in% 'DRIFT' & !at$row %in% newlat & at$col %in% newlat]
+  if (!length(test)) return(NULL)
+  # At zero coupling the extended model must reproduce the fit -- up to the
+  # normal(0, 1) prior's constant for each new parameter, with priors on
+  # every parameter.
+  value1 <- ctJuliaEvaluate(current, est, gradient = FALSE, cores = cores)$value
+  offset <- if (isTRUE(current$args$resolved$priors)) length(new) * stats::dnorm(0, log = TRUE) else 0
+  ev <- ctJuliaEvaluate(sp$spec, x0, gradient = TRUE, cores = cores)
+  if (!isTRUE(abs(ev$value - value1 - offset) <= 1e-6 * max(1, abs(value1)))) return(NULL)
+  module <- .ctJuliaModule(current$model_spec$project)
+  objective <- .ctJuliaObjective(sp$spec, hybrid = TRUE)
+  units <- as.matrix(.ctBackendWithMaxChunks(cores, .ctJuliaGet(module$ctsem_subject_gradients(
+    objective, .ctJuliaVector(as.numeric(x0)))))$scores)
+  theta <- match(nm1, nm2); delta <- match(test, nm2)
+  Hc <- .ctBackendWithMaxChunks(cores, as.matrix(.ctBackendJuliaValue(
+    module$ctsem_hessian_columns(objective, .ctJuliaNumericVector(as.numeric(x0)),
+      .ctJuliaVector(as.integer(delta))))))
+  Iinv <- .ctScorePinv(-.ctBackendHessian(current, est))$inv
+  A <- -t(Hc[theta, , drop = FALSE]) %*% Iinv
+  grad <- as.numeric(ev$gradient)
+  U <- grad[delta] - as.numeric(A %*% grad[theta])
+  C <- units[, delta, drop = FALSE] - units[, theta, drop = FALSE] %*% t(A)
+  j <- .ctScorePinv(.ctScoreSpread(C))
+  if (!j$rank) return(NULL)
+  list(statistic = as.numeric(t(U) %*% j$inv %*% U), df = j$rank, p = .ctScoreBoot(C, 999L))
 }
 
 # The adequacy check's evidence for a slow process in latent `name`: the
