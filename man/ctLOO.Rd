@@ -191,8 +191,8 @@ that moves the estimate. Two levels:
   sample the fit and use its draws instead. No warning is not proof the
   approximation is good: k is estimated too low from few draws, so a value
   approaching 0.7, or a posterior you expect to be skewed (an outlying
-  subject, a variance near zero), is worth rerunning with more
-  \code{nsamples} or on a sampled fit.
+  subject, a variance near zero, binary indicators), is worth rerunning
+  with more \code{nsamples} or on a sampled fit.
   \item \code{subjectwise = FALSE}, on an optimized
   \code{intoverpop = 'laplace'} fit only: leave one row out, conditional on the
   estimated population parameters and integrating over each unit's random

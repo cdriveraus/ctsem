@@ -341,6 +341,37 @@ test_that("binary works with random effects and with laplace", {
     expect_false(inherits(fit, "try-error"), info = approach)
     if (!inherits(fit, "try-error")) {
       expect_true(is.finite(fit$estimate$loglik), info = approach)
+
+      # What ctLOO reads through the categorical update. Each subject's term
+      # (`ctsem_unit_terms`, for PSIS) adds up with the prior to the objective,
+      # and the score a row fold removes -- a subject left partly observed, so
+      # the training data's score is used (casewiseApproximation) -- is the
+      # gradient of what removing those rows removes.
+      spec <- .ctBackendSpec(fit)
+      est <- as.numeric(fit$estimate$raw)
+      terms <- .ctBackendUnitTerms(spec, est)
+      expect_equal(terms$value,
+        ctJuliaEvaluate(fit, pars = est, gradient = FALSE, cores = 1)$value,
+        tolerance = 1e-8, info = approach)
+      rowsubject <- .ctFitRowSubject(fit)
+      heldout <- which(rowsubject == 2)[c(2, 5, 8)]
+      training <- spec$data
+      training[heldout, c("b1", "b2", "b3")] <- NA
+      trainfit <- .ctFitReplaceData(fit, training)
+      ctx <- list(scores = .ctBackendScoreMatrix(fit, est, prior = FALSE),
+        covariance = diag(length(est)), unitOf = terms$unit,
+        rowsubject = rowsubject, est = est)
+      removed <- .ctLOOFoldScore(ctx, heldout, training = function() trainfit)
+      U <- terms$unit[2]
+      contribution <- function(p) {
+        .ctBackendUnitTerms(spec, p)$unit_loglik[U, 1] -
+          .ctBackendUnitTerms(trainfit$model_spec, p)$unit_loglik[U, 1]
+      }
+      fd <- vapply(seq_along(est), function(j) {
+        e <- replace(numeric(length(est)), j, 1e-4)
+        (contribution(est + e) - contribution(est - e)) / 2e-4
+      }, numeric(1))
+      expect_equal(removed, fd, tolerance = 1e-5, info = approach)
     }
   }
 })
