@@ -154,7 +154,11 @@ than the step. A fold's influence \code{s' cov s} measures the step in
 posterior standard deviations squared, and a number given as
 \code{casewiseApproximation} refits exactly every fold whose influence is at
 or above it, so the approximation is used only where the step is short.
-\code{foldstepped} says which folds were stepped.
+\code{foldstepped} says which folds were stepped. On a julia fit a stepped
+fold scores its held-out rows only, together with every other stepped fold
+in one pass over the data, so its column of \code{LogLikRowFolds} is
+\code{NA} elsewhere: the training rows at each step would cost a pass a
+fold, which for leave-one-subject-out is the whole cost.
 
 \strong{\code{method = 'psis'}.} Pareto-smoothed importance sampling
 (Vehtari, Gelman and Gabry, 2017), without refitting. It estimates the

@@ -99,7 +99,11 @@
 #' posterior standard deviations squared, and a number given as
 #' \code{casewiseApproximation} refits exactly every fold whose influence is at
 #' or above it, so the approximation is used only where the step is short.
-#' \code{foldstepped} says which folds were stepped.
+#' \code{foldstepped} says which folds were stepped. On a julia fit a stepped
+#' fold scores its held-out rows only, together with every other stepped fold
+#' in one pass over the data, so its column of \code{LogLikRowFolds} is
+#' \code{NA} elsewhere: the training rows at each step would cost a pass a
+#' fold, which for leave-one-subject-out is the whole cost.
 #'
 #' \strong{\code{method = 'psis'}.} Pareto-smoothed importance sampling
 #' (Vehtari, Gelman and Gabry, 2017), without refitting. It estimates the
@@ -624,6 +628,12 @@ ctLOO <- function(fit, folds = 10, cores = getOption("mc.cores", 2L), parallelFo
     warning(sum(!usable), " of ", folds, " folds failed to refit and are dropped.",
       call. = FALSE)
   }
+  deferred <- which(usable)[vapply(folded[usable], function(x) isTRUE(x$deferred),
+    logical(1L))]
+  if (length(deferred)) {
+    folded <- .ctBackendLOOScoreSteps(fit, est, folded, deferred, samplerows,
+      rowsubject)
+  }
 
   llrow <- insample
   llrow[llrow == 0] <- NA
@@ -864,10 +874,21 @@ ctLOO <- function(fit, folds = 10, cores = getOption("mc.cores", 2L), parallelFo
   # `leaveOutN` is used without refitting, the in-sample likelihoods are the
   # ones wanted, and they are the same call -- one already made, when the
   # parameters are the estimate and no modes come from the training rows.
-  modesFrom <- if (laplace && withheld) trainingFit()$model_spec else NULL
-  out <- list(llrow = if (!isTRUE(refit) && is.null(modesFrom)) ctx$insample else
+  #
+  # Except after a step. Against a refit that pass is one evaluation among
+  # many; against a step it is the fold's whole cost, and leaving each of N
+  # subjects out made it N passes over N subjects -- an hour on 1046 subjects
+  # where the step itself took a second. So a stepped fold on the filter's
+  # route leaves its held-out rows to one pass shared by every stepped fold
+  # (`.ctBackendLOOScoreSteps()`), and a stepped Laplace subject fold, whose
+  # answer is its units' marginals below, scores no rows.
+  deferred <- stepped && !laplace
+  rowless <- stepped && subjectlevel
+  modesFrom <- if (laplace && withheld && !rowless) trainingFit()$model_spec else NULL
+  out <- list(llrow = if (deferred || rowless) rep(NA_real_, length(rowsubject)) else
+    if (!isTRUE(refit) && is.null(modesFrom)) ctx$insample else
     .ctBackendRowLoglik(fit, pars, modesFrom = modesFrom), pars = pars,
-    influence = influence, stepped = stepped)
+    influence = influence, stepped = stepped, deferred = deferred)
   if (subjectlevel) {
     # The held-out units' marginals, and no other unit's: nothing reads them.
     held <- unique(rowsubject[heldout])
@@ -878,6 +899,40 @@ ctLOO <- function(fit, folds = 10, cores = getOption("mc.cores", 2L), parallelFo
     out$converged <- isTRUE(all(full$converged)) && isTRUE(all(train$converged))
   }
   out
+}
+
+# The held-out rows of the folds a step answered on the filter's route
+# (`deferred`, indices into `folded`), scored together: one filter pass with a
+# parameter row per subject (`ctsem_kalman`'s second form), each subject at the
+# parameters of the fold holding its rows. Subject folds hold each subject in
+# one fold, so that is one pass for them all; a subject with rows in several
+# folds (row folds) takes a pass for each.
+.ctBackendLOOScoreSteps <- function(fit, est, folded, deferred, samplerows,
+  rowsubject) {
+  subjects <- unique(rowsubject)
+  index <- match(rowsubject, subjects)
+  pending <- lapply(deferred, function(f) unique(index[samplerows[[f]]]))
+  while (any(lengths(pending))) {
+    values <- matrix(est, length(subjects), length(est), byrow = TRUE)
+    taken <- logical(length(subjects))
+    scored <- vector("list", length(deferred))
+    for (k in seq_along(deferred)) {
+      s <- pending[[k]][!taken[pending[[k]]]]
+      if (!length(s)) next
+      values[s, ] <- matrix(folded[[deferred[k]]]$pars, length(s), length(est),
+        byrow = TRUE)
+      taken[s] <- TRUE
+      scored[[k]] <- s
+      pending[[k]] <- setdiff(pending[[k]], s)
+    }
+    llrow <- .ctBackendRowLoglik(fit, values)
+    for (k in which(lengths(scored) > 0L)) {
+      f <- deferred[k]
+      rows <- samplerows[[f]][index[samplerows[[f]]] %in% scored[[k]]]
+      folded[[f]]$llrow[rows] <- llrow[rows]
+    }
+  }
+  folded
 }
 
 

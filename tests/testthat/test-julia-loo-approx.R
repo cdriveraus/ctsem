@@ -154,6 +154,18 @@ test_that("casewise steps follow refits on row and subject folds, and a bar refi
   # Locally the largest row difference was 0.014.
   expect_lt(max(abs(stepped$outsampleLogLikRow - refit$outsampleLogLikRow),
     na.rm = TRUE), 0.05)
+  # Stepped folds are scored together, each subject at the parameters of the
+  # fold holding its rows -- several passes here, as a subject's rows span
+  # folds: the held-out rows are what a full pass at the fold's parameters
+  # gives them, and no other row is scored.
+  heldrows <- function(loo, k) {
+    rows <- loo$foldrows[[k]]
+    full <- .ctBackendRowLoglik(fit, loo$foldpars[, k])
+    full[full == 0] <- NA
+    expect_equal(loo$LogLikRowFolds[[k]][rows], full[rows], tolerance = 1e-10)
+    expect_true(all(is.na(loo$LogLikRowFolds[[k]][-rows])))
+  }
+  for (k in seq_along(stepped$foldrows)) heldrows(stepped, k)
 
   # A bar steps the folds whose influence is under it and refits the rest,
   # which then agree with the plain refits to the optimiser's tolerance.
@@ -175,6 +187,8 @@ test_that("casewise steps follow refits on row and subject folds, and a bar refi
     cores = 1))
   set.seed(4)
   refit <- suppressMessages(ctLOO(fit, folds = 16, cores = 1))
+  # One pass for all sixteen folds here.
+  for (k in c(1L, 9L, 16L)) heldrows(stepped, k)
   bysubject <- function(x) as.numeric(tapply(x$outsampleLogLikRow, rowsubject, sum))
   error <- abs(bysubject(stepped) - bysubject(refit))
   foldsubject <- vapply(stepped$foldrows, function(r) rowsubject[r[1]], numeric(1))
