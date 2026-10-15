@@ -2494,7 +2494,7 @@ function _laplace_unit_loglik_gradient(laplace::CTSEMLaplaceObjective, U::Intege
         for m in pos
             loglik = one!(m, aws, gradient, shift, inner)
             isfinite(loglik) ||
-                return (value=loglik, gradient=fill(T(NaN), length(u)), hlogdet=zero(T))
+                return (value=loglik, gradient=fill(_ctsem_nan(T), length(u)), hlogdet=zero(T))
             total += loglik
             hsum += aws.ekf_ws.hyb.half_logdet
         end
@@ -2558,7 +2558,7 @@ function _laplace_unit_loglik_gradient(laplace::CTSEMLaplaceObjective, U::Intege
         return true
     end
     @inbounds for w in 1:width
-        okk[w] || return (value=bad[w], gradient=fill(T(NaN), length(u)), hlogdet=zero(T))
+        okk[w] || return (value=bad[w], gradient=fill(_ctsem_nan(T), length(u)), hlogdet=zero(T))
     end
     inner = into === nothing ? zeros(T, length(u)) : fill!(into, zero(T))
     @inbounds for w in 1:width

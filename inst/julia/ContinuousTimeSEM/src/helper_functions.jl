@@ -31,6 +31,19 @@ _finite_deep(x::ForwardDiff.Dual) = _finite_deep(ForwardDiff.value(x)) &&
 _finite_deep(x::AbstractArray) = all(_finite_deep, x)
 
 """
+    _ctsem_nan(T)
+
+NaN of type `T` in the value and in every partial, at every level of a dual
+number: the sentinel for an invalid point. `T(NaN)` sets the value alone, and a
+Jacobian reads only the partials, so a gradient filled with it differentiated to
+an exact zero -- `ctsem_hessian` returned a zero matrix at a point whose dual
+pass had failed, which every check downstream took for a Hessian.
+"""
+_ctsem_nan(::Type{T}) where {T} = T(NaN)
+_ctsem_nan(::Type{ForwardDiff.Dual{G,V,N}}) where {G,V,N} = ForwardDiff.Dual{G}(
+    _ctsem_nan(V), ForwardDiff.Partials(ntuple(_ -> _ctsem_nan(V), Val(N))))
+
+"""
     _zero_deep(x)
 
 Whether `x` is exactly zero *including its derivatives*: the value and every

@@ -2519,8 +2519,10 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
             reporter=reporter)
         minimizer = collect(finish.x)
         # The finish's own gain replaces L-BFGS's metric proxy: it is the exact
-        # decrement, which is what the verdict below should be judging.
-        directional.dphi0 = -2 * finish.gain
+        # decrement, which is what the verdict below should be judging. A
+        # finish with no Hessian has none (`Inf`), and the proxy stays: put
+        # there, it made the report read "stopped with Inf still available".
+        isfinite(finish.gain) && (directional.dphi0 = -2 * finish.gain)
         (early && (finish.handback || finish.hessian === nothing)) || break
         # L-BFGS carries on from where the finish left the point, to the
         # ordinary stopping rule, rather than the fit ending short: either the

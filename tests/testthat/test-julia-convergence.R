@@ -509,3 +509,50 @@ test_that("a marginal model's exact Hessian reports its progress through the sha
     npar, npar)
   expect_equal(hessian, bare, tolerance = 1e-10)
 })
+
+test_that("an exact Hessian the dual pass cannot form is refused, and the fit goes on without it", {
+  skip_without_julia()
+  # A deterministic age state and steep logistic steps in it, as a
+  # questionnaire's form changes are written: the symbolic Jy cell holds
+  # `exp(40 (AGE - 4.7)) / (1 + exp(40 (AGE - 4.7)))^2`, whose denominator is
+  # Inf past age 13.6. Its value is 0, but a derivative of 1e-17 on the age
+  # state makes the quotient's partial Inf / Inf, so every dual pass is NaN.
+  # The adjoint's invalid-point gradient was `T(NaN)` -- NaN in the value,
+  # zero in the partials -- and a Jacobian reads only the partials: the exact
+  # Hessian came back an exact zero matrix, the Newton finish took no step and
+  # did not hand back to L-BFGS, and a 415-parameter fit stopped uncertified
+  # with |g| 177. It is NaN now, so the finish resumes L-BFGS and the
+  # certification differences the gradient.
+  set.seed(5)
+  data <- do.call(rbind, lapply(seq_len(30), function(i) {
+    t <- sort(c(4.5, stats::runif(5, 4.6, 15.5)))
+    eta <- cumsum(stats::rnorm(length(t), 0, 0.5))
+    data.frame(id = i, time = t, y1 = eta + stats::rnorm(length(t), 0, 0.5) +
+      ifelse(t < 4.7, 1, 0) - ifelse(t > 13.4, 1, 0))
+  }))
+  model <- suppressMessages(ctModel(type = "ct", n.latent = 2, n.manifest = 1,
+    manifestNames = "y1", latentNames = c("eta", "AGE"),
+    LAMBDA = matrix(c(1, 0), 1, 2), DRIFT = matrix(c("drift", 0, 0, 0), 2, 2),
+    DIFFUSION = matrix(c("diff", 0, 0, 0), 2, 2),
+    T0VAR = matrix(c("t0v", 0, 0, 0), 2, 2), T0MEANS = matrix(c("t0m", 4.5), 2, 1),
+    CINT = matrix(c(0, 1), 2, 1), MANIFESTMEANS = matrix(paste0(
+      "f54 * 1/(1+exp((AGE - 4.7)*40)) + f15 * 1/(1+exp(-(AGE - 13.4)*20))")),
+    MANIFESTVAR = matrix("mvar"), PARS = matrix(c("f54", "f15"), ncol = 1)))
+  model$pars$indvarying <- FALSE
+
+  spec <- suppressWarnings(suppressMessages(ctFit(data, model, backend = "julia",
+    fit = FALSE, cores = 1L)))
+  hessian <- ctsem:::.ctBackendHessianAt(spec, rep(0.1, ctsem:::.ctBackendNpar(spec)))
+  expect_false(isTRUE(all(hessian == 0)))
+  expect_true(anyNA(hessian))
+
+  fit <- suppressWarnings(suppressMessages(ctFit(data, model, backend = "julia",
+    cores = 1L)))
+  expect_true(isTRUE(fit$optim$converged))
+  expect_identical(fit$uncertainty$certification$status, "certified")
+  expect_true(all(is.finite(fit$uncertainty$hessian)))
+  expect_false(all(fit$uncertainty$hessian == 0))
+  # The proxy the stopping rule used, not the Inf of a finish that had no
+  # Hessian.
+  expect_true(is.finite(fit$optim$predicted_gain))
+})

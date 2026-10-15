@@ -1390,10 +1390,10 @@ function _reverse_update!(x̄::Vector{T}, P̄::Matrix{T}, Θ̄::Matrix{T}, θ̄c
         # drops cotangents at non-mutable positions -- a poison confined to the
         # state cotangents could be filtered out of a model whose measurement
         # matrices are all fixed.
-        fill!(x̄, T(NaN))
-        fill!(P̄, T(NaN))
-        fill!(Θ̄, T(NaN))
-        fill!(θ̄ca, T(NaN))
+        fill!(x̄, _ctsem_nan(T))
+        fill!(P̄, _ctsem_nan(T))
+        fill!(Θ̄, _ctsem_nan(T))
+        fill!(θ̄ca, _ctsem_nan(T))
         return nothing
     end
     copyto!(ỹ, record.manifestmeans)

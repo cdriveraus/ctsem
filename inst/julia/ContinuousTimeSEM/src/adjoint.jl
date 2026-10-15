@@ -383,7 +383,7 @@ function ctsem_adjoint_gradient(objective::CTSEMObjective, values::AbstractVecto
     gradients = [zeros(T, length(values)) for _ in 1:nblocks]
     totals = zeros(T, nblocks)
     valid = fill(true, nblocks)
-    badvalue = fill(T(NaN), nblocks)
+    badvalue = fill(_ctsem_nan(T), nblocks)
 
     _ctsem_pull_blocks(nblocks, nchunks) do b, w
         _ctsem_adjoint_chunk!(gradients[b], totals, valid, badvalue, b,
@@ -396,7 +396,7 @@ function ctsem_adjoint_gradient(objective::CTSEMObjective, values::AbstractVecto
             # in the serial path: a non-finite value *and* a non-finite
             # gradient, so an optimizer's finiteness guards reject the trial
             # point rather than accepting a partial gradient.
-            return (value=badvalue[c], gradient=fill(T(NaN), length(values)))
+            return (value=badvalue[c], gradient=fill(_ctsem_nan(T), length(values)))
         end
     end
 
@@ -465,7 +465,7 @@ function ctsem_subject_gradients(objective::CTSEMObjective, values::AbstractVect
     ranges = _ctsem_chunk_ranges(nsubjects, nblocks)
     totals = zeros(T, nblocks)
     valid = fill(true, nblocks)
-    badvalue = fill(T(NaN), nblocks)
+    badvalue = fill(_ctsem_nan(T), nblocks)
 
     _ctsem_pull_blocks(nblocks, nchunks) do b, w
         _ctsem_subject_gradient_chunk!(scores, totals, valid, badvalue, b,
@@ -473,7 +473,7 @@ function ctsem_subject_gradients(objective::CTSEMObjective, values::AbstractVect
     end
 
     @inbounds for c in 1:nblocks
-        valid[c] || return (value=badvalue[c], scores=fill(T(NaN), nsubjects, npars))
+        valid[c] || return (value=badvalue[c], scores=fill(_ctsem_nan(T), nsubjects, npars))
     end
 
     prior && _ctsem_prior_scores!(scores, objective, values)
