@@ -88,7 +88,7 @@ Suggests:
     rstudioapi,
     R.rsp,
     qgraph,
-    JuliaConnectoR,
+    JuliaConnectoR (>= 1.1.6),
     digest,
     withr,
     ps

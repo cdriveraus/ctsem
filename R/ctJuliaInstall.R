@@ -27,6 +27,35 @@
 # re-resolved on first use.
 .ct_julia_version <- "1.12.7"
 
+# The oldest JuliaConnectoR the julia backend runs on. 1.1.5 hangs translating a
+# named tuple that holds an empty vector -- on Linux the Julia process exits
+# partway through the reply and R waits on the socket for good: every sampled
+# fit with no effective-size target returned one (`target_trace`), and lost
+# hours of draws that way on the S3IT cluster (2026-10-16). 1.1.6 translates it.
+.ct_juliaconnector_min <- "1.1.6"
+
+# Whether JuliaConnectoR is installed at a version the backend runs on.
+# `version` is the installed one, NULL for none; a parameter so the rule is
+# testable without uninstalling anything.
+#' @keywords internal
+.ctJuliaConnectoROk <- function(version = .ctJuliaConnectoRVersion()) {
+  !is.null(version) && utils::compareVersion(as.character(version),
+    .ct_juliaconnector_min) >= 0L
+}
+
+# The installed JuliaConnectoR's version, or NULL when there is none. Read from
+# the loaded namespace when it is loaded: an update installed since then does
+# not take effect until R restarts, and that is the copy every call goes
+# through.
+#' @keywords internal
+.ctJuliaConnectoRVersion <- function() {
+  if ("JuliaConnectoR" %in% loadedNamespaces()) {
+    return(as.character(getNamespaceVersion("JuliaConnectoR")))
+  }
+  if (!requireNamespace("JuliaConnectoR", quietly = TRUE)) return(NULL)
+  as.character(utils::packageVersion("JuliaConnectoR"))
+}
+
 # sha256 and approximate size of the official archive for .ct_julia_version, per
 # platform. A user-supplied version is downloaded unverified -- with a message
 # saying so -- since these are the only hashes we know.
@@ -185,15 +214,21 @@
 }
 
 .ctJuliaInstallConnectoR <- function(agree = NULL, quiet = FALSE) {
-  if (requireNamespace("JuliaConnectoR", quietly = TRUE)) return(TRUE)
+  installed <- .ctJuliaConnectoRVersion()
+  if (.ctJuliaConnectoROk(installed)) return(TRUE)
   lib <- .ctJuliaWritableLib()
   agreed <- .ctJuliaAgreed(agree, paste0(
-    "The julia backend needs the JuliaConnectoR package, which is not installed.\n",
+    "The julia backend needs the JuliaConnectoR package",
+    if (is.null(installed)) ", which is not installed.\n" else
+      paste0(" ", .ct_juliaconnector_min, " or later; ", installed, " is installed.\n"),
     "  install: JuliaConnectoR, from CRAN (pure R, nothing to compile)\n",
     "  into:    ", lib))
   if (!agreed) return(FALSE)
   utils::install.packages("JuliaConnectoR", lib = lib, quiet = quiet)
-  requireNamespace("JuliaConnectoR", quietly = TRUE)
+  # An older copy already loaded stays the one in use until R restarts, and
+  # the version check reads that one.
+  ("JuliaConnectoR" %in% loadedNamespaces() ||
+    requireNamespace("JuliaConnectoR", quietly = TRUE)) && .ctJuliaConnectoROk()
 }
 
 .ctJuliaChecksumOk <- function(path, sha256) {
@@ -439,10 +474,9 @@
 ctJuliaInstall <- function(threads = NULL, version = NULL, agree = NULL, force = FALSE,
   quiet = FALSE) {
   done <- character()
-  if (!requireNamespace("JuliaConnectoR", quietly = TRUE)) {
+  if (!.ctJuliaConnectoROk()) {
     if (!.ctJuliaInstallConnectoR(agree = agree, quiet = quiet)) {
-      stop("The julia backend needs the JuliaConnectoR package.\n", .ctJuliaDeclined(),
-        call. = FALSE)
+      stop(.ctJuliaConnectoRNeeded(), call. = FALSE)
     }
     done <- c(done, "JuliaConnectoR")
   }

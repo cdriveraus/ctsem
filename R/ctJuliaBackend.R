@@ -238,15 +238,28 @@
 }
 
 .ctJuliaRequire <- function() {
-  if (requireNamespace("JuliaConnectoR", quietly = TRUE)) return(invisible(TRUE))
+  if (.ctJuliaConnectoROk()) return(invisible(TRUE))
   # Offered rather than demanded: this is one CRAN package away from working,
   # and sending the user off to install it by hand and come back is the friction
   # ctJuliaInstall() exists to remove.
   if (isTRUE(tryCatch(.ctJuliaInstallConnectoR(), error = function(e) FALSE))) {
     return(invisible(TRUE))
   }
-  stop("backend='julia' needs the JuliaConnectoR package, which is not installed.\n",
-    .ctJuliaDeclined(), call. = FALSE)
+  stop(.ctJuliaConnectoRNeeded(), call. = FALSE)
+}
+
+# Why there is no usable JuliaConnectoR, and what to do: install it, update it,
+# or -- with an update installed under a loaded older copy -- restart R.
+#' @keywords internal
+.ctJuliaConnectoRNeeded <- function(installed = .ctJuliaConnectoRVersion()) {
+  if (is.null(installed)) {
+    return(paste0("backend='julia' needs the JuliaConnectoR package, which is ",
+      "not installed.\n", .ctJuliaDeclined()))
+  }
+  paste0("backend='julia' needs JuliaConnectoR ", .ct_juliaconnector_min,
+    " or later, and ", installed, " is ",
+    if ("JuliaConnectoR" %in% loadedNamespaces()) "loaded" else "installed",
+    ": install.packages('JuliaConnectoR'), then restart R.")
 }
 
 # The engine's identity: a hash of its own source.
@@ -691,7 +704,7 @@ ctJuliaSetup <- function(project = NULL, julia_bin = NULL,
 #'   or consent to install them given in advance with
 #'   \code{CTSEM_JULIA_AGREE=yes} (checked by a short \code{julia} process,
 #'   once per session, never a session) -- whether the \code{connectoR} bridge
-#'   package is installed,
+#'   package is installed at a version the backend runs on,
 #'   the \code{julia_bin} directory in use and the \code{julia} version there,
 #'   the \code{engine} version (a hash of the engine source shipped with this
 #'   ctsem, which is also what its cached project directory is keyed on), and
@@ -703,7 +716,7 @@ ctJuliaSetup <- function(project = NULL, julia_bin = NULL,
 #' status$available
 #' @export
 ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
-  connectoR <- requireNamespace("JuliaConnectoR", quietly = TRUE)
+  connectoR <- .ctJuliaConnectoROk()
   julia_bin <- .ctJuliaBin(julia_bin)
   if (!is.null(julia_bin)) Sys.setenv(JULIA_BINDIR = julia_bin)
   # A running session can be asked its own version; only a Julia that has never

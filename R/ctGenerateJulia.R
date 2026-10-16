@@ -284,10 +284,7 @@
 .ctGenerateJulia <- function(model, n.subjects, times, popmeans = NULL,
   project = NULL, quiet = FALSE, intoverstates = FALSE) {
 
-  if (!requireNamespace("JuliaConnectoR", quietly = TRUE)) {
-    stop("Generating with backend='julia' needs the JuliaConnectoR package.",
-      call. = FALSE)
-  }
+  if (!.ctJuliaConnectoROk()) stop(.ctJuliaConnectoRNeeded(), call. = FALSE)
   skeleton <- .ctGenerateSkeleton(model, n.subjects, times)
   prepared <- .ctGeneratePrepare(model, skeleton, popmeans = popmeans,
     project = project, quiet = quiet)
