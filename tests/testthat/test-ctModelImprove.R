@@ -111,9 +111,17 @@ test_that("a covariate the model lacks is added, an unrelated one is not, and th
   expect_equal(again$fit$estimate$loglik, imp$fit$estimate$loglik)
   expect_error(search(alpha = 0.01, verbose = FALSE), 'different search')
   # A refit's progress line, on stderr: the refit suppresses messages.
-  progress <- ctsem:::.ctImproveProgress('Round 2: ', every = 0)
-  line <- capture.output(suppressMessages(progress(3, 10, 12.5, 0.01)), type = 'message')
+  # With a file, the point reached is saved too.
+  pointfile <- tempfile(fileext = '.rds')
+  on.exit(unlink(pointfile), add = TRUE)
+  progress <- ctsem:::.ctImproveProgress('Round 2: ', every = 0, file = pointfile,
+    change = 'eta1 made second order')
+  line <- capture.output(suppressMessages(progress(3, 10, 12.5, 0.01, c(0.1, -2))),
+    type = 'message')
   expect_match(line, 'Round 2: refit at 0 min: iteration 3')
+  point <- readRDS(pointfile)
+  expect_equal(point$parameters, c(0.1, -2))
+  expect_identical(point$change, 'eta1 made second order')
   kept <- imp$history$change[imp$history$kept]
   expect_true(any(grepl('^z as a predictor of', kept)))
   expect_false(any(grepl('^w ', imp$history$change)))

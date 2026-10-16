@@ -175,7 +175,9 @@
 #'   round and after pruning. Called again with the same file, the same fit and
 #'   the same settings, it resumes after the last round saved; a file from a
 #'   different search is refused. A long search on a cluster otherwise keeps
-#'   nothing until it ends.
+#'   nothing until it ends. With \code{verbose}, the refit running is also
+#'   saved every ten minutes beside it (\code{<checkpoint>.refit.rds}): the
+#'   round, the change, the iteration and the raw parameters it had reached.
 #' @param verbose Report progress: each round's steps, each refit's time, and
 #'   while a refit runs, its iteration, objective and gradient every ten
 #'   minutes.
@@ -332,7 +334,9 @@ ctModelImprove <- function(fit, covariates = NULL,
         silent = TRUE))
       for (prop in batch) say("Round ", step, ": refitting with ", prop$label)
       refits <- .ctImproveRefits(current, edits, lapply(batch, `[[`, 'start'), cores,
-        slowest, progress = if (isTRUE(verbose)) paste0("Round ", step, ": "))
+        slowest, progress = if (isTRUE(verbose)) list(label = paste0("Round ", step, ": "),
+          change = batch[[1]]$label,
+          file = if (!is.null(checkpoint)) paste0(checkpoint, '.refit.rds')))
       slowest <- max(slowest, attr(refits, 'seconds'))
       say("Round ", step, ": refit took ", .ctImproveRefitReport(refits))
       for (b in seq_along(batch)) {
@@ -1265,7 +1269,8 @@ ctModelImprove <- function(fit, covariates = NULL,
   # A refit can run for hours, and says nothing while it does unless asked.
   if (!is.null(progress)) args$optimcontrol <- utils::modifyList(
     if (is.list(args$optimcontrol)) args$optimcontrol else list(),
-    list(callback = .ctImproveProgress(progress)))
+    list(callback = .ctImproveProgress(progress$label, file = progress$file,
+      change = progress$change)))
   names2 <- prepared$names
   est <- setNames(.ctFitRawEstimate(current), .ctFitRawParNames(current))
   init <- setNames(numeric(length(names2)), names2)
@@ -1295,10 +1300,11 @@ ctModelImprove <- function(fit, covariates = NULL,
 # with the iteration, the objective and the gradient's norm. Written to stderr
 # with the time rather than as a message, which the refit's
 # suppressMessages() would swallow, as it did a four-hour refit's on the
-# cluster.
-.ctImproveProgress <- function(label, every = 600) {
+# cluster. With `file`, the point reached is saved there too, so a refit that
+# stalls can be examined where it stalled.
+.ctImproveProgress <- function(label, every = 600, file = NULL, change = NULL) {
   start <- last <- proc.time()[['elapsed']]
-  function(iteration, total, objective, gradient_norm) {
+  function(iteration, total, objective, gradient_norm, parameters) {
     now <- proc.time()[['elapsed']]
     if (now - last < every) return(invisible(NULL))
     last <<- now
@@ -1306,6 +1312,10 @@ ctModelImprove <- function(fit, covariates = NULL,
       sprintf("refit at %.0f min: iteration %d, objective %.2f, |g| %.3g",
         (now - start) / 60, as.integer(iteration), objective, gradient_norm), '\n',
       sep = '', file = stderr())
+    if (!is.null(file)) .ctImproveCheckpointSave(file, list(round = label, change = change,
+      minutes = (now - start) / 60, iteration = as.integer(iteration),
+      objective = objective, gradient_norm = gradient_norm,
+      parameters = as.numeric(parameters)))
     invisible(NULL)
   }
 }

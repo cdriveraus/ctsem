@@ -87,7 +87,9 @@ session.}
 round and after pruning. Called again with the same file, the same fit and
 the same settings, it resumes after the last round saved; a file from a
 different search is refused. A long search on a cluster otherwise keeps
-nothing until it ends.}
+nothing until it ends. With \code{verbose}, the refit running is also
+saved every ten minutes beside it (\code{<checkpoint>.refit.rds}): the
+round, the change, the iteration and the raw parameters it had reached.}
 
 \item{verbose}{Report progress: each round's steps, each refit's time, and
 while a refit runs, its iteration, objective and gradient every ten
