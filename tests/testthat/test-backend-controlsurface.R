@@ -260,3 +260,17 @@ test_that("cores is refused by name on ctKalmanArray and ctSubjectPars for a jul
     expect_false(grepl('cores=', msg, fixed = TRUE))
   }
 })
+
+test_that("a supplied start is not batched from unless batch asks for it", {
+  # Batching is a device for a cold start; from a point already chosen its
+  # subset gradients only walk off it.
+  start <- ctsem:::.ctJuliaStartControl
+  expect_false(start(list(), inits = c(0.1, 0.2))$batch)
+  expect_null(start(list(), inits = NULL)$batch)
+  expect_null(start(list(), inits = "random")$batch)
+  # An explicit value wins either way.
+  expect_true(start(list(batch = TRUE), inits = c(0.1, 0.2))$batch)
+  expect_false(start(list(batch = FALSE), inits = NULL)$batch)
+  # Nothing else is touched.
+  expect_equal(start(list(maxiter = 5), inits = 1)$maxiter, 5)
+})
