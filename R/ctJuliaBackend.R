@@ -4611,10 +4611,7 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
 }
 
 # Say so when `cores` is more than the session can give, once per session per
-# pair. Separate from `.ctBackendReportChunks()` below on purpose: that one is
-# about the chunk tuner declining headroom it measured, and this is about
-# headroom that never existed, which is a different thing to say and a different
-# thing to do about it.
+# pair.
 .ctBackendReportThreads <- function(cores, threads) {
   key <- paste0(cores, ":", threads)
   if (key %in% .ct_julia_cache$threads_reported) return(invisible(NULL))
@@ -4705,59 +4702,6 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
   invisible(threads)
 }
 
-# Say so when the chunk tuner used materially fewer chunks than `cores` allowed.
-#
-# `cores` is a ceiling, not an instruction: `ctsem_tune_chunks!` times a ladder
-# of chunk counts within it and pins the fastest, because the subject loop is
-# not monotone in the count -- one model measured 3.7x *slower* on 23 threads
-# than on one. That is the right behaviour, and it was entirely silent, so
-# `ctFit(cores = 12)` could run on two chunks with nothing said: no way to tell
-# that ten cores went unused, and no way to tell whether asking for more would
-# have helped or hurt.
-#
-# Two things keep it from becoming noise. It fires only where the tuner itself
-# left the headroom -- the ceiling is `min(cores, threads)`, so a session with
-# fewer threads than `cores` says nothing here rather than blaming the tuner
-# for a limit it never saw -- and each limit-and-count pair is said once per
-# session, so a simulation study looping a hundred fits gets one line.
-#
-# That first exclusion left the worst case silent for a while: a `cores = 4` fit
-# in a one-thread session is not the tuner declining headroom, it is headroom
-# that never existed, and nothing said so. The exclusion is still right -- the
-# tuner is not at fault and naming it would misattribute -- so the case is
-# reported by `.ctBackendResolveThreads()` above instead, before the fit and
-# against `threads`, which is where the fix is.
-#
-# `threads` is the session's thread count and is asked for when not supplied.
-# It is a parameter so the gate can be exercised at a thread count the test
-# machine does not have to be restarted into: the alternative was a test that
-# skipped itself whenever an earlier file had left the session narrow, which is
-# a test that reports nothing and looks like a pass.
-.ctBackendReportChunks <- function(cores, picked, threads = NULL) {
-  cores <- suppressWarnings(as.integer(cores)[1L])
-  picked <- suppressWarnings(as.integer(picked)[1L])
-  if (is.na(cores) || is.na(picked) || picked < 1L) return(invisible(NULL))
-  # Cheap test first. A fit that used what it asked for is the usual case and
-  # must not pay a bridge call to establish that.
-  if (picked * 2L > cores || cores - picked < 2L) return(invisible(NULL))
-  # Guarded, because `juliaEval` *starts* a session when none is running rather
-  # than failing, and a function whose whole job is to report must never be the
-  # thing that launches the engine. In its own call site a fit has just
-  # finished, so the session is up and this is one cheap bridge call.
-  if (is.null(threads)) {
-    threads <- if (!.ctJuliaSessionRunning()) NA_integer_ else
-      tryCatch(as.integer(.ctJuliaEval("Threads.nthreads()")),
-        error = function(e) NA_integer_)
-  }
-  threads <- suppressWarnings(as.integer(threads)[1L])
-  limit <- if (is.na(threads)) cores else min(cores, threads)
-  if (picked * 2L > limit || limit - picked < 2L) return(invisible(NULL))
-  key <- paste0(limit, ":", picked)
-  if (key %in% .ct_julia_cache$chunks_reported) return(invisible(NULL))
-  .ct_julia_cache$chunks_reported <- c(.ct_julia_cache$chunks_reported, key)
-  message("cores = ", cores, " requested, ", picked, " used.")
-  invisible(NULL)
-}
 
 # The engine's per-iteration record, as a data frame.
 #
@@ -5197,9 +5141,9 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
     common$stall_carried <- max(0, as.numeric(carried)[1L], na.rm = TRUE)
     common$stall_alone <- TRUE
   }
-  # `cores` is the ceiling; `ctsem_tune_chunks!` measures the count to use
-  # within it, and the fit records what it picked. Restored afterwards so the
-  # session does not carry this fit's ceiling into the next thing that runs.
+  # `cores` is the ceiling the subject loop runs at, and the fit records it.
+  # Restored afterwards so the session does not carry this fit's ceiling into
+  # the next thing that runs.
   # `damp` names coordinates whose first steps should be short. The metric is
   # `Diagonal(scale^2)` standing in for the curvature, and a step is `P^-1 g`,
   # so multiplying a coordinate's `scale` by 10 divides its step by 100. Used
@@ -5408,8 +5352,6 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
   if (is.null(result$stall_escapes)) result$stall_escapes <- escapes
   for (nm in names(saem_record)) result[nm] <- list(saem_record[[nm]])
   result <- .ctJuliaAddRunCounts(result, spent)
-  # What the tuner settled on, when that is well short of what was asked for.
-  .ctBackendReportChunks(cores, result$chunks)
   if (!is.null(failure)) {
     warning("The progress callback failed and was disabled after the first ",
       "error; the fit itself is unaffected. The error was: ", failure,
@@ -6082,13 +6024,11 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
     # where the optimiser stopped, not what was estimated.
     gradient = gradientvec,
     iterations = as.integer(result$iterations),
-    # How many pool workers `ctsem_tune_chunks!` measured as best within the
-    # `cores` ceiling. Carried onto the fit because the uncertainty phase reads
-    # it rather than re-deriving it from `cores`: the subject loop is not
-    # monotone in the worker count, which is the whole reason the tuner exists.
-    # It is also the setting to hold fixed when comparing two fits, because the
-    # pool divides a sum differently at each width and that moves an estimate
-    # in its last digits.
+    # How many pool workers the fit ran on: the `cores` ceiling, within the
+    # session's threads. Carried onto the fit because the uncertainty phase
+    # reads it. Two fits at different widths differ in an estimate's last
+    # digits, and so do two at one width above one, since the pool takes units
+    # as its workers come free; one worker reproduces.
     chunks = if (is.null(result$chunks)) NA_integer_ else as.integer(result$chunks),
     # Evaluation counts, because "how many times did it call the likelihood"
     # is the first question about a fit that took longer than expected, and

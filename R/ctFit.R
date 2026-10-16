@@ -738,9 +738,10 @@ T0VARredundancies <- function(ctm) {
 #' stan). Defaults to \code{getOption("mc.cores", 2)}. It is the most CPU
 #' cores the call uses at once, counting every process it starts: on julia
 #' the threads a fit uses, BLAS included, and a sampling run's worker
-#' processes, which share it between them. A julia fit at \code{cores > 1} is not
-#' reproducible to the last decimal, because the chunk tuner times candidate
-#' splits; use \code{cores = 1} for a before-and-after comparison. The Julia
+#' processes, which share it between them. A julia fit at \code{cores > 1} is
+#' not reproducible to the last decimal, because its sums are divided among
+#' workers in an order that varies from run to run; use \code{cores = 1} for a
+#' before-and-after comparison. The Julia
 #' session starts as wide as the call that starts it, and a later call asking
 #' for more runs at what it has and says so: \code{ctJuliaSetup(threads = n,
 #' force = TRUE)} restarts it wider, and
@@ -2337,8 +2338,8 @@ ctFit<-function(datalong, model, stanmodeltext=NA, iter=1000, intoverstates=TRUE
   # turned it into 1 -- so asking for every core silently got one.
   #
   # `chains` does not cap the julia backend -- it has no MCMC chains. Its
-  # parallelism is over subject chunks, and `ctsem_tune_chunks!` measures within
-  # whatever ceiling it is given, so the ceiling is simply the machine.
+  # parallelism is over subject chunks, run at whatever ceiling it is given, so
+  # the ceiling is simply the machine.
   if(is.character(cores) && cores=='maxneeded') {
     cores <- if(backend %in% 'julia') max(1, parallel::detectCores()-1) else
       max(1,min(c(chains,parallel::detectCores()-1)))

@@ -342,8 +342,8 @@ function _run_chain(logdensity!, centre::Vector{Float64},
     # Given rather than estimated, every chain starts from the same number.
     # It has to come from the caller rather than be shared here: computing it
     # once per run inside the engine gives a *different* answer in a worker
-    # process than in this session, because the subject-loop chunk tuner picks
-    # its count by timing and the last bits of the density differ -- and this
+    # process than in this session, because a worker runs the subject loop at
+    # its own width and the last bits of the density differ -- and this
     # ladder's `> log(0.5)` test turns that into a factor of two. Measured:
     # 0.125 in-process against 0.0625 in a worker, on one fixture at one seed,
     # which broke the processes-reproduce-in-process invariant.

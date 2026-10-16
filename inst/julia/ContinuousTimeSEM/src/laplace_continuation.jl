@@ -1073,7 +1073,7 @@ function ctsem_laplace_continuation_optimize(o::CTSEMLaplaceContinuation,
     res = ctsem_optimize(step, zeros(size(B, 2)); maxiter=Int(maxiter), g_tol=1e-8,
         f_tol=0.0, x_tol=0.0, gap_tol=Float64(tol), converge_tol=Float64(tol),
         overshoot_probe=:off, stall_window=0, batch=false, newton=false,
-        tune_chunks=false, precondition=nothing, lbfgs_diagonal=false,
+        precondition=nothing, lbfgs_diagonal=false,
         initial_alpha=max(alpha, 1e-12), progress=false)
     y = collect(Float64, res.minimizer)
     moved = sqrt(sum(abs2, y))
@@ -1598,10 +1598,6 @@ width is ForwardDiff's chunk for the active count where one has already run
 on a model of this shape in this session, or where width one is forecast to
 take more than `_CONTINUATION_WIDE_AFTER[]` seconds (one timed sweep, times
 the sweeps the flagged rules need, over the workers), and one otherwise.
-
-Its own timing rather than `ctsem_tune_chunks!`'s: that one chooses how many
-chunks the subject loop is split into from timed gradients, where this asks
-once whether a wider dual's compile pays, from one sweep.
 """
 function _continuation_hessian_width(o::CTSEMLaplaceContinuation,
     theta::Vector{Float64}, layout)

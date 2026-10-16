@@ -612,8 +612,9 @@
     #
     # Supplied here rather than shared inside the engine, deliberately: one
     # estimate computed per run there answers differently in a worker process
-    # than in this session, because the chunk tuner shifts the last bits of
-    # the density and the ladder's threshold turns that into a factor of two.
+    # than in this session, because a worker runs the subject loop at its own
+    # width, which shifts the last bits of the density, and the ladder's
+    # threshold turns that into a factor of two.
     stepsize = as.numeric(.ctJuliaOr(control$stepsize, 0)),
     # `adapt_metric` defaults to FALSE, which is a change, and it is measured
     # rather than argued. Warmup re-estimates the metric from 150 iterations

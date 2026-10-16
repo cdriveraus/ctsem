@@ -162,7 +162,7 @@ end
 @testset "a round stays inside its trust region and does not lose objective" begin
     laplace, values = _fresh_nonlinear()
     theta = collect(Float64, values)
-    fit = ctsem_laplace_optimize(laplace, theta; maxiter=200, tune_chunks=false)
+    fit = ctsem_laplace_optimize(laplace, theta; maxiter=200)
     est = fit.minimizer
     H = ctsem_laplace_hessian(laplace, est)
     E = eigen(Symmetric(-(H .+ transpose(H)) ./ 2))

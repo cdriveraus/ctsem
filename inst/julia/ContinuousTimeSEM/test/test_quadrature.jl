@@ -195,8 +195,7 @@ end
 
 @testset "the correction is available at more than one level" begin
     laplace, values = _fresh_twolevel()
-    result = ctsem_laplace_optimize(laplace, values; maxiter=100, g_tol=1e-7,
-        tune_chunks=false)
+    result = ctsem_laplace_optimize(laplace, values; maxiter=100, g_tol=1e-7)
     H = ctsem_laplace_hessian(laplace, result.minimizer)
     correction = ctsem_laplace_correction(laplace, result.minimizer, H; nodes=3)
     @test all(isfinite, correction.delta)
@@ -247,8 +246,7 @@ end
 
 @testset "the correction is the Newton step it claims to be" begin
     laplace, values = _fresh_nonlinear()
-    result = ctsem_laplace_optimize(laplace, values; maxiter=200, g_tol=1e-8,
-        tune_chunks=false)
+    result = ctsem_laplace_optimize(laplace, values; maxiter=200, g_tol=1e-8)
     est = result.minimizer
     H = ctsem_laplace_hessian(laplace, est)
     correction = ctsem_laplace_correction(laplace, est, H; nodes=5)
