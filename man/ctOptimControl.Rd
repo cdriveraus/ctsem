@@ -23,7 +23,8 @@ default.
  \item{\code{maxiter}}{Both. Iteration cap. Default 1000 on julia, mize's on
  stan.}
  \item{\code{lbfgs_memory}}{Both. How many curvature pairs L-BFGS keeps.
- Default 20 on julia, mize's on stan.}
+ Default on julia one per free parameter, at least 20 and at most 1000;
+ mize's on stan.}
  \item{\code{stallretries}}{Both. Default 2. How often a fit that stopped
  somewhere that is not a maximum is tried again: stan restarts from fresh
  random values when the gradient exceeds \code{stalltol} per data point, and
