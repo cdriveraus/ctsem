@@ -1184,23 +1184,23 @@ function _ctsem_flat_ladder(fg!, x::AbstractVector, f::Real, G::AbstractVector,
 end
 
 """
-    _ctsem_secant_along(H, s, y)
+    _ctsem_sr1(H, s, y)
 
-`H` with its curvature along the step `s` replaced by the secant's, `s'y / s's`
-(`y` the change in gradient over the step), and every other direction's kept:
-a symmetric rank-one correction, which is what lets the chord's copy of its
-Hessian follow a curvature that changes along the direction it walks. Returned
-unchanged when the secant is not a positive, finite curvature -- noise, or a
-step into negative curvature, which the chord then keeps from its Hessian.
+`H` updated by the symmetric rank-one formula so that it maps the step `s` to
+the change in gradient `y` over it: `H + r r' / (r's)` with `r = y - H s`, which
+gives `H s = y` and changes nothing orthogonal to `r`. What lets the chord's
+copy of its Hessian follow a curvature that changes as it walks, from the
+gradients the steps compute anyway. Unlike BFGS it does not keep `H` positive
+definite, which the finish's model does not need: a direction the steps find
+convex the other way is taken as the saddle-free step takes negative
+curvature. Skipped -- `H` returned -- where `r's` is below `1e-8 |r| |s|`, the
+usual safeguard (Nocedal & Wright, eq. 6.26), or not finite.
 """
-function _ctsem_secant_along(H::AbstractMatrix, s::AbstractVector, y::AbstractVector)
-    ss = dot(s, s)
-    (isfinite(ss) && ss > 0) || return H
-    kappa = dot(s, y) / ss
-    (isfinite(kappa) && kappa > 0) || return H
-    current = dot(s, H * s) / ss
-    isfinite(current) || return H
-    H .+ ((kappa - current) / ss) .* (s * transpose(s))
+function _ctsem_sr1(H::AbstractMatrix, s::AbstractVector, y::AbstractVector)
+    r = y .- H * s
+    denom = dot(r, s)
+    (isfinite(denom) && abs(denom) > 1e-8 * norm(r) * norm(s)) || return H
+    H .+ (r * transpose(r)) ./ denom
 end
 
 """
@@ -1256,9 +1256,9 @@ What the steps are taken against is `curvature`:
 - `:chord`  the exact Hessian at `x`, kept for every step (the chord, or
   simplified Newton, method: linear convergence at the rate the Hessian
   changes between `x` and the optimum, which from a hand-over this close is
-  fast), with the steps' copy of it corrected along any step that is slow in
-  that sense by the secant curvature there (`_ctsem_secant_along`), until the
-  steps are not worth a Hessian: at the rate the last half of the walk gained,
+  fast), with the steps' copy of it updated after every step by the step and
+  its change in gradient (`_ctsem_sr1`), until the steps are not worth a
+  Hessian: at the rate the last half of the walk gained,
   closing the gain its model predicts over the trusted directions would take
   more steps than a Hessian costs in gradients, and the point has moved more
   than `reuse_se` standard errors from where the Hessian was taken;
@@ -1273,10 +1273,10 @@ that is -- `_ctsem_hessian_distance`). Whatever the steps used, a step the
 trust region cannot make on a stale matrix is answered with the exact Hessian.
 A subset Hessian, or a chord one whose steps converged farther away, is
 replaced by the exact Hessian at the final point and the chord walked again on
-that, as is a chord that used up its steps -- `maxit`, or as many as its
-Hessian cost in gradients (`_ctsem_hessian_cost`) if more -- at most five
-times; on the exact variant the steps continue on a fresh Hessian each until it
-agrees.
+that, as is a chord that ended without converging, while the finish has spent
+less than six Hessians and walks of as many steps as one costs (counted in
+gradients, `_ctsem_hessian_cost`); on the exact variant the steps continue on a
+fresh Hessian each until it agrees.
 
 At a saddle -- negative curvature in the final Hessian -- the ladder along the
 negative curvature is tried (`_ctsem_saddle_ladder`), and the finish
@@ -1537,15 +1537,25 @@ function _ctsem_newton_finish(objective, x0, f0, G0, fg!; tol::Real=1e-8,
     # first step is the Newton step -- and the region is set by what the steps
     # on it then show.
     radius = Inf
-    # The steps a Hessian is walked for: `maxit`, and on the chord and the
-    # subset at most as many as the Hessian cost (`_ctsem_hessian_cost`),
-    # each step costing about a gradient. A walk there ends sooner once its
-    # steps are not worth a Hessian (`worth` below). A chord that ends either
-    # way, or converges somewhere its Hessian no longer describes, is walked
-    # again on the exact Hessian there (below), at most `max_rewalks` times.
+    # The steps a Hessian is walked for: `maxit` on the exact variant. On the
+    # chord and the subset a walk goes on while its steps are worth what a
+    # Hessian costs (the rule below), and the finish as a whole may spend, in
+    # gradients, what six Hessians and walks of as many steps as one costs
+    # did under the count this replaced (`finish_budget`): a step costs about
+    # a gradient and a Hessian `hessian_cost` of them (`_ctsem_hessian_cost`).
+    # Counted as a number of rewalks, walks cut short for a fresh Hessian used
+    # the allowance up sooner, and a finish that could not close its gap ended
+    # having covered less ground. A walk that ends without converging, or
+    # converges somewhere its Hessian no longer describes, is walked again on
+    # the exact Hessian there (below) while the budget lasts. An escape's new
+    # Hessian is walked for `per_hessian` steps whatever is left.
     hessian_cost = _ctsem_hessian_cost(objective, length(x))
+    subset_cost = sub === nothing ? Float64(hessian_cost) : hessian_cost * m / NU
     per_hessian = curvature === :exact ? Int(maxit) : max(Int(maxit), hessian_cost)
-    budget = per_hessian; rewalks = 0; max_rewalks = 5
+    finish_budget = 6 * (hessian_cost + per_hessian)
+    budget = curvature === :exact ? per_hessian :
+        max(0, floor(Int, finish_budget - hessian_cost * full_hessians[] -
+            subset_cost * subset_hessians[]))
     while true                          # once, and again after an escape or a rewalk
         converged = false
         prevgain = Inf; prevwhole = true; prevrho = 1.0
@@ -1669,15 +1679,21 @@ function _ctsem_newton_finish(objective, x0, f0, G0, fg!; tol::Real=1e-8,
             # the refreshed steps had climbed off -- to -207.02 twice, -207.29
             # and -205.83.
             #
-            # The chord's refresh is a free one: its copy of the matrix takes
-            # the secant's curvature along the step it just took, which the
-            # gradients at both ends measure, and keeps the exact Hessian's
-            # everywhere else (`_ctsem_secant_along`). Without it the chord
-            # walked a ray whose curvature decays along it -- a random-effect sd
-            # heading toward zero -- at the curvature of where it started, every
-            # step shorter than the last: on AnomAuth S1 from its default start
-            # (bench, dev1), 30 chord steps for gains of 4e-5 down to 3e-7, then
-            # five exact Hessians to finish, seven in the stage.
+            # The chord's refresh is a free one: after every step its copy of
+            # the matrix is updated by the step and the change in gradient over
+            # it, which the steps compute anyway (`_ctsem_sr1`), so the curvature
+            # it walks on follows the walk rather than staying where the
+            # Hessian was taken. Without any update the chord walked a ray whose
+            # curvature decays along it -- a random-effect sd heading toward
+            # zero -- at the curvature of where it started, every step shorter
+            # than the last: on AnomAuth S1 from its default start (bench,
+            # dev1), 30 chord steps for gains of 4e-5 down to 3e-7, then five
+            # exact Hessians to finish, seven in the stage. A correction along
+            # the step alone, on slow steps, mended that ray and left the rest
+            # of the matrix fixed: a curved valley bends it in other directions
+            # too, and on a 529-parameter marginal fit (ECLS-K, dev2) each walk
+            # gained nine tenths of its total in 25 steps and crawled on for
+            # 500 more.
             #
             # A step the trust region held back cannot contract the gain as a
             # Newton step does -- the directions it damped keep their share of
@@ -1694,7 +1710,7 @@ function _ctsem_newton_finish(objective, x0, f0, G0, fg!; tol::Real=1e-8,
                 H === nothing && break
                 prevgain = Inf; prevwhole = true; prevrho = 1.0; radius = Inf
             else
-                curvature === :chord && slow && (Hs = _ctsem_secant_along(Hs, dx, dg))
+                curvature !== :exact && (Hs = _ctsem_sr1(Hs, dx, dg))
                 prevgain = gain
             end
         end
@@ -1735,9 +1751,10 @@ function _ctsem_newton_finish(objective, x0, f0, G0, fg!; tol::Real=1e-8,
                 H = hess(x); Hs = H; hat = copy(x); exact = true; at_x = true
                 H === nothing && break
                 radius = Inf
-                if take_steps && rewalks < max_rewalks
-                    rewalks += 1
-                    budget = steps + per_hessian
+                left = finish_budget - hessian_cost * full_hessians[] -
+                    subset_cost * subset_hessians[] - steps
+                if take_steps && left >= 1
+                    budget = steps + floor(Int, left)
                     continue
                 end
             elseif !keep

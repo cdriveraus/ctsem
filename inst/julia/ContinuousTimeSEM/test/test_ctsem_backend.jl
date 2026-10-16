@@ -1248,13 +1248,23 @@ end
     # Walked as far as the tolerance needs: what is left along the ray is the
     # objective's own remaining gain, b exp(2 p2).
     @test b * exp(2 * out.x[2]) < 1e-7
-    # The secant itself: exact along the step for a quadratic, and nothing
-    # changed when the step measures no positive curvature.
+    # The update itself: it maps the step to its change in gradient, stays
+    # symmetric, and leaves the matrix alone where the step says nothing new.
     H = [4.0 1.0; 1.0 3.0]
     s = [1.0, 0.0]
-    @test ContinuousTimeSEM._ctsem_secant_along(H, s, [2.0, 7.0])[1, 1] ≈ 2.0
-    @test ContinuousTimeSEM._ctsem_secant_along(H, s, [2.0, 7.0])[2, 2] == 3.0
-    @test ContinuousTimeSEM._ctsem_secant_along(H, s, [-1.0, 0.0]) === H
+    y = [2.0, 7.0]
+    U = ContinuousTimeSEM._ctsem_sr1(H, s, y)
+    @test U * s ≈ y
+    @test U ≈ transpose(U)
+    @test ContinuousTimeSEM._ctsem_sr1(H, s, H * s) === H
+    # A quadratic's Hessian is learned from steps along its axes.
+    A = [5.0 2.0 0.0; 2.0 4.0 1.0; 0.0 1.0 3.0]
+    B = Matrix{Float64}(I, 3, 3)
+    for k in 1:3
+        e = zeros(3); e[k] = 1.0
+        B = ContinuousTimeSEM._ctsem_sr1(B, e, A * e)
+    end
+    @test B ≈ A
 end
 
 @testset "a first step that does not contract hands the point back" begin
