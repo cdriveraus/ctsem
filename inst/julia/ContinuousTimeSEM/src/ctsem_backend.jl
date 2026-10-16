@@ -2096,11 +2096,11 @@ will read what it returns, which adds the flat-direction probe and, on a route
 whose Hessian is expensive (Laplace), is what the finish runs for at all;
 `newton_curvature` is `:auto` (the route's own, `_ctsem_finish_curvature`),
 `:exact`, `:chord` or `:subset`; `newton_switch` is the predicted gain at which
-L-BFGS hands over where a Hessian is cheap, and a finish whose first step shows
-that hand-over was early gives the point back to L-BFGS, which runs on to its
-own stopping rule before the finish runs again -- where the Hessian is cheap
-enough to discard (`_ctsem_hessian_cost` within `newton_maxit`), and otherwise
-walks on it; `newton_reuse` and `flat_rtol`
+L-BFGS hands over where a Hessian is cheap enough to discard
+(`_ctsem_hessian_cost` within `newton_maxit`), and a finish whose first step
+shows that hand-over was early gives the point back to L-BFGS, which runs on to
+its own stopping rule before the finish runs again; where a Hessian is dearer
+L-BFGS runs to its own rule first; `newton_reuse` and `flat_rtol`
 are the finish's rules, passed from R so one number serves both sides.
 `lbfgs_inverse` is an initial inverse Hessian for L-BFGS (`_ctsem_lbfgs`'s
 `inverse`), as a fit's covariance is for refitting it to part of its data; one
@@ -2200,7 +2200,9 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
     # below `newton_switch`. Where it costs `2 npar` gradients (Laplace) it
     # runs only when a certification will read it, and L-BFGS runs to its own
     # rule first: the finish's Hessian is then the one the certification would
-    # have formed anyway, rather than an extra one.
+    # have formed anyway, rather than an extra one. A marginal model above
+    # `newton_maxit` parameters, whose Hessian costs about `npar` gradients,
+    # runs L-BFGS to its own rule first too (`handover` below).
     cheap = _ctsem_cheap_hessian(objective)
     route_curvature = _ctsem_finish_curvature(objective, length(start_values),
         Int(newton_maxit))
@@ -2217,8 +2219,17 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
     finishing = newton && gap_tol > 0 && route_curvature !== nothing &&
         (certify || cheap)
     # A Ref: the callback reads it and the resumed stage below lowers it.
-    handover = Ref(finishing && cheap ? max(Float64(gap_tol), Float64(newton_switch)) :
-        Float64(gap_tol))
+    #
+    # The early hand-over is for a Hessian that costs a few gradients, the
+    # same test as `discardable`: on the marginal route above `newton_maxit`
+    # parameters a Hessian costs about `npar` gradients, so there, as on the
+    # Laplace route, L-BFGS runs to its own rule first. The marginal route
+    # counted as cheap whatever its size, and a 529-parameter fit (ECLS-K,
+    # dev2) handed over on the switch with 140 nats still to climb while
+    # L-BFGS was gaining 2.5 nats a minute, to chord walks that gained 0.03 to
+    # 0.5 a minute with their Hessians.
+    handover = Ref(finishing && cheap && discardable ?
+        max(Float64(gap_tol), Float64(newton_switch)) : Float64(gap_tol))
     # A callback rather than Optim's `show_trace`, which prints one dense line
     # per iteration whatever the model costs -- thousands on a fast one, and on
     # a slow one nothing for minutes. The objective and the gradient norm are
