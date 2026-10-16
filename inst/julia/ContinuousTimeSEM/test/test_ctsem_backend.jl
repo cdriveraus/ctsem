@@ -1450,7 +1450,7 @@ end
     # is exactly zero along y = 0) and hands over, and the finish escapes.
     m = _endgame_mock(p -> -0.5 * p[1]^2 + 0.5 * p[2]^2 - 0.25 * p[2]^4)
     r = ContinuousTimeSEM.ctsem_optimize(m, [0.5, 0.0]; maxiter=200,
-        tune_chunks=false, gap_tol=1e-8, newton=true, certify=true,
+        gap_tol=1e-8, newton=true, certify=true,
         progress=false, verbose=false, overshoot_probe=:off)
     @test r.newton_escapes == 1
     @test abs(r.minimizer[2]) ≈ 1 atol = 1e-6
@@ -1465,7 +1465,7 @@ end
     # With nothing to certify, no probe; the steps are still taken where the
     # Hessian is cheap, as they always were.
     bare = ContinuousTimeSEM.ctsem_optimize(m, [0.5, 0.0]; maxiter=200,
-        tune_chunks=false, gap_tol=1e-8, newton=true, certify=false,
+        gap_tol=1e-8, newton=true, certify=false,
         progress=false, verbose=false, overshoot_probe=:off)
     @test bare.newton_steps >= 1
     @test !bare.probe_ran
@@ -1482,7 +1482,7 @@ end
     cb = (iteration, total, value, gnorm, x) ->
         (push!(seen, (Int(iteration), Float64(value), copy(x))); nothing)
     r = ContinuousTimeSEM.ctsem_optimize(_endgame_mock(f), [0.5, 0.0];
-        maxiter=200, tune_chunks=false, gap_tol=1e-8, newton=true,
+        maxiter=200, gap_tol=1e-8, newton=true,
         certify=false, progress=false, verbose=false, overshoot_probe=:off,
         progress_callback=cb, callback_every=0.0)
     @test r.newton_escapes == 1
@@ -1510,7 +1510,7 @@ end
     f = p -> -0.5 * sum(abs2, p .- c)
     m = _endgame_mock(f; h = p -> -100.0 * Matrix{Float64}(I, 2, 2))
     r = ContinuousTimeSEM.ctsem_optimize(m, [4.0, 3.0]; maxiter=200,
-        tune_chunks=false, gap_tol=1e-8, newton=true, newton_switch=1e6,
+        gap_tol=1e-8, newton=true, newton_switch=1e6,
         certify=false, progress=false, verbose=false, overshoot_probe=:off)
     @test r.newton_handback
     @test maximum(abs, r.minimizer .- c) < 1e-6
@@ -1521,7 +1521,7 @@ end
     @test r.stop_reason in ("gap", "gradient", "linesearch")
     # With the Hessian right, the early hand-over is borne out and kept.
     kept = ContinuousTimeSEM.ctsem_optimize(_endgame_mock(f), [4.0, 3.0];
-        maxiter=200, tune_chunks=false, gap_tol=1e-8, newton=true,
+        maxiter=200, gap_tol=1e-8, newton=true,
         newton_switch=1e6, certify=false, progress=false, verbose=false,
         overshoot_probe=:off)
     @test !kept.newton_handback
@@ -1539,7 +1539,7 @@ end
     m = _endgame_mock(p -> -0.5e4 * p[1]^2 - 1e-4 * exp(2 * p[2]))
     lines = String[]
     r = ContinuousTimeSEM.ctsem_optimize(m, [0.01, 0.0]; maxiter=3,
-        tune_chunks=false, gap_tol=1e-8, newton=true, precondition=[1e6, 1e6],
+        gap_tol=1e-8, newton=true, precondition=[1e6, 1e6],
         newton_maxit=1, newton_curvature=:chord,
         certify=false, progress=true, progress_every=1e-9,
         progress_sink=(text, kind) -> (push!(lines, text); nothing),
@@ -1561,7 +1561,7 @@ end
     f = p -> -0.5 * sum(abs2, p .- c)
     m = _endgame_mock(f)
     r = ContinuousTimeSEM.ctsem_optimize(m, [4.0, 3.0, -1.0, 0.0]; maxiter=200,
-        tune_chunks=false, gap_tol=1e-8, newton=true, newton_switch=1e6,
+        gap_tol=1e-8, newton=true, newton_switch=1e6,
         newton_maxit=3, certify=false, progress=false, verbose=false,
         overshoot_probe=:off)
     @test maximum(abs, r.minimizer .- c) < 1e-6
@@ -1572,7 +1572,7 @@ end
     # Where the Hessian is cheap enough to throw away, the switch still hands
     # over at once (4 parameters within `newton_maxit = 30`).
     cheap = ContinuousTimeSEM.ctsem_optimize(_endgame_mock(f), [4.0, 3.0, -1.0, 0.0];
-        maxiter=200, tune_chunks=false, gap_tol=1e-8, newton=true,
+        maxiter=200, gap_tol=1e-8, newton=true,
         newton_switch=1e6, certify=false, progress=false, verbose=false,
         overshoot_probe=:off)
     @test maximum(abs, cheap.minimizer .- c) < 1e-8
@@ -1630,7 +1630,7 @@ end
     laplace = _endgame_laplace_objective()
     start = [0.5, -0.4, -1.0, 0.2, 0.0]
     fit = ctsem_laplace_optimize(laplace, start; maxiter=500,
-        tune_chunks=false, gap_tol=1e-8, newton=true, certify=true,
+        gap_tol=1e-8, newton=true, certify=true,
         progress=false)
     @test fit.converged
     @test fit.newton_hessians >= 1
@@ -1667,7 +1667,7 @@ end
     # And without a certification to read it, the Laplace route runs no finish
     # at all: its Hessian would be one nobody asked for.
     bare = ctsem_laplace_optimize(_endgame_laplace_objective(), start;
-        maxiter=500, tune_chunks=false, gap_tol=1e-8, newton=true,
+        maxiter=500, gap_tol=1e-8, newton=true,
         certify=false, progress=false)
     @test bare.newton_hessians == 0
 end

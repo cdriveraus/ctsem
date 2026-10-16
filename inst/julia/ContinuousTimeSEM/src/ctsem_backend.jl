@@ -387,9 +387,7 @@ and put back to that count by `0`. Its pool is separate from Julia's threads
 and was 12 wide on a 24-thread machine at every `cores`, so a `cores = 1` call
 could still run BLAS on twelve. The subject loop does not call BLAS, but the
 Hessians and population-level algebra around it do, and so does every worker
-process that runs a restart or a chain. The chunk tuner writes the ceiling
-directly and leaves this alone: BLAS follows what `cores` allows, not the chunk
-count the tuner found fastest for the subject loop.
+process that runs a restart or a chain.
 """
 function ctsem_set_max_chunks!(n::Integer)
     n >= 0 || throw(ArgumentError("max chunks must be non-negative"))
@@ -409,151 +407,18 @@ ctsem_max_chunks() = (max_chunks=_CTSEM_MAX_CHUNKS[], nthreads=Threads.nthreads(
     return max(1, min(available, nsubjects))
 end
 
-"""
-    ctsem_tune_chunks!(evaluate; ceiling=0, verbose=false)
-
-Pick the chunk count that is actually fastest for this model, and pin it.
-
-`cores` is a *ceiling*, not an instruction. Splitting the subject loop wider is
-not free and it is not even monotone, and how far from monotone depends on the
-model: a one-subject, one-latent evaluation once measured **3.7x slower on 23
-threads than on one**, where a twenty-latent one ran 2.7x faster. What differs
-is how much arithmetic sits between two allocations, so the ratio moves
-whenever either side of that does.
-
-It has moved. The reverse sweep used to allocate on the order of ten thousand
-small arrays per subject and the collector was what the threads queued for;
-after the allocation work it is about one per subject evaluation. Measured on
-dev1 (23 cores, idle), 200 subjects of 24 rows, mean seconds per summed
-gradient over thirty repeats, before and after that work:
-
-                     1 thread        10 threads       MB/gradient   GC at 10
-  1 latent    0.0186 -> 0.0172   0.0092 -> 0.0075    1.8 -> 0.1    14% -> 0%
-  5 latent    0.0730 -> 0.0684   0.0125 -> 0.0099    4.8 -> 0.2    10% -> 0%
-  12 latent   0.3628 -> 0.3235   0.0426 -> 0.0342   19.1 -> 0.3    29% -> 0%
-
-So roughly a fifth off a ten-thread gradient, a tenth off a serial one, and
-1-to-10 scaling from 8.5x to 9.5x on the twelve-latent model. The wider point
-for this function is the last column and the spread behind it: the *minimum*
-time barely moved, because a fast iteration was one with no collection in it,
-while the mean and its run-to-run spread moved a lot. A tuner timing candidates
-was measuring the collector as much as the division.
-
-So the count cannot be chosen from `cores` alone, and it cannot be derived from
-the model shape without a constant nobody has measured for the machine in
-front of them. It can be measured, and cheaply: a handful of evaluations
-against a fit that will do thousands. The ladder doubles from one, stops as
-soon as two successive candidates fail to beat the best by a clear margin, and
-leaves `_CTSEM_MAX_CHUNKS` at the winner.
-
-`evaluate` is a zero-argument closure doing one representative evaluation --
-whatever the caller's inner loop will actually be doing.
-"""
-function ctsem_tune_chunks!(evaluate; ceiling::Integer=0, verbose::Bool=false)
-    limit = ceiling <= 0 ? _CTSEM_MAX_CHUNKS[] : Int(ceiling)
-    limit = limit <= 0 ? Threads.nthreads() : min(limit, Threads.nthreads())
-    if limit <= 1
-        _CTSEM_MAX_CHUNKS[] = 1
-        return (chunks=1, timings=[(1, NaN)])
-    end
-    previous = _CTSEM_MAX_CHUNKS[]
-    # Each candidate spends the whole budget: `n` chunks of units, each dividing
-    # a unit's members `limit / n` ways, so `n * width <= limit` always and the
-    # ceiling the caller asked for is what runs. `n = limit` is the old
-    # behaviour, chunks only; `n = 1` is members only.
-    #
-    # Both ends matter and neither dominates. A unit's innermost level is one
-    # block per subject, which only chunks can spread; its outermost is a single
-    # block over every member, which only the member axis can. And where units
-    # are few and unequal -- thirteen studies, the largest 18.4% of the rows --
-    # chunks alone cap the speedup at 5.4x however many cores are given.
-    timings = Tuple{Int,Float64}[]
-    best_chunks = 1
-    best_time = Inf
-    misses = 0
-    try
-        # One untimed pass at the serial setting so compilation, workspace
-        # construction and the first mode solve are not charged to chunk 1.
-        _CTSEM_MAX_CHUNKS[] = 1
-        evaluate()
-        serial = @elapsed evaluate()
-        # A short evaluation cannot be timed once. Measured on a 100-subject
-        # model whose evaluation is ~12 ms, three consecutive ladders gave chunk
-        # 2 as 0.076 s, 0.0125 s and 0.0129 s -- a sixfold swing on the same
-        # work, enough to pick a different winner each run. The minimum of a few
-        # repeats is the right statistic under contention (a scheduler can only
-        # ever make a timing longer), and three repeats of a 12 ms evaluation
-        # cost nothing against the fit that follows.
-        repeats = serial < 0.005 ? 5 : serial < 0.05 ? 3 : 1
-        # The largest relative spread seen between repeats of one candidate,
-        # which is this machine's noise floor for this evaluation, measured
-        # rather than assumed. A candidate has to beat the incumbent by more
-        # than this to be believed. Starts at 5%, the fixed margin this
-        # replaces, so it can only ever become more demanding.
-        noise = 0.05
-        # The ladder is doubled from one, but only while an evaluation is cheap
-        # enough that trying six settings is free against the fit. A model whose
-        # evaluation takes a second is also a model with enough arithmetic
-        # between allocations to thread well, so the ladder collapses to its
-        # ends and the tuning costs four evaluations rather than a dozen.
-        candidates = if serial > 1.0
-            limit > 3 ? [1, max(2, limit ÷ 2), limit] : [1, limit]
-        else
-            built = Int[]; c = 1
-            while c < limit; push!(built, c); c *= 2; end
-            push!(built, limit); built
-        end
-        for n in candidates
-            _CTSEM_MAX_CHUNKS[] = n
-            evaluate()                       # warm this setting's workspaces
-            elapsed = Inf
-            slowest = 0.0
-            for _ in 1:repeats
-                one = @elapsed evaluate()
-                elapsed = min(elapsed, one)
-                slowest = max(slowest, one)
-            end
-            if repeats > 1 && elapsed > 0
-                noise = max(noise, (slowest - elapsed) / elapsed)
-            end
-            push!(timings, (n, elapsed))
-            verbose && println(_console(), "Chunk tuning: ", n, " worker(s) ",
-                round(elapsed; digits=4), " s")
-            # `1 - noise`, not a fixed 0.95. Splitting a small model's subject
-            # loop finely is close to free either way, so the ladder was picking
-            # between candidates that differ by less than the timing varies:
-            # three identical 12-subject fits at `cores = 12` chose 12, 12 and
-            # then 4. Whichever it lands on is then pinned for the whole fit, and
-            # the wrong end of that is not harmless -- one chunk per subject is
-            # where the allocator contention this tuner exists to avoid begins.
-            #
-            # Requiring a candidate to beat the incumbent by more than the
-            # observed run-to-run spread means an unmeasurable difference cannot
-            # decide the answer. Where nothing clears the bar the earliest
-            # candidate stands, and the ladder climbs from one, so ties resolve
-            # toward fewer chunks -- the conservative direction.
-            if elapsed < best_time * (1 - noise)
-                best_time = min(best_time, elapsed)
-                best_chunks = n
-                misses = 0
-            else
-                best_time = min(best_time, elapsed)
-                misses += 1
-                misses >= 2 && break
-            end
-        end
-    catch err
-        err isa InterruptException && rethrow()
-        _CTSEM_MAX_CHUNKS[] = previous
-        rethrow()
-    end
-    _CTSEM_MAX_CHUNKS[] = best_chunks
-    verbose && println(_console(), "Chunk tuning: using ", best_chunks,
-        " worker(s) of at most ", limit)
-    return (chunks=best_chunks, timings=timings)
-end
-
-export ctsem_tune_chunks!
+# The subject loop runs on every worker the `cores` ceiling allows. A tuner used
+# to time widths from one up and pin the fastest, for a loop that was not
+# monotone in its width while it allocated -- one model measured 3.7x slower on
+# 23 threads than on one. Once the loop stopped allocating and the per-subject
+# workspaces and the BLAS and LAPACK locks went, every shape measured fastest at
+# the widest setting (2026-10-16, local AVX2, a 16-thread session, one gradient:
+# filter and Laplace routes, 30 to 1,000 subjects, a nested model of 10 studies;
+# 7 to 10 times one worker, each width faster than the one below it), while the
+# tuner's serial rungs cost a heavy model four single-threaded evaluations a
+# stage -- 2 h 45 min of every 24 h slot on the SNSF pilot's joint fit (697
+# parameters, 4,031 units, 64 threads, 2,476 s an evaluation), and again at
+# every resume.
 
 """
     _ctsem_chunk_assignment(weights, nchunks)
@@ -2119,7 +1984,7 @@ hand-over (0.1) and step cap (30) at the head of the endgame in optimiser.jl.
 function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
     maxiter::Integer=1000, g_tol::Real=1e-8, f_tol::Real=0.0,
     x_tol::Real=0.0, verbose::Bool=false, gradient_method=:adjoint,
-    tune_chunks::Bool=true, lbfgs_memory::Integer=_CTSEM_LBFGS_MEMORY,
+    lbfgs_memory::Integer=_CTSEM_LBFGS_MEMORY,
     lbfgs_diagonal::Bool=true, lbfgs_nonmonotone::Real=0.0,
     lbfgs_gll::Integer=0, sgd::Bool=false, sgd_maxiter::Integer=2000, sgd_progress::Real=1e-3,
     saem::Bool=false, saem_maxiter::Integer=10000, saem_seed::Integer=1,
@@ -2242,8 +2107,8 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
     # moving while the gradient is still large is a fit in trouble, and that is
     # visible here long before the convergence flags are set.
     # Progress is not verbosity. Someone watching a fit wants to know it is
-    # going somewhere; they do not thereby want the chunk-tuning timings and
-    # the model-shape summary that `verbose` also turns on. Separating them is
+    # going somewhere; they do not thereby want the model-shape summary that
+    # `verbose` also turns on. Separating them is
     # what lets progress be the default without making the default noisy.
     reporter = _ctsem_progress_reporter(progress, progress_label,
         progress_overwrite, progress_sink, progress_every)
@@ -2370,13 +2235,6 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
         end
         return false
     end
-    # See `ctsem_tune_chunks!`: the subject loop is not monotone in the chunk
-    # count, so the count is measured on this model rather than taken from
-    # `cores`.
-    tuning = tune_chunks ? ctsem_tune_chunks!(
-        () -> ctsem_evaluate(objective, start_values; gradient=true,
-            gradient_method=gradient_method); verbose=verbose) : nothing
-    # After the tuning, which is what decided the chunk count it reports.
     verbose && _ctsem_optimise_verbose_shape(objective)
     # A first step of unit *length*, not of unit alpha.
     #
@@ -2861,12 +2719,12 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
         stall_point=isempty(stall.point) ? Float64[0.0] : stall.point,
         stall_gain=stall.gain,
         stalled=stalled,
-        chunks=ctsem_max_chunks().max_chunks,
         # Reported because the answer depends on it. Dividing a unit's members
         # reassociates a sum, so two fits at different widths differ in the last
-        # few digits -- deterministic at a fixed width, and the thing to hold
-        # constant for a before-and-after.
-        chunk_timings=tuning === nothing ? Tuple{Int,Int,Float64}[] : tuning.timings,
+        # few digits -- and so do two at one width above one, since the pool
+        # takes units as its workers come free: five evaluations at one point
+        # and width 8 differed by 2e-13 (2026-10-16). One worker reproduces.
+        chunks=ctsem_max_chunks().max_chunks,
         gradient_norm=gradient_norm,
         converge_tol=Float64(converge_tol),
         last_gain=_ctsem_last_gain(trace),

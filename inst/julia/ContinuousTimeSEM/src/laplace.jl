@@ -6932,7 +6932,6 @@ What is about to be fitted: the sizes that decide what the fit will cost.
 The unit and level counts are what a misdeclared grouping shows up as -- one
 unit per subject when a study level was meant -- and the chunk and thread counts
 are the difference between a run that uses the machine and one that does not.
-Printed after chunk tuning, which is what decides the chunk count.
 """
 function _ctsem_optimise_verbose_shape(o::CTSEMLaplaceObjective)
     chunks = ctsem_max_chunks()
