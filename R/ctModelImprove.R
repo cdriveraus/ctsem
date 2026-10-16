@@ -940,17 +940,21 @@ ctModelImprove <- function(fit, covariates = NULL,
   # A slow process or a second order for a latent with innovations of its
   # own: not for a cycle's clock, which turns as written, nor for the level
   # of a process already second order, nor for a process a change added (a
-  # slow process, an item's own), which starts from the stationary
-  # distribution of the first-order process it is: the cluster's search
-  # spent a round refitting an item process driven by a slow one, and dev1's
-  # two on slow processes made second order, none of them kept.
+  # slow process, an item's own, a second order's derivative), which starts
+  # from the stationary distribution of the first-order process it is, or is
+  # that process's rate of change: the cluster's search spent a round
+  # refitting an item process driven by a slow one, dev1's two on slow
+  # processes made second order, none of them kept, and a later one proposed
+  # a second order's derivative made second order -- a third order by
+  # another name.
   noisy <- .ctImproveNoisyLatents(model)
-  noisy <- noisy[!grepl('^(slow|u)_', model$latentNames[noisy])]
+  added <- grepl('^(slow|u)_', model$latentNames) |
+    model$latentNames %in% paste0('d', model$latentNames)
+  noisy <- noisy[!added[noisy]]
   if ('slow' %in% relax && isTRUE(model$continuoustime)) {
     lat <- model$latentNames
     for (i in seq_along(lat)) {
-      if (!i %in% noisy || grepl('^slow_', lat[i]) || paste0('slow_', lat[i]) %in% lat ||
-          lat[i] %in% paste0('d', lat)) next
+      if (!i %in% noisy || paste0('slow_', lat[i]) %in% lat) next
       evidence <- .ctImproveSlowEvidence(ad, lat[i])
       out[[length(out) + 1L]] <- list(key = paste0('slow:', lat[i]), family = 'slow',
         label = paste0(lat[i], ' driven by a slow process'), p = evidence,
@@ -1288,15 +1292,20 @@ ctModelImprove <- function(fit, covariates = NULL,
 }
 
 # The optimiser callback for a refit's progress: a line every `every` seconds,
-# with the iteration, the objective and the gradient's norm.
+# with the iteration, the objective and the gradient's norm. Written to stderr
+# with the time rather than as a message, which the refit's
+# suppressMessages() would swallow, as it did a four-hour refit's on the
+# cluster.
 .ctImproveProgress <- function(label, every = 600) {
   start <- last <- proc.time()[['elapsed']]
   function(iteration, total, objective, gradient_norm) {
     now <- proc.time()[['elapsed']]
     if (now - last < every) return(invisible(NULL))
     last <<- now
-    message(label, sprintf("refit at %.0f min: iteration %d, objective %.2f, |g| %.3g",
-      (now - start) / 60, as.integer(iteration), objective, gradient_norm))
+    cat(format(Sys.time(), '%H:%M:%S'), ' ', label,
+      sprintf("refit at %.0f min: iteration %d, objective %.2f, |g| %.3g",
+        (now - start) / 60, as.integer(iteration), objective, gradient_norm), '\n',
+      sep = '', file = stderr())
     invisible(NULL)
   }
 }

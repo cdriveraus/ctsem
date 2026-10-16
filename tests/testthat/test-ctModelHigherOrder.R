@@ -396,6 +396,18 @@ test_that("a model's cycles are not proposed again, nor given slow processes or 
   expect_true(all(c('eta1 driven by a slow process', 'eta1 made second order') %in% labels))
 })
 
+test_that("a second order's derivative is given no slow process and no second order", {
+  # Raising the derivative's order is a third order by another name.
+  m2 <- ctModelHigherOrder(.ho_ct(), 1L)
+  pr <- ctsem:::.ctImproveStructural(m2, c('slow', 'order'), NULL, NULL, NULL, 0.05)
+  labels <- vapply(pr, `[[`, '', 'label')
+  derivative <- setdiff(m2$latentNames, .ho_ct()$latentNames)
+  expect_length(derivative, 1L)
+  expect_false(any(startsWith(labels, paste0(derivative, ' '))))
+  expect_false('eta1 made second order' %in% labels)
+  expect_true(all(c('eta2 made second order', 'eta2 driven by a slow process') %in% labels))
+})
+
 test_that("the state dependence screen writes no terms into a clock's drift", {
   cm <- ctModelPeriodicComponent(.ho_ct(), 24, indices = 1:2, individual = FALSE)
   terms <- ctsem:::.ctScoreStateModel(cm)$terms

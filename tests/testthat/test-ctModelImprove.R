@@ -110,9 +110,10 @@ test_that("a covariate the model lacks is added, an unrelated one is not, and th
   expect_identical(again$history, imp$history)
   expect_equal(again$fit$estimate$loglik, imp$fit$estimate$loglik)
   expect_error(search(alpha = 0.01, verbose = FALSE), 'different search')
-  # A refit's progress line.
+  # A refit's progress line, on stderr: the refit suppresses messages.
   progress <- ctsem:::.ctImproveProgress('Round 2: ', every = 0)
-  expect_message(progress(3, 10, 12.5, 0.01), 'Round 2: refit at 0 min: iteration 3')
+  line <- capture.output(suppressMessages(progress(3, 10, 12.5, 0.01)), type = 'message')
+  expect_match(line, 'Round 2: refit at 0 min: iteration 3')
   kept <- imp$history$change[imp$history$kept]
   expect_true(any(grepl('^z as a predictor of', kept)))
   expect_false(any(grepl('^w ', imp$history$change)))
