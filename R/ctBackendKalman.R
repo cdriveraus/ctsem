@@ -135,11 +135,19 @@
 
 .ctBackendKalmanRaw <- function(fit, raw, subjectmatrices = TRUE,
   randomEffects = NULL, fields = NULL, sequential = FALSE, compact = FALSE) {
-  raw <- as.numeric(raw)
+  # One raw vector for every subject, or on the filter's route a matrix with
+  # one row per subject (`ctsem_kalman`'s second form).
+  persubject <- is.matrix(raw)
+  if (persubject) storage.mode(raw) <- "double" else raw <- as.numeric(raw)
   spec <- .ctBackendSpec(fit)
+  if (persubject && !is.null(spec$laplace)) {
+    stop("Internal: per-subject parameters are for the filter's route.",
+      call. = FALSE)
+  }
   module <- .ctJuliaModule(spec$project)
   hybrid <- .ctBackendHybridReports(spec)
-  arguments <- list(.ctJuliaObjective(fit, hybrid = hybrid), .ctJuliaNumericVector(raw),
+  arguments <- list(.ctJuliaObjective(fit, hybrid = hybrid),
+    if (persubject) .ctJuliaPut(raw) else .ctJuliaNumericVector(raw),
     subject_matrices = isTRUE(subjectmatrices))
   if (length(fields)) arguments$fields <- .ctJuliaVector(as.character(fields))
   # `compact`: only what the misfit tests read (`_ctsem_kalman_compact`) --

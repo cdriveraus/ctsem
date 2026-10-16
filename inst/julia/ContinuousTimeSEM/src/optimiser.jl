@@ -91,11 +91,12 @@ _ctsem_lbfgs_reset!(M::CTSEMLBFGSMemory) =
 # diagonal (all ones for no metric). With no pairs, returns `h0 * D^-1 q`.
 # `diagonal`, when given, is the initial inverse Hessian itself, one scale per
 # coordinate (`_ctsem_lbfgs_diagonal!`), in place of the metric's shape times
-# the latest pair's one secant ratio.
+# the latest pair's one secant ratio; or a whole matrix the caller supplied
+# (`_ctsem_lbfgs`'s `inverse`), taken as it is, with or without pairs.
 function _ctsem_lbfgs_hmul(M::CTSEMLBFGSMemory, q::AbstractVector, h0::Float64,
         dinv::Vector{Float64}, diagonal=nothing)
     k = length(M.S)
-    k == 0 && return h0 .* dinv .* q
+    k == 0 && return diagonal isa AbstractMatrix ? diagonal * q : h0 .* dinv .* q
     r = collect(Float64, q)
     a = Vector{Float64}(undef, k)
     @inbounds for i in k:-1:1
@@ -106,6 +107,8 @@ function _ctsem_lbfgs_hmul(M::CTSEMLBFGSMemory, q::AbstractVector, h0::Float64,
         y = M.Y[k]
         gamma = dot(M.S[k], y) / sum(i -> y[i]^2 * dinv[i], eachindex(y))
         r .= gamma .* dinv .* r
+    elseif diagonal isa AbstractMatrix
+        r = diagonal * r
     else
         r .= diagonal .* r
     end
@@ -196,13 +199,23 @@ directional derivative `g's` of each step taken, which is what
 
 `batch`, when given, is a `CTSEMBatch` whose `fg!` and `scores` replace the
 full-data ones while it is smaller than the data; see `_ctsem_batch_step!`.
+
+`inverse`, when given, is the initial inverse Hessian, a whole matrix: the
+curvature a caller already holds near `x0`, as a fit's covariance is for a
+refit to slightly different data. The pairs correct it as they would the
+learned diagonal, which it replaces (`diagonal` is then ignored). From an
+inverse that is close, the first step is nearly the Newton step and what each
+step predicts it gains is nearly what is left, which is what the gap rule reads
+(`_ctsem_predicted_gain`); learned from the pairs alone, that prediction was a
+hundredth of what was left on a 433-parameter model.
 """
 function _ctsem_lbfgs(fg!, x0::AbstractVector; memory::Integer=20,
         metric=nothing, initial_alpha::Real=0.1, maxiter::Integer=1000,
         g_tol::Real=1e-8, f_tol::Real=0.0, x_tol::Real=0.0,
         callback=nothing, directional=nothing, batch=nothing,
         c1::Real=1e-4, maxbacktrack::Integer=40, iteration0::Integer=0,
-        diagonal::Bool=false, nonmonotone::Real=0.0, gll::Integer=0)
+        diagonal::Bool=false, nonmonotone::Real=0.0, gll::Integer=0,
+        inverse::Union{Nothing,Matrix{Float64}}=nothing)
     n = length(x0)
     x = collect(Float64, x0)
     dinv = metric === nothing ? ones(n) : begin
@@ -244,7 +257,8 @@ function _ctsem_lbfgs(fg!, x0::AbstractVector; memory::Integer=20,
     # below the recent level, which lets a step cross a curved valley that a
     # monotone search would cut short. `eta = 0` makes `C` the last value: the
     # search is then exactly the monotone Armijo one.
-    B = nothing; Dinv = nothing
+    B = nothing; Dinv = inverse
+    learn = diagonal && inverse === nothing
     eta = clamp(Float64(nonmonotone), 0.0, 1.0)
     C = f; Q = 1.0; recent = [f]
     # `gll`: Grippo, Lampariello & Lucidi's (1986) rule instead -- a step is
@@ -267,7 +281,7 @@ function _ctsem_lbfgs(fg!, x0::AbstractVector; memory::Integer=20,
             # Not a descent direction: the memory has gone bad. Start it again.
             isempty(M.S) && (lsfail = true; break)
             _ctsem_lbfgs_reset!(M); h0 = Float64(initial_alpha) / max(metric_norm(G), eps())
-            B = nothing; Dinv = nothing; C = f; Q = 1.0; recent = [f]
+            B = nothing; Dinv = inverse; C = f; Q = 1.0; recent = [f]
             continue
         end
         # The first trial carries the gradient too: most steps are accepted
@@ -314,7 +328,7 @@ function _ctsem_lbfgs(fg!, x0::AbstractVector; memory::Integer=20,
                 retried = true
                 _ctsem_lbfgs_reset!(M)
                 h0 = Float64(initial_alpha) / max(metric_norm(G), eps())
-                B = nothing; Dinv = nothing; C = f; Q = 1.0; recent = [f]
+                B = nothing; Dinv = inverse; C = f; Q = 1.0; recent = [f]
                 continue
             end
             lsfail = true
@@ -327,7 +341,7 @@ function _ctsem_lbfgs(fg!, x0::AbstractVector; memory::Integer=20,
         fconv = abs(fn - f) <= f_tol * abs(fn)
         xconv = maximum(abs, step; init=0.0) <= x_tol
         dG = Gn .- G
-        if _ctsem_lbfgs_push!(M, step, dG) && diagonal
+        if _ctsem_lbfgs_push!(M, step, dG) && learn
             B = _ctsem_lbfgs_diagonal!(B, step, dG, dinv)
             Dinv = 1 ./ B
         end
@@ -1042,34 +1056,53 @@ function _ctsem_flat_probe(value_at, x::AbstractVector, value::Real,
 end
 
 """
-    _ctsem_saddle_ladder(value_at, x, value, split, ascent; ladder)
+    _ctsem_saddle_ladder(value_at, x, value, split, ascent; ladder, enough)
 
-At a saddle, the best point along the most negative curvature: the unit
-eigenvector, both signs -- the gradient's first, since along a saddle direction
-the gradient says which way is up -- at each rung of `ladder` raw units. The
-Newton step cannot find this: it lives in the trusted directions, where the
-point is already a maximum. `value_at` is as for `_ctsem_flat_probe`. Returns
-the best improvement on `value` as `(point, value, length)`, or `nothing`, and
-the evaluations spent. The logic of the R-side negative-curvature step it
-replaced.
+At a saddle, the best point along the directions of negative curvature: each
+unit eigenvector, most negative first, both signs -- the gradient's first, since
+along a saddle direction the gradient says which way is up -- at each rung of
+`ladder` raw units. The Newton step cannot find this: it lives in the trusted
+directions, where the point is already a maximum. `value_at` is as for
+`_ctsem_flat_probe`. The walk stops after a direction that gained more than
+`enough`, the most an escape is not taken for; `Inf` walks them all.
+
+Returns the best improvement on `value` as `(point, value, length)`, or
+`nothing`; the evaluations spent; and `walked`, the directions measured, which
+is what lets a certification read a ladder that found nothing as a finding: a
+direction counts once its shortest rung was evaluated on both sides, where a
+curvature `c` would show as a gain of `c * ladder[1]^2 / 2` on at least one. A
+route that refuses those points measured nothing along it. The sign of a
+curvature that is zero by symmetry is rounding -- a population loading the data
+fix the length of but not the direction among dimensions nothing else informs,
+SNSF pilot: -0.016 against a largest eigenvalue of 1.2e6, under the bar by a
+third, while its three twins came out positive -- and the ladder is what tells
+that from a saddle.
 """
 function _ctsem_saddle_ladder(value_at, x::AbstractVector, value::Real, split,
-        ascent::AbstractVector; ladder=_CTSEM_SADDLE_LADDER)
+        ascent::AbstractVector; ladder=_CTSEM_SADDLE_LADDER, enough::Real=0.0)
     (split === nothing || !any(split.negative)) &&
-        return (best=nothing, evaluations=0)
-    v = split.vectors[:, argmin(split.values)]
-    first = dot(ascent, v) >= 0 ? 1.0 : -1.0
+        return (best=nothing, evaluations=0, walked=0)
+    order = sort!(findall(split.negative); by=k -> split.values[k])
     best = nothing
     evaluations = 0
-    for side in (first, -first), len in ladder
-        point = x .+ (side * len) .* v
-        got = value_at(point)
-        evaluations += 1
-        if isfinite(got) && got > value && (best === nothing || got > best.value)
-            best = (point=point, value=got, length=side * len)
+    walked = 0
+    for k in order
+        v = split.vectors[:, k]
+        first = dot(ascent, v) >= 0 ? 1.0 : -1.0
+        shortest = 0
+        for side in (first, -first), len in ladder
+            point = x .+ (side * len) .* v
+            got = value_at(point)
+            evaluations += 1
+            isfinite(got) && len == ladder[1] && (shortest += 1)
+            if isfinite(got) && got > value && (best === nothing || got > best.value)
+                best = (point=point, value=got, length=side * len)
+            end
         end
+        shortest == 2 && (walked += 1)
+        best !== nothing && best.value - value > enough && break
     end
-    (best=best, evaluations=evaluations)
+    (best=best, evaluations=evaluations, walked=walked)
 end
 
 """
@@ -1242,10 +1275,13 @@ times; on the exact variant the steps continue on a fresh Hessian each until it
 agrees.
 
 At a saddle -- negative curvature in the final Hessian -- the ladder along the
-most negative curvature is tried (`_ctsem_saddle_ladder`), and the finish
+negative curvature is tried (`_ctsem_saddle_ladder`), and the finish
 continues from the better point with the exact Hessian there, at most
 `max_escapes` times: it never returns a point with a direction of negative
-curvature it did not try, short of that cap. With no negative curvature but a
+curvature it did not try, short of that cap. What the last ladder found at the
+returned point is returned with it (`saddle_walked`, `saddle_gain`), so a
+direction whose negative curvature is rounding, walked and found flat, is a
+measurement the certification reads rather than a saddle. With no negative curvature but a
 direction the curvature calls flat, or a saddle whose ladder found nothing
 worth having, the flat ladder (`_ctsem_flat_ladder`) is tried, when
 `flat_escape` (the fit sets it where `_ctsem_flat_escape` allows), within the
@@ -1254,9 +1290,10 @@ budget. Either escape is taken only when it gains more than `escape_gain`,
 which the fit sets to its certification tolerance. Then, when `probe`, the
 flat-direction probe (`_ctsem_flat_probe`) at the final point.
 
-`take_steps = false` gives the certification's numbers alone: the Hessian at `x`
-and the probe, with no step, no refresh and no ladder, for a point the optimiser
-left without a finish (`ctsem_endgame`).
+`take_steps = false` gives the certification's numbers alone: the Hessian at `x`,
+the ladder's measurement along any negative curvature there and the probe, with
+no step and no refresh, for a point the optimiser left without a finish
+(`ctsem_endgame`).
 
 `handback = true` is for a hand-over L-BFGS made on its own predicted gain
 rather than at its stopping rule, where the Hessian is cheap enough to discard
@@ -1273,7 +1310,9 @@ Returns the point and its value and gradient (minimised); the Hessian of the
 MAXIMISED objective, or `nothing`, with `hessian_at` and `distance`; the steps
 taken, including escapes, and the predicted gain at the end; the full and
 subset Hessians formed and the calls made; the saddle record (`escapes`,
-`saddle`, `ladder_tried`, `ladder_gain`); the probe record; whether it handed
+`saddle`, `ladder_tried`, `ladder_gain`, and at the returned point
+`saddle_walked` and `saddle_gain`, 0 and `NaN` when no ladder ran there); the
+probe record; whether it handed
 back (`handback`); and the history of the steps, one entry each (`kind` is "newton", "exact", "saddle" or "flat", and `alpha`
 the share of its Newton step's length the step took).
 """
@@ -1452,13 +1491,15 @@ function _ctsem_newton_finish(objective, x0, f0, G0, fg!; tol::Real=1e-8,
     exact = curvature !== :subset       # `H` is the exact Hessian at `hat`
     steps = 0; escapes = 0; gain = Inf
     saddle = false; ladder_tried = false; ladder_gain = 0.0
+    saddle_walked = 0; saddle_gain = NaN
     firstgain = Inf; firstwhole = true; handed = false
     if H === nothing
         return (x=x, f=f, G=G, hessian=nothing, hessian_at=hat, distance=NaN,
             steps=0, gain=Inf, full_hessians=full_hessians[],
             subset_hessians=subset_hessians[], fcalls=0, gcalls=0, escapes=0,
-            saddle=false, ladder_tried=false, ladder_gain=0.0,
-            probe=_ctsem_no_probe(), history=history, handback=false)
+            saddle=false, ladder_tried=false, ladder_gain=0.0, saddle_walked=0,
+            saddle_gain=NaN, probe=_ctsem_no_probe(), history=history,
+            handback=false)
     end
     at_x = exact                        # `H` is the exact Hessian at `x`
     # The trust region, in raw units. Each Hessian starts without one -- its
@@ -1594,7 +1635,8 @@ function _ctsem_newton_finish(objective, x0, f0, G0, fg!; tol::Real=1e-8,
             distance=NaN, steps=steps, gain=gain, full_hessians=full_hessians[],
             subset_hessians=subset_hessians[], fcalls=fcalls[], gcalls=gcalls,
             escapes=0, saddle=false, ladder_tried=false, ladder_gain=0.0,
-            probe=_ctsem_no_probe(), history=history, handback=true)
+            saddle_walked=0, saddle_gain=NaN, probe=_ctsem_no_probe(),
+            history=history, handback=true)
         H === nothing && break
         # The final Hessian. A chord Hessian the steps converged on, taken
         # within `reuse_se` standard errors of here, is kept: the exact one at
@@ -1662,9 +1704,21 @@ function _ctsem_newton_finish(objective, x0, f0, G0, fg!; tol::Real=1e-8,
         # step gained its predicted 2.2e-7 and L-BFGS resumed from there crept
         # 0.02 nats in 1000 iterations along the same direction, while a
         # maximum 2 nats higher sat in the other basin.
-        take_steps || break
         split = _ctsem_information_split(H; rtol=flat_rtol, negative=negative)
         split === nothing && break
+        # The certification's numbers alone: what the negative curvature is
+        # worth, measured along every such direction, and no step.
+        if !take_steps
+            if any(split.negative)
+                saddle = true; ladder_tried = true
+                tried = _ctsem_saddle_ladder(valueof, x, -f, split, -G;
+                    ladder=ladder, enough=Inf)
+                fcalls[] += tried.evaluations
+                saddle_walked = tried.walked
+                saddle_gain = tried.best === nothing ? 0.0 : tried.best.value + f
+            end
+            break
+        end
         # An escape has to gain more than `escape_gain`, the certification's
         # tolerance: less is a move the verdict cannot tell from staying, and it
         # spends one of the `max_escapes`. On test-julia-convergence.R's random
@@ -1675,8 +1729,11 @@ function _ctsem_newton_finish(objective, x0, f0, G0, fg!; tol::Real=1e-8,
             saddle = true
             escapes >= max_escapes && break
             ladder_tried = true
-            tried = _ctsem_saddle_ladder(valueof, x, -f, split, -G; ladder=ladder)
+            tried = _ctsem_saddle_ladder(valueof, x, -f, split, -G; ladder=ladder,
+                enough=escape_gain)
             fcalls[] += tried.evaluations
+            saddle_walked = tried.walked
+            saddle_gain = tried.best === nothing ? 0.0 : tried.best.value + f
             if tried.best !== nothing
                 Gn = similar(G)
                 fn = fg!(0.0, Gn, tried.best.point); fcalls[] += 1; gcalls += 1
@@ -1691,7 +1748,18 @@ function _ctsem_newton_finish(objective, x0, f0, G0, fg!; tol::Real=1e-8,
                     report(NaN, steps, f, G, x)
                     H = hess(x); Hs = H; hat = copy(x); exact = true; at_x = true
                     saddle = false; ladder_tried = false
+                    saddle_walked = 0; saddle_gain = NaN
                     H === nothing && break
+                    # A new point and a new Hessian: walked as the first one
+                    # was, with its own budget and no trust region. Without the
+                    # budget an escape after the steps had spent theirs was
+                    # returned unwalked: a 529-parameter marginal fit (ECLS-K,
+                    # dev2, 2026-10-16) ended its finish on the ladder's point
+                    # with |g| 1.3e3 against 7 before it, its certification
+                    # found 2 nats left, and the resume began again with
+                    # L-BFGS and the Hessian it had just formed.
+                    radius = Inf
+                    budget = max(budget, steps + per_hessian)
                     continue
                 end
             end
@@ -1711,8 +1779,10 @@ function _ctsem_newton_finish(objective, x0, f0, G0, fg!; tol::Real=1e-8,
         report(NaN, steps, f, G, x)
         H = hess(x); Hs = H; hat = copy(x); exact = true; at_x = true
         saddle = false; ladder_tried = false
+        saddle_walked = 0; saddle_gain = NaN
         H === nothing && break
         # A new point and a new Hessian: walked as the first one was.
+        radius = Inf
         budget = max(budget, steps + per_hessian)
     end
     split = H === nothing ? nothing :
@@ -1738,7 +1808,8 @@ function _ctsem_newton_finish(objective, x0, f0, G0, fg!; tol::Real=1e-8,
      distance=distance, steps=steps, gain=gain, full_hessians=full_hessians[],
      subset_hessians=subset_hessians[], fcalls=fcalls[], gcalls=gcalls,
      escapes=escapes, saddle=saddle, ladder_tried=ladder_tried,
-     ladder_gain=ladder_gain, probe=probed, history=history, handback=false)
+     ladder_gain=ladder_gain, saddle_walked=saddle_walked,
+     saddle_gain=saddle_gain, probe=probed, history=history, handback=false)
 end
 
 """
@@ -1771,8 +1842,9 @@ end
 
 The certification's numbers at a point the optimiser left without its finish --
 an iteration cap, a stall, a finish that could not form a Hessian -- so R can
-certify it the way it certifies a finished one: the exact Hessian at `values`
-and what the flat directions are worth there. No step is taken. Whether to go
+certify it the way it certifies a finished one: the exact Hessian at `values`,
+what any negative curvature there is worth along the ladder, and what the flat
+directions are worth. No step is taken. Whether to go
 on from here is R's decision, and it goes on by resuming the optimiser, whose
 own finish takes the steps.
 
@@ -1821,6 +1893,8 @@ function ctsem_endgame(objective::CTSEMOptimisable, values::AbstractVector;
         hessian=out.hessian === nothing ? zeros(1, 1) : out.hessian,
         iterations=0, f_calls=1 + out.fcalls, g_calls=1 + out.gcalls,
         newton_steps=0, newton_hessians=out.full_hessians,
+        newton_saddle_walked=out.saddle_walked,
+        newton_saddle_gain=out.saddle_gain,
         probe_ran=!isempty(probed.direction), probe_gain=probed.gain,
         probe_length=probed.length, probe_longest=probed.longest,
         probe_direction=isempty(probed.direction) ? [0.0] : probed.direction)
@@ -1890,3 +1964,32 @@ function ctsem_flat_probe(objective, values::AbstractVector,
 end
 
 export ctsem_flat_probe
+
+"""
+    ctsem_saddle_probe(objective, values, hessian; ascent, ladder)
+
+The saddle ladder (`_ctsem_saddle_ladder`) along every direction of negative
+curvature in `hessian` -- of the MAXIMISED objective, as R holds it -- at
+`values`, measured and no step taken: for a certification R assembles from a
+Hessian it already holds (`.ctBackendCertification()`, the Laplace
+continuation). Its split is `_ctsem_information_split`'s, the rule R's
+`.ctBackendInformationSplit()` applies. `ascent`, the gradient there, orders
+the two sides of each direction and nothing else. Named as `ctsem_optimize`
+names the finish's own, so R reads both one way: `newton_saddle_walked` the
+directions measured, `newton_saddle_gain` the best gain found (0 for none).
+"""
+function ctsem_saddle_probe(objective, values::AbstractVector,
+        hessian::AbstractMatrix; ascent=nothing, ladder=_CTSEM_SADDLE_LADDER)
+    x = collect(Float64, values)
+    split = _ctsem_information_split(-Matrix{Float64}(hessian))
+    value_at = y -> _ctsem_probe_value(objective, y)
+    base = (split === nothing || !any(split.negative)) ? -Inf : value_at(x)
+    isfinite(base) || return (newton_saddle_walked=0, newton_saddle_gain=NaN)
+    a = ascent === nothing ? zeros(length(x)) : collect(Float64, ascent)
+    tried = _ctsem_saddle_ladder(value_at, x, base, split, a;
+        ladder=collect(Float64, ladder), enough=Inf)
+    return (newton_saddle_walked=tried.walked,
+        newton_saddle_gain=tried.best === nothing ? 0.0 : tried.best.value - base)
+end
+
+export ctsem_saddle_probe

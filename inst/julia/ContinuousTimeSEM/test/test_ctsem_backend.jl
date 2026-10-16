@@ -960,6 +960,91 @@ end
     @test stuck.saddle
     @test stuck.ladder_tried
     @test stuck.x == [0.0, 0.0]
+    # ... and that it measured nothing there, which is not the same as finding
+    # nothing.
+    @test stuck.saddle_walked == 0
+end
+
+@testset "an escape after the steps spent their budget is still walked" begin
+    # Maximised: -x^2/2 + 1.69 y^2/2 - y^4/4, a saddle at the origin and maxima
+    # at y = +-1.3, off the ladder's lengths, so the escape lands at y = 1 with
+    # a gradient of 0.69 to go. With `maxit = 1` the start converges at once
+    # and leaves one step in the budget, and the escape is that step: a
+    # 529-parameter fit's finish escaped so after its last walk, and returned
+    # the ladder's point unwalked, |g| 1.3e3.
+    m = _endgame_mock(p -> -0.5 * p[1]^2 + 0.845 * p[2]^2 - 0.25 * p[2]^4)
+    out = _endgame_run(m, [0.0, 0.0]; maxit = 1)
+    @test out.escapes == 1
+    @test abs(out.x[2]) ≈ 1.3 atol = 1e-4
+    @test -out.f ≈ 1.69^2 / 4 atol = 1e-8
+    @test out.gain < 1e-8
+    saddle_at = findfirst(==("saddle"), out.history.kind)
+    @test saddle_at !== nothing && saddle_at < length(out.history.kind)
+end
+
+@testset "the saddle ladder walks every negative direction, and says which it measured" begin
+    # Two directions of negative curvature by the Hessian given: the more
+    # negative (x) is flat in fact -- quartic, as a direction whose curvature is
+    # zero by symmetry and comes out at rounding of either sign -- and the other
+    # (y) a real saddle. Walking the most negative only found nothing there.
+    split = ContinuousTimeSEM._ctsem_information_split(diagm([-2.0, -1.0, 3.0]))
+    @test count(split.negative) == 2
+    up = p -> -p[1]^4 + p[2]^2 - p[3]^2
+    out = ContinuousTimeSEM._ctsem_saddle_ladder(up, zeros(3), 0.0, split, zeros(3))
+    @test out.best !== nothing
+    @test out.best.point[1] == 0.0
+    @test out.best.point[2] != 0.0
+    @test out.walked == 2
+    # Flat along both: nothing proposed, and both measured.
+    flat = p -> -p[1]^4 - p[2]^4 - p[3]^2
+    none = ContinuousTimeSEM._ctsem_saddle_ladder(flat, zeros(3), 0.0, split,
+        zeros(3); enough = Inf)
+    @test none.best === nothing
+    @test none.walked == 2
+    # A route that refuses every point off the start measured nothing.
+    refused = ContinuousTimeSEM._ctsem_saddle_ladder(
+        p -> all(iszero, p) ? 0.0 : -Inf, zeros(3), 0.0, split, zeros(3))
+    @test refused.best === nothing
+    @test refused.walked == 0
+    # The walk stops after a direction that gains more than `enough`.
+    both = p -> p[1]^2 + p[2]^2 - p[3]^2
+    first = ContinuousTimeSEM._ctsem_saddle_ladder(both, zeros(3), 0.0, split,
+        zeros(3))
+    @test first.walked == 1
+    @test first.best.point[1] != 0.0
+end
+
+@testset "negative curvature that is rounding is measured flat, with or without a step" begin
+    # Maximised: -x^2/2 - y^4/4, a maximum at the origin and flat in y to second
+    # order, with its Hessian given 1e-3 the wrong side of zero in y. The ladder
+    # walks y, finds nothing, and the point comes back with that measurement
+    # for the certification to read.
+    f = p -> -0.5 * p[1]^2 - 0.25 * p[2]^4
+    hm = [-1.0 0.0; 0.0 1e-3]
+    m = _endgame_mock(f; h = p -> hm)
+    out = _endgame_run(m, [0.0, 0.0]; escape_gain = 1e-6)
+    @test out.saddle
+    @test out.ladder_tried
+    @test out.escapes == 0
+    @test out.saddle_walked == 1
+    @test out.saddle_gain == 0.0
+    @test out.x == [0.0, 0.0]
+    # The same numbers without a step, as `ctsem_endgame` takes them.
+    still = _endgame_run(m, [0.0, 0.0]; take_steps = false)
+    @test still.saddle_walked == 1
+    @test still.saddle_gain == 0.0
+    # And from a Hessian R holds.
+    held = ContinuousTimeSEM.ctsem_saddle_probe(m, [0.0, 0.0], hm)
+    @test held.newton_saddle_walked == 1
+    @test held.newton_saddle_gain == 0.0
+    @test ContinuousTimeSEM.ctsem_saddle_probe(m, [0.0, 0.0],
+        [-1.0 0.0; 0.0 -1.0]).newton_saddle_walked == 0
+    # A real saddle measured without a step says what it found, and stays put.
+    real = _endgame_mock(p -> -0.5 * p[1]^2 + 0.5 * p[2]^2 - 0.25 * p[2]^4)
+    there = _endgame_run(real, [0.0, 0.0]; take_steps = false)
+    @test there.saddle_walked == 1
+    @test there.saddle_gain ≈ 0.25
+    @test there.x == [0.0, 0.0]
 end
 
 # A plateau on a curved ridge, as test-julia-convergence.R's random walks have
@@ -1386,12 +1471,13 @@ end
     # The finish's steps count in the line but not against `maxiter`: a dear
     # Hessian is walked for as many steps as it cost, so on a large model they
     # alone can pass the cap in a fit that converged. The exponential tail
-    # needs about seven steps after a hand-over at L-BFGS's first iteration,
+    # needs about seven steps after L-BFGS stops at its first iteration -- a
+    # metric a million times too stiff makes its predicted gain negligible --
     # on a chord too dear to hand back (a budget of one step).
     m = _endgame_mock(p -> -0.5e4 * p[1]^2 - 1e-4 * exp(2 * p[2]))
     lines = String[]
     r = ContinuousTimeSEM.ctsem_optimize(m, [0.01, 0.0]; maxiter=3,
-        tune_chunks=false, gap_tol=1e-8, newton=true, newton_switch=1e6,
+        tune_chunks=false, gap_tol=1e-8, newton=true, precondition=[1e6, 1e6],
         newton_maxit=1, newton_curvature=:chord,
         certify=false, progress=true, progress_every=1e-9,
         progress_sink=(text, kind) -> (push!(lines, text); nothing),
@@ -1402,27 +1488,33 @@ end
     @test !any(occursin("ITERATION CAP", l) for l in lines)
 end
 
-@testset "ctsem_optimize finishes on a Hessian too dear to hand back" begin
-    # The quadratic whose first Hessian is a hundredfold wrong, handed over
-    # after L-BFGS's first iteration, with a step budget below what a Hessian
-    # costs (4 parameters, `newton_maxit = 3`): the first step fails the check
-    # a hand-back would make, but the finish may not throw the Hessian away,
-    # so it keeps what it formed, refreshes on the slow step and closes the
-    # gap itself, and everything it did is counted.
+@testset "ctsem_optimize runs L-BFGS to its own rule where a Hessian is too dear to discard" begin
+    # A Hessian costing more gradients than the finish has steps (4 parameters,
+    # `newton_maxit = 3`) is not formed on L-BFGS's predicted gain, however
+    # high the switch: L-BFGS runs on to its own stopping rule, as on the
+    # Laplace route, and the finish starts there. With the switch alone it
+    # handed over after one iteration, as a 529-parameter marginal fit did
+    # with 140 nats to climb (ECLS-K, dev2).
     c = [1.0, -2.0, 0.5, 3.0]
-    f, h = _endgame_misled(c)
-    m = _endgame_mock(f; h = h)
+    f = p -> -0.5 * sum(abs2, p .- c)
+    m = _endgame_mock(f)
     r = ContinuousTimeSEM.ctsem_optimize(m, [4.0, 3.0, -1.0, 0.0]; maxiter=200,
         tune_chunks=false, gap_tol=1e-8, newton=true, newton_switch=1e6,
         newton_maxit=3, certify=false, progress=false, verbose=false,
         overshoot_probe=:off)
-    @test maximum(abs, r.minimizer .- c) < 1e-8
-    @test r.newton_steps >= 1
-    @test length(r.newton_history_kind) == r.newton_steps
-    @test r.newton_hessians == m.hessians[] <= 3
-    @test r.iterations - r.newton_steps <= 2    # L-BFGS did not have to go on
+    @test maximum(abs, r.minimizer .- c) < 1e-6
+    @test r.iterations - r.newton_steps > 1     # L-BFGS went on
+    @test r.newton_hessians == m.hessians[] <= 2
     @test r.stop_reason in ("gap", "gradient", "linesearch")
     @test !r.newton_handback
+    # Where the Hessian is cheap enough to throw away, the switch still hands
+    # over at once (4 parameters within `newton_maxit = 30`).
+    cheap = ContinuousTimeSEM.ctsem_optimize(_endgame_mock(f), [4.0, 3.0, -1.0, 0.0];
+        maxiter=200, tune_chunks=false, gap_tol=1e-8, newton=true,
+        newton_switch=1e6, certify=false, progress=false, verbose=false,
+        overshoot_probe=:off)
+    @test maximum(abs, cheap.minimizer .- c) < 1e-8
+    @test cheap.iterations - cheap.newton_steps == 1
 end
 
 # Shared with `test_laplace.jl`; see `laplace_fixtures.jl`.

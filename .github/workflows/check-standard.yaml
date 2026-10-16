@@ -85,6 +85,11 @@ jobs:
       # installed here so that the julia examples, which are guarded on
       # ctJuliaStatus() and inert everywhere else, run too.
       BUILD_VIGNETTES: ${{ github.event_name == 'workflow_dispatch' && inputs.vignettes == true }}
+      # And consent, in advance, to install the engine's Julia packages, which
+      # the first julia example then does. Without it ctJuliaStatus() reports
+      # Julia unavailable -- a fit would stop to ask -- and every julia example
+      # is inert, which is not what installing Julia here is for.
+      CTSEM_JULIA_AGREE: ${{ (github.event_name == 'workflow_dispatch' && inputs.vignettes == true) && 'yes' || 'no' }}
       # --as-cran stops an example that leaves a connection open, and sets
       # _R_CHECK_CONNECTIONS_LEFT_OPEN_ itself, so it cannot be turned off
       # here. A julia example therefore ends with ctJuliaKill('session'):

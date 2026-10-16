@@ -7,8 +7,10 @@ using ForwardDiff
     @test ContinuousTimeSEM.gauss_summation(5) == 15
     ksolve_buffer = ContinuousTimeSEM.LyapBuffer(Float64, 2)
     @test ksolve_buffer isa ContinuousTimeSEM.LyapKsolveBuffer{Float64}
-    @test ksolve_buffer.ksolve_dim isa Val{2}
-    @test ksolve_buffer.ksolve_system_dim isa Val{3}
+    # Run-time integers, not `Val`s: a size in a type compiles again for every
+    # model (CLAUDE.md, "A model's types do not depend on the model").
+    @test ksolve_buffer.ksolve_dim === 2
+    @test ksolve_buffer.ksolve_system_dim === 3
     # The threshold is where the packed solve stops being faster than a LAPACK
     # call; see `_CTSEM_LYAP_SCHUR_ABOVE` for the measurement behind ten.
     @test ContinuousTimeSEM.LyapBuffer(Float64, 10) isa ContinuousTimeSEM.LyapKsolveBuffer{Float64}

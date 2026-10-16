@@ -116,11 +116,17 @@ function shard_source(file::AbstractString, keep::Vector{Int})
 ")
 end
 
-# Each file runs the same preamble `runtests.jl` uses, then just that file.
+# Each file runs the same preamble `runtests.jl` uses, then just that file --
+# with the tests' compile cache (test/cache) only when it is built and current:
+# a stale image loaded by every worker would have them all wait while one of
+# them rebuilt it, serially, for as long as compiling the suite.
 const PREAMBLE = """
 using Test, ContinuousTimeSEM
 using LinearAlgebra, Random, Printf, ForwardDiff, DataFrames, ChainRulesCore,
     ComponentArrays
+let id = Base.identify_package("ContinuousTimeSEMTestCache")
+    id !== nothing && Base.isprecompiled(id) && @eval Main using ContinuousTimeSEMTestCache
+end
 cd(raw"$HERE")
 include(joinpath(raw"$HERE", "table_helpers.jl"))
 """

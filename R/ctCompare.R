@@ -48,7 +48,8 @@ ctChisqTest<-function(fit1,fit2){
       "for both models; a sampled fit (ctFit(optimize=FALSE) or ",
       "ctFitUncertainty(fit, 'sample')) has a posterior instead of a single ",
       "objective value. Refit with ",
-      "optimize=TRUE, or compare sampled fits with ctLOO() instead.",
+      "optimize=TRUE, or compare sampled julia fits with ",
+      "ctLOO(fit, method = 'psis') instead.",
       call.=FALSE)
   }
   d <- data.frame(

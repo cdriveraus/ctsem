@@ -349,16 +349,6 @@
       as.numeric(stored$evaluated_at) else as.numeric(est)
   }
   fit$uncertainty <- uncertaintyfit
-  # And the identifiability report, for the same reason: it is a statement
-  # about the curvature this call just used. A fit made with `estonly = TRUE`
-  # and finished later by `ctOptimUncertainty()` carried none at all, so
-  # nothing named the parameter whose interval had no width.
-  # `screen` is what the likelihood said along the flat directions of that same
-  # curvature, so the report names what was measured flat and not only what
-  # the eigenvalue has decayed far enough to call flat at this stopping point.
-  fit$identifiability <- .ctBackendIdentifiability(uncertaintyfit$hessian,
-    names(fit$estimate$se), fit = fit, at = fit$estimate$raw,
-    screen = uncertaintyfit$details$flatdirections)
   # What the curvature says about convergence, which a gradient cannot: the
   # objective still available under the local quadratic approximation, over the
   # subspace whose curvature the data supports, plus a measurement of what the
@@ -376,6 +366,20 @@
     .ctBackendCertification(fit, uncertaintyfit$hessian,
       tolerance = .ctBackendGapTolerance(fit))
   }
+  # And the identifiability report, for the same reason: it is a statement
+  # about the curvature this call just used. A fit made with `estonly = TRUE`
+  # and finished later by `ctOptimUncertainty()` carried none at all, so
+  # nothing named the parameter whose interval had no width.
+  # `screen` is what the likelihood said along the flat directions of that same
+  # curvature, so the report names what was measured flat and not only what
+  # the eigenvalue has decayed far enough to call flat at this stopping point.
+  # After the certification, which is of the same curvature: a negative
+  # direction its saddle ladder found flat is reported as unidentified rather
+  # than as a saddle.
+  fit$identifiability <- .ctBackendIdentifiability(uncertaintyfit$hessian,
+    names(fit$estimate$se), fit = fit, at = fit$estimate$raw,
+    screen = uncertaintyfit$details$flatdirections,
+    certification = fit$uncertainty$certification)
   # And `converged` with it: a fit finished here had only the engine's verdict
   # until this call, and that verdict is what this one replaces.
   fit <- .ctBackendCertifiedVerdict(fit)
@@ -782,11 +786,14 @@
 
 # The score matrix `ctOptimScoreMatrix()`/`bootstrapHessian()` consume, from the
 # engines' own per-subject adjoint contributions rather than by re-initialising
-# a model per subject the way `scorecalc()` must for Stan.
-.ctBackendScoreMatrix <- function(fit, est) {
+# a model per subject the way `scorecalc()` must for Stan. One row per unit:
+# subject, or under the Laplace layer outermost group. `prior = FALSE` leaves
+# out each row's share of the prior, for what removing a unit removes.
+.ctBackendScoreMatrix <- function(fit, est, prior = TRUE) {
   module <- .ctJuliaModule(fit$model_spec$project)
   result <- .ctJuliaGet(module$ctsem_subject_gradients(
-    .ctJuliaObjective(fit, hybrid = TRUE), .ctJuliaVector(as.numeric(est))))
+    .ctJuliaObjective(fit, hybrid = TRUE), .ctJuliaVector(as.numeric(est)),
+    prior = isTRUE(prior)))
   scores <- as.matrix(result$scores)
   if (any(!is.finite(scores))) {
     stop("The engine returned non-finite per-subject scores at the estimate; ",

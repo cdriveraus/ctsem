@@ -383,7 +383,7 @@ function ctsem_adjoint_gradient(objective::CTSEMObjective, values::AbstractVecto
     gradients = [zeros(T, length(values)) for _ in 1:nblocks]
     totals = zeros(T, nblocks)
     valid = fill(true, nblocks)
-    badvalue = fill(T(NaN), nblocks)
+    badvalue = fill(_ctsem_nan(T), nblocks)
 
     _ctsem_pull_blocks(nblocks, nchunks) do b, w
         _ctsem_adjoint_chunk!(gradients[b], totals, valid, badvalue, b,
@@ -396,7 +396,7 @@ function ctsem_adjoint_gradient(objective::CTSEMObjective, values::AbstractVecto
             # in the serial path: a non-finite value *and* a non-finite
             # gradient, so an optimizer's finiteness guards reject the trial
             # point rather than accepting a partial gradient.
-            return (value=badvalue[c], gradient=fill(T(NaN), length(values)))
+            return (value=badvalue[c], gradient=fill(_ctsem_nan(T), length(values)))
         end
     end
 
@@ -447,8 +447,14 @@ of its cotangent lands on that row through the per-subject
 `_ctsem_parameter_layer!`, a cell reading it through `_ctsem_tipred_scatter!`,
 and its imputation density's term is added to the same row
 (`_ctsem_prior_scores!`).
+
+`prior = false` leaves the prior out of the rows -- each is then subject `i`'s
+log likelihood gradient alone, which is what removing subject `i` removes
+(`ctLOO(casewiseApproximation = TRUE)`); a refit keeps the whole prior. The
+value is the objective either way.
 """
-function ctsem_subject_gradients(objective::CTSEMObjective, values::AbstractVector{T}) where {T}
+function ctsem_subject_gradients(objective::CTSEMObjective, values::AbstractVector{T};
+    prior::Bool=true) where {T}
     subjects = objective.subject_objectives
     nsubjects = length(subjects)
     npars = length(values)
@@ -459,7 +465,7 @@ function ctsem_subject_gradients(objective::CTSEMObjective, values::AbstractVect
     ranges = _ctsem_chunk_ranges(nsubjects, nblocks)
     totals = zeros(T, nblocks)
     valid = fill(true, nblocks)
-    badvalue = fill(T(NaN), nblocks)
+    badvalue = fill(_ctsem_nan(T), nblocks)
 
     _ctsem_pull_blocks(nblocks, nchunks) do b, w
         _ctsem_subject_gradient_chunk!(scores, totals, valid, badvalue, b,
@@ -467,10 +473,10 @@ function ctsem_subject_gradients(objective::CTSEMObjective, values::AbstractVect
     end
 
     @inbounds for c in 1:nblocks
-        valid[c] || return (value=badvalue[c], scores=fill(T(NaN), nsubjects, npars))
+        valid[c] || return (value=badvalue[c], scores=fill(_ctsem_nan(T), nsubjects, npars))
     end
 
-    _ctsem_prior_scores!(scores, objective, values)
+    prior && _ctsem_prior_scores!(scores, objective, values)
     return (value=sum(totals) + _ctsem_log_prior(objective, values), scores=scores)
 end
 
@@ -485,56 +491,47 @@ function _ctsem_subject_gradient_chunk!(scores::Matrix{T}, totals::Vector{T},
     try
         @inbounds for i in range
             subject_objective = subjects[i]
-            ws = _get_or_init_objective_workspace!(subject_objective, T)
-            # One exponential table for the chunk: a linear model's `exp(JAx * dt)` is
-            # the same for every subject at the same interval. Lent to the subject for
-            # its pass and given back after: left in place, every subject a worker had
-            # run shared that worker's table, and a later threaded value pass (a line
-            # search's, a score test's) that put two of them on different threads
-            # raced on it -- the log likelihood off by up to 0.3, by a different amount
-            # each time, with no error.
-            own_table = ws.discretization_cache.exp_table
+            # The task's filter workspace, as in `_ctsem_adjoint_chunk!`.
+            ws = aws.ekf_ws
+            # One exponential table for the chunk: a linear model's
+            # `exp(JAx * dt)` is the same for every subject at the same interval.
             ws.discretization_cache.exp_table = aws.exp_table
-            try
-                tape = _tape_reset!(aws.tape)
-                # The concrete numeric row this evaluation reads: identity for a
-                # plain `Vector{Float64}` (see `_ctsem_tipred_vector`), or the
-                # sampled predictor's raw parameter value substituted in for a
-                # `TIMissingRecipe` subject. The forward pass and the group replay
-                # inside the reverse pass (`aws.tipreds`, read via `ctx.tipreds`)
-                # must see the same row `values` produced, not the recipe itself.
-                tipred_vec = _ctsem_tipred_fill!(aws.tipreds, subject_objective.tipreds, values)
-                aws.frechet_count = 0
+            tape = _tape_reset!(aws.tape)
+            # The concrete numeric row this evaluation reads: identity for a
+            # plain `Vector{Float64}` (see `_ctsem_tipred_vector`), or the
+            # sampled predictor's raw parameter value substituted in for a
+            # `TIMissingRecipe` subject. The forward pass and the group replay
+            # inside the reverse pass (`aws.tipreds`, read via `ctx.tipreds`)
+            # must see the same row `values` produced, not the recipe itself.
+            tipred_vec = _ctsem_tipred_fill!(aws.tipreds, subject_objective.tipreds, values)
+            aws.frechet_count = 0
 
-                loglik = _ekf_run(ws, subject_objective, values, tipred_vec, tape)
-                # _finite_deep, not isfinite: under ctsem_hessian this runs at Dual
-                # and isfinite tests the value alone, so a NaN partial would pass.
-                if !_finite_deep(loglik)
-                    valid[c] = false
-                    badvalue[c] = loglik
-                    return nothing
-                end
-                total += loglik
-
-                if _growth_unstable(ws)
-                    _ctsem_forward_subject_gradient!(view(scores, i, :), subject_objective, values)
-                    continue
-                end
-
-                fill!(aws.theta_bar, zero(T))
-                _ctsem_tipred_bar_reset!(aws, subject_objective.tipreds, length(tipred_vec))
-                _ctsem_reverse_tape!(tape, subject_objective.params, aws, aws.n, aws.m)
-                # The original `tipreds` (recipe or plain vector), not
-                # `tipred_vec`: `_ctsem_parameter_layer!` dispatches on its type to
-                # decide whether a second product-rule term is needed.
-                _ctsem_parameter_layer!(view(scores, i, :), aws.theta_bar,
-                    tape.subject_values, subject_objective.params, aws,
-                    subject_objective.tipreds, values)
-                _hybrid_scatter!(view(scores, i, :), tape.hyb, subject_objective.params.hybrid)
-                _ctsem_tipred_scatter!(view(scores, i, :), aws, subject_objective.tipreds)
-            finally
-                ws.discretization_cache.exp_table = own_table
+            loglik = _ekf_run(ws, subject_objective, values, tipred_vec, tape)
+            # _finite_deep, not isfinite: under ctsem_hessian this runs at Dual
+            # and isfinite tests the value alone, so a NaN partial would pass.
+            if !_finite_deep(loglik)
+                valid[c] = false
+                badvalue[c] = loglik
+                return nothing
             end
+            total += loglik
+
+            if _growth_unstable(ws)
+                _ctsem_forward_subject_gradient!(view(scores, i, :), subject_objective, values)
+                continue
+            end
+
+            fill!(aws.theta_bar, zero(T))
+            _ctsem_tipred_bar_reset!(aws, subject_objective.tipreds, length(tipred_vec))
+            _ctsem_reverse_tape!(tape, subject_objective.params, aws, aws.n, aws.m)
+            # The original `tipreds` (recipe or plain vector), not
+            # `tipred_vec`: `_ctsem_parameter_layer!` dispatches on its type to
+            # decide whether a second product-rule term is needed.
+            _ctsem_parameter_layer!(view(scores, i, :), aws.theta_bar,
+                tape.subject_values, subject_objective.params, aws,
+                subject_objective.tipreds, values)
+            _hybrid_scatter!(view(scores, i, :), tape.hyb, subject_objective.params.hybrid)
+            _ctsem_tipred_scatter!(view(scores, i, :), aws, subject_objective.tipreds)
         end
     finally
         aws.defer_frechet = deferred
@@ -578,64 +575,60 @@ function _ctsem_adjoint_chunk!(gradient::Vector{T}, totals::Vector{T},
 
     @inbounds for i in range
         subject_objective = subjects[i]
-        ws = _get_or_init_objective_workspace!(subject_objective, T)
-        # One exponential table for the chunk: a linear model's `exp(JAx * dt)` is
-        # the same for every subject at the same interval. Lent to the subject for
-        # its pass and given back after: left in place, every subject a worker had
-        # run shared that worker's table, and a later threaded value pass (a line
-        # search's, a score test's) that put two of them on different threads
-        # raced on it -- the log likelihood off by up to 0.3, by a different amount
-        # each time, with no error.
-        own_table = ws.discretization_cache.exp_table
+        # The task's filter workspace, which this chunk's adjoint workspace
+        # carries at its own element type (the Laplace route filters through
+        # it too): a workspace depends on the shared parameters, never on the
+        # subject. A subject's own cached one, as here before, left a copy per
+        # subject, and under `ctsem_hessian` a dual copy per subject 13 times
+        # the size, kept for the session -- 15 GB on a 1046-subject model.
+        ws = aws.ekf_ws
+        # One exponential table for the chunk: a linear model's `exp(JAx * dt)`
+        # is the same for every subject at the same interval.
         ws.discretization_cache.exp_table = aws.exp_table
-        try
-            tape = _tape_reset!(aws.tape)
-            # See the matching comment in `_ctsem_subject_gradient_chunk!`: the
-            # forward pass and the group replay need the concrete numeric row, not
-            # the (possibly `TIMissingRecipe`) stored one.
-            tipred_vec = _ctsem_tipred_fill!(aws.tipreds, subject_objective.tipreds, values)
+        tape = _tape_reset!(aws.tape)
+        # See the matching comment in `_ctsem_subject_gradient_chunk!`: the
+        # forward pass and the group replay need the concrete numeric row, not
+        # the (possibly `TIMissingRecipe`) stored one.
+        tipred_vec = _ctsem_tipred_fill!(aws.tipreds, subject_objective.tipreds, values)
 
-            loglik = _ekf_run(ws, subject_objective, values, tipred_vec, tape)
-            # _finite_deep, not isfinite: under ctsem_hessian this runs at Dual and
-            # isfinite tests the value alone, so a NaN partial would pass.
-            if !_finite_deep(loglik)
-                valid[c] = false
-                badvalue[c] = loglik
-                return nothing
-            end
-            total += loglik
+        loglik = _ekf_run(ws, subject_objective, values, tipred_vec, tape)
+        # _finite_deep, not isfinite: under ctsem_hessian this runs at Dual and
+        # isfinite tests the value alone, so a NaN partial would pass.
+        if !_finite_deep(loglik)
+            valid[c] = false
+            badvalue[c] = loglik
+            return nothing
+        end
+        total += loglik
 
-            # Forward mode for a subject whose reverse pass would not be stable;
-            # see `_CTSEM_ADJOINT_GROWTH`. Its gradient goes straight into the
-            # chunk's, so nothing of it enters the shared parameter layer.
-            if _growth_unstable(ws)
-                gf = similar(gradient)
-                _ctsem_forward_subject_gradient!(gf, subject_objective, values)
-                gradient .+= gf
-                continue
-            end
+        # Forward mode for a subject whose reverse pass would not be stable;
+        # see `_CTSEM_ADJOINT_GROWTH`. Its gradient goes straight into the
+        # chunk's, so nothing of it enters the shared parameter layer.
+        if _growth_unstable(ws)
+            gf = similar(gradient)
+            _ctsem_forward_subject_gradient!(gf, subject_objective, values)
+            gradient .+= gf
+            continue
+        end
 
-            shared || fill!(aws.theta_bar, zero(T))
-            _ctsem_tipred_bar_reset!(aws, subject_objective.tipreds, length(tipred_vec))
-            _ctsem_reverse_tape!(tape, subject_objective.params, aws, aws.n, aws.m)
-            # Per subject and straight onto raw positions, so before or after a
-            # shared parameter layer alike (`CTSEMHybrid`, a sampled TI predictor
-            # a cell reads).
-            _hybrid_scatter!(gradient, tape.hyb, subject_objective.params.hybrid)
-            _ctsem_tipred_scatter!(gradient, aws, subject_objective.tipreds)
-            # Kept for the shared parameter layer below, and for the deferred
-            # Frechet pass; with either of those enabled every subject sees the
-            # same parameter layer, so any subject's values do. The original
-            # `tipreds` (recipe or plain vector), not `tipred_vec` -- see
-            # `_ctsem_parameter_layer!`.
-            last_subject_values = tape.subject_values
-            last_tipreds = subject_objective.tipreds
-            if !shared
-                _ctsem_parameter_layer!(gradient, aws.theta_bar, tape.subject_values,
-                    subject_objective.params, aws, subject_objective.tipreds, values)
-            end
-        finally
-            ws.discretization_cache.exp_table = own_table
+        shared || fill!(aws.theta_bar, zero(T))
+        _ctsem_tipred_bar_reset!(aws, subject_objective.tipreds, length(tipred_vec))
+        _ctsem_reverse_tape!(tape, subject_objective.params, aws, aws.n, aws.m)
+        # Per subject and straight onto raw positions, so before or after a
+        # shared parameter layer alike (`CTSEMHybrid`, a sampled TI predictor
+        # a cell reads).
+        _hybrid_scatter!(gradient, tape.hyb, subject_objective.params.hybrid)
+        _ctsem_tipred_scatter!(gradient, aws, subject_objective.tipreds)
+        # Kept for the shared parameter layer below, and for the deferred
+        # Frechet pass; with either of those enabled every subject sees the
+        # same parameter layer, so any subject's values do. The original
+        # `tipreds` (recipe or plain vector), not `tipred_vec` -- see
+        # `_ctsem_parameter_layer!`.
+        last_subject_values = tape.subject_values
+        last_tipreds = subject_objective.tipreds
+        if !shared
+            _ctsem_parameter_layer!(gradient, aws.theta_bar, tape.subject_values,
+                subject_objective.params, aws, subject_objective.tipreds, values)
         end
     end
 

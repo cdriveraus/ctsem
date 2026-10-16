@@ -798,6 +798,43 @@ test_that("a call into a Julia process that has died errors by name, and the nex
     tolerance = 1e-10)
 })
 
+test_that("a session killed mid-call is not replaced until the call returns", {
+  skip_without_julia()
+  # What the out-of-memory killer does: the process dies during a call. Every
+  # stage of a fit that catches its own errors would otherwise start a new
+  # session and rebuild what had just exhausted the machine, so none starts
+  # until the top-level call returns -- here, the whole test file, which
+  # testthat runs as one -- and running it again starts afresh.
+  spec <- suppressMessages(ctFit(image_data(nsub = 3L, nobs = 4L, seed = 4L),
+    image_model(), backend = "julia", fit = FALSE))
+  raw <- rep(0, ctsem:::.ctBackendNpar(spec))
+  value <- suppressMessages(ctJuliaEvaluate(spec, raw, gradient = FALSE)$value)
+  cache <- ctsem:::.ct_julia_cache
+  withr::defer(cache$lost <- NULL)
+  bridge <- get("pkgLocal", envir = asNamespace("JuliaConnectoR"))
+
+  # Killed from another process two seconds into a call that would sleep for
+  # two minutes: SIGKILL, as the out-of-memory killer sends, except on
+  # Windows, where pskill refuses it and its default terminates the process.
+  pid <- as.integer(ctsem:::.ctJuliaEval("getpid()"))
+  signal <- if (.Platform$OS.type == "windows") "tools::SIGTERM" else "tools::SIGKILL"
+  system2(file.path(R.home("bin"), "Rscript"), c("-e", shQuote(sprintf(
+    "Sys.sleep(2); tools::pskill(%d, %s)", pid, signal))), wait = FALSE)
+  expect_error(ctsem:::.ctJuliaEval("sleep(120); 1"), "killed or crashed")
+  expect_identical(cache$lost, "mainevalcmd")
+
+  # Refused rather than started, at whatever entry the next call comes in by.
+  expect_error(suppressMessages(ctJuliaEvaluate(spec, raw, gradient = FALSE)),
+    "no new one starts until the call returns")
+  expect_null(bridge$con)
+
+  # What the task callback does when the call returns.
+  cache$lost <- NULL
+  expect_equal(as.numeric(suppressMessages(
+    ctJuliaEvaluate(spec, raw, gradient = FALSE)$value)), as.numeric(value),
+    tolerance = 1e-10)
+})
+
 test_that("a session that died partway through a message is reported gone, not waited on", {
   # What a SIGTERM leaves on Linux: Julia prints its signal report to stderr on
   # the way out, so the socket holds a stderr marker, a message cut short, and

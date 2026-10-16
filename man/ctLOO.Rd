@@ -9,14 +9,14 @@ ctLOO(
   folds = 10,
   cores = getOption("mc.cores", 2L),
   parallelFolds = FALSE,
-  tol = 1e-05,
+  tol = NULL,
   subjectwise = ifelse(length(unique(.ctFitRowSubject(fit))) >= folds, TRUE, FALSE),
   keepfirstobs = FALSE,
   leaveOutN = NA,
   refit = TRUE,
   casewiseApproximation = FALSE,
   method = c("kfold", "psis"),
-  nsamples = 500
+  nsamples = 1000
 )
 }
 \arguments{
@@ -30,7 +30,13 @@ model is re-fit 10 times, each time to a data set with 1/10 of the observations 
 \item{parallelFolds}{compute folds in parallel or use cores to finish single folds faster.
 parallelFolds will use folds times as much memory.}
 
-\item{tol}{tolerance for optimisation of refitted samples, can generally be more relaxed than the tolerance used for fitting initially.}
+\item{tol}{objective tolerance for each fold's refit. On a stan fit it
+defaults to 1e-5. On a julia fit a fold by default stops once a step is
+predicted to gain less than 1e-4 in log likelihood, which keeps each
+held-out subject's error to about 0.014 times the square root of its
+influence (see \code{casewiseApproximation}); an objective tolerance
+stops it while the gradient can still be large, and at 1e-5 moved one
+40-subject model's out-of-sample log likelihood by 1 in total.}
 
 \item{subjectwise}{drop random subjects instead of data rows? With
 \code{method = 'psis'} this chooses the level instead -- leave one subject
@@ -46,35 +52,56 @@ Leaving 2 out would result in 3 folds (starting at rows 1,2,3), each containing 
 \item{refit}{if FALSE, do not optimise parameters for the new data set,
 just compute the likelihoods etc from the original parameters}
 
-\item{casewiseApproximation}{if TRUE, use a bootstrapped gradient contributions approach to approximate the cross validation parameters -- much faster but less reliable.}
+\item{casewiseApproximation}{\code{TRUE} replaces each fold's refit by one
+Newton step from the full estimate: the held-out data's score times the
+fit's covariance. Much faster than refitting, and close to it when no fold
+moves the estimate far. On a julia fit each fold's influence, the step's
+squared length in the covariance's metric, is returned in
+\code{foldinfluence}, and a number instead of \code{TRUE} steps only the
+folds whose influence is below it and refits the rest (see Details). Needs an optimized fit with
+a covariance; on a stan fit, subject folds and \code{TRUE} or
+\code{FALSE} only.}
 
 \item{method}{\code{'kfold'} (the default) refits the model once per fold.
 \code{'psis'} is refit-free Pareto-smoothed importance sampling
-leave-one-out, available only for \code{backend = 'julia'} fits with
-\code{intoverpop = 'laplace'}, and refused for any other fit; it needs the
-\pkg{loo} package. The K-fold arguments \code{folds}, \code{parallelFolds},
+leave-one-out for \code{backend = 'julia'} fits (see Details); it needs
+the \pkg{loo} package. The K-fold arguments \code{folds}, \code{parallelFolds},
 \code{tol}, \code{keepfirstobs}, \code{leaveOutN}, \code{refit} and
 \code{casewiseApproximation} mean nothing to it and are refused if given.}
 
-\item{nsamples}{Number of importance sampling draws for \code{method = 'psis'}.}
+\item{nsamples}{Number of importance sampling draws for \code{method =
+'psis'}. A sampled fit's posterior draws are used instead: all of them,
+or thinned to \code{nsamples} when it is given. Fewer draws estimate the
+Pareto k of a heavy-tailed correction too low: on one fit with an
+outlying subject the proposal's k read 0.54 at 1000 draws and 0.83 at
+4000.}
 }
 \value{
 For \code{method = 'kfold'}, a list with \code{foldrows},
   \code{foldpars}, \code{insampleLogLikRow}, \code{LogLikRowFolds},
   \code{outsampleLogLikRow}, \code{insampleLogLik}, \code{outsampleLogLik}
   and entropy and standard deviation summaries, and \code{processes},
-  whether the folds ran in worker processes. \code{scoring} is added
+  whether the folds ran in worker processes. When a julia fit's folds are
+  refit, \code{foldoptim} has a row per fold: \code{method} (\code{'refit'}
+  or \code{'step'}), and for a refit the optimiser's \code{iterations},
+  \code{gradients}, \code{converged}, \code{gain} (what it was predicted
+  still to gain, in log likelihood, when it stopped) and \code{seconds}; a
+  warning counts the refits that stopped without converging. With
+  \code{casewiseApproximation}, \code{foldinfluence} and
+  \code{foldstepped} give each fold's influence and whether it was stepped
+  rather than refit. \code{scoring} is added
   whenever the folds were refit, naming what was scored and that they are
   uncertified (see Details); an \code{intoverpop = 'laplace'} fit also adds
   \code{insampleLogLikSubject} and \code{outsampleLogLikSubject}. For
   \code{method = 'psis'}, an object of class
   \code{ctLOOpsis}: \code{elpd_loo}, \code{se_elpd_loo}, \code{p_loo},
   \code{looic}, \code{pointwise} (a data frame of \code{elpd_loo},
-  \code{lpd}, \code{p_loo} and \code{pareto_k} per unit or row),
+  \code{lpd}, \code{p_loo} and \code{pareto_k} per unit or row, and at
+  the unit level \code{refined}),
   \code{n_high_k}, \code{ndraws}, \code{ndropped}, \code{proposal_k} (the
-  Pareto k of the correction from proposal to Laplace posterior: one value at
-  the unit level, one per unit at the row level), \code{level} and
-  \code{note}.
+  Pareto k of the correction from proposal to posterior: one value at the
+  unit level, \code{NA} for a sampled fit, one per unit at the row level),
+  \code{level} and \code{note}.
 }
 \description{
 Estimates out-of-sample predictive performance, by refitting the model with
@@ -119,19 +146,60 @@ value evenly. \code{insampleLogLik} is correspondingly the Laplace marginal at
 the estimate for subject folds, and the sum of the rows at the full-data
 modes for row folds.
 
+\strong{\code{casewiseApproximation}.} Each fold's refit is replaced by one
+Newton step from the full estimate, \code{est - cov \%*\% s}, where
+\code{s} is the score of the held-out data at the estimate: each unit the
+fold empties (a subject, or under the Laplace layer an outermost group)
+contributes its likelihood score, and a unit it leaves partly observed -- a
+row fold, or a subject inside a group -- the difference between its score on
+the full and on the training data, at one gradient of the training objective
+per fold. The prior stays, as it does in a refit. This is the one-step
+(infinitesimal jackknife) approximation to the refit; its error grows faster
+than the step. A fold's influence \code{t(s) \%*\% cov \%*\% s} measures the step in
+posterior standard deviations squared, and a number given as
+\code{casewiseApproximation} refits exactly every fold whose influence is at
+or above it, so the approximation is used only where the step is short.
+\code{foldstepped} says which folds were stepped. On a julia fit a stepped
+fold scores its held-out rows only, together with every other stepped fold
+in one pass over the data, so its column of \code{LogLikRowFolds} is
+\code{NA} elsewhere: the training rows at each step would cost a pass a
+fold, which for leave-one-subject-out is the whole cost.
+
 \strong{\code{method = 'psis'}.} Pareto-smoothed importance sampling
-(Vehtari, Gelman and Gabry, 2017) over draws built from the Laplace
-approximation, without refitting, at one of two levels:
+(Vehtari, Gelman and Gabry, 2017), without refitting. It estimates the
+Bayesian leave-one-out predictive density -- a unit's likelihood averaged
+over the posterior without it -- where K fold scores each fold at its refit
+estimate, so the two differ by more than Monte Carlo error, most for a unit
+that moves the estimate. Two levels:
 \itemize{
   \item \code{subjectwise = TRUE}: leave one unit out, where a unit is the
   outermost level of random effect -- a subject in a one-level model, a
   group in a multilevel one, since subjects sharing a group effect are not
-  independent given the population parameters. Population parameter draws
-  come from the fit's normal approximation (\code{fit$estimate$cov}, so the
-  fit must carry one) widened by a factor of 1.5, are importance corrected
-  to the Laplace posterior, and are weighted by each unit's Laplace marginal
-  to remove it.
-  \item \code{subjectwise = FALSE}: leave one row out, conditional on the
+  independent given the population parameters. A unit's term is its
+  likelihood with its random effects integrated out: by the filter under
+  \code{intoverpop = 'augmented'}, by the Laplace approximation otherwise.
+  On a sampled fit (\code{optimize = FALSE}, or
+  \code{ctFitUncertainty(fit, 'sample')}) the population parameters are
+  its posterior draws. On an optimized fit they are drawn from its normal
+  approximation (\code{fit$estimate$cov}, so the fit must carry one),
+  widened by a factor of 1.5 and importance corrected to the posterior. A
+  unit whose Pareto k is above 0.7 is estimated again with \code{nsamples}
+  more draws, centred where leaving it out moves the estimate -- the step
+  \code{casewiseApproximation} takes -- pooled with draws around the
+  estimate, and the estimate with the lower k is kept
+  (\code{pointwise$refined}). That needs the fit's objective to be the
+  posterior it describes, so it is not done for a fit sampled jointly over
+  parameters and random effects (\code{intoverpop = 'none'}), whose unit
+  terms are Laplace approximations to the sampled marginal. When the normal
+  approximation itself misses the posterior (\code{proposal_k}, printed,
+  above 0.7) every unit's estimate is unreliable, and a warning says to
+  sample the fit and use its draws instead. No warning is not proof the
+  approximation is good: k is estimated too low from few draws, so a value
+  approaching 0.7, or a posterior you expect to be skewed (an outlying
+  subject, a variance near zero, binary indicators), is worth rerunning
+  with more \code{nsamples} or on a sampled fit.
+  \item \code{subjectwise = FALSE}, on an optimized
+  \code{intoverpop = 'laplace'} fit only: leave one row out, conditional on the
   estimated population parameters and integrating over each unit's random
   effects, drawn from the Gaussian the Laplace approximation fits at their
   mode, widened by a factor of 1.5. This is pointwise leave-one-out of the

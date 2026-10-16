@@ -266,7 +266,7 @@ function _hybrid_joint_objective_gradient(laplace::CTSEMLaplaceObjective, U::Int
     r = _laplace_unit_loglik_gradient(laplace, U, values, Ls, u, aws,
         eachindex(laplace.units.members[U]), nothing, _HYBRID_FIXED, hook)
     isfinite(r.value) ||
-        return (value=r.value, gradient=fill(T(NaN), length(z)), hlogdet=zero(T))
+        return (value=r.value, gradient=fill(_ctsem_nan(T), length(z)), hlogdet=zero(T))
     gradient = vcat(r.gradient, hook.grad)
     @inbounds for a in eachindex(z)
         gradient[a] -= z[a]

@@ -619,8 +619,9 @@ const _CTSEM_SCRATCH_LOCK = Threads.SpinLock()
     _ctsem_scratch()
 
 The store the engine's per-task caches live in: the covariance and
-exponential caches (`_covcache`, `_expm_cov_scratch`) and the transpose
-buffers (`_ctsem_transpose_buffer`). A worker spawned by a parallel region
+exponential caches (`_covcache`, `_expm_cov_scratch`), the transpose
+buffers (`_ctsem_transpose_buffer`), and the filter workspace subjects run in
+(`_get_or_init_objective_workspace!`). A worker spawned by a parallel region
 borrows one from a pool for its lifetime (`_ctsem_with_scratch`); any other
 task uses its own task-local storage.
 
@@ -801,7 +802,11 @@ function ctsem_evaluate(objective::CTSEMObjective, values::AbstractVector;
         grad = gradient ? _ctsem_gradient(objective, values) : nothing
     end
     if contributions
-        subject = [obj(values) for obj in objective.subject_objectives]
+        subject = eltype(values) === Float64 ?
+            _ctsem_subject_logliks!(
+                Vector{Float64}(undef, length(objective.subject_objectives)),
+                objective, Vector{Float64}(values)) :
+            [obj(values) for obj in objective.subject_objectives]
         return (value=value, gradient=grad, subject_loglik=subject,
             row_loglik=_ctsem_row_loglikelihood(objective, values))
     end
@@ -1008,6 +1013,87 @@ function ctsem_evaluate_batch_gradient(objective, values::AbstractMatrix)
         probe.gradient === nothing || (out[2:end, j] .= probe.gradient)
     end
     return out
+end
+
+export ctsem_unit_terms
+
+"""
+    ctsem_unit_terms(objective::CTSEMObjective, draws::AbstractMatrix)
+
+Every subject's log likelihood, and the objective, at each column of `draws`,
+in one bridge call: `value` the objective (the log posterior the fit
+maximised), `unit_loglik` (`nsubjects x ndraws`) each subject's log likelihood
+-- its marginal over whatever random effects the filter carries as states --
+`converged` whether the column could be evaluated, and `unit` the unit each
+subject is: itself, since the filter's route has no level above the subject.
+A column the model cannot evaluate comes back `NaN`. The Laplace layer's
+method (laplace_loo.jl) returns the same fields for its units, so a caller
+asks for units' terms without asking which route it holds.
+
+For leave-one-subject-out by Pareto-smoothed importance sampling
+(`ctLOO(method = 'psis')` on the filter's route), which needs exactly these
+numbers at a few hundred draws -- of a proposal or of a sampled posterior: the
+objective to weight a proposal's draw to the posterior, a subject's own term
+to take that subject out. One pass per draw, threaded over subjects as the
+objective itself is, where a refit per subject costs a whole optimisation
+each.
+"""
+function ctsem_unit_terms(objective::CTSEMObjective, draws::AbstractMatrix)
+    ncol = size(draws, 2)
+    ncol >= 1 || throw(ArgumentError("draws must have at least one column"))
+    nsubjects = length(objective.subject_objectives)
+    value = fill(NaN, ncol)
+    terms = fill(NaN, nsubjects, ncol)
+    converged = fill(false, ncol)
+    for j in 1:ncol
+        _ctsem_interrupt_check()
+        v = Vector{Float64}(view(draws, :, j))
+        column = view(terms, :, j)
+        ok = try
+            _ctsem_subject_logliks!(column, objective, v)
+            value[j] = sum(column) + _ctsem_log_prior(objective, v)
+            isfinite(value[j])
+        catch err
+            _ctsem_must_propagate(err) && rethrow()
+            false
+        end
+        if ok
+            converged[j] = true
+        else
+            value[j] = NaN
+            column .= NaN
+        end
+    end
+    return (value=value, unit_loglik=terms, converged=converged,
+        unit=collect(1:nsubjects))
+end
+
+"""
+    _ctsem_subject_logliks!(column, objective, values)
+
+Each subject's term of `objective(values)`, written into `column`, over the
+same chunks and threads the objective's own evaluation uses. Shared by the
+batch above and `ctsem_evaluate(; contributions=true)`.
+"""
+function _ctsem_subject_logliks!(column::AbstractVector{Float64},
+    objective::CTSEMObjective, values::Vector{Float64})
+    subjects = objective.subject_objectives
+    nsubjects = length(subjects)
+    nchunks = _ctsem_nchunks(nsubjects)
+    if nchunks <= 1
+        @inbounds for i in 1:nsubjects
+            column[i] = subjects[i](values)
+        end
+        return column
+    end
+    nblocks = _ctsem_nblocks(nsubjects, nchunks)
+    ranges = _ctsem_chunk_ranges(nsubjects, nblocks)
+    _ctsem_pull_blocks(nblocks, nchunks) do b, _
+        @inbounds for i in ranges[b]
+            column[i] = subjects[i](values)
+        end
+    end
+    return column
 end
 
 """
@@ -1561,6 +1647,23 @@ function _ctsem_metric(precondition, n::Integer)
     Diagonal(scale .^ 2)
 end
 
+"""
+    _ctsem_lbfgs_inverse(inverse, n)
+
+A caller's initial inverse Hessian for L-BFGS (`_ctsem_lbfgs`'s `inverse`),
+symmetrised, or `nothing` where it is not one: not `n` by `n`, not finite, or
+not positive definite, since a direction it gives would then not descend. The
+optimiser then learns its curvature from the pairs, as without one.
+"""
+function _ctsem_lbfgs_inverse(inverse, n::Integer)
+    inverse === nothing && return nothing
+    H = Matrix{Float64}(inverse)
+    (size(H) == (n, n) && all(isfinite, H)) || return nothing
+    H = (H .+ transpose(H)) ./ 2
+    isposdef(Symmetric(H)) || return nothing
+    H
+end
+
 """What the whole run has gained, and what its last `window` iterations did.
 
 Only for reporting: `_ctsem_stalled` computes both itself rather than calling
@@ -1993,12 +2096,15 @@ will read what it returns, which adds the flat-direction probe and, on a route
 whose Hessian is expensive (Laplace), is what the finish runs for at all;
 `newton_curvature` is `:auto` (the route's own, `_ctsem_finish_curvature`),
 `:exact`, `:chord` or `:subset`; `newton_switch` is the predicted gain at which
-L-BFGS hands over where a Hessian is cheap, and a finish whose first step shows
-that hand-over was early gives the point back to L-BFGS, which runs on to its
-own stopping rule before the finish runs again -- where the Hessian is cheap
-enough to discard (`_ctsem_hessian_cost` within `newton_maxit`), and otherwise
-walks on it; `newton_reuse` and `flat_rtol`
-are the finish's rules, passed from R so one number serves both sides. The stall
+L-BFGS hands over where a Hessian is cheap enough to discard
+(`_ctsem_hessian_cost` within `newton_maxit`), and a finish whose first step
+shows that hand-over was early gives the point back to L-BFGS, which runs on to
+its own stopping rule before the finish runs again; where a Hessian is dearer
+L-BFGS runs to its own rule first; `newton_reuse` and `flat_rtol`
+are the finish's rules, passed from R so one number serves both sides.
+`lbfgs_inverse` is an initial inverse Hessian for L-BFGS (`_ctsem_lbfgs`'s
+`inverse`), as a fit's covariance is for refitting it to part of its data; one
+that is not positive definite is not used (`_ctsem_lbfgs_inverse`). The stall
 watch's `stall_carried` and `stall_alone` are set only on a stage resumed after
 a certification (see `CTSEMStallWatch`).
 
@@ -2019,7 +2125,7 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
     progress::Bool=verbose, progress_label::AbstractString="optimise",
     progress_budget::Bool=false, progress_every::Real=0.0,
     gap_tol::Real=0.0, converge_tol::Real=1e-6,
-    precondition=nothing, initial_alpha::Real=0.1,
+    precondition=nothing, lbfgs_inverse=nothing, initial_alpha::Real=0.1,
     overshoot_probe=_CTSEM_OVERSHOOT_PROBE[],
     stall_window::Integer=80, stall_fraction::Real=1e-2,
     stall_cooldown::Integer=30, stall_tighten::Real=0.1,
@@ -2094,7 +2200,9 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
     # below `newton_switch`. Where it costs `2 npar` gradients (Laplace) it
     # runs only when a certification will read it, and L-BFGS runs to its own
     # rule first: the finish's Hessian is then the one the certification would
-    # have formed anyway, rather than an extra one.
+    # have formed anyway, rather than an extra one. A marginal model above
+    # `newton_maxit` parameters, whose Hessian costs about `npar` gradients,
+    # runs L-BFGS to its own rule first too (`handover` below).
     cheap = _ctsem_cheap_hessian(objective)
     route_curvature = _ctsem_finish_curvature(objective, length(start_values),
         Int(newton_maxit))
@@ -2111,8 +2219,17 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
     finishing = newton && gap_tol > 0 && route_curvature !== nothing &&
         (certify || cheap)
     # A Ref: the callback reads it and the resumed stage below lowers it.
-    handover = Ref(finishing && cheap ? max(Float64(gap_tol), Float64(newton_switch)) :
-        Float64(gap_tol))
+    #
+    # The early hand-over is for a Hessian that costs a few gradients, the
+    # same test as `discardable`: on the marginal route above `newton_maxit`
+    # parameters a Hessian costs about `npar` gradients, so there, as on the
+    # Laplace route, L-BFGS runs to its own rule first. The marginal route
+    # counted as cheap whatever its size, and a 529-parameter fit (ECLS-K,
+    # dev2) handed over on the switch with 140 nats still to climb while
+    # L-BFGS was gaining 2.5 nats a minute, to chord walks that gained 0.03 to
+    # 0.5 a minute with their Hessians.
+    handover = Ref(finishing && cheap && discardable ?
+        max(Float64(gap_tol), Float64(newton_switch)) : Float64(gap_tol))
     # A callback rather than Optim's `show_trace`, which prints one dense line
     # per iteration whatever the model costs -- thousands on a fast one, and on
     # a slow one nothing for minutes. The objective and the gradient norm are
@@ -2322,10 +2439,11 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
     end
     sgd_iterations = sgd_result === nothing ? 0 : sgd_result.iterations
     # See optimiser.jl for why this is not Optim any more.
+    inverse = _ctsem_lbfgs_inverse(lbfgs_inverse, length(start_values))
     result = _ctsem_lbfgs(fg!, lbfgs_start; memory=Int(lbfgs_memory),
         diagonal=lbfgs_diagonal, nonmonotone=lbfgs_nonmonotone, gll=Int(lbfgs_gll),
         metric=_ctsem_metric(precondition, length(start_values)),
-        initial_alpha=Float64(initial_alpha),
+        inverse=inverse, initial_alpha=Float64(initial_alpha),
         maxiter=max(0, Int(maxiter) - sgd_iterations),
         g_tol=g_tol, f_tol=f_tol, x_tol=x_tol, callback=watch,
         directional=directional, batch=batcher, iteration0=sgd_iterations)
@@ -2443,8 +2561,10 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
             reporter=reporter)
         minimizer = collect(finish.x)
         # The finish's own gain replaces L-BFGS's metric proxy: it is the exact
-        # decrement, which is what the verdict below should be judging.
-        directional.dphi0 = -2 * finish.gain
+        # decrement, which is what the verdict below should be judging. A
+        # finish with no Hessian has none (`Inf`), and the proxy stays: put
+        # there, it made the report read "stopped with Inf still available".
+        isfinite(finish.gain) && (directional.dphi0 = -2 * finish.gain)
         (early && (finish.handback || finish.hessian === nothing)) || break
         # L-BFGS carries on from where the finish left the point, to the
         # ordinary stopping rule, rather than the fit ending short: either the
@@ -2468,7 +2588,7 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
         resumed = _ctsem_lbfgs(fg!, minimizer; memory=Int(lbfgs_memory),
             diagonal=lbfgs_diagonal, nonmonotone=lbfgs_nonmonotone, gll=Int(lbfgs_gll),
             metric=_ctsem_metric(precondition, length(start_values)),
-            initial_alpha=Float64(initial_alpha),
+            inverse=inverse, initial_alpha=Float64(initial_alpha),
             maxiter=max(0, Int(maxiter) - result.iterations - spent.steps[]),
             g_tol=g_tol, f_tol=f_tol, x_tol=x_tol, callback=watch,
             directional=directional, iteration0=result.iterations + spent.steps[])
@@ -2670,11 +2790,15 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
             NaN : finish.distance,
         # The saddle record: whether the final point still has a direction of
         # negative curvature, whether the ladder was tried at it, how many
-        # escapes the ladder made on the way, and what they gained.
+        # escapes the ladder made on the way, and what they gained; and at the
+        # final point, how many negative directions the ladder measured and the
+        # most it found along them, which `.ctBackendCertify()` reads.
         newton_saddle=finish === nothing ? false : finish.saddle,
         newton_ladder_tried=finish === nothing ? false : finish.ladder_tried,
         newton_escapes=finish === nothing ? 0 : finish.escapes,
         newton_escape_gain=finish === nothing ? 0.0 : finish.ladder_gain,
+        newton_saddle_walked=finish === nothing ? 0 : finish.saddle_walked,
+        newton_saddle_gain=finish === nothing ? NaN : finish.saddle_gain,
         # What the directions the final Hessian does not trust are worth, by
         # the route's own predicate: the probe `.ctBackendCertify()` reads.
         # `probe_ran` false and a `[0.0]` direction when there was nothing to

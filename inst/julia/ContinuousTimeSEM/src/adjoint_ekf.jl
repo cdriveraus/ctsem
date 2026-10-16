@@ -488,7 +488,9 @@ function _ctsem_forward_subject_gradient_impl!(g, so, values, mode::Int=0,
         ws.hyb.dfix = convert(Vector{eltype(x)}, collect(dfix))
         return _ekf_run(ws, so, x, _ctsem_tipred_vector(so.tipreds, x), nothing)
     end
-    ForwardDiff.gradient!(g, f, values)
+    # At a bucketed width (`_ctsem_gradient`), not ForwardDiff's own, which
+    # compiled the filter again for each parameter count.
+    copyto!(g, _ctsem_gradient(f, values))
     return nothing
 end
 
@@ -1628,10 +1630,10 @@ function _reverse_update!(x̄::Vector{T}, P̄::Matrix{T}, Θ̄::Matrix{T}, θ̄c
         # drops cotangents at non-mutable positions -- a poison confined to the
         # state cotangents could be filtered out of a model whose measurement
         # matrices are all fixed.
-        fill!(x̄, T(NaN))
-        fill!(P̄, T(NaN))
-        fill!(Θ̄, T(NaN))
-        fill!(θ̄ca, T(NaN))
+        fill!(x̄, _ctsem_nan(T))
+        fill!(P̄, _ctsem_nan(T))
+        fill!(Θ̄, _ctsem_nan(T))
+        fill!(θ̄ca, _ctsem_nan(T))
         return nothing
     end
     copyto!(ỹ, record.manifestmeans)

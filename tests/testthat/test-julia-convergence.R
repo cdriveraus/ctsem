@@ -509,3 +509,102 @@ test_that("a marginal model's exact Hessian reports its progress through the sha
     npar, npar)
   expect_equal(hessian, bare, tolerance = 1e-10)
 })
+
+# A deterministic age state and steep steps in it, as a questionnaire's form
+# changes are written, with the step given by `means`.
+.age_step_data <- function() {
+  set.seed(5)
+  do.call(rbind, lapply(seq_len(30), function(i) {
+    t <- sort(c(4.5, stats::runif(5, 4.6, 15.5)))
+    eta <- cumsum(stats::rnorm(length(t), 0, 0.5))
+    data.frame(id = i, time = t, y1 = eta + stats::rnorm(length(t), 0, 0.5) +
+      ifelse(t < 4.7, 1, 0) - ifelse(t > 13.4, 1, 0))
+  }))
+}
+.age_step_model <- function(means) {
+  model <- suppressMessages(ctModel(type = "ct", n.latent = 2, n.manifest = 1,
+    manifestNames = "y1", latentNames = c("eta", "AGE"),
+    LAMBDA = matrix(c(1, 0), 1, 2), DRIFT = matrix(c("drift", 0, 0, 0), 2, 2),
+    DIFFUSION = matrix(c("diff", 0, 0, 0), 2, 2),
+    T0VAR = matrix(c("t0v", 0, 0, 0), 2, 2), T0MEANS = matrix(c("t0m", 4.5), 2, 1),
+    CINT = matrix(c(0, 1), 2, 1), MANIFESTMEANS = matrix(means),
+    MANIFESTVAR = matrix("mvar"), PARS = matrix(c("f54", "f15"), ncol = 1)))
+  model$pars$indvarying <- FALSE
+  model
+}
+
+test_that("a logistic is differentiated in a form that does not overflow", {
+  # Deriv's quotient rule makes `x / (1 + exp(a))`, and `inv_logit(a)` through
+  # its body, into `exp(a) / (1 + exp(a))^2`, whose square is Inf past
+  # a = 354: right in value, Inf / Inf under any derivative.
+  stable <- ctsem:::.ctStableLogistic
+  expect_identical(stable("exp(a)/(exp(a)+1)"), "inv_logit(a)")
+  expect_identical(stable("1/(1+exp(a))"), "inv_logit(-(a))")
+  expect_identical(stable("f*1/(1+exp((s-4.7)*40))"), "(f*1)*inv_logit(-((s-4.7)*40))")
+  # Nothing to rewrite comes back as written, digits and all.
+  expect_identical(stable("x/(2+exp(a))+0.123456789012345678*s"),
+    "x/(2+exp(a))+0.123456789012345678*s")
+  derivative <- ctsem:::.ctWithStableDerivRules(Deriv::Deriv(
+    stable("f*1/(1+exp((s-4.7)*40))"), "s", cache.exp = FALSE))
+  expect_false(grepl("^", derivative, fixed = TRUE))
+  expect_equal(eval(str2lang(derivative), list(f = 2, s = 4.8,
+    inv_logit = ctsem::inv_logit)), -80 * stats::dlogis(4))
+  # The rules are Deriv's to keep: added for the call, then put back.
+  expect_false(exists("inv_logit", envir = Deriv::drule, inherits = FALSE))
+
+  skip_without_julia()
+  # Past age 13.6 the old Jy cell's square overflowed, and a derivative of
+  # 1e-17 on the age state made every dual pass NaN: no exact Hessian. Both
+  # spellings of the step now give it, against central differences of the
+  # adjoint gradient, elementwise.
+  data <- .age_step_data()
+  for (means in c(
+    "f54 * 1/(1+exp((AGE - 4.7)*40)) + f15 * 1/(1+exp(-(AGE - 13.4)*20))",
+    "f54 * inv_logit(-(AGE - 4.7)*40) + f15 * inv_logit((AGE - 13.4)*20)")) {
+    spec <- suppressWarnings(suppressMessages(ctFit(data, .age_step_model(means),
+      backend = "julia", fit = FALSE, cores = 1L)))
+    jy <- spec$parameter_table$updatetransform[spec$parameter_table$matrix %in% "Jy"]
+    expect_false(any(grepl("^", jy, fixed = TRUE)))
+    npar <- ctsem:::.ctBackendNpar(spec)
+    at <- rep(0.1, npar)
+    hessian <- ctsem:::.ctBackendHessianAt(spec, at)
+    gradient <- function(x) as.numeric(ctJuliaEvaluate(spec, x, gradient = TRUE)$gradient)
+    eps <- 1e-5
+    differenced <- vapply(seq_len(npar), function(j) {
+      (gradient(replace(at, j, at[j] + eps)) - gradient(replace(at, j, at[j] - eps))) /
+        (2 * eps)
+    }, numeric(npar))
+    expect_equal(hessian, differenced, tolerance = 1e-5)
+  }
+})
+
+test_that("an exact Hessian the dual pass cannot form is refused, and the fit goes on without it", {
+  skip_without_julia()
+  # A cell that overflows under a derivative however it is differentiated:
+  # the step's own slope, `exp(a) / (1 + exp(a))^2`, written out. Its value
+  # is 0 past age 13.6, and a derivative of 1e-17 on the age state makes its
+  # partial Inf / Inf, so every dual pass is NaN. The adjoint's invalid-point
+  # gradient was `T(NaN)` -- NaN in the value, zero in the partials -- and a
+  # Jacobian reads only the partials: the exact Hessian came back an exact zero
+  # matrix, the Newton finish took no step and did not hand back to L-BFGS,
+  # and a 415-parameter fit stopped uncertified with |g| 177. It is NaN now, so
+  # the finish resumes L-BFGS and the certification differences the gradient.
+  data <- .age_step_data()
+  model <- .age_step_model(paste0("f54 * exp((AGE - 4.7)*40)/(1+exp((AGE - 4.7)*40))^2",
+    " + f15 * 1/(1+exp(-(AGE - 13.4)*20))"))
+  spec <- suppressWarnings(suppressMessages(ctFit(data, model, backend = "julia",
+    fit = FALSE, cores = 1L)))
+  hessian <- ctsem:::.ctBackendHessianAt(spec, rep(0.1, ctsem:::.ctBackendNpar(spec)))
+  expect_false(isTRUE(all(hessian == 0)))
+  expect_true(anyNA(hessian))
+
+  fit <- suppressWarnings(suppressMessages(ctFit(data, model, backend = "julia",
+    cores = 1L)))
+  expect_true(isTRUE(fit$optim$converged))
+  expect_identical(fit$uncertainty$certification$status, "certified")
+  expect_true(all(is.finite(fit$uncertainty$hessian)))
+  expect_false(all(fit$uncertainty$hessian == 0))
+  # The proxy the stopping rule used, not the Inf of a finish that had no
+  # Hessian.
+  expect_true(is.finite(fit$optim$predicted_gain))
+})

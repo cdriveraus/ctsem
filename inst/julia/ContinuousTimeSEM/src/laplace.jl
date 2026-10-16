@@ -2494,7 +2494,7 @@ function _laplace_unit_loglik_gradient(laplace::CTSEMLaplaceObjective, U::Intege
         for m in pos
             loglik = one!(m, aws, gradient, shift, inner)
             isfinite(loglik) ||
-                return (value=loglik, gradient=fill(T(NaN), length(u)), hlogdet=zero(T))
+                return (value=loglik, gradient=fill(_ctsem_nan(T), length(u)), hlogdet=zero(T))
             total += loglik
             hsum += aws.ekf_ws.hyb.half_logdet
         end
@@ -2558,7 +2558,7 @@ function _laplace_unit_loglik_gradient(laplace::CTSEMLaplaceObjective, U::Intege
         return true
     end
     @inbounds for w in 1:width
-        okk[w] || return (value=bad[w], gradient=fill(T(NaN), length(u)), hlogdet=zero(T))
+        okk[w] || return (value=bad[w], gradient=fill(_ctsem_nan(T), length(u)), hlogdet=zero(T))
     end
     inner = into === nothing ? zeros(T, length(u)) : fill!(into, zero(T))
     @inbounds for w in 1:width
@@ -2846,7 +2846,7 @@ function _laplace_unit_hessian(laplace::CTSEMLaplaceObjective, U::Integer,
             _laplace_scratch_vector!(laplace, S, length(uu), :curv_inner)
             ).gradient
     end
-    H = _ctsem_jacobian(inner_of, collect(u))
+    H = _ctsem_jacobian(inner_of, collect(u), _CTSEM_CURVATURE_WIDTHS[])
     return (H .+ transpose(H)) ./ 2
 end
 
@@ -3220,7 +3220,7 @@ function _laplace_block_precision(laplace::CTSEMLaplaceObjective, U::Integer,
             [convert(Matrix{S}, L) for L in Ls], uu, ws, members, nothing, mode)
         return [r.gradient[c] for c in columns]
     end
-    A = _ctsem_jacobian(gradient_of, collect(Float64, z))
+    A = _ctsem_jacobian(gradient_of, collect(Float64, z), _CTSEM_CURVATURE_WIDTHS[])
     return Matrix{Float64}(LinearAlgebra.I, k, k) .- _laplace_symmetrise(A)
 end
 
@@ -7351,17 +7351,22 @@ dual pass per chunk of parameters over every unit, on one thread. The batched
 optimiser takes every gradient of a batch stage from here, and on the SNSF
 pilot (310 parameters, 493 single-member units) its first iterations then took
 5-20 minutes each at one core, against seconds once the batch was full.
+
+`prior = false` leaves each unit's share of the prior out, as for the plain
+objective.
 """
 function ctsem_subject_gradients(laplace::CTSEMLaplaceObjective,
-    values::AbstractVector)
+    values::AbstractVector; prior::Bool=true)
     theta = collect(Float64, values)
     nunits = length(laplace.units.members)
     S = zeros(Float64, nunits, length(theta))
     r = ctsem_laplace_evaluate(laplace, theta; gradient=true, scores=S)
     isfinite(r.value) || return (value=r.value, scores=fill(NaN, size(S)))
-    all(isfinite, S) || return _laplace_subject_gradients_forward(laplace, theta)
+    all(isfinite, S) ||
+        return _laplace_subject_gradients_forward(laplace, theta; prior=prior)
     # Each unit carries its share of the prior, as the forward route's rows do.
-    _ctsem_prior_scores!(S, laplace.objective, theta, _laplace_unit_of_subject(laplace))
+    prior && _ctsem_prior_scores!(S, laplace.objective, theta,
+        _laplace_unit_of_subject(laplace))
     return (value=r.value, scores=S)
 end
 
@@ -7375,7 +7380,7 @@ a vector and differentiated together, so the same forward directions serve
 every row.
 """
 function _laplace_subject_gradients_forward(laplace::CTSEMLaplaceObjective,
-    values::AbstractVector)
+    values::AbstractVector; prior::Bool=true)
     theta = collect(Float64, values)
     nsubjects = length(laplace.objective.subject_objectives)
     nunits = length(laplace.units.members)
@@ -7403,7 +7408,8 @@ function _laplace_subject_gradients_forward(laplace::CTSEMLaplaceObjective,
     # Each unit carries its share of the prior, so the rows still sum to the
     # full posterior gradient -- the same convention `ctsem_subject_gradients`
     # uses without random effects.
-    _ctsem_prior_scores!(scores, laplace.objective, theta, _laplace_unit_of_subject(laplace))
+    prior && _ctsem_prior_scores!(scores, laplace.objective, theta,
+        _laplace_unit_of_subject(laplace))
     aws = _laplace_workspace!(laplace, Float64, length(theta))
     value = sum(_laplace_unit_term(laplace, U, theta, Ls, laplace.modes[U], aws)
                 for U in 1:nunits; init=0.0)

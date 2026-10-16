@@ -238,15 +238,28 @@
 }
 
 .ctJuliaRequire <- function() {
-  if (requireNamespace("JuliaConnectoR", quietly = TRUE)) return(invisible(TRUE))
+  if (.ctJuliaConnectoROk()) return(invisible(TRUE))
   # Offered rather than demanded: this is one CRAN package away from working,
   # and sending the user off to install it by hand and come back is the friction
   # ctJuliaInstall() exists to remove.
   if (isTRUE(tryCatch(.ctJuliaInstallConnectoR(), error = function(e) FALSE))) {
     return(invisible(TRUE))
   }
-  stop("backend='julia' needs the JuliaConnectoR package, which is not installed.\n",
-    .ctJuliaDeclined(), call. = FALSE)
+  stop(.ctJuliaConnectoRNeeded(), call. = FALSE)
+}
+
+# Why there is no usable JuliaConnectoR, and what to do: install it, update it,
+# or -- with an update installed under a loaded older copy -- restart R.
+#' @keywords internal
+.ctJuliaConnectoRNeeded <- function(installed = .ctJuliaConnectoRVersion()) {
+  if (is.null(installed)) {
+    return(paste0("backend='julia' needs the JuliaConnectoR package, which is ",
+      "not installed.\n", .ctJuliaDeclined()))
+  }
+  paste0("backend='julia' needs JuliaConnectoR ", .ct_juliaconnector_min,
+    " or later, and ", installed, " is ",
+    if ("JuliaConnectoR" %in% loadedNamespaces()) "loaded" else "installed",
+    ": install.packages('JuliaConnectoR'), then restart R.")
 }
 
 # The engine's identity: a hash of its own source.
@@ -388,6 +401,44 @@
   bin <- tryCatch(.ctJuliaBin(), error = function(e) NULL)
   if (is.null(bin)) return(FALSE)
   .ctJuliaVersionOk(.ctJuliaCachedVersion(bin))
+}
+
+# Could a julia fit run here now, without installing or asking anything? A
+# Julia that reports a version is not enough: a runner's juliaup shim printed
+# one and then could not load its own system image, and a Julia without the
+# engine's packages starts but cannot load the engine, and installing them
+# needs consent an example or a check cannot give. So a one-off `julia`
+# process -- not a session: it pins no thread count, holds no connection and
+# exits -- confirms both that Julia runs and that every package the engine
+# depends on is installed, without loading the engine (which could mean
+# precompiling it for minutes). Once per binary and R session. "ok", "absent"
+# (Julia runs, the packages are not there) or "broken" (Julia did not run).
+.ctJuliaEngineInstalled <- function(bin) {
+  known <- .ct_julia_cache$engine_installed
+  if (!is.null(known[[bin]])) return(known[[bin]])
+  env_dir <- .ctJuliaEnvDir()
+  project <- if (file.exists(file.path(env_dir, "Project.toml"))) env_dir else
+    system.file("julia", "ContinuousTimeSEM", package = "ctsem")
+  if (!nzchar(project)) return("broken")
+  script <- tempfile(fileext = ".jl")
+  on.exit(unlink(script), add = TRUE)
+  writeLines(c(
+    "import TOML",
+    "deps = keys(get(TOML.parsefile(Base.active_project()), \"deps\", Dict()))",
+    "absent = [d for d in deps if (id = Base.identify_package(d);",
+    "  id === nothing || Base.locate_package(id) === nothing)]",
+    "print(isempty(absent) ? \"CTSEM-ENGINE-DEPS-OK\" : \"CTSEM-ENGINE-DEPS-ABSENT\")"),
+    script)
+  out <- tryCatch(suppressWarnings(system2(file.path(bin, .ctJuliaExeName()),
+    c("--startup-file=no", "--history-file=no",
+      paste0("--project=", shQuote(project)), shQuote(script)),
+    stdout = TRUE, stderr = FALSE, timeout = 120)),
+    error = function(e) character())
+  state <- if (any(grepl("CTSEM-ENGINE-DEPS-OK", out, fixed = TRUE))) "ok" else
+    if (any(grepl("CTSEM-ENGINE-DEPS-ABSENT", out, fixed = TRUE))) "absent" else
+      "broken"
+  .ct_julia_cache$engine_installed <- c(known, stats::setNames(list(state), bin))
+  state
 }
 
 #' Configure the Julia engine used by ctsem
@@ -648,7 +699,12 @@ ctJuliaSetup <- function(project = NULL, julia_bin = NULL,
 #'
 #' @inheritParams ctJuliaSetup
 #' @return A list describing the selected Julia engine: whether it is
-#'   \code{available}, whether the \code{connectoR} bridge package is installed,
+#'   \code{available} -- a julia fit could run now without asking anything,
+#'   which needs a Julia that starts and the engine's Julia packages installed,
+#'   or consent to install them given in advance with
+#'   \code{CTSEM_JULIA_AGREE=yes} (checked by a short \code{julia} process,
+#'   once per session, never a session) -- whether the \code{connectoR} bridge
+#'   package is installed at a version the backend runs on,
 #'   the \code{julia_bin} directory in use and the \code{julia} version there,
 #'   the \code{engine} version (a hash of the engine source shipped with this
 #'   ctsem, which is also what its cached project directory is keyed on), and
@@ -660,7 +716,7 @@ ctJuliaSetup <- function(project = NULL, julia_bin = NULL,
 #' status$available
 #' @export
 ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
-  connectoR <- requireNamespace("JuliaConnectoR", quietly = TRUE)
+  connectoR <- .ctJuliaConnectoROk()
   julia_bin <- .ctJuliaBin(julia_bin)
   if (!is.null(julia_bin)) Sys.setenv(JULIA_BINDIR = julia_bin)
   # A running session can be asked its own version; only a Julia that has never
@@ -680,8 +736,20 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
   version <- if (running) tryCatch(as.character(.ctJuliaEval("string(VERSION)")),
     error = function(e) NA_character_) else NA_character_
   if (is.na(version) && !is.null(julia_bin)) version <- .ctJuliaCachedVersion(julia_bin)
-  available <- connectoR && (running || isTRUE(tryCatch(.ctJuliaStartable(),
-    error = function(e) FALSE)))
+  # Whether a julia fit could run now without asking anything: the engine
+  # loaded in a running session, or a Julia that starts and has the engine's
+  # packages (`.ctJuliaEngineInstalled`) or consent given in advance to install
+  # them. This is the guard the julia examples run under, so on a machine where
+  # a fit would stop to ask -- or where `julia` is a shim that cannot start --
+  # it has to say no.
+  engine <- if (connectoR && !is.null(julia_bin) && !(running &&
+      !is.null(.ct_julia_cache$module)) && isTRUE(tryCatch(.ctJuliaStartable(),
+        error = function(e) FALSE)))
+    tryCatch(.ctJuliaEngineInstalled(julia_bin), error = function(e) "broken") else NA
+  available <- connectoR && ((running && !is.null(.ct_julia_cache$module)) ||
+    nzchar(Sys.getenv("JULIACONNECTOR_SERVER", unset = "")) ||
+    identical(engine, "ok") ||
+    (identical(engine, "absent") && .ctJuliaAgreedInAdvance()))
   threads <- if (running) {
     tryCatch(as.integer(.ctJuliaEval("Threads.nthreads()")),
       error = function(e) NA_integer_)
@@ -988,7 +1056,7 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
     "Calling again starts a new one.", call. = FALSE)
 }
 
-# The objective cache, read and written only through these two.
+# The objective cache, read and written only through these three.
 #
 # The read is where the staleness check has to happen: `.ctJuliaObjective()`
 # answers from the cache without ever asking for the module, so a check placed
@@ -1002,6 +1070,26 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
 .ctJuliaCacheStore <- function(key, objective) {
   assign(key, objective, envir = .ct_julia_cache$objectives)
   objective
+}
+
+# Drops a specification's objectives from the cache -- the one whose own
+# variances the filter integrates (`hybrid = TRUE`) and the one without -- so
+# that once no caller holds them, R's collector releases the proxies and
+# JuliaConnectoR lets go of them. For an objective built for data no later
+# call will see again, a cross-validation fold's training data, which the
+# cache would otherwise hold for the rest of the session with every workspace
+# it grew.
+.ctJuliaForgetObjective <- function(object) {
+  spec <- if (inherits(object, "ctJuliaFit")) object$model_spec else object
+  for (hybrid in c(FALSE, TRUE)) {
+    variant <- spec
+    if (!hybrid && !is.null(variant$laplace$hybrid)) variant$laplace$hybrid <- NULL
+    key <- .ctJuliaObjectiveKey(variant)
+    if (exists(key, envir = .ct_julia_cache$objectives, inherits = FALSE)) {
+      rm(list = key, envir = .ct_julia_cache$objectives)
+    }
+  }
+  invisible(NULL)
 }
 
 .ctJuliaTuneBridge <- function() {
@@ -4437,6 +4525,12 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
 # is performance-only, but it makes a timing depend on history, which is exactly
 # what makes one impossible to reproduce.
 .ctBackendWithMaxChunks <- function(chunks, expr) {
+  # With no Julia here at all there is no engine work to bound, and setting the
+  # ceiling would start the setup only to fail it: a stored julia fit's
+  # extract, summaries and LaTeX are R work on the draws it carries. Anything in
+  # `expr` that does need the engine says Julia is missing itself.
+  if (!isTRUE(.ctJuliaSessionRunning()) &&
+      !isTRUE(tryCatch(.ctJuliaStartable(), error = function(e) FALSE))) return(expr)
   previous <- .ctBackendSetMaxChunks(chunks)
   on.exit(.ctBackendRestoreMaxChunks(previous), add = TRUE)
   expr
@@ -4833,7 +4927,7 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
 .ctJuliaOptimise <- function(model_spec, start, optimcontrol = list(),
   gradient = "adjoint", cores = 1L, verbose = 0L, maxiter = NULL,
   callback = NULL, objective = NULL, progress_label = NULL,
-  progress_budget = FALSE, pin = NULL, carried = NULL) {
+  progress_budget = FALSE, pin = NULL, carried = NULL, inverse = NULL) {
   spec <- structure(model_spec, class = c("ctJuliaModel", "ctFitModel"))
   # A caller may hand in the objective to maximise. `intoverstates=FALSE` does,
   # passing the joint one over `[theta; z]`; everything below is unchanged by
@@ -4939,8 +5033,10 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
     # A certificate without the Hessian for the doors that need no standard
     # errors (conjugate gradients on Hessian-vector products, plan P8) was
     # considered and not built, because those doors form no Hessian to save:
-    # folds and profile points pass `certify = FALSE`, which zeroes `gap_tol`
-    # and with it the finish; `estonly` forms none on the Laplace route and on
+    # profile points pass `certify = FALSE`, which zeroes `gap_tol` and with it
+    # the finish, and ctLOO's folds set a gap rule of their own, start L-BFGS
+    # from the fit's covariance and leave the finish off (`.ctBackendLOOFold()`);
+    # `estonly` forms none on the Laplace route and on
     # the augmented only the finish's exact ones, which its Newton steps need
     # (optimiser bench at juliaFit 908b068d, dev1: no Hessian in any Laplace
     # estonly cell). Restarts form one each, as the finish's metric; they are
@@ -5138,6 +5234,18 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
   # evaluation". Every internal call below that does not name its own `pin`
   # -- the first stage and an ordinary resume alike -- inherits it this way.
   default_pin <- pin
+  # A curvature the caller already holds near `start`, as L-BFGS's initial
+  # inverse Hessian (`_ctsem_lbfgs`'s `inverse`): a fit's covariance, for a
+  # refit to part of its data (ctLOO's folds). Sent only when there is one:
+  # the keywords are part of the call's type, and an always-present
+  # `lbfgs_inverse = nothing` made every fit's call differ from the ones the
+  # package image recorded (tools/generate-precompile-shapes.R), so every
+  # first fit compiled the optimiser's entry again.
+  if (!is.null(inverse)) {
+    inverse <- as.matrix(inverse)
+    storage.mode(inverse) <- "double"
+    common$lbfgs_inverse <- inverse
+  }
   optimise_once <- function(from, damp = integer(), pin = default_pin) {
     args <- common
     held <- !is.null(pin) && length(pin$index)
@@ -5783,6 +5891,12 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
     substeps <- remesh(start[seq_len(npar)])
     if (!is.null(jointobjective)) start <- c(start[seq_len(npar)], numeric(nstate))
   }
+  # The engine loaded first, so a first fit's install and compile -- minutes,
+  # once per machine -- is not counted as this fit's own time, which says how
+  # slow work repeating the fit would be (`.ctWorkerFitSeconds`). Counted, it
+  # made a profile on a fresh CI runner start worker sessions for a fit of
+  # seconds.
+  invisible(.ctJuliaModule(model_spec$project))
   optimise_started <- proc.time()[["elapsed"]]
   result <- .ctJuliaOptimise(model_spec, start, optimcontrol = optimcontrol,
     gradient = gradient, cores = cores, verbose = verbose,
@@ -6424,7 +6538,8 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
   out$identifiability <- .ctBackendIdentifiability(out$uncertainty$hessian,
     rawnames, fit = out,
     at = .ctJuliaOr(out$uncertainty$evaluated_at, out$estimate$raw),
-    screen = out$uncertainty$details$flatdirections)
+    screen = out$uncertainty$details$flatdirections,
+    certification = out$uncertainty$certification)
   # `$uncertainty$intervalcheck` is attached by `.ctBackendUncertainty()`, so
   # it describes whichever method ran; it is only warned about here. A separate
   # question from identifiability: a direction can be flat enough to ruin every

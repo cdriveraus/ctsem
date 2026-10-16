@@ -20,6 +20,14 @@
 # `model$timeName`, neither was found, and preparation died inside `order()`
 # with "argument 1 is not a vector". On the R route the data came back with
 # columns the model could not be fitted to without renaming them first.
+test_that("a fit's prepared model is refused by name, with where the given one is", {
+  # A fit's model has random effects added as states; the R generator's
+  # matrices did not conform to it, and it failed "non-conformable arguments".
+  expect_error(ctGenerate(ctstantestfit$ctstanmodel, n = 2, Tpoints = 3),
+    "prepared for fitting")
+  expect_s3_class(ctstantestfit$ctstanmodelbase, "ctStanModel")
+})
+
 test_that("generated column names follow the model, backend r", {
   d <- ctGenerate(.route_model(id = "subject", time = "age"), n = 3,
     Tpoints = 4, backend = "r")

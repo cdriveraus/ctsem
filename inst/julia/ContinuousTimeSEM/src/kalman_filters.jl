@@ -12,9 +12,11 @@ export res_and_grad_likelihood_ekf_continuous!
 # Continuous-time Extended Kalman filter
 ################################################################################
 
+# Mutable although nothing writes to it: a mutable argument passes a dynamic
+# dispatch by reference, where an immutable one is copied to the heap (see
+# `_ekf_run`). Its filter workspace is the task's, not its own
+# (`_get_or_init_objective_workspace!`).
 mutable struct ContinuousEKFObjective{P,D,TS,TD,TI,MT}
-    value_ws::Any
-    dual_ws::Any
     params::P
     data::D
     timesteps::TS
@@ -78,28 +80,55 @@ function ContinuousEKFObjective(params::EKFParameters, data::Matrix, timesteps::
     tipreds isa AbstractVector{<:Integer} && (tipreds = _ctsem_float_data(tipreds))
     rule = _validate_substep_rule(max_timestep, length(timesteps))
     return ContinuousEKFObjective{typeof(params),typeof(data),typeof(timesteps),typeof(tdpreds),typeof(tipreds),typeof(rule)}(
-        nothing, nothing, params, data, timesteps, tdpreds, tipreds, Int(subject), rule)
+        params, data, timesteps, tdpreds, tipreds, Int(subject), rule)
 end
 
-# `isa ContinuousEKFWorkspace{T}` rather than reading `eltype(ws.all_params)`
-# off a workspace whose type is not known here, which allocated on every
-# subject of every evaluation.
-function _get_or_init_objective_workspace!(objective::ContinuousEKFObjective, ::Type{T}) where {T}
-    if T <: ForwardDiff.Dual
-        ws = objective.dual_ws
-        if !(ws isa ContinuousEKFWorkspace{T})
-            ws = _init_continuous_ekf_workspace(T, objective.params)
-            objective.dual_ws = ws
-        end
-        return ws::ContinuousEKFWorkspace{T}
-    end
+# A task's filter workspace for one element type, and the parameters it was
+# built for. The key is a singleton per type, so a lookup allocates nothing,
+# and the parameters are held at their own type: `EKFParameters` is immutable,
+# and compared through an untyped field it was boxed on every call.
+struct _CTSEMFilterWorkspaceKey{T,P} end
+mutable struct _CTSEMFilterWorkspace{P}
+    params::P
+    ws::Any
+end
 
-    ws = objective.value_ws
-    if !(ws isa ContinuousEKFWorkspace{T})
-        ws = _init_continuous_ekf_workspace(T, objective.params)
-        objective.value_ws = ws
+"""
+    _get_or_init_objective_workspace!(objective, T)
+
+The filter workspace a subject runs in: the running task's, one per element
+type, from its scratch store (`_ctsem_scratch`), rebuilt when the task next
+filters another model. A workspace depends only on the shared `EKFParameters`
+and `T`, never on the subject (as `_laplace_ekf_workspace!` and the adjoint's
+`ekf_ws` already rely on), and a task filters one subject at a time, so one
+serves every subject the task runs.
+
+Held per subject instead, as it was, an objective kept a copy for each:
+1.1 MB a subject on a 433-parameter, 1046-subject model, and after an exact
+Hessian a dual copy of 13 times that per subject, for the rest of the session
+-- 15 GB on that model, and the bulk of what a 17,687-subject fit was killed
+for. Per task it is a copy a thread, and a model released by R takes its
+workspaces with it once each task has filtered another.
+"""
+function _get_or_init_objective_workspace!(objective::ContinuousEKFObjective{P},
+    ::Type{T}) where {P,T}
+    store = _ctsem_scratch()
+    held = get(store, _CTSEMFilterWorkspaceKey{T,P}(), nothing)
+    if held === nothing
+        built = _CTSEMFilterWorkspace{P}(objective.params,
+            _init_continuous_ekf_workspace(T, objective.params))
+        store[_CTSEMFilterWorkspaceKey{T,P}()] = built
+        return built.ws::ContinuousEKFWorkspace{T}
     end
-    return ws::ContinuousEKFWorkspace{T}
+    slot = held::_CTSEMFilterWorkspace{P}
+    # `isa ContinuousEKFWorkspace{T}` rather than reading `eltype(ws.all_params)`
+    # off a workspace whose type is not known here, which allocated on every
+    # subject of every evaluation.
+    if slot.params !== objective.params || !(slot.ws isa ContinuousEKFWorkspace{T})
+        slot.ws = _init_continuous_ekf_workspace(T, objective.params)
+        slot.params = objective.params
+    end
+    return slot.ws::ContinuousEKFWorkspace{T}
 end
 
 """

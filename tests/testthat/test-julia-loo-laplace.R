@@ -50,7 +50,7 @@
 }
 
 .lool_unit_terms <- function(fit, pars = fit$estimate$raw) {
-  ctsem:::.ctBackendLaplaceUnitTerms(ctsem:::.ctBackendSpec(fit),
+  ctsem:::.ctBackendUnitTerms(ctsem:::.ctBackendSpec(fit),
     matrix(as.numeric(pars), ncol = 1L))
 }
 
@@ -156,7 +156,7 @@ test_that("PSIS leave-one-subject-out matches the exact integral over the popula
   axis <- seq(-9, 9, length.out = 91)
   nodes <- as.matrix(expand.grid(a = axis, b = axis))
   grid <- est + eig$vectors %*% (sqrt(eig$values) * t(nodes))
-  terms <- ctsem:::.ctBackendLaplaceUnitTerms(ctsem:::.ctBackendSpec(fit), grid)
+  terms <- ctsem:::.ctBackendUnitTerms(ctsem:::.ctBackendSpec(fit), grid)
   expect_true(all(is.finite(terms$value)))
   lse <- ctsem:::.ctLogSumExp
   exact <- vapply(seq_len(16), function(i)
@@ -247,13 +247,16 @@ test_that("PSIS is refused by name where it does not apply", {
   estonly$estimate$cov <- NULL
   expect_error(ctLOO(estonly, method = "psis"), "carries no covariance")
 
-  # A julia fit without Laplace random effects.
+  # A julia fit without Laplace random effects leaves subjects out by the
+  # filter's terms, so it needs the covariance too; rows it cannot leave out.
   fixed <- .lool_model()
   fixed$pars$indvarying <- FALSE
   plain <- suppressMessages(ctFit(.lool_data(nsubjects = 4), fixed,
     backend = "julia", verbose = 0,
     optimcontrol = list(estonly = TRUE)))
-  expect_error(ctLOO(plain, method = "psis"), "intoverpop = 'laplace'")
+  expect_error(ctLOO(plain, method = "psis"), "carries no covariance")
+  expect_error(ctLOO(plain, method = "psis", subjectwise = FALSE),
+    "leaves one row out only on an optimized fit with intoverpop = 'laplace'")
   # A stan fit.
-  expect_error(ctLOO(ctstantestfit, method = "psis"), "intoverpop = 'laplace'")
+  expect_error(ctLOO(ctstantestfit, method = "psis"), "needs a backend = 'julia' fit")
 })

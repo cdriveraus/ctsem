@@ -29,10 +29,10 @@ concurrency:
 jobs:
   engine-tests:
     runs-on: ubuntu-latest
-    # The suite takes about 22 minutes on a 23-core box, single- or
-    # multi-threaded, so a hosted runner needs room beyond the 6-hour default
-    # only if it is much slower. This cap is a guard against a hang.
-    timeout-minutes: 90
+    # The suite takes about 22 minutes on a 23-core box, and on a hosted
+    # runner about 82 after 8 of setup (2026-10-15; test_laplace.jl alone 46).
+    # This cap is a guard against a hang: at 90 it cut ordinary runs off.
+    timeout-minutes: 150
     steps:
       - uses: actions/checkout@v5
 
@@ -47,7 +47,12 @@ jobs:
       # The engine's own Project.toml deliberately does not carry the
       # test-only dependencies, so a --project run of the suite dies on
       # "Package DataFrames not found". Build the environment the way
-      # CLAUDE.md documents for a local run.
+      # CLAUDE.md documents for a local run, without the tests compile cache
+      # (test/cache): this workflow runs only when the engine changed, which
+      # invalidates that image, so it could only add a precompile the size of
+      # the suite, and on a hosted runner that precompile was killed 23 minutes
+      # in (2026-10-16, a runner shutdown signal: the shape memory exhaustion
+      # takes there).
       - name: Test environment
         run: |
           julia -e '
@@ -61,10 +66,24 @@ jobs:
 
       # include() resolves against the including file, not the working
       # directory, so the path is built from an absolute base.
+      # Every testset's time and compile time (runtests.jl): a table in the job
+      # summary, and the CSV kept as an artifact so one run can be set against
+      # another. A testset that doubled went unnoticed for nine days behind
+      # the timeout above.
       - name: Run the engine suite
+        env:
+          CTSEM_TEST_TIMINGS: ${{ github.workspace }}/engine-test-timings.csv
         run: |
           julia --project=ci-testenv -e '
             engine = abspath("inst/julia/ContinuousTimeSEM")
             cd(engine)
             include(joinpath(engine, "test", "runtests.jl"))
             println("DONE")'
+
+      - name: Keep the timings
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: engine-test-timings
+          path: engine-test-timings.csv
+          if-no-files-found: ignore

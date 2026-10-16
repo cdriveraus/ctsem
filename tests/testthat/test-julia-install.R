@@ -47,6 +47,19 @@ test_that("the newest Julia is chosen by version, not by name", {
   expect_null(ctsem:::.ctJuliaNewestDir(character()))
 })
 
+test_that("a JuliaConnectoR older than the backend runs on is not usable", {
+  # 1.1.5 hangs translating a named tuple holding an empty vector, which every
+  # sampled fit without an effective-size target returned.
+  expect_false(ctsem:::.ctJuliaConnectoROk("1.1.5"))
+  expect_true(ctsem:::.ctJuliaConnectoROk("1.1.6"))
+  expect_true(ctsem:::.ctJuliaConnectoROk("1.2.0"))
+  expect_false(ctsem:::.ctJuliaConnectoROk(NULL))
+  expect_match(ctsem:::.ctJuliaConnectoRNeeded("1.1.5"), "1.1.6 or later",
+    fixed = TRUE)
+  expect_match(ctsem:::.ctJuliaConnectoRNeeded(NULL), "not installed",
+    fixed = TRUE)
+})
+
 test_that("nothing is installed in a session with nobody to ask", {
   skip_if(interactive())
   withr::local_envvar(CTSEM_JULIA_AGREE = "")
@@ -173,6 +186,32 @@ test_that("a model still prepares on a machine with no Julia at all", {
     "Julia was not found")
 })
 
+test_that("a stored julia fit reports without Julia, and says so where it cannot", {
+  # A fit read on a machine with no Julia -- every CRAN machine: the extract and
+  # the LaTeX are R work on the draws the fit carries, and setting the engine's
+  # thread ceiling first used to make them demand Julia. What does need the
+  # engine says Julia is missing, not "No admissable samples!?".
+  skip_without_julia()
+  skip_if(interactive())
+  model <- suppressWarnings(ctModel(type = "ct", manifestNames = "Y1",
+    latentNames = "eta1", LAMBDA = matrix(1)))
+  fit <- suppressWarnings(suppressMessages(ctFit(ctstantestdat, model,
+    backend = "julia", cores = 1, verbose = 0)))
+  suppressMessages(ctJuliaKill("session"))
+  withr::local_envvar(CTSEM_JULIA_AGREE = "no")
+  bin <- ctsem:::.ctJuliaBin
+  assignInNamespace(".ctJuliaBin", function(julia_bin = NULL) NULL, ns = "ctsem")
+  on.exit(assignInNamespace(".ctJuliaBin", bin, ns = "ctsem"), add = TRUE)
+  expect_false(ctJuliaStatus()$available)
+
+  extract <- ctExtract(fit)
+  expect_true(all(c("pop_DRIFT", "popmeans") %in% names(extract)))
+  expect_type(ctModelLatex(fit, compile = FALSE, open = FALSE,
+    folder = withr::local_tempdir()), "character")
+  expect_error(suppressMessages(ctSubjectPars(fit)),
+    "Julia was not found")
+})
+
 test_that("ctJuliaStatus reports rather than errors, and installs nothing", {
   # It is what a user reaches for when the backend will not start, so it has to
   # work on the machine where nothing else does.
@@ -196,6 +235,31 @@ test_that("ctJuliaStatus starts no session, so it leaves the session's width to 
   expect_false(is.na(status$julia))
   expect_true(is.na(status$threads))
   expect_false(ctsem:::.ctJuliaSessionRunning())
+})
+
+test_that("ctJuliaStatus says available only where a julia fit would run without asking", {
+  # Reporting a Julia that printed a version was not enough: on a CI runner a
+  # juliaup shim printed one and could not start, and a Julia with none of the
+  # engine's packages made the first guarded example stop to ask for consent.
+  skip_without_julia()
+  ctsem:::.ctJuliaClearSession()
+  cache <- ctsem:::.ct_julia_cache
+  withr::defer(assign("engine_installed", NULL, envir = cache))
+  bin <- ctJuliaStatus()$julia_bin
+  # None of the engine's packages in this depot.
+  assign("engine_installed", NULL, envir = cache)
+  withr::local_envvar(JULIA_DEPOT_PATH = withr::local_tempdir(),
+    CTSEM_JULIA_AGREE = "no")
+  expect_identical(ctsem:::.ctJuliaEngineInstalled(bin), "absent")
+  expect_false(ctJuliaStatus()$available)
+  # Consent given in advance: a fit would install them without asking.
+  withr::local_envvar(CTSEM_JULIA_AGREE = "yes")
+  expect_true(ctJuliaStatus()$available)
+  expect_false(ctsem:::.ctJuliaSessionRunning())
+  # A binary directory whose julia cannot run.
+  fake <- withr::local_tempdir()
+  file.create(file.path(fake, ctsem:::.ctJuliaExeName()))
+  expect_identical(ctsem:::.ctJuliaEngineInstalled(fake), "broken")
 })
 
 test_that("ctJuliaSetup declines to instantiate the engine's Julia dependencies without consent", {
