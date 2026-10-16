@@ -1,0 +1,15 @@
+name = "ContinuousTimeSEMTestCache"
+uuid = "ee500ddf-c2d6-485a-8e4b-fa975ad33c0a"
+version = "0.1.0"
+
+[deps]
+ChainRulesCore = "d360d2e6-b24c-11e9-a2a3-2a2ae2dbcce4"
+ComponentArrays = "b0b7db55-cfe3-40fc-9ded-d10e2dbeff66"
+ContinuousTimeSEM = "f9893156-9a63-4c15-8aa2-620c153f8331"
+DataFrames = "a93c6f00-e57d-5684-b7b6-d8193f3e46c0"
+ForwardDiff = "f6369f11-7733-5829-9624-2563aa707210"
+LinearAlgebra = "37e2e46d-f89d-539d-b4ee-838fcccc9c8e"
+PrecompileTools = "aea7be01-6a6a-4083-8856-8a6e6704d82a"
+Printf = "de0858da-6303-5e67-8744-51eddeeeb8d7"
+Random = "9a3f8284-a2c9-5f02-9a11-845980a1fd5c"
+Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"

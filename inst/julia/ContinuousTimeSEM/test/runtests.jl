@@ -7,6 +7,14 @@ using ContinuousTimeSEM
 using LinearAlgebra, Random, Printf, ForwardDiff, DataFrames, ChainRulesCore,
     ComponentArrays
 
+# The tests' compile cache (test/cache), when this environment has it: loaded
+# first, so the oracles find the engine already compiled at their dual types.
+# Building it, when the engine has changed, costs what compiling the suite
+# would; with it current, the suite is mostly running.
+if Base.identify_package("ContinuousTimeSEMTestCache") !== nothing
+    @eval using ContinuousTimeSEMTestCache
+end
+
 # Shared, test-only conveniences for writing parameter tables as DataFrames.
 # The package itself takes plain column vectors; see src/r_interface.jl.
 include("table_helpers.jl")
