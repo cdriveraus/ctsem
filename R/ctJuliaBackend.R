@@ -5597,6 +5597,15 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
   # `inits` are never overridden -- a starting value the caller chose is the
   # one thing here that is not a guess.
   datastart <- .ctJuliaOr(optimcontrol$datastart, TRUE)
+  # And a start the caller chose is not batched from, unless
+  # `optimcontrol$batch = TRUE` asks for it. Batching is a device for starting
+  # cold, as the prior warm-up below is (and it is skipped for the same
+  # reason); from a point already chosen -- often where an earlier fit stopped
+  # -- its subset gradients only walk off it. On the SNSF pilot's joint fit,
+  # four batch iterations from its iteration-598 point (log posterior
+  # -1,464,550.02, |g| 1.65) ended 181 below it with |g| 2,514. Only the runs
+  # from `start` take this; random restarts start cold and batch as usual.
+  startcontrol <- .ctJuliaStartControl(optimcontrol, inits)
   if (isTRUE(datastart) && is.null(inits) && !is.null(datalong)) {
     derived <- try(.ctDataStart(datalong, model, model_spec, npar), silent = TRUE)
     if (!inherits(derived, "try-error") && !is.null(derived)) {
@@ -5839,7 +5848,7 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
   # seconds.
   invisible(.ctJuliaModule(model_spec$project))
   optimise_started <- proc.time()[["elapsed"]]
-  result <- .ctJuliaOptimise(model_spec, start, optimcontrol = optimcontrol,
+  result <- .ctJuliaOptimise(model_spec, start, optimcontrol = startcontrol,
     gradient = gradient, cores = cores, verbose = verbose,
     callback = optimcontrol$callback, objective = jointobjective)
   if (!is.null(substeps) && isTRUE(substeps$finite)) {
@@ -5854,7 +5863,8 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
       # are for a stage that starts away from one.
       result <- .ctJuliaAddRunCounts(.ctJuliaOptimise(model_spec, restart,
         optimcontrol = utils::modifyList(optimcontrol,
-          list(saem = FALSE, stochastic = FALSE)), gradient = gradient, cores = cores,
+          list(saem = FALSE, stochastic = FALSE, batch = FALSE)), gradient = gradient,
+        cores = cores,
         verbose = verbose, callback = optimcontrol$callback,
         objective = jointobjective), first)
     }
@@ -5937,7 +5947,7 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
       is.null(jointobjective) && isTRUE(intoverstates)) {
     saemrun <- result
     plain <- try(.ctJuliaOptimise(model_spec, start, optimcontrol =
-      utils::modifyList(optimcontrol, list(saem = FALSE)), gradient = gradient,
+      utils::modifyList(startcontrol, list(saem = FALSE)), gradient = gradient,
       cores = cores, verbose = verbose, callback = optimcontrol$callback,
       progress_label = "without SAEM"), silent = TRUE)
     plaincorrection <- NULL
@@ -6690,4 +6700,14 @@ logLik.ctJuliaFit <- function(object, ...) {
   nobs <- if (!is.null(object$standata$ndatapoints)) as.integer(object$standata$ndatapoints) else
     nrow(.ctBackendSpec(object)$data)
   structure(object$estimate$loglik, df = length(object$estimate$raw), nobs = nobs, class = "logLik")
+}
+
+# The controls for a run from the fit's own start: batching off when the caller
+# supplied that start, unless `optimcontrol$batch` says otherwise. See
+# `.ctJuliaOptimiseFit()`.
+#' @keywords internal
+.ctJuliaStartControl <- function(optimcontrol, inits) {
+  supplied <- !is.null(inits) && !identical(inits, "random")
+  if (!supplied || !is.null(optimcontrol$batch)) return(optimcontrol)
+  utils::modifyList(optimcontrol, list(batch = FALSE))
 }

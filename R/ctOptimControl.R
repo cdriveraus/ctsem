@@ -70,9 +70,11 @@
 #'  \item{\code{gradient}}{Julia. \code{'adjoint'} (reverse mode, the default)
 #'  or \code{'forward'}. The same gradient; the adjoint's cost does not grow
 #'  with the number of parameters.}
-#'  \item{\code{batch}}{Julia. Default TRUE. Start on a random subset of the
-#'  subjects and grow it as the fit needs more data; needs at least 80
-#'  subjects or top-level groups.}
+#'  \item{\code{batch}}{Julia. Default TRUE, or FALSE when \code{inits} are
+#'  supplied. Start on a random subset of the subjects and grow it as the fit
+#'  needs more data; needs at least 80 subjects or top-level groups. A
+#'  supplied start is not batched from, since the subsets' gradients walk off a
+#'  point already chosen; \code{TRUE} asks for it anyway.}
 #'  \item{\code{explosive_forward}}{Julia. Default FALSE. For a subject whose
 #'  predictions grow more than 100-fold between observations (explosive
 #'  dynamics over a long gap), take its gradient by forward mode instead of
