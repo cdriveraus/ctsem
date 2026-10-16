@@ -1,0 +1,33 @@
+# lbfgsmem grid: L-BFGS's memory (20, 100, 500 pairs) on the growth cells --
+# many correlated parameters on the marginal route, the regime of a
+# 529-parameter ECLS-K fit -- and on a few cells of the other families, to see
+# that more memory costs nothing there. Paired by cell within each model.
+#
+# id                                    model        data route      start                    variant
+growth10.aug.d1.s1.default              growth10     1    augmented  default:1                default
+growth10.aug.d1.s1.mem100               growth10     1    augmented  default:1                mem100
+growth10.aug.d1.s1.mem500               growth10     1    augmented  default:1                mem500
+growth10.aug.d2.s1.default              growth10     2    augmented  default:1                default
+growth10.aug.d2.s1.mem100               growth10     2    augmented  default:1                mem100
+growth10.aug.d2.s1.mem500               growth10     2    augmented  default:1                mem500
+growth6.aug.d1.s1.default               growth6      1    augmented  default:1                default
+growth6.aug.d1.s1.mem100                growth6      1    augmented  default:1                mem100
+growth6.aug.d1.s1.mem500                growth6      1    augmented  default:1                mem500
+bigp.aug.d1.s1.default                  bigp         1    augmented  default:1                default
+bigp.aug.d1.s2.default                  bigp         1    augmented  default:2                default
+cf_ordinal.lap.d1.s1.default            cf_ordinal   1    laplace    default:1                default
+gD1.lap.cfg.s1.default                  gD1          cfg  laplace    default:1                default
+anomS1.lap.cfg.s1.default               anomS1       cfg  laplace    default:1                default
+mvmix.aug.cfg.s1.default                mvmix        cfg  augmented  default:1                default
+bigp.aug.d1.s1.mem100                   bigp         1    augmented  default:1                mem100
+bigp.aug.d1.s2.mem100                   bigp         1    augmented  default:2                mem100
+cf_ordinal.lap.d1.s1.mem100             cf_ordinal   1    laplace    default:1                mem100
+gD1.lap.cfg.s1.mem100                   gD1          cfg  laplace    default:1                mem100
+anomS1.lap.cfg.s1.mem100                anomS1       cfg  laplace    default:1                mem100
+mvmix.aug.cfg.s1.mem100                 mvmix        cfg  augmented  default:1                mem100
+bigp.aug.d1.s1.mem500                   bigp         1    augmented  default:1                mem500
+bigp.aug.d1.s2.mem500                   bigp         1    augmented  default:2                mem500
+cf_ordinal.lap.d1.s1.mem500             cf_ordinal   1    laplace    default:1                mem500
+gD1.lap.cfg.s1.mem500                   gD1          cfg  laplace    default:1                mem500
+anomS1.lap.cfg.s1.mem500                anomS1       cfg  laplace    default:1                mem500
+mvmix.aug.cfg.s1.mem500                 mvmix        cfg  augmented  default:1                mem500
