@@ -744,6 +744,109 @@ growth_model <- function(P) {
   m
 }
 
+# ---- growthm: the growth cell with ECLS-K's moderation -----------------------
+#
+# `growth` with what `buildSkillCoupling` (papers/2025 marie atypical,
+# coupling_2026/analyses/R/couplingModel.R) adds around it: two indicators per
+# process, the second with a free loading and intercept; each indicator's error
+# SD a softplus in a deterministic AGE state, `log1p_exp(AGE * merrorAge_i +
+# mvar_i)`, with AGE starting at 4.5 and not centred, so that each indicator's
+# slope and intercept form a long narrow valley; and two TI predictors (one
+# continuous, one a 0/1 code) moderating both coupling parameters and every
+# initial mean (`couplingModerators`). 401 parameters at P = 10, 104 at P = 4.
+# Simulated exactly at continuous intervals as `growth` is, each subject's
+# coupling its own.
+
+growthm_data <- function(P, seed, nsub = 400L, nobs = 9L, age0 = 4.5) {
+  set.seed(seed)
+  k <- 2L * P
+  half <- seq_len(P %/% 2L); other <- setdiff(seq_len(P), half)
+  Rq <- stats::cov2cor(crossprod(matrix(stats::rnorm(P * P, sd = 0.3), P)) + diag(P))
+  Q <- matrix(0, k, k)
+  Q[seq_len(P), seq_len(P)] <- 0.25 * Rq
+  R0 <- stats::cov2cor(crossprod(matrix(stats::rnorm(k * k, sd = 0.35), k)) + diag(k))
+  s0 <- c(rep(1, P), rep(0.3, P))
+  L0 <- t(chol(diag(s0) %*% R0 %*% diag(s0)))
+  mu0 <- c(stats::rnorm(P, 0, 0.5), rep(0.2, P))
+  B0 <- matrix(stats::rnorm(k * 2, 0, 0.15), k, 2)          # TI effects on T0 means
+  lam2 <- stats::runif(P, 0.7, 1.3); mm2 <- stats::rnorm(P, 0, 0.3)
+  nind <- 2L * P
+  bage <- stats::runif(nind, -0.08, 0.08)
+  cage <- log(exp(0.5) - 1) - bage * (age0 + 4)              # error sd 0.5 at mid age
+  rows <- lapply(seq_len(nsub), function(i) {
+    z <- c(stats::rnorm(1), stats::rbinom(1, 1, 0.5))
+    A <- matrix(0, k, k)
+    A[cbind(seq_len(P), seq_len(P))] <- -seq(0.3, 0.7, length.out = P)
+    A[cbind(seq_len(P), P + seq_len(P))] <- 1
+    A[other, half] <- 0.04 + 0.02 * z[1] - 0.02 * z[2]
+    A[half, other] <- -0.03 + 0.015 * z[1] + 0.02 * z[2]
+    times <- cumsum(c(0, stats::runif(nobs - 1L, 0.6, 1.4)))
+    x <- matrix(0, nobs, k)
+    x[1, ] <- mu0 + as.vector(B0 %*% z) + as.vector(L0 %*% stats::rnorm(k))
+    for (t in 2:nobs) {
+      dt <- times[t] - times[t - 1L]
+      E <- expmA(rbind(cbind(-A, Q), cbind(matrix(0, k, k), t(A))) * dt)
+      Ad <- t(E[k + seq_len(k), k + seq_len(k)])
+      Qd <- Ad %*% E[seq_len(k), k + seq_len(k)]
+      Qd <- (Qd + t(Qd)) / 2
+      noise <- c(as.vector(t(chol(Qd[seq_len(P), seq_len(P)] + diag(1e-12, P))) %*%
+        stats::rnorm(P)), rep(0, P))
+      x[t, ] <- as.vector(Ad %*% x[t - 1L, ]) + noise
+    }
+    lev <- x[, seq_len(P), drop = FALSE]
+    eta <- cbind(lev, sweep(sweep(lev, 2, lam2, `*`), 2, mm2, `+`))
+    age <- age0 + times
+    sds <- log1p(exp(outer(age, bage) + matrix(cage, nobs, nind, byrow = TRUE)))
+    y <- eta + sds * matrix(stats::rnorm(nobs * nind), nobs, nind)
+    colnames(y) <- paste0("Y", seq_len(nind))
+    data.frame(id = i, time = times, y, z1 = z[1], z2 = z[2])
+  })
+  do.call(rbind, rows)
+}
+
+growthm_model <- function(P, age0 = 4.5) {
+  k <- 2L * P; nl <- k + 1L; nind <- 2L * P
+  half <- seq_len(P %/% 2L); other <- setdiff(seq_len(P), half)
+  ind <- paste0("Y", seq_len(nind))
+  LAMBDA <- matrix("0", nind, nl); MMEANS <- matrix("0", nind, 1)
+  for (j in seq_len(P)) {
+    LAMBDA[j, j] <- "1"
+    LAMBDA[P + j, j] <- paste0("lambda_", j)
+    MMEANS[P + j, 1] <- paste0("mm_", j)
+  }
+  DRIFT <- matrix("0", nl, nl)
+  for (i in seq_len(P)) {
+    DRIFT[i, i] <- paste0("a", i)
+    DRIFT[i, P + i] <- "1"
+  }
+  DRIFT[other, half] <- "cross_AB"
+  DRIFT[half, other] <- "cross_BA"
+  DIFF <- matrix("0", nl, nl)
+  for (i in seq_len(P)) for (j in seq_len(i)) DIFF[i, j] <- paste0("q", i, "_", j)
+  T0VAR <- matrix("0", nl, nl)
+  for (i in seq_len(k)) for (j in seq_len(i)) T0VAR[i, j] <- paste0("t0v", i, "_", j)
+  MVAR <- matrix("0", nind, nind)
+  diag(MVAR) <- paste0("log1p_exp(AGE * merrorAge_", ind, " + mvar_", ind, ")")
+  m <- suppressWarnings(suppressMessages(ctModel(type = "ct", n.latent = nl,
+    n.manifest = nind, manifestNames = ind,
+    latentNames = c(paste0("L", seq_len(P)), paste0("G", seq_len(P)), "AGE"),
+    LAMBDA = LAMBDA, DRIFT = DRIFT, DIFFUSION = DIFF, T0VAR = T0VAR,
+    T0MEANS = matrix(c(paste0("t0m", seq_len(k)), age0), nl, 1),
+    CINT = matrix(c(rep(0, k), 1), nl, 1), MANIFESTMEANS = MMEANS,
+    MANIFESTVAR = MVAR,
+    PARS = matrix(c(paste0("merrorAge_", ind), paste0("mvar_", ind)), ncol = 1),
+    TIpredNames = c("z1", "z2"), silent = TRUE)))
+  p <- m$pars
+  free <- is.na(p$value)
+  for (tp in c("z1", "z2")) {
+    p[[paste0(tp, "_effect")]] <- free & (p$matrix %in% "T0MEANS" |
+      (p$matrix %in% "DRIFT" & grepl("^cross_", p$param)))
+  }
+  p$indvarying <- FALSE
+  m$pars <- p
+  m
+}
+
 # ---- the registry ----------------------------------------------------------------
 
 bench_problem <- function(model) {
@@ -805,6 +908,11 @@ bench_problem <- function(model) {
     c("laplace", "auto"), datafixed = TRUE))
   if (model == "bigre") return(mk(fixed(function() bigre_data(1)), bigre_model,
     c("laplace", "augmented", "auto"), datafixed = TRUE, reference = FALSE))
+  if (grepl("^growthm[0-9]+$", model)) {
+    P <- as.integer(substring(model, 8))
+    return(mk(function(s) growthm_data(P, as.integer(s)), function() growthm_model(P),
+      c("augmented", "laplace", "auto"), reference = FALSE))
+  }
   if (grepl("^growth[0-9]+$", model)) {
     P <- as.integer(substring(model, 7))
     # No random effects, as for the cov cells: one marginal filter on every
