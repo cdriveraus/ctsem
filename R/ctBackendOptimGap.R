@@ -1150,7 +1150,10 @@
       message("Not yet a certified maximum (", status, ", predicted ",
         signif(gap$gap, 3), "); resuming the optimiser")
     }
-    resumed <- try(optimise(est, max(0, value - started_at)), silent = TRUE)
+    # With the curvature in hand: the Hessian the verdict was reached on, for
+    # the resumed stage's finish to walk on where Hessians are dear, and its
+    # covariance as L-BFGS's first metric (`.ctBackendResumeInverse()`).
+    resumed <- try(optimise(est, max(0, value - started_at), endgame), silent = TRUE)
     ok <- !inherits(resumed, "try-error") &&
       is.finite(as.numeric(resumed$maximum_loglik)[1L]) &&
       as.numeric(resumed$maximum_loglik)[1L] >= value
@@ -1177,6 +1180,22 @@
     evaluated_at = if (is.null(endgame)) NULL else endgame$evaluated_at,
     distance = if (is.null(endgame)) NA_real_ else endgame$distance,
     corrections = history, totals = totals, hessians = hessians)
+}
+
+# The covariance a certification's Hessian implies, as the initial inverse
+# Hessian of the L-BFGS stage it resumes (`.ctJuliaOptimise()`'s `inverse`), or
+# NULL when it has none: no Hessian, or one that is not negative definite --
+# a saddle, a flat direction -- which the engine would refuse anyway
+# (`_ctsem_lbfgs_inverse`). The stage starts at the point the Hessian
+# describes, so its first steps are Newton's rather than a scalar metric's.
+#' @keywords internal
+.ctBackendResumeInverse <- function(endgame) {
+  hessian <- endgame$hessian
+  if (!is.matrix(hessian) || !all(is.finite(hessian))) return(NULL)
+  information <- -(hessian + t(hessian)) / 2
+  factor <- tryCatch(chol(information), error = function(e) NULL)
+  if (is.null(factor)) return(NULL)
+  chol2inv(factor)
 }
 
 # What the optimiser's own stopping rule is set to, and when it is on at all.

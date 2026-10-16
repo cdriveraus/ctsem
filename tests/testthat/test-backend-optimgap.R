@@ -345,8 +345,9 @@ test_that("a fit short of its optimum is resumed under its own rules, with its p
   short <- .fake_result(-diag(c(4, 25)), c(2, 5), value = -100)
   done <- .fake_result(-diag(c(4, 25)), c(0, 0), value = -99, x = c(0.5, 0.2))
   seen <- list()
-  optimise <- function(from, carried) {
-    seen[[length(seen) + 1L]] <<- list(from = from, carried = carried)
+  optimise <- function(from, carried, endgame = NULL) {
+    seen[[length(seen) + 1L]] <<- list(from = from, carried = carried,
+      endgame = endgame)
     done
   }
   out <- ctsem:::.ctBackendCorrectResult(short, spec = list(), npar = 2L,
@@ -356,6 +357,10 @@ test_that("a fit short of its optimum is resumed under its own rules, with its p
   expect_length(seen, 1L)
   expect_equal(seen[[1L]]$from, c(0, 0))
   expect_equal(seen[[1L]]$carried, 5)
+  # With the curvature it was certified on, for the resumed stage to start
+  # from: the Hessian and where it was taken.
+  expect_identical(seen[[1L]]$endgame$hessian, short$hessian)
+  expect_equal(seen[[1L]]$endgame$evaluated_at, c(0, 0))
   expect_identical(out$result, done)
   expect_equal(out$certification$status, "certified")
   expect_length(out$corrections, 1L)
@@ -396,11 +401,24 @@ test_that("a run the fit does not keep is still counted in its work", {
   expect_identical(ctsem:::.ctJuliaAddRunCounts(kept, list()), kept)
 })
 
+test_that("a resume starts L-BFGS from the certification's covariance, where it has one", {
+  inverse <- ctsem:::.ctBackendResumeInverse
+  # Of the maximised objective: the covariance is the inverse of minus it.
+  h <- -matrix(c(4, 1, 1, 9), 2, 2)
+  expect_equal(inverse(list(hessian = h)), solve(-h))
+  # A saddle, a flat direction, a matrix with a hole in it, or none at all:
+  # nothing, and L-BFGS starts as it always does.
+  expect_null(inverse(list(hessian = diag(c(-4, 1)))))
+  expect_null(inverse(list(hessian = diag(c(-4, 0)))))
+  expect_null(inverse(list(hessian = matrix(c(-4, NA, NA, -9), 2, 2))))
+  expect_null(inverse(NULL))
+})
+
 test_that("a resume that does not improve is not taken", {
   short <- .fake_result(-diag(c(4, 25)), c(2, 5), value = -100)
   worse <- .fake_result(-diag(c(4, 25)), c(0, 0), value = -101)
   out <- ctsem:::.ctBackendCorrectResult(short, spec = list(), npar = 2L,
-    tolerance = 1e-6, optimise = function(from, carried) worse)
+    tolerance = 1e-6, optimise = function(from, carried, endgame = NULL) worse)
   expect_identical(out$result, short)
   expect_equal(out$certification$status, "suboptimal")
   expect_false(out$corrections[[1L]]$resumed)
@@ -409,7 +427,7 @@ test_that("a resume that does not improve is not taken", {
 test_that("rounds are capped, and a certified fit takes none", {
   short <- .fake_result(-diag(c(4, 25)), c(2, 5), value = -100)
   calls <- 0L
-  again <- function(from, carried) {
+  again <- function(from, carried, endgame = NULL) {
     calls <<- calls + 1L
     .fake_result(-diag(c(4, 25)), c(2, 5), value = -100 + calls)
   }
@@ -431,7 +449,7 @@ test_that("rounds are capped, and a certified fit takes none", {
 })
 
 test_that("a flat direction that still gains stops, and so does a saddle the finish could not leave", {
-  never <- function(from, carried) stop("resumed")
+  never <- function(from, carried, endgame = NULL) stop("resumed")
   # `notstationary` stops: continuing along the probe's direction walked
   # AnomAuth S1 from its good optimum into the spurious basin.
   flatgain <- .fake_result(-diag(c(4, 0)), c(0, 3), value = -100,
@@ -453,7 +471,7 @@ test_that("a flat direction that still gains stops, and so does a saddle the fin
   expect_length(stuck$corrections, 0L)
   # Without that record the saddle is resumed, as any point short of a maximum.
   resumed <- 0L
-  once <- function(from, carried) {
+  once <- function(from, carried, endgame = NULL) {
     resumed <<- resumed + 1L
     .fake_result(-diag(c(1, 1)), c(0, 0), value = -99)
   }
@@ -474,7 +492,7 @@ test_that("a flat direction that still gains stops, and so does a saddle the fin
 })
 
 test_that("a saddle the finish measured flat is certified, and not resumed", {
-  never <- function(from, carried) stop("resumed")
+  never <- function(from, carried, endgame = NULL) stop("resumed")
   # The finish walked the one negative direction and found nothing along it.
   rounding <- .fake_result(diag(c(-4, 1e-3)), c(0, 0), value = -100,
     newton_saddle = TRUE, newton_ladder_tried = TRUE,
