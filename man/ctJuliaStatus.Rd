@@ -20,7 +20,7 @@ A list describing the selected Julia engine: whether it is
   or consent to install them given in advance with
   \code{CTSEM_JULIA_AGREE=yes} (checked by a short \code{julia} process,
   once per session, never a session) -- whether the \code{connectoR} bridge
-  package is installed,
+  package is installed at a version the backend runs on,
   the \code{julia_bin} directory in use and the \code{julia} version there,
   the \code{engine} version (a hash of the engine source shipped with this
   ctsem, which is also what its cached project directory is keyed on), and

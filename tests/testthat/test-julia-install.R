@@ -47,6 +47,19 @@ test_that("the newest Julia is chosen by version, not by name", {
   expect_null(ctsem:::.ctJuliaNewestDir(character()))
 })
 
+test_that("a JuliaConnectoR older than the backend runs on is not usable", {
+  # 1.1.5 hangs translating a named tuple holding an empty vector, which every
+  # sampled fit without an effective-size target returned.
+  expect_false(ctsem:::.ctJuliaConnectoROk("1.1.5"))
+  expect_true(ctsem:::.ctJuliaConnectoROk("1.1.6"))
+  expect_true(ctsem:::.ctJuliaConnectoROk("1.2.0"))
+  expect_false(ctsem:::.ctJuliaConnectoROk(NULL))
+  expect_match(ctsem:::.ctJuliaConnectoRNeeded("1.1.5"), "1.1.6 or later",
+    fixed = TRUE)
+  expect_match(ctsem:::.ctJuliaConnectoRNeeded(NULL), "not installed",
+    fixed = TRUE)
+})
+
 test_that("nothing is installed in a session with nobody to ask", {
   skip_if(interactive())
   withr::local_envvar(CTSEM_JULIA_AGREE = "")
