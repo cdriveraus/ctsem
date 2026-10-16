@@ -89,14 +89,48 @@ categorical_model <- function(names, type) {
   m$pars$indvarying <- m$pars$param %in% "cint"
   m
 }
+# What a user does with a fit after making it. Each of these compiled 1-7 s on
+# its first call in a fresh session (scripts/first-call-compile, 2026-10-16:
+# sampling 3.6 s and a sampled ctFit 7.2 s, ctGenerateFromFit 3.3, a profile
+# 2.5, ctLOO 1.9, the particle filter 1.3), so they are recorded after the
+# Gaussian fits and replayed at build time too: a longer install rather than a
+# wait at first use. Settings as small as still reach each route's code, since
+# the replay runs them; the types are what is captured, not the results. The
+# replay runs what was recorded, on one thread, so a step that is slow here is
+# slow in every build: on these 8 subjects the cint sd sits near zero, and a
+# profile of every parameter walked refits to the iteration cap (25 refits,
+# 4.6 min) and the Laplace marginal sampler ran at full tree depth (2.2 min),
+# dev1 2026-10-16. Hence one parameter, few iterations and a shallow tree:
+# values, not types, so the same code is compiled.
+followups <- list(
+  kalman = function(fit, dat, model) ctKalman(fit),
+  loo = function(fit, dat, model) ctLOO(fit, folds = 2, cores = 1L),
+  psis = function(fit, dat, model) ctLOO(fit, method = "psis", nsamples = 50),
+  profile = function(fit, dat, model) ctFitProfile(fit, parameters = 1L,
+    points = 2L, maxiter = 20L, cores = 1L),
+  generate = function(fit, dat, model) ctGenerateFromFit(fit, nsamples = 2, cores = 1L),
+  particle = function(fit, dat, model) ctParticleLik(fit, particles = 20, cores = 1L),
+  sample = function(fit, dat, model) ctFitUncertainty(fit, "sample",
+    control = list(chains = 1L, warmup = 5L, draws = 5L, maxdepth = 3L,
+      processes = FALSE), cores = 1L))
+# A sampled fit is a route of its own (`intoverpop = 'auto'` resolves to the
+# joint target when `optimize = FALSE`), the same whatever the shape's route,
+# so it follows one shape only.
+sampled_fit <- list(sampled = function(fit, dat, model) ctFit(dat, model,
+  backend = "julia", optimize = FALSE, priors = TRUE, cores = 1L, verbose = 0,
+  sampleControl = list(iter = 10L, chains = 1L, warmup = 5L, maxdepth = 3L,
+    processes = FALSE)))
+
 shapes <- list(
   # One latent, two Gaussian indicators, a random intercept, on each route:
   # `image_model()` in tests/testthat/helper-julia.R, which tests fit so that a
   # fit costs seconds.
   gaussian_augmented = list(route = "augmented", model = function() cint_model(c("y1", "y2")),
-    data = function() indicators(sim_latent(8, 6), c("y1", "y2"))),
+    data = function() indicators(sim_latent(8, 6), c("y1", "y2")),
+    followups = followups),
   gaussian_laplace = list(route = "laplace", model = function() cint_model(c("y1", "y2")),
-    data = function() indicators(sim_latent(8, 6), c("y1", "y2"))),
+    data = function() indicators(sim_latent(8, 6), c("y1", "y2")),
+    followups = c(followups, sampled_fit)),
   # A model with a categorical indicator is a different filter workspace type
   # -- the categorical update is gated on it, so Gaussian fits do not carry
   # that code -- so each route needs one. Binary and ordinal share it.
@@ -209,6 +243,20 @@ for (name in names(shapes)) {
   }
   cat(sprintf("%-22s %3d engine calls, loglik %.3f\n", name, length(rec$calls),
     fit$estimate$loglik))
+  # Recorded into the same replay, after the fit whose objects they use. One
+  # that cannot be recorded -- an R callback handed to Julia cannot be replayed
+  # at build time -- is said so and left out; the calls it made before that
+  # still replay.
+  for (f in names(s$followups)) {
+    before <- length(rec$calls)
+    rec$on <- TRUE
+    set.seed(1)
+    tryCatch(suppressWarnings(suppressMessages(s$followups[[f]](fit, dat, model))),
+      error = function(e) cat(sprintf("  %s: %s stopped recording: %s\n", name, f,
+        conditionMessage(e))),
+      finally = rec$on <- FALSE)
+    cat(sprintf("  %-20s %3d engine calls\n", f, length(rec$calls) - before))
+  }
   body <- c(body, sprintf("    %s = Any[", name),
     vapply(rec$calls, emit_call, ""), "    ],")
 }

@@ -5040,14 +5040,6 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
     precondition = if (identical(optimcontrol$precondition, FALSE)) NULL else
       .ctJuliaVector(.ctJuliaParameterScale(model_spec,
         at = as.numeric(start), npar = length(as.numeric(start)))),
-    # A curvature the caller already holds near `start`, as L-BFGS's initial
-    # inverse Hessian (`_ctsem_lbfgs`'s `inverse`): a fit's covariance, for a
-    # refit to part of its data (ctLOO's folds).
-    lbfgs_inverse = if (!is.null(inverse)) {
-      inverse <- as.matrix(inverse)
-      storage.mode(inverse) <- "double"
-      inverse
-    },
     # The line search's first step, in the metric's own norm (see
     # `_ctsem_lbfgs` in optimiser.jl). Guards against a first step landing deep
     # inside a flat transform before any curvature has been learned -- a full
@@ -5230,6 +5222,18 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
   # evaluation". Every internal call below that does not name its own `pin`
   # -- the first stage and an ordinary resume alike -- inherits it this way.
   default_pin <- pin
+  # A curvature the caller already holds near `start`, as L-BFGS's initial
+  # inverse Hessian (`_ctsem_lbfgs`'s `inverse`): a fit's covariance, for a
+  # refit to part of its data (ctLOO's folds). Sent only when there is one:
+  # the keywords are part of the call's type, and an always-present
+  # `lbfgs_inverse = nothing` made every fit's call differ from the ones the
+  # package image recorded (tools/generate-precompile-shapes.R), so every
+  # first fit compiled the optimiser's entry again.
+  if (!is.null(inverse)) {
+    inverse <- as.matrix(inverse)
+    storage.mode(inverse) <- "double"
+    common$lbfgs_inverse <- inverse
+  }
   optimise_once <- function(from, damp = integer(), pin = default_pin) {
     args <- common
     held <- !is.null(pin) && length(pin$index)
