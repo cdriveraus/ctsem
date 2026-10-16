@@ -4915,7 +4915,8 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
 .ctJuliaOptimise <- function(model_spec, start, optimcontrol = list(),
   gradient = "adjoint", cores = 1L, verbose = 0L, maxiter = NULL,
   callback = NULL, objective = NULL, progress_label = NULL,
-  progress_budget = FALSE, pin = NULL, carried = NULL, inverse = NULL) {
+  progress_budget = FALSE, pin = NULL, carried = NULL, inverse = NULL,
+  hessian = NULL, hessian_at = NULL) {
   spec <- structure(model_spec, class = c("ctJuliaModel", "ctFitModel"))
   # A caller may hand in the objective to maximise. `intoverstates=FALSE` does,
   # passing the joint one over `[theta; z]`; everything below is unchanged by
@@ -5233,6 +5234,16 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
     inverse <- as.matrix(inverse)
     storage.mode(inverse) <- "double"
     common$lbfgs_inverse <- inverse
+  }
+  # A Hessian the caller holds at `hessian_at` (of the maximised objective),
+  # for the finish to walk on where Hessians are dear rather than form one
+  # again: the certification's, for the stage it resumes. Sent only when there
+  # is one, for the reason above.
+  if (!is.null(hessian) && !is.null(hessian_at)) {
+    hessian <- as.matrix(hessian)
+    storage.mode(hessian) <- "double"
+    common$newton_hessian <- hessian
+    common$newton_hessian_at <- .ctJuliaVector(as.numeric(hessian_at))
   }
   optimise_once <- function(from, damp = integer(), pin = default_pin) {
     args <- common
@@ -5929,12 +5940,14 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
     tolerance = .ctJuliaOr(optimcontrol$gaptol, 1e-6),
     maxtries = .ctJuliaOr(optimcontrol$gapretries, 2L),
     gradient = gradient, verbose = verbose,
-    optimise = function(from, carried = 0) .ctJuliaOptimise(model_spec,
+    optimise = function(from, carried = 0, endgame = NULL) .ctJuliaOptimise(model_spec,
       if (is.null(jointobjective)) from else c(from, numeric(nstate)),
       optimcontrol = utils::modifyList(optimcontrol, list(batch = FALSE)),
       gradient = gradient, cores = cores,
       verbose = verbose, callback = optimcontrol$callback,
-      objective = jointobjective, carried = carried))
+      objective = jointobjective, carried = carried,
+      inverse = .ctBackendResumeInverse(endgame),
+      hessian = endgame$hessian, hessian_at = endgame$evaluated_at))
   if (certifying) {
     correction <- correct(result)
     result <- correction$result

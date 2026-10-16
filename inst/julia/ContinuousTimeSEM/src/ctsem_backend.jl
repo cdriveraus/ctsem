@@ -2104,9 +2104,13 @@ L-BFGS runs to its own rule first; `newton_reuse` and `flat_rtol`
 are the finish's rules, passed from R so one number serves both sides.
 `lbfgs_inverse` is an initial inverse Hessian for L-BFGS (`_ctsem_lbfgs`'s
 `inverse`), as a fit's covariance is for refitting it to part of its data; one
-that is not positive definite is not used (`_ctsem_lbfgs_inverse`). The stall
-watch's `stall_carried` and `stall_alone` are set only on a stage resumed after
-a certification (see `CTSEMStallWatch`).
+that is not positive definite is not used (`_ctsem_lbfgs_inverse`).
+`newton_hessian`, the Hessian of the maximised objective at
+`newton_hessian_at`, is one the caller already holds, for the finish to walk
+on rather than form again where Hessians are dear (`_ctsem_newton_finish`'s
+`hessian0`). The stall watch's `stall_carried` and `stall_alone`, and with them
+these two, are set only on a stage resumed after a certification (see
+`CTSEMStallWatch`).
 
 Provenance of the defaults: the stall watch's constants are documented at
 `CTSEMStallWatch`, the batching's at `_ctsem_batch_plan`, and the finish's
@@ -2135,7 +2139,8 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
     newton::Bool=false, newton_switch::Real=0.1, newton_maxit::Integer=30,
     newton_curvature=:auto, certify::Bool=false,
     newton_reuse::Real=_CTSEM_HESSIAN_REUSE_SE,
-    flat_rtol::Real=_CTSEM_FLAT_RTOL)
+    flat_rtol::Real=_CTSEM_FLAT_RTOL, newton_hessian=nothing,
+    newton_hessian_at=nothing)
     start_values = collect(start)
     # Validated here rather than at the probe, which runs after the fit: a
     # misspelled mode should cost nothing, not a whole optimisation.
@@ -2558,7 +2563,11 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
             curvature=finish_curvature, probe=certify, reuse_se=newton_reuse,
             flat_rtol=flat_rtol, handback=early && discardable,
             escape_gain=Float64(converge_tol), flat_escape=_ctsem_flat_escape(objective),
-            reporter=reporter)
+            reporter=reporter,
+            # The caller's Hessian, for the stage's first finish only: after a
+            # hand-back L-BFGS has moved the point on.
+            hessian0=handed_back ? nothing : newton_hessian,
+            hessian0_at=handed_back ? nothing : newton_hessian_at)
         minimizer = collect(finish.x)
         # The finish's own gain replaces L-BFGS's metric proxy: it is the exact
         # decrement, which is what the verdict below should be judging. A
