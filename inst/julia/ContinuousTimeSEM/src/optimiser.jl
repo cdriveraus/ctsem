@@ -1750,6 +1750,16 @@ function _ctsem_newton_finish(objective, x0, f0, G0, fg!; tol::Real=1e-8,
                     saddle = false; ladder_tried = false
                     saddle_walked = 0; saddle_gain = NaN
                     H === nothing && break
+                    # A new point and a new Hessian: walked as the first one
+                    # was, with its own budget and no trust region. Without the
+                    # budget an escape after the steps had spent theirs was
+                    # returned unwalked: a 529-parameter marginal fit (ECLS-K,
+                    # dev2, 2026-10-16) ended its finish on the ladder's point
+                    # with |g| 1.3e3 against 7 before it, its certification
+                    # found 2 nats left, and the resume began again with
+                    # L-BFGS and the Hessian it had just formed.
+                    radius = Inf
+                    budget = max(budget, steps + per_hessian)
                     continue
                 end
             end
@@ -1772,6 +1782,7 @@ function _ctsem_newton_finish(objective, x0, f0, G0, fg!; tol::Real=1e-8,
         saddle_walked = 0; saddle_gain = NaN
         H === nothing && break
         # A new point and a new Hessian: walked as the first one was.
+        radius = Inf
         budget = max(budget, steps + per_hessian)
     end
     split = H === nothing ? nothing :

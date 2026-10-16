@@ -965,6 +965,23 @@ end
     @test stuck.saddle_walked == 0
 end
 
+@testset "an escape after the steps spent their budget is still walked" begin
+    # Maximised: -x^2/2 + 1.69 y^2/2 - y^4/4, a saddle at the origin and maxima
+    # at y = +-1.3, off the ladder's lengths, so the escape lands at y = 1 with
+    # a gradient of 0.69 to go. With `maxit = 1` the start converges at once
+    # and leaves one step in the budget, and the escape is that step: a
+    # 529-parameter fit's finish escaped so after its last walk, and returned
+    # the ladder's point unwalked, |g| 1.3e3.
+    m = _endgame_mock(p -> -0.5 * p[1]^2 + 0.845 * p[2]^2 - 0.25 * p[2]^4)
+    out = _endgame_run(m, [0.0, 0.0]; maxit = 1)
+    @test out.escapes == 1
+    @test abs(out.x[2]) ≈ 1.3 atol = 1e-4
+    @test -out.f ≈ 1.69^2 / 4 atol = 1e-8
+    @test out.gain < 1e-8
+    saddle_at = findfirst(==("saddle"), out.history.kind)
+    @test saddle_at !== nothing && saddle_at < length(out.history.kind)
+end
+
 @testset "the saddle ladder walks every negative direction, and says which it measured" begin
     # Two directions of negative curvature by the Hessian given: the more
     # negative (x) is flat in fact -- quartic, as a direction whose curvature is
