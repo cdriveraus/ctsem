@@ -1,18 +1,23 @@
 # lbfgsmem grid: L-BFGS's memory (20, 100, 500 pairs) on the growth cells --
 # many correlated parameters on the marginal route, the regime of a
-# 529-parameter ECLS-K fit -- and on a few cells of the other families, to see
-# that more memory costs nothing there. Paired by cell within each model.
+# 529-parameter ECLS-K fit, with (growthm) and without (growth) its age-
+# moderated errors and moderated coupling -- and on a few cells of the other
+# families, to see that more memory costs nothing there. Paired by cell
+# within each model.
 #
 # id                                    model        data route      start                    variant
+growthm10.aug.d1.s1.default             growthm10    1    augmented  default:1                default
+growthm10.aug.d1.s1.mem100              growthm10    1    augmented  default:1                mem100
+growthm10.aug.d1.s1.mem500              growthm10    1    augmented  default:1                mem500
+growthm10.aug.d2.s1.default             growthm10    2    augmented  default:1                default
+growthm10.aug.d2.s1.mem100              growthm10    2    augmented  default:1                mem100
+growthm10.aug.d2.s1.mem500              growthm10    2    augmented  default:1                mem500
 growth10.aug.d1.s1.default              growth10     1    augmented  default:1                default
 growth10.aug.d1.s1.mem100               growth10     1    augmented  default:1                mem100
 growth10.aug.d1.s1.mem500               growth10     1    augmented  default:1                mem500
 growth10.aug.d2.s1.default              growth10     2    augmented  default:1                default
 growth10.aug.d2.s1.mem100               growth10     2    augmented  default:1                mem100
 growth10.aug.d2.s1.mem500               growth10     2    augmented  default:1                mem500
-growth6.aug.d1.s1.default               growth6      1    augmented  default:1                default
-growth6.aug.d1.s1.mem100                growth6      1    augmented  default:1                mem100
-growth6.aug.d1.s1.mem500                growth6      1    augmented  default:1                mem500
 bigp.aug.d1.s1.default                  bigp         1    augmented  default:1                default
 bigp.aug.d1.s2.default                  bigp         1    augmented  default:2                default
 cf_ordinal.lap.d1.s1.default            cf_ordinal   1    laplace    default:1                default
