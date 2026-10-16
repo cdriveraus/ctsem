@@ -23,6 +23,7 @@ ctModelImprove(
   nsamples = 100L,
   projection = "auto",
   cores = getOption("mc.cores", 2L),
+  checkpoint = NULL,
   verbose = TRUE
 )
 }
@@ -82,7 +83,15 @@ and a worker takes about half a minute to start.
 \code{options(ctsem.improve.processes = FALSE)} keeps them in this
 session.}
 
-\item{verbose}{Report progress.}
+\item{checkpoint}{Optional file the search saves its state to after every
+round and after pruning. Called again with the same file, the same fit and
+the same settings, it resumes after the last round saved; a file from a
+different search is refused. A long search on a cluster otherwise keeps
+nothing until it ends.}
+
+\item{verbose}{Report progress: each round's steps, each refit's time, and
+while a refit runs, its iteration, objective and gradient every ten
+minutes.}
 }
 \value{
 An object of class \code{ctModelImprove}: \code{fit} (the final

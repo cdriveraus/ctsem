@@ -171,7 +171,14 @@
 #'   and a worker takes about half a minute to start.
 #'   \code{options(ctsem.improve.processes = FALSE)} keeps them in this
 #'   session.
-#' @param verbose Report progress.
+#' @param checkpoint Optional file the search saves its state to after every
+#'   round and after pruning. Called again with the same file, the same fit and
+#'   the same settings, it resumes after the last round saved; a file from a
+#'   different search is refused. A long search on a cluster otherwise keeps
+#'   nothing until it ends.
+#' @param verbose Report progress: each round's steps, each refit's time, and
+#'   while a refit runs, its iteration, objective and gradient every ten
+#'   minutes.
 #' @return An object of class \code{ctModelImprove}: \code{fit} (the final
 #'   fit), \code{history} (every refit tried: the round, the relaxation, its
 #'   screening p-value, the change in log likelihood and parameters, the
@@ -192,7 +199,7 @@ ctModelImprove <- function(fit, covariates = NULL,
   candidates = NULL, alpha = 0.05, maxsteps = 10L, ntry = 3L,
   criterion = c('LR', 'AIC', 'BIC'), adequacy = TRUE, prune = TRUE,
   close = NULL, holdout = 0, form = 'auto', periods = NULL, nsamples = 100L,
-  projection = 'auto', cores = getOption('mc.cores', 2L),
+  projection = 'auto', cores = getOption('mc.cores', 2L), checkpoint = NULL,
   verbose = TRUE) {
   if (!.ctFitIsJulia(fit)) stop("ctModelImprove() needs a fit from ",
     "ctFit(backend = 'julia').", call. = FALSE)
@@ -235,7 +242,31 @@ ctModelImprove <- function(fit, covariates = NULL,
   ad <- NULL
   stopped <- 'maxsteps'
   slowest <- 0
-  for (step in seq_len(maxsteps)) {
+  # A checkpoint holds everything the rounds carry from one to the next, and
+  # what the search is, so that a file from another search is not resumed.
+  identity <- list(start = .ctImproveFingerprint(fit), relax = relax, alpha = alpha,
+    criterion = criterion, ntry = ntry, adequacy = adequacy, close = close,
+    holdout = holdout, candidates = length(candidates))
+  carried <- c('current', 'data', 'kept', 'extraargs', 'history', 'screens', 'rejected',
+    'ad', 'stopped', 'slowest')
+  stage <- list(round = 0L, searched = FALSE, pruned = FALSE)
+  here <- environment()
+  checkpointed <- function() if (!is.null(checkpoint)) .ctImproveCheckpointSave(checkpoint,
+    list(identity = identity, stage = stage,
+      state = mget(carried, envir = here, inherits = FALSE)))
+  if (!is.null(checkpoint) && file.exists(checkpoint)) {
+    saved <- readRDS(checkpoint)
+    if (!identical(saved$identity, identity)) stop("The checkpoint ", checkpoint,
+      " is from a different search: another starting fit or other settings. ",
+      "Remove it, or name another file.", call. = FALSE)
+    for (nm in carried) assign(nm, saved$state[[nm]])
+    stage <- saved$stage
+    say("Resuming after ", if (stage$pruned) "pruning" else if (stage$searched)
+      "the search" else paste0("round ", stage$round), ", from ", checkpoint)
+  }
+  rounds <- if (stage$searched || stage$round >= maxsteps) integer() else
+    seq.int(stage$round + 1L, maxsteps)
+  for (step in rounds) {
     model <- .ctFitBaseModel(current)
     available <- if (is.null(covariates)) NULL else
       covariates[, c(idname, setdiff(names(covariates), c(idname, model$TIpredNames))),
@@ -301,8 +332,9 @@ ctModelImprove <- function(fit, covariates = NULL,
         silent = TRUE))
       for (prop in batch) say("Round ", step, ": refitting with ", prop$label)
       refits <- .ctImproveRefits(current, edits, lapply(batch, `[[`, 'start'), cores,
-        slowest)
+        slowest, progress = if (isTRUE(verbose)) paste0("Round ", step, ": "))
       slowest <- max(slowest, attr(refits, 'seconds'))
+      say("Round ", step, ": refit took ", .ctImproveRefitReport(refits))
       for (b in seq_along(batch)) {
         prop <- batch[[b]]
         edited <- edits[[b]]
@@ -321,6 +353,8 @@ ctModelImprove <- function(fit, covariates = NULL,
     rejected <- c(rejected, vapply(tried[!ok], function(t) t$prop$key, ''))
     if (!any(ok)) {
       if (structural) { stopped <- 'not adequate, no candidate improved'; break }
+      stage$round <- step
+      checkpointed()
       next
     }
     best <- which(ok)[which.max(vapply(tried[ok], function(t) t$verdict$score, 0))]
@@ -340,13 +374,20 @@ ctModelImprove <- function(fit, covariates = NULL,
       current <- ranked$current; kept <- ranked$kept; data <- ranked$data
       extraargs <- ranked$args
     }
+    stage$round <- step
+    checkpointed()
+  }
+  if (!stage$searched) {
+    stage$searched <- TRUE
+    checkpointed()
   }
   # Backward: a change kept early can be made redundant by one kept later --
   # a random effect on a parameter whose variation a covariate then explains.
   # Each kept change in turn, the model is rebuilt from the start with all the
   # others and refitted; if the fuller model is not better by the criterion,
   # the change goes.
-  if (isTRUE(prune) && sum(vapply(kept, .ctImprovePrunable, logical(1))) > 1L) {
+  if (!stage$pruned && isTRUE(prune) &&
+      sum(vapply(kept, .ctImprovePrunable, logical(1))) > 1L) {
     pruned <- .ctImprovePrune(.ctFitBaseModel(fit), current, kept, startdata, covariates,
       criterion, alpha, cores, ntry, slowest, say)
     history <- c(history, pruned$history)
@@ -355,6 +396,8 @@ ctModelImprove <- function(fit, covariates = NULL,
       current <- pruned$current; data <- pruned$data; extraargs <- pruned$args; ad <- NULL
     }
     kept <- pruned$kept
+    stage$pruned <- TRUE
+    checkpointed()
   }
   if (isTRUE(adequacy) && is.null(ad)) {
     model <- .ctFitBaseModel(current)
@@ -1161,13 +1204,14 @@ ctModelImprove <- function(fit, covariates = NULL,
 # At most `width` workers: past that a refit waits for a free one (`future()`
 # blocks), and each worker's Julia holds its own objective, several GB on the
 # Fisher example.
-.ctImproveRefits <- function(current, edits, starts, cores, slowest = 0, width = Inf) {
+.ctImproveRefits <- function(current, edits, starts, cores, slowest = 0, width = Inf,
+    progress = NULL) {
   seconds <- 0
   here <- function(i) {
     if (inherits(edits[[i]], 'try-error')) return(edits[[i]])
     started <- proc.time()[['elapsed']]
     out <- try(.ctImproveRefit(current, edits[[i]]$model, edits[[i]]$data, cores,
-      starts[[i]], edits[[i]]$args), silent = TRUE)
+      starts[[i]], edits[[i]]$args, progress = progress), silent = TRUE)
     seconds <<- max(seconds, proc.time()[['elapsed']] - started)
     out
   }
@@ -1210,9 +1254,14 @@ ctModelImprove <- function(fit, covariates = NULL,
 # new random effect at an arbitrary scale can leave a Laplace unit's inner mode
 # unconverged at the start, which ended two of three refits in testing -- so a
 # refit that fails from there is tried once from ctsem's own start.
-.ctImproveRefit <- function(current, model, data, cores, start = NULL, args = NULL) {
+.ctImproveRefit <- function(current, model, data, cores, start = NULL, args = NULL,
+    progress = NULL) {
   prepared <- .ctImproveSpec(current, model, data, cores, args)
   args <- prepared$args
+  # A refit can run for hours, and says nothing while it does unless asked.
+  if (!is.null(progress)) args$optimcontrol <- utils::modifyList(
+    if (is.list(args$optimcontrol)) args$optimcontrol else list(),
+    list(callback = .ctImproveProgress(progress)))
   names2 <- prepared$names
   est <- setNames(.ctFitRawEstimate(current), .ctFitRawParNames(current))
   init <- setNames(numeric(length(names2)), names2)
@@ -1223,9 +1272,61 @@ ctModelImprove <- function(fit, covariates = NULL,
   args$fit <- TRUE
   args$inits <- unname(init)
   out <- try(suppressMessages(suppressWarnings(do.call(ctFit, args))), silent = TRUE)
-  if (!inherits(out, 'try-error')) return(out)
-  args$inits <- NULL
-  suppressMessages(suppressWarnings(do.call(ctFit, args)))
+  if (inherits(out, 'try-error')) {
+    args$inits <- NULL
+    out <- suppressMessages(suppressWarnings(do.call(ctFit, args)))
+  }
+  .ctImproveDropCallback(out)
+}
+
+# The fit without the progress callback in its recorded call, so that a later
+# refit or update of it does not report under this search's label.
+.ctImproveDropCallback <- function(fit) {
+  for (slot in c('input', 'resolved')) if (is.list(fit$args[[slot]]$optimcontrol))
+    fit$args[[slot]]$optimcontrol$callback <- NULL
+  fit
+}
+
+# The optimiser callback for a refit's progress: a line every `every` seconds,
+# with the iteration, the objective and the gradient's norm.
+.ctImproveProgress <- function(label, every = 600) {
+  start <- last <- proc.time()[['elapsed']]
+  function(iteration, total, objective, gradient_norm) {
+    now <- proc.time()[['elapsed']]
+    if (now - last < every) return(invisible(NULL))
+    last <<- now
+    message(label, sprintf("refit at %.0f min: iteration %d, objective %.2f, |g| %.3g",
+      (now - start) / 60, as.integer(iteration), objective, gradient_norm))
+    invisible(NULL)
+  }
+}
+
+# One line on a round's refits: how long they took, and how each ended.
+.ctImproveRefitReport <- function(refits) {
+  what <- vapply(refits, function(r) {
+    if (inherits(r, 'try-error')) return('failed')
+    o <- r$optim
+    if (is.null(o)) return('done')
+    paste0(o$iterations, ' iterations', if (isTRUE(o$overshot > 0)) ', overshot' else '',
+      if (!isTRUE(as.logical(o$converged))) ', not converged' else '')
+  }, '')
+  paste0(round(attr(refits, 'seconds') / 60, 1), ' min (', paste(what, collapse = '; '), ')')
+}
+
+# What identifies a search's starting fit, for its checkpoint.
+.ctImproveFingerprint <- function(fit) list(loglik = signif(fit$estimate$loglik, 10),
+  estimate = signif(unname(.ctFitRawEstimate(fit)), 8), names = .ctFitRawParNames(fit))
+
+# Written whole to a temporary file and then moved over the checkpoint, so a
+# search killed while saving leaves the previous round's.
+.ctImproveCheckpointSave <- function(path, value) {
+  tmp <- paste0(path, '.tmp')
+  saveRDS(value, tmp)
+  if (!file.rename(tmp, path)) {
+    file.copy(tmp, path, overwrite = TRUE)
+    unlink(tmp)
+  }
+  invisible(path)
 }
 
 # An edited model prepared as the current fit was, on `cores`, and not fitted:
@@ -1238,6 +1339,7 @@ ctModelImprove <- function(fit, covariates = NULL,
   args$datalong <- data
   args$cores <- cores
   args$verbose <- 0
+  if (is.list(args$optimcontrol)) args$optimcontrol$callback <- NULL
   args$fit <- FALSE
   args$inits <- NULL
   spec <- suppressMessages(suppressWarnings(do.call(ctFit, args)))

@@ -96,9 +96,23 @@ test_that("the Anderson-Darling reference holds its level", {
 
 test_that("a covariate the model lacks is added, an unrelated one is not, and the search stops", {
   x <- .improve_fit(0.8)
-  imp <- suppressMessages(ctModelImprove(x$fit, covariates = unique(x$data[, c('id', 'z', 'w')]),
-    relax = c('heterogeneity', 'covariates'), nsamples = 40, cores = 1, verbose = FALSE))
+  cp <- tempfile(fileext = '.rds')
+  on.exit(unlink(cp), add = TRUE)
+  search <- function(...) ctModelImprove(x$fit,
+    covariates = unique(x$data[, c('id', 'z', 'w')]), relax = c('heterogeneity', 'covariates'),
+    nsamples = 40, cores = 1, checkpoint = cp, ...)
+  imp <- suppressMessages(search(verbose = FALSE))
   expect_s3_class(imp, 'ctModelImprove')
+  # The checkpoint: a finished search called again resumes past its end and
+  # refits nothing, and a search with other settings refuses the file.
+  expect_true(file.exists(cp))
+  expect_message(again <- search(), 'Resuming after (the search|pruning)')
+  expect_identical(again$history, imp$history)
+  expect_equal(again$fit$estimate$loglik, imp$fit$estimate$loglik)
+  expect_error(search(alpha = 0.01, verbose = FALSE), 'different search')
+  # A refit's progress line.
+  progress <- ctsem:::.ctImproveProgress('Round 2: ', every = 0)
+  expect_message(progress(3, 10, 12.5, 0.01), 'Round 2: refit at 0 min: iteration 3')
   kept <- imp$history$change[imp$history$kept]
   expect_true(any(grepl('^z as a predictor of', kept)))
   expect_false(any(grepl('^w ', imp$history$change)))
