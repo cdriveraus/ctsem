@@ -664,6 +664,86 @@ bigre_data <- function(seed = 1, nsub = 200L, nobs = 20L) {
   do.call(rbind, rows)
 }
 
+# ---- growth: many correlated parameters on the marginal route ----------------
+#
+# The regime the bench had no cell for until 2026-10-16, and the one a
+# 529-parameter ECLS-K fit spent 19 hours in: P processes in two groups, each a
+# level driven by a constant growth of its own, every initial level and growth
+# correlated with every other (a full T0VAR over 2P states), the levels'
+# diffusion correlated, and two coupling parameters each shared by every
+# cross-group level effect (cAB, cBA), as that fit's cross-effects were by 40
+# DRIFT cells each. No random effects, so every route is the same marginal
+# filter and a Hessian costs about one gradient per parameter: 307 parameters
+# at P = 10, 125 at P = 6. Simulated exactly at continuous intervals by Van
+# Loan's discretisation, since the growth states have no stationary
+# distribution for `sim_linear`'s.
+
+growth_data <- function(P, seed, nsub = 500L, nobs = 9L) {
+  set.seed(seed)
+  k <- 2L * P
+  half <- seq_len(P %/% 2L); other <- setdiff(seq_len(P), half)
+  A <- matrix(0, k, k)
+  A[cbind(seq_len(P), seq_len(P))] <- -seq(0.3, 0.7, length.out = P)
+  A[cbind(seq_len(P), P + seq_len(P))] <- 1
+  A[other, half] <- 0.04
+  A[half, other] <- -0.03
+  Rq <- stats::cov2cor(crossprod(matrix(stats::rnorm(P * P, sd = 0.3), P)) + diag(P))
+  Q <- matrix(0, k, k)
+  Q[seq_len(P), seq_len(P)] <- 0.25 * Rq
+  R0 <- stats::cov2cor(crossprod(matrix(stats::rnorm(k * k, sd = 0.35), k)) + diag(k))
+  s0 <- c(rep(1, P), rep(0.3, P))
+  T0cov <- diag(s0) %*% R0 %*% diag(s0)
+  mu0 <- c(stats::rnorm(P, 0, 0.5), rep(0.2, P))
+  L0 <- t(chol(T0cov))
+  rows <- lapply(seq_len(nsub), function(i) {
+    times <- cumsum(c(0, stats::runif(nobs - 1L, 0.6, 1.4)))
+    x <- matrix(0, nobs, k)
+    x[1, ] <- mu0 + as.vector(L0 %*% stats::rnorm(k))
+    for (t in 2:nobs) {
+      dt <- times[t] - times[t - 1L]
+      E <- expmA(rbind(cbind(-A, Q), cbind(matrix(0, k, k), t(A))) * dt)
+      F22 <- E[k + seq_len(k), k + seq_len(k)]
+      Ad <- t(F22)
+      Qd <- Ad %*% E[seq_len(k), k + seq_len(k)]
+      Qd <- (Qd + t(Qd)) / 2
+      # The noise enters the levels only, and the growths have no drift of
+      # their own, so it stays in the level block over any interval.
+      noise <- c(as.vector(t(chol(Qd[seq_len(P), seq_len(P)] + diag(1e-12, P))) %*%
+        stats::rnorm(P)), rep(0, P))
+      x[t, ] <- as.vector(Ad %*% x[t - 1L, ]) + noise
+    }
+    y <- x[, seq_len(P)] + matrix(stats::rnorm(nobs * P, 0, 0.5), nobs, P)
+    colnames(y) <- paste0("Y", seq_len(P))
+    data.frame(id = i, time = times, y)
+  })
+  do.call(rbind, rows)
+}
+
+growth_model <- function(P) {
+  k <- 2L * P
+  half <- seq_len(P %/% 2L); other <- setdiff(seq_len(P), half)
+  DRIFT <- matrix("0", k, k)
+  for (i in seq_len(P)) {
+    DRIFT[i, i] <- paste0("a", i)
+    DRIFT[i, P + i] <- "1"
+  }
+  DRIFT[other, half] <- "cAB"
+  DRIFT[half, other] <- "cBA"
+  DIFF <- matrix("0", k, k)
+  for (i in seq_len(P)) for (j in seq_len(i)) DIFF[i, j] <- paste0("q", i, "_", j)
+  T0VAR <- matrix("0", k, k)
+  for (i in seq_len(k)) for (j in seq_len(i)) T0VAR[i, j] <- paste0("t0v", i, "_", j)
+  m <- suppressWarnings(suppressMessages(ctModel(type = "ct", n.latent = k,
+    n.manifest = P, manifestNames = paste0("Y", seq_len(P)),
+    latentNames = c(paste0("L", seq_len(P)), paste0("G", seq_len(P))),
+    LAMBDA = cbind(diag(P), matrix(0, P, P)), DRIFT = DRIFT, DIFFUSION = DIFF,
+    T0VAR = T0VAR, T0MEANS = matrix(paste0("t0m", seq_len(k)), k, 1),
+    CINT = matrix(0, k, 1), MANIFESTMEANS = matrix(0, P, 1),
+    MANIFESTVAR = diagchar(paste0("mv", seq_len(P))), silent = TRUE)))
+  m$pars$indvarying <- FALSE
+  m
+}
+
 # ---- the registry ----------------------------------------------------------------
 
 bench_problem <- function(model) {
@@ -725,6 +805,13 @@ bench_problem <- function(model) {
     c("laplace", "auto"), datafixed = TRUE))
   if (model == "bigre") return(mk(fixed(function() bigre_data(1)), bigre_model,
     c("laplace", "augmented", "auto"), datafixed = TRUE, reference = FALSE))
+  if (grepl("^growth[0-9]+$", model)) {
+    P <- as.integer(substring(model, 7))
+    # No random effects, as for the cov cells: one marginal filter on every
+    # route, and nothing for a Laplace reference to check.
+    return(mk(function(s) growth_data(P, as.integer(s)), function() growth_model(P),
+      c("augmented", "laplace", "auto"), reference = FALSE))
+  }
   if (grepl("^cov[0-9]+$", model)) {
     m <- as.integer(substring(model, 4))
     # No random effects: every route is the same marginal filter, and there

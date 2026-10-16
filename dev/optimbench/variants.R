@@ -44,6 +44,12 @@ BENCH_VARIANTS <- list(
   # The scalar initial scale, the default before the diagonal became it.
   scalar = list(optimcontrol = list(lbfgs_diagonal = FALSE)),
 
+  # How many curvature pairs L-BFGS keeps (default 20, chosen on a small
+  # model): whether more pays where the curvature is broad and correlated --
+  # the growth cells, bigp -- and costs nothing elsewhere.
+  mem100 = list(optimcontrol = list(lbfgs_memory = 100L)),
+  mem500 = list(optimcontrol = list(lbfgs_memory = 500L)),
+
   # The sgd phase (`_ctsem_sgd`) before L-BFGS: optimcontrol$stochastic.
   stoch = list(optimcontrol = list(stochastic = TRUE)),
 
