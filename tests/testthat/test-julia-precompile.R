@@ -183,13 +183,17 @@ test_that("every captured model replayed when the engine image was built", {
     sprintf("  backend = 'julia', intoverpop = %s, cores = 1L)))", deparse(route)),
     sprintf("marks <- c(fit = length(readLines(%s, warn = FALSE)))", deparse(trace)),
     paste(".then <-", paste(deparse(then), collapse = "\n")),
+    "errors <- character()",
     "for (nm in names(.then)) {",
-    "  suppressWarnings(suppressMessages(.then[[nm]](fit)))",
+    "  errors[[nm]] <- tryCatch({",
+    "    suppressWarnings(suppressMessages(.then[[nm]](fit))); NA_character_",
+    "  }, error = function(e) conditionMessage(e))",
     sprintf("  marks[[nm]] <- length(readLines(%s, warn = FALSE))", deparse(trace)),
     "}",
     sprintf("saveRDS(list(before = before, lines = readLines(%s, warn = FALSE),",
       deparse(trace)),
-    sprintf("  marks = marks, loglik = fit$estimate$loglik), %s)", deparse(out))),
+    sprintf("  marks = marks, errors = errors, loglik = fit$estimate$loglik), %s)",
+      deparse(out))),
     script)
   # The child inherits the environment, so it finds this session's libraries
   # (an installed ctsem under R CMD check) and its Julia.
@@ -213,6 +217,7 @@ test_that("every captured model replayed when the engine image was built", {
   segments <- lapply(seq_along(res$marks), function(k)
     count(res$lines[seq_len(ends[k + 1L] - ends[k]) + ends[k]]))
   names(segments) <- names(res$marks)
+  for (nm in names(res$errors)) segments[[nm]]$error <- res$errors[[nm]]
   c(list(finished = TRUE, log = log, loglik = res$loglik), segments$fit,
     list(then = segments[-1L]))
 }
@@ -260,7 +265,9 @@ test_that("a fresh session's first follow-ups of a fit compile almost nothing", 
   .skip_without_workload()
   # The generator's follow-ups, at its settings (values do not change what
   # compiles); a sampled ctFit follows the Laplace shape only, and the
-  # particle filter and PSIS the augmented one, as there.
+  # particle filter the augmented one, as there. Not PSIS: it refuses a fit
+  # whose covariance is not positive definite, as the augmented fit to this
+  # data's is.
   then <- list(
     kalman = function(fit) ctKalman(fit),
     loo = function(fit) ctLOO(fit, folds = 2, cores = 1L),
@@ -272,7 +279,6 @@ test_that("a fresh session's first follow-ups of a fit compile almost nothing", 
       cores = 1L))
   extra <- list(
     augmented = list(
-      psis = function(fit) ctLOO(fit, method = "psis", nsamples = 50),
       particle = function(fit) ctParticleLik(fit, particles = 20, cores = 1L)),
     laplace = list(sampled = function(fit) ctFit(.data(), .model(),
       backend = "julia", optimize = FALSE, priors = TRUE, cores = 1L, verbose = 0,
@@ -285,10 +291,18 @@ test_that("a fresh session's first follow-ups of a fit compile almost nothing", 
     if (!isTRUE(res$finished)) next
     expect_identical(names(res$then), names(c(then, extra[[route]])))
     for (nm in names(res$then)) {
-      expect_lt(res$then[[nm]]$engine, 60, label = sprintf(
-        "engine methods compiled by the first %s after a %s fit (%d, %.1f s of compile in all)",
-        nm, route, res$then[[nm]]$engine, res$then[[nm]]$seconds))
+      expect_true(is.na(res$then[[nm]]$error), label = sprintf(
+        "the first %s after a %s fit ran (%s)", nm, route, res$then[[nm]]$error))
     }
+    # Seconds, not methods: a follow-up the image lacks compiles a few
+    # top-level methods, each a whole tree. On dev1 (2026-10-16) these
+    # follow-ups compiled 2.0 s (augmented) and 2.3 s (Laplace) in all with
+    # them in the workload, and 19 s and 45 s without; no single one over 0.9 s
+    # with, and all but the augmented ctKalman over 2 s without.
+    seconds <- vapply(res$then, function(s) s$seconds, numeric(1))
+    expect_lt(sum(seconds), 10, label = sprintf(
+      "seconds of compile in the first follow-ups after a %s fit (%s)", route,
+      paste(sprintf("%s %.1f", names(seconds), seconds), collapse = ", ")))
   }
 })
 
