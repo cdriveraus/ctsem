@@ -47,17 +47,18 @@ jobs:
       # The engine's own Project.toml deliberately does not carry the
       # test-only dependencies, so a --project run of the suite dies on
       # "Package DataFrames not found". Build the environment the way
-      # CLAUDE.md documents for a local run, with the tests' compile cache
-      # (test/cache): precompiling it runs the suite once, which is most of
-      # what the suite costs, and julia-actions/cache keeps the image for the
-      # next run while the engine is unchanged.
+      # CLAUDE.md documents for a local run, without the tests compile cache
+      # (test/cache): this workflow runs only when the engine changed, which
+      # invalidates that image, so it could only add a precompile the size of
+      # the suite, and on a hosted runner that precompile was killed 23 minutes
+      # in (2026-10-16, a runner shutdown signal: the shape memory exhaustion
+      # takes there).
       - name: Test environment
         run: |
           julia -e '
             using Pkg
             Pkg.activate("ci-testenv")
-            Pkg.develop([Pkg.PackageSpec(path = "inst/julia/ContinuousTimeSEM"),
-                Pkg.PackageSpec(path = "inst/julia/ContinuousTimeSEM/test/cache")])
+            Pkg.develop(path = "inst/julia/ContinuousTimeSEM")
             Pkg.add(["DataFrames", "ForwardDiff", "ChainRulesCore",
                      "ComponentArrays", "FiniteDiff"])
             Pkg.precompile()
