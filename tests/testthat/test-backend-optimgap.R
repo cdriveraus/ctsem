@@ -400,7 +400,7 @@ test_that("a resume that does not improve is not taken", {
   short <- .fake_result(-diag(c(4, 25)), c(2, 5), value = -100)
   worse <- .fake_result(-diag(c(4, 25)), c(0, 0), value = -101)
   out <- ctsem:::.ctBackendCorrectResult(short, spec = list(), npar = 2L,
-    tolerance = 1e-6, optimise = function(from, carried) worse)
+    tolerance = 1e-6, optimise = function(from, carried, endgame) worse)
   expect_identical(out$result, short)
   expect_equal(out$certification$status, "suboptimal")
   expect_false(out$corrections[[1L]]$resumed)
