@@ -67,10 +67,12 @@ ctModelPeriodicComponent <- function(ctm, period, indices = seq_len(ctm$n.latent
   taken <- c(newnames[newnames %in% ctm$latentNames], preds[preds %in% ctm$TIpredNames])
   if (length(taken)) stop("The model already has ", paste(taken, collapse = ', '),
     "; give the cycle another name.", call. = FALSE)
-  # The phase predictors are read by the initial means alone: no effects.
+  # The phase predictors are read by the initial means alone: no effects, on
+  # these cells or on any a later change adds (`statedTIpreds`).
   for (p in preds) ctm$pars[[paste0(p, '_effect')]] <- 'FALSE'
   ctm$TIpredNames <- c(ctm$TIpredNames, preds)
   ctm$n.TIpred <- length(ctm$TIpredNames)
+  ctm$statedTIpreds <- c(ctm$statedTIpreds, preds)
   ed <- .ctParsLatentEditor(ctm, newnames)
   allnames <- ed$names
   cs <- nl + 1L; sn <- nl + 2L

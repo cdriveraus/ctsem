@@ -179,6 +179,13 @@ ctModelHigherOrder <- function(ctm, indices,diffusion=TRUE, crosseffects=FALSE,c
     for (l in levelflags) rec[[l]] <- FALSE
     put(m, r, c, rec)
   }
+  # A new free cell takes the model's default predictor effects, but only of
+  # the user's own predictors: one a component or the search added states its
+  # effects cell by cell (`statedTIpreds`) -- a cycle's clock phases set its
+  # initial means and nothing else. Defaulting those too gave the Fisher
+  # search's second-order processes 38 effects of the clock on their drifts
+  # and initial conditions, and a refit that crawled for hours.
+  stated <- paste0(ctm$statedTIpreds, '_effect')
   free <- function(m, r, c, name, transform = NULL, tipred = isTRUE(ctm$tipredDefault)) {
     rec <- template
     def <- .ctModelDefaultFreePar(m, r, c, TRUE)
@@ -186,7 +193,7 @@ ctModelHigherOrder <- function(ctm, indices,diffusion=TRUE, crosseffects=FALSE,c
     rec$transform <- if (is.null(transform)) def$transform else transform
     rec$indvarying <- FALSE
     if ('sdscale' %in% names(rec)) rec$sdscale <- 1
-    for (e in effects) rec[[e]] <- as.character(isTRUE(tipred))
+    for (e in effects) rec[[e]] <- as.character(isTRUE(tipred) && !e %in% stated)
     for (l in levelflags) rec[[l]] <- FALSE
     put(m, r, c, rec)
   }

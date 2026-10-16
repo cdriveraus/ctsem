@@ -396,6 +396,23 @@ test_that("a model's cycles are not proposed again, nor given slow processes or 
   expect_true(all(c('eta1 driven by a slow process', 'eta1 made second order') %in% labels))
 })
 
+test_that("cells a change adds take effects of the user's predictors, not a clock's", {
+  # A cycle's phase predictors set its initial means and nothing else.
+  cm <- ctModelPeriodicComponent(.ho_ct(), 24, indices = 1:2, individual = FALSE)
+  expect_true(length(cm$statedTIpreds) == 2L)
+  m2 <- ctModelHigherOrder(cm, 1L)
+  added <- !is.na(m2$pars$param) & grepl('deta1', m2$pars$param)
+  expect_gt(sum(added), 3L)
+  for (p in cm$statedTIpreds)
+    expect_true(all(m2$pars[[paste0(p, '_effect')]][added] %in% 'FALSE'))
+  # A predictor of the user's own still follows tipredDefault.
+  u <- suppressMessages(ctModel(type = 'ct', silent = TRUE, manifestNames = c('Y1', 'Y2'),
+    latentNames = c('eta1', 'eta2'), LAMBDA = diag(2), n.TIpred = 1, TIpredNames = 'g'))
+  u2 <- ctModelHigherOrder(u, 1L)
+  added <- !is.na(u2$pars$param) & grepl('deta1', u2$pars$param)
+  expect_true(all(u2$pars$g_effect[added] %in% 'TRUE'))
+})
+
 test_that("a second order's derivative is given no slow process and no second order", {
   # Raising the derivative's order is a third order by another name.
   m2 <- ctModelHigherOrder(.ho_ct(), 1L)

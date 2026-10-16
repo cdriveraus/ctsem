@@ -827,6 +827,9 @@ ctModelImprove <- function(fit, covariates = NULL,
         model$TIpredNames <- c(model$TIpredNames, z)
         model$n.TIpred <- length(model$TIpredNames)
         model$pars[[paste0(z, '_effect')]] <- ifelse(model$pars$param %in% pars, 'TRUE', 'FALSE')
+        # Its effects are the ones the tests singled out, not a default for
+        # cells a later change adds.
+        model$statedTIpreds <- c(model$statedTIpreds, z)
         list(model = model, data = data)
       } }))
   }
