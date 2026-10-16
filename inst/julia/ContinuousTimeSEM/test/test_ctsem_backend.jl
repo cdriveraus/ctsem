@@ -982,6 +982,58 @@ end
     @test saddle_at !== nothing && saddle_at < length(out.history.kind)
 end
 
+# The finish on the chord, recording the step each Hessian was formed at. The
+# mock's Hessian costs one gradient per parameter (`_ctsem_hessian_cost`), so
+# at 40 parameters a walk's budget is 40 steps.
+function _chord_run(f, x0; kwargs...)
+    seen = Ref(0); at = Int[]
+    m = _endgame_mock(f; h = x -> (push!(at, seen[]); ForwardDiff.hessian(f, x)))
+    out = _endgame_run(m, x0; curvature = :chord,
+        callback = s -> (seen[] = s.iteration; false), kwargs...)
+    (out = out, at = at)
+end
+
+@testset "a chord walk ends once its steps are not worth a Hessian" begin
+    # A chained curved valley near its optimum: the first Hessian's steps
+    # gain little after 15, and walking them to the budget of 40, as the
+    # chord did, took 87 steps and four Hessians where a fresh one at 15 takes
+    # 56 and three (dev1, 2026-10-16).
+    chained = p -> -sum(100 * (p[i+1] - p[i]^2)^2 + (1 - p[i])^2 for i in 1:length(p)-1)
+    r = _chord_run(chained, 0.8 .+ 0.1 .* randn(MersenneTwister(5), 40))
+    @test r.out.gain < 1e-8
+    @test length(r.at) >= 2 && r.at[2] < 40
+    # A walk that converges keeps its Hessian: one at the start and the exact
+    # one at the end, whatever its steps' rate.
+    for (f, x0) in ((p -> -sum(abs2, p .- 1) / 2 - 0.05 * sum(x -> x^4, p .- 1), fill(-2.0, 40)),
+            (p -> -sum(log1p(exp(-(p[i] * (i / 40) - 0.3))) for i in 1:40) - sum(abs2, p) / 20,
+                zeros(40)))
+        c = _chord_run(f, x0)
+        @test c.out.gain < 1e-8
+        @test length(c.at) == 2
+    end
+end
+
+@testset "a Hessian the caller holds is walked on rather than formed again" begin
+    # A stage resumed after a certification holds the certification's Hessian
+    # at about where it starts. On a quadratic the walk on it converges in one
+    # step, and the only Hessian formed is the final one.
+    A = let Q = qr(randn(MersenneTwister(1), 40, 40)).Q
+        Matrix(Q * Diagonal(range(1, 50; length = 40)) * Q')
+    end
+    quad = p -> -dot(p .- 1, A * (p .- 1)) / 2
+    near = fill(0.01, 40)
+    held = ForwardDiff.hessian(quad, near)
+    plain = _chord_run(quad, zeros(40))
+    seeded = _chord_run(quad, zeros(40); hessian0 = held, hessian0_at = near)
+    @test plain.out.full_hessians == 2
+    @test seeded.out.full_hessians == 1
+    @test seeded.out.x ≈ ones(40) atol = 1e-8
+    @test seeded.out.hessian ≈ held atol = 1e-8     # the exact one at the end
+    # Where Hessians are cheap the finish forms its own.
+    exact = _endgame_run(_endgame_mock(quad), zeros(40); hessian0 = held, hessian0_at = near)
+    @test exact.full_hessians == 2
+end
+
 @testset "the saddle ladder walks every negative direction, and says which it measured" begin
     # Two directions of negative curvature by the Hessian given: the more
     # negative (x) is flat in fact -- quartic, as a direction whose curvature is
