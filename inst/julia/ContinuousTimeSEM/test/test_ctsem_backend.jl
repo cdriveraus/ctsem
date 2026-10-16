@@ -1471,12 +1471,13 @@ end
     # The finish's steps count in the line but not against `maxiter`: a dear
     # Hessian is walked for as many steps as it cost, so on a large model they
     # alone can pass the cap in a fit that converged. The exponential tail
-    # needs about seven steps after a hand-over at L-BFGS's first iteration,
+    # needs about seven steps after L-BFGS stops at its first iteration -- a
+    # metric a million times too stiff makes its predicted gain negligible --
     # on a chord too dear to hand back (a budget of one step).
     m = _endgame_mock(p -> -0.5e4 * p[1]^2 - 1e-4 * exp(2 * p[2]))
     lines = String[]
     r = ContinuousTimeSEM.ctsem_optimize(m, [0.01, 0.0]; maxiter=3,
-        tune_chunks=false, gap_tol=1e-8, newton=true, newton_switch=1e6,
+        tune_chunks=false, gap_tol=1e-8, newton=true, precondition=[1e6, 1e6],
         newton_maxit=1, newton_curvature=:chord,
         certify=false, progress=true, progress_every=1e-9,
         progress_sink=(text, kind) -> (push!(lines, text); nothing),
@@ -1487,27 +1488,33 @@ end
     @test !any(occursin("ITERATION CAP", l) for l in lines)
 end
 
-@testset "ctsem_optimize finishes on a Hessian too dear to hand back" begin
-    # The quadratic whose first Hessian is a hundredfold wrong, handed over
-    # after L-BFGS's first iteration, with a step budget below what a Hessian
-    # costs (4 parameters, `newton_maxit = 3`): the first step fails the check
-    # a hand-back would make, but the finish may not throw the Hessian away,
-    # so it keeps what it formed, refreshes on the slow step and closes the
-    # gap itself, and everything it did is counted.
+@testset "ctsem_optimize runs L-BFGS to its own rule where a Hessian is too dear to discard" begin
+    # A Hessian costing more gradients than the finish has steps (4 parameters,
+    # `newton_maxit = 3`) is not formed on L-BFGS's predicted gain, however
+    # high the switch: L-BFGS runs on to its own stopping rule, as on the
+    # Laplace route, and the finish starts there. With the switch alone it
+    # handed over after one iteration, as a 529-parameter marginal fit did
+    # with 140 nats to climb (ECLS-K, dev2).
     c = [1.0, -2.0, 0.5, 3.0]
-    f, h = _endgame_misled(c)
-    m = _endgame_mock(f; h = h)
+    f = p -> -0.5 * sum(abs2, p .- c)
+    m = _endgame_mock(f)
     r = ContinuousTimeSEM.ctsem_optimize(m, [4.0, 3.0, -1.0, 0.0]; maxiter=200,
         tune_chunks=false, gap_tol=1e-8, newton=true, newton_switch=1e6,
         newton_maxit=3, certify=false, progress=false, verbose=false,
         overshoot_probe=:off)
-    @test maximum(abs, r.minimizer .- c) < 1e-8
-    @test r.newton_steps >= 1
-    @test length(r.newton_history_kind) == r.newton_steps
-    @test r.newton_hessians == m.hessians[] <= 3
-    @test r.iterations - r.newton_steps <= 2    # L-BFGS did not have to go on
+    @test maximum(abs, r.minimizer .- c) < 1e-6
+    @test r.iterations - r.newton_steps > 1     # L-BFGS went on
+    @test r.newton_hessians == m.hessians[] <= 2
     @test r.stop_reason in ("gap", "gradient", "linesearch")
     @test !r.newton_handback
+    # Where the Hessian is cheap enough to throw away, the switch still hands
+    # over at once (4 parameters within `newton_maxit = 30`).
+    cheap = ContinuousTimeSEM.ctsem_optimize(_endgame_mock(f), [4.0, 3.0, -1.0, 0.0];
+        maxiter=200, tune_chunks=false, gap_tol=1e-8, newton=true,
+        newton_switch=1e6, certify=false, progress=false, verbose=false,
+        overshoot_probe=:off)
+    @test maximum(abs, cheap.minimizer .- c) < 1e-8
+    @test cheap.iterations - cheap.newton_steps == 1
 end
 
 # Shared with `test_laplace.jl`; see `laplace_fixtures.jl`.
