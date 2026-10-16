@@ -700,10 +700,33 @@ false "converged" this route used to report -- and the second run met the
 criterion at ten perfectly well. So "ten silently fails" is not a property of
 the setting; it is a thing that *can* happen at ten and did not happen twice.
 
-Twenty is the knee on both. The `lbfgs_memory` keyword overrides it, and R
-reaches that through `optimcontrol`.
+Twenty is the knee on both, and it is the floor: a model keeps as many pairs
+as it has parameters, at least 20 and at most `_CTSEM_LBFGS_MEMORY_MAX`
+(`_ctsem_lbfgs_memory`). On the optimiser bench's larger cells (dev1,
+2026-10-16, grids/lbfgsmem.txt) more memory than 20 took 5 to 19% fewer
+gradients to the same optimum -- 401 parameters with ECLS-K's moderation
+(growthm10) 16 to 19% at 500 pairs, 8% at 100; 307 (growth10) 10%; 66 (bigp)
+5 to 8% -- and changed nothing at 9 to 11 parameters but the path of one
+multi-basin cell. Pairs beyond the parameters or the iterations run add
+nothing, which is why the parameter count is the right scale; a pair costs
+O(npar) per iteration, nothing next to a gradient. The `lbfgs_memory` keyword
+overrides it, and R reaches that through `optimcontrol`.
 """
 const _CTSEM_LBFGS_MEMORY = 20
+
+"""The most curvature pairs L-BFGS keeps by default, whatever the model's size
+(`_ctsem_lbfgs_memory`): 1000 pairs of 1000 parameters is 16 MB."""
+const _CTSEM_LBFGS_MEMORY_MAX = 1000
+
+"""
+    _ctsem_lbfgs_memory(npar)
+
+How many curvature pairs L-BFGS keeps for a model of `npar` parameters when
+the caller does not say: one per parameter, within `_CTSEM_LBFGS_MEMORY` and
+`_CTSEM_LBFGS_MEMORY_MAX` (see the first for the measurements).
+"""
+_ctsem_lbfgs_memory(npar::Integer) =
+    clamp(Int(npar), _CTSEM_LBFGS_MEMORY, _CTSEM_LBFGS_MEMORY_MAX)
 
 """
 Which coordinates of a minimizer carry ctsem parameter transforms, and so can
@@ -1984,7 +2007,7 @@ hand-over (0.1) and step cap (30) at the head of the endgame in optimiser.jl.
 function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
     maxiter::Integer=1000, g_tol::Real=1e-8, f_tol::Real=0.0,
     x_tol::Real=0.0, verbose::Bool=false, gradient_method=:adjoint,
-    lbfgs_memory::Integer=_CTSEM_LBFGS_MEMORY,
+    lbfgs_memory::Union{Nothing,Integer}=nothing,
     lbfgs_diagonal::Bool=true, lbfgs_nonmonotone::Real=0.0,
     lbfgs_gll::Integer=0, sgd::Bool=false, sgd_maxiter::Integer=2000, sgd_progress::Real=1e-3,
     saem::Bool=false, saem_maxiter::Integer=10000, saem_seed::Integer=1,
@@ -2007,6 +2030,8 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
     flat_rtol::Real=_CTSEM_FLAT_RTOL, newton_hessian=nothing,
     newton_hessian_at=nothing)
     start_values = collect(start)
+    lbfgs_pairs = lbfgs_memory === nothing ?
+        _ctsem_lbfgs_memory(length(start_values)) : Int(lbfgs_memory)
     # Validated here rather than at the probe, which runs after the fit: a
     # misspelled mode should cost nothing, not a whole optimisation.
     overshoot_probe = _ctsem_overshoot_mode(overshoot_probe)
@@ -2303,7 +2328,7 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
     sgd_iterations = sgd_result === nothing ? 0 : sgd_result.iterations
     # See optimiser.jl for why this is not Optim any more.
     inverse = _ctsem_lbfgs_inverse(lbfgs_inverse, length(start_values))
-    result = _ctsem_lbfgs(fg!, lbfgs_start; memory=Int(lbfgs_memory),
+    result = _ctsem_lbfgs(fg!, lbfgs_start; memory=lbfgs_pairs,
         diagonal=lbfgs_diagonal, nonmonotone=lbfgs_nonmonotone, gll=Int(lbfgs_gll),
         metric=_ctsem_metric(precondition, length(start_values)),
         inverse=inverse, initial_alpha=Float64(initial_alpha),
@@ -2452,7 +2477,7 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
         finish = nothing
         handover[] = Float64(gap_tol)
         stopped_by_gap[] = false
-        resumed = _ctsem_lbfgs(fg!, minimizer; memory=Int(lbfgs_memory),
+        resumed = _ctsem_lbfgs(fg!, minimizer; memory=lbfgs_pairs,
             diagonal=lbfgs_diagonal, nonmonotone=lbfgs_nonmonotone, gll=Int(lbfgs_gll),
             metric=_ctsem_metric(precondition, length(start_values)),
             inverse=inverse, initial_alpha=Float64(initial_alpha),
