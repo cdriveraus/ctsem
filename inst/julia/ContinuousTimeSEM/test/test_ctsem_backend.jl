@@ -1013,7 +1013,7 @@ end
     end
 end
 
-@testset "where Hessians are dear, a point its exact Hessian certifies is not stepped off" begin
+@testset "a point its exact Hessian certifies is not stepped off" begin
     # A quadratic 40 parameters wide, its Hessian one gradient a parameter (the
     # chord), started where the exact gain is 1e-3: within a certification
     # tolerance of 1e-2, so the finish stops there on the one Hessian. Asked
@@ -1035,6 +1035,10 @@ end
     @test on.out.steps >= 1
     @test on.out.full_hessians == 2
     @test on.out.gain < 1e-8
+    # The same where the Hessian is cheap: the gain is as exact there.
+    cheap = _endgame_run(_endgame_mock(quad), x0; certify_tol = 1e-2)
+    @test cheap.steps == 0
+    @test cheap.full_hessians == 1
 end
 
 @testset "a Hessian the caller holds is walked on rather than formed again" begin
@@ -1098,7 +1102,7 @@ end
     f = p -> -0.5 * p[1]^2 - 0.25 * p[2]^4
     hm = [-1.0 0.0; 0.0 1e-3]
     m = _endgame_mock(f; h = p -> hm)
-    out = _endgame_run(m, [0.0, 0.0]; escape_gain = 1e-6)
+    out = _endgame_run(m, [0.0, 0.0]; certify_tol = 1e-6)
     @test out.saddle
     @test out.ladder_tried
     @test out.escapes == 0
@@ -1160,7 +1164,7 @@ end
 @testset "the finish leaves a plateau on a curved ridge where the route allows it" begin
     m = _endgame_mock(_ridge)
     x0 = [-4.0, _ridge_c(-4.0)]
-    up = _endgame_run(m, x0; flat_rtol=1e-6, flat_escape=true, escape_gain=1e-6)
+    up = _endgame_run(m, x0; flat_rtol=1e-6, flat_escape=true, certify_tol=1e-6)
     @test -up.f ≈ 15 atol = 1e-6
     @test up.x ≈ [2.0, _ridge_c(2.0)] atol = 1e-4
     @test "flat" in up.history.kind
@@ -1170,8 +1174,8 @@ end
     stay = _endgame_run(m, x0; flat_rtol=1e-6)
     @test -stay.f < 1e-5
     @test !("flat" in stay.history.kind)
-    # An escape that gains less than `escape_gain` is not taken.
-    tiny = _endgame_run(m, x0; flat_rtol=1e-6, flat_escape=true, escape_gain=100.0)
+    # An escape that gains less than `certify_tol` is not taken.
+    tiny = _endgame_run(m, x0; flat_rtol=1e-6, flat_escape=true, certify_tol=100.0)
     @test !("flat" in tiny.history.kind)
     @test tiny.escapes == 0
 end
