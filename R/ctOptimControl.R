@@ -33,8 +33,8 @@
 #'  \item{\code{lbfgs_scores}}{Julia. Default FALSE. Runs beside L-BFGS a
 #'  second model of the curvature, the centred outer product of the per-unit
 #'  scores plus the prior's precision and a learned correction, and takes each
-#'  step on whichever model predicted the last step's gain better. Turns off
-#'  batching.}
+#'  step on whichever model predicted the last step's gain better; while a
+#'  fit is batched, only on the whole data.}
 #'  \item{\code{lbfgs_memory}}{Both. How many curvature pairs L-BFGS keeps.
 #'  Default on julia one per free parameter, at least 20 and at most 1000;
 #'  mize's on stan.}

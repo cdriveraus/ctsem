@@ -2242,9 +2242,10 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
     # sampled TI predictor, and enough units (a prior is separated out and does
     # not stop it; see `_ctsem_batch_plan`). Otherwise `nothing`, and the run
     # below is ordinary L-BFGS on the whole data.
-    # Not with `lbfgs_scores`: a batch evaluates a subset of the units, whose
-    # scores are not the information of the whole.
-    batcher = batch && score_store === nothing ?
+    # With `lbfgs_scores` too: a batch's trials are not the objective's, so
+    # they keep no scores, and the structured model takes no step until the
+    # batch is the whole data.
+    batcher = batch ?
         _ctsem_batch_plan(objective, trial_fg!; theta=batch_theta) : nothing
     # Only where there are scores: a pinned objective, which a profile or an
     # escape optimises, has no prior of its own to ask.
