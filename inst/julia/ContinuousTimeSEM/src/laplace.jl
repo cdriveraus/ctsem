@@ -4627,6 +4627,25 @@ end
 struct _LaplaceSeedInner end
 struct _LaplaceSeedOuter end
 
+# Their order among other tags, which ForwardDiff asks whenever duals of two
+# tags meet (`a ≺ b`: `Dual{b}` goes outside `Dual{a}`). A bare tag type has
+# none, so any meeting threw `DualMismatchError`: a categorical row's moment
+# Jacobian (`CTSEMNestedTag`) reading a seeded value it did not seed itself,
+# in the sweep that gives a Laplace fit's per-unit scores, and the seeds
+# inside the forward Jacobian that is that sweep's fallback. The seeds go
+# outside an ordinary tag (they perturb a point that tag's differentiation is
+# at), inside the nested one (which differentiates within whatever reaches it),
+# and the outer seed outside the inner, as `_laplace_seed_pair` builds them.
+const _LaplaceSeedTag = Union{Type{_LaplaceSeedInner},Type{_LaplaceSeedOuter}}
+ForwardDiff.:≺(::Type{_LaplaceSeedInner}, ::Type{_LaplaceSeedOuter}) = true
+ForwardDiff.:≺(::Type{_LaplaceSeedOuter}, ::Type{_LaplaceSeedInner}) = false
+ForwardDiff.:≺(::Type{<:ForwardDiff.Tag}, ::_LaplaceSeedTag) = true
+ForwardDiff.:≺(::_LaplaceSeedTag, ::Type{<:ForwardDiff.Tag}) = false
+ForwardDiff.:≺(::Type{ForwardDiff.Tag{CTSEMNestedTag,V}}, ::_LaplaceSeedTag) where {V} =
+    false
+ForwardDiff.:≺(::_LaplaceSeedTag, ::Type{ForwardDiff.Tag{CTSEMNestedTag,V}}) where {V} =
+    true
+
 """The two seeds `(eps1, eps2)`, one per tag: `x + d1 * eps1 + d2 * eps2`
 carries the mixed second derivative along `d1` and `d2` as the coefficient of
 `eps1 * eps2`."""
