@@ -1375,8 +1375,8 @@ _ctsem_scores_supported(o) = false
     _ctsem_optimise_trial_scores(objective, x, gradient_method, limit, log, store)
 
 `_ctsem_optimise_trial` with a gradient, taken as the sum of the units' scores
-(and the prior's gradient), the scores kept in `store` for the starting
-curvature (`_ctsem_scores_inverse`). The same validity rule.
+(and the prior's gradient), the scores kept in `store` for the structured
+model of the curvature (`CTSEMStructured`). The same validity rule.
 """
 function _ctsem_optimise_trial_scores(o::CTSEMObjective, x, gradient_method,
         limit::Real, log, store::CTSEMScoreStore)
@@ -1400,32 +1400,99 @@ function _ctsem_optimise_trial_scores(o::CTSEMObjective, x, gradient_method,
 end
 
 """
-    _ctsem_scores_inverse(store, x, precision)
+    CTSEMStructured(store, precision, npar)
 
-The inverse of `S'S + Diagonal(precision)` from the scores `store` holds, when
-they are `x`'s; otherwise `nothing`. The outer product of the units' scores is
-the BHHH estimate of the information, and with many units to a parameter it
-carries most of the curvature's conditioning (the bench, dev1, 2026-10-17:
-eigenvalue spreads of 2-30 left after it against 10-1000 after per-parameter
-scaling). One product and one factorisation an iteration, never per row.
+The second model of the curvature that R's `lbfgs_scores` control gives
+L-BFGS: the centred outer product of the units' scores at the current point
+plus the prior's precision (`B`), and a learned correction to the Hessian
+(`A`), updated by SR1 from each step's secant residual -- the structured
+quasi-Newton of Dennis, Gay and Welsch (NL2SOL), with the score outer product
+in Gauss-Newton's place. Near the optimum `B` carries most of the curvature's
+conditioning (eigenvalue spreads of 2-30 left after it on the bench, against
+10-1000 after per-parameter scaling; dev1, 2026-10-17) and starting L-BFGS from
+it took 2-5 times fewer iterations; far from it, `B` misstates the curvature
+and a run on it stopped hundreds of nats short. So the two models run side by
+side and each step is taken on whichever predicted the last step's actual gain
+better (`_ctsem_structured_update!`), with no distance to choose.
 """
-function _ctsem_scores_inverse(store::CTSEMScoreStore, x::AbstractVector,
-        precision::AbstractVector)
-    (store.valid && store.x == x) || return nothing
-    B = transpose(store.S) * store.S
-    @inbounds for i in eachindex(precision)
-        B[i, i] += precision[i]
+mutable struct CTSEMStructured
+    store::CTSEMScoreStore
+    precision::Vector{Float64}
+    A::Matrix{Float64}
+    B::Matrix{Float64}
+    Bx::Vector{Float64}
+    haveB::Bool
+    active::Bool
+    steps::Int
+end
+CTSEMStructured(store::CTSEMScoreStore, precision::AbstractVector, n::Integer) =
+    CTSEMStructured(store, collect(Float64, precision), zeros(n, n), zeros(n, n),
+        fill(NaN, n), false, false, 0)
+
+"""`B` at `x` from the store's scores there, centred: the outer product of the
+units' scores about their mean, without the mean's own `g g' / units`, which
+dominates far from the optimum; plus the prior's precision. `false` when the
+store does not describe `x`. One product an iteration, never per row."""
+function _ctsem_structured_B!(m::CTSEMStructured, x::AbstractVector)
+    st = m.store
+    (st.valid && st.x == x) || return false
+    S = st.S
+    N = size(S, 1)
+    mul!(m.B, transpose(S), S)
+    g = vec(sum(S; dims=1))
+    @inbounds for j in axes(m.B, 2), i in axes(m.B, 1)
+        m.B[i, j] -= g[i] * g[j] / N
     end
-    scale = maximum(abs, diag(B); init=0.0)
-    (isfinite(scale) && scale > 0) || return nothing
-    shift = 0.0
-    for _ in 1:8
-        C = copy(B)
-        shift > 0 && (C[diagind(C)] .+= shift)
-        F = cholesky!(Symmetric(C); check=false)
-        issuccess(F) && return Matrix(inv(F))
-        shift = shift == 0 ? 1e-10 * scale : 100 * shift
+    @inbounds for i in eachindex(m.precision)
+        m.B[i, i] += m.precision[i]
     end
+    copyto!(m.Bx, x)
+    m.haveB = true
+    return true
+end
+
+"""The structured model's step at `x`, `-(B + A) \\ G`, when it is the model
+in use and positive definite there; `nothing` otherwise."""
+function _ctsem_structured_direction(m::CTSEMStructured, x::AbstractVector,
+        G::AbstractVector)
+    m.active || return nothing
+    (m.haveB && m.Bx == x) || _ctsem_structured_B!(m, x) || return nothing
+    F = cholesky!(Symmetric(m.B .+ m.A); check=false)
+    issuccess(F) || return nothing
+    return -(F \ G)
+end
+
+"""
+    _ctsem_structured_update!(m, x0, x1, G0, G1, f0, f1, step, alpha, structured_step)
+
+After an accepted step from `x0` to `x1` (minimised values `f0`, `f1`): each
+model's predicted gain for that step against the gain it made, the correction
+`A` updated from the secant residual at `x1`'s `B` (so that `(B + A) step =
+G1 - G0`), and which model takes the next step. Plain L-BFGS's prediction is
+read off its own step (`step = alpha d` with `d = -H^-1 G0`, so `step' H step =
+-alpha G0' step`); after a structured step it has none, and the structured
+model keeps the next one while it predicted within a factor of two.
+"""
+function _ctsem_structured_update!(m::CTSEMStructured, x0, x1, G0, G1, f0, f1,
+        step, alpha, structured_step::Bool)
+    actual = f0 - f1
+    predicted = NaN
+    if m.haveB && m.Bx == x0
+        Hs = (m.B .+ m.A) * step
+        predicted = -dot(G0, step) - dot(step, Hs) / 2
+    end
+    plain = structured_step ? NaN : -dot(G0, step) * (1 - alpha / 2)
+    if _ctsem_structured_B!(m, x1)
+        r = (G1 .- G0) .- (m.B .+ m.A) * step
+        den = dot(r, step)
+        if abs(den) > 1e-8 * norm(r) * norm(step)
+            m.A .+= (r * transpose(r)) ./ den
+        end
+    end
+    miss(p) = (isfinite(p) && p > 0 && actual > 0) ? abs(log(actual / p)) : Inf
+    m.active = structured_step ? miss(predicted) <= log(2) :
+        miss(predicted) < miss(plain)
+    structured_step && (m.steps += 1)
     return nothing
 end
 
@@ -2135,7 +2202,7 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
     current_x = copy(start_values)
     # Over whichever objective is in force: the fit's own, or a batch of its
     # units (see `_ctsem_batch_plan`), which is the same route over fewer.
-    # Per-unit scores for L-BFGS's starting curvature (`lbfgs_scores`), kept
+    # Per-unit scores for the structured curvature (`lbfgs_scores`), kept
     # from every full-data trial with a gradient. Made before the closure that
     # writes it.
     score_store = lbfgs_scores && _ctsem_scores_supported(objective) ?
@@ -2181,13 +2248,10 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
         _ctsem_batch_plan(objective, trial_fg!; theta=batch_theta) : nothing
     # Only where there are scores: a pinned objective, which a profile or an
     # escape optimises, has no prior of its own to ask.
-    score_inverse = if score_store === nothing
-        nothing
-    else
-        score_precision = _ctsem_prior_precision(_ctsem_prior_objective(objective),
+    structured = score_store === nothing ? nothing :
+        CTSEMStructured(score_store, _ctsem_prior_precision(
+            _ctsem_prior_objective(objective), length(start_values)),
             length(start_values))
-        y -> _ctsem_scores_inverse(score_store, y, score_precision)
-    end
     batching() = batcher !== nothing && !_ctsem_batch_full(batcher)
     # The endgame (`_ctsem_newton_finish`), on a route that has one. Where a
     # Hessian costs a few gradients it runs whenever there is a stopping rule
@@ -2427,7 +2491,7 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
     result = _ctsem_lbfgs(fg!, lbfgs_start; memory=lbfgs_pairs,
         diagonal=lbfgs_diagonal, nonmonotone=lbfgs_nonmonotone, gll=Int(lbfgs_gll),
         metric=_ctsem_metric(precondition, length(start_values)),
-        inverse=inverse, inverse_at=score_inverse,
+        inverse=inverse, structured=structured,
         initial_alpha=Float64(initial_alpha),
         maxiter=max(0, Int(maxiter) - sgd_iterations),
         g_tol=g_tol, f_tol=f_tol, x_tol=x_tol, callback=watch,
@@ -2580,7 +2644,7 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
         resumed = _ctsem_lbfgs(fg!, minimizer; memory=lbfgs_pairs,
             diagonal=lbfgs_diagonal, nonmonotone=lbfgs_nonmonotone, gll=Int(lbfgs_gll),
             metric=_ctsem_metric(precondition, length(start_values)),
-            inverse=inverse, inverse_at=score_inverse,
+            inverse=inverse, structured=structured,
             initial_alpha=Float64(initial_alpha),
             maxiter=max(0, Int(maxiter) - result.iterations - spent.steps[]),
             g_tol=g_tol, f_tol=f_tol, x_tol=x_tol, callback=watch,
@@ -2763,6 +2827,8 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
         # `[0.0;;]` when there was no finish (a 1x1 zero, since an empty matrix
         # would hang the bridge).
         newton_steps=newton_steps,
+        # L-BFGS steps taken on the structured model (`lbfgs_scores`).
+        structured_steps=structured === nothing ? 0 : structured.steps,
         newton_hessians=spent.hessians[] +
             (finish === nothing ? 0 : finish.full_hessians),
         newton_subset_hessians=spent.subset[] +
