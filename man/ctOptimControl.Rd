@@ -143,8 +143,11 @@ default.
  may still predict at the estimate before the fit is continued.}
  \item{\code{gapretries}}{Default 2. How often a fit the check finds short of
  a maximum is resumed; a resumed stage that stops gaining is stopped.}
- \item{\code{innergaptol}}{Stop once a step is predicted to gain less than
- this; by default a hundredth of the certification's tolerance.}
+ \item{\code{innergaptol}}{What a prediction of the remaining gain that
+ can be optimistic -- L-BFGS's, or a Newton step's on a Hessian taken at
+ another point -- has to fall below to stop; by default a hundredth of
+ \code{gaptol}. A gain read off the exact Hessian at the estimate is held to
+ \code{gaptol} itself.}
  \item{\code{overshoot}}{\code{'magnitude'} (the default),
  \code{'saturation'} or \code{'off'}: which directions are pulled back after
  a fit, to test whether it stopped at a maximum.}

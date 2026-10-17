@@ -1290,9 +1290,18 @@ direction the curvature calls flat, or a saddle whose ladder found nothing
 worth having, the flat ladder (`_ctsem_flat_ladder`) is tried, when
 `flat_escape` (the fit sets it where `_ctsem_flat_escape` allows), within the
 same cap, the steps continuing on the exact Hessian there with a fresh step
-budget. Either escape is taken only when it gains more than `escape_gain`,
-which the fit sets to its certification tolerance. Then, when `probe`, the
-flat-direction probe (`_ctsem_flat_probe`) at the final point.
+budget. Either escape is taken only when it gains more than `certify_tol`.
+Then, when `probe`, the flat-direction probe (`_ctsem_flat_probe`) at the final
+point.
+
+The two tolerances divide by what a decision reads. `certify_tol`, the
+certification's own (the fit sets it; 0 turns off what follows), is for what
+is exact: a gain read off the exact Hessian at the point ends the steps once
+it is below it, and an escape has to gain more. `tol`, the fit's inner
+tolerance (a hundredth of the other by default), is for what is not: a gain
+predicted by a matrix taken elsewhere, the chord's, or a refreshed one's
+first step, has to fall below it, as L-BFGS's own prediction does, since such
+a prediction can be optimistic.
 
 `hessian0`, the Hessian of the MAXIMISED objective at `hessian0_at`, is one the
 caller holds -- the certification's, for a stage it resumed -- and is walked on
@@ -1334,7 +1343,7 @@ function _ctsem_newton_finish(objective, x0, f0, G0, fg!; tol::Real=1e-8,
         flat_rtol::Real=_CTSEM_FLAT_RTOL, negative::Real=_CTSEM_NEGATIVE_RTOL,
         ladder=_CTSEM_SADDLE_LADDER, probe_lengths=_CTSEM_FLAT_PROBE_LENGTHS,
         max_escapes::Integer=3, value_at=nothing, handback::Bool=false,
-        escape_gain::Real=0.0, flat_escape::Bool=false,
+        certify_tol::Real=0.0, flat_escape::Bool=false,
         reporter=nothing, hessian0=nothing, hessian0_at=nothing)
     curvature in (:exact, :chord, :subset) || throw(ArgumentError(
         "newton curvature must be exact, chord or subset, got $(curvature)"))
@@ -1568,6 +1577,20 @@ function _ctsem_newton_finish(objective, x0, f0, G0, fg!; tol::Real=1e-8,
             nt = newton(Hs, G, radius)
             nt === nothing && break
             gain = nt.gain
+            # A gain read off the exact Hessian at the point (`at_x`) is the
+            # number the certification computes, so within its tolerance the
+            # point is certified as it stands; `tol`'s margin is for
+            # predictions that can be optimistic, which this is not. Stepping
+            # on toward `tol` moved the point off its Hessian, and past
+            # `reuse_se` standard errors another was needed to certify where
+            # it went: on ECLS-K at full N (529 parameters, 3 h a Hessian, a
+            # tolerance of 2) the finish re-formed its Hessian after 5 steps,
+            # then 1, then 1, each time to close part of what was already
+            # within the tolerance.
+            if at_x && gain < certify_tol
+                converged = true
+                break
+            end
             if gain < tol
                 # On the exact variant a gap is closed when the Hessian here
                 # says so. One from an earlier point can call it closed on a
@@ -1805,7 +1828,7 @@ function _ctsem_newton_finish(objective, x0, f0, G0, fg!; tol::Real=1e-8,
             end
             break
         end
-        # An escape has to gain more than `escape_gain`, the certification's
+        # An escape has to gain more than `certify_tol`, the certification's
         # tolerance: less is a move the verdict cannot tell from staying, and it
         # spends one of the `max_escapes`. On test-julia-convergence.R's random
         # walks the Hessian on the white-noise plateau showed a noise-level
@@ -1816,7 +1839,7 @@ function _ctsem_newton_finish(objective, x0, f0, G0, fg!; tol::Real=1e-8,
             escapes >= max_escapes && break
             ladder_tried = true
             tried = _ctsem_saddle_ladder(valueof, x, -f, split, -G; ladder=ladder,
-                enough=escape_gain)
+                enough=certify_tol)
             fcalls[] += tried.evaluations
             saddle_walked = tried.walked
             saddle_gain = tried.best === nothing ? 0.0 : tried.best.value + f
@@ -1826,7 +1849,7 @@ function _ctsem_newton_finish(objective, x0, f0, G0, fg!; tol::Real=1e-8,
                 # The point the ladder measured, through the optimiser's own
                 # trial path: a point the route refuses a gradient at is not one
                 # to continue from.
-                if isfinite(fn) && f - fn > escape_gain
+                if isfinite(fn) && f - fn > certify_tol
                     ladder_gain += f - fn
                     x = collect(Float64, tried.best.point); f = fn; G = Gn
                     steps += 1; escapes += 1
@@ -1857,7 +1880,7 @@ function _ctsem_newton_finish(objective, x0, f0, G0, fg!; tol::Real=1e-8,
         (flat_escape && escapes < max_escapes) || break
         walked = _ctsem_flat_ladder(fg!, x, f, G, split; lengths=probe_lengths)
         fcalls[] += walked.fcalls; gcalls += walked.gcalls
-        (walked.best !== nothing && f - walked.best.f > escape_gain) || break
+        (walked.best !== nothing && f - walked.best.f > certify_tol) || break
         x = collect(Float64, walked.best.point); f = walked.best.f
         G = walked.best.G
         steps += 1; escapes += 1
