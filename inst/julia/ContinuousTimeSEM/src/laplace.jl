@@ -3473,12 +3473,13 @@ function _laplace_newton_unit_mode(laplace::CTSEMLaplaceObjective, U::Integer,
     # converges only superlinearly and stopped just under it. On the affect
     # pilot (35 effects a unit) that left modes 1e-7 short: the objective
     # moved 1.7e-6, above the outer gap tolerance, and the gradient 1e-4 in the
-    # loadings. So after an updated step the bound is not read: the solve goes
-    # on while each step halves the gradient, and a step that does not -- the
-    # roundoff floor, where Newton ends too -- makes the next curvature exact,
-    # and only then is the bound read. Neither the step bound nor a failed line
-    # search is read from an updated matrix: like a repaired one, it does not
-    # measure the distance to the mode.
+    # loadings. So the bound ends the solve only after an exact step; reached
+    # by an updated one, it makes this iteration's curvature exact, whose step
+    # bound then says the mode is found or whose Newton step is taken. That
+    # costs one exact curvature at the end, and leaves the mode where Newton
+    # leaves it. Neither the step bound nor a failed line search is read from
+    # an updated matrix: like a repaired one, it does not measure the distance
+    # to the mode.
     sr1 = _LAPLACE_INNER_SR1[] && !keep && d > 0 && length(blocks) == 1
     # Taken whether or not they are used: a local that is either `nothing` or
     # an array makes every call on it dynamic.
@@ -3486,6 +3487,9 @@ function _laplace_newton_unit_mode(laplace::CTSEMLaplaceObjective, U::Integer,
     sstep = _laplace_scratch_vector!(laplace, Float64, d, :newton_sr1_s)
     rvec = _laplace_scratch_vector!(laplace, Float64, d, :newton_sr1_r)
     exact = true
+    # Whether the step that reached `u` was taken on an exact curvature: the
+    # origin counts as one, as it always did.
+    stepped_exact = true
     current = _laplace_unit_objective_gradient(laplace, U, values, Ls, u, aws,
         gcur)
     if !isfinite(current.value) && any(!iszero, u)
@@ -3495,11 +3499,13 @@ function _laplace_newton_unit_mode(laplace::CTSEMLaplaceObjective, U::Integer,
     end
     for iteration in 1:laplace.inner_maxiter
         iterations = iteration
-        if d == 0 || (exact && maximum(abs, current.gradient) <
-                _laplace_inner_tolerance(laplace, current.value))
+        small = d == 0 || maximum(abs, current.gradient) <
+            _laplace_inner_tolerance(laplace, current.value)
+        if small && stepped_exact
             converged = true
             break
         end
+        small && (exact = true)
         # The band, not just the slot. Each Newton step builds the curvature
         # over every block, and that is the bulk of the primal -- passing only
         # the slot alone left the count at its default, so the whole mode solve
@@ -3517,6 +3523,7 @@ function _laplace_newton_unit_mode(laplace::CTSEMLaplaceObjective, U::Integer,
             copyto!(Mwork.diag[1], B)
             Mwork
         end
+        used_exact = exact
         keep && (curvature = _laplace_block_dense!(_laplace_scratch_matrix!(laplace,
             Float64, d, d, :probe_curvature), M, laplace.units.blocks[U]))
         fac = _laplace_factor_repaired!(M, blocks; store=fstore)
@@ -3557,6 +3564,7 @@ function _laplace_newton_unit_mode(laplace::CTSEMLaplaceObjective, U::Integer,
             end
             scale /= 2
         end
+        accepted && (stepped_exact = used_exact)
         if accepted && sr1
             # `u` is the accepted point and `utry` the one it left; `gcur` and
             # `gtry` their gradients. The curvature is minus the gradient's
@@ -3577,9 +3585,8 @@ function _laplace_newton_unit_mode(laplace::CTSEMLaplaceObjective, U::Integer,
                     B[i, j] += rvec[i] * rvec[j] / den
                 end
             end
-            # `>=`: a gradient already zero has not halved, and must not walk on.
             exact = scale < 1 ||
-                maximum(abs, gcur) >= maximum(abs, gtry) / 2
+                maximum(abs, gcur) > maximum(abs, gtry) / 2
         end
         if !accepted && !exact
             # An updated curvature's step found nothing: form it exactly and
