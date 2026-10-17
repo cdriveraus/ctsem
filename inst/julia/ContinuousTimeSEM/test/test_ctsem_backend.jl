@@ -1013,6 +1013,30 @@ end
     end
 end
 
+@testset "where Hessians are dear, a point its exact Hessian certifies is not stepped off" begin
+    # A quadratic 40 parameters wide, its Hessian one gradient a parameter (the
+    # chord), started where the exact gain is 1e-3: within a certification
+    # tolerance of 1e-2, so the finish stops there on the one Hessian. Asked
+    # for the finish's own tolerance alone it steps on, leaves the Hessian
+    # behind, and forms another to certify where it went.
+    A = let Q = qr(randn(MersenneTwister(2), 40, 40)).Q
+        Matrix(Q * Diagonal(range(1, 50; length = 40)) * Q')
+    end
+    quad = p -> -dot(p .- 1, A * (p .- 1)) / 2
+    d = randn(MersenneTwister(3), 40)
+    d .*= sqrt(2e-3 / dot(d, A * d))            # an exact gain of 1e-3
+    x0 = ones(40) .+ d
+    held = _chord_run(quad, x0; certify_tol = 1e-2)
+    @test held.out.steps == 0
+    @test held.out.full_hessians == 1
+    @test held.out.gain ≈ 1e-3 rtol = 1e-6
+    @test held.out.hessian_at == x0
+    on = _chord_run(quad, x0)
+    @test on.out.steps >= 1
+    @test on.out.full_hessians == 2
+    @test on.out.gain < 1e-8
+end
+
 @testset "a Hessian the caller holds is walked on rather than formed again" begin
     # A stage resumed after a certification holds the certification's Hessian
     # at about where it starts. On a quadratic the walk on it converges in one

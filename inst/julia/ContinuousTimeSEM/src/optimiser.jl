@@ -1294,6 +1294,10 @@ budget. Either escape is taken only when it gains more than `escape_gain`,
 which the fit sets to its certification tolerance. Then, when `probe`, the
 flat-direction probe (`_ctsem_flat_probe`) at the final point.
 
+`certify_tol`, the certification's tolerance (the fit sets it; 0 turns it
+off), ends the steps on the chord and the subset at a point whose exact
+Hessian already predicts less gain than it, rather than at `tol`.
+
 `hessian0`, the Hessian of the MAXIMISED objective at `hessian0_at`, is one the
 caller holds -- the certification's, for a stage it resumed -- and is walked on
 in place of forming one at `x`, on the chord and the subset; the exact variant
@@ -1334,7 +1338,7 @@ function _ctsem_newton_finish(objective, x0, f0, G0, fg!; tol::Real=1e-8,
         flat_rtol::Real=_CTSEM_FLAT_RTOL, negative::Real=_CTSEM_NEGATIVE_RTOL,
         ladder=_CTSEM_SADDLE_LADDER, probe_lengths=_CTSEM_FLAT_PROBE_LENGTHS,
         max_escapes::Integer=3, value_at=nothing, handback::Bool=false,
-        escape_gain::Real=0.0, flat_escape::Bool=false,
+        escape_gain::Real=0.0, flat_escape::Bool=false, certify_tol::Real=0.0,
         reporter=nothing, hessian0=nothing, hessian0_at=nothing)
     curvature in (:exact, :chord, :subset) || throw(ArgumentError(
         "newton curvature must be exact, chord or subset, got $(curvature)"))
@@ -1568,6 +1572,20 @@ function _ctsem_newton_finish(objective, x0, f0, G0, fg!; tol::Real=1e-8,
             nt = newton(Hs, G, radius)
             nt === nothing && break
             gain = nt.gain
+            # Where Hessians are dear, a point whose exact Hessian (`at_x`)
+            # already puts the gain within the certification's tolerance
+            # (`certify_tol`) is certified as it stands. The steps aim at
+            # `tol`, a hundredth of that, as margin for L-BFGS's proxy, which
+            # can be optimistic; a gain read off the exact Hessian at the point
+            # needs none, and a step past `reuse_se` standard errors would need
+            # another Hessian to certify the point it reached. On ECLS-K at
+            # full N (529 parameters, 3 h a Hessian, a tolerance of 2) the
+            # finish re-formed its Hessian after 5 steps, then 1, then 1, each
+            # time to close part of what was already within the tolerance.
+            if curvature !== :exact && at_x && gain < certify_tol
+                converged = true
+                break
+            end
             if gain < tol
                 # On the exact variant a gap is closed when the Hessian here
                 # says so. One from an earlier point can call it closed on a
