@@ -617,6 +617,26 @@ ctScoreTest <- function(fit, covariates = NULL,
   list(inv = inv, rank = sum(keep))
 }
 
+# A joint test of the score `U` with covariance `V`: its statistic, the rank
+# it is on, and its p-value, from a studentised bootstrap of the units'
+# contributions `C` when the variance is theirs, else from the chi-square.
+# A robust joint test needs fewer terms than the units' contributions span:
+# with n units their spread has rank n - 1 at most, and at that rank the
+# statistic carries no information. On the Fisher search's final model, 42
+# state dependence terms over 40 people gave LM 902 on 39 df and a bootstrap
+# p of .0035, where no term came near and neither equation's joint test did
+# (p .98 and .84). NA there.
+.ctScoreJoint <- function(U, V, C = NULL, nboot = 1999L) {
+  j <- .ctScorePinv(V)
+  if (!j$rank) return(list(LM = NA_real_, df = 0L, p = NA_real_))
+  if (!is.null(C) && j$rank >= nrow(as.matrix(C)) - 1L)
+    return(list(LM = NA_real_, df = j$rank, p = NA_real_))
+  stat <- as.numeric(t(U) %*% j$inv %*% U)
+  p <- if (!is.null(C)) .ctScoreBoot(C, nboot) else
+    stats::pchisq(stat, j$rank, lower.tail = FALSE)
+  list(LM = stat, df = j$rank, p = p)
+}
+
 .ctScoreBH <- function(p) {
   out <- rep(NA_real_, length(p))
   ok <- !is.na(p)
@@ -929,10 +949,7 @@ ctScoreTest <- function(fit, covariates = NULL,
   Vmodel <- Idd - A %*% t(Idt)
   Vmodel <- (Vmodel + t(Vmodel)) / 2
   V <- if (variance == 'robust') .ctScoreSpread(Cstar) else Vmodel
-  joint <- .ctScorePinv(V)
-  lm <- as.numeric(t(Ustar) %*% joint$inv %*% Ustar)
-  pjoint <- if (variance == 'robust') .ctScoreBoot(Cstar, nboot) else
-    stats::pchisq(lm, joint$rank, lower.tail = FALSE)
+  joint <- .ctScoreJoint(Ustar, V, if (variance == 'robust') Cstar, nboot)
   heldinv <- .ctScorePinv(Idd)$inv
   held <- as.numeric(heldinv %*% Ustar)
   heldcov <- heldinv %*% V %*% heldinv
@@ -958,7 +975,7 @@ ctScoreTest <- function(fit, covariates = NULL,
   parameters$p_adj <- .ctScoreBH(parameters$p)
   if (q == 1L) parameters$class <- .ctScoreClasses(heldC)
   list(joint = data.frame(covariate = attr(G, 'name'), form = attr(G, 'form'),
-    basis = q, LM = lm, df = joint$rank, p = pjoint,
+    basis = q, LM = joint$LM, df = joint$df, p = joint$p,
     nmissing = attr(G, 'nmissing'), stringsAsFactors = FALSE),
     parameters = parameters[order(parameters$p, -abs(parameters$estimate /
       parameters$se)), , drop = FALSE])
@@ -1516,12 +1533,9 @@ ctScoreTest <- function(fit, covariates = NULL,
     projected = seq_along(delta) %in% chosen)
   per$p <- stats::pchisq(per$LM, 1, lower.tail = FALSE)
   jointtest <- function(idx, label) {
-    j <- .ctScorePinv(V[idx, idx, drop = FALSE])
-    stat <- as.numeric(t(Ustar[idx]) %*% j$inv %*% Ustar[idx])
-    p <- if (!j$rank) NA_real_ else if (!is.null(Cstar))
-      .ctScoreBoot(Cstar[, idx, drop = FALSE], nboot) else
-      stats::pchisq(stat, j$rank, lower.tail = FALSE)
-    data.frame(set = label, LM = stat, df = j$rank, p = p, stringsAsFactors = FALSE)
+    j <- .ctScoreJoint(Ustar[idx], V[idx, idx, drop = FALSE],
+      if (!is.null(Cstar)) Cstar[, idx, drop = FALSE], nboot)
+    data.frame(set = label, LM = j$LM, df = j$df, p = j$p, stringsAsFactors = FALSE)
   }
   out <- list(statedependence = NULL, volatility = NULL, fixed = NULL)
   latent <- base$latentNames

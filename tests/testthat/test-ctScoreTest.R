@@ -50,6 +50,19 @@ skip_on_32bit()
     backend = 'julia', cores = 1, verbose = 0)))
 })
 
+test_that("a robust joint test with as many terms as the units span is not reported", {
+  set.seed(4)
+  # 12 units: their contributions span 11 dimensions at most.
+  wide <- matrix(stats::rnorm(12 * 14), 12, 14)
+  joint <- ctsem:::.ctScoreJoint(colSums(wide), ctsem:::.ctScoreSpread(wide), wide, 199)
+  expect_true(is.na(joint$p))
+  expect_true(is.na(joint$LM))
+  narrow <- wide[, 1:3]
+  joint <- ctsem:::.ctScoreJoint(colSums(narrow), ctsem:::.ctScoreSpread(narrow), narrow, 199)
+  expect_equal(joint$df, 3L)
+  expect_true(joint$p > 0 && joint$p <= 1)
+})
+
 test_that("the per-subject pieces reproduce the engine's derivatives", {
   x <- .score_fit('cov')
   fit <- x$fit
