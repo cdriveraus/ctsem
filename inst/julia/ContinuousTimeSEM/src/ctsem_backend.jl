@@ -1982,13 +1982,13 @@ route has one, the endgame (`_ctsem_newton_finish`).
 The endgame's controls: `newton` turns it on; `certify` says a certification
 will read what it returns, which adds the flat-direction probe and, on a route
 whose Hessian is expensive (Laplace), is what the finish runs for at all;
-`newton_curvature` is `:auto` (the route's own, `_ctsem_finish_curvature`,
-by what a Hessian costs against what the stage has spent), `:exact`, `:chord`
-or `:subset`; `newton_switch` is the predicted gain at which L-BFGS hands over
+`newton_curvature` is `:auto` (the route's own, `_ctsem_finish_curvature`),
+`:exact`, `:chord` or `:subset`; `newton_switch` is the predicted gain at which L-BFGS hands over
 once the stage has spent at least a Hessian's cost (`_ctsem_hessian_cost`),
 and a finish whose first step shows that hand-over was early gives the point
 back to L-BFGS, which runs on to its own stopping rule before the finish runs
-again; `newton_maxit` is the exact finish's step budget; `newton_reuse` and
+again; `newton_maxit` is the finish's shortest walk on one Hessian, and the exact
+variant's step budget; `newton_reuse` and
 `flat_rtol`
 are the finish's rules, passed from R so one number serves both sides.
 `lbfgs_inverse` is an initial inverse Hessian for L-BFGS (`_ctsem_lbfgs`'s
@@ -2439,13 +2439,11 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
         end
         # A hand-over on L-BFGS's proxy rather than at its stopping rule, which
         # the finish checks with its first step (`handback`) where its Hessian
-        # cost no more than the stage had spent; the same comparison decides
-        # whether the finish may refresh its Hessian (`_ctsem_finish_curvature`).
+        # cost no more than the stage had spent.
         early = handover[] > gap_tol
         affordable = hessian_cost <= result.iterations
         finish_curvature = Symbol(newton_curvature) === :auto ?
-            _ctsem_finish_curvature(objective, length(start_values),
-                result.iterations) : Symbol(newton_curvature)
+            route_curvature : Symbol(newton_curvature)
         finish = _ctsem_newton_finish(objective, minimizer, f0, G0, fg!;
             tol=gap_tol, maxit=newton_maxit, callback=record,
             iteration0=result.iterations + spent.steps[],

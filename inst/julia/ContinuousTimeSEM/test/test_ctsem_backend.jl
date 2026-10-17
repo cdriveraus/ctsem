@@ -1711,19 +1711,14 @@ end
     @test bare.newton_hessians == 0
 end
 
-@testset "the finish refreshes a Hessian only where it costs no more than the stage spent" begin
-    # A forward-over-reverse Hessian costs about a gradient per parameter: the
-    # marginal route refreshes it (`:exact`) once the stage has spent at least
-    # that, and walks one (the chord) while it would cost more -- whatever the
-    # model's size. The Laplace route walks one always.
+@testset "every route walks one Hessian, whatever it costs" begin
+    # Whether a fresh Hessian pays is the walk's to judge, against what one
+    # costs (`_ctsem_hessian_cost`): no route refreshes at every step by size.
     laplace = _endgame_laplace_objective(; nsubjects=5)
-    marginal = laplace.objective
     curvature = ContinuousTimeSEM._ctsem_finish_curvature
-    @test curvature(marginal, 30, 30) === :exact
-    @test curvature(marginal, 30, 29) === :chord
-    @test curvature(marginal, 529, 290) === :chord      # ECLS-K at its hand-over
-    @test curvature(marginal, 529, 1137) === :exact     # and at L-BFGS's own stop
-    @test curvature(laplace, 5, 10_000) === :chord
-    @test curvature(_endgame_mock(p -> -sum(abs2, p)), 100, 100) === :exact
-    @test curvature(_endgame_mock(p -> -sum(abs2, p)), 100, 99) === :chord
+    @test curvature(laplace.objective) === :chord
+    @test curvature(laplace) === :chord
+    @test curvature(nothing) === nothing
+    @test ContinuousTimeSEM._ctsem_hessian_cost(laplace.objective, 529) == 529
+    @test ContinuousTimeSEM._ctsem_hessian_cost(laplace, 529) == 1058
 end

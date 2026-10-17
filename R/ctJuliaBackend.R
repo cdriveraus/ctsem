@@ -4957,9 +4957,9 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
     batch = !state_explicit && !identical(optimcontrol$batch, FALSE),
     newton = !state_explicit && !identical(optimcontrol$newton, FALSE),
     # `newton` may also name what the finish's steps are taken against --
-    # 'exact', 'chord' or 'subset'; otherwise the route's own, the exact
-    # Hessian where it is a few gradients and the chord where it is `2 npar`
-    # (Laplace). See `_ctsem_newton_finish`.
+    # 'exact', 'chord' or 'subset'; otherwise the route's own, the chord: one
+    # Hessian walked with SR1 updates and refreshed when its walk stops paying.
+    # See `_ctsem_newton_finish`.
     newton_curvature = if (is.character(optimcontrol$newton))
       as.character(optimcontrol$newton)[1L] else "auto",
     # Whether a certification will read what the endgame returns. It adds the
