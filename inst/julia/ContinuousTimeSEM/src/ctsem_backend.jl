@@ -2160,15 +2160,11 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
     stopped_by_gap = Ref(false)
     stopped_by_stall = Ref(false)
     stopped_by_progress = Ref(false)
-    # A stall is no progress over a full turnover of L-BFGS's memory: judged
-    # over fewer iterations than it keeps pairs, a fit is judged before its
-    # curvature has been renewed. So the window, and the cooldown with it, are
-    # at least `lbfgs_pairs` (one a parameter by default); the 80 and 30 they
-    # were set at are the floor, for the small models they were set on.
-    stall_scale = stall_window > 0 ? max(1.0, lbfgs_pairs / stall_window) : 1.0
-    stall = CTSEMStallWatch(window=round(Int, stall_window * stall_scale),
-        fraction=stall_fraction,
-        cooldown=round(Int, stall_cooldown * stall_scale), tighten=stall_tighten,
+    # The window is not scaled to L-BFGS's memory: on a large model that made
+    # the watch, the one thing that ends a creeping stage, answer up to twelve
+    # times later, and progress does not wait for the memory to turn over.
+    stall = CTSEMStallWatch(window=stall_window, fraction=stall_fraction,
+        cooldown=stall_cooldown, tighten=stall_tighten,
         tightenings=stall_tightenings, carried=stall_carried, alone=stall_alone)
     # Under `verbose`, each stall check that found a flat coordinate says which,
     # and what pulling back gained -- a check that does not stop the fit
