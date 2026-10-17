@@ -5096,6 +5096,9 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
   if (!is.null(optimcontrol$lbfgs_memory)) {
     common$lbfgs_memory <- as.integer(optimcontrol$lbfgs_memory)[1L]
   }
+  # L-BFGS's starting curvature from the per-unit score outer products, rebuilt
+  # every iteration (`_ctsem_scores_inverse`); with lbfgs_memory = 0, BHHH.
+  if (isTRUE(optimcontrol$lbfgs_scores)) common$lbfgs_scores <- TRUE
   # L-BFGS's initial inverse Hessian per coordinate, and a non-monotone line
   # search (see `_ctsem_lbfgs` in optimiser.jl).
   if (!is.null(optimcontrol$lbfgs_diagonal)) {

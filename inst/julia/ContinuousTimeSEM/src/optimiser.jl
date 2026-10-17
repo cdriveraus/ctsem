@@ -215,7 +215,7 @@ function _ctsem_lbfgs(fg!, x0::AbstractVector; memory::Integer=20,
         callback=nothing, directional=nothing, batch=nothing,
         c1::Real=1e-4, maxbacktrack::Integer=40, iteration0::Integer=0,
         diagonal::Bool=false, nonmonotone::Real=0.0, gll::Integer=0,
-        inverse::Union{Nothing,Matrix{Float64}}=nothing)
+        inverse::Union{Nothing,Matrix{Float64}}=nothing, inverse_at=nothing)
     n = length(x0)
     x = collect(Float64, x0)
     dinv = metric === nothing ? ones(n) : begin
@@ -257,8 +257,17 @@ function _ctsem_lbfgs(fg!, x0::AbstractVector; memory::Integer=20,
     # below the recent level, which lets a step cross a curved valley that a
     # monotone search would cut short. `eta = 0` makes `C` the last value: the
     # search is then exactly the monotone Armijo one.
-    B = nothing; Dinv = inverse
-    learn = diagonal && inverse === nothing
+    # `inverse_at(x)`, when given, is the initial inverse Hessian at the point
+    # `x` the run has reached (or `nothing` to keep the last): rebuilt after
+    # every accepted step, the pairs correcting it as they would a fixed one.
+    # A reset returns to the latest, not to the caller's `inverse`.
+    Dbase = inverse
+    if inverse_at !== nothing
+        D0 = inverse_at(x)
+        D0 === nothing || (Dbase = D0)
+    end
+    B = nothing; Dinv = Dbase
+    learn = diagonal && Dbase === nothing && inverse_at === nothing
     eta = clamp(Float64(nonmonotone), 0.0, 1.0)
     C = f; Q = 1.0; recent = [f]
     # `gll`: Grippo, Lampariello & Lucidi's (1986) rule instead -- a step is
@@ -272,7 +281,10 @@ function _ctsem_lbfgs(fg!, x0::AbstractVector; memory::Integer=20,
         # almost nothing -- so 0.1 in model units is an enormous raw step. One
         # raw unit at most, then: a long first step is how a fit once went from
         # raw 0 to raw 20.9 and ended where every transform is flat.
-        if isempty(M.S)
+        # A step from a curvature the caller rebuilds at every point is a
+        # Newton-like one and keeps its length; capped, the first step of each
+        # iteration of pure BHHH (no pairs) would be one raw unit at most.
+        if isempty(M.S) && inverse_at === nothing
             len = norm(s)
             len > 1 && (s .*= 1 / len)
         end
@@ -281,7 +293,7 @@ function _ctsem_lbfgs(fg!, x0::AbstractVector; memory::Integer=20,
             # Not a descent direction: the memory has gone bad. Start it again.
             isempty(M.S) && (lsfail = true; break)
             _ctsem_lbfgs_reset!(M); h0 = Float64(initial_alpha) / max(metric_norm(G), eps())
-            B = nothing; Dinv = inverse; C = f; Q = 1.0; recent = [f]
+            B = nothing; Dinv = Dbase; C = f; Q = 1.0; recent = [f]
             continue
         end
         # The first trial carries the gradient too: most steps are accepted
@@ -328,7 +340,7 @@ function _ctsem_lbfgs(fg!, x0::AbstractVector; memory::Integer=20,
                 retried = true
                 _ctsem_lbfgs_reset!(M)
                 h0 = Float64(initial_alpha) / max(metric_norm(G), eps())
-                B = nothing; Dinv = inverse; C = f; Q = 1.0; recent = [f]
+                B = nothing; Dinv = Dbase; C = f; Q = 1.0; recent = [f]
                 continue
             end
             lsfail = true
@@ -346,6 +358,13 @@ function _ctsem_lbfgs(fg!, x0::AbstractVector; memory::Integer=20,
             Dinv = 1 ./ B
         end
         x = xn; f = fn; G = Gn
+        if inverse_at !== nothing
+            Dn = inverse_at(x)
+            if Dn !== nothing
+                Dbase = Dn
+                Dinv = Dn
+            end
+        end
         push!(recent, f)
         Qn = eta * Q + 1
         C = (eta * Q * C + f) / Qn; Q = Qn

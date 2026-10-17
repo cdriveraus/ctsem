@@ -1351,6 +1351,85 @@ function _ctsem_optimise_trial(o::CTSEMOptimisable, x, want_gradient::Bool,
 end
 
 """
+    CTSEMScoreStore(nunits, npar)
+
+The per-unit scores at the last point an optimiser evaluated with a gradient,
+for R's `lbfgs_scores` control: `x` the point, `S` its units' scores without
+the prior (units by parameters), `valid` whether they describe `x`.
+"""
+mutable struct CTSEMScoreStore
+    x::Vector{Float64}
+    S::Matrix{Float64}
+    valid::Bool
+end
+CTSEMScoreStore(nunits::Integer, npar::Integer) =
+    CTSEMScoreStore(fill(NaN, npar), zeros(nunits, npar), false)
+
+"""Whether a route can give the optimiser per-unit scores with its gradient:
+the marginal and Laplace routes, without a sampled TI predictor (whose
+imputation density is not a unit's)."""
+_ctsem_scores_supported(o::CTSEMObjective) = isempty(o.ti_missing_parameter)
+_ctsem_scores_supported(o) = false
+
+"""
+    _ctsem_optimise_trial_scores(objective, x, gradient_method, limit, log, store)
+
+`_ctsem_optimise_trial` with a gradient, taken as the sum of the units' scores
+(and the prior's gradient), the scores kept in `store` for the starting
+curvature (`_ctsem_scores_inverse`). The same validity rule.
+"""
+function _ctsem_optimise_trial_scores(o::CTSEMObjective, x, gradient_method,
+        limit::Real, log, store::CTSEMScoreStore)
+    store.valid = false
+    xv = collect(Float64, x)
+    r = try
+        ctsem_subject_gradients(o, xv; prior=false)
+    catch err
+        _ctsem_must_propagate(err) && rethrow()
+        nothing
+    end
+    (r === nothing || !isfinite(r.value) || !all(isfinite, r.scores)) &&
+        return (evaluated=nothing, valid=false)
+    g = vec(sum(r.scores; dims=1))
+    _ctsem_log_prior_gradient!(g, o, xv)
+    valid = all(isfinite, g) && all(abs(v) < limit for v in g)
+    if valid
+        copyto!(store.S, r.scores); copyto!(store.x, xv); store.valid = true
+    end
+    return (evaluated=(value=r.value, gradient=g), valid=valid)
+end
+
+"""
+    _ctsem_scores_inverse(store, x, precision)
+
+The inverse of `S'S + Diagonal(precision)` from the scores `store` holds, when
+they are `x`'s; otherwise `nothing`. The outer product of the units' scores is
+the BHHH estimate of the information, and with many units to a parameter it
+carries most of the curvature's conditioning (the bench, dev1, 2026-10-17:
+eigenvalue spreads of 2-30 left after it against 10-1000 after per-parameter
+scaling). One product and one factorisation an iteration, never per row.
+"""
+function _ctsem_scores_inverse(store::CTSEMScoreStore, x::AbstractVector,
+        precision::AbstractVector)
+    (store.valid && store.x == x) || return nothing
+    B = transpose(store.S) * store.S
+    @inbounds for i in eachindex(precision)
+        B[i, i] += precision[i]
+    end
+    scale = maximum(abs, diag(B); init=0.0)
+    (isfinite(scale) && scale > 0) || return nothing
+    shift = 0.0
+    for _ in 1:8
+        C = copy(B)
+        shift > 0 && (C[diagind(C)] .+= shift)
+        F = cholesky!(Symmetric(C); check=false)
+        issuccess(F) && return Matrix(inv(F))
+        shift = shift == 0 ? 1e-10 * scale : 100 * shift
+    end
+    return nothing
+end
+
+"""
     CTSEMPinnedObjective(objective, index, value)
 
 `objective` with the coordinates in `index` held at `value`.
@@ -2018,7 +2097,8 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
     progress::Bool=verbose, progress_label::AbstractString="optimise",
     progress_budget::Bool=false, progress_every::Real=0.0,
     gap_tol::Real=0.0, converge_tol::Real=1e-6,
-    precondition=nothing, lbfgs_inverse=nothing, initial_alpha::Real=0.1,
+    precondition=nothing, lbfgs_inverse=nothing, lbfgs_scores::Bool=false,
+    initial_alpha::Real=0.1,
     overshoot_probe=_CTSEM_OVERSHOOT_PROBE[],
     stall_window::Integer=80, stall_fraction::Real=1e-2,
     stall_cooldown::Integer=30, stall_tighten::Real=0.1,
@@ -2055,13 +2135,21 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
     current_x = copy(start_values)
     # Over whichever objective is in force: the fit's own, or a batch of its
     # units (see `_ctsem_batch_plan`), which is the same route over fewer.
+    # Per-unit scores for L-BFGS's starting curvature (`lbfgs_scores`), kept
+    # from every full-data trial with a gradient. Made before the closure that
+    # writes it.
+    score_store = lbfgs_scores && _ctsem_scores_supported(objective) ?
+        CTSEMScoreStore(_ctsem_nunits(objective), length(start_values)) : nothing
     trial_fg! = function (target, F, G, x)
         # The route decides what a usable trial point is: see
         # `_ctsem_optimise_trial`. On the laplace route a finite value at a
         # point whose inner Newton did not converge is *not* usable, because the
         # objective is only defined at the mode.
-        trial = _ctsem_optimise_trial(target, x, G !== nothing,
-            gradient_method, gradient_limit, call_log)
+        trial = score_store !== nothing && G !== nothing && target === objective ?
+            _ctsem_optimise_trial_scores(target, x, gradient_method,
+                gradient_limit, call_log, score_store) :
+            _ctsem_optimise_trial(target, x, G !== nothing,
+                gradient_method, gradient_limit, call_log)
         evaluated = trial.evaluated
         valid = trial.valid
         if !valid
@@ -2087,8 +2175,14 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
     # sampled TI predictor, and enough units (a prior is separated out and does
     # not stop it; see `_ctsem_batch_plan`). Otherwise `nothing`, and the run
     # below is ordinary L-BFGS on the whole data.
-    batcher = batch ? _ctsem_batch_plan(objective, trial_fg!; theta=batch_theta) :
-        nothing
+    # Not with `lbfgs_scores`: a batch evaluates a subset of the units, whose
+    # scores are not the information of the whole.
+    batcher = batch && score_store === nothing ?
+        _ctsem_batch_plan(objective, trial_fg!; theta=batch_theta) : nothing
+    score_precision = _ctsem_prior_precision(_ctsem_prior_objective(objective),
+        length(start_values))
+    score_inverse = score_store === nothing ? nothing :
+        (y -> _ctsem_scores_inverse(score_store, y, score_precision))
     batching() = batcher !== nothing && !_ctsem_batch_full(batcher)
     # The endgame (`_ctsem_newton_finish`), on a route that has one. Where a
     # Hessian costs a few gradients it runs whenever there is a stopping rule
@@ -2328,7 +2422,8 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
     result = _ctsem_lbfgs(fg!, lbfgs_start; memory=lbfgs_pairs,
         diagonal=lbfgs_diagonal, nonmonotone=lbfgs_nonmonotone, gll=Int(lbfgs_gll),
         metric=_ctsem_metric(precondition, length(start_values)),
-        inverse=inverse, initial_alpha=Float64(initial_alpha),
+        inverse=inverse, inverse_at=score_inverse,
+        initial_alpha=Float64(initial_alpha),
         maxiter=max(0, Int(maxiter) - sgd_iterations),
         g_tol=g_tol, f_tol=f_tol, x_tol=x_tol, callback=watch,
         directional=directional, batch=batcher, iteration0=sgd_iterations)
@@ -2480,7 +2575,8 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
         resumed = _ctsem_lbfgs(fg!, minimizer; memory=lbfgs_pairs,
             diagonal=lbfgs_diagonal, nonmonotone=lbfgs_nonmonotone, gll=Int(lbfgs_gll),
             metric=_ctsem_metric(precondition, length(start_values)),
-            inverse=inverse, initial_alpha=Float64(initial_alpha),
+            inverse=inverse, inverse_at=score_inverse,
+            initial_alpha=Float64(initial_alpha),
             maxiter=max(0, Int(maxiter) - result.iterations - spent.steps[]),
             g_tol=g_tol, f_tol=f_tol, x_tol=x_tol, callback=watch,
             directional=directional, iteration0=result.iterations + spent.steps[])

@@ -30,6 +30,10 @@
 #'  by default.}
 #'  \item{\code{maxiter}}{Both. Iteration cap. Default 1000 on julia, mize's on
 #'  stan.}
+#'  \item{\code{lbfgs_scores}}{Julia. Default FALSE. Starts every L-BFGS
+#'  iteration from the outer product of the per-unit scores at that point plus
+#'  the prior's precision, the BHHH estimate of the curvature; with
+#'  \code{lbfgs_memory = 0} the steps are BHHH's. Turns off batching.}
 #'  \item{\code{lbfgs_memory}}{Both. How many curvature pairs L-BFGS keeps.
 #'  Default on julia one per free parameter, at least 20 and at most 1000;
 #'  mize's on stan.}
