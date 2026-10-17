@@ -4890,6 +4890,12 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
   # `progress` at the foot of the list for why it is not simply `verbose`.
   reporting <- isTRUE(.ctJuliaOr(optimcontrol$progress, .ctBackendReporting(verbose)))
   common <- list(
+    # Not scaled with the parameters. A first stage that is slow but not
+    # stuck has no other end -- the stall watch only cools down there -- and
+    # ten iterations a parameter let a 697-parameter Laplace fit creep on at
+    # 2e-5 log likelihood an iteration for days rather than hours (affint,
+    # 2026-10-17). A fit this stops short is resumed by the certification,
+    # whose stage does stop on progress alone (`CTSEMStallWatch`).
     maxiter = as.integer(.ctJuliaOr(maxiter, .ctJuliaOr(optimcontrol$maxiter, 1000L))),
     g_tol = .ctJuliaOr(optimcontrol$g_tol, 1e-8),
     f_tol = .ctJuliaOr(optimcontrol$tol, 0),
@@ -4951,9 +4957,9 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
     batch = !state_explicit && !identical(optimcontrol$batch, FALSE),
     newton = !state_explicit && !identical(optimcontrol$newton, FALSE),
     # `newton` may also name what the finish's steps are taken against --
-    # 'exact', 'chord' or 'subset'; otherwise the route's own, the exact
-    # Hessian where it is a few gradients and the chord where it is `2 npar`
-    # (Laplace). See `_ctsem_newton_finish`.
+    # 'exact', 'chord' or 'subset'; otherwise the route's own, the chord: one
+    # Hessian walked with SR1 updates and refreshed when its walk stops paying.
+    # See `_ctsem_newton_finish`.
     newton_curvature = if (is.character(optimcontrol$newton))
       as.character(optimcontrol$newton)[1L] else "auto",
     # Whether a certification will read what the endgame returns. It adds the

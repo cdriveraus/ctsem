@@ -1,0 +1,40 @@
+# curvature grid: the finish's steps on the route's own curvature (default)
+# against each forced (exact, chord), on the marginal route. The growth cells
+# and bigp have more parameters than the 30 at which the route's choice used
+# to switch to the chord; the small cells take the exact Hessian by default,
+# and are paired with the chord to see whether it serves them as well.
+#
+# id                                    model        data route      start                    variant
+growth10.aug.d1.s1.default              growth10     1    augmented  default:1                default
+growth10.aug.d1.s1.exact                growth10     1    augmented  default:1                exact
+growth10.aug.d1.s1.chord                growth10     1    augmented  default:1                chord
+growth10.aug.d2.s1.default              growth10     2    augmented  default:1                default
+growth10.aug.d2.s1.exact                growth10     2    augmented  default:1                exact
+growth10.aug.d2.s1.chord                growth10     2    augmented  default:1                chord
+growthm10.aug.d1.s1.default             growthm10    1    augmented  default:1                default
+growthm10.aug.d1.s1.exact               growthm10    1    augmented  default:1                exact
+growthm10.aug.d1.s1.chord               growthm10    1    augmented  default:1                chord
+growthm10.aug.d2.s1.default             growthm10    2    augmented  default:1                default
+growthm10.aug.d2.s1.exact               growthm10    2    augmented  default:1                exact
+growthm10.aug.d2.s1.chord               growthm10    2    augmented  default:1                chord
+bigp.aug.d1.s1.default                  bigp         1    augmented  default:1                default
+bigp.aug.d1.s1.exact                    bigp         1    augmented  default:1                exact
+bigp.aug.d1.s1.chord                    bigp         1    augmented  default:1                chord
+cf_gaussian.aug.d1.s1.default           cf_gaussian  1    augmented  default:1                default
+cf_gaussian.aug.d1.s1.chord             cf_gaussian  1    augmented  default:1                chord
+cf_binary.aug.d1.s1.default             cf_binary    1    augmented  default:1                default
+cf_binary.aug.d1.s1.chord               cf_binary    1    augmented  default:1                chord
+cf_ordinal.aug.d1.s1.default            cf_ordinal   1    augmented  default:1                default
+cf_ordinal.aug.d1.s1.chord              cf_ordinal   1    augmented  default:1                chord
+cf_mixed.aug.d1.s1.default              cf_mixed     1    augmented  default:1                default
+cf_mixed.aug.d1.s1.chord                cf_mixed     1    augmented  default:1                chord
+mvmix.aug.cfg.s1.default                mvmix        cfg  augmented  default:1                default
+mvmix.aug.cfg.s1.chord                  mvmix        cfg  augmented  default:1                chord
+small.aug.d1.s1.default                 small        1    augmented  default:1                default
+small.aug.d1.s1.chord                   small        1    augmented  default:1                chord
+nonlin.aug.d1.s1.default                nonlin       1    augmented  default:1                default
+nonlin.aug.d1.s1.chord                  nonlin       1    augmented  default:1                chord
+long.aug.d1.s1.default                  long         1    augmented  default:1                default
+long.aug.d1.s1.chord                    long         1    augmented  default:1                chord
+panel.aug.d1.s1.default                 panel        1    augmented  default:1                default
+panel.aug.d1.s1.chord                   panel        1    augmented  default:1                chord

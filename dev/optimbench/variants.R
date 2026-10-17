@@ -50,6 +50,13 @@ BENCH_VARIANTS <- list(
   mem100 = list(optimcontrol = list(lbfgs_memory = 100L)),
   mem500 = list(optimcontrol = list(lbfgs_memory = 500L)),
 
+  # The finish's steps on one curvature whatever the route would choose
+  # (`_ctsem_finish_curvature`): a fresh exact Hessian whenever a step is slow,
+  # or one Hessian walked with SR1 updates and refreshed when its walk stops
+  # paying. Paired with `default`: what the route's own choice costs.
+  exact = list(optimcontrol = list(newton = "exact")),
+  chord = list(optimcontrol = list(newton = "chord")),
+
   # The sgd phase (`_ctsem_sgd`) before L-BFGS: optimcontrol$stochastic.
   stoch = list(optimcontrol = list(stochastic = TRUE)),
 

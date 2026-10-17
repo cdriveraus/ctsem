@@ -1502,14 +1502,17 @@ end
 @testset "the progress callback hears the finish, at the finish's own point" begin
     # The callback, which R's checkpointing reads its restart point from, was
     # called from L-BFGS only, so it fell silent for as long as the finish ran:
-    # five hours on the SNSF pilot. Here L-BFGS converges into the saddle on
-    # y = 0 and the finish escapes it, so a point off that line can only have
-    # come from the finish.
-    f = p -> -0.5 * p[1]^2 + 0.5 * p[2]^2 - 0.25 * p[2]^4
+    # five hours on the SNSF pilot. Here L-BFGS climbs towards the saddle on
+    # y = 0 (the eighth coordinate) and the finish escapes it, so a point off
+    # that line can only have come from the finish. The ill-conditioned block
+    # beside it keeps L-BFGS going past a Hessian's cost, so the hand-over is
+    # early and the finish has a Newton step to take before the escape.
+    D = collect(range(1.0, 1e3; length = 7))
+    f = p -> -0.5 * sum(D .* p[1:7] .^ 2) + 0.5 * p[8]^2 - 0.25 * p[8]^4
     seen = Tuple{Int,Float64,Vector{Float64}}[]
     cb = (iteration, total, value, gnorm, x) ->
         (push!(seen, (Int(iteration), Float64(value), copy(x))); nothing)
-    r = ContinuousTimeSEM.ctsem_optimize(_endgame_mock(f), [0.5, 0.0];
+    r = ContinuousTimeSEM.ctsem_optimize(_endgame_mock(f), vcat(ones(7), 0.0);
         maxiter=200, gap_tol=1e-8, newton=true,
         certify=false, progress=false, verbose=false, overshoot_probe=:off,
         progress_callback=cb, callback_every=0.0)
@@ -1521,8 +1524,8 @@ end
     # finish being heard is a call between L-BFGS's last iteration and it.
     @test r.newton_steps >= 2
     @test any(s -> last_lbfgs < s[1] < r.iterations, seen)
-    @test all(s -> abs(s[3][2]) < 1e-8, filter(s -> s[1] <= last_lbfgs, seen))
-    @test any(s -> abs(s[3][2]) > 0.5, finish)
+    @test all(s -> abs(s[3][8]) < 1e-8, filter(s -> s[1] <= last_lbfgs, seen))
+    @test any(s -> abs(s[3][8]) > 0.5, finish)
     # Each point the finish reports is the one its value was taken at -- not the
     # last point evaluated, which may be a Hessian column or a rejected trial.
     @test all(s -> s[2] ≈ f(s[3]), finish)
@@ -1530,14 +1533,16 @@ end
 end
 
 @testset "ctsem_optimize goes back to L-BFGS when the hand-over was early" begin
-    # The quadratic with the hundredfold Hessian, and the switch set so high
-    # that L-BFGS hands over after its first iteration: the finish hands back,
+    # A quadratic L-BFGS needs more than a Hessian's cost (8 gradients) for,
+    # with a Hessian a hundredfold too large, and the switch set so high that
+    # L-BFGS hands over as soon as it has spent that: the finish hands back,
     # L-BFGS runs to its own stopping rule, and the finish runs again there.
     # Everything either finish did is counted.
-    c = [1.0, -2.0]
-    f = p -> -0.5 * sum(abs2, p .- c)
-    m = _endgame_mock(f; h = p -> -100.0 * Matrix{Float64}(I, 2, 2))
-    r = ContinuousTimeSEM.ctsem_optimize(m, [4.0, 3.0]; maxiter=200,
+    D = collect(range(1.0, 1e3; length = 8))
+    c = collect(range(-1.0, 1.0; length = 8))
+    f = p -> -0.5 * sum(D .* (p .- c) .^ 2)
+    m = _endgame_mock(f; h = p -> -100.0 * Matrix(Diagonal(D)))
+    r = ContinuousTimeSEM.ctsem_optimize(m, c .+ 1.0; maxiter=200,
         gap_tol=1e-8, newton=true, newton_switch=1e6,
         certify=false, progress=false, verbose=false, overshoot_probe=:off)
     @test r.newton_handback
@@ -1548,7 +1553,7 @@ end
     @test r.iterations > r.newton_steps
     @test r.stop_reason in ("gap", "gradient", "linesearch")
     # With the Hessian right, the early hand-over is borne out and kept.
-    kept = ContinuousTimeSEM.ctsem_optimize(_endgame_mock(f), [4.0, 3.0];
+    kept = ContinuousTimeSEM.ctsem_optimize(_endgame_mock(f), c .+ 1.0;
         maxiter=200, gap_tol=1e-8, newton=true,
         newton_switch=1e6, certify=false, progress=false, verbose=false,
         overshoot_probe=:off)
@@ -1578,33 +1583,39 @@ end
     @test !any(occursin("ITERATION CAP", l) for l in lines)
 end
 
-@testset "ctsem_optimize runs L-BFGS to its own rule where a Hessian is too dear to discard" begin
-    # A Hessian costing more gradients than the finish has steps (4 parameters,
-    # `newton_maxit = 3`) is not formed on L-BFGS's predicted gain, however
-    # high the switch: L-BFGS runs on to its own stopping rule, as on the
-    # Laplace route, and the finish starts there. With the switch alone it
-    # handed over after one iteration, as a 529-parameter marginal fit did
-    # with 140 nats to climb (ECLS-K, dev2).
-    c = [1.0, -2.0, 0.5, 3.0]
-    f = p -> -0.5 * sum(abs2, p .- c)
-    m = _endgame_mock(f)
-    r = ContinuousTimeSEM.ctsem_optimize(m, [4.0, 3.0, -1.0, 0.0]; maxiter=200,
-        gap_tol=1e-8, newton=true, newton_switch=1e6,
-        newton_maxit=3, certify=false, progress=false, verbose=false,
-        overshoot_probe=:off)
-    @test maximum(abs, r.minimizer .- c) < 1e-6
-    @test r.iterations - r.newton_steps > 1     # L-BFGS went on
-    @test r.newton_hessians == m.hessians[] <= 2
-    @test r.stop_reason in ("gap", "gradient", "linesearch")
-    @test !r.newton_handback
-    # Where the Hessian is cheap enough to throw away, the switch still hands
-    # over at once (4 parameters within `newton_maxit = 30`).
-    cheap = ContinuousTimeSEM.ctsem_optimize(_endgame_mock(f), [4.0, 3.0, -1.0, 0.0];
-        maxiter=200, gap_tol=1e-8, newton=true,
-        newton_switch=1e6, certify=false, progress=false, verbose=false,
-        overshoot_probe=:off)
-    @test maximum(abs, cheap.minimizer .- c) < 1e-8
-    @test cheap.iterations - cheap.newton_steps == 1
+@testset "an early hand-over waits until L-BFGS has spent what a Hessian costs" begin
+    # An ill-conditioned quadratic L-BFGS needs more than 8 iterations for, 8
+    # parameters wide, so a Hessian costs 8 gradients. However high the switch,
+    # L-BFGS hands over only once it has spent that, and the finish's step
+    # budget no longer decides anything. With the switch alone it handed over
+    # after one iteration, as a 529-parameter marginal fit did with 140 nats
+    # to climb (ECLS-K, dev2).
+    D = collect(range(1.0, 1e3; length = 8))
+    c = collect(range(-1.0, 1.0; length = 8))
+    f = p -> -0.5 * sum(D .* (p .- c) .^ 2)
+    x0 = c .+ 1.0
+    kw = (maxiter=500, gap_tol=1e-8, certify=false, progress=false,
+        verbose=false, overshoot_probe=:off)
+    alone = ContinuousTimeSEM.ctsem_optimize(_endgame_mock(f), x0; newton=false, kw...)
+    @test alone.iterations > 8
+    for budget in (3, 30)
+        r = ContinuousTimeSEM.ctsem_optimize(_endgame_mock(f), x0; newton=true,
+            newton_switch=1e6, newton_maxit=budget, kw...)
+        @test r.iterations - r.newton_steps == 8
+        @test maximum(abs, r.minimizer .- c) < 1e-8
+    end
+    # Where L-BFGS stops by its own rule before it has spent a Hessian's cost
+    # -- a well-conditioned quadratic 40 wide -- the finish starts there.
+    D40 = collect(range(1.0, 2.0; length = 40))
+    c40 = collect(range(-1.0, 1.0; length = 40))
+    f40 = p -> -0.5 * sum(D40 .* (p .- c40) .^ 2)
+    own = ContinuousTimeSEM.ctsem_optimize(_endgame_mock(f40), c40 .+ 1.0;
+        newton=false, kw...)
+    @test own.iterations < 40
+    r40 = ContinuousTimeSEM.ctsem_optimize(_endgame_mock(f40), c40 .+ 1.0;
+        newton=true, newton_switch=1e6, kw...)
+    @test r40.iterations - r40.newton_steps == own.iterations
+    @test !r40.newton_handback
 end
 
 # Shared with `test_laplace.jl`; see `laplace_fixtures.jl`.
@@ -1700,16 +1711,14 @@ end
     @test bare.newton_hessians == 0
 end
 
-@testset "the marginal route takes the chord where a Hessian outprices its steps" begin
-    # A forward-over-reverse Hessian costs about a gradient per parameter, and
-    # a refresh can save at most the finish's step budget: above that many
-    # parameters the marginal route walks one Hessian (the chord), as the
-    # Laplace route always has.
+@testset "every route walks one Hessian, whatever it costs" begin
+    # Whether a fresh Hessian pays is the walk's to judge, against what one
+    # costs (`_ctsem_hessian_cost`): no route refreshes at every step by size.
     laplace = _endgame_laplace_objective(; nsubjects=5)
-    marginal = laplace.objective
-    @test ContinuousTimeSEM._ctsem_finish_curvature(marginal, 30, 30) === :exact
-    @test ContinuousTimeSEM._ctsem_finish_curvature(marginal, 31, 30) === :chord
-    @test ContinuousTimeSEM._ctsem_finish_curvature(laplace, 5, 30) === :chord
-    @test ContinuousTimeSEM._ctsem_finish_curvature(
-        _endgame_mock(p -> -sum(abs2, p)), 100, 30) === :exact
+    curvature = ContinuousTimeSEM._ctsem_finish_curvature
+    @test curvature(laplace.objective) === :chord
+    @test curvature(laplace) === :chord
+    @test curvature(nothing) === nothing
+    @test ContinuousTimeSEM._ctsem_hessian_cost(laplace.objective, 529) == 529
+    @test ContinuousTimeSEM._ctsem_hessian_cost(laplace, 529) == 1058
 end

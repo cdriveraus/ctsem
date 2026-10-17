@@ -132,12 +132,14 @@
 #'
 #' @section The finish and its certification (julia):
 #' \describe{
-#'  \item{\code{newton}}{Default TRUE. Newton steps on the exact Hessian once
-#'  close, ending on the Hessian the certification and the standard errors
+#'  \item{\code{newton}}{Default TRUE. Newton steps once close, on an exact
+#'  Hessian updated after each step and formed again when its steps stop paying
+#'  for it, ending on the Hessian the certification and the standard errors
 #'  use; it tries the direction of negative curvature at a saddle and checks
 #'  what the directions with no curvature are worth. Under
 #'  \code{intoverpop = 'laplace'} it runs only when the fit is certified. May
-#'  name the curvature its steps use: \code{'exact'}, \code{'chord'} or
+#'  name the curvature its steps use: \code{'chord'} (the default),
+#'  \code{'exact'} (a fresh Hessian whenever a step contracts slowly) or
 #'  \code{'subset'}. \code{fit$optim$newton_steps} records it.}
 #'  \item{\code{certify}}{Default TRUE. The curvature check that certifies a
 #'  fit has converged. \code{estonly} skips it too.}
