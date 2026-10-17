@@ -538,6 +538,35 @@ end
     @test ForwardDiff.partials(ForwardDiff.value(ForwardDiff.value(p)))[1] ≈ 0.3
 end
 
+@testset "an SR1 inner solve ends where exact Newton does" begin
+    # The inner solve updates its curvature by SR1 between exact ones where
+    # the mode probes do not run; off here so the fixture's unit uses it. It
+    # must end at the same mode as exact Newton, to roundoff, or the objective
+    # moves with the solver: stopping just under the gradient bound, as it
+    # once did, left modes short by the bound over the curvature.
+    probes = ContinuousTimeSEM._LAPLACE_MODE_PROBES[]
+    sr1 = ContinuousTimeSEM._LAPLACE_INNER_SR1[]
+    try
+        ContinuousTimeSEM._LAPLACE_MODE_PROBES[] = false
+        for v in ([0.1, 0.4, -0.2, 0.05, -0.25], [0.6, -1.2, 0.4, 0.3, 0.5])
+            out = map((true, false)) do on
+                ContinuousTimeSEM._LAPLACE_INNER_SR1[] = on
+                laplace, _ = _fresh_nonlinear()
+                r = ctsem_laplace_evaluate(laplace, v; gradient=true)
+                (r=r, modes=deepcopy(laplace.modes))
+            end
+            with, without = out
+            @test maximum(maximum(abs, a .- b)
+                for (a, b) in zip(with.modes, without.modes)) < 1e-12
+            @test with.r.value ≈ without.r.value atol=1e-11
+            @test maximum(abs, with.r.gradient .- without.r.gradient) < 1e-9
+        end
+    finally
+        ContinuousTimeSEM._LAPLACE_MODE_PROBES[] = probes
+        ContinuousTimeSEM._LAPLACE_INNER_SR1[] = sr1
+    end
+end
+
 @testset "the seeded gradient is exercised away from the optimum" begin
     # A single test point can hide a term that happens to vanish there. These
     # perturb the population scales and correlations, which are the parameters

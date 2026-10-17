@@ -2734,6 +2734,11 @@ the origin (`_laplace_probe_modes`). On by default; `ctsem_set_mode_probes!`.
 """
 const _LAPLACE_MODE_PROBES = Ref(true)
 
+# Whether the inner solve updates its curvature by SR1 between exact ones
+# (`_laplace_newton_unit_mode`); off, every Newton step forms it exactly. For
+# the tests, which compare the two.
+const _LAPLACE_INNER_SR1 = Ref(true)
+
 """
 Precision below which a direction of a mode's curvature is probed: the
 continuation's `soft_tau`, the precision below which a direction can be
@@ -3461,7 +3466,20 @@ function _laplace_newton_unit_mode(laplace::CTSEMLaplaceObjective, U::Integer,
     # which read the curvature at the mode found, and not on a unit of nested
     # blocks, whose curvature is stored block-sparse and a rank-one update
     # would fill.
-    sr1 = !keep && d > 0 && length(blocks) == 1
+    #
+    # Ending must not depend on which: the gradient bound is relative to the
+    # unit's value (`_laplace_inner_tolerance`), and exact Newton lands orders
+    # below it on its last, quadratic, step, while an updated curvature
+    # converges only superlinearly and stopped just under it. On the affect
+    # pilot (35 effects a unit) that left modes 1e-7 short: the objective
+    # moved 1.7e-6, above the outer gap tolerance, and the gradient 1e-4 in the
+    # loadings. So after an updated step the bound is not read: the solve goes
+    # on while each step halves the gradient, and a step that does not -- the
+    # roundoff floor, where Newton ends too -- makes the next curvature exact,
+    # and only then is the bound read. Neither the step bound nor a failed line
+    # search is read from an updated matrix: like a repaired one, it does not
+    # measure the distance to the mode.
+    sr1 = _LAPLACE_INNER_SR1[] && !keep && d > 0 && length(blocks) == 1
     # Taken whether or not they are used: a local that is either `nothing` or
     # an array makes every call on it dynamic.
     B = _laplace_scratch_matrix!(laplace, Float64, d, d, :newton_sr1)
@@ -3477,8 +3495,8 @@ function _laplace_newton_unit_mode(laplace::CTSEMLaplaceObjective, U::Integer,
     end
     for iteration in 1:laplace.inner_maxiter
         iterations = iteration
-        if d == 0 || maximum(abs, current.gradient) <
-                _laplace_inner_tolerance(laplace, current.value)
+        if d == 0 || (exact && maximum(abs, current.gradient) <
+                _laplace_inner_tolerance(laplace, current.value))
             converged = true
             break
         end
@@ -3515,7 +3533,7 @@ function _laplace_newton_unit_mode(laplace::CTSEMLaplaceObjective, U::Integer,
         # tolerance of 1.4e-10 for 200 iterations with a step of 3e-17, then
         # failed the trial point. Not from a repaired curvature, whose step
         # does not measure the distance to a maximum.
-        if !fac.repaired && maximum(abs, step) < laplace.inner_tol
+        if exact && !fac.repaired && maximum(abs, step) < laplace.inner_tol
             converged = true
             break
         end
@@ -3559,8 +3577,15 @@ function _laplace_newton_unit_mode(laplace::CTSEMLaplaceObjective, U::Integer,
                     B[i, j] += rvec[i] * rvec[j] / den
                 end
             end
+            # `>=`: a gradient already zero has not halved, and must not walk on.
             exact = scale < 1 ||
-                maximum(abs, gcur) > maximum(abs, gtry) / 2
+                maximum(abs, gcur) >= maximum(abs, gtry) / 2
+        end
+        if !accepted && !exact
+            # An updated curvature's step found nothing: form it exactly and
+            # try again before any verdict.
+            exact = true
+            continue
         end
         if !accepted
             # Aim for the tolerance; do not fail for missing it when the
