@@ -799,10 +799,14 @@ end
 #   1000-subject panel, dev1), so L-BFGS hands over early, and there every step
 #   uses the exact Hessian, refreshed while the steps contract slowly. On a
 #   large one it is not few: about 750 gradients, a quarter of an hour, on a
-#   715-parameter model. A refresh pays only while a Hessian costs less than
-#   the steps it saves, which are at most the finish's budget of `maxit`, so
-#   above `maxit` parameters the marginal route takes the chord below
-#   (`_ctsem_finish_curvature`);
+#   715-parameter model. So whether it is cheap is a comparison of costs,
+#   not of sizes: a Hessian that costs no more than the gradients the stage
+#   has already spent at most doubles the fit, and there the finish refreshes
+#   it freely and L-BFGS may hand over early; one that costs more is walked
+#   on (the chord below) after L-BFGS has run to its own rule
+#   (`_ctsem_finish_curvature`). Until 2026-10-17 the comparison was with the
+#   finish's step budget, `maxit`, which made 30 parameters a boundary where
+#   the finish and the hand-over changed for no change in cost;
 # * the Laplace route's is central differences of the gradient, `2 npar`
 #   gradients, and an exact finish there made fits slower (0.6x with it, 1.3 to
 #   1.9x without, dev1). So L-BFGS runs to its own stopping rule there, and the
@@ -878,21 +882,25 @@ _ctsem_hessian_cost(::CTSEMLaplaceObjective, npar::Integer) = 2 * Int(npar)
 _ctsem_hessian_cost(::Any, npar::Integer) = Int(npar)
 
 """
-    _ctsem_finish_curvature(objective[, npar, maxit])
+    _ctsem_finish_curvature(objective[, npar, spent])
 
-The route's own curvature for the finish: `:exact` where a Hessian costs no
-more than the `maxit` steps a refresh could save (`_ctsem_hessian_cost`),
-`:chord` where it costs more -- always on the Laplace route, and on the
-marginal route above `maxit` parameters -- and `nothing` for a route the
+The route's own curvature for the finish: `:exact` on a route whose Hessian
+may be refreshed (the marginal route), `:chord` on the Laplace route, where an
+exact finish made fits slower on the bench, and `nothing` for a route the
 finish does not run on: a pinned profile point, whose wrapper has no Hessian
 of its own, and the state-explicit target, which is never certified.
+
+With `npar` and `spent`, the gradients the stage has spent so far: `:exact`
+only where a Hessian (`_ctsem_hessian_cost`) costs no more than that, since
+forming and discarding it then at most doubles the fit; `:chord` otherwise.
 """
 _ctsem_finish_curvature(::CTSEMObjective) = :exact
 _ctsem_finish_curvature(::CTSEMLaplaceObjective) = :chord
 _ctsem_finish_curvature(::Any) = nothing
-_ctsem_finish_curvature(o, npar::Integer, maxit::Integer) = _ctsem_finish_curvature(o)
-_ctsem_finish_curvature(o::CTSEMObjective, npar::Integer, maxit::Integer) =
-    _ctsem_hessian_cost(o, npar) <= maxit ? :exact : :chord
+function _ctsem_finish_curvature(o, npar::Integer, spent::Integer)
+    route = _ctsem_finish_curvature(o)
+    route === :exact && _ctsem_hessian_cost(o, npar) > spent ? :chord : route
+end
 
 """
 How far the estimate may be from where a Hessian was evaluated, in the standard

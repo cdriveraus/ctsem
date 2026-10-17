@@ -20,7 +20,8 @@ default.
  this. Default \code{1e-8} on julia, off on stan.}
  \item{\code{x_tol}}{Both. Stop when the parameter step falls below this. Off
  by default.}
- \item{\code{maxiter}}{Both. Iteration cap. Default 1000 on julia, mize's on
+ \item{\code{maxiter}}{Both. Iteration cap. Default on julia ten per free
+ parameter, at least 1000; mize's on
  stan.}
  \item{\code{lbfgs_memory}}{Both. How many curvature pairs L-BFGS keeps.
  Default on julia one per free parameter, at least 20 and at most 1000;
@@ -157,7 +158,8 @@ default.
  negligible progress end a fit, what share of its own progress counts as
  negligible, how much of its responsiveness a transform must have lost to
  count as the reason, and how long and how far the bar tightens after a fit
- is found slow rather than stuck.}
+ is found slow rather than stuck. On julia the window and the cooldown are
+ scaled up to L-BFGS's memory (\code{lbfgs_memory}) where that is longer.}
  \item{\code{escapesaturated}}{Default FALSE. Refit a fit stalled on a
  saturated transform from a zeroed boundary, keeping whichever wins.}
  \item{\code{escapepin}}{Default FALSE. Hold the escaped coordinates still

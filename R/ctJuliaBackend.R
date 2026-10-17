@@ -4890,7 +4890,13 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
   # `progress` at the foot of the list for why it is not simply `verbose`.
   reporting <- isTRUE(.ctJuliaOr(optimcontrol$progress, .ctBackendReporting(verbose)))
   common <- list(
-    maxiter = as.integer(.ctJuliaOr(maxiter, .ctJuliaOr(optimcontrol$maxiter, 1000L))),
+    # The cap scales with the parameters: L-BFGS keeps a curvature pair per
+    # parameter, and the default allows ten turnovers of that memory, at least
+    # 1000 iterations. A fixed 1000 stopped large models short -- ECLS-K at
+    # 529 parameters took 1137 iterations -- where the certification then paid
+    # for a Hessian at a point that had not converged.
+    maxiter = as.integer(.ctJuliaOr(maxiter, .ctJuliaOr(optimcontrol$maxiter,
+      max(1000L, 10L * length(as.numeric(start)))))),
     g_tol = .ctJuliaOr(optimcontrol$g_tol, 1e-8),
     f_tol = .ctJuliaOr(optimcontrol$tol, 0),
     x_tol = .ctJuliaOr(optimcontrol$x_tol, 0),

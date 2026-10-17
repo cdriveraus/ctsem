@@ -1982,13 +1982,14 @@ route has one, the endgame (`_ctsem_newton_finish`).
 The endgame's controls: `newton` turns it on; `certify` says a certification
 will read what it returns, which adds the flat-direction probe and, on a route
 whose Hessian is expensive (Laplace), is what the finish runs for at all;
-`newton_curvature` is `:auto` (the route's own, `_ctsem_finish_curvature`),
-`:exact`, `:chord` or `:subset`; `newton_switch` is the predicted gain at which
-L-BFGS hands over where a Hessian is cheap enough to discard
-(`_ctsem_hessian_cost` within `newton_maxit`), and a finish whose first step
-shows that hand-over was early gives the point back to L-BFGS, which runs on to
-its own stopping rule before the finish runs again; where a Hessian is dearer
-L-BFGS runs to its own rule first; `newton_reuse` and `flat_rtol`
+`newton_curvature` is `:auto` (the route's own, `_ctsem_finish_curvature`,
+by what a Hessian costs against what the stage has spent), `:exact`, `:chord`
+or `:subset`; `newton_switch` is the predicted gain at which L-BFGS hands over
+once the stage has spent at least a Hessian's cost (`_ctsem_hessian_cost`),
+and a finish whose first step shows that hand-over was early gives the point
+back to L-BFGS, which runs on to its own stopping rule before the finish runs
+again; `newton_maxit` is the exact finish's step budget; `newton_reuse` and
+`flat_rtol`
 are the finish's rules, passed from R so one number serves both sides.
 `lbfgs_inverse` is an initial inverse Hessian for L-BFGS (`_ctsem_lbfgs`'s
 `inverse`), as a fit's covariance is for refitting it to part of its data; one
@@ -2095,35 +2096,24 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
     # below `newton_switch`. Where it costs `2 npar` gradients (Laplace) it
     # runs only when a certification will read it, and L-BFGS runs to its own
     # rule first: the finish's Hessian is then the one the certification would
-    # have formed anyway, rather than an extra one. A marginal model above
-    # `newton_maxit` parameters, whose Hessian costs about `npar` gradients,
-    # runs L-BFGS to its own rule first too (`handover` below).
+    # have formed anyway, rather than an extra one.
     cheap = _ctsem_cheap_hessian(objective)
-    route_curvature = _ctsem_finish_curvature(objective, length(start_values),
-        Int(newton_maxit))
-    # Whether a Hessian the finish forms at an early hand-over may be thrown
-    # away when its first step shows the hand-over was early: only where it
-    # costs no more than the finish's own budget of steps. On a 715-parameter
-    # model the one given back had cost a quarter of an hour, twice, after
-    # which L-BFGS gained 0.02 log likelihood an iteration; a dear Hessian is
-    # walked on instead, its steps held to a trust region.
-    discardable = _ctsem_hessian_cost(objective, length(start_values)) <=
-        newton_maxit
-    finish_curvature = Symbol(newton_curvature) === :auto ? route_curvature :
-        Symbol(newton_curvature)
+    route_curvature = _ctsem_finish_curvature(objective)
+    hessian_cost = _ctsem_hessian_cost(objective, length(start_values))
     finishing = newton && gap_tol > 0 && route_curvature !== nothing &&
         (certify || cheap)
     # A Ref: the callback reads it and the resumed stage below lowers it.
     #
-    # The early hand-over is for a Hessian that costs a few gradients, the
-    # same test as `discardable`: on the marginal route above `newton_maxit`
-    # parameters a Hessian costs about `npar` gradients, so there, as on the
-    # Laplace route, L-BFGS runs to its own rule first. The marginal route
-    # counted as cheap whatever its size, and a 529-parameter fit (ECLS-K,
-    # dev2) handed over on the switch with 140 nats still to climb while
-    # L-BFGS was gaining 2.5 nats a minute, to chord walks that gained 0.03 to
-    # 0.5 a minute with their Hessians.
-    handover = Ref(finishing && cheap && discardable ?
+    # The early hand-over, on L-BFGS's predicted gain below `newton_switch`,
+    # is taken only once the stage has spent at least what a Hessian costs
+    # (the callback below): forming one then, and throwing it away if its
+    # first step shows the hand-over was early, at most doubles the fit. A
+    # Hessian dearer than that is formed where L-BFGS stops by its own rule,
+    # as on the Laplace route. Judged by a size until 2026-10-17 -- within
+    # `newton_maxit` parameters, and before that on the marginal route at
+    # any size -- a 529-parameter fit (ECLS-K, dev2) handed over with 140 nats
+    # still to climb while L-BFGS was gaining 2.5 nats a minute.
+    handover = Ref(finishing && cheap ?
         max(Float64(gap_tol), Float64(newton_switch)) : Float64(gap_tol))
     # A callback rather than Optim's `show_trace`, which prints one dense line
     # per iteration whatever the model costs -- thousands on a fast one, and on
@@ -2170,8 +2160,15 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
     stopped_by_gap = Ref(false)
     stopped_by_stall = Ref(false)
     stopped_by_progress = Ref(false)
-    stall = CTSEMStallWatch(window=stall_window, fraction=stall_fraction,
-        cooldown=stall_cooldown, tighten=stall_tighten,
+    # A stall is no progress over a full turnover of L-BFGS's memory: judged
+    # over fewer iterations than it keeps pairs, a fit is judged before its
+    # curvature has been renewed. So the window, and the cooldown with it, are
+    # at least `lbfgs_pairs` (one a parameter by default); the 80 and 30 they
+    # were set at are the floor, for the small models they were set on.
+    stall_scale = stall_window > 0 ? max(1.0, lbfgs_pairs / stall_window) : 1.0
+    stall = CTSEMStallWatch(window=round(Int, stall_window * stall_scale),
+        fraction=stall_fraction,
+        cooldown=round(Int, stall_cooldown * stall_scale), tighten=stall_tighten,
         tightenings=stall_tightenings, carried=stall_carried, alone=stall_alone)
     # Under `verbose`, each stall check that found a flat coordinate says which,
     # and what pulling back gained -- a check that does not stop the fit
@@ -2237,9 +2234,13 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
         # Neither rule while a batch is still growing: its objective is not the
         # fit's, and a batch that has gone quiet is a batch about to grow.
         batching() && return false
-        if handover[] > 0 && _ctsem_predicted_gain(directional) < handover[]
-            stopped_by_gap[] = true
-            return true
+        if handover[] > 0
+            predicted = _ctsem_predicted_gain(directional)
+            if predicted < gap_tol ||
+                    (predicted < handover[] && latest.iteration >= hessian_cost)
+                stopped_by_gap[] = true
+                return true
+            end
         end
         # And stop when the fit has stopped getting anywhere *and* a transform
         # has gone flat, which is the structural reason it stopped. Neither
@@ -2438,13 +2439,18 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
         end
         # A hand-over on L-BFGS's proxy rather than at its stopping rule, which
         # the finish checks with its first step (`handback`) where its Hessian
-        # is cheap enough to discard.
+        # cost no more than the stage had spent; the same comparison decides
+        # whether the finish may refresh its Hessian (`_ctsem_finish_curvature`).
         early = handover[] > gap_tol
+        affordable = hessian_cost <= result.iterations
+        finish_curvature = Symbol(newton_curvature) === :auto ?
+            _ctsem_finish_curvature(objective, length(start_values),
+                result.iterations) : Symbol(newton_curvature)
         finish = _ctsem_newton_finish(objective, minimizer, f0, G0, fg!;
             tol=gap_tol, maxit=newton_maxit, callback=record,
             iteration0=result.iterations + spent.steps[],
             curvature=finish_curvature, probe=certify, reuse_se=newton_reuse,
-            flat_rtol=flat_rtol, handback=early && discardable,
+            flat_rtol=flat_rtol, handback=early && affordable,
             certify_tol=Float64(converge_tol), flat_escape=_ctsem_flat_escape(objective),
             reporter=reporter,
             # The caller's Hessian, for the stage's first finish only: after a
