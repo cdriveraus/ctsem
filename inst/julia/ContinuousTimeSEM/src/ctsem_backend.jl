@@ -2179,10 +2179,15 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
     # scores are not the information of the whole.
     batcher = batch && score_store === nothing ?
         _ctsem_batch_plan(objective, trial_fg!; theta=batch_theta) : nothing
-    score_precision = _ctsem_prior_precision(_ctsem_prior_objective(objective),
-        length(start_values))
-    score_inverse = score_store === nothing ? nothing :
-        (y -> _ctsem_scores_inverse(score_store, y, score_precision))
+    # Only where there are scores: a pinned objective, which a profile or an
+    # escape optimises, has no prior of its own to ask.
+    score_inverse = if score_store === nothing
+        nothing
+    else
+        score_precision = _ctsem_prior_precision(_ctsem_prior_objective(objective),
+            length(start_values))
+        y -> _ctsem_scores_inverse(score_store, y, score_precision)
+    end
     batching() = batcher !== nothing && !_ctsem_batch_full(batcher)
     # The endgame (`_ctsem_newton_finish`), on a route that has one. Where a
     # Hessian costs a few gradients it runs whenever there is a stopping rule
