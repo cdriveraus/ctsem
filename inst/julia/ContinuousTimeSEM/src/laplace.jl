@@ -3448,6 +3448,26 @@ function _laplace_newton_unit_mode(laplace::CTSEMLaplaceObjective, U::Integer,
     # scratch, so read it before the next solve on this slot.
     curvature = nothing
     keep = _LAPLACE_MODE_PROBES[] && d <= _LAPLACE_PROBE_MAXDIM
+    # The curvature is most of what a mode solve costs (60-70% of a Laplace
+    # evaluation, dev1), and Newton formed it afresh at every iteration. Here it
+    # is formed exactly at the first iterate -- so the solve stays a function of
+    # the parameters alone, from the origin as before -- and then updated by
+    # SR1 from each accepted step's change in the gradient, as the finish's walk
+    # updates its Hessian, until a step shows the matrix no longer describes the
+    # unit: one the line search had to shorten, or one that did not halve the
+    # gradient. Then it is formed exactly again. The Laplace term at the mode
+    # forms its own exact curvature (`_laplace_unit_primal`), so nothing the
+    # objective reports rests on an updated matrix. Not where the probes run,
+    # which read the curvature at the mode found, and not on a unit of nested
+    # blocks, whose curvature is stored block-sparse and a rank-one update
+    # would fill.
+    sr1 = !keep && d > 0 && length(blocks) == 1
+    # Taken whether or not they are used: a local that is either `nothing` or
+    # an array makes every call on it dynamic.
+    B = _laplace_scratch_matrix!(laplace, Float64, d, d, :newton_sr1)
+    sstep = _laplace_scratch_vector!(laplace, Float64, d, :newton_sr1_s)
+    rvec = _laplace_scratch_vector!(laplace, Float64, d, :newton_sr1_r)
+    exact = true
     current = _laplace_unit_objective_gradient(laplace, U, values, Ls, u, aws,
         gcur)
     if !isfinite(current.value) && any(!iszero, u)
@@ -3470,8 +3490,15 @@ function _laplace_newton_unit_mode(laplace::CTSEMLaplaceObjective, U::Integer,
         # Asserted: inference does not see through the curvature's routes, and
         # an untyped `M` made the factorization below a dynamic call that boxed
         # its result, every Newton step.
-        M = _laplace_unit_curvature(laplace, U, values, Ls, u;
-            into=Mwork)::CTSEMBlockMatrix{Float64}
+        M = if exact
+            Mx = _laplace_unit_curvature(laplace, U, values, Ls, u;
+                into=Mwork)::CTSEMBlockMatrix{Float64}
+            sr1 && copyto!(B, Mx.diag[1])
+            Mx
+        else
+            copyto!(Mwork.diag[1], B)
+            Mwork
+        end
         keep && (curvature = _laplace_block_dense!(_laplace_scratch_matrix!(laplace,
             Float64, d, d, :probe_curvature), M, laplace.units.blocks[U]))
         fac = _laplace_factor_repaired!(M, blocks; store=fstore)
@@ -3511,6 +3538,29 @@ function _laplace_newton_unit_mode(laplace::CTSEMLaplaceObjective, U::Integer,
                 break
             end
             scale /= 2
+        end
+        if accepted && sr1
+            # `u` is the accepted point and `utry` the one it left; `gcur` and
+            # `gtry` their gradients. The curvature is minus the gradient's
+            # Jacobian, so its secant is the old gradient less the new.
+            @inbounds for i in 1:d
+                sstep[i] = u[i] - utry[i]
+            end
+            @inbounds for i in 1:d
+                acc = 0.0
+                for j in 1:d
+                    acc += B[i, j] * sstep[j]
+                end
+                rvec[i] = (gtry[i] - gcur[i]) - acc
+            end
+            den = dot(rvec, sstep)
+            if abs(den) > 1e-8 * norm(rvec) * norm(sstep)
+                @inbounds for j in 1:d, i in 1:d
+                    B[i, j] += rvec[i] * rvec[j] / den
+                end
+            end
+            exact = scale < 1 ||
+                maximum(abs, gcur) > maximum(abs, gtry) / 2
         end
         if !accepted
             # Aim for the tolerance; do not fail for missing it when the
