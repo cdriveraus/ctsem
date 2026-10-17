@@ -1731,3 +1731,80 @@ end
     @test ContinuousTimeSEM._ctsem_hessian_cost(laplace.objective, 529) == 529
     @test ContinuousTimeSEM._ctsem_hessian_cost(laplace, 529) == 1058
 end
+
+@testset "the structured model learns what the outer product misses, and steps while it predicts" begin
+    # `CTSEMStructured`: B, the centred outer product of the units' scores plus
+    # the prior's precision, and A, learned by SR1 from the secant residual. A
+    # Hessian that differs from B by rank one is B + A after one step, and
+    # the next step is then Newton's. Fixed scores, so B is the same at every
+    # point.
+    rng = Random.MersenneTwister(3)
+    n = 4; N = 30
+    S = randn(rng, N, n)
+    Sc = S .- sum(S; dims=1) ./ N
+    precision = fill(0.5, n)
+    B0 = transpose(Sc) * Sc .+ Diagonal(precision)
+    v = randn(rng, n)
+    H = B0 .+ v * transpose(v)
+    g0 = randn(rng, n)
+    f(x) = dot(g0, x) + dot(x, H * x) / 2
+    grad(x) = g0 .+ H * x
+    store = ContinuousTimeSEM.CTSEMScoreStore(N, n)
+    at!(x) = (copyto!(store.S, S); copyto!(store.x, x); store.valid = true)
+    m = ContinuousTimeSEM.CTSEMStructured(store, precision, n)
+    x0 = zeros(n); at!(x0)
+    # Not in use until it has predicted a step better than L-BFGS.
+    @test ContinuousTimeSEM._ctsem_structured_direction(m, x0, grad(x0)) === nothing
+    @test ContinuousTimeSEM._ctsem_structured_B!(m, x0)
+    @test m.B ≈ B0
+    # A step L-BFGS took at alpha = 1, at half of Newton's length.
+    s = -(H \ grad(x0)) ./ 2
+    x1 = x0 .+ s; at!(x1)
+    ContinuousTimeSEM._ctsem_structured_update!(m, x0, x1, grad(x0), grad(x1),
+        f(x0), f(x1), s, 1.0, false)
+    @test m.B .+ m.A ≈ H
+    # In use, its step is Newton's, to the minimum.
+    m.active = true
+    d = ContinuousTimeSEM._ctsem_structured_direction(m, x1, grad(x1))
+    @test x1 .+ d ≈ -(H \ g0)
+    # A step it predicted exactly keeps it in use; one it overstated by more
+    # than twice hands back to L-BFGS.
+    x2 = x1 .+ d; at!(x2)
+    ContinuousTimeSEM._ctsem_structured_update!(m, x1, x2, grad(x1), grad(x2),
+        f(x1), f(x2), d, 1.0, true)
+    @test m.active
+    @test m.steps == 1
+    @test ContinuousTimeSEM._ctsem_structured_B!(m, x1)
+    gain = f(x1) - f(x2)
+    ContinuousTimeSEM._ctsem_structured_update!(m, x1, x2, grad(x1), grad(x2),
+        f(x1), f(x1) - gain / 3, d, 1.0, true)
+    @test !m.active
+    # Scores the store holds for another point build nothing.
+    store.valid = false
+    @test !ContinuousTimeSEM._ctsem_structured_B!(m, x2)
+end
+
+@testset "a fit with the structured model ends where L-BFGS alone does" begin
+    # The marginal and Laplace routes, from near the optimum: the structured
+    # model takes steps, and the run reaches the same maximum.
+    laplace = _endgame_laplace_objective()
+    start = [0.5, -0.4, -1.0, 0.2, 0.0]
+    kw = (maxiter=500, gap_tol=1e-10, newton=false, certify=false,
+        progress=false)
+    best = ctsem_laplace_optimize(laplace, start; kw...)
+    near = collect(Float64, best.minimizer) .+ 0.05
+    plain = ctsem_laplace_optimize(laplace, near; kw...)
+    with = ctsem_laplace_optimize(laplace, near; lbfgs_scores=true, kw...)
+    @test with.structured_steps > 0
+    @test plain.structured_steps == 0
+    @test with.maximum_loglik ≈ plain.maximum_loglik atol=1e-6
+    # The marginal objective has no random effect, nor its sd (parameter 5).
+    marginal = laplace.objective
+    mbest = ContinuousTimeSEM.ctsem_optimize(marginal, start[1:4]; kw...)
+    mnear = collect(Float64, mbest.minimizer) .+ 0.05
+    mplain = ContinuousTimeSEM.ctsem_optimize(marginal, mnear; kw...)
+    mwith = ContinuousTimeSEM.ctsem_optimize(marginal, mnear; lbfgs_scores=true,
+        kw...)
+    @test mwith.structured_steps > 0
+    @test mwith.maximum_loglik ≈ mplain.maximum_loglik atol=1e-6
+end
