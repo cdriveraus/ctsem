@@ -1159,8 +1159,13 @@ ctScoreTest <- function(fit, covariates = NULL,
   # Equations of latents with innovations of their own: a cycle's clock turns
   # as written, and a term in its drift kept one search's clock wandering. The
   # clock's states stay among the monomials: a drift varying with the time of
-  # day is a question to ask.
-  for (i in .ctImproveNoisyLatents(model)) for (mono in monomials) {
+  # day is a question to ask. Nor the equations of latents a 'stationary'
+  # initial condition needs fixed within each subject (`.ctStationaryClosure`):
+  # a term there leaves no one stationary distribution, and the extended model
+  # is refused -- which on the Fisher search took these families out of every
+  # screen after the first such process was kept.
+  equations <- setdiff(.ctImproveNoisyLatents(model), which(.ctStationaryClosure(model)))
+  for (i in equations) for (mono in monomials) {
     terms[[length(terms) + 1L]] <- data.frame(name = paste0('ctscoreterm',
       length(terms) + 1L), equation = latent[i], i = i, k = mono[1L],
       by = paste(latent[mono[-1L]], collapse = '*'),
@@ -1252,8 +1257,12 @@ ctScoreTest <- function(fit, covariates = NULL,
 .ctScoreVolatilityModel <- function(model) {
   latent <- model$latentNames
   noisy <- .ctImproveNoisyLatents(model)
-  if (!length(noisy)) return(list(model = model, terms = NULL))
-  grid <- expand.grid(m = noisy, i = noisy)
+  # Not the innovations of a latent a 'stationary' initial condition needs
+  # fixed within each subject (`.ctScoreStateModel`); any noisy state may
+  # moderate the others'.
+  equations <- setdiff(noisy, which(.ctStationaryClosure(model)))
+  if (!length(equations)) return(list(model = model, terms = NULL))
+  grid <- expand.grid(m = noisy, i = equations)
   terms <- data.frame(name = paste0('ctscorevol', seq_len(nrow(grid))),
     equation = latent[grid$i], i = grid$i, m = grid$m, by = latent[grid$m],
     stringsAsFactors = FALSE)
@@ -1336,8 +1345,12 @@ ctScoreTest <- function(fit, covariates = NULL,
   # would make a clock wander, and a covariance with nothing has no meaning.
   quiet <- pars$row[pars$matrix %in% 'DIFFUSION' & pars$row == pars$col & free &
     !is.na(value) & value == 0]
+  # Nor a drift into a latent a 'stationary' initial condition needs: it would
+  # make the driving latent one too, and its dynamics, which the other
+  # families extend, fixed (`.ctScoreStateModel`).
+  closed <- which(.ctStationaryClosure(model))
   candidate <- which(free & !is.na(value) & value == 0 & (
-    (pars$matrix %in% 'DRIFT' & pars$row != pars$col & !pars$row %in% quiet) |
+    (pars$matrix %in% 'DRIFT' & pars$row != pars$col & !pars$row %in% c(quiet, closed)) |
       (pars$matrix %in% 'DIFFUSION' & pars$row > pars$col & !pars$row %in% quiet &
         !pars$col %in% quiet) |
       (pars$matrix %in% 'MANIFESTVAR' & pars$row > pars$col) |

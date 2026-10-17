@@ -73,16 +73,9 @@
     "its indvarying to FALSE.", call. = FALSE)
 
   # The closure: the marked latents and whatever drives them.
+  closure <- .ctStationaryClosure(ctm, means | variance)
   drift <- p[p$matrix %in% 'DRIFT' & p$row <= nl & p$col <= nl, , drop = FALSE]
   value <- suppressWarnings(as.numeric(drift$value))
-  drives <- drift$row != drift$col & (!is.na(drift$param) | (!is.na(value) & value != 0))
-  closure <- means | variance
-  repeat {
-    grown <- closure
-    grown[drift$col[drives & drift$row %in% which(closure)]] <- TRUE
-    if (identical(grown, closure)) break
-    closure <- grown
-  }
   static <- vapply(which(closure), function(i) {
     own <- drift$row == i
     all(is.na(drift$param[own]) & !is.na(value[own]) & value[own] == 0)
@@ -119,4 +112,32 @@
   ctm$t0stationary <- list(means = means, block = as.integer(block),
     closure = closure)
   ctm
+}
+
+# The latents whose stationary moments a model's 'stationary' cells need, one
+# logical per latent: the latents `start` names -- by default those a T0MEANS
+# or T0VAR cell named 'stationary' belongs to -- and every latent that drives
+# them through DRIFT, a cell that is free or fixed away from zero. Their
+# DRIFT, CINT and DIFFUSION have to be fixed within each subject, so what
+# extends a model's dynamics (the score tests' terms) leaves them out.
+.ctStationaryClosure <- function(ctm, start = NULL) {
+  p <- ctm$pars
+  nl <- ctm$n.latent
+  if (is.null(start)) {
+    mark <- !is.na(p$param) & p$param == 'stationary' &
+      p$matrix %in% c('T0MEANS', 'T0VAR') & p$row <= nl
+    start <- logical(nl)
+    start[unique(c(p$row[mark], p$col[mark & p$matrix %in% 'T0VAR']))] <- TRUE
+  }
+  drift <- p[p$matrix %in% 'DRIFT' & p$row <= nl & p$col <= nl, , drop = FALSE]
+  value <- suppressWarnings(as.numeric(drift$value))
+  drives <- drift$row != drift$col & (!is.na(drift$param) | (!is.na(value) & value != 0))
+  closure <- start
+  repeat {
+    grown <- closure
+    grown[drift$col[drives & drift$row %in% which(closure)]] <- TRUE
+    if (identical(grown, closure)) break
+    closure <- grown
+  }
+  closure
 }

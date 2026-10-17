@@ -294,6 +294,27 @@ test_that("'stationary' elements are refused where they name no stationary value
   expect_error(prep(.stat_marked(type = "dt")), "continuous time")
 })
 
+test_that("score tests extend the dynamics a 'stationary' element does not need", {
+  # a, its mean and variance stationary, is driven by nothing; b is free.
+  m <- .stat_marked(T0MEANS = c("stationary", "t0b"))
+  m$pars$param[m$pars$matrix %in% "DRIFT" & m$pars$row == 1 & m$pars$col == 2] <- NA
+  m$pars$value[m$pars$matrix %in% "DRIFT" & m$pars$row == 1 & m$pars$col == 2] <- 0
+  m$pars$g_effect[] <- FALSE
+  expect_identical(ctsem:::.ctStationaryClosure(m), c(TRUE, FALSE))
+  expect_setequal(unique(ctsem:::.ctScoreStateModel(m)$terms$equation), "b")
+  expect_setequal(unique(ctsem:::.ctScoreVolatilityModel(m)$terms$equation), "b")
+  fixed <- ctsem:::.ctScoreFixedModel(m)$terms
+  expect_false(any(fixed$matrix == "DRIFT" & fixed$row == 1L))
+  # On a fit, every extended family is tested, none refused.
+  fit <- suppressMessages(ctFit(.stat_data(), m, backend = "julia", cores = 1))
+  st <- suppressMessages(ctScoreTest(fit, tests = c("statedependence", "volatility",
+    "fixed"), cores = 1, verbose = FALSE))
+  expect_length(st$info$errors, 0L)
+  expect_false(is.null(st$statedependence))
+  expect_false(is.null(st$volatility))
+  expect_false(is.null(st$fixed))
+})
+
 test_that("generation starts 'stationary' elements where a fit does", {
   # Fixed: the first observation is the stationary distribution, mean
   # -CINT / DRIFT = 4 and variance DIFFUSION^2 / (-2 DRIFT) = 1, plus the
