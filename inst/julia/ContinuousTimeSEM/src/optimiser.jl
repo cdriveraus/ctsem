@@ -903,7 +903,7 @@ _ctsem_finish_curvature(::Any) = nothing
 """
 How far the estimate may be from where a Hessian was evaluated, in the standard
 errors that Hessian implies, for that Hessian still to give the standard errors
-(`optimcontrol$hessianreuse`). A Wald standard error treats the curvature as
+(R's `hessianreuse` control). A Wald standard error treats the curvature as
 constant over about a standard error around the estimate, and carries an error
 of however much it is not -- on the bench, 20 to 50 per cent over one standard
 error on well identified models and 150 to 300 on weakly identified Laplace
