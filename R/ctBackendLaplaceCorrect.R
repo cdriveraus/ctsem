@@ -334,9 +334,9 @@ print.ctLaplaceCorrection <- function(x, ...) {
   est <- as.numeric(fit$estimate$raw)
   npar <- length(est)
   hessian <- fit$uncertainty$hessian
-  # The curvature at the estimate: evaluated there, or within a hundredth of a
-  # standard error, where the optimiser's finish keeps the Hessian it took at
-  # the hand-over (see `.ctBackendStoredHessian()`).
+  # The curvature at the estimate: evaluated there, or within the fit's
+  # `hessianreuse` standard errors, where the optimiser's finish keeps the
+  # Hessian it took at the hand-over (see `.ctBackendStoredHessian()`).
   usable <- !is.null(.ctBackendStoredHessian(fit, est))
   # A 1x1 NaN rather than an empty matrix: an empty one deadlocks the bridge,
   # and the engine reads any size mismatch as "no Hessian".
@@ -815,7 +815,7 @@ print.ctLaplaceCorrection <- function(x, ...) {
 # `final`, `info` (NULL when no step was kept) and the gap before and after.
 #' @keywords internal
 .ctLaplaceContinueFinish <- function(module, cont, x, hc, final, value, bar,
-  value_tol, maxsteps = 2L) {
+  value_tol, maxsteps = 2L, reuse = .ctBackendHessianReuse()) {
   get <- .ctJuliaGet
   at <- x
   gap <- .ctBackendOptimGap(hc, as.numeric(final$gradient))
@@ -825,7 +825,7 @@ print.ctLaplaceCorrection <- function(x, ...) {
   while (steps < maxsteps && isTRUE(gap$ok) && identical(gap$nnegative, 0L) &&
       isTRUE(gap$gap > bar)) {
     xn <- x + gap$step
-    if (!isTRUE(.ctBackendHessianDistance(hc, at, xn) <= .ctBackendHessianReuse())) {
+    if (!isTRUE(.ctBackendHessianDistance(hc, at, xn) <= reuse)) {
       break
     }
     placed <- get(module[["ctsem_laplace_continuation_recentre!"]](cont,
@@ -1154,7 +1154,8 @@ print.ctLaplaceCorrection <- function(x, ...) {
   hessian_at <- x
   if (reached && is.matrix(hc) && all(is.finite(hc))) {
     finish <- .ctLaplaceContinueFinish(module, cont, x, hc, final,
-      value = run$value, bar = run$bar, value_tol = control$value_tol)
+      value = run$value, bar = run$bar, value_tol = control$value_tol,
+      reuse = .ctBackendHessianReuse(.ctBackendFitOptimcontrol(fit)))
     record$newton <- finish[c("steps", "gap_before", "gap_after")]
     if (finish$steps > 0L) {
       x <- finish$x

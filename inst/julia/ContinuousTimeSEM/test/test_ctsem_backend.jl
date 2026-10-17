@@ -1031,10 +1031,19 @@ end
     @test held.out.full_hessians == 1
     @test held.out.gain ≈ 1e-3 rtol = 1e-6
     @test held.out.hessian_at == x0
-    on = _chord_run(quad, x0)
+    # Within a hundredth of a standard error of reuse, the finish forms one
+    # to certify where its steps went...
+    on = _chord_run(quad, x0; reuse_se = 0.01)
     @test on.out.steps >= 1
     @test on.out.full_hessians == 2
     @test on.out.gain < 1e-8
+    # ...and within the default tenth, the one it walked on still describes
+    # the point, a few hundredths of a standard error away.
+    kept = _chord_run(quad, x0)
+    @test kept.out.steps >= 1
+    @test kept.out.full_hessians == 1
+    @test 0 < kept.out.distance <= ContinuousTimeSEM._CTSEM_HESSIAN_REUSE_SE
+    @test kept.out.gain < 1e-8
     # The same where the Hessian is cheap: the gain is as exact there.
     cheap = _endgame_run(_endgame_mock(quad), x0; certify_tol = 1e-2)
     @test cheap.steps == 0

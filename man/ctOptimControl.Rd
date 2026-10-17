@@ -143,6 +143,13 @@ default.
  fit has converged. \code{estonly} skips it too.}
  \item{\code{gaptol}}{Default \code{1e-6}. How much objective the curvature
  may still predict at the estimate before the fit is continued.}
+ \item{\code{hessianreuse}}{Default 0.1. How far, in standard errors, the
+ estimate may move from where a Hessian was formed for that Hessian still to
+ give the standard errors. A Wald standard error assumes the curvature is
+ constant over about a standard error around the estimate, and is in error by
+ however much it is not; a Hessian formed this far away adds about this
+ fraction to that error, where forming a fresh one costs a gradient per
+ parameter (two on the Laplace route). 0 forms one at the estimate.}
  \item{\code{gapretries}}{Default 2. How often a fit the check finds short of
  a maximum is resumed; a resumed stage that stops gaining is stopped.}
  \item{\code{innergaptol}}{What a prediction of the remaining gain that
