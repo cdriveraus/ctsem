@@ -519,6 +519,25 @@ end
     end
 end
 
+@testset "the seeds order against the tags they meet" begin
+    # A nested differentiation (a categorical row's moment Jacobian) reading
+    # a value the seeds perturb: d/dz (z^2 x) at z = x is 2 x^2, whose
+    # derivative along the first seed is 4 x. Without an order between the
+    # tags this threw DualMismatchError.
+    e1, e2 = ContinuousTimeSEM._laplace_seed_pair()
+    x = 0.3 + e1
+    g = ContinuousTimeSEM._ctsem_nested_gradient(z -> z[1]^2 * x, [x])
+    @test typeof(g[1]) == typeof(x)
+    @test ForwardDiff.value(ForwardDiff.value(g[1])) ≈ 2 * 0.3^2
+    @test ForwardDiff.partials(ForwardDiff.value(g[1]))[1] ≈ 4 * 0.3
+    # An ordinary tag goes inside the seeds: the seeds perturb a point that is
+    # itself being differentiated.
+    y = ForwardDiff.Dual{ForwardDiff.Tag{typeof(sin),Float64}}(0.3, 1.0)
+    p = y * (0.3 + e2)
+    @test p isa ForwardDiff.Dual{ContinuousTimeSEM._LaplaceSeedOuter}
+    @test ForwardDiff.partials(ForwardDiff.value(ForwardDiff.value(p)))[1] ≈ 0.3
+end
+
 @testset "the seeded gradient is exercised away from the optimum" begin
     # A single test point can hide a term that happens to vanish there. These
     # perturb the population scales and correlations, which are the parameters
