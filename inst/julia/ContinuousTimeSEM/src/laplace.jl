@@ -7066,6 +7066,16 @@ ordinal and nonlinear models and unchanged on a linear-Gaussian one, which
 already needed two. `warm = false` is the behaviour before, which the
 inner-budget escalation test needs.
 
+`localised` (the default) differences each column over the units whose terms
+read its parameter, and over no others. A unit that does not read a parameter
+runs the same computation at both differencing points, so its share of that
+column is exactly zero and evaluating it is waste. Which units read which
+parameter comes from their scores at `values`: a unit's score in a parameter it
+never reads is exactly zero -- an item it never answered, a predictor that is
+zero for it, a level it is not in. On a 697-parameter model of 4031 units
+(affint's joint fit) the columns then need 12 to 20 per cent of the unit
+passes. The result differs from `localised = false` only in rounding.
+
 `progress`, when given, is called `(done, total)` after every column with the
 gradient evaluations completed so far out of `2n` -- this loop is the one
 place a finish or a certification can go quiet for minutes on a wide Laplace
@@ -7073,23 +7083,29 @@ model, so the caller reports through it rather than this function printing
 anything itself; see `_progress_fraction` in progress.jl.
 """
 function ctsem_laplace_hessian(laplace::CTSEMLaplaceObjective, values::AbstractVector;
-    step::Real=1e-4, retries::Integer=2, warm::Bool=true, progress=nothing)
+    step::Real=1e-4, retries::Integer=2, warm::Bool=true, progress=nothing,
+    localised::Bool=true)
     H = _laplace_hessian_columns(laplace, values, 1:length(values); step=step,
-        retries=retries, warm=warm, progress=progress)
+        retries=retries, warm=warm, progress=progress, localised=localised)
     return (H .+ transpose(H)) ./ 2
 end
 
 """
-    _laplace_hessian_columns(laplace, values, columns; step, retries, warm, progress)
+    _laplace_hessian_columns(laplace, values, columns; step, retries, warm,
+        progress, localised)
 
 `ctsem_laplace_hessian`'s columns `columns` alone, unsymmetrised, as an `n` by
 `length(columns)` matrix: each differenced from the gradient at two points as
 there, with the same inner-budget escalation and `NaN` for a column whose
-points did not both solve their modes.
+points did not both solve their modes. With `localised`, a column whose
+parameter some units do not read is differenced on the objective over the
+units that do (`_ctsem_subset_objective`), one such objective for every set of
+units that some column needs, its modes started where the full objective's
+were.
 """
 function _laplace_hessian_columns(laplace::CTSEMLaplaceObjective,
     values::AbstractVector, columns; step::Real=1e-4, retries::Integer=2,
-    warm::Bool=true, progress=nothing)
+    warm::Bool=true, progress=nothing, localised::Bool=true)
     x = collect(Float64, values)
     n = length(x)
     cols = collect(Int, columns)
@@ -7097,62 +7113,83 @@ function _laplace_hessian_columns(laplace::CTSEMLaplaceObjective,
     H = zeros(Float64, n, k)
     k == 0 && return H
     budget = laplace.inner_maxiter
-    # One assignment: `restore!` captures it, and a captured local assigned
-    # more than once is a `Core.Box`.
-    base = if warm
-        # The modes at `x`, from the origin, which every differencing point
-        # then starts from.
+    NU = length(laplace.units.members)
+    # The modes at `x`, from the origin, which every differencing point then
+    # starts from; and, for `localised`, each unit's score there, which says
+    # which parameters it reads.
+    scores = localised ? zeros(Float64, NU, n) : nothing
+    if warm || localised
         previous = ctsem_set_warm_start!(false)
         try
-            ctsem_laplace_evaluate(laplace, x; gradient=false)
+            ctsem_laplace_evaluate(laplace, x; gradient=localised, scores=scores)
         finally
             ctsem_set_warm_start!(previous)
         end
-        deepcopy(laplace.modes)
-    else
-        nothing
     end
-    function restore!()
-        base === nothing && return nothing
-        for U in eachindex(base)
-            laplace.modes[U] = copy(base[U])
+    base = warm ? deepcopy(laplace.modes) : nothing
+    # The units each column is differenced over, grouped so that one subset
+    # objective serves every column that reads the same units. All units, or
+    # scores that are not finite, or a parameter no unit reads (only the prior
+    # does), mean the full objective.
+    groups = Dict{Vector{Int},Vector{Int}}()
+    full = Int[]
+    for c in 1:k
+        reads = scores === nothing || !all(isfinite, scores) ? Int[] :
+            findall(!iszero, view(scores, :, cols[c]))
+        if isempty(reads) || length(reads) == NU
+            push!(full, c)
+        else
+            push!(get!(groups, reads, Int[]), c)
         end
-        return nothing
+    end
+    plan = Tuple{Vector{Int},Vector{Int}}[(Int[], full)]
+    for (reads, cs) in groups
+        push!(plan, (reads, cs))
     end
     previous = ctsem_set_warm_start!(warm)
     unconverged = Int[]
     escalated = Int[]
     worst = 0.0
     units = 0
+    done = 0
     try
-        for (c, j) in enumerate(cols)
-            h = step * max(1.0, abs(x[j]))
-            plus = copy(x); plus[j] += h
-            minus = copy(x); minus[j] -= h
-            restore!()
-            pp = _laplace_hessian_point(laplace, plus, budget, retries)
-            restore!()
-            pm = _laplace_hessian_point(laplace, minus, budget, retries)
-            (pp.tries + pm.tries) > 0 && push!(escalated, j)
-            # Two gradients just finished, converged or not: a column this
-            # function gives up on (NaN, below) still cost the same two inner
-            # solves, so it counts here too or the reported total falls behind
-            # the real one.
-            progress !== nothing && progress(2c, 2k)
-            if !(pp.out.converged && pm.out.converged)
-                # The same predicate `fg!` applies to a trial point, applied to
-                # the two points this column is differenced from. A gradient at
-                # a not-quite-mode is a gradient of a different function, and
-                # one that converged to 1e-9 instead of 1e-10 is finite, so
-                # nothing downstream would notice. NaN makes the column visible
-                # to the non-finite fallback callers already have.
-                push!(unconverged, j)
-                worst = max(worst, pp.worst, pm.worst)
-                units = max(units, pp.units, pm.units)
-                H[:, c] .= NaN
-                continue
+        for (reads, cs) in plan
+            isempty(cs) && continue
+            obj = isempty(reads) ? laplace : _ctsem_subset_objective(laplace, reads)
+            from = base === nothing ? nothing :
+                isempty(reads) ? base : [base[U] for U in reads]
+            for c in cs
+                j = cols[c]
+                h = step * max(1.0, abs(x[j]))
+                plus = copy(x); plus[j] += h
+                minus = copy(x); minus[j] -= h
+                _laplace_restore_modes!(obj, from)
+                pp = _laplace_hessian_point(obj, plus, budget, retries)
+                _laplace_restore_modes!(obj, from)
+                pm = _laplace_hessian_point(obj, minus, budget, retries)
+                (pp.tries + pm.tries) > 0 && push!(escalated, j)
+                # Two gradients just finished, converged or not: a column this
+                # function gives up on (NaN, below) still cost the same two
+                # inner solves, so it counts here too or the reported total
+                # falls behind the real one.
+                done += 1
+                progress !== nothing && progress(2done, 2k)
+                if !(pp.out.converged && pm.out.converged)
+                    # The same predicate `fg!` applies to a trial point, applied
+                    # to the two points this column is differenced from. A
+                    # gradient at a not-quite-mode is a gradient of a different
+                    # function, and one that converged to 1e-9 instead of 1e-10
+                    # is finite, so nothing downstream would notice. NaN makes
+                    # the column visible to the non-finite fallback callers
+                    # already have.
+                    push!(unconverged, j)
+                    worst = max(worst, pp.worst, pm.worst)
+                    units = max(units, pp.units, pm.units)
+                    H[:, c] .= NaN
+                    continue
+                end
+                H[:, c] = (pp.out.gradient .- pm.out.gradient) ./ (2h)
             end
-            H[:, c] = (pp.out.gradient .- pm.out.gradient) ./ (2h)
         end
     finally
         # The budget is a field of a mutable objective the caller keeps, so an
@@ -7160,6 +7197,9 @@ function _laplace_hessian_columns(laplace::CTSEMLaplaceObjective,
         # evaluation of it; the warm-start switch is global, and the same.
         laplace.inner_maxiter = budget
         ctsem_set_warm_start!(previous)
+        # Where the caller's objective's modes were left: at `x`, as the full
+        # objective's last column would have left them near it.
+        _laplace_restore_modes!(laplace, base)
     end
     # A count, not a list of indices: on a model with a thousand parameters the
     # list is the whole message and says no more than the count does.
@@ -7171,6 +7211,21 @@ function _laplace_hessian_columns(laplace::CTSEMLaplaceObjective,
         "gradient ", worst, " against a budget of ", budget * 4^retries,
         " iterations.")
     return H
+end
+
+"""
+    _laplace_restore_modes!(laplace, modes)
+
+Put `laplace`'s inner modes back to `modes` (one vector per unit, copied), the
+start every differencing point is solved from; nothing when `modes` is
+`nothing`.
+"""
+function _laplace_restore_modes!(laplace::CTSEMLaplaceObjective, modes)
+    modes === nothing && return nothing
+    for U in eachindex(modes)
+        laplace.modes[U] = copy(modes[U])
+    end
+    return nothing
 end
 
 """

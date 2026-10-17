@@ -928,6 +928,53 @@ end
     @test all(isapprox.(some, full[:, cols]; rtol=1e-5, atol=1e-8))
 end
 
+@testset "the outer Hessian is differenced over the units that read each parameter" begin
+    # Two indicators, the second never observed for the odd subjects: their
+    # units do not read its intercept (6) or its error (7), so those columns
+    # are differenced over the even subjects' units alone, and nothing else
+    # about the matrix may change.
+    df = _laplace_test_dataframe(
+        drift=[-0.5;;], jax=[-0.5;;], cint=[0.0;;], diffusion=[0.2;;],
+        lambda=[1.0; 0.8;;], jy=[1.0; 0.8;;], manifestmeans=[0.0; 0.0;;],
+        manifestvar=[0.3 0.0; 0.0 0.3], t0var=[0.4;;], t0means=[0.0;;],
+        free=Dict(
+            (:T0MEANS, 1, 1) => (1, "param[1]"),
+            (:CINT, 1, 1) => (2, "param[2]"),
+            (:DRIFT, 1, 1) => (3, "-log1p_exp(param[3])"),
+            (:JAx, 1, 1) => (3, "-log1p_exp(param[3])"),
+            (:DIFFUSION, 1, 1) => (4, "log1p_exp(param[4])"),
+            (:MANIFESTMEANS, 1, 1) => (5, "param[5]"),
+            (:MANIFESTMEANS, 2, 1) => (6, "param[6]"),
+            (:MANIFESTVAR, 2, 2) => (7, "log1p_exp(param[7])"),
+        ))
+    sp = ekf_from_data_frame(df)
+    starts, times, data = _laplace_test_data(6, 2)
+    stops = vcat(starts[2:end] .- 1, size(data, 2))
+    for s in 1:2:6
+        data[2, starts[s]:stops[s]] .= NaN
+    end
+    objective = ctsem_objective(sp, starts, times, data)
+    laplace = ctsem_laplace_objective(objective, [1, 2], [8, 9], [10], [1.0, 1.0])
+    values = [0.2, -0.1, 0.3, -0.2, 0.05, -0.05, 0.1, -0.3, -0.15, 0.4]
+    scores = ContinuousTimeSEM.ctsem_subject_gradients(laplace, values;
+        prior=false).scores
+    # What the localised columns rely on: exactly zero where a unit does not
+    # read the parameter, and not elsewhere.
+    @test count(iszero, scores[:, 6]) == 3
+    @test count(iszero, scores[:, 7]) == 3
+    @test count(iszero, scores[:, 5]) == 0
+    localised = ctsem_laplace_hessian(laplace, values)
+    full = ctsem_laplace_hessian(laplace, values; localised=false)
+    @test all(isfinite, localised)
+    @test localised ≈ full rtol = 1e-8
+    # Columns asked for alone take the same route.
+    some = ctsem_hessian_columns(laplace, values, [6, 7])
+    @test all(isapprox.(some, full[:, [6, 7]]; rtol=1e-5, atol=1e-8))
+    # And without the warm start, which leaves the base modes unstored.
+    cold = ctsem_laplace_hessian(laplace, values; warm=false)
+    @test cold ≈ full rtol = 1e-6
+end
+
 @testset "an unusable inner curvature is reported, not hidden" begin
     laplace, values = _fresh_linear()
     # A population scale driven to essentially zero makes the random effects
