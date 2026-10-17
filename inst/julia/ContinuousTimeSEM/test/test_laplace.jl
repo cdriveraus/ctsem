@@ -538,6 +538,54 @@ end
     @test ForwardDiff.partials(ForwardDiff.value(ForwardDiff.value(p)))[1] ≈ 0.3
 end
 
+@testset "the inner solve ends at the mode, whichever curvature it walks on" begin
+    # Ended by the gradient bound alone, which is relative to the unit's value,
+    # a solve stopped up to the bound over the curvature short of the mode --
+    # and SR1, converging only superlinearly, further than Newton -- so the
+    # objective moved with the solver. Each solve must end with the Newton
+    # step left, on the exact curvature at the mode it returns, under
+    # `inner_tol`. With SR1 (probes off, so the fixture's unit uses it) and
+    # without, at two points.
+    probes = ContinuousTimeSEM._LAPLACE_MODE_PROBES[]
+    sr1 = ContinuousTimeSEM._LAPLACE_INNER_SR1[]
+    C = ContinuousTimeSEM
+    function newton_left(laplace, v)
+        Ls = C._laplace_popchols(v, laplace.spec)
+        aws = C._laplace_workspace!(laplace, Float64, length(v))
+        worst = 0.0
+        for U in eachindex(laplace.modes)
+            u = laplace.modes[U]
+            isempty(u) && continue
+            r = C._laplace_unit_objective_gradient(laplace, U, v, Ls, u, aws,
+                zeros(length(u)))
+            M = C._laplace_block_dense!(zeros(length(u), length(u)),
+                C._laplace_unit_curvature(laplace, U, v, Ls, u),
+                laplace.units.blocks[U])
+            worst = max(worst, maximum(abs, M \ collect(r.gradient)))
+        end
+        return worst
+    end
+    try
+        ContinuousTimeSEM._LAPLACE_MODE_PROBES[] = false
+        for v in ([0.1, 0.4, -0.2, 0.05, -0.25], [0.6, -1.2, 0.4, 0.3, 0.5])
+            out = map((true, false)) do on
+                ContinuousTimeSEM._LAPLACE_INNER_SR1[] = on
+                laplace, _ = _fresh_nonlinear()
+                r = ctsem_laplace_evaluate(laplace, v; gradient=true)
+                (r=r, left=newton_left(laplace, v), tol=laplace.inner_tol)
+            end
+            with, without = out
+            @test with.left < 2 * with.tol
+            @test without.left < 2 * without.tol
+            @test with.r.value ≈ without.r.value atol=1e-9
+            @test maximum(abs, with.r.gradient .- without.r.gradient) < 1e-7
+        end
+    finally
+        ContinuousTimeSEM._LAPLACE_MODE_PROBES[] = probes
+        ContinuousTimeSEM._LAPLACE_INNER_SR1[] = sr1
+    end
+end
+
 @testset "the seeded gradient is exercised away from the optimum" begin
     # A single test point can hide a term that happens to vanish there. These
     # perturb the population scales and correlations, which are the parameters
