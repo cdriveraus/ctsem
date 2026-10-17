@@ -121,7 +121,7 @@
   # posterior mean, so a ratio of the two was comparing curvature at one point
   # with spread at another and calling the result a ridge diagnostic.
   # "Describes" is `.ctBackendStoredHessian()`'s rule: evaluated there, or
-  # within a hundredth of a standard error of it.
+  # within the fit's `hessianreuse` standard errors of it.
   if (inherits(fit, "ctJuliaFit") && !is.null(hess)) {
     here <- suppressWarnings(as.numeric(.ctFitRawEstimate(fit)))
     if (is.null(.ctBackendStoredHessian(fit, here))) hess <- NULL

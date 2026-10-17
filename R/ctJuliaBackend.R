@@ -4986,7 +4986,7 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
     # engine and R: how far a Hessian may have been taken from the estimate and
     # still be its curvature (`.ctBackendHessianReuse()`), and the relative
     # curvature below which a direction is flat (`.ctFlatDirectionRtol()`).
-    newton_reuse = .ctBackendHessianReuse(),
+    newton_reuse = .ctBackendHessianReuse(optimcontrol),
     flat_rtol = .ctFlatDirectionRtol(),
     precondition = if (identical(optimcontrol$precondition, FALSE)) NULL else
       .ctJuliaVector(.ctJuliaParameterScale(model_spec,
@@ -6336,8 +6336,8 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
     # the matrix is at the Laplace point and `$estimate$raw` is the posterior
     # mean. `.ctBackendCorrectResult()` recertifies at the top of every
     # attempt and only breaks out before resuming, so this matrix describes the
-    # `minimizer` the fit reports: evaluated there, or within a hundredth of a
-    # standard error of it.
+    # `minimizer` the fit reports: evaluated there, or within `hessianreuse`
+    # standard errors of it.
     out$uncertainty <- list(certification = correction$certification,
       hessian = correction$hessian,
       evaluated_at = if (is.null(correction$evaluated_at)) minimizer else

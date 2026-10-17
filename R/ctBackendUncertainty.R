@@ -339,9 +339,9 @@
   # duplication ratchet asserts it.
   #
   # The stored matrix, when it was the one used, keeps the point it was
-  # evaluated at: the optimiser's finish may have taken it at the hand-over, a
-  # hundredth of a standard error or less from `est`, and saying `est` would
-  # claim more than was measured.
+  # evaluated at: the optimiser's finish may have taken it at the hand-over,
+  # within the fit's `hessianreuse` standard errors of `est`, and saying `est`
+  # would claim more than was measured.
   reused <- !is.null(stored$hessian) && !is.null(uncertaintyfit$hessian) &&
     identical(uncertaintyfit$hessian, stored$hessian)
   if (!is.null(uncertaintyfit$hessian)) {
@@ -699,7 +699,7 @@
   # the same answer.
   #
   # Reused only when it describes the point being asked about: evaluated there,
-  # or within a hundredth of a standard error of it (`.ctBackendStoredHessian()`),
+  # or within the fit's `hessianreuse` standard errors (`.ctBackendStoredHessian()`),
   # and `evaluated_at` is what says where it was. Comparing against
   # `fit$estimate$raw` instead is the trap: it is the same point on an
   # optimised fit and a different one on a sampled fit, whose Hessian is at the

@@ -902,15 +902,17 @@ _ctsem_finish_curvature(::Any) = nothing
 
 """
 How far the estimate may be from where a Hessian was evaluated, in the standard
-errors that Hessian implies, for that Hessian still to count as the curvature at
-the estimate. A displacement of a hundredth of a standard error moves the
-curvature by a hundredth of what it changes over a whole standard error, which
-in a regular model is itself small. Chosen, not measured (decision 3 of
-`review/OPTIM-consolidation-plan-2026-09-25.md`); the optimiser bench is what
-says whether it matters. R's `.ctBackendHessianReuse()` is the same number and
-is what the fit passes in.
+errors that Hessian implies, for that Hessian still to give the standard errors
+(`optimcontrol$hessianreuse`). A Wald standard error treats the curvature as
+constant over about a standard error around the estimate, and carries an error
+of however much it is not -- on the bench, 20 to 50 per cent over one standard
+error on well identified models and 150 to 300 on weakly identified Laplace
+ones (review/bench/2026-10-17-reuse-probe.csv). A Hessian `d` standard errors
+away is off by about `d` of that, so a tenth adds a tenth to the error the
+standard error already carries, whatever the model. R's
+`.ctBackendHessianReuse()` is the same default and is what the fit passes in.
 """
-const _CTSEM_HESSIAN_REUSE_SE = 0.01
+const _CTSEM_HESSIAN_REUSE_SE = 0.1
 
 """
 The relative curvature at or below which a direction is flat: excluded from the

@@ -415,19 +415,11 @@
 # precision than it needs as a side effect. `lambda` goes out beside the gap so
 # a reader can have either reading.
 #
-# The controls are read from wherever the fit keeps them. `ctFit()` stores them
-# under `$args$resolved` and `$args$input`; the backend's own `$args` -- what a
-# fit carries while it is being built, and what a stored fit from before that
-# split has -- keeps them at the top. Reading only the top found nothing once
-# `ctFit()` had returned, so `ctOptimUncertainty(fit)` re-certified every fit
-# at the default, whatever `gaptol` it was fitted with.
+# The controls are read from wherever the fit keeps them
+# (`.ctBackendFitOptimcontrol()`).
 #' @keywords internal
 .ctBackendGapTolerance <- function(fit, default = 1e-6) {
-  args <- fit$args
-  optimcontrol <- args$resolved$optimcontrol
-  if (is.null(optimcontrol)) optimcontrol <- args$input$optimcontrol
-  if (is.null(optimcontrol)) optimcontrol <- args$optimcontrol
-  .ctBackendConvergeTol(optimcontrol, default = default)
+  .ctBackendConvergeTol(.ctBackendFitOptimcontrol(fit), default = default)
 }
 
 # The bar itself, from the controls rather than from a fit.
@@ -956,26 +948,59 @@
   max(ratio)
 }
 
-# How far, in those standard errors, a Hessian may have been evaluated from a
-# point and still be the curvature there: a hundredth. The engine's finish
-# keeps the Hessian it took at the hand-over when its steps moved the estimate
-# less than this, and everything that reuses a stored Hessian asks the same
-# question (`.ctBackendStoredHessian()`), so one number serves both sides and
-# the engine is passed this one. Chosen, not measured: decision 3 of
-# review/OPTIM-consolidation-plan-2026-09-25.md, for the bench to test.
+# How far, in standard errors, the estimate may be from where a Hessian was
+# formed for that Hessian still to give the standard errors
+# (`optimcontrol$hessianreuse`, default a tenth). A Wald standard error treats
+# the curvature as constant over about a standard error either side of the
+# estimate, and carries an error of however much it is not: over one standard
+# error the curvature changed by 20 to 50 per cent on the bench's well
+# identified models and by 150 to 300 per cent on weakly identified Laplace ones
+# (review/bench/2026-10-17-reuse-probe.csv). A Hessian formed `d` standard
+# errors away differs from the one at the estimate by about `d` of that change,
+# so a tenth adds a tenth to the error the standard error already carries,
+# whatever the model, where forming a fresh one costs a gradient a parameter
+# (two on the Laplace route). The 0.01 this replaced was chosen, not measured.
+# The engine's finish keeps the Hessian it took at the hand-over when its steps
+# moved the estimate less than this, and everything that reuses a stored
+# Hessian asks the same question (`.ctBackendStoredHessian()`), so one number
+# serves both sides and the engine is passed this one.
 #' @keywords internal
-.ctBackendHessianReuse <- function() 0.01
+.ctBackendHessianReuse <- function(optimcontrol = list(), default = 0.1) {
+  value <- if (is.null(optimcontrol)) NULL else optimcontrol$hessianreuse
+  if (is.null(value)) return(default)
+  value <- suppressWarnings(as.numeric(value)[1L])
+  if (!is.finite(value) || value < 0) {
+    stop("optimcontrol$hessianreuse must be a non-negative number of standard ",
+      "errors.", call. = FALSE)
+  }
+  value
+}
+
+# The controls a fit was made with, from wherever it keeps them. `ctFit()`
+# stores them under `$args$resolved` and `$args$input`; the backend's own
+# `$args` -- what a fit carries while it is being built, and what a stored fit
+# from before that split has -- keeps them at the top. Reading only the top
+# found nothing once `ctFit()` had returned, so `ctOptimUncertainty(fit)`
+# re-certified every fit at the default, whatever `gaptol` it was fitted with.
+#' @keywords internal
+.ctBackendFitOptimcontrol <- function(fit) {
+  args <- fit$args
+  optimcontrol <- args$resolved$optimcontrol
+  if (is.null(optimcontrol)) optimcontrol <- args$input$optimcontrol
+  if (is.null(optimcontrol)) optimcontrol <- args$optimcontrol
+  optimcontrol
+}
 
 # The fit's stored Hessian when it describes the curvature at `est`, else NULL.
 #
-# It does when it was evaluated at `est` exactly, or within
+# It does when it was evaluated at `est` exactly, or within the fit's
 # `.ctBackendHessianReuse()` standard errors of it by its own inverse: the
 # engine's finish keeps a Hessian taken at the hand-over as the final one when
 # its steps moved the estimate less than that, and says where it was taken in
 # `$uncertainty$evaluated_at`. Reading `evaluated_at` rather than assuming
 # `$estimate$raw` is what stops a sampled fit's Hessian, taken at the Laplace
-# estimate, being reused at its posterior mean -- a different point, and far
-# more than a hundredth of a standard error away.
+# estimate, being reused at its posterior mean -- a different point, and
+# usually farther away than that.
 #' @keywords internal
 .ctBackendStoredHessian <- function(fit, est) {
   stored <- fit$uncertainty$hessian
@@ -988,7 +1013,8 @@
   }
   if (isTRUE(all.equal(as.numeric(at), est, tolerance = 0))) return(stored)
   moved <- .ctBackendHessianDistance(stored, at, est)
-  if (isTRUE(moved <= .ctBackendHessianReuse())) stored else NULL
+  reuse <- .ctBackendHessianReuse(.ctBackendFitOptimcontrol(fit))
+  if (isTRUE(moved <= reuse)) stored else NULL
 }
 
 # The curvature's numbers from an optimiser result: the Hessian the engine's

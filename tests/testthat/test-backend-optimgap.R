@@ -305,18 +305,27 @@ test_that("distance is measured in the standard errors the Hessian implies", {
   # A matrix that cannot be decomposed describes nothing.
   expect_equal(ctsem:::.ctBackendHessianDistance(matrix(NA_real_, 1, 1), 0, 1),
     Inf)
-  expect_equal(ctsem:::.ctBackendHessianReuse(), 0.01)
+  expect_equal(ctsem:::.ctBackendHessianReuse(), 0.1)
+  expect_equal(ctsem:::.ctBackendHessianReuse(list(hessianreuse = 0)), 0)
+  expect_error(ctsem:::.ctBackendHessianReuse(list(hessianreuse = -1)),
+    "hessianreuse")
 })
 
-test_that("a stored Hessian is reused within a hundredth of a standard error, and no further", {
+test_that("a stored Hessian is reused within the fit's hessianreuse standard errors, and no further", {
+  # A standard error of a half: a tenth of one is 0.05.
   fit <- list(uncertainty = list(hessian = matrix(-4, 1, 1), evaluated_at = 1))
   stored <- fit$uncertainty$hessian
   expect_identical(ctsem:::.ctBackendStoredHessian(fit, 1), stored)
-  expect_identical(ctsem:::.ctBackendStoredHessian(fit, 1.004), stored)
-  expect_null(ctsem:::.ctBackendStoredHessian(fit, 1.006))
-  # A posterior mean a tenth of a standard error from the Laplace point is
-  # somewhere else, which is the case `evaluated_at` exists for.
-  expect_null(ctsem:::.ctBackendStoredHessian(fit, 1.05))
+  expect_identical(ctsem:::.ctBackendStoredHessian(fit, 1.04), stored)
+  expect_null(ctsem:::.ctBackendStoredHessian(fit, 1.06))
+  # A posterior mean half a standard error from the Laplace point is somewhere
+  # else, which is the case `evaluated_at` exists for.
+  expect_null(ctsem:::.ctBackendStoredHessian(fit, 1.25))
+  # The fit's own setting, wherever ctFit() kept it.
+  strict <- utils::modifyList(fit, list(args = list(resolved = list(
+    optimcontrol = list(hessianreuse = 0.01)))))
+  expect_identical(ctsem:::.ctBackendStoredHessian(strict, 1.004), stored)
+  expect_null(ctsem:::.ctBackendStoredHessian(strict, 1.04))
   # A Hessian that does not say where it was taken predates the field and is
   # not reused; nor is one of the wrong size.
   expect_null(ctsem:::.ctBackendStoredHessian(
