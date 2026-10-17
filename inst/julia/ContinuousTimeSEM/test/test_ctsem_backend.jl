@@ -1774,7 +1774,9 @@ end
         f(x1), f(x2), d, 1.0, true)
     @test m.active
     @test m.steps == 1
+    at!(x1)
     @test ContinuousTimeSEM._ctsem_structured_B!(m, x1)
+    at!(x2)
     gain = f(x1) - f(x2)
     ContinuousTimeSEM._ctsem_structured_update!(m, x1, x2, grad(x1), grad(x2),
         f(x1), f(x1) - gain / 3, d, 1.0, true)
