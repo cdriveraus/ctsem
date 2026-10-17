@@ -6868,17 +6868,6 @@ _ctsem_optimise_progress_extra(o::CTSEMLaplaceObjective) =
 _ctsem_saturated_for(o::CTSEMLaplaceObjective, minimizer) =
     _laplace_saturated_parameters(o, minimizer)
 
-"""
-A trial point on the laplace route, where finite is not the same as usable.
-
-`converged` is the inner solve's verdict, and a point it failed at is invalid
-however finite its value: the Laplace term is defined at the mode, so away from
-one the number is not the objective. `ctsem_laplace_evaluate` is called rather
-than the generic `ctsem_evaluate`, which deliberately drops that flag.
-
-`gradient_method === :nested` is how `nested_gradient` reaches here through the
-shared driver's one gradient-method argument.
-"""
 _ctsem_scores_supported(o::CTSEMLaplaceObjective) = _ctsem_scores_supported(o.objective)
 
 # The Laplace route's scores come from the same evaluation as its gradient.
@@ -6894,6 +6883,17 @@ function _ctsem_optimise_trial_scores(o::CTSEMLaplaceObjective, x, gradient_meth
     return trial
 end
 
+"""
+A trial point on the laplace route, where finite is not the same as usable.
+
+`converged` is the inner solve's verdict, and a point it failed at is invalid
+however finite its value: the Laplace term is defined at the mode, so away from
+one the number is not the objective. `ctsem_laplace_evaluate` is called rather
+than the generic `ctsem_evaluate`, which deliberately drops that flag.
+
+`gradient_method === :nested` is how `nested_gradient` reaches here through the
+shared driver's one gradient-method argument.
+"""
 function _ctsem_optimise_trial(o::CTSEMLaplaceObjective, x, want_gradient::Bool,
         gradient_method, limit::Real, log; scores=nothing)
     evaluated = try

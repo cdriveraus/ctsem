@@ -22,7 +22,7 @@ default.
  by default.}
  \item{\code{maxiter}}{Both. Iteration cap. Default 1000 on julia, mize's on
  stan.}
- \item{\code{lbfgs_scores}}{Julia. Default FALSE. Runs beside L-BFGS a
+ \item{\code{lbfgs_scores}}{Julia. Default TRUE. Runs beside L-BFGS a
  second model of the curvature, the centred outer product of the per-unit
  scores plus the prior's precision and a learned correction, and takes each
  step on whichever model predicted the last step's gain better; while a
