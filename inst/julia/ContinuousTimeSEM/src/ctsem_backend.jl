@@ -1414,6 +1414,13 @@ it took 2-5 times fewer iterations; far from it, `B` misstates the curvature
 and a run on it stopped hundreds of nats short. So the two models run side by
 side and each step is taken on whichever predicted the last step's actual gain
 better (`_ctsem_structured_update!`), with no distance to choose.
+
+Its step is at most twice the last accepted step's length, a trust region that
+doubles while the model keeps predicting. `B` says least where the data say
+least -- a weakly identified sd -- and there its Newton step is longest: the
+prediction is checked only after a step, so uncapped, one such step took a
+population sd of test-poprank.R's full-rank fit into its transform's flat end,
+where the fit stopped saturated 0.62 below the maximum after 10 iterations.
 """
 mutable struct CTSEMStructured
     store::CTSEMScoreStore
@@ -1424,10 +1431,11 @@ mutable struct CTSEMStructured
     haveB::Bool
     active::Bool
     steps::Int
+    last::Float64
 end
 CTSEMStructured(store::CTSEMScoreStore, precision::AbstractVector, n::Integer) =
     CTSEMStructured(store, collect(Float64, precision), zeros(n, n), zeros(n, n),
-        fill(NaN, n), false, false, 0)
+        fill(NaN, n), false, false, 0, NaN)
 
 """`B` at `x` from the store's scores there, centred: the outer product of the
 units' scores about their mean, without the mean's own `g g' / units`, which
@@ -1451,15 +1459,21 @@ function _ctsem_structured_B!(m::CTSEMStructured, x::AbstractVector)
     return true
 end
 
-"""The structured model's step at `x`, `-(B + A) \\ G`, when it is the model
-in use and positive definite there; `nothing` otherwise."""
+"""The structured model's step at `x`, `-(B + A) \\ G` shortened to twice the
+last accepted step's length, when it is the model in use and positive
+definite there; `nothing` otherwise."""
 function _ctsem_structured_direction(m::CTSEMStructured, x::AbstractVector,
         G::AbstractVector)
     m.active || return nothing
     (m.haveB && m.Bx == x) || _ctsem_structured_B!(m, x) || return nothing
     F = cholesky!(Symmetric(m.B .+ m.A); check=false)
     issuccess(F) || return nothing
-    return -(F \ G)
+    d = -(F \ G)
+    if isfinite(m.last) && m.last > 0
+        len = norm(d)
+        len > 2 * m.last && (d .*= 2 * m.last / len)
+    end
+    return d
 end
 
 """
@@ -1493,6 +1507,7 @@ function _ctsem_structured_update!(m::CTSEMStructured, x0, x1, G0, G1, f0, f1,
     m.active = structured_step ? miss(predicted) <= log(2) :
         miss(predicted) < miss(plain)
     structured_step && (m.steps += 1)
+    m.last = norm(step)
     return nothing
 end
 

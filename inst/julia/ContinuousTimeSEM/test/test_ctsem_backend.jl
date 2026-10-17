@@ -1767,6 +1767,11 @@ end
     m.active = true
     d = ContinuousTimeSEM._ctsem_structured_direction(m, x1, grad(x1))
     @test x1 .+ d ≈ -(H \ g0)
+    # Never longer than twice the last accepted step.
+    @test m.last ≈ norm(s)
+    m.last = 1e-3
+    @test norm(ContinuousTimeSEM._ctsem_structured_direction(m, x1, grad(x1))) ≈ 2e-3
+    m.last = norm(s)
     # A step it predicted exactly keeps it in use; one it overstated by more
     # than twice hands back to L-BFGS.
     x2 = x1 .+ d; at!(x2)
