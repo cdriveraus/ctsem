@@ -1246,12 +1246,16 @@ It used to wrap Optim's line search and read `dphi0` off its arguments; since
 the optimiser became ctsem's own (optimiser.jl) nothing called the wrapped
 search, and it carried an unused `BackTracking` until 2026-09-25.
 
-`NaN`, no prediction, after a step the line search shortened or one taken on
-no curvature (the first, the gradient alone): the first's `g'p` is the
-gradient's, and a shortened step's is `alpha g'p`, how far the search backed
-off. Read as the gain left, a first step backed off to almost nothing along a
-stiff direction ended the affect pilot's 697-parameter fit after one
-iteration as converged, at |g| 0.47 (predicted gain 1e-17).
+`NaN`, no prediction, after a step the line search shortened, one taken on
+no curvature (the first, the gradient alone), or one that gained more than 1.5
+times what it predicted (a model with too much curvature along it): the
+first's `g'p` is the gradient's, a shortened step's is `alpha g'p`, how far the
+search backed off, and the third's model predicts every gain too small. Read
+as the gain left, a first step backed off to almost nothing along a stiff
+direction ended the affect pilot's 697-parameter fit after one iteration as
+converged, at |g| 0.47 (predicted gain 1e-17); with that step excluded, the
+next, on one curvature pair learned along the stiff direction, did the same on
+the test's quadratic (predicted 5e-13, 50 left).
 """
 mutable struct CTSEMDirectional
     dphi0::Float64
