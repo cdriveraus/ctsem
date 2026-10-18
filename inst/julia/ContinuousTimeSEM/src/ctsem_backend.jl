@@ -1415,12 +1415,16 @@ and a run on it stopped hundreds of nats short. So the two models run side by
 side and each step is taken on whichever predicted the last step's actual gain
 better (`_ctsem_structured_update!`), with no distance to choose.
 
-Its step is at most twice the last accepted step's length, a trust region that
-doubles while the model keeps predicting. `B` says least where the data say
-least -- a weakly identified sd -- and there its Newton step is longest: the
-prediction is checked only after a step, so uncapped, one such step took a
-population sd of test-poprank.R's full-rank fit into its transform's flat end,
-where the fit stopped saturated 0.62 below the maximum after 10 iterations.
+And only near the optimum, which is where `B` is the information: there
+`g' (B + A)^-1 g / 2` is the log likelihood still to gain, about a confidence
+region's chi-square with `npar` degrees of freedom, and the model steps only
+while that is at most `npar`. Further away `B` extrapolates, and accurately
+predicted steps can still lead somewhere plain L-BFGS does not go: on
+test-poprank.R's full-rank fit from its start, steps whose gains it predicted
+to 3% drove a population sd's raw value from 0 to -23, the flat end of its
+transform, where the fit stopped saturated 0.62 below the maximum (dev2). Its
+step is also at most twice the last accepted step's length, a trust region
+that doubles while the model keeps predicting.
 """
 mutable struct CTSEMStructured
     store::CTSEMScoreStore
@@ -1460,8 +1464,8 @@ function _ctsem_structured_B!(m::CTSEMStructured, x::AbstractVector)
 end
 
 """The structured model's step at `x`, `-(B + A) \\ G` shortened to twice the
-last accepted step's length, when it is the model in use and positive
-definite there; `nothing` otherwise."""
+last accepted step's length, when it is the model in use, positive definite
+there, and predicts no more than `npar` still to gain; `nothing` otherwise."""
 function _ctsem_structured_direction(m::CTSEMStructured, x::AbstractVector,
         G::AbstractVector)
     m.active || return nothing
@@ -1469,6 +1473,7 @@ function _ctsem_structured_direction(m::CTSEMStructured, x::AbstractVector,
     F = cholesky!(Symmetric(m.B .+ m.A); check=false)
     issuccess(F) || return nothing
     d = -(F \ G)
+    -dot(G, d) / 2 <= length(G) || return nothing
     if isfinite(m.last) && m.last > 0
         len = norm(d)
         len > 2 * m.last && (d .*= 2 * m.last / len)
