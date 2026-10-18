@@ -356,8 +356,14 @@ function _ctsem_lbfgs(fg!, x0::AbstractVector; memory::Integer=20,
             break
         end
         retried = false
-        directional === nothing ||
-            (directional.dphi0 = alpha == 1 && informed ? dphi : NaN)
+        # And whose gain did not show its curvature too high: for a whole step
+        # `s = -B^-1 g`, gained / predicted is `2 - (curvature along s) / (the
+        # model's)`, so a step that gained more than 1.5 times its prediction
+        # was taken on at least twice the curvature there is, and every gain
+        # that model predicts is too small. Curvature too low only makes the
+        # prediction too large, which delays a stop and never ends a run early.
+        verified = alpha == 1 && informed && (f - fn) <= 1.5 * (-dphi / 2)
+        directional === nothing || (directional.dphi0 = verified ? dphi : NaN)
         step = xn .- x
         iteration += 1
         fconv = abs(fn - f) <= f_tol * abs(fn)
