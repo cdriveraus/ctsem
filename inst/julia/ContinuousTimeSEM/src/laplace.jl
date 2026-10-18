@@ -3905,6 +3905,16 @@ Whether two of unit `U`'s Newton end points are separate maxima of `g_U`: it
 dips below the lower of the two somewhere on the segment between them (seven
 interior points), or cannot be evaluated there. Otherwise the lower is a point
 on the higher's slope. See `_laplace_probe_modes`.
+
+Any dip, however shallow: a shoulder -- a maximum a valley of hundredths of a
+nat parts from a higher one -- has a soft curvature, and its larger term is
+the better one. On a bench model (gD3) two units of two effects had shoulders
+0.009 and 0.02 nats deep, and against each unit's integral on a grid the
+shoulder's term was 0.007 and 0.46 off, the higher maximum's 0.54 and 0.61.
+A depth threshold would choose the higher maximum there. What does go wrong
+with shoulders is the search: from the higher maximum no probe reached
+either, so which term a unit got depended on which maximum Newton reached
+first, and the SR1 and exact solves reached different ones.
 """
 function _laplace_modes_separated(laplace::CTSEMLaplaceObjective, U::Integer,
     values::AbstractVector{Float64}, Ls::Vector{Matrix{Float64}}, aws, a, b)
