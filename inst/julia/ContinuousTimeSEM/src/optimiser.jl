@@ -870,17 +870,59 @@ _ctsem_cheap_hessian(::Any) = false
     _ctsem_flat_escape(objective)
 
 Whether the finish may leave a point along a direction its curvature calls flat
-(`_ctsem_flat_ladder`). On the marginal objective, the likelihood itself, a
-gain along such a direction is a gain. Not on the Laplace objective: there the
-approximation is least reliable exactly where a direction goes flat -- a
-random-effect scale collapsing, a unit's curvature going singular -- and moving
-along one walked AnomAuth S1 from its optimum into the spurious basin, 25
+(`_ctsem_flat_ladder`); `_ctsem_flat_allowed` says which way. On the marginal
+objective, the likelihood itself, a gain along such a direction is a gain, and
+so it is on the Laplace objective along any direction that takes no
+random-effect scale toward zero. That way the approximation is least reliable
+-- a unit's curvature goes singular as its effects' spread collapses -- and
+moving along it walked AnomAuth S1 from its optimum into the spurious basin, 25
 Laplace nats up and 1.8 exact nats down (decision 1 of
-review/OPTIM-consolidation-plan-2026-09-25). Nor on the state-explicit
-objective, which is sampled, never optimised.
+review/OPTIM-consolidation-plan-2026-09-25). Until 2026-10-18 that case kept
+the escape off the Laplace objective altogether, and a count model's fit from a
+supplied start (test-julia-count.R) stopped where the certification called it
+not stationary, 14 nats short along a population sd going up. Not on the
+state-explicit objective, which is sampled, never optimised.
 """
-_ctsem_flat_escape(::CTSEMObjective) = true
+_ctsem_flat_escape(::Union{CTSEMObjective,CTSEMLaplaceObjective}) = true
 _ctsem_flat_escape(::Any) = false
+
+"""
+How much smaller, relative, a random-effect population sd may be at a point
+the flat ladder takes than where it started (`_ctsem_flat_allowed`): room for a
+flat direction's leakage onto a scale -- 1e-5 raw on the count model's -- not
+a judgement of how much collapse is harmless, since a collapse moves an sd by
+orders of magnitude.
+"""
+const _CTSEM_FLAT_SCALE_RTOL = 1e-3
+
+"""
+    _ctsem_flat_allowed(objective, from, to)
+
+Whether the flat ladder may take the point `to` from `from`. On the Laplace
+objective, unless some random effect's population sd, at any level, is smaller
+there by more than `_CTSEM_FLAT_SCALE_RTOL`: the square root of the diagonal of
+each level's population covariance, own variances the filter integrates
+included (`_laplace_level_covariance`), so a rotation of a loading model's
+loadings, which leaves every sd where it was, is not refused. Everywhere else,
+always.
+"""
+_ctsem_flat_allowed(::Any, from, to) = true
+function _ctsem_flat_allowed(laplace::CTSEMLaplaceObjective, from::AbstractVector,
+        to::AbstractVector)
+    a = collect(Float64, from)
+    b = collect(Float64, to)
+    for level in laplace.spec.levels
+        nrandomeffects(level) == 0 && continue
+        Sa = _laplace_level_covariance(level, a)
+        Sb = _laplace_level_covariance(level, b)
+        for j in axes(Sa, 1)
+            sa = sqrt(max(Sa[j, j], 0.0))
+            sb = isfinite(Sb[j, j]) ? sqrt(max(Sb[j, j], 0.0)) : -Inf
+            sb >= (1 - _CTSEM_FLAT_SCALE_RTOL) * sa || return false
+        end
+    end
+    return true
+end
 
 """
     _ctsem_hessian_cost(objective, npar)
@@ -1132,7 +1174,9 @@ curvature at `x` and its length from the secant of the gradients at its two
 ends: the Hessian at `x` describes the ridge less well the further along it the
 rung is, and on a ridge curving as sharply as a parabola's four units out its
 curvature was 2.5 times too strong, so uncorrected lengths each recovered only
-two fifths of the way back. Returns the best point below `f` (minimised) as
+two fifths of the way back. `allowed(x, y)` may refuse a point: a rung's
+straight end before it is evaluated, and the point its corrections reach
+(`_ctsem_flat_allowed`). Returns the best point below `f` (minimised) as
 `(point, f, G, length)`, or `nothing`, and the calls spent.
 
 Why followed, not straight: a ridge flat in one direction is curved in raw
@@ -1150,7 +1194,8 @@ With no gradient at all outside the trusted directions, the flattest direction.
 sentinel value, which no correction improves and no comparison accepts.
 """
 function _ctsem_flat_ladder(fg!, x::AbstractVector, f::Real, G::AbstractVector,
-        split; lengths=_CTSEM_FLAT_PROBE_LENGTHS, corrections::Integer=3)
+        split; lengths=_CTSEM_FLAT_PROBE_LENGTHS, corrections::Integer=3,
+        allowed=(from, to) -> true)
     flat = findall(.!split.trusted)
     isempty(flat) && return (best=nothing, fcalls=0, gcalls=0)
     r = _ctsem_flat_residual(split, -G)
@@ -1163,6 +1208,7 @@ function _ctsem_flat_ladder(fg!, x::AbstractVector, f::Real, G::AbstractVector,
     best = nothing; fcalls = 0; gcalls = 0
     for side in (1.0, -1.0), len in lengths
         y = x .+ (side * len) .* u
+        allowed(x, y) || continue
         g = similar(G)
         fy = fg!(0.0, g, y); fcalls += 1; gcalls += 1
         isfinite(fy) || continue
@@ -1190,7 +1236,7 @@ function _ctsem_flat_ladder(fg!, x::AbstractVector, f::Real, G::AbstractVector,
             (isfinite(fz) && fz < fy) || break
             y = z; fy = fz; g = gz
         end
-        if fy < f && (best === nothing || fy < best.f)
+        if fy < f && (best === nothing || fy < best.f) && allowed(x, y)
             best = (point=y, f=fy, G=g, length=side * len)
         end
     end
@@ -1302,8 +1348,8 @@ direction whose negative curvature is rounding, walked and found flat, is a
 measurement the certification reads rather than a saddle. With no negative curvature but a
 direction the curvature calls flat, or a saddle whose ladder found nothing
 worth having, the flat ladder (`_ctsem_flat_ladder`) is tried, when
-`flat_escape` (the fit sets it where `_ctsem_flat_escape` allows), within the
-same cap, the steps continuing on the exact Hessian there with a fresh step
+`flat_escape` (the fit sets it where `_ctsem_flat_escape` allows), along what
+`flat_allowed(from, to)` permits (`_ctsem_flat_allowed`), within the same cap, the steps continuing on the exact Hessian there with a fresh step
 budget. Either escape is taken only when it gains more than `certify_tol`.
 Then, when `probe`, the flat-direction probe (`_ctsem_flat_probe`) at the final
 point.
@@ -1358,6 +1404,7 @@ function _ctsem_newton_finish(objective, x0, f0, G0, fg!; tol::Real=1e-8,
         ladder=_CTSEM_SADDLE_LADDER, probe_lengths=_CTSEM_FLAT_PROBE_LENGTHS,
         max_escapes::Integer=3, value_at=nothing, handback::Bool=false,
         certify_tol::Real=0.0, flat_escape::Bool=false,
+        flat_allowed=(from, to) -> true,
         reporter=nothing, hessian0=nothing, hessian0_at=nothing)
     curvature in (:exact, :chord, :subset) || throw(ArgumentError(
         "newton curvature must be exact, chord or subset, got $(curvature)"))
@@ -1892,7 +1939,8 @@ function _ctsem_newton_finish(objective, x0, f0, G0, fg!; tol::Real=1e-8,
         # the Newton step (no gradient there) nor the certification's straight
         # probe can see -- `_ctsem_flat_ladder`, where the route allows it.
         (flat_escape && escapes < max_escapes) || break
-        walked = _ctsem_flat_ladder(fg!, x, f, G, split; lengths=probe_lengths)
+        walked = _ctsem_flat_ladder(fg!, x, f, G, split; lengths=probe_lengths,
+            allowed=flat_allowed)
         fcalls[] += walked.fcalls; gcalls += walked.gcalls
         (walked.best !== nothing && f - walked.best.f > certify_tol) || break
         x = collect(Float64, walked.best.point); f = walked.best.f
