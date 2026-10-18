@@ -1482,6 +1482,21 @@ end
         carried = 50.0) == (0, false)
 end
 
+@testset "a first step backed off along a stiff direction does not end the run" begin
+    # The first step is the gradient, scaled; here the stiff coordinate
+    # dominates it, so the line search backs off to alpha ~ 2e-8, and the
+    # step's own predicted gain, alpha g'p / 2 ~ 1e-4, is under the gap
+    # tolerance while 50 is left in the soft coordinate. It ended the run as
+    # converged after one iteration; a step predicts the gain left only taken
+    # whole on a model of the curvature.
+    m = _endgame_mock(p -> -0.5 * (1e14 * p[1]^2 + p[2]^2))
+    r = ContinuousTimeSEM.ctsem_optimize(m, [1e-9, 10.0]; maxiter=200,
+        gap_tol=1e-3, newton=false, certify=false,
+        progress=false, verbose=false, overshoot_probe=:off)
+    @test r.iterations > 1
+    @test r.maximum_loglik > -1e-2
+end
+
 @testset "ctsem_optimize hands the endgame's numbers back" begin
     # From beside the saddle above: L-BFGS converges into it (the gradient in y
     # is exactly zero along y = 0) and hands over, and the finish escapes.

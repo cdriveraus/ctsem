@@ -273,6 +273,11 @@ function _ctsem_lbfgs(fg!, x0::AbstractVector; memory::Integer=20,
             _ctsem_structured_direction(structured, x, G)
         took_structured = sdir !== nothing
         s = took_structured ? sdir : -_ctsem_lbfgs_hmul(M, G, h0, dinv, Dinv)
+        # Whether `s` comes from a model of the curvature -- pairs, an inverse
+        # the caller holds, or the structured model -- rather than the gradient
+        # alone, scaled. Only such a step, taken whole, predicts what is left to
+        # gain.
+        informed = took_structured || !isempty(M.S) || Dinv !== nothing
         # With no curvature pairs the step is the metric's alone, and at a start
         # where the transforms are flat the metric says a raw unit is worth
         # almost nothing -- so 0.1 in model units is an enormous raw step. One
@@ -351,7 +356,8 @@ function _ctsem_lbfgs(fg!, x0::AbstractVector; memory::Integer=20,
             break
         end
         retried = false
-        directional === nothing || (directional.dphi0 = alpha * dphi)
+        directional === nothing ||
+            (directional.dphi0 = alpha == 1 && informed ? dphi : NaN)
         step = xn .- x
         iteration += 1
         fconv = abs(fn - f) <= f_tol * abs(fn)
