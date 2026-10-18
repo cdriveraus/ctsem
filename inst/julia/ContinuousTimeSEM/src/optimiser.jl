@@ -215,7 +215,8 @@ function _ctsem_lbfgs(fg!, x0::AbstractVector; memory::Integer=20,
         callback=nothing, directional=nothing, batch=nothing,
         c1::Real=1e-4, maxbacktrack::Integer=40, iteration0::Integer=0,
         diagonal::Bool=false, nonmonotone::Real=0.0, gll::Integer=0,
-        inverse::Union{Nothing,Matrix{Float64}}=nothing, scaled::Bool=false)
+        inverse::Union{Nothing,Matrix{Float64}}=nothing, scaled::Bool=false,
+        structured=nothing)
     n = length(x0)
     x = collect(Float64, x0)
     dinv = metric === nothing ? ones(n) : begin
@@ -266,22 +267,32 @@ function _ctsem_lbfgs(fg!, x0::AbstractVector; memory::Integer=20,
     # acceptance sgd() uses (`_ctsem_sgd`). `recent` is set beside C.
     reference(recent, C) = gll > 0 ? maximum(@view recent[max(1, end - gll + 1):end]) : C
     while !stopped && !gconv && iteration < maxiter
-        s = -_ctsem_lbfgs_hmul(M, G, h0, dinv, Dinv)
-        # Whether `s` comes from a model of the curvature -- pairs, an inverse
-        # the caller holds, or coordinates the caller has scaled by it
-        # (`scaled`) -- rather than the gradient alone. Only such a step
-        # predicts anything of what is left to gain.
-        informed = scaled || !isempty(M.S) || Dinv !== nothing
+        # `structured` (R's `lbfgs_scores`): a second model of the curvature,
+        # whose step is taken while it predicts better than this one
+        # (`CTSEMStructured`).
+        sdir = structured === nothing ? nothing :
+            _ctsem_structured_direction(structured, x, G)
+        took_structured = sdir !== nothing
+        s = took_structured ? sdir : -_ctsem_lbfgs_hmul(M, G, h0, dinv, Dinv)
+        # Whether `s` comes from a model of the curvature -- the structured
+        # model, pairs, an inverse the caller holds, or coordinates the caller
+        # has scaled by it (`scaled`) -- rather than the gradient alone. Only
+        # such a step predicts anything of what is left to gain.
+        informed = took_structured || scaled || !isempty(M.S) || Dinv !== nothing
         # With no curvature pairs the step is the metric's alone, and at a start
         # where the transforms are flat the metric says a raw unit is worth
         # almost nothing -- so 0.1 in model units is an enormous raw step. One
         # raw unit at most, then: a long first step is how a fit once went from
         # raw 0 to raw 20.9 and ended where every transform is flat.
-        if isempty(M.S)
+        if isempty(M.S) && !took_structured
             len = norm(s)
             len > 1 && (s .*= 1 / len)
         end
         dphi = dot(G, s)
+        if (!(dphi < 0) || !isfinite(dphi)) && took_structured
+            structured.active = false
+            continue
+        end
         if !(dphi < 0) || !isfinite(dphi)
             # Not a descent direction: the memory has gone bad. Start it again.
             isempty(M.S) && (lsfail = true; break)
@@ -327,6 +338,12 @@ function _ctsem_lbfgs(fg!, x0::AbstractVector; memory::Integer=20,
                 accepted && break
             end
         end
+        if !accepted && took_structured
+            # The structured model's step found nothing: plain L-BFGS from
+            # here, until the structured model predicts better again.
+            structured.active = false
+            continue
+        end
         if !accepted
             # A stale memory is the usual cause; drop it once, then give up.
             if !retried && !isempty(M.S)
@@ -347,6 +364,8 @@ function _ctsem_lbfgs(fg!, x0::AbstractVector; memory::Integer=20,
         fconv = abs(fn - f) <= f_tol * abs(fn)
         xconv = maximum(abs, step; init=0.0) <= x_tol
         dG = Gn .- G
+        structured === nothing || _ctsem_structured_update!(structured, x, xn,
+            G, Gn, f, fn, step, alpha, took_structured)
         if _ctsem_lbfgs_push!(M, step, dG) && learn
             B = _ctsem_lbfgs_diagonal!(B, step, dG, dinv)
             Dinv = 1 ./ B

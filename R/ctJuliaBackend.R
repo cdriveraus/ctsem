@@ -5096,6 +5096,9 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
   if (!is.null(optimcontrol$lbfgs_memory)) {
     common$lbfgs_memory <- as.integer(optimcontrol$lbfgs_memory)[1L]
   }
+  # A second model of the curvature beside L-BFGS's, from the per-unit score
+  # outer products (`CTSEMStructured`); on unless asked not to.
+  if (!isFALSE(optimcontrol$lbfgs_scores)) common$lbfgs_scores <- TRUE
   # L-BFGS's initial inverse Hessian per coordinate, and a non-monotone line
   # search (see `_ctsem_lbfgs` in optimiser.jl).
   if (!is.null(optimcontrol$lbfgs_diagonal)) {
@@ -6143,6 +6146,9 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
     # route, or the run ended on its cap or a stall).
     newton_steps = if (is.null(result$newton_steps)) 0L else
       as.integer(result$newton_steps),
+    # L-BFGS steps taken on the score outer product's model (lbfgs_scores).
+    structured_steps = if (is.null(result$structured_steps)) 0L else
+      as.integer(result$structured_steps),
     # Full and subset Hessians the finish formed, the final (certification)
     # one included: that one is handed over and not formed again.
     newton_hessians = if (is.null(result$newton_hessians)) 0L else

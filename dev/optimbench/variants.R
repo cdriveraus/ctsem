@@ -50,6 +50,10 @@ BENCH_VARIANTS <- list(
   mem100 = list(optimcontrol = list(lbfgs_memory = 100L)),
   mem500 = list(optimcontrol = list(lbfgs_memory = 500L)),
 
+  # A structured model of the curvature beside L-BFGS, from the per-unit score
+  # outer products (optimcontrol$lbfgs_scores).
+  scores = list(optimcontrol = list(lbfgs_scores = TRUE)),
+
   # The finish's steps on one curvature whatever the route would choose
   # (`_ctsem_finish_curvature`): a fresh exact Hessian whenever a step is slow,
   # or one Hessian walked with SR1 updates and refreshed when its walk stops

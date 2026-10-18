@@ -7007,6 +7007,21 @@ _ctsem_optimise_progress_extra(o::CTSEMLaplaceObjective) =
 _ctsem_saturated_for(o::CTSEMLaplaceObjective, minimizer) =
     _laplace_saturated_parameters(o, minimizer)
 
+_ctsem_scores_supported(o::CTSEMLaplaceObjective) = _ctsem_scores_supported(o.objective)
+
+# The Laplace route's scores come from the same evaluation as its gradient.
+function _ctsem_optimise_trial_scores(o::CTSEMLaplaceObjective, x, gradient_method,
+        limit::Real, log, store::CTSEMScoreStore)
+    store.valid = false
+    fill!(store.S, 0.0)
+    trial = _ctsem_optimise_trial(o, x, true, gradient_method, limit, log;
+        scores=store.S)
+    if trial.valid && all(isfinite, store.S)
+        copyto!(store.x, x); store.valid = true
+    end
+    return trial
+end
+
 """
 A trial point on the laplace route, where finite is not the same as usable.
 
@@ -7019,10 +7034,10 @@ than the generic `ctsem_evaluate`, which deliberately drops that flag.
 shared driver's one gradient-method argument.
 """
 function _ctsem_optimise_trial(o::CTSEMLaplaceObjective, x, want_gradient::Bool,
-        gradient_method, limit::Real, log)
+        gradient_method, limit::Real, log; scores=nothing)
     evaluated = try
         ctsem_laplace_evaluate(o, x; gradient=want_gradient,
-            nested_gradient=(Symbol(gradient_method) === :nested))
+            nested_gradient=(Symbol(gradient_method) === :nested), scores=scores)
     catch err
         _ctsem_must_propagate(err) && rethrow()
         nothing
