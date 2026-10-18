@@ -195,24 +195,27 @@ test_that("the two routes agree on a count model", {
   skip_without_julia()
   d <- .count_data()
   m <- .count_model_varying()
-  # A COMMON, FIXED starting point, so that both routes start from the same
-  # place: `inits = NULL` starts each at rnorm(npar, 0, .01) from whatever RNG
-  # state it inherits.
+  # The default start, from one seed for both routes: the draw it starts from
+  # and the prior warm-up it runs before the fit, which supplied `inits` skip.
   #
-  # Full fits, not `estonly`. On the Laplace route `estonly` forms no Hessian,
-  # so no Newton finish runs and the fit ends wherever L-BFGS stops -- and this
-  # model has a plateau there, 41 nats below the maximum: drift near -15, the
-  # latent process white noise and the random intercept carrying the stability,
-  # with a slightly positive curvature along drift. From ten small random starts
-  # (sd 0.01 and 0.1) estonly fits stopped short of the maximum from most of
-  # them on both routes and under either L-BFGS scaling, while full Laplace fits
-  # reached it from all ten under both (2026-10-04). With estonly this test read
-  # which side of the plateau zeros fell on, which the diagonal scaling changed.
+  # This model has a second maximum 41 nats below the first: drift near -20,
+  # the latent process white noise and the random intercept carrying the
+  # stability, drift and diffusion unidentified along it, the curvature along
+  # drift quartic (2026-10-18). A fit from supplied inits can end on either,
+  # so a test from one of them reads which basin its start lies in, not
+  # whether the routes agree. From zeros the Laplace fit once reached the
+  # first only by failing to converge on the second and wandering off it;
+  # once the finish converged there (qn-walk), Laplace fits from supplied
+  # starts (zeros, and ten at each of sd 0.01 and 0.1) ended on the second
+  # from 5 of 21, against 2 before. From the default start they reached the
+  # first from ten seeds of ten, before and after. Not `estonly` either: on
+  # the Laplace route it forms no Hessian, so no finish runs, and from ten
+  # small random starts L-BFGS stopped short of the first maximum from 8 to
+  # 10 of them (2026-10-04).
   fit <- function(route) {
-    spec <- suppressWarnings(suppressMessages(ctFit(d, m, backend = "julia",
-      intoverpop = route, fit = FALSE)))
+    set.seed(1)
     suppressWarnings(suppressMessages(ctFit(d, m, backend = "julia",
-      intoverpop = route, inits = rep(0, ctsem:::.ctBackendNpar(spec)))))
+      intoverpop = route)))
   }
   augmented <- fit("augmented")
   laplace <- fit("laplace")
