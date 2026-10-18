@@ -1074,6 +1074,9 @@ function ctsem_laplace_continuation_optimize(o::CTSEMLaplaceContinuation,
         f_tol=0.0, x_tol=0.0, gap_tol=Float64(tol), converge_tol=Float64(tol),
         overshoot_probe=:off, stall_window=0, batch=false, newton=false,
         precondition=nothing, lbfgs_diagonal=false,
+        # Its basis is whitened by the Hessian, so its first step is Newton's
+        # and its prediction is the gain left.
+        lbfgs_scaled=true,
         initial_alpha=max(alpha, 1e-12), progress=false)
     y = collect(Float64, res.minimizer)
     moved = sqrt(sum(abs2, y))
