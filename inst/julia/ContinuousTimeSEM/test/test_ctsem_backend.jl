@@ -1187,9 +1187,10 @@ end
     tiny = _endgame_run(m, x0; flat_rtol=1e-6, flat_escape=true, certify_tol=100.0)
     @test !("flat" in tiny.history.kind)
     @test tiny.escapes == 0
-    # Nor one along a way `flat_allowed` refuses -- on the Laplace objective, a
-    # scale going toward zero (`_ctsem_flat_allowed`): the ridge rises toward
-    # larger `a`, and refusing that way leaves the finish where it was.
+    # Nor one to a point `flat_allowed` refuses -- on the Laplace objective, one
+    # where the corrected objective does not gain (`_ctsem_flat_allowed`): the
+    # ridge rises toward larger `a`, and refusing that way leaves the finish
+    # where it was.
     held = _endgame_run(m, x0; flat_rtol=1e-6, flat_escape=true, certify_tol=1e-6,
         flat_allowed=(from, to) -> to[1] <= from[1])
     @test !("flat" in held.history.kind)
