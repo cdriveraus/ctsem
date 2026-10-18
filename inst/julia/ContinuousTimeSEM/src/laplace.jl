@@ -3516,7 +3516,10 @@ function _laplace_newton_unit_mode(laplace::CTSEMLaplaceObjective, U::Integer,
             utry .= u .+ step
             trial = _laplace_unit_objective_gradient(laplace, U, values, Ls,
                 utry, aws, gtry)
-            if isfinite(trial.value) && trial.value >= current.value - 1e-12
+            # The value, or where it cannot rank the step, the gradient (see the
+            # failed line search below).
+            if isfinite(trial.value) && (trial.value >= current.value - 1e-12 ||
+                    maximum(abs, gtry) < maximum(abs, current.gradient))
                 u, utry = utry, u
                 gcur, gtry = gtry, gcur
                 current = trial
@@ -3659,9 +3662,35 @@ function _laplace_newton_unit_mode(laplace::CTSEMLaplaceObjective, U::Integer,
             # `inner_gradient` keeps what was actually reached, so a unit that
             # stopped four orders above the tolerance is visible in the
             # diagnostics rather than silently equated with one that did not.
-            converged = evaluable &&
+            #
+            # But a value that cannot rank the trials does not mean the mode is
+            # found: on an exact, unrepaired curvature the Newton step is
+            # reliable whatever the value can see, and the gradient still ranks
+            # it. On the affect pilot, well-conditioned units (curvature 1.3 to
+            # 134) stopped here one step short -- |g| 25-100 times the bound,
+            # the step 1e3-1e4 times `inner_tol`, 1e-13 left to gain against a
+            # value of -1000 -- and which units did depended on the CPU's last
+            # bits: the objective differed by 1.1e-6 between Intel and AMD
+            # nodes, through the log-determinant at those modes. So that step
+            # is taken if it makes the gradient smaller, and only otherwise is
+            # this the floor.
+            stationary = evaluable &&
                 _laplace_stationary_gain(current.gradient, step) <=
                     _laplace_inner_tolerance(laplace, current.value)
+            if stationary && exact && !fac.repaired
+                utry .= u .+ step
+                trial = _laplace_unit_objective_gradient(laplace, U, values, Ls,
+                    utry, aws, gtry)
+                if isfinite(trial.value) &&
+                        maximum(abs, gtry) < maximum(abs, current.gradient)
+                    u, utry = utry, u
+                    gcur, gtry = gtry, gcur
+                    current = trial
+                    stepped_exact = true
+                    continue
+                end
+            end
+            converged = stationary
             break
         end
     end
