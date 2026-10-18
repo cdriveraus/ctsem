@@ -3698,10 +3698,13 @@ function _laplace_newton_unit_mode(laplace::CTSEMLaplaceObjective, U::Integer,
             break
         end
     end
-    if d == 0 || maximum(abs, current.gradient) <
-            _laplace_inner_tolerance(laplace, current.value)
-        converged = true
-    end
+    # A solve that ran out of iterations has not measured its distance to the
+    # mode, whatever its gradient: the bound is not the stopping rule above, so
+    # counting it here let a starved budget stop short and still call the mode
+    # found. The Hessian's escalation, which raises the budget only for a unit
+    # that did not converge, then never ran, and its columns differed from the
+    # full budget's by 3e-8 relative (test-julia-laplace.R, 2026-10-18).
+    d == 0 && (converged = true)
     # The gradient's largest entry, the one thing its readers ask of it: the
     # vector is the slot's, and the next solve on this slot overwrites it.
     return (u=copy(u), value=current.value,
@@ -7344,8 +7347,23 @@ function _laplace_hessian_columns(laplace::CTSEMLaplaceObjective,
     if warm || localised
         previous = ctsem_set_warm_start!(false)
         try
-            ctsem_laplace_evaluate(laplace, x; gradient=localised, scores=scores)
+            # Escalated as the points are (`_laplace_hessian_point`): the
+            # points start from these modes, and modes a short budget stopped
+            # short of sent them along other paths than the full budget's, to
+            # other ends within the inner tolerance -- columns 3e-8 apart
+            # relative where the escalation should have changed nothing.
+            out = ctsem_laplace_evaluate(laplace, x; gradient=localised,
+                scores=scores)
+            tries = 0
+            while !out.converged && tries < retries &&
+                    any(>=(laplace.inner_maxiter), laplace.inner_iterations)
+                tries += 1
+                laplace.inner_maxiter = budget * 4^tries
+                out = ctsem_laplace_evaluate(laplace, x; gradient=localised,
+                    scores=scores)
+            end
         finally
+            laplace.inner_maxiter = budget
             ctsem_set_warm_start!(previous)
         end
     end
@@ -7386,10 +7404,8 @@ function _laplace_hessian_columns(laplace::CTSEMLaplaceObjective,
                 h = step * max(1.0, abs(x[j]))
                 plus = copy(x); plus[j] += h
                 minus = copy(x); minus[j] -= h
-                _laplace_restore_modes!(obj, from)
-                pp = _laplace_hessian_point(obj, plus, budget, retries)
-                _laplace_restore_modes!(obj, from)
-                pm = _laplace_hessian_point(obj, minus, budget, retries)
+                pp = _laplace_hessian_point(obj, plus, budget, retries; from=from)
+                pm = _laplace_hessian_point(obj, minus, budget, retries; from=from)
                 (pp.tries + pm.tries) > 0 && push!(escalated, j)
                 # Two gradients just finished, converged or not: a column this
                 # function gives up on (NaN, below) still cost the same two
@@ -7452,10 +7468,14 @@ function _laplace_restore_modes!(laplace::CTSEMLaplaceObjective, modes)
 end
 
 """
-    _laplace_hessian_point(laplace, x, budget, retries)
+    _laplace_hessian_point(laplace, x, budget, retries; from=nothing)
 
 One of the two points a Hessian column is differenced from, evaluated with the
-inner budget raised rather than the column abandoned.
+inner budget raised rather than the column abandoned. Each attempt starts from
+`from`, the warm start (`nothing`: the origin): a retry from where the short
+attempt stopped walks another path than the larger budget would have from the
+start, so ends elsewhere within the inner tolerance, and the column is not the
+one the larger budget gives.
 
 Retried only while some unit actually *exhausted* its iterations. Every other
 way the inner solve reports failure is deterministic from a fixed start -- the
@@ -7471,17 +7491,19 @@ optimcontrol name `laplace_inner_maxiter`; a bare dollar sign interpolates in a
 Julia docstring, which is why it is not written out here.)
 """
 function _laplace_hessian_point(laplace::CTSEMLaplaceObjective,
-    x::AbstractVector, budget::Integer, retries::Integer)
+    x::AbstractVector, budget::Integer, retries::Integer; from=nothing)
     capped() = any(>=(laplace.inner_maxiter), laplace.inner_iterations)
     reached() = isempty(laplace.inner_gradient) ? 0.0 :
         maximum(laplace.inner_gradient)
     short() = count(!, laplace.inner_converged)
     laplace.inner_maxiter = budget
+    _laplace_restore_modes!(laplace, from)
     out = ctsem_laplace_evaluate(laplace, x; gradient=true)
     tries = 0
     while !out.converged && capped() && tries < retries
         tries += 1
         laplace.inner_maxiter = budget * 4^tries
+        _laplace_restore_modes!(laplace, from)
         out = ctsem_laplace_evaluate(laplace, x; gradient=true)
     end
     result = (out=out, tries=tries, worst=reached(), units=short())
