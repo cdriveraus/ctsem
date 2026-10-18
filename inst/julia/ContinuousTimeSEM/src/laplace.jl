@@ -2744,11 +2744,6 @@ const _LAPLACE_MODE_PROBES = Ref(true)
 # the tests, which compare the two.
 const _LAPLACE_INNER_SR1 = Ref(true)
 
-# What an SR1 inner solve starts from: `:exact`, the curvature at the origin, or
-# `:prior`, the effects' prior precision (the identity: they are standardised),
-# which forms no curvature until the solve verifies its end. A measurement.
-const _LAPLACE_SR1_START = Ref(:exact)
-
 """
 Precision below which a direction of a mode's curvature is probed: the
 continuation's `soft_tau`, the precision below which a direction can be
@@ -3469,7 +3464,10 @@ function _laplace_newton_unit_mode(laplace::CTSEMLaplaceObjective, U::Integer,
     # The curvature is most of what a mode solve costs (60-70% of a Laplace
     # evaluation, dev1), and Newton formed it afresh at every iteration. Here it
     # is formed exactly at the first iterate -- so the solve stays a function of
-    # the parameters alone, from the origin as before -- and then updated by
+    # the parameters alone, from the origin as before; started instead from the
+    # prior's identity, which forms nothing there, solves were 5-15% slower on
+    # wide2 and bigre (dev2), the first poor step forming it anyway after the
+    # steps it wasted -- and then updated by
     # SR1 from each accepted step's change in the gradient, as the finish's walk
     # updates its Hessian, until a step shows the matrix no longer describes the
     # unit: one the line search had to shorten, or one that did not halve the
@@ -3512,13 +3510,6 @@ function _laplace_newton_unit_mode(laplace::CTSEMLaplaceObjective, U::Integer,
     # last decision, which the term then reads instead of forming it again
     # (`_laplace_unit_primal`'s `given`): one curvature a unit fewer.
     final = nothing
-    if sr1 && _LAPLACE_SR1_START[] === :prior
-        fill!(B, 0.0)
-        @inbounds for i in 1:d
-            B[i, i] = 1.0
-        end
-        exact = false
-    end
     current = _laplace_unit_objective_gradient(laplace, U, values, Ls, u, aws,
         gcur)
     if !isfinite(current.value) && any(!iszero, u)
