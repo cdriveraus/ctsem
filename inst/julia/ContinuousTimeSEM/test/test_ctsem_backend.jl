@@ -1590,18 +1590,19 @@ end
     # The finish's steps count in the line but not against `maxiter`: a dear
     # Hessian is walked for as many steps as it cost, so on a large model they
     # alone can pass the cap in a fit that converged. The exponential tail
-    # needs about seven steps after L-BFGS stops at its first iteration -- a
-    # metric a million times too stiff makes its predicted gain negligible --
-    # on a chord too dear to hand back (a budget of one step).
+    # takes about ten steps of the finish after L-BFGS hands over at its fourth
+    # iteration, on a chord too dear to hand back (a budget of one step), so a
+    # cap of five is L-BFGS's and the finish passes it.
     m = _endgame_mock(p -> -0.5e4 * p[1]^2 - 1e-4 * exp(2 * p[2]))
     lines = String[]
-    r = ContinuousTimeSEM.ctsem_optimize(m, [0.01, 0.0]; maxiter=3,
+    r = ContinuousTimeSEM.ctsem_optimize(m, [0.01, 0.0]; maxiter=5,
         gap_tol=1e-8, newton=true, precondition=[1e6, 1e6],
         newton_maxit=1, newton_curvature=:chord,
         certify=false, progress=true, progress_every=1e-9,
         progress_sink=(text, kind) -> (push!(lines, text); nothing),
         verbose=false, overshoot_probe=:off)
-    @test r.iterations > 3
+    @test r.iterations > 5
+    @test r.newton_steps > 1
     @test r.stop_reason != "cap"
     @test any(occursin("iterations", l) for l in lines)
     @test !any(occursin("ITERATION CAP", l) for l in lines)
@@ -1625,7 +1626,9 @@ end
     for budget in (3, 30)
         r = ContinuousTimeSEM.ctsem_optimize(_endgame_mock(f), x0; newton=true,
             newton_switch=1e6, newton_maxit=budget, kw...)
-        @test r.iterations - r.newton_steps == 8
+        # No earlier than a Hessian's cost; later where the step at that
+        # point predicts nothing (`CTSEMDirectional`).
+        @test r.iterations - r.newton_steps >= 8
         @test maximum(abs, r.minimizer .- c) < 1e-8
     end
     # Where L-BFGS stops by its own rule before it has spent a Hessian's cost
