@@ -3489,13 +3489,13 @@ function _laplace_newton_unit_mode(laplace::CTSEMLaplaceObjective, U::Integer,
     # stopped just under the bound. On the affect pilot (35 effects a unit)
     # SR1 moved the objective 1.7e-6, above the outer gap tolerance, and the
     # gradient 1e-4 in the loadings, against Newton; neither was the mode. So
-    # once the gradient is under the bound, the distance to the mode is asked
-    # of the last exact factorization, a solve and no new curvature: under
-    # `inner_tol` the mode is found, and otherwise that step is taken (a chord
-    # step, on the curvature a step back). Reached after an updated step, the
-    # bound makes the next curvature exact first. Neither the step bound nor a
-    # failed line search is read from an updated matrix: like a repaired one,
-    # it does not measure the distance to the mode.
+    # the solve ends only when the Newton step on the exact curvature at the
+    # point is under `inner_tol`, and that curvature is the term's too
+    # (`final`). An SR1 solve reaches it by its own steps: when the updated
+    # curvature's step is under `inner_tol`, the exact one is formed at the
+    # same point to verify it. Neither the step bound nor a failed line search
+    # is read from an updated matrix: like a repaired one, it does not measure
+    # the distance to the mode.
     sr1 = _LAPLACE_INNER_SR1[] && d > 0 && length(blocks) == 1
     # Taken whether or not they are used: a local that is either `nothing` or
     # an array makes every call on it dynamic.
