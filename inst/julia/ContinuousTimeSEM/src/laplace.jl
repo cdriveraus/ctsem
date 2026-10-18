@@ -1934,6 +1934,11 @@ struct CTSEMBlockMatrix{T}
     coupling::Vector{Vector{Matrix{T}}}
 end
 
+"""A block matrix's copy, to keep past the slot scratch it was formed in."""
+_laplace_copy_blockmatrix(M::CTSEMBlockMatrix{T}) where {T} =
+    CTSEMBlockMatrix{T}([copy(b) for b in M.diag],
+        [[copy(c) for c in row] for row in M.coupling])
+
 """An all-zero block matrix shaped for one unit."""
 function CTSEMBlockMatrix(::Type{T}, blocks::Vector{CTSEMLaplaceBlock}) where {T}
     diag = [zeros(T, b.size, b.size) for b in blocks]
@@ -2739,6 +2744,11 @@ const _LAPLACE_MODE_PROBES = Ref(true)
 # the tests, which compare the two.
 const _LAPLACE_INNER_SR1 = Ref(true)
 
+# What an SR1 inner solve starts from: `:exact`, the curvature at the origin, or
+# `:prior`, the effects' prior precision (the identity: they are standardised),
+# which forms no curvature until the solve verifies its end. A measurement.
+const _LAPLACE_SR1_START = Ref(:exact)
+
 """
 Precision below which a direction of a mode's curvature is probed: the
 continuation's `soft_tau`, the precision below which a direction can be
@@ -3349,7 +3359,8 @@ function _laplace_solve_unit_mode!(laplace::CTSEMLaplaceObjective, U::Integer,
     laplace.inner_gradient[U] = best.gradmax
     laplace.inner_converged[U] = best.converged
     laplace.hessian_repaired[U] = best.repaired
-    return (u=best.u, value=best.value, converged=best.converged)
+    return (u=best.u, value=best.value, converged=best.converged,
+        final=best.final)
 end
 
 """
@@ -3497,6 +3508,17 @@ function _laplace_newton_unit_mode(laplace::CTSEMLaplaceObjective, U::Integer,
     # exact, unrepaired factorization, whose solve measures the distance left.
     stepped_exact = true
     factored_exact = false
+    # The exact curvature at the point the solve ends on, formed there for the
+    # last decision, which the term then reads instead of forming it again
+    # (`_laplace_unit_primal`'s `given`): one curvature a unit fewer.
+    final = nothing
+    if sr1 && _LAPLACE_SR1_START[] === :prior
+        fill!(B, 0.0)
+        @inbounds for i in 1:d
+            B[i, i] = 1.0
+        end
+        exact = false
+    end
     current = _laplace_unit_objective_gradient(laplace, U, values, Ls, u, aws,
         gcur)
     if !isfinite(current.value) && any(!iszero, u)
@@ -3508,35 +3530,17 @@ function _laplace_newton_unit_mode(laplace::CTSEMLaplaceObjective, U::Integer,
         iterations = iteration
         small = d == 0 || maximum(abs, current.gradient) <
             _laplace_inner_tolerance(laplace, current.value)
-        if small && factored_exact
-            _laplace_block_solve!(step, fstore.factors, fstore.coupling, blocks,
-                current.gradient)
-            if maximum(abs, step) < laplace.inner_tol
-                converged = true
-                break
-            end
-            utry .= u .+ step
-            trial = _laplace_unit_objective_gradient(laplace, U, values, Ls,
-                utry, aws, gtry)
-            # The value, or where it cannot rank the step, the gradient (see the
-            # failed line search below).
-            if isfinite(trial.value) && (trial.value >= current.value - 1e-12 ||
-                    maximum(abs, gtry) < maximum(abs, current.gradient))
-                u, utry = utry, u
-                gcur, gtry = gtry, gcur
-                current = trial
-                continue
-            end
-            # Nothing the arithmetic resolves is left to gain along it: the
-            # mode in floating point, as at a failed line search below.
+        # Nothing exact to measure the distance with -- the origin, or a
+        # curvature the factorization repaired: the bound is all there is.
+        if small && stepped_exact && !factored_exact
             converged = true
             break
         end
-        if small && stepped_exact
-            converged = true
-            break
-        end
-        small && (exact = true)
+        # Under the bound the distance to the mode is measured on the exact
+        # curvature at this point, which is then the term's curvature too, so
+        # the measurement costs nothing more. An SR1 solve first walks on, a
+        # gradient a step, until its own step is under `inner_tol` (below).
+        small && !sr1 && (exact = true)
         # The band, not just the slot. Each Newton step builds the curvature
         # over every block, and that is the bulk of the primal -- passing only
         # the slot alone left the count at its default, so the whole mode solve
@@ -3572,9 +3576,14 @@ function _laplace_newton_unit_mode(laplace::CTSEMLaplaceObjective, U::Integer,
         # tolerance of 1.4e-10 for 200 iterations with a step of 3e-17, then
         # failed the trial point. Not from a repaired curvature, whose step
         # does not measure the distance to a maximum.
-        if exact && !fac.repaired && maximum(abs, step) < laplace.inner_tol
-            converged = true
-            break
+        if !fac.repaired && maximum(abs, step) < laplace.inner_tol
+            if exact
+                converged = true
+                final = _laplace_copy_blockmatrix(M)
+                break
+            end
+            exact = true
+            continue
         end
         accepted = false
         # Whether any trial could be evaluated at all, which is what separates
@@ -3693,6 +3702,8 @@ function _laplace_newton_unit_mode(laplace::CTSEMLaplaceObjective, U::Integer,
                 end
             end
             converged = stationary
+            stationary && exact && !fac.repaired &&
+                (final = _laplace_copy_blockmatrix(M))
             break
         end
     end
@@ -3705,7 +3716,7 @@ function _laplace_newton_unit_mode(laplace::CTSEMLaplaceObjective, U::Integer,
     return (u=copy(u), value=current.value,
         gradmax=d == 0 ? 0.0 : maximum(abs, current.gradient),
         converged=converged, iterations=iterations, repaired=repaired,
-        curvature=curvature)
+        curvature=curvature, final=final)
 end
 
 """
@@ -3871,7 +3882,8 @@ function _laplace_probe_modes(laplace::CTSEMLaplaceObjective, U::Integer,
         end
         best = (u=r.u, value=r.value, gradmax=r.gradmax, converged=true,
             iterations=found.iterations + r.iterations,
-            repaired=found.repaired || r.repaired, curvature=nothing)
+            repaired=found.repaired || r.repaired, curvature=nothing,
+            final=r.final)
         bestterm = term
     end
     return best
@@ -4585,9 +4597,10 @@ function _laplace_store_unit_primal!(laplace::CTSEMLaplaceObjective, U::Integer,
     theta::Vector{Float64}, Ls, aws, primal_curvature, primal_matrices,
     primal_gated, unit_loglik, chunk_ok, chunk_bad)
     b0 = _laplace_mark()
-    _laplace_solve_unit_mode!(laplace, U, theta, Ls, aws)
+    solved = _laplace_solve_unit_mode!(laplace, U, theta, Ls, aws)
     _laplace_charge!(_LAPLACE_BYTES_MODE, b0)
-    primal = _laplace_unit_primal(laplace, U, theta, Ls, laplace.modes[U], aws)
+    primal = _laplace_unit_primal(laplace, U, theta, Ls, laplace.modes[U], aws;
+        given=solved.final)
     laplace.mode_repaired[U] = primal.fac.repaired
     primal_curvature[U] = (primal.fac.factors, primal.fac.coupling)
     primal_matrices[U] = primal.M
@@ -4622,7 +4635,7 @@ joint curvature's gate, whose cross terms the same curvature pass gives
 """
 function _laplace_unit_primal(laplace::CTSEMLaplaceObjective, U::Integer,
     values::AbstractVector{T}, Ls::Vector{<:AbstractMatrix}, u::AbstractVector{T},
-    aws) where {T}
+    aws; given=nothing) where {T}
     blocks = laplace.units.blocks[U]
     gated_floor = _LAPLACE_PRIOR_FLOOR[] && laplace.floor === :gated
     b0 = _laplace_mark()
@@ -4631,7 +4644,12 @@ function _laplace_unit_primal(laplace::CTSEMLaplaceObjective, U::Integer,
         _hybrid_cross!(laplace, T, length(u), length(laplace.units.members[U])) :
         nothing
     # Asserted, as in `_laplace_newton_unit_mode`.
+    # `given`: the exact curvature the inner solve formed at `u` to end on
+    # (`_laplace_newton_unit_mode`), not when the gated hybrid needs its cross
+    # terms from the same pass.
     M = isempty(u) ? CTSEMBlockMatrix(T, blocks) :
+        (T === Float64 && given !== nothing && cross === nothing) ?
+            given::CTSEMBlockMatrix{T} :
         _laplace_unit_curvature(laplace, U, values, Ls, u;
             hook=cross)::CTSEMBlockMatrix{T}
     _laplace_charge!(_LAPLACE_BYTES_CURV, b0)
