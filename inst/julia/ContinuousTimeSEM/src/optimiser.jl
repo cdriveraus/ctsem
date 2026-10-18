@@ -215,7 +215,7 @@ function _ctsem_lbfgs(fg!, x0::AbstractVector; memory::Integer=20,
         callback=nothing, directional=nothing, batch=nothing,
         c1::Real=1e-4, maxbacktrack::Integer=40, iteration0::Integer=0,
         diagonal::Bool=false, nonmonotone::Real=0.0, gll::Integer=0,
-        inverse::Union{Nothing,Matrix{Float64}}=nothing)
+        inverse::Union{Nothing,Matrix{Float64}}=nothing, scaled::Bool=false)
     n = length(x0)
     x = collect(Float64, x0)
     dinv = metric === nothing ? ones(n) : begin
@@ -267,6 +267,11 @@ function _ctsem_lbfgs(fg!, x0::AbstractVector; memory::Integer=20,
     reference(recent, C) = gll > 0 ? maximum(@view recent[max(1, end - gll + 1):end]) : C
     while !stopped && !gconv && iteration < maxiter
         s = -_ctsem_lbfgs_hmul(M, G, h0, dinv, Dinv)
+        # Whether `s` comes from a model of the curvature -- pairs, an inverse
+        # the caller holds, or coordinates the caller has scaled by it
+        # (`scaled`) -- rather than the gradient alone. Only such a step
+        # predicts anything of what is left to gain.
+        informed = scaled || !isempty(M.S) || Dinv !== nothing
         # With no curvature pairs the step is the metric's alone, and at a start
         # where the transforms are flat the metric says a raw unit is worth
         # almost nothing -- so 0.1 in model units is an enormous raw step. One
@@ -335,7 +340,8 @@ function _ctsem_lbfgs(fg!, x0::AbstractVector; memory::Integer=20,
             break
         end
         retried = false
-        directional === nothing || (directional.dphi0 = alpha * dphi)
+        directional === nothing ||
+            (directional.dphi0 = informed ? alpha * dphi : NaN)
         step = xn .- x
         iteration += 1
         fconv = abs(fn - f) <= f_tol * abs(fn)

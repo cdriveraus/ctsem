@@ -1482,6 +1482,19 @@ end
         carried = 50.0) == (0, false)
 end
 
+@testset "a first step on no curvature does not end the run" begin
+    # The first step is the gradient, scaled; here the stiff coordinate
+    # dominates it, so the line search backs off to alpha ~ 2e-8, and the
+    # step's own predicted gain, alpha g'p / 2 ~ 1e-4, is under the gap
+    # tolerance while 50 is left in the soft coordinate. It ended the run as
+    # converged after one iteration.
+    m = _endgame_mock(p -> -0.5 * (1e14 * p[1]^2 + p[2]^2))
+    r = ContinuousTimeSEM.ctsem_optimize(m, [1e-9, 10.0]; maxiter=200,
+        gap_tol=1e-3, newton=false, certify=false,
+        progress=false, verbose=false, overshoot_probe=:off)
+    @test r.iterations > 1
+end
+
 @testset "ctsem_optimize hands the endgame's numbers back" begin
     # From beside the saddle above: L-BFGS converges into it (the gradient in y
     # is exactly zero along y = 0) and hands over, and the finish escapes.
@@ -1575,7 +1588,7 @@ end
     # The finish's steps count in the line but not against `maxiter`: a dear
     # Hessian is walked for as many steps as it cost, so on a large model they
     # alone can pass the cap in a fit that converged. The exponential tail
-    # needs about seven steps after L-BFGS stops at its first iteration -- a
+    # needs about a dozen steps after L-BFGS stops at its third iteration -- a
     # metric a million times too stiff makes its predicted gain negligible --
     # on a chord too dear to hand back (a budget of one step).
     m = _endgame_mock(p -> -0.5e4 * p[1]^2 - 1e-4 * exp(2 * p[2]))
