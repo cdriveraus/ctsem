@@ -95,6 +95,54 @@ test_that("the inner solve ends at a maximum, scored as the evaluation scores it
   expect_equal(fd, sum(as.numeric(r$gradient) * v), tolerance = 1e-5)
 })
 
+# The sign fixture made wide: six loadings, each random by person, so each unit
+# has six effects, and its likelihood is symmetric under flipping them all. At
+# loading means of zero -- the default start's -- the origin is the stationary
+# point between a person's two maxima, wherever the width. A cap on the width
+# probed once left every such unit there, and the objective 4800 low.
+test_that("a wide unit leaves the stationary origin for a maximum", {
+  skip_without_julia()
+  set.seed(3)
+  n <- 10; nt <- 8; p <- 6
+  d <- data.frame(id = rep(1:n, each = nt), time = rep(0:(nt - 1), n))
+  signs <- sample(c(-1, 1), n, TRUE)
+  eta <- unlist(lapply(1:n, function(i) {
+    e <- numeric(nt)
+    e[1] <- rnorm(1)
+    for (t in 2:nt) e[t] <- 0.6 * e[t - 1] + rnorm(1, 0, 0.8)
+    e
+  }))
+  for (j in 1:p) d[[paste0("Y", j)]] <- signs[d$id] * (0.6 + 0.2 * j) * eta +
+    rnorm(n * nt, 0, 0.4)
+  m <- suppressWarnings(suppressMessages(ctModel(type = "ct", id = "id",
+    manifestNames = paste0("Y", 1:p), latentNames = "eta1",
+    LAMBDA = matrix(paste0("l", 1:p), p, 1), DRIFT = matrix(-0.5),
+    DIFFUSION = matrix(0.8), MANIFESTVAR = diag(0.16, p),
+    MANIFESTMEANS = matrix(0, p, 1), T0MEANS = matrix(0), T0VAR = matrix(1),
+    CINT = matrix(0))))
+  m$pars$indvarying <- m$pars$param %in% paste0("l", 1:p)
+  m$pars$transform[m$pars$param %in% paste0("l", 1:p)] <- "param"
+  spec <- suppressMessages(ctFit(d, m, backend = "julia",
+    intoverpop = "laplace", fit = FALSE))
+  handle <- structure(spec, class = c("ctJuliaModel", "ctFitModel"))
+  objective <- ctsem:::.ctJuliaObjective(handle, hybrid = TRUE)
+  x <- numeric(ctsem:::.ctBackendNpar(spec))
+  ctJuliaEvaluate(handle, x, gradient = FALSE, cores = 1L)
+  ctsem:::.ctJuliaEval(paste(
+    "function _ctsem_test_wide_origin(o, theta)",
+    "  C = ContinuousTimeSEM",
+    "  Ls = C._laplace_popchols(theta, o.spec)",
+    "  aws = C._laplace_workspace!(o, Float64, length(theta))",
+    "  g(U, u) = C._laplace_unit_objective_gradient(o, U, theta, Ls, u, aws).value",
+    "  [g(U, copy(o.modes[U])) - g(U, zeros(length(o.modes[U])))",
+    "    for U in eachindex(o.modes)]",
+    "end", sep = "\n"))
+  rise <- as.numeric(ctsem:::.ctJuliaCall("Main._ctsem_test_wide_origin",
+    objective, ctsem:::.ctJuliaNumericVector(x)))
+  expect_length(rise, n)
+  expect_true(all(rise > 0.1))
+})
+
 # The loading fixture made asymmetric: the latent starts at a known mean of 1,
 # so the data say the loading's sign weakly, through the first few means, and
 # the sign's two maxima no longer score alike. With the population mean at 0.5

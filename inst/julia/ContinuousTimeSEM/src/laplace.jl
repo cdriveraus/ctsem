@@ -2746,9 +2746,6 @@ non-Gaussian enough to matter.
 """
 const _LAPLACE_PROBE_SOFT = 3.5
 
-"""Widest unit probed: the quadrature's `maxdim`, for the same reason of cost."""
-const _LAPLACE_PROBE_MAXDIM = 5
-
 """
 How far a probe starts from the mode, in posterior sds along its direction.
 Two missed, on the pilot's person-persistence fit, a person's second mode two
@@ -3272,10 +3269,14 @@ end
     _laplace_solve_unit_mode!(laplace, U, values, Ls)
 
 Newton's method on `g_U`, from the origin -- or from the retained mode for
-unit `U` when `ctsem_set_warm_start!` has asked for that -- and then, for a unit
-no wider than `_LAPLACE_PROBE_MAXDIM`, from points along that mode's soft
-directions, keeping the mode with the largest Laplace term
-(`_laplace_probe_modes`).
+unit `U` when `ctsem_set_warm_start!` has asked for that -- and then from points
+along that mode's soft directions and its reflection, where the line to one
+shows a second maximum, keeping the mode with the largest Laplace term
+(`_laplace_probe_modes`). At every width: a cap of five effects, taken from the
+quadrature's (whose cost is exponential in the width, where probing's is not),
+left a loading model of six effects per person, at the default start's
+loading means of zero, at each person's stationary origin between two maxima
+-- its objective 4800 below the true, its gradient off tenfold (dev1).
 
 `g_U` is a log likelihood minus a quadratic, so its curvature is negative
 definite near the mode and Newton is the right method; away from the mode, and
@@ -3340,7 +3341,7 @@ function _laplace_solve_unit_mode!(laplace::CTSEMLaplaceObjective, U::Integer,
             best = cold
         end
     end
-    if _LAPLACE_MODE_PROBES[] && best.converged && 0 < d <= _LAPLACE_PROBE_MAXDIM
+    if _LAPLACE_MODE_PROBES[] && best.converged && 0 < d
         best = _laplace_probe_modes(laplace, U, values, Ls, aws, best)
     end
     laplace.modes[U] = best.u
@@ -3448,11 +3449,12 @@ function _laplace_newton_unit_mode(laplace::CTSEMLaplaceObjective, U::Integer,
     repaired = false
     converged = false
     iterations = 0
-    # The last curvature formed, before any repair, for `_laplace_probe_modes`:
-    # one step from the mode, so its directions are the mode's. The slot's
-    # scratch, so read it before the next solve on this slot.
+    # The last exact curvature formed, before any repair, for
+    # `_laplace_probe_modes`: one step from the mode, so its directions are the
+    # mode's, never an SR1 update. The slot's scratch, so read it before the
+    # next solve on this slot.
     curvature = nothing
-    keep = _LAPLACE_MODE_PROBES[] && d <= _LAPLACE_PROBE_MAXDIM
+    keep = _LAPLACE_MODE_PROBES[] && d > 0
     # The curvature is most of what a mode solve costs (60-70% of a Laplace
     # evaluation, dev1), and Newton formed it afresh at every iteration. Here it
     # is formed exactly at the first iterate -- so the solve stays a function of
@@ -3462,10 +3464,10 @@ function _laplace_newton_unit_mode(laplace::CTSEMLaplaceObjective, U::Integer,
     # unit: one the line search had to shorten, or one that did not halve the
     # gradient. Then it is formed exactly again. The Laplace term at the mode
     # forms its own exact curvature (`_laplace_unit_primal`), so nothing the
-    # objective reports rests on an updated matrix. Not where the probes run,
-    # which read the curvature at the mode found, and not on a unit of nested
-    # blocks, whose curvature is stored block-sparse and a rank-one update
-    # would fill.
+    # objective reports rests on an updated matrix. The probes read the last
+    # exact curvature, which every solve ends on (below). Not on a unit of
+    # nested blocks, whose curvature is stored block-sparse and a rank-one
+    # update would fill.
     #
     # Where the solve ends must not depend on which, and the gradient bound
     # alone did not say it: it is relative to the unit's value
@@ -3483,7 +3485,7 @@ function _laplace_newton_unit_mode(laplace::CTSEMLaplaceObjective, U::Integer,
     # bound makes the next curvature exact first. Neither the step bound nor a
     # failed line search is read from an updated matrix: like a repaired one,
     # it does not measure the distance to the mode.
-    sr1 = _LAPLACE_INNER_SR1[] && !keep && d > 0 && length(blocks) == 1
+    sr1 = _LAPLACE_INNER_SR1[] && d > 0 && length(blocks) == 1
     # Taken whether or not they are used: a local that is either `nothing` or
     # an array makes every call on it dynamic.
     B = _laplace_scratch_matrix!(laplace, Float64, d, d, :newton_sr1)
@@ -3553,7 +3555,7 @@ function _laplace_newton_unit_mode(laplace::CTSEMLaplaceObjective, U::Integer,
             Mwork
         end
         used_exact = exact
-        keep && (curvature = _laplace_block_dense!(_laplace_scratch_matrix!(laplace,
+        keep && used_exact && (curvature = _laplace_block_dense!(_laplace_scratch_matrix!(laplace,
             Float64, d, d, :probe_curvature), M, laplace.units.blocks[U]))
         fac = _laplace_factor_repaired!(M, blocks; store=fstore)
         factored_exact = used_exact && fac.ok && !fac.repaired
@@ -3823,6 +3825,36 @@ function _laplace_probe_modes(laplace::CTSEMLaplaceObjective, U::Integer,
                 miss[i] = acc
             end
             dot(miss, ldiv!(solved, F, miss)) > 1 || continue
+            # And only where a second maximum can lie on the line: past the
+            # found one the line falls, and a maximum beyond a valley makes it
+            # rise again, so the slope along it turns outward somewhere. The
+            # screen above passes wherever the unit is not Gaussian along the
+            # line, a maximum or not, and a Newton solve from every such start
+            # made probing units of 15 effects cost four times their solve and
+            # find nothing (dev1). The slope at the start, then at three
+            # quarters, a half and a quarter of the way; Newton starts at the
+            # first point that rises outward, which lies in the other basin.
+            # A maximum narrower than a quarter of the line is missed.
+            outward = dot(at.gradient, start) - dot(at.gradient, found.u) > 0
+            if !outward
+                ray = _laplace_scratch_vector!(laplace, Float64, d, :probe_ray)
+                raygrad = _laplace_scratch_vector!(laplace, Float64, d,
+                    :probe_raygrad)
+                for t in (0.75, 0.5, 0.25)
+                    @inbounds for i in 1:d
+                        ray[i] = found.u[i] + t * (start[i] - found.u[i])
+                    end
+                    rg = _laplace_unit_objective_gradient(laplace, U, values, Ls,
+                        ray, aws, raygrad)
+                    isfinite(rg.value) || continue
+                    if dot(rg.gradient, start) - dot(rg.gradient, found.u) > 0
+                        copyto!(start, ray)
+                        outward = true
+                        break
+                    end
+                end
+            end
+            outward || continue
         end
         r = _laplace_newton_unit_mode(laplace, U, values, Ls, aws, start)
         (r.converged && isfinite(r.value)) || continue
