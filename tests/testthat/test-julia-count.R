@@ -239,6 +239,26 @@ test_that("the two routes agree on a count model", {
   # that small tests the optimiser's last digit, not the methodology.
 })
 
+test_that("a Laplace fit leaves a flat direction that takes a scale away from zero", {
+  skip_without_julia()
+  d <- .count_data()
+  m <- .count_model_varying()
+  # Where a fit from set.seed(5), rnorm(npar, 0, 0.1) stopped at juliaFit
+  # 87bf4057: log likelihood -1541.20, white-noise drift, the random
+  # intercept's sd near zero (raw -5.4) and flat, the curvature along it
+  # positive at 1e-9 of the largest. The certification found 14 nats within
+  # four raw units of it and called it not stationary, and the finish, whose
+  # flat escape was then off on the Laplace objective, left it there. That way
+  # takes the sd away from zero, which the escape allows.
+  stuck <- c(-6.8132806610195944, -0.1446411157531316, 0.12066040178495163,
+    -0.6539490711769077, -5.3980379237865872)
+  fit <- suppressWarnings(suppressMessages(ctFit(d, m, backend = "julia",
+    intoverpop = "laplace", inits = stuck, cores = 1)))
+  expect_gte(fit$optim$newton_escapes, 1L)
+  expect_identical(fit$uncertainty$certification$status, "certified")
+  expect_equal(as.numeric(fit$estimate$loglik), -1466.970967, tolerance = 1e-8)
+})
+
 test_that("ctGenerate draws counts rather than continuous values", {
   skip_without_julia()
   gen <- suppressWarnings(suppressMessages(ctModel(type = "ct", n.latent = 1,

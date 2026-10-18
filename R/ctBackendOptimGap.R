@@ -1104,8 +1104,12 @@
 # not return in 1 h 47 min.
 #
 # Two cases stop instead of resuming. `notstationary`, a flat direction that
-# still gains: continuing along it walked AnomAuth S1 from its good optimum into
-# the spurious basin (decision 1 of review/OPTIM-consolidation-plan-2026-09-25).
+# still gains: the finish has already followed any such direction its route
+# allows (`_ctsem_flat_escape`; on the Laplace route, to a point where the
+# quadrature-corrected objective gains too), so what is left is one it refused
+# or could not follow, and continuing along such a direction walked AnomAuth S1
+# from its good optimum into the spurious basin, 25 Laplace nats up and 0.3
+# corrected nats down (decision 1 of review/OPTIM-consolidation-plan-2026-09-25).
 # And a saddle the finish already tried to leave along its negative curvature
 # and could not, with nothing else left -- the gap over the trusted directions
 # within tolerance: the resumed optimiser would start where the finish
