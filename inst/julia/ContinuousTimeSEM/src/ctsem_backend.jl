@@ -2647,6 +2647,8 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
             curvature=finish_curvature, probe=certify, reuse_se=newton_reuse,
             flat_rtol=flat_rtol, handback=early && affordable,
             certify_tol=Float64(converge_tol), flat_escape=_ctsem_flat_escape(objective),
+            flat_allowed=(from, to) -> _ctsem_flat_allowed(objective, from, to,
+                Float64(converge_tol)),
             reporter=reporter,
             # The caller's Hessian, for the stage's first finish only: after a
             # hand-back L-BFGS has moved the point on.

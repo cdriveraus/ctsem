@@ -1178,8 +1178,8 @@ end
     @test up.x ≈ [2.0, _ridge_c(2.0)] atol = 1e-4
     @test "flat" in up.history.kind
     @test up.escapes >= 1
-    # Where the route does not allow it (Laplace, `_ctsem_flat_escape`), the
-    # finish stays where it was asked to finish, as it did before.
+    # Where the route does not allow it (the state-explicit objective,
+    # `_ctsem_flat_escape`), the finish stays where it was asked to finish.
     stay = _endgame_run(m, x0; flat_rtol=1e-6)
     @test -stay.f < 1e-5
     @test !("flat" in stay.history.kind)
@@ -1187,6 +1187,14 @@ end
     tiny = _endgame_run(m, x0; flat_rtol=1e-6, flat_escape=true, certify_tol=100.0)
     @test !("flat" in tiny.history.kind)
     @test tiny.escapes == 0
+    # Nor one to a point `flat_allowed` refuses -- on the Laplace objective, one
+    # where the corrected objective does not gain (`_ctsem_flat_allowed`): the
+    # ridge rises toward larger `a`, and refusing that way leaves the finish
+    # where it was.
+    held = _endgame_run(m, x0; flat_rtol=1e-6, flat_escape=true, certify_tol=1e-6,
+        flat_allowed=(from, to) -> to[1] <= from[1])
+    @test !("flat" in held.history.kind)
+    @test -held.f < 1e-5
 end
 
 @testset "negative curvature does not starve the step that closes the gap" begin
