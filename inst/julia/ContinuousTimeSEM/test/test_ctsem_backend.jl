@@ -1784,6 +1784,10 @@ end
     ContinuousTimeSEM._ctsem_structured_update!(m, x0, x1, grad(x0), grad(x1),
         f(x0), f(x1), s, 1.0, false)
     @test m.B .+ m.A ≈ H
+    # The update read B only through its products with the step, from the
+    # scores: B is formed for a step the model takes, not at every iteration.
+    @test m.Bx == x0
+    @test ContinuousTimeSEM._ctsem_structured_Bmul(S, precision, s) ≈ B0 * s
     # In use, its step is Newton's, to the minimum.
     m.active = true
     d = ContinuousTimeSEM._ctsem_structured_direction(m, x1, grad(x1))

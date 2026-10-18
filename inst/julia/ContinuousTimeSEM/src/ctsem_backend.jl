@@ -1439,6 +1439,14 @@ to 3% drove a population sd's raw value from 0 to -23, the flat end of its
 transform, where the fit stopped saturated 0.62 below the maximum (dev2). Its
 step is also at most twice the last accepted step's length, a trust region
 that doubles while the model keeps predicting.
+
+`B` itself, units times parameters squared, is formed only for a step the model
+takes. Comparing its prediction with L-BFGS's and learning `A` need only `B`
+times the step, which the scores give in units times parameters
+(`_ctsem_structured_Bmul`); the scores at the step's start are kept for that
+(`S0`, `x0`). Formed at every iteration, `B` cost the bench about 2 per cent a
+gradient (dev1, 2026-10-18), most of it while the model was too far from the
+optimum to step.
 """
 mutable struct CTSEMStructured
     store::CTSEMScoreStore
@@ -1450,15 +1458,34 @@ mutable struct CTSEMStructured
     active::Bool
     steps::Int
     last::Float64
+    S0::Matrix{Float64}
+    x0::Vector{Float64}
+    have0::Bool
 end
 CTSEMStructured(store::CTSEMScoreStore, precision::AbstractVector, n::Integer) =
     CTSEMStructured(store, collect(Float64, precision), zeros(n, n), zeros(n, n),
-        fill(NaN, n), false, false, 0, NaN)
+        fill(NaN, n), false, false, 0, NaN, zeros(size(store.S)), fill(NaN, n),
+        false)
+
+"""`B v` from the units' scores `S` at a point, without forming `B`: `S' (S v)`
+less the centring `g (g' v) / units`, plus the prior's precision times `v`.
+Two matrix-vector products, units times parameters."""
+function _ctsem_structured_Bmul(S::AbstractMatrix, precision::AbstractVector,
+        v::AbstractVector)
+    out = transpose(S) * (S * v)
+    g = vec(sum(S; dims=1))
+    c = dot(g, v) / size(S, 1)
+    @inbounds for i in eachindex(out)
+        out[i] += precision[i] * v[i] - c * g[i]
+    end
+    return out
+end
 
 """`B` at `x` from the store's scores there, centred: the outer product of the
 units' scores about their mean, without the mean's own `g g' / units`, which
 dominates far from the optimum; plus the prior's precision. `false` when the
-store does not describe `x`. One product an iteration, never per row."""
+store does not describe `x`. Formed for a step the model takes, never per
+row."""
 function _ctsem_structured_B!(m::CTSEMStructured, x::AbstractVector)
     st = m.store
     (st.valid && st.x == x) || return false
@@ -1501,7 +1528,9 @@ end
 After an accepted step from `x0` to `x1` (minimised values `f0`, `f1`): each
 model's predicted gain for that step against the gain it made, the correction
 `A` updated from the secant residual at `x1`'s `B` (so that `(B + A) step =
-G1 - G0`), and which model takes the next step. Plain L-BFGS's prediction is
+G1 - G0`), and which model takes the next step. `B` times the step comes from
+`B` where it was formed at `x0`, otherwise from the scores kept there and at
+`x1` (`_ctsem_structured_Bmul`). Plain L-BFGS's prediction is
 read off its own step (`step = alpha d` with `d = -H^-1 G0`, so `step' H step =
 -alpha G0' step`); after a structured step it has none, and the structured
 model keeps the next one while it predicted within a factor of two.
@@ -1510,17 +1539,26 @@ function _ctsem_structured_update!(m::CTSEMStructured, x0, x1, G0, G1, f0, f1,
         step, alpha, structured_step::Bool)
     actual = f0 - f1
     predicted = NaN
-    if m.haveB && m.Bx == x0
-        Hs = (m.B .+ m.A) * step
+    Bs = (m.haveB && m.Bx == x0) ? m.B * step :
+        (m.have0 && m.x0 == x0) ? _ctsem_structured_Bmul(m.S0, m.precision, step) :
+        nothing
+    if Bs !== nothing
+        Hs = Bs .+ m.A * step
         predicted = -dot(G0, step) - dot(step, Hs) / 2
     end
     plain = structured_step ? NaN : -dot(G0, step) * (1 - alpha / 2)
-    if _ctsem_structured_B!(m, x1)
-        r = (G1 .- G0) .- (m.B .+ m.A) * step
+    st = m.store
+    m.have0 = false
+    if st.valid && st.x == x1
+        r = (G1 .- G0) .- (_ctsem_structured_Bmul(st.S, m.precision, step) .+
+            m.A * step)
         den = dot(r, step)
         if abs(den) > 1e-8 * norm(r) * norm(step)
             m.A .+= (r * transpose(r)) ./ den
         end
+        copyto!(m.S0, st.S)
+        copyto!(m.x0, x1)
+        m.have0 = true
     end
     miss(p) = (isfinite(p) && p > 0 && actual > 0) ? abs(log(actual / p)) : Inf
     m.active = structured_step ? miss(predicted) <= log(2) :
