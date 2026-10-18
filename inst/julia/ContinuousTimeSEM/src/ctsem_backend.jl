@@ -1246,16 +1246,19 @@ It used to wrap Optim's line search and read `dphi0` off its arguments; since
 the optimiser became ctsem's own (optimiser.jl) nothing called the wrapped
 search, and it carried an unused `BackTracking` until 2026-09-25.
 
-`NaN`, no prediction, after a step the line search shortened, one taken on
-no curvature (the first, the gradient alone), or one that gained more than 1.5
-times what it predicted (a model with too much curvature along it): the
-first's `g'p` is the gradient's, a shortened step's is `alpha g'p`, how far the
-search backed off, and the third's model predicts every gain too small. Read
-as the gain left, a first step backed off to almost nothing along a stiff
-direction ended the affect pilot's 697-parameter fit after one iteration as
-converged, at |g| 0.47 (predicted gain 1e-17); with that step excluded, the
-next, on one curvature pair learned along the stiff direction, did the same on
-the test's quadratic (predicted 5e-13, 50 left).
+`NaN`, no prediction, after a step taken on no curvature at all: the first of
+a run with no inverse to start from and coordinates not scaled by the
+curvature (`lbfgs_scaled`, which the continuation sets, its basis being
+whitened): its `g'p` is the gradient's, which says nothing of what is left.
+Read as the gain left, such a first step backed off to almost nothing along a
+stiff direction ended the affect pilot's 697-parameter fit after one
+iteration as converged, at |g| 0.47 (predicted gain 1e-17). Stricter rules --
+reading only steps taken whole, or whose gain confirmed the model's curvature
+-- kept runs walking where the prediction had been right: the continuation's
+correction stage took 7 times as long on the bench, and a flat ridge 1300
+iterations (dev1, 2026-10-18). A later step on a model too stiff along it
+still predicts too little; the finish and the certification are what catch
+that, from an exact Hessian.
 """
 mutable struct CTSEMDirectional
     dphi0::Float64
@@ -2021,6 +2024,7 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
     x_tol::Real=0.0, verbose::Bool=false, gradient_method=:adjoint,
     lbfgs_memory::Union{Nothing,Integer}=nothing,
     lbfgs_diagonal::Bool=true, lbfgs_nonmonotone::Real=0.0,
+    lbfgs_scaled::Bool=false,
     lbfgs_gll::Integer=0, sgd::Bool=false, sgd_maxiter::Integer=2000, sgd_progress::Real=1e-3,
     saem::Bool=false, saem_maxiter::Integer=10000, saem_seed::Integer=1,
     saem_proposal::AbstractString="rw",
@@ -2338,6 +2342,7 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
     inverse = _ctsem_lbfgs_inverse(lbfgs_inverse, length(start_values))
     result = _ctsem_lbfgs(fg!, lbfgs_start; memory=lbfgs_pairs,
         diagonal=lbfgs_diagonal, nonmonotone=lbfgs_nonmonotone, gll=Int(lbfgs_gll),
+        scaled=lbfgs_scaled,
         metric=_ctsem_metric(precondition, length(start_values)),
         inverse=inverse, initial_alpha=Float64(initial_alpha),
         maxiter=max(0, Int(maxiter) - sgd_iterations),
@@ -2490,6 +2495,7 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
         stopped_by_gap[] = false
         resumed = _ctsem_lbfgs(fg!, minimizer; memory=lbfgs_pairs,
             diagonal=lbfgs_diagonal, nonmonotone=lbfgs_nonmonotone, gll=Int(lbfgs_gll),
+        scaled=lbfgs_scaled,
             metric=_ctsem_metric(precondition, length(start_values)),
             inverse=inverse, initial_alpha=Float64(initial_alpha),
             maxiter=max(0, Int(maxiter) - result.iterations - spent.steps[]),
