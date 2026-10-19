@@ -604,8 +604,10 @@ ctGenerate<-function(ctmodelobj,n=100,burnin=0,dtmean=1,logdtsd=0,dtmat=NA,
   # The matrix-list model form carries no parameter specification for the
   # engine to read, so `auto` keeps it on the R generator.
   specified <- inherits(ctmodelobj, 'ctStanModel')
+  # Initial conditions named 'stationary' are placed by the engine.
+  stationary <- specified && any(ctmodelobj$pars$param %in% 'stationary')
   if(backend == 'auto') backend <-
-    if(nonlinear || categorical || length(n) > 1L || !is.null(popmeans))
+    if(nonlinear || categorical || stationary || length(n) > 1L || !is.null(popmeans))
       'julia' else 'r'
   # `'auto'` is the state-explicit route for every model. The argument stays
   # because comparing the two routes on one specification is how the
@@ -641,6 +643,11 @@ ctGenerate<-function(ctmodelobj,n=100,burnin=0,dtmean=1,logdtsd=0,dtmat=NA,
       if(length(tieffects)) paste0('effects of ', paste(tieffects, collapse=', ')),
       " are not drawn, and free parameters are filled with fixed defaults. ",
       "backend='julia' draws them from the population the model states.")
+  }
+  if(backend == 'r' && stationary) {
+    stop("This model names 'stationary' initial conditions, which ctGenerate's ",
+      "own generator cannot place. Use backend='julia' (the default for such ",
+      "models).", call.=FALSE)
   }
   if(backend == 'r' && nonlinear) {
     stop("This model is nonlinear, and ctGenerate's own generator integrates a ",

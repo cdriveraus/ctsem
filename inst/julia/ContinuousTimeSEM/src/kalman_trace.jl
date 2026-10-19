@@ -86,6 +86,12 @@ mutable struct CTSEMKalmanTrace{T}
     # Set by the driver before each subject's forward pass.
     offset::Int
     current_subject::Int
+    # Each non-Gaussian observation's predictive distribution function just
+    # below and at what was observed, in the order the filter applied them
+    # (item_pit.jl); NaN elsewhere. Filled only when `pitwanted`.
+    pitwanted::Bool
+    pitlower::Matrix{Float64}
+    pitupper::Matrix{Float64}
 end
 
 function CTSEMKalmanTrace(::Type{T}, nlatent::Int, nmanifest::Int, nrows::Int,
@@ -97,7 +103,8 @@ function CTSEMKalmanTrace(::Type{T}, nlatent::Int, nmanifest::Int, nrows::Int,
         zeros(T, nrows), [Matrix{T}(I, nlatent, nlatent) for _ in 1:nrows],
         [zeros(T, nmanifest, nlatent) for _ in 1:nrows], zeros(Int, nrows),
         [zeros(T, nall) for _ in 1:nsubjects], [zeros(T, nlatent) for _ in 1:nsubjects],
-        zeros(T, nall), zeros(T, nmanifest, nmanifest), 0, 0)
+        zeros(T, nall), zeros(T, nmanifest, nmanifest), 0, 0,
+        false, fill(NaN, nrows, nmanifest), fill(NaN, nrows, nmanifest))
 end
 
 # No-ops for the trace types that do not want these, so the primal and adjoint
@@ -122,6 +129,7 @@ end
 @inline _begin_predict!(::CTSEMKalmanTrace, args...) = nothing
 @inline _record_predict!(::CTSEMKalmanTrace, args...) = nothing
 @inline _record_stationary!(::CTSEMKalmanTrace, args...) = nothing
+@inline _record_stationary_elements!(::CTSEMKalmanTrace, args...) = nothing
 
 ################################################################################
 # Response-scale reporting for non-Gaussian manifest variables
@@ -591,7 +599,31 @@ function _kalman_smooth!(trace::CTSEMKalmanTrace{T}, ws, first::Int,
 end
 
 """
-    ctsem_kalman(objective, values; subject_matrices=true)
+    _ctsem_kalman_compact(out)
+
+What the misfit tests read of a filter's output, and nothing else: the
+predicted and updated states (`eta12`), their variances (`etavar12`, the
+diagonals of the state covariances), and the predicted observations and their
+covariance (`y1`, `ycov1`), beside the row log densities, subjects and
+non-Gaussian bounds. The full arrays carry the smoothed pass and every state
+covariance, which on an augmented fit with eight states is several megabytes a
+call -- seconds across the R bridge at its 1-2 MB/s, against milliseconds of
+filtering -- and an estimation correction makes two such calls a parameter.
+"""
+function _ctsem_kalman_compact(out)
+    P, nrows, n = size(out.eta)
+    etavar = Array{Float64}(undef, 2, nrows, n)
+    @inbounds for p in 1:2, r in 1:nrows, j in 1:n
+        etavar[p, r, j] = out.etacov[p, r, j, j]
+    end
+    return (eta12=out.eta[1:2, :, :], etavar12=etavar, y1=out.y[1, :, :],
+        ycov1=out.ycov[1, :, :, :], llrow=out.llrow, subject=out.subject,
+        pitlower=out.pitlower, pitupper=out.pitupper,
+        ess=hasproperty(out, :ess) ? out.ess : Float64[])
+end
+
+"""
+    ctsem_kalman(objective, values; subject_matrices=true, fields=String[], compact=false)
 
 Prior, filtered and smoothed states and observations for every data row, plus
 each subject's own model matrices.
@@ -607,6 +639,7 @@ smoothed; `llrow`; `subject`; `subject_loglik`; `transition` (the interval
 Jacobian that reached each row, `nrows` by `n` by `n`); and, unless
 `subject_matrices=false`, a `size`-by-`nsubjects` matrix packed in the layout
 `ctsem_parameter_layout` describes.
+`compact=true` returns only what the misfit tests read (`_ctsem_kalman_compact`).
 
 A subject's matrices are its parameter vector as of its last row with T0MEANS
 replaced by its smoothed initial state. That is where individual differences
@@ -615,7 +648,7 @@ latent state with no drift and no diffusion, so the smoothed t0 estimate of that
 state is the subject's value for it.
 """
 function ctsem_kalman(objective::CTSEMObjective, values::AbstractVecOrMat;
-    subject_matrices::Bool=true, fields=String[])
+    subject_matrices::Bool=true, fields=String[], compact::Bool=false)
 
     sp = objective.params
     persubject = values isa AbstractMatrix
@@ -634,6 +667,8 @@ function ctsem_kalman(objective::CTSEMObjective, values::AbstractVecOrMat;
     nrows = sum(size(sub.data, 2) for sub in subjects)
 
     trace = CTSEMKalmanTrace(Float64, n, m, nrows, length(subjects), nall)
+    wantedfields = fields isa AbstractString ? [fields] : collect(fields)
+    trace.pitwanted = any(f -> f in ("pitlower", "pitupper"), wantedfields)
     loglik = zeros(Float64, length(subjects))
 
     offset = 0
@@ -706,7 +741,8 @@ function ctsem_kalman(objective::CTSEMObjective, values::AbstractVecOrMat;
     end
     result = (eta=trace.eta, etacov=trace.etacov, y=trace.y, ycov=trace.ycov,
         llrow=trace.llrow, subject=trace.subject, subject_loglik=loglik,
-        transition=transitions)
+        transition=transitions, pitlower=trace.pitlower, pitupper=trace.pitupper)
+    compact && return _ctsem_kalman_compact(result)
     # `fields` keeps only the named arrays. The covariance and transition
     # arrays are the bulk -- `etacov` alone is `nrows * nlatent^2` -- and a
     # caller that wants only the prior prediction error needs `y` and nothing

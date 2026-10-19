@@ -343,8 +343,15 @@
 .ctJuliaReadOutput <- function(connection, wait = 5) {
   text <- .ctJuliaReadText(connection, wait = wait)
   if (is.null(text)) return(NULL)
-  gsub("\033(?:[@-Z\\\\-_]|\\[[0-?]*[ -/]*[@-~])", "", text)
+  .ctJuliaPlainOutput(text)
 }
+
+# Bytewise: a relayed chunk can end partway through a multibyte character, and
+# a regex over such a string stops with "input string 1 is invalid". A profile
+# report from the engine (SIGUSR1) did, and the error ended the call it arrived
+# during.
+.ctJuliaPlainOutput <- function(text)
+  gsub("\033(?:[@-Z\\\\-_]|\\[[0-?]*[ -/]*[@-~])", "", text, useBytes = TRUE)
 
 # Releasing proxies R has collected, as `juliaCall()` does after every call.
 # The queue is one raw vector of 8-byte references, and a collection during the

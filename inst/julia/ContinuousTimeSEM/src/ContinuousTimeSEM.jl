@@ -119,6 +119,9 @@ include("laplace_continuation.jl")
 # After quadrature.jl: the binary measurement update integrates the
 # observation with the Gauss-Hermite rule defined there.
 include("binary_measurement.jl")
+# After binary_measurement.jl and kalman_trace.jl: the predictive distribution
+# function of a non-Gaussian observation, taken in the update for the trace.
+include("item_pit.jl")
 # After binary_measurement.jl: the conditional observation model it defines --
 # the log likelihood of one observation at a *known* linear predictor -- is
 # exactly what a sampled state supplies, so the state path evaluates the same
@@ -127,6 +130,12 @@ include("state_sampling.jl")
 include("particle_filter.jl")
 # After particle_filter.jl, which brings in Random for the effect draws.
 include("laplace_loo.jl")
+# After laplace_sequential.jl (record truncation) and laplace.jl (the dual mode
+# and the member likelihood); nothing on a fitting path calls it.
+include("row_scores.jl")
+# The sequential predictions of a Laplace fit by importance sampling over the
+# random effects: the exact predictive, for misfit tests that need it.
+include("laplace_mixture.jl")
 include("sample_density.jl")
 include("sample_nuts.jl")
 include("sample_adapt.jl")

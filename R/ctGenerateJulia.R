@@ -148,6 +148,10 @@
 .ctGeneratePrepare <- function(model, skeleton, popmeans = NULL,
   project = NULL, quiet = FALSE) {
   model <- .ctCovRefresh(model)
+  # 'stationary' initial conditions, placed as a fit places them: generation
+  # hands the model to `.ctJuliaPrepare()` without passing through ctFit().
+  model$t0stationary <- NULL
+  if (any(model$pars$param %in% 'stationary')) model <- .ctStationaryElements(model)
   fixedti <- list()
   for (k in seq_along(model$TIpredNames)) {
     column <- paste0(model$TIpredNames[k], "_effect")

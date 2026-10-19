@@ -397,47 +397,7 @@ ctFitUpdate <- function(oldfit, data=NA, recompile=FALSE,refit=FALSE,...){
       "the backend that made them. Use refit=TRUE to fit on another backend.",
       call.=FALSE)
 
-  # `$args$input` -- the literal call, still carrying 'auto'/'maxneeded' and
-  # whatever else was unresolved -- not `$args$resolved`, which would freeze
-  # this refit at whatever a previous 'auto' happened to route to instead of
-  # letting it re-route against the new data or overrides in `...`. A fit made
-  # by 3.11.1 or earlier keeps its call in `$args` itself, and reading only
-  # `$input` replayed every argument of such a fit at its default -- the
-  # priors it was estimated with among them -- when bringing an old fit up to
-  # date is what this function is for.
-  args <- as.list(if(!is.null(oldfit$args$input)) oldfit$args$input else
-    oldfit$args)
-  # That capture is the calling environment rather than the literal call, so a
-  # defaulted argument is in it and `do.call()` below hands it back looking as
-  # though the caller had typed it. For `poprank` that is the difference
-  # between a no-op and an error: `ctFit()` reads `!missing(poprank)` as "a
-  # rank was asked for" and refuses one on the stan backend, so replaying the
-  # default 'auto' made this function fail on every stan fit, the documented
-  # example included. The capture recorded the distinction next to the value;
-  # use it, before the `...` overrides, so a rank passed here still counts as
-  # asked for.
-  if(!isTRUE(args$poprankexplicit)) args$poprank <- NULL
-  # `priors` is captured after ctFit() has reduced it to a logical, so the julia
-  # default, 'randomCorr', reads TRUE there -- and TRUE replayed is a prior on
-  # every coordinate, a different estimator. `priorscope` beside it still says
-  # which. 'all' and 'none' are what TRUE and FALSE mean, and a stan fit never
-  # records 'randomCorr'.
-  if(identical(args$priorscope, 'randomCorr')) args$priors <- 'randomCorr'
-  # `iter`, `chains` and `control` are captured as what they resolved to, so
-  # replayed they read as the deprecated spellings and draw that warning at a
-  # caller who never used them. When `sampleControl` alone resolves to the
-  # same settings they add nothing, and are left out.
-  sampling <- c('iter', 'chains', 'control')
-  if(isTRUE(all.equal(.ctSampleControlResolve(args$sampleControl),
-      args[sampling]))) args[sampling] <- NULL
-  # Only ctFit()'s arguments are replayed. The capture also holds its locals
-  # (`datavars`, `priorscope`, `poprankexplicit`), `nopriors`, whose effect
-  # `priors` already carries, and arguments since removed -- `vb`, which every
-  # 3.11.1 fit carries and ctFit() now refuses by name. Anything else was the
-  # caller's own `...`, which only stan's sampler reads, and a fit refitted
-  # here was optimised, so nothing ever read it.
-  args <- args[intersect(names(args),
-    setdiff(names(formals(ctFit)), c('...', 'nopriors')))]
+  args <- .ctFitReplayArgs(oldfit)
   for(n in names(dots)){
     args[[n]] <- dots[[n]]
   }
@@ -500,6 +460,56 @@ ctFitUpdate <- function(oldfit, data=NA, recompile=FALSE,refit=FALSE,...){
 
 #' @export
 ctStanFitUpdate <- ctFitUpdate
+
+# The arguments `oldfit` was made with, as `ctFit()` takes them: what
+# `ctFitUpdate()` replays, and what `ctScoreTest()` prepares an extended model
+# with, so the extension is the fitted model plus its new coordinates and
+# nothing else.
+.ctFitReplayArgs <- function(oldfit) {
+  # `$args$input` -- the literal call, still carrying 'auto'/'maxneeded' and
+  # whatever else was unresolved -- not `$args$resolved`, which would freeze
+  # this refit at whatever a previous 'auto' happened to route to instead of
+  # letting it re-route against the new data or overrides in `...`. A fit made
+  # by 3.11.1 or earlier keeps its call in `$args` itself, and reading only
+  # `$input` replayed every argument of such a fit at its default -- the
+  # priors it was estimated with among them -- when bringing an old fit up to
+  # date is what this function is for.
+  args <- as.list(if(!is.null(oldfit$args$input)) oldfit$args$input else
+    oldfit$args)
+  # That capture is the calling environment rather than the literal call, so a
+  # defaulted argument is in it and `do.call()` below hands it back looking as
+  # though the caller had typed it. For `poprank` that is the difference
+  # between a no-op and an error: `ctFit()` reads `!missing(poprank)` as "a
+  # rank was asked for" and refuses one on the stan backend, so replaying the
+  # default 'auto' made this function fail on every stan fit, the documented
+  # example included. The capture recorded the distinction next to the value;
+  # use it, before the `...` overrides, so a rank passed here still counts as
+  # asked for.
+  if(!isTRUE(args$poprankexplicit)) args$poprank <- NULL
+  # `priors` is captured after ctFit() has reduced it to a logical, so the julia
+  # default, 'randomCorr', reads TRUE there -- and TRUE replayed is a prior on
+  # every coordinate, a different estimator. `priorscope` beside it still says
+  # which. 'all' and 'none' are what TRUE and FALSE mean, and a stan fit never
+  # records 'randomCorr'.
+  if(identical(args$priorscope, 'randomCorr')) args$priors <- 'randomCorr'
+  # `iter`, `chains` and `control` are captured as what they resolved to, so
+  # replayed they read as the deprecated spellings and draw that warning at a
+  # caller who never used them. When `sampleControl` alone resolves to the
+  # same settings they add nothing, and are left out.
+  sampling <- c('iter', 'chains', 'control')
+  if(isTRUE(all.equal(.ctSampleControlResolve(args$sampleControl),
+      args[sampling]))) args[sampling] <- NULL
+  # Only ctFit()'s arguments are replayed. The capture also holds its locals
+  # (`datavars`, `priorscope`, `poprankexplicit`), `nopriors`, whose effect
+  # `priors` already carries, and arguments since removed -- `vb`, which every
+  # 3.11.1 fit carries and ctFit() now refuses by name. Anything else was the
+  # caller's own `...`, which only stan's sampler reads, and a fit refitted
+  # here was optimised, so nothing ever read it.
+  args <- args[intersect(names(args),
+    setdiff(names(formals(ctFit)), c('...', 'nopriors')))]
+  args
+}
+
 
 
 # Disable the T0VAR rows and columns that RAWPOPVAR already accounts for.
@@ -838,6 +848,18 @@ T0VARredundancies <- function(ctm) {
 #' \code{intoverpop='auto'} then chooses; each subject starts from its own
 #' stationary distribution. A latent process whose DRIFT row is fixed at zero
 #' never settles, and is refused.
+#'
+#' To start only some initial conditions there, name those cells
+#' \code{'stationary'} in the model (\code{backend='julia'}); every other
+#' initial condition stays as written. A T0MEANS cell takes its entry of the
+#' stationary mean, asymCINT. A T0VAR diagonal cell gives its latent the
+#' stationary variance, asymDIFFUSION's diagonal, keeping that latent's
+#' T0VAR correlations with the others. A T0VAR off-diagonal cell gives the
+#' pair the stationary covariance, and needs both their variances, and every
+#' covariance among the latents it joins, named too. The stationary moments
+#' are those of the marked latents and every latent that drives them, so a
+#' latent driven by others works, and DRIFT, CINT and DIFFUSION need to be
+#' fixed within each subject only for those.
 #' @param forcerecompile logical. For \code{backend='stan'}, recompiles the
 #' stan model regardless of apparent need (for development). For
 #' \code{backend='julia'}, compiles the model's state-dependent expressions --
@@ -1427,10 +1449,15 @@ ctFit<-function(datalong, model, stanmodeltext=NA, iter=1000, intoverstates=TRUE
   # be stationary in.
   if(!isTRUE(stationary) && !isFALSE(stationary)) stop(
     'stationary must be TRUE or FALSE.', call. = FALSE)
-  if(any(ctm$pars$param %in% 'stationary')) stop(
-    "Naming a T0MEANS or T0VAR cell 'stationary' is no longer supported; ",
-    "use stationary = TRUE, which applies to every latent process.",
-    call. = FALSE)
+  # Single elements: T0MEANS or T0VAR cells named 'stationary', which the
+  # engine starts at their stationary values (`.ctStationaryElements`). Under
+  # stationary = TRUE every T0 cell is written over below, so there are none.
+  ctm$t0stationary <- NULL
+  if(any(ctm$pars$param %in% 'stationary') && !stationary) {
+    if(!identical(backend, 'julia')) stop(
+      "A 'stationary' T0MEANS or T0VAR cell needs backend = 'julia'.", call. = FALSE)
+    ctm <- .ctStationaryElements(ctm)
+  }
   if(stationary) {
     if(!identical(backend, 'julia')) stop(
       "stationary = TRUE needs backend = 'julia'.", call. = FALSE)

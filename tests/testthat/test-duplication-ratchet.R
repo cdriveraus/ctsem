@@ -108,7 +108,14 @@ test_that("the number of two-implementation forks does not grow", {
   for (ex in asts) for (e in as.list(ex)) walk(e)
 
   expect_gt(length(defined), 500L)   # the walk found the package, not nothing
-  expect_lte(nforks, 33L)
+  # 35. Since 31: ctModelHigherOrder() rewrites a type = 'ct' model's
+  # parameter table (.ctHigherOrderPars) and keeps its old path for type =
+  # 'omx', which has none (2026-10-10); ctScoreTest's covariate test bootstraps
+  # the held estimates under variance = 'robust' and takes the Wald form under
+  # 'model' (.ctScoreBoot); ctFitUncertainty()'s julia branch hands 'is' with
+  # a quadrature or particle likelihood to .ctBackendUncertaintyLikelihood()
+  # (c50bffd3); ctTracePlot() draws a sampled fit's chains (.ctTracePlotChains).
+  expect_lte(nforks, 35L)
 })
 
 test_that("the duplication detectors are present and runnable", {

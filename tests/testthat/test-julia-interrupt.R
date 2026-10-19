@@ -137,6 +137,14 @@ test_that("a pause partway through a message is waited out; an ending is not", {
   expect_lt(elapsed, 5)
 })
 
+test_that("relayed output cut partway through a character is still read", {
+  # An escape sequence, then 'a' and the first two bytes of an ellipsis.
+  cut <- rawToChar(as.raw(c(0x1b, 0x5b, 0x31, 0x6d, 0x61, 0xe2, 0x80)))
+  Encoding(cut) <- "UTF-8"
+  expect_false(validUTF8(cut))
+  expect_identical(charToRaw(ctsem:::.ctJuliaPlainOutput(cut)), as.raw(c(0x61, 0xe2, 0x80)))
+})
+
 test_that("an argument Julia cannot take leaves the connection usable", {
   skip_without_julia()
   ctJuliaSetup()

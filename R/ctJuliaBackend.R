@@ -1488,8 +1488,10 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
 # placeholder state (`_ctsem_stationary!`), so such a model would start from
 # the distribution of a system it is not; refused here, by cell. A state past
 # `nlatent` is a random effect the augmented route carries as a state, and
-# 'laplace' is the route that keeps it fixed for each subject.
-.ctJuliaStationaryCheck <- function(table, nlatent) {
+# 'laplace' is the route that keeps it fixed for each subject. `rows` are the
+# latents whose moments are needed: all of them, or for single stationary
+# elements the closure of the marked ones.
+.ctJuliaStationaryCheck <- function(table, nlatent, rows = seq_len(nlatent)) {
   blank <- function(x) .ctJuliaNoNA(as.character(x), "")
   expression <- paste(blank(table$predicttransform),
     blank(table$updatetransform), blank(table$tdtransform))
@@ -1516,17 +1518,17 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
     carrier <- nextcarrier
   }
   dynamics <- table$matrix %in% c("DRIFT", "CINT", "DIFFUSION") &
-    table$row <= nlatent & (table$matrix %in% "CINT" | table$col <= nlatent)
+    table$row %in% rows & (table$matrix %in% "CINT" | table$col <= nlatent)
   bad <- which(dynamics & varying)
   if (!length(bad)) return(invisible(TRUE))
   cells <- paste(paste0(table$matrix[bad], "[", table$row[bad], ",",
     table$col[bad], "]"), collapse = ", ")
-  if (any(carrier[bad])) stop("stationary = TRUE needs DRIFT, CINT and ",
-    "DIFFUSION fixed within each subject, and intoverpop = 'augmented' ",
+  if (any(carrier[bad])) stop("Stationary initial conditions need DRIFT, CINT ",
+    "and DIFFUSION fixed within each subject, and intoverpop = 'augmented' ",
     "carries the individual variation in ", cells, " as a state. Use ",
     "intoverpop = 'laplace'.", call. = FALSE)
-  stop("stationary = TRUE needs DRIFT, CINT and DIFFUSION fixed within each ",
-    "subject, and ", cells, " depend on the latent states or on time ",
+  stop("Stationary initial conditions need DRIFT, CINT and DIFFUSION fixed ",
+    "within each subject, and ", cells, " depend on the latent states or on time ",
     "dependent predictors, so there is no one stationary distribution. ",
     "Estimate T0MEANS and T0VAR instead.", call. = FALSE)
 }
@@ -2366,10 +2368,8 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
   } else if (!is.null(model$modelmats$matsetup)) {
     setup <- as.data.frame(model$modelmats$matsetup)
     values <- as.data.frame(model$modelmats$matvalues)
-    rows <- which(as.integer(setup$indvarying) > 0L & as.integer(setup$param) > 0L)
-    rows <- rows[!duplicated(as.integer(setup$param)[rows])]
-    varying <- as.integer(setup$param)[rows]
-    sdscale <- as.numeric(values$sdscale)[rows]
+    varying <- .ctIndvaryingIndex(setup[as.integer(setup$param) > 0L, , drop = FALSE])
+    sdscale <- as.numeric(values$sdscale)[match(varying, as.integer(setup$param))]
   } else {
     # Neither, which is a model straight from `ctModel()`. `ctFit()` always
     # supplies both -- it builds `modelmats` and hands `.ctPrepareData()`'s
@@ -3740,6 +3740,9 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
   ti_fixed <- .ctJuliaTIFixed(parameter_table, model)
   if (isTRUE(as.logical(model$stationary))) {
     .ctJuliaStationaryCheck(parameter_table, augmented$nlatent)
+  } else if (!is.null(model$t0stationary)) {
+    .ctJuliaStationaryCheck(parameter_table, augmented$nlatent,
+      which(model$t0stationary$closure))
   }
   # `laplace$npar` already counts every level's scales and correlations. Taking
   # the maximum over the *level-one* index vectors instead sized the raw vector
@@ -3846,6 +3849,10 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
     # fit rebuilt from a saved object filters the way it was estimated; NULL on
     # a model saved before the option worked, which is FALSE.
     stationary = isTRUE(as.logical(model$stationary)),
+    # Single initial conditions at their stationary values: per latent, its
+    # T0MEANS mark, its T0VAR block and whether its moments are needed
+    # (`.ctStationaryElements`). NULL when the model names none.
+    t0stationary = model$t0stationary,
     # Which covariance construction to use, as the integer code both backends
     # share -- 0 for the unconstrained correlation square root, 2 for
     # covmattransform='z'. Carried on the spec so a fit rebuilt from a saved
@@ -4064,6 +4071,11 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
   # Sent only when set, so every other model hashes and builds exactly as it
   # did.
   if (isTRUE(spec$stationary)) arguments$stationary <- TRUE
+  if (!is.null(spec$t0stationary)) {
+    arguments$stationary_mean <- V(as.integer(spec$t0stationary$means))
+    arguments$stationary_block <- V(as.integer(spec$t0stationary$block))
+    arguments$stationary_closure <- V(as.integer(spec$t0stationary$closure))
+  }
   # Transforms compiled per model rather than evaluated as data
   # (`ctFit(forcerecompile = TRUE)`). Here, so a compiled and an interpreted
   # objective of one model are different cache entries.

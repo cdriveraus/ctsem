@@ -73,3 +73,25 @@ ctMatsetupFreePars <- function(m, ...) {
   m <- m[match(unique(m$param), m$param), , drop = FALSE]
   m[order(m$param), , drop = FALSE]
 }
+
+#' The parameters that vary over subjects, in the order of their random effects
+#'
+#' The order the model declares them in: the `indvarying` column numbers each
+#' varying parameter as `.ctModelMatSetup()` meets it in the parameter table.
+#' Not matsetup's row order, which puts PARS first so they are computed before
+#' what reads them -- an order for computation, which made a parameter's place
+#' among the random effects depend on whether it was written in PARS. Moving a
+#' random innovation sd into PARS to scale it by the state then reordered the
+#' effects, and their correlation coordinates, which are not invariant to
+#' order, no longer matched the fit's. The augmented route already followed
+#' the declared order (`ivnames`), so the two routes also disagreed for any
+#' model with a random PARS parameter.
+#'
+#' @param ms matsetup, as a data.frame.
+#' @return integer vector of parameter numbers, one per random effect.
+#' @keywords internal
+.ctIndvaryingIndex <- function(ms) {
+  rows <- which(ms$indvarying > 0)
+  rows <- rows[!duplicated(ms$param[rows])]
+  as.integer(ms$param[rows][order(ms$indvarying[rows])])
+}

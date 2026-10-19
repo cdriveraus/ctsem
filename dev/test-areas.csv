@@ -80,6 +80,8 @@
 "test-ctNetwork.R","reporting","core"
 "test-ctPlotPosterior.R","reporting","core"
 "test-ctReport.R","reporting","core"
+"test-ctScoreTest.R","reporting","core"
+"test-ctModelImprove.R","reporting","core"
 "test-print-model.R","reporting","core"
 "test-ctACF.R","reporting","extended"
 "test-ctModelLatex.R","reporting","extended"
@@ -129,3 +131,4 @@
 "test-subject-ids.R","filter","core"
 "test-data-guards.R","spec","core"
 "test-ctcov.R","spec","extended"
+"test-julia-item-pit.R","categorical","core"

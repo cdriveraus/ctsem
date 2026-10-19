@@ -630,3 +630,33 @@ function _ctsem_corrsqrt_row_pullback!(vbar::AbstractVector{T}, v::AbstractVecto
     end
     return vbar
 end
+
+"""
+    _ctsem_chol_pullback!(Ā, L, L̄, b, W)
+
+The cotangent of a symmetric `A = L L'` from that of its lower Cholesky
+factor, `sym(L^-T Φ(L' tril(L̄)) L^-1)`, Φ the lower triangle with the
+diagonal halved (Murray 2016, "Differentiation of the Cholesky
+decomposition"). Only `L̄`'s lower triangle is read; `W` is `b` by `b` scratch,
+and `L`'s diagonal must be nonzero.
+"""
+function _ctsem_chol_pullback!(Ā, L, L̄, b::Int, W)
+    T = eltype(Ā)
+    @inbounds for j in 1:b, i in 1:b
+        if i < j
+            W[i, j] = zero(T)
+        else
+            s = zero(T)
+            for p in i:b
+                s += L[p, i] * L̄[p, j]
+            end
+            W[i, j] = i == j ? s / 2 : s
+        end
+    end
+    _ctsem_right_solve_lower!(W, L, b)
+    _ctsem_left_solve_lower_t!(W, L, b)
+    @inbounds for j in 1:b, i in 1:b
+        Ā[i, j] = (W[i, j] + W[j, i]) / 2
+    end
+    return Ā
+end

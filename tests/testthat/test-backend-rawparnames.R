@@ -135,3 +135,27 @@ test_that("a name that cannot be derived is reported rather than shipped as a na
   expect_silent(bare <- ctsem:::.ctBackendRawParameterNames(list(), 3L))
   expect_equal(bare, c("raw[1]", "raw[2]", "raw[3]"))
 })
+
+test_that("random effects take the order their parameters are declared in, PARS or not", {
+  # PARS rows are computed first, so matsetup lists them first. The Laplace
+  # route took its random-effect order from that and put a random PARS
+  # parameter ahead of the rest, where the augmented route kept the declared
+  # order: two layouts of one model's raw vector.
+  model <- suppressWarnings(suppressMessages(ctModel(type = "ct",
+    manifestNames = "Y1", latentNames = "eta1", LAMBDA = matrix(1),
+    DRIFT = matrix("drift_eta1"), DIFFUSION = matrix("diffscale * 1"),
+    PARS = matrix("diffscale"))))
+  model$pars$indvarying[model$pars$param %in% c("drift_eta1", "diffscale")] <- TRUE
+  declared <- paste0("popsd_", model$pars$param[model$pars$indvarying %in% TRUE])
+  expect_identical(tail(declared, 1), "popsd_diffscale")
+  popsd <- function(route) {
+    spec <- suppressWarnings(suppressMessages(ctFit(
+      .rawnames_data()[, c("id", "time", "Y1")], model, backend = "julia",
+      fit = FALSE, intoverpop = route, verbose = 0)))
+    raw <- as.character(ctsem:::.ctBackendRawParameterNames(list(model_spec = spec),
+      ctsem:::.ctBackendNpar(spec)))
+    grep("^popsd_", raw, value = TRUE)
+  }
+  expect_identical(popsd("laplace"), declared)
+  expect_identical(popsd("augmented"), declared)
+})

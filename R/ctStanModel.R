@@ -967,11 +967,15 @@ ctStanModel <- ctModelConvertOMX
   # subject's constants, and the augmented filter carries individual variation
   # on any of them as a state -- so there, even an affine CINT effect needs
   # the route that keeps each subject's values fixed.
-  dynamics <- if(isTRUE(as.logical(model$stationary)))
+  # Single stationary elements need it for the latents their moments are
+  # solved over (`.ctStationaryElements`).
+  stationaryrows <- if(isTRUE(as.logical(model$stationary)))
+    seq_len(model$n.latent) else which(model$t0stationary$closure %in% TRUE)
+  dynamics <- if(length(stationaryrows))
     c('DRIFT', 'CINT', 'DIFFUSION') else character(0)
-  hit <- home[matrixname[home] %in% dynamics]
+  hit <- home[matrixname[home] %in% dynamics & pars$row[home] %in% stationaryrows]
   if(length(hit)) return(paste0('individual variation on ', cells(hit),
-    ' is a state on the augmented route, and stationary=TRUE needs it ',
+    ' is a state on the augmented route, and stationary initial conditions need it ',
     'fixed within each subject'))
   hit <- home[matrixname[home] %in% .ctPopNonlinearMatrices()]
   if(length(hit)) return(paste0('individual variation on ', cells(hit),
@@ -1016,9 +1020,9 @@ ctStanModel <- ctModelConvertOMX
           patterns <- c(patterns, parsref(ri))
           next
         }
-        if(matrixname[ri] %in% dynamics)
+        if(matrixname[ri] %in% dynamics && pars$row[ri] %in% stationaryrows)
           return(paste0('individual variation on ', label, ' reaches ',
-            matrixname[ri], ', which stationary=TRUE needs fixed within ',
+            matrixname[ri], ', which stationary initial conditions need fixed within ',
             'each subject'))
         if(matrixname[ri] %in% .ctPopNonlinearMatrices())
           return(paste0('individual variation on ', label, ' reaches ',

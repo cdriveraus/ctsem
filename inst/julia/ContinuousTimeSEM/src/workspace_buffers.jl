@@ -373,12 +373,28 @@ what to do instead; this is the backstop for a caller that does not.
 """
 function _ctsem_check_stationary(sp::EKFParameters, diffusion_state_indices,
         affine_dim::Int)
-    sp.stationary || return nothing
+    se = sp.stationary_elements
+    elements = _stationary_elements_on(se)
+    (sp.stationary || elements) || return nothing
+    sp.stationary && elements && throw(ArgumentError(
+        "stationary = TRUE starts every latent from its stationary moments; " *
+        "it takes no single stationary elements as well"))
     sp.continuous_time || throw(ArgumentError(
         "stationary initial conditions are implemented for continuous time only"))
     all(<=(affine_dim), diffusion_state_indices) || throw(ArgumentError(
         "stationary initial conditions need every diffusing state among the " *
         "leading $(affine_dim) latent processes"))
+    if elements
+        length(se.inclosure) <= affine_dim || throw(ArgumentError(
+            "stationary elements are for the leading $(affine_dim) latent processes"))
+        # A random initial mean is a population row on its latent; a stationary
+        # mean leaves nothing to vary, and a stationary variance is not one the
+        # population block adds to.
+        marked = vcat(se.means, reduce(vcat, se.blocks; init=Int[]))
+        any(in(marked), sp.population_indices) && throw(ArgumentError(
+            "a stationary initial condition's latent has a random initial mean"))
+        return nothing
+    end
     # An individually varying T0MEANS is a population row on a latent itself.
     # Stationarity leaves no T0MEANS to vary, and the placement would write
     # over the block that row describes.

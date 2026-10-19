@@ -3271,17 +3271,27 @@ function _laplace_factor_repaired!(M::CTSEMBlockMatrix{T},
 end
 
 """
-    _laplace_solve_unit_mode!(laplace, U, values, Ls)
+    _laplace_solve_unit_mode!(laplace, U, values, Ls; retain)
 
 Newton's method on `g_U`, from the origin -- or from the retained mode for
-unit `U` when `ctsem_set_warm_start!` has asked for that -- and then from points
-along that mode's soft directions and its reflection, where the line to one
-shows a second maximum, keeping the mode with the largest Laplace term
+unit `U` when `retain` is true, which by default it is when
+`ctsem_set_warm_start!` has asked for that -- and then from points along that
+mode's soft directions and its reflection, where the line to one shows a second
+maximum, keeping the mode with the largest Laplace term
 (`_laplace_probe_modes`). At every width: a cap of five effects, taken from the
 quadrature's (whose cost is exponential in the width, where probing's is not),
 left a loading model of six effects per person, at the default start's
 loading means of zero, at each person's stationary origin between two maxima
 -- its objective 4800 below the true, its gradient off tenfold (dev1).
+
+A solve that `ctsem_set_warm_start!` started from a retained mode is not
+probed. Those warm starts are the differencing schemes' (the Hessian's
+columns, the continuation's Hessian): their base point was solved from the
+origin and probed, and every differenced point belongs in the basin the base
+chose, since the derivative there is that mode's. A probe can only cost time
+or, switching basin between a column's two points, difference across the
+jump. On the Fisher example's final model (11 effects a person) the probes
+made each gradient 1.6 times slower.
 
 `g_U` is a log likelihood minus a quadratic, so its curvature is negative
 definite near the mode and Newton is the right method; away from the mode, and
@@ -3289,23 +3299,31 @@ for a nonlinear process model, it need not be. Two guards, both visible in the
 diagnostics rather than silent: a curvature that is not negative definite is
 shifted until it is and the unit flagged as repaired, and a step that does not
 improve `g_U` is halved before the iteration gives up.
+
+`retain` per call is for a caller that chains related solves and owns what
+`laplace.modes[U]` holds between them: the sequential pass starts each
+truncated record from the mode of the record one row shorter, and the first
+from the origin, so its result is still a function of theta alone.
 """
 _laplace_solve_unit_mode!(laplace::CTSEMLaplaceObjective, U::Integer,
-    values::AbstractVector{Float64}, Ls::Vector{Matrix{Float64}}) =
+    values::AbstractVector{Float64}, Ls::Vector{Matrix{Float64}};
+    retain::Bool=_LAPLACE_WARM_START[]) =
     _laplace_solve_unit_mode!(laplace, U, values, Ls,
-        _laplace_workspace!(laplace, Float64, length(values)))
+        _laplace_workspace!(laplace, Float64, length(values)); retain=retain)
 
 # With the slot's workspace in hand: called with it concretely typed, Newton and
 # the probes below are static calls, and nothing they return is boxed.
 function _laplace_solve_unit_mode!(laplace::CTSEMLaplaceObjective, U::Integer,
-    values::AbstractVector{Float64}, Ls::Vector{Matrix{Float64}}, aws)
+    values::AbstractVector{Float64}, Ls::Vector{Matrix{Float64}}, aws;
+    retain::Bool=_LAPLACE_WARM_START[])
     d = laplace.units.dims[U]
     # Newton copies its start, so neither needs a vector of its own.
     origin = _laplace_scratch_vector!(laplace, Float64, d, :mode_origin)
-    retained = _LAPLACE_WARM_START[] ? laplace.modes[U] : fill!(origin, 0.0)
+    retained = retain ? laplace.modes[U] : fill!(origin, 0.0)
     started_warm = any(!iszero, retained)
     warm = _laplace_newton_unit_mode(laplace, U, values, Ls, aws, retained)
     best = warm
+    fromwarm = started_warm
     # The start is the origin, and that is not a detail of the iteration: it is
     # what makes the value a function of theta.
     #
@@ -3344,9 +3362,11 @@ function _laplace_solve_unit_mode!(laplace::CTSEMLaplaceObjective, U::Integer,
         if cold.converged || (isfinite(cold.value) &&
                 (!isfinite(best.value) || cold.value > best.value))
             best = cold
+            fromwarm = false
         end
     end
-    if _LAPLACE_MODE_PROBES[] && best.converged && 0 < d
+    if _LAPLACE_MODE_PROBES[] && best.converged && 0 < d &&
+            !(fromwarm && _LAPLACE_WARM_START[])
         best = _laplace_probe_modes(laplace, U, values, Ls, aws, best)
     end
     laplace.modes[U] = best.u
@@ -6239,10 +6259,17 @@ function ctsem_laplace_subject_values(laplace::CTSEMLaplaceObjective,
     values::AbstractVector; from_level::Integer=1, ti_effects::Bool=true)
     theta = collect(Float64, values)
     Ls = _laplace_popchols(theta, laplace.spec)
-    shifted = _laplace_shifted_values(laplace, theta, Ls, function (U)
+    # Every unit's mode on the pool, as an evaluation solves them: each writes
+    # only its own `laplace.modes[U]`, and the slot its task holds. Solved one
+    # unit after another, the plug-in Kalman passes an adequacy check makes,
+    # two a parameter, ran on one core -- 28 s each on the Fisher example's
+    # six-latent, 11-effect model, 97 minutes in all.
+    _laplace_parallel(laplace, eachindex(laplace.units.members)) do U
         _laplace_solve_unit_mode!(laplace, U, theta, Ls)
-        return _laplace_restrict_levels(laplace, U, laplace.modes[U], from_level)
-    end)
+        return true
+    end
+    shifted = _laplace_shifted_values(laplace, theta, Ls, U ->
+        _laplace_restrict_levels(laplace, U, laplace.modes[U], from_level))
     # Deviations the subject filter integrates (`CTSEMHybrid`), at their
     # conditional modes given each subject's whole record and its effects'
     # modes: the subject level's own, so only where that level is kept.
@@ -6492,12 +6519,12 @@ filter adds each subject's effects itself, from this objective's predictors,
 exactly as it does in the fit.
 """
 function ctsem_kalman(laplace::CTSEMLaplaceObjective, values::AbstractVector;
-    from_level::Integer=1, subject_matrices::Bool=true, fields=String[],
+    from_level::Integer=1, subject_matrices::Bool=true, fields=String[], compact::Bool=false,
     subject_values::Union{Nothing,AbstractMatrix}=nothing)
     persubject = _laplace_filter_values(laplace, values; from_level=from_level,
         subject_values=subject_values)
     return ctsem_kalman(laplace.objective, persubject;
-        subject_matrices=subject_matrices, fields=fields)
+        subject_matrices=subject_matrices, fields=fields, compact=compact)
 end
 
 """

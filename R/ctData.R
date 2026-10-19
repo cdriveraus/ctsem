@@ -81,9 +81,7 @@ expmGetSubsets <- function(m){
   nparams <- max(ctm$modelmats$matsetup$param[
     .ctMatsetupFreeRows(ctm$modelmats$matsetup, free = FALSE)])
   nmatrices <- length(mats$base)
-  ctm$modelmats$matsetup[which(ctm$modelmats$matsetup$indvarying > 0),]
-  indvaryingindex <- ctm$modelmats$matsetup$param[which(ctm$modelmats$matsetup$indvarying > 0)]
-  indvaryingindex <- array(indvaryingindex[!duplicated(indvaryingindex)])
+  indvaryingindex <- array(.ctIndvaryingIndex(ctm$modelmats$matsetup))
   
   sdscale <- array(ctm$modelmats$matvalues$sdscale[match(indvaryingindex,ctm$modelmats$matsetup$param)])
   

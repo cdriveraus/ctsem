@@ -1,0 +1,474 @@
+---
+title: "What is the model missing? Score tests after a fit"
+format:
+  html:
+    toc: true
+    code-fold: false
+    embed-resources: true
+    self-contained-math: true
+execute:
+  message: false
+  warning: false
+vignette: >
+  %\VignetteIndexEntry{What is the model missing? Score tests after a fit}
+  %\VignetteEngine{quarto::html}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r setup, include = FALSE}
+knitr::opts_chunk$set(collapse = TRUE, comment = "#>", message = FALSE,
+  warning = FALSE)
+```
+
+A fitted model can be wrong in ways its own estimates do not show. Subjects
+may differ in a parameter the model holds fixed; a parameter may depend on a
+covariate that was never put in the model; the dynamics may depend on where the
+process is. `ctScoreTest()` asks of one fitted model, without refitting it,
+whether any of these relaxations would fit better, and if so where:
+
+* **heterogeneity**: does a parameter differ between subjects, so that it
+  should be individually varying?
+* **covariates**: does a parameter depend on a subject-level covariate the
+  model does not contain -- including the size of a random effect, not only
+  its mean?
+* **state dependence**: does a drift coefficient change with the level of a
+  latent state, so that the dynamics are nonlinear?
+* **volatility**: does the size of a process's random shocks change with the
+  level of a state -- negative affect more variable when it is high, say?
+
+Each is a score (Lagrange multiplier) test: the slope of the log likelihood,
+at the fitted model, in the direction of the relaxation. It needs a few
+evaluations of the fitted model's gradient rather than a new fit per
+candidate, so any number of candidates can be screened after one fit, and each
+test also says roughly how large the relaxation would be. The tests are
+screens: they point at what to relax, and the refit says how much it matters.
+
+The three examples below each generate data with one thing the fitted model
+lacks, fit the model without it, ask `ctScoreTest()`, and then refit with what
+it found. The sections after them add a fourth family of tests (cells the
+model fixes at zero), the posterior predictive checks as tests
+(`ctFitAdequacy()`), and a search that combines the two and does the
+refitting itself (`ctModelImprove()`).
+
+```{r libs}
+library(ctsem)
+set.seed(3)
+```
+
+## The process
+
+Two latent processes, each measured by one indicator, observed 30 times at
+irregular intervals for 150 subjects. `eta1` regulates towards its baseline at
+rate 0.6, `eta2` at 0.4, and `eta1` pushes `eta2` up (a cross effect of 0.25).
+Each subject has their own measurement intercepts. The generating model is
+written once, and each example changes one cell of it.
+
+```{r generator}
+generator <- function(DRIFT, MANIFESTMEANS = c("mm1|param|TRUE|1", "mm2|param|TRUE|1"),
+  TIpredNames = NULL) {
+  ctModel(type = "ct", silent = TRUE,
+    manifestNames = c("Y1", "Y2"), latentNames = c("eta1", "eta2"),
+    LAMBDA = diag(2), DRIFT = DRIFT, CINT = matrix(0, 2, 1),
+    DIFFUSION = matrix(c(0.8, 0, 0, 0.6), 2, 2), MANIFESTVAR = diag(0.5, 2),
+    MANIFESTMEANS = matrix(MANIFESTMEANS, 2, 1),
+    T0MEANS = matrix(0, 2, 1), T0VAR = diag(1, 2), TIpredNames = TIpredNames)
+}
+```
+
+The model fitted in every example is ctsem's default for two latents with one
+indicator each: every drift, diffusion and measurement error parameter free
+and shared by all subjects, and individually varying measurement intercepts
+and initial states.
+
+```{r model}
+model <- ctModel(type = "ct", silent = TRUE,
+  manifestNames = c("Y1", "Y2"), latentNames = c("eta1", "eta2"),
+  LAMBDA = diag(2))
+```
+
+## 1. Subjects who differ in a parameter
+
+Here the subjects differ in how quickly `eta1` regulates: the drift
+`DRIFT[1,1]` varies between subjects around -0.6, with a standard deviation of
+about 0.25.
+
+```{r het-generate}
+gen1 <- generator(DRIFT = matrix(c("drift11|-log1p_exp(-param)|TRUE|0.6", 0.25,
+  0, -0.4), 2, 2))
+d1 <- ctGenerate(gen1, n = 150, Tpoints = 30, dtmean = 1, logdtsd = 0.5,
+  backend = "julia", popmeans = c(drift11 = -0.6, mm1 = 0, mm2 = 0))
+truedrift <- attr(d1, "subjectpars")$drift11
+c(mean = mean(truedrift), sd = sd(truedrift))
+d1 <- data.frame(d1)
+```
+
+The default model shares one drift among all subjects.
+
+```{r het-fit}
+fit1 <- ctFit(d1, model, backend = "julia", cores = 2)
+st1 <- ctScoreTest(fit1, tests = "heterogeneity")
+st1
+```
+
+Each row tests whether that parameter's variance over subjects is zero; the
+test is one sided, since a variance cannot be negative. The drift of `eta1` is
+flagged, and so is its diffusion. That is expected rather than a second
+finding: a subject whose process regulates more slowly also varies more, so
+the subjects disagree about the diffusion too. The test says that the subjects
+differ, and roughly where; it cannot always say which of two related
+parameters is the source. The way to find out is to relax the strongest
+candidate and test again.
+
+The line under the table tests every direction at once: whether the subjects
+vary along some combination of these parameters, which no single row would
+isolate when the variation is spread over several of them. Here one parameter
+carries the variation, and its own row is the sharper test. On a model whose
+population covariance has reduced rank (`poprank`) the rows test variation
+outside the shared dimensions, and the line is not given: in simulation the
+rows found a missing dimension far more often.
+
+```{r het-refit}
+model1b <- model
+model1b$pars$indvarying[model1b$pars$param %in% "drift_eta1"] <- TRUE
+fit1b <- ctFit(d1, model1b, backend = "julia", cores = 2)
+c(loglik_without = fit1$estimate$loglik, loglik_with = fit1b$estimate$loglik)
+ctScoreTest(fit1b, tests = "heterogeneity")
+```
+
+With the drift free to vary the log likelihood rises by about 12, and
+nothing else stands out: the diffusion's signal was the drift's. (A drift that
+varies between subjects enters the filter nonlinearly, so `ctFit()` chose the
+Laplace route for the refit; the tests work on either.)
+
+## 2. A covariate the model does not contain
+
+Now each subject has an `age` (standardised), and age matters twice: older
+subjects have a higher intercept on `Y1`, and in older subjects `eta1` pushes
+`eta2` harder (the cross effect `DRIFT[2,1]` rises by 0.3 per standard
+deviation of age). A second covariate, `w`, is unrelated to anything.
+
+```{r cov-generate}
+gen2 <- generator(DRIFT = matrix(c(-0.6, "drift21||||age=0.3", 0, -0.4), 2, 2),
+  MANIFESTMEANS = c("mm1|param|TRUE|1|age=0.6", "mm2|param|TRUE|1"),
+  TIpredNames = c("age", "w"))
+d2 <- data.frame(ctGenerate(gen2, n = 150, Tpoints = 30, dtmean = 1,
+  logdtsd = 0.5, backend = "julia", popmeans = c(drift21 = 0.25, mm1 = 0, mm2 = 0)))
+covariates <- unique(d2[, c("id", "age", "w")])
+head(covariates)
+```
+
+The model is fitted without either covariate, and the covariates are handed to
+`ctScoreTest()` afterwards, one row per subject.
+
+```{r cov-fit}
+fit2 <- ctFit(d2[, c("id", "time", "Y1", "Y2")], model, backend = "julia", cores = 2)
+st2 <- ctScoreTest(fit2, covariates = covariates, tests = "covariates")
+st2
+```
+
+For each covariate, the joint test asks whether it matters anywhere; then each
+parameter's row gives the effect a refit with that covariate would be expected
+to estimate, per unit of the covariate. `age` is found, on the intercept of
+`Y1` and on the cross effect, at about the sizes it was generated with; `w` is
+not. Two things make that attribution work. The effects are estimated jointly,
+so a covariate that moves one parameter is not read off another that happens
+to be correlated with it. And they are estimated with the fitted model's
+parameters held where the fit left them: the model without `age` has already
+absorbed some of its effect -- the intercepts' standard deviation has grown to
+take in the age differences -- and an estimate that lets those parameters move
+too extrapolates the model's curvature across that whole change.
+
+The tests also cover the random effects' standard deviations (the `popsd_`
+rows): whether subjects differ more at some ages than others. A covariate can
+also be tested as a step at an unknown threshold, `form = "threshold"`, which
+scans the cuts and accounts for having chosen the best one: an effect that
+switches on above some age, say.
+
+The refit puts `age` into the model as a time independent predictor, with
+effects on every parameter:
+
+```{r cov-refit}
+model2b <- ctModel(type = "ct", silent = TRUE,
+  manifestNames = c("Y1", "Y2"), latentNames = c("eta1", "eta2"),
+  LAMBDA = diag(2), TIpredNames = "age")
+fit2b <- ctFit(d2, model2b, backend = "julia", cores = 2)
+effects <- summary(fit2b)$tipreds
+effects[grepl("mm_Y1|drift_eta2_eta1", rownames(effects)), ]
+```
+
+## 3. Dynamics that depend on the state
+
+Last, `eta2` moderates how `eta1` regulates: when `eta2` is high, `eta1`
+returns to baseline more slowly. The drift of `eta1` is
+`-0.6 + 0.3 * tanh(eta2)`, so it ranges between -0.9 and -0.3, and near
+`eta2 = 0` it rises by about 0.3 per unit of `eta2`.
+
+```{r sdep-generate}
+gen3 <- generator(DRIFT = matrix(c("-0.6 + 0.3 * tanh(eta2)", 0.25, 0, -0.4), 2, 2))
+d3 <- data.frame(ctGenerate(gen3, n = 150, Tpoints = 30, dtmean = 1,
+  logdtsd = 0.5, backend = "julia", popmeans = c(mm1 = 0, mm2 = 0)))
+```
+
+The fitted model is linear: each drift coefficient is a constant.
+
+```{r sdep-fit}
+fit3 <- ctFit(d3, model, backend = "julia", cores = 2)
+st3 <- ctScoreTest(fit3, tests = "statedependence")
+st3
+```
+
+Each term is one drift coefficient varying linearly with one state. The term
+`eta1*eta2` in the equation of `eta1` stands out: either the drift of `eta1`
+changes with `eta2` -- which is what generated the data -- or the effect of
+`eta2` on `eta1` changes with `eta1`. At this order the two are the same term,
+so the table names both, and which reading to fit is a substantive choice. The
+estimate is the change in the drift coefficient per unit of the state. Writing
+the dependence into the model:
+
+```{r sdep-refit}
+model3b <- ctModel(type = "ct", silent = TRUE,
+  manifestNames = c("Y1", "Y2"), latentNames = c("eta1", "eta2"),
+  LAMBDA = diag(2),
+  DRIFT = matrix(c("dr11 + dstate * eta2", "dr21", "dr12", "dr22"), 2, 2),
+  PARS = c("dr11|-log1p_exp(-param)", "dstate"))
+fit3b <- ctFit(d3, model3b, backend = "julia", cores = 2)
+c(loglik_without = fit3$estimate$loglik, loglik_with = fit3b$estimate$loglik)
+summary(fit3b)$popmeans[c("dr11", "dstate"), ]
+```
+
+The refit's `dstate` is a little smaller than the one-step estimate: the
+generating `tanh` flattens away from zero, and a term linear in `eta2`
+averages over its whole range. The first screen also flagged a second, weaker
+term, `eta1*eta1` in the equation of `eta2`. That one was an echo -- the misfit
+in `eta1`'s dynamics reaches `eta2` through the cross effect -- and testing the
+refitted model shows nothing left:
+
+```{r sdep-retest}
+ctScoreTest(fit3b, tests = "statedependence")
+```
+
+The term already in the model now has no score left at all, and no other
+term stands out.
+
+The test works because the filter evaluates each candidate term at the state
+it predicts from earlier observations. A weight that has not seen the
+observation being scored keeps that observation's contribution to the score at
+mean zero when the model is right. Using smoothed or updated state estimates
+as covariates instead -- regressing something on the estimated states after
+the fit -- does not have that property, and rejects correct models: in
+simulation, nearly always.
+
+The polynomial terms assume the dependence is smooth enough to show in a
+linear term. `tests = "instability"` asks without assuming a form. It takes
+each observation's score -- how much that observation pulls each parameter --
+and orders the observations by time, and by each latent's state as predicted
+from earlier observations. Under the model the running sum of those scores
+wanders like a Brownian bridge whatever the order; a parameter that changes
+over the study, or differs between low and high levels of a state, bends it.
+
+```{r sdep-instability}
+ctScoreTest(fit3, tests = "instability")
+```
+
+Ordered by `eta2`'s predicted state, the drift of `eta1` stands out, which is
+the moderation that generated the data, found without being told its form.
+Ordered by time nothing changes. The test needs each observation's score, a
+pass of the filter per eight parameters, so it is not run unless asked for.
+
+## Everything at once
+
+By default `ctScoreTest()` runs every family: the three above (covariates when
+given) and a fourth, the cells the model fixes at zero -- here the measurement
+error covariance and the cross loadings -- each tested as though freed. On the
+last dataset:
+
+```{r all}
+ctScoreTest(fit3)
+```
+
+The state dependence stands out. The heterogeneity tests stay quiet here, but
+they need not: a drift that changes with the state can also look, subject by
+subject, like a drift that differs between subjects, and in simulations a
+missing nonlinearity did move them. A badly misspecified model can light up
+several tests at once, so read them as a map: relax what stands out most,
+refit, and test again.
+
+## Do the model's predictions look like the data?
+
+The usual check of a dynamic model compares the data with data the fitted
+model generates: the autocorrelations and cross-correlations (ACF and CCF),
+how much subjects differ from each other, and so on. `ctFitAdequacy()` makes
+those comparisons tests, in families aimed at different departures.
+
+Most of the families work on the one-step-ahead prediction errors, which
+under the model are independent and standard normal however the observations
+are spaced, so they need no generated data. Each variable's error is taken
+given the others observed at the same time, so a result names a variable.
+
+* `residuals`: the errors' correlations within subjects, for every pair of a
+  subject's observations, binned by the time between them. This is the
+  residual ACF and CCF in continuous time, and a slow process the model lacks
+  shows as correlation over the gaps it spans.
+* `latent`: the same for each latent process: how much each observation moves
+  the predicted state, standardised, correlated with the same subject's moves
+  at other times. A model with many indicators per process can leave each
+  item's errors nearly uncorrelated while the processes themselves are
+  misspecified, a cross effect missing, say; one statistic per process rather
+  than per item does not dilute that.
+* `volatility`: the same for the squared errors, for variance that clusters
+  in time.
+* `pairs`: whether two variables' errors at the same time correlate as the
+  model says, for a wrong measurement error covariance or loading.
+* `periodic`: a cycle the model lacks, such as a daily rhythm: the
+  periodogram of each variable's errors and each process's updates at a
+  period. It depends only on the time between observations, so it finds a
+  rhythm whatever its phase in each subject. Name the periods that matter
+  (`periods = 24` with time in hours), or by default it scans.
+* `tvcovariates`, given `tvcovariates`: whether time varying variables the
+  model does not use predict its errors, at the same and the previous
+  observation.
+* `distribution`: skewness, kurtosis and outlying occasions.
+* `fit`: whether some subjects are fitted much worse than the model allows.
+* `dependence`: whether an error or its size depends, in any form, on what
+  came before it: the predicted states, the previous errors, the time since
+  the last observation.
+* `effects`: on a model whose random effects are integrated by
+  `intoverpop = "laplace"`, whether their normal distribution fits. Each
+  subject's posterior probability that its effect lies below a cut, at cuts
+  along each axis, is averaged over subjects; under the model that average is
+  the normal's, and a skewed or bimodal distribution of the subjects moves
+  it.
+* `scores`, when asked for: whether each observation's score is uncorrelated
+  with the scores of the same subject's other observations, which holds
+  under the model whatever is being looked for. That makes it a check for
+  dynamic misspecification of any kind, but a weak one, spread over many
+  statistics; the targeted tests above find what they cover far more often.
+
+The error statistics account for the parameters having been estimated from
+the same data. Each subject's contribution is projected on its scores, which
+removes what estimation did to the statistic, as the score tests do. Three
+more families compare statistics of the data with generated data: the spread
+over subjects of their own means, standard deviations and lag-one
+correlations; whether change depends on level nonlinearly; and, given
+covariates, whether subjects' statistics depend on them. With many
+observations every misfit is significant, so the size of what remains is
+reported too, as root mean square residual correlations, of the items and of
+the latent processes, with intervals and a test that each is at most `close`
+(0.05 by default).
+
+On the second example's fit, which lacks `age`, the checks fail, through the
+subjects' spread and their relation to age:
+
+```{r adequacy-cov}
+ctFitAdequacy(fit2, covariates = covariates)
+```
+
+On the linear fit to the state-dependent data:
+
+```{r adequacy}
+ctFitAdequacy(fit3)
+```
+
+Every family passes, though this model is missing the state dependence the
+score test found at p = 5e-6. A moderated drift, averaged over the data,
+still decays much like a single exponential, so the errors it leaves are
+nearly uncorrelated: the root mean square residual correlation is
+indistinguishable from zero. The checks are worth having for what lies
+outside every score test's reach: a slow process the model lacks, variance
+that clusters, errors with heavy tails, a process of the wrong order. In
+simulation the residual correlations over time gaps found a missing slow
+process (a time constant ten times the fast one's) in 65 of 100 datasets,
+where correlations at a few lags of the observations found it in 5. But
+passing the checks is necessary rather than sufficient, which is why the next
+section screens with the score tests and stops on the checks.
+
+## Automating the search
+
+`ctModelImprove()` puts the tests into a loop. It screens the fit, refits with
+the most strongly indicated relaxations one at a time (warm started from the
+current estimates), and keeps the best if the refit's likelihood confirms it.
+It repeats until nothing more is indicated, then checks the model with
+`ctFitAdequacy()`. If a check fails, it tries structural changes the score
+tests cannot reach: a slow process driving a latent (`ctModelSlowComponent()`),
+tried first for a latent whose updates stay correlated over long gaps; a daily
+or other cycle at the period the `periodic` family points to
+(`ctModelPeriodicComponent()`); a process of its own for an item whose errors
+stay correlated with its own (`ctModelUniqueProcess()`); making a process
+second order (`ctModelHigherOrder()`); or models you supply. Finally it
+tries dropping each change it kept, in case a later one made it redundant.
+
+Here the data contain two of the departures above at once: `age` acts on the
+intercept of `Y1` and on the cross effect, `eta2` moderates how `eta1`
+regulates, and `w` is unrelated.
+
+```{r improve-generate}
+gen4 <- generator(DRIFT = matrix(c("-0.6 + 0.3 * tanh(eta2)", "drift21||||age=0.3",
+  0, -0.4), 2, 2),
+  MANIFESTMEANS = c("mm1|param|TRUE|1|age=0.6", "mm2|param|TRUE|1"),
+  TIpredNames = c("age", "w"))
+d4 <- data.frame(ctGenerate(gen4, n = 150, Tpoints = 30, dtmean = 1,
+  logdtsd = 0.5, backend = "julia", popmeans = c(drift21 = 0.25, mm1 = 0, mm2 = 0)))
+fit4 <- ctFit(d4[, c("id", "time", "Y1", "Y2")], model, backend = "julia", cores = 2)
+```
+
+```{r improve}
+imp <- ctModelImprove(fit4, covariates = unique(d4[, c("id", "age", "w")]))
+imp
+```
+
+Each round shows what was tried, the score test that proposed it, and what
+the refit's likelihood said. The first round kept `age`, with effects on the
+cross effect, the intercept of `Y1` and the initial level of `eta1`; it also
+tried a random effect on the
+cross effect, which the score tests had flagged because subjects of different
+ages differ in it -- a covariate that explains the variation beats a random
+effect that only describes it. The second round kept the moderation, and
+turned down the dimension test's suggestion that three dynamic parameters vary
+together, whose refit gained 8 log likelihood units for 18 parameters. Then
+nothing more was indicated, every adequacy check passed, and trying each kept
+change out again showed both were still needed. The effects found are near
+those that generated the data (0.3 on the cross effect, 0.6 on the intercept
+of `Y1`). The effect on the initial level of `eta1` was not generated: it is
+small, and only just significant -- a search that decides at `alpha = 0.05`
+keeps such things about one time in twenty, and `alpha = 0.01` is the
+stricter choice.
+
+The final fit is an ordinary fit:
+
+```{r improve-final}
+s <- summary(imp$fit)
+s$tipreds
+s$popmeans[grepl("^sdep", rownames(s$popmeans)), ]
+```
+
+The model was chosen by the data it is fitted to, so its standard errors and
+tests are too optimistic about the structure the search added. Treat that
+structure as a hypothesis, and confirm it on other data. Within one dataset,
+`holdout = 0.3` sets aside 30 per cent of the subjects: the search runs on
+the rest, and each change it keeps is then tested on the held-out subjects
+alone. With a large dataset, `close = 0.05` also stops the search once the
+residual correlations that remain are not significantly larger than that,
+where every small misfit would otherwise be significant.
+
+## How the tests work, briefly
+
+* The scores are those of the objective the model was fitted with, so they
+  integrate over random effects exactly as the fit did. A covariate's effect
+  adds to a parameter's raw value, so its score is the covariate times each
+  subject's score in that parameter -- any number of covariates costs a few
+  matrix products after one set of per-subject scores and Hessians.
+* A random effect's variance has, at zero, the score
+  $\frac{1}{2}\sum_i (s_{ij}^2 + H_{i,jj})$: the information matrix test in that
+  parameter, which is the score test for neglected heterogeneity.
+* State dependence is tested on the fitted model extended with the drift terms
+  at zero, which reproduces the fit exactly there.
+* The fitted model's curvature projects the fitted parameters out of each test
+  and sizes the one-step estimates; each test's variance is the spread of the
+  subjects' contributions, and its p-value comes from resampling subjects. That
+  keeps a test valid when the model is wrong in some other way -- the case a
+  screen is for -- where a variance from the model's own curvature would make
+  unrelated tests reject too.
+
+The tests need subjects as independent units, so a model with levels above the
+subject can be tested for state dependence only. See `?ctScoreTest` for the
+details.

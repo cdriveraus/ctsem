@@ -134,7 +134,7 @@
 }
 
 .ctBackendKalmanRaw <- function(fit, raw, subjectmatrices = TRUE,
-  randomEffects = NULL, fields = NULL, sequential = FALSE) {
+  randomEffects = NULL, fields = NULL, sequential = FALSE, compact = FALSE) {
   # One raw vector for every subject, or on the filter's route a matrix with
   # one row per subject (`ctsem_kalman`'s second form).
   persubject <- is.matrix(raw)
@@ -150,6 +150,10 @@
     if (persubject) .ctJuliaPut(raw) else .ctJuliaNumericVector(raw),
     subject_matrices = isTRUE(subjectmatrices))
   if (length(fields)) arguments$fields <- .ctJuliaVector(as.character(fields))
+  # `compact`: only what the misfit tests read (`_ctsem_kalman_compact`) --
+  # `eta12`, `etavar12`, `y1`, `ycov1` -- in place of the full arrays, whose
+  # transfer was most of an adequacy pass.
+  if (isTRUE(compact)) arguments$compact <- TRUE
   from <- 1L
 
   # The Laplace route is the same call with two more keywords: which levels of
@@ -184,14 +188,36 @@
   # each row's log predictive density with them; the smoothed pass stays the
   # plug-in one, conditional on the whole record. Asked for by the calls that
   # return trajectories; the others compare like with like through the plug-in.
-  if (isTRUE(sequential) && .ctBackendSequentialApplies(spec, from)) {
-    seq <- .ctBackendJuliaValue(module$ctsem_laplace_sequential(arguments[[1L]],
-      .ctJuliaNumericVector(raw)))
-    for (f in c("eta", "y")) {
-      if (!is.null(result[[f]])) result[[f]][1:2, , ] <- seq[[f]]
+  # `sequential = 'mixture'`: the same rows from the model's exact predictive,
+  # the random effects integrated by importance sampling against their
+  # posterior given each row's predecessors (ctsem_laplace_sequential_mixture)
+  # rather than at each truncated record's mode by the delta method -- on the
+  # objective that integrates own variances in the filter, so those are
+  # marginalised exactly inside each draw rather than sampled.
+  mixture <- identical(sequential, 'mixture')
+  if ((isTRUE(sequential) || mixture) && .ctBackendSequentialApplies(spec, from)) {
+    seq <- .ctBackendJuliaValue(if (mixture)
+      module$ctsem_laplace_sequential_mixture(.ctJuliaObjective(fit, hybrid = TRUE),
+        .ctJuliaNumericVector(raw),
+        particles = as.integer(getOption('ctsem.sequential.particles', 512L)),
+        compact = isTRUE(compact)) else
+      module$ctsem_laplace_sequential(arguments[[1L]], .ctJuliaNumericVector(raw),
+        compact = isTRUE(compact)))
+    if (mixture) result$ess <- as.numeric(seq$ess)
+    # Non-Gaussian items' distribution function bounds, from the same draws.
+    if (mixture && !is.null(result$pitlower)) {
+      result$pitlower <- seq$pitlower
+      result$pitupper <- seq$pitupper
     }
-    for (f in c("etacov", "ycov")) {
-      if (!is.null(result[[f]])) result[[f]][1:2, , , ] <- seq[[f]]
+    if (isTRUE(compact)) {
+      for (f in c("eta12", "etavar12", "y1", "ycov1")) result[[f]] <- seq[[f]]
+    } else {
+      for (f in c("eta", "y")) {
+        if (!is.null(result[[f]])) result[[f]][1:2, , ] <- seq[[f]]
+      }
+      for (f in c("etacov", "ycov")) {
+        if (!is.null(result[[f]])) result[[f]][1:2, , , ] <- seq[[f]]
+      }
     }
     if (!is.null(result$llrow)) result$llrow <- as.numeric(seq$llrow)
     # The effects' own posterior at each row, for `indvarstates`.

@@ -139,6 +139,18 @@ end
             @test threaded_adjoint.gradient ≈ serial_adjoint.gradient rtol = 1e-12
             @test threaded_forward ≈ serial_forward rtol = 1e-12
         end
+
+        # After gradients, a threaded value pass is what it was before them.
+        # Subjects once kept workspaces of their own, a gradient left those it
+        # ran pointing at its worker's exponential table, and a later threaded
+        # value pass that put two of them on different threads raced on it: a
+        # wrong log likelihood, different each time. Workspaces are the task's
+        # now, so nothing is lent; this checks the symptom.
+        ContinuousTimeSEM.ctsem_set_max_chunks!(4)
+        before = objective(values)
+        ctsem_adjoint_gradient(objective, values)
+        ContinuousTimeSEM.ctsem_subject_gradients(objective, values)
+        @test all(objective(values) == before for _ in 1:5)
     finally
         ContinuousTimeSEM.ctsem_set_max_chunks!(original)
     end

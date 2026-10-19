@@ -197,13 +197,16 @@ end
 
 """Gauss-Hermite grids a rule of these options can ask for, filled before any
 threaded region so that `_gh_grid` is a read there (see
-`_quadrature_warm_caches`)."""
+`_quadrature_warm_caches`): a product rule's, for a block no wider than
+`product_maxdim`, and the soft directions', at most `soft_maxdirs` of them. A
+wider block's stiff complement is built where it is placed
+(`_continuation_stiff_rule`), so its size is not warmed: warming every block
+size built a 5^13-point grid for units of thirteen effects, which `maxdim`
+then left out."""
 function _continuation_warm_caches(laplace::CTSEMLaplaceObjective, nodes::Integer,
-    soft_maxdirs::Integer)
-    _quadrature_warm_caches(laplace, nodes)
-    for k in 1:max(1, Int(soft_maxdirs))
-        _gh_grid(k, nodes)
-    end
+    soft_maxdirs::Integer, product_maxdim::Integer)
+    _quadrature_warm_caches(laplace, nodes,
+        1:max(1, Int(soft_maxdirs), Int(product_maxdim)))
     return nothing
 end
 
@@ -532,7 +535,7 @@ function _continuation_place(laplace::CTSEMLaplaceObjective, theta::Vector{Float
     lap = ctsem_laplace_evaluate(laplace, theta; gradient=false)
     Ls = _laplace_popchols(theta, laplace.spec)
     _laplace_ensure_pool!(laplace)
-    _continuation_warm_caches(laplace, opts.nodes, opts.soft_maxdirs)
+    _continuation_warm_caches(laplace, opts.nodes, opts.soft_maxdirs, opts.product_maxdim)
     rules = Vector{Union{Nothing,CTSEMFixedUnitRule}}(nothing, nunits)
     values = fill(NaN, nunits)
     wide = [_continuation_unit_width(laplace, U) > opts.maxdim for U in 1:nunits]
@@ -816,7 +819,7 @@ function _continuation_flagged(o::CTSEMLaplaceContinuation, theta::Vector{Float6
     dL = want_gradient ? _laplace_level_chol_derivatives(theta, spec) : nothing
     positions = [_laplace_level_positions(spec, l) for l in eachindex(spec.levels)]
     _laplace_ensure_pool!(laplace)
-    _continuation_warm_caches(laplace, o.nodes, o.soft_maxdirs)
+    _continuation_warm_caches(laplace, o.nodes, o.soft_maxdirs, o.product_maxdim)
     nslot = _laplace_pool_width()
     partials = [zeros(npar) for _ in 1:(want_gradient ? nslot : 0)]
     good = fill(true, nslot)
@@ -1652,7 +1655,7 @@ function _continuation_flagged_hessian(o::CTSEMLaplaceContinuation,
     (layout === nothing || isempty(layout.active)) && return nothing
     d2L = _continuation_level_chol_second_derivatives(theta, spec, positions)
     _laplace_ensure_pool!(laplace)
-    _continuation_warm_caches(laplace, o.nodes, o.soft_maxdirs)
+    _continuation_warm_caches(laplace, o.nodes, o.soft_maxdirs, o.product_maxdim)
     N = width > 0 ? Int(width) : _continuation_hessian_width(o, theta, layout)
     out = _continuation_flagged_hessian(o, theta, Ls, dL, d2L, layout, Val(N))
     if out !== nothing && N > 1
