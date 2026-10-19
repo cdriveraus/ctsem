@@ -244,9 +244,11 @@ test_that("backendcontrol is gone, and says where its settings went", {
 })
 
 test_that("cores is refused by name on ctKalmanArray and ctSubjectPars for a julia fit", {
-  # A stub carrying only the class: both refusals fire before anything reads
-  # the fit, which is the point -- the argument is wrong whatever the fit holds.
-  stub <- structure(list(), class = 'ctJuliaFit')
+  # A stub carrying only what marks a julia fit -- the class, and the
+  # `model_spec` that `.ctFitIsJulia()` asks for: both refusals fire before
+  # anything reads the fit, which is the point -- the argument is wrong
+  # whatever the fit holds.
+  stub <- structure(list(model_spec = list()), class = 'ctJuliaFit')
   expect_error(ctKalmanArray(stub, cores = 4),
     "ctKalmanArray\\(cores=\\) is only available for backend='stan'")
   expect_error(ctKalmanArray(stub, cores = 4), "ctFit\\(cores=\\)")
