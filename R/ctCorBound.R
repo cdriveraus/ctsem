@@ -79,9 +79,9 @@
     level = if (is.null(spec$subjectIDname)) "" else as.character(spec$subjectIDname)[1L]))
 }
 
-# The bound in force, read from the engine rather than duplicated.
+# The bound, read from the engine rather than duplicated.
 .ctCorBoundValue <- function() {
-  value <- try(.ctJuliaEval("ContinuousTimeSEM._CTSEM_CORBOUND[]"), silent = TRUE)
+  value <- try(.ctJuliaEval("ContinuousTimeSEM._CTSEM_CORBOUND"), silent = TRUE)
   if (inherits(value, "try-error") || !length(value)) 0.99 else as.numeric(value)[1L]
 }
 
@@ -93,7 +93,6 @@
   raw <- as.numeric(fit$estimate$raw)
   if (inherits(blocks, "try-error") || !length(blocks) || !length(raw)) return(NULL)
   bound <- .ctCorBoundValue()
-  if (!(bound > 0)) return(NULL)
   rows <- lapply(blocks, function(b) {
     cells <- diag(b$k)
     low <- which(lower.tri(cells), arr.ind = TRUE)

@@ -308,26 +308,10 @@ route's differenced Hessian mix columns that saw it with columns that did not
 simulated boundary model. It is part of the parameter space, not a
 prior: `prior_weight` does not scale it, it is in the objective whatever
 `priors` says, and every route reads it here. It has no curvature inside the
-bound, so `_ctsem_prior_precision` leaves it out. Settable with
-`ctsem_set_correlation_bound!`.
+bound, so `_ctsem_prior_precision` leaves it out.
 """
-const _CTSEM_CORBOUND = Ref(0.99)
-const _CTSEM_CORBOUND_STEEPNESS = Ref(100.0)
-
-export ctsem_set_correlation_bound!
-"""
-    ctsem_set_correlation_bound!(bound; steepness)
-
-Set the largest multiple correlation a random effect may have with the others
-at its level (`0` removes the bound) and the wall's steepness past it.
-"""
-function ctsem_set_correlation_bound!(bound::Real; steepness::Real=_CTSEM_CORBOUND_STEEPNESS[])
-    0 <= bound < 1 || throw(ArgumentError("the correlation bound must be in [0, 1)"))
-    steepness > 0 || throw(ArgumentError("the wall's steepness must be positive"))
-    _CTSEM_CORBOUND[] = Float64(bound)
-    _CTSEM_CORBOUND_STEEPNESS[] = Float64(steepness)
-    return (bound=Float64(bound), steepness=Float64(steepness))
-end
+const _CTSEM_CORBOUND = 0.99
+const _CTSEM_CORBOUND_STEEPNESS = 100.0
 
 """A block's raw lower triangle with unit scales, and the correlation matrix
 its own construction makes of it."""
@@ -382,7 +366,7 @@ function _ctsem_corbound_inverse(R::AbstractMatrix{T}) where {T}
     return M
 end
 
-@inline _ctsem_corbound_limit() = -log1p(-_CTSEM_CORBOUND[]^2)
+@inline _ctsem_corbound_limit() = -log1p(-_CTSEM_CORBOUND^2)
 
 """
     _ctsem_corbound(objective, values)
@@ -391,9 +375,9 @@ The wall on every bounded block, summed: `_CTSEM_CORBOUND`'s docstring. Zero
 for every model with no full-rank block of two or more random effects.
 """
 function _ctsem_corbound(objective::CTSEMObjective, values::AbstractVector{T}) where {T}
-    (isempty(objective.corbound) || _CTSEM_CORBOUND[] <= 0) && return zero(T)
+    isempty(objective.corbound) && return zero(T)
     limit = _ctsem_corbound_limit()
-    kappa = _CTSEM_CORBOUND_STEEPNESS[]
+    kappa = _CTSEM_CORBOUND_STEEPNESS
     total = zero(T)
     for block in objective.corbound
         _, R = _ctsem_corbound_matrix(block, values)
@@ -417,9 +401,9 @@ derivative through `log R_jj + log (R^-1)_jj`, `e_j e_j' / R_jj - m_j m_j' /
 """
 function _ctsem_corbound_gradient!(gradient::AbstractVector, objective::CTSEMObjective,
     values::AbstractVector{T}) where {T}
-    (isempty(objective.corbound) || _CTSEM_CORBOUND[] <= 0) && return gradient
+    isempty(objective.corbound) && return gradient
     limit = _ctsem_corbound_limit()
-    kappa = _CTSEM_CORBOUND_STEEPNESS[]
+    kappa = _CTSEM_CORBOUND_STEEPNESS
     for block in objective.corbound
         k = block.k
         base, R = _ctsem_corbound_matrix(block, values)

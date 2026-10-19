@@ -3,8 +3,8 @@
 # level at most 0.99, held by a wall in the objective on every julia route.
 #
 # The independent answer is the wall computed here, in R, from the population
-# correlation matrix `.ctCovForward` builds: the objective with the bound minus
-# the objective without it. Past the bound the two routes must then agree,
+# correlation matrix `.ctCovForward` builds: the objective minus the subjects'
+# own log likelihoods, with no prior to account for. Past the bound the two routes must then agree,
 # which they did not while only the laplace route clamped the coordinates, and
 # the adjoint gradient must agree with forward mode. One fit, on data whose
 # maximum-likelihood population covariance is singular (rank 2 of 4), must end
@@ -50,9 +50,6 @@ test_that("the bound is the same wall on both routes, and its gradient is right"
   inside <- base
   past <- base
   past[block$index] <- 1.2 * c(0.65, 0.927, 2.13, -2.02, 1.5, -0.178)
-  module <- ctsem:::.ctJuliaModule(specs$laplace$project)
-  on.exit(ctsem:::.ctJuliaEval("ContinuousTimeSEM.ctsem_set_correlation_bound!(0.99)"),
-    add = TRUE)
   value <- function(s, x, route) ctJuliaEvaluate(s, unname(x[names[[route]]]),
     gradient = FALSE, cores = 1)$value
   for (x in list(inside, past)) {
@@ -60,9 +57,8 @@ test_that("the bound is the same wall on both routes, and its gradient is right"
     # The routes' likelihoods are the same function here (linear effects), to
     # the Laplace inner solve's tolerance at a point this far from any optimum.
     expect_equal(with_bound[["augmented"]], with_bound[["laplace"]], tolerance = 1e-6)
-    ctsem:::.ctJuliaEval("ContinuousTimeSEM.ctsem_set_correlation_bound!(0)")
-    without <- value(specs$laplace, x, "laplace")
-    ctsem:::.ctJuliaEval("ContinuousTimeSEM.ctsem_set_correlation_bound!(0.99)")
+    without <- sum(ctJuliaEvaluate(specs$laplace, unname(x[names$laplace]),
+      gradient = FALSE, contributions = TRUE, cores = 1)$subject_loglik)
     expect_equal(with_bound[["laplace"]] - without, .cb_wall(block, unname(x[names$laplace])),
       tolerance = 1e-8)
   }
