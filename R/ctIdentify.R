@@ -341,6 +341,8 @@ ctIdentify <- function(datalong, model, inits = NULL, nstart = 3L,
   effects <- if (!is.null(inits) && !identical(inits, "random"))
     .ctEffectInformation(spec, points[[1L]], point = "at the supplied inits")
     else NULL
+  # Each group's posterior at inits describes no fit; only the shares are wanted.
+  if (!is.null(effects)) effects$posterior <- NULL
 
   # Aggregated by subspace, not by name. `k` is the rank deficiency the data
   # has at every point, and the `k` flattest directions at each point span it;
