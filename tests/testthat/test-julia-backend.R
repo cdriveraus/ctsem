@@ -129,8 +129,11 @@ test_that("arguments a fit would coerce or drop are refused or named before any 
   expect_error(prep(seed = 1), "only backend='stan'")
   # Sampling settings on a fit that optimises are named as unused.
   expect_warning(prep(sampleControl = list(chains = 3)), "not used")
-  # The prior the fit runs under, not the logical it was reduced to.
-  expect_identical(suppressWarnings(prep())$args$resolved$priors, "randomCorr")
+  # The prior the fit runs under, not the logical it was reduced to; none by
+  # default.
+  expect_identical(suppressWarnings(prep(priors = "randomCorr"))$args$resolved$priors,
+    "randomCorr")
+  expect_identical(suppressWarnings(prep())$args$resolved$priors, FALSE)
   # A binary indicator is checked against the data, as counts and ordinal
   # categories are: a continuous column declared binary fitted silently.
   binary <- model
@@ -165,10 +168,13 @@ test_that("the defaults a sampled or reduced-rank fit resolves to combine", {
   # Sampling keeps the priors it is given, the default included -- it is not
   # switched to TRUE -- and a scope that leaves parameters flat warns before
   # the run. priors = TRUE is the way out, and says nothing.
-  expect_identical(sampled$args$resolved$priors, "randomCorr")
-  expect_identical(prep()$args$resolved$priors, "randomCorr")
+  expect_identical(sampled$args$resolved$priors, FALSE)
+  expect_identical(prep()$args$resolved$priors, FALSE)
   expect_warning(suppressMessages(ctFit(ctstantestdat, m, backend = "julia",
-    fit = FALSE, optimize = FALSE)), "population sds without a prior")
+    fit = FALSE, optimize = FALSE)), "Sampling with priors=FALSE")
+  expect_warning(suppressMessages(ctFit(ctstantestdat, m, backend = "julia",
+    fit = FALSE, optimize = FALSE, priors = "randomCorr")),
+    "population sds without a prior")
   expect_no_warning(suppressMessages(ctFit(ctstantestdat, m, backend = "julia",
     fit = FALSE, optimize = FALSE, priors = TRUE)), message = "without a prior")
   # Under laplace a rank below the varying T0MEANS fixed the initial state

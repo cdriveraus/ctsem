@@ -434,8 +434,7 @@
 # trusting it.
 #' The random-effect correlations alone, as a prior spec.
 #'
-#' What `priors = 'randomCorr'` builds, and the default: the random-effect
-#' correlations only, at every level of a hierarchy -- not their standard
+#' What `priors = 'randomCorr'` builds: the random-effect correlations only, at every level of a hierarchy -- not their standard
 #' deviations, which the likelihood alone determines poorly enough to warrant
 #' a warning but not, on their own, the walk a correlation coordinate is
 #' capable of (see below). Every other coordinate is left to the likelihood;

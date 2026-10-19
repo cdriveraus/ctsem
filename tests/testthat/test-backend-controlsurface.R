@@ -148,13 +148,13 @@ test_that("the prior warm-up runs by default only with a non-Gaussian indicator,
   # and on a Gaussian one (AnomAuth) it cost the fit its best maximum. TRUE or
   # FALSE forces it either way.
   #
-  # And it runs under the default priors, which is what the second half is
-  # for. The default is priors = 'randomCorr', a prior on the random-effect
-  # correlations alone; the warm-up used to borrow the fit's prior scope, so
-  # it was skipped on every default fit while `$optim$carefulfit` reported
-  # that it had run -- a stage whose builder returned NULL looked like one
-  # that ran. This model has two random effects (T0MEANS and MANIFESTMEANS by
-  # default), so the default prior is not empty.
+  # And it runs whatever the fit's own priors, which is what the second half
+  # is for. The warm-up used to borrow the fit's prior scope, so it was skipped
+  # on every fit under priors = 'randomCorr' (the default from 2026-09-22 to
+  # 2026-10-19) while `$optim$carefulfit` reported that it had run -- a stage
+  # whose builder returned NULL looked like one that ran. This model has two
+  # random effects (T0MEANS and MANIFESTMEANS by default), so that prior is
+  # not empty.
   set.seed(1)
   dat <- do.call(rbind, lapply(1:10, function(i) {
     eta <- as.numeric(stats::filter(stats::rnorm(6), 0.6, method = 'recursive'))

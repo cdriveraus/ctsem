@@ -232,8 +232,7 @@ ctModeltoNumeric <- function(ctmodelobj){
 # nothing to optimise without a prior; drawing directly has no such need.
 #
 # `priorscope` says which prior the fit had. `$args$input$priors` alone cannot,
-# because ctFit() reduces the julia default 'randomCorr' to TRUE before it is
-# captured; `$args$resolved$priors` records the scope itself, but only since
+# because ctFit() reduces 'randomCorr' to TRUE before it is captured; `$args$resolved$priors` records the scope itself, but only since
 # 2026-10-05. A fit made before `priorscope` was recorded has only the logical:
 # under `$args$resolved`; in `$args` itself for a fit saved by 3.11.1; or,
 # failing both, in the prepared data.

@@ -436,7 +436,7 @@ rbind(short = c(max_rhat = max(re_quick$sample$rhat), min_ess = min(re_quick$sam
 ## With and without priors
 
 `priors = TRUE` adds ctsem's raw-scale priors to the objective; `priors =
-FALSE` leaves them out. (`ctFit()`'s default, `'randomCorr'`, puts the prior on
+FALSE`, `ctFit()`'s default, leaves them out. (`'randomCorr'` puts the prior on
 random-effect correlations alone, which for a model with no random effects,
 like this one, is the same as `FALSE`.) Combined with `optimize`, that is four
 corners, and they mean four different things:

@@ -357,10 +357,10 @@ test_that("ctGenerateFromPriors() generates over a julia backend fit's own desig
   model <- .generate_model()
   data <- .generate_data()
   fit <- suppressMessages(ctFit(data, model, backend = "julia", verbose = 0))
-  # The julia default is a prior on the random-effect correlations only, and
-  # the draws use every parameter's prior, so that is said.
+  # The default is no prior, and the draws use every parameter's prior, so
+  # that is said.
   expect_warning(out <- suppressMessages(ctsem:::.ctGenerateFromPriors(fit,
-    nsamples = 3, cores = 1, backend = "julia")), regexp = "randomCorr")
+    nsamples = 3, cores = 1, backend = "julia")), regexp = "priors=FALSE")
   expect_equal(dim(out$Y), c(3L, nrow(data), 1L))
   expect_true(all(is.finite(out$Y)))
 

@@ -24,7 +24,7 @@ ctFit(
   backend = c("stan", "julia"),
   nlcontrol = list(),
   nopriors = NA,
-  priors = "randomCorr",
+  priors = FALSE,
   chains = 2,
   cores = getOption("mc.cores", 2L),
   inits = NULL,
@@ -221,18 +221,16 @@ shares no approximation with the filter; it needs a fine \code{maxtimestep}. See
 
 \item{nopriors}{deprecated, use priors argument. logical. If TRUE, any priors are disabled -- sometimes desirable for optimization.}
 
-\item{priors}{\code{'randomCorr'}, \code{TRUE} or \code{FALSE}. \code{TRUE}
-adds ctsem's \code{normal(0,1)} raw-scale prior to every parameter, making
-an optimised fit maximum a posteriori; \code{FALSE} uses none.
-\code{'randomCorr'}, the default, applies it to the
-random-effect correlations only, at every level: those are where unbounded
-maximum likelihood is ill-posed, since a bounded correlation on an
-unbounded coordinate walks along any direction the data do not determine.
-Sampling (\code{optimize=FALSE}) without a prior on every parameter warns,
-because a parameter the data leave flat has an improper posterior; use
-\code{priors=TRUE} there.
-\code{'randomCorr'} needs \code{backend='julia'}: asked for on stan it is an
-error, and left at the default on stan it means \code{FALSE}.}
+\item{priors}{\code{FALSE} (the default), \code{TRUE} or \code{'randomCorr'}.
+\code{FALSE} uses no prior: maximum likelihood. \code{TRUE} adds ctsem's
+\code{normal(0,1)} raw-scale prior to every parameter, making an optimised
+fit maximum a posteriori. \code{'randomCorr'} applies it to the
+random-effect correlations only, at every level: a bounded correlation on an
+unbounded coordinate can walk along a direction the data do not determine,
+and the prior holds it. Sampling (\code{optimize=FALSE}) without a prior on
+every parameter warns, because a parameter the data leave flat has an
+improper posterior; use \code{priors=TRUE} there. \code{'randomCorr'} needs
+\code{backend='julia'}.}
 
 \item{chains}{\strong{Deprecated} -- use \code{sampleControl$chains}. Still
 honoured, with a warning.}

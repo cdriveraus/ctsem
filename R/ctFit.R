@@ -486,9 +486,9 @@ ctStanFitUpdate <- ctFitUpdate
   # use it, before the `...` overrides, so a rank passed here still counts as
   # asked for.
   if(!isTRUE(args$poprankexplicit)) args$poprank <- NULL
-  # `priors` is captured after ctFit() has reduced it to a logical, so the julia
-  # default, 'randomCorr', reads TRUE there -- and TRUE replayed is a prior on
-  # every coordinate, a different estimator. `priorscope` beside it still says
+  # `priors` is captured after ctFit() has reduced it to a logical, so
+  # 'randomCorr' reads TRUE there -- and TRUE replayed is a prior on every
+  # coordinate, a different estimator. `priorscope` beside it still says
   # which. 'all' and 'none' are what TRUE and FALSE mean, and a stan fit never
   # records 'randomCorr'.
   if(identical(args$priorscope, 'randomCorr')) args$priors <- 'randomCorr'
@@ -762,18 +762,16 @@ T0VARredundancies <- function(ctm) {
 #' \code{fit$stanfit$rawest} on stan. With \code{backend='stan'} and
 #' \code{optimize=FALSE}, the string \code{'optimize'} optimises first and
 #' starts the chains there.
-#' @param priors \code{'randomCorr'}, \code{TRUE} or \code{FALSE}. \code{TRUE}
-#' adds ctsem's \code{normal(0,1)} raw-scale prior to every parameter, making
-#' an optimised fit maximum a posteriori; \code{FALSE} uses none.
-#' \code{'randomCorr'}, the default, applies it to the
-#' random-effect correlations only, at every level: those are where unbounded
-#' maximum likelihood is ill-posed, since a bounded correlation on an
-#' unbounded coordinate walks along any direction the data do not determine.
-#' Sampling (\code{optimize=FALSE}) without a prior on every parameter warns,
-#' because a parameter the data leave flat has an improper posterior; use
-#' \code{priors=TRUE} there.
-#' \code{'randomCorr'} needs \code{backend='julia'}: asked for on stan it is an
-#' error, and left at the default on stan it means \code{FALSE}.
+#' @param priors \code{FALSE} (the default), \code{TRUE} or \code{'randomCorr'}.
+#' \code{FALSE} uses no prior: maximum likelihood. \code{TRUE} adds ctsem's
+#' \code{normal(0,1)} raw-scale prior to every parameter, making an optimised
+#' fit maximum a posteriori. \code{'randomCorr'} applies it to the
+#' random-effect correlations only, at every level: a bounded correlation on an
+#' unbounded coordinate can walk along a direction the data do not determine,
+#' and the prior holds it. Sampling (\code{optimize=FALSE}) without a prior on
+#' every parameter warns, because a parameter the data leave flat has an
+#' improper posterior; use \code{priors=TRUE} there. \code{'randomCorr'} needs
+#' \code{backend='julia'}.
 #' @param cores number of cpu cores to use: a positive whole number, or
 #' \code{'maxneeded'} for all but one (capped at the number of chains on
 #' stan). Defaults to \code{getOption("mc.cores", 2)}. It is the most CPU
@@ -1169,7 +1167,7 @@ ctFit<-function(datalong, model, stanmodeltext=NA, iter=1000, intoverstates=TRUE
   fit=TRUE, intoverpop='auto', poprank='auto', sameInitialTimes=FALSE, stationary=FALSE,plot=FALSE,  derrind=NA,
   optimize=TRUE,  optimcontrol=list(),
   backend=c('stan','julia'),
-  nlcontrol = list(), nopriors=NA, priors='randomCorr', chains=2,
+  nlcontrol = list(), nopriors=NA, priors=FALSE, chains=2,
   cores=getOption("mc.cores", 2L),
   inits=NULL,
   compileArgs=list(),
@@ -1316,35 +1314,29 @@ ctFit<-function(datalong, model, stanmodeltext=NA, iter=1000, intoverstates=TRUE
   # that is what every existing branch and both `as.integer`/`as.logical`
   # coercions expect. The scope rides alongside it rather than replacing it.
   #
-  # 'randomCorr' is the default: a prior on the random-effect correlations and
-  # nothing else. Those are the coordinates where unbounded maximum likelihood
-  # is ill-posed rather than merely uncertain -- a correlation is bounded, its
-  # coordinate is not, and along a direction the data do not determine the
-  # coordinate walks until the transform saturates. Measured on a 4x4
-  # population covariance with 50 subjects: coordinates at 118, a fit
-  # reporting convergence because nothing was moving, and every correlation in
-  # the summary `NA`, including the ones the data determine. See
-  # `.ctBackendRandomCorrPriorSpec`.
+  # 'randomCorr': a prior on the random-effect correlations and nothing else.
+  # A correlation is bounded and its coordinate is not, so along a direction the
+  # data do not determine the coordinate can walk until the transform
+  # saturates -- measured on a 4x4 population covariance with 50 subjects:
+  # coordinates at 118, and every correlation in the summary `NA`. It was the
+  # julia default from 2026-09-22 (4b2dbf05) until 2026-10-19, when the
+  # default went back to FALSE, the released one (Charles: the prior was
+  # covering another issue). See `.ctBackendRandomCorrPriorSpec`.
   priorscope <- if(is.character(priors)) match.arg(priors, 'randomCorr') else
     if(isTRUE(priors)) 'all' else 'none'
   if(!is.character(priors) && !is.logical(priors)) stop(
     "priors must be TRUE, FALSE, or 'randomCorr'", call.=FALSE)
-  # Sampling needs a prior wherever the likelihood can go flat -- under
-  # 'randomCorr' a population sd has none, and on the ?ctFit example the chains
-  # wandered off along popsd_mm (R-hat 2.1). The argument is not changed for
-  # it: the default is one value whatever the route, and sampling without a
-  # prior on every parameter warns below, before the run.
+  # Sampling needs a prior wherever the likelihood can go flat -- with none, or
+  # under 'randomCorr', a population sd has none, and on the ?ctFit example the
+  # chains wandered off along popsd_mm (R-hat 2.1). The argument is not changed
+  # for it: the default is one value whatever the route, and sampling without
+  # a prior on every parameter warns below, before the run.
   # The generated Stan model builds its priors in, so a subset of coordinates
-  # is not expressible there. Asking for one explicitly is refused by name;
-  # arriving at one only because it is the default falls back to stan's own
-  # previous behaviour rather than failing a call the user did not make.
-  if(priorscope %in% 'randomCorr' && !backend %in% 'julia'){
-    if(!missing(priors)) stop("priors='randomCorr' applies a prior to a subset ",
-      "of coordinates, which the generated Stan model cannot express. Use ",
-      "priors=TRUE or priors=FALSE with backend='stan', or backend='julia'.",
-      call.=FALSE)
-    priorscope <- 'none'
-  }
+  # is not expressible there.
+  if(priorscope %in% 'randomCorr' && !backend %in% 'julia') stop(
+    "priors='randomCorr' applies a prior to a subset of coordinates, which the ",
+    "generated Stan model cannot express. Use priors=TRUE or priors=FALSE with ",
+    "backend='stan', or backend='julia'.", call.=FALSE)
   priors <- !priorscope %in% 'none'
 
   if(any(!is.na(derrind))) warning('derrind argment is deprecated, computed automatically now')

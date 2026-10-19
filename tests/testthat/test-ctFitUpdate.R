@@ -5,9 +5,9 @@
 # checking that a call returns:
 #
 #   * the call is replayed with a value that means something different from
-#     what the fit ran with -- `priors = TRUE` for a julia fit made under the
-#     default `'randomCorr'` is a prior on every coordinate, a different
-#     estimator, and the refit would have moved to it without a word;
+#     what the fit ran with -- `priors = TRUE` for a julia fit made under
+#     `'randomCorr'` is a prior on every coordinate, a different estimator, and
+#     the refit would have moved to it without a word;
 #   * a field of the updated fit is left describing the old data while the one
 #     beside it describes the new.
 
@@ -145,9 +145,10 @@ test_that("a julia fit without the model it was built from says how to refit", {
   model
 }
 
-# Built once and reused. `optimised` takes every default, the route and the
-# `'randomCorr'` prior included, since those are what a replay has to
-# reproduce. `meshed` chooses its substeps per row.
+# Built once and reused. `optimised` takes every default but the prior, which
+# is `'randomCorr'`: the scope a replay can mistake for `priors = TRUE`, since
+# the logical it is reduced to reads TRUE. `meshed` chooses its substeps per
+# row.
 .update_fits <- local({
   cached <- NULL
   function() {
@@ -155,6 +156,7 @@ test_that("a julia fit without the model it was built from says how to refit", {
     data <- .update_data()
     model <- .update_model()
     optimised <- .quietly(ctFit(data, model, backend = "julia", cores = 1,
+      priors = "randomCorr",
       optimcontrol = list(finishsamples = 20)))
     sampled <- .quietly(ctFit(data, model, backend = "julia", cores = 1,
       intoverpop = "laplace", optimize = FALSE,
