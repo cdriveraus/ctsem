@@ -47,7 +47,12 @@ observation covariance.}
 \item{subjectpars}{Also return each subject's own model matrices.}
 
 \item{indvarstates}{Keep the augmented individual-difference states in the
-latent output rather than trimming to the real processes.}
+latent output rather than trimming to the real processes. On a single
+level of Laplace random effects, where the effects are not states, they
+are appended as if they were: predicted and updated from the subject's
+rows before and up to each row, smoothed from its whole record, on the raw
+scale as deviations from the population value. Their covariances with the
+latent states are not computed and are \code{NA}.}
 
 \item{randomEffects}{For an `intoverpop='laplace'` fit, which levels of
   random effect the trajectories are built from. Naming one of the model's

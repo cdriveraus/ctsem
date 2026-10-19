@@ -470,6 +470,14 @@ ctFitUpdate <- function(oldfit, data=NA, recompile=FALSE,refit=FALSE,...){
     }
     oldfit$model_spec <- spec
     oldfit$model <- spec$model
+    # Each group's posterior was solved from the old data; with new data it is
+    # another set of groups' posterior, at the same estimate.
+    if(newdata && !is.null(oldfit$randomeffects)) {
+      check <- tryCatch(.ctEffectInformation(spec, .ctFitRawEstimate(oldfit),
+        point = "at the estimate"), error = function(e) NULL)
+      oldfit$randomeffects <- if(is.null(check)) NULL else
+        .ctRandomEffectsStore(oldfit, check$posterior)
+    }
   } else {
     if(oldfit$ctstanmodel$recompile || recompile) oldfit$stanmodel <- rstan::stan_model(model_code = newfit$stanmodeltext) else
       oldfit$stanmodel <- stanmodels$ctsm
