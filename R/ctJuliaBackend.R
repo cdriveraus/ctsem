@@ -5667,9 +5667,9 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
   # The warm-up has its own prior scope, N(0,1) on every raw coordinate -- the
   # spec `priors = TRUE` builds -- whatever the fit's own priors are. It used
   # to borrow the fit's: it ran only when `priors` was FALSE, which was right
-  # while the scopes were all or none, and since `priors = 'randomCorr'`
-  # became the julia default (4b2dbf05, 2026-09-22) resolved to TRUE on every
-  # default fit, so the stage was skipped there while `$optim$carefulfit`
+  # while the scopes were all or none, and while `priors = 'randomCorr'` was
+  # the julia default (4b2dbf05, 2026-09-22, to 2026-10-19) resolved to TRUE on
+  # every default fit, so the stage was skipped there while `$optim$carefulfit`
   # reported that it ran. A prior on the random-effect correlations alone does
   # nothing to place the rest of the vector, which is what this stage is for.
   warmspec <- function() {
@@ -5746,9 +5746,8 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
   # augmented and the laplace route, fitted with `priors = FALSE`
   # (dev/simstudies/simstudy-individual-differences.R and
   # simstudy-carefulfit.R). Nothing with more than one random effect, an
-  # effect on DRIFT or a variance, or an outer level, and all of it before the
-  # default became 'randomCorr'. A change to the cap is a bench run, not an
-  # edit.
+  # effect on DRIFT or a variance, or an outer level. A change to the cap is a
+  # bench run, not an edit.
   #
   # On by default only when some indicator is not Gaussian (binary, ordinal,
   # count or censored), Charles's decision of 2026-09-27. The benefits measured

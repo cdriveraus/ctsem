@@ -592,10 +592,10 @@ end
 # is separated out: scaled = (N/n) (batch - prior) + prior, and likewise for the
 # gradient. Both routes add exactly `_ctsem_log_prior` of the marginal
 # objective to their value, and their score rows each carry 1/n of its
-# gradient, which is what makes the separation exact. (ctFit's default
-# `priors = 'randomCorr'` puts a prior on random-effect correlations even in a
-# maximum likelihood fit, so refusing a prior would refuse every model with
-# random effects.) A sampled TI predictor's imputation density is also global
+# gradient, which is what makes the separation exact. (`priors = 'randomCorr'`
+# puts a prior on random-effect correlations even in a maximum likelihood fit,
+# and refusing a prior would refuse those fits.) A sampled TI predictor's
+# imputation density is also global
 # but is not attributable per subject, so that one still disables batching.
 #
 # In a batch stage the gradient comes from the score sweep itself -- the rows
