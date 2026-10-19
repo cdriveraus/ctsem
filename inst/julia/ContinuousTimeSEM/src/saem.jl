@@ -1248,6 +1248,7 @@ mutable struct _SAEMChain
     draws::Vector{Vector{Float64}}
     effect_sum::Vector{Float64}
     effect_sq::Vector{Float64}
+    effect_cross::Vector{Float64}
     accept::Vector{Float64}
     divergent::Vector{Bool}
     depth::Vector{Int}
@@ -1669,8 +1670,9 @@ function _saem_new_chain(base::CTSEMSAEMState, laplace::CTSEMLaplaceObjective,
         [similar(st.ll[U][1]) for U in eachindex(st.u)], 0.0, _DualAverage(1.0, 0.8),
         ctsem_identity_metric(npar), zeros(npar, npar), 0,
         logscale, fill(log(0.5), length(levels)), fisher, Vector{Float64}[],
-        zeros(neffects), zeros(neffects), Float64[], Bool[], Int[], Float64[], 0,
-        0.0, 0, 0.0, 0)
+        zeros(neffects), zeros(neffects),
+        zeros(_effect_cross_length(_laplace_deviation_blocks(laplace))),
+        Float64[], Bool[], Int[], Float64[], 0, 0.0, 0, 0.0, 0)
 end
 
 """
@@ -1878,6 +1880,7 @@ function _saem_chain_record!(ch::_SAEMChain, sampler::CTSEMSampler, step,
         ch.effect_sq[j] += dev[j] * dev[j]
         save_effects && (x[npar + j] = dev[j])
     end
+    _effect_cross_add!(ch.effect_cross, dev, _laplace_deviation_blocks(laplace))
     push!(ch.draws, x)
     push!(ch.accept, step.accept)
     push!(ch.divergent, step.divergent)
@@ -2097,6 +2100,11 @@ function _ctsem_saem_sample(laplace::CTSEMLaplaceObjective, values::AbstractVect
     effect_mean = effect_sum ./ nall
     effect_sd = sqrt.(max.(effect_sq ./ nall .- effect_mean .^ 2, 0.0) .*
         (nall / max(nall - 1, 1)))
+    blocks = _laplace_deviation_blocks(laplace)
+    effect_cross = sum(ch.effect_cross for ch in chains;
+        init=zeros(_effect_cross_length(blocks)))
+    effect_cov = _effect_cross_cov(effect_cross, effect_mean, nall, blocks)
+    effect_cov_rows, effect_cov_cols = _effect_cross_index(blocks)
     divergent = reduce(vcat, [ch.divergent for ch in chains])
     depth = reduce(vcat, [ch.depth for ch in chains])
     diagnostics = ctsem_sample_diagnostics(draws, nchains)
@@ -2109,6 +2117,9 @@ function _ctsem_saem_sample(laplace::CTSEMLaplaceObjective, values::AbstractVect
         saved_effects=save_effects,
         effect_mean=effect_mean,
         effect_sd=effect_sd,
+        effect_cov=effect_cov,
+        effect_cov_rows=effect_cov_rows,
+        effect_cov_cols=effect_cov_cols,
         rhat=diagnostics.rhat,
         ess=diagnostics.ess,
         ess_tail=diagnostics.ess_tail,

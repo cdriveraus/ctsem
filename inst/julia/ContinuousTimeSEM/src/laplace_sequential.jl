@@ -73,9 +73,15 @@ function ctsem_laplace_sequential(laplace::CTSEMLaplaceObjective, values::Abstra
     rows = [size(s.data, 2) for s in subjects]
     first_row = cumsum(vcat(0, rows[1:(end - 1)]))
     nrows = sum(rows)
+    # The effects' own posterior at each row, on the raw scale: the deviation
+    # of each varying parameter and its covariance, given the rows before it
+    # (1) and with it (2) -- what an augmented fit's carrier states are.
+    k = nrandomeffects(laplace.spec.levels[1])
     out = (eta=fill(NaN, 2, nrows, n), etacov=fill(NaN, 2, nrows, n, n),
         y=fill(NaN, 2, nrows, m), ycov=fill(NaN, 2, nrows, m, m),
-        llrow=fill(NaN, nrows), subject=zeros(Int, nrows))
+        llrow=fill(NaN, nrows), subject=zeros(Int, nrows),
+        effect=fill(NaN, 2, nrows, max(k, 1)),
+        effectcov=fill(NaN, 2, nrows, max(k, 1), max(k, 1)))
     for (i, r) in enumerate(rows)
         out.subject[(first_row[i] + 1):(first_row[i] + r)] .= i
     end
@@ -184,6 +190,8 @@ function _laplace_sequential_unit!(out, laplace::CTSEMLaplaceObjective, U::Integ
                 (ia == 0 || ib == 0) && continue
                 SigmaP[a, b] = Sigma[ia, ib]
             end
+            _laplace_sequential_effects!(out, offset, t, T, Ls[1], lv, hyb,
+                theta, pass_items, z0, SigmaP, d, D)
             zd = [_laplace_sequential_seed(S, z0[a], a) for a in 1:D]
             ud = S[zd[a] for a in 1:d]
             x = _laplace_member_values(theta, spec, Ls, ud, units.offsets[U][1])
@@ -216,6 +224,47 @@ function _laplace_sequential_unit!(out, laplace::CTSEMLaplaceObjective, U::Integ
         laplace.logdet_floored[U] = saved.floored
     end
     return nothing
+end
+
+"""
+    _laplace_sequential_effects!(out, offset, t, T, L, lv, hyb, theta, items, z0, Sigma, d, D)
+
+The effects' posterior given rows `1:t` on the raw scale, recorded as row `t`'s
+updated value and row `t + 1`'s predicted one: each varying parameter's
+deviation `A z0` and covariance `A Sigma A'`, `A` the level's loading for the
+effects and each integrated item's sd for its deviation.
+"""
+function _laplace_sequential_effects!(out, offset::Integer, t::Integer, T::Integer,
+    L::AbstractMatrix, lv, hyb, theta::Vector{Float64}, items::Vector{Int},
+    z0::Vector{Float64}, Sigma::Matrix{Float64}, d::Integer, D::Integer)
+    k = size(L, 1)
+    k == 0 && return out
+    A = zeros(Float64, k, D)
+    @inbounds for a in 1:min(d, size(L, 2)), j in 1:k
+        A[j, a] = L[j, a]
+    end
+    for (c, item) in enumerate(items)
+        A[hyb.effect[item], d + c] += _hybrid_item_sd(hyb, lv, theta, item)
+    end
+    # The engine's own products: this runs per row on every thread, where a BLAS
+    # matrix product would queue on OpenBLAS's lock.
+    centre = zeros(Float64, k)
+    @inbounds for a in 1:D, j in 1:k
+        centre[j] += A[j, a] * z0[a]
+    end
+    AS = zeros(Float64, k, D)
+    _ctsem_mul!(AS, A, Sigma)
+    spread = zeros(Float64, k, k)
+    _ctsem_mulNT!(spread, AS, A)
+    if t >= 1
+        out.effect[2, offset + t, 1:k] .= centre
+        out.effectcov[2, offset + t, 1:k, 1:k] .= spread
+    end
+    if t + 1 <= T
+        out.effect[1, offset + t + 1, 1:k] .= centre
+        out.effectcov[1, offset + t + 1, 1:k, 1:k] .= spread
+    end
+    return out
 end
 
 """One row's means and covariances from a seeded pass: the filter's values at

@@ -81,7 +81,12 @@
     k <- length(entry$param)
     ngroups <- nrow(entry$mean)
     level <- if (length(entry$level)) entry$level else subjectid
-    if (identical(entry$index, 1L) || !length(level) || is.null(data[[level]])) {
+    if (!is.null(entry$first_member)) {
+      # A sampler's blocks name their groups by their first member.
+      member <- if (identical(entry$index, 1L) || is.null(data[[level]])) ids else
+        as.character(data[[level]][match(ids, as.character(data[[subjectid]]))])
+      labels <- member[entry$first_member]
+    } else if (identical(entry$index, 1L) || !length(level) || is.null(data[[level]])) {
       labels <- if (length(ids) == ngroups) ids else as.character(seq_len(ngroups))
     } else {
       # The engine numbers a level's groups; each subject's group at that
@@ -178,4 +183,53 @@
       centre[i, ], "-")
   }
   values
+}
+
+
+# A sampled fit's per-group posterior (`fit$randomeffects`). Sampling the joint
+# posterior draws every group's effects, and the samplers keep each group's
+# mean and covariance over the draws (`effect_mean`, `effect_cov`, pooled over
+# processes) whether or not the draws themselves are saved. A marginal sample
+# integrated the effects out, so there the posterior is the one an optimised
+# fit stores, at the posterior mean.
+.ctRandomEffectsFromSample <- function(fit) {
+  smp <- fit$sample
+  spec <- .ctBackendSpec(fit)
+  if (!length(smp$effect_mean) || !length(smp$effect_cov)) {
+    check <- .ctEffectInformation(fit$model_spec, fit$estimate$raw,
+      point = "at the posterior mean")
+    if (is.null(check)) return(NULL)
+    return(.ctRandomEffectsStore(fit, check$posterior))
+  }
+  layout <- .ctJuliaGet(.ctJuliaModule(spec$project)$ctsem_laplace_deviation_layout(
+    .ctJuliaObjective(fit)))
+  level <- as.integer(layout$level)
+  within <- as.integer(layout$within)
+  first <- as.integer(layout$first_member)
+  starts <- which(within == 1L)
+  structure <- .ctSpecRandomEffectLevels(fit$model_spec)
+  width <- vapply(structure, function(s) length(s$params), integer(1))
+  packed <- width[level[starts]] * (width[level[starts]] + 1L) / 2L
+  covstart <- c(0L, cumsum(packed))[seq_along(starts)]
+  mean <- as.numeric(smp$effect_mean)
+  cov <- as.numeric(smp$effect_cov)
+  if (length(mean) != length(level) || length(cov) != sum(packed)) return(NULL)
+  posterior <- list()
+  for (l in seq_along(structure)) {
+    blocks <- which(level[starts] == l)
+    k <- width[l]
+    if (!length(blocks) || !k) next
+    m <- matrix(vapply(blocks, function(b) mean[starts[b] + seq_len(k) - 1L],
+      numeric(k)), ncol = k, byrow = TRUE)
+    q <- k * (k + 1L) / 2L
+    v <- matrix(vapply(blocks, function(b) cov[covstart[b] + seq_len(q)],
+      numeric(q)), ncol = q, byrow = TRUE)
+    posterior[[length(posterior) + 1L]] <- list(
+      level = as.character(spec$laplace$levels[[l]]$name), index = l,
+      param = as.character(structure[[l]]$params), mean = m, cov = v,
+      first_member = first[starts[blocks]])
+  }
+  out <- .ctRandomEffectsStore(fit, posterior)
+  if (!is.null(out)) attr(out, "route") <- "sampled"
+  out
 }

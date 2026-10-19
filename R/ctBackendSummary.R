@@ -1274,9 +1274,9 @@ ctBackendParMatrices <- function(fit, raw = NULL, tipreds = NULL, state = NULL,
     if (!is.null(saved) && nrow(saved) == nrow(.ctBackendRawSamples(fit))) {
       effects <- if (is.null(keep)) saved else saved[keep, , drop = FALSE]
     } else message("This fit sampled its random effects, but their draws are ",
-      "not on it, so each subject's draws are its conditional mode linearised ",
-      "around the estimate rather than its sampled effects. Sample with ",
-      "saveEffects=TRUE to report from the draws.")
+      "not on it, so each subject's draws come from its Laplace posterior about ",
+      "the mode linearised around the estimate rather than from its sampled ",
+      "effects. Sample with saveEffects=TRUE to report from the draws.")
   }
 
   if (is.null(draws)) {

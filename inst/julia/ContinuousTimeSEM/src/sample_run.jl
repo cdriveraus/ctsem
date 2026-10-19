@@ -981,6 +981,9 @@ function _ctsem_sample(laplace::CTSEMLaplaceObjective, values::AbstractVector;
     # nothing whether or not the draws themselves are kept.
     effect_sum = zeros(Float64, ndev)
     effect_sq = zeros(Float64, ndev)
+    # And products within each group's block, for its posterior covariance.
+    blocks = _laplace_deviation_blocks(laplace)
+    effect_cross = zeros(Float64, _effect_cross_length(blocks))
     dev = zeros(Float64, ndev)
     for c in 1:nchains
         r = results[c]
@@ -997,6 +1000,7 @@ function _ctsem_sample(laplace::CTSEMLaplaceObjective, values::AbstractVector;
                 effect_sq[j] += dev[j] * dev[j]
                 save_effects && (draws[npar + j, column] = dev[j])
             end
+            _effect_cross_add!(effect_cross, dev, blocks)
             accept[column] = r.accept[t]
             divergent[column] = r.divergent[t]
             depth[column] = r.depth[t]
@@ -1006,6 +1010,8 @@ function _ctsem_sample(laplace::CTSEMLaplaceObjective, values::AbstractVector;
     effect_mean = effect_sum ./ total
     effect_sd = sqrt.(max.(effect_sq ./ total .- effect_mean .^ 2, 0.0) .*
         (total / max(total - 1, 1)))
+    effect_cov = _effect_cross_cov(effect_cross, effect_mean, total, blocks)
+    effect_cov_rows, effect_cov_cols = _effect_cross_index(blocks)
 
     diagnostics = ctsem_sample_diagnostics(draws, nchains)
     return (
@@ -1019,6 +1025,9 @@ function _ctsem_sample(laplace::CTSEMLaplaceObjective, values::AbstractVector;
         saved_effects=save_effects,
         effect_mean=effect_mean,
         effect_sd=effect_sd,
+        effect_cov=effect_cov,
+        effect_cov_rows=effect_cov_rows,
+        effect_cov_cols=effect_cov_cols,
         rhat=diagnostics.rhat,
         ess=diagnostics.ess,
         ess_tail=diagnostics.ess_tail,
@@ -1259,6 +1268,7 @@ function ctsem_sample_marginal(objective, values::AbstractVector;
     return (
         draws=draws, npar=npar, ndim=npar, nchains=nchains, ndraws=ndraws,
         saved_effects=false, effect_mean=Float64[], effect_sd=Float64[],
+        effect_cov=Float64[], effect_cov_rows=Int[], effect_cov_cols=Int[],
         rhat=diagnostics.rhat, ess=diagnostics.ess, ess_tail=diagnostics.ess_tail,
         accept=accept, divergent=divergent, depth=depth, energy=energy,
         stepsize=[r.stepsize for r in results],
