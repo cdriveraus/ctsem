@@ -15,9 +15,10 @@
   TDpredNames = "TD1", TIpredNames = c("TI1", "TI2", "TI3"), LAMBDA = diag(2),
   silent = TRUE)
 
-.cb_spec <- function(route) structure(suppressWarnings(suppressMessages(ctFit(
-  ctstantestdat, .cb_model(), backend = "julia", intoverpop = route, priors = FALSE,
-  fit = FALSE))), class = c("ctJuliaModel", "ctFitModel"))
+.cb_spec <- function(route, corbound = NULL) structure(suppressWarnings(suppressMessages(
+  ctFit(ctstantestdat, .cb_model(), backend = "julia", intoverpop = route,
+    priors = FALSE, fit = FALSE, optimcontrol = list(corbound = corbound)))),
+  class = c("ctJuliaModel", "ctFitModel"))
 
 # The wall, from the correlation matrix the block's coordinates build.
 .cb_wall <- function(block, raw, bound = 0.99, steepness = 100) {
@@ -50,9 +51,8 @@ test_that("the bound is the same wall on both routes, and its gradient is right"
   inside <- base
   past <- base
   past[block$index] <- 1.2 * c(0.65, 0.927, 2.13, -2.02, 1.5, -0.178)
-  module <- ctsem:::.ctJuliaModule(specs$laplace$project)
-  on.exit(ctsem:::.ctJuliaEval("ContinuousTimeSEM.ctsem_set_correlation_bound!(0.99)"),
-    add = TRUE)
+  unbounded <- .cb_spec("laplace", corbound = 0)
+  expect_null(ctsem:::.ctCorBoundSpec(unbounded))
   value <- function(s, x, route) ctJuliaEvaluate(s, unname(x[names[[route]]]),
     gradient = FALSE, cores = 1)$value
   for (x in list(inside, past)) {
@@ -60,9 +60,7 @@ test_that("the bound is the same wall on both routes, and its gradient is right"
     # The routes' likelihoods are the same function here (linear effects), to
     # the Laplace inner solve's tolerance at a point this far from any optimum.
     expect_equal(with_bound[["augmented"]], with_bound[["laplace"]], tolerance = 1e-6)
-    ctsem:::.ctJuliaEval("ContinuousTimeSEM.ctsem_set_correlation_bound!(0)")
-    without <- value(specs$laplace, x, "laplace")
-    ctsem:::.ctJuliaEval("ContinuousTimeSEM.ctsem_set_correlation_bound!(0.99)")
+    without <- value(unbounded, x, "laplace")
     expect_equal(with_bound[["laplace"]] - without, .cb_wall(block, unname(x[names$laplace])),
       tolerance = 1e-8)
   }

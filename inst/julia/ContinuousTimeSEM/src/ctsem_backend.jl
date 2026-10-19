@@ -28,13 +28,14 @@ files later -- a signature naming it here could not be parsed.
 abstract type CTSEMOptimisable end
 
 """
-    CTSEMCorBound(k, code, index, fixed)
+    CTSEMCorBound(k, code, index, fixed, bound)
 
 A full-rank population covariance whose correlations are bounded
 (`_ctsem_corbound`): its dimension `k`, its construction (`sdcovsqrt2cov`'s
-code: 0 the correlation square root, 2 `'z'`), and for each cell below the
+code: 0 the correlation square root, 2 `'z'`), for each cell below the
 diagonal, in column-major order, the raw parameter it reads, or 0 and the value
-it is fixed at. Both routes read those coordinates untransformed, the Laplace
+it is fixed at, and the largest multiple correlation an effect may have with
+the others (ctFit's `corbound` optimcontrol entry, 0.99 by default). Both routes read those coordinates untransformed, the Laplace
 level as `cor_index` and the augmented route as `RAWPOPVAR`'s cells, so one
 description serves both and the R side writes it (`.ctCorBoundSpec`).
 """
@@ -43,6 +44,7 @@ struct CTSEMCorBound
     code::Int
     index::Vector{Int}
     fixed::Vector{Float64}
+    bound::Float64
 end
 
 """
@@ -281,8 +283,8 @@ end
 ################################################################################
 
 """
-The largest multiple correlation a random effect may have with the others at
-its level, and the steepness of the wall that holds it there.
+The steepness of the wall that holds each random effect's multiple correlation
+with the others at its level below its bound (`CTSEMCorBound.bound`).
 
 Unpenalised maximum likelihood often puts a random-effects covariance on the
 singular boundary: an effect with no variance of its own, which the others
@@ -308,26 +310,11 @@ route's differenced Hessian mix columns that saw it with columns that did not
 simulated boundary model. It is part of the parameter space, not a
 prior: `prior_weight` does not scale it, it is in the objective whatever
 `priors` says, and every route reads it here. It has no curvature inside the
-bound, so `_ctsem_prior_precision` leaves it out. Settable with
-`ctsem_set_correlation_bound!`.
+bound, so `_ctsem_prior_precision` leaves it out. The bound itself is per
+block, so a fit sets it (the `corbound` optimcontrol entry; 0 for none, which the parity
+tests against the stan program, which has no bound, use).
 """
-const _CTSEM_CORBOUND = Ref(0.99)
-const _CTSEM_CORBOUND_STEEPNESS = Ref(100.0)
-
-export ctsem_set_correlation_bound!
-"""
-    ctsem_set_correlation_bound!(bound; steepness)
-
-Set the largest multiple correlation a random effect may have with the others
-at its level (`0` removes the bound) and the wall's steepness past it.
-"""
-function ctsem_set_correlation_bound!(bound::Real; steepness::Real=_CTSEM_CORBOUND_STEEPNESS[])
-    0 <= bound < 1 || throw(ArgumentError("the correlation bound must be in [0, 1)"))
-    steepness > 0 || throw(ArgumentError("the wall's steepness must be positive"))
-    _CTSEM_CORBOUND[] = Float64(bound)
-    _CTSEM_CORBOUND_STEEPNESS[] = Float64(steepness)
-    return (bound=Float64(bound), steepness=Float64(steepness))
-end
+const _CTSEM_CORBOUND_STEEPNESS = 100.0
 
 """A block's raw lower triangle with unit scales, and the correlation matrix
 its own construction makes of it."""
@@ -382,20 +369,21 @@ function _ctsem_corbound_inverse(R::AbstractMatrix{T}) where {T}
     return M
 end
 
-@inline _ctsem_corbound_limit() = -log1p(-_CTSEM_CORBOUND[]^2)
+@inline _ctsem_corbound_limit(bound::Real) = -log1p(-bound^2)
 
 """
     _ctsem_corbound(objective, values)
 
-The wall on every bounded block, summed: `_CTSEM_CORBOUND`'s docstring. Zero
+The wall on every bounded block, summed: `_CTSEM_CORBOUND_STEEPNESS`'s docstring. Zero
 for every model with no full-rank block of two or more random effects.
 """
 function _ctsem_corbound(objective::CTSEMObjective, values::AbstractVector{T}) where {T}
-    (isempty(objective.corbound) || _CTSEM_CORBOUND[] <= 0) && return zero(T)
-    limit = _ctsem_corbound_limit()
-    kappa = _CTSEM_CORBOUND_STEEPNESS[]
+    isempty(objective.corbound) && return zero(T)
+    kappa = _CTSEM_CORBOUND_STEEPNESS
     total = zero(T)
     for block in objective.corbound
+        block.bound > 0 || continue
+        limit = _ctsem_corbound_limit(block.bound)
         _, R = _ctsem_corbound_matrix(block, values)
         M = _ctsem_corbound_inverse(R)
         M === nothing && return _ctsem_nan(T)
@@ -417,10 +405,11 @@ derivative through `log R_jj + log (R^-1)_jj`, `e_j e_j' / R_jj - m_j m_j' /
 """
 function _ctsem_corbound_gradient!(gradient::AbstractVector, objective::CTSEMObjective,
     values::AbstractVector{T}) where {T}
-    (isempty(objective.corbound) || _CTSEM_CORBOUND[] <= 0) && return gradient
-    limit = _ctsem_corbound_limit()
-    kappa = _CTSEM_CORBOUND_STEEPNESS[]
+    isempty(objective.corbound) && return gradient
+    kappa = _CTSEM_CORBOUND_STEEPNESS
     for block in objective.corbound
+        block.bound > 0 || continue
+        limit = _ctsem_corbound_limit(block.bound)
         k = block.k
         base, R = _ctsem_corbound_matrix(block, values)
         M = _ctsem_corbound_inverse(R)
@@ -512,7 +501,8 @@ function CTSEMObjective(params::EKFParameters, subject_starts::AbstractVector,
     # kept flat on the returned objective for `_ctsem_ti_missing_loglik`.
     ti_missing_subject=Int[], ti_missing_predictor=Int[], ti_missing_parameter=Int[],
     ti_missing_mu=Float64[], ti_missing_sigma=Float64[], subject_weights=Float64[],
-    corbound_k=Int[], corbound_code=Int[], corbound_index=Int[], corbound_fixed=Float64[])
+    corbound_k=Int[], corbound_code=Int[], corbound_index=Int[], corbound_fixed=Float64[],
+    corbound_bound=Float64[])
     ranges = _ctsem_subject_ranges(subject_starts, timesteps, data)
     (isempty(subject_weights) || length(subject_weights) == length(ranges)) ||
         throw(DimensionMismatch("subject_weights needs one weight per subject"))
@@ -570,14 +560,18 @@ function CTSEMObjective(params::EKFParameters, subject_starts::AbstractVector,
         Float64.(prior_scale), Float64(prior_weight), Int.(ti_missing_parameter),
         Float64.(ti_missing_mu), Float64.(ti_missing_sigma), Int.(ti_missing_subject),
         Float64.(subject_weights),
-        _ctsem_corbound_blocks(corbound_k, corbound_code, corbound_index, corbound_fixed))
+        _ctsem_corbound_blocks(corbound_k, corbound_code, corbound_index, corbound_fixed,
+            corbound_bound))
 end
 
-"""The bounded blocks from flat vectors, as the R side sends them: a size and
-a construction per block, and the blocks' lower-triangle cells concatenated."""
-function _ctsem_corbound_blocks(ks, codes, index, fixed)
-    length(ks) == length(codes) && length(index) == length(fixed) ||
+"""The bounded blocks from flat vectors, as the R side sends them: a size, a
+construction and a bound per block, and the blocks' lower-triangle cells
+concatenated."""
+function _ctsem_corbound_blocks(ks, codes, index, fixed, bounds)
+    length(ks) == length(codes) == length(bounds) && length(index) == length(fixed) ||
         throw(DimensionMismatch("corbound_* vectors do not describe whole blocks"))
+    all(b -> 0 <= b < 1, bounds) ||
+        throw(ArgumentError("a correlation bound must be in [0, 1)"))
     blocks = CTSEMCorBound[]
     at = 0
     for b in eachindex(ks)
@@ -586,7 +580,7 @@ function _ctsem_corbound_blocks(ks, codes, index, fixed)
         at + n <= length(index) ||
             throw(DimensionMismatch("corbound_index is shorter than its blocks"))
         push!(blocks, CTSEMCorBound(k, Int(codes[b]), Int.(index[(at + 1):(at + n)]),
-            Float64.(fixed[(at + 1):(at + n)])))
+            Float64.(fixed[(at + 1):(at + n)]), Float64(bounds[b])))
         at += n
     end
     at == length(index) ||
@@ -600,14 +594,16 @@ ctsem_objective(params::EKFParameters, subject_starts, timesteps, data,
     prior_index=Int[], prior_scale=Float64[], prior_weight::Real=1.0,
     ti_missing_subject=Int[], ti_missing_predictor=Int[], ti_missing_parameter=Int[],
     ti_missing_mu=Float64[], ti_missing_sigma=Float64[], subject_weights=Float64[],
-    corbound_k=Int[], corbound_code=Int[], corbound_index=Int[], corbound_fixed=Float64[]) =
+    corbound_k=Int[], corbound_code=Int[], corbound_index=Int[], corbound_fixed=Float64[],
+    corbound_bound=Float64[]) =
     CTSEMObjective(params, subject_starts, timesteps, data, tdpred_data, tipred_data,
         max_timestep; prior_index=prior_index, prior_scale=prior_scale,
         prior_weight=prior_weight, ti_missing_subject=ti_missing_subject,
         ti_missing_predictor=ti_missing_predictor, ti_missing_parameter=ti_missing_parameter,
         ti_missing_mu=ti_missing_mu, ti_missing_sigma=ti_missing_sigma,
         subject_weights=subject_weights, corbound_k=corbound_k, corbound_code=corbound_code,
-        corbound_index=corbound_index, corbound_fixed=corbound_fixed)
+        corbound_index=corbound_index, corbound_fixed=corbound_fixed,
+        corbound_bound=corbound_bound)
 
 ################################################################################
 # Threading

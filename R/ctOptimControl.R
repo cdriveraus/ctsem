@@ -248,6 +248,12 @@
 #'  it.}
 #'  \item{\code{tipredMissingIncludeOutcome}}{Default TRUE. Whether the outcome
 #'  informs the imputation of missing TI predictors.}
+#'  \item{\code{corbound}}{Julia. Default 0.99. The largest multiple
+#'  correlation a random effect may have with the others at its level (for two
+#'  effects, their correlation), held by a penalty past it; 0 for none. Without
+#'  it a covariance estimated as singular walks to infinite coordinates. A fit
+#'  that ends on the bound says so and points to \code{poprank}; see
+#'  \code{fit$corbound}.}
 #'  \item{\code{saveEffects}}{A sampling setting; read here for older scripts.
 #'  Use \code{sampleControl$saveEffects}.}
 #' }

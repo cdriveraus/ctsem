@@ -14,8 +14,20 @@
 # wall in the objective (`_ctsem_corbound`, ctsem_backend.jl), on every julia
 # route; review/PRIORS-default-boundary-2026-10-19.md has the evidence.
 #
-# This file says which blocks the wall applies to, and reports a fit that
-# ended on it.
+# This file says which blocks the wall applies to and at what bound, and
+# reports a fit that ended on it.
+
+# `optimcontrol$corbound`, resolved: the largest multiple correlation, 0.99 when
+# not given, 0 (or FALSE) for no bound.
+.ctCorBoundResolve <- function(x) {
+  if (is.null(x)) return(0.99)
+  if (isFALSE(x)) return(0)
+  if (!is.numeric(x) || length(x) != 1L || !is.finite(x) || x < 0 || x >= 1)
+    stop("optimcontrol$corbound is the largest multiple correlation a random ",
+      "effect may have with the others: a number in [0, 1), 0 for none.",
+      call. = FALSE)
+  as.numeric(x)
+}
 
 # The blocks the bound applies to, as the engine reads them: one per full-rank
 # population covariance of two or more effects built from correlations (`'z'`
@@ -31,6 +43,8 @@
 # this construction's, and its block is left unbounded rather than guessed at.
 .ctCorBoundSpec <- function(spec,
     table = as.data.frame(spec$parameter_table, stringsAsFactors = FALSE)) {
+  bound <- .ctCorBoundResolve(spec$corbound)
+  if (!(bound > 0)) return(NULL)
   code <- if (is.null(spec$covmatcode)) 0L else as.integer(spec$covmatcode)[1L]
   if (!code %in% c(0L, 2L)) return(NULL)
   lower <- function(k) {
@@ -48,7 +62,7 @@
       fixed <- if (length(lv$cor_fixed) == length(index)) as.numeric(lv$cor_fixed) else
         rep(NA_real_, length(index))
       blocks[[length(blocks) + 1L]] <- list(k = k, code = code, index = index,
-        fixed = fixed, names = as.character(lv$param),
+        fixed = fixed, bound = bound, names = as.character(lv$param),
         level = if (is.null(lv$name)) "" else as.character(lv$name))
     }
     return(if (length(blocks)) blocks else NULL)
@@ -75,14 +89,9 @@
   }
   diagonal <- which(row == col)
   names <- sub("^popsd_", "", as.character(pop$param[diagonal][order(row[diagonal])]))
-  list(list(k = k, code = code, index = index, fixed = fixed, names = names,
+  list(list(k = k, code = code, index = index, fixed = fixed, bound = bound,
+    names = names,
     level = if (is.null(spec$subjectIDname)) "" else as.character(spec$subjectIDname)[1L]))
-}
-
-# The bound in force, read from the engine rather than duplicated.
-.ctCorBoundValue <- function() {
-  value <- try(.ctJuliaEval("ContinuousTimeSEM._CTSEM_CORBOUND[]"), silent = TRUE)
-  if (inherits(value, "try-error") || !length(value)) 0.99 else as.numeric(value)[1L]
 }
 
 # Each bounded effect's multiple correlation with the others at the fit's
@@ -92,8 +101,7 @@
   blocks <- try(.ctCorBoundSpec(fit$model_spec), silent = TRUE)
   raw <- as.numeric(fit$estimate$raw)
   if (inherits(blocks, "try-error") || !length(blocks) || !length(raw)) return(NULL)
-  bound <- .ctCorBoundValue()
-  if (!(bound > 0)) return(NULL)
+  bound <- blocks[[1L]]$bound
   rows <- lapply(blocks, function(b) {
     cells <- diag(b$k)
     low <- which(lower.tri(cells), arr.ind = TRUE)

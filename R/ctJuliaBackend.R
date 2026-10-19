@@ -4145,6 +4145,7 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
     objective_args$corbound_index <- V(unlist(lapply(bounds, function(b) b$index)))
     objective_args$corbound_fixed <- V(unlist(lapply(bounds, function(b) {
       x <- b$fixed; x[!is.finite(x)] <- 0; x })))
+    objective_args$corbound_bound <- V(vapply(bounds, function(b) b$bound, numeric(1)))
   }
   # Sampled TI-predictor values, one entry per missing cell -- omitted
   # entirely (not sent as empty vectors) for every model with none, which is
@@ -5523,6 +5524,9 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
   # Sampling weights, one per subject in the specification's order and
   # normalised (R/ctWeights.R); every objective built from the spec takes them.
   model_spec$subject_weights <- .ctResolveSubjectWeights(model_spec, weights, datalong)
+  # The bound on random-effect correlations (R/ctCorBound.R), on the spec so
+  # every objective built from it holds the same one.
+  model_spec$corbound <- .ctCorBoundResolve(optimcontrol$corbound)
   # On the spec, so every objective built from it -- this fit's, a saved fit's
   # prediction, a sampling worker's -- compiles or interprets alike. Set only
   # when asked, so every other spec hashes as it did.
