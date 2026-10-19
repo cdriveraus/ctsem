@@ -6555,6 +6555,8 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
 print.ctJuliaFit <- function(x, ...) {
   cat("ctsem Julia fit\n")
   cat("  log likelihood:", format(x$estimate$loglik), "\n")
+  if (!is.null(x$estimate$loglik_weighted)) cat("  weighted log likelihood:",
+    format(x$estimate$loglik_weighted), "(sampling weights)\n")
   # On a sampled fit that optimisation only placed the chains, and an unlabelled
   # "converged: TRUE" beside "chains converged: FALSE" read as a contradiction.
   cat(if (is.null(x$sample)) "  converged:" else "  placement converged:",
@@ -6738,6 +6740,9 @@ vcov.ctJuliaFit <- function(object, ...) .ctFitNameRawCov(object, object$estimat
 
 #' @export
 logLik.ctJuliaFit <- function(object, ...) {
+  if (.ctFitWeighted(object)) stop("logLik() and AIC() do not apply to a fit ",
+    "with sampling weights, which maximises a weighted likelihood: that value is ",
+    "fit$estimate$loglik_weighted.", call. = FALSE)
   # `object$data` is now the sentinel-cleaned `standata` structure (a list,
   # for parity with a stan fit -- see R/ctFit.R), not a data.frame, so
   # `nrow()` on it no longer gives the row count. `$standata$ndatapoints` is

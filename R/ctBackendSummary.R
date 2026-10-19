@@ -2021,14 +2021,28 @@ ctBackendParMatrices <- function(fit, raw = NULL, tipreds = NULL, state = NULL,
   }
   logposterior <- object$estimate$logposterior
   if (is.null(logposterior)) logposterior <- object$estimate$loglik
-  out$logposterior <- logposterior
+  # With sampling weights the objective is the weighted log likelihood (plus
+  # any prior), and without a prior calling it a posterior would be wrong: it
+  # is reported as what it is, below, and the posterior only when a prior made
+  # it something more.
+  weighted <- .ctFitWeighted(object)
+  if (!weighted || !isTRUE(all.equal(as.numeric(logposterior),
+      as.numeric(object$estimate$loglik_weighted)))) out$logposterior <- logposterior
   # Without priors these are the same number; the shared print method (not
   # this builder) skips the duplicate row -- see
   # summaryCtStanFitLoglikDuplicatesPosterior() in R/summary.ctStanFit.R.
   # The likelihood is always returned, priors or not.
   out$loglik <- object$estimate$loglik
+  if (weighted) {
+    w <- .ctBackendSpec(object)$subject_weights
+    out$weights <- sprintf("%d subjects, relative weights %s to %s (mean 1)",
+      length(w), signif(min(w), 3), signif(max(w), 3))
+    out$loglik_weighted <- object$estimate$loglik_weighted
+  }
   out$npars <- length(object$estimate$raw)
-  out$aic <- 2 * out$npars - 2 * object$estimate$loglik
+  # A weighted fit maximises a pseudo-likelihood, whose differences are not
+  # chi-square, so it has no AIC.
+  if (!weighted) out$aic <- 2 * out$npars - 2 * object$estimate$loglik
   # How far this estimate is from the optimum, when the curvature to say so was
   # computed. Absent rather than zero when it was not -- `estonly = TRUE`
   # computes no Hessian, and reporting a gap of zero for a fit nobody checked

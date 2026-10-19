@@ -362,6 +362,8 @@
   if (!is.null(summ$loglik)) add("Log likelihood: ", .ctReportNum(summ$loglik))
   if (!is.null(summ$npars)) add("Free parameters: ", summ$npars)
   if (!is.null(summ$aic)) add("AIC: ", .ctReportNum(summ$aic))
+  if (!is.null(summ$loglik_weighted)) add("Weighted log likelihood (maximised): ",
+    .ctReportNum(summ$loglik_weighted), "; sampling weights, ", summ$weights)
   add("")
 
   if (inherits(fit, "ctJuliaFit")) {
@@ -628,7 +630,8 @@
   if (!is.null(summ$loglik)) {
     add("Log likelihood: ", .ctReportNum(summ$loglik),
       ". Free parameters: ", if (is.null(summ$npars)) "NA" else summ$npars,
-      ". AIC: ", .ctReportNum(summ$aic), ".")
+      if (is.null(summ$loglik_weighted)) paste0(". AIC: ", .ctReportNum(summ$aic)) else
+        paste0(". Weighted log likelihood: ", .ctReportNum(summ$loglik_weighted)), ".")
   }
   add("Written ", format(Sys.time(), "%Y-%m-%d %H:%M"), " by ctReport().")
   add("")

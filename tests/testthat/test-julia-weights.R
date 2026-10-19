@@ -75,6 +75,17 @@ test_that("a weighted fit records its weighted log likelihood and takes the sand
   expect_equal(fit$estimate$loglik, sum(fit$estimate$subject_loglik))
   expect_error(ctLOO(fit), "sampling weights")
   expect_error(ctFitUncertainty(fit, "sample"), "sampling weights")
+  # Reported as weighted: no posterior that is only the weighted objective,
+  # and no AIC, which a pseudo-likelihood does not have.
+  s <- summary(fit)
+  # The summary rounds to three decimals.
+  expect_equal(s$loglik_weighted, fit$estimate$loglik_weighted, tolerance = 1e-5)
+  expect_match(s$weights, "12 subjects")
+  expect_null(s$aic)
+  expect_null(s$logposterior)
+  expect_error(logLik(fit), "sampling weights")
+  expect_error(AIC(fit), "sampling weights")
+  expect_output(print(fit), "weighted log likelihood")
 })
 
 test_that("weights are refused where they do not apply, and must be one per subject", {
