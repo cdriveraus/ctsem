@@ -683,6 +683,19 @@ T0VARredundancies <- function(ctm) {
 #' \code{popunique_<parameter>.<level>}, on the same raw scale as a full-rank
 #' sd. Requires \code{backend = 'julia'} and \code{intoverpop = 'laplace'} or
 #' sampling (\code{'none'}); must be passed by name.
+#' @param weights Sampling weights, one per subject: the name of a column of
+#' \code{datalong} that is constant within subject, or a numeric vector named
+#' by subject id (or unnamed, in the order subjects first appear in the data).
+#' Each subject's contribution to the likelihood -- its marginal likelihood,
+#' random effects integrated out -- is multiplied by its weight (the weighted
+#' pseudo-likelihood), and the prior is not; a weight of zero leaves the
+#' subject out. Weights are normalised to a mean of one over the weighted
+#' subjects, and standard errors come from the sandwich estimator unless
+#' \code{optimcontrol$uncertainty} says otherwise. \code{fit$estimate$loglik}
+#' stays the data's log likelihood at the estimate;
+#' \code{fit$estimate$loglik_weighted} is the weighted one. Requires
+#' \code{backend = 'julia'} and optimisation; with nested ids, weights must be
+#' constant within each group of the outermost level. Must be passed by name.
 #' @param intoverpop How declared individual differences (random effects) are
 #' handled: integrated out of the likelihood, or sampled with everything else.
 #'
@@ -1164,7 +1177,7 @@ ctFit<-function(datalong, model, stanmodeltext=NA, iter=1000, intoverstates=TRUE
   savesubjectmatrices=FALSE, saveComplexPars=FALSE,
   gendata=FALSE,
   sampleControl=list(),
-  control=list(),verbose=0,..., popunique=NULL, ctstanmodel){
+  control=list(),verbose=0,..., popunique=NULL, weights=NULL, ctstanmodel){
 
   # `vb` (Stan's variational Bayes) was removed: it is a stan-only path,
   # crashed on the default fit=TRUE, and stan is being deprecated. Without
@@ -1235,6 +1248,18 @@ ctFit<-function(datalong, model, stanmodeltext=NA, iter=1000, intoverstates=TRUE
     'instead.', call.=FALSE)
 
   backend <- match.arg(backend)
+  # Before anything prepares, warns or fits.
+  # Sampling weights (R/ctWeights.R): a weighted pseudo-likelihood, which the
+  # julia engine maximises. Sampling it would not give a posterior, and the
+  # state-explicit route optimises a joint density weights do not apply to.
+  if(!is.null(weights)){
+    if(!backend %in% 'julia') stop("weights requires backend='julia'.", call.=FALSE)
+    if(!isTRUE(optimize)) stop("weights are for optimised fits: a weighted ",
+      "likelihood is not a posterior to sample. Use optimize=TRUE; standard ",
+      "errors then come from the sandwich estimator.", call.=FALSE)
+    if(!isTRUE(intoverstates)) stop("weights require intoverstates=TRUE.",
+      call.=FALSE)
+  }
   # Whether `poprank` was asked for or merely defaulted. Taken here because
   # `missing()` has to be evaluated before the argument is touched, and it
   # decides whether an inapplicable rank is an error or a no-op. A rank stated
@@ -2458,7 +2483,7 @@ ctFit<-function(datalong, model, stanmodeltext=NA, iter=1000, intoverstates=TRUE
       verbose=verbose, fit=fit, priors=priors, priorscope=priorscope,
       optimize=optimize,
       chains=if(chainsgiven) chains else 4L, iter=iter, control=control,
-      intoverpop=juliaintoverpop, intoverstates=intoverstates)
+      intoverpop=juliaintoverpop, intoverstates=intoverstates, weights=weights)
     # Replaces whatever narrower `$args` the julia backend built internally
     # (it only ever had the resolved settings, and not all of them) with the
     # two-sublist form every fit now carries -- see the `argsresolved` comment

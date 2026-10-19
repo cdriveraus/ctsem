@@ -66,11 +66,30 @@ mutable struct CTSEMObjective{P,O} <: CTSEMOptimisable
     ti_missing_mu::Vector{Float64}
     ti_missing_sigma::Vector{Float64}
     ti_missing_subject::Vector{Int}
+    # Sampling weights, one per subject, or empty for none. Each multiplies its
+    # subject's term in the objective -- on this route the subject's log
+    # marginal likelihood, on the Laplace route its unit's -- and never the
+    # prior: the weighted pseudo-likelihood. Its gradient, Hessian and
+    # per-subject scores follow; the per-subject log likelihoods reported as
+    # contributions stay the data's own. A subject of weight zero is skipped.
+    subject_weights::Vector{Float64}
 end
 
 CTSEMObjective(params, subject_objectives) =
     CTSEMObjective(params, subject_objectives, nothing, Int[], Float64[], 1.0,
-        Int[], Float64[], Float64[], Int[])
+        Int[], Float64[], Float64[], Int[], Float64[])
+
+# Without weights, as every objective was built before they existed.
+CTSEMObjective(params, subject_objectives, adjoint_ws, prior_index, prior_scale,
+    prior_weight, ti_missing_parameter, ti_missing_mu, ti_missing_sigma,
+    ti_missing_subject) =
+    CTSEMObjective(params, subject_objectives, adjoint_ws, prior_index, prior_scale,
+        prior_weight, ti_missing_parameter, ti_missing_mu, ti_missing_sigma,
+        ti_missing_subject, Float64[])
+
+"""Subject `i`'s sampling weight: one when the objective has none."""
+@inline _ctsem_subject_weight(objective::CTSEMObjective, i::Integer) =
+    isempty(objective.subject_weights) ? 1.0 : @inbounds(objective.subject_weights[i])
 
 """
     _ctsem_log_prior(objective, values)
@@ -273,8 +292,12 @@ function CTSEMObjective(params::EKFParameters, subject_starts::AbstractVector,
     # subject's `TIMissingRecipe`; `parameter`/`mu`/`sigma`/`subject` are also
     # kept flat on the returned objective for `_ctsem_ti_missing_loglik`.
     ti_missing_subject=Int[], ti_missing_predictor=Int[], ti_missing_parameter=Int[],
-    ti_missing_mu=Float64[], ti_missing_sigma=Float64[])
+    ti_missing_mu=Float64[], ti_missing_sigma=Float64[], subject_weights=Float64[])
     ranges = _ctsem_subject_ranges(subject_starts, timesteps, data)
+    (isempty(subject_weights) || length(subject_weights) == length(ranges)) ||
+        throw(DimensionMismatch("subject_weights needs one weight per subject"))
+    all(w -> isfinite(w) && w >= 0, subject_weights) ||
+        throw(ArgumentError("subject_weights must be finite and non-negative"))
     all(s -> 1 <= s <= length(ranges), ti_missing_subject) ||
         throw(ArgumentError("ti_missing_subject must name subjects of this objective"))
     # A mesh (one substep count per row of the whole dataset) is sliced per
@@ -325,7 +348,8 @@ function CTSEMObjective(params::EKFParameters, subject_starts::AbstractVector,
         throw(DimensionMismatch("prior index and scale vectors must have equal length"))
     return CTSEMObjective(params, objects, nothing, Int.(prior_index),
         Float64.(prior_scale), Float64(prior_weight), Int.(ti_missing_parameter),
-        Float64.(ti_missing_mu), Float64.(ti_missing_sigma), Int.(ti_missing_subject))
+        Float64.(ti_missing_mu), Float64.(ti_missing_sigma), Int.(ti_missing_subject),
+        Float64.(subject_weights))
 end
 
 ctsem_objective(params::EKFParameters, subject_starts, timesteps, data,
@@ -333,12 +357,13 @@ ctsem_objective(params::EKFParameters, subject_starts, timesteps, data,
     tipred_data=zeros(eltype(data), length(subject_starts), 0), max_timestep=Inf;
     prior_index=Int[], prior_scale=Float64[], prior_weight::Real=1.0,
     ti_missing_subject=Int[], ti_missing_predictor=Int[], ti_missing_parameter=Int[],
-    ti_missing_mu=Float64[], ti_missing_sigma=Float64[]) =
+    ti_missing_mu=Float64[], ti_missing_sigma=Float64[], subject_weights=Float64[]) =
     CTSEMObjective(params, subject_starts, timesteps, data, tdpred_data, tipred_data,
         max_timestep; prior_index=prior_index, prior_scale=prior_scale,
         prior_weight=prior_weight, ti_missing_subject=ti_missing_subject,
         ti_missing_predictor=ti_missing_predictor, ti_missing_parameter=ti_missing_parameter,
-        ti_missing_mu=ti_missing_mu, ti_missing_sigma=ti_missing_sigma)
+        ti_missing_mu=ti_missing_mu, ti_missing_sigma=ti_missing_sigma,
+        subject_weights=subject_weights)
 
 ################################################################################
 # Threading
@@ -604,8 +629,10 @@ function (objective::CTSEMObjective)(values::AbstractVector)
     nchunks = _ctsem_nchunks(nsubjects)
     if nchunks <= 1
         total = zero(T)
-        @inbounds for subject_objective in subjects
-            total += subject_objective(values)
+        @inbounds for i in 1:nsubjects
+            w = _ctsem_subject_weight(objective, i)
+            w == 0 && continue
+            total += w * subjects[i](values)
         end
         return total + _ctsem_log_prior(objective, values)
     end
@@ -616,7 +643,9 @@ function (objective::CTSEMObjective)(values::AbstractVector)
     _ctsem_pull_blocks(nblocks, nchunks) do b, _
         accumulator = zero(T)
         @inbounds for i in ranges[b]
-            accumulator += subjects[i](values)
+            w = _ctsem_subject_weight(objective, i)
+            w == 0 && continue
+            accumulator += w * subjects[i](values)
         end
         partials[b] = accumulator
     end

@@ -252,6 +252,7 @@ ctFitAdequacy <- function(fit, covariates = NULL,
   gaps = NULL, periods = NULL, tvcovariates = NULL, close = 0.05, alpha = 0.05,
   projection = c('auto', 'derivative', 'plugin', 'opg', 'none'), parameters = NULL,
   nsamples = 100, lags = 0:3, nboot = 1999L, cores = getOption('mc.cores', 2L)) {
+  .ctWeightsRefuse(fit, 'ctFitAdequacy()')
   if (!.ctFitIsJulia(fit) && !inherits(fit, 'ctStanFit')) stop('Not a ctsem fit.',
     call. = FALSE)
   asked <- !missing(families)

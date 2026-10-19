@@ -4169,6 +4169,10 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
     objective_args$prior_scale <- V(spec$priors$scale)
     objective_args$prior_weight <- spec$priors$weight
   }
+  # Sampling weights (R/ctWeights.R); omitted, not sent empty, without them.
+  if (length(spec$subject_weights)) {
+    objective_args$subject_weights <- V(as.numeric(spec$subject_weights))
+  }
   # Sampled TI-predictor values, one entry per missing cell -- omitted
   # entirely (not sent as empty vectors) for every model with none, which is
   # what keeps that the zero-cost path on the Julia side too.
@@ -5450,14 +5454,16 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
   optimcontrol = list(), verbose = 0L, fit = TRUE,
   priors = FALSE, priorscope = NULL,
   intoverpop = "augmented", optimize = TRUE, chains = 4L,
-  iter = 2000L, control = list(), intoverstates = TRUE, forcerecompile = FALSE) {
+  iter = 2000L, control = list(), intoverstates = TRUE, forcerecompile = FALSE,
+  weights = NULL) {
   .ctJuliaInterruptSafe(.ctFitJuliaBackendImpl(datalong = datalong,
     model = model, prepared_data = prepared_data, inits = inits, cores = cores,
     optimcontrol = optimcontrol,
     verbose = verbose, fit = fit, priors = priors, priorscope = priorscope,
     intoverpop = intoverpop,
     optimize = optimize, chains = chains, iter = iter, control = control,
-    intoverstates = intoverstates, forcerecompile = forcerecompile))
+    intoverstates = intoverstates, forcerecompile = forcerecompile,
+    weights = weights))
 }
 
 #' @keywords internal
@@ -5466,7 +5472,8 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
   optimcontrol = list(), verbose = 0L, fit = TRUE,
   priors = FALSE, priorscope = NULL,
   intoverpop = "augmented", optimize = TRUE, chains = 4L,
-  iter = 2000L, control = list(), intoverstates = TRUE, forcerecompile = FALSE) {
+  iter = 2000L, control = list(), intoverstates = TRUE, forcerecompile = FALSE,
+  weights = NULL) {
   # The engine environment and a session restart are ctJuliaSetup()'s own
   # `project` and `force = TRUE`; the per-fit copies of both were a second
   # spelling of an exported function, so a fit uses whatever session is set up.
@@ -5540,6 +5547,9 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
         .ctJuliaOr(optimcontrol$laplace_floor, .ctJuliaLaplaceFloorDefault)
         else optimcontrol$laplace_floor))
   model_spec$tipredMissing <- tipredMissing
+  # Sampling weights, one per subject in the specification's order and
+  # normalised (R/ctWeights.R); every objective built from the spec takes them.
+  model_spec$subject_weights <- .ctResolveSubjectWeights(model_spec, weights, datalong)
   # On the spec, so every objective built from it -- this fit's, a saved fit's
   # prediction, a sampling worker's -- compiles or interprets alike. Set only
   # when asked, so every other spec hashes as it did.
@@ -6220,6 +6230,11 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
   out <- list(backend = "julia", model = model, model_spec = model_spec,
     estimate = list(raw = minimizer,
       loglik = loglik,
+      # The weighted log likelihood the fit maximised, with sampling weights;
+      # `loglik` stays the data's own (R/ctWeights.R).
+      loglik_weighted = if (length(model_spec$subject_weights) &&
+          length(subject_loglik) == length(model_spec$subject_weights))
+        sum(model_spec$subject_weights * subject_loglik) else NULL,
       logposterior = as.numeric(result$maximum_loglik),
       subject_loglik = result$subject_loglik,
       # State-explicit fits only. `states` is the trajectory at the
@@ -6409,7 +6424,10 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
       "only the profile curvature, which the states flatten. Use ",
       "optimize=FALSE to sample them, or intoverstates=TRUE.")
   } else if (!isTRUE(optimcontrol$estonly)) {
-    uncertainty <- .ctJuliaOr(optimcontrol$uncertainty, "hessian")
+    # With sampling weights the sandwich, unless asked otherwise: the Hessian
+    # alone is the pseudo-likelihood's curvature, not the estimate's spread.
+    uncertainty <- .ctJuliaOr(optimcontrol$uncertainty,
+      if (length(out$model_spec$subject_weights)) "sandwich" else "hessian")
     # One way to sample: `ctFit(optimize = FALSE)`, which places the sampler
     # through this same pipeline before ever reaching this stage (see
     # `.ctJuliaSampleFit()`, R/ctBackendSample.R). Asking for

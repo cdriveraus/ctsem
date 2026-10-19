@@ -206,6 +206,7 @@ ctLOO <- function(fit, folds = 10, cores = getOption("mc.cores", 2L), parallelFo
   subjectwise = ifelse(length(unique(.ctFitRowSubject(fit))) >= folds, TRUE, FALSE),
   keepfirstobs = FALSE, leaveOutN = NA, refit = TRUE, casewiseApproximation = FALSE,
   method = c("kfold", "psis"), nsamples = 1000) {
+  .ctWeightsRefuse(fit, 'ctLOO()')
 
   method <- match.arg(method)
   if (identical(method, "psis")) {

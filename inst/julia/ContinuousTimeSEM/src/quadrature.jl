@@ -581,7 +581,8 @@ function ctsem_laplace_quadrature(laplace::CTSEMLaplaceObjective,
         return contributions ? (value=NaN, subject_loglik=unit_term) :
             (value=NaN, subject_loglik=Float64[])
     end
-    total = sum(unit_term) + _ctsem_log_prior(laplace.objective, theta)
+    total = _laplace_weighted_total(laplace, unit_term) +
+        _ctsem_log_prior(laplace.objective, theta)
     return contributions ? (value=total, subject_loglik=unit_term) :
         (value=total, subject_loglik=Float64[])
 end

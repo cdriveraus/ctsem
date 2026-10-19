@@ -469,7 +469,7 @@ function ctsem_subject_gradients(objective::CTSEMObjective, values::AbstractVect
 
     _ctsem_pull_blocks(nblocks, nchunks) do b, w
         _ctsem_subject_gradient_chunk!(scores, totals, valid, badvalue, b,
-            ranges[b], subjects, workspaces[w], values)
+            ranges[b], subjects, workspaces[w], values, objective.subject_weights)
     end
 
     @inbounds for c in 1:nblocks
@@ -483,7 +483,8 @@ end
 """Per-subject gradients for one contiguous chunk, written into `scores`."""
 function _ctsem_subject_gradient_chunk!(scores::Matrix{T}, totals::Vector{T},
     valid::Vector{Bool}, badvalue::Vector{T}, c::Int, range::UnitRange{Int},
-    subjects, aws, values::AbstractVector{T}) where {T}
+    subjects, aws, values::AbstractVector{T},
+    weights::Vector{Float64}=Float64[]) where {T}
 
     deferred = aws.defer_frechet
     aws.defer_frechet = false
@@ -491,6 +492,10 @@ function _ctsem_subject_gradient_chunk!(scores::Matrix{T}, totals::Vector{T},
     try
         @inbounds for i in range
             subject_objective = subjects[i]
+            # A weighted subject's score is its weight times its gradient: the
+            # derivative of its term in the objective.
+            w = isempty(weights) ? 1.0 : weights[i]
+            w == 0 && continue
             # The task's filter workspace, as in `_ctsem_adjoint_chunk!`.
             ws = aws.ekf_ws
             # One exponential table for the chunk: a linear model's
@@ -514,10 +519,11 @@ function _ctsem_subject_gradient_chunk!(scores::Matrix{T}, totals::Vector{T},
                 badvalue[c] = loglik
                 return nothing
             end
-            total += loglik
+            total += w * loglik
 
             if _growth_unstable(ws)
                 _ctsem_forward_subject_gradient!(view(scores, i, :), subject_objective, values)
+                w == 1 || (view(scores, i, :) .*= w)
                 continue
             end
 
@@ -532,6 +538,7 @@ function _ctsem_subject_gradient_chunk!(scores::Matrix{T}, totals::Vector{T},
                 subject_objective.tipreds, values)
             _hybrid_scatter!(view(scores, i, :), tape.hyb, subject_objective.params.hybrid)
             _ctsem_tipred_scatter!(view(scores, i, :), aws, subject_objective.tipreds)
+            w == 1 || (view(scores, i, :) .*= w)
         end
     finally
         aws.defer_frechet = deferred
@@ -573,8 +580,11 @@ function _ctsem_adjoint_chunk!(gradient::Vector{T}, totals::Vector{T},
     last_tipreds = nothing
     total = zero(T)
 
+    weights = objective.subject_weights
     @inbounds for i in range
         subject_objective = subjects[i]
+        w = isempty(weights) ? 1.0 : weights[i]
+        w == 0 && continue
         # The task's filter workspace, which this chunk's adjoint workspace
         # carries at its own element type (the Laplace route filters through
         # it too): a workspace depends on the shared parameters, never on the
@@ -599,7 +609,7 @@ function _ctsem_adjoint_chunk!(gradient::Vector{T}, totals::Vector{T},
             badvalue[c] = loglik
             return nothing
         end
-        total += loglik
+        total += w * loglik
 
         # Forward mode for a subject whose reverse pass would not be stable;
         # see `_CTSEM_ADJOINT_GROWTH`. Its gradient goes straight into the
@@ -607,10 +617,17 @@ function _ctsem_adjoint_chunk!(gradient::Vector{T}, totals::Vector{T},
         if _growth_unstable(ws)
             gf = similar(gradient)
             _ctsem_forward_subject_gradient!(gf, subject_objective, values)
-            gradient .+= gf
+            w == 1 ? (gradient .+= gf) : (gradient .+= w .* gf)
             continue
         end
 
+        # A sampling weight. The reverse pass below adds this subject's
+        # cotangents into the chunk's accumulators -- the gradient, the shared
+        # parameter layer's, the deferred Frechet one -- linearly and nowhere
+        # else, so dividing them by the weight first and multiplying after
+        # leaves what was there and adds the weight times this subject's part,
+        # without a weight in any kernel.
+        w == 1 || _ctsem_scale_accumulators!(gradient, aws, shared, inv(w))
         shared || fill!(aws.theta_bar, zero(T))
         _ctsem_tipred_bar_reset!(aws, subject_objective.tipreds, length(tipred_vec))
         _ctsem_reverse_tape!(tape, subject_objective.params, aws, aws.n, aws.m)
@@ -630,6 +647,7 @@ function _ctsem_adjoint_chunk!(gradient::Vector{T}, totals::Vector{T},
             _ctsem_parameter_layer!(gradient, aws.theta_bar, tape.subject_values,
                 subject_objective.params, aws, subject_objective.tipreds, values)
         end
+        w == 1 || _ctsem_scale_accumulators!(gradient, aws, shared, w)
     end
 
     if shared && last_subject_values !== nothing
@@ -655,6 +673,28 @@ function _ctsem_adjoint_chunk!(gradient::Vector{T}, totals::Vector{T},
     end
 
     totals[c] = total
+    return nothing
+end
+
+"""
+    _ctsem_scale_accumulators!(gradient, aws, shared, s)
+
+Scale everything a chunk accumulates across its subjects' reverse passes by
+`s`: the gradient, the shared parameter layer's cotangent where one is shared,
+and, where the Frechet derivatives are deferred, both what has been flushed of
+them and the queue still waiting (`_frechet_enqueue!`), whose entries add up
+directions across subjects until the chunk ends or the table fills. See the
+sampling weight in `_ctsem_adjoint_chunk!`.
+"""
+@inline function _ctsem_scale_accumulators!(gradient, aws, shared::Bool, s)
+    gradient .*= s
+    shared && (aws.theta_bar .*= s)
+    if aws.defer_frechet
+        aws.jax_bar_deferred .*= s
+        @inbounds for e in 1:aws.frechet_count
+            aws.frechet_accums[e] .*= s
+        end
+    end
     return nothing
 end
 

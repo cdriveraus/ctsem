@@ -2729,6 +2729,8 @@ ctFitUncertainty <- function(fit,
       "control = list(", dotnames[1L], " = ...).", call.=FALSE)
   }
   uncertainty <- match.arg(uncertainty)
+  if(identical(uncertainty, 'sample')) .ctWeightsRefuse(fit,
+    "ctFitUncertainty(uncertainty = 'sample')")
   # Which density `'is'` samples against; validated before anything runs, and
   # taken out of `control` so the methods that do not read it never see it.
   likelihood <- .ctUncertaintyLikelihood(uncertainty, control$likelihood)

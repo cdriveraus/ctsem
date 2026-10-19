@@ -687,8 +687,10 @@ function _continuation_place!(o::CTSEMLaplaceContinuation, theta::Vector{Float64
     o.centre_laplace = placed.laplace
     o.rule_failed = failed
     prior = _ctsem_log_prior(laplace.objective, theta)
-    o.centre_value = sum(placed.laplace[U] for U in o.rest_units; init=0.0) +
-        sum(placed.quadrature[U] for U in flagged; init=0.0) + prior
+    o.centre_value = sum(_laplace_unit_weight(laplace, U) * placed.laplace[U]
+        for U in o.rest_units; init=0.0) +
+        sum(_laplace_unit_weight(laplace, U) * placed.quadrature[U]
+        for U in flagged; init=0.0) + prior
     o.recentres += 1
     o.cache = nothing
     o.value_cache = nothing
@@ -855,7 +857,7 @@ function _continuation_flagged(o::CTSEMLaplaceContinuation, theta::Vector{Float6
             return false
         end
         values[f] = total
-        want_gradient && (partials[_laplace_slot()] .+= grad)
+        want_gradient && (partials[_laplace_slot()] .+= _laplace_unit_weight(laplace, U) .* grad)
         return true
     end
     ok = all(good)
@@ -909,7 +911,8 @@ function _continuation_evaluate(o::CTSEMLaplaceContinuation, theta::Vector{Float
     gradient ? (o.gradient_calls += 1) : (o.value_calls += 1)
     evaluations = sum(r.evaluations for r in o.rules; init=0)
     gradient ? (o.member_sweeps += evaluations) : (o.member_values += evaluations)
-    value = flagged.ok ? rest.value + sum(flagged.values; init=0.0) : NaN
+    value = flagged.ok ? rest.value + sum(_laplace_unit_weight(o.laplace, U) *
+        flagged.values[f] for (f, U) in enumerate(o.flagged); init=0.0) : NaN
     grad = gradient ? (flagged.ok ? rest.gradient .+ flagged.gradient :
         fill(NaN, length(theta))) : nothing
     nunits = length(o.laplace.units.members)
@@ -1711,8 +1714,9 @@ function _continuation_flagged_hessian(o::CTSEMLaplaceContinuation,
             return false
         end
         values[f] = total
-        gparts[slot] .+= sc.unit_gradient
-        hparts[slot] .+= sc.unit_hessian
+        w = _laplace_unit_weight(laplace, U)
+        gparts[slot] .+= w .* sc.unit_gradient
+        hparts[slot] .+= w .* sc.unit_hessian
         return true
     end
     all(good) || return nothing

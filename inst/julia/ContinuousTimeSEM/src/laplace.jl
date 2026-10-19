@@ -5937,7 +5937,8 @@ function ctsem_laplace_evaluate(laplace::CTSEMLaplaceObjective, values::Abstract
             subject_loglik=subject_loglik, unit_loglik=unit_loglik,
             converged=all(laplace.inner_converged))
     end
-    value = sum(unit_loglik) + _ctsem_log_prior(laplace.objective, theta)
+    value = _laplace_weighted_total(laplace, unit_loglik) +
+        _ctsem_log_prior(laplace.objective, theta)
     laplace.gated_units = count(primal_gated)
 
     gradient || return (value=value, gradient=nothing,
@@ -5978,12 +5979,15 @@ function ctsem_laplace_evaluate(laplace::CTSEMLaplaceObjective, values::Abstract
         # slot's and then added both to the slot's sum and to the unit's row:
         # the units' own gradients are the score rows
         # (`ctsem_subject_gradients`). Without, the buffer is the sum itself.
-        rows = scores === nothing ? partials :
-            [zeros(Float64, length(theta)) for _ in 1:nslot]
+        # With sampling weights too: each unit's gradient is then its weight
+        # times the row.
+        weighted = !isempty(laplace.objective.subject_weights)
+        separate = scores !== nothing || weighted
+        rows = separate ? [zeros(Float64, length(theta)) for _ in 1:nslot] : partials
         fill!(chunk_ok, true)
         run_gradient = function (c)
             @inbounds for U in ranges[c]
-                scores === nothing || fill!(rows[_laplace_slot()], 0.0)
+                separate && fill!(rows[_laplace_slot()], 0.0)
                 # One pass, so a unit handled early can `break` to the row below.
                 for _ in 1:1
                     # A unit the gated floor scored is differentiated through its
@@ -6039,9 +6043,10 @@ function ctsem_laplace_evaluate(laplace::CTSEMLaplaceObjective, values::Abstract
                         return nothing
                     end
                 end
-                if scores !== nothing
-                    partials[_laplace_slot()] .+= rows[_laplace_slot()]
-                    scores[U, :] .= rows[_laplace_slot()]
+                if separate
+                    w = _laplace_unit_weight(laplace, U)
+                    partials[_laplace_slot()] .+= w .* rows[_laplace_slot()]
+                    scores === nothing || (scores[U, :] .= w .* rows[_laplace_slot()])
                 end
             end
             return nothing
@@ -6145,6 +6150,26 @@ function _laplace_floored_unit_gradient!(out::Vector{Float64},
     return true
 end
 
+"""Unit `U`'s sampling weight: its subjects', which the R side requires to be
+one value within a unit; one when the objective has none."""
+@inline function _laplace_unit_weight(laplace::CTSEMLaplaceObjective, U::Integer)
+    weights = laplace.objective.subject_weights
+    isempty(weights) && return 1.0
+    members = laplace.units.members[U]
+    return isempty(members) ? 1.0 : @inbounds(weights[first(members)])
+end
+
+"""The units' terms summed with their sampling weights."""
+function _laplace_weighted_total(laplace::CTSEMLaplaceObjective, terms::AbstractVector)
+    isempty(laplace.objective.subject_weights) && return sum(terms)
+    total = zero(eltype(terms))
+    for U in eachindex(terms)
+        w = _laplace_unit_weight(laplace, U)
+        w == 0 || (total += w * terms[U])
+    end
+    return total
+end
+
 """
     _laplace_nested_gradient(laplace, theta, Ls, curvature)
 
@@ -6165,9 +6190,11 @@ function _laplace_nested_gradient(laplace::CTSEMLaplaceObjective,
         Lsd = _laplace_popchols(x, laplace.spec)
         accumulated = zero(S)
         for U in 1:nunits
+            w = _laplace_unit_weight(laplace, U)
+            w == 0 && continue
             uhat = laplace.modes[U]
             ud = _laplace_dual_unit_mode(laplace, U, x, Lsd, uhat, curvature[U], wsd)
-            accumulated += _laplace_unit_term(laplace, U, x, Lsd, ud, wsd)
+            accumulated += w * _laplace_unit_term(laplace, U, x, Lsd, ud, wsd)
         end
         return accumulated + _ctsem_log_prior(laplace.objective, x)
     end

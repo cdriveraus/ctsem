@@ -40,6 +40,7 @@ ctFit(
   verbose = 0,
   ...,
   popunique = NULL,
+  weights = NULL,
   ctstanmodel
 )
 }
@@ -344,6 +345,20 @@ independent random effects. Reported as
 \code{popunique_<parameter>.<level>}, on the same raw scale as a full-rank
 sd. Requires \code{backend = 'julia'} and \code{intoverpop = 'laplace'} or
 sampling (\code{'none'}); must be passed by name.}
+
+\item{weights}{Sampling weights, one per subject: the name of a column of
+\code{datalong} that is constant within subject, or a numeric vector named
+by subject id (or unnamed, in the order subjects first appear in the data).
+Each subject's contribution to the likelihood -- its marginal likelihood,
+random effects integrated out -- is multiplied by its weight (the weighted
+pseudo-likelihood), and the prior is not; a weight of zero leaves the
+subject out. Weights are normalised to a mean of one over the weighted
+subjects, and standard errors come from the sandwich estimator unless
+\code{optimcontrol$uncertainty} says otherwise. \code{fit$estimate$loglik}
+stays the data's log likelihood at the estimate;
+\code{fit$estimate$loglik_weighted} is the weighted one. Requires
+\code{backend = 'julia'} and optimisation; with nested ids, weights must be
+constant within each group of the outermost level. Must be passed by name.}
 
 \item{ctstanmodel}{Deprecated. Use \code{model}.}
 }

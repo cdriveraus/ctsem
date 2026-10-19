@@ -320,6 +320,7 @@ ctScoreTest <- function(fit, covariates = NULL,
   order = 2L, variance = c('robust', 'model'), nboot = 1999L, exact = 5L,
   cores = getOption('mc.cores', 2L),
   verbose = TRUE) {
+  .ctWeightsRefuse(fit, 'ctScoreTest()')
   if (!.ctFitIsJulia(fit)) stop("ctScoreTest() needs a fit from ",
     "ctFit(backend = 'julia'). Refit on that backend to use it.", call. = FALSE)
   if (!is.null(fit$sample)) stop("Score tests are made at an optimum, and this ",
