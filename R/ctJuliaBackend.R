@@ -2140,43 +2140,6 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
   as.character(names[index])
 }
 
-# Which random-effect correlations, if any, ended the fit on their cap.
-#
-# Reported as a data frame naming the parameter pair and the level, because
-# "a correlation hit the boundary" is only actionable if you know which one.
-.ctJuliaBoundaryReport <- function(fit, model_spec, result) {
-  empty <- data.frame(level = character(), param = character(),
-    correlation = numeric(), stringsAsFactors = FALSE)
-  laplace <- model_spec$laplace
-  if (is.null(laplace)) return(empty)
-  module <- .ctJuliaModule(model_spec$project)
-  hit <- try(.ctBackendJuliaValue(module$ctsem_laplace_boundary(
-    .ctJuliaObjective(fit), .ctJuliaNumericVector(fit$estimate$raw))), silent = TRUE)
-  if (inherits(hit, "try-error") || !length(hit$level)) return(empty)
-  rows <- lapply(seq_along(hit$level), function(i) {
-    level <- laplace$levels[[hit$level[i]]]
-    names <- level$param
-    lower <- which(lower.tri(diag(max(1L, length(names)))), arr.ind = TRUE)
-    pair <- if (hit$position[i] <= nrow(lower))
-      paste0(names[lower[hit$position[i], 1L]], "__", names[lower[hit$position[i], 2L]])
-      else paste0("correlation", hit$position[i])
-    # The capped value, which is what the model used -- transforming the raw
-    # coordinate as it stands would report the correlation the optimizer was
-    # heading for rather than the one it was held at.
-    capped <- max(-.ctJuliaCorrelationCap(), min(.ctJuliaCorrelationCap(), hit$value[i]))
-    data.frame(level = level$name, param = pair,
-      correlation = 2 / (1 + exp(-capped)) - 1, stringsAsFactors = FALSE)
-  })
-  do.call(rbind, rows)
-}
-
-# The engine's correlation cap, read rather than duplicated.
-.ctJuliaCorrelationCap <- function() {
-  value <- try(.ctJuliaEval("ContinuousTimeSEM._LAPLACE_COR_CAP[]"),
-    silent = TRUE)
-  if (inherits(value, "try-error")) 5.2933 else as.numeric(value)[1L]
-}
-
 # Every index the specification references must lie inside the raw parameter
 # vector the fit will actually allocate.
 #
@@ -4172,6 +4135,16 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
   # Sampling weights (R/ctWeights.R); omitted, not sent empty, without them.
   if (length(spec$subject_weights)) {
     objective_args$subject_weights <- V(as.numeric(spec$subject_weights))
+  }
+  # The bounded population correlation blocks (R/ctCorBound.R), omitted when
+  # there are none.
+  bounds <- .ctCorBoundSpec(spec, table)
+  if (length(bounds)) {
+    objective_args$corbound_k <- V(vapply(bounds, function(b) b$k, integer(1)))
+    objective_args$corbound_code <- V(vapply(bounds, function(b) b$code, integer(1)))
+    objective_args$corbound_index <- V(unlist(lapply(bounds, function(b) b$index)))
+    objective_args$corbound_fixed <- V(unlist(lapply(bounds, function(b) {
+      x <- b$fixed; x[!is.finite(x)] <- 0; x })))
   }
   # Sampled TI-predictor values, one entry per missing cell -- omitted
   # entirely (not sent as empty vectors) for every model with none, which is
@@ -6303,21 +6276,11 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
       warning("The random-effect mode did not converge for every subject; ",
         "see fit$laplace$inner_converged.", call. = FALSE)
     }
-    # A correlation sitting on its cap means the data could not locate it --
-    # usually a level with too few groups for the number of effects asked of
-    # it. The fit is still a fit; the estimate for that pair is not.
-    boundary <- .ctJuliaBoundaryReport(out, model_spec, result)
-    out$laplace$boundary <- boundary
-    if (nrow(boundary)) {
-      warning("Random-effect correlation", if (nrow(boundary) > 1) "s" else "",
-        " reached the boundary and ", if (nrow(boundary) > 1) "were" else "was",
-        " capped at |r| = ", signif(boundary$correlation[1L], 3), ": ",
-        paste(sprintf("%s (%s level)", boundary$param, boundary$level),
-          collapse = ", "),
-        ". This usually means the level has too few groups to identify that ",
-        "correlation. See fit$laplace$boundary.", call. = FALSE)
-    }
   }
+  # Random effects predicted by the others up to the correlation bound: the
+  # population covariance the data point to is singular (R/ctCorBound.R).
+  out$corbound <- .ctCorBoundReport(out)
+  .ctCorBoundWarn(out$corbound)
   # How long the optimisation took before any restarts, which says how slow
   # work repeating it would be (`.ctWorkerFitSeconds`).
   out$optim$seconds <- fitseconds

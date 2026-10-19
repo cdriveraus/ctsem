@@ -215,11 +215,6 @@ struct CTSEMLaplaceLevel
             all((index .== 0) .== isfinite.(fixed)) || throw(ArgumentError(
                 "a stated $(what) has index 0 and a finite value; a free one a raw position and NaN"))
         end
-        # A stated coordinate past the cap would be clipped where the
-        # covariance is built, describing a different matrix than was stated.
-        cap = _LAPLACE_COR_CAP[]
-        cap > 0 && any(x -> isfinite(x) && abs(x) > cap, corfix) && throw(ArgumentError(
-            "a stated correlation coordinate exceeds the cap of $(cap) the population covariance applies"))
         return new(re, sd, cor, load, scale, grp, Int(ngroups), Int(covmatcode), r, uniq,
             Int[], sdfix, corfix, hyb)
     end
@@ -771,74 +766,6 @@ ctsem_laplace_objective(objective::CTSEMObjective, re_index, sd_index, cor_index
 ################################################################################
 
 """
-Largest unconstrained correlation coordinate allowed, and the correlation it
-maps to: `2/(1+exp(-p)) - 1`, so `p = 5.2933` is a correlation of `0.99`.
-
-A random-effect correlation can be driven to the boundary by a design that
-cannot identify it -- a level estimates `k + k(k-1)/2` parameters from as many
-draws as it has groups, and there are usually far fewer studies than subjects.
-Left alone the coordinate runs off to infinity, the covariance approaches
-singularity, and the curvature factorizations start failing for reasons that
-have nothing to do with the model.
-
-Capping keeps the fit alive and bounded. It is a real restriction of the
-parameter space, not a numerical detail, so `ctsem_laplace_boundary` reports
-which coordinates are sitting on it and the R side warns naming them. A prior
-would also solve this, but it would change the estimator silently; a cap that
-announces itself does not.
-
-Provenance. A chosen value with no measurement on record: 0.99 is a round
-correlation at which the covariance still factorizes, not a number any fixture
-was tuned to. It moves where a fit ends whenever a correlation reaches it,
-which is why the optimisation plan's Appendix B lists it among the constants
-that decide an estimate
-(`CT-SEM/review/OPTIM-consolidation-plan-2026-09-25.md`).
-"""
-const _LAPLACE_COR_CAP = Ref(5.2933)
-
-export ctsem_set_correlation_cap!, ctsem_laplace_boundary
-"""
-    ctsem_set_correlation_cap!(p)
-
-Set the largest unconstrained correlation coordinate. `0` removes the cap.
-"""
-function ctsem_set_correlation_cap!(p::Real)
-    p >= 0 || throw(ArgumentError("correlation cap must be non-negative"))
-    _LAPLACE_COR_CAP[] = Float64(p)
-    return Float64(p)
-end
-
-"""Clamp one correlation coordinate, leaving other scalar types alone."""
-@inline function _laplace_cap_correlation(x)
-    cap = _LAPLACE_COR_CAP[]
-    cap <= 0 && return x
-    return clamp(x, -cap, cap)
-end
-
-"""
-    ctsem_laplace_boundary(laplace, values)
-
-Which unconstrained correlation coordinates are sitting on the cap, as
-`(level, position, value)` triples. Empty when none are, which is the ordinary
-case.
-"""
-function ctsem_laplace_boundary(laplace::CTSEMLaplaceObjective, values::AbstractVector)
-    cap = _LAPLACE_COR_CAP[]
-    levels = Int[]; positions = Int[]; found = Float64[]
-    cap <= 0 && return (level=levels, position=positions, value=found)
-    theta = collect(Float64, values)
-    for (l, level) in enumerate(laplace.spec.levels)
-        for (t, idx) in enumerate(level.cor_index)
-            idx == 0 && continue
-            if abs(theta[idx]) >= cap - 1e-8
-                push!(levels, l); push!(positions, t); push!(found, theta[idx])
-            end
-        end
-    end
-    return (level=levels, position=positions, value=found)
-end
-
-"""
     _laplace_check_indices(laplace, npar)
 
 Refuse a parameter vector too short to hold every index the spec references.
@@ -875,8 +802,9 @@ including both of its numerical offsets and its exact correlation
 parameterisation, so that a Laplace fit and a Stan fit of the same model are
 describing the same population distribution rather than two similar ones.
 
-`base` is exactly Stan's `rawpopcovbase`: the transformed scales on the
-diagonal, the capped correlation coordinates in the lower triangle. Handing it
+`_laplace_popcov_full` builds the covariance. Its `base` is exactly Stan's
+`rawpopcovbase`: the transformed scales on the diagonal, the correlation
+coordinates in the lower triangle. Handing it
 to `sdcovsqrt2cov` is what makes this the same construction the filter and the
 stan program use rather than a second implementation of it -- this function
 used to spell the code=0 route out by hand, and so silently ignored the model's
@@ -886,6 +814,29 @@ function _laplace_popchol(values::AbstractVector{T}, level::CTSEMLaplaceLevel) w
     k = nrandomeffects(level)
     k == 0 && return zeros(T, 0, 0)
     isreducedrank(level) && return _laplace_poploading(values, level)
+    Sigma = _laplace_popcov_full(values, level)
+    order = level.order
+    if length(order) == k
+        Lp = cholesky(Symmetric(Sigma[order, order])).L
+        S = similar(Sigma)
+        S[order, :] = Lp
+        return S
+    end
+    return Matrix(cholesky(Symmetric(Sigma, :L)).L)
+end
+
+"""
+    _laplace_popcov_full(values, level)
+
+A full-rank level's raw-scale population covariance, by the model's own
+construction and without a factor: what `_laplace_popchol` factors, and what a
+report reads. A report must not factor it -- a draw from an estimate's
+uncertainty can fall far enough past the correlation bound that the matrix,
+valid but near singular, no longer factors in floating point.
+"""
+function _laplace_popcov_full(values::AbstractVector{T}, level::CTSEMLaplaceLevel) where {T}
+    k = nrandomeffects(level)
+    k == 0 && return zeros(T, 0, 0)
     scales = Vector{T}(undef, k)
     @inbounds for j in 1:k
         idx = level.sd_index[j]
@@ -899,12 +850,13 @@ function _laplace_popchol(values::AbstractVector{T}, level::CTSEMLaplaceLevel) w
         for i in 1:k
             if i > j
                 counter += 1
-                # No squash here any more: `constraincorsqrt1` applies it.
-                # The cap still bounds the correlation at 0.99, because it
-                # bounds the coordinate the squash then maps.
+                # No squash here: `constraincorsqrt1` applies it, and `'z'`
+                # has none. How nearly singular the matrix may become is the
+                # objective's bound (`_ctsem_corbound`), the same on every
+                # route; a clamp on the coordinates here once made this route
+                # fit a different parameter space from the augmented one.
                 idx = level.cor_index[counter]
-                base[i, j] = _laplace_cap_correlation(
-                    idx == 0 ? level.cor_fixed[counter] : values[idx])
+                base[i, j] = idx == 0 ? level.cor_fixed[counter] : values[idx]
             end
         end
     end
@@ -919,15 +871,7 @@ function _laplace_popchol(values::AbstractVector{T}, level::CTSEMLaplaceLevel) w
     # is not a path worth caching anyway.
     buffer = _make_square_buffer(T, k)
     _sdcovsqrt2cov_uncached!(buffer, base, level.covmatcode, k)
-    order = level.order
-    if length(order) == k
-        Sigma = Matrix(Symmetric(buffer.out, :L))
-        Lp = cholesky(Symmetric(Sigma[order, order])).L
-        S = similar(Sigma)
-        S[order, :] = Lp
-        return S
-    end
-    return Matrix(cholesky(Symmetric(buffer.out, :L)).L)
+    return Matrix(Symmetric(buffer.out, :L))
 end
 
 # Which square root of a full-rank level's covariance standardises its effects,
@@ -1119,8 +1063,12 @@ squared own sd of every effect whose deviation the subject filter integrates
 (`hybrid`), which has no column of the root.
 """
 function _laplace_level_covariance(lv::CTSEMLaplaceLevel, x::Vector{Float64})
-    L = _laplace_popchol(x, lv)
-    Sigma = L * transpose(L)
+    Sigma = if isreducedrank(lv)
+        L = _laplace_poploading(x, lv)
+        L * transpose(L)
+    else
+        _laplace_popcov_full(x, lv)
+    end
     for p in eachindex(lv.hybrid)
         lv.hybrid[p] || continue
         psi = log1p_exp(2 * x[lv.unique_index[p]] - 1) * lv.sd_scale[p] + 1e-10
@@ -1142,13 +1090,11 @@ through `laplace.objective.params.regular_transforms` and are covered by
 `_ctsem_saturated_parameters` (`parameter_transforms.jl`); each level's
 `sd_index` and `cor_index` coordinates go through the population-scale and
 -correlation formulas `_laplace_popchol` evaluates directly
-(`log1p_exp(2x-1) * sdscale + 1e-10` and `2/(1+exp(-clamp(x))) - 1`), which sit
-outside `regular_transforms` entirely -- "a tail of the vector no model matrix
-cell reads", per `CTSEMLaplaceLevel`'s docstring -- so they need their own
-derivative here. A correlation coordinate sitting past
-`ctsem_set_correlation_cap!`'s cap is flagged by the same mechanism, because
-the clamp itself has zero derivative past it: the same practical fact
-`ctsem_laplace_boundary` already diagnoses separately, by name.
+(`log1p_exp(2x-1) * sdscale + 1e-10`, and for the correlation square root
+`2/(1+exp(-x)) - 1`; `'z'` has no squash to saturate), which sit outside
+`regular_transforms` entirely -- "a tail of the vector no model matrix cell
+reads", per `CTSEMLaplaceLevel`'s docstring -- so they need their own
+derivative here.
 
 A raw index reached by neither layer -- a TI-predictor coefficient -- is never
 flagged, as in `_ctsem_saturated_parameters`.
@@ -1166,10 +1112,11 @@ function _laplace_saturated_parameters(laplace::CTSEMLaplaceObjective,
                 raw -> log1p_exp(2 * raw - 1) * scale + 1e-10, values[idx]))
             d < threshold && push!(found, idx)
         end
+        level.covmatcode == 2 && continue
         for idx in level.cor_index
             idx == 0 && continue
             d = abs(ForwardDiff.derivative(
-                raw -> 2 / (1 + exp(-_laplace_cap_correlation(raw))) - 1, values[idx]))
+                raw -> 2 / (1 + exp(-raw)) - 1, values[idx]))
             d < threshold && push!(found, idx)
         end
     end
