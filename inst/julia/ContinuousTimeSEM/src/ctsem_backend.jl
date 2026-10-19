@@ -297,10 +297,15 @@ the others, `1 - 1/((R^-1)_jj R_jj)`. For two effects it is exactly the
 correlation. It also keeps the smallest eigenvalue of `R` above
 `(1 - bound^2) / k`, so nothing downstream factors a near-singular matrix.
 
-The wall is `-steepness * excess^2` past `log((R^-1)_jj R_jj) = -log(1 -
+The wall is `-steepness * excess^3` past `log((R^-1)_jj R_jj) = -log(1 -
 bound^2)`, zero inside: a fit stops on it as at an ordinary point, with
 curvature, rather than on a flat extension (the clamp that preceded it left
-the coordinate flat past its cap). It is part of the parameter space, not a
+the coordinate flat past its cap). Cubic, not quadratic, so that its curvature
+too starts from zero: a fit stops where the wall balances a weak push, barely
+past the bound, and a quadratic wall's jump in curvature there made the Laplace
+route's differenced Hessian mix columns that saw it with columns that did not
+-- a negative eigenvalue at a maximum the exact Hessian resolved, on a
+simulated boundary model. It is part of the parameter space, not a
 prior: `prior_weight` does not scale it, it is in the objective whatever
 `priors` says, and every route reads it here. It has no curvature inside the
 bound, so `_ctsem_prior_precision` leaves it out. Settable with
@@ -396,7 +401,7 @@ function _ctsem_corbound(objective::CTSEMObjective, values::AbstractVector{T}) w
         M === nothing && return _ctsem_nan(T)
         @inbounds for j in 1:block.k
             excess = log(R[j, j]) + log(M[j, j]) - limit
-            excess > 0 && (total -= kappa * excess * excess)
+            excess > 0 && (total -= kappa * excess * excess * excess)
         end
     end
     return total
@@ -431,7 +436,7 @@ function _ctsem_corbound_gradient!(gradient::AbstractVector, objective::CTSEMObj
             excess = log(R[j, j]) + log(M[j, j]) - limit
             excess > 0 || continue
             past = true
-            w = -2 * kappa * excess
+            w = -3 * kappa * excess * excess
             Rbar[j, j] += w / R[j, j]
             for b in 1:k, a in 1:k
                 Rbar[a, b] -= w * M[a, j] * M[j, b] / M[j, j]

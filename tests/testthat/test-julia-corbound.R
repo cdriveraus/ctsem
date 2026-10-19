@@ -27,7 +27,7 @@
   cells[low] <- ifelse(block$index > 0L, raw[pmax(block$index, 1L)], block$fixed)
   R <- ctsem:::.ctCovForward(cells, if (block$code == 2L) "z" else "rawcorr")
   excess <- log(diag(R) * diag(solve(R))) + log1p(-bound^2)
-  -steepness * sum(pmax(excess, 0)^2)
+  -steepness * sum(pmax(excess, 0)^3)
 }
 
 test_that("the bound is the same wall on both routes, and its gradient is right", {
