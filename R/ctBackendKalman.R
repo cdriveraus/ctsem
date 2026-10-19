@@ -194,6 +194,9 @@
       if (!is.null(result[[f]])) result[[f]][1:2, , , ] <- seq[[f]]
     }
     if (!is.null(result$llrow)) result$llrow <- as.numeric(seq$llrow)
+    # The effects' own posterior at each row, for `indvarstates`.
+    result$effect <- seq$effect
+    result$effectcov <- seq$effectcov
   }
   result
 }
@@ -392,7 +395,12 @@
 #'   observation covariance.
 #' @param subjectpars Also return each subject's own model matrices.
 #' @param indvarstates Keep the augmented individual-difference states in the
-#'   latent output rather than trimming to the real processes.
+#'   latent output rather than trimming to the real processes. On a single
+#'   level of Laplace random effects, where the effects are not states, they
+#'   are appended as if they were: predicted and updated from the subject's
+#'   rows before and up to each row, smoothed from its whole record, on the raw
+#'   scale as deviations from the population value. Their covariances with the
+#'   latent states are not computed and are \code{NA}.
 #' @param ... Passed to \code{collapsefunc}.
 #' @return A list of arrays, the same shape \code{\link{ctKalmanArray}} returns
 #'   for Stan fits, with \code{subjectMatrices} attached when
@@ -467,6 +475,20 @@ ctBackendKalman <- function(fit, subjects = "all", timestep = "asdata",
 
   etaa <- array(0, dim = c(iterations, 3L, nrows, naug))
   etacova <- array(0, dim = c(iterations, 3L, nrows, naug, naug))
+  # A Laplace fit's effects as states (`indvarstates`), from the sequential pass.
+  effects <- isTRUE(indvarstates) && !is.null(spec$laplace)
+  if (effects && !.ctBackendSequentialApplies(spec, .ctBackendLaplaceLevel(spec,
+      if (is.null(randomEffects)) .ctSpecRandomEffectLevels(spec)[[1L]]$name else
+        randomEffects))) stop("ctKalman(indvarstates = TRUE) adds the random ",
+    "effects as states for a single level of Laplace random effects. Each ",
+    "group's posterior of its effects is fit$randomeffects, and ctSubjectPars() ",
+    "gives subject parameters with their uncertainty.", call. = FALSE)
+  effectnames <- if (effects) .ctSpecRandomEffectLevels(spec)[[1L]]$params else character()
+  keff <- length(effectnames)
+  if (effects) {
+    effa <- array(NA_real_, dim = c(iterations, 3L, nrows, keff))
+    effcova <- array(NA_real_, dim = c(iterations, 3L, nrows, keff, keff))
+  }
   ya <- array(0, dim = c(iterations, 3L, nrows, nmanifest))
   ycova <- array(0, dim = c(iterations, 3L, nrows, nmanifest, nmanifest))
   llrow <- matrix(0, iterations, nrows)
@@ -486,6 +508,16 @@ ctBackendKalman <- function(fit, subjects = "all", timestep = "asdata",
     ycova[iteration, , , , ] <- scores$ycov
     llrow[iteration, ] <- scores$llrow
     if (is.null(id)) id <- scores$subject
+    if (effects && !is.null(scores$effect)) {
+      effa[iteration, 1:2, , ] <- array(scores$effect, c(2L, nrows, keff))
+      effcova[iteration, 1:2, , , ] <- array(scores$effectcov, c(2L, nrows, keff, keff))
+      # Smoothed: the posterior given the whole record, which is the updated
+      # one at the subject's last row.
+      last <- tapply(seq_len(nrows), scores$subject, max)
+      rowlast <- as.integer(last[as.character(scores$subject)])
+      effa[iteration, 3L, , ] <- effa[iteration, 2L, rowlast, , drop = FALSE]
+      effcova[iteration, 3L, , , ] <- effcova[iteration, 2L, rowlast, , , drop = FALSE]
+    }
     # A subject whose filter failed leaves its smoothed rows untouched, so this
     # has to be said rather than returned as zeros that look like estimates.
     failed <- which(!is.finite(scores$subject_loglik))
@@ -508,6 +540,19 @@ ctBackendKalman <- function(fit, subjects = "all", timestep = "asdata",
     if (naug > length(latentNames)) {
       latentNames <- c(latentNames, .ctBackendCarrierNames(spec, naug - length(latentNames)))
     }
+  }
+  if (effects) {
+    # Appended after the processes; nothing relates them to the processes here.
+    joined <- array(NA_real_, dim = c(iterations, 3L, nrows, naug + keff))
+    joined[, , , seq_len(naug)] <- etaa
+    joined[, , , naug + seq_len(keff)] <- effa
+    etaa <- joined
+    joinedcov <- array(NA_real_, dim = c(iterations, 3L, nrows, naug + keff, naug + keff))
+    joinedcov[, , , seq_len(naug), seq_len(naug)] <- etacova
+    joinedcov[, , , naug + seq_len(keff), naug + seq_len(keff)] <- effcova
+    etacova <- joinedcov
+    nlatent <- naug + keff
+    latentNames <- c(latentNames[seq_len(naug)], effectnames)
   }
 
   # The manifests as reported, which is not the same as the manifests filtered

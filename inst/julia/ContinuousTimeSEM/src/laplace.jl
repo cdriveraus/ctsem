@@ -6684,10 +6684,22 @@ Deviations each member's filter integrates (`CTSEMHybrid`) are linearised with
 the effects (`ctsem_laplace_mode_jacobian`) and enter at each draw's own
 variances, as the layer holding them as coordinates would have them.
 
+With `conditional = true` each draw also carries a draw of every unit's
+effects from their conditional posterior given its data, `N(0, M^-1)` about
+the linearised mode in the unit's coordinates (`_laplace_effect_posterior`,
+deviations included): plausible values, whose spread is the population
+parameters' uncertainty and each person's own. Without it the spread is the
+population parameters' alone, which for a person with little data is far too
+narrow. The posterior's covariance is taken at `thetahat`, as the mode's
+Jacobian is. `seed` makes those draws reproducible from the R side's seed. A
+unit whose curvature cannot be factorized keeps its linearised mode, and the
+count of such units is warned about.
+
 Returns `ndraws x nsubjects x npar`.
 """
 function ctsem_laplace_subject_values(laplace::CTSEMLaplaceObjective,
-    draws::AbstractMatrix, thetahat::AbstractVector; ti_effects::Bool=true)
+    draws::AbstractMatrix, thetahat::AbstractVector; ti_effects::Bool=true,
+    conditional::Bool=false, seed::Integer=1)
     # The Jacobian is computed here rather than handed in: it is a vector of
     # matrices, and round-tripping one through the R bridge only to send it
     # straight back costs two marshalling steps for no gain.
@@ -6701,12 +6713,22 @@ function ctsem_laplace_subject_values(laplace::CTSEMLaplaceObjective,
     nh = _hybrid_on(hyb) ? length(hyb.manifests) : 0
     items = nh > 0 ? sortperm(hyb.effect) : Int[]
     lv = laplace.spec.levels[1]
+    factors = conditional ? _laplace_conditional_factors(laplace, centre, linear, nh) :
+        nothing
+    rng = MersenneTwister(seed)
     out = zeros(Float64, ndraws, nsubjects, npar)
     for s in 1:ndraws
         theta = collect(Float64, view(draws, s, :))
         Ls = _laplace_popchols(theta, laplace.spec)
         step = theta .- centre
         w = [linear.modes[U] .+ linear.jacobians[U] * step for U in eachindex(units.members)]
+        if factors !== nothing
+            for U in eachindex(units.members)
+                F = factors[U]
+                F === nothing && continue
+                w[U] .+= F * randn(rng, size(F, 1))
+            end
+        end
         shifted = _laplace_shifted_values(laplace, theta, Ls, U -> w[U][1:units.dims[U]])
         if nh > 0
             psi = [_hybrid_item_sd(hyb, lv, theta, k) for k in items]
@@ -6719,6 +6741,45 @@ function ctsem_laplace_subject_values(laplace::CTSEMLaplaceObjective,
         end
         out[s, :, :] = ti_effects ? _laplace_add_ti_effects(laplace, shifted) : shifted
     end
+    return out
+end
+
+"""
+    _laplace_conditional_factors(laplace, theta, linear, nh)
+
+Per unit, the lower Cholesky factor of its effects' conditional posterior
+covariance at `theta` (`_laplace_effect_posterior`), in the coordinates of
+`_laplace_mode_jacobian`'s modes -- effects, then each member's integrated
+deviations -- or `nothing` for a unit with no coordinates, one whose inner
+solve did not converge, or one whose curvature could not be factorized; the
+last two are warned about once, by count.
+"""
+function _laplace_conditional_factors(laplace::CTSEMLaplaceObjective,
+    theta::Vector{Float64}, linear, nh::Integer)
+    units = laplace.units
+    Ls = _laplace_popchols(theta, laplace.spec)
+    out = Vector{Union{Nothing,Matrix{Float64}}}(nothing, length(units.members))
+    failed = 0
+    for U in eachindex(units.members)
+        d = units.dims[U]
+        D = d + nh * length(units.members[U])
+        D == 0 && continue
+        uhat = collect(Float64, view(linear.modes[U], 1:d))
+        post = _laplace_effect_posterior(laplace, U, theta, Ls, uhat, nh)
+        if !post.ok || !laplace.inner_converged[U]
+            failed += 1
+            continue
+        end
+        F = cholesky(Symmetric((post.cov .+ transpose(post.cov)) ./ 2); check=false)
+        if !issuccess(F)
+            failed += 1
+            continue
+        end
+        out[U] = Matrix{Float64}(F.L)
+    end
+    failed > 0 && @warn string(failed, " unit(s) have no conditional draws: their ",
+        "curvature could not be factorized or their mode was not found, so their ",
+        "draws carry the population parameters' uncertainty only.")
     return out
 end
 
@@ -7806,6 +7867,79 @@ function _laplace_deviation_offsets(laplace::CTSEMLaplaceObjective)
         end
     end
     return starts, total
+end
+
+"""
+    _laplace_deviation_blocks(laplace)
+
+The natural deviations' blocks in their layout's order: each block's
+zero-based start and width (its level's `k`). A block is one group's effects at
+one level, so sums of products within blocks (`_effect_cross_add!`) give every
+group's posterior covariance from a sampler's draws.
+"""
+function _laplace_deviation_blocks(laplace::CTSEMLaplaceObjective)
+    starts, _ = _laplace_deviation_offsets(laplace)
+    out = Tuple{Int,Int}[]
+    for U in eachindex(laplace.units.members), (b, blk) in enumerate(laplace.units.blocks[U])
+        push!(out, (starts[U][b], nrandomeffects(laplace.spec.levels[blk.level])))
+    end
+    sort!(out; by=first)
+    return out
+end
+
+"""Length of the packed within-block products for `blocks`."""
+_effect_cross_length(blocks) = sum(k * (k + 1) ÷ 2 for (_, k) in blocks; init=0)
+
+"""
+    _effect_cross_add!(cross, dev, blocks)
+
+Add one draw's within-block products of the deviations `dev` to `cross`,
+packed block by block, each column by column from the diagonal down.
+"""
+function _effect_cross_add!(cross::AbstractVector{Float64}, dev::AbstractVector,
+    blocks::Vector{Tuple{Int,Int}})
+    at = 0
+    @inbounds for (s, k) in blocks
+        for jb in 1:k, ja in jb:k
+            at += 1
+            cross[at] += dev[s + ja] * dev[s + jb]
+        end
+    end
+    return cross
+end
+
+"""
+    _effect_cross_index(blocks)
+
+The two deviation positions (one-based) of each packed entry, in packing
+order: what pooling covariances from several processes needs for the part
+between them.
+"""
+function _effect_cross_index(blocks::Vector{Tuple{Int,Int}})
+    rows = Int[]
+    cols = Int[]
+    for (s, k) in blocks, jb in 1:k, ja in jb:k
+        push!(rows, s + ja)
+        push!(cols, s + jb)
+    end
+    return rows, cols
+end
+
+"""
+    _effect_cross_cov(cross, mean, n, blocks)
+
+Each block's sample covariance, packed as `cross` is, from the sums of products
+over `n` draws and the deviations' means.
+"""
+function _effect_cross_cov(cross::AbstractVector{Float64}, mean::AbstractVector{Float64},
+    n::Integer, blocks::Vector{Tuple{Int,Int}})
+    out = zeros(Float64, length(cross))
+    at = 0
+    for (s, k) in blocks, jb in 1:k, ja in jb:k
+        at += 1
+        out[at] = (cross[at] / n - mean[s + ja] * mean[s + jb]) * (n / max(n - 1, 1))
+    end
+    return out
 end
 
 """

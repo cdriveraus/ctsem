@@ -714,6 +714,9 @@
     # is what dropping these produced.
     effect_mean = as.numeric(result$effect_mean),
     effect_sd = as.numeric(result$effect_sd),
+    effect_cov = as.numeric(result$effect_cov),
+    effect_cov_rows = as.integer(result$effect_cov_rows),
+    effect_cov_cols = as.integer(result$effect_cov_cols),
     sampler = if (is.null(result$sampler)) "nuts" else as.character(result$sampler),
     # Each worker placed its own chain; the first worker's placement stands for
     # the run's in the assembled fit.
@@ -790,6 +793,19 @@
       colSums(nb * sweep(means, 2, effectmean)^2)
     effectsd <- sqrt(total / max(1, sum(nb) - 1))
   }
+  # Each group's covariance pools the same way, entry by packed entry: the
+  # blocks' own products plus the products of their means' departures.
+  covs <- do.call(rbind, lapply(drawn, function(d) as.numeric(d$effect_cov)))
+  rows <- as.integer(drawn[[1]]$effect_cov_rows)
+  cols <- as.integer(drawn[[1]]$effect_cov_cols)
+  effectcov <- numeric(0)
+  if (length(effectmean) && !is.null(covs) && ncol(covs) > 0L &&
+      ncol(covs) == length(rows)) {
+    nb <- nblock * nper
+    departure <- sweep(means, 2, effectmean)
+    effectcov <- (colSums((nb - 1) * covs) + colSums(nb * departure[, rows, drop = FALSE] *
+      departure[, cols, drop = FALSE])) / max(1, sum(nb) - 1)
+  }
 
   module <- .ctJuliaModule(fit$model_spec$project)
   # The population block alone: R-hat over every random effect as well would
@@ -818,6 +834,7 @@
     accept = perdraw("accept"), depth = perdraw("depth"),
     energy = perdraw("energy"),
     effect_mean = effectmean, effect_sd = effectsd,
+    effect_cov = effectcov, effect_cov_rows = rows, effect_cov_cols = cols,
     # Per chain, like the step size.
     sampler = drawn[[1]]$sampler,
     placement = drawn[[1]]$placement,

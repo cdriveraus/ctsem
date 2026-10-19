@@ -1155,6 +1155,9 @@
     energy = as.numeric(result$energy),
     effect_mean = as.numeric(result$effect_mean),
     effect_sd = as.numeric(result$effect_sd),
+    effect_cov = as.numeric(result$effect_cov),
+    effect_cov_rows = as.integer(result$effect_cov_rows),
+    effect_cov_cols = as.integer(result$effect_cov_cols),
     marginal = identical(as.integer(result$ndim), as.integer(result$npar)),
     # Which posterior was sampled, 'joint' (`intoverpop = 'none'`) or
     # 'marginal' (`'laplace'` or `'augmented'`) -- distinct from
@@ -1197,6 +1200,11 @@
   out$transformedpars <- NULL
   out$transformedpars <- .ctBackendConstrained(out)
   out$priorerrors <- .ctBackendPriorErrors(out)
+  # Each group's posterior of its effects: from the draws when the effects were
+  # sampled, and otherwise -- a marginal sample -- from the Laplace or
+  # augmented posterior at the posterior mean, as an optimised fit stores it.
+  out$randomeffects <- tryCatch(.ctRandomEffectsFromSample(out),
+    error = function(e) NULL)
 
   # Which sampled coordinates reached the flat region of their transform.
   # Computed here because the warner sees only the diagnostics, and the draws

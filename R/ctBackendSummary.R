@@ -1228,7 +1228,7 @@ ctBackendParMatrices <- function(fit, raw = NULL, tipreds = NULL, state = NULL,
 # generation does. Without the effect draws (`saveEffects = FALSE`, the
 # default) the draws fall back to the linearised modes, and say so.
 .ctBackendLaplaceSubjectPars <- function(fit, spec, pointest = TRUE,
-  nsamples = "all") {
+  nsamples = "all", uncertainty = "total") {
   cells <- .ctBackendFreeParameterCells(fit)
   cells <- cells[!cells$randomeffect, , drop = FALSE]
   varying <- .ctBackendVaryingParameters(spec, cells)
@@ -1252,6 +1252,16 @@ ctBackendParMatrices <- function(fit, raw = NULL, tipreds = NULL, state = NULL,
 
   sampled <- identical(fit$sample$target, "joint") &&
     length(fit$sample$effect_mean) > 0L
+  if (sampled && !is.null(draws) && !identical(uncertainty, "total")) stop(
+    "This fit sampled each subject's random effects with the parameters, so its ",
+    "draws carry both uncertainties together; uncertainty = 'total' is what ",
+    "they give.", call. = FALSE)
+  # With the population held at the estimate, every draw is the estimate and
+  # only the subject's own effects vary.
+  if (!is.null(draws) && identical(uncertainty, "conditional")) {
+    draws <- matrix(as.numeric(fit$estimate$raw), nrow(draws), ncol(draws),
+      byrow = TRUE)
+  }
   # The engine reports deviations its filter integrates at their conditional
   # modes, and linearises them with the effects for draws
   # (`.ctBackendHybridReports`); a fit that sampled its effects has a draw of
@@ -1264,9 +1274,9 @@ ctBackendParMatrices <- function(fit, raw = NULL, tipreds = NULL, state = NULL,
     if (!is.null(saved) && nrow(saved) == nrow(.ctBackendRawSamples(fit))) {
       effects <- if (is.null(keep)) saved else saved[keep, , drop = FALSE]
     } else message("This fit sampled its random effects, but their draws are ",
-      "not on it, so each subject's draws are its conditional mode linearised ",
-      "around the estimate rather than its sampled effects. Sample with ",
-      "saveEffects=TRUE to report from the draws.")
+      "not on it, so each subject's draws come from its Laplace posterior about ",
+      "the mode linearised around the estimate rather than from its sampled ",
+      "effects. Sample with saveEffects=TRUE to report from the draws.")
   }
 
   if (is.null(draws)) {
@@ -1289,11 +1299,15 @@ ctBackendParMatrices <- function(fit, raw = NULL, tipreds = NULL, state = NULL,
   # makes this a matrix-vector product per draw rather than a Newton solve. See
   # `ctsem_laplace_subject_values`: it is an approximation, and it is documented
   # as one wherever it surfaces.
+  # Each subject's own uncertainty, drawn in the engine from its conditional
+  # posterior about the linearised mode (`conditional`); the seed is R's, so
+  # set.seed() governs the draws.
   raw <- .ctBackendJuliaValue(if (!is.null(effects))
     module$ctsem_laplace_subject_values(objective, .ctJuliaPut(as.matrix(draws)),
       .ctJuliaPut(as.matrix(effects))) else
     module$ctsem_laplace_subject_values(objective, .ctJuliaPut(as.matrix(draws)),
-      estimate))
+      estimate, conditional = !identical(uncertainty, "population"),
+      seed = sample.int(.Machine$integer.max, 1L)))
   nsubjects <- length(spec$subject_starts)
   raw <- array(as.numeric(raw), dim = c(nrow(draws), nsubjects,
     length(fit$estimate$raw)))
@@ -1504,10 +1518,11 @@ ctBackendParMatrices <- function(fit, raw = NULL, tipreds = NULL, state = NULL,
 # both), and where each one lives is the same population cell the fixed-effects
 # summary reads -- so a random-effects CINT parameter is reported from `subj_
 # CINT`, transform applied, rather than from its raw carrier state.
-.ctBackendSubjectPars <- function(fit, pointest = TRUE, nsamples = "all") {
+.ctBackendSubjectPars <- function(fit, pointest = TRUE, nsamples = "all",
+  uncertainty = "total") {
   spec <- .ctBackendSpec(fit)
   if (!is.null(spec$laplace)) {
-    return(.ctBackendLaplaceSubjectPars(fit, spec, pointest, nsamples))
+    return(.ctBackendLaplaceSubjectPars(fit, spec, pointest, nsamples, uncertainty))
   }
   cells <- .ctBackendFreeParameterCells(fit)
   cells <- cells[!cells$randomeffect, , drop = FALSE]
@@ -1522,6 +1537,21 @@ ctBackendParMatrices <- function(fit, raw = NULL, tipreds = NULL, state = NULL,
     .ctBackendVaryingParameters(spec, cells)
 
   if (isTRUE(pointest)) fit$estimate$rawposterior <- NULL
+  conditional <- !isTRUE(pointest) && !identical(uncertainty, "population")
+  if (conditional && (standardised || (!is.null(regression$cells) &&
+      nrow(regression$cells)))) stop("Each subject's own uncertainty is not ",
+    "available for a reduced-rank (poprank) fit on the augmented route, whose ",
+    "effects are dimensions rather than parameters; use intoverpop = 'laplace', ",
+    "or uncertainty = 'population'.", call. = FALSE)
+  # With the population held at the estimate every draw is the estimate, so
+  # only the subject's own effects, added below, vary.
+  if (identical(uncertainty, "conditional") && !isTRUE(pointest)) {
+    draws <- .ctBackendRawSamples(fit)
+    count <- if (identical(nsamples, "all")) nrow(draws) else
+      min(nrow(draws), as.integer(nsamples))
+    fit$estimate$rawposterior <- matrix(as.numeric(fit$estimate$raw), count,
+      ncol(draws), byrow = TRUE)
+  }
   extracted <- .ctBackendExtract(fit, subjectMatrices = TRUE, nsamples = nsamples)
 
   index <- match(varying, cells$parnumber)
@@ -1535,6 +1565,8 @@ ctBackendParMatrices <- function(fit, raw = NULL, tipreds = NULL, state = NULL,
       values <- extracted[[paste0("subj_", cells$matrix[cell])]]
       out[, , position] <- values[, , cells$row[cell], cells$col[cell]]
     }
+    if (conditional) out <- .ctRandomEffectsAugmentedDraws(fit, out,
+      cells[index, , drop = FALSE])
   } else {
     # Nothing from this route. The dimensions come from whichever subject
     # matrix the cell route is about to read, so that the arrays concatenate.

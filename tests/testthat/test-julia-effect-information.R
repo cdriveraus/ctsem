@@ -13,6 +13,9 @@
 # identifiability report; that a weakly determined effect is said once, in the
 # words `summary()` and `ctReport()` repeat, with a lower poprank offered
 # where the level can take one; and that an informed one is not said at all.
+# The same pass gives each group's posterior of its effects, which a fit
+# stores (`fit$randomeffects`, R/ctRandomEffects.R) and `ctSubjectPars()` and
+# `ctKalman(indvarstates = TRUE)` read; the two routes must agree on it too.
 
 # A random CINT and a random initial level: one static carrier and one
 # dynamic state on the augmented route, so its backward pass is exercised for
@@ -117,6 +120,31 @@ test_that("the two routes agree on how much each subject's data determine, where
   expect_identical(info$laplace$point, "a test point")
   expect_equal(info$laplace$values, unname(points$laplace))
   expect_equal(info$laplace$units$n, 20L)
+
+  # Each subject's posterior from the same pass: the deviation of each effect
+  # from its population value and their covariance, on the raw scale -- the
+  # Laplace mode and inverse curvature against the smoothed effect states.
+  post <- lapply(info, function(i) i$posterior[[1L]])
+  order <- match(post$laplace$param, post$augmented$param)
+  expect_false(anyNA(order))
+  expect_equal(post$augmented$mean[, order], post$laplace$mean, tolerance = 1e-6)
+  unpack <- function(entry, columns) {
+    index <- ctsem:::.ctPackedIndex(length(entry$param))
+    t(apply(entry$cov, 1L, function(v) {
+      m <- matrix(NA_real_, length(entry$param), length(entry$param))
+      m[index] <- v
+      m[index[, 2:1, drop = FALSE]] <- v
+      as.numeric(m[columns, columns])
+    }))
+  }
+  expect_equal(unpack(post$augmented, order), unpack(post$laplace,
+    seq_along(post$laplace$param)), tolerance = 1e-6)
+  # The variance is what the share was taken from.
+  j <- match("cint", post$laplace$param)
+  index <- ctsem:::.ctPackedIndex(length(post$laplace$param))
+  variance <- post$laplace$cov[, which(index[, 1L] == j & index[, 2L] == j)]
+  population <- info$laplace$table$popsd[match("cint", info$laplace$table$effect)]^2
+  expect_equal(1 - variance / population, unname(laplace[, "cint"]), tolerance = 1e-6)
 })
 
 test_that("an sd near zero is measured again at the starting spread, and that decides", {
@@ -321,6 +349,44 @@ test_that("a fit takes it at its estimate, keeps it, and says nothing when every
   # Nothing to say, so the summary says nothing about it.
   printed <- utils::capture.output(print(summary(fit)))
   expect_false(any(grepl("barely determined", printed)))
+
+  # Each subject's posterior is stored from the same pass, labelled by id.
+  stored <- fit$randomeffects
+  expect_identical(attr(stored, "route"), "laplace")
+  expect_equal(attr(stored, "evaluated_at"), as.numeric(fit$estimate$raw))
+  entry <- stored[[1L]]
+  expect_identical(entry$param, "cint")
+  expect_identical(entry$ids, as.character(unique(.ei_fitdata()$id)))
+  expect_equal(dim(entry$mean), c(30L, 1L))
+  expect_true(all(entry$cov > 0))
+  # ctKalman(indvarstates = TRUE) appends the effect as a state: smoothed it is
+  # the stored posterior at every row; predicted at a subject's first row it is
+  # the population, with the population's variance.
+  k <- suppressMessages(ctKalmanArray(fit, indvarstates = TRUE, realid = FALSE))
+  expect_identical(dimnames(k$etasmooth)[[3L]], c("eta1", "cint"))
+  rows <- split(seq_along(k$id), as.integer(k$id))
+  smooth <- k$etasmooth[1L, , "cint"]
+  expect_equal(unname(vapply(rows, function(r) smooth[r[1L]], 0)),
+    unname(entry$mean[, 1L]))
+  expect_true(all(vapply(rows, function(r) diff(range(smooth[r])), 0) == 0))
+  first <- vapply(rows, `[`, 0L, 1L)
+  expect_equal(unname(k$etaprior[1L, first, "cint"]), rep(0, 30L))
+  popsd <- effects$table$popsd[effects$table$effect == "cint"]
+  expect_equal(unname(k$etapriorcov[1L, first, "cint", "cint"]), rep(popsd^2, 30L),
+    tolerance = 1e-6)
+  expect_true(all(is.na(k$etasmoothcov[1L, , "eta1", "cint"])))
+  # ctSubjectPars: 'conditional' draws vary with the subject's own posterior,
+  # 'population' ones only with the parameters', and 'total' carries both.
+  set.seed(4)
+  spread <- vapply(c("population", "conditional", "total"), function(u)
+    apply(ctSubjectPars(fit, pointest = FALSE, nsamples = 400,
+      uncertainty = u)[, , "cint"], 2L, stats::sd), numeric(30L))
+  expect_true(all(spread[, "total"] > spread[, "population"]))
+  # Linear in the raw effect, so the conditional spread is the stored sd times
+  # one slope for every subject.
+  ratio <- spread[, "conditional"] / sqrt(entry$cov[, 1L])
+  expect_lt(stats::sd(ratio) / mean(ratio), 0.1)
+  expect_error(ctSubjectPars(fit, uncertainty = "total"), "pointest=FALSE")
 })
 
 test_that("a weakly informed effect is said once, and summary() and ctReport() repeat it", {

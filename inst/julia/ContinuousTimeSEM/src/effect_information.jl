@@ -45,13 +45,26 @@ eigenvalue of `M` as `ctsem_laplace_conditioning` reports it and whether the
 inner solve converged. The modes are solved at `values` from the origin, as an
 evaluation solves them.
 
+The same pass gives each group's conditional posterior of its effects on the
+raw scale, which the fit stores for every person-level report: per level,
+`mean` (`ngroups` by effects: `L z_hat`, the deviation from the population
+value and TI-predictor effects) and `cov` (`ngroups` by `k(k+1)/2`:
+`L M^-1 L'`, packed column by column from the diagonal down), and `group`,
+each subject's group index at every level. Deviations the
+subject filter integrates (`CTSEMHybrid`) are not coordinates of this
+objective; the layer, which holds them as coordinates, reports them with the
+rest.
+
 On the augmented route (`CTSEMObjective`) each effect is a state of the
 filter (`population_indices`), its population variance the variance the
 filter starts it at, and its posterior variance that state's smoothed
 variance at the subject's first row: a carrier state has no dynamics, so that
 is its variance given every observation, and for an individually varying
 initial state it is the initial state's. Returns `determined` and `priorvar`,
-subjects by effects.
+subjects by effects. With them, each effect state's smoothed mean at the
+first row (`mean`), the mean the filter starts it at (`prior_mean`), and the
+smoothed covariance among the effect states (`cov`, packed as above), all in
+state units.
 
 A level or route with no random effects returns a one-by-one `NaN`
 placeholder rather than an empty array, which the R bridge cannot carry.
@@ -67,11 +80,15 @@ function ctsem_effect_information(laplace::CTSEMLaplaceObjective,
     determined = Vector{Matrix{Float64}}(undef, nlev)
     popvar = Vector{Vector{Float64}}(undef, nlev)
     filled = Vector{Vector{Bool}}(undef, nlev)
+    means = Vector{Matrix{Float64}}(undef, nlev)
+    covs = Vector{Matrix{Float64}}(undef, nlev)
     for l in 1:nlev
         lv = spec.levels[l]
         k = nrandomeffects(lv)
         L = Ls[l]
         determined[l] = fill(NaN, max(lv.ngroups, 1), max(k, 1))
+        means[l] = fill(NaN, max(lv.ngroups, 1), max(k, 1))
+        covs[l] = fill(NaN, max(lv.ngroups, 1), max(div(k * (k + 1), 2), 1))
         popvar[l] = k == 0 ? [NaN] : [sum(abs2, view(L, j, :)) for j in 1:k]
         filled[l] = fill(false, lv.ngroups)
     end
@@ -90,17 +107,19 @@ function ctsem_effect_information(laplace::CTSEMLaplaceObjective,
     # written from two tasks would race, neighbouring bytes do not.
     _laplace_parallel(laplace, 1:nunits) do U
         _effect_information_unit!(laplace, U, theta, Ls, determined, popvar,
-            filled, mins, converged)
+            filled, mins, converged, means, covs)
         return true
     end
     return (determined=determined, popvar=popvar, min_eigenvalue=mins,
-        converged=converged,
+        converged=converged, mean=means, cov=covs,
+        group=[collect(Int, lv.group) for lv in spec.levels],
         nrandom=[nrandomeffects(lv) for lv in spec.levels])
 end
 
 """One unit's share of `ctsem_effect_information` on the Laplace route."""
 function _effect_information_unit!(laplace::CTSEMLaplaceObjective, U::Int,
-    theta::Vector{Float64}, Ls, determined, popvar, filled, mins, converged)
+    theta::Vector{Float64}, Ls, determined, popvar, filled, mins, converged,
+    means, covs)
     spec = laplace.spec
     nlev = length(spec.levels)
     d = laplace.units.dims[U]
@@ -155,7 +174,13 @@ function _effect_information_unit!(laplace::CTSEMLaplaceObjective, U::Int,
                 population = popvar[l][j]
                 determined[l][g, j] = population > 0 ?
                     1 - posterior / population : NaN
+                centre = 0.0
+                for a in 1:r
+                    centre += L[j, a] * u[base + a]
+                end
+                means[l][g, j] = centre
             end
+            _effect_pack_cov!(covs[l], g, L, block, k, r)
         end
     end
     return nothing
@@ -169,8 +194,12 @@ function ctsem_effect_information(objective::CTSEMObjective, values::AbstractVec
     nsub = length(subjects)
     determined = fill(NaN, max(nsub, 1), max(k, 1))
     priorvar = fill(NaN, max(nsub, 1), max(k, 1))
+    means = fill(NaN, max(nsub, 1), max(k, 1))
+    priormeans = fill(NaN, max(nsub, 1), max(k, 1))
+    covs = fill(NaN, max(nsub, 1), max(div(k * (k + 1), 2), 1))
     (k == 0 || nsub == 0) &&
-        return (determined=determined, priorvar=priorvar, nrandom=k)
+        return (determined=determined, priorvar=priorvar, mean=means,
+            prior_mean=priormeans, cov=covs, nrandom=k)
     raw = collect(Float64, values)
     maxrows = maximum(size(sub.data, 2) for sub in subjects)
     # Contiguous chunks of subjects, each owning its workspace and trace, as
@@ -193,11 +222,18 @@ function ctsem_effect_information(objective::CTSEMObjective, values::AbstractVec
                 _ctsem_tipred_vector(sub.tipreds, raw), i,
                 sub.max_timestep, trace)
             isfinite(value) || continue
-            smoothed = _effect_smoothed_initial_cov(trace, nobs, n)
+            smoothed, centre = _effect_smoothed_initial(trace, nobs, n)
             for (j, s) in enumerate(states)
                 prior = trace.etacov[_CTSEM_KALMAN_PRIOR, 1, s, s]
                 priorvar[i, j] = prior
                 determined[i, j] = prior > 0 ? 1 - smoothed[s, s] / prior : NaN
+                means[i, j] = centre[s]
+                priormeans[i, j] = trace.eta[_CTSEM_KALMAN_PRIOR, 1, s]
+            end
+            at = 0
+            for jb in 1:k, ja in jb:k
+                at += 1
+                covs[i, at] = smoothed[states[ja], states[jb]]
             end
         end
         return nothing
@@ -211,39 +247,66 @@ function ctsem_effect_information(objective::CTSEMObjective, values::AbstractVec
             Threads.@spawn run(ranges[c])
         end
     end
-    return (determined=determined, priorvar=priorvar, nrandom=k)
+    return (determined=determined, priorvar=priorvar, mean=means,
+        prior_mean=priormeans, cov=covs, nrandom=k)
 end
 
 export ctsem_effect_information
 
 """
-    _effect_smoothed_initial_cov(trace, nobs, n)
+    _effect_pack_cov!(out, g, L, block, k, r)
 
-The smoothed state covariance at a subject's first row: the covariance half of
-the backward pass `_kalman_smooth!` makes, with the same ridge on the matrix it
-solves against, but through the engine's own Cholesky rather than LAPACK's, and
-without the means and the measurement quantities nothing here reads.
+Row `g` of `out` set to `L * block * L'`, `k x k`, packed column by column
+from the diagonal down: the layout every stored covariance of effects uses.
 """
-function _effect_smoothed_initial_cov(trace::CTSEMKalmanTrace, nobs::Int, n::Int)
+function _effect_pack_cov!(out::AbstractMatrix{Float64}, g::Integer,
+    L::AbstractMatrix, block::AbstractMatrix{Float64}, k::Integer, r::Integer)
+    at = 0
+    for jb in 1:k, ja in jb:k
+        at += 1
+        value = 0.0
+        for a in 1:r, b in 1:r
+            value += L[ja, a] * block[a, b] * L[jb, b]
+        end
+        out[g, at] = value
+    end
+    return out
+end
+
+"""
+    _effect_smoothed_initial(trace, nobs, n)
+
+The smoothed state covariance and mean at a subject's first row: the backward
+pass `_kalman_smooth!` makes, with the same ridge on the matrix it solves
+against, but through the engine's own Cholesky rather than LAPACK's, and
+without the measurement quantities nothing here reads. Returns
+`(covariance, mean)`.
+"""
+function _effect_smoothed_initial(trace::CTSEMKalmanTrace, nobs::Int, n::Int)
     smoothed = trace.etacov[_CTSEM_KALMAN_UPD, nobs, :, :]
+    centre = trace.eta[_CTSEM_KALMAN_UPD, nobs, :]
     P = Matrix{Float64}(undef, n, n)
     gain = Matrix{Float64}(undef, n, n)
     scratch = Matrix{Float64}(undef, n, n)
+    step = Vector{Float64}(undef, n)
     for r in (nobs - 1):-1:1
         prior = trace.etacov[_CTSEM_KALMAN_PRIOR, r + 1, :, :]
         updated = trace.etacov[_CTSEM_KALMAN_UPD, r, :, :]
         copyto!(P, prior)
         _symmetrize_and_ridge!(P, n)
         factor = _ctsem_cholesky(P, n)
-        issuccess(factor) || return fill(NaN, n, n)
+        issuccess(factor) || return fill(NaN, n, n), fill(NaN, n)
         # gain = P_upd A' P_prior^-1
         _ctsem_mulNT!(gain, updated, trace.transition[r + 1])
         rdiv!(gain, factor)
+        # x_sm[r] = x_upd[r] + gain (x_sm[r+1] - x_prior[r+1])
+        step .= centre .- view(trace.eta, _CTSEM_KALMAN_PRIOR, r + 1, :)
+        centre = trace.eta[_CTSEM_KALMAN_UPD, r, :] .+ gain * step
         # P_sm[r] = P_upd + gain (P_sm[r+1] - P_prior[r+1]) gain'
         smoothed .-= prior
         _ctsem_mul!(scratch, gain, smoothed)
         _ctsem_mulNT!(updated, scratch, gain, true, true)
         smoothed = updated
     end
-    return smoothed
+    return smoothed, centre
 end

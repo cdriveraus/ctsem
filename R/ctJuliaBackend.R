@@ -6489,7 +6489,13 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
   effectcheck <- if (isTRUE(intoverstates)) .ctBackendWithMaxChunks(cores,
     .ctEffectInformation(out$model_spec, out$estimate$raw,
       point = "at the estimate")) else NULL
-  if (!is.null(effectcheck)) out$identifiability <- list(effects = effectcheck)
+  if (!is.null(effectcheck)) {
+    # Each group's posterior from the same pass, stored once for every
+    # person-level report (R/ctRandomEffects.R).
+    out$randomeffects <- .ctRandomEffectsStore(out, effectcheck$posterior)
+    effectcheck$posterior <- NULL
+    out$identifiability <- list(effects = effectcheck)
+  }
   .ctEffectMessage(effectcheck)
   # `fit`/`at` let it tell a random-effect block trading its scale off against
   # its correlations -- where the covariances are determined, and fixing a

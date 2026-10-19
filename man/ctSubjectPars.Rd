@@ -10,7 +10,8 @@ ctSubjectPars(
   pointest = TRUE,
   cores = getOption("mc.cores", 2L),
   nsamples = "all",
-  level = NULL
+  level = NULL,
+  uncertainty = NULL
 )
 }
 \arguments{
@@ -32,6 +33,19 @@ group's own parameter values -- the population values shifted by that
 group's random effects and those of the levels above it, without the
 subject-level ones or TI predictor effects. Grouping levels need a
 \code{backend='julia'} fit and \code{pointest=TRUE}.}
+
+\item{uncertainty}{For \code{backend='julia'} fits with \code{pointest=FALSE}:
+what the draws carry. \code{'total'} (the default) pairs each draw of the
+population parameters with a draw of each subject's random effects from their
+posterior given that subject's data -- plausible values, whose spread is both
+the population parameters' uncertainty and how well the subject's own data
+determine its parameters. \code{'conditional'} keeps the population
+parameters at the estimate and draws only the subject's effects;
+\code{'population'} varies only the population parameters, with each subject
+at its estimate given them, which understates a subject's uncertainty
+whenever its own data say little. A fit that sampled its random effects
+(\code{optimize=FALSE}) already has draws of both, so only \code{'total'}
+applies there.}
 }
 \value{
 an nsamples by nsubjects by nparams array, with the subjects (or
@@ -45,6 +59,13 @@ Extract an array of subject specific parameters from a fit from
 \details{
 This function returns the estimates of individual parameters, taking into account any
 covariates and random effects, at every level of a nested model.
+
+A julia fit also stores, for every level with random effects, each group's
+conditional posterior of its effects on the raw parameter scale --
+\code{fit$randomeffects}, one entry per level with the groups' \code{mean}
+deviation from the population value and their covariance packed column by
+column (\code{cov}). The draws with \code{uncertainty='total'} are built from
+the same posterior.
 }
 \examples{
 indpars <- ctSubjectPars(ctstantestfit)

@@ -125,7 +125,7 @@
   table$sdindex <- NULL
   out <- list(point = point, values = values, route = at$route,
     table = table, groups = at$groups, thresholds = .ctEffectThresholds(),
-    ranks = .ctEffectRanks(spec, at$route, table))
+    ranks = .ctEffectRanks(spec, at$route, table), posterior = at$posterior)
   if (!is.null(at$mins)) {
     # Per unit, as `fit$laplace$conditioning` reports it at the estimate: an
     # eigenvalue of the inner curvature below the prior's is a unit whose
@@ -158,8 +158,10 @@
   if (inherits(result, "try-error") || is.null(result$determined)) return(NULL)
   determined <- result$determined
   if (!is.list(determined)) determined <- list(determined)
+  aslist <- function(x) if (is.list(x)) x else list(x)
   rows <- list()
   groups <- list()
+  posterior <- list()
   mins <- NULL
   if (laplace) {
     mins <- as.numeric(result$min_eigenvalue)
@@ -170,6 +172,15 @@
       d <- matrix(as.numeric(as.matrix(determined[[l]])), ncol = k)
       colnames(d) <- as.character(level$param)
       groups[[as.character(level$name)]] <- d
+      # Each group's conditional posterior from the same pass, which the fit
+      # stores for every person-level report (`.ctRandomEffectsStore()`).
+      if (!is.null(result$mean)) posterior[[length(posterior) + 1L]] <- list(
+        level = as.character(level$name), index = l, param = as.character(level$param),
+        parnumber = as.integer(level$re_index),
+        mean = matrix(as.numeric(as.matrix(aslist(result$mean)[[l]])), ncol = k),
+        cov = matrix(as.numeric(as.matrix(aslist(result$cov)[[l]])),
+          ncol = k * (k + 1L) / 2L),
+        group = as.integer(aslist(result$group)[[l]]))
       popvar <- as.numeric(result$popvar[[l]])
       # What switches this level's effects off: `indvarying` for subjects,
       # `indvarying_<level>` above them.
@@ -196,6 +207,22 @@
     # The filter starts each effect's state at its population variance, in
     # state units; `scale` is the factor between those and the raw parameter.
     priorsd <- sqrt(as.matrix(result$priorvar))
+    # The posterior in raw units: each effect state's smoothed deviation from
+    # where the filter started it, over the state-to-raw factor, so the stored
+    # posterior means the same thing as the Laplace route's `L z`.
+    if (!is.null(result$mean)) {
+      k <- ncol(d)
+      scale <- as.numeric(effects$scale)
+      scale[!is.finite(scale) | scale == 0] <- 1
+      centre <- matrix(as.numeric(as.matrix(result$mean)), ncol = k)
+      start <- matrix(as.numeric(as.matrix(result$prior_mean)), ncol = k)
+      packed <- matrix(as.numeric(as.matrix(result$cov)), ncol = k * (k + 1L) / 2L)
+      index <- .ctPackedIndex(k)
+      posterior[[1L]] <- list(level = name, index = 1L, param = as.character(effects$param),
+        mean = sweep(centre - start, 2L, scale, "/"),
+        cov = sweep(packed, 2L, scale[index[, 1L]] * scale[index[, 2L]], "/"),
+        group = seq_len(nrow(d)))
+    }
     for (j in seq_len(ncol(d))) {
       scale <- as.numeric(effects$scale[j])
       if (!is.finite(scale) || scale == 0) scale <- 1
@@ -207,7 +234,8 @@
   }
   if (!length(rows)) return(NULL)
   list(table = do.call(rbind, rows), groups = groups, mins = mins,
-    route = if (laplace) "laplace" else "augmented")
+    route = if (laplace) "laplace" else "augmented",
+    posterior = if (length(posterior)) posterior)
 }
 
 # A reduced-rank level, one effect at a time.
