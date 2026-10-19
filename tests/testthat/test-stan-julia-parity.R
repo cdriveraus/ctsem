@@ -571,11 +571,7 @@ test_that("Stan and Julia agree for 3 original (not just augmented) latents", {
 # Augmented by name: stan has that route only, and 'auto' takes laplace for
 # this model's random DRIFT, whose objective is a different function.
 .parity_fit_cache <- new.env(parent = emptyenv())
-# Without julia's bound on random-effect correlations (R/ctCorBound.R): the
-# stan program has none, and this fixture's correlations walk a ridge to the
-# singular boundary, where a bounded fit would stop and stan's would not.
 .parity_julia_fit <- function(optimcontrol = list()) {
-  optimcontrol$corbound <- 0
   key <- paste0("fit:", paste(names(optimcontrol), unlist(optimcontrol),
     sep = "=", collapse = ";"))
   if (!exists(key, envir = .parity_fit_cache, inherits = FALSE)) {
