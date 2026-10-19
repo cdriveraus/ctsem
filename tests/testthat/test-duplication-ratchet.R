@@ -45,7 +45,7 @@ test_that("the backend is not asked by class literal in more places than it is",
   # The ratchet. Bring this down opportunistically when touching a file for
   # another reason; a sweep is not worth the churn, and this is what makes the
   # opportunistic version converge.
-  expect_lte(literal, 56L)
+  expect_lte(literal, 54L)
 })
 
 test_that("the number of two-implementation forks does not grow", {

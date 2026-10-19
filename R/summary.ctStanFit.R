@@ -209,14 +209,14 @@ ctSubjectPars <- function(fit,pointest=TRUE,cores=getOption("mc.cores", 2L),nsam
   # what this refusal exists to stop. Before the conflated-cell warning below,
   # so a rejected call does not also emit a warning about a result it will not
   # produce.
-  if(inherits(fit,'ctJuliaFit') && !missing(cores)) stop(
+  if(.ctFitIsJulia(fit) && !missing(cores)) stop(
     "ctSubjectPars(cores=) is only available for backend='stan' fits: it ",
     "splits ctExtract()'s subject-matrix reconstruction across R worker ",
     "processes, and a julia fit already carries those arrays. Drop it -- ",
     "ctFit(cores=) is where the julia engine takes a thread count.",
     call.=FALSE)
   if(!is.null(uncertainty)){
-    if(!inherits(fit,'ctJuliaFit')) stop("ctSubjectPars(uncertainty=) is for ",
+    if(!.ctFitIsJulia(fit)) stop("ctSubjectPars(uncertainty=) is for ",
       "backend='julia' fits. A stan fit's draws vary the population parameters, ",
       "and with intoverpop each subject's own uncertainty is ctKalman()'s ",
       "smoothed covariance of its individually varying states.", call.=FALSE)
@@ -259,7 +259,7 @@ ctSubjectPars <- function(fit,pointest=TRUE,cores=getOption("mc.cores", 2L),nsam
   # backend='julia' fits reach the same quantity by the same route -- the
   # subject matrices ctExtract() returns -- but reach the model metadata through
   # the spec rather than through matsetup; see R/ctBackendSummary.R.
-  if(inherits(fit,'ctJuliaFit')) return(.ctSubjectParsLabel(.ctBackendSubjectPars(fit,
+  if(.ctFitIsJulia(fit)) return(.ctSubjectParsLabel(.ctBackendSubjectPars(fit,
     pointest=pointest, nsamples=nsamples,
     uncertainty=if(is.null(uncertainty)) 'total' else uncertainty), fit))
 
