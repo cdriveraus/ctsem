@@ -1357,8 +1357,9 @@ ctFit<-function(datalong, model, stanmodeltext=NA, iter=1000, intoverstates=TRUE
     if(!backend %in% 'julia') stop("Smooth TI predictor terms, s(), need ",
       "backend='julia'.", call.=FALSE)
     if(!isTRUE(optimize)) stop("Smooth TI predictor terms are estimated by ",
-      "optimisation, which sets their smoothness: use optimize=TRUE, and ",
-      "ctFitUncertainty() for intervals.", call.=FALSE)
+      "optimisation, which sets their smoothness: use optimize=TRUE, then ",
+      "ctFitUncertainty(fit, 'sample') to sample with the smoothness held at ",
+      "its estimate.", call.=FALSE)
     smoothed <- .ctTIsmoothData(ctstanmodel, datalong)
     ctstanmodel <- smoothed$model
     datalong <- smoothed$data
