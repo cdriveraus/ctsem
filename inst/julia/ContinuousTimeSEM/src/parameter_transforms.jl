@@ -67,9 +67,12 @@ after the raw parameters."""
 function _materialize_subject_values!(subject_values::AbstractVector, values::AbstractVector,
     sp::EKFParameters, tipreds::AbstractVector)
     subject_values isa Vector || throw(ArgumentError("subject parameter buffer must be resizable"))
-    resize!(subject_values, length(values) + length(sp.ti_tail))
-    copyto!(subject_values, 1, values, 1, length(values))
-    _ctsem_fill_ti_tail!(subject_values, sp, length(values), tipreds)
+    nraw = length(values)
+    na = _ctsem_anchor_append(sp, nraw)
+    resize!(subject_values, nraw + na + length(sp.ti_tail))
+    copyto!(subject_values, 1, values, 1, nraw)
+    _ctsem_fill_anchors!(subject_values, sp, nraw, na)
+    _ctsem_fill_ti_tail!(subject_values, sp, nraw + na, tipreds)
     @boundscheck length(sp.ti_parameter_indices) == length(sp.ti_predictor_indices) == length(sp.ti_coefficient_indices) ||
         throw(DimensionMismatch("TI effect metadata has inconsistent lengths"))
     @inbounds for i in eachindex(sp.ti_parameter_indices)
@@ -80,6 +83,36 @@ function _materialize_subject_values!(subject_values::AbstractVector, values::Ab
         predictor <= length(tipreds) || throw(BoundsError(tipreds, predictor))
         coefficient <= length(values) || throw(BoundsError(values, coefficient))
         subject_values[parameter] += _ctsem_ti_effect(sp, values, i) * tipreds[predictor]
+    end
+    return subject_values
+end
+
+"""
+    _ctsem_anchor_append(sp, nraw)
+
+How many stated population values (`CTSEMAnchors`) a subject vector built
+from `nraw` raw values needs appended: all of them for the free parameters
+alone, none for a vector that already carries them. Any other length is a
+caller that built a vector for another model, and an error.
+"""
+@inline function _ctsem_anchor_append(sp::EKFParameters, nraw::Integer)
+    a = sp.anchors
+    na = length(a.values)
+    na == 0 && return 0
+    nraw == a.nfree && return na
+    nraw == a.nfree + na && return 0
+    throw(DimensionMismatch(string("a parameter vector of length ", nraw,
+        " for a model with ", a.nfree, " free parameters and ", na,
+        " with a stated population value")))
+end
+
+"""The stated population values after the `nraw` raw ones, when `na` of them
+are to be appended (`_ctsem_anchor_append`)."""
+@inline function _ctsem_fill_anchors!(subject_values::AbstractVector, sp::EKFParameters,
+    nraw::Integer, na::Integer)
+    T = eltype(subject_values)
+    @inbounds for j in 1:na
+        subject_values[nraw + j] = convert(T, sp.anchors.values[j])
     end
     return subject_values
 end
@@ -367,11 +400,15 @@ function _ctsem_transform_derivatives(sp::EKFParameters, values::AbstractVector{
     best = Dict{Int,T}()
     isempty(range) && return best
     D = ForwardDiff.Dual{Nothing,T,1}
-    # With the TI predictor tail (`sp.ti_tail`) at zero, the population's own
-    # point, for a cell that reads one.
-    scratch = Vector{D}(undef, length(values) + length(sp.ti_tail))
+    # With any stated population values (`sp.anchors`) after the raw ones, and
+    # the TI predictor tail (`sp.ti_tail`) at zero, the population's own point,
+    # for a cell that reads one.
+    na = _ctsem_anchor_append(sp, length(values))
+    scratch = Vector{D}(undef, length(values) + na + length(sp.ti_tail))
     @inbounds for i in eachindex(scratch)
-        scratch[i] = D(i <= length(values) ? values[i] : zero(T), ForwardDiff.Partials((zero(T),)))
+        v = i <= length(values) ? values[i] :
+            i <= length(values) + na ? T(sp.anchors.values[i - length(values)]) : zero(T)
+        scratch[i] = D(v, ForwardDiff.Partials((zero(T),)))
     end
     tf_idx = 0
     @inbounds for idx in eachindex(sp.mutables)
