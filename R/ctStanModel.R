@@ -209,6 +209,14 @@ ctModelUnlist<-function(ctmodelobj,
         # separators or `key=value` text would be stored as the parameter name.
         spec <- .ctCellSpecFields(parsed$param)
         parsed$param <- spec$param
+        # A stated population mean (ctPar(mean=)) belongs to the parameter,
+        # and the model holds it beside `pars`.
+        if(!is.na(spec$mean)) {
+          means <- ctm[['fixedpopmeans']]
+          if(is.null(means)) means <- numeric(0)
+          means[[spec$param]] <- spec$mean
+          ctm[['fixedpopmeans']] <- means
+        }
         pars$param[parrow] <- parsed$param
         pars$value[parrow] <- parsed$value
 
@@ -517,6 +525,10 @@ ctModelConvertOMX<-function(ctmodelobj, type='ct',tipredDefault=TRUE){
   
   # Rows whose tipreds field was given, which a smooth's default leaves alone.
   tiexplicit <- rep(FALSE, nrow(ctspec))
+  # Population means stated rather than estimated, by parameter name: those a
+  # model already holds, and those its cells write as 'name=value'.
+  fixedpopmeans <- ctm[['fixedpopmeans']]
+  if(is.null(fixedpopmeans)) fixedpopmeans <- numeric(0)
   for(pi in 1:nrow(ctspec)){ #check for complex / split specifications
     if(grepl('|',ctspec$param[pi],fixed=TRUE)){
       # The trailing space keeps a trailing empty field, which strsplit()
@@ -558,6 +570,18 @@ ctModelConvertOMX<-function(ctmodelobj, type='ct',tipredDefault=TRUE){
       # sign and a decimal point are non-word characters -- so one
       # specification errored or silently misbehaved depending on which number
       # was written in it.
+      # 'lev=0': a stated population mean (ctPar(mean=)), which leaves the
+      # random effects about it to fit and no mean of its own.
+      namemean <- .ctCellSpecNameMean(split[1])
+      if(!is.na(namemean$mean)){
+        stated <- fixedpopmeans[namemean$name]
+        if(!is.na(stated) && stated != namemean$mean) stop('Two population ',
+          'means stated for ', namemean$name, ': ', stated, ' and ',
+          namemean$mean, '.', call.=FALSE)
+        fixedpopmeans[[namemean$name]] <- namemean$mean
+        split[1] <- namemean$name
+      }
+
       fixedvalue <- suppressWarnings(as.numeric(split[1]))
       if(!is.na(fixedvalue)){
         ignored <- c(
@@ -729,6 +753,10 @@ ctModelConvertOMX<-function(ctmodelobj, type='ct',tipredDefault=TRUE){
   out$tipredDefault <- isTRUE(tipredDefault)
   # Smooth terms, with their basis once data has built it (R/ctTIpredSmooth.R).
   if(length(TIsmooths)) out$TIsmooths <- TIsmooths
+  # Population means stated rather than estimated (ctPar(mean=)), natural
+  # scale, by parameter name; checked and used when the model is fitted
+  # (`.ctFixedPopMeans()`).
+  if(length(fixedpopmeans)) out$fixedpopmeans <- fixedpopmeans
 
   out$tipredeffectscale <- 1
   out$tipredsimputedscale <- 1
