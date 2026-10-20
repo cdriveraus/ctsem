@@ -6517,13 +6517,16 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
 #' @export
 print.ctJuliaFit <- function(x, ...) {
   cat("ctsem Julia fit\n")
-  cat("  log likelihood:", format(x$estimate$loglik), "\n")
+  # On a sampled fit the optimisation only placed the chains, so neither its
+  # log likelihood nor its verdict is the fit's: the sampler's line below is.
+  # Its own record stays on `$optim`, and its warnings in
+  # `$optim$placement_warnings`.
+  sampled <- !is.null(x$sample)
+  if (!sampled) cat("  log likelihood:", format(x$estimate$loglik), "\n")
   if (!is.null(x$estimate$loglik_weighted)) cat("  weighted log likelihood:",
     format(x$estimate$loglik_weighted), "(sampling weights)\n")
-  # On a sampled fit that optimisation only placed the chains, and an unlabelled
-  # "converged: TRUE" beside "chains converged: FALSE" read as a contradiction.
-  cat(if (is.null(x$sample)) "  converged:" else "  placement converged:",
-    x$optim$converged, " iterations:", x$optim$iterations, "\n")
+  if (!sampled) cat("  converged:", x$optim$converged, " iterations:",
+    x$optim$iterations, "\n")
   # A sampled fit's headline is not the optimiser's. That optimisation ran only
   # to place the sampler and build its metric, so a fit whose chains never
   # agreed prints `converged: TRUE` on the line above and is still worthless.
@@ -6538,6 +6541,9 @@ print.ctJuliaFit <- function(x, ...) {
         ". See fit$sample.\n", sep = "")
     }
   }
+  # Everything below reads the optimum and its curvature, which on a sampled fit
+  # are the placement's: its intervals come from the draws.
+  if (sampled) return(invisible(x))
   # The quadrature correction, only when it moved the estimate by a tenth of a
   # standard error or more.
   corr <- x$laplace$correction

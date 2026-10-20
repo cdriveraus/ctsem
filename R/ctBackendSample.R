@@ -1687,12 +1687,25 @@ print.ctSampleDiagnostics <- function(x, ...) {
     placementcontrol <- utils::modifyList(placementcontrol,
       list(estonly = TRUE, maxiter = 0L))
   }
-  placementfit <- .ctJuliaOptimiseFit(model_spec = model_spec, datalong = datalong,
-    model = model, prepared_data = prepared_data, inits = inits,
-    cores = placementcores,
+  # The placement's own warnings are a verdict on an optimisation that only
+  # placed the chains, so they are kept rather than raised: under SAEM
+  # placement it runs no iterations at all, and "no progress from its
+  # starting values ... Treat this fit as failed" came with every default
+  # sampled fit. The sampler's diagnostics are what judge a sampled fit.
+  placementwarnings <- character()
+  placementfit <- withCallingHandlers(.ctJuliaOptimiseFit(model_spec = model_spec,
+    datalong = datalong, model = model, prepared_data = prepared_data,
+    inits = inits, cores = placementcores,
     optimcontrol = placementcontrol, verbose = verbose, priors = priors,
     priorscope = priorscope, intoverpop = intoverpop, intoverstates = TRUE,
-    gradient = gradient, correctlaplace = FALSE)
+    gradient = gradient, correctlaplace = FALSE),
+    warning = function(w) {
+      placementwarnings <<- c(placementwarnings, conditionMessage(w))
+      invokeRestart("muffleWarning")
+    })
+  if (length(placementwarnings)) {
+    placementfit$optim$placement_warnings <- unique(placementwarnings)
+  }
 
   # From here, sampling is exactly `ctFitUncertainty(placementfit, 'sample')`:
   # one function for both entry points (`.ctBackendUncertaintySample()`,

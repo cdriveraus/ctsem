@@ -2019,6 +2019,11 @@ ctBackendParMatrices <- function(fit, raw = NULL, tipreds = NULL, state = NULL,
     counts <- vapply(levels, function(l) length(unique(data[[l]])), integer(1))
     out$units <- paste(paste(counts, levels), collapse = " within ")
   }
+  # A sampled fit's estimate is the posterior mean, and the log likelihood and
+  # posterior it carries are the placement optimisation's, at another point --
+  # under SAEM placement, the start. Neither they nor an AIC describe a
+  # posterior sample; ctLOO() compares those.
+  sampled <- !is.null(object$sample)
   logposterior <- object$estimate$logposterior
   if (is.null(logposterior)) logposterior <- object$estimate$loglik
   # With sampling weights the objective is the weighted log likelihood (plus
@@ -2026,13 +2031,13 @@ ctBackendParMatrices <- function(fit, raw = NULL, tipreds = NULL, state = NULL,
   # is reported as what it is, below, and the posterior only when a prior made
   # it something more.
   weighted <- .ctFitWeighted(object)
-  if (!weighted || !isTRUE(all.equal(as.numeric(logposterior),
-      as.numeric(object$estimate$loglik_weighted)))) out$logposterior <- logposterior
+  if (!sampled && (!weighted || !isTRUE(all.equal(as.numeric(logposterior),
+      as.numeric(object$estimate$loglik_weighted))))) out$logposterior <- logposterior
   # Without priors these are the same number; the shared print method (not
   # this builder) skips the duplicate row -- see
   # summaryCtStanFitLoglikDuplicatesPosterior() in R/summary.ctStanFit.R.
   # The likelihood is always returned, priors or not.
-  out$loglik <- object$estimate$loglik
+  if (!sampled) out$loglik <- object$estimate$loglik
   if (weighted) {
     w <- .ctBackendSpec(object)$subject_weights
     out$weights <- sprintf("%d subjects, relative weights %s to %s (mean 1)",
@@ -2042,7 +2047,7 @@ ctBackendParMatrices <- function(fit, raw = NULL, tipreds = NULL, state = NULL,
   out$npars <- length(object$estimate$raw)
   # A weighted fit maximises a pseudo-likelihood, whose differences are not
   # chi-square, so it has no AIC.
-  if (!weighted) out$aic <- 2 * out$npars - 2 * object$estimate$loglik
+  if (!weighted && !sampled) out$aic <- 2 * out$npars - 2 * object$estimate$loglik
   # How far this estimate is from the optimum, when the curvature to say so was
   # computed. Absent rather than zero when it was not -- `estonly = TRUE`
   # computes no Hessian, and reporting a gap of zero for a fit nobody checked
