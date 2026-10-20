@@ -229,7 +229,8 @@
   if (!is.null(smooth)) {
     # The covariate's own values, one per person, are the x axis.
     persons <- spec$data[[smooth$covariate]][!duplicated(spec$data[[model$subjectIDname]])]
-    covariate <- seq(min(persons), max(persons), length.out = nsubjects)
+    covariate <- seq(min(persons, na.rm = TRUE), max(persons, na.rm = TRUE),
+      length.out = nsubjects)
     tipreds <- .ctTIsmoothEval(smooth$basis, covariate)
   } else if (length(whichTIpreds) > 1) {
     tipreds <- tipreds[sample.int(nrow(tipreds), nsubjects), , drop = FALSE]

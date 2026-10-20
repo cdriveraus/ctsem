@@ -215,17 +215,43 @@
     if (is.null(data[[covariate]])) stop("Column ", covariate, " (the covariate ",
       "of s(", covariate, ")) is not in the data.", call. = FALSE)
     x <- suppressWarnings(as.numeric(data[[covariate]]))
-    if (anyNA(x)) stop("s(", covariate, ") needs a value of ", covariate,
-      " for every person: ", sum(is.na(x)), " rows have none.", call. = FALSE)
-    perperson <- tapply(x, data[[id]], function(v) diff(range(v)))
-    if (any(perperson > 1e-12 * max(1, abs(x)))) stop(covariate, " varies ",
-      "within persons; s() takes a person-level covariate, one value per ",
-      "person.", call. = FALSE)
+    perperson <- tapply(x, data[[id]], function(v) if (all(is.na(v))) 0 else
+      diff(range(v, na.rm = TRUE)))
+    if (any(perperson > 1e-12 * max(1, abs(x), na.rm = TRUE))) stop(covariate,
+      " varies within persons; s() takes a person-level covariate, one value ",
+      "per person.", call. = FALSE)
+    # One value per person, from any of their rows; built from the persons who
+    # have one.
+    person <- as.character(data[[id]])
+    value <- tapply(x, person, function(v) if (all(is.na(v))) NA_real_ else
+      v[!is.na(v)][1L])
+    observed <- value[!is.na(value)]
+    if (!length(observed)) stop("s(", covariate, ") has no value of ", covariate,
+      " for any person.", call. = FALSE)
     if (is.null(s$basis)) {
-      persons <- x[!duplicated(data[[id]])]
-      s$basis <- .ctTIsmoothBuild(persons, s$k, covariate)
+      s$basis <- .ctTIsmoothBuild(observed, s$k, covariate)
       smooths[[name]] <- s
     }
+    # A person without a value is held at the mean of those with one in their
+    # group at the first level above the person, else of everyone: as a
+    # missing linear predictor is held at its expected value when optimising.
+    absent <- names(value)[is.na(value)]
+    if (length(absent)) {
+      group <- if (length(model$groupIDnames))
+        tapply(as.character(data[[model$groupIDnames[1L]]]), person, `[`, 1L)
+      fill <- vapply(absent, function(p) {
+        peers <- if (is.null(group)) NULL else
+          value[!is.na(value) & group[names(value)] == group[[p]]]
+        if (length(peers)) mean(peers) else mean(observed)
+      }, numeric(1))
+      value[absent] <- fill
+      message("s(", covariate, "): ", length(absent), " person",
+        if (length(absent) > 1L) "s have" else " has", " no value of ",
+        covariate, " and ", if (length(absent) > 1L) "are" else "is",
+        " held at the mean of ", if (is.null(group)) "those who have one" else
+        "their group, or of everyone where their group has none", ".")
+    }
+    x <- unname(value[person])
     columns <- .ctTIsmoothEval(s$basis, x)
     for (j in seq_along(s$columns)) data[[s$columns[j]]] <- columns[, j]
   }
@@ -443,7 +469,8 @@
   values <- matrix(values, nrow = length(x))
   out <- data.frame(x = rep(x, ncol(values)), value = as.numeric(values),
     variable = factor(rep(labels, each = length(x)), levels = labels))
-  out[is.finite(out$value), , drop = FALSE]
+  # Persons without a value of the covariate have no place on its axis.
+  out[is.finite(out$value) & is.finite(out$x), , drop = FALSE]
 }
 
 # The fit at its estimate alone, for a report that wants point values.

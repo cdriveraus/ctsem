@@ -111,6 +111,26 @@ test_that("smooths are refused where they cannot be estimated", {
     "varies within persons")
   few <- dat
   expect_error(ctsem:::.ctTIsmoothData(m, few), "distinct values")
+  # A person without a value is held at the mean of their group's, or of
+  # everyone's where the group has none.
+  set.seed(1)
+  persons <- data.frame(id = 1:12, study = rep(1:3, each = 4),
+    age = c(21, 25, 33, NA, 41, 47, 52, 58, NA, NA, NA, NA))
+  long <- persons[rep(1:12, each = 2), ]
+  long$time <- rep(0:1, 12)
+  long$Y1 <- rnorm(24)
+  long$age[3] <- NA
+  nested <- suppressMessages(ctModel(type = "ct", n.latent = 1, n.manifest = 1,
+    LAMBDA = diag(1), CINT = matrix("cint"), MANIFESTMEANS = matrix(0),
+    id = c("id", "study"), TIpredNames = ~ s(age, k = 4)))
+  out <- expect_message(ctsem:::.ctTIsmoothData(nested, long), "5 persons")
+  basis <- out$model$TIsmooths$age$basis
+  at <- function(a) as.numeric(ctsem:::.ctTIsmoothEval(basis, a))
+  row <- function(i) as.numeric(out$data[out$data$id == i,
+    out$model$TIsmooths$age$columns][1L, ])
+  expect_equal(row(2), at(25))
+  expect_equal(row(4), at(mean(c(21, 25, 33))))
+  expect_equal(row(9), at(mean(c(21, 25, 33, 41, 47, 52, 58))))
 })
 
 # One fit: a random intercept whose mean is a curve in age, and a model whose
