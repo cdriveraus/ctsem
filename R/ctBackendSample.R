@@ -316,7 +316,7 @@
   # difference is not finite.
   sampletarget <- .ctBackendSampleTarget(estimate = estimate, npar = npar,
     marginal = marginal, state_explicit = isTRUE(state_explicit),
-    hessian = fit$uncertainty$hessian, placement = placement)
+    hessian = .ctBackendSampleHessian(fit), placement = placement)
 
   out <- .ctBackendSampleRun(fit, sampletarget, chains = chains, warmup = warmup,
     draws = draws, cores = cores, saveEffects = saveEffects, seed = seed,
@@ -714,6 +714,31 @@
 # route cannot be combined with the Laplace effect route at all -- but not the
 # reverse.
 #' @keywords internal
+# The curvature the marginal sampler's metric and starting spread are read
+# from: the fit's Hessian, rescaled along each direction where
+# `uncertainty = 'checked'` measured the posterior's width to differ from it,
+# to the width it measured (`$normalcheck$widths`, variances in units of the
+# Hessian's). In the coordinates where the Hessian's normal is N(0, I) that
+# sets the precision along each such direction `w` to `1 / width`; in raw ones
+# it adds `(P w)(1 / width - 1)(P w)'`, `P` the information.
+#
+# On a shell the Hessian's metric is many times too wide along it: the
+# leapfrog overshoots there, the step size shrinks to cope and every other
+# direction then moves at the deepest tree. On a 100-subject model whose
+# item loading has a shell (scripts/gsm-uncertainty-2026-10/trial_metric.R,
+# dev2; 4 chains, 150 warmup, 150 draws, tree depth at most 8): the Hessian's
+# metric took a step size of 0.002, R-hat 4.2 and a minimum ESS of 2; the
+# rescaled one 16, R-hat 1.06 and 121. The joint route recomputes its
+# population block and reads this only as a fallback.
+.ctBackendSampleHessian <- function(fit) {
+  H <- fit$uncertainty$hessian
+  check <- fit$uncertainty$details$normalcheck
+  if (is.null(H) || !length(check$widths)) return(H)
+  information <- -(H + t(H)) / 2
+  PW <- information %*% check$directions
+  -(information + PW %*% diag(1 / check$widths - 1, length(check$widths)) %*% t(PW))
+}
+
 .ctBackendSampleTarget <- function(estimate, npar, marginal = FALSE,
   state_explicit = FALSE, hessian = NULL, gradient = "adjoint", placement = "fit") {
   list(estimate = as.numeric(estimate), npar = as.integer(npar)[1L],

@@ -238,6 +238,24 @@ test_that("checked keeps the normal, and says so, where sampling cannot correct 
   expect_false(drawn$uncertaintyfit$details$importance_sampling$used)
 })
 
+test_that("the sampler's metric is the Hessian rescaled to the widths the check measured", {
+  set.seed(6)
+  P <- crossprod(matrix(rnorm(25), 5)) + diag(5)
+  H <- -P
+  eig <- eigen(solve(P), symmetric = TRUE)
+  A <- eig$vectors %*% diag(sqrt(eig$values))
+  v <- qr.Q(qr(matrix(rnorm(10), 5)))
+  widths <- c(0.01, 4)
+  fit <- list(uncertainty = list(hessian = H, details = list(normalcheck =
+    list(directions = A %*% v, widths = widths))))
+  rescaled <- -ctsem:::.ctBackendSampleHessian(fit)
+  # Where the Hessian's normal is N(0, I), the precision is the identity but
+  # 1 / width along each direction the check named.
+  expect_equal(t(A) %*% rescaled %*% A, diag(5) + v %*% diag(1 / widths - 1) %*% t(v))
+  fit$uncertainty$details$normalcheck$widths <- numeric()
+  expect_identical(ctsem:::.ctBackendSampleHessian(fit), H)
+})
+
 test_that("uncertainty = 'surrogate' is refused by name", {
   expect_error(ctFitUncertainty(list(), 'surrogate'), "removed in ctsem 4.0.0")
   expect_error(ctOptimUncertainty(list(), 'surrogate'), "uncertainty = 'checked'")
