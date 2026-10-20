@@ -655,7 +655,28 @@ test_that("a study level effect needs no subject level effect", {
   expect_equal(dimnames(studies)[["study"]], unique(studyof))
   expect_equal(unname(subjects[1, , "mmean"]), unname(studies[1, studyof, "mmean"]))
   expect_gt(stats::sd(studies[1, , "mmean"]), 0)
-  expect_error(ctSubjectPars(fit, level = "study", pointest = FALSE), "pointest=TRUE")
+  # A grouping level's draws are drawn as a subject's are, from the same joint
+  # draw of a unit's effects: with one seed, and nothing varying within a
+  # study, a subject's draws are its study's. A posterior held at the estimate
+  # leaves only each study's own uncertainty, which is the stored posterior's.
+  posterior <- fit
+  posterior$estimate$rawposterior <- matrix(fit$estimate$raw, 300L,
+    length(fit$estimate$raw), byrow = TRUE)
+  set.seed(5)
+  subjectdraws <- suppressMessages(ctSubjectPars(posterior, pointest = FALSE,
+    uncertainty = "conditional"))
+  set.seed(5)
+  studydraws <- suppressMessages(ctSubjectPars(posterior, level = "study",
+    pointest = FALSE, uncertainty = "conditional"))
+  expect_equal(dim(studydraws), c(300L, length(unique(studyof)), 1L))
+  expect_equal(unname(subjectdraws[, , "mmean"]),
+    unname(studydraws[, studyof, "mmean"]))
+  entry <- fit$randomeffects$study
+  ratio <- apply(studydraws[, , "mmean"], 2L, stats::sd) /
+    sqrt(entry$cov[match(dimnames(studydraws)$study, entry$ids), 1L])
+  expect_lt(stats::sd(ratio) / mean(ratio), 0.1)
+  expect_equal(colMeans(studydraws[, , "mmean"]), studies[1, , "mmean"],
+    tolerance = 0.1)
   expect_error(ctSubjectPars(fit, level = "house"), "one of this model's id levels")
   expect_setequal(levels(suppressMessages(ctResiduals(fit))$Subject), ids)
   # The summary says how many units each level's spread is estimated from.

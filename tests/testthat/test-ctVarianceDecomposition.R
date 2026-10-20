@@ -98,6 +98,26 @@ fixedmodel <- estmodel
 fixedmodel$pars$indvarying <- FALSE
 fixedfit <- ctFit(datalong, fixedmodel, backend = 'julia', cores = 1, verbose = 0)
 
+# persons='estimated' at the modes alone, without the draw from each person's
+# posterior that makes them plausible values: deterministic, so two routes
+# that should build the same persons can be compared exactly.
+.vd_modes_only <- function(expr) {
+  testthat::local_mocked_bindings(
+    .ctVarDecompCarrierNoise = function(fit, donors, carrier)
+      matrix(0, length(donors), length(carrier)),
+    .ctVarDecompCoordinateDraws = function(fit, objective, draws, nlevels, dims) {
+      module <- ctsem:::.ctJuliaModule(ctsem:::.ctBackendSpec(fit)$project)
+      raw <- ctsem:::.ctJuliaNumericVector(as.numeric(fit$estimate$raw))
+      lapply(seq_len(nlevels + 1L), function(l) {
+        modes <- as.matrix(ctsem:::.ctBackendJuliaValue(
+          module$ctsem_laplace_subject_values(objective, raw,
+            from_level = as.integer(l), ti_effects = FALSE)))
+        aperm(array(modes, c(dims, draws)), c(3L, 1L, 2L))
+      })
+    }, .package = 'ctsem')
+  expr
+}
+
 
 test_that('the four components sum to the total and none is negative', {
   for (source in c('model', 'estimated')) {
@@ -152,15 +172,26 @@ test_that('the deterministic part is the transient the model implies', {
     mean(shape)^2 * asymsd^2, tolerance = 0.15)
 })
 
-test_that('estimated persons are shrunk relative to drawn ones', {
-  drawn <- ctVarianceDecomposition(fit, persons = 'model', npersons = 400)
-  estimated <- ctVarianceDecomposition(fit, persons = 'estimated')
-  expect_lt(estimated$between[estimated$variable == 'eta1'],
-    drawn$between[drawn$variable == 'eta1'])
+test_that('estimated persons at their modes are shrunk, at plausible values not', {
+  set.seed(3)
+  drawn <- ctVarianceDecomposition(fit, persons = 'model', npersons = 600)
+  modes <- .vd_modes_only(ctVarianceDecomposition(fit, persons = 'estimated'))
+  estimated <- ctVarianceDecomposition(fit, persons = 'estimated',
+    npersons = 600)
+  between <- function(x) x$between[x$variable == 'eta1']
+  expect_lt(between(modes), between(drawn))
+  # A mode plus a draw from its posterior has the population's spread: the
+  # law of total variance, which the modes' spread is short of by the mean
+  # posterior variance.
+  expect_gt(between(estimated), between(modes))
+  expect_equal(between(estimated), between(drawn), tolerance = 0.2)
   # Shrinkage moves the persons, not the measurement model.
   expect_equal(estimated$within.measurement, drawn$within.measurement)
   expect_equal(attr(estimated, 'persons'), 'estimated')
-  expect_equal(attr(drawn, 'npersons'), 400L)
+  expect_true(attr(estimated, 'plausible'))
+  expect_equal(attr(estimated, 'npersons'), 600L)
+  expect_equal(attr(drawn, 'npersons'), 600L)
+  expect_output(print(estimated), 'plausible values')
 })
 
 test_that('a model with no random effects has no between person variance', {
@@ -326,7 +357,9 @@ test_that('the two backends decompose the same model the same way', {
     'set CTSEM_TEST_STAN to compare the backends')
   fits <- fit_backends(datalong = datalong, model = estmodel, cores = 1,
     verbose = 0)
-  julia <- ctVarianceDecomposition(fits$julia, persons = 'estimated')
+  # Stan's estimated persons are its modes, so julia's are compared there.
+  julia <- .vd_modes_only(ctVarianceDecomposition(fits$julia,
+    persons = 'estimated'))
   stan <- suppressMessages(ctVarianceDecomposition(fits$stan, persons = 'estimated'))
   parts <- c('between', 'within.deterministic', 'within.stochastic',
     'within.measurement', 'total')
@@ -455,13 +488,13 @@ test_that('the two representations of individual differences agree', {
   # which is what a model with no individual differences correctly returns, so
   # nothing about the number looks wrong.
   #
-  # Compared at persons='estimated' on both sides, since that is the only route
-  # a Laplace fit has: both are then the fitted modes and the same quantity.
+  # Compared at the fitted modes on both sides (persons='estimated' without
+  # its posterior draws), where both are the same deterministic quantity.
   fits <- .vd_intoverpop_fits()
-  augmented <- suppressMessages(
-    ctVarianceDecomposition(fits$augmented, persons = 'estimated'))
-  laplace <- suppressMessages(
-    ctVarianceDecomposition(fits$laplace, persons = 'estimated'))
+  augmented <- .vd_modes_only(suppressMessages(
+    ctVarianceDecomposition(fits$augmented, persons = 'estimated')))
+  laplace <- .vd_modes_only(suppressMessages(
+    ctVarianceDecomposition(fits$laplace, persons = 'estimated')))
 
   expect_gt(min(augmented$between), 0)
   expect_gt(min(laplace$between), 0)
@@ -495,10 +528,10 @@ test_that('the two representations agree with a TI predictor', {
   fits <- fit_intoverpop(datalong = tidata, model = timodel, cores = 1,
     verbose = 0)
   expect_length(ctsem:::.ctBackendSpec(fits$laplace)$ti_effects$parameter, 2L)
-  augmented <- suppressMessages(
-    ctVarianceDecomposition(fits$augmented, persons = 'estimated'))
-  laplace <- suppressMessages(
-    ctVarianceDecomposition(fits$laplace, persons = 'estimated'))
+  augmented <- .vd_modes_only(suppressMessages(
+    ctVarianceDecomposition(fits$augmented, persons = 'estimated')))
+  laplace <- .vd_modes_only(suppressMessages(
+    ctVarianceDecomposition(fits$laplace, persons = 'estimated')))
   for (part in c('between', 'within.deterministic', 'within.stochastic',
     'within.measurement', 'total')) {
     expect_equal(laplace[[part]], augmented[[part]], tolerance = 1e-4,
@@ -603,6 +636,16 @@ test_that('a level above the subject gets its own between column', {
   expect_equal(drawn$between.id + drawn$between.study, drawn$between)
   expect_equal(drawn$between + drawn$within, drawn$total)
   expect_gt(min(drawn$between.id), min(out$between.id))
+  # Plausible values are drawn jointly over a unit's levels, so each level's
+  # share is that level's part of one draw: the levels still add up, and the
+  # subject level is no longer shrunk the way its modes are.
+  estimated <- suppressMessages(ctVarianceDecomposition(fit,
+    persons = 'estimated', npersons = 400))
+  modes <- .vd_modes_only(suppressMessages(ctVarianceDecomposition(fit,
+    persons = 'estimated')))
+  expect_equal(estimated$between.id + estimated$between.study,
+    estimated$between)
+  expect_gt(min(estimated$between.id), min(modes$between.id))
 })
 
 test_that('a stan fit works through the estimated route and refuses the drawn one', {

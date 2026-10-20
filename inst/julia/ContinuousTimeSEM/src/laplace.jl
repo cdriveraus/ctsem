@@ -6252,7 +6252,7 @@ function ctsem_laplace_subject_values(laplace::CTSEMLaplaceObjective,
 end
 
 """
-    ctsem_laplace_subject_values(laplace, values, effects; ti_effects=true)
+    ctsem_laplace_subject_values(laplace, values, effects; ti_effects=true, from_level=1)
 
 Each subject's own raw parameter vector at the random effects it is *given*,
 rather than at the conditional modes solved from the data.
@@ -6271,20 +6271,22 @@ the same thing whichever square root of the population covariance it was made
 under.
 
 Everything after the slicing is shared with the mode method, including what
-`ti_effects` means, so the two cannot drift in how a shifted parameter vector
-is built.
+`ti_effects` and `from_level` mean, so the two cannot drift in how a shifted
+parameter vector is built.
 
 Returns `nsubjects x length(values)`.
 """
 function ctsem_laplace_subject_values(laplace::CTSEMLaplaceObjective,
-    values::AbstractVector, effects::AbstractVector; ti_effects::Bool=true)
+    values::AbstractVector, effects::AbstractVector; ti_effects::Bool=true,
+    from_level::Integer=1)
     theta = collect(Float64, values)
-    shifted = _laplace_shifted_values_from_deviations(laplace, theta, effects)
+    shifted = _laplace_shifted_values_from_deviations(laplace, theta, effects;
+        from_level=from_level)
     return ti_effects ? _laplace_add_ti_effects(laplace, shifted) : shifted
 end
 
 """
-    ctsem_laplace_subject_values(laplace, draws, effects; ti_effects=true)
+    ctsem_laplace_subject_values(laplace, draws, effects; ti_effects=true, from_level=1)
 
 The method above for a whole sample at once: `draws[s, :]` is one draw of the
 parameters and `effects[s, :]` the natural deviations drawn with it, so each
@@ -6295,7 +6297,8 @@ would cost a bridge round trip each.
 Returns `ndraws x nsubjects x npar`, as the linearised method does.
 """
 function ctsem_laplace_subject_values(laplace::CTSEMLaplaceObjective,
-    draws::AbstractMatrix, effects::AbstractMatrix; ti_effects::Bool=true)
+    draws::AbstractMatrix, effects::AbstractMatrix; ti_effects::Bool=true,
+    from_level::Integer=1)
     size(effects, 1) == size(draws, 1) || throw(DimensionMismatch(string(
         "effects has ", size(effects, 1), " draws for ", size(draws, 1),
         " parameter draws")))
@@ -6305,7 +6308,7 @@ function ctsem_laplace_subject_values(laplace::CTSEMLaplaceObjective,
     for s in 1:ndraws
         out[s, :, :] = ctsem_laplace_subject_values(laplace,
             collect(Float64, view(draws, s, :)), view(effects, s, :);
-            ti_effects=ti_effects)
+            ti_effects=ti_effects, from_level=from_level)
     end
     return out
 end
@@ -6679,7 +6682,12 @@ normal-approximation posterior puts its draws. It degrades for draws far from
 the estimate, which is also where the normal approximation the draws come from
 is itself least trustworthy.
 
-`ti_effects` means what it does for the other two methods.
+`ti_effects` and `from_level` mean what they do for the other methods:
+`from_level = l` leaves out the effects of the levels inside `l`, so a draw at
+a grouping level is that group's own values. A unit's effects are drawn
+jointly over its levels and the inner ones then dropped, which leaves a draw
+from the group's marginal posterior; the same `seed` at two `from_level`s
+makes the same joint draw, so their difference is one level's share of it.
 
 Deviations each member's filter integrates (`CTSEMHybrid`) are linearised with
 the effects (`ctsem_laplace_mode_jacobian`) and enter at each draw's own
@@ -6700,7 +6708,7 @@ Returns `ndraws x nsubjects x npar`.
 """
 function ctsem_laplace_subject_values(laplace::CTSEMLaplaceObjective,
     draws::AbstractMatrix, thetahat::AbstractVector; ti_effects::Bool=true,
-    conditional::Bool=false, seed::Integer=1)
+    conditional::Bool=false, seed::Integer=1, from_level::Integer=1)
     # The Jacobian is computed here rather than handed in: it is a vector of
     # matrices, and round-tripping one through the R bridge only to send it
     # straight back costs two marshalling steps for no gain.
@@ -6730,8 +6738,10 @@ function ctsem_laplace_subject_values(laplace::CTSEMLaplaceObjective,
                 w[U] .+= F * randn(rng, size(F, 1))
             end
         end
-        shifted = _laplace_shifted_values(laplace, theta, Ls, U -> w[U][1:units.dims[U]])
-        if nh > 0
+        shifted = _laplace_shifted_values(laplace, theta, Ls, U ->
+            _laplace_restrict_levels(laplace, U, w[U][1:units.dims[U]], from_level))
+        # The integrated deviations are the subject level's own.
+        if nh > 0 && from_level <= 1
             psi = [_hybrid_item_sd(hyb, lv, theta, k) for k in items]
             for U in eachindex(units.members), (m, i) in enumerate(units.members[U])
                 at = units.dims[U] + (m - 1) * nh
@@ -8037,15 +8047,16 @@ function ctsem_laplace_population_deviations(laplace::CTSEMLaplaceObjective,
 end
 
 """
-    _laplace_shifted_values_from_deviations(laplace, theta, deviations)
+    _laplace_shifted_values_from_deviations(laplace, theta, deviations; from_level=1)
 
 Every subject's raw parameters before TI-predictor effects, from the population
 vector and one draw's natural deviations: each of its blocks' deviations added
-to that level's parameters. No population root is involved, so this is the same
-whichever root the draws were made under.
+to that level's parameters, for the levels from `from_level` outward. No
+population root is involved, so this is the same whichever root the draws were
+made under.
 """
 function _laplace_shifted_values_from_deviations(laplace::CTSEMLaplaceObjective,
-    theta::Vector{Float64}, deviations::AbstractVector)
+    theta::Vector{Float64}, deviations::AbstractVector; from_level::Integer=1)
     units = laplace.units
     spec = laplace.spec
     starts, total = _laplace_deviation_offsets(laplace)
@@ -8058,6 +8069,7 @@ function _laplace_shifted_values_from_deviations(laplace::CTSEMLaplaceObjective,
         for (m, i) in enumerate(units.members[U])
             shifted = copy(theta)
             for l in eachindex(spec.levels)
+                l < from_level && continue
                 level = spec.levels[l]
                 k = nrandomeffects(level)
                 (k == 0 || nlatent(level) == 0) && continue

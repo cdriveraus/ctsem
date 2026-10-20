@@ -474,12 +474,52 @@ ctBackendParMatrices <- function(fit, raw = NULL, tipreds = NULL, state = NULL,
   .ctBackendPopArraysFromFlat(flat, layout, .ctBackendSpec(fit))
 }
 
+# Each subject's raw vector before TI-predictor effects at every draw, for a
+# fit whose random effects are coordinates: draws x subjects x parameters, the
+# subjects those of `spec` (all of the fit's, or the ones `.ctBackendKalmanSpec`
+# kept). Plausible values, as `ctSubjectPars(uncertainty = 'total')` gives:
+# the effects drawn with the parameters where a sampled fit saved them, and
+# otherwise each draw's linearised mode plus a draw from the subject's
+# conditional posterior (`ctsem_laplace_subject_values(conditional = TRUE)`).
+# NULL for one draw, or a fit whose effects are filter states.
+.ctBackendPlausibleValues <- function(fit, spec, samples, rows = NULL) {
+  fitspec <- .ctBackendSpec(fit)
+  if (is.null(fitspec$laplace) || nrow(samples) < 2L) return(NULL)
+  module <- .ctJuliaModule(fitspec$project)
+  objective <- .ctJuliaObjective(fit, hybrid = .ctBackendHybridReports(fitspec))
+  sampled <- identical(fit$sample$target, "joint") &&
+    length(fit$sample$effect_mean) > 0L
+  saved <- fit$sample$effects
+  if (sampled && !is.null(saved) && !is.null(rows) &&
+      nrow(saved) == nrow(.ctBackendRawSamples(fit))) {
+    raw <- module$ctsem_laplace_subject_values(objective,
+      .ctJuliaPut(as.matrix(samples)), .ctJuliaPut(as.matrix(saved[rows, , drop = FALSE])),
+      ti_effects = FALSE)
+  } else {
+    if (sampled) message("This fit sampled its random effects, but their draws ",
+      "are not on it, so each subject's matrices come from its Laplace posterior ",
+      "about the mode, linearised around the estimate. Sample with ",
+      "saveEffects=TRUE to report from the draws.")
+    raw <- module$ctsem_laplace_subject_values(objective,
+      .ctJuliaPut(as.matrix(samples)), .ctJuliaNumericVector(fit$estimate$raw),
+      conditional = TRUE, seed = sample.int(.Machine$integer.max, 1L),
+      ti_effects = FALSE)
+  }
+  raw <- array(as.numeric(.ctBackendJuliaValue(raw)),
+    dim = c(nrow(samples), length(fitspec$subject_starts), ncol(samples)))
+  subjects <- attr(spec, "laplaceSubjects")
+  if (!is.null(subjects)) raw <- raw[, subjects, , drop = FALSE]
+  raw
+}
+
 .ctBackendExtract <- function(object, subjectMatrices = FALSE, nsamples = "all",
   subjects = "all", ...) {
   samples <- .ctBackendRawSamples(object)
+  rows <- seq_len(nrow(samples))
   if (!identical(nsamples, "all")) {
     wanted <- min(nrow(samples), as.integer(nsamples)[1L])
-    samples <- samples[round(seq(1, nrow(samples), length.out = wanted)), , drop = FALSE]
+    rows <- round(seq(1, nrow(samples), length.out = wanted))
+    samples <- samples[rows, , drop = FALSE]
   }
   # Subject matrices need the filter, not just the transforms: an individually
   # varying parameter is an augmented latent state, so a subject's value for it
@@ -494,6 +534,11 @@ ctBackendParMatrices <- function(fit, raw = NULL, tipreds = NULL, state = NULL,
   subject <- NULL
   if (isTRUE(subjectMatrices)) {
     spec <- .ctBackendKalmanSpec(object, subjects = subjects)
+    # Where the random effects are coordinates, each draw's subject matrices
+    # are at that draw's plausible values: the population draw with the
+    # subject's own uncertainty, as ctSubjectPars() reports. At the modes alone
+    # a subject with little data would look as certain as the population.
+    plausible <- .ctBackendPlausibleValues(object, spec, samples, rows)
     computed <- lapply(seq_len(nrow(samples)), function(iteration) {
       # Only `subject_matrices` is read below, which `fields` does not gate --
       # it is assembled separately from the filter trace regardless of which
@@ -501,7 +546,10 @@ ctBackendParMatrices <- function(fit, raw = NULL, tipreds = NULL, state = NULL,
       # vector, so `fields` still needs one name; `subject_loglik` is the
       # smallest of the eight.
       scores <- try(.ctBackendKalmanRaw(spec, samples[iteration, ],
-        subjectmatrices = TRUE, fields = "subject_loglik"), silent = TRUE)
+        subjectmatrices = TRUE, fields = "subject_loglik",
+        subjectvalues = if (!is.null(plausible))
+          matrix(plausible[iteration, , ], ncol = dim(plausible)[3L])),
+        silent = TRUE)
       if (inherits(scores, "try-error")) scores else scores$subject_matrices
     })
     failed <- vapply(computed, inherits, logical(1L), "try-error")
@@ -1173,8 +1221,10 @@ ctBackendParMatrices <- function(fit, raw = NULL, tipreds = NULL, state = NULL,
 # subjects. TI predictor effects are a subject's and are left out. Reported
 # for the parameters that differ between groups at that level -- those varying
 # there or at a level above it -- through the transforms the subject values
-# use.
-.ctBackendGroupPars <- function(fit, level) {
+# use. Draws are the subject route's, at that level: the group's effects drawn
+# with the levels inside it, which are then dropped.
+.ctBackendGroupPars <- function(fit, level, pointest = TRUE, nsamples = "all",
+  uncertainty = "total") {
   spec <- .ctBackendSpec(fit)
   model <- .ctFitBaseModel(fit)
   levels <- c(model$subjectIDname, model$groupIDnames)
@@ -1182,28 +1232,17 @@ ctBackendParMatrices <- function(fit, raw = NULL, tipreds = NULL, state = NULL,
   params <- .ctVaryingParams(model, .ctVaryingColumns(model)[position:length(levels)])
   if (!length(params)) stop("Nothing varies between groups of '", level,
     "' or above, so every group's parameters are the population's.", call. = FALSE)
-
-  cells <- .ctBackendFreeParameterCells(fit)
-  cells <- cells[!cells$randomeffect, , drop = FALSE]
-  selected <- cells[.ctBackendParameterNames(cells) %in% params, , drop = FALSE]
-  selected <- selected[!duplicated(.ctBackendParameterNames(selected)), , drop = FALSE]
-  module <- .ctJuliaModule(spec$project)
-  raw <- .ctBackendJuliaValue(module$ctsem_laplace_subject_values(
-    .ctJuliaObjective(fit), .ctJuliaNumericVector(fit$estimate$raw),
-    from_level = as.integer(position), ti_effects = FALSE))
-  raw <- matrix(as.numeric(raw), ncol = length(fit$estimate$raw))
-  values <- .ctBackendPopCellValues(fit, raw, selected, .ctBackendSummaryLayout(fit))
+  values <- .ctBackendLaplaceSubjectPars(fit, spec, pointest = pointest,
+    nsamples = nsamples, uncertainty = uncertainty, from_level = position,
+    params = params)
 
   ids <- as.character(.ctFitIdMap(fit)$original)
-  data <- spec$data
-  group <- as.character(data[[level]][match(ids, as.character(data[[model$subjectIDname]]))])
-  first <- !duplicated(group)
-  names <- colnames(values)
-  alphabetical <- order(names)
-  out <- array(as.numeric(values[first, alphabetical, drop = FALSE]),
-    dim = c(1L, sum(first), length(names)))
-  dimnames(out) <- stats::setNames(list(1L, group[first], names[alphabetical]),
-    c("iter", level, "param"))
+  group <- as.character(spec$data[[level]][match(ids,
+    as.character(spec$data[[model$subjectIDname]]))])
+  first <- which(!duplicated(group))
+  out <- values[, first, , drop = FALSE]
+  dimnames(out) <- stats::setNames(list(dimnames(values)[[1L]], group[first],
+    dimnames(values)[[3L]]), c("iter", level, "param"))
   out
 }
 
@@ -1227,11 +1266,21 @@ ctBackendParMatrices <- function(fit, raw = NULL, tipreds = NULL, state = NULL,
 # draws pair draw `s` of the parameters with draw `s` of the effects, as
 # generation does. Without the effect draws (`saveEffects = FALSE`, the
 # default) the draws fall back to the linearised modes, and say so.
+#
+# `from_level` > 1 builds each subject's vector from that level outward, with
+# no TI-predictor effects -- its group's values, `.ctBackendGroupPars()` --
+# for the parameters named in `params`.
 .ctBackendLaplaceSubjectPars <- function(fit, spec, pointest = TRUE,
-  nsamples = "all", uncertainty = "total") {
+  nsamples = "all", uncertainty = "total", from_level = 1L, params = NULL) {
   cells <- .ctBackendFreeParameterCells(fit)
   cells <- cells[!cells$randomeffect, , drop = FALSE]
   varying <- .ctBackendVaryingParameters(spec, cells)
+  if (!is.null(params)) {
+    named <- cells$parnumber[.ctBackendParameterNames(cells) %in% params]
+    varying <- sort(unique(named))
+  }
+  from_level <- as.integer(from_level)
+  ti_effects <- from_level <= 1L
 
   module <- .ctJuliaModule(spec$project)
   estimate <- .ctJuliaNumericVector(fit$estimate$raw)
@@ -1266,7 +1315,7 @@ ctBackendParMatrices <- function(fit, raw = NULL, tipreds = NULL, state = NULL,
   # modes, and linearises them with the effects for draws
   # (`.ctBackendHybridReports`); a fit that sampled its effects has a draw of
   # every coordinate, so it reads them from the layer holding them.
-  objective <- .ctJuliaObjective(fit, hybrid = !sampled &&
+  objective <- .ctJuliaObjective(fit, hybrid = !sampled && ti_effects &&
     .ctBackendHybridReports(spec))
   effects <- NULL
   if (!is.null(draws) && sampled) {
@@ -1282,8 +1331,10 @@ ctBackendParMatrices <- function(fit, raw = NULL, tipreds = NULL, state = NULL,
   if (is.null(draws)) {
     subject_raw <- .ctBackendJuliaValue(if (sampled)
       module$ctsem_laplace_subject_values(objective, estimate,
-        .ctJuliaNumericVector(fit$sample$effect_mean)) else
-      module$ctsem_laplace_subject_values(objective, estimate))
+        .ctJuliaNumericVector(fit$sample$effect_mean), from_level = from_level,
+        ti_effects = ti_effects) else
+      module$ctsem_laplace_subject_values(objective, estimate,
+        from_level = from_level, ti_effects = ti_effects))
     subject_raw <- matrix(as.numeric(subject_raw), ncol = length(fit$estimate$raw))
     values <- .ctBackendPopCellValues(fit, subject_raw, selected, layout)
     out <- array(as.numeric(values[, alphabetical, drop = FALSE]),
@@ -1304,10 +1355,12 @@ ctBackendParMatrices <- function(fit, raw = NULL, tipreds = NULL, state = NULL,
   # set.seed() governs the draws.
   raw <- .ctBackendJuliaValue(if (!is.null(effects))
     module$ctsem_laplace_subject_values(objective, .ctJuliaPut(as.matrix(draws)),
-      .ctJuliaPut(as.matrix(effects))) else
+      .ctJuliaPut(as.matrix(effects)), from_level = from_level,
+      ti_effects = ti_effects) else
     module$ctsem_laplace_subject_values(objective, .ctJuliaPut(as.matrix(draws)),
       estimate, conditional = !identical(uncertainty, "population"),
-      seed = sample.int(.Machine$integer.max, 1L)))
+      seed = sample.int(.Machine$integer.max, 1L), from_level = from_level,
+      ti_effects = ti_effects))
   nsubjects <- length(spec$subject_starts)
   raw <- array(as.numeric(raw), dim = c(nrow(draws), nsubjects,
     length(fit$estimate$raw)))

@@ -164,7 +164,8 @@ ctStanContinuousPars <- ctSummaryMatrices
 #' group's own parameter values -- the population values shifted by that
 #' group's random effects and those of the levels above it, without the
 #' subject-level ones or TI predictor effects. Grouping levels need a
-#' \code{backend='julia'} fit and \code{pointest=TRUE}.
+#' \code{backend='julia'} fit; their draws take \code{uncertainty} as a
+#' subject's do.
 #' @param uncertainty For \code{backend='julia'} fits with \code{pointest=FALSE}:
 #' what the draws carry. \code{'total'} (the default) pairs each draw of the
 #' population parameters with a draw of each subject's random effects from their
@@ -250,9 +251,9 @@ ctSubjectPars <- function(fit,pointest=TRUE,cores=getOption("mc.cores", 2L),nsam
       if(!.ctFitIsJulia(fit) || is.null(.ctBackendSpec(fit)$laplace)) stop(
         "ctSubjectPars(level=) for a grouping level needs a backend='julia' fit ",
         "with nested ids.", call.=FALSE)
-      if(!isTRUE(pointest)) stop("ctSubjectPars(level=) for a grouping level ",
-        "reports point estimates only; use pointest=TRUE.", call.=FALSE)
-      return(.ctBackendGroupPars(fit, level))
+      return(.ctBackendGroupPars(fit, level, pointest=pointest,
+        nsamples=nsamples,
+        uncertainty=if(is.null(uncertainty)) 'total' else uncertainty))
     }
   }
 
