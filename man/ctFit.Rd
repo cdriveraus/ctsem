@@ -40,6 +40,7 @@ ctFit(
   verbose = 0,
   ...,
   popunique = NULL,
+  popblocks = NULL,
   weights = NULL,
   ctstanmodel
 )
@@ -346,6 +347,25 @@ independent random effects. Reported as
 \code{popunique_<parameter>.<level>}, on the same raw scale as a full-rank
 sd. Requires \code{backend = 'julia'} and \code{intoverpop = 'laplace'} or
 sampling (\code{'none'}); must be passed by name.}
+
+\item{popblocks}{Shared dimensions in blocks, on a reduced-rank level: a
+list of blocks, each a list with \code{rank}, how many shared dimensions,
+and \code{effects}, which parameters load on them -- \code{TRUE} for every
+parameter varying at the level, or names of matrices or parameters, as for
+\code{popunique}. A parameter loads only on the dimensions of the blocks
+that name it, so parameters with no block in common are uncorrelated, and
+one named in no block needs an own variance (\code{popunique}). A level's
+rank is the sum of its blocks' ranks, so \code{poprank} need not be given
+for it. One unnamed list of blocks applies to every level; a list named by
+level gives each level its own. For example, person-level item intercepts
+that do not covary with a latent level but may covary with each other and
+with the dynamics: \code{popblocks = list(level = list(rank = 1, effects =
+c('lev', 'DRIFT')), items = list(rank = 2, effects = c('MANIFESTMEANS',
+'DRIFT')))}. Within a block, its first \code{rank} parameters, in the
+order the model lists them, form its basis. Loadings are reported as
+\code{poploading_<parameter>_dim<j>}, the dimensions numbered across the
+blocks in order. Requires \code{backend = 'julia'} and \code{intoverpop =
+'laplace'} or sampling (\code{'none'}); must be passed by name.}
 
 \item{weights}{Sampling weights, one per subject: the name of a column of
 \code{datalong} that is constant within subject, or a numeric vector named

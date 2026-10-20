@@ -562,7 +562,10 @@
       rank <- as.integer(if (is.null(level$rank)) 1L else level$rank)[1L]
       if (!is.finite(rank) || rank < 1L) rank <- 1L
       index <- c(index, as.integer(level$load_index))
-      scale <- c(scale, rep(1 / sqrt(rank), length(level$load_index)))
+      # A level with blocks scales each loading by the dimensions its own
+      # effect may load on (`.ctJuliaBlockPattern()`), the same rule.
+      scale <- c(scale, if (length(level$load_prior) == length(level$load_index))
+        as.numeric(level$load_prior) else rep(1 / sqrt(rank), length(level$load_index)))
     }
     # Own variances (`popunique`) take a full-rank sd's transform, and so its
     # prior.

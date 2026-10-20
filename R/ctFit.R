@@ -683,6 +683,24 @@ T0VARredundancies <- function(ctm) {
 #' \code{popunique_<parameter>.<level>}, on the same raw scale as a full-rank
 #' sd. Requires \code{backend = 'julia'} and \code{intoverpop = 'laplace'} or
 #' sampling (\code{'none'}); must be passed by name.
+#' @param popblocks Shared dimensions in blocks, on a reduced-rank level: a
+#' list of blocks, each a list with \code{rank}, how many shared dimensions,
+#' and \code{effects}, which parameters load on them -- \code{TRUE} for every
+#' parameter varying at the level, or names of matrices or parameters, as for
+#' \code{popunique}. A parameter loads only on the dimensions of the blocks
+#' that name it, so parameters with no block in common are uncorrelated, and
+#' one named in no block needs an own variance (\code{popunique}). A level's
+#' rank is the sum of its blocks' ranks, so \code{poprank} need not be given
+#' for it. One unnamed list of blocks applies to every level; a list named by
+#' level gives each level its own. For example, person-level item intercepts
+#' that do not covary with a latent level but may covary with each other and
+#' with the dynamics: \code{popblocks = list(level = list(rank = 1, effects =
+#' c('lev', 'DRIFT')), items = list(rank = 2, effects = c('MANIFESTMEANS',
+#' 'DRIFT')))}. Within a block, its first \code{rank} parameters, in the
+#' order the model lists them, form its basis. Loadings are reported as
+#' \code{poploading_<parameter>_dim<j>}, the dimensions numbered across the
+#' blocks in order. Requires \code{backend = 'julia'} and \code{intoverpop =
+#' 'laplace'} or sampling (\code{'none'}); must be passed by name.
 #' @param weights Sampling weights, one per subject: the name of a column of
 #' \code{datalong} that is constant within subject, or a numeric vector named
 #' by subject id (or unnamed, in the order subjects first appear in the data).
@@ -1178,7 +1196,8 @@ ctFit<-function(datalong, model, stanmodeltext=NA, iter=1000, intoverstates=TRUE
   savesubjectmatrices=FALSE, saveComplexPars=FALSE,
   gendata=FALSE,
   sampleControl=list(),
-  control=list(),verbose=0,..., popunique=NULL, weights=NULL, ctstanmodel){
+  control=list(),verbose=0,..., popunique=NULL, popblocks=NULL, weights=NULL,
+  ctstanmodel){
 
   # `vb` (Stan's variational Bayes) was removed: it is a stan-only path,
   # crashed on the default fit=TRUE, and stan is being deprecated. Without
@@ -1971,8 +1990,16 @@ ctFit<-function(datalong, model, stanmodeltext=NA, iter=1000, intoverstates=TRUE
   # same holds under 'none', below.
   levelnames <- c(ctm$subjectIDname, ctm$groupIDnames)
   laplacerank <- NULL
-  enginerank <- intoverpopmethod %in% c('laplace','none') && poprankexplicit &&
-    !(length(poprank)==1 && is.na(poprank))
+  # Blocks of shared dimensions (`popblocks`, R/ctPopBlocks.R) are columns of
+  # the engine's loading matrix, so they ask for this route as a rank does.
+  blocksasked <- .ctPopblocksRequested(popblocks)
+  if(blocksasked && (!identical(backend,'julia') ||
+      !intoverpopmethod %in% c('laplace','none'))) stop("popblocks requires ",
+    "backend='julia' with intoverpop='laplace' or sampling (intoverpop='none'): ",
+    "a block is a set of columns of the engine's loading matrix, which the ",
+    "augmented route and stan do not build.", call.=FALSE)
+  rankasked <- poprankexplicit && !(length(poprank)==1 && is.na(poprank))
+  enginerank <- intoverpopmethod %in% c('laplace','none') && (rankasked || blocksasked)
   if(enginerank && !identical(backend,'julia')) stop(
     "poprank requires backend='julia'.", call.=FALSE)
   if(enginerank && !any(ctm$pars$indvarying[is.na(ctm$pars$value)]) &&
@@ -1982,7 +2009,7 @@ ctFit<-function(datalong, model, stanmodeltext=NA, iter=1000, intoverstates=TRUE
   if(enginerank){
     levelcolumns <- stats::setNames(c('indvarying', if(length(ctm$groupIDnames))
       paste0('indvarying_', ctm$groupIDnames)), levelnames)
-    asked <- .ctPoprankByLevel(poprank, levelnames)
+    asked <- if(rankasked) .ctPoprankByLevel(poprank, levelnames) else list()
     laplacerank <- vapply(names(asked), function(level){
       value <- asked[[level]]
       if(!identical(value, 'auto')) return(value)
@@ -1996,12 +2023,39 @@ ctFit<-function(datalong, model, stanmodeltext=NA, iter=1000, intoverstates=TRUE
     }, integer(1L))
     laplacerank <- laplacerank[!is.na(laplacerank)]
     if(!length(laplacerank)) laplacerank <- NULL
+    # Blocks (`popblocks`): a level's rank is the sum of its blocks', and a
+    # rank asked for the same level must agree with it.
+    laplaceblocks <- if(blocksasked) .ctPopblocksResolve(ctm, popblocks,
+      levelnames, levelcolumns) else list()
+    for(level in names(laplaceblocks)){
+      total <- sum(vapply(laplaceblocks[[level]], function(b) b$rank, integer(1L)))
+      if(level %in% names(laplacerank) && laplacerank[[level]] != total) stop(
+        "poprank for level '", level, "' is ", laplacerank[[level]], " but its ",
+        "popblocks span ", total, " dimensions. Drop poprank for that level: ",
+        "its blocks give its rank.", call.=FALSE)
+      laplacerank[level] <- as.integer(total)
+    }
+    if(length(laplaceblocks)) ctm$laplaceblocks <- laplaceblocks
     # Own variances (`popunique`, R/ctPopUnique.R), resolved here because the
     # T0MEANS floor below counts them: an effect with an own variance has a
     # dimension of its own whatever the rank.
     laplaceunique <- if(.ctPopuniqueRequested(popunique)) .ctPopuniqueResolve(ctm,
-      popunique, levelnames, levelcolumns, laplacerank) else list()
+      popunique, levelnames, levelcolumns, laplacerank,
+      patterned = names(laplaceblocks)) else list()
     if(length(laplaceunique)) ctm$laplaceunique <- laplaceunique
+    # An effect in no block shares no dimension, so without an own variance
+    # it would not vary.
+    for(level in names(laplaceblocks)){
+      inblock <- unique(unlist(lapply(laplaceblocks[[level]], function(b) b$param)))
+      roles <- .ctPopEffectRoles(ctm$pars, column=levelcolumns[[level]])
+      alone <- setdiff(setdiff(roles$param, inblock), laplaceunique[[level]])
+      if(length(alone)) stop("popblocks at level '", level, "' leaves ",
+        paste(alone, collapse=', '), " in no block and without an own variance,",
+        " so ", if(length(alone) > 1) "they" else "it", " would not vary. Name ",
+        if(length(alone) > 1) "them" else "it", " in a block, or give ",
+        if(length(alone) > 1) "them own variances" else "it an own variance",
+        " with popunique.", call.=FALSE)
+    }
     # An innermost-level varying T0MEANS whose latent has a free T0VAR takes
     # its initial variance from this covariance instead (`T0VARredundancies()`,
     # below, disables those T0VAR cells), so a rank below their number fixes

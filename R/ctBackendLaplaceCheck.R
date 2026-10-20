@@ -424,17 +424,10 @@ print.ctLaplaceCheck <- function(x, ...) {
       # of plausible mislabelling that survives review.
       load_index <- as.integer(level$load_index)
       if (length(load_index) && length(varying)) {
-        rank <- as.integer(if (is.null(level$rank)) length(varying) else level$rank)
-        k <- length(varying)
-        slot <- 0L
-        for (q in seq_len(rank)) {
-          for (p in seq(q, k)) {
-            slot <- slot + 1L
-            if (slot > length(load_index)) break
-            names[load_index[slot]] <- paste0("poploading_", varying[p],
-              "_dim", q, suffix)
-          }
-        }
+        # The triangle, or the level's blocks (`.ctJuliaLoadingEntries()`).
+        entries <- .ctJuliaLoadingEntries(level)
+        names[load_index] <- paste0("poploading_", varying[entries$row],
+          "_dim", entries$col, suffix)
       }
       # Own variances (`popunique`): an sd, but only the effect's own part of
       # it, so not `popsd_`.

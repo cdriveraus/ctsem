@@ -37,6 +37,7 @@
 "test-julia-laplace-modes.R","laplace","core"
 "test-julia-laplace-quadrature.R","laplace","core"
 "test-julia-fixedpopmeans.R","laplace","core"
+"test-julia-popblocks.R","laplace","core"
 "test-julia-popunique.R","laplace","core"
 "test-laplace-slot-bands.R","laplace","core"
 "test-poprank.R","laplace","core"
