@@ -165,19 +165,22 @@ where \code{uncertainty = 'sample'} is documented.
 \describe{
 \item{\code{'checked'}}{The default: the Hessian's normal, checked, and
 corrected by importance sampling in the directions where it is wrong. The
-log posterior's gradient at 32 draws from the normal says where the
-posterior departs from it, whatever the number of parameters: directions
-where the normal's 95\% interval would cover under 90\% or over 99\%, or
-where a skew or a width that moves with another parameter moves one tail
-outside 0.5 to 5\%. Those directions are sampled as \code{'is'} samples
-(below), the normal kept in all the rest. This is what corrects a curved
-ridge -- a loading vector whose length the data determine and whose
-direction they barely do, where the Hessian's intervals can be many times
-too wide -- and a variance from few groups and the effects it scales. A fit
-with nothing named gets exactly the Hessian's normal, for 32 gradients. The
-check is recorded in \code{$uncertainty$details$normalcheck}, and the
-sampling, when there was any, in
-\code{$uncertainty$details$importance_sampling}.}
+log posterior's gradient at draws from the normal says in which directions
+the posterior departs from it, in batches of 8 until a batch names no more
+directions than the one before (16 to 64 draws, whatever the number of
+parameters). Where a direction would leave some parameter's 95\% interval
+covering under 90\% or over 99\%, or move one tail outside 0.5 to 5\% by
+a skew or by a width that moves with another parameter, every departing
+direction is sampled as \code{'is'} samples (below), the normal kept in
+all the rest, spending at most what the fit's optimisation did. This is
+what corrects a variance from few groups and the effects it scales. Where
+that sampling cannot correct the normal -- a curved ridge such as a loading
+vector whose length the data determine and whose direction they barely do,
+where the Hessian's intervals can be many times too wide -- the Hessian's
+normal is kept, with a warning naming the parameters it misstates. A fit
+with nothing named gets exactly the Hessian's normal. The check is recorded
+in \code{$uncertainty$details$normalcheck}, and the sampling, when there was
+any, in \code{$uncertainty$details$importance_sampling}.}
 \item{\code{'hessian'}}{A normal approximation from the Hessian at the
 estimate, unchecked -- exact on julia, which differentiates its own
 gradient, and by finite differences of the gradient on stan.}

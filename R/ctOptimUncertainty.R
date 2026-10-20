@@ -1546,9 +1546,22 @@ ctOptimFullBootstrapDraws <- function(est, standata, sm, n=1000, cores=1,
 # where the normal is N(0, I), its log density has gradient `-z`, so the
 # residual `r = A'g + z` -- `g` the log posterior's gradient at `est + A z` --
 # is zero wherever the normal is exact and lies in the directions where the
-# posterior departs from it. Every draw moves along every direction, so a few
-# dozen see all of them, whatever the number of parameters; the cost is
-# `ndraws` gradients. The directions are the residuals' singular vectors,
+# posterior departs from it. Where the departure runs through `k` directions,
+# every residual lies in their span, so more than `k` draws name them, however
+# many parameters there are: this locates a span the residuals are confined
+# to, rather than estimating a matrix the size of the model (the same idea as
+# the gradient-based dimension reduction of Zahm, Cui, Law, Spantini and
+# Marzouk, arXiv:1807.03712, taken here relative to the normal).
+#
+# So the draws come in batches of `batch`, and stop once the directions named
+# would be the same with every slope and shape two standard errors further
+# from the normal or two nearer, or at `maxdraws`. A healthy fit and a gross
+# departure are decided at two batches; a direction near a bar buys draws.
+# Stopping instead when a batch named as many directions as the batch before
+# missed one of a funnel's two directions on 9 seeds of 20: its statistic is
+# a product of two coordinates, noisy at 16 draws, and two batches agreed by
+# chance. One still undecided at `maxdraws` is read at its estimate. The
+# directions are the residuals' singular vectors,
 # and each is measured by two numbers rather than by its singular value, which
 # with fewer draws than parameters is inflated by the draws' own spread:
 #
@@ -1581,47 +1594,80 @@ ctOptimFullBootstrapDraws <- function(est, standata, sm, n=1000, cores=1,
 # bench_*.R) the directions named nothing on a Gaussian, the two directions of
 # a ring and of a crescent, the two of a skewed variance's funnel, and exactly
 # the five of a five-dimensional shell mixed into thirty parameters.
-.ctOptimNormalCheck <- function(gradients, est, cov, ndraws = 32L,
-  coverage = c(0.90, 0.99)) {
+.ctOptimNormalCheck <- function(gradients, est, cov, batch = 8L,
+  maxdraws = 64L, coverage = c(0.90, 0.99)) {
   eig <- eigen((cov + t(cov)) / 2, symmetric = TRUE)
   keep <- eig$values > .ctFlatDirectionRtol() * max(eig$values)
   A <- sweep(eig$vectors[, keep, drop = FALSE], 2, sqrt(eig$values[keep]), "*")
-  Z <- matrix(stats::rnorm(ndraws * ncol(A)), ndraws)
-  out <- gradients(sweep(Z %*% t(A), 2, est, "+"))
-  R <- as.matrix(out$gradient) %*% A + Z
-  usable <- is.finite(out$value) & out$value > -1e99 & rowSums(!is.finite(R)) == 0
   bars <- .ctNormalResidualBars(coverage)
-  record <- list(draws = ndraws, unusable = sum(!usable), bars = bars,
+  Z <- R <- matrix(0, 0L, ncol(A))
+  drawn <- unusable <- 0L
+  repeat {
+    Zb <- matrix(stats::rnorm(batch * ncol(A)), batch)
+    out <- gradients(sweep(Zb %*% t(A), 2, est, "+"))
+    Rb <- as.matrix(out$gradient) %*% A + Zb
+    usable <- is.finite(out$value) & out$value > -1e99 & rowSums(!is.finite(Rb)) == 0
+    drawn <- drawn + batch
+    unusable <- unusable + sum(!usable)
+    Z <- rbind(Z, Zb[usable, , drop = FALSE])
+    R <- rbind(R, Rb[usable, , drop = FALSE])
+    found <- if (nrow(R) >= 2L) .ctNormalDepartures(Z, R, A, bars) else NULL
+    if (drawn >= maxdraws || (drawn >= 2L * batch && isTRUE(found$decided))) break
+  }
+  record <- list(draws = drawn, unusable = unusable, bars = bars,
     directions = matrix(0, length(est), 0L), slope = numeric(), shape = numeric(),
     parameters = integer())
-  if (sum(usable) < 2L) return(record)
-  Z <- Z[usable, , drop = FALSE]
-  R <- R[usable, , drop = FALSE]
+  if (is.null(found)) return(record)
+  flagged <- found$flagged
+  record$directions <- A %*% found$v[, flagged, drop = FALSE]
+  # Whose intervals the normal misstates, positionally.
+  record$parameters <- found$parameters
+  record$slope <- found$slope[flagged]
+  record$shape <- found$shape[flagged]
+  record
+}
+
+# The directions the residuals `R` at draws `Z` name, which of them
+# `.ctOptimNormalCheck()` samples, and whether that choice survives two
+# standard errors on each direction's slope and shape; see there.
+.ctNormalDepartures <- function(Z, R, A, bars) {
+  n <- nrow(R)
   v <- svd(R)$v
   along <- R %*% v
   zalong <- Z %*% v
   slope <- colSums(along * zalong) / colSums(zalong^2)
-  shape <- sqrt(colMeans((along - sweep(zalong, 2, slope, "*"))^2))
+  left <- along - sweep(zalong, 2, slope, "*")
+  shape <- sqrt(colMeans(left^2))
+  # Standard errors: the slope's from its residuals, the shape's by the delta
+  # method from the spread of the squared residuals.
+  slopese <- sqrt(colSums(left^2 * zalong^2)) / colSums(zalong^2)
+  shapese <- apply(left^2, 2, stats::sd) / sqrt(n) / (2 * pmax(shape, 1e-12))
+  # A direction no draw moved along says nothing either way.
+  slope[!is.finite(slope)] <- 0
+  slopese[!is.finite(slopese)] <- 0
   # Each parameter's share of each direction, and what that does to its
   # interval. A slope of one or more is a direction the posterior does not
   # fall off along at all.
   share <- (A %*% v)^2 / rowSums(A^2)
   share[!is.finite(share)] <- 0
-  width <- ifelse(slope < 1, 1 / (1 - slope), Inf)
-  ratio <- sqrt(1 + share * rep(width - 1, each = nrow(share)))
-  ratio[is.nan(ratio)] <- 1
-  skew <- share^1.5 * rep(shape * 2 / sqrt(3), each = nrow(share))
-  outside <- ratio > bars$narrow | ratio < bars$wide | skew > bars$skew
-  matters <- colSums(outside) > 0
-  departs <- width > bars$narrow^2 | width < bars$wide^2 |
-    shape * 2 / sqrt(3) > bars$skew
-  flagged <- if (any(matters)) which(matters | departs) else integer()
-  record$directions <- A %*% v[, flagged, drop = FALSE]
-  # Whose intervals the normal misstates, positionally.
-  record$parameters <- which(rowSums(outside) > 0)
-  record$slope <- slope[flagged]
-  record$shape <- shape[flagged]
-  record
+  classify <- function(slope, shape) {
+    width <- ifelse(slope < 1, 1 / (1 - slope), Inf)
+    ratio <- sqrt(1 + share * rep(width - 1, each = nrow(share)))
+    ratio[is.nan(ratio)] <- 1
+    skew <- share^1.5 * rep(shape * 2 / sqrt(3), each = nrow(share))
+    outside <- ratio > bars$narrow | ratio < bars$wide | skew > bars$skew
+    matters <- colSums(outside) > 0
+    departs <- width > bars$narrow^2 | width < bars$wide^2 |
+      shape * 2 / sqrt(3) > bars$skew
+    list(flagged = if (any(matters)) which(matters | departs) else integer(),
+      parameters = which(rowSums(outside) > 0))
+  }
+  found <- classify(slope, shape)
+  nearer <- classify(sign(slope) * pmax(abs(slope) - 2 * slopese, 0),
+    pmax(shape - 2 * shapese, 0))
+  further <- classify(slope + sign(slope) * 2 * slopese, shape + 2 * shapese)
+  c(list(v = v, slope = slope, shape = shape,
+    decided = identical(nearer$flagged, further$flagged)), found)
 }
 
 # How far a parameter's interval may be from the normal's before it covers
@@ -2191,19 +2237,22 @@ ctOptimFitLpgFunc <- function(fit, cores=1){
 #' \describe{
 #' \item{\code{'checked'}}{The default: the Hessian's normal, checked, and
 #' corrected by importance sampling in the directions where it is wrong. The
-#' log posterior's gradient at 32 draws from the normal says where the
-#' posterior departs from it, whatever the number of parameters: directions
-#' where the normal's 95\% interval would cover under 90\% or over 99\%, or
-#' where a skew or a width that moves with another parameter moves one tail
-#' outside 0.5 to 5\%. Those directions are sampled as \code{'is'} samples
-#' (below), the normal kept in all the rest. This is what corrects a curved
-#' ridge -- a loading vector whose length the data determine and whose
-#' direction they barely do, where the Hessian's intervals can be many times
-#' too wide -- and a variance from few groups and the effects it scales. A fit
-#' with nothing named gets exactly the Hessian's normal, for 32 gradients. The
-#' check is recorded in \code{$uncertainty$details$normalcheck}, and the
-#' sampling, when there was any, in
-#' \code{$uncertainty$details$importance_sampling}.}
+#' log posterior's gradient at draws from the normal says in which directions
+#' the posterior departs from it, in batches of 8 until a batch names no more
+#' directions than the one before (16 to 64 draws, whatever the number of
+#' parameters). Where a direction would leave some parameter's 95\% interval
+#' covering under 90\% or over 99\%, or move one tail outside 0.5 to 5\% by
+#' a skew or by a width that moves with another parameter, every departing
+#' direction is sampled as \code{'is'} samples (below), the normal kept in
+#' all the rest, spending at most what the fit's optimisation did. This is
+#' what corrects a variance from few groups and the effects it scales. Where
+#' that sampling cannot correct the normal -- a curved ridge such as a loading
+#' vector whose length the data determine and whose direction they barely do,
+#' where the Hessian's intervals can be many times too wide -- the Hessian's
+#' normal is kept, with a warning naming the parameters it misstates. A fit
+#' with nothing named gets exactly the Hessian's normal. The check is recorded
+#' in \code{$uncertainty$details$normalcheck}, and the sampling, when there was
+#' any, in \code{$uncertainty$details$importance_sampling}.}
 #' \item{\code{'hessian'}}{A normal approximation from the Hessian at the
 #' estimate, unchecked -- exact on julia, which differentiates its own
 #' gradient, and by finite differences of the gradient on stan.}

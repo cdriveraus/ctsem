@@ -200,11 +200,12 @@ optimum. `uncertainty` in `optimcontrol` (at fit time) or in
 - `hessian`: finite-difference (stan) or exact forward-mode (julia) curvature
   at the optimum, with normal draws. The cheapest.
 - `checked`: the `hessian` normal, checked against the log posterior's
-  gradients at 32 draws from it, and importance sampled in the directions
-  where its intervals would be wrong -- a curved ridge, a skew, a variance
-  that scales other parameters' widths. With nothing found, exactly the
-  `hessian` normal. The default for `backend = 'julia'` and for
-  `ctFitUncertainty()`.
+  gradients at 16 to 64 draws from it, and importance sampled in the
+  directions where its intervals would be wrong -- a skew, a variance that
+  scales other parameters' widths. Where sampling within the fit's own cost
+  cannot correct it, as on a curved ridge, the `hessian` normal is kept and
+  a warning names the parameters. With nothing found, exactly the `hessian`
+  normal. The default for `backend = 'julia'` and for `ctFitUncertainty()`.
 - `opg`: an information estimate from the variability of per-subject score
   contributions, with no Hessian involved. Included as a diagnostic; it tends
   to disagree with the others most exactly where the Hessian's curvature

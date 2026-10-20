@@ -142,7 +142,8 @@ test_that("checked leaves the normal of a Gaussian posterior alone", {
     sm = NULL, lpgFunc = lpg, uncertainty = 'hessian', finishsamples = 20,
     verbose = 0)
   expect_equal(ncol(out$details$normalcheck$directions), 0L)
-  expect_equal(out$details$normalcheck$draws, 32L)
+  # Two batches of 8 that name nothing: the check stops there.
+  expect_equal(out$details$normalcheck$draws, 16L)
   expect_equal(unname(out$cov), unname(hess$cov))
   drawn <- ctsem:::.ctOptimDrawSamples(out, 'imis', list(), rep(0, 6), 50,
     lpg = lpg)
