@@ -12,6 +12,7 @@ A major release: ctsem gains a second estimation engine, written in Julia, which
 - Nested grouping levels, as `id=c('person','couple')`, with each parameter's `indvarying` naming the levels it varies at and `poprank` set per level. Julia backend only.
 - Ordinal, count and censored indicators, and lower and upper asymptotes for binary ones (`ASYMPTOTES` in `ctModel()`). Julia backend only.
 - Posterior sampling with `ctFit(backend='julia', optimize=FALSE)`, or after an optimised fit with `ctFitUncertainty(fit, 'sample')`, running until target effective sample sizes and R-hat are reached.
+- Sampling weights, one per subject, with `ctFit(weights=)`: a weighted pseudo-likelihood with robust standard errors, described in the new sampling weights vignette. Julia backend only.
 - `ctFitUncertainty()` is the new name of `ctOptimUncertainty()`, which remains, and adds `'sample'`, `'stored'` to redraw from the covariance a fit carries, and importance sampling against the quadrature or particle filter likelihood (`control$likelihood`).
 - On the julia backend, missing values of time independent predictors are imputed when optimising and sampled when sampling, and `nlcontrol$nsubsteps='auto'` sets a nonlinear model's integration steps from its own error.
 - `ctFit(stationary=TRUE)` works again, with `backend='julia'`.
@@ -23,7 +24,7 @@ A major release: ctsem gains a second estimation engine, written in Julia, which
 - Posterior predictive checking is consolidated in `ctPostPredPlots()`, with panels for the mean trajectory and the lagged covariance; `ctFitCovCheck()` is renamed `ctFitCheckCov()`, the old name still available, and splits by group.
 - `ctLOO(method='psis')` cross-validates a Laplace fit without refitting.
 - `coef()`, `vcov()`, `logLik()` and `print()` for fits from either backend; `summary()`, `plot()` and `ctPlotPosterior()` for julia fits.
-- `ctGenerate(fromPriors=TRUE)` draws datasets from a model's prior predictive, without a fit or data, and `ctGenerateFromPriors()` is deprecated in its favour; `ctGenerate(backend='julia')` generates random effects at every level, nonlinear dynamics and non-Gaussian indicators.
+- `ctGenerate(fromPriors=TRUE)` draws datasets from a model's prior predictive, without a fit or data, and `ctGenerateFromPriors()` is deprecated in its favour; `ctGenerate(backend='julia')` generates random effects at every level, nonlinear dynamics and non-Gaussian indicators, fills in a given design with `datastruct=`, and takes population values on the scales `summary()` reports with `values=`.
 - `ctGenerate()`'s `n.subjects` is now `n`, one count per id level; `n.subjects` still works, with a warning.
 - ACF plots fit a precision weighted spline by default, `method='weighted'`; `method='quantile'` for the previous plot.
 - Functions that run fits or engine loops default to `cores=getOption('mc.cores', 2)`, as `ctFit()` does. For `ctOptimUncertainty()`, `ctFitCovCheck()` and `ctKalmanArray()` that is up from one; `cores=1` for the previous behaviour.
