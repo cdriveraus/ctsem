@@ -36,9 +36,11 @@ person's own baseline, and baselines are lower with a diagnosis: -1 on average
 against 0.5. So the average baseline is 0.275 in the population, but -0.25 in
 the sample.
 
-The baseline `mm` varies between people with sd 0.5 around its group's mean
-(`"mm|param|TRUE|0.5"`: identity transform, individually varying, sd 0.5), and
-`popmeans` sets that mean for each group:
+The generating model says the structure: the baseline `mm` varies between
+people with sd 0.5 and is 1.5 lower with a diagnosis
+(`"mm|param|TRUE|0.5|depressed=-1.5"`: identity transform, individually
+varying, sd 0.5, effect of `depressed`). `datastruct` says who is observed
+when, and `popmeans` gives the baseline without a diagnosis:
 
 ```{r data}
 library(ctsem)
@@ -47,24 +49,19 @@ set.seed(1)
 gen <- ctModel(type = "ct", manifestNames = "mood", latentNames = "eta",
   LAMBDA = matrix(1), DRIFT = matrix(-0.5), DIFFUSION = matrix(0.8),
   T0MEANS = matrix(0), T0VAR = matrix(1), CINT = matrix(0),
-  MANIFESTMEANS = matrix("mm|param|TRUE|0.5"), MANIFESTVAR = matrix(0.5),
-  silent = TRUE)
+  MANIFESTMEANS = matrix("mm|param|TRUE|0.5|depressed=-1.5"),
+  MANIFESTVAR = matrix(0.5), TIpredNames = "depressed", silent = TRUE)
 
-depressed <- ctGenerate(gen, n = 100, Tpoints = 10, popmeans = c(mm = -1),
-  backend = "julia")
-control <- ctGenerate(gen, n = 100, Tpoints = 10, popmeans = c(mm = 0.5),
-  backend = "julia")
-
-dat <- rbind(data.frame(depressed, group = "depressed"),
-  data.frame(control, group = "control"))
-dat$id <- paste(dat$group, dat$id)   # ids restart at 1 in each call
+design <- data.frame(id = rep(1:200, each = 10), time = rep(0:9, 200),
+  depressed = rep(1:0, each = 1000))
+dat <- ctGenerate(gen, datastruct = design, popmeans = c(mm = 0.5))
 ```
 
 The weight is each group's share of the population divided by its share of
 the sample:
 
 ```{r weights}
-dat$w <- ifelse(dat$group == "depressed", 0.15 / 0.5, 0.85 / 0.5)
+dat$w <- ifelse(dat$depressed == 1, 0.15 / 0.5, 0.85 / 0.5)
 ```
 
 Fit the same model with and without the weights. By default each person's

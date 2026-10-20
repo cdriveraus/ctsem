@@ -312,6 +312,69 @@ test_that("popmeans, RAWPOPVAR and fixed TI effects set what they state", {
     popmeans = c(nothere = 1)), "not a free parameter")
 })
 
+test_that("popmeans takes summary()'s values, so a model written for fitting generates", {
+  skip_without_julia()
+  # Every parameter free, as a model is written for fitting: T0MEANS and
+  # MANIFESTMEANS vary, and TI1 acts on everything.
+  m <- ctModel(type = "ct", manifestNames = "Y1", latentNames = "eta1",
+    LAMBDA = matrix(1), TIpredNames = "TI1", silent = TRUE)
+  truth <- list(drift_eta1 = -0.5, diff_eta1 = 1, mvarY1 = 0.5, mm_Y1 = 2,
+    popsd = c(mm_Y1 = 0.6, T0m_eta1 = 1), rawpopcorr = c(mm_Y1__T0m_eta1 = 0.4),
+    tipreds = c(tip_TI1_mm_Y1 = 0.8))
+  set.seed(3)
+  d <- suppressMessages(ctGenerate(m, n = 2000, Tpoints = 2, popmeans = truth))
+  sp <- attr(d, "subjectpars")
+  ti <- tapply(d[, "TI1"], d[, "id"], `[`, 1)
+  mm <- stats::lm(sp$mm_Y1 ~ ti)
+  expect_equal(unname(stats::coef(mm)), c(2, 0.8), tolerance = 0.05)
+  expect_equal(stats::sigma(mm), 0.6, tolerance = 0.05)
+  expect_equal(stats::sd(sp$T0m_eta1), 1, tolerance = 0.05)
+  expect_equal(stats::cor(stats::residuals(mm), sp$T0m_eta1), 0.4, tolerance = 0.1)
+  # The spread is summary()'s: the Gauss-Hermite sd of the transformed value,
+  # exact for a linear transform, matched for a curved one.
+  expect_equal(ctsem:::.ctGenerateRawSd("10 * param", 0, 0.6, "x"), 0.06)
+  s <- ctsem:::.ctGenerateRawSd("log1p_exp(2 * param)", 0.3, 0.2, "x")
+  rule <- ctsem:::.ctBackendGaussHermite()
+  v <- ctsem:::.ctGenerateNatural("log1p_exp(2 * param)", 0.3 + s * rule$node)
+  expect_equal(sqrt(sum(rule$weight * (v - sum(rule$weight * v))^2)), 0.2)
+
+  gen <- function(values) ctGenerate(m, n = 3, Tpoints = 2, popmeans = values)
+  expect_error(gen(list(popsd = c(drift_eta1 = 1))), "does not vary")
+  expect_error(gen(list(popsd = c(mm_Y1 = 0))), "positive")
+  expect_error(gen(list(rawpopcorr = c(mm_Y1__nope = 0.2))), "not a pair")
+  expect_error(gen(list(tipreds = c(tip_TI1_nope = 1))), "not a free TI")
+  expect_error(gen(list(popsd.study = c(mm_Y1 = 1))), "no level")
+})
+
+test_that("datastruct is the design, returned with the generated values", {
+  skip_without_julia()
+  m <- .gen_model(ti = 1)
+  m$pars$TI1_effect <- ifelse(m$pars$param %in% "mm", "TRUE", "FALSE")
+  # Out of id order, irregular times, missing cells, a 0/1 predictor and a
+  # column of the caller's own.
+  design <- data.frame(id = rep(c("b", "a", "c"), each = 4),
+    time = c(0, 1, 2, 3, 0, .5, 1.7, 3, 0, 2.2, 2.9, 4.1),
+    Y1 = c(0, 0, NA, 0, 0, NA, 0, 0, 0, 0, 0, 0),
+    TI1 = rep(c(1, 0, 0), each = 4), label = rep(c("y", "x", "z"), each = 4))
+  set.seed(5)
+  d <- suppressMessages(ctGenerate(m, datastruct = design,
+    popmeans = list(mm = 2, popsd = c(mm = 0.01), tipreds = c(tip_TI1_mm = 5))))
+  expect_s3_class(d, "data.frame")
+  expect_identical(d[c("id", "time", "TI1", "label")], design[c("id", "time", "TI1", "label")])
+  expect_identical(is.na(d$Y1), is.na(design$Y1))
+  sp <- attr(d, "subjectpars")
+  expect_equal(sp$mm[match(c("a", "b", "c"), sp$id)], c(2, 7, 2), tolerance = 0.01)
+
+  # A predictor the design lacks takes its default, and says so.
+  expect_message(ctGenerate(m, datastruct = design[c("id", "time")]),
+    "Not in datastruct: TI1 drawn standard normal")
+  varying <- design
+  varying$TI1[2] <- 0
+  expect_error(ctGenerate(m, datastruct = varying), "constant within each subject")
+  expect_error(ctGenerate(m, datastruct = design, n = 3), "datastruct is the design")
+  expect_error(ctGenerate(m, datastruct = design, backend = "r"), "backend='r'")
+})
+
 test_that("state dependent generation carries the dependence into the data", {
   skip_without_julia()
   m <- suppressWarnings(suppressMessages(ctModel(type = "ct", n.latent = 1,

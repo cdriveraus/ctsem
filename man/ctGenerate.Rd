@@ -93,19 +93,33 @@ subjects at \code{Tpoints} occasions \code{dtmean} apart is used.}
 
 \item{nsamples}{With \code{fromPriors=TRUE}, how many datasets to draw.}
 
-\item{datastruct}{With \code{fromPriors=TRUE}, an optional long format data
-structure giving the subjects, times and missingness to generate for, used
-in place of the balanced design. A fit passed as \code{ctmodelobj} brings
+\item{datastruct}{A long format data frame giving the design to generate
+for, in place of the balanced one \code{n}, \code{Tpoints} and
+\code{dtmean} build: the subject (and any group) ids and times, TD and TI
+predictor values, and which observations exist -- a manifest cell that is
+NA stays missing, any other value or a manifest column left out is
+generated. A predictor the model names and \code{datastruct} lacks is zero
+(TD) or drawn standard normal per subject (TI). The same data frame is
+returned with the generated values filled in. Needs \code{backend='julia'},
+or \code{fromPriors=TRUE}, where a fit passed as \code{ctmodelobj} brings
 its own.}
 
 \item{cores}{With \code{fromPriors=TRUE}, cpu cores to use.}
 
-\item{popmeans}{For \code{backend='julia'}: a named numeric vector of
-population means on each parameter's natural scale, e.g.
-\code{c(mm = 2, drift = -0.3)}. This is the way to state the mean of an
-individually varying parameter, whose cell cannot hold a value; it works for
-any free parameter. Unnamed free parameters are set at their prior's centre,
-raw zero.}
+\item{popmeans}{For \code{backend='julia'}: the population values to
+generate from, named and scaled as \code{summary()} reports them, so a model
+written for fitting can generate data at chosen values. A named numeric
+vector or list of free parameters' values on their natural scale, e.g.
+\code{c(mm = 2, drift = -0.3)}, which may also hold the sections
+\code{popsd} (random-effect sds on the natural scale, named by parameter),
+\code{rawpopcorr} (correlations of the random effects, named
+\code{'a__b'}) and \code{tipreds} (linearised TI predictor effects, named
+\code{'tip_<predictor>_<parameter>'}), as in
+\code{list(mm = 2, popsd = c(mm = 0.5), tipreds = c(tip_TI1_mm = 1))}. With
+grouping levels, \code{popsd.<level>} and \code{rawpopcorr.<level>} name a
+level's. What is not given takes its prior's centre: raw zero for a mean,
+\code{sdscale} for a raw sd, zero for a correlation or a free effect. A
+value fixed in the model cannot also be given here.}
 
 \item{n.subjects}{Deprecated; use \code{n}.}
 }
