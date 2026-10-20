@@ -2040,7 +2040,8 @@ ctBackendParMatrices <- function(fit, raw = NULL, tipreds = NULL, state = NULL,
   # were estimated and some follow from the dimension structure, and a reader
   # cannot tell which from the numbers. The non-finite sentence joins it rather
   # than replacing it -- both can be true of one table.
-  popsdnote <- .ctBackendPopRegressionNote(.ctBackendSpec(object))
+  popsdnote <- c(.ctBackendPopRegressionNote(.ctBackendSpec(object)),
+    .ctBackendPopBlocksNote(.ctBackendSpec(object)))
   popsdnote <- c(popsdnote,
     .ctBackendNotFiniteNote(out$popsd, "standard deviation"))
   # The random effects the data barely inform, from the check the fit made

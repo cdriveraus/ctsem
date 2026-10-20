@@ -124,6 +124,13 @@ no packing anywhere.
     own variance, a single entry `psi_j` in row `j`, transformed as a
     full-rank level's scale. An own variance on a full-rank level would not
     be identified, so it is refused.
+  * `load_row`, `load_col`: the effect and dimension each loading fills, in
+    `load_index` order, when the level states a pattern; empty for the
+    triangle above. A pattern places dimensions in blocks, each loaded by
+    the effects the model names for it and triangular in its own first rows,
+    so an effect named in no block shares no dimension with the others
+    (`ctFit(popblocks =)`). A patterned level is a loading level whatever its
+    rank.
 """
 struct CTSEMLaplaceLevel
     re_index::Vector{Int}
@@ -147,26 +154,45 @@ struct CTSEMLaplaceLevel
     # level (`CTSEMHybrid`): no column of the level's root, no coordinate of
     # its block. Empty when there are none.
     hybrid::Vector{Bool}
+    # The effect and dimension of each loading, when the level states a
+    # pattern (`_laplace_loading_entries`); empty for the triangle.
+    load_row::Vector{Int}
+    load_col::Vector{Int}
 
     function CTSEMLaplaceLevel(re_index, sd_index, cor_index, sd_scale, group,
         ngroups::Integer; covmatcode::Integer=0, rank::Integer=-1,
         load_index=Int[], sd_fixed=Float64[], cor_fixed=Float64[],
-        unique_index=Int[], hybrid=Bool[])
+        unique_index=Int[], hybrid=Bool[], load_row=Int[], load_col=Int[])
         re = Vector{Int}(collect(re_index))
         sd = Vector{Int}(collect(sd_index))
         cor = Vector{Int}(collect(cor_index))
         load = Vector{Int}(collect(load_index))
         scale = Vector{Float64}(collect(sd_scale))
         grp = Vector{Int}(collect(group))
+        lrow = Vector{Int}(collect(load_row))
+        lcol = Vector{Int}(collect(load_col))
+        patterned = !isempty(lrow)
         k = length(re)
         # A negative rank means "not stated", which is the full-rank level every
-        # caller before this argument existed builds.
+        # caller before this argument existed builds. A pattern may span more
+        # dimensions than effects: an effect can load on several blocks.
         r = rank < 0 ? k : Int(rank)
-        (r >= 0 && r <= k) || throw(ArgumentError(
+        (r >= 0 && (patterned || r <= k)) || throw(ArgumentError(
             "rank must lie in 0:$(k) for a level with $(k) random effects, got $(r)"))
         length(scale) == k ||
             throw(DimensionMismatch("one sdscale per random effect is required"))
-        if r < k
+        if patterned
+            (length(lrow) == length(lcol) == length(load)) || throw(DimensionMismatch(
+                "load_row and load_col give one effect and one dimension per loading"))
+            (all(p -> 1 <= p <= k, lrow) && all(q -> 1 <= q <= r, lcol)) ||
+                throw(ArgumentError("a loading's effect lies in 1:$(k) and its dimension in 1:$(r)"))
+            allunique(zip(lrow, lcol)) || throw(ArgumentError(
+                "each effect loads on a dimension at most once"))
+            all(q -> q in lcol, 1:r) || throw(ArgumentError(
+                "every dimension of a patterned level needs a loading"))
+            (isempty(sd) && isempty(cor)) || throw(ArgumentError(
+                "a reduced-rank level is described by load_index alone; sd_index and cor_index must be empty"))
+        elseif r < k
             expected = k * r - div(r * (r - 1), 2)
             length(load) == expected || throw(DimensionMismatch(
                 "expected $(expected) loading parameters for rank $(r) over $(k) random effects, got $(length(load))"))
@@ -191,7 +217,7 @@ struct CTSEMLaplaceLevel
             length(uniq) == k || throw(DimensionMismatch(
                 "unique_index holds one entry per random effect, 0 for none"))
             all(>=(0), uniq) || throw(ArgumentError("unique_index entries are raw positions or 0"))
-            any(>(0), uniq) && r == k && throw(ArgumentError(
+            any(>(0), uniq) && r == k && !patterned && throw(ArgumentError(
                 "own variances need a reduced-rank level: on a full-rank level they are not identified"))
             all(iszero, uniq) && (uniq = Int[])
         end
@@ -216,13 +242,57 @@ struct CTSEMLaplaceLevel
                 "a stated $(what) has index 0 and a finite value; a free one a raw position and NaN"))
         end
         return new(re, sd, cor, load, scale, grp, Int(ngroups), Int(covmatcode), r, uniq,
-            Int[], sdfix, corfix, hyb)
+            Int[], sdfix, corfix, hyb, lrow, lcol)
     end
 end
 
-"""True when this level's population covariance spans fewer dimensions than it
-has random effects."""
-isreducedrank(level::CTSEMLaplaceLevel) = level.rank < length(level.re_index)
+"""True when this level's population covariance is a loading matrix: it spans
+fewer dimensions than it has random effects, or it states a pattern."""
+isreducedrank(level::CTSEMLaplaceLevel) =
+    level.rank < length(level.re_index) || !isempty(level.load_row)
+
+"""
+    _laplace_loading_entries(level)
+
+The effect and dimension each of a reduced-rank level's loadings fills, in
+`load_index` order: the level's pattern (`load_row`, `load_col`), or the
+triangle a level without one has, dimension `q` loaded by effects `q:k`,
+dimension by dimension.
+"""
+function _laplace_loading_entries(level::CTSEMLaplaceLevel)
+    isempty(level.load_row) || return (level.load_row, level.load_col)
+    k = nrandomeffects(level)
+    rows = Int[]
+    cols = Int[]
+    for q in 1:level.rank, p in q:k
+        push!(rows, p)
+        push!(cols, q)
+    end
+    return (rows, cols)
+end
+
+"""
+    _laplace_loading_allowed(level)
+
+Which entries `A[m, q]` a move `L -> L A` of a reduced-rank level's loadings
+may use and keep its pattern: `m >= q`, and every effect loading on dimension
+`m` loads on `q` too. The triangle allows its whole lower triangle; a pattern
+of blocks, each block's. The allowed pairs are closed under products, so
+`exp(E)` of a matrix on them stays on them.
+"""
+function _laplace_loading_allowed(level::CTSEMLaplaceLevel)
+    r = level.rank
+    rows, cols = _laplace_loading_entries(level)
+    has = falses(nrandomeffects(level), r)
+    for t in eachindex(rows)
+        has[rows[t], cols[t]] = true
+    end
+    allowed = falses(r, r)
+    for q in 1:r, m in q:r
+        allowed[m, q] = all(p -> !has[p, m] || has[p, q], axes(has, 1))
+    end
+    return allowed
+end
 
 """Number of model parameters this level moves."""
 nrandomeffects(level::CTSEMLaplaceLevel) = length(level.re_index)
@@ -394,6 +464,14 @@ function _laplace_coordinate_inert(level::CTSEMLaplaceLevel, q::Integer,
             seen == t && return insorted(p, inert)
         end
         return false
+    end
+    # A pattern's dimension is loaded by the effects it names, not by `q:k`.
+    if !isempty(level.load_row)
+        for t in eachindex(level.load_col)
+            level.load_col[t] == q || continue
+            insorted(level.load_row[t], inert) || return false
+        end
+        return true
     end
     for p in q:k
         insorted(p, inert) || return false
@@ -657,6 +735,7 @@ function ctsem_laplace_objective(objective::CTSEMObjective; re_index=Int[],
     level_rank=Int[], load_index=Int[], sd_fixed=Float64[], cor_fixed=Float64[],
     unique_index=Int[], inert_level=Int[], inert_group=Int[], inert_effect=Int[],
     hybrid_effect=Int[], hybrid_manifest=Int[], hybrid_slope=Float64[],
+    level_nload=Int[], load_row=Int[], load_col=Int[],
     inner_maxiter::Integer=_LAPLACE_INNER_MAXITER[], inner_tol::Real=1e-10,
     floor="total", gate_lo::Real=0.2, gate_hi::Real=0.7)
     nsubjects = length(objective.subject_objectives)
@@ -695,13 +774,20 @@ function ctsem_laplace_objective(objective::CTSEMObjective; re_index=Int[],
     # consumes loadings and no scales or correlations, so the scale cursor and
     # the effect cursor stop advancing together the moment one level is reduced.
     re_at = 0; sd_at = 0; cor_at = 0; load_at = 0
+    # Loading patterns (`load_row`, `load_col`), when sent, cover every reduced
+    # level, with `level_nload` saying how many loadings each has.
+    patterns = !isempty(load_row)
+    patterns && length(level_nload) != length(counts) && throw(DimensionMismatch(
+        "load_row needs level_nload, one loading count per level"))
     for l in eachindex(counts)
         k = counts[l]
         r = ranks[l]
-        reduced = r < k
+        patterned = patterns && level_nload[l] > 0
+        reduced = r < k || patterned
         ncor = reduced ? 0 : div(k * (k - 1), 2)
         nsd = reduced ? 0 : k
-        nload = reduced ? k * r - div(r * (r - 1), 2) : 0
+        nload = patterns ? Int(level_nload[l]) :
+            reduced ? k * r - div(r * (r - 1), 2) : 0
         push!(levels, CTSEMLaplaceLevel(
             Int.(re_index[(re_at + 1):(re_at + k)]),
             Int.(sd_index[(sd_at + 1):(sd_at + nsd)]),
@@ -717,7 +803,9 @@ function ctsem_laplace_objective(objective::CTSEMObjective; re_index=Int[],
             unique_index=isempty(unique_index) ? Int[] :
                 Int.(unique_index[(re_at + 1):(re_at + k)]),
             hybrid=(l == 1 && !isempty(hybrid_effect)) ?
-                [p in hybrid_effect for p in 1:k] : Bool[]))
+                [p in hybrid_effect for p in 1:k] : Bool[],
+            load_row=patterned ? Int.(load_row[(load_at + 1):(load_at + nload)]) : Int[],
+            load_col=patterned ? Int.(load_col[(load_at + 1):(load_at + nload)]) : Int[]))
         re_at += k; sd_at += nsd; cor_at += ncor; load_at += nload
     end
     # The deviations the filter integrates, into the shared `EKFParameters`.
@@ -1063,11 +1151,19 @@ function _laplace_poploading(values::AbstractVector{T}, level::CTSEMLaplaceLevel
     k = nrandomeffects(level)
     r = level.rank
     L = zeros(T, k, nlatent(level))
-    counter = 0
-    @inbounds for q in 1:r
-        for p in q:k
-            counter += 1
-            L[p, q] = values[level.load_index[counter]] * level.sd_scale[p]
+    if isempty(level.load_row)
+        counter = 0
+        @inbounds for q in 1:r
+            for p in q:k
+                counter += 1
+                L[p, q] = values[level.load_index[counter]] * level.sd_scale[p]
+            end
+        end
+    else
+        # A pattern (`load_row`, `load_col`): each loading where it says.
+        @inbounds for t in eachindex(level.load_row)
+            p = level.load_row[t]
+            L[p, level.load_col[t]] = values[level.load_index[t]] * level.sd_scale[p]
         end
     end
     # Own variances (`unique_index`): one column each, a single entry in the

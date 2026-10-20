@@ -2425,9 +2425,14 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
       }
     }
     k <- length(lv_varying)
-    rank <- .ctJuliaLevelRank(model, hierarchy[[l]]$name, k)
-    reduced <- rank < k
     lv_names <- .ctJuliaLaplaceNames(table, lv_varying)
+    # Blocks of shared dimensions (`popblocks`, R/ctPopBlocks.R): the level's
+    # rank is their sum, and it is a loading level whatever that is.
+    blocks <- model[['laplaceblocks']][[hierarchy[[l]]$name]]
+    pattern <- if (length(blocks)) .ctJuliaBlockPattern(blocks, lv_names) else NULL
+    rank <- if (length(blocks)) sum(vapply(blocks, function(b) as.integer(b$rank),
+      integer(1))) else .ctJuliaLevelRank(model, hierarchy[[l]]$name, k)
+    reduced <- rank < k || !is.null(pattern)
     # What RAWPOPVAR (RAWPOPVAR_<level> above the subject) states for this
     # level: a number fixes that scale or correlation coordinate, a label or
     # nothing leaves it free. A fixed entry takes no place in the raw vector;
@@ -2460,7 +2465,8 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
     corfree <- if (reduced) logical() else !is.finite(cor_fixed)
     nsd <- sum(sdfree)
     noff <- sum(corfree)
-    nload <- if (reduced) as.integer(k * rank - rank * (rank - 1L) / 2L) else 0L
+    nload <- if (!is.null(pattern)) length(pattern$row) else
+      if (reduced) as.integer(k * rank - rank * (rank - 1L) / 2L) else 0L
     # Own variances (`popunique`), one raw position each after the loadings,
     # 0 for an effect without one. Only on a reduced level: `ctFit()` refuses
     # them at full rank, where they would not be identified.
@@ -2484,6 +2490,13 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
       cor_fixed = if (reduced) numeric() else as.numeric(cor_fixed),
       load_index = if (nload) as.integer(cursor + seq_len(nload)) else integer(),
       unique_index = if (nown) as.integer(unique_index) else integer(),
+      # The effect and dimension of each loading, and its prior scale, where
+      # the level has blocks; absent for the triangle
+      # (`.ctJuliaLoadingEntries()`).
+      load_row = if (!is.null(pattern)) pattern$row else NULL,
+      load_col = if (!is.null(pattern)) pattern$col else NULL,
+      load_prior = if (!is.null(pattern)) pattern$prior else NULL,
+      blocks = blocks,
       rank = as.integer(rank),
       sd_scale = as.numeric(lv_scale),
       param = lv_names,
@@ -4359,13 +4372,25 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
     # nothing crosses exactly as it did before this existed.
     ranks <- as.integer(vapply(levels, function(x)
       if (is.null(x$rank)) x$nrandom else x$rank, integer(1)))
-    if (any(ranks < as.integer(vapply(levels, function(x) x$nrandom, integer(1))))) {
+    patterned <- any(vapply(levels, function(x) length(x$load_row) > 0L, logical(1)))
+    if (patterned ||
+        any(ranks < as.integer(vapply(levels, function(x) x$nrandom, integer(1))))) {
       laplace_args$level_rank <- V(ranks)
       # Absent rather than empty when every reduced level has rank 0 (own
       # variances only): a zero-length vector deadlocks the bridge.
       if (length(grab("load_index"))) {
         laplace_args$load_index <- V(as.integer(grab("load_index")))
       }
+    }
+    # Loading patterns (`popblocks`), sent only when some level has blocks, and
+    # then for every level, the triangle written out where a level has none.
+    if (patterned) {
+      entries <- lapply(levels, function(x) if (length(x$load_index))
+        .ctJuliaLoadingEntries(x) else list(row = integer(), col = integer()))
+      laplace_args$level_nload <- V(as.integer(vapply(levels, function(x)
+        length(x$load_index), integer(1))))
+      laplace_args$load_row <- V(as.integer(unlist(lapply(entries, `[[`, "row"))))
+      laplace_args$load_col <- V(as.integer(unlist(lapply(entries, `[[`, "col"))))
     }
     # One entry per random effect, 0 for none, sent only when some level has
     # an own variance (`popunique`), so every other model crosses as before.

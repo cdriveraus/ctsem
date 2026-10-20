@@ -690,28 +690,64 @@ function _saem_centre_loadings!(st::CTSEMSAEMState, laplace::CTSEMLaplaceObjecti
     k = nrandomeffects(level)
     r = nlatent(level)
     G > r || return nothing
-    F = cholesky(Symmetric(S ./ G); check=false)
-    issuccess(F) || return nothing
-    A = Matrix(F.L)
+    # `A` keeps to the entries the level's pattern allows
+    # (`_laplace_loading_allowed`): the whole lower triangle for the triangle,
+    # and each block's for a pattern of blocks, where the optimum without a
+    # prior is each block's own `chol(S_bb / G)`.
+    allowed = _laplace_loading_allowed(level)
+    A, whole = _saem_block_cholesky(S ./ G, allowed)
+    A === nothing && return nothing
+    rows, cols = _laplace_loading_entries(level)
     R = zeros(k, r)
     D = zeros(k, r)
-    counter = 0
-    for q in 1:r, p in q:k
-        counter += 1
-        R[p, q] = st.theta[level.load_index[counter]]
-        D[p, q] = prec[level.load_index[counter]]
+    for t in eachindex(rows)
+        R[rows[t], cols[t]] = st.theta[level.load_index[t]]
+        D[rows[t], cols[t]] = prec[level.load_index[t]]
     end
-    if any(>(0), D)
-        A = _saem_loading_factor(A, S, R, D, G)
+    # Newton where a prior shapes the optimum, or where some block's triangle
+    # is not wholly allowed and its Cholesky factor would leave the pattern;
+    # it moves the allowed entries alone.
+    if any(>(0), D) || !whole
+        A = _saem_loading_factor(A, S, R, D, G, allowed)
         A === nothing && return nothing
     end
     R = R * A
-    counter = 0
-    for q in 1:r, p in q:k
-        counter += 1
-        st.theta[level.load_index[counter]] = R[p, q]
+    for t in eachindex(rows)
+        st.theta[level.load_index[t]] = R[rows[t], cols[t]]
     end
     return Matrix(inv(LowerTriangular(A)))
+end
+
+"""
+    _saem_block_cholesky(M, allowed)
+
+The lower Cholesky factor of each block of `M` that `allowed` connects
+(`_laplace_loading_allowed`), zero between blocks, and whether every pair
+within each block is allowed, so that the factors stay on the pattern.
+`(nothing, false)` where a block is not positive definite. One block, the
+whole of `M`, for the triangle.
+"""
+function _saem_block_cholesky(M::AbstractMatrix, allowed::AbstractMatrix{Bool})
+    r = size(M, 1)
+    block = collect(1:r)
+    root(i) = (while block[i] != i; i = block[i]; end; i)
+    for q in 1:r, m in (q + 1):r
+        allowed[m, q] || continue
+        a, b = root(m), root(q)
+        a == b || (block[max(a, b)] = min(a, b))
+    end
+    A = zeros(r, r)
+    whole = true
+    for b in unique(root.(1:r))
+        members = [i for i in 1:r if root(i) == b]
+        F = cholesky(Symmetric(M[members, members]); check=false)
+        issuccess(F) || return (nothing, false)
+        A[members, members] .= F.L
+        for j in eachindex(members), m in members[(j + 1):end]
+            allowed[m, members[j]] || (whole = false)
+        end
+    end
+    return (A, whole)
 end
 
 """
@@ -725,9 +761,11 @@ the raw loadings `R A`. Newton on `A`'s `r (r + 1) / 2` entries with a halving
 line search, from `A0`. `nothing` where no step could be taken from the start.
 """
 function _saem_loading_factor(A0::Matrix{Float64}, S::Matrix{Float64},
-    R::Matrix{Float64}, D::Matrix{Float64}, G::Integer)
+    R::Matrix{Float64}, D::Matrix{Float64}, G::Integer,
+    allowed::AbstractMatrix{Bool}=trues(size(A0)))
     r = size(A0, 1)
-    idx = [(p, q) for q in 1:r for p in q:r]
+    # Only the entries the level's pattern allows (`_laplace_loading_allowed`).
+    idx = [(p, q) for q in 1:r for p in q:r if allowed[p, q]]
     function unpack(x)
         A = zeros(eltype(x), r, r)
         for (j, (p, q)) in enumerate(idx)
@@ -1448,7 +1486,8 @@ function _saem_level_ti(laplace::CTSEMLaplaceObjective, l::Integer)
     out = Tuple{Int,Vector{Tuple{Int,Int}}}[]
     isempty(sp.ti_parameter_indices) && return out
     level = laplace.spec.levels[l]
-    nlatent(level) == nrandomeffects(level) == level.rank || return out
+    (!isreducedrank(level) && nlatent(level) == nrandomeffects(level) == level.rank) ||
+        return out
     for U in eachindex(laplace.units.blocks), blk in laplace.units.blocks[U]
         blk.level == l && length(blk.members) != 1 && return out
     end
@@ -1647,32 +1686,39 @@ function _saem_sample_loadings!(st::CTSEMSAEMState, laplace::CTSEMLaplaceObjecti
     k = nrandomeffects(level)
     r = nlatent(level)
     (G == 0 || r == 0) && return NaN
+    # `E` on the entries the level's pattern allows (`_laplace_loading_allowed`),
+    # so `exp(E)` keeps the loadings on their pattern.
+    allowed = _laplace_loading_allowed(level)
     E = zeros(r, r)
     for q in 1:r, p in q:r
+        allowed[p, q] || continue
         E[p, q] = scale * randn(rng)
     end
     A = exp(E)
     Ainv = exp(-E)
+    rows, cols = _laplace_loading_entries(level)
     Rl = zeros(k, r)
     D = zeros(k, r)
-    counter = 0
-    for q in 1:r, p in q:k
-        counter += 1
-        Rl[p, q] = st.theta[level.load_index[counter]]
-        D[p, q] = prec[level.load_index[counter]]
+    for t in eachindex(rows)
+        Rl[rows[t], cols[t]] = st.theta[level.load_index[t]]
+        D[rows[t], cols[t]] = prec[level.load_index[t]]
     end
     Rn = Rl * A
     uold = [st.u[U][1][_saem_cols(laplace, U, b)] for (U, b) in sites]
     unew = [Ainv * v for v in uold]
+    # The map's Jacobian on the loadings: column `q`'s entries scale by
+    # `A[q, q]`, one factor each (`k - q + 1` of them in the triangle).
+    ncol = zeros(Int, r)
+    for q in cols
+        ncol[q] += 1
+    end
     logratio = -sum(D .* Rn .^ 2) / 2 + sum(D .* Rl .^ 2) / 2 -
         sum(sum(abs2, v) for v in unew) / 2 + sum(sum(abs2, v) for v in uold) / 2 +
-        sum((k - q + 1) * E[q, q] for q in 1:r) - G * sum(E[q, q] for q in 1:r)
+        sum(ncol[q] * E[q, q] for q in 1:r) - G * sum(E[q, q] for q in 1:r)
     alpha = isfinite(logratio) ? min(1.0, exp(logratio)) : 0.0
     if rand(rng) < alpha
-        counter = 0
-        for q in 1:r, p in q:k
-            counter += 1
-            st.theta[level.load_index[counter]] = Rn[p, q]
+        for t in eachindex(rows)
+            st.theta[level.load_index[t]] = Rn[rows[t], cols[t]]
         end
         for (j, (U, b)) in enumerate(sites)
             st.u[U][1][_saem_cols(laplace, U, b)] = unew[j]

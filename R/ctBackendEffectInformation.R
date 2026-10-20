@@ -270,17 +270,17 @@
     r <- as.integer(.ctJuliaOr(lv$rank, k))
     # A rank-0 level (own variances only) has independent effects already, and
     # needs no isolating.
-    if (!length(index) || !k || r >= k) next
+    if (!length(index) || !k || (r >= k && !length(lv$load_row))) next
     # Own variances (`popunique`): raw -20 is a spread of about 1e-17 sdscale,
     # the nearest the sd transform comes to switching one off.
     ownindex <- as.integer(lv$unique_index)
     if (length(ownindex) != k) ownindex <- integer(k)
-    # Row p of the loading matrix holds the entries for dimensions 1 to
-    # min(p, r), laid out dimension by dimension (`_laplace_poploading`).
+    # Each effect's loadings: the triangle's, row p on dimensions 1 to
+    # min(p, r), or the level's blocks' (`.ctJuliaLoadingEntries()`).
+    entries <- .ctJuliaLoadingEntries(lv)
     rows <- vector("list", k)
-    slot <- 0L
-    for (q in seq_len(r)) for (p in seq(q, k)) {
-      slot <- slot + 1L
+    for (slot in seq_along(entries$row)) {
+      p <- entries$row[slot]
       rows[[p]] <- c(rows[[p]], index[slot])
     }
     for (j in seq_len(k)) {
