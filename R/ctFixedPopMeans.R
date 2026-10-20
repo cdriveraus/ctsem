@@ -18,14 +18,24 @@
 # such a position extends the vector first (`.ctBackendRawFull()`); positions
 # up to the free count mean what they always did.
 
-# The model's stated means, checked, with the raw value each corresponds to:
-# one row a parameter, `param`, `value` on the scale summary() reports
-# population means on, and `raw`, the value its transform maps there. NULL
-# when there are none.
+# The model's stated means, checked: one row a parameter, `param`, its
+# `value` on the scale summary() reports population means on, and `raw`, the
+# value its transform maps there. NULL when there are none.
+#
+# The transform is the cell's own, text as ctStanModel() writes it. ctFit()
+# converts before anything rewrites the model -- the augmented route moves a
+# varying intercept into a carrier state that holds it raw, the scaling into
+# the cell that reads the state -- and keeps the result as
+# `fixedpopmeansraw`, used while it still describes the stated means.
 #' @keywords internal
 .ctFixedPopMeans <- function(model) {
   means <- model[['fixedpopmeans']]
   if (!length(means)) return(NULL)
+  stored <- model[['fixedpopmeansraw']]
+  if (is.data.frame(stored) && identical(stored$param, names(means)) &&
+      identical(stored$value, as.numeric(means))) {
+    return(stored)
+  }
   if (!is.numeric(means) || is.null(names(means)) || any(!nzchar(names(means))) ||
       any(!is.finite(means)) || anyDuplicated(names(means))) {
     stop("fixedpopmeans must be a named numeric vector: one finite population ",
@@ -69,7 +79,8 @@
 .ctJuliaAnchorLayout <- function(means, nfull, parameter_table, laplace,
   ti_effects, ti_fixed, ti_missing, random_effects, priors) {
   table <- as.data.frame(parameter_table, stringsAsFactors = FALSE)
-  old <- as.integer(table$parnumber[match(means$param, table$param)])
+  rows <- match(means$param, table$param)
+  old <- as.integer(table$parnumber[rows])
   if (anyNA(old) || any(old < 1L) || any(old > nfull)) {
     stop("Internal layout error: a stated population mean has no raw position. ",
       "This is a bug in ctsem rather than in the model; please report it.",

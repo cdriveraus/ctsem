@@ -473,9 +473,12 @@ print.ctLaplaceCheck <- function(x, ...) {
     index <- as.integer(ti_effects$coefficient)
     target <- as.integer(ti_effects$parameter)
     predictor <- .ctBackendPredictorLabel(tipred_names, ti_effects$predictor)
+    # A target may be a stated population mean (R/ctFixedPopMeans.R), past
+    # the free parameters and named by its parameter.
+    targets <- c(names, as.character(spec$anchors$param))
     keep <- !is.na(index) & index >= 1L & index <= npar &
-      !is.na(target) & target >= 1L & target <= npar
-    names[index[keep]] <- paste0("rawtipredeffect_", names[target[keep]], "_",
+      !is.na(target) & target >= 1L & target <= length(targets)
+    names[index[keep]] <- paste0("rawtipredeffect_", targets[target[keep]], "_",
       predictor[keep])
   }
 

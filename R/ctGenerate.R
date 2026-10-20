@@ -635,9 +635,15 @@ ctGenerate<-function(ctmodelobj,n=100,burnin=0,dtmean=1,logdtsd=0,dtmat=NA,
   specified <- inherits(ctmodelobj, 'ctStanModel')
   # Initial conditions named 'stationary' are placed by the engine.
   stationary <- specified && any(ctmodelobj$pars$param %in% 'stationary')
+  # Stated population means (ctPar(mean=)) describe random effects, which only
+  # julia draws.
+  stated <- specified && length(ctmodelobj[['fixedpopmeans']]) > 0L
   if(backend == 'auto') backend <-
-    if(nonlinear || categorical || stationary || length(n) > 1L || !is.null(values) ||
-      design) 'julia' else 'r'
+    if(nonlinear || categorical || stationary || stated || length(n) > 1L ||
+      !is.null(values) || design) 'julia' else 'r'
+  if(backend == 'r' && stated) stop("backend='r' does not generate random ",
+    "effects, so it cannot use the model's stated population means ",
+    "(fixedpopmeans). Use backend='julia'.", call.=FALSE)
   # `'auto'` is the state-explicit route for every model. The argument stays
   # because comparing the two routes on one specification is how the
   # filter's approximation is checked; see test-julia-intoverstates.R.

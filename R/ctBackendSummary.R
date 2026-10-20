@@ -736,6 +736,9 @@ ctBackendParMatrices <- function(fit, raw = NULL, tipreds = NULL, state = NULL,
   # sections rather than among the fixed effects -- as they do for Stan, whose
   # `popmeans` covers only `nparams`.
   free$randomeffect <- free$parnumber %in% .ctBackendRandomEffectParameters(spec)
+  # A stated population mean (R/ctFixedPopMeans.R) is a cell a subject's
+  # parameters read, and not an estimate.
+  free$stated <- free$parnumber %in% spec$anchors$index
   free
 }
 
@@ -790,13 +793,14 @@ ctBackendParMatrices <- function(fit, raw = NULL, tipreds = NULL, state = NULL,
 .ctBackendPopMeanSamples <- function(fit, samples = NULL, ...) {
   if (!length(list(...))) {
     constrained <- .ctBackendConstrained(fit, samples)
-    cells <- constrained$cells[!constrained$cells$randomeffect, , drop = FALSE]
+    cells <- constrained$cells[!constrained$cells$randomeffect &
+      !(constrained$cells$stated %in% TRUE), , drop = FALSE]
     return(list(
       values = .ctBackendPopCellsFromFlat(constrained$flat, cells, constrained$layout),
       parnumber = as.integer(cells$parnumber)))
   }
   cells <- .ctBackendFreeParameterCells(fit)
-  cells <- cells[!cells$randomeffect, , drop = FALSE]
+  cells <- cells[!cells$randomeffect & !(cells$stated %in% TRUE), , drop = FALSE]
   layout <- .ctBackendSummaryLayout(fit)
   if (is.null(samples)) samples <- .ctBackendRawSamples(fit)
   values <- .ctBackendPopCellValues(fit, samples, cells, layout, ...)
@@ -1069,6 +1073,9 @@ ctBackendParMatrices <- function(fit, raw = NULL, tipreds = NULL, state = NULL,
 # level: what differs is only which raw parameters vary and how spread out they
 # are, both of which arrive in `population`.
 .ctBackendRandomEffectLevel <- function(fit, population, cells, layout, samples) {
+  # Displaced at the varying parameters' positions, a stated population mean's
+  # among them (R/ctFixedPopMeans.R).
+  samples <- .ctBackendRawFull(fit, samples)
   parnumber <- population$parnumber
   parname <- population$param
   rawsd <- population$rawsd
@@ -1335,7 +1342,10 @@ ctBackendParMatrices <- function(fit, raw = NULL, tipreds = NULL, state = NULL,
         ti_effects = ti_effects) else
       module$ctsem_laplace_subject_values(objective, estimate,
         from_level = from_level, ti_effects = ti_effects))
-    subject_raw <- matrix(as.numeric(subject_raw), ncol = length(fit$estimate$raw))
+    # A subject's vector carries any stated population means after the free
+    # parameters (R/ctFixedPopMeans.R).
+    subject_raw <- matrix(as.numeric(subject_raw),
+      ncol = length(fit$estimate$raw) + .ctBackendNanchors(fit))
     values <- .ctBackendPopCellValues(fit, subject_raw, selected, layout)
     out <- array(as.numeric(values[, alphabetical, drop = FALSE]),
       dim = c(1L, nrow(subject_raw), length(varying)))
@@ -1363,7 +1373,7 @@ ctBackendParMatrices <- function(fit, raw = NULL, tipreds = NULL, state = NULL,
       ti_effects = ti_effects))
   nsubjects <- length(spec$subject_starts)
   raw <- array(as.numeric(raw), dim = c(nrow(draws), nsubjects,
-    length(fit$estimate$raw)))
+    length(fit$estimate$raw) + .ctBackendNanchors(fit)))
   flat <- matrix(aperm(raw, c(2L, 1L, 3L)), nrow = nsubjects * nrow(draws))
   values <- .ctBackendPopCellValues(fit, flat, selected, layout)
   out <- array(NA_real_, dim = c(nrow(draws), nsubjects, length(varying)))
@@ -1515,6 +1525,8 @@ ctBackendParMatrices <- function(fit, raw = NULL, tipreds = NULL, state = NULL,
   predictors <- sort(unique(effects$predictor))
   perpredictor <- lapply(predictors, function(predictor)
     effects[effects$predictor %in% predictor, , drop = FALSE])
+  # A predictor may act on a stated population mean (R/ctFixedPopMeans.R).
+  samples <- .ctBackendRawFull(fit, samples)
   ndraws <- nrow(samples)
 
   # One engine call for every predictor and both directions, for the same
@@ -1736,13 +1748,17 @@ ctBackendParMatrices <- function(fit, raw = NULL, tipreds = NULL, state = NULL,
   if (is.null(samples)) samples <- .ctBackendRawSamples(fit)
   layout <- .ctBackendSummaryLayout(fit)
   cells <- .ctBackendFreeParameterCells(fit)
-  flat <- .ctBackendParMatricesFlat(fit, t(samples))
-  randomeffects <- .ctBackendRandomEffectDraws(fit, samples = samples, cells = cells,
+  # The draws with any stated population means after them
+  # (R/ctFixedPopMeans.R), for everything below that reads a cell's position;
+  # `samples` itself stays the free parameters, as the cache compares it.
+  full <- .ctBackendRawFull(fit, samples)
+  flat <- .ctBackendParMatricesFlat(fit, t(full))
+  randomeffects <- .ctBackendRandomEffectDraws(fit, samples = full, cells = cells,
     layout = layout, flat = flat)
   list(samples = samples, layout = layout, cells = cells, flat = flat,
     popsd = randomeffects$popsd, rawpopcorr = randomeffects$rawpopcorr,
     randomeffectlevels = randomeffects$levels,
-    tipreds = .ctBackendTipredDraws(fit, samples = samples, cells = cells,
+    tipreds = .ctBackendTipredDraws(fit, samples = full, cells = cells,
       layout = layout))
 }
 
@@ -2040,7 +2056,7 @@ ctBackendParMatrices <- function(fit, raw = NULL, tipreds = NULL, state = NULL,
       " shown with the estimate only: no sd, interval or z."),
     "See fit$identifiability$effects."), collapse = " ")
 
-  fixed <- cells[!cells$randomeffect, , drop = FALSE]
+  fixed <- cells[!cells$randomeffect & !(cells$stated %in% TRUE), , drop = FALSE]
   # A `poprank` fit's loadings are free parameters, so without this they
   # appear here as `poploading_df11_dim1` beside the model's own parameters --
   # an internal coordinate in the one table a reader treats as the answer.
@@ -2067,6 +2083,10 @@ ctBackendParMatrices <- function(fit, raw = NULL, tipreds = NULL, state = NULL,
   out$popNote <- paste0("Population values on the transformed scale. ",
     "Covariance parameters appear in sd / unconstrained correlation form; ",
     "see System Matrices (or ctSummaryMatrices()) for cor/cov.")
+  anchors <- .ctBackendSpec(object)$anchors
+  if (length(anchors$index)) out$popNote <- paste0(out$popNote,
+    " Population means stated in the model, not estimated: ",
+    paste0(anchors$param, " = ", format(anchors$value), collapse = ", "), ".")
 
   # Immediately after the parameters it re-expresses, because the `threshold_`
   # rows above are gaps and are not readable on their own -- which is the whole

@@ -1351,11 +1351,13 @@ ctFit<-function(datalong, model, stanmodeltext=NA, iter=1000, intoverstates=TRUE
   datalong <- data.frame(datalong)
 
   # Stated population means (ctPar(mean=); R/ctFixedPopMeans.R), checked
-  # before the data are read.
-  if(length(ctstanmodel$fixedpopmeans)){
+  # before the data are read, and converted to raw values from the cells' own
+  # transforms before the augmented route rewrites a varying intercept into a
+  # carrier state.
+  if(length(ctstanmodel[['fixedpopmeans']])){
     if(!backend %in% 'julia') stop("Stated population means, ctPar(mean=), ",
       "need backend='julia'.", call.=FALSE)
-    invisible(.ctFixedPopMeans(ctstanmodel))
+    ctstanmodel[['fixedpopmeansraw']] <- .ctFixedPopMeans(ctstanmodel)
   }
 
   # Smooth TI predictor terms: their basis columns, built from these data where
