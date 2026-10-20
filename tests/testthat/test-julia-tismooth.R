@@ -205,3 +205,31 @@ test_that("summary() and ctTIpredEffects() report a smooth whole", {
     parmatrices = FALSE, nsubjects = 15, plot = TRUE))
   expect_s3_class(g, "ggplot")
 })
+
+test_that("a fit given as inits starts a changed model where it stopped", {
+  skip_without_julia()
+  fit <- .tismooth_fit()
+  # The same model without the smooth: its parameters are the fit's, by name.
+  dat <- .tismooth_data()$data
+  plain <- ctModel(type = "ct", n.latent = 1, n.manifest = 1, LAMBDA = diag(1),
+    DRIFT = matrix("drift"), DIFFUSION = matrix("diff"),
+    MANIFESTVAR = matrix("mvar"), CINT = matrix("cint"),
+    T0MEANS = matrix("t0m||||"), T0VAR = matrix("t0v"),
+    MANIFESTMEANS = matrix(0), silent = TRUE)
+  spec <- suppressMessages(ctFit(dat, plain, backend = "julia", fit = FALSE))
+  npar <- ctsem:::.ctBackendNpar(spec)
+  start <- expect_message(ctsem:::.ctJuliaInitsFromFit(fit, spec, npar),
+    paste0("for ", npar, " of ", npar))
+  names <- ctsem:::.ctBackendRawParameterNames(list(model_spec = spec), npar)
+  old <- ctsem:::.ctBackendRawParameterNames(fit, length(fit$estimate$raw))
+  expect_equal(start, as.numeric(fit$estimate$raw)[match(names, old)])
+  # And the smooth model from the plain one's values: its coefficients at zero.
+  back <- suppressMessages(ctsem:::.ctJuliaInitsFromFit(
+    structure(list(model_spec = spec, estimate = list(raw = start)),
+      class = c("ctJuliaFit", "ctFit")), fit$model_spec,
+    length(fit$estimate$raw)))
+  coefficients <- unlist(fit$model_spec$penalty$index)
+  expect_true(all(back[coefficients] == 0))
+  expect_error(suppressMessages(ctFit(dat, plain, backend = "stan",
+    inits = fit, fit = FALSE)), "backend='julia' fit")
+})
