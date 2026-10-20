@@ -441,7 +441,8 @@
     if (key %in% names(tipreds)) {
       if (!is.null(value)) stop("values$tipreds: ", key, " is fixed in the ",
         "model.", call. = FALSE)
-      mean <- raw[ti$parameter[r]]
+      # The target may be a stated population mean (R/ctFixedPopMeans.R).
+      mean <- .ctBackendRawFull(spec, raw)[ti$parameter[r]]
       h <- 1e-5
       slope <- diff(.ctGenerateNatural(transformOf(name), mean + c(-h, h))) / (2 * h)
       if (!is.finite(slope) || abs(slope) < 1e-12) stop("values$tipreds: ",
