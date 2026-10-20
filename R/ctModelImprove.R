@@ -217,6 +217,9 @@ ctModelImprove <- function(fit, covariates = NULL,
   criterion <- match.arg(criterion)
   if (!is.null(changes) && (!inherits(changes, 'ctModelProposals') || !nrow(changes)))
     stop("changes takes rows of ctModelProposals().", call. = FALSE)
+  if (!is.null(changes) && is.null(covariates) && any(changes$family %in% 'covariates'))
+    stop("A covariate's change needs the covariates it was proposed from: pass ",
+      "covariates.", call. = FALSE)
   say <- function(...) if (isTRUE(verbose)) message(...)
   covariates <- .ctImproveCovariates(fit, covariates)
   idname <- .ctFitModelObject(fit)$subjectIDname

@@ -174,6 +174,8 @@ test_that("a covariate the model lacks is added, an unrelated one is not, and th
   expect_length(step$screens, 0L)
   expect_error(ctModelImprove(x$fit, changes = data.frame(change = 'x')),
     'rows of ctModelProposals')
+  if (identical(pick$family, 'covariates'))
+    expect_error(ctModelImprove(x$fit, changes = pick), 'pass covariates')
 
   # Pruning keeps a change the fit plainly needs without refitting: the random
   # intercept, whose spread here is many standard errors from zero, by a Wald
