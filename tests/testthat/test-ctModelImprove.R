@@ -59,6 +59,30 @@ test_that("adequacy is reported per family, and the error-based families need no
   expect_identical(ad3$families$family, 'scores')
   expect_true(ad3$families$p > 0 && ad3$families$p <= 1)
   expect_true(all(startsWith(ad3$statistics$statistic, 's(')))
+
+  # What each statistic is about, as columns, so nothing parses the names.
+  st <- ad$statistics
+  r <- st[st$family == 'residuals', ]
+  expect_true(all(r$variable == 'Y1' & r$with == 'Y1' & !is.na(r$gap)))
+  expect_identical(unique(r$gap), unique(sub('.* gap ', '', r$statistic)))
+  per <- st[st$family == 'periodic', ]
+  expect_setequal(unique(per$variable), c('Y1', 'latent eta1'))
+  expect_equal(per$period, as.numeric(sub('.* period ', '', per$statistic)), tolerance = 0.005)
+  expect_true(all(st$variable[st$family %in% c('subjects', 'distribution', 'dependence') &
+    !grepl('distance', st$statistic)] == 'Y1'))
+  # The rows the errors were computed from: every data row, for the variable,
+  # and for the latent its update and its prediction.
+  e <- ad$errors
+  expect_setequal(unique(e$Element), c('error', 'update', 'etaprior'))
+  expect_equal(sum(e$Element == 'error'), nrow(x$data))
+  expect_setequal(unique(e$Row[e$Element == 'update']), 'eta1')
+  # Drawn: the families, a family over gaps, the periods, and any other.
+  for (p in list(plot(ad), plot(ad, 'residuals'), plot(ad, 'periodic'),
+    plot(ad, 'distribution'))) {
+    expect_s3_class(p, 'ggplot')
+    expect_silent(ggplot2::ggplot_build(p))
+  }
+  expect_error(plot(ad, 'covariates'), "No statistics for family 'covariates'")
 })
 
 test_that("a conditional error's implied correlation is P_jk / sqrt(P_jj P_kk)", {
@@ -129,6 +153,27 @@ test_that("a covariate the model lacks is added, an unrelated one is not, and th
   expect_gt(imp$fit$estimate$loglik, x$fit$estimate$loglik)
   expect_identical(imp$stopped, 'adequate')
   expect_output(print(imp), 'stopped because adequate')
+  expect_silent(ggplot2::ggplot_build(plot(imp)))
+
+  # The search's first step made by hand: the changes its first screen
+  # proposes, and the one it kept refitted alone, to the same gain.
+  props <- ctModelProposals(x$fit, score = imp$screens[[1]],
+    relax = c('heterogeneity', 'covariates'))
+  expect_s3_class(props, 'ctModelProposals')
+  expect_output(print(props), 'z as a predictor of')
+  first <- imp$history[imp$history$round %in% 1 & imp$history$kept, ]
+  pick <- props[props$change == first$change, ]
+  expect_identical(nrow(pick), 1L)
+  expect_s3_class(pick, 'ctModelProposals')
+  step <- ctModelImprove(x$fit, covariates = unique(x$data[, c('id', 'z', 'w')]),
+    changes = pick, maxsteps = 1, prune = FALSE, adequacy = FALSE, cores = 1,
+    verbose = FALSE)
+  expect_identical(step$history$change, first$change)
+  expect_true(step$history$kept)
+  expect_equal(step$history$dloglik, first$dloglik, tolerance = 1e-6)
+  expect_length(step$screens, 0L)
+  expect_error(ctModelImprove(x$fit, changes = data.frame(change = 'x')),
+    'rows of ctModelProposals')
 
   # Pruning keeps a change the fit plainly needs without refitting: the random
   # intercept, whose spread here is many standard errors from zero, by a Wald

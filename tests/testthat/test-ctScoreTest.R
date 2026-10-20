@@ -108,6 +108,11 @@ test_that("a covariate the model lacks is found and attributed; an unrelated one
   # The held one-step is near what generated the data, 0.8 on the mean.
   expect_equal(mm$estimate_natural, 0.8, tolerance = 0.3)
   expect_output(print(st), 'Covariate z')
+  p <- plot(st, top = 3)
+  expect_s3_class(p, 'ggplot')
+  expect_silent(ggplot2::ggplot_build(p))
+  expect_true(all(startsWith(levels(p$data$key), 'covariates|')))
+  expect_error(plot(st, family = 'fixed'), 'Nothing to plot')
 })
 
 test_that("a parameter that varies over subjects is found", {

@@ -111,11 +111,13 @@ test_that("a component the backend cannot do is recorded, and the run continues 
 
   d <- .ctReportFolder()
   res <- suppressWarnings(suppressMessages(
-    ctReport(fit, folder = d, components = c("summary", "tipredeffects", "covcheck"),
-      nsamples = 10, verbose = FALSE)))
+    ctReport(fit, folder = d, components = c("summary", "tipredeffects", "covcheck",
+      "scoretests"), nsamples = 10, verbose = FALSE)))
 
   expect_identical(res$components$tipredeffects$status, "skipped")
   expect_match(res$components$tipredeffects$note, "covariate")
+  expect_identical(res$components$scoretests$status, "skipped")
+  expect_match(res$components$scoretests$note, "julia")
   expect_identical(res$components$summary$status, "ok")
   expect_identical(res$components$covcheck$status, "ok")
   .ctReportCheckFolder(res)
@@ -276,7 +278,7 @@ test_that("ctReport writes the same folder for a julia fit, and its own diagnost
   res <- suppressWarnings(suppressMessages(
     ctReport(fit, folder = d, components = c("summary", "parmatrices",
       "identification", "profile", "discretepars", "predictions", "residuals",
-      "covcheck", "postpred", "tipredeffects"),
+      "covcheck", "postpred", "tipredeffects", "adequacy", "scoretests"),
       nsamples = 10, profilepoints = 5, verbose = FALSE)))
 
   .ctReportCheckFolder(res)

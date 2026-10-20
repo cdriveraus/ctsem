@@ -87,10 +87,21 @@ them. Reused from \code{fit} when it already carries at least as many.}
 An object of class \code{ctFitAdequacy}: \code{families} (one row
   per family: the number of statistics, the worst, its z, the family's
   p-value and the Holm-adjusted one), \code{statistics} (every statistic:
-  observed value, z, two-sided p), \code{size} (the root mean square
-  residual correlations, their intervals and close-fit tests),
-  \code{adequate}, \code{close_fit}, \code{projection} (the method used),
-  and \code{fit} (with any generated data, for reuse).
+  what it is about -- \code{variable}, \code{with} (the other variable of
+  a pair, or what the variable is correlated with), \code{gap} (the gap
+  bin of a pair of rows, or a lag), \code{period} and \code{covariate},
+  each NA where it does not apply -- and its observed value, z and
+  two-sided p), \code{size} (the root mean square residual correlations,
+  their intervals and close-fit tests), \code{errors} (the rows the
+  error-based families are computed from, in long form: \code{Subject},
+  \code{Time}, \code{Element} -- \code{'error'}, each variable's
+  standardised one-step-ahead error given the row's other observed
+  values; \code{'update'}, each latent's standardised update;
+  \code{'etaprior'}, its predicted mean -- \code{Row}, the variable, and
+  \code{value}; NULL when no such family ran), \code{adequate},
+  \code{close_fit}, \code{projection} (the method used), and \code{fit}
+  (with any generated data, for reuse). \code{plot()} draws the families,
+  or one family's statistics.
 }
 \description{
 Tests a fitted model in families, each aimed at one way a continuous time

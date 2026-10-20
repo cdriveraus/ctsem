@@ -29,12 +29,14 @@ from a previous \code{ctReport} run in the same folder are removed first,
 so the folder always matches its index.}
 
 \item{components}{Either one of \code{'quick'} (nothing that needs generated
-data), \code{'default'}, \code{'all'} (adds cross validation and LaTeX), or
+data), \code{'default'}, \code{'all'} (adds cross validation, LaTeX, the
+adequacy checks and the score tests), or
 a character vector of component names: \code{summary}, \code{parmatrices},
 \code{identification}, \code{profile}, \code{discretepars},
 \code{network}, \code{predictions}, \code{residuals}, \code{covcheck},
 \code{postpred}, \code{tipredeffects}, \code{crossval},
-\code{equations}.}
+\code{equations}, \code{adequacy} (\code{\link{ctFitAdequacy}}),
+\code{scoretests} (\code{\link{ctScoreTest}}).}
 
 \item{nsamples}{Draws used by the components that sample from the fit's
 uncertainty, and by data generation for \code{covcheck} and
@@ -103,7 +105,12 @@ to run by default; \code{identification} names the ridge directions.
   \code{\link{ctPostPredPlots}}, and \code{\link{ctFitCheckCov}} for the
   lagged covariances, split by a group or predictor if wanted.}
 \item{Are the one-step-ahead errors what the model says they are?}{
-  \code{\link{ctResiduals}} and \code{\link{ctACFresiduals}}.}
+  \code{\link{ctFitAdequacy}} tests them by family, allowing for the
+  estimation; \code{\link{ctResiduals}} and \code{\link{ctACFresiduals}}
+  show them.}
+\item{What would relaxing the model change?}{\code{\link{ctScoreTest}},
+  without refitting; \code{\link{ctModelProposals}} lists the changes and
+  \code{\link{ctModelImprove}} refits them.}
 \item{Does a richer model fit better, or predict better?}{
   \code{\link{ctChisqTest}} for nested models, \code{\link{ctLOO}} for
   out-of-sample prediction.}

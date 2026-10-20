@@ -137,6 +137,11 @@
 #' @param covariates Optional subject-level covariates the model may add, as
 #'   for \code{\link{ctScoreTest}}.
 #' @param relax Which relaxations may be made.
+#' @param changes Optionally rows of \code{\link{ctModelProposals}}: the first
+#'   round refits with these, in the order given, instead of screening, and
+#'   keeps the first that improves the fit by \code{criterion}. With
+#'   \code{maxsteps = 1}, one step of a search made by hand; later rounds
+#'   screen as usual.
 #' @param candidates Optional list of alternative models (from
 #'   \code{\link{ctModel}}) to try when the screen is clean but the checks fail.
 #' @param alpha Level for the screen (Benjamini-Hochberg within each family),
@@ -197,7 +202,7 @@
 #' @export
 ctModelImprove <- function(fit, covariates = NULL,
   relax = c('heterogeneity', 'covariates', 'statedependence', 'volatility', 'fixed', 'slow',
-    'unique', 'periodic', 'order'),
+    'unique', 'periodic', 'order'), changes = NULL,
   candidates = NULL, alpha = 0.05, maxsteps = 10L, ntry = 3L,
   criterion = c('LR', 'AIC', 'BIC'), adequacy = TRUE, prune = TRUE,
   close = NULL, holdout = 0, form = 'auto', periods = NULL, nsamples = 100L,
@@ -210,13 +215,11 @@ ctModelImprove <- function(fit, covariates = NULL,
   .ctBackendResolveThreads(cores)
   relax <- match.arg(relax, several.ok = TRUE)
   criterion <- match.arg(criterion)
+  if (!is.null(changes) && (!inherits(changes, 'ctModelProposals') || !nrow(changes)))
+    stop("changes takes rows of ctModelProposals().", call. = FALSE)
   say <- function(...) if (isTRUE(verbose)) message(...)
-  covariates <- if (is.null(covariates)) NULL else as.data.frame(covariates)
+  covariates <- .ctImproveCovariates(fit, covariates)
   idname <- .ctFitModelObject(fit)$subjectIDname
-  if (!is.null(covariates) && !any(c(idname, 'id') %in% names(covariates)))
-    stop("covariates needs a '", idname, "' column.", call. = FALSE)
-  if (!is.null(covariates) && !idname %in% names(covariates))
-    names(covariates)[names(covariates) == 'id'] <- idname
   data <- as.data.frame(.ctFitLongData(fit))
   selected <- NULL
   if (!is.numeric(holdout) || holdout < 0 || holdout > 0.5) stop("holdout is a ",
@@ -249,6 +252,7 @@ ctModelImprove <- function(fit, covariates = NULL,
   identity <- list(start = .ctImproveFingerprint(fit), relax = relax, alpha = alpha,
     criterion = criterion, ntry = ntry, adequacy = adequacy, close = close,
     holdout = holdout, candidates = length(candidates))
+  if (!is.null(changes)) identity$changes <- vapply(changes$proposal, `[[`, '', 'key')
   carried <- c('current', 'data', 'kept', 'extraargs', 'history', 'screens', 'rejected',
     'ad', 'stopped', 'slowest')
   stage <- list(round = 0L, searched = FALSE, pruned = FALSE)
@@ -270,21 +274,20 @@ ctModelImprove <- function(fit, covariates = NULL,
     seq.int(stage$round + 1L, maxsteps)
   for (step in rounds) {
     model <- .ctFitBaseModel(current)
-    available <- if (is.null(covariates)) NULL else
-      covariates[, c(idname, setdiff(names(covariates), c(idname, model$TIpredNames))),
-        drop = FALSE]
-    if (!is.null(available) && ncol(available) < 2L) available <- NULL
-    tests <- intersect(relax, c('heterogeneity', 'covariates', 'statedependence', 'volatility',
-      'fixed'))
-    if (is.null(available)) tests <- setdiff(tests, 'covariates')
-    say("Round ", step, ": screening")
-    st <- if (length(tests)) suppressMessages(ctScoreTest(current, covariates = available,
-      tests = tests, form = form, cores = cores, verbose = FALSE)) else NULL
-    screens[[step]] <- st
-    proposals <- .ctImproveProposals(st, model, alpha, current, relax)
+    available <- .ctImproveAvailable(covariates, model)
+    byhand <- step == 1L && !is.null(changes)
+    if (byhand) {
+      say("Round 1: the ", nrow(changes), " change(s) given")
+      proposals <- as.list(changes$proposal)
+    } else {
+      say("Round ", step, ": screening")
+      st <- .ctImproveScreen(current, available, relax, form, cores)
+      screens[[step]] <- st
+      proposals <- .ctImproveProposals(st, model, alpha, current, relax)
+    }
     proposals <- proposals[!vapply(proposals, `[[`, '', 'key') %in% rejected]
     structural <- FALSE
-    if (!length(proposals)) {
+    if (!length(proposals) && !byhand) {
       if (isTRUE(adequacy)) {
         say("Round ", step, ": nothing indicated; checking adequacy")
         ad <- ctFitAdequacy(current, covariates = available, periods = periods,
@@ -319,11 +322,14 @@ ctModelImprove <- function(fit, covariates = NULL,
     # every one of the three passed by tens of log likelihood units, so
     # keeping the first reorders additions the next rounds make anyway. Each
     # refit then has all the cores.
-    proposals <- proposals[order(vapply(proposals, `[[`, 0, 'rank'))]
-    cls <- vapply(proposals, function(p) if (is.null(p$class) || is.na(p$class)) NA_character_ else
-      paste(p$family, p$class), '')
-    proposals <- proposals[is.na(cls) | !duplicated(cls)]
-    if (!structural) proposals <- utils::head(proposals, ntry)
+    # Changes given are tried as given: in their order, all of them.
+    if (!byhand) {
+      proposals <- proposals[order(vapply(proposals, `[[`, 0, 'rank'))]
+      cls <- vapply(proposals, function(p) if (is.null(p$class) || is.na(p$class))
+        NA_character_ else paste(p$family, p$class), '')
+      proposals <- proposals[is.na(cls) | !duplicated(cls)]
+      if (!structural) proposals <- utils::head(proposals, ntry)
+    }
     level <- alpha / length(proposals)
     tried <- list()
     ok <- logical()
@@ -404,11 +410,7 @@ ctModelImprove <- function(fit, covariates = NULL,
     checkpointed()
   }
   if (isTRUE(adequacy) && is.null(ad)) {
-    model <- .ctFitBaseModel(current)
-    available <- if (is.null(covariates)) NULL else
-      covariates[, c(idname, setdiff(names(covariates), c(idname, model$TIpredNames))),
-        drop = FALSE]
-    if (!is.null(available) && ncol(available) < 2L) available <- NULL
+    available <- .ctImproveAvailable(covariates, .ctFitBaseModel(current))
     ad <- ctFitAdequacy(current, covariates = available, periods = periods,
       nsamples = nsamples, alpha = alpha, close = if (is.null(close)) 0.05 else close,
       projection = projection, cores = cores)
@@ -450,6 +452,114 @@ ctModelImprove <- function(fit, covariates = NULL,
     adequacy = ad, confirmation = confirmation, stopped = stopped, start = fit,
     selected = selected,
     holdout = held), class = 'ctModelImprove')
+}
+
+#' Changes the score tests and adequacy checks propose
+#'
+#' The changes \code{\link{ctModelImprove}} would consider for a fit: the
+#' relaxations its score tests indicate and, given an adequacy check, the
+#' structural changes the check's families point to -- a process of an item's
+#' own or shared by two, a slow process, a cycle, a second order. Rows can be
+#' handed to \code{ctModelImprove(changes = )}, which refits with them and
+#' judges each by the search's criterion: a search made a step at a time, by
+#' hand.
+#'
+#' Unlike a search's rounds, every indicated change is listed, including
+#' relaxations the tests cannot tell apart (one \code{class}), of which a
+#' round refits only the strongest; and the structural changes are listed
+#' beside the relaxations, where a round turns to them only once the screen
+#' is clean.
+#'
+#' @param fit A fit from \code{\link{ctFit}} with \code{backend = 'julia'}.
+#' @param score A \code{\link{ctScoreTest}} of \code{fit}. Run when
+#'   neither it nor \code{adequacy} is given.
+#' @param adequacy Optionally a \code{\link{ctFitAdequacy}} of \code{fit},
+#'   for the structural changes.
+#' @param covariates,relax,alpha,cores As for \code{\link{ctModelImprove}}.
+#' @return A data frame of class \code{ctModelProposals}, one row per change,
+#'   strongest first within the relaxations and within the structural
+#'   changes: \code{change} (as a search's \code{history} names it),
+#'   \code{family}, \code{p} (the evidence ranked by), \code{class}, and
+#'   \code{proposal}, what \code{ctModelImprove()} needs to make the change.
+#' @seealso \code{vignette('score-tests')}.
+#' @export
+ctModelProposals <- function(fit, score = NULL, adequacy = NULL, covariates = NULL,
+  relax = c('heterogeneity', 'covariates', 'statedependence', 'volatility', 'fixed', 'slow',
+    'unique', 'periodic', 'order'), alpha = 0.05, cores = getOption('mc.cores', 2L)) {
+  if (!.ctFitIsJulia(fit)) stop("ctModelProposals() needs a fit from ",
+    "ctFit(backend = 'julia').", call. = FALSE)
+  if (is.null(.ctFitBaseModel(fit))) stop("This fit does not carry the model it ",
+    "was built from; refit it with this version of ctsem.", call. = FALSE)
+  if (!is.null(score) && !inherits(score, 'ctScoreTest'))
+    stop("score takes a ctScoreTest() of the fit.", call. = FALSE)
+  if (!is.null(adequacy) && !inherits(adequacy, 'ctFitAdequacy'))
+    stop("adequacy takes a ctFitAdequacy() of the fit.", call. = FALSE)
+  relax <- match.arg(relax, several.ok = TRUE)
+  covariates <- .ctImproveCovariates(fit, covariates)
+  model <- .ctFitBaseModel(fit)
+  if (is.null(score) && is.null(adequacy)) score <- .ctImproveScreen(fit,
+    .ctImproveAvailable(covariates, model), relax, 'auto', cores)
+  byrank <- function(p) p[order(vapply(p, `[[`, 0, 'rank'))]
+  props <- byrank(.ctImproveProposals(score, model, alpha, fit, relax))
+  if (!is.null(adequacy)) props <- c(props, byrank(.ctImproveScoreStructural(fit,
+    .ctImproveStructural(model, relax, NULL, adequacy, fit, alpha),
+    as.data.frame(.ctFitLongData(fit)), covariates, cores)))
+  field <- function(name, empty) vapply(props, function(p) {
+    v <- p[[name]]
+    if (is.null(v) || !length(v) || is.na(v[1])) empty else
+      if (is.character(empty)) as.character(v[1]) else as.numeric(v[1])
+  }, empty)
+  out <- data.frame(change = field('label', ''), family = field('family', ''),
+    p = field('p', NA_real_), class = field('class', NA_character_),
+    stringsAsFactors = FALSE)
+  out$proposal <- I(props)
+  class(out) <- c('ctModelProposals', 'data.frame')
+  out
+}
+
+#' @export
+print.ctModelProposals <- function(x, digits = 3, ...) {
+  if (!nrow(x)) {
+    cat("No change proposed.\n")
+    return(invisible(x))
+  }
+  d <- as.data.frame(unclass(x)[c('change', 'family', 'p', 'class')],
+    stringsAsFactors = FALSE)
+  d$p <- signif(d$p, digits)
+  if (all(is.na(d$class))) d$class <- NULL
+  print(d, row.names = FALSE)
+  invisible(x)
+}
+
+# Covariates a search may add, keyed by the model's subject id (or 'id').
+.ctImproveCovariates <- function(fit, covariates) {
+  if (is.null(covariates)) return(NULL)
+  covariates <- as.data.frame(covariates)
+  idname <- .ctFitModelObject(fit)$subjectIDname
+  if (!any(c(idname, 'id') %in% names(covariates)))
+    stop("covariates needs a '", idname, "' column.", call. = FALSE)
+  if (!idname %in% names(covariates)) names(covariates)[names(covariates) == 'id'] <- idname
+  covariates
+}
+
+# The covariates a model does not have yet, or NULL when none is left.
+.ctImproveAvailable <- function(covariates, model) {
+  if (is.null(covariates)) return(NULL)
+  idname <- model$subjectIDname
+  available <- covariates[, c(idname, setdiff(names(covariates), c(idname, model$TIpredNames))),
+    drop = FALSE]
+  if (ncol(available) < 2L) NULL else available
+}
+
+# A round's screen: the score tests of the relaxations a search may make,
+# or NULL when it may make none of them.
+.ctImproveScreen <- function(current, available, relax, form, cores) {
+  tests <- intersect(relax, c('heterogeneity', 'covariates', 'statedependence', 'volatility',
+    'fixed'))
+  if (is.null(available)) tests <- setdiff(tests, 'covariates')
+  if (!length(tests)) return(NULL)
+  suppressMessages(ctScoreTest(current, covariates = available, tests = tests, form = form,
+    cores = cores, verbose = FALSE))
 }
 
 # Whether the current fit plainly needs a kept change, so pruning can keep it
@@ -929,8 +1039,8 @@ ctModelImprove <- function(fit, covariates = NULL,
     s <- if (is.null(ad)) NULL else ad$statistics
     pr <- if (is.null(s)) NULL else s[s$family == 'pairs' & is.finite(s$z), , drop = FALSE]
     for (r in seq_len(if (is.null(pr)) 0L else nrow(pr))) {
-      items <- strsplit(pr$statistic[r], ':', fixed = TRUE)[[1]]
-      if (length(items) != 2L || !all(items %in% model$manifestNames)) next
+      items <- c(pr$variable[r], pr$with[r])
+      if (!all(items %in% model$manifestNames)) next
       items <- model$manifestNames[sort(match(items, model$manifestNames))]
       if (paste0('u_', paste(items, collapse = '_')) %in% model$latentNames) next
       evidence <- min(1, pr$p[r] * nrow(pr))
@@ -1076,7 +1186,7 @@ ctModelImprove <- function(fit, covariates = NULL,
 .ctImproveOwnEvidence <- function(ad, family, name) {
   s <- if (is.null(ad)) NULL else ad$statistics
   if (is.null(s) || !nrow(s)) return(NA_real_)
-  all <- s$family == family & startsWith(s$statistic, paste0(name, '~', name, ' gap ')) &
+  all <- s$family == family & s$variable %in% name & s$with %in% name & !is.na(s$gap) &
     is.finite(s$z)
   own <- all & s$z > 0
   if (!any(own)) return(NA_real_)
@@ -1097,13 +1207,14 @@ ctModelImprove <- function(fit, covariates = NULL,
   f <- ad$families[ad$families$family == 'periodic', , drop = FALSE]
   s <- ad$statistics[ad$statistics$family == 'periodic' & is.finite(ad$statistics$z) &
     ad$statistics$z > 0, , drop = FALSE]
-  at <- as.numeric(sub('.* period ', '', s$statistic))
-  s <- s[is.finite(at) & !vapply(at, function(a) any(abs(a - exclude) <= 0.01 * a),
-    logical(1)), , drop = FALSE]
+  # To three figures, as the proposal's label and key give it.
+  at <- signif(s$period, 3)
+  keep <- is.finite(at) & !vapply(at, function(a) any(abs(a - exclude) <= 0.01 * a),
+    logical(1))
+  s <- s[keep, , drop = FALSE]; at <- at[keep]
   if (!nrow(f) || !nrow(s)) return(NULL)
   best <- which.max(s$z)
-  period <- as.numeric(sub('.* period ', '', s$statistic[best]))
-  if (!is.finite(period)) return(NULL)
+  period <- at[best]
   scanned <- sum(ad$statistics$family == 'periodic' & is.finite(ad$statistics$z))
   list(p = min(1, s$p[best] * scanned), period = period)
 }
@@ -1399,6 +1510,43 @@ ctModelImprove <- function(fit, covariates = NULL,
   delta <- -2 * dll + penalty * dk
   list(accept = delta < 0, dloglik = dll, dpar = dk, value = delta, score = -delta,
     note = sprintf('%s change %.3g', if (criterion == 'BIC') 'BIC' else 'AIC', delta))
+}
+
+#' Plot a model improvement search
+#'
+#' The search's path: the log likelihood gained over the starting fit as each
+#' change is kept, round by round, with every change tried and rejected
+#' (open) at the gain its refit found. Pruning's decisions are in the
+#' subtitle.
+#'
+#' @param x A \code{ctModelImprove}.
+#' @param ... Unused.
+#' @return A ggplot.
+#' @export
+plot.ctModelImprove <- function(x, ...) {
+  h <- x$history
+  h <- h[!is.na(h$round) & is.finite(h$dloglik), , drop = FALSE]
+  if (!nrow(h)) stop("The search refitted nothing.", call. = FALSE)
+  # The gain before each round, from the changes kept in the rounds before it.
+  rounds <- sort(unique(h$round))
+  keptgain <- vapply(rounds, function(r) sum(h$dloglik[h$round == r & h$kept]), 0)
+  before <- stats::setNames(c(0, cumsum(keptgain))[seq_along(rounds)], rounds)
+  h$gain <- before[as.character(h$round)] + h$dloglik
+  path <- data.frame(round = c(min(rounds) - 1, rounds), gain = c(0, cumsum(keptgain)))
+  pr <- x$history[x$history$family %in% 'prune', , drop = FALSE]
+  sub <- if (nrow(pr)) paste0('Pruning dropped ', sum(pr$kept), ' of ', nrow(pr),
+    ' changes') else NULL
+  ggplot(h, aes(x = .data$round, y = .data$gain)) +
+    geom_step(data = path, colour = 'grey50') +
+    geom_point(aes(shape = .data$kept), size = 2.5) +
+    scale_shape_manual(values = c(`FALSE` = 1, `TRUE` = 16),
+      labels = c(`FALSE` = 'rejected', `TRUE` = 'kept'), name = NULL) +
+    geom_text(data = h[h$kept, , drop = FALSE], aes(label = .data$change), hjust = 1.05,
+      vjust = -0.6, size = 3) +
+    scale_x_continuous(breaks = rounds) +
+    labs(x = 'Round', y = 'Log likelihood gained', title = paste0('Search: ', x$stopped),
+      subtitle = sub) +
+    theme_bw()
 }
 
 #' @export

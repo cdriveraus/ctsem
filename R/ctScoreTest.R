@@ -1590,6 +1590,55 @@ ctScoreTest <- function(fit, covariates = NULL,
   out
 }
 
+#' Plot score tests
+#'
+#' Each family's strongest relaxations: their p-values adjusted within the
+#' family (Benjamini-Hochberg), on a log scale, against .05.
+#'
+#' @param x A \code{ctScoreTest}.
+#' @param family Families to show; by default every family tested.
+#' @param top Relaxations shown per family, the strongest.
+#' @param ... Unused.
+#' @return A ggplot.
+#' @export
+plot.ctScoreTest <- function(x, family = NULL, top = 10, ...) {
+  rows <- list()
+  add <- function(fam, label, p, p_adj) if (length(label))
+    rows[[length(rows) + 1L]] <<- data.frame(family = fam, label = label, p = p,
+      p_adj = p_adj, stringsAsFactors = FALSE)
+  h <- x$heterogeneity
+  if (!is.null(h)) add('heterogeneity', h$parameter, h$p, h$p_adj)
+  for (cv in x$covariates) add('covariates', paste0(cv$joint$covariate, ': ',
+    cv$parameters$parameter), cv$parameters$p, cv$parameters$p_adj)
+  s <- x$statedependence$terms
+  if (!is.null(s)) add('statedependence', paste0(s$equation, ': ', s$term), s$p, s$p_adj)
+  v <- x$volatility$terms
+  if (!is.null(v)) add('volatility', v$term, v$p, v$p_adj)
+  f <- x$fixed$cells
+  if (!is.null(f)) add('fixed', f$cell, f$p, f$p_adj)
+  i <- x$instability$parameters
+  if (!is.null(i)) add('instability', paste0(i$parameter, ' (', i$ordering, ')'), i$p, i$p_adj)
+  d <- do.call(rbind, rows)
+  if (!is.null(family)) d <- d[d$family %in% family, , drop = FALSE]
+  if (is.null(d) || !nrow(d)) stop("Nothing to plot: no relaxation was tested",
+    if (!is.null(family)) " in those families", ".", call. = FALSE)
+  d <- do.call(rbind, lapply(split(d, factor(d$family, levels = unique(d$family))),
+    function(part) utils::head(part[order(part$p_adj, part$p), , drop = FALSE], top)))
+  # One axis per family, strongest at the top.
+  d$key <- factor(paste0(d$family, '|', d$label),
+    levels = rev(unique(paste0(d$family, '|', d$label))))
+  ggplot(d, aes(x = pmax(.data$p_adj, 1e-12), y = .data$key)) +
+    geom_vline(xintercept = 0.05, linetype = 2, colour = 'grey50') +
+    geom_point(aes(colour = .data$p_adj < 0.05), size = 2.5) +
+    scale_colour_manual(values = c(`FALSE` = 'grey35', `TRUE` = 'red3'), guide = 'none') +
+    scale_x_log10() + scale_y_discrete(labels = function(k) sub('^[^|]*[|]', '', k)) +
+    facet_wrap(~family, scales = 'free_y', ncol = 1) +
+    labs(x = 'p adjusted within the family (dashed: .05)', y = NULL,
+      title = paste0('Score tests (', x$info$route, ' route, ', x$info$nsubjects,
+        ' subjects)')) +
+    theme_bw()
+}
+
 #' @export
 print.ctScoreTest <- function(x, digits = 3, top = 10, ...) {
   # A bootstrap p-value cannot go below 1 / (nboot + 1); at that floor it

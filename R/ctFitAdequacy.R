@@ -216,10 +216,21 @@
 #' @return An object of class \code{ctFitAdequacy}: \code{families} (one row
 #'   per family: the number of statistics, the worst, its z, the family's
 #'   p-value and the Holm-adjusted one), \code{statistics} (every statistic:
-#'   observed value, z, two-sided p), \code{size} (the root mean square
-#'   residual correlations, their intervals and close-fit tests),
-#'   \code{adequate}, \code{close_fit}, \code{projection} (the method used),
-#'   and \code{fit} (with any generated data, for reuse).
+#'   what it is about -- \code{variable}, \code{with} (the other variable of
+#'   a pair, or what the variable is correlated with), \code{gap} (the gap
+#'   bin of a pair of rows, or a lag), \code{period} and \code{covariate},
+#'   each NA where it does not apply -- and its observed value, z and
+#'   two-sided p), \code{size} (the root mean square residual correlations,
+#'   their intervals and close-fit tests), \code{errors} (the rows the
+#'   error-based families are computed from, in long form: \code{Subject},
+#'   \code{Time}, \code{Element} -- \code{'error'}, each variable's
+#'   standardised one-step-ahead error given the row's other observed
+#'   values; \code{'update'}, each latent's standardised update;
+#'   \code{'etaprior'}, its predicted mean -- \code{Row}, the variable, and
+#'   \code{value}; NULL when no such family ran), \code{adequate},
+#'   \code{close_fit}, \code{projection} (the method used), and \code{fit}
+#'   (with any generated data, for reuse). \code{plot()} draws the families,
+#'   or one family's statistics.
 #' @references Newey, W. K. (1985). Maximum likelihood specification testing
 #'   and conditional moment tests. \emph{Econometrica, 53}, 1047-1070.
 #'
@@ -283,6 +294,7 @@ ctFitAdequacy <- function(fit, covariates = NULL,
   set.seed(20261010L)
 
   statistics <- list(); fams <- list(); size <- NULL; used <- NA_character_
+  errors <- NULL
   moments <- intersect(families, c('residuals', 'latent', 'volatility', 'pairs',
     'periodic', 'distribution', 'fit', 'effects', 'scores', 'tvcovariates'))
   if (length(moments) || 'dependence' %in% families) {
@@ -291,6 +303,7 @@ ctFitAdequacy <- function(fit, covariates = NULL,
     neederr <- length(setdiff(c(moments, intersect(families, 'dependence')), 'effects')) > 0
     t0 <- proc.time()[['elapsed']]
     err <- if (neederr) .ctAdequacyErrors(fit, cores = cores) else NULL
+    if (!is.null(err)) errors <- .ctAdequacyErrorRows(err)
     setup <- if (neederr) .ctAdequacySetup(err, gaps, periods,
       if ('tvcovariates' %in% moments) .ctAdequacyTVCovariates(fit, err, tvcovariates)) else NULL
     if (!is.null(err$ess) && any(is.finite(err$ess)) && min(err$ess, na.rm = TRUE) < 20)
@@ -331,8 +344,8 @@ ctFitAdequacy <- function(fit, covariates = NULL,
         nboot, raw = mom$M)
       extras <- .ctAdequacyExtras(err, moments)
       statistics[[length(statistics) + 1L]] <- data.frame(family = mom$meta$family,
-        statistic = mom$meta$name, observed = tests$estimate, z = tests$z, p = tests$p,
-        stringsAsFactors = FALSE)
+        statistic = mom$meta$name, mom$meta[names(.ctAdequacyAbout(0L))],
+        observed = tests$estimate, z = tests$z, p = tests$p, stringsAsFactors = FALSE)
       if (nrow(extras$statistics)) statistics[[length(statistics) + 1L]] <- extras$statistics
       for (f in moments) {
         r <- tests$families[[f]]
@@ -368,10 +381,47 @@ ctFitAdequacy <- function(fit, covariates = NULL,
   sized <- if (is.null(size)) character() else
     size$family[!is.na(size$p_close) & size$p_close >= alpha & size$overall]
   structure(list(families = families_out, statistics = statistics, size = size,
-    adequate = !length(failing), close_fit = all(failing %in% sized),
+    errors = errors, adequate = !length(failing), close_fit = all(failing %in% sized),
     alpha = alpha, close = close, projection = used,
     nsamples = if (length(generated)) nsamples else NA_integer_, fit = fit),
     class = 'ctFitAdequacy')
+}
+
+# What each statistic is about, beside its name, so that a reader selects by
+# variable, pair, gap, period or covariate rather than parsing names -- which
+# variable names with '_', ':' or ' period ' in them would defeat, and which
+# rounded a period to three figures. NA where a statistic has no such part.
+.ctAdequacyAbout <- function(n, variable = NA_character_, with = NA_character_,
+  gap = NA_character_, period = NA_real_, covariate = NA_character_) {
+  data.frame(variable = rep_len(as.character(variable), n),
+    with = rep_len(as.character(with), n), gap = rep_len(as.character(gap), n),
+    period = rep_len(as.numeric(period), n), covariate = rep_len(as.character(covariate), n),
+    stringsAsFactors = FALSE)
+}
+
+# The description of a block of moment statistics: what the tests need of each
+# (family, name, the count its estimate is over, its kind, its gap bin) and
+# what it is about.
+.ctAdequacyMeta <- function(family, name, count, kind, bin = NA_integer_, ...) {
+  cbind(data.frame(family = family, name = name, count = count, kind = kind, bin = bin,
+    stringsAsFactors = FALSE), .ctAdequacyAbout(length(name), ...))
+}
+
+# The errors' rows, in the long form ctKalman's are melted to: each
+# variable's conditional error, each latent's update and its predicted mean.
+.ctAdequacyErrorRows <- function(err) {
+  n <- length(err$unit)
+  part <- function(element, X) {
+    X <- as.matrix(X)
+    if (!ncol(X)) return(NULL)
+    data.frame(Subject = factor(rep(err$labels[err$unit], ncol(X)), levels = err$labels),
+      Time = rep(err$time, ncol(X)), Element = element,
+      Row = rep(colnames(X), each = n), value = as.numeric(X), stringsAsFactors = FALSE)
+  }
+  E <- err$E; colnames(E) <- err$vars
+  eta <- as.matrix(err$eta)
+  if (ncol(eta) == ncol(err$Z)) colnames(eta) <- colnames(err$Z) else eta <- eta[, 0]
+  do.call(rbind, list(part('error', E), part('update', err$Z), part('etaprior', eta)))
 }
 
 # The one-step-ahead errors at a raw parameter vector (the estimate unless
@@ -646,17 +696,17 @@ ctFitAdequacy <- function(fit, covariates = NULL,
     out
   }
   blocks <- list()
-  addblock <- function(M, V0, family, name, count, kind, bin = NA_integer_)
-    blocks[[length(blocks) + 1L]] <<- list(M = M, V0 = V0, meta = data.frame(
-      family = family, name = name, count = count, kind = kind, bin = bin,
-      stringsAsFactors = FALSE))
+  addblock <- function(M, V0, family, name, count, kind, bin = NA_integer_, ...)
+    blocks[[length(blocks) + 1L]] <<- list(M = M, V0 = V0,
+      meta = .ctAdequacyMeta(family, name, count, kind, bin, ...))
   if (any(c('residuals', 'volatility') %in% which)) {
     B <- length(setup$labels)
     if ('residuals' %in% which) {
       blk <- .ctAdequacyPairBlock(E, err$unit, err$time, n, setup)
       grid <- expand.grid(j = seq_len(p), k = seq_len(p), b = seq_len(B))
       addblock(blk$M, blk$V0, 'residuals', paste0(vars[grid$j], '~', vars[grid$k], ' gap ',
-        setup$labels[grid$b]), blk$N, 'corr', grid$b)
+        setup$labels[grid$b]), blk$N, 'corr', grid$b, variable = vars[grid$j],
+        with = vars[grid$k], gap = setup$labels[grid$b])
     }
     if ('volatility' %in% which) {
       E2 <- sweep(E^2, 2, setup$centre)
@@ -665,7 +715,8 @@ ctFitAdequacy <- function(fit, covariates = NULL,
       own <- grid$j == grid$k
       addblock(blk$M[, own, drop = FALSE], blk$V0[, own, drop = FALSE], 'volatility',
         paste0(vars[grid$j[own]], '^2 gap ', setup$labels[grid$b[own]]), blk$N[own],
-        'square', grid$b[own])
+        'square', grid$b[own], variable = vars[grid$j[own]], with = vars[grid$j[own]],
+        gap = setup$labels[grid$b[own]])
     }
   }
   if ('latent' %in% which) {
@@ -674,7 +725,8 @@ ctFitAdequacy <- function(fit, covariates = NULL,
     grid <- expand.grid(j = seq_len(q), k = seq_len(q), b = seq_len(length(setup$labels)))
     lat <- colnames(err$Z)
     addblock(blk$M, blk$V0, 'latent', paste0(lat[grid$j], '~', lat[grid$k], ' gap ',
-      setup$labels[grid$b]), blk$N, 'corr', grid$b)
+      setup$labels[grid$b]), blk$N, 'corr', grid$b, variable = lat[grid$j],
+      with = lat[grid$k], gap = setup$labels[grid$b])
   }
   if ('pairs' %in% which && p > 1L) {
     pr <- which(upper.tri(diag(p)), arr.ind = TRUE)
@@ -687,7 +739,7 @@ ctFitAdequacy <- function(fit, covariates = NULL,
     V <- matrix(V, nrow(E))
     N <- colSums(!is.na(E[, pr[, 1], drop = FALSE]) & !is.na(E[, pr[, 2], drop = FALSE]))
     addblock(unitsum(V), unitsum(V^2), 'pairs', paste0(vars[pr[, 1]], ':', vars[pr[, 2]]),
-      N, 'corr')
+      N, 'corr', variable = vars[pr[, 1]], with = vars[pr[, 2]])
   }
   if ('periodic' %in% which && length(setup$periods)) {
     X <- cbind(E, err$Z)
@@ -695,7 +747,8 @@ ctFitAdequacy <- function(fit, covariates = NULL,
     blk <- .ctAdequacyPeriodBlock(X, err$unit, err$time, n, setup$periods)
     grid <- expand.grid(j = seq_len(ncol(X)), f = seq_along(setup$periods))
     addblock(blk$M, blk$V0, 'periodic', paste0(lab[grid$j], ' period ',
-      as.character(signif(setup$periods[grid$f], 3))), blk$N, 'corr')
+      as.character(signif(setup$periods[grid$f], 3))), blk$N, 'corr',
+      variable = lab[grid$j], period = setup$periods[grid$f])
   }
   # Each variable's error, and each latent's update, against each time varying
   # covariate at the row and at the unit's previous row. A covariate that is
@@ -713,7 +766,9 @@ ctFitAdequacy <- function(fit, covariates = NULL,
       P <- Xz[, grid$j, drop = FALSE] * Wz[, grid$c, drop = FALSE]
       N <- colSums((is.finite(X[, grid$j, drop = FALSE]) * Wz[, grid$c, drop = FALSE])^2)
       addblock(unitsum(P), unitsum(P^2), 'tvcovariates', paste0(lab[grid$j], '~',
-        setup$tv$names[grid$c], if (lag == 1L) ' (previous row)'), N, 'corr')
+        setup$tv$names[grid$c], if (lag == 1L) ' (previous row)'), N, 'corr',
+        variable = lab[grid$j], covariate = setup$tv$names[grid$c],
+        gap = if (lag == 1L) 'previous row' else 'same row')
     }
   }
   if ('distribution' %in% which) {
@@ -734,7 +789,8 @@ ctFitAdequacy <- function(fit, covariates = NULL,
     addblock(unitsum(terms), matrix(NA_real_, n, ncol(terms)), 'distribution',
       c(paste0('skew(', vars, ')'), paste0('kurtosis(', vars, ')'),
         if (distances) c('distance', 'distance spread')),
-      c(nobs, nobs, if (distances) rep(sum(err$d > 0), 2)), 'moment')
+      c(nobs, nobs, if (distances) rep(sum(err$d > 0), 2)), 'moment',
+      variable = c(vars, vars, if (distances) rep(NA_character_, 2)))
   }
   if ('fit' %in% which) {
     Q <- err$Q; Q[!is.finite(Q)] <- 0
@@ -879,9 +935,9 @@ ctFitAdequacy <- function(fit, covariates = NULL,
   }))
   C[!is.finite(C)] <- 0
   n <- nrow(C)
-  list(M = C, V0 = matrix(NA_real_, n, ncol(C)), meta = data.frame(family = 'effects',
-    name = paste0('P(u', rep(seq_len(d), each = length(cuts)), ' < ', cuts, ')'),
-    count = n, kind = 'moment', bin = NA_integer_, stringsAsFactors = FALSE))
+  dims <- paste0('u', rep(seq_len(d), each = length(cuts)))
+  list(M = C, V0 = matrix(NA_real_, n, ncol(C)), meta = .ctAdequacyMeta('effects',
+    paste0('P(', dims, ' < ', cuts, ')'), n, 'moment', variable = dims))
 }
 
 # The raw parameters whose row scores the scores family uses: named, or up to
@@ -929,9 +985,10 @@ ctFitAdequacy <- function(fit, covariates = NULL,
   grid <- expand.grid(j = seq_len(K), k = seq_len(K), b = seq_len(length(setup$labels)))
   par <- colnames(directions)
   list(M = blk$M, V0 = matrix(NA_real_, nrow(blk$M), ncol(blk$M)),
-    meta = data.frame(family = 'scores',
-    name = paste0('s(', par[grid$j], ')~s(', par[grid$k], ') gap ', setup$labels[grid$b]),
-    count = blk$N, kind = 'moment', bin = grid$b, stringsAsFactors = FALSE))
+    meta = .ctAdequacyMeta('scores',
+    paste0('s(', par[grid$j], ')~s(', par[grid$k], ') gap ', setup$labels[grid$b]),
+    blk$N, 'moment', grid$b, variable = par[grid$j], with = par[grid$k],
+    gap = setup$labels[grid$b]))
 }
 
 # Each unit's contribution with the estimation effect removed:
@@ -1126,15 +1183,17 @@ ctFitAdequacy <- function(fit, covariates = NULL,
 .ctAdequacyExtras <- function(err, which) {
   stats <- list(); p <- list()
   zp <- function(x) stats::qnorm(pmax(x, 1e-300) / 2, lower.tail = FALSE)
-  add <- function(family, name, observed, pv) {
+  add <- function(family, name, observed, pv, ...) {
     stats[[length(stats) + 1L]] <<- data.frame(family = family, statistic = name,
-      observed = observed, z = zp(pv), p = pv, stringsAsFactors = FALSE)
+      .ctAdequacyAbout(1L, ...), observed = observed, z = zp(pv), p = pv,
+      stringsAsFactors = FALSE)
     p[[family]] <<- c(p[[family]], pv)
   }
   if ('distribution' %in% which) {
     for (j in seq_along(err$vars)) {
       ad <- .ctAdequacyAD(stats::pnorm(err$E[, j]))
-      if (!is.null(ad)) add('distribution', paste0('AD normal(', err$vars[j], ')'), ad[1], ad[2])
+      if (!is.null(ad)) add('distribution', paste0('AD normal(', err$vars[j], ')'), ad[1], ad[2],
+        variable = err$vars[j])
     }
     ok <- err$d > 0 & is.finite(err$Q)
     ad <- .ctAdequacyAD(stats::pchisq(err$Q[ok], err$d[ok]))
@@ -1152,8 +1211,8 @@ ctFitAdequacy <- function(fit, covariates = NULL,
       1 - (1 - ext[w])^length(u))
   }
   list(statistics = if (length(stats)) do.call(rbind, stats) else
-    data.frame(family = character(), statistic = character(), observed = numeric(),
-      z = numeric(), p = numeric()), p = p)
+    data.frame(family = character(), statistic = character(), .ctAdequacyAbout(0L),
+      observed = numeric(), z = numeric(), p = numeric()), p = p)
 }
 
 # The size of what the model leaves in the error correlations: the root mean
@@ -1230,6 +1289,7 @@ ctFitAdequacy <- function(fit, covariates = NULL,
     targets[[length(targets) + 1L]] <- .ctAdequacyCentredDistance(E[use, j, drop = FALSE]^2)
     tn <- c(tn, paste0('dcor(', vars[j], '^2, past)'))
   }
+  tv <- rep(vars, each = 2L)
   va <- mean(A * A)
   dcor <- function(B, idx = NULL) {
     Bp <- if (is.null(idx)) B else B[idx, idx]
@@ -1247,7 +1307,8 @@ ctFitAdequacy <- function(fit, covariates = NULL,
   ratio <- observed / rowMeans(perm)
   maxperm <- apply(perm / rowMeans(perm), 2, max)
   w <- which.max(ratio)
-  list(statistics = data.frame(family = 'dependence', statistic = tn, observed = observed,
+  list(statistics = data.frame(family = 'dependence', statistic = tn,
+    .ctAdequacyAbout(length(tn), variable = tv), observed = observed,
     z = zp(pstat), p = pstat, stringsAsFactors = FALSE),
     family = data.frame(family = 'dependence', statistics = length(targets), worst = tn[w],
       worst_z = zp(pstat[w]), p = (1 + sum(maxperm >= max(ratio))) / (1 + nperm),
@@ -1274,8 +1335,10 @@ ctFitAdequacy <- function(fit, covariates = NULL,
   ids <- unique(id)
   statfun <- function(Ymat) .ctAdequacyStats(Ymat, id, ids, vars, covs)
   observed <- statfun(Y)
-  generated <- vapply(seq_len(nsamples), function(b) statfun(matrix(G[b, , ],
-    nrow = nrow(Y), dimnames = list(NULL, vars))), observed)
+  about <- attr(observed, 'about')
+  attr(observed, 'about') <- NULL
+  generated <- vapply(seq_len(nsamples), function(b) c(statfun(matrix(G[b, , ],
+    nrow = nrow(Y), dimnames = list(NULL, vars)))), observed)
   generated <- matrix(generated, nrow = length(observed), dimnames = list(names(observed), NULL))
   if ('lagged' %in% which) {
     cc <- suppressMessages(ctFitCheckCov(fit, plot = FALSE, keep = 'samples',
@@ -1290,6 +1353,8 @@ ctFitAdequacy <- function(fit, covariates = NULL,
       s$value[match(label, slab[samples$sample == b])]
     }, numeric(length(label)))
     observed <- c(setNames(cc$empirical, label), observed)
+    about <- rbind(.ctAdequacyAbout(length(label), variable = cc$rowvar, with = cc$colvar,
+      gap = paste('lag', cc$lag)), about)
     generated <- rbind(matrix(lagged, nrow = length(label), dimnames = list(label, NULL)),
       generated)
   }
@@ -1297,14 +1362,15 @@ ctFitAdequacy <- function(fit, covariates = NULL,
   keep <- family %in% which & is.finite(observed) & apply(generated, 1, function(g)
     sum(is.finite(g)) > 10 && stats::sd(g, na.rm = TRUE) > 0)
   observed <- observed[keep]; generated <- generated[keep, , drop = FALSE]
-  family <- family[keep]
+  family <- family[keep]; about <- about[keep, , drop = FALSE]
   m <- rowMeans(generated, na.rm = TRUE)
   s <- apply(generated, 1, stats::sd, na.rm = TRUE)
   ng <- rowSums(is.finite(generated))
   z <- (observed - m) / s
   pstat <- 2 * stats::pt(-abs(z) / sqrt(1 + 1 / ng), df = ng - 1)
   statistics <- data.frame(family = family, statistic = sub('^[^:]*:', '', names(observed)),
-    observed = observed, z = z, p = pstat, stringsAsFactors = FALSE, row.names = NULL)
+    about, observed = observed, z = z, p = pstat, stringsAsFactors = FALSE,
+    row.names = NULL)
   families <- do.call(rbind, lapply(unique(family), function(f) {
     rows <- which(family == f)
     w <- rows[which.min(pstat[rows])]
@@ -1336,8 +1402,18 @@ ctFitAdequacy <- function(fit, covariates = NULL,
     out
   })
   per <- do.call(rbind, per)
+  # What each per-subject summary is about, in the order they were made.
+  pabout <- .ctAdequacyAbout(2L * p + p * p, variable = c(vars, vars, rep(vars, each = p)),
+    with = c(rep(NA_character_, 2L * p), rep(vars, times = p)),
+    gap = c(rep(NA_character_, 2L * p), rep('lag 1', p * p)))
   out <- c()
-  for (nm in colnames(per)) out[paste0('subjects:sd(', nm, ')')] <- stats::sd(per[, nm], na.rm = TRUE)
+  about <- list()
+  # Keyed as `out` is, so that two summaries with one name stay paired.
+  for (a in seq_len(ncol(per))) {
+    key <- paste0('subjects:sd(', colnames(per)[a], ')')
+    out[key] <- stats::sd(per[, a], na.rm = TRUE)
+    about[[key]] <- pabout[a, ]
+  }
   # Pooled within-subject change against products of deviations.
   dev <- Y; change <- Y; change[] <- NA_real_
   for (r in rows) {
@@ -1352,18 +1428,109 @@ ctFitAdequacy <- function(fit, covariates = NULL,
   }
   for (j in seq_len(p)) {
     for (k in seq_len(p)) for (m in k:p) {
-      out[paste0('nonlinear:cor(d', vars[j], ',', vars[k], '*', vars[m], ')')] <-
-        pc(change[, j], dev[, k] * dev[, m])
+      key <- paste0('nonlinear:cor(d', vars[j], ',', vars[k], '*', vars[m], ')')
+      out[key] <- pc(change[, j], dev[, k] * dev[, m])
+      about[[key]] <- .ctAdequacyAbout(1L, variable = vars[j],
+        with = paste0(vars[k], '*', vars[m]))
     }
-    for (k in seq_len(p)) out[paste0('nonlinear:cor(d', vars[j], '^2,', vars[k], ')')] <-
-      pc(change[, j]^2, dev[, k])
+    for (k in seq_len(p)) {
+      key <- paste0('nonlinear:cor(d', vars[j], '^2,', vars[k], ')')
+      out[key] <- pc(change[, j]^2, dev[, k])
+      about[[key]] <- .ctAdequacyAbout(1L, variable = vars[j], with = vars[k])
+    }
   }
   if (length(covs)) for (cn in names(covs)) {
     z <- suppressWarnings(as.numeric(if (is.numeric(covs[[cn]])) covs[[cn]] else
       as.integer(as.factor(covs[[cn]]))))
-    for (nm in colnames(per)) out[paste0('covariates:cor(', cn, ',', nm, ')')] <- pc(z, per[, nm])
+    for (a in seq_len(ncol(per))) {
+      key <- paste0('covariates:cor(', cn, ',', colnames(per)[a], ')')
+      out[key] <- pc(z, per[, a])
+      ab <- pabout[a, ]; ab$covariate <- cn
+      about[[key]] <- ab
+    }
   }
+  attr(out, 'about') <- do.call(rbind, unname(about[names(out)]))
   out
+}
+
+#' Plot the adequacy checks
+#'
+#' Without \code{family}, each family's Holm-adjusted p-value on a log scale,
+#' against \code{alpha}, with its worst statistic. With a family, its
+#' statistics: for the families over the gaps between a subject's rows
+#' (\code{residuals}, \code{latent}, \code{volatility}, \code{scores}),
+#' each pair's estimate by gap with a 95 per cent interval; for
+#' \code{periodic}, each variable's z by period; for any other, the
+#' statistics' z, the 40 largest. The intervals and z are each statistic's
+#' own: the family's p-value, which accounts for how many there are, is the
+#' test.
+#'
+#' @param x A \code{ctFitAdequacy}.
+#' @param family One family, or NULL for all of them.
+#' @param ... Unused.
+#' @return A ggplot.
+#' @export
+plot.ctFitAdequacy <- function(x, family = NULL, ...) {
+  flag <- scale_colour_manual(values = c(`FALSE` = 'grey35', `TRUE` = 'red3'), guide = 'none')
+  if (is.null(family)) {
+    f <- x$families
+    f$label <- factor(paste0(f$family, '  (', f$worst, ')'),
+      levels = rev(paste0(f$family, '  (', f$worst, ')')))
+    f$flagged <- f$p_adj < x$alpha
+    return(ggplot(f, aes(x = pmax(.data$p_adj, 1e-12), y = .data$label)) +
+      geom_vline(xintercept = x$alpha, linetype = 2, colour = 'grey50') +
+      geom_point(aes(colour = .data$flagged), size = 2.5) + flag +
+      scale_x_log10() +
+      labs(x = 'Holm-adjusted p (dashed: alpha)', y = NULL,
+        title = paste0(if (x$adequate) 'Adequate' else 'Not adequate', ' at alpha = ',
+          x$alpha, if (!x$adequate && isTRUE(x$close_fit)) ', but a close fit'),
+        subtitle = if (!is.na(x$projection)) paste0('Estimation removed by: ',
+          x$projection)) +
+      theme_bw())
+  }
+  family <- as.character(family)[1]
+  s <- x$statistics[x$statistics$family %in% family, , drop = FALSE]
+  if (!nrow(s)) stop("No statistics for family '", family, "'. Checked: ",
+    paste(x$families$family, collapse = ', '), call. = FALSE)
+  fam <- x$families[x$families$family == family, , drop = FALSE]
+  title <- if (nrow(fam)) sprintf('%s: p = %.2g, Holm-adjusted %.2g', family, fam$p[1],
+    fam$p_adj[1]) else family
+  s$beyond <- is.finite(s$z) & abs(s$z) > 1.96
+  if (family %in% c('residuals', 'latent', 'volatility', 'scores') && any(!is.na(s$gap))) {
+    s$gap <- factor(s$gap, levels = unique(s$gap))
+    pair <- ifelse(s$variable == s$with, s$variable, paste(s$variable, s$with, sep = ' ~ '))
+    s$pair <- factor(pair, levels = unique(pair))
+    se <- ifelse(is.finite(s$z) & s$z != 0, abs(s$observed / s$z), NA_real_)
+    s$lower <- s$observed - 1.96 * se
+    s$upper <- s$observed + 1.96 * se
+    ylab <- c(residuals = 'Correlation of errors', latent = 'Correlation of latent updates',
+      volatility = 'Covariance of squared errors', scores = 'Mean product of row scores')
+    return(ggplot(s, aes(x = .data$gap, y = .data$observed)) +
+      geom_hline(yintercept = 0, colour = 'grey60') +
+      geom_pointrange(aes(ymin = .data$lower, ymax = .data$upper, colour = .data$beyond),
+        na.rm = TRUE) + flag +
+      facet_wrap(~pair) +
+      labs(x = 'Gap between rows', y = ylab[[family]], title = title,
+        subtitle = 'Each with its 95% interval, before any adjustment') +
+      theme_bw() + theme(axis.text.x = element_text(angle = 45, hjust = 1)))
+  }
+  if (family == 'periodic') {
+    return(ggplot(s[is.finite(s$z), , drop = FALSE], aes(x = .data$period, y = .data$z,
+      colour = .data$variable)) +
+      geom_hline(yintercept = c(-1.96, 1.96), linetype = 2, colour = 'grey60') +
+      geom_line() + geom_point(size = 1) + scale_x_log10() +
+      labs(x = 'Period', y = 'z', colour = NULL, title = title) + theme_bw())
+  }
+  s <- s[is.finite(s$z), , drop = FALSE]
+  shown <- utils::head(s[order(-abs(s$z)), , drop = FALSE], 40L)
+  shown$statistic <- factor(make.unique(shown$statistic),
+    levels = rev(make.unique(shown$statistic)))
+  ggplot(shown, aes(x = .data$z, y = .data$statistic)) +
+    geom_vline(xintercept = c(-1.96, 1.96), linetype = 2, colour = 'grey60') +
+    geom_point(aes(colour = .data$beyond), size = 2) + flag +
+    labs(x = 'z', y = NULL, title = title, subtitle = if (nrow(s) > nrow(shown))
+      paste0('The ', nrow(shown), ' largest of ', nrow(s))) +
+    theme_bw()
 }
 
 #' @export

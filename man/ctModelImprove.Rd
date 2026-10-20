@@ -9,6 +9,7 @@ ctModelImprove(
   covariates = NULL,
   relax = c("heterogeneity", "covariates", "statedependence", "volatility", "fixed",
     "slow", "unique", "periodic", "order"),
+  changes = NULL,
   candidates = NULL,
   alpha = 0.05,
   maxsteps = 10L,
@@ -34,6 +35,12 @@ ctModelImprove(
 for \code{\link{ctScoreTest}}.}
 
 \item{relax}{Which relaxations may be made.}
+
+\item{changes}{Optionally rows of \code{\link{ctModelProposals}}: the first
+round refits with these, in the order given, instead of screening, and
+keeps the first that improves the fit by \code{criterion}. With
+\code{maxsteps = 1}, one step of a search made by hand; later rounds
+screen as usual.}
 
 \item{candidates}{Optional list of alternative models (from
 \code{\link{ctModel}}) to try when the screen is clean but the checks fail.}
