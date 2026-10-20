@@ -2628,6 +2628,13 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
 # the engine then skips the coordinates that move only inert effects, which is
 # exact (`CTSEMLaplaceUnits`). A calculation reading LAMBDA or MANIFESTMEANS
 # cells could carry an effect elsewhere, so such a model is left as it is.
+#
+# An effect held in a PARS cell reaches whatever cells the calculations reading
+# that cell write, followed through PARS cells that read it in turn: an item
+# intercept written `mm_a + lam_a * lev`, with `mm_a` in PARS, reaches item a
+# alone, as a plain intercept cell does. Anything other than a LAMBDA or
+# MANIFESTMEANS cell along the way, and a PARS cell nothing reads, leave the
+# effect reaching everything.
 .ctJuliaLaplaceInert <- function(model, setup, levels, dat) {
   if (is.null(setup) || !nrow(setup) || !length(levels)) return(NULL)
   rhs <- sub("^[^=]*=", "", unlist(model$modelmats$calcs))
@@ -2637,6 +2644,33 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
   id <- model$subjectIDname
   if (!length(manifests) || !all(c(id, manifests) %in% colnames(dat))) return(NULL)
   codes <- .ctMatricesList()$base[c("LAMBDA", "MANIFESTMEANS")]
+  parscode <- .ctMatricesList()$base[["PARS"]]
+  calcs <- unlist(model$modelmats$calcs)
+  written <- gsub("[[:space:]]", "", sub("=.*$", "", calcs))
+  reads <- gsub("[[:space:]]", "", sub("^[^=]*=", "", calcs))
+  # The manifests PARS[row, col] reaches through the calculations, or NULL
+  # where it reaches anything else.
+  parsreach <- function(row, col, seen = character()) {
+    key <- paste0("PARS[", row, ",", col, "]")
+    if (key %in% seen) return(integer())
+    seen <- c(seen, key)
+    readers <- written[grepl(key, reads, fixed = TRUE)]
+    if (!length(readers)) return(NULL)
+    out <- integer()
+    for (cell in readers) {
+      parts <- regmatches(cell, regexec("^([A-Za-z]+)\\[([0-9]+),([0-9]+)\\]$",
+        cell))[[1L]]
+      if (length(parts) != 4L) return(NULL)
+      if (parts[2L] %in% c("LAMBDA", "MANIFESTMEANS")) {
+        out <- c(out, as.integer(parts[3L]))
+      } else if (identical(parts[2L], "PARS")) {
+        more <- parsreach(as.integer(parts[3L]), as.integer(parts[4L]), seen)
+        if (is.null(more)) return(NULL)
+        out <- c(out, more)
+      } else return(NULL)
+    }
+    out
+  }
   subjects <- factor(dat[[id]], levels = unique(dat[[id]]))
   # Subjects by manifests: whether that subject observes it at all.
   observed <- vapply(manifests, function(m)
@@ -2648,8 +2682,19 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
     lv <- levels[[l]]
     reach <- lapply(as.integer(lv$re_index), function(p) {
       rows <- which(param == p)
-      if (!length(rows) || !all(as.integer(setup$matrix[rows]) %in% codes)) return(NULL)
-      unique(as.integer(setup$row[rows]))
+      if (!length(rows)) return(NULL)
+      out <- integer()
+      for (ri in rows) {
+        code <- as.integer(setup$matrix[ri])
+        if (code %in% codes) {
+          out <- c(out, as.integer(setup$row[ri]))
+        } else if (code == parscode) {
+          more <- parsreach(as.integer(setup$row[ri]), as.integer(setup$col[ri]))
+          if (is.null(more)) return(NULL)
+          out <- c(out, more)
+        } else return(NULL)
+      }
+      if (length(out)) unique(out) else NULL
     })
     candidates <- which(!vapply(reach, is.null, logical(1)))
     if (!length(candidates) || length(lv$group) != nrow(observed)) next
