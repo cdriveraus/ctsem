@@ -364,14 +364,19 @@ bootstrapHessian <- function(standata, sm, est, finishsamples, cores, scores=NUL
 # than from 0 to 397 by accident -- see `.ctImisUnwhitenMatrix()`: a null
 # direction has no column in the map at all.
 .ctImisRun <- function(lpg, centre, cov, rtol = .ctFlatDirectionRtol(),
-  directions = NULL, ...) {
+  directions = NULL, widths = NULL, ...) {
   centre <- as.numeric(centre)
   cov <- as.matrix(cov)
   # `directions` confines the sampling to those columns, each one unit of the
   # normal `cov` describes (`.ctOptimNormalCheck()`); the normal stays the
-  # answer in the rest, added to every draw and to the covariance.
+  # answer in the rest, added to every draw and to the covariance. `widths`,
+  # the variances the check measured along them, is where the proposal
+  # starts: on a four-dimensional shell it reached an effective sample of 200
+  # in 1174 evaluations against the normal's 5789, and as fast elsewhere
+  # (scripts/gsm-uncertainty-2026-10/trial_isstart.R).
   subspace <- if (!is.null(directions)) list(V = directions,
-    d = rep(1, ncol(directions)), k = ncol(directions)) else
+    d = if (length(widths) == ncol(directions)) widths else rep(1, ncol(directions)),
+    k = ncol(directions)) else
     .ctImisSubspace(cov, rtol = rtol)
   if (is.null(subspace)) return(imis_is(lpg, mu_hat = centre, Sigma_hat = cov, ...))
   wrapped <- .ctImisWhitenDensity(lpg, centre, subspace)
@@ -1616,7 +1621,7 @@ ctOptimFullBootstrapDraws <- function(est, standata, sm, n=1000, cores=1,
   }
   record <- list(draws = drawn, unusable = unusable, bars = bars,
     directions = matrix(0, length(est), 0L), slope = numeric(), shape = numeric(),
-    parameters = integer())
+    widths = numeric(), parameters = integer())
   if (is.null(found)) return(record)
   flagged <- found$flagged
   record$directions <- A %*% found$v[, flagged, drop = FALSE]
@@ -1624,6 +1629,10 @@ ctOptimFullBootstrapDraws <- function(est, standata, sm, n=1000, cores=1,
   record$parameters <- found$parameters
   record$slope <- found$slope[flagged]
   record$shape <- found$shape[flagged]
+  # The variance each direction's slope measured, in units of the normal's:
+  # where importance sampling starts, and the sampler's metric. A slope of one
+  # or more measured no width, and keeps the normal's.
+  record$widths <- ifelse(record$slope < 1, 1 / (1 - record$slope), 1)
   record
 }
 
@@ -2057,7 +2066,8 @@ ctOptimFitLpgFunc <- function(fit, cores=1){
   # `IS-importance-sampling-2026-09-06.md`. `lpg` value-only carries the batch
   # attribute `.ctBackendLpgFunc(fit, gradient=FALSE)` sets, whitened or not.
   is_res <- .ctImisRun(lpg, centre = est, cov = uncertaintyfit$cov,
-    directions = directions, max_iter = control$imisMaxIter, scale_init = control$imisScaleInit,
+    directions = directions, widths = uncertaintyfit$details$normalcheck$widths,
+    max_iter = control$imisMaxIter, scale_init = control$imisScaleInit,
     tail_scale = control$imisTailScale, df = control$imisDf,
     target_ess = control$isESS, n_batch = control$isitersize, cl = NA,
     finishsamples = finishsamples,
