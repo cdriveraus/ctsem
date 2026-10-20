@@ -79,6 +79,12 @@ test_that("blocks are read, laid out and refused where they cannot apply", {
     effects = "lev"))), "in no block and without an own variance")
   expect_error(.blocks_prep(m, data, popblocks = .blocks2, poprank = 3),
     "its blocks give its rank")
+  # `'auto'`, the default written out, and NULL, the argument left out, defer
+  # to the blocks.
+  for (rank in list("auto", NULL)) {
+    p <- .blocks_prep(m, data, popblocks = .blocks2, poprank = rank)
+    expect_equal(p$laplace$levels[[1]]$rank, 2L)
+  }
   expect_error(suppressMessages(ctFit(data, m, backend = "julia", fit = FALSE,
     intoverpop = "augmented", popblocks = .blocks2)), "intoverpop='laplace'")
 })

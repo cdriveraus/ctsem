@@ -356,7 +356,8 @@ parameter varying at the level, or names of matrices or parameters, as for
 that name it, so parameters with no block in common are uncorrelated, and
 one named in no block needs an own variance (\code{popunique}). A level's
 rank is the sum of its blocks' ranks, so \code{poprank} need not be given
-for it. One unnamed list of blocks applies to every level; a list named by
+for it; \code{'auto'} there defers to the blocks, and a number must equal
+the sum. One unnamed list of blocks applies to every level; a list named by
 level gives each level its own. For example, person-level item intercepts
 that do not covary with a latent level but may covary with each other and
 with the dynamics: \code{popblocks = list(level = list(rank = 1, effects =

@@ -691,7 +691,8 @@ T0VARredundancies <- function(ctm) {
 #' that name it, so parameters with no block in common are uncorrelated, and
 #' one named in no block needs an own variance (\code{popunique}). A level's
 #' rank is the sum of its blocks' ranks, so \code{poprank} need not be given
-#' for it. One unnamed list of blocks applies to every level; a list named by
+#' for it; \code{'auto'} there defers to the blocks, and a number must equal
+#' the sum. One unnamed list of blocks applies to every level; a list named by
 #' level gives each level its own. For example, person-level item intercepts
 #' that do not covary with a latent level but may covary with each other and
 #' with the dynamics: \code{popblocks = list(level = list(rank = 1, effects =
@@ -1288,7 +1289,9 @@ ctFit<-function(datalong, model, stanmodeltext=NA, iter=1000, intoverstates=TRUE
   # `missing()` has to be evaluated before the argument is touched, and it
   # decides whether an inapplicable rank is an error or a no-op. A rank stated
   # on the model sets it too, once the model is read (`model$poprank` below).
-  poprankexplicit <- !missing(poprank)
+  # NULL is the argument left out: the default, and not a rank asked for.
+  poprankexplicit <- !missing(poprank) && !is.null(poprank)
+  if(is.null(poprank)) poprank <- 'auto'
   # Before any data preparation and before the Julia install prompt: a control
   # name the chosen backend cannot honour is a mistake to report immediately,
   # not after a wait.
@@ -2023,13 +2026,15 @@ ctFit<-function(datalong, model, stanmodeltext=NA, iter=1000, intoverstates=TRUE
     }, integer(1L))
     laplacerank <- laplacerank[!is.na(laplacerank)]
     if(!length(laplacerank)) laplacerank <- NULL
-    # Blocks (`popblocks`): a level's rank is the sum of its blocks', and a
-    # rank asked for the same level must agree with it.
+    # Blocks (`popblocks`): a level's rank is the sum of its blocks'. A number
+    # asked for the same level must agree with it; `'auto'`, the default
+    # written out, defers to the blocks.
     laplaceblocks <- if(blocksasked) .ctPopblocksResolve(ctm, popblocks,
       levelnames, levelcolumns) else list()
     for(level in names(laplaceblocks)){
       total <- sum(vapply(laplaceblocks[[level]], function(b) b$rank, integer(1L)))
-      if(level %in% names(laplacerank) && laplacerank[[level]] != total) stop(
+      if(level %in% names(laplacerank) && laplacerank[[level]] != total &&
+          !identical(asked[[level]], 'auto')) stop(
         "poprank for level '", level, "' is ", laplacerank[[level]], " but its ",
         "popblocks span ", total, " dimensions. Drop poprank for that level: ",
         "its blocks give its rank.", call.=FALSE)
