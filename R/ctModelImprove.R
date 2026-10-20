@@ -128,10 +128,22 @@
 #' rejected, is in \code{history}.
 #'
 #' With many observations a model can be rejected by the checks for
-#' departures too small to matter. With \code{close}, the search also stops
-#' when every check that fails is a residual or within-row correlation family
-#' whose size is not significantly above \code{close}
-#' (\code{\link{ctFitAdequacy}}).
+#' departures that are small on these summaries. With \code{close}, the search
+#' also stops when every check that fails is a residual or within-row
+#' correlation family
+#' whose size is shown below \code{close} (\code{\link{ctFitAdequacy}}).
+#'
+#' Each refit is judged by \code{criterion}; with \code{'LR'}, the likelihood
+#' ratio against a chi-square on the parameters the change adds, at
+#' \code{alpha} divided by the refits the round tries. That reference is
+#' exact for none of the changes the search makes: a variance added at zero
+#' sits on its boundary, where the chi-square is conservative, and a process
+#' or cycle added brings parameters that mean nothing when its coupling is
+#' zero, where it can err either way. Screening, rounds and pruning add
+#' further choices the level does not count. The search is a way of
+#' developing a model, and its p-values describe the steps it took rather than
+#' testing the result. A refit that ends below the model it extends has not
+#' reached an optimum, and is recorded as such.
 #'
 #' @param fit A fit from \code{\link{ctFit}} with \code{backend = 'julia'}.
 #' @param covariates Optional subject-level covariates the model may add, as
@@ -195,7 +207,15 @@
 #'   tests of each round), \code{adequacy} (the final checks),
 #'   \code{confirmation} (with \code{holdout}: each kept change's likelihood
 #'   ratio test on the held-out subjects), and \code{stopped} (why the search
-#'   ended). With \code{holdout}, \code{fit} is the model with the confirmed
+#'   ended: \code{'adequate'}, no adequacy family detected misfit;
+#'   \code{'close fit'}, those that did were shown within \code{close};
+#'   \code{'not adequate, no candidate improved'} or \code{'not adequate,
+#'   nothing left to try'}, the checks still detect misfit; \code{'nothing
+#'   indicated'}, with \code{adequacy = FALSE}, the screen was clean;
+#'   \code{'maxsteps'}). A refit that failed, or ended below the model it
+#'   extends, is in \code{history} with a note saying so. With \code{holdout},
+#'   the held-out subjects take no part in the search; each kept change is
+#'   tested once on them, at the end, at \code{alpha}. \code{fit} is the model with the confirmed
 #'   changes refitted to every subject, and \code{selected} the search's own
 #'   choice fitted to the subjects it searched on.
 #' @seealso \code{vignette('score-tests')}.
@@ -1503,6 +1523,14 @@ print.ctModelProposals <- function(x, digits = 3, ...) {
   k0 <- length(.ctFitRawEstimate(current)); k1 <- length(.ctFitRawEstimate(refit))
   dll <- ll1 - ll0; dk <- k1 - k0
   if (!is.finite(dll)) return(bad('log likelihood not finite'))
+  # A model that contains the current one cannot fit worse at its optimum: a
+  # refit that ends below it stopped short, and says nothing about the change.
+  if (dk > 0 && dll < -0.01 * max(1, sqrt(abs(ll0)) / 10)) {
+    out <- bad(sprintf(paste('ended %.3g below the model it extends: not an optimum,',
+      'so no evidence either way'), -dll))
+    out$dloglik <- dll; out$dpar <- dk
+    return(out)
+  }
   n <- .ctFitNsubjects(current)
   if (criterion == 'LR' && dk > 0) {
     p <- stats::pchisq(2 * dll, dk, lower.tail = FALSE)

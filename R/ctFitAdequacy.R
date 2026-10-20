@@ -21,7 +21,9 @@
 # its variance -- less what estimation took. Within a family, many correlated
 # statistics: their largest |z| and their sum of squares, calibrated with the
 # statistics' correlation, and combined with any exact p-values the family has by
-# the Cauchy combination (Liu & Xie 2020), which holds under any dependence.
+# the Cauchy combination (Liu & Xie 2020), whose tail is approximately standard
+# Cauchy whatever the p-values' dependence, for small p; that its p-values hold
+# their level here is checked by simulation (the adequacy tutorial).
 # The sum has the power against many small departures -- a flat residual
 # autocorrelation -- and the max against a few large ones. Holm across
 # families. Design and simulations in
@@ -158,10 +160,17 @@
 #' With many observations every misfit is significant, so the sizes of the
 #' residual, latent and within-row correlations the model leaves are reported
 #' too, as
-#' root mean squares (the unbiased form of the SRMR, Maydeu-Olivares 2017),
-#' with intervals and a test that the size is at most \code{close}.
+#' root mean squares, each squared correlation less its sampling variance (as
+#' for the SRMR, Maydeu-Olivares 2017): the mean square is unbiased, its root,
+#' truncated at zero, bias-corrected. Each has a 95 per cent interval and
+#' \code{p_close}, the p-value of the test that it is at least \code{close}.
 #' \code{close_fit} is \code{TRUE} when every family that fails is one of those
-#' three and its size is not significantly above \code{close}.
+#' three and that test rejects at \code{alpha} -- the size is shown to be
+#' below \code{close}, its one-sided upper bound under it. A size whose
+#' interval reaches \code{close} is not a close fit: not showing that a misfit
+#' is large does not show that it is small. A close fit is about these
+#' averages over many correlations; one large discrepancy among them, or a
+#' biased estimate of a quantity of interest, can sit under a small average.
 #'
 #' Detection is not localization: a failure in one variable's equation reaches
 #' the others' errors through the fitted covariance. \code{\link{ctScoreTest}}
@@ -379,7 +388,7 @@ ctFitAdequacy <- function(fit, covariates = NULL,
   families_out$p_adj <- stats::p.adjust(families_out$p, 'holm')
   failing <- families_out$family[families_out$p_adj < alpha]
   sized <- if (is.null(size)) character() else
-    size$family[!is.na(size$p_close) & size$p_close >= alpha & size$overall]
+    size$family[!is.na(size$p_close) & size$p_close < alpha & size$overall]
   structure(list(families = families_out, statistics = statistics, size = size,
     errors = errors, adequate = !length(failing), close_fit = all(failing %in% sized),
     alpha = alpha, close = close, projection = used,
@@ -625,9 +634,13 @@ ctFitAdequacy <- function(fit, covariates = NULL,
 # The periods the periodic family scans when none are named: the Fourier
 # frequencies of the typical record, k / T for T its median span, from two
 # cycles a record to one every two typical intervals between rows -- beyond
-# that a cycle is not resolved -- thinned evenly in log period to at most 48.
-# In the data's own time units, so nothing about the units is assumed.
-.ctAdequacyPeriodGrid <- function(time, rows, most = 48L) {
+# that a cycle is not resolved -- thinned evenly in log period only past 200.
+# A frequency is resolved to about 1 / T, so a thinner grid steps over cycles:
+# thinned to 48 on the 32-day records of the adequacy tutorial's Fisher data,
+# it went from 22.7 to 24.9 hours and showed a daily rhythm at z 15 as
+# nothing. In the data's own time units, so nothing about the units is
+# assumed.
+.ctAdequacyPeriodGrid <- function(time, rows, most = 200L) {
   span <- vapply(rows, function(r) if (length(r) > 1L) diff(range(time[r])) else NA_real_, 0)
   step <- unlist(lapply(rows, function(r) diff(sort(time[r]))), use.names = FALSE)
   span <- stats::median(span, na.rm = TRUE); step <- stats::median(step[step > 0])
@@ -1216,10 +1229,12 @@ ctFitAdequacy <- function(fit, covariates = NULL,
 }
 
 # The size of what the model leaves in the error correlations: the root mean
-# square residual correlation, unbiased (each squared correlation less its
-# sampling variance, Maydeu-Olivares 2017), with a delta-method interval and a
-# one-sided test that it is at most `close`, the variance of the mean square
-# from the bootstrap's draws of the summed contributions. For the residual correlations over all gaps, over
+# square residual correlation, bias-corrected (each squared correlation less
+# its sampling variance, Maydeu-Olivares 2017, which makes the mean square
+# unbiased and its truncated root not quite), with a delta-method interval and
+# the one-sided test that it is at least `close` (an equivalence test: small
+# p shows it below), the variance of the mean square from the bootstrap's
+# draws of the summed contributions. For the residual correlations over all gaps, over
 # the shortest gaps alone, and for the within-row correlations.
 .ctAdequacySize <- function(tests, meta, close) {
   okcols <- which(tests$ok)
@@ -1237,7 +1252,7 @@ ctFitAdequacy <- function(fit, covariates = NULL,
     est <- sqrt(max(ms, 0))
     data.frame(family = family, measure = label, estimate = est,
       lower = sqrt(max(ms - 1.96 * sems, 0)), upper = sqrt(max(ms + 1.96 * sems, 0)),
-      close = close, p_close = stats::pnorm((ms - close^2) / sems, lower.tail = FALSE),
+      close = close, p_close = stats::pnorm((ms - close^2) / sems),
       overall = !grepl('shortest', label), stringsAsFactors = FALSE)
   }
   res <- which(meta$family == 'residuals' & meta$kind == 'corr')
@@ -1256,7 +1271,8 @@ ctFitAdequacy <- function(fit, covariates = NULL,
 }
 
 # p-values combined by the Cauchy combination (Liu & Xie 2020): the mean of
-# tan((0.5 - p) pi) is standard Cauchy in the tail under any dependence.
+# tan((0.5 - p) pi) has approximately a standard Cauchy tail whatever the
+# dependence between the p-values, an approximation for small p.
 .ctCauchyCombine <- function(p) {
   p <- p[is.finite(p)]
   if (!length(p)) return(NA_real_)
@@ -1481,8 +1497,9 @@ plot.ctFitAdequacy <- function(x, family = NULL, ...) {
       geom_point(aes(colour = .data$flagged), size = 2.5) + flag +
       scale_x_log10() +
       labs(x = 'Holm-adjusted p (dashed: alpha)', y = NULL,
-        title = paste0(if (x$adequate) 'Adequate' else 'Not adequate', ' at alpha = ',
-          x$alpha, if (!x$adequate && isTRUE(x$close_fit)) ', but a close fit'),
+        title = paste0(if (x$adequate) 'No family detects misfit' else
+          'Misfit detected', ' at alpha = ', x$alpha,
+          if (!x$adequate && isTRUE(x$close_fit)) ', shown within the close-fit bound'),
         subtitle = if (!is.na(x$projection)) paste0('Estimation removed by: ',
           x$projection)) +
       theme_bw() + theme(plot.title.position = 'plot'))
@@ -1534,9 +1551,12 @@ plot.ctFitAdequacy <- function(x, family = NULL, ...) {
 
 #' @export
 print.ctFitAdequacy <- function(x, digits = 3, ...) {
-  cat("Adequacy: ", if (x$adequate) "adequate" else "NOT adequate", " at alpha = ",
+  failing <- x$families$family[x$families$p_adj < x$alpha]
+  cat("Adequacy: ", if (x$adequate) "no family detects misfit" else paste0("misfit ",
+    "detected by ", length(failing), " of ", nrow(x$families), " families"), " at alpha = ",
     x$alpha, if (!x$adequate && isTRUE(x$close_fit)) paste0(
-      ", but a close fit (remaining correlations not above ", x$close, ")"), "\n", sep = "")
+      ", each shown within the close-fit bound (remaining correlations below ", x$close,
+      ")"), "\n", sep = "")
   notes <- c(if (!is.na(x$projection)) paste0("estimation removed by: ", x$projection),
     if (!is.na(x$nsamples)) paste0(x$nsamples, " generated datasets"))
   if (length(notes)) cat("(", paste(notes, collapse = "; "), ")\n", sep = "")
@@ -1545,7 +1565,8 @@ print.ctFitAdequacy <- function(x, digits = 3, ...) {
   f[c('worst_z', 'p', 'p_adj')] <- lapply(f[c('worst_z', 'p', 'p_adj')], signif, digits)
   print(f, row.names = FALSE)
   if (!is.null(x$size) && nrow(x$size)) {
-    cat("\nSize of what remains (root mean square, unbiased):\n")
+    cat("\nSize of what remains (root mean square, bias-corrected; p_close tests",
+      "that it is at least close):\n")
     s <- x$size[, c('measure', 'estimate', 'lower', 'upper', 'close', 'p_close')]
     s[c('estimate', 'lower', 'upper', 'p_close')] <-
       lapply(s[c('estimate', 'lower', 'upper', 'p_close')], signif, digits)

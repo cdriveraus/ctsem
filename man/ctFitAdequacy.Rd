@@ -234,10 +234,17 @@ are not paired.
 With many observations every misfit is significant, so the sizes of the
 residual, latent and within-row correlations the model leaves are reported
 too, as
-root mean squares (the unbiased form of the SRMR, Maydeu-Olivares 2017),
-with intervals and a test that the size is at most \code{close}.
+root mean squares, each squared correlation less its sampling variance (as
+for the SRMR, Maydeu-Olivares 2017): the mean square is unbiased, its root,
+truncated at zero, bias-corrected. Each has a 95 per cent interval and
+\code{p_close}, the p-value of the test that it is at least \code{close}.
 \code{close_fit} is \code{TRUE} when every family that fails is one of those
-three and its size is not significantly above \code{close}.
+three and that test rejects at \code{alpha} -- the size is shown to be
+below \code{close}, its one-sided upper bound under it. A size whose
+interval reaches \code{close} is not a close fit: not showing that a misfit
+is large does not show that it is small. A close fit is about these
+averages over many correlations; one large discrepancy among them, or a
+biased estimate of a quantity of interest, can sit under a small average.
 
 Detection is not localization: a failure in one variable's equation reaches
 the others' errors through the fitted covariance. \code{\link{ctScoreTest}}

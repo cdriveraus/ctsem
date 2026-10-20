@@ -112,7 +112,15 @@ An object of class \code{ctModelImprove}: \code{fit} (the final
   tests of each round), \code{adequacy} (the final checks),
   \code{confirmation} (with \code{holdout}: each kept change's likelihood
   ratio test on the held-out subjects), and \code{stopped} (why the search
-  ended). With \code{holdout}, \code{fit} is the model with the confirmed
+  ended: \code{'adequate'}, no adequacy family detected misfit;
+  \code{'close fit'}, those that did were shown within \code{close};
+  \code{'not adequate, no candidate improved'} or \code{'not adequate,
+  nothing left to try'}, the checks still detect misfit; \code{'nothing
+  indicated'}, with \code{adequacy = FALSE}, the screen was clean;
+  \code{'maxsteps'}). A refit that failed, or ended below the model it
+  extends, is in \code{history} with a note saying so. With \code{holdout},
+  the held-out subjects take no part in the search; each kept change is
+  tested once on them, at the end, at \code{alpha}. \code{fit} is the model with the confirmed
   changes refitted to every subject, and \code{selected} the search's own
   choice fitted to the subjects it searched on.
 }
@@ -229,10 +237,22 @@ to every subject, keeps only those. Every step, and every refit tried and
 rejected, is in \code{history}.
 
 With many observations a model can be rejected by the checks for
-departures too small to matter. With \code{close}, the search also stops
-when every check that fails is a residual or within-row correlation family
-whose size is not significantly above \code{close}
-(\code{\link{ctFitAdequacy}}).
+departures that are small on these summaries. With \code{close}, the search
+also stops when every check that fails is a residual or within-row
+correlation family
+whose size is shown below \code{close} (\code{\link{ctFitAdequacy}}).
+
+Each refit is judged by \code{criterion}; with \code{'LR'}, the likelihood
+ratio against a chi-square on the parameters the change adds, at
+\code{alpha} divided by the refits the round tries. That reference is
+exact for none of the changes the search makes: a variance added at zero
+sits on its boundary, where the chi-square is conservative, and a process
+or cycle added brings parameters that mean nothing when its coupling is
+zero, where it can err either way. Screening, rounds and pruning add
+further choices the level does not count. The search is a way of
+developing a model, and its p-values describe the steps it took rather than
+testing the result. A refit that ends below the model it extends has not
+reached an optimum, and is recorded as such.
 }
 
 \seealso{

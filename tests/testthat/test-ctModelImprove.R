@@ -48,7 +48,7 @@ test_that("adequacy is reported per family, and the error-based families need no
     'latent residual correlation, all gaps') %in% ad$size$measure))
   # Reuses what the fit generated.
   expect_equal(dim(ad$fit$generated$Y)[1], 40L)
-  expect_output(print(ad), 'adequate')
+  expect_output(print(ad), 'no family detects misfit')
   # The error-based families alone generate nothing.
   ad2 <- ctFitAdequacy(x$fit, families = c('residuals', 'volatility', 'fit'), cores = 1,
     nboot = 199)
@@ -83,6 +83,37 @@ test_that("adequacy is reported per family, and the error-based families need no
     expect_silent(ggplot2::ggplot_build(p))
   }
   expect_error(plot(ad, 'covariates'), "No statistics for family 'covariates'")
+})
+
+test_that("a close fit is a size shown below the bound, not one not shown above it", {
+  # Ten residual correlations of about 0.01: estimated precisely, the size is
+  # shown below 0.05; estimated loosely, its interval reaches past 0.05 and
+  # the fit is not called close, though the estimate is the same.
+  size <- function(se) {
+    set.seed(1)
+    k <- 10L; denom <- 1000
+    r <- stats::rnorm(k, 0.01, se)
+    v <- (se * denom)^2
+    tests <- list(ok = rep(TRUE, k), U = r * denom, denom = rep(denom, k), v = rep(v, k),
+      draws = matrix(stats::rnorm(2000 * k, 0, sqrt(v)), 2000))
+    meta <- data.frame(family = 'residuals', kind = 'corr', bin = 1L)[rep(1, k), ]
+    ctsem:::.ctAdequacySize(tests, meta, close = 0.05)[1, ]
+  }
+  tight <- size(0.002); loose <- size(0.1)
+  expect_lt(tight$p_close, 0.05)
+  expect_lt(tight$upper, 0.05)
+  expect_gt(loose$p_close, 0.05)
+  expect_gt(loose$upper, 0.05)
+})
+
+test_that("the periodic scan keeps the periods a record resolves", {
+  # 32-day records, a row every 4.3 hours: a daily cycle is resolved to about
+  # 0.75 hours, and a grid thinned to 48 periods stepped from 22.7 to 24.9.
+  time <- seq(0, 770, by = 4.3)
+  rows <- list(seq_along(time))
+  grid <- ctsem:::.ctAdequacyPeriodGrid(time, rows)
+  expect_true(any(abs(grid - 24) < 0.4))
+  expect_true(any(abs(grid - 12) < 0.2))
 })
 
 test_that("a conditional error's implied correlation is P_jk / sqrt(P_jj P_kk)", {
@@ -153,6 +184,12 @@ test_that("a covariate the model lacks is added, an unrelated one is not, and th
   expect_gt(imp$fit$estimate$loglik, x$fit$estimate$loglik)
   expect_identical(imp$stopped, 'adequate')
   expect_output(print(imp), 'stopped because adequate')
+  # A refit that ends below the model it extends is no evidence either way.
+  short <- imp$fit
+  short$estimate$loglik <- x$fit$estimate$loglik - 5
+  verdict <- ctsem:::.ctImproveCompare(x$fit, short, 'LR', 0.05)
+  expect_false(verdict$accept)
+  expect_match(verdict$note, 'below the model it extends')
   expect_silent(ggplot2::ggplot_build(plot(imp)))
 
   # The search's first step made by hand: the changes its first screen
