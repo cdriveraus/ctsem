@@ -316,7 +316,8 @@
   # difference is not finite.
   sampletarget <- .ctBackendSampleTarget(estimate = estimate, npar = npar,
     marginal = marginal, state_explicit = isTRUE(state_explicit),
-    hessian = .ctBackendSampleHessian(fit), placement = placement)
+    hessian = fit$uncertainty$hessian, metric = .ctBackendSampleMetric(fit),
+    placement = placement)
 
   out <- .ctBackendSampleRun(fit, sampletarget, chains = chains, warmup = warmup,
     draws = draws, cores = cores, saveEffects = saveEffects, seed = seed,
@@ -715,7 +716,8 @@
 # reverse.
 #' @keywords internal
 # The curvature the marginal sampler's metric and starting spread are read
-# from: the fit's Hessian, rescaled along each direction where
+# from, where it is not the fit's Hessian itself (`NULL` then): that Hessian,
+# rescaled along each direction where
 # `uncertainty = 'checked'` measured the posterior's width to differ from it,
 # to the width it measured (`$normalcheck$widths`, variances in units of the
 # Hessian's). In the coordinates where the Hessian's normal is N(0, I) that
@@ -729,21 +731,28 @@
 # dev2; 4 chains, 150 warmup, 150 draws, tree depth at most 8): the Hessian's
 # metric took a step size of 0.002, R-hat 4.2 and a minimum ESS of 2; the
 # rescaled one 16, R-hat 1.06 and 121. The joint route recomputes its
-# population block and reads this only as a fallback.
-.ctBackendSampleHessian <- function(fit) {
+# population block and reads this only as a fallback. Only the engine reads
+# it: the sampled fit keeps the exact Hessian as `uncertainty$hessian`, which
+# the identifiability report reads.
+.ctBackendSampleMetric <- function(fit) {
   H <- fit$uncertainty$hessian
   check <- fit$uncertainty$details$normalcheck
-  if (is.null(H) || !length(check$widths)) return(H)
+  if (is.null(H) || !length(check$widths)) return(NULL)
   information <- -(H + t(H)) / 2
   PW <- information %*% check$directions
-  -(information + PW %*% diag(1 / check$widths - 1, length(check$widths)) %*% t(PW))
+  rescaled <- information + PW %*% diag(1 / check$widths - 1, length(check$widths)) %*% t(PW)
+  -(rescaled + t(rescaled)) / 2
 }
 
 .ctBackendSampleTarget <- function(estimate, npar, marginal = FALSE,
-  state_explicit = FALSE, hessian = NULL, gradient = "adjoint", placement = "fit") {
+  state_explicit = FALSE, hessian = NULL, gradient = "adjoint", placement = "fit",
+  metric = NULL) {
   list(estimate = as.numeric(estimate), npar = as.integer(npar)[1L],
     marginal = isTRUE(marginal), state_explicit = isTRUE(state_explicit),
     hessian = if (is.null(hessian)) NULL else as.matrix(hessian),
+    # What the engine reads in its place, when not the Hessian itself; see
+    # `.ctBackendSampleMetric()`.
+    metric = if (is.null(metric)) NULL else as.matrix(metric),
     placement = placement,
     gradient = gradient)
 }
@@ -936,9 +945,8 @@
     # at all, so this is deliberately only reachable on the marginal path.
     arguments$gradient_method <- target$gradient
   }
-  if (!is.null(target$hessian)) {
-    arguments$hessian <- .ctJuliaPut(as.matrix(target$hessian))
-  }
+  metric <- .ctJuliaOr(target$metric, target$hessian)
+  if (!is.null(metric)) arguments$hessian <- .ctJuliaPut(as.matrix(metric))
   # How many of the sampled coordinates are model parameters. Only differs
   # from all of them on the state-explicit route, where the vector is
   # `[theta; innovations]` -- and there the engine needs to know, or it builds

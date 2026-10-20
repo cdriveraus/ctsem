@@ -248,12 +248,14 @@ test_that("the sampler's metric is the Hessian rescaled to the widths the check 
   widths <- c(0.01, 4)
   fit <- list(uncertainty = list(hessian = H, details = list(normalcheck =
     list(directions = A %*% v, widths = widths))))
-  rescaled <- -ctsem:::.ctBackendSampleHessian(fit)
+  rescaled <- -ctsem:::.ctBackendSampleMetric(fit)
   # Where the Hessian's normal is N(0, I), the precision is the identity but
   # 1 / width along each direction the check named.
   expect_equal(t(A) %*% rescaled %*% A, diag(5) + v %*% diag(1 / widths - 1) %*% t(v))
+  expect_identical(rescaled, t(rescaled))
+  # Nothing named, nothing rescaled: the engine reads the fit's own Hessian.
   fit$uncertainty$details$normalcheck$widths <- numeric()
-  expect_identical(ctsem:::.ctBackendSampleHessian(fit), H)
+  expect_null(ctsem:::.ctBackendSampleMetric(fit))
 })
 
 test_that("uncertainty = 'surrogate' is refused by name", {
