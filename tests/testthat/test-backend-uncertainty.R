@@ -326,9 +326,11 @@ test_that("the batch attribute reproduces the per-draw loop in one bridge call",
   valueonly <- ctsem:::.ctBackendLpgFunc(fit, gradient = FALSE)
   batchfn <- attr(valueonly, "batch")
   expect_true(is.function(batchfn))
-  # There is no batch form for gradient=TRUE: nothing reads a batch of
-  # gradients, and the engine function does not compute one.
-  expect_null(attr(ctsem:::.ctBackendLpgFunc(fit, gradient = TRUE), "batch"))
+  # The gradient form carries the same batch functions: the normal check of
+  # `uncertainty = 'checked'` reads batch gradients from whichever it holds.
+  withgrad <- ctsem:::.ctBackendLpgFunc(fit, gradient = TRUE)
+  expect_true(is.function(attr(withgrad, "batch")))
+  expect_true(is.function(attr(withgrad, "gradbatch")))
 
   est <- as.numeric(fit$estimate$raw)
   npar <- length(est)
