@@ -1517,10 +1517,10 @@ print.ctModelProposals <- function(x, digits = 3, ...) {
 
 #' Plot a model improvement search
 #'
-#' The search's path: the log likelihood gained over the starting fit as each
-#' change is kept, round by round, with every change tried and rejected
-#' (open) at the gain its refit found. Pruning's decisions are in the
-#' subtitle.
+#' The search's path: one row per refit, in the order tried, from the log
+#' likelihood its round started at to the one the refit reached, both as
+#' gained over the starting fit; kept changes filled, rejected ones open.
+#' Pruning's decisions are in the subtitle.
 #'
 #' @param x A \code{ctModelImprove}.
 #' @param ... Unused.
@@ -1534,22 +1534,25 @@ plot.ctModelImprove <- function(x, ...) {
   rounds <- sort(unique(h$round))
   keptgain <- vapply(rounds, function(r) sum(h$dloglik[h$round == r & h$kept]), 0)
   before <- stats::setNames(c(0, cumsum(keptgain))[seq_along(rounds)], rounds)
-  h$gain <- before[as.character(h$round)] + h$dloglik
-  path <- data.frame(round = c(min(rounds) - 1, rounds), gain = c(0, cumsum(keptgain)))
+  h$from <- before[as.character(h$round)]
+  h$gain <- h$from + h$dloglik
+  labels <- make.unique(paste0(h$round, '. ', h$change))
+  h$label <- factor(labels, levels = rev(labels))
   pr <- x$history[x$history$family %in% 'prune', , drop = FALSE]
   sub <- if (nrow(pr)) paste0('Pruning dropped ', sum(pr$kept), ' of ', nrow(pr),
     ' changes') else NULL
-  ggplot(h, aes(x = .data$round, y = .data$gain)) +
-    geom_step(data = path, colour = 'grey50') +
-    geom_point(aes(shape = .data$kept), size = 2.5) +
+  ggplot(h, aes(y = .data$label)) +
+    geom_segment(aes(x = .data$from, xend = .data$gain, yend = .data$label,
+      linetype = .data$kept), colour = 'grey50') +
+    geom_point(aes(x = .data$gain, shape = .data$kept), size = 2.5) +
     scale_shape_manual(values = c(`FALSE` = 1, `TRUE` = 16),
       labels = c(`FALSE` = 'rejected', `TRUE` = 'kept'), name = NULL) +
-    geom_text(data = h[h$kept, , drop = FALSE], aes(label = .data$change), hjust = 1.05,
-      vjust = -0.6, size = 3) +
-    scale_x_continuous(breaks = rounds) +
-    labs(x = 'Round', y = 'Log likelihood gained', title = paste0('Search: ', x$stopped),
-      subtitle = sub) +
-    theme_bw()
+    scale_linetype_manual(values = c(`FALSE` = 'dotted', `TRUE` = 'solid'), guide = 'none') +
+    scale_y_discrete(labels = function(k) vapply(k, function(s)
+      paste(strwrap(s, 45), collapse = '\n'), '')) +
+    labs(x = 'Log likelihood gained over the starting fit', y = NULL,
+      title = paste0('Search: ', x$stopped), subtitle = sub) +
+    theme_bw() + theme(plot.title.position = 'plot', legend.position = 'bottom')
 }
 
 #' @export

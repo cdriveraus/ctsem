@@ -1456,7 +1456,7 @@ ctFitAdequacy <- function(fit, covariates = NULL,
 #' Plot the adequacy checks
 #'
 #' Without \code{family}, each family's Holm-adjusted p-value on a log scale,
-#' against \code{alpha}, with its worst statistic. With a family, its
+#' against \code{alpha}. With a family, its
 #' statistics: for the families over the gaps between a subject's rows
 #' (\code{residuals}, \code{latent}, \code{volatility}, \code{scores}),
 #' each pair's estimate by gap with a 95 per cent interval; for
@@ -1474,8 +1474,7 @@ plot.ctFitAdequacy <- function(x, family = NULL, ...) {
   flag <- scale_colour_manual(values = c(`FALSE` = 'grey35', `TRUE` = 'red3'), guide = 'none')
   if (is.null(family)) {
     f <- x$families
-    f$label <- factor(paste0(f$family, '  (', f$worst, ')'),
-      levels = rev(paste0(f$family, '  (', f$worst, ')')))
+    f$label <- factor(f$family, levels = rev(f$family))
     f$flagged <- f$p_adj < x$alpha
     return(ggplot(f, aes(x = pmax(.data$p_adj, 1e-12), y = .data$label)) +
       geom_vline(xintercept = x$alpha, linetype = 2, colour = 'grey50') +
@@ -1486,7 +1485,7 @@ plot.ctFitAdequacy <- function(x, family = NULL, ...) {
           x$alpha, if (!x$adequate && isTRUE(x$close_fit)) ', but a close fit'),
         subtitle = if (!is.na(x$projection)) paste0('Estimation removed by: ',
           x$projection)) +
-      theme_bw())
+      theme_bw() + theme(plot.title.position = 'plot'))
   }
   family <- as.character(family)[1]
   s <- x$statistics[x$statistics$family %in% family, , drop = FALSE]

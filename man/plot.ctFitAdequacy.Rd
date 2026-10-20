@@ -18,7 +18,7 @@ A ggplot.
 }
 \description{
 Without \code{family}, each family's Holm-adjusted p-value on a log scale,
-against \code{alpha}, with its worst statistic. With a family, its
+against \code{alpha}. With a family, its
 statistics: for the families over the gaps between a subject's rows
 (\code{residuals}, \code{latent}, \code{volatility}, \code{scores}),
 each pair's estimate by gap with a 95 per cent interval; for

@@ -1632,11 +1632,12 @@ plot.ctScoreTest <- function(x, family = NULL, top = 10, ...) {
     geom_point(aes(colour = .data$p_adj < 0.05), size = 2.5) +
     scale_colour_manual(values = c(`FALSE` = 'grey35', `TRUE` = 'red3'), guide = 'none') +
     scale_x_log10() + scale_y_discrete(labels = function(k) sub('^[^|]*[|]', '', k)) +
-    facet_wrap(~family, scales = 'free_y', ncol = 1) +
+    facet_grid(family ~ ., scales = 'free_y', space = 'free_y') +
     labs(x = 'p adjusted within the family (dashed: .05)', y = NULL,
       title = paste0('Score tests (', x$info$route, ' route, ', x$info$nsubjects,
         ' subjects)')) +
-    theme_bw()
+    theme_bw() + theme(strip.text.y = element_text(angle = 0),
+      plot.title.position = 'plot')
 }
 
 #' @export
