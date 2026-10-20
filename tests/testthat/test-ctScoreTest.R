@@ -21,10 +21,16 @@ skip_on_32bit()
   z <- stats::rnorm(nsub); w <- stats::rnorm(nsub)
   do.call(rbind, lapply(seq_len(nsub), function(i) {
     a <- -0.5; b <- 0
+    # 'level': persistence that differs with where the subject sits, its
+    # manifest mean. Drawn only here, so the other scenarios' draws are as
+    # they were.
+    lev <- if (scenario == 'level') stats::rnorm(1) else NA_real_
+    if (scenario == 'level') a <- -0.5 * exp(0.6 * lev)
     if (scenario == 'het') a <- -0.5 * exp(0.6 * stats::rnorm(1))
     if (scenario == 'cov') a <- -0.5 * exp(0.3 * z[i])
     if (scenario == 'sdep') b <- 0.4
-    mm <- stats::rnorm(1) + if (scenario == 'cov') 0.8 * z[i] else 0
+    mm <- if (scenario == 'level') lev else
+      stats::rnorm(1) + if (scenario == 'cov') 0.8 * z[i] else 0
     times <- cumsum(c(0, stats::rexp(nobs - 1L, 1)))
     x <- stats::rnorm(1, 0, sigma / sqrt(-2 * a))
     xs <- numeric(nobs); xs[1] <- x
@@ -155,6 +161,35 @@ test_that("innovations whose size depends on the state are found", {
   expect_lt(terms$p, 0.01)
   expect_true(is.na(terms$estimate) || terms$estimate > 0)
   expect_equal(st$volatility$joint$equation, c('eta1', 'all'))
+})
+
+test_that("a parameter that depends on the subject's level is found by the level terms", {
+  # The state is the deviation from the subject's mean, which the model puts
+  # in the random intercept, so the state dependence terms cannot see a
+  # persistence that depends on the mean itself; the level terms ask.
+  x <- .score_fit('level', seed = 4L)
+  st <- suppressMessages(ctScoreTest(x$fit, tests = 'level', cores = 1, verbose = FALSE))
+  expect_null(st$info$errors)
+  lv <- st$level$terms
+  expect_setequal(lv$parameter, c('drift_eta1', 'diff_eta1', 'mvarY1'))
+  expect_equal(length(unique(lv$level)), 1L)
+  expect_lt(lv$p[lv$parameter == 'drift_eta1'], 0.01)
+  # Persistence shorter for the high: the drift more negative with the level.
+  e <- lv$estimate[lv$parameter == 'drift_eta1']
+  expect_true(is.na(e) || e < 0)
+  expect_true(all(c(lv$level[1], 'all') %in% st$level$joint$level))
+  # Nothing where nothing depends on the level.
+  n <- .score_fit('null')
+  st0 <- suppressMessages(ctScoreTest(n$fit, tests = 'level', cores = 1, verbose = FALSE))
+  expect_gt(min(st0$level$terms$p_adj), 0.05)
+  # A model with no random intercept has nothing to test.
+  m <- .score_model()
+  m$pars$indvarying <- FALSE
+  fixedmean <- fit_cached('scoretest null no random mean', suppressMessages(ctFit(
+    n$data[, c('id', 'time', 'Y1')], m, backend = 'julia', cores = 1, verbose = 0)))
+  st1 <- suppressMessages(ctScoreTest(fixedmean, tests = 'level', cores = 1, verbose = FALSE))
+  expect_null(st1$level)
+  expect_null(st1$info$errors)
 })
 
 test_that("results are reproducible and leave the caller's random numbers alone", {

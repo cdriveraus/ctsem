@@ -47,6 +47,10 @@
 #'     eta_m)}: innovations whose size depends on a state.}
 #'   \item{fixed}{a cell fixed at zero freed: a drift cross effect, a
 #'     diffusion covariance, a cross loading.}
+#'   \item{level}{a parameter of the dynamics or error variances that depends
+#'     on a subject's level (a random intercept) let vary over subjects, its
+#'     random effect correlated with the intercepts (\code{\link{ctScoreTest}}'s
+#'     level terms).}
 #'   \item{slow}{a slow process driving a latent through its drift, its effect
 #'     started at one and its persistence at a tenth of the latent's.}
 #'   \item{periodic}{a cycle of the period the adequacy check points to,
@@ -221,8 +225,8 @@
 #' @seealso \code{vignette('score-tests')}.
 #' @export
 ctModelImprove <- function(fit, covariates = NULL,
-  relax = c('heterogeneity', 'covariates', 'statedependence', 'volatility', 'fixed', 'slow',
-    'unique', 'periodic', 'order'), changes = NULL,
+  relax = c('heterogeneity', 'covariates', 'statedependence', 'volatility', 'fixed', 'level',
+    'slow', 'unique', 'periodic', 'order'), changes = NULL,
   candidates = NULL, alpha = 0.05, maxsteps = 10L, ntry = 3L,
   criterion = c('LR', 'AIC', 'BIC'), adequacy = TRUE, prune = TRUE,
   close = NULL, holdout = 0, form = 'auto', periods = NULL, nsamples = 100L,
@@ -507,8 +511,8 @@ ctModelImprove <- function(fit, covariates = NULL,
 #' @seealso \code{vignette('score-tests')}.
 #' @export
 ctModelProposals <- function(fit, score = NULL, adequacy = NULL, covariates = NULL,
-  relax = c('heterogeneity', 'covariates', 'statedependence', 'volatility', 'fixed', 'slow',
-    'unique', 'periodic', 'order'), alpha = 0.05, cores = getOption('mc.cores', 2L)) {
+  relax = c('heterogeneity', 'covariates', 'statedependence', 'volatility', 'fixed', 'level',
+    'slow', 'unique', 'periodic', 'order'), alpha = 0.05, cores = getOption('mc.cores', 2L)) {
   if (!.ctFitIsJulia(fit)) stop("ctModelProposals() needs a fit from ",
     "ctFit(backend = 'julia').", call. = FALSE)
   if (is.null(.ctFitBaseModel(fit))) stop("This fit does not carry the model it ",
@@ -578,7 +582,7 @@ print.ctModelProposals <- function(x, digits = 3, ...) {
 # or NULL when it may make none of them.
 .ctImproveScreen <- function(current, available, relax, form, cores) {
   tests <- intersect(relax, c('heterogeneity', 'covariates', 'statedependence', 'volatility',
-    'fixed'))
+    'fixed', 'level'))
   if (is.null(available)) tests <- setdiff(tests, 'covariates')
   if (!length(tests)) return(NULL)
   suppressMessages(ctScoreTest(current, covariates = available, tests = tests, form = form,
@@ -599,7 +603,7 @@ print.ctModelProposals <- function(x, digits = 3, ...) {
 # zero. Near the boundary the Wald test is unreliable, so a change short of
 # the margin is refitted.
 .ctImprovePruneNeeded <- function(current, prop, rebuilt, cores, criterion, alpha) {
-  if (!isTRUE(prop$family %in% c('heterogeneity', 'dimension', 'statedependence',
+  if (!isTRUE(prop$family %in% c('heterogeneity', 'dimension', 'level', 'statedependence',
     'volatility', 'fixed'))) return(NULL)
   cov <- current$estimate$cov
   if (is.null(cov)) return(NULL)
@@ -909,6 +913,23 @@ print.ctModelProposals <- function(x, digits = 3, ...) {
         if (isTRUE(old)) stop('every parameter already has a variance of its own')
         old <- if (is.null(old) || isFALSE(old)) character() else as.character(old)
         list(model = model, data = data, args = list(popunique = unique(c(old, par))))
+      } }))
+  }
+  # A parameter depending on a subject's level: let it vary over subjects, so
+  # its random effect is estimated with its correlation with the intercepts --
+  # the heterogeneity edit, under its key, so the two families do not propose
+  # it twice.
+  lv <- st$level$terms
+  if (!is.null(lv)) for (r in which(lv$p_adj < alpha)) {
+    par <- lv$parameter[r]
+    if (paste0('het:', par) %in% vapply(out, `[[`, '', 'key')) next
+    if (par %in% model$pars$param[as.logical(model$pars$indvarying) %in% TRUE]) next
+    out[[length(out) + 1L]] <- list(key = paste0('het:', par), family = 'level',
+      label = paste0(par, ' individually varying (with ', lv$level[r], ')'), p = lv$p[r],
+      rank = lv$p[r], class = lv$class[r],
+      edit = local({ par <- par; function(model, data, covs, args = list()) {
+        model$pars$indvarying[model$pars$param %in% par] <- TRUE
+        list(model = model, data = data)
       } }))
   }
   # The dimension test runs only where the level is not of reduced rank

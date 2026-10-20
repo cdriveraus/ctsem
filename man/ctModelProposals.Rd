@@ -10,7 +10,7 @@ ctModelProposals(
   adequacy = NULL,
   covariates = NULL,
   relax = c("heterogeneity", "covariates", "statedependence", "volatility", "fixed",
-    "slow", "unique", "periodic", "order"),
+    "level", "slow", "unique", "periodic", "order"),
   alpha = 0.05,
   cores = getOption("mc.cores", 2L)
 )

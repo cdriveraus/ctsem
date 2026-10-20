@@ -8,7 +8,7 @@ ctScoreTest(
   fit,
   covariates = NULL,
   tests = c("heterogeneity", "covariates", "statedependence", "volatility", "fixed",
-    "instability"),
+    "level", "instability"),
   form = c("auto", "linear", "spline", "factor", "threshold"),
   df = 3,
   parameters = NULL,
@@ -32,8 +32,9 @@ subject in the fit's subject order.}
 
 \item{tests}{Which families to run: any of \code{'heterogeneity'},
 \code{'covariates'}, \code{'statedependence'}, \code{'volatility'},
-\code{'fixed'}, \code{'instability'}. By default all but \code{'instability'}; covariates
-are tested only when \code{covariates} is given.}
+\code{'fixed'}, \code{'level'}, \code{'instability'}. By default all but
+\code{'instability'}; covariates are tested only when \code{covariates} is
+given, and levels only where the model has a random intercept.}
 
 \item{form}{How a covariate enters: \code{'auto'} (indicators for a factor,
 character or logical covariate; linear otherwise), \code{'linear'},
@@ -212,6 +213,30 @@ before interpreting their sizes.
   exp(v * eta2)'} with \code{PARS = c('sd2|log1p_exp(param)', 'v')}) and
   refit; \code{\link{ctModelImprove}} does that. The terms make the model
   nonlinear, so the test, and a refit, run the extended Kalman filter.
+}
+
+\section{Level}{
+ \code{tests = 'level'} asks whether a parameter of the
+  dynamics or of the error variances depends on a subject's level, where
+  that level is a random intercept: for each free \code{DRIFT},
+  \code{DIFFUSION} and \code{MANIFESTVAR} parameter that does not vary over
+  subjects, and each \code{MANIFESTMEANS} or \code{CINT} intercept that
+  does, the score test of a term \code{g * intercept} added to the
+  parameter, at \code{g = 0}. When subjects' levels sit in the intercepts,
+  the latent states are deviations from them, so the state dependence and
+  volatility tests, which read the states, see dependence on the deviation
+  only; a parameter that depends on where a subject sits -- persistence or
+  innovation size that differs between people who are usually high and
+  people who are usually low -- shows there only as heterogeneity, in no
+  particular direction. These terms ask about that direction. The score
+  is taken over each subject's posterior for the intercept, from the
+  extended model's own gradient, which the product of a subject's score
+  and estimated level is not. \code{estimate} is the one-step change in the
+  parameter, on its own scale, per unit of the intercept. To act on a
+  result, let the parameter vary over subjects, so its random effect is
+  estimated with its correlation with the intercept;
+  \code{\link{ctModelImprove}} does that. A model with no random intercept
+  has nothing to test.
 }
 
 \section{Fixed cells}{

@@ -8,7 +8,7 @@ ctModelImprove(
   fit,
   covariates = NULL,
   relax = c("heterogeneity", "covariates", "statedependence", "volatility", "fixed",
-    "slow", "unique", "periodic", "order"),
+    "level", "slow", "unique", "periodic", "order"),
   changes = NULL,
   candidates = NULL,
   alpha = 0.05,
@@ -155,6 +155,10 @@ The relaxations, in the language of the model:
     eta_m)}: innovations whose size depends on a state.}
   \item{fixed}{a cell fixed at zero freed: a drift cross effect, a
     diffusion covariance, a cross loading.}
+  \item{level}{a parameter of the dynamics or error variances that depends
+    on a subject's level (a random intercept) let vary over subjects, its
+    random effect correlated with the intercepts (\code{\link{ctScoreTest}}'s
+    level terms).}
   \item{slow}{a slow process driving a latent through its drift, its effect
     started at one and its persistence at a tenth of the latent's.}
   \item{periodic}{a cycle of the period the adequacy check points to,
