@@ -152,8 +152,10 @@ ctModelHigherOrder <- function(ctm, indices,diffusion=TRUE, crosseffects=FALSE,c
 # the existing ones): every cell of their rows and columns set to zero, then
 # edited a cell at a time by the closures returned -- `fixed`; `free`, with
 # ctsem's default transform unless one is given, varying over no one, and
-# predictor effects as `tipred` says; `copy`, a cell with every setting it has
-# -- and `finish()` returns the model. Shared by ctModelHigherOrder(),
+# predictor effects as `tipred` says; `copy`, a cell with every setting it has;
+# `expression`, a cell computed from the names it reads; `declare`, a free
+# cell's parameter declared in PARS so expressions can read it; `cell`, a
+# cell's current row -- and `finish()` returns the model. Shared by ctModelHigherOrder(),
 # ctModelSlowComponent(), ctModelPeriodicComponent() and ctModelUniqueProcess(),
 # so a cell written by any is written the same way.
 .ctParsLatentEditor <- function(ctm, newnames) {
@@ -201,6 +203,33 @@ ctModelHigherOrder <- function(ctm, indices,diffusion=TRUE, crosseffects=FALSE,c
     k <- at(m, fr, fc)
     if (length(k)) put(m, tr, tc, pars[k, , drop = FALSE]) else fixed(m, tr, tc, 0)
   }
+  # A cell computed from the names it reads, which ctModel takes as
+  # references: states, predictors, PARS parameters.
+  expression <- function(m, r, c, expr) {
+    rec <- template
+    rec$param <- expr; rec$value <- NA_real_; rec$transform <- NA_character_
+    rec$indvarying <- FALSE
+    if ('sdscale' %in% names(rec)) rec$sdscale <- NA_real_
+    for (e in effects) rec[[e]] <- 'FALSE'
+    for (l in levelflags) rec[[l]] <- FALSE
+    put(m, r, c, rec)
+  }
+  cell <- function(m, r, c) {
+    k <- at(m, r, c)
+    if (length(k) == 1L) pars[k, , drop = FALSE] else NULL
+  }
+  # The parameter of a free cell, declared in PARS with all its settings --
+  # transform, individual variation, predictor effects -- so an expression
+  # elsewhere can read it; the cell itself then refers to that declaration.
+  # Nothing if PARS declares it already.
+  declare <- function(m, r, c) {
+    rec <- cell(m, r, c)
+    if (is.null(rec) || is.na(rec$param)) return(invisible(FALSE))
+    if (!any(pars$matrix == 'PARS' & pars$param %in% rec$param))
+      put('PARS', sum(pars$matrix == 'PARS') + 1L, 1L, rec)
+    invisible(TRUE)
+  }
+  npars <- function() sum(pars$matrix == 'PARS')
   # An initial condition at its stationary value (`.ctStationaryElements`).
   stationary <- function(m, r, c) {
     rec <- template
@@ -228,5 +257,6 @@ ctModelHigherOrder <- function(ctm, indices,diffusion=TRUE, crosseffects=FALSE,c
     ctm
   }
   list(fixed = fixed, free = free, copy = copy, stationary = stationary, finish = finish,
+    expression = expression, cell = cell, declare = declare, npars = npars,
     names = allnames)
 }

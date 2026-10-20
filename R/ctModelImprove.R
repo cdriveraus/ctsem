@@ -1254,12 +1254,20 @@ print.ctModelProposals <- function(x, digits = 3, ...) {
 
 # Raw starts for a slow process added to latent `i`: its effect at one (zero
 # is a stationary point of both it and the slow process), its persistence a
-# tenth of the latent's own through the inverse of ctsem's default drift
-# transform, -(1e-6 + 2 log1p_exp(-2 raw)). The latent's drift is read off the
-# current fit; where it cannot be, -0.2, the pilot's start.
+# tenth of the latent's own. Where ctModelSlowComponent() orders the two, the
+# slow drift is the latent's times inv_logit(raw), so a tenth is qlogis(0.1)
+# whatever the latent's rate; where it leaves the slow drift free (the
+# latent's drift is an expression), a tenth through the inverse of ctsem's
+# default drift transform, -(1e-6 + 2 log1p_exp(-2 raw)), the latent's drift
+# read off the current fit, and where it cannot be, -0.2, the pilot's start.
 .ctImproveSlowStart <- function(model, current, i) {
   name <- model$latentNames[i]
   slow <- paste0('slow_', name)
+  ordered <- try(ctModelSlowComponent(model, i), silent = TRUE)
+  if (!inherits(ordered, 'try-error') && any(ordered$pars$matrix == 'PARS' &
+    ordered$pars$param %in% paste0('drift_', slow)))
+    return(c(setNames(stats::qlogis(0.1), paste0('drift_', slow)),
+      setNames(1, paste0('drift_', name, '_', slow))))
   target <- -0.2
   cell <- model$pars[model$pars$matrix == 'DRIFT' & model$pars$row == i &
     model$pars$col == i, , drop = FALSE]
