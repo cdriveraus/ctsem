@@ -188,6 +188,22 @@ ctModelHigherOrder <- function(ctm, indices,diffusion=TRUE, crosseffects=FALSE,c
   # search's second-order processes 38 effects of the clock on their drifts
   # and initial conditions, and a refit that crawled for hours.
   stated <- paste0(ctm$statedTIpreds, '_effect')
+  # A plain name: a parameter, as opposed to an expression.
+  plain <- function(x) !is.na(x) & grepl('^[A-Za-z.][A-Za-z0-9._]*$', x)
+  # PARS rows that hold a parameter moved out of a matrix cell sit straight
+  # after that cell (.ctInsertMovedRows does this for terms the score tests
+  # and the search write into CINT): random effects are ordered as their
+  # parameters are declared (.ctIndvaryingIndex), so a moved parameter keeps
+  # its place among them. Those already so placed, and those `declare` adds,
+  # stay so through `finish`; a PARS declaration the user wrote stays where
+  # it was.
+  attached <- {
+    k <- which(pars$matrix %in% 'PARS' & seq_len(nrow(pars)) > 1L)
+    k <- k[!pars$matrix[k - 1L] %in% 'PARS' & plain(pars$param[k - 1L]) &
+      pars$param[k - 1L] == pars$param[k]]
+    unique(pars$param[k])
+  }
+  declared <- character()
   free <- function(m, r, c, name, transform = NULL, tipred = isTRUE(ctm$tipredDefault)) {
     rec <- template
     def <- .ctModelDefaultFreePar(m, r, c, TRUE)
@@ -225,8 +241,10 @@ ctModelHigherOrder <- function(ctm, indices,diffusion=TRUE, crosseffects=FALSE,c
   declare <- function(m, r, c) {
     rec <- cell(m, r, c)
     if (is.null(rec) || is.na(rec$param)) return(invisible(FALSE))
-    if (!any(pars$matrix == 'PARS' & pars$param %in% rec$param))
+    if (!any(pars$matrix == 'PARS' & pars$param %in% rec$param)) {
       put('PARS', sum(pars$matrix == 'PARS') + 1L, 1L, rec)
+      declared <<- c(declared, rec$param)
+    }
     invisible(TRUE)
   }
   npars <- function() sum(pars$matrix == 'PARS')
@@ -249,7 +267,15 @@ ctModelHigherOrder <- function(ctm, indices,diffusion=TRUE, crosseffects=FALSE,c
     for (j in seq_len(ctm$n.TDpred)) fixed('TDPREDEFFECT', n, j, 0)
   }
   finish <- function() {
-    out <- pars[order(match(pars$matrix, unique(ctm$pars$matrix)), pars$col, pars$row), ]
+    mo <- match(pars$matrix, unique(c(ctm$pars$matrix, 'PARS')))
+    rank <- numeric(nrow(pars))
+    rank[order(mo, pars$col, pars$row)] <- seq_len(nrow(pars))
+    moved <- which(pars$matrix %in% 'PARS' & pars$param %in% c(attached, declared))
+    for (k in moved) {
+      at <- which(!pars$matrix %in% 'PARS' & plain(pars$param) & pars$param == pars$param[k])
+      if (length(at)) rank[k] <- min(rank[at]) + 0.5
+    }
+    out <- pars[order(rank), ]
     rownames(out) <- NULL
     ctm$pars <- out
     ctm$latentNames <- allnames

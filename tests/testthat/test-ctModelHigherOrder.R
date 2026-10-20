@@ -199,6 +199,21 @@ test_that("a latent's drift declared for its slow process keeps its individual v
   expect_identical(ep$param[ep$matrix == 'DRIFT' & ep$row == 2 & ep$col == 2], 'drift_slow_eta1')
 })
 
+test_that("a drift declared for a slow process keeps its place among the random effects", {
+  # Random effects are ordered as their parameters are declared, so the
+  # declaration sits straight after the cell it came from, and stays there
+  # through later edits; a warm start's correlation coordinates depend on it.
+  adjacent <- function(p, name) {
+    k <- which(p$matrix == 'PARS' & p$param == name)
+    length(k) == 1L && k > 1L && p$matrix[k - 1L] == 'DRIFT' && p$param[k - 1L] == name
+  }
+  once <- ctModelSlowComponent(.ho_ct(), 2)
+  expect_true(adjacent(once$pars, 'drift_eta2'))
+  twice <- ctModelPeriodicComponent(ctModelSlowComponent(once, 1), 24, indices = 1)
+  expect_true(adjacent(twice$pars, 'drift_eta2'))
+  expect_true(adjacent(twice$pars, 'drift_eta1'))
+})
+
 test_that("slow processes' innovations correlate with each other, added together or later", {
   both <- ctModelMatrices(ctModelSlowComponent(.ho_ct(), 1:2))
   expect_equal(unname(both$DIFFUSION[4, ]), c('0', '0', 'diff_slow_eta2_slow_eta1', '1'))
