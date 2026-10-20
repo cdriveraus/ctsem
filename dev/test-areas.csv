@@ -87,6 +87,7 @@
 "test-ctACF.R","reporting","extended"
 "test-ctModelLatex.R","reporting","extended"
 "test-ctVarianceDecomposition.R","reporting","extended"
+"test-ctDiscretePars-summary.R","reporting","core"
 "test-julia-effect-information.R","reporting","extended"
 "test-latex-nonlinear.R","reporting","extended"
 "test-nonlinear-reporting-julia.R","reporting","extended"
