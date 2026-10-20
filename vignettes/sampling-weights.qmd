@@ -36,25 +36,28 @@ person's own baseline, and baselines are lower with a diagnosis: -1 on average
 against 0.5. So the average baseline is 0.275 in the population, but -0.25 in
 the sample.
 
+The baseline `mm` varies between people with sd 0.5 around its group's mean
+(`"mm|param|TRUE|0.5"`: identity transform, individually varying, sd 0.5), and
+`popmeans` sets that mean for each group:
+
 ```{r data}
 library(ctsem)
 set.seed(1)
 
-process <- ctModel(type = "ct", manifestNames = "mood", latentNames = "eta",
+gen <- ctModel(type = "ct", manifestNames = "mood", latentNames = "eta",
   LAMBDA = matrix(1), DRIFT = matrix(-0.5), DIFFUSION = matrix(0.8),
   T0MEANS = matrix(0), T0VAR = matrix(1), CINT = matrix(0),
-  MANIFESTMEANS = matrix(0), MANIFESTVAR = matrix(0.5), silent = TRUE)
+  MANIFESTMEANS = matrix("mm|param|TRUE|0.5"), MANIFESTVAR = matrix(0.5),
+  silent = TRUE)
 
-sample_group <- function(n, baseline, group) {
-  d <- data.frame(ctGenerate(process, n = n, Tpoints = 10, dtmean = 1,
-    backend = "r"))
-  d$mood <- d$mood + (baseline + rnorm(n, 0, 0.5))[d$id]  # personal baselines
-  d$id <- paste(group, d$id)
-  d$group <- group
-  d
-}
-dat <- rbind(sample_group(100, -1, "depressed"),
-  sample_group(100, 0.5, "control"))
+depressed <- ctGenerate(gen, n = 100, Tpoints = 10, popmeans = c(mm = -1),
+  backend = "julia")
+control <- ctGenerate(gen, n = 100, Tpoints = 10, popmeans = c(mm = 0.5),
+  backend = "julia")
+
+dat <- rbind(data.frame(depressed, group = "depressed"),
+  data.frame(control, group = "control"))
+dat$id <- paste(dat$group, dat$id)   # ids restart at 1 in each call
 ```
 
 The weight is each group's share of the population divided by its share of
