@@ -212,6 +212,31 @@ test_that("checked corrects the funnel a variance from six observations makes", 
     tolerance = 0.15)
 })
 
+test_that("checked keeps the normal, and says so, where sampling cannot correct it", {
+  # A four-dimensional shell of radius 0.05: the Hessian's normal is many
+  # times too wide around it, and one round of 300 draws cannot place it.
+  d <- 4; r0 <- 0.05; tau <- 0.01; e1 <- c(1, rep(0, d - 1))
+  lpg <- function(x) {
+    r <- sqrt(sum(x^2))
+    out <- -(r - r0)^2 / (2 * tau^2) - sum((x - 0.5 * e1)^2) / 2
+    attr(out, 'gradient') <- -(r - r0) / tau^2 * x / r - (x - 0.5 * e1)
+    out
+  }
+  mode <- optim(r0 * e1, function(x) -lpg(x), function(x) -attr(lpg(x), 'gradient'),
+    method = 'BFGS', control = list(reltol = 1e-15))$par
+  set.seed(5)
+  out <- suppressMessages(ctsem:::ctOptimComputeUncertainty(mode, list(nsubjects = 1),
+    sm = NULL, lpgFunc = lpg, uncertainty = 'checked', finishsamples = 20, verbose = 0))
+  expect_gt(ncol(out$details$normalcheck$directions), 0L)
+  expect_true(all(2:d %in% out$details$normalcheck$parameters))
+  expect_warning(drawn <- ctsem:::.ctOptimDrawSamples(out, 'imis',
+    list(imisBudget = 300), mode, 200, lpg = ctsem:::.ctImisPointGradbatch(lpg),
+    parnames = paste0('p', seq_len(d))), "unreliable for p")
+  expect_identical(drawn$draws, 'normal')
+  expect_equal(drawn$uncertaintyfit$cov, out$cov)
+  expect_false(drawn$uncertaintyfit$details$importance_sampling$used)
+})
+
 test_that("uncertainty = 'surrogate' is refused by name", {
   expect_error(ctFitUncertainty(list(), 'surrogate'), "removed in ctsem 4.0.0")
   expect_error(ctOptimUncertainty(list(), 'surrogate'), "uncertainty = 'checked'")

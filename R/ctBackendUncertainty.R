@@ -322,6 +322,7 @@
   juliaImis <- .ctImisProposalDefaults('julia')
   drawn <- .ctOptimDrawSamples(uncertaintyfit, draws = draws, control = control,
     est = est, finishsamples = finishsamples,
+    parnames = tryCatch(.ctFitRawParNames(fit), error = function(e) NULL),
     lpg = lpg(fit, gradient = FALSE), verbose = verbose,
     scaleInit = juliaImis$scaleInit, tailScale = juliaImis$tailScale,
     tailremedy = "ctFitUncertainty(fit, 'sample') samples the posterior itself.")

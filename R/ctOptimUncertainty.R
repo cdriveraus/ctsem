@@ -1592,7 +1592,8 @@ ctOptimFullBootstrapDraws <- function(est, standata, sm, n=1000, cores=1,
   usable <- is.finite(out$value) & out$value > -1e99 & rowSums(!is.finite(R)) == 0
   bars <- .ctNormalResidualBars(coverage)
   record <- list(draws = ndraws, unusable = sum(!usable), bars = bars,
-    directions = matrix(0, length(est), 0L), slope = numeric(), shape = numeric())
+    directions = matrix(0, length(est), 0L), slope = numeric(), shape = numeric(),
+    parameters = integer())
   if (sum(usable) < 2L) return(record)
   Z <- Z[usable, , drop = FALSE]
   R <- R[usable, , drop = FALSE]
@@ -1610,11 +1611,14 @@ ctOptimFullBootstrapDraws <- function(est, standata, sm, n=1000, cores=1,
   ratio <- sqrt(1 + share * rep(width - 1, each = nrow(share)))
   ratio[is.nan(ratio)] <- 1
   skew <- share^1.5 * rep(shape * 2 / sqrt(3), each = nrow(share))
-  matters <- colSums(ratio > bars$narrow | ratio < bars$wide | skew > bars$skew) > 0
+  outside <- ratio > bars$narrow | ratio < bars$wide | skew > bars$skew
+  matters <- colSums(outside) > 0
   departs <- width > bars$narrow^2 | width < bars$wide^2 |
     shape * 2 / sqrt(3) > bars$skew
   flagged <- if (any(matters)) which(matters | departs) else integer()
   record$directions <- A %*% v[, flagged, drop = FALSE]
+  # Whose intervals the normal misstates, positionally.
+  record$parameters <- which(rowSums(outside) > 0)
   record$slope <- slope[flagged]
   record$shape <- shape[flagged]
   record
@@ -1962,7 +1966,7 @@ ctOptimFitLpgFunc <- function(fit, cores=1){
 # @return list(samples, uncertaintyfit, control) -- `control` comes back
 #   because the defaults filled in here are what gets recorded in `$settings`.
 .ctOptimDrawSamples <- function(uncertaintyfit, draws, control, est,
-  finishsamples, lpg, verbose = 0,
+  finishsamples, lpg, verbose = 0, parnames = NULL,
   scaleInit = .ctImisProposalDefaults()$scaleInit,
   tailScale = .ctImisProposalDefaults()$tailScale,
   df = .ctImisProposalDefaults()$df,
@@ -2017,6 +2021,33 @@ ctOptimFitLpgFunc <- function(fit, cores=1){
     verbose = verbose > 0)
   subspace <- attr(is_res, 'subspace')
 
+  # `'checked'` keeps the Hessian's normal where its correction failed. Weights
+  # past the Pareto k bar describe the proposal, not the posterior: on a shell
+  # sampled within what the fit cost they rested on one draw (ESS 1, k 40), and
+  # their covariance was a point, intervals far narrower than the truth where
+  # the normal's are far wider and the check has said so.
+  if (!is.null(directions)) {
+    k <- .ctImisParetoK(is_res)
+    reliable <- if (is.finite(k)) k <= .ctImisParetoKBar() else
+      isTRUE(is_res$ess >= control$isESS)
+    if (!reliable) {
+      involved <- uncertaintyfit$details$normalcheck$parameters
+      named <- if (length(parnames) == length(est)) parnames[involved] else
+        paste0('par', involved)
+      warning('The normal approximation is unreliable for ',
+        paste(named, collapse = ', '), ': the posterior departs from it ',
+        'there, and importance sampling within what the fit cost could not ',
+        'correct it (Pareto k ', signif(k, 2), '). Their intervals are the ',
+        "Hessian's. ", tailremedy, call. = FALSE)
+      uncertaintyfit$details$importance_sampling <- list(ess = is_res$ess,
+        pareto_k = k, used = FALSE, directions = ncol(directions),
+        evaluations = is_res$evaluations)
+      return(list(samples = ctOptimNormalDraws(est, uncertaintyfit$cov,
+        finishsamples), uncertaintyfit = uncertaintyfit, control = control,
+        draws = 'normal'))
+    }
+  }
+
   samples <- is_res$theta
   uncertaintyfit$proposal_cov <- uncertaintyfit$cov
   # `$details$covariance` diagnoses the covariance `ctOptimComputeUncertainty()`
@@ -2052,6 +2083,7 @@ ctOptimFitLpgFunc <- function(fit, cores=1){
       nullDirections = subspace$nnull, heldParameters = subspace$nullParameters),
     # How many directions `'checked'` sampled; the normal held the rest.
     directions = if (!is.null(directions)) ncol(directions),
+    used = TRUE,
     # How much it cost and what the profile-path search found: the log
     # density's evaluations, the rounds of draws, and the parameters (or
     # subspace directions) whose paths had a tail to follow; see `imis_is()`.
@@ -2730,6 +2762,7 @@ ctFitUncertainty <- function(fit,
   stanImis <- .ctImisProposalDefaults('stan')
   drawn <- .ctOptimDrawSamples(uncertaintyfit, draws = draws, control = control,
     est = fit$stanfit$rawest, finishsamples = finishsamples,
+    parnames = tryCatch(.ctFitRawParNames(fit), error = function(e) NULL),
     lpg = .ctImisPointGradbatch(lpgsetup$lpg), verbose = verbose,
     scaleInit = stanImis$scaleInit, tailScale = stanImis$tailScale,
     tailremedy = paste0("ctFit(..., optimize = FALSE) samples the posterior ",
