@@ -1372,8 +1372,9 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
     if (length(diagonal)) out[diagonal[diagonal <= npar]] <- 1
     return(out)
   }
-  if (inherits(inits, "ctJuliaFit")) return(.ctJuliaInitsFromFit(inits, spec, npar))
-  values <- as.numeric(inits)
+  # Another julia fit's estimates, matched to this model by name.
+  values <- if (inherits(inits, "ctFit") && .ctFitIsJulia(inits))
+    .ctJuliaInitsFromFit(inits, spec, npar) else as.numeric(inits)
   if (length(values) != npar) {
     stop("inits has ", length(values), " value", if (length(values) != 1L) "s",
       "; the model has ", npar, " free parameters, one value each on the raw ",

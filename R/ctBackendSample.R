@@ -1633,7 +1633,7 @@ print.ctSampleDiagnostics <- function(x, ...) {
   # regardless ran the placement at every core while each worker compiled.
   start0 <- .ctJuliaInitialValues(npar, inits,
     initsd = .ctJuliaOr(optimcontrol$initsd, .01),
-    spec = if (inherits(inits, "ctJuliaFit")) model_spec)
+    spec = if (inherits(inits, "ctFit")) model_spec)
   spec0 <- structure(model_spec, class = c("ctJuliaModel", "ctFitModel"))
   if (!is.null(spec0$substeps)) spec0$max_timestep <- rep(1L, length(spec0$times))
   # The chains sample missing TI predictor values the placement imputes, and
