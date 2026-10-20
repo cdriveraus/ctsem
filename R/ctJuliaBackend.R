@@ -3135,89 +3135,193 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
 # trustworthy, so it falls back to a simpler one instead.
 .ctJuliaTIMinCasesPerCoef <- 5
 
-# Fit one TI predictor's imputation regression on complete cases, falling
-# back progressively when the data cannot support the fuller model: full
-# (the other TI predictors, plus per-subject manifest means and SDs if
-# `includeOutcome`) -> predictors only -> marginal (the predictor's own mean
-# and SD). Coefficients and residual scale are fit once, here, and then held
-# fixed for the whole sampling run -- they are not estimated by the sampler
-# (Charles's 2026-09-03 decision): the missing value is still a sampled
-# parameter with a proper conditional distribution, so its posterior still
-# has spread, which is the part that matters.
+# A person-level variable's imputation model, for every person missing it:
+# each person's own conditional mean and sd given everything known about them.
 #
-# Warns, once per predictor, naming the fallback actually taken -- but only
-# when a fallback actually happened, i.e. the tier used is not the best tier
-# the request and the data shape could in principle support. A single
-# predictor with `includeOutcome=FALSE` has no "predictors" tier to try at
-# all, so going straight to marginal there is the plan, not a fallback, and
-# draws no warning.
-.ctJuliaTIImputationFit <- function(predictor_name, target, others, ybar, ysd,
-  includeOutcome) {
-  min_cases <- .ctJuliaTIMinCasesPerCoef
-  fit_tier <- function(design) {
-    ncoef <- ncol(design) + 1L
-    d <- data.frame(.y = target, design, check.names = FALSE)
-    cc <- stats::complete.cases(d)
-    if (sum(cc) < min_cases * ncoef) return(NULL)
-    fit <- try(stats::lm(.y ~ ., data = d[cc, , drop = FALSE]), silent = TRUE)
-    if (inherits(fit, "try-error")) return(NULL)
-    fit
+# A regression on the person's available inputs -- the other TI predictors
+# and smooth covariates, and with `includeOutcome` the person's manifest means
+# and sds -- fitted on the complete cases for exactly those inputs, so a person
+# missing an input loses that input and nothing else (one fit per pattern of
+# available inputs, cached). Where a pattern's complete cases are too few for
+# its terms (`.ctJuliaTIMinCasesPerCoef` per coefficient) it drops the outcome
+# summaries, then the predictors, down to the mean; a column the data cannot
+# separate from the others is dropped too. Then the person's group, at the
+# first level above the person: the residuals' between-group variance by
+# one-way moments, and the group's mean residual shrunk by it, so a group with
+# many complete cases moves its members' imputations to its own level and a
+# group with none adds its variance to their sd. The mean is held within the
+# variable's observed range.
+#
+# Coefficients and scales are fitted once and held fixed: the missing value
+# is still a sampled parameter with a proper conditional distribution when
+# sampling (Charles's 2026-09-03 decision).
+#
+# Warns, once per variable, when a pattern's complete cases could not support
+# its fullest model, naming the model taken.
+.ctTIImpute <- function(name, target, inputs, ybar = NULL, ysd = NULL,
+  includeOutcome = TRUE, group = NULL) {
+  target <- as.numeric(target)
+  missing <- which(is.na(target))
+  empty <- data.frame(person = integer(), mu = numeric(), sigma = numeric())
+  if (!length(missing)) return(empty)
+  observed <- target[!is.na(target)]
+  outcome <- if (isTRUE(includeOutcome)) cbind(ybar, ysd) else NULL
+  usable <- function(m) {
+    if (is.null(m) || !ncol(m)) return(matrix(numeric(), length(target), 0L))
+    m <- as.matrix(m)
+    keep <- apply(m, 2L, function(x) sum(!is.na(x)) > 1L &&
+      stats::var(x, na.rm = TRUE) > 0)
+    m[, keep, drop = FALSE]
+  }
+  inputs <- usable(inputs)
+  outcome <- usable(outcome)
+  named <- function(m, prefix) {
+    if (!ncol(m)) return(m)
+    if (is.null(colnames(m))) colnames(m) <- paste0(prefix, seq_len(ncol(m)))
+    colnames(m) <- make.names(colnames(m), unique = TRUE)
+    m
+  }
+  inputs <- named(inputs, "x")
+  outcome <- named(outcome, "y")
+  all <- cbind(inputs, outcome)
+
+  cache <- list()
+  fitted <- function(columns) {
+    key <- paste(columns, collapse = "|")
+    if (!is.null(cache[[key]])) return(cache[[key]])
+    repeat {
+      d <- if (length(columns)) data.frame(.y = target, all[, columns, drop = FALSE],
+        check.names = FALSE) else data.frame(.y = target)
+      cc <- stats::complete.cases(d)
+      if ((length(columns) &&
+          sum(cc) < .ctJuliaTIMinCasesPerCoef * (length(columns) + 1L)) ||
+          sum(cc) < 2L) {
+        cache[[key]] <<- list(fit = NULL)
+        return(cache[[key]])
+      }
+      fit <- stats::lm(.y ~ ., data = d[cc, , drop = FALSE])
+      aliased <- names(which(is.na(stats::coef(fit))))
+      aliased <- setdiff(gsub("`", "", aliased), "(Intercept)")
+      if (!length(aliased)) break
+      columns <- setdiff(columns, aliased)
+    }
+    out <- list(fit = fit, columns = columns, cc = which(cc))
+    cache[[key]] <<- out
+    out
+  }
+  # The fullest model a person's available inputs and the data support.
+  tiers <- function(i) {
+    have <- colnames(all)[!is.na(all[i, ])]
+    list(full = have, predictors = intersect(have, colnames(inputs)),
+      marginal = character())
+  }
+  best <- if (ncol(outcome)) "full" else if (ncol(inputs)) "predictors" else
+    "marginal"
+  fallback <- character()
+
+  # Group effects on one fit's residuals, by one-way moments.
+  groupterms <- function(model) {
+    if (is.null(group)) return(NULL)
+    r <- stats::residuals(model$fit)
+    g <- as.character(group[model$cc])
+    n <- table(g)
+    if (length(n) < 2L) return(NULL)
+    rbar <- tapply(r, g, mean)
+    within <- sum((r - rbar[g])^2)
+    dfw <- length(r) - length(n)
+    if (dfw < 1L) return(NULL)
+    sw <- within / dfw
+    N <- length(r)
+    msb <- sum(n * (rbar - mean(r))^2) / (length(n) - 1L)
+    n0 <- (N - sum(n^2) / N) / (length(n) - 1L)
+    tau2 <- max(0, (msb - sw) / n0)
+    if (tau2 <= 0) return(NULL)
+    list(n = n, rbar = rbar, sw = sw, tau2 = tau2)
   }
 
-  outcome_design <- cbind(ybar, ysd)
-  if (ncol(outcome_design)) {
-    outcome_design <- outcome_design[, apply(outcome_design, 2, function(x) any(!is.na(x))), drop = FALSE]
-  }
-  full_design <- if (includeOutcome) cbind(others, outcome_design) else others
-
-  best_tier <- if (includeOutcome && ncol(outcome_design)) "full" else
-    if (ncol(others)) "predictors" else "marginal"
-
-  marginal_cc <- !is.na(target)
-  marginal_fit <- stats::lm(target[marginal_cc] ~ 1)
-
-  fit <- NULL; tier <- NULL
-  if (identical(best_tier, "full") && ncol(full_design)) {
-    fit <- fit_tier(full_design)
-    if (!is.null(fit)) tier <- "full"
-  }
-  if (is.null(fit) && ncol(others)) {
-    fit <- fit_tier(others)
-    if (!is.null(fit)) tier <- "predictors"
-  }
-  if (is.null(fit)) {
-    fit <- marginal_fit
+  rows <- lapply(missing, function(i) {
+    options <- tiers(i)
+    model <- NULL
     tier <- "marginal"
-  }
-
-  if (!identical(tier, best_tier)) {
+    for (t in c("full", "predictors", "marginal")) {
+      if (t == "full" && best != "full") next
+      if (t == "predictors" && best == "marginal") next
+      if (t != "marginal" && !length(options[[t]])) next
+      model <- fitted(options[[t]])
+      if (!is.null(model$fit)) { tier <- t; break }
+    }
+    # A tier this person's inputs allowed but the data could not support.
+    wanted <- if (best == "full" && length(options$full)) "full" else
+      if (best != "marginal" && length(options$predictors)) "predictors" else
+        "marginal"
+    if (tier != wanted) fallback <<- c(fallback, paste(wanted, tier))
+    mu <- if (length(model$columns)) {
+      newdata <- as.data.frame(as.list(all[i, model$columns, drop = TRUE]),
+        check.names = FALSE)
+      names(newdata) <- model$columns
+      as.numeric(stats::predict(model$fit, newdata = newdata))
+    } else unname(stats::coef(model$fit)[["(Intercept)"]])
+    sigma <- stats::sigma(model$fit)
+    terms <- groupterms(model)
+    if (!is.null(terms)) {
+      g <- as.character(group[i])
+      ng <- if (g %in% names(terms$n)) as.numeric(terms$n[[g]]) else 0
+      shrink <- ng * terms$tau2 / (ng * terms$tau2 + terms$sw)
+      if (ng > 0) mu <- mu + shrink * terms$rbar[[g]]
+      sigma <- sqrt(terms$sw + terms$tau2 * (1 - shrink))
+    }
+    mu <- min(max(mu, min(observed)), max(observed))
+    if (!is.finite(sigma) || sigma <= 0) sigma <- 1e-8 * max(1, stats::sd(observed))
+    data.frame(person = as.integer(i), mu = mu, sigma = sigma)
+  })
+  if (length(fallback)) {
+    worst <- utils::tail(unique(fallback), 1L)
+    parts <- strsplit(worst, " ", fixed = TRUE)[[1L]]
     warning(sprintf(paste0("TI predictor '%s': not enough complete cases for the %s ",
       "imputation model (roughly %d complete cases needed per coefficient) -- ",
-      "using the %s fallback instead."), predictor_name, best_tier, min_cases, tier),
-      call. = FALSE)
+      "using the %s fallback instead."), name, parts[1L],
+      .ctJuliaTIMinCasesPerCoef, parts[2L]), call. = FALSE)
   }
-
-  list(fit = fit, marginal_fit = marginal_fit, tier = tier,
-    design_names = if (identical(tier, "marginal")) character(0) else
-      colnames(if (identical(tier, "full")) full_design else others))
+  do.call(rbind, rows)
 }
 
-# The conditional mean for one subject's missing cell, from an already-fit
-# `.ctJuliaTIImputationFit()` result. A subject missing one of the fitted
-# model's own inputs (e.g. a second TI predictor that is *also* missing for
-# them) cannot use it -- rather than fabricate that input, this falls back
-# to the marginal conditional for this subject alone, the same dropout
-# principle applied throughout this file.
-.ctJuliaTIPredictMu <- function(imputation, newdata_row) {
-  if (identical(imputation$tier, "marginal")) {
-    return(unname(stats::coef(imputation$fit)[["(Intercept)"]]))
+# Each subject's group at the first level above it, in subject order, or NULL
+# without grouping levels.
+.ctTISubjectGroup <- function(dat, model) {
+  if (!length(model$groupIDnames)) return(NULL)
+  ids <- dat[[model$subjectIDname]]
+  first <- !duplicated(ids)
+  as.character(dat[[model$groupIDnames[1L]]][first])
+}
+
+# The person-level inputs an imputation model reads: the TI predictors with a
+# smooth's columns replaced by its covariate, as observed (NA where missing),
+# and each time dependent predictor's mean over the person's rows; one row per
+# subject in subject order.
+.ctTISubjectInputs <- function(dat, model, tipred) {
+  smooth <- .ctTIsmoothColumns(model)
+  keep <- !colnames(tipred) %in% smooth
+  out <- as.data.frame(tipred[, keep, drop = FALSE])
+  ids <- dat[[model$subjectIDname]]
+  subjects <- unique(ids)
+  for (td in intersect(model$TDpredNames, names(dat))) {
+    x <- suppressWarnings(as.numeric(dat[[td]]))
+    means <- vapply(subjects, function(i) {
+      v <- x[ids == i]
+      if (any(!is.na(v))) mean(v, na.rm = TRUE) else NA_real_
+    }, numeric(1))
+    out[[paste0("tdmean_", td)]] <- means
   }
-  vals <- newdata_row[imputation$design_names]
-  if (anyNA(vals)) {
-    return(unname(stats::coef(imputation$marginal_fit)[["(Intercept)"]]))
+  for (s in model$TIsmooths) {
+    x <- suppressWarnings(as.numeric(dat[[s$covariate]]))
+    value <- vapply(subjects, function(i) {
+      v <- x[ids == i]
+      v <- v[!is.na(v)]
+      if (length(v)) v[1L] else NA_real_
+    }, numeric(1))
+    out <- cbind(out, stats::setNames(data.frame(value), s$covariate))
   }
-  nd <- as.data.frame(as.list(vals))
-  unname(as.numeric(stats::predict(imputation$fit, newdata = nd)))
+  as.matrix(out)
 }
 
 # The sampling path's imputation spec: one row per missing TI predictor cell,
@@ -3231,6 +3335,9 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
   if (!any(missing_mask)) return(empty)
 
   manifest_summary <- .ctJuliaTISubjectManifestSummary(dat, model)
+  colnames(raw_tipred) <- model$TIpredNames
+  inputs <- .ctTISubjectInputs(dat, model, raw_tipred)
+  group <- .ctTISubjectGroup(dat, model)
   rows <- list()
   for (j in seq_len(model$n.TIpred)) {
     if (!any(missing_mask[, j])) next
@@ -3243,18 +3350,11 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
         predictor = as.integer(j), mu = NA_real_, sigma = NA_real_)
       next
     }
-    others <- if (model$n.TIpred > 1L) raw_tipred[, -j, drop = FALSE] else
-      matrix(numeric(), nrow(raw_tipred), 0L)
-    imputation <- .ctJuliaTIImputationFit(model$TIpredNames[j], raw_tipred[, j],
-      others, manifest_summary$ybar, manifest_summary$ysd, includeOutcome)
-    sigma <- stats::sigma(imputation$fit)
-    for (i in which(missing_mask[, j])) {
-      newdata_row <- c(others[i, , drop = TRUE], manifest_summary$ybar[i, , drop = TRUE],
-        manifest_summary$ysd[i, , drop = TRUE])
-      mu <- .ctJuliaTIPredictMu(imputation, newdata_row)
-      rows[[length(rows) + 1L]] <- data.frame(subject = as.integer(i),
-        predictor = as.integer(j), mu = as.numeric(mu), sigma = as.numeric(sigma))
-    }
+    imputed <- .ctTIImpute(model$TIpredNames[j], raw_tipred[, j],
+      inputs[, colnames(inputs) != model$TIpredNames[j], drop = FALSE],
+      manifest_summary$ybar, manifest_summary$ysd, includeOutcome, group)
+    rows[[length(rows) + 1L]] <- data.frame(subject = imputed$person,
+      predictor = as.integer(j), mu = imputed$mu, sigma = imputed$sigma)
   }
   if (!length(rows)) return(empty)
   do.call(rbind, rows)

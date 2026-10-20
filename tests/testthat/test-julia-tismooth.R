@@ -111,11 +111,12 @@ test_that("smooths are refused where they cannot be estimated", {
     "varies within persons")
   few <- dat
   expect_error(ctsem:::.ctTIsmoothData(m, few), "distinct values")
-  # A person without a value is held at the mean of their group's, or of
-  # everyone's where the group has none.
+  # A person without a value is held at the value the imputation model
+  # predicts for them; here, with nothing else known, their study's mean shrunk
+  # towards everyone's, and everyone's where the study has no values.
   set.seed(1)
   persons <- data.frame(id = 1:12, study = rep(1:3, each = 4),
-    age = c(21, 25, 33, NA, 41, 47, 52, 58, NA, NA, NA, NA))
+    age = c(21, 25, 33, NA, 61, 67, 72, 78, NA, NA, NA, NA))
   long <- persons[rep(1:12, each = 2), ]
   long$time <- rep(0:1, 12)
   long$Y1 <- rnorm(24)
@@ -123,14 +124,78 @@ test_that("smooths are refused where they cannot be estimated", {
   nested <- suppressMessages(ctModel(type = "ct", n.latent = 1, n.manifest = 1,
     LAMBDA = diag(1), CINT = matrix("cint"), MANIFESTMEANS = matrix(0),
     id = c("id", "study"), TIpredNames = ~ s(age, k = 4)))
-  out <- expect_message(ctsem:::.ctTIsmoothData(nested, long), "5 persons")
+  out <- suppressWarnings(expect_message(ctsem:::.ctTIsmoothData(nested, long,
+    includeOutcome = FALSE), "5 persons"))
   basis <- out$model$TIsmooths$age$basis
   at <- function(a) as.numeric(ctsem:::.ctTIsmoothEval(basis, a))
   row <- function(i) as.numeric(out$data[out$data$id == i,
     out$model$TIsmooths$age$columns][1L, ])
+  # A value on any of a person's rows is theirs.
   expect_equal(row(2), at(25))
-  expect_equal(row(4), at(mean(c(21, 25, 33))))
-  expect_equal(row(9), at(mean(c(21, 25, 33, 41, 47, 52, 58))))
+  everyone <- mean(c(21, 25, 33, 61, 67, 72, 78))
+  study1 <- mean(c(21, 25, 33))
+  imputed <- ctsem:::.ctTIImpute("age", c(21, 25, 33, NA, 61, 67, 72, 78, NA),
+    NULL, includeOutcome = FALSE, group = rep(1:3, c(4, 4, 1)))
+  expect_gt(imputed$mu[1L], study1)
+  expect_lt(imputed$mu[1L], everyone)
+  expect_equal(imputed$mu[2L], everyone)
+  expect_gt(imputed$sigma[2L], imputed$sigma[1L])
+  expect_equal(row(4), at(imputed$mu[1L]))
+  expect_equal(row(9), at(everyone))
+})
+
+test_that("a smooth covariate is imputed from the person's other data", {
+  # A covariate that is close to a time dependent predictor's mean is
+  # recovered from it for the persons who lack it.
+  set.seed(3)
+  n <- 60
+  td <- rnorm(n)
+  persons <- data.frame(id = 1:n, age = 40 + 10 * td + rnorm(n, 0, 1))
+  persons$age[1:5] <- NA
+  long <- persons[rep(1:n, each = 3), ]
+  long$time <- rep(0:2, n)
+  long$Y1 <- rnorm(3 * n)
+  long$TD1 <- rep(td, each = 3)
+  m <- suppressMessages(ctModel(type = "ct", n.latent = 1, n.manifest = 1,
+    LAMBDA = diag(1), CINT = matrix("cint"), MANIFESTMEANS = matrix(0),
+    TDpredNames = "TD1", TIpredNames = ~ s(age, k = 5)))
+  out <- suppressMessages(ctsem:::.ctTIsmoothData(m, long,
+    includeOutcome = FALSE))
+  basis <- out$model$TIsmooths$age$basis
+  imputed <- out$data$age_lin[match(1:5, out$data$id)]
+  truth <- ctsem:::.ctTIsmoothEval(basis, 40 + 10 * td[1:5])[, 1]
+  expect_lt(max(abs(imputed - truth)), 0.1)
+})
+
+test_that("the imputation model is each person's, from all they have", {
+  set.seed(2)
+  n <- 200
+  x <- rnorm(n)
+  z <- rnorm(n)
+  target <- 2 * x - z + rnorm(n, 0, 0.3)
+  truth <- target
+  target[1:3] <- NA
+  inputs <- cbind(x = x, z = z)
+  inputs[2, "z"] <- NA
+  inputs[3, ] <- NA
+  out <- ctsem:::.ctTIImpute("t", target, inputs, includeOutcome = FALSE)
+  expect_equal(out$person, 1:3)
+  # Both inputs, one, none: each person's own model, and its own residual sd.
+  expect_lt(abs(out$mu[1L] - (2 * x[1] - z[1])), 0.2)
+  expect_lt(abs(out$mu[2L] - 2 * x[2]), 0.4)
+  expect_equal(out$mu[3L], mean(target, na.rm = TRUE))
+  expect_lt(out$sigma[1L], out$sigma[2L])
+  expect_lt(out$sigma[2L], out$sigma[3L])
+  expect_equal(out$sigma[3L], stats::sd(target, na.rm = TRUE))
+  # A column the data cannot separate from another is dropped, not fatal.
+  twin <- cbind(inputs, x2 = 2 * inputs[, "x"])
+  same <- ctsem:::.ctTIImpute("t", target, twin, includeOutcome = FALSE)
+  expect_equal(same$mu, out$mu)
+  # Held within the observed range.
+  far <- inputs
+  far[1, "x"] <- 50
+  expect_equal(ctsem:::.ctTIImpute("t", target, far,
+    includeOutcome = FALSE)$mu[1L], max(target, na.rm = TRUE))
 })
 
 # One fit: a random intercept whose mean is a curve in age, and a model whose

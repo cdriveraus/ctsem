@@ -204,55 +204,68 @@
 
 # The model with every smooth's basis built (from `data` where it has none) and
 # the data with the basis columns added. One value of each covariate per
-# person: a smooth explains differences between persons.
-.ctTIsmoothData <- function(model, data) {
+# person: a smooth explains differences between persons. A person without a
+# value is held at the value the imputation model predicts for them
+# (`.ctTIImpute()`: their other predictors and smooth covariates, their data's
+# means and sds with `includeOutcome`, and their group), as a missing linear
+# predictor is held at its imputed value when optimising.
+.ctTIsmoothData <- function(model, data, includeOutcome = TRUE) {
   smooths <- model$TIsmooths
   if (!length(smooths)) return(list(model = model, data = data))
-  id <- model$subjectIDname
+  ids <- data[[model$subjectIDname]]
+  subjects <- unique(ids)
+  row <- match(ids, subjects)
+  perperson <- function(v) vapply(seq_along(subjects), function(i) {
+    w <- v[row == i]
+    w <- w[!is.na(w)]
+    if (length(w)) w[1L] else NA_real_
+  }, numeric(1))
+  covariates <- vapply(smooths, `[[`, "", "covariate")
+  for (covariate in covariates) if (is.null(data[[covariate]])) stop("Column ",
+    covariate, " (the covariate of s(", covariate, ")) is not in the data.",
+    call. = FALSE)
+  # The imputation model's inputs, one row per person: the linear predictors
+  # in the data and the smooths' covariates, as observed, and the time
+  # dependent predictors' means (`.ctTISubjectInputs()`).
+  linear <- intersect(setdiff(model$TIpredNames, .ctTIsmoothColumns(model)),
+    names(data))
+  observed <- vapply(linear, function(v)
+    perperson(suppressWarnings(as.numeric(data[[v]]))), numeric(length(subjects)))
+  observed <- if (length(linear)) matrix(observed, length(subjects),
+    dimnames = list(NULL, linear)) else matrix(numeric(), length(subjects), 0L)
+  inputs <- .ctTISubjectInputs(data, model, observed)
+  summary <- NULL
   for (name in names(smooths)) {
     s <- smooths[[name]]
     covariate <- s$covariate
-    if (is.null(data[[covariate]])) stop("Column ", covariate, " (the covariate ",
-      "of s(", covariate, ")) is not in the data.", call. = FALSE)
     x <- suppressWarnings(as.numeric(data[[covariate]]))
-    perperson <- tapply(x, data[[id]], function(v) if (all(is.na(v))) 0 else
+    spread <- tapply(x, row, function(v) if (all(is.na(v))) 0 else
       diff(range(v, na.rm = TRUE)))
-    if (any(perperson > 1e-12 * max(1, abs(x), na.rm = TRUE))) stop(covariate,
+    if (any(spread > 1e-12 * max(1, abs(x), na.rm = TRUE))) stop(covariate,
       " varies within persons; s() takes a person-level covariate, one value ",
       "per person.", call. = FALSE)
-    # One value per person, from any of their rows; built from the persons who
-    # have one.
-    person <- as.character(data[[id]])
-    value <- tapply(x, person, function(v) if (all(is.na(v))) NA_real_ else
-      v[!is.na(v)][1L])
+    value <- inputs[, covariate]
     observed <- value[!is.na(value)]
-    if (!length(observed)) stop("s(", covariate, ") has no value of ", covariate,
-      " for any person.", call. = FALSE)
+    if (length(observed) < 2L) stop("s(", covariate, ") needs a value of ",
+      covariate, " for at least two persons.", call. = FALSE)
     if (is.null(s$basis)) {
       s$basis <- .ctTIsmoothBuild(observed, s$k, covariate)
       smooths[[name]] <- s
     }
-    # A person without a value is held at the mean of those with one in their
-    # group at the first level above the person, else of everyone: as a
-    # missing linear predictor is held at its expected value when optimising.
-    absent <- names(value)[is.na(value)]
-    if (length(absent)) {
-      group <- if (length(model$groupIDnames))
-        tapply(as.character(data[[model$groupIDnames[1L]]]), person, `[`, 1L)
-      fill <- vapply(absent, function(p) {
-        peers <- if (is.null(group)) NULL else
-          value[!is.na(value) & group[names(value)] == group[[p]]]
-        if (length(peers)) mean(peers) else mean(observed)
-      }, numeric(1))
-      value[absent] <- fill
-      message("s(", covariate, "): ", length(absent), " person",
-        if (length(absent) > 1L) "s have" else " has", " no value of ",
-        covariate, " and ", if (length(absent) > 1L) "are" else "is",
-        " held at the mean of ", if (is.null(group)) "those who have one" else
-        "their group, or of everyone where their group has none", ".")
+    if (anyNA(value)) {
+      if (is.null(summary)) summary <- .ctJuliaTISubjectManifestSummary(data, model)
+      imputed <- .ctTIImpute(covariate, value,
+        inputs[, colnames(inputs) != covariate, drop = FALSE], summary$ybar,
+        summary$ysd, includeOutcome, .ctTISubjectGroup(data, model))
+      value[imputed$person] <- imputed$mu
+      message("s(", covariate, "): ", nrow(imputed), " person",
+        if (nrow(imputed) > 1L) "s have" else " has", " no value of ", covariate,
+        "; ", if (nrow(imputed) > 1L) "each is" else "it is", " held at the ",
+        "value an imputation model predicts from ",
+        if (nrow(imputed) > 1L) "their" else "its", " other predictors, data",
+        if (length(model$groupIDnames)) " and group", ".")
     }
-    x <- unname(value[person])
-    columns <- .ctTIsmoothEval(s$basis, x)
+    columns <- .ctTIsmoothEval(s$basis, value[row])
     for (j in seq_along(s$columns)) data[[s$columns[j]]] <- columns[, j]
   }
   model$TIsmooths <- smooths

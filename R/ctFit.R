@@ -1360,7 +1360,8 @@ ctFit<-function(datalong, model, stanmodeltext=NA, iter=1000, intoverstates=TRUE
       "optimisation, which sets their smoothness: use optimize=TRUE, then ",
       "ctFitUncertainty(fit, 'sample') to sample with the smoothness held at ",
       "its estimate.", call.=FALSE)
-    smoothed <- .ctTIsmoothData(ctstanmodel, datalong)
+    smoothed <- .ctTIsmoothData(ctstanmodel, datalong,
+      includeOutcome = !isFALSE(optimcontrol$tipredMissingIncludeOutcome))
     ctstanmodel <- smoothed$model
     datalong <- smoothed$data
   }
