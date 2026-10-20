@@ -6559,7 +6559,7 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
     # With sampling weights the sandwich, unless asked otherwise: the Hessian
     # alone is the pseudo-likelihood's curvature, not the estimate's spread.
     uncertainty <- .ctJuliaOr(optimcontrol$uncertainty,
-      if (length(out$model_spec$subject_weights)) "sandwich" else "hessian")
+      if (length(out$model_spec$subject_weights)) "sandwich" else "checked")
     # One way to sample: `ctFit(optimize = FALSE)`, which places the sampler
     # through this same pipeline before ever reaching this stage (see
     # `.ctJuliaSampleFit()`, R/ctBackendSample.R). Asking for

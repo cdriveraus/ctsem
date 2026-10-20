@@ -243,7 +243,8 @@ test_that("uncertainty='stored' redraws a julia fit without touching the engine"
   expect_equal(redrawn$uncertainty$hessian, hess0, tolerance = 0)
   # `method` keeps naming what produced the covariance; `redrawn` says the
   # draws were regenerated from it.
-  expect_identical(redrawn$uncertainty$settings$method, "hessian")
+  expect_identical(redrawn$uncertainty$settings$method,
+    fit$uncertainty$settings$method)
   expect_true(isTRUE(redrawn$uncertainty$settings$redrawn))
   expect_identical(colnames(redrawn$estimate$rawposterior),
     colnames(fit$estimate$rawposterior))

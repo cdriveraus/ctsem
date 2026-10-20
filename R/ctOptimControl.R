@@ -213,8 +213,10 @@
 #'
 #' @section Uncertainty:
 #' \describe{
-#'  \item{\code{uncertainty}}{Both. Default \code{'hessian'}. The method
-#'  computed when the optimiser ends, as in \code{\link{ctFitUncertainty}}.
+#'  \item{\code{uncertainty}}{Both. Default \code{'checked'} on julia
+#'  (\code{'sandwich'} with subject weights) and \code{'hessian'} on stan.
+#'  The method computed when the optimiser ends, as in
+#'  \code{\link{ctFitUncertainty}}.
 #'  \code{'sample'} is refused here: use \code{optimize = FALSE}, or
 #'  \code{ctFitUncertainty(fit, 'sample')} on the fit.}
 #'  \item{\code{uncertaintyDraws}, \code{finishsamples},

@@ -7,7 +7,7 @@
 \usage{
 ctFitUncertainty(
   fit,
-  uncertainty = c("hessian", "surrogate", "is", "bootstrap", "fullbootstrap", "sandwich",
+  uncertainty = c("checked", "hessian", "is", "bootstrap", "fullbootstrap", "sandwich",
     "opg", "stored", "sample"),
   draws = c("auto", "normal", "empirical", "imis"),
   finishsamples = NULL,
@@ -19,7 +19,7 @@ ctFitUncertainty(
 
 ctOptimUncertainty(
   fit,
-  uncertainty = c("hessian", "surrogate", "is", "bootstrap", "fullbootstrap", "sandwich",
+  uncertainty = c("hessian", "checked", "is", "bootstrap", "fullbootstrap", "sandwich",
     "opg", "stored"),
   draws = c("auto", "normal", "empirical", "imis"),
   finishsamples = NULL,
@@ -33,8 +33,8 @@ ctOptimUncertainty(
 \item{fit}{Optimized \code{ctStanFit} or \code{ctJuliaFit} object, or for
 \code{uncertainty = 'sample'} a julia fit that is already sampled.}
 
-\item{uncertainty}{Which method: \code{'hessian'} (the default),
-\code{'surrogate'}, \code{'is'}, \code{'bootstrap'},
+\item{uncertainty}{Which method: \code{'checked'} (the default),
+\code{'hessian'}, \code{'is'}, \code{'bootstrap'},
 \code{'fullbootstrap'}, \code{'sandwich'}, \code{'opg'}, \code{'stored'},
 or \code{'sample'}. See the Methods section, and Sampling for
 \code{'sample'}.}
@@ -77,28 +77,15 @@ and agree to rounding above it.}
 \code{init_scale}, and NUTS's \code{maxdepth}, \code{target_accept},
 \code{adapt_metric} and \code{adapt_effects}); none of the entries below
 apply to it. For every other method, useful entries include
-\code{ridge}, \code{hessianStep}, \code{surrogateNpoints},
-\code{surrogateScale}, \code{surrogateProfile},
-\code{surrogateProfileTargetDrop}, \code{surrogateProfileMaxStep},
-\code{bootstrapFitCores}, \code{bootstrapTol}, \code{imisMaxIter},
+\code{ridge}, \code{hessianStep}, \code{bootstrapFitCores}, \code{bootstrapTol}, \code{imisMaxIter},
 \code{imisScaleInit}, \code{imisTailScale}, \code{imisDf}, \code{isESS},
 and \code{isitersize}. Omitted entries use
 \code{ridge = 1e-8}, \code{hessianStep = 1e-3},
-\code{surrogateScale = .5}, \code{surrogateNpoints = NULL},
-\code{surrogateProfile = TRUE},
-\code{surrogateProfileTargetDrop = NULL},
-\code{surrogateProfileMaxStep = 64},
 \code{bootstrapFitCores = 1}, \code{bootstrapTol = 1e-5},
 \code{imisMaxIter = 50}, \code{imisScaleInit = 1.1},
 \code{imisTailScale = 1.1} (1.5 and 1.2 on julia), \code{imisDf = 5} (the
 proposal components' t degrees of freedom; \code{Inf} for normal),
-\code{isESS = 200}, and \code{isitersize = 1000}. When
-\code{surrogateNpoints} is \code{NULL}, the surrogate uses at least
-\code{max(4 * npars, 50)} local directions; \code{surrogateProfile = TRUE}
-profiles every fitted surrogate direction until it reaches
-\code{surrogateProfileTargetDrop} (the surrogate's own target drop when
-\code{NULL}), going beyond \code{surrogateProfileMaxStep} where the
-surrogate predicts a flat direction needs it. \code{parsteps} keeps
+\code{isESS = 200}, and \code{isitersize = 1000}. \code{parsteps} keeps
 stepwise-fixed raw parameters fixed (stan only).
 \code{analyticHessian = FALSE} (julia only) asks for the finite-difference
 Hessian instead of the engine's exact one. \code{likelihood} (\code{'fit'},
@@ -173,14 +160,24 @@ where \code{uncertainty = 'sample'} is documented.
 \section{Methods}{
 
 \describe{
-\item{\code{'hessian'}}{The default: a normal approximation from the Hessian
-at the estimate -- exact on julia, which differentiates its own gradient,
-and by finite differences of the gradient on stan.}
-\item{\code{'surrogate'}}{Fits a local quadratic surrogate to log-posterior
-evaluations around the optimum, in coordinates whitened by the proposal
-covariance. Each direction is adjusted radially so its points land near an
-informative drop, and with \code{surrogateProfile = TRUE} every fitted
-curvature direction is then profiled out to the target drop.}
+\item{\code{'checked'}}{The default: the Hessian's normal, checked, and
+corrected by importance sampling in the directions where it is wrong. The
+log posterior's gradient at 32 draws from the normal says where the
+posterior departs from it, whatever the number of parameters: directions
+where the normal's 95\% interval would cover under 90\% or over 99\%, or
+where a skew or a width that moves with another parameter moves one tail
+outside 0.5 to 5\%. Those directions are sampled as \code{'is'} samples
+(below), the normal kept in all the rest. This is what corrects a curved
+ridge -- a loading vector whose length the data determine and whose
+direction they barely do, where the Hessian's intervals can be many times
+too wide -- and a variance from few groups and the effects it scales. A fit
+with nothing named gets exactly the Hessian's normal, for 32 gradients. The
+check is recorded in \code{$uncertainty$details$normalcheck}, and the
+sampling, when there was any, in
+\code{$uncertainty$details$importance_sampling}.}
+\item{\code{'hessian'}}{A normal approximation from the Hessian at the
+estimate, unchecked -- exact on julia, which differentiates its own
+gradient, and by finite differences of the gradient on stan.}
 \item{\code{'bootstrap'}, \code{'sandwich'}, \code{'opg'}}{Built from
 per-subject score contributions: one-step score bootstrap draws with
 Hessian bread, Hessian bread with score covariance meat, and the outer
@@ -396,8 +393,8 @@ fit <- ctFitUncertainty(ctstantestfit, uncertainty = 'stored',
 fit$stanfit$uncertainty$settings$redrawn
 
 \donttest{
-# A local quadratic surrogate rather than the Hessian
-fit <- ctFitUncertainty(ctstantestfit, uncertainty = 'surrogate')
+# The Hessian's normal, checked, and importance sampled where it is wrong
+fit <- ctFitUncertainty(ctstantestfit, uncertainty = 'checked')
 summary(fit)$popmeans
 
 # Needs a working julia backend, so the example is inert where Julia is

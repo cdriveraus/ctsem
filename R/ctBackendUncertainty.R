@@ -43,9 +43,9 @@
 # per-draw loop's cost is almost entirely the bridge round trip rather than the
 # arithmetic -- about 41 ms per call measured there, independent of what the
 # call computes -- so collapsing 1000 calls into one is most of the cost of
-# `uncertainty = 'is'`. There is no batch form for `gradient = TRUE`: nothing
-# in this package asks for a batch of gradients, and `ctsem_evaluate_batch`
-# does not compute one.
+# `uncertainty = 'is'`. Both attributes ride on either form, since what reads
+# them -- the importance sampler, the normal screen and score matching -- is
+# handed whichever the caller holds.
 #
 # Deliberately not wrapped in a `try()` the way the per-draw closure below is.
 # A single bad proposal draw cannot make this throw -- `ctsem_evaluate_batch`
@@ -91,45 +91,51 @@
     if (wantgrad) attributes(value) <- list(gradient = grad)
     value
   }
-  if (!wantgrad) {
-    module <- .ctJuliaModule(fit$model_spec$project)
-    objective <- .ctJuliaObjective(fit, hybrid = TRUE)
-    attr(fn, "batch") <- function(draws) {
-      draws <- as.matrix(draws)
-      # The engine takes columns as draws; `imis_is`'s `x_new` (and every
-      # other caller here) has rows as draws, the ordinary R convention for a
-      # sample matrix. Transposed once per batch rather than asking every
-      # caller to remember the engine's orientation.
-      values <- t(draws)
-      # Not an unconditional `JuliaConnectoR::juliaGet()`: a plain
-      # `Vector{Float64}` -- what `ctsem_evaluate_batch` returns -- comes back
-      # already converted to an R numeric, and `juliaGet()` on that throws
-      # ("no applicable method"), where the functions elsewhere in this file
-      # that return a NamedTuple (`.ctBackendHessian`, `.ctBackendJointHessian`)
-      # need it. `.ctBackendJuliaValue()` is the existing guard for exactly
-      # this -- unwrap a `JuliaProxy`, pass anything else through.
-      out <- as.numeric(.ctBackendJuliaValue(
-        module$ctsem_evaluate_batch(objective, values)))
-      # Same sentinel as the per-draw closure above, and for the same reason:
-      # a proposal the model cannot evaluate gets a finite, negligible weight
-      # rather than an infinite or NaN one reaching `imis_is`'s log-weight
-      # arithmetic.
-      out[!is.finite(out)] <- -1e100
-      out
+  # The engine's objective on first use rather than here: most densities built
+  # here are only ever evaluated a point at a time.
+  engine <- local({
+    built <- NULL
+    function() {
+      if (is.null(built)) built <<- list(module = .ctJuliaModule(fit$model_spec$project),
+        objective = .ctJuliaObjective(fit, hybrid = TRUE))
+      built
     }
-    # Values and gradients for a draws matrix in one bridge call, through
-    # `ctsem_evaluate_batch_gradient`: what `imis_is()`'s profile-path search
-    # moves every path by, one Newton step at a time. A point the route
-    # cannot use comes back with the value sentinel and a gradient of NaN.
-    attr(fn, "gradbatch") <- function(draws) {
-      draws <- as.matrix(draws)
-      out <- matrix(as.numeric(.ctBackendJuliaValue(
-        module$ctsem_evaluate_batch_gradient(objective, t(draws)))),
-        nrow = ncol(draws) + 1L)
-      value <- out[1L, ]
-      value[!is.finite(value)] <- -1e100
-      list(value = value, gradient = t(out[-1L, , drop = FALSE]))
-    }
+  })
+  attr(fn, "batch") <- function(draws) {
+    draws <- as.matrix(draws)
+    # The engine takes columns as draws; `imis_is`'s `x_new` (and every
+    # other caller here) has rows as draws, the ordinary R convention for a
+    # sample matrix. Transposed once per batch rather than asking every
+    # caller to remember the engine's orientation.
+    values <- t(draws)
+    # Not an unconditional `JuliaConnectoR::juliaGet()`: a plain
+    # `Vector{Float64}` -- what `ctsem_evaluate_batch` returns -- comes back
+    # already converted to an R numeric, and `juliaGet()` on that throws
+    # ("no applicable method"), where the functions elsewhere in this file
+    # that return a NamedTuple (`.ctBackendHessian`, `.ctBackendJointHessian`)
+    # need it. `.ctBackendJuliaValue()` is the existing guard for exactly
+    # this -- unwrap a `JuliaProxy`, pass anything else through.
+    out <- as.numeric(.ctBackendJuliaValue(
+      engine()$module$ctsem_evaluate_batch(engine()$objective, values)))
+    # Same sentinel as the per-draw closure above, and for the same reason:
+    # a proposal the model cannot evaluate gets a finite, negligible weight
+    # rather than an infinite or NaN one reaching `imis_is`'s log-weight
+    # arithmetic.
+    out[!is.finite(out)] <- -1e100
+    out
+  }
+  # Values and gradients for a draws matrix in one bridge call, through
+  # `ctsem_evaluate_batch_gradient`: what `imis_is()`'s profile-path search
+  # moves every path by, one Newton step at a time. A point the route
+  # cannot use comes back with the value sentinel and a gradient of NaN.
+  attr(fn, "gradbatch") <- function(draws) {
+    draws <- as.matrix(draws)
+    out <- matrix(as.numeric(.ctBackendJuliaValue(
+      engine()$module$ctsem_evaluate_batch_gradient(engine()$objective, t(draws)))),
+      nrow = ncol(draws) + 1L)
+    value <- out[1L, ]
+    value[!is.finite(value)] <- -1e100
+    list(value = value, gradient = t(out[-1L, , drop = FALSE]))
   }
   fn
 }
@@ -151,7 +157,7 @@
 # and re-optimises each sample, which needs the model rebuilt per resample
 # rather than just re-evaluated. Everything else these engines can serve, now
 # that they produce per-subject scores directly (see .ctBackendScoreMatrix).
-.ctBackendUncertaintySupported <- c("hessian", "surrogate", "is", "opg",
+.ctBackendUncertaintySupported <- c("checked", "hessian", "is", "opg",
   "sandwich", "bootstrap")
 
 # `lpg` builds the log posterior the curvature, the flat-direction screen and
@@ -252,8 +258,8 @@
   # engine can differentiate its own gradient. `control$analyticHessian=FALSE`
   # falls back to the shared finite-difference path, which is worth keeping
   # reachable -- it is the only way to compare the two on a real model.
-  needsHessian <- uncertainty %in% c("hessian", "sandwich", "bootstrap", "is") ||
-    (uncertainty == "surrogate" && is.null(control$initialCov))
+  needsHessian <- uncertainty %in% c("checked", "hessian", "sandwich",
+    "bootstrap", "is")
   # What the fit already knows about its curvature, kept before
   # `fit$uncertainty` is replaced below: the Hessian the certification decided
   # on, where it was evaluated, and that certification.
@@ -300,9 +306,9 @@
   samples <- drawn$samples
   uncertaintyfit <- drawn$uncertaintyfit
   control <- drawn$control
+  draws <- drawn$draws
 
   storedControl <- control
-  storedControl$initialCov <- NULL
   uncertaintyfit$draws <- draws
   uncertaintyfit$settings <- list(method = uncertainty, draws = draws,
     finishsamples = finishsamples, cores = cores, control = storedControl)

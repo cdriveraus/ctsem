@@ -1239,7 +1239,7 @@ print.ctLaplaceCorrection <- function(x, ...) {
     record$hessian <- hc
     stages["certification"] <- since(certification_started)
   }
-  own <- usable && identical(method, "hessian")
+  own <- usable && method %in% c("hessian", "checked")
   record$hessian_at <- if (own) "estimate" else "laplace_estimate"
   if (own) {
     uncertainty_started <- proc.time()[["elapsed"]]
@@ -1248,14 +1248,15 @@ print.ctLaplaceCorrection <- function(x, ...) {
       if (!is.null(fit$estimate$rawposterior)) nrow(fit$estimate$rawposterior) else 1000L)
     fit$uncertainty <- list(hessian = hc, evaluated_at = hessian_at,
       certification = certification)
-    fit <- .ctBackendUncertainty(fit, uncertainty = "hessian", draws = "normal",
+    fit <- .ctBackendUncertainty(fit, uncertainty = method,
+      draws = .ctResolveDraws(method, "auto"),
       finishsamples = finishsamples, cores = chunks,
       control = .ctJuliaOr(settings$control, list()), verbose = verbose,
       lpg = .ctLaplaceContinueLpg(module, cont))
     record$draws <- "redrawn"
     fit$uncertainty$details$laplace_correction <- list(
-      draws = paste0("normal draws about the continuation's estimate, from the ",
-        "Hessian of its quadrature objective there"),
+      draws = paste0("draws about the continuation's estimate, by '",
+        method, "' on its quadrature objective there"),
       nodes = record$nodes)
     stages["uncertainty"] <- since(uncertainty_started)
   } else {

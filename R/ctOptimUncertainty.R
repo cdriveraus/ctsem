@@ -363,15 +363,27 @@ bootstrapHessian <- function(standata, sm, est, finishsamples, cores, scores=NUL
 # and the flat coordinate's reported spread went from 397 to exactly 0 rather
 # than from 0 to 397 by accident -- see `.ctImisUnwhitenMatrix()`: a null
 # direction has no column in the map at all.
-.ctImisRun <- function(lpg, centre, cov, rtol = .ctFlatDirectionRtol(), ...) {
+.ctImisRun <- function(lpg, centre, cov, rtol = .ctFlatDirectionRtol(),
+  directions = NULL, ...) {
   centre <- as.numeric(centre)
   cov <- as.matrix(cov)
-  subspace <- .ctImisSubspace(cov, rtol = rtol)
+  # `directions` confines the sampling to those columns, each one unit of the
+  # normal `cov` describes (`.ctOptimNormalCheck()`); the normal stays the
+  # answer in the rest, added to every draw and to the covariance.
+  subspace <- if (!is.null(directions)) list(V = directions,
+    d = rep(1, ncol(directions)), k = ncol(directions)) else
+    .ctImisSubspace(cov, rtol = rtol)
   if (is.null(subspace)) return(imis_is(lpg, mu_hat = centre, Sigma_hat = cov, ...))
   wrapped <- .ctImisWhitenDensity(lpg, centre, subspace)
   whitened <- imis_is(wrapped, mu_hat = rep(0, subspace$k),
     Sigma_hat = diag(subspace$k), ...)
   result <- .ctImisUnwhitenResult(whitened, centre, subspace)
+  if (!is.null(directions)) {
+    rest <- cov - tcrossprod(directions)
+    result$theta <- result$theta + ctOptimNormalDraws(rep(0, length(centre)), rest,
+      nrow(result$theta))
+    result$covariance <- result$covariance + rest
+  }
   attr(result, 'subspace') <- subspace
   result
 }
@@ -1519,360 +1531,96 @@ ctOptimFullBootstrapDraws <- function(est, standata, sm, n=1000, cores=1,
     tol=control$bootstrapTol)
 }
 
-ctOptimSurrogateDirections <- function(p, n){
-  dirs <- rbind(diag(p), -diag(p))
-  while(nrow(dirs) < n){
-    addn <- ceiling((n - nrow(dirs)) / 2)
-    z <- matrix(stats::rnorm(addn * p), nrow=addn)
-    z <- z / sqrt(rowSums(z^2))
-    dirs <- rbind(dirs, z, -z)
-  }
-  dirs[seq_len(n),,drop=FALSE]
+# Where the Hessian's normal misstates the posterior, and in which directions.
+#
+# The normal at the estimate is the curvature there, extrapolated, and it can
+# be wrong in a few directions while right in all the rest. The cases that
+# set this up: a person-level loading vector whose length the data determine
+# and whose direction they barely do -- a shell in the posterior, which the
+# Hessian's normal made 30 times too wide on the affect pilot's joint fit --
+# and a variance from a handful of groups, whose posterior is skewed and
+# scales the width of what it governs (a funnel). Neither is visible in the
+# curvature at the estimate, and neither warned.
+#
+# The check reads gradients at draws from the normal. In coordinates `z`
+# where the normal is N(0, I), its log density has gradient `-z`, so the
+# residual `r = A'g + z` -- `g` the log posterior's gradient at `est + A z` --
+# is zero wherever the normal is exact and lies in the directions where the
+# posterior departs from it. Every draw moves along every direction, so a few
+# dozen see all of them, whatever the number of parameters; the cost is
+# `ndraws` gradients. The directions are the residuals' singular vectors,
+# and each is judged by two numbers rather than by its singular value, which
+# with fewer draws than parameters is inflated by the draws' own spread:
+#
+#   * `slope`, the residual's regression on `z` along it. Where the posterior
+#     is normal with `sigma` times the normal's width, the residual is
+#     `(1 - 1 / sigma^2) z`, so the slope is that, exactly.
+#   * `shape`, the root mean square of what the slope leaves: a skew `kappa`
+#     leaves `kappa z^2 / 2`, a width that moves with another coordinate a
+#     product of the two.
+#
+# What either may reach is set by a coverage band, `.ctNormalResidualBars()`.
+# On synthetic targets with exact references (scripts/gsm-uncertainty-2026-10/
+# bench_*.R) this named nothing on a Gaussian, the two directions of a ring
+# and of a crescent, the two of a skewed variance's funnel, and exactly the
+# five of a five-dimensional shell mixed into thirty parameters.
+.ctOptimNormalCheck <- function(gradients, est, cov, ndraws = 32L,
+  coverage = c(0.90, 0.99)) {
+  eig <- eigen((cov + t(cov)) / 2, symmetric = TRUE)
+  keep <- eig$values > .ctFlatDirectionRtol() * max(eig$values)
+  A <- sweep(eig$vectors[, keep, drop = FALSE], 2, sqrt(eig$values[keep]), "*")
+  Z <- matrix(stats::rnorm(ndraws * ncol(A)), ndraws)
+  out <- gradients(sweep(Z %*% t(A), 2, est, "+"))
+  R <- as.matrix(out$gradient) %*% A + Z
+  usable <- is.finite(out$value) & out$value > -1e99 & rowSums(!is.finite(R)) == 0
+  bars <- .ctNormalResidualBars(coverage)
+  record <- list(draws = ndraws, unusable = sum(!usable), bars = bars,
+    directions = matrix(0, length(est), 0L), slope = numeric(), shape = numeric())
+  if (sum(usable) < 2L) return(record)
+  Z <- Z[usable, , drop = FALSE]
+  R <- R[usable, , drop = FALSE]
+  v <- svd(R)$v
+  along <- R %*% v
+  zalong <- Z %*% v
+  slope <- colSums(along * zalong) / colSums(zalong^2)
+  shape <- sqrt(colMeans((along - sweep(zalong, 2, slope, "*"))^2))
+  flagged <- which(slope > bars$narrow | slope < bars$wide | shape > bars$shape)
+  record$directions <- A %*% v[, flagged, drop = FALSE]
+  record$slope <- slope[flagged]
+  record$shape <- shape[flagged]
+  record
 }
 
-ctOptimSurrogateEvalPoint <- function(est, lpgFunc, cholcov, z, baseValue){
-  rawstep <- as.numeric(z %*% cholcov)
-  lp <- try(suppressMessages(suppressWarnings(lpgFunc(est + rawstep))),
-    silent=TRUE)
-  value <- NA_real_
-  grad <- rep(NA_real_, length(est))
-  if(!'try-error' %in% class(lp)) {
-    value <- lp[1]
-    lpgrad <- attributes(lp)$gradient
-    if(length(lpgrad) == length(est)) grad <- lpgrad
-  }
-  drop <- baseValue - value
-  finite <- is.finite(value) && is.finite(drop) && all(is.finite(grad))
-  list(white=as.numeric(z), raw=rawstep, value=value, gradient=grad,
-    drop=drop, finite=finite)
-}
-
-ctOptimSurrogateBestEval <- function(evals, targetDrop, preferRange=NULL){
-  drops <- vapply(evals, `[[`, numeric(1), 'drop')
-  finite <- vapply(evals, `[[`, logical(1), 'finite') &
-    is.finite(drops) & drops > 0
-  if(!is.null(preferRange)) {
-    inrange <- finite & drops >= preferRange[1] & drops <= preferRange[2]
-    if(any(inrange)) finite <- inrange
-  }
-  if(!any(finite)) {
-    finite <- vapply(evals, `[[`, logical(1), 'finite')
-  }
-  if(!any(finite)) return(evals[[length(evals)]])
-  ii <- which(finite)
-  ii <- ii[which.min(abs(log(pmax(drops[ii], .Machine$double.eps) /
-      targetDrop)))]
-  evals[[ii]]
-}
-
-ctOptimSurrogateRadiusForDrop <- function(radius, drop, targetDrop,
-  minFactor=.2, maxFactor=8, safety=1.1){
-  if(!is.finite(drop) || drop <= 0) return(radius * maxFactor)
-  factor <- sqrt(targetDrop / drop) * safety
-  radius * min(maxFactor, max(minFactor, factor))
-}
-
-ctOptimSurrogateTargetPoint <- function(est, lpgFunc, cholcov, direction,
-  targetDrop, dropRange, initialRadius, maxRadius=64, maxEval=6,
-  targetFactor=1.35, baseValue){
-  direction <- as.numeric(direction)
-  direction <- direction / sqrt(sum(direction^2))
-  evals <- list()
-  evalAt <- function(radius){
-    ev <- ctOptimSurrogateEvalPoint(est=est, lpgFunc=lpgFunc,
-      cholcov=cholcov, z=radius * direction, baseValue=baseValue)
-    ev$radius <- radius
-    ev
-  }
-  addEval <- function(radius){
-    evals[[length(evals) + 1L]] <<- evalAt(radius)
-    evals[[length(evals)]]
-  }
-  goodTarget <- function(ev){
-    ev$finite && is.finite(ev$drop) && ev$drop > 0 &&
-      abs(log(ev$drop / targetDrop)) <= log(targetFactor)
-  }
-  initialRadius <- max(.Machine$double.eps, initialRadius)
-  ev <- addEval(initialRadius)
-  if(goodTarget(ev)) {
-    ev$targeted <- TRUE
-    ev$neval <- length(evals)
-    return(ev)
-  }
-  
-  low <- 0
-  high <- initialRadius
-  if(ev$finite && is.finite(ev$drop) && ev$drop > 0 &&
-      ev$drop < targetDrop) {
-    low <- initialRadius
-    while(length(evals) < maxEval && high < maxRadius) {
-      high <- min(maxRadius, ctOptimSurrogateRadiusForDrop(high,
-        ev$drop, targetDrop, minFactor=1.5))
-      ev <- addEval(high)
-      if(goodTarget(ev)) {
-        ev$targeted <- TRUE
-        ev$neval <- length(evals)
-        return(ev)
-      }
-      if(!ev$finite || !is.finite(ev$drop) || ev$drop >= targetDrop) break
-      low <- high
-    }
-  }
-  
-  while(length(evals) < maxEval && high > 0 && high > low) {
-    if(is.finite(ev$drop) && ev$drop > targetDrop && low == 0) {
-      mid <- ctOptimSurrogateRadiusForDrop(high, ev$drop, targetDrop,
-        minFactor=.1, maxFactor=.8, safety=.9)
-      mid <- min(high * .95, max(.Machine$double.eps, mid))
-    } else {
-      mid <- (low + high) / 2
-    }
-    ev <- addEval(mid)
-    if(goodTarget(ev)) {
-      ev$targeted <- TRUE
-      ev$neval <- length(evals)
-      return(ev)
-    }
-    if(!ev$finite || !is.finite(ev$drop) || ev$drop >= targetDrop) {
-      high <- mid
-    } else {
-      low <- mid
-    }
-  }
-  
-  ev <- ctOptimSurrogateBestEval(evals=evals, targetDrop=targetDrop,
-    preferRange=dropRange)
-  ev$targeted <- ev$finite && is.finite(ev$drop) && ev$drop >= dropRange[1] &&
-    ev$drop <= dropRange[2]
-  ev$neval <- length(evals)
-  ev
-}
-
-ctOptimSurrogateBacktransformHessian <- function(hessWhite, cholcov){
-  invchol <- backsolve(cholcov, diag(ncol(cholcov)))
-  hess <- invchol %*% hessWhite %*% t(invchol)
-  (hess + t(hess)) / 2
-}
-
-ctOptimSurrogateProfileDirections <- function(est, lpgFunc, cholcov,
-  directions, targetDrop=2, maxStep=64, tol=.02, maxIter=25,
-  initialStep=1, maxExpand=4, baseValue=NULL, verbose=0){
-  if(is.null(baseValue)) {
-    baseValue <- suppressMessages(suppressWarnings(lpgFunc(est)))[1]
-  }
-  directions <- as.matrix(directions)
-  if(nrow(directions) < 1) {
-    return(data.frame())
-  }
-  evalDrop <- function(z){
-    rawstep <- as.numeric(z %*% cholcov)
-    lp <- try(suppressMessages(suppressWarnings(lpgFunc(est + rawstep))),
-      silent=TRUE)
-    if('try-error' %in% class(lp)) return(NA_real_)
-    baseValue - lp[1]
-  }
-  out <- vector('list', nrow(directions) * 2L)
-  oi <- 0L
-  for(di in seq_len(nrow(directions))){
-    diri <- directions[di,]
-    diri <- diri / sqrt(sum(diri^2))
-    maxStepi <- maxStep[min(length(maxStep), di)]
-    initialStepi <- initialStep[min(length(initialStep), di)]
-    if(!is.finite(maxStepi) || maxStepi <= 0) maxStepi <- 64
-    if(!is.finite(initialStepi) || initialStepi <= 0) initialStepi <- 1
-    initialStepi <- min(initialStepi, maxStepi)
-    for(sgn in c(-1, 1)){
-      oi <- oi + 1L
-      low <- 0
-      high <- initialStepi
-      dhigh <- evalDrop(sgn * high * diri)
-      while(is.finite(dhigh) && dhigh < targetDrop && high < maxStepi){
-        low <- high
-        high <- min(maxStepi, ctOptimSurrogateRadiusForDrop(high,
-          dhigh, targetDrop, minFactor=1.5))
-        dhigh <- evalDrop(sgn * high * diri)
-      }
-      expand <- 0L
-      while(is.finite(dhigh) && dhigh < targetDrop && expand < maxExpand) {
-        expand <- expand + 1L
-        low <- high
-        high2 <- ctOptimSurrogateRadiusForDrop(high, dhigh, targetDrop,
-          minFactor=1.5, maxFactor=16)
-        if(!is.finite(high2) || high2 <= high) high2 <- high * 2
-        high <- high2
-        dhigh <- evalDrop(sgn * high * diri)
-      }
-      reached <- is.finite(dhigh) && dhigh >= targetDrop
-      if(reached) {
-        for(iter in seq_len(maxIter)){
-          if(low == 0 && is.finite(dhigh) && dhigh > targetDrop) {
-            mid <- ctOptimSurrogateRadiusForDrop(high, dhigh, targetDrop,
-              minFactor=.1, maxFactor=.8, safety=.9)
-            mid <- min(high * .95, max(.Machine$double.eps, mid))
-          } else {
-            mid <- (low + high) / 2
-          }
-          dmid <- evalDrop(sgn * mid * diri)
-          if(!is.finite(dmid) || dmid >= targetDrop) high <- mid else low <- mid
-          if(is.finite(dmid) && abs(dmid - targetDrop) <= tol * targetDrop) break
-        }
-        step <- high
-        drop <- evalDrop(sgn * step * diri)
-        curvature <- 2 * targetDrop / step^2
-      } else {
-        step <- high
-        drop <- dhigh
-        curvature <- if(is.finite(drop) && drop > 0) 2 * drop / step^2
-          else NA_real_
-      }
-      status <- if(reached) 'reached' else if(!is.finite(drop)) {
-        'nonfinite'
-      } else if(drop < targetDrop) {
-        'belowTargetAtMaxStep'
-      } else {
-        'notReached'
-      }
-      out[[oi]] <- data.frame(direction=di, sign=sgn, step=step,
-        drop=drop, curvature=curvature, reached=reached, status=status,
-        expansions=expand)
-    }
-  }
-  profiles <- do.call(rbind, out)
-  if(verbose > 0) {
-    message('Surrogate profiled ', nrow(directions), ' direction(s); ',
-      sum(profiles$reached), '/', nrow(profiles),
-      ' one-sided targets reached')
-    if(any(!profiles$reached)) {
-      message('Surrogate profile misses: ',
-        paste(names(table(profiles$status[!profiles$reached])),
-          as.integer(table(profiles$status[!profiles$reached])),
-          sep='=', collapse=', '))
-    }
-  }
-  profiles
-}
-
-ctOptimSurrogateProfileCurvature <- function(hessWhite, est, lpgFunc,
-  cholcov, targetDrop=2, maxStep=64, baseValue=NULL, verbose=0){
-  infoWhite <- -((hessWhite + t(hessWhite)) / 2)
-  eig <- eigen(infoWhite, symmetric=TRUE)
-  directions <- t(eig$vectors)
-  expectedStep <- rep(maxStep, length(eig$values))
-  positive <- is.finite(eig$values) & eig$values > 0
-  expectedStep[positive] <- sqrt(2 * targetDrop / eig$values[positive])
-  expectedStep[!is.finite(expectedStep) | expectedStep <= 0] <- maxStep
-  profileMaxStep <- pmax(maxStep, expectedStep * 2)
-  profileInitialStep <- pmax(.Machine$double.eps, expectedStep)
-  profiles <- ctOptimSurrogateProfileDirections(est=est, lpgFunc=lpgFunc,
-    cholcov=cholcov, directions=directions, targetDrop=targetDrop,
-    maxStep=profileMaxStep, initialStep=profileInitialStep,
-    baseValue=baseValue, verbose=verbose)
-  adjusted <- 0L
-  newvals <- eig$values
-  for(i in seq_along(newvals)){
-    curv <- profiles$curvature[profiles$direction == i &
-        is.finite(profiles$curvature)]
-    if(length(curv) > 0) {
-      profileCurv <- max(curv)
-      if(is.finite(profileCurv) && profileCurv > newvals[i]) {
-        newvals[i] <- profileCurv
-        adjusted <- adjusted + 1L
-      }
-    }
-  }
-  infoWhite <- eig$vectors %*% diag(newvals, length(newvals)) %*%
-    t(eig$vectors)
-  infoWhite <- (infoWhite + t(infoWhite)) / 2
-  list(hessWhite=-infoWhite, profiles=profiles, nProfiled=length(newvals),
-    nAdjusted=adjusted)
-}
-
-ctOptimSurrogateHessian <- function(est, lpgFunc, cov, npoints=NULL,
-  scale=.5, ridge=1e-6, profile=TRUE, profileTargetDrop=NULL,
-  profileMaxStep=64, verbose=0){
-  p <- length(est)
-  if(is.null(npoints)) npoints <- max(4 * p, 50)
-  cov <- ctOptimSafeCov(cov, ridge=ridge)
-  cholcov <- chol(cov)
-  targetDrop <- 2
-  dropRange <- c(.25, 6)
-  defaultScale <- .5
-  initialRadius <- (scale / defaultScale) * sqrt(2 * targetDrop)
-  base <- suppressMessages(suppressWarnings(lpgFunc(est)))
-  baseValue <- base[1]
-  basegrad <- attributes(base)$gradient
-  if(is.null(basegrad) || any(!is.finite(basegrad))) basegrad <- rep(0, p)
-  
-  directions <- ctOptimSurrogateDirections(p=p, n=npoints)
-  evals <- vector('list', npoints)
-  for(i in seq_len(npoints)){
-    if(verbose > 0) message('\rFitting local quadratic surrogate, point ',
-      i, '/', npoints, appendLF=FALSE)
-    evals[[i]] <- ctOptimSurrogateTargetPoint(est=est, lpgFunc=lpgFunc,
-      cholcov=cholcov, direction=directions[i,], targetDrop=targetDrop,
-      dropRange=dropRange, initialRadius=initialRadius,
-      baseValue=baseValue)
-  }
-  if(verbose > 0) message('')
-  values <- vapply(evals, `[[`, numeric(1), 'value')
-  drops <- vapply(evals, `[[`, numeric(1), 'drop')
-  targeted <- vapply(evals, `[[`, logical(1), 'targeted')
-  neval <- vapply(evals, `[[`, numeric(1), 'neval')
-  gradients <- do.call(rbind, lapply(evals, `[[`, 'gradient'))
-  design <- do.call(rbind, lapply(evals, `[[`, 'raw'))
-  whiteDesign <- do.call(rbind, lapply(evals, `[[`, 'white'))
-  finite <- is.finite(values) & is.finite(drops) &
-    apply(gradients, 1, function(x) all(is.finite(x)))
-  inrange <- finite & drops >= dropRange[1] & drops <= dropRange[2]
-  positive <- finite & drops > 0
-  keep <- inrange
-  if(sum(keep) < npoints && any(positive & !keep)) {
-    add <- which(positive & !keep)
-    add <- add[order(abs(log(pmax(drops[add], .Machine$double.eps) /
-        targetDrop)))]
-    keep[add[seq_len(min(length(add), npoints - sum(keep)))]] <- TRUE
-  }
-  if(sum(keep) <= p) stop('Too few finite surrogate evaluations')
-  design <- design[keep,,drop=FALSE]
-  whiteDesign <- whiteDesign[keep,,drop=FALSE]
-  gradients <- gradients[keep,,drop=FALSE]
-  values <- values[keep]
-  drops <- drops[keep]
-  diagnostics <- list(nRequested=npoints, nUsed=nrow(design),
-    nTargeted=sum(targeted), nInRange=sum(inrange),
-    nFinitePositive=sum(positive), nFinite=sum(finite),
-    meanEvaluations=mean(neval), maxEvaluations=max(neval),
-    targetDrop=targetDrop, dropRange=dropRange)
-  rawgrad <- sweep(gradients, 2, basegrad, '-')
-  y <- rawgrad %*% t(cholcov)
-  pointWeights <- 1 / pmax(abs(log(pmax(drops, .Machine$double.eps) /
-        targetDrop)), .25)
-  pointWeights <- pointWeights / mean(pointWeights, na.rm=TRUE)
-  sqrtw <- sqrt(pointWeights)
-  xw <- whiteDesign * sqrtw
-  yw <- y * sqrtw
-  xtx <- crossprod(xw) + diag(ridge, p)
-  coef <- solve(xtx, crossprod(xw, yw))
-  hessWhite <- (t(coef) + coef) / 2
-  if(isTRUE(profile)) {
-    profiled <- ctOptimSurrogateProfileCurvature(hessWhite=hessWhite,
-      est=est, lpgFunc=lpgFunc, cholcov=cholcov,
-      targetDrop=if(is.null(profileTargetDrop)) targetDrop else profileTargetDrop,
-      maxStep=profileMaxStep, baseValue=baseValue, verbose=verbose)
-    hessWhite <- profiled$hessWhite
-  } else {
-    profiled <- list(profiles=data.frame(), nProfiled=0L, nAdjusted=0L,
-      note='Directional profiling disabled')
-  }
-  hess <- ctOptimSurrogateBacktransformHessian(hessWhite, cholcov)
-  list(hessian=hess, values=values, gradients=gradients, design=design,
-    whiteDesign=whiteDesign, drops=drops, targetDrop=targetDrop, dropRange=dropRange,
-    scale=initialRadius, parScale=rep(1, p), nfinite=sum(keep),
-    rounds=1, diagnostics=diagnostics, profile=profiled)
+# The residuals a direction may carry before the normal's 95% interval along
+# it covers less than `coverage[1]` or more than `coverage[2]`: 90% and 99%.
+#
+#   * `narrow`, `1 - (qnorm(0.95) / qnorm(0.975))^2` = 0.30: the slope of a
+#     direction whose true width is 1.19 times the normal's, where the
+#     interval covers 90%.
+#   * `wide`, `1 - (qnorm(0.995) / qnorm(0.975))^2` = -0.73: 0.76 times, 99%.
+#   * `shape`, 0.39: the residual of a skew that moves one tail of the
+#     interval out of 0.5-5%, the per-side form of the same band.
+#
+# Why that band. Bradley's (1978) liberal criterion -- an error rate within
+# half and one and a half times nominal, 92.5-97.5% coverage -- is the usual
+# bar for calling an interval procedure robust, but standard deviations from
+# the correction this triggers, importance sampling to an effective sample of
+# 200, carry about five per cent of Monte Carlo error, and the reference
+# posteriors they were checked against about as much; inside Bradley's band
+# the check would trigger on differences neither can resolve. Doubling the
+# nominal error rate, or cutting it to a fifth, is outside it on both sides.
+.ctNormalResidualBars <- function(coverage = c(0.90, 0.99)) {
+  a <- stats::qnorm(0.975)
+  ends <- stats::qnorm((1 + coverage) / 2)
+  # Per-side drops at the interval's end that leave a tail of (1 - coverage) / 2.
+  drops <- rev(ends)^2 / 2
+  kappa <- min(drops[1L] - a^2 / 2, a^2 / 2 - drops[2L]) * 6 / a^3
+  list(narrow = 1 - (ends[1L] / a)^2, wide = 1 - (ends[2L] / a)^2,
+    shape = kappa * sqrt(3) / 2, coverage = coverage)
 }
 
 ctOptimComputeUncertainty <- function(est, standata, sm, lpgFunc,
-  uncertainty=c('hessian','surrogate','is','bootstrap','fullbootstrap',
+  uncertainty=c('hessian','checked','is','bootstrap','fullbootstrap',
     'sandwich','opg'),
   finishsamples=1000, cores=1, matsetup=NA, control=list(), verbose=0,
   scores=NULL, hessian=NULL){
@@ -1882,15 +1630,6 @@ ctOptimComputeUncertainty <- function(est, standata, sm, lpgFunc,
     finishsamples=finishsamples, npars=length(est))
   if(is.null(control$ridge)) control$ridge <- 1e-8
   if(is.null(control$hessianStep)) control$hessianStep <- 1e-3
-  if(is.null(control$surrogateScale)) control$surrogateScale <- .5
-  if(is.null(control$surrogateNpoints)) control$surrogateNpoints <- NULL
-  if(is.null(control$surrogateProfile)) control$surrogateProfile <- TRUE
-  if(is.null(control$surrogateProfileTargetDrop)) {
-    control$surrogateProfileTargetDrop <- NULL
-  }
-  if(is.null(control$surrogateProfileMaxStep)) {
-    control$surrogateProfileMaxStep <- 64
-  }
   
   base <- suppressMessages(suppressWarnings(lpgFunc(est)))
   base_gradient <- attributes(base)$gradient
@@ -1902,15 +1641,8 @@ ctOptimComputeUncertainty <- function(est, standata, sm, lpgFunc,
   scoremat <- NULL
   draws <- NULL
   method_details <- list()
-  covavailable <- FALSE
-  
-  if(uncertainty == 'surrogate' && !is.null(control$initialCov)){
-    cov <- ctOptimSafeCov(control$initialCov, ridge=control$ridge)
-    covavailable <- TRUE
-  }
-  
-  if(uncertainty %in% c('hessian','sandwich','bootstrap','is') ||
-      (uncertainty == 'surrogate' && !covavailable)){
+
+  if(uncertainty %in% c('hessian','checked','sandwich','bootstrap','is')){
     if(!is.null(hessian)){
       # An exact Hessian supplied by the caller -- see .ctBackendHessian(),
       # which gets one from the julia engine by differentiating its own
@@ -1974,7 +1706,14 @@ ctOptimComputeUncertainty <- function(est, standata, sm, lpgFunc,
           max(screen$eig$values),
         vectors = screen$eig$vectors[, screen$flat, drop = FALSE])
     }
-    covavailable <- TRUE
+    # Where this normal misstates the posterior, from gradients at draws from
+    # it; `.ctOptimDrawSamples()` importance samples those directions. See
+    # `.ctOptimNormalCheck()`.
+    if(uncertainty == 'checked') {
+      method_details$normalcheck <- .ctOptimNormalCheck(.ctJuliaOr(
+        .ctImisGradient(lpgFunc, est), attr(.ctImisPointGradbatch(lpgFunc), 'gradbatch')),
+        est, cov)
+    }
   }
   
   if(uncertainty == 'opg'){
@@ -2016,25 +1755,13 @@ ctOptimComputeUncertainty <- function(est, standata, sm, lpgFunc,
     }
   }
   
-  if(uncertainty == 'surrogate'){
-    message('Estimating local quadratic surrogate')
-    surrogate <- ctOptimSurrogateHessian(est=est, lpgFunc=lpgFunc, cov=cov,
-      npoints=control$surrogateNpoints, scale=control$surrogateScale,
-      ridge=control$ridge,
-      profile=control$surrogateProfile,
-      profileTargetDrop=control$surrogateProfileTargetDrop,
-      profileMaxStep=control$surrogateProfileMaxStep,
-      verbose=verbose)
-    hess <- surrogate$hessian
-    cov <- ctOptimCovFromHessian(hess, ridge=control$ridge)
-    method_details$surrogate <- surrogate
-  }
   covDiagnostics <- attr(cov, 'ctOptimCovFromHessian')
   if(!is.null(covDiagnostics)) method_details$covariance <- covDiagnostics
   
   if(!is.null(hessian)) method_details$hessian <- list(
     source='exact, by forward-mode differentiation of the reverse-mode gradient')
-  list(method=uncertainty, cov=cov, hessian=if(exists('hess')) hess else NULL,
+  list(method=uncertainty, cov=cov,
+    hessian=if(exists('hess')) hess else NULL,
     scores=scoremat, draws=draws, base_value=base[1],
     base_gradient=base_gradient, details=method_details)
 }
@@ -2131,9 +1858,19 @@ ctOptimFitLpgFunc <- function(fit, cores=1){
 # -- the argument appeared to be a choice and was not. It is now derived, and an
 # incompatible request is an error rather than a warning about something the
 # code went on to ignore.
+# `'surrogate'` shipped in 3.11.1 and is gone: refused by name, so a script
+# written for it is told what replaced it rather than handed match.arg's list.
+.ctUncertaintyRemoved <- function(uncertainty) {
+  if(identical(uncertainty, 'surrogate')) stop("uncertainty = 'surrogate' ",
+    "was removed in ctsem 4.0.0. uncertainty = 'checked' does what it ",
+    "approximated: it checks the Hessian's normal over the posterior's own ",
+    "width and corrects it where it is wrong.", call.=FALSE)
+}
+
 .ctResolveDraws <- function(uncertainty, draws) {
   implied <- switch(uncertainty,
     is = 'imis',
+    checked = 'imis',
     bootstrap = 'empirical',
     fullbootstrap = 'empirical',
     'normal')
@@ -2203,12 +1940,16 @@ ctOptimFitLpgFunc <- function(fit, cores=1){
 
   if (draws == 'empirical' && !is.null(uncertaintyfit$draws)) {
     return(list(samples = uncertaintyfit$draws, uncertaintyfit = uncertaintyfit,
-      control = control))
+      control = control, draws = draws))
   }
 
-  if (draws != 'imis') {
+  # `'checked'` samples only the directions its check named, and none when it
+  # named none: the normal is then the answer.
+  directions <- if (identical(uncertaintyfit$method, 'checked'))
+    uncertaintyfit$details$normalcheck$directions else NULL
+  if (draws != 'imis' || (!is.null(directions) && !ncol(directions))) {
     return(list(samples = ctOptimNormalDraws(est, uncertaintyfit$cov, finishsamples),
-      uncertaintyfit = uncertaintyfit, control = control))
+      uncertaintyfit = uncertaintyfit, control = control, draws = 'normal'))
   }
 
   if (is.null(control$imisMaxIter)) control$imisMaxIter <- 50
@@ -2227,7 +1968,7 @@ ctOptimFitLpgFunc <- function(fit, cores=1){
   # `IS-importance-sampling-2026-09-06.md`. `lpg` value-only carries the batch
   # attribute `.ctBackendLpgFunc(fit, gradient=FALSE)` sets, whitened or not.
   is_res <- .ctImisRun(lpg, centre = est, cov = uncertaintyfit$cov,
-    max_iter = control$imisMaxIter, scale_init = control$imisScaleInit,
+    directions = directions, max_iter = control$imisMaxIter, scale_init = control$imisScaleInit,
     tail_scale = control$imisTailScale, df = control$imisDf,
     target_ess = control$isESS, n_batch = control$isitersize, cl = NA,
     finishsamples = finishsamples,
@@ -2268,15 +2009,18 @@ ctOptimFitLpgFunc <- function(fit, cores=1){
     # parameter vector, as `ctOptimCovFromHessian()`'s `nullParameters` is,
     # because names are not attached to this vector until
     # `.ctFitNameRawUncertainty()` runs, further down the caller.
-    subspace = if (is.null(subspace)) NULL else list(
+    subspace = if (is.null(subspace) || !is.null(directions)) NULL else list(
       nullDirections = subspace$nnull, heldParameters = subspace$nullParameters),
+    # How many directions `'checked'` sampled; the normal held the rest.
+    directions = if (!is.null(directions)) ncol(directions),
     # How much it cost and what the profile-path search found: the log
     # density's evaluations, the rounds of draws, and the parameters (or
     # subspace directions) whose paths had a tail to follow; see `imis_is()`.
     evaluations = is_res$evaluations, rounds = nrow(is_res$rounds),
     paths = is_res$paths)
 
-  list(samples = samples, uncertaintyfit = uncertaintyfit, control = control)
+  list(samples = samples, uncertaintyfit = uncertaintyfit, control = control,
+    draws = 'imis')
 }
 
 .ctOptimStoredRedraw <- function(fit, finishsamples, cores, verbose=0){
@@ -2286,7 +2030,7 @@ ctOptimFitLpgFunc <- function(fit, cores=1){
   if(is.null(cov) || !length(cov) || any(!is.finite(cov))) stop(
     "uncertainty='stored' redraws from the covariance already on the fit, and ",
     "this fit has no usable one. Run ctFitUncertainty() with a method that ",
-    "computes one first -- 'hessian' is the default.", call.=FALSE)
+    "computes one first -- 'checked' is the default.", call.=FALSE)
   if(is.null(est) || length(est) != ncol(cov)) stop(
     "uncertainty='stored' needs the fit's raw estimate and stored covariance ",
     "to describe the same parameters; they do not.", call.=FALSE)
@@ -2374,14 +2118,24 @@ ctOptimFitLpgFunc <- function(fit, cores=1){
 #'
 #' @section Methods:
 #' \describe{
-#' \item{\code{'hessian'}}{The default: a normal approximation from the Hessian
-#' at the estimate -- exact on julia, which differentiates its own gradient,
-#' and by finite differences of the gradient on stan.}
-#' \item{\code{'surrogate'}}{Fits a local quadratic surrogate to log-posterior
-#' evaluations around the optimum, in coordinates whitened by the proposal
-#' covariance. Each direction is adjusted radially so its points land near an
-#' informative drop, and with \code{surrogateProfile = TRUE} every fitted
-#' curvature direction is then profiled out to the target drop.}
+#' \item{\code{'checked'}}{The default: the Hessian's normal, checked, and
+#' corrected by importance sampling in the directions where it is wrong. The
+#' log posterior's gradient at 32 draws from the normal says where the
+#' posterior departs from it, whatever the number of parameters: directions
+#' where the normal's 95\% interval would cover under 90\% or over 99\%, or
+#' where a skew or a width that moves with another parameter moves one tail
+#' outside 0.5 to 5\%. Those directions are sampled as \code{'is'} samples
+#' (below), the normal kept in all the rest. This is what corrects a curved
+#' ridge -- a loading vector whose length the data determine and whose
+#' direction they barely do, where the Hessian's intervals can be many times
+#' too wide -- and a variance from few groups and the effects it scales. A fit
+#' with nothing named gets exactly the Hessian's normal, for 32 gradients. The
+#' check is recorded in \code{$uncertainty$details$normalcheck}, and the
+#' sampling, when there was any, in
+#' \code{$uncertainty$details$importance_sampling}.}
+#' \item{\code{'hessian'}}{A normal approximation from the Hessian at the
+#' estimate, unchecked -- exact on julia, which differentiates its own
+#' gradient, and by finite differences of the gradient on stan.}
 #' \item{\code{'bootstrap'}, \code{'sandwich'}, \code{'opg'}}{Built from
 #' per-subject score contributions: one-step score bootstrap draws with
 #' Hessian bread, Hessian bread with score covariance meat, and the outer
@@ -2587,8 +2341,8 @@ ctOptimFitLpgFunc <- function(fit, cores=1){
 #'
 #' @param fit Optimized \code{ctStanFit} or \code{ctJuliaFit} object, or for
 #' \code{uncertainty = 'sample'} a julia fit that is already sampled.
-#' @param uncertainty Which method: \code{'hessian'} (the default),
-#' \code{'surrogate'}, \code{'is'}, \code{'bootstrap'},
+#' @param uncertainty Which method: \code{'checked'} (the default),
+#' \code{'hessian'}, \code{'is'}, \code{'bootstrap'},
 #' \code{'fullbootstrap'}, \code{'sandwich'}, \code{'opg'}, \code{'stored'},
 #' or \code{'sample'}. See the Methods section, and Sampling for
 #' \code{'sample'}.
@@ -2627,28 +2381,15 @@ ctOptimFitLpgFunc <- function(fit, cores=1){
 #' \code{init_scale}, and NUTS's \code{maxdepth}, \code{target_accept},
 #' \code{adapt_metric} and \code{adapt_effects}); none of the entries below
 #' apply to it. For every other method, useful entries include
-#' \code{ridge}, \code{hessianStep}, \code{surrogateNpoints},
-#' \code{surrogateScale}, \code{surrogateProfile},
-#' \code{surrogateProfileTargetDrop}, \code{surrogateProfileMaxStep},
-#' \code{bootstrapFitCores}, \code{bootstrapTol}, \code{imisMaxIter},
+#' \code{ridge}, \code{hessianStep}, \code{bootstrapFitCores}, \code{bootstrapTol}, \code{imisMaxIter},
 #' \code{imisScaleInit}, \code{imisTailScale}, \code{imisDf}, \code{isESS},
 #' and \code{isitersize}. Omitted entries use
 #' \code{ridge = 1e-8}, \code{hessianStep = 1e-3},
-#' \code{surrogateScale = .5}, \code{surrogateNpoints = NULL},
-#' \code{surrogateProfile = TRUE},
-#' \code{surrogateProfileTargetDrop = NULL},
-#' \code{surrogateProfileMaxStep = 64},
 #' \code{bootstrapFitCores = 1}, \code{bootstrapTol = 1e-5},
 #' \code{imisMaxIter = 50}, \code{imisScaleInit = 1.1},
 #' \code{imisTailScale = 1.1} (1.5 and 1.2 on julia), \code{imisDf = 5} (the
 #' proposal components' t degrees of freedom; \code{Inf} for normal),
-#' \code{isESS = 200}, and \code{isitersize = 1000}. When
-#' \code{surrogateNpoints} is \code{NULL}, the surrogate uses at least
-#' \code{max(4 * npars, 50)} local directions; \code{surrogateProfile = TRUE}
-#' profiles every fitted surrogate direction until it reaches
-#' \code{surrogateProfileTargetDrop} (the surrogate's own target drop when
-#' \code{NULL}), going beyond \code{surrogateProfileMaxStep} where the
-#' surrogate predicts a flat direction needs it. \code{parsteps} keeps
+#' \code{isESS = 200}, and \code{isitersize = 1000}. \code{parsteps} keeps
 #' stepwise-fixed raw parameters fixed (stan only).
 #' \code{analyticHessian = FALSE} (julia only) asks for the finite-difference
 #' Hessian instead of the engine's exact one. \code{likelihood} (\code{'fit'},
@@ -2690,8 +2431,8 @@ ctOptimFitLpgFunc <- function(fit, cores=1){
 #' fit$stanfit$uncertainty$settings$redrawn
 #'
 #' \donttest{
-#' # A local quadratic surrogate rather than the Hessian
-#' fit <- ctFitUncertainty(ctstantestfit, uncertainty = 'surrogate')
+#' # The Hessian's normal, checked, and importance sampled where it is wrong
+#' fit <- ctFitUncertainty(ctstantestfit, uncertainty = 'checked')
 #' summary(fit)$popmeans
 #'
 #' # Needs a working julia backend, so the example is inert where Julia is
@@ -2713,7 +2454,7 @@ ctOptimFitLpgFunc <- function(fit, cores=1){
 #' }
 #' @export
 ctFitUncertainty <- function(fit,
-  uncertainty=c('hessian','surrogate','is','bootstrap','fullbootstrap',
+  uncertainty=c('checked','hessian','is','bootstrap','fullbootstrap',
     'sandwich','opg','stored','sample'),
   draws=c('auto','normal','empirical','imis'), finishsamples=NULL,
   cores=getOption("mc.cores", 2L), control=list(), verbose=0, ...){
@@ -2728,6 +2469,7 @@ ctFitUncertainty <- function(fit,
       ". A method's settings are entries of control, as in ",
       "control = list(", dotnames[1L], " = ...).", call.=FALSE)
   }
+  .ctUncertaintyRemoved(uncertainty)
   uncertainty <- match.arg(uncertainty)
   if(identical(uncertainty, 'sample')) .ctWeightsRefuse(fit,
     "ctFitUncertainty(uncertainty = 'sample')")
@@ -2883,10 +2625,6 @@ ctFitUncertainty <- function(fit,
       try(file.remove(lpgsetup$smfile), silent=TRUE)
     }
   }, add=TRUE)
-  if(uncertainty == 'surrogate' && is.null(control$initialCov) &&
-      !is.null(fit$stanfit$cov)) {
-    control$initialCov <- fit$stanfit$cov
-  }
   if(is.null(control$parsteps) &&
       !is.null(fit$stanfit$uncertainty$fixedpars)) {
     control$parsteps <- fit$stanfit$uncertainty$fixedpars
@@ -2904,9 +2642,6 @@ ctFitUncertainty <- function(fit,
   lpguse <- lpgsetup$lpg
   if(length(parsteps) > 0) {
     estuse <- fit$stanfit$rawest[freepars]
-    if(!is.null(control$initialCov)) {
-      control$initialCov <- control$initialCov[freepars, freepars, drop=FALSE]
-    }
     lpguse <- function(parm){
       fullparm <- fit$stanfit$rawest
       fullparm[freepars] <- parm
@@ -2960,7 +2695,8 @@ ctFitUncertainty <- function(fit,
   samples <- drawn$samples
   uncertaintyfit <- drawn$uncertaintyfit
   control <- drawn$control
-  
+  draws <- drawn$draws
+
   fit$stanfit$cov <- uncertaintyfit$cov
   fit$stanfit$rawposterior <- samples
   # As on julia. A no-op when this is called from inside `stanoptimis()`, where
@@ -2970,7 +2706,6 @@ ctFitUncertainty <- function(fit,
   fit$stanfit$uncertainty <- uncertaintyfit
   fit$stanfit$uncertainty$draws <- draws
   storedControl <- control
-  storedControl$initialCov <- NULL
   storedControl$parsteps <- NULL
   fit$stanfit$uncertainty$settings <- list(
     method=uncertainty,
@@ -2992,10 +2727,11 @@ ctFitUncertainty <- function(fit,
 #' where \code{uncertainty = 'sample'} is documented.
 #' @export
 ctOptimUncertainty <- function(fit,
-  uncertainty=c('hessian','surrogate','is','bootstrap','fullbootstrap',
+  uncertainty=c('hessian','checked','is','bootstrap','fullbootstrap',
     'sandwich','opg','stored'),
   draws=c('auto','normal','empirical','imis'), finishsamples=NULL,
   cores=getOption("mc.cores", 2L), control=list(), verbose=0, ...){
+  .ctUncertaintyRemoved(uncertainty)
   uncertainty <- match.arg(uncertainty)
   ctFitUncertainty(fit, uncertainty=uncertainty, draws=draws,
     finishsamples=finishsamples, cores=cores, control=control,

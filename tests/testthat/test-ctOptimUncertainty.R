@@ -14,17 +14,6 @@ test_that("ctOptimComputeUncertainty recovers quadratic covariance", {
     verbose=0)
   expect_equal(diag(hess$cov), c(.5, .25), tolerance=.01)
   
-  surrogate <- ctsem:::ctOptimComputeUncertainty(c(0, 0), list(nsubjects=1),
-    sm=NULL, lpgFunc=lpg, uncertainty='surrogate', finishsamples=20,
-    control=list(initialCov=diag(2), surrogateNpoints=20), verbose=0)
-  expect_equal(diag(surrogate$cov), c(.5, .25), tolerance=.01)
-  
-  surrogate_from_hessian <- ctsem:::ctOptimComputeUncertainty(c(0, 0),
-    list(nsubjects=1), sm=NULL, lpgFunc=lpg, uncertainty='surrogate',
-    finishsamples=20, control=list(surrogateNpoints=20), verbose=0)
-  expect_equal(diag(surrogate_from_hessian$cov), c(.5, .25),
-    tolerance=.01)
-  
   is_proposal <- ctsem:::ctOptimComputeUncertainty(c(0, 0),
     list(nsubjects=1), sm=NULL, lpgFunc=lpg, uncertainty='is',
     finishsamples=20, verbose=0)
@@ -103,106 +92,132 @@ test_that("Hessian processing reports one-sided and weak curvature parameters", 
   expect_equal(out$probpars, 3)
 })
 
-test_that("surrogate design scales with dimension and filters lp outliers", {
+test_that("the normal check's bars are the coverage band's", {
+  bars <- ctsem:::.ctNormalResidualBars()
+  # A direction 1.19 times wider than the normal says covers 90%; 0.76 times,
+  # 99%; and a skew of 0.45 moves one tail to 0.5% or 5%.
+  expect_equal(bars$narrow, 1 - (qnorm(0.95) / qnorm(0.975))^2)
+  expect_equal(bars$wide, 1 - (qnorm(0.995) / qnorm(0.975))^2)
+  expect_equal(2 * pnorm(-qnorm(0.975) * sqrt(1 - bars$narrow)), 0.10)
+  expect_equal(2 * pnorm(-qnorm(0.975) * sqrt(1 - bars$wide)), 0.01)
+  kappa <- bars$shape * 2 / sqrt(3)
+  drop <- qnorm(0.975)^2 / 2 - kappa * qnorm(0.975)^3 / 6
+  expect_equal(pnorm(-sqrt(2 * drop)), 0.05)
+})
+
+# Log densities with gradients, and their exact moments on a grid.
+.checkedTarget <- function(lp, grad, mode, grid) {
+  lpg <- function(x) {
+    out <- lp(matrix(x, 1))
+    attr(out, 'gradient') <- grad(x)
+    out
+  }
+  v <- lp(grid)
+  w <- exp(v - max(v))
+  w <- w / sum(w)
+  mean <- colSums(grid * w)
+  list(lpg = lpg, mode = mode, mean = unname(mean),
+    sd = unname(sqrt(colSums(sweep(grid, 2, mean)^2 * w))))
+}
+.checkedRun <- function(target, uncertainty) {
+  out <- suppressMessages(ctsem:::ctOptimComputeUncertainty(target$mode,
+    list(nsubjects = 1), sm = NULL, lpgFunc = target$lpg,
+    uncertainty = uncertainty, finishsamples = 1000, verbose = 0))
+  drawn <- suppressWarnings(suppressMessages(ctsem:::.ctOptimDrawSamples(out,
+    ctsem:::.ctResolveDraws(uncertainty, 'auto'), list(), target$mode, 1000,
+    lpg = ctsem:::.ctImisPointGradbatch(target$lpg))))
+  c(drawn, list(check = out$details$normalcheck))
+}
+
+test_that("checked leaves the normal of a Gaussian posterior alone", {
+  set.seed(3)
+  S <- crossprod(matrix(rnorm(36), 6)) / 6 + diag(6) / 10
+  P <- solve(S)
+  lpg <- function(x) {
+    out <- -0.5 * sum(x * (P %*% x))
+    attr(out, 'gradient') <- -as.numeric(P %*% x)
+    out
+  }
+  out <- ctsem:::ctOptimComputeUncertainty(rep(0, 6), list(nsubjects = 1),
+    sm = NULL, lpgFunc = lpg, uncertainty = 'checked', finishsamples = 20,
+    verbose = 0)
+  hess <- ctsem:::ctOptimComputeUncertainty(rep(0, 6), list(nsubjects = 1),
+    sm = NULL, lpgFunc = lpg, uncertainty = 'hessian', finishsamples = 20,
+    verbose = 0)
+  expect_equal(ncol(out$details$normalcheck$directions), 0L)
+  expect_equal(out$details$normalcheck$draws, 32L)
+  expect_equal(unname(out$cov), unname(hess$cov))
+  drawn <- ctsem:::.ctOptimDrawSamples(out, 'imis', list(), rep(0, 6), 50,
+    lpg = lpg)
+  expect_identical(drawn$draws, 'normal')
+  expect_equal(dim(drawn$samples), c(50L, 6L))
+})
+
+test_that("checked samples a ring the Hessian's normal makes six times too wide", {
+  # A shell of radius 0.05 under a N((0.5, 0), I) prior, rotated 45 degrees:
+  # the direction around it is the prior's, the Hessian's curvature there a
+  # tenth of a unit, and the normal's sd 0.24 against the ring's 0.037.
+  r0 <- 0.05; tau <- 0.01
+  rot <- matrix(c(1, 1, -1, 1), 2) / sqrt(2)
+  lp <- function(X) {
+    uv <- X %*% rot
+    r <- sqrt(rowSums(uv^2))
+    -(r - r0)^2 / (2 * tau^2) - ((uv[, 1] - 0.5)^2 + uv[, 2]^2) / 2
+  }
+  grad <- function(x) {
+    uv <- as.numeric(t(rot) %*% x)
+    r <- sqrt(sum(uv^2))
+    as.numeric(rot %*% (-(r - r0) / tau^2 * uv / r - c(uv[1] - 0.5, uv[2])))
+  }
+  mode <- optim(as.numeric(rot %*% c(r0, 0)), function(x) -lp(matrix(x, 1)),
+    function(x) -grad(x), method = 'BFGS', control = list(reltol = 1e-15))$par
+  g <- seq(-0.12, 0.12, length.out = 401)
+  target <- .checkedTarget(lp, grad, mode, as.matrix(expand.grid(g, g)))
   set.seed(1)
-  p <- 12
-  lpg <- function(x){
-    out <- -0.5 * sum(x^2)
-    attr(out, 'gradient') <- -x
-    out
-  }
-  
-  surrogate <- ctsem:::ctOptimSurrogateHessian(rep(0, p), lpgFunc=lpg,
-    cov=diag(p), npoints=NULL, scale=.5, verbose=0)
-  
-  expect_equal(nrow(surrogate$design), max(4 * p, 50))
-  expect_true(all(surrogate$drops >= surrogate$dropRange[1]))
-  expect_true(all(surrogate$drops <= surrogate$dropRange[2]))
-  expect_equal(diag(surrogate$hessian), rep(-1, p), tolerance=.01)
+  hess <- .checkedRun(target, 'hessian')
+  expect_gt(min(sqrt(diag(hess$uncertaintyfit$cov)) / target$sd), 5)
+  set.seed(1)
+  checked <- .checkedRun(target, 'checked')
+  expect_equal(ncol(checked$check$directions), 2L)
+  expect_identical(checked$draws, 'imis')
+  expect_equal(checked$uncertaintyfit$details$importance_sampling$directions, 2L)
+  expect_equal(sqrt(diag(checked$uncertaintyfit$cov)) / target$sd, c(1, 1),
+    tolerance = 0.15)
 })
 
-test_that("surrogate whitening handles correlated proposal covariance", {
+test_that("checked corrects the funnel a variance from six observations makes", {
+  # y ~ N(mu, sigma) from six values, theta = (mu, log sigma). The mode sits
+  # where sigma is smallest, so the normal is narrow in mu and its mean of
+  # log sigma low by half a posterior sd.
+  y <- c(-0.3, 1.2, 0.4, 2.1, 0.9, 1.5)
+  lp <- function(X) {
+    s <- exp(X[, 2])
+    -length(y) * X[, 2] - (colSums(outer(y, X[, 1], '-')^2)) / (2 * s^2) -
+      X[, 1]^2 / 200 - X[, 2]^2 / 8
+  }
+  grad <- function(x) {
+    s2 <- exp(2 * x[2])
+    c(sum(y - x[1]) / s2 - x[1] / 100,
+      -length(y) + sum((y - x[1])^2) / s2 - x[2] / 4)
+  }
+  mode <- optim(c(1, 0), function(x) -lp(matrix(x, 1)), function(x) -grad(x),
+    method = 'BFGS', control = list(reltol = 1e-14))$par
+  target <- .checkedTarget(lp, grad, mode, as.matrix(expand.grid(
+    seq(-2, 4, length.out = 401), seq(-1.5, 1.8, length.out = 401))))
   set.seed(2)
-  A <- matrix(c(2, .4, .4, 1), 2, 2)
-  lpg <- function(x){
-    out <- -0.5 * drop(t(x) %*% A %*% x)
-    attr(out, 'gradient') <- -drop(A %*% x)
-    out
-  }
-  propcov <- matrix(c(.8, .3, .3, .6), 2, 2)
-  surrogate <- ctsem:::ctOptimSurrogateHessian(c(0, 0), lpgFunc=lpg,
-    cov=propcov, npoints=60, scale=.5, verbose=0)
-  expect_equal(surrogate$hessian, -A, tolerance=.03)
+  hess <- .checkedRun(target, 'hessian')
+  expect_gt(max(abs(colMeans(hess$samples) - target$mean) / target$sd), 0.4)
+  set.seed(2)
+  checked <- .checkedRun(target, 'checked')
+  expect_gte(ncol(checked$check$directions), 1L)
+  expect_lt(max(abs(colMeans(checked$samples) - target$mean) / target$sd), 0.15)
+  expect_equal(sqrt(diag(checked$uncertaintyfit$cov)) / target$sd, c(1, 1),
+    tolerance = 0.15)
 })
 
-test_that("surrogate profiles all fitted curvature directions", {
-  set.seed(4)
-  lpg <- function(x){
-    theta <- log1p(exp(x[1] - 8))
-    out <- -0.5 * (theta / .5)^2 - 0.5 * x[2]^2
-    grad <- c(-(theta / .25) * plogis(x[1] - 8), -x[2])
-    attr(out, 'gradient') <- grad
-    out
-  }
-  surrogate <- ctsem:::ctOptimSurrogateHessian(c(0, 0), lpgFunc=lpg,
-    cov=diag(c(100, 1)), npoints=40, scale=.5,
-    profile=TRUE, verbose=0)
-  cov <- ctsem:::ctOptimCovFromHessian(surrogate$hessian)
-  expect_equal(surrogate$profile$nProfiled, 2)
-  expect_gt(surrogate$profile$nAdjusted, 0)
-  expect_true(any(surrogate$profile$profiles$reached))
-  expect_true(all(is.finite(cov)))
-})
-
-test_that("surrogate profiling uses drop magnitude for flat directions", {
-  lpg <- function(x){
-    out <- -0.5 * .001 * x[1]^2
-    attr(out, 'gradient') <- -.001 * x
-    out
-  }
-  # maxStep is 200 rather than the default 64 so the cap cannot be what
-  # produces the answer: the expansion grows by factors of 8 and lands on
-  # exactly 64 of its own accord, which under maxStep=64 was indistinguishable
-  # from running out of room. `expect_lt` is the assertion that fails if the
-  # expansion ever does reach the cap.
-  #
-  # Measured step is exactly 64.0 -- identical over three repeats and at
-  # maxStep 64, 200 and 1000 -- against a target of sqrt(2*2/.001) = 63.2456,
-  # a relative difference of 0.0119. The tolerance below has 1.7x headroom
-  # over that; the old tolerance of 1 had 84x and could discriminate nothing.
-  prof <- ctsem:::ctOptimSurrogateProfileDirections(est=0, lpgFunc=lpg,
-    cholcov=matrix(1), directions=matrix(1), targetDrop=2,
-    maxStep=200, verbose=0)
-  expect_true(all(prof$reached))
-  expect_lt(max(prof$step), 200)
-  expect_equal(prof$step, rep(sqrt(2 * 2 / .001), 2), tolerance=.02)
-})
-
-test_that("surrogate profiling expands to surrogate-implied flat target", {
-  lpg <- function(x){
-    out <- -0.5 * .00025 * x[1]^2
-    attr(out, 'gradient') <- -.00025 * x
-    out
-  }
-  profiled <- ctsem:::ctOptimSurrogateProfileCurvature(
-    hessWhite=matrix(-.00025), est=0, lpgFunc=lpg, cholcov=matrix(1),
-    targetDrop=2, maxStep=64, verbose=0)
-  expect_true(all(profiled$profiles$reached))
-  expect_gt(max(profiled$profiles$step), 64)
-})
-
-test_that("surrogate profiling keeps expanding when observed profile is flatter", {
-  lpg <- function(x){
-    out <- -0.5 * .00001 * x[1]^2
-    attr(out, 'gradient') <- -.00001 * x
-    out
-  }
-  profiled <- ctsem:::ctOptimSurrogateProfileCurvature(
-    hessWhite=matrix(-.00025), est=0, lpgFunc=lpg, cholcov=matrix(1),
-    targetDrop=2, maxStep=64, verbose=0)
-  expect_true(all(profiled$profiles$reached))
-  expect_gt(max(profiled$profiles$expansions), 0)
-  expect_gt(max(profiled$profiles$step), 250)
+test_that("uncertainty = 'surrogate' is refused by name", {
+  expect_error(ctFitUncertainty(list(), 'surrogate'), "removed in ctsem 4.0.0")
+  expect_error(ctOptimUncertainty(list(), 'surrogate'), "uncertainty = 'checked'")
 })
 
 test_that("optimized uncertainty API uses explicit method and draw names", {
@@ -219,6 +234,8 @@ test_that("optimized uncertainty API uses explicit method and draw names", {
   expect_true('opg' %in% eval(formals(ctOptimUncertainty)$uncertainty))
   expect_true('fullbootstrap' %in% eval(formals(ctOptimUncertainty)$uncertainty))
   expect_false('score' %in% eval(formals(ctOptimUncertainty)$uncertainty))
+  expect_identical(eval(formals(ctFitUncertainty)$uncertainty)[1], 'checked')
+  expect_false('surrogate' %in% eval(formals(ctFitUncertainty)$uncertainty))
 })
 
 test_that("full bootstrap standata resamples and reindexes subjects", {

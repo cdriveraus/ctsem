@@ -1191,7 +1191,7 @@ imis_is <- function(parlp,
 #' @param subsamplesize value between 0 and 1 representing proportion of subjects to include in first pass fit. 
 #' @param cores Number of cpu cores to use, should be at least 2.
 #' @param uncertainty Character string selecting the optimized-fit uncertainty
-#' approximation. Options are \code{'hessian'}, \code{'surrogate'},
+#' approximation. Options are \code{'hessian'}, \code{'checked'},
 #' \code{'is'}, \code{'bootstrap'}, \code{'fullbootstrap'}, \code{'sandwich'},
 #' and \code{'opg'}.
 #' @param uncertaintyDraws Character string controlling approximate
@@ -1230,7 +1230,7 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,
   stochastic = TRUE,
   priors=TRUE,carefulfit=TRUE,
   stallretries=2,stalltol=1e-2,
-  uncertainty=c('hessian','surrogate','is','bootstrap','fullbootstrap',
+  uncertainty=c('hessian','checked','is','bootstrap','fullbootstrap',
     'sandwich','opg'),
   uncertaintyDraws='auto',
   uncertaintyControl=list(),
@@ -1581,8 +1581,9 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,
     return(stanfit)
   }
   
+  .ctUncertaintyRemoved(uncertainty)
   uncertainty <- match.arg(uncertainty,
-    c('hessian','surrogate','is','bootstrap','fullbootstrap','sandwich','opg'))
+    c('hessian','checked','is','bootstrap','fullbootstrap','sandwich','opg'))
   if(length(parsteps) > 0 && uncertainty == 'fullbootstrap') {
     stop('fullbootstrap uncertainty is not currently supported with parsteps')
   }
