@@ -6048,7 +6048,8 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
         result <- correction$result
       }
     } else message("Smoothing parameters held at their starting values: ",
-      "estimating them needs the Hessian, which estonly skips.")
+      "estimating them needs the certified Hessian, which this fit does not ",
+      "form (estonly, certify = FALSE or intoverstates = FALSE).")
     model_spec$penalty$passes <- smoothpasses
   }
   # The engine maximises the log posterior, so its `maximum_loglik` is the log
