@@ -21,7 +21,7 @@ A major release: ctsem gains a second estimation engine, written in Julia, which
 - Covariance matrices are parameterised by a matrix logarithm, so every positive definite matrix is reachable; `model$covmattransform='rawcorr'` for the previous parameterisation.
 - A parameter named in cells whose default transforms differ, such as a DRIFT diagonal and an off-diagonal, is now refused rather than transformed differently in each.
 - New checks: `ctReport()` runs the reporting and checking functions over a fit and writes a folder; `ctIdentify()` and `ctFitProfile()` for identification, on the julia backend; `ctLaplaceCheck()` and `ctParticleLik()` for the approximations a julia fit makes; `ctTracePlot()` for a julia fit's optimisation or chains.
-- New views of the dynamics: `ctNetwork()` and `ctNetworkPlot()`, `ctPhasePortrait()`, `ctStateDependencePlot()`, `ctVarianceDecomposition()` and `ctHalfLife()`.
+- New views of the dynamics: `ctNetwork()` and `ctNetworkPlot()`, `ctPhasePortrait()`, `ctStateDependencePlot()` and `ctVarianceDecomposition()`.
 - Posterior predictive checking is consolidated in `ctPostPredPlots()`, with panels for the mean trajectory and the lagged covariance; `ctFitCovCheck()` is renamed `ctFitCheckCov()`, the old name still available, and splits by group.
 - `ctLOO(method='psis')` cross-validates a Laplace fit without refitting.
 - `coef()`, `vcov()`, `logLik()` and `print()` for fits from either backend; `summary()`, `plot()` and `ctPlotPosterior()` for julia fits.
