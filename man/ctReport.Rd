@@ -29,21 +29,23 @@ from a previous \code{ctReport} run in the same folder are removed first,
 so the folder always matches its index.}
 
 \item{components}{Either one of \code{'quick'} (nothing that needs generated
-data), \code{'default'}, \code{'all'} (adds cross validation, LaTeX, the
-adequacy checks and the score tests), or
-a character vector of component names: \code{summary}, \code{parmatrices},
-\code{identification}, \code{profile}, \code{discretepars},
-\code{network}, \code{predictions}, \code{residuals}, \code{covcheck},
+data or further model evaluations), \code{'default'}, \code{'all'} (adds
+cross validation and LaTeX), or a character vector of component names:
+\code{summary}, \code{parmatrices}, \code{identification},
+\code{profile}, \code{discretepars}, \code{network},
+\code{predictions}, \code{residuals}, \code{adequacy}
+(\code{\link{ctFitAdequacy}}), \code{scoretests}
+(\code{\link{ctScoreTest}}, julia fits), \code{covcheck},
 \code{postpred}, \code{tipredeffects}, \code{crossval},
-\code{equations}, \code{adequacy} (\code{\link{ctFitAdequacy}}),
-\code{scoretests} (\code{\link{ctScoreTest}}).}
+\code{equations}.}
 
 \item{nsamples}{Draws used by the components that sample from the fit's
-uncertainty, and by data generation for \code{covcheck} and
-\code{postpred}.}
+uncertainty, and by data generation for \code{adequacy}, \code{covcheck}
+and \code{postpred}.}
 
 \item{cores}{Cores for the components that can use more than one
-(\code{discretepars}, \code{covcheck}, \code{postpred}, \code{crossval}).}
+(\code{discretepars}, \code{adequacy}, \code{scoretests},
+\code{covcheck}, \code{postpred}, \code{crossval}).}
 
 \item{quantiles}{Quantiles for the parameter matrices and the discrete
 parameter plots.}
@@ -77,9 +79,11 @@ backend or a model does not support are recorded in the index as not
 produced, rather than stopping the run.
 }
 \details{
-The expensive parts are \code{covcheck} and \code{postpred}, which generate
-data from the fit, and \code{crossval}, which refits. \code{components =
-'quick'} excludes all three.
+The expensive parts are \code{adequacy}, \code{covcheck} and
+\code{postpred}, which generate data from the fit (once, shared),
+\code{scoretests}, which evaluates the model extended with new terms, and
+\code{crossval}, which refits. \code{components = 'quick'} excludes them
+all.
 
 \code{profile} walks the log probability along each raw parameter, holding
 the others at the estimate, over a grid measured in the standard error that

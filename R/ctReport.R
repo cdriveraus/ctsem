@@ -43,13 +43,13 @@
   network        = "quick",
   predictions    = "quick",
   residuals      = "quick",
+  adequacy       = "default",
+  scoretests     = "default",
   covcheck       = "default",
   postpred       = "default",
   tipredeffects  = "default",
   crossval       = "all",
-  equations      = "all",
-  adequacy       = "all",
-  scoretests     = "all"
+  equations      = "all"
 )
 
 .ctReportSets <- function() {
@@ -904,9 +904,9 @@
   covcheck = function(fit, ctx) {
     cc <- suppressWarnings(suppressMessages(ctFitCheckCov(ctx$generated(),
       plot = FALSE, nsamples = ctx$nsamples, cores = ctx$cores, lags = ctx$lags)))
-    utils::write.csv(cc, file.path(ctx$folder, "09-covariance-check.csv"),
+    utils::write.csv(cc, file.path(ctx$folder, "11-covariance-check.csv"),
       row.names = FALSE)
-    .ctReportPdf(file.path(ctx$folder, "09-covariance-check.pdf"), {
+    .ctReportPdf(file.path(ctx$folder, "11-covariance-check.pdf"), {
       p <- ctFitCovCheckPlot(cc, cor = isTRUE(attr(cc, "ctFitCovCheck_cor")))
       if (inherits(p, "list")) lapply(p, print) else print(p)
     })
@@ -915,11 +915,11 @@
       ctx$note(paste0(nsig, " of ", nrow(cc),
         " observed covariances fall outside the generated interval."))
     }
-    c("09-covariance-check.csv", "09-covariance-check.pdf")
+    c("11-covariance-check.csv", "11-covariance-check.pdf")
   },
 
   postpred = function(fit, ctx) {
-    f <- "10-posterior-predictive.pdf"
+    f <- "12-posterior-predictive.pdf"
     pp <- suppressWarnings(suppressMessages(ctPostPredPlots(ctx$generated())))
     .ctReportPdf(file.path(ctx$folder, f), lapply(pp, function(p) try(print(p), silent = TRUE)))
     f
@@ -931,7 +931,7 @@
       ctx$skip("the model has no covariates (time independent predictors)")
       return(NULL)
     }
-    f <- "11-covariate-effects.pdf"
+    f <- "13-covariate-effects.pdf"
     .ctReportPdf(file.path(ctx$folder, f), {
       for (tip in seq_len(m$n.TIpred)) {
         te <- suppressWarnings(suppressMessages(ctTIpredEffects(fit,
@@ -957,7 +957,7 @@
   },
 
   crossval = function(fit, ctx) {
-    f <- "12-cross-validation.txt"
+    f <- "14-cross-validation.txt"
     lo <- suppressWarnings(suppressMessages(ctLOO(fit, folds = ctx$folds,
       cores = ctx$cores)))
     keep <- c("insampleLogLik", "outsampleLogLik",
@@ -975,7 +975,7 @@
   },
 
   adequacy = function(fit, ctx) {
-    stem <- file.path(ctx$folder, "14-adequacy")
+    stem <- file.path(ctx$folder, "09-adequacy")
     ad <- suppressWarnings(suppressMessages(ctFitAdequacy(ctx$generated(),
       nsamples = ctx$nsamples, cores = ctx$cores)))
     utils::write.csv(ad$statistics, paste0(stem, ".csv"), row.names = FALSE)
@@ -988,7 +988,7 @@
     })
     ctx$note(if (!length(bad)) "No family rejects the model." else
       paste0("Families rejecting the model: ", paste(bad, collapse = ", "), "."))
-    paste0("14-adequacy.", c("txt", "csv", "pdf"))
+    paste0("09-adequacy.", c("txt", "csv", "pdf"))
   },
 
   scoretests = function(fit, ctx) {
@@ -1000,18 +1000,18 @@
       ctx$skip("score tests are made at an optimum, and this fit was sampled")
       return(NULL)
     }
-    stem <- file.path(ctx$folder, "15-score-tests")
+    stem <- file.path(ctx$folder, "10-score-tests")
     st <- suppressWarnings(suppressMessages(ctScoreTest(fit, cores = ctx$cores,
       verbose = FALSE)))
     .ctReportWrite(paste0(stem, ".txt"), .ctReportCapture(print(st)))
     .ctReportPdf(paste0(stem, ".pdf"), print(plot(st)))
     ctx$note(paste0(nrow(ctModelProposals(fit, score = st)),
       " relaxation(s) indicated after adjustment within each family."))
-    paste0("15-score-tests.", c("txt", "pdf"))
+    paste0("10-score-tests.", c("txt", "pdf"))
   },
 
   equations = function(fit, ctx) {
-    stem <- "13-model-equations"
+    stem <- "15-model-equations"
     write <- function(x, compile) suppressWarnings(suppressMessages(
       ctModelLatex(x, folder = ctx$folder, filename = stem, open = FALSE,
         compile = compile)))
@@ -1046,19 +1046,21 @@
 #'   from a previous \code{ctReport} run in the same folder are removed first,
 #'   so the folder always matches its index.
 #' @param components Either one of \code{'quick'} (nothing that needs generated
-#'   data), \code{'default'}, \code{'all'} (adds cross validation, LaTeX, the
-#'   adequacy checks and the score tests), or
-#'   a character vector of component names: \code{summary}, \code{parmatrices},
-#'   \code{identification}, \code{profile}, \code{discretepars},
-#'   \code{network}, \code{predictions}, \code{residuals}, \code{covcheck},
+#'   data or further model evaluations), \code{'default'}, \code{'all'} (adds
+#'   cross validation and LaTeX), or a character vector of component names:
+#'   \code{summary}, \code{parmatrices}, \code{identification},
+#'   \code{profile}, \code{discretepars}, \code{network},
+#'   \code{predictions}, \code{residuals}, \code{adequacy}
+#'   (\code{\link{ctFitAdequacy}}), \code{scoretests}
+#'   (\code{\link{ctScoreTest}}, julia fits), \code{covcheck},
 #'   \code{postpred}, \code{tipredeffects}, \code{crossval},
-#'   \code{equations}, \code{adequacy} (\code{\link{ctFitAdequacy}}),
-#'   \code{scoretests} (\code{\link{ctScoreTest}}).
+#'   \code{equations}.
 #' @param nsamples Draws used by the components that sample from the fit's
-#'   uncertainty, and by data generation for \code{covcheck} and
-#'   \code{postpred}.
+#'   uncertainty, and by data generation for \code{adequacy}, \code{covcheck}
+#'   and \code{postpred}.
 #' @param cores Cores for the components that can use more than one
-#'   (\code{discretepars}, \code{covcheck}, \code{postpred}, \code{crossval}).
+#'   (\code{discretepars}, \code{adequacy}, \code{scoretests},
+#'   \code{covcheck}, \code{postpred}, \code{crossval}).
 #' @param quantiles Quantiles for the parameter matrices and the discrete
 #'   parameter plots.
 #' @param times Interval grid for \code{discretepars}. \code{'auto'} uses zero
@@ -1076,9 +1078,11 @@
 #'   written, skipped or failed. Called for the files it writes.
 #'
 #' @details
-#' The expensive parts are \code{covcheck} and \code{postpred}, which generate
-#' data from the fit, and \code{crossval}, which refits. \code{components =
-#' 'quick'} excludes all three.
+#' The expensive parts are \code{adequacy}, \code{covcheck} and
+#' \code{postpred}, which generate data from the fit (once, shared),
+#' \code{scoretests}, which evaluates the model extended with new terms, and
+#' \code{crossval}, which refits. \code{components = 'quick'} excludes them
+#' all.
 #'
 #' \code{profile} walks the log probability along each raw parameter, holding
 #' the others at the estimate, over a grid measured in the standard error that

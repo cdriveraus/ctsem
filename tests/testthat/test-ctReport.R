@@ -112,11 +112,12 @@ test_that("a component the backend cannot do is recorded, and the run continues 
   d <- .ctReportFolder()
   res <- suppressWarnings(suppressMessages(
     ctReport(fit, folder = d, components = c("summary", "tipredeffects", "covcheck",
-      "scoretests"), nsamples = 10, verbose = FALSE)))
+      "adequacy", "scoretests"), nsamples = 10, verbose = FALSE)))
 
   expect_identical(res$components$tipredeffects$status, "skipped")
   expect_match(res$components$tipredeffects$note, "covariate")
   expect_identical(res$components$scoretests$status, "skipped")
+  expect_identical(res$components$adequacy$status, "ok")
   expect_match(res$components$scoretests$note, "julia")
   expect_identical(res$components$summary$status, "ok")
   expect_identical(res$components$covcheck$status, "ok")
