@@ -285,8 +285,10 @@
         m = sum(take), lambda = if (is.null(start)) .ctTIsmoothLambdaStart else
           as.numeric(start), stringsAsFactors = FALSE)
       rows[[length(rows)]]$index <- list(as.integer(ti_effects$coefficient[take]))
-      rows[[length(rows)]]$linear <- as.integer(ti_effects$coefficient[
-        predictor %in% s$linear & as.integer(ti_effects$parameter) == parameter])[1L]
+      rows[[length(rows)]]$predictors <- list(as.integer(ti_effects$predictor[take]))
+      line <- predictor %in% s$linear & as.integer(ti_effects$parameter) == parameter
+      rows[[length(rows)]]$linear <- as.integer(ti_effects$coefficient[line])[1L]
+      rows[[length(rows)]]$linearpredictor <- as.integer(ti_effects$predictor[line])[1L]
     }
   }
   if (!length(rows)) return(NULL)
@@ -411,8 +413,27 @@
     statistic <- sum(projected^2 / pmax(eig$values[seq_len(r)], .Machine$double.eps))
     c(statistic, r, stats::pchisq(statistic, r, lower.tail = FALSE))
   }, numeric(3)))
-  out <- data.frame(edf = report$edf, sd = report$sd, chisq = test[, 1L],
-    df = test[, 2L], p = test[, 3L])
+  # How much of the target's variance over persons the term accounts for, on
+  # the raw scale: the spread of its values at the persons' covariate values,
+  # against that plus the random effects' variance at every level.
+  spec <- .ctBackendSpec(object)
+  popcov <- tryCatch(.ctBackendRawPopCov(object, matrix(raw, nrow = 1L)),
+    error = function(e) NULL)
+  share <- vapply(seq_len(nrow(penalty)), function(g) {
+    j <- c(penalty$linear[g], penalty$index[[g]])
+    k <- c(penalty$linearpredictor[g], penalty$predictors[[g]])
+    keep <- !is.na(j) & !is.na(k)
+    values <- as.numeric(as.matrix(spec$tipred_data)[, k[keep], drop = FALSE] %*%
+      raw[j[keep]])
+    explained <- mean((values - mean(values))^2)
+    random <- sum(vapply(popcov, function(level) {
+      at <- match(penalty$param[g], level$param)
+      if (is.na(at)) 0 else level$cov[at, at]
+    }, numeric(1)))
+    explained / (explained + random)
+  }, numeric(1))
+  out <- data.frame(edf = report$edf, sd = report$sd, share = share,
+    chisq = test[, 1L], df = test[, 2L], p = test[, 3L])
   rownames(out) <- paste0(report$term, " on ", report$param)
   out[] <- lapply(out, function(x) round(x, digits))
   out

@@ -204,6 +204,10 @@ test_that("summary() and ctTIpredEffects() report a smooth whole", {
   s <- suppressMessages(summary(fit))
   expect_equal(rownames(s$smooths), "s(age) on cint")
   expect_lt(s$smooths$p, 0.01)
+  # Most of the person differences in cint are the curve's: a sine of
+  # amplitude 0.6 against a random sd of 0.2.
+  expect_gt(s$smooths$share, 0.5)
+  expect_lt(s$smooths$share, 1)
   expect_false(any(grepl("^tip_age_", rownames(s$tipreds))))
   expect_output(print(s), "Smooth time-independent predictor terms")
   # AIC counts the smooth by its effective degrees of freedom.

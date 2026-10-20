@@ -1937,8 +1937,9 @@ ctBackendParMatrices <- function(fit, raw = NULL, tipreds = NULL, state = NULL,
     out$smooths <- smooths
     out$smoothsNote <- paste0("Smooth TI predictor terms: effective degrees of ",
       "freedom (the linear trend included), the sd of the penalised ",
-      "coefficients, and an approximate test of the whole term. ",
-      "ctTIpredEffects() plots them.")
+      "coefficients, the share of the target's variance over persons the term ",
+      "accounts for (raw scale, against the random effects' variance), and an ",
+      "approximate test of the whole term. ctTIpredEffects() plots them.")
   }
 
   if (isTRUE(parmatrices)) {
