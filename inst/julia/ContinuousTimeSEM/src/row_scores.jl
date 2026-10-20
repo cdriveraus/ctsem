@@ -104,9 +104,14 @@ as for the sequential predictions.
 """
 function ctsem_row_scores(laplace::CTSEMLaplaceObjective, values::AbstractVector,
     directions::AbstractMatrix)
-    theta = collect(Float64, values)
-    size(directions, 1) == length(theta) || throw(DimensionMismatch(
+    size(directions, 1) == length(values) || throw(DimensionMismatch(
         "directions needs one row per raw parameter"))
+    # A stated population value (`CTSEMAnchors`, `_laplace_extend`) is not a
+    # direction anyone asks along: a zero row for each, after the caller's.
+    theta = _laplace_extend(laplace, collect(Float64, values))
+    na = length(theta) - length(values)
+    along = na == 0 ? directions :
+        vcat(directions, zeros(eltype(directions), na, size(directions, 2)))
     units = laplace.units
     all(length(mm) == 1 for mm in units.members) || throw(ArgumentError(
         "row scores need every subject to be its own unit: a single level of " *
@@ -120,7 +125,7 @@ function ctsem_row_scores(laplace::CTSEMLaplaceObjective, values::AbstractVector
     Ls = _laplace_popchols(theta, laplace.spec)
     _laplace_ensure_pool!(laplace)
     _laplace_parallel(laplace, eachindex(units.members)) do U
-        _laplace_row_scores_unit!(out, laplace, U, theta, Ls, directions,
+        _laplace_row_scores_unit!(out, laplace, U, theta, Ls, along,
             first_row[units.members[U][1]])
         return true
     end
@@ -213,7 +218,7 @@ number of effects; a unit the rule cannot be built for is `NaN`.
 function ctsem_laplace_posterior_nodes(laplace::CTSEMLaplaceObjective,
     values::AbstractVector; nodes::Integer=5)
     nodes >= 1 || throw(ArgumentError("need at least one quadrature node"))
-    theta = collect(Float64, values)
+    theta = _laplace_extend(laplace, collect(Float64, values))
     _laplace_check_indices(laplace, length(theta))
     units = laplace.units
     all(length(mm) == 1 for mm in units.members) || throw(ArgumentError(

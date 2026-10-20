@@ -345,7 +345,7 @@ misfit tests use in place of their errors (item_pit.jl).
 function ctsem_laplace_sequential_mixture(laplace::CTSEMLaplaceObjective,
     values::AbstractVector; particles::Integer=128, scale::Real=1.15,
     seed::Integer=20261011, compact::Bool=false)
-    theta = collect(Float64, values)
+    theta = _laplace_extend(laplace, collect(Float64, values))
     units = laplace.units
     all(length(m) == 1 for m in units.members) || throw(ArgumentError(
         "sequential prediction needs every subject to be its own unit: a single " *

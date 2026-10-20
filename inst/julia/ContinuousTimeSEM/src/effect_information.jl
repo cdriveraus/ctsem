@@ -71,7 +71,7 @@ placeholder rather than an empty array, which the R bridge cannot carry.
 """
 function ctsem_effect_information(laplace::CTSEMLaplaceObjective,
     values::AbstractVector)
-    theta = collect(Float64, values)
+    theta = _laplace_extend(laplace, collect(Float64, values))
     _laplace_check_indices(laplace, length(theta))
     spec = laplace.spec
     _laplace_ensure_pool!(laplace)

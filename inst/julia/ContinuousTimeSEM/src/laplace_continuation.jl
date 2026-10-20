@@ -610,7 +610,7 @@ function ctsem_laplace_continuation(laplace::CTSEMLaplaceObjective,
     product_maxdim::Integer=2, soft_tau::Real=3.5, soft_maxdirs::Integer=2,
     maxdim::Integer=5)
     nodes >= 1 || throw(ArgumentError("need at least one quadrature node"))
-    theta = collect(Float64, values)
+    theta = _laplace_extend(laplace, collect(Float64, values))
     _laplace_check_indices(laplace, length(theta))
     nunits = length(laplace.units.members)
     o = CTSEMLaplaceContinuation{typeof(laplace)}(laplace, laplace, collect(1:nunits),
@@ -639,7 +639,7 @@ function ctsem_laplace_continuation_recentre!(o::CTSEMLaplaceContinuation,
     values::AbstractVector)
     o.previous = NamedTuple{_CONTINUATION_STATE}(
         Tuple(getfield(o, f) for f in _CONTINUATION_STATE))
-    _continuation_place!(o, collect(Float64, values))
+    _continuation_place!(o, _laplace_extend(o.laplace, collect(Float64, values)))
     return ctsem_laplace_continuation_info(o)
 end
 
@@ -883,17 +883,20 @@ route. `unit_loglik` is every unit's term in the fit's unit order, and
 """
 function ctsem_laplace_continuation_evaluate(o::CTSEMLaplaceContinuation,
     values::AbstractVector; gradient::Bool=true)
-    theta = collect(Float64, values)
+    # Over the extended vector (`_laplace_extend`), the gradient returned at
+    # the caller's length.
+    n = length(values)
+    theta = _laplace_extend(o.laplace, collect(Float64, values))
     for hit in (o.cache, o.value_cache)
         if hit !== nothing && hit.theta == theta &&
                 (!gradient || hit.result.gradient !== nothing)
-            return _continuation_copy(hit.result)
+            return _laplace_free_result(_continuation_copy(hit.result), n)
         end
     end
     result = _continuation_evaluate(o, theta, gradient)
     entry = (theta=theta, result=_continuation_copy(result))
     gradient ? (o.cache = entry) : (o.value_cache = entry)
-    return result
+    return _laplace_free_result(result, n)
 end
 
 # Copies of the vectors, so that neither a caller nor the cache can change
@@ -1135,7 +1138,9 @@ function ctsem_laplace_continuation_hessian(o::CTSEMLaplaceContinuation,
     scheme = scheme isa Symbol ? scheme : Symbol(scheme)
     scheme in (:exact, :forward, :central) || throw(ArgumentError(
         "scheme must be :exact, :forward or :central, got " * repr(scheme)))
-    x = collect(Float64, values)
+    # Over the extended vector (`_laplace_extend`), returned at the caller's.
+    nin = length(values)
+    x = _laplace_extend(o.laplace, collect(Float64, values))
     started = time_ns()
     H = scheme === :exact ? _continuation_exact_hessian(o, x; step=step, width=width) :
         nothing
@@ -1145,7 +1150,7 @@ function ctsem_laplace_continuation_hessian(o::CTSEMLaplaceContinuation,
             scheme === :exact ? :forward : scheme)
     end
     o.seconds_hessian += (time_ns() - started) / 1e9
-    return H
+    return size(H, 1) == nin ? H : H[1:nin, 1:nin]
 end
 
 """The `:forward` and `:central` schemes of `ctsem_laplace_continuation_hessian`."""
