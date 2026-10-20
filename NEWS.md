@@ -12,6 +12,7 @@ A major release: ctsem gains a second estimation engine, written in Julia, which
 - Nested grouping levels, as `id=c('person','couple')`, with each parameter's `indvarying` naming the levels it varies at and `poprank` set per level. Julia backend only.
 - Ordinal, count and censored indicators, and lower and upper asymptotes for binary ones (`ASYMPTOTES` in `ctModel()`). Julia backend only.
 - Posterior sampling with `ctFit(backend='julia', optimize=FALSE)`, or after an optimised fit with `ctFitUncertainty(fit, 'sample')`, running until target effective sample sizes and R-hat are reached.
+- Smooth effects of time independent predictors, `ctModel(TIpredNames = ~ s(age) + sex)`, with their smoothness estimated from the data; `ctTIpredEffects(fit, whichTIpreds = 'age')` draws them with each person's own values. Julia backend only.
 - Sampling weights, one per subject, with `ctFit(weights=)`: a weighted pseudo-likelihood with robust standard errors, described in the new sampling weights vignette. Julia backend only.
 - `ctFitUncertainty()` is the new name of `ctOptimUncertainty()`, which remains, and adds `'sample'`, `'stored'` to redraw from the covariance a fit carries, and importance sampling against the quadrature or particle filter likelihood (`control$likelihood`).
 - On the julia backend, missing values of time independent predictors are imputed when optimising and sampled when sampling, and `nlcontrol$nsubsteps='auto'` sets a nonlinear model's integration steps from its own error.
@@ -20,7 +21,7 @@ A major release: ctsem gains a second estimation engine, written in Julia, which
 - Covariance matrices are parameterised by a matrix logarithm, so every positive definite matrix is reachable; `model$covmattransform='rawcorr'` for the previous parameterisation.
 - A parameter named in cells whose default transforms differ, such as a DRIFT diagonal and an off-diagonal, is now refused rather than transformed differently in each.
 - New checks: `ctReport()` runs the reporting and checking functions over a fit and writes a folder; `ctIdentify()` and `ctFitProfile()` for identification, on the julia backend; `ctLaplaceCheck()` and `ctParticleLik()` for the approximations a julia fit makes; `ctTracePlot()` for a julia fit's optimisation or chains.
-- New views of the dynamics: `ctNetwork()` and `ctNetworkPlot()`, `ctPhasePortrait()`, `ctStateDependencePlot()` and `ctVarianceDecomposition()`.
+- New views of the dynamics: `ctNetwork()` and `ctNetworkPlot()`, `ctPhasePortrait()`, `ctStateDependencePlot()`, `ctVarianceDecomposition()` and `ctHalfLife()`.
 - Posterior predictive checking is consolidated in `ctPostPredPlots()`, with panels for the mean trajectory and the lagged covariance; `ctFitCovCheck()` is renamed `ctFitCheckCov()`, the old name still available, and splits by group.
 - `ctLOO(method='psis')` cross-validates a Laplace fit without refitting.
 - `coef()`, `vcov()`, `logLik()` and `print()` for fits from either backend; `summary()`, `plot()` and `ctPlotPosterior()` for julia fits.
