@@ -252,7 +252,10 @@ force = TRUE)} restarts it wider, and
 \item{inits}{\code{NULL} (the default) for ctsem's own starting values, or
 a vector of starting values on the raw (unconstrained) scale, one per free
 parameter, as a fit holds its estimate: \code{fit$estimate$raw} on julia,
-\code{fit$stanfit$rawest} on stan. With \code{backend='stan'} and
+\code{fit$stanfit$rawest} on stan. On julia, a fit itself: its estimates are
+matched to this model's parameters by name, so a model extended by a
+predictor or a smooth starts where the fit stopped, with the new
+coefficients at zero. With \code{backend='stan'} and
 \code{optimize=FALSE}, the string \code{'optimize'} optimises first and
 starts the chains there.}
 

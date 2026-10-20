@@ -1922,6 +1922,24 @@ ctBackendParMatrices <- function(fit, raw = NULL, tipreds = NULL, state = NULL,
       z = nrow(samples) > 1L, chains = chains)
     out$tipredsNote <- "Approximate (linearised) effects on the transformed parameters."
   }
+  # A smooth term's columns are one effect, and a coefficient of its basis says
+  # nothing alone: the term is reported whole (R/ctTIpredSmooth.R), and
+  # ctTIpredEffects() draws it.
+  smooths <- .ctTIsmoothSummary(object, digits = digits)
+  if (!is.null(smooths)) {
+    columns <- .ctTIsmoothColumns(.ctBackendModel(object))
+    if (!is.null(out$tipreds)) {
+      pattern <- paste0("^tip_(", paste(columns, collapse = "|"), ")_")
+      out$tipreds <- out$tipreds[!grepl(pattern, rownames(out$tipreds)), ,
+        drop = FALSE]
+      if (!nrow(out$tipreds)) out$tipreds <- out$tipredsNote <- NULL
+    }
+    out$smooths <- smooths
+    out$smoothsNote <- paste0("Smooth TI predictor terms: effective degrees of ",
+      "freedom (the linear trend included), the sd of the penalised ",
+      "coefficients, and an approximate test of the whole term. ",
+      "ctTIpredEffects() plots them.")
+  }
 
   if (isTRUE(parmatrices)) {
     # One materialization, five collapses -- not five calls to
@@ -2098,9 +2116,16 @@ ctBackendParMatrices <- function(fit, raw = NULL, tipreds = NULL, state = NULL,
     out$loglik_weighted <- object$estimate$loglik_weighted
   }
   out$npars <- length(object$estimate$raw)
+  # A smooth counts by its effective degrees of freedom, not its columns.
+  penalty <- .ctBackendSpec(object)$penalty
+  effective <- out$npars
+  if (!is.null(penalty) && nrow(penalty) && !is.null(penalty$edf) &&
+      all(is.finite(penalty$edf))) {
+    effective <- out$npars - sum(penalty$m) + sum(penalty$edf)
+  }
   # A weighted fit maximises a pseudo-likelihood, whose differences are not
   # chi-square, so it has no AIC.
-  if (!weighted && !sampled) out$aic <- 2 * out$npars - 2 * object$estimate$loglik
+  if (!weighted && !sampled) out$aic <- 2 * effective - 2 * object$estimate$loglik
   # How far this estimate is from the optimum, when the curvature to say so was
   # computed. Absent rather than zero when it was not -- `estonly = TRUE`
   # computes no Hessian, and reporting a gap of zero for a fit nobody checked

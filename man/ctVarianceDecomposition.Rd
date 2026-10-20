@@ -32,9 +32,12 @@ or \code{DIFFUSION} cells needs. \code{'auto'}, the default, is
 \item{persons}{Which population the between person variance refers to.
 \code{'model'} draws persons from the fitted population distribution of
 the random effects, which is the model's own claim about the population
-and is not shrunk. \code{'estimated'} uses the subjects in the data at
-their estimated (empirical Bayes) matrices, which describes this sample
-but attenuates the between person variance. \code{'auto'}, the default, is
+and is not shrunk. \code{'estimated'} uses the subjects in the data, which
+describes this sample: on a \code{backend='julia'} fit each at plausible
+values -- its estimated effects plus a draw from their posterior given its
+data -- which are not shrunk either; on a stan fit at their estimated
+(empirical Bayes) matrices, which attenuates the between person
+variance. \code{'auto'}, the default, is
 \code{'model'} for a \code{backend='julia'} fit and \code{'estimated'}
 for a stan one, saying which it used -- only the julia engine can
 materialise the model matrices at a drawn set of random effects.}
@@ -55,7 +58,9 @@ result gains a \code{time} column and loses
 \code{method='simulation'} or with time dependent predictors, neither of
 which has values on a grid of its own.}
 
-\item{npersons}{Number of persons to draw when \code{persons='model'}.}
+\item{npersons}{Number of persons to draw when \code{persons='model'}.
+With \code{persons='estimated'} on a julia fit, each subject gets as many
+plausible values as make at least this many persons in all.}
 
 \item{npaths}{Trajectories drawn per person when \code{method='simulation'}.
 Each person needs several: with one path, the average over that person's
@@ -131,14 +136,16 @@ The decomposition is a nested law of total variance over the
   level's own departure from the level outside it. They are orthogonal by
   construction and sum to \code{between}.
 
-  \code{persons='estimated'} reads each level's fitted modes, which are
-  shrunk toward the level outside them by an amount that follows the
-  information per unit rather than the number of units: on a 6-study,
-  30-subject example the subject level retained 52 per cent of the
-  population standard deviation (ten occasions each) while the study level
-  retained 97 per cent (five subjects each). \code{persons='model'} draws
-  from each level's own fitted covariance instead and is not shrunk, which
-  is why it is the default.
+  Each level's fitted modes are shrunk toward the level outside them by an
+  amount that follows the information per unit rather than the number of
+  units: on a 6-study, 30-subject example the subject level's modes retained
+  52 per cent of the population standard deviation (ten occasions each)
+  while the study level's retained 97 per cent (five subjects each).
+  \code{persons='estimated'} therefore adds to each mode a draw from that
+  unit's posterior, drawn jointly over its levels: the spread of such
+  plausible values is the population's, where the spread of the modes is
+  not. \code{persons='model'} draws from each level's own fitted covariance
+  instead, and is the default.
 
   \strong{When the split changes over the window.} The columns above are
   averages over each person's occasions, and for a process that has not

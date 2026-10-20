@@ -759,7 +759,10 @@ T0VARredundancies <- function(ctm) {
 #' @param inits \code{NULL} (the default) for ctsem's own starting values, or
 #' a vector of starting values on the raw (unconstrained) scale, one per free
 #' parameter, as a fit holds its estimate: \code{fit$estimate$raw} on julia,
-#' \code{fit$stanfit$rawest} on stan. With \code{backend='stan'} and
+#' \code{fit$stanfit$rawest} on stan. On julia, a fit itself: its estimates are
+#' matched to this model's parameters by name, so a model extended by a
+#' predictor or a smooth starts where the fit stopped, with the new
+#' coefficients at zero. With \code{backend='stan'} and
 #' \code{optimize=FALSE}, the string \code{'optimize'} optimises first and
 #' starts the chains there.
 #' @param priors \code{FALSE} (the default), \code{TRUE} or \code{'randomCorr'}.
@@ -1246,6 +1249,10 @@ ctFit<-function(datalong, model, stanmodeltext=NA, iter=1000, intoverstates=TRUE
     'instead.', call.=FALSE)
 
   backend <- match.arg(backend)
+  # Starting values matched by name from another fit are the julia path's.
+  if(inherits(inits, 'ctFit') && !(backend %in% 'julia' && .ctFitIsJulia(inits)))
+    stop("inits as a fit takes a backend='julia' fit, for a backend='julia' ",
+      "fit; otherwise pass its raw estimate.", call.=FALSE)
   # Before anything prepares, warns or fits.
   # Sampling weights (R/ctWeights.R): a weighted pseudo-likelihood, which the
   # julia engine maximises. Sampling it would not give a posterior, and the
@@ -1343,6 +1350,20 @@ ctFit<-function(datalong, model, stanmodeltext=NA, iter=1000, intoverstates=TRUE
 
   datalong <- data.frame(datalong)
 
+  # Smooth TI predictor terms: their basis columns, built from these data where
+  # the model has none yet, and kept on the model the fit stores
+  # (R/ctTIpredSmooth.R).
+  if(length(ctstanmodel$TIsmooths)){
+    if(!backend %in% 'julia') stop("Smooth TI predictor terms, s(), need ",
+      "backend='julia'.", call.=FALSE)
+    if(!isTRUE(optimize)) stop("Smooth TI predictor terms are estimated by ",
+      "optimisation, which sets their smoothness: use optimize=TRUE, and ",
+      "ctFitUncertainty() for intervals.", call.=FALSE)
+    smoothed <- .ctTIsmoothData(ctstanmodel, datalong)
+    ctstanmodel <- smoothed$model
+    datalong <- smoothed$data
+  }
+
   if(!ctstanmodel$timeName %in% colnames(datalong) && !ctstanmodel$continuoustime) {
     dtable <- data.table(datalong)
     dtable[,.ObsCount:=1:.N,by=ctstanmodel$id]
@@ -1406,6 +1427,9 @@ ctFit<-function(datalong, model, stanmodeltext=NA, iter=1000, intoverstates=TRUE
   if(nlcontrol$transition == 'euler' && !backend %in% 'julia') stop("nlcontrol$transition = 'euler' requires backend = 'julia'")
 
   args=c(as.list(environment()), list(...)) #as.list((match.call(expand.dots=FALSE)))
+  # A fit given as starting values is not kept in the new fit's call: its
+  # estimates matched this model's parameters once, and a replay starts afresh.
+  if(inherits(args$inits, 'ctFit')) args['inits'] <- list(NULL)
   args$datalong <- NULL
   args$model <- NULL
   args$ctstanmodel <- NULL
@@ -2490,6 +2514,12 @@ ctFit<-function(datalong, model, stanmodeltext=NA, iter=1000, intoverstates=TRUE
     # the augmented route. ctFitUpdate() rebuilds a fit from this one. Read it
     # through `.ctFitBaseModel()`, which says why the name differs.
     juliafit$modelbase <- ctstanmodel
+    # With the smoothing parameters the fit estimated, so a refit or an update
+    # starts from them (R/ctTIpredSmooth.R).
+    if(length(ctstanmodel$TIsmooths) && is.list(juliafit$model_spec) &&
+        !is.null(juliafit$model_spec$penalty))
+      juliafit$modelbase$TIsmooths <- .ctTIsmoothKeepLambda(ctstanmodel$TIsmooths,
+        juliafit$model_spec$penalty)
     # `$data`/`$standata` mean the same thing on both backends: `$standata` is
     # the prepared data with the 99999 missing-value sentinel intact, `$data`
     # is the same thing with that sentinel replaced by `NA` (see

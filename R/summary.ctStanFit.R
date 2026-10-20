@@ -558,6 +558,8 @@ summaryCtStanFitLabel <- function(x){
     priorcheckNote = 'Note',
     tipreds = 'Time-independent predictor effects',
     tipredsNote = 'Note',
+    smooths = 'Smooth time-independent predictor terms',
+    smoothsNote = 'Note',
     parmatrices = 'System Matrices',
     popsd = 'Random-effects standard deviations',
     popmeans = 'Fixed-effects / Population means',

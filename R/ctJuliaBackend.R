@@ -1372,6 +1372,7 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
     if (length(diagonal)) out[diagonal[diagonal <= npar]] <- 1
     return(out)
   }
+  if (inherits(inits, "ctJuliaFit")) return(.ctJuliaInitsFromFit(inits, spec, npar))
   values <- as.numeric(inits)
   if (length(values) != npar) {
     stop("inits has ", length(values), " value", if (length(values) != 1L) "s",
@@ -1380,6 +1381,29 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
       "one entry per free parameter.", call. = FALSE)
   }
   if (anyNA(values)) stop("Julia initial values must be numeric.", call. = FALSE)
+  values
+}
+
+# Starting values from another julia fit, by raw parameter name: a model
+# extended by a covariate or a smooth starts where the old one stopped, and its
+# new coordinates at zero, no effect. A level's correlation coordinates are
+# carried only where the level varies the same parameters, since they mean
+# something else in a block of another size.
+.ctJuliaInitsFromFit <- function(old, spec, npar) {
+  if (is.null(spec)) stop("Internal: starting values from a fit need the ",
+    "prepared specification.", call. = FALSE)
+  raw <- as.numeric(.ctFitRawEstimate(old))
+  oldnames <- .ctBackendRawParameterNames(old, length(raw))
+  newnames <- .ctBackendRawParameterNames(list(model_spec = spec), npar)
+  values <- raw[match(newnames, oldnames)]
+  spread <- function(names) sort(names[grepl("^popsd_", names)])
+  if (!identical(spread(oldnames), spread(newnames))) {
+    values[grepl("^rawcor_", newnames)] <- NA
+  }
+  carried <- sum(!is.na(values))
+  values[is.na(values)] <- 0
+  message("Starting values from the fit for ", carried, " of ", npar,
+    " parameters; the rest start at zero.")
   values
 }
 
@@ -3787,6 +3811,9 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
     tdpred_data = t(tdpred_data),
     tipred_data = as.matrix(tipred_data),
     ti_effects = ti_effects,
+    # Smooth terms' penalties, one row per (term, target), with each
+    # smoothing parameter (R/ctTIpredSmooth.R); NULL without smooths.
+    penalty = .ctTIsmoothPenalty(model, ti_effects, parameter_table),
     # TI effects fixed to a value (`.ctJuliaTIFixed()`); NULL when there are
     # none, so every other specification is as it was.
     ti_fixed = if (nrow(ti_fixed)) ti_fixed else NULL,
@@ -4135,6 +4162,14 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
   # Sampling weights (R/ctWeights.R); omitted, not sent empty, without them.
   if (length(spec$subject_weights)) {
     objective_args$subject_weights <- V(as.numeric(spec$subject_weights))
+  }
+  # Smoothing penalties (R/ctTIpredSmooth.R), omitted without smooths. Their
+  # precisions change as the fit estimates them, and are part of the cache key
+  # with everything else here.
+  if (!is.null(spec$penalty) && nrow(spec$penalty)) {
+    penalty <- .ctTIsmoothPenaltyVectors(spec$penalty)
+    objective_args$penalty_index <- V(penalty$index)
+    objective_args$penalty_precision <- V(penalty$precision)
   }
   # The bounded population correlation blocks (R/ctCorBound.R), omitted when
   # there are none.
@@ -5985,6 +6020,36 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
       }
     }
   }
+  # Smoothing parameters (R/ctTIpredSmooth.R): the generalised Fellner-Schall
+  # fixed point on the quadratic model the certified Hessian gives, and the
+  # fit re-optimised at it, until the parameters stop moving by more than a
+  # per cent. A pass starts where that quadratic model puts the optimum, with
+  # its Hessian, so it is mostly a finish. Without a certified Hessian
+  # (`estonly`) the smoothing parameters stay where they started.
+  if (!is.null(model_spec$penalty) && nrow(model_spec$penalty)) {
+    smoothpasses <- 0L
+    if (certifying && !is.null(correction$hessian)) {
+      for (pass in seq_len(10L)) {
+        theta <- as.numeric(result$minimizer)
+        gfs <- .ctTIsmoothLambda(model_spec$penalty, correction$hessian, theta,
+          gradient = as.numeric(result$gradient))
+        moved <- max(abs(log(gfs$lambda) - log(model_spec$penalty$lambda)))
+        model_spec$penalty$edf <- gfs$edf
+        if (moved < 0.01) break
+        model_spec$penalty$lambda <- gfs$lambda
+        smoothpasses <- pass
+        result <- .ctJuliaAddRunCounts(.ctJuliaOptimise(model_spec, gfs$point,
+          optimcontrol = utils::modifyList(optimcontrol, list(batch = FALSE,
+            saem = FALSE, stochastic = FALSE)), gradient = gradient,
+          cores = cores, verbose = verbose, callback = optimcontrol$callback,
+          hessian = gfs$hessian, hessian_at = theta), result)
+        correction <- correct(result)
+        result <- correction$result
+      }
+    } else message("Smoothing parameters held at their starting values: ",
+      "estimating them needs the Hessian, which estonly skips.")
+    model_spec$penalty$passes <- smoothpasses
+  }
   # The engine maximises the log posterior, so its `maximum_loglik` is the log
   # posterior and the per-subject objectives (which carry no prior term) sum to
   # the log likelihood. Without priors the two are the same number; with them
@@ -6277,6 +6342,9 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
         "see fit$laplace$inner_converged.", call. = FALSE)
     }
   }
+  # Each smooth term's smoothing parameter and effective degrees of freedom
+  # (R/ctTIpredSmooth.R).
+  out$smooths <- .ctTIsmoothReport(out$model_spec$penalty)
   # Random effects predicted by the others up to the correlation bound: the
   # population covariance the data point to is singular (R/ctCorBound.R).
   out$corbound <- .ctCorBoundReport(out)

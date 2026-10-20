@@ -20,7 +20,13 @@ ctExtract(
 \item{object}{A fit from \code{\link{ctFit}}, on either backend: sampled, or
 optimized with its approximate posterior draws.}
 
-\item{subjectMatrices}{Calculate subject specific system matrices?}
+\item{subjectMatrices}{Calculate subject specific system matrices? On a
+\code{backend='julia'} fit whose random effects are coordinates
+(\code{intoverpop='laplace'}, or a sampled fit), each draw's subject
+matrices are at that draw's plausible values -- the population draw with a
+draw of the subject's own effects from their posterior given its data -- so
+their spread over draws is the subject's whole uncertainty, as
+\code{\link{ctSubjectPars}} reports by default.}
 
 \item{cores}{Only used if subjectMatrices = TRUE . For faster computation use more cores.}
 

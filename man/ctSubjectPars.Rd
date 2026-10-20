@@ -32,7 +32,8 @@ default, the first id) or a grouping level above it, which gives each
 group's own parameter values -- the population values shifted by that
 group's random effects and those of the levels above it, without the
 subject-level ones or TI predictor effects. Grouping levels need a
-\code{backend='julia'} fit and \code{pointest=TRUE}.}
+\code{backend='julia'} fit; their draws take \code{uncertainty} as a
+subject's do.}
 
 \item{uncertainty}{For \code{backend='julia'} fits with \code{pointest=FALSE}:
 what the draws carry. \code{'total'} (the default) pairs each draw of the

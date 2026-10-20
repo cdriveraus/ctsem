@@ -71,6 +71,7 @@
 "test-julia-parsrefs.R","predictors","core"
 "test-julia-tipred-shared.R","predictors","core"
 "test-julia-t0-tipreds.R","predictors","core"
+"test-julia-tismooth.R","predictors","core"
 "test-julia-tipred-missing.R","predictors","extended"
 "test-stantipred.R","predictors","extended"
 "test-timevarying.R","predictors","extended"

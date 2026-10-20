@@ -94,11 +94,26 @@ mutable struct CTSEMObjective{P,O} <: CTSEMOptimisable
     # The population correlation blocks whose multiple correlations are
     # bounded (`_ctsem_corbound`), or empty for none.
     corbound::Vector{CTSEMCorBound}
+    # Smoothing penalties (`_ctsem_penalty`): coefficients of a smooth term's
+    # penalised basis, each `Normal(0, 1 / sqrt(precision))`. Part of the model
+    # whenever a fit has a smooth, so no `prior_weight` scales them; the R side
+    # sets each term's precision (R/ctTIpredSmooth.R). Empty for none.
+    penalty_index::Vector{Int}
+    penalty_precision::Vector{Float64}
 end
 
 CTSEMObjective(params, subject_objectives) =
     CTSEMObjective(params, subject_objectives, nothing, Int[], Float64[], 1.0,
-        Int[], Float64[], Float64[], Int[], Float64[], CTSEMCorBound[])
+        Int[], Float64[], Float64[], Int[], Float64[], CTSEMCorBound[], Int[],
+        Float64[])
+
+# Without smoothing penalties.
+CTSEMObjective(params, subject_objectives, adjoint_ws, prior_index, prior_scale,
+    prior_weight, ti_missing_parameter, ti_missing_mu, ti_missing_sigma,
+    ti_missing_subject, subject_weights, corbound::Vector{CTSEMCorBound}) =
+    CTSEMObjective(params, subject_objectives, adjoint_ws, prior_index, prior_scale,
+        prior_weight, ti_missing_parameter, ti_missing_mu, ti_missing_sigma,
+        ti_missing_subject, subject_weights, corbound, Int[], Float64[])
 
 # Without weights, as every objective was built before they existed.
 CTSEMObjective(params, subject_objectives, adjoint_ws, prior_index, prior_scale,
@@ -140,7 +155,8 @@ Stan's, which is exactly what the parity tests would then report as a
 mismatch.
 """
 function _ctsem_log_prior(objective::CTSEMObjective, values::AbstractVector{T}) where {T}
-    cells = _ctsem_ti_missing_loglik(objective, values) + _ctsem_corbound(objective, values)
+    cells = _ctsem_ti_missing_loglik(objective, values) +
+        _ctsem_corbound(objective, values) + _ctsem_penalty(objective, values)
     isempty(objective.prior_index) && return cells
     total = zero(T)
     weight = objective.prior_weight
@@ -158,6 +174,9 @@ function _ctsem_prior_precision(objective::CTSEMObjective, npar::Integer)
     for j in eachindex(objective.prior_index)
         prec[objective.prior_index[j]] += objective.prior_weight / objective.prior_scale[j]^2
     end
+    for k in eachindex(objective.penalty_index)
+        prec[objective.penalty_index[k]] += objective.penalty_precision[k]
+    end
     for k in eachindex(objective.ti_missing_parameter)
         prec[objective.ti_missing_parameter[k]] += 1 / objective.ti_missing_sigma[k]^2
     end
@@ -173,6 +192,12 @@ function _ctsem_log_prior_gradient!(gradient::AbstractVector{T},
     cells::Bool=true) where {T}
     cells && _ctsem_ti_missing_loglik_gradient!(gradient, objective, values)
     cells && _ctsem_corbound_gradient!(gradient, objective, values)
+    # The smoothing penalty in `weight`'s share, as the parameter prior below
+    # but with no `prior_weight`: it is part of the model, not eased in.
+    @inbounds for k in eachindex(objective.penalty_index)
+        idx = objective.penalty_index[k]
+        gradient[idx] -= weight * objective.penalty_precision[k] * values[idx]
+    end
     isempty(objective.prior_index) && return gradient
     scale_weight = objective.prior_weight * weight
     @inbounds for k in eachindex(objective.prior_index)
@@ -197,7 +222,7 @@ function _ctsem_prior_scores!(scores::AbstractMatrix, objective::CTSEMObjective,
     values::AbstractVector, row::AbstractVector{<:Integer}=Base.OneTo(size(scores, 1)))
     nrows = size(scores, 1)
     nrows > 0 || return scores
-    if !isempty(objective.prior_index)
+    if !isempty(objective.prior_index) || !isempty(objective.penalty_index)
         share = 1 / nrows
         @inbounds for r in 1:nrows
             _ctsem_log_prior_gradient!(view(scores, r, :), objective, values, share, false)
@@ -220,6 +245,24 @@ function _ctsem_prior_scores!(scores::AbstractMatrix, objective::CTSEMObjective,
             (values[idx] - objective.ti_missing_mu[k]) / (sigma * sigma)
     end
     return scores
+end
+
+"""
+    _ctsem_penalty(objective, values)
+
+The smoothing penalties' log density: each penalised coefficient
+`Normal(0, 1 / sqrt(precision))`, normalising constant included, so the log
+posterior a fit with a smooth reports carries the smooth's prior whole. Its
+gradient is in `_ctsem_log_prior_gradient!`.
+"""
+function _ctsem_penalty(objective::CTSEMObjective, values::AbstractVector{T}) where {T}
+    total = zero(T)
+    @inbounds for k in eachindex(objective.penalty_index)
+        lambda = objective.penalty_precision[k]
+        x = values[objective.penalty_index[k]]
+        total += -0.5 * lambda * x * x + 0.5 * log(lambda) - 0.5 * log(2 * pi)
+    end
+    return total
 end
 
 """
@@ -496,7 +539,12 @@ function CTSEMObjective(params::EKFParameters, subject_starts::AbstractVector,
     # kept flat on the returned objective for `_ctsem_ti_missing_loglik`.
     ti_missing_subject=Int[], ti_missing_predictor=Int[], ti_missing_parameter=Int[],
     ti_missing_mu=Float64[], ti_missing_sigma=Float64[], subject_weights=Float64[],
-    corbound_k=Int[], corbound_code=Int[], corbound_index=Int[], corbound_fixed=Float64[])
+    corbound_k=Int[], corbound_code=Int[], corbound_index=Int[], corbound_fixed=Float64[],
+    penalty_index=Int[], penalty_precision=Float64[])
+    length(penalty_index) == length(penalty_precision) ||
+        throw(DimensionMismatch("penalty_index and penalty_precision differ in length"))
+    all(p -> isfinite(p) && p > 0, penalty_precision) ||
+        throw(ArgumentError("penalty_precision must be positive and finite"))
     ranges = _ctsem_subject_ranges(subject_starts, timesteps, data)
     (isempty(subject_weights) || length(subject_weights) == length(ranges)) ||
         throw(DimensionMismatch("subject_weights needs one weight per subject"))
@@ -554,7 +602,8 @@ function CTSEMObjective(params::EKFParameters, subject_starts::AbstractVector,
         Float64.(prior_scale), Float64(prior_weight), Int.(ti_missing_parameter),
         Float64.(ti_missing_mu), Float64.(ti_missing_sigma), Int.(ti_missing_subject),
         Float64.(subject_weights),
-        _ctsem_corbound_blocks(corbound_k, corbound_code, corbound_index, corbound_fixed))
+        _ctsem_corbound_blocks(corbound_k, corbound_code, corbound_index, corbound_fixed),
+        Int.(penalty_index), Float64.(penalty_precision))
 end
 
 """The bounded blocks from flat vectors, as the R side sends them: a size and
@@ -584,14 +633,16 @@ ctsem_objective(params::EKFParameters, subject_starts, timesteps, data,
     prior_index=Int[], prior_scale=Float64[], prior_weight::Real=1.0,
     ti_missing_subject=Int[], ti_missing_predictor=Int[], ti_missing_parameter=Int[],
     ti_missing_mu=Float64[], ti_missing_sigma=Float64[], subject_weights=Float64[],
-    corbound_k=Int[], corbound_code=Int[], corbound_index=Int[], corbound_fixed=Float64[]) =
+    corbound_k=Int[], corbound_code=Int[], corbound_index=Int[], corbound_fixed=Float64[],
+    penalty_index=Int[], penalty_precision=Float64[]) =
     CTSEMObjective(params, subject_starts, timesteps, data, tdpred_data, tipred_data,
         max_timestep; prior_index=prior_index, prior_scale=prior_scale,
         prior_weight=prior_weight, ti_missing_subject=ti_missing_subject,
         ti_missing_predictor=ti_missing_predictor, ti_missing_parameter=ti_missing_parameter,
         ti_missing_mu=ti_missing_mu, ti_missing_sigma=ti_missing_sigma,
         subject_weights=subject_weights, corbound_k=corbound_k, corbound_code=corbound_code,
-        corbound_index=corbound_index, corbound_fixed=corbound_fixed)
+        corbound_index=corbound_index, corbound_fixed=corbound_fixed,
+        penalty_index=penalty_index, penalty_precision=penalty_precision)
 
 ################################################################################
 # Threading
