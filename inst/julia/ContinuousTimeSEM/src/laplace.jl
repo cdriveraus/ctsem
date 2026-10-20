@@ -792,6 +792,55 @@ function _laplace_check_indices(laplace::CTSEMLaplaceObjective, npar::Integer)
 end
 
 """
+    _laplace_extend(laplace, theta)
+
+`theta` as everything below an entry point reads it: the free parameters, then
+any stated population values (`CTSEMAnchors`), which the random effects shift
+like any other raw parameter (a level's `re_index` names them). Every entry
+point that takes a parameter vector from R, the optimiser or a sampler passes
+it through here first, and what it returns per parameter -- a gradient, a
+Hessian, a Jacobian's columns, scores -- goes back at the caller's length. A
+vector that already carries the values, or a model with none, comes back as it
+is, so an entry point reached from another passes through unchanged.
+"""
+function _laplace_extend(laplace::CTSEMLaplaceObjective, theta::AbstractVector{T}) where {T}
+    sp = laplace.objective.params
+    n = length(theta)
+    na = _ctsem_anchor_append(sp, n)
+    na == 0 && return theta
+    out = Vector{T}(undef, n + na)
+    copyto!(out, 1, theta, 1, n)
+    return _ctsem_fill_anchors!(out, sp, n, na)
+end
+
+"""Every row of `draws` extended as `_laplace_extend` extends one vector."""
+function _laplace_extend_rows(laplace::CTSEMLaplaceObjective,
+    draws::AbstractMatrix{T}) where {T}
+    sp = laplace.objective.params
+    n = size(draws, 2)
+    na = _ctsem_anchor_append(sp, n)
+    na == 0 && return draws
+    out = Matrix{T}(undef, size(draws, 1), n + na)
+    out[:, 1:n] .= draws
+    for j in 1:na
+        out[:, n + j] .= sp.anchors.values[j]
+    end
+    return out
+end
+
+"""How many stated population values the model has (`CTSEMAnchors`); they
+are the last entries of an extended vector."""
+_laplace_nanchors(laplace::CTSEMLaplaceObjective) =
+    length(laplace.objective.params.anchors.values)
+
+"""An evaluation's result with its gradient cut back to the caller's `n`
+parameters (`_laplace_extend`)."""
+function _laplace_free_result(r, n::Integer)
+    (r === nothing || r.gradient === nothing || length(r.gradient) == n) && return r
+    return merge(r, (gradient=r.gradient[1:n],))
+end
+
+"""
     _laplace_popchol(values, level)
 
 The Cholesky factor of one level's raw-scale population covariance.
@@ -901,7 +950,7 @@ are left at zero.
 """
 function _laplace_determined_shares(laplace::CTSEMLaplaceObjective,
     theta::AbstractVector)
-    theta = collect(Float64, theta)
+    theta = _laplace_extend(laplace, collect(Float64, theta))
     spec = laplace.spec
     _laplace_ensure_pool!(laplace)
     Ls = _laplace_popchols(theta, spec)
@@ -1155,6 +1204,12 @@ function _laplace_member_values!(shifted::AbstractVector, values::AbstractVector
     spec::CTSEMLaplaceSpec, Ls::Vector{<:AbstractMatrix}, u::AbstractVector,
     offsets::Vector{Int})
     S = eltype(shifted)
+    # Outside the loop's `@inbounds`: a vector short of an index a level
+    # shifts -- a stated population value (`CTSEMAnchors`) an entry point did
+    # not append (`_laplace_extend`) -- would otherwise be written past its end.
+    for level in spec.levels
+        isempty(level.re_index) || checkbounds(values, maximum(level.re_index))
+    end
     copyto!(shifted, values)
     @inbounds for l in eachindex(spec.levels)
         level = spec.levels[l]
@@ -5787,7 +5842,24 @@ needs a marginal per independent block (leave-one-unit-out, for one) reads
 function ctsem_laplace_evaluate(laplace::CTSEMLaplaceObjective, values::AbstractVector;
     gradient::Bool=true, contributions::Bool=false, nested_gradient::Bool=false,
     scores::Union{Nothing,Matrix{Float64}}=nothing)
-    theta = collect(Float64, values)
+    n = length(values)
+    theta = _laplace_extend(laplace, collect(Float64, values))
+    length(theta) == n && return _laplace_evaluate(laplace, theta; gradient=gradient,
+        contributions=contributions, nested_gradient=nested_gradient, scores=scores)
+    # With stated population values (`CTSEMAnchors`) the gradient and the
+    # scores are formed over the extended vector and returned over the
+    # caller's.
+    full = scores === nothing ? nothing : zeros(Float64, size(scores, 1), length(theta))
+    r = _laplace_evaluate(laplace, theta; gradient=gradient,
+        contributions=contributions, nested_gradient=nested_gradient, scores=full)
+    full === nothing || copyto!(scores, view(full, :, 1:n))
+    return _laplace_free_result(r, n)
+end
+
+"""`ctsem_laplace_evaluate` at a vector already extended (`_laplace_extend`)."""
+function _laplace_evaluate(laplace::CTSEMLaplaceObjective, theta::Vector{Float64};
+    gradient::Bool=true, contributions::Bool=false, nested_gradient::Bool=false,
+    scores::Union{Nothing,Matrix{Float64}}=nothing)
     _laplace_check_indices(laplace, length(theta))
     laplace.last_values = theta
     nsubjects = length(laplace.objective.subject_objectives)
@@ -6231,7 +6303,7 @@ to get that subject's parameter matrices.
 """
 function ctsem_laplace_subject_values(laplace::CTSEMLaplaceObjective,
     values::AbstractVector; from_level::Integer=1, ti_effects::Bool=true)
-    theta = collect(Float64, values)
+    theta = _laplace_extend(laplace, collect(Float64, values))
     Ls = _laplace_popchols(theta, laplace.spec)
     # Every unit's mode on the pool, as an evaluation solves them: each writes
     # only its own `laplace.modes[U]`, and the slot its task holds. Solved one
@@ -6279,7 +6351,7 @@ Returns `nsubjects x length(values)`.
 function ctsem_laplace_subject_values(laplace::CTSEMLaplaceObjective,
     values::AbstractVector, effects::AbstractVector; ti_effects::Bool=true,
     from_level::Integer=1)
-    theta = collect(Float64, values)
+    theta = _laplace_extend(laplace, collect(Float64, values))
     shifted = _laplace_shifted_values_from_deviations(laplace, theta, effects;
         from_level=from_level)
     return ti_effects ? _laplace_add_ti_effects(laplace, shifted) : shifted
@@ -6302,6 +6374,7 @@ function ctsem_laplace_subject_values(laplace::CTSEMLaplaceObjective,
     size(effects, 1) == size(draws, 1) || throw(DimensionMismatch(string(
         "effects has ", size(effects, 1), " draws for ", size(draws, 1),
         " parameter draws")))
+    draws = _laplace_extend_rows(laplace, draws)
     ndraws = size(draws, 1)
     nsubjects = length(laplace.objective.subject_objectives)
     out = zeros(Float64, ndraws, nsubjects, size(draws, 2))
@@ -6335,9 +6408,14 @@ function _laplace_filter_values(laplace::CTSEMLaplaceObjective,
         size(subject_values, 1) == nsubjects || throw(ArgumentError(
             "subject_values has $(size(subject_values, 1)) rows for " *
             "$nsubjects subjects."))
-        size(subject_values, 2) == length(values) || throw(ArgumentError(
+        # A subject's vector carries any stated population values
+        # (`CTSEMAnchors`) after the free parameters, as every vector this
+        # route builds does.
+        width = length(values) + _ctsem_anchor_append(laplace.objective.params,
+            length(values))
+        size(subject_values, 2) == width || throw(ArgumentError(
             "subject_values has $(size(subject_values, 2)) columns for " *
-            "$(length(values)) parameters."))
+            "$width parameters."))
         return subject_values
     end
     effects === nothing ||
@@ -6377,7 +6455,7 @@ TI-predictor effects, which the filter adds exactly as it does in the fit.
 """
 function ctsem_auto_substeps(laplace::CTSEMLaplaceObjective, values::AbstractVector;
     kwargs...)
-    theta = collect(Float64, values)
+    theta = _laplace_extend(laplace, collect(Float64, values))
     _laplace_check_indices(laplace, length(theta))
     Ls = _laplace_popchols(theta, laplace.spec)
     shifted = _laplace_shifted_values(laplace, theta, Ls, function (U)
@@ -6594,8 +6672,13 @@ are its effects and then, member by member, one per hybrid item in the order
 moves with the parameters directly and through the effects' mode -- and an
 item the member never observes is a row of zeros, its mode the prior's.
 """
-ctsem_laplace_mode_jacobian(laplace::CTSEMLaplaceObjective, values::AbstractVector) =
-    _laplace_mode_jacobian(laplace, collect(Float64, values)).jacobians
+function ctsem_laplace_mode_jacobian(laplace::CTSEMLaplaceObjective,
+    values::AbstractVector)
+    n = length(values)
+    J = _laplace_mode_jacobian(laplace,
+        _laplace_extend(laplace, collect(Float64, values))).jacobians
+    return [size(j, 2) == n ? j : j[:, 1:n] for j in J]
+end
 
 """
     _laplace_mode_jacobian(laplace, theta)
@@ -6712,7 +6795,8 @@ function ctsem_laplace_subject_values(laplace::CTSEMLaplaceObjective,
     # The Jacobian is computed here rather than handed in: it is a vector of
     # matrices, and round-tripping one through the R bridge only to send it
     # straight back costs two marshalling steps for no gain.
-    centre = collect(Float64, thetahat)
+    centre = _laplace_extend(laplace, collect(Float64, thetahat))
+    draws = _laplace_extend_rows(laplace, draws)
     linear = _laplace_mode_jacobian(laplace, centre)
     ndraws = size(draws, 1)
     npar = size(draws, 2)
@@ -6843,7 +6927,7 @@ is `L * cov * L'`: the same change of variables the model itself applies.
 """
 function ctsem_laplace_modes(laplace::CTSEMLaplaceObjective, values::AbstractVector,
     level::Integer=1)
-    theta = collect(Float64, values)
+    theta = _laplace_extend(laplace, collect(Float64, values))
     spec = laplace.spec
     lv = spec.levels[level]
     k = nrandomeffects(lv)
@@ -7414,12 +7498,15 @@ were.
 function _laplace_hessian_columns(laplace::CTSEMLaplaceObjective,
     values::AbstractVector, columns; step::Real=1e-4, retries::Integer=2,
     warm::Bool=true, progress=nothing, localised::Bool=true)
-    x = collect(Float64, values)
+    # Over the extended vector (`_laplace_extend`), and returned with the
+    # caller's rows.
+    nin = length(values)
+    x = _laplace_extend(laplace, collect(Float64, values))
     n = length(x)
     cols = collect(Int, columns)
     k = length(cols)
     H = zeros(Float64, n, k)
-    k == 0 && return H
+    k == 0 && return H[1:nin, :]
     budget = laplace.inner_maxiter
     NU = length(laplace.units.members)
     # The modes at `x`, from the origin, which every differencing point then
@@ -7563,7 +7650,7 @@ function _laplace_hessian_columns(laplace::CTSEMLaplaceObjective,
         "; those columns are NaN. ", units, " unit(s) short, worst inner ",
         "gradient ", worst, " against a budget of ", budget * 4^retries,
         " iterations.")
-    return H
+    return n == nin ? H : H[1:nin, :]
 end
 
 """
@@ -7797,17 +7884,22 @@ objective.
 """
 function ctsem_subject_gradients(laplace::CTSEMLaplaceObjective,
     values::AbstractVector; prior::Bool=true)
-    theta = collect(Float64, values)
+    # Over the extended vector (`_laplace_extend`), and returned with the
+    # caller's columns.
+    n = length(values)
+    theta = _laplace_extend(laplace, collect(Float64, values))
     nunits = length(laplace.units.members)
     S = zeros(Float64, nunits, length(theta))
     r = ctsem_laplace_evaluate(laplace, theta; gradient=true, scores=S)
-    isfinite(r.value) || return (value=r.value, scores=fill(NaN, size(S)))
-    all(isfinite, S) ||
-        return _laplace_subject_gradients_forward(laplace, theta; prior=prior)
+    isfinite(r.value) || return (value=r.value, scores=fill(NaN, nunits, n))
+    if !all(isfinite, S)
+        f = _laplace_subject_gradients_forward(laplace, theta; prior=prior)
+        return (value=f.value, scores=size(f.scores, 2) == n ? f.scores : f.scores[:, 1:n])
+    end
     # Each unit carries its share of the prior, as the forward route's rows do.
     prior && _ctsem_prior_scores!(S, laplace.objective, theta,
         _laplace_unit_of_subject(laplace))
-    return (value=r.value, scores=S)
+    return (value=r.value, scores=size(S, 2) == n ? S : S[:, 1:n])
 end
 
 """
@@ -8148,7 +8240,7 @@ function ctsem_laplace_population_deviations(laplace::CTSEMLaplaceObjective,
     n = ctsem_laplace_coordinate_dimension(laplace)
     length(u) == n || throw(DimensionMismatch(string("u has ", length(u),
         " coordinates where the random effects take ", n)))
-    theta = collect(Float64, values)
+    theta = _laplace_extend(laplace, collect(Float64, values))
     _laplace_check_indices(laplace, length(theta))
     Ls = _laplace_popchols(theta, laplace.spec)
     starts, ndev = _laplace_deviation_offsets(laplace)

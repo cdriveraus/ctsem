@@ -61,7 +61,7 @@ effects shared with the other members.
 """
 function ctsem_laplace_sequential(laplace::CTSEMLaplaceObjective, values::AbstractVector;
     compact::Bool=false)
-    theta = collect(Float64, values)
+    theta = _laplace_extend(laplace, collect(Float64, values))
     units = laplace.units
     all(length(m) == 1 for m in units.members) || throw(ArgumentError(
         "sequential prediction needs every subject to be its own unit: a single " *

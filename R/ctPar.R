@@ -30,6 +30,12 @@
 # `.ctCellSpecToPipe()` below normalises the named form to the `|` form, so
 # there stays exactly one thing for the model parser to read.
 #
+# `mean` states a varying parameter's population mean instead of estimating
+# it. It has no `|` field of its own -- the fields are positional, and a sixth
+# after tipreds would make an empty tipreds field mean "no effects" -- so it
+# rides in the name field, 'lev=0||TRUE', and the model holds it in
+# `fixedpopmeans`.
+#
 # `indvarying` says at which levels of the id hierarchy a parameter varies.
 # TRUE is every level the model has and FALSE none; anything else is a list of
 # id names, 'cross||couple' or 'cross||person,couple'. That is also what the
@@ -67,6 +73,13 @@
 #'   model is built. \code{character(0)} (or \code{tipreds=} with nothing
 #'   after it, in a cell) means no predictor acts on this cell, which is not
 #'   the same as leaving the argument out -- that keeps the model's default.
+#' @param mean A population mean stated rather than estimated, for a parameter
+#'   that varies (\code{indvarying}): a number on the scale
+#'   \code{summary()} reports population means on. Only the random effects
+#'   about it are then fitted, as for a person-level intercept with mean zero.
+#'   Written into the cell as \code{'name=value|...'}, and held by the model
+#'   in \code{fixedpopmeans}, a named vector that may also be set directly.
+#'   Fits with \code{backend = 'julia'}.
 #'
 #' @return A single character string, suitable for a model matrix cell.
 #'
@@ -106,6 +119,8 @@
 #' ctPar('mm', indvarying = TRUE, tipreds = c('age', 'sex'))
 #' # varying between couples only, in a model with id = c('person', 'couple')
 #' ctPar('cross', indvarying = 'couple')
+#' # a person-level intercept whose population mean is zero
+#' ctPar('lev', indvarying = TRUE, mean = 0)
 #'
 #' \dontrun{
 #' # These two models are identical.
@@ -121,10 +136,17 @@
 #' @seealso \code{\link{ctModel}} for the matrices these cells go in.
 #' @export
 ctPar <- function(name, transform = NA, indvarying = NA, sdscale = NA,
-  tipreds = NULL) {
+  tipreds = NULL, mean = NA) {
 
   if (missing(name) || length(name) != 1L || is.na(name) || !nzchar(name)) {
     stop("ctPar() needs a parameter name.", call. = FALSE)
+  }
+  meangiven <- length(mean) == 1L && !is.na(mean)
+  if (meangiven) {
+    if (!is.numeric(mean) || !is.finite(mean)) {
+      stop("ctPar(mean=) takes one finite number.", call. = FALSE)
+    }
+    name <- paste0(name, "=", format(mean, digits = 15))
   }
   field <- function(x) {
     if (length(x) != 1L || is.na(x)) return("")
@@ -160,7 +182,8 @@ ctPar <- function(name, transform = NA, indvarying = NA, sdscale = NA,
   # Trailing empty fields carry no information and only add pipes to read past
   # -- except an empty tipreds field, which is the whole of how "no predictor
   # effects" is written and must survive.
-  keep <- if (tipredsgiven) length(.ctCellSpecKeys) else 1L
+  # A stated mean keeps one `|`, which is what says the name field is a field.
+  keep <- if (tipredsgiven) length(.ctCellSpecKeys) else if (meangiven) 2L else 1L
   while (length(parts) > keep && !nzchar(parts[length(parts)])) {
     parts <- parts[-length(parts)]
   }
@@ -228,6 +251,12 @@ ctPar <- function(name, transform = NA, indvarying = NA, sdscale = NA,
   if (!.ctCellSpecIsNamed(x)) return(x)
   parts <- trimws(.ctCellSpecSplit(x))
   parts <- parts[nzchar(parts)]
+  # 'lev=0' alone is a name with a stated mean, not a named field: the `|`
+  # form of the same cell, with the separator that makes it one.
+  if (length(parts) == 1L && !is.na(.ctCellSpecNameMean(parts)$mean) &&
+      !.ctCellSpecNameMean(parts)$name %in% c(.ctCellSpecKeys, 'mean')) {
+    return(paste0(parts, '|'))
+  }
   args <- list()
   for (i in seq_along(parts)) {
     part <- parts[i]
@@ -246,10 +275,10 @@ ctPar <- function(name, transform = NA, indvarying = NA, sdscale = NA,
     }
     key <- trimws(sub('=$', '', keyed))
     value <- trimws(substring(part, nchar(keyed) + 1L))
-    if (!key %in% .ctCellSpecKeys) {
+    if (!key %in% c(.ctCellSpecKeys, 'mean')) {
       stop("In the parameter specification '", x, "', '", key, "' is not a ",
         'field. Valid fields are: ',
-        paste(.ctCellSpecKeys, collapse = ', '), '.',
+        paste(c(.ctCellSpecKeys, 'mean'), collapse = ', '), '.',
         .ctCellSpecDidYouMean(key), call. = FALSE)
     }
     if (key %in% names(args)) {
@@ -259,6 +288,7 @@ ctPar <- function(name, transform = NA, indvarying = NA, sdscale = NA,
     args[[key]] <- switch(key,
       indvarying = .ctCellSpecIndvarying(value),
       sdscale = .ctCellSpecNumeric(value, x),
+      mean = .ctCellSpecNumeric(value, x, 'mean'),
       tipreds = .ctCellSpecNames(value),
       value)
   }
@@ -273,9 +303,22 @@ ctPar <- function(name, transform = NA, indvarying = NA, sdscale = NA,
 # meant rather than only listing all of them. `tipred` for `tipreds` and
 # `indvarying` for `indvaring` are both one edit away.
 .ctCellSpecDidYouMean <- function(key) {
-  d <- as.integer(utils::adist(tolower(key), .ctCellSpecKeys)[1, ])
+  keys <- c(.ctCellSpecKeys, 'mean')
+  d <- as.integer(utils::adist(tolower(key), keys)[1, ])
   if (min(d) > max(1L, nchar(key) %/% 3L)) return('')
-  paste0(" Did you mean '", .ctCellSpecKeys[which.min(d)], "'?")
+  paste0(" Did you mean '", keys[which.min(d)], "'?")
+}
+
+# A name field with a stated population mean, 'lev=0' (ctPar(mean=)): the
+# name, and the mean or NA when the field is a plain name.
+.ctCellSpecNameMean <- function(x) {
+  out <- list(name = x, mean = NA_real_)
+  if (!is.character(x) || length(x) != 1L || is.na(x)) return(out)
+  m <- regmatches(x, regexec(paste0('^[[:space:]]*([A-Za-z.][A-Za-z0-9._]*)',
+    '[[:space:]]*=[[:space:]]*([-+]?([0-9]+[.]?[0-9]*|[.][0-9]+)',
+    '([eE][-+]?[0-9]+)?)[[:space:]]*$'), x))[[1]]
+  if (!length(m)) return(out)
+  list(name = m[2], mean = as.numeric(m[3]))
 }
 
 # `indvarying=TRUE`, `indvarying=couple` and `indvarying=c(person, couple)`.
@@ -342,9 +385,9 @@ ctPar <- function(name, transform = NA, indvarying = NA, sdscale = NA,
   out
 }
 
-.ctCellSpecNumeric <- function(value, x) {
+.ctCellSpecNumeric <- function(value, x, key = 'sdscale') {
   out <- suppressWarnings(as.numeric(value))
-  if (is.na(out)) stop("sdscale=", value, " in '", x, "' must be a number.",
+  if (is.na(out)) stop(key, "=", value, " in '", x, "' must be a number.",
     call. = FALSE)
   out
 }
@@ -366,7 +409,7 @@ ctPar <- function(name, transform = NA, indvarying = NA, sdscale = NA,
 # form instead and lets its own parser read the fields.
 .ctCellSpecFields <- function(x) {
   out <- list(param = NA_character_, transform = NA_character_,
-    indvarying = NA, sdscale = NA_real_, tipreds = NULL)
+    indvarying = NA, sdscale = NA_real_, tipreds = NULL, mean = NA_real_)
   if (!is.character(x) || length(x) != 1L || is.na(x)) return(out)
   x <- .ctCellSpecToPipe(x)
   if (!grepl('|', x, fixed = TRUE)) {
@@ -393,7 +436,11 @@ ctPar <- function(name, transform = NA, indvarying = NA, sdscale = NA,
       next
     }
     if (!nzchar(split[i])) next
-    if (identical(key, 'name')) out$param <- split[i]
+    if (identical(key, 'name')) {
+      namemean <- .ctCellSpecNameMean(split[i])
+      out$param <- namemean$name
+      out$mean <- namemean$mean
+    }
     else if (identical(key, 'indvarying')) out$indvarying <- .ctCellSpecIndvarying(split[i])
     else if (identical(key, 'sdscale')) out$sdscale <- as.numeric(split[i])
     else out[[key]] <- split[i]

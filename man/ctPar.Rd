@@ -4,7 +4,14 @@
 \alias{ctPar}
 \title{Write a parameter specification}
 \usage{
-ctPar(name, transform = NA, indvarying = NA, sdscale = NA, tipreds = NULL)
+ctPar(
+  name,
+  transform = NA,
+  indvarying = NA,
+  sdscale = NA,
+  tipreds = NULL,
+  mean = NA
+)
 }
 \arguments{
 \item{name}{Parameter name. Two cells given the same name are the same
@@ -34,6 +41,14 @@ one of the model's \code{TIpredNames}; anything else is an error when the
 model is built. \code{character(0)} (or \code{tipreds=} with nothing
 after it, in a cell) means no predictor acts on this cell, which is not
 the same as leaving the argument out -- that keeps the model's default.}
+
+\item{mean}{A population mean stated rather than estimated, for a parameter
+that varies (\code{indvarying}): a number on the scale
+\code{summary()} reports population means on. Only the random effects
+about it are then fitted, as for a person-level intercept with mean zero.
+Written into the cell as \code{'name=value|...'}, and held by the model
+in \code{fixedpopmeans}, a named vector that may also be set directly.
+Fits with \code{backend = 'julia'}.}
 }
 \value{
 A single character string, suitable for a model matrix cell.
@@ -79,6 +94,8 @@ ctPar('drift11', transform = '-exp(param)')
 ctPar('mm', indvarying = TRUE, tipreds = c('age', 'sex'))
 # varying between couples only, in a model with id = c('person', 'couple')
 ctPar('cross', indvarying = 'couple')
+# a person-level intercept whose population mean is zero
+ctPar('lev', indvarying = TRUE, mean = 0)
 
 \dontrun{
 # These two models are identical.

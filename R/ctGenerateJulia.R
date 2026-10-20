@@ -322,12 +322,17 @@
         if (length(unknown) > 1L) "are not free parameters" else
           "is not a free parameter", " of this model.", call. = FALSE)
     }
+    stated <- intersect(names(means), spec$anchors$param)
+    if (length(stated)) {
+      stop("values gives a population mean for ", paste(stated, collapse = ", "),
+        ", which the model states (fixedpopmeans); change it there.", call. = FALSE)
+    }
     for (nm in names(means)) {
       index <- unique(table$parnumber[free & table$param %in% nm])
       raw[index] <- .ctGenerateRawFor(transformOf(nm), means[[nm]], nm)
     }
   }
-  centred <- setdiff(parnames, names(means))
+  centred <- setdiff(parnames, c(names(means), spec$anchors$param))
   natural <- vapply(centred, function(nm)
     .ctGenerateNatural(transformOf(nm), 0), numeric(1))
 
@@ -366,8 +371,10 @@
         if (name %in% names(sds)) {
           if (!free) stop("values$popsd: ", name, "'s spread is stated in ",
             "the model's RAWPOPVAR.", call. = FALSE)
-          target <- .ctGenerateRawSd(transformOf(name), raw[level$re_index[j]],
-            sds[[name]], name)
+          # The mean may be stated in the model (R/ctFixedPopMeans.R), past
+          # the free parameters.
+          target <- .ctGenerateRawSd(transformOf(name),
+            .ctBackendRawFull(spec, raw)[level$re_index[j]], sds[[name]], name)
         } else {
           target <- if (free) level$sd_scale[j] else
             log1p(exp(2 * level$sd_fixed[j] - 1)) * level$sd_scale[j]
@@ -434,7 +441,8 @@
     if (key %in% names(tipreds)) {
       if (!is.null(value)) stop("values$tipreds: ", key, " is fixed in the ",
         "model.", call. = FALSE)
-      mean <- raw[ti$parameter[r]]
+      # The target may be a stated population mean (R/ctFixedPopMeans.R).
+      mean <- .ctBackendRawFull(spec, raw)[ti$parameter[r]]
       h <- 1e-5
       slope <- diff(.ctGenerateNatural(transformOf(name), mean + c(-h, h))) / (2 * h)
       if (!is.finite(slope) || abs(slope) < 1e-12) stop("values$tipreds: ",
@@ -606,6 +614,9 @@
 .ctGenerateSubjectPars <- function(handle, raw, effects, model, skeleton,
   ti_effects = TRUE) {
   spec <- .ctBackendSpec(handle)
+  # Read by position below, a stated population mean's among them
+  # (R/ctFixedPopMeans.R).
+  raw <- .ctBackendRawFull(spec, as.numeric(raw))
   table <- spec$parameter_table
   free <- !is.na(table$parnumber)
   if (!any(free)) return(NULL)

@@ -126,9 +126,14 @@ print.ctStanModel <- function(x, matrices = NULL, ...) {
   # matrices below still show the cells as written.
   shownpars <- pars
   pars <- suppressMessages(T0VARredundancies(x))$pars
-  free <- .ctModelFreeNames(pars)
+  # A parameter whose population mean is stated (ctPar(mean=)) has no mean of
+  # its own to estimate, only its random effects.
+  stated <- x[['fixedpopmeans']]
+  free <- setdiff(.ctModelFreeNames(pars), names(stated))
   cat("\n", length(free), " free parameter", if (length(free) != 1L) "s" else "",
     "\n", sep = "")
+  if (length(stated)) cat("  Population means stated, not estimated: ",
+    paste0(names(stated), " = ", format(stated), collapse = ", "), "\n", sep = "")
 
   # The implication, stated rather than left to be inferred from a column --
   # for every level of the id hierarchy, each of which estimates its own

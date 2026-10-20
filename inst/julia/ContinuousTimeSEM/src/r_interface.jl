@@ -441,7 +441,7 @@ function ekf_from_columns(matrix, row, col, parnumber, value, transform,
     population_scale=Float64[], affine_dim::Int=0, stationary::Bool=false,
     ti_fixed_value=Float64[], ti_tail_offset::Integer=0, n_tipreds::Integer=0,
     compile_transforms::Bool=false, stationary_mean=Int[], stationary_block=Int[],
-    stationary_closure=Int[])
+    stationary_closure=Int[], nfree::Integer=0, anchor_values=Float64[])
 
     n = length(matrix)
     length(row) == n && length(col) == n ||
@@ -566,6 +566,14 @@ function ekf_from_columns(matrix, row, col, parnumber, value, transform,
         Float64.(ti_fixed_value), ti_tail)
     _ctsem_set_stationary_elements!(sp.stationary_elements, stationary_mean,
         stationary_block, stationary_closure)
+    # Parameters with a stated population value (`CTSEMAnchors`): their cells
+    # read `param[nfree + j]`, and the TI predictor tail follows them, which
+    # `ti_tail_offset` already says.
+    if !isempty(anchor_values)
+        nfree > 0 || throw(ArgumentError("anchor_values needs nfree"))
+        sp.anchors.nfree = Int(nfree)
+        sp.anchors.values = Float64.(anchor_values)
+    end
     return sp
 end
 

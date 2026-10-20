@@ -47,7 +47,7 @@ function ctsem_unit_terms(laplace::CTSEMLaplaceObjective, draws::AbstractMatrix;
     # A bare integer when R sends one subject, so iterate rather than index.
     chosen = subjects === nothing ? Int[] : unique(Int[unit[Int(i)] for i in subjects])
     for s in 1:ndraws
-        theta = collect(Float64, view(draws, :, s))
+        theta = _laplace_extend(laplace, collect(Float64, view(draws, :, s)))
         ok = try
             if subjects === nothing
                 result = ctsem_laplace_evaluate(laplace, theta; gradient=false)
@@ -139,7 +139,7 @@ the proposal; see the R side (`.ctBackendLOOPsis`) for why it is above one.
 """
 function ctsem_laplace_effect_draws(laplace::CTSEMLaplaceObjective,
     values::AbstractVector, ndraws::Integer; seed::Integer=1, scale::Real=1.0)
-    theta = collect(Float64, values)
+    theta = _laplace_extend(laplace, collect(Float64, values))
     _laplace_check_indices(laplace, length(theta))
     _laplace_ensure_pool!(laplace)
     Ls = _laplace_popchols(theta, laplace.spec)

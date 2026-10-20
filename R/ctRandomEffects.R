@@ -120,7 +120,9 @@
 # to a value (`ti_fixed`) are left out.
 .ctRandomEffectsSubjectRaw <- function(fit, entry) {
   spec <- .ctBackendSpec(fit)
-  estimate <- as.numeric(.ctFitRawEstimate(fit))
+  # With any stated population means after the free parameters
+  # (R/ctFixedPopMeans.R), as a subject's vector carries them.
+  estimate <- .ctBackendRawFull(fit, as.numeric(.ctFitRawEstimate(fit)))
   n <- nrow(entry$mean)
   raw <- matrix(estimate, n, length(estimate), byrow = TRUE)
   effects <- spec$ti_effects

@@ -3872,7 +3872,23 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
     .ctBackendLaplacePriorSpec(prepared_data, laplace, npar)
   } else .ctBackendPriorSpec(prepared_data, npar,
     nextra = if (is.null(ti_missing)) 0L else nrow(ti_missing))
-  list(
+  # Stated population means (R/ctFixedPopMeans.R): each one's raw position
+  # moved past the free parameters, and every index renumbered to match.
+  anchors <- NULL
+  means <- .ctFixedPopMeans(model)
+  if (!is.null(means)) {
+    moved <- .ctJuliaAnchorLayout(means, npar, parameter_table, laplace,
+      ti_effects, ti_fixed, ti_missing, augmented$random_effects, prior_spec)
+    parameter_table <- moved$parameter_table
+    laplace <- moved$laplace
+    ti_effects <- moved$ti_effects
+    ti_fixed <- moved$ti_fixed
+    ti_missing <- moved$ti_missing
+    augmented$random_effects <- moved$random_effects
+    prior_spec <- moved$priors
+    anchors <- moved$anchors
+  }
+  spec <- list(
     class = "ctJuliaModel",
     intoverpop = intoverpop,
     laplace = laplace,
@@ -3973,6 +3989,9 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
     project = project,
     engine = .ctJuliaEngineVersion()
   )
+  # Added only when there are any, so every other specification is as it was.
+  if (!is.null(anchors)) spec$anchors <- anchors
+  spec
 }
 
 # Say so, once, when a model shape is about to be compiled for.
@@ -4034,7 +4053,10 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
   n <- suppressWarnings(max(c(0L, spec$parameter_table$parnumber,
     spec$laplace$npar, spec$ti_effects$coefficient, spec$ti_missing$parameter),
     na.rm = TRUE))
-  if (!is.finite(n)) 0L else as.integer(n)
+  if (!is.finite(n)) return(0L)
+  # Stated population means sit past the free parameters, which are what the
+  # raw vector holds (R/ctFixedPopMeans.R).
+  as.integer(n) - length(spec$anchors$index)
 }
 
 # Is this model's population covariance a factor rather than a scale-and-
@@ -4142,7 +4164,7 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
   # the subject's parameter vector, after every raw parameter.
   if (any(grepl(.CT_JULIA_TIPREDREF, .ctJuliaNoNA(as.character(table$transform), ""),
       perl = TRUE))) {
-    arguments$ti_tail_offset <- .ctBackendNpar(spec)
+    arguments$ti_tail_offset <- .ctBackendNpar(spec) + length(spec$anchors$index)
     # From the prepared predictors, which every specification carries: a
     # fitted one has no `standata`, and reading the count from there sent NA
     # and stopped every fit of such a model before its first evaluation.
@@ -4157,6 +4179,12 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
   if (length(spec$dynamic_state_indices)) {
     arguments$diffusion_state_indices <-
       V(as.integer(spec$dynamic_state_indices))
+  }
+  # Stated population means (R/ctFixedPopMeans.R), which follow the free
+  # parameters in each subject's vector; sent only when there are any.
+  if (length(spec$anchors$index)) {
+    arguments$nfree <- .ctBackendNpar(spec)
+    arguments$anchor_values <- V(as.numeric(spec$anchors$raw))
   }
   arguments$continuous_time <- isTRUE(spec$continuoustime)
   # Sent only when set, so every other model hashes and builds exactly as it

@@ -357,7 +357,7 @@ function ctsem_sample_metric(sampler::CTSEMSampler, values::AbstractVector;
     # An entry point, and on an objective this session may never have evaluated
     # -- see `ctsem_sample_start`.
     _laplace_ensure_pool!(laplace)
-    theta = collect(Float64, values)[1:sampler.npar]
+    theta = _laplace_extend(laplace, collect(Float64, values)[1:sampler.npar])
     ranges = UnitRange{Int}[]
     covariances = Matrix{Float64}[]
 

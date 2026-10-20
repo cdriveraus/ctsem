@@ -507,7 +507,7 @@ does not decompose over a group's members, which is the same reason
 function ctsem_laplace_quadrature(laplace::CTSEMLaplaceObjective,
     values::AbstractVector; nodes::Integer=5, contributions::Bool=false)
     nodes >= 1 || throw(ArgumentError("need at least one quadrature node"))
-    theta = collect(Float64, values)
+    theta = _laplace_extend(laplace, collect(Float64, values))
     _laplace_check_indices(laplace, length(theta))
     nunits = length(laplace.units.members)
     unit_term = zeros(Float64, nunits)
