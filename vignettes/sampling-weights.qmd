@@ -40,7 +40,7 @@ The generating model says the structure: the baseline `mm` varies between
 people with sd 0.5 and is 1.5 lower with a diagnosis
 (`"mm|param|TRUE|0.5|depressed=-1.5"`: identity transform, individually
 varying, sd 0.5, effect of `depressed`). `datastruct` says who is observed
-when, and `popmeans` gives the baseline without a diagnosis:
+when, and `values` gives the baseline without a diagnosis:
 
 ```{r data}
 library(ctsem)
@@ -54,7 +54,7 @@ gen <- ctModel(type = "ct", manifestNames = "mood", latentNames = "eta",
 
 design <- data.frame(id = rep(1:200, each = 10), time = rep(0:9, 200),
   depressed = rep(1:0, each = 1000))
-dat <- ctGenerate(gen, datastruct = design, popmeans = c(mm = 0.5))
+dat <- ctGenerate(gen, datastruct = design, values = c(mm = 0.5))
 ```
 
 The weight is each group's share of the population divided by its share of

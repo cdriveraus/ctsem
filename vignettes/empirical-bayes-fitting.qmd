@@ -58,7 +58,7 @@ dimnames(raw_cov) <- dimnames(raw_cor)
 
 # Each subject's raw parameters are drawn from this population by ctGenerate:
 # RAWPOPVAR is the covariance of the raw (pre-transform) parameters, written
-# from a covariance matrix by ctCov(), and popmeans the population means on
+# from a covariance matrix by ctCov(), and values the population means on
 # the natural scale.
 gm <- ctModel(
   silent = TRUE,
@@ -78,7 +78,7 @@ gm$RAWPOPVAR <- ctCov(raw_cov)
 softplus <- function(x) ifelse(x > 30, x, log1p(exp(x)))
 
 generated <- ctGenerate(gm, n = n_subjects, dtmean = .1, backend = "julia",
-  popmeans = c(t0m = raw_mean[["t0m"]], drift = -softplus(-raw_mean[["drift"]]),
+  values = c(t0m = raw_mean[["t0m"]], drift = -softplus(-raw_mean[["drift"]]),
     diffusion = softplus(raw_mean[["diffusion"]]), mmean = raw_mean[["mmean"]]))
 
 # The parameters each subject was generated with, on the natural scale, and

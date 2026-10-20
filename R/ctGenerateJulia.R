@@ -17,12 +17,12 @@
 # `ctsem_generate_states` simulates each subject at its shifted parameters.
 #
 # Every value the model leaves free is set at its prior's centre -- raw zero,
-# under every transform -- unless `popmeans` states it, and every population
-# sd is its `sdscale` on the raw scale unless RAWPOPVAR or `popmeans` states
+# under every transform -- unless `values` states it, and every population
+# sd is its `sdscale` on the raw scale unless RAWPOPVAR or `values` states
 # it: the prior's scales used as fixed values. Free correlations are zero and
-# free TI predictor effects zero unless `popmeans` states them; a fixed effect
+# free TI predictor effects zero unless `values` states them; a fixed effect
 # (`'mm||||TI1=0.5'`) shifts the raw parameter by that much per unit of the
-# predictor, as fitting applies it. `popmeans` takes each value on the scale
+# predictor, as fitting applies it. `values` takes each value on the scale
 # summary() reports it (`.ctGenerateValues`), so a model written for fitting
 # generates from the values one would compare its fit with. All of it is named
 # in one message.
@@ -176,33 +176,38 @@
   list(skeleton = rows, order = order, observed = observed, original = original)
 }
 
-# `popmeans`, split into the free parameters' values (plain names, natural
-# scale) and the sections named as summary() names its tables: `popsd` (or
-# `popsd.<level>`) the random-effect sds, `rawpopcorr` (or
-# `rawpopcorr.<level>`) their raw correlations, `tipreds` the linearised TI
-# predictor effects -- each a named vector, named as that table's rows.
+# `values`: a named vector is the free parameters' population values, on
+# their natural scale; a list holds summary()'s own sections -- `popmeans`
+# (the same), `popsd` (or `popsd.<level>`) the random-effect sds,
+# `rawpopcorr` (or `rawpopcorr.<level>`) their raw correlations, `tipreds` the
+# linearised TI predictor effects -- each a named vector, named as that
+# table's rows.
 #' @keywords internal
-.ctGenerateValues <- function(popmeans) {
-  if (!length(popmeans)) return(list(means = NULL, sections = list()))
-  if (is.null(names(popmeans)) || any(!nzchar(names(popmeans)))) {
-    stop("popmeans must be named by parameter.", call. = FALSE)
+.ctGenerateValues <- function(values) {
+  if (!length(values)) return(list(means = NULL, sections = list()))
+  named <- function(v) !is.null(names(v)) && all(nzchar(names(v)))
+  if (!is.list(values)) {
+    if (!is.numeric(values) || !named(values)) stop("values must be a named ",
+      "numeric vector of population values, or a list of summary()'s ",
+      "sections.", call. = FALSE)
+    return(list(means = values, sections = list()))
   }
-  values <- as.list(popmeans)
-  section <- grepl("^(popsd|rawpopcorr)(\\..+)?$|^tipreds$", names(values))
-  sections <- values[section]
-  for (nm in names(sections)) {
-    v <- sections[[nm]]
-    if (!is.numeric(v) || is.null(names(v)) || any(!nzchar(names(v)))) {
-      stop("popmeans$", nm, " must be a named numeric vector, named as ",
-        "summary() names that table's rows.", call. = FALSE)
-    }
+  section <- grepl("^(popmeans|tipreds)$|^(popsd|rawpopcorr)(\\..+)?$",
+    names(values))
+  if (!named(values) || !all(section)) stop("values, as a list, holds ",
+    "summary()'s sections -- popmeans, popsd, rawpopcorr and tipreds, with ",
+    ".<level> on popsd and rawpopcorr where there are levels",
+    if (named(values)) paste0(" -- not ", paste(names(values)[!section],
+      collapse = ", ")), ". A named vector gives population values alone.",
+    call. = FALSE)
+  for (nm in names(values)) {
+    v <- values[[nm]]
+    if (!is.numeric(v) || !named(v)) stop("values$", nm, " must be a named ",
+      "numeric vector, named as summary() names that table's rows.",
+      call. = FALSE)
   }
-  means <- values[!section]
-  if (length(means) && !all(vapply(means, function(v)
-      is.numeric(v) && length(v) == 1L, logical(1)))) {
-    stop("popmeans: each parameter takes one number.", call. = FALSE)
-  }
-  list(means = unlist(means), sections = sections)
+  list(means = values$popmeans,
+    sections = values[setdiff(names(values), "popmeans")])
 }
 
 # The raw sd at which a random effect spreads its parameter by `target` on the
@@ -212,7 +217,7 @@
 # bracket holds the one root.
 #' @keywords internal
 .ctGenerateRawSd <- function(transform, mean, target, name) {
-  if (!is.finite(target) || target <= 0) stop("popmeans$popsd: ", name,
+  if (!is.finite(target) || target <= 0) stop("values$popsd: ", name,
     " must be a positive number; a parameter with no spread does not vary.",
     call. = FALSE)
   rule <- .ctBackendGaussHermite()
@@ -223,7 +228,7 @@
   upper <- 1
   while (!(spread(upper) >= target)) {
     upper <- upper * 2
-    if (upper > 2^20) stop("popmeans$popsd: ", name, " = ", format(target),
+    if (upper > 2^20) stop("values$popsd: ", name, " = ", format(target),
       " is not a spread its transform (", transform, ") can produce about ",
       "its mean.", call. = FALSE)
   }
@@ -257,7 +262,7 @@
       return(stats::uniroot(f, c(-width, width), tol = 1e-12)$root)
     }
   }
-  stop("popmeans: ", name, " = ", format(value), " is not a value its ",
+  stop("values: ", name, " = ", format(value), " is not a value its ",
     "transform (", transform, ") can take.", call. = FALSE)
 }
 
@@ -269,7 +274,7 @@
 # value is written into the raw vector. The specification then carries every
 # effect the same way, and `.ctJuliaTIEffects()` is reused as it stands.
 #' @keywords internal
-.ctGeneratePrepare <- function(model, skeleton, popmeans = NULL,
+.ctGeneratePrepare <- function(model, skeleton, values = NULL,
   project = NULL, quiet = FALSE) {
   model <- .ctCovRefresh(model)
   # 'stationary' initial conditions, placed as a fit places them: generation
@@ -307,13 +312,13 @@
   }
 
   # Population means: the prior's centre, raw zero, unless stated.
-  given <- .ctGenerateValues(popmeans)
+  given <- .ctGenerateValues(values)
   means <- given$means
   sectionsused <- character()
   if (length(means)) {
     unknown <- setdiff(names(means), parnames)
     if (length(unknown)) {
-      stop("popmeans names ", paste(unknown, collapse = ", "), ", which ",
+      stop("values names ", paste(unknown, collapse = ", "), ", which ",
         if (length(unknown) > 1L) "are not free parameters" else
           "is not a free parameter", " of this model.", call. = FALSE)
     }
@@ -330,13 +335,13 @@
   # already fixed in the specification, as fitting holds it; a free sd is the
   # level's sdscale, a free correlation coordinate zero. All raw-scale.
   spread <- character()
-  # A level's section of `popmeans`: `<name>.<level>`, or the bare name for
+  # A level's section of `values`: `<name>.<level>`, or the bare name for
   # the subject level.
   sectionFor <- function(name, level) {
     keys <- c(paste0(name, ".", level$name),
       if (identical(level$name, model$subjectIDname)) name)
     hit <- intersect(keys, names(given$sections))
-    if (length(hit) > 1L) stop("popmeans gives both ", paste(hit, collapse = " and "),
+    if (length(hit) > 1L) stop("values gives both ", paste(hit, collapse = " and "),
       ", which name the same level.", call. = FALSE)
     if (!length(hit)) return(NULL)
     sectionsused <<- c(sectionsused, hit)
@@ -346,12 +351,12 @@
     sds <- sectionFor("popsd", level)
     cors <- sectionFor("rawpopcorr", level)
     if ((length(sds) || length(cors)) && length(level$load_index)) {
-      stop("popmeans: level ", level$name, " has a reduced-rank population ",
+      stop("values: level ", level$name, " has a reduced-rank population ",
         "covariance (poprank), whose spread popsd and rawpopcorr cannot set.",
         call. = FALSE)
     }
     unknown <- setdiff(names(sds), level$param)
-    if (length(unknown)) stop("popmeans$popsd names ", paste(unknown,
+    if (length(unknown)) stop("values$popsd names ", paste(unknown,
       collapse = ", "), ", which ", if (length(unknown) > 1L) "do" else "does",
       " not vary at level ", level$name, ".", call. = FALSE)
     if (length(level$sd_index)) {
@@ -359,7 +364,7 @@
         free <- level$sd_index[j] > 0L
         name <- level$param[j]
         if (name %in% names(sds)) {
-          if (!free) stop("popmeans$popsd: ", name, "'s spread is stated in ",
+          if (!free) stop("values$popsd: ", name, "'s spread is stated in ",
             "the model's RAWPOPVAR.", call. = FALSE)
           target <- .ctGenerateRawSd(transformOf(name), raw[level$re_index[j]],
             sds[[name]], name)
@@ -377,21 +382,21 @@
         for (nm in names(cors)) {
           pair <- match(strsplit(nm, "__", fixed = TRUE)[[1L]], level$param)
           if (length(pair) != 2L || anyNA(pair) || pair[1L] == pair[2L]) {
-            stop("popmeans$rawpopcorr: ", nm, " is not a pair of parameters ",
+            stop("values$rawpopcorr: ", nm, " is not a pair of parameters ",
               "varying at level ", level$name, " (named a__b, as summary() ",
               "names them).", call. = FALSE)
           }
           R[pair[1L], pair[2L]] <- R[pair[2L], pair[1L]] <- cors[[nm]]
         }
         index <- as.integer(level$cor_index)
-        if (any(index == 0L)) stop("popmeans$rawpopcorr: level ", level$name,
+        if (any(index == 0L)) stop("values$rawpopcorr: level ", level$name,
           " states some of its correlations in RAWPOPVAR.", call. = FALSE)
         construction <- c("0" = "rawcorr", "2" = "z")[as.character(
           if (is.null(spec$covmatcode)) 0L else spec$covmatcode)]
-        if (is.na(construction)) stop("popmeans$rawpopcorr needs ",
+        if (is.na(construction)) stop("values$rawpopcorr needs ",
           "covmattransform 'z' or 'rawcorr'.", call. = FALSE)
         cells <- .ctCovCells(R, construction,
-          what = paste0("popmeans$rawpopcorr at level ", level$name))
+          what = paste0("values$rawpopcorr at level ", level$name))
         lower <- which(lower.tri(R), arr.ind = TRUE)
         lower <- lower[order(lower[, 2L], lower[, 1L]), , drop = FALSE]
         raw[index] <- cells[lower]
@@ -414,7 +419,7 @@
   }
 
   # TI effects: a fixed value where the model states one, the raw coefficient
-  # for a linearised effect `popmeans$tipreds` states, zero otherwise. The
+  # for a linearised effect `values$tipreds` states, zero otherwise. The
   # summary reports an effect as the raw coefficient times the transform's
   # slope at the raw mean (`.ctBackendTipredDraws`), so this divides by it.
   zeroed <- character()
@@ -427,12 +432,12 @@
     value <- fixedti[[paste(name, ti$predictor[r])]]
     key <- paste0("tip_", model$TIpredNames[ti$predictor[r]], "_", name)
     if (key %in% names(tipreds)) {
-      if (!is.null(value)) stop("popmeans$tipreds: ", key, " is fixed in the ",
+      if (!is.null(value)) stop("values$tipreds: ", key, " is fixed in the ",
         "model.", call. = FALSE)
       mean <- raw[ti$parameter[r]]
       h <- 1e-5
       slope <- diff(.ctGenerateNatural(transformOf(name), mean + c(-h, h))) / (2 * h)
-      if (!is.finite(slope) || abs(slope) < 1e-12) stop("popmeans$tipreds: ",
+      if (!is.finite(slope) || abs(slope) < 1e-12) stop("values$tipreds: ",
         key, " cannot be set, because ", name, "'s transform is flat at its ",
         "mean.", call. = FALSE)
       raw[ti$coefficient[r]] <- tipreds[[key]] / slope
@@ -442,12 +447,12 @@
     } else raw[ti$coefficient[r]] <- value
   }
   unknown <- setdiff(names(tipreds), stated)
-  if (length(unknown)) stop("popmeans$tipreds names ", paste(unknown,
+  if (length(unknown)) stop("values$tipreds names ", paste(unknown,
     collapse = ", "), ", which ", if (length(unknown) > 1L) "are not" else
     "is not", " a free TI predictor effect of this model (named tip_<predictor>_",
     "<parameter>, as summary() names them).", call. = FALSE)
   unread <- setdiff(names(given$sections), sectionsused)
-  if (length(unread)) stop("popmeans: ", paste(unread, collapse = ", "),
+  if (length(unread)) stop("values: ", paste(unread, collapse = ", "),
     " name", if (length(unread) == 1L) "s", " no level of this model.",
     call. = FALSE)
 
@@ -458,8 +463,8 @@
       if (length(centred)) paste0("at prior centres (raw 0): ",
         listed(paste0(centred, "=", vapply(natural,
           function(x) format(signif(x, 4)), "")))),
-      if (length(popmeans)) paste0("from popmeans: ",
-        listed(names(popmeans))),
+      if (length(values)) paste0("from values: ",
+        listed(names(values))),
       if (length(spread)) paste0("population sd (raw): ", listed(spread)),
       if (length(zeroed)) paste0("TI effects at zero: ", listed(zeroed)))
     if (length(parts)) message("Generating values -- ",
@@ -492,7 +497,7 @@
 }
 
 #' @keywords internal
-.ctGenerateJulia <- function(model, n.subjects, times, popmeans = NULL,
+.ctGenerateJulia <- function(model, n.subjects, times, values = NULL,
   project = NULL, quiet = FALSE, intoverstates = FALSE, design = NULL) {
 
   if (!.ctJuliaConnectoROk()) stop(.ctJuliaConnectoRNeeded(), call. = FALSE)
@@ -500,7 +505,7 @@
     .ctGenerateDesign(model, design, quiet = quiet)
   skeleton <- if (is.null(designed)) .ctGenerateSkeleton(model, n.subjects, times) else
     designed$skeleton
-  prepared <- .ctGeneratePrepare(model, skeleton, popmeans = popmeans,
+  prepared <- .ctGeneratePrepare(model, skeleton, values = values,
     project = project, quiet = quiet)
   handle <- prepared$handle
   # A zero-length vector deadlocks the JuliaConnectoR bridge, and a fully

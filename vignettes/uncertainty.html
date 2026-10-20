@@ -216,8 +216,8 @@ border-radius: 0 4px 4px 0;
 <span id="cb4-6"><a href="#cb4-6" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; </span></span>
 <span id="cb4-7"><a href="#cb4-7" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; SAMPLING FOR MODEL &#39;ctsm&#39; NOW (CHAIN 1).</span></span>
 <span id="cb4-8"><a href="#cb4-8" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; Chain 1: </span></span>
-<span id="cb4-9"><a href="#cb4-9" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; Chain 1: Gradient evaluation took 0.000879 seconds</span></span>
-<span id="cb4-10"><a href="#cb4-10" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; Chain 1: 1000 transitions using 10 leapfrog steps per transition would take 8.79 seconds.</span></span>
+<span id="cb4-9"><a href="#cb4-9" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; Chain 1: Gradient evaluation took 0.000892 seconds</span></span>
+<span id="cb4-10"><a href="#cb4-10" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; Chain 1: 1000 transitions using 10 leapfrog steps per transition would take 8.92 seconds.</span></span>
 <span id="cb4-11"><a href="#cb4-11" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; Chain 1: Adjust your expectations accordingly!</span></span>
 <span id="cb4-12"><a href="#cb4-12" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; Chain 1: </span></span>
 <span id="cb4-13"><a href="#cb4-13" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; Chain 1: </span></span>
@@ -244,9 +244,9 @@ border-radius: 0 4px 4px 0;
 <span id="cb4-34"><a href="#cb4-34" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; Chain 1: Iteration: 380 / 400 [ 95%]  (Sampling)</span></span>
 <span id="cb4-35"><a href="#cb4-35" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; Chain 1: Iteration: 400 / 400 [100%]  (Sampling)</span></span>
 <span id="cb4-36"><a href="#cb4-36" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; Chain 1: </span></span>
-<span id="cb4-37"><a href="#cb4-37" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; Chain 1:  Elapsed Time: 2.549 seconds (Warm-up)</span></span>
-<span id="cb4-38"><a href="#cb4-38" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; Chain 1:                2.314 seconds (Sampling)</span></span>
-<span id="cb4-39"><a href="#cb4-39" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; Chain 1:                4.863 seconds (Total)</span></span>
+<span id="cb4-37"><a href="#cb4-37" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; Chain 1:  Elapsed Time: 2.086 seconds (Warm-up)</span></span>
+<span id="cb4-38"><a href="#cb4-38" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; Chain 1:                1.905 seconds (Sampling)</span></span>
+<span id="cb4-39"><a href="#cb4-39" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; Chain 1:                3.991 seconds (Total)</span></span>
 <span id="cb4-40"><a href="#cb4-40" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; Chain 1:</span></span></code></pre></div>
 </div>
 <div class="cell">
@@ -261,7 +261,7 @@ border-radius: 0 4px 4px 0;
 <div class="sourceCode cell-code" id="cb6"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb6-1"><a href="#cb6-1" aria-hidden="true" tabindex="-1"></a><span class="fu">rbind</span>(<span class="at">stan =</span> <span class="fu">drift_interval</span>(stan_sample), <span class="at">julia =</span> <span class="fu">drift_interval</span>(julia_sample))</span>
 <span id="cb6-2"><a href="#cb6-2" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;             mean      2.5%       97.5%</span></span>
 <span id="cb6-3"><a href="#cb6-3" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; stan  -0.6794117 -2.040637 -0.02921703</span></span>
-<span id="cb6-4"><a href="#cb6-4" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; julia -0.6857638 -1.719940 -0.03387380</span></span></code></pre></div>
+<span id="cb6-4"><a href="#cb6-4" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; julia -0.6427222 -1.917464 -0.05370909</span></span></code></pre></div>
 </div>
 <h3 id="optimizing">Optimizing</h3>
 <div class="cell">
@@ -282,7 +282,7 @@ border-radius: 0 4px 4px 0;
 <div class="sourceCode cell-code" id="cb9"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb9-1"><a href="#cb9-1" aria-hidden="true" tabindex="-1"></a><span class="fu">rbind</span>(<span class="at">stan =</span> <span class="fu">drift_interval</span>(stan_map), <span class="at">julia =</span> <span class="fu">drift_interval</span>(julia_map))</span>
 <span id="cb9-2"><a href="#cb9-2" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;             mean      2.5%      97.5%</span></span>
 <span id="cb9-3"><a href="#cb9-3" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; stan  -0.7051033 -1.945421 -0.1221965</span></span>
-<span id="cb9-4"><a href="#cb9-4" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; julia -0.6670242 -2.018281 -0.1256235</span></span></code></pre></div>
+<span id="cb9-4"><a href="#cb9-4" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; julia -0.6670267 -2.018292 -0.1256225</span></span></code></pre></div>
 </div>
 <p>Each optimized fit above draws its <code>rawposterior</code> from a Hessian-based normal approximation by default (<code>uncertainty = &quot;hessian&quot;</code>) – the closest optimized-fit analogue to the sampling intervals above, but still an approximation around a single point rather than a description of the whole density. The next section is about what else can go in that approximation’s place.</p>
 <h2 id="the-bits-in-between">The bits in between</h2>
@@ -316,12 +316,12 @@ border-radius: 0 4px 4px 0;
 <span id="cb10-16"><a href="#cb10-16" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; 4     stan  sandwich -0.7093890 -1.818714 -0.17067079</span></span>
 <span id="cb10-17"><a href="#cb10-17" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; 5     stan bootstrap -0.6592181 -1.651801 -0.16349160</span></span>
 <span id="cb10-18"><a href="#cb10-18" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; 6     stan        is -0.6824358 -1.661323 -0.04706093</span></span>
-<span id="cb10-19"><a href="#cb10-19" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; 7    julia   hessian -0.6785587 -1.804208 -0.10804797</span></span>
-<span id="cb10-20"><a href="#cb10-20" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; 8    julia surrogate -0.7073095 -1.722447 -0.17242128</span></span>
-<span id="cb10-21"><a href="#cb10-21" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; 9    julia       opg -0.7403087 -2.688929 -0.08071744</span></span>
-<span id="cb10-22"><a href="#cb10-22" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; 10   julia  sandwich -0.6453968 -1.824154 -0.15513329</span></span>
-<span id="cb10-23"><a href="#cb10-23" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; 11   julia bootstrap -0.6265077 -1.566960 -0.15783634</span></span>
-<span id="cb10-24"><a href="#cb10-24" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; 12   julia        is -0.6812151 -1.695873 -0.06325930</span></span></code></pre></div>
+<span id="cb10-19"><a href="#cb10-19" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; 7    julia   hessian -0.6785616 -1.804221 -0.10804715</span></span>
+<span id="cb10-20"><a href="#cb10-20" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; 8    julia surrogate -0.7073113 -1.722451 -0.17242194</span></span>
+<span id="cb10-21"><a href="#cb10-21" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; 9    julia       opg -0.7403109 -2.688939 -0.08071769</span></span>
+<span id="cb10-22"><a href="#cb10-22" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; 10   julia  sandwich -0.6454004 -1.824181 -0.15513125</span></span>
+<span id="cb10-23"><a href="#cb10-23" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; 11   julia bootstrap -0.6265110 -1.566981 -0.15783528</span></span>
+<span id="cb10-24"><a href="#cb10-24" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; 12   julia        is -0.6812176 -1.695880 -0.06325854</span></span></code></pre></div>
 </div>
 <div class="cell">
 <div class="sourceCode cell-code" id="cb11"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb11-1"><a href="#cb11-1" aria-hidden="true" tabindex="-1"></a><span class="fu">ggplot</span>(uncertainty_table, <span class="fu">aes</span>(<span class="at">x =</span> method, <span class="at">y =</span> mean, <span class="at">ymin =</span> X2.<span class="fl">5.</span>, <span class="at">ymax =</span> X97.<span class="fl">5.</span>,</span>
@@ -385,7 +385,7 @@ border-radius: 0 4px 4px 0;
 <span id="cb14-5"><a href="#cb14-5" aria-hidden="true" tabindex="-1"></a>)</span>
 <span id="cb14-6"><a href="#cb14-6" aria-hidden="true" tabindex="-1"></a>state_explicit_samp<span class="sc">$</span>estimate<span class="sc">$</span>se</span>
 <span id="cb14-7"><a href="#cb14-7" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; drift_eta1  diff_eta1      cmean T0var_eta1 </span></span>
-<span id="cb14-8"><a href="#cb14-8" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; 0.99442702 0.39113265 0.01537336 0.19846031</span></span>
+<span id="cb14-8"><a href="#cb14-8" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; 0.62010878 0.31259616 0.01716712 0.18678781</span></span>
 <span id="cb14-9"><a href="#cb14-9" aria-hidden="true" tabindex="-1"></a><span class="fu">dim</span>(state_explicit_samp<span class="sc">$</span>estimate<span class="sc">$</span>states)</span>
 <span id="cb14-10"><a href="#cb14-10" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; [1] 48  1</span></span></code></pre></div>
 </div>
@@ -407,7 +407,7 @@ border-radius: 0 4px 4px 0;
 <span id="cb15-6"><a href="#cb15-6" aria-hidden="true" tabindex="-1"></a>  <span class="at">DRIFT =</span> <span class="fu">matrix</span>(<span class="st">&quot;drift|-exp(param)|TRUE|0.5&quot;</span>), <span class="at">DIFFUSION =</span> <span class="fu">matrix</span>(<span class="fl">0.5</span>),</span>
 <span id="cb15-7"><a href="#cb15-7" aria-hidden="true" tabindex="-1"></a>  <span class="at">CINT =</span> <span class="fu">matrix</span>(<span class="fl">0.15</span>), <span class="at">MANIFESTMEANS =</span> <span class="fu">matrix</span>(<span class="dv">0</span>), <span class="at">MANIFESTVAR =</span> <span class="fu">matrix</span>(<span class="fl">0.25</span>))</span>
 <span id="cb15-8"><a href="#cb15-8" aria-hidden="true" tabindex="-1"></a>re_dat <span class="ot">&lt;-</span> <span class="fu">data.frame</span>(<span class="fu">ctGenerate</span>(re_gen, <span class="at">n =</span> <span class="dv">30</span>, <span class="at">dtmean =</span> <span class="fl">0.4</span>, <span class="at">logdtsd =</span> <span class="fl">0.1</span>,</span>
-<span id="cb15-9"><a href="#cb15-9" aria-hidden="true" tabindex="-1"></a>  <span class="at">backend =</span> <span class="st">&quot;julia&quot;</span>, <span class="at">popmeans =</span> <span class="fu">c</span>(<span class="at">drift =</span> <span class="sc">-</span><span class="fl">0.35</span>)))</span>
+<span id="cb15-9"><a href="#cb15-9" aria-hidden="true" tabindex="-1"></a>  <span class="at">backend =</span> <span class="st">&quot;julia&quot;</span>, <span class="at">values =</span> <span class="fu">c</span>(<span class="at">drift =</span> <span class="sc">-</span><span class="fl">0.35</span>)))</span>
 <span id="cb15-10"><a href="#cb15-10" aria-hidden="true" tabindex="-1"></a>re_model <span class="ot">&lt;-</span> fit_model</span>
 <span id="cb15-11"><a href="#cb15-11" aria-hidden="true" tabindex="-1"></a>re_model<span class="sc">$</span>pars<span class="sc">$</span>indvarying[re_model<span class="sc">$</span>pars<span class="sc">$</span>param <span class="sc">%in%</span> <span class="st">&quot;drift&quot;</span>] <span class="ot">&lt;-</span> <span class="cn">TRUE</span></span></code></pre></div>
 </div>
@@ -437,12 +437,12 @@ border-radius: 0 4px 4px 0;
 <span id="cb18-10"><a href="#cb18-10" aria-hidden="true" tabindex="-1"></a>  <span class="fu">drift_rows</span>(re_quick, <span class="st">&quot;short sample&quot;</span>, fit_time <span class="sc">+</span> quick_time),</span>
 <span id="cb18-11"><a href="#cb18-11" aria-hidden="true" tabindex="-1"></a>  <span class="fu">drift_rows</span>(re_full, <span class="st">&quot;default sample&quot;</span>, fit_time <span class="sc">+</span> full_time))</span>
 <span id="cb18-12"><a href="#cb18-12" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;               route seconds        quantity   mean   2.5%  97.5%</span></span>
-<span id="cb18-13"><a href="#cb18-13" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; 1 Laplace + Hessian       8 population mean -0.381 -0.676 -0.181</span></span>
-<span id="cb18-14"><a href="#cb18-14" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; 2 Laplace + Hessian       8   population sd  0.387     NA     NA</span></span>
-<span id="cb18-15"><a href="#cb18-15" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; 3      short sample      21 population mean -0.378 -0.669 -0.164</span></span>
-<span id="cb18-16"><a href="#cb18-16" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; 4      short sample      21   population sd  0.270  0.005  1.256</span></span>
-<span id="cb18-17"><a href="#cb18-17" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; 5    default sample      26 population mean -0.378 -0.721 -0.111</span></span>
-<span id="cb18-18"><a href="#cb18-18" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; 6    default sample      26   population sd  0.261  0.003  1.033</span></span></code></pre></div>
+<span id="cb18-13"><a href="#cb18-13" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; 1 Laplace + Hessian     108 population mean -0.381 -0.676 -0.181</span></span>
+<span id="cb18-14"><a href="#cb18-14" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; 2 Laplace + Hessian     108   population sd  0.387     NA     NA</span></span>
+<span id="cb18-15"><a href="#cb18-15" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; 3      short sample     119 population mean -0.378 -0.669 -0.164</span></span>
+<span id="cb18-16"><a href="#cb18-16" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; 4      short sample     119   population sd  0.270  0.005  1.256</span></span>
+<span id="cb18-17"><a href="#cb18-17" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; 5    default sample     127 population mean -0.377 -0.720 -0.102</span></span>
+<span id="cb18-18"><a href="#cb18-18" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; 6    default sample     127   population sd  0.213  0.004  0.986</span></span></code></pre></div>
 </div>
 <p>Each subject’s own data say little about its own drift here, and the Laplace fit, whose interval is the curvature at its mode, can give the population standard deviation no interval at all – <code>summary()</code> reports <code>NA</code> and the fit says why. Both samples describe what the curvature could not: a wide, skewed posterior that runs down to near zero. The default sample is the reference; the short one is a draft of it, and says how rough a draft through its own diagnostics:</p>
 <div class="cell">
@@ -450,10 +450,10 @@ border-radius: 0 4px 4px 0;
 <span id="cb19-2"><a href="#cb19-2" aria-hidden="true" tabindex="-1"></a>  <span class="at">default =</span> <span class="fu">c</span>(<span class="at">max_rhat =</span> <span class="fu">max</span>(re_full<span class="sc">$</span>sample<span class="sc">$</span>rhat), <span class="at">min_ess =</span> <span class="fu">min</span>(re_full<span class="sc">$</span>sample<span class="sc">$</span>ess)))</span>
 <span id="cb19-3"><a href="#cb19-3" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;         max_rhat   min_ess</span></span>
 <span id="cb19-4"><a href="#cb19-4" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; short   1.047570  53.48851</span></span>
-<span id="cb19-5"><a href="#cb19-5" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; default 1.009774 266.10477</span></span></code></pre></div>
+<span id="cb19-5"><a href="#cb19-5" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; default 1.006913 394.39791</span></span></code></pre></div>
 </div>
 <h2 id="with-and-without-priors">With and without priors</h2>
-<p><code>priors = TRUE</code> adds ctsem’s raw-scale priors to the objective; <code>priors = FALSE</code> leaves them out. (<code>ctFit()</code>’s default, <code>&#39;randomCorr&#39;</code>, puts the prior on random-effect correlations alone, which for a model with no random effects, like this one, is the same as <code>FALSE</code>.) Combined with <code>optimize</code>, that is four corners, and they mean four different things:</p>
+<p><code>priors = TRUE</code> adds ctsem’s raw-scale priors to the objective; <code>priors = FALSE</code>, <code>ctFit()</code>’s default, leaves them out. (<code>&#39;randomCorr&#39;</code> puts the prior on random-effect correlations alone, which for a model with no random effects, like this one, is the same as <code>FALSE</code>.) Combined with <code>optimize</code>, that is four corners, and they mean four different things:</p>
 <table class="caption-top">
 <colgroup>
 <col style="width: 14%">
@@ -490,8 +490,8 @@ border-radius: 0 4px 4px 0;
 <span id="cb20-6"><a href="#cb20-6" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; </span></span>
 <span id="cb20-7"><a href="#cb20-7" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; SAMPLING FOR MODEL &#39;ctsm&#39; NOW (CHAIN 1).</span></span>
 <span id="cb20-8"><a href="#cb20-8" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; Chain 1: </span></span>
-<span id="cb20-9"><a href="#cb20-9" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; Chain 1: Gradient evaluation took 0.000652 seconds</span></span>
-<span id="cb20-10"><a href="#cb20-10" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; Chain 1: 1000 transitions using 10 leapfrog steps per transition would take 6.52 seconds.</span></span>
+<span id="cb20-9"><a href="#cb20-9" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; Chain 1: Gradient evaluation took 0.000699 seconds</span></span>
+<span id="cb20-10"><a href="#cb20-10" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; Chain 1: 1000 transitions using 10 leapfrog steps per transition would take 6.99 seconds.</span></span>
 <span id="cb20-11"><a href="#cb20-11" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; Chain 1: Adjust your expectations accordingly!</span></span>
 <span id="cb20-12"><a href="#cb20-12" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; Chain 1: </span></span>
 <span id="cb20-13"><a href="#cb20-13" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; Chain 1: </span></span>
@@ -508,9 +508,9 @@ border-radius: 0 4px 4px 0;
 <span id="cb20-24"><a href="#cb20-24" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; Chain 1: Iteration: 180 / 200 [ 90%]  (Sampling)</span></span>
 <span id="cb20-25"><a href="#cb20-25" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; Chain 1: Iteration: 200 / 200 [100%]  (Sampling)</span></span>
 <span id="cb20-26"><a href="#cb20-26" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; Chain 1: </span></span>
-<span id="cb20-27"><a href="#cb20-27" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; Chain 1:  Elapsed Time: 11.721 seconds (Warm-up)</span></span>
-<span id="cb20-28"><a href="#cb20-28" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; Chain 1:                13.138 seconds (Sampling)</span></span>
-<span id="cb20-29"><a href="#cb20-29" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; Chain 1:                24.859 seconds (Total)</span></span>
+<span id="cb20-27"><a href="#cb20-27" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; Chain 1:  Elapsed Time: 10.169 seconds (Warm-up)</span></span>
+<span id="cb20-28"><a href="#cb20-28" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; Chain 1:                11.357 seconds (Sampling)</span></span>
+<span id="cb20-29"><a href="#cb20-29" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; Chain 1:                21.526 seconds (Total)</span></span>
 <span id="cb20-30"><a href="#cb20-30" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; Chain 1:</span></span>
 <span id="cb20-31"><a href="#cb20-31" aria-hidden="true" tabindex="-1"></a><span class="fu">range</span>(stan_lik_sample<span class="sc">$</span>stanfit<span class="sc">$</span>rawposterior)</span>
 <span id="cb20-32"><a href="#cb20-32" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; [1] -9448.344152     2.047528</span></span></code></pre></div>
@@ -522,7 +522,7 @@ border-radius: 0 4px 4px 0;
 <span id="cb21-4"><a href="#cb21-4" aria-hidden="true" tabindex="-1"></a>  <span class="at">sampleControl =</span> <span class="fu">list</span>(<span class="at">chains =</span> <span class="dv">1</span>, <span class="at">iter =</span> <span class="dv">150</span>), <span class="at">verbose =</span> <span class="dv">0</span></span>
 <span id="cb21-5"><a href="#cb21-5" aria-hidden="true" tabindex="-1"></a>)</span>
 <span id="cb21-6"><a href="#cb21-6" aria-hidden="true" tabindex="-1"></a><span class="fu">range</span>(julia_lik_sample<span class="sc">$</span>estimate<span class="sc">$</span>rawposterior)</span>
-<span id="cb21-7"><a href="#cb21-7" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; [1] -46.15351 280.35847</span></span></code></pre></div>
+<span id="cb21-7"><a href="#cb21-7" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; [1] -126.8554  422.1281</span></span></code></pre></div>
 </div>
 <p>Compare the raw-scale range here to the posterior sample earlier, which stayed within a couple of units of zero on the same raw scale. With no prior at all, the raw parameters have nothing constraining them outside what the likelihood itself identifies, and for a model and sample size this small that is not much. Run at these settings, the julia backend often names the mechanism directly, with a warning that some sampled parameter “reached the region where their transform is flat to machine precision… with no prior the posterior is improper there and the chains wander rather than mix” – suppressed from this rendering along with every other warning, but worth reading in full the first time it appears in an interactive session. The stan sampler shows the same problem less legibly: warm-up tends to take substantially longer with <code>priors = FALSE</code> than with <code>priors = TRUE</code> on this model, because the sampler is fighting geometry that a prior would have tamed, and the resulting draws are still not trustworthy afterward.</p>
 <p>None of this means <code>priors = FALSE</code> sampling is broken – it is sampling exactly what was asked for, the raw likelihood, and for a well identified model with enough data it is a legitimate route to a frequentist-flavoured posterior. It means that removing the prior removes the thing keeping the raw scale bounded, and a small or weakly identified model will show you that immediately rather than converging to something that merely looks plausible. <code>priors = TRUE</code> is the safer default for sampling for exactly this reason, whatever <code>ctFit()</code>’s own default is for optimizing.</p>

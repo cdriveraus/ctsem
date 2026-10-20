@@ -132,7 +132,7 @@ border-radius: 0 4px 4px 0;
 <p><code>ctFit(weights = )</code> does this for the julia backend.</p>
 <h2 id="an-over-sampled-group">An over-sampled group</h2>
 <p>A mood study recruits as many people with a depression diagnosis as without, although only 15% of the population has one. Mood regulates towards each person’s own baseline, and baselines are lower with a diagnosis: -1 on average against 0.5. So the average baseline is 0.275 in the population, but -0.25 in the sample.</p>
-<p>The generating model says the structure: the baseline <code>mm</code> varies between people with sd 0.5 and is 1.5 lower with a diagnosis (<code>&quot;mm|param|TRUE|0.5|depressed=-1.5&quot;</code>: identity transform, individually varying, sd 0.5, effect of <code>depressed</code>). <code>datastruct</code> says who is observed when, and <code>popmeans</code> gives the baseline without a diagnosis:</p>
+<p>The generating model says the structure: the baseline <code>mm</code> varies between people with sd 0.5 and is 1.5 lower with a diagnosis (<code>&quot;mm|param|TRUE|0.5|depressed=-1.5&quot;</code>: identity transform, individually varying, sd 0.5, effect of <code>depressed</code>). <code>datastruct</code> says who is observed when, and <code>values</code> gives the baseline without a diagnosis:</p>
 <div class="cell">
 <div class="sourceCode cell-code" id="cb1"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb1-1"><a href="#cb1-1" aria-hidden="true" tabindex="-1"></a><span class="fu">library</span>(ctsem)</span>
 <span id="cb1-2"><a href="#cb1-2" aria-hidden="true" tabindex="-1"></a><span class="fu">set.seed</span>(<span class="dv">1</span>)</span>
@@ -145,7 +145,7 @@ border-radius: 0 4px 4px 0;
 <span id="cb1-9"><a href="#cb1-9" aria-hidden="true" tabindex="-1"></a></span>
 <span id="cb1-10"><a href="#cb1-10" aria-hidden="true" tabindex="-1"></a>design <span class="ot">&lt;-</span> <span class="fu">data.frame</span>(<span class="at">id =</span> <span class="fu">rep</span>(<span class="dv">1</span><span class="sc">:</span><span class="dv">200</span>, <span class="at">each =</span> <span class="dv">10</span>), <span class="at">time =</span> <span class="fu">rep</span>(<span class="dv">0</span><span class="sc">:</span><span class="dv">9</span>, <span class="dv">200</span>),</span>
 <span id="cb1-11"><a href="#cb1-11" aria-hidden="true" tabindex="-1"></a>  <span class="at">depressed =</span> <span class="fu">rep</span>(<span class="dv">1</span><span class="sc">:</span><span class="dv">0</span>, <span class="at">each =</span> <span class="dv">1000</span>))</span>
-<span id="cb1-12"><a href="#cb1-12" aria-hidden="true" tabindex="-1"></a>dat <span class="ot">&lt;-</span> <span class="fu">ctGenerate</span>(gen, <span class="at">datastruct =</span> design, <span class="at">popmeans =</span> <span class="fu">c</span>(<span class="at">mm =</span> <span class="fl">0.5</span>))</span></code></pre></div>
+<span id="cb1-12"><a href="#cb1-12" aria-hidden="true" tabindex="-1"></a>dat <span class="ot">&lt;-</span> <span class="fu">ctGenerate</span>(gen, <span class="at">datastruct =</span> design, <span class="at">values =</span> <span class="fu">c</span>(<span class="at">mm =</span> <span class="fl">0.5</span>))</span></code></pre></div>
 </div>
 <p>The weight is each group’s share of the population divided by its share of the sample:</p>
 <div class="cell">

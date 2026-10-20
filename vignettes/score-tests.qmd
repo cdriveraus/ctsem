@@ -96,7 +96,7 @@ about 0.25.
 gen1 <- generator(DRIFT = matrix(c("drift11|-log1p_exp(-param)|TRUE|0.6", 0.25,
   0, -0.4), 2, 2))
 d1 <- ctGenerate(gen1, n = 150, Tpoints = 30, dtmean = 1, logdtsd = 0.5,
-  backend = "julia", popmeans = c(drift11 = -0.6, mm1 = 0, mm2 = 0))
+  backend = "julia", values = c(drift11 = -0.6, mm1 = 0, mm2 = 0))
 truedrift <- attr(d1, "subjectpars")$drift11
 c(mean = mean(truedrift), sd = sd(truedrift))
 d1 <- data.frame(d1)
@@ -152,7 +152,7 @@ gen2 <- generator(DRIFT = matrix(c(-0.6, "drift21||||age=0.3", 0, -0.4), 2, 2),
   MANIFESTMEANS = c("mm1|param|TRUE|1|age=0.6", "mm2|param|TRUE|1"),
   TIpredNames = c("age", "w"))
 d2 <- data.frame(ctGenerate(gen2, n = 150, Tpoints = 30, dtmean = 1,
-  logdtsd = 0.5, backend = "julia", popmeans = c(drift21 = 0.25, mm1 = 0, mm2 = 0)))
+  logdtsd = 0.5, backend = "julia", values = c(drift21 = 0.25, mm1 = 0, mm2 = 0)))
 covariates <- unique(d2[, c("id", "age", "w")])
 head(covariates)
 ```
@@ -206,7 +206,7 @@ returns to baseline more slowly. The drift of `eta1` is
 ```{r sdep-generate}
 gen3 <- generator(DRIFT = matrix(c("-0.6 + 0.3 * tanh(eta2)", 0.25, 0, -0.4), 2, 2))
 d3 <- data.frame(ctGenerate(gen3, n = 150, Tpoints = 30, dtmean = 1,
-  logdtsd = 0.5, backend = "julia", popmeans = c(mm1 = 0, mm2 = 0)))
+  logdtsd = 0.5, backend = "julia", values = c(mm1 = 0, mm2 = 0)))
 ```
 
 The fitted model is linear: each drift coefficient is a constant.
@@ -407,7 +407,7 @@ gen4 <- generator(DRIFT = matrix(c("-0.6 + 0.3 * tanh(eta2)", "drift21||||age=0.
   MANIFESTMEANS = c("mm1|param|TRUE|1|age=0.6", "mm2|param|TRUE|1"),
   TIpredNames = c("age", "w"))
 d4 <- data.frame(ctGenerate(gen4, n = 150, Tpoints = 30, dtmean = 1,
-  logdtsd = 0.5, backend = "julia", popmeans = c(drift21 = 0.25, mm1 = 0, mm2 = 0)))
+  logdtsd = 0.5, backend = "julia", values = c(drift21 = 0.25, mm1 = 0, mm2 = 0)))
 fit4 <- ctFit(d4[, c("id", "time", "Y1", "Y2")], model, backend = "julia", cores = 2)
 ```
 

@@ -26,7 +26,7 @@
 # Seven binary indicators through ctsem's own logistic link, each subject's
 # intercept drawn by ctGenerate from the population the model states -- CINT
 # has an identity transform here, so its sdscale of 0.3 is the intercept sd
-# and popmeans sets the mean.
+# and values sets the mean.
 #
 # Generated rather than looped over subjects by hand. The hand loop had to
 # write each subject's CINT through `$matrices`, because a direct assignment
@@ -51,7 +51,7 @@
       T0MEANS = -.3, T0VAR = .5))
     gm$manifesttype[] <- 1L
     d <- suppressMessages(ctGenerate(gm, n = nsubjects, logdtsd = .2,
-      backend = 'julia', popmeans = c(b = .1)))
+      backend = 'julia', values = c(b = .1)))
     cache <<- list(
       data = d,
       # The realised spread, not the nominal 0.3: 20 draws of an sd 0.3 normal

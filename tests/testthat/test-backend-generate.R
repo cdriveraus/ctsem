@@ -286,15 +286,15 @@ test_that("ctGenerate draws subjects from the population at every level", {
   expect_equal(sd(tapply(means, study, mean)), sqrt(25 + 100 / 20), tolerance = 0.25)
 })
 
-test_that("popmeans, RAWPOPVAR and fixed TI effects set what they state", {
+test_that("values, RAWPOPVAR and fixed TI effects set what they state", {
   skip_without_julia()
   m <- .gen_model(ti = 1)
   m$RAWPOPVAR["mm", "mm"] <- 0.2
   m$pars$TI1_effect <- ifelse(m$pars$param %in% "mm", "0.3", "FALSE")
   set.seed(4)
   expect_message(d <- ctGenerate(m, n = 400, Tpoints = 8,
-    backend = "julia", popmeans = c(mm = 3, drift = -0.5)),
-    "from popmeans: mm, drift; population sd \\(raw\\): mm 0.2 \\[id\\]")
+    backend = "julia", values = c(mm = 3, drift = -0.5)),
+    "from values: mm, drift; population sd \\(raw\\): mm 0.2 \\[id\\]")
   means <- .gen_subject_means(d)
   ti <- tapply(d[, "TI1"], d[, "id"], `[`, 1)
   regression <- stats::lm(means ~ ti)
@@ -309,20 +309,20 @@ test_that("popmeans, RAWPOPVAR and fixed TI effects set what they state", {
   expect_message(ctGenerate(free, n = 4, Tpoints = 3, backend = "julia"),
     "at prior centres \\(raw 0\\): drift=-1.386, mm=0.*TI effects at zero: TI1 on mm")
   expect_error(ctGenerate(free, n = 4, Tpoints = 3, backend = "julia",
-    popmeans = c(nothere = 1)), "not a free parameter")
+    values = c(nothere = 1)), "not a free parameter")
 })
 
-test_that("popmeans takes summary()'s values, so a model written for fitting generates", {
+test_that("values takes summary()'s sections, so a model written for fitting generates", {
   skip_without_julia()
   # Every parameter free, as a model is written for fitting: T0MEANS and
   # MANIFESTMEANS vary, and TI1 acts on everything.
   m <- ctModel(type = "ct", manifestNames = "Y1", latentNames = "eta1",
     LAMBDA = matrix(1), TIpredNames = "TI1", silent = TRUE)
-  truth <- list(drift_eta1 = -0.5, diff_eta1 = 1, mvarY1 = 0.5, mm_Y1 = 2,
-    popsd = c(mm_Y1 = 0.6, T0m_eta1 = 1), rawpopcorr = c(mm_Y1__T0m_eta1 = 0.4),
-    tipreds = c(tip_TI1_mm_Y1 = 0.8))
+  truth <- list(popmeans = c(drift_eta1 = -0.5, diff_eta1 = 1, mvarY1 = 0.5,
+    mm_Y1 = 2), popsd = c(mm_Y1 = 0.6, T0m_eta1 = 1),
+    rawpopcorr = c(mm_Y1__T0m_eta1 = 0.4), tipreds = c(tip_TI1_mm_Y1 = 0.8))
   set.seed(3)
-  d <- suppressMessages(ctGenerate(m, n = 2000, Tpoints = 2, popmeans = truth))
+  d <- suppressMessages(ctGenerate(m, n = 2000, Tpoints = 2, values = truth))
   sp <- attr(d, "subjectpars")
   ti <- tapply(d[, "TI1"], d[, "id"], `[`, 1)
   mm <- stats::lm(sp$mm_Y1 ~ ti)
@@ -338,7 +338,8 @@ test_that("popmeans takes summary()'s values, so a model written for fitting gen
   v <- ctsem:::.ctGenerateNatural("log1p_exp(2 * param)", 0.3 + s * rule$node)
   expect_equal(sqrt(sum(rule$weight * (v - sum(rule$weight * v))^2)), 0.2)
 
-  gen <- function(values) ctGenerate(m, n = 3, Tpoints = 2, popmeans = values)
+  gen <- function(v) ctGenerate(m, n = 3, Tpoints = 2, values = v)
+  expect_error(gen(list(mm_Y1 = 2)), "holds summary\\(\\)'s sections")
   expect_error(gen(list(popsd = c(drift_eta1 = 1))), "does not vary")
   expect_error(gen(list(popsd = c(mm_Y1 = 0))), "positive")
   expect_error(gen(list(rawpopcorr = c(mm_Y1__nope = 0.2))), "not a pair")
@@ -358,7 +359,8 @@ test_that("datastruct is the design, returned with the generated values", {
     TI1 = rep(c(1, 0, 0), each = 4), label = rep(c("y", "x", "z"), each = 4))
   set.seed(5)
   d <- suppressMessages(ctGenerate(m, datastruct = design,
-    popmeans = list(mm = 2, popsd = c(mm = 0.01), tipreds = c(tip_TI1_mm = 5))))
+    values = list(popmeans = c(mm = 2), popsd = c(mm = 0.01),
+      tipreds = c(tip_TI1_mm = 5))))
   expect_s3_class(d, "data.frame")
   expect_identical(d[c("id", "time", "TI1", "label")], design[c("id", "time", "TI1", "label")])
   expect_identical(is.na(d$Y1), is.na(design$Y1))

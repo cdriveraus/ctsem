@@ -387,7 +387,7 @@ re_gen <- ctModel(type = "ct", Tpoints = tpoints, n.latent = 1, n.manifest = 1,
   DRIFT = matrix("drift|-exp(param)|TRUE|0.5"), DIFFUSION = matrix(0.5),
   CINT = matrix(0.15), MANIFESTMEANS = matrix(0), MANIFESTVAR = matrix(0.25))
 re_dat <- data.frame(ctGenerate(re_gen, n = 30, dtmean = 0.4, logdtsd = 0.1,
-  backend = "julia", popmeans = c(drift = -0.35)))
+  backend = "julia", values = c(drift = -0.35)))
 re_model <- fit_model
 re_model$pars$indvarying[re_model$pars$param %in% "drift"] <- TRUE
 ```
