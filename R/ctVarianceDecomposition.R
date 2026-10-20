@@ -120,7 +120,8 @@
 #
 # Steps are cached by interval. Most designs have a handful of distinct
 # intervals and each one costs two matrix exponentials.
-.ctVarDecompPersonMoments <- function(mats, times, tdpreds, continuoustime) {
+.ctVarDecompPersonMoments <- function(mats, times, tdpreds, continuoustime,
+  sources = NULL) {
   nlatent <- nrow(mats$DRIFT)
   nmanifest <- nrow(mats$LAMBDA)
   nrows <- length(times)
@@ -131,7 +132,29 @@
   state <- as.numeric(mats$T0MEANS)
   cov <- mats$T0cov
   cache <- list()
+  # With `sources`, the state covariance kept apart by where it came from: the
+  # initial state, and each group of latents' innovations (`.ctVarDecompSources`).
+  # They add up because the groups' innovations are independent and the
+  # transition is linear. Beside each, the sum over pairs of rows of the
+  # state's covariance, `K_t = P_t + A_t K_{t-1}` being a row's covariance with
+  # every row before it and itself, which is what the variance of the record's
+  # mean is made of.
+  split <- length(sources) > 0L
+  if (split) {
+    part <- c(list(initial = mats$T0cov), lapply(sources, function(s)
+      matrix(0, nlatent, nlatent)))
+    carried <- lapply(part, function(x) matrix(0, nlatent, nlatent))
+    pairs <- carried
+    partlatent <- array(0, c(nrows, nlatent, length(part)))
+    partlinear <- array(0, c(nrows, nmanifest, length(part)))
+    masked <- lapply(sources, function(s) {
+      d <- matrix(0, nlatent, nlatent)
+      d[s, s] <- mats$DIFFUSIONcov[s, s]
+      d
+    })
+  }
   for (ri in seq_len(nrows)) {
+    transition <- NULL
     if (ri > 1L) {
       dt <- times[ri] - times[ri - 1L]
       key <- format(dt, digits = 15L)
@@ -139,10 +162,25 @@
       if (is.null(step)) {
         step <- .ctVarDecompStep(mats$DRIFT, mats$DIFFUSIONcov, mats$CINT, dt,
           continuoustime)
+        if (split) step$parts <- lapply(masked, function(d) .ctVarDecompStep(
+          mats$DRIFT, d, mats$CINT, dt, continuoustime)$innovation)
         cache[[key]] <- step
       }
+      transition <- step$transition
       state <- as.numeric(step$transition %*% state + step$intercept)
       cov <- step$transition %*% cov %*% t(step$transition) + step$innovation
+    }
+    if (split) for (g in seq_along(part)) {
+      if (!is.null(transition)) {
+        part[[g]] <- transition %*% part[[g]] %*% t(transition) +
+          if (g > 1L) step$parts[[g - 1L]] else 0
+        carried[[g]] <- transition %*% carried[[g]]
+      }
+      part[[g]] <- (part[[g]] + t(part[[g]])) / 2
+      carried[[g]] <- carried[[g]] + part[[g]]
+      pairs[[g]] <- pairs[[g]] + carried[[g]] + t(carried[[g]]) - part[[g]]
+      partlatent[ri, , g] <- diag(part[[g]])
+      partlinear[ri, , g] <- diag(mats$LAMBDA %*% part[[g]] %*% t(mats$LAMBDA))
     }
     # A time dependent predictor is an instantaneous shift at the observed row,
     # applied after the time update -- matching the filter, which does
@@ -156,8 +194,58 @@
     linearmean[ri, ] <- as.numeric(mats$LAMBDA %*% state + mats$MANIFESTMEANS)
     linearvar[ri, ] <- diag(mats$LAMBDA %*% cov %*% t(mats$LAMBDA))
   }
-  list(latentmean = latentmean, latentvar = latentvar,
+  out <- list(latentmean = latentmean, latentvar = latentvar,
     linearmean = linearmean, linearvar = linearvar)
+  if (split) {
+    # The record mean's variance from each part: the sum over pairs of rows
+    # over the number of pairs.
+    out$partlatent <- partlatent
+    out$partlinear <- partlinear
+    out$levellatent <- vapply(pairs, function(p) diag(p) / nrows^2,
+      numeric(nlatent))
+    out$levellinear <- vapply(pairs, function(p)
+      diag(mats$LAMBDA %*% p %*% t(mats$LAMBDA)) / nrows^2, numeric(nmanifest))
+    out$levellatent <- matrix(out$levellatent, nlatent)
+    out$levellinear <- matrix(out$levellinear, nmanifest)
+  }
+  out
+}
+
+# `sources` resolved against the model: a named list of latent names, each a
+# group whose innovations are independent of every other group's, checked on
+# the fitted DIFFUSIONcov. Returned as latent indices.
+.ctVarDecompSources <- function(fit, sources, nlatent) {
+  if (is.null(sources)) return(NULL)
+  latents <- .ctFitModelObject(fit)$latentNames[seq_len(nlatent)]
+  if (!is.list(sources) || is.null(names(sources)) || any(!nzchar(names(sources))))
+    stop("sources must be a named list of latent names, one entry per group of ",
+      "processes whose innovations are independent of the others'.", call. = FALSE)
+  if (any(names(sources) %in% c("initial", "level"))) stop("'initial' and ",
+    "'level' name parts the decomposition reports; call the sources otherwise.",
+    call. = FALSE)
+  index <- lapply(sources, function(s) {
+    i <- match(s, latents)
+    if (anyNA(i)) stop("sources names latents this model does not have: ",
+      paste(s[is.na(i)], collapse = ", "), ".", call. = FALSE)
+    i
+  })
+  all <- unlist(index)
+  if (anyDuplicated(all)) stop("A latent appears in more than one source.",
+    call. = FALSE)
+  diffusion <- as.matrix(suppressMessages(ctSummaryMatrices(fit))$DIFFUSIONcov)
+  outside <- setdiff(seq_len(nlatent), all)
+  if (length(outside) && any(abs(diffusion[outside, ]) > 0)) stop(
+    "Latents with innovations of their own are in no source: ",
+    paste(latents[outside], collapse = ", "), ".", call. = FALSE)
+  for (a in seq_along(index)) for (b in seq_along(index)) {
+    if (a == b) next
+    if (any(abs(diffusion[index[[a]], index[[b]]]) >
+        1e-8 * max(abs(diffusion)))) stop("The innovations of sources '",
+      names(sources)[a], "' and '", names(sources)[b], "' are correlated in ",
+      "the fitted DIFFUSIONcov, so the variance does not split between them. ",
+      "Put the correlated latents in one source.", call. = FALSE)
+  }
+  index
 }
 
 
@@ -714,7 +802,8 @@
 # anything; a level's between term uses the sample variance over that level's
 # units, which is an estimate of a population variance.
 .ctVarDecompMomentComponents <- function(fit, design, persons, levels, nlatent,
-  latents, type, scale, gh, continuoustime, nmanifest, times = NULL) {
+  latents, type, scale, gh, continuoustime, nmanifest, times = NULL,
+  sources = NULL) {
 
   # `times` turns the window average into a decomposition at each point on a
   # common grid. Every person is then evaluated at the same times rather than
@@ -736,6 +825,9 @@
   persondet <- matrix(NA_real_, length(persons), nvar)
   personstoch <- array(NA_real_, c(length(persons), nvar, ntime))
   personmeas <- array(0, c(length(persons), nvar, ntime))
+  nparts <- if (length(sources)) length(sources) + 1L else 0L
+  personpart <- array(0, c(length(persons), nvar, ntime, max(nparts, 1L)))
+  personlevel <- array(0, c(length(persons), nvar, max(nparts, 1L)))
 
   for (index in seq_along(persons)) {
     person <- persons[[index]]
@@ -745,7 +837,23 @@
       design$tdpreds[rows, , drop = FALSE] else NULL
     for (s in seq_len(nsteps)) {
       mats <- person$mats[[s]]
-      moments <- .ctVarDecompPersonMoments(mats, at, tdpreds, continuoustime)
+      moments <- .ctVarDecompPersonMoments(mats, at, tdpreds, continuoustime,
+        sources = if (s == 1L) sources)
+      if (s == 1L && nparts) {
+        # Rows by variables, as a time series per variable or its mean.
+        perrow <- function(x) if (bytime) t(x) else colMeans(x)
+        for (g in seq_len(nparts)) {
+          personpart[index, seq_len(nmanifest), , g] <-
+            perrow(matrix(moments$partlinear[, , g], length(at)))
+          personlevel[index, seq_len(nmanifest), g] <- moments$levellinear[, g]
+          if (latents) {
+            personpart[index, nmanifest + seq_len(nlatent), , g] <-
+              perrow(matrix(moments$partlatent[, , g], length(at)))
+            personlevel[index, nmanifest + seq_len(nlatent), g] <-
+              moments$levellatent[, g]
+          }
+        }
+      }
       for (vi in seq_len(nmanifest)) {
         measured <- .ctVarDecompMeasurement(moments$linearmean[, vi],
           moments$linearvar[, vi], type[vi], mats$MANIFESTcov[vi, vi], scale, gh)
@@ -799,6 +907,19 @@
     npersons = length(persons), times = times)
   # The deterministic term is the variance over t and has no per-instant form.
   if (!bytime) out$within.deterministic <- colMeans(persondet)
+  # Each source's share of the stochastic term, and over the window how much of
+  # it is the record's mean: what does not move within a record.
+  if (nparts) {
+    partnames <- c("initial", names(sources))
+    out$sources <- lapply(seq_len(nparts), function(g)
+      flat(apply(personpart[, , , g, drop = FALSE], c(2L, 3L), mean)))
+    names(out$sources) <- partnames
+    if (!bytime) {
+      out$sourcelevels <- lapply(seq_len(nparts), function(g)
+        colMeans(matrix(personlevel[, , g], length(persons))))
+      names(out$sourcelevels) <- partnames
+    }
+  }
   out
 }
 
@@ -1056,6 +1177,16 @@
 #' @param realid If TRUE (the default), subjects are read as the ids in the data,
 #' and integers that are not ids there are read as ctsem's numbering of the
 #' subjects, 1 to N, with a message. If FALSE, they are read as that numbering.
+#' @param sources Optional named list of latent names, one entry per group of
+#'   processes whose innovations are independent of the other groups' -- fast
+#'   affect, a day-scale tier, a slow tier, say. The stochastic within person
+#'   term is then split by where it came from: \code{within.stochastic.<group>}
+#'   for each group's innovations and \code{within.stochastic.initial} for the
+#'   initial state's variance still present, which add up to
+#'   \code{within.stochastic}. Averaged over the window, \code{level.<group>}
+#'   is the part of each that is the variance of the record's own mean: a
+#'   process as slow as the record is long acts within it mostly as a level,
+#'   and this says how much. Needs \code{method='moment'}.
 #'
 #' @details The decomposition is a nested law of total variance over the
 #'   population of (person, occasion) pairs at the design the fit was built on.
@@ -1151,7 +1282,7 @@
 ctVarianceDecomposition <- function(fit, method = c('auto', 'moment', 'simulation'),
   persons = c('auto', 'model', 'estimated'), scale = c('latent', 'response'),
   times = NULL, npersons = 200L, npaths = 20L, latents = TRUE, quadpoints = 21L,
-  subjects = 'all', realid = TRUE) {
+  subjects = 'all', realid = TRUE, sources = NULL) {
 
   # `ctFit`, which both backends' fits carry, rather than naming the two
   # classes: this asks whether the argument is a fit at all, not which backend
@@ -1167,6 +1298,15 @@ ctVarianceDecomposition <- function(fit, method = c('auto', 'moment', 'simulatio
     method <- if (nrow(.ctVarDecompStateDependent(fit))) 'simulation' else 'moment'
   }
   .ctVarDecompCheckModel(fit, method, scale)
+  if (!is.null(sources)) {
+    if (!identical(method, 'moment')) stop("sources needs method='moment': the ",
+      'split follows the covariance recursion, which the simulation route does ',
+      'not run.', call. = FALSE)
+    if (identical(scale, 'response') &&
+        any(as.integer(.ctFitModelObject(fit)$manifesttype) != 0L)) stop(
+      "sources splits variance on the latent scale, where it adds up; use ",
+      "scale='latent' with non-Gaussian indicators.", call. = FALSE)
+  }
   if (identical(method, 'simulation') && !.ctFitIsJulia(fit)) {
     stop("method='simulation' needs a backend='julia' fit: it draws the ",
       'trajectories from the engine, which the stan path has no entry point ',
@@ -1261,7 +1401,8 @@ ctVarianceDecomposition <- function(fit, method = c('auto', 'moment', 'simulatio
     if (!length(people)) stop('No usable persons.', call. = FALSE)
     gh <- if (identical(scale, 'response')) .ctVarDecompGaussHermite(quadpoints) else NULL
     .ctVarDecompMomentComponents(fit, design, people, levels, nlatent, latents,
-      type, scale, gh, continuoustime, nmanifest, times = times)
+      type, scale, gh, continuoustime, nmanifest, times = times,
+      sources = .ctVarDecompSources(fit, sources, nlatent))
   }
 
   variables <- c(manifestNames, if (latents) latentNames)
@@ -1295,6 +1436,16 @@ ctVarianceDecomposition <- function(fit, method = c('auto', 'moment', 'simulatio
       out[[paste0('between.', l)]] <- if (bytime)
         as.numeric(components$levels[l, , , drop = TRUE]) else
         components$levels[l, ]
+    }
+  }
+  # The stochastic term by source, and the part of each that is the record's
+  # mean, after the parts they split.
+  if (!is.null(components$sources)) {
+    for (g in names(components$sources)) {
+      out[[paste0('within.stochastic.', g)]] <- as.numeric(components$sources[[g]])
+    }
+    if (!is.null(components$sourcelevels)) for (g in names(components$sourcelevels)) {
+      out[[paste0('level.', g)]] <- as.numeric(components$sourcelevels[[g]])
     }
   }
   out$within <- rowSums(as.data.frame(out[setdiff(parts, 'between')]))

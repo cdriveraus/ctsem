@@ -7374,6 +7374,16 @@ zero for it, a level it is not in. On a 697-parameter model of 4031 units
 (affint's joint fit) the columns then need 12 to 20 per cent of the unit
 passes. The result differs from `localised = false` only in rounding.
 
+`localised` also takes a TI-predictor coefficient's column from its target's
+(`_laplace_ti_derivable`): where every unit is one subject, a coefficient
+`c` on predictor `k` moves a unit only through its target parameter `j`, by
+the unit's `x_k`, so `d s_U / d c = x_k d s_U / d theta_j` for every unit's
+score `s_U`, and the column is the units' score differences along `j`
+weighted by their `x_k`, plus the prior's curvature at `c`. A smooth's
+columns then cost nothing past their target's: on a model where a covariate's
+spline reaches every varying parameter, most of the columns. The result
+differs from differencing along `c` by the difference rule's truncation.
+
 `progress`, when given, is called `(done, total)` after every column with the
 gradient evaluations completed so far out of `2n` -- this loop is the one
 place a finish or a certification can go quiet for minutes on a wide Laplace
@@ -7440,15 +7450,31 @@ function _laplace_hessian_columns(laplace::CTSEMLaplaceObjective,
         end
     end
     base = warm ? deepcopy(laplace.modes) : nothing
+    # Coefficient columns taken from their targets' score differences
+    # (`_laplace_ti_derivable`): `derived[c]` is the TI effect entry of
+    # column `c`, and the targets are differenced with their units' scores
+    # kept, whether or not their own columns were asked for.
+    derived = localised ? _laplace_ti_derivable(laplace, cols) : Dict{Int,Int}()
+    sp = laplace.objective.params
+    targets = sort!(unique([sp.ti_parameter_indices[e] for e in Base.values(derived)]))
+    extra = setdiff(targets, cols)
+    if length(cols) - length(derived) + length(extra) >= length(cols)
+        empty!(derived)
+        targets = Int[]
+        extra = Int[]
+    end
+    work = vcat(cols, extra)
+    targetscores = Dict{Int,Matrix{Float64}}()
     # The units each column is differenced over, grouped so that one subset
     # objective serves every column that reads the same units. All units, or
     # scores that are not finite, or a parameter no unit reads (only the prior
     # does), mean the full objective.
     groups = Dict{Vector{Int},Vector{Int}}()
     full = Int[]
-    for c in 1:k
+    for c in eachindex(work)
+        c <= k && haskey(derived, c) && continue
         reads = scores === nothing || !all(isfinite, scores) ? Int[] :
-            findall(!iszero, view(scores, :, cols[c]))
+            findall(!iszero, view(scores, :, work[c]))
         if isempty(reads) || length(reads) == NU
             push!(full, c)
         else
@@ -7472,19 +7498,33 @@ function _laplace_hessian_columns(laplace::CTSEMLaplaceObjective,
             from = base === nothing ? nothing :
                 isempty(reads) ? base : [base[U] for U in reads]
             for c in cs
-                j = cols[c]
+                j = work[c]
                 h = step * max(1.0, abs(x[j]))
                 plus = copy(x); plus[j] += h
                 minus = copy(x); minus[j] -= h
-                pp = _laplace_hessian_point(obj, plus, budget, retries; from=from)
-                pm = _laplace_hessian_point(obj, minus, budget, retries; from=from)
+                target = j in targets
+                nreads = isempty(reads) ? NU : length(reads)
+                splus = target ? zeros(Float64, nreads, n) : nothing
+                sminus = target ? zeros(Float64, nreads, n) : nothing
+                pp = _laplace_hessian_point(obj, plus, budget, retries; from=from,
+                    scores=splus)
+                pm = _laplace_hessian_point(obj, minus, budget, retries; from=from,
+                    scores=sminus)
                 (pp.tries + pm.tries) > 0 && push!(escalated, j)
                 # Two gradients just finished, converged or not: a column this
                 # function gives up on (NaN, below) still cost the same two
                 # inner solves, so it counts here too or the reported total
                 # falls behind the real one.
                 done += 1
-                progress !== nothing && progress(2done, 2k)
+                progress !== nothing && progress(2done, 2 * (length(work) - length(derived)))
+                if target && pp.out.converged && pm.out.converged
+                    # Every unit's score difference along `j`, by full unit.
+                    D = zeros(Float64, NU, n)
+                    rows = isempty(reads) ? (1:NU) : reads
+                    D[rows, :] .= (splus .- sminus) ./ (2h)
+                    targetscores[j] = D
+                end
+                c > k && continue
                 if !(pp.out.converged && pm.out.converged)
                     # The same predicate `fg!` applies to a trial point, applied
                     # to the two points this column is differenced from. A
@@ -7502,6 +7542,8 @@ function _laplace_hessian_columns(laplace::CTSEMLaplaceObjective,
                 H[:, c] = (pp.out.gradient .- pm.out.gradient) ./ (2h)
             end
         end
+        isempty(derived) || _laplace_ti_derived_columns!(H, laplace, x, cols,
+            derived, targetscores)
     finally
         # The budget is a field of a mutable objective the caller keeps, so an
         # escalation that threw would otherwise be inherited by every later
@@ -7521,6 +7563,73 @@ function _laplace_hessian_columns(laplace::CTSEMLaplaceObjective,
         "; those columns are NaN. ", units, " unit(s) short, worst inner ",
         "gradient ", worst, " against a budget of ", budget * 4^retries,
         " iterations.")
+    return H
+end
+
+"""
+    _laplace_ti_derivable(laplace, cols)
+
+The columns among `cols` that are TI-predictor coefficients whose Hessian
+column can be taken from their target's (`_laplace_hessian_columns`), as
+column position => TI effect entry: every unit one subject, so a coefficient
+moves a unit through its own predictor value; no sampled predictor value,
+which would make that value a parameter too; and a coefficient with one
+target, not one named effect shared between parameters.
+"""
+function _laplace_ti_derivable(laplace::CTSEMLaplaceObjective, cols::AbstractVector{<:Integer})
+    out = Dict{Int,Int}()
+    sp = laplace.objective.params
+    isempty(sp.ti_coefficient_indices) && return out
+    all(m -> length(m) == 1, laplace.units.members) || return out
+    isempty(laplace.objective.ti_missing_parameter) || return out
+    all(s -> s.tipreds isa AbstractVector{<:Real},
+        laplace.objective.subject_objectives) || return out
+    coefficients = sp.ti_coefficient_indices
+    for (c, j) in enumerate(cols)
+        entries = findall(==(j), coefficients)
+        length(entries) == 1 || continue
+        e = entries[1]
+        # The target's own column must be differenced, not derived.
+        sp.ti_parameter_indices[e] in coefficients && continue
+        out[c] = e
+    end
+    return out
+end
+
+"""
+    _laplace_ti_derived_columns!(H, laplace, x, cols, derived, targetscores)
+
+Fill each derived column of `H` from its target's units' score differences:
+`sum_U x_Uk d s_U / d theta_j`, plus the prior's and penalty's curvature at the
+coefficient itself. The units' scores carry no prior, which is diagonal in a
+coefficient. A target whose differencing failed leaves its columns `NaN`.
+"""
+function _laplace_ti_derived_columns!(H::AbstractMatrix, laplace::CTSEMLaplaceObjective,
+    x::AbstractVector, cols::AbstractVector{<:Integer}, derived::Dict{Int,Int},
+    targetscores::Dict{Int,Matrix{Float64}})
+    sp = laplace.objective.params
+    subjects = laplace.objective.subject_objectives
+    members = laplace.units.members
+    precision = _ctsem_prior_precision(laplace.objective, length(x))
+    for (c, e) in derived
+        j = sp.ti_parameter_indices[e]
+        k = sp.ti_predictor_indices[e]
+        D = get(targetscores, j, nothing)
+        if D === nothing
+            H[:, c] .= NaN
+            continue
+        end
+        column = zeros(Float64, size(H, 1))
+        for U in eachindex(members)
+            value = subjects[members[U][1]].tipreds[k]
+            iszero(value) && continue
+            @inbounds for m in eachindex(column)
+                column[m] += value * D[U, m]
+            end
+        end
+        column[cols[c]] -= precision[cols[c]]
+        H[:, c] .= column
+    end
     return H
 end
 
@@ -7563,20 +7672,21 @@ optimcontrol name `laplace_inner_maxiter`; a bare dollar sign interpolates in a
 Julia docstring, which is why it is not written out here.)
 """
 function _laplace_hessian_point(laplace::CTSEMLaplaceObjective,
-    x::AbstractVector, budget::Integer, retries::Integer; from=nothing)
+    x::AbstractVector, budget::Integer, retries::Integer; from=nothing,
+    scores::Union{Nothing,Matrix{Float64}}=nothing)
     capped() = any(>=(laplace.inner_maxiter), laplace.inner_iterations)
     reached() = isempty(laplace.inner_gradient) ? 0.0 :
         maximum(laplace.inner_gradient)
     short() = count(!, laplace.inner_converged)
     laplace.inner_maxiter = budget
     _laplace_restore_modes!(laplace, from)
-    out = ctsem_laplace_evaluate(laplace, x; gradient=true)
+    out = ctsem_laplace_evaluate(laplace, x; gradient=true, scores=scores)
     tries = 0
     while !out.converged && capped() && tries < retries
         tries += 1
         laplace.inner_maxiter = budget * 4^tries
         _laplace_restore_modes!(laplace, from)
-        out = ctsem_laplace_evaluate(laplace, x; gradient=true)
+        out = ctsem_laplace_evaluate(laplace, x; gradient=true, scores=scores)
     end
     result = (out=out, tries=tries, worst=reached(), units=short())
     laplace.inner_maxiter = budget

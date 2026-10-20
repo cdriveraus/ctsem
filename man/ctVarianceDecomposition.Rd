@@ -15,7 +15,8 @@ ctVarianceDecomposition(
   latents = TRUE,
   quadpoints = 21L,
   subjects = "all",
-  realid = TRUE
+  realid = TRUE,
+  sources = NULL
 )
 }
 \arguments{
@@ -80,6 +81,17 @@ is computed over, as ids in the data (see \code{realid}).}
 \item{realid}{If TRUE (the default), subjects are read as the ids in the data,
 and integers that are not ids there are read as ctsem's numbering of the
 subjects, 1 to N, with a message. If FALSE, they are read as that numbering.}
+
+\item{sources}{Optional named list of latent names, one entry per group of
+processes whose innovations are independent of the other groups' -- fast
+affect, a day-scale tier, a slow tier, say. The stochastic within person
+term is then split by where it came from: \code{within.stochastic.<group>}
+for each group's innovations and \code{within.stochastic.initial} for the
+initial state's variance still present, which add up to
+\code{within.stochastic}. Averaged over the window, \code{level.<group>}
+is the part of each that is the variance of the record's own mean: a
+process as slow as the record is long acts within it mostly as a level,
+and this says how much. Needs \code{method='moment'}.}
 }
 \value{
 A data frame of class \code{ctVarianceDecomposition}, one row per

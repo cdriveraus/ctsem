@@ -18,6 +18,32 @@ test_that('Gauss-Hermite nodes integrate a standard normal', {
   expect_error(ctsem:::.ctVarDecompGaussHermite(2L), 'at least 3')
 })
 
+test_that('the stochastic variance splits by source, and its record mean has the closed form', {
+  # Two independent processes, a fast and a slow one, started stationary and
+  # read by one indicator. Each source's share is its process's variance less
+  # what is still the initial state's, and the record mean's variance is the
+  # double sum of a stationary process's autocovariance over the rows.
+  mats <- list(DRIFT = diag(c(-0.5, -0.05)), DIFFUSIONcov = diag(c(1, 0.1)),
+    CINT = matrix(0, 2, 1), T0MEANS = matrix(0, 2, 1), T0cov = diag(2),
+    LAMBDA = matrix(1, 1, 2), MANIFESTMEANS = matrix(0, 1, 1))
+  times <- c(0, 0.5, 1.5, 2, 4, 4.3, 7)
+  m <- ctsem:::.ctVarDecompPersonMoments(mats, times, NULL, TRUE,
+    sources = list(fast = 1L, slow = 2L))
+  # initial, fast, slow
+  expect_equal(m$partlatent[, 1L, 1L] + m$partlatent[, 1L, 2L], rep(1, 7))
+  expect_equal(m$partlatent[, 1L, 1L], exp(-times))
+  expect_equal(m$partlatent[, 1L, 3L], rep(0, 7))
+  expect_equal(m$partlatent[, 2L, 1L] + m$partlatent[, 2L, 3L], rep(1, 7))
+  expect_equal(apply(m$partlinear, c(1L, 2L), sum), m$linearvar)
+  lag <- abs(outer(times, times, `-`))
+  expect_equal(m$levellatent[1L, 1L] + m$levellatent[1L, 2L],
+    sum(exp(-0.5 * lag)) / 49)
+  expect_equal(m$levellatent[2L, 1L] + m$levellatent[2L, 3L],
+    sum(exp(-0.05 * lag)) / 49)
+  expect_equal(sum(m$levellinear), (sum(exp(-0.5 * lag)) +
+    sum(exp(-0.05 * lag))) / 49)
+})
+
 test_that('one interval step matches the closed forms it generalises', {
   drift <- matrix(c(-0.5, 0, 0.2, -0.3), 2, 2)
   diffusioncov <- matrix(c(1, 0.2, 0.2, 0.6), 2, 2)
@@ -192,6 +218,19 @@ test_that('estimated persons at their modes are shrunk, at plausible values not'
   expect_equal(attr(estimated, 'npersons'), 600L)
   expect_equal(attr(drawn, 'npersons'), 600L)
   expect_output(print(estimated), 'plausible values')
+})
+
+test_that('sources split the stochastic term of a fit and bound its record level', {
+  out <- ctVarianceDecomposition(fit, persons = 'model', npersons = 50,
+    sources = list(process = 'eta1'))
+  expect_equal(out$within.stochastic.initial + out$within.stochastic.process,
+    out$within.stochastic)
+  expect_true(all(out$level.process <= out$within.stochastic.process + 1e-12))
+  expect_true(all(out$level.process > 0))
+  expect_error(ctVarianceDecomposition(fit, sources = list(a = 'eta9')),
+    'does not have')
+  expect_error(ctVarianceDecomposition(fit, sources = list(initial = 'eta1')),
+    "call the sources otherwise")
 })
 
 test_that('a model with no random effects has no between person variance', {

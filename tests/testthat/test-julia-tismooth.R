@@ -214,7 +214,7 @@ test_that("a fit given as inits starts a changed model where it stopped", {
   plain <- ctModel(type = "ct", n.latent = 1, n.manifest = 1, LAMBDA = diag(1),
     DRIFT = matrix("drift"), DIFFUSION = matrix("diff"),
     MANIFESTVAR = matrix("mvar"), CINT = matrix("cint"),
-    T0MEANS = matrix("t0m||||"), T0VAR = matrix("t0v"),
+    T0MEANS = matrix("t0m"), T0VAR = matrix("t0v"),
     MANIFESTMEANS = matrix(0), silent = TRUE)
   spec <- suppressMessages(ctFit(dat, plain, backend = "julia", fit = FALSE))
   npar <- ctsem:::.ctBackendNpar(spec)
@@ -232,4 +232,28 @@ test_that("a fit given as inits starts a changed model where it stopped", {
   expect_true(all(back[coefficients] == 0))
   expect_error(suppressMessages(ctFit(dat, plain, backend = "stan",
     inits = fit, fit = FALSE)), "backend='julia' fit")
+})
+
+test_that("the Laplace Hessian takes a smooth's columns from its target's", {
+  skip_without_julia()
+  fit <- .tismooth_fit()
+  dat <- .tismooth_data()$data
+  spec <- suppressMessages(ctFit(dat, fit$modelbase, backend = "julia",
+    intoverpop = "laplace", fit = FALSE))
+  npar <- ctsem:::.ctBackendNpar(spec)
+  x <- suppressMessages(ctsem:::.ctJuliaInitsFromFit(fit, spec, npar))
+  objective <- ctsem:::.ctJuliaObjective(structure(spec,
+    class = c("ctJuliaModel", "ctFitModel")), hybrid = TRUE)
+  module <- ctsem:::.ctJuliaModule(spec$project)
+  ctsem:::.ctJuliaEval(paste0("ctsem_test_nderived(o, n) = ",
+    "length(ContinuousTimeSEM._laplace_ti_derivable(o, collect(1:n)))"))
+  derived <- ctsem:::.ctJuliaCall("ctsem_test_nderived", objective,
+    as.integer(npar))
+  # Every coefficient of the smooth: seven, on cint.
+  expect_equal(as.integer(derived), 7L)
+  fast <- ctsem:::.ctBackendJuliaValue(module$ctsem_laplace_hessian(objective,
+    ctsem:::.ctJuliaNumericVector(x)))
+  slow <- ctsem:::.ctBackendJuliaValue(module$ctsem_laplace_hessian(objective,
+    ctsem:::.ctJuliaNumericVector(x), localised = FALSE))
+  expect_equal(as.matrix(fast), as.matrix(slow), tolerance = 1e-5)
 })
