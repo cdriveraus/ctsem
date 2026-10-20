@@ -1549,7 +1549,7 @@ ctOptimFullBootstrapDraws <- function(est, standata, sm, n=1000, cores=1,
 # posterior departs from it. Every draw moves along every direction, so a few
 # dozen see all of them, whatever the number of parameters; the cost is
 # `ndraws` gradients. The directions are the residuals' singular vectors,
-# and each is judged by two numbers rather than by its singular value, which
+# and each is measured by two numbers rather than by its singular value, which
 # with fewer draws than parameters is inflated by the draws' own spread:
 #
 #   * `slope`, the residual's regression on `z` along it. Where the posterior
@@ -1557,13 +1557,30 @@ ctOptimFullBootstrapDraws <- function(est, standata, sm, n=1000, cores=1,
 #     `(1 - 1 / sigma^2) z`, so the slope is that, exactly.
 #   * `shape`, the root mean square of what the slope leaves: a skew `kappa`
 #     leaves `kappa z^2 / 2`, a width that moves with another coordinate a
-#     product of the two.
+#     product of the two. Read as a skew, `kappa = shape * 2 / sqrt(3)`.
 #
-# What either may reach is set by a coverage band, `.ctNormalResidualBars()`.
+# Whether to sample is decided by what a direction does to an interval a fit
+# reports: each parameter's, through its share `s` of the direction (the
+# squared cosine between them in `z`). A width `sigma` along the direction
+# makes the parameter's `sqrt(1 + s (sigma^2 - 1))` times the normal's, and a
+# skew reaches it as `kappa s^(3/2)`; either outside the coverage band of
+# `.ctNormalResidualBars()` means sampling. Judged by the direction alone, a
+# departure spread thin over many parameters triggered sampling that moved
+# no interval: on a 28-parameter Laplace fit one such direction (shape 0.72)
+# cost 31 seconds against a 50-second fit, and every sd stayed where it was
+# against NUTS. A loading vector's shell lies along its own loadings, so its
+# share there is most of it.
+#
+# What is sampled, once something is, is every direction that departs from
+# the normal by the same band read along the direction itself. A curved
+# ridge needs the directions it bends through: a ring's radial direction
+# moves no interval, its variance being a hundredth of the tangent's, but
+# sampling the tangent without it left the ring's sds at half their size.
+#
 # On synthetic targets with exact references (scripts/gsm-uncertainty-2026-10/
-# bench_*.R) this named nothing on a Gaussian, the two directions of a ring
-# and of a crescent, the two of a skewed variance's funnel, and exactly the
-# five of a five-dimensional shell mixed into thirty parameters.
+# bench_*.R) the directions named nothing on a Gaussian, the two directions of
+# a ring and of a crescent, the two of a skewed variance's funnel, and exactly
+# the five of a five-dimensional shell mixed into thirty parameters.
 .ctOptimNormalCheck <- function(gradients, est, cov, ndraws = 32L,
   coverage = c(0.90, 0.99)) {
   eig <- eigen((cov + t(cov)) / 2, symmetric = TRUE)
@@ -1584,22 +1601,33 @@ ctOptimFullBootstrapDraws <- function(est, standata, sm, n=1000, cores=1,
   zalong <- Z %*% v
   slope <- colSums(along * zalong) / colSums(zalong^2)
   shape <- sqrt(colMeans((along - sweep(zalong, 2, slope, "*"))^2))
-  flagged <- which(slope > bars$narrow | slope < bars$wide | shape > bars$shape)
+  # Each parameter's share of each direction, and what that does to its
+  # interval. A slope of one or more is a direction the posterior does not
+  # fall off along at all.
+  share <- (A %*% v)^2 / rowSums(A^2)
+  share[!is.finite(share)] <- 0
+  width <- ifelse(slope < 1, 1 / (1 - slope), Inf)
+  ratio <- sqrt(1 + share * rep(width - 1, each = nrow(share)))
+  ratio[is.nan(ratio)] <- 1
+  skew <- share^1.5 * rep(shape * 2 / sqrt(3), each = nrow(share))
+  matters <- colSums(ratio > bars$narrow | ratio < bars$wide | skew > bars$skew) > 0
+  departs <- width > bars$narrow^2 | width < bars$wide^2 |
+    shape * 2 / sqrt(3) > bars$skew
+  flagged <- if (any(matters)) which(matters | departs) else integer()
   record$directions <- A %*% v[, flagged, drop = FALSE]
   record$slope <- slope[flagged]
   record$shape <- shape[flagged]
   record
 }
 
-# The residuals a direction may carry before the normal's 95% interval along
-# it covers less than `coverage[1]` or more than `coverage[2]`: 90% and 99%.
+# How far a parameter's interval may be from the normal's before it covers
+# less than `coverage[1]` or more than `coverage[2]`: 90% and 99%.
 #
-#   * `narrow`, `1 - (qnorm(0.95) / qnorm(0.975))^2` = 0.30: the slope of a
-#     direction whose true width is 1.19 times the normal's, where the
-#     interval covers 90%.
-#   * `wide`, `1 - (qnorm(0.995) / qnorm(0.975))^2` = -0.73: 0.76 times, 99%.
-#   * `shape`, 0.39: the residual of a skew that moves one tail of the
-#     interval out of 0.5-5%, the per-side form of the same band.
+#   * `narrow`, `qnorm(0.975) / qnorm(0.95)` = 1.19: a true sd that much wider
+#     than the normal's leaves its 95% interval covering 90%.
+#   * `wide`, `qnorm(0.975) / qnorm(0.995)` = 0.76: that much narrower, 99%.
+#   * `skew`, 0.45: the skewness that moves one tail of the interval out of
+#     0.5-5%, the per-side form of the same band.
 #
 # Why that band. Bradley's (1978) liberal criterion -- an error rate within
 # half and one and a half times nominal, 92.5-97.5% coverage -- is the usual
@@ -1612,11 +1640,13 @@ ctOptimFullBootstrapDraws <- function(est, standata, sm, n=1000, cores=1,
 .ctNormalResidualBars <- function(coverage = c(0.90, 0.99)) {
   a <- stats::qnorm(0.975)
   ends <- stats::qnorm((1 + coverage) / 2)
-  # Per-side drops at the interval's end that leave a tail of (1 - coverage) / 2.
-  drops <- rev(ends)^2 / 2
-  kappa <- min(drops[1L] - a^2 / 2, a^2 / 2 - drops[2L]) * 6 / a^3
-  list(narrow = 1 - (ends[1L] / a)^2, wide = 1 - (ends[2L] / a)^2,
-    shape = kappa * sqrt(3) / 2, coverage = coverage)
+  # A skew `kappa` adds `kappa z^3 / 6` to the log density, so the fall to the
+  # interval's end on one side is `a^2 / 2 - kappa a^3 / 6`; the per-side
+  # tails of (1 - coverage) / 2 are falls of `ends^2 / 2`.
+  falls <- rev(ends)^2 / 2
+  list(narrow = a / ends[1L], wide = a / ends[2L],
+    skew = min(falls[1L] - a^2 / 2, a^2 / 2 - falls[2L]) * 6 / a^3,
+    coverage = coverage)
 }
 
 ctOptimComputeUncertainty <- function(est, standata, sm, lpgFunc,
@@ -1959,7 +1989,16 @@ ctOptimFitLpgFunc <- function(fit, cores=1){
   if (is.null(control$imisDf)) control$imisDf <- df
   # `.ctEssTarget`, the one default every draw-producing route shares.
   if (is.null(control$isESS)) control$isESS <- .ctEssTarget
-  if (is.null(control$isitersize)) control$isitersize <- 1000
+  # `'checked'` samples a few directions from a proposal that is nearly right
+  # in most of them: 75% efficient on a 28-parameter Laplace fit, so 300
+  # draws reach the target of 200, and rounds are added where they do not.
+  if (is.null(control$isitersize)) control$isitersize <- if (is.null(directions)) 1000 else 300
+  # A budget in log density evaluations, where the caller knows what the fit
+  # cost (`.ctBackendFitCost()`): rounds stop there, and the report says the
+  # target was not reached.
+  # `imis_is()` runs `max_iter + 1` rounds.
+  if (!is.null(control$imisBudget)) control$imisMaxIter <- max(0L,
+    min(control$imisMaxIter, floor(control$imisBudget / control$isitersize) - 1L))
 
   # `.ctImisRun()` runs in the identified subspace of `uncertaintyfit$cov` when
   # it is rank deficient -- an individually varying parameter with no
@@ -2389,7 +2428,10 @@ ctOptimFitLpgFunc <- function(fit, cores=1){
 #' \code{imisMaxIter = 50}, \code{imisScaleInit = 1.1},
 #' \code{imisTailScale = 1.1} (1.5 and 1.2 on julia), \code{imisDf = 5} (the
 #' proposal components' t degrees of freedom; \code{Inf} for normal),
-#' \code{isESS = 200}, and \code{isitersize = 1000}. \code{parsteps} keeps
+#' \code{isESS = 200}, and \code{isitersize = 1000} (300 for
+#' \code{'checked'}). \code{imisBudget} caps the log density evaluations
+#' importance sampling spends; on julia, \code{'checked'} sets it to what the
+#' fit's optimisation spent. \code{parsteps} keeps
 #' stepwise-fixed raw parameters fixed (stan only).
 #' \code{analyticHessian = FALSE} (julia only) asks for the finite-difference
 #' Hessian instead of the engine's exact one. \code{likelihood} (\code{'fit'},

@@ -85,7 +85,10 @@ and \code{isitersize}. Omitted entries use
 \code{imisMaxIter = 50}, \code{imisScaleInit = 1.1},
 \code{imisTailScale = 1.1} (1.5 and 1.2 on julia), \code{imisDf = 5} (the
 proposal components' t degrees of freedom; \code{Inf} for normal),
-\code{isESS = 200}, and \code{isitersize = 1000}. \code{parsteps} keeps
+\code{isESS = 200}, and \code{isitersize = 1000} (300 for
+\code{'checked'}). \code{imisBudget} caps the log density evaluations
+importance sampling spends; on julia, \code{'checked'} sets it to what the
+fit's optimisation spent. \code{parsteps} keeps
 stepwise-fixed raw parameters fixed (stan only).
 \code{analyticHessian = FALSE} (julia only) asks for the finite-difference
 Hessian instead of the engine's exact one. \code{likelihood} (\code{'fit'},

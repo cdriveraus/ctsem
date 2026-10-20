@@ -94,14 +94,11 @@ test_that("Hessian processing reports one-sided and weak curvature parameters", 
 
 test_that("the normal check's bars are the coverage band's", {
   bars <- ctsem:::.ctNormalResidualBars()
-  # A direction 1.19 times wider than the normal says covers 90%; 0.76 times,
-  # 99%; and a skew of 0.45 moves one tail to 0.5% or 5%.
-  expect_equal(bars$narrow, 1 - (qnorm(0.95) / qnorm(0.975))^2)
-  expect_equal(bars$wide, 1 - (qnorm(0.995) / qnorm(0.975))^2)
-  expect_equal(2 * pnorm(-qnorm(0.975) * sqrt(1 - bars$narrow)), 0.10)
-  expect_equal(2 * pnorm(-qnorm(0.975) * sqrt(1 - bars$wide)), 0.01)
-  kappa <- bars$shape * 2 / sqrt(3)
-  drop <- qnorm(0.975)^2 / 2 - kappa * qnorm(0.975)^3 / 6
+  # A true sd 1.19 times the normal's leaves its 95% interval covering 90%;
+  # 0.76 times, 99%; and a skew of 0.45 moves one tail to 5%.
+  expect_equal(2 * pnorm(-qnorm(0.975) / bars$narrow), 0.10)
+  expect_equal(2 * pnorm(-qnorm(0.975) / bars$wide), 0.01)
+  drop <- qnorm(0.975)^2 / 2 - bars$skew * qnorm(0.975)^3 / 6
   expect_equal(pnorm(-sqrt(2 * drop)), 0.05)
 })
 
