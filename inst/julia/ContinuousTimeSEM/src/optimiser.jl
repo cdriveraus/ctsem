@@ -928,8 +928,8 @@ end
 #   twice as long -- the cheapest
 #   search for how long a coreset stays good, its checks costing at most twice
 #   those of the longest stage that would have paid -- on the smallest coreset
-#   that reproduces the check's gradient within `tol`, held out as for
-#   entering; one that did not returns to the full objective. Near the optimum the
+#   refitted to every point that reproduces the check's gradient within `tol`;
+#   one that did not returns to the full objective. Near the optimum the
 #   gradient shrinks while a coreset's error does not, so no coreset passes
 #   there and the full sum finishes.
 # - Within a stage, a check comes when the stage has run as planned, or when
@@ -1232,16 +1232,15 @@ The smallest coreset a stage of `c.stretch` iterations can pay for
 `_CTSEM_CORESET_TOL` relative, or `nothing` if none is; `c.error` becomes its
 error there in objective units, `e' H e / 2`.
 
-The path is fitted on every training point but the newest, which is held out
--- for a stage carried on, the point its check just measured -- and the
-coreset found is fitted again on every point. Fitted in sample, a coreset
-carried on near the optimum passed on an error a fraction of the one it met,
-its stage ran past its floor, and the full objective came out worse.
+Entering (`refit = false`): the path is fitted on every training point but the
+newest, which is held out, and the coreset found is fitted again on every
+point. Carrying on (`refit = true`): the path is fitted on every point, the
+newest the check just measured.
 """
 function _ctsem_coreset_choose(c::CTSEMCoresetPlan, scale::AbstractVector, hmul;
         refit::Bool)
     K = length(c.S)
-    K >= 3 || return nothing
+    K >= (refit ? 1 : 3) || return nothing
     t0 = time()
     budget = _ctsem_coreset_budget(c.stretch)
     Sn = c.S[K]
@@ -1257,14 +1256,18 @@ function _ctsem_coreset_choose(c::CTSEMCoresetPlan, scale::AbstractVector, hmul;
         passes = isfinite(ee) && gg > 0 && ee <= tol2 * gg
         (passes ? 1.0 : 0.0, passes ? 1.0 : 2.0, ee / 2)
     end
-    first = _ctsem_coreset_path(c, 1:(K - 1), budget, value, scale)
-    result = if first === nothing
-        nothing
+    result = if refit
+        _ctsem_coreset_path(c, 1:K, budget, value, scale)
     else
-        again = _ctsem_coreset_path(c, 1:K, budget, nothing, scale;
-            size=length(first.units))
-        again === nothing ? nothing :
-            (units=again.units, weights=again.weights, error=first.error)
+        first = _ctsem_coreset_path(c, 1:(K - 1), budget, value, scale)
+        if first === nothing
+            nothing
+        else
+            again = _ctsem_coreset_path(c, 1:K, budget, nothing, scale;
+                size=length(first.units))
+            again === nothing ? nothing :
+                (units=again.units, weights=again.weights, error=first.error)
+        end
     end
     c.attempts += 1
     c.select_seconds += time() - t0
