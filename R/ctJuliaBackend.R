@@ -5675,8 +5675,13 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
   # their inner solves stopped, integrated by frozen draws from here on
   # (`.ctLaplaceFrozenRescue()`). Not under a pin, whose wrapper names none.
   if (!is.null(model_spec$laplace) && !state_explicit && is.null(default_pin)) {
-    result <- .ctLaplaceFrozenRescue(result, module, objective, common,
-      verbose = verbose)
+    rescued <- try(.ctLaplaceFrozenRescue(result, module, objective, common,
+      verbose = verbose), silent = TRUE)
+    if (inherits(rescued, "try-error")) {
+      warning("The fit stopped where the objective jumped; integrating the ",
+        "units that jumped failed (", .ctLaplaceTryReason(rescued), ").",
+        call. = FALSE)
+    } else result <- rescued
   }
   # The two early phases belong to the first stage, which is the one that
   # starts away from the optimum. An escape below resumes from a pulled-back

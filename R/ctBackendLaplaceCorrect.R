@@ -660,12 +660,15 @@ print.ctLaplaceCorrection <- function(x, ...) {
 # (`ctsem_laplace_continuation`, `screen = FALSE`): those units' terms by
 # frozen draws, smooth whatever their solves do, and every other unit's by
 # Laplace. A jump in the hybrid names another unit, which joins them, the
-# draws placed again where it stopped. A run that ends without one is
-# followed by a placement at its end and another run, until a run gains under
-# `value_tol` -- a placement's proposal is good near where it was made -- or
-# `frozen_rounds` placements are spent. Intermediate runs take no finish; the
-# last takes the fit's own, on the hybrid's exact Hessian, so the
-# certification reads that. Returns the last run's result with `frozen`: the
+# draws placed again where it stopped. Draws are a proposal for where they were
+# placed, and as the parameters move their weights spread: a run that ends
+# without a jump is followed by a placement at its end and another run only if
+# the draws' standard error there has drifted past twice what they were placed
+# to (`ctsem_laplace_continuation_se`), or `frozen_rounds` placements are
+# spent. Not on a run's gain, since fresh draws move the value by their own
+# error (0.055 nats at one point on the round-9 stall) and that rule chased it.
+# Intermediate runs take no finish; the last takes the fit's own, on the
+# hybrid's exact Hessian, so the certification reads that. Returns the last run's result with `frozen`: the
 # units, the placements, the units each jump named, and the rules' standard
 # errors and draws at the last placement. The input result unchanged when
 # there is nothing to rescue or the hybrid cannot be built.
@@ -704,14 +707,13 @@ print.ctLaplaceCorrection <- function(x, ...) {
     "newton_hessian", "newton_hessian_at", "lbfgs_inverse")) plain[[nm]] <- NULL
   finish <- utils::modifyList(plain, list(newton = isTRUE(args$newton),
     certify = isTRUE(args$certify), overshoot_probe = args$overshoot_probe))
-  value_tol <- as.numeric(.ctJuliaOr(control$value_tol, 1e-3))
+  drift <- 2 * as.numeric(.ctJuliaOr(control$draws_se, 0.05))
   maxrounds <- as.integer(.ctJuliaOr(control$frozen_rounds, 10L))
   jumps <- list(units)
   run <- NULL
   placements <- 1L
   last <- FALSE
   repeat {
-    start_value <- as.numeric(get(module$ctsem_laplace_continuation_info(cont))$value)
     staged <- try(get(do.call(module$ctsem_optimize,
       c(list(cont, .ctJuliaNumericVector(x)), if (last) finish else plain))),
       silent = TRUE)
@@ -727,13 +729,18 @@ print.ctLaplaceCorrection <- function(x, ...) {
     jumped <- identical(as.character(run$stop_reason)[1L], "jump")
     more <- as.integer(run$jump_units)
     more <- more[!is.na(more) & more > 0L]
-    gained <- as.numeric(run$maximum_loglik)[1L] - start_value
-    if (!jumped && (!is.finite(gained) || gained < value_tol ||
-        placements >= maxrounds)) {
-      # One more run, from the point this placement settled at, with the
-      # finish and the certification's Hessian.
-      last <- TRUE
-      next
+    if (!jumped) {
+      se <- try(as.numeric(.ctBackendJuliaValue(
+        module$ctsem_laplace_continuation_se(cont, .ctJuliaNumericVector(x)))),
+        silent = TRUE)
+      # Draws that cannot be weighed there are placed again, as drifted ones.
+      if (!inherits(se, "try-error") && length(se) && all(is.finite(se)) &&
+          max(se) <= drift) {
+        # One more run, from the point these draws settled at, with the finish
+        # and the certification's Hessian.
+        last <- TRUE
+        next
+      }
     }
     if (placements >= maxrounds) {
       last <- TRUE

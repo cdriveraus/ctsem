@@ -136,6 +136,7 @@ using LinearAlgebra
 
 export ctsem_laplace_continuation, ctsem_laplace_continuation_info,
     ctsem_laplace_continuation_evaluate, ctsem_laplace_continuation_recentre!,
+    ctsem_laplace_continuation_se,
     ctsem_laplace_continuation_revert!, ctsem_laplace_continuation_optimize,
     ctsem_laplace_continuation_hessian
 
@@ -2437,4 +2438,61 @@ function _laplace_jump_units(laplace::CTSEMLaplaceObjective, numbering::Vector{I
     end
     return (units=units, changes=changes,
         point_units=isempty(point_units) ? [0] : point_units, point_values=values)
+end
+
+"""
+    ctsem_laplace_continuation_se(o, values)
+
+Each flagged unit's importance rule's standard error at `values`, its draws
+held where they were placed: `sqrt(1/ESS - 1/n)` from the weights there, `0`
+for a unit on a product rule. The draws are the proposal's of the point they
+were placed at, and as the parameters move away from it their weights spread;
+a fit rescued from a jump places them again only once this has drifted past
+what they were placed to (`.ctLaplaceFrozenRescue()`). In the order of
+`ctsem_laplace_continuation_info`'s `flagged`; `[0.0]` when none is flagged.
+"""
+function ctsem_laplace_continuation_se(o::CTSEMLaplaceContinuation,
+    values::AbstractVector)
+    nf = length(o.rules)
+    nf == 0 && return [0.0]
+    theta = _laplace_extend(o.laplace, collect(Float64, values))
+    laplace = o.laplace
+    spec = laplace.spec
+    Ls = _laplace_popchols(theta, spec)
+    positions = [_laplace_level_positions(spec, l) for l in eachindex(spec.levels)]
+    npar = length(theta)
+    out = zeros(nf)
+    _laplace_ensure_pool!(laplace)
+    _laplace_parallel(laplace, 1:nf) do f
+        local rule, U, root, block, columns, aws, scratch, u, n, terms, peak, w
+        rule = o.rules[f]
+        U = rule.unit
+        o.importance[U] || return true
+        root = rule.roots[1]
+        block = laplace.units.blocks[U][root.block]
+        columns = (block.offset + 1):(block.offset + block.size)
+        aws = _laplace_workspace!(laplace, Float64, npar)
+        scratch = _continuation_scratch(laplace, npar)
+        u = zeros(laplace.units.dims[U])
+        n = size(root.points, 2)
+        terms = fill(-Inf, n)
+        for j in 1:n
+            @inbounds for (t, c) in enumerate(columns); u[c] = root.points[t, j]; end
+            h = 0.0
+            for m in block.members
+                h += _continuation_member!(Float64[], laplace, U, m, theta, Ls,
+                    nothing, positions, u, aws, scratch, false)
+            end
+            isfinite(h) && (terms[j] = root.logweights[j] + h)
+        end
+        peak = maximum(terms)
+        if !isfinite(peak)
+            out[f] = Inf
+            return true
+        end
+        w = exp.(terms .- peak)
+        out[f] = sqrt(max(sum(abs2, w) / sum(w)^2 - 1 / n, 0.0))
+        return true
+    end
+    return out
 end
