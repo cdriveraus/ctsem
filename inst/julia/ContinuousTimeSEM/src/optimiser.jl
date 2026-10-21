@@ -1076,9 +1076,14 @@ end
 # when what L-BFGS's model says is left to gain on the coreset is no more than
 # its error -- its held-out relative error, squared, times what was left to gain
 # where the stage began -- since what it would go on to gain is then its error.
-# No stage is carried on from a point where the full objective's model leaves
-# less than the fit's gap tolerance to gain: the end is the full sum's, and its
-# stopping rules'.
+# No stage is carried on once the full objective gained less than the fit's
+# gap tolerance an iteration over the stage just run -- the bar a full step's
+# predicted gain meets in the gap rule, read from what the stage measurably
+# did: the end is the full sum's, and its stopping rules'. Carried on while
+# L-BFGS's model of what was left exceeded the tolerance, stages climbed on
+# along AnomAuth's flat directions where the full sum's own gap rule had
+# stopped it, 8-14 log units up an over-credited Laplace term, and the
+# certification paid twice the fit's cost to come back.
 #
 # Looking for a coreset backs off: after a search that found none, the next
 # waits twice as many full iterations as the last wait, and one that finds one
@@ -1156,8 +1161,9 @@ before the next, the record, how many curvature pairs the stage in force has
 given L-BFGS, which a stage that is sent back takes with it, the region its
 coreset was fitted on: the farthest training point's distance from where the
 stage began, in the metric `metric` scales by; and the held-out relative error
-of the last coreset chosen, squared (`rel`), and the fit's gap tolerance, under
-which no stage is carried on (`gap_tol`, set by `ctsem_optimize`).
+of the last coreset chosen, squared (`rel`), and the fit's gap tolerance: no
+stage is carried on from one that gained less than it an iteration (`gap_tol`,
+set by `ctsem_optimize`).
 """
 mutable struct CTSEMCoresetPlan
     full::CTSEMLaplaceObjective
@@ -1619,9 +1625,9 @@ stage's start if the full value is worse there or unusable; otherwise a
 training point, and, unless `leave`, a stage carried on from `x`, planned twice
 as long, if this one paid -- its iterations times the full objective's gain
 over the coreset's predicted one, against its iterations' share of the work and
-its check -- L-BFGS's model leaves more than `gap_tol` to gain at `x`, and some
-coreset the longer stage can pay for is accurate enough; the full objective
-otherwise.
+its check -- the full objective gained more than `gap_tol` an iteration over
+it, and some coreset the longer stage can pay for is accurate enough; the full
+objective otherwise.
 """
 function _ctsem_coreset_check!(c::CTSEMCoresetPlan, x, fc, Gc, hmul, scale;
         leave::Bool=false)
@@ -1644,7 +1650,7 @@ function _ctsem_coreset_check!(c::CTSEMCoresetPlan, x, fc, Gc, hmul, scale;
         return (act=:revert, x=c.x0, f=c.f0, G=c.G0)
     end
     paid = n * fidelity > n * c.shares[end] + 1
-    if !leave && paid && dot(Gf, hmul(Gf)) / 2 > c.gap_tol
+    if !leave && paid && actual > c.gap_tol * max(n, 1)
         stretch = 2c.stretch
         c.stretch = stretch
         cs = _ctsem_coreset_choose(c, scale, hmul; refit=true)
