@@ -2662,6 +2662,7 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
     coreseter = coreset && !progress_budget ?
         _ctsem_coreset_plan(objective, trial_fg!, score_store) :
         nothing
+    coreseter === nothing || (coreseter.gap_tol = Float64(gap_tol))
     # The endgame (`_ctsem_newton_finish`), on a route that has one. Where a
     # Hessian costs a few gradients it runs whenever there is a stopping rule
     # for it to finish, and L-BFGS hands over as soon as its predicted gain is
