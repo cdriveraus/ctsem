@@ -1253,7 +1253,7 @@ function _ctsem_coreset_choose(c::CTSEMCoresetPlan, scale::AbstractVector, hmul;
     most > overhead || return nothing
     t0 = time()
     budget = 1 - overhead / most
-    kappa = c.calibration
+    kappa = 1.0
     lik = vec(sum(Sn; dims=1))
     plan = Ref(0.0)
     value = (units, w) -> begin
