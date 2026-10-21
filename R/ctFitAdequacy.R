@@ -117,10 +117,11 @@
 #' pairs of rows has the sum of the products' squares as its variance, which
 #' holds with heavy tails or a changing variance; estimating the parameters
 #' takes a known part of it away. That is the variance of the residual,
-#' latent, volatility, within-row, periodic and covariate families; the
-#' distribution and fit families,
-#' whose statistics are sums of high powers, use the spread of the units'
-#' contributions and a studentised bootstrap over units. Within a family the
+#' latent, volatility, within-row and covariate families; the distribution and
+#' fit families, whose statistics are sums of high powers, and the periodic
+#' family, whose statistic is for each unit the squared modulus of a sum (the
+#' periodogram), skewed to the right however many rows a unit has, use the
+#' spread of the units' contributions and a studentised bootstrap over units. Within a family the
 #' largest standardised statistic and the sum of their squares are calibrated
 #' with the statistics' correlation over units
 #' and combined, with any exact p-values the family has, by the Cauchy
@@ -759,7 +760,14 @@ ctFitAdequacy <- function(fit, covariates = NULL,
     lab <- c(vars, paste('latent', colnames(err$Z)))
     blk <- .ctAdequacyPeriodBlock(X, err$unit, err$time, n, setup$periods)
     grid <- expand.grid(j = seq_len(ncol(X)), f = seq_along(setup$periods))
-    addblock(blk$M, blk$V0, 'periodic', paste0(lab[grid$j], ' period ',
+    # Unit-level: a unit's periodogram ordinate is the squared modulus of a
+    # sum, roughly exponential, and summed over units still skewed (z
+    # skewness 0.25 over 60 units); against the pairwise variance and a
+    # Gaussian reference for the largest of some three hundred, the family
+    # rejected a correct model 9.4 per cent of the time at .05 (500 null
+    # datasets). The units' spread and the studentised bootstrap carry the
+    # skew.
+    addblock(blk$M, blk$V0 * NA_real_, 'periodic', paste0(lab[grid$j], ' period ',
       as.character(signif(setup$periods[grid$f], 3))), blk$N, 'corr',
       variable = lab[grid$j], period = setup$periods[grid$f])
   }
