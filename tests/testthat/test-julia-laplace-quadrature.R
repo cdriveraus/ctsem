@@ -256,8 +256,18 @@ test_that("what a continued fit reports is the continuation's own", {
     expect_equal(as.numeric(cont$estimate$cov), as.numeric(solve(information)),
       tolerance = 1e-6)
   }
-  expect_lt(max(abs(colMeans(cont$estimate$rawposterior) - x) /
-    as.numeric(cont$estimate$se)), 0.5)
+  # The draws are the continuation's posterior's, not the Laplace optimum's:
+  # in every coordinate where the two estimates separate by more than the
+  # draws' error, the draws' mean is the continued estimate's side. Not within
+  # a fixed share of a standard error of the estimate: 'checked' centres them
+  # on the posterior mean (b063aaaf), which on this fixture sits 0.5-0.7 se
+  # from the mode in two coordinates where the two estimates agree.
+  se <- as.numeric(cont$estimate$se)
+  centre <- colMeans(cont$estimate$rawposterior)
+  laplace <- as.numeric(off$estimate$raw)
+  apart <- abs(x - laplace) / se > 0.3
+  expect_true(any(apart))
+  expect_true(all(abs(centre - x)[apart] < abs(centre - laplace)[apart]))
   expect_identical(corr$draws, "redrawn")
   # Certified on the objective it maximises.
   expect_true(isTRUE(corr$certification$certified))
