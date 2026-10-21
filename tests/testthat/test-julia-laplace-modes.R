@@ -244,7 +244,7 @@ test_that("a model of concave units goes unprobed and evaluates as when probed",
     isTRUE(field(ctsem:::.ctJuliaObjective(h, hybrid = TRUE))), logical(1)),
     c(TRUE, FALSE))
   set.seed(9)
-  npar <- length(ctJuliaEvaluate(handles[[1]], gradient = TRUE, cores = 1L)$gradient)
+  npar <- ctsem:::.ctBackendNpar(spec)
   for (i in 1:3) {
     x <- stats::rnorm(npar, 0, 0.5)
     a <- ctJuliaEvaluate(handles[[1]], x, gradient = TRUE, cores = 1L)
