@@ -171,9 +171,15 @@ test_that("importance sampling with a coreset reaches the full density's posteri
   skip_on_cran()
   skip_if_not(isTRUE(ctsem::ctJuliaStatus()$available))
   fit <- .coreset_fixture()
+  # Each at an effective size of 500. At the default 200 one run's means lie
+  # up to 0.22 posterior sds from a long reference (ESS 4,000) on this model
+  # and two runs' differ by up to 0.43, with either sampler (seeds 21-24), so
+  # the bar below would test the seed; at 500 they differ by 0.08-0.24
+  # (seeds 21-26).
   run <- function(control) {
     set.seed(21)
-    suppressWarnings(ctsem::ctFitUncertainty(fit, "is", cores = 1, control = control))
+    suppressWarnings(ctsem::ctFitUncertainty(fit, "is", cores = 1,
+      control = c(control, list(isESS = 500))))
   }
   a <- run(list(coreset = FALSE))
   b <- run(list())
@@ -182,9 +188,7 @@ test_that("importance sampling with a coreset reaches the full density's posteri
   expect_null(ia$coreset)
   expect_true(isTRUE(ib$coreset$used))
   expect_lt(ib$cost, ia$cost)
-  # Within Monte Carlo error of each other, read from the weighted samples:
-  # the means of two full-sum runs at effective sizes 200-370 differ by up to
-  # 0.17 sd on this model, and the resampled draws add as much again.
+  # Within Monte Carlo error of each other, read from the weighted samples.
   expect_equal(b$estimate$se, a$estimate$se, tolerance = 0.25)
   sa <- sqrt(diag(a$uncertainty$imis$covariance))
   expect_lt(max(abs(b$uncertainty$imis$mean - a$uncertainty$imis$mean) / sa), 0.4)

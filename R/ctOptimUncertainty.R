@@ -471,6 +471,47 @@ bootstrapHessian <- function(standata, sm, est, finishsamples, cores, scores=NUL
   list(mu = x + as.numeric(L %*% step), cov = L %*% covariance %*% t(L))
 }
 
+# The share of the next round's draws each of `imis_is()`'s components gets:
+# `birth` of them split among the `length(comp_mu) - K` added this round, and
+# the rest among the K before by each one's responsibility for the posterior
+# -- the weighted share of the draws carrying `mass` of the weight that it
+# accounts for under the deterministic mixture, population Monte Carlo's
+# update (Douc, Guillin, Marin and Robert 2007; Cappe, Douc, Guillin, Marin
+# and Robert 2008). `counts` are the draws each earlier component has been
+# asked for, `dprop` the components' log density.
+#
+# IMIS (Raftery and Bao) draws each round from that round's new components
+# alone, so the starting proposal gets the first round's draws and none
+# after. In a few dimensions that tiles a curved shell quickly; in 36, the
+# directions 'checked' names on a 266-parameter Laplace fit whose
+# population covariance is fitted at twice its rank
+# (scripts/gsm-uncertainty-2026-10/scale_model.R), the starting proposal
+# alone reached an effective sample of 57 in 1,000 draws where the mixture
+# had 4.7, and the rounds ran to 64: every component built from a round's
+# top-weighted draws rests on a few of them in 36 dimensions, and draws
+# nowhere the posterior is. Kept drawing by its responsibility, a start that
+# fits keeps its share and one that does not, as on a shell, loses it. On
+# that fit 37 rounds and 6,364 evaluations against 64 and 11,062; on the
+# synthetic targets and an 11-direction shell, the same within the spread
+# over seeds (scripts/gsm-uncertainty-2026-10/proto_alloc.R).
+.ctImisAllocate <- function(samples, w, counts, comp_mu, comp_cov, K, dprop,
+  birth = 0.5, mass = 0.999, maxdraws = 2000L) {
+  born <- length(comp_mu) - K
+  wn <- w / sum(w)
+  o <- order(-wn)
+  m <- min(length(o), maxdraws, findInterval(mass, cumsum(wn[o])) + 1L)
+  sel <- o[seq_len(m)]
+  X <- samples[sel, , drop = FALSE]
+  lq <- matrix(vapply(seq_len(K), function(k) if (counts[k] > 0)
+    log(counts[k]) + dprop(X, comp_mu[[k]], comp_cov[[k]]) else rep(-Inf, m),
+    numeric(m)), m)
+  rho <- exp(lq - apply(lq, 1, max))
+  r <- colSums(rho / rowSums(rho) * wn[sel])
+  r <- r / sum(r)
+  if (!born) return(r)
+  c((1 - birth) * r, rep(birth / born, born))
+}
+
 # Each parameter's profile path, walked out on both sides of the mode: at
 # `first` and then `rungs` standard errors of the curvature, parameter j is
 # held and the others moved to their conditional mode, by Newton steps in the
