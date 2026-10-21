@@ -7379,13 +7379,15 @@ one the number is not the objective. `ctsem_laplace_evaluate` is called rather
 than the generic `ctsem_evaluate`, which deliberately drops that flag.
 
 `gradient_method === :nested` is how `nested_gradient` reaches here through the
-shared driver's one gradient-method argument.
+shared driver's one gradient-method argument. `coreset`, a `CTSEMCoreset`, is a
+coreset stage's trial (`CTSEMCoresetTarget`): its units alone, weighted.
 """
 function _ctsem_optimise_trial(o::CTSEMLaplaceObjective, x, want_gradient::Bool,
-        gradient_method, limit::Real, log; scores=nothing)
+        gradient_method, limit::Real, log; scores=nothing, coreset=nothing)
     evaluated = try
         ctsem_laplace_evaluate(o, x; gradient=want_gradient,
-            nested_gradient=(Symbol(gradient_method) === :nested), scores=scores)
+            nested_gradient=(Symbol(gradient_method) === :nested), scores=scores,
+            coreset=coreset)
     catch err
         _ctsem_must_propagate(err) && rethrow()
         nothing

@@ -2553,6 +2553,7 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
     stall_tightenings::Integer=2, stall_ratio::Real=1e-3,
     stall_carried::Real=0.0, stall_alone::Bool=false,
     batch::Bool=false, batch_theta::Real=0.25,
+    coreset::Bool=false, coreset_tol::Real=0.1, coreset_budget::Real=0.25,
     newton::Bool=false, newton_switch::Real=0.1, newton_maxit::Integer=30,
     newton_curvature=:auto, certify::Bool=false,
     newton_reuse::Real=_CTSEM_HESSIAN_REUSE_SE,
@@ -2586,7 +2587,8 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
     # Per-unit scores for the structured curvature (`lbfgs_scores`), kept
     # from every full-data trial with a gradient. Made before the closure that
     # writes it.
-    score_store = lbfgs_scores && _ctsem_scores_supported(objective) ?
+    # And for coreset stages (`coreset`), whose training points they are.
+    score_store = (lbfgs_scores || coreset) && _ctsem_scores_supported(objective) ?
         CTSEMScoreStore(_ctsem_nunits(objective), length(start_values)) : nothing
     trial_fg! = function (target, F, G, x)
         # The route decides what a usable trial point is: see
@@ -2630,11 +2632,16 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
         _ctsem_batch_plan(objective, trial_fg!; theta=batch_theta) : nothing
     # Only where there are scores: a pinned objective, which a profile or an
     # escape optimises, has no prior of its own to ask.
-    structured = score_store === nothing ? nothing :
+    structured = (!lbfgs_scores || score_store === nothing) ? nothing :
         CTSEMStructured(score_store, _ctsem_prior_precision(
             _ctsem_prior_objective(objective), length(start_values)),
             length(start_values))
     batching() = batcher !== nothing && !_ctsem_batch_full(batcher)
+    # Coreset stages on the Laplace route (`_ctsem_coreset_plan`): stretches of
+    # the L-BFGS stage on a weighted few of the units, each checked by a full
+    # gradient. `nothing` on any other route, with too few units, or off.
+    coreseter = coreset ? _ctsem_coreset_plan(objective, trial_fg!, score_store;
+        tol=coreset_tol, budget=coreset_budget) : nothing
     # The endgame (`_ctsem_newton_finish`), on a route that has one. Where a
     # Hessian costs a few gradients it runs whenever there is a stopping rule
     # for it to finish, and L-BFGS hands over as soon as its predicted gain is
@@ -2747,6 +2754,8 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
                 @sprintf("logpost %11.2f", -latest.value),
                 @sprintf("|g| %9.2e", latest.g_norm),
                 (batching() ? (@sprintf("batch %d/%d units", batcher.m, batcher.nunits),) : ())...,
+                (_ctsem_coreset_live(coreseter) ? (@sprintf("coreset %d/%d units",
+                    length(coreseter.target.coreset.units), length(coreseter.sampling)),) : ())...,
                 _ctsem_optimise_progress_extra(objective)...,
                 _ctsem_forward_progress(forward0, explosive0)...;
                 budget=progress_budget,
@@ -2775,6 +2784,8 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
         # Neither rule while a batch is still growing: its objective is not the
         # fit's, and a batch that has gone quiet is a batch about to grow.
         batching() && return false
+        # Nor in a coreset stage, whose model and value are the coreset's.
+        _ctsem_coreset_live(coreseter) && return false
         if handover[] > 0
             predicted = _ctsem_predicted_gain(directional)
             if predicted < gap_tol ||
@@ -2878,7 +2889,8 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
         initial_alpha=Float64(initial_alpha),
         maxiter=max(0, Int(maxiter) - sgd_iterations),
         g_tol=g_tol, f_tol=f_tol, x_tol=x_tol, callback=watch,
-        directional=directional, batch=batcher, iteration0=sgd_iterations)
+        directional=directional, batch=batcher, iteration0=sgd_iterations,
+        coreset=coreseter)
     if sgd_result !== nothing
         result = CTSEMLBFGSResult(result.minimizer, result.minimum,
             result.gradient, sgd_iterations + result.iterations,
@@ -3215,6 +3227,18 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
         newton_steps=newton_steps,
         # L-BFGS steps taken on the structured model (`lbfgs_scores`).
         structured_steps=structured === nothing ? 0 : structured.steps,
+        # The coreset stages (`coreset`): each stage's units and iterations,
+        # the iteration it began after, how many full gradients checked them
+        # and how many sent the point back, the coreset fits tried, and the
+        # seconds choosing them took. `[0]` for none, for the bridge's sake.
+        coreset_sizes=_ctsem_coreset_report(coreseter, :sizes),
+        coreset_stage_iterations=_ctsem_coreset_report(coreseter, :stage_iterations),
+        coreset_entered=_ctsem_coreset_report(coreseter, :entered),
+        coreset_iterations=coreseter === nothing ? 0 : coreseter.total_iterations,
+        coreset_checks=coreseter === nothing ? 0 : coreseter.checks,
+        coreset_reverted=coreseter === nothing ? 0 : coreseter.reverted,
+        coreset_attempts=coreseter === nothing ? 0 : coreseter.attempts,
+        coreset_seconds=coreseter === nothing ? 0.0 : coreseter.select_seconds,
         newton_hessians=spent.hessians[] +
             (finish === nothing ? 0 : finish.full_hessians),
         newton_subset_hessians=spent.subset[] +

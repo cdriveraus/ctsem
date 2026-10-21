@@ -5533,6 +5533,15 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
   if (!is.null(optimcontrol$lbfgs_gll)) {
     common$lbfgs_gll <- as.integer(optimcontrol$lbfgs_gll)[1L]
   }
+  # `coreset`: stretches of the L-BFGS stage on a weighted few of the units,
+  # each checked by a full gradient (`_ctsem_coreset_plan` in the engine), on
+  # the Laplace route. Sent only when set, so that a default fit's call keeps
+  # the shape the package image recorded.
+  if (!is.null(optimcontrol$coreset)) {
+    common$coreset <- isTRUE(optimcontrol$coreset)
+    if (!is.null(optimcontrol$coreset_tol))
+      common$coreset_tol <- as.numeric(optimcontrol$coreset_tol)[1L]
+  }
   # `stochastic`, as on stan: TRUE runs the sgd phase (`_ctsem_sgd`) before
   # L-BFGS, 'auto' runs it above 50 parameters -- stan's own rule -- and FALSE,
   # the julia default, does not. Only on a stage that starts away from the

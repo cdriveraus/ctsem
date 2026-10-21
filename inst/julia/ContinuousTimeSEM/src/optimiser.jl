@@ -200,6 +200,11 @@ directional derivative `g's` of each step taken, which is what
 `batch`, when given, is a `CTSEMBatch` whose `fg!` and `scores` replace the
 full-data ones while it is smaller than the data; see `_ctsem_batch_step!`.
 
+`coreset`, when given, is a `CTSEMCoresetPlan`: once no batch is in force,
+stretches of the run go on a coreset of the units, each checked by a full
+gradient (`_ctsem_coreset_step!`), and the run returns the full objective's
+value and gradient at its end.
+
 `inverse`, when given, is the initial inverse Hessian, a whole matrix: the
 curvature a caller already holds near `x0`, as a fit's covariance is for a
 refit to slightly different data. The pairs correct it as they would the
@@ -216,7 +221,7 @@ function _ctsem_lbfgs(fg!, x0::AbstractVector; memory::Integer=20,
         c1::Real=1e-4, maxbacktrack::Integer=40, iteration0::Integer=0,
         diagonal::Bool=false, nonmonotone::Real=0.0, gll::Integer=0,
         inverse::Union{Nothing,Matrix{Float64}}=nothing, scaled::Bool=false,
-        structured=nothing)
+        structured=nothing, coreset=nothing)
     n = length(x0)
     x = collect(Float64, x0)
     dinv = metric === nothing ? ones(n) : begin
@@ -233,8 +238,11 @@ function _ctsem_lbfgs(fg!, x0::AbstractVector; memory::Integer=20,
     # read, and an untyped trial point made inference walk the whole objective
     # again for `Any` -- most of what the package image held and what loading
     # it cost (review/PRECOMPILE-workload-2026-10-12.md).
-    evaluate!(b, F, Gout, y) = b === nothing ? fg!(F, Gout, y) :
-        _ctsem_batch_fg!(b, F, Gout, y)
+    # A coreset stage, when one is in force, before either.
+    evaluate!(b, F, Gout, y) = _ctsem_coreset_live(coreset) ?
+        coreset.fg!(coreset.target, F, Gout, y) :
+        b === nothing ? fg!(F, Gout, y) : _ctsem_batch_fg!(b, F, Gout, y)
+    coreset === nothing || (coreset.g_tol = Float64(g_tol))
     f = evaluate!(batch, 0.0, G, x); fcalls += 1; gcalls += 1
     # Iteration 0 only on a run that is a run of its own; a continuation's
     # starting point is the last row its predecessor already recorded.
@@ -338,6 +346,20 @@ function _ctsem_lbfgs(fg!, x0::AbstractVector; memory::Integer=20,
                 accepted && break
             end
         end
+        if !accepted && _ctsem_coreset_live(coreset)
+            # A coreset whose line search finds nothing has stopped leading
+            # anywhere the full objective goes: check it and leave the stage.
+            hm = let h0 = h0, Dinv = Dinv
+                q -> _ctsem_lbfgs_hmul(M, q, h0, dinv, Dinv)
+            end
+            r = _ctsem_coreset_check!(coreset, x, G, hm,
+                _ctsem_lbfgs_scale(Dinv, dinv); leave=true)
+            x, f, G, nev = _ctsem_coreset_switch!(coreset, r, evaluate!, batch)
+            fcalls += nev; gcalls += nev
+            gconv = maximum(abs, G; init=0.0) <= g_tol
+            C = f; Q = 1.0; recent = [f]
+            continue
+        end
         if !accepted && took_structured
             # The structured model's step found nothing: plain L-BFGS from
             # here, until the structured model predicts better again.
@@ -375,8 +397,12 @@ function _ctsem_lbfgs(fg!, x0::AbstractVector; memory::Integer=20,
         Qn = eta * Q + 1
         C = (eta * Q * C + f) / Qn; Q = Qn
         gconv = maximum(abs, G; init=0.0) <= g_tol
+        # A coreset stage's value is shown on the full objective's scale, from
+        # where the stage began (`offset`), so the trace and the progress line
+        # read on across the switches.
+        shown = _ctsem_coreset_live(coreset) ? f + coreset.offset : f
         stopped = callback !== nothing && callback(CTSEMIterate(
-            iteration0 + iteration, f, maximum(abs, G; init=0.0))) === true
+            iteration0 + iteration, shown, maximum(abs, G; init=0.0))) === true
         # A growing batch changes the objective under the optimiser. The
         # curvature pairs are kept -- the batch objective is scaled to the full
         # data, so they estimate the same curvature -- but no pair spans the
@@ -396,11 +422,39 @@ function _ctsem_lbfgs(fg!, x0::AbstractVector; memory::Integer=20,
             # The reference level belongs to the objective it averaged.
             C = f; Q = 1.0; recent = [f]
         end
+        # Coreset stages, once no batch is in force: the step may begin one,
+        # check one, or end one (`_ctsem_coreset_step!`). The pairs are kept
+        # whichever way it switches; the value, gradient and reference level
+        # are those of the objective now in force.
+        if coreset !== nothing && !stopped && batch === nothing
+            hm = let h0 = h0, Dinv = Dinv
+                q -> _ctsem_lbfgs_hmul(M, q, h0, dinv, Dinv)
+            end
+            r = _ctsem_coreset_step!(coreset, x, f, G, hm,
+                _ctsem_lbfgs_scale(Dinv, dinv))
+            if r.act !== :none
+                x, f, G, nev = _ctsem_coreset_switch!(coreset, r, evaluate!, batch)
+                fcalls += nev; gcalls += nev
+                gconv = maximum(abs, G; init=0.0) <= g_tol
+                C = f; Q = 1.0; recent = [f]
+            end
+        end
         (fconv && f_tol > 0) && break
         (xconv && x_tol > 0) && break
     end
     if batch !== nothing
         sizes = batch.sizes; its = batch.iterations
+    end
+    # A run that ends inside a coreset stage ends on the full objective.
+    if _ctsem_coreset_live(coreset)
+        hm = let h0 = h0, Dinv = Dinv
+            q -> _ctsem_lbfgs_hmul(M, q, h0, dinv, Dinv)
+        end
+        r = _ctsem_coreset_check!(coreset, x, G, hm, _ctsem_lbfgs_scale(Dinv, dinv);
+            leave=true)
+        x, f, G, nev = _ctsem_coreset_switch!(coreset, r, evaluate!, batch)
+        fcalls += nev; gcalls += nev
+        gconv = maximum(abs, G; init=0.0) <= g_tol
     end
     CTSEMLBFGSResult(x, f, G, iteration, fcalls, gcalls, gconv, fconv, xconv,
         lsfail, stopped, sizes, its)
@@ -806,6 +860,461 @@ function _ctsem_batch_step!(b::CTSEMBatch, x, G, hmul, iteration)
     push!(b.sizes, newm); push!(b.iterations, iteration)
     true
 end
+
+# ------------------------------------------------------------------ coreset stages
+#
+# On the Laplace route a gradient is a sum over units, each an inner mode solve,
+# and along an optimiser's path the units' scores vary in about as many
+# dimensions as there are parameters, however many units there are. So a few of
+# them with non-negative weights (`CTSEMCoreset`) can follow the full gradient
+# over a stretch of the path, and L-BFGS can run on their weighted sum at their
+# share of the cost (review/OPTIM-coreset-2026-10-21.md).
+#
+# Every full gradient on the way already holds every unit's score: the trial
+# takes them from the same reverse sweep (`CTSEMScoreStore`). The last few of
+# those points are the training set. After each full iteration a coreset is
+# fitted to reproduce the gradient at every point but the newest, by forward
+# selection with non-negative weights, and tried at the newest: if the smallest
+# coreset within the budget predicts the newest gradient to within `tol`
+# relative, in L-BFGS's own inverse-curvature norm -- the norm in which a
+# gradient error becomes an error in the step and in what the step gains -- it
+# is refitted on every point and a stage begins.
+#
+# A stage is ordinary L-BFGS on the coreset objective, with the curvature pairs
+# kept across the switch both ways: the coreset's curvature is the full
+# objective's to the accuracy the weights reproduce its gradients, which is the
+# condition for entering. One full gradient checks each stretch of the stage:
+# if the full objective is worse than where the stage began, the point goes
+# back there; otherwise the check is a training point, and the stage carries on
+# with a refitted coreset while the old one predicted the check's gradient
+# within `tol`, and returns to the full objective when it did not. Near the
+# optimum the gradient shrinks while the coreset's error does not, so the
+# stages end there by themselves; the full sum finishes, and the Newton finish
+# and its Hessian, which certify the estimate and give its standard errors,
+# never see a coreset.
+
+"""
+    CTSEMCoresetTarget(laplace, coreset)
+
+What a coreset stage optimises: `laplace`'s log prior plus the coreset's
+weighted unit terms, through the Laplace route's own trial
+(`_ctsem_optimise_trial`, with its validity rule), solving only the coreset's
+units on the pool a full evaluation uses.
+"""
+struct CTSEMCoresetTarget
+    laplace::CTSEMLaplaceObjective
+    coreset::CTSEMCoreset
+end
+
+_ctsem_optimise_trial(t::CTSEMCoresetTarget, x, want_gradient::Bool,
+        gradient_method, limit::Real, log) =
+    _ctsem_optimise_trial(t.laplace, x, want_gradient, gradient_method, limit, log;
+        coreset=t.coreset)
+
+"""
+    CTSEMCoresetPlan
+
+The state of the coreset stages in one L-BFGS run (`_ctsem_lbfgs`'s
+`coreset`): the full objective and the caller's trial (`fg!(target, F, G, x)`),
+the store the full trials leave their units' scores in, the training points
+(each point, its units' scores without the prior, and the full gradient of the
+maximised objective there), the stage in force, and the record.
+"""
+mutable struct CTSEMCoresetPlan
+    full::CTSEMLaplaceObjective
+    fg!::Any
+    store::CTSEMScoreStore
+    sampling::Vector{Float64}
+    cost::Vector{Float64}
+    tol::Float64
+    keep::Int
+    minunits::Int
+    budget::Float64
+    g_tol::Float64
+    X::Vector{Vector{Float64}}
+    S::Vector{Matrix{Float64}}
+    gfull::Vector{Vector{Float64}}
+    live::Bool
+    target::Union{Nothing,CTSEMCoresetTarget}
+    size::Int
+    x0::Vector{Float64}
+    f0::Float64
+    G0::Vector{Float64}
+    offset::Float64
+    iterations::Int
+    stretch::Int
+    error::Float64
+    since::Int
+    cooldown::Int
+    sizes::Vector{Int}
+    entered::Vector{Int}
+    stage_iterations::Vector{Int}
+    total_iterations::Int
+    checks::Int
+    reverted::Int
+    attempts::Int
+    unit_solves::Float64
+    select_seconds::Float64
+end
+
+"""
+    _ctsem_coreset_plan(objective, fg!, store; tol, budget)
+
+Coreset stages for `objective`'s L-BFGS run, or `nothing` where they cannot
+apply: a route other than Laplace, units whose scores the trial does not keep,
+or too few units for a coreset of a quarter of the work to hold a third as many
+units as there are parameters. `tol` is the relative gradient error a coreset
+must stay within, `budget` the largest share of a full evaluation's work it may
+cost. The training set holds the last 30 full gradients, fewer where their
+scores would pass 2.5e7 numbers.
+"""
+_ctsem_coreset_plan(objective, fg!, store; kwargs...) = nothing
+function _ctsem_coreset_plan(L::CTSEMLaplaceObjective, fg!, store; tol::Real=0.1,
+        budget::Real=0.25)
+    store === nothing && return nothing
+    N, p = size(store.S)
+    minunits = max(4, cld(p, 3))
+    w = _laplace_unit_weights(L)
+    cost = w ./ sum(w)
+    # As many of the cheapest units as the budget holds.
+    floor(Int, budget * N) >= minunits || return nothing
+    keep = clamp(floor(Int, 2.5e7 / (N * p)), 3, 30)
+    sampling = Float64[_laplace_unit_weight(L, U) for U in 1:N]
+    return CTSEMCoresetPlan(L, fg!, store, sampling, cost, Float64(tol), keep,
+        minunits, Float64(budget), 0.0, Vector{Float64}[], Matrix{Float64}[],
+        Vector{Float64}[], false, nothing, 0, Float64[], NaN, Float64[], 0.0, 0,
+        10, 0.0, 0, 1, Int[], Int[], Int[], 0, 0, 0, 0, 0.0, 0.0)
+end
+
+_ctsem_coreset_live(c) = c !== nothing && c.live
+
+"""What a coreset stage's trial costs, as a share of a full evaluation's work."""
+_ctsem_coreset_share(c::CTSEMCoresetPlan) =
+    sum(c.cost[U] for U in c.target.coreset.units; init=0.0)
+
+"""Keep the full gradient at `x` (`G` minimised) and its units' scores, which
+the trial just left in the store, as a training point."""
+function _ctsem_coreset_record!(c::CTSEMCoresetPlan, x::AbstractVector, G::AbstractVector)
+    st = c.store
+    (st.valid && st.x == x) || return false
+    push!(c.X, collect(Float64, x))
+    push!(c.S, copy(st.S))
+    push!(c.gfull, -collect(Float64, G))
+    while length(c.S) > c.keep
+        popfirst!(c.X); popfirst!(c.S); popfirst!(c.gfull)
+    end
+    return true
+end
+
+"""
+    _ctsem_nnls(AtA, Atb)
+
+Lawson and Hanson's non-negative least squares, from the normal equations:
+the `x >= 0` minimising `|A x - b|^2`, given `A'A` and `A'b`. Each passive set
+is solved by a Cholesky factorization of its block, with a ridge of `1e-12` of
+the diagonal's mean so that collinear units do not stop it.
+"""
+function _ctsem_nnls(AtA::AbstractMatrix, Atb::AbstractVector)
+    n = length(Atb)
+    x = zeros(n)
+    n == 0 && return x
+    P = falses(n)
+    w = collect(Float64, Atb)
+    tol = 1e-10 * max(1.0, maximum(abs, w))
+    ridge = 1e-12 * max(sum(AtA[i, i] for i in 1:n) / n, eps())
+    solve(idx) = begin
+        B = AtA[idx, idx]
+        for i in eachindex(idx)
+            B[i, i] += ridge
+        end
+        F = cholesky!(Symmetric(B); check=false)
+        issuccess(F) ? F \ Atb[idx] : pinv(AtA[idx, idx]) * Atb[idx]
+    end
+    for _ in 1:(3n)
+        j = 0; best = tol
+        for i in 1:n
+            (!P[i] && w[i] > best) && (best = w[i]; j = i)
+        end
+        j == 0 && break
+        P[j] = true
+        z = zeros(n)
+        for _ in 1:(3n)
+            idx = findall(P)
+            z = zeros(n)
+            z[idx] = solve(idx)
+            all(z[i] > 0 for i in idx) && break
+            alpha = Inf
+            for i in idx
+                z[i] <= 0 && (alpha = min(alpha, x[i] / (x[i] - z[i])))
+            end
+            x .+= alpha .* (z .- x)
+            for i in idx
+                x[i] <= 1e-12 && (P[i] = false; x[i] = 0.0)
+            end
+        end
+        x = z
+        w = Atb .- AtA * x
+    end
+    return x
+end
+
+"""
+    _ctsem_coreset_fit(c, scale, hmul; test)
+
+A coreset fitted to the training points' gradients, or `nothing`. The rows are
+each point's units' scores, scaled per coordinate by `sqrt(scale)` -- L-BFGS's
+current inverse-curvature diagonal, so that a coordinate counts as much as a
+step along it -- and per point by its full gradient's length in that metric, so
+that each point's relative error counts alike; the target is their sum over
+units, so every unit at weight one fits exactly. Units are chosen by forward
+selection: each adds the unit whose scores, orthogonalised against those in,
+best explain what is left, among those that help with a positive weight; the
+weights are refitted by non-negative least squares at each size tried
+(`_ctsem_nnls`), sizes 1.25 times apart from a third of the parameter count,
+while the units cost at most `budget` of a full evaluation.
+
+With `test`, the path is fitted on every point but the newest, and the first
+size whose prediction of the newest point's gradient is within `tol` relative,
+in `hmul`'s norm, is fitted again on every point; `c.error` becomes the error's
+size there in objective units, `e' H e / 2`. Without it, the path is fitted on
+every point at the current stage's size.
+"""
+function _ctsem_coreset_fit(c::CTSEMCoresetPlan, scale::AbstractVector, hmul; test::Bool)
+    K = length(c.S)
+    K >= (test ? 3 : 1) || return nothing
+    t0 = time()
+    root = sqrt.(max.(collect(Float64, scale), 0.0))
+    path_for(points, upto, check) = begin
+        N, p = size(c.S[1])
+        rows = p * length(points)
+        A = Matrix{Float64}(undef, rows, N)
+        b = Vector{Float64}(undef, rows)
+        for (j, k) in enumerate(points)
+            nk = norm(root .* c.gfull[k])
+            nk = nk > 0 && isfinite(nk) ? nk : 1.0
+            r0 = (j - 1) * p
+            S = c.S[k]
+            @inbounds for U in 1:N, i in 1:p
+                A[r0 + i, U] = root[i] * S[U, i] / nk
+            end
+            @inbounds for i in 1:p
+                b[r0 + i] = sum(view(A, r0 + i, :))
+            end
+        end
+        Ap = copy(A)
+        nrm = vec(sum(abs2, Ap; dims=1))
+        floor0 = 1e-14 * maximum(nrm; init=0.0)
+        r = copy(b)
+        chosen = Int[]
+        spent = 0.0
+        along = zeros(N)
+        t = zeros(N)
+        # Without a check, the path goes to `upto` units and is fitted there.
+        sizes = Int[]
+        m = c.minunits
+        while check !== nothing && m <= N
+            push!(sizes, m)
+            m = max(m + 1, round(Int, 1.25m))
+        end
+        check === nothing && push!(sizes, min(upto, N))
+        found = nothing
+        for target in sizes
+            target > upto && break
+            while length(chosen) < target
+                mul!(along, transpose(Ap), r)
+                j = 0; best = 0.0
+                @inbounds for U in 1:N
+                    a = along[U]
+                    if a > 0 && nrm[U] > floor0
+                        s = a^2 / nrm[U]
+                        s > best && (best = s; j = U)
+                    end
+                end
+                j == 0 && break
+                spent + c.cost[j] > c.budget && break
+                push!(chosen, j)
+                spent += c.cost[j]
+                q = Ap[:, j] ./ sqrt(nrm[j])
+                mul!(t, transpose(Ap), q)
+                LinearAlgebra.BLAS.ger!(-1.0, q, t, Ap)
+                @inbounds for U in 1:N
+                    nrm[U] = max(nrm[U] - t[U]^2, 0.0)
+                end
+                for U in chosen
+                    nrm[U] = 0.0
+                end
+                r .-= q .* dot(q, r)
+            end
+            length(chosen) < min(target, upto) && length(chosen) < c.minunits && break
+            As = A[:, chosen]
+            w = _ctsem_nnls(transpose(As) * As, transpose(As) * b)
+            ok = check === nothing || check(chosen, w)
+            if ok
+                found = (units=copy(chosen), weights=w)
+                break
+            end
+            length(chosen) < target && break
+        end
+        found
+    end
+    result = if test
+        newest = K
+        Sn = c.S[newest]
+        gn = c.gfull[newest]
+        lik = vec(sum(Sn; dims=1))
+        gg = dot(gn, hmul(gn))
+        errsize = Ref(NaN)
+        check = (units, w) -> begin
+            e = transpose(view(Sn, units, :)) * w .- lik
+            ee = dot(e, hmul(e))
+            errsize[] = ee / 2
+            isfinite(ee) && gg > 0 && ee <= c.tol^2 * gg
+        end
+        first = path_for(1:(K - 1), typemax(Int), check)
+        if first === nothing
+            nothing
+        else
+            c.error = errsize[]
+            path_for(1:K, length(first.units), nothing)
+        end
+    else
+        path_for(1:K, c.size, nothing)
+    end
+    c.attempts += 1
+    c.select_seconds += time() - t0
+    result === nothing && return nothing
+    keep = findall(>(0), result.weights)
+    isempty(keep) && return nothing
+    units = result.units[keep]
+    c.size = length(result.units)
+    return CTSEMCoreset(units, result.weights[keep] .* c.sampling[units])
+end
+
+"""
+    _ctsem_coreset_step!(c, x, f, G, hmul, scale)
+
+After an accepted L-BFGS step to `x`, with value `f` and gradient `G` (of the
+minimised objective in force): on the full objective, keep the point and try
+for a coreset, every `cooldown` iterations; in a stage, check it with a full
+gradient once the stage has run `stretch` iterations, once what L-BFGS's model
+says is left to gain on the coreset (`G' H G / 2`) is within four times the
+coreset's last measured error, or once its gradient is below `g_tol`.
+
+Returns `(act, x, f, G)`: `:none`; `:enter` or `:refit`, a stage that begins
+at `x` on `c.target`, with the full value and gradient there; `:leave`, back to
+the full objective at `x`; `:revert`, back to the full objective at the start
+of the stage that just failed its check.
+"""
+function _ctsem_coreset_step!(c::CTSEMCoresetPlan, x, f, G, hmul, scale)
+    none = (act=:none, x=x, f=f, G=G)
+    if !c.live
+        _ctsem_coreset_record!(c, x, G) || return none
+        c.since += 1
+        c.since >= c.cooldown || return none
+        c.since = 0
+        cs = _ctsem_coreset_fit(c, scale, hmul; test=true)
+        if cs === nothing
+            c.cooldown = min(2c.cooldown, 8)
+            return none
+        end
+        c.cooldown = 1
+        _ctsem_coreset_begin!(c, cs, x, f, G)
+        c.stretch = 10
+        push!(c.entered, c.total_iterations)
+        return (act=:enter, x=x, f=f, G=G)
+    end
+    c.iterations += 1
+    c.total_iterations += 1
+    c.unit_solves += _ctsem_coreset_share(c)
+    left = dot(G, hmul(G)) / 2
+    due = c.iterations >= c.stretch || left <= 4 * c.error ||
+        maximum(abs, G; init=0.0) <= c.g_tol
+    due || return none
+    return _ctsem_coreset_check!(c, x, G, hmul, scale)
+end
+
+function _ctsem_coreset_begin!(c::CTSEMCoresetPlan, cs::CTSEMCoreset, x, f, G)
+    c.live = true
+    c.target = CTSEMCoresetTarget(c.full, cs)
+    c.x0 = collect(Float64, x); c.f0 = f; c.G0 = collect(Float64, G)
+    c.iterations = 0
+    push!(c.sizes, length(cs.units))
+    push!(c.stage_iterations, 0)
+    return nothing
+end
+
+"""
+    _ctsem_coreset_check!(c, x, Gc, hmul, scale; leave)
+
+The full gradient at `x`, where the stage's coreset has gradient `Gc`: back to
+the stage's start if the full value is worse there or unusable, otherwise a
+training point, and a stage refitted from `x` while the coreset predicted it
+within `tol` (never with `leave`), the full objective otherwise.
+"""
+function _ctsem_coreset_check!(c::CTSEMCoresetPlan, x, Gc, hmul, scale; leave::Bool=false)
+    c.checks += 1
+    c.stage_iterations[end] = c.iterations
+    Gf = similar(collect(Float64, x))
+    ff = c.fg!(c.full, 0.0, Gf, x)
+    ok = ff !== nothing && isfinite(ff) && ff < _CTSEM_BATCH_INVALID && all(isfinite, Gf)
+    c.live = false
+    c.since = 0
+    # A usable check is a training point whatever it says.
+    ok && _ctsem_coreset_record!(c, x, Gf)
+    if !ok || ff > c.f0
+        c.reverted += 1
+        c.cooldown = 4
+        return (act=:revert, x=c.x0, f=c.f0, G=c.G0)
+    end
+    e = Gc .- Gf
+    ee = dot(e, hmul(e))
+    gg = dot(Gf, hmul(Gf))
+    c.error = isfinite(ee) ? ee / 2 : Inf
+    if !leave && isfinite(ee) && gg > 0 && ee <= c.tol^2 * gg
+        cs = _ctsem_coreset_fit(c, scale, hmul; test=false)
+        if cs !== nothing
+            stretch = c.stretch
+            _ctsem_coreset_begin!(c, cs, x, ff, Gf)
+            c.stretch = min(2stretch, 80)
+            return (act=:refit, x=x, f=ff, G=Gf)
+        end
+    end
+    return (act=:leave, x=x, f=ff, G=Gf)
+end
+
+"""The objective in force after a coreset action `r` (`_ctsem_coreset_step!`):
+for a stage that begins, the coreset's value and gradient at its point, read
+through `evaluate!` (which reads the plan), and the full ones if the coreset
+cannot be evaluated there; the full ones otherwise. Returns the point, value,
+gradient and the number of evaluations it took."""
+function _ctsem_coreset_switch!(c::CTSEMCoresetPlan, r, evaluate!, batch)
+    r.act === :none && return (r.x, r.f, r.G, 0)
+    if r.act === :enter || r.act === :refit
+        Gc = similar(r.G)
+        fc = evaluate!(batch, 0.0, Gc, r.x)
+        if fc !== nothing && isfinite(fc) && fc < _CTSEM_BATCH_INVALID && all(isfinite, Gc)
+            c.offset = r.f - fc
+            return (r.x, Float64(fc), Gc, 1)
+        end
+        c.live = false
+        return (r.x, r.f, r.G, 1)
+    end
+    return (r.x, r.f, r.G, 1)
+end
+
+"""A field of the plan's record for the bridge: `[0]` when there is no plan or
+the field is empty."""
+function _ctsem_coreset_report(c, field::Symbol)
+    c === nothing && return [0]
+    v = getfield(c, field)
+    return isempty(v) ? [0] : copy(v)
+end
+
+"""The per-coordinate scale of L-BFGS's initial inverse Hessian: the learned
+diagonal, the diagonal of a caller's inverse, or the metric's."""
+_ctsem_lbfgs_scale(Dinv::AbstractVector, dinv) = Dinv
+_ctsem_lbfgs_scale(Dinv::AbstractMatrix, dinv) = diag(Dinv)
+_ctsem_lbfgs_scale(::Nothing, dinv) = dinv
 
 # ------------------------------------------------------------------ the endgame
 #
