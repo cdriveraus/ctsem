@@ -2518,11 +2518,9 @@ variant's step budget; `newton_reuse` and
 `flat_rtol`
 are the finish's rules, passed from R so one number serves both sides.
 `coreset` (on by default) runs stretches of the L-BFGS stage on a weighted few
-of the units where the route has units and a coreset that cheap is accurate
-enough (`_ctsem_coreset_plan`, the Laplace route), each stretch checked by a
-full gradient; `coreset_tol` is the relative gradient error, in L-BFGS's own
-metric, a coreset must stay within. Neither the finish nor a budget stage sees
-one.
+of the units where the route has units (`_ctsem_coreset_plan`, the Laplace
+route) and a coreset is expected to save, each stretch checked by a full
+gradient. Neither the finish nor a budget stage sees one.
 `lbfgs_inverse` is an initial inverse Hessian for L-BFGS (`_ctsem_lbfgs`'s
 `inverse`), as a fit's covariance is for refitting it to part of its data; one
 that is not positive definite is not used (`_ctsem_lbfgs_inverse`).
@@ -2559,7 +2557,7 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
     stall_tightenings::Integer=2, stall_ratio::Real=1e-3,
     stall_carried::Real=0.0, stall_alone::Bool=false,
     batch::Bool=false, batch_theta::Real=0.25,
-    coreset::Bool=true, coreset_tol::Real=0.1,
+    coreset::Bool=true,
     newton::Bool=false, newton_switch::Real=0.1, newton_maxit::Integer=30,
     newton_curvature=:auto, certify::Bool=false,
     newton_reuse::Real=_CTSEM_HESSIAN_REUSE_SE,
@@ -2654,7 +2652,7 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
     # budget stage (the prior warm-up), whose few iterations are its plan and
     # leave no stage room to pay.
     coreseter = coreset && !progress_budget ?
-        _ctsem_coreset_plan(objective, trial_fg!, score_store; tol=coreset_tol) :
+        _ctsem_coreset_plan(objective, trial_fg!, score_store) :
         nothing
     # The endgame (`_ctsem_newton_finish`), on a route that has one. Where a
     # Hessian costs a few gradients it runs whenever there is a stopping rule

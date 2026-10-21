@@ -86,7 +86,7 @@
 #'  scores reproduce the full gradients seen so far, each stretch checked by a
 #'  full gradient; the full objective finishes, so the estimate and its
 #'  standard errors are those of every unit. It engages only where a coreset
-#'  that cheap is accurate enough, which needs many units for each parameter.
+#'  is expected to save gradients, which needs many units for each parameter.
 #'  \code{fit$optim$coreset_sizes} records the stages.}
 #'  \item{\code{explosive_forward}}{Julia. Default FALSE. For a subject whose
 #'  predictions grow more than 100-fold between observations (explosive
