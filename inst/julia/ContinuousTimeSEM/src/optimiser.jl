@@ -903,7 +903,14 @@ end
 #   differ more feeds it pairs from another function. Tested in sample, or
 #   priced by a model of what a coarser coreset would still save, coresets were
 #   let in whose stages made the full objective worse, and runs cost more
-#   (review/OPTIM-coreset-2026-10-21.md).
+#   (review/OPTIM-coreset-2026-10-21.md). And it is trusted only where it was
+#   fitted: a stage is checked once it is farther from where it began than the
+#   farthest training point, in L-BFGS's scaled metric, and each check is a
+#   training point there, so the region grows as fast as it is confirmed. A few
+#   units stand for a population's spread only near where they were chosen;
+#   unbounded, stages on coresets of 4-6 of 500 and 37-338 of 400 units walked a
+#   random effect's sd to the far end of its transform, and the fits ended on
+#   maxima 157 and 8 log units below the full sum's.
 # - A stage spends only what it can save. `n` coreset iterations at a share `s`
 #   of a full evaluation, plus the full check and the full iteration after the
 #   stage, beat `n` full iterations while `n s + 2 < n`, so a stage planned for
@@ -975,8 +982,10 @@ gradient of the maximised objective there), the stage in force -- its target,
 where it began on the full objective (`x0`, `f0`, `G0`, minimised), the
 coreset's value there less the full one (`offset`), its length so far and as
 planned, and the coreset's gradient error in objective units, `e' H e / 2` --
-the clock that paces the fits, the record, and how many curvature pairs the
-stage in force has given L-BFGS, which a stage that is sent back takes with it.
+the clock that paces the fits, the record, how many curvature pairs the stage
+in force has given L-BFGS, which a stage that is sent back takes with it, and
+the region its coreset was fitted on: the farthest training point's distance
+from where the stage began, in the metric `metric` scales by.
 """
 mutable struct CTSEMCoresetPlan
     full::CTSEMLaplaceObjective
@@ -1012,6 +1021,8 @@ mutable struct CTSEMCoresetPlan
     attempts::Int
     select_seconds::Float64
     pairs::Int
+    radius::Float64
+    metric::Vector{Float64}
 end
 
 """
@@ -1034,7 +1045,8 @@ function _ctsem_coreset_plan(L::CTSEMLaplaceObjective, fg!, store)
     return CTSEMCoresetPlan(L, fg!, store, sampling, cost, keep, 0.0,
         Vector{Float64}[], Matrix{Float64}[], Vector{Float64}[], false, nothing,
         Float64[], NaN, Float64[], 0.0, 0, _CTSEM_CORESET_FIRST_STAGE, 0.0, NaN,
-        0.0, 0.0, Int[], Float64[], Int[], Int[], Float64[], 0, 0, 0, 0, 0.0, 0)
+        0.0, 0.0, Int[], Float64[], Int[], Int[], Float64[], 0, 0, 0, 0, 0.0, 0,
+        0.0, Float64[])
 end
 
 _ctsem_coreset_live(c) = c !== nothing && c.live
@@ -1281,8 +1293,9 @@ for a coreset (`_ctsem_coreset_choose`) once the full iterations
 since the last look that found none have taken four times as long as it. In a
 stage: check it with a full gradient (`_ctsem_coreset_check!`) once it has run
 its planned iterations, once what L-BFGS's model says is left to gain on the
-coreset (`G' H G / 2`) is no more than the coreset's error, or once its
-gradient is below `g_tol`.
+coreset (`G' H G / 2`) is no more than the coreset's error, once its gradient
+is below `g_tol`, or once it has gone farther from where it began than the
+coreset's training points reach (`_ctsem_coreset_begin!`).
 
 Returns `(act, x, f, G)`: `:none`; `:enter` or `:refit`, a stage that begins
 at `x` on `c.target`, with the full value and gradient there; `:leave`, back to
@@ -1308,24 +1321,31 @@ function _ctsem_coreset_step!(c::CTSEMCoresetPlan, x, f, G, hmul, scale)
         end
         c.looked = 0.0
         push!(c.entered, c.total_iterations)
-        _ctsem_coreset_begin!(c, cs, x, f, G)
+        _ctsem_coreset_begin!(c, cs, x, f, G, scale)
         return (act=:enter, x=x, f=f, G=G)
     end
     c.iterations += 1
     c.total_iterations += 1
     left = dot(G, hmul(G)) / 2
     due = c.iterations >= c.stretch || left <= c.error ||
-        maximum(abs, G; init=0.0) <= c.g_tol
+        maximum(abs, G; init=0.0) <= c.g_tol ||
+        norm((x .- c.x0) .* c.metric) > c.radius
     due || return none
     return _ctsem_coreset_check!(c, x, f, G, hmul, scale)
 end
 
-function _ctsem_coreset_begin!(c::CTSEMCoresetPlan, cs::CTSEMCoreset, x, f, G)
+"""A stage on `cs` from `x` (minimised value `f`, gradient `G`), trusted within
+the training points' reach of `x` in the metric that divides each coordinate by
+`sqrt(scale)` -- L-BFGS's inverse-curvature diagonal, so that a unit is about
+one standard deviation of its quadratic model in every coordinate."""
+function _ctsem_coreset_begin!(c::CTSEMCoresetPlan, cs::CTSEMCoreset, x, f, G, scale)
     c.live = true
     c.target = CTSEMCoresetTarget(c.full, cs)
     c.x0 = collect(Float64, x); c.f0 = f; c.G0 = collect(Float64, G)
     c.iterations = 0
     c.pairs = 0
+    c.metric = [v > 0 && isfinite(v) ? 1 / sqrt(v) : 1.0 for v in scale]
+    c.radius = maximum((norm((xk .- c.x0) .* c.metric) for xk in c.X); init=0.0)
     push!(c.sizes, length(cs.units))
     push!(c.shares, _ctsem_coreset_share(c, cs.units))
     push!(c.stage_iterations, 0)
@@ -1371,7 +1391,7 @@ function _ctsem_coreset_check!(c::CTSEMCoresetPlan, x, fc, Gc, hmul, scale;
         c.stretch = stretch
         cs = _ctsem_coreset_choose(c, scale, hmul; refit=true)
         if cs !== nothing
-            _ctsem_coreset_begin!(c, cs, x, ff, Gf)
+            _ctsem_coreset_begin!(c, cs, x, ff, Gf, scale)
             return (act=:refit, x=x, f=ff, G=Gf)
         end
     end
