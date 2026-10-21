@@ -3,7 +3,7 @@
 # selection on a sum it can compress, and the sampler's density with a coreset
 # behind it against the full density. One fit, the shared Laplace fixture at
 # 100 subjects: its seven parameters all move under 'is', so a coreset needs
-# about twice that many units, and may have at most a quarter of them.
+# about twice that many units, a small enough share of 100 to pay.
 
 .coreset_fixture <- function() laplace_fixture(nsub = 100L, tp = 6L, seed = 31L)
 
@@ -64,9 +64,13 @@ test_that("the selection finds a small coreset where the units' terms span few d
   # On a log density's scale: the sum moves a few units across the draws.
   X <- (basis %*% mix) / 20 + matrix(rnorm(draws * 60, 0, 1e-5), draws)
   y <- rowSums(X)
-  cf <- ctsem:::.ctCoresetChoose(X, y, seq_len(200), maxM = 20L)
+  # Chosen by its expected cost in a round of 100 draws and 30 gradients:
+  # a handful of units, since three carry the sum and every unit costs.
+  round <- list(values = 100, grads = 30, checks = 8)
+  cf <- ctsem:::.ctCoresetChoose(X, y, seq_len(200), round)
   expect_false(is.null(cf))
-  expect_lte(sum(cf$w > 0), 20L)
+  expect_lte(sum(cf$w > 0), 10L)
+  expect_lt(cf$cost, round$values + 2 * round$grads)
   held <- 201:draws
   err <- ctsem:::.ctCoresetPredict(cf, X[held, , drop = FALSE]) - y[held]
   expect_lt(max(abs(err)), ctsem:::.ctCoresetTol$max)
@@ -108,7 +112,7 @@ test_that("the sampler's density with a coreset behind it follows the full densi
   rec <- attr(lpg, "coreset")()
   expect_true(rec$used)
   expect_equal(rec$units, 100L)
-  expect_lte(rec$size, 25L)
+  expect_lt(rec$expected_round_cost, 100 + 2 * 30)
   expect_equal(attr(lpg, "cost")(), nrow(first))
   spent <- attr(lpg, "cost")()
   second <- draw(100)
