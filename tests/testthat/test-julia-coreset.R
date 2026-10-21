@@ -74,6 +74,13 @@ test_that("the selection finds a small coreset where the units' terms span few d
   held <- 201:draws
   err <- ctsem:::.ctCoresetPredict(cf, X[held, , drop = FALSE]) - y[held]
   expect_lt(max(abs(err)), ctsem:::.ctCoresetTol$max)
+  # Units that all move against the sum get zero weights, which leave nothing
+  # to evaluate: never chosen, however cheap that looks, from scratch or from
+  # a coreset that held them (a 200-person fit once handed the engine an
+  # empty unit list).
+  against <- 50 - X
+  expect_null(ctsem:::.ctCoresetChoose(against, y, seq_len(200), round))
+  expect_null(ctsem:::.ctCoresetChoose(against, y, seq_len(200), round, start = 1:3))
   # Non-negative least squares agrees with a bounded optimiser.
   A <- X[1:200, 1:8]
   b <- y[1:200]

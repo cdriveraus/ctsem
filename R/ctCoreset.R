@@ -227,9 +227,14 @@
     if (M > length(path)) path <- .ctCoresetPath(X, y, M, fitrows, path, rel[fitrows])
     if (M > length(path)) break
     cf <- .ctCoresetWeights(X, y, path[seq_len(M)], fitrows, rel[fitrows])
-    fail <- max(failrate(cf, held), failrate(cf, newest))
-    cost <- .ctCoresetRoundCost(sum(cf$w > 0), N, round, fail)
-    if (is.null(best) || cost < best$cost) best <- list(M = M, cost = cost, fail = fail)
+    # Weights that all come out zero leave a constant and no unit to
+    # evaluate, which costs nothing by the formula: priced, such a coreset was
+    # chosen, and the engine was then handed an empty unit list.
+    if (any(cf$w > 0)) {
+      fail <- max(failrate(cf, held), failrate(cf, newest))
+      cost <- .ctCoresetRoundCost(sum(cf$w > 0), N, round, fail)
+      if (is.null(best) || cost < best$cost) best <- list(M = M, cost = cost, fail = fail)
+    }
     # Steps of about a tenth of the size: fine where sizes are small, and a
     # path of hundreds of units is not walked one at a time.
     M <- M + max(1L, M %/% 10L)
@@ -237,6 +242,7 @@
   if (is.null(best) || best$cost >= fullround) return(NULL)
   S <- .ctCoresetPath(X, y, best$M, rows, start, rel[rows])
   cf <- .ctCoresetWeights(X, y, S, rows, rel[rows])
+  if (!any(cf$w > 0)) return(NULL)
   cf$cost <- best$cost
   cf$fail <- best$fail
   cf
@@ -284,7 +290,10 @@
   # coreset times its share of the units (see `clock()`).
   st$times <- NULL
   st$timed_kinds <- character(0)
-  st$choose_secs <- 0
+  # Where the time went, for the record: seconds and draws by kind of call.
+  st$secs <- c(full = 0, coreset = 0, gradient_full = 0, gradient_coreset = 0,
+    choose = 0)
+  st$draws <- c(full = 0, coreset = 0, gradient_full = 0, gradient_coreset = 0)
   engine <- local({
     built <- NULL
     function() {
@@ -324,13 +333,18 @@
     if (b[2L] <= 0) return(list(ratio = 1, overhead = 0))
     list(ratio = if (any(T[, 3L] > 0)) b[3L] / b[2L] else 1, overhead = b[1L] / b[2L])
   }
-  timed <- function(kind, expr, full, core) {
+  timed <- function(kind, expr, full, core, draws) {
     started <- proc.time()[["elapsed"]]
     out <- expr
     secs <- proc.time()[["elapsed"]] - started
+    tally(kind, secs, draws)
     if (kind %in% st$timed_kinds) st$times <- rbind(st$times, c(secs, full, core))
     else st$timed_kinds <- c(st$timed_kinds, kind)
     out
+  }
+  tally <- function(kind, secs, draws = 0) {
+    st$secs[[kind]] <- st$secs[[kind]] + secs
+    if (kind %in% names(st$draws)) st$draws[[kind]] <- st$draws[[kind]] + draws
   }
   roundinfo <- function() {
     tc <- clock()
@@ -341,7 +355,7 @@
   choose <- function(start = integer()) {
     started <- proc.time()[["elapsed"]]
     cf <- .ctCoresetChoose(st$X, st$y, seq_along(st$y), roundinfo(), start, st$focus)
-    st$choose_secs <- st$choose_secs + proc.time()[["elapsed"]] - started
+    tally('choose', proc.time()[["elapsed"]] - started)
     if (is.null(cf)) return(FALSE)
     st$cf <- cf
     st$sizes <- c(st$sizes, sum(cf$w > 0))
@@ -366,13 +380,13 @@
     v <- timed('coreset', as.numeric(.ctBackendJuliaValue(
       engine()$module$ctsem_coreset_batch(engine()$objective, t(X),
         .ctJuliaVector(as.integer(a$units)), .ctJuliaVector(as.numeric(a$weights))))),
-      0, nrow(X) * share)
+      0, nrow(X) * share, nrow(X))
     st$cost <- st$cost + nrow(X) * share
     v + st$cf$c
   }
   full <- function(X) {
     engine()
-    t0 <- timed('full', terms(X), nrow(X), 0)
+    t0 <- timed('full', terms(X), nrow(X), 0, nrow(X))
     st$cost <- st$cost + nrow(X)
     t0
   }
@@ -396,7 +410,14 @@
   }
   passed <- function() {
     keep <- st$cf[c('cost', 'fail')]
-    st$cf <- c(.ctCoresetWeights(st$X, st$y, st$cf$S, seq_along(st$y)), keep)
+    refit <- .ctCoresetWeights(st$X, st$y, st$cf$S, seq_along(st$y))
+    # Refitted on the new rows, its weights can all come out zero: chosen
+    # again, as after a failure.
+    if (!any(refit$w > 0)) {
+      if (!choose(st$cf$S)) st$phase <- 'training'
+      return(invisible())
+    }
+    st$cf <- c(refit, keep)
     # Passing, but its record may still say a full round is cheaper.
     if (dearer()) st$phase <- 'training'
   }
@@ -483,15 +504,19 @@
   gradbatch <- function(draws) {
     X <- as.matrix(draws)
     st$gradsnow <- st$gradsnow + nrow(X)
+    started <- proc.time()[["elapsed"]]
     if (st$phase != 'coreset') {
       st$cost <- st$cost + 2 * nrow(X)
-      return(attr(lpg, 'gradbatch')(X))
+      out <- attr(lpg, 'gradbatch')(X)
+      tally('gradient_full', proc.time()[["elapsed"]] - started, nrow(X))
+      return(out)
     }
     a <- active()
     out <- matrix(as.numeric(.ctBackendJuliaValue(
       engine()$module$ctsem_coreset_batch_gradient(engine()$objective, t(X),
         .ctJuliaVector(as.integer(a$units)), .ctJuliaVector(as.numeric(a$weights))))),
       nrow = ncol(X) + 1L)
+    tally('gradient_coreset', proc.time()[["elapsed"]] - started, nrow(X))
     st$cost <- st$cost + 2 * nrow(X) * length(a$units) / ncol(st$X)
     value <- out[1L, ] + st$cf$c
     value[!is.finite(value)] <- -1e100
@@ -505,9 +530,11 @@
     if (is.null(st$cf)) return(NULL)
     o <- order(-logw)
     top <- o[seq_len(min(20L, length(o)))]
+    started <- proc.time()[["elapsed"]]
     vt <- as.numeric(.ctBackendJuliaValue(engine()$module$ctsem_evaluate_batch(
       engine()$objective, t(samples[top, , drop = FALSE]))))
     st$cost <- st$cost + length(top)
+    tally('full', proc.time()[["elapsed"]] - started, length(top))
     delta <- vt - logp[top]
     ok <- is.finite(delta)
     offset <- if (any(ok)) stats::median(delta[ok]) else 0
@@ -520,9 +547,11 @@
     full_all <- rep(NA_real_, length(logw))
     full_all[top] <- vt
     if (length(need)) {
+      started <- proc.time()[["elapsed"]]
       full_all[need] <- as.numeric(.ctBackendJuliaValue(engine()$module$ctsem_evaluate_batch(
         engine()$objective, t(samples[need, , drop = FALSE]))))
       st$cost <- st$cost + length(need)
+      tally('full', proc.time()[["elapsed"]] - started, length(need))
     }
     d <- full_all - logp
     d[!is.finite(d)] <- offset
@@ -547,7 +576,8 @@
     free_checks = st$free_total,
     time_ratio = clock()$ratio,
     call_overhead = clock()$overhead,
-    choose_secs = st$choose_secs,
+    seconds = st$secs,
+    draws = st$draws,
     training_draws = length(st$y),
     check_rms = if (length(st$checks)) sqrt(mean(st$checks^2)) else NA_real_,
     check_max = if (length(st$checks)) max(abs(st$checks)) else NA_real_,
