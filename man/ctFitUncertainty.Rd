@@ -88,7 +88,10 @@ proposal components' t degrees of freedom; \code{Inf} for normal),
 \code{isESS = 200}, and \code{isitersize = 1000} (100 for
 \code{'checked'}). \code{imisBudget} caps the log density evaluations
 importance sampling spends; on julia, \code{'checked'} sets it to what the
-fit's optimisation spent. \code{parsteps} keeps
+fit's optimisation spent. On a Laplace fit (julia), importance sampling
+evaluates a weighted subset of the units chosen and checked as it runs, and
+corrects its weights where that subset strays; \code{coreset = FALSE}
+evaluates every unit instead. \code{parsteps} keeps
 stepwise-fixed raw parameters fixed (stan only).
 \code{analyticHessian = FALSE} (julia only) asks for the finite-difference
 Hessian instead of the engine's exact one. \code{likelihood} (\code{'fit'},

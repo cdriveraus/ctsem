@@ -318,6 +318,14 @@ bootstrapHessian <- function(standata, sm, est, finishsamples, cores, scores=NUL
       r
     }
   }
+  # A coreset's (`.ctCoresetLpg()`) cost carries through as it is, and its end
+  # check sees the draws on the raw parameters.
+  if (!is.null(attr(lpg, 'cost'))) attr(wrapped, 'cost') <- attr(lpg, 'cost')
+  finalbase <- attr(lpg, 'finalize')
+  if (!is.null(finalbase)) {
+    attr(wrapped, 'finalize') <- function(Z, logp, logw)
+      finalbase(.ctImisUnwhitenMatrix(Z, centre, subspace), logp, logw)
+  }
   wrapped
 }
 
@@ -2214,7 +2222,8 @@ ctOptimFitLpgFunc <- function(fit, cores=1){
         "about six times the fit.", call. = FALSE)
       uncertaintyfit$details$importance_sampling <- list(ess = is_res$ess,
         pareto_k = k, used = FALSE, directions = ncol(directions),
-        evaluations = is_res$evaluations)
+        evaluations = is_res$evaluations, cost = is_res$cost,
+        coreset = if (is.function(attr(lpg, 'coreset'))) attr(lpg, 'coreset')())
       return(list(samples = ctOptimNormalDraws(centre, uncertaintyfit$cov,
         finishsamples), uncertaintyfit = uncertaintyfit, control = control,
         draws = 'normal'))
@@ -2261,7 +2270,12 @@ ctOptimFitLpgFunc <- function(fit, cores=1){
     # density's evaluations, the rounds of draws, and the parameters (or
     # subspace directions) whose paths had a tail to follow; see `imis_is()`.
     evaluations = is_res$evaluations, rounds = nrow(is_res$rounds),
-    paths = is_res$paths)
+    paths = is_res$paths,
+    # In full evaluations, a gradient as two: below `evaluations` where a
+    # coreset (`.ctCoresetLpg()`) stood in for the full sum, whose record
+    # follows.
+    cost = is_res$cost,
+    coreset = if (is.function(attr(lpg, 'coreset'))) attr(lpg, 'coreset')())
 
   list(samples = samples, uncertaintyfit = uncertaintyfit, control = control,
     draws = 'imis')
@@ -2650,7 +2664,10 @@ ctOptimFitLpgFunc <- function(fit, cores=1){
 #' \code{isESS = 200}, and \code{isitersize = 1000} (100 for
 #' \code{'checked'}). \code{imisBudget} caps the log density evaluations
 #' importance sampling spends; on julia, \code{'checked'} sets it to what the
-#' fit's optimisation spent. \code{parsteps} keeps
+#' fit's optimisation spent. On a Laplace fit (julia), importance sampling
+#' evaluates a weighted subset of the units chosen and checked as it runs, and
+#' corrects its weights where that subset strays; \code{coreset = FALSE}
+#' evaluates every unit instead. \code{parsteps} keeps
 #' stepwise-fixed raw parameters fixed (stan only).
 #' \code{analyticHessian = FALSE} (julia only) asks for the finite-difference
 #' Hessian instead of the engine's exact one. \code{likelihood} (\code{'fit'},

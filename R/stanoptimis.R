@@ -1047,7 +1047,12 @@ imis_is <- function(parlp,
       gradcall(X)
     }
   }
-  spent <- function() nevals + 2 * ngrad
+  # A density that costs less than a full evaluation a draw -- a coreset,
+  # `.ctCoresetLpg()` -- says what it has spent, in full evaluations, and the
+  # budget and the record read that instead.
+  costfun <- attr(parlp, 'cost')
+  spent <- if (is.function(costfun)) function() costfun() else
+    function() nevals + 2 * ngrad
   pathinfo <- NULL
   if (!is.null(gradfun) && isTRUE(paths)) {
     pathinfo <- .ctImisPaths(gradfun, evaluate, mu_hat, Sigma_hat)
@@ -1174,6 +1179,20 @@ imis_is <- function(parlp,
 
   if (verbose) message("")   # newline after progress line
 
+  # A density that approximates the target -- a coreset, `.ctCoresetLpg()` --
+  # checks itself where the weights sit and hands back corrected log weights,
+  # or NULL where nothing needed correcting.
+  finalize <- attr(parlp, 'finalize')
+  if (is.function(finalize) && length(log_w)) {
+    fixed <- finalize(samples, log_p_all, log_w)
+    if (!is.null(fixed)) {
+      log_w   <- fixed - max(fixed)
+      w_raw   <- exp(log_w)
+      ess_now <- ess(w_raw)
+      k_now   <- .ctImisParetoK(list(log_weights = log_w))
+    }
+  }
+
   w_norm <- if (length(w_raw)) w_raw / sum(w_raw) else numeric(0)
   idx_eq <- if (length(w_norm)) rsamp(w_norm, finishsamples) else integer(0)
 
@@ -1196,6 +1215,9 @@ imis_is <- function(parlp,
     df_used      = df,
     evaluations  = nevals,
     gradients    = ngrad,
+    # In full evaluations, a gradient as two: `evaluations + 2 * gradients`
+    # unless the density says it costs less (see `spent` above).
+    cost         = spent(),
     rounds       = trace,
     paths        = if (is.null(pathinfo)) NULL else pathinfo[c("followed",
       "gradients", "calls", "reachesLimit", "limit")])

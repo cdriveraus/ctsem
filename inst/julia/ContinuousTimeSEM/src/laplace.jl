@@ -5926,6 +5926,71 @@ function _laplace_unit_weights(laplace::CTSEMLaplaceObjective)
     end for U in eachindex(laplace.units.members)]
 end
 
+"""
+    CTSEMCoreset(units, weights)
+
+A weighted subset of a Laplace objective's units: an evaluation given one
+solves only these units' inner problems and returns the log prior plus
+`sum(weights .* terms)` over them, in place of every unit's term. Importance
+sampling uses it where a few units' terms, refitted as the draws move, follow
+the full sum closely (R's `.ctCoresetLpg()`); `units` index
+`laplace.units.members`, and a weight replaces the unit's sampling weight.
+"""
+struct CTSEMCoreset
+    units::Vector{Int}
+    weights::Vector{Float64}
+end
+
+"""A coreset over `laplace`'s units, checked: distinct units in range, finite
+non-negative weights, one per unit."""
+function _laplace_coreset(laplace::CTSEMLaplaceObjective, units::AbstractVector,
+    weights::AbstractVector)
+    nunits = length(laplace.units.members)
+    u = Int[Int(x) for x in units]
+    w = Float64[Float64(x) for x in weights]
+    length(u) == length(w) || throw(ArgumentError(
+        "a coreset needs one weight per unit: $(length(u)) units, $(length(w)) weights"))
+    isempty(u) && throw(ArgumentError("a coreset needs at least one unit"))
+    all(U -> 1 <= U <= nunits, u) || throw(ArgumentError(
+        "coreset units must lie in 1:$nunits"))
+    allunique(u) || throw(ArgumentError("coreset units must be distinct"))
+    all(x -> isfinite(x) && x >= 0, w) || throw(ArgumentError(
+        "coreset weights must be finite and non-negative"))
+    return CTSEMCoreset(u, w)
+end
+
+"""Each unit's weight in the evaluation: the coreset's, zero off it; empty
+without a coreset, when `_laplace_unit_weight` decides."""
+function _laplace_coreset_weights(coreset::Union{Nothing,CTSEMCoreset}, nunits::Integer)
+    coreset === nothing && return Float64[]
+    w = zeros(Float64, nunits)
+    @inbounds for k in eachindex(coreset.units)
+        w[coreset.units[k]] = coreset.weights[k]
+    end
+    return w
+end
+
+"""NaN for every unit, and its subjects, that the coreset did not evaluate."""
+function _laplace_coreset_mask!(unit_loglik::Vector{Float64},
+    subject_loglik::Vector{Float64}, laplace::CTSEMLaplaceObjective,
+    coreset::CTSEMCoreset)
+    evaluated = falses(length(unit_loglik))
+    evaluated[coreset.units] .= true
+    @inbounds for U in eachindex(unit_loglik)
+        evaluated[U] && continue
+        unit_loglik[U] = NaN
+        for i in laplace.units.members[U]
+            subject_loglik[i] = NaN
+        end
+    end
+    return nothing
+end
+
+"""Whether every evaluated unit's inner mode was found."""
+_laplace_converged(laplace::CTSEMLaplaceObjective, coreset::Union{Nothing,CTSEMCoreset}) =
+    coreset === nothing ? all(laplace.inner_converged) :
+    all(U -> laplace.inner_converged[U], coreset.units)
+
 """How often the seeded gradient assembly was abandoned for the nested route."""
 const _CTSEM_LAPLACE_FALLBACKS = Ref(0)
 
@@ -5950,17 +6015,20 @@ needs a marginal per independent block (leave-one-unit-out, for one) reads
 """
 function ctsem_laplace_evaluate(laplace::CTSEMLaplaceObjective, values::AbstractVector;
     gradient::Bool=true, contributions::Bool=false, nested_gradient::Bool=false,
-    scores::Union{Nothing,Matrix{Float64}}=nothing)
+    scores::Union{Nothing,Matrix{Float64}}=nothing,
+    coreset::Union{Nothing,CTSEMCoreset}=nothing)
     n = length(values)
     theta = _laplace_extend(laplace, collect(Float64, values))
     length(theta) == n && return _laplace_evaluate(laplace, theta; gradient=gradient,
-        contributions=contributions, nested_gradient=nested_gradient, scores=scores)
+        contributions=contributions, nested_gradient=nested_gradient, scores=scores,
+        coreset=coreset)
     # With stated population values (`CTSEMAnchors`) the gradient and the
     # scores are formed over the extended vector and returned over the
     # caller's.
     full = scores === nothing ? nothing : zeros(Float64, size(scores, 1), length(theta))
     r = _laplace_evaluate(laplace, theta; gradient=gradient,
-        contributions=contributions, nested_gradient=nested_gradient, scores=full)
+        contributions=contributions, nested_gradient=nested_gradient, scores=full,
+        coreset=coreset)
     full === nothing || copyto!(scores, view(full, :, 1:n))
     return _laplace_free_result(r, n)
 end
@@ -5968,7 +6036,8 @@ end
 """`ctsem_laplace_evaluate` at a vector already extended (`_laplace_extend`)."""
 function _laplace_evaluate(laplace::CTSEMLaplaceObjective, theta::Vector{Float64};
     gradient::Bool=true, contributions::Bool=false, nested_gradient::Bool=false,
-    scores::Union{Nothing,Matrix{Float64}}=nothing)
+    scores::Union{Nothing,Matrix{Float64}}=nothing,
+    coreset::Union{Nothing,CTSEMCoreset}=nothing)
     _laplace_check_indices(laplace, length(theta))
     laplace.last_values = theta
     nsubjects = length(laplace.objective.subject_objectives)
@@ -6025,8 +6094,12 @@ function _laplace_evaluate(laplace::CTSEMLaplaceObjective, theta::Vector{Float64
     # free. Cost-weighted chunking is no longer needed for the same reason: the
     # queue does the balancing, and it does it against what the work actually
     # cost rather than against an estimate of it.
-    nchunks = nunits
-    ranges = [U:U for U in 1:nunits]
+    #
+    # A coreset (`CTSEMCoreset`) is the same region over its own units only:
+    # the rest are neither solved nor summed, so their entries come back NaN.
+    ranges = coreset === nothing ? [U:U for U in 1:nunits] : [U:U for U in coreset.units]
+    nchunks = length(ranges)
+    coreset_w = _laplace_coreset_weights(coreset, nunits)
     _laplace_ensure_pool!(laplace)
     # Per *slot*, not per piece. Pieces are now one per unit so that the queue
     # can balance, and a model whose units are subjects has thousands of them;
@@ -6063,15 +6136,19 @@ function _laplace_evaluate(laplace::CTSEMLaplaceObjective, theta::Vector{Float64
         chunk_ok[c] || return (value=chunk_bad[c],
             gradient=gradient ? fill(NaN, length(theta)) : nothing,
             subject_loglik=subject_loglik, unit_loglik=unit_loglik,
-            converged=all(laplace.inner_converged))
+            converged=_laplace_converged(laplace, coreset))
     end
-    value = _laplace_weighted_total(laplace, unit_loglik) +
+    value = (coreset === nothing ? _laplace_weighted_total(laplace, unit_loglik) :
+        sum(coreset.weights[k] * unit_loglik[coreset.units[k]]
+            for k in eachindex(coreset.units))) +
         _ctsem_log_prior(laplace.objective, theta)
+    coreset === nothing || _laplace_coreset_mask!(unit_loglik, subject_loglik,
+        laplace, coreset)
     laplace.gated_units = count(primal_gated)
 
     gradient || return (value=value, gradient=nothing,
         subject_loglik=subject_loglik, unit_loglik=unit_loglik,
-        converged=all(laplace.inner_converged))
+        converged=_laplace_converged(laplace, coreset))
 
     # 3. The gradient, by a number of seeded reverse sweeps proportional to a
     #    unit's members rather than to the parameter count.
@@ -6110,7 +6187,7 @@ function _laplace_evaluate(laplace::CTSEMLaplaceObjective, theta::Vector{Float64
         # With sampling weights too: each unit's gradient is then its weight
         # times the row.
         weighted = !isempty(laplace.objective.subject_weights)
-        separate = scores !== nothing || weighted
+        separate = scores !== nothing || weighted || coreset !== nothing
         rows = separate ? [zeros(Float64, length(theta)) for _ in 1:nslot] : partials
         fill!(chunk_ok, true)
         run_gradient = function (c)
@@ -6172,7 +6249,7 @@ function _laplace_evaluate(laplace::CTSEMLaplaceObjective, theta::Vector{Float64
                     end
                 end
                 if separate
-                    w = _laplace_unit_weight(laplace, U)
+                    w = coreset === nothing ? _laplace_unit_weight(laplace, U) : coreset_w[U]
                     partials[_laplace_slot()] .+= w .* rows[_laplace_slot()]
                     scores === nothing || (scores[U, :] .= w .* rows[_laplace_slot()])
                 end
@@ -6198,16 +6275,18 @@ function _laplace_evaluate(laplace::CTSEMLaplaceObjective, theta::Vector{Float64
             # return a partial sum: fall back to the route that does not need
             # those factorizations.
             fill!(grad, 0.0)
-            grad .= _laplace_nested_gradient(laplace, theta, Ls, primal_curvature)
+            grad .= _laplace_nested_gradient(laplace, theta, Ls, primal_curvature;
+                unitweights=coreset_w)
             _CTSEM_LAPLACE_FALLBACKS[] += 1
             scores === nothing || fill!(scores, NaN)
         end
     else
-        grad .= _laplace_nested_gradient(laplace, theta, Ls, primal_curvature)
+        grad .= _laplace_nested_gradient(laplace, theta, Ls, primal_curvature;
+                unitweights=coreset_w)
         scores === nothing || fill!(scores, NaN)
     end
     return (value=value, gradient=grad, subject_loglik=subject_loglik,
-        unit_loglik=unit_loglik, converged=all(laplace.inner_converged))
+        unit_loglik=unit_loglik, converged=_laplace_converged(laplace, coreset))
 end
 
 """
@@ -6310,7 +6389,7 @@ when a factorization the seeded path needs is not available.
 """
 function _laplace_nested_gradient(laplace::CTSEMLaplaceObjective,
     theta::Vector{Float64}, Ls::Vector{Matrix{Float64}},
-    curvature::AbstractVector)
+    curvature::AbstractVector; unitweights::Vector{Float64}=Float64[])
     nunits = length(laplace.units.members)
     total_of = function (x)
         S = eltype(x)
@@ -6318,7 +6397,8 @@ function _laplace_nested_gradient(laplace::CTSEMLaplaceObjective,
         Lsd = _laplace_popchols(x, laplace.spec)
         accumulated = zero(S)
         for U in 1:nunits
-            w = _laplace_unit_weight(laplace, U)
+            w = isempty(unitweights) ? _laplace_unit_weight(laplace, U) :
+                unitweights[U]
             w == 0 && continue
             uhat = laplace.modes[U]
             ud = _laplace_dual_unit_mode(laplace, U, x, Lsd, uhat, curvature[U], wsd)
