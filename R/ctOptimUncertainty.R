@@ -2136,7 +2136,9 @@ ctOptimFitLpgFunc <- function(fit, cores=1){
         paste(named, collapse = ', '), ': the posterior departs from it ',
         'there, and importance sampling within what the fit cost could not ',
         'correct it (Pareto k ', signif(k, 2), '). Their intervals are the ',
-        "Hessian's. ", tailremedy, call. = FALSE)
+        "Hessian's. ctFitUncertainty(fit, 'checked', control = list(imisBudget ",
+        "= Inf)) samples on until it can; a shell in the posterior has taken ",
+        "about six times the fit.", call. = FALSE)
       uncertaintyfit$details$importance_sampling <- list(ess = is_res$ess,
         pareto_k = k, used = FALSE, directions = ncol(directions),
         evaluations = is_res$evaluations)
