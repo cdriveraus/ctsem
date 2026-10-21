@@ -2670,94 +2670,205 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
 
 # What a cell of the model reaches: a function of (matrix name, row, col)
 # returning the manifests whose part of the likelihood the cell can move, or
-# NULL for every manifest.
+# NULL for every manifest. Read off matsetup and the calculations, as the
+# engine's filter would see them.
 #
-#  * LAMBDA, MANIFESTMEANS, Jy, THRESHOLDS, RESPONSE: row `i` belongs to
-#    manifest `i`, and the filter's update reads only the observed manifests'
-#    rows. ASYMPTOTES likewise, but its row `i` is the `i`th binary indicator.
-#  * MANIFESTVAR: the manifests the cell is coupled with. The covariance is
-#    built from the whole matrix -- a matrix exponential under
-#    covmattransform 'z' -- and the update reads its observed block, so a
-#    cell reaches every manifest joined to its row or column through nonzero
-#    off-diagonal cells: its own manifest alone, for a diagonal MANIFESTVAR.
+#  * Measurement cells. LAMBDA, MANIFESTMEANS, Jy, THRESHOLDS, RESPONSE: row
+#    `i` belongs to manifest `i`, and the filter's update reads only the
+#    observed manifests' rows. ASYMPTOTES likewise, but its row `i` is the
+#    `i`th binary indicator. A MANIFESTVAR cell reaches the manifests coupled
+#    with it: the covariance is built from the whole matrix -- a matrix
+#    exponential under covmattransform 'z' -- and the update reads its observed
+#    block, so a cell reaches every manifest joined to its row or column
+#    through nonzero off-diagonal cells.
+#  * Dynamics cells. DRIFT, CINT, JAx, TDPREDEFFECT, Jtd and T0MEANS row `k`
+#    move state `k`; a DIFFUSION or T0VAR cell moves the states coupled with
+#    it, as for MANIFESTVAR. What a moved state reaches is every manifest that
+#    reads it or any state downstream of it. State `i` is upstream of state `k`
+#    when a nonzero cell of `k`'s dynamics reads `i`: a DRIFT, JAx or Jtd cell
+#    in column `i`, or any of `k`'s cells whose expression reads `state[i]`.
+#    The Jacobians make the first exact for a state dependent drift. A
+#    manifest reads state `k` through a nonzero LAMBDA or Jy cell in column
+#    `k`, or any of its measurement cells whose expression reads `state[k]`.
+#    So a process measured by one item, and feeding no process another item
+#    measures, reaches that item alone. That is exact for the filter: with
+#    nothing feeding back, the states the observed items read evolve and
+#    update by their own blocks of the drift, covariance and loadings.
 #  * PARS: nothing of its own, only through what reads it.
-#  * Anything else moves the latent states, or is used in a way not known
-#    here, and reaches every manifest.
+#  * Anything else is used in a way not known here, and reaches every
+#    manifest.
 #
-# A calculation (`model$modelmats$calcs`) reading a cell carries it on to the
-# cell it writes, so a cell also reaches what every cell written from it
-# reaches, through any number of PARS cells: an intercept written
-# `mm_a + lam_a * lev` with `mm_a` in PARS reaches item a alone, as a plain
-# intercept cell does. A PARS cell nothing reads is used somewhere this cannot
-# see, and reaches every manifest.
+# A cell whose expression -- matsetup's `parname`, or a calculation in
+# `model$modelmats$calcs` -- references another cell carries that cell on to
+# itself, so a cell also reaches what every cell reading it reaches, through
+# any number of PARS cells: an intercept written `mm_a + lam_a * lev` with
+# `mm_a` in PARS reaches item a alone, as a plain intercept cell does. The same
+# references pass state reads on: a cell reading a PARS cell that reads
+# `state[i]` reads state `i`. A PARS cell nothing reads is used somewhere this
+# cannot see, and reaches every manifest.
 .ctJuliaCellReach <- function(model, setup) {
-  rowlocal <- c("LAMBDA", "MANIFESTMEANS", "Jy", "THRESHOLDS", "RESPONSE")
-  binary <- which(model$manifesttype %in% 1L)
-  calcs <- unlist(model$modelmats$calcs)
-  written <- gsub("[[:space:]]", "", sub("=.*$", "", calcs))
-  reads <- gsub("[[:space:]]", "", sub("^[^=]*=", "", calcs))
-  cellpattern <- "^([A-Za-z][A-Za-z0-9]*)\\[([0-9]+),([0-9]+)\\]$"
-  parse <- function(cell) {
-    parts <- regmatches(cell, regexec(cellpattern, cell))[[1L]]
+  codes <- .ctMatricesList()$all
+  setupname <- names(codes)[match(as.integer(setup$matrix), codes)]
+  setuprow <- as.integer(setup$row)
+  setupcol <- as.integer(setup$col)
+  keyof <- function(matrix, row, col) paste0(matrix, "[", row, ",", col, "]")
+  cellpattern <- "\\b([A-Za-z][A-Za-z0-9]*)\\s*\\[\\s*([0-9]+)\\s*,\\s*([0-9]+)\\s*\\]"
+  parsekey <- function(key) {
+    parts <- regmatches(key, regexec(cellpattern, key, perl = TRUE))[[1L]]
     if (length(parts) != 4L) return(NULL)
     list(matrix = parts[2L], row = as.integer(parts[3L]), col = as.integer(parts[4L]))
   }
-  # MANIFESTVAR's coupling: manifests joined by an off-diagonal cell that is
-  # free, fixed at a nonzero value, or written by a calculation. A free cell
-  # carries the value 99999 in `matvalues` (`.ctModelMatSetup()`).
-  nm <- length(model$manifestNames)
-  group <- seq_len(nm)
-  root <- function(i) {
-    while (group[i] != i) i <- group[i]
-    i
-  }
-  join <- function(i, j) {
-    if (i > nm || j > nm) return(invisible())
-    a <- root(i); b <- root(j)
-    if (a != b) group[max(a, b)] <<- min(a, b)
-  }
+  # Every cell with its expressions, matsetup's and the calculations'.
+  calcs <- unlist(model$modelmats$calcs)
+  calcs <- calcs[!is.na(calcs) & grepl("=", calcs, fixed = TRUE)]
+  calcat <- lapply(trimws(sub("=.*$", "", calcs)), parsekey)
+  calcok <- !vapply(calcat, is.null, logical(1))
+  calckey <- vapply(calcat[calcok], function(at) keyof(at$matrix, at$row, at$col),
+    character(1))
+  calcrhs <- sub("^[^=]*=", "", calcs[calcok])
+  setupkey <- keyof(setupname, setuprow, setupcol)
+  parname <- if (is.null(setup$parname)) rep(NA_character_, nrow(setup)) else
+    as.character(setup$parname)
+  keys <- unique(c(setupkey, calckey))
+  expressions <- lapply(keys, function(k) {
+    e <- c(parname[setupkey == k], calcrhs[calckey == k])
+    e[!is.na(e) & nzchar(e)]
+  })
+  names(expressions) <- keys
   values <- model$modelmats$matvalues
-  for (ri in which(as.integer(setup$matrix) == .ctMatricesList()$all[["MANIFESTVAR"]])) {
-    i <- as.integer(setup$row[ri]); j <- as.integer(setup$col[ri])
-    if (i == j) next
-    fixed <- if (is.null(values)) NA_real_ else
-      suppressWarnings(as.numeric(values$value[ri]))
-    if (as.integer(setup$param[ri]) > 0L ||
-        (is.finite(fixed) && fixed != 0 && fixed != 99999)) join(i, j)
+  value <- if (is.null(values)) rep(NA_real_, nrow(setup)) else
+    suppressWarnings(as.numeric(values$value))
+  stateref <- if (is.null(setup$stateref)) integer(nrow(setup)) else
+    as.integer(setup$stateref)
+  # Structurally nonzero: free, from a state, fixed away from zero, or written
+  # by a calculation. A free or computed cell carries 99999 in `matvalues`.
+  nonzero <- setNames(keys %in% calckey, keys)
+  setnz <- as.integer(setup$param) > 0L | stateref > 0L | (!is.na(value) & value != 0)
+  nonzero[setupkey[setnz]] <- TRUE
+  # The cells each expression references, other than states and predictors.
+  referenced <- lapply(expressions, function(e) {
+    hits <- unlist(regmatches(e, gregexpr(cellpattern, e, perl = TRUE)))
+    if (!length(hits)) return(character())
+    unique(vapply(hits, function(h) {
+      at <- parsekey(h)
+      keyof(at$matrix, at$row, at$col)
+    }, character(1), USE.NAMES = FALSE))
+  })
+  readers <- if (!length(unlist(referenced))) list() else
+    split(rep(keys, lengths(referenced)), unlist(referenced))
+  # States a cell reads, directly or through the cells it references.
+  statesread <- function(k, seen = character()) {
+    if (k %in% seen) return(integer())
+    seen <- c(seen, k)
+    out <- c(stateref[setupkey == k],
+      unlist(lapply(expressions[[k]], .ctExpressionIndices, name = "state")))
+    for (r in referenced[[k]]) {
+      if (r %in% keys) out <- c(out, statesread(r, seen))
+    }
+    out <- unique(as.integer(out))
+    out[out > 0L]
   }
-  for (cell in written) {
-    at <- parse(cell)
-    if (!is.null(at) && identical(at$matrix, "MANIFESTVAR") && at$row != at$col) {
-      join(at$row, at$col)
+
+  # Coupled blocks of a covariance matrix, by its nonzero off-diagonal cells.
+  blocks <- function(matrix) {
+    on <- keys[startsWith(keys, paste0(matrix, "[")) & nonzero]
+    at <- lapply(on, parsekey)
+    n <- max(0L, unlist(lapply(at, function(a) c(a$row, a$col))))
+    group <- seq_len(n)
+    root <- function(i) {
+      while (group[i] != i) i <- group[i]
+      i
+    }
+    for (a in at) {
+      if (a$row == a$col) next
+      x <- root(a$row); y <- root(a$col)
+      if (x != y) group[max(x, y)] <- min(x, y)
+    }
+    function(i) {
+      if (i > n) return(as.integer(i))
+      roots <- vapply(seq_len(n), root, integer(1))
+      which(roots == root(i))
     }
   }
-  coupled <- function(i) {
-    if (i > nm) return(NULL)
-    which(vapply(seq_len(nm), root, integer(1)) == root(i))
+  manifestvar <- blocks("MANIFESTVAR")
+  diffusion <- blocks("DIFFUSION")
+  t0var <- blocks("T0VAR")
+
+  nm <- length(model$manifestNames)
+  binary <- which(model$manifesttype %in% 1L)
+  rowlocal <- c("LAMBDA", "MANIFESTMEANS", "Jy", "THRESHOLDS", "RESPONSE")
+  # The states a dynamics cell moves, NULL for a cell that is not one.
+  moves <- function(at) {
+    if (at$matrix %in% c("DRIFT", "CINT", "JAx", "TDPREDEFFECT", "Jtd", "T0MEANS")) {
+      return(at$row)
+    }
+    if (identical(at$matrix, "DIFFUSION")) return(unique(c(diffusion(at$row), diffusion(at$col))))
+    if (identical(at$matrix, "T0VAR")) return(unique(c(t0var(at$row), t0var(at$col))))
+    NULL
   }
+  # The manifests a measurement cell belongs to, NULL for a cell that is not one.
+  belongs <- function(at) {
+    if (at$matrix %in% rowlocal) return(if (at$row <= nm) at$row else integer())
+    if (identical(at$matrix, "ASYMPTOTES")) {
+      return(if (at$row <= length(binary)) binary[at$row] else integer())
+    }
+    if (identical(at$matrix, "MANIFESTVAR")) {
+      return(intersect(unique(c(manifestvar(at$row), manifestvar(at$col))), seq_len(nm)))
+    }
+    NULL
+  }
+  # Edges between states, and the states each manifest reads.
+  upstream <- list()
+  manifestreads <- rep(list(integer()), nm)
+  for (k in keys[nonzero]) {
+    at <- parsekey(k)
+    if (is.null(at)) next
+    read <- statesread(k)
+    if (!is.null(to <- moves(at))) {
+      if (at$matrix %in% c("DRIFT", "JAx", "Jtd")) read <- c(read, at$col)
+      for (s in to) upstream[[as.character(s)]] <- unique(c(upstream[[as.character(s)]], read))
+    } else if (!is.null(m <- belongs(at))) {
+      if (at$matrix %in% c("LAMBDA", "Jy")) read <- c(read, at$col)
+      for (i in m) manifestreads[[i]] <- unique(c(manifestreads[[i]], read))
+    }
+  }
+  # The states downstream of a set, the set included.
+  downstream <- function(states) {
+    out <- unique(as.integer(states))
+    repeat {
+      more <- as.integer(names(upstream))[vapply(upstream, function(u) any(u %in% out),
+        logical(1))]
+      more <- setdiff(more, out)
+      if (!length(more)) return(out)
+      out <- c(out, more)
+    }
+  }
+
   reach <- function(matrix, row, col, seen = character()) {
-    key <- paste0(matrix, "[", row, ",", col, "]")
+    key <- keyof(matrix, row, col)
     if (key %in% seen) return(integer())
     seen <- c(seen, key)
-    own <- if (matrix %in% rowlocal) as.integer(row) else
-      if (identical(matrix, "ASYMPTOTES")) {
-        if (row > length(binary)) return(NULL)
-        binary[row]
-      } else if (identical(matrix, "MANIFESTVAR")) {
-        a <- coupled(row); b <- coupled(col)
-        if (is.null(a) || is.null(b)) return(NULL)
-        unique(c(a, b))
-      } else if (identical(matrix, "PARS")) integer() else return(NULL)
-    readers <- written[grepl(key, reads, fixed = TRUE)]
-    if (identical(matrix, "PARS") && !length(readers)) return(NULL)
-    for (cell in readers) {
-      at <- parse(cell)
-      if (is.null(at)) return(NULL)
-      more <- reach(at$matrix, at$row, at$col, seen)
+    at <- list(matrix = matrix, row = as.integer(row), col = as.integer(col))
+    own <- belongs(at)
+    if (is.null(own)) {
+      moved <- moves(at)
+      if (!is.null(moved)) {
+        down <- downstream(moved)
+        own <- which(vapply(manifestreads, function(r) any(r %in% down), logical(1)))
+      } else if (identical(matrix, "PARS")) {
+        own <- integer()
+      } else return(NULL)
+    }
+    those <- readers[[key]]
+    if (identical(matrix, "PARS") && !length(those)) return(NULL)
+    for (r in those) {
+      to <- parsekey(r)
+      if (is.null(to)) return(NULL)
+      more <- reach(to$matrix, to$row, to$col, seen)
       if (is.null(more)) return(NULL)
       own <- c(own, more)
     }
-    unique(own)
+    unique(as.integer(own))
   }
   reach
 }
