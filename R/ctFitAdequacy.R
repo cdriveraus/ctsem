@@ -20,8 +20,9 @@
 # rows, so a sum of products over row pairs has the sum of their squares as
 # its variance -- less what estimation took. Within a family, many correlated
 # statistics: their largest |z|, calibrated with the statistics' correlation,
-# and their sum of squares, from the units' cross terms, combined with any
-# exact p-values the family has by the Cauchy combination (Liu & Xie 2020), whose tail is approximately standard
+# and their sum of squares, from the units' cross terms (or the bootstrap, for
+# unit-level statistics), combined with any exact p-values the family has by
+# the Cauchy combination (Liu & Xie 2020), whose tail is approximately standard
 # Cauchy whatever the p-values' dependence, for small p; that its p-values hold
 # their level here is checked by simulation (the adequacy tutorial).
 # The sum has the power against many small departures -- a flat residual
@@ -125,8 +126,9 @@
 #' families, whose statistics are sums of high powers, use the spread of the
 #' units' contributions and a studentised bootstrap over units. Within a family the
 #' largest standardised statistic is calibrated with the statistics'
-#' correlation over units, and the sum of their squares by its terms between
-#' units, whose mean is zero under the model (Chen & Qin, 2010); the two are
+#' correlation over units, and the sum of their squares, where the variances
+#' are the model's, by its terms between units, whose mean is zero under the
+#' model (Chen & Qin, 2010), and otherwise by the bootstrap; the two are
 #' combined, with any exact p-values the family has, by the Cauchy
 #' combination; families are combined by Holm. \code{adequate} is \code{TRUE}
 #' when no family's adjusted p-value is below \code{alpha}.
@@ -1202,8 +1204,9 @@ ctFitAdequacy <- function(fit, covariates = NULL,
 # unit-level statistic, which is a skewed sum over a few hundred units, a
 # studentised bootstrap over units, which corrects the skewness to second
 # order (a Gaussian one rejected a correct model 14 per cent of the time at
-# .05). The sum of squares is tested by its terms between units
-# (.ctAdequacySumP).
+# .05). The sum of squares is tested by its terms between units where the
+# variances are the model's (.ctAdequacySumP), and by the bootstrap's own sum
+# where they are the units' spread.
 .ctAdequacyMomentTests <- function(Mstar, V0, reduction, meta, nboot = 1999L,
   raw = Mstar) {
   n <- nrow(Mstar)
@@ -1265,9 +1268,16 @@ ctFitAdequacy <- function(fit, covariates = NULL,
     tmax <- max(abs(zf))
     bmax <- apply(abs(Zb), 1, max, na.rm = TRUE)
     w <- idx[which.max(abs(zf))]
+    # The sum: for statistics with the model's variance, its terms between
+    # units (.ctAdequacySumP); for studentised ones, the studentised
+    # bootstrap's own sum, as for the max. The few unit-level statistics have
+    # contributions too heavy tailed for a chi-square read of the cross terms:
+    # the fit family's two put its p below .0045 -- what the whole check's
+    # Holm step needs -- in 3 per cent of 200 correct models.
+    psum <- if (all(rowlevel[idx])) .ctAdequacySumP(Mstar[, idx, drop = FALSE], v[idx]) else
+      (1 + sum(rowSums(Zb^2, na.rm = TRUE) >= sum(zf^2))) / (nboot + 1)
     list(k = length(idx), worst = meta$name[w], worst_z = z[w],
-      pmax = (1 + sum(bmax >= tmax)) / (nboot + 1),
-      psum = .ctAdequacySumP(Mstar[, idx, drop = FALSE], v[idx]))
+      pmax = (1 + sum(bmax >= tmax)) / (nboot + 1), psum = psum)
   })
   # The estimate each statistic is about: a correlation for the residual and
   # within-row statistics (the projected sum over the pairs that contribute),
