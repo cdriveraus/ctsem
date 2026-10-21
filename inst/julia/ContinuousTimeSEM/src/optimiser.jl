@@ -878,50 +878,44 @@ end
 # finish and its Hessian, which certify the estimate and give its standard
 # errors, never see a coreset.
 #
-# What a coreset must be is accurate: its gradient within `tol` (10%) of the
-# full one, in L-BFGS's inverse-curvature norm -- the norm in which a gradient
-# error becomes an error in the step and in what it gains -- at a point held out
-# from those it was fitted to (`_CTSEM_CORESET_TOL`). The stages share one
-# curvature memory, and a coreset whose gradients differ more feeds it pairs
-# from another function: choosing the size by its cost per unit of progress
-# instead, which let cheaper and coarser coresets in, cost 1.3-3 times the full
-# gradients of this rule on the strong-shell fits, with no stage worse than
-# where it began. Everything else is what a stage costs for the progress it
-# makes, against full iterations:
+# A coreset must be accurate: its gradient within `tol` (10%) of the full one,
+# in L-BFGS's inverse-curvature norm -- the norm in which a gradient error
+# becomes an error in the step and in what it gains -- at a point held out from
+# those it was fitted to (`_CTSEM_CORESET_TOL`). Of the coresets that are, the
+# smallest a stage can pay for is used. The stages share one curvature memory,
+# and a coreset whose gradients differ more feeds it pairs from another function;
+# choosing the size instead by a model of what a stage saves -- a coreset with
+# relative error `rho` buying `n (1 - rho^2)` iterations' progress, or
+# `log(1 / rho^2)` of the log gap at the run's measured rate, with or without a
+# calibration from the stages' checks -- let coarser coresets in, and on the
+# strong-shell fits each such rule cost 1.3-8 times the full gradients of this
+# one (review/OPTIM-coreset-2026-10-21.md). Everything else is what a stage
+# costs against what it buys:
 #
-# - L-BFGS closes the gap to the optimum -- what its model says is left to
-#   gain, `G = g' H g / 2` -- by about a factor `exp(-lambda)` an iteration,
-#   `lambda` measured as the run goes (`_ctsem_coreset_rate`). A coreset whose
-#   gradient errs by `rho` has a floor: run to its own optimum it leaves about
-#   `rho^2 G` of the gap. So its stage is planned for no more than
-#   `log(1 / rho^2) / lambda` iterations, or what the run has left before it
-#   stops if that is less. And for no more than twice the last stage's, the
-#   first for 10: a coreset is fitted where the run has been and drifts from
-#   there, and planned to its floor alone it ran for 119-270 iterations whose
-#   checks found it had closed a small part of what it planned. Doubling while
-#   stages pay is the cheapest search for how long a coreset stays good: its
-#   checks cost at most twice those of the longest stage that would have paid.
-# - Its iterations, at its share `s` of a full evaluation, plus its check and,
-#   when the run goes back, the full iteration after it, must cost less than as
-#   many full iterations: so the share spent is at most `1 - overhead / n` for a
-#   stage of `n`, and of the coresets within it the smallest accurate enough is
-#   used. Coresets of growing size, from one unit, are fitted to reproduce the
-#   gradient at every training point but the newest, by forward selection with
-#   non-negative weights, tried at the newest, and the one used is fitted again
-#   on every point.
+# - What a stage may cost is what it saves. `n` coreset iterations at a share
+#   `s` of a full evaluation, plus the full check and the full iteration after
+#   the stage, beat `n` full iterations while `n s + 2 < n`, so a stage planned
+#   for `n` iterations may use units costing up to `1 - 2/n` of the work
+#   (`_ctsem_coreset_budget`).
+# - Entering: after a full iteration, coresets of growing size, from one unit,
+#   are fitted to reproduce the gradient at every training point but the newest,
+#   by forward selection with non-negative weights, and each is tried at the
+#   newest; the first within `tol` and the budget is fitted again on every point
+#   and a stage begins, planned for 10 iterations.
 # - At a check: the point goes back to the stage's start if the full objective
 #   is worse there. Otherwise the check is a training point, and the stage is
-#   judged by what it bought: the log gap it closed on the full objective, at
-#   full iterations' rate, against its iterations' share of the work and its
-#   check. A stage that paid carries on from there on a coreset chosen again by
-#   the same held-out test -- in-sample errors understated it, and stages
-#   refitted on them made the full objective worse -- and one that did not
-#   returns to the full objective. Near the optimum the gradient shrinks while a
-#   coreset's error does not, so no coreset passes there and the full sum
-#   finishes.
+#   judged by what it bought: its iterations times the full objective's gain
+#   over the coreset's own, against their share of the work and the check. A
+#   stage that paid carries on from there, planned twice as long -- the cheapest
+#   search for how long a coreset stays good, its checks costing at most twice
+#   those of the longest stage that would have paid -- on the smallest coreset
+#   refitted to every point that reproduces the check's gradient within `tol`;
+#   one that did not returns to the full objective. Near the optimum the
+#   gradient shrinks while a coreset's error does not, so no coreset passes
+#   there and the full sum finishes.
 # - Within a stage, a check comes when the stage has run as planned, or when
-#   what L-BFGS's model says is left to gain on the coreset is no more than its
-#   floor, so that what it would go on to gain is its error.
+#   what L-BFGS's model says is left to gain on the coreset is no more than the
+#   coreset's own error, so that what it would go on to gain is its error.
 #
 # Choosing the units is timed: after a fit that found none, the next waits until
 # the full iterations since have taken four times as long, so that looking costs
@@ -945,13 +939,13 @@ _ctsem_optimise_trial(t::CTSEMCoresetTarget, x, want_gradient::Bool,
     _ctsem_optimise_trial(t.laplace, x, want_gradient, gradient_method, limit, log;
         coreset=t.coreset)
 
-"""The first stage's planned length; each stage that pays may plan the next for
-twice its own (see the head of this section)."""
+"""The first stage's planned length; a stage that pays plans the next twice as
+long."""
 const _CTSEM_CORESET_FIRST_STAGE = 10
 
 """The relative gradient error a coreset may have, in L-BFGS's
-inverse-curvature norm, at a point held out from those it was fitted to; see the
-head of this section for why it is an accuracy and not a price."""
+inverse-curvature norm; see the head of this section for why it is an accuracy
+and not a price."""
 const _CTSEM_CORESET_TOL = 0.1
 
 """
@@ -966,10 +960,7 @@ gradient of the maximised objective there), the stage in force -- its target,
 where it began on the full objective (`x0`, `f0`, `G0`, minimised), the
 coreset's value there less the full one (`offset`), its length so far and as
 planned, and the coreset's gradient error in objective units, `e' H e / 2` --
-the clock that paces the fits, each stage's held-out squared relative error and
-the share of the full gap its check found left (`heldout`, `found`), the gap at
-which the run stops, the log-rates at which the recent iterations closed the
-gap and the last gap, and the record.
+the clock that paces the fits, and the record.
 """
 mutable struct CTSEMCoresetPlan
     full::CTSEMLaplaceObjective
@@ -999,12 +990,6 @@ mutable struct CTSEMCoresetPlan
     entered::Vector{Int}
     stage_iterations::Vector{Int}
     bought::Vector{Float64}
-    heldout::Vector{Float64}
-    found::Vector{Float64}
-    pending::Float64
-    target_gap::Float64
-    rates::Vector{Float64}
-    lastgap::Float64
     total_iterations::Int
     checks::Int
     reverted::Int
@@ -1013,15 +998,15 @@ mutable struct CTSEMCoresetPlan
 end
 
 """
-    _ctsem_coreset_plan(objective, fg!, store; target)
+    _ctsem_coreset_plan(objective, fg!, store)
 
 Coreset stages for `objective`'s L-BFGS run, or `nothing` where they cannot
 apply: a route other than Laplace, units whose scores the trial does not keep,
-or a single unit. `target` is the predicted gain at which the run stops. The training set holds the last 30 full gradients, fewer
+or a single unit. The training set holds the last 30 full gradients, fewer
 where their scores would pass 2.5e7 numbers.
 """
-_ctsem_coreset_plan(objective, fg!, store; kwargs...) = nothing
-function _ctsem_coreset_plan(L::CTSEMLaplaceObjective, fg!, store; target::Real=1e-10)
+_ctsem_coreset_plan(objective, fg!, store) = nothing
+function _ctsem_coreset_plan(L::CTSEMLaplaceObjective, fg!, store)
     store === nothing && return nothing
     N, p = size(store.S)
     N >= 2 || return nothing
@@ -1031,36 +1016,17 @@ function _ctsem_coreset_plan(L::CTSEMLaplaceObjective, fg!, store; target::Real=
     sampling = Float64[_laplace_unit_weight(L, U) for U in 1:N]
     return CTSEMCoresetPlan(L, fg!, store, sampling, cost, keep, 0.0,
         Vector{Float64}[], Matrix{Float64}[], Vector{Float64}[], false, nothing,
-        Float64[], NaN, Float64[], 0.0, 0, 0, 0.0, NaN,
-        0.0, 0.0, Int[], Float64[], Int[], Int[], Float64[], Float64[], Float64[],
-        NaN, Float64(target), Float64[], NaN, 0, 0, 0, 0, 0.0)
+        Float64[], NaN, Float64[], 0.0, 0, _CTSEM_CORESET_FIRST_STAGE, 0.0, NaN,
+        0.0, 0.0, Int[], Float64[], Int[], Int[], Float64[], 0, 0, 0, 0, 0.0)
 end
 
 _ctsem_coreset_live(c) = c !== nothing && c.live
 
-"""
-    _ctsem_coreset_plan_length(c, rate, gap, rho2)
-
-How many iterations a stage on a coreset whose floor is `rho2` of the gap `gap`
-is planned for: until it reaches its floor, `log(1 / rho2) / rate`, or until
-the run's own stopping gap, if that comes first.
-"""
-function _ctsem_coreset_plan_length(c::CTSEMCoresetPlan, rate, gap, rho2)
-    left = log(gap / c.target_gap)
-    reach = rho2 > 0 ? log(1 / rho2) : Inf
-    return max(min(reach, left), 0.0) / rate
-end
-
-"""The rate at which the run closes the gap, per iteration: the median of the
-recent iterations' log-ratios of gap before to gap after; `NaN` before two, or
-where the run is not closing it."""
-function _ctsem_coreset_rate(c::CTSEMCoresetPlan)
-    isempty(c.rates) && return NaN
-    r = sort(c.rates)
-    k = length(r)
-    m = isodd(k) ? r[(k + 1) >> 1] : (r[k >> 1] + r[(k >> 1) + 1]) / 2
-    return m > 0 ? m : NaN
-end
+"""The largest share of a full evaluation's work a stage planned for `n`
+iterations can spend on each: with its check and the full iteration after it,
+`n` iterations at share `s` cost less than `n` full ones only while
+`s < 1 - 2/n`."""
+_ctsem_coreset_budget(n::Integer) = 1 - 2 / n
 
 """What a coreset costs, as a share of a full evaluation's work."""
 _ctsem_coreset_share(c::CTSEMCoresetPlan, units) =
@@ -1158,8 +1124,8 @@ orthogonalised against those in, best explain what is left, among those that
 help with a positive weight, while the units cost at most `budget` of a full
 evaluation; the weights at each size tried (`_ctsem_coreset_sizes`) are
 non-negative least squares (`_ctsem_nnls`). `value` returns the score, a bound
-on any larger coreset's, and what to keep about it (`error`); the search stops
-once the bound is no better than the best. With `size`, the path goes to that many units and
+on any larger coreset's, and the error to keep; the search stops once the bound
+is no better than the best. With `size`, the path goes to that many units and
 is taken there, unscored.
 """
 function _ctsem_coreset_path(c::CTSEMCoresetPlan, points, budget::Real, value,
@@ -1225,7 +1191,7 @@ function _ctsem_coreset_path(c::CTSEMCoresetPlan, points, budget::Real, value,
         isempty(chosen) && return nothing
         As = A[:, chosen]
         w = _ctsem_nnls(transpose(As) * As, transpose(As) * b)
-        size > 0 && return (units=copy(chosen), weights=w, error=nothing)
+        size > 0 && return (units=copy(chosen), weights=w, error=NaN)
         v, bound, err = value(chosen, w)
         if v > bestv
             best = (units=copy(chosen), weights=w, error=err)
@@ -1240,62 +1206,54 @@ end
 """
     _ctsem_coreset_choose(c, scale, hmul; refit)
 
-The smallest coreset whose gradient at the newest training point, held out
-from those it was fitted to, is within `_CTSEM_CORESET_TOL` relative, among
-those a stage of the length that error allows can pay for; `nothing` if none.
-The one used is fitted again on every point. `c.stretch` becomes the
-iterations its stage is planned for (`_ctsem_coreset_plan_length`, and at most
-the first stage's length or twice the last one's), `c.error`
-its floor in objective units, and `c.pending` its held-out squared relative
-error. A stage that carries on (`refit`) is not followed by a full iteration;
-one entered from the full objective is, when it ends.
+The smallest coreset a stage of `c.stretch` iterations can pay for
+(`_ctsem_coreset_budget`) whose gradient at the newest training point is within
+`_CTSEM_CORESET_TOL` relative, or `nothing` if none is; `c.error` becomes its
+error there in objective units, `e' H e / 2`.
+
+Entering (`refit = false`): the path is fitted on every training point but the
+newest, which is held out, and the coreset found is fitted again on every
+point. Carrying on (`refit = true`): the path is fitted on every point, the
+newest the check just measured.
 """
 function _ctsem_coreset_choose(c::CTSEMCoresetPlan, scale::AbstractVector, hmul;
         refit::Bool)
     K = length(c.S)
-    K >= 3 || return nothing
-    rate = _ctsem_coreset_rate(c)
-    isfinite(rate) || return nothing
+    K >= (refit ? 1 : 3) || return nothing
+    t0 = time()
+    budget = _ctsem_coreset_budget(c.stretch)
     Sn = c.S[K]
     gn = c.gfull[K]
-    gg = dot(gn, hmul(gn))
-    gap = gg / 2
-    tol2 = _CTSEM_CORESET_TOL^2
-    overhead = refit ? 1.0 : 2.0
-    # The shortest stage a coreset accurate enough is planned for, and the most
-    # of the work its iterations can take and still cost less than full ones.
-    longest = refit ? 2 * max(c.stretch, 1) : _CTSEM_CORESET_FIRST_STAGE
-    shortest = min(longest, _ctsem_coreset_plan_length(c, rate, gap, tol2))
-    shortest > overhead || return nothing
-    t0 = time()
-    budget = 1 - overhead / shortest
     lik = vec(sum(Sn; dims=1))
+    gg = dot(gn, hmul(gn))
+    tol2 = _CTSEM_CORESET_TOL^2
+    # The first size within the tolerance: scored one there, after which no
+    # larger can score more.
     value = (units, w) -> begin
         e = transpose(view(Sn, units, :)) * w .- lik
         ee = dot(e, hmul(e))
-        rho2 = isfinite(ee) && gg > 0 ? ee / gg : Inf
-        passes = rho2 <= tol2
-        (passes ? 1.0 : 0.0, passes ? 0.0 : 1.0, rho2)
+        passes = isfinite(ee) && gg > 0 && ee <= tol2 * gg
+        (passes ? 1.0 : 0.0, passes ? 1.0 : 2.0, ee / 2)
     end
-    first = _ctsem_coreset_path(c, 1:(K - 1), budget, value, scale)
-    result = if first === nothing
-        nothing
+    result = if refit
+        _ctsem_coreset_path(c, 1:K, budget, value, scale)
     else
-        again = _ctsem_coreset_path(c, 1:K, budget, nothing, scale;
-            size=length(first.units))
-        again === nothing ? nothing :
-            (units=again.units, weights=again.weights, error=first.error)
+        first = _ctsem_coreset_path(c, 1:(K - 1), budget, value, scale)
+        if first === nothing
+            nothing
+        else
+            again = _ctsem_coreset_path(c, 1:K, budget, nothing, scale;
+                size=length(first.units))
+            again === nothing ? nothing :
+                (units=again.units, weights=again.weights, error=first.error)
+        end
     end
     c.attempts += 1
     c.select_seconds += time() - t0
     result === nothing && return nothing
     keep = findall(>(0), result.weights)
     isempty(keep) && return nothing
-    rho2 = result.error
-    c.pending = rho2
-    c.error = rho2 * gap
-    longest = refit ? 2 * max(c.stretch, 1) : _CTSEM_CORESET_FIRST_STAGE
-    c.stretch = max(1, min(longest, ceil(Int, _ctsem_coreset_plan_length(c, rate, gap, rho2))))
+    c.error = result.error
     units = result.units[keep]
     return CTSEMCoreset(units, result.weights[keep] .* c.sampling[units])
 end
@@ -1305,13 +1263,12 @@ end
 
 After an accepted L-BFGS step to `x`, with value `f` and gradient `G` (of the
 minimised objective in force). On the full objective: keep the point, and look
-for a coreset that saves (`_ctsem_coreset_choose`) once the full iterations
+for a coreset (`_ctsem_coreset_choose`) once the full iterations
 since the last look that found none have taken four times as long as it. In a
 stage: check it with a full gradient (`_ctsem_coreset_check!`) once it has run
 its planned iterations, once what L-BFGS's model says is left to gain on the
-coreset (`G' H G / 2`) is no more than its floor, or once its gradient is below
-`g_tol`. Either way, the gap the step closed is a rate for
-`_ctsem_coreset_rate`.
+coreset (`G' H G / 2`) is no more than the coreset's error, or once its
+gradient is below `g_tol`.
 
 Returns `(act, x, f, G)`: `:none`; `:enter` or `:refit`, a stage that begins
 at `x` on `c.target`, with the full value and gradient there; `:leave`, back to
@@ -1320,13 +1277,6 @@ of the stage that just failed its check.
 """
 function _ctsem_coreset_step!(c::CTSEMCoresetPlan, x, f, G, hmul, scale)
     none = (act=:none, x=x, f=f, G=G)
-    # The gap this iteration closed, on whichever objective is in force.
-    gap = dot(G, hmul(G)) / 2
-    if isfinite(c.lastgap) && c.lastgap > 0 && isfinite(gap) && gap > 0
-        push!(c.rates, log(c.lastgap / gap))
-        length(c.rates) > 20 && popfirst!(c.rates)
-    end
-    c.lastgap = gap
     if !c.live
         now = time()
         isfinite(c.clock) && (c.waited += now - c.clock)
@@ -1334,6 +1284,7 @@ function _ctsem_coreset_step!(c::CTSEMCoresetPlan, x, f, G, hmul, scale)
         _ctsem_coreset_record!(c, x, G) || return none
         c.waited >= 4 * c.looked || return none
         t0 = time()
+        c.stretch = _CTSEM_CORESET_FIRST_STAGE
         cs = _ctsem_coreset_choose(c, scale, hmul; refit=false)
         c.clock = time()
         c.waited = 0.0
@@ -1344,12 +1295,12 @@ function _ctsem_coreset_step!(c::CTSEMCoresetPlan, x, f, G, hmul, scale)
         c.looked = 0.0
         push!(c.entered, c.total_iterations)
         _ctsem_coreset_begin!(c, cs, x, f, G)
-        c.lastgap = NaN
         return (act=:enter, x=x, f=f, G=G)
     end
     c.iterations += 1
     c.total_iterations += 1
-    due = c.iterations >= c.stretch || gap <= c.error ||
+    left = dot(G, hmul(G)) / 2
+    due = c.iterations >= c.stretch || left <= c.error ||
         maximum(abs, G; init=0.0) <= c.g_tol
     due || return none
     return _ctsem_coreset_check!(c, x, f, G, hmul, scale)
@@ -1364,8 +1315,6 @@ function _ctsem_coreset_begin!(c::CTSEMCoresetPlan, cs::CTSEMCoreset, x, f, G)
     push!(c.shares, _ctsem_coreset_share(c, cs.units))
     push!(c.stage_iterations, 0)
     push!(c.bought, NaN)
-    push!(c.heldout, c.pending)
-    push!(c.found, NaN)
     return nothing
 end
 
@@ -1374,10 +1323,11 @@ end
 
 The full gradient at `x`, where the stage's coreset has value `fc`: back to the
 stage's start if the full value is worse there or unusable; otherwise a
-training point, and, unless `leave`, a stage carried on from `x` if this one
-paid -- the log of the full gap it closed, at full iterations' rate, against
-its iterations' share of the work and its check -- and some coreset's stage is
-expected to pay from here; the full objective otherwise.
+training point, and, unless `leave`, a stage carried on from `x`, planned twice
+as long, if this one paid -- its iterations times the full objective's gain
+over the coreset's predicted one, against its iterations' share of the work and
+its check -- and some coreset the longer stage can pay for is accurate enough;
+the full objective otherwise.
 """
 function _ctsem_coreset_check!(c::CTSEMCoresetPlan, x, fc, Gc, hmul, scale;
         leave::Bool=false)
@@ -1390,27 +1340,20 @@ function _ctsem_coreset_check!(c::CTSEMCoresetPlan, x, fc, Gc, hmul, scale;
     c.live = false
     c.clock = time()
     c.waited = 0.0
-    c.lastgap = NaN
     # A usable check is a training point whatever it says.
     ok && _ctsem_coreset_record!(c, x, Gf)
     predicted = (c.f0 - c.offset) - fc
     actual = ok ? c.f0 - ff : -Inf
     fidelity = predicted > 0 ? actual / predicted : 0.0
     c.bought[end] = fidelity
-    # What the stage left of the full gap.
-    if ok
-        after = dot(Gf, hmul(Gf))
-        before = dot(c.G0, hmul(c.G0))
-        isfinite(after) && before > 0 && after > 0 && (c.found[end] = after / before)
-    end
     if !ok || ff > c.f0
         c.reverted += 1
         return (act=:revert, x=c.x0, f=c.f0, G=c.G0)
     end
-    rate = _ctsem_coreset_rate(c)
-    closed = -log(c.found[end])
-    paid = isfinite(rate) && isfinite(closed) && closed / rate > n * c.shares[end] + 1
+    paid = n * fidelity > n * c.shares[end] + 1
     if !leave && paid
+        stretch = 2c.stretch
+        c.stretch = stretch
         cs = _ctsem_coreset_choose(c, scale, hmul; refit=true)
         if cs !== nothing
             _ctsem_coreset_begin!(c, cs, x, ff, Gf)
@@ -1443,7 +1386,7 @@ end
 """A field of the plan's record for the bridge: `[0]` when there is no plan or
 the field is empty."""
 function _ctsem_coreset_report(c, field::Symbol)
-    c === nothing && return field in (:shares, :bought, :heldout, :found) ? [0.0] : [0]
+    c === nothing && return field in (:shares, :bought) ? [0.0] : [0]
     v = getfield(c, field)
     return isempty(v) ? (eltype(v) <: AbstractFloat ? [0.0] : [0]) : copy(v)
 end
