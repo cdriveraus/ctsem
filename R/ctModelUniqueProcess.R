@@ -34,6 +34,9 @@
 #' @param items Which manifest variables, by name or position.
 #' @param shared One process for all of \code{items}, named \code{u_} and
 #'   their names joined by \code{_}, rather than one each.
+#' @param name The new latents' names, in place of those: one for a shared
+#'   process, one per item otherwise. For a second process on the same items,
+#'   at another time scale.
 #' @return The extended model.
 #' @seealso \code{\link{ctModelImprove}}, which adds one for the items the
 #'   adequacy check points to.

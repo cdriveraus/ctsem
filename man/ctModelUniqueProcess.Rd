@@ -13,6 +13,10 @@ ctModelUniqueProcess(ctm, items, shared = FALSE, name = NULL)
 
 \item{shared}{One process for all of \code{items}, named \code{u_} and
 their names joined by \code{_}, rather than one each.}
+
+\item{name}{The new latents' names, in place of those: one for a shared
+process, one per item otherwise. For a second process on the same items,
+at another time scale.}
 }
 \value{
 The extended model.
