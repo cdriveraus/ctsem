@@ -60,6 +60,7 @@
 "test-fit-gap.R","optimiser","core"
 "test-intoverpop-auto.R","optimiser","core"
 "test-julia-convergence.R","optimiser","core"
+"test-julia-coreset-optim.R","optimiser","core"
 "test-julia-particle.R","optimiser","core"
 "test-julia-restarts.R","optimiser","core"
 "test-julia-saem.R","optimiser","core"
