@@ -425,6 +425,44 @@ bootstrapHessian <- function(standata, sm, est, finishsamples, cores, scores=NUL
   lpg
 }
 
+# A proposal component where `imis_is()`'s draws say the proposal falls short:
+# the draw `x` moved by a damped Newton step on the log density, and shaped by
+# the curvature there, as optimized population Monte Carlo adapts its
+# proposals (Elvira and Chouzenoux 2022, arXiv:2204.06891; Elvira,
+# Chouzenoux, Akyildiz and Martino 2023, arXiv:2210.10785).
+#
+# Why gradients. A round's weights say where the proposal falls short only at
+# the few draws that carry weight -- after the first round on a shell, one
+# draw in a few hundred -- so a component built from weights alone (IMIS's,
+# at the top-weighted draws) copies the spread of the proposal's own draws. A
+# gradient says how the density bends at a draw whatever that draw's weight,
+# so a component built on it points along a curved ridge from the start.
+#
+# The curvature is forward differences of the gradient along the axes of the
+# starting proposal's whitened coordinates (`L` with `L L'` its covariance):
+# `d + 1` gradients, the reason `imis_is()` caps the components a round so
+# their gradients cost at most one round's draws. In those coordinates the
+# precision is floored at the starting proposal's, `1 / scale^2`, so a flat or
+# convex direction gets the starting width rather than an infinite one, and
+# the step is at most `maxstep` of the component's own sds. NULL where the
+# gradient or curvature is not finite.
+.ctImisNewtonComponent <- function(gradfun, x, L, scale, h = 1e-5, maxstep = 3) {
+  d <- length(x)
+  out <- gradfun(rbind(x, sweep(t(L) * h, 2, x, '+')))
+  G <- as.matrix(out$gradient) %*% L
+  if (!all(is.finite(G))) return(NULL)
+  g0 <- G[1L, ]
+  H <- t(sweep(G[-1L, , drop = FALSE], 2, g0)) / h
+  e <- eigen(-(H + t(H)) / 2, symmetric = TRUE)
+  if (!all(is.finite(e$values))) return(NULL)
+  v <- pmax(e$values, 1 / scale^2)
+  covariance <- e$vectors %*% (t(e$vectors) / v)
+  step <- as.numeric(covariance %*% g0)
+  size <- sqrt(sum(step * (e$vectors %*% (v * crossprod(e$vectors, step)))))
+  if (size > maxstep) step <- step * maxstep / size
+  list(mu = x + as.numeric(L %*% step), cov = L %*% covariance %*% t(L))
+}
+
 # Each parameter's profile path, walked out on both sides of the mode: at
 # `first` and then `rungs` standard errors of the curvature, parameter j is
 # held and the others moved to their conditional mode, by Newton steps in the
@@ -2048,16 +2086,20 @@ ctOptimFitLpgFunc <- function(fit, cores=1){
   if (is.null(control$imisDf)) control$imisDf <- df
   # `.ctEssTarget`, the one default every draw-producing route shares.
   if (is.null(control$isESS)) control$isESS <- .ctEssTarget
-  # `'checked'` samples a few directions from a proposal that is nearly right
-  # in most of them: 75% efficient on a 28-parameter Laplace fit, so 300
-  # draws reach the target of 200, and rounds are added where they do not.
-  if (is.null(control$isitersize)) control$isitersize <- if (is.null(directions)) 1000 else 300
-  # A budget in log density evaluations, where the caller knows what the fit
-  # cost (`.ctBackendFitCost()`): rounds stop there, and the report says the
-  # target was not reached.
-  # `imis_is()` runs `max_iter + 1` rounds.
-  if (!is.null(control$imisBudget)) control$imisMaxIter <- max(0L,
-    min(control$imisMaxIter, floor(control$imisBudget / control$isitersize) - 1L))
+  # `'checked'` samples a few directions, adapting by Newton components
+  # (`.ctImisNewtonComponent()`) in small rounds and without the profile
+  # paths, which walk every direction before the first round where the Newton
+  # components go only where the draws show a shortfall. Evaluations to an
+  # effective sample of 200 (a gradient as two; scripts/gsm-uncertainty-2026-10/
+  # proto_gais*.R, dev1), paths and rounds of 300 without Newton components
+  # against this: a ring 759 and 454, a five-dimensional shell 1770 and 916,
+  # the 100-subject strong-shell Laplace fit 6632 and 1926, at like accuracy.
+  checked <- !is.null(directions)
+  if (is.null(control$isitersize)) control$isitersize <- if (checked) 100 else 1000
+  # A budget in log density evaluations, a gradient counted as two, where the
+  # caller knows what the fit cost (`.ctBackendFitCost()`): rounds stop there,
+  # and the report says the target was not reached.
+  budget <- .ctJuliaOr(control$imisBudget, Inf)
 
   # `.ctImisRun()` runs in the identified subspace of `uncertaintyfit$cov` when
   # it is rank deficient -- an individually varying parameter with no
@@ -2070,7 +2112,7 @@ ctOptimFitLpgFunc <- function(fit, cores=1){
     max_iter = control$imisMaxIter, scale_init = control$imisScaleInit,
     tail_scale = control$imisTailScale, df = control$imisDf,
     target_ess = control$isESS, n_batch = control$isitersize, cl = NA,
-    finishsamples = finishsamples,
+    finishsamples = finishsamples, paths = !checked, budget = budget,
     # `verbose > 0`, not TRUE: this printed IMIS iteration progress at
     # `verbose = 0`, so the one argument meant two things across the backends --
     # silence on julia, a page of output on stan.
@@ -2281,9 +2323,11 @@ ctOptimFitLpgFunc <- function(fit, cores=1){
 #' finds a tail the curvature does not show -- a skewed one, or one bending
 #' along a ridge, as a variance with few subjects often has. Rounds of
 #' \code{isitersize} draws from these multivariate t components then add
-#' components at the highest-weighted draws until the effective sample size
-#' reaches \code{isESS} and the Pareto k of the weights is below 0.7 (k needs
-#' the loo package). The effective size, k, the evaluations used and the
+#' components at the highest-weighted draws, and up to three more where the
+#' weights show the proposal falls short, each moved by a Newton step and
+#' shaped by the log posterior's curvature there, until the effective sample
+#' size reaches \code{isESS} and the Pareto k of the weights is below 0.7 (k
+#' needs the loo package). The effective size, k, the evaluations used and the
 #' parameters with a tail are recorded in
 #' \code{fit$uncertainty$details$importance_sampling}; k above 0.7 warns, and
 #' so does a parameter whose walk has not fallen off by 96 standard errors,
@@ -2519,7 +2563,7 @@ ctOptimFitLpgFunc <- function(fit, cores=1){
 #' \code{imisMaxIter = 50}, \code{imisScaleInit = 1.1},
 #' \code{imisTailScale = 1.1} (1.5 and 1.2 on julia), \code{imisDf = 5} (the
 #' proposal components' t degrees of freedom; \code{Inf} for normal),
-#' \code{isESS = 200}, and \code{isitersize = 1000} (300 for
+#' \code{isESS = 200}, and \code{isitersize = 1000} (100 for
 #' \code{'checked'}). \code{imisBudget} caps the log density evaluations
 #' importance sampling spends; on julia, \code{'checked'} sets it to what the
 #' fit's optimisation spent. \code{parsteps} keeps

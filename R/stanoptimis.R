@@ -909,7 +909,19 @@ autoTIpredsFunc <- function(cl, standata, sm, optimArgs, parsteps, optimcores, c
 # 2. Rounds. `n_batch` draws from the mixture, then while the effective sample
 #    size is short of `target_ess` or the Pareto k of the weights is at or
 #    above `kbar`, a component at the top-weighted tenth of the draws (as
-#    IMIS, Raftery and Bao), from which the next round draws.
+#    IMIS, Raftery and Bao), from which the next round draws. And, where the
+#    density brings a gradient, up to `newton` components at the
+#    top-weighted distinct draws whose weight relative to the mean, r, exceeds
+#    N / target_ess (N the draws so far): if every r were below that the
+#    effective sample N / mean(r^2) would already be at least `target_ess`, so
+#    these are the places the proposal falls short. Each is moved by a damped
+#    Newton step and shaped by the curvature there
+#    (`.ctImisNewtonComponent()`), costing d + 1 gradients, so a round adds
+#    at most as many as cost one round's draws. On a five-dimensional shell
+#    mixed into thirty parameters (scripts/gsm-uncertainty-2026-10/
+#    proto_gais_full.R) the rounds alone stopped at ESS 3 after 51,667
+#    evaluations; with these, ESS 247 in 20,643 (a gradient counted as two).
+#    `budget` stops the rounds at that many evaluations, gradients included.
 #
 #    Measured on five bench models and two closed forms against long NUTS
 #    references (dev2, 2026-09-30): the worst parameter's sd error fell from
@@ -952,7 +964,9 @@ imis_is <- function(parlp,
   verbose       = TRUE,
   diag_plots    = TRUE,
   paths         = TRUE,
-  kbar          = .ctImisParetoKBar()) {
+  kbar          = .ctImisParetoKBar(),
+  newton        = 3L,
+  budget        = Inf) {
 
   for (pkg in c("mvtnorm", "diagis", "gridExtra", "ggplot2", "grid"))
     if (!requireNamespace(pkg, quietly = TRUE))
@@ -1012,6 +1026,9 @@ imis_is <- function(parlp,
   }
 
   Sigma_hat <- safe_pd(Sigma_hat)
+  # The coordinates where the starting proposal is N(0, I): where a Newton
+  # component measures its curvature, its distances and its floor.
+  L_hat <- t(chol(Sigma_hat))
   comp_mu <- list(mu_hat)
   # `scale_init^2 * Sigma`, the whole matrix, not its diagonal: an
   # elementwise inflation divides every correlation by `scale_init^2`.
@@ -1019,9 +1036,20 @@ imis_is <- function(parlp,
   pw <- 1
 
   # ---- 1. profile paths ------------------------------------------------------
-  gradfun <- if (isTRUE(paths)) .ctImisGradient(parlp, mu_hat) else NULL
-  pathinfo <- NULL
+  # Every gradient asked for is counted, at two values each (1.6-2.3 measured
+  # on dev1), for `budget` and the record.
+  gradfun <- .ctImisGradient(parlp, mu_hat)
+  ngrad <- 0L
   if (!is.null(gradfun)) {
+    gradcall <- gradfun
+    gradfun <- function(X) {
+      ngrad <<- ngrad + nrow(as.matrix(X))
+      gradcall(X)
+    }
+  }
+  spent <- function() nevals + 2 * ngrad
+  pathinfo <- NULL
+  if (!is.null(gradfun) && isTRUE(paths)) {
     pathinfo <- .ctImisPaths(gradfun, evaluate, mu_hat, Sigma_hat)
     # The central component where the paths started: the density's mode.
     comp_mu[[1L]] <- pathinfo$centre
@@ -1108,7 +1136,7 @@ imis_is <- function(parlp,
       if (is.na(ess_met)) ess_met <- it
       if (it - ess_met >= 4L) break
     }
-    if (it == max_iter) break
+    if (it == max_iter || spent() >= budget) break
 
     ## ---------- add a component at the top-weighted draws ------------------
     top_idx <- w_raw > stats::quantile(w_raw, 0.9)
@@ -1118,6 +1146,30 @@ imis_is <- function(parlp,
     comp_cov[[K + 1L]] <- safe_pd(diagis::weighted_var(
       samples[top_idx, , drop = FALSE], w_raw[top_idx]) * tail_scale^2)
     pw <- c(rep(0, K), 1)
+    # And components where the draws say the proposal falls short, each moved
+    # by a damped Newton step and shaped by the curvature there; see
+    # `.ctImisNewtonComponent()`.
+    nnew <- if (is.null(gradfun)) 0L else
+      min(as.integer(newton), floor(n_batch / (2 * (d + 1))))
+    if (nnew > 0L) {
+      ratio <- w_raw / mean(w_raw)
+      short <- order(-ratio)[seq_len(sum(ratio > nrow(samples) / target_ess))]
+      picked <- integer(0)
+      for (i in short) {
+        if (length(picked) >= nnew) break
+        apart <- !length(picked) || all(sqrt(colSums(forwardsolve(L_hat,
+          t(samples[picked, , drop = FALSE]) - samples[i, ])^2)) > 0.5)
+        if (apart) picked <- c(picked, i)
+      }
+      for (i in picked) {
+        nc <- .ctImisNewtonComponent(gradfun, samples[i, ], L_hat, scale_init)
+        if (is.null(nc)) next
+        comp_mu[[length(comp_mu) + 1L]] <- nc$mu
+        comp_cov[[length(comp_cov) + 1L]] <- safe_pd(nc$cov * tail_scale^2)
+      }
+      pw <- c(rep(0, K), rep(1, length(comp_mu) - K))
+      pw <- pw / sum(pw)
+    }
   }
 
   if (verbose) message("")   # newline after progress line
@@ -1143,6 +1195,7 @@ imis_is <- function(parlp,
     else matrix(NA_real_, length(mu_hat), length(mu_hat)),
     df_used      = df,
     evaluations  = nevals,
+    gradients    = ngrad,
     rounds       = trace,
     paths        = if (is.null(pathinfo)) NULL else pathinfo[c("followed",
       "gradients", "calls", "reachesLimit", "limit")])

@@ -85,7 +85,7 @@ and \code{isitersize}. Omitted entries use
 \code{imisMaxIter = 50}, \code{imisScaleInit = 1.1},
 \code{imisTailScale = 1.1} (1.5 and 1.2 on julia), \code{imisDf = 5} (the
 proposal components' t degrees of freedom; \code{Inf} for normal),
-\code{isESS = 200}, and \code{isitersize = 1000} (300 for
+\code{isESS = 200}, and \code{isitersize = 1000} (100 for
 \code{'checked'}). \code{imisBudget} caps the log density evaluations
 importance sampling spends; on julia, \code{'checked'} sets it to what the
 fit's optimisation spent. \code{parsteps} keeps
@@ -199,9 +199,11 @@ conditional mode, and a proposal component is placed wherever that walk
 finds a tail the curvature does not show -- a skewed one, or one bending
 along a ridge, as a variance with few subjects often has. Rounds of
 \code{isitersize} draws from these multivariate t components then add
-components at the highest-weighted draws until the effective sample size
-reaches \code{isESS} and the Pareto k of the weights is below 0.7 (k needs
-the loo package). The effective size, k, the evaluations used and the
+components at the highest-weighted draws, and up to three more where the
+weights show the proposal falls short, each moved by a Newton step and
+shaped by the log posterior's curvature there, until the effective sample
+size reaches \code{isESS} and the Pareto k of the weights is below 0.7 (k
+needs the loo package). The effective size, k, the evaluations used and the
 parameters with a tail are recorded in
 \code{fit$uncertainty$details$importance_sampling}; k above 0.7 warns, and
 so does a parameter whose walk has not fallen off by 96 standard errors,
