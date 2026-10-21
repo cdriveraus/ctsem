@@ -387,13 +387,17 @@ function _ctsem_lbfgs(fg!, x0::AbstractVector; memory::Integer=20,
         # The trials' lengths and their excess over the linear model, for the
         # jump watch (`jump`); empty when nothing watches. A trial the route
         # refused comes back as a huge sentinel and is no measurement of the
-        # objective, so it is not one of them.
+        # objective, so it is not one of them. Not in a coreset stage, whose
+        # objective weights a few units many times over: a spike there is one
+        # unit's, scaled, and a search that fails in a stage leaves it for the
+        # full objective, where the watch sees the jump if there is one.
+        watching = jump !== nothing && !_ctsem_coreset_live(coreset)
         trial_alpha = Float64[]
         trial_excess = Float64[]
         found = false
         found_hi = NaN; found_lo = NaN; found_excess = NaN
         while !accepted && k < maxbacktrack
-            if jump !== nothing && !found && isfinite(fn) && fn < _CTSEM_REFUSED
+            if watching && !found && isfinite(fn) && fn < _CTSEM_REFUSED
                 excess = fn - f - alpha * dphi
                 if excess > 1e-8 * (1 + abs(f))
                     for (a, e) in zip(trial_alpha, trial_excess)
