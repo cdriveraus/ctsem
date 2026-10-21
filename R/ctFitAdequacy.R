@@ -117,11 +117,13 @@
 #' pairs of rows has the sum of the products' squares as its variance, which
 #' holds with heavy tails or a changing variance; estimating the parameters
 #' takes a known part of it away. That is the variance of the residual,
-#' latent, volatility, within-row and covariate families; the distribution and
-#' fit families, whose statistics are sums of high powers, and the periodic
-#' family, whose statistic is for each unit the squared modulus of a sum (the
-#' periodogram), skewed to the right however many rows a unit has, use the
-#' spread of the units' contributions and a studentised bootstrap over units. Within a family the
+#' latent, volatility, within-row, periodic and covariate families. A periodic
+#' statistic is in each unit a quadratic form of rank two in its errors, the
+#' periodogram, skewed to the right however many units there are; its z is
+#' read through a chi-square of the skewness that form has under the model,
+#' worked out exactly from the unit's times. The distribution and fit
+#' families, whose statistics are sums of high powers, use the spread of the
+#' units' contributions and a studentised bootstrap over units. Within a family the
 #' largest standardised statistic and the sum of their squares are calibrated
 #' with the statistics' correlation over units
 #' and combined, with any exact p-values the family has, by the Cauchy
@@ -412,9 +414,11 @@ ctFitAdequacy <- function(fit, covariates = NULL,
 # The description of a block of moment statistics: what the tests need of each
 # (family, name, the count its estimate is over, its kind, its gap bin) and
 # what it is about.
-.ctAdequacyMeta <- function(family, name, count, kind, bin = NA_integer_, ...) {
+.ctAdequacyMeta <- function(family, name, count, kind, bin = NA_integer_, skew = NA_real_,
+  ...) {
   cbind(data.frame(family = family, name = name, count = count, kind = kind, bin = bin,
-    stringsAsFactors = FALSE), .ctAdequacyAbout(length(name), ...))
+    skew = rep_len(as.numeric(skew), length(name)), stringsAsFactors = FALSE),
+    .ctAdequacyAbout(length(name), ...))
 }
 
 # The errors' rows, in the long form ctKalman's are melted to: each
@@ -778,16 +782,19 @@ ctFitAdequacy <- function(fit, covariates = NULL,
     lab <- c(vars, paste('latent', colnames(err$Z)))
     blk <- .ctAdequacyPeriodBlock(X, err$unit, err$time, n, setup$periods)
     grid <- expand.grid(j = seq_len(ncol(X)), f = seq_along(setup$periods))
-    # Unit-level: a unit's periodogram ordinate is the squared modulus of a
-    # sum, roughly exponential, and summed over units still skewed (z
-    # skewness 0.25 over 60 units); against the pairwise variance and a
-    # Gaussian reference for the largest of some three hundred, the family
-    # rejected a correct model 9.4 per cent of the time at .05 (500 null
-    # datasets). The units' spread and the studentised bootstrap carry the
-    # skew.
-    addblock(blk$M, blk$V0 * NA_real_, 'periodic', paste0(lab[grid$j], ' period ',
+    # Skewed: a unit's periodogram ordinate is roughly exponential, and the
+    # sum over 60 units had z skewness 0.25; read against the Gaussian, the
+    # largest of some three hundred such statistics rejected a correct model
+    # 9.4 per cent of the time at .05 (500 null datasets). Each z is read
+    # through a chi-square of its exact skewness (.ctAdequacySkewZ). Made
+    # unit-level instead -- the units' spread and a studentised bootstrap -- it
+    # rejected 2 per cent, and found a daily cycle in 4 per cent of datasets
+    # where this finds it in half: with hundreds of statistics over sixty
+    # units, the bootstrap's maximum is ruled by the resamples whose spread
+    # is tiny.
+    addblock(blk$M, blk$V0, 'periodic', paste0(lab[grid$j], ' period ',
       as.character(signif(setup$periods[grid$f], 3))), blk$N, 'corr',
-      variable = lab[grid$j], period = setup$periods[grid$f])
+      variable = lab[grid$j], period = setup$periods[grid$f], skew = blk$skew)
   }
   # Each variable's error, and each latent's update, against each time varying
   # covariate at the row and at the unit's previous row. A covariate that is
@@ -908,15 +915,50 @@ ctFitAdequacy <- function(fit, covariates = NULL,
     s <- usum(a)
     matrix((s^2 - usum(a^2)) / 2, n, nf)
   }
-  M <- V0 <- matrix(0, n, K * nf); N <- numeric(K * nf)
+  # The skewness of each statistic under the model, from the unit's times. On
+  # a unit's observed rows the statistic is a'Aa, A = (W - I) / 2, W = cc' +
+  # ss' with c, s the cosines and sines of the rows' times at the frequency;
+  # with standard normal, independent errors its variance is 2 tr(A^2) and
+  # its third cumulant 8 tr(A^3), and the traces of W's powers are those of
+  # the 2 x 2 matrix G of the sums of c^2, cs and s^2 (tr W = the rows).
+  third <- function(o) {
+    gcc <- usum(o * C1^2); gcs <- usum(o * C1 * S1); gss <- usum(o * S1^2)
+    nobs <- matrix(usum(o), n, nf)
+    w2 <- gcc^2 + 2 * gcs^2 + gss^2
+    w3 <- gcc^3 + 3 * gcc * gcs^2 + 3 * gcs^2 * gss + gss^3
+    k2 <- colSums(2 * (w2 - nobs) / 4)
+    k3 <- colSums(8 * (w3 - 3 * w2 + 2 * nobs) / 8)
+    ifelse(k2 > 0, k3 / k2^1.5, NA_real_)
+  }
+  M <- V0 <- matrix(0, n, K * nf); N <- skew <- numeric(K * nf)
   for (k in seq_len(K)) {
     cols <- k + K * (seq_len(nf) - 1L)
     a <- Xz[, k]; b <- a^2; o <- O[, k]
     M[, cols] <- pairsum(a, C1, S1)
     V0[, cols] <- (plain(b) + pairsum(b, C2, S2)) / 2
     N[cols] <- colSums((plain(o) + pairsum(o, C2, S2)) / 2)
+    skew[cols] <- third(o)
   }
-  list(M = M, V0 = V0, N = N)
+  list(M = M, V0 = V0, N = N, skew = skew)
+}
+
+# A standardised statistic of skewness g > 0 read through the chi-square of
+# that skewness, (X - nu) / sqrt(2 nu) with nu = 8 / g^2, onto the normal:
+# the z a Gaussian statistic with the same tail probability would have. Left
+# as it is where g is unknown or nil. Below the chi-square's lower bound the
+# statistic is beyond anything the model gives, and the most negative z
+# the normal's double precision holds is taken.
+.ctAdequacySkewZ <- function(z, g) {
+  out <- z
+  use <- is.finite(z) & is.finite(g) & g > 1e-6
+  if (!any(use)) return(out)
+  nu <- 8 / g[use]^2
+  q <- nu + z[use] * sqrt(2 * nu)
+  lower <- stats::qnorm(stats::pchisq(pmax(q, 0), nu, log.p = TRUE), log.p = TRUE)
+  upper <- -stats::qnorm(stats::pchisq(pmax(q, 0), nu, lower.tail = FALSE, log.p = TRUE),
+    log.p = TRUE)
+  out[use] <- ifelse(z[use] < 0, pmax(lower, -37), upper)
+  out
 }
 
 # Every requested family's per-unit statistics at the parameters `x` (NULL:
@@ -1174,6 +1216,9 @@ ctFitAdequacy <- function(fit, covariates = NULL,
   base <- ifelse(rowlevel, v0, rawspread)
   ok <- is.finite(v) & is.finite(base) & base > 0 & v > 0.01 * base
   z <- ifelse(ok, U / sqrt(pmax(v, 0)), NA_real_)
+  # A statistic whose skewness under the model is known (the periodic
+  # family's) is read through it.
+  if (!is.null(meta$skew)) z <- .ctAdequacySkewZ(z, meta$skew)
   p <- 2 * stats::pnorm(-abs(z))
   okcols <- which(ok)
   Ub <- matrix(NA_real_, nboot, length(okcols))
