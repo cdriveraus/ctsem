@@ -2548,7 +2548,8 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
     base_npar = as.integer(base_npar),
     npar = as.integer(cursor),
     inert = .ctJuliaLaplaceInert(model, setup, levels, dat),
-    hybrid = .ctJuliaLaplaceHybrid(model, setup, levels)
+    hybrid = .ctJuliaLaplaceHybrid(model, setup, levels),
+    quadratic = .ctJuliaLaplaceQuadratic(model, setup, levels)
   )
 }
 
@@ -2607,6 +2608,38 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
 # in parameters and a time dependent predictor, say, as for a study's known
 # response rounding -- is a fixed matrix for each row, and the filter integrates
 # the deviations exactly through it.
+# Whether every unit's inner problem is a concave quadratic in its effects, so
+# that it has exactly one maximum and the engine's mode probes
+# (`_laplace_probe_modes`), which look for a better one, cannot find anything.
+# The hybrid's test for own variances (`.ctJuliaLaplaceHybrid()`), applied to
+# every effect at every level: every indicator Gaussian, no cell referencing a
+# state, every matsetup cell an effect moves in a mean vector (T0MEANS, CINT,
+# MANIFESTMEANS, TDPREDEFFECT) with the affine transform (code 0), and no
+# calculation that reads a state, a mean vector or PARS, any of which could
+# carry an effect into a covariance or a gain. Then each predicted mean is
+# affine in the effects and no covariance depends on them, so the log
+# likelihood is quadratic in them; loadings onto the effects are population
+# parameters and keep it so. Where the probes are needed -- a person's
+# loadings whose sign the data leave open, a person's persistence -- an effect
+# sits in LAMBDA or DRIFT, and this is FALSE.
+.ctJuliaLaplaceQuadratic <- function(model, setup, levels) {
+  if (is.null(setup) || !nrow(setup) || !length(levels)) return(FALSE)
+  if (length(model$manifesttype) && any(as.integer(model$manifesttype) != 0L)) return(FALSE)
+  if ("stateref" %in% names(setup) && any(as.integer(setup$stateref) > 0L)) return(FALSE)
+  calcs <- unlist(model$modelmats$calcs)
+  if (length(calcs) && any(grepl("state[", calcs, fixed = TRUE) |
+      grepl("\\b(T0MEANS|CINT|MANIFESTMEANS|TDPREDEFFECT|PARS)\\[", calcs))) return(FALSE)
+  base <- .ctMatricesList()$base
+  means <- base[c("T0MEANS", "CINT", "MANIFESTMEANS", "TDPREDEFFECT")]
+  param <- as.integer(setup$param)
+  for (lv in levels) for (p in as.integer(lv$re_index)) {
+    rows <- which(param == p)
+    if (!length(rows) || !all(as.integer(setup$matrix[rows]) %in% means) ||
+        !all(as.integer(setup$transform[rows]) == 0L)) return(FALSE)
+  }
+  TRUE
+}
+
 .ctJuliaHybridCalcsOk <- function(model) {
   calcs <- unlist(model$modelmats$calcs)
   if (!length(calcs)) return(TRUE)
@@ -4625,6 +4658,9 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
       laplace_args$hybrid_manifest <- V(as.integer(hybrid$manifest))
       laplace_args$hybrid_slope <- V(as.numeric(hybrid$slope))
     }
+    # Sent only when every unit's inner problem is a concave quadratic
+    # (`.ctJuliaLaplaceQuadratic`), so every other model crosses as before.
+    if (isTRUE(spec$laplace$quadratic)) laplace_args$quadratic <- TRUE
     # Absent unless the fit asked for them, so the engine's own defaults stay
     # the defaults and a spec built before this existed is byte-for-byte as it
     # was. `inner_maxiter` must cross as an integer; see .ctJuliaLaplaceInner().
