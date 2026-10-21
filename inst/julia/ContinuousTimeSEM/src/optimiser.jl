@@ -1028,11 +1028,15 @@ end
 #   because a few small errors are no evidence: with one step there is no
 #   test, and with few the coreset must do clearly better. And the steps
 #   need not have moved every parameter, so the coreset must also carry, in
-#   every parameter, at least half the units' spread of scores where the stage
+#   every parameter, enough of the units' spread of scores where the stage
 #   begins -- the diagonal of their covariance, which estimates the
-#   information (`_ctsem_coreset_shortfall`). Less, and a stage's step there is
-#   off by more than itself, which is where stages stop closing on the full
-#   maximum; more only shortens it. A random effect's sd has its curvature
+#   information (`_ctsem_coreset_shortfall`) -- that a stage's step there is
+#   off by at most `tol`, as the steps' test asks of the steps. Too little
+#   makes a step too long; too much only shortens it, so the test is one-sided.
+#   At the contraction boundary instead (half the information), coresets
+#   chosen for their spread sat just above it, steps along two sds ran up to
+#   twice too long stage after stage, and both collapsed, 20 below the
+#   optimum. A random effect's sd has its curvature
 #   from the spread of the units and from little else: on bigre from refit
 #   starts, coresets of 3-8 of 400 units passed the steps' test, and their
 #   stages took an sd to its floor, 8 and 12 below the full sum's optimum.
@@ -1349,10 +1353,10 @@ How far a coreset's information falls short, at worst over the parameters:
 `(d - d_c) / d_c`, where `d` is the units' spread of scores
 (`_ctsem_coreset_information`, `info`) and `d_c` the coreset's weighted spread
 about its weighted mean. To first order and in each parameter alone, a stage's
-step is off by that factor, so the stages close on the full maximum only while
-it is below one -- the coreset carrying at least half the information in
-every parameter. Carrying more only shortens a step. `Inf` where the coreset
-carries none.
+step is off by that factor: the stages close on the full maximum only while it
+is below one, and `_ctsem_coreset_choose` asks that it be within
+`_CTSEM_CORESET_TOL`. Carrying more only shortens a step. `Inf` where the
+coreset carries none.
 """
 function _ctsem_coreset_shortfall(S::AbstractMatrix, units, w::AbstractVector, info)
     W = sum(w)
@@ -1513,8 +1517,8 @@ newest last -- for a stage carried on, ending with the stage just run. For
 each, the path is fitted on the other steps and the first size within the
 tolerance on the fold is that fold's; the coreset is fitted again on every
 step and on the units' spread of scores at the newest training point, at the
-first size from the largest of them up that carries at least half that spread
-in every parameter (`_ctsem_coreset_shortfall`). Fitted in sample, a coreset carried on near the
+first size from the largest of them up whose shortfall of that spread is within
+the tolerance in every parameter (`_ctsem_coreset_shortfall`). Fitted in sample, a coreset carried on near the
 optimum passed on an error a fraction of the one it met, its stage ran past
 its floor, and the full objective came out worse.
 """
@@ -1564,10 +1568,11 @@ function _ctsem_coreset_choose(c::CTSEMCoresetPlan, scale::AbstractVector, hmul;
         if isfinite(bound) && bound <= tol2
             SK = c.S[end]
             info = _ctsem_coreset_information(SK, scale)
+            tol = _CTSEM_CORESET_TOL[]
             need = largest
             spread = (units, w) -> begin
                 ok = length(units) >= need &&
-                    _ctsem_coreset_shortfall(SK, units, w, info) < 1
+                    _ctsem_coreset_shortfall(SK, units, w, info) <= tol
                 (ok ? 1.0 : 0.0, ok ? 1.0 : 2.0, nothing)
             end
             again = _ctsem_coreset_path(c, 1:nsteps, budget, spread, scale;
