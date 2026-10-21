@@ -619,6 +619,8 @@ function _ctsem_kalman_compact(out)
     return (eta12=out.eta[1:2, :, :], etavar12=etavar, y1=out.y[1, :, :],
         ycov1=out.ycov[1, :, :, :], llrow=out.llrow, subject=out.subject,
         pitlower=out.pitlower, pitupper=out.pitupper,
+        pitgauss=hasproperty(out, :pitgauss) ? out.pitgauss : zeros(0, 0),
+        pitseq=hasproperty(out, :pitseq) ? out.pitseq : zeros(0, 0),
         ess=hasproperty(out, :ess) ? out.ess : Float64[])
 end
 

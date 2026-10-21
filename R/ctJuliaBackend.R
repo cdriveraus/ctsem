@@ -5535,6 +5535,11 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
   if (!is.null(optimcontrol$lbfgs_gll)) {
     common$lbfgs_gll <- as.integer(optimcontrol$lbfgs_gll)[1L]
   }
+  # `coreset`: stretches of the L-BFGS stage on a weighted few of the units,
+  # each checked by a full gradient (`_ctsem_coreset_plan` in the engine), on
+  # the Laplace route; off by default. Sent only when asked for, so that a
+  # default fit's call keeps the shape the package image recorded.
+  if (isTRUE(optimcontrol$coreset)) common$coreset <- TRUE
   # `stochastic`, as on stan: TRUE runs the sgd phase (`_ctsem_sgd`) before
   # L-BFGS, 'auto' runs it above 50 parameters -- stan's own rule -- and FALSE,
   # the julia default, does not. Only on a stage that starts away from the
@@ -5673,6 +5678,18 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
     out
   }
   result <- optimise_once(start)
+  # A jump the optimiser named: the units whose Laplace terms moved with where
+  # their inner solves stopped, integrated by frozen draws from here on
+  # (`.ctLaplaceFrozenRescue()`). Not under a pin, whose wrapper names none.
+  if (!is.null(model_spec$laplace) && !state_explicit && is.null(default_pin)) {
+    rescued <- try(.ctLaplaceFrozenRescue(result, module, objective, common,
+      verbose = verbose), silent = TRUE)
+    if (inherits(rescued, "try-error")) {
+      warning("The fit stopped where the objective jumped; integrating the ",
+        "units that jumped failed (", .ctLaplaceTryReason(rescued), ").",
+        call. = FALSE)
+    } else result <- rescued
+  }
   # The two early phases belong to the first stage, which is the one that
   # starts away from the optimum. An escape below resumes from a pulled-back
   # point beside it, so neither runs again there -- and SAEM's record is the
@@ -5826,6 +5843,9 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
     # The floor the objective was built with; post-fit routes rebuild the
     # objective from the same specification, so they use it too.
     floor = as.character(.ctJuliaOr(model_spec$laplace$inner$floor, "total")),
+    # Units whose Laplace term jumped as the fit went, integrated by frozen
+    # draws from then on (`.ctLaplaceFrozenRescue()`), or NULL.
+    frozen = result$frozen,
     gated_units = if (is.null(result$gated_units)) NA_integer_ else
       as.integer(result$gated_units),
     inner_converged = isTRUE(result$inner_converged),
@@ -6339,8 +6359,12 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
       inverse = .ctBackendResumeInverse(endgame),
       hessian = endgame$hessian, hessian_at = endgame$evaluated_at))
   if (certifying) {
+    frozen <- result$frozen
     correction <- correct(result)
     result <- correction$result
+    # A resume runs on the Laplace objective, and a unit that jumped before
+    # stays integrated by frozen draws in the correction that follows.
+    result$frozen <- .ctLaplaceFrozenMerge(frozen, result$frozen)
   }
   # Random restarts, when asked for, only for a fit still not converged -- see
   # R/ctBackendRestarts.R for when they run and when they deliberately do not
@@ -6609,6 +6633,19 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
     # L-BFGS steps taken on the score outer product's model (lbfgs_scores).
     structured_steps = if (is.null(result$structured_steps)) 0L else
       as.integer(result$structured_steps),
+    # The L-BFGS stage's coreset stages (`optimcontrol$coreset`, Laplace
+    # route): each stage's units, the iterations run on a coreset, and the full
+    # gradients that checked them; 0 when none ran. `full_gradients` counts
+    # the optimiser's gradients of the whole objective, a Hessian's columns
+    # aside. See `_ctsem_coreset_plan` in the engine.
+    coreset_sizes = if (is.null(result$coreset_sizes)) 0L else
+      as.integer(result$coreset_sizes),
+    coreset_iterations = if (is.null(result$coreset_iterations)) 0L else
+      as.integer(result$coreset_iterations),
+    coreset_checks = if (is.null(result$coreset_checks)) 0L else
+      as.integer(result$coreset_checks),
+    full_gradients = if (is.null(result$full_gradients)) NA_integer_ else
+      as.integer(result$full_gradients),
     # Full and subset Hessians the finish formed, the final (certification)
     # one included: that one is handed over and not formed again.
     newton_hessians = if (is.null(result$newton_hessians)) 0L else
@@ -6860,8 +6897,15 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
     # `[[`: `$` falls back to the one field the name begins, so an
     # `uncertaintyControl` given alone was read as the method and stopped the
     # fit in `match.arg()`.
+    # A fit rescued from a jump maximised the hybrid, some units' terms by
+    # frozen draws (`.ctLaplaceFrozenRescue()`), and its finish's Hessian is
+    # the hybrid's; 'checked' would sample the Laplace objective, which jumps
+    # there (round-9 stall: ESS 3, Pareto k 3.2, with no budget to stop it).
+    # So its default is that Hessian's normal, which the quadrature
+    # correction, keeping those units flagged, then replaces.
     uncertainty <- .ctJuliaOr(optimcontrol[["uncertainty"]],
-      if (length(out$model_spec$subject_weights)) "sandwich" else "checked")
+      if (length(out$model_spec$subject_weights)) "sandwich" else
+        if (!is.null(out$laplace$frozen)) "hessian" else "checked")
     # One way to sample: `ctFit(optimize = FALSE)`, which places the sampler
     # through this same pipeline before ever reaching this stage (see
     # `.ctJuliaSampleFit()`, R/ctBackendSample.R). Asking for

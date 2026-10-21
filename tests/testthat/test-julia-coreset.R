@@ -68,7 +68,7 @@ test_that("the selection finds a small coreset where the units' terms span few d
   # a handful of units, since three carry the sum and every unit costs.
   round <- list(values = 100, grads = 30, checks = 8)
   cf <- ctsem:::.ctCoresetChoose(X, y, seq_len(200), round)
-  expect_false(is.null(cf))
+  expect_gt(length(cf), 0L)
   expect_lte(sum(cf$w > 0), 10L)
   expect_lt(cf$cost, round$values + 2 * round$grads)
   held <- 201:draws
@@ -79,8 +79,8 @@ test_that("the selection finds a small coreset where the units' terms span few d
   # a coreset that held them (a 200-person fit once handed the engine an
   # empty unit list).
   against <- 50 - X
-  expect_null(ctsem:::.ctCoresetChoose(against, y, seq_len(200), round))
-  expect_null(ctsem:::.ctCoresetChoose(against, y, seq_len(200), round, start = 1:3))
+  expect_length(ctsem:::.ctCoresetChoose(against, y, seq_len(200), round), 0L)
+  expect_length(ctsem:::.ctCoresetChoose(against, y, seq_len(200), round, start = 1:3), 0L)
   # Non-negative least squares agrees with a bounded optimiser.
   A <- X[1:200, 1:8]
   b <- y[1:200]
@@ -109,23 +109,29 @@ test_that("the sampler's density with a coreset behind it follows the full densi
   cov <- as.matrix(fit$estimate$cov)
   set.seed(9)
   draw <- function(n) ctsem:::ctOptimNormalDraws(est, cov * 2, n)
-  # Training rounds are the full density, until a coreset passes (at most
-  # three).
+  # Rounds with no coreset are the full density, half a round at a time; once
+  # one is chosen, the rest of the round runs on it, checked (at most three).
   first <- NULL
   v1 <- NULL
+  t1 <- NULL
   for (round in 1:3) {
     x <- draw(100)
+    had <- isTRUE(attr(lpg, "coreset")()$used)
     v <- attr(lpg, "batch")(x)
-    expect_equal(v, attr(full, "batch")(x), tolerance = 1e-8)
+    truth1 <- attr(full, "batch")(x)
+    if (!had) expect_equal(v[1:50], truth1[1:50], tolerance = 1e-8)
+    near <- truth1 > max(truth1) - 15
+    expect_lt(max(abs((v - truth1)[near])), 1)
     first <- rbind(first, x)
     v1 <- c(v1, v)
+    t1 <- c(t1, truth1)
     if (isTRUE(attr(lpg, "coreset")()$used)) break
   }
   rec <- attr(lpg, "coreset")()
   expect_true(rec$used)
   expect_equal(rec$units, 100L)
   expect_lt(rec$expected_round_cost, 100 + 2 * 30)
-  expect_equal(attr(lpg, "cost")(), nrow(first))
+  expect_lte(attr(lpg, "cost")(), nrow(first))
   spent <- attr(lpg, "cost")()
   # Rounds on the coreset. A round whose check fails costs a full one (one
   # first coreset in five, over five seeds on this model, against about 20
@@ -156,7 +162,7 @@ test_that("the sampler's density with a coreset behind it follows the full densi
   expect_false(is.null(rec$final))
   if (!is.null(fixed)) {
     top <- order(-logw)[1:20]
-    tw <- c(v1, truth)[top]
+    tw <- c(t1, truth)[top]
     expect_lt(max(abs((fixed[top] - logw[top]) - (tw - logp[top]))), 1e-6)
   }
 })

@@ -141,9 +141,10 @@ test_that("a slow process drives its latent through the drift and nothing else",
   sm <- ctModelSlowComponent(m, 1)
   expect_equal(sm$latentNames, c('eta1', 'eta2', 'slow_eta1'))
   mats <- ctModelMatrices(sm)
-  # Its persistence and its effect on the latent are free; nothing reaches it
+  # Its persistence is a fraction of the latent's, so it cannot come out the
+  # faster of the two; its effect on the latent is free; nothing reaches it
   # from the fast states; it has no indicators and no intercept.
-  expect_equal(unname(mats$DRIFT[3, 3]), 'drift_slow_eta1')
+  expect_equal(unname(mats$DRIFT[3, 3]), 'drift_eta1 * inv_logit(drift_slow_eta1)')
   expect_equal(unname(mats$DRIFT[1, 3]), 'drift_eta1_slow_eta1')
   expect_equal(unname(mats$DRIFT[3, 1:2]), c('0', '0'))
   expect_equal(unname(mats$DRIFT[2, 3]), '0')
@@ -163,13 +164,86 @@ test_that("a slow process drives its latent through the drift and nothing else",
   # where the model's default would add them.
   expect_false(any(free$indvarying))
   for (e in grep('_effect$', names(p), value = TRUE)) expect_true(all(free[[e]] == 'FALSE'))
-  # The persistence takes ctsem's default drift transform.
-  expect_identical(free$transform[free$param == 'drift_slow_eta1'],
-    .ctModelDefaultFreePar('DRIFT', 3L, 3L, TRUE)$transform)
+  # The fraction is a PARS parameter on the raw scale, and the latent's drift
+  # is declared there too, under its own name and with its own settings, so
+  # the cell can read it.
+  pp <- p[p$matrix == 'PARS', ]
+  expect_identical(pp$transform[pp$param == 'drift_slow_eta1'], 'param')
+  expect_false(pp$indvarying[pp$param == 'drift_slow_eta1'])
+  d11 <- m$pars[m$pars$matrix == 'DRIFT' & m$pars$row == 1 & m$pars$col == 1, ]
+  expect_identical(pp$transform[pp$param == 'drift_eta1'], d11$transform)
   # The latents it was not asked for are untouched.
   cells <- function(q) { q <- q[q$matrix == 'DRIFT' & q$row <= 2 & q$col <= 2, ]
     q$param[order(q$row, q$col)] }
   expect_identical(cells(p), cells(m$pars))
+})
+
+test_that("a latent's drift declared for its slow process keeps its individual variation", {
+  # The fixture's eta2 drift varies over people; its slow process's rate is a
+  # fraction of each person's.
+  p <- ctModelSlowComponent(.ho_ct(), 2)$pars
+  pp <- p[p$matrix == 'PARS', ]
+  expect_true(pp$indvarying[pp$param == 'drift_eta2'])
+  expect_identical(p$param[p$matrix == 'DRIFT' & p$row == 3 & p$col == 3],
+    'drift_eta2 * inv_logit(drift_slow_eta2)')
+  # A fixed drift enters as its value; an expression leaves the slow drift
+  # free and unordered.
+  f <- .ho_ct()
+  k <- which(f$pars$matrix == 'DRIFT' & f$pars$row == 1 & f$pars$col == 1)
+  f$pars$param[k] <- NA; f$pars$value[k] <- -3
+  expect_identical(ctModelMatrices(ctModelSlowComponent(f, 1))$DRIFT[3, 3],
+    '(-3) * inv_logit(drift_slow_eta1)')
+  e <- suppressMessages(ctModel(type = 'ct', silent = TRUE, manifestNames = 'Y1',
+    latentNames = 'eta1', LAMBDA = diag(1), DRIFT = matrix('-exp(dr)'), PARS = c('dr')))
+  ep <- ctModelSlowComponent(e, 1)$pars
+  expect_identical(ep$param[ep$matrix == 'DRIFT' & ep$row == 2 & ep$col == 2], 'drift_slow_eta1')
+})
+
+test_that("a drift declared for a slow process keeps its place among the random effects", {
+  # Random effects are ordered as their parameters are declared, so the
+  # declaration sits straight after the cell it came from, and stays there
+  # through later edits; a warm start's correlation coordinates depend on it.
+  adjacent <- function(p, name) {
+    k <- which(p$matrix == 'PARS' & p$param == name)
+    length(k) == 1L && k > 1L && p$matrix[k - 1L] == 'DRIFT' && p$param[k - 1L] == name
+  }
+  once <- ctModelSlowComponent(.ho_ct(), 2)
+  expect_true(adjacent(once$pars, 'drift_eta2'))
+  twice <- ctModelPeriodicComponent(ctModelSlowComponent(once, 1), 24, indices = 1)
+  expect_true(adjacent(twice$pars, 'drift_eta2'))
+  expect_true(adjacent(twice$pars, 'drift_eta1'))
+})
+
+test_that("a latent level takes the marker's varying intercept into CINT", {
+  m <- suppressMessages(ctModel(type = 'ct', silent = TRUE, manifestNames = c('Y1', 'Y2', 'Y3'),
+    latentNames = c('eta1', 'eta2'), LAMBDA = matrix(c(1, 'l2', 0, 0, 0, 1), 3),
+    CINT = matrix(0, 2), MANIFESTMEANS = matrix(c('mm1', 'mm2', 'mm3'), 3)))
+  m$pars$indvarying <- m$pars$matrix %in% 'MANIFESTMEANS'
+  lm <- suppressMessages(ctModelLatentLevel(m))
+  expect_identical(attr(lm, 'moved'), c('eta1', 'eta2'))
+  p <- lm$pars
+  get <- function(mat, r) p[p$matrix == mat & p$row == r & p$col == 1, ]
+  # Each latent's CINT free and varying, its marker's intercept fixed at 0,
+  # its initial mean stationary.
+  expect_identical(get('CINT', 1)$param, 'cint_eta1')
+  expect_true(get('CINT', 1)$indvarying)
+  expect_true(is.na(get('MANIFESTMEANS', 1)$param))
+  expect_equal(as.numeric(get('MANIFESTMEANS', 1)$value), 0)
+  expect_identical(get('T0MEANS', 1)$param, 'stationary')
+  # Item 2, not a marker, keeps its own varying intercept.
+  expect_identical(get('MANIFESTMEANS', 2)$param, 'mm2')
+  expect_true(get('MANIFESTMEANS', 2)$indvarying)
+  expect_identical(get('CINT', 2)$param, 'cint_eta2')
+  # A latent with no marker, or a free CINT, is left as it is, and says so.
+  m2 <- m
+  m2$pars$value[m2$pars$matrix == 'LAMBDA' & m2$pars$row == 1 & m2$pars$col == 1] <- 0.5
+  expect_message(x <- ctModelLatentLevel(m2, 'eta1'), 'no indicator')
+  expect_identical(attr(x, 'moved'), character())
+  m3 <- m
+  k <- which(m3$pars$matrix == 'CINT' & m3$pars$row == 1)
+  m3$pars$param[k] <- 'c1'; m3$pars$value[k] <- NA
+  expect_message(ctModelLatentLevel(m3, 1), 'CINT is not fixed')
+  expect_error(ctModelLatentLevel(m, 'nope'), 'latents')
 })
 
 test_that("slow processes' innovations correlate with each other, added together or later", {
@@ -185,23 +259,32 @@ test_that("slow processes' innovations correlate with each other, added together
 
 test_that("the search starts a slow process away from the stationary point", {
   m <- .ho_ct()
-  # The effect at one; the persistence a tenth of the latent's, through the
-  # inverse of the default transform. Without a fit to read the latent's drift
-  # from, the pilot's -0.2.
+  # The effect at one; the persistence a tenth of the latent's, which for an
+  # ordered slow process is a raw fraction of qlogis(0.1) whatever the
+  # latent's rate, free or fixed.
   st <- ctsem:::.ctImproveSlowStart(m, NULL, 1)
   expect_equal(unname(st['drift_eta1_slow_eta1']), 1)
-  tf <- function(param) eval(parse(text = .ctModelDefaultFreePar('DRIFT', 3L, 3L, TRUE)$transform),
-    list(param = param, log1p_exp = ctsem:::log1p_exp))
-  expect_equal(tf(unname(st['drift_slow_eta1'])), -0.2, tolerance = 1e-6)
+  expect_equal(unname(st['drift_slow_eta1']), stats::qlogis(0.1))
   fixedfast <- m
   k <- which(fixedfast$pars$matrix == 'DRIFT' & fixedfast$pars$row == 1 & fixedfast$pars$col == 1)
   fixedfast$pars$param[k] <- NA; fixedfast$pars$value[k] <- -3
-  expect_equal(tf(unname(ctsem:::.ctImproveSlowStart(fixedfast, NULL, 1)['drift_slow_eta1'])),
-    -0.3, tolerance = 1e-6)
+  expect_equal(unname(ctsem:::.ctImproveSlowStart(fixedfast, NULL, 1)['drift_slow_eta1']),
+    stats::qlogis(0.1))
+  # Unordered (the latent's drift an expression): a tenth through the inverse
+  # of the default transform, the pilot's -0.2 without a fit to read it from.
+  e <- suppressMessages(ctModel(type = 'ct', silent = TRUE, manifestNames = 'Y1',
+    latentNames = 'eta1', LAMBDA = diag(1), DRIFT = matrix('-exp(dr)'), PARS = c('dr')))
+  tf <- function(param) eval(parse(text = .ctModelDefaultFreePar('DRIFT', 2L, 2L, TRUE)$transform),
+    list(param = param, log1p_exp = ctsem:::log1p_exp))
+  expect_equal(tf(unname(ctsem:::.ctImproveSlowStart(e, NULL, 1)['drift_slow_eta1'])), -0.2,
+    tolerance = 1e-6)
   # The evidence: the latent's own updates still positively correlated over
   # some gap; a negative correlation is not evidence of a slow process.
+  # A statistic says what it is about in columns, as ctFitAdequacy() sets them.
   ad <- list(statistics = data.frame(family = 'latent', statistic = c('eta1~eta1 gap <=1',
     'eta1~eta1 gap >5', 'eta2~eta2 gap >5', 'eta1~eta2 gap >5'),
+    variable = c('eta1', 'eta1', 'eta2', 'eta1'), with = c('eta1', 'eta1', 'eta2', 'eta2'),
+    gap = c('<=1', '>5', '>5', '>5'),
     z = c(1, 3, -4, 5), p = c(0.3, 0.003, 6e-5, 6e-7), stringsAsFactors = FALSE))
   # The smallest p, times the gap bins it is the smallest of.
   expect_equal(ctsem:::.ctImproveSlowEvidence(ad, 'eta1'), 0.006)
@@ -302,8 +385,8 @@ test_that("correlated errors get a shared process from the checks; errorcov free
   expect_identical(pe[[1]]$family, 'fixed')
   expect_identical(pe[[1]]$label, 'MANIFESTVAR[Y2,Y1] freed')
   ad <- list(statistics = data.frame(family = c('pairs', 'residuals'),
-    statistic = c('Y1:Y2', 'Y1~Y1 gap <=3'), z = c(-6, -1), p = c(2e-9, 0.3),
-    stringsAsFactors = FALSE))
+    statistic = c('Y1:Y2', 'Y1~Y1 gap <=3'), variable = c('Y1', 'Y1'), with = c('Y2', 'Y1'),
+    gap = c(NA, '<=3'), z = c(-6, -1), p = c(2e-9, 0.3), stringsAsFactors = FALSE))
   pr <- ctsem:::.ctImproveStructural(m, 'unique', NULL, ad, NULL, 0.05)
   expect_length(pr, 1L)
   expect_identical(pr[[1]]$label, 'Y1 and Y2 given a process they share')
@@ -330,8 +413,10 @@ test_that("the search reads a cycle's period and an item's own correlation from 
   ad <- list(families = data.frame(family = c('periodic', 'residuals'), p = c(1e-4, 0.01)),
     statistics = data.frame(family = c('periodic', 'periodic', 'periodic', 'residuals',
       'residuals'), statistic = c('Y1 period 24', 'Y2 period 12', 'latent eta1 period 8',
-      'Y2~Y2 gap <=3', 'Y1~Y1 gap <=3'), z = c(4, -6, 3, 3.5, -2),
-      p = c(6e-5, 2e-9, 3e-3, 5e-4, 0.05), stringsAsFactors = FALSE))
+      'Y2~Y2 gap <=3', 'Y1~Y1 gap <=3'),
+      variable = c('Y1', 'Y2', 'latent eta1', 'Y2', 'Y1'), with = c(NA, NA, NA, 'Y2', 'Y1'),
+      gap = c(NA, NA, NA, '<=3', '<=3'), period = c(24, 12, 8, NA, NA),
+      z = c(4, -6, 3, 3.5, -2), p = c(6e-5, 2e-9, 3e-3, 5e-4, 0.05), stringsAsFactors = FALSE))
   cyc <- ctsem:::.ctImprovePeriodicEvidence(ad)
   expect_equal(cyc$period, 24)
   # The strongest positive period's p times the periods scanned, not the
@@ -382,7 +467,8 @@ test_that("a model's cycles are not proposed again, nor given slow processes or 
   expect_equal(ctsem:::.ctModelCyclePeriods(.ho_ct()), numeric())
   ad <- list(families = data.frame(family = 'periodic', p = 1e-4),
     statistics = data.frame(family = 'periodic',
-      statistic = c('latent eta1 period 24', 'latent eta1 period 12'), z = c(8, 4),
+      statistic = c('latent eta1 period 24', 'latent eta1 period 12'),
+      variable = 'latent eta1', period = c(24, 12), z = c(8, 4),
       p = c(1e-15, 3e-5), stringsAsFactors = FALSE))
   # The strongest period the model lacks, not the one it has.
   expect_equal(ctsem:::.ctImprovePeriodicEvidence(ad)$period, 24)
