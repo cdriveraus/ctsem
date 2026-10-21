@@ -2646,6 +2646,12 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
             _ctsem_prior_objective(objective), length(start_values)),
             length(start_values))
     batching() = batcher !== nothing && !_ctsem_batch_full(batcher)
+    # The last iteration a coreset stage was in force: the stall watch judges
+    # only windows of full iterations after it. A window holding a stage's
+    # iterations measures the coreset's path, and one holding a stage that was
+    # sent back reads as no progress near the optimum: that ended fits as
+    # stalled and ran the stall escape's refits there, on the full sum.
+    coreset_last = Ref(typemin(Int) >> 1)
     # Coreset stages on the Laplace route (`_ctsem_coreset_plan`): stretches of
     # the L-BFGS stage on a weighted few of the units, each checked by a full
     # gradient. `nothing` on any other route, with too few units, off, or on a
@@ -2797,7 +2803,10 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
         # fit's, and a batch that has gone quiet is a batch about to grow.
         batching() && return false
         # Nor in a coreset stage, whose model and value are the coreset's.
-        _ctsem_coreset_live(coreseter) && return false
+        if _ctsem_coreset_live(coreseter)
+            coreset_last[] = Int(latest.iteration)
+            return false
+        end
         if handover[] > 0
             predicted = _ctsem_predicted_gain(directional)
             if predicted < gap_tol ||
@@ -2811,7 +2820,8 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
         # half is a stopping rule on its own -- see `_ctsem_stall_verdict!` for
         # why, and for the cooldown that keeps a merely slow fit from being
         # asked over and over.
-        if _ctsem_stall_verdict!(stall, trace, latest.iteration, objective,
+        if latest.iteration - coreset_last[] > stall.window &&
+                _ctsem_stall_verdict!(stall, trace, latest.iteration, objective,
                 _ctsem_params(objective), current_x,
                 _ctsem_saturation_range(objective, current_x), stall_ratio;
                 tolerance=converge_tol, progress=_ctsem_probe_progress(reporter),
