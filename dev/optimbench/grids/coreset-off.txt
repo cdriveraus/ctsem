@@ -1,0 +1,56 @@
+# coreset-off grid: grids/coreset.txt's cells with the coreset stages off
+# (variant nocoreset), the same ids, so that summarise.R pairs the two.
+#
+#
+# id                                    model        data route      start                    variant
+control.1                               panel        1    augmented  zeros                    control
+cf_gaussian.lap.d1.s1.default           cf_gaussian  1    laplace    default:1                nocoreset
+cf_gaussian.lap.d1.s2.default           cf_gaussian  1    laplace    default:2                nocoreset
+cf_binary.lap.d1.s1.default             cf_binary    1    laplace    default:1                nocoreset
+cf_binary.lap.d1.s2.default             cf_binary    1    laplace    default:2                nocoreset
+cf_ordinal.lap.d1.s1.default            cf_ordinal   1    laplace    default:1                nocoreset
+cf_ordinal.lap.d1.s2.default            cf_ordinal   1    laplace    default:2                nocoreset
+cf_mixed.lap.d1.s1.default              cf_mixed     1    laplace    default:1                nocoreset
+cf_mixed.lap.d1.s2.default              cf_mixed     1    laplace    default:2                nocoreset
+gA1.lap.cfg.s1.default                  gA1          cfg  laplace    default:1                nocoreset
+gA1.lap.cfg.s2.default                  gA1          cfg  laplace    default:2                nocoreset
+gA1.lap.cfg.s3.default                  gA1          cfg  laplace    default:3                nocoreset
+gA14.lap.cfg.s1.default                 gA14         cfg  laplace    default:1                nocoreset
+gA14.lap.cfg.s2.default                 gA14         cfg  laplace    default:2                nocoreset
+gA14.lap.cfg.s3.default                 gA14         cfg  laplace    default:3                nocoreset
+gB2.lap.cfg.s1.default                  gB2          cfg  laplace    default:1                nocoreset
+gB2.lap.cfg.s2.default                  gB2          cfg  laplace    default:2                nocoreset
+gB2.lap.cfg.s3.default                  gB2          cfg  laplace    default:3                nocoreset
+gB8.lap.cfg.s1.default                  gB8          cfg  laplace    default:1                nocoreset
+gB8.lap.cfg.s2.default                  gB8          cfg  laplace    default:2                nocoreset
+gB8.lap.cfg.s3.default                  gB8          cfg  laplace    default:3                nocoreset
+gC2.lap.cfg.s1.default                  gC2          cfg  laplace    default:1                nocoreset
+gC2.lap.cfg.s2.default                  gC2          cfg  laplace    default:2                nocoreset
+gC2.lap.cfg.s3.default                  gC2          cfg  laplace    default:3                nocoreset
+gC8.lap.cfg.s1.default                  gC8          cfg  laplace    default:1                nocoreset
+gC8.lap.cfg.s2.default                  gC8          cfg  laplace    default:2                nocoreset
+gC8.lap.cfg.s3.default                  gC8          cfg  laplace    default:3                nocoreset
+gD1.lap.cfg.s1.default                  gD1          cfg  laplace    default:1                nocoreset
+gD1.lap.cfg.s2.default                  gD1          cfg  laplace    default:2                nocoreset
+gD1.lap.cfg.s3.default                  gD1          cfg  laplace    default:3                nocoreset
+gD3.lap.cfg.s1.default                  gD3          cfg  laplace    default:1                nocoreset
+gD3.lap.cfg.s2.default                  gD3          cfg  laplace    default:2                nocoreset
+gD3.lap.cfg.s3.default                  gD3          cfg  laplace    default:3                nocoreset
+acnonlin.lap.cfg.s1.default             acnonlin     cfg  laplace    default:1                nocoreset
+acnonlin.lap.cfg.s2.default             acnonlin     cfg  laplace    default:2                nocoreset
+mvmix.lap.cfg.s1.default                mvmix        cfg  laplace    default:1                nocoreset
+mvmix.lap.cfg.s2.default                mvmix        cfg  laplace    default:2                nocoreset
+jflat.lap.cfg.flatdrift8.default        jflat        cfg  laplace    stored:flatdrift8        nocoreset
+jflat.lap.cfg.s1.default                jflat        cfg  laplace    default:1                nocoreset
+gN1.lap.cfg.s1.default                  gN1          cfg  laplace    default:1                nocoreset
+gN1.lap.cfg.s2.default                  gN1          cfg  laplace    default:2                nocoreset
+gN1.lap.cfg.s3.default                  gN1          cfg  laplace    default:3                nocoreset
+gN3.lap.cfg.s1.default                  gN3          cfg  laplace    default:1                nocoreset
+gN3.lap.cfg.s2.default                  gN3          cfg  laplace    default:2                nocoreset
+gN3.lap.cfg.s3.default                  gN3          cfg  laplace    default:3                nocoreset
+ordinal.lap.d1.s1.default               ordinal      1    laplace    default:1                nocoreset
+ordinal.lap.d1.s2.default               ordinal      1    laplace    default:2                nocoreset
+anomS1.lap.cfg.s1.default               anomS1       cfg  laplace    default:1                nocoreset
+anomS2.lap.cfg.s1.default               anomS2       cfg  laplace    default:1                nocoreset
+anomS1.lap.cfg.anomS1_spurious.default  anomS1       cfg  laplace    stored:anomS1_spurious   nocoreset
+anomS2.lap.cfg.anomS2_spurious.default  anomS2       cfg  laplace    stored:anomS2_spurious   nocoreset

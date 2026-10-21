@@ -5535,6 +5535,11 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
   if (!is.null(optimcontrol$lbfgs_gll)) {
     common$lbfgs_gll <- as.integer(optimcontrol$lbfgs_gll)[1L]
   }
+  # `coreset`: stretches of the L-BFGS stage on a weighted few of the units,
+  # each checked by a full gradient (`_ctsem_coreset_plan` in the engine), on
+  # the Laplace route; off by default. Sent only when asked for, so that a
+  # default fit's call keeps the shape the package image recorded.
+  if (isTRUE(optimcontrol$coreset)) common$coreset <- TRUE
   # `stochastic`, as on stan: TRUE runs the sgd phase (`_ctsem_sgd`) before
   # L-BFGS, 'auto' runs it above 50 parameters -- stan's own rule -- and FALSE,
   # the julia default, does not. Only on a stage that starts away from the
@@ -6609,6 +6614,19 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
     # L-BFGS steps taken on the score outer product's model (lbfgs_scores).
     structured_steps = if (is.null(result$structured_steps)) 0L else
       as.integer(result$structured_steps),
+    # The L-BFGS stage's coreset stages (`optimcontrol$coreset`, Laplace
+    # route): each stage's units, the iterations run on a coreset, and the full
+    # gradients that checked them; 0 when none ran. `full_gradients` counts
+    # the optimiser's gradients of the whole objective, a Hessian's columns
+    # aside. See `_ctsem_coreset_plan` in the engine.
+    coreset_sizes = if (is.null(result$coreset_sizes)) 0L else
+      as.integer(result$coreset_sizes),
+    coreset_iterations = if (is.null(result$coreset_iterations)) 0L else
+      as.integer(result$coreset_iterations),
+    coreset_checks = if (is.null(result$coreset_checks)) 0L else
+      as.integer(result$coreset_checks),
+    full_gradients = if (is.null(result$full_gradients)) NA_integer_ else
+      as.integer(result$full_gradients),
     # Full and subset Hessians the finish formed, the final (certification)
     # one included: that one is handed over and not formed again.
     newton_hessians = if (is.null(result$newton_hessians)) 0L else
