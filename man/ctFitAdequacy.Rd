@@ -191,10 +191,13 @@ they are independent over rows under the model, so a sum of products over
 pairs of rows has the sum of the products' squares as its variance, which
 holds with heavy tails or a changing variance; estimating the parameters
 takes a known part of it away. That is the variance of the residual,
-latent, volatility, within-row, periodic and covariate families; the
-distribution and fit families,
-whose statistics are sums of high powers, use the spread of the units'
-contributions and a studentised bootstrap over units. Within a family the
+latent, volatility, within-row, periodic and covariate families. A periodic
+statistic is in each unit a quadratic form of rank two in its errors, the
+periodogram, skewed to the right however many units there are; its z is
+read through a chi-square of the skewness that form has under the model,
+worked out exactly from the unit's times. The distribution and fit
+families, whose statistics are sums of high powers, use the spread of the
+units' contributions and a studentised bootstrap over units. Within a family the
 largest standardised statistic and the sum of their squares are calibrated
 with the statistics' correlation over units
 and combined, with any exact p-values the family has, by the Cauchy

@@ -366,11 +366,21 @@ ctModelImprove <- function(fit, covariates = NULL,
       edits <- lapply(batch, function(prop) try(prop$edit(model, data, covariates),
         silent = TRUE))
       for (prop in batch) say("Round ", step, ": refitting with ", prop$label)
-      refits <- .ctImproveRefits(current, edits, lapply(batch, `[[`, 'start'), cores,
-        slowest, progress = if (isTRUE(verbose)) list(label = paste0("Round ", step, ": "),
+      # A proposal with several starts (`starts`: a time scale at each end of
+      # the design's range) is refitted from each, side by side where the
+      # cores allow, and its best fit is its refit.
+      runs <- unlist(lapply(seq_along(batch), function(b) {
+        s <- batch[[b]]$starts
+        if (length(s) > 1L) lapply(s, function(x) list(b = b, start = x)) else
+          list(list(b = b, start = if (length(s)) s[[1]] else batch[[b]]$start))
+      }), recursive = FALSE)
+      ran <- .ctImproveRefits(current, lapply(runs, function(r) edits[[r$b]]),
+        lapply(runs, `[[`, 'start'), cores, slowest,
+        progress = if (isTRUE(verbose)) list(label = paste0("Round ", step, ": "),
           change = batch[[1]]$label,
           file = if (!is.null(checkpoint)) paste0(checkpoint, '.refit.rds')))
-      slowest <- max(slowest, attr(refits, 'seconds'))
+      refits <- .ctImproveBestOf(ran, vapply(runs, `[[`, 0L, 'b'), length(batch))
+      slowest <- max(slowest, attr(ran, 'seconds'))
       say("Round ", step, ": refit took ", .ctImproveRefitReport(refits))
       for (b in seq_along(batch)) {
         prop <- batch[[b]]
@@ -1062,16 +1072,30 @@ print.ctModelProposals <- function(x, digits = 3, ...) {
   }
   # An item whose errors stay correlated with its own over time, given a
   # process of its own; ranked by that evidence.
+  # The data can hold more than one time scale, so where the evidence stays
+  # after one process, another is proposed for the same items, under a name of
+  # its own (u_<items>_2, ...); each is refitted from both ends of the
+  # design's time scales (.ctImproveTimescales).
+  scales <- if (is.null(current)) c(short = NA_real_, long = NA_real_) else
+    .ctImproveTimescales(model, current)
+  freename <- function(base) {
+    name <- base; k <- 1L
+    while (name %in% model$latentNames) { k <- k + 1L; name <- paste0(base, '_', k) }
+    name
+  }
   if ('unique' %in% relax && isTRUE(model$continuoustime)) {
     for (item in model$manifestNames) {
-      if (paste0('u_', item) %in% model$latentNames) next
       evidence <- .ctImproveOwnEvidence(ad, 'residuals', item)
       if (!is.finite(evidence)) next
-      out[[length(out) + 1L]] <- list(key = paste0('unique:', item), family = 'unique',
-        label = paste0(item, ' given a process of its own'), p = evidence, rank = evidence,
-        start = .ctImproveUniqueStart(model, current, item),
-        edit = local({ item <- item; function(model, data, covs, args = list())
-          list(model = ctModelUniqueProcess(model, item), data = data) }))
+      name <- freename(paste0('u_', item))
+      again <- name != paste0('u_', item)
+      out[[length(out) + 1L]] <- list(key = paste0('unique:', name), family = 'unique',
+        label = paste0(item, ' given ', if (again) 'another process' else 'a process',
+          ' of its own'), p = evidence, rank = evidence,
+        starts = .ctImproveStartsAt(scales, function(h)
+          .ctImproveUniqueStart(model, current, item, halflife = h, name = name)),
+        edit = local({ item <- item; name <- name; function(model, data, covs, args = list())
+          list(model = ctModelUniqueProcess(model, item, name = name), data = data) }))
     }
   }
   # Two items whose errors are correlated within an occasion (the pairs
@@ -1086,16 +1110,20 @@ print.ctModelProposals <- function(x, digits = 3, ...) {
       items <- c(pr$variable[r], pr$with[r])
       if (!all(items %in% model$manifestNames)) next
       items <- model$manifestNames[sort(match(items, model$manifestNames))]
-      if (paste0('u_', paste(items, collapse = '_')) %in% model$latentNames) next
+      name <- freename(paste0('u_', paste(items, collapse = '_')))
+      again <- name != paste0('u_', paste(items, collapse = '_'))
       evidence <- min(1, pr$p[r] * nrow(pr))
       if (!isTRUE(evidence < alpha)) next
-      out[[length(out) + 1L]] <- list(key = paste0('shared:', paste(items, collapse = ',')),
-        family = 'unique', label = paste0(items[1], ' and ', items[2],
-          ' given a process they share'), p = evidence, rank = evidence,
-        start = .ctImproveUniqueStart(model, current, items, shared = TRUE,
-          sign = if (pr$z[r] < 0) -1 else 1),
-        edit = local({ items <- items; function(model, data, covs, args = list())
-          list(model = ctModelUniqueProcess(model, items, shared = TRUE), data = data) }))
+      sign <- if (pr$z[r] < 0) -1 else 1
+      out[[length(out) + 1L]] <- list(key = paste0('shared:', name),
+        family = 'unique', label = paste0(items[1], ' and ', items[2], ' given ',
+          if (again) 'another process' else 'a process', ' they share'), p = evidence,
+        rank = evidence,
+        starts = .ctImproveStartsAt(scales, function(h) .ctImproveUniqueStart(model,
+          current, items, shared = TRUE, sign = sign, halflife = h, name = name)),
+        edit = local({ items <- items; name <- name
+          function(model, data, covs, args = list()) list(model = ctModelUniqueProcess(model,
+            items, shared = TRUE, name = name), data = data) }))
     }
   }
   # A slow process or a second order for a latent with innovations of its
@@ -1120,7 +1148,9 @@ print.ctModelProposals <- function(x, digits = 3, ...) {
       out[[length(out) + 1L]] <- list(key = paste0('slow:', lat[i]), family = 'slow',
         label = paste0(lat[i], ' driven by a slow process'), p = evidence,
         rank = if (is.finite(evidence)) evidence else 1,
-        start = .ctImproveSlowStart(model, current, i),
+        starts = c(list(.ctImproveSlowStart(model, current, i)),
+          .ctImproveStartsAt(scales['long'], function(h)
+            .ctImproveSlowStart(model, current, i, halflife = h))),
         edit = local({ i <- i; function(model, data, covs, args = list())
           list(model = ctModelSlowComponent(model, i), data = data) }))
     }
@@ -1273,6 +1303,37 @@ print.ctModelProposals <- function(x, digits = 3, ...) {
   setdiff(seq_len(model$n.latent), quiet)
 }
 
+# The time scales a study's design resolves, from the current fit's data: the
+# median interval between a subject's rows, the shortest a process can be told
+# from noise at, and a quarter of the median subject's span from first to last
+# row, the longest the records still cover several times over. A component
+# with a time scale of its own -- a process of an item's own or shared by
+# several, a slow process -- is refitted from both ends of that range and the
+# better fit kept: from one start, the refit keeps to whichever time scale it
+# began nearest, and the data can hold several. On the tutorial's empirical
+# example a shared process added from the short end came out at 0.0025 hours
+# and gained 30 log likelihood units, from a week 116 hours and 79; with one
+# time scale in simulated data (1.5, 8 or 48 hours) both ends found it.
+.ctImproveTimescales <- function(model, current) {
+  d <- try(.ctFitLongData(current), silent = TRUE)
+  if (inherits(d, 'try-error') || is.null(d)) return(c(short = NA_real_, long = NA_real_))
+  times <- split(d[[model$timeName]], d[[model$subjectIDname]])
+  gaps <- unlist(lapply(times, function(t) diff(sort(t))))
+  span <- vapply(times, function(t) diff(range(t)), 0)
+  short <- stats::median(gaps[is.finite(gaps) & gaps > 0])
+  long <- stats::median(span[is.finite(span) & span > 0]) / 4
+  # Two ends only where they are apart: on a short record one start serves.
+  if (!is.finite(long) || !is.finite(short) || long < 3 * short) long <- NA_real_
+  c(short = short, long = long)
+}
+
+# A component's starts at each end of the time scales (`.ctImproveTimescales`),
+# by `fun(halflife)`; one where the design spans no range.
+.ctImproveStartsAt <- function(scales, fun) {
+  out <- Filter(Negate(is.null), lapply(scales[is.finite(scales)], fun))
+  if (length(out)) out else NULL
+}
+
 # Raw starts for a slow process added to latent `i`: its effect at one (zero
 # is a stationary point of both it and the slow process), its persistence a
 # tenth of the latent's own. Where ctModelSlowComponent() orders the two, the
@@ -1281,15 +1342,12 @@ print.ctModelProposals <- function(x, digits = 3, ...) {
 # latent's drift is an expression), a tenth through the inverse of ctsem's
 # default drift transform, -(1e-6 + 2 log1p_exp(-2 raw)), the latent's drift
 # read off the current fit, and where it cannot be, -0.2, the pilot's start.
-.ctImproveSlowStart <- function(model, current, i) {
+# `halflife`, where given, puts the slow process there instead -- the fraction
+# of the latent's rate that gives it, read off the current fit, where that is
+# under a tenth; NULL where it is not, the tenth already being slower.
+.ctImproveSlowStart <- function(model, current, i, halflife = NULL) {
   name <- model$latentNames[i]
   slow <- paste0('slow_', name)
-  ordered <- try(ctModelSlowComponent(model, i), silent = TRUE)
-  if (!inherits(ordered, 'try-error') && any(ordered$pars$matrix == 'PARS' &
-    ordered$pars$param %in% paste0('drift_', slow)))
-    return(c(setNames(stats::qlogis(0.1), paste0('drift_', slow)),
-      setNames(1, paste0('drift_', name, '_', slow))))
-  target <- -0.2
   cell <- model$pars[model$pars$matrix == 'DRIFT' & model$pars$row == i &
     model$pars$col == i, , drop = FALSE]
   fast <- NA_real_
@@ -1301,7 +1359,19 @@ print.ctModelProposals <- function(x, digits = 3, ...) {
         list(param = raw, log1p_exp = log1p_exp))), error = function(e) NA_real_)
     }
   }
-  if (is.finite(fast) && fast < 0) target <- fast / 10
+  fraction <- 0.1
+  if (!is.null(halflife)) {
+    if (!is.finite(fast) || fast >= 0) return(NULL)
+    fraction <- (log(2) / halflife) / -fast
+    if (!is.finite(fraction) || fraction >= 0.1 || fraction <= 0) return(NULL)
+  }
+  ordered <- try(ctModelSlowComponent(model, i), silent = TRUE)
+  if (!inherits(ordered, 'try-error') && any(ordered$pars$matrix == 'PARS' &
+    ordered$pars$param %in% paste0('drift_', slow)))
+    return(c(setNames(stats::qlogis(fraction), paste0('drift_', slow)),
+      setNames(1, paste0('drift_', name, '_', slow))))
+  target <- -0.2
+  if (is.finite(fast) && fast < 0) target <- fast * fraction
   a <- max(-target - 1e-6, 1e-8) / 2
   c(setNames(-log(expm1(a)) / 2, paste0('drift_', slow)),
     setNames(1, paste0('drift_', name, '_', slow)))
@@ -1320,10 +1390,13 @@ print.ctModelProposals <- function(x, digits = 3, ...) {
 # `shared` by `item` (two or more) is placed on the first; each other loading
 # starts where the item gets the same share of its own error variance, with
 # the `sign` of the covariance the screen pointed to.
-.ctImproveUniqueStart <- function(model, current, item, shared = FALSE, sign = 1) {
+# `halflife` sets the process's half-life (the median interval when NULL), and
+# `name` the new latent's name, for a second process on the same items.
+.ctImproveUniqueStart <- function(model, current, item, shared = FALSE, sign = 1,
+  halflife = NULL, name = NULL) {
   if (is.null(current)) return(NULL)
   j <- match(item, model$manifestNames)
-  m1 <- try(ctModelUniqueProcess(model, item, shared = shared), silent = TRUE)
+  m1 <- try(ctModelUniqueProcess(model, item, shared = shared, name = name), silent = TRUE)
   if (anyNA(j) || inherits(m1, 'try-error')) return(NULL)
   value <- function(transform, raw) tryCatch(as.numeric(eval(parse(text = transform),
     list(param = raw, log1p_exp = log1p_exp))), error = function(e) NA_real_)
@@ -1344,7 +1417,7 @@ print.ctModelProposals <- function(x, digits = 3, ...) {
   }
   sd <- vapply(j, errsd, 0)
   if (!is.finite(gap) || !all(is.finite(sd)) || any(sd <= 0)) return(NULL)
-  rate <- log(2) / gap
+  rate <- log(2) / if (is.null(halflife)) gap else halflife
   v <- sd[1]^2 / 4
   u <- length(m1$latentNames)
   # The initial variance is the stationary one these imply (ctModelUniqueProcess).
@@ -1408,6 +1481,17 @@ print.ctModelProposals <- function(x, digits = 3, ...) {
       structure(conditionMessage(e), class = 'try-error', condition = e))
   })
   structure(out, seconds = seconds)
+}
+
+# The best of each proposal's refits by log likelihood (`which` gives the
+# proposal each refit belongs to); a try-error only where every one failed.
+.ctImproveBestOf <- function(refits, which, n) {
+  lapply(seq_len(n), function(b) {
+    own <- refits[which == b]
+    ll <- vapply(own, function(f) if (inherits(f, 'try-error') ||
+      !is.finite(f$estimate$loglik)) -Inf else f$estimate$loglik, 0)
+    if (all(!is.finite(ll))) own[[1]] else own[[which.max(ll)]]
+  })
 }
 
 # Whether `.ctImproveRefits` would send `n` refits to worker processes rather

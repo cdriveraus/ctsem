@@ -4,7 +4,7 @@
 \alias{ctModelUniqueProcess}
 \title{Give indicators processes of their own}
 \usage{
-ctModelUniqueProcess(ctm, items, shared = FALSE)
+ctModelUniqueProcess(ctm, items, shared = FALSE, name = NULL)
 }
 \arguments{
 \item{ctm}{A model from \code{ctModel(type = 'ct')}.}

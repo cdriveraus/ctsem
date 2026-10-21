@@ -325,6 +325,48 @@ test_that("an item's own process starts persistent, at a quarter of its error va
     m1$pars$col == 2], 'stationary')
 })
 
+test_that("a component with a time scale starts at each end of the design's range", {
+  # The short end the median interval between a subject's rows, the long a
+  # quarter of the median subject's span: the data can hold processes at
+  # several time scales, and a refit keeps to the one it starts nearest.
+  x <- .improve_fit(0, seed = 1L)
+  model <- ctsem:::.ctFitBaseModel(x$fit)
+  sc <- ctsem:::.ctImproveTimescales(model, x$fit)
+  times <- split(x$data$time, x$data$id)
+  gaps <- unlist(lapply(times, diff))
+  expect_equal(sc[['short']], stats::median(gaps[gaps > 0]))
+  long <- stats::median(vapply(times, function(t) diff(range(t)), 0)) / 4
+  expect_equal(sc[['long']], if (long >= 3 * sc[['short']]) long else NA_real_)
+  hl <- function(start, par) log(2) / -eval(parse(text = ctModelUniqueProcess(model, 'Y1')$pars$transform[
+    ctModelUniqueProcess(model, 'Y1')$pars$param %in% par]),
+    list(param = start[[par]], log1p_exp = ctsem:::log1p_exp))
+  starts <- ctsem:::.ctImproveStartsAt(sc, function(h)
+    ctsem:::.ctImproveUniqueStart(model, x$fit, 'Y1', halflife = h))
+  expect_equal(length(starts), sum(is.finite(sc)))
+  expect_equal(vapply(starts, hl, 0, par = 'drift_u_Y1'), sc[is.finite(sc)],
+    tolerance = 1e-6, ignore_attr = TRUE)
+  # A second process for the same item, under a name of its own, where the
+  # evidence stays after the first.
+  m1 <- ctModelUniqueProcess(model, 'Y1')
+  expect_error(ctModelUniqueProcess(m1, 'Y1'), 'already has')
+  m2 <- ctModelUniqueProcess(m1, 'Y1', name = 'u_Y1_2')
+  expect_true(all(c('u_Y1', 'u_Y1_2') %in% m2$latentNames))
+  ad <- list(statistics = data.frame(family = 'residuals', statistic = 'Y1~Y1 gap <=3',
+    variable = 'Y1', with = 'Y1', gap = '<=3', z = 4, p = 1e-4, stringsAsFactors = FALSE))
+  pr <- ctsem:::.ctImproveStructural(m1, 'unique', NULL, ad, x$fit, 0.05)
+  own <- pr[vapply(pr, function(q) startsWith(q$key, 'unique:'), logical(1))]
+  expect_identical(vapply(own, `[[`, '', 'key')[1], 'unique:u_Y1_2')
+  expect_match(own[[1]]$label, 'another process')
+  expect_true(length(own[[1]]$starts) >= 1L)
+  # Of a proposal's refits, the best by log likelihood is its refit; a failed
+  # one counts for nothing unless all failed.
+  fake <- function(ll) list(estimate = list(loglik = ll))
+  failed <- structure('no', class = 'try-error')
+  best <- ctsem:::.ctImproveBestOf(list(fake(-10), fake(-5), failed, failed), c(1L, 1L, 2L, 2L), 2L)
+  expect_equal(best[[1]]$estimate$loglik, -5)
+  expect_s3_class(best[[2]], 'try-error')
+})
+
 test_that("pruning side by side makes the decisions pruning one at a time does", {
   # No fits: each model is the labels of the changes it carries. b and d are
   # each redundant while the other is kept, e always: one at a time, b goes

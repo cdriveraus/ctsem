@@ -47,7 +47,7 @@
 #' p[p$col %in% 2 & p$matrix %in% c('LAMBDA', 'DRIFT', 'DIFFUSION'),
 #'   c('matrix', 'row', 'col', 'param', 'value')]
 #' ctModelUniqueProcess(m, c('Y2', 'Y3'), shared = TRUE)$latentNames
-ctModelUniqueProcess <- function(ctm, items, shared = FALSE) {
+ctModelUniqueProcess <- function(ctm, items, shared = FALSE, name = NULL) {
   if (!inherits(ctm, 'ctStanModel')) stop("ctModelUniqueProcess() takes a model ",
     "from ctModel(type = 'ct').", call. = FALSE)
   if (!isTRUE(ctm$continuoustime)) stop("Processes of their own are for continuous ",
@@ -60,6 +60,11 @@ ctModelUniqueProcess <- function(ctm, items, shared = FALSE) {
     call. = FALSE)
   newnames <- if (isTRUE(shared)) paste0('u_', paste(mn[j], collapse = '_')) else
     paste0('u_', mn[j])
+  if (!is.null(name)) {
+    if (length(name) != length(newnames)) stop("name gives the new latents' names: ",
+      length(newnames), " here.", call. = FALSE)
+    newnames <- as.character(name)
+  }
   taken <- newnames[newnames %in% ctm$latentNames]
   if (length(taken)) stop("The model already has ", paste(taken, collapse = ', '), ".",
     call. = FALSE)
