@@ -12,13 +12,18 @@
 # 100, 250 or 1,000 along 'checked''s directions, and the sampler reached the
 # full sum's posterior in 2.7, 4.9 and 10 times fewer evaluations.
 #
-# `.ctCoresetLpg()` wraps the sampler's density. It trains on the first round,
-# which it evaluates in full as the sampler would anyway; chooses the smallest
-# coreset whose held-out error passes `.ctCoresetTol`; then evaluates the
+# `.ctCoresetLpg()` wraps the sampler's density, and every decision it makes is
+# by the cost of a sampler round in full evaluations. It evaluates rounds in
+# full, as the sampler would without it, and learns from them until some
+# coreset is expected to cost less than a full round; then it evaluates that
 # coreset's units only (`ctsem_coreset_batch`, on the pool a full evaluation
-# uses), checks a few of every round's draws in full, and refits or grows
-# when they drift. Where no coreset of at most a quarter of the units passes, or
-# the drift outgrows that, it evaluates in full from then on. At the end it
+# uses), checks a few of every round's draws in full, and evaluates a round in
+# full when its check fails. The size is the one whose expected round cost is
+# least (`.ctCoresetChoose()`): its share of the round's values and gradients,
+# its checks, and the chance a check fails times the full round that costs.
+# That chance is read from held-out errors and then from the failures the
+# coreset actually has; when they make it dearer than a full round it goes
+# back to full rounds and tries again with what they teach. At the end it
 # checks the draws that carry the weight and corrects them where needed, so
 # what it hands back is the full density's.
 
@@ -49,6 +54,37 @@
   near <- rel >= .ctCoresetTol$relevant
   worst <- if (any(near)) max(abs(err[near])) else 0
   rms <= mult * .ctCoresetTol$rms && worst <= mult * .ctCoresetTol$max
+}
+
+# What a sampler round on a coreset of `M` of `N` units is expected to cost, in
+# full evaluations: its share of the round's `values` and `grads` (a gradient
+# as two), the `checks` evaluated in full, and -- with probability `fail` --
+# the rest of the round evaluated in full after a failed check. A full round
+# costs `values + 2 * grads`.
+.ctCoresetRoundCost <- function(M, N, round, fail) {
+  M / N * (round$values + 2 * round$grads) + round$checks +
+    fail * (round$values - round$checks)
+}
+
+# How often a round's check would fail, from errors `err` at draws of
+# relevance `rel`: rounds of `checks` draws resampled in proportion to
+# relevance, as a round's checks lean towards where the weight sits. On a
+# private random stream, so that the sampler's own is the same with a coreset
+# as without.
+.ctCoresetFailRate <- function(err, rel, checks) {
+  if (!length(err) || sum(rel) <= 0) return(0)
+  had <- exists('.Random.seed', envir = globalenv(), inherits = FALSE)
+  if (had) old <- get('.Random.seed', envir = globalenv(), inherits = FALSE)
+  on.exit(if (had) assign('.Random.seed', old, envir = globalenv()) else
+    if (exists('.Random.seed', envir = globalenv(), inherits = FALSE))
+      rm('.Random.seed', envir = globalenv()))
+  set.seed(20261021L)
+  p <- rel / sum(rel)
+  n <- min(checks, length(err))
+  mean(vapply(seq_len(200L), function(b) {
+    i <- sample.int(length(err), n, replace = TRUE, prob = p)
+    !.ctCoresetPasses(err[i], rel[i], .ctCoresetTol$drift)
+  }, logical(1)))
 }
 
 # Lawson-Hanson non-negative least squares.
@@ -123,45 +159,57 @@
   S
 }
 
-# The smallest coreset of at least `minM` units on a path whose error on
-# held-out training rows passes `.ctCoresetTol`, refitted on every row; NULL
-# when none of at most `maxM` units does. Two sets are held out and each must
-# pass: the newest of the rows the sampler's rounds checked in full (`focus`),
-# which are where the weight is moving to, and every fourth of the rest. Older
-# checked rows are fitted like any other: held out for good, a coreset fitted
-# mostly on the first rounds' tails could never reach them. Held out
-# deterministically, so that the sampler's random stream is the same with a
-# coreset as without.
-.ctCoresetChoose <- function(X, y, rows, maxM, start = integer(),
-  focus = integer(), minM = 1L) {
+# The coreset whose expected round cost (`.ctCoresetRoundCost()`) is least,
+# refitted on every row, with that cost and its failure rate as attributes;
+# NULL when none is expected to cost less than a full round, or there are too
+# few held-out draws near the top to judge by. Sizes are tried along one
+# forward-selection path, which grows until a size's share of the round alone
+# costs more than the best found: nothing larger can be cheaper. Two sets are
+# held out: the newest of the rows the sampler's rounds checked in full
+# (`focus`), which are where the weight is moving to, and every fourth of the
+# rest. Older checked rows are fitted like any other: held out for good, a
+# coreset fitted mostly on the first rounds' tails could never reach them.
+# Held out deterministically, so that the sampler's random stream is the same
+# with a coreset as without.
+.ctCoresetChoose <- function(X, y, rows, round, start = integer(),
+  focus = integer()) {
   focus <- intersect(focus, rows)
-  newest <- utils::tail(focus, 8L)
+  newest <- utils::tail(focus, round$checks)
   plain <- setdiff(rows, newest)
   held <- plain[seq_along(plain) %% 4L == 0L]
   fitrows <- setdiff(plain, held)
   rel <- numeric(length(y))
   rel[rows] <- .ctCoresetRelevance(y[rows])
-  # Too few held-out draws near the top to judge by.
   if (sum(rel[held]) < 2 || length(fitrows) < 10L) return(NULL)
-  grid <- c(seq(10L, 30L, by = 5L), seq(40L, max(40L, maxM), by = 10L))
-  sizes <- sort(unique(c(if (length(start)) length(start), grid, maxM)))
-  sizes <- sizes[sizes >= max(1L, minM, length(start)) & sizes <= maxM]
-  passes <- function(cf, idx) {
-    if (!length(idx)) return(TRUE)
-    .ctCoresetPasses(.ctCoresetPredict(cf, X[idx, , drop = FALSE]) - y[idx], rel[idx])
+  N <- ncol(X)
+  fullround <- round$values + 2 * round$grads
+  failrate <- function(cf, idx) {
+    if (!length(idx)) return(0)
+    .ctCoresetFailRate(.ctCoresetPredict(cf, X[idx, , drop = FALSE]) - y[idx], rel[idx],
+      round$checks)
   }
-  # The path grows only as far as the size being tried.
+  best <- NULL
   path <- start
-  for (M in sizes) {
+  M <- max(1L, length(start))
+  repeat {
+    floorcost <- M / N * fullround + round$checks
+    if (M > N || floorcost >= fullround || (!is.null(best) && floorcost >= best$cost)) break
     if (M > length(path)) path <- .ctCoresetPath(X, y, M, fitrows, path, rel[fitrows])
     if (M > length(path)) break
     cf <- .ctCoresetWeights(X, y, path[seq_len(M)], fitrows, rel[fitrows])
-    if (passes(cf, held) && passes(cf, newest)) {
-      S <- .ctCoresetPath(X, y, M, rows, start, rel[rows])
-      return(.ctCoresetWeights(X, y, S, rows, rel[rows]))
-    }
+    fail <- max(failrate(cf, held), failrate(cf, newest))
+    cost <- .ctCoresetRoundCost(sum(cf$w > 0), N, round, fail)
+    if (is.null(best) || cost < best$cost) best <- list(M = M, cost = cost, fail = fail)
+    # Steps of about a tenth of the size: fine where sizes are small, and a
+    # path of hundreds of units is not walked one at a time.
+    M <- M + max(1L, M %/% 10L)
   }
-  NULL
+  if (is.null(best) || best$cost >= fullround) return(NULL)
+  S <- .ctCoresetPath(X, y, best$M, rows, start, rel[rows])
+  cf <- .ctCoresetWeights(X, y, S, rows, rel[rows])
+  cf$cost <- best$cost
+  cf$fail <- best$fail
+  cf
 }
 
 # The sampler's density with a coreset behind it: `lpg` (`.ctBackendLpgFunc()`)
@@ -182,11 +230,19 @@
   st$cost <- 0
   st$sizes <- integer(0)
   st$checks <- numeric(0)
-  st$rounds <- 0L
-  st$retrains <- 0L
-  st$drifts <- 0L
-  st$minM <- 1L
   st$final <- NULL
+  # What a round is made of: its draws (the latest round's), the gradients the
+  # sampler asked for between rounds, and the checks a coreset round adds.
+  st$values <- 0
+  st$grads <- numeric(0)
+  st$gradsnow <- 0
+  st$batches <- 0L
+  # The current coreset's own record: rounds run on it and checks failed.
+  st$runs <- 0L
+  st$fails <- 0L
+  st$switches <- 0L
+  st$runs_total <- 0L
+  st$fails_total <- 0L
   engine <- local({
     built <- NULL
     function() {
@@ -213,17 +269,24 @@
     keep <- st$cf$w > 0
     list(units = st$cf$S[keep], weights = st$cf$w[keep])
   }
+  roundinfo <- function() list(values = st$values,
+    grads = if (length(st$grads)) mean(st$grads) else 0.3 * st$values,
+    checks = min(8, st$values))
   choose <- function(start = integer()) {
-    N <- ncol(st$X)
-    # A quarter of the units at most: at 100 units a coreset of 26-27, near a
-    # third, sat at its tolerance, failed its checks round after round and
-    # cost more than the full sum.
-    cf <- .ctCoresetChoose(st$X, st$y, seq_along(st$y), floor(N / 4), start,
-      st$focus, st$minM)
+    cf <- .ctCoresetChoose(st$X, st$y, seq_along(st$y), roundinfo(), start, st$focus)
     if (is.null(cf)) return(FALSE)
     st$cf <- cf
     st$sizes <- c(st$sizes, sum(cf$w > 0))
+    st$runs <- 0L
+    st$fails <- 0L
     TRUE
+  }
+  # The current coreset's expected round cost with its own record mixed in:
+  # its held-out failure rate counts as two rounds' worth of evidence.
+  dearer <- function() {
+    fail <- (st$fails + 2 * st$cf$fail) / (st$runs + 2)
+    r <- roundinfo()
+    .ctCoresetRoundCost(sum(st$cf$w > 0), ncol(st$X), r, fail) >= r$values + 2 * r$grads
   }
   coreset_value <- function(X) {
     a <- active()
@@ -240,35 +303,22 @@
   }
   batch <- function(draws) {
     X <- as.matrix(draws)
-    if (st$phase == 'off') {
-      st$cost <- st$cost + nrow(X)
-      return(attr(lpg, 'batch')(X))
-    }
+    # A round's size, and the gradients asked for since the last one (none
+    # before the first: until a round has passed, a round's gradients are
+    # taken as 30% of its draws, about what 'checked''s Newton components
+    # ask for).
+    st$values <- nrow(X)
+    if (st$batches > 0L) st$grads <- c(st$grads, st$gradsnow)
+    st$batches <- st$batches + 1L
+    st$gradsnow <- 0
     if (st$phase == 'training') {
+      # Full rounds are what the sampler pays without a coreset, so learning
+      # from them costs nothing; each one, try again for a coreset that pays.
       t0 <- full(X)
       learn(t0)
-      # Counted in draws, not calls: 'is' walks its profile paths first, a
-      # few draws a call, and counted in calls they ended training before
-      # its first round.
-      st$rounds <- st$rounds + nrow(X)
-      st$draws <- rbind(st$draws, X)
-      # No fewer units than twice the dimensions the draws span: to first
-      # order each unit's term is its score along them, and the measured
-      # rank of the units' terms ran 1.5-2 times that. A coreset chosen
-      # smaller from the first rounds' tails passed there and misled the
-      # sampler once it reached the posterior.
-      sv <- svd(scale(st$draws, scale = FALSE), nu = 0, nv = 0)$d
-      st$minM <- 2L * sum(sv > 1e-8 * max(sv))
-      # Under 30 units a coreset of a quarter of them saves too little; after
-      # 300 training draws in a row without one, the sum does not compress
-      # here.
-      if (is.null(st$X) || ncol(st$X) < 30L) {
-        st$phase <- 'off'
-      } else if (choose(if (!is.null(st$cf)) st$cf$S else integer())) {
+      if (!is.null(st$X) && choose(if (!is.null(st$cf)) st$cf$S else integer())) {
         st$phase <- 'coreset'
-        st$rounds <- 0L
-      } else if (st$rounds >= 300L) {
-        st$phase <- 'off'
+        st$switches <- st$switches + 1L
       }
       v <- t0$value
       v[!is.finite(v)] <- -1e100
@@ -290,32 +340,30 @@
       v[pick[good]] <- t0$value[good]
       learn(t0, focus = TRUE)
       rel <- .ctCoresetRelevance(t0$total[good], max(st$y))
+      st$runs <- st$runs + 1L
+      st$runs_total <- st$runs_total + 1L
       if (!.ctCoresetPasses(err, rel, tol$drift)) {
-        # Drifted. The round is evaluated in full: the sampler keeps every
+        # Failed. The round is evaluated in full: the sampler keeps every
         # value it is handed, and a coreset that overrated the draws it
-        # ranked highest by 20 log units (the first, too small, coreset on
-        # the 250-subject strong shell) misled its adaptation for thirty
-        # rounds and left 1,900 draws for the end check to correct. The full
-        # round is training data where the sampler now is; then grow the
-        # coreset from what it has, failing that train on full rounds, twice
-        # at most, then give up.
-        # Each drift costs a full round; past three the coreset is not
-        # paying for itself.
-        st$drifts <- st$drifts + 1L
+        # ranked highest by 20 log units (a first, too small, coreset on the
+        # 250-subject strong shell) misled its adaptation for thirty rounds
+        # and left 1,900 draws for the end check to correct. The full round is
+        # training data where the sampler now is, and the coreset is chosen
+        # again from it; if none pays, full rounds until one does.
+        st$fails <- st$fails + 1L
+        st$fails_total <- st$fails_total + 1L
         others <- setdiff(seq_len(nrow(X)), pick)
         if (length(others)) {
           t1 <- full(X[others, , drop = FALSE])
           v[others] <- t1$value
           learn(t1)
         }
-        if (st$drifts > 3L) {
-          st$phase <- 'off'
-        } else if (!choose(st$cf$S)) {
-          st$retrains <- st$retrains + 1L
-          st$phase <- if (st$retrains <= 2L) 'training' else 'off'
-        }
+        if (!choose(st$cf$S)) st$phase <- 'training'
       } else {
-        st$cf <- .ctCoresetWeights(st$X, st$y, st$cf$S, seq_along(st$y))
+        keep <- st$cf[c('cost', 'fail')]
+        st$cf <- c(.ctCoresetWeights(st$X, st$y, st$cf$S, seq_along(st$y)), keep)
+        # Passing, but its record may still say a full round is cheaper.
+        if (dearer()) st$phase <- 'training'
       }
     }
     v[!is.finite(v)] <- -1e100
@@ -323,6 +371,7 @@
   }
   gradbatch <- function(draws) {
     X <- as.matrix(draws)
+    st$gradsnow <- st$gradsnow + nrow(X)
     if (st$phase != 'coreset') {
       st$cost <- st$cost + 2 * nrow(X)
       return(attr(lpg, 'gradbatch')(X))
@@ -380,9 +429,10 @@
     size = if (!is.null(st$cf)) sum(st$cf$w > 0),
     sizes = st$sizes,
     phase = st$phase,
-    minimum = st$minM,
-    retrains = st$retrains,
-    drifts = st$drifts,
+    switches = st$switches,
+    rounds_on_coreset = st$runs_total,
+    failed_checks = st$fails_total,
+    expected_round_cost = if (!is.null(st$cf)) st$cf$cost,
     training_draws = length(st$y),
     check_rms = if (length(st$checks)) sqrt(mean(st$checks^2)) else NA_real_,
     check_max = if (length(st$checks)) max(abs(st$checks)) else NA_real_,
