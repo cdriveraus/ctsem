@@ -199,6 +199,36 @@ test_that("own variances of items a subject never answers are skipped, exactly",
   }
 })
 
+test_that("an asymptote reaches its own binary item, not the manifest its row number names", {
+  skip_without_julia()
+  # Fit-free. ASYMPTOTES row 2 is the second binary indicator, Y3; read as a
+  # manifest number it would be Y2. With Y2 missing for subjects 13-24 and Y3
+  # for 1-6, Y3's guessing parameter is inert for 1-6 alone.
+  set.seed(11)
+  n <- 24; t <- 6
+  d <- data.frame(id = rep(seq_len(n), each = t), time = rep(seq_len(t) - 1, n))
+  eta <- rnorm(n)[d$id] + rnorm(n * t, 0, 0.5)
+  d$Y1 <- rbinom(n * t, 1, plogis(eta))
+  d$Y2 <- eta + rnorm(n * t, 0, 0.6)
+  d$Y3 <- rbinom(n * t, 1, plogis(0.8 * eta))
+  d$Y2[d$id > 12] <- NA
+  d$Y3[d$id <= 6] <- NA
+  m <- suppressWarnings(suppressMessages(ctModel(type = "ct", id = "id",
+    manifestNames = c("Y1", "Y2", "Y3"), latentNames = "eta1",
+    manifesttype = c(1, 0, 1), LAMBDA = matrix(c(1, 0.8, 0.8), 3, 1),
+    DRIFT = matrix(-0.5), DIFFUSION = matrix(0.5), MANIFESTVAR = diag(c(0, 0.4, 0)),
+    MANIFESTMEANS = matrix(c("mm1", "mm2", "mm3"), 3, 1),
+    ASYMPTOTES = rbind(c(NA, NA), c("g3", NA)),
+    T0VAR = matrix(1), T0MEANS = matrix(0), CINT = matrix(0))))
+  m$pars$indvarying <- m$pars$param %in% c("mm2", "g3")
+  spec <- .pu_spec(d, m, poprank = 1, popunique = TRUE)
+  inert <- spec$laplace$inert
+  effects <- spec$laplace$levels[[1]]$param
+  groups <- function(name) sort(unname(inert[effects[inert[, "effect"]] == name, "group"]))
+  expect_equal(groups("g3"), 1:6)
+  expect_equal(groups("mm2"), 13:24)
+})
+
 test_that("any measurement effect reaches only its own items, and is skipped where unanswered", {
   skip_without_julia()
   # Y2 and Y3 share an intercept mmA, and Y3 adds mmB times a time dependent
