@@ -216,11 +216,15 @@
 # with 'batch', 'gradbatch', 'cost' (full evaluations spent, a gradient as
 # two), 'finalize' (the end check; see `imis_is()`) and 'coreset' (the record
 # `$details$importance_sampling$coreset` reports). `lpg` itself comes back
-# where a coreset cannot apply: off the Laplace route, or `control$coreset`
-# FALSE.
+# where a coreset cannot apply: off the Laplace route, `control$coreset`
+# FALSE, or a density that is not the fit's own sum over units (its
+# 'unitsum' mark). The coreset's terms are the fit's Laplace terms, so on any
+# other density -- the quadrature continuation's -- it would sample the wrong
+# one without a word.
 .ctCoresetLpg <- function(fit, lpg, control = list()) {
   if (isFALSE(control$coreset) || !.ctBackendIsLaplace(fit) ||
-    !is.function(attr(lpg, 'batch')) || !is.function(attr(lpg, 'gradbatch'))) return(lpg)
+    !isTRUE(attr(lpg, 'unitsum')) || !is.function(attr(lpg, 'batch')) ||
+    !is.function(attr(lpg, 'gradbatch'))) return(lpg)
   tol <- .ctCoresetTol
   st <- new.env(parent = emptyenv())
   st$phase <- 'training'

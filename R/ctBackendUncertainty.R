@@ -101,6 +101,11 @@
       built
     }
   })
+  # This density is the fit's own sum over units, which a coreset of them may
+  # stand in for (`.ctCoresetLpg()`); a density built on another objective --
+  # the quadrature continuation's, say -- carries no such mark and is never
+  # replaced by the fit's unit terms.
+  attr(fn, "unitsum") <- TRUE
   attr(fn, "batch") <- function(draws) {
     draws <- as.matrix(draws)
     # The engine takes columns as draws; `imis_is`'s `x_new` (and every

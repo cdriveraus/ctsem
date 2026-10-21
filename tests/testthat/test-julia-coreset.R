@@ -93,6 +93,11 @@ test_that("the sampler's density with a coreset behind it follows the full densi
   lpg <- ctsem:::.ctCoresetLpg(fit, full)
   expect_false(identical(lpg, full))
   expect_identical(ctsem:::.ctCoresetLpg(fit, full, list(coreset = FALSE)), full)
+  # A density on another objective, batch attributes and all, is never
+  # replaced by the fit's unit terms.
+  other <- full
+  attr(other, "unitsum") <- NULL
+  expect_identical(ctsem:::.ctCoresetLpg(fit, other), other)
   est <- as.numeric(fit$estimate$raw)
   cov <- as.matrix(fit$estimate$cov)
   set.seed(9)
