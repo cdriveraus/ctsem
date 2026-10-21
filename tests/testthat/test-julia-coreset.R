@@ -120,13 +120,22 @@ test_that("the sampler's density with a coreset behind it follows the full densi
   expect_lt(rec$expected_round_cost, 100 + 2 * 30)
   expect_equal(attr(lpg, "cost")(), nrow(first))
   spent <- attr(lpg, "cost")()
-  second <- draw(100)
-  v2 <- attr(lpg, "batch")(second)
-  truth <- attr(full, "batch")(second)
+  # Rounds on the coreset. A round whose check fails costs a full one (one
+  # first coreset in five, over five seeds on this model, against about 20
+  # for a round that passes); together they cost well under full rounds.
+  second <- NULL
+  v2 <- NULL
+  truth <- NULL
+  for (round in 1:4) {
+    x <- draw(100)
+    second <- rbind(second, x)
+    v2 <- c(v2, attr(lpg, "batch")(x))
+    truth <- c(truth, attr(full, "batch")(x))
+  }
   # Away from where nothing has weight, the coreset is within a nat.
   near <- truth > max(truth) - 15
   expect_lt(max(abs((v2 - truth)[near])), 1)
-  expect_lt(attr(lpg, "cost")() - spent, 100)
+  expect_lt(attr(lpg, "cost")() - spent, 300)
   g <- attr(lpg, "gradbatch")(second[1:3, , drop = FALSE])
   gt <- attr(full, "gradbatch")(second[1:3, , drop = FALSE])
   expect_lt(max(abs(g$gradient - gt$gradient)) / max(abs(gt$gradient)), 0.1)
