@@ -2620,57 +2620,19 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
 # Which random effects cannot reach which groups' data: a matrix of (level,
 # group, effect) rows, effect indexing the level's `re_index`, or NULL.
 #
-# An effect is a candidate when every matsetup cell carrying its raw position is
-# a LAMBDA or MANIFESTMEANS cell: the filter's row update reads only the
-# observed manifests' rows of those matrices, so such an effect reaches its
-# own manifests and nothing else. It is inert for a group none of whose
-# subjects ever observes one of them -- an item a study did not ask, say -- and
-# the engine then skips the coordinates that move only inert effects, which is
-# exact (`CTSEMLaplaceUnits`). A calculation reading LAMBDA or MANIFESTMEANS
-# cells could carry an effect elsewhere, so such a model is left as it is.
-#
-# An effect held in a PARS cell reaches whatever cells the calculations reading
-# that cell write, followed through PARS cells that read it in turn: an item
-# intercept written `mm_a + lam_a * lev`, with `mm_a` in PARS, reaches item a
-# alone, as a plain intercept cell does. Anything other than a LAMBDA or
-# MANIFESTMEANS cell along the way, and a PARS cell nothing reads, leave the
-# effect reaching everything.
+# An effect is inert for a group when nothing it moves can reach a manifest
+# any of the group's subjects observes -- an item a study did not ask, say --
+# and the engine then skips the coordinates that move only inert effects,
+# which is exact (`CTSEMLaplaceUnits`). What each of its cells reaches is read
+# off the model (`.ctJuliaCellReach()`), and an effect reaches the union.
 .ctJuliaLaplaceInert <- function(model, setup, levels, dat) {
   if (is.null(setup) || !nrow(setup) || !length(levels)) return(NULL)
-  rhs <- sub("^[^=]*=", "", unlist(model$modelmats$calcs))
-  if (any(grepl("LAMBDA[", rhs, fixed = TRUE) |
-      grepl("MANIFESTMEANS[", rhs, fixed = TRUE))) return(NULL)
   manifests <- model$manifestNames
   id <- model$subjectIDname
   if (!length(manifests) || !all(c(id, manifests) %in% colnames(dat))) return(NULL)
-  codes <- .ctMatricesList()$base[c("LAMBDA", "MANIFESTMEANS")]
-  parscode <- .ctMatricesList()$base[["PARS"]]
-  calcs <- unlist(model$modelmats$calcs)
-  written <- gsub("[[:space:]]", "", sub("=.*$", "", calcs))
-  reads <- gsub("[[:space:]]", "", sub("^[^=]*=", "", calcs))
-  # The manifests PARS[row, col] reaches through the calculations, or NULL
-  # where it reaches anything else.
-  parsreach <- function(row, col, seen = character()) {
-    key <- paste0("PARS[", row, ",", col, "]")
-    if (key %in% seen) return(integer())
-    seen <- c(seen, key)
-    readers <- written[grepl(key, reads, fixed = TRUE)]
-    if (!length(readers)) return(NULL)
-    out <- integer()
-    for (cell in readers) {
-      parts <- regmatches(cell, regexec("^([A-Za-z]+)\\[([0-9]+),([0-9]+)\\]$",
-        cell))[[1L]]
-      if (length(parts) != 4L) return(NULL)
-      if (parts[2L] %in% c("LAMBDA", "MANIFESTMEANS")) {
-        out <- c(out, as.integer(parts[3L]))
-      } else if (identical(parts[2L], "PARS")) {
-        more <- parsreach(as.integer(parts[3L]), as.integer(parts[4L]), seen)
-        if (is.null(more)) return(NULL)
-        out <- c(out, more)
-      } else return(NULL)
-    }
-    out
-  }
+  cellreach <- .ctJuliaCellReach(model, setup)
+  codes <- .ctMatricesList()$all
+  matrixname <- names(codes)[match(as.integer(setup$matrix), codes)]
   subjects <- factor(dat[[id]], levels = unique(dat[[id]]))
   # Subjects by manifests: whether that subject observes it at all.
   observed <- vapply(manifests, function(m)
@@ -2683,18 +2645,14 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
     reach <- lapply(as.integer(lv$re_index), function(p) {
       rows <- which(param == p)
       if (!length(rows)) return(NULL)
-      out <- integer()
+      hit <- integer()
       for (ri in rows) {
-        code <- as.integer(setup$matrix[ri])
-        if (code %in% codes) {
-          out <- c(out, as.integer(setup$row[ri]))
-        } else if (code == parscode) {
-          more <- parsreach(as.integer(setup$row[ri]), as.integer(setup$col[ri]))
-          if (is.null(more)) return(NULL)
-          out <- c(out, more)
-        } else return(NULL)
+        more <- cellreach(matrixname[ri], as.integer(setup$row[ri]),
+          as.integer(setup$col[ri]))
+        if (is.null(more)) return(NULL)
+        hit <- c(hit, more)
       }
-      if (length(out)) unique(out) else NULL
+      if (length(hit)) unique(hit) else NULL
     })
     candidates <- which(!vapply(reach, is.null, logical(1)))
     if (!length(candidates) || length(lv$group) != nrow(observed)) next
@@ -2708,6 +2666,100 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
   }
   if (!length(out)) return(NULL)
   do.call(rbind, out)
+}
+
+# What a cell of the model reaches: a function of (matrix name, row, col)
+# returning the manifests whose part of the likelihood the cell can move, or
+# NULL for every manifest.
+#
+#  * LAMBDA, MANIFESTMEANS, Jy, THRESHOLDS, RESPONSE: row `i` belongs to
+#    manifest `i`, and the filter's update reads only the observed manifests'
+#    rows. ASYMPTOTES likewise, but its row `i` is the `i`th binary indicator.
+#  * MANIFESTVAR: the manifests the cell is coupled with. The covariance is
+#    built from the whole matrix -- a matrix exponential under
+#    covmattransform 'z' -- and the update reads its observed block, so a
+#    cell reaches every manifest joined to its row or column through nonzero
+#    off-diagonal cells: its own manifest alone, for a diagonal MANIFESTVAR.
+#  * PARS: nothing of its own, only through what reads it.
+#  * Anything else moves the latent states, or is used in a way not known
+#    here, and reaches every manifest.
+#
+# A calculation (`model$modelmats$calcs`) reading a cell carries it on to the
+# cell it writes, so a cell also reaches what every cell written from it
+# reaches, through any number of PARS cells: an intercept written
+# `mm_a + lam_a * lev` with `mm_a` in PARS reaches item a alone, as a plain
+# intercept cell does. A PARS cell nothing reads is used somewhere this cannot
+# see, and reaches every manifest.
+.ctJuliaCellReach <- function(model, setup) {
+  rowlocal <- c("LAMBDA", "MANIFESTMEANS", "Jy", "THRESHOLDS", "RESPONSE")
+  binary <- which(model$manifesttype %in% 1L)
+  calcs <- unlist(model$modelmats$calcs)
+  written <- gsub("[[:space:]]", "", sub("=.*$", "", calcs))
+  reads <- gsub("[[:space:]]", "", sub("^[^=]*=", "", calcs))
+  cellpattern <- "^([A-Za-z][A-Za-z0-9]*)\\[([0-9]+),([0-9]+)\\]$"
+  parse <- function(cell) {
+    parts <- regmatches(cell, regexec(cellpattern, cell))[[1L]]
+    if (length(parts) != 4L) return(NULL)
+    list(matrix = parts[2L], row = as.integer(parts[3L]), col = as.integer(parts[4L]))
+  }
+  # MANIFESTVAR's coupling: manifests joined by an off-diagonal cell that is
+  # free, fixed at a nonzero value, or written by a calculation. A free cell
+  # carries the value 99999 in `matvalues` (`.ctModelMatSetup()`).
+  nm <- length(model$manifestNames)
+  group <- seq_len(nm)
+  root <- function(i) {
+    while (group[i] != i) i <- group[i]
+    i
+  }
+  join <- function(i, j) {
+    if (i > nm || j > nm) return(invisible())
+    a <- root(i); b <- root(j)
+    if (a != b) group[max(a, b)] <<- min(a, b)
+  }
+  values <- model$modelmats$matvalues
+  for (ri in which(as.integer(setup$matrix) == .ctMatricesList()$all[["MANIFESTVAR"]])) {
+    i <- as.integer(setup$row[ri]); j <- as.integer(setup$col[ri])
+    if (i == j) next
+    fixed <- if (is.null(values)) NA_real_ else
+      suppressWarnings(as.numeric(values$value[ri]))
+    if (as.integer(setup$param[ri]) > 0L ||
+        (is.finite(fixed) && fixed != 0 && fixed != 99999)) join(i, j)
+  }
+  for (cell in written) {
+    at <- parse(cell)
+    if (!is.null(at) && identical(at$matrix, "MANIFESTVAR") && at$row != at$col) {
+      join(at$row, at$col)
+    }
+  }
+  coupled <- function(i) {
+    if (i > nm) return(NULL)
+    which(vapply(seq_len(nm), root, integer(1)) == root(i))
+  }
+  reach <- function(matrix, row, col, seen = character()) {
+    key <- paste0(matrix, "[", row, ",", col, "]")
+    if (key %in% seen) return(integer())
+    seen <- c(seen, key)
+    own <- if (matrix %in% rowlocal) as.integer(row) else
+      if (identical(matrix, "ASYMPTOTES")) {
+        if (row > length(binary)) return(NULL)
+        binary[row]
+      } else if (identical(matrix, "MANIFESTVAR")) {
+        a <- coupled(row); b <- coupled(col)
+        if (is.null(a) || is.null(b)) return(NULL)
+        unique(c(a, b))
+      } else if (identical(matrix, "PARS")) integer() else return(NULL)
+    readers <- written[grepl(key, reads, fixed = TRUE)]
+    if (identical(matrix, "PARS") && !length(readers)) return(NULL)
+    for (cell in readers) {
+      at <- parse(cell)
+      if (is.null(at)) return(NULL)
+      more <- reach(at$matrix, at$row, at$col, seen)
+      if (is.null(more)) return(NULL)
+      own <- c(own, more)
+    }
+    unique(own)
+  }
+  reach
 }
 
 # The raw entry for a population sd, as the engine's `_laplace_popchol` reads
