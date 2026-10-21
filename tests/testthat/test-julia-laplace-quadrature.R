@@ -517,8 +517,12 @@ test_that("a correction predicted to gain less than skip_gain is skipped, and sa
 test_that("a unit wider than the cap keeps its Laplace term, and the fit says so", {
   skip_without_julia()
   fits <- .lc_fits("linear")
-  # One effect a subject; a cap of none leaves every subject unscored.
-  narrow <- utils::modifyList(.ctLaplaceContinueDefaults, list(maxdim = 0L))
+  # One effect a subject; a cap of none leaves every subject unscored, with
+  # draws off or kept, by default, to the units a rescue named. With them for
+  # every unit, a unit of one block past the cap is scored by frozen draws
+  # instead (checked at the end).
+  narrow <- utils::modifyList(.ctLaplaceContinueDefaults, list(maxdim = 0L,
+    draws = 0L))
   expect_message(out <- .ctLaplaceContinue(fits$off, control = narrow),
     "kept the Laplace term, having more than 0 random effects")
   corr <- out$laplace$correction
@@ -531,6 +535,12 @@ test_that("a unit wider than the cap keeps its Laplace term, and the fit says so
     capture.output(print(out)))))
   # Under the default cap nothing here is wide.
   expect_identical(fits$quadrature$laplace$correction$wide, 0L)
+  # Nor past it, with draws: each subject is one block, scored by them, and on
+  # this Gaussian integrand every gap is within their error.
+  drawn <- suppressMessages(.ctLaplaceContinue(fits$off,
+    control = utils::modifyList(narrow, list(draws = 256L, draws_scope = "all"))))
+  expect_identical(drawn$laplace$correction$wide, 0L)
+  expect_identical(drawn$laplace$correction$status, "exact")
 })
 
 test_that("requests that cannot apply are refused by name", {
