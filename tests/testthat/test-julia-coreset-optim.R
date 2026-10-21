@@ -1,8 +1,9 @@
 # The optimiser's coreset stages on the Laplace route (`_ctsem_coreset_plan`
 # in optimiser.jl): stretches of the L-BFGS stage on a weighted few of the
 # units, each checked by a full gradient, with the full objective finishing.
-# Two fits of one model from the default start under one seed, with and
-# without them: the same optimum and Hessian, in fewer full gradients.
+# Two fits of one model from the default start under one seed, with them
+# (`optimcontrol$coreset = TRUE`; they are off by default) and without: the
+# same optimum and Hessian, in fewer full gradients.
 # Three hundred subjects of the shared Laplace fixture's design, so that its
 # seven parameters leave a coreset a small share of the units. Batching is off
 # in both: from the default start it does most of the climbing on this model,
@@ -17,7 +18,7 @@
       suppressWarnings(suppressMessages(ctsem::ctFit(data, laplace_fixture_model(),
         backend = "julia", cores = 1, intoverpop = "laplace", priors = TRUE,
         optimcontrol = c(list(finishsamples = 20, batch = FALSE),
-          if (!coreset) list(coreset = FALSE)))))
+          if (coreset) list(coreset = TRUE)))))
     }
     list(on = fit_one(TRUE), off = fit_one(FALSE))
   })
@@ -29,7 +30,7 @@ test_that("coreset stages reach the full objective's optimum in fewer full gradi
   fits <- .coreset_optim_fits()
   on <- fits$on
   off <- fits$off
-  # What ran: stages by default, none when switched off.
+  # What ran: stages when asked for, none by default.
   expect_gt(sum(on$optim$coreset_sizes), 0)
   expect_gt(on$optim$coreset_iterations, 0)
   expect_equal(sum(off$optim$coreset_sizes), 0)
