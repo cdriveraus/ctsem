@@ -1185,7 +1185,11 @@ size there in objective units, `e' H e / 2`.
 
 Carrying on (`refit = true`): the path is fitted on every point from the
 current stage's size, and the first size that reproduces the newest point's
-gradient within `tol` is taken.
+gradient within `tol` is taken; `c.error` becomes its error there, which is
+what the stage's own end is measured against (`_ctsem_coreset_step!`) -- the
+old coreset's error at the point, which the check measured, describes a
+coreset that is no longer in force, and read so it ended a third of the stages
+after one iteration.
 """
 function _ctsem_coreset_choose(c::CTSEMCoresetPlan, scale::AbstractVector, hmul,
         stretch::Integer; refit::Bool)
@@ -1206,8 +1210,10 @@ function _ctsem_coreset_choose(c::CTSEMCoresetPlan, scale::AbstractVector, hmul,
         isfinite(ee) && gg > 0 && ee <= c.tol^2 * gg
     end
     result = if refit
-        _ctsem_coreset_path(c, 1:K, _ctsem_coreset_sizes(max(c.size, c.minunits), N),
+        found = _ctsem_coreset_path(c, 1:K, _ctsem_coreset_sizes(max(c.size, c.minunits), N),
             budget, check, scale)
+        found === nothing || (c.error = errsize[])
+        found
     else
         first = _ctsem_coreset_path(c, 1:(K - 1), _ctsem_coreset_sizes(c.minunits, N),
             budget, check, scale)
