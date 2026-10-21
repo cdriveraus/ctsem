@@ -909,7 +909,7 @@ autoTIpredsFunc <- function(cl, standata, sm, optimArgs, parsteps, optimcores, c
 # 2. Rounds. `n_batch` draws from the mixture, then while the effective sample
 #    size is short of `target_ess` or the Pareto k of the weights is at or
 #    above `kbar`, a component at the top-weighted tenth of the draws (as
-#    IMIS, Raftery and Bao), from which the next round draws. And, where the
+#    IMIS, Raftery and Bao). And, where the
 #    density brings a gradient, up to `newton` components at the
 #    top-weighted distinct draws whose weight relative to the mean, r, exceeds
 #    N / target_ess (N the draws so far): if every r were below that the
@@ -922,6 +922,9 @@ autoTIpredsFunc <- function(cl, standata, sm, optimArgs, parsteps, optimcores, c
 #    proto_gais_full.R) the rounds alone stopped at ESS 3 after 51,667
 #    evaluations; with these, ESS 247 in 20,643 (a gradient counted as two).
 #    `budget` stops the rounds at that many evaluations, gradients included.
+#    The next round draws half its draws from the components a round adds
+#    and the rest from every earlier one, by the share of the posterior each
+#    carries (`.ctImisAllocate()`), where IMIS draws from the new ones alone.
 #
 #    Measured on five bench models and two closed forms against long NUTS
 #    references (dev2, 2026-09-30): the worst parameter's sd error fell from
@@ -1150,7 +1153,6 @@ imis_is <- function(parlp,
       samples[top_idx, , drop = FALSE], w_raw[top_idx])
     comp_cov[[K + 1L]] <- safe_pd(diagis::weighted_var(
       samples[top_idx, , drop = FALSE], w_raw[top_idx]) * tail_scale^2)
-    pw <- c(rep(0, K), 1)
     # And components where the draws say the proposal falls short, each moved
     # by a damped Newton step and shaped by the curvature there; see
     # `.ctImisNewtonComponent()`.
@@ -1172,9 +1174,11 @@ imis_is <- function(parlp,
         comp_mu[[length(comp_mu) + 1L]] <- nc$mu
         comp_cov[[length(comp_cov) + 1L]] <- safe_pd(nc$cov * tail_scale^2)
       }
-      pw <- c(rep(0, K), rep(1, length(comp_mu) - K))
-      pw <- pw / sum(pw)
     }
+    # Half the next round to the components just added, the rest to every
+    # earlier one by the share of the posterior it carries; see
+    # `.ctImisAllocate()`.
+    pw <- .ctImisAllocate(samples, w_raw, counts, comp_mu, comp_cov, K, dprop)
   }
 
   if (verbose) message("")   # newline after progress line
