@@ -190,6 +190,44 @@ test_that("checked centres its normal on the mean, not the mode", {
   expect_equal(colMeans(run$samples), run$check$centre, tolerance = 0.1)
 })
 
+test_that("checked's centre does not read a curvature it leaves unnamed as a shift", {
+  # A five-dimensional shell of radius 0.05 under a N((0.5, 0, ...), I) prior,
+  # mixed with 25 standard normal coordinates by a scaled rotation: too slight
+  # in any one parameter's variance for the check to name, and the even part
+  # of its residuals is the shell's curvature. Read as a shift it moved the
+  # centre the full three sds, where the mode was within 0.02 posterior sds of
+  # the mean; taken again about the moved centre it does not fall, and the
+  # step goes.
+  set.seed(11)
+  mix <- qr.Q(qr(matrix(rnorm(900), 30))) %*% diag(exp(rnorm(30, 0, 0.5)))
+  inv <- solve(mix)
+  r0 <- 0.05; tau <- 0.01
+  m0 <- c(0.5, 0, 0, 0, 0)
+  lpg <- function(theta) {
+    z <- as.numeric(inv %*% theta)
+    x <- z[1:5]
+    y <- z[6:30]
+    r <- sqrt(sum(x^2))
+    out <- -(r - r0)^2 / (2 * tau^2) - sum((x - m0)^2) / 2 - sum(y^2) / 2
+    attr(out, 'gradient') <- as.numeric(t(inv) %*% c(-(r - r0) / tau^2 * x / r - (x - m0), -y))
+    out
+  }
+  mode <- optim(as.numeric(mix %*% c(r0, rep(0, 29))), function(x) -lpg(x),
+    function(x) -attr(lpg(x), 'gradient'), method = 'BFGS',
+    control = list(reltol = 1e-15, maxit = 5000))$par
+  hess <- suppressWarnings(ctsem:::ctOptimComputeUncertainty(mode,
+    list(nsubjects = 1), sm = NULL, lpgFunc = lpg, uncertainty = 'hessian',
+    finishsamples = 20, verbose = 0))
+  gb <- attr(ctsem:::.ctImisPointGradbatch(lpg), 'gradbatch')
+  sds <- sqrt(diag(hess$cov))
+  moved <- vapply(1:5, function(s) {
+    set.seed(s)
+    check <- ctsem:::.ctOptimNormalCheck(gb, mode, hess$cov)
+    max(abs(check$centre - mode) / sds)
+  }, numeric(1))
+  expect_lt(max(moved), 0.2)
+})
+
 test_that("checked samples a ring the Hessian's normal makes six times too wide", {
   # A shell of radius 0.05 under a N((0.5, 0), I) prior, rotated 45 degrees:
   # the direction around it is the prior's, the Hessian's curvature there a
