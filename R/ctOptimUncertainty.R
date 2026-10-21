@@ -1369,6 +1369,10 @@ ctOptimCovFromHessian <- function(hess, ridge=1e-8, rtol=.ctFlatDirectionRtol(),
       rep(0, nrow(cov))
     diagnostics$widened <- list(n=length(widened$widths), widths=widened$widths,
       directions=widened$directions, evaluations=widened$evaluations)
+    # Per coordinate, as `nullMass`, but of the directions still held at no
+    # width: what the intervals of the routes that drew from this have no
+    # spread along (`.ctBackendHeldMass()`).
+    diagnostics$heldMass <- heldMass
     repairSteps <- c(repairSteps, paste0(length(widened$widths),
       ' of them given, for sampling, the width the log density falls half a ',
       'unit over along them'))

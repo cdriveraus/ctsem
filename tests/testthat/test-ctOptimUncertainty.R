@@ -287,6 +287,15 @@ test_that("checked samples a direction the Hessian gives no curvature", {
   expect_gte(ncol(checked$check$directions), 1L)
   expect_equal(sqrt(diag(checked$uncertaintyfit$cov)) / target$sd, c(1, 1),
     tolerance = 0.15)
+  # The projection dropped the tangent coordinate, and nothing is held once it
+  # has a width: the intervals are read against what is held, so the summary
+  # does not blank a coordinate the draws spread along.
+  covariance <- details$proposal_covariance %||% details$covariance
+  expect_equal(covariance$nullMass, c(0, 1), tolerance = 1e-8)
+  expect_equal(covariance$heldMass, c(0, 0), tolerance = 1e-8)
+  expect_equal(ctsem:::.ctBackendHeldMass(details), c(0, 0), tolerance = 1e-8)
+  expect_equal(ctsem:::.ctBackendHeldMass(hess$uncertaintyfit$details), c(0, 1),
+    tolerance = 1e-8)
 })
 
 test_that("checked corrects the funnel a variance from six observations makes", {
