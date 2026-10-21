@@ -18,7 +18,9 @@
   inits, intoverstates) {
   # Opt-in: each restart is a whole optimisation, which on a slow laplace fit
   # is minutes, and on the fixture below five of them found nothing better.
-  n <- suppressWarnings(as.integer(.ctJuliaOr(optimcontrol$restarts, 0L))[1L])
+  # `[[`, not `$`: `$` falls back to the one field a name begins, and
+  # `optimcontrol$restartsd` alone would be read as the count.
+  n <- suppressWarnings(as.integer(.ctJuliaOr(optimcontrol[["restarts"]], 0L))[1L])
   if (!isTRUE(n >= 1L)) return(0L)
   if (!isTRUE(intoverstates)) return(0L)
   if (!is.null(inits) || !is.null(optimcontrol$maxiter)) return(0L)

@@ -3936,7 +3936,9 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
 .ctJuliaSaemDefaultIterations <- 10000L
 .ctJuliaSaemIterations <- function(optimcontrol, intoverpop = "laplace",
   intoverstates = TRUE) {
-  v <- optimcontrol$saem
+  # `[[`: `$` falls back to `saem_proposal` when this is absent, and a
+  # proposal given alone stopped the fit as an invalid iteration count.
+  v <- optimcontrol[["saem"]]
   if (is.null(v) || isFALSE(v)) return(0L)
   n <- if (isTRUE(v)) .ctJuliaSaemDefaultIterations else
     suppressWarnings(as.integer(v)[1L])
@@ -5357,7 +5359,7 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
     # The hysteresis: a fit that stalls with nothing flat is slow rather than
     # stuck, so it is left alone for a while and asked less readily after.
     stall_cooldown = as.integer(.ctJuliaOr(optimcontrol$stallcooldown, 30L)),
-    stall_tighten = as.numeric(.ctJuliaOr(optimcontrol$stalltighten, 0.1)),
+    stall_tighten = as.numeric(.ctJuliaOr(optimcontrol[["stalltighten"]], 0.1)),
     stall_tightenings = as.integer(.ctJuliaOr(optimcontrol$stalltightenings, 2L)),
     # How much of its live responsiveness a transform has to have lost before
     # it counts as the reason a fit stopped. Relative, because an absolute
@@ -6855,7 +6857,10 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
   } else if (!isTRUE(optimcontrol$estonly)) {
     # With sampling weights the sandwich, unless asked otherwise: the Hessian
     # alone is the pseudo-likelihood's curvature, not the estimate's spread.
-    uncertainty <- .ctJuliaOr(optimcontrol$uncertainty,
+    # `[[`: `$` falls back to the one field the name begins, so an
+    # `uncertaintyControl` given alone was read as the method and stopped the
+    # fit in `match.arg()`.
+    uncertainty <- .ctJuliaOr(optimcontrol[["uncertainty"]],
       if (length(out$model_spec$subject_weights)) "sandwich" else "checked")
     # One way to sample: `ctFit(optimize = FALSE)`, which places the sampler
     # through this same pipeline before ever reaching this stage (see
