@@ -54,6 +54,11 @@ BENCH_VARIANTS <- list(
   # outer products (optimcontrol$lbfgs_scores).
   scores = list(optimcontrol = list(lbfgs_scores = TRUE)),
 
+  # The L-BFGS stage's coreset stages off (optimcontrol$coreset, on by default
+  # on the Laplace route). Paired with `default` on the same build: what they
+  # save, and that the optimum is the same.
+  nocoreset = list(optimcontrol = list(coreset = FALSE)),
+
   # The finish's steps on one curvature whatever the route would choose
   # (`_ctsem_finish_curvature`): a fresh exact Hessian whenever a step is slow,
   # or one Hessian walked with SR1 updates and refreshed when its walk stops

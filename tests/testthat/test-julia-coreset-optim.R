@@ -2,9 +2,12 @@
 # in optimiser.jl): stretches of the L-BFGS stage on a weighted few of the
 # units, each checked by a full gradient, with the full objective finishing.
 # Two fits of one model from the default start under one seed, with and
-# without them: the same optimum and standard errors, in fewer full gradients.
+# without them: the same optimum and Hessian, in fewer full gradients.
 # Three hundred subjects of the shared Laplace fixture's design, so that its
-# seven parameters leave a coreset a small share of the units.
+# seven parameters leave a coreset a small share of the units. Batching is off
+# in both: from the default start it does most of the climbing on this model,
+# and both fits then took 15 full gradients, with or without coreset stages
+# after it; without it, 18 against 68 (dev1, 2026-10-21).
 
 .coreset_optim_fits <- function() {
   fit_cached("coreset optimiser fits", {
@@ -13,7 +16,7 @@
       set.seed(1)
       suppressWarnings(suppressMessages(ctsem::ctFit(data, laplace_fixture_model(),
         backend = "julia", cores = 1, intoverpop = "laplace", priors = TRUE,
-        optimcontrol = c(list(finishsamples = 20),
+        optimcontrol = c(list(finishsamples = 20, batch = FALSE),
           if (!coreset) list(coreset = FALSE)))))
     }
     list(on = fit_one(TRUE), off = fit_one(FALSE))
@@ -35,10 +38,11 @@ test_that("coreset stages reach the full objective's optimum in fewer full gradi
   expect_true(isTRUE(on$uncertainty$certification$certified))
   expect_true(isTRUE(off$uncertainty$certification$certified))
   expect_equal(on$estimate$logposterior, off$estimate$logposterior, tolerance = 1e-8)
-  se <- as.numeric(off$estimate$se)
+  H <- off$uncertainty$hessian
+  se <- sqrt(diag(solve(-H)))
   expect_equal(as.numeric(on$estimate$raw) / se, as.numeric(off$estimate$raw) / se,
     tolerance = 1e-3)
-  expect_equal(as.numeric(on$estimate$se), se, tolerance = 1e-4)
+  expect_equal(on$uncertainty$hessian, H, tolerance = 1e-5)
   # And the point of it.
   expect_lt(on$optim$full_gradients, off$optim$full_gradients)
 })
