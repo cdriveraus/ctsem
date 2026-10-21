@@ -1,11 +1,11 @@
 # The coreset importance sampling evaluates on the Laplace route (R/ctCoreset.R,
 # laplace_coreset.jl): the engine's subset evaluation against the full one, the
 # selection on a sum it can compress, and the sampler's density with a coreset
-# behind it against the full density. One fit, the shared Laplace fixture at 60
-# subjects: its seven parameters all move under 'is', so a coreset needs about
-# twice that many units, and may have at most a third of them.
+# behind it against the full density. One fit, the shared Laplace fixture at
+# 100 subjects: its seven parameters all move under 'is', so a coreset needs
+# about twice that many units, and may have at most a quarter of them.
 
-.coreset_fixture <- function() laplace_fixture(nsub = 60L, tp = 6L, seed = 31L)
+.coreset_fixture <- function() laplace_fixture(nsub = 100L, tp = 6L, seed = 31L)
 
 test_that("the engine's coreset evaluation is the weighted sum of the units it names", {
   skip_on_cran()
@@ -19,7 +19,7 @@ test_that("the engine's coreset evaluation is the weighted sum of the units it n
   terms <- ctsem:::.ctBackendJuliaValue(module$ctsem_coreset_terms(obj, t(X)))
   L <- matrix(as.numeric(terms$unit_loglik), ncol = 3)
   N <- nrow(L)
-  expect_equal(N, 60L)
+  expect_equal(N, 100L)
   plain <- as.numeric(ctsem:::.ctBackendJuliaValue(module$ctsem_evaluate_batch(obj, t(X))))
   expect_equal(as.numeric(terms$value), plain, tolerance = 1e-10)
   expect_equal(colSums(L), as.numeric(terms$total), tolerance = 1e-10)
@@ -107,8 +107,8 @@ test_that("the sampler's density with a coreset behind it follows the full densi
   }
   rec <- attr(lpg, "coreset")()
   expect_true(rec$used)
-  expect_equal(rec$units, 60L)
-  expect_lte(rec$size, 20L)
+  expect_equal(rec$units, 100L)
+  expect_lte(rec$size, 25L)
   expect_equal(attr(lpg, "cost")(), nrow(first))
   spent <- attr(lpg, "cost")()
   second <- draw(100)

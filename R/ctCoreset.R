@@ -17,7 +17,7 @@
 # coreset whose held-out error passes `.ctCoresetTol`; then evaluates the
 # coreset's units only (`ctsem_coreset_batch`, on the pool a full evaluation
 # uses), checks a few of every round's draws in full, and refits or grows
-# when they drift. Where no coreset of at most a third of the units passes, or
+# when they drift. Where no coreset of at most a quarter of the units passes, or
 # the drift outgrows that, it evaluates in full from then on. At the end it
 # checks the draws that carry the weight and corrects them where needed, so
 # what it hands back is the full density's.
@@ -184,6 +184,7 @@
   st$checks <- numeric(0)
   st$rounds <- 0L
   st$retrains <- 0L
+  st$drifts <- 0L
   st$minM <- 1L
   st$final <- NULL
   engine <- local({
@@ -214,7 +215,10 @@
   }
   choose <- function(start = integer()) {
     N <- ncol(st$X)
-    cf <- .ctCoresetChoose(st$X, st$y, seq_along(st$y), floor(N / 3), start,
+    # A quarter of the units at most: at 100 units a coreset of 26-27, near a
+    # third, sat at its tolerance, failed its checks round after round and
+    # cost more than the full sum.
+    cf <- .ctCoresetChoose(st$X, st$y, seq_along(st$y), floor(N / 4), start,
       st$focus, st$minM)
     if (is.null(cf)) return(FALSE)
     st$cf <- cf
@@ -243,25 +247,27 @@
     if (st$phase == 'training') {
       t0 <- full(X)
       learn(t0)
-      st$rounds <- st$rounds + 1L
+      # Counted in draws, not calls: 'is' walks its profile paths first, a
+      # few draws a call, and counted in calls they ended training before
+      # its first round.
+      st$rounds <- st$rounds + nrow(X)
+      st$draws <- rbind(st$draws, X)
       # No fewer units than twice the dimensions the draws span: to first
       # order each unit's term is its score along them, and the measured
       # rank of the units' terms ran 1.5-2 times that. A coreset chosen
       # smaller from the first rounds' tails passed there and misled the
       # sampler once it reached the posterior.
-      if (st$rounds == 1L) {
-        sv <- svd(scale(X, scale = FALSE), nu = 0, nv = 0)$d
-        st$minM <- 2L * sum(sv > 1e-8 * max(sv))
-      }
-      # Under 30 units a coreset of a third of them saves too little; after
-      # three training rounds in a row without one, the sum does not
-      # compress here.
+      sv <- svd(scale(st$draws, scale = FALSE), nu = 0, nv = 0)$d
+      st$minM <- 2L * sum(sv > 1e-8 * max(sv))
+      # Under 30 units a coreset of a quarter of them saves too little; after
+      # 300 training draws in a row without one, the sum does not compress
+      # here.
       if (is.null(st$X) || ncol(st$X) < 30L) {
         st$phase <- 'off'
       } else if (choose(if (!is.null(st$cf)) st$cf$S else integer())) {
         st$phase <- 'coreset'
         st$rounds <- 0L
-      } else if (st$rounds >= 3L) {
+      } else if (st$rounds >= 300L) {
         st$phase <- 'off'
       }
       v <- t0$value
@@ -293,13 +299,18 @@
         # round is training data where the sampler now is; then grow the
         # coreset from what it has, failing that train on full rounds, twice
         # at most, then give up.
+        # Each drift costs a full round; past three the coreset is not
+        # paying for itself.
+        st$drifts <- st$drifts + 1L
         others <- setdiff(seq_len(nrow(X)), pick)
         if (length(others)) {
           t1 <- full(X[others, , drop = FALSE])
           v[others] <- t1$value
           learn(t1)
         }
-        if (!choose(st$cf$S)) {
+        if (st$drifts > 3L) {
+          st$phase <- 'off'
+        } else if (!choose(st$cf$S)) {
           st$retrains <- st$retrains + 1L
           st$phase <- if (st$retrains <= 2L) 'training' else 'off'
         }
@@ -371,6 +382,7 @@
     phase = st$phase,
     minimum = st$minM,
     retrains = st$retrains,
+    drifts = st$drifts,
     training_draws = length(st$y),
     check_rms = if (length(st$checks)) sqrt(mean(st$checks^2)) else NA_real_,
     check_max = if (length(st$checks)) max(abs(st$checks)) else NA_real_,
