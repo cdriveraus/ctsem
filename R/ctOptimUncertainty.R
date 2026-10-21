@@ -2336,9 +2336,9 @@ ctOptimFitLpgFunc <- function(fit, cores=1){
   # the 100-subject strong-shell Laplace fit 6632 and 1926, at like accuracy.
   checked <- !is.null(directions)
   if (is.null(control$isitersize)) control$isitersize <- if (checked) 100 else 1000
-  # A budget in log density evaluations, a gradient counted as two, where the
-  # caller knows what the fit cost (`.ctBackendFitCost()`): rounds stop there,
-  # and the report says the target was not reached.
+  # A budget in log density evaluations, a gradient counted as two, when the
+  # caller sets one (`control$imisBudget`): rounds stop there, and the report
+  # says the target was not reached.
   budget <- .ctJuliaOr(control$imisBudget, Inf)
 
   # `.ctImisRun()` runs in the identified subspace of `uncertaintyfit$cov` when
@@ -2361,9 +2361,10 @@ ctOptimFitLpgFunc <- function(fit, cores=1){
 
   # `'checked'` keeps the Hessian's normal where its correction failed. Weights
   # past the Pareto k bar describe the proposal, not the posterior: on a shell
-  # sampled within what the fit cost they rested on one draw (ESS 1, k 40), and
-  # their covariance was a point, intervals far narrower than the truth where
-  # the normal's are far wider and the check has said so.
+  # sampled within what the fit cost (a budget 'checked' once set) they rested
+  # on one draw (ESS 1, k 40), and their covariance was a point, intervals far
+  # narrower than the truth where the normal's are far wider and the check has
+  # said so.
   if (!is.null(directions)) {
     k <- .ctImisParetoK(is_res)
     reliable <- if (is.finite(k)) k <= .ctImisParetoKBar() else
@@ -2374,11 +2375,9 @@ ctOptimFitLpgFunc <- function(fit, cores=1){
         paste0('par', involved)
       warning('The normal approximation is unreliable for ',
         paste(named, collapse = ', '), ': the posterior departs from it ',
-        'there, and importance sampling within what the fit cost could not ',
-        'correct it (Pareto k ', signif(k, 2), '). Their intervals are the ',
-        "Hessian's. ctFitUncertainty(fit, 'checked', control = list(imisBudget ",
-        "= Inf)) samples on until it can; a shell in the posterior has taken ",
-        "about six times the fit.", call. = FALSE)
+        'there, and importance sampling could not correct it (Pareto k ',
+        signif(k, 2), '). Their intervals are the Hessian\'s. ', tailremedy,
+        call. = FALSE)
       uncertaintyfit$details$importance_sampling <- list(ess = is_res$ess,
         pareto_k = k, used = FALSE, directions = ncol(directions),
         evaluations = is_res$evaluations, cost = is_res$cost,
@@ -2822,8 +2821,8 @@ ctOptimFitLpgFunc <- function(fit, cores=1){
 #' proposal components' t degrees of freedom; \code{Inf} for normal),
 #' \code{isESS = 200}, and \code{isitersize = 1000} (100 for
 #' \code{'checked'}). \code{imisBudget} caps the log density evaluations
-#' importance sampling spends; on julia, \code{'checked'} sets it to what the
-#' fit's optimisation spent. On a Laplace fit (julia), importance sampling
+#' importance sampling spends (no cap by default). On a Laplace fit (julia),
+#' importance sampling
 #' evaluates a weighted subset of the units chosen and checked as it runs, and
 #' corrects its weights where that subset strays; \code{coreset = FALSE}
 #' evaluates every unit instead. \code{parsteps} keeps
