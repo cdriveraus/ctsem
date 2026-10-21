@@ -192,6 +192,26 @@ test_that("a parameter that depends on the subject's level is found by the level
   expect_null(st1$info$errors)
 })
 
+test_that("the level in the latent is the same linear model as the level in the indicator", {
+  # With linear dynamics and the same initial distribution -- the deviation
+  # from 0, the level from its stationary mean, each with its stationary
+  # variance -- the two forms are one model, and fit to one likelihood.
+  n <- .score_fit('null')
+  m <- .score_model()
+  m$pars$param[m$pars$matrix == 'T0MEANS'] <- NA
+  m$pars$value[m$pars$matrix == 'T0MEANS'] <- 0
+  m$pars$param[m$pars$matrix == 'T0VAR'] <- 'stationary'
+  m$pars$value[m$pars$matrix == 'T0VAR'] <- NA
+  m$pars$indvarying[m$pars$matrix %in% c('T0MEANS', 'T0VAR')] <- FALSE
+  lm <- ctModelLatentLevel(m)
+  expect_identical(attr(lm, 'moved'), 'eta1')
+  fit <- function(model) suppressMessages(ctFit(n$data[, c('id', 'time', 'Y1')], model,
+    backend = 'julia', intoverpop = 'laplace', cores = 1, verbose = 0))
+  a <- fit_cached('scoretest null deviation form', fit(m))
+  b <- fit_cached('scoretest null level form', fit(lm))
+  expect_equal(b$estimate$loglik, a$estimate$loglik, tolerance = 1e-3)
+})
+
 test_that("results are reproducible and leave the caller's random numbers alone", {
   x <- .score_fit('cov')
   set.seed(11)

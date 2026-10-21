@@ -214,6 +214,38 @@ test_that("a drift declared for a slow process keeps its place among the random 
   expect_true(adjacent(twice$pars, 'drift_eta1'))
 })
 
+test_that("a latent level takes the marker's varying intercept into CINT", {
+  m <- suppressMessages(ctModel(type = 'ct', silent = TRUE, manifestNames = c('Y1', 'Y2', 'Y3'),
+    latentNames = c('eta1', 'eta2'), LAMBDA = matrix(c(1, 'l2', 0, 0, 0, 1), 3),
+    CINT = matrix(0, 2), MANIFESTMEANS = matrix(c('mm1', 'mm2', 'mm3'), 3)))
+  m$pars$indvarying <- m$pars$matrix %in% 'MANIFESTMEANS'
+  lm <- suppressMessages(ctModelLatentLevel(m))
+  expect_identical(attr(lm, 'moved'), c('eta1', 'eta2'))
+  p <- lm$pars
+  get <- function(mat, r) p[p$matrix == mat & p$row == r & p$col == 1, ]
+  # Each latent's CINT free and varying, its marker's intercept fixed at 0,
+  # its initial mean stationary.
+  expect_identical(get('CINT', 1)$param, 'cint_eta1')
+  expect_true(get('CINT', 1)$indvarying)
+  expect_true(is.na(get('MANIFESTMEANS', 1)$param))
+  expect_equal(as.numeric(get('MANIFESTMEANS', 1)$value), 0)
+  expect_identical(get('T0MEANS', 1)$param, 'stationary')
+  # Item 2, not a marker, keeps its own varying intercept.
+  expect_identical(get('MANIFESTMEANS', 2)$param, 'mm2')
+  expect_true(get('MANIFESTMEANS', 2)$indvarying)
+  expect_identical(get('CINT', 2)$param, 'cint_eta2')
+  # A latent with no marker, or a free CINT, is left as it is, and says so.
+  m2 <- m
+  m2$pars$value[m2$pars$matrix == 'LAMBDA' & m2$pars$row == 1 & m2$pars$col == 1] <- 0.5
+  expect_message(x <- ctModelLatentLevel(m2, 'eta1'), 'no indicator')
+  expect_identical(attr(x, 'moved'), character())
+  m3 <- m
+  k <- which(m3$pars$matrix == 'CINT' & m3$pars$row == 1)
+  m3$pars$param[k] <- 'c1'; m3$pars$value[k] <- NA
+  expect_message(ctModelLatentLevel(m3, 1), 'CINT is not fixed')
+  expect_error(ctModelLatentLevel(m, 'nope'), 'latents')
+})
+
 test_that("slow processes' innovations correlate with each other, added together or later", {
   both <- ctModelMatrices(ctModelSlowComponent(.ho_ct(), 1:2))
   expect_equal(unname(both$DIFFUSION[4, ]), c('0', '0', 'diff_slow_eta2_slow_eta1', '1'))
