@@ -497,6 +497,10 @@ ctFitAdequacy <- function(fit, covariates = NULL,
     time <- as.numeric(k$time)
   }
   Y[!is.finite(Y) | Y == 99999] <- NA
+  G <- Gs <- NULL
+  if (.ctFitIsJulia(fit) && mixture && length(k$pitgauss) == nrows * m) {
+    G <- matrix(k$pitgauss, nrows, m); Gs <- matrix(k$pitseq, nrows, m)
+  }
   E <- matrix(NA_real_, nrows, m, dimnames = list(NULL, vars))
   R <- array(NA_real_, c(nrows, m, m))
   Q <- rep(NA_real_, nrows); d <- integer(nrows)
@@ -541,6 +545,20 @@ ctFitAdequacy <- function(fit, covariates = NULL,
     E[r, obs] <- Pv / s
     R[r, obs, obs] <- P / outer(s, s)
     Q[r] <- sum(v * Pv); d[r] <- length(obs)
+    # From the exact predictive, a mixture over the random effects: the error is
+    # the normal quantile of the mixture's own distribution function at what was
+    # observed, each item given the row's others, and the row distance the sum
+    # of squares of each item's given those before it. Standardised by the
+    # mixture's mean and covariance instead they are not normal -- heavier
+    # tailed -- and the distribution family read their kurtosis and the
+    # distance's spread as misfit, a correct model rejected 37 per cent of the
+    # time at 120 people, whatever the number of draws. With one component the
+    # two are the same.
+    if (!is.null(G)) {
+      g <- G[r, obs]; sq <- Gs[r, obs]
+      if (all(is.finite(g))) E[r, obs] <- stats::qnorm(pmin(pmax(g, 1e-12), 1 - 1e-12))
+      if (all(is.finite(sq))) Q[r] <- sum(stats::qnorm(pmin(pmax(sq, 1e-12), 1 - 1e-12))^2)
+    }
   }
   # Each latent's update by the row, standardised: the state moved by K v,
   # whose covariance under the model is the prior less the updated -- a

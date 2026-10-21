@@ -420,3 +420,52 @@ test_that("where effects reach the dynamics, only the unit-level families are pr
   expect_equal(exact$statistics$z[rowlevel], plain$statistics$z[rowlevel])
   expect_false(isTRUE(all.equal(exact$statistics$z[!rowlevel], plain$statistics$z[!rowlevel])))
 })
+
+test_that("errors from the mixture predictive are its own distribution function's", {
+  # The exact predictive integrates the random effects by importance sampling:
+  # a mixture of normals, whose errors standardised by its mean and covariance
+  # are heavier tailed than normal. Through the mixture's own distribution
+  # function they are standard normal under the model.
+  mix <- function(fit) {
+    spec <- ctsem:::.ctBackendSpec(fit)
+    k <- suppressMessages(ctsem:::.ctBackendKalmanRaw(fit, ctsem:::.ctFitRawEstimate(fit),
+      subjectmatrices = FALSE, fields = 'subject', sequential = 'mixture', compact = TRUE))
+    nrows <- length(spec$times)
+    y <- as.numeric(spec$manifest_data)
+    y[!is.finite(y) | y == 99999] <- NA
+    list(standardised = (y - as.numeric(k$y1)) / sqrt(as.numeric(k$ycov1)),
+      transformed = stats::qnorm(as.numeric(k$pitgauss)),
+      sequential = stats::qnorm(as.numeric(k$pitseq)), ok = !is.na(y))
+  }
+  # Where the effects enter linearly (a random intercept, on the Laplace route,
+  # where the exact predictive is the mixture) the predictive is normal, and
+  # the transforms give the standardised errors back, to the sampling's
+  # accuracy; with one item the two transforms are one.
+  n <- .score_fit('null')
+  lfit <- fit_cached('scoretest null laplace', suppressMessages(ctFit(
+    n$data[, c('id', 'time', 'Y1')], .score_model(), backend = 'julia',
+    intoverpop = 'laplace', cores = 1, verbose = 0)))
+  lin <- mix(lfit)
+  expect_true(all(is.finite(lin$transformed[lin$ok])))
+  expect_equal(lin$transformed[lin$ok], lin$sequential[lin$ok])
+  # The sampling's error is largest at a person's first row, where the
+  # posterior is the prior and 512 draws cover its tails coarsely (0.2 per
+  # cent of rows differ by more than 0.05 there, none at 4096 draws).
+  dev <- abs(lin$transformed - lin$standardised)[lin$ok]
+  expect_lt(stats::median(dev), 1e-3)
+  expect_lt(stats::quantile(dev, 0.99, names = FALSE), 0.05)
+  # Where they reach the dynamics the two differ, and the transforms' tails
+  # are the lighter.
+  d <- .score_data('het', nsub = 20L)
+  m <- .score_model()
+  m$pars$indvarying[m$pars$param %in% c('drift_eta1', 'diff_eta1')] <- TRUE
+  fit <- fit_cached('scoretest het random sd', suppressWarnings(suppressMessages(ctFit(
+    d[, c('id', 'time', 'Y1')], m, backend = 'julia', intoverpop = 'laplace',
+    cores = 1, verbose = 0))))
+  dyn <- mix(fit)
+  expect_true(all(is.finite(dyn$transformed[dyn$ok])))
+  expect_gt(max(abs(dyn$transformed - dyn$standardised)[dyn$ok]), 0.01)
+  # The adequacy check takes them: its errors are the transforms.
+  err <- ctsem:::.ctAdequacyErrors(fit)
+  expect_equal(as.numeric(err$E[, 1])[dyn$ok], dyn$transformed[dyn$ok])
+})
