@@ -3189,7 +3189,10 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
         final.value, gradient_norm, _ctsem_predicted_gain(directional),
         _ctsem_last_gain(trace), saturated_parameters, g_tol, converge_tol;
         # A stage asked for no iterations has not stalled.
-        label=label, verbose=verbose && maxiter > 0, overshoot_probe=overshoot_probe,
+        # Not after a jump the route named: the run is handed on from there,
+        # and the probe's pullbacks cost minutes on the fit this was built for.
+        label=label, verbose=verbose && maxiter > 0,
+        overshoot_probe=stop_reason == "jump" ? :off : overshoot_probe,
         progress=_ctsem_probe_progress(reporter))
     saturated = verdict.saturated
     stalled = verdict.stalled

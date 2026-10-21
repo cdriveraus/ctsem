@@ -448,3 +448,90 @@ end
     @test_throws ArgumentError ContinuousTimeSEM._gh_grid(13, 5)
     @test !haskey(ContinuousTimeSEM._GH_GRID_CACHE, (13, 5))
 end
+
+# --- frozen importance draws, for units too wide for a product rule ------------
+#
+# A unit of one block wider than `maxdim` gets draws held fixed in its
+# standardised effects in place of nodes (`_continuation_importance_rule`).
+# What has to hold: its value is the unit's integral to within its own error,
+# its gradient is the derivative of its value, a gap within that error flags
+# nothing, a unit the caller names is flagged whatever its gap, and with
+# `screen = false` only that unit is scored.
+
+@testset "a wide unit of one block gets frozen draws, valued as quadrature values it" begin
+    laplace, values = _fresh_2d3()
+    theta = collect(Float64, values)
+    # Three effects a subject: the product rule's 125 nodes are the reference.
+    reference = ctsem_laplace_quadrature(laplace, theta; nodes=5,
+        contributions=true)
+    o = ctsem_laplace_continuation(laplace, theta; tolerance=0.0, maxdim=2,
+        draws=256, draws_se=0.02, force=1:length(laplace.units.members))
+    info = ctsem_laplace_continuation_info(o)
+    @test (info.nwide, info.nimportance, info.nflagged) ==
+        (0, info.nunits, info.nunits)
+    @test all(se -> 0 < se <= 0.02, info.centre_se)
+    for U in 1:info.nunits
+        @test abs(info.quadrature_units[U] - reference.subject_loglik[U]) <
+            4 * info.centre_se[U] + 1e-3
+    end
+    # Away from the centre the draws are held, and the gradient is the
+    # derivative of the value they give.
+    r = _continuation_fd_check(o, theta .+ 0.05)
+    @test isapprox(r.g, r.fd; atol=1e-6, rtol=1e-5)
+    # With draws off, as before: too wide, so not scored.
+    off = ctsem_laplace_continuation_info(ctsem_laplace_continuation(laplace,
+        theta; tolerance=0.0, maxdim=2))
+    @test (off.nwide, off.nimportance, off.nflagged) == (off.nunits, 0, 0)
+end
+
+@testset "an importance rule on a Gaussian integrand is the Laplace value" begin
+    laplace, values = _fresh_linear()
+    theta = collect(Float64, values)
+    lap = ctsem_laplace_evaluate(laplace, theta; gradient=false)
+    o = ctsem_laplace_continuation(laplace, theta; tolerance=0.0, maxdim=1,
+        draws=256)
+    info = ctsem_laplace_continuation_info(o)
+    @test info.nimportance == info.nunits
+    for U in 1:info.nunits
+        @test abs(info.quadrature_units[U] - lap.unit_loglik[U]) <
+            4 * info.centre_se[U] + 1e-8
+    end
+    # Laplace is exact here, so every gap is within the draws' error and the
+    # screen, which reads only what it can resolve, flags nothing.
+    @test info.nflagged == 0
+    @test info.screen == 0
+end
+
+@testset "a unit named is flagged whatever its gap, and screen = false scores it alone" begin
+    laplace, values = _fresh_2d3()
+    theta = collect(Float64, values)
+    lap = ctsem_laplace_evaluate(laplace, theta; gradient=false)
+    o = ctsem_laplace_continuation(laplace, theta; maxdim=2, draws=256,
+        force=[2], screen=false)
+    info = ctsem_laplace_continuation_info(o)
+    @test (info.nflagged, info.flagged) == (1, [2])
+    others = setdiff(1:info.nunits, 2)
+    @test info.quadrature_units[others] == info.laplace_units[others]
+    hyb = ctsem_laplace_continuation_evaluate(o, theta; gradient=false)
+    @test isapprox(hyb.value, lap.value - lap.unit_loglik[2] +
+        info.quadrature_units[2]; rtol=1e-12)
+    # A placement again keeps it, and a point given for it joins its proposal.
+    d = laplace.units.dims[2]
+    ctsem_laplace_continuation_recentre!(o, theta .+ 0.01; point_units=[2],
+        point_values=reshape(fill(0.3, d), d, 1))
+    @test ctsem_laplace_continuation_info(o).flagged == [2]
+    @test length(o.points[2]) == 1
+    @test_throws ArgumentError ctsem_laplace_continuation(laplace, theta;
+        maxdim=2, draws=256, force=[info.nunits + 1])
+end
+
+@testset "no unit is named a jump on a smooth objective" begin
+    laplace, values = _fresh_nonlinear()
+    theta = collect(Float64, values)
+    g = ctsem_laplace_evaluate(laplace, theta; gradient=true).gradient
+    s = -g ./ sqrt(sum(abs2, g))
+    jump = ContinuousTimeSEM.CTSEMJump(true, theta, s, 1e-3, 1e-5, 0.3)
+    named = ContinuousTimeSEM._ctsem_jump_units(laplace, jump)
+    @test isempty(named.units)
+    @test named.point_units == [0]
+end
