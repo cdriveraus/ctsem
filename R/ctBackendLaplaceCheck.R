@@ -257,13 +257,9 @@ ctLaplaceCheck <- function(fit, nodes = 5L, correction = TRUE, step = 1e-3,
     control <- .ctLaplaceContinueDefaults
     control$nodes <- as.integer(nodes)
     control$maxiter <- as.integer(maxiter)
-    cont <- module$ctsem_laplace_continuation(objective,
-      .ctJuliaNumericVector(est), nodes = as.integer(control$nodes),
-      tolerance = as.numeric(control$tolerance),
-      product_maxdim = as.integer(control$product_maxdim),
-      soft_tau = as.numeric(control$soft_tau),
-      soft_maxdirs = as.integer(control$soft_maxdirs),
-      maxdim = as.integer(control$maxdim))
+    cont <- do.call(module$ctsem_laplace_continuation,
+      c(list(objective, .ctJuliaNumericVector(est)),
+        .ctLaplaceContinuationArgs(control, force = fit$laplace$frozen$units)))
     basis <- .ctLaplaceContinueBasis(hessian,
       fit$uncertainty$details$flatdirections$vectors, rtol = control$rtol)
     run <- if (is.null(basis) || basis$kept < 1L) NULL else

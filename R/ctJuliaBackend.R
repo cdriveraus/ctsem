@@ -5671,6 +5671,13 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
     out
   }
   result <- optimise_once(start)
+  # A jump the optimiser named: the units whose Laplace terms moved with where
+  # their inner solves stopped, integrated by frozen draws from here on
+  # (`.ctLaplaceFrozenRescue()`). Not under a pin, whose wrapper names none.
+  if (!is.null(model_spec$laplace) && !state_explicit && is.null(default_pin)) {
+    result <- .ctLaplaceFrozenRescue(result, module, objective, common,
+      verbose = verbose)
+  }
   # The two early phases belong to the first stage, which is the one that
   # starts away from the optimum. An escape below resumes from a pulled-back
   # point beside it, so neither runs again there -- and SAEM's record is the
@@ -5824,6 +5831,9 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
     # The floor the objective was built with; post-fit routes rebuild the
     # objective from the same specification, so they use it too.
     floor = as.character(.ctJuliaOr(model_spec$laplace$inner$floor, "total")),
+    # Units whose Laplace term jumped as the fit went, integrated by frozen
+    # draws from then on (`.ctLaplaceFrozenRescue()`), or NULL.
+    frozen = result$frozen,
     gated_units = if (is.null(result$gated_units)) NA_integer_ else
       as.integer(result$gated_units),
     inner_converged = isTRUE(result$inner_converged),
@@ -6337,8 +6347,12 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
       inverse = .ctBackendResumeInverse(endgame),
       hessian = endgame$hessian, hessian_at = endgame$evaluated_at))
   if (certifying) {
+    frozen <- result$frozen
     correction <- correct(result)
     result <- correction$result
+    # A resume runs on the Laplace objective, and a unit that jumped before
+    # stays integrated by frozen draws in the correction that follows.
+    result$frozen <- .ctLaplaceFrozenMerge(frozen, result$frozen)
   }
   # Random restarts, when asked for, only for a fit still not converged -- see
   # R/ctBackendRestarts.R for when they run and when they deliberately do not
