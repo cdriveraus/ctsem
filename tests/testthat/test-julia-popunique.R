@@ -199,38 +199,103 @@ test_that("own variances of items a subject never answers are skipped, exactly",
   }
 })
 
-test_that("an intercept held in PARS reaches its own items, and is skipped where unanswered", {
+test_that("any measurement effect reaches only its own items, and is skipped where unanswered", {
   skip_without_julia()
-  # Y2 and Y3 share an intercept mmA, and Y3 adds an offset mmB: both held in
-  # PARS and read by the intercept cells' expressions. mmB reaches Y3 alone,
-  # so its own variance cannot reach the subjects who never answer Y3; mmA
-  # reaches Y2 as well, which everyone answers.
+  # Y2 and Y3 share an intercept mmA, and Y3 adds mmB times a time dependent
+  # predictor, both held in PARS and read by the intercept cells' expressions;
+  # Y3 also has a random loading and a random error variance. Everything of
+  # Y3's own cannot reach the subjects who never answer it -- reading a
+  # predictor joins nothing -- while mmA reaches Y2 as well, which everyone
+  # answers. With Y3's error correlated with Y2's, its error variance reaches
+  # Y2 through the covariance's construction, and is no longer inert; the
+  # loading still is, since the update reads only the observed rows.
   d <- .pu_data()
+  d$tp <- rnorm(nrow(d))
   d$Y3[d$id > 12] <- NA
-  m <- suppressWarnings(suppressMessages(ctModel(type = "ct", id = "id",
-    manifestNames = c("Y1", "Y2", "Y3"), latentNames = "eta1",
-    LAMBDA = matrix(c(1, 0.8, 1.2), 3, 1), DRIFT = matrix(-0.5),
-    DIFFUSION = matrix(0.5), MANIFESTVAR = diag(0.4, 3),
-    MANIFESTMEANS = matrix(c("mm1", "mmA", "mmA + mmB"), 3, 1),
-    PARS = matrix(c("mmA||TRUE", "mmB||TRUE")),
-    T0VAR = matrix(1), T0MEANS = matrix(0), CINT = matrix(0))))
-  spec <- .pu_spec(d, m, poprank = 1, popunique = TRUE)
-  inert <- spec$laplace$inert
-  expect_false(is.null(inert))
-  expect_setequal(inert[, "group"], 13:24)
-  expect_true(all(inert[, "effect"] ==
-    match("mmB", spec$laplace$levels[[1]]$param)))
   on.exit(ctsem:::.ctJuliaEval("ContinuousTimeSEM.ctsem_set_laplace_prune!(true)"),
     add = TRUE)
-  set.seed(8)
-  x <- rnorm(length(.pu_names(spec)), 0, 0.3)
-  ctsem:::.ctJuliaEval("ContinuousTimeSEM.ctsem_set_laplace_prune!(false)")
-  full <- .pu_eval(spec, x)
-  ctsem:::.ctJuliaEval("ContinuousTimeSEM.ctsem_set_laplace_prune!(true)")
-  pruned <- .pu_eval(spec, x)
-  expect_equal(pruned$value, full$value, tolerance = 1e-10)
-  expect_equal(as.numeric(pruned$gradient), as.numeric(full$gradient),
-    tolerance = 1e-8)
+  for (coupled in c(FALSE, TRUE)) {
+    m <- suppressWarnings(suppressMessages(ctModel(type = "ct", id = "id",
+      manifestNames = c("Y1", "Y2", "Y3"), latentNames = "eta1",
+      TDpredNames = "tp", TDPREDEFFECT = matrix(0),
+      LAMBDA = matrix(c(1, 0.8, "lam3||TRUE"), 3, 1), DRIFT = matrix(-0.5),
+      DIFFUSION = matrix(0.5),
+      MANIFESTVAR = matrix(c(0.4, 0, 0, 0, 0.4, if (coupled) "mvc" else 0,
+        0, 0, "mv3||TRUE"), 3),
+      MANIFESTMEANS = matrix(c("mm1", "mmA", "mmA + mmB * tp"), 3, 1),
+      PARS = matrix(c("mmA||TRUE", "mmB||TRUE")),
+      T0VAR = matrix(1), T0MEANS = matrix(0), CINT = matrix(0))))
+    spec <- .pu_spec(d, m, poprank = 1, popunique = TRUE)
+    inert <- spec$laplace$inert
+    expect_false(is.null(inert))
+    expect_setequal(inert[, "group"], 13:24)
+    effects <- spec$laplace$levels[[1]]$param
+    expect_setequal(effects[unique(inert[, "effect"])],
+      c("mmB", "lam3", if (!coupled) "mv3"))
+    set.seed(8)
+    x <- rnorm(length(.pu_names(spec)), 0, 0.3)
+    pruned <- .pu_eval(spec, x)
+    ctsem:::.ctJuliaEval("ContinuousTimeSEM.ctsem_set_laplace_prune!(false)")
+    full <- .pu_eval(spec, x)
+    ctsem:::.ctJuliaEval("ContinuousTimeSEM.ctsem_set_laplace_prune!(true)")
+    expect_equal(pruned$value, full$value, tolerance = 1e-10, info = coupled)
+    expect_equal(as.numeric(pruned$gradient), as.numeric(full$gradient),
+      tolerance = 1e-8, info = coupled)
+  }
+})
+
+test_that("a process measured by one item reaches that item alone, and is skipped where unanswered", {
+  skip_without_julia()
+  # eta2 is measured by Y3 alone and fed by eta1, not the reverse, so its
+  # drift, intercept, noise, initial mean and predictor effect cannot reach
+  # the subjects who never answer Y3 -- linear, and with eta2's noise
+  # depending on eta1. eta1's predictor effect reaches everyone. Once eta2
+  # feeds what Y1 or Y2 read, nothing of it is inert.
+  d <- .pu_data()
+  d$tp <- rnorm(nrow(d))
+  d$Y3[d$id > 12] <- NA
+  build <- function(drift = matrix(c("d11", "d21", 0, "d22"), 2),
+    diffusion = matrix(c("q1", 0, 0, "q2"), 2), manifestvar = diag(0.4, 3)) {
+    m <- suppressWarnings(suppressMessages(ctModel(type = "ct", id = "id",
+      manifestNames = c("Y1", "Y2", "Y3"), latentNames = c("eta1", "eta2"),
+      TDpredNames = "tp", TDPREDEFFECT = matrix(c("tpe1", "tpe2"), 2, 1),
+      LAMBDA = matrix(c(1, 0.8, 0, 0, 0, 1), 3, 2), DRIFT = drift,
+      DIFFUSION = diffusion, MANIFESTVAR = manifestvar,
+      MANIFESTMEANS = matrix(c("mm1", "mm2", "mm3"), 3, 1),
+      T0VAR = diag(1, 2), T0MEANS = matrix(c("t0m1", "t0m2"), 2),
+      CINT = matrix(c(0, "cint2"), 2))))
+    m$pars$indvarying <- m$pars$param %in% c("mm1", "d21", "d22", "cint2", "q2",
+      "t0m2", "tpe1", "tpe2")
+    .pu_spec(d, m, poprank = 1, popunique = TRUE)
+  }
+  inert_effects <- function(spec) {
+    inert <- spec$laplace$inert
+    if (is.null(inert)) return(character())
+    expect_setequal(inert[, "group"], 13:24)
+    spec$laplace$levels[[1]]$param[unique(inert[, "effect"])]
+  }
+  expect_length(inert_effects(build(drift = matrix(c("d11", "d21", "d12", "d22"), 2))), 0)
+  expect_length(inert_effects(build(
+    diffusion = matrix(c("0.5 * exp(0.1 * state[2])", 0, 0, "q2"), 2))), 0)
+  expect_length(inert_effects(build(manifestvar = matrix(c("0.4 * exp(0.1 * state[2])",
+    0, 0, 0, 0.4, 0, 0, 0, 0.4), 3))), 0)
+
+  on.exit(ctsem:::.ctJuliaEval("ContinuousTimeSEM.ctsem_set_laplace_prune!(true)"),
+    add = TRUE)
+  for (noise in c("q2", "0.5 * exp(0.1 * state[1])")) {
+    spec <- build(diffusion = matrix(c("q1", 0, 0, noise), 2))
+    expect_setequal(inert_effects(spec),
+      c("d21", "d22", "cint2", "t0m2", "tpe2", if (noise == "q2") "q2"))
+    set.seed(9)
+    x <- rnorm(length(.pu_names(spec)), 0, 0.3)
+    pruned <- .pu_eval(spec, x)
+    ctsem:::.ctJuliaEval("ContinuousTimeSEM.ctsem_set_laplace_prune!(false)")
+    full <- .pu_eval(spec, x)
+    ctsem:::.ctJuliaEval("ContinuousTimeSEM.ctsem_set_laplace_prune!(true)")
+    expect_equal(pruned$value, full$value, tolerance = 1e-10, info = noise)
+    expect_equal(as.numeric(pruned$gradient), as.numeric(full$gradient),
+      tolerance = 1e-8, info = noise)
+  }
 })
 
 test_that("own intercept variances the filter integrates match the Laplace coordinates", {

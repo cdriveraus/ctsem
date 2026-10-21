@@ -2620,57 +2620,19 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
 # Which random effects cannot reach which groups' data: a matrix of (level,
 # group, effect) rows, effect indexing the level's `re_index`, or NULL.
 #
-# An effect is a candidate when every matsetup cell carrying its raw position is
-# a LAMBDA or MANIFESTMEANS cell: the filter's row update reads only the
-# observed manifests' rows of those matrices, so such an effect reaches its
-# own manifests and nothing else. It is inert for a group none of whose
-# subjects ever observes one of them -- an item a study did not ask, say -- and
-# the engine then skips the coordinates that move only inert effects, which is
-# exact (`CTSEMLaplaceUnits`). A calculation reading LAMBDA or MANIFESTMEANS
-# cells could carry an effect elsewhere, so such a model is left as it is.
-#
-# An effect held in a PARS cell reaches whatever cells the calculations reading
-# that cell write, followed through PARS cells that read it in turn: an item
-# intercept written `mm_a + lam_a * lev`, with `mm_a` in PARS, reaches item a
-# alone, as a plain intercept cell does. Anything other than a LAMBDA or
-# MANIFESTMEANS cell along the way, and a PARS cell nothing reads, leave the
-# effect reaching everything.
+# An effect is inert for a group when nothing it moves can reach a manifest
+# any of the group's subjects observes -- an item a study did not ask, say --
+# and the engine then skips the coordinates that move only inert effects,
+# which is exact (`CTSEMLaplaceUnits`). What each of its cells reaches is read
+# off the model (`.ctJuliaCellReach()`), and an effect reaches the union.
 .ctJuliaLaplaceInert <- function(model, setup, levels, dat) {
   if (is.null(setup) || !nrow(setup) || !length(levels)) return(NULL)
-  rhs <- sub("^[^=]*=", "", unlist(model$modelmats$calcs))
-  if (any(grepl("LAMBDA[", rhs, fixed = TRUE) |
-      grepl("MANIFESTMEANS[", rhs, fixed = TRUE))) return(NULL)
   manifests <- model$manifestNames
   id <- model$subjectIDname
   if (!length(manifests) || !all(c(id, manifests) %in% colnames(dat))) return(NULL)
-  codes <- .ctMatricesList()$base[c("LAMBDA", "MANIFESTMEANS")]
-  parscode <- .ctMatricesList()$base[["PARS"]]
-  calcs <- unlist(model$modelmats$calcs)
-  written <- gsub("[[:space:]]", "", sub("=.*$", "", calcs))
-  reads <- gsub("[[:space:]]", "", sub("^[^=]*=", "", calcs))
-  # The manifests PARS[row, col] reaches through the calculations, or NULL
-  # where it reaches anything else.
-  parsreach <- function(row, col, seen = character()) {
-    key <- paste0("PARS[", row, ",", col, "]")
-    if (key %in% seen) return(integer())
-    seen <- c(seen, key)
-    readers <- written[grepl(key, reads, fixed = TRUE)]
-    if (!length(readers)) return(NULL)
-    out <- integer()
-    for (cell in readers) {
-      parts <- regmatches(cell, regexec("^([A-Za-z]+)\\[([0-9]+),([0-9]+)\\]$",
-        cell))[[1L]]
-      if (length(parts) != 4L) return(NULL)
-      if (parts[2L] %in% c("LAMBDA", "MANIFESTMEANS")) {
-        out <- c(out, as.integer(parts[3L]))
-      } else if (identical(parts[2L], "PARS")) {
-        more <- parsreach(as.integer(parts[3L]), as.integer(parts[4L]), seen)
-        if (is.null(more)) return(NULL)
-        out <- c(out, more)
-      } else return(NULL)
-    }
-    out
-  }
+  cellreach <- .ctJuliaCellReach(model, setup)
+  codes <- .ctMatricesList()$all
+  matrixname <- names(codes)[match(as.integer(setup$matrix), codes)]
   subjects <- factor(dat[[id]], levels = unique(dat[[id]]))
   # Subjects by manifests: whether that subject observes it at all.
   observed <- vapply(manifests, function(m)
@@ -2683,18 +2645,14 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
     reach <- lapply(as.integer(lv$re_index), function(p) {
       rows <- which(param == p)
       if (!length(rows)) return(NULL)
-      out <- integer()
+      hit <- integer()
       for (ri in rows) {
-        code <- as.integer(setup$matrix[ri])
-        if (code %in% codes) {
-          out <- c(out, as.integer(setup$row[ri]))
-        } else if (code == parscode) {
-          more <- parsreach(as.integer(setup$row[ri]), as.integer(setup$col[ri]))
-          if (is.null(more)) return(NULL)
-          out <- c(out, more)
-        } else return(NULL)
+        more <- cellreach(matrixname[ri], as.integer(setup$row[ri]),
+          as.integer(setup$col[ri]))
+        if (is.null(more)) return(NULL)
+        hit <- c(hit, more)
       }
-      if (length(out)) unique(out) else NULL
+      if (length(hit)) unique(hit) else NULL
     })
     candidates <- which(!vapply(reach, is.null, logical(1)))
     if (!length(candidates) || length(lv$group) != nrow(observed)) next
@@ -2708,6 +2666,211 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
   }
   if (!length(out)) return(NULL)
   do.call(rbind, out)
+}
+
+# What a cell of the model reaches: a function of (matrix name, row, col)
+# returning the manifests whose part of the likelihood the cell can move, or
+# NULL for every manifest. Read off matsetup and the calculations, as the
+# engine's filter would see them.
+#
+#  * Measurement cells. LAMBDA, MANIFESTMEANS, Jy, THRESHOLDS, RESPONSE: row
+#    `i` belongs to manifest `i`, and the filter's update reads only the
+#    observed manifests' rows. ASYMPTOTES likewise, but its row `i` is the
+#    `i`th binary indicator. A MANIFESTVAR cell reaches the manifests coupled
+#    with it: the covariance is built from the whole matrix -- a matrix
+#    exponential under covmattransform 'z' -- and the update reads its observed
+#    block, so a cell reaches every manifest joined to its row or column
+#    through nonzero off-diagonal cells.
+#  * Dynamics cells. DRIFT, CINT, JAx, TDPREDEFFECT, Jtd and T0MEANS row `k`
+#    move state `k`; a DIFFUSION or T0VAR cell moves the states coupled with
+#    it, as for MANIFESTVAR. What a moved state reaches is every manifest that
+#    reads it or any state downstream of it. State `i` is upstream of state `k`
+#    when a nonzero cell of `k`'s dynamics reads `i`: a DRIFT, JAx or Jtd cell
+#    in column `i`, or any of `k`'s cells whose expression reads `state[i]`.
+#    The Jacobians make the first exact for a state dependent drift. A
+#    manifest reads state `k` through a nonzero LAMBDA or Jy cell in column
+#    `k`, or any of its measurement cells whose expression reads `state[k]`.
+#    So a process measured by one item, and feeding no process another item
+#    measures, reaches that item alone. That is exact for the filter: with
+#    nothing feeding back, the states the observed items read evolve and
+#    update by their own blocks of the drift, covariance and loadings.
+#  * PARS: nothing of its own, only through what reads it.
+#  * Anything else is used in a way not known here, and reaches every
+#    manifest.
+#
+# A cell whose expression -- matsetup's `parname`, or a calculation in
+# `model$modelmats$calcs` -- references another cell carries that cell on to
+# itself, so a cell also reaches what every cell reading it reaches, through
+# any number of PARS cells: an intercept written `mm_a + lam_a * lev` with
+# `mm_a` in PARS reaches item a alone, as a plain intercept cell does. The same
+# references pass state reads on: a cell reading a PARS cell that reads
+# `state[i]` reads state `i`. A PARS cell nothing reads is used somewhere this
+# cannot see, and reaches every manifest.
+.ctJuliaCellReach <- function(model, setup) {
+  codes <- .ctMatricesList()$all
+  setupname <- names(codes)[match(as.integer(setup$matrix), codes)]
+  setuprow <- as.integer(setup$row)
+  setupcol <- as.integer(setup$col)
+  keyof <- function(matrix, row, col) paste0(matrix, "[", row, ",", col, "]")
+  cellpattern <- "\\b([A-Za-z][A-Za-z0-9]*)\\s*\\[\\s*([0-9]+)\\s*,\\s*([0-9]+)\\s*\\]"
+  parsekey <- function(key) {
+    parts <- regmatches(key, regexec(cellpattern, key, perl = TRUE))[[1L]]
+    if (length(parts) != 4L) return(NULL)
+    list(matrix = parts[2L], row = as.integer(parts[3L]), col = as.integer(parts[4L]))
+  }
+  # Every cell with its expressions, matsetup's and the calculations'.
+  calcs <- unlist(model$modelmats$calcs)
+  calcs <- calcs[!is.na(calcs) & grepl("=", calcs, fixed = TRUE)]
+  calcat <- lapply(trimws(sub("=.*$", "", calcs)), parsekey)
+  calcok <- !vapply(calcat, is.null, logical(1))
+  calckey <- vapply(calcat[calcok], function(at) keyof(at$matrix, at$row, at$col),
+    character(1))
+  calcrhs <- sub("^[^=]*=", "", calcs[calcok])
+  setupkey <- keyof(setupname, setuprow, setupcol)
+  parname <- if (is.null(setup$parname)) rep(NA_character_, nrow(setup)) else
+    as.character(setup$parname)
+  keys <- unique(c(setupkey, calckey))
+  expressions <- lapply(keys, function(k) {
+    e <- c(parname[setupkey == k], calcrhs[calckey == k])
+    e[!is.na(e) & nzchar(e)]
+  })
+  names(expressions) <- keys
+  values <- model$modelmats$matvalues
+  value <- if (is.null(values)) rep(NA_real_, nrow(setup)) else
+    suppressWarnings(as.numeric(values$value))
+  stateref <- if (is.null(setup$stateref)) integer(nrow(setup)) else
+    as.integer(setup$stateref)
+  # Structurally nonzero: free, from a state, fixed away from zero, or written
+  # by a calculation. A free or computed cell carries 99999 in `matvalues`.
+  nonzero <- setNames(keys %in% calckey, keys)
+  setnz <- as.integer(setup$param) > 0L | stateref > 0L | (!is.na(value) & value != 0)
+  nonzero[setupkey[setnz]] <- TRUE
+  # The cells each expression references, other than states and predictors.
+  referenced <- lapply(expressions, function(e) {
+    hits <- unlist(regmatches(e, gregexpr(cellpattern, e, perl = TRUE)))
+    if (!length(hits)) return(character())
+    unique(vapply(hits, function(h) {
+      at <- parsekey(h)
+      keyof(at$matrix, at$row, at$col)
+    }, character(1), USE.NAMES = FALSE))
+  })
+  readers <- if (!length(unlist(referenced))) list() else
+    split(rep(keys, lengths(referenced)), unlist(referenced))
+  # States a cell reads, directly or through the cells it references.
+  statesread <- function(k, seen = character()) {
+    if (k %in% seen) return(integer())
+    seen <- c(seen, k)
+    out <- c(stateref[setupkey == k],
+      unlist(lapply(expressions[[k]], .ctExpressionIndices, name = "state")))
+    for (r in referenced[[k]]) {
+      if (r %in% keys) out <- c(out, statesread(r, seen))
+    }
+    out <- unique(as.integer(out))
+    out[out > 0L]
+  }
+
+  # Coupled blocks of a covariance matrix, by its nonzero off-diagonal cells.
+  blocks <- function(matrix) {
+    on <- keys[startsWith(keys, paste0(matrix, "[")) & nonzero]
+    at <- lapply(on, parsekey)
+    n <- max(0L, unlist(lapply(at, function(a) c(a$row, a$col))))
+    group <- seq_len(n)
+    root <- function(i) {
+      while (group[i] != i) i <- group[i]
+      i
+    }
+    for (a in at) {
+      if (a$row == a$col) next
+      x <- root(a$row); y <- root(a$col)
+      if (x != y) group[max(x, y)] <- min(x, y)
+    }
+    function(i) {
+      if (i > n) return(as.integer(i))
+      roots <- vapply(seq_len(n), root, integer(1))
+      which(roots == root(i))
+    }
+  }
+  manifestvar <- blocks("MANIFESTVAR")
+  diffusion <- blocks("DIFFUSION")
+  t0var <- blocks("T0VAR")
+
+  nm <- length(model$manifestNames)
+  binary <- which(model$manifesttype %in% 1L)
+  rowlocal <- c("LAMBDA", "MANIFESTMEANS", "Jy", "THRESHOLDS", "RESPONSE")
+  # The states a dynamics cell moves, NULL for a cell that is not one.
+  moves <- function(at) {
+    if (at$matrix %in% c("DRIFT", "CINT", "JAx", "TDPREDEFFECT", "Jtd", "T0MEANS")) {
+      return(at$row)
+    }
+    if (identical(at$matrix, "DIFFUSION")) return(unique(c(diffusion(at$row), diffusion(at$col))))
+    if (identical(at$matrix, "T0VAR")) return(unique(c(t0var(at$row), t0var(at$col))))
+    NULL
+  }
+  # The manifests a measurement cell belongs to, NULL for a cell that is not one.
+  belongs <- function(at) {
+    if (at$matrix %in% rowlocal) return(if (at$row <= nm) at$row else integer())
+    if (identical(at$matrix, "ASYMPTOTES")) {
+      return(if (at$row <= length(binary)) binary[at$row] else integer())
+    }
+    if (identical(at$matrix, "MANIFESTVAR")) {
+      return(intersect(unique(c(manifestvar(at$row), manifestvar(at$col))), seq_len(nm)))
+    }
+    NULL
+  }
+  # Edges between states, and the states each manifest reads.
+  upstream <- list()
+  manifestreads <- rep(list(integer()), nm)
+  for (k in keys[nonzero]) {
+    at <- parsekey(k)
+    if (is.null(at)) next
+    read <- statesread(k)
+    if (!is.null(to <- moves(at))) {
+      if (at$matrix %in% c("DRIFT", "JAx", "Jtd")) read <- c(read, at$col)
+      for (s in to) upstream[[as.character(s)]] <- unique(c(upstream[[as.character(s)]], read))
+    } else if (!is.null(m <- belongs(at))) {
+      if (at$matrix %in% c("LAMBDA", "Jy")) read <- c(read, at$col)
+      for (i in m) manifestreads[[i]] <- unique(c(manifestreads[[i]], read))
+    }
+  }
+  # The states downstream of a set, the set included.
+  downstream <- function(states) {
+    out <- unique(as.integer(states))
+    repeat {
+      more <- as.integer(names(upstream))[vapply(upstream, function(u) any(u %in% out),
+        logical(1))]
+      more <- setdiff(more, out)
+      if (!length(more)) return(out)
+      out <- c(out, more)
+    }
+  }
+
+  reach <- function(matrix, row, col, seen = character()) {
+    key <- keyof(matrix, row, col)
+    if (key %in% seen) return(integer())
+    seen <- c(seen, key)
+    at <- list(matrix = matrix, row = as.integer(row), col = as.integer(col))
+    own <- belongs(at)
+    if (is.null(own)) {
+      moved <- moves(at)
+      if (!is.null(moved)) {
+        down <- downstream(moved)
+        own <- which(vapply(manifestreads, function(r) any(r %in% down), logical(1)))
+      } else if (identical(matrix, "PARS")) {
+        own <- integer()
+      } else return(NULL)
+    }
+    those <- readers[[key]]
+    if (identical(matrix, "PARS") && !length(those)) return(NULL)
+    for (r in those) {
+      to <- parsekey(r)
+      if (is.null(to)) return(NULL)
+      more <- reach(to$matrix, to$row, to$col, seen)
+      if (is.null(more)) return(NULL)
+      own <- c(own, more)
+    }
+    unique(as.integer(own))
+  }
+  reach
 }
 
 # The raw entry for a population sd, as the engine's `_laplace_popchol` reads
