@@ -591,7 +591,7 @@ ctLOO <- function(fit, folds = 10, cores = getOption("mc.cores", 2L), parallelFo
   }
   scores <- NULL
   unitOf <- NULL
-  covariance <- fit$estimate$cov
+  covariance <- .ctLOOCurvature(fit)
   if (isTRUE(refit)) {
     scores <- try(.ctBackendScoreMatrix(fit, est, prior = FALSE), silent = TRUE)
     if (stepping && (inherits(scores, "try-error") || is.null(covariance))) {
@@ -1117,6 +1117,28 @@ ctLOO <- function(fit, folds = 10, cores = getOption("mc.cores", 2L), parallelFo
     level = level, note = note)
   class(out) <- "ctLOOpsis"
   out
+}
+
+# A fold's stepped estimate is a Newton step from the fit's estimate, and a
+# refitted fold starts L-BFGS from the same metric, so both want the inverse of
+# the fit's curvature there. `fit$estimate$cov` is that only where the
+# uncertainty is the Hessian's normal: 'checked', the default since juliaFit
+# d5d1f195, reports the importance sampler's covariance wherever it sampled,
+# the posterior's spread rather than the curvature, and on
+# test-julia-loo-approx.R's nested fit the stepped folds then captured 12 nats
+# of a 6-nat penalty. Built from the Hessian the fit kept, as its normal is;
+# the reported covariance where there is none (a stan fit, `estonly`).
+.ctLOOCurvature <- function(fit) {
+  hessian <- fit$uncertainty$hessian
+  if (!is.null(hessian) && all(is.finite(hessian))) {
+    cov <- try(ctOptimCovFromHessian(as.matrix(hessian), warn = FALSE),
+      silent = TRUE)
+    if (!inherits(cov, "try-error") && !is.null(cov) && all(is.finite(cov)) &&
+        nrow(cov) == length(fit$estimate$raw)) {
+      return(matrix(as.numeric(cov), nrow(cov)))
+    }
+  }
+  fit$estimate$cov
 }
 
 # Normal draws around `centre` with covariance `scale^2 covariance`, and their
