@@ -891,50 +891,46 @@ end
 # finish and its Hessian, which certify the estimate and give its standard
 # errors, never see a coreset.
 #
-# A coreset must be accurate: its gradient within `tol` (10%) of the full one,
-# in L-BFGS's inverse-curvature norm -- the norm in which a gradient error
-# becomes an error in the step and in what it gains -- at a point held out from
-# those it was fitted to (`_CTSEM_CORESET_TOL`). Of the coresets that are, the
-# smallest a stage can pay for is used. The stages share one curvature memory,
-# and a coreset whose gradients differ more feeds it pairs from another function;
-# choosing the size instead by a model of what a stage saves -- a coreset with
-# relative error `rho` buying `n (1 - rho^2)` iterations' progress, or
-# `log(1 / rho^2)` of the log gap at the run's measured rate, with or without a
-# calibration from the stages' checks -- let coarser coresets in, and on the
-# strong-shell fits each such rule cost 1.3-8 times the full gradients of this
-# one (review/OPTIM-coreset-2026-10-21.md). Everything else is what a stage
-# costs against what it buys:
+# Three rules, each for a reason that does not depend on the model:
 #
-# - What a stage may cost is what it saves. `n` coreset iterations at a share
-#   `s` of a full evaluation, plus the full check and the full iteration after
-#   the stage, beat `n` full iterations while `n s + 2 < n`, so a stage planned
-#   for `n` iterations may use units costing up to `1 - 2/n` of the work
-#   (`_ctsem_coreset_budget`).
-# - Entering: after a full iteration, coresets of growing size, from one unit,
-#   are fitted to reproduce the gradient at every training point but the newest,
-#   by forward selection with non-negative weights, and each is tried at the
-#   newest; the first within `tol` and the budget is fitted again on every point
-#   and a stage begins, planned for 10 iterations.
-# - At a check: the point goes back to the stage's start if the full objective
-#   is worse there, and the curvature pairs the stage gave L-BFGS go with it: they
-#   describe a coreset that led somewhere worse, and kept, they made the full
-#   sum's polish after such a stage take up to twice as long. Otherwise the check is a training point, and the stage is
-#   judged by what it bought: its iterations times the full objective's gain
-#   over the coreset's own, against their share of the work and the check, and
-#   that share of its gain, which must be at least half -- below that a coreset
-#   is near its floor, and carried on on cheap coresets regardless, the stages
-#   after such ones made the full objective worse and the full sum's polish
-#   took up to twice as long. A stage that paid carries on from there, planned
-#   twice as long -- the cheapest
-#   search for how long a coreset stays good, its checks costing at most twice
-#   those of the longest stage that would have paid -- on the smallest coreset
-#   that reproduces the check's gradient within `tol`, held out as for
-#   entering; one that did not returns to the full objective. Near the optimum the
-#   gradient shrinks while a coreset's error does not, so no coreset passes
-#   there and the full sum finishes.
-# - Within a stage, a check comes when the stage has run as planned, or when
-#   what L-BFGS's model says is left to gain on the coreset is no more than the
-#   coreset's own error, so that what it would go on to gain is its error.
+# - A coreset is a proxy for the full objective where the stage goes, so it is
+#   tested where it was not fitted: its gradient at the newest training point,
+#   held out, must be within `tol` (10%) of the full one in L-BFGS's
+#   inverse-curvature norm, the norm in which a gradient error becomes an error
+#   in the step and in what it gains (`_CTSEM_CORESET_TOL`). Entering and carrying
+#   on alike, and always the smallest coreset that passes. An accuracy and not a
+#   price: the stages share one curvature memory, and a coreset whose gradients
+#   differ more feeds it pairs from another function. Tested in sample, or
+#   priced by a model of what a coarser coreset would still save, coresets were
+#   let in whose stages made the full objective worse, and runs cost more
+#   (review/OPTIM-coreset-2026-10-21.md).
+# - A stage spends only what it can save. `n` coreset iterations at a share `s`
+#   of a full evaluation, plus the full check and the full iteration after the
+#   stage, beat `n` full iterations while `n s + 2 < n`, so a stage planned for
+#   `n` iterations may use units costing up to `1 - 2/n` of the work
+#   (`_ctsem_coreset_budget`), and it carries on only if it paid: its iterations
+#   times the full objective's gain over the coreset's own against their share
+#   of the work and the check. The first stage is planned for 10 iterations and
+#   each that pays for twice the last, the cheapest search for how long a
+#   coreset stays good: its checks cost at most twice those of the longest stage
+#   that would have paid.
+# - A stage that led somewhere worse leaves nothing behind. The point goes back
+#   to where it began, and the curvature pairs it gave L-BFGS go with it; and the
+#   stall watch judges only windows of full iterations after the last stage
+#   (`ctsem_optimize`), since a window holding a stage measures the coreset's
+#   path, and one holding a stage sent back reads as no progress.
+#
+# Entering: after a full iteration, coresets of growing size, from one unit, are
+# fitted to reproduce the gradient at every training point but the newest, by
+# forward selection with non-negative weights, and tried at the newest; the
+# first that passes within the budget is fitted again on every point. At a
+# check, the check is a training point whatever it says, and a stage carried on
+# is chosen the same way with the check held out. Near the optimum the gradient
+# shrinks while a coreset's error does not, so no coreset passes there and the
+# full sum finishes. Within a stage, a check comes when the stage has run as
+# planned, or when what L-BFGS's model says is left to gain on the coreset is no
+# more than the coreset's error, so that what it would go on to gain is its
+# error.
 #
 # Choosing the units is timed: after a fit that found none, the next waits until
 # the full iterations since have taken four times as long, so that looking costs
@@ -1369,10 +1365,7 @@ function _ctsem_coreset_check!(c::CTSEMCoresetPlan, x, fc, Gc, hmul, scale;
         c.reverted += 1
         return (act=:revert, x=c.x0, f=c.f0, G=c.G0)
     end
-    # Paid for itself, and still a proxy: a coreset whose stage realised under
-    # half its own gain on the full objective is near its floor, and the stage
-    # after it is the one that makes the full objective worse.
-    paid = n * fidelity > n * c.shares[end] + 1 && fidelity >= 0.5
+    paid = n * fidelity > n * c.shares[end] + 1
     if !leave && paid
         stretch = 2c.stretch
         c.stretch = stretch
