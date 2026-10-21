@@ -878,43 +878,41 @@ end
 # finish and its Hessian, which certify the estimate and give its standard
 # errors, never see a coreset.
 #
-# Every decision is what a stage costs for the progress it makes, against what
-# full iterations would cost for the same. L-BFGS closes the gap to the optimum
-# -- what its model says is left to gain, `G = g' H g / 2` -- by about a factor
-# `exp(-lambda)` an iteration, `lambda` measured as the run goes. A coreset
-# whose gradient errs by `rho` relative to the full one, in L-BFGS's
-# inverse-curvature norm (the norm in which a gradient error becomes an error in
-# the step and in what it gains), has a floor: run to its own optimum it leaves
-# about `rho^2 G` of the gap. So a stage on it closes `log(1 / rho^2)` of the
-# log gap -- no more than the run has left before it stops -- in about that over
-# `lambda` iterations, each at its share `s` of a full evaluation, plus its
-# check and, when the run goes back, the full iteration after it. Full
-# iterations close the same for `1 / lambda` each. A stage pays while its cost
-# per unit of progress, `s + overhead lambda / log(1 / rho^2)`, is under one
-# (`_ctsem_coreset_rate_cost`); that is the same whether the next stage starts
-# from a smaller gap or not, because a coreset refitted there has its floor
-# relative to the gap it starts from, so a run of cheap stages each cutting the
-# gap by `1 / rho^2` beats one exact coreset that would close it all.
+# What a coreset must be is accurate: its gradient within `tol` (10%) of the
+# full one, in L-BFGS's inverse-curvature norm -- the norm in which a gradient
+# error becomes an error in the step and in what it gains -- at a point held out
+# from those it was fitted to (`_CTSEM_CORESET_TOL`). The stages share one
+# curvature memory, and a coreset whose gradients differ more feeds it pairs
+# from another function: choosing the size by its cost per unit of progress
+# instead, which let cheaper and coarser coresets in, cost 1.3-3 times the full
+# gradients of this rule on the strong-shell fits, with no stage worse than
+# where it began. Everything else is what a stage costs for the progress it
+# makes, against full iterations:
 #
-# - Choosing: coresets of growing size are fitted to reproduce the gradient at
-#   every training point but the newest, by forward selection with non-negative
-#   weights, and each is tried at the newest; the one whose stage costs least
-#   per unit of progress is refitted on every point and used, if that is under
-#   one. The search stops once a larger coreset's share alone is more than the
-#   best's cost, and never spends a share at which no stage could pay. Its stage
-#   is planned for `log(1 / rho^2) / lambda` iterations.
-# - The held-out error, at a point a step from those the coreset was fitted to,
-#   is the one that counts near the optimum too: there the gap a stage left was
-#   0.06-0.6 of its held-out floor. Errors fitted in sample understated
-#   it, and a stage refitted on them made the full objective worse.
+# - L-BFGS closes the gap to the optimum -- what its model says is left to
+#   gain, `G = g' H g / 2` -- by about a factor `exp(-lambda)` an iteration,
+#   `lambda` measured as the run goes (`_ctsem_coreset_rate`). A coreset whose
+#   gradient errs by `rho` has a floor: run to its own optimum it leaves about
+#   `rho^2 G` of the gap. So its stage is planned for `log(1 / rho^2) / lambda`
+#   iterations, or what the run has left before it stops if that is less.
+# - Its iterations, at its share `s` of a full evaluation, plus its check and,
+#   when the run goes back, the full iteration after it, must cost less than as
+#   many full iterations: so the share spent is at most `1 - overhead / n` for a
+#   stage of `n`, and of the coresets within it the smallest accurate enough is
+#   used. Coresets of growing size, from one unit, are fitted to reproduce the
+#   gradient at every training point but the newest, by forward selection with
+#   non-negative weights, tried at the newest, and the one used is fitted again
+#   on every point.
 # - At a check: the point goes back to the stage's start if the full objective
 #   is worse there. Otherwise the check is a training point, and the stage is
 #   judged by what it bought: the log gap it closed on the full objective, at
 #   full iterations' rate, against its iterations' share of the work and its
-#   check. A stage that paid carries on from there on the coreset chosen again
-#   from every point; one that did not returns to the full objective. Near the
-#   optimum the gap left is no more than a coreset's floor, so the stages stop
-#   there by themselves.
+#   check. A stage that paid carries on from there on a coreset chosen again by
+#   the same held-out test -- in-sample errors understated it, and stages
+#   refitted on them made the full objective worse -- and one that did not
+#   returns to the full objective. Near the optimum the gradient shrinks while a
+#   coreset's error does not, so no coreset passes there and the full sum
+#   finishes.
 # - Within a stage, a check comes when the stage has run as planned, or when
 #   what L-BFGS's model says is left to gain on the coreset is no more than its
 #   floor, so that what it would go on to gain is its error.
@@ -940,6 +938,11 @@ _ctsem_optimise_trial(t::CTSEMCoresetTarget, x, want_gradient::Bool,
         gradient_method, limit::Real, log) =
     _ctsem_optimise_trial(t.laplace, x, want_gradient, gradient_method, limit, log;
         coreset=t.coreset)
+
+"""The relative gradient error a coreset may have, in L-BFGS's
+inverse-curvature norm, at a point held out from those it was fitted to; see the
+head of this section for why it is an accuracy and not a price."""
+const _CTSEM_CORESET_TOL = 0.1
 
 """
     CTSEMCoresetPlan
@@ -1026,22 +1029,16 @@ end
 _ctsem_coreset_live(c) = c !== nothing && c.live
 
 """
-    _ctsem_coreset_rate_cost(c, rate, gap, share, rho2, overhead)
+    _ctsem_coreset_plan_length(c, rate, gap, rho2)
 
-What a stage on a coreset costing `share` of a full evaluation, whose floor is
-`rho2` of the gap `gap`, costs per unit of the log gap it closes, in full
-iterations' cost for the same, and how many iterations it is planned for. It
-closes `min(log(1 / rho2), log(gap / target))` in that over `rate` iterations,
-each at `share`, plus the `overhead` full gradients around it (its check, and
-the full iteration after it when the run goes back to the full objective);
-full iterations close `rate` each for one gradient. Under one, the stage pays.
+How many iterations a stage on a coreset whose floor is `rho2` of the gap `gap`
+is planned for: until it reaches its floor, `log(1 / rho2) / rate`, or until
+the run's own stopping gap, if that comes first.
 """
-function _ctsem_coreset_rate_cost(c::CTSEMCoresetPlan, rate, gap, share, rho2, overhead)
+function _ctsem_coreset_plan_length(c::CTSEMCoresetPlan, rate, gap, rho2)
     left = log(gap / c.target_gap)
     reach = rho2 > 0 ? log(1 / rho2) : Inf
-    progress = min(reach, left)
-    progress > 0 || return (cost=Inf, iterations=0.0)
-    return (cost=share + overhead * rate / progress, iterations=progress / rate)
+    return max(min(reach, left), 0.0) / rate
 end
 
 """The rate at which the run closes the gap, per iteration: the median of the
@@ -1233,14 +1230,14 @@ end
 """
     _ctsem_coreset_choose(c, scale, hmul; refit)
 
-The coreset whose stage costs least per unit of progress
-(`_ctsem_coreset_rate_cost`), or `nothing` when none costs less than full
-iterations. The path is fitted on every training point but the newest, and
-each size is scored by its error there, held out; the best is fitted again on
-every point. `c.stretch` becomes the iterations its stage is planned for,
-`c.error` its floor in objective units, and `c.pending` its held-out squared
-relative error. A stage that carries on (`refit`) is not followed by a full
-iteration; one entered from the full objective is, when it ends.
+The smallest coreset whose gradient at the newest training point, held out
+from those it was fitted to, is within `_CTSEM_CORESET_TOL` relative, among
+those a stage of the length that error allows can pay for; `nothing` if none.
+The one used is fitted again on every point. `c.stretch` becomes the
+iterations its stage is planned for (`_ctsem_coreset_plan_length`), `c.error`
+its floor in objective units, and `c.pending` its held-out squared relative
+error. A stage that carries on (`refit`) is not followed by a full iteration;
+one entered from the full objective is, when it ends.
 """
 function _ctsem_coreset_choose(c::CTSEMCoresetPlan, scale::AbstractVector, hmul;
         refit::Bool)
@@ -1252,22 +1249,21 @@ function _ctsem_coreset_choose(c::CTSEMCoresetPlan, scale::AbstractVector, hmul;
     gn = c.gfull[K]
     gg = dot(gn, hmul(gn))
     gap = gg / 2
+    tol2 = _CTSEM_CORESET_TOL^2
     overhead = refit ? 1.0 : 2.0
-    # No share is spent at which even an exact coreset's stage could not pay.
-    exact = _ctsem_coreset_rate_cost(c, rate, gap, 0.0, 0.0, overhead).cost
-    exact < 1 || return nothing
+    # The shortest stage a coreset accurate enough is planned for, and the most
+    # of the work its iterations can take and still cost less than full ones.
+    shortest = _ctsem_coreset_plan_length(c, rate, gap, tol2)
+    shortest > overhead || return nothing
     t0 = time()
-    budget = 1 - exact
+    budget = 1 - overhead / shortest
     lik = vec(sum(Sn; dims=1))
     value = (units, w) -> begin
         e = transpose(view(Sn, units, :)) * w .- lik
         ee = dot(e, hmul(e))
-        share = _ctsem_coreset_share(c, units)
         rho2 = isfinite(ee) && gg > 0 ? ee / gg : Inf
-        v = _ctsem_coreset_rate_cost(c, rate, gap, share, rho2, overhead)
-        # Scored as what it saves of a full iteration's cost; a larger coreset
-        # saves at most what its share leaves.
-        (1 - v.cost, 1 - share, (rho2=rho2, iterations=v.iterations))
+        passes = rho2 <= tol2
+        (passes ? 1.0 : 0.0, passes ? 0.0 : 1.0, rho2)
     end
     first = _ctsem_coreset_path(c, 1:(K - 1), budget, value, scale)
     result = if first === nothing
@@ -1283,9 +1279,10 @@ function _ctsem_coreset_choose(c::CTSEMCoresetPlan, scale::AbstractVector, hmul;
     result === nothing && return nothing
     keep = findall(>(0), result.weights)
     isempty(keep) && return nothing
-    c.pending = result.error.rho2
-    c.error = result.error.rho2 * gap
-    c.stretch = max(1, ceil(Int, result.error.iterations))
+    rho2 = result.error
+    c.pending = rho2
+    c.error = rho2 * gap
+    c.stretch = max(1, ceil(Int, _ctsem_coreset_plan_length(c, rate, gap, rho2)))
     units = result.units[keep]
     return CTSEMCoreset(units, result.weights[keep] .* c.sampling[units])
 end
