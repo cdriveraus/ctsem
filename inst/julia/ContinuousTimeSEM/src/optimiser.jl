@@ -1134,11 +1134,18 @@ function _ctsem_coreset_fit(c::CTSEMCoresetPlan, scale::AbstractVector, hmul; te
                 spent + c.cost[j] > c.budget && break
                 push!(chosen, j)
                 spent += c.cost[j]
-                q = Ap[:, j] ./ sqrt(nrm[j])
+                q = Ap[:, j]
+                q ./= norm(q)
                 mul!(t, transpose(Ap), q)
                 LinearAlgebra.BLAS.ger!(-1.0, q, t, Ap)
-                @inbounds for U in 1:N
-                    nrm[U] = max(nrm[U] - t[U]^2, 0.0)
+                # The lengths by downdating, and afresh every eighth unit, so
+                # that rounding cannot leave a spent column looking long.
+                if length(chosen) % 8 == 0
+                    sum!(abs2, reshape(nrm, 1, N), Ap)
+                else
+                    @inbounds for U in 1:N
+                        nrm[U] = max(nrm[U] - t[U]^2, 0.0)
+                    end
                 end
                 for U in chosen
                     nrm[U] = 0.0
