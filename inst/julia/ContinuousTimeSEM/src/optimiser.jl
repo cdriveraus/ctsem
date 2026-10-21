@@ -920,8 +920,12 @@ end
 #   describe a coreset that led somewhere worse, and kept, they made the full
 #   sum's polish after such a stage take up to twice as long. Otherwise the check is a training point, and the stage is
 #   judged by what it bought: its iterations times the full objective's gain
-#   over the coreset's own, against their share of the work and the check. A
-#   stage that paid carries on from there, planned twice as long -- the cheapest
+#   over the coreset's own, against their share of the work and the check, and
+#   that share of its gain, which must be at least half -- below that a coreset
+#   is near its floor, and carried on on cheap coresets regardless, the stages
+#   after such ones made the full objective worse and the full sum's polish
+#   took up to twice as long. A stage that paid carries on from there, planned
+#   twice as long -- the cheapest
 #   search for how long a coreset stays good, its checks costing at most twice
 #   those of the longest stage that would have paid -- on the smallest coreset
 #   refitted to every point that reproduces the check's gradient within `tol`;
@@ -1368,7 +1372,10 @@ function _ctsem_coreset_check!(c::CTSEMCoresetPlan, x, fc, Gc, hmul, scale;
         c.reverted += 1
         return (act=:revert, x=c.x0, f=c.f0, G=c.G0)
     end
-    paid = n * fidelity > n * c.shares[end] + 1
+    # Paid for itself, and still a proxy: a coreset whose stage realised under
+    # half its own gain on the full objective is near its floor, and the stage
+    # after it is the one that makes the full objective worse.
+    paid = n * fidelity > n * c.shares[end] + 1 && fidelity >= 0.5
     if !leave && paid
         stretch = 2c.stretch
         c.stretch = stretch
