@@ -939,9 +939,12 @@ end
 # more than the coreset's error, so that what it would go on to gain is its
 # error.
 #
-# Choosing the units is timed: after a fit that found none, the next waits until
-# the full iterations since have taken four times as long, so that looking costs
-# at most a fifth of the time where nothing pays.
+# Looking for a coreset backs off: after a search that found none, the next
+# waits twice as many full iterations as the last wait, and one that finds one
+# starts the count again, so a run where nothing passes searches about `log2`
+# of its full iterations' times. Counted in iterations, not timed: decisions
+# that read the clock made a fit's path depend on the machine's load, and two
+# identical fits at one core ended at different points.
 
 """
     CTSEMCoresetTarget(laplace, coreset)
@@ -982,7 +985,8 @@ gradient of the maximised objective there), the stage in force -- its target,
 where it began on the full objective (`x0`, `f0`, `G0`, minimised), the
 coreset's value there less the full one (`offset`), its length so far and as
 planned, and the coreset's gradient error in objective units, `e' H e / 2` --
-the clock that paces the fits, the record, how many curvature pairs the stage
+the full iterations since the last search and how many to wait before the
+next, the record, how many curvature pairs the stage
 in force has given L-BFGS, which a stage that is sent back takes with it, and
 the region its coreset was fitted on: the farthest training point's distance
 from where the stage began, in the metric `metric` scales by.
@@ -1007,9 +1011,8 @@ mutable struct CTSEMCoresetPlan
     iterations::Int
     stretch::Int
     error::Float64
-    clock::Float64
-    waited::Float64
-    looked::Float64
+    since::Int
+    wait::Int
     sizes::Vector{Int}
     shares::Vector{Float64}
     entered::Vector{Int}
@@ -1044,8 +1047,8 @@ function _ctsem_coreset_plan(L::CTSEMLaplaceObjective, fg!, store)
     sampling = Float64[_laplace_unit_weight(L, U) for U in 1:N]
     return CTSEMCoresetPlan(L, fg!, store, sampling, cost, keep, 0.0,
         Vector{Float64}[], Matrix{Float64}[], Vector{Float64}[], false, nothing,
-        Float64[], NaN, Float64[], 0.0, 0, _CTSEM_CORESET_FIRST_STAGE, 0.0, NaN,
-        0.0, 0.0, Int[], Float64[], Int[], Int[], Float64[], 0, 0, 0, 0, 0.0, 0,
+        Float64[], NaN, Float64[], 0.0, 0, _CTSEM_CORESET_FIRST_STAGE, 0.0, 0,
+        0, Int[], Float64[], Int[], Int[], Float64[], 0, 0, 0, 0, 0.0, 0,
         0.0, Float64[])
 end
 
@@ -1289,8 +1292,9 @@ end
 
 After an accepted L-BFGS step to `x`, with value `f` and gradient `G` (of the
 minimised objective in force). On the full objective: keep the point, and look
-for a coreset (`_ctsem_coreset_choose`) once the full iterations
-since the last look that found none have taken four times as long as it. In a
+for a coreset (`_ctsem_coreset_choose`) once the full iterations since the
+last search number `wait`, which doubles after a search that finds none and
+is one after one that finds one. In a
 stage: check it with a full gradient (`_ctsem_coreset_check!`) once it has run
 its planned iterations, once what L-BFGS's model says is left to gain on the
 coreset (`G' H G / 2`) is no more than the coreset's error, once its gradient
@@ -1305,21 +1309,17 @@ of the stage that just failed its check.
 function _ctsem_coreset_step!(c::CTSEMCoresetPlan, x, f, G, hmul, scale)
     none = (act=:none, x=x, f=f, G=G)
     if !c.live
-        now = time()
-        isfinite(c.clock) && (c.waited += now - c.clock)
-        c.clock = now
         _ctsem_coreset_record!(c, x, G) || return none
-        c.waited >= 4 * c.looked || return none
-        t0 = time()
+        c.since += 1
+        c.since >= c.wait || return none
+        c.since = 0
         c.stretch = _CTSEM_CORESET_FIRST_STAGE
         cs = _ctsem_coreset_choose(c, scale, hmul; refit=false)
-        c.clock = time()
-        c.waited = 0.0
         if cs === nothing
-            c.looked = c.clock - t0
+            c.wait = max(1, 2c.wait)
             return none
         end
-        c.looked = 0.0
+        c.wait = 1
         push!(c.entered, c.total_iterations)
         _ctsem_coreset_begin!(c, cs, x, f, G, scale)
         return (act=:enter, x=x, f=f, G=G)
@@ -1373,8 +1373,7 @@ function _ctsem_coreset_check!(c::CTSEMCoresetPlan, x, fc, Gc, hmul, scale;
     ff = c.fg!(c.full, 0.0, Gf, x)
     ok = ff !== nothing && isfinite(ff) && ff < _CTSEM_BATCH_INVALID && all(isfinite, Gf)
     c.live = false
-    c.clock = time()
-    c.waited = 0.0
+    c.since = 0
     # A usable check is a training point whatever it says.
     ok && _ctsem_coreset_record!(c, x, Gf)
     predicted = (c.f0 - c.offset) - fc
