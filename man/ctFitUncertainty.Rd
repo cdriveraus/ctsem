@@ -166,9 +166,9 @@ where \code{uncertainty = 'sample'} is documented.
 \item{\code{'checked'}}{The default: the Hessian's normal, checked, and
 corrected by importance sampling in the directions where it is wrong. The
 log posterior's gradient at draws from the normal says in which directions
-the posterior departs from it, in batches of 8 until a batch names no more
-directions than the one before (16 to 64 draws, whatever the number of
-parameters). Where a direction would leave some parameter's 95\% interval
+the posterior departs from it, in batches of 8 until the directions named
+would be the same with every departure two standard errors larger or
+smaller (16 to 64 draws, whatever the number of parameters). Where a direction would leave some parameter's 95\% interval
 covering under 90\% or over 99\%, or move one tail outside 0.5 to 5\% by
 a skew or by a width that moves with another parameter, every departing
 direction is sampled as \code{'is'} samples (below), the normal kept in
@@ -177,8 +177,12 @@ what corrects a variance from few groups and the effects it scales. Where
 that sampling cannot correct the normal -- a curved ridge such as a loading
 vector whose length the data determine and whose direction they barely do,
 where the Hessian's intervals can be many times too wide -- the Hessian's
-normal is kept, with a warning naming the parameters it misstates. A fit
-with nothing named gets exactly the Hessian's normal. The check is recorded
+normal is kept, with a warning naming the parameters it misstates. The
+normal is centred where the same gradients, and those at 8 of the draws
+reflected, put the posterior's mean, which is not the estimate wherever the
+posterior is skewed; the estimate stays the fit's, and \code{summary()}
+reports it beside the draws. A fit with nothing named gets the Hessian's
+covariance. The check is recorded
 in \code{$uncertainty$details$normalcheck}, and the sampling, when there was
 any, in \code{$uncertainty$details$importance_sampling}.}
 \item{\code{'hessian'}}{A normal approximation from the Hessian at the

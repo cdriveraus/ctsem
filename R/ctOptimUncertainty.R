@@ -1637,6 +1637,10 @@ ctOptimFullBootstrapDraws <- function(est, standata, sm, n=1000, cores=1,
 # bench_*.R) the directions named nothing on a Gaussian, the two directions of
 # a ring and of a crescent, the two of a skewed variance's funnel, and exactly
 # the five of a five-dimensional shell mixed into thirty parameters.
+#
+# The same draws say where the posterior's mean is (`centre`), which is not
+# the mode wherever the posterior is skewed, however well the normal's widths
+# fit; see `.ctNormalCentre()`. The normal's draws are placed there.
 .ctOptimNormalCheck <- function(gradients, est, cov, batch = 8L,
   maxdraws = 64L, coverage = c(0.90, 0.99)) {
   eig <- eigen((cov + t(cov)) / 2, symmetric = TRUE)
@@ -1659,9 +1663,20 @@ ctOptimFullBootstrapDraws <- function(est, standata, sm, n=1000, cores=1,
   }
   record <- list(draws = drawn, unusable = unusable, bars = bars,
     directions = matrix(0, length(est), 0L), slope = numeric(), shape = numeric(),
-    widths = numeric(), parameters = integer())
+    widths = numeric(), parameters = integer(), centre = as.numeric(est))
   if (is.null(found)) return(record)
   flagged <- found$flagged
+  # The centre's pairs: the first draws reflected, eight more gradients.
+  pairs <- seq_len(min(8L, nrow(Z)))
+  Zminus <- -Z[pairs, , drop = FALSE]
+  out <- gradients(sweep(Zminus %*% t(A), 2, est, "+"))
+  Rminus <- as.matrix(out$gradient) %*% A + Zminus
+  usable <- is.finite(out$value) & out$value > -1e99 & rowSums(!is.finite(Rminus)) == 0
+  record$centredraws <- length(pairs)
+  record$centre <- as.numeric(est + A %*% .ctNormalCentre(
+    rbind(Z, Zminus[usable, , drop = FALSE]), rbind(R, Rminus[usable, , drop = FALSE]),
+    R[pairs[usable], , drop = FALSE], Rminus[usable, , drop = FALSE],
+    found$v[, flagged, drop = FALSE]))
   record$directions <- A %*% found$v[, flagged, drop = FALSE]
   # Whose intervals the normal misstates, positionally.
   record$parameters <- found$parameters
@@ -1715,6 +1730,59 @@ ctOptimFullBootstrapDraws <- function(est, standata, sm, n=1000, cores=1,
   further <- classify(slope + sign(slope) * 2 * slopese, shape + 2 * shapese)
   c(list(v = v, slope = slope, shape = shape,
     decided = identical(nearer$flagged, further$flagged)), found)
+}
+
+# Where the posterior's mean sits, in the check's coordinates `z`. A normal
+# posterior with precision `P` and mean `m` there has gradient
+# `A'g = -P (z - m)`, so the residuals are `R = (I - P) z + P m`: an intercept
+# `P m`, from which `m` follows -- a Newton step averaged over the normal's
+# width rather than taken at one point. That is the posterior's mean wherever
+# it is near normal, where the mode is not, however well the curvature at the
+# mode fits.
+#
+# The intercept comes from pairs, a draw `z` (`Rplus`) and its reflection `-z`
+# (`Rminus`): `(R(z) + R(-z)) / 2` is the intercept and the residuals' even
+# terms (skew), with none of the slope `I - P`, so its error is the pairs'
+# spread whatever the number of parameters. Taken from a regression on plain
+# draws instead, the intercept carries every slope the draws cannot resolve
+# times the draws' mean: with more parameters than draws that error cannot be
+# estimated from them, and a 150-parameter Gaussian whose normal had the widths
+# wrong by 0.6-1.6 moved its centre up to 0.32 sds from 16 draws. Each
+# intercept is shrunk by its standard error (`c max(0, 1 - 4 se^2 / c^2)`), so
+# noise moves nothing. `P` is the residuals' regression on every draw (`Z`, `R`,
+# the reflections included), held towards the normal's (a ridge of one draw)
+# where they do not resolve it and floored at 1/25; the step is held to three
+# of its sds. Directions the sampler takes over (`sampled`, columns of `z`) are
+# left to it.
+#
+# On the 28-parameter, 250-subject Laplace fit of scripts/gsm-uncertainty-2026-10/
+# (regress_vs_means.R, against 6,000 importance-sampled draws, Pareto k 0.13)
+# the mode was up to 0.36 posterior sds from the mean in a loading (median
+# 0.04); over ten seeds of the check, 8 pairs put the centre within 0.13-0.24
+# (median 0.02-0.04; centre_real.R). Unshrunk it came within 0.12, and a
+# Gaussian's centre moved on noise.
+.ctNormalCentre <- function(Z, R, Rplus, Rminus, sampled = NULL, ridge = 1,
+  floor = 1 / 25, maxstep = 3) {
+  k <- ncol(Z)
+  if (!k || NROW(Rplus) < 2L) return(numeric(k))
+  pairs <- (Rplus + Rminus) / 2
+  intercept <- colMeans(pairs)
+  se <- apply(pairs, 2, stats::sd) / sqrt(nrow(pairs))
+  intercept <- intercept * pmax(0, 1 - 4 * se^2 / pmax(intercept^2, .Machine$double.xmin))
+  n <- nrow(Z)
+  Zc <- sweep(Z, 2, colMeans(Z))
+  Rc <- sweep(R, 2, colMeans(R))
+  # In the draws' own n x n form, cheaper than k x k wherever this matters:
+  # `(Z'Z + ridge I)^-1 Z' = Z' (Z Z' + ridge I)^-1`.
+  S <- crossprod(Zc, solve(tcrossprod(Zc) + diag(ridge, n), Rc))
+  S <- (S + t(S)) / 2
+  e <- eigen(diag(k) - S, symmetric = TRUE)
+  precision <- pmax(e$values, floor)
+  m <- as.numeric(e$vectors %*% (crossprod(e$vectors, intercept) / precision))
+  size <- sqrt(sum(crossprod(e$vectors, m)^2 * precision))
+  if (size > maxstep) m <- m * maxstep / size
+  if (length(sampled) && ncol(sampled)) m <- m - as.numeric(sampled %*% crossprod(sampled, m))
+  m
 }
 
 # How far a parameter's interval may be from the normal's before it covers
@@ -2074,8 +2142,13 @@ ctOptimFitLpgFunc <- function(fit, cores=1){
   # named none: the normal is then the answer.
   directions <- if (identical(uncertaintyfit$method, 'checked'))
     uncertaintyfit$details$normalcheck$directions else NULL
+  # And places its normal where the check put the posterior mean
+  # (`.ctNormalCentre()`): the draws, the sampler's centre, and its fallback.
+  # `est` stays the estimate the fit reports.
+  centre <- if (identical(uncertaintyfit$method, 'checked'))
+    .ctJuliaOr(uncertaintyfit$details$normalcheck$centre, est) else est
   if (draws != 'imis' || (!is.null(directions) && !ncol(directions))) {
-    return(list(samples = ctOptimNormalDraws(est, uncertaintyfit$cov, finishsamples),
+    return(list(samples = ctOptimNormalDraws(centre, uncertaintyfit$cov, finishsamples),
       uncertaintyfit = uncertaintyfit, control = control, draws = 'normal'))
   }
 
@@ -2107,7 +2180,7 @@ ctOptimFitLpgFunc <- function(fit, cores=1){
   # cause -- and passes straight through to `imis_is()` otherwise; see
   # `IS-importance-sampling-2026-09-06.md`. `lpg` value-only carries the batch
   # attribute `.ctBackendLpgFunc(fit, gradient=FALSE)` sets, whitened or not.
-  is_res <- .ctImisRun(lpg, centre = est, cov = uncertaintyfit$cov,
+  is_res <- .ctImisRun(lpg, centre = centre, cov = uncertaintyfit$cov,
     directions = directions, widths = uncertaintyfit$details$normalcheck$widths,
     max_iter = control$imisMaxIter, scale_init = control$imisScaleInit,
     tail_scale = control$imisTailScale, df = control$imisDf,
@@ -2142,7 +2215,7 @@ ctOptimFitLpgFunc <- function(fit, cores=1){
       uncertaintyfit$details$importance_sampling <- list(ess = is_res$ess,
         pareto_k = k, used = FALSE, directions = ncol(directions),
         evaluations = is_res$evaluations)
-      return(list(samples = ctOptimNormalDraws(est, uncertaintyfit$cov,
+      return(list(samples = ctOptimNormalDraws(centre, uncertaintyfit$cov,
         finishsamples), uncertaintyfit = uncertaintyfit, control = control,
         draws = 'normal'))
     }
@@ -2216,7 +2289,12 @@ ctOptimFitLpgFunc <- function(fit, cores=1){
       call.=FALSE)
   }
 
-  samples <- ctOptimNormalDraws(est, cov, finishsamples)
+  # Where `'checked'` placed its normal (`.ctNormalCentre()`), so a redraw
+  # describes the same distribution.
+  centre <- uncertaintyfit$details$normalcheck$centre
+  if (!identical(uncertaintyfit$settings$method, 'checked') ||
+      length(centre) != length(est)) centre <- est
+  samples <- ctOptimNormalDraws(centre, cov, finishsamples)
 
   # `method` keeps naming the method that produced the covariance, because that
   # is what every reader of it wants to know and it has not changed; `redrawn`
@@ -2292,9 +2370,9 @@ ctOptimFitLpgFunc <- function(fit, cores=1){
 #' \item{\code{'checked'}}{The default: the Hessian's normal, checked, and
 #' corrected by importance sampling in the directions where it is wrong. The
 #' log posterior's gradient at draws from the normal says in which directions
-#' the posterior departs from it, in batches of 8 until a batch names no more
-#' directions than the one before (16 to 64 draws, whatever the number of
-#' parameters). Where a direction would leave some parameter's 95\% interval
+#' the posterior departs from it, in batches of 8 until the directions named
+#' would be the same with every departure two standard errors larger or
+#' smaller (16 to 64 draws, whatever the number of parameters). Where a direction would leave some parameter's 95\% interval
 #' covering under 90\% or over 99\%, or move one tail outside 0.5 to 5\% by
 #' a skew or by a width that moves with another parameter, every departing
 #' direction is sampled as \code{'is'} samples (below), the normal kept in
@@ -2303,8 +2381,12 @@ ctOptimFitLpgFunc <- function(fit, cores=1){
 #' that sampling cannot correct the normal -- a curved ridge such as a loading
 #' vector whose length the data determine and whose direction they barely do,
 #' where the Hessian's intervals can be many times too wide -- the Hessian's
-#' normal is kept, with a warning naming the parameters it misstates. A fit
-#' with nothing named gets exactly the Hessian's normal. The check is recorded
+#' normal is kept, with a warning naming the parameters it misstates. The
+#' normal is centred where the same gradients, and those at 8 of the draws
+#' reflected, put the posterior's mean, which is not the estimate wherever the
+#' posterior is skewed; the estimate stays the fit's, and \code{summary()}
+#' reports it beside the draws. A fit with nothing named gets the Hessian's
+#' covariance. The check is recorded
 #' in \code{$uncertainty$details$normalcheck}, and the sampling, when there was
 #' any, in \code{$uncertainty$details$importance_sampling}.}
 #' \item{\code{'hessian'}}{A normal approximation from the Hessian at the

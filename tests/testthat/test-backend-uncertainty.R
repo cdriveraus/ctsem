@@ -250,9 +250,12 @@ test_that("uncertainty='stored' redraws a julia fit without touching the engine"
     colnames(fit$estimate$rawposterior))
 
   # The same normals the shared helper would produce, so the two backends draw
-  # identically given the same covariance and seed.
+  # identically given the same covariance and seed -- centred where 'checked'
+  # placed its normal, the posterior mean its check measured, not the estimate.
+  centre <- fit$uncertainty$details$normalcheck$centre
+  expect_length(centre, length(fit$estimate$raw))
   set.seed(29)
-  direct <- ctsem:::ctOptimNormalDraws(as.numeric(fit$estimate$raw), cov0, 220)
+  direct <- ctsem:::ctOptimNormalDraws(centre, cov0, 220)
   expect_equal(unname(redrawn$estimate$rawposterior), unname(direct), tolerance = 0)
 
   # And no engine work: the exact Hessian is the expensive part of every other
