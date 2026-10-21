@@ -917,9 +917,14 @@ print.ctLaplaceCorrection <- function(x, ...) {
     # start. A kept rise is a rise in the objective the fit reports, so this
     # cannot walk downhill, and each such round gains at least the bar, so it
     # cannot cycle.
-    rise <- max(stop_gain, as.numeric(control$value_tol))
+    # Where flagged units are integrated by frozen draws the value carries their
+    # error, and a change within twice its combined standard error is no
+    # change the rounds can read (the draws are the same at every placement,
+    # so this overstates the error of a difference).
+    noise <- 2 * sqrt(sum(as.numeric(placed$centre_se)^2, na.rm = TRUE))
+    rise <- max(stop_gain, as.numeric(control$value_tol)) + noise
     keep <- is.finite(after) && is.finite(gain) &&
-      ((after < residual && gain >= -as.numeric(control$value_tol)) ||
+      ((after < residual && gain >= -(as.numeric(control$value_tol) + noise)) ||
         gain > rise)
     rows[[length(rows) + 1L]] <- row(round, after, keep, placed$nflagged, gain)
     # At the same default verbosity as the rest of the correction: a round can

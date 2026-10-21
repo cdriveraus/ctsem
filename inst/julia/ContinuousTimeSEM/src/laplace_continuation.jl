@@ -492,11 +492,13 @@ function _continuation_newton_point(fns, x::Vector{Float64}, floor::Float64;
 end
 
 """The draws an importance rule has taken: their block coordinates, the
-component each came from (0 the prior) and its members' log likelihood."""
+component each came from (0 the prior), its members' log likelihood, and how
+many batches have been drawn."""
 mutable struct _ContinuationDraws
     points::Matrix{Float64}
     origin::Vector{Int}
     h::Vector{Float64}
+    batches::Int
 end
 
 """`m` split as evenly as whole numbers allow over `J` parts, the larger
@@ -509,13 +511,16 @@ end
 
 """`m` draws from component `component` (`c`), scored at `theta`: each draw's
 members' log likelihood, the deviations their filters integrate integrated
-exactly, as at a product rule's node."""
+exactly, as at a product rule's node. The lattice's shift comes from `key`, the
+batch and the component alone, so the same component of the same batch draws
+the same standard normals at every placement: common random numbers."""
 function _continuation_draw!(D::_ContinuationDraws, laplace::CTSEMLaplaceObjective,
     U::Integer, theta::Vector{Float64}, Ls, block, columns, u::Vector{Float64}, aws,
-    c::CTSEMImportanceComponent, component::Int, m::Int, rng)
+    c::CTSEMImportanceComponent, component::Int, m::Int, key)
     m > 0 || return D
     k = length(c.mu)
-    Z = _continuation_lattice_normals(k, m, rng)
+    Z = _continuation_lattice_normals(k, m,
+        Random.Xoshiro(hash((key, D.batches, component))))
     X = Matrix{Float64}(undef, k, m)
     hs = Vector{Float64}(undef, m)
     for j in 1:m
@@ -546,13 +551,14 @@ end
 components."""
 function _continuation_batch!(D::_ContinuationDraws, laplace, U, theta, Ls, block,
     columns, u, aws, comps, prior::CTSEMImportanceComponent, share::Float64,
-    m::Int, rng)
+    m::Int, key)
+    D.batches += 1
     mp = clamp(round(Int, share * m), 1, m)
     _continuation_draw!(D, laplace, U, theta, Ls, block, columns, u, aws, prior, 0,
-        mp, rng)
+        mp, key)
     for (t, n) in enumerate(_continuation_split(m - mp, length(comps)))
         _continuation_draw!(D, laplace, U, theta, Ls, block, columns, u, aws,
-            comps[t], t, n, rng)
+            comps[t], t, n, key)
     end
     return D
 end
@@ -616,9 +622,15 @@ over its components, each weighted by its share of the draws:
     (`_continuation_newton_point`).
 
 Draws come in batches, the first of `opts.draws` and each later as large as
-all before it, quasi-random (`_continuation_lattice_normals`) from one seed
-per unit, block and placement, until the standard error is under
-`opts.draws_se` or `opts.draws_max` are spent. Returns `(rule, value, se, ess,
+all before it, quasi-random (`_continuation_lattice_normals`), until the
+standard error is under `opts.draws_se` or `opts.draws_max` are spent. Each
+component's lattice in each batch is seeded by the unit, block, batch and
+component, the same at every placement: common random numbers, so two
+placements differ by where their proposals sit rather than by their draws'
+luck. With fresh draws at each placement the continuation's rounds, which keep
+a step only if the objective with the rule placed again is no lower, were
+rejected by the draws' error on the round-9 fit: 0.4 to 0.7 nats at radii
+down to 0.03 standard errors. Returns `(rule, value, se, ess,
 components)`, or `nothing` when no draw scores.
 """
 function _continuation_importance_rule(laplace::CTSEMLaplaceObjective, U::Integer,
@@ -639,11 +651,11 @@ function _continuation_importance_rule(laplace::CTSEMLaplaceObjective, U::Intege
     end
     isempty(comps) && return nothing
     prior = CTSEMImportanceComponent(zeros(k), Matrix{Float64}(I, k, k), ones(k))
-    rng = Random.Xoshiro(hash((Int(opts.draws_seed), Int(U), Int(b))))
-    D = _ContinuationDraws(zeros(k, 0), Int[], Float64[])
+    key = (Int(opts.draws_seed), Int(U), Int(b))
+    D = _ContinuationDraws(zeros(k, 0), Int[], Float64[], 0)
     share = Float64(opts.draws_prior)
     _continuation_batch!(D, laplace, U, theta, Ls, block, columns, u, aws, comps,
-        prior, share, Int(opts.draws), rng)
+        prior, share, Int(opts.draws), key)
     current = _continuation_importance_weigh(D, comps, prior, k)
     target_ess = 1 / Float64(opts.draws_se)^2
     while (!isfinite(current.value) || current.se > opts.draws_se) &&
@@ -662,7 +674,7 @@ function _continuation_importance_rule(laplace::CTSEMLaplaceObjective, U::Intege
             end
         end
         _continuation_batch!(D, laplace, U, theta, Ls, block, columns, u, aws, comps,
-            prior, share, min(n, Int(opts.draws_max) - n), rng)
+            prior, share, min(n, Int(opts.draws_max) - n), key)
         current = _continuation_importance_weigh(D, comps, prior, k)
     end
     isfinite(current.value) || return nothing
@@ -1099,7 +1111,7 @@ function _continuation_place!(o::CTSEMLaplaceContinuation, theta::Vector{Float64
         maxdim=o.maxdim,
         soft_maxdirs=o.soft_maxdirs, draws=o.draws, draws_se=o.draws_se,
         draws_max=o.draws_max, draws_floor=o.draws_floor, draws_prior=o.draws_prior,
-        draws_seed=o.draws_seed + o.recentres, points=o.points,
+        draws_seed=o.draws_seed, points=o.points,
         only=o.screen ? nothing : Set(o.flagged))
     placed = _continuation_place(laplace, theta, opts)
     nunits = length(laplace.units.members)
