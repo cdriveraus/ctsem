@@ -2559,6 +2559,9 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
     flat_rtol::Real=_CTSEM_FLAT_RTOL, newton_hessian=nothing,
     newton_hessian_at=nothing)
     start_values = collect(start)
+    # What the line search saw of a jump, for the route to name its cause
+    # (`_ctsem_jump_units`).
+    jump = CTSEMJump()
     lbfgs_pairs = lbfgs_memory === nothing ?
         _ctsem_lbfgs_memory(length(start_values)) : Int(lbfgs_memory)
     # Validated here rather than at the probe, which runs after the fit: a
@@ -2878,7 +2881,8 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
         initial_alpha=Float64(initial_alpha),
         maxiter=max(0, Int(maxiter) - sgd_iterations),
         g_tol=g_tol, f_tol=f_tol, x_tol=x_tol, callback=watch,
-        directional=directional, batch=batcher, iteration0=sgd_iterations)
+        directional=directional, batch=batcher, iteration0=sgd_iterations,
+        jump=jump)
     if sgd_result !== nothing
         result = CTSEMLBFGSResult(result.minimizer, result.minimum,
             result.gradient, sgd_iterations + result.iterations,
@@ -2914,10 +2918,34 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
     # Before the final evaluation, so what it reports is the run rather than
     # the extra call: see `_ctsem_optimise_verbose_report`.
     minimizer = collect(result.minimizer)
+    # A jump the line search saw, named by the route: the units whose terms
+    # jumped and where their inner solves stopped either side
+    # (`_ctsem_jump_units`). A run whose jump the route names stops there
+    # ("jump"), with no finish: Newton steps across a discontinuity are no
+    # better than L-BFGS's, and the caller has what it needs to make the
+    # objective smooth there. A jump the route cannot name is a failed line
+    # search, as it always was.
+    jumped_units = Ref{Any}(nothing)
+    if result.linesearch_failed && jump.seen
+        named = try
+            _ctsem_jump_units(objective, jump)
+        catch err
+            _ctsem_must_propagate(err) && rethrow()
+            nothing
+        end
+        if named !== nothing && !isempty(named.units)
+            jumped_units[] = named
+            verbose && println(_console(), label, ": the objective jumped by ",
+                jump.excess, " along the last search direction, between steps of ",
+                jump.alpha_lo, " and ", jump.alpha_hi, "; unit(s) ", named.units,
+                " moved with where their inner solve stopped")
+        end
+    end
     # Why L-BFGS stopped, in one word, since the finish depends on it and the
     # certification reads it.
     reason_for(r) = stopped_by_gap[] ? "gap" : stopped_by_stall[] ? "stall" :
         stopped_by_progress[] ? "progress" :
+        (r.linesearch_failed && jumped_units[] !== nothing) ? "jump" :
         r.linesearch_failed ? "linesearch" :
         r.g_converged ? "gradient" :
         ((r.f_converged && f_tol > 0) || (r.x_converged && x_tol > 0)) ?
@@ -3034,7 +3062,8 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
             initial_alpha=Float64(initial_alpha),
             maxiter=max(0, Int(maxiter) - result.iterations - spent.steps[]),
             g_tol=g_tol, f_tol=f_tol, x_tol=x_tol, callback=watch,
-            directional=directional, iteration0=result.iterations + spent.steps[])
+            directional=directional, iteration0=result.iterations + spent.steps[],
+            jump=jump)
         result = CTSEMLBFGSResult(resumed.minimizer, resumed.minimum,
             resumed.gradient, result.iterations + resumed.iterations,
             result.f_calls + resumed.f_calls, result.g_calls + resumed.g_calls,
@@ -3042,6 +3071,15 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
             resumed.linesearch_failed, resumed.stopped_by_callback,
             result.batch_sizes, result.batch_iterations)
         minimizer = collect(result.minimizer)
+        if result.linesearch_failed && jump.seen && jumped_units[] === nothing
+            named = try
+                _ctsem_jump_units(objective, jump)
+            catch err
+                _ctsem_must_propagate(err) && rethrow()
+                nothing
+            end
+            (named !== nothing && !isempty(named.units)) && (jumped_units[] = named)
+        end
         stop_reason = reason_for(result)
         again || break
     end
@@ -3266,9 +3304,21 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
             newton_history.alpha,
         newton_history_value=isempty(newton_history.value) ? [NaN] :
             newton_history.value,
-        # Why L-BFGS stopped: "gap", "stall", "progress", "linesearch",
-        # "gradient", "tolerance", "cap" or "other".
+        # Why L-BFGS stopped: "gap", "stall", "progress", "jump",
+        # "linesearch", "gradient", "tolerance", "cap" or "other".
         stop_reason=stop_reason,
+        # A jump the route named (`stop_reason == "jump"`): the units whose
+        # terms jumped, their changes along the step, and where each one's
+        # inner solve stopped at the points either side, column `j` of
+        # `jump_point_values` for unit `jump_point_units[j]` (zero-padded to
+        # the widest). `[0]`, `[0.0]` and a 1x1 zero when there was none.
+        jump_units=jumped_units[] === nothing ? [0] : jumped_units[].units,
+        jump_changes=jumped_units[] === nothing ? [0.0] : jumped_units[].changes,
+        jump_point_units=jumped_units[] === nothing ? [0] :
+            jumped_units[].point_units,
+        jump_point_values=jumped_units[] === nothing ? zeros(1, 1) :
+            jumped_units[].point_values,
+        jump_excess=jump.seen ? jump.excess : 0.0,
         stopped_by_gap=stopped_by_gap[],
         # A resumed stage stopped on progress alone; see `CTSEMStallWatch`.
         stopped_by_progress=stopped_by_progress[],
@@ -3322,7 +3372,7 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
         # and `saturated_parameters`. Keying convergence on saturation made the
         # flag false on two thirds of good fits; see `_ctsem_overshot`.
         converged=!stalled && !overshot && finite_gradient &&
-            (result.g_converged || converged_enough),
+            stop_reason != "jump" && (result.g_converged || converged_enough),
         saturated=saturated,
         # The pullback verdict and its margin. `overshot` is the half of
         # saturation that is a convergence failure; `overshoot_gain` is how

@@ -44,6 +44,25 @@ end
 CTSEMIterate(iteration, value, g_norm, gain=NaN) =
     CTSEMIterate(iteration, value, g_norm, gain, nothing)
 
+"""
+A jump the line search saw (`_ctsem_lbfgs`'s `jump`): from `x` along `s`, a
+trial at `alpha_lo` kept at least a quarter of the excess over the line
+search's linear model, `excess`, that a trial at `alpha_hi`, a hundred times
+longer or more, had. A smooth objective's excess shrinks with the square of
+the step, so that is a jump of about `excess` between the two, not curvature:
+on the Laplace route, a unit whose term moved with where its inner solve
+stopped (`_ctsem_jump_units`). `seen` is false until one is.
+"""
+mutable struct CTSEMJump
+    seen::Bool
+    x::Vector{Float64}
+    s::Vector{Float64}
+    alpha_hi::Float64
+    alpha_lo::Float64
+    excess::Float64
+end
+CTSEMJump() = CTSEMJump(false, Float64[], Float64[], NaN, NaN, NaN)
+
 """What `_ctsem_lbfgs` returns: the point and the reasons it stopped."""
 struct CTSEMLBFGSResult
     minimizer::Vector{Float64}
@@ -208,6 +227,19 @@ inverse that is close, the first step is nearly the Newton step and what each
 step predicts it gains is nearly what is left, which is what the gap rule reads
 (`_ctsem_predicted_gain`); learned from the pairs alone, that prediction was a
 hundredth of what was left on a 433-parameter model.
+
+`jump`, a `CTSEMJump`, asks the line search to watch for a jump rather than
+backtrack through it. A trial whose excess over the linear model `alpha g's`
+does not shrink as the step does -- a quarter of it left at a hundredth of an
+earlier trial's length -- is a discontinuity, and backtracking only reaches a
+step too short to leave the point where it is: a Laplace fit whose person's
+term jumped by 0.33 nats as its inner solve changed where it stopped
+accepted steps below the resolution of the parameters for hours, each after 40
+backtracks (CT-SEM/review/LAPLACE-shoulders-frozen-draws-2026-10-21.md). The
+search stops there, with the line search failed and the jump recorded in
+`jump`, and the memory is not reset to retry, a jump not being a stale memory.
+An accepted step that leaves the point where it was fails the line search
+too: it is no step.
 """
 function _ctsem_lbfgs(fg!, x0::AbstractVector; memory::Integer=20,
         metric=nothing, initial_alpha::Real=0.1, maxiter::Integer=1000,
@@ -216,7 +248,7 @@ function _ctsem_lbfgs(fg!, x0::AbstractVector; memory::Integer=20,
         c1::Real=1e-4, maxbacktrack::Integer=40, iteration0::Integer=0,
         diagonal::Bool=false, nonmonotone::Real=0.0, gll::Integer=0,
         inverse::Union{Nothing,Matrix{Float64}}=nothing, scaled::Bool=false,
-        structured=nothing)
+        structured=nothing, jump::Union{Nothing,CTSEMJump}=nothing)
     n = length(x0)
     x = collect(Float64, x0)
     dinv = metric === nothing ? ones(n) : begin
@@ -309,7 +341,33 @@ function _ctsem_lbfgs(fg!, x0::AbstractVector; memory::Integer=20,
         have_gradient = true
         accepted = isfinite(fn) && fn <= reference(recent, C) + c1 * alpha * dphi
         k = 0
+        # The trials' lengths and their excess over the linear model, for the
+        # jump watch (`jump`); empty when nothing watches.
+        trial_alpha = Float64[]
+        trial_excess = Float64[]
+        jumped = false
         while !accepted && k < maxbacktrack
+            if jump !== nothing && isfinite(fn)
+                excess = fn - f - alpha * dphi
+                floor_excess = 1e-8 * (1 + abs(f))
+                if excess > floor_excess
+                    for (a, e) in zip(trial_alpha, trial_excess)
+                        if a >= 100 * alpha && excess >= e / 4
+                            jump.seen = true
+                            jump.x = copy(x)
+                            jump.s = copy(s)
+                            jump.alpha_hi = a
+                            jump.alpha_lo = alpha
+                            jump.excess = excess
+                            jumped = true
+                            break
+                        end
+                    end
+                    jumped && break
+                    push!(trial_alpha, alpha)
+                    push!(trial_excess, excess)
+                end
+            end
             k += 1
             # Quadratic interpolation of phi(alpha), safeguarded to [0.1, 0.5].
             denom = 2 * (fn - f - dphi * alpha)
@@ -337,6 +395,16 @@ function _ctsem_lbfgs(fg!, x0::AbstractVector; memory::Integer=20,
                     all(isfinite, Gn)
                 accepted && break
             end
+        end
+        # A step that leaves the point where it was is none, however the
+        # Armijo test reads it: below the parameters' resolution `fn == f`, and
+        # `f + c1 alpha dphi` rounds to `f`.
+        if accepted && xn == x
+            accepted = false
+        end
+        if jumped
+            lsfail = true
+            break
         end
         if !accepted && took_structured
             # The structured model's step found nothing: plain L-BFGS from
