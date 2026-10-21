@@ -199,7 +199,8 @@ worked out exactly from the unit's times. The distribution and fit
 families, whose statistics are sums of high powers, use the spread of the
 units' contributions and a studentised bootstrap over units. Within a family the
 largest standardised statistic and the sum of their squares are calibrated
-with the statistics' correlation over units
+with the statistics' correlation over units -- for the sum, less the noise
+that estimating the correlation from the units adds to the sum's spread --
 and combined, with any exact p-values the family has, by the Cauchy
 combination; families are combined by Holm. \code{adequate} is \code{TRUE}
 when no family's adjusted p-value is below \code{alpha}.

@@ -489,3 +489,32 @@ test_that("errors from the mixture predictive are its own distribution function'
   err <- ctsem:::.ctAdequacyErrors(fit)
   expect_equal(as.numeric(err$E[, 1])[dyn$ok], dyn$transformed[dyn$ok])
 })
+
+test_that("a skewed statistic and a family's sum are read against references of their own shape", {
+  # A statistic of known skewness is read through a chi-square of that
+  # skewness, so a chi-square's quantiles come back as the normal's.
+  nu <- c(20, 200)
+  for (pr in c(0.999, 0.01)) {
+    q <- stats::qchisq(pr, nu)
+    expect_equal(ctsem:::.ctAdequacySkewZ((q - nu) / sqrt(2 * nu), sqrt(8 / nu)),
+      rep(stats::qnorm(pr), 2), tolerance = 1e-8)
+  }
+  # A family's sum of k squared z, with their correlation taken from n units
+  # and k not few beside n: draws with that correlation carry its noise, about
+  # k^2 / n in tr(R^2), and were too wide for the sum (the true 5 per cent
+  # point read as p = 0.18). The reference takes the noise out.
+  withr::with_seed(1, {
+    n <- 60; k <- 150
+    R <- stats::cor(matrix(stats::rnorm(n * k), n))
+    e <- eigen(R, symmetric = TRUE)
+    keep <- e$values > 1e-8 * e$values[1]
+    Zb <- matrix(stats::rnorm(1999 * sum(keep)), 1999) %*%
+      (sqrt(e$values[keep]) * t(e$vectors[, keep]))
+  })
+  bsum <- rowSums(Zb^2)
+  at <- k + stats::qnorm(0.95) * sqrt(2 * k)
+  expect_gt(mean(bsum >= at), 0.15)
+  p <- ctsem:::.ctAdequacySumP(at, bsum, R, n)
+  expect_gt(p, 0.02)
+  expect_lt(p, 0.1)
+})

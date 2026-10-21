@@ -125,7 +125,8 @@
 #' families, whose statistics are sums of high powers, use the spread of the
 #' units' contributions and a studentised bootstrap over units. Within a family the
 #' largest standardised statistic and the sum of their squares are calibrated
-#' with the statistics' correlation over units
+#' with the statistics' correlation over units -- for the sum, less the noise
+#' that estimating the correlation from the units adds to the sum's spread --
 #' and combined, with any exact p-values the family has, by the Cauchy
 #' combination; families are combined by Holm. \code{adequate} is \code{TRUE}
 #' when no family's adjusted p-value is below \code{alpha}.
@@ -1192,7 +1193,8 @@ ctFitAdequacy <- function(fit, covariates = NULL,
 # estimation took (`V0`, `reduction`), or for a unit-level statistic the
 # spread of the units' projected contributions. A family's largest |z| and sum
 # of squares are referred to draws of the standardised statistics with their
-# correlation, taken from the units' projected contributions: Gaussian draws
+# correlation, taken from the units' projected contributions (the sum through
+# the draws' first two moments, .ctAdequacySumP): Gaussian draws
 # where the variances are pairwise or row-wise, sums over thousands of nearly
 # independent terms; for a unit-level statistic, which is a skewed sum over a
 # few hundred units, a studentised bootstrap over units, which corrects the
@@ -1227,8 +1229,8 @@ ctFitAdequacy <- function(fit, covariates = NULL,
     if (!length(idx)) return(NULL)
     at <- match(idx, okcols)
     zf <- z[idx]
+    R <- stats::cov2cor(crossprod(C[, idx, drop = FALSE]) + diag(1e-12, length(idx)))
     if (all(rowlevel[idx])) {
-      R <- stats::cov2cor(crossprod(C[, idx, drop = FALSE]) + diag(1e-12, length(idx)))
       e <- eigen(R, symmetric = TRUE)
       keep <- e$values > 1e-8 * e$values[1]
       Zb <- matrix(stats::rnorm(nboot * sum(keep)), nboot) %*%
@@ -1250,7 +1252,7 @@ ctFitAdequacy <- function(fit, covariates = NULL,
     w <- idx[which.max(abs(zf))]
     list(k = length(idx), worst = meta$name[w], worst_z = z[w],
       pmax = (1 + sum(bmax >= tmax)) / (nboot + 1),
-      psum = (1 + sum(bsum >= tsum)) / (nboot + 1))
+      psum = .ctAdequacySumP(tsum, bsum, R, n))
   })
   # The estimate each statistic is about: a correlation for the residual and
   # within-row statistics (the projected sum over the pairs that contribute),
@@ -1258,6 +1260,31 @@ ctFitAdequacy <- function(fit, covariates = NULL,
   denom <- ifelse(meta$kind %in% c('corr', 'square'), pmax(meta$count, 1), n)
   list(z = z, p = p, estimate = U / denom, U = U, v = v, ok = ok, denom = denom,
     families = families, draws = Ub)
+}
+
+# The p-value of a family's sum of squared z. Draws made with the units'
+# correlation R carry its sampling noise into their sum: about k^2 / n is
+# added to tr(R^2), which sets the sum's variance (2 tr(R^2) for Gaussian
+# statistics), so with k statistics not few beside n units the reference was
+# too wide. The periodic family's 320 statistics over 60 units, with
+# independent normal errors and nothing estimated, rejected 0 of 300 at .05,
+# and the Cauchy combination with a test that never rejects halved the
+# family's. The draws give the sum's mean and variance, the variance less
+# that noise -- tr(R^2) less Bai and Saranadasa's (1996) unbiased estimate of
+# it -- and a chi-square scaled to the two (Satterthwaite) is the reference.
+.ctAdequacySumP <- function(tsum, bsum, R, n) {
+  bsum <- bsum[is.finite(bsum)]
+  k <- ncol(R)
+  m <- mean(bsum); V <- stats::var(bsum)
+  if (n > 3L) {
+    t2 <- sum(R^2)
+    unbiased <- (n - 1)^2 / ((n + 1) * (n - 2)) * (t2 - k^2 / (n - 1))
+    V <- V - 2 * (t2 - max(unbiased, k))
+  }
+  if (!is.finite(V) || V <= 0 || !is.finite(m) || m <= 0)
+    return((1 + sum(bsum >= tsum)) / (length(bsum) + 1))
+  a <- V / (2 * m)
+  stats::pchisq(tsum / a, 2 * m^2 / V, lower.tail = FALSE)
 }
 
 # P-values the Cauchy combination takes beside the bootstrap's: the
