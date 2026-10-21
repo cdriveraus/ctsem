@@ -81,6 +81,13 @@
 #'  needs more data; needs at least 80 subjects or top-level groups. A
 #'  supplied start is not batched from, since the subsets' gradients walk off a
 #'  point already chosen; \code{TRUE} asks for it anyway.}
+#'  \item{\code{coreset}}{Julia. Default TRUE. On the Laplace route, run
+#'  stretches of L-BFGS on a weighted few of the units, chosen so that their
+#'  scores reproduce the full gradients seen so far, each stretch checked by a
+#'  full gradient; the full objective finishes, so the estimate and its
+#'  standard errors are those of every unit. It engages only where a coreset
+#'  that cheap is accurate enough, which needs many units for each parameter.
+#'  \code{fit$optim$coreset_sizes} records the stages.}
 #'  \item{\code{explosive_forward}}{Julia. Default FALSE. For a subject whose
 #'  predictions grow more than 100-fold between observations (explosive
 #'  dynamics over a long gap), take its gradient by forward mode instead of

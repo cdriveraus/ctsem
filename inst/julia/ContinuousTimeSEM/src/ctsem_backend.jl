@@ -2517,6 +2517,12 @@ again; `newton_maxit` is the finish's shortest walk on one Hessian, and the exac
 variant's step budget; `newton_reuse` and
 `flat_rtol`
 are the finish's rules, passed from R so one number serves both sides.
+`coreset` (on by default) runs stretches of the L-BFGS stage on a weighted few
+of the units where the route has units and a coreset that cheap is accurate
+enough (`_ctsem_coreset_plan`, the Laplace route), each stretch checked by a
+full gradient; `coreset_tol` is the relative gradient error, in L-BFGS's own
+metric, a coreset must stay within. Neither the finish nor a budget stage sees
+one.
 `lbfgs_inverse` is an initial inverse Hessian for L-BFGS (`_ctsem_lbfgs`'s
 `inverse`), as a fit's covariance is for refitting it to part of its data; one
 that is not positive definite is not used (`_ctsem_lbfgs_inverse`).
@@ -2553,7 +2559,7 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
     stall_tightenings::Integer=2, stall_ratio::Real=1e-3,
     stall_carried::Real=0.0, stall_alone::Bool=false,
     batch::Bool=false, batch_theta::Real=0.25,
-    coreset::Bool=false, coreset_tol::Real=0.1,
+    coreset::Bool=true, coreset_tol::Real=0.1,
     newton::Bool=false, newton_switch::Real=0.1, newton_maxit::Integer=30,
     newton_curvature=:auto, certify::Bool=false,
     newton_reuse::Real=_CTSEM_HESSIAN_REUSE_SE,
@@ -2588,13 +2594,18 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
     # from every full-data trial with a gradient. Made before the closure that
     # writes it.
     # And for coreset stages (`coreset`), whose training points they are.
-    score_store = (lbfgs_scores || coreset) && _ctsem_scores_supported(objective) ?
+    score_store = (lbfgs_scores || (coreset && !progress_budget)) &&
+        _ctsem_scores_supported(objective) ?
         CTSEMScoreStore(_ctsem_nunits(objective), length(start_values)) : nothing
+    # Gradients of the whole objective the trials took, which is what a batch
+    # or a coreset stage saves; a Hessian's columns are not trials.
+    full_gradients = Ref(0)
     trial_fg! = function (target, F, G, x)
         # The route decides what a usable trial point is: see
         # `_ctsem_optimise_trial`. On the laplace route a finite value at a
         # point whose inner Newton did not converge is *not* usable, because the
         # objective is only defined at the mode.
+        (G !== nothing && target === objective) && (full_gradients[] += 1)
         trial = score_store !== nothing && G !== nothing && target === objective ?
             _ctsem_optimise_trial_scores(target, x, gradient_method,
                 gradient_limit, call_log, score_store) :
@@ -2639,9 +2650,12 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
     batching() = batcher !== nothing && !_ctsem_batch_full(batcher)
     # Coreset stages on the Laplace route (`_ctsem_coreset_plan`): stretches of
     # the L-BFGS stage on a weighted few of the units, each checked by a full
-    # gradient. `nothing` on any other route, with too few units, or off.
-    coreseter = coreset ? _ctsem_coreset_plan(objective, trial_fg!, score_store;
-        tol=coreset_tol) : nothing
+    # gradient. `nothing` on any other route, with too few units, off, or on a
+    # budget stage (the prior warm-up), whose few iterations are its plan and
+    # leave no stage room to pay.
+    coreseter = coreset && !progress_budget ?
+        _ctsem_coreset_plan(objective, trial_fg!, score_store; tol=coreset_tol) :
+        nothing
     # The endgame (`_ctsem_newton_finish`), on a route that has one. Where a
     # Hessian costs a few gradients it runs whenever there is a stopping rule
     # for it to finish, and L-BFGS hands over as soon as its predicted gain is
@@ -3243,6 +3257,7 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
         coreset_reverted=coreseter === nothing ? 0 : coreseter.reverted,
         coreset_attempts=coreseter === nothing ? 0 : coreseter.attempts,
         coreset_seconds=coreseter === nothing ? 0.0 : coreseter.select_seconds,
+        full_gradients=full_gradients[],
         newton_hessians=spent.hessians[] +
             (finish === nothing ? 0 : finish.full_hessians),
         newton_subset_hessians=spent.subset[] +
