@@ -84,6 +84,14 @@ function _ctsem_lbfgs_push!(M::CTSEMLBFGSMemory, s::Vector{Float64},
     true
 end
 
+"""Drop the `k` newest curvature pairs."""
+function _ctsem_lbfgs_drop!(M::CTSEMLBFGSMemory, k::Integer)
+    for _ in 1:min(k, length(M.S))
+        pop!(M.S); pop!(M.Y); pop!(M.rho)
+    end
+    return M
+end
+
 _ctsem_lbfgs_reset!(M::CTSEMLBFGSMemory) =
     (empty!(M.S); empty!(M.Y); empty!(M.rho); M)
 
@@ -354,6 +362,7 @@ function _ctsem_lbfgs(fg!, x0::AbstractVector; memory::Integer=20,
             end
             r = _ctsem_coreset_check!(coreset, x, f, G, hm,
                 _ctsem_lbfgs_scale(Dinv, dinv); leave=true)
+            r.act === :revert && _ctsem_lbfgs_drop!(M, coreset.pairs)
             x, f, G, nev = _ctsem_coreset_switch!(coreset, r, evaluate!, batch)
             fcalls += nev; gcalls += nev
             gconv = maximum(abs, G; init=0.0) <= g_tol
@@ -388,7 +397,9 @@ function _ctsem_lbfgs(fg!, x0::AbstractVector; memory::Integer=20,
         dG = Gn .- G
         structured === nothing || _ctsem_structured_update!(structured, x, xn,
             G, Gn, f, fn, step, alpha, took_structured)
-        if _ctsem_lbfgs_push!(M, step, dG) && learn
+        pushed = _ctsem_lbfgs_push!(M, step, dG)
+        pushed && _ctsem_coreset_live(coreset) && (coreset.pairs += 1)
+        if pushed && learn
             B = _ctsem_lbfgs_diagonal!(B, step, dG, dinv)
             Dinv = 1 ./ B
         end
@@ -433,6 +444,7 @@ function _ctsem_lbfgs(fg!, x0::AbstractVector; memory::Integer=20,
             r = _ctsem_coreset_step!(coreset, x, f, G, hm,
                 _ctsem_lbfgs_scale(Dinv, dinv))
             if r.act !== :none
+                r.act === :revert && _ctsem_lbfgs_drop!(M, coreset.pairs)
                 x, f, G, nev = _ctsem_coreset_switch!(coreset, r, evaluate!, batch)
                 fcalls += nev; gcalls += nev
                 gconv = maximum(abs, G; init=0.0) <= g_tol
@@ -452,6 +464,7 @@ function _ctsem_lbfgs(fg!, x0::AbstractVector; memory::Integer=20,
         end
         r = _ctsem_coreset_check!(coreset, x, f, G, hm, _ctsem_lbfgs_scale(Dinv, dinv);
             leave=true)
+        r.act === :revert && _ctsem_lbfgs_drop!(M, coreset.pairs)
         x, f, G, nev = _ctsem_coreset_switch!(coreset, r, evaluate!, batch)
         fcalls += nev; gcalls += nev
         gconv = maximum(abs, G; init=0.0) <= g_tol
@@ -903,7 +916,9 @@ end
 #   newest; the first within `tol` and the budget is fitted again on every point
 #   and a stage begins, planned for 10 iterations.
 # - At a check: the point goes back to the stage's start if the full objective
-#   is worse there. Otherwise the check is a training point, and the stage is
+#   is worse there, and the curvature pairs the stage gave L-BFGS go with it: they
+#   describe a coreset that led somewhere worse, and kept, they made the full
+#   sum's polish after such a stage take up to twice as long. Otherwise the check is a training point, and the stage is
 #   judged by what it bought: its iterations times the full objective's gain
 #   over the coreset's own, against their share of the work and the check. A
 #   stage that paid carries on from there, planned twice as long -- the cheapest
@@ -960,7 +975,8 @@ gradient of the maximised objective there), the stage in force -- its target,
 where it began on the full objective (`x0`, `f0`, `G0`, minimised), the
 coreset's value there less the full one (`offset`), its length so far and as
 planned, and the coreset's gradient error in objective units, `e' H e / 2` --
-the clock that paces the fits, and the record.
+the clock that paces the fits, the record, and how many curvature pairs the
+stage in force has given L-BFGS, which a stage that is sent back takes with it.
 """
 mutable struct CTSEMCoresetPlan
     full::CTSEMLaplaceObjective
@@ -995,6 +1011,7 @@ mutable struct CTSEMCoresetPlan
     reverted::Int
     attempts::Int
     select_seconds::Float64
+    pairs::Int
 end
 
 """
@@ -1017,7 +1034,7 @@ function _ctsem_coreset_plan(L::CTSEMLaplaceObjective, fg!, store)
     return CTSEMCoresetPlan(L, fg!, store, sampling, cost, keep, 0.0,
         Vector{Float64}[], Matrix{Float64}[], Vector{Float64}[], false, nothing,
         Float64[], NaN, Float64[], 0.0, 0, _CTSEM_CORESET_FIRST_STAGE, 0.0, NaN,
-        0.0, 0.0, Int[], Float64[], Int[], Int[], Float64[], 0, 0, 0, 0, 0.0)
+        0.0, 0.0, Int[], Float64[], Int[], Int[], Float64[], 0, 0, 0, 0, 0.0, 0)
 end
 
 _ctsem_coreset_live(c) = c !== nothing && c.live
@@ -1311,6 +1328,7 @@ function _ctsem_coreset_begin!(c::CTSEMCoresetPlan, cs::CTSEMCoreset, x, f, G)
     c.target = CTSEMCoresetTarget(c.full, cs)
     c.x0 = collect(Float64, x); c.f0 = f; c.G0 = collect(Float64, G)
     c.iterations = 0
+    c.pairs = 0
     push!(c.sizes, length(cs.units))
     push!(c.shares, _ctsem_coreset_share(c, cs.units))
     push!(c.stage_iterations, 0)
