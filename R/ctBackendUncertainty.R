@@ -101,6 +101,11 @@
       built
     }
   })
+  # This density is the fit's own sum over units, which a coreset of them may
+  # stand in for (`.ctCoresetLpg()`); a density built on another objective --
+  # the quadrature continuation's, say -- carries no such mark and is never
+  # replaced by the fit's unit terms.
+  attr(fn, "unitsum") <- TRUE
   attr(fn, "batch") <- function(draws) {
     draws <- as.matrix(draws)
     # The engine takes columns as draws; `imis_is`'s `x_new` (and every
@@ -138,21 +143,6 @@
     list(value = value, gradient = t(out[-1L, , drop = FALSE]))
   }
   fn
-}
-
-# What the optimiser spent, in log density evaluations: its gradients, each
-# Newton finish Hessian at the engine's own cost (`_ctsem_hessian_cost`: two
-# gradients a parameter on the Laplace route, one otherwise), and a gradient
-# at two values (2.1-2.3 measured on dev1). `NULL` when the fit carries no
-# counts. `g_calls` can undercount (see `.ctJuliaRunCounters`), which errs
-# toward spending less.
-.ctBackendFitCost <- function(fit) {
-  o <- fit$optim
-  npar <- length(fit$estimate$raw)
-  perhessian <- if (identical(fit$args$resolved$intoverpop, "laplace")) 2 * npar else npar
-  gradients <- sum(c(o$g_calls, o$newton_hessians * perhessian), na.rm = TRUE)
-  if (!is.finite(gradients) || gradients <= 0) return(NULL)
-  2 * gradients
 }
 
 # The two counts `ctOptimCheckUncertaintyData` needs. The Julia spec has no
@@ -279,13 +269,10 @@
   # `fit$uncertainty` is replaced below: the Hessian the certification decided
   # on, where it was evaluated, and that certification.
   stored <- fit$uncertainty
-  # What `'checked'` may spend sampling: what the optimiser spent, so the stage
-  # at most doubles the fit, as forming a Hessian the finish then discards
-  # does. A posterior that needs more than that to correct is one to sample;
-  # the importance sampling report says so when its target was not reached.
-  if (identical(uncertainty, "checked") && is.null(control$imisBudget)) {
-    control$imisBudget <- .ctBackendFitCost(fit)
-  }
+  # No budget on `'checked'`'s sampling unless the caller sets one
+  # (`control$imisBudget`). It once stopped at what the optimiser had spent and
+  # fell back to the Hessian's normal, which on a shell is the answer the check
+  # had just found wrong.
   hessian <- if (needsHessian && !identical(control$analyticHessian, FALSE)) {
     .ctBackendHessian(fit, est, verbose = verbose)
   } else NULL

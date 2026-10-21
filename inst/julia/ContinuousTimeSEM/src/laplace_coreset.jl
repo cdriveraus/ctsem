@@ -12,7 +12,19 @@
 # a point the model cannot evaluate, or whose inner solve did not converge,
 # comes back `-Inf` and is never raised, since a sampler's tails are full of them.
 
-export ctsem_coreset_terms, ctsem_coreset_batch, ctsem_coreset_batch_gradient
+export ctsem_coreset_terms, ctsem_coreset_batch, ctsem_coreset_batch_gradient,
+    ctsem_set_coreset_draw_parallel!
+
+"""
+Whether a coreset's draws are evaluated several at once (`_laplace_coreset_each`).
+On; off evaluates them one after another, each over its units in parallel,
+which gives the same numbers and is there to time against and to check that it
+does. `ctsem_set_coreset_draw_parallel!` sets it.
+"""
+const _LAPLACE_CORESET_DRAWS = Ref(true)
+
+"""Set whether a coreset's draws are evaluated several at once."""
+ctsem_set_coreset_draw_parallel!(on::Bool) = (_LAPLACE_CORESET_DRAWS[] = on)
 
 """
     ctsem_coreset_terms(laplace, values)
@@ -57,8 +69,9 @@ function ctsem_coreset_batch(laplace::CTSEMLaplaceObjective, values::AbstractMat
     ncol >= 1 || throw(ArgumentError("values must have at least one column"))
     coreset = _laplace_coreset(laplace, units, weights)
     out = fill(-Inf, ncol)
+    results = _laplace_coreset_each(laplace, values, coreset, false)
     for j in 1:ncol
-        r = _laplace_coreset_try(laplace, Vector{Float64}(view(values, :, j)), false, coreset)
+        r = results[j]
         r === nothing || (out[j] = r.value)
     end
     return out
@@ -78,8 +91,9 @@ function ctsem_coreset_batch_gradient(laplace::CTSEMLaplaceObjective,
     ncol >= 1 || throw(ArgumentError("values must have at least one column"))
     coreset = _laplace_coreset(laplace, units, weights)
     out = fill(NaN, n + 1, ncol)
+    results = _laplace_coreset_each(laplace, values, coreset, true)
     for j in 1:ncol
-        r = _laplace_coreset_try(laplace, Vector{Float64}(view(values, :, j)), true, coreset)
+        r = results[j]
         if r === nothing
             out[1, j] = -Inf
         else
@@ -88,6 +102,62 @@ function ctsem_coreset_batch_gradient(laplace::CTSEMLaplaceObjective,
         end
     end
     return out
+end
+
+"""
+    _laplace_coreset_each(laplace, values, coreset, gradient)
+
+The coreset evaluated at every column of `values`, several draws at once: the
+pool works through the draws, each on its own copy of the objective's per-unit
+state (`_laplace_draw_copy`), and a draw's units take whatever slots the draws
+leave free. Over a coreset's units alone most of the pool sat idle whenever it
+had more workers than the coreset has units. One result per column, `nothing`
+where the draw cannot be used (`_laplace_coreset_try`).
+"""
+function _laplace_coreset_each(laplace::CTSEMLaplaceObjective, values::AbstractMatrix,
+    coreset::CTSEMCoreset, gradient::Bool)
+    ncol = size(values, 2)
+    results = Vector{Any}(nothing, ncol)
+    if !_LAPLACE_CORESET_DRAWS[] || ncol == 1
+        for j in 1:ncol
+            results[j] = _laplace_coreset_try(laplace, Vector{Float64}(view(values, :, j)),
+                gradient, coreset)
+        end
+        return results
+    end
+    _laplace_ensure_pool!(laplace)
+    _laplace_parallel(laplace, 1:ncol) do j
+        results[j] = _laplace_coreset_try(_laplace_draw_copy(laplace, coreset),
+            Vector{Float64}(view(values, :, j)), gradient, coreset)
+        return true
+    end
+    return results
+end
+
+"""
+    _laplace_draw_copy(laplace, coreset)
+
+`laplace` for one draw evaluated while others are: fresh modes for the
+coreset's units and its own per-unit flags, the rest shared. An evaluation
+writes each unit's mode and flags on the objective, so draws evaluated at once
+on one objective would overwrite each other's; the subjects and the
+specification are only read, and the workspaces are per slot, which the pool
+gives one task at a time. Modes are rebound per unit
+(`_laplace_solve_unit_mode!`), never written in place, so a shallow copy of the
+others is enough.
+"""
+function _laplace_draw_copy(laplace::CTSEMLaplaceObjective{O},
+    coreset::CTSEMCoreset) where {O}
+    modes = copy(laplace.modes)
+    for U in coreset.units
+        modes[U] = zeros(Float64, length(laplace.modes[U]))
+    end
+    return CTSEMLaplaceObjective{O}(laplace.objective, laplace.spec, laplace.units,
+        modes, laplace.inner_maxiter, laplace.inner_tol, laplace.workspaces,
+        copy(laplace.inner_iterations), copy(laplace.inner_gradient),
+        copy(laplace.inner_converged), copy(laplace.hessian_repaired),
+        copy(laplace.mode_repaired), copy(laplace.logdet_floored), Float64[],
+        laplace.floor, laplace.gate_lo, laplace.gate_hi, 0, laplace.quadratic)
 end
 
 """One evaluation for the entry points above, or `nothing` where the draw
