@@ -221,6 +221,39 @@ test_that("checked samples a ring the Hessian's normal makes six times too wide"
     tolerance = 0.15)
 })
 
+test_that("checked's centre leaves the coordinates beside a shell where they are", {
+  # A four-dimensional shell of radius 0.05 under a N((0.5, 0, 0, 0), I) prior,
+  # with six exactly normal coordinates beside it: the check samples the shell,
+  # and the centre's step in the rest must not borrow the shell's intercept.
+  # Solved in every direction and projected afterwards it moved the six by up
+  # to 10 sds, whose mean is 0.
+  r0 <- 0.05; tau <- 0.01
+  lpx <- function(x) {
+    r <- sqrt(sum(x^2))
+    -(r - r0)^2 / (2 * tau^2) - sum((x - c(0.5, 0, 0, 0))^2) / 2
+  }
+  gx <- function(x) {
+    r <- sqrt(sum(x^2))
+    -(r - r0) / tau^2 * x / r - (x - c(0.5, 0, 0, 0))
+  }
+  lpg <- function(th) {
+    out <- lpx(th[1:4]) - sum(th[5:10]^2) / 2
+    attr(out, 'gradient') <- c(gx(th[1:4]), -th[5:10])
+    out
+  }
+  gb <- function(X) list(value = apply(X, 1, function(x) as.numeric(lpg(x))),
+    gradient = t(apply(X, 1, function(x) attr(lpg(x), 'gradient'))))
+  mode <- c(optim(c(r0, 0, 0, 0), function(x) -lpx(x), function(x) -gx(x),
+    method = 'BFGS', control = list(reltol = 1e-15))$par, rep(0, 6))
+  hess <- suppressWarnings(ctsem:::ctOptimComputeUncertainty(mode,
+    list(nsubjects = 1), sm = NULL, lpgFunc = lpg, uncertainty = 'hessian',
+    finishsamples = 20, verbose = 0))
+  set.seed(11)
+  check <- ctsem:::.ctOptimNormalCheck(gb, mode, hess$cov)
+  expect_gte(ncol(check$directions), 1L)
+  expect_equal(check$centre[5:10], rep(0, 6), tolerance = 1e-8)
+})
+
 test_that("checked corrects the funnel a variance from six observations makes", {
   # y ~ N(mu, sigma) from six values, theta = (mu, log sigma). The mode sits
   # where sigma is smallest, so the normal is narrow in mu and its mean of

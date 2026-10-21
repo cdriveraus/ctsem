@@ -1759,9 +1759,19 @@ ctOptimFullBootstrapDraws <- function(est, standata, sm, n=1000, cores=1,
 # intercept is shrunk by its standard error (`c max(0, 1 - 4 se^2 / c^2)`), so
 # noise moves nothing. `P` is the residuals' regression on every draw (`Z`, `R`,
 # the reflections included), held towards the normal's (a ridge of one draw)
-# where they do not resolve it and floored at 1/25; the step is held to three
-# of its sds. Directions the sampler takes over (`sampled`, columns of `z`) are
-# left to it.
+# where they do not resolve it and floored at 1/25.
+#
+# Directions the sampler takes over (`sampled`, columns of `z`) are left to
+# it, and the step is solved in their complement alone, at the mode's value of
+# them: `P`'s complement block against the complement's intercept. Solved in
+# every direction and projected afterwards, a shell's large intercept along
+# its sampled directions reached the complement through the noise in `P`'s
+# off-diagonal terms: on a four-dimensional shell with six exactly normal
+# coordinates beside it the centre moved those by up to 10 sds, mean 0
+# (scripts/gsm-uncertainty-2026-10/diag_centre_shell.R). The step is held to
+# `maxstep` sds of the normal: in the complement the check found the normal's
+# widths right, so the floor's widening is not the posterior's there, and
+# measured in the floored metric that 11.7-sd step passed as 2.3.
 #
 # On the 28-parameter, 250-subject Laplace fit of scripts/gsm-uncertainty-2026-10/
 # (regress_vs_means.R, against 6,000 importance-sampled draws, Pareto k 0.13)
@@ -1773,24 +1783,32 @@ ctOptimFullBootstrapDraws <- function(est, standata, sm, n=1000, cores=1,
   floor = 1 / 25, maxstep = 3) {
   k <- ncol(Z)
   if (!k || NROW(Rplus) < 2L) return(numeric(k))
-  pairs <- (Rplus + Rminus) / 2
+  # The complement of the sampled directions, orthonormal: every direction
+  # where nothing is sampled.
+  W <- if (length(sampled) && ncol(sampled)) {
+    qs <- qr(sampled)
+    if (qs$rank >= k) return(numeric(k))
+    qr.Q(qs, complete = TRUE)[, seq.int(qs$rank + 1L, k), drop = FALSE]
+  } else diag(k)
+  pairs <- ((Rplus + Rminus) / 2) %*% W
   intercept <- colMeans(pairs)
   se <- apply(pairs, 2, stats::sd) / sqrt(nrow(pairs))
   intercept <- intercept * pmax(0, 1 - 4 * se^2 / pmax(intercept^2, .Machine$double.xmin))
   n <- nrow(Z)
   Zc <- sweep(Z, 2, colMeans(Z))
-  Rc <- sweep(R, 2, colMeans(R))
+  Rc <- sweep(R, 2, colMeans(R)) %*% W
   # In the draws' own n x n form, cheaper than k x k wherever this matters:
-  # `(Z'Z + ridge I)^-1 Z' = Z' (Z Z' + ridge I)^-1`.
-  S <- crossprod(Zc, solve(tcrossprod(Zc) + diag(ridge, n), Rc))
+  # `(Z'Z + ridge I)^-1 Z' = Z' (Z Z' + ridge I)^-1`. The regressors are every
+  # direction, so the complement's slopes are partial ones; only the
+  # complement's block is read.
+  S <- crossprod(Zc %*% W, solve(tcrossprod(Zc) + diag(ridge, n), Rc))
   S <- (S + t(S)) / 2
-  e <- eigen(diag(k) - S, symmetric = TRUE)
+  e <- eigen(diag(ncol(W)) - S, symmetric = TRUE)
   precision <- pmax(e$values, floor)
   m <- as.numeric(e$vectors %*% (crossprod(e$vectors, intercept) / precision))
-  size <- sqrt(sum(crossprod(e$vectors, m)^2 * precision))
+  size <- sqrt(sum(m^2))
   if (size > maxstep) m <- m * maxstep / size
-  if (length(sampled) && ncol(sampled)) m <- m - as.numeric(sampled %*% crossprod(sampled, m))
-  m
+  as.numeric(W %*% m)
 }
 
 # How far a parameter's interval may be from the normal's before it covers
