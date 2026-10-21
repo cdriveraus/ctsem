@@ -658,6 +658,12 @@ mutable struct CTSEMLaplaceObjective{O} <: CTSEMOptimisable
     gate_hi::Float64
     # Units the gated rule flagged at the last evaluation.
     gated_units::Int
+    # Whether every unit's inner problem is a concave quadratic: Gaussian
+    # indicators, a linear model, and every effect entering a mean vector
+    # through the affine transform (R's `.ctJuliaLaplaceQuadratic()`). Then it
+    # has one maximum, Newton from the origin finds it, and the mode probes,
+    # which look for another, are skipped (`_laplace_solve_unit_mode!`).
+    quadratic::Bool
 end
 
 # `gate_lo = 0.2` and `gate_hi = 0.7` are measured, not derived: see the
@@ -665,7 +671,7 @@ end
 function CTSEMLaplaceObjective(objective::CTSEMObjective, spec::CTSEMLaplaceSpec;
     inner_maxiter::Integer=_LAPLACE_INNER_MAXITER[], inner_tol::Real=1e-10,
     floor=:total, gate_lo::Real=0.2, gate_hi::Real=0.7,
-    inert::Union{Nothing,Vector{Vector{Vector{Int}}}}=nothing)
+    inert::Union{Nothing,Vector{Vector{Vector{Int}}}}=nothing, quadratic::Bool=false)
     Symbol(floor) in (:total, :gated) ||
         throw(ArgumentError("the Laplace floor must be :total or :gated"))
     0 < gate_lo < gate_hi || throw(ArgumentError("the gate needs 0 < lo < hi"))
@@ -677,7 +683,7 @@ function CTSEMLaplaceObjective(objective::CTSEMObjective, spec::CTSEMLaplaceSpec
         Int(inner_maxiter), Float64(inner_tol), [Dict{Any,Any}()],
         zeros(Int, nunits), zeros(Float64, nunits), falses(nunits), falses(nunits),
         falses(nunits), falses(nunits), Float64[], Symbol(floor), Float64(gate_lo),
-        Float64(gate_hi), 0)
+        Float64(gate_hi), 0, quadratic)
 end
 
 """
@@ -728,6 +734,9 @@ the subject filter integrates instead of this objective, the manifest whose
 intercept each one is, and that intercept transform's slope in the raw value
 (`CTSEMHybrid`). They leave the level's root and its block, and fill the
 wrapped objective's `params.hybrid`, which every subject's filter shares.
+
+`quadratic`, when sent, says every unit's inner problem is a concave quadratic,
+so the mode probes are skipped (`CTSEMLaplaceObjective`'s field of that name).
 """
 function ctsem_laplace_objective(objective::CTSEMObjective; re_index=Int[],
     sd_index=Int[], cor_index=Int[], sd_scale=Float64[], level_nre=Int[],
@@ -737,7 +746,7 @@ function ctsem_laplace_objective(objective::CTSEMObjective; re_index=Int[],
     hybrid_effect=Int[], hybrid_manifest=Int[], hybrid_slope=Float64[],
     level_nload=Int[], load_row=Int[], load_col=Int[],
     inner_maxiter::Integer=_LAPLACE_INNER_MAXITER[], inner_tol::Real=1e-10,
-    floor="total", gate_lo::Real=0.2, gate_hi::Real=0.7)
+    floor="total", gate_lo::Real=0.2, gate_hi::Real=0.7, quadratic::Bool=false)
     nsubjects = length(objective.subject_objectives)
     counts = isempty(level_nre) ? [length(re_index)] : Vector{Int}(Int.(level_nre))
     ngroups = isempty(level_ngroups) ? [nsubjects] : Vector{Int}(Int.(level_ngroups))
@@ -840,7 +849,7 @@ function ctsem_laplace_objective(objective::CTSEMObjective; re_index=Int[],
     end
     return CTSEMLaplaceObjective(objective, CTSEMLaplaceSpec(levels);
         inner_maxiter=inner_maxiter, inner_tol=inner_tol, floor=Symbol(floor),
-        gate_lo=gate_lo, gate_hi=gate_hi, inert=inert)
+        gate_lo=gate_lo, gate_hi=gate_hi, inert=inert, quadratic=quadratic)
 end
 
 """Positional convenience form, for single-level calls written in Julia."""
@@ -3463,7 +3472,11 @@ function _laplace_solve_unit_mode!(laplace::CTSEMLaplaceObjective, U::Integer,
             fromwarm = false
         end
     end
-    if _LAPLACE_MODE_PROBES[] && best.converged && 0 < d &&
+    # Not where every unit's inner problem is a concave quadratic: there is no
+    # second maximum to find, and screening for one cost 25-50% of an
+    # evaluation on random-intercept models, values unchanged
+    # (scripts/gsm-uncertainty-2026-10/warm_reference.R).
+    if _LAPLACE_MODE_PROBES[] && !laplace.quadratic && best.converged && 0 < d &&
             !(fromwarm && _LAPLACE_WARM_START[])
         best = _laplace_probe_modes(laplace, U, values, Ls, aws, best)
     end
