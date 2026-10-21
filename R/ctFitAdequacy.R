@@ -19,9 +19,9 @@
 # A statistic's variance is the model's own -- the errors are independent over
 # rows, so a sum of products over row pairs has the sum of their squares as
 # its variance -- less what estimation took. Within a family, many correlated
-# statistics: their largest |z| and their sum of squares, calibrated with the
-# statistics' correlation, and combined with any exact p-values the family has by
-# the Cauchy combination (Liu & Xie 2020), whose tail is approximately standard
+# statistics: their largest |z|, calibrated with the statistics' correlation,
+# and their sum of squares, from the units' cross terms, combined with any
+# exact p-values the family has by the Cauchy combination (Liu & Xie 2020), whose tail is approximately standard
 # Cauchy whatever the p-values' dependence, for small p; that its p-values hold
 # their level here is checked by simulation (the adequacy tutorial).
 # The sum has the power against many small departures -- a flat residual
@@ -124,10 +124,10 @@
 #' worked out exactly from the unit's times. The distribution and fit
 #' families, whose statistics are sums of high powers, use the spread of the
 #' units' contributions and a studentised bootstrap over units. Within a family the
-#' largest standardised statistic and the sum of their squares are calibrated
-#' with the statistics' correlation over units -- for the sum, less the noise
-#' that estimating the correlation from the units adds to the sum's spread --
-#' and combined, with any exact p-values the family has, by the Cauchy
+#' largest standardised statistic is calibrated with the statistics'
+#' correlation over units, and the sum of their squares by its terms between
+#' units, whose mean is zero under the model (Chen & Qin, 2010); the two are
+#' combined, with any exact p-values the family has, by the Cauchy
 #' combination; families are combined by Holm. \code{adequate} is \code{TRUE}
 #' when no family's adjusted p-value is below \code{alpha}.
 #'
@@ -261,6 +261,10 @@
 #'
 #'   Chang, J., Yao, Q., & Zhou, W. (2017). Testing for high-dimensional white
 #'   noise using maximum cross-correlations. \emph{Biometrika, 104}, 111-127.
+#'
+#'   Chen, S. X., & Qin, Y.-L. (2010). A two-sample test for high-dimensional
+#'   data with applications to gene-set testing. \emph{The Annals of
+#'   Statistics, 38}, 808-835.
 #'
 #'   Liu, Y., & Xie, J. (2020). Cauchy combination test. \emph{Journal of the
 #'   American Statistical Association, 115}, 393-402.
@@ -787,12 +791,12 @@ ctFitAdequacy <- function(fit, covariates = NULL,
     # sum over 60 units had z skewness 0.25; read against the Gaussian, the
     # largest of some three hundred such statistics rejected a correct model
     # 9.4 per cent of the time at .05 (500 null datasets). Each z is read
-    # through a chi-square of its exact skewness (.ctAdequacySkewZ). Made
-    # unit-level instead -- the units' spread and a studentised bootstrap -- it
-    # rejected 2 per cent, and found a daily cycle in 4 per cent of datasets
-    # where this finds it in half: with hundreds of statistics over sixty
-    # units, the bootstrap's maximum is ruled by the resamples whose spread
-    # is tiny.
+    # through a chi-square of its exact skewness (.ctAdequacySkewZ); the
+    # family then rejected 5.0 per cent (200 null datasets) and found a daily
+    # cycle in 48 (50). Made unit-level instead -- the units' spread and a
+    # studentised bootstrap -- it rejected 2 per cent, and found the cycle in
+    # 4: with hundreds of statistics over sixty units, the bootstrap's maximum
+    # is ruled by the resamples whose spread is tiny.
     addblock(blk$M, blk$V0, 'periodic', paste0(lab[grid$j], ' period ',
       as.character(signif(setup$periods[grid$f], 3))), blk$N, 'corr',
       variable = lab[grid$j], period = setup$periods[grid$f], skew = blk$skew)
@@ -1191,15 +1195,15 @@ ctFitAdequacy <- function(fit, covariates = NULL,
 # Every statistic's z, and each family's max and sum tests. A statistic's
 # variance is its pairwise or row-wise variance under the model less what
 # estimation took (`V0`, `reduction`), or for a unit-level statistic the
-# spread of the units' projected contributions. A family's largest |z| and sum
-# of squares are referred to draws of the standardised statistics with their
-# correlation, taken from the units' projected contributions (the sum through
-# the draws' first two moments, .ctAdequacySumP): Gaussian draws
-# where the variances are pairwise or row-wise, sums over thousands of nearly
-# independent terms; for a unit-level statistic, which is a skewed sum over a
-# few hundred units, a studentised bootstrap over units, which corrects the
-# skewness to second order (a Gaussian one rejected a correct model 14 per
-# cent of the time at .05).
+# spread of the units' projected contributions. A family's largest |z| is
+# referred to draws of the statistics with their correlation, taken from the
+# units' projected contributions: Gaussian draws where the variances are
+# pairwise or row-wise, sums over thousands of nearly independent terms; for a
+# unit-level statistic, which is a skewed sum over a few hundred units, a
+# studentised bootstrap over units, which corrects the skewness to second
+# order (a Gaussian one rejected a correct model 14 per cent of the time at
+# .05). The sum of squares is tested by its terms between units
+# (.ctAdequacySumP).
 .ctAdequacyMomentTests <- function(Mstar, V0, reduction, meta, nboot = 1999L,
   raw = Mstar) {
   n <- nrow(Mstar)
@@ -1220,7 +1224,9 @@ ctFitAdequacy <- function(fit, covariates = NULL,
   z <- ifelse(ok, U / sqrt(pmax(v, 0)), NA_real_)
   # A statistic whose skewness under the model is known (the periodic
   # family's) is read through it.
-  if (!is.null(meta$skew)) z <- .ctAdequacySkewZ(z, meta$skew)
+  skewread <- if (is.null(meta$skew)) logical(length(z)) else
+    is.finite(meta$skew) & meta$skew > 1e-6
+  if (any(skewread)) z <- .ctAdequacySkewZ(z, meta$skew)
   p <- 2 * stats::pnorm(-abs(z))
   okcols <- which(ok)
   Ub <- matrix(NA_real_, nboot, length(okcols))
@@ -1229,8 +1235,8 @@ ctFitAdequacy <- function(fit, covariates = NULL,
     if (!length(idx)) return(NULL)
     at <- match(idx, okcols)
     zf <- z[idx]
-    R <- stats::cov2cor(crossprod(C[, idx, drop = FALSE]) + diag(1e-12, length(idx)))
     if (all(rowlevel[idx])) {
+      R <- stats::cov2cor(crossprod(C[, idx, drop = FALSE]) + diag(1e-12, length(idx)))
       e <- eigen(R, symmetric = TRUE)
       keep <- e$values > 1e-8 * e$values[1]
       Zb <- matrix(stats::rnorm(nboot * sum(keep)), nboot) %*%
@@ -1246,13 +1252,22 @@ ctFitAdequacy <- function(fit, covariates = NULL,
       }
     }
     Ub[, at] <<- sweep(Zb, 2, sqrt(v[idx]), '*')
-    tmax <- max(abs(zf)); tsum <- sum(zf^2)
+    # The max's draws made as its statistics are. A plain z is the summed
+    # contributions over sqrt(v), so its draws are the units' summed
+    # contributions over the same v: drawn with unit variance, they put the
+    # residual family's largest |z| beyond its 5 per cent point 8 per cent of
+    # the time on correct models (200 datasets), 5 per cent so. A z read
+    # through its skewness is normal already, and its draws keep unit
+    # variance: the periodogram's spread over units is too uneven to scale by.
+    plain <- rowlevel[idx] & !skewread[idx]
+    if (any(plain)) Zb[, plain] <- sweep(Zb[, plain, drop = FALSE], 2,
+      sqrt(spread[idx][plain] / v[idx][plain]), '*')
+    tmax <- max(abs(zf))
     bmax <- apply(abs(Zb), 1, max, na.rm = TRUE)
-    bsum <- rowSums(Zb^2, na.rm = TRUE)
     w <- idx[which.max(abs(zf))]
     list(k = length(idx), worst = meta$name[w], worst_z = z[w],
       pmax = (1 + sum(bmax >= tmax)) / (nboot + 1),
-      psum = .ctAdequacySumP(tsum, bsum, R, n))
+      psum = .ctAdequacySumP(Mstar[, idx, drop = FALSE], v[idx]))
   })
   # The estimate each statistic is about: a correlation for the residual and
   # within-row statistics (the projected sum over the pairs that contribute),
@@ -1262,29 +1277,31 @@ ctFitAdequacy <- function(fit, covariates = NULL,
     families = families, draws = Ub)
 }
 
-# The p-value of a family's sum of squared z. Draws made with the units'
-# correlation R carry its sampling noise into their sum: about k^2 / n is
-# added to tr(R^2), which sets the sum's variance (2 tr(R^2) for Gaussian
-# statistics), so with k statistics not few beside n units the reference was
-# too wide. The periodic family's 320 statistics over 60 units, with
-# independent normal errors and nothing estimated, rejected 0 of 300 at .05,
-# and the Cauchy combination with a test that never rejects halved the
-# family's. The draws give the sum's mean and variance, the variance less
-# that noise -- tr(R^2) less Bai and Saranadasa's (1996) unbiased estimate of
-# it -- and a chi-square scaled to the two (Satterthwaite) is the reference.
-.ctAdequacySumP <- function(tsum, bsum, R, n) {
-  bsum <- bsum[is.finite(bsum)]
-  k <- ncol(R)
-  m <- mean(bsum); V <- stats::var(bsum)
-  if (n > 3L) {
-    t2 <- sum(R^2)
-    unbiased <- (n - 1)^2 / ((n + 1) * (n - 2)) * (t2 - k^2 / (n - 1))
-    V <- V - 2 * (t2 - max(unbiased, k))
-  }
-  if (!is.finite(V) || V <= 0 || !is.finite(m) || m <= 0)
-    return((1 + sum(bsum >= tsum)) / (length(bsum) + 1))
-  a <- V / (2 * m)
-  stats::pchisq(tsum / a, 2 * m^2 / V, lower.tail = FALSE)
+# The p-value of a family's sum of squared z, from its terms between units.
+# With x_i a unit's projected contributions to the family's statistics and
+# D = diag(1 / v), the sum is the sum over units of x_i' D x_i plus the sum
+# over i != i' of x_i' D x_i'. The second (Chen & Qin 2010) has mean zero
+# under the model whatever v is, and its variance 2 tr(A^2) and third
+# cumulant 8 tr(A^3), A = X D X' with its diagonal zero, are unbiased from the
+# units; it is read through the chi-square of that skewness, one sided, as a
+# departure adds to it. It needs no correlation between the statistics. The
+# reference before, draws with the units' correlation, carried that
+# estimate's noise -- about k^2 / n added to tr(R^2), which sets the sum's
+# variance -- and with k statistics not few beside n units was too wide: the
+# periodic family's 320 statistics over 60 units, independent normal errors
+# and nothing estimated, rejected 0 of 300 at .05, and the Cauchy combination
+# with a test that never rejects halved the family's. There this rejects 4
+# per cent, and finds a cycle of amplitude 0.4 in 77 per cent of datasets
+# where the draws' moments less that noise found 55.
+.ctAdequacySumP <- function(X, v) {
+  X <- as.matrix(X)
+  X[!is.finite(X)] <- 0
+  A <- tcrossprod(sweep(X, 2, sqrt(v), '/'))
+  diag(A) <- 0
+  V <- 2 * sum(A^2)
+  if (!is.finite(V) || V <= 0) return(NA_real_)
+  g <- 8 * sum((A %*% A) * A) / V^1.5
+  stats::pnorm(-.ctAdequacySkewZ(sum(A) / sqrt(V), g))
 }
 
 # P-values the Cauchy combination takes beside the bootstrap's: the

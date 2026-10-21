@@ -198,10 +198,10 @@ read through a chi-square of the skewness that form has under the model,
 worked out exactly from the unit's times. The distribution and fit
 families, whose statistics are sums of high powers, use the spread of the
 units' contributions and a studentised bootstrap over units. Within a family the
-largest standardised statistic and the sum of their squares are calibrated
-with the statistics' correlation over units -- for the sum, less the noise
-that estimating the correlation from the units adds to the sum's spread --
-and combined, with any exact p-values the family has, by the Cauchy
+largest standardised statistic is calibrated with the statistics'
+correlation over units, and the sum of their squares by its terms between
+units, whose mean is zero under the model (Chen & Qin, 2010); the two are
+combined, with any exact p-values the family has, by the Cauchy
 combination; families are combined by Holm. \code{adequate} is \code{TRUE}
 when no family's adjusted p-value is below \code{alpha}.
 
@@ -273,6 +273,10 @@ Newey, W. K. (1985). Maximum likelihood specification testing
 
   Chang, J., Yao, Q., & Zhou, W. (2017). Testing for high-dimensional white
   noise using maximum cross-correlations. \emph{Biometrika, 104}, 111-127.
+
+  Chen, S. X., & Qin, Y.-L. (2010). A two-sample test for high-dimensional
+  data with applications to gene-set testing. \emph{The Annals of
+  Statistics, 38}, 808-835.
 
   Liu, Y., & Xie, J. (2020). Cauchy combination test. \emph{Journal of the
   American Statistical Association, 115}, 393-402.

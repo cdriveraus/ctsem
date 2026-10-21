@@ -499,22 +499,19 @@ test_that("a skewed statistic and a family's sum are read against references of 
     expect_equal(ctsem:::.ctAdequacySkewZ((q - nu) / sqrt(2 * nu), sqrt(8 / nu)),
       rep(stats::qnorm(pr), 2), tolerance = 1e-8)
   }
-  # A family's sum of k squared z, with their correlation taken from n units
-  # and k not few beside n: draws with that correlation carry its noise, about
-  # k^2 / n in tr(R^2), and were too wide for the sum (the true 5 per cent
-  # point read as p = 0.18). The reference takes the noise out.
-  withr::with_seed(1, {
-    n <- 60; k <- 150
-    R <- stats::cor(matrix(stats::rnorm(n * k), n))
-    e <- eigen(R, symmetric = TRUE)
-    keep <- e$values > 1e-8 * e$values[1]
-    Zb <- matrix(stats::rnorm(1999 * sum(keep)), 1999) %*%
-      (sqrt(e$values[keep]) * t(e$vectors[, keep]))
-  })
-  bsum <- rowSums(Zb^2)
-  at <- k + stats::qnorm(0.95) * sqrt(2 * k)
-  expect_gt(mean(bsum >= at), 0.15)
-  p <- ctsem:::.ctAdequacySumP(at, bsum, R, n)
-  expect_gt(p, 0.02)
-  expect_lt(p, 0.1)
+  # A family's sum of squared z, from its terms between units: k statistics
+  # not few beside n units (here more), each unit's contributions independent
+  # and of mean zero under the model. The p-values are uniform, and a small
+  # shift in every statistic's mean, too small for any one z, is found.
+  sump <- function(shift) withr::with_seed(1, vapply(seq_len(200), function(r) {
+    X <- matrix(stats::rnorm(60 * 150), 60) + shift
+    ctsem:::.ctAdequacySumP(X, rep(60, 150))
+  }, 0))
+  null <- sump(0)
+  expect_gt(mean(null < 0.05), 0.02)
+  expect_lt(mean(null < 0.05), 0.09)
+  expect_gt(stats::ks.test(null, 'punif')$p.value, 0.01)
+  # The shift puts each z's mean at 0.6; the largest of 150 such z is often
+  # within the null's spread, the sum of their squares is not.
+  expect_gt(mean(sump(0.6 / sqrt(60)) < 0.05), 0.8)
 })
