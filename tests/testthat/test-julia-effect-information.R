@@ -387,6 +387,14 @@ test_that("a fit takes it at its estimate, keeps it, and says nothing when every
   ratio <- spread[, "conditional"] / sqrt(entry$cov[, 1L])
   expect_lt(stats::sd(ratio) / mean(ratio), 0.1)
   expect_error(ctSubjectPars(fit, uncertainty = "total"), "pointest=FALSE")
+  # ctExtract's subject matrices are at plausible values too, so what is
+  # derived from them carries each subject's whole uncertainty.
+  extracted <- suppressMessages(ctExtract(fit, subjectMatrices = TRUE,
+    nsamples = 150))
+  matrixspread <- apply(extracted$subj_CINT[, , 1L, 1L], 2L, stats::sd)
+  expect_true(all(matrixspread > spread[, "population"]))
+  expect_equal(stats::median(matrixspread / spread[, "total"]), 1,
+    tolerance = 0.2)
 })
 
 test_that("a weakly informed effect is said once, and summary() and ctReport() repeat it", {

@@ -130,6 +130,9 @@ include("state_sampling.jl")
 include("particle_filter.jl")
 # After particle_filter.jl, which brings in Random for the effect draws.
 include("laplace_loo.jl")
+# The coreset entry points for importance sampling; after laplace.jl, which
+# holds `CTSEMCoreset` and the evaluation that takes it.
+include("laplace_coreset.jl")
 # After laplace_sequential.jl (record truncation) and laplace.jl (the dual mode
 # and the member likelihood); nothing on a fitting path calls it.
 include("row_scores.jl")

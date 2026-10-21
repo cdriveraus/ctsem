@@ -142,10 +142,15 @@ test_that("sampled effects are each parameter's natural deviation, at reduced ra
   data$study <- ceiling(data$id / 3)
   model <- laplace_fixture_model()
   model$pars$indvarying[model$pars$matrix == "T0MEANS" & is.na(model$pars$value)] <- TRUE
-  run <- function(m, ...) suppressWarnings(suppressMessages(ctFit(data, m,
+  warned <- character()
+  run <- function(m, ...) withCallingHandlers(suppressMessages(ctFit(data, m,
     backend = "julia", cores = 1, priors = TRUE, optimize = FALSE, ...,
     sampleControl = list(chains = 1L, warmup = 20L, draws = 20L, minESS = 0,
-      saveEffects = TRUE, processes = FALSE))))
+      saveEffects = TRUE, processes = FALSE))),
+    warning = function(w) {
+      warned <<- c(warned, conditionMessage(w))
+      invokeRestart("muffleWarning")
+    })
 
   # Rank one, a loading matrix over both effects -- on the route sampling
   # resolves to ('none'), which builds it as laplace does: one coordinate per
@@ -155,6 +160,17 @@ test_that("sampled effects are each parameter's natural deviation, at reduced ra
   expect_false(is.null(names(reduced$sample$effect_mean)))
   expect_equal(dim(reduced$sample$effects), c(reduced$sample$draws, 24L))
   expect_true(all(is.finite(reduced$sample$effects)))
+  # SAEM places these chains, and the optimisation before it runs no
+  # iterations, so its verdict ("no progress ... Treat this fit as failed") is
+  # kept on the fit rather than raised, and neither it nor that optimisation's
+  # log likelihood is reported as the sampled fit's.
+  expect_false(any(grepl("Treat this fit as failed", warned)))
+  expect_true(any(grepl("no progress", reduced$optim$placement_warnings)))
+  printed <- utils::capture.output(print(reduced))
+  expect_false(any(grepl("^  converged:|log likelihood", printed)))
+  s <- summary(reduced)
+  expect_null(s$loglik)
+  expect_null(s$aic)
 
   # Nested: a study-level effect on the manifest mean too -- 12 subjects x 2
   # plus 4 studies x 1, labelled from the engine's deviation layout.

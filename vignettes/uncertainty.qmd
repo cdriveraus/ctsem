@@ -192,17 +192,20 @@ place.
 
 ## The bits in between
 
-An optimized fit does not have to settle for the default Hessian
-approximation. `uncertainty` in `optimcontrol` (at fit time) or in
+An optimized fit does not have to settle for a normal approximation at the
+optimum. `uncertainty` in `optimcontrol` (at fit time) or in
 `ctFitUncertainty()` (after the fact, reusing the existing optimum; previously
 `ctOptimUncertainty()`, still available) selects among several:
 
 - `hessian`: finite-difference (stan) or exact forward-mode (julia) curvature
-  at the optimum, with normal draws. The default, and the cheapest.
-- `surrogate`: a local quadratic fit using gradient evaluations at points
-  spread around the optimum (`max(4 * npars, 50)` by default). More stable
-  than a single finite-difference Hessian when individual directions are
-  noisy, still local.
+  at the optimum, with normal draws. The cheapest.
+- `checked`: the `hessian` normal, checked against the log posterior's
+  gradients at 16 to 64 draws from it, and importance sampled in the
+  directions where its intervals would be wrong -- a skew, a variance that
+  scales other parameters' widths. Where sampling within the fit's own cost
+  cannot correct it, as on a curved ridge, the `hessian` normal is kept and
+  a warning names the parameters. With nothing found, exactly the `hessian`
+  normal. The default for `backend = 'julia'` and for `ctFitUncertainty()`.
 - `opg`: an information estimate from the variability of per-subject score
   contributions, with no Hessian involved. Included as a diagnostic; it tends
   to disagree with the others most exactly where the Hessian's curvature
@@ -229,7 +232,7 @@ path supplies its own exact Hessian and per-subject scores to the same code
 rather than duplicating the numerics.
 
 ```{r uncertainty-gallery}
-methods <- c("hessian", "surrogate", "opg", "sandwich", "bootstrap", "is")
+methods <- c("hessian", "checked", "opg", "sandwich", "bootstrap", "is")
 
 gallery <- function(base_fit, backend_label) {
   do.call(rbind, lapply(methods, function(m) {
@@ -252,7 +255,7 @@ ggplot(uncertainty_table, aes(x = method, y = mean, ymin = X2.5., ymax = X97.5.,
 
 With eight subjects the score-based methods (`opg`, `sandwich`, `bootstrap`)
 warn about too few independent score rows and show it: wider and less stable
-intervals than `hessian` or `surrogate`. That warning is informative rather
+intervals than `hessian` or `checked`. That warning is informative rather
 than a bug in the demonstration -- it is the method telling you its assumption
 does not hold here. `fullbootstrap` is shown separately because it is
 stan-only and slower even at a small resample count:
@@ -387,7 +390,7 @@ re_gen <- ctModel(type = "ct", Tpoints = tpoints, n.latent = 1, n.manifest = 1,
   DRIFT = matrix("drift|-exp(param)|TRUE|0.5"), DIFFUSION = matrix(0.5),
   CINT = matrix(0.15), MANIFESTMEANS = matrix(0), MANIFESTVAR = matrix(0.25))
 re_dat <- data.frame(ctGenerate(re_gen, n = 30, dtmean = 0.4, logdtsd = 0.1,
-  backend = "julia", popmeans = c(drift = -0.35)))
+  backend = "julia", values = c(drift = -0.35)))
 re_model <- fit_model
 re_model$pars$indvarying[re_model$pars$param %in% "drift"] <- TRUE
 ```
@@ -500,7 +503,7 @@ whatever `ctFit()`'s own default is for optimizing.
   setting; they differ in whether the answer is a set of draws or a point plus
   a local approximation.
 - Around an optimum, `uncertainty` chooses which approximation: `hessian` is
-  the default and cheapest, `surrogate` is a more stable local alternative,
+  the cheapest, `checked` (the julia default) corrects it where it is wrong,
   `opg`/`sandwich`/`bootstrap` use per-subject scores and need enough subjects
   to be stable, `fullbootstrap` (stan only) is the most literal and most
   expensive, and `is` turns the same curvature into an importance-sampling

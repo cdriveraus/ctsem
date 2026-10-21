@@ -81,6 +81,15 @@
 #'  needs more data; needs at least 80 subjects or top-level groups. A
 #'  supplied start is not batched from, since the subsets' gradients walk off a
 #'  point already chosen; \code{TRUE} asks for it anyway.}
+#'  \item{\code{coreset}}{Julia. Default FALSE. On the Laplace route, run
+#'  stretches of L-BFGS on a weighted few of the units, chosen so that their
+#'  scores reproduce the full gradients seen so far, each stretch checked by a
+#'  full gradient; the full objective finishes, so the estimate and its
+#'  standard errors are those of every unit. It engages only where a coreset
+#'  is expected to save gradients, which needs many units for each parameter,
+#'  and pays most on large, well-identified fits; on small or sparse ones it
+#'  can cost time and change which of several maxima a fit reaches.
+#'  \code{fit$optim$coreset_sizes} records the stages.}
 #'  \item{\code{explosive_forward}}{Julia. Default FALSE. For a subject whose
 #'  predictions grow more than 100-fold between observations (explosive
 #'  dynamics over a long gap), take its gradient by forward mode instead of
@@ -213,8 +222,10 @@
 #'
 #' @section Uncertainty:
 #' \describe{
-#'  \item{\code{uncertainty}}{Both. Default \code{'hessian'}. The method
-#'  computed when the optimiser ends, as in \code{\link{ctFitUncertainty}}.
+#'  \item{\code{uncertainty}}{Both. Default \code{'checked'} on julia
+#'  (\code{'sandwich'} with subject weights) and \code{'hessian'} on stan.
+#'  The method computed when the optimiser ends, as in
+#'  \code{\link{ctFitUncertainty}}.
 #'  \code{'sample'} is refused here: use \code{optimize = FALSE}, or
 #'  \code{ctFitUncertainty(fit, 'sample')} on the fit.}
 #'  \item{\code{uncertaintyDraws}, \code{finishsamples},

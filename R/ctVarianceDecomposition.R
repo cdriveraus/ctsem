@@ -120,7 +120,8 @@
 #
 # Steps are cached by interval. Most designs have a handful of distinct
 # intervals and each one costs two matrix exponentials.
-.ctVarDecompPersonMoments <- function(mats, times, tdpreds, continuoustime) {
+.ctVarDecompPersonMoments <- function(mats, times, tdpreds, continuoustime,
+  sources = NULL) {
   nlatent <- nrow(mats$DRIFT)
   nmanifest <- nrow(mats$LAMBDA)
   nrows <- length(times)
@@ -131,7 +132,29 @@
   state <- as.numeric(mats$T0MEANS)
   cov <- mats$T0cov
   cache <- list()
+  # With `sources`, the state covariance kept apart by where it came from: the
+  # initial state, and each group of latents' innovations (`.ctVarDecompSources`).
+  # They add up because the groups' innovations are independent and the
+  # transition is linear. Beside each, the sum over pairs of rows of the
+  # state's covariance, `K_t = P_t + A_t K_{t-1}` being a row's covariance with
+  # every row before it and itself, which is what the variance of the record's
+  # mean is made of.
+  split <- length(sources) > 0L
+  if (split) {
+    part <- c(list(initial = mats$T0cov), lapply(sources, function(s)
+      matrix(0, nlatent, nlatent)))
+    carried <- lapply(part, function(x) matrix(0, nlatent, nlatent))
+    pairs <- carried
+    partlatent <- array(0, c(nrows, nlatent, length(part)))
+    partlinear <- array(0, c(nrows, nmanifest, length(part)))
+    masked <- lapply(sources, function(s) {
+      d <- matrix(0, nlatent, nlatent)
+      d[s, s] <- mats$DIFFUSIONcov[s, s]
+      d
+    })
+  }
   for (ri in seq_len(nrows)) {
+    transition <- NULL
     if (ri > 1L) {
       dt <- times[ri] - times[ri - 1L]
       key <- format(dt, digits = 15L)
@@ -139,10 +162,25 @@
       if (is.null(step)) {
         step <- .ctVarDecompStep(mats$DRIFT, mats$DIFFUSIONcov, mats$CINT, dt,
           continuoustime)
+        if (split) step$parts <- lapply(masked, function(d) .ctVarDecompStep(
+          mats$DRIFT, d, mats$CINT, dt, continuoustime)$innovation)
         cache[[key]] <- step
       }
+      transition <- step$transition
       state <- as.numeric(step$transition %*% state + step$intercept)
       cov <- step$transition %*% cov %*% t(step$transition) + step$innovation
+    }
+    if (split) for (g in seq_along(part)) {
+      if (!is.null(transition)) {
+        part[[g]] <- transition %*% part[[g]] %*% t(transition) +
+          if (g > 1L) step$parts[[g - 1L]] else 0
+        carried[[g]] <- transition %*% carried[[g]]
+      }
+      part[[g]] <- (part[[g]] + t(part[[g]])) / 2
+      carried[[g]] <- carried[[g]] + part[[g]]
+      pairs[[g]] <- pairs[[g]] + carried[[g]] + t(carried[[g]]) - part[[g]]
+      partlatent[ri, , g] <- diag(part[[g]])
+      partlinear[ri, , g] <- diag(mats$LAMBDA %*% part[[g]] %*% t(mats$LAMBDA))
     }
     # A time dependent predictor is an instantaneous shift at the observed row,
     # applied after the time update -- matching the filter, which does
@@ -156,8 +194,58 @@
     linearmean[ri, ] <- as.numeric(mats$LAMBDA %*% state + mats$MANIFESTMEANS)
     linearvar[ri, ] <- diag(mats$LAMBDA %*% cov %*% t(mats$LAMBDA))
   }
-  list(latentmean = latentmean, latentvar = latentvar,
+  out <- list(latentmean = latentmean, latentvar = latentvar,
     linearmean = linearmean, linearvar = linearvar)
+  if (split) {
+    # The record mean's variance from each part: the sum over pairs of rows
+    # over the number of pairs.
+    out$partlatent <- partlatent
+    out$partlinear <- partlinear
+    out$levellatent <- vapply(pairs, function(p) diag(p) / nrows^2,
+      numeric(nlatent))
+    out$levellinear <- vapply(pairs, function(p)
+      diag(mats$LAMBDA %*% p %*% t(mats$LAMBDA)) / nrows^2, numeric(nmanifest))
+    out$levellatent <- matrix(out$levellatent, nlatent)
+    out$levellinear <- matrix(out$levellinear, nmanifest)
+  }
+  out
+}
+
+# `sources` resolved against the model: a named list of latent names, each a
+# group whose innovations are independent of every other group's, checked on
+# the fitted DIFFUSIONcov. Returned as latent indices.
+.ctVarDecompSources <- function(fit, sources, nlatent) {
+  if (is.null(sources)) return(NULL)
+  latents <- .ctFitModelObject(fit)$latentNames[seq_len(nlatent)]
+  if (!is.list(sources) || is.null(names(sources)) || any(!nzchar(names(sources))))
+    stop("sources must be a named list of latent names, one entry per group of ",
+      "processes whose innovations are independent of the others'.", call. = FALSE)
+  if (any(names(sources) %in% c("initial", "level"))) stop("'initial' and ",
+    "'level' name parts the decomposition reports; call the sources otherwise.",
+    call. = FALSE)
+  index <- lapply(sources, function(s) {
+    i <- match(s, latents)
+    if (anyNA(i)) stop("sources names latents this model does not have: ",
+      paste(s[is.na(i)], collapse = ", "), ".", call. = FALSE)
+    i
+  })
+  all <- unlist(index)
+  if (anyDuplicated(all)) stop("A latent appears in more than one source.",
+    call. = FALSE)
+  diffusion <- as.matrix(suppressMessages(ctSummaryMatrices(fit))$DIFFUSIONcov)
+  outside <- setdiff(seq_len(nlatent), all)
+  if (length(outside) && any(abs(diffusion[outside, ]) > 0)) stop(
+    "Latents with innovations of their own are in no source: ",
+    paste(latents[outside], collapse = ", "), ".", call. = FALSE)
+  for (a in seq_along(index)) for (b in seq_along(index)) {
+    if (a == b) next
+    if (any(abs(diffusion[index[[a]], index[[b]]]) >
+        1e-8 * max(abs(diffusion)))) stop("The innovations of sources '",
+      names(sources)[a], "' and '", names(sources)[b], "' are correlated in ",
+      "the fitted DIFFUSIONcov, so the variance does not split between them. ",
+      "Put the correlated latents in one source.", call. = FALSE)
+  }
+  index
 }
 
 
@@ -384,7 +472,9 @@
 # reimplementing one here. persons='model' draws the vector from the population
 # distribution (the carrier block of the augmented T0MEANS and T0cov, shifted
 # by that person's time independent predictors); persons='estimated' reads each
-# subject's own carrier values off the filter instead.
+# subject's own carrier values off the filter instead, at plausible values: the
+# smoothed value plus a draw from the posterior the fit stored
+# (`.ctVarDecompCarrierNoise()`), so the spread over persons is not shrunk.
 .ctVarDecompCarrierPersons <- function(fit, design, nlatent, source, npersons,
   subjects, levels) {
   carrier <- .ctVarDecompCarrier(fit, nlatent)
@@ -403,11 +493,15 @@
   tipredrow <- .ctVarDecompTIpredRow(fit)
 
   donors <- if (identical(source, 'model') && length(carrier))
-    subjects[sample.int(length(subjects), npersons, replace = TRUE)] else subjects
+    subjects[sample.int(length(subjects), npersons, replace = TRUE)] else
+    if (length(carrier)) rep(subjects, max(1L, ceiling(npersons /
+      length(subjects)))) else subjects
 
   estimated <- if (identical(source, 'estimated') && length(carrier)) {
     .ctVarDecompSubjectMatrices(fit)$subj_T0MEANS
   }
+  noise <- if (identical(source, 'estimated') && length(carrier))
+    .ctVarDecompCarrierNoise(fit, donors, carrier)
 
   # One population fetch per donor subject actually used: the augmented T0
   # block depends on the parameters and on that subject's predictors, and on
@@ -433,7 +527,8 @@
         root <- .ctVarDecompCholesky(base$T0cov[carrier, carrier, drop = FALSE])
         state[carrier] <- state[carrier] +
           as.numeric(root %*% stats::rnorm(length(carrier)))
-      } else state[carrier] <- as.numeric(estimated[1L, si, carrier, 1L])
+      } else state[carrier] <- as.numeric(estimated[1L, si, carrier, 1L]) +
+        noise[index, ]
       .ctVarDecompPersonAt(fit, tipredrow(si), state, nlatent)
     }
     list(rows = which(design$subject == si), unit = index,
@@ -442,7 +537,50 @@
 }
 
 
+# A draw from each donor's stored posterior (`fit$randomeffects`), in the
+# filter's state units at the carrier positions: donors x carriers. The
+# posterior is stored in raw units, the state's departure over its
+# state-to-raw factor, which is multiplied back here.
+.ctVarDecompCarrierNoise <- function(fit, donors, carrier) {
+  entry <- fit$randomeffects[[1L]]
+  if (is.null(entry)) stop("This fit carries no posterior of its subjects' ",
+    "effects (fits made before ctsem stored one); refit it, or use ",
+    "persons='model'.", call. = FALSE)
+  effects <- .ctBackendSpec(fit)$random_effects
+  effects <- effects[effects$type %in% "sd", , drop = FALSE]
+  at <- match(entry$param, as.character(effects$param))
+  position <- match(as.integer(effects$row[at]), carrier)
+  if (anyNA(position)) stop("The stored posterior's effects are not this fit's ",
+    "carrier states. This is a bug -- please report the fit.", call. = FALSE)
+  scale <- as.numeric(effects$scale[at])
+  scale[!is.finite(scale) | scale == 0] <- 1
+  covs <- .ctRandomEffectsCov(entry)
+  out <- matrix(0, length(donors), length(carrier))
+  for (index in seq_along(donors)) {
+    root <- .ctVarDecompCholesky(covs[donors[index], , ])
+    out[index, position] <- scale * as.numeric(root %*%
+      stats::rnorm(length(entry$param)))
+  }
+  out
+}
+
+
 # Coordinate fits: a person is an effect vector -------------------------------
+#
+# `draws` sets of plausible values for every subject, one array per
+# `from_level` (1 to nlevels + 1, the last the population's), each
+# draws x subjects x parameters and all from the same joint draws.
+.ctVarDecompCoordinateDraws <- function(fit, objective, draws, nlevels, dims) {
+  module <- .ctJuliaModule(.ctBackendSpec(fit)$project)
+  raw <- as.numeric(fit$estimate$raw)
+  seed <- sample.int(.Machine$integer.max, 1L)
+  at <- .ctJuliaPut(matrix(raw, draws, length(raw), byrow = TRUE))
+  lapply(seq_len(nlevels + 1L), function(l) array(as.numeric(
+    .ctBackendJuliaValue(module$ctsem_laplace_subject_values(objective, at,
+      .ctJuliaNumericVector(raw), conditional = TRUE, seed = as.integer(seed),
+      from_level = as.integer(l), ti_effects = FALSE))), c(draws, dims)))
+}
+
 #
 # `intoverpop='laplace'` and `intoverpop='none'` keep the random effects as
 # coordinates rather than states, so there is no carrier to materialise at.
@@ -454,11 +592,14 @@
 # from level l outward and from level l+1 outward, and it is nonzero only at
 # that level's `re_index` -- checked below rather than assumed.
 #
-# So persons='estimated' uses those differences as they are, the fitted modes,
-# and persons='model' replaces each with a draw from the level's own population
-# covariance. The draw is per *unit*: every subject in a study shares its study
-# effect. Cost is one engine call per level per redraw, whatever the number of
-# persons, because a whole set of subjects is materialised at once.
+# So persons='estimated' uses those differences at plausible values -- each
+# unit's mode plus a draw from its effects' posterior given its data, drawn
+# jointly over the unit's levels with one seed for every level's call, so the
+# differences split one draw -- and persons='model' replaces each with a draw
+# from the level's own population covariance. The draw is per *unit*: every
+# subject in a study shares its study effect. Cost is one engine call per level
+# (per redraw for 'model'), whatever the number of persons, because a whole set
+# of subjects is materialised at once.
 .ctVarDecompCoordinatePersons <- function(fit, design, nlatent, source,
   npersons, subjects, levels) {
   spec <- .ctBackendSpec(fit)
@@ -490,8 +631,10 @@
     declared
   })
 
-  draws <- if (identical(source, 'model'))
-    max(1L, ceiling(npersons / length(subjects))) else 1L
+  draws <- max(1L, ceiling(npersons / length(subjects)))
+  plausible <- if (identical(source, 'estimated'))
+    .ctVarDecompCoordinateDraws(fit, objective, draws, nlevels,
+      dim(values[[1L]]))
   roots <- if (identical(source, 'model')) lapply(seq_len(nlevels), function(l)
     .ctVarDecompCholesky(as.matrix(.ctBackendJuliaValue(
       module$ctsem_laplace_popcov(objective, raw, as.integer(l)))))) else NULL
@@ -511,7 +654,9 @@
     step <- vector('list', nlevels + 1L)
     step[[nlevels + 1L]] <- values[[nlevels + 1L]]
     for (l in rev(seq_len(nlevels))) {
-      shift <- if (identical(source, 'estimated')) contribution[[l]] else {
+      shift <- if (identical(source, 'estimated'))
+        matrix(plausible[[l]][drawi, , ] - plausible[[l + 1L]][drawi, , ],
+          nrow(values[[l]])) else {
         units <- structure[[l]]$units
         perunit <- matrix(stats::rnorm(structure[[l]]$nunits * ncol(roots[[l]])),
           structure[[l]]$nunits)
@@ -657,7 +802,8 @@
 # anything; a level's between term uses the sample variance over that level's
 # units, which is an estimate of a population variance.
 .ctVarDecompMomentComponents <- function(fit, design, persons, levels, nlatent,
-  latents, type, scale, gh, continuoustime, nmanifest, times = NULL) {
+  latents, type, scale, gh, continuoustime, nmanifest, times = NULL,
+  sources = NULL) {
 
   # `times` turns the window average into a decomposition at each point on a
   # common grid. Every person is then evaluated at the same times rather than
@@ -679,6 +825,9 @@
   persondet <- matrix(NA_real_, length(persons), nvar)
   personstoch <- array(NA_real_, c(length(persons), nvar, ntime))
   personmeas <- array(0, c(length(persons), nvar, ntime))
+  nparts <- if (length(sources)) length(sources) + 1L else 0L
+  personpart <- array(0, c(length(persons), nvar, ntime, max(nparts, 1L)))
+  personlevel <- array(0, c(length(persons), nvar, max(nparts, 1L)))
 
   for (index in seq_along(persons)) {
     person <- persons[[index]]
@@ -688,7 +837,23 @@
       design$tdpreds[rows, , drop = FALSE] else NULL
     for (s in seq_len(nsteps)) {
       mats <- person$mats[[s]]
-      moments <- .ctVarDecompPersonMoments(mats, at, tdpreds, continuoustime)
+      moments <- .ctVarDecompPersonMoments(mats, at, tdpreds, continuoustime,
+        sources = if (s == 1L) sources)
+      if (s == 1L && nparts) {
+        # Rows by variables, as a time series per variable or its mean.
+        perrow <- function(x) if (bytime) t(x) else colMeans(x)
+        for (g in seq_len(nparts)) {
+          personpart[index, seq_len(nmanifest), , g] <-
+            perrow(matrix(moments$partlinear[, , g], length(at)))
+          personlevel[index, seq_len(nmanifest), g] <- moments$levellinear[, g]
+          if (latents) {
+            personpart[index, nmanifest + seq_len(nlatent), , g] <-
+              perrow(matrix(moments$partlatent[, , g], length(at)))
+            personlevel[index, nmanifest + seq_len(nlatent), g] <-
+              moments$levellatent[, g]
+          }
+        }
+      }
       for (vi in seq_len(nmanifest)) {
         measured <- .ctVarDecompMeasurement(moments$linearmean[, vi],
           moments$linearvar[, vi], type[vi], mats$MANIFESTcov[vi, vi], scale, gh)
@@ -742,6 +907,19 @@
     npersons = length(persons), times = times)
   # The deterministic term is the variance over t and has no per-instant form.
   if (!bytime) out$within.deterministic <- colMeans(persondet)
+  # Each source's share of the stochastic term, and over the window how much of
+  # it is the record's mean: what does not move within a record.
+  if (nparts) {
+    partnames <- c("initial", names(sources))
+    out$sources <- lapply(seq_len(nparts), function(g)
+      flat(apply(personpart[, , , g, drop = FALSE], c(2L, 3L), mean)))
+    names(out$sources) <- partnames
+    if (!bytime) {
+      out$sourcelevels <- lapply(seq_len(nparts), function(g)
+        colMeans(matrix(personlevel[, , g], length(persons))))
+      names(out$sourcelevels) <- partnames
+    }
+  }
   out
 }
 
@@ -965,9 +1143,12 @@
 #' @param persons Which population the between person variance refers to.
 #'   \code{'model'} draws persons from the fitted population distribution of
 #'   the random effects, which is the model's own claim about the population
-#'   and is not shrunk. \code{'estimated'} uses the subjects in the data at
-#'   their estimated (empirical Bayes) matrices, which describes this sample
-#'   but attenuates the between person variance. \code{'auto'}, the default, is
+#'   and is not shrunk. \code{'estimated'} uses the subjects in the data, which
+#'   describes this sample: on a \code{backend='julia'} fit each at plausible
+#'   values -- its estimated effects plus a draw from their posterior given its
+#'   data -- which are not shrunk either; on a stan fit at their estimated
+#'   (empirical Bayes) matrices, which attenuates the between person
+#'   variance. \code{'auto'}, the default, is
 #'   \code{'model'} for a \code{backend='julia'} fit and \code{'estimated'}
 #'   for a stan one, saying which it used -- only the julia engine can
 #'   materialise the model matrices at a drawn set of random effects.
@@ -986,6 +1167,8 @@
 #'   \code{method='simulation'} or with time dependent predictors, neither of
 #'   which has values on a grid of its own.
 #' @param npersons Number of persons to draw when \code{persons='model'}.
+#'   With \code{persons='estimated'} on a julia fit, each subject gets as many
+#'   plausible values as make at least this many persons in all.
 #' @param latents If TRUE, also decompose the latent processes, which have no
 #'   measurement component.
 #' @param quadpoints Gauss-Hermite nodes used when \code{scale='response'}.
@@ -994,6 +1177,16 @@
 #' @param realid If TRUE (the default), subjects are read as the ids in the data,
 #' and integers that are not ids there are read as ctsem's numbering of the
 #' subjects, 1 to N, with a message. If FALSE, they are read as that numbering.
+#' @param sources Optional named list of latent names, one entry per group of
+#'   processes whose innovations are independent of the other groups' -- fast
+#'   affect, a day-scale tier, a slow tier, say. The stochastic within person
+#'   term is then split by where it came from: \code{within.stochastic.<group>}
+#'   for each group's innovations and \code{within.stochastic.initial} for the
+#'   initial state's variance still present, which add up to
+#'   \code{within.stochastic}. Averaged over the window, \code{level.<group>}
+#'   is the part of each that is the variance of the record's own mean: a
+#'   process as slow as the record is long acts within it mostly as a level,
+#'   and this says how much. Needs \code{method='moment'}.
 #'
 #' @details The decomposition is a nested law of total variance over the
 #'   population of (person, occasion) pairs at the design the fit was built on.
@@ -1033,14 +1226,16 @@
 #'   level's own departure from the level outside it. They are orthogonal by
 #'   construction and sum to \code{between}.
 #'
-#'   \code{persons='estimated'} reads each level's fitted modes, which are
-#'   shrunk toward the level outside them by an amount that follows the
-#'   information per unit rather than the number of units: on a 6-study,
-#'   30-subject example the subject level retained 52 per cent of the
-#'   population standard deviation (ten occasions each) while the study level
-#'   retained 97 per cent (five subjects each). \code{persons='model'} draws
-#'   from each level's own fitted covariance instead and is not shrunk, which
-#'   is why it is the default.
+#'   Each level's fitted modes are shrunk toward the level outside them by an
+#'   amount that follows the information per unit rather than the number of
+#'   units: on a 6-study, 30-subject example the subject level's modes retained
+#'   52 per cent of the population standard deviation (ten occasions each)
+#'   while the study level's retained 97 per cent (five subjects each).
+#'   \code{persons='estimated'} therefore adds to each mode a draw from that
+#'   unit's posterior, drawn jointly over its levels: the spread of such
+#'   plausible values is the population's, where the spread of the modes is
+#'   not. \code{persons='model'} draws from each level's own fitted covariance
+#'   instead, and is the default.
 #'
 #'   \strong{When the split changes over the window.} The columns above are
 #'   averages over each person's occasions, and for a process that has not
@@ -1087,7 +1282,7 @@
 ctVarianceDecomposition <- function(fit, method = c('auto', 'moment', 'simulation'),
   persons = c('auto', 'model', 'estimated'), scale = c('latent', 'response'),
   times = NULL, npersons = 200L, npaths = 20L, latents = TRUE, quadpoints = 21L,
-  subjects = 'all', realid = TRUE) {
+  subjects = 'all', realid = TRUE, sources = NULL) {
 
   # `ctFit`, which both backends' fits carry, rather than naming the two
   # classes: this asks whether the argument is a fit at all, not which backend
@@ -1103,6 +1298,15 @@ ctVarianceDecomposition <- function(fit, method = c('auto', 'moment', 'simulatio
     method <- if (nrow(.ctVarDecompStateDependent(fit))) 'simulation' else 'moment'
   }
   .ctVarDecompCheckModel(fit, method, scale)
+  if (!is.null(sources)) {
+    if (!identical(method, 'moment')) stop("sources needs method='moment': the ",
+      'split follows the covariance recursion, which the simulation route does ',
+      'not run.', call. = FALSE)
+    if (identical(scale, 'response') &&
+        any(as.integer(.ctFitModelObject(fit)$manifesttype) != 0L)) stop(
+      "sources splits variance on the latent scale, where it adds up; use ",
+      "scale='latent' with non-Gaussian indicators.", call. = FALSE)
+  }
   if (identical(method, 'simulation') && !.ctFitIsJulia(fit)) {
     stop("method='simulation' needs a backend='julia' fit: it draws the ",
       'trajectories from the engine, which the stan path has no entry point ',
@@ -1197,7 +1401,8 @@ ctVarianceDecomposition <- function(fit, method = c('auto', 'moment', 'simulatio
     if (!length(people)) stop('No usable persons.', call. = FALSE)
     gh <- if (identical(scale, 'response')) .ctVarDecompGaussHermite(quadpoints) else NULL
     .ctVarDecompMomentComponents(fit, design, people, levels, nlatent, latents,
-      type, scale, gh, continuoustime, nmanifest, times = times)
+      type, scale, gh, continuoustime, nmanifest, times = times,
+      sources = .ctVarDecompSources(fit, sources, nlatent))
   }
 
   variables <- c(manifestNames, if (latents) latentNames)
@@ -1233,6 +1438,16 @@ ctVarianceDecomposition <- function(fit, method = c('auto', 'moment', 'simulatio
         components$levels[l, ]
     }
   }
+  # The stochastic term by source, and the part of each that is the record's
+  # mean, after the parts they split.
+  if (!is.null(components$sources)) {
+    for (g in names(components$sources)) {
+      out[[paste0('within.stochastic.', g)]] <- as.numeric(components$sources[[g]])
+    }
+    if (!is.null(components$sourcelevels)) for (g in names(components$sourcelevels)) {
+      out[[paste0('level.', g)]] <- as.numeric(components$sourcelevels[[g]])
+    }
+  }
   out$within <- rowSums(as.data.frame(out[setdiff(parts, 'between')]))
   out$total <- out$between + out$within
   # A variable with no variance at all has no proportions, and NA says that
@@ -1246,6 +1461,9 @@ ctVarianceDecomposition <- function(fit, method = c('auto', 'moment', 'simulatio
 
   attr(out, 'method') <- method
   attr(out, 'persons') <- persons
+  # The julia routes give estimated persons at plausible values; stan's are its
+  # modes.
+  attr(out, 'plausible') <- identical(persons, 'estimated') && .ctFitIsJulia(fit)
   attr(out, 'scale') <- scale
   attr(out, 'npersons') <- components$npersons
   attr(out, 'npaths') <- if (identical(method, 'simulation')) as.integer(npaths)
@@ -1255,6 +1473,15 @@ ctVarianceDecomposition <- function(fit, method = c('auto', 'moment', 'simulatio
   out
 }
 
+
+.ctVarDecompPersonsLabel <- function(x) {
+  n <- attr(x, 'npersons')
+  if (identical(attr(x, 'persons'), 'model'))
+    paste0(n, ' persons drawn from the fitted population distribution')
+  else if (isTRUE(attr(x, 'plausible')))
+    paste0(n, ' plausible values of the subjects in the data')
+  else paste0('the ', n, ' estimated subjects, attenuated by shrinkage')
+}
 
 #' @export
 print.ctVarianceDecomposition <- function(x, digits = 3L, ...) {
@@ -1269,11 +1496,8 @@ print.ctVarianceDecomposition <- function(x, digits = 3L, ...) {
     cat('\nAt one time point there is no deterministic within person term: it ',
       'is the variance of the mean path over time, so it exists only in the ',
       'window average. Call without times= for that.\n', sep = '')
-    cat('Between person variance refers to ',
-      if (identical(attr(x, 'persons'), 'model'))
-        paste0(attr(x, 'npersons'), ' persons drawn from the fitted population distribution')
-      else paste0('the ', attr(x, 'npersons'),
-        ' estimated subjects, attenuated by shrinkage'), '.\n', sep = '')
+    cat('Between person variance refers to ', .ctVarDecompPersonsLabel(x),
+      '.\n', sep = '')
     return(invisible(x))
   }
   show <- c('variable', 'type', 'between', 'within.deterministic',
@@ -1297,11 +1521,7 @@ print.ctVarianceDecomposition <- function(x, digits = 3L, ...) {
   cat('\nComputed by the ', attr(x, 'method'), ' route',
     if (identical(attr(x, 'method'), 'simulation'))
       paste0(', ', attr(x, 'npaths'), ' paths per person') else '', '.\n', sep = '')
-  cat('Between person variance refers to ',
-    if (identical(attr(x, 'persons'), 'model'))
-      paste0(attr(x, 'npersons'), ' persons drawn from the fitted population distribution')
-    else paste0('the ', attr(x, 'npersons'),
-      ' estimated subjects, attenuated by shrinkage'),
+  cat('Between person variance refers to ', .ctVarDecompPersonsLabel(x),
     '.\n', sep = '')
   cat('Within person variance is over each person\'s own observation times; ',
     'the deterministic part is the mean path moving.\n', sep = '')

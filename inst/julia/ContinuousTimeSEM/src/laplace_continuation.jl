@@ -88,15 +88,56 @@ correction took 92 s beside a 343 s Laplace fit (the step correction 57 s), at
 exact (`ctsem_laplace_continuation_hessian`) the `d = 5` correction takes
 132 s there beside a 170-second fit, 30 s of it the Hessian; the cap has not
 been revisited. A unit wider
-than `maxdim` is not scored and keeps its Laplace term (`wide` in the info):
-the step correction, the alternative, pays the same `nodes^d` per quadrature
-value, so falling back to it would save nothing.
+than `maxdim` and of one block gets a frozen importance rule instead when
+`draws > 0` (below); a nested one is not scored and keeps its Laplace term
+(`wide` in the info): the step correction, the alternative, pays the same
+`nodes^d` per quadrature value, so falling back to it would save nothing.
+
+# Units too wide for a product rule: frozen importance draws
+
+A unit of one block wider than `maxdim` gets draws in place of nodes
+(`_continuation_importance_rule`) -- every such unit, or with `draws_scope =
+:forced` only those the caller names, the rest keeping their Laplace terms: held fixed in the standardised effects, as
+nodes are, from a defensive mixture -- a Gaussian at the unit's mode, at any
+other point the caller knows for it (`points`: where the inner solve stopped
+at nearby parameters), at draws that carried weight once moved a Newton step,
+and the prior -- and weighted by that mixture. Its cost is the number of draws
+whatever the width, and the same Fisher identity gives its gradient and the
+same Louis identity its Hessian. Why: a unit whose posterior has a broad
+shoulder beside its mode has a Laplace term that moves with where the inner
+solve stops, by up to the shoulder's mass, and an optimiser climbing onto the
+point where it stops on the shoulder stalls there with a gradient that is that
+spike's (`CT-SEM/review/LAPLACE-shoulders-frozen-draws-2026-10-21.md`: 0.33 nats
+on an 8-effect person, the fit stalled for hours). A frozen rule does not read
+the stopping point, so its term is smooth.
+
+Its value carries Monte Carlo error, `sqrt(1/ESS - 1/n)` estimated from its
+weights, which no number of draws a fit can afford takes below the screen's
+tolerance. So a unit's gap counts towards flagging only beyond twice that
+error (`_continuation_place!`): the screen flags what it can resolve, and a
+unit Laplace gets right to within the draws' error keeps its Laplace term. A
+unit the caller names (`force`) is flagged whatever its gap: the optimiser
+names a unit whose term jumped (`_ctsem_jump_units`), and at a stall the gap
+at the stalled point can be small, since that is where the solve stopped on
+the shoulder.
+
+The constants. `draws_floor = 0.25` floors each component's precision
+eigenvalues, so a soft or indefinite direction is sampled at up to twice the
+prior's sd; `draws_prior = 0.2` is the prior's share of every batch. Both are
+the 20000-draw reference's, which reached an ESS of 8000 on that person. The
+first batch of `draws = 256`, doubling, to a standard error of `draws_se =
+0.05`: on that person a rule placed from the stiff mode alone reached it at
+1024 draws with seven components, its error against the reference at most
+0.019 nats over four seeds and constant along the fold to 1e-3, and its
+directional derivative within 1e-4 of its own differences. `draws_max = 16384`
+is cost: a gradient is one reverse sweep per member per draw.
 """
 
 using LinearAlgebra
 
 export ctsem_laplace_continuation, ctsem_laplace_continuation_info,
     ctsem_laplace_continuation_evaluate, ctsem_laplace_continuation_recentre!,
+    ctsem_laplace_continuation_se,
     ctsem_laplace_continuation_revert!, ctsem_laplace_continuation_optimize,
     ctsem_laplace_continuation_hessian
 
@@ -161,8 +202,29 @@ mutable struct CTSEMLaplaceContinuation{L} <: CTSEMOptimisable
     soft_tau::Float64
     soft_maxdirs::Int
     maxdim::Int
-    # Units wider than `maxdim`: never scored, never flagged.
+    # Units wider than `maxdim` that no importance rule can take (nested, or
+    # `draws = 0`): never scored, never flagged.
     wide::Vector{Bool}
+    # The importance rule's options (see the module docstring), the points the
+    # caller knows for each unit, and per unit at the centre: the rule's
+    # standard error (0 for a product rule) and whether it is an importance rule.
+    draws::Int
+    draws_se::Float64
+    draws_max::Int
+    draws_floor::Float64
+    draws_prior::Float64
+    draws_seed::Int
+    points::Dict{Int,Vector{Vector{Float64}}}
+    centre_se::Vector{Float64}
+    importance::Vector{Bool}
+    # Whether a placement scores every unit, or only the flagged ones (a fit
+    # rescued from a jump, which needs the units the optimiser named and no
+    # screen).
+    screen::Bool
+    # Which units too wide for a product rule draws may take: every one of one
+    # block (`:all`), or only those `force` named (`:forced`), and those units.
+    draws_scope::Symbol
+    forced::Vector{Int}
     # What the rule scored every unit at the centre, and what Laplace did.
     centre_quadrature::Vector{Float64}
     centre_laplace::Vector{Float64}
@@ -337,6 +399,299 @@ function _continuation_stiff_rule(nh::Integer, nodes::Integer)
 end
 
 """
+    _continuation_lattice_normals(d, n, rng)
+
+`n` standard normal points in `d` dimensions, as columns, from a randomly
+shifted rank-1 lattice (`frac(j sqrt(p_a) + s_a)`, `p_a` the `a`-th prime, one
+shift `s` from `rng`) mapped through the normal quantile: the points
+`_laplace_mixture_unit!` draws each component's particles from. Quasi-random,
+because the integrands are smooth and their error falls faster than with
+pseudo-random draws at the same number.
+"""
+function _continuation_lattice_normals(d::Integer, n::Integer, rng)
+    alpha = [mod(sqrt(Float64(p)), 1.0) for p in _mixture_primes(Int(d))]
+    shift = rand(rng, Int(d))
+    Z = Matrix{Float64}(undef, Int(d), Int(n))
+    @inbounds for j in 1:Int(n), a in 1:Int(d)
+        Z[a, j] = sqrt(2.0) * erfinv(clamp(2 * mod(j * alpha[a] + shift[a], 1.0) - 1,
+            -1 + 1e-15, 1 - 1e-15))
+    end
+    return Z
+end
+
+"""
+A Gaussian component of an importance rule's proposal in a block's own
+standardised coordinates: centre `mu`, precision `vecs * Diagonal(lam) * vecs'`
+-- the block's precision at the centre, its eigenvalues floored.
+"""
+struct CTSEMImportanceComponent
+    mu::Vector{Float64}
+    vecs::Matrix{Float64}
+    lam::Vector{Float64}
+end
+
+function _continuation_component_logdensity(c::CTSEMImportanceComponent,
+    z::AbstractVector{Float64}, work::Vector{Float64})
+    k = length(c.mu)
+    @inbounds for a in 1:k
+        work[a] = z[a] - c.mu[a]
+    end
+    q = 0.0
+    @inbounds for t in 1:k
+        s = 0.0
+        for a in 1:k
+            s += c.vecs[a, t] * work[a]
+        end
+        q += c.lam[t] * s * s
+    end
+    return -(q + k * log(2 * pi)) / 2 + sum(log, c.lam) / 2
+end
+
+"""
+    _continuation_importance_component(fns, x, floor)
+
+The component at block coordinates `x`: the block's precision there
+(`fns.precision`) with its eigenvalues floored at `floor`, so a soft or an
+indefinite direction is sampled at a bounded width rather than an infinite
+one. `nothing` where the precision is not finite.
+"""
+function _continuation_importance_component(fns, x::Vector{Float64}, floor::Float64)
+    P = fns.precision(x)
+    all(isfinite, P) || return nothing
+    E = _ctsem_symeig(_laplace_symmetrise(P))
+    all(isfinite, E.values) || return nothing
+    return CTSEMImportanceComponent(copy(x), Matrix(E.vectors), max.(E.values, floor))
+end
+
+"""Add the component at `x` unless one sits within 1e-3 of it; whether it was
+added."""
+function _continuation_add_component!(comps::Vector{CTSEMImportanceComponent}, fns,
+    x::Vector{Float64}, floor::Float64)
+    any(c -> maximum(abs, c.mu .- x) < 1e-3, comps) && return false
+    c = _continuation_importance_component(fns, x, floor)
+    c === nothing && return false
+    push!(comps, c)
+    return true
+end
+
+"""
+    _continuation_newton_point(fns, x, floor; maxstep=3)
+
+One damped Newton step on the block's log integrand from `x`, on its curvature
+there with the eigenvalues floored, its length capped at `maxstep` in that
+curvature's metric: where a component goes from a draw that carries weight, as
+`.ctImisNewtonComponent()` moves the outer sampler's (after optimized
+population Monte Carlo, Elvira and Chouzenoux 2022). `nothing` where the value
+or the curvature is not finite.
+"""
+function _continuation_newton_point(fns, x::Vector{Float64}, floor::Float64;
+    maxstep::Real=3.0)
+    vg = fns.value_gradient(x)
+    (isfinite(vg.value) && all(isfinite, vg.gradient)) || return nothing
+    c = _continuation_importance_component(fns, x, floor)
+    c === nothing && return nothing
+    w = transpose(c.vecs) * vg.gradient
+    len = sqrt(sum(abs2, w ./ sqrt.(c.lam)))
+    scale = len > maxstep ? maxstep / len : 1.0
+    return x .+ c.vecs * (scale .* w ./ c.lam)
+end
+
+"""The draws an importance rule has taken: their block coordinates, the
+component each came from (0 the prior), its members' log likelihood, and how
+many batches have been drawn."""
+mutable struct _ContinuationDraws
+    points::Matrix{Float64}
+    origin::Vector{Int}
+    h::Vector{Float64}
+    batches::Int
+end
+
+"""`m` split as evenly as whole numbers allow over `J` parts, the larger
+first."""
+function _continuation_split(m::Integer, J::Integer)
+    J <= 0 && return Int[]
+    q, r = divrem(Int(m), Int(J))
+    return [q + (t <= r ? 1 : 0) for t in 1:Int(J)]
+end
+
+"""`m` draws from component `component` (`c`), scored at `theta`: each draw's
+members' log likelihood, the deviations their filters integrate integrated
+exactly, as at a product rule's node. The lattice's shift comes from `key`, the
+batch and the component alone, so the same component of the same batch draws
+the same standard normals at every placement: common random numbers."""
+function _continuation_draw!(D::_ContinuationDraws, laplace::CTSEMLaplaceObjective,
+    U::Integer, theta::Vector{Float64}, Ls, block, columns, u::Vector{Float64}, aws,
+    c::CTSEMImportanceComponent, component::Int, m::Int, key)
+    m > 0 || return D
+    k = length(c.mu)
+    Z = _continuation_lattice_normals(k, m,
+        Random.Xoshiro(hash((key, D.batches, component))))
+    X = Matrix{Float64}(undef, k, m)
+    hs = Vector{Float64}(undef, m)
+    for j in 1:m
+        @inbounds for t in 1:k
+            s = 0.0
+            for a in 1:k
+                s += c.vecs[t, a] * Z[a, j] / sqrt(c.lam[a])
+            end
+            X[t, j] = c.mu[t] + s
+        end
+        @inbounds for (t, col) in enumerate(columns); u[col] = X[t, j]; end
+        inner = 0.0
+        for mm in block.members
+            shifted = _laplace_member_values(theta, laplace.spec, Ls, u,
+                laplace.units.offsets[U][mm])
+            inner += _laplace_member_loglik(aws, laplace.objective.subject_objectives[
+                laplace.units.members[U][mm]], shifted)
+        end
+        hs[j] = isfinite(inner) ? inner : -Inf
+    end
+    D.points = hcat(D.points, X)
+    append!(D.origin, fill(component, m))
+    append!(D.h, hs)
+    return D
+end
+
+"""A batch of `m` draws: the prior's share, the rest split over the
+components."""
+function _continuation_batch!(D::_ContinuationDraws, laplace, U, theta, Ls, block,
+    columns, u, aws, comps, prior::CTSEMImportanceComponent, share::Float64,
+    m::Int, key)
+    D.batches += 1
+    mp = clamp(round(Int, share * m), 1, m)
+    _continuation_draw!(D, laplace, U, theta, Ls, block, columns, u, aws, prior, 0,
+        mp, key)
+    for (t, n) in enumerate(_continuation_split(m - mp, length(comps)))
+        _continuation_draw!(D, laplace, U, theta, Ls, block, columns, u, aws,
+            comps[t], t, n, key)
+    end
+    return D
+end
+
+"""
+The log weights of every draw under the balance heuristic -- each component
+weighted by its share of the draws -- and the log integral, its standard error
+`sqrt(1/ESS - 1/n)` and effective sample size, for a block of `k` effects.
+"""
+function _continuation_importance_weigh(D::_ContinuationDraws,
+    comps::Vector{CTSEMImportanceComponent}, prior::CTSEMImportanceComponent, k::Int)
+    n = size(D.points, 2)
+    J = length(comps)
+    counts = zeros(Int, J + 1)
+    for t in D.origin
+        counts[t + 1] += 1
+    end
+    lw = Vector{Float64}(undef, n)
+    dens = Vector{Float64}(undef, J + 1)
+    work = zeros(k)
+    @inbounds for j in 1:n
+        z = view(D.points, :, j)
+        for t in 0:J
+            dens[t + 1] = counts[t + 1] == 0 ? -Inf : log(counts[t + 1] / n) +
+                _continuation_component_logdensity(t == 0 ? prior : comps[t], z, work)
+        end
+        lw[j] = -dot(z, z) / 2 - _logsumexp(dens) - log(n)
+    end
+    terms = lw .+ D.h
+    peak = maximum(terms)
+    isfinite(peak) || return (lw=lw, terms=terms, value=NaN, se=Inf, ess=0.0)
+    w = exp.(terms .- peak)
+    sw = sum(w)
+    ess = sw^2 / sum(abs2, w)
+    return (lw=lw, terms=terms, value=peak + log(sw) - k * log(2 * pi) / 2,
+        se=sqrt(max(1 / ess - 1 / n, 0.0)), ess=ess)
+end
+
+"""
+    _continuation_importance_rule(laplace, U, theta, Ls, b, u, context, aws, opts)
+
+Block `b`'s frozen importance rule (see the module docstring): draws held fixed
+in the standardised effects, weighted by the mixture they came from, so the
+block's term is
+
+    log (1/n) sum_j L(z_j) exp(-z_j'z_j/2) / q(z_j) - k/2 log 2 pi
+
+-- a `CTSEMFixedRule` whose log weights carry `-z'z/2 - log q - log n`, valued
+and differentiated as a product rule's nodes are. `q` is the balance heuristic
+over its components, each weighted by its share of the draws:
+
+  - a Gaussian at the block's mode (`context.mode`) and at every point
+    `opts.points` holds for the unit, each on the block's precision there with
+    its eigenvalues floored at `opts.draws_floor`;
+  - the prior `N(0, I)`, `opts.draws_prior` of every batch, which bounds every
+    weight by the likelihood's supremum over that share, so the estimate has a
+    finite variance in any dimension (Hesterberg 1995);
+  - where the weights show a gap -- a draw carrying more than `n / ESS*` times
+    its share, `ESS* = 1 / draws_se^2` -- a component at each of up to three
+    such draws, moved a damped Newton step and shaped by the precision there
+    (`_continuation_newton_point`).
+
+Draws come in batches, the first of `opts.draws` and each later as large as
+all before it, quasi-random (`_continuation_lattice_normals`), until the
+standard error is under `opts.draws_se` or `opts.draws_max` are spent. Each
+component's lattice in each batch is seeded by the unit, block, batch and
+component, the same at every placement: common random numbers, so two
+placements differ by where their proposals sit rather than by their draws'
+luck. With fresh draws at each placement the continuation's rounds, which keep
+a step only if the objective with the rule placed again is no lower, were
+rejected by the draws' error on the round-9 fit: 0.4 to 0.7 nats at radii
+down to 0.03 standard errors. Returns `(rule, value, se, ess,
+components)`, or `nothing` when no draw scores.
+"""
+function _continuation_importance_rule(laplace::CTSEMLaplaceObjective, U::Integer,
+    theta::Vector{Float64}, Ls::Vector{Matrix{Float64}}, b::Integer,
+    u::Vector{Float64}, context, aws, opts)
+    block = laplace.units.blocks[U][b]
+    k = block.size
+    columns = (block.offset + 1):(block.offset + k)
+    fns = _continuation_block_functions(laplace, U, theta, Ls, b, u, aws)
+    floor = Float64(opts.draws_floor)
+    comps = CTSEMImportanceComponent[]
+    _continuation_add_component!(comps, fns, Float64[context.mode[c] for c in columns],
+        floor)
+    for p in get(opts.points, Int(U), Vector{Vector{Float64}}())
+        length(p) == length(u) || continue
+        x = Float64[p[c] for c in columns]
+        all(isfinite, x) && _continuation_add_component!(comps, fns, x, floor)
+    end
+    isempty(comps) && return nothing
+    prior = CTSEMImportanceComponent(zeros(k), Matrix{Float64}(I, k, k), ones(k))
+    key = (Int(opts.draws_seed), Int(U), Int(b))
+    D = _ContinuationDraws(zeros(k, 0), Int[], Float64[], 0)
+    share = Float64(opts.draws_prior)
+    _continuation_batch!(D, laplace, U, theta, Ls, block, columns, u, aws, comps,
+        prior, share, Int(opts.draws), key)
+    current = _continuation_importance_weigh(D, comps, prior, k)
+    target_ess = 1 / Float64(opts.draws_se)^2
+    while (!isfinite(current.value) || current.se > opts.draws_se) &&
+            size(D.points, 2) < opts.draws_max
+        n = size(D.points, 2)
+        if isfinite(current.value)
+            peak = maximum(current.terms)
+            w = exp.(current.terms .- peak)
+            ratio = w ./ (sum(w) / n)
+            added = 0
+            for j in sortperm(ratio; rev=true)
+                (added >= 3 || ratio[j] <= n / target_ess) && break
+                x = _continuation_newton_point(fns, D.points[:, j], floor)
+                x === nothing && continue
+                _continuation_add_component!(comps, fns, x, floor) && (added += 1)
+            end
+        end
+        _continuation_batch!(D, laplace, U, theta, Ls, block, columns, u, aws, comps,
+            prior, share, min(n, Int(opts.draws_max) - n), key)
+        current = _continuation_importance_weigh(D, comps, prior, k)
+    end
+    isfinite(current.value) || return nothing
+    # The block's own coordinates back where the caller had them.
+    @inbounds for c in columns; u[c] = context.mode[c]; end
+    rule = CTSEMFixedRule(b, D.points, current.lw, -k * log(2 * pi) / 2,
+        Vector{Vector{CTSEMFixedRule}}(), 0)
+    return (rule=rule, value=current.value, se=current.se, ess=current.ess,
+        components=length(comps))
+end
+
+"""
     _continuation_block_rule(laplace, U, theta, Ls, b, u, context, aws, opts)
 
 Place block `b`'s nodes, and those of every block beneath it, with its
@@ -500,6 +855,17 @@ function _continuation_unit_rule(laplace::CTSEMLaplaceObjective, U::Integer,
     isempty(blocks) && return nothing
     _laplace_solve_unit_mode!(laplace, U, theta, Ls)
     mode = copy(laplace.modes[U])
+    if _continuation_unit_width(laplace, U) > opts.maxdim
+        # Too wide for a product rule: only `_continuation_place` sends such a
+        # unit here, and only one of one block when draws are on.
+        tree = _quadrature_children(blocks)
+        placed = _continuation_importance_rule(laplace, U, theta, Ls, tree.roots[1],
+            copy(mode), (children=tree.children, mode=mode), aws, opts)
+        placed === nothing && return nothing
+        evaluations = size(placed.rule.points, 2) * length(blocks[1].members)
+        return (rule=CTSEMFixedUnitRule(U, [placed.rule], evaluations),
+            value=placed.value, se=placed.se, importance=true)
+    end
     M = _laplace_unit_curvature(laplace, U, theta, Ls, mode)
     factorization = _laplace_factor_repaired!(M, blocks)
     factorization.ok || return nothing
@@ -518,7 +884,8 @@ function _continuation_unit_rule(laplace::CTSEMLaplaceObjective, U::Integer,
     end
     isfinite(total) || return nothing
     evaluations = sum(_continuation_evaluations(r, blocks) for r in roots; init=0)
-    return (rule=CTSEMFixedUnitRule(U, roots, evaluations), value=total)
+    return (rule=CTSEMFixedUnitRule(U, roots, evaluations), value=total, se=0.0,
+        importance=false)
 end
 
 """
@@ -538,9 +905,18 @@ function _continuation_place(laplace::CTSEMLaplaceObjective, theta::Vector{Float
     _continuation_warm_caches(laplace, opts.nodes, opts.soft_maxdirs, opts.product_maxdim)
     rules = Vector{Union{Nothing,CTSEMFixedUnitRule}}(nothing, nunits)
     values = fill(NaN, nunits)
-    wide = [_continuation_unit_width(laplace, U) > opts.maxdim for U in 1:nunits]
+    ses = zeros(nunits)
+    importance = fill(false, nunits)
+    # Wide and out of reach: a unit too wide for a product rule that is nested,
+    # or any such unit when draws are off.
+    drawable = get(opts, :drawable, nothing)
+    wide = [_continuation_unit_width(laplace, U) > opts.maxdim &&
+        !(opts.draws > 0 && length(laplace.units.blocks[U]) == 1 &&
+          (drawable === nothing || U in drawable)) for U in 1:nunits]
+    only = get(opts, :only, nothing)
     _laplace_parallel(laplace, 1:nunits) do U
         wide[U] && return true
+        (only === nothing || U in only) || return true
         placed = try
             _continuation_unit_rule(laplace, U, theta, Ls,
                 _laplace_workspace!(laplace, Float64, length(theta)), opts)
@@ -555,12 +931,26 @@ function _continuation_place(laplace::CTSEMLaplaceObjective, theta::Vector{Float
         else
             rules[U] = placed.rule
             values[U] = placed.value
+            ses[U] = placed.se
+            importance[U] = placed.importance
         end
         return true
     end
     return (rules=rules, quadrature=values, laplace=copy(lap.unit_loglik),
-        laplace_value=lap.value, converged=lap.converged, wide=wide)
+        laplace_value=lap.value, converged=lap.converged, wide=wide, se=ses,
+        importance=importance)
 end
+
+"""
+    _continuation_resolved(gaps, se)
+
+Each unit's gap beyond twice its rule's standard error, towards zero: what the
+screen can tell from the draws' own error (see the module docstring). The same
+gap where the rule is a product rule, whose `se` is zero.
+"""
+_continuation_resolved(gaps::Vector{Float64}, se::Vector{Float64}) =
+    [isfinite(g) ? sign(g) * max(abs(g) - 2 * se[U], 0.0) : g
+     for (U, g) in enumerate(gaps)]
 
 """
     _continuation_flags(gaps, tolerance)
@@ -596,50 +986,116 @@ end
 
 """
     ctsem_laplace_continuation(laplace, values; nodes=5, tolerance=0.01,
-        product_maxdim=2, soft_tau=3.5, soft_maxdirs=2, maxdim=5)
+        product_maxdim=2, soft_tau=3.5, soft_maxdirs=2, maxdim=5, draws=0,
+        draws_se=0.05, draws_max=16384, draws_floor=0.25, draws_prior=0.2,
+        draws_seed=20261021, force=nothing, point_units=nothing,
+        point_values=nothing, screen=true, draws_scope=:all)
 
 The hybrid objective with its nodes placed at `values`. Every unit is scored by
-the rule there against its Laplace term, the units that differ are flagged
-(`_continuation_flags`), and those carry fixed nodes from then on while the
-rest keep their Laplace term. A unit wider than `maxdim` effects along any
-path of its block tree is not scored at all and keeps its Laplace term. See the
-module docstring for the rule and the constants.
+the rule there against its Laplace term, the units that differ beyond the
+rule's own error are flagged (`_continuation_resolved`, `_continuation_flags`),
+and those carry fixed nodes from then on while the rest keep their Laplace
+term; the units in `force` are flagged whatever their gap. A unit wider than
+`maxdim` effects along any path of its block tree gets a frozen importance
+rule when it is one block and `draws > 0`, and is not scored at all
+otherwise, keeping its Laplace term. `point_units` and `point_values` are
+points the caller knows for some units, column `j` of `point_values` for unit
+`point_units[j]` (its first `dims` entries), each a component of that unit's
+importance proposal. `screen = false` scores only the units `force` names, the
+rest keeping their Laplace terms unscored: what a fit rescued from a jump
+needs. `draws_scope = :forced` gives draws only to the units `force` names,
+every other unit too wide for a product rule keeping its Laplace term
+unscored, as with `draws = 0`. See the module docstring for the rules and the
+constants.
 """
 function ctsem_laplace_continuation(laplace::CTSEMLaplaceObjective,
     values::AbstractVector; nodes::Integer=5, tolerance::Real=0.01,
     product_maxdim::Integer=2, soft_tau::Real=3.5, soft_maxdirs::Integer=2,
-    maxdim::Integer=5)
+    maxdim::Integer=5, draws::Integer=0, draws_se::Real=0.05,
+    draws_max::Integer=16384, draws_floor::Real=0.25, draws_prior::Real=0.2,
+    draws_seed::Integer=20261021, force=nothing, point_units=nothing,
+    point_values=nothing, screen::Bool=true, draws_scope=:all)
     nodes >= 1 || throw(ArgumentError("need at least one quadrature node"))
-    theta = collect(Float64, values)
+    Symbol(draws_scope) in (:all, :forced) || throw(ArgumentError(
+        "draws_scope must be :all or :forced"))
+    draws >= 0 || throw(ArgumentError("draws must be at least zero"))
+    draws_se > 0 || throw(ArgumentError("draws_se must be positive"))
+    0 < draws_prior < 1 || throw(ArgumentError("draws_prior must be between 0 and 1"))
+    draws_floor > 0 || throw(ArgumentError("draws_floor must be positive"))
+    theta = _laplace_extend(laplace, collect(Float64, values))
     _laplace_check_indices(laplace, length(theta))
     nunits = length(laplace.units.members)
     o = CTSEMLaplaceContinuation{typeof(laplace)}(laplace, laplace, collect(1:nunits),
         Int[], CTSEMFixedUnitRule[], theta, Int(nodes), Float64(tolerance),
         Int(product_maxdim), Float64(soft_tau), Int(soft_maxdirs), Int(maxdim),
-        fill(false, nunits),
+        fill(false, nunits), Int(draws), Float64(draws_se),
+        max(Int(draws_max), Int(draws)), Float64(draws_floor), Float64(draws_prior),
+        Int(draws_seed), Dict{Int,Vector{Vector{Float64}}}(), zeros(nunits),
+        fill(false, nunits), Bool(screen), Symbol(draws_scope), Int[],
         fill(NaN, nunits), fill(NaN, nunits), fill(false, nunits), NaN, nothing,
         0, 0, 0, 0, 0, 0, 0.0, 0.0, 0.0, 0.0, nothing, nothing)
+    _continuation_add_points!(o, point_units, point_values)
+    _continuation_force!(o, force)
     _continuation_place!(o, theta)
     return o
 end
 
+"""Units `force` names, flagged from now on whatever their gap; out-of-range
+entries are an error."""
+function _continuation_force!(o::CTSEMLaplaceContinuation, force)
+    force === nothing && return o
+    nunits = length(o.laplace.units.members)
+    units = Int[Int(U) for U in force]
+    all(U -> 1 <= U <= nunits, units) || throw(ArgumentError(
+        "force names a unit outside 1:$(nunits)"))
+    o.flagged = sort!(union(o.flagged, units))
+    o.forced = sort!(union(o.forced, units))
+    return o
+end
+
+"""Points the caller knows for some units (`point_units[j]`, `point_values[:,
+j]`), added to `o.points` as components for their importance proposals."""
+function _continuation_add_points!(o::CTSEMLaplaceContinuation, point_units,
+    point_values)
+    (point_units === nothing || point_values === nothing) && return o
+    V = Matrix{Float64}(point_values)
+    units = Int[Int(U) for U in point_units]
+    size(V, 2) == length(units) || throw(DimensionMismatch(
+        "point_values needs one column per entry of point_units"))
+    for (j, U) in enumerate(units)
+        1 <= U <= length(o.laplace.units.members) || continue
+        d = o.laplace.units.dims[U]
+        d <= size(V, 1) || continue
+        x = V[1:d, j]
+        all(isfinite, x) || continue
+        push!(get!(o.points, U, Vector{Vector{Float64}}()), x)
+    end
+    return o
+end
+
 const _CONTINUATION_STATE = (:rest, :rest_units, :flagged, :rules, :centre,
-    :centre_quadrature, :centre_laplace, :rule_failed, :centre_value)
+    :centre_quadrature, :centre_laplace, :rule_failed, :centre_value, :centre_se,
+    :importance)
 
 """
-    ctsem_laplace_continuation_recentre!(o, values)
+    ctsem_laplace_continuation_recentre!(o, values; force=nothing,
+        point_units=nothing, point_values=nothing)
 
 Re-place `o`'s nodes at `values`: every unit is scored again, the flagged set
-grows by any unit whose gap now matters -- it never shrinks, so no later round
-loses a unit an earlier one was scored on -- and every flagged unit's rule
-moves to its mode and curvature there. The placement it replaces is kept for
-`ctsem_laplace_continuation_revert!`. Returns `ctsem_laplace_continuation_info`.
+grows by any unit whose gap now matters and by any `force` names -- it never
+shrinks, so no later round loses a unit an earlier one was scored on -- and
+every flagged unit's rule moves to its mode and curvature there, an importance
+rule drawing afresh with the points it knows and any given here. The placement
+it replaces is kept for `ctsem_laplace_continuation_revert!`. Returns
+`ctsem_laplace_continuation_info`.
 """
 function ctsem_laplace_continuation_recentre!(o::CTSEMLaplaceContinuation,
-    values::AbstractVector)
+    values::AbstractVector; force=nothing, point_units=nothing, point_values=nothing)
     o.previous = NamedTuple{_CONTINUATION_STATE}(
         Tuple(getfield(o, f) for f in _CONTINUATION_STATE))
-    _continuation_place!(o, collect(Float64, values))
+    _continuation_add_points!(o, point_units, point_values)
+    _continuation_force!(o, force)
+    _continuation_place!(o, _laplace_extend(o.laplace, collect(Float64, values)))
     return ctsem_laplace_continuation_info(o)
 end
 
@@ -666,13 +1122,17 @@ function _continuation_place!(o::CTSEMLaplaceContinuation, theta::Vector{Float64
     laplace = o.laplace
     opts = (nodes=o.nodes, product_maxdim=o.product_maxdim, soft_tau=o.soft_tau,
         maxdim=o.maxdim,
-        soft_maxdirs=o.soft_maxdirs)
+        soft_maxdirs=o.soft_maxdirs, draws=o.draws, draws_se=o.draws_se,
+        draws_max=o.draws_max, draws_floor=o.draws_floor, draws_prior=o.draws_prior,
+        draws_seed=o.draws_seed, points=o.points,
+        only=o.screen ? nothing : Set(o.flagged),
+        drawable=o.draws_scope === :all ? nothing : Set(o.forced))
     placed = _continuation_place(laplace, theta, opts)
     nunits = length(laplace.units.members)
     failed = [placed.rules[U] === nothing && !isempty(laplace.units.blocks[U]) &&
               !placed.wide[U] for U in 1:nunits]
     o.wide = placed.wide
-    gaps = placed.quadrature .- placed.laplace
+    gaps = _continuation_resolved(placed.quadrature .- placed.laplace, placed.se)
     flagged = sort!(union(o.flagged, _continuation_flags(gaps, o.tolerance)))
     # A unit flagged before whose rule could not be placed here keeps its
     # Laplace term: an honest Laplace term beats a rule placed somewhere else.
@@ -685,6 +1145,8 @@ function _continuation_place!(o::CTSEMLaplaceContinuation, theta::Vector{Float64
     o.centre = copy(theta)
     o.centre_quadrature = placed.quadrature
     o.centre_laplace = placed.laplace
+    o.centre_se = placed.se
+    o.importance = placed.importance
     o.rule_failed = failed
     prior = _ctsem_log_prior(laplace.objective, theta)
     o.centre_value = sum(_laplace_unit_weight(laplace, U) * placed.laplace[U]
@@ -746,18 +1208,24 @@ One block's log integral under its fixed rule at `theta`, with its gradient:
 `sum_j pi_j dh_j/dtheta`, `pi` the normalised node weights -- the Fisher
 identity. One pass, the running maximum rescaling what has been summed so far.
 A node whose likelihood is not finite carries no weight, as it does in
-`_quadrature_block`.
+`_quadrature_block`. A leaf's nodes are summed by `_continuation_leaf_sum`.
 """
 function _continuation_rule_value(o::CTSEMLaplaceContinuation, U::Integer,
     theta::Vector{Float64}, Ls, dL, positions, rule::CTSEMFixedRule,
     u::Vector{Float64}, aws, scratch, want_gradient::Bool)
+    if isempty(rule.children)
+        a = _continuation_leaf_sum(o, U, theta, Ls, dL, positions, rule, u, aws,
+            scratch, want_gradient, 1:size(rule.points, 2))
+        isfinite(a.peak) || return (value=NaN, gradient=a.gacc)
+        want_gradient && (a.gacc ./= a.acc)
+        return (value=a.peak + log(a.acc) + rule.constant, gradient=a.gacc)
+    end
     laplace = o.laplace
     block = laplace.units.blocks[U][rule.block]
     k = block.size
     columns = (block.offset + 1):(block.offset + k)
     npar = length(theta)
     n = size(rule.points, 2)
-    leaf = isempty(rule.children)
     peak = -Inf
     acc = 0.0
     gacc = want_gradient ? zeros(npar) : Float64[]
@@ -766,29 +1234,15 @@ function _continuation_rule_value(o::CTSEMLaplaceContinuation, U::Integer,
         @inbounds for (t, c) in enumerate(columns); u[c] = rule.points[t, j]; end
         want_gradient && fill!(gh, 0.0)
         h = 0.0
-        ok = true
-        if leaf
-            for m in block.members
-                ll = _continuation_member!(gh, laplace, U, m, theta, Ls, dL,
-                    positions, u, aws, scratch, want_gradient)
-                if !isfinite(ll)
-                    ok = false
-                    break
-                end
-                h += ll
-            end
-        else
-            for child in rule.children[j]
-                r = _continuation_rule_value(o, U, theta, Ls, dL, positions, child,
-                    u, aws, scratch, want_gradient)
-                # A child that cannot be scored fails the block, rather than
-                # silently removing this node's mass.
-                isfinite(r.value) || return (value=NaN, gradient=gacc)
-                h += r.value
-                want_gradient && (gh .+= r.gradient)
-            end
+        for child in rule.children[j]
+            r = _continuation_rule_value(o, U, theta, Ls, dL, positions, child,
+                u, aws, scratch, want_gradient)
+            # A child that cannot be scored fails the block, rather than
+            # silently removing this node's mass.
+            isfinite(r.value) || return (value=NaN, gradient=gacc)
+            h += r.value
+            want_gradient && (gh .+= r.gradient)
         end
-        ok || continue
         t = rule.logweights[j] + h
         if t > peak
             if isfinite(peak)
@@ -807,8 +1261,93 @@ function _continuation_rule_value(o::CTSEMLaplaceContinuation, U::Integer,
     return (value=peak + log(acc) + rule.constant, gradient=gacc)
 end
 
+"""
+    _continuation_leaf_sum(o, U, theta, Ls, dL, positions, rule, u, aws,
+        scratch, want_gradient, range)
+
+A leaf rule's nodes `range`, summed: their largest log term `peak`, the sum
+`acc` of `exp(term - peak)` over them, and with the gradient the same sum of
+each node's score times its weight (`gacc`), unnormalised -- so a rule's nodes
+can be summed in parts on different threads and the parts combined
+(`_continuation_flagged`). `peak` is `-Inf` where no node in the range scores.
+"""
+function _continuation_leaf_sum(o::CTSEMLaplaceContinuation, U::Integer,
+    theta::Vector{Float64}, Ls, dL, positions, rule::CTSEMFixedRule,
+    u::Vector{Float64}, aws, scratch, want_gradient::Bool, range::UnitRange{Int})
+    laplace = o.laplace
+    block = laplace.units.blocks[U][rule.block]
+    columns = (block.offset + 1):(block.offset + block.size)
+    npar = length(theta)
+    peak = -Inf
+    acc = 0.0
+    gacc = want_gradient ? zeros(npar) : Float64[]
+    gh = want_gradient ? zeros(npar) : Float64[]
+    for j in range
+        @inbounds for (t, c) in enumerate(columns); u[c] = rule.points[t, j]; end
+        want_gradient && fill!(gh, 0.0)
+        h = 0.0
+        ok = true
+        for m in block.members
+            ll = _continuation_member!(gh, laplace, U, m, theta, Ls, dL,
+                positions, u, aws, scratch, want_gradient)
+            if !isfinite(ll)
+                ok = false
+                break
+            end
+            h += ll
+        end
+        ok || continue
+        t = rule.logweights[j] + h
+        if t > peak
+            if isfinite(peak)
+                s = exp(peak - t)
+                acc *= s
+                want_gradient && (gacc .*= s)
+            end
+            peak = t
+        end
+        w = exp(t - peak)
+        acc += w
+        want_gradient && (gacc .+= w .* gh)
+    end
+    return (peak=peak, acc=acc, gacc=gacc)
+end
+
+"""
+    _continuation_tasks(o, nslot)
+
+The pieces `_continuation_flagged` hands the pool: each flagged unit whole, as
+`(f, nothing)`, except that where there are fewer flagged units than slots a
+unit whose rule is one leaf of at least 64 nodes -- a wide unit's draws, a
+product rule over several effects -- is split into ranges of its nodes,
+`(f, range)`, at least 32 a range and up to the slots each unit's share
+leaves. Without that a fit whose one flagged unit has 4096 draws evaluated
+them on one thread while the rest of the pool waited.
+"""
+function _continuation_tasks(o::CTSEMLaplaceContinuation, nslot::Integer)
+    nf = length(o.rules)
+    share = nf < nslot ? cld(Int(nslot), nf) : 1
+    tasks = Tuple{Int,Union{Nothing,UnitRange{Int}}}[]
+    for (f, rule) in enumerate(o.rules)
+        root = rule.roots[1]
+        n = size(root.points, 2)
+        if share > 1 && length(rule.roots) == 1 && isempty(root.children) && n >= 64
+            stop = 0
+            for m in _continuation_split(n, min(share, cld(n, 32)))
+                push!(tasks, (f, (stop + 1):(stop + m)))
+                stop += m
+            end
+        else
+            push!(tasks, (f, nothing))
+        end
+    end
+    return tasks
+end
+
 """The flagged units' fixed-rule terms at `theta`, and their summed gradient,
-in parallel over units."""
+in parallel over units and, where there are few of them, over a wide unit's
+nodes (`_continuation_tasks`). Each piece's result is kept by the piece and
+summed in order afterwards."""
 function _continuation_flagged(o::CTSEMLaplaceContinuation, theta::Vector{Float64},
     want_gradient::Bool)
     laplace = o.laplace
@@ -822,52 +1361,86 @@ function _continuation_flagged(o::CTSEMLaplaceContinuation, theta::Vector{Float6
     positions = [_laplace_level_positions(spec, l) for l in eachindex(spec.levels)]
     _laplace_ensure_pool!(laplace)
     _continuation_warm_caches(laplace, o.nodes, o.soft_maxdirs, o.product_maxdim)
-    nslot = _laplace_pool_width()
-    partials = [zeros(npar) for _ in 1:(want_gradient ? nslot : 0)]
-    good = fill(true, nslot)
-    _laplace_parallel(laplace, 1:nf) do f
+    tasks = _continuation_tasks(o, _laplace_pool_width())
+    ntask = length(tasks)
+    peaks = fill(-Inf, ntask)
+    accs = zeros(ntask)
+    grads = [want_gradient ? zeros(npar) : Float64[] for _ in 1:ntask]
+    ok = _laplace_parallel(laplace, 1:ntask) do k
         # `local` throughout: a name assigned here that is also a local of the
         # enclosing function would be one binding shared by every task.
-        local rule, U, aws, scratch, u, total, grad, r, failed
+        local f, range, rule, U, aws, scratch, u, total, r, failed, a
+        f, range = tasks[k]
         rule = o.rules[f]
         U = rule.unit
         aws = _laplace_workspace!(laplace, Float64, npar)
         scratch = _continuation_scratch(laplace, npar)
         u = zeros(laplace.units.dims[U])
-        total = 0.0
-        grad = want_gradient ? zeros(npar) : Float64[]
         failed = false
         try
-            for root in rule.roots
-                r = _continuation_rule_value(o, U, theta, Ls, dL, positions, root,
-                    u, aws, scratch, want_gradient)
-                if !isfinite(r.value)
-                    failed = true
-                    break
+            if range === nothing
+                # The whole unit: its term as a peak with a sum of one, its
+                # gradient already normalised.
+                total = 0.0
+                for root in rule.roots
+                    r = _continuation_rule_value(o, U, theta, Ls, dL, positions,
+                        root, u, aws, scratch, want_gradient)
+                    if !isfinite(r.value)
+                        failed = true
+                        break
+                    end
+                    total += r.value
+                    want_gradient && (grads[k] .+= r.gradient)
                 end
-                total += r.value
-                want_gradient && (grad .+= r.gradient)
+                peaks[k] = total
+                accs[k] = 1.0
+            else
+                a = _continuation_leaf_sum(o, U, theta, Ls, dL, positions,
+                    rule.roots[1], u, aws, scratch, want_gradient, range)
+                peaks[k] = a.peak
+                accs[k] = a.acc
+                want_gradient && (grads[k] .= a.gacc)
             end
         catch err
             _ctsem_must_propagate(err) && rethrow()
             failed = true
         end
-        if failed || (want_gradient && !all(isfinite, grad))
-            good[_laplace_slot()] = false
-            return false
-        end
-        values[f] = total
-        want_gradient && (partials[_laplace_slot()] .+= _laplace_unit_weight(laplace, U) .* grad)
-        return true
+        return !failed
     end
-    ok = all(good)
     gradient = zeros(npar)
-    if want_gradient && ok
-        for p in partials
-            gradient .+= p
+    ok || return (values=values, gradient=gradient, ok=false)
+    g = want_gradient ? zeros(npar) : Float64[]
+    at = 1
+    while at <= ntask
+        f = tasks[at][1]
+        last = at
+        while last < ntask && tasks[last + 1][1] == f
+            last += 1
         end
+        rule = o.rules[f]
+        if tasks[at][2] === nothing
+            values[f] = peaks[at]
+            want_gradient && (g .= grads[at])
+        else
+            P = maximum(@view peaks[at:last])
+            isfinite(P) || return (values=values, gradient=gradient, ok=false)
+            A = 0.0
+            want_gradient && fill!(g, 0.0)
+            for q in at:last
+                e = exp(peaks[q] - P)
+                A += accs[q] * e
+                want_gradient && (g .+= e .* grads[q])
+            end
+            values[f] = P + log(A) + rule.roots[1].constant
+            want_gradient && (g ./= A)
+        end
+        if want_gradient
+            all(isfinite, g) || return (values=values, gradient=gradient, ok=false)
+            gradient .+= _laplace_unit_weight(laplace, rule.unit) .* g
+        end
+        at = last + 1
     end
-    return (values=values, gradient=gradient, ok=ok)
+    return (values=values, gradient=gradient, ok=true)
 end
 
 """
@@ -883,17 +1456,20 @@ route. `unit_loglik` is every unit's term in the fit's unit order, and
 """
 function ctsem_laplace_continuation_evaluate(o::CTSEMLaplaceContinuation,
     values::AbstractVector; gradient::Bool=true)
-    theta = collect(Float64, values)
+    # Over the extended vector (`_laplace_extend`), the gradient returned at
+    # the caller's length.
+    n = length(values)
+    theta = _laplace_extend(o.laplace, collect(Float64, values))
     for hit in (o.cache, o.value_cache)
         if hit !== nothing && hit.theta == theta &&
                 (!gradient || hit.result.gradient !== nothing)
-            return _continuation_copy(hit.result)
+            return _laplace_free_result(_continuation_copy(hit.result), n)
         end
     end
     result = _continuation_evaluate(o, theta, gradient)
     entry = (theta=theta, result=_continuation_copy(result))
     gradient ? (o.cache = entry) : (o.value_cache = entry)
-    return result
+    return _laplace_free_result(result, n)
 end
 
 # Copies of the vectors, so that neither a caller nor the cache can change
@@ -947,6 +1523,14 @@ function ctsem_evaluate(o::CTSEMLaplaceContinuation, values::AbstractVector;
 end
 
 _ctsem_optimise_label(::CTSEMLaplaceContinuation) = "Laplace continuation"
+# The finish walks the hybrid on its own Hessian, as it walks the Laplace
+# objective, where the optimiser takes the hybrid whole (a fit rescued from a
+# jump, `.ctLaplaceFrozenRounds()`): chord, at the cost of the Laplace part's
+# differences.
+_ctsem_finish_curvature(::CTSEMLaplaceContinuation) = :chord
+_ctsem_hessian_cost(::CTSEMLaplaceContinuation, npar::Integer) = 2 * Int(npar)
+ctsem_hessian(o::CTSEMLaplaceContinuation, values::AbstractVector;
+    chunk::Integer=0, progress=nothing) = ctsem_laplace_continuation_hessian(o, values)
 _ctsem_params(o::CTSEMLaplaceContinuation) = _ctsem_params(o.laplace)
 _ctsem_saturated_for(o::CTSEMLaplaceContinuation, minimizer) =
     _laplace_saturated_parameters(o.laplace, minimizer)
@@ -1135,7 +1719,9 @@ function ctsem_laplace_continuation_hessian(o::CTSEMLaplaceContinuation,
     scheme = scheme isa Symbol ? scheme : Symbol(scheme)
     scheme in (:exact, :forward, :central) || throw(ArgumentError(
         "scheme must be :exact, :forward or :central, got " * repr(scheme)))
-    x = collect(Float64, values)
+    # Over the extended vector (`_laplace_extend`), returned at the caller's.
+    nin = length(values)
+    x = _laplace_extend(o.laplace, collect(Float64, values))
     started = time_ns()
     H = scheme === :exact ? _continuation_exact_hessian(o, x; step=step, width=width) :
         nothing
@@ -1145,7 +1731,7 @@ function ctsem_laplace_continuation_hessian(o::CTSEMLaplaceContinuation,
             scheme === :exact ? :forward : scheme)
     end
     o.seconds_hessian += (time_ns() - started) / 1e9
-    return H
+    return size(H, 1) == nin ? H : H[1:nin, 1:nin]
 end
 
 """The `:forward` and `:central` schemes of `ctsem_laplace_continuation_hessian`."""
@@ -1767,7 +2353,9 @@ nothing is flagged, and `nflagged` says so.
 function ctsem_laplace_continuation_info(o::CTSEMLaplaceContinuation)
     nunits = length(o.laplace.units.members)
     gaps = o.centre_quadrature .- o.centre_laplace
-    finite = [isfinite(g) ? abs(g) : 0.0 for g in gaps]
+    # The screen reads the gaps it can resolve (`_continuation_resolved`); the
+    # signed `gap` reported is the raw difference.
+    finite = [isfinite(g) ? abs(g) : 0.0 for g in _continuation_resolved(gaps, o.centre_se)]
     flaggedgaps = [finite[U] for U in o.flagged]
     prior = _ctsem_log_prior(o.laplace.objective, o.centre)
     quadrature_units = [isfinite(o.centre_quadrature[U]) ? o.centre_quadrature[U] :
@@ -1792,6 +2380,11 @@ function ctsem_laplace_continuation_info(o::CTSEMLaplaceContinuation)
         laplace=sum(o.centre_laplace) + prior,
         rule_failures=count(o.rule_failed), soft_blocks=softblocks,
         nwide=count(o.wide), maxdim=o.maxdim,
+        importance=[o.importance[U] for U in 1:nunits], nimportance=count(o.importance),
+        centre_se=copy(o.centre_se),
+        importance_draws=sum(size(r.roots[1].points, 2) for r in o.rules
+            if o.importance[r.unit]; init=0),
+        draws=o.draws, draws_se=o.draws_se,
         evaluations_per_value=sum(r.evaluations for r in o.rules; init=0),
         value_calls=o.value_calls, gradient_calls=o.gradient_calls,
         member_values=o.member_values, member_sweeps=o.member_sweeps,
@@ -1801,4 +2394,131 @@ function ctsem_laplace_continuation_info(o::CTSEMLaplaceContinuation)
         nodes=o.nodes,
         product_maxdim=o.product_maxdim, soft_tau=o.soft_tau,
         soft_maxdirs=o.soft_maxdirs, tolerance=o.tolerance)
+end
+
+"""
+    _ctsem_jump_units(objective, jump)
+
+The units whose terms jumped along the step the line search saw jump
+(`CTSEMJump`), with their changes and where each one's inner solve stopped
+either side, as `(units, changes, point_units, point_values)`; `nothing` on a
+route with no units to name. On the Laplace route each unit's term is taken at
+`x`, `x + alpha_lo s` and `x + alpha_hi s`: a unit whose change over the short
+step keeps a quarter of its change over the long one, a hundred times longer,
+and carries a tenth of the jump, moved with where its inner solve stopped
+rather than with the parameters (`CT-SEM/review/LAPLACE-shoulders-frozen-draws-2026-10-21.md`).
+Its modes at the three points are what a frozen importance rule for it starts
+from (`ctsem_laplace_continuation`'s `point_units`): at one point the solve
+returns one of them, and the rule needs both sides.
+"""
+_ctsem_jump_units(::Any, jump) = nothing
+_ctsem_jump_capable(::Union{CTSEMLaplaceObjective,CTSEMLaplaceContinuation}) = true
+
+function _ctsem_jump_units(laplace::CTSEMLaplaceObjective, jump::CTSEMJump)
+    return _laplace_jump_units(laplace, collect(1:length(laplace.units.members)),
+        jump)
+end
+
+# On the hybrid only its Laplace units can jump; the flagged ones are frozen
+# rules, smooth by construction. Named in the full objective's numbering.
+_ctsem_jump_units(o::CTSEMLaplaceContinuation, jump::CTSEMJump) =
+    _laplace_jump_units(o.rest, o.rest_units, jump)
+
+function _laplace_jump_units(laplace::CTSEMLaplaceObjective, numbering::Vector{Int},
+    jump::CTSEMJump)
+    thetas = [jump.x, jump.x .+ jump.alpha_lo .* jump.s,
+        jump.x .+ jump.alpha_hi .* jump.s]
+    terms = Vector{Vector{Float64}}()
+    modes = Vector{Vector{Vector{Float64}}}()
+    for th in thetas
+        r = ctsem_laplace_evaluate(laplace, th; gradient=false)
+        push!(terms, copy(r.unit_loglik))
+        push!(modes, [copy(m) for m in laplace.modes])
+    end
+    nunits = length(numbering)
+    units = Int[]
+    changes = Float64[]
+    point_units = Int[]
+    columns = Vector{Vector{Float64}}()
+    for p in 1:nunits
+        w = _laplace_unit_weight(laplace, p)
+        lo = w * (terms[2][p] - terms[1][p])
+        hi = w * (terms[3][p] - terms[1][p])
+        (isfinite(lo) && isfinite(hi)) || continue
+        abs(lo) >= jump.excess / 10 || continue
+        abs(lo) >= abs(hi) / 4 || continue
+        push!(units, numbering[p])
+        push!(changes, lo)
+        for k in 1:3
+            if !any(c -> c == modes[k][p], (columns[j] for j in eachindex(columns)
+                    if point_units[j] == numbering[p]))
+                push!(point_units, numbering[p])
+                push!(columns, modes[k][p])
+            end
+        end
+    end
+    width = maximum(length, columns; init=1)
+    values = zeros(width, max(length(columns), 1))
+    for (j, c) in enumerate(columns)
+        values[1:length(c), j] = c
+    end
+    return (units=units, changes=changes,
+        point_units=isempty(point_units) ? [0] : point_units, point_values=values)
+end
+
+"""
+    ctsem_laplace_continuation_se(o, values)
+
+Each flagged unit's importance rule's standard error at `values`, its draws
+held where they were placed: `sqrt(1/ESS - 1/n)` from the weights there, `0`
+for a unit on a product rule. The draws are the proposal's of the point they
+were placed at, and as the parameters move away from it their weights spread;
+a fit rescued from a jump places them again only once this has drifted past
+what they were placed to (`.ctLaplaceFrozenRescue()`). In the order of
+`ctsem_laplace_continuation_info`'s `flagged`; `[0.0]` when none is flagged.
+"""
+function ctsem_laplace_continuation_se(o::CTSEMLaplaceContinuation,
+    values::AbstractVector)
+    nf = length(o.rules)
+    nf == 0 && return [0.0]
+    theta = _laplace_extend(o.laplace, collect(Float64, values))
+    laplace = o.laplace
+    spec = laplace.spec
+    Ls = _laplace_popchols(theta, spec)
+    positions = [_laplace_level_positions(spec, l) for l in eachindex(spec.levels)]
+    npar = length(theta)
+    out = zeros(nf)
+    _laplace_ensure_pool!(laplace)
+    _laplace_parallel(laplace, 1:nf) do f
+        local rule, U, root, block, columns, aws, scratch, u, n, terms, peak, w
+        rule = o.rules[f]
+        U = rule.unit
+        o.importance[U] || return true
+        root = rule.roots[1]
+        block = laplace.units.blocks[U][root.block]
+        columns = (block.offset + 1):(block.offset + block.size)
+        aws = _laplace_workspace!(laplace, Float64, npar)
+        scratch = _continuation_scratch(laplace, npar)
+        u = zeros(laplace.units.dims[U])
+        n = size(root.points, 2)
+        terms = fill(-Inf, n)
+        for j in 1:n
+            @inbounds for (t, c) in enumerate(columns); u[c] = root.points[t, j]; end
+            h = 0.0
+            for m in block.members
+                h += _continuation_member!(Float64[], laplace, U, m, theta, Ls,
+                    nothing, positions, u, aws, scratch, false)
+            end
+            isfinite(h) && (terms[j] = root.logweights[j] + h)
+        end
+        peak = maximum(terms)
+        if !isfinite(peak)
+            out[f] = Inf
+            return true
+        end
+        w = exp.(terms .- peak)
+        out[f] = sqrt(max(sum(abs2, w) / sum(w)^2 - 1 / n, 0.0))
+        return true
+    end
+    return out
 end

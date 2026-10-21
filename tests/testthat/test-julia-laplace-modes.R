@@ -210,3 +210,46 @@ test_that("a better mode past the origin is found where the found one is pinned"
     scan[, "best"] > scan[, "term_origin"] + 0.5
   expect_true(any(pinned))
 })
+
+# Where every unit's inner problem is a concave quadratic -- Gaussian
+# indicators, a linear model, effects only in mean vectors -- there is one
+# maximum, and the probes are skipped (`.ctJuliaLaplaceQuadratic()`). The
+# claim to hold is that nothing else changes: the same values and gradients as
+# with the probes running. The sign fixture above is the other side: its
+# effect is a loading, which is why it has two maxima, and it keeps them.
+test_that("a model of concave units goes unprobed and evaluates as when probed", {
+  skip_without_julia()
+  data <- .modes_sign_data()
+  model <- suppressWarnings(suppressMessages(ctModel(type = "ct", id = "id",
+    manifestNames = "Y1", latentNames = "eta1", LAMBDA = matrix(1),
+    DRIFT = matrix("drift"), DIFFUSION = matrix("diff"), MANIFESTVAR = matrix("mvar"),
+    MANIFESTMEANS = matrix("mm"), T0MEANS = matrix("t0m"), T0VAR = matrix(1),
+    CINT = matrix(0))))
+  model$pars$indvarying <- model$pars$param %in% c("mm", "t0m")
+  spec <- suppressMessages(ctFit(data, model, backend = "julia",
+    intoverpop = "laplace", fit = FALSE))
+  expect_true(isTRUE(spec$laplace$quadratic))
+  signed <- suppressMessages(ctFit(data, .modes_sign_model(), backend = "julia",
+    intoverpop = "laplace", fit = FALSE))
+  expect_false(isTRUE(signed$laplace$quadratic))
+
+  probed <- spec
+  probed$laplace$quadratic <- FALSE
+  handles <- lapply(list(spec, probed), function(s)
+    structure(s, class = c("ctJuliaModel", "ctFitModel")))
+  # The engine holds what it was sent: a flag it ignored would pass the
+  # comparison below for the wrong reason.
+  field <- ctsem:::.ctJuliaEval("o -> o.quadratic")
+  expect_identical(vapply(handles, function(h)
+    isTRUE(field(ctsem:::.ctJuliaObjective(h, hybrid = TRUE))), logical(1)),
+    c(TRUE, FALSE))
+  set.seed(9)
+  npar <- ctsem:::.ctBackendNpar(spec)
+  for (i in 1:3) {
+    x <- stats::rnorm(npar, 0, 0.5)
+    a <- ctJuliaEvaluate(handles[[1]], x, gradient = TRUE, cores = 1L)
+    b <- ctJuliaEvaluate(handles[[2]], x, gradient = TRUE, cores = 1L)
+    expect_equal(a$value, b$value, tolerance = 1e-12)
+    expect_equal(a$gradient, b$gradient, tolerance = 1e-10)
+  }
+})

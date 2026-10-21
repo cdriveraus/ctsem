@@ -1,0 +1,195 @@
+<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml" lang="en" xml:lang="en"><head>
+
+<meta charset="utf-8">
+<meta name="generator" content="quarto-1.10.18">
+
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes">
+
+
+<title>Sampling weights</title>
+<style>
+
+span.smallcaps{font-variant: small-caps;}
+div.columns{display: flex; gap: 1.5em;}
+div.column{flex: auto;}
+@media screen {
+div.columns{gap: min(4vw, 1.5em);}
+div.column{overflow-x: auto;}
+}
+div.hanging-indent{margin-left: 1.5em; text-indent: -1.5em;}
+ul.task-list{list-style: none;}
+ul.task-list li input[type="checkbox"] {
+width: 0.8em;
+margin: 0 0.8em 0.2em -1em;  vertical-align: middle;
+}
+
+html { -webkit-text-size-adjust: 100%; }
+pre > code.sourceCode { white-space: pre; position: relative; }
+pre > code.sourceCode > span { display: inline-block; line-height: 1.25; }
+pre > code.sourceCode > span:empty { height: 1.2em; }
+.sourceCode { overflow: visible; }
+code.sourceCode > span { color: inherit; text-decoration: inherit; }
+div.sourceCode { margin: 1em 0; }
+pre.sourceCode { margin: 0; }
+@media screen {
+div.sourceCode { overflow: auto; }
+}
+@media print {
+pre > code.sourceCode { white-space: pre-wrap; }
+pre > code.sourceCode > span { text-indent: -5em; padding-left: 5em; }
+}
+pre.numberSource code
+{ counter-reset: source-line 0; }
+pre.numberSource code > span
+{ position: relative; left: -4em; counter-increment: source-line; }
+pre.numberSource code > span > a:first-child::before
+{ content: counter(source-line);
+position: relative; left: -1em; text-align: right; vertical-align: baseline;
+border: none; display: inline-block;
+-webkit-touch-callout: none; -webkit-user-select: none;
+-khtml-user-select: none; -moz-user-select: none;
+-ms-user-select: none; user-select: none;
+padding: 0 4px; width: 4em;
+}
+pre.numberSource { margin-left: 3em; padding-left: 4px; }
+div.sourceCode
+{ }
+@media screen {
+pre > code.sourceCode > span > a:first-child::before { text-decoration: underline; }
+}
+</style>
+
+
+
+
+<style type="text/css">
+body {
+max-width: 50rem;
+margin: 2rem auto;
+padding: 0 1rem;
+font-family: system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+font-size: 16px;
+line-height: 1.55;
+color: #1f2328;
+background: #ffffff;
+}
+h1, h2, h3, h4 { line-height: 1.25; margin: 1.8em 0 0.6em; }
+h1.title { margin-top: 0.4em; }
+a { color: #0969da; }
+pre, code {
+font-family: ui-monospace, "Cascadia Mono", Consolas, "Liberation Mono", monospace;
+font-size: 0.87em;
+}
+pre {
+background: #f6f8fa;
+padding: 0.75em 1em;
+overflow-x: auto;
+border-radius: 4px;
+line-height: 1.4;
+}
+code { background: #f6f8fa; padding: 0.1em 0.3em; border-radius: 3px; }
+pre code { background: none; padding: 0; }
+details > summary { cursor: pointer; color: #57606a; margin: 0.5em 0; }
+img { max-width: 100%; height: auto; }
+figure { margin: 1.2em 0; }
+figcaption { color: #57606a; font-size: 0.9em; }
+table { border-collapse: collapse; margin: 1em 0; font-size: 0.93em; }
+th, td { border-bottom: 1px solid #d0d7de; padding: 0.3em 0.7em; text-align: left; }
+th { border-bottom-width: 2px; }
+blockquote { border-left: 3px solid #d0d7de; margin: 1em 0; padding-left: 1em; color: #57606a; }
+math[display="block"] { margin: 1em 0; overflow-x: auto; }
+nav#TOC, #TOC { border-left: 3px solid #d0d7de; padding-left: 1em; margin: 1.5em 0; }
+#TOC ul { list-style: none; padding-left: 1em; margin: 0.2em 0; }
+#TOC > ul { padding-left: 0; }
+.callout, .callout-note {
+border-left: 4px solid #0969da;
+background: #f6f8fa;
+padding: 0.6em 1em;
+margin: 1.2em 0;
+border-radius: 0 4px 4px 0;
+}
+</style>
+</head>
+
+<body>
+
+
+<header id="title-block-header">
+<h1 class="title">Sampling weights</h1>
+
+</header>
+
+<nav id="TOC" role="doc-toc">
+    <h2 id="toc-title">Table of contents</h2>
+   
+  <ul>
+  <li><a href="#an-over-sampled-group" id="toc-an-over-sampled-group">An over-sampled group</a></li>
+  <li><a href="#how-it-works" id="toc-how-it-works">How it works</a></li>
+  </ul>
+</nav>
+<p>A sample rarely mirrors its population. A study may recruit a clinical group on purpose, or some kinds of people may be more likely to take part. Estimates then describe the sample rather than the population. Sampling weights correct this: each person counts in proportion to how many people like them there are in the population, relative to how many are in the sample.</p>
+<p><code>ctFit(weights = )</code> does this for the julia backend.</p>
+<h2 id="an-over-sampled-group">An over-sampled group</h2>
+<p>A mood study recruits as many people with a depression diagnosis as without, although only 15% of the population has one. Mood regulates towards each person’s own baseline, and baselines are lower with a diagnosis: -1 on average against 0.5. So the average baseline is 0.275 in the population, but -0.25 in the sample.</p>
+<p>The generating model says the structure: the baseline <code>mm</code> varies between people with sd 0.5 and is 1.5 lower with a diagnosis (<code>&quot;mm|param|TRUE|0.5|depressed=-1.5&quot;</code>: identity transform, individually varying, sd 0.5, effect of <code>depressed</code>). <code>datastruct</code> says who is observed when, and <code>values</code> gives the baseline without a diagnosis:</p>
+<div class="cell">
+<div class="sourceCode cell-code" id="cb1"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb1-1"><a href="#cb1-1" aria-hidden="true" tabindex="-1"></a><span class="fu">library</span>(ctsem)</span>
+<span id="cb1-2"><a href="#cb1-2" aria-hidden="true" tabindex="-1"></a><span class="fu">set.seed</span>(<span class="dv">1</span>)</span>
+<span id="cb1-3"><a href="#cb1-3" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-4"><a href="#cb1-4" aria-hidden="true" tabindex="-1"></a>gen <span class="ot">&lt;-</span> <span class="fu">ctModel</span>(<span class="at">type =</span> <span class="st">&quot;ct&quot;</span>, <span class="at">manifestNames =</span> <span class="st">&quot;mood&quot;</span>, <span class="at">latentNames =</span> <span class="st">&quot;eta&quot;</span>,</span>
+<span id="cb1-5"><a href="#cb1-5" aria-hidden="true" tabindex="-1"></a>  <span class="at">LAMBDA =</span> <span class="fu">matrix</span>(<span class="dv">1</span>), <span class="at">DRIFT =</span> <span class="fu">matrix</span>(<span class="sc">-</span><span class="fl">0.5</span>), <span class="at">DIFFUSION =</span> <span class="fu">matrix</span>(<span class="fl">0.8</span>),</span>
+<span id="cb1-6"><a href="#cb1-6" aria-hidden="true" tabindex="-1"></a>  <span class="at">T0MEANS =</span> <span class="fu">matrix</span>(<span class="dv">0</span>), <span class="at">T0VAR =</span> <span class="fu">matrix</span>(<span class="dv">1</span>), <span class="at">CINT =</span> <span class="fu">matrix</span>(<span class="dv">0</span>),</span>
+<span id="cb1-7"><a href="#cb1-7" aria-hidden="true" tabindex="-1"></a>  <span class="at">MANIFESTMEANS =</span> <span class="fu">matrix</span>(<span class="st">&quot;mm|param|TRUE|0.5|depressed=-1.5&quot;</span>),</span>
+<span id="cb1-8"><a href="#cb1-8" aria-hidden="true" tabindex="-1"></a>  <span class="at">MANIFESTVAR =</span> <span class="fu">matrix</span>(<span class="fl">0.5</span>), <span class="at">TIpredNames =</span> <span class="st">&quot;depressed&quot;</span>, <span class="at">silent =</span> <span class="cn">TRUE</span>)</span>
+<span id="cb1-9"><a href="#cb1-9" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-10"><a href="#cb1-10" aria-hidden="true" tabindex="-1"></a>design <span class="ot">&lt;-</span> <span class="fu">data.frame</span>(<span class="at">id =</span> <span class="fu">rep</span>(<span class="dv">1</span><span class="sc">:</span><span class="dv">200</span>, <span class="at">each =</span> <span class="dv">10</span>), <span class="at">time =</span> <span class="fu">rep</span>(<span class="dv">0</span><span class="sc">:</span><span class="dv">9</span>, <span class="dv">200</span>),</span>
+<span id="cb1-11"><a href="#cb1-11" aria-hidden="true" tabindex="-1"></a>  <span class="at">depressed =</span> <span class="fu">rep</span>(<span class="dv">1</span><span class="sc">:</span><span class="dv">0</span>, <span class="at">each =</span> <span class="dv">1000</span>))</span>
+<span id="cb1-12"><a href="#cb1-12" aria-hidden="true" tabindex="-1"></a>dat <span class="ot">&lt;-</span> <span class="fu">ctGenerate</span>(gen, <span class="at">datastruct =</span> design, <span class="at">values =</span> <span class="fu">c</span>(<span class="at">mm =</span> <span class="fl">0.5</span>))</span></code></pre></div>
+</div>
+<p>The weight is each group’s share of the population divided by its share of the sample:</p>
+<div class="cell">
+<div class="sourceCode cell-code" id="cb2"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb2-1"><a href="#cb2-1" aria-hidden="true" tabindex="-1"></a>dat<span class="sc">$</span>w <span class="ot">&lt;-</span> <span class="fu">ifelse</span>(dat<span class="sc">$</span>depressed <span class="sc">==</span> <span class="dv">1</span>, <span class="fl">0.15</span> <span class="sc">/</span> <span class="fl">0.5</span>, <span class="fl">0.85</span> <span class="sc">/</span> <span class="fl">0.5</span>)</span></code></pre></div>
+</div>
+<p>Fit the same model with and without the weights. By default each person’s baseline (<code>mm_mood</code>) varies around a population mean:</p>
+<div class="cell">
+<div class="sourceCode cell-code" id="cb3"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb3-1"><a href="#cb3-1" aria-hidden="true" tabindex="-1"></a>model <span class="ot">&lt;-</span> <span class="fu">ctModel</span>(<span class="at">type =</span> <span class="st">&quot;ct&quot;</span>, <span class="at">manifestNames =</span> <span class="st">&quot;mood&quot;</span>, <span class="at">latentNames =</span> <span class="st">&quot;eta&quot;</span>,</span>
+<span id="cb3-2"><a href="#cb3-2" aria-hidden="true" tabindex="-1"></a>  <span class="at">LAMBDA =</span> <span class="fu">matrix</span>(<span class="dv">1</span>), <span class="at">silent =</span> <span class="cn">TRUE</span>)</span>
+<span id="cb3-3"><a href="#cb3-3" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb3-4"><a href="#cb3-4" aria-hidden="true" tabindex="-1"></a>unweighted <span class="ot">&lt;-</span> <span class="fu">ctFit</span>(dat, model, <span class="at">backend =</span> <span class="st">&quot;julia&quot;</span>)</span>
+<span id="cb3-5"><a href="#cb3-5" aria-hidden="true" tabindex="-1"></a>weighted <span class="ot">&lt;-</span> <span class="fu">ctFit</span>(dat, model, <span class="at">backend =</span> <span class="st">&quot;julia&quot;</span>, <span class="at">weights =</span> <span class="st">&quot;w&quot;</span>)</span>
+<span id="cb3-6"><a href="#cb3-6" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb3-7"><a href="#cb3-7" aria-hidden="true" tabindex="-1"></a><span class="fu">rbind</span>(<span class="at">unweighted =</span> <span class="fu">summary</span>(unweighted)<span class="sc">$</span>popmeans[<span class="st">&quot;mm_mood&quot;</span>, <span class="dv">1</span><span class="sc">:</span><span class="dv">2</span>],</span>
+<span id="cb3-8"><a href="#cb3-8" aria-hidden="true" tabindex="-1"></a>  <span class="at">weighted =</span> <span class="fu">summary</span>(weighted)<span class="sc">$</span>popmeans[<span class="st">&quot;mm_mood&quot;</span>, <span class="dv">1</span><span class="sc">:</span><span class="dv">2</span>])</span>
+<span id="cb3-9"><a href="#cb3-9" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;              mean    sd</span></span>
+<span id="cb3-10"><a href="#cb3-10" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; unweighted -0.257 0.074</span></span>
+<span id="cb3-11"><a href="#cb3-11" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; weighted    0.274 0.077</span></span></code></pre></div>
+</div>
+<p>The unweighted fit estimates the sample’s average baseline, the weighted fit the population’s.</p>
+<h2 id="how-it-works">How it works</h2>
+<ul>
+<li><strong>One weight per person.</strong> <code>weights</code> is a column of the data that is constant within each person, or a vector with one value per person. Only relative weights matter: they are rescaled to a mean of 1.</li>
+<li><strong>It weights each person’s likelihood.</strong> Each person’s log likelihood, with their random effects integrated out, is multiplied by their weight, and the fit maximises the sum. A weight of 2 counts a person as twice as many people like them. The same applies on every julia route, so it works with any model the julia backend fits.</li>
+<li><strong>Standard errors come from the sandwich.</strong> Weighting adds no information: a person with weight 2 is one person, not two. The curvature of the weighted likelihood would treat them as two, and so understate the uncertainty whenever weights are unequal. A weighted fit therefore uses robust (sandwich) standard errors, built from the spread of the people’s weighted contributions.</li>
+<li><strong>What is reported.</strong> The summary shows the weights and the weighted log likelihood, which is the value maximised:</li>
+</ul>
+<div class="cell">
+<div class="sourceCode cell-code" id="cb4"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb4-1"><a href="#cb4-1" aria-hidden="true" tabindex="-1"></a>s <span class="ot">&lt;-</span> <span class="fu">summary</span>(weighted)</span>
+<span id="cb4-2"><a href="#cb4-2" aria-hidden="true" tabindex="-1"></a>s[<span class="fu">c</span>(<span class="st">&quot;loglik&quot;</span>, <span class="st">&quot;weights&quot;</span>, <span class="st">&quot;loglik_weighted&quot;</span>)]</span>
+<span id="cb4-3"><a href="#cb4-3" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; $loglik</span></span>
+<span id="cb4-4"><a href="#cb4-4" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; [1] -2807.6</span></span>
+<span id="cb4-5"><a href="#cb4-5" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; </span></span>
+<span id="cb4-6"><a href="#cb4-6" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; $weights</span></span>
+<span id="cb4-7"><a href="#cb4-7" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; [1] &quot;200 subjects, relative weights 0.3 to 1.7 (mean 1)&quot;</span></span>
+<span id="cb4-8"><a href="#cb4-8" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; </span></span>
+<span id="cb4-9"><a href="#cb4-9" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; $loglik_weighted</span></span>
+<span id="cb4-10"><a href="#cb4-10" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; [1] -2727.892</span></span></code></pre></div>
+</div>
+<p>A weighted fit maximises a pseudo-likelihood, so likelihood comparisons do not apply: there is no AIC, and <code>logLik()</code> and <code>AIC()</code> refuse. Leave-one-out cross-validation, score tests, adequacy checks and sampling (<code>optimize = FALSE</code>) refuse weights too, and so does the stan backend.</p>
+<p>These are sampling weights. If each row instead stands for several identical, independent people (frequency weights), the right analysis is the data with those rows repeated, not this one.</p>
+
+
+
+
+
+</body></html>

@@ -156,8 +156,11 @@ ctStanParnames <- ctRawParnames
 #'(and hence needs to be printed if intended to display within a loop).
 #'This can be modified by the various ggplot2 functions, or displayed using print(x).
 #'@return With \code{plot = FALSE}, an array of the discrete time
-#'coefficients, by sample, subject, time interval, row and column; with
-#'\code{plot = TRUE}, a ggplot object.
+#'coefficients, by sample, subject, time interval, row and column, of class
+#'\code{ctDiscretePars}: \code{summary()} gives each curve's peak, the lag of
+#'the peak, the lag at which it has fallen to half the peak (a half-life), and
+#'the area under it, with their uncertainty (\code{\link{summary.ctDiscretePars}}).
+#'With \code{plot = TRUE}, a ggplot object.
 #'@aliases ctStanDiscretePars
 #'@export
 ctDiscretePars<-function(fit, subjects='popmean',
@@ -210,6 +213,7 @@ ctDiscretePars<-function(fit, subjects='popmean',
     attributes(out)$standardise <- standardise
     attributes(out)$method <- 'simulate'
     out <- .ctContextAttach(out, fit)
+    class(out) <- c('ctDiscretePars', 'array')
     if(plot) out <- ctDiscreteParsPlot(out, ...)
     return(out)
   }
@@ -317,6 +321,7 @@ ctDiscretePars<-function(fit, subjects='popmean',
   attributes(out)$cov <- cov
   attributes(out)$standardise <- standardise
   attributes(out)$method <- 'linearise'
+  class(out) <- c('ctDiscretePars', 'array')
   attributes(out)$stateLabel <- stateLabel
   out <- .ctContextAttach(out, fit)
 
@@ -333,6 +338,98 @@ ctDiscretePars<-function(fit, subjects='popmean',
 ctStanDiscretePars <- ctDiscretePars
 
 
+
+#' Summarise discrete time effect curves
+#'
+#' For each curve \code{\link{ctDiscretePars}} returned -- one per subject and
+#' pair of processes -- the quantities read off it, per draw, and their
+#' distribution over draws.
+#'
+#' @param object Output of \code{\link{ctDiscretePars}} with \code{plot = FALSE}.
+#' @param probs Quantiles of each quantity over draws.
+#' @param ... Not used.
+#' @return A data frame, one row per subject, pair of processes (\code{row} the
+#'   one affected, \code{col} the one acting) and quantity, with the mean, sd
+#'   and quantiles over draws. The quantities:
+#'   \describe{
+#'     \item{\code{peak}}{The value of largest magnitude, with its sign.}
+#'     \item{\code{peaktime}}{The lag at which it occurs.}
+#'     \item{\code{halftime}}{The first lag after the peak at which the curve's
+#'       magnitude has fallen to half the peak's, interpolated between lags.
+#'       For an autoregression, which peaks at lag zero, its half-life: with
+#'       \code{impulseType = 'observed', standardise = TRUE}, that of the
+#'       autocorrelation. \code{NA} for a draw whose curve does not fall that
+#'       far within the lags computed; \code{beyond} is the share of such
+#'       draws, and the summary is over the others.}
+#'     \item{\code{area}}{The area under the curve over the lags computed: for
+#'       a unit impulse over long enough lags, the cumulative effect.}
+#'   }
+#'   The lags are those \code{ctDiscretePars} was given, so their spacing
+#'   bounds the precision of \code{peaktime} and \code{halftime}, and their
+#'   range what \code{halftime} and \code{area} can see.
+#' @examples
+#' dp <- ctDiscretePars(ctstantestfit, times = seq(0, 5, .1), nsamples = 20)
+#' summary(dp)
+#' @export
+summary.ctDiscretePars <- function(object, probs = c(.025, .5, .975), ...) {
+  times <- as.numeric(dimnames(object)[[3L]])
+  dims <- dim(object)
+  names <- dimnames(object)
+  rows <- list()
+  for (i in seq_len(dims[2L])) for (r in seq_len(dims[4L])) for (c in seq_len(dims[5L])) {
+    V <- matrix(unclass(object)[, i, , r, c], nrow = dims[1L])
+    quantities <- .ctCurveQuantities(V, times)
+    for (q in names(quantities)) {
+      v <- quantities[[q]]
+      ok <- is.finite(v)
+      summarised <- if (any(ok)) c(mean(v[ok]), if (sum(ok) > 1L) stats::sd(v[ok]) else
+        NA_real_, stats::quantile(v[ok], probs, names = FALSE)) else
+        rep(NA_real_, 2L + length(probs))
+      rows[[length(rows) + 1L]] <- data.frame(Subject = names[[2L]][i],
+        row = names[[4L]][r], col = names[[5L]][c], quantity = q,
+        t(summarised), beyond = if (q == "halftime") mean(!ok) else NA_real_,
+        stringsAsFactors = FALSE)
+    }
+  }
+  out <- do.call(rbind, rows)
+  colnames(out)[5L:(6L + length(probs))] <- c("mean", "sd",
+    paste0(100 * probs, "%"))
+  rownames(out) <- NULL
+  out
+}
+
+# Each draw's peak, its lag, the lag the curve falls to half the peak after
+# it, and the area under it: one curve per row of `V`, over `times`.
+.ctCurveQuantities <- function(V, times) {
+  A <- abs(V)
+  peakcol <- max.col(A, ties.method = "first")
+  index <- cbind(seq_len(nrow(V)), peakcol)
+  peak <- V[index]
+  half <- abs(peak) / 2
+  after <- A <= half & col(A) > peakcol
+  first <- max.col(after, ties.method = "first")
+  reached <- rowSums(after) > 0 & abs(peak) > 0
+  halftime <- rep(NA_real_, nrow(V))
+  for (s in which(reached)) {
+    j <- first[s]
+    a0 <- A[s, j - 1L]
+    a1 <- A[s, j]
+    halftime[s] <- times[j - 1L] + (a0 - half[s]) / (a0 - a1) *
+      (times[j] - times[j - 1L])
+  }
+  steps <- diff(times)
+  area <- if (length(times) > 1L) as.numeric(((V[, -1L, drop = FALSE] +
+    V[, -ncol(V), drop = FALSE]) / 2) %*% steps) else rep(0, nrow(V))
+  list(peak = peak, peaktime = times[peakcol], halftime = halftime, area = area)
+}
+
+#' @export
+print.ctDiscretePars <- function(x, ...) {
+  y <- x
+  class(y) <- NULL
+  print(y, ...)
+  invisible(x)
+}
 
 ctDiscreteParsDrift<-function(ctpars,times, impulseType,  standardise,cov=FALSE,
   types='dtDRIFT',discreteInput=FALSE, quiet=FALSE){

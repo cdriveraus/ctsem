@@ -118,7 +118,7 @@ test_that("unsupported requests are refused by name", {
   expect_error(ctFitUncertainty(fit, "is",
     control = list(likelihood = "particle", nodes = 5)),
     "control$nodes is not used with likelihood = 'particle'", fixed = TRUE)
-  expect_error(ctFitUncertainty(fit, "surrogate",
+  expect_error(ctFitUncertainty(fit, "hessian",
     control = list(likelihood = "particle")), "applies to uncertainty = 'is'")
   bare <- fit
   bare$estimate$cov <- NULL

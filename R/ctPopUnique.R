@@ -67,7 +67,8 @@
 
 # The parameters one level's `popunique` value selects, from those varying at
 # that level (`column` is its flag: `indvarying`, or `indvarying_<level>`).
-.ctPopuniqueSelect <- function(pars, column, value, level) {
+# `what` names the argument in a refusal; `popblocks` selects the same way.
+.ctPopuniqueSelect <- function(pars, column, value, level, what = "popunique") {
   pars <- .ctModelCleanctspec(pars)
   flag <- if (column %in% names(pars)) pars[[column]] else rep(FALSE, nrow(pars))
   rows <- !is.na(pars$param) & is.na(pars$value) & flag %in% TRUE &
@@ -76,13 +77,13 @@
     matrix = as.character(pars$matrix[rows]), stringsAsFactors = FALSE))
   varying <- varying[!duplicated(varying$param), , drop = FALSE]
   if (is.logical(value)) {
-    if (length(value) != 1L || is.na(value)) stop("popunique for level '", level,
+    if (length(value) != 1L || is.na(value)) stop(what, " for level '", level,
       "' must be TRUE, FALSE, or names of matrices or parameters.", call. = FALSE)
     return(if (isTRUE(value)) varying$param else character())
   }
   value <- as.character(value)
   known <- value %in% c(varying$matrix, varying$param)
-  if (any(!known)) stop("popunique for level '", level, "' names ",
+  if (any(!known)) stop(what, " for level '", level, "' names ",
     paste(value[!known], collapse = ', '), ", which ",
     if (sum(!known) == 1L) "is" else "are",
     " neither a matrix nor a parameter varying at that level.", call. = FALSE)
@@ -94,7 +95,7 @@
 # list, level -> the parameters given an own variance, holding only levels
 # with any.
 .ctPopuniqueResolve <- function(ctm, popunique, levelnames, levelcolumns,
-  laplacerank) {
+  laplacerank, patterned = character()) {
   asked <- .ctPopuniqueByLevel(popunique, levelnames)
   out <- list()
   for (level in names(asked)) {
@@ -104,7 +105,9 @@
     k <- nrow(.ctPopEffectRoles(ctm$pars, column = levelcolumns[[level]]))
     rank <- if (!is.null(laplacerank) && level %in% names(laplacerank))
       laplacerank[[level]] else NA_integer_
-    if (is.na(rank) || rank >= k) stop("popunique gives own variances at level '",
+    # A level with blocks (`popblocks`) is a loading level whatever its rank.
+    if (!level %in% patterned && (is.na(rank) || rank >= k)) stop(
+      "popunique gives own variances at level '",
       level, "', which needs a reduced rank there: an own variance on top of an ",
       "unrestricted covariance is not identified. Give poprank=c(", level, "=r) ",
       "with r below its ", k, " varying parameters, or r=0 for independent ",

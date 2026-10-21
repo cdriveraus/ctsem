@@ -133,8 +133,12 @@
     length(spec$laplace$levels) == 1L && identical(as.integer(from), 1L)
 }
 
+# `subjectvalues`, on the Laplace route: each subject's raw vector before
+# TI-predictor effects, one row per subject of this specification, in place of
+# the modes -- a draw of plausible values (`.ctBackendPlausibleValues()`).
 .ctBackendKalmanRaw <- function(fit, raw, subjectmatrices = TRUE,
-  randomEffects = NULL, fields = NULL, sequential = FALSE, compact = FALSE) {
+  randomEffects = NULL, fields = NULL, sequential = FALSE, compact = FALSE,
+  subjectvalues = NULL) {
   # One raw vector for every subject, or on the filter's route a matrix with
   # one row per subject (`ctsem_kalman`'s second form).
   persubject <- is.matrix(raw)
@@ -172,7 +176,9 @@
     # nothing to carry. Before TI-predictor effects: the filter adds those
     # itself, so vectors that carried them would have them twice.
     source <- attr(fit, "laplaceSource")
-    if (!is.null(source)) {
+    if (!is.null(subjectvalues)) {
+      arguments$subject_values <- .ctJuliaPut(as.matrix(subjectvalues))
+    } else if (!is.null(source)) {
       subjects <- attr(fit, "laplaceSubjects")
       fitted <- .ctBackendJuliaValue(module$ctsem_laplace_subject_values(
         .ctJuliaObjective(source, hybrid = hybrid), .ctJuliaNumericVector(raw),

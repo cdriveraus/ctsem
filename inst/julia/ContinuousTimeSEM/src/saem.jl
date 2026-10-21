@@ -546,10 +546,14 @@ function _saem_centre!(st::CTSEMSAEMState, laplace::CTSEMLaplaceObjective,
         system = _saem_mean_system(st, laplace, l, sites, prec, K, ti)
         system === nothing && (ti = _saem_level_ti_none;
             system = _saem_mean_system(st, laplace, l, sites, prec, K, ti))
-        A, rhs, L, N = system
-        full = Symmetric(A) \ rhs
-        delta = W * full[1:r]
-        eta = full[(r + 1):end]
+        A, rhs, L, N, Z = system
+        full = isempty(rhs) ? rhs : Symmetric(A) \ rhs
+        rz = Z === nothing ? r : size(Z, 2)
+        # Confined (`_saem_mean_confine`), the shrinkage acts within the
+        # subspace the move may take.
+        delta = Z === nothing ? W * full[1:r] :
+            Z * ((transpose(Z) * W * Z) * full[1:rz])
+        eta = full[(rz + 1):end]
         for c in eachindex(eta)
             num = 0.0
             den = 0.0
@@ -686,28 +690,64 @@ function _saem_centre_loadings!(st::CTSEMSAEMState, laplace::CTSEMLaplaceObjecti
     k = nrandomeffects(level)
     r = nlatent(level)
     G > r || return nothing
-    F = cholesky(Symmetric(S ./ G); check=false)
-    issuccess(F) || return nothing
-    A = Matrix(F.L)
+    # `A` keeps to the entries the level's pattern allows
+    # (`_laplace_loading_allowed`): the whole lower triangle for the triangle,
+    # and each block's for a pattern of blocks, where the optimum without a
+    # prior is each block's own `chol(S_bb / G)`.
+    allowed = _laplace_loading_allowed(level)
+    A, whole = _saem_block_cholesky(S ./ G, allowed)
+    A === nothing && return nothing
+    rows, cols = _laplace_loading_entries(level)
     R = zeros(k, r)
     D = zeros(k, r)
-    counter = 0
-    for q in 1:r, p in q:k
-        counter += 1
-        R[p, q] = st.theta[level.load_index[counter]]
-        D[p, q] = prec[level.load_index[counter]]
+    for t in eachindex(rows)
+        R[rows[t], cols[t]] = st.theta[level.load_index[t]]
+        D[rows[t], cols[t]] = prec[level.load_index[t]]
     end
-    if any(>(0), D)
-        A = _saem_loading_factor(A, S, R, D, G)
+    # Newton where a prior shapes the optimum, or where some block's triangle
+    # is not wholly allowed and its Cholesky factor would leave the pattern;
+    # it moves the allowed entries alone.
+    if any(>(0), D) || !whole
+        A = _saem_loading_factor(A, S, R, D, G, allowed)
         A === nothing && return nothing
     end
     R = R * A
-    counter = 0
-    for q in 1:r, p in q:k
-        counter += 1
-        st.theta[level.load_index[counter]] = R[p, q]
+    for t in eachindex(rows)
+        st.theta[level.load_index[t]] = R[rows[t], cols[t]]
     end
     return Matrix(inv(LowerTriangular(A)))
+end
+
+"""
+    _saem_block_cholesky(M, allowed)
+
+The lower Cholesky factor of each block of `M` that `allowed` connects
+(`_laplace_loading_allowed`), zero between blocks, and whether every pair
+within each block is allowed, so that the factors stay on the pattern.
+`(nothing, false)` where a block is not positive definite. One block, the
+whole of `M`, for the triangle.
+"""
+function _saem_block_cholesky(M::AbstractMatrix, allowed::AbstractMatrix{Bool})
+    r = size(M, 1)
+    block = collect(1:r)
+    root(i) = (while block[i] != i; i = block[i]; end; i)
+    for q in 1:r, m in (q + 1):r
+        allowed[m, q] || continue
+        a, b = root(m), root(q)
+        a == b || (block[max(a, b)] = min(a, b))
+    end
+    A = zeros(r, r)
+    whole = true
+    for b in unique(root.(1:r))
+        members = [i for i in 1:r if root(i) == b]
+        F = cholesky(Symmetric(M[members, members]); check=false)
+        issuccess(F) || return (nothing, false)
+        A[members, members] .= F.L
+        for j in eachindex(members), m in members[(j + 1):end]
+            allowed[m, members[j]] || (whole = false)
+        end
+    end
+    return (A, whole)
 end
 
 """
@@ -721,9 +761,11 @@ the raw loadings `R A`. Newton on `A`'s `r (r + 1) / 2` entries with a halving
 line search, from `A0`. `nothing` where no step could be taken from the start.
 """
 function _saem_loading_factor(A0::Matrix{Float64}, S::Matrix{Float64},
-    R::Matrix{Float64}, D::Matrix{Float64}, G::Integer)
+    R::Matrix{Float64}, D::Matrix{Float64}, G::Integer,
+    allowed::AbstractMatrix{Bool}=trues(size(A0)))
     r = size(A0, 1)
-    idx = [(p, q) for q in 1:r for p in q:r]
+    # Only the entries the level's pattern allows (`_laplace_loading_allowed`).
+    idx = [(p, q) for q in 1:r for p in q:r if allowed[p, q]]
     function unpack(x)
         A = zeros(eltype(x), r, r)
         for (j, (p, q)) in enumerate(idx)
@@ -777,7 +819,10 @@ mode. `chains = 0` takes `_saem_default_chains`.
 """
 function ctsem_saem_init(laplace::CTSEMLaplaceObjective, theta::AbstractVector;
     seed::Integer=1, chains::Integer=0, disperse::Bool=true)
-    x = collect(Float64, theta)
+    # The state carries any stated population values (`CTSEMAnchors`) after
+    # the free parameters, where the mean moves and the prior's precision
+    # index them; the steps hold them still.
+    x = _laplace_extend(laplace, collect(Float64, theta))
     _laplace_check_indices(laplace, length(x))
     ctsem_laplace_evaluate(laplace, x; gradient=false)
     nunits = length(laplace.units.members)
@@ -963,6 +1008,7 @@ function ctsem_saem_step!(st::CTSEMSAEMState, laplace::CTSEMLaplaceObjective;
     logpost = _saem_logpost(st, laplace)
     _ctsem_log_prior_gradient!(g, laplace.objective, st.theta)
     B = Matrix(Symmetric(B, :U))
+    _saem_hold_anchors!(g, B, laplace)
     # The step's information comes from earlier draws than its score: this
     # iteration's outer product moves with this iteration's score, and
     # dividing one by the other is a self-normalised estimate whose fixed point
@@ -978,6 +1024,7 @@ function ctsem_saem_step!(st::CTSEMSAEMState, laplace::CTSEMLaplaceObjective;
         # Capping coordinates one by one can turn an ascent direction into
         # one that is not; scaled whole, it stays one.
         dot(g, step) > 0 || (step = d .* min(1.0, maxstep / maximum(abs, d; init=0.0)))
+        step[(npar - _laplace_nanchors(laplace) + 1):npar] .= 0.0
         step = _saem_ascend!(st, laplace, items, step, g)
         centre && _saem_centre!(st, laplace, prec)
     end
@@ -987,6 +1034,26 @@ function ctsem_saem_step!(st::CTSEMSAEMState, laplace::CTSEMLaplaceObjective;
 end
 
 export ctsem_saem_step!
+
+"""
+    _saem_hold_anchors!(g, B, laplace)
+
+Stated population values (`CTSEMAnchors`), the state's last entries, are not
+parameters: no score, and an information row and column that leave the
+step's solve decoupled from them, so it does not move them.
+"""
+function _saem_hold_anchors!(g::Vector{Float64}, B::Matrix{Float64},
+    laplace::CTSEMLaplaceObjective)
+    na = _laplace_nanchors(laplace)
+    n = length(g)
+    for j in (n - na + 1):n
+        g[j] = 0.0
+        B[j, :] .= 0.0
+        B[:, j] .= 0.0
+        B[j, j] = 1.0
+    end
+    return nothing
+end
 
 """
     _saem_ascend!(st, laplace, items, step, g; halvings)
@@ -1055,12 +1122,13 @@ one stationary distribution and larger while the run still has somewhere to
 go; `NaN` until each batch holds five iterates.
 """
 function _saem_trend(st::CTSEMSAEMState, P::AbstractMatrix; batches::Integer=10,
-    negligible::Real=0.01)
+    negligible::Real=0.01, npar::Integer=length(st.theta))
+    # `npar`: the free parameters, the first entries of the state; any stated
+    # population values after them never move.
     k = length(st.csum)
     q = k ÷ 4
     bl = q ÷ batches
     bl < 5 && return NaN
-    npar = length(st.theta)
     function quarter(stop)
         means = [_saem_window(st, stop - (batches - j + 1) * bl, stop - (batches - j) * bl)
                  for j in 1:batches]
@@ -1121,7 +1189,8 @@ function ctsem_saem(laplace::CTSEMLaplaceObjective, start::AbstractVector;
         out = ctsem_saem_step!(st, laplace; sweeps=sweeps, nupper=nupper,
             maxstep=maxstep, refresh=refresh, info_rate=info_rate, prec=prec,
             proposal=proposal, centre=centre)
-        trend = _saem_trend(st, _saem_curvature(st.info, prec))
+        trend = _saem_trend(st, _saem_curvature(st.info, prec);
+            npar=length(st.theta) - _laplace_nanchors(laplace))
         acceptance = _saem_acceptance(st)
         _record!(trace, k, out.logpost, out.gradient_norm, out.step, acceptance,
             trend)
@@ -1133,14 +1202,15 @@ function ctsem_saem(laplace::CTSEMLaplaceObjective, start::AbstractVector;
                 @sprintf("accept %.2f", acceptance))
         end
         _invoke_callback(watcher, k, Int(maxiter), out.logpost, out.gradient_norm,
-            estimate)
+            estimate[1:length(start)])
         if isfinite(trend) && trend <= null
             settled = true
             break
         end
     end
     k = st.iteration
-    minimizer = _saem_window(st, k - max(1, k ÷ 2), k)
+    # The free parameters, as `start` gave them.
+    minimizer = _saem_window(st, k - max(1, k ÷ 2), k)[1:length(start)]
     _progress_done(reporter, @sprintf("%d iterations", k),
         settled ? @sprintf("settled, trend %.2f", trend) :
             @sprintf("not settled, trend %.2f", trend),
@@ -1289,7 +1359,11 @@ evaluated: a trajectory routinely steps somewhere the filter refuses, and that
 is a rejection, not an error.
 """
 function _saem_conditional!(g::Vector{Float64}, st::CTSEMSAEMState,
-    laplace::CTSEMLaplaceObjective, theta::Vector{Float64}, ll)
+    laplace::CTSEMLaplaceObjective, free::Vector{Float64}, ll)
+    # NUTS moves the free parameters (`g`'s length); the members read them with
+    # any stated population values after them (`_laplace_extend`). One
+    # assignment: the unit loop's closure captures it.
+    theta = _laplace_extend(laplace, free)
     spec = laplace.spec
     Ls, dL = try
         (_laplace_popchols(theta, spec), _laplace_level_chol_derivatives(theta, spec))
@@ -1306,10 +1380,11 @@ function _saem_conditional!(g::Vector{Float64}, st::CTSEMSAEMState,
     ok || return -Inf
     fill!(g, 0.0)
     value = 0.0
+    ng = length(g)
     for U in eachindex(st.u)
         S = st.scores[U][1]
         for m in axes(S, 2)
-            @views g .+= S[:, m]
+            @views g .+= S[1:ng, m]
         end
         value += sum(ll[U]; init=0.0)
     end
@@ -1381,10 +1456,13 @@ function _saem_sample_mean!(st::CTSEMSAEMState, laplace::CTSEMLaplaceObjective,
     system = _saem_mean_system(st, laplace, l, sites, prec, 1, ti)
     system === nothing && (ti = _saem_level_ti_none;
         system = _saem_mean_system(st, laplace, l, sites, prec, 1, ti))
-    A, rhs, L, N = system
+    A, rhs, L, N, Z = system
+    isempty(rhs) && return nothing
     F = cholesky(Symmetric(A))
     z = (F \ rhs) .+ (F.U \ randn(rng, length(rhs)))
-    _saem_mean_apply!(st, laplace, l, sites, 1, ti, L, N, z[1:r], z[(r + 1):end])
+    rz = Z === nothing ? r : size(Z, 2)
+    delta = Z === nothing ? z[1:r] : Z * z[1:rz]
+    _saem_mean_apply!(st, laplace, l, sites, 1, ti, L, N, delta, z[(rz + 1):end])
     return nothing
 end
 
@@ -1408,7 +1486,8 @@ function _saem_level_ti(laplace::CTSEMLaplaceObjective, l::Integer)
     out = Tuple{Int,Vector{Tuple{Int,Int}}}[]
     isempty(sp.ti_parameter_indices) && return out
     level = laplace.spec.levels[l]
-    nlatent(level) == nrandomeffects(level) == level.rank || return out
+    (!isreducedrank(level) && nlatent(level) == nrandomeffects(level) == level.rank) ||
+        return out
     for U in eachindex(laplace.units.blocks), blk in laplace.units.blocks[U]
         blk.level == l && length(blk.members) != 1 && return out
     end
@@ -1482,10 +1561,36 @@ function _saem_mean_system(st::CTSEMSAEMState, laplace::CTSEMLaplaceObjective,
         A[r + c, r + c] += prec[coef]
         b[r + c] -= prec[coef] * st.theta[coef]
     end
-    C == 0 && return (A, b, L, N)
+    C == 0 && return _saem_mean_confine(laplace, level, A, b, L, N)
     A[(r + 1):end, 1:r] .= transpose(A[1:r, (r + 1):end])
     issuccess(cholesky(Symmetric(A); check=false)) || return nothing
-    return (A, b, L, N)
+    return _saem_mean_confine(laplace, level, A, b, L, N)
+end
+
+"""
+    _saem_mean_confine(laplace, level, A, b, L, N)
+
+The mean system `(A, b, L, N)` with `Z` beside it: `nothing` where none of the
+level's parameters has a stated population value (`CTSEMAnchors`), the system
+unchanged; otherwise an orthonormal basis of the moves `delta` whose shift
+`L delta` leaves every such parameter where it is, and the system in the
+coordinates `(y, eta)` of `delta = Z y`. A Gaussian confined to that subspace
+is the one in `y`, so the centred step and the draw are each taken there.
+"""
+function _saem_mean_confine(laplace::CTSEMLaplaceObjective, level, A, b, L, N)
+    anchors = laplace.objective.params.anchors
+    nf = isempty(anchors.values) ? typemax(Int) : anchors.nfree
+    held = findall(>(nf), level.re_index)
+    isempty(held) && return (A, b, L, N, nothing)
+    r = size(L, 2)
+    C = size(A, 1) - r
+    Z = nullspace(L[held, :])
+    T = zeros(r + C, size(Z, 2) + C)
+    T[1:r, 1:size(Z, 2)] .= Z
+    for c in 1:C
+        T[r + c, size(Z, 2) + c] = 1.0
+    end
+    return (transpose(T) * A * T, transpose(T) * b, L, N, Z)
 end
 
 """Move level `l`'s mean by `L delta`, the TI coefficients `ti` by `eta`, and
@@ -1496,6 +1601,13 @@ function _saem_mean_apply!(st::CTSEMSAEMState, laplace::CTSEMLaplaceObjective,
     st.theta[level.re_index] .+= L * delta
     for (c, (coef, _)) in enumerate(ti)
         st.theta[coef] += eta[c]
+    end
+    # A confined move (`_saem_mean_confine`) leaves stated population values
+    # where they were to rounding; put them back exactly.
+    na = _laplace_nanchors(laplace)
+    if na > 0
+        n = length(st.theta)
+        st.theta[(n - na + 1):n] .= laplace.objective.params.anchors.values
     end
     for (g, (U, blk)) in enumerate(sites)
         shift = isempty(ti) ? delta : delta .+ N[g] * eta
@@ -1574,32 +1686,39 @@ function _saem_sample_loadings!(st::CTSEMSAEMState, laplace::CTSEMLaplaceObjecti
     k = nrandomeffects(level)
     r = nlatent(level)
     (G == 0 || r == 0) && return NaN
+    # `E` on the entries the level's pattern allows (`_laplace_loading_allowed`),
+    # so `exp(E)` keeps the loadings on their pattern.
+    allowed = _laplace_loading_allowed(level)
     E = zeros(r, r)
     for q in 1:r, p in q:r
+        allowed[p, q] || continue
         E[p, q] = scale * randn(rng)
     end
     A = exp(E)
     Ainv = exp(-E)
+    rows, cols = _laplace_loading_entries(level)
     Rl = zeros(k, r)
     D = zeros(k, r)
-    counter = 0
-    for q in 1:r, p in q:k
-        counter += 1
-        Rl[p, q] = st.theta[level.load_index[counter]]
-        D[p, q] = prec[level.load_index[counter]]
+    for t in eachindex(rows)
+        Rl[rows[t], cols[t]] = st.theta[level.load_index[t]]
+        D[rows[t], cols[t]] = prec[level.load_index[t]]
     end
     Rn = Rl * A
     uold = [st.u[U][1][_saem_cols(laplace, U, b)] for (U, b) in sites]
     unew = [Ainv * v for v in uold]
+    # The map's Jacobian on the loadings: column `q`'s entries scale by
+    # `A[q, q]`, one factor each (`k - q + 1` of them in the triangle).
+    ncol = zeros(Int, r)
+    for q in cols
+        ncol[q] += 1
+    end
     logratio = -sum(D .* Rn .^ 2) / 2 + sum(D .* Rl .^ 2) / 2 -
         sum(sum(abs2, v) for v in unew) / 2 + sum(sum(abs2, v) for v in uold) / 2 +
-        sum((k - q + 1) * E[q, q] for q in 1:r) - G * sum(E[q, q] for q in 1:r)
+        sum(ncol[q] * E[q, q] for q in 1:r) - G * sum(E[q, q] for q in 1:r)
     alpha = isfinite(logratio) ? min(1.0, exp(logratio)) : 0.0
     if rand(rng) < alpha
-        counter = 0
-        for q in 1:r, p in q:k
-            counter += 1
-            st.theta[level.load_index[counter]] = Rn[p, q]
+        for t in eachindex(rows)
+            st.theta[level.load_index[t]] = Rn[rows[t], cols[t]]
         end
         for (j, (U, b)) in enumerate(sites)
             st.u[U][1][_saem_cols(laplace, U, b)] = unew[j]
@@ -1645,7 +1764,7 @@ function _saem_new_chain(base::CTSEMSAEMState, laplace::CTSEMLaplaceObjective,
     rng::Random.Xoshiro, setup, maxdepth::Integer)
     npar = sampler.npar
     st = deepcopy(base)
-    st.theta = x[1:npar]
+    st.theta = _laplace_extend(laplace, x[1:npar])
     for U in 1:sampler.nunits
         st.u[U][1] .= view(x, _sample_urange(sampler, U))
     end
@@ -1668,7 +1787,7 @@ function _saem_new_chain(base::CTSEMSAEMState, laplace::CTSEMLaplaceObjective,
     neffects = last(_laplace_deviation_offsets(laplace))
     return _SAEMChain(st, rng, _NUTSWorkspace(npar, Int(maxdepth)), zeros(npar),
         [similar(st.ll[U][1]) for U in eachindex(st.u)], 0.0, _DualAverage(1.0, 0.8),
-        ctsem_identity_metric(npar), zeros(npar, npar), 0,
+        ctsem_identity_metric(npar), zeros(length(st.theta), length(st.theta)), 0,
         logscale, fill(log(0.5), length(levels)), fisher, Vector{Float64}[],
         zeros(neffects), zeros(neffects),
         zeros(_effect_cross_length(_laplace_deviation_blocks(laplace))),
@@ -1702,7 +1821,7 @@ end
 state's effects."""
 function _saem_joint_point(sampler::CTSEMSampler, theta::AbstractVector, st::CTSEMSAEMState)
     x = zeros(sampler.ndim)
-    x[1:sampler.npar] .= theta
+    x[1:sampler.npar] .= view(theta, 1:sampler.npar)
     for U in 1:sampler.nunits
         x[_sample_urange(sampler, U)] .= st.u[U][1]
     end
@@ -1734,13 +1853,15 @@ function _saem_placement(laplace::CTSEMLaplaceObjective, values::AbstractVector;
         chains=max(Int(nchains), _saem_default_chains(nunits)))
     st = run.state
     theta = collect(Float64, run.minimizer)
-    st.theta .= theta
-    prec = _saem_prior_precision(laplace, npar)
+    st.theta .= _laplace_extend(laplace, theta)
+    prec = _saem_prior_precision(laplace, length(st.theta))
     for _ in 1:nestep
         ctsem_saem_step!(st, laplace; prec=prec, mstep=false)
     end
     sampler = ctsem_sampler(laplace, npar)
-    R = cholesky(_saem_curvature(st.info, prec)).U
+    # The free parameters' block: any stated population values after them are
+    # held, not drawn.
+    R = cholesky(_saem_curvature(st.info[1:npar, 1:npar], prec[1:npar])).U
     rng = Random.Xoshiro(hash((seed, :saem_placement)))
     joint = zeros(sampler.ndim, nchains)
     pars = zeros(npar, nchains)
@@ -1774,8 +1895,11 @@ end
 """Meter theta's transitions by the information `B` plus the prior's
 precision (`_saem_curvature`)."""
 function _saem_set_metric!(ch::_SAEMChain, B::AbstractMatrix, prec::Vector{Float64})
-    ch.metric = _metric_from_covariances([1:length(prec)],
-        [Matrix(inv(_saem_curvature(B, prec)))])
+    # The free parameters NUTS moves (`ch.g`'s length), the first of the
+    # state's; any stated population values after them are held.
+    n = length(ch.g)
+    ch.metric = _metric_from_covariances([1:n],
+        [Matrix(inv(_saem_curvature(B[1:n, 1:n], prec[1:n])))])
     return ch
 end
 
@@ -1802,14 +1926,17 @@ function _saem_chain_iterate!(ch::_SAEMChain, laplace::CTSEMLaplaceObjective,
         ch.info_sum .+= _saem_score_information(st)
         ch.info_n += 1
     end
-    x = copy(st.theta)
+    # The free parameters (`ch.g`'s length); any stated population values
+    # after them in the state are held.
+    np = length(ch.g)
+    x = st.theta[1:np]
     trial = ch.trial
     step = _nuts_transition!(ch.ws, (g, y) -> _saem_conditional!(g, st, laplace, y, trial),
         ch.metric, ch.rng, x, ch.g, logp, ch.eps, setup.maxdepth, setup.maxdelta)
-    if x != st.theta
+    if x != view(st.theta, 1:np)
         # The transition chose one point of its trajectory and its members'
         # likelihoods went with the others; one forward pass recovers them.
-        st.theta .= x
+        st.theta[1:np] .= x
         _saem_sample_ll!(own, st, laplace, st.theta) ||
             throw(DomainError(st.theta, "SAEM sampler: a member's log likelihood " *
                 "is not finite at the point the transition accepted"))
@@ -1873,8 +2000,8 @@ function _saem_chain_record!(ch::_SAEMChain, sampler::CTSEMSampler, step,
     effects = reduce(vcat, (st.u[U][1] for U in 1:sampler.nunits); init=Float64[])
     dev = _laplace_deviations!(zeros(ndev), laplace,
         _laplace_popchols(st.theta, laplace.spec), effects, devstarts)
-    x = save_effects ? zeros(npar + ndev) : copy(st.theta)
-    save_effects && (x[1:npar] .= st.theta)
+    x = save_effects ? zeros(npar + ndev) : st.theta[1:npar]
+    save_effects && (x[1:npar] .= view(st.theta, 1:npar))
     @inbounds for j in 1:ndev
         ch.effect_sum[j] += dev[j]
         ch.effect_sq[j] += dev[j] * dev[j]
@@ -2011,7 +2138,8 @@ function _ctsem_saem_sample(laplace::CTSEMLaplaceObjective, values::AbstractVect
     setup = (
         maxdepth=Int(maxdepth), maxdelta=Float64(maxdelta),
         sweeps=Int(sweeps), nupper=Int(nupper), nscale=Int(nscale), nncp=Int(nncp),
-        prec=_saem_prior_precision(laplace, npar), levels=levels,
+        prec=_saem_prior_precision(laplace, npar + _laplace_nanchors(laplace)),
+        levels=levels,
         active=[nrandomeffects(laplace.spec.levels[l]) > 0 &&
                 nlatent(laplace.spec.levels[l]) > 0 for l in levels],
         reduced=[isreducedrank(laplace.spec.levels[l]) for l in levels])
@@ -2040,7 +2168,7 @@ function _ctsem_saem_sample(laplace::CTSEMLaplaceObjective, values::AbstractVect
             _saem_score_information(ch.st) : state.info, setup.prec)
         ch.eps = stepsize > 0 ? Float64(stepsize) :
             _init_stepsize((g, y) -> _saem_conditional!(g, ch.st, laplace, y, ch.trial),
-                ch.metric, rng, copy(ch.st.theta), copy(ch.g), logp, ch.ws)
+                ch.metric, rng, ch.st.theta[1:npar], copy(ch.g), logp, ch.ws)
         ch.da = _DualAverage(ch.eps, Float64(target_accept))
         chains[c] = ch
     end

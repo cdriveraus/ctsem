@@ -133,6 +133,15 @@
 #' 
 #' @param TIpredNames n.TIpred length vector of time independent predictor variable names,
 #' as they appear in the data structure.  Default names are TI1, TI2, etc.
+#' Or a formula whose terms are such names and smooth terms,
+#' \code{~ s(age, k = 8) + female}: a smooth is a penalised spline of a
+#' person-level covariate, with its smoothness estimated from the data
+#' (\code{backend = 'julia'}). It enters the model as \code{k - 1} predictor
+#' columns, \code{age_lin} (the linear trend) and \code{age_s1}, ..., which
+#' are built from the data when the model is fitted. A cell's \code{tipreds}
+#' field names the covariate (\code{'cint||||age'}) to give it the smooth;
+#' without one, under \code{tipredDefault = TRUE}, a smooth reaches every
+#' free parameter that varies between persons.
 #' 
 #' @param tipredDefault Logical. TRUE sets any parameters with unspecified time independent
 #' predictor effects to have effects estimated, FALSE fixes the effect to zero unless individually specified.
@@ -352,6 +361,16 @@ ctModel<-function(LAMBDA, type='ct',n.manifest = 'auto', n.latent='auto', Tpoint
     } else n.TDpred <- 0
   }
   
+  # Smooth terms (R/ctTIpredSmooth.R): their basis columns are the predictors.
+  TIsmooths <- NULL
+  if(inherits(TIpredNames, 'formula')){
+    if(type %in% 'omx') stop("Smooth TI predictor terms need type = 'ct' or 'dt'.",
+      call. = FALSE)
+    parsed <- .ctTIpredParseFormula(TIpredNames)
+    TIpredNames <- parsed$names
+    TIsmooths <- parsed$smooths
+  }
+
   if(is.null(n.TIpred) || all(n.TIpred %in% 'auto')){
     if(!all(TIpredNames %in% 'auto')){
       if(!silent) message('n.TIpred inferred  inferred from TIpredNames')
@@ -640,6 +659,7 @@ ctModel<-function(LAMBDA, type='ct',n.manifest = 'auto', n.latent='auto', Tpoint
      `censormin`=censormin, `censormax`=censormax,
      `ncategories`=ncategories,
      `THRESHOLDS`=THRESHOLDS, `ASYMPTOTES`=ASYMPTOTES, `RESPONSE`=RESPONSE)
+  if(length(TIsmooths)) completemodel$TIsmooths <- TIsmooths
   
   
   

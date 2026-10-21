@@ -824,7 +824,13 @@
           title = "Effect of an observation of a latent"))
       }
     })
-    f
+    # Each curve's peak, its lag, the lag it halves by and its area.
+    table <- cbind(impulse = "unit", summary(dp))
+    if (!inherits(dpo, "try-error"))
+      table <- rbind(table, cbind(impulse = "observed", summary(dpo)))
+    utils::write.csv(table, file.path(ctx$folder, "05-discrete-parameters.csv"),
+      row.names = FALSE)
+    c(f, "05-discrete-parameters.csv")
   },
 
   network = function(fit, ctx) {

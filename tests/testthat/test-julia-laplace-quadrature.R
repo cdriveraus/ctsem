@@ -234,10 +234,28 @@ test_that("what a continued fit reports is the continuation's own", {
   expect_equal(cont$uncertainty$hessian, corr$hessian)
   expect_false(isTRUE(all.equal(as.matrix(cont$estimate$cov),
     as.matrix(off$estimate$cov))))
-  # Values only: the covariance carries its construction's diagnostics as an
-  # attribute.
-  expect_equal(as.numeric(cont$estimate$cov),
-    as.numeric(solve(-(corr$hessian + t(corr$hessian)) / 2)), tolerance = 1e-6)
+  # The normal is the continuation's Hessian's inverse. 'checked', the default,
+  # reports it unless its check finds it wrong along some direction; then it
+  # importance-samples the continuation's quadrature objective from it and
+  # reports the weighted draws' covariance, the normal's construction kept as
+  # the proposal's (`details$proposal_covariance`). On this fixture the check
+  # finds the normal wrong (a slope of -4.4 along one direction), so the
+  # covariance is the sampler's, and the proposal is tied to the Hessian by
+  # the information's smallest eigenvalue, which its record keeps. Values only:
+  # the covariance carries its construction's diagnostics as an attribute.
+  information <- -(corr$hessian + t(corr$hessian)) / 2
+  details <- cont$uncertainty$details
+  if (isTRUE(details$importance_sampling$used)) {
+    expect_true(isTRUE(details$importance_sampling$weighted))
+    expect_identical(details$proposal_covariance$method, "solve")
+    expect_false(isTRUE(details$proposal_covariance$usedNullProjection))
+    expect_equal(details$proposal_covariance$minInfoEigenOriginal,
+      min(eigen(information, symmetric = TRUE, only.values = TRUE)$values),
+      tolerance = 1e-6)
+  } else {
+    expect_equal(as.numeric(cont$estimate$cov), as.numeric(solve(information)),
+      tolerance = 1e-6)
+  }
   expect_lt(max(abs(colMeans(cont$estimate$rawposterior) - x) /
     as.numeric(cont$estimate$se)), 0.5)
   expect_identical(corr$draws, "redrawn")
@@ -499,8 +517,12 @@ test_that("a correction predicted to gain less than skip_gain is skipped, and sa
 test_that("a unit wider than the cap keeps its Laplace term, and the fit says so", {
   skip_without_julia()
   fits <- .lc_fits("linear")
-  # One effect a subject; a cap of none leaves every subject unscored.
-  narrow <- utils::modifyList(.ctLaplaceContinueDefaults, list(maxdim = 0L))
+  # One effect a subject; a cap of none leaves every subject unscored, with
+  # draws off or kept, by default, to the units a rescue named. With them for
+  # every unit, a unit of one block past the cap is scored by frozen draws
+  # instead (checked at the end).
+  narrow <- utils::modifyList(.ctLaplaceContinueDefaults, list(maxdim = 0L,
+    draws = 0L))
   expect_message(out <- .ctLaplaceContinue(fits$off, control = narrow),
     "kept the Laplace term, having more than 0 random effects")
   corr <- out$laplace$correction
@@ -513,6 +535,12 @@ test_that("a unit wider than the cap keeps its Laplace term, and the fit says so
     capture.output(print(out)))))
   # Under the default cap nothing here is wide.
   expect_identical(fits$quadrature$laplace$correction$wide, 0L)
+  # Nor past it, with draws: each subject is one block, scored by them, and on
+  # this Gaussian integrand every gap is within their error.
+  drawn <- suppressMessages(.ctLaplaceContinue(fits$off,
+    control = utils::modifyList(narrow, list(draws = 256L, draws_scope = "all"))))
+  expect_identical(drawn$laplace$correction$wide, 0L)
+  expect_identical(drawn$laplace$correction$status, "exact")
 })
 
 test_that("requests that cannot apply are refused by name", {

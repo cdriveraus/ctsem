@@ -177,6 +177,18 @@
       call. = FALSE)
   }
   ntipred <- ncol(spec$tipred_data)
+  # A smooth term is one predictor here: named by its covariate, or reached
+  # through any of its columns, it is swept over the covariate and its columns
+  # evaluated from the stored basis at each point (R/ctTIpredSmooth.R).
+  smooth <- .ctTIsmoothSelected(model, whichTIpreds)
+  if (is.character(whichTIpreds)) {
+    whichTIpreds <- if (!is.null(smooth)) match(smooth$columns, model$TIpredNames) else
+      match(whichTIpreds, model$TIpredNames)
+    if (anyNA(whichTIpreds)) stop("whichTIpreds names a predictor or smooth ",
+      "covariate this model does not have.", call. = FALSE)
+  } else if (!is.null(smooth)) {
+    whichTIpreds <- match(smooth$columns, model$TIpredNames)
+  }
   if (max(whichTIpreds) > ntipred || min(whichTIpreds) < 1) {
     stop("whichTIpreds selects a predictor outside 1:", ntipred,
       ", the predictors this model has.", call. = FALSE)
@@ -191,11 +203,14 @@
   if (identical(nsamples, "all") || nsamples > niter) nsamples <- niter
   samplerows <- sample.int(niter, nsamples)
 
+  samples <- samples[samplerows, , drop = FALSE]
+  # Without the mean parameters' uncertainty, they are held at their median
+  # and the TI-predictor effects keep theirs, as documented. Holding every
+  # coordinate at the median, coefficients included, left no uncertainty at all.
   if (!isTRUE(includeMeanUncertainty)) {
-    med <- apply(samples, 2, stats::median)
-    samples <- matrix(med, nrow = nsamples, ncol = ncol(samples), byrow = TRUE)
-  } else {
-    samples <- samples[samplerows, , drop = FALSE]
+    held <- setdiff(seq_len(ncol(samples)), as.integer(effects$coefficient))
+    samples[, held] <- matrix(apply(samples[, held, drop = FALSE], 2, stats::median),
+      nrow = nsamples, ncol = length(held), byrow = TRUE)
   }
 
   tipreds <- spec$tipred_data
@@ -210,14 +225,21 @@
   # more subjects than the data has.
   if (nsubjects > nrow(tipreds) && length(whichTIpreds) > 1) nsubjects <- nrow(tipreds)
 
-  if (length(whichTIpreds) > 1) {
+  covariate <- NULL
+  if (!is.null(smooth)) {
+    # The covariate's own values, one per person, are the x axis.
+    persons <- spec$data[[smooth$covariate]][!duplicated(spec$data[[model$subjectIDname]])]
+    covariate <- seq(min(persons, na.rm = TRUE), max(persons, na.rm = TRUE),
+      length.out = nsubjects)
+    tipreds <- .ctTIsmoothEval(smooth$basis, covariate)
+  } else if (length(whichTIpreds) > 1) {
     tipreds <- tipreds[sample.int(nrow(tipreds), nsubjects), , drop = FALSE]
   }
-  if (length(whichTIpreds) == 1) {
+  if (is.null(smooth) && length(whichTIpreds) == 1) {
     tipreds <- cbind(seq(from = min(tipreds), to = max(tipreds, na.rm = TRUE),
       length.out = nsubjects))
   }
-  tiorder <- order(tipreds[, 1])
+  tiorder <- if (is.null(smooth)) order(tipreds[, 1]) else seq_len(nrow(tipreds))
   tipreds <- tipreds[tiorder, , drop = FALSE]
 
   # Every predictor not selected stays at zero -- the same as the stan path
@@ -245,10 +267,31 @@
   dimnames(out)$subject <- tiorder
 
   colnames(tipreds) <- colnames(spec$tipred_data)[whichTIpreds]
-  names(attributes(out)$dimnames) <- c("Parameter", "param",
-    paste(colnames(tipreds), collapse = ""))
-  out <- list(y = aperm(out, c(3, 2, 1)), x = tipreds[, 1, drop = FALSE])
+  xname <- if (is.null(smooth)) paste(colnames(tipreds), collapse = "") else
+    smooth$covariate
+  names(attributes(out)$dimnames) <- c("Parameter", "param", xname)
+  out <- list(y = aperm(out, c(3, 2, 1)), x = if (is.null(smooth))
+    tipreds[, 1, drop = FALSE] else matrix(covariate, ncol = 1L,
+      dimnames = list(NULL, smooth$covariate)))
+  # For a smooth, each person's own value of what is plotted, at their own
+  # covariate value: the curve plus their random effects, so the spread about
+  # the curve is the person differences it leaves (`$persons`).
+  if (!is.null(smooth)) {
+    out$persons <- .ctTIsmoothPersons(fit, smooth, dimnames(out$y)[[2L]],
+      parmatrices = parmatrices)
+    attr(out, "smooth") <- .ctTIsmoothSubtitle(fit, smooth)
+  }
 
   if (!isTRUE(plot)) return(out)
-  ctPlotArrayGG(out)
+  g <- ctPlotArrayGG(out)
+  if (!is.null(out$persons) && nrow(out$persons)) {
+    x <- value <- variable <- NULL
+    g <- g + ggplot2::geom_point(data = out$persons,
+        ggplot2::aes(x = x, y = value, colour = variable), alpha = .35,
+        size = .9, inherit.aes = FALSE) +
+      ggplot2::geom_rug(data = out$persons[!duplicated(out$persons$x), ],
+        ggplot2::aes(x = x), sides = "b", alpha = .3, inherit.aes = FALSE) +
+      ggplot2::labs(x = smooth$covariate, subtitle = attr(out, "smooth"))
+  }
+  g
 }

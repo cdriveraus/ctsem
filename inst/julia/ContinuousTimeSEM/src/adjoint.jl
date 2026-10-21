@@ -169,9 +169,10 @@ function CTSEMAdjointWorkspace(::Type{T}, sp::EKFParameters, nvalues::Integer,
     ws = _init_continuous_ekf_workspace(T, sp)
     n = _val(ws.state_dim)
     m = _val(ws.manifest_dim)
-    # The subject vector the regular transforms read: the raw parameters, then
-    # any TI predictor tail (`EKFParameters.ti_tail`).
-    nvalues = Int(nvalues) + length(sp.ti_tail)
+    # The subject vector the regular transforms read: the raw parameters, any
+    # stated population values (`EKFParameters.anchors`), then any TI
+    # predictor tail (`EKFParameters.ti_tail`).
+    nvalues = Int(nvalues) + _ctsem_anchor_append(sp, nvalues) + length(sp.ti_tail)
 
     predict_indices = findall(sp.predict_transforms_indices)
     update_indices = findall(sp.update_transforms_indices)
@@ -704,7 +705,9 @@ function _get_or_init_adjoint_workspaces!(objective::CTSEMObjective, ::Type{T},
     cached = objective.adjoint_ws
     if cached isa Vector{Any} && length(cached) >= nchunks &&
         all(w -> w isa CTSEMAdjointWorkspace{T} &&
-            length(w.regular_dual_scratch) == nvalues + length(objective.params.ti_tail),
+            length(w.regular_dual_scratch) == nvalues +
+                _ctsem_anchor_append(objective.params, nvalues) +
+                length(objective.params.ti_tail),
             view(cached, 1:nchunks))
         return cached
     end

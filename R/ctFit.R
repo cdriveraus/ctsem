@@ -115,6 +115,11 @@
     msg = paste0("switches off the julia optimiser's progressive batching, ",
       "which starts on a subset of subjects and grows it as the fit needs more ",
       "data. The stan path has no equivalent")),
+  coreset = list(only = 'julia',
+    inert = function(v) isFALSE(v),
+    msg = paste0("runs the julia optimiser's coreset stages, stretches of ",
+      "L-BFGS on a weighted few of the units on the Laplace route. The stan ",
+      "path has no equivalent")),
   newton = list(only = 'julia',
     inert = function(v) isFALSE(v),
     msg = paste0("switches off the julia optimiser's Newton finish on the exact ",
@@ -683,6 +688,25 @@ T0VARredundancies <- function(ctm) {
 #' \code{popunique_<parameter>.<level>}, on the same raw scale as a full-rank
 #' sd. Requires \code{backend = 'julia'} and \code{intoverpop = 'laplace'} or
 #' sampling (\code{'none'}); must be passed by name.
+#' @param popblocks Shared dimensions in blocks, on a reduced-rank level: a
+#' list of blocks, each a list with \code{rank}, how many shared dimensions,
+#' and \code{effects}, which parameters load on them -- \code{TRUE} for every
+#' parameter varying at the level, or names of matrices or parameters, as for
+#' \code{popunique}. A parameter loads only on the dimensions of the blocks
+#' that name it, so parameters with no block in common are uncorrelated, and
+#' one named in no block needs an own variance (\code{popunique}). A level's
+#' rank is the sum of its blocks' ranks, so \code{poprank} need not be given
+#' for it; \code{'auto'} there defers to the blocks, and a number must equal
+#' the sum. One unnamed list of blocks applies to every level; a list named by
+#' level gives each level its own. For example, person-level item intercepts
+#' that do not covary with a latent level but may covary with each other and
+#' with the dynamics: \code{popblocks = list(level = list(rank = 1, effects =
+#' c('lev', 'DRIFT')), items = list(rank = 2, effects = c('MANIFESTMEANS',
+#' 'DRIFT')))}. Within a block, its first \code{rank} parameters, in the
+#' order the model lists them, form its basis. Loadings are reported as
+#' \code{poploading_<parameter>_dim<j>}, the dimensions numbered across the
+#' blocks in order. Requires \code{backend = 'julia'} and \code{intoverpop =
+#' 'laplace'} or sampling (\code{'none'}); must be passed by name.
 #' @param weights Sampling weights, one per subject: the name of a column of
 #' \code{datalong} that is constant within subject, or a numeric vector named
 #' by subject id (or unnamed, in the order subjects first appear in the data).
@@ -759,7 +783,10 @@ T0VARredundancies <- function(ctm) {
 #' @param inits \code{NULL} (the default) for ctsem's own starting values, or
 #' a vector of starting values on the raw (unconstrained) scale, one per free
 #' parameter, as a fit holds its estimate: \code{fit$estimate$raw} on julia,
-#' \code{fit$stanfit$rawest} on stan. With \code{backend='stan'} and
+#' \code{fit$stanfit$rawest} on stan. On julia, a fit itself: its estimates are
+#' matched to this model's parameters by name, so a model extended by a
+#' predictor or a smooth starts where the fit stopped, with the new
+#' coefficients at zero. With \code{backend='stan'} and
 #' \code{optimize=FALSE}, the string \code{'optimize'} optimises first and
 #' starts the chains there.
 #' @param priors \code{FALSE} (the default), \code{TRUE} or \code{'randomCorr'}.
@@ -1175,7 +1202,8 @@ ctFit<-function(datalong, model, stanmodeltext=NA, iter=1000, intoverstates=TRUE
   savesubjectmatrices=FALSE, saveComplexPars=FALSE,
   gendata=FALSE,
   sampleControl=list(),
-  control=list(),verbose=0,..., popunique=NULL, weights=NULL, ctstanmodel){
+  control=list(),verbose=0,..., popunique=NULL, popblocks=NULL, weights=NULL,
+  ctstanmodel){
 
   # `vb` (Stan's variational Bayes) was removed: it is a stan-only path,
   # crashed on the default fit=TRUE, and stan is being deprecated. Without
@@ -1246,6 +1274,10 @@ ctFit<-function(datalong, model, stanmodeltext=NA, iter=1000, intoverstates=TRUE
     'instead.', call.=FALSE)
 
   backend <- match.arg(backend)
+  # Starting values matched by name from another fit are the julia path's.
+  if(inherits(inits, 'ctFit') && !(backend %in% 'julia' && .ctFitIsJulia(inits)))
+    stop("inits as a fit takes a backend='julia' fit, for a backend='julia' ",
+      "fit; otherwise pass its raw estimate.", call.=FALSE)
   # Before anything prepares, warns or fits.
   # Sampling weights (R/ctWeights.R): a weighted pseudo-likelihood, which the
   # julia engine maximises. Sampling it would not give a posterior, and the
@@ -1262,7 +1294,9 @@ ctFit<-function(datalong, model, stanmodeltext=NA, iter=1000, intoverstates=TRUE
   # `missing()` has to be evaluated before the argument is touched, and it
   # decides whether an inapplicable rank is an error or a no-op. A rank stated
   # on the model sets it too, once the model is read (`model$poprank` below).
-  poprankexplicit <- !missing(poprank)
+  # NULL is the argument left out: the default, and not a rank asked for.
+  poprankexplicit <- !missing(poprank) && !is.null(poprank)
+  if(is.null(poprank)) poprank <- 'auto'
   # Before any data preparation and before the Julia install prompt: a control
   # name the chosen backend cannot honour is a mistake to report immediately,
   # not after a wait.
@@ -1343,6 +1377,32 @@ ctFit<-function(datalong, model, stanmodeltext=NA, iter=1000, intoverstates=TRUE
 
   datalong <- data.frame(datalong)
 
+  # Stated population means (ctPar(mean=); R/ctFixedPopMeans.R), checked
+  # before the data are read, and converted to raw values from the cells' own
+  # transforms before the augmented route rewrites a varying intercept into a
+  # carrier state.
+  if(length(ctstanmodel[['fixedpopmeans']])){
+    if(!backend %in% 'julia') stop("Stated population means, ctPar(mean=), ",
+      "need backend='julia'.", call.=FALSE)
+    ctstanmodel[['fixedpopmeansraw']] <- .ctFixedPopMeans(ctstanmodel)
+  }
+
+  # Smooth TI predictor terms: their basis columns, built from these data where
+  # the model has none yet, and kept on the model the fit stores
+  # (R/ctTIpredSmooth.R).
+  if(length(ctstanmodel$TIsmooths)){
+    if(!backend %in% 'julia') stop("Smooth TI predictor terms, s(), need ",
+      "backend='julia'.", call.=FALSE)
+    if(!isTRUE(optimize)) stop("Smooth TI predictor terms are estimated by ",
+      "optimisation, which sets their smoothness: use optimize=TRUE, then ",
+      "ctFitUncertainty(fit, 'sample') to sample with the smoothness held at ",
+      "its estimate.", call.=FALSE)
+    smoothed <- .ctTIsmoothData(ctstanmodel, datalong,
+      includeOutcome = !isFALSE(optimcontrol$tipredMissingIncludeOutcome))
+    ctstanmodel <- smoothed$model
+    datalong <- smoothed$data
+  }
+
   if(!ctstanmodel$timeName %in% colnames(datalong) && !ctstanmodel$continuoustime) {
     dtable <- data.table(datalong)
     dtable[,.ObsCount:=1:.N,by=ctstanmodel$id]
@@ -1406,6 +1466,9 @@ ctFit<-function(datalong, model, stanmodeltext=NA, iter=1000, intoverstates=TRUE
   if(nlcontrol$transition == 'euler' && !backend %in% 'julia') stop("nlcontrol$transition = 'euler' requires backend = 'julia'")
 
   args=c(as.list(environment()), list(...)) #as.list((match.call(expand.dots=FALSE)))
+  # A fit given as starting values is not kept in the new fit's call: its
+  # estimates matched this model's parameters once, and a replay starts afresh.
+  if(inherits(args$inits, 'ctFit')) args['inits'] <- list(NULL)
   args$datalong <- NULL
   args$model <- NULL
   args$ctstanmodel <- NULL
@@ -1935,8 +1998,16 @@ ctFit<-function(datalong, model, stanmodeltext=NA, iter=1000, intoverstates=TRUE
   # same holds under 'none', below.
   levelnames <- c(ctm$subjectIDname, ctm$groupIDnames)
   laplacerank <- NULL
-  enginerank <- intoverpopmethod %in% c('laplace','none') && poprankexplicit &&
-    !(length(poprank)==1 && is.na(poprank))
+  # Blocks of shared dimensions (`popblocks`, R/ctPopBlocks.R) are columns of
+  # the engine's loading matrix, so they ask for this route as a rank does.
+  blocksasked <- .ctPopblocksRequested(popblocks)
+  if(blocksasked && (!identical(backend,'julia') ||
+      !intoverpopmethod %in% c('laplace','none'))) stop("popblocks requires ",
+    "backend='julia' with intoverpop='laplace' or sampling (intoverpop='none'): ",
+    "a block is a set of columns of the engine's loading matrix, which the ",
+    "augmented route and stan do not build.", call.=FALSE)
+  rankasked <- poprankexplicit && !(length(poprank)==1 && is.na(poprank))
+  enginerank <- intoverpopmethod %in% c('laplace','none') && (rankasked || blocksasked)
   if(enginerank && !identical(backend,'julia')) stop(
     "poprank requires backend='julia'.", call.=FALSE)
   if(enginerank && !any(ctm$pars$indvarying[is.na(ctm$pars$value)]) &&
@@ -1946,7 +2017,7 @@ ctFit<-function(datalong, model, stanmodeltext=NA, iter=1000, intoverstates=TRUE
   if(enginerank){
     levelcolumns <- stats::setNames(c('indvarying', if(length(ctm$groupIDnames))
       paste0('indvarying_', ctm$groupIDnames)), levelnames)
-    asked <- .ctPoprankByLevel(poprank, levelnames)
+    asked <- if(rankasked) .ctPoprankByLevel(poprank, levelnames) else list()
     laplacerank <- vapply(names(asked), function(level){
       value <- asked[[level]]
       if(!identical(value, 'auto')) return(value)
@@ -1960,12 +2031,41 @@ ctFit<-function(datalong, model, stanmodeltext=NA, iter=1000, intoverstates=TRUE
     }, integer(1L))
     laplacerank <- laplacerank[!is.na(laplacerank)]
     if(!length(laplacerank)) laplacerank <- NULL
+    # Blocks (`popblocks`): a level's rank is the sum of its blocks'. A number
+    # asked for the same level must agree with it; `'auto'`, the default
+    # written out, defers to the blocks.
+    laplaceblocks <- if(blocksasked) .ctPopblocksResolve(ctm, popblocks,
+      levelnames, levelcolumns) else list()
+    for(level in names(laplaceblocks)){
+      total <- sum(vapply(laplaceblocks[[level]], function(b) b$rank, integer(1L)))
+      if(level %in% names(laplacerank) && laplacerank[[level]] != total &&
+          !identical(asked[[level]], 'auto')) stop(
+        "poprank for level '", level, "' is ", laplacerank[[level]], " but its ",
+        "popblocks span ", total, " dimensions. Drop poprank for that level: ",
+        "its blocks give its rank.", call.=FALSE)
+      laplacerank[level] <- as.integer(total)
+    }
+    if(length(laplaceblocks)) ctm$laplaceblocks <- laplaceblocks
     # Own variances (`popunique`, R/ctPopUnique.R), resolved here because the
     # T0MEANS floor below counts them: an effect with an own variance has a
     # dimension of its own whatever the rank.
     laplaceunique <- if(.ctPopuniqueRequested(popunique)) .ctPopuniqueResolve(ctm,
-      popunique, levelnames, levelcolumns, laplacerank) else list()
+      popunique, levelnames, levelcolumns, laplacerank,
+      patterned = names(laplaceblocks)) else list()
     if(length(laplaceunique)) ctm$laplaceunique <- laplaceunique
+    # An effect in no block shares no dimension, so without an own variance
+    # it would not vary.
+    for(level in names(laplaceblocks)){
+      inblock <- unique(unlist(lapply(laplaceblocks[[level]], function(b) b$param)))
+      roles <- .ctPopEffectRoles(ctm$pars, column=levelcolumns[[level]])
+      alone <- setdiff(setdiff(roles$param, inblock), laplaceunique[[level]])
+      if(length(alone)) stop("popblocks at level '", level, "' leaves ",
+        paste(alone, collapse=', '), " in no block and without an own variance,",
+        " so ", if(length(alone) > 1) "they" else "it", " would not vary. Name ",
+        if(length(alone) > 1) "them" else "it", " in a block, or give ",
+        if(length(alone) > 1) "them own variances" else "it an own variance",
+        " with popunique.", call.=FALSE)
+    }
     # An innermost-level varying T0MEANS whose latent has a free T0VAR takes
     # its initial variance from this covariance instead (`T0VARredundancies()`,
     # below, disables those T0VAR cells), so a rank below their number fixes
@@ -2490,6 +2590,12 @@ ctFit<-function(datalong, model, stanmodeltext=NA, iter=1000, intoverstates=TRUE
     # the augmented route. ctFitUpdate() rebuilds a fit from this one. Read it
     # through `.ctFitBaseModel()`, which says why the name differs.
     juliafit$modelbase <- ctstanmodel
+    # With the smoothing parameters the fit estimated, so a refit or an update
+    # starts from them (R/ctTIpredSmooth.R).
+    if(length(ctstanmodel$TIsmooths) && is.list(juliafit$model_spec) &&
+        !is.null(juliafit$model_spec$penalty))
+      juliafit$modelbase$TIsmooths <- .ctTIsmoothKeepLambda(ctstanmodel$TIsmooths,
+        juliafit$model_spec$penalty)
     # `$data`/`$standata` mean the same thing on both backends: `$standata` is
     # the prepared data with the 99999 missing-value sentinel intact, `$data`
     # is the same thing with that sentinel replaced by `NA` (see

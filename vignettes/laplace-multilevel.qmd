@@ -180,7 +180,7 @@ gm$RAWPOPVAR <- ctCov(S / 100)
 gm$RAWPOPVAR_study['cint', 'cint'] <- sd_study_cint / 10
 
 dat <- ctGenerate(gm, n = c(nstudy * npersub, nstudy), Tpoints = nobs,
-  backend = 'julia', popmeans = c(t0 = 0, cint = mu_cint))
+  backend = 'julia', values = c(t0 = 0, cint = mu_cint))
 # What each subject and each study was generated with.
 truth <- attr(dat, 'subjectpars')
 studytruth <- attr(dat, 'grouppars')$study

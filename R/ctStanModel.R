@@ -209,6 +209,14 @@ ctModelUnlist<-function(ctmodelobj,
         # separators or `key=value` text would be stored as the parameter name.
         spec <- .ctCellSpecFields(parsed$param)
         parsed$param <- spec$param
+        # A stated population mean (ctPar(mean=)) belongs to the parameter,
+        # and the model holds it beside `pars`.
+        if(!is.na(spec$mean)) {
+          means <- ctm[['fixedpopmeans']]
+          if(is.null(means)) means <- numeric(0)
+          means[[spec$param]] <- spec$mean
+          ctm[['fixedpopmeans']] <- means
+        }
         pars$param[parrow] <- parsed$param
         pars$value[parrow] <- parsed$value
 
@@ -418,6 +426,9 @@ ctModelConvertOMX<-function(ctmodelobj, type='ct',tipredDefault=TRUE){
   latentNames<-ctm$latentNames
   TDpredNames<-ctm$TDpredNames
   TIpredNames<-ctm$TIpredNames
+  # Smooth terms' columns are predictors like any other, but a cell names the
+  # covariate, and their default targets differ (R/ctTIpredSmooth.R).
+  TIsmooths <- ctm$TIsmooths
   
   ctspec<-ctModelUnlist(ctm)
 
@@ -512,6 +523,12 @@ ctModelConvertOMX<-function(ctmodelobj, type='ct',tipredDefault=TRUE){
   getwords <- function(x) gsub('\\W+',',',x)
   
   
+  # Rows whose tipreds field was given, which a smooth's default leaves alone.
+  tiexplicit <- rep(FALSE, nrow(ctspec))
+  # Population means stated rather than estimated, by parameter name: those a
+  # model already holds, and those its cells write as 'name=value'.
+  fixedpopmeans <- ctm[['fixedpopmeans']]
+  if(is.null(fixedpopmeans)) fixedpopmeans <- numeric(0)
   for(pi in 1:nrow(ctspec)){ #check for complex / split specifications
     if(grepl('|',ctspec$param[pi],fixed=TRUE)){
       # The trailing space keeps a trailing empty field, which strsplit()
@@ -553,6 +570,18 @@ ctModelConvertOMX<-function(ctmodelobj, type='ct',tipredDefault=TRUE){
       # sign and a decimal point are non-word characters -- so one
       # specification errored or silently misbehaved depending on which number
       # was written in it.
+      # 'lev=0': a stated population mean (ctPar(mean=)), which leaves the
+      # random effects about it to fit and no mean of its own.
+      namemean <- .ctCellSpecNameMean(split[1])
+      if(!is.na(namemean$mean)){
+        stated <- fixedpopmeans[namemean$name]
+        if(!is.na(stated) && stated != namemean$mean) stop('Two population ',
+          'means stated for ', namemean$name, ': ', stated, ' and ',
+          namemean$mean, '.', call.=FALSE)
+        fixedpopmeans[[namemean$name]] <- namemean$mean
+        split[1] <- namemean$name
+      }
+
       fixedvalue <- suppressWarnings(as.numeric(split[1]))
       if(!is.na(fixedvalue)){
         ignored <- c(
@@ -626,12 +655,25 @@ ctModelConvertOMX<-function(ctmodelobj, type='ct',tipredDefault=TRUE){
         # out as `TI1,4,3` and there was no way to write a value at all.
         tisplit <- trimws(strsplit(tisplit, ',', fixed=TRUE)[[1]])
         ctspec[pi,paste0(TIpredNames,'_effect')] <- 'FALSE' #first set all off
+        tiexplicit[pi] <- TRUE
         for(entry in tisplit){
           if(!nzchar(entry)) next
           parts <- trimws(strsplit(entry, '=', fixed=TRUE)[[1]])
           ti <- parts[1]
-          if(!ti %in% TIpredNames) stop(ti,' is not a time independent predictor!')
           spec <- if(length(parts) > 1 && nzchar(parts[2])) parts[2] else 'TRUE'
+          # A smooth is named by its covariate, and is estimated whole.
+          if(ti %in% names(TIsmooths)){
+            if(!identical(spec, 'TRUE')) stop('s(', ti, ') in ', ctspec$matrix[pi],
+              '[', ctspec$row[pi], ',', ctspec$col[pi], '] cannot be fixed or ',
+              'named: a smooth is estimated whole.', call.=FALSE)
+            ctspec[pi,paste0(TIsmooths[[ti]]$columns,'_effect')] <- 'TRUE'
+            whichtipreds <- c(whichtipreds, paste0('s(', ti, ')'))
+            next
+          }
+          if(!is.na(.ctTIsmoothOfColumn(TIsmooths, ti))) stop(ti, ' is a column ',
+            'of s(', .ctTIsmoothOfColumn(TIsmooths, ti), '); name the covariate ',
+            'to give a cell the smooth.', call.=FALSE)
+          if(!ti %in% TIpredNames) stop(ti,' is not a time independent predictor!')
           ctspec[pi,paste0(ti,'_effect')] <- spec
           whichtipreds <- c(whichtipreds,
             if(identical(spec,'TRUE')) ti else paste0(ti,'=',spec))
@@ -648,6 +690,7 @@ ctModelConvertOMX<-function(ctmodelobj, type='ct',tipredDefault=TRUE){
     }
   }
   
+  ctspec <- .ctTIsmoothDefaultEffects(ctspec, TIsmooths, tiexplicit, tipredDefault)
   if(n.TIpred > 0 && !any(.ctTipredEffectActive(ctspec[,paste0(TIpredNames,'_effect')]))) warning('TI predictors included but no effects specified!')
   
   for(ri in 1:nrow(ctspec)){ #set NA's on complex params
@@ -708,6 +751,12 @@ ctModelConvertOMX<-function(ctmodelobj, type='ct',tipredDefault=TRUE){
   # -- ctsemGUI adding a parameter to a loaded one -- needs the default the
   # cells without a tipreds field were given, and had to guess it.
   out$tipredDefault <- isTRUE(tipredDefault)
+  # Smooth terms, with their basis once data has built it (R/ctTIpredSmooth.R).
+  if(length(TIsmooths)) out$TIsmooths <- TIsmooths
+  # Population means stated rather than estimated (ctPar(mean=)), natural
+  # scale, by parameter name; checked and used when the model is fitted
+  # (`.ctFixedPopMeans()`).
+  if(length(fixedpopmeans)) out$fixedpopmeans <- fixedpopmeans
 
   out$tipredeffectscale <- 1
   out$tipredsimputedscale <- 1

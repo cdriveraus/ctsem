@@ -19,7 +19,7 @@ ctGenerate(
   nsamples = 200,
   datastruct = NA,
   cores = getOption("mc.cores", 2L),
-  popmeans = NULL,
+  values = NULL,
   n.subjects
 )
 }
@@ -67,7 +67,7 @@ with fixed defaults; it refuses a nonlinear model and has no measurement
 link. \code{'auto'} uses \code{'r'}, as \code{ctGenerate} always has,
 unless the model or the call needs \code{'julia'}: a nonlinear model, a
 non-Gaussian indicator, more than one count in \code{n}, or
-\code{popmeans}. On a model that declares random effects or TI predictor
+\code{values}. On a model that declares random effects or TI predictor
 effects, \code{'r'} says what it leaves out.}
 
 \item{intoverstates}{For \code{backend='julia'}: \code{'auto'} (the
@@ -93,19 +93,34 @@ subjects at \code{Tpoints} occasions \code{dtmean} apart is used.}
 
 \item{nsamples}{With \code{fromPriors=TRUE}, how many datasets to draw.}
 
-\item{datastruct}{With \code{fromPriors=TRUE}, an optional long format data
-structure giving the subjects, times and missingness to generate for, used
-in place of the balanced design. A fit passed as \code{ctmodelobj} brings
+\item{datastruct}{A long format data frame giving the design to generate
+for, in place of the balanced one \code{n}, \code{Tpoints} and
+\code{dtmean} build: the subject (and any group) ids and times, TD and TI
+predictor values, and which observations exist -- a manifest cell that is
+NA stays missing, any other value or a manifest column left out is
+generated. A predictor the model names and \code{datastruct} lacks is zero
+(TD) or drawn standard normal per subject (TI). The same data frame is
+returned with the generated values filled in. Needs \code{backend='julia'},
+or \code{fromPriors=TRUE}, where a fit passed as \code{ctmodelobj} brings
 its own.}
 
 \item{cores}{With \code{fromPriors=TRUE}, cpu cores to use.}
 
-\item{popmeans}{For \code{backend='julia'}: a named numeric vector of
-population means on each parameter's natural scale, e.g.
-\code{c(mm = 2, drift = -0.3)}. This is the way to state the mean of an
-individually varying parameter, whose cell cannot hold a value; it works for
-any free parameter. Unnamed free parameters are set at their prior's centre,
-raw zero.}
+\item{values}{For \code{backend='julia'}: the population values to
+generate from, named and scaled as \code{summary()} reports them, so a
+model written for fitting can generate data at chosen values. A named
+numeric vector gives free parameters' values on their natural scale, e.g.
+\code{c(mm = 2, drift = -0.3)}. A list gives \code{summary()}'s sections:
+\code{values} (the same), \code{popsd} (random-effect sds on the natural
+scale, named by parameter), \code{rawpopcorr} (correlations of the random
+effects, named \code{'a__b'}) and \code{tipreds} (linearised TI predictor
+effects, named \code{'tip_<predictor>_<parameter>'}), as in
+\code{list(values = c(mm = 2), popsd = c(mm = 0.5), tipreds =
+c(tip_TI1_mm = 1))}; with grouping levels, \code{popsd.<level>} and
+\code{rawpopcorr.<level>} name a level's. What is not given takes its
+prior's centre: raw zero for a mean, \code{sdscale} for a raw sd, zero for
+a correlation or a free effect. A value fixed in the model cannot also be
+given here.}
 
 \item{n.subjects}{Deprecated; use \code{n}.}
 }
@@ -132,7 +147,7 @@ With \code{backend='julia'} every value the model leaves free is fixed by
 the scale of its prior, and all of them are named in a message:
 \itemize{
   \item a free parameter is at its prior's centre, raw zero, unless
-  \code{popmeans} names it;
+  \code{values} names it;
   \item an individually varying parameter's population sd is its
   \code{sdscale}, at every level it varies at, on the raw,
   untransformed scale, unless \code{RAWPOPVAR} (\code{RAWPOPVAR_<level>})
@@ -179,7 +194,7 @@ data <- ctGenerate(generatingModel,n=15,burnin=10)
 #scale (CINT is 10 * raw, so 0.5 and 0.8)
 if (isTRUE(ctJuliaStatus()$available)) {
   data <- ctGenerate(generatingModel,n=15,burnin=10,
-    backend='julia',popmeans=c(cint1=1,cint2=0))
+    backend='julia',values=c(cint1=1,cint2=0))
 }
 }
 

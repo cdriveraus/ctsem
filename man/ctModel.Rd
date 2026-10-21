@@ -196,7 +196,16 @@ structure, mainly to support data generation workflows. Expected dimensions are
 Each TIpredictor is inserted at the right of the data matrix, after the time intervals.}
 
 \item{TIpredNames}{n.TIpred length vector of time independent predictor variable names,
-as they appear in the data structure.  Default names are TI1, TI2, etc.}
+as they appear in the data structure.  Default names are TI1, TI2, etc.
+Or a formula whose terms are such names and smooth terms,
+\code{~ s(age, k = 8) + female}: a smooth is a penalised spline of a
+person-level covariate, with its smoothness estimated from the data
+(\code{backend = 'julia'}). It enters the model as \code{k - 1} predictor
+columns, \code{age_lin} (the linear trend) and \code{age_s1}, ..., which
+are built from the data when the model is fitted. A cell's \code{tipreds}
+field names the covariate (\code{'cint||||age'}) to give it the smooth;
+without one, under \code{tipredDefault = TRUE}, a smooth reaches every
+free parameter that varies between persons.}
 
 \item{tipredDefault}{Logical. TRUE sets any parameters with unspecified time independent
 predictor effects to have effects estimated, FALSE fixes the effect to zero unless individually specified.

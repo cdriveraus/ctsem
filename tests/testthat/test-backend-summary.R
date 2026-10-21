@@ -517,7 +517,12 @@ test_that("summary reports fixed effects and system matrices, with intervals onl
   uncertain <- suppressWarnings(suppressMessages(
     ctOptimUncertainty(fit, uncertainty = "hessian", finishsamples = 100, verbose = 0)))
   interval <- summary(uncertain)
-  expect_identical(colnames(interval$popmeans), c("mean", "sd", "2.5%", "50%", "97.5%"))
+  expect_identical(colnames(interval$popmeans),
+    c("mean", "sd", "2.5%", "50%", "97.5%", "mode"))
+  # The mode column is the fit's estimate through the same transforms: what the
+  # point-estimate summary of the same fit reports as its value.
+  expect_equal(interval$popmeans[, "mode"], point$popmeans[, "mean"])
+  expect_true(grepl("mode is the fit's estimate", interval$popNote))
   expect_true(all(c("Mean", "sd", "2.5%", "50%", "97.5%") %in% colnames(interval$parmatrices)))
   # `ndraws`, not `nsamples`: an optimised fit never sampled, and reporting a
   # sample count for uncertainty draws read as MCMC output.
@@ -578,11 +583,12 @@ test_that("a default julia fit carries uncertainty, as an optimized Stan fit doe
       optimcontrol = list(finishsamples = 50))))
 
   expect_equal(nrow(fit$estimate$rawposterior), 50L)
-  expect_equal(fit$uncertainty$settings$method, "hessian")
+  expect_equal(fit$uncertainty$settings$method, "checked")
   expect_true(all(is.finite(fit$estimate$se)))
 
   out <- summary(fit, parmatrices = FALSE)
-  expect_identical(colnames(out$popmeans), c("mean", "sd", "2.5%", "50%", "97.5%"))
+  expect_identical(colnames(out$popmeans),
+    c("mean", "sd", "2.5%", "50%", "97.5%", "mode"))
   expect_false(is.null(out$residCovStd))
   expect_false(is.null(out$logposterior))
   # The filter output summary() reads for that is cached at fit time, as the

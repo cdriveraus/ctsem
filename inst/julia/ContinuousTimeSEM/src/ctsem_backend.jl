@@ -94,11 +94,26 @@ mutable struct CTSEMObjective{P,O} <: CTSEMOptimisable
     # The population correlation blocks whose multiple correlations are
     # bounded (`_ctsem_corbound`), or empty for none.
     corbound::Vector{CTSEMCorBound}
+    # Smoothing penalties (`_ctsem_penalty`): coefficients of a smooth term's
+    # penalised basis, each `Normal(0, 1 / sqrt(precision))`. Part of the model
+    # whenever a fit has a smooth, so no `prior_weight` scales them; the R side
+    # sets each term's precision (R/ctTIpredSmooth.R). Empty for none.
+    penalty_index::Vector{Int}
+    penalty_precision::Vector{Float64}
 end
 
 CTSEMObjective(params, subject_objectives) =
     CTSEMObjective(params, subject_objectives, nothing, Int[], Float64[], 1.0,
-        Int[], Float64[], Float64[], Int[], Float64[], CTSEMCorBound[])
+        Int[], Float64[], Float64[], Int[], Float64[], CTSEMCorBound[], Int[],
+        Float64[])
+
+# Without smoothing penalties.
+CTSEMObjective(params, subject_objectives, adjoint_ws, prior_index, prior_scale,
+    prior_weight, ti_missing_parameter, ti_missing_mu, ti_missing_sigma,
+    ti_missing_subject, subject_weights, corbound::Vector{CTSEMCorBound}) =
+    CTSEMObjective(params, subject_objectives, adjoint_ws, prior_index, prior_scale,
+        prior_weight, ti_missing_parameter, ti_missing_mu, ti_missing_sigma,
+        ti_missing_subject, subject_weights, corbound, Int[], Float64[])
 
 # Without weights, as every objective was built before they existed.
 CTSEMObjective(params, subject_objectives, adjoint_ws, prior_index, prior_scale,
@@ -140,7 +155,8 @@ Stan's, which is exactly what the parity tests would then report as a
 mismatch.
 """
 function _ctsem_log_prior(objective::CTSEMObjective, values::AbstractVector{T}) where {T}
-    cells = _ctsem_ti_missing_loglik(objective, values) + _ctsem_corbound(objective, values)
+    cells = _ctsem_ti_missing_loglik(objective, values) +
+        _ctsem_corbound(objective, values) + _ctsem_penalty(objective, values)
     isempty(objective.prior_index) && return cells
     total = zero(T)
     weight = objective.prior_weight
@@ -158,6 +174,9 @@ function _ctsem_prior_precision(objective::CTSEMObjective, npar::Integer)
     for j in eachindex(objective.prior_index)
         prec[objective.prior_index[j]] += objective.prior_weight / objective.prior_scale[j]^2
     end
+    for k in eachindex(objective.penalty_index)
+        prec[objective.penalty_index[k]] += objective.penalty_precision[k]
+    end
     for k in eachindex(objective.ti_missing_parameter)
         prec[objective.ti_missing_parameter[k]] += 1 / objective.ti_missing_sigma[k]^2
     end
@@ -173,6 +192,12 @@ function _ctsem_log_prior_gradient!(gradient::AbstractVector{T},
     cells::Bool=true) where {T}
     cells && _ctsem_ti_missing_loglik_gradient!(gradient, objective, values)
     cells && _ctsem_corbound_gradient!(gradient, objective, values)
+    # The smoothing penalty in `weight`'s share, as the parameter prior below
+    # but with no `prior_weight`: it is part of the model, not eased in.
+    @inbounds for k in eachindex(objective.penalty_index)
+        idx = objective.penalty_index[k]
+        gradient[idx] -= weight * objective.penalty_precision[k] * values[idx]
+    end
     isempty(objective.prior_index) && return gradient
     scale_weight = objective.prior_weight * weight
     @inbounds for k in eachindex(objective.prior_index)
@@ -197,7 +222,7 @@ function _ctsem_prior_scores!(scores::AbstractMatrix, objective::CTSEMObjective,
     values::AbstractVector, row::AbstractVector{<:Integer}=Base.OneTo(size(scores, 1)))
     nrows = size(scores, 1)
     nrows > 0 || return scores
-    if !isempty(objective.prior_index)
+    if !isempty(objective.prior_index) || !isempty(objective.penalty_index)
         share = 1 / nrows
         @inbounds for r in 1:nrows
             _ctsem_log_prior_gradient!(view(scores, r, :), objective, values, share, false)
@@ -220,6 +245,24 @@ function _ctsem_prior_scores!(scores::AbstractMatrix, objective::CTSEMObjective,
             (values[idx] - objective.ti_missing_mu[k]) / (sigma * sigma)
     end
     return scores
+end
+
+"""
+    _ctsem_penalty(objective, values)
+
+The smoothing penalties' log density: each penalised coefficient
+`Normal(0, 1 / sqrt(precision))`, normalising constant included, so the log
+posterior a fit with a smooth reports carries the smooth's prior whole. Its
+gradient is in `_ctsem_log_prior_gradient!`.
+"""
+function _ctsem_penalty(objective::CTSEMObjective, values::AbstractVector{T}) where {T}
+    total = zero(T)
+    @inbounds for k in eachindex(objective.penalty_index)
+        lambda = objective.penalty_precision[k]
+        x = values[objective.penalty_index[k]]
+        total += -0.5 * lambda * x * x + 0.5 * log(lambda) - 0.5 * log(2 * pi)
+    end
+    return total
 end
 
 """
@@ -496,7 +539,12 @@ function CTSEMObjective(params::EKFParameters, subject_starts::AbstractVector,
     # kept flat on the returned objective for `_ctsem_ti_missing_loglik`.
     ti_missing_subject=Int[], ti_missing_predictor=Int[], ti_missing_parameter=Int[],
     ti_missing_mu=Float64[], ti_missing_sigma=Float64[], subject_weights=Float64[],
-    corbound_k=Int[], corbound_code=Int[], corbound_index=Int[], corbound_fixed=Float64[])
+    corbound_k=Int[], corbound_code=Int[], corbound_index=Int[], corbound_fixed=Float64[],
+    penalty_index=Int[], penalty_precision=Float64[])
+    length(penalty_index) == length(penalty_precision) ||
+        throw(DimensionMismatch("penalty_index and penalty_precision differ in length"))
+    all(p -> isfinite(p) && p > 0, penalty_precision) ||
+        throw(ArgumentError("penalty_precision must be positive and finite"))
     ranges = _ctsem_subject_ranges(subject_starts, timesteps, data)
     (isempty(subject_weights) || length(subject_weights) == length(ranges)) ||
         throw(DimensionMismatch("subject_weights needs one weight per subject"))
@@ -554,7 +602,8 @@ function CTSEMObjective(params::EKFParameters, subject_starts::AbstractVector,
         Float64.(prior_scale), Float64(prior_weight), Int.(ti_missing_parameter),
         Float64.(ti_missing_mu), Float64.(ti_missing_sigma), Int.(ti_missing_subject),
         Float64.(subject_weights),
-        _ctsem_corbound_blocks(corbound_k, corbound_code, corbound_index, corbound_fixed))
+        _ctsem_corbound_blocks(corbound_k, corbound_code, corbound_index, corbound_fixed),
+        Int.(penalty_index), Float64.(penalty_precision))
 end
 
 """The bounded blocks from flat vectors, as the R side sends them: a size and
@@ -584,14 +633,16 @@ ctsem_objective(params::EKFParameters, subject_starts, timesteps, data,
     prior_index=Int[], prior_scale=Float64[], prior_weight::Real=1.0,
     ti_missing_subject=Int[], ti_missing_predictor=Int[], ti_missing_parameter=Int[],
     ti_missing_mu=Float64[], ti_missing_sigma=Float64[], subject_weights=Float64[],
-    corbound_k=Int[], corbound_code=Int[], corbound_index=Int[], corbound_fixed=Float64[]) =
+    corbound_k=Int[], corbound_code=Int[], corbound_index=Int[], corbound_fixed=Float64[],
+    penalty_index=Int[], penalty_precision=Float64[]) =
     CTSEMObjective(params, subject_starts, timesteps, data, tdpred_data, tipred_data,
         max_timestep; prior_index=prior_index, prior_scale=prior_scale,
         prior_weight=prior_weight, ti_missing_subject=ti_missing_subject,
         ti_missing_predictor=ti_missing_predictor, ti_missing_parameter=ti_missing_parameter,
         ti_missing_mu=ti_missing_mu, ti_missing_sigma=ti_missing_sigma,
         subject_weights=subject_weights, corbound_k=corbound_k, corbound_code=corbound_code,
-        corbound_index=corbound_index, corbound_fixed=corbound_fixed)
+        corbound_index=corbound_index, corbound_fixed=corbound_fixed,
+        penalty_index=penalty_index, penalty_precision=penalty_precision)
 
 ################################################################################
 # Threading
@@ -2466,6 +2517,12 @@ again; `newton_maxit` is the finish's shortest walk on one Hessian, and the exac
 variant's step budget; `newton_reuse` and
 `flat_rtol`
 are the finish's rules, passed from R so one number serves both sides.
+`coreset` runs stretches of the L-BFGS stage on a weighted few of the units
+where the route has units (`_ctsem_coreset_plan`, the Laplace route) and a
+coreset is expected to save, each stretch checked by a full gradient; off by
+default (review/OPTIM-coreset-2026-10-21.md: it pays on large, well-identified
+fits and cost on small and sparse ones). Neither the finish nor a budget stage
+sees one.
 `lbfgs_inverse` is an initial inverse Hessian for L-BFGS (`_ctsem_lbfgs`'s
 `inverse`), as a fit's covariance is for refitting it to part of its data; one
 that is not positive definite is not used (`_ctsem_lbfgs_inverse`).
@@ -2502,12 +2559,17 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
     stall_tightenings::Integer=2, stall_ratio::Real=1e-3,
     stall_carried::Real=0.0, stall_alone::Bool=false,
     batch::Bool=false, batch_theta::Real=0.25,
+    coreset::Bool=false,
     newton::Bool=false, newton_switch::Real=0.1, newton_maxit::Integer=30,
     newton_curvature=:auto, certify::Bool=false,
     newton_reuse::Real=_CTSEM_HESSIAN_REUSE_SE,
     flat_rtol::Real=_CTSEM_FLAT_RTOL, newton_hessian=nothing,
     newton_hessian_at=nothing)
     start_values = collect(start)
+    # What the line search saw of a jump, for the route to name its cause
+    # (`_ctsem_jump_units`), on a route that can.
+    jump = CTSEMJump()
+    watch_jump = _ctsem_jump_capable(objective)
     lbfgs_pairs = lbfgs_memory === nothing ?
         _ctsem_lbfgs_memory(length(start_values)) : Int(lbfgs_memory)
     # Validated here rather than at the probe, which runs after the fit: a
@@ -2535,13 +2597,19 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
     # Per-unit scores for the structured curvature (`lbfgs_scores`), kept
     # from every full-data trial with a gradient. Made before the closure that
     # writes it.
-    score_store = lbfgs_scores && _ctsem_scores_supported(objective) ?
+    # And for coreset stages (`coreset`), whose training points they are.
+    score_store = (lbfgs_scores || (coreset && !progress_budget)) &&
+        _ctsem_scores_supported(objective) ?
         CTSEMScoreStore(_ctsem_nunits(objective), length(start_values)) : nothing
+    # Gradients of the whole objective the trials took, which is what a batch
+    # or a coreset stage saves; a Hessian's columns are not trials.
+    full_gradients = Ref(0)
     trial_fg! = function (target, F, G, x)
         # The route decides what a usable trial point is: see
         # `_ctsem_optimise_trial`. On the laplace route a finite value at a
         # point whose inner Newton did not converge is *not* usable, because the
         # objective is only defined at the mode.
+        (G !== nothing && target === objective) && (full_gradients[] += 1)
         trial = score_store !== nothing && G !== nothing && target === objective ?
             _ctsem_optimise_trial_scores(target, x, gradient_method,
                 gradient_limit, call_log, score_store) :
@@ -2579,11 +2647,25 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
         _ctsem_batch_plan(objective, trial_fg!; theta=batch_theta) : nothing
     # Only where there are scores: a pinned objective, which a profile or an
     # escape optimises, has no prior of its own to ask.
-    structured = score_store === nothing ? nothing :
+    structured = (!lbfgs_scores || score_store === nothing) ? nothing :
         CTSEMStructured(score_store, _ctsem_prior_precision(
             _ctsem_prior_objective(objective), length(start_values)),
             length(start_values))
     batching() = batcher !== nothing && !_ctsem_batch_full(batcher)
+    # The last iteration a coreset stage was in force: the stall watch judges
+    # only windows of full iterations after it. A window holding a stage's
+    # iterations measures the coreset's path, and one holding a stage that was
+    # sent back reads as no progress near the optimum: that ended fits as
+    # stalled and ran the stall escape's refits there, on the full sum.
+    coreset_last = Ref(typemin(Int) >> 1)
+    # Coreset stages on the Laplace route (`_ctsem_coreset_plan`): stretches of
+    # the L-BFGS stage on a weighted few of the units, each checked by a full
+    # gradient. `nothing` on any other route, with too few units, off, or on a
+    # budget stage (the prior warm-up), whose few iterations are its plan and
+    # leave no stage room to pay.
+    coreseter = coreset && !progress_budget ?
+        _ctsem_coreset_plan(objective, trial_fg!, score_store) :
+        nothing
     # The endgame (`_ctsem_newton_finish`), on a route that has one. Where a
     # Hessian costs a few gradients it runs whenever there is a stopping rule
     # for it to finish, and L-BFGS hands over as soon as its predicted gain is
@@ -2696,6 +2778,8 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
                 @sprintf("logpost %11.2f", -latest.value),
                 @sprintf("|g| %9.2e", latest.g_norm),
                 (batching() ? (@sprintf("batch %d/%d units", batcher.m, batcher.nunits),) : ())...,
+                (_ctsem_coreset_live(coreseter) ? (@sprintf("coreset %d/%d units",
+                    length(coreseter.target.coreset.units), length(coreseter.sampling)),) : ())...,
                 _ctsem_optimise_progress_extra(objective)...,
                 _ctsem_forward_progress(forward0, explosive0)...;
                 budget=progress_budget,
@@ -2724,6 +2808,11 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
         # Neither rule while a batch is still growing: its objective is not the
         # fit's, and a batch that has gone quiet is a batch about to grow.
         batching() && return false
+        # Nor in a coreset stage, whose model and value are the coreset's.
+        if _ctsem_coreset_live(coreseter)
+            coreset_last[] = Int(latest.iteration)
+            return false
+        end
         if handover[] > 0
             predicted = _ctsem_predicted_gain(directional)
             if predicted < gap_tol ||
@@ -2737,7 +2826,8 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
         # half is a stopping rule on its own -- see `_ctsem_stall_verdict!` for
         # why, and for the cooldown that keeps a merely slow fit from being
         # asked over and over.
-        if _ctsem_stall_verdict!(stall, trace, latest.iteration, objective,
+        if latest.iteration - coreset_last[] > stall.window &&
+                _ctsem_stall_verdict!(stall, trace, latest.iteration, objective,
                 _ctsem_params(objective), current_x,
                 _ctsem_saturation_range(objective, current_x), stall_ratio;
                 tolerance=converge_tol, progress=_ctsem_probe_progress(reporter),
@@ -2827,7 +2917,8 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
         initial_alpha=Float64(initial_alpha),
         maxiter=max(0, Int(maxiter) - sgd_iterations),
         g_tol=g_tol, f_tol=f_tol, x_tol=x_tol, callback=watch,
-        directional=directional, batch=batcher, iteration0=sgd_iterations)
+        directional=directional, batch=batcher, iteration0=sgd_iterations,
+        coreset=coreseter, jump=watch_jump ? jump : nothing)
     if sgd_result !== nothing
         result = CTSEMLBFGSResult(result.minimizer, result.minimum,
             result.gradient, sgd_iterations + result.iterations,
@@ -2863,10 +2954,34 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
     # Before the final evaluation, so what it reports is the run rather than
     # the extra call: see `_ctsem_optimise_verbose_report`.
     minimizer = collect(result.minimizer)
+    # A jump the line search saw, named by the route: the units whose terms
+    # jumped and where their inner solves stopped either side
+    # (`_ctsem_jump_units`). A run whose jump the route names stops there
+    # ("jump"), with no finish: Newton steps across a discontinuity are no
+    # better than L-BFGS's, and the caller has what it needs to make the
+    # objective smooth there. A jump the route cannot name is a failed line
+    # search, as it always was.
+    jumped_units = Ref{Any}(nothing)
+    if result.linesearch_failed && jump.seen
+        named = try
+            _ctsem_jump_units(objective, jump)
+        catch err
+            _ctsem_must_propagate(err) && rethrow()
+            nothing
+        end
+        if named !== nothing && !isempty(named.units)
+            jumped_units[] = named
+            verbose && println(_console(), label, ": the objective jumped by ",
+                jump.excess, " along the last search direction, between steps of ",
+                jump.alpha_lo, " and ", jump.alpha_hi, "; unit(s) ", named.units,
+                " moved with where their inner solve stopped")
+        end
+    end
     # Why L-BFGS stopped, in one word, since the finish depends on it and the
     # certification reads it.
     reason_for(r) = stopped_by_gap[] ? "gap" : stopped_by_stall[] ? "stall" :
         stopped_by_progress[] ? "progress" :
+        (r.linesearch_failed && jumped_units[] !== nothing) ? "jump" :
         r.linesearch_failed ? "linesearch" :
         r.g_converged ? "gradient" :
         ((r.f_converged && f_tol > 0) || (r.x_converged && x_tol > 0)) ?
@@ -2983,7 +3098,8 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
             initial_alpha=Float64(initial_alpha),
             maxiter=max(0, Int(maxiter) - result.iterations - spent.steps[]),
             g_tol=g_tol, f_tol=f_tol, x_tol=x_tol, callback=watch,
-            directional=directional, iteration0=result.iterations + spent.steps[])
+            directional=directional, iteration0=result.iterations + spent.steps[],
+            jump=watch_jump ? jump : nothing)
         result = CTSEMLBFGSResult(resumed.minimizer, resumed.minimum,
             resumed.gradient, result.iterations + resumed.iterations,
             result.f_calls + resumed.f_calls, result.g_calls + resumed.g_calls,
@@ -2991,6 +3107,15 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
             resumed.linesearch_failed, resumed.stopped_by_callback,
             result.batch_sizes, result.batch_iterations)
         minimizer = collect(result.minimizer)
+        if result.linesearch_failed && jump.seen && jumped_units[] === nothing
+            named = try
+                _ctsem_jump_units(objective, jump)
+            catch err
+                _ctsem_must_propagate(err) && rethrow()
+                nothing
+            end
+            (named !== nothing && !isempty(named.units)) && (jumped_units[] = named)
+        end
         stop_reason = reason_for(result)
         again || break
     end
@@ -3100,7 +3225,10 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
         final.value, gradient_norm, _ctsem_predicted_gain(directional),
         _ctsem_last_gain(trace), saturated_parameters, g_tol, converge_tol;
         # A stage asked for no iterations has not stalled.
-        label=label, verbose=verbose && maxiter > 0, overshoot_probe=overshoot_probe,
+        # Not after a jump the route named: the run is handed on from there,
+        # and the probe's pullbacks cost minutes on the fit this was built for.
+        label=label, verbose=verbose && maxiter > 0,
+        overshoot_probe=stop_reason == "jump" ? :off : overshoot_probe,
         progress=_ctsem_probe_progress(reporter))
     saturated = verdict.saturated
     stalled = verdict.stalled
@@ -3164,6 +3292,23 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
         newton_steps=newton_steps,
         # L-BFGS steps taken on the structured model (`lbfgs_scores`).
         structured_steps=structured === nothing ? 0 : structured.steps,
+        # The coreset stages (`coreset`): each stage's units, share of a full
+        # evaluation's work, iterations, and what the full objective gained
+        # over what the coreset predicted; the iteration each run of stages
+        # began after; how many full gradients checked them and how many sent
+        # the point back; the coreset fits tried, and the seconds choosing them
+        # took. `[0]` for none, for the bridge's sake.
+        coreset_sizes=_ctsem_coreset_report(coreseter, :sizes),
+        coreset_shares=_ctsem_coreset_report(coreseter, :shares),
+        coreset_bought=_ctsem_coreset_report(coreseter, :bought),
+        coreset_stage_iterations=_ctsem_coreset_report(coreseter, :stage_iterations),
+        coreset_entered=_ctsem_coreset_report(coreseter, :entered),
+        coreset_iterations=coreseter === nothing ? 0 : coreseter.total_iterations,
+        coreset_checks=coreseter === nothing ? 0 : coreseter.checks,
+        coreset_reverted=coreseter === nothing ? 0 : coreseter.reverted,
+        coreset_attempts=coreseter === nothing ? 0 : coreseter.attempts,
+        coreset_seconds=coreseter === nothing ? 0.0 : coreseter.select_seconds,
+        full_gradients=full_gradients[],
         newton_hessians=spent.hessians[] +
             (finish === nothing ? 0 : finish.full_hessians),
         newton_subset_hessians=spent.subset[] +
@@ -3215,9 +3360,21 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
             newton_history.alpha,
         newton_history_value=isempty(newton_history.value) ? [NaN] :
             newton_history.value,
-        # Why L-BFGS stopped: "gap", "stall", "progress", "linesearch",
-        # "gradient", "tolerance", "cap" or "other".
+        # Why L-BFGS stopped: "gap", "stall", "progress", "jump",
+        # "linesearch", "gradient", "tolerance", "cap" or "other".
         stop_reason=stop_reason,
+        # A jump the route named (`stop_reason == "jump"`): the units whose
+        # terms jumped, their changes along the step, and where each one's
+        # inner solve stopped at the points either side, column `j` of
+        # `jump_point_values` for unit `jump_point_units[j]` (zero-padded to
+        # the widest). `[0]`, `[0.0]` and a 1x1 zero when there was none.
+        jump_units=jumped_units[] === nothing ? [0] : jumped_units[].units,
+        jump_changes=jumped_units[] === nothing ? [0.0] : jumped_units[].changes,
+        jump_point_units=jumped_units[] === nothing ? [0] :
+            jumped_units[].point_units,
+        jump_point_values=jumped_units[] === nothing ? zeros(1, 1) :
+            jumped_units[].point_values,
+        jump_excess=jump.seen ? jump.excess : 0.0,
         stopped_by_gap=stopped_by_gap[],
         # A resumed stage stopped on progress alone; see `CTSEMStallWatch`.
         stopped_by_progress=stopped_by_progress[],
@@ -3271,7 +3428,7 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
         # and `saturated_parameters`. Keying convergence on saturation made the
         # flag false on two thirds of good fits; see `_ctsem_overshot`.
         converged=!stalled && !overshot && finite_gradient &&
-            (result.g_converged || converged_enough),
+            stop_reason != "jump" && (result.g_converged || converged_enough),
         saturated=saturated,
         # The pullback verdict and its margin. `overshot` is the half of
         # saturation that is a convergence failure; `overshoot_gain` is how

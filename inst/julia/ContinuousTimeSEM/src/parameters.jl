@@ -200,6 +200,28 @@ _stationary_elements_on(s::CTSEMStationaryElements) = !isempty(s.inclosure)
 const _CTSEM_NO_STATIONARY_ELEMENTS = CTSEMStationaryElements()
 
 """
+    CTSEMAnchors
+
+Parameters whose population value is stated rather than estimated, with
+random effects about it: a person-level latent level with mean zero, say.
+Such a parameter has no coordinate in the raw vector the optimiser and the
+samplers move. Its population value is a constant placed after the `nfree`
+free parameters in each subject's parameter vector, which a cell reads like
+any other raw parameter (`param[nfree + j]`), and which the random effects
+shift like any other (`CTSEMLaplaceSpec` levels name it in `re_index`).
+
+`_materialize_subject_values!` appends the constants to a vector of the free
+parameters alone -- a population evaluation -- and takes a vector that
+already carries them, a member's shifted parameters (`_laplace_extend`), as
+it is. Empty, and off, unless R sent them (`ekf_from_columns`).
+"""
+mutable struct CTSEMAnchors
+    nfree::Int
+    values::Vector{Float64}
+end
+CTSEMAnchors() = CTSEMAnchors(0, Float64[])
+
+"""
     EKFParameters
 
 Container for parameter metadata used by the continuous-time EKF routines.
@@ -476,6 +498,9 @@ struct EKFParameters{RG,PT,UT,TT,AX,FV}
     # `CTSEMStationaryElements`. Empty unless R sent the marks. Declared last
     # and supplied last.
     stationary_elements::CTSEMStationaryElements
+    # Parameters with a stated population value; see `CTSEMAnchors`. Empty
+    # unless R sent them. Declared last and supplied last.
+    anchors::CTSEMAnchors
 
     # The constructor ensures that the provided vectors are of the correct types and converts them if necessary.
     function EKFParameters(
@@ -593,6 +618,7 @@ struct EKFParameters{RG,PT,UT,TT,AX,FV}
             ti_tail,
             CTSEMHybrid(),
             CTSEMStationaryElements(),
+            CTSEMAnchors(),
         )
     end
 end

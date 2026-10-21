@@ -20,6 +20,11 @@
 #' predictor has been included, then you can specify both the linear and squared version. 
 #' The x axis of the plot (if generated) will be based off the first indexed predictor. To 
 #' check what predictors are in the model, run \code{fit$ctstanmodel$TIpredNames}.
+#' A smooth term (\code{s(age)} in \code{\link{ctModel}}'s \code{TIpredNames}) is
+#' selected by its covariate's name, \code{whichTIpreds = 'age'}, and is drawn
+#' over that covariate, with each person's own value at their covariate value
+#' as a point (returned as \code{$persons}): the spread of the points about the
+#' curve is what the smooth leaves to the person differences.
 #' @param parmatrices Logical. If TRUE (default), system matrices rather than specific parameters
 #' are referenced -- e.g. 'DRIFT' instead of a parameter name like drift12.
 #' @param whichpars if parmatrices==TRUE, character vector specifying which matrices, and potentially which 

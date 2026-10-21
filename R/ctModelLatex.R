@@ -198,7 +198,9 @@ texPrep <- function(x){ #replaces certain characters with tex safe versions
 .ctLatexRawEstimates <- function(fit, e = NULL) {
   if (inherits(fit, 'ctJuliaFit')) {
     cells <- .ctBackendFreeParameterCells(fit)
-    values <- as.numeric(fit$estimate$raw)[cells$parnumber]
+    # A stated population mean (R/ctFixedPopMeans.R) is a value the cell
+    # reads, past the free parameters.
+    values <- .ctBackendRawFull(fit, as.numeric(fit$estimate$raw))[cells$parnumber]
     names(values) <- .ctBackendParameterNames(cells)
     return(values[!is.na(names(values))])
   }

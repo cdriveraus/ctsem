@@ -16,7 +16,7 @@ stanoptimis(
   carefulfit = TRUE,
   stallretries = 2,
   stalltol = 0.01,
-  uncertainty = c("hessian", "surrogate", "is", "bootstrap", "fullbootstrap", "sandwich",
+  uncertainty = c("hessian", "checked", "is", "bootstrap", "fullbootstrap", "sandwich",
     "opg"),
   uncertaintyDraws = "auto",
   uncertaintyControl = list(),
@@ -71,7 +71,7 @@ convergence, returning the starting values as the estimate. Converged fits sit n
 data point, stalled ones at 1 or more.}
 
 \item{uncertainty}{Character string selecting the optimized-fit uncertainty
-approximation. Options are \code{'hessian'}, \code{'surrogate'},
+approximation. Options are \code{'hessian'}, \code{'checked'},
 \code{'is'}, \code{'bootstrap'}, \code{'fullbootstrap'}, \code{'sandwich'},
 and \code{'opg'}.}
 

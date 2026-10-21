@@ -124,6 +124,13 @@ no packing anywhere.
     own variance, a single entry `psi_j` in row `j`, transformed as a
     full-rank level's scale. An own variance on a full-rank level would not
     be identified, so it is refused.
+  * `load_row`, `load_col`: the effect and dimension each loading fills, in
+    `load_index` order, when the level states a pattern; empty for the
+    triangle above. A pattern places dimensions in blocks, each loaded by
+    the effects the model names for it and triangular in its own first rows,
+    so an effect named in no block shares no dimension with the others
+    (`ctFit(popblocks =)`). A patterned level is a loading level whatever its
+    rank.
 """
 struct CTSEMLaplaceLevel
     re_index::Vector{Int}
@@ -147,26 +154,45 @@ struct CTSEMLaplaceLevel
     # level (`CTSEMHybrid`): no column of the level's root, no coordinate of
     # its block. Empty when there are none.
     hybrid::Vector{Bool}
+    # The effect and dimension of each loading, when the level states a
+    # pattern (`_laplace_loading_entries`); empty for the triangle.
+    load_row::Vector{Int}
+    load_col::Vector{Int}
 
     function CTSEMLaplaceLevel(re_index, sd_index, cor_index, sd_scale, group,
         ngroups::Integer; covmatcode::Integer=0, rank::Integer=-1,
         load_index=Int[], sd_fixed=Float64[], cor_fixed=Float64[],
-        unique_index=Int[], hybrid=Bool[])
+        unique_index=Int[], hybrid=Bool[], load_row=Int[], load_col=Int[])
         re = Vector{Int}(collect(re_index))
         sd = Vector{Int}(collect(sd_index))
         cor = Vector{Int}(collect(cor_index))
         load = Vector{Int}(collect(load_index))
         scale = Vector{Float64}(collect(sd_scale))
         grp = Vector{Int}(collect(group))
+        lrow = Vector{Int}(collect(load_row))
+        lcol = Vector{Int}(collect(load_col))
+        patterned = !isempty(lrow)
         k = length(re)
         # A negative rank means "not stated", which is the full-rank level every
-        # caller before this argument existed builds.
+        # caller before this argument existed builds. A pattern may span more
+        # dimensions than effects: an effect can load on several blocks.
         r = rank < 0 ? k : Int(rank)
-        (r >= 0 && r <= k) || throw(ArgumentError(
+        (r >= 0 && (patterned || r <= k)) || throw(ArgumentError(
             "rank must lie in 0:$(k) for a level with $(k) random effects, got $(r)"))
         length(scale) == k ||
             throw(DimensionMismatch("one sdscale per random effect is required"))
-        if r < k
+        if patterned
+            (length(lrow) == length(lcol) == length(load)) || throw(DimensionMismatch(
+                "load_row and load_col give one effect and one dimension per loading"))
+            (all(p -> 1 <= p <= k, lrow) && all(q -> 1 <= q <= r, lcol)) ||
+                throw(ArgumentError("a loading's effect lies in 1:$(k) and its dimension in 1:$(r)"))
+            allunique(zip(lrow, lcol)) || throw(ArgumentError(
+                "each effect loads on a dimension at most once"))
+            all(q -> q in lcol, 1:r) || throw(ArgumentError(
+                "every dimension of a patterned level needs a loading"))
+            (isempty(sd) && isempty(cor)) || throw(ArgumentError(
+                "a reduced-rank level is described by load_index alone; sd_index and cor_index must be empty"))
+        elseif r < k
             expected = k * r - div(r * (r - 1), 2)
             length(load) == expected || throw(DimensionMismatch(
                 "expected $(expected) loading parameters for rank $(r) over $(k) random effects, got $(length(load))"))
@@ -191,7 +217,7 @@ struct CTSEMLaplaceLevel
             length(uniq) == k || throw(DimensionMismatch(
                 "unique_index holds one entry per random effect, 0 for none"))
             all(>=(0), uniq) || throw(ArgumentError("unique_index entries are raw positions or 0"))
-            any(>(0), uniq) && r == k && throw(ArgumentError(
+            any(>(0), uniq) && r == k && !patterned && throw(ArgumentError(
                 "own variances need a reduced-rank level: on a full-rank level they are not identified"))
             all(iszero, uniq) && (uniq = Int[])
         end
@@ -216,13 +242,57 @@ struct CTSEMLaplaceLevel
                 "a stated $(what) has index 0 and a finite value; a free one a raw position and NaN"))
         end
         return new(re, sd, cor, load, scale, grp, Int(ngroups), Int(covmatcode), r, uniq,
-            Int[], sdfix, corfix, hyb)
+            Int[], sdfix, corfix, hyb, lrow, lcol)
     end
 end
 
-"""True when this level's population covariance spans fewer dimensions than it
-has random effects."""
-isreducedrank(level::CTSEMLaplaceLevel) = level.rank < length(level.re_index)
+"""True when this level's population covariance is a loading matrix: it spans
+fewer dimensions than it has random effects, or it states a pattern."""
+isreducedrank(level::CTSEMLaplaceLevel) =
+    level.rank < length(level.re_index) || !isempty(level.load_row)
+
+"""
+    _laplace_loading_entries(level)
+
+The effect and dimension each of a reduced-rank level's loadings fills, in
+`load_index` order: the level's pattern (`load_row`, `load_col`), or the
+triangle a level without one has, dimension `q` loaded by effects `q:k`,
+dimension by dimension.
+"""
+function _laplace_loading_entries(level::CTSEMLaplaceLevel)
+    isempty(level.load_row) || return (level.load_row, level.load_col)
+    k = nrandomeffects(level)
+    rows = Int[]
+    cols = Int[]
+    for q in 1:level.rank, p in q:k
+        push!(rows, p)
+        push!(cols, q)
+    end
+    return (rows, cols)
+end
+
+"""
+    _laplace_loading_allowed(level)
+
+Which entries `A[m, q]` a move `L -> L A` of a reduced-rank level's loadings
+may use and keep its pattern: `m >= q`, and every effect loading on dimension
+`m` loads on `q` too. The triangle allows its whole lower triangle; a pattern
+of blocks, each block's. The allowed pairs are closed under products, so
+`exp(E)` of a matrix on them stays on them.
+"""
+function _laplace_loading_allowed(level::CTSEMLaplaceLevel)
+    r = level.rank
+    rows, cols = _laplace_loading_entries(level)
+    has = falses(nrandomeffects(level), r)
+    for t in eachindex(rows)
+        has[rows[t], cols[t]] = true
+    end
+    allowed = falses(r, r)
+    for q in 1:r, m in q:r
+        allowed[m, q] = all(p -> !has[p, m] || has[p, q], axes(has, 1))
+    end
+    return allowed
+end
 
 """Number of model parameters this level moves."""
 nrandomeffects(level::CTSEMLaplaceLevel) = length(level.re_index)
@@ -394,6 +464,14 @@ function _laplace_coordinate_inert(level::CTSEMLaplaceLevel, q::Integer,
             seen == t && return insorted(p, inert)
         end
         return false
+    end
+    # A pattern's dimension is loaded by the effects it names, not by `q:k`.
+    if !isempty(level.load_row)
+        for t in eachindex(level.load_col)
+            level.load_col[t] == q || continue
+            insorted(level.load_row[t], inert) || return false
+        end
+        return true
     end
     for p in q:k
         insorted(p, inert) || return false
@@ -580,6 +658,12 @@ mutable struct CTSEMLaplaceObjective{O} <: CTSEMOptimisable
     gate_hi::Float64
     # Units the gated rule flagged at the last evaluation.
     gated_units::Int
+    # Whether every unit's inner problem is a concave quadratic: Gaussian
+    # indicators, a linear model, and every effect entering a mean vector
+    # through the affine transform (R's `.ctJuliaLaplaceQuadratic()`). Then it
+    # has one maximum, Newton from the origin finds it, and the mode probes,
+    # which look for another, are skipped (`_laplace_solve_unit_mode!`).
+    quadratic::Bool
 end
 
 # `gate_lo = 0.2` and `gate_hi = 0.7` are measured, not derived: see the
@@ -587,7 +671,7 @@ end
 function CTSEMLaplaceObjective(objective::CTSEMObjective, spec::CTSEMLaplaceSpec;
     inner_maxiter::Integer=_LAPLACE_INNER_MAXITER[], inner_tol::Real=1e-10,
     floor=:total, gate_lo::Real=0.2, gate_hi::Real=0.7,
-    inert::Union{Nothing,Vector{Vector{Vector{Int}}}}=nothing)
+    inert::Union{Nothing,Vector{Vector{Vector{Int}}}}=nothing, quadratic::Bool=false)
     Symbol(floor) in (:total, :gated) ||
         throw(ArgumentError("the Laplace floor must be :total or :gated"))
     0 < gate_lo < gate_hi || throw(ArgumentError("the gate needs 0 < lo < hi"))
@@ -599,7 +683,7 @@ function CTSEMLaplaceObjective(objective::CTSEMObjective, spec::CTSEMLaplaceSpec
         Int(inner_maxiter), Float64(inner_tol), [Dict{Any,Any}()],
         zeros(Int, nunits), zeros(Float64, nunits), falses(nunits), falses(nunits),
         falses(nunits), falses(nunits), Float64[], Symbol(floor), Float64(gate_lo),
-        Float64(gate_hi), 0)
+        Float64(gate_hi), 0, quadratic)
 end
 
 """
@@ -650,6 +734,9 @@ the subject filter integrates instead of this objective, the manifest whose
 intercept each one is, and that intercept transform's slope in the raw value
 (`CTSEMHybrid`). They leave the level's root and its block, and fill the
 wrapped objective's `params.hybrid`, which every subject's filter shares.
+
+`quadratic`, when sent, says every unit's inner problem is a concave quadratic,
+so the mode probes are skipped (`CTSEMLaplaceObjective`'s field of that name).
 """
 function ctsem_laplace_objective(objective::CTSEMObjective; re_index=Int[],
     sd_index=Int[], cor_index=Int[], sd_scale=Float64[], level_nre=Int[],
@@ -657,8 +744,9 @@ function ctsem_laplace_objective(objective::CTSEMObjective; re_index=Int[],
     level_rank=Int[], load_index=Int[], sd_fixed=Float64[], cor_fixed=Float64[],
     unique_index=Int[], inert_level=Int[], inert_group=Int[], inert_effect=Int[],
     hybrid_effect=Int[], hybrid_manifest=Int[], hybrid_slope=Float64[],
+    level_nload=Int[], load_row=Int[], load_col=Int[],
     inner_maxiter::Integer=_LAPLACE_INNER_MAXITER[], inner_tol::Real=1e-10,
-    floor="total", gate_lo::Real=0.2, gate_hi::Real=0.7)
+    floor="total", gate_lo::Real=0.2, gate_hi::Real=0.7, quadratic::Bool=false)
     nsubjects = length(objective.subject_objectives)
     counts = isempty(level_nre) ? [length(re_index)] : Vector{Int}(Int.(level_nre))
     ngroups = isempty(level_ngroups) ? [nsubjects] : Vector{Int}(Int.(level_ngroups))
@@ -695,13 +783,20 @@ function ctsem_laplace_objective(objective::CTSEMObjective; re_index=Int[],
     # consumes loadings and no scales or correlations, so the scale cursor and
     # the effect cursor stop advancing together the moment one level is reduced.
     re_at = 0; sd_at = 0; cor_at = 0; load_at = 0
+    # Loading patterns (`load_row`, `load_col`), when sent, cover every reduced
+    # level, with `level_nload` saying how many loadings each has.
+    patterns = !isempty(load_row)
+    patterns && length(level_nload) != length(counts) && throw(DimensionMismatch(
+        "load_row needs level_nload, one loading count per level"))
     for l in eachindex(counts)
         k = counts[l]
         r = ranks[l]
-        reduced = r < k
+        patterned = patterns && level_nload[l] > 0
+        reduced = r < k || patterned
         ncor = reduced ? 0 : div(k * (k - 1), 2)
         nsd = reduced ? 0 : k
-        nload = reduced ? k * r - div(r * (r - 1), 2) : 0
+        nload = patterns ? Int(level_nload[l]) :
+            reduced ? k * r - div(r * (r - 1), 2) : 0
         push!(levels, CTSEMLaplaceLevel(
             Int.(re_index[(re_at + 1):(re_at + k)]),
             Int.(sd_index[(sd_at + 1):(sd_at + nsd)]),
@@ -717,7 +812,9 @@ function ctsem_laplace_objective(objective::CTSEMObjective; re_index=Int[],
             unique_index=isempty(unique_index) ? Int[] :
                 Int.(unique_index[(re_at + 1):(re_at + k)]),
             hybrid=(l == 1 && !isempty(hybrid_effect)) ?
-                [p in hybrid_effect for p in 1:k] : Bool[]))
+                [p in hybrid_effect for p in 1:k] : Bool[],
+            load_row=patterned ? Int.(load_row[(load_at + 1):(load_at + nload)]) : Int[],
+            load_col=patterned ? Int.(load_col[(load_at + 1):(load_at + nload)]) : Int[]))
         re_at += k; sd_at += nsd; cor_at += ncor; load_at += nload
     end
     # The deviations the filter integrates, into the shared `EKFParameters`.
@@ -752,7 +849,7 @@ function ctsem_laplace_objective(objective::CTSEMObjective; re_index=Int[],
     end
     return CTSEMLaplaceObjective(objective, CTSEMLaplaceSpec(levels);
         inner_maxiter=inner_maxiter, inner_tol=inner_tol, floor=Symbol(floor),
-        gate_lo=gate_lo, gate_hi=gate_hi, inert=inert)
+        gate_lo=gate_lo, gate_hi=gate_hi, inert=inert, quadratic=quadratic)
 end
 
 """Positional convenience form, for single-level calls written in Julia."""
@@ -789,6 +886,55 @@ function _laplace_check_indices(laplace::CTSEMLaplaceObjective, npar::Integer)
         end
     end
     return nothing
+end
+
+"""
+    _laplace_extend(laplace, theta)
+
+`theta` as everything below an entry point reads it: the free parameters, then
+any stated population values (`CTSEMAnchors`), which the random effects shift
+like any other raw parameter (a level's `re_index` names them). Every entry
+point that takes a parameter vector from R, the optimiser or a sampler passes
+it through here first, and what it returns per parameter -- a gradient, a
+Hessian, a Jacobian's columns, scores -- goes back at the caller's length. A
+vector that already carries the values, or a model with none, comes back as it
+is, so an entry point reached from another passes through unchanged.
+"""
+function _laplace_extend(laplace::CTSEMLaplaceObjective, theta::AbstractVector{T}) where {T}
+    sp = laplace.objective.params
+    n = length(theta)
+    na = _ctsem_anchor_append(sp, n)
+    na == 0 && return theta
+    out = Vector{T}(undef, n + na)
+    copyto!(out, 1, theta, 1, n)
+    return _ctsem_fill_anchors!(out, sp, n, na)
+end
+
+"""Every row of `draws` extended as `_laplace_extend` extends one vector."""
+function _laplace_extend_rows(laplace::CTSEMLaplaceObjective,
+    draws::AbstractMatrix{T}) where {T}
+    sp = laplace.objective.params
+    n = size(draws, 2)
+    na = _ctsem_anchor_append(sp, n)
+    na == 0 && return draws
+    out = Matrix{T}(undef, size(draws, 1), n + na)
+    out[:, 1:n] .= draws
+    for j in 1:na
+        out[:, n + j] .= sp.anchors.values[j]
+    end
+    return out
+end
+
+"""How many stated population values the model has (`CTSEMAnchors`); they
+are the last entries of an extended vector."""
+_laplace_nanchors(laplace::CTSEMLaplaceObjective) =
+    length(laplace.objective.params.anchors.values)
+
+"""An evaluation's result with its gradient cut back to the caller's `n`
+parameters (`_laplace_extend`)."""
+function _laplace_free_result(r, n::Integer)
+    (r === nothing || r.gradient === nothing || length(r.gradient) == n) && return r
+    return merge(r, (gradient=r.gradient[1:n],))
 end
 
 """
@@ -901,7 +1047,7 @@ are left at zero.
 """
 function _laplace_determined_shares(laplace::CTSEMLaplaceObjective,
     theta::AbstractVector)
-    theta = collect(Float64, theta)
+    theta = _laplace_extend(laplace, collect(Float64, theta))
     spec = laplace.spec
     _laplace_ensure_pool!(laplace)
     Ls = _laplace_popchols(theta, spec)
@@ -1014,11 +1160,19 @@ function _laplace_poploading(values::AbstractVector{T}, level::CTSEMLaplaceLevel
     k = nrandomeffects(level)
     r = level.rank
     L = zeros(T, k, nlatent(level))
-    counter = 0
-    @inbounds for q in 1:r
-        for p in q:k
-            counter += 1
-            L[p, q] = values[level.load_index[counter]] * level.sd_scale[p]
+    if isempty(level.load_row)
+        counter = 0
+        @inbounds for q in 1:r
+            for p in q:k
+                counter += 1
+                L[p, q] = values[level.load_index[counter]] * level.sd_scale[p]
+            end
+        end
+    else
+        # A pattern (`load_row`, `load_col`): each loading where it says.
+        @inbounds for t in eachindex(level.load_row)
+            p = level.load_row[t]
+            L[p, level.load_col[t]] = values[level.load_index[t]] * level.sd_scale[p]
         end
     end
     # Own variances (`unique_index`): one column each, a single entry in the
@@ -1155,6 +1309,12 @@ function _laplace_member_values!(shifted::AbstractVector, values::AbstractVector
     spec::CTSEMLaplaceSpec, Ls::Vector{<:AbstractMatrix}, u::AbstractVector,
     offsets::Vector{Int})
     S = eltype(shifted)
+    # Outside the loop's `@inbounds`: a vector short of an index a level
+    # shifts -- a stated population value (`CTSEMAnchors`) an entry point did
+    # not append (`_laplace_extend`) -- would otherwise be written past its end.
+    for level in spec.levels
+        isempty(level.re_index) || checkbounds(values, maximum(level.re_index))
+    end
     copyto!(shifted, values)
     @inbounds for l in eachindex(spec.levels)
         level = spec.levels[l]
@@ -3312,7 +3472,11 @@ function _laplace_solve_unit_mode!(laplace::CTSEMLaplaceObjective, U::Integer,
             fromwarm = false
         end
     end
-    if _LAPLACE_MODE_PROBES[] && best.converged && 0 < d &&
+    # Not where every unit's inner problem is a concave quadratic: there is no
+    # second maximum to find, and screening for one cost 25-50% of an
+    # evaluation on random-intercept models, values unchanged
+    # (scripts/gsm-uncertainty-2026-10/warm_reference.R).
+    if _LAPLACE_MODE_PROBES[] && !laplace.quadratic && best.converged && 0 < d &&
             !(fromwarm && _LAPLACE_WARM_START[])
         best = _laplace_probe_modes(laplace, U, values, Ls, aws, best)
     end
@@ -5762,6 +5926,71 @@ function _laplace_unit_weights(laplace::CTSEMLaplaceObjective)
     end for U in eachindex(laplace.units.members)]
 end
 
+"""
+    CTSEMCoreset(units, weights)
+
+A weighted subset of a Laplace objective's units: an evaluation given one
+solves only these units' inner problems and returns the log prior plus
+`sum(weights .* terms)` over them, in place of every unit's term. Importance
+sampling uses it where a few units' terms, refitted as the draws move, follow
+the full sum closely (R's `.ctCoresetLpg()`); `units` index
+`laplace.units.members`, and a weight replaces the unit's sampling weight.
+"""
+struct CTSEMCoreset
+    units::Vector{Int}
+    weights::Vector{Float64}
+end
+
+"""A coreset over `laplace`'s units, checked: distinct units in range, finite
+non-negative weights, one per unit."""
+function _laplace_coreset(laplace::CTSEMLaplaceObjective, units::AbstractVector,
+    weights::AbstractVector)
+    nunits = length(laplace.units.members)
+    u = Int[Int(x) for x in units]
+    w = Float64[Float64(x) for x in weights]
+    length(u) == length(w) || throw(ArgumentError(
+        "a coreset needs one weight per unit: $(length(u)) units, $(length(w)) weights"))
+    isempty(u) && throw(ArgumentError("a coreset needs at least one unit"))
+    all(U -> 1 <= U <= nunits, u) || throw(ArgumentError(
+        "coreset units must lie in 1:$nunits"))
+    allunique(u) || throw(ArgumentError("coreset units must be distinct"))
+    all(x -> isfinite(x) && x >= 0, w) || throw(ArgumentError(
+        "coreset weights must be finite and non-negative"))
+    return CTSEMCoreset(u, w)
+end
+
+"""Each unit's weight in the evaluation: the coreset's, zero off it; empty
+without a coreset, when `_laplace_unit_weight` decides."""
+function _laplace_coreset_weights(coreset::Union{Nothing,CTSEMCoreset}, nunits::Integer)
+    coreset === nothing && return Float64[]
+    w = zeros(Float64, nunits)
+    @inbounds for k in eachindex(coreset.units)
+        w[coreset.units[k]] = coreset.weights[k]
+    end
+    return w
+end
+
+"""NaN for every unit, and its subjects, that the coreset did not evaluate."""
+function _laplace_coreset_mask!(unit_loglik::Vector{Float64},
+    subject_loglik::Vector{Float64}, laplace::CTSEMLaplaceObjective,
+    coreset::CTSEMCoreset)
+    evaluated = falses(length(unit_loglik))
+    evaluated[coreset.units] .= true
+    @inbounds for U in eachindex(unit_loglik)
+        evaluated[U] && continue
+        unit_loglik[U] = NaN
+        for i in laplace.units.members[U]
+            subject_loglik[i] = NaN
+        end
+    end
+    return nothing
+end
+
+"""Whether every evaluated unit's inner mode was found."""
+_laplace_converged(laplace::CTSEMLaplaceObjective, coreset::Union{Nothing,CTSEMCoreset}) =
+    coreset === nothing ? all(laplace.inner_converged) :
+    all(U -> laplace.inner_converged[U], coreset.units)
+
 """How often the seeded gradient assembly was abandoned for the nested route."""
 const _CTSEM_LAPLACE_FALLBACKS = Ref(0)
 
@@ -5786,8 +6015,29 @@ needs a marginal per independent block (leave-one-unit-out, for one) reads
 """
 function ctsem_laplace_evaluate(laplace::CTSEMLaplaceObjective, values::AbstractVector;
     gradient::Bool=true, contributions::Bool=false, nested_gradient::Bool=false,
-    scores::Union{Nothing,Matrix{Float64}}=nothing)
-    theta = collect(Float64, values)
+    scores::Union{Nothing,Matrix{Float64}}=nothing,
+    coreset::Union{Nothing,CTSEMCoreset}=nothing)
+    n = length(values)
+    theta = _laplace_extend(laplace, collect(Float64, values))
+    length(theta) == n && return _laplace_evaluate(laplace, theta; gradient=gradient,
+        contributions=contributions, nested_gradient=nested_gradient, scores=scores,
+        coreset=coreset)
+    # With stated population values (`CTSEMAnchors`) the gradient and the
+    # scores are formed over the extended vector and returned over the
+    # caller's.
+    full = scores === nothing ? nothing : zeros(Float64, size(scores, 1), length(theta))
+    r = _laplace_evaluate(laplace, theta; gradient=gradient,
+        contributions=contributions, nested_gradient=nested_gradient, scores=full,
+        coreset=coreset)
+    full === nothing || copyto!(scores, view(full, :, 1:n))
+    return _laplace_free_result(r, n)
+end
+
+"""`ctsem_laplace_evaluate` at a vector already extended (`_laplace_extend`)."""
+function _laplace_evaluate(laplace::CTSEMLaplaceObjective, theta::Vector{Float64};
+    gradient::Bool=true, contributions::Bool=false, nested_gradient::Bool=false,
+    scores::Union{Nothing,Matrix{Float64}}=nothing,
+    coreset::Union{Nothing,CTSEMCoreset}=nothing)
     _laplace_check_indices(laplace, length(theta))
     laplace.last_values = theta
     nsubjects = length(laplace.objective.subject_objectives)
@@ -5844,8 +6094,12 @@ function ctsem_laplace_evaluate(laplace::CTSEMLaplaceObjective, values::Abstract
     # free. Cost-weighted chunking is no longer needed for the same reason: the
     # queue does the balancing, and it does it against what the work actually
     # cost rather than against an estimate of it.
-    nchunks = nunits
-    ranges = [U:U for U in 1:nunits]
+    #
+    # A coreset (`CTSEMCoreset`) is the same region over its own units only:
+    # the rest are neither solved nor summed, so their entries come back NaN.
+    ranges = coreset === nothing ? [U:U for U in 1:nunits] : [U:U for U in coreset.units]
+    nchunks = length(ranges)
+    coreset_w = _laplace_coreset_weights(coreset, nunits)
     _laplace_ensure_pool!(laplace)
     # Per *slot*, not per piece. Pieces are now one per unit so that the queue
     # can balance, and a model whose units are subjects has thousands of them;
@@ -5882,15 +6136,19 @@ function ctsem_laplace_evaluate(laplace::CTSEMLaplaceObjective, values::Abstract
         chunk_ok[c] || return (value=chunk_bad[c],
             gradient=gradient ? fill(NaN, length(theta)) : nothing,
             subject_loglik=subject_loglik, unit_loglik=unit_loglik,
-            converged=all(laplace.inner_converged))
+            converged=_laplace_converged(laplace, coreset))
     end
-    value = _laplace_weighted_total(laplace, unit_loglik) +
+    value = (coreset === nothing ? _laplace_weighted_total(laplace, unit_loglik) :
+        sum(coreset.weights[k] * unit_loglik[coreset.units[k]]
+            for k in eachindex(coreset.units))) +
         _ctsem_log_prior(laplace.objective, theta)
+    coreset === nothing || _laplace_coreset_mask!(unit_loglik, subject_loglik,
+        laplace, coreset)
     laplace.gated_units = count(primal_gated)
 
     gradient || return (value=value, gradient=nothing,
         subject_loglik=subject_loglik, unit_loglik=unit_loglik,
-        converged=all(laplace.inner_converged))
+        converged=_laplace_converged(laplace, coreset))
 
     # 3. The gradient, by a number of seeded reverse sweeps proportional to a
     #    unit's members rather than to the parameter count.
@@ -5929,7 +6187,7 @@ function ctsem_laplace_evaluate(laplace::CTSEMLaplaceObjective, values::Abstract
         # With sampling weights too: each unit's gradient is then its weight
         # times the row.
         weighted = !isempty(laplace.objective.subject_weights)
-        separate = scores !== nothing || weighted
+        separate = scores !== nothing || weighted || coreset !== nothing
         rows = separate ? [zeros(Float64, length(theta)) for _ in 1:nslot] : partials
         fill!(chunk_ok, true)
         run_gradient = function (c)
@@ -5991,7 +6249,7 @@ function ctsem_laplace_evaluate(laplace::CTSEMLaplaceObjective, values::Abstract
                     end
                 end
                 if separate
-                    w = _laplace_unit_weight(laplace, U)
+                    w = coreset === nothing ? _laplace_unit_weight(laplace, U) : coreset_w[U]
                     partials[_laplace_slot()] .+= w .* rows[_laplace_slot()]
                     scores === nothing || (scores[U, :] .= w .* rows[_laplace_slot()])
                 end
@@ -6017,16 +6275,18 @@ function ctsem_laplace_evaluate(laplace::CTSEMLaplaceObjective, values::Abstract
             # return a partial sum: fall back to the route that does not need
             # those factorizations.
             fill!(grad, 0.0)
-            grad .= _laplace_nested_gradient(laplace, theta, Ls, primal_curvature)
+            grad .= _laplace_nested_gradient(laplace, theta, Ls, primal_curvature;
+                unitweights=coreset_w)
             _CTSEM_LAPLACE_FALLBACKS[] += 1
             scores === nothing || fill!(scores, NaN)
         end
     else
-        grad .= _laplace_nested_gradient(laplace, theta, Ls, primal_curvature)
+        grad .= _laplace_nested_gradient(laplace, theta, Ls, primal_curvature;
+                unitweights=coreset_w)
         scores === nothing || fill!(scores, NaN)
     end
     return (value=value, gradient=grad, subject_loglik=subject_loglik,
-        unit_loglik=unit_loglik, converged=all(laplace.inner_converged))
+        unit_loglik=unit_loglik, converged=_laplace_converged(laplace, coreset))
 end
 
 """
@@ -6129,7 +6389,7 @@ when a factorization the seeded path needs is not available.
 """
 function _laplace_nested_gradient(laplace::CTSEMLaplaceObjective,
     theta::Vector{Float64}, Ls::Vector{Matrix{Float64}},
-    curvature::AbstractVector)
+    curvature::AbstractVector; unitweights::Vector{Float64}=Float64[])
     nunits = length(laplace.units.members)
     total_of = function (x)
         S = eltype(x)
@@ -6137,7 +6397,8 @@ function _laplace_nested_gradient(laplace::CTSEMLaplaceObjective,
         Lsd = _laplace_popchols(x, laplace.spec)
         accumulated = zero(S)
         for U in 1:nunits
-            w = _laplace_unit_weight(laplace, U)
+            w = isempty(unitweights) ? _laplace_unit_weight(laplace, U) :
+                unitweights[U]
             w == 0 && continue
             uhat = laplace.modes[U]
             ud = _laplace_dual_unit_mode(laplace, U, x, Lsd, uhat, curvature[U], wsd)
@@ -6231,7 +6492,7 @@ to get that subject's parameter matrices.
 """
 function ctsem_laplace_subject_values(laplace::CTSEMLaplaceObjective,
     values::AbstractVector; from_level::Integer=1, ti_effects::Bool=true)
-    theta = collect(Float64, values)
+    theta = _laplace_extend(laplace, collect(Float64, values))
     Ls = _laplace_popchols(theta, laplace.spec)
     # Every unit's mode on the pool, as an evaluation solves them: each writes
     # only its own `laplace.modes[U]`, and the slot its task holds. Solved one
@@ -6252,7 +6513,7 @@ function ctsem_laplace_subject_values(laplace::CTSEMLaplaceObjective,
 end
 
 """
-    ctsem_laplace_subject_values(laplace, values, effects; ti_effects=true)
+    ctsem_laplace_subject_values(laplace, values, effects; ti_effects=true, from_level=1)
 
 Each subject's own raw parameter vector at the random effects it is *given*,
 rather than at the conditional modes solved from the data.
@@ -6271,20 +6532,22 @@ the same thing whichever square root of the population covariance it was made
 under.
 
 Everything after the slicing is shared with the mode method, including what
-`ti_effects` means, so the two cannot drift in how a shifted parameter vector
-is built.
+`ti_effects` and `from_level` mean, so the two cannot drift in how a shifted
+parameter vector is built.
 
 Returns `nsubjects x length(values)`.
 """
 function ctsem_laplace_subject_values(laplace::CTSEMLaplaceObjective,
-    values::AbstractVector, effects::AbstractVector; ti_effects::Bool=true)
-    theta = collect(Float64, values)
-    shifted = _laplace_shifted_values_from_deviations(laplace, theta, effects)
+    values::AbstractVector, effects::AbstractVector; ti_effects::Bool=true,
+    from_level::Integer=1)
+    theta = _laplace_extend(laplace, collect(Float64, values))
+    shifted = _laplace_shifted_values_from_deviations(laplace, theta, effects;
+        from_level=from_level)
     return ti_effects ? _laplace_add_ti_effects(laplace, shifted) : shifted
 end
 
 """
-    ctsem_laplace_subject_values(laplace, draws, effects; ti_effects=true)
+    ctsem_laplace_subject_values(laplace, draws, effects; ti_effects=true, from_level=1)
 
 The method above for a whole sample at once: `draws[s, :]` is one draw of the
 parameters and `effects[s, :]` the natural deviations drawn with it, so each
@@ -6295,17 +6558,19 @@ would cost a bridge round trip each.
 Returns `ndraws x nsubjects x npar`, as the linearised method does.
 """
 function ctsem_laplace_subject_values(laplace::CTSEMLaplaceObjective,
-    draws::AbstractMatrix, effects::AbstractMatrix; ti_effects::Bool=true)
+    draws::AbstractMatrix, effects::AbstractMatrix; ti_effects::Bool=true,
+    from_level::Integer=1)
     size(effects, 1) == size(draws, 1) || throw(DimensionMismatch(string(
         "effects has ", size(effects, 1), " draws for ", size(draws, 1),
         " parameter draws")))
+    draws = _laplace_extend_rows(laplace, draws)
     ndraws = size(draws, 1)
     nsubjects = length(laplace.objective.subject_objectives)
     out = zeros(Float64, ndraws, nsubjects, size(draws, 2))
     for s in 1:ndraws
         out[s, :, :] = ctsem_laplace_subject_values(laplace,
             collect(Float64, view(draws, s, :)), view(effects, s, :);
-            ti_effects=ti_effects)
+            ti_effects=ti_effects, from_level=from_level)
     end
     return out
 end
@@ -6332,9 +6597,14 @@ function _laplace_filter_values(laplace::CTSEMLaplaceObjective,
         size(subject_values, 1) == nsubjects || throw(ArgumentError(
             "subject_values has $(size(subject_values, 1)) rows for " *
             "$nsubjects subjects."))
-        size(subject_values, 2) == length(values) || throw(ArgumentError(
+        # A subject's vector carries any stated population values
+        # (`CTSEMAnchors`) after the free parameters, as every vector this
+        # route builds does.
+        width = length(values) + _ctsem_anchor_append(laplace.objective.params,
+            length(values))
+        size(subject_values, 2) == width || throw(ArgumentError(
             "subject_values has $(size(subject_values, 2)) columns for " *
-            "$(length(values)) parameters."))
+            "$width parameters."))
         return subject_values
     end
     effects === nothing ||
@@ -6374,7 +6644,7 @@ TI-predictor effects, which the filter adds exactly as it does in the fit.
 """
 function ctsem_auto_substeps(laplace::CTSEMLaplaceObjective, values::AbstractVector;
     kwargs...)
-    theta = collect(Float64, values)
+    theta = _laplace_extend(laplace, collect(Float64, values))
     _laplace_check_indices(laplace, length(theta))
     Ls = _laplace_popchols(theta, laplace.spec)
     shifted = _laplace_shifted_values(laplace, theta, Ls, function (U)
@@ -6591,8 +6861,13 @@ are its effects and then, member by member, one per hybrid item in the order
 moves with the parameters directly and through the effects' mode -- and an
 item the member never observes is a row of zeros, its mode the prior's.
 """
-ctsem_laplace_mode_jacobian(laplace::CTSEMLaplaceObjective, values::AbstractVector) =
-    _laplace_mode_jacobian(laplace, collect(Float64, values)).jacobians
+function ctsem_laplace_mode_jacobian(laplace::CTSEMLaplaceObjective,
+    values::AbstractVector)
+    n = length(values)
+    J = _laplace_mode_jacobian(laplace,
+        _laplace_extend(laplace, collect(Float64, values))).jacobians
+    return [size(j, 2) == n ? j : j[:, 1:n] for j in J]
+end
 
 """
     _laplace_mode_jacobian(laplace, theta)
@@ -6679,7 +6954,12 @@ normal-approximation posterior puts its draws. It degrades for draws far from
 the estimate, which is also where the normal approximation the draws come from
 is itself least trustworthy.
 
-`ti_effects` means what it does for the other two methods.
+`ti_effects` and `from_level` mean what they do for the other methods:
+`from_level = l` leaves out the effects of the levels inside `l`, so a draw at
+a grouping level is that group's own values. A unit's effects are drawn
+jointly over its levels and the inner ones then dropped, which leaves a draw
+from the group's marginal posterior; the same `seed` at two `from_level`s
+makes the same joint draw, so their difference is one level's share of it.
 
 Deviations each member's filter integrates (`CTSEMHybrid`) are linearised with
 the effects (`ctsem_laplace_mode_jacobian`) and enter at each draw's own
@@ -6700,11 +6980,12 @@ Returns `ndraws x nsubjects x npar`.
 """
 function ctsem_laplace_subject_values(laplace::CTSEMLaplaceObjective,
     draws::AbstractMatrix, thetahat::AbstractVector; ti_effects::Bool=true,
-    conditional::Bool=false, seed::Integer=1)
+    conditional::Bool=false, seed::Integer=1, from_level::Integer=1)
     # The Jacobian is computed here rather than handed in: it is a vector of
     # matrices, and round-tripping one through the R bridge only to send it
     # straight back costs two marshalling steps for no gain.
-    centre = collect(Float64, thetahat)
+    centre = _laplace_extend(laplace, collect(Float64, thetahat))
+    draws = _laplace_extend_rows(laplace, draws)
     linear = _laplace_mode_jacobian(laplace, centre)
     ndraws = size(draws, 1)
     npar = size(draws, 2)
@@ -6730,8 +7011,10 @@ function ctsem_laplace_subject_values(laplace::CTSEMLaplaceObjective,
                 w[U] .+= F * randn(rng, size(F, 1))
             end
         end
-        shifted = _laplace_shifted_values(laplace, theta, Ls, U -> w[U][1:units.dims[U]])
-        if nh > 0
+        shifted = _laplace_shifted_values(laplace, theta, Ls, U ->
+            _laplace_restrict_levels(laplace, U, w[U][1:units.dims[U]], from_level))
+        # The integrated deviations are the subject level's own.
+        if nh > 0 && from_level <= 1
             psi = [_hybrid_item_sd(hyb, lv, theta, k) for k in items]
             for U in eachindex(units.members), (m, i) in enumerate(units.members[U])
                 at = units.dims[U] + (m - 1) * nh
@@ -6833,7 +7116,7 @@ is `L * cov * L'`: the same change of variables the model itself applies.
 """
 function ctsem_laplace_modes(laplace::CTSEMLaplaceObjective, values::AbstractVector,
     level::Integer=1)
-    theta = collect(Float64, values)
+    theta = _laplace_extend(laplace, collect(Float64, values))
     spec = laplace.spec
     lv = spec.levels[level]
     k = nrandomeffects(lv)
@@ -7096,13 +7379,15 @@ one the number is not the objective. `ctsem_laplace_evaluate` is called rather
 than the generic `ctsem_evaluate`, which deliberately drops that flag.
 
 `gradient_method === :nested` is how `nested_gradient` reaches here through the
-shared driver's one gradient-method argument.
+shared driver's one gradient-method argument. `coreset`, a `CTSEMCoreset`, is a
+coreset stage's trial (`CTSEMCoresetTarget`): its units alone, weighted.
 """
 function _ctsem_optimise_trial(o::CTSEMLaplaceObjective, x, want_gradient::Bool,
-        gradient_method, limit::Real, log; scores=nothing)
+        gradient_method, limit::Real, log; scores=nothing, coreset=nothing)
     evaluated = try
         ctsem_laplace_evaluate(o, x; gradient=want_gradient,
-            nested_gradient=(Symbol(gradient_method) === :nested), scores=scores)
+            nested_gradient=(Symbol(gradient_method) === :nested), scores=scores,
+            coreset=coreset)
     catch err
         _ctsem_must_propagate(err) && rethrow()
         nothing
@@ -7364,6 +7649,16 @@ zero for it, a level it is not in. On a 697-parameter model of 4031 units
 (affint's joint fit) the columns then need 12 to 20 per cent of the unit
 passes. The result differs from `localised = false` only in rounding.
 
+`localised` also takes a TI-predictor coefficient's column from its target's
+(`_laplace_ti_derivable`): where every unit is one subject, a coefficient
+`c` on predictor `k` moves a unit only through its target parameter `j`, by
+the unit's `x_k`, so `d s_U / d c = x_k d s_U / d theta_j` for every unit's
+score `s_U`, and the column is the units' score differences along `j`
+weighted by their `x_k`, plus the prior's curvature at `c`. A smooth's
+columns then cost nothing past their target's: on a model where a covariate's
+spline reaches every varying parameter, most of the columns. The result
+differs from differencing along `c` by the difference rule's truncation.
+
 `progress`, when given, is called `(done, total)` after every column with the
 gradient evaluations completed so far out of `2n` -- this loop is the one
 place a finish or a certification can go quiet for minutes on a wide Laplace
@@ -7394,12 +7689,15 @@ were.
 function _laplace_hessian_columns(laplace::CTSEMLaplaceObjective,
     values::AbstractVector, columns; step::Real=1e-4, retries::Integer=2,
     warm::Bool=true, progress=nothing, localised::Bool=true)
-    x = collect(Float64, values)
+    # Over the extended vector (`_laplace_extend`), and returned with the
+    # caller's rows.
+    nin = length(values)
+    x = _laplace_extend(laplace, collect(Float64, values))
     n = length(x)
     cols = collect(Int, columns)
     k = length(cols)
     H = zeros(Float64, n, k)
-    k == 0 && return H
+    k == 0 && return H[1:nin, :]
     budget = laplace.inner_maxiter
     NU = length(laplace.units.members)
     # The modes at `x`, from the origin, which every differencing point then
@@ -7430,15 +7728,31 @@ function _laplace_hessian_columns(laplace::CTSEMLaplaceObjective,
         end
     end
     base = warm ? deepcopy(laplace.modes) : nothing
+    # Coefficient columns taken from their targets' score differences
+    # (`_laplace_ti_derivable`): `derived[c]` is the TI effect entry of
+    # column `c`, and the targets are differenced with their units' scores
+    # kept, whether or not their own columns were asked for.
+    derived = localised ? _laplace_ti_derivable(laplace, cols) : Dict{Int,Int}()
+    sp = laplace.objective.params
+    targets = sort!(unique([sp.ti_parameter_indices[e] for e in Base.values(derived)]))
+    extra = setdiff(targets, cols)
+    if length(cols) - length(derived) + length(extra) >= length(cols)
+        empty!(derived)
+        targets = Int[]
+        extra = Int[]
+    end
+    work = vcat(cols, extra)
+    targetscores = Dict{Int,Matrix{Float64}}()
     # The units each column is differenced over, grouped so that one subset
     # objective serves every column that reads the same units. All units, or
     # scores that are not finite, or a parameter no unit reads (only the prior
     # does), mean the full objective.
     groups = Dict{Vector{Int},Vector{Int}}()
     full = Int[]
-    for c in 1:k
+    for c in eachindex(work)
+        c <= k && haskey(derived, c) && continue
         reads = scores === nothing || !all(isfinite, scores) ? Int[] :
-            findall(!iszero, view(scores, :, cols[c]))
+            findall(!iszero, view(scores, :, work[c]))
         if isempty(reads) || length(reads) == NU
             push!(full, c)
         else
@@ -7462,19 +7776,33 @@ function _laplace_hessian_columns(laplace::CTSEMLaplaceObjective,
             from = base === nothing ? nothing :
                 isempty(reads) ? base : [base[U] for U in reads]
             for c in cs
-                j = cols[c]
+                j = work[c]
                 h = step * max(1.0, abs(x[j]))
                 plus = copy(x); plus[j] += h
                 minus = copy(x); minus[j] -= h
-                pp = _laplace_hessian_point(obj, plus, budget, retries; from=from)
-                pm = _laplace_hessian_point(obj, minus, budget, retries; from=from)
+                target = j in targets
+                nreads = isempty(reads) ? NU : length(reads)
+                splus = target ? zeros(Float64, nreads, n) : nothing
+                sminus = target ? zeros(Float64, nreads, n) : nothing
+                pp = _laplace_hessian_point(obj, plus, budget, retries; from=from,
+                    scores=splus)
+                pm = _laplace_hessian_point(obj, minus, budget, retries; from=from,
+                    scores=sminus)
                 (pp.tries + pm.tries) > 0 && push!(escalated, j)
                 # Two gradients just finished, converged or not: a column this
                 # function gives up on (NaN, below) still cost the same two
                 # inner solves, so it counts here too or the reported total
                 # falls behind the real one.
                 done += 1
-                progress !== nothing && progress(2done, 2k)
+                progress !== nothing && progress(2done, 2 * (length(work) - length(derived)))
+                if target && pp.out.converged && pm.out.converged
+                    # Every unit's score difference along `j`, by full unit.
+                    D = zeros(Float64, NU, n)
+                    rows = isempty(reads) ? (1:NU) : reads
+                    D[rows, :] .= (splus .- sminus) ./ (2h)
+                    targetscores[j] = D
+                end
+                c > k && continue
                 if !(pp.out.converged && pm.out.converged)
                     # The same predicate `fg!` applies to a trial point, applied
                     # to the two points this column is differenced from. A
@@ -7492,6 +7820,8 @@ function _laplace_hessian_columns(laplace::CTSEMLaplaceObjective,
                 H[:, c] = (pp.out.gradient .- pm.out.gradient) ./ (2h)
             end
         end
+        isempty(derived) || _laplace_ti_derived_columns!(H, laplace, x, cols,
+            derived, targetscores)
     finally
         # The budget is a field of a mutable objective the caller keeps, so an
         # escalation that threw would otherwise be inherited by every later
@@ -7511,6 +7841,73 @@ function _laplace_hessian_columns(laplace::CTSEMLaplaceObjective,
         "; those columns are NaN. ", units, " unit(s) short, worst inner ",
         "gradient ", worst, " against a budget of ", budget * 4^retries,
         " iterations.")
+    return n == nin ? H : H[1:nin, :]
+end
+
+"""
+    _laplace_ti_derivable(laplace, cols)
+
+The columns among `cols` that are TI-predictor coefficients whose Hessian
+column can be taken from their target's (`_laplace_hessian_columns`), as
+column position => TI effect entry: every unit one subject, so a coefficient
+moves a unit through its own predictor value; no sampled predictor value,
+which would make that value a parameter too; and a coefficient with one
+target, not one named effect shared between parameters.
+"""
+function _laplace_ti_derivable(laplace::CTSEMLaplaceObjective, cols::AbstractVector{<:Integer})
+    out = Dict{Int,Int}()
+    sp = laplace.objective.params
+    isempty(sp.ti_coefficient_indices) && return out
+    all(m -> length(m) == 1, laplace.units.members) || return out
+    isempty(laplace.objective.ti_missing_parameter) || return out
+    all(s -> s.tipreds isa AbstractVector{<:Real},
+        laplace.objective.subject_objectives) || return out
+    coefficients = sp.ti_coefficient_indices
+    for (c, j) in enumerate(cols)
+        entries = findall(==(j), coefficients)
+        length(entries) == 1 || continue
+        e = entries[1]
+        # The target's own column must be differenced, not derived.
+        sp.ti_parameter_indices[e] in coefficients && continue
+        out[c] = e
+    end
+    return out
+end
+
+"""
+    _laplace_ti_derived_columns!(H, laplace, x, cols, derived, targetscores)
+
+Fill each derived column of `H` from its target's units' score differences:
+`sum_U x_Uk d s_U / d theta_j`, plus the prior's and penalty's curvature at the
+coefficient itself. The units' scores carry no prior, which is diagonal in a
+coefficient. A target whose differencing failed leaves its columns `NaN`.
+"""
+function _laplace_ti_derived_columns!(H::AbstractMatrix, laplace::CTSEMLaplaceObjective,
+    x::AbstractVector, cols::AbstractVector{<:Integer}, derived::Dict{Int,Int},
+    targetscores::Dict{Int,Matrix{Float64}})
+    sp = laplace.objective.params
+    subjects = laplace.objective.subject_objectives
+    members = laplace.units.members
+    precision = _ctsem_prior_precision(laplace.objective, length(x))
+    for (c, e) in derived
+        j = sp.ti_parameter_indices[e]
+        k = sp.ti_predictor_indices[e]
+        D = get(targetscores, j, nothing)
+        if D === nothing
+            H[:, c] .= NaN
+            continue
+        end
+        column = zeros(Float64, size(H, 1))
+        for U in eachindex(members)
+            value = subjects[members[U][1]].tipreds[k]
+            iszero(value) && continue
+            @inbounds for m in eachindex(column)
+                column[m] += value * D[U, m]
+            end
+        end
+        column[cols[c]] -= precision[cols[c]]
+        H[:, c] .= column
+    end
     return H
 end
 
@@ -7553,20 +7950,21 @@ optimcontrol name `laplace_inner_maxiter`; a bare dollar sign interpolates in a
 Julia docstring, which is why it is not written out here.)
 """
 function _laplace_hessian_point(laplace::CTSEMLaplaceObjective,
-    x::AbstractVector, budget::Integer, retries::Integer; from=nothing)
+    x::AbstractVector, budget::Integer, retries::Integer; from=nothing,
+    scores::Union{Nothing,Matrix{Float64}}=nothing)
     capped() = any(>=(laplace.inner_maxiter), laplace.inner_iterations)
     reached() = isempty(laplace.inner_gradient) ? 0.0 :
         maximum(laplace.inner_gradient)
     short() = count(!, laplace.inner_converged)
     laplace.inner_maxiter = budget
     _laplace_restore_modes!(laplace, from)
-    out = ctsem_laplace_evaluate(laplace, x; gradient=true)
+    out = ctsem_laplace_evaluate(laplace, x; gradient=true, scores=scores)
     tries = 0
     while !out.converged && capped() && tries < retries
         tries += 1
         laplace.inner_maxiter = budget * 4^tries
         _laplace_restore_modes!(laplace, from)
-        out = ctsem_laplace_evaluate(laplace, x; gradient=true)
+        out = ctsem_laplace_evaluate(laplace, x; gradient=true, scores=scores)
     end
     result = (out=out, tries=tries, worst=reached(), units=short())
     laplace.inner_maxiter = budget
@@ -7677,17 +8075,22 @@ objective.
 """
 function ctsem_subject_gradients(laplace::CTSEMLaplaceObjective,
     values::AbstractVector; prior::Bool=true)
-    theta = collect(Float64, values)
+    # Over the extended vector (`_laplace_extend`), and returned with the
+    # caller's columns.
+    n = length(values)
+    theta = _laplace_extend(laplace, collect(Float64, values))
     nunits = length(laplace.units.members)
     S = zeros(Float64, nunits, length(theta))
     r = ctsem_laplace_evaluate(laplace, theta; gradient=true, scores=S)
-    isfinite(r.value) || return (value=r.value, scores=fill(NaN, size(S)))
-    all(isfinite, S) ||
-        return _laplace_subject_gradients_forward(laplace, theta; prior=prior)
+    isfinite(r.value) || return (value=r.value, scores=fill(NaN, nunits, n))
+    if !all(isfinite, S)
+        f = _laplace_subject_gradients_forward(laplace, theta; prior=prior)
+        return (value=f.value, scores=size(f.scores, 2) == n ? f.scores : f.scores[:, 1:n])
+    end
     # Each unit carries its share of the prior, as the forward route's rows do.
     prior && _ctsem_prior_scores!(S, laplace.objective, theta,
         _laplace_unit_of_subject(laplace))
-    return (value=r.value, scores=S)
+    return (value=r.value, scores=size(S, 2) == n ? S : S[:, 1:n])
 end
 
 """
@@ -8028,7 +8431,7 @@ function ctsem_laplace_population_deviations(laplace::CTSEMLaplaceObjective,
     n = ctsem_laplace_coordinate_dimension(laplace)
     length(u) == n || throw(DimensionMismatch(string("u has ", length(u),
         " coordinates where the random effects take ", n)))
-    theta = collect(Float64, values)
+    theta = _laplace_extend(laplace, collect(Float64, values))
     _laplace_check_indices(laplace, length(theta))
     Ls = _laplace_popchols(theta, laplace.spec)
     starts, ndev = _laplace_deviation_offsets(laplace)
@@ -8037,15 +8440,16 @@ function ctsem_laplace_population_deviations(laplace::CTSEMLaplaceObjective,
 end
 
 """
-    _laplace_shifted_values_from_deviations(laplace, theta, deviations)
+    _laplace_shifted_values_from_deviations(laplace, theta, deviations; from_level=1)
 
 Every subject's raw parameters before TI-predictor effects, from the population
 vector and one draw's natural deviations: each of its blocks' deviations added
-to that level's parameters. No population root is involved, so this is the same
-whichever root the draws were made under.
+to that level's parameters, for the levels from `from_level` outward. No
+population root is involved, so this is the same whichever root the draws were
+made under.
 """
 function _laplace_shifted_values_from_deviations(laplace::CTSEMLaplaceObjective,
-    theta::Vector{Float64}, deviations::AbstractVector)
+    theta::Vector{Float64}, deviations::AbstractVector; from_level::Integer=1)
     units = laplace.units
     spec = laplace.spec
     starts, total = _laplace_deviation_offsets(laplace)
@@ -8058,6 +8462,7 @@ function _laplace_shifted_values_from_deviations(laplace::CTSEMLaplaceObjective,
         for (m, i) in enumerate(units.members[U])
             shifted = copy(theta)
             for l in eachindex(spec.levels)
+                l < from_level && continue
                 level = spec.levels[l]
                 k = nrandomeffects(level)
                 (k == 0 || nlatent(level) == 0) && continue

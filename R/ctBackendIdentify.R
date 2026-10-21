@@ -210,7 +210,7 @@
 # confirmed directions and the change each moved the likelihood by. Each is
 # matched to an eigenvector of `vectors` when one is the same direction -- the
 # usual case, since both decompose the same Hessian -- and left unmatched,
-# `NA`, otherwise: the surrogate route, say, stores a different matrix from
+# `NA`, otherwise: the score-based routes, say, store a different matrix from
 # the one the screen walked.
 #' @keywords internal
 .ctIdentifyMeasuredFlat <- function(screen, vectors) {

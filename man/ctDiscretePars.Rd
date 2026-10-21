@@ -115,8 +115,11 @@ subjects, 1 to N, with a message. If FALSE, they are read as that numbering.}
 }
 \value{
 With \code{plot = FALSE}, an array of the discrete time
-coefficients, by sample, subject, time interval, row and column; with
-\code{plot = TRUE}, a ggplot object.
+coefficients, by sample, subject, time interval, row and column, of class
+\code{ctDiscretePars}: \code{summary()} gives each curve's peak, the lag of
+the peak, the lag at which it has fallen to half the peak (a half-life), and
+the area under it, with their uncertainty (\code{\link{summary.ctDiscretePars}}).
+With \code{plot = TRUE}, a ggplot object.
 }
 \description{
 Calculate model implied regressions for a sequence of time intervals (if ct) or steps (if dt) based on

@@ -474,12 +474,52 @@ ctBackendParMatrices <- function(fit, raw = NULL, tipreds = NULL, state = NULL,
   .ctBackendPopArraysFromFlat(flat, layout, .ctBackendSpec(fit))
 }
 
+# Each subject's raw vector before TI-predictor effects at every draw, for a
+# fit whose random effects are coordinates: draws x subjects x parameters, the
+# subjects those of `spec` (all of the fit's, or the ones `.ctBackendKalmanSpec`
+# kept). Plausible values, as `ctSubjectPars(uncertainty = 'total')` gives:
+# the effects drawn with the parameters where a sampled fit saved them, and
+# otherwise each draw's linearised mode plus a draw from the subject's
+# conditional posterior (`ctsem_laplace_subject_values(conditional = TRUE)`).
+# NULL for one draw, or a fit whose effects are filter states.
+.ctBackendPlausibleValues <- function(fit, spec, samples, rows = NULL) {
+  fitspec <- .ctBackendSpec(fit)
+  if (is.null(fitspec$laplace) || nrow(samples) < 2L) return(NULL)
+  module <- .ctJuliaModule(fitspec$project)
+  objective <- .ctJuliaObjective(fit, hybrid = .ctBackendHybridReports(fitspec))
+  sampled <- identical(fit$sample$target, "joint") &&
+    length(fit$sample$effect_mean) > 0L
+  saved <- fit$sample$effects
+  if (sampled && !is.null(saved) && !is.null(rows) &&
+      nrow(saved) == nrow(.ctBackendRawSamples(fit))) {
+    raw <- module$ctsem_laplace_subject_values(objective,
+      .ctJuliaPut(as.matrix(samples)), .ctJuliaPut(as.matrix(saved[rows, , drop = FALSE])),
+      ti_effects = FALSE)
+  } else {
+    if (sampled) message("This fit sampled its random effects, but their draws ",
+      "are not on it, so each subject's matrices come from its Laplace posterior ",
+      "about the mode, linearised around the estimate. Sample with ",
+      "saveEffects=TRUE to report from the draws.")
+    raw <- module$ctsem_laplace_subject_values(objective,
+      .ctJuliaPut(as.matrix(samples)), .ctJuliaNumericVector(fit$estimate$raw),
+      conditional = TRUE, seed = sample.int(.Machine$integer.max, 1L),
+      ti_effects = FALSE)
+  }
+  raw <- array(as.numeric(.ctBackendJuliaValue(raw)),
+    dim = c(nrow(samples), length(fitspec$subject_starts), ncol(samples)))
+  subjects <- attr(spec, "laplaceSubjects")
+  if (!is.null(subjects)) raw <- raw[, subjects, , drop = FALSE]
+  raw
+}
+
 .ctBackendExtract <- function(object, subjectMatrices = FALSE, nsamples = "all",
   subjects = "all", ...) {
   samples <- .ctBackendRawSamples(object)
+  rows <- seq_len(nrow(samples))
   if (!identical(nsamples, "all")) {
     wanted <- min(nrow(samples), as.integer(nsamples)[1L])
-    samples <- samples[round(seq(1, nrow(samples), length.out = wanted)), , drop = FALSE]
+    rows <- round(seq(1, nrow(samples), length.out = wanted))
+    samples <- samples[rows, , drop = FALSE]
   }
   # Subject matrices need the filter, not just the transforms: an individually
   # varying parameter is an augmented latent state, so a subject's value for it
@@ -494,6 +534,11 @@ ctBackendParMatrices <- function(fit, raw = NULL, tipreds = NULL, state = NULL,
   subject <- NULL
   if (isTRUE(subjectMatrices)) {
     spec <- .ctBackendKalmanSpec(object, subjects = subjects)
+    # Where the random effects are coordinates, each draw's subject matrices
+    # are at that draw's plausible values: the population draw with the
+    # subject's own uncertainty, as ctSubjectPars() reports. At the modes alone
+    # a subject with little data would look as certain as the population.
+    plausible <- .ctBackendPlausibleValues(object, spec, samples, rows)
     computed <- lapply(seq_len(nrow(samples)), function(iteration) {
       # Only `subject_matrices` is read below, which `fields` does not gate --
       # it is assembled separately from the filter trace regardless of which
@@ -501,7 +546,10 @@ ctBackendParMatrices <- function(fit, raw = NULL, tipreds = NULL, state = NULL,
       # vector, so `fields` still needs one name; `subject_loglik` is the
       # smallest of the eight.
       scores <- try(.ctBackendKalmanRaw(spec, samples[iteration, ],
-        subjectmatrices = TRUE, fields = "subject_loglik"), silent = TRUE)
+        subjectmatrices = TRUE, fields = "subject_loglik",
+        subjectvalues = if (!is.null(plausible))
+          matrix(plausible[iteration, , ], ncol = dim(plausible)[3L])),
+        silent = TRUE)
       if (inherits(scores, "try-error")) scores else scores$subject_matrices
     })
     failed <- vapply(computed, inherits, logical(1L), "try-error")
@@ -688,6 +736,9 @@ ctBackendParMatrices <- function(fit, raw = NULL, tipreds = NULL, state = NULL,
   # sections rather than among the fixed effects -- as they do for Stan, whose
   # `popmeans` covers only `nparams`.
   free$randomeffect <- free$parnumber %in% .ctBackendRandomEffectParameters(spec)
+  # A stated population mean (R/ctFixedPopMeans.R) is a cell a subject's
+  # parameters read, and not an estimate.
+  free$stated <- free$parnumber %in% spec$anchors$index
   free
 }
 
@@ -742,13 +793,14 @@ ctBackendParMatrices <- function(fit, raw = NULL, tipreds = NULL, state = NULL,
 .ctBackendPopMeanSamples <- function(fit, samples = NULL, ...) {
   if (!length(list(...))) {
     constrained <- .ctBackendConstrained(fit, samples)
-    cells <- constrained$cells[!constrained$cells$randomeffect, , drop = FALSE]
+    cells <- constrained$cells[!constrained$cells$randomeffect &
+      !(constrained$cells$stated %in% TRUE), , drop = FALSE]
     return(list(
       values = .ctBackendPopCellsFromFlat(constrained$flat, cells, constrained$layout),
       parnumber = as.integer(cells$parnumber)))
   }
   cells <- .ctBackendFreeParameterCells(fit)
-  cells <- cells[!cells$randomeffect, , drop = FALSE]
+  cells <- cells[!cells$randomeffect & !(cells$stated %in% TRUE), , drop = FALSE]
   layout <- .ctBackendSummaryLayout(fit)
   if (is.null(samples)) samples <- .ctBackendRawSamples(fit)
   values <- .ctBackendPopCellValues(fit, samples, cells, layout, ...)
@@ -816,8 +868,11 @@ ctBackendParMatrices <- function(fit, raw = NULL, tipreds = NULL, state = NULL,
 # Mean / sd / quantiles of a sample matrix, in Stan's summary column order, with
 # `n_eff` and `Rhat` in Stan's place when the draws are a Hamiltonian sample and
 # `chains` says how they are grouped. Base R for the moments: with one
-# point-estimate "sample" there is nothing to monitor.
-.ctBackendSampleSummary <- function(values, digits = 3, z = FALSE, chains = NULL) {
+# point-estimate "sample" there is nothing to monitor. `mode`, the same
+# quantities at the optimiser's estimate (one row), adds a column after the
+# quantiles.
+.ctBackendSampleSummary <- function(values, digits = 3, z = FALSE, chains = NULL,
+  mode = NULL) {
   if (nrow(values) < 2L) {
     out <- data.frame(mean = as.numeric(values[1L, ]), row.names = colnames(values))
     return(round(out, digits))
@@ -835,6 +890,12 @@ ctBackendParMatrices <- function(fit, raw = NULL, tipreds = NULL, state = NULL,
   if (!is.null(diagnostics)) {
     out$n_eff <- diagnostics$n_eff
     out$Rhat <- diagnostics$Rhat
+  }
+  if (!is.null(mode) && length(mode) && ncol(as.matrix(mode)) == ncol(values)) {
+    mode <- as.matrix(mode)
+    at <- if (!is.null(colnames(mode)) && !is.null(colnames(values)) &&
+        all(colnames(values) %in% colnames(mode))) mode[1L, colnames(values)] else mode[1L, ]
+    out$mode <- as.numeric(at)
   }
   # A quantity with no posterior spread has no z, rather than an enormous one.
   # Two things land here with an exactly zero sd and both want this: a
@@ -1021,6 +1082,9 @@ ctBackendParMatrices <- function(fit, raw = NULL, tipreds = NULL, state = NULL,
 # level: what differs is only which raw parameters vary and how spread out they
 # are, both of which arrive in `population`.
 .ctBackendRandomEffectLevel <- function(fit, population, cells, layout, samples) {
+  # Displaced at the varying parameters' positions, a stated population mean's
+  # among them (R/ctFixedPopMeans.R).
+  samples <- .ctBackendRawFull(fit, samples)
   parnumber <- population$parnumber
   parname <- population$param
   rawsd <- population$rawsd
@@ -1173,8 +1237,10 @@ ctBackendParMatrices <- function(fit, raw = NULL, tipreds = NULL, state = NULL,
 # subjects. TI predictor effects are a subject's and are left out. Reported
 # for the parameters that differ between groups at that level -- those varying
 # there or at a level above it -- through the transforms the subject values
-# use.
-.ctBackendGroupPars <- function(fit, level) {
+# use. Draws are the subject route's, at that level: the group's effects drawn
+# with the levels inside it, which are then dropped.
+.ctBackendGroupPars <- function(fit, level, pointest = TRUE, nsamples = "all",
+  uncertainty = "total") {
   spec <- .ctBackendSpec(fit)
   model <- .ctFitBaseModel(fit)
   levels <- c(model$subjectIDname, model$groupIDnames)
@@ -1182,28 +1248,17 @@ ctBackendParMatrices <- function(fit, raw = NULL, tipreds = NULL, state = NULL,
   params <- .ctVaryingParams(model, .ctVaryingColumns(model)[position:length(levels)])
   if (!length(params)) stop("Nothing varies between groups of '", level,
     "' or above, so every group's parameters are the population's.", call. = FALSE)
-
-  cells <- .ctBackendFreeParameterCells(fit)
-  cells <- cells[!cells$randomeffect, , drop = FALSE]
-  selected <- cells[.ctBackendParameterNames(cells) %in% params, , drop = FALSE]
-  selected <- selected[!duplicated(.ctBackendParameterNames(selected)), , drop = FALSE]
-  module <- .ctJuliaModule(spec$project)
-  raw <- .ctBackendJuliaValue(module$ctsem_laplace_subject_values(
-    .ctJuliaObjective(fit), .ctJuliaNumericVector(fit$estimate$raw),
-    from_level = as.integer(position), ti_effects = FALSE))
-  raw <- matrix(as.numeric(raw), ncol = length(fit$estimate$raw))
-  values <- .ctBackendPopCellValues(fit, raw, selected, .ctBackendSummaryLayout(fit))
+  values <- .ctBackendLaplaceSubjectPars(fit, spec, pointest = pointest,
+    nsamples = nsamples, uncertainty = uncertainty, from_level = position,
+    params = params)
 
   ids <- as.character(.ctFitIdMap(fit)$original)
-  data <- spec$data
-  group <- as.character(data[[level]][match(ids, as.character(data[[model$subjectIDname]]))])
-  first <- !duplicated(group)
-  names <- colnames(values)
-  alphabetical <- order(names)
-  out <- array(as.numeric(values[first, alphabetical, drop = FALSE]),
-    dim = c(1L, sum(first), length(names)))
-  dimnames(out) <- stats::setNames(list(1L, group[first], names[alphabetical]),
-    c("iter", level, "param"))
+  group <- as.character(spec$data[[level]][match(ids,
+    as.character(spec$data[[model$subjectIDname]]))])
+  first <- which(!duplicated(group))
+  out <- values[, first, , drop = FALSE]
+  dimnames(out) <- stats::setNames(list(dimnames(values)[[1L]], group[first],
+    dimnames(values)[[3L]]), c("iter", level, "param"))
   out
 }
 
@@ -1227,11 +1282,21 @@ ctBackendParMatrices <- function(fit, raw = NULL, tipreds = NULL, state = NULL,
 # draws pair draw `s` of the parameters with draw `s` of the effects, as
 # generation does. Without the effect draws (`saveEffects = FALSE`, the
 # default) the draws fall back to the linearised modes, and say so.
+#
+# `from_level` > 1 builds each subject's vector from that level outward, with
+# no TI-predictor effects -- its group's values, `.ctBackendGroupPars()` --
+# for the parameters named in `params`.
 .ctBackendLaplaceSubjectPars <- function(fit, spec, pointest = TRUE,
-  nsamples = "all", uncertainty = "total") {
+  nsamples = "all", uncertainty = "total", from_level = 1L, params = NULL) {
   cells <- .ctBackendFreeParameterCells(fit)
   cells <- cells[!cells$randomeffect, , drop = FALSE]
   varying <- .ctBackendVaryingParameters(spec, cells)
+  if (!is.null(params)) {
+    named <- cells$parnumber[.ctBackendParameterNames(cells) %in% params]
+    varying <- sort(unique(named))
+  }
+  from_level <- as.integer(from_level)
+  ti_effects <- from_level <= 1L
 
   module <- .ctJuliaModule(spec$project)
   estimate <- .ctJuliaNumericVector(fit$estimate$raw)
@@ -1266,7 +1331,7 @@ ctBackendParMatrices <- function(fit, raw = NULL, tipreds = NULL, state = NULL,
   # modes, and linearises them with the effects for draws
   # (`.ctBackendHybridReports`); a fit that sampled its effects has a draw of
   # every coordinate, so it reads them from the layer holding them.
-  objective <- .ctJuliaObjective(fit, hybrid = !sampled &&
+  objective <- .ctJuliaObjective(fit, hybrid = !sampled && ti_effects &&
     .ctBackendHybridReports(spec))
   effects <- NULL
   if (!is.null(draws) && sampled) {
@@ -1282,9 +1347,14 @@ ctBackendParMatrices <- function(fit, raw = NULL, tipreds = NULL, state = NULL,
   if (is.null(draws)) {
     subject_raw <- .ctBackendJuliaValue(if (sampled)
       module$ctsem_laplace_subject_values(objective, estimate,
-        .ctJuliaNumericVector(fit$sample$effect_mean)) else
-      module$ctsem_laplace_subject_values(objective, estimate))
-    subject_raw <- matrix(as.numeric(subject_raw), ncol = length(fit$estimate$raw))
+        .ctJuliaNumericVector(fit$sample$effect_mean), from_level = from_level,
+        ti_effects = ti_effects) else
+      module$ctsem_laplace_subject_values(objective, estimate,
+        from_level = from_level, ti_effects = ti_effects))
+    # A subject's vector carries any stated population means after the free
+    # parameters (R/ctFixedPopMeans.R).
+    subject_raw <- matrix(as.numeric(subject_raw),
+      ncol = length(fit$estimate$raw) + .ctBackendNanchors(fit))
     values <- .ctBackendPopCellValues(fit, subject_raw, selected, layout)
     out <- array(as.numeric(values[, alphabetical, drop = FALSE]),
       dim = c(1L, nrow(subject_raw), length(varying)))
@@ -1304,13 +1374,15 @@ ctBackendParMatrices <- function(fit, raw = NULL, tipreds = NULL, state = NULL,
   # set.seed() governs the draws.
   raw <- .ctBackendJuliaValue(if (!is.null(effects))
     module$ctsem_laplace_subject_values(objective, .ctJuliaPut(as.matrix(draws)),
-      .ctJuliaPut(as.matrix(effects))) else
+      .ctJuliaPut(as.matrix(effects)), from_level = from_level,
+      ti_effects = ti_effects) else
     module$ctsem_laplace_subject_values(objective, .ctJuliaPut(as.matrix(draws)),
       estimate, conditional = !identical(uncertainty, "population"),
-      seed = sample.int(.Machine$integer.max, 1L)))
+      seed = sample.int(.Machine$integer.max, 1L), from_level = from_level,
+      ti_effects = ti_effects))
   nsubjects <- length(spec$subject_starts)
   raw <- array(as.numeric(raw), dim = c(nrow(draws), nsubjects,
-    length(fit$estimate$raw)))
+    length(fit$estimate$raw) + .ctBackendNanchors(fit)))
   flat <- matrix(aperm(raw, c(2L, 1L, 3L)), nrow = nsubjects * nrow(draws))
   values <- .ctBackendPopCellValues(fit, flat, selected, layout)
   out <- array(NA_real_, dim = c(nrow(draws), nsubjects, length(varying)))
@@ -1462,6 +1534,8 @@ ctBackendParMatrices <- function(fit, raw = NULL, tipreds = NULL, state = NULL,
   predictors <- sort(unique(effects$predictor))
   perpredictor <- lapply(predictors, function(predictor)
     effects[effects$predictor %in% predictor, , drop = FALSE])
+  # A predictor may act on a stated population mean (R/ctFixedPopMeans.R).
+  samples <- .ctBackendRawFull(fit, samples)
   ndraws <- nrow(samples)
 
   # One engine call for every predictor and both directions, for the same
@@ -1683,13 +1757,17 @@ ctBackendParMatrices <- function(fit, raw = NULL, tipreds = NULL, state = NULL,
   if (is.null(samples)) samples <- .ctBackendRawSamples(fit)
   layout <- .ctBackendSummaryLayout(fit)
   cells <- .ctBackendFreeParameterCells(fit)
-  flat <- .ctBackendParMatricesFlat(fit, t(samples))
-  randomeffects <- .ctBackendRandomEffectDraws(fit, samples = samples, cells = cells,
+  # The draws with any stated population means after them
+  # (R/ctFixedPopMeans.R), for everything below that reads a cell's position;
+  # `samples` itself stays the free parameters, as the cache compares it.
+  full <- .ctBackendRawFull(fit, samples)
+  flat <- .ctBackendParMatricesFlat(fit, t(full))
+  randomeffects <- .ctBackendRandomEffectDraws(fit, samples = full, cells = cells,
     layout = layout, flat = flat)
   list(samples = samples, layout = layout, cells = cells, flat = flat,
     popsd = randomeffects$popsd, rawpopcorr = randomeffects$rawpopcorr,
     randomeffectlevels = randomeffects$levels,
-    tipreds = .ctBackendTipredDraws(fit, samples = samples, cells = cells,
+    tipreds = .ctBackendTipredDraws(fit, samples = full, cells = cells,
       layout = layout))
 }
 
@@ -1799,6 +1877,18 @@ ctBackendParMatrices <- function(fit, raw = NULL, tipreds = NULL, state = NULL,
   cells <- constrained$cells
   layout <- constrained$layout
   flat <- constrained$flat
+  # The optimiser's estimate through the same transforms, for a `mode` column
+  # beside the draws' moments. They differ where the posterior is skewed, and
+  # the estimate is the point a likelihood ratio or an information criterion
+  # refers to. Only for an optimised fit with draws: a sampled fit's `raw` is
+  # its posterior mean, and without draws the table is the estimate already.
+  atmode <- if (nrow(samples) > 1L && is.null(object$sample) &&
+      length(object$estimate$raw) == ncol(samples))
+    .ctBackendConstrain(object, matrix(as.numeric(object$estimate$raw), nrow = 1L)) else NULL
+  modelevel <- function(level, field) {
+    for (m in atmode$randomeffectlevels) if (identical(m$level, level)) return(m[[field]])
+    NULL
+  }
 
   # Non-NULL only for a Hamiltonian sample, and only while the draws still are
   # the ones the sampler produced: draws with no chains would make `n_eff` and
@@ -1833,7 +1923,7 @@ ctBackendParMatrices <- function(fit, raw = NULL, tipreds = NULL, state = NULL,
     for (lv in constrained$randomeffectlevels) {
       if (!is.null(lv$rawpopcorr)) {
         section <- .ctBackendSampleSummary(lv$rawpopcorr, digits = digits,
-          chains = chains)
+          chains = chains, mode = modelevel(lv$level, "rawpopcorr"))
         section <- .ctBackendMarkNoWidth(section,
           .ctBackendNoWidthRows(nowidth, rownames(section), "rawcor_", lv$level))
         section <- .ctBackendMarkNotFinite(section)
@@ -1844,7 +1934,8 @@ ctBackendParMatrices <- function(fit, raw = NULL, tipreds = NULL, state = NULL,
     }
   } else if (!is.null(constrained$rawpopcorr)) {
     out$rawpopcorr <- .ctBackendSampleSummary(constrained$rawpopcorr,
-      digits = digits, z = nrow(samples) > 1L, chains = chains)
+      digits = digits, z = nrow(samples) > 1L, chains = chains,
+      mode = atmode$rawpopcorr)
     out$rawpopcorr <- .ctBackendMarkNoWidth(out$rawpopcorr,
       .ctBackendNoWidthRows(nowidth, rownames(out$rawpopcorr), "rawcor_"))
     out$rawpopcorr <- .ctBackendMarkNotFinite(out$rawpopcorr)
@@ -1866,8 +1957,27 @@ ctBackendParMatrices <- function(fit, raw = NULL, tipreds = NULL, state = NULL,
 
   if (!is.null(constrained$tipreds)) {
     out$tipreds <- .ctBackendSampleSummary(constrained$tipreds, digits = digits,
-      z = nrow(samples) > 1L, chains = chains)
+      z = nrow(samples) > 1L, chains = chains, mode = atmode$tipreds)
     out$tipredsNote <- "Approximate (linearised) effects on the transformed parameters."
+  }
+  # A smooth term's columns are one effect, and a coefficient of its basis says
+  # nothing alone: the term is reported whole (R/ctTIpredSmooth.R), and
+  # ctTIpredEffects() draws it.
+  smooths <- .ctTIsmoothSummary(object, digits = digits)
+  if (!is.null(smooths)) {
+    columns <- .ctTIsmoothColumns(.ctBackendModel(object))
+    if (!is.null(out$tipreds)) {
+      pattern <- paste0("^tip_(", paste(columns, collapse = "|"), ")_")
+      out$tipreds <- out$tipreds[!grepl(pattern, rownames(out$tipreds)), ,
+        drop = FALSE]
+      if (!nrow(out$tipreds)) out$tipreds <- out$tipredsNote <- NULL
+    }
+    out$smooths <- smooths
+    out$smoothsNote <- paste0("Smooth TI predictor terms: effective degrees of ",
+      "freedom (the linear trend included), the sd of the penalised ",
+      "coefficients, the share of the target's variance over persons the term ",
+      "accounts for (raw scale, against the random effects' variance), and an ",
+      "approximate test of the whole term. ctTIpredEffects() plots them.")
   }
 
   if (isTRUE(parmatrices)) {
@@ -1935,7 +2045,7 @@ ctBackendParMatrices <- function(fit, raw = NULL, tipreds = NULL, state = NULL,
     for (lv in constrained$randomeffectlevels) {
       if (!is.null(lv$popsd)) {
         section <- .ctBackendSampleSummary(lv$popsd, digits = digits,
-          chains = chains)
+          chains = chains, mode = modelevel(lv$level, "popsd"))
         out[[paste0("popsd.", lv$level)]] <- .ctBackendMarkNoWidth(section,
           .ctBackendNoWidthRows(undetermined, rownames(section), "popsd_",
             lv$level))
@@ -1943,7 +2053,7 @@ ctBackendParMatrices <- function(fit, raw = NULL, tipreds = NULL, state = NULL,
     }
   } else if (!is.null(constrained$popsd)) {
     out$popsd <- .ctBackendSampleSummary(constrained$popsd, digits = digits,
-      chains = chains)
+      chains = chains, mode = atmode$popsd)
     out$popsd <- .ctBackendMarkNoWidth(out$popsd,
       .ctBackendNoWidthRows(undetermined, rownames(out$popsd), "popsd_"))
     out$popsd <- .ctBackendMarkNotFinite(out$popsd)
@@ -1952,7 +2062,8 @@ ctBackendParMatrices <- function(fit, raw = NULL, tipreds = NULL, state = NULL,
   # were estimated and some follow from the dimension structure, and a reader
   # cannot tell which from the numbers. The non-finite sentence joins it rather
   # than replacing it -- both can be true of one table.
-  popsdnote <- .ctBackendPopRegressionNote(.ctBackendSpec(object))
+  popsdnote <- c(.ctBackendPopRegressionNote(.ctBackendSpec(object)),
+    .ctBackendPopBlocksNote(.ctBackendSpec(object)))
   popsdnote <- c(popsdnote,
     .ctBackendNotFiniteNote(out$popsd, "standard deviation"))
   # The random effects the data barely inform, from the check the fit made
@@ -1968,7 +2079,7 @@ ctBackendParMatrices <- function(fit, raw = NULL, tipreds = NULL, state = NULL,
       " shown with the estimate only: no sd, interval or z."),
     "See fit$identifiability$effects."), collapse = " ")
 
-  fixed <- cells[!cells$randomeffect, , drop = FALSE]
+  fixed <- cells[!cells$randomeffect & !(cells$stated %in% TRUE), , drop = FALSE]
   # A `poprank` fit's loadings are free parameters, so without this they
   # appear here as `poploading_df11_dim1` beside the model's own parameters --
   # an internal coordinate in the one table a reader treats as the answer.
@@ -1984,7 +2095,8 @@ ctBackendParMatrices <- function(fit, raw = NULL, tipreds = NULL, state = NULL,
   }
   out$popmeans <- .ctBackendSampleSummary(
     .ctBackendPopCellsFromFlat(flat, fixed, layout), digits = digits,
-    chains = chains)
+    chains = chains, mode = if (!is.null(atmode))
+      .ctBackendPopCellsFromFlat(atmode$flat, fixed, layout))
   # A model parameter's raw coordinate is spelled the same way here as in the
   # raw vector, so no prefix -- see `.ctBackendRawParameterNames()`. Marked
   # too, because a flat direction is not confined to random-effect
@@ -1994,7 +2106,13 @@ ctBackendParMatrices <- function(fit, raw = NULL, tipreds = NULL, state = NULL,
     .ctBackendNoWidthRows(nowidth, rownames(out$popmeans)))
   out$popNote <- paste0("Population values on the transformed scale. ",
     "Covariance parameters appear in sd / unconstrained correlation form; ",
-    "see System Matrices (or ctSummaryMatrices()) for cor/cov.")
+    "see System Matrices (or ctSummaryMatrices()) for cor/cov.",
+    if (!is.null(atmode)) paste0(" mode is the fit's estimate, the other ",
+      "columns its posterior draws."))
+  anchors <- .ctBackendSpec(object)$anchors
+  if (length(anchors$index)) out$popNote <- paste0(out$popNote,
+    " Population means stated in the model, not estimated: ",
+    paste0(anchors$param, " = ", format(anchors$value), collapse = ", "), ".")
 
   # Immediately after the parameters it re-expresses, because the `threshold_`
   # rows above are gaps and are not readable on their own -- which is the whole
@@ -2019,6 +2137,11 @@ ctBackendParMatrices <- function(fit, raw = NULL, tipreds = NULL, state = NULL,
     counts <- vapply(levels, function(l) length(unique(data[[l]])), integer(1))
     out$units <- paste(paste(counts, levels), collapse = " within ")
   }
+  # A sampled fit's estimate is the posterior mean, and the log likelihood and
+  # posterior it carries are the placement optimisation's, at another point --
+  # under SAEM placement, the start. Neither they nor an AIC describe a
+  # posterior sample; ctLOO() compares those.
+  sampled <- !is.null(object$sample)
   logposterior <- object$estimate$logposterior
   if (is.null(logposterior)) logposterior <- object$estimate$loglik
   # With sampling weights the objective is the weighted log likelihood (plus
@@ -2026,13 +2149,13 @@ ctBackendParMatrices <- function(fit, raw = NULL, tipreds = NULL, state = NULL,
   # is reported as what it is, below, and the posterior only when a prior made
   # it something more.
   weighted <- .ctFitWeighted(object)
-  if (!weighted || !isTRUE(all.equal(as.numeric(logposterior),
-      as.numeric(object$estimate$loglik_weighted)))) out$logposterior <- logposterior
+  if (!sampled && (!weighted || !isTRUE(all.equal(as.numeric(logposterior),
+      as.numeric(object$estimate$loglik_weighted))))) out$logposterior <- logposterior
   # Without priors these are the same number; the shared print method (not
   # this builder) skips the duplicate row -- see
   # summaryCtStanFitLoglikDuplicatesPosterior() in R/summary.ctStanFit.R.
   # The likelihood is always returned, priors or not.
-  out$loglik <- object$estimate$loglik
+  if (!sampled) out$loglik <- object$estimate$loglik
   if (weighted) {
     w <- .ctBackendSpec(object)$subject_weights
     out$weights <- sprintf("%d subjects, relative weights %s to %s (mean 1)",
@@ -2040,9 +2163,16 @@ ctBackendParMatrices <- function(fit, raw = NULL, tipreds = NULL, state = NULL,
     out$loglik_weighted <- object$estimate$loglik_weighted
   }
   out$npars <- length(object$estimate$raw)
+  # A smooth counts by its effective degrees of freedom, not its columns.
+  penalty <- .ctBackendSpec(object)$penalty
+  effective <- out$npars
+  if (!is.null(penalty) && nrow(penalty) && !is.null(penalty$edf) &&
+      all(is.finite(penalty$edf))) {
+    effective <- out$npars - sum(penalty$m) + sum(penalty$edf)
+  }
   # A weighted fit maximises a pseudo-likelihood, whose differences are not
   # chi-square, so it has no AIC.
-  if (!weighted) out$aic <- 2 * out$npars - 2 * object$estimate$loglik
+  if (!weighted && !sampled) out$aic <- 2 * effective - 2 * object$estimate$loglik
   # How far this estimate is from the optimum, when the curvature to say so was
   # computed. Absent rather than zero when it was not -- `estonly = TRUE`
   # computes no Hessian, and reporting a gap of zero for a fit nobody checked

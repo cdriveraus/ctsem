@@ -103,7 +103,13 @@ end
 function ctsem_sampler(laplace::CTSEMLaplaceObjective, npar::Integer)
     npar = Int(npar)
     npar >= 1 || throw(ArgumentError("npar must be positive"))
-    _laplace_check_indices(laplace, npar)
+    # The free parameters are drawn; any stated population values
+    # (`CTSEMAnchors`) are appended to them where the density reads them.
+    na = _laplace_nanchors(laplace)
+    na == 0 || npar == laplace.objective.params.anchors.nfree || throw(ArgumentError(
+        "npar must be the free parameters' count, " *
+        string(laplace.objective.params.anchors.nfree)))
+    _laplace_check_indices(laplace, npar + na)
     units = laplace.units
     nunits = length(units.members)
     udims = copy(units.dims)
@@ -172,7 +178,7 @@ function ctsem_sample_density!(gradient::Vector{Float64}, sampler::CTSEMSampler,
     spec = laplace.spec
     npar = sampler.npar
     nunits = sampler.nunits
-    theta = Vector{Float64}(view(x, 1:npar))
+    theta = _laplace_extend(laplace, Vector{Float64}(view(x, 1:npar)))
 
     # The population Cholesky factors and their derivatives with respect to the
     # scale and correlation parameters. Both are `theta`-only, so they are built
@@ -209,13 +215,15 @@ function ctsem_sample_density!(gradient::Vector{Float64}, sampler::CTSEMSampler,
     shared_total = Ref(0.0)
 
     run = function (mine, _w)
-        aws = _laplace_workspace!(laplace, Float64, npar)
+        # Sized by `theta`, which carries any stated population values after
+        # the `npar` drawn.
+        aws = _laplace_workspace!(laplace, Float64, length(theta))
         # Per slot, not per subject: several chains filter the *same* subject at
         # the same time, where the unit loop never does, so the workspace cached
         # on the subject would be shared and silently corrupted.
         ekf = _laplace_ekf_workspace!(laplace, Float64)
-        gsub = _laplace_scratch_vector!(laplace, Float64, npar, :sample_gsub)
-        shifted = _laplace_scratch_vector!(laplace, Float64, npar, :sample_shift)
+        gsub = _laplace_scratch_vector!(laplace, Float64, length(theta), :sample_gsub)
+        shifted = _laplace_scratch_vector!(laplace, Float64, length(theta), :sample_shift)
         # This worker's whole contribution, added in once at the end. Full
         # length because subjects of one unit share every level above the
         # innermost, and all of them share `theta`.

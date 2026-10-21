@@ -316,7 +316,8 @@
   # difference is not finite.
   sampletarget <- .ctBackendSampleTarget(estimate = estimate, npar = npar,
     marginal = marginal, state_explicit = isTRUE(state_explicit),
-    hessian = fit$uncertainty$hessian, placement = placement)
+    hessian = fit$uncertainty$hessian, metric = .ctBackendSampleMetric(fit),
+    placement = placement)
 
   out <- .ctBackendSampleRun(fit, sampletarget, chains = chains, warmup = warmup,
     draws = draws, cores = cores, saveEffects = saveEffects, seed = seed,
@@ -714,11 +715,47 @@
 # route cannot be combined with the Laplace effect route at all -- but not the
 # reverse.
 #' @keywords internal
+# The curvature the marginal sampler's metric and starting spread are read
+# from, where it is not the fit's Hessian itself (`NULL` then): that Hessian,
+# rescaled along each direction where
+# `uncertainty = 'checked'` measured the posterior's width to differ from it,
+# to the width it measured (`$normalcheck$widths`, variances in units of the
+# Hessian's). In the coordinates where the Hessian's normal is N(0, I) that
+# sets the precision along each such direction `w` to `1 / width`; in raw ones
+# it adds `(P w)(1 / width - 1)(P w)'`, `P` the information.
+#
+# A metric many times too wide along a direction makes the leapfrog
+# overshoot there, so the step size shrinks to cope and every other direction
+# moves at the deepest tree; this sets each measured direction to the width
+# measured. Not shown to help on a shell: on a 100-subject model whose item
+# loading has one (scripts/gsm-uncertainty-2026-10/trial_metric.R and
+# metric_flat.R, dev1/dev2), NUTS failed with the Hessian's metric (R-hat 4.2)
+# and with this one (3.9), and also with the shell's flat rotation, which the
+# check cannot see, given its measured width (2.6). It converged (1.06) only
+# when that rotation was pinned, which samples a slice of the posterior; a
+# curved shell is beyond any constant metric. The joint route recomputes its
+# population block and reads this only as a fallback. Only the engine reads
+# it: the sampled fit keeps the exact Hessian as `uncertainty$hessian`, which
+# the identifiability report reads.
+.ctBackendSampleMetric <- function(fit) {
+  H <- fit$uncertainty$hessian
+  check <- fit$uncertainty$details$normalcheck
+  if (is.null(H) || !length(check$widths)) return(NULL)
+  information <- -(H + t(H)) / 2
+  PW <- information %*% check$directions
+  rescaled <- information + PW %*% diag(1 / check$widths - 1, length(check$widths)) %*% t(PW)
+  -(rescaled + t(rescaled)) / 2
+}
+
 .ctBackendSampleTarget <- function(estimate, npar, marginal = FALSE,
-  state_explicit = FALSE, hessian = NULL, gradient = "adjoint", placement = "fit") {
+  state_explicit = FALSE, hessian = NULL, gradient = "adjoint", placement = "fit",
+  metric = NULL) {
   list(estimate = as.numeric(estimate), npar = as.integer(npar)[1L],
     marginal = isTRUE(marginal), state_explicit = isTRUE(state_explicit),
     hessian = if (is.null(hessian)) NULL else as.matrix(hessian),
+    # What the engine reads in its place, when not the Hessian itself; see
+    # `.ctBackendSampleMetric()`.
+    metric = if (is.null(metric)) NULL else as.matrix(metric),
     placement = placement,
     gradient = gradient)
 }
@@ -911,9 +948,8 @@
     # at all, so this is deliberately only reachable on the marginal path.
     arguments$gradient_method <- target$gradient
   }
-  if (!is.null(target$hessian)) {
-    arguments$hessian <- .ctJuliaPut(as.matrix(target$hessian))
-  }
+  metric <- .ctJuliaOr(target$metric, target$hessian)
+  if (!is.null(metric)) arguments$hessian <- .ctJuliaPut(as.matrix(metric))
   # How many of the sampled coordinates are model parameters. Only differs
   # from all of them on the state-explicit route, where the vector is
   # `[theta; innovations]` -- and there the engine needs to know, or it builds
@@ -1632,7 +1668,8 @@ print.ctSampleDiagnostics <- function(x, ...) {
   # from `.ctBackendSampleProcesses()`, while this session waits. Overlapping
   # regardless ran the placement at every core while each worker compiled.
   start0 <- .ctJuliaInitialValues(npar, inits,
-    initsd = .ctJuliaOr(optimcontrol$initsd, .01))
+    initsd = .ctJuliaOr(optimcontrol$initsd, .01),
+    spec = if (inherits(inits, "ctFit")) model_spec)
   spec0 <- structure(model_spec, class = c("ctJuliaModel", "ctFitModel"))
   if (!is.null(spec0$substeps)) spec0$max_timestep <- rep(1L, length(spec0$times))
   # The chains sample missing TI predictor values the placement imputes, and
@@ -1687,12 +1724,25 @@ print.ctSampleDiagnostics <- function(x, ...) {
     placementcontrol <- utils::modifyList(placementcontrol,
       list(estonly = TRUE, maxiter = 0L))
   }
-  placementfit <- .ctJuliaOptimiseFit(model_spec = model_spec, datalong = datalong,
-    model = model, prepared_data = prepared_data, inits = inits,
-    cores = placementcores,
+  # The placement's own warnings are a verdict on an optimisation that only
+  # placed the chains, so they are kept rather than raised: under SAEM
+  # placement it runs no iterations at all, and "no progress from its
+  # starting values ... Treat this fit as failed" came with every default
+  # sampled fit. The sampler's diagnostics are what judge a sampled fit.
+  placementwarnings <- character()
+  placementfit <- withCallingHandlers(.ctJuliaOptimiseFit(model_spec = model_spec,
+    datalong = datalong, model = model, prepared_data = prepared_data,
+    inits = inits, cores = placementcores,
     optimcontrol = placementcontrol, verbose = verbose, priors = priors,
     priorscope = priorscope, intoverpop = intoverpop, intoverstates = TRUE,
-    gradient = gradient, correctlaplace = FALSE)
+    gradient = gradient, correctlaplace = FALSE),
+    warning = function(w) {
+      placementwarnings <<- c(placementwarnings, conditionMessage(w))
+      invokeRestart("muffleWarning")
+    })
+  if (length(placementwarnings)) {
+    placementfit$optim$placement_warnings <- unique(placementwarnings)
+  }
 
   # From here, sampling is exactly `ctFitUncertainty(placementfit, 'sample')`:
   # one function for both entry points (`.ctBackendUncertaintySample()`,

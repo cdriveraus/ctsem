@@ -17,11 +17,18 @@
 # `ctsem_generate_states` simulates each subject at its shifted parameters.
 #
 # Every value the model leaves free is set at its prior's centre -- raw zero,
-# under every transform -- unless `popmeans` states it, and every population
-# sd is its `sdscale` on the raw scale unless RAWPOPVAR states it: the prior's
-# scales used as fixed values. Free TI predictor effects are zero; a fixed one
+# under every transform -- unless `values` states it, and every population
+# sd is its `sdscale` on the raw scale unless RAWPOPVAR or `values` states
+# it: the prior's scales used as fixed values. Free correlations are zero and
+# free TI predictor effects zero unless `values` states them; a fixed effect
 # (`'mm||||TI1=0.5'`) shifts the raw parameter by that much per unit of the
-# predictor, as fitting applies it. All of it is named in one message.
+# predictor, as fitting applies it. `values` takes each value on the scale
+# summary() reports it (`.ctGenerateValues`), so a model written for fitting
+# generates from the values one would compare its fit with. All of it is named
+# in one message.
+#
+# The design -- subjects, groups, times, missingness, predictor values -- is
+# either built (`.ctGenerateSkeleton`) or the caller's (`.ctGenerateDesign`).
 #
 # The standard normals are drawn on the R side, in a fixed order -- the TI
 # predictors, the random effects, the latent innovations, the observation
@@ -106,6 +113,128 @@
   rows
 }
 
+# A design the caller supplies (`ctGenerate(datastruct = )`), as the skeleton
+# generation fills in: the subjects, groups, times and predictor values as
+# given, ordered by subject and time as the engine reads them. A manifest cell
+# that is NA stays missing; any other value, or a manifest column left out, is
+# generated. A predictor the model names and the design lacks takes the
+# balanced design's default -- zero for a TD predictor, a standard normal per
+# subject for a TI predictor -- and is named in a message. `original` and
+# `order` put the generated values back into the caller's own rows.
+#' @keywords internal
+.ctGenerateDesign <- function(model, datastruct, quiet = FALSE) {
+  original <- as.data.frame(datastruct, stringsAsFactors = FALSE)
+  idname <- model$subjectIDname
+  timename <- model$timeName
+  needed <- c(idname, timename, model$groupIDnames)
+  absent <- setdiff(needed, names(original))
+  if (length(absent)) stop("datastruct needs the column",
+    if (length(absent) > 1L) "s", " ", paste(absent, collapse = ", "),
+    ", which the model names for its subjects, times or groups.", call. = FALSE)
+  if (!nrow(original)) stop("datastruct has no rows.", call. = FALSE)
+  if (anyNA(original[[idname]]) || anyNA(original[[timename]])) {
+    stop("datastruct has missing ids or times.", call. = FALSE)
+  }
+  # The order `.ctJuliaPrepare()` gives the data the engine reads, which is
+  # the order generated values come back in: by id's own sort, then time.
+  # First appearance put "b" before "a", and every subject's values back on
+  # another subject's rows.
+  order <- order(original[[idname]], original[[timename]])
+  rows <- original[order, needed, drop = FALSE]
+  rownames(rows) <- NULL
+  observed <- matrix(TRUE, nrow(rows), length(model$manifestNames),
+    dimnames = list(NULL, model$manifestNames))
+  for (nm in model$manifestNames) {
+    if (!is.null(original[[nm]])) observed[, nm] <- !is.na(original[[nm]][order])
+    rows[[nm]] <- ifelse(observed[, nm], 0, NA_real_)
+  }
+  defaulted <- character()
+  for (nm in model$TDpredNames) {
+    if (is.null(original[[nm]])) {
+      rows[[nm]] <- 0
+      defaulted <- c(defaulted, paste0(nm, " at 0"))
+    } else rows[[nm]] <- as.numeric(original[[nm]][order])
+  }
+  subject <- match(rows[[idname]], unique(rows[[idname]]))
+  for (nm in model$TIpredNames) {
+    if (is.null(original[[nm]])) {
+      rows[[nm]] <- stats::rnorm(max(subject))[subject]
+      defaulted <- c(defaulted, paste0(nm, " drawn standard normal"))
+      next
+    }
+    value <- as.numeric(original[[nm]][order])
+    if (anyNA(value)) stop("datastruct: TI predictor ", nm, " has missing ",
+      "values, and generation needs each subject's.", call. = FALSE)
+    if (any(tapply(value, subject, function(v) length(unique(v))) > 1L)) {
+      stop("datastruct: TI predictor ", nm, " must be constant within each ",
+        "subject.", call. = FALSE)
+    }
+    rows[[nm]] <- value
+  }
+  if (length(defaulted) && !quiet) message("Not in datastruct: ",
+    paste(defaulted, collapse = ", "), ".")
+  list(skeleton = rows, order = order, observed = observed, original = original)
+}
+
+# `values`: a named vector is the free parameters' population values, on
+# their natural scale; a list holds summary()'s own sections -- `popmeans`
+# (the same), `popsd` (or `popsd.<level>`) the random-effect sds,
+# `rawpopcorr` (or `rawpopcorr.<level>`) their raw correlations, `tipreds` the
+# linearised TI predictor effects -- each a named vector, named as that
+# table's rows.
+#' @keywords internal
+.ctGenerateValues <- function(values) {
+  if (!length(values)) return(list(means = NULL, sections = list()))
+  named <- function(v) !is.null(names(v)) && all(nzchar(names(v)))
+  if (!is.list(values)) {
+    if (!is.numeric(values) || !named(values)) stop("values must be a named ",
+      "numeric vector of population values, or a list of summary()'s ",
+      "sections.", call. = FALSE)
+    return(list(means = values, sections = list()))
+  }
+  section <- grepl("^(popmeans|tipreds)$|^(popsd|rawpopcorr)(\\..+)?$",
+    names(values))
+  if (!named(values) || !all(section)) stop("values, as a list, holds ",
+    "summary()'s sections -- popmeans, popsd, rawpopcorr and tipreds, with ",
+    ".<level> on popsd and rawpopcorr where there are levels",
+    if (named(values)) paste0(" -- not ", paste(names(values)[!section],
+      collapse = ", ")), ". A named vector gives population values alone.",
+    call. = FALSE)
+  for (nm in names(values)) {
+    v <- values[[nm]]
+    if (!is.numeric(v) || !named(v)) stop("values$", nm, " must be a named ",
+      "numeric vector, named as summary() names that table's rows.",
+      call. = FALSE)
+  }
+  list(means = values$popmeans,
+    sections = values[setdiff(names(values), "popmeans")])
+}
+
+# The raw sd at which a random effect spreads its parameter by `target` on the
+# natural scale, as summary() measures it: the Gauss-Hermite spread of the
+# transform about the raw mean (`.ctBackendRandomEffectLevel`). The spread is
+# zero at zero and grows with the raw sd for a monotone transform, so a
+# bracket holds the one root.
+#' @keywords internal
+.ctGenerateRawSd <- function(transform, mean, target, name) {
+  if (!is.finite(target) || target <= 0) stop("values$popsd: ", name,
+    " must be a positive number; a parameter with no spread does not vary.",
+    call. = FALSE)
+  rule <- .ctBackendGaussHermite()
+  spread <- function(s) {
+    v <- .ctGenerateNatural(transform, mean + s * rule$node)
+    sqrt(sum(rule$weight * (v - sum(rule$weight * v))^2))
+  }
+  upper <- 1
+  while (!(spread(upper) >= target)) {
+    upper <- upper * 2
+    if (upper > 2^20) stop("values$popsd: ", name, " = ", format(target),
+      " is not a spread its transform (", transform, ") can produce about ",
+      "its mean.", call. = FALSE)
+  }
+  stats::uniroot(function(s) spread(s) - target, c(0, upper), tol = 1e-12)$root
+}
+
 # A parameter's natural value at raw `raw`, through the transform the model
 # states for it: an expression in `param`, or one of ctsem's numbered shapes.
 #' @keywords internal
@@ -133,7 +262,7 @@
       return(stats::uniroot(f, c(-width, width), tol = 1e-12)$root)
     }
   }
-  stop("popmeans: ", name, " = ", format(value), " is not a value its ",
+  stop("values: ", name, " = ", format(value), " is not a value its ",
     "transform (", transform, ") can take.", call. = FALSE)
 }
 
@@ -145,7 +274,7 @@
 # value is written into the raw vector. The specification then carries every
 # effect the same way, and `.ctJuliaTIEffects()` is reused as it stands.
 #' @keywords internal
-.ctGeneratePrepare <- function(model, skeleton, popmeans = NULL,
+.ctGeneratePrepare <- function(model, skeleton, values = NULL,
   project = NULL, quiet = FALSE) {
   model <- .ctCovRefresh(model)
   # 'stationary' initial conditions, placed as a fit places them: generation
@@ -183,22 +312,27 @@
   }
 
   # Population means: the prior's centre, raw zero, unless stated.
-  if (length(popmeans)) {
-    if (is.null(names(popmeans)) || any(!nzchar(names(popmeans)))) {
-      stop("popmeans must be named by parameter.", call. = FALSE)
-    }
-    unknown <- setdiff(names(popmeans), parnames)
+  given <- .ctGenerateValues(values)
+  means <- given$means
+  sectionsused <- character()
+  if (length(means)) {
+    unknown <- setdiff(names(means), parnames)
     if (length(unknown)) {
-      stop("popmeans names ", paste(unknown, collapse = ", "), ", which ",
+      stop("values names ", paste(unknown, collapse = ", "), ", which ",
         if (length(unknown) > 1L) "are not free parameters" else
           "is not a free parameter", " of this model.", call. = FALSE)
     }
-    for (nm in names(popmeans)) {
+    stated <- intersect(names(means), spec$anchors$param)
+    if (length(stated)) {
+      stop("values gives a population mean for ", paste(stated, collapse = ", "),
+        ", which the model states (fixedpopmeans); change it there.", call. = FALSE)
+    }
+    for (nm in names(means)) {
       index <- unique(table$parnumber[free & table$param %in% nm])
-      raw[index] <- .ctGenerateRawFor(transformOf(nm), popmeans[[nm]], nm)
+      raw[index] <- .ctGenerateRawFor(transformOf(nm), means[[nm]], nm)
     }
   }
-  centred <- setdiff(parnames, names(popmeans))
+  centred <- setdiff(parnames, c(names(means), spec$anchors$param))
   natural <- vapply(centred, function(nm)
     .ctGenerateNatural(transformOf(nm), 0), numeric(1))
 
@@ -206,15 +340,73 @@
   # already fixed in the specification, as fitting holds it; a free sd is the
   # level's sdscale, a free correlation coordinate zero. All raw-scale.
   spread <- character()
+  # A level's section of `values`: `<name>.<level>`, or the bare name for
+  # the subject level.
+  sectionFor <- function(name, level) {
+    keys <- c(paste0(name, ".", level$name),
+      if (identical(level$name, model$subjectIDname)) name)
+    hit <- intersect(keys, names(given$sections))
+    if (length(hit) > 1L) stop("values gives both ", paste(hit, collapse = " and "),
+      ", which name the same level.", call. = FALSE)
+    if (!length(hit)) return(NULL)
+    sectionsused <<- c(sectionsused, hit)
+    given$sections[[hit]]
+  }
   for (level in spec$laplace$levels) {
+    sds <- sectionFor("popsd", level)
+    cors <- sectionFor("rawpopcorr", level)
+    if ((length(sds) || length(cors)) && length(level$load_index)) {
+      stop("values: level ", level$name, " has a reduced-rank population ",
+        "covariance (poprank), whose spread popsd and rawpopcorr cannot set.",
+        call. = FALSE)
+    }
+    unknown <- setdiff(names(sds), level$param)
+    if (length(unknown)) stop("values$popsd names ", paste(unknown,
+      collapse = ", "), ", which ", if (length(unknown) > 1L) "do" else "does",
+      " not vary at level ", level$name, ".", call. = FALSE)
     if (length(level$sd_index)) {
       for (j in seq_along(level$sd_index)) {
         free <- level$sd_index[j] > 0L
-        target <- if (free) level$sd_scale[j] else
-          log1p(exp(2 * level$sd_fixed[j] - 1)) * level$sd_scale[j]
+        name <- level$param[j]
+        if (name %in% names(sds)) {
+          if (!free) stop("values$popsd: ", name, "'s spread is stated in ",
+            "the model's RAWPOPVAR.", call. = FALSE)
+          # The mean may be stated in the model (R/ctFixedPopMeans.R), past
+          # the free parameters.
+          target <- .ctGenerateRawSd(transformOf(name),
+            .ctBackendRawFull(spec, raw)[level$re_index[j]], sds[[name]], name)
+        } else {
+          target <- if (free) level$sd_scale[j] else
+            log1p(exp(2 * level$sd_fixed[j] - 1)) * level$sd_scale[j]
+        }
         if (free) raw[level$sd_index[j]] <- .ctJuliaRawPopSd(target, level$sd_scale[j])
-        spread <- c(spread, sprintf("%s %s [%s]", level$param[j],
+        spread <- c(spread, sprintf("%s %s [%s]", name,
           format(signif(target, 4)), level$name))
+      }
+      if (length(cors)) {
+        k <- length(level$param)
+        R <- diag(k)
+        for (nm in names(cors)) {
+          pair <- match(strsplit(nm, "__", fixed = TRUE)[[1L]], level$param)
+          if (length(pair) != 2L || anyNA(pair) || pair[1L] == pair[2L]) {
+            stop("values$rawpopcorr: ", nm, " is not a pair of parameters ",
+              "varying at level ", level$name, " (named a__b, as summary() ",
+              "names them).", call. = FALSE)
+          }
+          R[pair[1L], pair[2L]] <- R[pair[2L], pair[1L]] <- cors[[nm]]
+        }
+        index <- as.integer(level$cor_index)
+        if (any(index == 0L)) stop("values$rawpopcorr: level ", level$name,
+          " states some of its correlations in RAWPOPVAR.", call. = FALSE)
+        construction <- c("0" = "rawcorr", "2" = "z")[as.character(
+          if (is.null(spec$covmatcode)) 0L else spec$covmatcode)]
+        if (is.na(construction)) stop("values$rawpopcorr needs ",
+          "covmattransform 'z' or 'rawcorr'.", call. = FALSE)
+        cells <- .ctCovCells(R, construction,
+          what = paste0("values$rawpopcorr at level ", level$name))
+        lower <- which(lower.tri(R), arr.ind = TRUE)
+        lower <- lower[order(lower[, 2L], lower[, 1L]), , drop = FALSE]
+        raw[index] <- cells[lower]
       }
     } else if (length(level$load_index)) {
       # A reduced-rank level: each basis effect's own loading at raw 1, which
@@ -233,16 +425,44 @@
     }
   }
 
-  # TI effects: a fixed value where the model states one, zero otherwise.
+  # TI effects: a fixed value where the model states one, the raw coefficient
+  # for a linearised effect `values$tipreds` states, zero otherwise. The
+  # summary reports an effect as the raw coefficient times the transform's
+  # slope at the raw mean (`.ctBackendTipredDraws`), so this divides by it.
   zeroed <- character()
+  tipreds <- given$sections$tipreds
+  if (!is.null(tipreds)) sectionsused <- c(sectionsused, "tipreds")
+  stated <- character()
   ti <- spec$ti_effects
   for (r in seq_len(NROW(ti))) {
     name <- as.character(table$param[match(ti$parameter[r], table$parnumber)])
     value <- fixedti[[paste(name, ti$predictor[r])]]
-    if (is.null(value)) {
+    key <- paste0("tip_", model$TIpredNames[ti$predictor[r]], "_", name)
+    if (key %in% names(tipreds)) {
+      if (!is.null(value)) stop("values$tipreds: ", key, " is fixed in the ",
+        "model.", call. = FALSE)
+      # The target may be a stated population mean (R/ctFixedPopMeans.R).
+      mean <- .ctBackendRawFull(spec, raw)[ti$parameter[r]]
+      h <- 1e-5
+      slope <- diff(.ctGenerateNatural(transformOf(name), mean + c(-h, h))) / (2 * h)
+      if (!is.finite(slope) || abs(slope) < 1e-12) stop("values$tipreds: ",
+        key, " cannot be set, because ", name, "'s transform is flat at its ",
+        "mean.", call. = FALSE)
+      raw[ti$coefficient[r]] <- tipreds[[key]] / slope
+      stated <- c(stated, key)
+    } else if (is.null(value)) {
       zeroed <- c(zeroed, paste0(model$TIpredNames[ti$predictor[r]], " on ", name))
     } else raw[ti$coefficient[r]] <- value
   }
+  unknown <- setdiff(names(tipreds), stated)
+  if (length(unknown)) stop("values$tipreds names ", paste(unknown,
+    collapse = ", "), ", which ", if (length(unknown) > 1L) "are not" else
+    "is not", " a free TI predictor effect of this model (named tip_<predictor>_",
+    "<parameter>, as summary() names them).", call. = FALSE)
+  unread <- setdiff(names(given$sections), sectionsused)
+  if (length(unread)) stop("values: ", paste(unread, collapse = ", "),
+    " name", if (length(unread) == 1L) "s", " no level of this model.",
+    call. = FALSE)
 
   if (!quiet) {
     listed <- function(x) paste0(paste(utils::head(x, 8), collapse = ", "),
@@ -251,8 +471,8 @@
       if (length(centred)) paste0("at prior centres (raw 0): ",
         listed(paste0(centred, "=", vapply(natural,
           function(x) format(signif(x, 4)), "")))),
-      if (length(popmeans)) paste0("from popmeans: ",
-        listed(names(popmeans))),
+      if (length(values)) paste0("from values: ",
+        listed(names(values))),
       if (length(spread)) paste0("population sd (raw): ", listed(spread)),
       if (length(zeroed)) paste0("TI effects at zero: ", listed(zeroed)))
     if (length(parts)) message("Generating values -- ",
@@ -285,12 +505,15 @@
 }
 
 #' @keywords internal
-.ctGenerateJulia <- function(model, n.subjects, times, popmeans = NULL,
-  project = NULL, quiet = FALSE, intoverstates = FALSE) {
+.ctGenerateJulia <- function(model, n.subjects, times, values = NULL,
+  project = NULL, quiet = FALSE, intoverstates = FALSE, design = NULL) {
 
   if (!.ctJuliaConnectoROk()) stop(.ctJuliaConnectoRNeeded(), call. = FALSE)
-  skeleton <- .ctGenerateSkeleton(model, n.subjects, times)
-  prepared <- .ctGeneratePrepare(model, skeleton, popmeans = popmeans,
+  designed <- if (is.null(design)) NULL else
+    .ctGenerateDesign(model, design, quiet = quiet)
+  skeleton <- if (is.null(designed)) .ctGenerateSkeleton(model, n.subjects, times) else
+    designed$skeleton
+  prepared <- .ctGeneratePrepare(model, skeleton, values = values,
     project = project, quiet = quiet)
   handle <- prepared$handle
   # A zero-length vector deadlocks the JuliaConnectoR bridge, and a fully
@@ -321,11 +544,23 @@
       nmanifest * nrow(skeleton), " were expected.", call. = FALSE)
   }
   skeleton[, model$manifestNames] <- t(matrix(drawn, nrow = nmanifest))
+  if (!is.null(designed)) {
+    for (nm in model$manifestNames) skeleton[[nm]][!designed$observed[, nm]] <- NA
+  }
   # A matrix, because that is what `ctGenerate`'s own path returns and callers
   # index it positionally. What generated it rides along as attributes, keyed
   # by id (and time) so they survive the burnin trim: each subject's
   # parameters, and on the state-explicit route the latent states.
-  out <- as.matrix(skeleton)
+  out <- if (is.null(designed)) as.matrix(skeleton) else {
+    # The caller's own data frame and rows, with the generated values (and any
+    # predictor it lacked) filled in.
+    filled <- designed$original
+    for (nm in c(model$manifestNames, model$TDpredNames, model$TIpredNames)) {
+      if (is.null(filled[[nm]])) filled[[nm]] <- NA_real_
+      filled[designed$order, nm] <- skeleton[[nm]]
+    }
+    filled
+  }
   attr(out, "subjectpars") <- .ctGenerateSubjectPars(handle, raw, effects,
     model, skeleton)
   grouppars <- .ctGenerateGroupPars(handle, raw, effects, model, skeleton)
@@ -379,6 +614,9 @@
 .ctGenerateSubjectPars <- function(handle, raw, effects, model, skeleton,
   ti_effects = TRUE) {
   spec <- .ctBackendSpec(handle)
+  # Read by position below, a stated population mean's among them
+  # (R/ctFixedPopMeans.R).
+  raw <- .ctBackendRawFull(spec, as.numeric(raw))
   table <- spec$parameter_table
   free <- !is.na(table$parnumber)
   if (!any(free)) return(NULL)

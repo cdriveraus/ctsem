@@ -164,7 +164,8 @@ ctStanContinuousPars <- ctSummaryMatrices
 #' group's own parameter values -- the population values shifted by that
 #' group's random effects and those of the levels above it, without the
 #' subject-level ones or TI predictor effects. Grouping levels need a
-#' \code{backend='julia'} fit and \code{pointest=TRUE}.
+#' \code{backend='julia'} fit; their draws take \code{uncertainty} as a
+#' subject's do.
 #' @param uncertainty For \code{backend='julia'} fits with \code{pointest=FALSE}:
 #' what the draws carry. \code{'total'} (the default) pairs each draw of the
 #' population parameters with a draw of each subject's random effects from their
@@ -250,9 +251,9 @@ ctSubjectPars <- function(fit,pointest=TRUE,cores=getOption("mc.cores", 2L),nsam
       if(!.ctFitIsJulia(fit) || is.null(.ctBackendSpec(fit)$laplace)) stop(
         "ctSubjectPars(level=) for a grouping level needs a backend='julia' fit ",
         "with nested ids.", call.=FALSE)
-      if(!isTRUE(pointest)) stop("ctSubjectPars(level=) for a grouping level ",
-        "reports point estimates only; use pointest=TRUE.", call.=FALSE)
-      return(.ctBackendGroupPars(fit, level))
+      return(.ctBackendGroupPars(fit, level, pointest=pointest,
+        nsamples=nsamples,
+        uncertainty=if(is.null(uncertainty)) 'total' else uncertainty))
     }
   }
 
@@ -346,6 +347,10 @@ getparnames <- function(fit,reonly=FALSE, subjvariationonly=FALSE, popstatesonly
 #' @param residualcov Whether or not to show standardised residual covariance. Takes a little longer to compute.
 #' @param ... Additional arguments to pass to \code{priorcheckreport}, such as \code{meanlim}, or \code{sdlim}.
 #' @return List containing summary items, with a \code{print} method for readable console and knitr output.
+#'   On an optimised \code{backend = 'julia'} fit with uncertainty draws, the
+#'   parameter tables carry a \code{mode} column beside the draws' mean, sd and
+#'   quantiles: the fit's estimate on the same scale, the point a likelihood
+#'   ratio or an information criterion refers to.
 #' @examples
 #' summary(ctstantestfit)
 #' @method summary ctStanFit
@@ -557,6 +562,8 @@ summaryCtStanFitLabel <- function(x){
     priorcheckNote = 'Note',
     tipreds = 'Time-independent predictor effects',
     tipredsNote = 'Note',
+    smooths = 'Smooth time-independent predictor terms',
+    smoothsNote = 'Note',
     parmatrices = 'System Matrices',
     popsd = 'Random-effects standard deviations',
     popmeans = 'Fixed-effects / Population means',

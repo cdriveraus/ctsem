@@ -313,6 +313,44 @@ end
     @test f(x) > f([A0[p, q] for (p, q) in idx])
 end
 
+# A loading pattern (`load_row`, `load_col`; `ctFit(popblocks =)`): a move
+# `L -> L A` uses only the entries the pattern allows, so it maps the pattern
+# to itself and leaves every deviation `L u` where it was.
+@testset "SAEM: a loading pattern's moves keep to it" begin
+    # Two blocks over four effects: effect 1 loads on both, 4 on the first,
+    # 2 and 3 on the second.
+    level = _S.CTSEMLaplaceLevel(1:4, Int[], Int[], ones(4), [1, 2], 2;
+        rank=2, load_index=1:5, load_row=[1, 4, 1, 2, 3], load_col=[1, 1, 2, 2, 2])
+    @test _S.isreducedrank(level)
+    @test _S._laplace_loading_entries(level) == ([1, 4, 1, 2, 3], [1, 1, 2, 2, 2])
+    allowed = _S._laplace_loading_allowed(level)
+    @test allowed == [true false; false true]
+    L = _S._laplace_poploading(collect(1.0:5.0), level)
+    @test L == [1.0 3.0; 0.0 4.0; 0.0 5.0; 2.0 0.0]
+    # The triangle allows its whole lower triangle.
+    tri = _S.CTSEMLaplaceLevel(1:4, Int[], Int[], ones(4), [1, 2], 2;
+        rank=2, load_index=1:7)
+    @test _S._laplace_loading_allowed(tri) == [true false; true true]
+    rng = Random.Xoshiro(4)
+    M = randn(rng, 2, 40)
+    S = M * transpose(M)
+    A, whole = _S._saem_block_cholesky(S ./ 40, allowed)
+    @test whole && A[1, 2] == 0 && A[2, 1] == 0
+    @test A[1, 1] ≈ sqrt(S[1, 1] / 40) && A[2, 2] ≈ sqrt(S[2, 2] / 40)
+    Atri, wtri = _S._saem_block_cholesky(S ./ 40, _S._laplace_loading_allowed(tri))
+    @test wtri && Atri ≈ Matrix(cholesky(Symmetric(S ./ 40)).L)
+    E = [0.3 0.0; 0.0 -0.2]
+    LA = L * exp(E)
+    @test LA[2, 1] == 0 && LA[3, 1] == 0 && LA[4, 2] == 0
+    u = randn(rng, 2)
+    @test LA * (exp(-E) * u) ≈ L * u
+    # A coordinate is inert where every effect loading on it is.
+    @test !_S._laplace_coordinate_inert(level, 2, [2, 3])
+    @test _S._laplace_coordinate_inert(level, 2, [1, 2, 3])
+    @test _S._laplace_coordinate_inert(level, 1, [1, 4])
+    @test !_S._laplace_coordinate_inert(level, 1, [4])
+end
+
 # The SAEM sampler draws the same joint posterior NUTS draws (`ctsem_sample`,
 # validated on its own): means within four Monte Carlo standard errors,
 # standard deviations within ten per cent, at two draw counts, since a wrong

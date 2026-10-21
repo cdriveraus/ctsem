@@ -243,15 +243,19 @@ test_that("uncertainty='stored' redraws a julia fit without touching the engine"
   expect_equal(redrawn$uncertainty$hessian, hess0, tolerance = 0)
   # `method` keeps naming what produced the covariance; `redrawn` says the
   # draws were regenerated from it.
-  expect_identical(redrawn$uncertainty$settings$method, "hessian")
+  expect_identical(redrawn$uncertainty$settings$method,
+    fit$uncertainty$settings$method)
   expect_true(isTRUE(redrawn$uncertainty$settings$redrawn))
   expect_identical(colnames(redrawn$estimate$rawposterior),
     colnames(fit$estimate$rawposterior))
 
   # The same normals the shared helper would produce, so the two backends draw
-  # identically given the same covariance and seed.
+  # identically given the same covariance and seed -- centred where 'checked'
+  # placed its normal, the posterior mean its check measured, not the estimate.
+  centre <- fit$uncertainty$details$normalcheck$centre
+  expect_length(centre, length(fit$estimate$raw))
   set.seed(29)
-  direct <- ctsem:::ctOptimNormalDraws(as.numeric(fit$estimate$raw), cov0, 220)
+  direct <- ctsem:::ctOptimNormalDraws(centre, cov0, 220)
   expect_equal(unname(redrawn$estimate$rawposterior), unname(direct), tolerance = 0)
 
   # And no engine work: the exact Hessian is the expensive part of every other
@@ -325,9 +329,11 @@ test_that("the batch attribute reproduces the per-draw loop in one bridge call",
   valueonly <- ctsem:::.ctBackendLpgFunc(fit, gradient = FALSE)
   batchfn <- attr(valueonly, "batch")
   expect_true(is.function(batchfn))
-  # There is no batch form for gradient=TRUE: nothing reads a batch of
-  # gradients, and the engine function does not compute one.
-  expect_null(attr(ctsem:::.ctBackendLpgFunc(fit, gradient = TRUE), "batch"))
+  # The gradient form carries the same batch functions: the normal check of
+  # `uncertainty = 'checked'` reads batch gradients from whichever it holds.
+  withgrad <- ctsem:::.ctBackendLpgFunc(fit, gradient = TRUE)
+  expect_true(is.function(attr(withgrad, "batch")))
+  expect_true(is.function(attr(withgrad, "gradbatch")))
 
   est <- as.numeric(fit$estimate$raw)
   npar <- length(est)

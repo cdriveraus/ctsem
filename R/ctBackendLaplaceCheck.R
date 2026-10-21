@@ -257,13 +257,9 @@ ctLaplaceCheck <- function(fit, nodes = 5L, correction = TRUE, step = 1e-3,
     control <- .ctLaplaceContinueDefaults
     control$nodes <- as.integer(nodes)
     control$maxiter <- as.integer(maxiter)
-    cont <- module$ctsem_laplace_continuation(objective,
-      .ctJuliaNumericVector(est), nodes = as.integer(control$nodes),
-      tolerance = as.numeric(control$tolerance),
-      product_maxdim = as.integer(control$product_maxdim),
-      soft_tau = as.numeric(control$soft_tau),
-      soft_maxdirs = as.integer(control$soft_maxdirs),
-      maxdim = as.integer(control$maxdim))
+    cont <- do.call(module$ctsem_laplace_continuation,
+      c(list(objective, .ctJuliaNumericVector(est)),
+        .ctLaplaceContinuationArgs(control, force = fit$laplace$frozen$units)))
     basis <- .ctLaplaceContinueBasis(hessian,
       fit$uncertainty$details$flatdirections$vectors, rtol = control$rtol)
     run <- if (is.null(basis) || basis$kept < 1L) NULL else
@@ -424,17 +420,10 @@ print.ctLaplaceCheck <- function(x, ...) {
       # of plausible mislabelling that survives review.
       load_index <- as.integer(level$load_index)
       if (length(load_index) && length(varying)) {
-        rank <- as.integer(if (is.null(level$rank)) length(varying) else level$rank)
-        k <- length(varying)
-        slot <- 0L
-        for (q in seq_len(rank)) {
-          for (p in seq(q, k)) {
-            slot <- slot + 1L
-            if (slot > length(load_index)) break
-            names[load_index[slot]] <- paste0("poploading_", varying[p],
-              "_dim", q, suffix)
-          }
-        }
+        # The triangle, or the level's blocks (`.ctJuliaLoadingEntries()`).
+        entries <- .ctJuliaLoadingEntries(level)
+        names[load_index] <- paste0("poploading_", varying[entries$row],
+          "_dim", entries$col, suffix)
       }
       # Own variances (`popunique`): an sd, but only the effect's own part of
       # it, so not `popsd_`.
@@ -473,9 +462,12 @@ print.ctLaplaceCheck <- function(x, ...) {
     index <- as.integer(ti_effects$coefficient)
     target <- as.integer(ti_effects$parameter)
     predictor <- .ctBackendPredictorLabel(tipred_names, ti_effects$predictor)
+    # A target may be a stated population mean (R/ctFixedPopMeans.R), past
+    # the free parameters and named by its parameter.
+    targets <- c(names, as.character(spec$anchors$param))
     keep <- !is.na(index) & index >= 1L & index <= npar &
-      !is.na(target) & target >= 1L & target <= npar
-    names[index[keep]] <- paste0("rawtipredeffect_", names[target[keep]], "_",
+      !is.na(target) & target >= 1L & target <= length(targets)
+    names[index[keep]] <- paste0("rawtipredeffect_", targets[target[keep]], "_",
       predictor[keep])
   }
 
