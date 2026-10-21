@@ -3240,14 +3240,17 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
         # L-BFGS steps taken on the structured model (`lbfgs_scores`).
         structured_steps=structured === nothing ? 0 : structured.steps,
         # The coreset stages (`coreset`): each stage's units, share of a full
-        # evaluation's work, iterations, and what the full objective gained
-        # over what the coreset predicted; the iteration each run of stages
+        # evaluation's work, iterations, what the full objective gained over
+        # what the coreset predicted, and its squared relative gradient error
+        # held out when chosen and found at its check; the iteration each run of stages
         # began after; how many full gradients checked them and how many sent
         # the point back; the coreset fits tried, and the seconds choosing them
         # took. `[0]` for none, for the bridge's sake.
         coreset_sizes=_ctsem_coreset_report(coreseter, :sizes),
         coreset_shares=_ctsem_coreset_report(coreseter, :shares),
         coreset_bought=_ctsem_coreset_report(coreseter, :bought),
+        coreset_heldout=_ctsem_coreset_report(coreseter, :heldout),
+        coreset_found=_ctsem_coreset_report(coreseter, :found),
         coreset_stage_iterations=_ctsem_coreset_report(coreseter, :stage_iterations),
         coreset_entered=_ctsem_coreset_report(coreseter, :entered),
         coreset_iterations=coreseter === nothing ? 0 : coreseter.total_iterations,
