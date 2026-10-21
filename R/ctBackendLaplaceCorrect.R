@@ -697,6 +697,21 @@ print.ctLaplaceCorrection <- function(x, ...) {
       "); the fit stops where the objective jumped.", call. = FALSE)
     return(result)
   }
+  # A unit the rule cannot take -- nested, its block tree wider than `maxdim`
+  # -- is left on Laplace by the placement, and the hybrid would jump where
+  # the fit did.
+  flagged_of <- function() {
+    info <- get(module$ctsem_laplace_continuation_info(cont))
+    as.integer(info$flagged)[seq_len(info$nflagged)]
+  }
+  untaken <- setdiff(units, flagged_of())
+  if (length(untaken)) {
+    warning(sprintf(paste0("The fit stops where the objective jumped: unit%s %s ",
+      "cannot be integrated by frozen draws (nested units wider than %d effects ",
+      "are not yet)."), if (length(untaken) == 1L) "" else "s",
+      paste(untaken, collapse = ", "), as.integer(control$maxdim)), call. = FALSE)
+    return(result)
+  }
   spent <- .ctJuliaRunCounts(result)
   # The stages before the last take no finish and no overshoot probe: each is
   # followed by another placement, and on the hybrid a probe's pullbacks cost
@@ -763,6 +778,14 @@ print.ctLaplaceCorrection <- function(x, ...) {
       next
     }
     placements <- placements + 1L
+    untaken <- setdiff(more, flagged_of())
+    if (length(untaken)) {
+      warning(sprintf(paste0("Unit%s %s jumped and cannot be integrated by ",
+        "frozen draws (nested units wider than %d effects are not yet); the ",
+        "fit ends where it stopped."), if (length(untaken) == 1L) "" else "s",
+        paste(untaken, collapse = ", "), as.integer(control$maxdim)), call. = FALSE)
+      break
+    }
   }
   if (is.null(run)) return(result)
   info <- get(module$ctsem_laplace_continuation_info(cont))
