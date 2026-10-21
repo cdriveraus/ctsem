@@ -26,7 +26,30 @@
 # RMS of 0.1 costs about 1% of an effective sample; `max` keeps any one draw
 # within a factor of 1.6. A round's checks may drift further before the
 # coreset is rebuilt (`drift`), so that it is not rebuilt on noise.
-.ctCoresetTol <- list(rms = 0.1, max = 0.5, drift = 1.5, final = 0.5)
+#
+# Both are read where a draw can carry weight. A sampler's first rounds are
+# mostly tails, 50-150 log units below its best draw, where a coreset that is
+# within 0.1 near the top errs by a unit or two -- and a draw 50 down carries
+# exp(-50) of the best one's weight. So a draw counts fully within `band` of
+# the best and e-fold less every `scale` below that (`.ctCoresetRelevance()`),
+# in the fit as in the test, and `max` reads only draws of relevance at least
+# `relevant`, about 55 below the best.
+.ctCoresetTol <- list(rms = 0.1, max = 0.5, drift = 1.5, final = 0.5,
+  band = 10, scale = 20, relevant = 0.1)
+
+.ctCoresetRelevance <- function(y, top = max(y)) {
+  exp(-pmax(0, top - y - .ctCoresetTol$band) / .ctCoresetTol$scale)
+}
+
+# Whether errors `err` at draws of relevance `rel` pass the tolerances, `mult`
+# times over.
+.ctCoresetPasses <- function(err, rel, mult = 1) {
+  if (!length(err) || sum(rel) <= 0) return(TRUE)
+  rms <- sqrt(sum(rel * err^2) / sum(rel))
+  near <- rel >= .ctCoresetTol$relevant
+  worst <- if (any(near)) max(abs(err[near])) else 0
+  rms <= mult * .ctCoresetTol$rms && worst <= mult * .ctCoresetTol$max
+}
 
 # Lawson-Hanson non-negative least squares.
 .ctCoresetNnls <- function(A, b) {
@@ -56,12 +79,16 @@
 }
 
 # Weights on units `S` for the training `rows` of `X` (draws x units) and `y`
-# (the full sum), the intercept free: least squares on the centred rows.
-.ctCoresetWeights <- function(X, y, S, rows) {
+# (the full sum), the intercept free: least squares on the centred rows, each
+# weighted by its relevance (`.ctCoresetRelevance()`).
+.ctCoresetWeights <- function(X, y, S, rows, rel = .ctCoresetRelevance(y[rows])) {
   Xs <- X[rows, S, drop = FALSE]
-  mx <- colMeans(Xs)
-  w <- .ctCoresetNnls(sweep(Xs, 2, mx), y[rows] - mean(y[rows]))
-  list(S = S, w = w, c = mean(y[rows]) - sum(mx * w))
+  share <- rel / sum(rel)
+  mx <- colSums(Xs * share)
+  my <- sum(y[rows] * share)
+  root <- sqrt(rel)
+  w <- .ctCoresetNnls(sweep(Xs, 2, mx) * root, (y[rows] - my) * root)
+  list(S = S, w = w, c = my - sum(mx * w))
 }
 .ctCoresetPredict <- function(cf, Xrows) drop(cf$c + Xrows[, cf$S, drop = FALSE] %*% cf$w)
 
@@ -69,9 +96,13 @@
 # term, orthogonalised against the units already in, best explains what is
 # left of the centred sum, and refits the weights. Nested, so a path serves
 # every size as a prefix.
-.ctCoresetPath <- function(X, y, M, rows, start = integer()) {
-  Xc <- scale(X[rows, , drop = FALSE], scale = FALSE)
-  yc <- y[rows] - mean(y[rows])
+.ctCoresetPath <- function(X, y, M, rows, start = integer(),
+  rel = .ctCoresetRelevance(y[rows])) {
+  share <- rel / sum(rel)
+  root <- sqrt(rel)
+  Xr <- X[rows, , drop = FALSE]
+  Xc <- sweep(Xr, 2, colSums(Xr * share)) * root
+  yc <- (y[rows] - sum(y[rows] * share)) * root
   S <- start
   r <- if (length(S)) yc - drop(Xc[, S, drop = FALSE] %*%
     .ctCoresetNnls(Xc[, S, drop = FALSE], yc)) else yc
@@ -106,24 +137,26 @@
   plain <- setdiff(rows, focus)
   held <- plain[seq_along(plain) %% 4L == 0L]
   fitrows <- setdiff(plain, held)
-  if (length(held) < 5L || length(fitrows) < 10L) return(NULL)
+  rel <- numeric(length(y))
+  rel[rows] <- .ctCoresetRelevance(y[rows])
+  # Too few held-out draws near the top to judge by.
+  if (sum(rel[held]) < 2 || length(fitrows) < 10L) return(NULL)
   grid <- c(seq(10L, 30L, by = 5L), seq(40L, max(40L, maxM), by = 10L))
   sizes <- sort(unique(c(if (length(start)) length(start), grid)))
   sizes <- sizes[sizes >= max(1L, length(start)) & sizes <= maxM]
   passes <- function(cf, idx) {
     if (!length(idx)) return(TRUE)
-    err <- .ctCoresetPredict(cf, X[idx, , drop = FALSE]) - y[idx]
-    sqrt(mean(err^2)) <= .ctCoresetTol$rms && max(abs(err)) <= .ctCoresetTol$max
+    .ctCoresetPasses(.ctCoresetPredict(cf, X[idx, , drop = FALSE]) - y[idx], rel[idx])
   }
   # The path grows only as far as the size being tried.
   path <- start
   for (M in sizes) {
-    if (M > length(path)) path <- .ctCoresetPath(X, y, M, fitrows, path)
+    if (M > length(path)) path <- .ctCoresetPath(X, y, M, fitrows, path, rel[fitrows])
     if (M > length(path)) break
-    cf <- .ctCoresetWeights(X, y, path[seq_len(M)], fitrows)
+    cf <- .ctCoresetWeights(X, y, path[seq_len(M)], fitrows, rel[fitrows])
     if (passes(cf, held) && passes(cf, focus)) {
-      S <- .ctCoresetPath(X, y, M, rows, start)
-      return(.ctCoresetWeights(X, y, S, rows))
+      S <- .ctCoresetPath(X, y, M, rows, start, rel[rows])
+      return(.ctCoresetWeights(X, y, S, rows, rel[rows]))
     }
   }
   NULL
@@ -235,7 +268,8 @@
       st$checks <- c(st$checks, err)
       v[pick[good]] <- t0$value[good]
       learn(t0, focus = TRUE)
-      if (sqrt(mean(err^2)) > tol$drift * tol$rms || max(abs(err)) > tol$drift * tol$max) {
+      rel <- .ctCoresetRelevance(t0$total[good], max(st$y))
+      if (!.ctCoresetPasses(err, rel, tol$drift)) {
         # Drifted: grow the coreset from what it has, or give it up.
         if (!choose(st$cf$S)) st$phase <- 'off'
       } else {
