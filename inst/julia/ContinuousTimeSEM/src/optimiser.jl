@@ -1049,12 +1049,17 @@ end
 #   still save, coresets were let in whose stages made the full objective
 #   worse, and runs cost more. And it is trusted only where it was fitted: a
 #   stage is checked once it is farther from where it began than the farthest
-#   training point, in L-BFGS's scaled metric, and each check is a training
-#   point there, so the region grows as fast as it is confirmed. A few units
-#   stand for a population's spread only near where they were chosen;
-#   unbounded, stages on coresets of 4-6 of 500 and 37-338 of 400 units walked
-#   a random effect's sd to the far end of its transform, and the fits ended on
-#   maxima 157 and 8 log units below the full sum's.
+#   training point, in L-BFGS's scaled metric, or once it has moved any
+#   parameter farther than the training points reach in that parameter, and
+#   each check is a training point there, so the region grows as fast as it is
+#   confirmed. A few units stand for a population's spread only near where
+#   they were chosen; unbounded, stages on coresets of 4-6 of 500 and 37-338 of
+#   400 units walked a random effect's sd to the far end of its transform, and
+#   the fits ended on maxima 157 and 8 log units below the full sum's. Bounded
+#   by distance alone, a stage could spend the whole reach of steps that moved
+#   every parameter a little along one sd, and on bigre from refit starts sds
+#   collapsed in about five runs of eight, 8-20 below the optimum the full sum
+#   reached from every one.
 # - A stage spends only what it can save. `n` coreset iterations at a share `s`
 #   of a full evaluation, plus the full check and the full iteration after the
 #   stage, beat `n` full iterations while `n s + 2 < n`, so a stage planned for
@@ -1169,9 +1174,10 @@ before the next, the record, how many curvature pairs the stage in force has
 given L-BFGS, which a stage that is sent back takes with it, the region its
 coreset was fitted on: the farthest training point's distance from where the
 stage began, in the metric `metric` scales by; and the held-out relative error
-of the last coreset chosen, squared (`rel`), and the fit's gap tolerance: no
+of the last coreset chosen, squared (`rel`), the fit's gap tolerance: no
 stage is carried on from one that gained less than it an iteration (`gap_tol`,
-set by `ctsem_optimize`).
+set by `ctsem_optimize`); and, per parameter, the farthest the training points
+lie from where the stage began (`reach`), which the stage may not pass.
 """
 mutable struct CTSEMCoresetPlan
     full::CTSEMLaplaceObjective
@@ -1210,6 +1216,7 @@ mutable struct CTSEMCoresetPlan
     metric::Vector{Float64}
     rel::Float64
     gap_tol::Float64
+    reach::Vector{Float64}
 end
 
 """
@@ -1233,7 +1240,7 @@ function _ctsem_coreset_plan(L::CTSEMLaplaceObjective, fg!, store)
         Vector{Float64}[], Matrix{Float64}[], Vector{Float64}[], false, nothing,
         Float64[], NaN, Float64[], 0.0, 0, _CTSEM_CORESET_FIRST_STAGE, 0.0, 0,
         0, Int[], Float64[], Int[], Int[], Float64[], 0, 0, 0, 0, 0.0, 0,
-        0.0, Float64[], 0.0, 0.0)
+        0.0, Float64[], 0.0, 0.0, Float64[])
 end
 
 _ctsem_coreset_live(c) = c !== nothing && c.live
@@ -1603,7 +1610,8 @@ stage: check it with a full gradient (`_ctsem_coreset_check!`) once it has run
 its planned iterations, once what L-BFGS's model says is left to gain on the
 coreset (`G' H G / 2`) is no more than the coreset's error, once its gradient
 is below `g_tol`, or once it has gone farther from where it began than the
-coreset's training points reach (`_ctsem_coreset_begin!`).
+coreset's training points reach, as a whole or in any one parameter
+(`_ctsem_coreset_begin!`).
 Neither the coreset's error nor `G' H G` is the full objective's inside a
 stage; both are the stage's own measures of where it stands.
 
@@ -1635,7 +1643,8 @@ function _ctsem_coreset_step!(c::CTSEMCoresetPlan, x, f, G, hmul, scale)
     left = dot(G, hmul(G)) / 2
     due = c.iterations >= c.stretch || left <= c.error ||
         maximum(abs, G; init=0.0) <= c.g_tol ||
-        norm((x .- c.x0) .* c.metric) > c.radius
+        norm((x .- c.x0) .* c.metric) > c.radius ||
+        any(i -> abs(x[i] - c.x0[i]) > c.reach[i], eachindex(c.reach))
     due || return none
     return _ctsem_coreset_check!(c, x, f, G, hmul, scale)
 end
@@ -1644,7 +1653,7 @@ end
 within the training points' reach of `x` in the metric that divides each
 coordinate by `sqrt(scale)` -- L-BFGS's inverse-curvature diagonal, so that a
 unit is about one standard deviation of its quadratic model in every
-coordinate -- whose error is the coreset's held-out relative error times what
+coordinate -- and within their reach in each parameter, and whose error is the coreset's held-out relative error times what
 L-BFGS's model (`hmul`) says is left to gain at `x`."""
 function _ctsem_coreset_begin!(c::CTSEMCoresetPlan, cs::CTSEMCoreset, x, f, G,
         scale, hmul)
@@ -1656,6 +1665,8 @@ function _ctsem_coreset_begin!(c::CTSEMCoresetPlan, cs::CTSEMCoreset, x, f, G,
     c.pairs = 0
     c.metric = [v > 0 && isfinite(v) ? 1 / sqrt(v) : 1.0 for v in scale]
     c.radius = maximum((norm((xk .- c.x0) .* c.metric) for xk in c.X); init=0.0)
+    c.reach = [maximum((abs(xk[i] - c.x0[i]) for xk in c.X); init=0.0)
+        for i in eachindex(c.x0)]
     push!(c.sizes, length(cs.units))
     push!(c.shares, _ctsem_coreset_share(c, cs.units))
     push!(c.stage_iterations, 0)
