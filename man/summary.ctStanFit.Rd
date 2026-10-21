@@ -48,6 +48,10 @@ julia fit carries no prior block to compare against, and refuses
 }
 \value{
 List containing summary items, with a \code{print} method for readable console and knitr output.
+  On an optimised \code{backend = 'julia'} fit with uncertainty draws, the
+  parameter tables carry a \code{mode} column beside the draws' mean, sd and
+  quantiles: the fit's estimate on the same scale, the point a likelihood
+  ratio or an information criterion refers to.
 }
 \description{
 Summarise a fit from \code{\link{ctFit}}, on either backend: population

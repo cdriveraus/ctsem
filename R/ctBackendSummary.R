@@ -868,8 +868,11 @@ ctBackendParMatrices <- function(fit, raw = NULL, tipreds = NULL, state = NULL,
 # Mean / sd / quantiles of a sample matrix, in Stan's summary column order, with
 # `n_eff` and `Rhat` in Stan's place when the draws are a Hamiltonian sample and
 # `chains` says how they are grouped. Base R for the moments: with one
-# point-estimate "sample" there is nothing to monitor.
-.ctBackendSampleSummary <- function(values, digits = 3, z = FALSE, chains = NULL) {
+# point-estimate "sample" there is nothing to monitor. `mode`, the same
+# quantities at the optimiser's estimate (one row), adds a column after the
+# quantiles.
+.ctBackendSampleSummary <- function(values, digits = 3, z = FALSE, chains = NULL,
+  mode = NULL) {
   if (nrow(values) < 2L) {
     out <- data.frame(mean = as.numeric(values[1L, ]), row.names = colnames(values))
     return(round(out, digits))
@@ -887,6 +890,12 @@ ctBackendParMatrices <- function(fit, raw = NULL, tipreds = NULL, state = NULL,
   if (!is.null(diagnostics)) {
     out$n_eff <- diagnostics$n_eff
     out$Rhat <- diagnostics$Rhat
+  }
+  if (!is.null(mode) && length(mode) && ncol(as.matrix(mode)) == ncol(values)) {
+    mode <- as.matrix(mode)
+    at <- if (!is.null(colnames(mode)) && !is.null(colnames(values)) &&
+        all(colnames(values) %in% colnames(mode))) mode[1L, colnames(values)] else mode[1L, ]
+    out$mode <- as.numeric(at)
   }
   # A quantity with no posterior spread has no z, rather than an enormous one.
   # Two things land here with an exactly zero sd and both want this: a
@@ -1868,6 +1877,18 @@ ctBackendParMatrices <- function(fit, raw = NULL, tipreds = NULL, state = NULL,
   cells <- constrained$cells
   layout <- constrained$layout
   flat <- constrained$flat
+  # The optimiser's estimate through the same transforms, for a `mode` column
+  # beside the draws' moments. They differ where the posterior is skewed, and
+  # the estimate is the point a likelihood ratio or an information criterion
+  # refers to. Only for an optimised fit with draws: a sampled fit's `raw` is
+  # its posterior mean, and without draws the table is the estimate already.
+  atmode <- if (nrow(samples) > 1L && is.null(object$sample) &&
+      length(object$estimate$raw) == ncol(samples))
+    .ctBackendConstrain(object, matrix(as.numeric(object$estimate$raw), nrow = 1L)) else NULL
+  modelevel <- function(level, field) {
+    for (m in atmode$randomeffectlevels) if (identical(m$level, level)) return(m[[field]])
+    NULL
+  }
 
   # Non-NULL only for a Hamiltonian sample, and only while the draws still are
   # the ones the sampler produced: draws with no chains would make `n_eff` and
@@ -1902,7 +1923,7 @@ ctBackendParMatrices <- function(fit, raw = NULL, tipreds = NULL, state = NULL,
     for (lv in constrained$randomeffectlevels) {
       if (!is.null(lv$rawpopcorr)) {
         section <- .ctBackendSampleSummary(lv$rawpopcorr, digits = digits,
-          chains = chains)
+          chains = chains, mode = modelevel(lv$level, "rawpopcorr"))
         section <- .ctBackendMarkNoWidth(section,
           .ctBackendNoWidthRows(nowidth, rownames(section), "rawcor_", lv$level))
         section <- .ctBackendMarkNotFinite(section)
@@ -1913,7 +1934,8 @@ ctBackendParMatrices <- function(fit, raw = NULL, tipreds = NULL, state = NULL,
     }
   } else if (!is.null(constrained$rawpopcorr)) {
     out$rawpopcorr <- .ctBackendSampleSummary(constrained$rawpopcorr,
-      digits = digits, z = nrow(samples) > 1L, chains = chains)
+      digits = digits, z = nrow(samples) > 1L, chains = chains,
+      mode = atmode$rawpopcorr)
     out$rawpopcorr <- .ctBackendMarkNoWidth(out$rawpopcorr,
       .ctBackendNoWidthRows(nowidth, rownames(out$rawpopcorr), "rawcor_"))
     out$rawpopcorr <- .ctBackendMarkNotFinite(out$rawpopcorr)
@@ -1935,7 +1957,7 @@ ctBackendParMatrices <- function(fit, raw = NULL, tipreds = NULL, state = NULL,
 
   if (!is.null(constrained$tipreds)) {
     out$tipreds <- .ctBackendSampleSummary(constrained$tipreds, digits = digits,
-      z = nrow(samples) > 1L, chains = chains)
+      z = nrow(samples) > 1L, chains = chains, mode = atmode$tipreds)
     out$tipredsNote <- "Approximate (linearised) effects on the transformed parameters."
   }
   # A smooth term's columns are one effect, and a coefficient of its basis says
@@ -2023,7 +2045,7 @@ ctBackendParMatrices <- function(fit, raw = NULL, tipreds = NULL, state = NULL,
     for (lv in constrained$randomeffectlevels) {
       if (!is.null(lv$popsd)) {
         section <- .ctBackendSampleSummary(lv$popsd, digits = digits,
-          chains = chains)
+          chains = chains, mode = modelevel(lv$level, "popsd"))
         out[[paste0("popsd.", lv$level)]] <- .ctBackendMarkNoWidth(section,
           .ctBackendNoWidthRows(undetermined, rownames(section), "popsd_",
             lv$level))
@@ -2031,7 +2053,7 @@ ctBackendParMatrices <- function(fit, raw = NULL, tipreds = NULL, state = NULL,
     }
   } else if (!is.null(constrained$popsd)) {
     out$popsd <- .ctBackendSampleSummary(constrained$popsd, digits = digits,
-      chains = chains)
+      chains = chains, mode = atmode$popsd)
     out$popsd <- .ctBackendMarkNoWidth(out$popsd,
       .ctBackendNoWidthRows(undetermined, rownames(out$popsd), "popsd_"))
     out$popsd <- .ctBackendMarkNotFinite(out$popsd)
@@ -2073,7 +2095,8 @@ ctBackendParMatrices <- function(fit, raw = NULL, tipreds = NULL, state = NULL,
   }
   out$popmeans <- .ctBackendSampleSummary(
     .ctBackendPopCellsFromFlat(flat, fixed, layout), digits = digits,
-    chains = chains)
+    chains = chains, mode = if (!is.null(atmode))
+      .ctBackendPopCellsFromFlat(atmode$flat, fixed, layout))
   # A model parameter's raw coordinate is spelled the same way here as in the
   # raw vector, so no prefix -- see `.ctBackendRawParameterNames()`. Marked
   # too, because a flat direction is not confined to random-effect
@@ -2083,7 +2106,9 @@ ctBackendParMatrices <- function(fit, raw = NULL, tipreds = NULL, state = NULL,
     .ctBackendNoWidthRows(nowidth, rownames(out$popmeans)))
   out$popNote <- paste0("Population values on the transformed scale. ",
     "Covariance parameters appear in sd / unconstrained correlation form; ",
-    "see System Matrices (or ctSummaryMatrices()) for cor/cov.")
+    "see System Matrices (or ctSummaryMatrices()) for cor/cov.",
+    if (!is.null(atmode)) paste0(" mode is the fit's estimate, the other ",
+      "columns its posterior draws."))
   anchors <- .ctBackendSpec(object)$anchors
   if (length(anchors$index)) out$popNote <- paste0(out$popNote,
     " Population means stated in the model, not estimated: ",

@@ -145,10 +145,48 @@ test_that("checked leaves the normal of a Gaussian posterior alone", {
   # Two batches of 8 that name nothing: the check stops there.
   expect_equal(out$details$normalcheck$draws, 16L)
   expect_equal(unname(out$cov), unname(hess$cov))
+  # And 8 reflections place the normal where the mean is: the mode, here.
+  expect_equal(out$details$normalcheck$centredraws, 8L)
+  expect_equal(out$details$normalcheck$centre, rep(0, 6), tolerance = 1e-10)
   drawn <- ctsem:::.ctOptimDrawSamples(out, 'imis', list(), rep(0, 6), 50,
     lpg = lpg)
   expect_identical(drawn$draws, 'normal')
   expect_equal(dim(drawn$samples), c(50L, 6L))
+})
+
+test_that("checked centres its normal on the mean, not the mode", {
+  # A Gaussian of 60 parameters whose normal has the widths wrong by up to 60%:
+  # with far fewer draws than parameters the slopes are unresolved, and the
+  # centre still does not move -- a draw and its reflection give the intercept
+  # exactly, whatever the slopes.
+  set.seed(8)
+  k <- 60
+  m <- stats::rnorm(k)
+  prec <- exp(stats::runif(k, -1, 1))
+  gb <- function(X) list(value = -0.5 * colSums(prec * (t(X) - m)^2),
+    gradient = -t(prec * (t(X) - m)))
+  check <- ctsem:::.ctOptimNormalCheck(gb, m,
+    diag(exp(stats::runif(k, log(0.6), log(1.6))) / prec))
+  expect_equal(check$centre, m, tolerance = 1e-10)
+
+  # Six log-gamma coordinates, p(x) proportional to exp(a x - e^x): skewed, mode
+  # log(a), mean digamma(a), 0.18 posterior sds apart at a = 8 -- too little
+  # skew to sample, enough to move a mean. The draws are placed nearer it.
+  a <- 8
+  lpg <- function(x) {
+    out <- sum(a * x - exp(x))
+    attr(out, 'gradient') <- a - exp(x)
+    out
+  }
+  target <- list(lpg = lpg, mode = rep(log(a), 6))
+  set.seed(4)
+  run <- .checkedRun(target, 'checked')
+  expect_identical(run$draws, 'normal')
+  sd <- sqrt(trigamma(a))
+  frommode <- abs(log(a) - digamma(a)) / sd
+  fromcentre <- mean(abs(run$check$centre - digamma(a)) / sd)
+  expect_lt(fromcentre, 0.8 * frommode)
+  expect_equal(colMeans(run$samples), run$check$centre, tolerance = 0.1)
 })
 
 test_that("checked samples a ring the Hessian's normal makes six times too wide", {
