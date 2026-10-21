@@ -96,6 +96,7 @@
 "test-nonlinear-reporting-julia.R","reporting","extended"
 "test-backend-covtransform-roundtrip.R","spec","core"
 "test-backend-rawparnames.R","spec","core"
+"test-optimcontrol-names.R","spec","core"
 "test-base-generics.R","spec","core"
 "test-context-dependence.R","spec","core"
 "test-covmattransform.R","spec","core"

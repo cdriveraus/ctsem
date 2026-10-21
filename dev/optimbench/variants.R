@@ -54,9 +54,11 @@ BENCH_VARIANTS <- list(
   # outer products (optimcontrol$lbfgs_scores).
   scores = list(optimcontrol = list(lbfgs_scores = TRUE)),
 
-  # The L-BFGS stage's coreset stages off (optimcontrol$coreset, on by default
-  # on the Laplace route). Paired with `default` on the same build: what they
-  # save, and that the optimum is the same.
+  # The L-BFGS stage's coreset stages on the Laplace route
+  # (optimcontrol$coreset, off by default), and off whatever the build's
+  # default: paired on one build, what they save and that the optimum is the
+  # same.
+  coreset = list(optimcontrol = list(coreset = TRUE)),
   nocoreset = list(optimcontrol = list(coreset = FALSE)),
 
   # The finish's steps on one curvature whatever the route would choose
