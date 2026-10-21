@@ -595,9 +595,16 @@ print.ctLaplaceCorrection <- function(x, ...) {
 # `rtol` (1e-8) is the identifiability report's: a direction the Laplace
 # curvature does not identify is held where the fit left it. `maxdim` (5) is
 # the widest product rule the correction places, explained with the engine's
-# default; a unit of one block wider than that is scored by frozen draws
+# default; a unit of one block wider than that can be scored by frozen draws
 # instead, `draws` (256) the first batch, doubling to a standard error of
 # `draws_se` (0.05 nats) or `draws_max` (16384) draws, also explained there.
+# `draws_scope` says which: "forced", the default, only the units a fit
+# rescued from a jump named (`fit$laplace$frozen`), every other wide unit
+# keeping its Laplace term as before; "all" every one of one block. Not "all"
+# by default: a flagged unit's gradient is a reverse sweep per draw, and on the
+# round-9 fit (40 people of eight effects) scoring every unit so made the
+# correction far dearer than the fit
+# (review/LAPLACE-shoulders-frozen-draws-2026-10-21.md, section 9).
 # `frozen_rounds` (10) bounds the placements a fit rescued from a jump makes
 # (`.ctLaplaceFrozenRescue()`), as `rounds` bounds the correction's.
 .ctLaplaceContinueDefaults <- list(nodes = 5L, tolerance = 0.01,
@@ -605,7 +612,8 @@ print.ctLaplaceCorrection <- function(x, ...) {
   attempts = 15L, radius = 1, radius_max = 16, maxiter = 100L,
   material = 0.1, guard = 50, guard_per_subject = 0.5, rtol = 1e-8,
   value_tol = 1e-3, maxdim = 5L, stop_gain = 0, skip_gain = 5e-3,
-  draws = 256L, draws_se = 0.05, draws_max = 16384L, frozen_rounds = 10L)
+  draws = 256L, draws_se = 0.05, draws_max = 16384L, draws_scope = "forced",
+  frozen_rounds = 10L)
 
 # The engine arguments of a continuation built under `control`: the product
 # rules' constants, the frozen importance rule's for units too wide for one
@@ -625,6 +633,7 @@ print.ctLaplaceCorrection <- function(x, ...) {
     draws = as.integer(.ctJuliaOr(control$draws, 0L)),
     draws_se = as.numeric(.ctJuliaOr(control$draws_se, 0.05)),
     draws_max = as.integer(.ctJuliaOr(control$draws_max, 16384L)),
+    draws_scope = as.character(.ctJuliaOr(control[["draws_scope"]], "forced")),
     screen = isTRUE(screen))
   force <- suppressWarnings(as.integer(force))
   force <- force[!is.na(force) & force > 0L]

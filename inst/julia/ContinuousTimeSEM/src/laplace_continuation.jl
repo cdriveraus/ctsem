@@ -96,7 +96,8 @@ than `maxdim` and of one block gets a frozen importance rule instead when
 # Units too wide for a product rule: frozen importance draws
 
 A unit of one block wider than `maxdim` gets draws in place of nodes
-(`_continuation_importance_rule`): held fixed in the standardised effects, as
+(`_continuation_importance_rule`) -- every such unit, or with `draws_scope =
+:forced` only those the caller names, the rest keeping their Laplace terms: held fixed in the standardised effects, as
 nodes are, from a defensive mixture -- a Gaussian at the unit's mode, at any
 other point the caller knows for it (`points`: where the inner solve stopped
 at nearby parameters), at draws that carried weight once moved a Newton step,
@@ -220,6 +221,10 @@ mutable struct CTSEMLaplaceContinuation{L} <: CTSEMOptimisable
     # rescued from a jump, which needs the units the optimiser named and no
     # screen).
     screen::Bool
+    # Which units too wide for a product rule draws may take: every one of one
+    # block (`:all`), or only those `force` named (`:forced`), and those units.
+    draws_scope::Symbol
+    forced::Vector{Int}
     # What the rule scored every unit at the centre, and what Laplace did.
     centre_quadrature::Vector{Float64}
     centre_laplace::Vector{Float64}
@@ -904,8 +909,10 @@ function _continuation_place(laplace::CTSEMLaplaceObjective, theta::Vector{Float
     importance = fill(false, nunits)
     # Wide and out of reach: a unit too wide for a product rule that is nested,
     # or any such unit when draws are off.
+    drawable = get(opts, :drawable, nothing)
     wide = [_continuation_unit_width(laplace, U) > opts.maxdim &&
-        !(opts.draws > 0 && length(laplace.units.blocks[U]) == 1) for U in 1:nunits]
+        !(opts.draws > 0 && length(laplace.units.blocks[U]) == 1 &&
+          (drawable === nothing || U in drawable)) for U in 1:nunits]
     only = get(opts, :only, nothing)
     _laplace_parallel(laplace, 1:nunits) do U
         wide[U] && return true
@@ -982,7 +989,7 @@ end
         product_maxdim=2, soft_tau=3.5, soft_maxdirs=2, maxdim=5, draws=0,
         draws_se=0.05, draws_max=16384, draws_floor=0.25, draws_prior=0.2,
         draws_seed=20261021, force=nothing, point_units=nothing,
-        point_values=nothing, screen=true)
+        point_values=nothing, screen=true, draws_scope=:all)
 
 The hybrid objective with its nodes placed at `values`. Every unit is scored by
 the rule there against its Laplace term, the units that differ beyond the
@@ -996,7 +1003,10 @@ points the caller knows for some units, column `j` of `point_values` for unit
 `point_units[j]` (its first `dims` entries), each a component of that unit's
 importance proposal. `screen = false` scores only the units `force` names, the
 rest keeping their Laplace terms unscored: what a fit rescued from a jump
-needs. See the module docstring for the rules and the constants.
+needs. `draws_scope = :forced` gives draws only to the units `force` names,
+every other unit too wide for a product rule keeping its Laplace term
+unscored, as with `draws = 0`. See the module docstring for the rules and the
+constants.
 """
 function ctsem_laplace_continuation(laplace::CTSEMLaplaceObjective,
     values::AbstractVector; nodes::Integer=5, tolerance::Real=0.01,
@@ -1004,8 +1014,10 @@ function ctsem_laplace_continuation(laplace::CTSEMLaplaceObjective,
     maxdim::Integer=5, draws::Integer=0, draws_se::Real=0.05,
     draws_max::Integer=16384, draws_floor::Real=0.25, draws_prior::Real=0.2,
     draws_seed::Integer=20261021, force=nothing, point_units=nothing,
-    point_values=nothing, screen::Bool=true)
+    point_values=nothing, screen::Bool=true, draws_scope=:all)
     nodes >= 1 || throw(ArgumentError("need at least one quadrature node"))
+    Symbol(draws_scope) in (:all, :forced) || throw(ArgumentError(
+        "draws_scope must be :all or :forced"))
     draws >= 0 || throw(ArgumentError("draws must be at least zero"))
     draws_se > 0 || throw(ArgumentError("draws_se must be positive"))
     0 < draws_prior < 1 || throw(ArgumentError("draws_prior must be between 0 and 1"))
@@ -1019,7 +1031,7 @@ function ctsem_laplace_continuation(laplace::CTSEMLaplaceObjective,
         fill(false, nunits), Int(draws), Float64(draws_se),
         max(Int(draws_max), Int(draws)), Float64(draws_floor), Float64(draws_prior),
         Int(draws_seed), Dict{Int,Vector{Vector{Float64}}}(), zeros(nunits),
-        fill(false, nunits), Bool(screen),
+        fill(false, nunits), Bool(screen), Symbol(draws_scope), Int[],
         fill(NaN, nunits), fill(NaN, nunits), fill(false, nunits), NaN, nothing,
         0, 0, 0, 0, 0, 0, 0.0, 0.0, 0.0, 0.0, nothing, nothing)
     _continuation_add_points!(o, point_units, point_values)
@@ -1037,6 +1049,7 @@ function _continuation_force!(o::CTSEMLaplaceContinuation, force)
     all(U -> 1 <= U <= nunits, units) || throw(ArgumentError(
         "force names a unit outside 1:$(nunits)"))
     o.flagged = sort!(union(o.flagged, units))
+    o.forced = sort!(union(o.forced, units))
     return o
 end
 
@@ -1112,7 +1125,8 @@ function _continuation_place!(o::CTSEMLaplaceContinuation, theta::Vector{Float64
         soft_maxdirs=o.soft_maxdirs, draws=o.draws, draws_se=o.draws_se,
         draws_max=o.draws_max, draws_floor=o.draws_floor, draws_prior=o.draws_prior,
         draws_seed=o.draws_seed, points=o.points,
-        only=o.screen ? nothing : Set(o.flagged))
+        only=o.screen ? nothing : Set(o.flagged),
+        drawable=o.draws_scope === :all ? nothing : Set(o.forced))
     placed = _continuation_place(laplace, theta, opts)
     nunits = length(laplace.units.members)
     failed = [placed.rules[U] === nothing && !isempty(laplace.units.blocks[U]) &&

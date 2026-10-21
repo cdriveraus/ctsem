@@ -482,6 +482,10 @@ end
     off = ctsem_laplace_continuation_info(ctsem_laplace_continuation(laplace,
         theta; tolerance=0.0, maxdim=2))
     @test (off.nwide, off.nimportance, off.nflagged) == (off.nunits, 0, 0)
+    # Draws for the units named only: the rest too wide and unscored.
+    some = ctsem_laplace_continuation_info(ctsem_laplace_continuation(laplace,
+        theta; tolerance=0.0, maxdim=2, draws=256, draws_scope=:forced, force=[1]))
+    @test (some.nwide, some.nimportance, some.flagged) == (some.nunits - 1, 1, [1])
 end
 
 @testset "an importance rule on a Gaussian integrand is the Laplace value" begin
