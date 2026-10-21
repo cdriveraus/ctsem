@@ -1814,10 +1814,50 @@ ctOptimFullBootstrapDraws <- function(est, standata, sm, n=1000, cores=1,
   Rminus <- as.matrix(out$gradient) %*% A + Zminus
   usable <- is.finite(out$value) & out$value > -1e99 & rowSums(!is.finite(Rminus)) == 0
   record$centredraws <- length(pairs)
-  record$centre <- as.numeric(est + A %*% .ctNormalCentre(
+  step <- .ctNormalCentre(
     rbind(Z, Zminus[usable, , drop = FALSE]), rbind(R, Rminus[usable, , drop = FALSE]),
     R[pairs[usable], , drop = FALSE], Rminus[usable, , drop = FALSE],
-    found$v[, flagged, drop = FALSE]))
+    found$v[, flagged, drop = FALSE])
+  # The step measured rather than assumed. It reads the pairs' intercept as a
+  # shift of the mean, which a near-normal posterior's is and a curved one's
+  # is not: a shell mixed into thirty parameters, too slight in any one
+  # parameter's variance to be named, has intercepts that are its curvature,
+  # and read as a shift they moved the centre the full three sds, the mean up
+  # to 0.83 posterior sds from the truth where the mode was 0.02 from it
+  # (scripts/gsm-uncertainty-2026-10/diag_shell30.R). So the same pairs are
+  # taken again about the moved centre, and the step kept by the fraction
+  # that, with the intercept linear between the two points, leaves the least
+  # of it: a shift leaves none at the moved centre and the step stands,
+  # curvature leaves about as much and the step goes. The whole intercept,
+  # outside the sampled directions: read along the step alone it fell where
+  # the shell's even part merely changed. Excluding directions whose residuals
+  # are nonlinear instead, or capping the step at the widths the check
+  # measured, failed: the first stopped the centre on the 250-subject Laplace
+  # fit, whose skewed directions are the ones the mean moves along; the second
+  # missed a step that went mostly where the residuals had measured nothing.
+  # Sixteen gradients, only for a step of a tenth of an sd or more: below
+  # that, a curvature misread moves the mean by too little to matter.
+  record$centrescale <- 1
+  if (sqrt(sum(step^2)) >= 0.1 && any(usable)) {
+    sel <- pairs[usable]
+    Zp <- Z[sel, , drop = FALSE]
+    at <- function(Zs) sweep(sweep(Zs, 2, step, "+") %*% t(A), 2, est, "+")
+    op <- gradients(at(Zp))
+    om <- gradients(at(-Zp))
+    Rp <- as.matrix(op$gradient) %*% A + Zp
+    Rm <- as.matrix(om$gradient) %*% A - Zp
+    ok <- is.finite(op$value) & op$value > -1e99 & rowSums(!is.finite(Rp)) == 0 &
+      is.finite(om$value) & om$value > -1e99 & rowSums(!is.finite(Rm)) == 0
+    record$centredraws <- record$centredraws + 2L * length(sel)
+    Vs <- found$v[, flagged, drop = FALSE]
+    rest <- function(x) x - as.numeric(Vs %*% crossprod(Vs, x))
+    before <- rest(colMeans((R[sel, , drop = FALSE] + Rminus[usable, , drop = FALSE]) / 2))
+    after <- if (any(ok)) rest(colMeans((Rp[ok, , drop = FALSE] + Rm[ok, , drop = FALSE]) / 2)) else NA
+    change <- after - before
+    record$centrescale <- if (all(is.finite(change)) && sum(change^2) > 0)
+      min(1, max(0, -sum(before * change) / sum(change^2))) else 0
+  }
+  record$centre <- as.numeric(est + A %*% (record$centrescale * step))
   record$directions <- A %*% found$v[, flagged, drop = FALSE]
   # Whose intervals the normal misstates, positionally.
   record$parameters <- found$parameters
