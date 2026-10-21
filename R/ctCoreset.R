@@ -286,10 +286,20 @@
   st$runs_total <- 0L
   st$fails_total <- 0L
   st$free_total <- 0L
-  # Whether the current coreset has passed a check since it was chosen, which
-  # it must before it serves a gradient; choices made, how many then passed,
-  # and the training rows at the last one (`worth_choosing()`).
+  # Whether the current coreset may serve gradients unchecked, and whether
+  # the last check, of whichever coreset, passed. A coreset chosen while the
+  # last check passed, or before any, is trusted on its held-out errors; one
+  # chosen after a failed check, where the sampler has moved past the rows it
+  # was fitted on, has its gradient batches checked until one passes
+  # (`gradbatch`). At 'is''s profile-path points every check failed, by 10-140
+  # log units, and the paths took their gradients from it. Taking the
+  # gradients of every untrusted coreset in full instead cost 'checked' a
+  # round of them after each failure, 25% more evaluations at 1,000 units,
+  # where the round the failure had just taught it was accurate. Choices
+  # made, how many then passed, and the training rows at the last one
+  # (`worth_choosing()`).
   st$trusted <- FALSE
+  st$last_passed <- TRUE
   st$nchoose <- 0L
   st$proved <- 0L
   st$rows_at_choose <- 0L
@@ -348,7 +358,7 @@
     st$sizes <- c(st$sizes, sum(cf$w > 0))
     st$runs <- 0L
     st$fails <- 0L
-    st$trusted <- FALSE
+    st$trusted <- st$last_passed
     TRUE
   }
   # A choice refits the forward selection on every training row, R arithmetic
@@ -409,11 +419,13 @@
     st$fails <- st$fails + 1L
     st$fails_total <- st$fails_total + 1L
     st$trusted <- FALSE
+    st$last_passed <- FALSE
     if (!choose(st$cf$S)) st$phase <- 'training'
   }
   passed <- function() {
     if (!st$trusted) st$proved <- st$proved + 1L
     st$trusted <- TRUE
+    st$last_passed <- TRUE
     keep <- st$cf[c('cost', 'fail')]
     refit <- .ctCoresetWeights(st$X, st$y, st$cf$S, seq_along(st$y))
     # Refitted on the new rows, its weights can all come out zero: chosen
@@ -506,24 +518,53 @@
     v[!is.finite(v)] <- -1e100
     v
   }
+  gradfull <- function(X) {
+    started <- proc.time()[["elapsed"]]
+    st$cost <- st$cost + 2 * nrow(X)
+    out <- attr(lpg, 'gradbatch')(X)
+    tally('gradient_full', proc.time()[["elapsed"]] - started, nrow(X))
+    out
+  }
   gradbatch <- function(draws) {
     X <- as.matrix(draws)
-    st$gradsnow <- st$gradsnow + nrow(X)
-    started <- proc.time()[["elapsed"]]
-    if (st$phase != 'coreset' || !st$trusted) {
-      st$cost <- st$cost + 2 * nrow(X)
-      out <- attr(lpg, 'gradbatch')(X)
-      tally('gradient_full', proc.time()[["elapsed"]] - started, nrow(X))
-      return(out)
-    }
+    n <- nrow(X)
+    st$gradsnow <- st$gradsnow + n
+    if (st$phase != 'coreset') return(gradfull(X))
     a <- active()
+    share <- length(a$units) / ncol(st$X)
+    # A coreset not yet trusted here has its gradient batch checked as a
+    # batch of values is: its values at a check's draws evaluated in full, and
+    # the batch's gradients taken in full if they fail. Where that is not
+    # expected to cost less than the batch in full -- a few gradients, or a
+    # coreset that keeps failing -- they are taken in full straight away.
+    k <- min(8L, n)
+    if (!st$trusted && 2 * share * n + k + failnow() * 2 * n >= 2 * n) return(gradfull(X))
+    started <- proc.time()[["elapsed"]]
     out <- matrix(as.numeric(.ctBackendJuliaValue(
       engine()$module$ctsem_coreset_batch_gradient(engine()$objective, t(X),
         .ctJuliaVector(as.integer(a$units)), .ctJuliaVector(as.numeric(a$weights))))),
       nrow = ncol(X) + 1L)
-    tally('gradient_coreset', proc.time()[["elapsed"]] - started, nrow(X))
-    st$cost <- st$cost + 2 * nrow(X) * length(a$units) / ncol(st$X)
+    tally('gradient_coreset', proc.time()[["elapsed"]] - started, n)
+    st$cost <- st$cost + 2 * n * share
     value <- out[1L, ] + st$cf$c
+    if (!st$trusted) {
+      pick <- checkpick(ifelse(is.finite(value), value, -Inf))
+      t0 <- full(X[pick, , drop = FALSE])
+      good <- is.finite(t0$value) & is.finite(value[pick])
+      if (any(good)) {
+        err <- (value[pick] - t0$value)[good]
+        st$checks <- c(st$checks, err)
+        learn(t0, focus = TRUE)
+        st$runs <- st$runs + 1L
+        rel <- .ctCoresetRelevance(t0$total[good], max(st$y))
+        if (!.ctCoresetPasses(err, rel, tol$drift)) {
+          failed()
+          return(gradfull(X))
+        }
+        value[pick[good]] <- t0$value[good]
+        passed()
+      }
+    }
     value[!is.finite(value)] <- -1e100
     list(value = value, gradient = t(out[-1L, , drop = FALSE]))
   }
