@@ -2553,7 +2553,7 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
     stall_tightenings::Integer=2, stall_ratio::Real=1e-3,
     stall_carried::Real=0.0, stall_alone::Bool=false,
     batch::Bool=false, batch_theta::Real=0.25,
-    coreset::Bool=false, coreset_tol::Real=0.1, coreset_budget::Real=0.25,
+    coreset::Bool=false, coreset_tol::Real=0.1,
     newton::Bool=false, newton_switch::Real=0.1, newton_maxit::Integer=30,
     newton_curvature=:auto, certify::Bool=false,
     newton_reuse::Real=_CTSEM_HESSIAN_REUSE_SE,
@@ -2641,7 +2641,7 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
     # the L-BFGS stage on a weighted few of the units, each checked by a full
     # gradient. `nothing` on any other route, with too few units, or off.
     coreseter = coreset ? _ctsem_coreset_plan(objective, trial_fg!, score_store;
-        tol=coreset_tol, budget=coreset_budget) : nothing
+        tol=coreset_tol) : nothing
     # The endgame (`_ctsem_newton_finish`), on a route that has one. Where a
     # Hessian costs a few gradients it runs whenever there is a stopping rule
     # for it to finish, and L-BFGS hands over as soon as its predicted gain is
@@ -3227,11 +3227,15 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
         newton_steps=newton_steps,
         # L-BFGS steps taken on the structured model (`lbfgs_scores`).
         structured_steps=structured === nothing ? 0 : structured.steps,
-        # The coreset stages (`coreset`): each stage's units and iterations,
-        # the iteration it began after, how many full gradients checked them
-        # and how many sent the point back, the coreset fits tried, and the
-        # seconds choosing them took. `[0]` for none, for the bridge's sake.
+        # The coreset stages (`coreset`): each stage's units, share of a full
+        # evaluation's work, iterations, and what the full objective gained
+        # over what the coreset predicted; the iteration each run of stages
+        # began after; how many full gradients checked them and how many sent
+        # the point back; the coreset fits tried, and the seconds choosing them
+        # took. `[0]` for none, for the bridge's sake.
         coreset_sizes=_ctsem_coreset_report(coreseter, :sizes),
+        coreset_shares=_ctsem_coreset_report(coreseter, :shares),
+        coreset_bought=_ctsem_coreset_report(coreseter, :bought),
         coreset_stage_iterations=_ctsem_coreset_report(coreseter, :stage_iterations),
         coreset_entered=_ctsem_coreset_report(coreseter, :entered),
         coreset_iterations=coreseter === nothing ? 0 : coreseter.total_iterations,
