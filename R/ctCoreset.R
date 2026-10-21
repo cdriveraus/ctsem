@@ -142,7 +142,7 @@
   # Too few held-out draws near the top to judge by.
   if (sum(rel[held]) < 2 || length(fitrows) < 10L) return(NULL)
   grid <- c(seq(10L, 30L, by = 5L), seq(40L, max(40L, maxM), by = 10L))
-  sizes <- sort(unique(c(if (length(start)) length(start), grid)))
+  sizes <- sort(unique(c(if (length(start)) length(start), grid, maxM)))
   sizes <- sizes[sizes >= max(1L, length(start)) & sizes <= maxM]
   passes <- function(cf, idx) {
     if (!length(idx)) return(TRUE)

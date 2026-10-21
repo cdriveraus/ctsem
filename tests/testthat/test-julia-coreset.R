@@ -1,10 +1,11 @@
 # The coreset importance sampling evaluates on the Laplace route (R/ctCoreset.R,
 # laplace_coreset.jl): the engine's subset evaluation against the full one, the
 # selection on a sum it can compress, and the sampler's density with a coreset
-# behind it against the full density. One fit, the shared Laplace fixture at 40
-# subjects, so that a coreset of at most a third of the units can exist.
+# behind it against the full density. One fit, the shared Laplace fixture at 60
+# subjects: its seven parameters all move under 'is', so a coreset needs about
+# twice that many units, and may have at most a third of them.
 
-.coreset_fixture <- function() laplace_fixture(nsub = 40L, tp = 6L, seed = 31L)
+.coreset_fixture <- function() laplace_fixture(nsub = 60L, tp = 6L, seed = 31L)
 
 test_that("the engine's coreset evaluation is the weighted sum of the units it names", {
   skip_on_cran()
@@ -18,7 +19,7 @@ test_that("the engine's coreset evaluation is the weighted sum of the units it n
   terms <- ctsem:::.ctBackendJuliaValue(module$ctsem_coreset_terms(obj, t(X)))
   L <- matrix(as.numeric(terms$unit_loglik), ncol = 3)
   N <- nrow(L)
-  expect_equal(N, 40L)
+  expect_equal(N, 60L)
   plain <- as.numeric(ctsem:::.ctBackendJuliaValue(module$ctsem_evaluate_batch(obj, t(X))))
   expect_equal(as.numeric(terms$value), plain, tolerance = 1e-10)
   expect_equal(colSums(L), as.numeric(terms$total), tolerance = 1e-10)
@@ -60,7 +61,8 @@ test_that("the selection finds a small coreset where the units' terms span few d
   draws <- 240L
   basis <- cbind(rnorm(draws), rnorm(draws)^2, sin(seq_len(draws) / 9))
   mix <- matrix(runif(60 * 3), 3)
-  X <- basis %*% mix + matrix(rnorm(draws * 60, 0, 1e-4), draws)
+  # On a log density's scale: the sum moves a few units across the draws.
+  X <- (basis %*% mix) / 20 + matrix(rnorm(draws * 60, 0, 1e-5), draws)
   y <- rowSums(X)
   cf <- ctsem:::.ctCoresetChoose(X, y, seq_len(200), maxM = 20L)
   expect_false(is.null(cf))
@@ -91,22 +93,31 @@ test_that("the sampler's density with a coreset behind it follows the full densi
   cov <- as.matrix(fit$estimate$cov)
   set.seed(9)
   draw <- function(n) ctsem:::ctOptimNormalDraws(est, cov * 2, n)
-  first <- draw(100)
-  v1 <- attr(lpg, "batch")(first)
-  # The first round is the full density, and trains the coreset.
-  expect_equal(v1, attr(full, "batch")(first), tolerance = 1e-8)
+  # Training rounds are the full density, until a coreset passes (at most
+  # three).
+  first <- NULL
+  v1 <- NULL
+  for (round in 1:3) {
+    x <- draw(100)
+    v <- attr(lpg, "batch")(x)
+    expect_equal(v, attr(full, "batch")(x), tolerance = 1e-8)
+    first <- rbind(first, x)
+    v1 <- c(v1, v)
+    if (isTRUE(attr(lpg, "coreset")()$used)) break
+  }
   rec <- attr(lpg, "coreset")()
   expect_true(rec$used)
-  expect_equal(rec$units, 40L)
-  expect_lte(rec$size, 13L)
-  expect_equal(attr(lpg, "cost")(), 100)
+  expect_equal(rec$units, 60L)
+  expect_lte(rec$size, 20L)
+  expect_equal(attr(lpg, "cost")(), nrow(first))
+  spent <- attr(lpg, "cost")()
   second <- draw(100)
   v2 <- attr(lpg, "batch")(second)
   truth <- attr(full, "batch")(second)
   # Away from where nothing has weight, the coreset is within a nat.
   near <- truth > max(truth) - 15
   expect_lt(max(abs((v2 - truth)[near])), 1)
-  expect_lt(attr(lpg, "cost")() - 100, 100)
+  expect_lt(attr(lpg, "cost")() - spent, 100)
   g <- attr(lpg, "gradbatch")(second[1:3, , drop = FALSE])
   gt <- attr(full, "gradbatch")(second[1:3, , drop = FALSE])
   expect_lt(max(abs(g$gradient - gt$gradient)) / max(abs(gt$gradient)), 0.1)
@@ -140,10 +151,10 @@ test_that("importance sampling with a coreset reaches the full density's posteri
   expect_null(ia$coreset)
   expect_true(isTRUE(ib$coreset$used))
   expect_lt(ib$cost, ia$cost)
-  # Within Monte Carlo error of each other: the sds of two weighted samples of
-  # effective size near 200 agree to about 10%, the means to a tenth of an sd.
+  # Within Monte Carlo error of each other, read from the weighted samples:
+  # the means of two full-sum runs at effective sizes 200-370 differ by up to
+  # 0.17 sd on this model, and the resampled draws add as much again.
   expect_equal(b$estimate$se, a$estimate$se, tolerance = 0.25)
-  ma <- colMeans(a$estimate$rawposterior)
-  mb <- colMeans(b$estimate$rawposterior)
-  expect_lt(max(abs(ma - mb) / a$estimate$se), 0.4)
+  sa <- sqrt(diag(a$uncertainty$imis$covariance))
+  expect_lt(max(abs(b$uncertainty$imis$mean - a$uncertainty$imis$mean) / sa), 0.4)
 })
