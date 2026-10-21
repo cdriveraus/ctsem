@@ -256,6 +256,13 @@
   S <- .ctCoresetPath(X, y, best$M, rows, start, rel[rows])
   cf <- .ctCoresetWeights(X, y, S, rows, rel[rows])
   if (!any(cf$w > 0)) return(structure(list(), why = 'empty'))
+  # The coreset is the units it was priced by, those with weight: refits on
+  # later rows re-weight them, and add none. Keeping the zero-weight units of
+  # the path let refits give them weight, and coresets priced at 28 units of
+  # 1,000 grew to 46.
+  keep <- cf$w > 0
+  cf$S <- cf$S[keep]
+  cf$w <- cf$w[keep]
   cf$cost <- best$cost
   cf$fail <- best$fail
   cf
