@@ -695,12 +695,15 @@ print.ctLaplaceCorrection <- function(x, ...) {
     return(result)
   }
   spent <- .ctJuliaRunCounts(result)
+  # The stages before the last take no finish and no overshoot probe: each is
+  # followed by another placement, and on the hybrid a probe's pullbacks cost
+  # minutes (18 sets at about 30 s on the round-9 stall).
   plain <- utils::modifyList(args, list(batch = FALSE, newton = FALSE,
-    certify = FALSE))
+    certify = FALSE, overshoot_probe = "off"))
   for (nm in c("sgd", "saem", "saem_maxiter", "saem_seed", "saem_proposal",
     "newton_hessian", "newton_hessian_at", "lbfgs_inverse")) plain[[nm]] <- NULL
   finish <- utils::modifyList(plain, list(newton = isTRUE(args$newton),
-    certify = isTRUE(args$certify)))
+    certify = isTRUE(args$certify), overshoot_probe = args$overshoot_probe))
   value_tol <- as.numeric(.ctJuliaOr(control$value_tol, 1e-3))
   maxrounds <- as.integer(.ctJuliaOr(control$frozen_rounds, 10L))
   jumps <- list(units)

@@ -2560,8 +2560,9 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
     newton_hessian_at=nothing)
     start_values = collect(start)
     # What the line search saw of a jump, for the route to name its cause
-    # (`_ctsem_jump_units`).
+    # (`_ctsem_jump_units`), on a route that can.
     jump = CTSEMJump()
+    watch_jump = _ctsem_jump_capable(objective)
     lbfgs_pairs = lbfgs_memory === nothing ?
         _ctsem_lbfgs_memory(length(start_values)) : Int(lbfgs_memory)
     # Validated here rather than at the probe, which runs after the fit: a
@@ -2882,7 +2883,7 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
         maxiter=max(0, Int(maxiter) - sgd_iterations),
         g_tol=g_tol, f_tol=f_tol, x_tol=x_tol, callback=watch,
         directional=directional, batch=batcher, iteration0=sgd_iterations,
-        jump=jump)
+        jump=watch_jump ? jump : nothing)
     if sgd_result !== nothing
         result = CTSEMLBFGSResult(result.minimizer, result.minimum,
             result.gradient, sgd_iterations + result.iterations,
@@ -3063,7 +3064,7 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
             maxiter=max(0, Int(maxiter) - result.iterations - spent.steps[]),
             g_tol=g_tol, f_tol=f_tol, x_tol=x_tol, callback=watch,
             directional=directional, iteration0=result.iterations + spent.steps[],
-            jump=jump)
+            jump=watch_jump ? jump : nothing)
         result = CTSEMLBFGSResult(resumed.minimizer, resumed.minimum,
             resumed.gradient, result.iterations + resumed.iterations,
             result.f_calls + resumed.f_calls, result.g_calls + resumed.g_calls,

@@ -1181,18 +1181,24 @@ One block's log integral under its fixed rule at `theta`, with its gradient:
 `sum_j pi_j dh_j/dtheta`, `pi` the normalised node weights -- the Fisher
 identity. One pass, the running maximum rescaling what has been summed so far.
 A node whose likelihood is not finite carries no weight, as it does in
-`_quadrature_block`.
+`_quadrature_block`. A leaf's nodes are summed by `_continuation_leaf_sum`.
 """
 function _continuation_rule_value(o::CTSEMLaplaceContinuation, U::Integer,
     theta::Vector{Float64}, Ls, dL, positions, rule::CTSEMFixedRule,
     u::Vector{Float64}, aws, scratch, want_gradient::Bool)
+    if isempty(rule.children)
+        a = _continuation_leaf_sum(o, U, theta, Ls, dL, positions, rule, u, aws,
+            scratch, want_gradient, 1:size(rule.points, 2))
+        isfinite(a.peak) || return (value=NaN, gradient=a.gacc)
+        want_gradient && (a.gacc ./= a.acc)
+        return (value=a.peak + log(a.acc) + rule.constant, gradient=a.gacc)
+    end
     laplace = o.laplace
     block = laplace.units.blocks[U][rule.block]
     k = block.size
     columns = (block.offset + 1):(block.offset + k)
     npar = length(theta)
     n = size(rule.points, 2)
-    leaf = isempty(rule.children)
     peak = -Inf
     acc = 0.0
     gacc = want_gradient ? zeros(npar) : Float64[]
@@ -1201,29 +1207,15 @@ function _continuation_rule_value(o::CTSEMLaplaceContinuation, U::Integer,
         @inbounds for (t, c) in enumerate(columns); u[c] = rule.points[t, j]; end
         want_gradient && fill!(gh, 0.0)
         h = 0.0
-        ok = true
-        if leaf
-            for m in block.members
-                ll = _continuation_member!(gh, laplace, U, m, theta, Ls, dL,
-                    positions, u, aws, scratch, want_gradient)
-                if !isfinite(ll)
-                    ok = false
-                    break
-                end
-                h += ll
-            end
-        else
-            for child in rule.children[j]
-                r = _continuation_rule_value(o, U, theta, Ls, dL, positions, child,
-                    u, aws, scratch, want_gradient)
-                # A child that cannot be scored fails the block, rather than
-                # silently removing this node's mass.
-                isfinite(r.value) || return (value=NaN, gradient=gacc)
-                h += r.value
-                want_gradient && (gh .+= r.gradient)
-            end
+        for child in rule.children[j]
+            r = _continuation_rule_value(o, U, theta, Ls, dL, positions, child,
+                u, aws, scratch, want_gradient)
+            # A child that cannot be scored fails the block, rather than
+            # silently removing this node's mass.
+            isfinite(r.value) || return (value=NaN, gradient=gacc)
+            h += r.value
+            want_gradient && (gh .+= r.gradient)
         end
-        ok || continue
         t = rule.logweights[j] + h
         if t > peak
             if isfinite(peak)
@@ -1242,8 +1234,93 @@ function _continuation_rule_value(o::CTSEMLaplaceContinuation, U::Integer,
     return (value=peak + log(acc) + rule.constant, gradient=gacc)
 end
 
+"""
+    _continuation_leaf_sum(o, U, theta, Ls, dL, positions, rule, u, aws,
+        scratch, want_gradient, range)
+
+A leaf rule's nodes `range`, summed: their largest log term `peak`, the sum
+`acc` of `exp(term - peak)` over them, and with the gradient the same sum of
+each node's score times its weight (`gacc`), unnormalised -- so a rule's nodes
+can be summed in parts on different threads and the parts combined
+(`_continuation_flagged`). `peak` is `-Inf` where no node in the range scores.
+"""
+function _continuation_leaf_sum(o::CTSEMLaplaceContinuation, U::Integer,
+    theta::Vector{Float64}, Ls, dL, positions, rule::CTSEMFixedRule,
+    u::Vector{Float64}, aws, scratch, want_gradient::Bool, range::UnitRange{Int})
+    laplace = o.laplace
+    block = laplace.units.blocks[U][rule.block]
+    columns = (block.offset + 1):(block.offset + block.size)
+    npar = length(theta)
+    peak = -Inf
+    acc = 0.0
+    gacc = want_gradient ? zeros(npar) : Float64[]
+    gh = want_gradient ? zeros(npar) : Float64[]
+    for j in range
+        @inbounds for (t, c) in enumerate(columns); u[c] = rule.points[t, j]; end
+        want_gradient && fill!(gh, 0.0)
+        h = 0.0
+        ok = true
+        for m in block.members
+            ll = _continuation_member!(gh, laplace, U, m, theta, Ls, dL,
+                positions, u, aws, scratch, want_gradient)
+            if !isfinite(ll)
+                ok = false
+                break
+            end
+            h += ll
+        end
+        ok || continue
+        t = rule.logweights[j] + h
+        if t > peak
+            if isfinite(peak)
+                s = exp(peak - t)
+                acc *= s
+                want_gradient && (gacc .*= s)
+            end
+            peak = t
+        end
+        w = exp(t - peak)
+        acc += w
+        want_gradient && (gacc .+= w .* gh)
+    end
+    return (peak=peak, acc=acc, gacc=gacc)
+end
+
+"""
+    _continuation_tasks(o, nslot)
+
+The pieces `_continuation_flagged` hands the pool: each flagged unit whole, as
+`(f, nothing)`, except that where there are fewer flagged units than slots a
+unit whose rule is one leaf of at least 64 nodes -- a wide unit's draws, a
+product rule over several effects -- is split into ranges of its nodes,
+`(f, range)`, at least 32 a range and up to the slots each unit's share
+leaves. Without that a fit whose one flagged unit has 4096 draws evaluated
+them on one thread while the rest of the pool waited.
+"""
+function _continuation_tasks(o::CTSEMLaplaceContinuation, nslot::Integer)
+    nf = length(o.rules)
+    share = nf < nslot ? cld(Int(nslot), nf) : 1
+    tasks = Tuple{Int,Union{Nothing,UnitRange{Int}}}[]
+    for (f, rule) in enumerate(o.rules)
+        root = rule.roots[1]
+        n = size(root.points, 2)
+        if share > 1 && length(rule.roots) == 1 && isempty(root.children) && n >= 64
+            stop = 0
+            for m in _continuation_split(n, min(share, cld(n, 32)))
+                push!(tasks, (f, (stop + 1):(stop + m)))
+                stop += m
+            end
+        else
+            push!(tasks, (f, nothing))
+        end
+    end
+    return tasks
+end
+
 """The flagged units' fixed-rule terms at `theta`, and their summed gradient,
-in parallel over units."""
+in parallel over units and, where there are few of them, over a wide unit's
+nodes (`_continuation_tasks`). Each piece's result is kept by the piece and
+summed in order afterwards."""
 function _continuation_flagged(o::CTSEMLaplaceContinuation, theta::Vector{Float64},
     want_gradient::Bool)
     laplace = o.laplace
@@ -1257,52 +1334,86 @@ function _continuation_flagged(o::CTSEMLaplaceContinuation, theta::Vector{Float6
     positions = [_laplace_level_positions(spec, l) for l in eachindex(spec.levels)]
     _laplace_ensure_pool!(laplace)
     _continuation_warm_caches(laplace, o.nodes, o.soft_maxdirs, o.product_maxdim)
-    nslot = _laplace_pool_width()
-    partials = [zeros(npar) for _ in 1:(want_gradient ? nslot : 0)]
-    good = fill(true, nslot)
-    _laplace_parallel(laplace, 1:nf) do f
+    tasks = _continuation_tasks(o, _laplace_pool_width())
+    ntask = length(tasks)
+    peaks = fill(-Inf, ntask)
+    accs = zeros(ntask)
+    grads = [want_gradient ? zeros(npar) : Float64[] for _ in 1:ntask]
+    ok = _laplace_parallel(laplace, 1:ntask) do k
         # `local` throughout: a name assigned here that is also a local of the
         # enclosing function would be one binding shared by every task.
-        local rule, U, aws, scratch, u, total, grad, r, failed
+        local f, range, rule, U, aws, scratch, u, total, r, failed, a
+        f, range = tasks[k]
         rule = o.rules[f]
         U = rule.unit
         aws = _laplace_workspace!(laplace, Float64, npar)
         scratch = _continuation_scratch(laplace, npar)
         u = zeros(laplace.units.dims[U])
-        total = 0.0
-        grad = want_gradient ? zeros(npar) : Float64[]
         failed = false
         try
-            for root in rule.roots
-                r = _continuation_rule_value(o, U, theta, Ls, dL, positions, root,
-                    u, aws, scratch, want_gradient)
-                if !isfinite(r.value)
-                    failed = true
-                    break
+            if range === nothing
+                # The whole unit: its term as a peak with a sum of one, its
+                # gradient already normalised.
+                total = 0.0
+                for root in rule.roots
+                    r = _continuation_rule_value(o, U, theta, Ls, dL, positions,
+                        root, u, aws, scratch, want_gradient)
+                    if !isfinite(r.value)
+                        failed = true
+                        break
+                    end
+                    total += r.value
+                    want_gradient && (grads[k] .+= r.gradient)
                 end
-                total += r.value
-                want_gradient && (grad .+= r.gradient)
+                peaks[k] = total
+                accs[k] = 1.0
+            else
+                a = _continuation_leaf_sum(o, U, theta, Ls, dL, positions,
+                    rule.roots[1], u, aws, scratch, want_gradient, range)
+                peaks[k] = a.peak
+                accs[k] = a.acc
+                want_gradient && (grads[k] .= a.gacc)
             end
         catch err
             _ctsem_must_propagate(err) && rethrow()
             failed = true
         end
-        if failed || (want_gradient && !all(isfinite, grad))
-            good[_laplace_slot()] = false
-            return false
-        end
-        values[f] = total
-        want_gradient && (partials[_laplace_slot()] .+= _laplace_unit_weight(laplace, U) .* grad)
-        return true
+        return !failed
     end
-    ok = all(good)
     gradient = zeros(npar)
-    if want_gradient && ok
-        for p in partials
-            gradient .+= p
+    ok || return (values=values, gradient=gradient, ok=false)
+    g = want_gradient ? zeros(npar) : Float64[]
+    at = 1
+    while at <= ntask
+        f = tasks[at][1]
+        last = at
+        while last < ntask && tasks[last + 1][1] == f
+            last += 1
         end
+        rule = o.rules[f]
+        if tasks[at][2] === nothing
+            values[f] = peaks[at]
+            want_gradient && (g .= grads[at])
+        else
+            P = maximum(@view peaks[at:last])
+            isfinite(P) || return (values=values, gradient=gradient, ok=false)
+            A = 0.0
+            want_gradient && fill!(g, 0.0)
+            for q in at:last
+                e = exp(peaks[q] - P)
+                A += accs[q] * e
+                want_gradient && (g .+= e .* grads[q])
+            end
+            values[f] = P + log(A) + rule.roots[1].constant
+            want_gradient && (g ./= A)
+        end
+        if want_gradient
+            all(isfinite, g) || return (values=values, gradient=gradient, ok=false)
+            gradient .+= _laplace_unit_weight(laplace, rule.unit) .* g
+        end
+        at = last + 1
     end
-    return (values=values, gradient=gradient, ok=ok)
+    return (values=values, gradient=gradient, ok=true)
 end
 
 """
@@ -2274,6 +2385,7 @@ from (`ctsem_laplace_continuation`'s `point_units`): at one point the solve
 returns one of them, and the rule needs both sides.
 """
 _ctsem_jump_units(::Any, jump) = nothing
+_ctsem_jump_capable(::Union{CTSEMLaplaceObjective,CTSEMLaplaceContinuation}) = true
 
 function _ctsem_jump_units(laplace::CTSEMLaplaceObjective, jump::CTSEMJump)
     return _laplace_jump_units(laplace, collect(1:length(laplace.units.members)),

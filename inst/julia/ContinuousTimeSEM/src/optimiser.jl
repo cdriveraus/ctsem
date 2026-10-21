@@ -63,6 +63,27 @@ mutable struct CTSEMJump
 end
 CTSEMJump() = CTSEMJump(false, Float64[], Float64[], NaN, NaN, NaN)
 
+function _ctsem_jump_record!(jump::CTSEMJump, x, s, alpha_hi, alpha_lo, excess)
+    jump.seen = true
+    jump.x = copy(x)
+    jump.s = copy(s)
+    jump.alpha_hi = alpha_hi
+    jump.alpha_lo = alpha_lo
+    jump.excess = excess
+    return jump
+end
+
+"""Whether the route can name the units a jump came from
+(`_ctsem_jump_units`), and so whether its line searches watch for one: the
+Laplace objective and the hybrid built on it. Elsewhere a line search behaves
+exactly as it did before the watch."""
+_ctsem_jump_capable(::Any) = false
+
+# At or above this a trial's value is the sentinel a route returns for a point
+# it refuses (`ctsem_optimize`'s `invalid_objective`, `floatmax / 1e8`), not a
+# measurement of the objective.
+const _CTSEM_REFUSED = floatmax(Float64) / 1e9
+
 """What `_ctsem_lbfgs` returns: the point and the reasons it stopped."""
 struct CTSEMLBFGSResult
     minimizer::Vector{Float64}
@@ -228,16 +249,19 @@ step predicts it gains is nearly what is left, which is what the gap rule reads
 (`_ctsem_predicted_gain`); learned from the pairs alone, that prediction was a
 hundredth of what was left on a 433-parameter model.
 
-`jump`, a `CTSEMJump`, asks the line search to watch for a jump rather than
-backtrack through it. A trial whose excess over the linear model `alpha g's`
-does not shrink as the step does -- a quarter of it left at a hundredth of an
-earlier trial's length -- is a discontinuity, and backtracking only reaches a
-step too short to leave the point where it is: a Laplace fit whose person's
-term jumped by 0.33 nats as its inner solve changed where it stopped
-accepted steps below the resolution of the parameters for hours, each after 40
-backtracks (CT-SEM/review/LAPLACE-shoulders-frozen-draws-2026-10-21.md). The
-search stops there, with the line search failed and the jump recorded in
-`jump`, and the memory is not reset to retry, a jump not being a stale memory.
+`jump`, a `CTSEMJump`, asks the line search to watch for a jump. A trial
+whose excess over the linear model `alpha g's` does not shrink as the step does
+-- a quarter of it left at a hundredth of an earlier trial's length -- may be a
+discontinuity, where backtracking only reaches a step too short to leave the
+point: a Laplace fit whose person's term jumped by 0.33 nats as its inner solve
+changed where it stopped accepted steps below the resolution of the parameters
+for hours, each after 40 backtracks
+(CT-SEM/review/LAPLACE-shoulders-frozen-draws-2026-10-21.md). It may also be a
+plateau the search gets past -- a run of refused trials, a profile point's
+boundary -- so the search backtracks as before and the jump counts only if it
+then finds no step, the retry with a fresh memory included, or finds one only
+below the jump's scale three searches running. Then the run stops, the line
+search failed and the jump recorded in `jump`.
 An accepted step that leaves the point where it was fails the line search
 too: it is no step.
 """
@@ -281,6 +305,8 @@ function _ctsem_lbfgs(fg!, x0::AbstractVector; memory::Integer=20,
     gconv = maximum(abs, G; init=0.0) <= g_tol
     fconv = false; xconv = false; lsfail = false
     retried = false
+    # Searches in a row that found a step only below a jump the watch saw.
+    crept = 0
     # `diagonal`: the initial inverse Hessian learned per coordinate from the
     # pairs (`_ctsem_lbfgs_diagonal!`), `B` its inverse, rather than the
     # metric's shape times one secant ratio. `nonmonotone`: Zhang & Hager's
@@ -342,30 +368,28 @@ function _ctsem_lbfgs(fg!, x0::AbstractVector; memory::Integer=20,
         accepted = isfinite(fn) && fn <= reference(recent, C) + c1 * alpha * dphi
         k = 0
         # The trials' lengths and their excess over the linear model, for the
-        # jump watch (`jump`); empty when nothing watches.
+        # jump watch (`jump`); empty when nothing watches. A trial the route
+        # refused comes back as a huge sentinel and is no measurement of the
+        # objective, so it is not one of them.
         trial_alpha = Float64[]
         trial_excess = Float64[]
-        jumped = false
+        found = false
+        found_hi = NaN; found_lo = NaN; found_excess = NaN
         while !accepted && k < maxbacktrack
-            if jump !== nothing && isfinite(fn)
+            if jump !== nothing && !found && isfinite(fn) && fn < _CTSEM_REFUSED
                 excess = fn - f - alpha * dphi
-                floor_excess = 1e-8 * (1 + abs(f))
-                if excess > floor_excess
+                if excess > 1e-8 * (1 + abs(f))
                     for (a, e) in zip(trial_alpha, trial_excess)
                         if a >= 100 * alpha && excess >= e / 4
-                            jump.seen = true
-                            jump.x = copy(x)
-                            jump.s = copy(s)
-                            jump.alpha_hi = a
-                            jump.alpha_lo = alpha
-                            jump.excess = excess
-                            jumped = true
+                            found = true
+                            found_hi = a; found_lo = alpha; found_excess = excess
                             break
                         end
                     end
-                    jumped && break
-                    push!(trial_alpha, alpha)
-                    push!(trial_excess, excess)
+                    if !found
+                        push!(trial_alpha, alpha)
+                        push!(trial_excess, excess)
+                    end
                 end
             end
             k += 1
@@ -402,9 +426,20 @@ function _ctsem_lbfgs(fg!, x0::AbstractVector; memory::Integer=20,
         if accepted && xn == x
             accepted = false
         end
-        if jumped
-            lsfail = true
-            break
+        # A jump the watch saw counts only once backtracking has confirmed it:
+        # the search, retried as it always is, found no step at all (below), or
+        # found one only below the jump's scale for the third search running
+        # -- creeping along a spike's top. A plateau backtracking gets past is
+        # no jump, and the search goes on as it always did.
+        if accepted && found && alpha < found_lo
+            crept += 1
+            if crept >= 3
+                _ctsem_jump_record!(jump, x, s, found_hi, found_lo, found_excess)
+                lsfail = true
+                break
+            end
+        elseif accepted
+            crept = 0
         end
         if !accepted && took_structured
             # The structured model's step found nothing: plain L-BFGS from
@@ -421,6 +456,7 @@ function _ctsem_lbfgs(fg!, x0::AbstractVector; memory::Integer=20,
                 B = nothing; Dinv = inverse; C = f; Q = 1.0; recent = [f]
                 continue
             end
+            found && _ctsem_jump_record!(jump, x, s, found_hi, found_lo, found_excess)
             lsfail = true
             break
         end
