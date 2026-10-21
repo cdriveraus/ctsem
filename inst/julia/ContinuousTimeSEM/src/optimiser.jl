@@ -1027,13 +1027,17 @@ end
 #   random effect's sd went with them to its floor. The standard error,
 #   because a few small errors are no evidence: with one step there is no
 #   test, and with few the coreset must do clearly better. And the steps
-#   need not have moved every parameter, so the coreset must also reproduce,
-#   in every parameter, the units' spread of scores where the stage begins --
-#   the diagonal of their covariance, which estimates the information
-#   (`_ctsem_coreset_spread`). A random effect's sd has its curvature from the
-#   spread of the units and from little else: on bigre from refit starts,
-#   coresets of 3-8 of 400 units passed the steps' test, and their stages took
-#   an sd to its floor, 8 and 12 below the full sum's optimum. Entering and
+#   need not have moved every parameter, so the coreset must also carry, in
+#   every parameter, at least half the units' spread of scores where the stage
+#   begins -- the diagonal of their covariance, which estimates the
+#   information (`_ctsem_coreset_shortfall`). Less, and a stage's step there is
+#   off by more than itself, which is where stages stop closing on the full
+#   maximum; more only shortens it. A random effect's sd has its curvature
+#   from the spread of the units and from little else: on bigre from refit
+#   starts, coresets of 3-8 of 400 units passed the steps' test, and their
+#   stages took an sd to its floor, 8 and 12 below the full sum's optimum.
+#   Asked to be within the tolerance both ways, the coresets took most of the
+#   units and saved nothing. Entering and
 #   carrying on alike, and always the smallest coreset that passes. An
 #   accuracy and not a price: the stages share one curvature memory, and a
 #   coreset whose gradients differ more feeds it pairs from another function.
@@ -1307,20 +1311,16 @@ function _ctsem_nnls(AtA::AbstractMatrix, Atb::AbstractVector)
 end
 
 """
-    _ctsem_coreset_spread(S, units, w, scale)
+    _ctsem_coreset_information(S, scale)
 
-The largest relative error, over the parameters, of a coreset's weighted spread
-of the units' scores (`S`, units by parameters) against all the units' spread:
-per parameter, `sum_c w_U (s_U - m_c)^2` against `sum_U (s_U - m)^2`, each
-about its own (weighted) mean -- the diagonal of the score covariance, which
-estimates the information. Parameters whose spread, in L-BFGS's metric
-(`scale`), is under `1e-8` of the largest are left out: no unit moves them.
+Each parameter's spread of the units' scores (`S`, units by parameters) about
+their mean, `sum_U (s_U - m)^2` -- the diagonal of the score covariance, which
+estimates the information -- and which parameters count: those whose spread,
+in L-BFGS's metric (`scale`), is under `1e-8` of the largest are left out,
+since no unit moves them.
 """
-function _ctsem_coreset_spread(S::AbstractMatrix, units, w::AbstractVector,
-        scale::AbstractVector)
+function _ctsem_coreset_information(S::AbstractMatrix, scale::AbstractVector)
     N, p = size(S)
-    W = sum(w)
-    (W > 0 && isfinite(W)) || return Inf
     full = zeros(p)
     @inbounds for i in 1:p
         m = 0.0
@@ -1334,11 +1334,29 @@ function _ctsem_coreset_spread(S::AbstractMatrix, units, w::AbstractVector,
         end
         full[i] = d
     end
-    top = maximum(i -> full[i] * max(scale[i], 0.0), 1:p; init=0.0)
-    top > 0 || return 0.0
-    worst = 0.0
-    @inbounds for i in 1:p
-        full[i] * max(scale[i], 0.0) > 1e-8 * top || continue
+    scaled = [full[i] * max(scale[i], 0.0) for i in 1:p]
+    top = maximum(scaled; init=0.0)
+    return (spread=full, counts=[top > 0 && v > 1e-8 * top for v in scaled])
+end
+
+"""
+    _ctsem_coreset_shortfall(S, units, w, info)
+
+How far a coreset's information falls short, at worst over the parameters:
+`(d - d_c) / d_c`, where `d` is the units' spread of scores
+(`_ctsem_coreset_information`, `info`) and `d_c` the coreset's weighted spread
+about its weighted mean. To first order and in each parameter alone, a stage's
+step is off by that factor, so the stages close on the full maximum only while
+it is below one -- the coreset carrying at least half the information in
+every parameter. Carrying more only shortens a step. `Inf` where the coreset
+carries none.
+"""
+function _ctsem_coreset_shortfall(S::AbstractMatrix, units, w::AbstractVector, info)
+    W = sum(w)
+    (W > 0 && isfinite(W)) || return Inf
+    worst = -Inf
+    @inbounds for i in eachindex(info.spread)
+        info.counts[i] || continue
         mc = 0.0
         for (j, U) in enumerate(units)
             mc += w[j] * S[U, i]
@@ -1348,7 +1366,8 @@ function _ctsem_coreset_spread(S::AbstractMatrix, units, w::AbstractVector,
         for (j, U) in enumerate(units)
             dc += w[j] * (S[U, i] - mc)^2
         end
-        worst = max(worst, abs(dc - full[i]) / full[i])
+        dc > 0 || return Inf
+        worst = max(worst, (info.spread[i] - dc) / dc)
     end
     return worst
 end
@@ -1472,9 +1491,9 @@ The steps are split into up to `_CTSEM_CORESET_FOLDS` contiguous folds, the
 newest last -- for a stage carried on, ending with the stage just run. For
 each, the path is fitted on the other steps and the first size within the
 tolerance on the fold is that fold's; the coreset is fitted again on every
-step, at the first size from the largest of them up whose spread of scores at
-the newest training point is within the tolerance in every parameter
-(`_ctsem_coreset_spread`). Fitted in sample, a coreset carried on near the
+step, at the first size from the largest of them up that carries at least half
+the units' spread of scores at the newest training point in every parameter
+(`_ctsem_coreset_shortfall`). Fitted in sample, a coreset carried on near the
 optimum passed on an error a fraction of the one it met, its stage ran past
 its floor, and the full objective came out worse.
 """
@@ -1523,11 +1542,11 @@ function _ctsem_coreset_choose(c::CTSEMCoresetPlan, scale::AbstractVector, hmul;
         bound = m + sqrt(sum(abs2, rels .- m) / (nsteps - 1) / nsteps)
         if isfinite(bound) && bound <= tol2
             SK = c.S[end]
-            tol = _CTSEM_CORESET_TOL[]
+            info = _ctsem_coreset_information(SK, scale)
             need = largest
             spread = (units, w) -> begin
                 ok = length(units) >= need &&
-                    _ctsem_coreset_spread(SK, units, w, scale) <= tol
+                    _ctsem_coreset_shortfall(SK, units, w, info) < 1
                 (ok ? 1.0 : 0.0, ok ? 1.0 : 2.0, nothing)
             end
             again = _ctsem_coreset_path(c, 1:nsteps, budget, spread, scale)
