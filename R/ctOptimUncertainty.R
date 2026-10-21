@@ -977,6 +977,110 @@ ctOptimSafeCov <- function(cov, ridge=1e-8){
     direction=if(found) gaindirection else NA_integer_)
 }
 
+# A width, for sampling, along each direction a covariance gives none: the
+# routes that draw (`'checked'`, `'is'`) pass this to `ctOptimCovFromHessian()`
+# as `widen`, and the covariance they draw from is the projected one with these
+# widths added along the dropped directions.
+#
+# The projection is right for standard errors and wrong for draws. A direction
+# without curvature has none at the estimate, which is not the same as having
+# no posterior spread: at a shell's radial mode every free tangent has exactly
+# zero curvature (f'(r*) / r*), rounding decides which come out negative and are
+# projected out, and the normal then has zero variance along them. Nothing
+# explores such a direction -- the check's draws, the sampler's proposal, the
+# weights, which cannot correct what the proposal never covers. On a rotated
+# cylinder (a shell the data partly orient), 'checked' reported sds 0.79 of the
+# truth along it; given the width measured here, 0.98
+# (scripts/gsm-uncertainty-2026-10/, review/UNCERTAINTY-charts-beyond-shells-
+# 2026-10-21.md).
+#
+# The width is how far the log density goes before falling by half a unit,
+# each side, along the direction: a sd for a normal, and for a curved ridge the
+# scale on which it leaves the straight line, which the check then tests and
+# the sampler corrects. A direction is left without width where it says
+# nothing: one the screen measured flat (`flat`, its vectors), or one along
+# which the density has not fallen half a unit within `longest` raw units on
+# either side -- the screen's own reading, one flat side settling it. So an
+# individually varying parameter with no individual differences behind it
+# stays held, as `.ctImisRun()` holds it.
+#
+# Halving or doubling from one raw unit to bracket the half-unit fall, then
+# `bisections` geometric bisections: about 15 evaluations a side. At most
+# `maxdirections` directions, the flattest first.
+.ctOptimZeroWidth <- function(cov, lpgFunc, est, flat = NULL, rtol = 1e-10,
+  target = 0.5, longest = 4, bisections = 5L, maxdirections = 20L) {
+  if (is.null(lpgFunc) || !is.function(lpgFunc) || is.null(est)) return(NULL)
+  cov <- (cov + t(cov)) / 2
+  e <- try(eigen(cov, symmetric = TRUE), silent = TRUE)
+  if ('try-error' %in% class(e) || !length(e$values)) return(NULL)
+  top <- max(e$values)
+  if (!is.finite(top) || top <= 0) return(NULL)
+  null <- e$values <= rtol * top
+  if (!any(null)) return(NULL)
+  N <- e$vectors[, null, drop = FALSE]
+  if (!is.null(flat) && NCOL(flat)) {
+    flat <- as.matrix(flat)
+    N <- N - flat %*% crossprod(flat, N)
+    sv <- svd(N)
+    N <- sv$u[, sv$d > 0.5, drop = FALSE]
+  }
+  if (!ncol(N)) return(NULL)
+  if (ncol(N) > maxdirections) N <- N[, seq_len(maxdirections), drop = FALSE]
+  value <- function(x) {
+    out <- try(lpgFunc(x), silent = TRUE)
+    if ('try-error' %in% class(out)) return(NA_real_)
+    suppressWarnings(as.numeric(out)[1L])
+  }
+  base <- value(est)
+  evaluations <- 1L
+  if (!isTRUE(is.finite(base))) return(NULL)
+  fall <- function(v, d) {
+    evaluations <<- evaluations + 1L
+    x <- value(est + d * v)
+    if (!isTRUE(is.finite(x)) || x < -1e99) Inf else base - x
+  }
+  side <- function(v) {
+    d <- 1
+    f <- fall(v, d)
+    if (f > target) {
+      hi <- d
+      repeat {
+        d <- d / 2
+        if (d < 1e-8) return(hi)
+        if (fall(v, d) <= target) break
+        hi <- d
+      }
+      lo <- d
+    } else {
+      lo <- d
+      repeat {
+        d <- 2 * d
+        if (d > longest) return(NA_real_)
+        if (fall(v, d) > target) break
+        lo <- d
+      }
+      hi <- d
+    }
+    for (i in seq_len(bisections)) {
+      mid <- sqrt(lo * hi)
+      if (fall(v, mid) > target) hi <- mid else lo <- mid
+    }
+    sqrt(lo * hi)
+  }
+  widths <- vapply(seq_len(ncol(N)), function(j) {
+    up <- side(N[, j])
+    down <- if (is.finite(up)) side(-N[, j]) else NA_real_
+    (up + down) / 2
+  }, numeric(1))
+  keep <- is.finite(widths) & widths > 0
+  if (!any(keep)) return(list(cov = cov, directions = N[, 0L, drop = FALSE],
+    widths = numeric(), evaluations = evaluations))
+  D <- N[, keep, drop = FALSE]
+  widened <- cov + D %*% (t(D) * widths[keep]^2)
+  list(cov = (widened + t(widened)) / 2, directions = D, widths = widths[keep],
+    evaluations = evaluations)
+}
+
 #
 # `eig` and `flat` come from `.ctOptimFlatDirectionScreen()` when the caller
 # ran it: the decomposition so it is not taken twice, and a mask of directions
@@ -1019,7 +1123,7 @@ ctOptimSafeCov <- function(cov, ridge=1e-8){
 }
 
 ctOptimCovFromHessian <- function(hess, ridge=1e-8, rtol=.ctFlatDirectionRtol(), warn=TRUE,
-  context='Hessian', screen=NULL){
+  context='Hessian', screen=NULL, widen=NULL){
   hess <- (hess + t(hess)) / 2
   info <- -hess
   infoEig <- try(eigen(info, symmetric=TRUE, only.values=TRUE), silent=TRUE)
@@ -1251,6 +1355,29 @@ ctOptimCovFromHessian <- function(hess, ridge=1e-8, rtol=.ctFlatDirectionRtol(),
     method=if(usedGinv) 'ginv' else if(usedNullProjection) 'nullprojection'
       else if(usedNearPD) 'nearPD_cov' else 'solve',
     repairSteps=repairSteps)
+  # For a route that draws, the directions the projection left without width
+  # get one (`.ctOptimZeroWidth()`); the diagnostics keep describing the
+  # projection, which is what the identifiability report and the interval check
+  # read, and say which directions were widened and by how much.
+  widened <- if(is.function(widen) && isTRUE(usedNullProjection)) widen(cov) else NULL
+  heldMass <- nullMass
+  if(!is.null(widened) && length(widened$widths)) {
+    cov <- widened$cov
+    eW <- eigen(cov, symmetric=TRUE)
+    held <- eW$values <= 1e-10 * max(eW$values)
+    heldMass <- if(any(held)) rowSums(eW$vectors[, held, drop=FALSE]^2) else
+      rep(0, nrow(cov))
+    diagnostics$widened <- list(n=length(widened$widths), widths=widened$widths,
+      directions=widened$directions, evaluations=widened$evaluations)
+    # Per coordinate, as `nullMass`, but of the directions still held at no
+    # width: what the intervals of the routes that drew from this have no
+    # spread along (`.ctBackendHeldMass()`).
+    diagnostics$heldMass <- heldMass
+    repairSteps <- c(repairSteps, paste0(length(widened$widths),
+      ' of them given, for sampling, the width the log density falls half a ',
+      'unit over along them'))
+    diagnostics$repairSteps <- repairSteps
+  }
   attr(cov, 'ctOptimCovFromHessian') <- diagnostics
   # `repairSteps` is the audit trail and goes out whole on the diagnostics; the
   # warning gets one sentence per fact. Three of those steps describe the null
@@ -1271,13 +1398,19 @@ ctOptimCovFromHessian <- function(hess, ridge=1e-8, rtol=.ctFlatDirectionRtol(),
       if(is.finite(infoEigenRatio))
         paste0(' (smallest eigenvalue ', signif(infoEigenRatio, 3),
           ' of the largest)') else '',
+      # Widened directions have a width to draw from, measured along the
+      # likelihood rather than read off the curvature, and are not the ones
+      # whose reported sd is the projection.
+      if(!is.null(diagnostics$widened)) paste0(', ', diagnostics$widened$n,
+        ' of them given a width for sampling from how far the log density ',
+        'extends along them') else '',
       # The count of *parameters* as well as of directions, because that is the
       # number a reader is about to be misled by. A parameter lying along a
       # dropped direction has an infinite variance and is given a small
       # reported one, which reads as precision rather than as a gap. See
       # `.ctBackendIntervalCheck()`, which names them on a julia fit.
-      if(sum(nullMass >= .ctNullMassBar()) > 0) paste0(', and ',
-        sum(nullMass >= .ctNullMassBar()),
+      if(sum(heldMass >= .ctNullMassBar()) > 0) paste0(', and ',
+        sum(heldMass >= .ctNullMassBar()),
         ' parameter(s) along them whose reported sd is that projection rather',
         ' than a small width') else ''))
   if(isTRUE(diagnostics$usedGinv)) issues <- c(issues,
@@ -1759,9 +1892,19 @@ ctOptimFullBootstrapDraws <- function(est, standata, sm, n=1000, cores=1,
 # intercept is shrunk by its standard error (`c max(0, 1 - 4 se^2 / c^2)`), so
 # noise moves nothing. `P` is the residuals' regression on every draw (`Z`, `R`,
 # the reflections included), held towards the normal's (a ridge of one draw)
-# where they do not resolve it and floored at 1/25; the step is held to three
-# of its sds. Directions the sampler takes over (`sampled`, columns of `z`) are
-# left to it.
+# where they do not resolve it and floored at 1/25.
+#
+# Directions the sampler takes over (`sampled`, columns of `z`) are left to
+# it, and the step is solved in their complement alone, at the mode's value of
+# them: `P`'s complement block against the complement's intercept. Solved in
+# every direction and projected afterwards, a shell's large intercept along
+# its sampled directions reached the complement through the noise in `P`'s
+# off-diagonal terms: on a four-dimensional shell with six exactly normal
+# coordinates beside it the centre moved those by up to 10 sds, mean 0
+# (scripts/gsm-uncertainty-2026-10/diag_centre_shell.R). The step is held to
+# `maxstep` sds of the normal: in the complement the check found the normal's
+# widths right, so the floor's widening is not the posterior's there, and
+# measured in the floored metric that 11.7-sd step passed as 2.3.
 #
 # On the 28-parameter, 250-subject Laplace fit of scripts/gsm-uncertainty-2026-10/
 # (regress_vs_means.R, against 6,000 importance-sampled draws, Pareto k 0.13)
@@ -1773,24 +1916,32 @@ ctOptimFullBootstrapDraws <- function(est, standata, sm, n=1000, cores=1,
   floor = 1 / 25, maxstep = 3) {
   k <- ncol(Z)
   if (!k || NROW(Rplus) < 2L) return(numeric(k))
-  pairs <- (Rplus + Rminus) / 2
+  # The complement of the sampled directions, orthonormal: every direction
+  # where nothing is sampled.
+  W <- if (length(sampled) && ncol(sampled)) {
+    qs <- qr(sampled)
+    if (qs$rank >= k) return(numeric(k))
+    qr.Q(qs, complete = TRUE)[, seq.int(qs$rank + 1L, k), drop = FALSE]
+  } else diag(k)
+  pairs <- ((Rplus + Rminus) / 2) %*% W
   intercept <- colMeans(pairs)
   se <- apply(pairs, 2, stats::sd) / sqrt(nrow(pairs))
   intercept <- intercept * pmax(0, 1 - 4 * se^2 / pmax(intercept^2, .Machine$double.xmin))
   n <- nrow(Z)
   Zc <- sweep(Z, 2, colMeans(Z))
-  Rc <- sweep(R, 2, colMeans(R))
+  Rc <- sweep(R, 2, colMeans(R)) %*% W
   # In the draws' own n x n form, cheaper than k x k wherever this matters:
-  # `(Z'Z + ridge I)^-1 Z' = Z' (Z Z' + ridge I)^-1`.
-  S <- crossprod(Zc, solve(tcrossprod(Zc) + diag(ridge, n), Rc))
+  # `(Z'Z + ridge I)^-1 Z' = Z' (Z Z' + ridge I)^-1`. The regressors are every
+  # direction, so the complement's slopes are partial ones; only the
+  # complement's block is read.
+  S <- crossprod(Zc %*% W, solve(tcrossprod(Zc) + diag(ridge, n), Rc))
   S <- (S + t(S)) / 2
-  e <- eigen(diag(k) - S, symmetric = TRUE)
+  e <- eigen(diag(ncol(W)) - S, symmetric = TRUE)
   precision <- pmax(e$values, floor)
   m <- as.numeric(e$vectors %*% (crossprod(e$vectors, intercept) / precision))
-  size <- sqrt(sum(crossprod(e$vectors, m)^2 * precision))
+  size <- sqrt(sum(m^2))
   if (size > maxstep) m <- m * maxstep / size
-  if (length(sampled) && ncol(sampled)) m <- m - as.numeric(sampled %*% crossprod(sampled, m))
-  m
+  as.numeric(W %*% m)
 }
 
 # How far a parameter's interval may be from the normal's before it covers
@@ -1885,7 +2036,15 @@ ctOptimComputeUncertainty <- function(est, standata, sm, lpgFunc,
     # than either answer.
     screen <- if(identical(control$flatScreen, FALSE)) NULL else
       .ctOptimFlatDirectionScreen(-(hess + t(hess)) / 2, lpgFunc, est)
-    cov <- ctOptimCovFromHessian(hess, ridge=control$ridge, screen=screen)
+    # The routes that draw from this covariance give the directions it holds at
+    # no width one measured along the likelihood, leaving those the screen
+    # found flat held; the others report the projection. See
+    # `.ctOptimZeroWidth()`.
+    widen <- if(uncertainty %in% c('checked', 'is')) function(cov)
+      .ctOptimZeroWidth(cov, lpgFunc, est, flat = if(!is.null(screen) &&
+          any(screen$flat)) screen$eig$vectors[, screen$flat, drop = FALSE])
+    cov <- ctOptimCovFromHessian(hess, ridge=control$ridge, screen=screen,
+      widen=widen)
     # A point better than the estimate, found while asking a different
     # question. Reported whether or not anything was confirmed flat: it says
     # the fit is not at a maximum, which is a more serious finding than

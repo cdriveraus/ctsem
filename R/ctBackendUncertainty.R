@@ -101,6 +101,11 @@
       built
     }
   })
+  # This density is the fit's own sum over units, which a coreset of them may
+  # stand in for (`.ctCoresetLpg()`); a density built on another objective --
+  # the quadrature continuation's, say -- carries no such mark and is never
+  # replaced by the fit's unit terms.
+  attr(fn, "unitsum") <- TRUE
   attr(fn, "batch") <- function(draws) {
     draws <- as.matrix(draws)
     # The engine takes columns as draws; `imis_is`'s `x_new` (and every
@@ -352,8 +357,10 @@
   uncertaintyfit$intervalcheck <- .ctBackendIntervalCheck(uncertaintyfit$hessian,
     fit$estimate$se, names(fit$estimate$se),
     # The null mass the covariance construction actually used, so the report
-    # and the intervals cannot disagree about which coordinates were dropped.
-    mass = uncertaintyfit$details$covariance$nullMass)
+    # and the intervals cannot disagree about which coordinates were dropped;
+    # after a route that drew gave a dropped direction a width, only what is
+    # still held. See `.ctBackendHeldMass()`.
+    mass = .ctBackendHeldMass(uncertaintyfit$details))
   # Where the curvature this call used was evaluated. `est` is this call's own
   # point, which is not always the fit's: `ctOptimUncertainty()` can be handed
   # an estimate from elsewhere.
@@ -903,4 +910,21 @@
     finishsamples = nrow(fit$estimate$rawposterior), cores = cores,
     control = c(list(likelihood = likelihood), control))
   fit
+}
+
+# The null mass an uncertainty pass's intervals are to be read against, per raw
+# coordinate. `ctOptimCovFromHessian()` drops the directions without curvature,
+# and `nullMass` says how much of each coordinate went with them; the summary
+# reports a coordinate with most of its share there as having no width
+# (`.ctBackendNoWidthCoordinates()`), since its sd is the projection's
+# artefact. The routes that draw (`'checked'`, `'is'`) give the dropped
+# directions a width measured along the likelihood (`.ctOptimZeroWidth()`), and
+# their draws then spread along them, so for them only what is still held
+# (`heldMass`) has no width. Read from the diagnostics the pass kept, which move
+# to `proposal_covariance` once importance sampling replaced the covariance.
+.ctBackendHeldMass <- function(details) {
+  for (d in list(details$covariance, details$proposal_covariance)) {
+    if (!is.null(d$widened)) return(d$heldMass)
+  }
+  details$covariance$nullMass
 }
