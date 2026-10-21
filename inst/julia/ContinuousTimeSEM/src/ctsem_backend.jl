@@ -2652,7 +2652,8 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
     # budget stage (the prior warm-up), whose few iterations are its plan and
     # leave no stage room to pay.
     coreseter = coreset && !progress_budget ?
-        _ctsem_coreset_plan(objective, trial_fg!, score_store) :
+        _ctsem_coreset_plan(objective, trial_fg!, score_store;
+            target=gap_tol > 0 ? Float64(gap_tol) : 1e-10) :
         nothing
     # The endgame (`_ctsem_newton_finish`), on a route that has one. Where a
     # Hessian costs a few gradients it runs whenever there is a stopping rule
