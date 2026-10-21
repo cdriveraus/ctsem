@@ -19,9 +19,12 @@
 # A statistic's variance is the model's own -- the errors are independent over
 # rows, so a sum of products over row pairs has the sum of their squares as
 # its variance -- less what estimation took. Within a family, many correlated
-# statistics: their largest |z| and their sum of squares, calibrated with the
-# statistics' correlation, and combined with any exact p-values the family has by
-# the Cauchy combination (Liu & Xie 2020), which holds under any dependence.
+# statistics: their largest |z|, calibrated with the statistics' correlation,
+# and their sum of squares, from the units' cross terms (or the bootstrap, for
+# unit-level statistics), combined with any exact p-values the family has by
+# the Cauchy combination (Liu & Xie 2020), whose tail is approximately standard
+# Cauchy whatever the p-values' dependence, for small p; that its p-values hold
+# their level here is checked by simulation (the adequacy tutorial).
 # The sum has the power against many small departures -- a flat residual
 # autocorrelation -- and the max against a few large ones. Holm across
 # families. Design and simulations in
@@ -115,13 +118,18 @@
 #' pairs of rows has the sum of the products' squares as its variance, which
 #' holds with heavy tails or a changing variance; estimating the parameters
 #' takes a known part of it away. That is the variance of the residual,
-#' latent, volatility, within-row, periodic and covariate families; the
-#' distribution and fit families,
-#' whose statistics are sums of high powers, use the spread of the units'
-#' contributions and a studentised bootstrap over units. Within a family the
-#' largest standardised statistic and the sum of their squares are calibrated
-#' with the statistics' correlation over units
-#' and combined, with any exact p-values the family has, by the Cauchy
+#' latent, volatility, within-row, periodic and covariate families. A periodic
+#' statistic is in each unit a quadratic form of rank two in its errors, the
+#' periodogram, skewed to the right however many units there are; its z is
+#' read through a chi-square of the skewness that form has under the model,
+#' worked out exactly from the unit's times. The distribution and fit
+#' families, whose statistics are sums of high powers, use the spread of the
+#' units' contributions and a studentised bootstrap over units. Within a family the
+#' largest standardised statistic is calibrated with the statistics'
+#' correlation over units, and the sum of their squares, where the variances
+#' are the model's, by its terms between units, whose mean is zero under the
+#' model (Chen & Qin, 2010), and otherwise by the bootstrap; the two are
+#' combined, with any exact p-values the family has, by the Cauchy
 #' combination; families are combined by Holm. \code{adequate} is \code{TRUE}
 #' when no family's adjusted p-value is below \code{alpha}.
 #'
@@ -158,10 +166,17 @@
 #' With many observations every misfit is significant, so the sizes of the
 #' residual, latent and within-row correlations the model leaves are reported
 #' too, as
-#' root mean squares (the unbiased form of the SRMR, Maydeu-Olivares 2017),
-#' with intervals and a test that the size is at most \code{close}.
+#' root mean squares, each squared correlation less its sampling variance (as
+#' for the SRMR, Maydeu-Olivares 2017): the mean square is unbiased, its root,
+#' truncated at zero, bias-corrected. Each has a 95 per cent interval and
+#' \code{p_close}, the p-value of the test that it is at least \code{close}.
 #' \code{close_fit} is \code{TRUE} when every family that fails is one of those
-#' three and its size is not significantly above \code{close}.
+#' three and that test rejects at \code{alpha} -- the size is shown to be
+#' below \code{close}, its one-sided upper bound under it. A size whose
+#' interval reaches \code{close} is not a close fit: not showing that a misfit
+#' is large does not show that it is small. A close fit is about these
+#' averages over many correlations; one large discrepancy among them, or a
+#' biased estimate of a quantity of interest, can sit under a small average.
 #'
 #' Detection is not localization: a failure in one variable's equation reaches
 #' the others' errors through the fitted covariance. \code{\link{ctScoreTest}}
@@ -216,10 +231,21 @@
 #' @return An object of class \code{ctFitAdequacy}: \code{families} (one row
 #'   per family: the number of statistics, the worst, its z, the family's
 #'   p-value and the Holm-adjusted one), \code{statistics} (every statistic:
-#'   observed value, z, two-sided p), \code{size} (the root mean square
-#'   residual correlations, their intervals and close-fit tests),
-#'   \code{adequate}, \code{close_fit}, \code{projection} (the method used),
-#'   and \code{fit} (with any generated data, for reuse).
+#'   what it is about -- \code{variable}, \code{with} (the other variable of
+#'   a pair, or what the variable is correlated with), \code{gap} (the gap
+#'   bin of a pair of rows, or a lag), \code{period} and \code{covariate},
+#'   each NA where it does not apply -- and its observed value, z and
+#'   two-sided p), \code{size} (the root mean square residual correlations,
+#'   their intervals and close-fit tests), \code{errors} (the rows the
+#'   error-based families are computed from, in long form: \code{Subject},
+#'   \code{Time}, \code{Element} -- \code{'error'}, each variable's
+#'   standardised one-step-ahead error given the row's other observed
+#'   values; \code{'update'}, each latent's standardised update;
+#'   \code{'etaprior'}, its predicted mean -- \code{Row}, the variable, and
+#'   \code{value}; NULL when no such family ran), \code{adequate},
+#'   \code{close_fit}, \code{projection} (the method used), and \code{fit}
+#'   (with any generated data, for reuse). \code{plot()} draws the families,
+#'   or one family's statistics.
 #' @references Newey, W. K. (1985). Maximum likelihood specification testing
 #'   and conditional moment tests. \emph{Econometrica, 53}, 1047-1070.
 #'
@@ -237,6 +263,10 @@
 #'
 #'   Chang, J., Yao, Q., & Zhou, W. (2017). Testing for high-dimensional white
 #'   noise using maximum cross-correlations. \emph{Biometrika, 104}, 111-127.
+#'
+#'   Chen, S. X., & Qin, Y.-L. (2010). A two-sample test for high-dimensional
+#'   data with applications to gene-set testing. \emph{The Annals of
+#'   Statistics, 38}, 808-835.
 #'
 #'   Liu, Y., & Xie, J. (2020). Cauchy combination test. \emph{Journal of the
 #'   American Statistical Association, 115}, 393-402.
@@ -283,6 +313,7 @@ ctFitAdequacy <- function(fit, covariates = NULL,
   set.seed(20261010L)
 
   statistics <- list(); fams <- list(); size <- NULL; used <- NA_character_
+  errors <- NULL
   moments <- intersect(families, c('residuals', 'latent', 'volatility', 'pairs',
     'periodic', 'distribution', 'fit', 'effects', 'scores', 'tvcovariates'))
   if (length(moments) || 'dependence' %in% families) {
@@ -291,6 +322,7 @@ ctFitAdequacy <- function(fit, covariates = NULL,
     neederr <- length(setdiff(c(moments, intersect(families, 'dependence')), 'effects')) > 0
     t0 <- proc.time()[['elapsed']]
     err <- if (neederr) .ctAdequacyErrors(fit, cores = cores) else NULL
+    if (!is.null(err)) errors <- .ctAdequacyErrorRows(err)
     setup <- if (neederr) .ctAdequacySetup(err, gaps, periods,
       if ('tvcovariates' %in% moments) .ctAdequacyTVCovariates(fit, err, tvcovariates)) else NULL
     if (!is.null(err$ess) && any(is.finite(err$ess)) && min(err$ess, na.rm = TRUE) < 20)
@@ -331,8 +363,8 @@ ctFitAdequacy <- function(fit, covariates = NULL,
         nboot, raw = mom$M)
       extras <- .ctAdequacyExtras(err, moments)
       statistics[[length(statistics) + 1L]] <- data.frame(family = mom$meta$family,
-        statistic = mom$meta$name, observed = tests$estimate, z = tests$z, p = tests$p,
-        stringsAsFactors = FALSE)
+        statistic = mom$meta$name, mom$meta[names(.ctAdequacyAbout(0L))],
+        observed = tests$estimate, z = tests$z, p = tests$p, stringsAsFactors = FALSE)
       if (nrow(extras$statistics)) statistics[[length(statistics) + 1L]] <- extras$statistics
       for (f in moments) {
         r <- tests$families[[f]]
@@ -366,12 +398,51 @@ ctFitAdequacy <- function(fit, covariates = NULL,
   families_out$p_adj <- stats::p.adjust(families_out$p, 'holm')
   failing <- families_out$family[families_out$p_adj < alpha]
   sized <- if (is.null(size)) character() else
-    size$family[!is.na(size$p_close) & size$p_close >= alpha & size$overall]
+    size$family[!is.na(size$p_close) & size$p_close < alpha & size$overall]
   structure(list(families = families_out, statistics = statistics, size = size,
-    adequate = !length(failing), close_fit = all(failing %in% sized),
+    errors = errors, adequate = !length(failing), close_fit = all(failing %in% sized),
     alpha = alpha, close = close, projection = used,
     nsamples = if (length(generated)) nsamples else NA_integer_, fit = fit),
     class = 'ctFitAdequacy')
+}
+
+# What each statistic is about, beside its name, so that a reader selects by
+# variable, pair, gap, period or covariate rather than parsing names -- which
+# variable names with '_', ':' or ' period ' in them would defeat, and which
+# rounded a period to three figures. NA where a statistic has no such part.
+.ctAdequacyAbout <- function(n, variable = NA_character_, with = NA_character_,
+  gap = NA_character_, period = NA_real_, covariate = NA_character_) {
+  data.frame(variable = rep_len(as.character(variable), n),
+    with = rep_len(as.character(with), n), gap = rep_len(as.character(gap), n),
+    period = rep_len(as.numeric(period), n), covariate = rep_len(as.character(covariate), n),
+    stringsAsFactors = FALSE)
+}
+
+# The description of a block of moment statistics: what the tests need of each
+# (family, name, the count its estimate is over, its kind, its gap bin) and
+# what it is about.
+.ctAdequacyMeta <- function(family, name, count, kind, bin = NA_integer_, skew = NA_real_,
+  ...) {
+  cbind(data.frame(family = family, name = name, count = count, kind = kind, bin = bin,
+    skew = rep_len(as.numeric(skew), length(name)), stringsAsFactors = FALSE),
+    .ctAdequacyAbout(length(name), ...))
+}
+
+# The errors' rows, in the long form ctKalman's are melted to: each
+# variable's conditional error, each latent's update and its predicted mean.
+.ctAdequacyErrorRows <- function(err) {
+  n <- length(err$unit)
+  part <- function(element, X) {
+    X <- as.matrix(X)
+    if (!ncol(X)) return(NULL)
+    data.frame(Subject = factor(rep(err$labels[err$unit], ncol(X)), levels = err$labels),
+      Time = rep(err$time, ncol(X)), Element = element,
+      Row = rep(colnames(X), each = n), value = as.numeric(X), stringsAsFactors = FALSE)
+  }
+  E <- err$E; colnames(E) <- err$vars
+  eta <- as.matrix(err$eta)
+  if (ncol(eta) == ncol(err$Z)) colnames(eta) <- colnames(err$Z) else eta <- eta[, 0]
+  do.call(rbind, list(part('error', E), part('update', err$Z), part('etaprior', eta)))
 }
 
 # The one-step-ahead errors at a raw parameter vector (the estimate unless
@@ -437,6 +508,10 @@ ctFitAdequacy <- function(fit, covariates = NULL,
     time <- as.numeric(k$time)
   }
   Y[!is.finite(Y) | Y == 99999] <- NA
+  G <- Gs <- NULL
+  if (.ctFitIsJulia(fit) && mixture && length(k$pitgauss) == nrows * m) {
+    G <- matrix(k$pitgauss, nrows, m); Gs <- matrix(k$pitseq, nrows, m)
+  }
   E <- matrix(NA_real_, nrows, m, dimnames = list(NULL, vars))
   R <- array(NA_real_, c(nrows, m, m))
   Q <- rep(NA_real_, nrows); d <- integer(nrows)
@@ -481,6 +556,20 @@ ctFitAdequacy <- function(fit, covariates = NULL,
     E[r, obs] <- Pv / s
     R[r, obs, obs] <- P / outer(s, s)
     Q[r] <- sum(v * Pv); d[r] <- length(obs)
+    # From the exact predictive, a mixture over the random effects: the error is
+    # the normal quantile of the mixture's own distribution function at what was
+    # observed, each item given the row's others, and the row distance the sum
+    # of squares of each item's given those before it. Standardised by the
+    # mixture's mean and covariance instead they are not normal -- heavier
+    # tailed -- and the distribution family read their kurtosis and the
+    # distance's spread as misfit, a correct model rejected 37 per cent of the
+    # time at 120 people, whatever the number of draws. With one component the
+    # two are the same.
+    if (!is.null(G)) {
+      g <- G[r, obs]; sq <- Gs[r, obs]
+      if (all(is.finite(g))) E[r, obs] <- stats::qnorm(pmin(pmax(g, 1e-12), 1 - 1e-12))
+      if (all(is.finite(sq))) Q[r] <- sum(stats::qnorm(pmin(pmax(sq, 1e-12), 1 - 1e-12))^2)
+    }
   }
   # Each latent's update by the row, standardised: the state moved by K v,
   # whose covariance under the model is the prior less the updated -- a
@@ -575,9 +664,13 @@ ctFitAdequacy <- function(fit, covariates = NULL,
 # The periods the periodic family scans when none are named: the Fourier
 # frequencies of the typical record, k / T for T its median span, from two
 # cycles a record to one every two typical intervals between rows -- beyond
-# that a cycle is not resolved -- thinned evenly in log period to at most 48.
-# In the data's own time units, so nothing about the units is assumed.
-.ctAdequacyPeriodGrid <- function(time, rows, most = 48L) {
+# that a cycle is not resolved -- thinned evenly in log period only past 200.
+# A frequency is resolved to about 1 / T, so a thinner grid steps over cycles:
+# thinned to 48 on the 32-day records of the adequacy tutorial's Fisher data,
+# it went from 22.7 to 24.9 hours and showed a daily rhythm at z 15 as
+# nothing. In the data's own time units, so nothing about the units is
+# assumed.
+.ctAdequacyPeriodGrid <- function(time, rows, most = 200L) {
   span <- vapply(rows, function(r) if (length(r) > 1L) diff(range(time[r])) else NA_real_, 0)
   step <- unlist(lapply(rows, function(r) diff(sort(time[r]))), use.names = FALSE)
   span <- stats::median(span, na.rm = TRUE); step <- stats::median(step[step > 0])
@@ -646,17 +739,17 @@ ctFitAdequacy <- function(fit, covariates = NULL,
     out
   }
   blocks <- list()
-  addblock <- function(M, V0, family, name, count, kind, bin = NA_integer_)
-    blocks[[length(blocks) + 1L]] <<- list(M = M, V0 = V0, meta = data.frame(
-      family = family, name = name, count = count, kind = kind, bin = bin,
-      stringsAsFactors = FALSE))
+  addblock <- function(M, V0, family, name, count, kind, bin = NA_integer_, ...)
+    blocks[[length(blocks) + 1L]] <<- list(M = M, V0 = V0,
+      meta = .ctAdequacyMeta(family, name, count, kind, bin, ...))
   if (any(c('residuals', 'volatility') %in% which)) {
     B <- length(setup$labels)
     if ('residuals' %in% which) {
       blk <- .ctAdequacyPairBlock(E, err$unit, err$time, n, setup)
       grid <- expand.grid(j = seq_len(p), k = seq_len(p), b = seq_len(B))
       addblock(blk$M, blk$V0, 'residuals', paste0(vars[grid$j], '~', vars[grid$k], ' gap ',
-        setup$labels[grid$b]), blk$N, 'corr', grid$b)
+        setup$labels[grid$b]), blk$N, 'corr', grid$b, variable = vars[grid$j],
+        with = vars[grid$k], gap = setup$labels[grid$b])
     }
     if ('volatility' %in% which) {
       E2 <- sweep(E^2, 2, setup$centre)
@@ -665,7 +758,8 @@ ctFitAdequacy <- function(fit, covariates = NULL,
       own <- grid$j == grid$k
       addblock(blk$M[, own, drop = FALSE], blk$V0[, own, drop = FALSE], 'volatility',
         paste0(vars[grid$j[own]], '^2 gap ', setup$labels[grid$b[own]]), blk$N[own],
-        'square', grid$b[own])
+        'square', grid$b[own], variable = vars[grid$j[own]], with = vars[grid$j[own]],
+        gap = setup$labels[grid$b[own]])
     }
   }
   if ('latent' %in% which) {
@@ -674,7 +768,8 @@ ctFitAdequacy <- function(fit, covariates = NULL,
     grid <- expand.grid(j = seq_len(q), k = seq_len(q), b = seq_len(length(setup$labels)))
     lat <- colnames(err$Z)
     addblock(blk$M, blk$V0, 'latent', paste0(lat[grid$j], '~', lat[grid$k], ' gap ',
-      setup$labels[grid$b]), blk$N, 'corr', grid$b)
+      setup$labels[grid$b]), blk$N, 'corr', grid$b, variable = lat[grid$j],
+      with = lat[grid$k], gap = setup$labels[grid$b])
   }
   if ('pairs' %in% which && p > 1L) {
     pr <- which(upper.tri(diag(p)), arr.ind = TRUE)
@@ -687,15 +782,26 @@ ctFitAdequacy <- function(fit, covariates = NULL,
     V <- matrix(V, nrow(E))
     N <- colSums(!is.na(E[, pr[, 1], drop = FALSE]) & !is.na(E[, pr[, 2], drop = FALSE]))
     addblock(unitsum(V), unitsum(V^2), 'pairs', paste0(vars[pr[, 1]], ':', vars[pr[, 2]]),
-      N, 'corr')
+      N, 'corr', variable = vars[pr[, 1]], with = vars[pr[, 2]])
   }
   if ('periodic' %in% which && length(setup$periods)) {
     X <- cbind(E, err$Z)
     lab <- c(vars, paste('latent', colnames(err$Z)))
     blk <- .ctAdequacyPeriodBlock(X, err$unit, err$time, n, setup$periods)
     grid <- expand.grid(j = seq_len(ncol(X)), f = seq_along(setup$periods))
+    # Skewed: a unit's periodogram ordinate is roughly exponential, and the
+    # sum over 60 units had z skewness 0.25; read against the Gaussian, the
+    # largest of some three hundred such statistics rejected a correct model
+    # 9.4 per cent of the time at .05 (500 null datasets). Each z is read
+    # through a chi-square of its exact skewness (.ctAdequacySkewZ); the
+    # family then rejected 5.0 per cent (200 null datasets) and found a daily
+    # cycle in 48 (50). Made unit-level instead -- the units' spread and a
+    # studentised bootstrap -- it rejected 2 per cent, and found the cycle in
+    # 4: with hundreds of statistics over sixty units, the bootstrap's maximum
+    # is ruled by the resamples whose spread is tiny.
     addblock(blk$M, blk$V0, 'periodic', paste0(lab[grid$j], ' period ',
-      as.character(signif(setup$periods[grid$f], 3))), blk$N, 'corr')
+      as.character(signif(setup$periods[grid$f], 3))), blk$N, 'corr',
+      variable = lab[grid$j], period = setup$periods[grid$f], skew = blk$skew)
   }
   # Each variable's error, and each latent's update, against each time varying
   # covariate at the row and at the unit's previous row. A covariate that is
@@ -713,7 +819,9 @@ ctFitAdequacy <- function(fit, covariates = NULL,
       P <- Xz[, grid$j, drop = FALSE] * Wz[, grid$c, drop = FALSE]
       N <- colSums((is.finite(X[, grid$j, drop = FALSE]) * Wz[, grid$c, drop = FALSE])^2)
       addblock(unitsum(P), unitsum(P^2), 'tvcovariates', paste0(lab[grid$j], '~',
-        setup$tv$names[grid$c], if (lag == 1L) ' (previous row)'), N, 'corr')
+        setup$tv$names[grid$c], if (lag == 1L) ' (previous row)'), N, 'corr',
+        variable = lab[grid$j], covariate = setup$tv$names[grid$c],
+        gap = if (lag == 1L) 'previous row' else 'same row')
     }
   }
   if ('distribution' %in% which) {
@@ -734,7 +842,8 @@ ctFitAdequacy <- function(fit, covariates = NULL,
     addblock(unitsum(terms), matrix(NA_real_, n, ncol(terms)), 'distribution',
       c(paste0('skew(', vars, ')'), paste0('kurtosis(', vars, ')'),
         if (distances) c('distance', 'distance spread')),
-      c(nobs, nobs, if (distances) rep(sum(err$d > 0), 2)), 'moment')
+      c(nobs, nobs, if (distances) rep(sum(err$d > 0), 2)), 'moment',
+      variable = c(vars, vars, if (distances) rep(NA_character_, 2)))
   }
   if ('fit' %in% which) {
     Q <- err$Q; Q[!is.finite(Q)] <- 0
@@ -813,15 +922,50 @@ ctFitAdequacy <- function(fit, covariates = NULL,
     s <- usum(a)
     matrix((s^2 - usum(a^2)) / 2, n, nf)
   }
-  M <- V0 <- matrix(0, n, K * nf); N <- numeric(K * nf)
+  # The skewness of each statistic under the model, from the unit's times. On
+  # a unit's observed rows the statistic is a'Aa, A = (W - I) / 2, W = cc' +
+  # ss' with c, s the cosines and sines of the rows' times at the frequency;
+  # with standard normal, independent errors its variance is 2 tr(A^2) and
+  # its third cumulant 8 tr(A^3), and the traces of W's powers are those of
+  # the 2 x 2 matrix G of the sums of c^2, cs and s^2 (tr W = the rows).
+  third <- function(o) {
+    gcc <- usum(o * C1^2); gcs <- usum(o * C1 * S1); gss <- usum(o * S1^2)
+    nobs <- matrix(usum(o), n, nf)
+    w2 <- gcc^2 + 2 * gcs^2 + gss^2
+    w3 <- gcc^3 + 3 * gcc * gcs^2 + 3 * gcs^2 * gss + gss^3
+    k2 <- colSums(2 * (w2 - nobs) / 4)
+    k3 <- colSums(8 * (w3 - 3 * w2 + 2 * nobs) / 8)
+    ifelse(k2 > 0, k3 / k2^1.5, NA_real_)
+  }
+  M <- V0 <- matrix(0, n, K * nf); N <- skew <- numeric(K * nf)
   for (k in seq_len(K)) {
     cols <- k + K * (seq_len(nf) - 1L)
     a <- Xz[, k]; b <- a^2; o <- O[, k]
     M[, cols] <- pairsum(a, C1, S1)
     V0[, cols] <- (plain(b) + pairsum(b, C2, S2)) / 2
     N[cols] <- colSums((plain(o) + pairsum(o, C2, S2)) / 2)
+    skew[cols] <- third(o)
   }
-  list(M = M, V0 = V0, N = N)
+  list(M = M, V0 = V0, N = N, skew = skew)
+}
+
+# A standardised statistic of skewness g > 0 read through the chi-square of
+# that skewness, (X - nu) / sqrt(2 nu) with nu = 8 / g^2, onto the normal:
+# the z a Gaussian statistic with the same tail probability would have. Left
+# as it is where g is unknown or nil. Below the chi-square's lower bound the
+# statistic is beyond anything the model gives, and the most negative z
+# the normal's double precision holds is taken.
+.ctAdequacySkewZ <- function(z, g) {
+  out <- z
+  use <- is.finite(z) & is.finite(g) & g > 1e-6
+  if (!any(use)) return(out)
+  nu <- 8 / g[use]^2
+  q <- nu + z[use] * sqrt(2 * nu)
+  lower <- stats::qnorm(stats::pchisq(pmax(q, 0), nu, log.p = TRUE), log.p = TRUE)
+  upper <- -stats::qnorm(stats::pchisq(pmax(q, 0), nu, lower.tail = FALSE, log.p = TRUE),
+    log.p = TRUE)
+  out[use] <- ifelse(z[use] < 0, pmax(lower, -37), upper)
+  out
 }
 
 # Every requested family's per-unit statistics at the parameters `x` (NULL:
@@ -879,9 +1023,9 @@ ctFitAdequacy <- function(fit, covariates = NULL,
   }))
   C[!is.finite(C)] <- 0
   n <- nrow(C)
-  list(M = C, V0 = matrix(NA_real_, n, ncol(C)), meta = data.frame(family = 'effects',
-    name = paste0('P(u', rep(seq_len(d), each = length(cuts)), ' < ', cuts, ')'),
-    count = n, kind = 'moment', bin = NA_integer_, stringsAsFactors = FALSE))
+  dims <- paste0('u', rep(seq_len(d), each = length(cuts)))
+  list(M = C, V0 = matrix(NA_real_, n, ncol(C)), meta = .ctAdequacyMeta('effects',
+    paste0('P(', dims, ' < ', cuts, ')'), n, 'moment', variable = dims))
 }
 
 # The raw parameters whose row scores the scores family uses: named, or up to
@@ -929,9 +1073,10 @@ ctFitAdequacy <- function(fit, covariates = NULL,
   grid <- expand.grid(j = seq_len(K), k = seq_len(K), b = seq_len(length(setup$labels)))
   par <- colnames(directions)
   list(M = blk$M, V0 = matrix(NA_real_, nrow(blk$M), ncol(blk$M)),
-    meta = data.frame(family = 'scores',
-    name = paste0('s(', par[grid$j], ')~s(', par[grid$k], ') gap ', setup$labels[grid$b]),
-    count = blk$N, kind = 'moment', bin = grid$b, stringsAsFactors = FALSE))
+    meta = .ctAdequacyMeta('scores',
+    paste0('s(', par[grid$j], ')~s(', par[grid$k], ') gap ', setup$labels[grid$b]),
+    blk$N, 'moment', grid$b, variable = par[grid$j], with = par[grid$k],
+    gap = setup$labels[grid$b]))
 }
 
 # Each unit's contribution with the estimation effect removed:
@@ -1052,14 +1197,16 @@ ctFitAdequacy <- function(fit, covariates = NULL,
 # Every statistic's z, and each family's max and sum tests. A statistic's
 # variance is its pairwise or row-wise variance under the model less what
 # estimation took (`V0`, `reduction`), or for a unit-level statistic the
-# spread of the units' projected contributions. A family's largest |z| and sum
-# of squares are referred to draws of the standardised statistics with their
-# correlation, taken from the units' projected contributions: Gaussian draws
-# where the variances are pairwise or row-wise, sums over thousands of nearly
-# independent terms; for a unit-level statistic, which is a skewed sum over a
-# few hundred units, a studentised bootstrap over units, which corrects the
-# skewness to second order (a Gaussian one rejected a correct model 14 per
-# cent of the time at .05).
+# spread of the units' projected contributions. A family's largest |z| is
+# referred to draws of the statistics with their correlation, taken from the
+# units' projected contributions: Gaussian draws where the variances are
+# pairwise or row-wise, sums over thousands of nearly independent terms; for a
+# unit-level statistic, which is a skewed sum over a few hundred units, a
+# studentised bootstrap over units, which corrects the skewness to second
+# order (a Gaussian one rejected a correct model 14 per cent of the time at
+# .05). The sum of squares is tested by its terms between units where the
+# variances are the model's (.ctAdequacySumP), and by the bootstrap's own sum
+# where they are the units' spread.
 .ctAdequacyMomentTests <- function(Mstar, V0, reduction, meta, nboot = 1999L,
   raw = Mstar) {
   n <- nrow(Mstar)
@@ -1078,6 +1225,11 @@ ctFitAdequacy <- function(fit, covariates = NULL,
   base <- ifelse(rowlevel, v0, rawspread)
   ok <- is.finite(v) & is.finite(base) & base > 0 & v > 0.01 * base
   z <- ifelse(ok, U / sqrt(pmax(v, 0)), NA_real_)
+  # A statistic whose skewness under the model is known (the periodic
+  # family's) is read through it.
+  skewread <- if (is.null(meta$skew)) logical(length(z)) else
+    is.finite(meta$skew) & meta$skew > 1e-6
+  if (any(skewread)) z <- .ctAdequacySkewZ(z, meta$skew)
   p <- 2 * stats::pnorm(-abs(z))
   okcols <- which(ok)
   Ub <- matrix(NA_real_, nboot, length(okcols))
@@ -1103,13 +1255,29 @@ ctFitAdequacy <- function(fit, covariates = NULL,
       }
     }
     Ub[, at] <<- sweep(Zb, 2, sqrt(v[idx]), '*')
-    tmax <- max(abs(zf)); tsum <- sum(zf^2)
+    # The max's draws made as its statistics are. A plain z is the summed
+    # contributions over sqrt(v), so its draws are the units' summed
+    # contributions over the same v: drawn with unit variance, they put the
+    # residual family's largest |z| beyond its 5 per cent point 8 per cent of
+    # the time on correct models (200 datasets), 5 per cent so. A z read
+    # through its skewness is normal already, and its draws keep unit
+    # variance: the periodogram's spread over units is too uneven to scale by.
+    plain <- rowlevel[idx] & !skewread[idx]
+    if (any(plain)) Zb[, plain] <- sweep(Zb[, plain, drop = FALSE], 2,
+      sqrt(spread[idx][plain] / v[idx][plain]), '*')
+    tmax <- max(abs(zf))
     bmax <- apply(abs(Zb), 1, max, na.rm = TRUE)
-    bsum <- rowSums(Zb^2, na.rm = TRUE)
     w <- idx[which.max(abs(zf))]
+    # The sum: for statistics with the model's variance, its terms between
+    # units (.ctAdequacySumP); for studentised ones, the studentised
+    # bootstrap's own sum, as for the max. The few unit-level statistics have
+    # contributions too heavy tailed for a chi-square read of the cross terms:
+    # the fit family's two put its p below .0045 -- what the whole check's
+    # Holm step needs -- in 3 per cent of 200 correct models.
+    psum <- if (all(rowlevel[idx])) .ctAdequacySumP(Mstar[, idx, drop = FALSE], v[idx]) else
+      (1 + sum(rowSums(Zb^2, na.rm = TRUE) >= sum(zf^2))) / (nboot + 1)
     list(k = length(idx), worst = meta$name[w], worst_z = z[w],
-      pmax = (1 + sum(bmax >= tmax)) / (nboot + 1),
-      psum = (1 + sum(bsum >= tsum)) / (nboot + 1))
+      pmax = (1 + sum(bmax >= tmax)) / (nboot + 1), psum = psum)
   })
   # The estimate each statistic is about: a correlation for the residual and
   # within-row statistics (the projected sum over the pairs that contribute),
@@ -1119,6 +1287,33 @@ ctFitAdequacy <- function(fit, covariates = NULL,
     families = families, draws = Ub)
 }
 
+# The p-value of a family's sum of squared z, from its terms between units.
+# With x_i a unit's projected contributions to the family's statistics and
+# D = diag(1 / v), the sum is the sum over units of x_i' D x_i plus the sum
+# over i != i' of x_i' D x_i'. The second (Chen & Qin 2010) has mean zero
+# under the model whatever v is, and its variance 2 tr(A^2) and third
+# cumulant 8 tr(A^3), A = X D X' with its diagonal zero, are unbiased from the
+# units; it is read through the chi-square of that skewness, one sided, as a
+# departure adds to it. It needs no correlation between the statistics. The
+# reference before, draws with the units' correlation, carried that
+# estimate's noise -- about k^2 / n added to tr(R^2), which sets the sum's
+# variance -- and with k statistics not few beside n units was too wide: the
+# periodic family's 320 statistics over 60 units, independent normal errors
+# and nothing estimated, rejected 0 of 300 at .05, and the Cauchy combination
+# with a test that never rejects halved the family's. There this rejects 4
+# per cent, and finds a cycle of amplitude 0.4 in 77 per cent of datasets
+# where the draws' moments less that noise found 55.
+.ctAdequacySumP <- function(X, v) {
+  X <- as.matrix(X)
+  X[!is.finite(X)] <- 0
+  A <- tcrossprod(sweep(X, 2, sqrt(v), '/'))
+  diag(A) <- 0
+  V <- 2 * sum(A^2)
+  if (!is.finite(V) || V <= 0) return(NA_real_)
+  g <- 8 * sum((A %*% A) * A) / V^1.5
+  stats::pnorm(-.ctAdequacySkewZ(sum(A) / sqrt(V), g))
+}
+
 # P-values the Cauchy combination takes beside the bootstrap's: the
 # Anderson-Darling tests of the errors against the normal and of the row
 # distances against the chi-square, and the worst unit's distance. Their
@@ -1126,15 +1321,17 @@ ctFitAdequacy <- function(fit, covariates = NULL,
 .ctAdequacyExtras <- function(err, which) {
   stats <- list(); p <- list()
   zp <- function(x) stats::qnorm(pmax(x, 1e-300) / 2, lower.tail = FALSE)
-  add <- function(family, name, observed, pv) {
+  add <- function(family, name, observed, pv, ...) {
     stats[[length(stats) + 1L]] <<- data.frame(family = family, statistic = name,
-      observed = observed, z = zp(pv), p = pv, stringsAsFactors = FALSE)
+      .ctAdequacyAbout(1L, ...), observed = observed, z = zp(pv), p = pv,
+      stringsAsFactors = FALSE)
     p[[family]] <<- c(p[[family]], pv)
   }
   if ('distribution' %in% which) {
     for (j in seq_along(err$vars)) {
       ad <- .ctAdequacyAD(stats::pnorm(err$E[, j]))
-      if (!is.null(ad)) add('distribution', paste0('AD normal(', err$vars[j], ')'), ad[1], ad[2])
+      if (!is.null(ad)) add('distribution', paste0('AD normal(', err$vars[j], ')'), ad[1], ad[2],
+        variable = err$vars[j])
     }
     ok <- err$d > 0 & is.finite(err$Q)
     ad <- .ctAdequacyAD(stats::pchisq(err$Q[ok], err$d[ok]))
@@ -1152,15 +1349,17 @@ ctFitAdequacy <- function(fit, covariates = NULL,
       1 - (1 - ext[w])^length(u))
   }
   list(statistics = if (length(stats)) do.call(rbind, stats) else
-    data.frame(family = character(), statistic = character(), observed = numeric(),
-      z = numeric(), p = numeric()), p = p)
+    data.frame(family = character(), statistic = character(), .ctAdequacyAbout(0L),
+      observed = numeric(), z = numeric(), p = numeric()), p = p)
 }
 
 # The size of what the model leaves in the error correlations: the root mean
-# square residual correlation, unbiased (each squared correlation less its
-# sampling variance, Maydeu-Olivares 2017), with a delta-method interval and a
-# one-sided test that it is at most `close`, the variance of the mean square
-# from the bootstrap's draws of the summed contributions. For the residual correlations over all gaps, over
+# square residual correlation, bias-corrected (each squared correlation less
+# its sampling variance, Maydeu-Olivares 2017, which makes the mean square
+# unbiased and its truncated root not quite), with a delta-method interval and
+# the one-sided test that it is at least `close` (an equivalence test: small
+# p shows it below), the variance of the mean square from the bootstrap's
+# draws of the summed contributions. For the residual correlations over all gaps, over
 # the shortest gaps alone, and for the within-row correlations.
 .ctAdequacySize <- function(tests, meta, close) {
   okcols <- which(tests$ok)
@@ -1178,7 +1377,7 @@ ctFitAdequacy <- function(fit, covariates = NULL,
     est <- sqrt(max(ms, 0))
     data.frame(family = family, measure = label, estimate = est,
       lower = sqrt(max(ms - 1.96 * sems, 0)), upper = sqrt(max(ms + 1.96 * sems, 0)),
-      close = close, p_close = stats::pnorm((ms - close^2) / sems, lower.tail = FALSE),
+      close = close, p_close = stats::pnorm((ms - close^2) / sems),
       overall = !grepl('shortest', label), stringsAsFactors = FALSE)
   }
   res <- which(meta$family == 'residuals' & meta$kind == 'corr')
@@ -1197,7 +1396,8 @@ ctFitAdequacy <- function(fit, covariates = NULL,
 }
 
 # p-values combined by the Cauchy combination (Liu & Xie 2020): the mean of
-# tan((0.5 - p) pi) is standard Cauchy in the tail under any dependence.
+# tan((0.5 - p) pi) has approximately a standard Cauchy tail whatever the
+# dependence between the p-values, an approximation for small p.
 .ctCauchyCombine <- function(p) {
   p <- p[is.finite(p)]
   if (!length(p)) return(NA_real_)
@@ -1230,6 +1430,7 @@ ctFitAdequacy <- function(fit, covariates = NULL,
     targets[[length(targets) + 1L]] <- .ctAdequacyCentredDistance(E[use, j, drop = FALSE]^2)
     tn <- c(tn, paste0('dcor(', vars[j], '^2, past)'))
   }
+  tv <- rep(vars, each = 2L)
   va <- mean(A * A)
   dcor <- function(B, idx = NULL) {
     Bp <- if (is.null(idx)) B else B[idx, idx]
@@ -1247,7 +1448,8 @@ ctFitAdequacy <- function(fit, covariates = NULL,
   ratio <- observed / rowMeans(perm)
   maxperm <- apply(perm / rowMeans(perm), 2, max)
   w <- which.max(ratio)
-  list(statistics = data.frame(family = 'dependence', statistic = tn, observed = observed,
+  list(statistics = data.frame(family = 'dependence', statistic = tn,
+    .ctAdequacyAbout(length(tn), variable = tv), observed = observed,
     z = zp(pstat), p = pstat, stringsAsFactors = FALSE),
     family = data.frame(family = 'dependence', statistics = length(targets), worst = tn[w],
       worst_z = zp(pstat[w]), p = (1 + sum(maxperm >= max(ratio))) / (1 + nperm),
@@ -1274,8 +1476,10 @@ ctFitAdequacy <- function(fit, covariates = NULL,
   ids <- unique(id)
   statfun <- function(Ymat) .ctAdequacyStats(Ymat, id, ids, vars, covs)
   observed <- statfun(Y)
-  generated <- vapply(seq_len(nsamples), function(b) statfun(matrix(G[b, , ],
-    nrow = nrow(Y), dimnames = list(NULL, vars))), observed)
+  about <- attr(observed, 'about')
+  attr(observed, 'about') <- NULL
+  generated <- vapply(seq_len(nsamples), function(b) c(statfun(matrix(G[b, , ],
+    nrow = nrow(Y), dimnames = list(NULL, vars)))), observed)
   generated <- matrix(generated, nrow = length(observed), dimnames = list(names(observed), NULL))
   if ('lagged' %in% which) {
     cc <- suppressMessages(ctFitCheckCov(fit, plot = FALSE, keep = 'samples',
@@ -1290,6 +1494,8 @@ ctFitAdequacy <- function(fit, covariates = NULL,
       s$value[match(label, slab[samples$sample == b])]
     }, numeric(length(label)))
     observed <- c(setNames(cc$empirical, label), observed)
+    about <- rbind(.ctAdequacyAbout(length(label), variable = cc$rowvar, with = cc$colvar,
+      gap = paste('lag', cc$lag)), about)
     generated <- rbind(matrix(lagged, nrow = length(label), dimnames = list(label, NULL)),
       generated)
   }
@@ -1297,14 +1503,15 @@ ctFitAdequacy <- function(fit, covariates = NULL,
   keep <- family %in% which & is.finite(observed) & apply(generated, 1, function(g)
     sum(is.finite(g)) > 10 && stats::sd(g, na.rm = TRUE) > 0)
   observed <- observed[keep]; generated <- generated[keep, , drop = FALSE]
-  family <- family[keep]
+  family <- family[keep]; about <- about[keep, , drop = FALSE]
   m <- rowMeans(generated, na.rm = TRUE)
   s <- apply(generated, 1, stats::sd, na.rm = TRUE)
   ng <- rowSums(is.finite(generated))
   z <- (observed - m) / s
   pstat <- 2 * stats::pt(-abs(z) / sqrt(1 + 1 / ng), df = ng - 1)
   statistics <- data.frame(family = family, statistic = sub('^[^:]*:', '', names(observed)),
-    observed = observed, z = z, p = pstat, stringsAsFactors = FALSE, row.names = NULL)
+    about, observed = observed, z = z, p = pstat, stringsAsFactors = FALSE,
+    row.names = NULL)
   families <- do.call(rbind, lapply(unique(family), function(f) {
     rows <- which(family == f)
     w <- rows[which.min(pstat[rows])]
@@ -1336,8 +1543,18 @@ ctFitAdequacy <- function(fit, covariates = NULL,
     out
   })
   per <- do.call(rbind, per)
+  # What each per-subject summary is about, in the order they were made.
+  pabout <- .ctAdequacyAbout(2L * p + p * p, variable = c(vars, vars, rep(vars, each = p)),
+    with = c(rep(NA_character_, 2L * p), rep(vars, times = p)),
+    gap = c(rep(NA_character_, 2L * p), rep('lag 1', p * p)))
   out <- c()
-  for (nm in colnames(per)) out[paste0('subjects:sd(', nm, ')')] <- stats::sd(per[, nm], na.rm = TRUE)
+  about <- list()
+  # Keyed as `out` is, so that two summaries with one name stay paired.
+  for (a in seq_len(ncol(per))) {
+    key <- paste0('subjects:sd(', colnames(per)[a], ')')
+    out[key] <- stats::sd(per[, a], na.rm = TRUE)
+    about[[key]] <- pabout[a, ]
+  }
   # Pooled within-subject change against products of deviations.
   dev <- Y; change <- Y; change[] <- NA_real_
   for (r in rows) {
@@ -1352,25 +1569,119 @@ ctFitAdequacy <- function(fit, covariates = NULL,
   }
   for (j in seq_len(p)) {
     for (k in seq_len(p)) for (m in k:p) {
-      out[paste0('nonlinear:cor(d', vars[j], ',', vars[k], '*', vars[m], ')')] <-
-        pc(change[, j], dev[, k] * dev[, m])
+      key <- paste0('nonlinear:cor(d', vars[j], ',', vars[k], '*', vars[m], ')')
+      out[key] <- pc(change[, j], dev[, k] * dev[, m])
+      about[[key]] <- .ctAdequacyAbout(1L, variable = vars[j],
+        with = paste0(vars[k], '*', vars[m]))
     }
-    for (k in seq_len(p)) out[paste0('nonlinear:cor(d', vars[j], '^2,', vars[k], ')')] <-
-      pc(change[, j]^2, dev[, k])
+    for (k in seq_len(p)) {
+      key <- paste0('nonlinear:cor(d', vars[j], '^2,', vars[k], ')')
+      out[key] <- pc(change[, j]^2, dev[, k])
+      about[[key]] <- .ctAdequacyAbout(1L, variable = vars[j], with = vars[k])
+    }
   }
   if (length(covs)) for (cn in names(covs)) {
     z <- suppressWarnings(as.numeric(if (is.numeric(covs[[cn]])) covs[[cn]] else
       as.integer(as.factor(covs[[cn]]))))
-    for (nm in colnames(per)) out[paste0('covariates:cor(', cn, ',', nm, ')')] <- pc(z, per[, nm])
+    for (a in seq_len(ncol(per))) {
+      key <- paste0('covariates:cor(', cn, ',', colnames(per)[a], ')')
+      out[key] <- pc(z, per[, a])
+      ab <- pabout[a, ]; ab$covariate <- cn
+      about[[key]] <- ab
+    }
   }
+  attr(out, 'about') <- do.call(rbind, unname(about[names(out)]))
   out
+}
+
+#' Plot the adequacy checks
+#'
+#' Without \code{family}, each family's Holm-adjusted p-value on a log scale,
+#' against \code{alpha}. With a family, its
+#' statistics: for the families over the gaps between a subject's rows
+#' (\code{residuals}, \code{latent}, \code{volatility}, \code{scores}),
+#' each pair's estimate by gap with a 95 per cent interval; for
+#' \code{periodic}, each variable's z by period; for any other, the
+#' statistics' z, the 40 largest. The intervals and z are each statistic's
+#' own: the family's p-value, which accounts for how many there are, is the
+#' test.
+#'
+#' @param x A \code{ctFitAdequacy}.
+#' @param family One family, or NULL for all of them.
+#' @param ... Unused.
+#' @return A ggplot.
+#' @export
+plot.ctFitAdequacy <- function(x, family = NULL, ...) {
+  flag <- scale_colour_manual(values = c(`FALSE` = 'grey35', `TRUE` = 'red3'), guide = 'none')
+  if (is.null(family)) {
+    f <- x$families
+    f$label <- factor(f$family, levels = rev(f$family))
+    f$flagged <- f$p_adj < x$alpha
+    return(ggplot(f, aes(x = pmax(.data$p_adj, 1e-12), y = .data$label)) +
+      geom_vline(xintercept = x$alpha, linetype = 2, colour = 'grey50') +
+      geom_point(aes(colour = .data$flagged), size = 2.5) + flag +
+      scale_x_log10() +
+      labs(x = 'Holm-adjusted p (dashed: alpha)', y = NULL,
+        title = paste0(if (x$adequate) 'No family detects misfit' else
+          'Misfit detected', ' at alpha = ', x$alpha,
+          if (!x$adequate && isTRUE(x$close_fit)) ', shown within the close-fit bound'),
+        subtitle = if (!is.na(x$projection)) paste0('Estimation removed by: ',
+          x$projection)) +
+      theme_bw() + theme(plot.title.position = 'plot'))
+  }
+  family <- as.character(family)[1]
+  s <- x$statistics[x$statistics$family %in% family, , drop = FALSE]
+  if (!nrow(s)) stop("No statistics for family '", family, "'. Checked: ",
+    paste(x$families$family, collapse = ', '), call. = FALSE)
+  fam <- x$families[x$families$family == family, , drop = FALSE]
+  title <- if (nrow(fam)) sprintf('%s: p = %.2g, Holm-adjusted %.2g', family, fam$p[1],
+    fam$p_adj[1]) else family
+  s$beyond <- is.finite(s$z) & abs(s$z) > 1.96
+  if (family %in% c('residuals', 'latent', 'volatility', 'scores') && any(!is.na(s$gap))) {
+    s$gap <- factor(s$gap, levels = unique(s$gap))
+    pair <- ifelse(s$variable == s$with, s$variable, paste(s$variable, s$with, sep = ' ~ '))
+    s$pair <- factor(pair, levels = unique(pair))
+    se <- ifelse(is.finite(s$z) & s$z != 0, abs(s$observed / s$z), NA_real_)
+    s$lower <- s$observed - 1.96 * se
+    s$upper <- s$observed + 1.96 * se
+    ylab <- c(residuals = 'Correlation of errors', latent = 'Correlation of latent updates',
+      volatility = 'Covariance of squared errors', scores = 'Mean product of row scores')
+    return(ggplot(s, aes(x = .data$gap, y = .data$observed)) +
+      geom_hline(yintercept = 0, colour = 'grey60') +
+      geom_pointrange(aes(ymin = .data$lower, ymax = .data$upper, colour = .data$beyond),
+        na.rm = TRUE) + flag +
+      facet_wrap(~pair) +
+      labs(x = 'Gap between rows', y = ylab[[family]], title = title,
+        subtitle = 'Each with its 95% interval, before any adjustment') +
+      theme_bw() + theme(axis.text.x = element_text(angle = 45, hjust = 1)))
+  }
+  if (family == 'periodic') {
+    return(ggplot(s[is.finite(s$z), , drop = FALSE], aes(x = .data$period, y = .data$z,
+      colour = .data$variable)) +
+      geom_hline(yintercept = c(-1.96, 1.96), linetype = 2, colour = 'grey60') +
+      geom_line() + geom_point(size = 1) + scale_x_log10() +
+      labs(x = 'Period', y = 'z', colour = NULL, title = title) + theme_bw())
+  }
+  s <- s[is.finite(s$z), , drop = FALSE]
+  shown <- utils::head(s[order(-abs(s$z)), , drop = FALSE], 40L)
+  shown$statistic <- factor(make.unique(shown$statistic),
+    levels = rev(make.unique(shown$statistic)))
+  ggplot(shown, aes(x = .data$z, y = .data$statistic)) +
+    geom_vline(xintercept = c(-1.96, 1.96), linetype = 2, colour = 'grey60') +
+    geom_point(aes(colour = .data$beyond), size = 2) + flag +
+    labs(x = 'z', y = NULL, title = title, subtitle = if (nrow(s) > nrow(shown))
+      paste0('The ', nrow(shown), ' largest of ', nrow(s))) +
+    theme_bw()
 }
 
 #' @export
 print.ctFitAdequacy <- function(x, digits = 3, ...) {
-  cat("Adequacy: ", if (x$adequate) "adequate" else "NOT adequate", " at alpha = ",
+  failing <- x$families$family[x$families$p_adj < x$alpha]
+  cat("Adequacy: ", if (x$adequate) "no family detects misfit" else paste0("misfit ",
+    "detected by ", length(failing), " of ", nrow(x$families), " families"), " at alpha = ",
     x$alpha, if (!x$adequate && isTRUE(x$close_fit)) paste0(
-      ", but a close fit (remaining correlations not above ", x$close, ")"), "\n", sep = "")
+      ", each shown within the close-fit bound (remaining correlations below ", x$close,
+      ")"), "\n", sep = "")
   notes <- c(if (!is.na(x$projection)) paste0("estimation removed by: ", x$projection),
     if (!is.na(x$nsamples)) paste0(x$nsamples, " generated datasets"))
   if (length(notes)) cat("(", paste(notes, collapse = "; "), ")\n", sep = "")
@@ -1379,7 +1690,8 @@ print.ctFitAdequacy <- function(x, digits = 3, ...) {
   f[c('worst_z', 'p', 'p_adj')] <- lapply(f[c('worst_z', 'p', 'p_adj')], signif, digits)
   print(f, row.names = FALSE)
   if (!is.null(x$size) && nrow(x$size)) {
-    cat("\nSize of what remains (root mean square, unbiased):\n")
+    cat("\nSize of what remains (root mean square, bias-corrected; p_close tests",
+      "that it is at least close):\n")
     s <- x$size[, c('measure', 'estimate', 'lower', 'upper', 'close', 'p_close')]
     s[c('estimate', 'lower', 'upper', 'p_close')] <-
       lapply(s[c('estimate', 'lower', 'upper', 'p_close')], signif, digits)

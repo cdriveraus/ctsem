@@ -166,6 +166,28 @@
 #'   refit; \code{\link{ctModelImprove}} does that. The terms make the model
 #'   nonlinear, so the test, and a refit, run the extended Kalman filter.
 #'
+#' @section Level: \code{tests = 'level'} asks whether a parameter of the
+#'   dynamics or of the error variances depends on a subject's level, where
+#'   that level is a random intercept: for each free \code{DRIFT},
+#'   \code{DIFFUSION} and \code{MANIFESTVAR} parameter that does not vary over
+#'   subjects, and each \code{MANIFESTMEANS} or \code{CINT} intercept that
+#'   does, the score test of a term \code{g * intercept} added to the
+#'   parameter, at \code{g = 0}. When subjects' levels sit in the intercepts,
+#'   the latent states are deviations from them, so the state dependence and
+#'   volatility tests, which read the states, see dependence on the deviation
+#'   only; a parameter that depends on where a subject sits -- persistence or
+#'   innovation size that differs between people who are usually high and
+#'   people who are usually low -- shows there only as heterogeneity, in no
+#'   particular direction. These terms ask about that direction. The score
+#'   is taken over each subject's posterior for the intercept, from the
+#'   extended model's own gradient, which the product of a subject's score
+#'   and estimated level is not. \code{estimate} is the one-step change in the
+#'   parameter, on its own scale, per unit of the intercept. To act on a
+#'   result, let the parameter vary over subjects, so its random effect is
+#'   estimated with its correlation with the intercept;
+#'   \code{\link{ctModelImprove}} does that. A model with no random intercept
+#'   has nothing to test.
+#'
 #' @section Fixed cells: For each cell the model fixes at zero that could
 #'   sensibly be freed -- a \code{DRIFT} cross effect, a \code{DIFFUSION} or
 #'   \code{MANIFESTVAR} covariance, a \code{LAMBDA} cross loading, a
@@ -234,8 +256,9 @@
 #'   subject in the fit's subject order.
 #' @param tests Which families to run: any of \code{'heterogeneity'},
 #'   \code{'covariates'}, \code{'statedependence'}, \code{'volatility'},
-#'   \code{'fixed'}, \code{'instability'}. By default all but \code{'instability'}; covariates
-#'   are tested only when \code{covariates} is given.
+#'   \code{'fixed'}, \code{'level'}, \code{'instability'}. By default all but
+#'   \code{'instability'}; covariates are tested only when \code{covariates} is
+#'   given, and levels only where the model has a random intercept.
 #' @param form How a covariate enters: \code{'auto'} (indicators for a factor,
 #'   character or logical covariate; linear otherwise), \code{'linear'},
 #'   \code{'spline'}, \code{'factor'} or \code{'threshold'} (a step at an
@@ -315,7 +338,7 @@
 #' @export
 ctScoreTest <- function(fit, covariates = NULL,
   tests = c('heterogeneity', 'covariates', 'statedependence', 'volatility', 'fixed',
-    'instability'),
+    'level', 'instability'),
   form = c('auto', 'linear', 'spline', 'factor', 'threshold'), df = 3, parameters = NULL,
   order = 2L, variance = c('robust', 'model'), nboot = 1999L, exact = 5L,
   cores = getOption('mc.cores', 2L),
@@ -368,7 +391,7 @@ ctScoreTest <- function(fit, covariates = NULL,
   est <- .ctFitRawEstimate(fit)
   ptab <- .ctScoreParameterTable(fit)
   out <- list(heterogeneity = NULL, covariates = NULL, statedependence = NULL,
-    volatility = NULL, fixed = NULL, info = list(route = .ctBackendIntOverPop(spec),
+    volatility = NULL, fixed = NULL, level = NULL, info = list(route = .ctBackendIntOverPop(spec),
       nsubjects = .ctFitNsubjects(fit), npar = length(est)))
   out$info$variance <- variance
   out$info$nboot <- nboot
@@ -436,14 +459,21 @@ ctScoreTest <- function(fit, covariates = NULL,
     })
   }
   extended <- intersect(tests, c('statedependence', 'volatility', 'fixed'))
+  information <- if (!is.null(pieces)) -pieces$Hsum else NULL
   if (length(extended)) attempt(paste(extended, collapse = ' and '), {
     say("Preparing the model extended at zero (", paste(extended, collapse = ', '), ")")
-    information <- if (!is.null(pieces)) -pieces$Hsum else NULL
     ext <- .ctScoreExtended(fit, est, extended, information, order = order,
       variance = variance, nboot = nboot, cores = cores, exact = exact)
     out$statedependence <- ext$statedependence
     out$volatility <- ext$volatility
     out$fixed <- ext$fixed
+  })
+  # A model of its own: its terms rewrite the cells the other families'
+  # terms rewrite too.
+  if ('level' %in% tests) attempt('level', {
+    say("Preparing the model extended at zero (level)")
+    out$level <- .ctScoreExtended(fit, est, 'level', information, order = order,
+      variance = variance, nboot = nboot, cores = cores, exact = exact)$level
   })
   if ('instability' %in% tests) attempt('instability', {
     say("Row scores for the stability tests")
@@ -1416,7 +1446,13 @@ ctScoreTest <- function(fit, covariates = NULL,
     "so the extended model cannot be prepared. Refit with this version of ctsem.",
     call. = FALSE)
   model <- base
-  state <- vol <- fixed <- NULL
+  state <- vol <- fixed <- lev <- NULL
+  if ('level' %in% families) {
+    if (length(families) > 1L) stop("The level terms are tested on a model of ",
+      "their own.", call. = FALSE)
+    lev <- .ctScoreLevelModel(model)
+    model <- lev$model
+  }
   if ('statedependence' %in% families) {
     state <- .ctScoreStateModel(model, order)
     model <- state$model
@@ -1429,9 +1465,9 @@ ctScoreTest <- function(fit, covariates = NULL,
     fixed <- .ctScoreFixedModel(model)
     model <- fixed$model
   }
-  names_new <- c(state$terms$name, vol$terms$name, fixed$terms$name)
+  names_new <- c(state$terms$name, vol$terms$name, fixed$terms$name, lev$terms$name)
   if (!length(names_new)) return(list(statedependence = NULL, volatility = NULL,
-    fixed = NULL))
+    fixed = NULL, level = NULL))
   args <- .ctFitReplayArgs(fit)
   args$model <- model
   args$fit <- FALSE
@@ -1487,8 +1523,9 @@ ctScoreTest <- function(fit, covariates = NULL,
   # projection, under the model, can only reduce: conservative, and it ranks
   # the terms the projection then sharpens. The model variance needs every
   # column.
-  family <- rep(c('statedependence', 'volatility', 'fixed'),
-    c(length(state$terms$name), length(vol$terms$name), length(fixed$terms$name)))
+  family <- rep(c('statedependence', 'volatility', 'fixed', 'level'),
+    c(length(state$terms$name), length(vol$terms$name), length(fixed$terms$name),
+      length(lev$terms$name)))
   chosen <- seq_along(delta)
   if (robust && length(delta) && is.finite(exact)) {
     raw <- units[, delta, drop = FALSE]
@@ -1538,7 +1575,7 @@ ctScoreTest <- function(fit, covariates = NULL,
       if (!is.null(Cstar)) Cstar[, idx, drop = FALSE], nboot)
     data.frame(set = label, LM = j$LM, df = j$df, p = j$p, stringsAsFactors = FALSE)
   }
-  out <- list(statedependence = NULL, volatility = NULL, fixed = NULL)
+  out <- list(statedependence = NULL, volatility = NULL, fixed = NULL, level = NULL)
   latent <- base$latentNames
   if (!is.null(state$terms)) {
     idx <- seq_len(nrow(state$terms))
@@ -1587,7 +1624,137 @@ ctScoreTest <- function(fit, covariates = NULL,
     out$fixed <- list(cells = table[order(table$p, -table$LM), , drop = FALSE],
       joint = jointtest(idx, 'all'))
   }
+  if (!is.null(lev$terms)) {
+    idx <- length(state$terms$name) + length(vol$terms$name) + length(fixed$terms$name) +
+      seq_len(nrow(lev$terms))
+    terms <- lev$terms
+    table <- data.frame(term = paste0(terms$parameter, ' ~ ', terms$level),
+      parameter = terms$parameter, level = terms$level, matrix = terms$matrix,
+      per[idx, c('LM', 'p', 'estimate', 'se', 'projected')], stringsAsFactors = FALSE)
+    table$p_adj <- .ctScoreBH(table$p)
+    if (!is.null(Cstar)) table$class <- .ctScoreClasses(Cstar[, idx, drop = FALSE])
+    joint <- do.call(rbind, c(lapply(unique(terms$level), function(l)
+      jointtest(idx[terms$level == l], l)), list(jointtest(idx, 'all'))))
+    names(joint)[1] <- 'level'
+    out$level <- list(terms = table[order(table$p, -table$LM), , drop = FALSE],
+      joint = joint)
+  }
   out
+}
+
+# The fitted model with every parameter of the dynamics and of the error
+# variances that does not vary over subjects (free DRIFT, DIFFUSION and
+# MANIFESTVAR parameters) shifted, on its own scale, by a term times each
+# intercept that does (MANIFESTMEANS, CINT): every cell the parameter fills
+# becomes `<parameter> + t1 * <intercept 1> + ...`, each t a new PARS
+# parameter at zero, identity transform. The parameter and the intercepts are
+# declared in PARS so the cells can read them, each straight after the cell it
+# came from (.ctInsertMovedRows), so the random effects keep their order. At
+# zero the model is the fit. The constant part of an intercept is the
+# parameter's own direction, which the test projects out, so a subject's
+# value needs no centring.
+.ctScoreLevelModel <- function(model) {
+  pars <- model$pars
+  varies <- as.logical(.ctResolveLevels(model)$pars$indvarying) %in% TRUE
+  isp <- pars$matrix %in% 'PARS'
+  plain <- !is.na(pars$param) & grepl('^[A-Za-z.][A-Za-z0-9._]*$', pars$param) &
+    !pars$param %in% c('stationary', model$latentNames, model$TDpredNames)
+  anyvaries <- function(p) any(varies[plain & pars$param == p])
+  levels <- unique(pars$param[pars$matrix %in% c('MANIFESTMEANS', 'CINT') & plain & varies])
+  tested <- unique(pars$param[pars$matrix %in% c('DRIFT', 'DIFFUSION', 'MANIFESTVAR') & plain])
+  tested <- tested[!vapply(tested, anyvaries, logical(1))]
+  if (!length(levels) || !length(tested)) return(list(model = model, terms = NULL))
+  terms <- expand.grid(level = levels, parameter = tested, stringsAsFactors = FALSE)
+  terms <- terms[, c('parameter', 'level')]
+  terms$name <- paste0('ctscorelevel', seq_len(nrow(terms)))
+  terms$matrix <- vapply(terms$parameter, function(p)
+    pars$matrix[!isp & plain & pars$param == p][1], '')
+  effects <- grep('_effect$', names(pars), value = TRUE)
+  levelflags <- grep('^indvarying_', names(pars), value = TRUE)
+  nextpars <- max(c(0L, as.integer(pars$row[isp])))
+  moved <- list(); added <- list()
+  for (p in c(tested, levels)) {
+    if (any(isp & pars$param %in% p)) next
+    cell <- which(!isp & plain & pars$param == p)[1]
+    r <- pars[cell, , drop = FALSE]
+    r$matrix <- 'PARS'; r$row <- nextpars <- nextpars + 1L; r$col <- 1L
+    moved[[as.character(cell)]] <- r
+  }
+  template <- pars[which(!isp)[1], , drop = FALSE]
+  for (k in seq_len(nrow(terms))) {
+    r <- template
+    r$matrix <- 'PARS'; r$row <- nextpars <- nextpars + 1L; r$col <- 1L
+    r$param <- terms$name[k]; r$value <- NA; r$transform <- 'param'; r$indvarying <- FALSE
+    if ('sdscale' %in% names(r)) r$sdscale <- 1
+    for (e in effects) r[[e]] <- 'FALSE'
+    for (l in levelflags) r[[l]] <- FALSE
+    added[[k]] <- r
+  }
+  for (p in tested) {
+    cells <- which(!isp & plain & pars$param == p)
+    tt <- terms[terms$parameter == p, , drop = FALSE]
+    pars$param[cells] <- paste0(p, ' + ', paste0(tt$name, ' * ', tt$level, collapse = ' + '))
+    pars$value[cells] <- NA
+    pars$transform[cells] <- NA
+    pars$indvarying[cells] <- FALSE
+    for (e in effects) pars[[e]][cells] <- 'FALSE'
+    for (l in levelflags) pars[[l]][cells] <- FALSE
+  }
+  model$pars <- .ctInsertMovedRows(pars, moved, added)
+  rownames(terms) <- NULL
+  list(model = model, terms = terms)
+}
+
+#' Plot score tests
+#'
+#' Each family's strongest relaxations: their p-values adjusted within the
+#' family (Benjamini-Hochberg), on a log scale, against .05.
+#'
+#' @param x A \code{ctScoreTest}.
+#' @param family Families to show; by default every family tested.
+#' @param top Relaxations shown per family, the strongest.
+#' @param ... Unused.
+#' @return A ggplot.
+#' @export
+plot.ctScoreTest <- function(x, family = NULL, top = 10, ...) {
+  rows <- list()
+  add <- function(fam, label, p, p_adj) if (length(label))
+    rows[[length(rows) + 1L]] <<- data.frame(family = fam, label = label, p = p,
+      p_adj = p_adj, stringsAsFactors = FALSE)
+  h <- x$heterogeneity
+  if (!is.null(h)) add('heterogeneity', h$parameter, h$p, h$p_adj)
+  for (cv in x$covariates) add('covariates', paste0(cv$joint$covariate, ': ',
+    cv$parameters$parameter), cv$parameters$p, cv$parameters$p_adj)
+  s <- x$statedependence$terms
+  if (!is.null(s)) add('statedependence', paste0(s$equation, ': ', s$term), s$p, s$p_adj)
+  v <- x$volatility$terms
+  if (!is.null(v)) add('volatility', v$term, v$p, v$p_adj)
+  f <- x$fixed$cells
+  if (!is.null(f)) add('fixed', f$cell, f$p, f$p_adj)
+  l <- x$level$terms
+  if (!is.null(l)) add('level', l$term, l$p, l$p_adj)
+  i <- x$instability$parameters
+  if (!is.null(i)) add('instability', paste0(i$parameter, ' (', i$ordering, ')'), i$p, i$p_adj)
+  d <- do.call(rbind, rows)
+  if (!is.null(family)) d <- d[d$family %in% family, , drop = FALSE]
+  if (is.null(d) || !nrow(d)) stop("Nothing to plot: no relaxation was tested",
+    if (!is.null(family)) " in those families", ".", call. = FALSE)
+  d <- do.call(rbind, lapply(split(d, factor(d$family, levels = unique(d$family))),
+    function(part) utils::head(part[order(part$p_adj, part$p), , drop = FALSE], top)))
+  # One axis per family, strongest at the top.
+  d$key <- factor(paste0(d$family, '|', d$label),
+    levels = rev(unique(paste0(d$family, '|', d$label))))
+  ggplot(d, aes(x = pmax(.data$p_adj, 1e-12), y = .data$key)) +
+    geom_vline(xintercept = 0.05, linetype = 2, colour = 'grey50') +
+    geom_point(aes(colour = .data$p_adj < 0.05), size = 2.5) +
+    scale_colour_manual(values = c(`FALSE` = 'grey35', `TRUE` = 'red3'), guide = 'none') +
+    scale_x_log10() + scale_y_discrete(labels = function(k) sub('^[^|]*[|]', '', k)) +
+    facet_grid(family ~ ., scales = 'free_y', space = 'free_y') +
+    labs(x = 'p adjusted within the family (dashed: .05)', y = NULL,
+      title = paste0('Score tests (', x$info$route, ' route, ', x$info$nsubjects,
+        ' subjects)')) +
+    theme_bw() + theme(strip.text.y = element_text(angle = 0),
+      plot.title.position = 'plot')
 }
 
 #' @export
@@ -1658,6 +1825,13 @@ print.ctScoreTest <- function(x, digits = 3, top = 10, ...) {
     cat("\nFixed cells, freed: joint LM = ", signif(j$LM, digits), ", df = ", j$df,
       ", p = ", signif(j$p, digits), "\n", sep = "")
     fmt(x$fixed$cells[, withclass(x$fixed$cells, c('cell', 'LM', 'p', 'p_adj',
+      'estimate', 'se'))])
+  }
+  if (!is.null(x$level)) {
+    cat("\nParameters depending on a subject's level (a random intercept):\n")
+    fmt(x$level$joint)
+    cat("\n")
+    fmt(x$level$terms[, withclass(x$level$terms, c('term', 'LM', 'p', 'p_adj',
       'estimate', 'se'))])
   }
   invisible(x)

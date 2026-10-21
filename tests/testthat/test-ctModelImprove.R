@@ -48,7 +48,7 @@ test_that("adequacy is reported per family, and the error-based families need no
     'latent residual correlation, all gaps') %in% ad$size$measure))
   # Reuses what the fit generated.
   expect_equal(dim(ad$fit$generated$Y)[1], 40L)
-  expect_output(print(ad), 'adequate')
+  expect_output(print(ad), 'no family detects misfit')
   # The error-based families alone generate nothing.
   ad2 <- ctFitAdequacy(x$fit, families = c('residuals', 'volatility', 'fit'), cores = 1,
     nboot = 199)
@@ -59,6 +59,61 @@ test_that("adequacy is reported per family, and the error-based families need no
   expect_identical(ad3$families$family, 'scores')
   expect_true(ad3$families$p > 0 && ad3$families$p <= 1)
   expect_true(all(startsWith(ad3$statistics$statistic, 's(')))
+
+  # What each statistic is about, as columns, so nothing parses the names.
+  st <- ad$statistics
+  r <- st[st$family == 'residuals', ]
+  expect_true(all(r$variable == 'Y1' & r$with == 'Y1' & !is.na(r$gap)))
+  expect_identical(unique(r$gap), unique(sub('.* gap ', '', r$statistic)))
+  per <- st[st$family == 'periodic', ]
+  expect_setequal(unique(per$variable), c('Y1', 'latent eta1'))
+  expect_equal(per$period, as.numeric(sub('.* period ', '', per$statistic)), tolerance = 0.005)
+  expect_true(all(st$variable[st$family %in% c('subjects', 'distribution', 'dependence') &
+    !grepl('distance', st$statistic)] == 'Y1'))
+  # The rows the errors were computed from: every data row, for the variable,
+  # and for the latent its update and its prediction.
+  e <- ad$errors
+  expect_setequal(unique(e$Element), c('error', 'update', 'etaprior'))
+  expect_equal(sum(e$Element == 'error'), nrow(x$data))
+  expect_setequal(unique(e$Row[e$Element == 'update']), 'eta1')
+  # Drawn: the families, a family over gaps, the periods, and any other.
+  for (p in list(plot(ad), plot(ad, 'residuals'), plot(ad, 'periodic'),
+    plot(ad, 'distribution'))) {
+    expect_s3_class(p, 'ggplot')
+    expect_silent(ggplot2::ggplot_build(p))
+  }
+  expect_error(plot(ad, 'covariates'), "No statistics for family 'covariates'")
+})
+
+test_that("a close fit is a size shown below the bound, not one not shown above it", {
+  # Ten residual correlations of about 0.01: estimated precisely, the size is
+  # shown below 0.05; estimated loosely, its interval reaches past 0.05 and
+  # the fit is not called close, though the estimate is the same.
+  size <- function(se) {
+    set.seed(1)
+    k <- 10L; denom <- 1000
+    r <- stats::rnorm(k, 0.01, se)
+    v <- (se * denom)^2
+    tests <- list(ok = rep(TRUE, k), U = r * denom, denom = rep(denom, k), v = rep(v, k),
+      draws = matrix(stats::rnorm(2000 * k, 0, sqrt(v)), 2000))
+    meta <- data.frame(family = 'residuals', kind = 'corr', bin = 1L)[rep(1, k), ]
+    ctsem:::.ctAdequacySize(tests, meta, close = 0.05)[1, ]
+  }
+  tight <- size(0.002); loose <- size(0.1)
+  expect_lt(tight$p_close, 0.05)
+  expect_lt(tight$upper, 0.05)
+  expect_gt(loose$p_close, 0.05)
+  expect_gt(loose$upper, 0.05)
+})
+
+test_that("the periodic scan keeps the periods a record resolves", {
+  # 32-day records, a row every 4.3 hours: a daily cycle is resolved to about
+  # 0.75 hours, and a grid thinned to 48 periods stepped from 22.7 to 24.9.
+  time <- seq(0, 770, by = 4.3)
+  rows <- list(seq_along(time))
+  grid <- ctsem:::.ctAdequacyPeriodGrid(time, rows)
+  expect_true(any(abs(grid - 24) < 0.4))
+  expect_true(any(abs(grid - 12) < 0.2))
 })
 
 test_that("a conditional error's implied correlation is P_jk / sqrt(P_jj P_kk)", {
@@ -129,6 +184,35 @@ test_that("a covariate the model lacks is added, an unrelated one is not, and th
   expect_gt(imp$fit$estimate$loglik, x$fit$estimate$loglik)
   expect_identical(imp$stopped, 'adequate')
   expect_output(print(imp), 'stopped because adequate')
+  # A refit that ends below the model it extends is no evidence either way.
+  short <- imp$fit
+  short$estimate$loglik <- x$fit$estimate$loglik - 5
+  verdict <- ctsem:::.ctImproveCompare(x$fit, short, 'LR', 0.05)
+  expect_false(verdict$accept)
+  expect_match(verdict$note, 'below the model it extends')
+  expect_silent(ggplot2::ggplot_build(plot(imp)))
+
+  # The search's first step made by hand: the changes its first screen
+  # proposes, and the one it kept refitted alone, to the same gain.
+  props <- ctModelProposals(x$fit, score = imp$screens[[1]],
+    relax = c('heterogeneity', 'covariates'))
+  expect_s3_class(props, 'ctModelProposals')
+  expect_output(print(props), 'z as a predictor of')
+  first <- imp$history[imp$history$round %in% 1 & imp$history$kept, ]
+  pick <- props[props$change == first$change, ]
+  expect_identical(nrow(pick), 1L)
+  expect_s3_class(pick, 'ctModelProposals')
+  step <- ctModelImprove(x$fit, covariates = unique(x$data[, c('id', 'z', 'w')]),
+    changes = pick, maxsteps = 1, prune = FALSE, adequacy = FALSE, cores = 1,
+    verbose = FALSE)
+  expect_identical(step$history$change, first$change)
+  expect_true(step$history$kept)
+  expect_equal(step$history$dloglik, first$dloglik, tolerance = 1e-6)
+  expect_length(step$screens, 0L)
+  expect_error(ctModelImprove(x$fit, changes = data.frame(change = 'x')),
+    'rows of ctModelProposals')
+  if (identical(pick$family, 'covariates'))
+    expect_error(ctModelImprove(x$fit, changes = pick), 'pass covariates')
 
   # Pruning keeps a change the fit plainly needs without refitting: the random
   # intercept, whose spread here is many standard errors from zero, by a Wald
@@ -239,6 +323,48 @@ test_that("an item's own process starts persistent, at a quarter of its error va
   expect_equal(at('diff_u_Y1')^2 / (2 * rate), v, tolerance = 1e-6)
   expect_identical(m1$pars$param[m1$pars$matrix == 'T0VAR' & m1$pars$row == 2 &
     m1$pars$col == 2], 'stationary')
+})
+
+test_that("a component with a time scale starts at each end of the design's range", {
+  # The short end the median interval between a subject's rows, the long a
+  # quarter of the median subject's span: the data can hold processes at
+  # several time scales, and a refit keeps to the one it starts nearest.
+  x <- .improve_fit(0, seed = 1L)
+  model <- ctsem:::.ctFitBaseModel(x$fit)
+  sc <- ctsem:::.ctImproveTimescales(model, x$fit)
+  times <- split(x$data$time, x$data$id)
+  gaps <- unlist(lapply(times, diff))
+  expect_equal(sc[['short']], stats::median(gaps[gaps > 0]))
+  long <- stats::median(vapply(times, function(t) diff(range(t)), 0)) / 4
+  expect_equal(sc[['long']], if (long >= 3 * sc[['short']]) long else NA_real_)
+  hl <- function(start, par) log(2) / -eval(parse(text = ctModelUniqueProcess(model, 'Y1')$pars$transform[
+    ctModelUniqueProcess(model, 'Y1')$pars$param %in% par]),
+    list(param = start[[par]], log1p_exp = ctsem:::log1p_exp))
+  starts <- ctsem:::.ctImproveStartsAt(sc, function(h)
+    ctsem:::.ctImproveUniqueStart(model, x$fit, 'Y1', halflife = h))
+  expect_equal(length(starts), sum(is.finite(sc)))
+  expect_equal(vapply(starts, hl, 0, par = 'drift_u_Y1'), sc[is.finite(sc)],
+    tolerance = 1e-6, ignore_attr = TRUE)
+  # A second process for the same item, under a name of its own, where the
+  # evidence stays after the first.
+  m1 <- ctModelUniqueProcess(model, 'Y1')
+  expect_error(ctModelUniqueProcess(m1, 'Y1'), 'already has')
+  m2 <- ctModelUniqueProcess(m1, 'Y1', name = 'u_Y1_2')
+  expect_true(all(c('u_Y1', 'u_Y1_2') %in% m2$latentNames))
+  ad <- list(statistics = data.frame(family = 'residuals', statistic = 'Y1~Y1 gap <=3',
+    variable = 'Y1', with = 'Y1', gap = '<=3', z = 4, p = 1e-4, stringsAsFactors = FALSE))
+  pr <- ctsem:::.ctImproveStructural(m1, 'unique', NULL, ad, x$fit, 0.05)
+  own <- pr[vapply(pr, function(q) startsWith(q$key, 'unique:'), logical(1))]
+  expect_identical(vapply(own, `[[`, '', 'key')[1], 'unique:u_Y1_2')
+  expect_match(own[[1]]$label, 'another process')
+  expect_true(length(own[[1]]$starts) >= 1L)
+  # Of a proposal's refits, the best by log likelihood is its refit; a failed
+  # one counts for nothing unless all failed.
+  fake <- function(ll) list(estimate = list(loglik = ll))
+  failed <- structure('no', class = 'try-error')
+  best <- ctsem:::.ctImproveBestOf(list(fake(-10), fake(-5), failed, failed), c(1L, 1L, 2L, 2L), 2L)
+  expect_equal(best[[1]]$estimate$loglik, -5)
+  expect_s3_class(best[[2]], 'try-error')
 })
 
 test_that("pruning side by side makes the decisions pruning one at a time does", {

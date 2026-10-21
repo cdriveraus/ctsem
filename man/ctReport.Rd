@@ -29,19 +29,23 @@ from a previous \code{ctReport} run in the same folder are removed first,
 so the folder always matches its index.}
 
 \item{components}{Either one of \code{'quick'} (nothing that needs generated
-data), \code{'default'}, \code{'all'} (adds cross validation and LaTeX), or
-a character vector of component names: \code{summary}, \code{parmatrices},
-\code{identification}, \code{profile}, \code{discretepars},
-\code{network}, \code{predictions}, \code{residuals}, \code{covcheck},
+data or further model evaluations), \code{'default'}, \code{'all'} (adds
+cross validation and LaTeX), or a character vector of component names:
+\code{summary}, \code{parmatrices}, \code{identification},
+\code{profile}, \code{discretepars}, \code{network},
+\code{predictions}, \code{residuals}, \code{adequacy}
+(\code{\link{ctFitAdequacy}}), \code{scoretests}
+(\code{\link{ctScoreTest}}, julia fits), \code{covcheck},
 \code{postpred}, \code{tipredeffects}, \code{crossval},
 \code{equations}.}
 
 \item{nsamples}{Draws used by the components that sample from the fit's
-uncertainty, and by data generation for \code{covcheck} and
-\code{postpred}.}
+uncertainty, and by data generation for \code{adequacy}, \code{covcheck}
+and \code{postpred}.}
 
 \item{cores}{Cores for the components that can use more than one
-(\code{discretepars}, \code{covcheck}, \code{postpred}, \code{crossval}).}
+(\code{discretepars}, \code{adequacy}, \code{scoretests},
+\code{covcheck}, \code{postpred}, \code{crossval}).}
 
 \item{quantiles}{Quantiles for the parameter matrices and the discrete
 parameter plots.}
@@ -75,9 +79,11 @@ backend or a model does not support are recorded in the index as not
 produced, rather than stopping the run.
 }
 \details{
-The expensive parts are \code{covcheck} and \code{postpred}, which generate
-data from the fit, and \code{crossval}, which refits. \code{components =
-'quick'} excludes all three.
+The expensive parts are \code{adequacy}, \code{covcheck} and
+\code{postpred}, which generate data from the fit (once, shared),
+\code{scoretests}, which evaluates the model extended with new terms, and
+\code{crossval}, which refits. \code{components = 'quick'} excludes them
+all.
 
 \code{profile} walks the log probability along each raw parameter, holding
 the others at the estimate, over a grid measured in the standard error that
@@ -103,7 +109,12 @@ to run by default; \code{identification} names the ridge directions.
   \code{\link{ctPostPredPlots}}, and \code{\link{ctFitCheckCov}} for the
   lagged covariances, split by a group or predictor if wanted.}
 \item{Are the one-step-ahead errors what the model says they are?}{
-  \code{\link{ctResiduals}} and \code{\link{ctACFresiduals}}.}
+  \code{\link{ctFitAdequacy}} tests them by family, allowing for the
+  estimation; \code{\link{ctResiduals}} and \code{\link{ctACFresiduals}}
+  show them.}
+\item{What would relaxing the model change?}{\code{\link{ctScoreTest}},
+  without refitting; \code{\link{ctModelProposals}} lists the changes and
+  \code{\link{ctModelImprove}} refits them.}
 \item{Does a richer model fit better, or predict better?}{
   \code{\link{ctChisqTest}} for nested models, \code{\link{ctLOO}} for
   out-of-sample prediction.}
