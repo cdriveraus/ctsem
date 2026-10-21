@@ -603,6 +603,42 @@ end
     @test isempty(ContinuousTimeSEM._ctsem_pullback_sets(Float64[]))
 end
 
+@testset "the line search names a jump rather than backtracking through it" begin
+    C = ContinuousTimeSEM
+    # A quadratic that jumps by 0.3 the moment the point leaves where it
+    # starts: a Laplace fit at a point where a unit's inner solve stopped on a
+    # shoulder, every step off it losing the shoulder's mass. Its minimum is
+    # 0.14 away, so no step gains as much as the jump costs.
+    x0 = [1.0, -2.0]
+    a = x0 .- 0.1
+    jumpy! = function (F, G, x)
+        G === nothing || (G .= x .- a)
+        F === nothing && return nothing
+        return 0.5 * sum(abs2, x .- a) + (x == x0 ? 0.0 : 0.3)
+    end
+    jump = C.CTSEMJump()
+    r = C._ctsem_lbfgs(jumpy!, x0; maxiter=50, jump=jump)
+    @test r.linesearch_failed
+    @test jump.seen
+    @test jump.alpha_hi >= 100 * jump.alpha_lo
+    @test isapprox(jump.excess, 0.3; atol=0.01)
+    @test (r.iterations, r.minimizer) == (0, x0)
+    # Unwatched, it backtracks to the end and still takes no step: one below
+    # the point's resolution passed the Armijo test, and is not a step.
+    plain = C._ctsem_lbfgs(jumpy!, x0; maxiter=50)
+    @test plain.linesearch_failed
+    @test (plain.iterations, plain.minimizer) == (0, x0)
+    # A smooth objective, watched, converges as it would and sees no jump.
+    smooth! = function (F, G, x)
+        G === nothing || (G .= x)
+        F === nothing ? nothing : 0.5 * sum(abs2, x)
+    end
+    quiet = C.CTSEMJump()
+    s = C._ctsem_lbfgs(smooth!, x0; maxiter=50, g_tol=1e-10, jump=quiet)
+    @test s.g_converged
+    @test !quiet.seen
+end
+
 @testset "the diagonal L-BFGS scaling learns each coordinate's curvature" begin
     C = ContinuousTimeSEM
     rng = Random.MersenneTwister(3)
