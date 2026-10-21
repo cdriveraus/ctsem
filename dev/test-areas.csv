@@ -137,4 +137,5 @@
 "test-ctcov.R","spec","extended"
 "test-julia-item-pit.R","categorical","core"
 "test-julia-weights.R","uncertainty","core"
+"test-julia-coreset.R","uncertainty","core"
 "test-julia-corbound.R","laplace","core"
