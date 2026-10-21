@@ -6879,8 +6879,15 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
     # `[[`: `$` falls back to the one field the name begins, so an
     # `uncertaintyControl` given alone was read as the method and stopped the
     # fit in `match.arg()`.
+    # A fit rescued from a jump maximised the hybrid, some units' terms by
+    # frozen draws (`.ctLaplaceFrozenRescue()`), and its finish's Hessian is
+    # the hybrid's; 'checked' would sample the Laplace objective, which jumps
+    # there (round-9 stall: ESS 3, Pareto k 3.2, with no budget to stop it).
+    # So its default is that Hessian's normal, which the quadrature
+    # correction, keeping those units flagged, then replaces.
     uncertainty <- .ctJuliaOr(optimcontrol[["uncertainty"]],
-      if (length(out$model_spec$subject_weights)) "sandwich" else "checked")
+      if (length(out$model_spec$subject_weights)) "sandwich" else
+        if (!is.null(out$laplace$frozen)) "hessian" else "checked")
     # One way to sample: `ctFit(optimize = FALSE)`, which places the sampler
     # through this same pipeline before ever reaching this stage (see
     # `.ctJuliaSampleFit()`, R/ctBackendSample.R). Asking for
