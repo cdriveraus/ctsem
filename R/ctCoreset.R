@@ -189,9 +189,10 @@
 }
 
 # The coreset whose expected round cost (`.ctCoresetRoundCost()`) is least,
-# refitted on every row, with that cost and its failure rate as attributes;
-# NULL when none is expected to cost less than a full round, or there are too
-# few held-out draws near the top to judge by. Sizes are tried along one
+# refitted on every row, with that cost and its failure rate as fields. When
+# there is none, an empty list whose 'why' says so: too few rows to fit
+# ('held'), none expected to cost less than a full round ('cost', with the
+# best found), or weights all zero ('empty'). Sizes are tried along one
 # forward-selection path, which grows until what a size costs with checks that
 # never fail is more than the best found: nothing larger can be cheaper. Two
 # sets are held out: the newest of the rows the sampler's rounds checked in full
@@ -209,13 +210,22 @@
   fitrows <- setdiff(plain, held)
   rel <- numeric(length(y))
   rel[rows] <- .ctCoresetRelevance(y[rows])
-  if (sum(rel[held]) < 2 || length(fitrows) < 10L) return(NULL)
+  if (length(fitrows) < 10L) {
+    return(structure(list(), why = 'held', relheld = sum(rel[held])))
+  }
   N <- ncol(X)
   fullround <- .ctCoresetFullRound(round)
+  # The failure rate a held-out set shows, with its uncertainty: the set's
+  # relevance, how many draws near the top it amounts to, counts as that many
+  # observations, under a uniform prior. A sampler's first rounds are tails,
+  # with a draw or two near the top between them; a bar on that count kept
+  # the first coreset back for two to three rounds of 100, a third of a run's
+  # full evaluations, where pricing an uncertain rate lets the checks decide.
   failrate <- function(cf, idx) {
-    if (!length(idx)) return(0)
+    if (!length(idx)) return(NA_real_)
     pred <- .ctCoresetPredict(cf, X[idx, , drop = FALSE])
-    .ctCoresetFailRate(pred - y[idx], rel[idx], pred, round)
+    m <- sum(rel[idx])
+    (m * .ctCoresetFailRate(pred - y[idx], rel[idx], pred, round) + 1) / (m + 2)
   }
   best <- NULL
   path <- start
@@ -231,7 +241,7 @@
     # evaluate, which costs nothing by the formula: priced, such a coreset was
     # chosen, and the engine was then handed an empty unit list.
     if (any(cf$w > 0)) {
-      fail <- max(failrate(cf, held), failrate(cf, newest))
+      fail <- max(failrate(cf, held), failrate(cf, newest), na.rm = TRUE)
       cost <- .ctCoresetRoundCost(sum(cf$w > 0), N, round, fail)
       if (is.null(best) || cost < best$cost) best <- list(M = M, cost = cost, fail = fail)
     }
@@ -239,10 +249,20 @@
     # path of hundreds of units is not walked one at a time.
     M <- M + max(1L, M %/% 10L)
   }
-  if (is.null(best) || best$cost >= fullround) return(NULL)
+  if (is.null(best) || best$cost >= fullround) {
+    return(structure(list(), why = 'cost', best = if (!is.null(best)) best,
+      fullround = fullround))
+  }
   S <- .ctCoresetPath(X, y, best$M, rows, start, rel[rows])
   cf <- .ctCoresetWeights(X, y, S, rows, rel[rows])
-  if (!any(cf$w > 0)) return(NULL)
+  if (!any(cf$w > 0)) return(structure(list(), why = 'empty'))
+  # The coreset is the units it was priced by, those with weight: refits on
+  # later rows re-weight them, and add none. Keeping the zero-weight units of
+  # the path let refits give them weight, and coresets priced at 28 units of
+  # 1,000 grew to 46.
+  keep <- cf$w > 0
+  cf$S <- cf$S[keep]
+  cf$w <- cf$w[keep]
   cf$cost <- best$cost
   cf$fail <- best$fail
   cf
@@ -308,6 +328,18 @@
   st$secs <- c(full = 0, coreset = 0, gradient_full = 0, gradient_coreset = 0,
     choose = 0)
   st$draws <- c(full = 0, coreset = 0, gradient_full = 0, gradient_coreset = 0)
+  # What the full draws were for: rounds while there is no coreset, batches
+  # too small for one, checks of value and gradient batches, the rest of a
+  # batch whose check failed, and the end check.
+  st$why <- c(training = 0, small = 0, check = 0, gradient_check = 0,
+    failed_rest = 0, end = 0)
+  # The full values already known, by draw, so that the end check evaluates
+  # only draws whose values came from a coreset. Keyed to 12 significant
+  # figures: the sampler's draws can reach the end check through another
+  # matrix product than the one that made them.
+  st$known <- new.env(hash = TRUE, parent = emptyenv())
+  st$trace <- list()
+  drawkey <- function(X) apply(signif(as.matrix(X), 12), 1L, paste, collapse = ',')
   engine <- local({
     built <- NULL
     function() {
@@ -353,7 +385,15 @@
     tally('choose', proc.time()[["elapsed"]] - started)
     st$nchoose <- st$nchoose + 1L
     st$rows_at_choose <- length(st$y)
-    if (is.null(cf)) return(FALSE)
+    st$trace[[length(st$trace) + 1L]] <- c(rows = length(st$y),
+      M = if (length(cf)) sum(cf$w > 0) else 0,
+      why = match(.ctJuliaOr(attr(cf, 'why'), 'chosen'), c('chosen', 'held', 'cost', 'empty')),
+      fail = if (length(cf)) cf$fail else .ctJuliaOr(attr(cf, 'best')$fail, NA),
+      cost = if (length(cf)) cf$cost else .ctJuliaOr(attr(cf, 'best')$cost, NA),
+      full = .ctJuliaOr(attr(cf, 'fullround'), NA),
+      bestM = .ctJuliaOr(attr(cf, 'best')$M, NA),
+      relheld = .ctJuliaOr(attr(cf, 'relheld'), NA))
+    if (!length(cf)) return(FALSE)
     st$cf <- cf
     st$sizes <- c(st$sizes, sum(cf$w > 0))
     st$runs <- 0L
@@ -396,11 +436,31 @@
     st$cost <- st$cost + nrow(X) * share
     v + st$cf$c
   }
-  full <- function(X) {
+  full <- function(X, why) {
     engine()
     t0 <- timed('full', terms(X), nrow(X))
     st$cost <- st$cost + nrow(X)
+    st$why[[why]] <- st$why[[why]] + nrow(X)
+    ok <- is.finite(t0$value)
+    if (any(ok)) list2env(stats::setNames(as.list(t0$value[ok]), drawkey(X[ok, , drop = FALSE])),
+      envir = st$known)
     t0
+  }
+  # The full density at draws `X`: known values where a draw was evaluated in
+  # full already, the rest evaluated now and counted for the end check.
+  fullvalues <- function(X) {
+    out <- unlist(mget(drawkey(X), envir = st$known, ifnotfound = list(NA_real_)),
+      use.names = FALSE)
+    todo <- which(is.na(out))
+    if (length(todo)) {
+      started <- proc.time()[["elapsed"]]
+      out[todo] <- as.numeric(.ctBackendJuliaValue(engine()$module$ctsem_evaluate_batch(
+        engine()$objective, t(X[todo, , drop = FALSE]))))
+      st$cost <- st$cost + length(todo)
+      st$why[['end']] <- st$why[['end']] + length(todo)
+      tally('full', proc.time()[["elapsed"]] - started, length(todo))
+    }
+    out
   }
   part <- function(t0, i) list(value = t0$value[i], total = t0$total[i],
     L = t0$L[i, , drop = FALSE])
@@ -448,47 +508,78 @@
     if (st$batches > 0L) st$grads <- smooth(st$grads, st$gradsnow)
     st$batches <- st$batches + 1L
     st$gradsnow <- 0
-    if (st$phase == 'coreset') {
-      this <- roundinfo()
-      this$values <- n
-      bc <- .ctCoresetBatchCost(sum(st$cf$w > 0), ncol(st$X), this, failnow())
-      if (bc[['coreset']] < bc[['full']]) return(oncoreset(X))
+    v <- if (st$phase == 'coreset') withcoreset(X) else inparts(X, 'training')
+    v[!is.finite(v)] <- -1e100
+    v
+  }
+  # A batch while there is a coreset: on it where that pays for the batch's
+  # size, else in full.
+  withcoreset <- function(X) {
+    n <- nrow(X)
+    this <- roundinfo()
+    this$values <- n
+    bc <- .ctCoresetBatchCost(sum(st$cf$w > 0), ncol(st$X), this, failnow())
+    if (bc[['coreset']] < bc[['full']]) return(oncoreset(X))
+    t0 <- full(X, 'small')
+    # In full because the coreset would not pay for its check on a batch this
+    # small, so the check is free: the coreset's prediction from the unit
+    # terms, at the draws a check would read.
+    pred <- .ctCoresetPredict(st$cf, t0$L)
+    pick <- checkpick(ifelse(is.finite(pred), pred, -Inf))
+    good <- is.finite(t0$value[pick]) & is.finite(pred[pick])
+    learn(part(t0, pick), focus = TRUE)
+    learn(part(t0, setdiff(seq_len(n), pick)))
+    if (any(good)) {
+      err <- (pred[pick] - t0$value[pick])[good]
+      st$checks <- c(st$checks, err)
+      st$runs <- st$runs + 1L
+      st$free_total <- st$free_total + 1L
+      rel <- .ctCoresetRelevance(t0$total[pick][good], max(st$y))
+      if (!.ctCoresetPasses(err, rel, tol$drift)) failed() else passed()
     }
-    t0 <- full(X)
-    v <- t0$value
-    if (st$phase == 'coreset') {
-      # In full because the coreset would not pay for its check on a batch
-      # this small, so the check is free: the coreset's prediction from the
-      # unit terms, at the draws a check would read.
-      pred <- .ctCoresetPredict(st$cf, t0$L)
-      pick <- checkpick(ifelse(is.finite(pred), pred, -Inf))
-      good <- is.finite(t0$value[pick]) & is.finite(pred[pick])
-      learn(part(t0, pick), focus = TRUE)
-      learn(part(t0, setdiff(seq_len(n), pick)))
-      if (any(good)) {
-        err <- (pred[pick] - t0$value[pick])[good]
-        st$checks <- c(st$checks, err)
-        st$runs <- st$runs + 1L
-        st$free_total <- st$free_total + 1L
-        rel <- .ctCoresetRelevance(t0$total[pick][good], max(st$y))
-        if (!.ctCoresetPasses(err, rel, tol$drift)) failed() else passed()
-      }
-    } else {
-      # Full rounds are what the sampler pays without a coreset, so learning
-      # from them costs nothing; each one, try again for a coreset that pays.
+    t0$value
+  }
+  # A batch with no coreset to run on -- the first rounds, or the rest of one
+  # whose check failed -- is evaluated in full a half at a time, while the
+  # other half could pay for a check on a coreset (on one of the last
+  # coreset's size that never fails). After each half a coreset is chosen
+  # from what the sampler has taught so far, and the rest runs on it if one
+  # pays. Full rounds are what the sampler pays without a coreset, so learning
+  # from them costs nothing; evaluated whole, they and failed batches were a
+  # third to a half of a run's full evaluations.
+  inparts <- function(X, why) {
+    n <- nrow(X)
+    v <- rep(NA_real_, n)
+    done <- 0L
+    while (done < n) {
+      left <- n - done
+      half <- left %/% 2L
+      r <- roundinfo()
+      r$values <- half
+      bc <- if (is.null(st$X)) .ctCoresetBatchCost(0, 1, r, 0) else
+        .ctCoresetBatchCost(if (is.null(st$cf)) 0 else sum(st$cf$w > 0), ncol(st$X), r, 0)
+      take <- if (half > 0L && bc[['coreset']] < bc[['full']]) left - half else left
+      idx <- done + seq_len(take)
+      t0 <- full(X[idx, , drop = FALSE], why)
+      v[idx] <- t0$value
       learn(t0)
+      done <- done + take
       if (!is.null(st$X) && choose(if (!is.null(st$cf)) st$cf$S else integer())) {
         st$phase <- 'coreset'
         st$switches <- st$switches + 1L
+        if (done < n) {
+          rest <- seq.int(done + 1L, n)
+          v[rest] <- withcoreset(X[rest, , drop = FALSE])
+        }
+        return(v)
       }
     }
-    v[!is.finite(v)] <- -1e100
     v
   }
   oncoreset <- function(X) {
     v <- coreset_value(X)
     pick <- checkpick(v)
-    t0 <- full(X[pick, , drop = FALSE])
+    t0 <- full(X[pick, , drop = FALSE], 'check')
     good <- is.finite(t0$value) & is.finite(v[pick])
     if (any(good)) {
       err <- (v[pick] - t0$value)[good]
@@ -499,20 +590,23 @@
       st$runs <- st$runs + 1L
       st$runs_total <- st$runs_total + 1L
       if (!.ctCoresetPasses(err, rel, tol$drift)) {
-        # Failed. The round is evaluated in full: the sampler keeps every
-        # value it is handed, and a coreset that overrated the draws it
-        # ranked highest by 20 log units (a first, too small, coreset on the
-        # 250-subject strong shell) misled its adaptation for thirty rounds
-        # and left 1,900 draws for the end check to correct. The full round is
-        # training data where the sampler now is, and the coreset is chosen
-        # again from it.
+        # Failed. None of the round's values comes from this coreset: the
+        # sampler keeps every value it is handed, and a coreset that overrated
+        # the draws it ranked highest by 20 log units (a first, too small,
+        # coreset on the 250-subject strong shell) misled its adaptation for
+        # thirty rounds and left 1,900 draws for the end check to correct. The
+        # rest is evaluated as a batch with no coreset is (`inparts`): its
+        # full halves are training data where the sampler now is, and a
+        # coreset chosen from them takes what is left, checked again.
+        st$fails <- st$fails + 1L
+        st$fails_total <- st$fails_total + 1L
+        st$trusted <- FALSE
+        st$last_passed <- FALSE
+        st$phase <- 'training'
         others <- setdiff(seq_len(nrow(X)), pick)
         if (length(others)) {
-          t1 <- full(X[others, , drop = FALSE])
-          v[others] <- t1$value
-          learn(t1)
-        }
-        failed()
+          v[others] <- inparts(X[others, , drop = FALSE], 'failed_rest')
+        } else if (choose(st$cf$S)) st$phase <- 'coreset'
       } else passed()
     }
     v[!is.finite(v)] <- -1e100
@@ -549,7 +643,7 @@
     value <- out[1L, ] + st$cf$c
     if (!st$trusted) {
       pick <- checkpick(ifelse(is.finite(value), value, -Inf))
-      t0 <- full(X[pick, , drop = FALSE])
+      t0 <- full(X[pick, , drop = FALSE], 'gradient_check')
       good <- is.finite(t0$value) & is.finite(value[pick])
       if (any(good)) {
         err <- (value[pick] - t0$value)[good]
@@ -576,11 +670,7 @@
     if (is.null(st$cf)) return(NULL)
     o <- order(-logw)
     top <- o[seq_len(min(20L, length(o)))]
-    started <- proc.time()[["elapsed"]]
-    vt <- as.numeric(.ctBackendJuliaValue(engine()$module$ctsem_evaluate_batch(
-      engine()$objective, t(samples[top, , drop = FALSE]))))
-    st$cost <- st$cost + length(top)
-    tally('full', proc.time()[["elapsed"]] - started, length(top))
+    vt <- fullvalues(samples[top, , drop = FALSE])
     delta <- vt - logp[top]
     ok <- is.finite(delta)
     offset <- if (any(ok)) stats::median(delta[ok]) else 0
@@ -592,13 +682,7 @@
     need <- setdiff(need, top)
     full_all <- rep(NA_real_, length(logw))
     full_all[top] <- vt
-    if (length(need)) {
-      started <- proc.time()[["elapsed"]]
-      full_all[need] <- as.numeric(.ctBackendJuliaValue(engine()$module$ctsem_evaluate_batch(
-        engine()$objective, t(samples[need, , drop = FALSE]))))
-      st$cost <- st$cost + length(need)
-      tally('full', proc.time()[["elapsed"]] - started, length(need))
-    }
+    if (length(need)) full_all[need] <- fullvalues(samples[need, , drop = FALSE])
     d <- full_all - logp
     d[!is.finite(d)] <- offset
     st$final$corrected <- length(need) + length(top)
@@ -624,6 +708,8 @@
     chosen_passed = st$proved,
     seconds = st$secs,
     draws = st$draws,
+    full_for = st$why,
+    choices = if (length(st$trace)) do.call(rbind, st$trace),
     training_draws = length(st$y),
     check_rms = if (length(st$checks)) sqrt(mean(st$checks^2)) else NA_real_,
     check_max = if (length(st$checks)) max(abs(st$checks)) else NA_real_,
