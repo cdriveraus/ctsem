@@ -123,18 +123,20 @@
   S
 }
 
-# The smallest coreset on a path whose error on held-out training rows passes
-# `.ctCoresetTol`, refitted on every row; NULL when none of at most `maxM`
-# units does. Two sets are held out and each must pass: every fourth of the
-# other rows, and `focus`, the rows the sampler's rounds checked in full. The
-# first round's draws are its starting proposal, mostly tails, which a small
-# coreset follows easily; the checked rows are where the weight sits, so they
-# are what decides once there are any. Held out deterministically, so that the
-# sampler's random stream is the same with a coreset as without.
+# The smallest coreset of at least `minM` units on a path whose error on
+# held-out training rows passes `.ctCoresetTol`, refitted on every row; NULL
+# when none of at most `maxM` units does. Two sets are held out and each must
+# pass: the newest of the rows the sampler's rounds checked in full (`focus`),
+# which are where the weight is moving to, and every fourth of the rest. Older
+# checked rows are fitted like any other: held out for good, a coreset fitted
+# mostly on the first rounds' tails could never reach them. Held out
+# deterministically, so that the sampler's random stream is the same with a
+# coreset as without.
 .ctCoresetChoose <- function(X, y, rows, maxM, start = integer(),
-  focus = integer()) {
+  focus = integer(), minM = 1L) {
   focus <- intersect(focus, rows)
-  plain <- setdiff(rows, focus)
+  newest <- utils::tail(focus, 8L)
+  plain <- setdiff(rows, newest)
   held <- plain[seq_along(plain) %% 4L == 0L]
   fitrows <- setdiff(plain, held)
   rel <- numeric(length(y))
@@ -143,7 +145,7 @@
   if (sum(rel[held]) < 2 || length(fitrows) < 10L) return(NULL)
   grid <- c(seq(10L, 30L, by = 5L), seq(40L, max(40L, maxM), by = 10L))
   sizes <- sort(unique(c(if (length(start)) length(start), grid, maxM)))
-  sizes <- sizes[sizes >= max(1L, length(start)) & sizes <= maxM]
+  sizes <- sizes[sizes >= max(1L, minM, length(start)) & sizes <= maxM]
   passes <- function(cf, idx) {
     if (!length(idx)) return(TRUE)
     .ctCoresetPasses(.ctCoresetPredict(cf, X[idx, , drop = FALSE]) - y[idx], rel[idx])
@@ -154,7 +156,7 @@
     if (M > length(path)) path <- .ctCoresetPath(X, y, M, fitrows, path, rel[fitrows])
     if (M > length(path)) break
     cf <- .ctCoresetWeights(X, y, path[seq_len(M)], fitrows, rel[fitrows])
-    if (passes(cf, held) && passes(cf, focus)) {
+    if (passes(cf, held) && passes(cf, newest)) {
       S <- .ctCoresetPath(X, y, M, rows, start, rel[rows])
       return(.ctCoresetWeights(X, y, S, rows, rel[rows]))
     }
@@ -181,6 +183,8 @@
   st$sizes <- integer(0)
   st$checks <- numeric(0)
   st$rounds <- 0L
+  st$retrains <- 0L
+  st$minM <- 1L
   st$final <- NULL
   engine <- local({
     built <- NULL
@@ -211,7 +215,7 @@
   choose <- function(start = integer()) {
     N <- ncol(st$X)
     cf <- .ctCoresetChoose(st$X, st$y, seq_along(st$y), floor(N / 3), start,
-      st$focus)
+      st$focus, st$minM)
     if (is.null(cf)) return(FALSE)
     st$cf <- cf
     st$sizes <- c(st$sizes, sum(cf$w > 0))
@@ -240,12 +244,23 @@
       t0 <- full(X)
       learn(t0)
       st$rounds <- st$rounds + 1L
-      # Under 30 units a coreset of a third of them saves too little; past
-      # three rounds without one, the sum does not compress here.
+      # No fewer units than twice the dimensions the draws span: to first
+      # order each unit's term is its score along them, and the measured
+      # rank of the units' terms ran 1.5-2 times that. A coreset chosen
+      # smaller from the first rounds' tails passed there and misled the
+      # sampler once it reached the posterior.
+      if (st$rounds == 1L) {
+        sv <- svd(scale(X, scale = FALSE), nu = 0, nv = 0)$d
+        st$minM <- 2L * sum(sv > 1e-8 * max(sv))
+      }
+      # Under 30 units a coreset of a third of them saves too little; after
+      # three training rounds in a row without one, the sum does not
+      # compress here.
       if (is.null(st$X) || ncol(st$X) < 30L) {
         st$phase <- 'off'
-      } else if (choose()) {
+      } else if (choose(if (!is.null(st$cf)) st$cf$S else integer())) {
         st$phase <- 'coreset'
+        st$rounds <- 0L
       } else if (st$rounds >= 3L) {
         st$phase <- 'off'
       }
@@ -270,8 +285,24 @@
       learn(t0, focus = TRUE)
       rel <- .ctCoresetRelevance(t0$total[good], max(st$y))
       if (!.ctCoresetPasses(err, rel, tol$drift)) {
-        # Drifted: grow the coreset from what it has, or give it up.
-        if (!choose(st$cf$S)) st$phase <- 'off'
+        # Drifted. The round is evaluated in full: the sampler keeps every
+        # value it is handed, and a coreset that overrated the draws it
+        # ranked highest by 20 log units (the first, too small, coreset on
+        # the 250-subject strong shell) misled its adaptation for thirty
+        # rounds and left 1,900 draws for the end check to correct. The full
+        # round is training data where the sampler now is; then grow the
+        # coreset from what it has, failing that train on full rounds, twice
+        # at most, then give up.
+        others <- setdiff(seq_len(nrow(X)), pick)
+        if (length(others)) {
+          t1 <- full(X[others, , drop = FALSE])
+          v[others] <- t1$value
+          learn(t1)
+        }
+        if (!choose(st$cf$S)) {
+          st$retrains <- st$retrains + 1L
+          st$phase <- if (st$retrains <= 2L) 'training' else 'off'
+        }
       } else {
         st$cf <- .ctCoresetWeights(st$X, st$y, st$cf$S, seq_along(st$y))
       }
@@ -338,6 +369,8 @@
     size = if (!is.null(st$cf)) sum(st$cf$w > 0),
     sizes = st$sizes,
     phase = st$phase,
+    minimum = st$minM,
+    retrains = st$retrains,
     training_draws = length(st$y),
     check_rms = if (length(st$checks)) sqrt(mean(st$checks^2)) else NA_real_,
     check_max = if (length(st$checks)) max(abs(st$checks)) else NA_real_,
