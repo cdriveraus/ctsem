@@ -724,13 +724,16 @@
 # sets the precision along each such direction `w` to `1 / width`; in raw ones
 # it adds `(P w)(1 / width - 1)(P w)'`, `P` the information.
 #
-# On a shell the Hessian's metric is many times too wide along it: the
-# leapfrog overshoots there, the step size shrinks to cope and every other
-# direction then moves at the deepest tree. On a 100-subject model whose
-# item loading has a shell (scripts/gsm-uncertainty-2026-10/trial_metric.R,
-# dev2; 4 chains, 150 warmup, 150 draws, tree depth at most 8): the Hessian's
-# metric took a step size of 0.002, R-hat 4.2 and a minimum ESS of 2; the
-# rescaled one 16, R-hat 1.06 and 121. The joint route recomputes its
+# A metric many times too wide along a direction makes the leapfrog
+# overshoot there, so the step size shrinks to cope and every other direction
+# moves at the deepest tree; this sets each measured direction to the width
+# measured. Not shown to help on a shell: on a 100-subject model whose item
+# loading has one (scripts/gsm-uncertainty-2026-10/trial_metric.R and
+# metric_flat.R, dev1/dev2), NUTS failed with the Hessian's metric (R-hat 4.2)
+# and with this one (3.9), and also with the shell's flat rotation, which the
+# check cannot see, given its measured width (2.6). It converged (1.06) only
+# when that rotation was pinned, which samples a slice of the posterior; a
+# curved shell is beyond any constant metric. The joint route recomputes its
 # population block and reads this only as a fallback. Only the engine reads
 # it: the sampled fit keeps the exact Hessian as `uncertainty$hessian`, which
 # the identifiability report reads.
