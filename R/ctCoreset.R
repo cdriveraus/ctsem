@@ -13,8 +13,9 @@
 # full sum's posterior in 2.7, 4.9 and 10 times fewer evaluations.
 #
 # `.ctCoresetLpg()` wraps the sampler's density, and every decision it makes is
-# by the expected time of the sampler's work, counted in full evaluations. It
-# evaluates in full, as the sampler would without it, and learns from that
+# by the expected cost of the sampler's work in full evaluations, unit terms
+# counted: never in seconds, which other work on the machine moves, so that
+# the same fit makes the same choices anywhere. It evaluates in full, as the sampler would without it, and learns from that
 # until some coreset is expected to make a round cheaper; then gradients run
 # on that coreset's units only, and each batch of draws does too where that is
 # cheaper for its size (`ctsem_coreset_batch`, several draws at once on the
@@ -61,30 +62,29 @@
 }
 
 # What a batch of `round$values` draws is expected to cost on a coreset of `M`
-# of `N` units, and in full, in full evaluations. On the coreset: its share,
-# the `checks` evaluated in full, and -- with probability `fail` -- the rest
-# evaluated in full after a failed check. The share is `M / N` times `ratio`,
-# and every call adds `overhead`: both measured on the sampler's own calls
-# (`.ctCoresetLpg()`), so the cost is the time, counted in full evaluations.
+# of `N` units, and in full, in full evaluations. On the coreset: its share
+# `M / N`, the `checks` evaluated in full, and -- with probability `fail` --
+# the rest evaluated in full after a failed check. Measured on dev3, a
+# coreset's draw took M/N of a full one's time to within 5% at 100, 250 and
+# 1,000 units, its draws evaluated several at once.
 .ctCoresetBatchCost <- function(M, N, round, fail) {
-  share <- .ctJuliaOr(round$ratio, 1) * M / N
-  o <- .ctJuliaOr(round$overhead, 0)
   n <- round$values
   k <- min(round$checks, n)
-  c(coreset = 2 * o + share * n + k + fail * (o + n - k), full = o + n)
+  c(coreset = M / N * n + k + fail * (n - k), full = n)
 }
 
 # What a sampler round -- a batch of `values` draws and `grads` gradients,
 # each as two values -- is expected to cost with a coreset of `M` of `N` units:
-# the gradients at its share, and the batch whichever way is cheaper
-# (`.ctCoresetBatchCost()`). A round in full costs `.ctCoresetFullRound()`.
+# the batch whichever way is cheaper (`.ctCoresetBatchCost()`), and the
+# gradients at its share where it has passed its last check and in full where
+# it failed it, since a coreset serves gradients only where it has just
+# passed one. A round in full costs `.ctCoresetFullRound()`.
 .ctCoresetRoundCost <- function(M, N, round, fail) {
-  2 * .ctJuliaOr(round$ratio, 1) * M / N * round$grads +
+  share <- M / N
+  2 * round$grads * (share + fail * (1 - share)) +
     min(.ctCoresetBatchCost(M, N, round, fail))
 }
-.ctCoresetFullRound <- function(round) {
-  .ctJuliaOr(round$overhead, 0) + round$values + 2 * round$grads
-}
+.ctCoresetFullRound <- function(round) round$values + 2 * round$grads
 
 # How often a round's check would fail, from a coreset's errors `err` and
 # predictions `pred` at held-out draws of relevance `rel`. The check is
@@ -193,8 +193,8 @@
 # NULL when none is expected to cost less than a full round, or there are too
 # few held-out draws near the top to judge by. Sizes are tried along one
 # forward-selection path, which grows until what a size costs with checks that
-# never fail is more than the best found: nothing larger can be cheaper. Two sets are
-# held out: the newest of the rows the sampler's rounds checked in full
+# never fail is more than the best found: nothing larger can be cheaper. Two
+# sets are held out: the newest of the rows the sampler's rounds checked in full
 # (`focus`), which are where the weight is moving to, and every fourth of the
 # rest. Older checked rows are fitted like any other: held out for good, a
 # coreset fitted mostly on the first rounds' tails could never reach them.
@@ -286,11 +286,15 @@
   st$runs_total <- 0L
   st$fails_total <- 0L
   st$free_total <- 0L
-  # One row a timed call: seconds, draws evaluated in full, and draws on a
-  # coreset times its share of the units (see `clock()`).
-  st$times <- NULL
-  st$timed_kinds <- character(0)
-  # Where the time went, for the record: seconds and draws by kind of call.
+  # Whether the current coreset has passed a check since it was chosen, which
+  # it must before it serves a gradient; choices made, how many then passed,
+  # and the training rows at the last one (`worth_choosing()`).
+  st$trusted <- FALSE
+  st$nchoose <- 0L
+  st$proved <- 0L
+  st$rows_at_choose <- 0L
+  # Where the time went, for the record only: seconds and draws by kind of
+  # call. Nothing is decided by them.
   st$secs <- c(full = 0, coreset = 0, gradient_full = 0, gradient_coreset = 0,
     choose = 0)
   st$draws <- c(full = 0, coreset = 0, gradient_full = 0, gradient_coreset = 0)
@@ -320,51 +324,49 @@
     keep <- st$cf$w > 0
     list(units = st$cf$S[keep], weights = st$cf$w[keep])
   }
-  # Seconds a call as `overhead + full + ratio * coreset`, in seconds a full
-  # evaluation: `full` the draws evaluated in full and `coreset` those on a
-  # coreset times its share of the units, fitted by non-negative least squares
-  # to the sampler's own calls (the bridge included). Each kind's first call
-  # is left out, as it compiles. Until a coreset has been timed its ratio is
-  # 1, every unit costing alike and both running as well in parallel.
-  clock <- function() {
-    T <- st$times
-    if (is.null(T) || nrow(T) < 3L) return(list(ratio = 1, overhead = 0))
-    b <- .ctCoresetNnls(cbind(1, T[, 2L], T[, 3L]), T[, 1L])
-    if (b[2L] <= 0) return(list(ratio = 1, overhead = 0))
-    list(ratio = if (any(T[, 3L] > 0)) b[3L] / b[2L] else 1, overhead = b[1L] / b[2L])
-  }
-  timed <- function(kind, expr, full, core, draws) {
+  timed <- function(kind, expr, draws) {
     started <- proc.time()[["elapsed"]]
     out <- expr
-    secs <- proc.time()[["elapsed"]] - started
-    tally(kind, secs, draws)
-    if (kind %in% st$timed_kinds) st$times <- rbind(st$times, c(secs, full, core))
-    else st$timed_kinds <- c(st$timed_kinds, kind)
+    tally(kind, proc.time()[["elapsed"]] - started, draws)
     out
   }
   tally <- function(kind, secs, draws = 0) {
     st$secs[[kind]] <- st$secs[[kind]] + secs
     if (kind %in% names(st$draws)) st$draws[[kind]] <- st$draws[[kind]] + draws
   }
-  roundinfo <- function() {
-    tc <- clock()
-    list(values = st$values,
-      grads = if (is.na(st$grads)) 0.3 * st$values else st$grads,
-      checks = 8, ratio = tc$ratio, overhead = tc$overhead)
-  }
+  roundinfo <- function() list(values = st$values,
+    grads = if (is.na(st$grads)) 0.3 * st$values else st$grads, checks = 8)
   choose <- function(start = integer()) {
+    if (!worth_choosing()) return(FALSE)
     started <- proc.time()[["elapsed"]]
     cf <- .ctCoresetChoose(st$X, st$y, seq_along(st$y), roundinfo(), start, st$focus)
     tally('choose', proc.time()[["elapsed"]] - started)
+    st$nchoose <- st$nchoose + 1L
+    st$rows_at_choose <- length(st$y)
     if (is.null(cf)) return(FALSE)
     st$cf <- cf
     st$sizes <- c(st$sizes, sum(cf$w > 0))
     st$runs <- 0L
     st$fails <- 0L
+    st$trusted <- FALSE
     TRUE
   }
+  # A choice refits the forward selection on every training row, R arithmetic
+  # over rows and units. It is made again only once the sampler has added at
+  # least as many rows as the last coreset had units, one for each weight it
+  # fits: with fewer, it refits to nearly the coreset that just failed. On the
+  # profile paths of 'is', where every check failed, a choice after each took
+  # a third of the run. Rows, not seconds, so the choice does not depend on
+  # the machine's load.
+  worth_choosing <- function() {
+    if (is.null(st$cf)) return(TRUE)
+    length(st$y) - st$rows_at_choose >= sum(st$cf$w > 0)
+  }
   # How often the current coreset's checks fail: its held-out rate counts as
-  # two checks' worth of evidence, and then its own record.
+  # two checks' worth of evidence, and then its own record. Not the sampler's
+  # recent checks, which may have been of other coresets elsewhere: on 'is'
+  # those of the profile paths, all failed, kept every later round off a
+  # coreset that would have passed.
   failnow <- function() (st$fails + 2 * st$cf$fail) / (st$runs + 2)
   # Whether the current coreset's expected round cost is now above a full
   # round's.
@@ -380,13 +382,13 @@
     v <- timed('coreset', as.numeric(.ctBackendJuliaValue(
       engine()$module$ctsem_coreset_batch(engine()$objective, t(X),
         .ctJuliaVector(as.integer(a$units)), .ctJuliaVector(as.numeric(a$weights))))),
-      0, nrow(X) * share, nrow(X))
+      nrow(X))
     st$cost <- st$cost + nrow(X) * share
     v + st$cf$c
   }
   full <- function(X) {
     engine()
-    t0 <- timed('full', terms(X), nrow(X), 0, nrow(X))
+    t0 <- timed('full', terms(X), nrow(X))
     st$cost <- st$cost + nrow(X)
     t0
   }
@@ -406,9 +408,12 @@
   failed <- function() {
     st$fails <- st$fails + 1L
     st$fails_total <- st$fails_total + 1L
+    st$trusted <- FALSE
     if (!choose(st$cf$S)) st$phase <- 'training'
   }
   passed <- function() {
+    if (!st$trusted) st$proved <- st$proved + 1L
+    st$trusted <- TRUE
     keep <- st$cf[c('cost', 'fail')]
     refit <- .ctCoresetWeights(st$X, st$y, st$cf$S, seq_along(st$y))
     # Refitted on the new rows, its weights can all come out zero: chosen
@@ -505,7 +510,7 @@
     X <- as.matrix(draws)
     st$gradsnow <- st$gradsnow + nrow(X)
     started <- proc.time()[["elapsed"]]
-    if (st$phase != 'coreset') {
+    if (st$phase != 'coreset' || !st$trusted) {
       st$cost <- st$cost + 2 * nrow(X)
       out <- attr(lpg, 'gradbatch')(X)
       tally('gradient_full', proc.time()[["elapsed"]] - started, nrow(X))
@@ -574,8 +579,8 @@
     failed_checks = st$fails_total,
     expected_round_cost = if (!is.null(st$cf)) st$cf$cost,
     free_checks = st$free_total,
-    time_ratio = clock()$ratio,
-    call_overhead = clock()$overhead,
+    chosen = st$nchoose,
+    chosen_passed = st$proved,
     seconds = st$secs,
     draws = st$draws,
     training_draws = length(st$y),
