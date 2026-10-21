@@ -116,10 +116,11 @@ test_that("the normal check's bars are the coverage band's", {
   list(lpg = lpg, mode = mode, mean = unname(mean),
     sd = unname(sqrt(colSums(sweep(grid, 2, mean)^2 * w))))
 }
-.checkedRun <- function(target, uncertainty) {
+.checkedRun <- function(target, uncertainty, hessian = NULL) {
   out <- suppressMessages(ctsem:::ctOptimComputeUncertainty(target$mode,
     list(nsubjects = 1), sm = NULL, lpgFunc = target$lpg,
-    uncertainty = uncertainty, finishsamples = 1000, verbose = 0))
+    uncertainty = uncertainty, finishsamples = 1000, verbose = 0,
+    hessian = hessian))
   drawn <- suppressWarnings(suppressMessages(ctsem:::.ctOptimDrawSamples(out,
     ctsem:::.ctResolveDraws(uncertainty, 'auto'), list(), target$mode, 1000,
     lpg = ctsem:::.ctImisPointGradbatch(target$lpg))))
@@ -252,6 +253,40 @@ test_that("checked's centre leaves the coordinates beside a shell where they are
   check <- ctsem:::.ctOptimNormalCheck(gb, mode, hess$cov)
   expect_gte(ncol(check$directions), 1L)
   expect_equal(check$centre[5:10], rep(0, 6), tolerance = 1e-8)
+})
+
+test_that("checked samples a direction the Hessian gives no curvature", {
+  # A ring of radius 0.05 under a N(0, I) prior centred where the ring is: at
+  # its radial mode the direction around it has exactly no curvature, the
+  # covariance projects it out, and the Hessian's normal has no spread along it
+  # at all. The routes that draw give it the width the log density falls half
+  # a unit over, and 'checked' then samples the ring.
+  r0 <- 0.05; tau <- 0.01
+  lp <- function(X) {
+    r <- sqrt(rowSums(X^2))
+    -(r - r0)^2 / (2 * tau^2) - rowSums(X^2) / 2
+  }
+  grad <- function(x) {
+    r <- sqrt(sum(x^2))
+    -(r - r0) / tau^2 * x / r - x
+  }
+  rs <- r0 / (1 + tau^2)
+  mode <- c(rs, 0)
+  hessian <- diag(c(-1 / tau^2 - 1, (r0 - rs) / (tau^2 * rs) - 1))
+  g <- seq(-0.12, 0.12, length.out = 401)
+  target <- .checkedTarget(lp, grad, mode, as.matrix(expand.grid(g, g)))
+  set.seed(1)
+  hess <- suppressWarnings(.checkedRun(target, 'hessian', hessian = hessian))
+  expect_lt(sqrt(hess$uncertaintyfit$cov[2, 2]) / target$sd[2], 0.01)
+  set.seed(1)
+  checked <- suppressWarnings(.checkedRun(target, 'checked', hessian = hessian))
+  details <- checked$uncertaintyfit$details
+  widened <- (details$proposal_covariance %||% details$covariance)$widened
+  expect_equal(widened$n, 1L)
+  expect_equal(abs(widened$directions[, 1]), c(0, 1), tolerance = 1e-8)
+  expect_gte(ncol(checked$check$directions), 1L)
+  expect_equal(sqrt(diag(checked$uncertaintyfit$cov)) / target$sd, c(1, 1),
+    tolerance = 0.15)
 })
 
 test_that("checked corrects the funnel a variance from six observations makes", {
