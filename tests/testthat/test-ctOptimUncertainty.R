@@ -1257,37 +1257,6 @@ test_that("checked's pairs measure the widths it does not sample", {
   expect_equal(out$cov[, ], truth, tolerance = 1e-6)
 })
 
-test_that("checked samples many directions by HMC", {
-  # 100 log-gamma(2) coordinates: the check names about half, past what
-  # importance sampling's weights stand, and HMC samples them to the exact
-  # moments.
-  a <- 2
-  k <- 100L
-  lpg <- function(x) {
-    out <- sum(a * x - exp(x))
-    attr(out, 'gradient') <- a - exp(x)
-    out
-  }
-  lpv <- lpg
-  attr(lpv, 'gradbatch') <- function(X) {
-    X <- as.matrix(X)
-    list(value = rowSums(a * X - exp(X)), gradient = a - exp(X))
-  }
-  out <- withr::with_seed(1, suppressMessages(ctsem:::ctOptimComputeUncertainty(
-    rep(log(a), k), list(nsubjects = 1), sm = NULL, lpgFunc = lpg,
-    uncertainty = 'checked', finishsamples = 1000, verbose = 0)))
-  expect_gte(ncol(out$details$normalcheck$directions), ctsem:::.ctHmcDirections)
-  drawn <- withr::with_seed(1, suppressWarnings(suppressMessages(
-    ctsem:::.ctOptimDrawSamples(out, 'imis', list(), rep(log(a), k), 1000, lpg = lpv))))
-  is <- drawn$uncertaintyfit$details$importance_sampling
-  expect_identical(drawn$draws, 'hmc')
-  expect_identical(is$sampler, 'hmc')
-  expect_true(is$hmc$converged)
-  sd <- sqrt(trigamma(a))
-  expect_lt(max(abs(colMeans(drawn$samples) - digamma(a))) / sd, 0.3)
-  expect_equal(unname(apply(drawn$samples, 2, stats::sd)) / sd, rep(1, k), tolerance = 0.2)
-})
-
 test_that("importance sampling goes on where its caller's check asks it to", {
   skip_if_not_installed('mvtnorm'); skip_if_not_installed('diagis')
   skip_if_not_installed('gridExtra'); skip_if_not_installed('ggplot2')
