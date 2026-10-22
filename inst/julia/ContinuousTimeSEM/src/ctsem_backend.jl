@@ -2577,6 +2577,10 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
     # (`_ctsem_jump_units`), on a route that can.
     jump = CTSEMJump()
     watch_jump = _ctsem_jump_capable(objective)
+    # A route that screens its own units as the climb goes (`_ctsem_anytime!`).
+    checkpoint = _ctsem_anytime_capable(objective) ?
+        ((x, gain, event) -> _ctsem_anytime!(objective, x, gain, event, jump)) :
+        nothing
     lbfgs_m = lbfgs_memory === nothing ?
         _ctsem_lbfgs_memory(length(start_values)) : Int(lbfgs_memory)
     # Where L-BFGS's curvature starts, and whether the objective keeps where it
@@ -2936,7 +2940,7 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
         maxiter=max(0, Int(maxiter) - sgd_iterations),
         g_tol=g_tol, f_tol=f_tol, x_tol=x_tol, callback=watch,
         directional=directional, batch=batcher, iteration0=sgd_iterations,
-        coreset=coreseter, jump=watch_jump ? jump : nothing)
+        coreset=coreseter, jump=watch_jump ? jump : nothing, checkpoint=checkpoint)
     if sgd_result !== nothing
         result = CTSEMLBFGSResult(result.minimizer, result.minimum,
             result.gradient, sgd_iterations + result.iterations,
@@ -3120,7 +3124,7 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
             maxiter=max(0, Int(maxiter) - result.iterations - spent.steps[]),
             g_tol=g_tol, f_tol=f_tol, x_tol=x_tol, callback=watch,
             directional=directional, iteration0=result.iterations + spent.steps[],
-            jump=watch_jump ? jump : nothing)
+            jump=watch_jump ? jump : nothing, checkpoint=checkpoint)
         result = CTSEMLBFGSResult(resumed.minimizer, resumed.minimum,
             resumed.gradient, result.iterations + resumed.iterations,
             result.f_calls + resumed.f_calls, result.g_calls + resumed.g_calls,

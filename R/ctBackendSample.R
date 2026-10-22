@@ -765,13 +765,14 @@
 # (scripts/gsm-uncertainty-2026-10/nuts_default_ts.R and nuts_metric_ts.R,
 # dev1).
 #
-# A fit rescued by frozen draws keeps its Hessian: its objective jumps where the
-# check would look, which is why ctFit() does not run 'checked' on it.
+# A fit whose climb took a jump in keeps its Hessian: the Laplace objective
+# jumps where the check would look, which is why ctFit() does not run
+# 'checked' on it before the correction.
 #' @keywords internal
 .ctBackendSampleCheck <- function(fit, cores = 1L, verbose = 0) {
   u <- fit$uncertainty
   if (is.null(u$hessian) || !is.null(u$details$normalcheck) ||
-      !is.null(fit$laplace$frozen)) return(fit)
+      isTRUE(fit$laplace$anytime$jumps > 0L)) return(fit)
   previous <- .ctBackendSetMaxChunks(cores)
   on.exit(.ctBackendRestoreMaxChunks(previous), add = TRUE)
   checked <- tryCatch(ctOptimComputeUncertainty(est = as.numeric(fit$estimate$raw),

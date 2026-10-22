@@ -333,7 +333,7 @@ test_that("the marginal sampler starts from the normal check, made where the fit
   fit <- .sample_fixture()
   expect_false(is.null(fit$uncertainty$details$normalcheck))
   # A fit that has its check keeps it; one without gets 'checked''s; one
-  # rescued by frozen draws keeps its Hessian.
+  # whose climb took a jump in keeps its Hessian.
   expect_identical(ctsem:::.ctBackendSampleCheck(fit), fit)
   bare <- fit
   bare$uncertainty$details$normalcheck <- NULL
@@ -341,9 +341,9 @@ test_that("the marginal sampler starts from the normal check, made where the fit
   made <- ctsem:::.ctBackendSampleCheck(bare)$uncertainty$details$normalcheck
   expect_true(all(c("directions", "widths", "centre") %in% names(made)))
   expect_gt(made$draws, 0)
-  frozen <- bare
-  frozen$laplace$frozen <- list(units = 1L)
-  expect_identical(ctsem:::.ctBackendSampleCheck(frozen), frozen)
+  jumped <- bare
+  jumped$laplace$anytime <- list(units = 1L, jumps = 1L)
+  expect_identical(ctsem:::.ctBackendSampleCheck(jumped), jumped)
 
   # The sampler asks for it on the marginal target, not on the joint one,
   # whose engine builds its own population block.

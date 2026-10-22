@@ -598,7 +598,7 @@ test_that("a corrected fit reports how far its objective is from the exact margi
   expect_true(is.na(.ctLaplaceIntegrationError(list(error = NA_real_))$se))
 })
 
-test_that("a rescued fit warns once past a quarter of the units named", {
+test_that("a climb warns once past a quarter of the units on draws", {
   # No julia needed.
   control <- .ctLaplaceContinueDefaults
   expect_identical(control$draws_se, 0.05)
@@ -606,12 +606,12 @@ test_that("a rescued fit warns once past a quarter of the units named", {
   expect_identical(control$draws_df, 4)
   expect_identical(.ctLaplaceContinuationArgs(control)$draws_df, 4)
   # The share warning: once, past a quarter, and not on a handful of units.
-  expect_silent(expect_false(.ctLaplaceFrozenShareWarn(1:10, 40L, FALSE)))
-  expect_warning(warned <- .ctLaplaceFrozenShareWarn(1:11, 40L, FALSE),
+  expect_silent(expect_false(.ctLaplaceDrawsShareWarn(1:10, 40L, FALSE)))
+  expect_warning(warned <- .ctLaplaceDrawsShareWarn(1:11, 40L, FALSE),
     "11 of 40 units.*optimize = FALSE")
   expect_true(warned)
-  expect_silent(expect_true(.ctLaplaceFrozenShareWarn(1:20, 40L, TRUE)))
-  expect_silent(expect_false(.ctLaplaceFrozenShareWarn(1L, 2L, FALSE)))
+  expect_silent(expect_true(.ctLaplaceDrawsShareWarn(1:20, 40L, TRUE)))
+  expect_silent(expect_false(.ctLaplaceDrawsShareWarn(1L, 2L, FALSE)))
 })
 
 # The gated-gaps A14 config (review/LAPLACE-gated-gaps-2026-09-24.md): 40

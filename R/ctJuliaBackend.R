@@ -5310,7 +5310,7 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
   gradient = "adjoint", cores = 1L, verbose = 0L, maxiter = NULL,
   callback = NULL, objective = NULL, progress_label = NULL,
   progress_budget = FALSE, pin = NULL, carried = NULL, inverse = NULL,
-  hessian = NULL, hessian_at = NULL) {
+  hessian = NULL, hessian_at = NULL, anytime = FALSE, continuation = NULL) {
   spec <- structure(model_spec, class = c("ctJuliaModel", "ctFitModel"))
   # A caller may hand in the objective to maximise. `intoverstates=FALSE` does,
   # passing the joint one over `[theta; z]`; everything below is unchanged by
@@ -5657,6 +5657,13 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
     args <- common
     held <- !is.null(pin) && length(pin$index)
     target <- objective
+    # On the hybrid the climb ended on, or is on (`continuation`): the engine's
+    # generic entry, from the pairs the objective holds (`lbfgs_pairs`).
+    on_hybrid <- !is.null(continuation) && !held
+    if (on_hybrid) {
+      target <- continuation
+      args$lbfgs_pairs <- "objective"
+    }
     if (held) {
       target <- module$ctsem_pin(objective,
         .ctJuliaVector(as.integer(pin$index)),
@@ -5677,7 +5684,7 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
       # over, and the wrapper forwards every route-specific method -- including
       # the trial predicate that refuses a point whose inner Newton did not
       # converge.
-      if (!is.null(model_spec$laplace) && !held) {
+      if (!is.null(model_spec$laplace) && !held && !on_hybrid) {
         # `gradient` selects how the *process* likelihood's gradient is taken
         # and does not apply here: the Laplace objective's gradient is a forward
         # sweep over that reverse pass regardless.
@@ -5703,18 +5710,41 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
     }
     out
   }
+  # The climb on the hybrid (`anytime`): the Laplace run first, with its
+  # batching and coreset stages, until a step's predicted gain is under the
+  # hand-over (`.ctLaplaceAnytimeHandover`) or the line search names a jump;
+  # then the continuation from that point, screening at its rungs
+  # (`_ctsem_anytime!`), from the pairs the Laplace run ended with, to the
+  # fit's own finish. Not under a pin, whose wrapper names no units. Every
+  # later run of this stage (an escape below) is then on the hybrid too.
+  anytime <- isTRUE(anytime) && is.null(continuation) &&
+    !is.null(model_spec$laplace) && !state_explicit && is.null(default_pin)
+  if (anytime) {
+    full <- common
+    common <- utils::modifyList(common, list(gap_tol = .ctLaplaceAnytimeHandover,
+      newton = FALSE, certify = FALSE, overshoot_probe = "off"))
+  }
   result <- optimise_once(start)
-  # A jump the optimiser named: the units whose Laplace terms moved with where
-  # their inner solves stopped, integrated by frozen draws from here on
-  # (`.ctLaplaceFrozenRescue()`). Not under a pin, whose wrapper names none.
-  if (!is.null(model_spec$laplace) && !state_explicit && is.null(default_pin)) {
-    rescued <- try(.ctLaplaceFrozenRescue(result, module, objective, common,
-      verbose = verbose), silent = TRUE)
-    if (inherits(rescued, "try-error")) {
-      warning("The fit stopped where the objective jumped; integrating the ",
-        "units that jumped failed (", .ctLaplaceTryReason(rescued), ").",
-        call. = FALSE)
-    } else result <- rescued
+  # Without the climb (the correction off, `estonly`, a quadratic model) a jump
+  # ends the stage where it was named, as before the hybrid existed: said, with
+  # the way to integrate the units that jumped.
+  if (!anytime && identical(as.character(.ctJuliaOr(result$stop_reason, ""))[1L], "jump")) {
+    named <- as.integer(result$jump_units)
+    named <- named[!is.na(named) & named > 0L]
+    warning("The Laplace objective jumped at unit", if (length(named) > 1L) "s " else " ",
+      paste(named, collapse = ", "), " (its term moved with where the inner solve ",
+      "stopped) and the fit stops there. laplace_correct = 'quadrature' integrates ",
+      "such units by frozen draws and climbs on.", call. = FALSE)
+  }
+  if (anytime) {
+    common <- full
+    continuation <- .ctLaplaceAnytimeStart(result, module, objective,
+      verbose = verbose)
+    if (!is.null(continuation)) {
+      second <- optimise_once(as.numeric(result$minimizer))
+      result <- .ctLaplaceAnytimeRecord(.ctJuliaAddRunCounts(second,
+        .ctJuliaRunCounts(result)), module, continuation, result)
+    }
   }
   # The two early phases belong to the first stage, which is the one that
   # starts away from the optimum. An escape below resumes from a pulled-back
@@ -5869,9 +5899,9 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
     # The floor the objective was built with; post-fit routes rebuild the
     # objective from the same specification, so they use it too.
     floor = as.character(.ctJuliaOr(model_spec$laplace$inner$floor, "total")),
-    # Units whose Laplace term jumped as the fit went, integrated by frozen
-    # draws from then on (`.ctLaplaceFrozenRescue()`), or NULL.
-    frozen = result$frozen,
+    # What the climb on the hybrid flagged and did (`.ctLaplaceAnytimeRecord()`),
+    # or NULL where the fit climbed the Laplace objective alone.
+    anytime = result$anytime,
     gated_units = if (is.null(result$gated_units)) NA_integer_ else
       as.integer(result$gated_units),
     inner_converged = isTRUE(result$inner_converged),
@@ -6331,10 +6361,27 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
   # made a profile on a fresh CI runner start worker sessions for a fit of
   # seconds.
   invisible(.ctJuliaModule(model_spec$project))
+  # Whether the fit climbs the hybrid from its Laplace run's hand-over
+  # (`.ctJuliaOptimise(anytime = )`): where the quadrature correction will
+  # read the estimate, and not on a model whose Laplace term is exact, which
+  # no screen can flag.
+  anytime_on <- is.null(jointobjective) && !is.null(model_spec$laplace) &&
+    !isTRUE(model_spec$laplace$quadratic) && !isTRUE(optimcontrol$estonly) &&
+    identical(.ctLaplaceCorrectResolve(optimcontrol, intoverpop = "laplace",
+      optimize = TRUE, intoverstates = TRUE), "quadrature")
+  # The continuation the climb ended on, kept out of the fit (it is a live
+  # engine object) and handed to the correction.
+  cont <- NULL
+  take_continuation <- function(result) {
+    if (!is.null(result$continuation)) cont <<- result$continuation
+    result$continuation <- NULL
+    result
+  }
   optimise_started <- proc.time()[["elapsed"]]
-  result <- .ctJuliaOptimise(model_spec, start, optimcontrol = startcontrol,
-    gradient = gradient, cores = cores, verbose = verbose,
-    callback = optimcontrol$callback, objective = jointobjective)
+  result <- take_continuation(.ctJuliaOptimise(model_spec, start,
+    optimcontrol = startcontrol, gradient = gradient, cores = cores,
+    verbose = verbose, callback = optimcontrol$callback,
+    objective = jointobjective, anytime = anytime_on))
   if (!is.null(substeps) && isTRUE(substeps$finite)) {
     before <- model_spec$max_timestep
     optimum <- as.numeric(result$minimizer)[seq_len(npar)]
@@ -6345,12 +6392,13 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
       first <- result
       # From the coarser mesh's optimum, so without the early phases, which
       # are for a stage that starts away from one.
-      result <- .ctJuliaAddRunCounts(.ctJuliaOptimise(model_spec, restart,
+      result <- take_continuation(.ctJuliaAddRunCounts(.ctJuliaOptimise(
+        model_spec, restart,
         optimcontrol = utils::modifyList(optimcontrol,
           list(saem = FALSE, stochastic = FALSE, batch = FALSE)), gradient = gradient,
         cores = cores,
         verbose = verbose, callback = optimcontrol$callback,
-        objective = jointobjective), first)
+        objective = jointobjective, anytime = anytime_on), first))
     }
   }
   if (!is.null(substeps)) message(.ctJuliaSubstepMessage(substeps))
@@ -6381,16 +6429,16 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
       optimcontrol = utils::modifyList(optimcontrol, list(batch = FALSE)),
       gradient = gradient, cores = cores,
       verbose = verbose, callback = optimcontrol$callback,
-      objective = jointobjective, carried = carried,
+      objective = jointobjective, carried = carried, continuation = cont,
       inverse = .ctBackendResumeInverse(endgame),
       hessian = endgame$hessian, hessian_at = endgame$evaluated_at))
   if (certifying) {
-    frozen <- result$frozen
+    climbed <- result$anytime
     correction <- correct(result)
     result <- correction$result
-    # A resume runs on the Laplace objective, and a unit that jumped before
-    # stays integrated by frozen draws in the correction that follows.
-    result$frozen <- .ctLaplaceFrozenMerge(frozen, result$frozen)
+    # A resume runs on the hybrid the climb ended on (`continuation` above), so
+    # what the climb flagged stays flagged; the record is the climb's.
+    if (is.null(result$anytime)) result$anytime <- climbed
   }
   # Random restarts, when asked for, only for a fit still not converged -- see
   # R/ctBackendRestarts.R for when they run and when they deliberately do not
@@ -6923,15 +6971,14 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
     # `[[`: `$` falls back to the one field the name begins, so an
     # `uncertaintyControl` given alone was read as the method and stopped the
     # fit in `match.arg()`.
-    # A fit rescued from a jump maximised the hybrid, some units' terms by
-    # frozen draws (`.ctLaplaceFrozenRescue()`), and its finish's Hessian is
-    # the hybrid's; 'checked' would sample the Laplace objective, which jumps
-    # there (round-9 stall: ESS 3, Pareto k 3.2, with no budget to stop it).
-    # So its default is that Hessian's normal, which the quadrature
-    # correction, keeping those units flagged, then replaces.
+    # A fit whose climb took a jump in maximised a hybrid with that unit on
+    # frozen draws, and the Laplace objective jumps there (round-9 stall:
+    # 'checked' on it gave ESS 3, Pareto k 3.2, with no budget to stop it).
+    # So this stage's default is the Hessian's normal, which the quadrature
+    # correction, sampling the hybrid itself, then replaces.
     uncertainty <- .ctJuliaOr(optimcontrol[["uncertainty"]],
       if (length(out$model_spec$subject_weights)) "sandwich" else
-        if (!is.null(out$laplace$frozen)) "hessian" else "checked")
+        if (isTRUE(out$laplace$anytime$jumps > 0L)) "hessian" else "checked")
     # One way to sample: `ctFit(optimize = FALSE)`, which places the sampler
     # through this same pipeline before ever reaching this stage (see
     # `.ctJuliaSampleFit()`, R/ctBackendSample.R). Asking for
@@ -6963,7 +7010,8 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
   # `.ctLaplaceAutoCorrect()` for `'step'`.
   if (!is.null(out$laplace) && isTRUE(intoverstates)) {
     if (identical(correctlaplace, "quadrature")) {
-      out <- holdrepair(.ctLaplaceContinue(out, cores = cores, verbose = verbose))
+      out <- holdrepair(.ctLaplaceContinue(out, cores = cores, verbose = verbose,
+        cont = cont))
     } else if (identical(correctlaplace, "step")) {
       out <- holdrepair(.ctLaplaceAutoCorrect(out, cores = cores, verbose = verbose))
     } else {

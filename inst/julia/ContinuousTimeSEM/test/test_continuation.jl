@@ -644,7 +644,7 @@ function _fresh_2d3_prior()
 end
 
 @testset "a stage after a placement starts from the pairs the last one ended with" begin
-    # A rescued fit's stages (`.ctLaplaceFrozenRescue()`): one run on the
+    # A climb's stages after a placement (`_ctsem_anytime!`): one run on the
     # hybrid, the draws placed again where it ended, and the next run from the
     # curvature the first left on the objective (`lbfgs_pairs = :objective`).
     # It reaches the cold run's point in fewer iterations (5 against 12 when
@@ -709,6 +709,45 @@ _fresh_nested_nonlinear() = (ctsem_laplace_objective(_LAPLACE_NONLINEAR_OBJECTIV
     sd_scale=[1.0, 1.0, 1.0], level_nre=[2, 1],
     group=vcat(1:5, [1, 1, 1, 2, 2]), level_ngroups=[5, 2]),
     [0.1, 0.4, -0.2, 0.05, -0.25, 1.5, 0.2, -0.3])
+
+@testset "a climb with anytime on screens at its rungs, takes a jump in, and leaves a quadratic model alone" begin
+    opts = (maxiter=300, newton=false, certify=false, overshoot_probe=:off,
+        progress=false, lbfgs_pairs=:objective)
+    # Nonlinear: the screen at a rung flags units, and the run ends on the
+    # hybrid, whose value at the end is the continuation's own.
+    laplace, values = _fresh_nonlinear()
+    theta = collect(Float64, values)
+    start = theta .+ 0.3
+    o = ctsem_laplace_continuation(laplace, start; tolerance=0.0, screen=false,
+        anytime=true)
+    @test o.anytime && isempty(o.flagged) && isempty(o.events)
+    r = ctsem_optimize(o, start; opts...)
+    @test r.anytime_n >= 1
+    @test "screen" in r.anytime_kind
+    @test !isempty(o.flagged)
+    @test r.continuation_flagged == length(o.flagged)
+    ev = ctsem_laplace_continuation_evaluate(o, r.minimizer; gradient=false)
+    @test isapprox(r.maximum_loglik, ev.value; rtol=1e-10)
+    # The rungs are spent in order, and no more screens come.
+    @test isempty(o.rungs) || o.rungs[1] < _CONTINUATION_RUNGS[1]
+    # Linear Gaussian, at the screen's own tolerance (at 0 it flags rounding):
+    # every screen flags nothing, the objective never changes, and the run is
+    # the Laplace run to the bit.
+    laplace, values = _fresh_linear()
+    theta = collect(Float64, values)
+    start = theta .+ 0.2
+    o = ctsem_laplace_continuation(laplace, start; screen=false, anytime=true)
+    r1 = ctsem_optimize(o, start; opts...)
+    r0 = ctsem_optimize(laplace, start; opts...)
+    @test isempty(o.flagged)
+    @test r1.anytime_n >= 1
+    @test r1.minimizer == r0.minimizer
+    @test r1.iterations == r0.iterations
+    # A placement with the screen turned on at the end scores every unit.
+    info = ctsem_laplace_continuation_recentre!(o, r1.minimizer; screen=true)
+    @test o.screen
+    @test info.nflagged == 0
+end
 
 @testset "each flagged unit reports its rule's error, and the hybrid its total" begin
     # A product rule's error is its value against the rule two nodes fewer,

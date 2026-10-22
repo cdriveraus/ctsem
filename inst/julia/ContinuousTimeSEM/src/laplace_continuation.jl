@@ -209,6 +209,21 @@ _continuation_draws(rule::CTSEMFixedRule) = size(rule.points, 2) +
     sum(sum(_continuation_draws(c) for c in kids; init=0)
         for kids in rule.children; init=0)
 
+"""One thing the climb's checkpoint did: a `:screen` at a rung or a `:jump`
+taken in, how many units were flagged after it, and the predicted gain it
+fired at."""
+const _ContinuationEvent = NamedTuple{(:kind, :flagged, :gain), Tuple{Symbol, Int, Float64}}
+
+"""
+The predicted gains, in nats, at which a climb with `anytime` on screens its
+units (`_ctsem_anytime!`): once the step's predicted gain first falls under
+each. Two: far out the Laplace surface is climbed as it is, since a rule
+placed there would be re-placed anyway; near the end what the screen
+resolves is what the correction would find, and flagging it here lets the
+climb finish on the objective the fit reports.
+"""
+const _CONTINUATION_RUNGS = (1.0, 0.1)
+
 """
     CTSEMLaplaceContinuation
 
@@ -292,7 +307,14 @@ mutable struct CTSEMLaplaceContinuation{L} <: CTSEMOptimisable
     # stages, one after each placement. Kept across placements, which change
     # the objective but not its coordinates.
     lbfgs::Union{Nothing,CTSEMLBFGSMemory}
+    # Whether the climb screens and flags units as it goes (`_ctsem_anytime!`):
+    # at each predicted-gain rung left in `rungs`, and at every jump the
+    # watch names. `events` is what it did, for the fit's record.
+    anytime::Bool
+    rungs::Vector{Float64}
+    events::Vector{_ContinuationEvent}
 end
+
 
 """Gauss-Hermite grids a rule of these options can ask for, filled before any
 threaded region so that `_gh_grid` is a read there (see
@@ -1502,11 +1524,12 @@ otherwise, keeping its Laplace term. `point_units` and `point_values` are
 points the caller knows for some units, column `j` of `point_values` for unit
 `point_units[j]` (its first `dims` entries), each a component of that unit's
 importance proposal. `screen = false` scores only the units `force` names, the
-rest keeping their Laplace terms unscored: what a fit rescued from a jump
+rest keeping their Laplace terms unscored: what a fit climbing the hybrid
 needs. `draws_scope = :forced` gives draws only to the units `force` names,
 every other unit too wide for a product rule keeping its Laplace term
-unscored, as with `draws = 0`. See the module docstring for the rules and the
-constants.
+unscored, as with `draws = 0`. `anytime = true` makes `ctsem_optimize` on this
+objective screen and flag units as its climb goes (`_ctsem_anytime!`). See
+the module docstring for the rules and the constants.
 """
 function ctsem_laplace_continuation(laplace::CTSEMLaplaceObjective,
     values::AbstractVector; nodes::Integer=5, tolerance::Real=0.01,
@@ -1514,7 +1537,7 @@ function ctsem_laplace_continuation(laplace::CTSEMLaplaceObjective,
     maxdim::Integer=5, draws::Integer=0, draws_se::Real=0.05,
     draws_max::Integer=16384, draws_floor::Real=0.25, draws_prior::Real=0.2,
     draws_df::Real=4, draws_seed::Integer=20261021, force=nothing,
-    point_units=nothing, point_values=nothing, screen::Bool=true, draws_scope=:all)
+    point_units=nothing, point_values=nothing, screen::Bool=true, draws_scope=:all, anytime::Bool=false)
     nodes >= 1 || throw(ArgumentError("need at least one quadrature node"))
     draws_df > 0 || throw(ArgumentError("draws_df must be positive (Inf for Gaussian)"))
     Symbol(draws_scope) in (:all, :forced) || throw(ArgumentError(
@@ -1535,7 +1558,8 @@ function ctsem_laplace_continuation(laplace::CTSEMLaplaceObjective,
         zeros(nunits), fill(NaN, nunits),
         fill(false, nunits), Bool(screen), Symbol(draws_scope), Int[],
         fill(NaN, nunits), fill(NaN, nunits), fill(false, nunits), NaN, nothing,
-        0, 0, 0, 0, 0, 0, 0.0, 0.0, 0.0, 0.0, nothing, nothing, nothing)
+        0, 0, 0, 0, 0, 0, 0.0, 0.0, 0.0, 0.0, nothing, nothing, nothing,
+        Bool(anytime), collect(Float64, _CONTINUATION_RUNGS), _ContinuationEvent[])
     _continuation_add_points!(o, point_units, point_values)
     _continuation_force!(o, force)
     _continuation_place!(o, theta)
@@ -1581,7 +1605,7 @@ const _CONTINUATION_STATE = (:rest, :rest_units, :flagged, :rules, :centre,
 
 """
     ctsem_laplace_continuation_recentre!(o, values; force=nothing,
-        point_units=nothing, point_values=nothing)
+        point_units=nothing, point_values=nothing, screen=nothing)
 
 Re-place `o`'s nodes at `values`: every unit is scored again, the flagged set
 grows by any unit whose gap now matters and by any `force` names -- it never
@@ -1592,9 +1616,13 @@ it replaces is kept for `ctsem_laplace_continuation_revert!`. Returns
 `ctsem_laplace_continuation_info`.
 """
 function ctsem_laplace_continuation_recentre!(o::CTSEMLaplaceContinuation,
-    values::AbstractVector; force=nothing, point_units=nothing, point_values=nothing)
+    values::AbstractVector; force=nothing, point_units=nothing, point_values=nothing,
+    screen=nothing)
     o.previous = NamedTuple{_CONTINUATION_STATE}(
         Tuple(getfield(o, f) for f in _CONTINUATION_STATE))
+    # `screen` given turns the screen on or off from here: a fit that climbed
+    # with the screen off places every unit once at its end.
+    screen === nothing || (o.screen = Bool(screen))
     _continuation_add_points!(o, point_units, point_values)
     _continuation_force!(o, force)
     _continuation_place!(o, _laplace_extend(o.laplace, collect(Float64, values)))
@@ -2022,21 +2050,80 @@ end
 
 _ctsem_optimise_label(::CTSEMLaplaceContinuation) = "Laplace continuation"
 # The finish walks the hybrid on its own Hessian, as it walks the Laplace
-# objective, where the optimiser takes the hybrid whole (a fit rescued from a
-# jump, `.ctLaplaceFrozenRescue()`): chord, at the cost of the Laplace part's
-# differences.
+# objective, where the optimiser takes the hybrid whole (a fit climbing it,
+# `_ctsem_anytime!`): chord, at the cost of the Laplace part's differences.
 _ctsem_finish_curvature(::CTSEMLaplaceContinuation) = :chord
 _ctsem_hessian_cost(::CTSEMLaplaceContinuation, npar::Integer) = 2 * Int(npar)
-_ctsem_lbfgs_held(o::CTSEMLaplaceContinuation) = o.lbfgs
+# A continuation built where a Laplace run ended starts from that run's
+# pairs: the hybrid with nothing flagged is the Laplace objective, and with
+# units flagged it differs by their terms, so the pairs still give descent
+# directions. The Laplace objective keeps a run's pairs in a weak table, so
+# an objective that is let go takes them with it.
+const _CTSEM_LBFGS_HELD = WeakKeyDict{Any,CTSEMLBFGSMemory}()
+_ctsem_lbfgs_held(o::CTSEMLaplaceObjective) = get(_CTSEM_LBFGS_HELD, o, nothing)
+_ctsem_lbfgs_hold!(o::CTSEMLaplaceObjective, memory::CTSEMLBFGSMemory) =
+    (_CTSEM_LBFGS_HELD[o] = memory; nothing)
+_ctsem_lbfgs_held(o::CTSEMLaplaceContinuation) =
+    o.lbfgs === nothing ? _ctsem_lbfgs_held(o.laplace) : o.lbfgs
 _ctsem_lbfgs_hold!(o::CTSEMLaplaceContinuation, memory::CTSEMLBFGSMemory) =
     (o.lbfgs = memory; nothing)
+_ctsem_anytime_capable(o::CTSEMLaplaceContinuation) = o.anytime
+
+"""
+    _ctsem_anytime!(o, x, gain, event, jump)
+
+The climb's checkpoint on a continuation with `anytime` on, called by
+`_ctsem_lbfgs` after each accepted step (`event = :step`, with the step's
+predicted gain) and where the watch has named a jump (`:jump`). At a jump the
+units whose terms moved are flagged, with the points the watch saw, and every
+flagged unit's rule is placed at `x`. At a step, once the gain has fallen
+under the next rung (`_CONTINUATION_RUNGS`), every unit a product rule can
+score is screened at `x` and what the screen resolves is flagged, the rest
+keeping their Laplace terms; units too wide for a product rule are scored
+only where named (`draws_scope = :forced`). Returns whether the objective
+changed, which it has not when nothing is or was flagged: the loop then
+reads it again at the point and keeps its pairs. Each action is recorded in
+`o.events`.
+"""
+function _ctsem_anytime!(o::CTSEMLaplaceContinuation, x::AbstractVector, gain::Real,
+    event::Symbol, jump)
+    o.anytime || return false
+    before = length(o.flagged)
+    theta = _laplace_extend(o.laplace, collect(Float64, x))
+    if event === :jump
+        named = _ctsem_jump_units(o, jump)
+        isempty(named.units) && return false
+        _continuation_force!(o, named.units)
+        named.point_units == [0] ||
+            _continuation_add_points!(o, named.point_units, named.point_values)
+        _continuation_place!(o, theta)
+        push!(o.events, (kind=:jump, flagged=length(o.flagged), gain=Float64(gain)))
+        return true
+    end
+    (isempty(o.rungs) || !(gain < o.rungs[1])) && return false
+    popfirst!(o.rungs)
+    was = o.screen
+    o.screen = true
+    try
+        _continuation_place!(o, theta)
+    finally
+        o.screen = was
+    end
+    push!(o.events, (kind=:screen, flagged=length(o.flagged), gain=Float64(gain)))
+    return before > 0 || length(o.flagged) > 0
+end
 ctsem_hessian(o::CTSEMLaplaceContinuation, values::AbstractVector;
     chunk::Integer=0, progress=nothing) = ctsem_laplace_continuation_hessian(o, values)
 _ctsem_params(o::CTSEMLaplaceContinuation) = _ctsem_params(o.laplace)
 _ctsem_saturated_for(o::CTSEMLaplaceContinuation, minimizer) =
     _laplace_saturated_parameters(o.laplace, minimizer)
+# The flagged count and what the climb's checkpoint did, with a sentinel
+# where it did nothing (an empty vector is not sent over the bridge).
 _ctsem_optimise_result_extra(o::CTSEMLaplaceContinuation, final, log) =
-    (continuation_flagged=length(o.flagged),)
+    (continuation_flagged=length(o.flagged), anytime_n=length(o.events),
+     anytime_kind=isempty(o.events) ? [""] : String[string(e.kind) for e in o.events],
+     anytime_flagged=isempty(o.events) ? [0] : Int[e.flagged for e in o.events],
+     anytime_gain=isempty(o.events) ? [NaN] : Float64[e.gain for e in o.events])
 
 function _ctsem_optimise_trial(o::CTSEMLaplaceContinuation, x, want_gradient::Bool,
     gradient_method, limit::Real, log)
@@ -3080,7 +3167,7 @@ score, the independent-draws formula `sqrt(1/ESS - 1/n)` stands in, as at
 placement. The draws are the proposal's of the point they were placed at, and
 as the parameters move away from it their weights spread; a fit rescued from a
 jump places them again only once this has drifted past what they were placed
-to (`.ctLaplaceFrozenRescue()`). In the order of
+to (`.ctLaplaceAnytimeRecord()`, the correction's rounds). In the order of
 `ctsem_laplace_continuation_info`'s `flagged`; `[0.0]` when none is flagged.
 In parallel over units and, as a value is, over a root's draws
 (`_continuation_ranges`).
