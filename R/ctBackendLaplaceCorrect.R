@@ -597,8 +597,8 @@ print.ctLaplaceCorrection <- function(x, ...) {
 # the widest product rule the correction places, explained with the engine's
 # default; a unit wider than that can be scored by frozen draws instead, per
 # block of its tree when it nests, `draws` (256) the first batch, doubling to
-# a standard error of `draws_se` (0.05 nats) or `draws_max` (16384) draws, at
-# every block, also explained there.
+# a standard error of `draws_se` (0.05 nats) or `draws_max` (16384) draws,
+# the blocks beneath another each to its share of that, also explained there.
 # `draws_scope` says which: "forced", the default, only the units a fit
 # rescued from a jump named (`fit$laplace$frozen`), every other wide unit
 # keeping its Laplace term as before; "all" every one. Not "all"
