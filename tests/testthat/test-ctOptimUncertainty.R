@@ -1146,29 +1146,68 @@ test_that("whitening carries a density's 'batch' attribute through the map", {
   expect_true(is.finite(result$ess))
 })
 
-test_that("checked's sampler can weigh the sampled directions by their marginal", {
+test_that("checked's sampler weighs the sampled directions by their marginal", {
   skip_if_not_installed('mvtnorm'); skip_if_not_installed('diagis')
   skip_if_not_installed('gridExtra'); skip_if_not_installed('ggplot2')
   # s ~ N(0, 1) and eight coordinates c | s ~ N(0, e^(a s)). The mode is at
   # s = -4a: held at c = 0 there, s has the conditional N(-4a, 1); its
-  # marginal is N(0, 1), the volume the c's spread adds as s grows.
+  # marginal is N(0, 1), the volume the c's spread adds as s grows. That
+  # volume is linear in s here, so the tilt's first order is all of it.
   a <- 0.1
   k <- 8L
   lp <- function(x) -x[1]^2 / 2 - sum(x[-1]^2) * exp(-a * x[1]) / 2 - k * a * x[1] / 2
   attr(lp, 'batch') <- function(X) apply(as.matrix(X), 1, lp)
+  attr(lp, 'gradbatch') <- function(X) {
+    X <- as.matrix(X)
+    e <- exp(-a * X[, 1])
+    list(value = attr(lp, 'batch')(X), gradient = cbind(
+      -X[, 1] + a * rowSums(X[, -1, drop = FALSE]^2) * e / 2 - k * a / 2,
+      -X[, -1, drop = FALSE] * e))
+  }
   mode <- c(-k * a / 2, rep(0, k))
   cov <- diag(c(1, rep(exp(-k * a^2 / 2), k)))
-  run <- function(complement) withr::with_seed(5, ctsem:::.ctImisRun(lp, centre = mode,
-    cov = cov, directions = matrix(c(1, rep(0, k))), widths = 1, complement = complement,
+  run <- function(complement, tilt = TRUE) withr::with_seed(5, ctsem:::.ctImisRun(lp,
+    centre = mode, cov = cov, directions = matrix(c(1, rep(0, k))), widths = 1,
+    complement = complement, tilt = tilt,
     max_iter = 50, scale_init = 1.5, tail_scale = 1.2, df = 5, target_ess = 1000,
     n_batch = 500, cl = NA, finishsamples = 1000, paths = FALSE, verbose = FALSE,
     diag_plots = FALSE))
-  held <- run(FALSE)
+  held <- run(FALSE, tilt = FALSE)
+  tilted <- run(FALSE)
   integrated <- run(TRUE)
   expect_lt(abs(held$mean[1] + k * a / 2), 0.12)
+  expect_lt(abs(tilted$mean[1]), 0.12)
   expect_lt(abs(integrated$mean[1]), 0.12)
+  # The tilt is the volume's gradient, k a / 2, and its 65 gradients are in
+  # the cost.
+  expect_equal(tilted$tilt$size, k * a / 2, tolerance = 0.25)
+  expect_equal(tilted$tilt$gradients, 65L)
+  expect_null(integrated$tilt)
   # The others' answer is the normal's either way.
   expect_equal(diag(integrated$covariance)[-1], diag(cov)[-1])
+  expect_equal(diag(tilted$covariance)[-1], diag(cov)[-1])
+})
+
+test_that("the Stein check names the parameters whose mean the draws miss", {
+  # A Gaussian posterior; draws from it, and draws whose third coordinate is
+  # moved a whole sd. Only the second fail, and the check names the third.
+  set.seed(2)
+  S <- crossprod(matrix(rnorm(25), 5)) / 5 + diag(5) / 5
+  P <- solve(S)
+  gb <- function(X) {
+    X <- as.matrix(X)
+    list(value = -0.5 * rowSums((X %*% P) * X), gradient = -X %*% P)
+  }
+  draws <- MASS::mvrnorm(2000, rep(0, 5), S)
+  right <- withr::with_seed(3, ctsem:::.ctSteinCheck(gb, draws, S, ess = 300))
+  expect_true(all(right$meanerror == 0))
+  expect_gt(right$worstp, 1e-3)
+  moved <- sweep(draws, 2, c(0, 0, sqrt(S[3, 3]), 0, 0), '+')
+  wrong <- withr::with_seed(3, ctsem:::.ctSteinCheck(gb, moved, S, ess = 300))
+  expect_lt(wrong$worstp, 1e-3)
+  expect_identical(wrong$worst, 3L)
+  expect_equal(wrong$meanerror[3], 1, tolerance = 0.25)
+  expect_identical(wrong$gradients, 100L)
 })
 
 test_that(".ctOptimImisDraws() reports which directions the subspace held", {

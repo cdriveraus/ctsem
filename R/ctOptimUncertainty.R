@@ -2705,13 +2705,16 @@ ctOptimFitLpgFunc <- function(fit, cores=1){
   stein <- .ctSteinCheck(.ctJuliaOr(attr(lpg, 'fullgradbatch'), attr(lpg, 'gradbatch')),
     is_res$theta, uncertaintyfit$cov, ess = is_res$ess)
   if (!is.null(stein)) {
-    stein$parameters <- if (length(parnames) == length(est)) parnames[stein$parameters] else
-      paste0('par', stein$parameters)
-    if (stein$p < .ctSteinBar$p && stein$offset >= .ctSteinBar$offset) {
+    named <- if (length(parnames) == length(est)) parnames else paste0('par', seq_along(est))
+    names(stein$meanerror) <- names(stein$z) <- named
+    off <- which(stein$meanerror >= .ctSteinBar$meanerror)
+    if (stein$worstp < .ctSteinBar$p && length(off)) {
+      off <- off[order(-stein$meanerror[off])]
       warning('The importance-sampled draws do not match the posterior\'s gradient ',
-        '(Stein check): their mean is about ', signif(stein$offset, 2),
-        ' sds off, most in ', paste(utils::head(stein$parameters, 3), collapse = ', '),
-        '. ', tailremedy, call. = FALSE)
+        '(Stein check): the mean of ', paste(utils::head(named[off], 3), collapse = ', '),
+        if (length(off) > 3) paste0(' and ', length(off) - 3, ' more'),
+        ' is up to ', signif(stein$meanerror[off[1L]], 2), ' sds off. ', tailremedy,
+        call. = FALSE)
     }
   }
 
@@ -2775,15 +2778,27 @@ ctOptimFitLpgFunc <- function(fit, cores=1){
 
 # Stein's identity as a check of a sampled answer: under the posterior,
 # `E[grad lp] = 0` whatever its shape. At `n` of the answer's `draws`, the mean
-# gradient whitened by `cov`'s factor (the normal the sampler corrected, so in
-# its sds) should be zero to within its error, each coordinate's sd over the
-# draws times `sqrt(1 / n + 1 / ess)`: an importance sampler's resampled draws
-# carry its effective sample, not their number. Returns the chi-square of the
-# standardised mean, its degrees of freedom and upper tail, `offset`, the
-# mean's length with its noise taken out (about how far the answer's mean is
-# from the posterior's, in the normal's sds, where the posterior is near
-# normal), `noise`, the gradients spent, and the parameters the largest
-# components load on, positionally. NULL without a gradient.
+# gradient whitened by `cov`'s factor `A` (the normal the sampler corrected,
+# so in its sds) should be zero to within its error, each coordinate's sd over
+# the draws times `sqrt(1 / n + 1 / ess)`: an importance sampler's resampled
+# draws carry its effective sample, not their number. Where the posterior is
+# near normal, `A A'` times the mean gradient is how far the answer's mean is
+# from the posterior's, so each parameter's share of it, in that parameter's
+# normal sd and with its noise taken out, is its mean's error.
+#
+# Returns the chi-square of the whitened mean gradient, its degrees of
+# freedom and upper tail (`p`); per parameter, positionally, `z` and
+# `meanerror`, the error in sds with its noise taken out where `z` reaches
+# `.ctSteinBar$z` and 0 where it does not (where the normal is far off, as on
+# a ring, `A A'` maps the gradient's spread to errors of several sds that
+# the noise alone explains); `worst`, the parameter with the largest `z`, and
+# its Bonferroni tail over the parameters (`worstp`); and the gradients
+# spent. NULL without a gradient.
+#
+# Per parameter, not as one length: a parameter's error in its own sds is
+# what its interval sees, and a length grows with the square root of the
+# coordinates from shifts too small to matter in any one (a tenth of an sd
+# in each of 266 is 1.6).
 #
 # A one-sided check. A mean off by `delta` sds shows as a mean gradient of
 # about `delta`, at z near `delta sqrt(ess)`; mass no draw reaches shows only
@@ -2810,22 +2825,30 @@ ctOptimFitLpgFunc <- function(fit, cores=1){
   if (sum(ok) < 2L) return(NULL)
   Gw <- G[ok, , drop = FALSE] %*% A
   m <- nrow(Gw)
-  gbar <- colMeans(Gw)
-  se2 <- apply(Gw, 2, stats::var) *
-    (1 / m + if (length(ess) && is.finite(ess) && ess > 0) 1 / ess else 0)
-  z <- gbar / sqrt(pmax(se2, .Machine$double.xmin))
-  q <- length(z)
-  chi2 <- sum(z^2)
-  top <- order(-abs(z))[seq_len(min(3L, q))]
-  load <- as.numeric(A[, top, drop = FALSE] %*% (z[top] / sqrt(sum(z[top]^2))))
-  list(chi2 = chi2, df = q, p = stats::pchisq(chi2, q, lower.tail = FALSE),
-    offset = sqrt(max(0, sum(gbar^2) - sum(se2))), noise = sqrt(sum(se2)),
-    gradients = nrow(X), parameters = utils::head(order(-abs(load)), 5L))
+  inflate <- 1 / m + if (length(ess) && is.finite(ess) && ess > 0) 1 / ess else 0
+  chi2 <- sum(colMeans(Gw)^2 / pmax(apply(Gw, 2, stats::var) * inflate,
+    .Machine$double.xmin))
+  # Each draw's `A A' g`, per parameter in its normal sd.
+  sds <- sqrt(rowSums(A^2))
+  Y <- sweep(Gw %*% t(A), 2, pmax(sds, .Machine$double.xmin), '/')
+  shift <- colMeans(Y)
+  se <- sqrt(apply(Y, 2, stats::var) * inflate)
+  z <- abs(shift) / pmax(se, .Machine$double.xmin)
+  z[sds <= 0] <- 0
+  meanerror <- ifelse(z >= .ctSteinBar$z, sqrt(pmax(0, shift^2 - se^2)), 0)
+  worst <- which.max(z)
+  list(chi2 = chi2, df = ncol(A), p = stats::pchisq(chi2, ncol(A), lower.tail = FALSE),
+    meanerror = meanerror, z = z, worst = worst,
+    worstp = min(1, length(z) * 2 * stats::pnorm(-z[worst])), gradients = nrow(X))
 }
 
-# When `.ctSteinCheck()` warns: a chi-square past `p` and a mean `offset` or
-# more of the normal's sds from where the gradient puts it.
-.ctSteinBar <- list(p = 1e-3, offset = 0.5)
+# When `.ctSteinCheck()` warns: the largest `z` past `p` (Bonferroni over the
+# parameters), naming every parameter whose mean is `meanerror` or more of
+# its normal sds off at `z` or more. On the 266-parameter fit this warned on
+# the Hessian normal, merged 'checked' and a normal recentred by one step
+# (their worst parameters 1.2-1.5 sds off, at z 4-17) and passed NUTS and
+# the corrected sampler (0.14-0.32, Bonferroni tail 0.2-1).
+.ctSteinBar <- list(p = 1e-3, meanerror = 0.5, z = 3)
 
 .ctOptimStoredRedraw <- function(fit, finishsamples, cores, verbose=0){
   julia <- inherits(fit, 'ctJuliaFit')
@@ -2949,8 +2972,8 @@ ctOptimFitLpgFunc <- function(fit, cores=1){
 #' draws. The sampled directions are weighed with the volume the others'
 #' spread adds to them, to first order, and the sampled draws are checked
 #' against the posterior's gradient at 100 of them (Stein's identity), with
-#' a warning where their mean is half a normal sd or more from where the
-#' gradient puts it. A fit with nothing named gets the Hessian's
+#' a warning naming the parameters whose mean the gradient puts half a
+#' normal sd or more away. A fit with nothing named gets the Hessian's
 #' covariance. The check is recorded
 #' in \code{$uncertainty$details$normalcheck}, and the sampling, when there was
 #' any, in \code{$uncertainty$details$importance_sampling}.}
@@ -3216,9 +3239,9 @@ ctOptimFitLpgFunc <- function(fit, cores=1){
 #' \code{'checked'}). \code{imisBudget} caps the log density evaluations
 #' importance sampling spends (no cap by default). \code{imisComplement = TRUE}
 #' (\code{'checked'}) weighs the sampled directions with the others integrated
-#' over rather than held at the centre: right where the others' spread moves
-#' with them, as a large covariance's scale does, at two to seven times the
-#' evaluations. On a Laplace fit (julia),
+#' over, rather than held at the centre with the volume their spread adds to
+#' first order: exact where the others' spread moves with them, as a large
+#' covariance's scale does, at up to seven times the evaluations. On a Laplace fit (julia),
 #' importance sampling
 #' evaluates a weighted subset of the units chosen and checked as it runs, and
 #' corrects its weights where that subset strays; \code{coreset = FALSE}
