@@ -655,19 +655,55 @@ function _continuation_importance_weigh(D::_ContinuationDraws,
 end
 
 """
-    _continuation_outer_shape(F, floor)
+    _continuation_outer_components(M, blocks, children, mode, floor)
 
-The shape of an outer block's proposal: the eigenvectors and the floored
-eigenvalues of its eliminated precision `F.L F.L'` at the unit's mode -- the
-block's precision once every block beneath it is integrated out, under the
-Gaussian approximation, which a product rule scales an outer block by too
-(`_quadrature_block`). `nothing` where it is not finite.
+The first component of every outer block's proposal, `nothing` for a leaf: a
+Gaussian at the unit's mode on the block's precision once every block beneath
+it is eliminated, its eigenvalues floored at `floor`. The elimination is the
+block factorization's (`_laplace_block_factor`, innermost first), each block
+eliminated with its precision's eigenvalues clipped at the prior's, as the
+quadrature clips a rule's scale (`_quadrature_clipped_scale`): a block's
+posterior covariance is no wider than its prior's where its likelihood is
+log-concave, while a soft curvature's inverse can be any width. Unclipped, the
+eliminated precision -- what a product rule scales an outer block by -- is
+where a near-singular child reappears (the SNSF pilot's subject 1174:
+`CT-SEM/review/LAPLACE-nested-spike-2026-10-02.md`, section 2), and the
+study's proposal is as wide as the floor allows along that direction. Where
+`M - I` is positive definite nothing is clipped and this is the eliminated
+precision exactly. `nothing` throughout where a block is not finite.
 """
-function _continuation_outer_shape(F, floor::Float64)
-    Lf = Matrix(F.L)
-    E = _ctsem_symeig(_laplace_symmetrise(Lf * transpose(Lf)))
-    all(isfinite, E.values) || return nothing
-    return (vecs=Matrix(E.vectors), lam=max.(E.values, floor))
+function _continuation_outer_components(M::CTSEMBlockMatrix{Float64},
+    blocks::Vector{CTSEMLaplaceBlock}, children, mode::Vector{Float64},
+    floor::Float64)
+    nb = length(blocks)
+    out = Vector{Union{Nothing,CTSEMImportanceComponent}}(nothing, nb)
+    diag = [_laplace_symmetrise(Matrix(d)) for d in M.diag]
+    coupling = [[Matrix(c) for c in row] for row in M.coupling]
+    for b in 1:nb
+        all(isfinite, diag[b]) || return fill!(out, nothing)
+        E = _ctsem_symeig(_laplace_symmetrise(diag[b]))
+        all(isfinite, E.values) || return fill!(out, nothing)
+        if !isempty(children[b])
+            columns = (blocks[b].offset + 1):(blocks[b].offset + blocks[b].size)
+            out[b] = CTSEMImportanceComponent(mode[columns], Matrix(E.vectors),
+                max.(E.values, floor))
+        end
+        ancestors = blocks[b].ancestors
+        isempty(ancestors) && continue
+        inverse = E.vectors * Diagonal(1 ./ max.(E.values, 1.0)) * transpose(E.vectors)
+        W = [inverse * coupling[b][t] for t in eachindex(ancestors)]
+        for t in eachindex(ancestors)
+            a = ancestors[t]
+            diag[a] .-= _laplace_symmetrise(transpose(coupling[b][t]) * W[t])
+            for s in eachindex(ancestors)
+                s == t && continue
+                slot = findfirst(==(ancestors[s]), blocks[a].ancestors)
+                slot === nothing && continue
+                coupling[a][slot] .-= transpose(coupling[b][t]) * W[s]
+            end
+        end
+    end
+    return out
 end
 
 """
@@ -760,8 +796,9 @@ draws:
     (`context.mode`) for a block with nothing above it, and beneath a draw of
     the blocks above the conditional mode there, re-solved from the unit's as a
     product rule's leaf is (`_quadrature_leaf_rule!`). At an outer block, a
-    Gaussian at the unit's mode on its eliminated precision, floored
-    (`_continuation_outer_shape`, placed by `_continuation_unit_rule` as
+    Gaussian at the unit's mode on its precision with the blocks beneath
+    eliminated, their curvatures clipped at the prior's, floored
+    (`_continuation_outer_components`, placed by `_continuation_unit_rule` as
     `context.outer`);
   - one at every point `opts.points` holds for the unit where this block is
     not at the unit's mode, on the block's precision there at a leaf, on the
@@ -1061,22 +1098,16 @@ function _continuation_unit_rule(laplace::CTSEMLaplaceObjective, U::Integer,
     if _continuation_unit_width(laplace, U) > opts.maxdim
         # Too wide for a product rule: only `_continuation_place` sends such a
         # unit here, and only when draws are on. A nested unit's outer blocks
-        # take their first components from the factorization, here, before
-        # anything runs in parallel: the factors can hold this slot's scratch.
+        # take their first components from the curvature, here, before
+        # anything runs in parallel: it is this slot's scratch.
         outer = Vector{Union{Nothing,CTSEMImportanceComponent}}(nothing,
             length(blocks))
         if length(blocks) > 1
-            factorization = _laplace_factor_repaired!(
-                _laplace_unit_curvature(laplace, U, theta, Ls, mode), blocks)
-            factorization.ok || return nothing
-            for b in eachindex(blocks)
-                isempty(tree.children[b]) && continue
-                shape = _continuation_outer_shape(factorization.factors[b],
-                    Float64(opts.draws_floor))
-                shape === nothing && return nothing
-                columns = (blocks[b].offset + 1):(blocks[b].offset + blocks[b].size)
-                outer[b] = CTSEMImportanceComponent(mode[columns], shape.vecs, shape.lam)
-            end
+            outer = _continuation_outer_components(
+                _laplace_unit_curvature(laplace, U, theta, Ls, mode), blocks,
+                tree.children, mode, Float64(opts.draws_floor))
+            any(b -> !isempty(tree.children[b]) && outer[b] === nothing,
+                eachindex(blocks)) && return nothing
         end
         context = (children=tree.children, mode=mode, outer=outer)
         roots = CTSEMFixedRule[]
