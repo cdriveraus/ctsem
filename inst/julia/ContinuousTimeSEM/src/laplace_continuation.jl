@@ -827,19 +827,25 @@ most `draws_se`, each aiming at `sqrt(draws_se / siblings)`, never below
 `draws_se` itself -- starting at the fewest draws that could reach it,
 `(share / (1 - share)) / se^2`, the error of a proposal matching the block
 exactly but for its prior share, at least 8 and at most `opts.draws`. See
-`_continuation_importance_rule`.
+`_continuation_importance_rule`. A block beneath another measures its error
+against that target by its weights' spread, `sqrt(1/ESS - 1/n)`, where a block
+with nothing above it reads its replicates' (`_continuation_importance_weigh`).
 
-Why no looser. A child's estimate is unbiased, but its draws come from a
-Gaussian at its conditional mode, lighter-tailed than these posteriors, and at
-a few hundred draws it falls short by more than its weights show. On the SNSF
-pilot's study unit at it290 (`CT-SEM/review/LAPLACE-shoulders-frozen-draws-2026-10-21.md`,
-section 10), with the study at 256 draws and every person's draws to 0.091,
-0.04 and 0.02, the unit came to -16745.691, -16745.657 and -16745.654, against
--16745.649 by Gauss-Hermite at both levels: a deficit of about a sixth of the
-children's summed squared error. Tied to `draws_se`, it stays under a sixth
-of the error the rule aims at. The first budget, a fixed 0.25 (what the prior's
-fifth of every batch costs any rule's weights), cost that unit 0.04 for a
-quarter of the evaluations.
+Why no looser, and why the weights. A child's estimate is unbiased, but its
+draws come from a Gaussian at its conditional mode, lighter-tailed than these
+posteriors, and at a few hundred draws it falls short: of the mass in the
+tails, which every replicate misses alike, so their spread does not show the
+shortfall, while the weights' spread does. On the SNSF pilot's study unit at
+it290 (`CT-SEM/review/LAPLACE-shoulders-frozen-draws-2026-10-21.md`, section
+10), with the study at 256 draws and every person's draws to 0.091, 0.04 and
+0.02 by their weights, the unit came to -16745.691, -16745.657 and
+-16745.654, against -16745.649 by Gauss-Hermite at both levels: a deficit of
+about a sixth of the children's summed squared error. Tied to `draws_se`, it
+stays under a sixth of the error the rule aims at. The first budget, a fixed
+0.25 (what the prior's fifth of every batch costs any rule's weights), cost
+that unit 0.04. Children stopped on their replicates' spread at 0.041 took
+about 350 draws each, against 966, and left the unit 0.10 short, with a
+standard error of 0.019.
 """
 function _continuation_draw_target(block::CTSEMLaplaceBlock, context, opts)
     isempty(block.ancestors) && return (se=Float64(opts.draws_se), first=Int(opts.draws))
@@ -975,8 +981,12 @@ function _continuation_importance_rule(laplace::CTSEMLaplaceObjective, U::Intege
         share, target.first, key, path)
     current = _continuation_importance_weigh(D, comps, prior, k)
     target_ess = 1 / target.se^2
-    while (!isfinite(current.value) || current.se > target.se) &&
-            size(D.points, 2) < opts.draws_max
+    # A block beneath another stops on its weights' spread rather than its
+    # replicates' (`_continuation_draw_target` says why).
+    beneath = !isempty(block.ancestors)
+    while (!isfinite(current.value) ||
+            (beneath ? sqrt(max(1 / current.ess - 1 / size(D.points, 2), 0.0)) :
+             current.se) > target.se) && size(D.points, 2) < opts.draws_max
         n = size(D.points, 2)
         if isfinite(current.value)
             if leaf
