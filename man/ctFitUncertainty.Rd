@@ -192,12 +192,16 @@ the estimate stays the fit's, and \code{summary()} reports it beside the
 draws. Where nothing is sampled, the same pairs' widths replace the
 Hessian's along the directions they resolve, where they move an sd by 5\%
 or more. The sampled directions are weighed with the volume the others'
-spread adds to them, to first order, and the sampled draws are checked
+spread adds to them, to first order. Fifty or more of them, or any number
+importance sampling cannot correct, are sampled by Hamiltonian Monte Carlo
+instead, with many chains in lockstep, until every direction's ESS reaches
+the target and its R-hat is under 1.05. The sampled draws are checked
 against the posterior's gradient at 100 of them (Stein's identity): where
-a mean is off along the sampled directions, sampling goes on from a
-component the gradient places (twice at most), and a warning names the
-parameters whose mean the gradient puts half a normal sd or more away, or
-whose spread it puts outside the coverage band. A fit with nothing named
+a mean is off along the sampled directions, importance sampling goes on
+from a component the gradient places (twice at most), and a warning names
+the parameters whose mean the gradient puts half a normal sd or more away,
+or whose spread it puts under half or over twice the posterior's. A fit
+with nothing named
 gets the Hessian's covariance, so corrected. The check is recorded
 in \code{$uncertainty$details$normalcheck}, and the sampling, when there was
 any, in \code{$uncertainty$details$importance_sampling}.}
