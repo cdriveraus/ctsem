@@ -969,7 +969,8 @@ imis_is <- function(parlp,
   paths         = TRUE,
   kbar          = .ctImisParetoKBar(),
   newton        = 3L,
-  budget        = Inf) {
+  budget        = Inf,
+  recheck       = NULL) {
 
   for (pkg in c("mvtnorm", "diagis", "gridExtra", "ggplot2", "grid"))
     if (!requireNamespace(pkg, quietly = TRUE))
@@ -1103,6 +1104,7 @@ imis_is <- function(parlp,
   ess_now   <- 0
   k_now     <- NA_real_
   ess_met   <- NA_integer_
+  nrecheck  <- 0L
   trace     <- data.frame(round = integer(0), n = integer(0), ess = numeric(0),
     k = numeric(0), components = integer(0))
   for (it in 0:max_iter) {
@@ -1149,12 +1151,36 @@ imis_is <- function(parlp,
     # Once the size target is met, four more rounds to bring k under the bar
     # and no more: a k that stays high is a finding to report, and on a
     # Laplace model each round costs as much as the whole run did before.
+    #
+    # Where the weights would stop it, `recheck(samples, weights)` -- the
+    # caller's check of the answer against the density, `'checked'`'s Stein
+    # check (`.ctImisSteinRecheck()`) -- may return a component, list(mu, cov),
+    # where it finds the draws' mean off, and the rounds go on from it; NULL
+    # stops them. Twice at most.
+    stop_now <- FALSE
     if (ess_now >= target_ess) {
-      if (is.na(k_now) || k_now < kbar) break
-      if (is.na(ess_met)) ess_met <- it
-      if (it - ess_met >= 4L) break
+      stop_now <- is.na(k_now) || k_now < kbar
+      if (!stop_now) {
+        if (is.na(ess_met)) ess_met <- it
+        stop_now <- it - ess_met >= 4L
+      }
+    }
+    more <- NULL
+    if (stop_now) {
+      if (is.function(recheck) && nrecheck < 2L && it < max_iter && spent() < budget)
+        more <- recheck(samples, w_raw)
+      if (is.null(more)) break
+      nrecheck <- nrecheck + 1L
+      ess_met <- NA_integer_
     }
     if (it == max_iter || spent() >= budget) break
+    if (!is.null(more)) {
+      cc <- safe_pd(more$cov * tail_scale^2)
+      if (!is.null(cc) && all(is.finite(more$mu))) {
+        comp_mu[[length(comp_mu) + 1L]] <- as.numeric(more$mu)
+        comp_cov[[length(comp_cov) + 1L]] <- cc
+      }
+    }
 
     ## ---------- add a component at the top-weighted draws ------------------
     top_idx <- w_raw > stats::quantile(w_raw, 0.9)
@@ -1162,9 +1188,9 @@ imis_is <- function(parlp,
     cc <- safe_pd(diagis::weighted_var(
       samples[top_idx, , drop = FALSE], w_raw[top_idx]) * tail_scale^2)
     if (!is.null(cc)) {
-      comp_mu[[K + 1L]] <- diagis::weighted_mean(
+      comp_mu[[length(comp_mu) + 1L]] <- diagis::weighted_mean(
         samples[top_idx, , drop = FALSE], w_raw[top_idx])
-      comp_cov[[K + 1L]] <- cc
+      comp_cov[[length(comp_cov) + 1L]] <- cc
     }
     # And components where the draws say the proposal falls short, each moved
     # by a damped Newton step and shaped by the curvature there; see
@@ -1239,7 +1265,8 @@ imis_is <- function(parlp,
     cost         = spent(),
     rounds       = trace,
     paths        = if (is.null(pathinfo)) NULL else pathinfo[c("followed",
-      "gradients", "calls", "reachesLimit", "limit")])
+      "gradients", "calls", "reachesLimit", "limit")],
+    rechecks     = nrecheck)
 }
 
 # =============================================================================
