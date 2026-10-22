@@ -1096,7 +1096,12 @@ end
 # L-BFGS's model of what was left exceeded the tolerance, stages climbed on
 # along AnomAuth's flat directions where the full sum's own gap rule had
 # stopped it, 8-14 log units up an over-credited Laplace term, and the
-# certification paid twice the fit's cost to come back.
+# certification paid twice the fit's cost to come back. Nor is one entered
+# after a full iteration that gained less than the tolerance: stages are for
+# climbing. Entered after every full iteration on bigre's collapsed-sd plateau
+# from a refit start, stage after stage drifted along the sd, flat for the full
+# objective, wherever its coreset's error pointed, from raw -2 to -9.5, and the
+# fit ended there, 7.8 below the optimum the full sum reached.
 #
 # Looking for a coreset backs off: after a search that found none, the next
 # waits twice as many full iterations as the last wait, and one that finds one
@@ -1179,7 +1184,9 @@ stage is carried on from one that gained less than it an iteration (`gap_tol`,
 set by `ctsem_optimize`); per parameter, the farthest the training points lie
 from where the stage began (`reach`), which the stage may not pass; and the
 accepted iterations so far, full or not (`seen`), with the one each stage
-began after (`starts`), which places the stages on the run's trace.
+began after (`starts`), which places the stages on the run's trace; and the
+full objective's value at the last full point (`f_last`, minimised), from
+which a full iteration's gain is measured.
 """
 mutable struct CTSEMCoresetPlan
     full::CTSEMLaplaceObjective
@@ -1221,6 +1228,7 @@ mutable struct CTSEMCoresetPlan
     reach::Vector{Float64}
     seen::Int
     starts::Vector{Int}
+    f_last::Float64
 end
 
 """
@@ -1244,7 +1252,7 @@ function _ctsem_coreset_plan(L::CTSEMLaplaceObjective, fg!, store)
         Vector{Float64}[], Matrix{Float64}[], Vector{Float64}[], false, nothing,
         Float64[], NaN, Float64[], 0.0, 0, _CTSEM_CORESET_FIRST_STAGE, 0.0, 0,
         0, Int[], Float64[], Int[], Int[], Float64[], 0, 0, 0, 0, 0.0, 0,
-        0.0, Float64[], 0.0, 0.0, Float64[], 0, Int[])
+        0.0, Float64[], 0.0, 0.0, Float64[], 0, Int[], NaN)
 end
 
 _ctsem_coreset_live(c) = c !== nothing && c.live
@@ -1606,10 +1614,11 @@ end
     _ctsem_coreset_step!(c, x, f, G, hmul, scale)
 
 After an accepted L-BFGS step to `x`, with value `f` and gradient `G` (of the
-minimised objective in force). On the full objective: keep the point, and look
-for a coreset (`_ctsem_coreset_choose`) once the full iterations since the
-last search number `wait`, which doubles after a search that finds none and
-is one after one that finds one. In a
+minimised objective in force). On the full objective: keep the point, and,
+where the step gained more than `gap_tol`, look for a coreset
+(`_ctsem_coreset_choose`) once the full iterations since the last search
+number `wait`, which doubles after a search that finds none and is one after
+one that finds one. In a
 stage: check it with a full gradient (`_ctsem_coreset_check!`) once it has run
 its planned iterations, once what L-BFGS's model says is left to gain on the
 coreset (`G' H G / 2`) is no more than the coreset's error, once its gradient
@@ -1628,7 +1637,10 @@ function _ctsem_coreset_step!(c::CTSEMCoresetPlan, x, f, G, hmul, scale)
     none = (act=:none, x=x, f=f, G=G)
     c.seen += 1
     if !c.live
+        gained = isfinite(c.f_last) ? c.f_last - f : Inf
+        c.f_last = f
         _ctsem_coreset_record!(c, x, G) || return none
+        gained > c.gap_tol || return none
         c.since += 1
         c.since >= c.wait || return none
         c.since = 0
@@ -1710,8 +1722,10 @@ function _ctsem_coreset_check!(c::CTSEMCoresetPlan, x, fc, Gc, hmul, scale;
     c.bought[end] = fidelity
     if !ok || ff > c.f0
         c.reverted += 1
+        c.f_last = c.f0
         return (act=:revert, x=c.x0, f=c.f0, G=c.G0)
     end
+    c.f_last = ff
     paid = n * fidelity > n * c.shares[end] + 1
     if !leave && paid && actual > c.gap_tol * max(n, 1)
         stretch = 2c.stretch
