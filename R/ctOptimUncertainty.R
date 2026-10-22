@@ -2983,7 +2983,11 @@ ctOptimFitLpgFunc <- function(fit, cores=1){
 #' proposal components' t degrees of freedom; \code{Inf} for normal),
 #' \code{isESS = 200}, and \code{isitersize = 1000} (100 for
 #' \code{'checked'}). \code{imisBudget} caps the log density evaluations
-#' importance sampling spends (no cap by default). On a Laplace fit (julia),
+#' importance sampling spends (no cap by default). \code{imisComplement = TRUE}
+#' (\code{'checked'}) weighs the sampled directions with the others integrated
+#' over rather than held at the centre: right where the others' spread moves
+#' with them, as a large covariance's scale does, at two to seven times the
+#' evaluations. On a Laplace fit (julia),
 #' importance sampling
 #' evaluates a weighted subset of the units chosen and checked as it runs, and
 #' corrects its weights where that subset strays; \code{coreset = FALSE}
