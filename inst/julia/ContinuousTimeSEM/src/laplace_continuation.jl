@@ -567,7 +567,7 @@ function _continuation_draw!(D::_ContinuationDraws, laplace::CTSEMLaplaceObjecti
     npar = length(theta)
     hs = fill(-Inf, m)
     placed = [CTSEMFixedRule[] for _ in 1:(isempty(kids) ? 0 : m)]
-    _laplace_parallel(laplace, 1:m) do j
+    score = function (j)
         # `local` throughout, as in `_continuation_flagged`.
         local uj, aws, inner, r
         uj = copy(u)
@@ -597,6 +597,10 @@ function _continuation_draw!(D::_ContinuationDraws, laplace::CTSEMLaplaceObjecti
         hs[j] = isfinite(inner) ? inner : -Inf
         return true
     end
+    # Below 64 member evaluations on this thread, as `_continuation_block_rule`
+    # places its nodes.
+    m * length(block.members) >= 64 ? _laplace_parallel(score, laplace, 1:m) :
+        foreach(score, 1:m)
     D.points = hcat(D.points, X)
     append!(D.origin, fill(component, m))
     append!(D.h, hs)
@@ -1029,31 +1033,43 @@ function _continuation_block_rule(laplace::CTSEMLaplaceObjective, U::Integer,
         constant = nsoft * (log(2) - log(2 * pi)) / 2 - sum(log, lsoft; init=0.0) / 2
     end
     n = size(points, 2)
-    children = Vector{Vector{CTSEMFixedRule}}()
-    terms = Vector{Float64}(undef, n)
-    for j in 1:n
-        @inbounds for (t, c) in enumerate(columns); u[c] = points[t, j]; end
+    # In parallel over the nodes, each on its own copy of `u`, as an importance
+    # rule's draws are (`_continuation_draw!`): a nested unit whose outer block
+    # holds 125 nodes, each placing every member's rule beneath it, was placed
+    # on one thread whenever it was the only unit being placed. Not below 64
+    # member evaluations (`_continuation_ranges`' bar): a region opened for
+    # every small block made test_continuation.jl three times slower.
+    children = [CTSEMFixedRule[] for _ in 1:(leaf ? 0 : n)]
+    terms = fill(-Inf, n)
+    npar = length(theta)
+    place_node = function (j)
+        # `local` throughout, as in `_continuation_flagged`.
+        local uj, awsj, inner, placed
+        uj = copy(u)
+        @inbounds for (t, c) in enumerate(columns); uj[c] = points[t, j]; end
+        awsj = _laplace_workspace!(laplace, Float64, npar)
         inner = 0.0
         if leaf
             for m in block.members
-                shifted = _laplace_member_values(theta, laplace.spec, Ls, u,
-                    laplace.units.offsets[U][m])
-                inner += _laplace_member_loglik(aws, laplace.objective.subject_objectives[
-                    laplace.units.members[U][m]], shifted)
+                inner += _laplace_member_loglik(awsj, laplace.objective.subject_objectives[
+                    laplace.units.members[U][m]], _laplace_member_values(theta,
+                    laplace.spec, Ls, uj, laplace.units.offsets[U][m]))
             end
         else
-            kidrules = CTSEMFixedRule[]
             for c in kids
-                placed = _continuation_block_rule(laplace, U, theta, Ls, c, u,
-                    context, aws, opts)
-                placed === nothing && return nothing
-                push!(kidrules, placed.rule)
+                placed = _continuation_block_rule(laplace, U, theta, Ls, c, uj,
+                    context, awsj, opts)
+                placed === nothing && return false
+                push!(children[j], placed.rule)
                 inner += placed.value
             end
-            push!(children, kidrules)
         end
         terms[j] = isfinite(inner) ? inner + logweights[j] : -Inf
+        return true
     end
+    placed_all = n * length(block.members) >= 64 ?
+        _laplace_parallel(place_node, laplace, 1:n) : all(place_node, 1:n)
+    placed_all || return nothing
     peak = maximum(terms)
     isfinite(peak) || return nothing
     value = peak + log(sum(t -> exp(t - peak), terms)) + constant
