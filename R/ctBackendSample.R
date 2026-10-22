@@ -759,9 +759,11 @@
 # with another method. The marginal sampler starts from the posterior the check
 # expects (`.ctBackendSampleMetric()`), which the Hessian alone is not. The check
 # costs a few hundred gradients, a small share of a sampler's thousands. On a
-# 75-parameter time series (one subject, six coupled processes), NUTS from it
-# reached min ESS 101 in 25 minutes (scripts/gsm-uncertainty-2026-10/
-# nuts_metric_ts.R, dev1).
+# 75-parameter time series (one subject, six coupled processes) the check took
+# 5 s and named 67 directions, and in 25 minutes of NUTS from it two runs
+# reached min ESS 48 and 101, against 28 from the Hessian's metric
+# (scripts/gsm-uncertainty-2026-10/nuts_default_ts.R and nuts_metric_ts.R,
+# dev1).
 #
 # A fit rescued by frozen draws keeps its Hessian: its objective jumps where the
 # check would look, which is why ctFit() does not run 'checked' on it.
