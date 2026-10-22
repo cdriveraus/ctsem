@@ -140,8 +140,9 @@ first batch of `draws = 256`, doubling, to a standard error of `draws_se =
 0.019 nats over four seeds and constant along the fold to 1e-3, and its
 directional derivative within 1e-4 of its own differences. `draws_max = 16384`
 is cost: a gradient is one reverse sweep per member per draw. Every component
-but the prior is a Student t on `draws_df = 4` degrees of freedom
-(`CTSEMImportanceComponent` says why); `Inf` makes them Gaussian.
+but the prior of a unit's top block is a Student t on `draws_df = 4` degrees
+of freedom (`CTSEMImportanceComponent` says why); `Inf` makes them Gaussian,
+as the blocks beneath another are.
 """
 
 using LinearAlgebra
@@ -455,10 +456,12 @@ vecs'` -- the block's precision at the centre, its eigenvalues floored -- and
 component is. A t, because a Gaussian proposal at a posterior's mode is
 lighter-tailed than the posterior, and every replicate lattice misses the
 same tail: on the bench's gA1 the rule stopped on its replicates' spread read
-0.6 to 1.0 nats low over 40 units with the spread saying 0.1
-(review/LAPLACE-frozen-draws-validation-2026-10-22.md). A t's tails cover
-what a Gaussian's cannot, at a bounded cost in effective draws where the
-posterior is Gaussian after all.
+0.6 to 1.0 nats low over 40 units with the spread saying 0.1, 0.2 to 0.35 on
+the t at the same draws (review/LAPLACE-frozen-draws-validation-2026-10-22.md).
+A t's tails cover what a Gaussian's cannot, at a cost in effective draws
+where the posterior is Gaussian after all. Only a unit's top block takes it;
+blocks beneath another keep Gaussian components (`_continuation_importance_rule`
+says why).
 """
 struct CTSEMImportanceComponent
     mu::Vector{Float64}
@@ -772,7 +775,9 @@ end
     _continuation_outer_components(M, blocks, children, mode, floor, df)
 
 The first component of every outer block's proposal, `nothing` for a leaf: a
-Gaussian at the unit's mode on the block's precision once every block beneath
+t on `df` degrees of freedom for a block with nothing above it, a Gaussian
+beneath another (`_continuation_importance_rule` says why), at the unit's
+mode on the block's precision once every block beneath
 it is eliminated, its eigenvalues floored at `floor`. The elimination is the
 block factorization's (`_laplace_block_factor`, innermost first), each block
 eliminated with its precision's eigenvalues clipped at the prior's, as the
@@ -800,7 +805,7 @@ function _continuation_outer_components(M::CTSEMBlockMatrix{Float64},
         if !isempty(children[b])
             columns = (blocks[b].offset + 1):(blocks[b].offset + blocks[b].size)
             out[b] = CTSEMImportanceComponent(mode[columns], Matrix(E.vectors),
-                max.(E.values, floor), df)
+                max.(E.values, floor), isempty(blocks[b].ancestors) ? df : Inf)
         end
         ancestors = blocks[b].ancestors
         isempty(ancestors) && continue
@@ -983,7 +988,18 @@ function _continuation_importance_rule(laplace::CTSEMLaplaceObjective, U::Intege
     columns = (block.offset + 1):(block.offset + k)
     leaf = isempty(context.children[b])
     floor = Float64(opts.draws_floor)
-    df = Float64(opts.draws_df)
+    # A t only at the top of a unit. A block beneath another takes small
+    # batches and stops on its weights' spread, and with a t's variable
+    # weights -- large where the draws sit in the core, small in the tails it
+    # samples -- that stopping picks the batches whose draws sit where the
+    # weights are largest: on the linear nested fixtures, where Laplace is
+    # exact, t leaves read 0.03 to 0.12 nats high at 3 to 16 standard errors,
+    # unchanged by more draws, and Gaussian ones within their error. The top
+    # block's first batch is 256 and its replicates' spread rules, where the
+    # same selection is slight; and the SNSF study unit's t top block doubled
+    # its draws for a stiff, near-Gaussian block (section 11 of the shoulders
+    # note), which is the t's price there.
+    df = isempty(path) ? Float64(opts.draws_df) : Inf
     joint = Float64[context.mode[c] for c in columns]
     comps = CTSEMImportanceComponent[]
     fns = nothing
@@ -1515,36 +1531,20 @@ const _CONTINUATION_STATE = (:rest, :rest_units, :flagged, :rules, :centre,
 
 """
     ctsem_laplace_continuation_recentre!(o, values; force=nothing,
-        point_units=nothing, point_values=nothing, draws=nothing,
-        draws_se=nothing, draws_max=nothing)
+        point_units=nothing, point_values=nothing)
 
 Re-place `o`'s nodes at `values`: every unit is scored again, the flagged set
 grows by any unit whose gap now matters and by any `force` names -- it never
 shrinks, so no later round loses a unit an earlier one was scored on -- and
 every flagged unit's rule moves to its mode and curvature there, an importance
-rule drawing afresh with the points it knows and any given here. `draws`,
-`draws_se` and `draws_max` given here replace the importance rule's from now
-on: a fit rescued from a jump climbs on a coarse rule and places the full one
-before its finish (`.ctLaplaceFrozenRescue()`). The placement it replaces is
-kept for `ctsem_laplace_continuation_revert!`. Returns
+rule drawing afresh with the points it knows and any given here. The placement
+it replaces is kept for `ctsem_laplace_continuation_revert!`. Returns
 `ctsem_laplace_continuation_info`.
 """
 function ctsem_laplace_continuation_recentre!(o::CTSEMLaplaceContinuation,
-    values::AbstractVector; force=nothing, point_units=nothing, point_values=nothing,
-    draws=nothing, draws_se=nothing, draws_max=nothing)
+    values::AbstractVector; force=nothing, point_units=nothing, point_values=nothing)
     o.previous = NamedTuple{_CONTINUATION_STATE}(
         Tuple(getfield(o, f) for f in _CONTINUATION_STATE))
-    if draws !== nothing
-        draws >= 0 || throw(ArgumentError("draws must be at least zero"))
-        o.draws = Int(draws)
-    end
-    if draws_se !== nothing
-        draws_se > 0 || throw(ArgumentError("draws_se must be positive"))
-        o.draws_se = Float64(draws_se)
-    end
-    if draws_max !== nothing
-        o.draws_max = max(Int(draws_max), o.draws)
-    end
     _continuation_add_points!(o, point_units, point_values)
     _continuation_force!(o, force)
     _continuation_place!(o, _laplace_extend(o.laplace, collect(Float64, values)))
@@ -2902,7 +2902,6 @@ function ctsem_laplace_continuation_info(o::CTSEMLaplaceContinuation)
         for rule in o.rules; init=0)
     return (flagged=isempty(o.flagged) ? [0] : copy(o.flagged),
         nflagged=length(o.flagged), nunits=nunits,
-        unit_members=[length(members[U]) for U in 1:nunits],
         screen=_continuation_screen(gaps, o.centre_se),
         gap=sum(gaps[isfinite.(gaps)]; init=0.0),
         bar=isempty(flaggedgaps) ? 0.0 : minimum(flaggedgaps),

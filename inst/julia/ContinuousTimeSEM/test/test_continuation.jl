@@ -540,29 +540,12 @@ end
             force=1:length(laplace.units.members))
         info = ctsem_laplace_continuation_info(o)
         for U in 1:info.nunits
-            @test abs(info.quadrature_units[U] - reference.unit_loglik[U]) <
-                4 * info.centre_se[U] + 1e-3
+            @test (df, U, abs(info.quadrature_units[U] - reference.subject_loglik[U]) <
+                4 * info.centre_se[U] + 1e-3) == (df, U, true)
         end
     end
     @test_throws ArgumentError ctsem_laplace_continuation(laplace, theta;
         maxdim=2, draws=256, draws_df=0)
-end
-
-@testset "a placement again may change the draws' target" begin
-    laplace, values = _fresh_2d3()
-    theta = collect(Float64, values)
-    nunits = length(laplace.units.members)
-    o = ctsem_laplace_continuation(laplace, theta; tolerance=0.0, maxdim=2,
-        draws=64, draws_max=64, draws_se=0.3, force=1:nunits)
-    coarse = ctsem_laplace_continuation_info(o)
-    @test coarse.importance_draws == 64 * nunits
-    @test coarse.unit_members == [length(m) for m in laplace.units.members]
-    full = ctsem_laplace_continuation_recentre!(o, theta; draws=256,
-        draws_max=1024, draws_se=0.02)
-    @test (o.draws, o.draws_max, o.draws_se) == (256, 1024, 0.02)
-    @test full.importance_draws >= 256 * nunits
-    @test full.nflagged == nunits
-    @test ctsem_laplace_unit_members(laplace) == coarse.unit_members
 end
 
 @testset "a unit named is flagged whatever its gap, and screen = false scores it alone" begin
@@ -673,6 +656,8 @@ _fresh_nested_nonlinear() = (ctsem_laplace_objective(_LAPLACE_NONLINEAR_OBJECTIV
     [0.1, 0.4, -0.2, 0.05, -0.25, 1.5, 0.2, -0.3])
 
 @testset "a nested unit wider than maxdim gets frozen draws per block" begin
+    # At the default `draws_df`: a t at the top block and Gaussians beneath.
+    # A t beneath read 0.03-0.12 nats high here (`_continuation_importance_rule`).
     for (label, fresh, draws, draws_max) in (
             ("two levels", _fresh_twolevel, 64, 4096),
             # Draws at three levels multiply: one batch of 32 at each.

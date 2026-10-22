@@ -609,17 +609,16 @@ print.ctLaplaceCorrection <- function(x, ...) {
 # `draws_df` (4) is the degrees of freedom of the proposal's components, a
 # Student t whose tails cover what a Gaussian's at the mode missed (0.6 to 1.0
 # nats over gA1's 40 units with the replicates' spread saying 0.1), `Inf` for
-# Gaussian. `frozen_rounds` (10) bounds the placements a fit rescued from a
-# jump makes (`.ctLaplaceFrozenRescue()`), as `rounds` bounds the correction's,
-# and `climb_se` (0.2) is the coarse target its climb's draws aim at before the
-# full one is placed for the finish (`.ctLaplaceClimbControl()`).
+# Gaussian; only a unit's top block takes it. `frozen_rounds` (10) bounds the
+# placements a fit rescued from a jump makes (`.ctLaplaceFrozenRescue()`), as
+# `rounds` bounds the correction's.
 .ctLaplaceContinueDefaults <- list(nodes = 5L, tolerance = 0.01,
   product_maxdim = 2L, soft_tau = 3.5, soft_maxdirs = 2L, rounds = 10L,
   attempts = 15L, radius = 1, radius_max = 16, maxiter = 100L,
   material = 0.1, guard = 50, guard_per_subject = 0.5, rtol = 1e-8,
   value_tol = 1e-3, maxdim = 5L, stop_gain = 0, skip_gain = 5e-3,
   draws = 256L, draws_se = 0.05, draws_max = 16384L, draws_df = 4,
-  draws_scope = "forced", frozen_rounds = 10L, climb_se = 0.2)
+  draws_scope = "forced", frozen_rounds = 10L)
 
 # The engine arguments of a continuation built under `control`: the product
 # rules' constants, the frozen importance rule's for units too wide for one
@@ -683,14 +682,15 @@ print.ctLaplaceCorrection <- function(x, ...) {
 # at (`ctsem_laplace_continuation_se`), or `frozen_rounds` placements are
 # spent. Not on a run's gain, since fresh draws move the value by their own
 # error (0.055 nats at one point on the round-9 stall) and that rule chased it.
-# The climb runs on a coarse rule whose cost a gradient is bounded
-# (`.ctLaplaceClimbControl()`): a named unit on the full rule costs 50-100
-# Laplace units a gradient, and nothing of a climb needs the value to 0.05
-# nats. Intermediate runs take no finish; once the climb settles the full rule
-# is placed there and the last run takes the fit's own finish on it, on the
-# hybrid's exact Hessian, so the certification reads that. Past a quarter of
-# the units named the fit warns (`.ctLaplaceFrozenShareWarn()`): it is a slow
-# sampler by then. Returns the last run's result with `frozen`: the
+# Every run climbs on the full rule. A coarse rule for the climb, placed in
+# full before the finish, was tried and cost more: the finish re-converged on
+# the full rule (91 L-BFGS iterations against 2 on the round-9 stall), while a
+# named unit's draws are cheap beside the other units' inner solves (2048
+# draws of one member about a dozen Laplace units a gradient there, 600 about
+# three). Intermediate runs take no finish; the last takes the fit's own, on
+# the hybrid's exact Hessian, so the certification reads that. Past a quarter
+# of the units named the fit warns (`.ctLaplaceFrozenShareWarn()`). Returns
+# the last run's result with `frozen`: the
 # units, the placements, the units each jump named, and the rules' standard
 # errors and draws at the last placement. The input result unchanged when
 # there is nothing to rescue or the hybrid cannot be built.
@@ -707,16 +707,12 @@ print.ctLaplaceCorrection <- function(x, ...) {
   points_of <- function(run) list(units = as.integer(run$jump_point_units),
     values = run$jump_point_values)
   x <- as.numeric(result$minimizer)
-  members <- as.integer(.ctBackendJuliaValue(
-    module$ctsem_laplace_unit_members(objective)))
-  climb <- .ctLaplaceClimbControl(control, members, units)
-  warned <- .ctLaplaceFrozenShareWarn(units, length(members), FALSE)
   message(sprintf(paste0("Laplace: the objective jumped at %s %s; integrating ",
     "%s by frozen draws from here."), if (length(units) == 1L) "unit" else "units",
     paste(units, collapse = ", "), if (length(units) == 1L) "it" else "them"))
   cont <- try(do.call(module$ctsem_laplace_continuation,
     c(list(objective, .ctJuliaNumericVector(x)),
-      .ctLaplaceContinuationArgs(climb, force = units, points = points_of(result),
+      .ctLaplaceContinuationArgs(control, force = units, points = points_of(result),
         screen = FALSE))), silent = TRUE)
   if (inherits(cont, "try-error")) {
     warning("Frozen draws could not be placed (", .ctLaplaceTryReason(cont),
@@ -733,7 +729,8 @@ print.ctLaplaceCorrection <- function(x, ...) {
   # The rules' standard errors at their last placement, in the order of
   # `flagged`, as `ctsem_laplace_continuation_se` reports them.
   placed_of <- function(info = info_of()) as.numeric(info$centre_se)[flagged_of(info)]
-  untaken <- setdiff(units, flagged_of())
+  info <- info_of()
+  untaken <- setdiff(units, flagged_of(info))
   if (length(untaken)) {
     warning(sprintf(paste0("The fit stops where the objective jumped: frozen ",
       "draws could not be placed for unit%s %s."),
@@ -741,6 +738,8 @@ print.ctLaplaceCorrection <- function(x, ...) {
       call. = FALSE)
     return(result)
   }
+  nunits <- as.integer(info$nunits)
+  warned <- .ctLaplaceFrozenShareWarn(units, nunits, FALSE)
   spent <- .ctJuliaRunCounts(result)
   # The stages before the last take no finish and no overshoot probe: each is
   # followed by another placement, and on the hybrid a probe's pullbacks cost
@@ -751,29 +750,13 @@ print.ctLaplaceCorrection <- function(x, ...) {
     "newton_hessian", "newton_hessian_at", "lbfgs_inverse")) plain[[nm]] <- NULL
   finish <- utils::modifyList(plain, list(newton = isTRUE(args$newton),
     certify = isTRUE(args$certify), overshoot_probe = args$overshoot_probe))
+  target <- as.numeric(.ctJuliaOr(control$draws_se, 0.05))
   maxrounds <- as.integer(.ctJuliaOr(control$frozen_rounds, 10L))
   jumps <- list(units)
   run <- NULL
   placements <- 1L
-  placed <- placed_of()
+  placed <- placed_of(info)
   last <- FALSE
-  # The full rule, placed where the climb settled, for the finish and the
-  # certification's Hessian. On failure the finish runs on the climb's.
-  fullplace <- function() {
-    replaced <- try(do.call(module[["ctsem_laplace_continuation_recentre!"]],
-      list(cont, .ctJuliaNumericVector(x), draws = as.integer(control$draws),
-        draws_se = as.numeric(.ctJuliaOr(control$draws_se, 0.05)),
-        draws_max = as.integer(.ctJuliaOr(control$draws_max, 16384L)))),
-      silent = TRUE)
-    if (inherits(replaced, "try-error")) {
-      warning("The frozen draws could not be placed at their full target (",
-        .ctLaplaceTryReason(replaced), "); the finish runs on the climb's.",
-        call. = FALSE)
-      return(invisible(FALSE))
-    }
-    placements <<- placements + 1L
-    invisible(TRUE)
-  }
   repeat {
     staged <- try(get(do.call(module$ctsem_optimize,
       c(list(cont, .ctJuliaNumericVector(x)), if (last) finish else plain))),
@@ -795,16 +778,17 @@ print.ctLaplaceCorrection <- function(x, ...) {
         module$ctsem_laplace_continuation_se(cont, .ctJuliaNumericVector(x)))),
         silent = TRUE)
       # Draws that cannot be weighed there are placed again, as drifted ones:
-      # a rule whose error has grown past twice what it was placed at.
+      # a rule whose error has grown past twice what it was placed at, or
+      # twice the target where `draws_max` held it above that.
       if (!inherits(se, "try-error") && length(se) == length(placed) &&
-          all(is.finite(se)) && all(se <= 2 * pmax(placed, climb$draws_se))) {
-        fullplace()
+          all(is.finite(se)) && all(se <= 2 * pmax(placed, target))) {
+        # One more run, from the point these draws settled at, with the finish
+        # and the certification's Hessian.
         last <- TRUE
         next
       }
     }
     if (placements >= maxrounds) {
-      fullplace()
       last <- TRUE
       next
     }
@@ -812,20 +796,17 @@ print.ctLaplaceCorrection <- function(x, ...) {
       jumps[[length(jumps) + 1L]] <- more
       message(sprintf("Laplace: the objective jumped at unit%s %s too.",
         if (length(more) == 1L) "" else "s", paste(more, collapse = ", ")))
-      named <- sort(unique(unlist(jumps)))
-      climb <- .ctLaplaceClimbControl(control, members, named)
-      warned <- .ctLaplaceFrozenShareWarn(named, length(members), warned)
+      warned <- .ctLaplaceFrozenShareWarn(sort(unique(unlist(jumps))), nunits,
+        warned)
     }
     replaced <- try(do.call(module[["ctsem_laplace_continuation_recentre!"]],
-      c(list(cont, .ctJuliaNumericVector(x), draws = as.integer(climb$draws),
-        draws_max = as.integer(climb$draws_max)),
-        if (jumped && length(more)) .ctLaplaceContinuationArgs(climb,
+      c(list(cont, .ctJuliaNumericVector(x)),
+        if (jumped && length(more)) .ctLaplaceContinuationArgs(control,
           force = more, points = points_of(run))[c("force", "point_units",
           "point_values")] else list())), silent = TRUE)
     if (inherits(replaced, "try-error")) {
       warning("Frozen draws could not be placed again (",
         .ctLaplaceTryReason(replaced), ").", call. = FALSE)
-      fullplace()
       last <- TRUE
       next
     }
@@ -845,36 +826,16 @@ print.ctLaplaceCorrection <- function(x, ...) {
   flagged <- flagged_of(info)
   run$frozen <- list(units = flagged, placements = placements, jumps = jumps,
     se = as.numeric(info$centre_se)[flagged],
-    draws = as.integer(info$importance_draws),
-    climb = list(se = climb$draws_se, draws_max = climb$draws_max))
+    draws = as.integer(info$importance_draws))
   .ctJuliaAddRunCounts(run, spent)
 }
 
-# The importance rule a rescued fit climbs on: `climb_se` (0.2 nats) its
-# target, and its `draws_max` capped so that the named units add at most the
-# Laplace gradient's own cost to each gradient. A Laplace unit's gradient is
-# about 15 sweeps a member (10-20 on the bench, most of it the inner solves);
-# a unit on draws costs one a member a draw. So each named unit may take
-# `15 * members / named members` draws, at least 64 (eight a replicate
-# lattice) and at most `draws_max`. The full rule is placed before the finish
-# (`.ctLaplaceFrozenRescue()`), and the correction places it again.
-.ctLaplaceClimbControl <- function(control, members, units) {
-  members <- as.integer(members)
-  named <- sum(members[units[units >= 1L & units <= length(members)]])
-  cap <- floor(15 * sum(members) / max(named, 1L))
-  cap <- as.integer(min(max(cap, 64), as.integer(.ctJuliaOr(control$draws_max,
-    16384L))))
-  climb <- control
-  climb$draws_se <- as.numeric(.ctJuliaOr(control$climb_se, 0.2))
-  climb$draws_max <- cap
-  climb$draws <- as.integer(min(as.integer(.ctJuliaOr(control$draws, 256L)), cap))
-  climb
-}
-
-# Warns, once, when more than a quarter of the units are integrated by draws:
-# each costs about as much a gradient as 50-100 Laplace units, so past that
-# share the fit is a slow sampler of its own, and sampling the posterior
-# (`optimize = FALSE`) is the honest route. Returns whether it has warned.
+# Warns, once, when more than a quarter of the units are integrated by draws.
+# A unit on draws costs about a dozen Laplace units a gradient (2048 draws of
+# one member against the inner solves of 40 units on the round-9 fit, local),
+# so past that share each gradient is several times the Laplace route's, and
+# sampling the posterior (`optimize = FALSE`) is the honest route. Returns
+# whether it has warned.
 .ctLaplaceFrozenShareWarn <- function(units, nunits, warned) {
   if (isTRUE(warned) || nunits < 4L || length(units) <= 0.25 * nunits) {
     return(isTRUE(warned))
