@@ -284,6 +284,11 @@ mutable struct CTSEMLaplaceContinuation{L} <: CTSEMOptimisable
     # ord4's took. Both cleared by every placement.
     cache::Any
     value_cache::Any
+    # The curvature the last `ctsem_optimize` run on this objective ended with,
+    # for the next to start from (`lbfgs_pairs = :objective`): a rescued fit's
+    # stages, one after each placement. Kept across placements, which change
+    # the objective but not its coordinates.
+    lbfgs::Union{Nothing,CTSEMLBFGSMemory}
 end
 
 """Gauss-Hermite grids a rule of these options can ask for, filled before any
@@ -1485,7 +1490,7 @@ function ctsem_laplace_continuation(laplace::CTSEMLaplaceObjective,
         zeros(nunits),
         fill(false, nunits), Bool(screen), Symbol(draws_scope), Int[],
         fill(NaN, nunits), fill(NaN, nunits), fill(false, nunits), NaN, nothing,
-        0, 0, 0, 0, 0, 0, 0.0, 0.0, 0.0, 0.0, nothing, nothing)
+        0, 0, 0, 0, 0, 0, 0.0, 0.0, 0.0, 0.0, nothing, nothing, nothing)
     _continuation_add_points!(o, point_units, point_values)
     _continuation_force!(o, force)
     _continuation_place!(o, theta)
@@ -1972,10 +1977,13 @@ end
 _ctsem_optimise_label(::CTSEMLaplaceContinuation) = "Laplace continuation"
 # The finish walks the hybrid on its own Hessian, as it walks the Laplace
 # objective, where the optimiser takes the hybrid whole (a fit rescued from a
-# jump, `.ctLaplaceFrozenRounds()`): chord, at the cost of the Laplace part's
+# jump, `.ctLaplaceFrozenRescue()`): chord, at the cost of the Laplace part's
 # differences.
 _ctsem_finish_curvature(::CTSEMLaplaceContinuation) = :chord
 _ctsem_hessian_cost(::CTSEMLaplaceContinuation, npar::Integer) = 2 * Int(npar)
+_ctsem_lbfgs_held(o::CTSEMLaplaceContinuation) = o.lbfgs
+_ctsem_lbfgs_hold!(o::CTSEMLaplaceContinuation, memory::CTSEMLBFGSMemory) =
+    (o.lbfgs = memory; nothing)
 ctsem_hessian(o::CTSEMLaplaceContinuation, values::AbstractVector;
     chunk::Integer=0, progress=nothing) = ctsem_laplace_continuation_hessian(o, values)
 _ctsem_params(o::CTSEMLaplaceContinuation) = _ctsem_params(o.laplace)

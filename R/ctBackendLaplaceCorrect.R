@@ -687,7 +687,13 @@ print.ctLaplaceCorrection <- function(x, ...) {
 # the full rule (91 L-BFGS iterations against 2 on the round-9 stall), while a
 # named unit's draws are cheap beside the other units' inner solves (2048
 # draws of one member about a dozen Laplace units a gradient there, 600 about
-# three). Intermediate runs take no finish; the last takes the fit's own, on
+# three). Each run after the first starts L-BFGS from the curvature pairs the
+# run before it ended with, which the hybrid keeps (`lbfgs_pairs =
+# "objective"`): a placement changes the objective a little and its
+# coordinates not at all. On the round-9 stall a run after a placement took 37
+# iterations from them against 76 cold, to the same point, 0.17 nats up and
+# 0.13 raw away along the fit's flat directions.
+# Intermediate runs take no finish; the last takes the fit's own, on
 # the hybrid's exact Hessian, so the certification reads that. Past a quarter
 # of the units named the fit warns (`.ctLaplaceFrozenShareWarn()`). Returns
 # the last run's result with `frozen`: the
@@ -745,7 +751,7 @@ print.ctLaplaceCorrection <- function(x, ...) {
   # followed by another placement, and on the hybrid a probe's pullbacks cost
   # minutes (18 sets at about 30 s on the round-9 stall).
   plain <- utils::modifyList(args, list(batch = FALSE, newton = FALSE,
-    certify = FALSE, overshoot_probe = "off"))
+    certify = FALSE, overshoot_probe = "off", lbfgs_pairs = "objective"))
   for (nm in c("sgd", "saem", "saem_maxiter", "saem_seed", "saem_proposal",
     "newton_hessian", "newton_hessian_at", "lbfgs_inverse")) plain[[nm]] <- NULL
   finish <- utils::modifyList(plain, list(newton = isTRUE(args$newton),

@@ -632,6 +632,61 @@ end
     @test named.point_units == [0]
 end
 
+# `_fresh_2d3` with a standard normal prior on every raw parameter. Without
+# one the scales run to zero, past raw 1e7, where Laplace is exact and no
+# placement moves the optimum.
+function _fresh_2d3_prior()
+    starts, times, data = _laplace_test_data(6, 2; seed=7)
+    prior = ctsem_objective(_CONTINUATION_2D_OBJECTIVE.params, starts, times, data;
+        prior_index=collect(1:12), prior_scale=ones(12))
+    return (ctsem_laplace_objective(prior, [1, 3, 5], [7, 8, 9], [10, 11, 12],
+        [1.0, 1.0, 1.0]), last(_fresh_2d3()))
+end
+
+@testset "a stage after a placement starts from the pairs the last one ended with" begin
+    # A rescued fit's stages (`.ctLaplaceFrozenRescue()`): one run on the
+    # hybrid, the draws placed again where it ended, and the next run from the
+    # curvature the first left on the objective (`lbfgs_pairs = :objective`).
+    # It reaches the cold run's point in fewer iterations (5 against 12 when
+    # written).
+    C = ContinuousTimeSEM
+    laplace, values = _fresh_2d3_prior()
+    theta = collect(Float64, values)
+    n = length(theta)
+    o = ctsem_laplace_continuation(laplace, theta; maxdim=2, draws=256,
+        draws_scope=:forced, force=[1, 2], screen=false)
+    stage(from; kw...) = C.ctsem_optimize(o, from; maxiter=500, g_tol=1e-6,
+        newton=false, certify=false, progress=false, verbose=false,
+        overshoot_probe=:off, kw...)
+    @test o.lbfgs === nothing
+    before = stage(theta; lbfgs_pairs=:objective)
+    held = o.lbfgs
+    @test held isa C.CTSEMLBFGSMemory
+    @test !isempty(held.S) && all(v -> length(v) == n, held.S)
+    x1 = collect(Float64, before.minimizer)
+    @test maximum(abs, x1) < 10
+    ctsem_laplace_continuation_recentre!(o, x1)
+    cold = stage(x1)
+    # A run that does not ask leaves the held pairs alone.
+    @test o.lbfgs === held
+    warm = stage(x1; lbfgs_pairs="objective")
+    @test o.lbfgs !== held
+    # The placement moved the optimum, so there was something to converge on.
+    @test cold.iterations > 2
+    @test warm.iterations < cold.iterations
+    @test isapprox(warm.maximum_loglik, cold.maximum_loglik; atol=1e-8)
+    @test isapprox(warm.minimizer, cold.minimizer; atol=1e-4)
+    # A memory for another number of parameters is refused, given or held.
+    bad = C.CTSEMLBFGSMemory(5)
+    @test C._ctsem_lbfgs_push!(bad, ones(n + 1), fill(2.0, n + 1))
+    @test_throws DimensionMismatch stage(x1; lbfgs_pairs=bad)
+    o.lbfgs = bad
+    @test_throws DimensionMismatch stage(x1; lbfgs_pairs=:objective)
+    @test_throws ArgumentError stage(x1; lbfgs_pairs=:elsewhere)
+    # And an objective that keeps none starts cold.
+    @test C._ctsem_lbfgs_held(laplace) === nothing
+end
+
 # --- nested units by frozen draws ---------------------------------------------
 #
 # A unit wider than `maxdim` whose block tree nests gets draws per block, each
