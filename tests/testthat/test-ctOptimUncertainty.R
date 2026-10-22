@@ -155,6 +155,38 @@ test_that("checked leaves the normal of a Gaussian posterior alone", {
   expect_equal(dim(drawn$samples), c(50L, 6L))
 })
 
+test_that("a proposal covariance that is not finite leaves the Hessian's normal, not a stopped fit", {
+  skip_if_not_installed('mvtnorm'); skip_if_not_installed('diagis')
+  skip_if_not_installed('gridExtra'); skip_if_not_installed('ggplot2')
+  # The sampler refuses it by name rather than stopping in eigen(): seen on a
+  # fit whose population sd collapsed on a flat raw scale (dev1).
+  target <- function(x) -0.5 * sum(x^2)
+  S <- diag(3); S[2, 2] <- Inf
+  expect_error(ctsem:::imis_is(target, mu_hat = rep(0, 3), Sigma_hat = S,
+    max_iter = 0, cl = NA, finishsamples = 10, verbose = FALSE,
+    diag_plots = FALSE), class = 'ctImisNonFinite')
+  # And the draws stage reports the Hessian's normal, with a warning.
+  set.seed(3)
+  P <- diag(6)
+  lpg <- function(x) {
+    out <- -0.5 * sum(x * (P %*% x))
+    attr(out, 'gradient') <- -as.numeric(P %*% x)
+    out
+  }
+  out <- ctsem:::ctOptimComputeUncertainty(rep(0, 6), list(nsubjects = 1),
+    sm = NULL, lpgFunc = lpg, uncertainty = 'hessian', finishsamples = 20,
+    verbose = 0)
+  local_mocked_bindings(.ctImisRun = function(...) stop(structure(
+    class = c('ctImisNonFinite', 'error', 'condition'),
+    list(message = "the starting proposal's covariance is not finite",
+      call = NULL))))
+  expect_warning(drawn <- ctsem:::.ctOptimDrawSamples(out, 'imis', list(),
+    rep(0, 6), 50, lpg = lpg), "Importance sampling could not run")
+  expect_identical(drawn$draws, 'normal')
+  expect_equal(dim(drawn$samples), c(50L, 6L))
+  expect_false(drawn$uncertaintyfit$details$importance_sampling$used)
+})
+
 test_that("checked centres its normal on the mean, not the mode", {
   # A Gaussian of 60 parameters whose normal has the widths wrong by up to 60%:
   # with far fewer draws than parameters the slopes are unresolved, and the
@@ -1111,6 +1143,31 @@ test_that("whitening carries a density's 'batch' attribute through the map", {
   expect_identical(calls_scalar, 0L)
   expect_identical(calls_batch, 6L)
   expect_true(is.finite(result$ess))
+})
+
+test_that("checked's sampler can weigh the sampled directions by their marginal", {
+  skip_if_not_installed('mvtnorm'); skip_if_not_installed('diagis')
+  skip_if_not_installed('gridExtra'); skip_if_not_installed('ggplot2')
+  # s ~ N(0, 1) and eight coordinates c | s ~ N(0, e^(a s)). The mode is at
+  # s = -4a: held at c = 0 there, s has the conditional N(-4a, 1); its
+  # marginal is N(0, 1), the volume the c's spread adds as s grows.
+  a <- 0.1
+  k <- 8L
+  lp <- function(x) -x[1]^2 / 2 - sum(x[-1]^2) * exp(-a * x[1]) / 2 - k * a * x[1] / 2
+  attr(lp, 'batch') <- function(X) apply(as.matrix(X), 1, lp)
+  mode <- c(-k * a / 2, rep(0, k))
+  cov <- diag(c(1, rep(exp(-k * a^2 / 2), k)))
+  run <- function(complement) withr::with_seed(5, ctsem:::.ctImisRun(lp, centre = mode,
+    cov = cov, directions = matrix(c(1, rep(0, k))), widths = 1, complement = complement,
+    max_iter = 50, scale_init = 1.5, tail_scale = 1.2, df = 5, target_ess = 1000,
+    n_batch = 500, cl = NA, finishsamples = 1000, paths = FALSE, verbose = FALSE,
+    diag_plots = FALSE))
+  held <- run(FALSE)
+  integrated <- run(TRUE)
+  expect_lt(abs(held$mean[1] + k * a / 2), 0.12)
+  expect_lt(abs(integrated$mean[1]), 0.12)
+  # The others' answer is the normal's either way.
+  expect_equal(diag(integrated$covariance)[-1], diag(cov)[-1])
 })
 
 test_that(".ctOptimImisDraws() reports which directions the subspace held", {

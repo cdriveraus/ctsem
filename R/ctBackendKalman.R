@@ -210,6 +210,12 @@
       module$ctsem_laplace_sequential(arguments[[1L]], .ctJuliaNumericVector(raw),
         compact = isTRUE(compact)))
     if (mixture) result$ess <- as.numeric(seq$ess)
+    # The Gaussian items' distribution functions under the mixture, for errors
+    # that are standard normal where the mixture is not (.ctAdequacyErrors).
+    if (mixture) {
+      result$pitgauss <- seq$pitgauss
+      result$pitseq <- seq$pitseq
+    }
     # Non-Gaussian items' distribution function bounds, from the same draws.
     if (mixture && !is.null(result$pitlower)) {
       result$pitlower <- seq$pitlower

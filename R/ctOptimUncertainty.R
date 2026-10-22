@@ -329,6 +329,82 @@ bootstrapHessian <- function(standata, sm, est, finishsamples, cores, scores=NUL
   wrapped
 }
 
+# `lpg` for `.ctImisRun(complement = TRUE)`: a density of the sampled
+# directions' whitened `z` that draws the rest of the coordinates from the
+# normal, `zeta ~ N(0, I)` through `C` with `C C'` the normal's covariance
+# outside `subspace$V`, and returns the full log density there plus
+# `|zeta|^2 / 2`, the rest's proposal density up to a constant. Its
+# exponential is an unbiased one-draw estimate of the density of `z` with the
+# rest integrated out, so `imis_is()`'s weights target the sampled
+# directions' marginal (pseudo-marginal importance sampling). The rest stays
+# the normal's draws, unweighted, as without: where the normal is right there
+# it is exact, and resampling it by weights would make it Monte Carlo (a 5-D
+# shell beside 25 exactly normal coordinates: their sds 0.86-0.93 at ESS
+# 200, against 1.00).
+#
+# Why. Weighed with the rest held at the centre, the sampled directions'
+# density is the conditional there, not the marginal: where the rest's widths
+# move with the sampled coordinates, the volume that movement adds is in
+# neither. On a 266-parameter Laplace fit with a 12-item population
+# covariance fitted at rank 4, the covariance's scale pulls the posterior mean
+# out 2 normal sds along the loadings' length (a covariance from n people in
+# p items has its mean about 2(p + 1)/n past its mode), and 'checked' left the
+# lengths at the mode's: the dimension 1-2 loadings' means a median 0.58 sds
+# from a SAEM reference whose draws pass the density's Stein identity, the
+# importance sampler's draws 29 standard errors from it
+# (scripts/gsm-uncertainty-2026-10/diag_stein_draws.R).
+#
+# The gradient (for the Newton components) is the conditional's, at the
+# rest's centre: it shapes the proposal, and the weights correct it. A
+# coreset's end check is handed its own values without the rest's share, so
+# its corrections are differences of the same density.
+.ctImisJointDensity <- function(lpg, centre, cov, subspace, rtol) {
+  A <- sweep(subspace$V, 2, sqrt(subspace$d), '*')
+  rest <- cov - tcrossprod(subspace$V)
+  er <- eigen((rest + t(rest)) / 2, symmetric = TRUE)
+  # Cut at the full normal's scale, not the rest's own: a direction the
+  # sampled ones already span leaves rounding in `rest`, and a coordinate
+  # that moves nothing makes its share of the weight, |zeta|^2 / 2,
+  # unbounded (a ring whose two directions were both named ran to 300
+  # rounds at Pareto k 1.2).
+  top <- max(eigen((cov + t(cov)) / 2, symmetric = TRUE, only.values = TRUE)$values)
+  keep <- er$values > rtol * top
+  C <- sweep(er$vectors[, keep, drop = FALSE], 2, sqrt(er$values[keep]), '*')
+  m <- ncol(C)
+  drawn <- new.env()
+  drawn$zeta <- matrix(0, 0L, m)
+  raw <- function(Z, zeta) sweep(as.matrix(Z) %*% t(A) + zeta %*% t(C), 2,
+    as.numeric(centre), '+')
+  batchbase <- attr(lpg, 'batch')
+  if (is.null(batchbase)) batchbase <- function(X)
+    vapply(seq_len(nrow(X)), function(i) as.numeric(lpg(X[i, ]))[1L], numeric(1))
+  batch <- function(Z) {
+    Z <- as.matrix(Z)
+    zeta <- matrix(stats::rnorm(nrow(Z) * m), nrow(Z))
+    drawn$zeta <- rbind(drawn$zeta, zeta)
+    as.numeric(batchbase(raw(Z, zeta))) + rowSums(zeta^2) / 2
+  }
+  density <- function(z) batch(matrix(z, 1L))
+  attr(density, 'batch') <- batch
+  gradbase <- attr(lpg, 'gradbatch')
+  if (!is.null(gradbase)) {
+    attr(density, 'gradbatch') <- function(Z) {
+      r <- gradbase(.ctImisUnwhitenMatrix(Z, centre, subspace))
+      r$gradient <- as.matrix(r$gradient) %*% A
+      r
+    }
+  }
+  if (!is.null(attr(lpg, 'cost'))) attr(density, 'cost') <- attr(lpg, 'cost')
+  finalbase <- attr(lpg, 'finalize')
+  if (!is.null(finalbase)) {
+    attr(density, 'finalize') <- function(Z, logp, logw) {
+      zeta <- drawn$zeta[seq_len(nrow(Z)), , drop = FALSE]
+      finalbase(raw(Z, zeta), logp - rowSums(zeta^2) / 2, logw)
+    }
+  }
+  density
+}
+
 # `imis_is()`'s own result, computed in whitened coordinates, mapped back onto
 # the raw parameters. `mean` and `covariance` are recomputed from the mapped
 # draws and the run's own final weights with the same `diagis` functions
@@ -372,12 +448,14 @@ bootstrapHessian <- function(standata, sm, est, finishsamples, cores, scores=NUL
 # than from 0 to 397 by accident -- see `.ctImisUnwhitenMatrix()`: a null
 # direction has no column in the map at all.
 .ctImisRun <- function(lpg, centre, cov, rtol = .ctFlatDirectionRtol(),
-  directions = NULL, widths = NULL, ...) {
+  directions = NULL, widths = NULL, complement = FALSE, ...) {
   centre <- as.numeric(centre)
   cov <- as.matrix(cov)
   # `directions` confines the sampling to those columns, each one unit of the
   # normal `cov` describes (`.ctOptimNormalCheck()`); the normal stays the
-  # answer in the rest, added to every draw and to the covariance. `widths`,
+  # answer in the rest, added to every draw and to the covariance. They are
+  # weighed with the rest at `centre`, or with `complement` integrated over
+  # it (`.ctImisJointDensity()`). `widths`,
   # the variances the check measured along them, is where the proposal
   # starts: on a four-dimensional shell it reached an effective sample of 200
   # in 1174 evaluations against the normal's 5789, and as fast elsewhere
@@ -387,7 +465,9 @@ bootstrapHessian <- function(standata, sm, est, finishsamples, cores, scores=NUL
     k = ncol(directions)) else
     .ctImisSubspace(cov, rtol = rtol)
   if (is.null(subspace)) return(imis_is(lpg, mu_hat = centre, Sigma_hat = cov, ...))
-  wrapped <- .ctImisWhitenDensity(lpg, centre, subspace)
+  wrapped <- if (!is.null(directions) && complement)
+    .ctImisJointDensity(lpg, centre, cov, subspace, rtol) else
+    .ctImisWhitenDensity(lpg, centre, subspace)
   whitened <- imis_is(wrapped, mu_hat = rep(0, subspace$k),
     Sigma_hat = diag(subspace$k), ...)
   result <- .ctImisUnwhitenResult(whitened, centre, subspace)
@@ -469,6 +549,47 @@ bootstrapHessian <- function(standata, sm, est, finishsamples, cores, scores=NUL
   size <- sqrt(sum(step * (e$vectors %*% (v * crossprod(e$vectors, step)))))
   if (size > maxstep) step <- step * maxstep / size
   list(mu = x + as.numeric(L %*% step), cov = L %*% covariance %*% t(L))
+}
+
+# The share of the next round's draws each of `imis_is()`'s components gets:
+# `birth` of them split among the `length(comp_mu) - K` added this round, and
+# the rest among the K before by each one's responsibility for the posterior
+# -- the weighted share of the draws carrying `mass` of the weight that it
+# accounts for under the deterministic mixture, population Monte Carlo's
+# update (Douc, Guillin, Marin and Robert 2007; Cappe, Douc, Guillin, Marin
+# and Robert 2008). `counts` are the draws each earlier component has been
+# asked for, `dprop` the components' log density.
+#
+# IMIS (Raftery and Bao) draws each round from that round's new components
+# alone, so the starting proposal gets the first round's draws and none
+# after. In a few dimensions that tiles a curved shell quickly; in 36, the
+# directions 'checked' names on a 266-parameter Laplace fit whose
+# population covariance is fitted at twice its rank
+# (scripts/gsm-uncertainty-2026-10/scale_model.R), the starting proposal
+# alone reached an effective sample of 57 in 1,000 draws where the mixture
+# had 4.7, and the rounds ran to 64: every component built from a round's
+# top-weighted draws rests on a few of them in 36 dimensions, and draws
+# nowhere the posterior is. Kept drawing by its responsibility, a start that
+# fits keeps its share and one that does not, as on a shell, loses it. On
+# that fit 37 rounds and 6,364 evaluations against 64 and 11,062; on the
+# synthetic targets and an 11-direction shell, the same within the spread
+# over seeds (scripts/gsm-uncertainty-2026-10/proto_alloc.R).
+.ctImisAllocate <- function(samples, w, counts, comp_mu, comp_cov, K, dprop,
+  birth = 0.5, mass = 0.999, maxdraws = 2000L) {
+  born <- length(comp_mu) - K
+  wn <- w / sum(w)
+  o <- order(-wn)
+  m <- min(length(o), maxdraws, findInterval(mass, cumsum(wn[o])) + 1L)
+  sel <- o[seq_len(m)]
+  X <- samples[sel, , drop = FALSE]
+  lq <- matrix(vapply(seq_len(K), function(k) if (counts[k] > 0)
+    log(counts[k]) + dprop(X, comp_mu[[k]], comp_cov[[k]]) else rep(-Inf, m),
+    numeric(m)), m)
+  rho <- exp(lq - apply(lq, 1, max))
+  r <- colSums(rho / rowSums(rho) * wn[sel])
+  r <- r / sum(r)
+  if (!born) return(r)
+  c((1 - birth) * r, rep(birth / born, born))
 }
 
 # Each parameter's profile path, walked out on both sides of the mode: at
@@ -2387,8 +2508,9 @@ ctOptimFitLpgFunc <- function(fit, cores=1){
   # cause -- and passes straight through to `imis_is()` otherwise; see
   # `IS-importance-sampling-2026-09-06.md`. `lpg` value-only carries the batch
   # attribute `.ctBackendLpgFunc(fit, gradient=FALSE)` sets, whitened or not.
-  is_res <- .ctImisRun(lpg, centre = centre, cov = uncertaintyfit$cov,
+  is_res <- tryCatch(.ctImisRun(lpg, centre = centre, cov = uncertaintyfit$cov,
     directions = directions, widths = uncertaintyfit$details$normalcheck$widths,
+    complement = isTRUE(control[["imisComplement"]]),
     max_iter = control$imisMaxIter, scale_init = control$imisScaleInit,
     tail_scale = control$imisTailScale, df = control$imisDf,
     target_ess = control$isESS, n_batch = control$isitersize, cl = NA,
@@ -2396,7 +2518,20 @@ ctOptimFitLpgFunc <- function(fit, cores=1){
     # `verbose > 0`, not TRUE: this printed IMIS iteration progress at
     # `verbose = 0`, so the one argument meant two things across the backends --
     # silence on julia, a page of output on stan.
-    verbose = verbose > 0)
+    verbose = verbose > 0),
+    # A sampler that cannot run -- a proposal covariance that is not finite,
+    # where a population sd collapsed on a flat raw scale -- leaves the
+    # Hessian's normal, said in a warning, rather than stopping the fit.
+    ctImisNonFinite = function(e) e)
+  if (inherits(is_res, "ctImisNonFinite")) {
+    warning("Importance sampling could not run (", conditionMessage(is_res),
+      "); the intervals are the Hessian's.", call. = FALSE)
+    uncertaintyfit$details$importance_sampling <- list(used = FALSE,
+      error = conditionMessage(is_res))
+    return(list(samples = ctOptimNormalDraws(centre, uncertaintyfit$cov,
+      finishsamples), uncertaintyfit = uncertaintyfit, control = control,
+      draws = 'normal'))
+  }
   subspace <- attr(is_res, 'subspace')
 
   # `'checked'` keeps the Hessian's normal where its correction failed. Weights
@@ -2861,7 +2996,11 @@ ctOptimFitLpgFunc <- function(fit, cores=1){
 #' proposal components' t degrees of freedom; \code{Inf} for normal),
 #' \code{isESS = 200}, and \code{isitersize = 1000} (100 for
 #' \code{'checked'}). \code{imisBudget} caps the log density evaluations
-#' importance sampling spends (no cap by default). On a Laplace fit (julia),
+#' importance sampling spends (no cap by default). \code{imisComplement = TRUE}
+#' (\code{'checked'}) weighs the sampled directions with the others integrated
+#' over rather than held at the centre: right where the others' spread moves
+#' with them, as a large covariance's scale does, at two to seven times the
+#' evaluations. On a Laplace fit (julia),
 #' importance sampling
 #' evaluates a weighted subset of the units chosen and checked as it runs, and
 #' corrects its weights where that subset strays; \code{coreset = FALSE}

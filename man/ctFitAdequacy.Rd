@@ -87,10 +87,21 @@ them. Reused from \code{fit} when it already carries at least as many.}
 An object of class \code{ctFitAdequacy}: \code{families} (one row
   per family: the number of statistics, the worst, its z, the family's
   p-value and the Holm-adjusted one), \code{statistics} (every statistic:
-  observed value, z, two-sided p), \code{size} (the root mean square
-  residual correlations, their intervals and close-fit tests),
-  \code{adequate}, \code{close_fit}, \code{projection} (the method used),
-  and \code{fit} (with any generated data, for reuse).
+  what it is about -- \code{variable}, \code{with} (the other variable of
+  a pair, or what the variable is correlated with), \code{gap} (the gap
+  bin of a pair of rows, or a lag), \code{period} and \code{covariate},
+  each NA where it does not apply -- and its observed value, z and
+  two-sided p), \code{size} (the root mean square residual correlations,
+  their intervals and close-fit tests), \code{errors} (the rows the
+  error-based families are computed from, in long form: \code{Subject},
+  \code{Time}, \code{Element} -- \code{'error'}, each variable's
+  standardised one-step-ahead error given the row's other observed
+  values; \code{'update'}, each latent's standardised update;
+  \code{'etaprior'}, its predicted mean -- \code{Row}, the variable, and
+  \code{value}; NULL when no such family ran), \code{adequate},
+  \code{close_fit}, \code{projection} (the method used), and \code{fit}
+  (with any generated data, for reuse). \code{plot()} draws the families,
+  or one family's statistics.
 }
 \description{
 Tests a fitted model in families, each aimed at one way a continuous time
@@ -180,13 +191,18 @@ they are independent over rows under the model, so a sum of products over
 pairs of rows has the sum of the products' squares as its variance, which
 holds with heavy tails or a changing variance; estimating the parameters
 takes a known part of it away. That is the variance of the residual,
-latent, volatility, within-row, periodic and covariate families; the
-distribution and fit families,
-whose statistics are sums of high powers, use the spread of the units'
-contributions and a studentised bootstrap over units. Within a family the
-largest standardised statistic and the sum of their squares are calibrated
-with the statistics' correlation over units
-and combined, with any exact p-values the family has, by the Cauchy
+latent, volatility, within-row, periodic and covariate families. A periodic
+statistic is in each unit a quadratic form of rank two in its errors, the
+periodogram, skewed to the right however many units there are; its z is
+read through a chi-square of the skewness that form has under the model,
+worked out exactly from the unit's times. The distribution and fit
+families, whose statistics are sums of high powers, use the spread of the
+units' contributions and a studentised bootstrap over units. Within a family the
+largest standardised statistic is calibrated with the statistics'
+correlation over units, and the sum of their squares, where the variances
+are the model's, by its terms between units, whose mean is zero under the
+model (Chen & Qin, 2010), and otherwise by the bootstrap; the two are
+combined, with any exact p-values the family has, by the Cauchy
 combination; families are combined by Holm. \code{adequate} is \code{TRUE}
 when no family's adjusted p-value is below \code{alpha}.
 
@@ -223,10 +239,17 @@ are not paired.
 With many observations every misfit is significant, so the sizes of the
 residual, latent and within-row correlations the model leaves are reported
 too, as
-root mean squares (the unbiased form of the SRMR, Maydeu-Olivares 2017),
-with intervals and a test that the size is at most \code{close}.
+root mean squares, each squared correlation less its sampling variance (as
+for the SRMR, Maydeu-Olivares 2017): the mean square is unbiased, its root,
+truncated at zero, bias-corrected. Each has a 95 per cent interval and
+\code{p_close}, the p-value of the test that it is at least \code{close}.
 \code{close_fit} is \code{TRUE} when every family that fails is one of those
-three and its size is not significantly above \code{close}.
+three and that test rejects at \code{alpha} -- the size is shown to be
+below \code{close}, its one-sided upper bound under it. A size whose
+interval reaches \code{close} is not a close fit: not showing that a misfit
+is large does not show that it is small. A close fit is about these
+averages over many correlations; one large discrepancy among them, or a
+biased estimate of a quantity of interest, can sit under a small average.
 
 Detection is not localization: a failure in one variable's equation reaches
 the others' errors through the fitted covariance. \code{\link{ctScoreTest}}
@@ -251,6 +274,10 @@ Newey, W. K. (1985). Maximum likelihood specification testing
 
   Chang, J., Yao, Q., & Zhou, W. (2017). Testing for high-dimensional white
   noise using maximum cross-correlations. \emph{Biometrika, 104}, 111-127.
+
+  Chen, S. X., & Qin, Y.-L. (2010). A two-sample test for high-dimensional
+  data with applications to gene-set testing. \emph{The Annals of
+  Statistics, 38}, 808-835.
 
   Liu, Y., & Xie, J. (2020). Cauchy combination test. \emph{Journal of the
   American Statistical Association, 115}, 393-402.

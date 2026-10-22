@@ -341,6 +341,15 @@ Single-level fits. With non-Gaussian indicators, each one's predictive
 distribution function just below and at what was observed, in the filter's
 order (`pitlower`, `pitupper`), for the probability integral transforms the
 misfit tests use in place of their errors (item_pit.jl).
+
+For the Gaussian items, the mixture's own distribution function at what was
+observed (`_mixture_gauss_pit!`): `pitgauss`, each item given the row's other
+Gaussian items, and `pitseq`, each given those before it in item order. The
+mixture is not normal, so an error standardised by its mean and covariance is
+not either: its fourth moments and the row distance's spread are not the
+normal's, and checks reading them rejected a correct model more often the more
+people there were. Through the normal quantile these are standard normal under
+the model, and with one component they are the standardised errors.
 """
 function ctsem_laplace_sequential_mixture(laplace::CTSEMLaplaceObjective,
     values::AbstractVector; particles::Integer=128, scale::Real=1.15,
@@ -365,7 +374,8 @@ function ctsem_laplace_sequential_mixture(laplace::CTSEMLaplaceObjective,
         y=fill(NaN, 2, nrows, m), ycov=fill(NaN, 2, nrows, m, m),
         llrow=fill(NaN, nrows), subject=zeros(Int, nrows),
         ess=fill(NaN, length(units.members)),
-        pitlower=fill(NaN, nrows, m), pitupper=fill(NaN, nrows, m))
+        pitlower=fill(NaN, nrows, m), pitupper=fill(NaN, nrows, m),
+        pitgauss=fill(NaN, nrows, m), pitseq=fill(NaN, nrows, m))
     for (i, r) in enumerate(rows)
         out.subject[(first_row[i] + 1):(first_row[i] + r)] .= i
     end
@@ -563,12 +573,16 @@ function _laplace_mixture_unit!(out, laplace::CTSEMLaplaceObjective, U::Integer,
         end
     end
 
-    # Second pass: the weighted moments, with the spread between draws.
+    # Second pass: the weighted moments, with the spread between draws, and the
+    # Gaussian items' distribution functions under the mixture.
     sP = zeros(T, n); sPP = zeros(T, n, n); sU = zeros(T, n); sUU = zeros(T, n, n)
     yP = zeros(T, m); yPP = zeros(T, m, m); yU = zeros(T, m); yUU = zeros(T, m, m)
+    gauss = [j for j in 1:m if !_ekf_is_categorical(types, j)]
+    pit = _CTSEMMixturePIT(T, m)
     for k in 1:K
         ok[k] || continue
         pass!(k) || continue
+        isempty(gauss) || _mixture_gauss_pit!(pit, tr, WP, k, gauss)
         @inbounds for t in 1:T
             wp = WP[k, t]
             wu = WU[k, t]
@@ -590,6 +604,10 @@ function _laplace_mixture_unit!(out, laplace::CTSEMLaplaceObjective, U::Integer,
             end
         end
     end
+    @inbounds for t in 1:T, j in gauss
+        pit.gden[t, j] > 0 && (out.pitgauss[offset + t, j] = pit.gnum[t, j] / pit.gden[t, j])
+        pit.sden[t, j] > 0 && (out.pitseq[offset + t, j] = pit.snum[t, j] / pit.sden[t, j])
+    end
     @inbounds for t in 1:T
         r = offset + t
         for a in 1:n
@@ -607,6 +625,118 @@ function _laplace_mixture_unit!(out, laplace::CTSEMLaplaceObjective, U::Integer,
                 out.ycov[1, r, a, b] = yPP[t, a, b] - yP[t, a] * yP[t, b]
                 out.ycov[2, r, a, b] = yUU[t, a, b] - yU[t, a] * yU[t, b]
             end
+        end
+    end
+    return nothing
+end
+
+# Running sums, over the draws, of each row's Gaussian items' conditional
+# distribution functions at what was observed and of their weights, each pair
+# on the scale of the largest log weight so far (log-sum-exp as it goes): `g`
+# each item given the row's other Gaussian items, `s` given those before it.
+struct _CTSEMMixturePIT
+    gmx::Matrix{Float64}
+    gnum::Matrix{Float64}
+    gden::Matrix{Float64}
+    smx::Matrix{Float64}
+    snum::Matrix{Float64}
+    sden::Matrix{Float64}
+    U::Matrix{Float64}
+    Ui::Matrix{Float64}
+    r::Vector{Float64}
+    obs::Vector{Int}
+end
+
+_CTSEMMixturePIT(T::Int, m::Int) = _CTSEMMixturePIT(fill(-Inf, T, m), zeros(T, m),
+    zeros(T, m), fill(-Inf, T, m), zeros(T, m), zeros(T, m), zeros(m, m), zeros(m, m),
+    zeros(m), zeros(Int, m))
+
+@inline function _mixture_pit_add!(mx, num, den, t, j, lw, p)
+    isfinite(lw) || return nothing
+    @inbounds if lw > mx[t, j]
+        s = exp(mx[t, j] - lw)
+        num[t, j] = num[t, j] * s + p
+        den[t, j] = den[t, j] * s + 1
+        mx[t, j] = lw
+    else
+        e = exp(lw - mx[t, j])
+        num[t, j] += e * p
+        den[t, j] += e
+    end
+    return nothing
+end
+
+# Draw k's share of each row's Gaussian items' distribution functions under the
+# mixture. Given the person's earlier rows, the draw predicts the row's
+# observed Gaussian items as N(mu, S) (the trace's prior prediction, as the
+# standardised errors use); with U'U = S, r = U'^-1 (y - mu) are the items
+# standardised given those before them, and (S^-1 (y - mu))_j / sqrt(S^-1_jj)
+# each item given the others. A draw's weight for an item is its prediction
+# weight times its density of what the item is conditioned on: the items
+# before it, or the others -- the row's density less the item's conditional
+# one. Hand-written triangular arithmetic: these run per row and draw inside a
+# threaded loop, where LAPACK's lock would serialise them.
+function _mixture_gauss_pit!(pit::_CTSEMMixturePIT, tr::CTSEMMixtureTrace,
+    WP::Matrix{Float64}, k::Int, gauss::Vector{Int})
+    T = size(WP, 2)
+    U = pit.U; Ui = pit.Ui; r = pit.r; obs = pit.obs
+    half_log_2pi = 0.5 * log(2pi)
+    @inbounds for t in 1:T
+        wp = WP[k, t]
+        wp > 0 || continue
+        g = 0
+        for j in gauss
+            if isfinite(tr.data[j, t])
+                g += 1
+                obs[g] = j
+            end
+        end
+        g == 0 && continue
+        for a in 1:g, b in 1:g
+            U[a, b] = tr.yPcov[t, obs[a], obs[b]]
+        end
+        _ctsem_cholesky!(U, g) || continue
+        logdet = 0.0
+        rr = 0.0
+        for a in 1:g
+            s = tr.data[obs[a], t] - tr.yP[t, obs[a]]
+            for c in 1:(a - 1)
+                s -= U[c, a] * r[c]
+            end
+            r[a] = s / U[a, a]
+            logdet += log(U[a, a])
+            rr += r[a]^2
+        end
+        isfinite(rr) || continue
+        lwp = log(wp)
+        llrow = -0.5 * rr - logdet - g * half_log_2pi
+        lpre = 0.0
+        for a in 1:g
+            _mixture_pit_add!(pit.smx, pit.snum, pit.sden, t, obs[a], lwp + lpre,
+                _ctsem_normal_cdf(r[a]))
+            lpre += -0.5 * r[a]^2 - log(U[a, a]) - half_log_2pi
+        end
+        # U^-1, upper triangular, column by column.
+        for c in 1:g
+            for a in c:-1:1
+                s = a == c ? 1.0 : 0.0
+                for i in (a + 1):c
+                    s -= U[a, i] * Ui[i, c]
+                end
+                Ui[a, c] = s / U[a, a]
+            end
+        end
+        for a in 1:g
+            Pjj = 0.0
+            Pv = 0.0
+            for i in a:g
+                Pjj += Ui[a, i]^2
+                Pv += Ui[a, i] * r[i]
+            end
+            z = Pv / sqrt(Pjj)
+            logcond = -0.5 * z^2 + 0.5 * log(Pjj) - half_log_2pi
+            _mixture_pit_add!(pit.gmx, pit.gnum, pit.gden, t, obs[a], lwp + llrow - logcond,
+                _ctsem_normal_cdf(z))
         end
     end
     return nothing

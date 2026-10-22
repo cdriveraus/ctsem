@@ -21,10 +21,16 @@ skip_on_32bit()
   z <- stats::rnorm(nsub); w <- stats::rnorm(nsub)
   do.call(rbind, lapply(seq_len(nsub), function(i) {
     a <- -0.5; b <- 0
+    # 'level': persistence that differs with where the subject sits, its
+    # manifest mean. Drawn only here, so the other scenarios' draws are as
+    # they were.
+    lev <- if (scenario == 'level') stats::rnorm(1) else NA_real_
+    if (scenario == 'level') a <- -0.5 * exp(0.6 * lev)
     if (scenario == 'het') a <- -0.5 * exp(0.6 * stats::rnorm(1))
     if (scenario == 'cov') a <- -0.5 * exp(0.3 * z[i])
     if (scenario == 'sdep') b <- 0.4
-    mm <- stats::rnorm(1) + if (scenario == 'cov') 0.8 * z[i] else 0
+    mm <- if (scenario == 'level') lev else
+      stats::rnorm(1) + if (scenario == 'cov') 0.8 * z[i] else 0
     times <- cumsum(c(0, stats::rexp(nobs - 1L, 1)))
     x <- stats::rnorm(1, 0, sigma / sqrt(-2 * a))
     xs <- numeric(nobs); xs[1] <- x
@@ -108,6 +114,11 @@ test_that("a covariate the model lacks is found and attributed; an unrelated one
   # The held one-step is near what generated the data, 0.8 on the mean.
   expect_equal(mm$estimate_natural, 0.8, tolerance = 0.3)
   expect_output(print(st), 'Covariate z')
+  p <- plot(st, top = 3)
+  expect_s3_class(p, 'ggplot')
+  expect_silent(ggplot2::ggplot_build(p))
+  expect_true(all(startsWith(levels(p$data$key), 'covariates|')))
+  expect_error(plot(st, family = 'fixed'), 'Nothing to plot')
 })
 
 test_that("a parameter that varies over subjects is found", {
@@ -150,6 +161,55 @@ test_that("innovations whose size depends on the state are found", {
   expect_lt(terms$p, 0.01)
   expect_true(is.na(terms$estimate) || terms$estimate > 0)
   expect_equal(st$volatility$joint$equation, c('eta1', 'all'))
+})
+
+test_that("a parameter that depends on the subject's level is found by the level terms", {
+  # The state is the deviation from the subject's mean, which the model puts
+  # in the random intercept, so the state dependence terms cannot see a
+  # persistence that depends on the mean itself; the level terms ask.
+  x <- .score_fit('level', seed = 4L)
+  st <- suppressMessages(ctScoreTest(x$fit, tests = 'level', cores = 1, verbose = FALSE))
+  expect_null(st$info$errors)
+  lv <- st$level$terms
+  expect_setequal(lv$parameter, c('drift_eta1', 'diff_eta1', 'mvarY1'))
+  expect_equal(length(unique(lv$level)), 1L)
+  expect_lt(lv$p[lv$parameter == 'drift_eta1'], 0.01)
+  # Persistence shorter for the high: the drift more negative with the level.
+  e <- lv$estimate[lv$parameter == 'drift_eta1']
+  expect_true(is.na(e) || e < 0)
+  expect_true(all(c(lv$level[1], 'all') %in% st$level$joint$level))
+  # Nothing where nothing depends on the level.
+  n <- .score_fit('null')
+  st0 <- suppressMessages(ctScoreTest(n$fit, tests = 'level', cores = 1, verbose = FALSE))
+  expect_gt(min(st0$level$terms$p_adj), 0.05)
+  # A model with no random intercept has nothing to test.
+  m <- .score_model()
+  m$pars$indvarying <- FALSE
+  fixedmean <- fit_cached('scoretest null no random mean', suppressMessages(ctFit(
+    n$data[, c('id', 'time', 'Y1')], m, backend = 'julia', cores = 1, verbose = 0)))
+  st1 <- suppressMessages(ctScoreTest(fixedmean, tests = 'level', cores = 1, verbose = FALSE))
+  expect_null(st1$level)
+  expect_null(st1$info$errors)
+})
+
+test_that("the level in the latent is the same linear model as the level in the indicator", {
+  # With linear dynamics and the same initial distribution -- the deviation
+  # from 0, the level from its stationary mean, each with its stationary
+  # variance -- the two forms are one model, and fit to one likelihood.
+  n <- .score_fit('null')
+  m <- .score_model()
+  m$pars$param[m$pars$matrix == 'T0MEANS'] <- NA
+  m$pars$value[m$pars$matrix == 'T0MEANS'] <- 0
+  m$pars$param[m$pars$matrix == 'T0VAR'] <- 'stationary'
+  m$pars$value[m$pars$matrix == 'T0VAR'] <- NA
+  m$pars$indvarying[m$pars$matrix %in% c('T0MEANS', 'T0VAR')] <- FALSE
+  lm <- ctModelLatentLevel(m)
+  expect_identical(attr(lm, 'moved'), 'eta1')
+  fit <- function(model) suppressMessages(ctFit(n$data[, c('id', 'time', 'Y1')], model,
+    backend = 'julia', intoverpop = 'laplace', cores = 1, verbose = 0))
+  a <- fit_cached('scoretest null deviation form', fit(m))
+  b <- fit_cached('scoretest null level form', fit(lm))
+  expect_equal(b$estimate$loglik, a$estimate$loglik, tolerance = 1e-3)
 })
 
 test_that("results are reproducible and leave the caller's random numbers alone", {
@@ -379,4 +439,79 @@ test_that("where effects reach the dynamics, only the unit-level families are pr
   # The mixture's draws are seeded, so unprojected statistics match exactly.
   expect_equal(exact$statistics$z[rowlevel], plain$statistics$z[rowlevel])
   expect_false(isTRUE(all.equal(exact$statistics$z[!rowlevel], plain$statistics$z[!rowlevel])))
+})
+
+test_that("errors from the mixture predictive are its own distribution function's", {
+  # The exact predictive integrates the random effects by importance sampling:
+  # a mixture of normals, whose errors standardised by its mean and covariance
+  # are heavier tailed than normal. Through the mixture's own distribution
+  # function they are standard normal under the model.
+  mix <- function(fit) {
+    spec <- ctsem:::.ctBackendSpec(fit)
+    k <- suppressMessages(ctsem:::.ctBackendKalmanRaw(fit, ctsem:::.ctFitRawEstimate(fit),
+      subjectmatrices = FALSE, fields = 'subject', sequential = 'mixture', compact = TRUE))
+    nrows <- length(spec$times)
+    y <- as.numeric(spec$manifest_data)
+    y[!is.finite(y) | y == 99999] <- NA
+    list(standardised = (y - as.numeric(k$y1)) / sqrt(as.numeric(k$ycov1)),
+      transformed = stats::qnorm(as.numeric(k$pitgauss)),
+      sequential = stats::qnorm(as.numeric(k$pitseq)), ok = !is.na(y))
+  }
+  # Where the effects enter linearly (a random intercept, on the Laplace route,
+  # where the exact predictive is the mixture) the predictive is normal, and
+  # the transforms give the standardised errors back, to the sampling's
+  # accuracy; with one item the two transforms are one.
+  n <- .score_fit('null')
+  lfit <- fit_cached('scoretest null laplace', suppressMessages(ctFit(
+    n$data[, c('id', 'time', 'Y1')], .score_model(), backend = 'julia',
+    intoverpop = 'laplace', cores = 1, verbose = 0)))
+  lin <- mix(lfit)
+  expect_true(all(is.finite(lin$transformed[lin$ok])))
+  expect_equal(lin$transformed[lin$ok], lin$sequential[lin$ok])
+  # The sampling's error is largest at a person's first row, where the
+  # posterior is the prior and 512 draws cover its tails coarsely (0.2 per
+  # cent of rows differ by more than 0.05 there, none at 4096 draws).
+  dev <- abs(lin$transformed - lin$standardised)[lin$ok]
+  expect_lt(stats::median(dev), 1e-3)
+  expect_lt(stats::quantile(dev, 0.99, names = FALSE), 0.05)
+  # Where they reach the dynamics the two differ, and the transforms' tails
+  # are the lighter.
+  d <- .score_data('het', nsub = 20L)
+  m <- .score_model()
+  m$pars$indvarying[m$pars$param %in% c('drift_eta1', 'diff_eta1')] <- TRUE
+  fit <- fit_cached('scoretest het random sd', suppressWarnings(suppressMessages(ctFit(
+    d[, c('id', 'time', 'Y1')], m, backend = 'julia', intoverpop = 'laplace',
+    cores = 1, verbose = 0))))
+  dyn <- mix(fit)
+  expect_true(all(is.finite(dyn$transformed[dyn$ok])))
+  expect_gt(max(abs(dyn$transformed - dyn$standardised)[dyn$ok]), 0.01)
+  # The adequacy check takes them: its errors are the transforms.
+  err <- ctsem:::.ctAdequacyErrors(fit)
+  expect_equal(as.numeric(err$E[, 1])[dyn$ok], dyn$transformed[dyn$ok])
+})
+
+test_that("a skewed statistic and a family's sum are read against references of their own shape", {
+  # A statistic of known skewness is read through a chi-square of that
+  # skewness, so a chi-square's quantiles come back as the normal's.
+  nu <- c(20, 200)
+  for (pr in c(0.999, 0.01)) {
+    q <- stats::qchisq(pr, nu)
+    expect_equal(ctsem:::.ctAdequacySkewZ((q - nu) / sqrt(2 * nu), sqrt(8 / nu)),
+      rep(stats::qnorm(pr), 2), tolerance = 1e-8)
+  }
+  # A family's sum of squared z, from its terms between units: k statistics
+  # not few beside n units (here more), each unit's contributions independent
+  # and of mean zero under the model. The p-values are uniform, and a small
+  # shift in every statistic's mean, too small for any one z, is found.
+  sump <- function(shift) withr::with_seed(1, vapply(seq_len(200), function(r) {
+    X <- matrix(stats::rnorm(60 * 150), 60) + shift
+    ctsem:::.ctAdequacySumP(X, rep(60, 150))
+  }, 0))
+  null <- sump(0)
+  expect_gt(mean(null < 0.05), 0.02)
+  expect_lt(mean(null < 0.05), 0.09)
+  expect_gt(stats::ks.test(null, 'punif')$p.value, 0.01)
+  # The shift puts each z's mean at 0.6; the largest of 150 such z is often
+  # within the null's spread, the sum of their squares is not.
+  expect_gt(mean(sump(0.6 / sqrt(60)) < 0.05), 0.8)
 })
