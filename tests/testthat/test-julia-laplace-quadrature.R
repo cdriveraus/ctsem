@@ -576,6 +576,28 @@ test_that("requests that cannot apply are refused by name", {
     "laplace_correct")
 })
 
+test_that("a corrected fit reports how far its objective is from the exact marginal", {
+  skip_without_julia()
+  fits <- .lc_fits("linear")
+  # Linear Gaussian: Laplace is exact, the screen flags nothing, and the error
+  # is zero with nothing to say in print.
+  err <- fits$quadrature$laplace$correction$error
+  expect_true(is.list(err))
+  expect_identical(err$nats, 0)
+  expect_identical(err$se, 0)
+  expect_identical(err$unscored, 0L)
+  expect_false(any(grepl("integrated to within", capture.output(print(fits$quadrature)))))
+  # The summary is a sum of its parts, and se is the certification's arithmetic.
+  info <- list(error = 0.03, error_draws = 0.01, error_nodes = 0.005,
+    error_residual = 0.015, centre_error = c(NaN, 0.01, 0.005))
+  e <- .ctLaplaceIntegrationError(info, unscored = 2L)
+  expect_equal(e$nats, 0.03)
+  expect_equal(e$se, sqrt(0.06))
+  expect_equal(e$draws + e$nodes + e$residual, e$nats)
+  expect_identical(e$unscored, 2L)
+  expect_true(is.na(.ctLaplaceIntegrationError(list(error = NA_real_))$se))
+})
+
 test_that("a rescued fit warns once past a quarter of the units named", {
   # No julia needed.
   control <- .ctLaplaceContinueDefaults

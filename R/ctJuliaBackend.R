@@ -7116,6 +7116,17 @@ print.ctJuliaFit <- function(x, ...) {
     cat("  Laplace estimate not corrected: every subject or group has more than ",
       corr$maxdim, " random effects. See fit$laplace$correction.\n", sep = "")
   }
+  # What the objective is known to, where the correction scored it and found
+  # anything to say: the rules' errors and what the screen left on Laplace.
+  err <- corr$error
+  if (is.list(err) && isTRUE(is.finite(err$nats)) && isTRUE(err$nats > 0)) {
+    cat("  Marginal likelihood integrated to within ", format(err$nats, digits = 2),
+      " nats; the estimate within ", format(err$se, digits = 2),
+      " standard errors of the exact-marginal optimum",
+      if (isTRUE(err$unscored > 0)) paste0(" (", err$unscored,
+        " unit(s) too wide to score)") else "",
+      ". See fit$laplace$correction$error.\n", sep = "")
+  }
   # One line, only when there is something to say. A reported interval much
   # wider than the curvature at the estimate supports is not visible anywhere
   # in the numbers themselves -- it was found once only by fitting the same

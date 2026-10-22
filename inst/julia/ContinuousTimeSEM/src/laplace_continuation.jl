@@ -245,6 +245,9 @@ mutable struct CTSEMLaplaceContinuation{L} <: CTSEMOptimisable
     draws_seed::Int
     points::Dict{Int,Vector{Vector{Float64}}}
     centre_se::Vector{Float64}
+    # Each flagged unit's rule error at the centre, in nats
+    # (`_continuation_node_errors`); `NaN` for an unflagged unit.
+    centre_error::Vector{Float64}
     importance::Vector{Bool}
     # Whether a placement scores every unit, or only the flagged ones (a fit
     # rescued from a jump, which needs the units the optimiser named and no
@@ -1377,6 +1380,48 @@ function _continuation_place(laplace::CTSEMLaplaceObjective, theta::Vector{Float
 end
 
 """
+    _continuation_node_errors(laplace, theta, opts, placed, flagged)
+
+Each flagged unit's rule error at the centre, in nats: a frozen rule's
+standard error; for a product or soft rule the difference between its value
+at `opts.nodes` and at two nodes fewer, placed again here (a mode solve and
+a 3-node rule beside the 5-node rule already placed), `NaN` where that rule
+cannot be placed or `nodes` is under 3. `NaN` for an unflagged unit, whose
+term is Laplace's. What `ctsem_laplace_continuation_info` sums into the
+hybrid's own error (`error`), the one number a fit reports for how far its
+objective is from the exact marginal.
+"""
+function _continuation_node_errors(laplace::CTSEMLaplaceObjective,
+    theta::Vector{Float64}, opts, placed, flagged::Vector{Int})
+    nunits = length(laplace.units.members)
+    errors = fill(NaN, nunits)
+    isempty(flagged) && return errors
+    fewer = Int(opts.nodes) - 2
+    opts3 = merge(opts, (nodes=max(fewer, 1),))
+    Ls = _laplace_popchols(theta, laplace.spec)
+    _continuation_warm_caches(laplace, opts3.nodes, opts.soft_maxdirs,
+        opts.product_maxdim)
+    _laplace_parallel(laplace, 1:length(flagged)) do i
+        local U, r
+        U = flagged[i]
+        if placed.importance[U]
+            errors[U] = placed.se[U]
+        elseif fewer >= 1 && placed.rules[U] !== nothing
+            r = try
+                _continuation_unit_rule(laplace, U, theta, Ls,
+                    _laplace_workspace!(laplace, Float64, length(theta)), opts3)
+            catch err
+                _ctsem_must_propagate(err) && rethrow()
+                nothing
+            end
+            errors[U] = r === nothing ? NaN : abs(placed.quadrature[U] - r.value)
+        end
+        return true
+    end
+    return errors
+end
+
+"""
     _continuation_resolved(gaps, se)
 
 Each unit's gap beyond twice its rule's standard error, towards zero: what the
@@ -1487,7 +1532,7 @@ function ctsem_laplace_continuation(laplace::CTSEMLaplaceObjective,
         fill(false, nunits), Int(draws), Float64(draws_se),
         max(Int(draws_max), Int(draws)), Float64(draws_floor), Float64(draws_prior),
         Float64(draws_df), Int(draws_seed), Dict{Int,Vector{Vector{Float64}}}(),
-        zeros(nunits),
+        zeros(nunits), fill(NaN, nunits),
         fill(false, nunits), Bool(screen), Symbol(draws_scope), Int[],
         fill(NaN, nunits), fill(NaN, nunits), fill(false, nunits), NaN, nothing,
         0, 0, 0, 0, 0, 0, 0.0, 0.0, 0.0, 0.0, nothing, nothing, nothing)
@@ -1532,7 +1577,7 @@ end
 
 const _CONTINUATION_STATE = (:rest, :rest_units, :flagged, :rules, :centre,
     :centre_quadrature, :centre_laplace, :rule_failed, :centre_value, :centre_se,
-    :importance)
+    :centre_error, :importance)
 
 """
     ctsem_laplace_continuation_recentre!(o, values; force=nothing,
@@ -1605,6 +1650,7 @@ function _continuation_place!(o::CTSEMLaplaceContinuation, theta::Vector{Float64
     o.centre_laplace = placed.laplace
     o.centre_se = placed.se
     o.importance = placed.importance
+    o.centre_error = _continuation_node_errors(laplace, theta, opts, placed, flagged)
     o.rule_failed = failed
     prior = _ctsem_log_prior(laplace.objective, theta)
     o.centre_value = sum(_laplace_unit_weight(laplace, U) * placed.laplace[U]
@@ -2908,12 +2954,23 @@ function ctsem_laplace_continuation_info(o::CTSEMLaplaceContinuation)
     end
     softblocks = sum(sum(_continuation_soft_blocks(r) for r in rule.roots; init=0)
         for rule in o.rules; init=0)
+    # The hybrid's own error against the exact marginal, in nats: the frozen
+    # rules' standard errors in quadrature, the product rules' node errors,
+    # and what the screen leaves on Laplace (`residual`).
+    residual = _continuation_screen(gaps[o.rest_units], o.centre_se[o.rest_units])
+    error_draws = sqrt(sum(abs2(o.centre_se[U]) for U in o.flagged if o.importance[U];
+        init=0.0))
+    error_nodes = sum(o.centre_error[U] for U in o.flagged
+        if !o.importance[U] && isfinite(o.centre_error[U]); init=0.0)
     return (flagged=isempty(o.flagged) ? [0] : copy(o.flagged),
         nflagged=length(o.flagged), nunits=nunits,
         screen=_continuation_screen(gaps, o.centre_se),
         gap=sum(gaps[isfinite.(gaps)]; init=0.0),
         bar=isempty(flaggedgaps) ? 0.0 : minimum(flaggedgaps),
-        residual=_continuation_screen(gaps[o.rest_units], o.centre_se[o.rest_units]),
+        residual=residual,
+        centre_error=copy(o.centre_error), error_draws=error_draws,
+        error_nodes=error_nodes, error_residual=residual,
+        error=error_draws + error_nodes + residual,
         centre=copy(o.centre), value=o.centre_value,
         quadrature=sum(quadrature_units) + prior, prior=prior,
         quadrature_units=quadrature_units, quadrature_subjects=subjects,
