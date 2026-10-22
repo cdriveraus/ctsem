@@ -2616,7 +2616,6 @@ ctOptimFitLpgFunc <- function(fit, cores=1){
       uncertaintyfit = uncertaintyfit, control = control, draws = 'normal'))
   }
 
-  if (is.null(control$imisMaxIter)) control$imisMaxIter <- 50
   if (is.null(control$imisScaleInit)) control$imisScaleInit <- scaleInit
   if (is.null(control$imisTailScale)) control$imisTailScale <- tailScale
   # t with 5 degrees of freedom, not normal: see `.ctImisProposalDefaults()`.
@@ -2633,6 +2632,12 @@ ctOptimFitLpgFunc <- function(fit, cores=1){
   # the 100-subject strong-shell Laplace fit 6632 and 1926, at like accuracy.
   checked <- !is.null(directions)
   if (is.null(control$isitersize)) control$isitersize <- if (checked) 100 else 1000
+  # Rounds: 100 of 100 draws for `'checked'`. At 50, on a 266-parameter fit
+  # whose check named 39 directions, sampling stopped at ESS 181 and Pareto k
+  # 0.75, past the bar, and fell back to the normal; allowed more it reached
+  # ESS 209 at k 0.59 a round or two later (scripts/gsm-uncertainty-2026-10/
+  # e2e_scale_checked.R, seed 2).
+  if (is.null(control$imisMaxIter)) control$imisMaxIter <- if (checked) 100 else 50
   # A budget in log density evaluations, a gradient counted as two, when the
   # caller sets one (`control$imisBudget`): rounds stop there, and the report
   # says the target was not reached.
@@ -3232,7 +3237,7 @@ ctOptimFitLpgFunc <- function(fit, cores=1){
 #' and \code{isitersize}. Omitted entries use
 #' \code{ridge = 1e-8}, \code{hessianStep = 1e-3},
 #' \code{bootstrapFitCores = 1}, \code{bootstrapTol = 1e-5},
-#' \code{imisMaxIter = 50}, \code{imisScaleInit = 1.1},
+#' \code{imisMaxIter = 50} (100 for \code{'checked'}), \code{imisScaleInit = 1.1},
 #' \code{imisTailScale = 1.1} (1.5 and 1.2 on julia), \code{imisDf = 5} (the
 #' proposal components' t degrees of freedom; \code{Inf} for normal),
 #' \code{isESS = 200}, and \code{isitersize = 1000} (100 for

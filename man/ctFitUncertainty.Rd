@@ -82,7 +82,7 @@ apply to it. For every other method, useful entries include
 and \code{isitersize}. Omitted entries use
 \code{ridge = 1e-8}, \code{hessianStep = 1e-3},
 \code{bootstrapFitCores = 1}, \code{bootstrapTol = 1e-5},
-\code{imisMaxIter = 50}, \code{imisScaleInit = 1.1},
+\code{imisMaxIter = 50} (100 for \code{'checked'}), \code{imisScaleInit = 1.1},
 \code{imisTailScale = 1.1} (1.5 and 1.2 on julia), \code{imisDf = 5} (the
 proposal components' t degrees of freedom; \code{Inf} for normal),
 \code{isESS = 200}, and \code{isitersize = 1000} (100 for
