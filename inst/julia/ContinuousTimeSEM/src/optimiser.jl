@@ -499,6 +499,10 @@ function _ctsem_lbfgs(fg!, x0::AbstractVector; memory::Integer=20,
         retried = false
         directional === nothing ||
             (directional.dphi0 = informed ? alpha * dphi : NaN)
+        # What the step was predicted to gain, as the gap rule reads it
+        # (`_ctsem_predicted_gain`), for a coreset stage to stop where the full
+        # sum would.
+        stepgain = informed ? abs(alpha * dphi) / 2 : Inf
         step = xn .- x
         iteration += 1
         fconv = abs(fn - f) <= f_tol * abs(fn)
@@ -551,7 +555,7 @@ function _ctsem_lbfgs(fg!, x0::AbstractVector; memory::Integer=20,
                 q -> _ctsem_lbfgs_hmul(M, q, h0, dinv, Dinv)
             end
             r = _ctsem_coreset_step!(coreset, x, f, G, hm,
-                _ctsem_lbfgs_scale(Dinv, dinv))
+                _ctsem_lbfgs_scale(Dinv, dinv); stepgain=stepgain)
             if r.act !== :none
                 r.act === :revert && _ctsem_lbfgs_drop!(M, coreset.pairs)
                 x, f, G, nev = _ctsem_coreset_switch!(coreset, r, evaluate!, batch)
@@ -1092,7 +1096,9 @@ end
 # No stage is carried on once the full objective gained less than the fit's
 # gap tolerance an iteration over the stage just run -- the bar a full step's
 # predicted gain meets in the gap rule, read from what the stage measurably
-# did: the end is the full sum's, and its stopping rules'. Carried on while
+# did: the end is the full sum's, and its stopping rules'. And a stage whose
+# step is predicted to gain less than the tolerance, where the gap rule would
+# stop a fit on the full sum, is checked and left with nothing carried on. Carried on while
 # L-BFGS's model of what was left exceeded the tolerance, stages climbed on
 # along AnomAuth's flat directions where the full sum's own gap rule had
 # stopped it, 8-14 log units up an over-credited Laplace term, and the
@@ -1624,7 +1630,9 @@ its planned iterations, once what L-BFGS's model says is left to gain on the
 coreset (`G' H G / 2`) is no more than the coreset's error, once its gradient
 is below `g_tol`, or once it has gone farther from where it began than the
 coreset's training points reach, as a whole or in any one parameter
-(`_ctsem_coreset_begin!`).
+(`_ctsem_coreset_begin!`); and check it and leave it, carrying nothing on,
+once a step is predicted to gain less than `gap_tol` (`stepgain`, as the gap
+rule reads it), where the full sum's gap rule would stop the fit.
 Neither the coreset's error nor `G' H G` is the full objective's inside a
 stage; both are the stage's own measures of where it stands.
 
@@ -1633,7 +1641,8 @@ at `x` on `c.target`, with the full value and gradient there; `:leave`, back to
 the full objective at `x`; `:revert`, back to the full objective at the start
 of the stage that just failed its check.
 """
-function _ctsem_coreset_step!(c::CTSEMCoresetPlan, x, f, G, hmul, scale)
+function _ctsem_coreset_step!(c::CTSEMCoresetPlan, x, f, G, hmul, scale;
+        stepgain::Real=Inf)
     none = (act=:none, x=x, f=f, G=G)
     c.seen += 1
     if !c.live
@@ -1658,12 +1667,16 @@ function _ctsem_coreset_step!(c::CTSEMCoresetPlan, x, f, G, hmul, scale)
     c.iterations += 1
     c.total_iterations += 1
     left = dot(G, hmul(G)) / 2
-    due = c.iterations >= c.stretch || left <= c.error ||
+    # A step predicted to gain less than the gap tolerance ends the stage, and
+    # no stage is carried on from it: where the full sum's gap rule would stop
+    # the fit, the full sum decides.
+    quiet = stepgain < c.gap_tol
+    due = quiet || c.iterations >= c.stretch || left <= c.error ||
         maximum(abs, G; init=0.0) <= c.g_tol ||
         norm((x .- c.x0) .* c.metric) > c.radius ||
         any(i -> abs(x[i] - c.x0[i]) > c.reach[i], eachindex(c.reach))
     due || return none
-    return _ctsem_coreset_check!(c, x, f, G, hmul, scale)
+    return _ctsem_coreset_check!(c, x, f, G, hmul, scale; leave=quiet)
 end
 
 """A stage on `cs` anchored at `x` (minimised value `f`, gradient `G`), trusted
