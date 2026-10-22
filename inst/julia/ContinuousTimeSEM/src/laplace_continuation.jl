@@ -111,12 +111,16 @@ spike's (`CT-SEM/review/LAPLACE-shoulders-frozen-draws-2026-10-21.md`: 0.33 nats
 on an 8-effect person, the fit stalled for hours). A frozen rule does not read
 the stopping point, so its term is smooth.
 
-Its value carries Monte Carlo error, `sqrt(1/ESS - 1/n)` estimated from its
-weights, which no number of draws a fit can afford takes below the screen's
-tolerance. So a unit's gap counts towards flagging only beyond twice that
-error (`_continuation_place!`): the screen flags what it can resolve, and a
-unit Laplace gets right to within the draws' error keeps its Laplace term. A
-unit the caller names (`force`) is flagged whatever its gap: the optimiser
+Its value carries Monte Carlo error, read from the spread of its replicate
+lattices (`_CONTINUATION_REPLICATES`), which no number of draws a fit can
+afford takes below the screen's tolerance. So the screen flags what it can
+resolve (`_continuation_flags`): a unit whose own gap exceeds twice its error
+by more than the tolerance, and, since small gaps of one sign sum to a
+resolved total -- 60-80 per cent of the gap on acnonlin and gA1 sat in units
+under twice their error (review/LAPLACE-frozen-draws-validation-2026-10-22.md)
+-- units largest first until the unflagged units' signed sum is within the
+tolerance plus twice its combined error. A unit the caller names (`force`)
+is flagged whatever its gap: the optimiser
 names a unit whose term jumped (`_ctsem_jump_units`), and at a stall the gap
 at the stalled point can be small, since that is where the solve stopped on
 the shoulder.
@@ -497,14 +501,29 @@ function _continuation_newton_point(fns, x::Vector{Float64}, floor::Float64;
 end
 
 """The draws an importance rule has taken: their block coordinates, the
-component each came from (0 the prior), its members' log likelihood, and how
-many batches have been drawn."""
+component each came from (0 the prior), the replicate lattice each belongs to
+(`_CONTINUATION_REPLICATES` per batch, for the standard error), its members'
+log likelihood, and how many batches have been drawn."""
 mutable struct _ContinuationDraws
     points::Matrix{Float64}
     origin::Vector{Int}
+    replicate::Vector{Int}
     h::Vector{Float64}
     batches::Int
 end
+
+"""
+How many independently shifted lattices each batch of an importance rule
+draws, per component. The rule's standard error is the spread of their log
+integrals over `sqrt` of their number: a shifted lattice's error falls faster
+than independent draws', and the independent-draws formula `sqrt(1/ESS - 1/n)`
+overstated it 1.7-fold at eight effects and 3- to 10-fold at one or two
+(review/LAPLACE-frozen-draws-validation-2026-10-22.md), so batches doubled
+needlessly and the screen called resolvable gaps noise. Eight: the spread of
+eight has about a quarter's relative error itself, and a 256-draw batch still
+gives each replicate 32 points over the components.
+"""
+const _CONTINUATION_REPLICATES = 8
 
 """`m` split as evenly as whole numbers allow over `J` parts, the larger
 first."""
@@ -516,16 +535,27 @@ end
 
 """`m` draws from component `component` (`c`), scored at `theta`: each draw's
 members' log likelihood, the deviations their filters integrate integrated
-exactly, as at a product rule's node. The lattice's shift comes from `key`, the
-batch and the component alone, so the same component of the same batch draws
-the same standard normals at every placement: common random numbers."""
+exactly, as at a product rule's node. The `m` are `_CONTINUATION_REPLICATES`
+lattices, each with its own shift from `key`, the batch, the component and the
+replicate alone, so the same replicate of the same component of the same batch
+draws the same standard normals at every placement: common random numbers."""
 function _continuation_draw!(D::_ContinuationDraws, laplace::CTSEMLaplaceObjective,
     U::Integer, theta::Vector{Float64}, Ls, block, columns, u::Vector{Float64}, aws,
     c::CTSEMImportanceComponent, component::Int, m::Int, key)
     m > 0 || return D
     k = length(c.mu)
-    Z = _continuation_lattice_normals(k, m,
-        Random.Xoshiro(hash((key, D.batches, component))))
+    R = _CONTINUATION_REPLICATES
+    sizes = _continuation_split(m, R)
+    Z = Matrix{Float64}(undef, k, m)
+    reps = Vector{Int}(undef, m)
+    at = 0
+    for r in 1:R
+        sizes[r] > 0 || continue
+        Z[:, (at + 1):(at + sizes[r])] = _continuation_lattice_normals(k, sizes[r],
+            Random.Xoshiro(hash((key, D.batches, component, r))))
+        reps[(at + 1):(at + sizes[r])] .= r
+        at += sizes[r]
+    end
     X = Matrix{Float64}(undef, k, m)
     hs = Vector{Float64}(undef, m)
     for j in 1:m
@@ -548,6 +578,7 @@ function _continuation_draw!(D::_ContinuationDraws, laplace::CTSEMLaplaceObjecti
     end
     D.points = hcat(D.points, X)
     append!(D.origin, fill(component, m))
+    append!(D.replicate, reps)
     append!(D.h, hs)
     return D
 end
@@ -571,35 +602,65 @@ end
 """
 The log weights of every draw under the balance heuristic -- each component
 weighted by its share of the draws -- and the log integral, its standard error
-`sqrt(1/ESS - 1/n)` and effective sample size, for a block of `k` effects.
+and effective sample size, for a block of `k` effects. The standard error is
+the spread of the replicate lattices' own log integrals (each weighted over
+its own draws, by its own counts) over `sqrt` of their number
+(`_CONTINUATION_REPLICATES`); where fewer than two replicates score, the
+independent-draws formula `sqrt(1/ESS - 1/n)` stands in.
 """
 function _continuation_importance_weigh(D::_ContinuationDraws,
     comps::Vector{CTSEMImportanceComponent}, prior::CTSEMImportanceComponent, k::Int)
     n = size(D.points, 2)
     J = length(comps)
-    counts = zeros(Int, J + 1)
-    for t in D.origin
-        counts[t + 1] += 1
-    end
-    lw = Vector{Float64}(undef, n)
-    dens = Vector{Float64}(undef, J + 1)
+    dens = Matrix{Float64}(undef, J + 1, n)
     work = zeros(k)
     @inbounds for j in 1:n
         z = view(D.points, :, j)
         for t in 0:J
-            dens[t + 1] = counts[t + 1] == 0 ? -Inf : log(counts[t + 1] / n) +
-                _continuation_component_logdensity(t == 0 ? prior : comps[t], z, work)
+            dens[t + 1, j] = _continuation_component_logdensity(t == 0 ? prior : comps[t],
+                z, work)
         end
-        lw[j] = -dot(z, z) / 2 - _logsumexp(dens) - log(n)
     end
-    terms = lw .+ D.h
-    peak = maximum(terms)
-    isfinite(peak) || return (lw=lw, terms=terms, value=NaN, se=Inf, ess=0.0)
-    w = exp.(terms .- peak)
-    sw = sum(w)
-    ess = sw^2 / sum(abs2, w)
-    return (lw=lw, terms=terms, value=peak + log(sw) - k * log(2 * pi) / 2,
-        se=sqrt(max(1 / ess - 1 / n, 0.0)), ess=ess)
+    # The log weights of a set of draws under the balance heuristic over the
+    # set's own counts, and the set's log integral.
+    function weigh(sel)
+        m = length(sel)
+        counts = zeros(Int, J + 1)
+        for j in sel
+            counts[D.origin[j] + 1] += 1
+        end
+        lw = Vector{Float64}(undef, m)
+        logq = Vector{Float64}(undef, J + 1)
+        @inbounds for (i, j) in enumerate(sel)
+            for t in 1:(J + 1)
+                logq[t] = counts[t] == 0 ? -Inf : log(counts[t] / m) + dens[t, j]
+            end
+            z = view(D.points, :, j)
+            lw[i] = -dot(z, z) / 2 - _logsumexp(logq) - log(m)
+        end
+        terms = lw .+ D.h[sel]
+        peak = maximum(terms)
+        isfinite(peak) || return (lw=lw, terms=terms, value=NaN, ess=0.0)
+        w = exp.(terms .- peak)
+        sw = sum(w)
+        return (lw=lw, terms=terms, value=peak + log(sw) - k * log(2 * pi) / 2,
+            ess=sw^2 / sum(abs2, w))
+    end
+    all_ = weigh(1:n)
+    isfinite(all_.value) || return (lw=all_.lw, terms=all_.terms, value=NaN, se=Inf,
+        ess=0.0)
+    values = Float64[]
+    for r in 1:_CONTINUATION_REPLICATES
+        sel = findall(==(r), D.replicate)
+        isempty(sel) && continue
+        v = weigh(sel).value
+        isfinite(v) && push!(values, v)
+    end
+    se = length(values) >= 2 ?
+        sqrt(sum(abs2, values .- sum(values) / length(values)) /
+             (length(values) - 1) / length(values)) :
+        sqrt(max(1 / all_.ess - 1 / n, 0.0))
+    return (lw=all_.lw, terms=all_.terms, value=all_.value, se=se, ess=all_.ess)
 end
 
 """
@@ -628,11 +689,12 @@ over its components, each weighted by its share of the draws:
 
 Draws come in batches, the first of `opts.draws` and each later as large as
 all before it, quasi-random (`_continuation_lattice_normals`), until the
-standard error is under `opts.draws_se` or `opts.draws_max` are spent. Each
-component's lattice in each batch is seeded by the unit, block, batch and
-component, the same at every placement: common random numbers, so two
-placements differ by where their proposals sit rather than by their draws'
-luck. With fresh draws at each placement the continuation's rounds, which keep
+standard error -- the spread of the batch's replicate lattices' log integrals
+(`_CONTINUATION_REPLICATES`, `_continuation_importance_weigh`) -- is under
+`opts.draws_se` or `opts.draws_max` are spent. Each replicate's lattice in
+each batch is seeded by the unit, block, batch, component and replicate, the
+same at every placement: common random numbers, so two placements differ by
+where their proposals sit rather than by their draws' luck. With fresh draws at each placement the continuation's rounds, which keep
 a step only if the objective with the rule placed again is no lower, were
 rejected by the draws' error on the round-9 fit: 0.4 to 0.7 nats at radii
 down to 0.03 standard errors. Returns `(rule, value, se, ess,
@@ -657,7 +719,7 @@ function _continuation_importance_rule(laplace::CTSEMLaplaceObjective, U::Intege
     isempty(comps) && return nothing
     prior = CTSEMImportanceComponent(zeros(k), Matrix{Float64}(I, k, k), ones(k))
     key = (Int(opts.draws_seed), Int(U), Int(b))
-    D = _ContinuationDraws(zeros(k, 0), Int[], Float64[], 0)
+    D = _ContinuationDraws(zeros(k, 0), Int[], Int[], Float64[], 0)
     share = Float64(opts.draws_prior)
     _continuation_batch!(D, laplace, U, theta, Ls, block, columns, u, aws, comps,
         prior, share, Int(opts.draws), key)
@@ -945,39 +1007,59 @@ end
     _continuation_resolved(gaps, se)
 
 Each unit's gap beyond twice its rule's standard error, towards zero: what the
-screen can tell from the draws' own error (see the module docstring). The same
-gap where the rule is a product rule, whose `se` is zero.
+screen can tell of that unit alone from the draws' own error. The same gap
+where the rule is a product rule, whose `se` is zero. What a set of units
+leaves together is their signed sum against its combined error
+(`_continuation_screen`), since gaps each below their own error sum to a
+resolved total.
 """
 _continuation_resolved(gaps::Vector{Float64}, se::Vector{Float64}) =
     [isfinite(g) ? sign(g) * max(abs(g) - 2 * se[U], 0.0) : g
      for (U, g) in enumerate(gaps)]
 
 """
-    _continuation_flags(gaps, tolerance)
+    _continuation_screen(gaps, se)
+
+What the screen can resolve of a set of units' gaps: the larger of the sum of
+each unit's own resolved gap and the set's signed sum beyond twice its
+combined error. Both are the plain absolute sum where every `se` is zero.
+"""
+function _continuation_screen(gaps::AbstractVector{Float64}, se::AbstractVector{Float64})
+    own = 0.0; signed = 0.0; var = 0.0
+    for (U, g) in enumerate(gaps)
+        isfinite(g) || continue
+        own += max(abs(g) - 2 * se[U], 0.0)
+        signed += g
+        var += se[U]^2
+    end
+    return max(own, abs(signed) - 2 * sqrt(var), 0.0)
+end
+
+"""
+    _continuation_flags(gaps, tolerance; se=zeros(length(gaps)))
 
 The units the continuation puts nodes on: largest `|gap|` first, the smallest
-set whose removal leaves the rest carrying at most `tolerance` in total. That
-is the tolerance the screen passes a whole fit on, so what the hybrid leaves to
-Laplace is what the screen would have called exact. A unit whose rule could
-not be placed (`NaN`) is never flagged. A negative `tolerance` flags every
-other unit, a zero gap included: at `0` a unit whose gap is exactly zero, as on
-a linear Gaussian model where Laplace is exact and the gaps are rounding, is
-left to Laplace, so whether it is flagged would be a matter of the last digit.
+set whose removal leaves the rest carrying at most `tolerance` of what the
+screen can resolve (`_continuation_screen`). That is the tolerance the screen
+passes a whole fit on, so what the hybrid leaves to Laplace is what the screen
+would have called exact. A unit whose rule could not be placed (`NaN`) is
+never flagged. A negative `tolerance` flags every other unit, a zero gap
+included: at `0` a unit whose gap is exactly zero, as on a linear Gaussian
+model where Laplace is exact and the gaps are rounding, is left to Laplace, so
+whether it is flagged would be a matter of the last digit.
 """
-function _continuation_flags(gaps::Vector{Float64}, tolerance::Real)
+function _continuation_flags(gaps::Vector{Float64}, tolerance::Real;
+    se::Vector{Float64}=zeros(length(gaps)))
     g = [isfinite(x) ? abs(x) : 0.0 for x in gaps]
     order = sortperm(g; rev=true)
     # What the unflagged units carry, as a sum of them rather than the total
     # less what has been flagged: subtracting the largest gaps from their total
     # can leave zero or less while a small one is still unflagged, which at
     # `tolerance = 0` dropped a unit on rounding alone.
-    remaining = zeros(length(order) + 1)
-    for k in length(order):-1:1
-        remaining[k] = remaining[k + 1] + g[order[k]]
-    end
     flagged = Int[]
     for (k, U) in enumerate(order)
-        remaining[k] <= tolerance && break
+        rest = order[k:end]
+        _continuation_screen(gaps[rest], se[rest]) <= tolerance && break
         (g[U] > 0 || tolerance < 0) || break
         push!(flagged, U)
     end
@@ -1132,8 +1214,9 @@ function _continuation_place!(o::CTSEMLaplaceContinuation, theta::Vector{Float64
     failed = [placed.rules[U] === nothing && !isempty(laplace.units.blocks[U]) &&
               !placed.wide[U] for U in 1:nunits]
     o.wide = placed.wide
-    gaps = _continuation_resolved(placed.quadrature .- placed.laplace, placed.se)
-    flagged = sort!(union(o.flagged, _continuation_flags(gaps, o.tolerance)))
+    gaps = placed.quadrature .- placed.laplace
+    flagged = sort!(union(o.flagged, _continuation_flags(gaps, o.tolerance;
+        se=placed.se)))
     # A unit flagged before whose rule could not be placed here keeps its
     # Laplace term: an honest Laplace term beats a rule placed somewhere else.
     filter!(U -> placed.rules[U] !== nothing, flagged)
@@ -2353,8 +2436,9 @@ nothing is flagged, and `nflagged` says so.
 function ctsem_laplace_continuation_info(o::CTSEMLaplaceContinuation)
     nunits = length(o.laplace.units.members)
     gaps = o.centre_quadrature .- o.centre_laplace
-    # The screen reads the gaps it can resolve (`_continuation_resolved`); the
-    # signed `gap` reported is the raw difference.
+    # The screen reads the gaps it can resolve (`_continuation_screen`); the
+    # signed `gap` reported is the raw difference, and each unit's own
+    # resolved gap sets the bar.
     finite = [isfinite(g) ? abs(g) : 0.0 for g in _continuation_resolved(gaps, o.centre_se)]
     flaggedgaps = [finite[U] for U in o.flagged]
     prior = _ctsem_log_prior(o.laplace.objective, o.centre)
@@ -2370,9 +2454,10 @@ function ctsem_laplace_continuation_info(o::CTSEMLaplaceContinuation)
         for rule in o.rules; init=0)
     return (flagged=isempty(o.flagged) ? [0] : copy(o.flagged),
         nflagged=length(o.flagged), nunits=nunits,
-        screen=sum(finite; init=0.0), gap=sum(gaps[isfinite.(gaps)]; init=0.0),
+        screen=_continuation_screen(gaps, o.centre_se),
+        gap=sum(gaps[isfinite.(gaps)]; init=0.0),
         bar=isempty(flaggedgaps) ? 0.0 : minimum(flaggedgaps),
-        residual=sum(finite[U] for U in o.rest_units; init=0.0),
+        residual=_continuation_screen(gaps[o.rest_units], o.centre_se[o.rest_units]),
         centre=copy(o.centre), value=o.centre_value,
         quadrature=sum(quadrature_units) + prior, prior=prior,
         quadrature_units=quadrature_units, quadrature_subjects=subjects,
