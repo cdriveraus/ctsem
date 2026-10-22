@@ -260,7 +260,7 @@ RESULT_KEYS <- c("iterations", "f_calls", "g_calls", "maximum_loglik", "converge
   "predicted_gain", "last_gain", "gradient_norm", "newton_steps", "newton_hessians",
   "newton_subset_hessians", "batch_sizes", "batch_iterations", "stall_escapes",
   "stall_triggers", "gap_tol", "linesearch", "chunks", "overshoot_gain",
-  "stopped_by_stall", "stall_gain")
+  "stopped_by_stall", "stall_gain", "stop_reason", "jump_units")
 rec$instrumented <- c(
   .ctJuliaOptimise = wrap(".ctJuliaOptimise", function(orig) function(...) {
     a <- list(...)
@@ -481,7 +481,10 @@ if (!is.null(fit)) {
   rec$laplace_block <- if (!is.null(fit$laplace)) list(
     correction = corr[setdiff(names(corr), c("draws"))],
     conditioning = fit$laplace$conditioning, floor = fit$laplace$floor,
-    gated_units = fit$laplace$gated_units) else NULL
+    gated_units = fit$laplace$gated_units,
+    # Units a jump named and the fit then integrated by frozen draws
+    # (`.ctLaplaceFrozenRescue()`), NULL on a build without the rescue.
+    frozen = fit$laplace$frozen) else NULL
   rec$identifiability <- tryCatch(list(nweak = .int1(fit$identifiability$nweak),
     weak = fit$identifiability$weak), error = function(e) NULL)
 }
@@ -788,6 +791,14 @@ rec$row <- data.frame(
       is.finite(k) && k >= 1L && k <= length(st) && !identical(st[[k]]$kind, "warmup")
     }, logical(1))),
   probe_secs = .num1(probe$secs %||% NA), probe_found = .lgl1(probe$found),
+  # Engine runs the jump watch stopped, and what the rescue then integrated by
+  # frozen draws (the rescue's own runs bypass the run record).
+  jump_runs = sum(vapply(runs, function(r) identical(r$stop_reason, "jump"), logical(1))),
+  jump_units = paste(unique(unlist(lapply(runs, function(r)
+    if (identical(r$stop_reason, "jump")) r$jump_units))), collapse = ","),
+  frozen_units = paste(rec$laplace_block$frozen$units, collapse = ","),
+  frozen_placements = .int1(rec$laplace_block$frozen$placements %||% NA),
+  lapcorr_wide = .int1(corr$wide %||% NA), lapcorr_flagged = .int1(corr$flagged %||% NA),
   lapcorr_continuation = .chr1(corr$continuation),
   lapcorr_secs = .num1(corr$seconds["total"]), lapcorr_gradients = .num1(corr$evaluations["gradients"]),
   cont_hessian = is.matrix(corr$hessian),

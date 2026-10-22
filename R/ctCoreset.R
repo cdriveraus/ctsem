@@ -691,6 +691,9 @@
   fn <- function(parm) batch(matrix(parm, 1L))
   attr(fn, 'batch') <- batch
   attr(fn, 'gradbatch') <- gradbatch
+  # The full density's gradient, for a check of the answer
+  # (`.ctSteinCheck()`) that a coreset's error must not reach.
+  attr(fn, 'fullgradbatch') <- gradfull
   attr(fn, 'cost') <- function() st$cost
   attr(fn, 'finalize') <- finalize
   attr(fn, 'coreset') <- function() list(
