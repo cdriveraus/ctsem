@@ -2007,8 +2007,18 @@ ctOptimFullBootstrapDraws <- function(est, standata, sm, n=1000, cores=1,
 # Stopping instead when a batch named as many directions as the batch before
 # missed one of a funnel's two directions on 9 seeds of 20: its statistic is
 # a product of two coordinates, noisy at 16 draws, and two batches agreed by
-# chance. One still undecided at `maxdraws` is read at its estimate. The
-# directions are the residuals' singular vectors,
+# chance. One still undecided at `maxdraws` is read at its estimate.
+#
+# Nor is it decided while it names more than half as many directions as it
+# has draws: the draws resolve at most as many directions as there are of
+# them, so a set that large is what they can see, not what there is. On a
+# single 400-row time series of six processes (75 parameters) 16 draws named
+# 16 directions and agreed with themselves; importance sampling weighed those
+# well (ESS 260, k 0.35), and the answer's means were up to 9 sds off in the
+# directions passed as normal (the Stein check, `.ctSteinCheck()`). 64 draws
+# named 55. `maxdraws` is twice the parameters, between 64 and 256.
+#
+# The directions are the residuals' singular vectors,
 # and each is measured by two numbers rather than by its singular value, which
 # with fewer draws than parameters is inflated by the draws' own spread:
 #
@@ -2046,10 +2056,11 @@ ctOptimFullBootstrapDraws <- function(est, standata, sm, n=1000, cores=1,
 # the mode wherever the posterior is skewed, however well the normal's widths
 # fit; see `.ctNormalCentre()`. The normal's draws are placed there.
 .ctOptimNormalCheck <- function(gradients, est, cov, batch = 8L,
-  maxdraws = 64L, coverage = c(0.90, 0.99), centrepairs = 32L) {
+  maxdraws = NULL, coverage = c(0.90, 0.99), centrepairs = 32L) {
   eig <- eigen((cov + t(cov)) / 2, symmetric = TRUE)
   keep <- eig$values > .ctFlatDirectionRtol() * max(eig$values)
   A <- sweep(eig$vectors[, keep, drop = FALSE], 2, sqrt(eig$values[keep]), "*")
+  if (is.null(maxdraws)) maxdraws <- as.integer(min(256, max(64, 2 * ncol(A))))
   bars <- .ctNormalResidualBars(coverage)
   Z <- R <- matrix(0, 0L, ncol(A))
   drawn <- unusable <- 0L
@@ -2063,7 +2074,8 @@ ctOptimFullBootstrapDraws <- function(est, standata, sm, n=1000, cores=1,
     Z <- rbind(Z, Zb[usable, , drop = FALSE])
     R <- rbind(R, Rb[usable, , drop = FALSE])
     found <- if (nrow(R) >= 2L) .ctNormalDepartures(Z, R, A, bars) else NULL
-    if (drawn >= maxdraws || (drawn >= 2L * batch && isTRUE(found$decided))) break
+    if (drawn >= maxdraws || (drawn >= 2L * batch && isTRUE(found$decided) &&
+      length(found$flagged) <= nrow(R) / 2)) break
   }
   record <- list(draws = drawn, unusable = unusable, bars = bars,
     directions = matrix(0, length(est), 0L), slope = numeric(), shape = numeric(),
@@ -3224,7 +3236,8 @@ ctOptimFitLpgFunc <- function(fit, cores=1){
 #' log posterior's gradient at draws from the normal says in which directions
 #' the posterior departs from it, in batches of 8 until the directions named
 #' would be the same with every departure two standard errors larger or
-#' smaller (16 to 64 draws, whatever the number of parameters). Where a direction would leave some parameter's 95\% interval
+#' smaller, and the directions named are fewer than half the draws (16 draws
+#' at least, and at most twice the parameters, between 64 and 256). Where a direction would leave some parameter's 95\% interval
 #' covering under 90\% or over 99\%, or move one tail outside 0.5 to 5\% by
 #' a skew or by a width that moves with another parameter, every departing
 #' direction is sampled as \code{'is'} samples (below), the normal kept in

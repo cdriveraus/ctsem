@@ -175,7 +175,8 @@ corrected by importance sampling in the directions where it is wrong. The
 log posterior's gradient at draws from the normal says in which directions
 the posterior departs from it, in batches of 8 until the directions named
 would be the same with every departure two standard errors larger or
-smaller (16 to 64 draws, whatever the number of parameters). Where a direction would leave some parameter's 95\% interval
+smaller, and the directions named are fewer than half the draws (16 draws
+at least, and at most twice the parameters, between 64 and 256). Where a direction would leave some parameter's 95\% interval
 covering under 90\% or over 99\%, or move one tail outside 0.5 to 5\% by
 a skew or by a width that moves with another parameter, every departing
 direction is sampled as \code{'is'} samples (below), the normal kept in
