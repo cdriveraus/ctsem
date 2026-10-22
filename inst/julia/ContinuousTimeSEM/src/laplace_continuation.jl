@@ -827,15 +827,20 @@ most `draws_se`, each aiming at `sqrt(draws_se / siblings)`, never below
 `draws_se` itself -- starting at the fewest draws that could reach it,
 `(share / (1 - share)) / se^2`, the error of a proposal matching the block
 exactly but for its prior share, at least 8 and at most `opts.draws`. See
-`_continuation_importance_rule`. A block beneath another measures its error
-against that target by its weights' spread, `sqrt(1/ESS - 1/n)`, where a block
-with nothing above it reads its replicates' (`_continuation_importance_weigh`).
+`_continuation_importance_rule`. Every block keeps drawing until both its
+replicates' spread (`_continuation_importance_weigh`, what it reports and the
+screen reads) and its weights' spread, `sqrt(1/ESS - 1/n)`, are under that
+target.
 
-Why no looser, and why the weights. A child's estimate is unbiased, but its
-draws come from a Gaussian at its conditional mode, lighter-tailed than these
-posteriors, and at a few hundred draws it falls short: of the mass in the
-tails, which every replicate misses alike, so their spread does not show the
-shortfall, while the weights' spread does. On the SNSF pilot's study unit at
+Why no looser, and why the weights too. A block's estimate is unbiased, but
+its draws come from Gaussians lighter-tailed than these posteriors, and at a
+few hundred draws it falls short: of the mass in the tails, which every
+replicate misses alike, so their spread does not show the shortfall, while
+the weights' spread does. At the top of a unit the same: on the bench's gA1
+(review/LAPLACE-frozen-draws-validation-2026-10-22.md), stopped on the
+replicates alone at about 1,100 draws a unit, the draws' total error against
+exact was -1.2 to -2.1 nats with a reported error 0.72 of the truth, where
+driven to 16,000 draws it was within 0.13. On the SNSF pilot's study unit at
 it290 (`CT-SEM/review/LAPLACE-shoulders-frozen-draws-2026-10-21.md`, section
 10), with the study at 256 draws and every person's draws to 0.091, 0.04 and
 0.02 by their weights, the unit came to -16745.691, -16745.657 and
@@ -901,10 +906,12 @@ draws:
     the weighted draws (`_continuation_moment_component!`).
 
 Draws come in batches, each later one as large as all before it,
-quasi-random (`_continuation_lattice_normals`), until the standard error -- the
-spread of the replicate lattices' log integrals (`_CONTINUATION_REPLICATES`,
-`_continuation_importance_weigh`) -- is under a target or `opts.draws_max` are
-spent. A block with nothing above it starts at `opts.draws` and aims at
+quasi-random (`_continuation_lattice_normals`), until both the standard error
+-- the spread of the replicate lattices' log integrals
+(`_CONTINUATION_REPLICATES`, `_continuation_importance_weigh`) -- and the
+weights' spread, which sees a tail the proposal misses where every replicate
+misses it alike, are under a target (`_continuation_draw_target`), or
+`opts.draws_max` are spent. A block with nothing above it starts at `opts.draws` and aims at
 `opts.draws_se`. An outer block's standard error counts its children's errors
 as well: they are independent across its draws (each draw's children are keyed
 by it), so they spread its replicates' integrals as its own proposal's
@@ -981,12 +988,12 @@ function _continuation_importance_rule(laplace::CTSEMLaplaceObjective, U::Intege
         share, target.first, key, path)
     current = _continuation_importance_weigh(D, comps, prior, k)
     target_ess = 1 / target.se^2
-    # A block beneath another stops on its weights' spread rather than its
-    # replicates' (`_continuation_draw_target` says why).
-    beneath = !isempty(block.ancestors)
+    # Every block stops on the larger of its replicates' spread and its
+    # weights' (`_continuation_draw_target` says why); the replicates' is what
+    # it reports and the screen reads.
     while (!isfinite(current.value) ||
-            (beneath ? sqrt(max(1 / current.ess - 1 / size(D.points, 2), 0.0)) :
-             current.se) > target.se) && size(D.points, 2) < opts.draws_max
+            max(current.se, sqrt(max(1 / current.ess - 1 / size(D.points, 2), 0.0))) >
+            target.se) && size(D.points, 2) < opts.draws_max
         n = size(D.points, 2)
         if isfinite(current.value)
             if leaf
