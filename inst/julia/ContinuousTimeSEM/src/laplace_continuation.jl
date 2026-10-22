@@ -703,6 +703,37 @@ function _continuation_moment_component!(comps::Vector{CTSEMImportanceComponent}
 end
 
 """
+The squared standard errors that the children at one draw of an outer block
+may carry together, `0.25`: what a fifth of every batch at the prior costs an
+importance rule's weights however well the rest match (`share / (1 - share)`
+at `draws_prior = 0.2`), so the children at most double the variance the outer
+block's own proposal gives its weights, and its draws needed to reach its
+standard error at most double with it, where each of its draws costs the
+children's draws.
+"""
+const _CONTINUATION_INNER_BUDGET = 0.25
+
+"""
+    _continuation_draw_target(block, context, opts)
+
+The standard error block `block`'s draws aim at and its first batch: for a
+block with nothing above it `opts.draws_se` and `opts.draws`; beneath another,
+its share of `_CONTINUATION_INNER_BUDGET` over its siblings,
+`sqrt(budget / siblings)` but never below `draws_se`, starting at the fewest
+draws that could reach it -- `(share / (1 - share)) / se^2`, the error of a
+proposal matching the block exactly but for its prior share -- and at least 8,
+at most `opts.draws`. See `_continuation_importance_rule`.
+"""
+function _continuation_draw_target(block::CTSEMLaplaceBlock, context, opts)
+    isempty(block.ancestors) && return (se=Float64(opts.draws_se), first=Int(opts.draws))
+    siblings = length(context.children[block.ancestors[1]])
+    se = max(Float64(opts.draws_se), sqrt(_CONTINUATION_INNER_BUDGET / siblings))
+    share = Float64(opts.draws_prior)
+    least = ceil(Int, share / (1 - share) / se^2)
+    return (se=se, first=clamp(least, min(8, Int(opts.draws)), Int(opts.draws)))
+end
+
+"""
     _continuation_importance_rule(laplace, U, theta, Ls, b, u, context, aws,
         opts, path=Int[])
 
@@ -745,16 +776,23 @@ draws:
     (`_continuation_newton_point`); at an outer block, the Gaussian matched to
     the weighted draws (`_continuation_moment_component!`).
 
-Draws come in batches, the first of `opts.draws` and each later as large as
-all before it, quasi-random (`_continuation_lattice_normals`), until the
-standard error is under `opts.draws_se` or `opts.draws_max` are spent: at every
-block, so each child's integral at each draw above is as good as a one-block
-unit's. An outer block's standard error, `sqrt(1/ESS - 1/n)` from its weights,
-counts its children's errors as well: they are independent across its draws
-(each draw's children are keyed by it), so they spread its weights as its own
-proposal's mismatch does. And the product of its children's estimates, each
-unbiased for its integral, is unbiased for their product, so the block's
-estimate of its integral is unbiased as a one-block unit's is.
+Draws come in batches, each later one as large as all before it,
+quasi-random (`_continuation_lattice_normals`), until the standard error is
+under a target or `opts.draws_max` are spent. A block with nothing above it
+starts at `opts.draws` and aims at `opts.draws_se`. An outer block's standard
+error, `sqrt(1/ESS - 1/n)` from its weights, counts its children's errors as
+well: they are independent across its draws (each draw's children are keyed by
+it), so they spread its weights as its own proposal's mismatch does. And the
+product of its children's estimates, each unbiased for its integral, is
+unbiased for their product, so the block's estimate of its integral is
+unbiased as a one-block unit's is. So a block beneath another needs only to
+keep that spread in bounds, not to reach `draws_se` itself: its siblings'
+squared errors together at most `_CONTINUATION_INNER_BUDGET`, each aiming at
+`sqrt(budget / siblings)` (never below `draws_se`) and starting at the fewest
+draws that could reach it (`_continuation_draw_target`). Children driven to
+`draws_se` each made an outer draw of the SNSF pilot's study unit cost 30
+people at 256 draws or more, where their whole error was a small part of the
+study's.
 
 Each component's lattice in each batch is seeded by the unit, the block, its
 `path` (the draws above it), the batch and the component, the same at every
@@ -812,11 +850,12 @@ function _continuation_importance_rule(laplace::CTSEMLaplaceObjective, U::Intege
         (Int(opts.draws_seed), Int(U), Int(b), path)
     D = _ContinuationDraws(zeros(k, 0), Int[], Float64[], Vector{CTSEMFixedRule}[], 0)
     share = Float64(opts.draws_prior)
+    target = _continuation_draw_target(block, context, opts)
     _continuation_batch!(D, laplace, U, theta, Ls, b, u, context, opts, comps, prior,
-        share, Int(opts.draws), key, path)
+        share, target.first, key, path)
     current = _continuation_importance_weigh(D, comps, prior, k)
-    target_ess = 1 / Float64(opts.draws_se)^2
-    while (!isfinite(current.value) || current.se > opts.draws_se) &&
+    target_ess = 1 / target.se^2
+    while (!isfinite(current.value) || current.se > target.se) &&
             size(D.points, 2) < opts.draws_max
         n = size(D.points, 2)
         if isfinite(current.value)
