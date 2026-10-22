@@ -21,7 +21,8 @@ using ForwardDiff, LinearAlgebra
 #     taken at one node gets wrong, although its value is exact.
 #  7. The stiff complement's rule has a standard normal's moments through
 #     degree four, cross moments included.
-#  8. A unit wider than `maxdim` is left on Laplace, unscored.
+#  8. A unit wider than `maxdim` is left on Laplace, unscored, without draws;
+#     with them, one block or nested, it is integrated by frozen draws.
 
 isdefined(@__MODULE__, :_LAPLACE_LINEAR_OBJECTIVE) ||
     include(joinpath(@__DIR__, "laplace_fixtures.jl"))
@@ -538,4 +539,105 @@ end
     named = ContinuousTimeSEM._ctsem_jump_units(laplace, jump)
     @test isempty(named.units)
     @test named.point_units == [0]
+end
+
+# --- nested units by frozen draws ---------------------------------------------
+#
+# A unit wider than `maxdim` whose block tree nests gets draws per block, each
+# block's conditional on a draw of the blocks above
+# (`_continuation_importance_rule`). What has to hold, as for one block: its
+# value is the unit's integral to within its own error, at two levels and at
+# three; its gradient is the derivative of its value; its standard error read
+# again at the centre is the one it was placed to; and its exact Hessian,
+# summed over the root's draws in parts on several threads, is the Hessian
+# taken whole and the derivative of its gradient.
+
+# Two levels on a nonlinear integrand: five subjects in two studies, each
+# subject's DRIFT (through `-log1p_exp`) and T0MEANS varying, each study's
+# MANIFESTMEANS. Raw layout: 1-4 the model parameters, 5-6 the subject scales,
+# 7 their correlation, 8 the study scale.
+_fresh_nested_nonlinear() = (ctsem_laplace_objective(_LAPLACE_NONLINEAR_OBJECTIVE;
+    re_index=[1, 2, 4], sd_index=[5, 6, 8], cor_index=[7],
+    sd_scale=[1.0, 1.0, 1.0], level_nre=[2, 1],
+    group=vcat(1:5, [1, 1, 1, 2, 2]), level_ngroups=[5, 2]),
+    [0.1, 0.4, -0.2, 0.05, -0.25, 0.3, 0.2, -0.3])
+
+@testset "a nested unit wider than maxdim gets frozen draws per block" begin
+    for (label, fresh, draws, draws_max) in (
+            ("two levels", _fresh_twolevel, 64, 4096),
+            # Draws at three levels multiply: one batch of 32 at each.
+            ("three levels", _fresh_threelevel, 32, 32))
+        laplace, values = fresh()
+        theta = collect(Float64, values)
+        # Linear Gaussian, so Laplace is the integral.
+        lap = ctsem_laplace_evaluate(laplace, theta; gradient=false)
+        o = ctsem_laplace_continuation(laplace, theta; tolerance=0.0, maxdim=1,
+            draws=draws, draws_max=draws_max, force=1:length(laplace.units.members))
+        info = ctsem_laplace_continuation_info(o)
+        @test (label, info.nwide, info.nimportance, info.nflagged) ==
+            (label, 0, info.nunits, info.nunits)
+        # Each draw of a root carries one rule per block beneath it.
+        root = o.rules[1].roots[1]
+        @test (label, !isempty(root.children) && length(root.children) ==
+            size(root.points, 2)) == (label, true)
+        @test (label, info.importance_draws > sum(size(r.roots[1].points, 2)
+            for r in o.rules)) == (label, true)
+        for U in 1:info.nunits
+            @test (label, U, abs(info.quadrature_units[U] - lap.unit_loglik[U]) <
+                4 * info.centre_se[U] + 1e-3) == (label, U, true)
+        end
+        @test (label, isapprox(ctsem_laplace_continuation_se(o, theta),
+            info.centre_se[info.flagged]; rtol=1e-8)) == (label, true)
+        r = _continuation_fd_check(o, theta .+ 0.05)
+        for j in eachindex(theta)
+            @test (label, j, isapprox(r.g[j], r.fd[j]; atol=1e-6, rtol=1e-5)) ==
+                (label, j, true)
+        end
+    end
+end
+
+@testset "nested draws on a nonlinear integrand integrate as the product rule does" begin
+    laplace, values = _fresh_nested_nonlinear()
+    theta = collect(Float64, values)
+    @test ContinuousTimeSEM._continuation_unit_width(laplace, 1) == 3
+    # Seven nodes on each of a path's three effects: the reference.
+    reference = ctsem_laplace_continuation_info(ctsem_laplace_continuation(laplace,
+        theta; nodes=7, tolerance=-1.0, maxdim=3)).quadrature_units
+    lap = ctsem_laplace_evaluate(laplace, theta; gradient=false).unit_loglik
+    o = ctsem_laplace_continuation(laplace, theta; tolerance=0.0, maxdim=2,
+        draws=128, draws_se=0.02, force=1:length(laplace.units.members))
+    info = ctsem_laplace_continuation_info(o)
+    @test info.nimportance == info.nunits
+    for U in 1:info.nunits
+        @test abs(info.quadrature_units[U] - reference[U]) <
+            4 * info.centre_se[U] + 1e-3
+    end
+    r = _continuation_fd_check(o, theta .+ 0.05)
+    @test isapprox(r.g, r.fd; atol=1e-6, rtol=1e-5)
+end
+
+@testset "a nested unit's exact Hessian in parts is the Hessian whole" begin
+    laplace, values = _fresh_twolevel()
+    theta = collect(Float64, values)
+    o = ctsem_laplace_continuation(laplace, theta; tolerance=0.0, maxdim=1, draws=64,
+        force=1:length(laplace.units.members))
+    x = theta .+ [0.02 * (-1)^j for j in eachindex(theta)]
+    # One worker takes every unit whole; the pool, wider than the three units,
+    # splits each one's root over its draws (`_continuation_tasks`) and merges
+    # the parts' moments. With one thread both are whole.
+    previous = ctsem_max_chunks().max_chunks
+    Hs, Hw = try
+        ctsem_set_max_chunks!(1)
+        whole = ctsem_laplace_continuation_hessian(o, x)
+        ctsem_set_max_chunks!(max(Threads.nthreads(), 1))
+        (ctsem_laplace_continuation_hessian(o, x), whole)
+    finally
+        ctsem_set_max_chunks!(previous)
+    end
+    scale = maximum(abs, Hw)
+    @test maximum(abs, Hs .- Hw) <= 1e-11 * scale
+    Hc = ctsem_laplace_continuation_hessian(o, x; scheme=:central, step=1e-4)
+    Hr = (4 .* Hc .- ctsem_laplace_continuation_hessian(o, x; scheme=:central,
+        step=2e-4)) ./ 3
+    @test isapprox(Hs, Hr; rtol=1e-7, atol=1e-9 * scale)
 end
