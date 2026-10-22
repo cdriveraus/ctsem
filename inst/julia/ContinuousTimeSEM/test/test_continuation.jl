@@ -632,6 +632,46 @@ end
     @test named.point_units == [0]
 end
 
+@testset "a stage after a placement starts from the pairs the last one ended with" begin
+    # A rescued fit's stages (`.ctLaplaceFrozenRescue()`): one run on the
+    # hybrid, the draws placed again where it ended, and the next run from the
+    # curvature the first left on the objective (`lbfgs_pairs = :objective`).
+    # It reaches the cold run's point in no more iterations.
+    C = ContinuousTimeSEM
+    laplace, values = _fresh_2d3()
+    theta = collect(Float64, values)
+    n = length(theta)
+    o = ctsem_laplace_continuation(laplace, theta; maxdim=2, draws=256,
+        draws_scope=:forced, force=[1, 2], screen=false)
+    stage(from; kw...) = C.ctsem_optimize(o, from; maxiter=500, g_tol=1e-6,
+        newton=false, certify=false, progress=false, verbose=false,
+        overshoot_probe=:off, kw...)
+    @test o.lbfgs === nothing
+    before = stage(theta; lbfgs_pairs=:objective)
+    held = o.lbfgs
+    @test held isa C.CTSEMLBFGSMemory
+    @test !isempty(held.S) && all(v -> length(v) == n, held.S)
+    x1 = collect(Float64, before.minimizer)
+    ctsem_laplace_continuation_recentre!(o, x1)
+    cold = stage(x1)
+    # A run that does not ask leaves the held pairs alone.
+    @test o.lbfgs === held
+    warm = stage(x1; lbfgs_pairs="objective")
+    @test o.lbfgs !== held
+    @test warm.iterations <= cold.iterations
+    @test isapprox(warm.maximum_loglik, cold.maximum_loglik; atol=1e-8)
+    @test isapprox(warm.minimizer, cold.minimizer; atol=1e-4)
+    # A memory for another number of parameters is refused, given or held.
+    bad = C.CTSEMLBFGSMemory(5)
+    @test C._ctsem_lbfgs_push!(bad, ones(n + 1), fill(2.0, n + 1))
+    @test_throws DimensionMismatch stage(x1; lbfgs_pairs=bad)
+    o.lbfgs = bad
+    @test_throws DimensionMismatch stage(x1; lbfgs_pairs=:objective)
+    @test_throws ArgumentError stage(x1; lbfgs_pairs=:elsewhere)
+    # And an objective that keeps none starts cold.
+    @test C._ctsem_lbfgs_held(laplace) === nothing
+end
+
 # --- nested units by frozen draws ---------------------------------------------
 #
 # A unit wider than `maxdim` whose block tree nests gets draws per block, each

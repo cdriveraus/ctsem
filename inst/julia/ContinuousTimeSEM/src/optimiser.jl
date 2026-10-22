@@ -84,7 +84,21 @@ _ctsem_jump_capable(::Any) = false
 # measurement of the objective.
 const _CTSEM_REFUSED = floatmax(Float64) / 1e9
 
-"""What `_ctsem_lbfgs` returns: the point and the reasons it stopped."""
+"""Curvature pairs for the two-loop recursion, on the MINIMISED objective, and
+the learned diagonal of the initial matrix (`_ctsem_lbfgs_diagonal!`'s `B`,
+`nothing` until a run learns one)."""
+mutable struct CTSEMLBFGSMemory
+    S::Vector{Vector{Float64}}
+    Y::Vector{Vector{Float64}}
+    rho::Vector{Float64}
+    m::Int
+    diagonal::Union{Nothing,Vector{Float64}}
+end
+CTSEMLBFGSMemory(m::Integer) = CTSEMLBFGSMemory(Vector{Float64}[],
+    Vector{Float64}[], Float64[], Int(m), nothing)
+
+"""What `_ctsem_lbfgs` returns: the point, the reasons it stopped, and the
+curvature it ended with, for a later run to start from (its `pairs`)."""
 struct CTSEMLBFGSResult
     minimizer::Vector{Float64}
     minimum::Float64
@@ -99,17 +113,41 @@ struct CTSEMLBFGSResult
     stopped_by_callback::Bool
     batch_sizes::Vector{Int}
     batch_iterations::Vector{Int}
+    memory::CTSEMLBFGSMemory
 end
 
-"""Curvature pairs for the two-loop recursion, on the MINIMISED objective."""
-mutable struct CTSEMLBFGSMemory
-    S::Vector{Vector{Float64}}
-    Y::Vector{Vector{Float64}}
-    rho::Vector{Float64}
-    m::Int
+"""
+    _ctsem_lbfgs_carry(pairs, m, n)
+
+The memory a run of `n` parameters keeping `m` pairs starts from: a fresh one
+for `pairs === nothing`, else a copy of `pairs`' newest `m`, so the run never
+writes into the memory it was handed. A memory of another length is refused.
+The pairs' vectors are shared, not copied: nothing writes into one once it is
+stored.
+"""
+function _ctsem_lbfgs_carry(pairs::Union{Nothing,CTSEMLBFGSMemory}, m::Integer,
+        n::Integer)
+    pairs === nothing && return CTSEMLBFGSMemory(m)
+    _ctsem_lbfgs_check(pairs, n)
+    keep = max(1, length(pairs.S) - Int(m) + 1):length(pairs.S)
+    CTSEMLBFGSMemory(pairs.S[keep], pairs.Y[keep], pairs.rho[keep], Int(m),
+        pairs.diagonal === nothing ? nothing : copy(pairs.diagonal))
 end
-CTSEMLBFGSMemory(m::Integer) = CTSEMLBFGSMemory(Vector{Float64}[],
-    Vector{Float64}[], Float64[], Int(m))
+
+"""Refuses a memory whose vectors are not of length `n`."""
+function _ctsem_lbfgs_check(pairs::CTSEMLBFGSMemory, n::Integer)
+    sized = all(v -> length(v) == n, pairs.S) && all(v -> length(v) == n, pairs.Y) &&
+        (pairs.diagonal === nothing || length(pairs.diagonal) == n)
+    sized || throw(DimensionMismatch(string("an L-BFGS memory made for another ",
+        "number of parameters cannot start a run of ", n)))
+    return nothing
+end
+
+# The curvature an objective keeps between `ctsem_optimize` runs on it
+# (`lbfgs_pairs = :objective`), or `nothing` where it keeps none and each run
+# starts cold; `_ctsem_lbfgs_hold!` leaves a run's there.
+_ctsem_lbfgs_held(::Any) = nothing
+_ctsem_lbfgs_hold!(::Any, memory) = nothing
 
 function _ctsem_lbfgs_push!(M::CTSEMLBFGSMemory, s::Vector{Float64},
         y::Vector{Float64})
@@ -133,7 +171,7 @@ function _ctsem_lbfgs_drop!(M::CTSEMLBFGSMemory, k::Integer)
 end
 
 _ctsem_lbfgs_reset!(M::CTSEMLBFGSMemory) =
-    (empty!(M.S); empty!(M.Y); empty!(M.rho); M)
+    (empty!(M.S); empty!(M.Y); empty!(M.rho); M.diagonal = nothing; M)
 
 # H * q for the inverse-Hessian approximation, with `dinv` the metric's inverse
 # diagonal (all ones for no metric). With no pairs, returns `h0 * D^-1 q`.
@@ -277,8 +315,15 @@ below the jump's scale three searches running. Then the run stops, the line
 search failed and the jump recorded in `jump`.
 An accepted step that leaves the point where it was fails the line search
 too: it is no step.
+
+`pairs`, a `CTSEMLBFGSMemory`, is the curvature to start from: what an earlier
+run on the same coordinates ended with (`CTSEMLBFGSResult`'s `memory`), as a
+rescued fit's stages hand on across a placement of the draws. It is copied,
+its newest `memory` pairs kept; one for another number of parameters is
+refused. The result's `memory` is what this run ended with.
 """
 function _ctsem_lbfgs(fg!, x0::AbstractVector; memory::Integer=20,
+        pairs::Union{Nothing,CTSEMLBFGSMemory}=nothing,
         metric=nothing, initial_alpha::Real=0.1, maxiter::Integer=1000,
         g_tol::Real=1e-8, f_tol::Real=0.0, x_tol::Real=0.0,
         callback=nothing, directional=nothing, batch=nothing,
@@ -293,7 +338,13 @@ function _ctsem_lbfgs(fg!, x0::AbstractVector; memory::Integer=20,
         d = collect(Float64, diag(metric))
         [isfinite(v) && v > 0 ? 1 / v : 1.0 for v in d]
     end
-    M = CTSEMLBFGSMemory(memory)
+    # Pairs carried from another run, perhaps on an objective that has since
+    # changed (a placement of the draws): the two-loop recursion stays positive
+    # definite for any stored pairs, since `_ctsem_lbfgs_push!` keeps only
+    # pairs with s'y > 0 and the learned diagonal is positive by construction,
+    # so they still give a descent direction on the new objective. Where they
+    # lead nowhere the line search fails and the retry below starts afresh.
+    M = _ctsem_lbfgs_carry(pairs, memory, n)
     G = zeros(n)
     fcalls = 0; gcalls = 0
     sizes = Int[]; its = Int[]
@@ -333,8 +384,9 @@ function _ctsem_lbfgs(fg!, x0::AbstractVector; memory::Integer=20,
     # below the recent level, which lets a step cross a curved valley that a
     # monotone search would cut short. `eta = 0` makes `C` the last value: the
     # search is then exactly the monotone Armijo one.
-    B = nothing; Dinv = inverse
     learn = diagonal && inverse === nothing
+    B = learn && M.diagonal !== nothing ? M.diagonal : nothing
+    Dinv = B === nothing ? inverse : 1 ./ B
     eta = clamp(Float64(nonmonotone), 0.0, 1.0)
     C = f; Q = 1.0; recent = [f]
     # `gll`: Grippo, Lampariello & Lucidi's (1986) rule instead -- a step is
@@ -582,8 +634,9 @@ function _ctsem_lbfgs(fg!, x0::AbstractVector; memory::Integer=20,
         fcalls += nev; gcalls += nev
         gconv = maximum(abs, G; init=0.0) <= g_tol
     end
+    M.diagonal = learn ? B : nothing
     CTSEMLBFGSResult(x, f, G, iteration, fcalls, gcalls, gconv, fconv, xconv,
-        lsfail, stopped, sizes, its)
+        lsfail, stopped, sizes, its, M)
 end
 
 """
@@ -748,7 +801,7 @@ function _ctsem_sgd(fg!, x0::AbstractVector; maxiter::Integer=1000,
     end
     CTSEMLBFGSResult(bestx, bestf, bestG, iteration, fcalls, gcalls,
         maximum(abs, bestG; init=0.0) <= 0, false, false, rejected > 0,
-        stopped, Int[], Int[])
+        stopped, Int[], Int[], CTSEMLBFGSMemory(0))
 end
 
 # ------------------------------------------------------------------ batches

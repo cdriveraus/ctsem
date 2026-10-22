@@ -2525,6 +2525,14 @@ Neither the finish nor a budget stage sees one.
 `lbfgs_inverse` is an initial inverse Hessian for L-BFGS (`_ctsem_lbfgs`'s
 `inverse`), as a fit's covariance is for refitting it to part of its data; one
 that is not positive definite is not used (`_ctsem_lbfgs_inverse`).
+`lbfgs_pairs` is the curvature L-BFGS starts from (`_ctsem_lbfgs`'s `pairs`):
+`nothing`, none; a `CTSEMLBFGSMemory`; or `:objective` (`"objective"` from R),
+what the objective holds from its last run on this argument
+(`_ctsem_lbfgs_held`), where this run's is then left -- a rescued fit's stages
+on one hybrid, each after a placement of its draws, so that a stage does not
+learn again the curvature its predecessor ended with. An objective that holds
+none starts cold. After a finish hands the point back, L-BFGS goes on from the
+pairs it had whatever this says.
 `newton_hessian`, the Hessian of the maximised objective at
 `newton_hessian_at`, is one the caller already holds, for the finish to walk
 on rather than form again where Hessians are dear (`_ctsem_newton_finish`'s
@@ -2551,7 +2559,7 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
     progress_budget::Bool=false, progress_every::Real=0.0,
     gap_tol::Real=0.0, converge_tol::Real=1e-6,
     precondition=nothing, lbfgs_inverse=nothing, lbfgs_scores::Bool=false,
-    initial_alpha::Real=0.1,
+    lbfgs_pairs=nothing, initial_alpha::Real=0.1,
     overshoot_probe=_CTSEM_OVERSHOOT_PROBE[],
     stall_window::Integer=80, stall_fraction::Real=1e-2,
     stall_cooldown::Integer=30, stall_tighten::Real=0.1,
@@ -2569,8 +2577,18 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
     # (`_ctsem_jump_units`), on a route that can.
     jump = CTSEMJump()
     watch_jump = _ctsem_jump_capable(objective)
-    lbfgs_pairs = lbfgs_memory === nothing ?
+    lbfgs_m = lbfgs_memory === nothing ?
         _ctsem_lbfgs_memory(length(start_values)) : Int(lbfgs_memory)
+    # Where L-BFGS's curvature starts, and whether the objective keeps where it
+    # ends: see `lbfgs_pairs` above.
+    carry = lbfgs_pairs isa AbstractString ? Symbol(lbfgs_pairs) : lbfgs_pairs
+    (carry === nothing || carry === :objective || carry isa CTSEMLBFGSMemory) ||
+        throw(ArgumentError(string("lbfgs_pairs must be nothing, :objective or ",
+            "a CTSEMLBFGSMemory, not ", repr(lbfgs_pairs))))
+    pairs0 = carry === :objective ? _ctsem_lbfgs_held(objective) :
+        carry isa CTSEMLBFGSMemory ? carry : nothing
+    # Here, not where L-BFGS starts: a phase before it can be long.
+    pairs0 === nothing || _ctsem_lbfgs_check(pairs0, length(start_values))
     # Validated here rather than at the probe, which runs after the fit: a
     # misspelled mode should cost nothing, not a whole optimisation.
     overshoot_probe = _ctsem_overshoot_mode(overshoot_probe)
@@ -2909,7 +2927,7 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
     sgd_iterations = sgd_result === nothing ? 0 : sgd_result.iterations
     # See optimiser.jl for why this is not Optim any more.
     inverse = _ctsem_lbfgs_inverse(lbfgs_inverse, length(start_values))
-    result = _ctsem_lbfgs(fg!, lbfgs_start; memory=lbfgs_pairs,
+    result = _ctsem_lbfgs(fg!, lbfgs_start; memory=lbfgs_m, pairs=pairs0,
         diagonal=lbfgs_diagonal, nonmonotone=lbfgs_nonmonotone, gll=Int(lbfgs_gll),
         scaled=lbfgs_scaled,
         metric=_ctsem_metric(precondition, length(start_values)),
@@ -2925,7 +2943,7 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
             sgd_result.f_calls + result.f_calls, sgd_result.g_calls + result.g_calls,
             result.g_converged, result.f_converged, result.x_converged,
             result.linesearch_failed, result.stopped_by_callback,
-            result.batch_sizes, result.batch_iterations)
+            result.batch_sizes, result.batch_iterations, result.memory)
     end
     # No rescue stage. The one that stood here existed because Hager-Zhang can
     # run out of line search and return the iterate it had reached while Optim
@@ -3090,7 +3108,10 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
         finish = nothing
         handover[] = Float64(gap_tol)
         stopped_by_gap[] = false
-        resumed = _ctsem_lbfgs(fg!, minimizer; memory=lbfgs_pairs,
+        # From the pairs the stage ended with: the objective is the same, the
+        # point a step or so on, and a cold memory spent its first iterations
+        # learning again what they hold.
+        resumed = _ctsem_lbfgs(fg!, minimizer; memory=lbfgs_m, pairs=result.memory,
             diagonal=lbfgs_diagonal, nonmonotone=lbfgs_nonmonotone, gll=Int(lbfgs_gll),
         scaled=lbfgs_scaled,
             metric=_ctsem_metric(precondition, length(start_values)),
@@ -3105,7 +3126,7 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
             result.f_calls + resumed.f_calls, result.g_calls + resumed.g_calls,
             resumed.g_converged, resumed.f_converged, resumed.x_converged,
             resumed.linesearch_failed, resumed.stopped_by_callback,
-            result.batch_sizes, result.batch_iterations)
+            result.batch_sizes, result.batch_iterations, resumed.memory)
         minimizer = collect(result.minimizer)
         if result.linesearch_failed && jump.seen && jumped_units[] === nothing
             named = try
@@ -3119,6 +3140,7 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
         stop_reason = reason_for(result)
         again || break
     end
+    carry === :objective && _ctsem_lbfgs_hold!(objective, result.memory)
     # The finish's totals, a finish that handed back included.
     newton_steps = spent.steps[] + (finish === nothing ? 0 : finish.steps)
     newton_history = finish === nothing ? spent.history :
