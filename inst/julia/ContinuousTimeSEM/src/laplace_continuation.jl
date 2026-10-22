@@ -88,22 +88,27 @@ correction took 92 s beside a 343 s Laplace fit (the step correction 57 s), at
 exact (`ctsem_laplace_continuation_hessian`) the `d = 5` correction takes
 132 s there beside a 170-second fit, 30 s of it the Hessian; the cap has not
 been revisited. A unit wider
-than `maxdim` and of one block gets a frozen importance rule instead when
-`draws > 0` (below); a nested one is not scored and keeps its Laplace term
-(`wide` in the info): the step correction, the alternative, pays the same
-`nodes^d` per quadrature value, so falling back to it would save nothing.
+than `maxdim` gets a frozen importance rule instead when `draws > 0` (below);
+with `draws = 0` it is not scored and keeps its Laplace term (`wide` in the
+info): the step correction, the alternative, pays the same `nodes^d` per
+quadrature value, so falling back to it would save nothing.
 
 # Units too wide for a product rule: frozen importance draws
 
-A unit of one block wider than `maxdim` gets draws in place of nodes
+A unit wider than `maxdim` gets draws in place of nodes
 (`_continuation_importance_rule`) -- every such unit, or with `draws_scope =
-:forced` only those the caller names, the rest keeping their Laplace terms: held fixed in the standardised effects, as
-nodes are, from a defensive mixture -- a Gaussian at the unit's mode, at any
-other point the caller knows for it (`points`: where the inner solve stopped
-at nearby parameters), at draws that carried weight once moved a Newton step,
-and the prior -- and weighted by that mixture. Its cost is the number of draws
-whatever the width, and the same Fisher identity gives its gradient and the
-same Louis identity its Hessian. Why: a unit whose posterior has a broad
+:forced` only those the caller names, the rest keeping their Laplace terms:
+held fixed in the standardised effects, as nodes are, from a defensive
+mixture -- a Gaussian at the block's mode, at any other point the caller knows
+for it (`points`: where the inner solve stopped at nearby parameters), at
+draws that carried weight once moved a Newton step, and the prior -- and
+weighted by that mixture. A nested unit gets them per block of its tree, as a
+product rule is placed: each block's draws conditional on a draw of the blocks
+above, an outer block's rule holding its children's rules at each of its
+draws, so each integral is one block's effects. Its cost is the number of
+draws whatever the width -- per member, the product of the draws along its
+path -- and the same Fisher identity gives its gradient and the same Louis
+identity its Hessian. Why: a unit whose posterior has a broad
 shoulder beside its mode has a Laplace term that moves with where the inner
 solve stops, by up to the shoulder's mass, and an optimiser climbing onto the
 point where it stops on the shoulder stalls there with a gradient that is that
@@ -156,7 +161,11 @@ adds to its log integral whatever the node. A leaf's value at a node is its
 members' log likelihood there; an outer block's is the sum of its children's
 rules, and `children[j]` holds those rules as they were placed with this block
 at node `j`. `soft` is the number of soft directions a soft rule used, zero for
-a product rule.
+a product rule. `replicate` is an importance rule's replicate lattice for each
+point (`_CONTINUATION_REPLICATES`) and `replicate_logweights` each point's log
+weight within its replicate's own estimate, both fixed with the draws, which
+its standard error is read from away from where it was placed
+(`ctsem_laplace_continuation_se`); empty for a product rule.
 """
 struct CTSEMFixedRule
     block::Int
@@ -165,7 +174,13 @@ struct CTSEMFixedRule
     constant::Float64
     children::Vector{Vector{CTSEMFixedRule}}
     soft::Int
+    replicate::Vector{Int}
+    replicate_logweights::Vector{Float64}
 end
+
+CTSEMFixedRule(block, points, logweights, constant, children, soft) =
+    CTSEMFixedRule(block, points, logweights, constant, children, soft, Int[],
+        Float64[])
 
 """A unit's fixed rule, one `CTSEMFixedRule` per root of its block tree, and
 how many member evaluations one value of it costs."""
@@ -183,6 +198,12 @@ _continuation_evaluations(rule::CTSEMFixedRule, blocks) =
 
 _continuation_soft_blocks(rule::CTSEMFixedRule) = (rule.soft > 0 ? 1 : 0) +
     sum(sum(_continuation_soft_blocks(c) for c in kids; init=0)
+        for kids in rule.children; init=0)
+
+"""The points a rule holds, at every block of its tree: an importance rule's
+draws in all."""
+_continuation_draws(rule::CTSEMFixedRule) = size(rule.points, 2) +
+    sum(sum(_continuation_draws(c) for c in kids; init=0)
         for kids in rule.children; init=0)
 
 """
@@ -206,8 +227,8 @@ mutable struct CTSEMLaplaceContinuation{L} <: CTSEMOptimisable
     soft_tau::Float64
     soft_maxdirs::Int
     maxdim::Int
-    # Units wider than `maxdim` that no importance rule can take (nested, or
-    # `draws = 0`): never scored, never flagged.
+    # Units wider than `maxdim` that no importance rule can take (`draws = 0`,
+    # or not named under `draws_scope = :forced`): never scored, never flagged.
     wide::Vector{Bool}
     # The importance rule's options (see the module docstring), the points the
     # caller knows for each unit, and per unit at the centre: the rule's
@@ -502,13 +523,16 @@ end
 
 """The draws an importance rule has taken: their block coordinates, the
 component each came from (0 the prior), the replicate lattice each belongs to
-(`_CONTINUATION_REPLICATES` per batch, for the standard error), its members'
-log likelihood, and how many batches have been drawn."""
+(`_CONTINUATION_REPLICATES` per batch, for the standard error), the log
+integrand beneath each -- its members' log likelihood at a leaf, the sum of its
+children's log integrals at an outer block -- the children's rules placed at
+each draw (none at a leaf), and how many batches have been drawn."""
 mutable struct _ContinuationDraws
     points::Matrix{Float64}
     origin::Vector{Int}
     replicate::Vector{Int}
     h::Vector{Float64}
+    children::Vector{Vector{CTSEMFixedRule}}
     batches::Int
 end
 
@@ -533,16 +557,29 @@ function _continuation_split(m::Integer, J::Integer)
     return [q + (t <= r ? 1 : 0) for t in 1:Int(J)]
 end
 
-"""`m` draws from component `component` (`c`), scored at `theta`: each draw's
-members' log likelihood, the deviations their filters integrate integrated
-exactly, as at a product rule's node. The `m` are `_CONTINUATION_REPLICATES`
-lattices, each with its own shift from `key`, the batch, the component and the
-replicate alone, so the same replicate of the same component of the same batch
-draws the same standard normals at every placement: common random numbers."""
+"""`m` draws of block `b` from component `component` (`c`), scored at `theta`
+with the blocks above where `u` has them: at a leaf each draw's members' log
+likelihood, the deviations their filters integrate integrated exactly, as at a
+product rule's node; at an outer block the sum of the log integrals of the
+blocks beneath it, each by its own rule placed with this block at the draw
+(`_continuation_importance_rule`), kept in `D.children`. In parallel over the
+draws, each on its own copy of `u`.
+
+The `m` are `_CONTINUATION_REPLICATES` lattices, each with its own shift from
+`key`, the batch, the component and the replicate alone, so the same replicate
+of the same component of the same batch draws the same standard normals at
+every placement: common random numbers. A block beneath takes the draw's index
+into its own `path`, and so into its key: every draw's children have draws of
+their own, whose errors are independent across the draws above, so the spread
+of this block's replicates counts them."""
 function _continuation_draw!(D::_ContinuationDraws, laplace::CTSEMLaplaceObjective,
-    U::Integer, theta::Vector{Float64}, Ls, block, columns, u::Vector{Float64}, aws,
-    c::CTSEMImportanceComponent, component::Int, m::Int, key)
+    U::Integer, theta::Vector{Float64}, Ls, b::Integer, u::Vector{Float64}, context,
+    opts, c::CTSEMImportanceComponent, component::Int, m::Int, key,
+    path::Vector{Int})
     m > 0 || return D
+    block = laplace.units.blocks[U][b]
+    columns = (block.offset + 1):(block.offset + block.size)
+    kids = context.children[b]
     k = length(c.mu)
     R = _CONTINUATION_REPLICATES
     sizes = _continuation_split(m, R)
@@ -557,7 +594,6 @@ function _continuation_draw!(D::_ContinuationDraws, laplace::CTSEMLaplaceObjecti
         at += sizes[r]
     end
     X = Matrix{Float64}(undef, k, m)
-    hs = Vector{Float64}(undef, m)
     for j in 1:m
         @inbounds for t in 1:k
             s = 0.0
@@ -566,35 +602,65 @@ function _continuation_draw!(D::_ContinuationDraws, laplace::CTSEMLaplaceObjecti
             end
             X[t, j] = c.mu[t] + s
         end
-        @inbounds for (t, col) in enumerate(columns); u[col] = X[t, j]; end
+    end
+    before = size(D.points, 2)
+    npar = length(theta)
+    hs = fill(-Inf, m)
+    placed = [CTSEMFixedRule[] for _ in 1:(isempty(kids) ? 0 : m)]
+    score = function (j)
+        # `local` throughout, as in `_continuation_flagged`.
+        local uj, aws, inner, r
+        uj = copy(u)
+        @inbounds for (t, col) in enumerate(columns); uj[col] = X[t, j]; end
+        aws = _laplace_workspace!(laplace, Float64, npar)
         inner = 0.0
-        for mm in block.members
-            shifted = _laplace_member_values(theta, laplace.spec, Ls, u,
-                laplace.units.offsets[U][mm])
-            inner += _laplace_member_loglik(aws, laplace.objective.subject_objectives[
-                laplace.units.members[U][mm]], shifted)
+        if isempty(kids)
+            for mm in block.members
+                inner += _laplace_member_loglik(aws, laplace.objective.subject_objectives[
+                    laplace.units.members[U][mm]], _laplace_member_values(theta,
+                    laplace.spec, Ls, uj, laplace.units.offsets[U][mm]))
+            end
+        else
+            for child in kids
+                r = _continuation_importance_rule(laplace, U, theta, Ls, child, uj,
+                    context, aws, opts, vcat(path, before + j))
+                # A block beneath that cannot be placed leaves this draw no
+                # weight; it is dropped from the rule (`_continuation_importance_rule`).
+                if r === nothing
+                    inner = -Inf
+                    break
+                end
+                push!(placed[j], r.rule)
+                inner += r.value
+            end
         end
         hs[j] = isfinite(inner) ? inner : -Inf
+        return true
     end
+    # Below 64 member evaluations on this thread, as `_continuation_block_rule`
+    # places its nodes.
+    m * length(block.members) >= 64 ? _laplace_parallel(score, laplace, 1:m) :
+        foreach(score, 1:m)
     D.points = hcat(D.points, X)
     append!(D.origin, fill(component, m))
     append!(D.replicate, reps)
     append!(D.h, hs)
+    append!(D.children, placed)
     return D
 end
 
 """A batch of `m` draws: the prior's share, the rest split over the
 components."""
-function _continuation_batch!(D::_ContinuationDraws, laplace, U, theta, Ls, block,
-    columns, u, aws, comps, prior::CTSEMImportanceComponent, share::Float64,
-    m::Int, key)
+function _continuation_batch!(D::_ContinuationDraws, laplace, U, theta, Ls, b, u,
+    context, opts, comps, prior::CTSEMImportanceComponent, share::Float64, m::Int,
+    key, path::Vector{Int})
     D.batches += 1
     mp = clamp(round(Int, share * m), 1, m)
-    _continuation_draw!(D, laplace, U, theta, Ls, block, columns, u, aws, prior, 0,
-        mp, key)
+    _continuation_draw!(D, laplace, U, theta, Ls, b, u, context, opts, prior, 0, mp,
+        key, path)
     for (t, n) in enumerate(_continuation_split(m - mp, length(comps)))
-        _continuation_draw!(D, laplace, U, theta, Ls, block, columns, u, aws,
-            comps[t], t, n, key)
+        _continuation_draw!(D, laplace, U, theta, Ls, b, u, context, opts, comps[t],
+            t, n, key, path)
     end
     return D
 end
@@ -606,7 +672,8 @@ and effective sample size, for a block of `k` effects. The standard error is
 the spread of the replicate lattices' own log integrals (each weighted over
 its own draws, by its own counts) over `sqrt` of their number
 (`_CONTINUATION_REPLICATES`); where fewer than two replicates score, the
-independent-draws formula `sqrt(1/ESS - 1/n)` stands in.
+independent-draws formula `sqrt(1/ESS - 1/n)` stands in. `replw` is each
+draw's log weight within its replicate's estimate.
 """
 function _continuation_importance_weigh(D::_ContinuationDraws,
     comps::Vector{CTSEMImportanceComponent}, prior::CTSEMImportanceComponent, k::Int)
@@ -647,108 +714,315 @@ function _continuation_importance_weigh(D::_ContinuationDraws,
             ess=sw^2 / sum(abs2, w))
     end
     all_ = weigh(1:n)
+    replw = fill(-Inf, n)
     isfinite(all_.value) || return (lw=all_.lw, terms=all_.terms, value=NaN, se=Inf,
-        ess=0.0)
+        ess=0.0, replw=replw)
     values = Float64[]
     for r in 1:_CONTINUATION_REPLICATES
         sel = findall(==(r), D.replicate)
         isempty(sel) && continue
-        v = weigh(sel).value
-        isfinite(v) && push!(values, v)
+        part = weigh(sel)
+        replw[sel] = part.lw
+        isfinite(part.value) && push!(values, part.value)
     end
     se = length(values) >= 2 ?
         sqrt(sum(abs2, values .- sum(values) / length(values)) /
              (length(values) - 1) / length(values)) :
         sqrt(max(1 / all_.ess - 1 / n, 0.0))
-    return (lw=all_.lw, terms=all_.terms, value=all_.value, se=se, ess=all_.ess)
+    return (lw=all_.lw, terms=all_.terms, value=all_.value, se=se, ess=all_.ess,
+        replw=replw)
 end
 
 """
-    _continuation_importance_rule(laplace, U, theta, Ls, b, u, context, aws, opts)
+    _continuation_outer_components(M, blocks, children, mode, floor)
 
-Block `b`'s frozen importance rule (see the module docstring): draws held fixed
-in the standardised effects, weighted by the mixture they came from, so the
-block's term is
+The first component of every outer block's proposal, `nothing` for a leaf: a
+Gaussian at the unit's mode on the block's precision once every block beneath
+it is eliminated, its eigenvalues floored at `floor`. The elimination is the
+block factorization's (`_laplace_block_factor`, innermost first), each block
+eliminated with its precision's eigenvalues clipped at the prior's, as the
+quadrature clips a rule's scale (`_quadrature_clipped_scale`): a block's
+posterior covariance is no wider than its prior's where its likelihood is
+log-concave, while a soft curvature's inverse can be any width. Unclipped, the
+eliminated precision -- what a product rule scales an outer block by -- is
+where a near-singular child reappears (the SNSF pilot's subject 1174:
+`CT-SEM/review/LAPLACE-nested-spike-2026-10-02.md`, section 2), and the
+study's proposal is as wide as the floor allows along that direction. Where
+`M - I` is positive definite nothing is clipped and this is the eliminated
+precision exactly. `nothing` throughout where a block is not finite.
+"""
+function _continuation_outer_components(M::CTSEMBlockMatrix{Float64},
+    blocks::Vector{CTSEMLaplaceBlock}, children, mode::Vector{Float64},
+    floor::Float64)
+    nb = length(blocks)
+    out = Vector{Union{Nothing,CTSEMImportanceComponent}}(nothing, nb)
+    diag = [_laplace_symmetrise(Matrix(d)) for d in M.diag]
+    coupling = [[Matrix(c) for c in row] for row in M.coupling]
+    for b in 1:nb
+        all(isfinite, diag[b]) || return fill!(out, nothing)
+        E = _ctsem_symeig(_laplace_symmetrise(diag[b]))
+        all(isfinite, E.values) || return fill!(out, nothing)
+        if !isempty(children[b])
+            columns = (blocks[b].offset + 1):(blocks[b].offset + blocks[b].size)
+            out[b] = CTSEMImportanceComponent(mode[columns], Matrix(E.vectors),
+                max.(E.values, floor))
+        end
+        ancestors = blocks[b].ancestors
+        isempty(ancestors) && continue
+        inverse = E.vectors * Diagonal(1 ./ max.(E.values, 1.0)) * transpose(E.vectors)
+        W = [inverse * coupling[b][t] for t in eachindex(ancestors)]
+        for t in eachindex(ancestors)
+            a = ancestors[t]
+            diag[a] .-= _laplace_symmetrise(transpose(coupling[b][t]) * W[t])
+            for s in eachindex(ancestors)
+                s == t && continue
+                slot = findfirst(==(ancestors[s]), blocks[a].ancestors)
+                slot === nothing && continue
+                coupling[a][slot] .-= transpose(coupling[b][t]) * W[s]
+            end
+        end
+    end
+    return out
+end
+
+"""
+    _continuation_moment_component!(comps, D, current, floor)
+
+Add the Gaussian matched to the weighted draws: their weighted mean, and their
+weighted covariance shrunk towards the first component's by `k + 2` draws
+against the draws' effective number (the fewest that keep it proper whatever
+the weights), its precision's eigenvalues floored at `floor`. How an outer
+block's proposal adapts (adaptive multiple importance sampling, Cornuet et al.
+2012): its marginal density, with the blocks beneath integrated out, has no
+gradient or curvature to take a Newton step on, only the draws' weights.
+Whether it was added.
+"""
+function _continuation_moment_component!(comps::Vector{CTSEMImportanceComponent},
+    D::_ContinuationDraws, current, floor::Float64)
+    k = size(D.points, 1)
+    peak = maximum(current.terms)
+    isfinite(peak) || return false
+    w = exp.(current.terms .- peak)
+    sw = sum(w)
+    mu = (D.points * w) ./ sw
+    X = D.points .- mu
+    S = (X .* transpose(w)) * transpose(X) ./ sw
+    first = comps[1]
+    S0 = first.vecs * Diagonal(1 ./ first.lam) * transpose(first.vecs)
+    S = (current.ess .* S .+ (k + 2) .* S0) ./ (current.ess + k + 2)
+    E = _ctsem_symeig(_laplace_symmetrise(S))
+    (all(isfinite, E.values) && all(>(0), E.values)) || return false
+    push!(comps, CTSEMImportanceComponent(mu, Matrix(E.vectors),
+        max.(1 ./ E.values, floor)))
+    return true
+end
+
+"""
+    _continuation_draw_target(block, context, opts)
+
+The standard error block `block`'s draws aim at and its first batch: for a
+block with nothing above it `opts.draws_se` and `opts.draws`; beneath another,
+its share of `draws_se` over its siblings -- their squared errors together at
+most `draws_se`, each aiming at `sqrt(draws_se / siblings)`, never below
+`draws_se` itself -- starting at the fewest draws that could reach it,
+`(share / (1 - share)) / se^2`, the error of a proposal matching the block
+exactly but for its prior share, at least 8 and at most `opts.draws`. See
+`_continuation_importance_rule`. A block beneath another measures its error
+against that target by its weights' spread, `sqrt(1/ESS - 1/n)`, where a block
+with nothing above it reads its replicates' (`_continuation_importance_weigh`).
+
+Why no looser, and why the weights. A child's estimate is unbiased, but its
+draws come from a Gaussian at its conditional mode, lighter-tailed than these
+posteriors, and at a few hundred draws it falls short: of the mass in the
+tails, which every replicate misses alike, so their spread does not show the
+shortfall, while the weights' spread does. On the SNSF pilot's study unit at
+it290 (`CT-SEM/review/LAPLACE-shoulders-frozen-draws-2026-10-21.md`, section
+10), with the study at 256 draws and every person's draws to 0.091, 0.04 and
+0.02 by their weights, the unit came to -16745.691, -16745.657 and
+-16745.654, against -16745.649 by Gauss-Hermite at both levels: a deficit of
+about a sixth of the children's summed squared error. Tied to `draws_se`, it
+stays under a sixth of the error the rule aims at. The first budget, a fixed
+0.25 (what the prior's fifth of every batch costs any rule's weights), cost
+that unit 0.04. Children stopped on their replicates' spread at 0.041 took
+about 350 draws each, against 966, and left the unit 0.10 short, with a
+standard error of 0.019.
+"""
+function _continuation_draw_target(block::CTSEMLaplaceBlock, context, opts)
+    isempty(block.ancestors) && return (se=Float64(opts.draws_se), first=Int(opts.draws))
+    siblings = length(context.children[block.ancestors[1]])
+    se = max(Float64(opts.draws_se), sqrt(Float64(opts.draws_se) / siblings))
+    share = Float64(opts.draws_prior)
+    least = ceil(Int, share / (1 - share) / se^2)
+    return (se=se, first=clamp(least, min(8, Int(opts.draws)), Int(opts.draws)))
+end
+
+"""
+    _continuation_importance_rule(laplace, U, theta, Ls, b, u, context, aws,
+        opts, path=Int[])
+
+Block `b`'s frozen importance rule, and every block's beneath it (see the
+module docstring): draws held fixed in the standardised effects, weighted by
+the mixture they came from, so the block's term is
 
     log (1/n) sum_j L(z_j) exp(-z_j'z_j/2) / q(z_j) - k/2 log 2 pi
 
 -- a `CTSEMFixedRule` whose log weights carry `-z'z/2 - log q - log n`, valued
-and differentiated as a product rule's nodes are. `q` is the balance heuristic
-over its components, each weighted by its share of the draws:
+and differentiated as a product rule's nodes are. At a leaf `L(z_j)` is its
+members' likelihood. At an outer block it is the product of its children's
+integrals, each by a rule of its own placed by this function with the block at
+`z_j` (`children[j]`), as `_continuation_block_rule` places product rules: each
+integral is one block's effects, never the whole unit's, since importance
+sampling jointly over a nested unit's 93 effects would compound the proposal's
+mismatch over every direction
+(`CT-SEM/review/LAPLACE-shoulders-frozen-draws-2026-10-21.md`, 3.2). `q` is the
+balance heuristic over its components, each weighted by its share of the
+draws:
 
-  - a Gaussian at the block's mode (`context.mode`) and at every point
-    `opts.points` holds for the unit, each on the block's precision there with
-    its eigenvalues floored at `opts.draws_floor`;
+  - at a leaf, a Gaussian at the block's mode on the block's precision there,
+    its eigenvalues floored at `opts.draws_floor`: the unit's mode
+    (`context.mode`) for a block with nothing above it, and beneath a draw of
+    the blocks above the conditional mode there, re-solved from the unit's as a
+    product rule's leaf is (`_quadrature_leaf_rule!`). At an outer block, a
+    Gaussian at the unit's mode on its precision with the blocks beneath
+    eliminated, their curvatures clipped at the prior's, floored
+    (`_continuation_outer_components`, placed by `_continuation_unit_rule` as
+    `context.outer`);
+  - one at every point `opts.points` holds for the unit where this block is
+    not at the unit's mode, on the block's precision there at a leaf, on the
+    outer shape at an outer block;
   - the prior `N(0, I)`, `opts.draws_prior` of every batch, which bounds every
     weight by the likelihood's supremum over that share, so the estimate has a
     finite variance in any dimension (Hesterberg 1995);
-  - where the weights show a gap -- a draw carrying more than `n / ESS*` times
-    its share, `ESS* = 1 / draws_se^2` -- a component at each of up to three
-    such draws, moved a damped Newton step and shaped by the precision there
-    (`_continuation_newton_point`).
+  - where the standard error is not yet reached: at a leaf, where the weights
+    show a gap -- a draw carrying more than `n / ESS*` times its share, `ESS* =
+    1 / draws_se^2` -- a component at each of up to three such draws, moved a
+    damped Newton step and shaped by the precision there
+    (`_continuation_newton_point`); at an outer block, the Gaussian matched to
+    the weighted draws (`_continuation_moment_component!`).
 
-Draws come in batches, the first of `opts.draws` and each later as large as
-all before it, quasi-random (`_continuation_lattice_normals`), until the
-standard error -- the spread of the batch's replicate lattices' log integrals
-(`_CONTINUATION_REPLICATES`, `_continuation_importance_weigh`) -- is under
-`opts.draws_se` or `opts.draws_max` are spent. Each replicate's lattice in
-each batch is seeded by the unit, block, batch, component and replicate, the
+Draws come in batches, each later one as large as all before it,
+quasi-random (`_continuation_lattice_normals`), until the standard error -- the
+spread of the replicate lattices' log integrals (`_CONTINUATION_REPLICATES`,
+`_continuation_importance_weigh`) -- is under a target or `opts.draws_max` are
+spent. A block with nothing above it starts at `opts.draws` and aims at
+`opts.draws_se`. An outer block's standard error counts its children's errors
+as well: they are independent across its draws (each draw's children are keyed
+by it), so they spread its replicates' integrals as its own proposal's
+mismatch does. And the product of its children's estimates, each unbiased for
+its integral, is unbiased for their product, so the block's estimate of its
+integral is unbiased as a one-block unit's is. So a block beneath another need
+not reach `draws_se` itself: its siblings' squared errors together at most
+`draws_se`, each aiming at `sqrt(draws_se / siblings)` (never below
+`draws_se`) and starting at the fewest draws that could reach it
+(`_continuation_draw_target`, which says why the share is no larger). Children
+driven to `draws_se` each made an outer draw of the SNSF pilot's study unit
+cost 30 people at 256 draws or more.
+
+Each replicate's lattice in each batch is seeded by the unit, the block, its
+`path` (the draws above it), the batch, the component and the replicate, the
 same at every placement: common random numbers, so two placements differ by
-where their proposals sit rather than by their draws' luck. With fresh draws at each placement the continuation's rounds, which keep
-a step only if the objective with the rule placed again is no lower, were
-rejected by the draws' error on the round-9 fit: 0.4 to 0.7 nats at radii
-down to 0.03 standard errors. Returns `(rule, value, se, ess,
-components)`, or `nothing` when no draw scores.
+where their proposals sit rather than by their draws' luck. With fresh draws at
+each placement the continuation's rounds, which keep a step only if the
+objective with the rule placed again is no lower, were rejected by the draws'
+error on the round-9 fit: 0.4 to 0.7 nats at radii down to 0.03 standard
+errors.
+
+`u` holds the blocks above where the caller placed them and is not changed.
+Returns `(rule, value, se, ess, components)`, or `nothing` when no draw scores
+or a mode cannot be found. A draw of an outer block whose children could not
+all be placed has no weight, and is left out of the rule.
 """
 function _continuation_importance_rule(laplace::CTSEMLaplaceObjective, U::Integer,
     theta::Vector{Float64}, Ls::Vector{Matrix{Float64}}, b::Integer,
-    u::Vector{Float64}, context, aws, opts)
+    u::Vector{Float64}, context, aws, opts, path::Vector{Int}=Int[])
     block = laplace.units.blocks[U][b]
     k = block.size
     columns = (block.offset + 1):(block.offset + k)
-    fns = _continuation_block_functions(laplace, U, theta, Ls, b, u, aws)
+    leaf = isempty(context.children[b])
     floor = Float64(opts.draws_floor)
+    joint = Float64[context.mode[c] for c in columns]
     comps = CTSEMImportanceComponent[]
-    _continuation_add_component!(comps, fns, Float64[context.mode[c] for c in columns],
-        floor)
+    fns = nothing
+    if leaf
+        centre = joint
+        if !isempty(block.ancestors)
+            lr = _quadrature_leaf_rule!(laplace, U, theta, Ls, b, u, aws; start=joint)
+            lr.ok || return nothing
+            centre = lr.centre
+        end
+        fns = _continuation_block_functions(laplace, U, theta, Ls, b, u, aws)
+        _continuation_add_component!(comps, fns, centre, floor)
+    else
+        first = context.outer[b]
+        first === nothing && return nothing
+        push!(comps, first)
+    end
+    isempty(comps) && return nothing
     for p in get(opts.points, Int(U), Vector{Vector{Float64}}())
         length(p) == length(u) || continue
         x = Float64[p[c] for c in columns]
-        all(isfinite, x) && _continuation_add_component!(comps, fns, x, floor)
+        (all(isfinite, x) && maximum(abs, x .- joint) >= 1e-3) || continue
+        if leaf
+            _continuation_add_component!(comps, fns, x, floor)
+        elseif !any(c -> maximum(abs, c.mu .- x) < 1e-3, comps)
+            push!(comps, CTSEMImportanceComponent(x, comps[1].vecs, comps[1].lam))
+        end
     end
-    isempty(comps) && return nothing
     prior = CTSEMImportanceComponent(zeros(k), Matrix{Float64}(I, k, k), ones(k))
-    key = (Int(opts.draws_seed), Int(U), Int(b))
-    D = _ContinuationDraws(zeros(k, 0), Int[], Int[], Float64[], 0)
+    # A block with nothing above it keeps the key it had before blocks could
+    # nest, so a one-block unit draws what it drew then.
+    key = isempty(path) ? (Int(opts.draws_seed), Int(U), Int(b)) :
+        (Int(opts.draws_seed), Int(U), Int(b), path)
+    D = _ContinuationDraws(zeros(k, 0), Int[], Int[], Float64[],
+        Vector{CTSEMFixedRule}[], 0)
     share = Float64(opts.draws_prior)
-    _continuation_batch!(D, laplace, U, theta, Ls, block, columns, u, aws, comps,
-        prior, share, Int(opts.draws), key)
+    target = _continuation_draw_target(block, context, opts)
+    _continuation_batch!(D, laplace, U, theta, Ls, b, u, context, opts, comps, prior,
+        share, target.first, key, path)
     current = _continuation_importance_weigh(D, comps, prior, k)
-    target_ess = 1 / Float64(opts.draws_se)^2
-    while (!isfinite(current.value) || current.se > opts.draws_se) &&
-            size(D.points, 2) < opts.draws_max
+    target_ess = 1 / target.se^2
+    # A block beneath another stops on its weights' spread rather than its
+    # replicates' (`_continuation_draw_target` says why).
+    beneath = !isempty(block.ancestors)
+    while (!isfinite(current.value) ||
+            (beneath ? sqrt(max(1 / current.ess - 1 / size(D.points, 2), 0.0)) :
+             current.se) > target.se) && size(D.points, 2) < opts.draws_max
         n = size(D.points, 2)
         if isfinite(current.value)
-            peak = maximum(current.terms)
-            w = exp.(current.terms .- peak)
-            ratio = w ./ (sum(w) / n)
-            added = 0
-            for j in sortperm(ratio; rev=true)
-                (added >= 3 || ratio[j] <= n / target_ess) && break
-                x = _continuation_newton_point(fns, D.points[:, j], floor)
-                x === nothing && continue
-                _continuation_add_component!(comps, fns, x, floor) && (added += 1)
+            if leaf
+                peak = maximum(current.terms)
+                w = exp.(current.terms .- peak)
+                ratio = w ./ (sum(w) / n)
+                added = 0
+                for j in sortperm(ratio; rev=true)
+                    (added >= 3 || ratio[j] <= n / target_ess) && break
+                    x = _continuation_newton_point(fns, D.points[:, j], floor)
+                    x === nothing && continue
+                    _continuation_add_component!(comps, fns, x, floor) && (added += 1)
+                end
+            else
+                _continuation_moment_component!(comps, D, current, floor)
             end
         end
-        _continuation_batch!(D, laplace, U, theta, Ls, block, columns, u, aws, comps,
-            prior, share, min(n, Int(opts.draws_max) - n), key)
+        _continuation_batch!(D, laplace, U, theta, Ls, b, u, context, opts, comps,
+            prior, share, min(n, Int(opts.draws_max) - n), key, path)
         current = _continuation_importance_weigh(D, comps, prior, k)
     end
     isfinite(current.value) || return nothing
-    # The block's own coordinates back where the caller had them.
-    @inbounds for c in columns; u[c] = context.mode[c]; end
-    rule = CTSEMFixedRule(b, D.points, current.lw, -k * log(2 * pi) / 2,
-        Vector{Vector{CTSEMFixedRule}}(), 0)
+    points, logweights, children = D.points, current.lw, D.children
+    replicate, replw = D.replicate, current.replw
+    if !leaf
+        keep = findall(isfinite, D.h)
+        if length(keep) < length(D.h)
+            points = points[:, keep]
+            logweights = logweights[keep]
+            children = children[keep]
+            replicate = replicate[keep]
+            replw = replw[keep]
+        end
+    end
+    rule = CTSEMFixedRule(b, points, logweights, -k * log(2 * pi) / 2, children, 0,
+        replicate, replw)
     return (rule=rule, value=current.value, se=current.se, ess=current.ess,
         components=length(comps))
 end
@@ -852,31 +1126,43 @@ function _continuation_block_rule(laplace::CTSEMLaplaceObjective, U::Integer,
         constant = nsoft * (log(2) - log(2 * pi)) / 2 - sum(log, lsoft; init=0.0) / 2
     end
     n = size(points, 2)
-    children = Vector{Vector{CTSEMFixedRule}}()
-    terms = Vector{Float64}(undef, n)
-    for j in 1:n
-        @inbounds for (t, c) in enumerate(columns); u[c] = points[t, j]; end
+    # In parallel over the nodes, each on its own copy of `u`, as an importance
+    # rule's draws are (`_continuation_draw!`): a nested unit whose outer block
+    # holds 125 nodes, each placing every member's rule beneath it, was placed
+    # on one thread whenever it was the only unit being placed. Not below 64
+    # member evaluations (`_continuation_ranges`' bar): a region opened for
+    # every small block made test_continuation.jl three times slower.
+    children = [CTSEMFixedRule[] for _ in 1:(leaf ? 0 : n)]
+    terms = fill(-Inf, n)
+    npar = length(theta)
+    place_node = function (j)
+        # `local` throughout, as in `_continuation_flagged`.
+        local uj, awsj, inner, placed
+        uj = copy(u)
+        @inbounds for (t, c) in enumerate(columns); uj[c] = points[t, j]; end
+        awsj = _laplace_workspace!(laplace, Float64, npar)
         inner = 0.0
         if leaf
             for m in block.members
-                shifted = _laplace_member_values(theta, laplace.spec, Ls, u,
-                    laplace.units.offsets[U][m])
-                inner += _laplace_member_loglik(aws, laplace.objective.subject_objectives[
-                    laplace.units.members[U][m]], shifted)
+                inner += _laplace_member_loglik(awsj, laplace.objective.subject_objectives[
+                    laplace.units.members[U][m]], _laplace_member_values(theta,
+                    laplace.spec, Ls, uj, laplace.units.offsets[U][m]))
             end
         else
-            kidrules = CTSEMFixedRule[]
             for c in kids
-                placed = _continuation_block_rule(laplace, U, theta, Ls, c, u,
-                    context, aws, opts)
-                placed === nothing && return nothing
-                push!(kidrules, placed.rule)
+                placed = _continuation_block_rule(laplace, U, theta, Ls, c, uj,
+                    context, awsj, opts)
+                placed === nothing && return false
+                push!(children[j], placed.rule)
                 inner += placed.value
             end
-            push!(children, kidrules)
         end
         terms[j] = isfinite(inner) ? inner + logweights[j] : -Inf
+        return true
     end
+    placed_all = n * length(block.members) >= 64 ?
+        _laplace_parallel(place_node, laplace, 1:n) : all(place_node, 1:n)
+    placed_all || return nothing
     peak = maximum(terms)
     isfinite(peak) || return nothing
     value = peak + log(sum(t -> exp(t - peak), terms)) + constant
@@ -917,21 +1203,40 @@ function _continuation_unit_rule(laplace::CTSEMLaplaceObjective, U::Integer,
     isempty(blocks) && return nothing
     _laplace_solve_unit_mode!(laplace, U, theta, Ls)
     mode = copy(laplace.modes[U])
+    tree = _quadrature_children(blocks)
     if _continuation_unit_width(laplace, U) > opts.maxdim
         # Too wide for a product rule: only `_continuation_place` sends such a
-        # unit here, and only one of one block when draws are on.
-        tree = _quadrature_children(blocks)
-        placed = _continuation_importance_rule(laplace, U, theta, Ls, tree.roots[1],
-            copy(mode), (children=tree.children, mode=mode), aws, opts)
-        placed === nothing && return nothing
-        evaluations = size(placed.rule.points, 2) * length(blocks[1].members)
-        return (rule=CTSEMFixedUnitRule(U, [placed.rule], evaluations),
-            value=placed.value, se=placed.se, importance=true)
+        # unit here, and only when draws are on. A nested unit's outer blocks
+        # take their first components from the curvature, here, before
+        # anything runs in parallel: it is this slot's scratch.
+        outer = Vector{Union{Nothing,CTSEMImportanceComponent}}(nothing,
+            length(blocks))
+        if length(blocks) > 1
+            outer = _continuation_outer_components(
+                _laplace_unit_curvature(laplace, U, theta, Ls, mode), blocks,
+                tree.children, mode, Float64(opts.draws_floor))
+            any(b -> !isempty(tree.children[b]) && outer[b] === nothing,
+                eachindex(blocks)) && return nothing
+        end
+        context = (children=tree.children, mode=mode, outer=outer)
+        roots = CTSEMFixedRule[]
+        total = 0.0
+        variance = 0.0
+        for root in tree.roots
+            placed = _continuation_importance_rule(laplace, U, theta, Ls, root,
+                copy(mode), context, aws, opts)
+            placed === nothing && return nothing
+            push!(roots, placed.rule)
+            total += placed.value
+            variance += placed.se^2
+        end
+        evaluations = sum(_continuation_evaluations(r, blocks) for r in roots; init=0)
+        return (rule=CTSEMFixedUnitRule(U, roots, evaluations), value=total,
+            se=sqrt(variance), importance=true)
     end
     M = _laplace_unit_curvature(laplace, U, theta, Ls, mode)
     factorization = _laplace_factor_repaired!(M, blocks)
     factorization.ok || return nothing
-    tree = _quadrature_children(blocks)
     context = (children=tree.children, nodes=opts.nodes, mode=mode,
         factors=factorization.factors)
     u = copy(mode)
@@ -969,12 +1274,12 @@ function _continuation_place(laplace::CTSEMLaplaceObjective, theta::Vector{Float
     values = fill(NaN, nunits)
     ses = zeros(nunits)
     importance = fill(false, nunits)
-    # Wide and out of reach: a unit too wide for a product rule that is nested,
-    # or any such unit when draws are off.
+    # Wide and out of reach: a unit too wide for a product rule when draws are
+    # off, or when they are kept for the units the caller named and it is not
+    # one.
     drawable = get(opts, :drawable, nothing)
     wide = [_continuation_unit_width(laplace, U) > opts.maxdim &&
-        !(opts.draws > 0 && length(laplace.units.blocks[U]) == 1 &&
-          (drawable === nothing || U in drawable)) for U in 1:nunits]
+        !(opts.draws > 0 && (drawable === nothing || U in drawable)) for U in 1:nunits]
     only = get(opts, :only, nothing)
     _laplace_parallel(laplace, 1:nunits) do U
         wide[U] && return true
@@ -1079,7 +1384,7 @@ rule's own error are flagged (`_continuation_resolved`, `_continuation_flags`),
 and those carry fixed nodes from then on while the rest keep their Laplace
 term; the units in `force` are flagged whatever their gap. A unit wider than
 `maxdim` effects along any path of its block tree gets a frozen importance
-rule when it is one block and `draws > 0`, and is not scored at all
+rule, per block of its tree, when `draws > 0`, and is not scored at all
 otherwise, keeping its Laplace term. `point_units` and `point_values` are
 points the caller knows for some units, column `j` of `point_values` for unit
 `point_units[j]` (its first `dims` entries), each a component of that unit's
@@ -1289,77 +1594,42 @@ end
 One block's log integral under its fixed rule at `theta`, with its gradient:
 `log sum_j exp(w_j + h_j(theta)) + c`, whose derivative with the nodes held is
 `sum_j pi_j dh_j/dtheta`, `pi` the normalised node weights -- the Fisher
-identity. One pass, the running maximum rescaling what has been summed so far.
-A node whose likelihood is not finite carries no weight, as it does in
-`_quadrature_block`. A leaf's nodes are summed by `_continuation_leaf_sum`.
+identity. A rule's nodes are summed by `_continuation_node_sum`.
 """
 function _continuation_rule_value(o::CTSEMLaplaceContinuation, U::Integer,
     theta::Vector{Float64}, Ls, dL, positions, rule::CTSEMFixedRule,
     u::Vector{Float64}, aws, scratch, want_gradient::Bool)
-    if isempty(rule.children)
-        a = _continuation_leaf_sum(o, U, theta, Ls, dL, positions, rule, u, aws,
-            scratch, want_gradient, 1:size(rule.points, 2))
-        isfinite(a.peak) || return (value=NaN, gradient=a.gacc)
-        want_gradient && (a.gacc ./= a.acc)
-        return (value=a.peak + log(a.acc) + rule.constant, gradient=a.gacc)
-    end
-    laplace = o.laplace
-    block = laplace.units.blocks[U][rule.block]
-    k = block.size
-    columns = (block.offset + 1):(block.offset + k)
-    npar = length(theta)
-    n = size(rule.points, 2)
-    peak = -Inf
-    acc = 0.0
-    gacc = want_gradient ? zeros(npar) : Float64[]
-    gh = want_gradient ? zeros(npar) : Float64[]
-    for j in 1:n
-        @inbounds for (t, c) in enumerate(columns); u[c] = rule.points[t, j]; end
-        want_gradient && fill!(gh, 0.0)
-        h = 0.0
-        for child in rule.children[j]
-            r = _continuation_rule_value(o, U, theta, Ls, dL, positions, child,
-                u, aws, scratch, want_gradient)
-            # A child that cannot be scored fails the block, rather than
-            # silently removing this node's mass.
-            isfinite(r.value) || return (value=NaN, gradient=gacc)
-            h += r.value
-            want_gradient && (gh .+= r.gradient)
-        end
-        t = rule.logweights[j] + h
-        if t > peak
-            if isfinite(peak)
-                s = exp(peak - t)
-                acc *= s
-                want_gradient && (gacc .*= s)
-            end
-            peak = t
-        end
-        w = exp(t - peak)
-        acc += w
-        want_gradient && (gacc .+= w .* gh)
-    end
-    isfinite(peak) || return (value=NaN, gradient=gacc)
-    want_gradient && (gacc ./= acc)
-    return (value=peak + log(acc) + rule.constant, gradient=gacc)
+    a = _continuation_node_sum(o, U, theta, Ls, dL, positions, rule, u, aws,
+        scratch, want_gradient, 1:size(rule.points, 2))
+    (a.failed || !isfinite(a.peak)) && return (value=NaN, gradient=a.gacc)
+    want_gradient && (a.gacc ./= a.acc)
+    return (value=a.peak + log(a.acc) + rule.constant, gradient=a.gacc)
 end
 
 """
-    _continuation_leaf_sum(o, U, theta, Ls, dL, positions, rule, u, aws,
+    _continuation_node_sum(o, U, theta, Ls, dL, positions, rule, u, aws,
         scratch, want_gradient, range)
 
-A leaf rule's nodes `range`, summed: their largest log term `peak`, the sum
-`acc` of `exp(term - peak)` over them, and with the gradient the same sum of
-each node's score times its weight (`gacc`), unnormalised -- so a rule's nodes
-can be summed in parts on different threads and the parts combined
-(`_continuation_flagged`). `peak` is `-Inf` where no node in the range scores.
+A rule's nodes `range`, summed: their largest log term `peak`, the sum `acc`
+of `exp(term - peak)` over them, and with the gradient the sum of each node's
+score times its weight (`gacc`), unnormalised -- so a rule's nodes can be
+summed in parts on different threads and the parts combined
+(`_continuation_flagged`). One pass, the running maximum rescaling what has
+been summed so far. A node's term is its
+log weight plus, at a leaf, its members' log likelihood, and at an outer block
+the log integrals of its children's rules as they were placed at that node
+(`_continuation_rule_value`), the gradient theirs. A leaf node whose likelihood
+is not finite carries no weight, as it does in `_quadrature_block`; a child
+that cannot be scored fails the sum (`failed`), rather than silently removing
+its node's mass. `peak` is `-Inf` where no node in the range scores.
 """
-function _continuation_leaf_sum(o::CTSEMLaplaceContinuation, U::Integer,
+function _continuation_node_sum(o::CTSEMLaplaceContinuation, U::Integer,
     theta::Vector{Float64}, Ls, dL, positions, rule::CTSEMFixedRule,
     u::Vector{Float64}, aws, scratch, want_gradient::Bool, range::UnitRange{Int})
     laplace = o.laplace
     block = laplace.units.blocks[U][rule.block]
     columns = (block.offset + 1):(block.offset + block.size)
+    leaf = isempty(rule.children)
     npar = length(theta)
     peak = -Inf
     acc = 0.0
@@ -1370,14 +1640,25 @@ function _continuation_leaf_sum(o::CTSEMLaplaceContinuation, U::Integer,
         want_gradient && fill!(gh, 0.0)
         h = 0.0
         ok = true
-        for m in block.members
-            ll = _continuation_member!(gh, laplace, U, m, theta, Ls, dL,
-                positions, u, aws, scratch, want_gradient)
-            if !isfinite(ll)
-                ok = false
-                break
+        if leaf
+            for m in block.members
+                ll = _continuation_member!(gh, laplace, U, m, theta, Ls, dL,
+                    positions, u, aws, scratch, want_gradient)
+                if !isfinite(ll)
+                    ok = false
+                    break
+                end
+                h += ll
             end
-            h += ll
+        else
+            for child in rule.children[j]
+                r = _continuation_rule_value(o, U, theta, Ls, dL, positions, child,
+                    u, aws, scratch, want_gradient)
+                isfinite(r.value) || return (peak=NaN, acc=0.0, gacc=gacc,
+                    failed=true)
+                h += r.value
+                want_gradient && (gh .+= r.gradient)
+            end
         end
         ok || continue
         t = rule.logweights[j] + h
@@ -1393,7 +1674,7 @@ function _continuation_leaf_sum(o::CTSEMLaplaceContinuation, U::Integer,
         acc += w
         want_gradient && (gacc .+= w .* gh)
     end
-    return (peak=peak, acc=acc, gacc=gacc)
+    return (peak=peak, acc=acc, gacc=gacc, failed=false)
 end
 
 """
@@ -1401,30 +1682,47 @@ end
 
 The pieces `_continuation_flagged` hands the pool: each flagged unit whole, as
 `(f, nothing)`, except that where there are fewer flagged units than slots a
-unit whose rule is one leaf of at least 64 nodes -- a wide unit's draws, a
-product rule over several effects -- is split into ranges of its nodes,
-`(f, range)`, at least 32 a range and up to the slots each unit's share
-leaves. Without that a fit whose one flagged unit has 4096 draws evaluated
-them on one thread while the rest of the pool waited.
+unit whose rule has one root of at least two nodes and at least 64 member
+evaluations -- a wide unit's draws, a nested unit's draws or nodes above its
+leaves, a product rule over several effects -- is split into ranges of its
+root's nodes, `(f, range)`, at least 32 evaluations a range and up to the
+slots each unit's share leaves. Without that a fit whose one flagged unit has
+4096 draws evaluated them on one thread while the rest of the pool waited.
 """
 function _continuation_tasks(o::CTSEMLaplaceContinuation, nslot::Integer)
     nf = length(o.rules)
     share = nf < nslot ? cld(Int(nslot), nf) : 1
     tasks = Tuple{Int,Union{Nothing,UnitRange{Int}}}[]
     for (f, rule) in enumerate(o.rules)
-        root = rule.roots[1]
-        n = size(root.points, 2)
-        if share > 1 && length(rule.roots) == 1 && isempty(root.children) && n >= 64
-            stop = 0
-            for m in _continuation_split(n, min(share, cld(n, 32)))
-                push!(tasks, (f, (stop + 1):(stop + m)))
-                stop += m
-            end
+        ranges = length(rule.roots) == 1 ? _continuation_ranges(
+            size(rule.roots[1].points, 2), rule.evaluations, share) :
+            UnitRange{Int}[]
+        if length(ranges) > 1
+            append!(tasks, ((f, range) for range in ranges))
         else
             push!(tasks, (f, nothing))
         end
     end
     return tasks
+end
+
+"""
+    _continuation_ranges(n, evaluations, share)
+
+A root's `n` nodes, costing `evaluations` member evaluations in all, as the
+ranges `_continuation_tasks` splits them into for `share` slots: one range
+unless `share > 1`, `n >= 2` and `evaluations >= 64`, otherwise at least 32
+evaluations a range and at most `share` ranges.
+"""
+function _continuation_ranges(n::Integer, evaluations::Integer, share::Integer)
+    (share > 1 && n >= 2 && evaluations >= 64) || return [1:Int(n)]
+    ranges = UnitRange{Int}[]
+    stop = 0
+    for m in _continuation_split(n, min(Int(share), Int(n), cld(Int(evaluations), 32)))
+        push!(ranges, (stop + 1):(stop + m))
+        stop += m
+    end
+    return ranges
 end
 
 """The flagged units' fixed-rule terms at `theta`, and their summed gradient,
@@ -1478,8 +1776,9 @@ function _continuation_flagged(o::CTSEMLaplaceContinuation, theta::Vector{Float6
                 peaks[k] = total
                 accs[k] = 1.0
             else
-                a = _continuation_leaf_sum(o, U, theta, Ls, dL, positions,
+                a = _continuation_node_sum(o, U, theta, Ls, dL, positions,
                     rule.roots[1], u, aws, scratch, want_gradient, range)
+                failed = a.failed
                 peaks[k] = a.peak
                 accs[k] = a.acc
                 want_gradient && (grads[k] .= a.gacc)
@@ -2150,7 +2449,7 @@ end
 
 """
     _continuation_rule_hessian!(o, U, theta, Ls, dL, d2L, layout, rule, u, aws,
-        sc, depth)
+        sc, depth; range=1:size(rule.points, 2), finalise=true)
 
 One block's log integral under its fixed rule at `theta`, with its gradient
 left in `sc.mean[depth]` and its Hessian in `sc.hess[depth]`: the Louis
@@ -2160,7 +2459,14 @@ gradients accumulated by West's weighted update, so that scores which are
 large and nearly equal -- a stiff direction's, see `_continuation_stiff_rule`
 -- do not cancel in a difference of two sums. Skips the nodes the gradient
 path skips, and fails a block whose child cannot be scored, as it does.
-Returns `(value, failed)`, `failed` meaning the Hessian cannot be formed.
+Returns `(value, failed, peak, W)`, `failed` meaning the Hessian cannot be
+formed.
+
+Over the nodes `range` alone and with `finalise = false`, the parts a root's
+nodes summed on different threads are merged from
+(`_continuation_merge_moments!`): `peak`, the weights' sum `W` relative to it,
+and in `sc` the weighted mean gradient, the weighted mean of the node Hessians
+and the gradients' scatter, the last not yet divided by `W` and added.
 
 The running-maximum rescale is written out here as it is in
 `_continuation_rule_value` and `_quadrature_block`, which carry one moment
@@ -2169,7 +2475,8 @@ buffer per moment in a node loop that allocates nothing.
 """
 function _continuation_rule_hessian!(o::CTSEMLaplaceContinuation, U::Integer,
     theta::Vector{Float64}, Ls, dL, d2L, layout, rule::CTSEMFixedRule,
-    u::Vector{Float64}, aws, sc, depth::Int)
+    u::Vector{Float64}, aws, sc, depth::Int;
+    range::UnitRange{Int}=1:size(rule.points, 2), finalise::Bool=true)
     laplace = o.laplace
     block = laplace.units.blocks[U][rule.block]
     k = block.size
@@ -2188,7 +2495,7 @@ function _continuation_rule_hessian!(o::CTSEMLaplaceContinuation, U::Integer,
     fill!(scatter, 0.0)
     peak = -Inf
     W = 0.0
-    for j in 1:n
+    for j in range
         @inbounds for (t, c) in enumerate(columns); u[c] = rule.points[t, j]; end
         fill!(gnode, 0.0)
         fill!(hnode, 0.0)
@@ -2198,7 +2505,7 @@ function _continuation_rule_hessian!(o::CTSEMLaplaceContinuation, U::Integer,
             for m in block.members
                 ll, status = _continuation_member_hessian!(gnode, hnode, laplace, U,
                     m, theta, Ls, dL, d2L, layout, u, aws, sc)
-                status == 2 && return (value=NaN, failed=true)
+                status == 2 && return (value=NaN, failed=true, peak=NaN, W=0.0)
                 if status == 1 || !isfinite(ll)
                     ok = false
                     break
@@ -2210,7 +2517,7 @@ function _continuation_rule_hessian!(o::CTSEMLaplaceContinuation, U::Integer,
                 r = _continuation_rule_hessian!(o, U, theta, Ls, dL, d2L, layout,
                     child, u, aws, sc, depth + 1)
                 r.failed && return r
-                isfinite(r.value) || return (value=NaN, failed=false)
+                isfinite(r.value) || return (value=NaN, failed=false, peak=NaN, W=0.0)
                 h += r.value
                 gnode .+= sc.mean[depth + 1]
                 hnode .+= sc.hess[depth + 1]
@@ -2243,12 +2550,45 @@ function _continuation_rule_hessian!(o::CTSEMLaplaceContinuation, U::Integer,
         end
         W = Wn
     end
-    isfinite(peak) || return (value=NaN, failed=false)
-    invW = 1 / W
-    @inbounds for b in 1:npar, a in 1:npar
-        hess[a, b] += scatter[a, b] * invW
+    isfinite(peak) || return (value=NaN, failed=false, peak=peak, W=W)
+    if finalise
+        invW = 1 / W
+        @inbounds for b in 1:npar, a in 1:npar
+            hess[a, b] += scatter[a, b] * invW
+        end
     end
-    return (value=peak + log(W) + rule.constant, failed=false)
+    return (value=peak + log(W) + rule.constant, failed=false, peak=peak, W=W)
+end
+
+"""
+    _continuation_merge_moments!(mean, hess, parts)
+
+The Louis identity's moments over a root's nodes from those of its parts, each
+`(peak, W, mean, hess, scatter)` as `_continuation_rule_hessian!` leaves them
+unfinalised over a range of the nodes: the parts' weights brought to the
+largest peak, their means and mean Hessians averaged by them, and the scatter
+about the whole mean -- each part's own plus its mean's distance from the
+whole's (Chan, Golub and LeVeque 1979) -- divided by the total weight and
+added to the mean Hessian. Writes `mean` and `hess`, and returns `(peak, W)`.
+"""
+function _continuation_merge_moments!(mean::Vector{Float64}, hess::Matrix{Float64},
+    parts)
+    P = maximum(p.peak for p in parts)
+    W = sum(p.W * exp(p.peak - P) for p in parts)
+    fill!(mean, 0.0)
+    fill!(hess, 0.0)
+    for p in parts
+        r = p.W * exp(p.peak - P) / W
+        mean .+= r .* p.mean
+        hess .+= r .* p.hess
+    end
+    for p in parts
+        e = exp(p.peak - P)
+        r = p.W * e / W
+        d = p.mean .- mean
+        hess .+= (e / W) .* p.scatter .+ r .* (d .* transpose(d))
+    end
+    return (peak=P, W=W)
 end
 
 # Width `wide` has been run on a model of this shape in this session, so a
@@ -2349,19 +2689,40 @@ function _continuation_flagged_hessian(o::CTSEMLaplaceContinuation,
     hparts = [zeros(npar, npar) for _ in 1:nslot]
     values = fill(NaN, nf)
     good = fill(true, nslot)
-    _laplace_parallel(laplace, 1:nf) do f
+    # A unit whole on one slot, or, where there are fewer units than slots,
+    # its root's nodes in ranges (`_continuation_tasks`), each range's moments
+    # kept by the task and merged below.
+    tasks = _continuation_tasks(o, nslot)
+    ntask = length(tasks)
+    parts = Vector{Any}(nothing, ntask)
+    _laplace_parallel(laplace, 1:ntask) do q
         # `local` throughout, as in `_continuation_flagged`.
-        local rule, U, aws, sc, u, total, failed, r, slot
+        local f, range, rule, U, aws, sc, u, total, failed, r, slot
         slot = _laplace_slot()
+        f, range = tasks[q]
         rule = o.rules[f]
         U = rule.unit
         aws = _laplace_workspace!(laplace, S, npar)
         sc = _continuation_hessian_scratch(laplace, S, npar, layout, depth)
         u = zeros(laplace.units.dims[U])
+        failed = false
+        if range !== nothing
+            try
+                r = _continuation_rule_hessian!(o, U, theta, Ls, dL, d2L, layout,
+                    rule.roots[1], u, aws, sc, 1; range=range, finalise=false)
+                failed = r.failed || isnan(r.peak)
+                failed || (parts[q] = (peak=r.peak, W=r.W, mean=copy(sc.mean[1]),
+                    hess=copy(sc.hess[1]), scatter=copy(sc.scatter[1])))
+            catch err
+                _ctsem_must_propagate(err) && rethrow()
+                failed = true
+            end
+            failed && (good[slot] = false)
+            return !failed
+        end
         fill!(sc.unit_gradient, 0.0)
         fill!(sc.unit_hessian, 0.0)
         total = 0.0
-        failed = false
         try
             for root in rule.roots
                 r = _continuation_rule_hessian!(o, U, theta, Ls, dL, d2L, layout,
@@ -2394,6 +2755,28 @@ function _continuation_flagged_hessian(o::CTSEMLaplaceContinuation,
     for s in 1:nslot
         gradient .+= gparts[s]
         hessian .+= hparts[s]
+    end
+    mean = zeros(npar)
+    hess = zeros(npar, npar)
+    at = 1
+    while at <= ntask
+        f, range = tasks[at]
+        last = at
+        while last < ntask && tasks[last + 1][1] == f
+            last += 1
+        end
+        if range !== nothing
+            pieces = [parts[q] for q in at:last if isfinite(parts[q].peak)]
+            isempty(pieces) && return nothing
+            m = _continuation_merge_moments!(mean, hess, pieces)
+            (all(isfinite, mean) && all(isfinite, hess)) || return nothing
+            rule = o.rules[f]
+            values[f] = m.peak + log(m.W) + rule.roots[1].constant
+            w = _laplace_unit_weight(laplace, rule.unit)
+            gradient .+= w .* mean
+            hessian .+= w .* hess
+        end
+        at = last + 1
     end
     # Dual sweeps, counted as the reverse sweeps they are.
     o.member_sweeps += sum(r.evaluations for r in o.rules; init=0) *
@@ -2467,8 +2850,8 @@ function ctsem_laplace_continuation_info(o::CTSEMLaplaceContinuation)
         nwide=count(o.wide), maxdim=o.maxdim,
         importance=[o.importance[U] for U in 1:nunits], nimportance=count(o.importance),
         centre_se=copy(o.centre_se),
-        importance_draws=sum(size(r.roots[1].points, 2) for r in o.rules
-            if o.importance[r.unit]; init=0),
+        importance_draws=sum(sum(_continuation_draws(root) for root in r.roots;
+            init=0) for r in o.rules if o.importance[r.unit]; init=0),
         draws=o.draws, draws_se=o.draws_se,
         evaluations_per_value=sum(r.evaluations for r in o.rules; init=0),
         value_calls=o.value_calls, gradient_calls=o.gradient_calls,
@@ -2555,12 +2938,22 @@ end
     ctsem_laplace_continuation_se(o, values)
 
 Each flagged unit's importance rule's standard error at `values`, its draws
-held where they were placed: `sqrt(1/ESS - 1/n)` from the weights there, `0`
-for a unit on a product rule. The draws are the proposal's of the point they
-were placed at, and as the parameters move away from it their weights spread;
-a fit rescued from a jump places them again only once this has drifted past
-what they were placed to (`.ctLaplaceFrozenRescue()`). In the order of
+held where they were placed, read as at placement: the spread of each root's
+replicate lattices' log integrals over `sqrt` of their number
+(`_CONTINUATION_REPLICATES`), the roots' combined as independent errors; `0`
+for a unit on a product rule. Each replicate's draws keep the log weights its
+placement gave them, which do not move with the parameters, so at the point
+of placement this is the standard error placed. A root above other blocks is weighted by its children's
+integrals as they were placed at each of its draws, so its error counts
+theirs (`_continuation_importance_rule`). Where fewer than two replicates
+score, the independent-draws formula `sqrt(1/ESS - 1/n)` stands in, as at
+placement. The draws are the proposal's of the point they were placed at, and
+as the parameters move away from it their weights spread; a fit rescued from a
+jump places them again only once this has drifted past what they were placed
+to (`.ctLaplaceFrozenRescue()`). In the order of
 `ctsem_laplace_continuation_info`'s `flagged`; `[0.0]` when none is flagged.
+In parallel over units and, as a value is, over a root's draws
+(`_continuation_ranges`).
 """
 function ctsem_laplace_continuation_se(o::CTSEMLaplaceContinuation,
     values::AbstractVector)
@@ -2572,38 +2965,116 @@ function ctsem_laplace_continuation_se(o::CTSEMLaplaceContinuation,
     Ls = _laplace_popchols(theta, spec)
     positions = [_laplace_level_positions(spec, l) for l in eachindex(spec.levels)]
     npar = length(theta)
-    out = zeros(nf)
     _laplace_ensure_pool!(laplace)
-    _laplace_parallel(laplace, 1:nf) do f
-        local rule, U, root, block, columns, aws, scratch, u, n, terms, peak, w
-        rule = o.rules[f]
+    share = nf < _laplace_pool_width() ? cld(_laplace_pool_width(), nf) : 1
+    # Every root's draws' log integrands beneath (its members' log likelihood,
+    # or its children's log integrals), filled by pieces of ranges: (flagged
+    # position, root, range).
+    roots = Tuple{Int,Int}[]
+    terms = Vector{Vector{Float64}}()
+    tasks = Tuple{Int,Int,UnitRange{Int}}[]
+    for (f, rule) in enumerate(o.rules)
+        o.importance[rule.unit] || continue
+        for (r, root) in enumerate(rule.roots)
+            push!(roots, (f, r))
+            push!(terms, fill(-Inf, size(root.points, 2)))
+            for range in _continuation_ranges(size(root.points, 2),
+                    _continuation_evaluations(root, laplace.units.blocks[rule.unit]),
+                    length(rule.roots) == 1 ? share : 1)
+                push!(tasks, (length(roots), r, range))
+            end
+        end
+    end
+    failed = fill(false, length(roots))
+    _laplace_parallel(laplace, 1:length(tasks)) do q
+        local i, r, range, rule, U, aws, scratch, u, ok
+        i, r, range = tasks[q]
+        rule = o.rules[roots[i][1]]
         U = rule.unit
-        o.importance[U] || return true
-        root = rule.roots[1]
-        block = laplace.units.blocks[U][root.block]
-        columns = (block.offset + 1):(block.offset + block.size)
         aws = _laplace_workspace!(laplace, Float64, npar)
         scratch = _continuation_scratch(laplace, npar)
         u = zeros(laplace.units.dims[U])
-        n = size(root.points, 2)
-        terms = fill(-Inf, n)
-        for j in 1:n
-            @inbounds for (t, c) in enumerate(columns); u[c] = root.points[t, j]; end
-            h = 0.0
-            for m in block.members
-                h += _continuation_member!(Float64[], laplace, U, m, theta, Ls,
-                    nothing, positions, u, aws, scratch, false)
-            end
-            isfinite(h) && (terms[j] = root.logweights[j] + h)
+        ok = try
+            _continuation_node_terms!(terms[i], o, U, theta, Ls, positions,
+                rule.roots[r], u, aws, scratch, range)
+        catch err
+            _ctsem_must_propagate(err) && rethrow()
+            false
         end
-        peak = maximum(terms)
-        if !isfinite(peak)
-            out[f] = Inf
-            return true
-        end
-        w = exp.(terms .- peak)
-        out[f] = sqrt(max(sum(abs2, w) / sum(w)^2 - 1 / n, 0.0))
+        ok || (failed[i] = true)
         return true
     end
-    return out
+    variance = zeros(nf)
+    for (i, (f, r)) in enumerate(roots)
+        root = o.rules[f].roots[r]
+        h = terms[i]
+        n = length(h)
+        t = root.logweights .+ h
+        peak = maximum(t; init=-Inf)
+        if failed[i] || !isfinite(peak)
+            variance[f] = Inf
+            continue
+        end
+        reps = Float64[]
+        if length(root.replicate) == n
+            for rep in 1:_CONTINUATION_REPLICATES
+                sel = findall(==(rep), root.replicate)
+                isempty(sel) && continue
+                tr = root.replicate_logweights[sel] .+ h[sel]
+                pk = maximum(tr)
+                isfinite(pk) && push!(reps, pk + log(sum(exp.(tr .- pk))))
+            end
+        end
+        if length(reps) >= 2
+            mu = sum(reps) / length(reps)
+            variance[f] += sum(abs2, reps .- mu) / (length(reps) - 1) / length(reps)
+        else
+            w = exp.(t .- peak)
+            variance[f] += max(sum(abs2, w) / sum(w)^2 - 1 / n, 0.0)
+        end
+    end
+    return sqrt.(variance)
+end
+
+"""
+    _continuation_node_terms!(terms, o, U, theta, Ls, positions, rule, u, aws,
+        scratch, range)
+
+Each of a rule's nodes `range`'s log integrand at `theta` into `terms`, its
+weight left out: its members' log likelihood at a leaf (`-Inf` where that is
+not finite, as `_continuation_node_sum` skips it), or its children's log
+integrals at an outer block. `false` where a child cannot be scored.
+"""
+function _continuation_node_terms!(terms::Vector{Float64}, o::CTSEMLaplaceContinuation,
+    U::Integer, theta::Vector{Float64}, Ls, positions, rule::CTSEMFixedRule,
+    u::Vector{Float64}, aws, scratch, range::UnitRange{Int})
+    laplace = o.laplace
+    block = laplace.units.blocks[U][rule.block]
+    columns = (block.offset + 1):(block.offset + block.size)
+    leaf = isempty(rule.children)
+    for j in range
+        @inbounds for (t, c) in enumerate(columns); u[c] = rule.points[t, j]; end
+        h = 0.0
+        ok = true
+        if leaf
+            for m in block.members
+                ll = _continuation_member!(Float64[], laplace, U, m, theta, Ls, nothing,
+                    positions, u, aws, scratch, false)
+                if !isfinite(ll)
+                    ok = false
+                    break
+                end
+                h += ll
+            end
+        else
+            for child in rule.children[j]
+                r = _continuation_rule_value(o, U, theta, Ls, nothing, positions, child,
+                    u, aws, scratch, false)
+                isfinite(r.value) || return false
+                h += r.value
+            end
+        end
+        terms[j] = ok ? h : -Inf
+    end
+    return true
 end
