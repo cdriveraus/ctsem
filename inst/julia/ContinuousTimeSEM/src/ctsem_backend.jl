@@ -2520,8 +2520,8 @@ are the finish's rules, passed from R so one number serves both sides.
 `coreset` runs stretches of the L-BFGS stage on a weighted few of the units
 where the route has units (`_ctsem_coreset_plan`, the Laplace route) and a
 coreset is expected to save, each stretch checked by a full gradient. Off here;
-R's default, `optimcontrol$coreset = 'auto'`, sends it for large data
-(`.ctJuliaCoresetOn()`). Neither the finish nor a budget stage sees one.
+R's default for it, `'auto'`, sends it for large data (`.ctJuliaCoresetOn()`).
+Neither the finish nor a budget stage sees one.
 `lbfgs_inverse` is an initial inverse Hessian for L-BFGS (`_ctsem_lbfgs`'s
 `inverse`), as a fit's covariance is for refitting it to part of its data; one
 that is not positive definite is not used (`_ctsem_lbfgs_inverse`).
