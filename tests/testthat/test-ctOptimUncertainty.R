@@ -1113,6 +1113,31 @@ test_that("whitening carries a density's 'batch' attribute through the map", {
   expect_true(is.finite(result$ess))
 })
 
+test_that("checked's sampler can weigh the sampled directions by their marginal", {
+  skip_if_not_installed('mvtnorm'); skip_if_not_installed('diagis')
+  skip_if_not_installed('gridExtra'); skip_if_not_installed('ggplot2')
+  # s ~ N(0, 1) and eight coordinates c | s ~ N(0, e^(a s)). The mode is at
+  # s = -4a: held at c = 0 there, s has the conditional N(-4a, 1); its
+  # marginal is N(0, 1), the volume the c's spread adds as s grows.
+  a <- 0.1
+  k <- 8L
+  lp <- function(x) -x[1]^2 / 2 - sum(x[-1]^2) * exp(-a * x[1]) / 2 - k * a * x[1] / 2
+  attr(lp, 'batch') <- function(X) apply(as.matrix(X), 1, lp)
+  mode <- c(-k * a / 2, rep(0, k))
+  cov <- diag(c(1, rep(exp(-k * a^2 / 2), k)))
+  run <- function(complement) withr::with_seed(5, ctsem:::.ctImisRun(lp, centre = mode,
+    cov = cov, directions = matrix(c(1, rep(0, k))), widths = 1, complement = complement,
+    max_iter = 50, scale_init = 1.5, tail_scale = 1.2, df = 5, target_ess = 1000,
+    n_batch = 500, cl = NA, finishsamples = 1000, paths = FALSE, verbose = FALSE,
+    diag_plots = FALSE))
+  held <- run(FALSE)
+  integrated <- run(TRUE)
+  expect_lt(abs(held$mean[1] + k * a / 2), 0.12)
+  expect_lt(abs(integrated$mean[1]), 0.12)
+  # The others' answer is the normal's either way.
+  expect_equal(diag(integrated$covariance)[-1], diag(cov)[-1])
+})
+
 test_that(".ctOptimImisDraws() reports which directions the subspace held", {
   skip_if_not_installed('mvtnorm'); skip_if_not_installed('diagis')
   skip_if_not_installed('gridExtra'); skip_if_not_installed('ggplot2')
