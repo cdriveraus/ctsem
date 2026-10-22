@@ -1138,10 +1138,14 @@ print.ctLaplaceCorrection <- function(x, ...) {
   if (inherits(cont, "try-error")) return(failed(paste0(
     "the quadrature could not be evaluated (", .ctLaplaceTryReason(cont), ")")))
   start <- get(module$ctsem_laplace_continuation_info(cont))
+  # `loglik_laplace` is the Laplace objective's log likelihood at the point the
+  # correction starts from (the placement's own Laplace terms), not the fit's
+  # reported value there, which on a fit that climbed the hybrid is already
+  # the hybrid's.
   record <- list(method = "quadrature", status = "exact", applied = FALSE,
     nodes = as.integer(start$nodes), tolerance = as.numeric(start$tolerance),
     screen = as.numeric(start$screen), gap = as.numeric(start$gap),
-    laplace_estimate = est, loglik_laplace = as.numeric(fit$estimate$loglik),
+    laplace_estimate = est, loglik_laplace = sum(as.numeric(start$laplace_units)),
     flagged = as.integer(start$nflagged), units = as.integer(start$nunits),
     rule_failures = as.integer(start$rule_failures),
     wide = as.integer(start$nwide), maxdim = as.integer(start$maxdim))
