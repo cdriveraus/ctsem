@@ -313,6 +313,12 @@ mutable struct CTSEMLaplaceContinuation{L} <: CTSEMOptimisable
     anytime::Bool
     rungs::Vector{Float64}
     events::Vector{_ContinuationEvent}
+    # Per flagged rule, its effective number of nodes at the last evaluation
+    # and at the first after its placement (`_continuation_record_ess!`), and
+    # the accepted steps since the last placement.
+    ess::Vector{Float64}
+    ess_placed::Vector{Float64}
+    since_placement::Int
 end
 
 
@@ -1559,7 +1565,8 @@ function ctsem_laplace_continuation(laplace::CTSEMLaplaceObjective,
         fill(false, nunits), Bool(screen), Symbol(draws_scope), Int[],
         fill(NaN, nunits), fill(NaN, nunits), fill(false, nunits), NaN, nothing,
         0, 0, 0, 0, 0, 0, 0.0, 0.0, 0.0, 0.0, nothing, nothing, nothing,
-        Bool(anytime), collect(Float64, _CONTINUATION_RUNGS), _ContinuationEvent[])
+        Bool(anytime), collect(Float64, _CONTINUATION_RUNGS), _ContinuationEvent[],
+        Float64[], Float64[], 0)
     _continuation_add_points!(o, point_units, point_values)
     _continuation_force!(o, force)
     _continuation_place!(o, theta)
@@ -1601,7 +1608,7 @@ end
 
 const _CONTINUATION_STATE = (:rest, :rest_units, :flagged, :rules, :centre,
     :centre_quadrature, :centre_laplace, :rule_failed, :centre_value, :centre_se,
-    :centre_error, :importance)
+    :centre_error, :importance, :ess, :ess_placed)
 
 """
     ctsem_laplace_continuation_recentre!(o, values; force=nothing,
@@ -1686,6 +1693,9 @@ function _continuation_place!(o::CTSEMLaplaceContinuation, theta::Vector{Float64
         sum(_laplace_unit_weight(laplace, U) * placed.quadrature[U]
         for U in flagged; init=0.0) + prior
     o.recentres += 1
+    o.ess = fill(NaN, length(o.rules))
+    o.ess_placed = fill(NaN, length(o.rules))
+    o.since_placement = 0
     o.cache = nothing
     o.value_cache = nothing
     o.seconds_placements += (time_ns() - started) / 1e9
@@ -1732,6 +1742,23 @@ function _continuation_member!(gh, laplace::CTSEMLaplaceObjective, U::Integer,
 end
 
 """
+    _continuation_record_ess!(o, f, ess)
+
+Keep flagged rule `f`'s effective number of nodes at the last evaluation
+(`o.ess`), and the first one after its placement (`o.ess_placed`), which the
+climb's checkpoint reads for drift (`_ctsem_anytime!`): a rule whose nodes
+were placed at one point carries less and less of the integrand's mass as
+the parameters move, and its weights concentrate on the nodes nearest the
+new mode. Written in the serial part of `_continuation_flagged`.
+"""
+function _continuation_record_ess!(o::CTSEMLaplaceContinuation, f::Integer, ess::Real)
+    f <= length(o.ess) || return nothing
+    o.ess[f] = Float64(ess)
+    isnan(o.ess_placed[f]) && isfinite(ess) && (o.ess_placed[f] = Float64(ess))
+    return nothing
+end
+
+"""
     _continuation_rule_value(o, U, theta, Ls, dL, positions, rule, u, aws,
         scratch, want_gradient)
 
@@ -1745,9 +1772,10 @@ function _continuation_rule_value(o::CTSEMLaplaceContinuation, U::Integer,
     u::Vector{Float64}, aws, scratch, want_gradient::Bool)
     a = _continuation_node_sum(o, U, theta, Ls, dL, positions, rule, u, aws,
         scratch, want_gradient, 1:size(rule.points, 2))
-    (a.failed || !isfinite(a.peak)) && return (value=NaN, gradient=a.gacc)
+    (a.failed || !isfinite(a.peak)) && return (value=NaN, gradient=a.gacc, ess=NaN)
     want_gradient && (a.gacc ./= a.acc)
-    return (value=a.peak + log(a.acc) + rule.constant, gradient=a.gacc)
+    return (value=a.peak + log(a.acc) + rule.constant, gradient=a.gacc,
+        ess=a.acc^2 / max(a.acc2, eps()))
 end
 
 """
@@ -1777,6 +1805,10 @@ function _continuation_node_sum(o::CTSEMLaplaceContinuation, U::Integer,
     npar = length(theta)
     peak = -Inf
     acc = 0.0
+    # The sum of the squared weights, for the nodes' effective number
+    # `acc^2 / acc2` (`_continuation_flagged`), which says how far the rule has
+    # drifted from the point it was placed at.
+    acc2 = 0.0
     gacc = want_gradient ? zeros(npar) : Float64[]
     gh = want_gradient ? zeros(npar) : Float64[]
     for j in range
@@ -1798,8 +1830,8 @@ function _continuation_node_sum(o::CTSEMLaplaceContinuation, U::Integer,
             for child in rule.children[j]
                 r = _continuation_rule_value(o, U, theta, Ls, dL, positions, child,
                     u, aws, scratch, want_gradient)
-                isfinite(r.value) || return (peak=NaN, acc=0.0, gacc=gacc,
-                    failed=true)
+                isfinite(r.value) || return (peak=NaN, acc=0.0, acc2=0.0,
+                    gacc=gacc, failed=true)
                 h += r.value
                 want_gradient && (gh .+= r.gradient)
             end
@@ -1810,15 +1842,17 @@ function _continuation_node_sum(o::CTSEMLaplaceContinuation, U::Integer,
             if isfinite(peak)
                 s = exp(peak - t)
                 acc *= s
+                acc2 *= s * s
                 want_gradient && (gacc .*= s)
             end
             peak = t
         end
         w = exp(t - peak)
         acc += w
+        acc2 += w * w
         want_gradient && (gacc .+= w .* gh)
     end
-    return (peak=peak, acc=acc, gacc=gacc, failed=false)
+    return (peak=peak, acc=acc, acc2=acc2, gacc=gacc, failed=false)
 end
 
 """
@@ -1890,11 +1924,15 @@ function _continuation_flagged(o::CTSEMLaplaceContinuation, theta::Vector{Float6
     ntask = length(tasks)
     peaks = fill(-Inf, ntask)
     accs = zeros(ntask)
+    # Per task the sum of squared weights (a range) or the effective number
+    # itself (a whole unit, the smallest over its roots).
+    acc2s = zeros(ntask)
+    esss = fill(NaN, ntask)
     grads = [want_gradient ? zeros(npar) : Float64[] for _ in 1:ntask]
     ok = _laplace_parallel(laplace, 1:ntask) do k
         # `local` throughout: a name assigned here that is also a local of the
         # enclosing function would be one binding shared by every task.
-        local f, range, rule, U, aws, scratch, u, total, r, failed, a
+        local f, range, rule, U, aws, scratch, u, total, r, failed, a, essmin
         f, range = tasks[k]
         rule = o.rules[f]
         U = rule.unit
@@ -1907,6 +1945,7 @@ function _continuation_flagged(o::CTSEMLaplaceContinuation, theta::Vector{Float6
                 # The whole unit: its term as a peak with a sum of one, its
                 # gradient already normalised.
                 total = 0.0
+                essmin = Inf
                 for root in rule.roots
                     r = _continuation_rule_value(o, U, theta, Ls, dL, positions,
                         root, u, aws, scratch, want_gradient)
@@ -1915,16 +1954,19 @@ function _continuation_flagged(o::CTSEMLaplaceContinuation, theta::Vector{Float6
                         break
                     end
                     total += r.value
+                    essmin = min(essmin, r.ess)
                     want_gradient && (grads[k] .+= r.gradient)
                 end
                 peaks[k] = total
                 accs[k] = 1.0
+                esss[k] = essmin
             else
                 a = _continuation_node_sum(o, U, theta, Ls, dL, positions,
                     rule.roots[1], u, aws, scratch, want_gradient, range)
                 failed = a.failed
                 peaks[k] = a.peak
                 accs[k] = a.acc
+                acc2s[k] = a.acc2
                 want_gradient && (grads[k] .= a.gacc)
             end
         catch err
@@ -1946,18 +1988,22 @@ function _continuation_flagged(o::CTSEMLaplaceContinuation, theta::Vector{Float6
         rule = o.rules[f]
         if tasks[at][2] === nothing
             values[f] = peaks[at]
+            _continuation_record_ess!(o, f, esss[at])
             want_gradient && (g .= grads[at])
         else
             P = maximum(@view peaks[at:last])
             isfinite(P) || return (values=values, gradient=gradient, ok=false)
             A = 0.0
+            B = 0.0
             want_gradient && fill!(g, 0.0)
             for q in at:last
                 e = exp(peaks[q] - P)
                 A += accs[q] * e
+                B += acc2s[q] * e * e
                 want_gradient && (g .+= e .* grads[q])
             end
             values[f] = P + log(A) + rule.roots[1].constant
+            _continuation_record_ess!(o, f, A^2 / max(B, eps()))
             want_gradient && (g ./= A)
         end
         if want_gradient
@@ -2080,10 +2126,14 @@ flagged unit's rule is placed at `x`. At a step, once the gain has fallen
 under the next rung (`_CONTINUATION_RUNGS`), every unit a product rule can
 score is screened at `x` and what the screen resolves is flagged, the rest
 keeping their Laplace terms; units too wide for a product rule are scored
-only where named (`draws_scope = :forced`). Returns whether the objective
-changed, which it has not when nothing is or was flagged: the loop then
-reads it again at the point and keeps its pairs. Each action is recorded in
-`o.events`.
+only where named (`draws_scope = :forced`). Between rungs a flagged rule that
+has drifted -- its effective number of nodes halved since its placement
+(`_continuation_record_ess!`) -- has every flagged rule placed again at `x`.
+Without that the rules a screen placed far from the optimum stayed there:
+on the bench's gC8 the climb ended 21-42 nats below the baseline, on anomS2's
+spurious start 31. Returns whether the objective changed, which it has not
+when nothing is or was flagged: the loop then reads it again at the point
+and keeps its pairs. Each action is recorded in `o.events`.
 """
 function _ctsem_anytime!(o::CTSEMLaplaceContinuation, x::AbstractVector, gain::Real,
     event::Symbol, jump)
@@ -2098,6 +2148,18 @@ function _ctsem_anytime!(o::CTSEMLaplaceContinuation, x::AbstractVector, gain::R
             _continuation_add_points!(o, named.point_units, named.point_values)
         _continuation_place!(o, theta)
         push!(o.events, (kind=:jump, flagged=length(o.flagged), gain=Float64(gain)))
+        return true
+    end
+    # Drift: a flagged rule whose effective number of nodes has halved since
+    # its placement is placed again where the climb now is, with every other
+    # flagged rule (the screen stays off, so nothing new is scored). Not
+    # within five accepted steps of a placement, or a rule in a steep region
+    # would be placed every step.
+    o.since_placement += 1
+    if o.since_placement >= 5 && any(f -> isfinite(o.ess[f]) && isfinite(o.ess_placed[f]) &&
+            o.ess[f] < 0.5 * o.ess_placed[f], eachindex(o.rules))
+        _continuation_place!(o, theta)
+        push!(o.events, (kind=:drift, flagged=length(o.flagged), gain=Float64(gain)))
         return true
     end
     (isempty(o.rungs) || !(gain < o.rungs[1])) && return false

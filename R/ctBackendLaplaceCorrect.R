@@ -731,17 +731,21 @@ print.ctLaplaceCorrection <- function(x, ...) {
 # continuation itself rides along as `continuation` for the correction to
 # place again at the estimate, and is dropped before the fit is built. Warns
 # once past a quarter of the units on draws (`.ctLaplaceDrawsShareWarn()`).
-.ctLaplaceAnytimeRecord <- function(run, module, cont, first) {
+.ctLaplaceAnytimeRecord <- function(run, module, cont, first, before = NULL) {
   info <- .ctJuliaGet(module$ctsem_laplace_continuation_info(cont))
   flagged <- as.integer(info$flagged)[seq_len(info$nflagged)]
   drawn <- intersect(which(as.logical(info$importance)), flagged)
-  .ctLaplaceDrawsShareWarn(drawn, as.integer(info$nunits)[1L], FALSE)
+  .ctLaplaceDrawsShareWarn(drawn, as.integer(info$nunits)[1L],
+    isTRUE(length(before$draws_units) > 0.25 * as.integer(info$nunits)[1L]))
   n <- as.integer(.ctJuliaOr(run$anytime_n, 0L))[1L]
   events <- if (n > 0L) data.frame(
     kind = as.character(run$anytime_kind)[seq_len(n)],
     flagged = as.integer(run$anytime_flagged)[seq_len(n)],
     gain = as.numeric(run$anytime_gain)[seq_len(n)], stringsAsFactors = FALSE) else
     data.frame(kind = character(0), flagged = integer(0), gain = numeric(0))
+  # The stages before this one (`before`, an earlier record on the same
+  # continuation) come first.
+  if (is.data.frame(before$events)) events <- rbind(before$events, events)
   handover <- as.character(.ctJuliaOr(first$stop_reason, ""))[1L]
   run$anytime <- list(units = flagged, draws_units = drawn,
     jumps = sum(events$kind == "jump") + as.integer(identical(handover, "jump")),

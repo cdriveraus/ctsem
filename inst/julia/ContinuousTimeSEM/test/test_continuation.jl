@@ -728,6 +728,16 @@ _fresh_nested_nonlinear() = (ctsem_laplace_objective(_LAPLACE_NONLINEAR_OBJECTIV
     @test r.continuation_flagged == length(o.flagged)
     ev = ctsem_laplace_continuation_evaluate(o, r.minimizer; gradient=false)
     @test isapprox(r.maximum_loglik, ev.value; rtol=1e-10)
+    # Each flagged rule's effective number of nodes is recorded at every
+    # evaluation, at most its node count, and falls where the parameters have
+    # moved far from the placement.
+    @test length(o.ess) == length(o.rules)
+    @test all(f -> 1 <= o.ess[f] <= size(o.rules[f].roots[1].points, 2) + 1e-9,
+        eachindex(o.rules))
+    @test all(isfinite, o.ess_placed)
+    near = copy(o.ess)
+    ctsem_laplace_continuation_evaluate(o, r.minimizer .+ 1.5; gradient=false)
+    @test any(f -> o.ess[f] < near[f], eachindex(o.rules))
     # The rungs are spent in order, and no more screens come.
     @test isempty(o.rungs) || o.rungs[1] < _CONTINUATION_RUNGS[1]
     # Linear Gaussian, at the screen's own tolerance (at 0 it flags rounding):

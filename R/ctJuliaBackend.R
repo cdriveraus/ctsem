@@ -5725,6 +5725,7 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
       newton = FALSE, certify = FALSE, overshoot_probe = "off"))
   }
   result <- optimise_once(start)
+  laplace_run <- result
   # Without the climb (the correction off, `estonly`, a quadratic model) a jump
   # ends the stage where it was named, as before the hybrid existed: said, with
   # the way to integrate the units that jumped.
@@ -5736,6 +5737,7 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
       "stopped) and the fit stops there. laplace_correct = 'quadrature' integrates ",
       "such units by frozen draws and climbs on.", call. = FALSE)
   }
+  climbed <- NULL
   if (anytime) {
     common <- full
     continuation <- .ctLaplaceAnytimeStart(result, module, objective,
@@ -5743,7 +5745,8 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
     if (!is.null(continuation)) {
       second <- optimise_once(as.numeric(result$minimizer))
       result <- .ctLaplaceAnytimeRecord(.ctJuliaAddRunCounts(second,
-        .ctJuliaRunCounts(result)), module, continuation, result)
+        .ctJuliaRunCounts(result)), module, continuation, laplace_run)
+      climbed <- result$anytime
     }
   }
   # The two early phases belong to the first stage, which is the one that
@@ -5856,6 +5859,13 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
     result <- resumed
   }
   if (is.null(result$stall_escapes)) result$stall_escapes <- escapes
+  # A stage the escape loop kept ran on the hybrid too and carries no record of
+  # the climb: the record is rebuilt on it, its own events after the climb's,
+  # and the continuation rides along for the correction.
+  if (!is.null(continuation) && is.null(result$continuation)) {
+    result <- .ctLaplaceAnytimeRecord(result, module, continuation, laplace_run,
+      before = climbed)
+  }
   for (nm in names(saem_record)) result[nm] <- list(saem_record[[nm]])
   result <- .ctJuliaAddRunCounts(result, spent)
   if (!is.null(failure)) {
