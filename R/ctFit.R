@@ -116,7 +116,7 @@
       "which starts on a subset of subjects and grows it as the fit needs more ",
       "data. The stan path has no equivalent")),
   coreset = list(only = 'julia',
-    inert = function(v) isFALSE(v),
+    inert = function(v) isFALSE(v) || identical(v, 'auto'),
     msg = paste0("runs the julia optimiser's coreset stages, stretches of ",
       "L-BFGS on a weighted few of the units on the Laplace route. The stan ",
       "path has no equivalent")),
