@@ -595,12 +595,13 @@ print.ctLaplaceCorrection <- function(x, ...) {
 # `rtol` (1e-8) is the identifiability report's: a direction the Laplace
 # curvature does not identify is held where the fit left it. `maxdim` (5) is
 # the widest product rule the correction places, explained with the engine's
-# default; a unit of one block wider than that can be scored by frozen draws
-# instead, `draws` (256) the first batch, doubling to a standard error of
-# `draws_se` (0.05 nats) or `draws_max` (16384) draws, also explained there.
+# default; a unit wider than that can be scored by frozen draws instead, per
+# block of its tree when it nests, `draws` (256) the first batch, doubling to
+# a standard error of `draws_se` (0.05 nats) or `draws_max` (16384) draws, at
+# every block, also explained there.
 # `draws_scope` says which: "forced", the default, only the units a fit
 # rescued from a jump named (`fit$laplace$frozen`), every other wide unit
-# keeping its Laplace term as before; "all" every one of one block. Not "all"
+# keeping its Laplace term as before; "all" every one. Not "all"
 # by default: a flagged unit's gradient is a reverse sweep per draw, and on the
 # round-9 fit (40 people of eight effects) scoring every unit so made the
 # correction far dearer than the fit
@@ -706,7 +707,7 @@ print.ctLaplaceCorrection <- function(x, ...) {
       "); the fit stops where the objective jumped.", call. = FALSE)
     return(result)
   }
-  # A unit the rule cannot take -- nested, its block tree wider than `maxdim`
+  # A unit whose rule could not be placed -- no mode, or no draw that scores
   # -- is left on Laplace by the placement, and the hybrid would jump where
   # the fit did.
   flagged_of <- function() {
@@ -715,10 +716,10 @@ print.ctLaplaceCorrection <- function(x, ...) {
   }
   untaken <- setdiff(units, flagged_of())
   if (length(untaken)) {
-    warning(sprintf(paste0("The fit stops where the objective jumped: unit%s %s ",
-      "cannot be integrated by frozen draws (nested units wider than %d effects ",
-      "are not yet)."), if (length(untaken) == 1L) "" else "s",
-      paste(untaken, collapse = ", "), as.integer(control$maxdim)), call. = FALSE)
+    warning(sprintf(paste0("The fit stops where the objective jumped: frozen ",
+      "draws could not be placed for unit%s %s."),
+      if (length(untaken) == 1L) "" else "s", paste(untaken, collapse = ", ")),
+      call. = FALSE)
     return(result)
   }
   spent <- .ctJuliaRunCounts(result)
@@ -789,10 +790,10 @@ print.ctLaplaceCorrection <- function(x, ...) {
     placements <- placements + 1L
     untaken <- setdiff(more, flagged_of())
     if (length(untaken)) {
-      warning(sprintf(paste0("Unit%s %s jumped and cannot be integrated by ",
-        "frozen draws (nested units wider than %d effects are not yet); the ",
-        "fit ends where it stopped."), if (length(untaken) == 1L) "" else "s",
-        paste(untaken, collapse = ", "), as.integer(control$maxdim)), call. = FALSE)
+      warning(sprintf(paste0("Unit%s %s jumped and frozen draws could not be ",
+        "placed for %s; the fit ends where it stopped."),
+        if (length(untaken) == 1L) "" else "s", paste(untaken, collapse = ", "),
+        if (length(untaken) == 1L) "it" else "them"), call. = FALSE)
       break
     }
   }
