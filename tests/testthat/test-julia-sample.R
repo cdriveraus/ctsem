@@ -328,6 +328,37 @@ test_that("a sampled fit keeps the exact Hessian it was built from", {
   expect_true(is.finite(sampled$identifiability$condition))
 })
 
+test_that("the marginal sampler starts from the normal check, made where the fit has none", {
+  skip_without_julia()
+  fit <- .sample_fixture()
+  expect_false(is.null(fit$uncertainty$details$normalcheck))
+  # A fit that has its check keeps it; one without gets 'checked''s; one
+  # rescued by frozen draws keeps its Hessian.
+  expect_identical(ctsem:::.ctBackendSampleCheck(fit), fit)
+  bare <- fit
+  bare$uncertainty$details$normalcheck <- NULL
+  set.seed(1)
+  made <- ctsem:::.ctBackendSampleCheck(bare)$uncertainty$details$normalcheck
+  expect_true(all(c("directions", "widths", "centre") %in% names(made)))
+  expect_gt(made$draws, 0)
+  frozen <- bare
+  frozen$laplace$frozen <- list(units = 1L)
+  expect_identical(ctsem:::.ctBackendSampleCheck(frozen), frozen)
+
+  # The sampler asks for it on the marginal target, not on the joint one,
+  # whose engine builds its own population block.
+  asked <- list()
+  testthat::local_mocked_bindings(
+    .ctBackendSampleCheck = function(fit, cores = 1L, verbose = 0) {
+      asked[[length(asked) + 1L]] <<- cores
+      fit
+    },
+    .ctBackendSampleRun = function(fit, target, ...) stop("no sampling here"))
+  for (route in c("laplace", "none")) expect_error(ctFitUncertainty(bare, "sample",
+    cores = 1, control = list(intoverpop = route)), "no sampling here")
+  expect_length(asked, 1L)
+})
+
 test_that("processes = TRUE reproduces the in-process draws to numerical noise", {
   skip_without_julia()
   fit <- .sample_fixture()

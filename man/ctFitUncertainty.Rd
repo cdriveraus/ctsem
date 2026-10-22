@@ -316,7 +316,10 @@ with moves that re-express the effects for each level's means and scales;
 \code{'nuts'} runs NUTS on the parameters and every random effect at once.
 Both draw the same posterior; SAEM's kernel was the more reliable and the
 faster in comparisons on variance and nested models, where NUTS on the
-joint vector mixes poorly. A marginal target is sampled by NUTS.
+joint vector mixes poorly. A marginal target is sampled by NUTS, from a
+metric set to the widths that the normal check of \code{'checked'} measured
+along the directions where the posterior departs from the fit's Hessian;
+a fit made without that check gets one first, at a few hundred gradients.
 \code{adapt_metric}, \code{adapt_effects} and \code{settleTol} belong to
 NUTS and are refused with SAEM's kernel. \code{control$placement} says
 where the chains start: \code{'saem'}, the default on the joint posterior,
