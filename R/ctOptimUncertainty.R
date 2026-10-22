@@ -2007,8 +2007,18 @@ ctOptimFullBootstrapDraws <- function(est, standata, sm, n=1000, cores=1,
 # Stopping instead when a batch named as many directions as the batch before
 # missed one of a funnel's two directions on 9 seeds of 20: its statistic is
 # a product of two coordinates, noisy at 16 draws, and two batches agreed by
-# chance. One still undecided at `maxdraws` is read at its estimate. The
-# directions are the residuals' singular vectors,
+# chance. One still undecided at `maxdraws` is read at its estimate.
+#
+# Nor is it decided while it names more than half as many directions as it
+# has draws: the draws resolve at most as many directions as there are of
+# them, so a set that large is what they can see, not what there is. On a
+# single 400-row time series of six processes (75 parameters) 16 draws named
+# 16 directions and agreed with themselves; importance sampling weighed those
+# well (ESS 260, k 0.35), and the answer's means were up to 9 sds off in the
+# directions passed as normal (the Stein check, `.ctSteinCheck()`). 64 draws
+# named 55. `maxdraws` is twice the parameters, between 64 and 256.
+#
+# The directions are the residuals' singular vectors,
 # and each is measured by two numbers rather than by its singular value, which
 # with fewer draws than parameters is inflated by the draws' own spread:
 #
@@ -2046,10 +2056,11 @@ ctOptimFullBootstrapDraws <- function(est, standata, sm, n=1000, cores=1,
 # the mode wherever the posterior is skewed, however well the normal's widths
 # fit; see `.ctNormalCentre()`. The normal's draws are placed there.
 .ctOptimNormalCheck <- function(gradients, est, cov, batch = 8L,
-  maxdraws = 64L, coverage = c(0.90, 0.99), centrepairs = 32L) {
+  maxdraws = NULL, coverage = c(0.90, 0.99), centrepairs = 32L) {
   eig <- eigen((cov + t(cov)) / 2, symmetric = TRUE)
   keep <- eig$values > .ctFlatDirectionRtol() * max(eig$values)
   A <- sweep(eig$vectors[, keep, drop = FALSE], 2, sqrt(eig$values[keep]), "*")
+  if (is.null(maxdraws)) maxdraws <- as.integer(min(256, max(64, 2 * ncol(A))))
   bars <- .ctNormalResidualBars(coverage)
   Z <- R <- matrix(0, 0L, ncol(A))
   drawn <- unusable <- 0L
@@ -2063,7 +2074,8 @@ ctOptimFullBootstrapDraws <- function(est, standata, sm, n=1000, cores=1,
     Z <- rbind(Z, Zb[usable, , drop = FALSE])
     R <- rbind(R, Rb[usable, , drop = FALSE])
     found <- if (nrow(R) >= 2L) .ctNormalDepartures(Z, R, A, bars) else NULL
-    if (drawn >= maxdraws || (drawn >= 2L * batch && isTRUE(found$decided))) break
+    if (drawn >= maxdraws || (drawn >= 2L * batch && isTRUE(found$decided) &&
+      length(found$flagged) <= nrow(R) / 2)) break
   }
   record <- list(draws = drawn, unusable = unusable, bars = bars,
     directions = matrix(0, length(est), 0L), slope = numeric(), shape = numeric(),
@@ -2868,7 +2880,7 @@ ctOptimFitLpgFunc <- function(fit, cores=1){
     if (length(off$mean) || length(off$spread)) {
       list3 <- function(i) paste0(paste(utils::head(named[i], 3), collapse = ', '),
         if (length(i) > 3) paste0(' and ', length(i) - 3, ' more'))
-      warning('The importance-sampled draws do not match the posterior\'s gradient ',
+      warning('The sampled draws do not match the posterior\'s gradient ',
         '(Stein check): ', paste(c(
           if (length(off$mean)) paste0('the mean of ', list3(off$mean), ' is up to ',
             signif(stein$meanerror[off$mean[1L]], 2), ' sds off'),
@@ -3044,17 +3056,22 @@ ctOptimFitLpgFunc <- function(fit, cores=1){
 
 # Which parameters `.ctSteinCheck()` finds off: `mean`, those whose mean is
 # `.ctSteinBar$meanerror` or more of their normal sds off, and `spread`, those
-# whose spread is outside the coverage band of `.ctNormalResidualBars()` (a
-# 95% interval covering under 90% or over 99%), each where the worst of its
-# family is past `.ctSteinBar$p`; worst first.
+# whose spread is under half or over twice the posterior's
+# (`.ctSteinBar$spread`), each where the worst of its family is past
+# `.ctSteinBar$p`; worst first.
+#
+# The spread's band is wide because its reading is a near-normal one, noisy
+# and, on a skewed posterior, biased. On 100 log-gamma coordinates, at draws
+# whose sds were within 12% of the truth, it read 0.74 of the spread at z
+# 4.5, and 0.82 where the truth was 0.96; on a shell 0.59 where the truth was 0.82. On a
+# product target it read 0.76 where the truth was 0.75. Read against the
+# coverage band, it warned of an answer that was fine.
 .ctSteinOff <- function(stein) {
-  bars <- .ctNormalResidualBars()
   mean <- if (stein$worstp < .ctSteinBar$p)
     which(stein$meanerror >= .ctSteinBar$meanerror) else integer()
-  # The posterior's sd over the answer's, against the bars.
-  over <- 1 / stein$sdratio
   spread <- if (stein$spreadp < .ctSteinBar$p)
-    which(stein$sdratio != 1 & (over > bars$narrow | over < bars$wide)) else integer()
+    which(stein$sdratio != 1 & (stein$sdratio < .ctSteinBar$spread[1L] |
+      stein$sdratio > .ctSteinBar$spread[2L])) else integer()
   list(mean = mean[order(-stein$meanerror[mean])],
     spread = spread[order(-abs(log(stein$sdratio[spread])))])
 }
@@ -3065,7 +3082,7 @@ ctOptimFitLpgFunc <- function(fit, cores=1){
 # the Hessian normal, merged 'checked' and a normal recentred by one step
 # (their worst parameters 1.2-1.5 sds off, at z 4-17) and passed NUTS and
 # the corrected sampler (0.14-0.32, Bonferroni tail 0.2-1).
-.ctSteinBar <- list(p = 1e-3, meanerror = 0.5, z = 3)
+.ctSteinBar <- list(p = 1e-3, meanerror = 0.5, z = 3, spread = c(0.5, 2))
 
 # How many sampled directions `.ctOptimDrawSamples()` reports. On the
 # 266-parameter fit of scripts/gsm-uncertainty-2026-10/scale_model.R, 16
@@ -3179,7 +3196,8 @@ ctOptimFitLpgFunc <- function(fit, cores=1){
 #' log posterior's gradient at draws from the normal says in which directions
 #' the posterior departs from it, in batches of 8 until the directions named
 #' would be the same with every departure two standard errors larger or
-#' smaller (16 to 64 draws, whatever the number of parameters). Where a direction would leave some parameter's 95\% interval
+#' smaller, and the directions named are fewer than half the draws (16 draws
+#' at least, and at most twice the parameters, between 64 and 256). Where a direction would leave some parameter's 95\% interval
 #' covering under 90\% or over 99\%, or move one tail outside 0.5 to 5\% by
 #' a skew or by a width that moves with another parameter, every departing
 #' direction is sampled as \code{'is'} samples (below), the normal kept in
@@ -3201,7 +3219,7 @@ ctOptimFitLpgFunc <- function(fit, cores=1){
 #' a mean is off along the sampled directions, sampling goes on from a
 #' component the gradient places (twice at most), and a warning names the
 #' parameters whose mean the gradient puts half a normal sd or more away, or
-#' whose spread it puts outside the coverage band. A fit with nothing named
+#' whose spread it puts under half or over twice the posterior's. A fit with nothing named
 #' gets the Hessian's covariance, so corrected. The check is recorded
 #' in \code{$uncertainty$details$normalcheck}, and the sampling, when there was
 #' any, in \code{$uncertainty$details$importance_sampling}.}

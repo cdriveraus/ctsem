@@ -1211,20 +1211,20 @@ test_that("the Stein check names the parameters whose mean the draws miss", {
 })
 
 test_that("the Stein check names the parameters whose spread the draws misstate", {
-  # Independent coordinates, the second drawn at 0.6 of its sd: the second
-  # identity puts its spread at 0.6 of the posterior's, and only its.
+  # Independent coordinates, the second drawn at 0.4 of its sd: the second
+  # identity puts its spread at 0.4 of the posterior's, and only its.
   set.seed(4)
   sds <- c(1, 2, 0.5, 1.5)
   gb <- function(X) {
     X <- as.matrix(X)
     list(value = -0.5 * rowSums(sweep(X, 2, sds, '/')^2), gradient = -sweep(X, 2, sds^2, '/'))
   }
-  draws <- sweep(matrix(rnorm(4000), 1000), 2, sds * c(1, 0.6, 1, 1), '*')
+  draws <- sweep(matrix(rnorm(4000), 1000), 2, sds * c(1, 0.4, 1, 1), '*')
   s <- withr::with_seed(5, ctsem:::.ctSteinCheck(gb, draws, diag(sds^2), n = 400))
   off <- ctsem:::.ctSteinOff(s)
   expect_identical(off$spread, 2L)
   expect_length(off$mean, 0L)
-  expect_equal(s$sdratio[2], 0.6, tolerance = 0.1)
+  expect_equal(s$sdratio[2], 0.4, tolerance = 0.1)
   expect_equal(s$sdratio[-2], c(1, 1, 1))
 })
 
