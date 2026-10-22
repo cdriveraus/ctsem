@@ -555,12 +555,14 @@ end
 # Two levels on a nonlinear integrand: five subjects in two studies, each
 # subject's DRIFT (through `-log1p_exp`) and T0MEANS varying, each study's
 # MANIFESTMEANS. Raw layout: 1-4 the model parameters, 5-6 the subject scales,
-# 7 their correlation, 8 the study scale.
+# 7 their correlation, 8 the study scale. The drift's scale is wide enough
+# (raw 1.5) that Laplace is 0.30 and 0.23 below the integral, which the
+# product rule at 7 nodes has to 3e-4 (against 9).
 _fresh_nested_nonlinear() = (ctsem_laplace_objective(_LAPLACE_NONLINEAR_OBJECTIVE;
     re_index=[1, 2, 4], sd_index=[5, 6, 8], cor_index=[7],
     sd_scale=[1.0, 1.0, 1.0], level_nre=[2, 1],
     group=vcat(1:5, [1, 1, 1, 2, 2]), level_ngroups=[5, 2]),
-    [0.1, 0.4, -0.2, 0.05, -0.25, 0.3, 0.2, -0.3])
+    [0.1, 0.4, -0.2, 0.05, -0.25, 1.5, 0.2, -0.3])
 
 @testset "a nested unit wider than maxdim gets frozen draws per block" begin
     for (label, fresh, draws, draws_max) in (
@@ -611,6 +613,8 @@ end
     for U in 1:info.nunits
         @test abs(info.quadrature_units[U] - reference[U]) <
             4 * info.centre_se[U] + 1e-3
+        # And it is a bar Laplace fails.
+        @test abs(lap[U] - reference[U]) > 8 * info.centre_se[U]
     end
     r = _continuation_fd_check(o, theta .+ 0.05)
     @test isapprox(r.g, r.fd; atol=1e-6, rtol=1e-5)
