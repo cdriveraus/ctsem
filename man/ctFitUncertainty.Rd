@@ -82,16 +82,16 @@ apply to it. For every other method, useful entries include
 and \code{isitersize}. Omitted entries use
 \code{ridge = 1e-8}, \code{hessianStep = 1e-3},
 \code{bootstrapFitCores = 1}, \code{bootstrapTol = 1e-5},
-\code{imisMaxIter = 50}, \code{imisScaleInit = 1.1},
+\code{imisMaxIter = 50} (100 for \code{'checked'}), \code{imisScaleInit = 1.1},
 \code{imisTailScale = 1.1} (1.5 and 1.2 on julia), \code{imisDf = 5} (the
 proposal components' t degrees of freedom; \code{Inf} for normal),
 \code{isESS = 200}, and \code{isitersize = 1000} (100 for
 \code{'checked'}). \code{imisBudget} caps the log density evaluations
 importance sampling spends (no cap by default). \code{imisComplement = TRUE}
 (\code{'checked'}) weighs the sampled directions with the others integrated
-over rather than held at the centre: right where the others' spread moves
-with them, as a large covariance's scale does, at two to seven times the
-evaluations. On a Laplace fit (julia),
+over, rather than held at the centre with the volume their spread adds to
+first order: exact where the others' spread moves with them, as a large
+covariance's scale does, at up to seven times the evaluations. On a Laplace fit (julia),
 importance sampling
 evaluates a weighted subset of the units chosen and checked as it runs, and
 corrects its weights where that subset strays; \code{coreset = FALSE}
@@ -179,16 +179,21 @@ smaller (16 to 64 draws, whatever the number of parameters). Where a direction w
 covering under 90\% or over 99\%, or move one tail outside 0.5 to 5\% by
 a skew or by a width that moves with another parameter, every departing
 direction is sampled as \code{'is'} samples (below), the normal kept in
-all the rest, spending at most what the fit's optimisation did. This is
+all the rest. This is
 what corrects a variance from few groups and the effects it scales. Where
 that sampling cannot correct the normal -- a curved ridge such as a loading
 vector whose length the data determine and whose direction they barely do,
 where the Hessian's intervals can be many times too wide -- the Hessian's
 normal is kept, with a warning naming the parameters it misstates. The
-normal is centred where the same gradients, and those at 8 of the draws
-reflected, put the posterior's mean, which is not the estimate wherever the
-posterior is skewed; the estimate stays the fit's, and \code{summary()}
-reports it beside the draws. A fit with nothing named gets the Hessian's
+normal is centred where the same gradients, and those at the draws
+reflected (at least 32 pairs), put the posterior's mean, which is not the
+estimate wherever the posterior is skewed or a covariance is estimated;
+the estimate stays the fit's, and \code{summary()} reports it beside the
+draws. The sampled directions are weighed with the volume the others'
+spread adds to them, to first order, and the sampled draws are checked
+against the posterior's gradient at 100 of them (Stein's identity), with
+a warning naming the parameters whose mean the gradient puts half a
+normal sd or more away. A fit with nothing named gets the Hessian's
 covariance. The check is recorded
 in \code{$uncertainty$details$normalcheck}, and the sampling, when there was
 any, in \code{$uncertainty$details$importance_sampling}.}

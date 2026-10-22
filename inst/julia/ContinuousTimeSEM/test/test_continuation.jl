@@ -1,4 +1,4 @@
-using ForwardDiff, LinearAlgebra
+using ForwardDiff, LinearAlgebra, Statistics
 
 # The quadrature continuation (`laplace_continuation.jl`): a hybrid objective
 # whose flagged units carry fixed-node quadrature rules and whose other units
@@ -528,6 +528,56 @@ end
     @test length(o.points[2]) == 1
     @test_throws ArgumentError ctsem_laplace_continuation(laplace, theta;
         maxdim=2, draws=256, force=[info.nunits + 1])
+end
+
+@testset "the screen sums small gaps of one sign, and each unit's own against its error" begin
+    C = ContinuousTimeSEM
+    # Ten gaps each under twice its error, sharing a sign: their sum, 0.04,
+    # is resolved many times over against a combined error of 0.0095, so the
+    # screen flags until what is left is within the tolerance plus twice that
+    # error. The old per-unit rule flagged none (the validation's acnonlin).
+    gaps = fill(0.004, 10)
+    se = fill(0.003, 10)
+    @test C._continuation_screen(gaps, se) ≈ 0.04 - 2 * sqrt(10) * 0.003
+    # Four: with seven left the sum beyond twice its error is 0.012, with six
+    # 0.009.
+    flagged = C._continuation_flags(gaps, 0.01; se=se)
+    @test length(flagged) == 4
+    @test C._continuation_screen(gaps[setdiff(1:10, flagged)], se[setdiff(1:10, flagged)]) <= 0.01
+    # Gaps that cancel are noise, whatever their size against their own error
+    # says, unless one alone exceeds the tolerance beyond its error.
+    @test isempty(C._continuation_flags([0.004, -0.004], 0.01; se=[0.003, 0.003]))
+    @test C._continuation_flags([0.05, -0.05], 0.01; se=[0.003, 0.003]) == [1, 2]
+    # With no error the rule is the product rules': the plain absolute sum.
+    @test C._continuation_flags([0.3, 0.2, 0.005, 0.004], 0.01) == [1, 2]
+    @test C._continuation_screen([0.3, -0.2], [0.0, 0.0]) ≈ 0.5
+end
+
+@testset "the importance rule's standard error is the spread of its replicates" begin
+    # On the nonlinear three-effect fixture, the reported se against the spread
+    # of the rule's value over seeds, unit by unit: the independent-draws
+    # formula overstated it 3- to 10-fold at this width (the validation note);
+    # the replicate spread should be within a factor of two of the truth, with
+    # six seeds' own uncertainty allowed for.
+    laplace, values = _fresh_2d3()
+    theta = collect(Float64, values)
+    seeds = 1:6
+    vals = Float64[]; ses = Float64[]
+    nunits = length(laplace.units.members)
+    V = zeros(nunits, length(seeds)); S = zeros(nunits, length(seeds))
+    for (i, seed) in enumerate(seeds)
+        o = ctsem_laplace_continuation(laplace, theta; tolerance=0.0, maxdim=2,
+            draws=256, draws_max=256, draws_seed=seed,
+            force=1:nunits)
+        info = ctsem_laplace_continuation_info(o)
+        V[:, i] = info.quadrature_units
+        S[:, i] = info.centre_se
+    end
+    spread = [std(V[U, :]) for U in 1:nunits]
+    reported = [sum(S[U, :]) / length(seeds) for U in 1:nunits]
+    ratio = reported ./ spread
+    @test all(isfinite, ratio)
+    @test 0.4 < median(ratio) < 2.5
 end
 
 @testset "no unit is named a jump on a smooth objective" begin
