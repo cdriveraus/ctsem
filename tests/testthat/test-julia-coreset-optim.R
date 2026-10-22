@@ -7,8 +7,7 @@
 # Three hundred subjects of the shared Laplace fixture's design, so that its
 # seven parameters leave a coreset a small share of the units. Batching is off
 # in both: from the default start it does most of the climbing on this model,
-# and both fits then took 15 full gradients, with or without coreset stages
-# after it; without it, 18 against 68 (dev1, 2026-10-21).
+# and after it the two fits took the same full gradients.
 
 .coreset_optim_fits <- function() {
   fit_cached("coreset optimiser fits", {

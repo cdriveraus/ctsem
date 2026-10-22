@@ -1155,7 +1155,7 @@ accuracy and not a price. A stage run to its maximum leaves about its square
 of what was left to gain where it began, so stages contract towards the full
 maximum while it is below one; 0.3 leaves about a tenth, with room for the
 error of measuring it along one step."""
-const _CTSEM_CORESET_TOL = Ref(0.3)
+const _CTSEM_CORESET_TOL = 0.3
 
 """The folds the steps between training points are split into to choose a
 coreset (`_ctsem_coreset_choose`): every step is held out once, and a search
@@ -1549,7 +1549,7 @@ function _ctsem_coreset_choose(c::CTSEMCoresetPlan, scale::AbstractVector, hmul;
     budget = _ctsem_coreset_budget(c.stretch)
     gg = [let dn = c.gfull[k + 1] .- c.gfull[k]; dot(dn, hmul(dn)) end for k in 1:nsteps]
     all(v -> isfinite(v) && v > 0, gg) || return nothing
-    tol2 = _CTSEM_CORESET_TOL[]^2
+    tol2 = _CTSEM_CORESET_TOL^2
     nfolds = min(nsteps, _CTSEM_CORESET_FOLDS)
     edges = round.(Int, range(0, nsteps; length=nfolds + 1))
     largest = 0
@@ -1587,7 +1587,7 @@ function _ctsem_coreset_choose(c::CTSEMCoresetPlan, scale::AbstractVector, hmul;
         if isfinite(bound) && bound <= tol2
             SK = c.S[end]
             info = _ctsem_coreset_information(SK, scale)
-            tol = _CTSEM_CORESET_TOL[]
+            tol = _CTSEM_CORESET_TOL
             need = largest
             spread = (units, w) -> begin
                 ok = length(units) >= need &&
