@@ -237,18 +237,24 @@
 # placement optimisation that produced `fit`.
 #' @keywords internal
 .ctBackendUncertaintySample <- function(fit, control = list(), cores = 1L,
-  verbose = 0, state_explicit = FALSE, handles = NULL) {
+  verbose = 0, state_explicit = FALSE, handles = NULL, checkcores = cores) {
 
   .ctBackendSampleCheckControl(control)
   # Missing TI predictor values are sampled with the rest unless the fit or
   # `control$tipredMissing` says to impute them; a fit that imputed them, the
   # placement of `ctFit(optimize = FALSE)` among them, gains them here.
-  if (.ctJuliaTIMissingSamples(fit$model_spec, control[["tipredMissing"]])) {
-    fit <- .ctJuliaTIMissingSampleFit(fit)
-  }
+  tisampled <- .ctJuliaTIMissingSamples(fit$model_spec, control[["tipredMissing"]]) &&
+    NROW(fit$model_spec$ti_imputed) > 0L
+  if (tisampled) fit <- .ctJuliaTIMissingSampleFit(fit)
   sampled <- .ctBackendSampleRoute(.ctBackendIntOverPop(fit$model_spec),
     requested = fit$args$input[["intoverpop"]], override = control$intoverpop)
   marginal <- !identical(sampled, "none")
+  # The check the marginal metric is built from, where the fit lacks one. Not
+  # with sampled TI values, whose coordinates the fit's objective does not
+  # have, nor on the state-explicit target, whose metric covers the states too.
+  # `checkcores`, because workers may still be warming (`.ctJuliaSampleFit()`).
+  if (marginal && !isTRUE(state_explicit) && !tisampled)
+    fit <- .ctBackendSampleCheck(fit, cores = checkcores, verbose = verbose)
   placement <- .ctBackendPlacementName(control$placement, marginal || isTRUE(state_explicit))
   if (identical(control$sampler, "saem") && (marginal || isTRUE(state_explicit))) {
     stop("control$sampler = 'saem' samples the joint posterior over population ",
@@ -745,6 +751,39 @@
   PW <- information %*% check$directions
   rescaled <- information + PW %*% diag(1 / check$widths - 1, length(check$widths)) %*% t(PW)
   -(rescaled + t(rescaled)) / 2
+}
+
+# The fit with the check `uncertainty = 'checked'` makes
+# (`.ctOptimNormalCheck()`) where it has a Hessian and no check: the placement
+# of `ctFit(optimize = FALSE)`, which forms only the Hessian, and a fit made
+# with another method. The marginal sampler starts from the posterior the check
+# expects (`.ctBackendSampleMetric()`), which the Hessian alone is not. The check
+# costs a few hundred gradients, a small share of a sampler's thousands. On a
+# 75-parameter time series (one subject, six coupled processes), NUTS from it
+# reached min ESS 101 in 25 minutes (scripts/gsm-uncertainty-2026-10/
+# nuts_metric_ts.R, dev1).
+#
+# A fit rescued by frozen draws keeps its Hessian: its objective jumps where the
+# check would look, which is why ctFit() does not run 'checked' on it.
+#' @keywords internal
+.ctBackendSampleCheck <- function(fit, cores = 1L, verbose = 0) {
+  u <- fit$uncertainty
+  if (is.null(u$hessian) || !is.null(u$details$normalcheck) ||
+      !is.null(fit$laplace$frozen)) return(fit)
+  previous <- .ctBackendSetMaxChunks(cores)
+  on.exit(.ctBackendRestoreMaxChunks(previous), add = TRUE)
+  checked <- tryCatch(ctOptimComputeUncertainty(est = as.numeric(fit$estimate$raw),
+    standata = .ctBackendDataShape(fit), sm = NULL, lpgFunc = .ctBackendLpgFunc(fit),
+    uncertainty = "checked", finishsamples = 2L, cores = cores, matsetup = NA,
+    verbose = verbose, hessian = u$hessian),
+    error = function(e) {
+      warning("The normal check for the sampler's metric failed (",
+        conditionMessage(e), "); sampling from the Hessian's.", call. = FALSE)
+      NULL
+    })
+  if (!is.null(checked$details$normalcheck))
+    fit$uncertainty$details$normalcheck <- checked$details$normalcheck
+  fit
 }
 
 .ctBackendSampleTarget <- function(estimate, npar, marginal = FALSE,
@@ -1758,5 +1797,5 @@ print.ctSampleDiagnostics <- function(x, ...) {
       intoverpop = intoverpop))
   .ctBackendUncertaintySample(placementfit, control = samplecontrol,
     cores = cores, verbose = verbose, state_explicit = !isTRUE(intoverstates),
-    handles = handles)
+    handles = handles, checkcores = placementcores)
 }
