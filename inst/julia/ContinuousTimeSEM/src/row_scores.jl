@@ -295,4 +295,14 @@ Each unit's number of random-effect coordinates.
 """
 ctsem_laplace_unit_dims(laplace::CTSEMLaplaceObjective) = copy(laplace.units.dims)
 
-export ctsem_row_scores, ctsem_laplace_posterior_nodes, ctsem_laplace_unit_dims
+"""
+    ctsem_laplace_unit_members(laplace)
+
+How many members each unit holds, in unit order: what a fit rescued from a
+jump budgets its climb's draws by (`.ctLaplaceClimbControl()`).
+"""
+ctsem_laplace_unit_members(laplace::CTSEMLaplaceObjective) =
+    Int[length(m) for m in laplace.units.members]
+
+export ctsem_row_scores, ctsem_laplace_posterior_nodes, ctsem_laplace_unit_dims,
+    ctsem_laplace_unit_members

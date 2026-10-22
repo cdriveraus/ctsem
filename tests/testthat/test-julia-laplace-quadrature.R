@@ -576,6 +576,39 @@ test_that("requests that cannot apply are refused by name", {
     "laplace_correct")
 })
 
+test_that("a rescued fit climbs on a capped rule and warns past a quarter of the units", {
+  # No julia needed. Forty units of one member: one named unit may take 15 *
+  # 40 / 1 = 600 draws a gradient, the Laplace gradient's own cost; ten named
+  # share it at 64, the floor; and the cap never passes `draws_max`.
+  control <- .ctLaplaceContinueDefaults
+  members <- rep(1L, 40L)
+  one <- .ctLaplaceClimbControl(control, members, 7L)
+  expect_identical(one$draws_max, 600L)
+  expect_identical(one$draws, 256L)
+  expect_identical(one$draws_se, 0.2)
+  ten <- .ctLaplaceClimbControl(control, members, 1:10)
+  expect_identical(ten$draws_max, 64L)
+  expect_identical(ten$draws, 64L)
+  # A unit's members count: a study of 20 people named among 40 such.
+  study <- .ctLaplaceClimbControl(control, rep(20L, 40L), 3L)
+  expect_identical(study$draws_max, 600L)
+  small <- .ctLaplaceClimbControl(utils::modifyList(control,
+    list(draws_max = 300L, climb_se = 0.5)), members, 7L)
+  expect_identical(small$draws_max, 300L)
+  expect_identical(small$draws_se, 0.5)
+  # The full target is untouched for the finish and the correction.
+  expect_identical(control$draws_se, 0.05)
+  expect_identical(control$draws_max, 16384L)
+  expect_identical(control$draws_df, 4)
+  # The share warning: once, past a quarter, and not on a handful of units.
+  expect_silent(expect_false(.ctLaplaceFrozenShareWarn(1:10, 40L, FALSE)))
+  expect_warning(warned <- .ctLaplaceFrozenShareWarn(1:11, 40L, FALSE),
+    "11 of 40 units.*optimize = FALSE")
+  expect_true(warned)
+  expect_silent(expect_true(.ctLaplaceFrozenShareWarn(1:20, 40L, TRUE)))
+  expect_silent(expect_false(.ctLaplaceFrozenShareWarn(1L, 2L, FALSE)))
+})
+
 # The gated-gaps A14 config (review/LAPLACE-gated-gaps-2026-09-24.md): 40
 # subjects of 6 waves, a random -log1p_exp DRIFT beside random T0MEANS and
 # CINT, so three effects per subject and the soft-direction rule. Its data

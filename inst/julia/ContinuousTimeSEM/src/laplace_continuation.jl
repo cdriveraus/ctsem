@@ -139,7 +139,9 @@ first batch of `draws = 256`, doubling, to a standard error of `draws_se =
 1024 draws with seven components, its error against the reference at most
 0.019 nats over four seeds and constant along the fold to 1e-3, and its
 directional derivative within 1e-4 of its own differences. `draws_max = 16384`
-is cost: a gradient is one reverse sweep per member per draw.
+is cost: a gradient is one reverse sweep per member per draw. Every component
+but the prior is a Student t on `draws_df = 4` degrees of freedom
+(`CTSEMImportanceComponent` says why); `Inf` makes them Gaussian.
 """
 
 using LinearAlgebra
@@ -238,6 +240,7 @@ mutable struct CTSEMLaplaceContinuation{L} <: CTSEMOptimisable
     draws_max::Int
     draws_floor::Float64
     draws_prior::Float64
+    draws_df::Float64
     draws_seed::Int
     points::Dict{Int,Vector{Vector{Float64}}}
     centre_se::Vector{Float64}
@@ -445,14 +448,23 @@ function _continuation_lattice_normals(d::Integer, n::Integer, rng)
 end
 
 """
-A Gaussian component of an importance rule's proposal in a block's own
-standardised coordinates: centre `mu`, precision `vecs * Diagonal(lam) * vecs'`
--- the block's precision at the centre, its eigenvalues floored.
+A component of an importance rule's proposal in a block's own standardised
+coordinates: centre `mu`, scale matrix the inverse of `vecs * Diagonal(lam) *
+vecs'` -- the block's precision at the centre, its eigenvalues floored -- and
+`df` degrees of freedom: a Student t, or a Gaussian at `Inf`, which the prior
+component is. A t, because a Gaussian proposal at a posterior's mode is
+lighter-tailed than the posterior, and every replicate lattice misses the
+same tail: on the bench's gA1 the rule stopped on its replicates' spread read
+0.6 to 1.0 nats low over 40 units with the spread saying 0.1
+(review/LAPLACE-frozen-draws-validation-2026-10-22.md). A t's tails cover
+what a Gaussian's cannot, at a bounded cost in effective draws where the
+posterior is Gaussian after all.
 """
 struct CTSEMImportanceComponent
     mu::Vector{Float64}
     vecs::Matrix{Float64}
     lam::Vector{Float64}
+    df::Float64
 end
 
 function _continuation_component_logdensity(c::CTSEMImportanceComponent,
@@ -469,31 +481,51 @@ function _continuation_component_logdensity(c::CTSEMImportanceComponent,
         end
         q += c.lam[t] * s * s
     end
-    return -(q + k * log(2 * pi)) / 2 + sum(log, c.lam) / 2
+    isfinite(c.df) || return -(q + k * log(2 * pi)) / 2 + sum(log, c.lam) / 2
+    nu = c.df
+    return loggamma((nu + k) / 2) - loggamma(nu / 2) - k * log(nu * pi) / 2 +
+        sum(log, c.lam) / 2 - (nu + k) / 2 * log1p(q / nu)
 end
 
 """
-    _continuation_importance_component(fns, x, floor)
+    _continuation_t_scale(df, z)
+
+The factor a t component's draw scales its Gaussian draw by, `sqrt(df / W)`
+with `W` a chi-square on `df` degrees of freedom at the quantile the standard
+normal `z` sits at: the draw's extra lattice coordinate, so a t draw is a
+Gaussian draw stretched by a quasi-random amount. 1 at `df = Inf`.
+"""
+function _continuation_t_scale(df::Float64, z::Float64)
+    isfinite(df) || return 1.0
+    p = clamp(erfc(-z / sqrt(2.0)) / 2, 1e-15, 1 - 1e-15)
+    w = 2 * gamma_inc_inv(df / 2, p, 1 - p)
+    return sqrt(df / max(w, 1e-300))
+end
+
+"""
+    _continuation_importance_component(fns, x, floor, df)
 
 The component at block coordinates `x`: the block's precision there
 (`fns.precision`) with its eigenvalues floored at `floor`, so a soft or an
 indefinite direction is sampled at a bounded width rather than an infinite
-one. `nothing` where the precision is not finite.
+one, on `df` degrees of freedom. `nothing` where the precision is not finite.
 """
-function _continuation_importance_component(fns, x::Vector{Float64}, floor::Float64)
+function _continuation_importance_component(fns, x::Vector{Float64}, floor::Float64,
+    df::Float64)
     P = fns.precision(x)
     all(isfinite, P) || return nothing
     E = _ctsem_symeig(_laplace_symmetrise(P))
     all(isfinite, E.values) || return nothing
-    return CTSEMImportanceComponent(copy(x), Matrix(E.vectors), max.(E.values, floor))
+    return CTSEMImportanceComponent(copy(x), Matrix(E.vectors), max.(E.values, floor),
+        df)
 end
 
 """Add the component at `x` unless one sits within 1e-3 of it; whether it was
 added."""
 function _continuation_add_component!(comps::Vector{CTSEMImportanceComponent}, fns,
-    x::Vector{Float64}, floor::Float64)
+    x::Vector{Float64}, floor::Float64, df::Float64)
     any(c -> maximum(abs, c.mu .- x) < 1e-3, comps) && return false
-    c = _continuation_importance_component(fns, x, floor)
+    c = _continuation_importance_component(fns, x, floor, df)
     c === nothing && return false
     push!(comps, c)
     return true
@@ -513,7 +545,7 @@ function _continuation_newton_point(fns, x::Vector{Float64}, floor::Float64;
     maxstep::Real=3.0)
     vg = fns.value_gradient(x)
     (isfinite(vg.value) && all(isfinite, vg.gradient)) || return nothing
-    c = _continuation_importance_component(fns, x, floor)
+    c = _continuation_importance_component(fns, x, floor, Inf)
     c === nothing && return nothing
     w = transpose(c.vecs) * vg.gradient
     len = sqrt(sum(abs2, w ./ sqrt.(c.lam)))
@@ -568,10 +600,11 @@ draws, each on its own copy of `u`.
 The `m` are `_CONTINUATION_REPLICATES` lattices, each with its own shift from
 `key`, the batch, the component and the replicate alone, so the same replicate
 of the same component of the same batch draws the same standard normals at
-every placement: common random numbers. A block beneath takes the draw's index
-into its own `path`, and so into its key: every draw's children have draws of
-their own, whose errors are independent across the draws above, so the spread
-of this block's replicates counts them."""
+every placement: common random numbers. A t component draws one lattice
+coordinate more, which stretches each draw (`_continuation_t_scale`). A block
+beneath takes the draw's index into its own `path`, and so into its key: every
+draw's children have draws of their own, whose errors are independent across
+the draws above, so the spread of this block's replicates counts them."""
 function _continuation_draw!(D::_ContinuationDraws, laplace::CTSEMLaplaceObjective,
     U::Integer, theta::Vector{Float64}, Ls, b::Integer, u::Vector{Float64}, context,
     opts, c::CTSEMImportanceComponent, component::Int, m::Int, key,
@@ -583,24 +616,26 @@ function _continuation_draw!(D::_ContinuationDraws, laplace::CTSEMLaplaceObjecti
     k = length(c.mu)
     R = _CONTINUATION_REPLICATES
     sizes = _continuation_split(m, R)
-    Z = Matrix{Float64}(undef, k, m)
+    kz = isfinite(c.df) ? k + 1 : k
+    Z = Matrix{Float64}(undef, kz, m)
     reps = Vector{Int}(undef, m)
     at = 0
     for r in 1:R
         sizes[r] > 0 || continue
-        Z[:, (at + 1):(at + sizes[r])] = _continuation_lattice_normals(k, sizes[r],
+        Z[:, (at + 1):(at + sizes[r])] = _continuation_lattice_normals(kz, sizes[r],
             Random.Xoshiro(hash((key, D.batches, component, r))))
         reps[(at + 1):(at + sizes[r])] .= r
         at += sizes[r]
     end
     X = Matrix{Float64}(undef, k, m)
     for j in 1:m
+        stretch = kz > k ? _continuation_t_scale(c.df, Z[kz, j]) : 1.0
         @inbounds for t in 1:k
             s = 0.0
             for a in 1:k
                 s += c.vecs[t, a] * Z[a, j] / sqrt(c.lam[a])
             end
-            X[t, j] = c.mu[t] + s
+            X[t, j] = c.mu[t] + stretch * s
         end
     end
     before = size(D.points, 2)
@@ -734,7 +769,7 @@ function _continuation_importance_weigh(D::_ContinuationDraws,
 end
 
 """
-    _continuation_outer_components(M, blocks, children, mode, floor)
+    _continuation_outer_components(M, blocks, children, mode, floor, df)
 
 The first component of every outer block's proposal, `nothing` for a leaf: a
 Gaussian at the unit's mode on the block's precision once every block beneath
@@ -753,7 +788,7 @@ precision exactly. `nothing` throughout where a block is not finite.
 """
 function _continuation_outer_components(M::CTSEMBlockMatrix{Float64},
     blocks::Vector{CTSEMLaplaceBlock}, children, mode::Vector{Float64},
-    floor::Float64)
+    floor::Float64, df::Float64)
     nb = length(blocks)
     out = Vector{Union{Nothing,CTSEMImportanceComponent}}(nothing, nb)
     diag = [_laplace_symmetrise(Matrix(d)) for d in M.diag]
@@ -765,7 +800,7 @@ function _continuation_outer_components(M::CTSEMBlockMatrix{Float64},
         if !isempty(children[b])
             columns = (blocks[b].offset + 1):(blocks[b].offset + blocks[b].size)
             out[b] = CTSEMImportanceComponent(mode[columns], Matrix(E.vectors),
-                max.(E.values, floor))
+                max.(E.values, floor), df)
         end
         ancestors = blocks[b].ancestors
         isempty(ancestors) && continue
@@ -786,19 +821,20 @@ function _continuation_outer_components(M::CTSEMBlockMatrix{Float64},
 end
 
 """
-    _continuation_moment_component!(comps, D, current, floor)
+    _continuation_moment_component!(comps, D, current, floor, df)
 
-Add the Gaussian matched to the weighted draws: their weighted mean, and their
-weighted covariance shrunk towards the first component's by `k + 2` draws
-against the draws' effective number (the fewest that keep it proper whatever
-the weights), its precision's eigenvalues floored at `floor`. How an outer
+Add the component matched to the weighted draws: their weighted mean, and
+their weighted covariance shrunk towards the first component's scale by
+`k + 2` draws against the draws' effective number (the fewest that keep it
+proper whatever the weights), as its scale matrix, its precision's
+eigenvalues floored at `floor`, on `df` degrees of freedom. How an outer
 block's proposal adapts (adaptive multiple importance sampling, Cornuet et al.
 2012): its marginal density, with the blocks beneath integrated out, has no
 gradient or curvature to take a Newton step on, only the draws' weights.
 Whether it was added.
 """
 function _continuation_moment_component!(comps::Vector{CTSEMImportanceComponent},
-    D::_ContinuationDraws, current, floor::Float64)
+    D::_ContinuationDraws, current, floor::Float64, df::Float64)
     k = size(D.points, 1)
     peak = maximum(current.terms)
     isfinite(peak) || return false
@@ -813,7 +849,7 @@ function _continuation_moment_component!(comps::Vector{CTSEMImportanceComponent}
     E = _ctsem_symeig(_laplace_symmetrise(S))
     (all(isfinite, E.values) && all(>(0), E.values)) || return false
     push!(comps, CTSEMImportanceComponent(mu, Matrix(E.vectors),
-        max.(1 ./ E.values, floor)))
+        max.(1 ./ E.values, floor), df))
     return true
 end
 
@@ -947,6 +983,7 @@ function _continuation_importance_rule(laplace::CTSEMLaplaceObjective, U::Intege
     columns = (block.offset + 1):(block.offset + k)
     leaf = isempty(context.children[b])
     floor = Float64(opts.draws_floor)
+    df = Float64(opts.draws_df)
     joint = Float64[context.mode[c] for c in columns]
     comps = CTSEMImportanceComponent[]
     fns = nothing
@@ -958,7 +995,7 @@ function _continuation_importance_rule(laplace::CTSEMLaplaceObjective, U::Intege
             centre = lr.centre
         end
         fns = _continuation_block_functions(laplace, U, theta, Ls, b, u, aws)
-        _continuation_add_component!(comps, fns, centre, floor)
+        _continuation_add_component!(comps, fns, centre, floor, df)
     else
         first = context.outer[b]
         first === nothing && return nothing
@@ -970,12 +1007,13 @@ function _continuation_importance_rule(laplace::CTSEMLaplaceObjective, U::Intege
         x = Float64[p[c] for c in columns]
         (all(isfinite, x) && maximum(abs, x .- joint) >= 1e-3) || continue
         if leaf
-            _continuation_add_component!(comps, fns, x, floor)
+            _continuation_add_component!(comps, fns, x, floor, df)
         elseif !any(c -> maximum(abs, c.mu .- x) < 1e-3, comps)
-            push!(comps, CTSEMImportanceComponent(x, comps[1].vecs, comps[1].lam))
+            push!(comps, CTSEMImportanceComponent(x, comps[1].vecs, comps[1].lam, df))
         end
     end
-    prior = CTSEMImportanceComponent(zeros(k), Matrix{Float64}(I, k, k), ones(k))
+    # The prior is the integrand's own Gaussian, kept as it is.
+    prior = CTSEMImportanceComponent(zeros(k), Matrix{Float64}(I, k, k), ones(k), Inf)
     # A block with nothing above it keeps the key it had before blocks could
     # nest, so a one-block unit draws what it drew then.
     key = isempty(path) ? (Int(opts.draws_seed), Int(U), Int(b)) :
@@ -1005,10 +1043,11 @@ function _continuation_importance_rule(laplace::CTSEMLaplaceObjective, U::Intege
                     (added >= 3 || ratio[j] <= n / target_ess) && break
                     x = _continuation_newton_point(fns, D.points[:, j], floor)
                     x === nothing && continue
-                    _continuation_add_component!(comps, fns, x, floor) && (added += 1)
+                    _continuation_add_component!(comps, fns, x, floor, df) &&
+                        (added += 1)
                 end
             else
-                _continuation_moment_component!(comps, D, current, floor)
+                _continuation_moment_component!(comps, D, current, floor, df)
             end
         end
         _continuation_batch!(D, laplace, U, theta, Ls, b, u, context, opts, comps,
@@ -1221,7 +1260,8 @@ function _continuation_unit_rule(laplace::CTSEMLaplaceObjective, U::Integer,
         if length(blocks) > 1
             outer = _continuation_outer_components(
                 _laplace_unit_curvature(laplace, U, theta, Ls, mode), blocks,
-                tree.children, mode, Float64(opts.draws_floor))
+                tree.children, mode, Float64(opts.draws_floor),
+                Float64(opts.draws_df))
             any(b -> !isempty(tree.children[b]) && outer[b] === nothing,
                 eachindex(blocks)) && return nothing
         end
@@ -1382,7 +1422,7 @@ end
     ctsem_laplace_continuation(laplace, values; nodes=5, tolerance=0.01,
         product_maxdim=2, soft_tau=3.5, soft_maxdirs=2, maxdim=5, draws=0,
         draws_se=0.05, draws_max=16384, draws_floor=0.25, draws_prior=0.2,
-        draws_seed=20261021, force=nothing, point_units=nothing,
+        draws_df=4, draws_seed=20261021, force=nothing, point_units=nothing,
         point_values=nothing, screen=true, draws_scope=:all)
 
 The hybrid objective with its nodes placed at `values`. Every unit is scored by
@@ -1407,9 +1447,10 @@ function ctsem_laplace_continuation(laplace::CTSEMLaplaceObjective,
     product_maxdim::Integer=2, soft_tau::Real=3.5, soft_maxdirs::Integer=2,
     maxdim::Integer=5, draws::Integer=0, draws_se::Real=0.05,
     draws_max::Integer=16384, draws_floor::Real=0.25, draws_prior::Real=0.2,
-    draws_seed::Integer=20261021, force=nothing, point_units=nothing,
-    point_values=nothing, screen::Bool=true, draws_scope=:all)
+    draws_df::Real=4, draws_seed::Integer=20261021, force=nothing,
+    point_units=nothing, point_values=nothing, screen::Bool=true, draws_scope=:all)
     nodes >= 1 || throw(ArgumentError("need at least one quadrature node"))
+    draws_df > 0 || throw(ArgumentError("draws_df must be positive (Inf for Gaussian)"))
     Symbol(draws_scope) in (:all, :forced) || throw(ArgumentError(
         "draws_scope must be :all or :forced"))
     draws >= 0 || throw(ArgumentError("draws must be at least zero"))
@@ -1424,7 +1465,8 @@ function ctsem_laplace_continuation(laplace::CTSEMLaplaceObjective,
         Int(product_maxdim), Float64(soft_tau), Int(soft_maxdirs), Int(maxdim),
         fill(false, nunits), Int(draws), Float64(draws_se),
         max(Int(draws_max), Int(draws)), Float64(draws_floor), Float64(draws_prior),
-        Int(draws_seed), Dict{Int,Vector{Vector{Float64}}}(), zeros(nunits),
+        Float64(draws_df), Int(draws_seed), Dict{Int,Vector{Vector{Float64}}}(),
+        zeros(nunits),
         fill(false, nunits), Bool(screen), Symbol(draws_scope), Int[],
         fill(NaN, nunits), fill(NaN, nunits), fill(false, nunits), NaN, nothing,
         0, 0, 0, 0, 0, 0, 0.0, 0.0, 0.0, 0.0, nothing, nothing)
@@ -1473,20 +1515,36 @@ const _CONTINUATION_STATE = (:rest, :rest_units, :flagged, :rules, :centre,
 
 """
     ctsem_laplace_continuation_recentre!(o, values; force=nothing,
-        point_units=nothing, point_values=nothing)
+        point_units=nothing, point_values=nothing, draws=nothing,
+        draws_se=nothing, draws_max=nothing)
 
 Re-place `o`'s nodes at `values`: every unit is scored again, the flagged set
 grows by any unit whose gap now matters and by any `force` names -- it never
 shrinks, so no later round loses a unit an earlier one was scored on -- and
 every flagged unit's rule moves to its mode and curvature there, an importance
-rule drawing afresh with the points it knows and any given here. The placement
-it replaces is kept for `ctsem_laplace_continuation_revert!`. Returns
+rule drawing afresh with the points it knows and any given here. `draws`,
+`draws_se` and `draws_max` given here replace the importance rule's from now
+on: a fit rescued from a jump climbs on a coarse rule and places the full one
+before its finish (`.ctLaplaceFrozenRescue()`). The placement it replaces is
+kept for `ctsem_laplace_continuation_revert!`. Returns
 `ctsem_laplace_continuation_info`.
 """
 function ctsem_laplace_continuation_recentre!(o::CTSEMLaplaceContinuation,
-    values::AbstractVector; force=nothing, point_units=nothing, point_values=nothing)
+    values::AbstractVector; force=nothing, point_units=nothing, point_values=nothing,
+    draws=nothing, draws_se=nothing, draws_max=nothing)
     o.previous = NamedTuple{_CONTINUATION_STATE}(
         Tuple(getfield(o, f) for f in _CONTINUATION_STATE))
+    if draws !== nothing
+        draws >= 0 || throw(ArgumentError("draws must be at least zero"))
+        o.draws = Int(draws)
+    end
+    if draws_se !== nothing
+        draws_se > 0 || throw(ArgumentError("draws_se must be positive"))
+        o.draws_se = Float64(draws_se)
+    end
+    if draws_max !== nothing
+        o.draws_max = max(Int(draws_max), o.draws)
+    end
     _continuation_add_points!(o, point_units, point_values)
     _continuation_force!(o, force)
     _continuation_place!(o, _laplace_extend(o.laplace, collect(Float64, values)))
@@ -1518,7 +1576,7 @@ function _continuation_place!(o::CTSEMLaplaceContinuation, theta::Vector{Float64
         maxdim=o.maxdim,
         soft_maxdirs=o.soft_maxdirs, draws=o.draws, draws_se=o.draws_se,
         draws_max=o.draws_max, draws_floor=o.draws_floor, draws_prior=o.draws_prior,
-        draws_seed=o.draws_seed, points=o.points,
+        draws_df=o.draws_df, draws_seed=o.draws_seed, points=o.points,
         only=o.screen ? nothing : Set(o.flagged),
         drawable=o.draws_scope === :all ? nothing : Set(o.forced))
     placed = _continuation_place(laplace, theta, opts)
@@ -2844,6 +2902,7 @@ function ctsem_laplace_continuation_info(o::CTSEMLaplaceContinuation)
         for rule in o.rules; init=0)
     return (flagged=isempty(o.flagged) ? [0] : copy(o.flagged),
         nflagged=length(o.flagged), nunits=nunits,
+        unit_members=[length(members[U]) for U in 1:nunits],
         screen=_continuation_screen(gaps, o.centre_se),
         gap=sum(gaps[isfinite.(gaps)]; init=0.0),
         bar=isempty(flaggedgaps) ? 0.0 : minimum(flaggedgaps),

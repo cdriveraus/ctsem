@@ -493,18 +493,76 @@ end
     laplace, values = _fresh_linear()
     theta = collect(Float64, values)
     lap = ctsem_laplace_evaluate(laplace, theta; gradient=false)
-    o = ctsem_laplace_continuation(laplace, theta; tolerance=0.0, maxdim=1,
-        draws=256)
-    info = ctsem_laplace_continuation_info(o)
-    @test info.nimportance == info.nunits
-    for U in 1:info.nunits
-        @test abs(info.quadrature_units[U] - lap.unit_loglik[U]) <
-            4 * info.centre_se[U] + 1e-8
+    # On t components (the default) and on Gaussian ones alike.
+    for df in (4, Inf)
+        o = ctsem_laplace_continuation(laplace, theta; tolerance=0.0, maxdim=1,
+            draws=256, draws_df=df)
+        info = ctsem_laplace_continuation_info(o)
+        @test info.nimportance == info.nunits
+        for U in 1:info.nunits
+            @test abs(info.quadrature_units[U] - lap.unit_loglik[U]) <
+                4 * info.centre_se[U] + 1e-8
+        end
+        # Laplace is exact here, so every gap is within the draws' error and the
+        # screen, which reads only what it can resolve, flags nothing.
+        @test (df, info.nflagged) == (df, 0)
+        @test info.screen == 0
     end
-    # Laplace is exact here, so every gap is within the draws' error and the
-    # screen, which reads only what it can resolve, flags nothing.
-    @test info.nflagged == 0
-    @test info.screen == 0
+end
+
+@testset "a t component's density is normalised and its draws stretch by a chi-square" begin
+    C = ContinuousTimeSEM.CTSEMImportanceComponent
+    dens = ContinuousTimeSEM._continuation_component_logdensity
+    work = zeros(2)
+    vecs = [cos(0.3) -sin(0.3); sin(0.3) cos(0.3)]
+    h = 0.1
+    grid = -30:h:30
+    for df in (4.0, Inf)
+        c = C([0.2, -0.1], vecs, [2.0, 0.5], df)
+        total = sum(exp(dens(c, [x, y], work)) for x in grid, y in grid) * h^2
+        @test isapprox(total, 1.0; atol=1e-3)
+    end
+    # The stretch at the median normal is the median chi-square's on 4 degrees
+    # of freedom (3.35669), and a Gaussian component is not stretched.
+    @test isapprox(ContinuousTimeSEM._continuation_t_scale(4.0, 0.0),
+        sqrt(4 / 3.35669); rtol=1e-4)
+    @test ContinuousTimeSEM._continuation_t_scale(Inf, 1.7) == 1.0
+    # A t component's draws are its Gaussian draws stretched: the same points
+    # in direction, heavier in the tails. On the three-effect fixture both
+    # integrate to the product rule's value within their error.
+    laplace, values = _fresh_2d3()
+    theta = collect(Float64, values)
+    reference = ctsem_laplace_quadrature(laplace, theta; nodes=5,
+        contributions=true)
+    for df in (4, Inf)
+        o = ctsem_laplace_continuation(laplace, theta; tolerance=0.0, maxdim=2,
+            draws=256, draws_se=0.02, draws_df=df,
+            force=1:length(laplace.units.members))
+        info = ctsem_laplace_continuation_info(o)
+        for U in 1:info.nunits
+            @test abs(info.quadrature_units[U] - reference.unit_loglik[U]) <
+                4 * info.centre_se[U] + 1e-3
+        end
+    end
+    @test_throws ArgumentError ctsem_laplace_continuation(laplace, theta;
+        maxdim=2, draws=256, draws_df=0)
+end
+
+@testset "a placement again may change the draws' target" begin
+    laplace, values = _fresh_2d3()
+    theta = collect(Float64, values)
+    nunits = length(laplace.units.members)
+    o = ctsem_laplace_continuation(laplace, theta; tolerance=0.0, maxdim=2,
+        draws=64, draws_max=64, draws_se=0.3, force=1:nunits)
+    coarse = ctsem_laplace_continuation_info(o)
+    @test coarse.importance_draws == 64 * nunits
+    @test coarse.unit_members == [length(m) for m in laplace.units.members]
+    full = ctsem_laplace_continuation_recentre!(o, theta; draws=256,
+        draws_max=1024, draws_se=0.02)
+    @test (o.draws, o.draws_max, o.draws_se) == (256, 1024, 0.02)
+    @test full.importance_draws >= 256 * nunits
+    @test full.nflagged == nunits
+    @test ctsem_laplace_unit_members(laplace) == coarse.unit_members
 end
 
 @testset "a unit named is flagged whatever its gap, and screen = false scores it alone" begin
