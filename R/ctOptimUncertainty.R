@@ -2796,7 +2796,17 @@ ctOptimFitLpgFunc <- function(fit, cores=1){
   # cause -- and passes straight through to `imis_is()` otherwise; see
   # `IS-importance-sampling-2026-09-06.md`. `lpg` value-only carries the batch
   # attribute `.ctBackendLpgFunc(fit, gradient=FALSE)` sets, whitened or not.
-  is_res <- tryCatch(.ctImisRun(lpg, centre = centre, cov = uncertaintyfit$cov,
+  #
+  # `'checked'` samples many directions -- `.ctHmcDirections` or more -- by
+  # lockstep HMC instead (`.ctHmcRun()`), where importance sampling's weights
+  # collapse, and falls back to it below where importance sampling fails.
+  hmc <- function() .ctHmcRun(lpg, centre = centre, cov = uncertaintyfit$cov,
+    directions = directions, widths = uncertaintyfit$details$normalcheck$widths,
+    finishsamples = finishsamples, target_ess = control$isESS)
+  canhmc <- checked && is.function(attr(lpg, 'gradbatch'))
+  sampler <- if (canhmc && ncol(directions) >= .ctHmcDirections) 'hmc' else 'imis'
+  is_res <- if (sampler == 'hmc') hmc() else tryCatch(.ctImisRun(lpg, centre = centre,
+    cov = uncertaintyfit$cov,
     directions = directions, widths = uncertaintyfit$details$normalcheck$widths,
     complement = isTRUE(control[["imisComplement"]]),
     max_iter = control$imisMaxIter, scale_init = control$imisScaleInit,
@@ -2828,22 +2838,42 @@ ctOptimFitLpgFunc <- function(fit, cores=1){
   # on one draw (ESS 1, k 40), and their covariance was a point, intervals far
   # narrower than the truth where the normal's are far wider and the check has
   # said so.
+  #
+  # HMC's own test is its chains: every coordinate's bulk and tail ESS at the
+  # target and R-hat under its bar (`.ctHmcLockstep()`). Importance sampling
+  # that fails goes to HMC before the normal.
   if (!is.null(directions)) {
-    k <- .ctImisParetoK(is_res)
-    reliable <- if (is.finite(k)) k <= .ctImisParetoKBar() else
-      isTRUE(is_res$ess >= control$isESS)
+    reliability <- function(r) {
+      if (!is.null(r$hmc)) return(list(ok = isTRUE(r$hmc$converged), k = NA_real_))
+      k <- .ctImisParetoK(r)
+      list(ok = if (is.finite(k)) k <= .ctImisParetoKBar() else
+        isTRUE(r$ess >= control$isESS), k = k)
+    }
+    rel <- reliability(is_res)
+    if (!rel$ok && sampler == 'imis' && canhmc) {
+      failed <- list(ess = is_res$ess, pareto_k = rel$k, cost = is_res$cost)
+      is_res <- hmc()
+      is_res$imis <- failed
+      sampler <- 'hmc'
+      rel <- reliability(is_res)
+    }
+    k <- rel$k
+    reliable <- rel$ok
     if (!reliable) {
       involved <- uncertaintyfit$details$normalcheck$parameters
       named <- if (length(parnames) == length(est)) parnames[involved] else
         paste0('par', involved)
       warning('The normal approximation is unreliable for ',
         paste(named, collapse = ', '), ': the posterior departs from it ',
-        'there, and importance sampling could not correct it (Pareto k ',
-        signif(k, 2), '). Their intervals are the Hessian\'s. ', tailremedy,
+        'there, and ', if (sampler == 'hmc') paste0('neither importance sampling ',
+          'nor HMC could correct it (R-hat ', signif(is_res$hmc$rhat, 3), ')') else
+          paste0('importance sampling could not correct it (Pareto k ', signif(k, 2), ')'),
+        '. Their intervals are the Hessian\'s. ', tailremedy,
         call. = FALSE)
       uncertaintyfit$details$importance_sampling <- list(ess = is_res$ess,
         pareto_k = k, used = FALSE, directions = ncol(directions),
-        evaluations = is_res$evaluations, cost = is_res$cost,
+        evaluations = is_res$evaluations, cost = is_res$cost, sampler = sampler,
+        hmc = is_res$hmc, imis = is_res$imis,
         coreset = if (is.function(attr(lpg, 'coreset'))) attr(lpg, 'coreset')())
       return(list(samples = ctOptimNormalDraws(centre, uncertaintyfit$cov,
         finishsamples), uncertaintyfit = uncertaintyfit, control = control,
@@ -2868,7 +2898,7 @@ ctOptimFitLpgFunc <- function(fit, cores=1){
     if (length(off$mean) || length(off$spread)) {
       list3 <- function(i) paste0(paste(utils::head(named[i], 3), collapse = ', '),
         if (length(i) > 3) paste0(' and ', length(i) - 3, ' more'))
-      warning('The importance-sampled draws do not match the posterior\'s gradient ',
+      warning('The sampled draws do not match the posterior\'s gradient ',
         '(Stein check): ', paste(c(
           if (length(off$mean)) paste0('the mean of ', list3(off$mean), ' is up to ',
             signif(stein$meanerror[off$mean[1L]], 2), ' sds off'),
@@ -2931,6 +2961,9 @@ ctOptimFitLpgFunc <- function(fit, cores=1){
     # How many directions `'checked'` sampled; the normal held the rest.
     directions = if (!is.null(directions)) ncol(directions),
     used = TRUE,
+    # 'imis', or 'hmc' (`.ctHmcRun()`): its chains' record, and importance
+    # sampling's where it failed first.
+    sampler = sampler, hmc = is_res$hmc, imis = is_res$imis,
     # How much it cost and what the profile-path search found: the log
     # density's evaluations, the rounds of draws, and the parameters (or
     # subspace directions) whose paths had a tail to follow; see `imis_is()`.
@@ -2950,7 +2983,7 @@ ctOptimFitLpgFunc <- function(fit, cores=1){
     coreset = if (is.function(attr(lpg, 'coreset'))) attr(lpg, 'coreset')())
 
   list(samples = samples, uncertaintyfit = uncertaintyfit, control = control,
-    draws = 'imis')
+    draws = sampler)
 }
 
 # Stein's identity as a check of a sampled answer: under the posterior,
@@ -3044,17 +3077,22 @@ ctOptimFitLpgFunc <- function(fit, cores=1){
 
 # Which parameters `.ctSteinCheck()` finds off: `mean`, those whose mean is
 # `.ctSteinBar$meanerror` or more of their normal sds off, and `spread`, those
-# whose spread is outside the coverage band of `.ctNormalResidualBars()` (a
-# 95% interval covering under 90% or over 99%), each where the worst of its
-# family is past `.ctSteinBar$p`; worst first.
+# whose spread is under half or over twice the posterior's
+# (`.ctSteinBar$spread`), each where the worst of its family is past
+# `.ctSteinBar$p`; worst first.
+#
+# The spread's band is wide because its reading is a near-normal one, noisy
+# and, on a skewed posterior, biased. On 100 log-gamma coordinates sampled
+# right to within 12% (HMC), it read 0.74 of the spread at z 4.5, and 0.82
+# where the truth was 0.96; on a shell 0.59 where the truth was 0.82. On a
+# product target it read 0.76 where the truth was 0.75. Read against the
+# coverage band, it warned of an answer that was fine.
 .ctSteinOff <- function(stein) {
-  bars <- .ctNormalResidualBars()
   mean <- if (stein$worstp < .ctSteinBar$p)
     which(stein$meanerror >= .ctSteinBar$meanerror) else integer()
-  # The posterior's sd over the answer's, against the bars.
-  over <- 1 / stein$sdratio
   spread <- if (stein$spreadp < .ctSteinBar$p)
-    which(stein$sdratio != 1 & (over > bars$narrow | over < bars$wide)) else integer()
+    which(stein$sdratio != 1 & (stein$sdratio < .ctSteinBar$spread[1L] |
+      stein$sdratio > .ctSteinBar$spread[2L])) else integer()
   list(mean = mean[order(-stein$meanerror[mean])],
     spread = spread[order(-abs(log(stein$sdratio[spread])))])
 }
@@ -3065,7 +3103,7 @@ ctOptimFitLpgFunc <- function(fit, cores=1){
 # the Hessian normal, merged 'checked' and a normal recentred by one step
 # (their worst parameters 1.2-1.5 sds off, at z 4-17) and passed NUTS and
 # the corrected sampler (0.14-0.32, Bonferroni tail 0.2-1).
-.ctSteinBar <- list(p = 1e-3, meanerror = 0.5, z = 3)
+.ctSteinBar <- list(p = 1e-3, meanerror = 0.5, z = 3, spread = c(0.5, 2))
 
 # How many sampled directions `.ctOptimDrawSamples()` reports. On the
 # 266-parameter fit of scripts/gsm-uncertainty-2026-10/scale_model.R, 16
@@ -3073,6 +3111,13 @@ ctOptimFitLpgFunc <- function(fit, cores=1){
 # two population dimensions the data do not support -- in 6,000-9,400 and
 # 13-21 minutes.
 .ctManyDirections <- 20L
+
+# How many sampled directions `'checked'` gives to HMC (`.ctHmcRun()`) rather
+# than importance sampling: past about fifty its weights collapsed (51 named
+# directions of 100 log-gamma coordinates: ESS 16 after 100 rounds; 55 of a
+# 75-parameter time series: 2), where at 32-39 it was the cheaper by 2-3
+# times (scripts/gsm-uncertainty-2026-10/proto_hmc.R, e2e_scale_checked.R).
+.ctHmcDirections <- 50L
 
 .ctOptimStoredRedraw <- function(fit, finishsamples, cores, verbose=0){
   julia <- inherits(fit, 'ctJuliaFit')
@@ -3196,12 +3241,16 @@ ctOptimFitLpgFunc <- function(fit, cores=1){
 #' draws. Where nothing is sampled, the same pairs' widths replace the
 #' Hessian's along the directions they resolve, where they move an sd by 5\%
 #' or more. The sampled directions are weighed with the volume the others'
-#' spread adds to them, to first order, and the sampled draws are checked
+#' spread adds to them, to first order. Fifty or more of them, or any number
+#' importance sampling cannot correct, are sampled by Hamiltonian Monte Carlo
+#' instead, with many chains in lockstep, until every direction's ESS reaches
+#' the target and its R-hat is under 1.05. The sampled draws are checked
 #' against the posterior's gradient at 100 of them (Stein's identity): where
-#' a mean is off along the sampled directions, sampling goes on from a
-#' component the gradient places (twice at most), and a warning names the
-#' parameters whose mean the gradient puts half a normal sd or more away, or
-#' whose spread it puts outside the coverage band. A fit with nothing named
+#' a mean is off along the sampled directions, importance sampling goes on
+#' from a component the gradient places (twice at most), and a warning names
+#' the parameters whose mean the gradient puts half a normal sd or more away,
+#' or whose spread it puts under half or over twice the posterior's. A fit
+#' with nothing named
 #' gets the Hessian's covariance, so corrected. The check is recorded
 #' in \code{$uncertainty$details$normalcheck}, and the sampling, when there was
 #' any, in \code{$uncertainty$details$importance_sampling}.}

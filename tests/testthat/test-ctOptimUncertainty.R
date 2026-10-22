@@ -1211,20 +1211,20 @@ test_that("the Stein check names the parameters whose mean the draws miss", {
 })
 
 test_that("the Stein check names the parameters whose spread the draws misstate", {
-  # Independent coordinates, the second drawn at 0.6 of its sd: the second
-  # identity puts its spread at 0.6 of the posterior's, and only its.
+  # Independent coordinates, the second drawn at 0.4 of its sd: the second
+  # identity puts its spread at 0.4 of the posterior's, and only its.
   set.seed(4)
   sds <- c(1, 2, 0.5, 1.5)
   gb <- function(X) {
     X <- as.matrix(X)
     list(value = -0.5 * rowSums(sweep(X, 2, sds, '/')^2), gradient = -sweep(X, 2, sds^2, '/'))
   }
-  draws <- sweep(matrix(rnorm(4000), 1000), 2, sds * c(1, 0.6, 1, 1), '*')
+  draws <- sweep(matrix(rnorm(4000), 1000), 2, sds * c(1, 0.4, 1, 1), '*')
   s <- withr::with_seed(5, ctsem:::.ctSteinCheck(gb, draws, diag(sds^2), n = 400))
   off <- ctsem:::.ctSteinOff(s)
   expect_identical(off$spread, 2L)
   expect_length(off$mean, 0L)
-  expect_equal(s$sdratio[2], 0.6, tolerance = 0.1)
+  expect_equal(s$sdratio[2], 0.4, tolerance = 0.1)
   expect_equal(s$sdratio[-2], c(1, 1, 1))
 })
 
@@ -1255,6 +1255,37 @@ test_that("checked's pairs measure the widths it does not sample", {
     list(nsubjects = 1), sm = NULL, lpgFunc = lpg, uncertainty = 'checked',
     finishsamples = 20, verbose = 0, hessian = -solve(normal)))
   expect_equal(out$cov[, ], truth, tolerance = 1e-6)
+})
+
+test_that("checked samples many directions by HMC", {
+  # 100 log-gamma(2) coordinates: the check names about half, past what
+  # importance sampling's weights stand, and HMC samples them to the exact
+  # moments.
+  a <- 2
+  k <- 100L
+  lpg <- function(x) {
+    out <- sum(a * x - exp(x))
+    attr(out, 'gradient') <- a - exp(x)
+    out
+  }
+  lpv <- lpg
+  attr(lpv, 'gradbatch') <- function(X) {
+    X <- as.matrix(X)
+    list(value = rowSums(a * X - exp(X)), gradient = a - exp(X))
+  }
+  out <- withr::with_seed(1, suppressMessages(ctsem:::ctOptimComputeUncertainty(
+    rep(log(a), k), list(nsubjects = 1), sm = NULL, lpgFunc = lpg,
+    uncertainty = 'checked', finishsamples = 1000, verbose = 0)))
+  expect_gte(ncol(out$details$normalcheck$directions), ctsem:::.ctHmcDirections)
+  drawn <- withr::with_seed(1, suppressWarnings(suppressMessages(
+    ctsem:::.ctOptimDrawSamples(out, 'imis', list(), rep(log(a), k), 1000, lpg = lpv))))
+  is <- drawn$uncertaintyfit$details$importance_sampling
+  expect_identical(drawn$draws, 'hmc')
+  expect_identical(is$sampler, 'hmc')
+  expect_true(is$hmc$converged)
+  sd <- sqrt(trigamma(a))
+  expect_lt(max(abs(colMeans(drawn$samples) - digamma(a))) / sd, 0.3)
+  expect_equal(unname(apply(drawn$samples, 2, stats::sd)) / sd, rep(1, k), tolerance = 0.2)
 })
 
 test_that("importance sampling goes on where its caller's check asks it to", {
