@@ -5280,6 +5280,32 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
     if (isTRUE(s$refit)) "; refit after the mesh moved at the optimum." else ".")
 }
 
+# Whether the L-BFGS stage runs coreset stages (`optimcontrol$coreset`):
+# TRUE and FALSE as given, and 'auto', the default, on the Laplace route for
+# data of at least `.ctCoresetAutoUnits` top-level units and
+# `.ctCoresetAutoCells` data cells (rows times manifest variables). Below that
+# a full gradient is cheap: on the optimiser bench (25-100 units, at most
+# about 3000 cells) the stages saved no optimiser time, and on its models with
+# several maxima they changed which one a fit reached, twice ending
+# uncertified where the full sum certified. From about 250 units and 12000
+# cells up -- the range's designs and the strong-shell fits -- they cost 1.2 to
+# 3.6 times less (review/OPTIM-coreset-2026-10-21.md). Rough bars, set between
+# the two; a coreset that carries every parameter's information needs tens of
+# units, so with fewer than a couple of hundred it is too large a share to pay.
+.ctCoresetAutoUnits <- 200L
+.ctCoresetAutoCells <- 1e4
+#' @keywords internal
+.ctJuliaCoresetOn <- function(optimcontrol, model_spec) {
+  v <- optimcontrol[["coreset"]]
+  if (!is.null(v) && !identical(v, "auto")) return(isTRUE(v))
+  levels <- model_spec$laplace$levels
+  if (!length(levels)) return(FALSE)
+  # The outermost level's groups are the Laplace route's units.
+  units <- as.integer(.ctJuliaOr(levels[[length(levels)]]$ngroups, 0L))[1L]
+  units >= .ctCoresetAutoUnits &&
+    length(model_spec$manifest_data) >= .ctCoresetAutoCells
+}
+
 .ctJuliaOptimise <- function(model_spec, start, optimcontrol = list(),
   gradient = "adjoint", cores = 1L, verbose = 0L, maxiter = NULL,
   callback = NULL, objective = NULL, progress_label = NULL,
@@ -5537,9 +5563,9 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
   }
   # `coreset`: stretches of the L-BFGS stage on a weighted few of the units,
   # each checked by a full gradient (`_ctsem_coreset_plan` in the engine), on
-  # the Laplace route; off by default. Sent only when asked for, so that a
-  # default fit's call keeps the shape the package image recorded.
-  if (isTRUE(optimcontrol$coreset)) common$coreset <- TRUE
+  # the Laplace route, where `.ctJuliaCoresetOn()` says. Sent only when on, so
+  # that a small fit's call keeps the shape the package image recorded.
+  if (.ctJuliaCoresetOn(optimcontrol, model_spec)) common$coreset <- TRUE
   # `stochastic`, as on stan: TRUE runs the sgd phase (`_ctsem_sgd`) before
   # L-BFGS, 'auto' runs it above 50 parameters -- stan's own rule -- and FALSE,
   # the julia default, does not. Only on a stage that starts away from the

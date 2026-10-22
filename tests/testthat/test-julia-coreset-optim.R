@@ -2,8 +2,9 @@
 # in optimiser.jl): stretches of the L-BFGS stage on a weighted few of the
 # units, each checked by a full gradient, with the full objective finishing.
 # Two fits of one model from the default start under one seed, with them
-# (`optimcontrol$coreset = TRUE`; they are off by default) and without: the
-# same optimum and Hessian, in fewer full gradients.
+# (`optimcontrol$coreset = TRUE`; the default, 'auto', leaves them off for data
+# this small) and without: the same optimum and Hessian, in fewer full
+# gradients.
 # Three hundred subjects of the shared Laplace fixture's design, so that its
 # seven parameters leave a coreset a small share of the units. Batching is off
 # in both: from the default start it does most of the climbing on this model,
@@ -64,4 +65,24 @@ test_that("the coreset weights are non-negative least squares", {
   expect_true(any(x == 0) && any(x > 0))
   expect_lt(max(abs(g[x > 0])), 1e-6)
   expect_gt(min(g[x == 0]), -1e-6)
+})
+
+# Which fits 'auto' runs them on (`.ctJuliaCoresetOn()`): at least 200
+# top-level units and 10,000 data cells, read off the specification; TRUE and
+# FALSE as given; never off the Laplace route.
+test_that("coreset = 'auto' runs the stages only on large data", {
+  on <- ctsem:::.ctJuliaCoresetOn
+  spec <- function(units, rows, manifests) list(
+    laplace = list(levels = list(list(ngroups = 3L * units), list(ngroups = units))),
+    manifest_data = matrix(0, manifests, rows))
+  big <- spec(400L, 5000L, 3L)
+  expect_true(on(list(), big))
+  expect_true(on(list(coreset = "auto"), big))
+  expect_false(on(list(coreset = FALSE), big))
+  # The outermost level's groups are the units: 1200 subjects in 400 groups
+  # pass, 600 subjects in 100 groups do not.
+  expect_false(on(list(), spec(100L, 5000L, 3L)))
+  expect_false(on(list(), spec(800L, 3000L, 1L)))
+  expect_true(on(list(coreset = TRUE), spec(40L, 240L, 1L)))
+  expect_false(on(list(), list(manifest_data = matrix(0, 3, 5000))))
 })
