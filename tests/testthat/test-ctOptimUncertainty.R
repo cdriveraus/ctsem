@@ -1210,6 +1210,74 @@ test_that("the Stein check names the parameters whose mean the draws miss", {
   expect_identical(wrong$gradients, 100L)
 })
 
+test_that("the Stein check names the parameters whose spread the draws misstate", {
+  # Independent coordinates, the second drawn at 0.6 of its sd: the second
+  # identity puts its spread at 0.6 of the posterior's, and only its.
+  set.seed(4)
+  sds <- c(1, 2, 0.5, 1.5)
+  gb <- function(X) {
+    X <- as.matrix(X)
+    list(value = -0.5 * rowSums(sweep(X, 2, sds, '/')^2), gradient = -sweep(X, 2, sds^2, '/'))
+  }
+  draws <- sweep(matrix(rnorm(4000), 1000), 2, sds * c(1, 0.6, 1, 1), '*')
+  s <- withr::with_seed(5, ctsem:::.ctSteinCheck(gb, draws, diag(sds^2), n = 400))
+  off <- ctsem:::.ctSteinOff(s)
+  expect_identical(off$spread, 2L)
+  expect_length(off$mean, 0L)
+  expect_equal(s$sdratio[2], 0.6, tolerance = 0.1)
+  expect_equal(s$sdratio[-2], c(1, 1, 1))
+})
+
+test_that("checked's pairs measure the widths it does not sample", {
+  # A Gaussian whose normal is 15% narrow in sd along two of its axes: inside
+  # the check's band, so nothing is sampled, and the pairs' odd parts give
+  # the widths exactly.
+  set.seed(9)
+  k <- 10
+  e <- eigen(crossprod(matrix(rnorm(k * k), k)) / k + diag(k) / 5, symmetric = TRUE)
+  truth <- e$vectors %*% (t(e$vectors) * e$values)
+  narrowed <- e$values * c(1 / 1.15^2, 1 / 1.15^2, rep(1, k - 2))
+  normal <- e$vectors %*% (t(e$vectors) * narrowed)
+  P <- solve(truth)
+  lpg <- function(x) {
+    out <- -0.5 * sum(x * (P %*% x))
+    attr(out, 'gradient') <- -as.numeric(P %*% x)
+    out
+  }
+  gb <- attr(ctsem:::.ctImisPointGradbatch(lpg), 'gradbatch')
+  check <- withr::with_seed(10, ctsem:::.ctOptimNormalCheck(gb, rep(0, k), normal))
+  expect_equal(ncol(check$directions), 0L)
+  expect_equal(ncol(check$spread$directions), 2L)
+  expect_equal(check$spread$widths, c(1.15^2, 1.15^2), tolerance = 1e-6)
+  expect_equal(check$spread$cov, truth, tolerance = 1e-6)
+  # And the fit reports it.
+  out <- withr::with_seed(10, ctsem:::ctOptimComputeUncertainty(rep(0, k),
+    list(nsubjects = 1), sm = NULL, lpgFunc = lpg, uncertainty = 'checked',
+    finishsamples = 20, verbose = 0, hessian = -solve(normal)))
+  expect_equal(out$cov[, ], truth, tolerance = 1e-6)
+})
+
+test_that("importance sampling goes on where its caller's check asks it to", {
+  skip_if_not_installed('mvtnorm'); skip_if_not_installed('diagis')
+  skip_if_not_installed('gridExtra'); skip_if_not_installed('ggplot2')
+  lp <- function(x) -sum(x^2) / 2
+  attr(lp, 'batch') <- function(X) -rowSums(as.matrix(X)^2) / 2
+  calls <- 0L
+  recheck <- function(samples, w) {
+    calls <<- calls + 1L
+    if (calls == 1L) list(mu = c(0.5, 0), cov = diag(2)) else NULL
+  }
+  run <- function(recheck) withr::with_seed(1, ctsem:::imis_is(lp, mu_hat = c(0, 0),
+    Sigma_hat = diag(2), cl = NA, n_batch = 200, target_ess = 100, max_iter = 20,
+    finishsamples = 100, verbose = FALSE, diag_plots = FALSE, paths = FALSE,
+    recheck = recheck))
+  asked <- run(recheck)
+  plain <- run(NULL)
+  expect_identical(calls, 2L)
+  expect_identical(asked$rechecks, 1L)
+  expect_gt(nrow(asked$rounds), nrow(plain$rounds))
+})
+
 test_that(".ctOptimImisDraws() reports which directions the subspace held", {
   skip_if_not_installed('mvtnorm'); skip_if_not_installed('diagis')
   skip_if_not_installed('gridExtra'); skip_if_not_installed('ggplot2')

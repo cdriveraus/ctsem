@@ -189,12 +189,16 @@ normal is centred where the same gradients, and those at the draws
 reflected (at least 32 pairs), put the posterior's mean, which is not the
 estimate wherever the posterior is skewed or a covariance is estimated;
 the estimate stays the fit's, and \code{summary()} reports it beside the
-draws. The sampled directions are weighed with the volume the others'
+draws. Where nothing is sampled, the same pairs' widths replace the
+Hessian's along the directions they resolve, where they move an sd by 5\%
+or more. The sampled directions are weighed with the volume the others'
 spread adds to them, to first order, and the sampled draws are checked
-against the posterior's gradient at 100 of them (Stein's identity), with
-a warning naming the parameters whose mean the gradient puts half a
-normal sd or more away. A fit with nothing named gets the Hessian's
-covariance. The check is recorded
+against the posterior's gradient at 100 of them (Stein's identity): where
+a mean is off along the sampled directions, sampling goes on from a
+component the gradient places (twice at most), and a warning names the
+parameters whose mean the gradient puts half a normal sd or more away, or
+whose spread it puts outside the coverage band. A fit with nothing named
+gets the Hessian's covariance, so corrected. The check is recorded
 in \code{$uncertainty$details$normalcheck}, and the sampling, when there was
 any, in \code{$uncertainty$details$importance_sampling}.}
 \item{\code{'hessian'}}{A normal approximation from the Hessian at the
