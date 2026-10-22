@@ -146,8 +146,9 @@ test_that("checked leaves the normal of a Gaussian posterior alone", {
   # Two batches of 8 that name nothing: the check stops there.
   expect_equal(out$details$normalcheck$draws, 16L)
   expect_equal(unname(out$cov), unname(hess$cov))
-  # And 8 reflections place the normal where the mean is: the mode, here.
-  expect_equal(out$details$normalcheck$centredraws, 8L)
+  # And the centre's pairs place the normal where the mean is: the mode,
+  # here. Each of the 16 draws reflected, and 16 fresh pairs to make 32.
+  expect_equal(out$details$normalcheck$centredraws, 48L)
   expect_equal(out$details$normalcheck$centre, rep(0, 6), tolerance = 1e-10)
   drawn <- ctsem:::.ctOptimDrawSamples(out, 'imis', list(), rep(0, 6), 50,
     lpg = lpg)

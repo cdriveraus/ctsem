@@ -360,16 +360,7 @@ bootstrapHessian <- function(standata, sm, est, finishsamples, cores, scores=NUL
 # its corrections are differences of the same density.
 .ctImisJointDensity <- function(lpg, centre, cov, subspace, rtol) {
   A <- sweep(subspace$V, 2, sqrt(subspace$d), '*')
-  rest <- cov - tcrossprod(subspace$V)
-  er <- eigen((rest + t(rest)) / 2, symmetric = TRUE)
-  # Cut at the full normal's scale, not the rest's own: a direction the
-  # sampled ones already span leaves rounding in `rest`, and a coordinate
-  # that moves nothing makes its share of the weight, |zeta|^2 / 2,
-  # unbounded (a ring whose two directions were both named ran to 300
-  # rounds at Pareto k 1.2).
-  top <- max(eigen((cov + t(cov)) / 2, symmetric = TRUE, only.values = TRUE)$values)
-  keep <- er$values > rtol * top
-  C <- sweep(er$vectors[, keep, drop = FALSE], 2, sqrt(er$values[keep]), '*')
+  C <- .ctImisRestFactor(cov, subspace, rtol)
   m <- ncol(C)
   drawn <- new.env()
   drawn$zeta <- matrix(0, 0L, m)
@@ -401,6 +392,89 @@ bootstrapHessian <- function(standata, sm, est, finishsamples, cores, scores=NUL
       zeta <- drawn$zeta[seq_len(nrow(Z)), , drop = FALSE]
       finalbase(raw(Z, zeta), logp - rowSums(zeta^2) / 2, logw)
     }
+  }
+  density
+}
+
+# A factor `C` of the normal `cov` outside the sampled directions
+# `subspace$V` (`C C'` that covariance), cut at `rtol` of the full normal's
+# largest variance, not the rest's own: a direction the sampled ones already
+# span leaves rounding in the rest, and a coordinate that moves nothing made
+# the joint density's share of the weight, |zeta|^2 / 2, unbounded (a ring
+# whose two directions were both named ran to 300 rounds at Pareto k 1.2).
+.ctImisRestFactor <- function(cov, subspace, rtol) {
+  rest <- cov - tcrossprod(subspace$V)
+  er <- eigen((rest + t(rest)) / 2, symmetric = TRUE)
+  top <- max(eigen((cov + t(cov)) / 2, symmetric = TRUE, only.values = TRUE)$values)
+  keep <- er$values > rtol * top
+  sweep(er$vectors[, keep, drop = FALSE], 2, sqrt(er$values[keep]), '*')
+}
+
+# What the rest's spread adds to the log density of the sampled directions,
+# to first order: `b'z` in their whitened `z`, with `b` the gradient of the
+# marginal less the conditional's at the centre. The marginal's gradient is
+# the conditional's averaged over the rest, `E[grad_z lp(z, zeta)]`, so `b`
+# is the mean over pairs `zeta`, `-zeta` drawn from the normal in the rest
+# alone (`.ctImisRestFactor()`) of the sampled directions' gradient, less its
+# value at the centre; a pair's odd terms cancel, and what is left is the
+# volume term. Shrunk as one vector by its error (`.ctShrunkMean()`).
+# `2 n + 1` gradients; NULL without a gradient or a rest.
+#
+# Why. The sampled directions are weighed with the rest at the centre: the
+# conditional there, not the marginal. Where the rest's widths move with the
+# sampled coordinates -- a population covariance's scale moves every
+# direction it multiplies -- the marginal's mean is past the conditional's.
+# On a 266-parameter Laplace fit with a 12-item population covariance at
+# rank 4, the dimension 1-2 loadings' means came within a median 0.22 sds of
+# a SAEM reference (max 0.59) tilted from the corrected centre, against 0.61
+# (1.04) untilted from the old one, at 1.03 times the evaluations;
+# integrating over the rest
+# exactly (`imisComplement`), 0.16 (0.48) at 1.4 times
+# (scripts/gsm-uncertainty-2026-10/proto_centre.R). A linear term is the
+# first order only: it moves the mean, not the widths.
+.ctImisVolumeTilt <- function(gradbatch, centre, cov, subspace, rtol, n = 32L) {
+  if (!is.function(gradbatch)) return(NULL)
+  C <- .ctImisRestFactor(cov, subspace, rtol)
+  if (!ncol(C)) return(NULL)
+  A <- sweep(subspace$V, 2, sqrt(subspace$d), '*')
+  E <- matrix(stats::rnorm(n * ncol(C)), n, ncol(C))
+  out <- gradbatch(sweep(rbind(0, E, -E) %*% t(C), 2, as.numeric(centre), '+'))
+  G <- as.matrix(out$gradient) %*% A
+  ok <- is.finite(out$value) & out$value > -1e99 & rowSums(!is.finite(G)) == 0
+  both <- which(ok[1L + seq_len(n)] & ok[1L + n + seq_len(n)])
+  if (!ok[1L] || length(both) < 2L) return(NULL)
+  pairs <- sweep((G[1L + both, , drop = FALSE] + G[1L + n + both, , drop = FALSE]) / 2,
+    2, G[1L, ])
+  b <- .ctShrunkMean(pairs)
+  list(b = b, size = sqrt(sum(b^2)),
+    noise = sqrt(sum(apply(pairs, 2, stats::var)) / nrow(pairs)),
+    gradients = 2L * n + 1L)
+}
+
+# `wrapped`, a density of the whitened `z` (`.ctImisWhitenDensity()`), with
+# `b'z` added (`.ctImisVolumeTilt()`): its value, its batch, and its
+# gradient. A coreset's end check is handed the values without it, so its
+# corrections are differences of the same density.
+.ctImisTiltDensity <- function(wrapped, b) {
+  tilt <- function(Z) as.numeric(as.matrix(Z) %*% b)
+  density <- function(z) as.numeric(wrapped(z))[1L] + sum(z * b)
+  batchbase <- attr(wrapped, 'batch')
+  if (!is.null(batchbase)) attr(density, 'batch') <- function(Z)
+    as.numeric(batchbase(Z)) + tilt(Z)
+  gradbase <- attr(wrapped, 'gradbatch')
+  if (!is.null(gradbase)) {
+    attr(density, 'gradbatch') <- function(Z) {
+      r <- gradbase(Z)
+      r$value <- as.numeric(r$value) + tilt(Z)
+      r$gradient <- sweep(as.matrix(r$gradient), 2, b, '+')
+      r
+    }
+  }
+  if (!is.null(attr(wrapped, 'cost'))) attr(density, 'cost') <- attr(wrapped, 'cost')
+  finalbase <- attr(wrapped, 'finalize')
+  if (!is.null(finalbase)) {
+    attr(density, 'finalize') <- function(Z, logp, logw)
+      finalbase(Z, logp - tilt(Z), logw)
   }
   density
 }
@@ -448,14 +522,15 @@ bootstrapHessian <- function(standata, sm, est, finishsamples, cores, scores=NUL
 # than from 0 to 397 by accident -- see `.ctImisUnwhitenMatrix()`: a null
 # direction has no column in the map at all.
 .ctImisRun <- function(lpg, centre, cov, rtol = .ctFlatDirectionRtol(),
-  directions = NULL, widths = NULL, complement = FALSE, ...) {
+  directions = NULL, widths = NULL, complement = FALSE, tilt = TRUE, ...) {
   centre <- as.numeric(centre)
   cov <- as.matrix(cov)
   # `directions` confines the sampling to those columns, each one unit of the
   # normal `cov` describes (`.ctOptimNormalCheck()`); the normal stays the
   # answer in the rest, added to every draw and to the covariance. They are
-  # weighed with the rest at `centre`, or with `complement` integrated over
-  # it (`.ctImisJointDensity()`). `widths`,
+  # weighed with the rest at `centre` and, with `tilt`, the volume its spread
+  # adds to first order (`.ctImisVolumeTilt()`), or with `complement` the
+  # rest integrated over (`.ctImisJointDensity()`). `widths`,
   # the variances the check measured along them, is where the proposal
   # starts: on a four-dimensional shell it reached an effective sample of 200
   # in 1174 evaluations against the normal's 5789, and as fast elsewhere
@@ -468,9 +543,17 @@ bootstrapHessian <- function(standata, sm, est, finishsamples, cores, scores=NUL
   wrapped <- if (!is.null(directions) && complement)
     .ctImisJointDensity(lpg, centre, cov, subspace, rtol) else
     .ctImisWhitenDensity(lpg, centre, subspace)
+  volume <- if (!is.null(directions) && !complement && tilt)
+    .ctImisVolumeTilt(attr(lpg, 'gradbatch'), centre, cov, subspace, rtol)
+  if (!is.null(volume)) wrapped <- .ctImisTiltDensity(wrapped, volume$b)
   whitened <- imis_is(wrapped, mu_hat = rep(0, subspace$k),
     Sigma_hat = diag(subspace$k), ...)
   result <- .ctImisUnwhitenResult(whitened, centre, subspace)
+  if (!is.null(volume)) {
+    result$tilt <- volume[c('size', 'noise', 'gradients')]
+    # A density that counts its own cost (a coreset) counted these already.
+    if (!is.function(attr(lpg, 'cost'))) result$cost <- result$cost + 2 * volume$gradients
+  }
   if (!is.null(directions)) {
     rest <- cov - tcrossprod(directions)
     result$theta <- result$theta + ctOptimNormalDraws(rep(0, length(centre)), rest,
@@ -1904,7 +1987,7 @@ ctOptimFullBootstrapDraws <- function(est, standata, sm, n=1000, cores=1,
 # the mode wherever the posterior is skewed, however well the normal's widths
 # fit; see `.ctNormalCentre()`. The normal's draws are placed there.
 .ctOptimNormalCheck <- function(gradients, est, cov, batch = 8L,
-  maxdraws = 64L, coverage = c(0.90, 0.99)) {
+  maxdraws = 64L, coverage = c(0.90, 0.99), centrepairs = 32L) {
   eig <- eigen((cov + t(cov)) / 2, symmetric = TRUE)
   keep <- eig$values > .ctFlatDirectionRtol() * max(eig$values)
   A <- sweep(eig$vectors[, keep, drop = FALSE], 2, sqrt(eig$values[keep]), "*")
@@ -1928,17 +2011,39 @@ ctOptimFullBootstrapDraws <- function(est, standata, sm, n=1000, cores=1,
     widths = numeric(), parameters = integer(), centre = as.numeric(est))
   if (is.null(found)) return(record)
   flagged <- found$flagged
-  # The centre's pairs: the first draws reflected, eight more gradients.
-  pairs <- seq_len(min(8L, nrow(Z)))
-  Zminus <- -Z[pairs, , drop = FALSE]
-  out <- gradients(sweep(Zminus %*% t(A), 2, est, "+"))
-  Rminus <- as.matrix(out$gradient) %*% A + Zminus
-  usable <- is.finite(out$value) & out$value > -1e99 & rowSums(!is.finite(Rminus)) == 0
-  record$centredraws <- length(pairs)
+  Vs <- found$v[, flagged, drop = FALSE]
+  # The variance each named direction's slope measured, in units of the
+  # normal's: where importance sampling starts, the sampler's metric, and the
+  # precision the centre's step divides by there. A slope of one or more
+  # measured no width, and keeps the normal's.
+  widths <- ifelse(found$slope[flagged] < 1, 1 / (1 - found$slope[flagged]), 1)
+  # The centre's pairs: every draw reflected, and fresh pairs beside them up
+  # to `centrepairs`. The step they give is a shift spread thin over many
+  # coordinates wherever a covariance is estimated: a population covariance
+  # over p items from n people has its mean about d / sqrt(n) posterior sds
+  # past its mode, d the loadings it couples (Katsevich 2023,
+  # arXiv:2305.17604). Eight pairs, each coordinate shrunk alone, left a
+  # 12-item covariance from 200 people a median 0.16 sds from a SAEM
+  # reference (max 0.31); 64, shrunk as one vector, 0.07 (0.13), and the
+  # other 44 parameters 0.02 (scripts/gsm-uncertainty-2026-10/
+  # diag_corrected_normal.R, review/UNCERTAINTY-mean-shift-2026-10-22.md).
+  fresh <- max(0L, centrepairs - nrow(Z))
+  Zf <- matrix(stats::rnorm(fresh * ncol(A)), fresh, ncol(A))
+  Zp <- rbind(Z, Zf)
+  side <- rbind(Zf, -Zp)
+  out <- gradients(sweep(side %*% t(A), 2, est, "+"))
+  Rs <- as.matrix(out$gradient) %*% A + side
+  ok <- is.finite(out$value) & out$value > -1e99 & rowSums(!is.finite(Rs)) == 0
+  Rp <- rbind(R, Rs[seq_len(fresh), , drop = FALSE])
+  okp <- c(rep(TRUE, nrow(Z)), ok[seq_len(fresh)])
+  Rm <- Rs[fresh + seq_len(nrow(Zp)), , drop = FALSE]
+  okm <- ok[fresh + seq_len(nrow(Zp))]
+  usable <- okp & okm
+  record$centredraws <- nrow(side)
   step <- .ctNormalCentre(
-    rbind(Z, Zminus[usable, , drop = FALSE]), rbind(R, Rminus[usable, , drop = FALSE]),
-    R[pairs[usable], , drop = FALSE], Rminus[usable, , drop = FALSE],
-    found$v[, flagged, drop = FALSE])
+    rbind(Zp[okp, , drop = FALSE], -Zp[okm, , drop = FALSE]),
+    rbind(Rp[okp, , drop = FALSE], Rm[okm, , drop = FALSE]),
+    Rp[usable, , drop = FALSE], Rm[usable, , drop = FALSE], Vs)
   # The step measured rather than assumed. It reads the pairs' intercept as a
   # shift of the mean, which a near-normal posterior's is and a curved one's
   # is not: a shell mixed into thirty parameters, too slight in any one
@@ -1956,38 +2061,47 @@ ctOptimFullBootstrapDraws <- function(est, standata, sm, n=1000, cores=1,
   # measured, failed: the first stopped the centre on the 250-subject Laplace
   # fit, whose skewed directions are the ones the mean moves along; the second
   # missed a step that went mostly where the residuals had measured nothing.
-  # Sixteen gradients, only for a step of a tenth of an sd or more: below
-  # that, a curvature misread moves the mean by too little to matter.
+  # Sixteen gradients, at the first eight usable pairs, only for a step of a
+  # tenth of an sd or more: below that, a curvature misread moves the mean by
+  # too little to matter.
   record$centrescale <- 1
   if (sqrt(sum(step^2)) >= 0.1 && any(usable)) {
-    sel <- pairs[usable]
-    Zp <- Z[sel, , drop = FALSE]
+    sel <- utils::head(which(usable), 8L)
+    Zs <- Zp[sel, , drop = FALSE]
     at <- function(Zs) sweep(sweep(Zs, 2, step, "+") %*% t(A), 2, est, "+")
-    op <- gradients(at(Zp))
-    om <- gradients(at(-Zp))
-    Rp <- as.matrix(op$gradient) %*% A + Zp
-    Rm <- as.matrix(om$gradient) %*% A - Zp
-    ok <- is.finite(op$value) & op$value > -1e99 & rowSums(!is.finite(Rp)) == 0 &
-      is.finite(om$value) & om$value > -1e99 & rowSums(!is.finite(Rm)) == 0
+    op <- gradients(at(Zs))
+    om <- gradients(at(-Zs))
+    Rpa <- as.matrix(op$gradient) %*% A + Zs
+    Rma <- as.matrix(om$gradient) %*% A - Zs
+    oka <- is.finite(op$value) & op$value > -1e99 & rowSums(!is.finite(Rpa)) == 0 &
+      is.finite(om$value) & om$value > -1e99 & rowSums(!is.finite(Rma)) == 0
     record$centredraws <- record$centredraws + 2L * length(sel)
-    Vs <- found$v[, flagged, drop = FALSE]
     rest <- function(x) x - as.numeric(Vs %*% crossprod(Vs, x))
-    before <- rest(colMeans((R[sel, , drop = FALSE] + Rminus[usable, , drop = FALSE]) / 2))
-    after <- if (any(ok)) rest(colMeans((Rp[ok, , drop = FALSE] + Rm[ok, , drop = FALSE]) / 2)) else NA
+    before <- rest(colMeans((Rp[sel, , drop = FALSE] + Rm[sel, , drop = FALSE]) / 2))
+    after <- if (any(oka)) rest(colMeans((Rpa[oka, , drop = FALSE] +
+      Rma[oka, , drop = FALSE]) / 2)) else NA
     change <- after - before
     record$centrescale <- if (all(is.finite(change)) && sum(change^2) > 0)
       min(1, max(0, -sum(before * change) / sum(change^2))) else 0
   }
-  record$centre <- as.numeric(est + A %*% (record$centrescale * step))
+  # In the directions the sampler takes over, the same pairs' intercept
+  # divided by the precision the check measured, unmeasured: the sampler
+  # weighs those directions itself, so a curvature read there as a shift
+  # moves only where its proposal starts. Left to the sampler, the shift was
+  # in neither: weighed with the rest held at the centre, the sampled
+  # directions' density is a conditional that a covariance's volume does not
+  # move (`.ctImisVolumeTilt()` adds it), and a 266-parameter fit's
+  # population loadings stayed at the mode's lengths, a median 0.6 sds from
+  # a SAEM reference, max 1.0 (scripts/gsm-uncertainty-2026-10/proto_centre.R).
+  record$centre <- as.numeric(est + A %*% (record$centrescale * step +
+    .ctNormalCentreSampled(Rp[usable, , drop = FALSE], Rm[usable, , drop = FALSE],
+      Vs, widths)))
   record$directions <- A %*% found$v[, flagged, drop = FALSE]
   # Whose intervals the normal misstates, positionally.
   record$parameters <- found$parameters
   record$slope <- found$slope[flagged]
   record$shape <- found$shape[flagged]
-  # The variance each direction's slope measured, in units of the normal's:
-  # where importance sampling starts, and the sampler's metric. A slope of one
-  # or more measured no width, and keeps the normal's.
-  record$widths <- ifelse(record$slope < 1, 1 / (1 - record$slope), 1)
+  record$widths <- widths
   record
 }
 
@@ -2049,9 +2163,12 @@ ctOptimFullBootstrapDraws <- function(est, standata, sm, n=1000, cores=1,
 # draws instead, the intercept carries every slope the draws cannot resolve
 # times the draws' mean: with more parameters than draws that error cannot be
 # estimated from them, and a 150-parameter Gaussian whose normal had the widths
-# wrong by 0.6-1.6 moved its centre up to 0.32 sds from 16 draws. Each
-# intercept is shrunk by its standard error (`c max(0, 1 - 4 se^2 / c^2)`), so
-# noise moves nothing. `P` is the residuals' regression on every draw (`Z`, `R`,
+# wrong by 0.6-1.6 moved its centre up to 0.32 sds from 16 draws. The
+# intercept is shrunk as one vector by its Monte Carlo error
+# (`.ctShrunkMean()`), so noise moves it little and a shift spread over many
+# coordinates, each under its own error, is kept; shrunk a coordinate at a
+# time (`c max(0, 1 - 4 se^2 / c^2)`), such a shift was mostly lost (see
+# `.ctOptimNormalCheck()`). `P` is the residuals' regression on every draw (`Z`, `R`,
 # the reflections included), held towards the normal's (a ridge of one draw)
 # where they do not resolve it and floored at 1/25.
 #
@@ -2084,10 +2201,7 @@ ctOptimFullBootstrapDraws <- function(est, standata, sm, n=1000, cores=1,
     if (qs$rank >= k) return(numeric(k))
     qr.Q(qs, complete = TRUE)[, seq.int(qs$rank + 1L, k), drop = FALSE]
   } else diag(k)
-  pairs <- ((Rplus + Rminus) / 2) %*% W
-  intercept <- colMeans(pairs)
-  se <- apply(pairs, 2, stats::sd) / sqrt(nrow(pairs))
-  intercept <- intercept * pmax(0, 1 - 4 * se^2 / pmax(intercept^2, .Machine$double.xmin))
+  intercept <- .ctShrunkMean(((Rplus + Rminus) / 2) %*% W)
   n <- nrow(Z)
   Zc <- sweep(Z, 2, colMeans(Z))
   Rc <- sweep(R, 2, colMeans(R)) %*% W
@@ -2103,6 +2217,28 @@ ctOptimFullBootstrapDraws <- function(est, standata, sm, n=1000, cores=1,
   size <- sqrt(sum(m^2))
   if (size > maxstep) m <- m * maxstep / size
   as.numeric(W %*% m)
+}
+
+# `.ctNormalCentre()`'s step in the directions `sampled` (orthonormal columns
+# of the check's `z`) the sampler takes over, where the check measured
+# precision `1 / widths`: the pairs' intercept `P m` there, shrunk as one
+# vector, times the widths, and held to `maxstep` in the widths' metric.
+.ctNormalCentreSampled <- function(Rplus, Rminus, sampled, widths, maxstep = 3) {
+  k <- NCOL(sampled)
+  if (!k || NROW(Rplus) < 2L) return(numeric(NROW(sampled)))
+  m <- widths * .ctShrunkMean(((Rplus + Rminus) / 2) %*% sampled)
+  size <- sqrt(sum(m^2 / widths))
+  if (size > maxstep) m <- m * maxstep / size
+  as.numeric(sampled %*% m)
+}
+
+# The mean of the rows of `pairs`, shrunk as one vector by its Monte Carlo
+# error (positive-part James-Stein): pure noise moves it little, and a shift
+# spread over many coordinates, each under its own error, is kept.
+.ctShrunkMean <- function(pairs) {
+  m <- colMeans(pairs)
+  noise <- sum(apply(pairs, 2, stats::var)) / nrow(pairs)
+  m * max(0, 1 - noise / max(sum(m^2), .Machine$double.xmin))
 }
 
 # How far a parameter's interval may be from the normal's before it covers
@@ -2563,6 +2699,22 @@ ctOptimFitLpgFunc <- function(fit, cores=1){
     }
   }
 
+  # The answer checked against the density's own gradient, in the units of
+  # the normal it corrected (`.ctSteinCheck()`); the full density's where a
+  # coreset stands in for it.
+  stein <- .ctSteinCheck(.ctJuliaOr(attr(lpg, 'fullgradbatch'), attr(lpg, 'gradbatch')),
+    is_res$theta, uncertaintyfit$cov, ess = is_res$ess)
+  if (!is.null(stein)) {
+    stein$parameters <- if (length(parnames) == length(est)) parnames[stein$parameters] else
+      paste0('par', stein$parameters)
+    if (stein$p < .ctSteinBar$p && stein$offset >= .ctSteinBar$offset) {
+      warning('The importance-sampled draws do not match the posterior\'s gradient ',
+        '(Stein check): their mean is about ', signif(stein$offset, 2),
+        ' sds off, most in ', paste(utils::head(stein$parameters, 3), collapse = ', '),
+        '. ', tailremedy, call. = FALSE)
+    }
+  }
+
   samples <- is_res$theta
   uncertaintyfit$proposal_cov <- uncertaintyfit$cov
   # `$details$covariance` diagnoses the covariance `ctOptimComputeUncertainty()`
@@ -2608,11 +2760,72 @@ ctOptimFitLpgFunc <- function(fit, cores=1){
     # coreset (`.ctCoresetLpg()`) stood in for the full sum, whose record
     # follows.
     cost = is_res$cost,
+    # The volume tilt `'checked'` weighed the sampled directions with
+    # (`.ctImisVolumeTilt()`): its length in the sampled directions' units,
+    # its noise, and its gradients (in `cost`).
+    tilt = is_res$tilt,
+    # The draws against the density's gradient (`.ctSteinCheck()`), not in
+    # `cost`.
+    stein = stein,
     coreset = if (is.function(attr(lpg, 'coreset'))) attr(lpg, 'coreset')())
 
   list(samples = samples, uncertaintyfit = uncertaintyfit, control = control,
     draws = 'imis')
 }
+
+# Stein's identity as a check of a sampled answer: under the posterior,
+# `E[grad lp] = 0` whatever its shape. At `n` of the answer's `draws`, the mean
+# gradient whitened by `cov`'s factor (the normal the sampler corrected, so in
+# its sds) should be zero to within its error, each coordinate's sd over the
+# draws times `sqrt(1 / n + 1 / ess)`: an importance sampler's resampled draws
+# carry its effective sample, not their number. Returns the chi-square of the
+# standardised mean, its degrees of freedom and upper tail, `offset`, the
+# mean's length with its noise taken out (about how far the answer's mean is
+# from the posterior's, in the normal's sds, where the posterior is near
+# normal), `noise`, the gradients spent, and the parameters the largest
+# components load on, positionally. NULL without a gradient.
+#
+# A one-sided check. A mean off by `delta` sds shows as a mean gradient of
+# about `delta`, at z near `delta sqrt(ess)`; mass no draw reaches shows only
+# through the density at its edge, so a pass certifies nothing about the
+# tails (a re-check by gradients passed a funnel, a product and a crescent
+# that importance sampling had missed parts of). On a 266-parameter Laplace
+# fit it failed 'checked''s draws whose population loadings sat 0.6 sds from
+# a SAEM reference and passed the reference, NUTS's draws and the corrected
+# answers; on 90 answers for ten synthetic targets with exact references none
+# fell below p = 0.001 (scripts/gsm-uncertainty-2026-10/calib_stein.R,
+# proto_centre.R). Thinned SAEM draws fail it (ratio 3-4): their
+# effective sample is below their count, which is what `ess` is for.
+.ctSteinCheck <- function(gradbatch, draws, cov, ess = NULL, n = 100L,
+  rtol = .ctFlatDirectionRtol()) {
+  if (!is.function(gradbatch) || NROW(draws) < 2L) return(NULL)
+  e <- eigen((cov + t(cov)) / 2, symmetric = TRUE)
+  keep <- e$values > rtol * max(e$values)
+  A <- sweep(e$vectors[, keep, drop = FALSE], 2, sqrt(e$values[keep]), '*')
+  X <- as.matrix(draws)
+  if (nrow(X) > n) X <- X[sort(sample.int(nrow(X), n)), , drop = FALSE]
+  out <- gradbatch(X)
+  G <- as.matrix(out$gradient)
+  ok <- is.finite(out$value) & out$value > -1e99 & rowSums(!is.finite(G)) == 0
+  if (sum(ok) < 2L) return(NULL)
+  Gw <- G[ok, , drop = FALSE] %*% A
+  m <- nrow(Gw)
+  gbar <- colMeans(Gw)
+  se2 <- apply(Gw, 2, stats::var) *
+    (1 / m + if (length(ess) && is.finite(ess) && ess > 0) 1 / ess else 0)
+  z <- gbar / sqrt(pmax(se2, .Machine$double.xmin))
+  q <- length(z)
+  chi2 <- sum(z^2)
+  top <- order(-abs(z))[seq_len(min(3L, q))]
+  load <- as.numeric(A[, top, drop = FALSE] %*% (z[top] / sqrt(sum(z[top]^2))))
+  list(chi2 = chi2, df = q, p = stats::pchisq(chi2, q, lower.tail = FALSE),
+    offset = sqrt(max(0, sum(gbar^2) - sum(se2))), noise = sqrt(sum(se2)),
+    gradients = nrow(X), parameters = utils::head(order(-abs(load)), 5L))
+}
+
+# When `.ctSteinCheck()` warns: a chi-square past `p` and a mean `offset` or
+# more of the normal's sds from where the gradient puts it.
+.ctSteinBar <- list(p = 1e-3, offset = 0.5)
 
 .ctOptimStoredRedraw <- function(fit, finishsamples, cores, verbose=0){
   julia <- inherits(fit, 'ctJuliaFit')
@@ -2723,16 +2936,21 @@ ctOptimFitLpgFunc <- function(fit, cores=1){
 #' covering under 90\% or over 99\%, or move one tail outside 0.5 to 5\% by
 #' a skew or by a width that moves with another parameter, every departing
 #' direction is sampled as \code{'is'} samples (below), the normal kept in
-#' all the rest, spending at most what the fit's optimisation did. This is
+#' all the rest. This is
 #' what corrects a variance from few groups and the effects it scales. Where
 #' that sampling cannot correct the normal -- a curved ridge such as a loading
 #' vector whose length the data determine and whose direction they barely do,
 #' where the Hessian's intervals can be many times too wide -- the Hessian's
 #' normal is kept, with a warning naming the parameters it misstates. The
-#' normal is centred where the same gradients, and those at 8 of the draws
-#' reflected, put the posterior's mean, which is not the estimate wherever the
-#' posterior is skewed; the estimate stays the fit's, and \code{summary()}
-#' reports it beside the draws. A fit with nothing named gets the Hessian's
+#' normal is centred where the same gradients, and those at the draws
+#' reflected (at least 32 pairs), put the posterior's mean, which is not the
+#' estimate wherever the posterior is skewed or a covariance is estimated;
+#' the estimate stays the fit's, and \code{summary()} reports it beside the
+#' draws. The sampled directions are weighed with the volume the others'
+#' spread adds to them, to first order, and the sampled draws are checked
+#' against the posterior's gradient at 100 of them (Stein's identity), with
+#' a warning where their mean is half a normal sd or more from where the
+#' gradient puts it. A fit with nothing named gets the Hessian's
 #' covariance. The check is recorded
 #' in \code{$uncertainty$details$normalcheck}, and the sampling, when there was
 #' any, in \code{$uncertainty$details$importance_sampling}.}
