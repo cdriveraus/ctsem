@@ -690,8 +690,9 @@ print.ctLaplaceCorrection <- function(x, ...) {
 # three). Each run after the first starts L-BFGS from the curvature pairs the
 # run before it ended with, which the hybrid keeps (`lbfgs_pairs =
 # "objective"`): a placement changes the objective a little and its
-# coordinates not at all, and cold, a run after one spent 91 iterations
-# learning the curvature again for 0.19 nats on the round-9 stall.
+# coordinates not at all. On the round-9 stall a run after a placement took 37
+# iterations from them against 76 cold, to the same point, 0.17 nats up and
+# 0.13 raw away along the fit's flat directions.
 # Intermediate runs take no finish; the last takes the fit's own, on
 # the hybrid's exact Hessian, so the certification reads that. Past a quarter
 # of the units named the fit warns (`.ctLaplaceFrozenShareWarn()`). Returns
