@@ -2508,7 +2508,7 @@ ctOptimFitLpgFunc <- function(fit, cores=1){
   # cause -- and passes straight through to `imis_is()` otherwise; see
   # `IS-importance-sampling-2026-09-06.md`. `lpg` value-only carries the batch
   # attribute `.ctBackendLpgFunc(fit, gradient=FALSE)` sets, whitened or not.
-  is_res <- .ctImisRun(lpg, centre = centre, cov = uncertaintyfit$cov,
+  is_res <- tryCatch(.ctImisRun(lpg, centre = centre, cov = uncertaintyfit$cov,
     directions = directions, widths = uncertaintyfit$details$normalcheck$widths,
     complement = isTRUE(control[["imisComplement"]]),
     max_iter = control$imisMaxIter, scale_init = control$imisScaleInit,
@@ -2518,7 +2518,20 @@ ctOptimFitLpgFunc <- function(fit, cores=1){
     # `verbose > 0`, not TRUE: this printed IMIS iteration progress at
     # `verbose = 0`, so the one argument meant two things across the backends --
     # silence on julia, a page of output on stan.
-    verbose = verbose > 0)
+    verbose = verbose > 0),
+    # A sampler that cannot run -- a proposal covariance that is not finite,
+    # where a population sd collapsed on a flat raw scale -- leaves the
+    # Hessian's normal, said in a warning, rather than stopping the fit.
+    ctImisNonFinite = function(e) e)
+  if (inherits(is_res, "ctImisNonFinite")) {
+    warning("Importance sampling could not run (", conditionMessage(is_res),
+      "); the intervals are the Hessian's.", call. = FALSE)
+    uncertaintyfit$details$importance_sampling <- list(used = FALSE,
+      error = conditionMessage(is_res))
+    return(list(samples = ctOptimNormalDraws(centre, uncertaintyfit$cov,
+      finishsamples), uncertaintyfit = uncertaintyfit, control = control,
+      draws = 'normal'))
+  }
   subspace <- attr(is_res, 'subspace')
 
   # `'checked'` keeps the Hessian's normal where its correction failed. Weights

@@ -982,8 +982,14 @@ imis_is <- function(parlp,
 
   d <- length(mu_hat)
   mu_hat <- as.numeric(mu_hat)
+  # NULL for a matrix with an entry that is not finite: a component built
+  # from one is skipped, and a starting covariance with one stops the sampler
+  # with a condition of class `ctImisNonFinite`, which `'checked'` and `'is'`
+  # turn into the Hessian's normal with a warning. `eigen()` stopped the whole
+  # fit on it: a population sd collapsed on a flat raw scale, on dev1.
   safe_pd <- function(S) {
     S <- (as.matrix(S) + t(as.matrix(S))) / 2
+    if (any(!is.finite(S))) return(NULL)
     e <- eigen(S, symmetric = TRUE)
     floor <- max(max(e$values), 0) * 1e-10 + ridge
     e$vectors %*% (pmax(e$values, floor) * t(e$vectors))
@@ -1029,6 +1035,9 @@ imis_is <- function(parlp,
   }
 
   Sigma_hat <- safe_pd(Sigma_hat)
+  if (is.null(Sigma_hat)) stop(structure(class = c("ctImisNonFinite", "error",
+    "condition"), list(message = paste0("the starting proposal's covariance ",
+    "is not finite"), call = NULL)))
   # The coordinates where the starting proposal is N(0, I): where a Newton
   # component measures its curvature, its distances and its floor.
   L_hat <- t(chol(Sigma_hat))
@@ -1066,9 +1075,10 @@ imis_is <- function(parlp,
       j <- p$j
       Sc <- Sigma_hat - tcrossprod(Sigma_hat[, j]) / Sigma_hat[j, j]
       seg <- p$x - p$from
+      cc <- safe_pd(Sc * tail_scale^2 + tcrossprod(seg / 2))
+      if (is.null(cc)) next
       comp_mu[[length(comp_mu) + 1L]] <- p$x
-      comp_cov[[length(comp_cov) + 1L]] <- safe_pd(Sc * tail_scale^2 +
-        tcrossprod(seg / 2))
+      comp_cov[[length(comp_cov) + 1L]] <- cc
       pw <- c(pw, exp(-p$drop) * abs(seg[j]) / se[j] / sqrt(2 * pi))
     }
     # Every path component keeps a share of the draws, however small its
@@ -1149,10 +1159,13 @@ imis_is <- function(parlp,
     ## ---------- add a component at the top-weighted draws ------------------
     top_idx <- w_raw > stats::quantile(w_raw, 0.9)
     if (sum(top_idx) < 2) top_idx <- rank(-w_raw, ties.method = "first") <= max(2, d + 1)
-    comp_mu[[K + 1L]] <- diagis::weighted_mean(
-      samples[top_idx, , drop = FALSE], w_raw[top_idx])
-    comp_cov[[K + 1L]] <- safe_pd(diagis::weighted_var(
+    cc <- safe_pd(diagis::weighted_var(
       samples[top_idx, , drop = FALSE], w_raw[top_idx]) * tail_scale^2)
+    if (!is.null(cc)) {
+      comp_mu[[K + 1L]] <- diagis::weighted_mean(
+        samples[top_idx, , drop = FALSE], w_raw[top_idx])
+      comp_cov[[K + 1L]] <- cc
+    }
     # And components where the draws say the proposal falls short, each moved
     # by a damped Newton step and shaped by the curvature there; see
     # `.ctImisNewtonComponent()`.
@@ -1171,8 +1184,10 @@ imis_is <- function(parlp,
       for (i in picked) {
         nc <- .ctImisNewtonComponent(gradfun, samples[i, ], L_hat, scale_init)
         if (is.null(nc)) next
+        cc <- safe_pd(nc$cov * tail_scale^2)
+        if (is.null(cc)) next
         comp_mu[[length(comp_mu) + 1L]] <- nc$mu
-        comp_cov[[length(comp_cov) + 1L]] <- safe_pd(nc$cov * tail_scale^2)
+        comp_cov[[length(comp_cov) + 1L]] <- cc
       }
     }
     # Half the next round to the components just added, the rest to every
