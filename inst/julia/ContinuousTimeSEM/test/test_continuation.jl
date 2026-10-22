@@ -710,6 +710,41 @@ _fresh_nested_nonlinear() = (ctsem_laplace_objective(_LAPLACE_NONLINEAR_OBJECTIV
     group=vcat(1:5, [1, 1, 1, 2, 2]), level_ngroups=[5, 2]),
     [0.1, 0.4, -0.2, 0.05, -0.25, 1.5, 0.2, -0.3])
 
+@testset "each flagged unit reports its rule's error, and the hybrid its total" begin
+    # A product rule's error is its value against the rule two nodes fewer,
+    # placed at the same centre; a frozen rule's is its standard error; an
+    # unflagged unit has none; and the hybrid's error is the draws' in
+    # quadrature plus the node errors plus what the screen leaves.
+    laplace, values = _fresh_nonlinear()
+    theta = collect(Float64, values)
+    five = ctsem_laplace_continuation_info(ctsem_laplace_continuation(laplace, theta;
+        tolerance=-1.0))
+    three = ctsem_laplace_continuation_info(ctsem_laplace_continuation(laplace, theta;
+        tolerance=-1.0, nodes=3))
+    @test five.nflagged == five.nunits
+    for U in five.flagged
+        @test isapprox(five.centre_error[U],
+            abs(five.quadrature_units[U] - three.quadrature_units[U]); atol=1e-8)
+    end
+    @test five.error_draws == 0
+    @test five.error_nodes ≈ sum(five.centre_error[U] for U in five.flagged)
+    @test five.error ≈ five.error_draws + five.error_nodes + five.error_residual
+    # Nothing flagged: no unit has an error, and the hybrid's is the residual.
+    none = ctsem_laplace_continuation_info(ctsem_laplace_continuation(laplace, theta;
+        tolerance=1e6))
+    @test none.nflagged == 0
+    @test all(isnan, none.centre_error)
+    @test none.error == none.error_residual
+    laplace, values = _fresh_2d3()
+    theta = collect(Float64, values)
+    nunits = length(laplace.units.members)
+    drawn = ctsem_laplace_continuation_info(ctsem_laplace_continuation(laplace, theta;
+        tolerance=0.0, maxdim=2, draws=256, force=1:nunits))
+    @test all(drawn.centre_error[U] == drawn.centre_se[U] for U in drawn.flagged)
+    @test drawn.error_draws ≈ sqrt(sum(abs2, drawn.centre_se[drawn.flagged]))
+    @test drawn.error_nodes == 0
+end
+
 @testset "a nested unit wider than maxdim gets frozen draws per block" begin
     # At the default `draws_df`: a t at the top block and Gaussians beneath.
     # A t beneath read 0.03-0.12 nats high here (`_continuation_importance_rule`).

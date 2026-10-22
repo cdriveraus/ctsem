@@ -620,6 +620,29 @@ print.ctLaplaceCorrection <- function(x, ...) {
   draws = 256L, draws_se = 0.05, draws_max = 16384L, draws_df = 4,
   draws_scope = "forced", frozen_rounds = 10L)
 
+# How far the hybrid's objective is from the exact marginal, from the engine's
+# info at a placement (`ctsem_laplace_continuation_info`): `nats`, the frozen
+# rules' standard errors in quadrature plus the product rules' node errors
+# plus what the screen leaves on Laplace; `se`, how far the estimate can be
+# from the exact-marginal optimum in standard errors, by the certification's
+# own arithmetic (a displacement costing `e` nats on the quadratic is at most
+# `sqrt(2 e)` long); the three parts; each unit's own error (`NaN` where its
+# term is Laplace's); and `unscored`, units too wide to be scored at all,
+# which the number does not cover.
+.ctLaplaceIntegrationError <- function(info, unscored = 0L) {
+  nats <- as.numeric(info$error)[1L]
+  # Rounding is not an error: on a linear Gaussian fit the screen's gaps are
+  # 1e-14 nats of arithmetic, and reported as such they read as a finding.
+  if (is.finite(nats) && nats < 1e-8) nats <- 0
+  list(nats = nats,
+    se = if (is.finite(nats) && nats >= 0) sqrt(2 * nats) else NA_real_,
+    draws = as.numeric(info$error_draws)[1L],
+    nodes = as.numeric(info$error_nodes)[1L],
+    residual = as.numeric(info$error_residual)[1L],
+    units = as.numeric(info$centre_error),
+    unscored = as.integer(.ctJuliaOr(unscored, 0L))[1L])
+}
+
 # The engine arguments of a continuation built under `control`: the product
 # rules' constants, the frozen importance rule's for units too wide for one
 # (`draws`, `draws_se`, `draws_max`; laplace_continuation.jl's module
@@ -1224,6 +1247,9 @@ print.ctLaplaceCorrection <- function(x, ...) {
     flagged = as.integer(start$nflagged), units = as.integer(start$nunits),
     rule_failures = as.integer(start$rule_failures),
     wide = as.integer(start$nwide), maxdim = as.integer(start$maxdim))
+  # What the objective is known to at the screen; the paths that place again
+  # replace it with the final placement's.
+  record$error <- .ctLaplaceIntegrationError(start, unscored = record$wide)
   # Wall seconds by stage as each is passed -- the screen, the rounds, the
   # continuation's Hessian, its certification, the uncertainty redrawn from it
   # -- and `total` when the record is written.
@@ -1295,6 +1321,7 @@ print.ctLaplaceCorrection <- function(x, ...) {
   # beside the wall seconds by stage.
   account <- function(record) {
     after <- get(module$ctsem_laplace_continuation_info(cont))
+    record$error <- .ctLaplaceIntegrationError(after, unscored = record$wide)
     record$evaluations <- c(values = as.integer(after$value_calls),
       gradients = as.integer(after$gradient_calls),
       placements = as.integer(after$recentres),
@@ -1448,6 +1475,7 @@ print.ctLaplaceCorrection <- function(x, ...) {
   # The objective the estimate maximises: the hybrid, whose unflagged units are
   # Laplace. It differs from the quadrature value above by at most `residual`.
   record$objective <- as.numeric(final$value)
+  record$error <- .ctLaplaceIntegrationError(info, unscored = record$wide)
   fit$estimate$raw <- x
   fit <- report_quadrature(fit, info)
   usable <- reached && !inherits(hc, "try-error") && all(is.finite(hc))
@@ -1510,7 +1538,9 @@ print.ctLaplaceCorrection <- function(x, ...) {
     fit$uncertainty$details$laplace_correction <- list(
       draws = paste0("draws about the continuation's estimate, by '",
         method, "' on its quadrature objective there"),
-      nodes = record$nodes)
+      nodes = record$nodes,
+      # What the density the draws came from is known to, in nats.
+      error = record$error)
     stages["uncertainty"] <- since(uncertainty_started)
   } else {
     # Recentred, as the step correction does, when the continuation stopped
