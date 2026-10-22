@@ -1176,8 +1176,10 @@ coreset was fitted on: the farthest training point's distance from where the
 stage began, in the metric `metric` scales by; and the held-out relative error
 of the last coreset chosen, squared (`rel`), the fit's gap tolerance: no
 stage is carried on from one that gained less than it an iteration (`gap_tol`,
-set by `ctsem_optimize`); and, per parameter, the farthest the training points
-lie from where the stage began (`reach`), which the stage may not pass.
+set by `ctsem_optimize`); per parameter, the farthest the training points lie
+from where the stage began (`reach`), which the stage may not pass; and the
+accepted iterations so far, full or not (`seen`), with the one each stage
+began after (`starts`), which places the stages on the run's trace.
 """
 mutable struct CTSEMCoresetPlan
     full::CTSEMLaplaceObjective
@@ -1217,6 +1219,8 @@ mutable struct CTSEMCoresetPlan
     rel::Float64
     gap_tol::Float64
     reach::Vector{Float64}
+    seen::Int
+    starts::Vector{Int}
 end
 
 """
@@ -1240,7 +1244,7 @@ function _ctsem_coreset_plan(L::CTSEMLaplaceObjective, fg!, store)
         Vector{Float64}[], Matrix{Float64}[], Vector{Float64}[], false, nothing,
         Float64[], NaN, Float64[], 0.0, 0, _CTSEM_CORESET_FIRST_STAGE, 0.0, 0,
         0, Int[], Float64[], Int[], Int[], Float64[], 0, 0, 0, 0, 0.0, 0,
-        0.0, Float64[], 0.0, 0.0, Float64[])
+        0.0, Float64[], 0.0, 0.0, Float64[], 0, Int[])
 end
 
 _ctsem_coreset_live(c) = c !== nothing && c.live
@@ -1622,6 +1626,7 @@ of the stage that just failed its check.
 """
 function _ctsem_coreset_step!(c::CTSEMCoresetPlan, x, f, G, hmul, scale)
     none = (act=:none, x=x, f=f, G=G)
+    c.seen += 1
     if !c.live
         _ctsem_coreset_record!(c, x, G) || return none
         c.since += 1
@@ -1668,6 +1673,7 @@ function _ctsem_coreset_begin!(c::CTSEMCoresetPlan, cs::CTSEMCoreset, x, f, G,
     c.reach = [maximum((abs(xk[i] - c.x0[i]) for xk in c.X); init=0.0)
         for i in eachindex(c.x0)]
     push!(c.sizes, length(cs.units))
+    push!(c.starts, c.seen)
     push!(c.shares, _ctsem_coreset_share(c, cs.units))
     push!(c.stage_iterations, 0)
     push!(c.bought, NaN)

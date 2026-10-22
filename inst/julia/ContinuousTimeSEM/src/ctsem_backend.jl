@@ -3304,6 +3304,7 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
         coreset_bought=_ctsem_coreset_report(coreseter, :bought),
         coreset_stage_iterations=_ctsem_coreset_report(coreseter, :stage_iterations),
         coreset_entered=_ctsem_coreset_report(coreseter, :entered),
+        coreset_starts=_ctsem_coreset_report(coreseter, :starts),
         coreset_iterations=coreseter === nothing ? 0 : coreseter.total_iterations,
         coreset_checks=coreseter === nothing ? 0 : coreseter.checks,
         coreset_reverted=coreseter === nothing ? 0 : coreseter.reverted,
