@@ -2162,8 +2162,7 @@ ctOptimFullBootstrapDraws <- function(est, standata, sm, n=1000, cores=1,
     Rm[usable, , drop = FALSE], Vs)
   if (!is.null(spread)) {
     D <- A %*% spread$directions
-    record$spread <- list(directions = D, widths = spread$widths, slope = spread$slope,
-      slopese = spread$slopese,
+    record$spread <- list(directions = D, widths = spread$widths,
       cov = cov + D %*% (t(D) * (spread$widths - 1)))
   }
   record$directions <- A %*% found$v[, flagged, drop = FALSE]
@@ -2290,39 +2289,51 @@ ctOptimFullBootstrapDraws <- function(est, standata, sm, n=1000, cores=1,
 }
 
 # The widths the pairs measure in the directions the sampler does not take
-# over: the second-order partner of `.ctNormalCentre()`'s step. A pair's odd
-# part, `(R(z) - R(-z)) / 2`, is `(I - P) z` and the residuals' odd terms,
-# with none of the intercept, so its regression on `z` along a direction `u`
-# measures the precision there that the posterior has on average over the
-# normal -- the curvature Gaussian variational inference's fixed point uses,
-# by Price's theorem, rather than the mode's. Directions are the odd parts'
-# right singular vectors outside `sampled` (orthonormal columns of the
-# check's `z`); along each, the slope and its standard error as
-# `.ctNormalDepartures()` takes them, and where the slope is resolved, `bar`
-# standard errors from zero, the width `1 / (1 - slope)`, held to
-# `[1 / cap, cap]`, kept where it moves the sd by `least` or more (5%, which
-# moves a 95% interval's coverage by under a point). NULL where nothing is
-# kept: a posterior the Hessian describes has odd parts of zero, and a
-# Hessian differenced to a few digits has resolved widths of 1.0001.
+# over: the second-order partner of `.ctNormalCentre()`'s step. In the check's
+# `z`, where the normal is N(0, I), a posterior `-|z|^2 / 2 + T[z, z, z] / 6 +
+# Q[z, z, z, z] / 24` has covariance `I + B + 2 C` to second order, and the
+# pairs give both terms (scripts/gsm-uncertainty-2026-10/cov2nd.R checks it
+# against the exact covariance in two dimensions):
+#   * `B`, the averaged curvature's deficit, `I - E[-grad^2 lp]` over the
+#     normal: the fourth derivatives' share, which Gaussian variational
+#     inference's fixed point takes (Price's theorem). A pair's odd part,
+#     `(R(z) - R(-z)) / 2`, is `B z` plus higher odd terms; along each of its
+#     right singular vectors its slope on `z` and that slope's standard error
+#     as `.ctNormalDepartures()` takes them, kept where `bar` standard errors
+#     resolve it.
+#   * `C`, the covariance over the pairs of their even parts,
+#     `(R(z) + R(-z)) / 2 = T[z, z] / 2` and the intercept: the third
+#     derivatives' share, `T T' / 2`, which a skewed posterior widens by and
+#     the averaged curvature does not see.
+# Both outside `sampled` (orthonormal columns of `z`). The directions are the
+# eigenvectors of `(I - B)^-1 - I + 2 C`; a direction's width, one plus its
+# eigenvalue, is kept where it moves the sd by `least` or more (5%, a 95%
+# interval's coverage by under a point) and stays within `near` of the
+# normal's, where the expansion holds; past that the check, not this, is what
+# the posterior's departure answers to. NULL where nothing is kept: a
+# posterior the Hessian describes has odd and even parts of zero, and a
+# Hessian differenced to a few digits has widths of 1.0001.
 #
 # Why. The check samples a direction only when it moves an interval out of
 # the coverage band; a width wrong by less, in many directions, it passes.
 # A population covariance's sds are so: on the 247-parameter rank-2 fit of
 # scripts/gsm-uncertainty-2026-10/scale_model.R the normal's L L' sds were
-# 8-24% narrow against SAEM and nothing was named.
-.ctNormalSpread <- function(Z, Rplus, Rminus, sampled = NULL, bar = 3, cap = 4,
-  least = 0.05) {
+# 8-24% narrow against SAEM and nothing was named. The averaged curvature
+# alone narrowed them further, to 0.86 at the median.
+.ctNormalSpread <- function(Z, Rplus, Rminus, sampled = NULL, bar = 3, least = 0.05,
+  near = c(0.5, 2)) {
   n <- NROW(Z)
   if (n < 8L || NCOL(sampled) >= NCOL(Z)) return(NULL)
   out <- if (NCOL(sampled)) function(M) M - (M %*% sampled) %*% t(sampled) else identity
   odd <- (Rplus - Rminus) / 2
   D <- out(odd)
   Zo <- out(Z)
+  E <- out((Rplus + Rminus) / 2)
+  E <- sweep(E, 2, colMeans(E))
+  # What the projection leaves of the sampled directions is rounding.
+  scale <- sqrt(sum(odd^2) + sum(((Rplus + Rminus) / 2)^2))
   sv <- svd(D, nu = 0L, nv = min(dim(D)))
-  # Measured against the odd parts before projection: what the projection
-  # leaves of the sampled directions is rounding.
-  live <- sv$d > 1e-8 * sqrt(sum(odd^2))
-  if (!any(live)) return(NULL)
+  live <- sv$d > 1e-8 * scale
   V <- sv$v[, live, drop = FALSE]
   along <- D %*% V
   zalong <- Zo %*% V
@@ -2330,12 +2341,25 @@ ctOptimFullBootstrapDraws <- function(est, standata, sm, n=1000, cores=1,
   slope <- colSums(along * zalong) / zz
   left <- along - sweep(zalong, 2, slope, '*')
   slopese <- sqrt(colSums(left^2 * zalong^2)) / zz
-  widths <- pmin(cap, pmax(1 / cap, ifelse(slope < 1, 1 / (1 - slope), cap)))
-  ok <- is.finite(slope) & is.finite(slopese) & abs(slope) > bar * slopese &
-    abs(sqrt(widths) - 1) >= least
-  if (!any(ok)) return(NULL)
-  list(directions = V[, ok, drop = FALSE], widths = widths[ok],
-    slope = slope[ok], slopese = slopese[ok])
+  ok <- is.finite(slope) & is.finite(slopese) & abs(slope) > bar * slopese & slope < 1
+  V <- V[, ok, drop = FALSE]
+  slope <- slope[ok]
+  # The even parts' rows, kept where they are more than rounding.
+  Er <- E[sqrt(rowSums(E^2)) > 1e-8 * scale, , drop = FALSE]
+  basis <- cbind(V, t(Er))
+  if (!ncol(basis)) return(NULL)
+  qb <- qr(basis)
+  U <- qr.Q(qb)[, seq_len(qb$rank), drop = FALSE]
+  # (I - B)^-1 - I along V, and 2 C, in the basis U.
+  VU <- crossprod(U, V)
+  M <- VU %*% (t(VU) * (1 / (1 - slope) - 1)) +
+    2 * crossprod(Er %*% U) / max(n - 1, 1)
+  e <- eigen((M + t(M)) / 2, symmetric = TRUE)
+  widths <- 1 + e$values
+  keep <- widths >= near[1] & widths <= near[2] & abs(sqrt(pmax(widths, 0)) - 1) >= least
+  if (!any(keep)) return(NULL)
+  list(directions = U %*% e$vectors[, keep, drop = FALSE], widths = widths[keep],
+    curvature = length(slope), skew = nrow(Er))
 }
 
 # `.ctNormalCentre()`'s step in the directions `sampled` (orthonormal columns
