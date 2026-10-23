@@ -857,17 +857,16 @@
   hessian
 }
 
-# `ctFitUncertainty(fit, 'is', control = list(likelihood = ...))`: importance
-# sampling against a likelihood the fit did not maximise -- the adaptive
-# Gauss-Hermite integral over a Laplace fit's random effects, or the particle
-# filter for a filter fit. The two samplers own their densities and their
-# records (`.ctLaplaceCorrect()`, `.ctParticleCorrect()`); this maps the 'is'
-# controls the three targets share onto them, so one entry point replaces the
-# draws behind a fit's intervals whichever density they are drawn against.
+# `ctFitUncertainty(fit, 'is' | 'checked', control = list(likelihood = ...))`:
+# the draws behind a fit's intervals against a density the fit did not
+# maximise -- the quadrature hybrid the continuation climbs, or the particle
+# filter for a filter fit. The two targets own their densities and their
+# records (`.ctLaplaceContinue()`, `.ctParticleCorrect()`); this maps the
+# shared controls onto them.
 .ctBackendUncertaintyLikelihoods <- c("fit", "quadrature", "particle")
 
-.ctBackendUncertaintyLikelihood <- function(fit, likelihood, finishsamples,
-  cores, control, verbose) {
+.ctBackendUncertaintyLikelihood <- function(fit, uncertainty, likelihood,
+  finishsamples, cores, control, verbose) {
   own <- switch(likelihood, quadrature = "nodes",
     particle = c("particles", "substeps", "transition", "seed"))
   shared <- c(isESS = "target_ess", isitersize = "nbatch",
@@ -879,18 +878,94 @@
       likelihood, "'. Its settings are ",
       paste(c(own, names(shared)), collapse = ", "), ".", call. = FALSE)
   }
+  if (identical(likelihood, "quadrature")) {
+    return(.ctBackendUncertaintyQuadrature(fit, uncertainty,
+      finishsamples = finishsamples, cores = cores, control = control,
+      verbose = verbose, shared = setdiff(names(shared), "correctEstimate")))
+  }
+  # The particle filter's density is sampled by the adaptive importance
+  # sampler alone: it has no normal to check.
+  if (!identical(uncertainty, "is")) {
+    stop("likelihood = 'particle' is sampled by uncertainty = 'is'; ",
+      "uncertainty = '", uncertainty, "' has no sampler against it.",
+      call. = FALSE)
+  }
   args <- c(list(fit = fit, finishsamples = finishsamples, cores = cores,
     verbose = verbose), control[intersect(names(control), own)])
   for (name in intersect(names(control), names(shared))) {
     args[[shared[[name]]]] <- control[[name]]
   }
-  fit <- do.call(if (identical(likelihood, "quadrature")) .ctLaplaceCorrect else
-    .ctParticleCorrect, args)
+  fit <- do.call(.ctParticleCorrect, args)
   # The record every other method writes, so `summary()` and a later
   # `uncertainty = 'stored'` describe these draws rather than the pass before.
   fit$uncertainty$settings <- list(method = "is", draws = "imis",
     finishsamples = nrow(fit$estimate$rawposterior), cores = cores,
     control = c(list(likelihood = likelihood), control))
+  fit
+}
+
+# `likelihood = 'quadrature'`: the continuation from the fit's estimate, and
+# the uncertainty by `uncertainty` on the hybrid it ends on, whose error the
+# record reports (`fit$laplace$correction$error`). A fit the fit-time
+# correction already moved is placed where it stands and not moved again
+# (`rounds = 0`), as is any fit under `correctEstimate = FALSE`; one made
+# with the correction off is climbed first. Where the screen finds Laplace
+# exact at the estimate the hybrid is the fit's own objective there, and the
+# draws are taken on it; where the continuation could not draw (no Hessian
+# to certify its end, every unit too wide) the draws are taken on the fit's
+# own objective too, and a message says so.
+.ctBackendUncertaintyQuadrature <- function(fit, uncertainty, finishsamples,
+  cores, control, verbose, shared) {
+  if (is.null(fit$model_spec$laplace)) {
+    stop("likelihood = 'quadrature' applies to fits made with ",
+      "intoverpop = 'laplace'. The augmented route carries the random effects ",
+      "in the state and has no separate integral to take by quadrature; ",
+      "likelihood = 'particle' is its exact reference.", call. = FALSE)
+  }
+  already <- .ctLaplaceIsCorrected(fit)
+  if (already && isTRUE(control$correctEstimate)) {
+    stop("This fit was already corrected by quadrature when it was fitted ",
+      "(fit$laplace$correction), so moving the estimate again would correct ",
+      "it twice. Drop correctEstimate to redraw around the corrected ",
+      "estimate, or refit with optimcontrol$laplace_correct = FALSE.",
+      call. = FALSE)
+  }
+  stay <- already || identical(control$correctEstimate, FALSE)
+  est <- as.numeric(fit$estimate$raw)
+  # The climb's first metric and basis is the fit's curvature at its
+  # estimate; a fit left where it is needs none (`.ctLaplaceContinue()`
+  # forms the hybrid's own at the end).
+  if (!stay && is.null(.ctBackendStoredHessian(fit, est))) {
+    stop("likelihood = 'quadrature' needs the fit's curvature at its ",
+      "estimate (its parameter covariance): the continuation's first metric, ",
+      "and the certification of where it ends. Run ctFitUncertainty(fit) ",
+      "first, or refit without optimcontrol$estonly.", call. = FALSE)
+  }
+  settings <- .ctLaplaceContinueDefaults
+  if (!is.null(control$nodes)) settings$nodes <- as.integer(control$nodes)
+  if (stay) settings$rounds <- 0L
+  if (is.null(finishsamples)) {
+    finishsamples <- if (!is.null(fit$estimate$rawposterior))
+      nrow(fit$estimate$rawposterior) else 1000L
+  }
+  iscontrol <- control[intersect(names(control), shared)]
+  fit$uncertainty$settings <- list(method = uncertainty, draws = "imis",
+    finishsamples = finishsamples, cores = cores, control = iscontrol)
+  fit <- .ctLaplaceContinue(fit, cores = cores, verbose = verbose,
+    control = settings, method = uncertainty)
+  drawn <- identical(fit$uncertainty$settings$method, uncertainty) &&
+    !is.null(fit$uncertainty$details$laplace_correction$error)
+  if (!drawn) {
+    status <- as.character(.ctJuliaOr(fit$laplace$correction$status, ""))[1L]
+    if (!identical(status, "exact")) {
+      message("The quadrature hybrid could not be sampled (", status,
+        "); the draws are against the fit's own objective.")
+    }
+    fit <- .ctBackendUncertainty(fit, uncertainty = uncertainty, draws = "imis",
+      finishsamples = finishsamples, cores = cores, control = iscontrol,
+      verbose = verbose)
+  }
+  fit$uncertainty$settings$control <- c(list(likelihood = "quadrature"), control)
   fit
 }
 

@@ -1,12 +1,14 @@
-# `ctFitUncertainty(fit, 'is', control = list(likelihood = 'quadrature'))`:
-# importance sampling against the quadrature posterior, after the correction
-# `ctLaplaceCheck()` measures.
+# `ctFitUncertainty(fit, 'is' | 'checked', control = list(likelihood =
+# 'quadrature'))`: the draws behind the intervals taken on the quadrature
+# hybrid the continuation climbs (`.ctLaplaceContinue()`), by the method asked
+# for.
 #
-# The engine's suite proves the quadrature and the Newton step. What is left for
-# here is that applying them changes the fit in the ways claimed and in no
-# others: that a fit where Laplace is exact keeps its estimate, that the record
-# says what was done, and that each way of asking for something unsupported
-# refuses rather than returning something that looks like an answer.
+# The engine's suite proves the rules and the climb. What is left for here is
+# that the request changes the fit in the ways claimed and in no others: that
+# a fit where Laplace is exact keeps its estimate and draws on it, that the
+# record says what was done, and that each way of asking for something
+# unsupported refuses rather than returning something that looks like an
+# answer.
 
 # A random effect on an identity-transformed parameter. Laplace is exact for
 # that integrand, so there is nothing to correct -- which makes it the sharpest
@@ -50,10 +52,10 @@
   get("fit", envir = .correct_cache, inherits = FALSE)
 }
 
-# A short run: one round of 40 quadrature evaluations is enough to show the
-# machinery working end to end, and not to pin a posterior.
-.quadrature_is <- function(fit, ...) {
-  suppressWarnings(ctFitUncertainty(fit, uncertainty = "is", finishsamples = 60,
+# A short run: one round of 40 draws is enough to show the machinery working
+# end to end, and not to pin a posterior.
+.quadrature_is <- function(fit, method = "is", ...) {
+  suppressWarnings(ctFitUncertainty(fit, uncertainty = method, finishsamples = 60,
     control = list(likelihood = "quadrature", nodes = 5, isitersize = 40,
       imisMaxIter = 1L, isESS = 20, ...)))
 }
@@ -66,27 +68,16 @@ test_that("a fit where Laplace is exact keeps its estimate, and records what was
 
   set.seed(9)
   corrected <- .quadrature_is(fit)
-  record <- corrected$laplace_correction
-  expect_s3_class(record, "ctLaplaceCorrection")
-  # Not merely small: the gap gradient here is floating-point noise, so the
-  # correction should be at the level of the arithmetic rather than at the
-  # level of the parameter.
-  expect_lt(max(abs(record$check$parameters$delta_se)), 1e-4)
+  # The screen finds Laplace exact here (the file comment), so the hybrid is
+  # the fit's own objective, nothing is continued, and the draws are taken on
+  # it.
+  record <- corrected$laplace$correction
+  expect_identical(record$status, "exact")
   expect_equal(as.numeric(corrected$estimate$raw), before, tolerance = 1e-6)
-  expect_equal(record$before$raw, before)
-  expect_true(record$corrected_estimate)
-
-  expect_identical(record$draws, "imis")
-  expect_true(is.finite(record$ess) && record$ess > 0)
   expect_equal(nrow(corrected$estimate$rawposterior), 60L)
   expect_equal(ncol(corrected$estimate$rawposterior), length(fit$estimate$raw))
   expect_false(is.null(corrected$uncertainty$imis))
   expect_equal(unname(corrected$estimate$se), unname(sqrt(diag(corrected$estimate$cov))))
-  # This fixture is exactly the case Laplace is exact for (see the file
-  # comment), so there is no flat direction to whiten here; the point of the
-  # test is that the shared IMIS core runs end to end against the quadrature
-  # density through this entry point, not that whitening triggers.
-  expect_null(attr(corrected$uncertainty$imis, 'subspace'))
 
   # The record every method writes, so summaries describe these draws.
   settings <- corrected$uncertainty$settings
@@ -96,7 +87,14 @@ test_that("a fit where Laplace is exact keeps its estimate, and records what was
   expect_identical(corrected$uncertainty$draws, "imis")
   expect_match(suppressMessages(summary(corrected))$uncertaintyNote,
     "likelihood='quadrature'", fixed = TRUE)
-  expect_output(print(record), "importance sampled against the quadrature")
+
+  # And by 'checked', on the same density.
+  set.seed(9)
+  checked <- .quadrature_is(fit, method = "checked")
+  expect_identical(checked$uncertainty$settings$method, "checked")
+  expect_identical(checked$uncertainty$settings$control$likelihood, "quadrature")
+  expect_equal(as.numeric(checked$estimate$raw), before, tolerance = 1e-6)
+  expect_equal(nrow(checked$estimate$rawposterior), 60L)
 })
 
 test_that("correctEstimate = FALSE leaves the point where it was", {
@@ -106,14 +104,14 @@ test_that("correctEstimate = FALSE leaves the point where it was", {
   set.seed(10)
   same <- .quadrature_is(fit, correctEstimate = FALSE)
   expect_equal(as.numeric(same$estimate$raw), as.numeric(fit$estimate$raw))
-  expect_false(same$laplace_correction$corrected_estimate)
-  expect_output(print(same$laplace_correction), "left at the uncorrected point")
+  expect_false(isTRUE(same$laplace$correction$applied))
+  expect_identical(same$uncertainty$settings$control$likelihood, "quadrature")
 })
 
 test_that("requests it cannot serve are refused by name", {
   skip_without_julia()
   fit <- .correct_fit()
-  # Only 'is' samples, so only 'is' takes a likelihood.
+  # Only the methods that draw take a likelihood.
   expect_error(ctFitUncertainty(fit, "hessian",
     control = list(likelihood = "quadrature")), "applies to uncertainty = 'is'")
   # Each likelihood takes its own settings and the shared ones, nothing else.
@@ -125,6 +123,9 @@ test_that("requests it cannot serve are refused by name", {
   # The quadrature and particle filter are the julia engine's.
   expect_error(ctFitUncertainty(ctstantestfit, "is",
     control = list(likelihood = "quadrature")), "only available for backend='julia'")
+  # The particle filter is sampled by 'is' alone.
+  expect_error(ctFitUncertainty(fit, "checked",
+    control = list(likelihood = "particle")), "sampled by uncertainty = 'is'")
 
   augmented <- suppressMessages(ctFit(.correct_test_data(),
     .correct_test_model(), backend = "julia", intoverpop = "augmented",
@@ -133,9 +134,9 @@ test_that("requests it cannot serve are refused by name", {
     control = list(likelihood = "quadrature")), "intoverpop = 'laplace'",
     fixed = TRUE)
 
-  # Without uncertainty there is no curvature to take the Newton step against,
-  # and no first proposal, which is a different failure from the fit being the
-  # wrong kind.
+  # Without uncertainty there is no curvature for the continuation's metric
+  # or its certification, which is a different failure from the fit being
+  # the wrong kind.
   estonly <- suppressMessages(ctFit(.correct_test_data(),
     .correct_test_model(), backend = "julia", intoverpop = "laplace",
     optimcontrol = list(estonly = TRUE)))

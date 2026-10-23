@@ -5,9 +5,7 @@
 test_that("every draw-producing route defaults to the same effective sample size", {
   target <- ctsem:::.ctEssTarget
   expect_identical(target, 200)
-  # The quadrature and particle samplers write the number out in their
-  # signatures.
-  expect_identical(formals(ctsem:::.ctLaplaceCorrect)$target_ess, target)
+  # The particle sampler writes the number out in its signature.
   expect_identical(formals(ctsem:::.ctParticleCorrect)$target_ess, target)
   # The internal ones name it.
   expect_identical(eval(formals(ctsem:::.ctOptimImisDraws)$target_ess,
