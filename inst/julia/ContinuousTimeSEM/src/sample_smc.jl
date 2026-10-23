@@ -52,24 +52,35 @@ time series, for nothing), so a stage is one block of `nmoves`.
 the default): a few units with non-negative weights whose weighted terms
 follow the full sum over the current cloud (`_smc_coreset_fit`, fitted from
 every unit's term at every particle, which the stage's weights need anyway).
-A move on the coreset density `q_t` instead of the stage's `pi_t` costs the
-coreset's share of a gradient, and nothing is lost: the particles after the
-moves are distributed as `q_t`, so the next stage's incremental weight is
-`pi_{t+1} / q_t`, which is the usual `exp(delta (log pi - log q0))` times
-`exp(-beta_t e)` with `e` the coreset's error at the particle -- an exact
-importance correction, read from the full values the stage evaluates for its
-weights. The correction's own effective size (`stage_correction_ess`) is the
-check: a coreset whose error alone drops it under the stage's target is
-refitted at half the tolerance, after a stage that moves `beta` by nothing
-and only corrects; two such stages in a row and the run goes on without a
-coreset. The final phase's chains run on the coreset too, and their draws
-are corrected by `exp(log pi - log q)` at every draw and resampled
+A move on the coreset density costs the coreset's share of a gradient. The
+moves are invariant for the tempered coreset density `q_t = q0^(1 - beta)
+c^beta`, not for the stage's `pi_t = q0^(1 - beta) pi^beta`, and the
+particles enter them distributed as `pi_t`, so after finitely many moves
+they are neither. The correction is the SMC sampler's backward kernel (Del
+Moral, Doucet and Jasra 2006) taken as the moves' own reversal under `q_t`:
+a particle moved from `x` to `y` carries `r(y) / r(x)`, `r = (pi / c)^beta`,
+whose log is `beta ((lp(y) - lc(y)) - (lp(x) - lc(x)))` -- the coreset's
+error where the particle ended less where it began; one for a particle that
+did not move (`_smc_move_correction`). The full values at `y` are the next
+stage's weights' anyway, and the coreset's at `x` are one coreset batch
+before the moves. Its expectation is one under the stage's density, so the
+stages' log mean weights still sum to the log constant with a coreset as
+without, and the engine tests check that on closed forms. An earlier version
+took `exp(beta (lp(y) - lc(y)))` alone, which is right only once the moves
+have mixed to `q_t`; with a few moves it tilted the cloud by the coreset's
+error where the particles began (found by the chart session, 2026-10-23).
+The correction's own effective size (`stage_correction_ess`) is the check: a
+coreset whose error alone drops it under the stage's target is refitted at
+half the tolerance, after a stage that moves `beta` by nothing and only
+corrects; two such stages in a row and the run goes on without a coreset.
+The final phase's chains run on a coreset fitted to the posterior's cloud;
+the same reversal makes draw `k` of a chain that started at `x0` carry
+`(pi / c)(x_k) / (pi / c)(x0)`, times whatever the last stage's moves left
+owing at `x0`, and the draws are resampled by those weights
 (`final_correction_ess` is the fraction kept); the chain diagnostics are the
-chains' own, before the resampling. Without a coreset the stages' log mean
-weights sum to the log constant (the engine tests check it on closed forms);
-with one the moves' density has a normaliser of its own, and they do not.
-A wrong coreset cannot give a wrong posterior here, only a slow one, which
-is what makes it safe to run by default: `coreset = false` is the oracle.
+chains' own, before the resampling. A coreset that follows the cloud poorly
+makes the run slower, not its posterior different, which is what makes it
+safe to run by default: `coreset = false` is the oracle.
 
 **Particles run in parallel on copies** (`parallel = true`): on the Laplace
 route each pool worker takes a copy of the objective (`_laplace_draw_copy`:
@@ -305,26 +316,28 @@ function _smc_coreset_path(A::Matrix{Float64}, b::Vector{Float64},
     return chosen
 end
 
-"""A Laplace objective's units' shares of a full evaluation."""
+# What the sampler asks of an objective whose log density is a sum of units'
+# terms, so that its particles can move on a coreset of them. The Laplace
+# route answers; any other objective is moved in full. A test can answer for
+# a closed-form target of its own.
+
+"""Whether `objective` is a sum of at least two units' terms a coreset can
+stand in for."""
+_smc_coreset_capable(objective) = false
+_smc_coreset_capable(laplace::CTSEMLaplaceObjective) = length(laplace.units.members) >= 2
+
+"""Each unit's share of a full evaluation."""
 function _smc_unit_cost(laplace::CTSEMLaplaceObjective)
     w = _laplace_unit_weights(laplace)
     return w ./ sum(w)
 end
 
-"""
-    _smc_terms(objective, X, want_terms)
-
-Every column of `X` evaluated in full: the log density (`value`, `-Inf` where
-the point cannot be used), and, on the Laplace route when `want_terms`, each
-unit's term (`terms`, `nunits x n`) and their weighted sum without the prior
-(`total`), for fitting a coreset.
-"""
-function _smc_terms(objective, X::AbstractMatrix{Float64}, want_terms::Bool)
-    if want_terms && objective isa CTSEMLaplaceObjective
-        r = ctsem_coreset_terms(objective, X)
-        return (value=r.value, total=r.total, terms=r.unit_loglik)
-    end
-    return (value=ctsem_evaluate_batch(objective, X), total=nothing, terms=nothing)
+"""Every column of `X` in full: the log density (`value`, `-Inf` where the
+point cannot be used), each unit's term (`terms`, `nunits x n`), and their
+weighted sum without the prior (`total`)."""
+function _smc_unit_terms(laplace::CTSEMLaplaceObjective, X::AbstractMatrix{Float64})
+    r = ctsem_coreset_terms(laplace, X)
+    return (value=r.value, total=r.total, terms=r.unit_loglik)
 end
 
 """The coreset's log density (prior included) at every column of `X`, `-Inf`
@@ -335,20 +348,57 @@ function _smc_coreset_values(laplace::CTSEMLaplaceObjective, X::AbstractMatrix{F
     return Float64[r === nothing ? -Inf : r.value for r in results]
 end
 
+"""The coreset's log density and gradient at `x`, or `nothing` where the
+point cannot be used."""
+function _smc_coreset_eval(laplace::CTSEMLaplaceObjective, coreset::CTSEMCoreset,
+    x::AbstractVector)
+    r = _laplace_coreset_try(laplace, Vector{Float64}(x), true, coreset)
+    return r === nothing ? nothing : (value=r.value, gradient=r.gradient)
+end
+
+"""
+    _smc_terms(objective, X, want_terms)
+
+Every column of `X` evaluated in full: the log density (`value`, `-Inf` where
+the point cannot be used), and, where the objective is a sum of units' terms
+and `want_terms`, each unit's term and their weighted sum without the prior,
+for fitting a coreset (`_smc_unit_terms`).
+"""
+function _smc_terms(objective, X::AbstractMatrix{Float64}, want_terms::Bool)
+    want_terms && _smc_coreset_capable(objective) && return _smc_unit_terms(objective, X)
+    return (value=ctsem_evaluate_batch(objective, X), total=nothing, terms=nothing)
+end
+
+"""
+    _smc_move_correction(beta, lp_y, lc_y, lp_x, lc_x, moved)
+
+The log weight a move made on the coreset density at `beta` leaves owing, for
+a particle that moved from `x` to `y`: `beta ((lp(y) - lc(y)) - (lp(x) -
+lc(x)))`, `lp` the full log density and `lc` the coreset's -- the backward
+kernel taken as the moves' reversal under the tempered coreset density (see
+the file comment); zero for one that did not move; `-Inf` where a value at a
+moved particle is not finite.
+"""
+function _smc_move_correction(beta::Real, lp_y::Real, lc_y::Real, lp_x::Real, lc_x::Real,
+    moved::Bool)
+    moved || return 0.0
+    v = beta * ((lp_y - lc_y) - (lp_x - lc_x))
+    return isfinite(v) ? Float64(v) : -Inf
+end
+
 """
     _smc_logdensity(objective, coreset, gradient_method)
 
 The log density and its gradient as a `(g, x)` closure, writing the gradient
 into `g` and returning the value, `-Inf` where the route cannot use the
-point: the full objective, or the coreset's density where one is given (the
-Laplace route only).
+point: the full objective, or the coreset's density where one is given
+(`_smc_coreset_eval`).
 """
 function _smc_logdensity(objective, coreset, gradient_method)
     if coreset !== nothing
-        laplace = objective::CTSEMLaplaceObjective
         return function (g, x)
-            r = _laplace_coreset_try(laplace, Vector{Float64}(x), true, coreset)
-            if r === nothing
+            r = _smc_coreset_eval(objective, coreset, x)
+            if r === nothing || !isfinite(r.value) || !all(isfinite, r.gradient)
                 fill!(g, 0.0)
                 return -Inf
             end
@@ -431,6 +481,9 @@ function _smc_each!(f, objective, coreset, np::Int, ndim::Int, maxdepth::Int, mo
             f(i, scratch.obj, scratch.ws, scratch.g)
             return true
         end
+        # The calling task runs items too, and its storage outlives the region:
+        # drop its copy rather than hold it for the session.
+        delete!(task_local_storage(), key)
         return nothing
     end
     if mode == :copies
@@ -438,29 +491,39 @@ function _smc_each!(f, objective, coreset, np::Int, ndim::Int, maxdepth::Int, mo
         held = _CTSEM_MAX_CHUNKS[]
         _CTSEM_MAX_CHUNKS[] = 1
         try
-            tasks = map(1:ncopies) do c
-                Threads.@spawn begin
-                    obj = deepcopy(objective)
-                    ws = _NUTSWorkspace(ndim, maxdepth)
-                    g = zeros(ndim)
-                    for i in c:ncopies:np
-                        _ctsem_interrupt_check()
-                        f(i, obj, ws, g)
-                    end
-                    nothing
-                end
-            end
+            # Each task's copy, workspace and buffer are built inside a
+            # function of its own (`_smc_run_share`). Built inline in the
+            # spawned block, `ws = ...` and `g = ...` rebound this function's
+            # own `ws` and `g` below, so every task wrote one shared workspace:
+            # moves that ended early, a posterior 0.6 of its width on the time
+            # series, and nothing that failed (2026-10-24).
+            tasks = [Threads.@spawn(_smc_run_share(f, objective, c, ncopies, np, ndim,
+                maxdepth)) for c in 1:ncopies]
             foreach(wait, tasks)
         finally
             _CTSEM_MAX_CHUNKS[] = held
         end
         return nothing
     end
+    _smc_run_share(f, objective, 1, 1, np, ndim, maxdepth; copy=false)
+    return nothing
+end
+
+"""
+    _smc_run_share(f, objective, first, stride, np, ndim, maxdepth; copy)
+
+`f(i, objective_i, ws, g)` for particles `first:stride:np` in turn, on a deep
+copy of `objective` (or the objective itself with `copy = false`) and a NUTS
+workspace and gradient buffer that belong to this call alone.
+"""
+function _smc_run_share(f, objective, first::Int, stride::Int, np::Int, ndim::Int,
+    maxdepth::Int; copy::Bool=true)
+    obj = copy ? deepcopy(objective) : objective
     ws = _NUTSWorkspace(ndim, maxdepth)
     g = zeros(ndim)
-    for i in 1:np
+    for i in first:stride:np
         _ctsem_interrupt_check()
-        f(i, objective, ws, g)
+        f(i, obj, ws, g)
     end
     return nothing
 end
@@ -491,13 +554,15 @@ function ctsem_sample_smc(objective, values::AbstractVector;
     t0 = time()
     forward0 = ctsem_forward_gradients()
     explosive0 = ctsem_explosive_passes()
+    # Converted once into names of their own: a closure that captures a
+    # variable assigned twice boxes it (CLAUDE.md, "No Core.Box").
     np = Int(nparticles)
-    nmoves = Int(nmoves)
-    maxdepth = Int(maxdepth)
-    ndraws = Int(ndraws)
+    nmv = Int(nmoves)
+    mdepth = Int(maxdepth)
+    nfirst = Int(ndraws)
     np >= 2 || throw(ArgumentError("nparticles must be at least 2"))
-    nmoves >= 1 || throw(ArgumentError("nmoves must be positive"))
-    ndraws >= 1 || throw(ArgumentError("ndraws must be positive"))
+    nmv >= 1 || throw(ArgumentError("nmoves must be positive"))
+    nfirst >= 1 || throw(ArgumentError("ndraws must be positive"))
     0 < target_accept < 1 || throw(ArgumentError("target_accept must be in (0, 1)"))
     0 < ess_frac < 1 || throw(ArgumentError("ess_frac must be in (0, 1)"))
     widen > 0 || throw(ArgumentError("widen must be positive"))
@@ -506,22 +571,20 @@ function ctsem_sample_smc(objective, values::AbstractVector;
     m0 = collect(Float64, values)
     ndim = length(m0)
     npar = ndim
-    maxdelta = Float64(maxdelta)
-    target_accept = Float64(target_accept)
+    mdelta = Float64(maxdelta)
+    tacc = Float64(target_accept)
     callback = CTSEMCallback(progress_callback)
 
     # The coreset applies where the objective is a sum of units' terms: the
-    # Laplace route with at least two units.
-    laplace = objective isa CTSEMLaplaceObjective ? objective : nothing
-    nunits = laplace === nothing ? 1 : length(laplace.units.members)
-    use_coreset = coreset && laplace !== nothing && nunits >= 2
-    unit_cost = use_coreset ? _smc_unit_cost(laplace) : Float64[]
+    # Laplace route with at least two units (`_smc_coreset_capable`).
+    capable = _smc_coreset_capable(objective)
+    unit_cost = capable ? _smc_unit_cost(objective) : Float64[]
+    nunits = capable ? length(unit_cost) : 1
+    use_coreset = coreset && capable
     tol_now = Float64(coreset_tol)
     corrections = 0
     mode = _smc_parallel(objective, parallel)
     fit_rng = Random.Xoshiro(hash((UInt64(seed), :coreset)))
-
-    logdensity! = _smc_logdensity(objective, nothing, gradient_method)
 
     # The start: the metric's covariance, widened.
     H = hessian === nothing ? ctsem_hessian(objective, m0) : Matrix(hessian)
@@ -550,7 +613,7 @@ function ctsem_sample_smc(objective, values::AbstractVector;
     end
 
     verbose && println(_console(), "Sampling by tempered SMC: ", np, " particles, ",
-        npar, " dimensions (effects integrated out), ", nmoves,
+        npar, " dimensions (effects integrated out), ", nmv,
         " NUTS moves a stage, from the metric's normal at ", widen, "x",
         use_coreset ? ", moves on a coreset of the $nunits units" : "",
         mode == :serial ? "" : ", particles in parallel on copies")
@@ -559,28 +622,21 @@ function ctsem_sample_smc(objective, values::AbstractVector;
     X = m0 .+ F0.L * randn(rng, ndim, np)
     full = _smc_terms(objective, X, use_coreset)
     lp = full.value
-    lpc = copy(lp)                      # the moves' density at X: the full one so far
     lq = [logq(view(X, :, i)) for i in 1:np]
     beta = 0.0
     step = 0.0
     Cprev = copy(S0)
     metric = _metric_from_covariances([1:ndim], [copy(S0)])
     stages = NamedTuple[]
-    cs = nothing                        # the coreset the last moves ran on
+    # What the last moves left owing, a log weight per particle
+    # (`_smc_move_correction`): zero after moves on the full objective.
+    owed = zeros(np)
     for stage in 1:Int(maxstages)
         _ctsem_interrupt_check()
         u = lp .- lq
         u[.!isfinite.(u)] .= -Inf
-        # The correction for moves made on a coreset: the particles sit at
-        # `q_t` (coreset, tempered at `beta`), the weights want `pi` there.
-        c = zeros(np)
-        if cs !== nothing
-            @inbounds for i in 1:np
-                c[i] = isfinite(lp[i]) && isfinite(lpc[i]) ? -beta * (lpc[i] - lp[i]) : -Inf
-            end
-        end
         target = Float64(ess_frac) * np
-        corr_ess = cs === nothing ? Float64(np) : _smc_ess(c)
+        corr_ess = all(iszero, owed) ? Float64(np) : _smc_ess(owed)
         delta = 1.0 - beta
         corrected = false
         if corr_ess < target
@@ -591,11 +647,11 @@ function ctsem_sample_smc(objective, values::AbstractVector;
             corrected = true
             corrections += 1
             tol_now /= 2
-        elseif _smc_ess(delta .* u .+ c) < target
+        elseif _smc_ess(delta .* u .+ owed) < target
             lo, hi = 0.0, delta
             for _ in 1:60
                 mid = (lo + hi) / 2
-                _smc_ess(mid .* u .+ c) >= target ? (lo = mid) : (hi = mid)
+                _smc_ess(mid .* u .+ owed) >= target ? (lo = mid) : (hi = mid)
             end
             delta = max(lo, 1e-12)
         end
@@ -606,7 +662,7 @@ function ctsem_sample_smc(objective, values::AbstractVector;
             # this cloud, and the full objective moves the particles from here.
             use_coreset = false
         end
-        lw = delta .* u .+ c
+        lw = delta .* u .+ owed
         mx = maximum(lw)
         w = exp.(lw .- mx)
         inc = mx + log(_smc_mean(w))
@@ -622,49 +678,59 @@ function ctsem_sample_smc(objective, values::AbstractVector;
             fit = _smc_coreset_fit(full.terms, full.total, unit_cost, tol_now,
                 _SMC_CORESET_BUDGET, fit_rng)
         end
-        cs = fit === nothing ? nothing : CTSEMCoreset(fit.units, fit.weights)
+        cs_stage = fit === nothing ? nothing : CTSEMCoreset(fit.units, fit.weights)
         idx = _smc_systematic(w, rng)
-        X = X[:, idx]; lp = lp[idx]; lq = lq[idx]
-        td! = tempered_for(objective, cs, beta)
+        Xpre = X[:, idx]
+        lp_pre = lp[idx]
+        lq = lq[idx]
+        # Where each particle begins its moves, pilot included, and the
+        # coreset's value there: the backward kernel's weight reads the
+        # coreset's error at both ends of the move.
+        lc_pre = cs_stage === nothing ? lp_pre : _smc_coreset_values(objective, Xpre, cs_stage)
+        td! = tempered_for(objective, cs_stage, beta)
         # The step: one particle's dual averaging from the carried step, twice
         # as long on the first stage, which has none. A failed pilot keeps the
         # carried step.
         npilot = step > 0 ? Int(pilot) : 2 * Int(pilot)
         piloted = try
-            _run_chain(td!, X[:, 1], metric, Random.Xoshiro(hash((UInt64(seed), stage, 0))),
-                npilot, 1, maxdepth, target_accept, maxdelta, 0.0, false, nothing;
+            _run_chain(td!, Xpre[:, 1], metric, Random.Xoshiro(hash((UInt64(seed), stage, 0))),
+                npilot, 1, mdepth, tacc, mdelta, 0.0, false, nothing;
                 init_eps=step)
         catch err
             err isa InterruptException && rethrow()
             nothing
         end
+        Xstart = copy(Xpre)
         if piloted !== nothing && isfinite(piloted.stepsize) && piloted.stepsize > 0
-            X[:, 1] .= piloted.x
+            Xstart[:, 1] .= piloted.x
             step = piloted.stepsize
         elseif step <= 0
             step = 0.1
         end
-        Xnew = copy(X)
+        Xnew = copy(Xstart)
         acc = zeros(np)
         dep = zeros(np)
-        div = zeros(Int, np)
+        ndiv = zeros(Int, np)
         mv = zeros(Int, np)
-        okp = falses(np)
+        # A Vector{Bool}, not a BitVector: particles on other tasks write their
+        # own entries at once, and a BitVector's entries share words.
+        okp = zeros(Bool, np)
         stage_beta = beta
         stage_step = step
         stage_metric = metric
-        _smc_each!(objective, cs, np, ndim, maxdepth, mode) do i, obj, ws, g
-            tdi! = tempered_for(obj, cs, stage_beta)
-            x = X[:, i]
-            logp = tdi!(g, x)
+        _smc_each!(objective, cs_stage, np, ndim, mdepth, mode) do i, obj, ws, g
+            tdi! = tempered_for(obj, cs_stage, stage_beta)
+            # The chain advances its start in place; the start is kept apart.
+            xi = Xstart[:, i]
+            logp = tdi!(g, xi)
             isfinite(logp) || return nothing
             r = _continue_chain(tdi!, ws, Random.Xoshiro(hash((UInt64(seed), stage, i))),
-                x, g, logp, stage_step, stage_metric, nmoves, maxdepth, maxdelta)
+                copy(xi), g, logp, stage_step, stage_metric, nmv, mdepth, mdelta)
             Xnew[:, i] .= r.x
             acc[i] = _smc_mean(r.accept)
             dep[i] = _smc_mean(r.depth)
-            div[i] = count(r.divergent)
-            mv[i] = sum(abs2, r.x .- x) > 0 ? 1 : 0
+            ndiv[i] = count(r.divergent)
+            mv[i] = r.x != xi ? 1 : 0
             okp[i] = true
             return nothing
         end
@@ -672,11 +738,19 @@ function ctsem_sample_smc(objective, values::AbstractVector;
         nok = max(1, count(okp))
         full = _smc_terms(objective, X, use_coreset)
         lp = full.value
-        lpc = cs === nothing ? copy(lp) : _smc_coreset_values(laplace, X, cs)
+        if cs_stage === nothing
+            fill!(owed, 0.0)
+        else
+            lc = _smc_coreset_values(objective, X, cs_stage)
+            @inbounds for i in 1:np
+                owed[i] = _smc_move_correction(beta, lp[i], lc[i], lp_pre[i], lc_pre[i],
+                    view(X, :, i) != view(Xpre, :, i))
+            end
+        end
         lq = [logq(view(X, :, i)) for i in 1:np]
         push!(stages, (beta=beta, step=step, accept=sum(acc) / nok, depth=sum(dep) / nok,
-            moved=sum(mv) / np, divergent=sum(div), shrink=shrunk.lambda, logz=inc,
-            coreset_size=cs === nothing ? 0 : length(cs.units),
+            moved=sum(mv) / np, divergent=sum(ndiv), shrink=shrunk.lambda, logz=inc,
+            coreset_size=cs_stage === nothing ? 0 : length(cs_stage.units),
             coreset_share=fit === nothing ? 1.0 : fit.share,
             coreset_error=fit === nothing ? NaN : fit.error,
             correction_ess=corr_ess / np, corrected=corrected,
@@ -684,11 +758,11 @@ function ctsem_sample_smc(objective, values::AbstractVector;
         verbose && println(_console(), "  stage ", stage, ": beta ", round(beta; sigdigits=4),
             ", step ", round(step; sigdigits=3), ", accept ", round(sum(acc) / nok; digits=2),
             ", depth ", round(sum(dep) / nok; digits=1),
-            cs === nothing ? "" : ", coreset $(length(cs.units)) of $nunits units",
+            cs_stage === nothing ? "" : ", coreset $(length(cs_stage.units)) of $nunits units",
             corrected ? ", correction only" : "",
             ", ", round(time() - t0; digits=0), " s")
         _invoke_callback(callback, "tempering", round(Int, 100 * beta), 100,
-            _smc_mean(filter(isfinite, lp)), sum(div); force=beta >= 1.0)
+            _smc_mean(filter(isfinite, lp)), sum(ndiv); force=beta >= 1.0)
         beta >= 1.0 && break
     end
     beta >= 1.0 || @warn "tempered SMC did not reach the posterior in $(maxstages) stages; the draws are from beta = $(beta)"
@@ -697,61 +771,67 @@ function ctsem_sample_smc(objective, values::AbstractVector;
     # The final phase: every particle a chain at the posterior, the step and
     # metric the last stage left, drawn and extended by the one stopping rule;
     # on the coreset fitted to the posterior's cloud where one holds out, its
-    # draws corrected to the full density afterwards.
+    # draws corrected to the full density afterwards, with what the last
+    # stage's moves left owing.
     final_fit = nothing
     if use_coreset && full.terms !== nothing
         final_fit = _smc_coreset_fit(full.terms, full.total, unit_cost, tol_now,
             _SMC_CORESET_BUDGET, fit_rng)
     end
     cs_final = final_fit === nothing ? nothing : CTSEMCoreset(final_fit.units, final_fit.weights)
-    results = Vector{_ChainResult}(undef, np)
+    Xf = X
+    lp_f = lp
+    owed_f = copy(owed)
+    first_results = Vector{_ChainResult}(undef, np)
+    start = collect(1:np)
     final_step = step
     final_metric = metric
-    _smc_each!(objective, cs_final, np, ndim, maxdepth, mode) do i, obj, ws, g
+    _smc_each!(objective, cs_final, np, ndim, mdepth, mode) do i, obj, ws, g
         ld = _smc_logdensity(obj, cs_final, gradient_method)
-        x = X[:, i]
-        logp = ld(g, x)
+        k = i
+        logp = ld(g, Xf[:, k])
         if !isfinite(logp)
             # A particle whose density is not finite here cannot have moved to
-            # it; it sits where the last finite move left it, which is X.
-            x = X[:, mod1(i + 1, np)]
-            logp = ld(g, x)
+            # it; its chain starts from the next particle instead.
+            k = mod1(i + 1, np)
+            logp = ld(g, Xf[:, k])
         end
-        results[i] = _continue_chain(ld, ws, Random.Xoshiro(hash((UInt64(seed), 0, i))),
-            x, g, logp, final_step, final_metric, ndraws, maxdepth, maxdelta)
+        start[i] = k
+        first_results[i] = _continue_chain(ld, ws, Random.Xoshiro(hash((UInt64(seed), 0, i))),
+            Xf[:, k], g, logp, final_step, final_metric, nfirst, mdepth, mdelta)
         return nothing
     end
-    held = Ref(results)
+    held = Ref(first_results)
     extend! = function (wanted, attempt)
         previous = held[]
         more = Vector{_ChainResult}(undef, np)
-        _smc_each!(objective, cs_final, np, ndim, maxdepth, mode) do i, obj, ws, g
+        _smc_each!(objective, cs_final, np, ndim, mdepth, mode) do i, obj, ws, g
             ld = _smc_logdensity(obj, cs_final, gradient_method)
             more[i] = _run_chain(ld, previous[i].x, previous[i].metric,
                 Random.Xoshiro(UInt64(seed + 1000 * attempt) + UInt64(i)),
-                0, wanted, maxdepth, 0.8, maxdelta, 0.0, false, nothing;
+                0, wanted, mdepth, 0.8, mdelta, 0.0, false, nothing;
                 resume=previous[i])
             return nothing
         end
         held[] = _merge_chains(previous, more)
         return nothing
     end
-    run = _sample_until_target(() -> _pool_draws(held[], npar), extend!, np, ndraws,
-        Float64(min_ess), Float64(mean_ess), max(Int(max_draws), ndraws),
+    run = _sample_until_target(() -> _pool_draws(held[], npar), extend!, np, nfirst,
+        Float64(min_ess), Float64(mean_ess), max(Int(max_draws), nfirst),
         Float64(rhat_target), verbose; t0=t0)
-    results = held[]
-    ndraws = run.total
+    chains = held[]
+    nper = run.total
 
-    total = np * ndraws
+    total = np * nper
     draws = Matrix{Float64}(undef, npar, total)
     accept = Vector{Float64}(undef, total)
     divergent = Vector{Bool}(undef, total)
     depth = Vector{Int}(undef, total)
     energy = Vector{Float64}(undef, total)
-    for c in 1:np
-        r = results[c]
-        for t in 1:ndraws
-            column = (c - 1) * ndraws + t
+    for ch in 1:np
+        r = chains[ch]
+        for t in 1:nper
+            column = (ch - 1) * nper + t
             @inbounds for j in 1:npar
                 draws[j, column] = r.draws[j, t]
             end
@@ -764,14 +844,31 @@ function ctsem_sample_smc(objective, values::AbstractVector;
     # The chains' own diagnostics, before any correction.
     diagnostics = ctsem_sample_diagnostics(draws, np)
     final_correction = 1.0
-    if cs_final !== nothing
-        # Every draw's full value against the coreset's: the importance weights
-        # that correct the coreset chains to the posterior, and a systematic
-        # resample by them so the draws come back unweighted.
-        lpf = ctsem_evaluate_batch(objective, draws)
-        lpk = _smc_coreset_values(laplace, draws, cs_final)
-        lw = Float64[isfinite(lpf[j]) && isfinite(lpk[j]) ? lpf[j] - lpk[j] : -Inf
-            for j in 1:total]
+    if cs_final !== nothing || any(!iszero, owed_f)
+        # Each chain's base: what the last stage's moves left owing at its
+        # start, less the final coreset's error there (the reversal of a chain
+        # on the coreset reads its error at both ends); each draw adds the
+        # error where it sits. A systematic resample by these weights returns
+        # the draws unweighted.
+        base = zeros(np)
+        lc0 = cs_final === nothing ? nothing : _smc_coreset_values(objective, Xf, cs_final)
+        for ch in 1:np
+            k = start[ch]
+            base[ch] = cs_final === nothing ? owed_f[k] : owed_f[k] - (lp_f[k] - lc0[k])
+        end
+        lw = Vector{Float64}(undef, total)
+        if cs_final === nothing
+            for j in 1:total
+                lw[j] = base[div(j - 1, nper) + 1]
+            end
+        else
+            lpf = ctsem_evaluate_batch(objective, draws)
+            lpk = _smc_coreset_values(objective, draws, cs_final)
+            for j in 1:total
+                v = base[div(j - 1, nper) + 1] + (lpf[j] - lpk[j])
+                lw[j] = isfinite(v) ? v : -Inf
+            end
+        end
         nfin = count(isfinite, lw)
         final_correction = nfin > 0 ? _smc_ess(lw) / nfin : 0.0
         if nfin > 0
@@ -787,21 +884,21 @@ function ctsem_sample_smc(objective, values::AbstractVector;
         final_correction < 0.5 && @warn "the final chains' coreset kept $(round(100 * final_correction; digits=0))% of the draws' effective size after the correction to the full density; a larger coreset_tol budget or coreset = false would give more"
     end
     return (
-        draws=draws, npar=npar, ndim=npar, nchains=np, ndraws=ndraws,
+        draws=draws, npar=npar, ndim=npar, nchains=np, ndraws=nper,
         saved_effects=false, effect_mean=Float64[], effect_sd=Float64[],
         effect_cov=Float64[], effect_cov_rows=Int[], effect_cov_cols=Int[],
         rhat=diagnostics.rhat, ess=diagnostics.ess, ess_tail=diagnostics.ess_tail,
         accept=accept, divergent=divergent, depth=depth, energy=energy,
         stepsize=fill(step, np), warmup_divergent=zeros(Int, np),
-        ndivergent=count(divergent), max_depth=maxdepth,
-        nsaturated=count(==(maxdepth), depth),
+        ndivergent=count(divergent), max_depth=mdepth,
+        nsaturated=count(==(mdepth), depth),
         ebfmi=_ebfmi(energy, np),
         worst_rhat=_finite_extremum(diagnostics.rhat, maximum),
         min_ess=_finite_extremum(vcat(diagnostics.ess, diagnostics.ess_tail), minimum),
         target_trace=run.trace,
         forward_gradients=ctsem_forward_gradients() - forward0,
         explosive_passes=ctsem_explosive_passes() - explosive0,
-        sampler="smc", nparticles=np, nmoves=nmoves, widen=Float64(widen),
+        sampler="smc", nparticles=np, nmoves=nmv, widen=Float64(widen),
         nstages=length(stages),
         stage_beta=[s.beta for s in stages], stage_step=[s.step for s in stages],
         stage_accept=[s.accept for s in stages], stage_depth=[s.depth for s in stages],
