@@ -5,15 +5,17 @@
 # carries: a manifest intercept's where it observes the item at all, a state
 # mean's always) and the filter's own gains and innovation covariances:
 #
-#   start:    X = 0, except an initial mean's column, slope e_l
+#   start:    X = 0, except an initial mean's column, e_l
 #   update:   V = Lambda[o,:] X + E          (E selects each observed item's column)
 #             S += V' S_t^-1 V,  s += V' S_t^-1 y_t      (through U^-T, never S^-1)
 #             X -= K V
 #   predict:  X = A X                         (A the discrete drift)
-#             + slope J^-1 (A - I) e_l  for a continuous intercept's column
+#             + J^-1 (A - I) e_l  for a continuous intercept's column
 #   close:    ll += 1/2 b' M^-1 b  [ - 1/2 logdet(M) ],   M = I + G S G,  b = G s
 #
-# with `G = diag(g)`, `g` each item's own sd times its cell's slope. For fixed
+# with `G = diag(g)`, `g` each item's own sd times its cell's slope; the
+# columns are per unit of the cell's value, as a manifest intercept's `E` is,
+# so the slope enters through `G` alone. For fixed
 # deviations a linear Gaussian filter's covariances and gains do not depend on
 # them, so the log likelihood is exactly quadratic in them, and this is its
 # integral against their N(0, I) prior (de Jong's augmented filter). Nothing
@@ -106,8 +108,9 @@ function _hybrid_start!(hb::CTSEMHybridBuffers{T}, h::CTSEMHybrid, data,
             hb.X[r, c] = zero(T)
             hb.Xinc[r, c] = zero(T)
         end
-        # An initial mean's deviation shifts the first state mean by its slope.
-        hb.ckind[c] == 2 && (hb.X[hb.clat[c], c] = T(hb.cslope[c]))
+        # An initial mean's column: a unit of the cell's value shifts the first
+        # state mean by one (the slope is in `G`, as for `E`).
+        hb.ckind[c] == 2 && (hb.X[hb.clat[c], c] = one(T))
         for a in 1:q
             hb.S[a, c] = zero(T)
         end
@@ -178,8 +181,8 @@ end
 """
 One prediction substep's share: `X = A X`, into the spare and swapped in, and
 for a continuous intercept's column (`ckind` 3) the discrete intercept's
-Jacobian in its deviation, `slope J^-1 (A - I) e_l` over the affine block
-`naff` by the engine's own solve, or `slope Phi e_l` where the substep took the
+Jacobian in a unit of the cell's value, `J^-1 (A - I) e_l` over the affine
+block `naff` by the engine's own solve, or `Phi e_l` where the substep took the
 series (`series.intercept`, set by `_compute_discrete_time_form!` just
 before); kept in `Xinc` for the tape.
 """
@@ -202,11 +205,10 @@ function _hybrid_predict!(hb::CTSEMHybridBuffers{T}, A, JAx, series, naff::Int,
         l = hb.clat[c]
         l <= naff || throw(ArgumentError(
             "a continuous intercept's deviation on latent $(l) lies outside the affine block of $(naff)"))
-        slope = T(hb.cslope[c])
         if series.intercept
             phi === nothing && (phi = _series_intercept!(series, JAx, dt, naff))
             for r in 1:naff
-                Xinc[r, c] = slope * phi[r, l]
+                Xinc[r, c] = phi[r, l]
             end
         else
             if size(hb.Jc, 1) < naff
@@ -219,7 +221,7 @@ function _hybrid_predict!(hb::CTSEMHybridBuffers{T}, A, JAx, series, naff::Int,
                 Jc[i, j] = JAx[i, j]
             end
             for i in 1:naff
-                jv[i] = slope * (A[i, l] - (i == l ? one(T) : zero(T)))
+                jv[i] = A[i, l] - (i == l ? one(T) : zero(T))
             end
             _solve_square_system_generic!(Jc, jv, hb.piv, naff)
             for r in 1:naff
@@ -596,10 +598,10 @@ end
 One prediction substep's reverse: `X+ = A X + Xinc`, so `Abar += Xbar X'` into
 the transition's cotangent and `Xbar = A' Xbar`; and first, while `Xbar` is
 still the cotangent of `X+`, each continuous intercept's column, whose
-increment `Xinc[:, c] = slope J^-1 (A - I) e_l` is reversed as the discrete
+increment `Xinc[:, c] = J^-1 (A - I) e_l` is reversed as the discrete
 intercept is in `_reverse_predict!`: `sbar = J^-T Xbar[1:naff, c]`,
-`JAx_bar -= sbar Xinc[1:naff, c]'`, `Abar[:, l] += slope sbar`; or on the
-series route the series pullback of `Xbar[1:naff, c] (slope e_l)'`, which reads
+`JAx_bar -= sbar Xinc[1:naff, c]'`, `Abar[:, l] += sbar`; or on the
+series route the series pullback of `Xbar[1:naff, c] e_l'`, which reads
 no exponential. Scratch from `sc` (`av1`, `aa1`, `piv`, `series`), used before
 the intercept's own reverse reuses them.
 """
@@ -618,14 +620,13 @@ function _hybrid_reverse_predict!(Abar, JAx_bar, A, JAx, rec::CTSEMHybridTape{T}
         k = rec.item[c]
         h.kind[k] == 3 || continue
         l = h.target[k]
-        slope = T(h.slope[k])
         if record.series_intercept
             if !series_done
                 _series_intercept!(sc.series, JAx, dt, naff)
                 series_done = true
             end
             for j in 1:naff, i in 1:naff
-                aa1[i, j] = j == l ? Xbar[i, c] * slope : zero(T)
+                aa1[i, j] = j == l ? Xbar[i, c] : zero(T)
             end
             _series_intercept_pullback!(JAx_bar, sc.series, naff, aa1)
         else
@@ -640,7 +641,7 @@ function _hybrid_reverse_predict!(Abar, JAx_bar, A, JAx, rec::CTSEMHybridTape{T}
                 JAx_bar[i, j] -= sbar[i] * Xinc[j, c]
             end
             for i in 1:naff
-                Abar[i, l] += sbar[i] * slope
+                Abar[i, l] += sbar[i]
             end
         end
     end

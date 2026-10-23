@@ -822,7 +822,7 @@ test_that("sequential predictions are the fitted model's own, row by row", {
         popcov <- as.matrix(ctsem:::.ctBackendJuliaValue(module$ctsem_laplace_popcov(o,
           xx, 1L)))
         slope <- spec$laplace$hybrid$slope
-        rows <- spec$laplace$hybrid$manifest
+        rows <- spec$laplace$hybrid$target[spec$laplace$hybrid$kind == 1L]
         added <- matrix(0, 3, 3)
         added[rows, rows] <- diag(slope, 3) %*% popcov %*% diag(slope, 3)
         for (r in first) {
