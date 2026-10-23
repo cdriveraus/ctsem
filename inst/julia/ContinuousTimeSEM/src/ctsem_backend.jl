@@ -1390,15 +1390,26 @@ try. A model of at most `dense` parameters gets every prefix, as before.
 
 At most `dense + log2(n / dense) + 2` sets of `length(fractions)` evaluations,
 and it stops at the first improvement.
+
+`among`, when given, is the pool the prefixes are taken over -- the
+coordinates the curvature or the transforms call flat
+(`_ctsem_overshoot_candidates`), with the flagged ones always in it -- and
+`n` above is then the pool's size. The end-of-run verdict passes it where a
+finish left a Hessian; the in-flight stall probe, which has none, searches
+every coordinate.
 """
 function _ctsem_pullback_sets(minimizer, flagged=Int[];
-        dense::Integer=_CTSEM_PULLBACK_DENSE)
-    n = length(minimizer)
+        dense::Integer=_CTSEM_PULLBACK_DENSE, among=nothing)
+    total = length(minimizer)
+    total == 0 && return Vector{Int}[]
+    extra = sort!(unique(p for p in flagged if 1 <= p <= total))
+    pool = among === nothing ? collect(1:total) :
+        sort!(unique(vcat([p for p in among if 1 <= p <= total], extra)))
+    n = length(pool)
     n == 0 && return Vector{Int}[]
-    order = sortperm(collect(minimizer); by=abs, rev=true)
+    order = pool[sortperm(abs.(collect(minimizer)[pool]); rev=true)]
     sets = [order[1:k] for k in 1:min(n, dense)]
-    rank = invperm(order)
-    extra = sort!(unique(p for p in flagged if 1 <= p <= n))
+    rank = Dict(p => i for (i, p) in enumerate(order))
     any(p -> rank[p] > dense, extra) && push!(sets, extra)
     k = 2 * dense
     while k < n
@@ -1489,7 +1500,7 @@ unusable point.
 """
 function _ctsem_overshot(objective, minimizer, saturated_parameters, value,
         tolerance; fractions=_CTSEM_PULLBACK_FRACTIONS,
-        mode=_CTSEM_OVERSHOOT_PROBE[], progress=nothing)
+        mode=_CTSEM_OVERSHOOT_PROBE[], progress=nothing, among=nothing)
     gain = 0.0
     empty_result = (overshot=false, gain=gain, coordinates=Int[], point=Float64[])
     (!isfinite(value) || isempty(minimizer)) && return empty_result
@@ -1498,7 +1509,7 @@ function _ctsem_overshot(objective, minimizer, saturated_parameters, value,
     sets = if mode === :saturation
         [[p] for p in saturated_parameters if 1 <= p <= length(minimizer)]
     else
-        _ctsem_pullback_sets(minimizer, saturated_parameters)
+        _ctsem_pullback_sets(minimizer, saturated_parameters; among=among)
     end
     isempty(sets) && return empty_result
     value = _ctsem_probe_baseline(objective, minimizer, value)
@@ -2372,15 +2383,91 @@ magnitude: a custom transform can be flat near zero (`exp(20 * param)` at raw
 const _CTSEM_OVERSHOOT_MIN_RAW = 2.0
 
 """
-    _ctsem_overshoot_skippable(minimizer, saturated_parameters)
+The share of the curvature's flat subspace a coordinate must carry for the
+end-of-run probe to pull it back: R's `.ctNullMassBar()`, the one rule for
+"this coordinate lies in a flat subspace", which the certification's
+intervals and the identifiability report apply to the same Hessian.
+"""
+const _CTSEM_NULL_MASS_BAR = 1e-3
+
+"""
+    _ctsem_flat_loaded(hessian; rtol, bar)
+
+The coordinates carrying at least `bar` of the flat subspace of `hessian`,
+the Hessian of the MAXIMISED objective: the directions
+`_ctsem_information_split` neither trusts nor calls negative, and a
+coordinate's share of them is the squared length of its unit vector's
+projection there (the diagonal of the projector). `nothing` when the
+Hessian cannot be split, which a caller reads as unknown.
+"""
+function _ctsem_flat_loaded(hessian::AbstractMatrix; rtol::Real=_CTSEM_FLAT_RTOL,
+        bar::Real=_CTSEM_NULL_MASS_BAR)
+    split = _ctsem_information_split(-Matrix{Float64}(hessian); rtol=rtol)
+    split === nothing && return nothing
+    flat = findall(.!split.trusted .& .!split.negative)
+    isempty(flat) && return Int[]
+    Q = split.vectors[:, flat]
+    share = vec(sum(abs2, Q; dims=2))
+    return findall(s -> s >= bar, share)
+end
+
+"""
+    _ctsem_overshoot_candidates(objective, minimizer, saturated_parameters,
+                                hessian, flat_rtol, stall_ratio)
+
+Which coordinates the end-of-run probe pulls back, or `nothing` where that
+cannot be told. An overshoot into a flat transform is a direction with no
+curvature, so with the finish's Hessian in hand the candidates are the
+coordinates that lie in its flat subspace (`_ctsem_flat_loaded`), together
+with those whose transform the route flags as saturated or that have lost
+all but `stall_ratio` of its live responsiveness (`_ctsem_flat_coordinates`,
+the stall watch's own rule). A collapsed population scale brings its
+correlations in through the first: their curvature goes with its variance,
+whatever their transforms still do. A coordinate with curvature behind it is
+estimated, and pulling it back is a move the quadratic model already prices;
+measured on the bench the full search over every coordinate was 5 per cent
+of a fit and up to half of an ordinal Laplace one, and it found an
+overshoot only where a coordinate was flat. Without a Hessian the search is
+over every coordinate, as before (`_ctsem_pullback_sets`).
+"""
+function _ctsem_overshoot_candidates(objective, minimizer, saturated_parameters,
+        hessian, flat_rtol::Real, stall_ratio::Real)
+    hessian === nothing && return nothing
+    n = length(minimizer)
+    (size(hessian, 1) == n && size(hessian, 2) == n && all(isfinite, hessian)) ||
+        return nothing
+    loaded = _ctsem_flat_loaded(hessian; rtol=flat_rtol)
+    loaded === nothing && return nothing
+    # An objective with no transform layer (`_ctsem_params`) has nothing to
+    # ask about responsiveness; the stall watch reads the same absence.
+    relative = if hasmethod(_ctsem_params, Tuple{typeof(objective)}) &&
+            _ctsem_params(objective) !== nothing
+        _ctsem_flat_coordinates(_ctsem_params(objective),
+            collect(Float64, minimizer),
+            _ctsem_saturation_range(objective, minimizer); ratio=stall_ratio)
+    else
+        Int[]
+    end
+    return sort!(unique(vcat(loaded, relative,
+        [p for p in saturated_parameters if 1 <= p <= n])))
+end
+
+"""
+    _ctsem_overshoot_skippable(minimizer, saturated_parameters, candidates=nothing)
 
 Whether the end-of-run overshoot probe can be skipped: nothing flagged as
-saturated, and every coordinate finite and below `_CTSEM_OVERSHOOT_MIN_RAW`
-in magnitude.
+saturated, and either no candidate to pull back (`candidates` known and
+empty, `_ctsem_overshoot_candidates`) or, where the candidates are unknown,
+every coordinate finite and below `_CTSEM_OVERSHOOT_MIN_RAW` in magnitude.
 """
-_ctsem_overshoot_skippable(minimizer, saturated_parameters) =
-    isempty(saturated_parameters) && !isempty(minimizer) &&
-    all(x -> abs(x) < _CTSEM_OVERSHOOT_MIN_RAW, minimizer)
+function _ctsem_overshoot_skippable(minimizer, saturated_parameters,
+        candidates=nothing)
+    isempty(saturated_parameters) || return false
+    isempty(minimizer) && return false
+    all(isfinite, minimizer) || return false
+    candidates === nothing || return isempty(candidates)
+    return all(x -> abs(x) < _CTSEM_OVERSHOOT_MIN_RAW, minimizer)
+end
 
 """
     _ctsem_optimise_verdict(objective, minimizer, start_values, value, gradient_norm,
@@ -2484,7 +2571,8 @@ function _ctsem_optimise_verdict(objective, minimizer, start_values, value,
         gradient_norm, predicted_gain, last_gain, saturated_parameters,
         g_tol, converge_tol;
         label::AbstractString="ctsem_optimize", verbose::Bool=false,
-        overshoot_probe=_CTSEM_OVERSHOOT_PROBE[], progress=nothing)
+        overshoot_probe=_CTSEM_OVERSHOOT_PROBE[], progress=nothing,
+        candidates=nothing)
     moved = isempty(minimizer) ? 0.0 : maximum(abs, minimizer .- start_values)
     saturated = !isempty(saturated_parameters)
     stalled = moved == 0 && (!isfinite(value) || gradient_norm > max(g_tol, 1e-6))
@@ -2493,10 +2581,12 @@ function _ctsem_optimise_verdict(objective, minimizer, start_values, value,
     # step cannot pass here on an uninitialised number.
     converged_enough = isfinite(value) && finite_gradient &&
         (predicted_gain <= converge_tol || last_gain <= converge_tol)
-    overshoot = _ctsem_overshoot_skippable(minimizer, saturated_parameters) ?
+    overshoot = _ctsem_overshoot_skippable(minimizer, saturated_parameters,
+            candidates) ?
         (overshot=false, gain=0.0, coordinates=Int[], point=Float64[]) :
         _ctsem_overshot(objective, minimizer, saturated_parameters,
-            value, converge_tol; mode=overshoot_probe, progress=progress)
+            value, converge_tol; mode=overshoot_probe, progress=progress,
+            among=candidates)
     overshot = overshoot.overshot
     verbose && stalled && println(_console(), label, ": the optimizer made no ",
         "progress from its starting values; reporting this as not converged")
@@ -3276,7 +3366,14 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
         # and the probe's pullbacks cost minutes on the fit this was built for.
         label=label, verbose=verbose && maxiter > 0,
         overshoot_probe=stop_reason == "jump" ? :off : overshoot_probe,
-        progress=_ctsem_probe_progress(reporter))
+        progress=_ctsem_probe_progress(reporter),
+        # What the probe pulls back, read off the finish's Hessian where
+        # there is one (`_ctsem_overshoot_candidates`).
+        candidates=_ctsem_overshoot_candidates(objective, minimizer,
+            saturated_parameters,
+            (finish === nothing || finish.hessian === nothing) ? nothing :
+                finish.hessian,
+            flat_rtol, stall_ratio))
     saturated = verdict.saturated
     stalled = verdict.stalled
     finite_gradient = verdict.finite_gradient

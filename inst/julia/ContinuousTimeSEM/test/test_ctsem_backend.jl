@@ -185,6 +185,59 @@ end
     @test !ContinuousTimeSEM._ctsem_overshoot_skippable([NaN, 0.0], Int[])
 end
 
+# With a finish's Hessian in hand the probe pulls back only the coordinates
+# that lie in its flat subspace, or that the transforms flag; with none it is
+# not run at all, whatever the coordinates' size. See
+# `_ctsem_overshoot_candidates`.
+@testset "the end-of-run probe pulls back the coordinates the curvature calls flat" begin
+    CT = ContinuousTimeSEM
+    # A maximised objective's Hessian: curvature 4 and 25 behind the first two
+    # coordinates and none behind the third.
+    H = -[4.0 0.0 0.0; 0.0 25.0 0.0; 0.0 0.0 0.0]
+    @test CT._ctsem_flat_loaded(H) == [3]
+    @test CT._ctsem_flat_loaded(-[4.0 0.0; 0.0 25.0]) == Int[]
+    # A flat direction through two coordinates names both; a share under the
+    # bar names neither of the trusted ones.
+    v = [1.0, 1.0, 0.0] ./ sqrt(2)
+    U = [v [1.0, -1.0, 0.0] ./ sqrt(2) [0.0, 0.0, 1.0]]
+    Hmixed = -(U * Diagonal([0.0, 9.0, 16.0]) * U')
+    @test CT._ctsem_flat_loaded(Hmixed) == [1, 2]
+    # Candidates: the flat coordinates and the flagged ones, read off the
+    # Hessian; unknown without one.
+    mock = _OvershotMock(0.0)
+    @test CT._ctsem_overshoot_candidates(mock, [2.5, -0.5, 7.0], Int[], H,
+        1e-12, 1e-3) == [3]
+    @test CT._ctsem_overshoot_candidates(mock, [2.5, -0.5, 7.0], [1], H,
+        1e-12, 1e-3) == [1, 3]
+    @test CT._ctsem_overshoot_candidates(mock, [2.5, -0.5, 7.0], Int[], nothing,
+        1e-12, 1e-3) === nothing
+    # The skip rule: known and empty skips at any magnitude; a flag never
+    # skips; unknown falls back to the magnitude rule.
+    @test CT._ctsem_overshoot_skippable([2.5, -0.5, 7.0], Int[], Int[])
+    @test !CT._ctsem_overshoot_skippable([2.5, -0.5, 7.0], Int[], [3])
+    @test !CT._ctsem_overshoot_skippable([2.5, -0.5, 7.0], [1], Int[])
+    @test !CT._ctsem_overshoot_skippable([2.5, -0.5, 7.0], Int[], nothing)
+    # The sets over a pool are that pool's magnitude-ordered prefixes, with a
+    # flagged coordinate outside it brought in.
+    sets = CT._ctsem_pullback_sets([0.5, -9.0, 2.0, 0.1, -4.0]; among=[3, 5])
+    @test sets == [[5], [5, 3]]
+    sets = CT._ctsem_pullback_sets([0.5, -9.0, 2.0, 0.1, -4.0], [1]; among=[3, 5])
+    @test sets == [[5], [5, 3], [5, 3, 1]]
+    @test isempty(CT._ctsem_pullback_sets([0.5, -9.0]; among=Int[]))
+    # And the verdict: the mock peaks at zero, so a pullback of any coordinate
+    # gains. With the third coordinate the only candidate the probe moves it
+    # alone and finds the gain there; with no candidate it is not asked,
+    # though the first coordinate is large.
+    verdict(x, flagged, candidates) = CT._ctsem_optimise_verdict(mock, x,
+        zeros(length(x)), -sum(abs2, x), 1e-9, 1e-9, 0.0, flagged, 1e-8, 1e-6;
+        candidates=candidates)
+    out = verdict([2.5, -0.5, 7.0], Int[], [3])
+    @test out.overshot
+    @test out.overshoot.coordinates == [3]
+    @test !verdict([2.5, -0.5, 7.0], Int[], Int[]).overshot
+    @test verdict([2.5, -0.5, 7.0], Int[], nothing).overshot
+end
+
 # The reason the probe is not one coordinate at a time. A degenerate corner is
 # left by moving a whole block together, and every single-coordinate move out of
 # one is worse than staying -- which is what a collapsed population scale and

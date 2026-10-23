@@ -1080,8 +1080,8 @@
     hessians = as.integer(.ctJuliaOr(out$newton_hessians, 1L)))
 }
 
-# Certify the optimiser's result, and resume the optimiser when the curvature
-# says it fell short.
+# Certify the optimiser's result, and try again when it stopped short, under
+# one budget.
 #
 # The numbers come from the engine. The finish that ended the optimiser's run
 # (`_ctsem_newton_finish`) hands back the Hessian it ended on, where that was
@@ -1091,17 +1091,33 @@
 # `ctsem_endgame`, with no step taken. The arithmetic on them, the gap and the
 # verdict, stays here, where it is tested on plain matrices.
 #
-# What happens next is one rule. `suboptimal` or `notmaximum`, with rounds
-# left, resumes the optimiser from the point it reached, under the same rules as
-# the first stage, with the stall watch carrying the fit's progress so a
-# resumed stage that stops gaining is stopped (`CTSEMStallWatch` in the
-# engine). Nothing is switched off and no budget enlarged: the resumed stage's
-# own finish is what closes a gap. The rule this replaced resumed after its own
-# damped Newton step and negative-curvature step, on a Hessian formed again each
-# round, with the predicted-gain stop switched off, the gradient tolerance
-# tightened and the iteration cap quadrupled -- which on AnomAuth turned a
-# corner of the objective into hours, and from its stored spurious start did
-# not return in 1 h 47 min.
+# What happens next is one rule with one budget, `maxtries`
+# (`optimcontrol$stallretries`), and the next stage is chosen by what the
+# result says. Each is kept only if it came out ahead: the fit can only move
+# forward here.
+#
+# - A measured better point on the result -- the pullback the engine's stall
+#   watch or its end-of-run probe found, `escape` (`.ctBackendStallEscape()`)
+#   -- is resumed from. Before the certification, which could only repeat
+#   what the probe measured, and without its Hessian: a stage the watch
+#   stopped has no finish and so none to read, and forming one there is
+#   `2 npar` gradients on the Laplace route for nothing a resume from the
+#   point does not give. Resuming rather than continuing, because L-BFGS's
+#   curvature history describes the region the fit just left.
+# - Otherwise, where the fit certifies, `suboptimal` or `notmaximum` with
+#   budget left resumes from the point it reached, under the same rules as the
+#   first stage, with the stall watch carrying the fit's progress so a resumed
+#   stage that stops gaining is stopped (`CTSEMStallWatch` in the engine),
+#   and with the curvature the verdict was reached on: the Hessian for the
+#   resumed stage's finish to walk on where Hessians are dear, and its
+#   covariance as L-BFGS's first metric (`.ctBackendResumeInverse()`). Nothing
+#   is switched off and no budget enlarged: the resumed stage's own finish is
+#   what closes a gap. The rule this replaced resumed after its own damped
+#   Newton step and negative-curvature step, on a Hessian formed again each
+#   round, with the predicted-gain stop switched off, the gradient tolerance
+#   tightened and the iteration cap quadrupled -- which on AnomAuth turned a
+#   corner of the objective into hours, and from its stored spurious start did
+#   not return in 1 h 47 min.
 #
 # Two cases stop instead of resuming. `notstationary`, a flat direction that
 # still gains: the finish has already followed any such direction its route
@@ -1118,17 +1134,23 @@
 # of its optimum; gated-gaps config B8 (bench, seed 1) was stopped 10.8 nats
 # short when this rule did not ask.
 #
-# `maxtries` is small on purpose: a point still short after two resumes needs a
-# different start, which is a decision for whoever runs the fit.
+# One budget, rather than one for escapes and one for corrections with each
+# wrapping the other: the escape loop ran inside every stage the certification
+# resumed, so a fit could take six escapes and two corrections, and a fit that
+# never certifies (`estonly`) took its escapes in a loop of its own. `maxtries`
+# is small on purpose: a point still short after two resumes needs a different
+# start, which is a decision for whoever runs the fit.
 #
-# Returns the result to carry on with, the certification that decided, the
-# Hessian it decided on with where it was evaluated and how far that is from the
-# estimate (so the uncertainty stage need not form the same matrix again), a
-# record of each resume, the counts over every stage, and how many Hessians
-# were formed.
+# Returns the result to carry on with, the certification that decided (of the
+# final point, whichever stage reached it), the Hessian it decided on with
+# where it was evaluated and how far that is from the estimate (so the
+# uncertainty stage need not form the same matrix again), a record of each
+# attempt, the counts over every stage run -- kept or not, since each did its
+# work -- how many Hessians were formed, and how many escapes were kept.
 #' @keywords internal
 .ctBackendCorrectResult <- function(result, spec, npar, tolerance = 0.01,
-  maxtries = 2L, gradient = "adjoint", optimise = NULL, verbose = 0) {
+  maxtries = 2L, gradient = "adjoint", optimise = NULL, escape = NULL,
+  certify = TRUE, verbose = 0) {
   spec <- structure(spec, class = c("ctJuliaModel", "ctFitModel"))
   history <- list()
   endgame <- NULL
@@ -1138,57 +1160,83 @@
   # naming `raw[7]` is worse than one naming the parameter and better than none.
   parnames <- tryCatch(.ctBackendRawParameterNames(list(model_spec = spec), npar),
     error = function(e) paste0("raw[", seq_len(npar), "]"))
-  # Work done across every stage, not the last one's: a fit that optimised and
-  # resumed twice would otherwise report the tail of that and hide the rest.
-  stage_counts <- function(r) c(
-    iterations = as.numeric(.ctJuliaOr(r$iterations, 0)),
-    f_calls = as.numeric(.ctJuliaOr(r$f_calls, 0)),
-    g_calls = as.numeric(.ctJuliaOr(r$g_calls, 0)))
-  stage_hessians <- function(r) as.integer(.ctJuliaOr(r$newton_hessians, 0L))
-  totals <- stage_counts(result)
-  hessians <- stage_hessians(result)
+  totals <- .ctJuliaRunCounts(result)
+  # Hessians the certification formed itself (`.ctBackendEndgameAt()`), beside
+  # the stages' own in `totals`.
+  formed <- 0L
   # Where the fit started, so a resumed stage's stall watch measures its
   # progress against the whole fit's rather than its own, which starts at zero.
   started_at <- suppressWarnings(as.numeric(result$trace$objective)[1L])
   if (!length(started_at) || !is.finite(started_at)) {
     started_at <- as.numeric(result$maximum_loglik)[1L]
   }
-  for (attempt in seq_len(max(0L, as.integer(maxtries)) + 1L)) {
-    est <- as.numeric(result$minimizer)[seq_len(npar)]
-    endgame <- .ctBackendEndgameOf(result, npar)
+  # The certification of one result: the engine's numbers, and the verdict.
+  # NULL where the result carries no usable Hessian and none can be formed.
+  certify_at <- function(r) {
+    est <- as.numeric(r$minimizer)[seq_len(npar)]
+    endgame <- .ctBackendEndgameOf(r, npar)
     if (is.null(endgame)) {
       endgame <- .ctBackendEndgameAt(spec, est, gradient = gradient, verbose = verbose)
-      if (!is.null(endgame)) hessians <- hessians + endgame$hessians
+      if (!is.null(endgame)) formed <<- formed + as.integer(endgame$hessians)
     }
-    if (is.null(endgame)) break
-    gap <- .ctBackendOptimGap(endgame$hessian,
-      as.numeric(result$gradient)[seq_len(npar)])
-    certification <- .ctBackendCertificationRecord(gap, endgame$probe,
-      tolerance = tolerance, saturated = isTRUE(result$saturated),
-      overshot = isTRUE(result$overshot), parnames = parnames,
-      saddle = endgame$saddle)
-    status <- certification$status
-    if (!status %in% c("suboptimal", "notmaximum")) break
-    if (attempt > as.integer(maxtries) || is.null(optimise)) break
-    if (identical(status, "notmaximum") && !isTRUE(result$overshot) &&
-        isTRUE(result$newton_ladder_tried) &&
-        isTRUE(is.finite(gap$gap) && gap$gap <= tolerance)) {
-      break
+    if (is.null(endgame)) return(NULL)
+    gap <- .ctBackendOptimGap(endgame$hessian, as.numeric(r$gradient)[seq_len(npar)])
+    list(endgame = endgame, gap = gap,
+      certification = .ctBackendCertificationRecord(gap, endgame$probe,
+        tolerance = tolerance, saturated = isTRUE(r$saturated),
+        overshot = isTRUE(r$overshot), parnames = parnames,
+        saddle = endgame$saddle))
+  }
+  budget <- max(0L, as.integer(maxtries))
+  attempt <- 0L
+  escapes <- 0L
+  repeat {
+    # With the budget spent nothing is asked for a point to resume from: the
+    # result is certified where it stands and the loop ends.
+    spent <- attempt >= budget || !is.function(optimise)
+    from <- if (!spent && is.function(escape)) escape(result) else NULL
+    kind <- "escape"
+    gap <- NULL
+    stage_endgame <- NULL
+    endgame <- NULL
+    certification <- NULL
+    if (is.null(from)) {
+      if (!isTRUE(certify)) break
+      checked <- certify_at(result)
+      if (is.null(checked)) break
+      endgame <- checked$endgame
+      gap <- checked$gap
+      certification <- checked$certification
+      status <- certification$status
+      if (!status %in% c("suboptimal", "notmaximum")) break
+      if (identical(status, "notmaximum") && !isTRUE(result$overshot) &&
+          isTRUE(result$newton_ladder_tried) &&
+          isTRUE(is.finite(gap$gap) && gap$gap <= tolerance)) {
+        break
+      }
+      if (spent) break
+      from <- as.numeric(result$minimizer)[seq_len(npar)]
+      kind <- status
+      stage_endgame <- endgame
     }
+    attempt <- attempt + 1L
     value <- as.numeric(result$maximum_loglik)[1L]
-    if (verbose > 0) {
-      message("Not yet a certified maximum (", status, ", predicted ",
+    if (verbose > 0 && !identical(kind, "escape")) {
+      message("Not yet a certified maximum (", kind, ", predicted ",
         signif(gap$gap, 3), "); resuming the optimiser")
     }
-    # With the curvature in hand: the Hessian the verdict was reached on, for
-    # the resumed stage's finish to walk on where Hessians are dear, and its
-    # covariance as L-BFGS's first metric (`.ctBackendResumeInverse()`).
-    resumed <- try(optimise(est, max(0, value - started_at), endgame), silent = TRUE)
+    resumed <- try(optimise(from, max(0, value - started_at), stage_endgame),
+      silent = TRUE)
     ok <- !inherits(resumed, "try-error") &&
       is.finite(as.numeric(resumed$maximum_loglik)[1L]) &&
       as.numeric(resumed$maximum_loglik)[1L] >= value
+    if (!inherits(resumed, "try-error")) totals <- totals + .ctJuliaRunCounts(resumed)
     history[[length(history) + 1L]] <- list(attempt = attempt,
-      status = status, predicted = gap$gap,
+      status = kind,
+      # Which coordinates an escape moved (`.ctBackendEscapeCoordinates()`).
+      coordinates = if (identical(kind, "escape")) {
+        as.integer(attr(from, "coordinates")) } else integer(0),
+      predicted = if (is.null(gap)) NA_real_ else gap$gap,
       total_gain = if (ok) as.numeric(resumed$maximum_loglik)[1L] - value else
         NA_real_,
       resumed = ok,
@@ -1198,18 +1246,28 @@
       stop_reason = if (ok) as.character(.ctJuliaOr(resumed$stop_reason,
         NA_character_))[1L] else NA_character_,
       stopped_progress = if (ok) isTRUE(resumed$stopped_by_progress) else NA)
-    # Never accept a resume that did not improve on what we had: the fit can
-    # only move forward here.
+    # The certification above, if any, describes the result this keeps.
     if (!ok) break
-    totals <- totals + stage_counts(resumed)
-    hessians <- hessians + stage_hessians(resumed)
+    if (identical(kind, "escape")) escapes <- escapes + 1L
     result <- resumed
+  }
+  # The final point's certification, where the loop ended on a stage it had
+  # not certified: a kept escape with no budget left, or one whose resume
+  # did not come out ahead.
+  if (isTRUE(certify) && is.null(certification)) {
+    checked <- certify_at(result)
+    if (!is.null(checked)) {
+      endgame <- checked$endgame
+      certification <- checked$certification
+    }
   }
   list(result = result, certification = certification,
     hessian = if (is.null(endgame)) NULL else endgame$hessian,
     evaluated_at = if (is.null(endgame)) NULL else endgame$evaluated_at,
     distance = if (is.null(endgame)) NA_real_ else endgame$distance,
-    corrections = history, totals = totals, hessians = hessians)
+    corrections = history, totals = totals,
+    hessians = as.integer(totals[["newton_hessians"]]) + formed,
+    escapes = escapes)
 }
 
 # The covariance a certification's Hessian implies, as the initial inverse
