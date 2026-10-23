@@ -5710,26 +5710,40 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
     }
     out
   }
-  # The climb on the hybrid (`anytime`): the Laplace run first, with its
-  # batching and coreset stages, until a step's predicted gain is under the
-  # hand-over (`.ctLaplaceAnytimeHandover`) or the line search names a jump;
-  # then the continuation from that point, screening at its rungs
+  # The climb on the hybrid (`anytime`). `TRUE`: the Laplace run first, with
+  # its batching and coreset stages, until a step's predicted gain is under
+  # the hand-over (`.ctLaplaceAnytimeHandover`) or the line search names a
+  # jump; then the continuation from that point, screening at its rungs
   # (`_ctsem_anytime!`), from the pairs the Laplace run ended with, to the
-  # fit's own finish. Not under a pin, whose wrapper names no units. Every
-  # later run of this stage (an escape below) is then on the hybrid too.
-  anytime <- isTRUE(anytime) && is.null(continuation) &&
-    !is.null(model_spec$laplace) && !state_explicit && is.null(default_pin)
-  if (anytime) {
+  # fit's own finish. `"jump"` (the default fit, `optimcontrol$laplace_climb =
+  # FALSE`): the Laplace run to its own end, finish and all, and the
+  # continuation only where that run ended on a jump -- the objective is not
+  # continuous there, and the hybrid with draws for the units that jumped is
+  # the one that is; a run that converged is corrected by the rounds instead
+  # (`.ctLaplaceContinue()`), which validate each step on the re-placed value
+  # where the climb validated nothing: measured on the bench's rescue grid,
+  # the climb from the hand-over lost anomS2's spurious start by 6.4 exact
+  # nats, gC8 s2 by 8.2 and gA14 by up to 2.7 and downgraded eleven
+  # certifications (`review/FITTING-anytime-hybrid-2026-10-22.md`, 2026-10-23),
+  # and the rounds with an unbounded, drift-ended first round keep the
+  # climb's gains on gB8, gN1 and gC8. Not under a pin, whose wrapper names no
+  # units. Every later run of this stage (an escape below) is then on the
+  # hybrid too.
+  climb <- if (isTRUE(anytime)) "handover" else if (identical(anytime, "jump")) "jump" else "none"
+  if (!is.null(continuation) || is.null(model_spec$laplace) || state_explicit ||
+      !is.null(default_pin)) climb <- "none"
+  if (climb == "handover") {
     full <- common
     common <- utils::modifyList(common, list(gap_tol = .ctLaplaceAnytimeHandover,
       newton = FALSE, certify = FALSE, overshoot_probe = "off"))
   }
   result <- optimise_once(start)
   laplace_run <- result
-  # Without the climb (the correction off, `estonly`, a quadratic model) a jump
-  # ends the stage where it was named, as before the hybrid existed: said, with
-  # the way to integrate the units that jumped.
-  if (!anytime && identical(as.character(.ctJuliaOr(result$stop_reason, ""))[1L], "jump")) {
+  jumped <- identical(as.character(.ctJuliaOr(result$stop_reason, ""))[1L], "jump")
+  # Without the continuation (the correction off, `estonly`, a quadratic
+  # model) a jump ends the stage where it was named, as before the hybrid
+  # existed: said, with the way to integrate the units that jumped.
+  if (climb == "none" && jumped) {
     named <- as.integer(result$jump_units)
     named <- named[!is.na(named) & named > 0L]
     warning("The Laplace objective jumped at unit", if (length(named) > 1L) "s " else " ",
@@ -5738,8 +5752,8 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
       "such units by frozen draws and climbs on.", call. = FALSE)
   }
   climbed <- NULL
-  if (anytime) {
-    common <- full
+  if (climb == "handover" || (climb == "jump" && jumped)) {
+    if (climb == "handover") common <- full
     continuation <- .ctLaplaceAnytimeStart(result, module, objective,
       verbose = verbose)
     if (!is.null(continuation)) {
@@ -6380,13 +6394,14 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
   # (`.ctJuliaOptimise(anytime = )`): where the quadrature correction will
   # read the estimate, and not on a model whose Laplace term is exact, which
   # no screen can flag.
-  # `optimcontrol$laplace_climb = FALSE` keeps the Laplace run to its own end
-  # and corrects from there, as before the climb.
+  # `optimcontrol$laplace_climb = TRUE` climbs from the Laplace run's
+  # hand-over; the default climbs only from a jump (`.ctJuliaOptimise()`'s
+  # `anytime`).
   anytime_on <- is.null(jointobjective) && !is.null(model_spec$laplace) &&
     !isTRUE(model_spec$laplace$quadratic) && !isTRUE(optimcontrol$estonly) &&
-    !isFALSE(optimcontrol$laplace_climb) &&
     identical(.ctLaplaceCorrectResolve(optimcontrol, intoverpop = "laplace",
       optimize = TRUE, intoverstates = TRUE), "quadrature")
+  if (anytime_on) anytime_on <- if (isTRUE(optimcontrol$laplace_climb)) TRUE else "jump"
   # The continuation the climb ended on, kept out of the fit (it is a live
   # engine object) and handed to the correction.
   cont <- NULL

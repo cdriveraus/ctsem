@@ -292,9 +292,12 @@
     msg = paste0("corrects a julia Laplace fit by quadrature over its random ",
       "effects, and stan has no Laplace term to correct. Drop it")),
   # Whether a julia Laplace fit climbs the quadrature hybrid from its Laplace
-  # run's hand-over (TRUE, the default) or runs the Laplace objective to its
-  # own end and corrects from there (FALSE, what the fit did before the climb;
-  # the bench's paired comparison of the two). FALSE describes stan.
+  # run's hand-over (TRUE) or runs the Laplace objective to its own end and
+  # corrects from there by the continuation's rounds (FALSE, the default: on
+  # the bench's rescue grid the climb lost anomS2's spurious start by 6.4
+  # exact nats and gC8 s2 by 8.2, where the rounds lose nothing and keep its
+  # gains elsewhere). A run that ends on a jump climbs the hybrid from the
+  # jump either way. FALSE describes stan.
   laplace_climb = list(only = 'julia',
     inert = function(v) isFALSE(v),
     msg = paste0("chooses whether a julia Laplace fit climbs the quadrature ",
