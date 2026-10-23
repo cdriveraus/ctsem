@@ -10,7 +10,7 @@
 # fewer particles than dimensions). And a start that is narrow and off
 # centre is the case the sampler exists for.
 
-using LinearAlgebra, Random, Statistics
+using LinearAlgebra, Logging, Random, Statistics
 
 isdefined(@__MODULE__, :_fresh_linear) || include("laplace_fixtures.jl")
 
@@ -182,6 +182,94 @@ end
         0.1, 0.05, Random.Xoshiro(1)) === nothing
 end
 
+@testset "a move on the coreset owes its error at both ends" begin
+    mc = ContinuousTimeSEM._smc_move_correction
+    # beta ((lp(y) - lc(y)) - (lp(x) - lc(x))); one for a particle that stayed.
+    @test mc(0.5, -10.0, -12.0, -11.0, -11.5, true) ≈ 0.5 * (2.0 - 0.5)
+    @test mc(0.5, -10.0, -12.0, -11.0, -11.5, false) == 0.0
+    @test mc(1.0, -Inf, -12.0, -11.0, -11.5, true) == -Inf
+    @test mc(1.0, -Inf, -12.0, -11.0, -11.5, false) == 0.0
+end
+
+# A sum of Gaussian unit terms the sampler can move on a coreset of, through
+# the hooks the Laplace route answers (`_smc_coreset_capable` and the rest):
+# exact moments and log constant, and a few units stand for the sum poorly.
+struct _SMCUnits
+    a::Matrix{Float64}            # d x N: each unit's centre
+    B::Vector{Matrix{Float64}}    # each unit's precision
+    P0::Matrix{Float64}           # the prior's precision
+end
+_smcu_term(o::_SMCUnits, U::Int, x) = (r = x .- view(o.a, :, U); -dot(r, o.B[U] * r) / 2)
+_smcu_prior(o::_SMCUnits, x) = -dot(x, o.P0 * x) / 2
+function _smcu_density(o::_SMCUnits, units, weights, x)
+    v = _smcu_prior(o, x)
+    g = -(o.P0 * x)
+    for (k, U) in enumerate(units)
+        r = x .- view(o.a, :, U)
+        Br = o.B[U] * r
+        v -= weights[k] * dot(r, Br) / 2
+        g .-= weights[k] .* Br
+    end
+    return (value=v, gradient=g)
+end
+function ContinuousTimeSEM.ctsem_evaluate(o::_SMCUnits, x::AbstractVector;
+    gradient::Bool=true, kwargs...)
+    r = _smcu_density(o, 1:size(o.a, 2), ones(size(o.a, 2)), collect(Float64, x))
+    return (value=r.value, gradient=gradient ? r.gradient : nothing)
+end
+ContinuousTimeSEM._smc_coreset_capable(::_SMCUnits) = true
+ContinuousTimeSEM._smc_unit_cost(o::_SMCUnits) = fill(1 / size(o.a, 2), size(o.a, 2))
+function ContinuousTimeSEM._smc_unit_terms(o::_SMCUnits, X::AbstractMatrix{Float64})
+    terms = [_smcu_term(o, U, view(X, :, j)) for U in axes(o.a, 2), j in axes(X, 2)]
+    total = vec(sum(terms; dims=1))
+    return (value=[_smcu_prior(o, view(X, :, j)) + total[j] for j in axes(X, 2)],
+        total=total, terms=terms)
+end
+ContinuousTimeSEM._smc_coreset_values(o::_SMCUnits, X::AbstractMatrix{Float64}, cs) =
+    [_smcu_density(o, cs.units, cs.weights, collect(Float64, view(X, :, j))).value
+        for j in axes(X, 2)]
+ContinuousTimeSEM._smc_coreset_eval(o::_SMCUnits, cs, x::AbstractVector) =
+    _smcu_density(o, cs.units, cs.weights, collect(Float64, x))
+
+@testset "a poor coreset slows SMC but leaves its posterior and constant exact" begin
+    # Forty units whose precisions are rank one along random directions: their
+    # sum is a well-conditioned normal in four dimensions, and a dozen of them
+    # stand for it with errors of a log unit and more, so the correction does
+    # real work (its effective size falls below a tenth at some stage). One
+    # move a stage, where a weight that assumed the moves had mixed to the
+    # coreset's density is furthest from right: before the backward kernel's
+    # weights the stages' log constant was 270-650 nats off on this target;
+    # with them, within a nat (2026-10-23).
+    d, N = 4, 40
+    rng = Random.Xoshiro(3)
+    a = 1.5 .* randn(rng, d, N)
+    B = [begin
+        v = randn(rng, d)
+        (2.0 * (0.5 + rand(rng))) .* (v * transpose(v)) ./ dot(v, v)
+    end for _ in 1:N]
+    o = _SMCUnits(a, B, Matrix(0.05I, d, d))
+    P = o.P0 .+ sum(B)
+    b = sum(B[U] * a[:, U] for U in 1:N)
+    S = inv(Symmetric(P))
+    m = S * b
+    sd = sqrt.(diag(S))
+    logz = -sum(dot(a[:, U], B[U] * a[:, U]) for U in 1:N) / 2 + dot(b, S * b) / 2 +
+        d / 2 * log(2pi) - logdet(Symmetric(P)) / 2
+    start = m .+ vcat([2.0, -2.0], zeros(d - 2)) .* sd
+    H = -Matrix(Diagonal(1 ./ (0.25 .* sd .^ 2)))
+    # Its final chains keep about half their effective size, which warns.
+    r = @test_logs min_level=Logging.Error ContinuousTimeSEM.ctsem_sample_smc(o, start;
+        hessian=H, widen=1.0, nparticles=400, nmoves=1, maxdepth=5, seed=2, ndraws=10,
+        min_ess=0.0, max_draws=10, coreset=true, coreset_tol=1.0, parallel=false)
+    @test r.coreset
+    @test all(r.stage_coreset_size .> 0)
+    @test minimum(r.stage_correction_ess) < 0.5
+    X = r.draws
+    @test maximum(abs.(vec(mean(X; dims=2)) .- m) ./ sd) < 0.2
+    @test all(0.85 .< vec(std(X; dims=2)) ./ sd .< 1.15)
+    @test abs(sum(r.stage_logz) - logz) < 1.5
+end
+
 @testset "tempered SMC on a coreset samples the same posterior as the full Laplace objective" begin
     # Forty subjects of the shared linear model, a standard normal prior on
     # every raw parameter (without one the scales run to zero), two random
@@ -217,6 +305,9 @@ end
     m2 = vec(mean(core.draws; dims=2)); s2 = vec(std(core.draws; dims=2))
     @test maximum(abs.(m1 .- m2) ./ s1) < 0.45
     @test all(0.65 .< s2 ./ s1 .< 1.5)
+    # With the backward kernel's weights the stages' log mean weights still
+    # estimate the log constant on a coreset, the same one the full run does.
+    @test abs(sum(core.stage_logz) - sum(full.stage_logz)) < 1.5
     if Threads.nthreads() > 1
         # Particles spread over the pool on copies: the same seeds per
         # particle, so the same posterior, laid out differently.
