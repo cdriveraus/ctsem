@@ -5653,8 +5653,37 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
     common$newton_hessian <- hessian
     common$newton_hessian_at <- .ctJuliaVector(as.numeric(hessian_at))
   }
-  optimise_once <- function(from, damp = integer(), pin = default_pin) {
+  optimise_once <- function(from, damp = integer(), pin = default_pin,
+      carried = NULL, endgame = NULL) {
     args <- common
+    # A resumed stage (`.ctBackendCorrectResult()`): on the full data -- it
+    # starts where the full objective already brought the fit, so a first
+    # batch of a few units only walks it away again (on the SNSF pilot, 493
+    # units, every resume began at the 20-unit batch, its log posterior back
+    # at -271148 from -386462) -- with the progress the fit has made carried
+    # in, so its stall watch has a progress to take a share of and leaves to
+    # stop on progress alone once the watch's hysteresis is spent; and on
+    # the curvature the verdict was reached on, where there is one: its
+    # covariance as L-BFGS's first metric and the Hessian for the finish to
+    # walk on where Hessians are dear. Every other rule is the first stage's.
+    if (!is.null(carried)) {
+      args$batch <- FALSE
+      args$stall_carried <- max(0, as.numeric(carried)[1L], na.rm = TRUE)
+      args$stall_alone <- TRUE
+    }
+    if (!is.null(endgame)) {
+      inverse <- .ctBackendResumeInverse(endgame)
+      if (!is.null(inverse)) {
+        storage.mode(inverse) <- "double"
+        args$lbfgs_inverse <- inverse
+      }
+      if (is.matrix(endgame$hessian) && length(endgame$evaluated_at)) {
+        hessian <- endgame$hessian
+        storage.mode(hessian) <- "double"
+        args$newton_hessian <- hessian
+        args$newton_hessian_at <- .ctJuliaVector(as.numeric(endgame$evaluated_at))
+      }
+    }
     held <- !is.null(pin) && length(pin$index)
     target <- objective
     # On the hybrid the climb ended on, or is on (`continuation`): the engine's
@@ -5767,107 +5796,75 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
     message("SAEM had not settled after ", saem_record$saem_iterations,
       " iterations; a larger optimcontrol$saem may help.")
   }
-  # A stage that stopped because it had stopped getting anywhere, with a
-  # transform flat as the reason, is the one case where there is somewhere
-  # better to go and we know where: pull the flat coordinates back and run
-  # again from there.
+  # A fit that stopped short is tried again under one budget
+  # (`.ctBackendCorrectResult()`, `optimcontrol$stallretries`): from the
+  # better point its probe measured, or from where it stopped when the
+  # certification finds it short, each stage kept only if it came out ahead.
+  # The certification's record rides on the result (`retry`) for the fit to
+  # read. A profile point and the warm-up do not certify (`certify = FALSE`),
+  # and the state-explicit route is never escaped from: its joint mode is
+  # degenerate, so a pullback can nearly always find something
+  # (`.ctBackendStallEscape()`).
   #
-  # Resuming rather than continuing, and that is not a detail. L-BFGS's
-  # curvature history describes the region the fit just left, so carrying it
-  # across a jump would feed the metric secant pairs from two different
-  # problems -- which is the same reason `.ctBackendCorrectResult()` resumes a
-  # fresh optimisation rather than nudging the old one.
-  #
-  # The jump is only ever taken on a *measured* improvement, so a resumed stage
-  # cannot start below where the last one stopped. `stallretries` caps the loop
-  # for the case where each escape lands somewhere that stalls again.
-  escapes <- 0L
-  maxescapes <- as.integer(.ctJuliaOr(optimcontrol$stallretries, 2L))
-  # The work of every run the loop does not keep -- the stage an escape
-  # replaced, an escape that did not come out ahead, a pinned stage -- added to
-  # the kept run's counts after it (`.ctJuliaAddRunCounts()`).
-  spent <- .ctJuliaRunCounts(list())
-  while (escapes < maxescapes) {
-    from <- .ctBackendStallEscape(result, optimcontrol, model_spec, verbose,
-      escapes = !state_explicit)
-    if (is.null(from)) break
-    escapes <- escapes + 1L
-    # Deliberately not damped. Holding the freed coordinate back with the
-    # metric was measured and it breaks the escape: after zeroing it the refit
-    # needs that coordinate to *travel* to where it belongs, and a step divided
-    # by 100 pins it near the value we just imposed. The fit then re-converges
-    # around a coordinate stuck in the wrong place -- -3721.05 against -2950.59
-    # on one fit, -2891.36 against -2883.16 on another, failing to converge in
-    # both. `optimise_once` keeps its `damp` argument because the
-    # measurement is worth being able to repeat.
-    # Pin, re-optimise, then release: hold the coordinates that were moved to
-    # get here at their displaced values while the rest of the model
-    # accommodates them, and only then let go.
-    #
-    # Off by default, because it was measured and it is worse. From a drift raw
-    # of 8 inside its own flat transform: -2950.5929 pinned against -2939.0339
-    # free, both converged, and -2950.59 is the same basin the damped-step
-    # experiment fell into. From raw 12 the two agree.
-    #
-    # The reason is worth keeping, because the idea is a reasonable one. The
-    # point this resumes from is already a *measured* improvement -- the
-    # pullback probe found it by evaluating there -- so the free resume starts
-    # somewhere good and gets the rest of the way on its own. Pinning adds a
-    # constraint that is not needed, and the rest of the model then settles
-    # into a configuration adapted to the held value that releasing does not
-    # undo. Holding a coordinate still helps when the model will not go
-    # somewhere on its own; here it already will.
-    #
-    # Kept reachable rather than deleted so the measurement can be repeated,
-    # and because the same primitive under `ctProfile()` is what a profile
-    # point is -- see `ctsem_pin` in the engine.
+  # Pin, re-optimise, then release (`optimcontrol$escapepin`): hold the
+  # coordinates an escape moved at their displaced values while the rest of
+  # the model accommodates them, and only then let go. Off by default,
+  # because it was measured and it is worse. From a drift raw of 8 inside its
+  # own flat transform: -2950.5929 pinned against -2939.0339 free, both
+  # converged. The point an escape resumes from is already a *measured*
+  # improvement -- the pullback probe found it by evaluating there -- so the
+  # free resume starts somewhere good and gets the rest of the way on its
+  # own. Pinning adds a constraint that is not needed, and the rest of the
+  # model settles into a configuration adapted to the held value that
+  # releasing does not undo. Kept reachable so the measurement can be
+  # repeated, and because the same primitive under `ctProfile()` is what a
+  # profile point is -- see `ctsem_pin` in the engine. Nor is an escape
+  # damped: holding the freed coordinate back with the metric was measured
+  # and it breaks the escape (-3721.05 against -2950.59 on one fit), since
+  # after zeroing it the refit needs that coordinate to *travel*.
+  stage <- function(from, carried = 0, endgame = NULL) {
     coordinates <- attr(from, "coordinates")
-    resumed <- if (isTRUE(optimcontrol$escapepin) && length(coordinates)) {
+    from <- as.numeric(from)
+    if (isTRUE(optimcontrol$escapepin) && length(coordinates)) {
       inside <- coordinates >= 1L & coordinates <= length(from)
       coordinates <- coordinates[inside]
-      # Merged with `default_pin` rather than replacing it: naming `pin=`
-      # explicitly here would otherwise drop a caller's top-level pin for the
-      # one stage that happens to pass its own, and a profile point's fixed
-      # coordinate must stay fixed through an escape too. The plain branch
-      # below needs no such merge -- `optimise_once(from)` already falls back
-      # to `default_pin` on its own.
+      # Merged with `default_pin` rather than replacing it: a profile point's
+      # fixed coordinate must stay fixed through an escape too.
       escape_pin <- list(
         index = c(if (length(default_pin$index)) as.integer(default_pin$index),
           coordinates),
         value = c(if (length(default_pin$index)) as.numeric(default_pin$value),
           from[coordinates]))
-      staged <- try(optimise_once(from, pin = escape_pin), silent = TRUE)
-      if (inherits(staged, "try-error")) staged else {
-        spent <- spent + .ctJuliaRunCounts(staged)
-        try(optimise_once(as.numeric(staged$minimizer)), silent = TRUE)
-      }
-    } else try(optimise_once(from), silent = TRUE)
-    if (inherits(resumed, "try-error")) break
-    # Only if it actually came out ahead. Neither route to `from` promises
-    # that: the pullback improves the objective on the spot but the stage that
-    # follows it is an optimisation like any other, and the zeroed point is
-    # deliberately *worse* on the spot -- 9.5 nats down on the fit this was
-    # measured on, from which a refit landed 7.2 nats up.
-    if (!is.finite(as.numeric(resumed$maximum_loglik)[1L]) ||
-        as.numeric(resumed$maximum_loglik)[1L] <
-          as.numeric(result$maximum_loglik)[1L]) {
-      spent <- spent + .ctJuliaRunCounts(resumed)
-      break
+      staged <- optimise_once(from, pin = escape_pin, carried = carried)
+      return(.ctJuliaAddRunCounts(optimise_once(as.numeric(staged$minimizer),
+        carried = carried, endgame = endgame), staged))
     }
-    spent <- spent + .ctJuliaRunCounts(result)
-    resumed$stall_escapes <- escapes
-    result <- resumed
+    optimise_once(from, carried = carried, endgame = endgame)
   }
-  if (is.null(result$stall_escapes)) result$stall_escapes <- escapes
-  # A stage the escape loop kept ran on the hybrid too and carries no record of
-  # the climb: the record is rebuilt on it, its own events after the climb's,
+  retried <- .ctBackendCorrectResult(result, model_spec,
+    npar = length(as.numeric(start)),
+    tolerance = .ctJuliaOr(optimcontrol$gaptol, 1e-6),
+    maxtries = .ctJuliaOr(optimcontrol$stallretries, 2L), gradient = gradient,
+    optimise = stage,
+    escape = function(r) .ctBackendStallEscape(r, optimcontrol, model_spec,
+      verbose, escapes = !state_explicit),
+    certify = isTRUE(common$certify), verbose = verbose)
+  result <- retried$result
+  result$stall_escapes <- retried$escapes
+  # The work of every stage the loop did not keep, added to the kept stage's
+  # counts after it (`.ctJuliaAddRunCounts()`), and the certification's
+  # record for the fit.
+  result <- .ctJuliaAddRunCounts(result, retried$totals - .ctJuliaRunCounts(result))
+  result$retry <- retried[setdiff(names(retried), c("result", "escapes", "totals"))]
+  result$retry$totals <- .ctJuliaRunCounts(result)
+  # A stage the loop kept ran on the hybrid too and carries no record of the
+  # climb: the record is rebuilt on it, its own events after the climb's,
   # and the continuation rides along for the correction.
   if (!is.null(continuation) && is.null(result$continuation)) {
     result <- .ctLaplaceAnytimeRecord(result, module, continuation, laplace_run,
       before = climbed)
   }
   for (nm in names(saem_record)) result[nm] <- list(saem_record[[nm]])
-  result <- .ctJuliaAddRunCounts(result, spent)
   if (!is.null(failure)) {
     warning("The progress callback failed and was disabled after the first ",
       "error; the fit itself is unaffected. The error was: ", failure,
@@ -6424,24 +6421,10 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
   correction <- NULL
   certifying <- isTRUE(intoverstates) && !isTRUE(optimcontrol$estonly) &&
     !identical(optimcontrol$certify, FALSE)
-  # A resume runs under the fit's own controls, with only the progress the fit
-  # has made carried in (see `.ctBackendCorrectResult()`) -- and on the full
-  # data. It starts where the full objective already brought the fit, so a
-  # first batch of a few units only walks it away again: on the SNSF pilot
-  # (493 units) every resume began at the 20-unit batch, its log posterior
-  # back at -271148 from -386462, and repeated the slow early iterations.
-  correct <- function(r) .ctBackendCorrectResult(r, model_spec, npar,
-    tolerance = .ctJuliaOr(optimcontrol$gaptol, 1e-6),
-    maxtries = .ctJuliaOr(optimcontrol$gapretries, 2L),
-    gradient = gradient, verbose = verbose,
-    optimise = function(from, carried = 0, endgame = NULL) .ctJuliaOptimise(model_spec,
-      if (is.null(jointobjective)) from else c(from, numeric(nstate)),
-      optimcontrol = utils::modifyList(optimcontrol, list(batch = FALSE)),
-      gradient = gradient, cores = cores,
-      verbose = verbose, callback = optimcontrol$callback,
-      objective = jointobjective, carried = carried, continuation = cont,
-      inverse = .ctBackendResumeInverse(endgame),
-      hessian = endgame$hessian, hessian_at = endgame$evaluated_at))
+  # The certification, and the stages that resumed the fit on its verdict or
+  # on a measured better point, are `.ctJuliaOptimise()`'s
+  # (`.ctBackendCorrectResult()`), and ride on its result.
+  correct <- function(r) c(list(result = r), r$retry)
   if (certifying) {
     climbed <- result$anytime
     correction <- correct(result)

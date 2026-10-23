@@ -41,10 +41,12 @@
 
 # Honoured by both backends, with the same meaning. `stallretries` is how many
 # times a fit that stopped short of a maximum is tried again, with each
-# backend's own retry: stan restarts from fresh random values, julia pulls the
-# flat coordinates back and refits. It used to be listed below twice, stan-only
-# and julia-only, and a list lookup returns the first -- so julia refused it
-# with stan's message and stan dropped it with the julia-only names.
+# backend's own retry: stan restarts from fresh random values, julia resumes
+# from the better point its probe measured or, when the certification finds
+# the fit short, from where it stopped (`.ctBackendCorrectResult()`). It used
+# to be listed below twice, stan-only and julia-only, and a list lookup returns
+# the first -- so julia refused it with stan's message and stan dropped it with
+# the julia-only names.
 .ctOptimcontrolShared <- c('tol','g_tol','x_tol','maxiter','lbfgs_memory',
   'initsd','carefulfit','estonly','finishsamples','uncertainty',
   'uncertaintyDraws','uncertaintyControl','stallretries','stochastic')
@@ -221,10 +223,6 @@
     inert = function(v) isTRUE(all(v == 2)),
     msg = paste0("caps how often the julia stall check tightens its bar, and ",
       "the stan path has no such check. Drop it")),
-  gapretries = list(only = 'julia',
-    inert = function(v) isTRUE(all(v == 0)),
-    msg = paste0("caps how many curvature-based corrections a julia fit may ",
-      "take, which the stan path does not do. Drop it")),
   callback = list(only = 'julia',
     inert = function(v) is.null(v),
     msg = paste0("is called by the julia engine while the fit runs, and the ",

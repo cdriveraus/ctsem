@@ -31,10 +31,12 @@ default.
  Default on julia one per free parameter, at least 20 and at most 1000;
  mize's on stan.}
  \item{\code{stallretries}}{Both. Default 2. How often a fit that stopped
- somewhere that is not a maximum is tried again: stan restarts from fresh
- random values when the gradient exceeds \code{stalltol} per data point, and
- julia pulls the flat coordinates back and refits, keeping the refit only if
- it improves the objective. 0 turns it off.}
+ short of a maximum is tried again: stan restarts from fresh random values
+ when the gradient exceeds \code{stalltol} per data point; julia resumes
+ from the better point its probe found by pulling flat coordinates back,
+ or from where it stopped when the check finds the fit short, keeping a
+ resumed stage only if it improves the objective, and stopping one that
+ stops gaining. 0 turns it off.}
 }
 }
 
@@ -166,8 +168,6 @@ default.
  however much it is not; a Hessian formed this far away adds about this
  fraction to that error, where forming a fresh one costs a gradient per
  parameter (two on the Laplace route). 0 forms one at the estimate.}
- \item{\code{gapretries}}{Default 2. How often a fit the check finds short of
- a maximum is resumed; a resumed stage that stops gaining is stopped.}
  \item{\code{innergaptol}}{What a prediction of the remaining gain that
  can be optimistic -- L-BFGS's, or a Newton step's on a Hessian taken at
  another point -- has to fall below to stop; by default a hundredth of

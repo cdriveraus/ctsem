@@ -423,6 +423,82 @@ test_that("a resume starts L-BFGS from the certification's covariance, where it 
   expect_null(inverse(NULL))
 })
 
+test_that("a measured better point is resumed from before anything is certified, under the one budget", {
+  # The engine's probe found a pullback that gains: the result carries it,
+  # and the loop resumes from it without reading or forming a Hessian. The
+  # resumed stage is then certified, and a verdict of short resumes again --
+  # within the same budget, counted together.
+  short <- .fake_result(-diag(c(4, 25)), c(2, 5), value = -100, x = c(8, 0))
+  better <- .fake_result(-diag(c(4, 25)), c(2, 5), value = -90, x = c(1, 0))
+  done <- .fake_result(-diag(c(4, 25)), c(0, 0), value = -89, x = c(0.5, 0.2))
+  offered <- 0L
+  escape <- function(r) {
+    if (identical(r, short)) {
+      offered <<- offered + 1L
+      return(structure(c(1, 0), coordinates = 1L))
+    }
+    NULL
+  }
+  seen <- list()
+  optimise <- function(from, carried, endgame = NULL) {
+    seen[[length(seen) + 1L]] <<- list(from = as.numeric(from), carried = carried,
+      endgame = endgame)
+    if (length(seen) == 1L) better else done
+  }
+  out <- ctsem:::.ctBackendCorrectResult(short, spec = list(), npar = 2L,
+    tolerance = 1e-6, maxtries = 2L, optimise = optimise, escape = escape)
+  expect_equal(offered, 1L)
+  expect_length(seen, 2L)
+  # The escape: from the measured point, with no curvature, the fit's progress
+  # carried like any resume.
+  expect_equal(seen[[1L]]$from, c(1, 0))
+  expect_null(seen[[1L]]$endgame)
+  expect_equal(seen[[1L]]$carried, 5)
+  # Then the certification of the escaped point, and its resume on that
+  # curvature.
+  expect_equal(seen[[2L]]$from, c(1, 0))
+  expect_identical(seen[[2L]]$endgame$hessian, better$hessian)
+  expect_identical(out$result, done)
+  expect_equal(out$certification$status, "certified")
+  expect_equal(out$escapes, 1L)
+  expect_length(out$corrections, 2L)
+  expect_equal(out$corrections[[1L]]$status, "escape")
+  expect_equal(out$corrections[[1L]]$coordinates, 1L)
+  expect_equal(out$corrections[[2L]]$status, "suboptimal")
+  # Three stages' work, and the two finishes' Hessians.
+  expect_equal(unname(out$totals[["iterations"]]), 30)
+  expect_equal(out$hessians, 3L)
+  # The budget is one count: an escape and a resume are two of two, and a
+  # third stage is not taken however short the point.
+  seen <- list()
+  capped <- ctsem:::.ctBackendCorrectResult(short, spec = list(), npar = 2L,
+    tolerance = 1e-6, maxtries = 1L, optimise = optimise, escape = escape)
+  expect_length(seen, 1L)
+  expect_identical(capped$result, better)
+  # And the point it ended on is certified all the same.
+  expect_equal(capped$certification$status, "suboptimal")
+  # Without certification (`estonly`) the escape alone runs.
+  seen <- list()
+  plain <- ctsem:::.ctBackendCorrectResult(short, spec = list(), npar = 2L,
+    tolerance = 1e-6, maxtries = 2L, optimise = optimise, escape = escape,
+    certify = FALSE)
+  expect_length(seen, 1L)
+  expect_identical(plain$result, better)
+  expect_null(plain$certification)
+  expect_equal(plain$escapes, 1L)
+  # An escape that does not come out ahead is not kept, and the point is
+  # certified where it stands.
+  worse <- .fake_result(-diag(c(4, 25)), c(2, 5), value = -101, x = c(1, 0))
+  seen <- list()
+  kept <- ctsem:::.ctBackendCorrectResult(short, spec = list(), npar = 2L,
+    tolerance = 1e-6, maxtries = 2L, escape = escape,
+    optimise = function(from, carried, endgame = NULL) worse)
+  expect_identical(kept$result, short)
+  expect_false(kept$corrections[[1L]]$resumed)
+  expect_equal(kept$certification$status, "suboptimal")
+  expect_equal(kept$escapes, 0L)
+})
+
 test_that("a resume that does not improve is not taken", {
   short <- .fake_result(-diag(c(4, 25)), c(2, 5), value = -100)
   worse <- .fake_result(-diag(c(4, 25)), c(0, 0), value = -101)
