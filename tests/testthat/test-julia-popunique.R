@@ -420,12 +420,10 @@ test_that("own variances on an initial mean and a continuous intercept are integ
       expect_equal(as.numeric(rh$gradient), as.numeric(fw$gradient), tolerance = 1e-6)
     }
   }
-  # A stationary initial state has no initial mean to shift: that effect stays
-  # in the layer, the continuous intercept's is still integrated.
+  # A stationary fit fixes every initial cell, so it has no initial mean to
+  # vary; the continuous intercept's own variance is still integrated.
   options(ctsem.laplace.hybrid = TRUE)
-  ms <- m
-  ms$stationary <- TRUE
-  st <- .pu_spec(d, ms, poprank = 1, popunique = c("T0MEANS", "CINT"))
+  st <- .pu_spec(d, m, poprank = 1, popunique = "CINT", stationary = TRUE)
   expect_equal(st$laplace$hybrid$kind, 3L)
 })
 
