@@ -1282,10 +1282,15 @@ print.ctLaplaceCorrection <- function(x, ...) {
   # uncertainty and recentres its draws, as the step correction does, and
   # takes no Hessian at all: on wide blocks that is a large share of a
   # correction's cost, and `stationarity` in the record already says how far
-  # from stationary the estimate is.
+  # from stationary the estimate is. A fit that ended on a jump has no other
+  # curvature, so it takes this one however the rounds ended: its rounds
+  # stall on the draws' re-placement differences (round 9: 0.017 nats of
+  # residual against draws' errors of 0.04), and what the fit reports is
+  # then the hybrid's certification at that point, gap and all.
   reached <- identical(run$status, "converged")
+  takes_hessian <- reached || !is.null(jump)
   hc <- NULL
-  if (reached) {
+  if (takes_hessian) {
     # By forward differences this Hessian was 18.8 minutes of a 22-minute
     # correction on the ordinal fixture that found the silence; it is exact
     # now (laplace_continuation.jl) and can still take minutes. A start and a
@@ -1313,7 +1318,7 @@ print.ctLaplaceCorrection <- function(x, ...) {
   # describes, which the estimate may then be a few thousandths of a standard
   # error from.
   hessian_at <- x
-  if (reached && is.matrix(hc) && all(is.finite(hc))) {
+  if (takes_hessian && is.matrix(hc) && all(is.finite(hc))) {
     finish <- .ctLaplaceContinueFinish(module, cont, x, hc, final,
       value = run$value, bar = run$bar, value_tol = control$value_tol,
       reuse = .ctBackendHessianReuse(.ctBackendFitOptimcontrol(fit)))
@@ -1337,7 +1342,10 @@ print.ctLaplaceCorrection <- function(x, ...) {
   names(delta) <- names(delta_se) <- names(fit$estimate$se)
   record$delta <- delta
   record$delta_se <- delta_se
-  record$material <- isTRUE(max(abs(delta_se), na.rm = TRUE) >= control$material)
+  # No standard errors yet on a fit that ended on a jump (its uncertainty
+  # stage waits for this Hessian), so nothing to measure the move against.
+  record$material <- any(is.finite(delta_se)) &&
+    isTRUE(max(abs(delta_se), na.rm = TRUE) >= control$material)
   record$loglik_quadrature <- sum(as.numeric(info$quadrature_units))
   record$logposterior_quadrature <- as.numeric(info$quadrature)
   record$gap_reported <- as.numeric(info$quadrature) - as.numeric(info$laplace)
@@ -1347,7 +1355,7 @@ print.ctLaplaceCorrection <- function(x, ...) {
   record$error <- .ctLaplaceIntegrationError(info, unscored = record$wide)
   fit$estimate$raw <- x
   fit <- report_quadrature(fit, info)
-  usable <- reached && !inherits(hc, "try-error") && all(is.finite(hc))
+  usable <- takes_hessian && is.matrix(hc) && all(is.finite(hc))
   method <- .ctJuliaOr(fit$uncertainty$settings$method, "hessian")
   # Present even when empty: `$` partial-matches, and without it
   # `correction$hessian` would answer with `hessian_at`.
@@ -1388,9 +1396,12 @@ print.ctLaplaceCorrection <- function(x, ...) {
     record$certification <- certification
     record$hessian <- hc
     # A fit that ended on a jump has no other certification: this is its
-    # verdict.
+    # verdict, and the gradient it reports is the hybrid's here, not the
+    # Laplace objective's at the jump.
     if (!is.null(jump)) {
       fit$optim$converged <- identical(certification$status, "certified")
+      fit$optim$gradient_norm <- max(abs(gradient))
+      fit$optim$stalled <- FALSE
     }
     stages["certification"] <- since(certification_started)
   }
