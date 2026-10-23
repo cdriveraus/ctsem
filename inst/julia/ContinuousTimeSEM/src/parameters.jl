@@ -182,7 +182,9 @@ deviations are its own is built after the `EKFParameters` it wraps:
     arguments: `lv_sd`, `lv_cor`, `lv_sdfix`, `lv_corfix`, `lv_scale`,
     `lv_code`), the order `perm` (the layer's effects, then the items in item
     order), and `lparams`, the raw positions of the level's free scales and
-    correlations, which the closing term's cotangent reaches.
+    correlations, which the closing term's cotangent reaches; `version`,
+    counted up each time the fields are set, which the filter's cached factor
+    is checked against (`_hybrid_block_cached!`).
 """
 mutable struct CTSEMHybrid
     kind::Vector{Int}
@@ -200,9 +202,10 @@ mutable struct CTSEMHybrid
     lv_code::Int
     perm::Vector{Int}
     lparams::Vector{Int}
+    version::Int
 end
 CTSEMHybrid() = CTSEMHybrid(Int[], Int[], Int[], Int[], Float64[], Float64[], false,
-    Int[], Int[], Float64[], Float64[], Float64[], 0, Int[], Int[])
+    Int[], Int[], Float64[], Float64[], Float64[], 0, Int[], Int[], 0)
 _hybrid_on(h::CTSEMHybrid) = !isempty(h.effect)
 """The model's hybrid item count, the capacity every per-item array is sized by."""
 _hybrid_items(h::CTSEMHybrid) = length(h.effect)

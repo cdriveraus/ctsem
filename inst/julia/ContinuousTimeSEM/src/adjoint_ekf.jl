@@ -122,7 +122,9 @@ values `lvals` -- and the reverse state: the cotangents of `S` and `s` from
 the closing term, the cotangent of `X` carried backwards through the rows,
 `Gbar`, and from it each item's own-sd cotangent (`psibar`) or the level's
 (`lpbar`, over `CTSEMHybrid`'s `lparams`), which the caller adds to the raw
-gradient. Scratch for
+gradient; and a block factor's derivatives in the level parameters, kept with
+the values they were taken at (`dkey`, `dLb`, `dok`, `dversion`;
+`_hybrid_block_derivatives!`). Scratch for
 the per-row work beside it. Every array is sized by capacity -- the model's
 hybrid item count, the manifest count, the state count -- and grows only, so a
 pass after the first allocates nothing; loops read the leading block they need.
@@ -137,6 +139,10 @@ mutable struct CTSEMHybridTape{T}
     lvals::Vector{T}
     Gbar::Matrix{T}
     lpbar::Vector{T}
+    dkey::Vector{T}
+    dLb::Array{T,3}
+    dok::Vector{Bool}
+    dversion::Int
     q::Int
     item::Vector{Int}
     col::Vector{Int}
@@ -164,7 +170,7 @@ mutable struct CTSEMHybridTape{T}
     beta::Vector{T}
 end
 CTSEMHybridTape{T}() where {T} = CTSEMHybridTape{T}(false, 0, T[], zeros(T, 0, 0), 0,
-    false, T[], zeros(T, 0, 0), T[], 0, Int[], Int[],
+    false, T[], zeros(T, 0, 0), T[], T[], zeros(T, 0, 0, 0), Bool[], -1, 0, Int[], Int[],
     zeros(T, 0, 0), T[], T[], T[], zeros(T, 0, 0), T[], zeros(T, 0, 0), T[],
     zeros(T, 0, 0), zeros(T, 0, 0), zeros(T, 0, 0), zeros(T, 0, 0), zeros(T, 0, 0),
     zeros(T, 0, 0), T[], zeros(T, 0, 0), zeros(T, 0, 0), zeros(T, 0, 0),

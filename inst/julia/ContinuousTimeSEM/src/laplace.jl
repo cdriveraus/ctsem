@@ -849,6 +849,7 @@ function ctsem_laplace_objective(objective::CTSEMObjective; re_index=Int[],
     # The deviations the filter integrates, into the shared `EKFParameters`.
     hyb = objective.params.hybrid
     hyb.block = false
+    hyb.version += 1
     if isempty(hybrid_effect)
         hyb.kind = Int[]; hyb.target = Int[]; hyb.psi_index = Int[]; hyb.effect = Int[]
         hyb.sd_scale = Float64[]; hyb.slope = Float64[]

@@ -131,6 +131,7 @@ function _hybrid_start!(hb::CTSEMHybridBuffers{T}, h::CTSEMHybrid, data,
     end
     if h.block && size(hb.Lb, 1) < length(h.perm)
         hb.Lb = zeros(T, length(h.perm), length(h.perm))
+        hb.lversion = -1
     end
     @inbounds for c in 1:q
         for r in 1:n
@@ -296,7 +297,7 @@ function _hybrid_factor!(hb::CTSEMHybridBuffers{T}, h::CTSEMHybrid,
         return q
     end
     nh = _hybrid_items(h)
-    _hybrid_block_factor!(hb.Lb, h, values) || (hb.rd = 0; return 0)
+    _hybrid_block_cached!(hb, h, values) || (hb.rd = 0; return 0)
     nL = length(h.perm) - nh
     Lb = hb.Lb
     @inbounds for f in 1:nh
@@ -313,6 +314,51 @@ function _hybrid_factor!(hb::CTSEMHybridBuffers{T}, h::CTSEMHybrid,
     end
     hb.rd = nh
     return nh
+end
+
+"""
+Whether two numbers are the same value with the same partials, at every depth
+of dual: a cached quantity built from one is the other's. `==` on duals reads
+the values alone.
+"""
+_hybrid_same(a::T, b::T) where {T<:AbstractFloat} = a == b
+function _hybrid_same(a::ForwardDiff.Dual{G,V,N}, b::ForwardDiff.Dual{G,V,N}) where {G,V,N}
+    _hybrid_same(ForwardDiff.value(a), ForwardDiff.value(b)) || return false
+    @inbounds for i in 1:N
+        _hybrid_same(ForwardDiff.partials(a, i), ForwardDiff.partials(b, i)) || return false
+    end
+    return true
+end
+_hybrid_same(a, b) = false
+
+"""
+The block's factor into `hb.Lb` (`_hybrid_block_factor!`), kept while the
+level's parameters are the ones it was built at, value and partials alike, and
+the spec is the one it was built for: a level's parameters are the same for
+every subject a task filters in one pass, so the factor is built once a pass
+rather than once a subject -- per subject it was most of a block's cost, and
+63 MB an evaluation on AnomAuth's 800. Returns whether it factored.
+"""
+function _hybrid_block_cached!(hb::CTSEMHybridBuffers{T}, h::CTSEMHybrid,
+    values::AbstractVector) where {T}
+    np = length(h.lparams)
+    if hb.lversion == h.version && length(hb.lkey) == np
+        same = true
+        @inbounds for j in 1:np
+            if !_hybrid_same(hb.lkey[j], values[h.lparams[j]])
+                same = false
+                break
+            end
+        end
+        same && return hb.lok
+    end
+    length(hb.lkey) == np || (hb.lkey = Vector{T}(undef, np))
+    @inbounds for j in 1:np
+        hb.lkey[j] = values[h.lparams[j]]
+    end
+    hb.lversion = h.version
+    hb.lok = _hybrid_block_factor!(hb.Lb, h, values)
+    return hb.lok
 end
 
 """
@@ -651,7 +697,7 @@ function _reverse_hybrid_marginal!(rec::CTSEMHybridTape{T}, n::Int, nh::Int,
         end
     end
     if rec.block
-        _hybrid_block_pullback!(rec.lpbar, h, rec.lvals, Gbar, rec.item, q, rd)
+        _hybrid_block_pullback!(rec, h, Gbar, q, rd)
     else
         @inbounds for c in 1:q
             rec.psibar[rec.item[c]] += Gbar[c, c] * rec.dg[c]
@@ -667,37 +713,72 @@ struct _HybridFactorTag end
 
 """
 `lpbar[j] = sum(Gbar .* dG/dtheta_j)` over the level's free scales and
-correlations (`h.lparams`, raw values `lvals`), `G` a block's factor
-(`_hybrid_factor!`) for the subject's columns `items[1:q]`: the factor
-rebuilt at a dual of width one per parameter. Small -- the level's covariance
-and its factor, once a parameter -- beside the pass it closes.
+correlations (`h.lparams`, raw values `rec.lvals`), `G` a block's factor
+(`_hybrid_factor!`) for the subject's columns `rec.item[1:q]`, from the
+factor's derivatives (`_hybrid_block_derivatives!`).
 """
-function _hybrid_block_pullback!(lpbar::AbstractVector{T}, h::CTSEMHybrid,
-    lvals::AbstractVector{T}, Gbar::AbstractMatrix{T}, items::AbstractVector{Int},
-    q::Int, rd::Int) where {T}
+function _hybrid_block_pullback!(rec::CTSEMHybridTape{T}, h::CTSEMHybrid,
+    Gbar::AbstractMatrix{T}, q::Int, rd::Int) where {T}
     np = length(h.lparams)
-    np == 0 && return lpbar
-    D = ForwardDiff.Dual{_HybridFactorTag,T,1}
+    np == 0 && return rec.lpbar
+    _hybrid_block_derivatives!(rec, h)
+    nL = length(h.perm) - rd
+    dLb = rec.dLb
+    @inbounds for j in 1:np
+        rec.dok[j] || continue
+        acc = zero(T)
+        for c in 1:q
+            it = rec.item[c]
+            sl = T(h.slope[it])
+            for f in 1:min(it, rd)
+                acc += Gbar[c, f] * sl * dLb[nL + f, nL + it, j]
+            end
+        end
+        rec.lpbar[j] = acc
+    end
+    return rec.lpbar
+end
+
+"""
+The block factor's derivative in each level parameter into `rec.dLb[:, :, j]`
+(`rec.dok[j]` false where it does not factor), the factor rebuilt at a dual of
+width one per parameter -- one tag, so no dual type depends on the model --
+and kept while the level parameters are the values they were taken at
+(`_hybrid_same`), as the forward factor is.
+"""
+function _hybrid_block_derivatives!(rec::CTSEMHybridTape{T}, h::CTSEMHybrid) where {T}
+    np = length(h.lparams)
+    lvals = rec.lvals
+    if rec.dversion == h.version && length(rec.dkey) == np
+        same = true
+        @inbounds for j in 1:np
+            if !_hybrid_same(rec.dkey[j], lvals[j])
+                same = false
+                break
+            end
+        end
+        same && return nothing
+    end
     k = length(h.perm)
-    nL = k - rd
+    D = ForwardDiff.Dual{_HybridFactorTag,T,1}
+    size(rec.dLb) == (k, k, np) || (rec.dLb = zeros(T, k, k, np))
+    length(rec.dok) == np || (rec.dok = fill(false, np))
     vd = zeros(D, maximum(h.lparams))
     Lb = zeros(D, k, k)
     for j in 1:np
         for t in 1:np
             vd[h.lparams[t]] = D(lvals[t], ForwardDiff.Partials{1,T}((t == j ? one(T) : zero(T),)))
         end
-        _hybrid_block_factor!(Lb, h, vd) || continue
-        acc = zero(T)
-        @inbounds for c in 1:q
-            it = items[c]
-            sl = T(h.slope[it])
-            for f in 1:min(it, rd)
-                acc += Gbar[c, f] * sl * ForwardDiff.partials(Lb[nL + f, nL + it])[1]
-            end
+        rec.dok[j] = _hybrid_block_factor!(Lb, h, vd)
+        rec.dok[j] || continue
+        @inbounds for c in 1:k, r in 1:k
+            rec.dLb[r, c, j] = ForwardDiff.partials(Lb[r, c])[1]
         end
-        lpbar[j] = acc
     end
-    return lpbar
+    length(rec.dkey) == np || (rec.dkey = Vector{T}(undef, np))
+    copyto!(rec.dkey, lvals)
+    rec.dversion = h.version
+    return nothing
 end
 
 """

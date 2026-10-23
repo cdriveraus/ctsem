@@ -138,7 +138,8 @@ direction's cross curvature with `u` (`_hybrid_after!` on a
 `q` for own variances and the level's integrated count for a block; `uitem`
 is the hybrid item each coordinate of `u` belongs to, and `_hybrid_ndev` reads
 `rd` for a pass that may not have run.
-`cov`, `Lb` are a block's covariance and factor scratch.
+`Lb` is a block's factor, kept with the level parameters it was built at
+(`lkey`, `lok`, `lversion`; `_hybrid_block_cached!`).
 """
 mutable struct CTSEMHybridBuffers{T}
     active::Bool
@@ -156,6 +157,9 @@ mutable struct CTSEMHybridBuffers{T}
     rd::Int
     uitem::Vector{Int}
     Lb::Matrix{T}
+    lkey::Vector{T}
+    lok::Bool
+    lversion::Int
     q::Int
     col::Vector{Int}
     item::Vector{Int}
@@ -176,7 +180,7 @@ mutable struct CTSEMHybridBuffers{T}
 end
 CTSEMHybridBuffers{T}() where {T} = CTSEMHybridBuffers{T}(false, _HYBRID_PROFILE,
     zero(T), T[], T[], T[], T[], T[], T[], zeros(T, 0, 0), zeros(T, 0, 0),
-    zeros(T, 0, 0), 0, Int[], zeros(T, 0, 0), 0,
+    zeros(T, 0, 0), 0, Int[], zeros(T, 0, 0), T[], false, -1, 0,
     Int[], Int[], Int[], Int[], Float64[],
     zeros(T, 0, 0), zeros(T, 0, 0), zeros(T, 0, 0), zeros(T, 0, 0), zeros(T, 0, 0),
     zeros(T, 0, 0), T[], T[], zeros(T, 0, 0), T[], Int[])
