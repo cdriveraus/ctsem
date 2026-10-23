@@ -461,6 +461,63 @@ test_that("integrated own intercepts beside shared effects on the dynamics are s
   }
 })
 
+# A full-rank level hands the filter every affine effect, integrated given the
+# level's other effects (a block): the layer keeps those as its coordinates,
+# the leading columns of its root taken with the block last, which carry the
+# block's conditional mean, and the filter integrates the rest of the root.
+# With a random drift beside them the Laplace term is an approximation, the
+# same one either way. A subject that never observes an item keeps that
+# item's column.
+.pu_block_model <- function(ind) {
+  m <- suppressWarnings(suppressMessages(ctModel(type = "ct",
+    id = "id", manifestNames = c("Y1", "Y2", "Y3"), latentNames = c("eta1", "eta2"),
+    LAMBDA = matrix(c(1, 0.8, 0, 0, 0.5, 1), 3, 2),
+    DRIFT = matrix(c("drift11", 0.2, -0.1, -0.4), 2, 2),
+    DIFFUSION = matrix(c(0.5, 0, 0.1, 0.4), 2, 2), MANIFESTVAR = diag(0.4, 3),
+    MANIFESTMEANS = matrix(c("mm1", "mm2", "mm3"), 3, 1),
+    T0VAR = diag(1, 2), T0MEANS = matrix(c("t0m1", 0), 2, 1),
+    CINT = matrix(c(0, "cint2"), 2, 1))))
+  m$pars$indvarying <- m$pars$param %in% ind
+  m
+}
+
+test_that("a full-rank level's affine effects are integrated given the rest, exactly", {
+  skip_without_julia()
+  d <- .pu_means_data()
+  d$Y2[d$id == 3] <- NA
+  old <- options(ctsem.laplace.hybrid = TRUE)
+  on.exit(options(old), add = TRUE)
+  cases <- list(
+    list(ind = c("t0m1", "cint2", "mm1", "mm2", "mm3"), kinds = c(1L, 1L, 1L, 2L, 3L)),
+    list(ind = c("drift11", "mm1", "mm3"), kinds = c(1L, 1L)),
+    list(ind = c("drift11", "t0m1", "cint2", "mm2"), kinds = c(1L, 2L, 3L)))
+  set.seed(29)
+  for (case in cases) {
+    m <- .pu_block_model(case$ind)
+    options(ctsem.laplace.hybrid = TRUE)
+    hy <- .pu_spec(d, m)
+    options(ctsem.laplace.hybrid = FALSE)
+    la <- .pu_spec(d, m)
+    expect_true(isTRUE(hy$laplace$hybrid$block))
+    expect_equal(sort(hy$laplace$hybrid$kind), case$kinds)
+    expect_null(la$laplace$hybrid)
+    for (draw in 1:2) {
+      x <- rnorm(length(.pu_names(hy)), 0, 0.3)
+      rh <- .pu_eval(hy, x)
+      rl <- .pu_eval(la, x)
+      expect_equal(rh$value, rl$value, tolerance = 1e-9)
+      expect_equal(as.numeric(rh$gradient), as.numeric(rl$gradient), tolerance = 1e-7)
+      fw <- .pu_eval(hy, x, "forward")
+      expect_equal(as.numeric(rh$gradient), as.numeric(fw$gradient), tolerance = 1e-6)
+    }
+  }
+  # SAEM samples every effect of the level, so a fit that runs it keeps them
+  # in the layer.
+  options(ctsem.laplace.hybrid = TRUE)
+  sa <- .pu_spec(d, .pu_block_model(c("drift11", "mm1")), optimcontrol = list(saem = 5))
+  expect_null(sa$laplace$hybrid)
+})
+
 test_that("a measurement error written in a time dependent predictor keeps the deviations integrated, exactly", {
   skip_without_julia()
   # A study's known response rounding as a per-row variance q added to each
@@ -737,14 +794,19 @@ test_that("reporting through the hybrid is the layer's: population, subjects, mo
   on.exit(options(old), add = TRUE)
   d <- .pu_dyn_data()
   handle <- function(s) structure(s, class = c("ctJuliaModel", "ctFitModel"))
+  # The third case is full rank: the intercepts are a block integrated given
+  # the dynamics' effects.
   cases <- list(list(m = .pu_dyn_model(), rank = 1, pu = "MANIFESTMEANS"),
-    list(m = .pu_model(), rank = 0, pu = TRUE))
+    list(m = .pu_model(), rank = 0, pu = TRUE),
+    list(m = .pu_dyn_model()))
+  spec_of <- function(case) if (is.null(case$rank)) .pu_spec(d, case$m) else
+    .pu_spec(d, case$m, poprank = case$rank, popunique = case$pu)
   set.seed(21)
   for (case in cases) {
     options(ctsem.laplace.hybrid = TRUE)
-    hy <- .pu_spec(d, case$m, poprank = case$rank, popunique = case$pu)
+    hy <- spec_of(case)
     options(ctsem.laplace.hybrid = FALSE)
-    la <- .pu_spec(d, case$m, poprank = case$rank, popunique = case$pu)
+    la <- spec_of(case)
     expect_false(is.null(hy$laplace$hybrid))
     x <- rnorm(length(.pu_names(hy)), 0, 0.3)
     module <- ctsem:::.ctJuliaModule(hy$project)

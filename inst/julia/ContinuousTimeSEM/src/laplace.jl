@@ -364,8 +364,11 @@ nlevels(spec::CTSEMLaplaceSpec) = length(spec.levels)
 """Total latent dimensions across every level, per subject."""
 nlatent(spec::CTSEMLaplaceSpec) = sum(nlatent(l) for l in spec.levels; init=0)
 
-"""True when any level's covariance spans fewer dimensions than it has effects."""
-hasreducedrank(spec::CTSEMLaplaceSpec) = any(isreducedrank, spec.levels)
+"""True when every level's root is square -- full rank, and no block the filter
+integrates (`_laplace_block`), whose root keeps only its leading columns: what
+`L \\ dL` needs to mean anything."""
+_laplace_square_roots(spec::CTSEMLaplaceSpec) =
+    !any(l -> isreducedrank(l) || _laplace_block(l), spec.levels)
 
 """
     CTSEMLaplaceBlock(offset, size, members, level, ancestors)
@@ -5157,14 +5160,15 @@ _laplace_member_pass_finite!(gradient, subject_objective, aws, x) =
     _laplace_level_chol_solves(spec, Ls, dL)
 
 `Ls[l] \\ dL[l][t]` for every level `l` and parameter `t`, as
-`_laplace_seeded_unit_gradient!` takes it; `nothing` under reduced rank, whose
-`L` is not square and whose units take the other route (`needV`) there. No unit
+`_laplace_seeded_unit_gradient!` takes it; `nothing` where some level's `L` is
+not square (`_laplace_square_roots`), whose units take the other route
+(`needV`) there. No unit
 changes it, so it is solved once per evaluation: solved by each unit, the
 general `\\` was an LAPACK factorization -- and its process-wide lock -- per
 unit and parameter, nearly every lock sample left in a Laplace gradient or
 Hessian at eight threads (dev1).
 """
-_laplace_level_chol_solves(spec, Ls, dL) = hasreducedrank(spec) ? nothing :
+_laplace_level_chol_solves(spec, Ls, dL) = !_laplace_square_roots(spec) ? nothing :
     [[Ls[l] \ dL[l][t] for t in eachindex(dL[l])] for l in eachindex(dL)]
 
 # `levelsweeps` for a unit that needs none: never written, so one is enough.
@@ -5638,7 +5642,7 @@ function _laplace_seeded_unit_gradient!(out::Vector{Float64},
     # `H_{b,x}` runs over the members depending on both blocks, which under
     # strict nesting is the members of whichever is inner.
     nlev = length(spec.levels)
-    needV = hasreducedrank(spec)
+    needV = !_laplace_square_roots(spec)
     levelsweeps = needV ? Vector{Vector{Matrix{Float64}}}(undef, nlev) :
         _LAPLACE_NO_LEVELSWEEPS
     if needV
