@@ -3467,8 +3467,18 @@ ctOptimFitLpgFunc <- function(fit, cores=1){
 #' this session. Neither route changes what is computed, though both change the
 #' order things are summed in, so results are reproducible at \code{cores = 1}
 #' and agree to rounding above it.
-#' @param control List of method-specific options. For \code{uncertainty =
-#' 'sample'} these are the sampler settings described in the Sampling section
+#' @param control List of method-specific options. \code{accuracy} (julia
+#' only), an accuracy in posterior standard deviations, applies to every
+#' method but \code{'sample'}: once the method has run, its own account of
+#' its error -- for \code{'checked'} and \code{'is'} the Stein check's
+#' per-parameter mean error and spread -- is read against it, and where the
+#' method falls short, or has no account (\code{'hessian'}, the score
+#' methods), the fit is sampled to that accuracy (\code{'sample'} with
+#' \code{minESS} and \code{rhatTarget} set from it: 0.5 is a tail
+#' effective size of about 125 and R-hat 1.07, 0.3 about 350 and 1.025).
+#' The method reached is the one reported, and \code{$uncertainty$escalation}
+#' records what was read and done. For \code{uncertainty =
+#' 'sample'} the entries are the sampler settings described in the Sampling section
 #' (\code{chains}, \code{warmup}, \code{draws}, \code{seed},
 #' \code{saveEffects}, \code{processes}, \code{intoverpop},
 #' \code{tipredMissing}, \code{sampler}, \code{placement}, \code{minESS},
@@ -3576,6 +3586,23 @@ ctFitUncertainty <- function(fit,
   }
   .ctUncertaintyRemoved(uncertainty)
   uncertainty <- match.arg(uncertainty)
+  # An accuracy in posterior sds (julia only): the method's own account of
+  # its error is read against it once the pass is made, and a brief sampling
+  # run reaches it where the pass falls short (`.ctUncertaintyEscalate()`).
+  accuracy <- control[["accuracy"]]
+  control[["accuracy"]] <- NULL
+  if(!is.null(accuracy)) {
+    if(!.ctFitIsJulia(fit)) stop("control$accuracy escalates to the julia ",
+      "sampler and is not available for a ctStanFit.", call.=FALSE)
+    if(identical(uncertainty, 'sample')) stop("control$accuracy sets the ",
+      "sampler's stop from an accuracy; with uncertainty = 'sample' give ",
+      "minESS and rhatTarget directly, or ask for accuracy with the method ",
+      "to try first.", call.=FALSE)
+    .ctAccuracyTargets(accuracy)
+    out <- ctFitUncertainty(fit, uncertainty=uncertainty, draws=draws,
+      finishsamples=finishsamples, cores=cores, control=control, verbose=verbose)
+    return(.ctUncertaintyEscalate(out, accuracy, cores=cores, verbose=verbose))
+  }
   if(identical(uncertainty, 'sample')) .ctWeightsRefuse(fit,
     "ctFitUncertainty(uncertainty = 'sample')")
   # Which density `'is'` samples against; validated before anything runs, and

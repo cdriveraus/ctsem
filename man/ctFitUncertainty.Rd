@@ -68,8 +68,18 @@ this session. Neither route changes what is computed, though both change the
 order things are summed in, so results are reproducible at \code{cores = 1}
 and agree to rounding above it.}
 
-\item{control}{List of method-specific options. For \code{uncertainty =
-'sample'} these are the sampler settings described in the Sampling section
+\item{control}{List of method-specific options. \code{accuracy} (julia
+only), an accuracy in posterior standard deviations, applies to every
+method but \code{'sample'}: once the method has run, its own account of
+its error -- for \code{'checked'} and \code{'is'} the Stein check's
+per-parameter mean error and spread -- is read against it, and where the
+method falls short, or has no account (\code{'hessian'}, the score
+methods), the fit is sampled to that accuracy (\code{'sample'} with
+\code{minESS} and \code{rhatTarget} set from it: 0.5 is a tail
+effective size of about 125 and R-hat 1.07, 0.3 about 350 and 1.025).
+The method reached is the one reported, and \code{$uncertainty$escalation}
+records what was read and done. For \code{uncertainty =
+'sample'} the entries are the sampler settings described in the Sampling section
 (\code{chains}, \code{warmup}, \code{draws}, \code{seed},
 \code{saveEffects}, \code{processes}, \code{intoverpop},
 \code{tipredMissing}, \code{sampler}, \code{placement}, \code{minESS},

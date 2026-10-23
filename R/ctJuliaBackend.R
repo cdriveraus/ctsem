@@ -6996,6 +6996,14 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
       finishsamples = .ctJuliaOr(optimcontrol$finishsamples, 1000L),
       cores = cores, control = .ctJuliaOr(optimcontrol$uncertaintyControl, list()),
       verbose = verbose))
+    # An accuracy asked for (`optimcontrol$accuracy`, in posterior sds): the
+    # method's own account of its error read against it, and a brief
+    # sampling run where it falls short (`.ctUncertaintyEscalate()`).
+    if (!is.null(optimcontrol[["accuracy"]])) {
+      out <- holdrepair(.ctUncertaintyEscalate(out, optimcontrol[["accuracy"]],
+        cores = cores, verbose = verbose,
+        control = .ctJuliaOr(optimcontrol$sampleControl, list())))
+    }
   }
 
   # The quadrature correction, last of the post-optimiser stages: after the

@@ -969,6 +969,115 @@
   fit
 }
 
+# One accuracy, in posterior standard deviations, and the escalation that
+# reaches it: `optimcontrol$accuracy` (`ctFitUncertainty`'s
+# `control$accuracy`). The uncertainty stage runs the method it was given
+# and reads that method's own account of its error; where the account is
+# short of the accuracy, or the method has none, the stage goes on to a
+# brief sampling run whose stopping rule is the accuracy itself
+# (`.ctAccuracyTargets()`), and the fit reports the method reached
+# (`fit$uncertainty$escalation`). Off (NULL) by default, so no fit changes.
+#
+# What each method knows of its error, in the units the escalation reads:
+#
+#   'checked', 'is'   the Stein check (`.ctSteinCheck()`): each parameter's
+#                     mean error in its own sds (`meanerror`), and its
+#                     spread against what the gradient implies (`sdratio`),
+#                     where the draws were kept; where the sampler fell back
+#                     to the normal (`importance_sampling$used` FALSE) the
+#                     error is unknown. The check is one-sided: a pass
+#                     certifies nothing about the tails, which is why the
+#                     escalation reads a spread off by more than the accuracy
+#                     too.
+#   'hessian' and the score methods    no account of their own: the accuracy
+#                     cannot be read, and the stage escalates.
+#   'sample'          the stop the accuracy sets, read by the run itself.
+#
+# The sampler's stop from an accuracy `eps` is the calibration of
+# review/APPROX-endpoint-2026-10-04.md: a reported 5% or 95% point's Monte
+# Carlo error is about `1.96 * 2.1 / sqrt(ESS)` posterior sds, the median's
+# `1.96 * 1.25 / sqrt(ESS)`, and chains whose means disagree by `d` sds give
+# an R-hat of about `sqrt(1 + d^2)`; measured on 3168 parameter-by-prefix
+# cases those claims are optimistic by a factor of 1.35 at 90 per cent
+# coverage, so the margin is in the targets. `eps = 0.5` is then a tail
+# effective size of about 125 and R-hat 1.07; `eps = 0.3`, 350 and 1.025;
+# the sampler's own defaults (200, 1.01) are about 0.2 at the centre and 0.4
+# in the tails.
+.ctAccuracyMargin <- 1.35
+
+#' @keywords internal
+.ctAccuracyTargets <- function(accuracy) {
+  eps <- as.numeric(accuracy)[1L]
+  if (!is.finite(eps) || eps <= 0) stop("accuracy must be a positive number ",
+    "of posterior standard deviations.", call. = FALSE)
+  list(minESS = ceiling((1.96 * 2.1 * .ctAccuracyMargin / eps)^2),
+    rhatTarget = sqrt(1 + (eps / .ctAccuracyMargin)^2))
+}
+
+# What a fit's uncertainty pass says of its own error, against `accuracy`:
+# `short` (reached it, or could not say), `error` (the largest per-parameter
+# mean error in sds the check found, NA where it has none), `spread` (the
+# largest departure of a spread ratio from one, NA likewise), and `reason`.
+#' @keywords internal
+.ctAccuracyShortfall <- function(fit, accuracy) {
+  eps <- as.numeric(accuracy)[1L]
+  method <- .ctJuliaOr(fit$uncertainty$settings$method, "hessian")
+  none <- function(reason) list(short = TRUE, error = NA_real_, spread = NA_real_,
+    reason = reason, method = method)
+  if (!is.null(fit$sample)) return(list(short = FALSE, error = NA_real_,
+    spread = NA_real_, reason = "sampled", method = "sample"))
+  if (!method %in% c("checked", "is")) return(none(paste0("'", method,
+    "' gives no account of its error")))
+  is <- fit$uncertainty$details$importance_sampling
+  if (is.null(is)) return(none("no draws were taken"))
+  if (!isTRUE(is$used)) return(none("the sampler fell back to the normal"))
+  stein <- is$stein
+  if (is.null(stein)) return(none("the draws were not checked against the gradient"))
+  error <- suppressWarnings(max(abs(stein$meanerror), na.rm = TRUE))
+  spread <- suppressWarnings(max(abs(log(stein$sdratio)), na.rm = TRUE))
+  if (!is.finite(error)) error <- NA_real_
+  if (!is.finite(spread)) spread <- NA_real_
+  short <- is.na(error) || error > eps ||
+    (!is.na(spread) && spread > log1p(eps))
+  list(short = short, error = error, spread = spread, method = method,
+    reason = if (!short) "within the accuracy" else if (is.na(error))
+      "the check could not read the error" else if (error > eps)
+      sprintf("a mean %.2g sds off against %.2g asked", error, eps) else
+      sprintf("a spread %.2g times the gradient's against %.2g asked",
+        exp(spread), 1 + eps))
+}
+
+# The escalation: the fit as its uncertainty pass left it, sampled on where
+# the pass was short of `accuracy`. Records what it read and what it did in
+# `fit$uncertainty$escalation`; the method the fit reports is the one
+# reached.
+#' @keywords internal
+.ctUncertaintyEscalate <- function(fit, accuracy, cores = 1L, verbose = 0,
+  control = list()) {
+  if (is.null(accuracy)) return(fit)
+  read <- .ctAccuracyShortfall(fit, accuracy)
+  targets <- .ctAccuracyTargets(accuracy)
+  record <- list(accuracy = as.numeric(accuracy)[1L], from = read$method,
+    error = read$error, spread = read$spread, reason = read$reason,
+    minESS = targets$minESS, rhatTarget = targets$rhatTarget,
+    sampled = FALSE)
+  if (!isTRUE(read$short)) {
+    fit$uncertainty$escalation <- record
+    return(fit)
+  }
+  if (.ctBackendReporting(verbose)) {
+    message("Uncertainty by '", read$method, "' is short of the accuracy asked (",
+      read$reason, "); sampling to it.")
+  }
+  sampled <- .ctBackendUncertaintySample(fit,
+    control = utils::modifyList(control, list(minESS = targets$minESS,
+      rhatTarget = targets$rhatTarget)),
+    cores = cores, verbose = verbose)
+  record$sampled <- TRUE
+  sampled$uncertainty$escalation <- record
+  sampled
+}
+
 # The null mass an uncertainty pass's intervals are to be read against, per raw
 # coordinate. `ctOptimCovFromHessian()` drops the directions without curvature,
 # and `nullMass` says how much of each coordinate went with them; the summary
