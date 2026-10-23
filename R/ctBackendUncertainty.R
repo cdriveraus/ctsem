@@ -878,13 +878,20 @@
       likelihood, "'. Its settings are ",
       paste(c(own, names(shared)), collapse = ", "), ".", call. = FALSE)
   }
-  if (identical(likelihood, "quadrature")) {
-    return(.ctBackendUncertaintyQuadrature(fit, uncertainty,
+  switch(likelihood,
+    quadrature = .ctBackendUncertaintyQuadrature(fit, uncertainty,
       finishsamples = finishsamples, cores = cores, control = control,
-      verbose = verbose, shared = setdiff(names(shared), "correctEstimate")))
-  }
-  # The particle filter's density is sampled by the adaptive importance
-  # sampler alone: it has no normal to check.
+      verbose = verbose, shared = setdiff(names(shared), "correctEstimate")),
+    particle = .ctBackendUncertaintyParticle(fit, uncertainty,
+      finishsamples = finishsamples, cores = cores, control = control,
+      verbose = verbose, own = own, shared = shared))
+}
+
+# `likelihood = 'particle'`: the particle filter's density, sampled by the
+# adaptive importance sampler alone (`.ctParticleCorrect()`): it has no
+# normal to check, so `'is'` is the one method against it.
+.ctBackendUncertaintyParticle <- function(fit, uncertainty, finishsamples,
+  cores, control, verbose, own, shared) {
   if (!identical(uncertainty, "is")) {
     stop("likelihood = 'particle' is sampled by uncertainty = 'is'; ",
       "uncertainty = '", uncertainty, "' has no sampler against it.",
@@ -900,7 +907,7 @@
   # `uncertainty = 'stored'` describe these draws rather than the pass before.
   fit$uncertainty$settings <- list(method = "is", draws = "imis",
     finishsamples = nrow(fit$estimate$rawposterior), cores = cores,
-    control = c(list(likelihood = likelihood), control))
+    control = c(list(likelihood = "particle"), control))
   fit
 }
 
