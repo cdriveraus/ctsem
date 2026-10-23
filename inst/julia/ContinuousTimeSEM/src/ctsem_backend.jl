@@ -1410,6 +1410,20 @@ function _ctsem_pullback_sets(minimizer, flagged=Int[];
 end
 
 """
+    _ctsem_probe_baseline(objective, minimizer, value)
+
+What a probe's trial values are compared against: the objective's value at
+`minimizer`, which for most objectives is the `value` the optimiser ended
+with. A route whose probe values are not the optimiser's objective -- the
+Laplace continuation, whose probes read the hybrid with its rules placed at
+the probed point where the optimiser climbed the frozen rules -- gives the
+same reading at the estimate, or a gain of the placement difference is
+reported as an overshoot (0.0245 nats on the bench's anomS2, and a fit
+cycling through escapes at one point).
+"""
+_ctsem_probe_baseline(objective, minimizer, value) = value
+
+"""
     _ctsem_overshot(objective, minimizer, saturated_parameters, value, tolerance)
 
 Whether the optimizer walked *past* an optimum into a flat region, rather than
@@ -1487,6 +1501,8 @@ function _ctsem_overshot(objective, minimizer, saturated_parameters, value,
         _ctsem_pullback_sets(minimizer, saturated_parameters)
     end
     isempty(sets) && return empty_result
+    value = _ctsem_probe_baseline(objective, minimizer, value)
+    isfinite(value) || return empty_result
     keep = collect(minimizer)
     probe = collect(minimizer)
     # No ranking of the points that did not improve. Ordering them by how
@@ -2554,7 +2570,7 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
     saem::Bool=false, saem_maxiter::Integer=10000, saem_seed::Integer=1,
     saem_proposal::AbstractString="rw",
     progress_overwrite::Bool=true, progress_sink=nothing,
-    progress_callback=nothing, callback_every::Real=0.4,
+    progress_callback=nothing, callback_every::Real=0.4, stop=nothing,
     progress::Bool=verbose, progress_label::AbstractString="optimise",
     progress_budget::Bool=false, progress_every::Real=0.0,
     gap_tol::Real=0.0, converge_tol::Real=1e-6,
@@ -2753,6 +2769,10 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
     seen_iterations = Ref(0)
     stopped_by_gap = Ref(false)
     stopped_by_stall = Ref(false)
+    # The route's own stop (`stop`, a predicate of the iterate): a round on
+    # frozen rules ends where they have drifted
+    # (`ctsem_laplace_continuation_optimize`).
+    stopped_by_stop = Ref(false)
     stopped_by_progress = Ref(false)
     # The window is not scaled to L-BFGS's memory: on a large model that made
     # the watch, the one thing that ends a creeping stage, answer up to twelve
@@ -2814,6 +2834,10 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
         _invoke_callback(watcher, latest.iteration, Int(maxiter),
             -latest.value, latest.g_norm, current_x)
         in_sgd[] && return false
+        if stop !== nothing && stop(latest) === true
+            stopped_by_stop[] = true
+            return true
+        end
         # Stop when the step just taken was predicted to gain less objective
         # than asked for. The predicted gain of the *next* step is not knowable
         # here, and the last one is the standard stand-in: a quasi-Newton
@@ -2997,7 +3021,8 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
     end
     # Why L-BFGS stopped, in one word, since the finish depends on it and the
     # certification reads it.
-    reason_for(r) = stopped_by_gap[] ? "gap" : stopped_by_stall[] ? "stall" :
+    reason_for(r) = stopped_by_stop[] ? "stopped" :
+        stopped_by_gap[] ? "gap" : stopped_by_stall[] ? "stall" :
         stopped_by_progress[] ? "progress" :
         (r.linesearch_failed && jumped_units[] !== nothing) ? "jump" :
         r.linesearch_failed ? "linesearch" :

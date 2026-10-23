@@ -644,7 +644,7 @@ function _fresh_2d3_prior()
 end
 
 @testset "a stage after a placement starts from the pairs the last one ended with" begin
-    # A rescued fit's stages (`.ctLaplaceFrozenRescue()`): one run on the
+    # Stages on the hybrid after a placement: one run on the
     # hybrid, the draws placed again where it ended, and the next run from the
     # curvature the first left on the objective (`lbfgs_pairs = :objective`).
     # It reaches the cold run's point in fewer iterations (5 against 12 when
@@ -714,13 +714,14 @@ _fresh_nested_nonlinear() = (ctsem_laplace_objective(_LAPLACE_NONLINEAR_OBJECTIV
     # A product rule's error is its value against the rule two nodes fewer,
     # placed at the same centre; a frozen rule's is its standard error; an
     # unflagged unit has none; and the hybrid's error is the draws' in
-    # quadrature plus the node errors plus what the screen leaves.
+    # quadrature plus the node errors plus what the screen leaves. With the
+    # draws' target out of reach no rule is refined (below).
     laplace, values = _fresh_nonlinear()
     theta = collect(Float64, values)
     five = ctsem_laplace_continuation_info(ctsem_laplace_continuation(laplace, theta;
-        tolerance=-1.0))
+        tolerance=-1.0, draws_se=1e9))
     three = ctsem_laplace_continuation_info(ctsem_laplace_continuation(laplace, theta;
-        tolerance=-1.0, nodes=3))
+        tolerance=-1.0, nodes=3, draws_se=1e9))
     @test five.nflagged == five.nunits
     for U in five.flagged
         @test isapprox(five.centre_error[U],
@@ -743,6 +744,130 @@ _fresh_nested_nonlinear() = (ctsem_laplace_objective(_LAPLACE_NONLINEAR_OBJECTIV
     @test all(drawn.centre_error[U] == drawn.centre_se[U] for U in drawn.flagged)
     @test drawn.error_draws ≈ sqrt(sum(abs2, drawn.centre_se[drawn.flagged]))
     @test drawn.error_nodes == 0
+end
+
+@testset "a rule whose nodes have not converged is refined, and takes draws past nine" begin
+    # On the nonlinear fixture, at a point where some unit's 5-node rule
+    # differs from its 3-node rule by more than the draws' target: with the
+    # target out of reach the errors are those differences; at the target
+    # every flagged unit either reads within it, carries a finer rule, or is
+    # on draws, and the hybrid's error is no larger. See
+    # `_continuation_refine!`.
+    C = ContinuousTimeSEM
+    laplace, values = _fresh_nonlinear()
+    theta = collect(Float64, values)
+    coarse = ctsem_laplace_continuation(laplace, theta; tolerance=-1.0, draws_se=1e9)
+    c = ctsem_laplace_continuation_info(coarse)
+    worst = maximum(c.centre_error[U] for U in c.flagged if isfinite(c.centre_error[U]))
+    @test worst > 0
+    # A target the worst unit's cheap check exceeds: that unit is refined or
+    # drawn, the rest keep their rule and their cheap measure.
+    target = 0.5 * worst
+    fine = ctsem_laplace_continuation(laplace, theta; tolerance=-1.0, draws=256,
+        draws_se=target)
+    f = ctsem_laplace_continuation_info(fine)
+    @test f.nflagged == c.nflagged
+    refined = 0
+    for (k, U) in enumerate(fine.flagged)
+        nodes = size(fine.rules[k].roots[1].points, 2)
+        if c.centre_error[U] <= target
+            @test f.centre_error[U] == c.centre_error[U]
+            @test nodes == 5 && !fine.importance[U]
+        else
+            refined += 1
+            if fine.importance[U]
+                @test f.centre_error[U] == f.centre_se[U]
+            else
+                @test f.centre_error[U] <= target || nodes > 5
+                @test nodes <= C._CONTINUATION_NODES_MAX
+            end
+        end
+    end
+    @test refined >= 1
+    @test f.error <= c.error + 1e-12
+    # A target only an exact rule reaches, on the three-effect nonlinear
+    # fixture, whose product rules differ at every node count: with draws
+    # on, every unit whose rule is not exact is on draws; with them off, such
+    # a unit carries the finest rule and its error against the rule below
+    # it. (The one-effect fixture above reads its 7-node rule within 1e-12 of
+    # its 5-node rule, so nothing there escalates.)
+    laplace, values = _fresh_2d3()
+    theta = collect(Float64, values)
+    tiny = 1e-12
+    drawn = ctsem_laplace_continuation(laplace, theta; tolerance=-1.0, draws=256,
+        draws_se=tiny)
+    d = ctsem_laplace_continuation_info(drawn)
+    @test any(drawn.importance[U] for U in drawn.flagged)
+    for U in drawn.flagged
+        @test drawn.importance[U] || d.centre_error[U] <= tiny
+        drawn.importance[U] && @test d.centre_error[U] == d.centre_se[U]
+    end
+    nodrawn = ctsem_laplace_continuation(laplace, theta; tolerance=-1.0, draws=0,
+        draws_se=tiny)
+    n = ctsem_laplace_continuation_info(nodrawn)
+    @test !any(nodrawn.importance)
+    # The finest rule is the 9-node continuation's rule for that unit, with
+    # its value, and its error is that value against the 7-node rule's.
+    nine = ctsem_laplace_continuation(laplace, theta; tolerance=-1.0,
+        nodes=C._CONTINUATION_NODES_MAX, draws_se=1e9)
+    seven = ctsem_laplace_continuation(laplace, theta; tolerance=-1.0,
+        nodes=C._CONTINUATION_NODES_MAX - 2, draws_se=1e9)
+    i9 = ctsem_laplace_continuation_info(nine)
+    i7 = ctsem_laplace_continuation_info(seven)
+    @test nine.flagged == nodrawn.flagged
+    finest = [size(nodrawn.rules[k].roots[1].points, 2) ==
+        size(nine.rules[k].roots[1].points, 2) for k in eachindex(nodrawn.flagged)]
+    @test any(finest)
+    for (k, U) in enumerate(nodrawn.flagged)
+        if finest[k]
+            @test isapprox(n.quadrature_units[U], i9.quadrature_units[U]; rtol=1e-10)
+            @test isapprox(n.centre_error[U],
+                abs(i9.quadrature_units[U] - i7.quadrature_units[U]); atol=1e-10)
+            @test n.centre_error[U] > tiny
+        else
+            @test n.centre_error[U] <= tiny
+        end
+    end
+end
+
+@testset "a probe on the hybrid reads the rules placed at the probed point, and leaves the placement" begin
+    C = ContinuousTimeSEM
+    laplace, values = _fresh_nonlinear()
+    theta = collect(Float64, values)
+    other = theta .+ 0.4
+    o = ctsem_laplace_continuation(laplace, theta; tolerance=-1.0)
+    fresh = ctsem_laplace_continuation(laplace, other; tolerance=-1.0)
+    rules = o.rules
+    value = o.centre_value
+    # The probe's reading is a continuation placed there, net of what that
+    # placement's rules cannot vouch for (`_continuation_error`), and differs
+    # from the frozen rules' reading far from their placement.
+    v = C._ctsem_probe_value(o, other)
+    @test isapprox(v, fresh.centre_value - C._continuation_error(fresh).total; rtol=1e-8)
+    frozen = ctsem_laplace_continuation_evaluate(o, other; gradient=false).value
+    @test abs(frozen - v) > 0
+    # And at the centre it is the centre's value read the same way, the
+    # baseline a probe's gain is measured from.
+    net = value - C._continuation_error(o).total
+    @test isapprox(C._ctsem_probe_value(o, theta), net; rtol=1e-10)
+    @test isapprox(C._ctsem_probe_baseline(o, theta, -123.0), net; rtol=1e-10)
+    # Nothing of the placement is changed by a probe.
+    @test o.centre == theta
+    @test o.centre_value == value
+    @test o.rules === rules
+    @test o.previous === nothing
+    @test o.recentres == 1
+    # Inside a round -- a placement saved for `revert!` -- a probe leaves
+    # that saved placement, so the round can still be put back.
+    ctsem_laplace_continuation_recentre!(o, other)
+    saved = o.previous
+    @test saved !== nothing
+    C._ctsem_probe_value(o, theta .+ 0.2)
+    @test o.previous === saved
+    @test o.centre == other
+    ctsem_laplace_continuation_revert!(o)
+    @test o.centre == theta
+    @test o.centre_value == value
 end
 
 @testset "a nested unit wider than maxdim gets frozen draws per block" begin

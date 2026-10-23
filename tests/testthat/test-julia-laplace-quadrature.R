@@ -157,8 +157,10 @@ test_that("the default is the quadrature correction, and the fit-time one is the
     fits$default$estimate$rawposterior)
   expect_identical(fits$quadrature$estimate$loglik, fits$default$estimate$loglik)
   expect_identical(fits$step$laplace$correction$method, "step")
-  # What the fit did is `.ctLaplaceContinue()` applied to the uncorrected fit,
+  # The Laplace run converged (no unit's term jumped, `fit$laplace$jump`), so
+  # what the fit did is `.ctLaplaceContinue()` applied to the uncorrected fit,
   # exactly, and the same holds for the step.
+  expect_null(fits$quadrature$laplace$jump)
   posthoc <- .ctLaplaceContinue(fits$off)
   expect_identical(posthoc$estimate$raw, fits$quadrature$estimate$raw)
   expect_identical(posthoc$estimate$loglik, fits$quadrature$estimate$loglik)
@@ -223,7 +225,12 @@ test_that("what a continued fit reports is the continuation's own", {
   expect_equal(cont$estimate$logposterior, quad, tolerance = 1e-8)
   expect_equal(cont$estimate$loglik, corr$loglik_quadrature)
   expect_equal(sum(cont$estimate$subject_loglik), cont$estimate$loglik, tolerance = 1e-8)
-  expect_equal(cont$estimate$loglik_laplace, off$estimate$loglik)
+  # The Laplace log likelihood kept is the Laplace objective's at the point the
+  # correction started from, the climb's end.
+  lap <- JuliaConnectoR::juliaGet(module$ctsem_laplace_evaluate(
+    .ctJuliaObjective(cont), .ctJuliaNumericVector(corr$laplace_estimate),
+    gradient = FALSE))
+  expect_equal(cont$estimate$loglik_laplace, sum(lap$unit_loglik), tolerance = 1e-8)
   # The covariance and draws come from the continuation's Hessian, evaluated at
   # its estimate -- or where the finish's steps started, within the reuse
   # distance of it -- not from the Laplace curvature at the Laplace optimum.
@@ -278,8 +285,8 @@ test_that("what a continued fit reports is the continuation's own", {
   expect_gt(corr$flagged, 0L)
   expect_lte(corr$residual, corr$tolerance)
   expect_true(is.data.frame(corr$trace))
-  # The Laplace optimum stays what cross-validation reads.
-  expect_equal(.ctLaplaceOptimum(cont), as.numeric(off$estimate$raw))
+  # What cross-validation reads is the point the correction started from.
+  expect_equal(.ctLaplaceOptimum(cont), as.numeric(corr$laplace_estimate))
   expect_true(.ctLaplaceIsCorrected(cont))
   # And print says what ran.
   printed <- capture.output(print(cont))
@@ -598,7 +605,7 @@ test_that("a corrected fit reports how far its objective is from the exact margi
   expect_true(is.na(.ctLaplaceIntegrationError(list(error = NA_real_))$se))
 })
 
-test_that("a rescued fit warns once past a quarter of the units named", {
+test_that("a climb warns once past a quarter of the units on draws", {
   # No julia needed.
   control <- .ctLaplaceContinueDefaults
   expect_identical(control$draws_se, 0.05)
@@ -606,12 +613,12 @@ test_that("a rescued fit warns once past a quarter of the units named", {
   expect_identical(control$draws_df, 4)
   expect_identical(.ctLaplaceContinuationArgs(control)$draws_df, 4)
   # The share warning: once, past a quarter, and not on a handful of units.
-  expect_silent(expect_false(.ctLaplaceFrozenShareWarn(1:10, 40L, FALSE)))
-  expect_warning(warned <- .ctLaplaceFrozenShareWarn(1:11, 40L, FALSE),
+  expect_silent(expect_false(.ctLaplaceDrawsShareWarn(1:10, 40L, FALSE)))
+  expect_warning(warned <- .ctLaplaceDrawsShareWarn(1:11, 40L, FALSE),
     "11 of 40 units.*optimize = FALSE")
   expect_true(warned)
-  expect_silent(expect_true(.ctLaplaceFrozenShareWarn(1:20, 40L, TRUE)))
-  expect_silent(expect_false(.ctLaplaceFrozenShareWarn(1L, 2L, FALSE)))
+  expect_silent(expect_true(.ctLaplaceDrawsShareWarn(1:20, 40L, TRUE)))
+  expect_silent(expect_false(.ctLaplaceDrawsShareWarn(1L, 2L, FALSE)))
 })
 
 # The gated-gaps A14 config (review/LAPLACE-gated-gaps-2026-09-24.md): 40

@@ -145,6 +145,21 @@ REFJL <- tryCatch({
   TRUE
 }, error = function(e) { REFJL_ERR <<- conditionMessage(e); FALSE })
 rec$reference_jl <- if (REFJL) "loaded" else REFJL_ERR
+# ctsem starts a new Julia session when the last one ended inside a call (a
+# fit stopped by the time cap), and the new one has none of reference.jl:
+# gN1 s3's reference on anytime3-5cadd1c7 failed with `bench_probe_units`
+# undefined after a two-hour fit. Included again where it is missing.
+ensure_refjl <- function() {
+  if (!REFJL) return(invisible(FALSE))
+  there <- tryCatch(isTRUE(jeval("isdefined(ContinuousTimeSEM, :bench_probe_units)")),
+    error = function(e) FALSE)
+  if (!there) {
+    jeval(sprintf("Core.eval(ContinuousTimeSEM, :(include(%s)))",
+      deparse(normalizePath(file.path(HERE, "reference.jl"), winslash = "/"))))
+    .stamp("reference.jl included again: the Julia session had restarted")
+  }
+  invisible(TRUE)
+}
 # JuliaConnectoR translates plain values (a Matrix, a Vector) on return and
 # hands back a proxy for anything else; juliaGet only applies to the latter.
 jget <- function(x) if (inherits(x, "JuliaProxy")) JuliaConnectoR::juliaGet(x) else x
@@ -260,7 +275,8 @@ RESULT_KEYS <- c("iterations", "f_calls", "g_calls", "maximum_loglik", "converge
   "predicted_gain", "last_gain", "gradient_norm", "newton_steps", "newton_hessians",
   "newton_subset_hessians", "batch_sizes", "batch_iterations", "stall_escapes",
   "stall_triggers", "gap_tol", "linesearch", "chunks", "overshoot_gain",
-  "stopped_by_stall", "stall_gain", "stop_reason", "jump_units")
+  "stopped_by_stall", "stall_gain", "stop_reason", "jump_units",
+  "continuation_flagged")
 rec$instrumented <- c(
   .ctJuliaOptimise = wrap(".ctJuliaOptimise", function(orig) function(...) {
     a <- list(...)
@@ -482,9 +498,9 @@ if (!is.null(fit)) {
     correction = corr[setdiff(names(corr), c("draws"))],
     conditioning = fit$laplace$conditioning, floor = fit$laplace$floor,
     gated_units = fit$laplace$gated_units,
-    # Units a jump named and the fit then integrated by frozen draws
-    # (`.ctLaplaceFrozenRescue()`), NULL on a build without the rescue.
-    frozen = fit$laplace$frozen) else NULL
+    # The units whose Laplace terms jumped (`fit$laplace$jump`), NULL where
+    # none did or on a build without it.
+    jump = fit$laplace$jump) else NULL
   rec$identifiability <- tryCatch(list(nweak = .int1(fit$identifiability$nweak),
     weak = fit$identifiability$weak), error = function(e) NULL)
 }
@@ -496,6 +512,7 @@ if (DOREF && !is.null(est) && length(est) == npar && all(is.finite(est))) {
   refs <- tryCatch({
     setTimeLimit(elapsed = REFCAP, transient = TRUE)
     out <- list()
+    ensure_refjl()
     fresh_objectives()
     obj <- ctsem:::.ctJuliaObjective(if (!is.null(fit)) fit else spec)
     if (laplace) {
@@ -791,13 +808,12 @@ rec$row <- data.frame(
       is.finite(k) && k >= 1L && k <= length(st) && !identical(st[[k]]$kind, "warmup")
     }, logical(1))),
   probe_secs = .num1(probe$secs %||% NA), probe_found = .lgl1(probe$found),
-  # Engine runs the jump watch stopped, and what the rescue then integrated by
-  # frozen draws (the rescue's own runs bypass the run record).
+  # Engine runs the jump watch stopped, the units they named, and how many
+  # the fit handed to the correction on draws.
   jump_runs = sum(vapply(runs, function(r) identical(r$stop_reason, "jump"), logical(1))),
   jump_units = paste(unique(unlist(lapply(runs, function(r)
     if (identical(r$stop_reason, "jump")) r$jump_units))), collapse = ","),
-  frozen_units = paste(rec$laplace_block$frozen$units, collapse = ","),
-  frozen_placements = .int1(rec$laplace_block$frozen$placements %||% NA),
+  jump_fit = length(rec$laplace_block$jump$units),
   lapcorr_wide = .int1(corr$wide %||% NA), lapcorr_flagged = .int1(corr$flagged %||% NA),
   lapcorr_continuation = .chr1(corr$continuation),
   lapcorr_secs = .num1(corr$seconds["total"]), lapcorr_gradients = .num1(corr$evaluations["gradients"]),
