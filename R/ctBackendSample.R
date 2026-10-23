@@ -417,6 +417,10 @@
   # How many particles tempered SMC (`sampler = 'smc'`) carries, 200 by
   # default; read by `.ctBackendSampleControl()`.
   "particles",
+  # Whether tempered SMC's particles move on a coreset of the Laplace units
+  # (sample_smc.jl), TRUE by default; FALSE is the oracle, as for 'checked''s
+  # importance sampler.
+  "coreset",
   # Where the chains start on the joint target: 'saem' (SAEM's own run and
   # state, the default there) or 'fit' (the fit's estimate); read by
   # `.ctBackendUncertaintySample()`.
@@ -672,7 +676,13 @@
     adapt_metric = isTRUE(.ctJuliaOr(control$adapt_metric, FALSE)),
     adapt_effects = isTRUE(.ctJuliaOr(control$adapt_effects, FALSE)),
     sampler = .ctBackendSamplerName(control$sampler),
-    particles = max(2L, as.integer(.ctJuliaOr(control$particles, 200L))[1L]))
+    particles = max(2L, as.integer(.ctJuliaOr(control$particles, 200L))[1L]),
+    # Tempered SMC's particles move on a coreset of the Laplace units: the
+    # full density, evaluated once a particle a stage for the weights anyway,
+    # corrects the moves exactly (sample_smc.jl), so this costs accuracy
+    # nothing and `FALSE` is the oracle, as for the importance sampler's
+    # coreset (`.ctCoresetLpg()`). Inert off the Laplace route.
+    coreset = !isFALSE(control$coreset))
 
   # The SAEM kernel draws the effects by SAEM's own sweeps and keeps the
   # parameters' metric at the conditional curvature it was placed with, so
@@ -1100,7 +1110,8 @@
       nparticles = as.integer(settings$particles), maxdepth = settings$maxdepth,
       target_accept = settings$target_accept, maxdelta = settings$maxdelta,
       seed = as.integer(seed)[1L], ndraws = as.integer(draws),
-      widen = as.numeric(target$widen), verbose = isTRUE(progress),
+      widen = as.numeric(target$widen), coreset = isTRUE(settings$coreset),
+      verbose = isTRUE(progress),
       progress_overwrite = .ctProgressOverwrite(verbose),
       progress_sink = if (isTRUE(progress)) .ctProgressSink(
         .ctProgressOverwrite(verbose)) else NULL)
@@ -1375,6 +1386,23 @@
     nstages = if (is.null(result$nstages)) NULL else as.integer(result$nstages),
     stage_beta = if (is.null(result$stage_beta)) NULL else as.numeric(result$stage_beta),
     smc_seconds = if (is.null(result$smc_secs)) NULL else as.numeric(result$smc_secs),
+    # The coreset tempered SMC's particles moved on, where the route is
+    # Laplace: how many of the units each stage's coreset held (0 where a
+    # stage ran on the full objective), the units, the correction's effective
+    # size a stage as a fraction, the final chains' coreset and the fraction
+    # of the draws' effective size their correction to the full density kept;
+    # and how the particles ran ('serial', 'pool' or 'copies').
+    coreset = isTRUE(result$coreset),
+    nunits = if (is.null(result$nunits)) NULL else as.integer(result$nunits),
+    stage_coreset_size = if (is.null(result$stage_coreset_size)) NULL else
+      as.integer(result$stage_coreset_size),
+    stage_correction_ess = if (is.null(result$stage_correction_ess)) NULL else
+      as.numeric(result$stage_correction_ess),
+    final_coreset_size = if (is.null(result$final_coreset_size)) NULL else
+      as.integer(result$final_coreset_size),
+    final_correction_ess = if (is.null(result$final_correction_ess)) NULL else
+      as.numeric(result$final_correction_ess),
+    particles_parallel = if (is.null(result$parallel)) NULL else as.character(result$parallel),
     scale_accept = as.numeric(result$scale_accept),
     ncp_accept = as.numeric(result$ncp_accept),
     processes = FALSE,
@@ -1667,6 +1695,14 @@ print.ctSampleDiagnostics <- function(x, ...) {
     "autocorrelation and is not a stopping target here)\n", sep = "")
   else cat("  ", x$chains, " chains x ", x$draws, " draws (", x$warmup,
     " warmup discarded)\n", sep = "")
+  if (smc && isTRUE(x$coreset)) {
+    sizes <- x$stage_coreset_size[x$stage_coreset_size > 0]
+    if (length(sizes)) cat("  particles moved on a coreset of ",
+      paste(unique(range(sizes)), collapse = "-"), " of ", x$nunits,
+      " units; the final chains' correction to the full density kept ",
+      round(100 * x$final_correction_ess), "% of their effective size\n",
+      sep = "")
+  }
   cat("  divergent: ", x$divergent, " of ", total,
     "   max tree depth reached: ", x$saturated, "\n", sep = "")
   cat("  step size: ", paste(signif(x$stepsize, 3), collapse = ", "),
