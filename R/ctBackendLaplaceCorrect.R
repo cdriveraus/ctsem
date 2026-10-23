@@ -476,9 +476,11 @@ print.ctLaplaceCorrection <- function(x, ...) {
 #            the round's L-BFGS runs in the fit's identified directions,
 #            whitened by its curvature, so it starts from the Newton step the
 #            fit's Hessian implies and is confined to `radius` standard errors
-#            of the round's centre -- none until a round has been rejected,
-#            so the first rounds take the frozen rules' own optimum however
-#            far it lies; then the nodes are re-placed where it ended.
+#            of the round's centre -- none until a round has been rejected --
+#            and ends where its rules have drifted (a rule's effective number
+#            of nodes halved since its placement, `_continuation_drifted`),
+#            which is as far as a run on frozen rules can be trusted; then the
+#            nodes are re-placed where it ended.
 #   target   the FIXED POINT of that iteration: the estimate at which the
 #            gradient of the objective with its nodes placed there is zero.
 #            With the nodes held, that gradient is the quadrature's own
@@ -579,7 +581,10 @@ print.ctLaplaceCorrection <- function(x, ...) {
 # budget ran out, 1.85 exact nats short, and gN1's rounds shrank onto
 # re-placement differences of 0.01 nats 1.3 short, while a climb on the frozen
 # rules reached both in one run (the anytime grids of 2026-10-23). The
-# unbounded round is that run, kept only where the re-placed value holds.
+# unbounded round is that run, kept only where the re-placed value holds,
+# and ended where the rules have drifted: unbounded without that, gA14's
+# first round ran 40 se out on rules that no longer described the integrand
+# and was kept 0.3 exact nats below where bounded rounds ended.
 # Growing the region on the
 # residual instead -- only when a round cut it to a quarter -- held gated-gaps
 # D3 at 0.25 se for six rounds whose gains matched their model's to 2%, and
@@ -861,7 +866,7 @@ print.ctLaplaceCorrection <- function(x, ...) {
     gain = gain,
     moved = as.numeric(round$moved), iterations = as.integer(round$iterations),
     f_calls = as.integer(round$f_calls), g_calls = as.integer(round$g_calls),
-    kept = keep, flagged = as.integer(flagged))
+    drifted = isTRUE(round$drifted), kept = keep, flagged = as.integer(flagged))
   # The gain the fixed-node model predicts from the start: half the squared
   # whitened gradient, the Newton gain in nats. One gradient, and it decides
   # whether any round runs at all (`skip_gain`).

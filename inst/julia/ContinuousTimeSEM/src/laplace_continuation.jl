@@ -1860,6 +1860,27 @@ function _continuation_record_ess!(o::CTSEMLaplaceContinuation, f::Integer, ess:
 end
 
 """
+    _continuation_drifted(o, ratio)
+
+Whether any flagged rule's effective number of nodes has fallen under `ratio`
+of what it was at its placement (`_continuation_record_ess!`): nodes fixed
+where they were placed carry less of the integrand as the parameters move,
+and read far from home they can say anything. The climb's checkpoint places
+every rule again on it (`_ctsem_anytime!`); a round of the correction ends on
+it (`ctsem_laplace_continuation_optimize`), which is as far as a run on
+frozen rules can be trusted: unbounded, a first round on the bench's gA14
+ran 40 standard errors out and was kept 0.3 exact nats below where bounded
+rounds ended.
+"""
+_continuation_drifted(o::CTSEMLaplaceContinuation, ratio::Real) =
+    any(f -> isfinite(o.ess[f]) && isfinite(o.ess_placed[f]) &&
+        o.ess[f] < ratio * o.ess_placed[f], eachindex(o.rules))
+
+# A round's stop: sets `flag` so the round can say it ended on drift.
+_continuation_drift_stop!(o::CTSEMLaplaceContinuation, ratio::Real, flag::Base.RefValue{Bool}) =
+    _continuation_drifted(o, ratio) ? (flag[] = true; true) : false
+
+"""
     _continuation_rule_value(o, U, theta, Ls, dL, positions, rule, u, aws,
         scratch, want_gradient)
 
@@ -2268,8 +2289,7 @@ function _ctsem_anytime!(o::CTSEMLaplaceContinuation, x::AbstractVector, gain::R
     # within five accepted steps of a placement, or a rule in a steep region
     # would be placed every step.
     o.since_placement += 1
-    if o.since_placement >= 5 && any(f -> isfinite(o.ess[f]) && isfinite(o.ess_placed[f]) &&
-            o.ess[f] < 0.5 * o.ess_placed[f], eachindex(o.rules))
+    if o.since_placement >= 5 && _continuation_drifted(o, 0.5)
         _continuation_place!(o, theta)
         push!(o.events, (kind=:drift, flagged=length(o.flagged), gain=Float64(gain)))
         return true
@@ -2440,9 +2460,16 @@ parameters, the hybrid's value there and at the start, the optimiser's counts,
 round whose `start_gain` is below `tol` is not run: `stationary` says the point
 is already the answer on these nodes. `stationary_only` asks only that.
 """
+# One round of the correction: L-BFGS on the frozen rules from `values`,
+# in the directions `basis` spans, within `radius` of the start (0 for no
+# bound), and only while the rules have not drifted (`drift`, the share of a
+# rule's placed effective node count under which the round ends,
+# `_continuation_drifted`; 0 for never). `drifted` in the result says it
+# ended so.
 function ctsem_laplace_continuation_optimize(o::CTSEMLaplaceContinuation,
     values::AbstractVector, basis::AbstractMatrix, radius::Real;
-    maxiter::Integer=100, tol::Real=1e-6, stationary_only::Bool=false)
+    maxiter::Integer=100, tol::Real=1e-6, stationary_only::Bool=false,
+    drift::Real=0.5)
     x0 = collect(Float64, values)
     B = Matrix{Float64}(basis)
     size(B, 1) == length(x0) || throw(DimensionMismatch(
@@ -2455,13 +2482,16 @@ function ctsem_laplace_continuation_optimize(o::CTSEMLaplaceContinuation,
     stationary = usable && start_gain < tol
     none = (minimizer=x0, value=start.value, start_value=start.value, iterations=0,
         f_calls=0, g_calls=1, converged=stationary, stopped_by_gap=false, moved=0.0,
-        boundary=false, gradient_norm=NaN, refused=0, start_gain=start_gain,
-        stationary=stationary)
+        boundary=false, drifted=false, gradient_norm=NaN, refused=0,
+        start_gain=start_gain, stationary=stationary)
     (usable && !stationary && !stationary_only) || return none
     newton = sqrt(sum(abs2, gy))
     alpha = radius > 0 ? min(newton, Float64(radius)) : newton
     step = CTSEMContinuationStep(o, x0, B, Float64(radius))
     refused = o.refused
+    drifted = Ref(false)
+    ratio = Float64(drift)
+    stop = ratio > 0 ? (st -> _continuation_drift_stop!(o, ratio, drifted)) : nothing
     res = ctsem_optimize(step, zeros(size(B, 2)); maxiter=Int(maxiter), g_tol=1e-8,
         f_tol=0.0, x_tol=0.0, gap_tol=Float64(tol), converge_tol=Float64(tol),
         overshoot_probe=:off, stall_window=0, batch=false, newton=false,
@@ -2469,14 +2499,15 @@ function ctsem_laplace_continuation_optimize(o::CTSEMLaplaceContinuation,
         # Its basis is whitened by the Hessian, so its first step is Newton's
         # and its prediction is the gain left.
         lbfgs_scaled=true,
-        initial_alpha=max(alpha, 1e-12), progress=false)
+        initial_alpha=max(alpha, 1e-12), progress=false, stop=stop)
     y = collect(Float64, res.minimizer)
     moved = sqrt(sum(abs2, y))
     return (minimizer=_continuation_point(step, y), value=res.maximum_loglik,
         start_value=start.value, iterations=res.iterations, f_calls=res.f_calls,
         g_calls=res.g_calls + 1, converged=res.converged,
         stopped_by_gap=res.stopped_by_gap, moved=moved,
-        boundary=radius > 0 && moved >= 0.9 * radius, gradient_norm=res.gradient_norm,
+        boundary=radius > 0 && moved >= 0.9 * radius, drifted=drifted[],
+        gradient_norm=res.gradient_norm,
         refused=o.refused - refused, start_gain=start_gain, stationary=false)
 end
 
