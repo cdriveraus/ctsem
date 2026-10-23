@@ -332,7 +332,10 @@
     marginal = marginal, state_explicit = isTRUE(state_explicit),
     hessian = fit$uncertainty$hessian, metric = .ctBackendSampleMetric(fit),
     placement = placement, smcstart = .ctBackendSmcStart(fit, estimate),
-    widen = if (is.null(fit$uncertainty$details$dais$cov)) 2 else 1)
+    # A posterior covariance (the importance draws' or DAIS's) starts the
+    # particles at its own width; the check's normal, which is a proposal, at
+    # twice it.
+    widen = if (.ctBackendMetricSource(fit) %in% c("is", "dais")) 1 else 2)
 
   out <- .ctBackendSampleRun(fit, sampletarget, chains = chains, warmup = warmup,
     draws = draws, cores = cores, saveEffects = saveEffects, seed = seed,
@@ -775,27 +778,62 @@
 # population block and reads this only as a fallback. Only the engine reads
 # it: the sampled fit keeps the exact Hessian as `uncertainty$hessian`, which
 # the identifiability report reads.
+# Where the sampler's metric comes from, best first: 'is', the covariance of
+# `'checked'`'s importance draws where they were used, weighted, and number at
+# least twice the dimension in effective size (`fit$estimate$cov`); 'dais', the
+# normal DAIS moved to the posterior's moments; 'check', the Hessian rescaled
+# to the widths the normal check measured; 'hessian', nothing better.
+#
+# The draws first, because a metric from draws of the posterior beat DAIS's
+# damped covariance by 6.8 times in effective sample per gradient on the
+# 75-parameter time series (the same seed and stopping rule; 5-13 times at
+# three seeds in the chart session's fixed-budget runs,
+# review/SAMPLING-smc-2026-10-23.md): DAIS's spread is 0.75 of the posterior's
+# by design, 0.39 in its worst direction there, and NUTS pays for a metric
+# that is too narrow with slow mixing along what it underestimates. The
+# importance draws are draws of the posterior wherever the check passed them;
+# fewer effective draws than twice the dimension make a covariance noisier in
+# its small directions than the damped one, which is where the bar sits.
+#' @keywords internal
+.ctBackendMetricSource <- function(fit) {
+  d <- fit$uncertainty$details
+  npar <- length(fit$estimate$raw)
+  is <- d$importance_sampling
+  C <- fit$estimate$cov
+  if (isTRUE(is$used) && isTRUE(is$weighted) && is.numeric(is$ess) &&
+      isTRUE(is$ess >= 2 * npar) && is.matrix(C) && nrow(C) == npar &&
+      all(is.finite(C))) return("is")
+  if (!is.null(d$dais$cov) && all(is.finite(d$dais$cov))) return("dais")
+  if (!is.null(fit$uncertainty$hessian) && length(d$normalcheck$widths)) return("check")
+  "hessian"
+}
+
+# A covariance's precision along the directions it holds, and nothing along
+# the rest: a direction the check's covariance dropped as unidentified is a
+# null direction of the posterior's covariance too, and the engine's
+# `_bounded_inverse` then floors it and gives it a wide momentum, as it does
+# for the Hessian's. A plain `solve` here was singular on such a fit
+# (reciprocal condition number 1e-25) and stopped the first sample after it.
+# Returned with the Hessian's sign, which is what the engine reads.
+#' @keywords internal
+.ctBackendCovPrecision <- function(C) {
+  C <- as.matrix(C)
+  e <- eigen((C + t(C)) / 2, symmetric = TRUE)
+  keep <- e$values > .ctFlatDirectionRtol() * max(e$values)
+  V <- e$vectors[, keep, drop = FALSE]
+  P <- V %*% (t(V) / e$values[keep])
+  -(P + t(P)) / 2
+}
+
 .ctBackendSampleMetric <- function(fit) {
-  # The normal `'checked'` moved to the posterior's moments where its check
-  # named directions (`.ctDaisRun()`): the posterior's own covariance, which is
-  # what warmup adaptation would estimate and measurement says not to
-  # re-estimate; read before the Hessian's rescaling, which it supersedes.
-  #
-  # Its precision along the directions the covariance holds, and nothing
-  # along the rest: a direction the check's covariance dropped as
-  # unidentified is a null direction of this one too, and the engine's
-  # `_bounded_inverse` then floors it and gives it a wide momentum, as it
-  # does for the Hessian's. A plain `solve` here was singular on such a fit
-  # (reciprocal condition number 1e-25) and stopped the first sample after it.
-  dais <- fit$uncertainty$details$dais
-  if (!is.null(dais$cov) && all(is.finite(dais$cov))) {
-    C <- as.matrix(dais$cov)
-    e <- eigen((C + t(C)) / 2, symmetric = TRUE)
-    keep <- e$values > .ctFlatDirectionRtol() * max(e$values)
-    V <- e$vectors[, keep, drop = FALSE]
-    P <- V %*% (t(V) / e$values[keep])
-    return(-(P + t(P)) / 2)
-  }
+  # The posterior's own covariance where `'checked'` has one -- its importance
+  # draws' where they passed, else the normal DAIS moved to the posterior's
+  # moments (`.ctBackendMetricSource()`) -- which is what warmup adaptation
+  # would estimate and measurement says not to re-estimate; read before the
+  # Hessian's rescaling, which it supersedes.
+  source <- .ctBackendMetricSource(fit)
+  if (identical(source, "is")) return(.ctBackendCovPrecision(fit$estimate$cov))
+  if (identical(source, "dais")) return(.ctBackendCovPrecision(fit$uncertainty$details$dais$cov))
   H <- fit$uncertainty$hessian
   check <- fit$uncertainty$details$normalcheck
   if (is.null(H) || !length(check$widths)) return(NULL)
