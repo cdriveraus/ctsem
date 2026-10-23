@@ -2798,7 +2798,15 @@ ctOptimFitLpgFunc <- function(fit, cores=1){
   # named or sampling fails. `control$dais = FALSE` leaves the Hessian's.
   dais <- NULL
   if (checked && !isFALSE(control$dais) && is.function(.ctImisGradient(lpg, centre))) {
-    dais <- .ctDaisRun(lpg, centre, uncertaintyfit$cov, control, verbose = verbose)
+    # The directions the flat screen confirmed are held at the normal's
+    # width: the data say nothing along them, and a moment-matching step has
+    # no fixed point there (see R/ctDais.R).
+    dais <- .ctDaisRun(lpg, centre, uncertaintyfit$cov, control, verbose = verbose,
+      hold = uncertaintyfit$details$flatdirections$vectors)
+    if (!is.null(dais) && !isTRUE(dais$used)) {
+      uncertaintyfit$details$dais <- dais
+      dais <- NULL
+    }
   }
   if (!is.null(dais)) {
     recheck <- .ctOptimNormalCheck(.ctImisGradient(lpg, centre), dais$mean, dais$cov)

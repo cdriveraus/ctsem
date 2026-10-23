@@ -83,6 +83,16 @@
 # check's draws, and on a shell this moved the normal to where no training
 # draw was. The values the batch returns are the ones weighted.
 #
+# A direction the data do not identify has no fixed point here: the
+# gradient along it is zero, so each step multiplies its variance by
+# `1 + gamma`, and on a fixture with one such direction the variance reached
+# 5e8 times the curvature's in 100 iterations and the Laplace correction's
+# proposal, which starts from the fit's covariance, was useless. So the
+# directions the flat screen confirmed (`hold`) are held at the normal's
+# width -- the moves and the covariance are projected off them -- and a
+# covariance that still grows past `1e4` times the start's in any direction
+# ends the run as diverged, `used = FALSE`, and the check's normal stands.
+#
 # Nothing here runs where the check named no direction: the Hessian's normal
 # is the answer there, and this costs nothing. `control$dais = FALSE` skips
 # it, which is also the oracle for measuring it.
@@ -100,7 +110,7 @@
 # two otherwise), and the trace per iteration.
 #' @keywords internal
 .ctDaisRun <- function(lpg, centre, cov, control = list(), verbose = 0,
-  rtol = .ctFlatDirectionRtol()) {
+  hold = NULL, rtol = .ctFlatDirectionRtol(), maxgrowth = 1e4) {
   gradbatch <- attr(lpg, 'gradbatch')
   if (!is.function(gradbatch)) return(NULL)
   teach <- if (is.function(attr(lpg, 'coreset'))) attr(lpg, 'batch') else NULL
@@ -113,6 +123,16 @@
   A <- sweep(e$vectors[, keep, drop = FALSE], 2, sqrt(e$values[keep]), '*')
   k <- ncol(A)
   if (!k) return(NULL)
+  # The held directions in the whitened coordinates, orthonormal: `A^+ h`
+  # for each, where `A^+ = D^-1/2 V'` on the kept eigenvectors.
+  U <- NULL
+  if (length(hold) && NCOL(hold)) {
+    Uz <- sweep(crossprod(e$vectors[, keep, drop = FALSE], as.matrix(hold)), 1,
+      sqrt(e$values[keep]), '/')
+    q <- qr(Uz)
+    if (q$rank > 0) U <- qr.Q(q)[, seq_len(q$rank), drop = FALSE]
+  }
+  offhold <- function(M) if (is.null(U)) M else M - (M %*% U) %*% t(U)
   S <- as.integer(.ctJuliaOr(control$daisDraws, .ctDaisDraws(k)))
   S <- max(4L, 2L * ((S + 1L) %/% 2L))
   maxiter <- max(1L, as.integer(.ctJuliaOr(control$daisMaxIter, 150L)))
@@ -159,7 +179,8 @@
     }
     ok <- is.finite(value) & value > -1e99 & rowSums(!is.finite(G)) == 0
     Phi <- ifelse(ok, value - lq, -Inf)
-    GP <- G %*% Gamma + sweep(Z, 2, mu)
+    # Off the held directions, where the normal stands as it is.
+    GP <- offhold(G %*% Gamma + sweep(Z, 2, mu))
     gamma <- 1
     if (ess_logw(Phi) < essfrac * S) {
       lo <- 0
@@ -178,7 +199,7 @@
       gbar <- colSums(w * GP)
       zbar <- colSums(w * Z)
       munew <- mu + gamma * gbar
-      Cv <- crossprod(w * sweep(GP, 2, gbar), sweep(Z, 2, zbar))
+      Cv <- crossprod(w * sweep(GP, 2, gbar), offhold(sweep(Z, 2, zbar)))
       Gnew <- Gamma + gamma * (Cv + t(Cv)) / 2
       Gnew <- (Gnew + t(Gnew)) / 2
       if (!inherits(try(chol(Gnew), silent = TRUE), 'try-error')) break
@@ -213,26 +234,38 @@
     if (length(recent) > average) recent <- recent[-1L]
     trace[[iter]] <- c(gamma = gamma, ess = essw, natural = natural, noise = noise,
       elbo = elbo, shift = shift, averaging = as.numeric(averaging > 0L))
+    # A variance still growing past `maxgrowth` times the start's is a
+    # direction with no fixed point: the run ends and the caller keeps the
+    # check's normal.
+    growth <- max(eigen(Gamma, symmetric = TRUE, only.values = TRUE)$values)
+    if (growth > maxgrowth) {
+      if (verbose > 0) message(sprintf(
+        'DAIS: the covariance grew %.0f times the normal\'s along a direction after %d iterations; the data do not identify it, and the check\'s normal stands.',
+        growth, iter))
+      return(list(used = FALSE, diverged = TRUE, iterations = iter, growth = growth,
+        draws = S, gradients = gradients, values = values,
+        cost = if (is.function(costfun)) costfun() - cost0 else 2 * gradients + values,
+        trace = do.call(rbind, trace)))
+    }
     if (verbose > 1) message(sprintf(
       'DAIS %d: gamma %.3g, ESS %.0f of %d, natural step %.2f (noise %.2f), ELBO %.2f%s',
       iter, gamma, essw, S, natural, noise, elbo, if (averaging > 0L) ', averaging' else ''))
-    if (averaging > 0L) {
+    # `averaging` counts the iterates summed, and is the divisor: counted as
+    # one more than the terms, it inflated every averaged shift and covariance
+    # by 21/20, which a held direction's variance of 1.05 showed.
+    if (averaging == 0L) {
+      settled <- if (natural <= noise && elbo_settled && travel_settled) settled + 1L else 0L
+    }
+    if (averaging > 0L || settled >= settle) {
       averaging <- averaging + 1L
       musum <- musum + mu
       Gsum <- Gsum + Gamma
-      if (averaging > average) break
-    } else {
-      settled <- if (natural <= noise && elbo_settled && travel_settled) settled + 1L else 0L
-      if (settled >= settle) {
-        averaging <- 1L
-        musum <- musum + mu
-        Gsum <- Gsum + Gamma
-      }
+      if (averaging >= average) break
     }
   }
-  if (averaging > 1L) {
-    mu <- musum / (averaging - 1L)
-    Gamma <- Gsum / (averaging - 1L)
+  if (averaging > 0L) {
+    mu <- musum / averaging
+    Gamma <- Gsum / averaging
   } else if (length(recent)) {
     mu <- Reduce(`+`, lapply(recent, `[[`, 'mu')) / length(recent)
     Gamma <- Reduce(`+`, lapply(recent, `[[`, 'Gamma')) / length(recent)
@@ -242,10 +275,10 @@
   cost <- if (is.function(costfun)) costfun() - cost0 else 2 * gradients + values
   if (verbose > 0) message(sprintf(
     'DAIS: %d iterations (%d averaged), %d gradients, last damping %.2g; the normal %s.',
-    length(trace), max(averaging - 1L, 0L), gradients, gamma,
+    length(trace), averaging, gradients, gamma,
     if (averaging > 0L) 'settled' else 'ran out of iterations'))
   list(used = TRUE, mean = centre + as.numeric(A %*% mu), cov = (covraw + t(covraw)) / 2,
-    iterations = length(trace), averaged = max(averaging - 1L, 0L), settled = averaging > 0L,
+    iterations = length(trace), averaged = averaging, settled = averaging > 0L,
     gamma = gamma, ess = essw, draws = S, gradients = gradients, values = values,
     cost = cost, trace = do.call(rbind, trace))
 }

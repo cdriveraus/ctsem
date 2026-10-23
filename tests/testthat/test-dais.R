@@ -57,6 +57,37 @@ test_that("DAIS moves a normal from the mode to a skewed posterior's moments", {
   expect_equal(r0$cov, t$lapcov, tolerance = 0.15)
 })
 
+test_that("a direction the data do not identify is held, or the run ends as diverged", {
+  # A skewed target in two coordinates and a third the log density does not
+  # depend on at all: along it the posterior is improper, the normal's width
+  # is whatever it was given, and a moment-matching step would double the
+  # variance with every iteration.
+  a <- c(0.5, 1)
+  lpg <- ctsem:::.ctImisPointGradbatch(function(x) {
+    e <- exp(x[1:2])
+    out <- sum(a * x[1:2] - e)
+    attr(out, 'gradient') <- c(a - e, 0)
+    out
+  })
+  mode <- c(log(a), 0)
+  cov0 <- diag(c(1 / a, 1))
+  set.seed(18)
+  held <- ctsem:::.ctDaisRun(lpg, mode, cov0, list(daisDraws = 64L),
+    hold = matrix(c(0, 0, 1), 3))
+  expect_true(held$used)
+  # The skewed coordinates move to their moments; the held one stays as it was.
+  expect_lt(max(abs(held$mean[1:2] - digamma(a)) / sqrt(trigamma(a))), 0.15)
+  expect_equal(held$mean[3], 0)
+  expect_equal(held$cov[3, 3], 1)
+  expect_equal(held$cov[1:2, 3], c(0, 0))
+  set.seed(18)
+  free <- ctsem:::.ctDaisRun(lpg, mode, cov0, list(daisDraws = 64L))
+  expect_false(free$used)
+  expect_true(free$diverged)
+  expect_gt(free$growth, 1e4)
+  expect_null(free$cov)
+})
+
 test_that("DAIS runs inside 'checked' where the check names a direction, and not where it does not", {
   t <- .skewTarget(d = 6L, a = c(0.5, 1))
   set.seed(14)
@@ -101,8 +132,15 @@ test_that("the sampler's metric is the DAIS normal's precision where there is on
   C <- crossprod(matrix(rnorm(25), 5)) + diag(5)
   fit <- list(uncertainty = list(hessian = -diag(5), details = list(dais = list(cov = C),
     normalcheck = list(directions = matrix(1, 5, 1), widths = 4))))
-  expect_equal(-ctsem:::.ctBackendSampleMetric(fit), solve(ctsem:::ctOptimSafeCov(C)),
-    tolerance = 1e-10)
+  expect_equal(-ctsem:::.ctBackendSampleMetric(fit), solve(C), tolerance = 1e-8)
+  # A direction the covariance does not hold gets no precision, so the engine
+  # floors it wide, as it does for the Hessian's unidentified directions.
+  v <- c(1, 0, 0, 0, 0)
+  Cnull <- C - C %*% v %*% t(v) %*% C / as.numeric(t(v) %*% C %*% v)
+  fit$uncertainty$details$dais$cov <- Cnull
+  Pn <- -ctsem:::.ctBackendSampleMetric(fit)
+  expect_equal(as.numeric(Pn %*% v), rep(0, 5), tolerance = 1e-6)
+  expect_equal(Pn %*% Cnull %*% Pn, Pn, tolerance = 1e-6)
   fit$uncertainty$details$dais <- NULL
   # Without one, the Hessian rescaled to the check's widths, as before.
   expect_false(isTRUE(all.equal(-ctsem:::.ctBackendSampleMetric(fit), solve(C))))

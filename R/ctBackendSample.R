@@ -748,9 +748,20 @@
   # named directions (`.ctDaisRun()`): the posterior's own covariance, which is
   # what warmup adaptation would estimate and measurement says not to
   # re-estimate; read before the Hessian's rescaling, which it supersedes.
+  #
+  # Its precision along the directions the covariance holds, and nothing
+  # along the rest: a direction the check's covariance dropped as
+  # unidentified is a null direction of this one too, and the engine's
+  # `_bounded_inverse` then floors it and gives it a wide momentum, as it
+  # does for the Hessian's. A plain `solve` here was singular on such a fit
+  # (reciprocal condition number 1e-25) and stopped the first sample after it.
   dais <- fit$uncertainty$details$dais
   if (!is.null(dais$cov) && all(is.finite(dais$cov))) {
-    P <- solve(ctOptimSafeCov(as.matrix(dais$cov)))
+    C <- as.matrix(dais$cov)
+    e <- eigen((C + t(C)) / 2, symmetric = TRUE)
+    keep <- e$values > .ctFlatDirectionRtol() * max(e$values)
+    V <- e$vectors[, keep, drop = FALSE]
+    P <- V %*% (t(V) / e$values[keep])
     return(-(P + t(P)) / 2)
   }
   H <- fit$uncertainty$hessian
