@@ -476,8 +476,11 @@ print.ctLaplaceCorrection <- function(x, ...) {
 #            the round's L-BFGS runs in the fit's identified directions,
 #            whitened by its curvature, so it starts from the Newton step the
 #            fit's Hessian implies and is confined to `radius` standard errors
-#            of the round's centre; then the nodes are re-placed where it
-#            ended.
+#            of the round's centre -- none until a round has been rejected --
+#            and ends where its rules have drifted (a rule's effective number
+#            of nodes halved since its placement, `_continuation_drifted`),
+#            which is as far as a run on frozen rules can be trusted; then the
+#            nodes are re-placed where it ended.
 #   target   the FIXED POINT of that iteration: the estimate at which the
 #            gradient of the objective with its nodes placed there is zero.
 #            With the nodes held, that gradient is the quadrature's own
@@ -568,10 +571,21 @@ print.ctLaplaceCorrection <- function(x, ...) {
 # with its nodes, so the iteration contracts more slowly there (the nested
 # fixture's residual fell by a factor of 0.3 to 0.7 a round, where the
 # one-level fixture's fell by 20 to 300). `attempts` (15) bounds the rounds a
-# trust region may reject. `radius` (1 se, doubling to at most `radius_max` =
-# 16 when a kept round ends on the boundary having gained at least three
-# quarters of what its model promised, cut to a quarter of the step when a
-# round is rejected) is the textbook trust-region schedule. Growing it on the
+# trust region may reject. `radius` (`Inf`: no bound until a round is
+# rejected, from which the region is a quarter of that step, doubling to at
+# most `radius_max` = 16 se when a kept round ends on the boundary having
+# gained at least three quarters of what its model promised and cut to a
+# quarter of the step when a round is rejected, the textbook schedule). A
+# first round held to one se stopped short wherever the hybrid's optimum lay
+# several se off: on the bench's gB8 ten rounds were still gaining when the
+# budget ran out, 1.85 exact nats short, and gN1's rounds shrank onto
+# re-placement differences of 0.01 nats 1.3 short, while a climb on the frozen
+# rules reached both in one run (the anytime grids of 2026-10-23). The
+# unbounded round is that run, kept only where the re-placed value holds,
+# and ended where the rules have drifted: unbounded without that, gA14's
+# first round ran 40 se out on rules that no longer described the integrand
+# and was kept 0.3 exact nats below where bounded rounds ended.
+# Growing the region on the
 # residual instead -- only when a round cut it to a quarter -- held gated-gaps
 # D3 at 0.25 se for six rounds whose gains matched their model's to 2%, and
 # the rounds ran out 0.7 exact nats short of the best-known point. `maxiter`
@@ -600,7 +614,7 @@ print.ctLaplaceCorrection <- function(x, ...) {
 # a standard error of `draws_se` (0.05 nats) or `draws_max` (16384) draws,
 # the blocks beneath another each to its share of that, also explained there.
 # `draws_scope` says which: "forced", the default, only the units the climb
-# named at a jump (`fit$laplace$anytime`), every other wide unit
+# named at a jump (`fit$laplace$jump`), every other wide unit
 # keeping its Laplace term as before; "all" every one. Not "all"
 # by default: a flagged unit's gradient is a reverse sweep per draw, and on the
 # round-9 fit (40 people of eight effects) scoring every unit so made the
@@ -612,7 +626,7 @@ print.ctLaplaceCorrection <- function(x, ...) {
 # Gaussian; only a unit's top block takes it.
 .ctLaplaceContinueDefaults <- list(nodes = 5L, tolerance = 0.01,
   product_maxdim = 2L, soft_tau = 3.5, soft_maxdirs = 2L, rounds = 10L,
-  attempts = 15L, radius = 1, radius_max = 16, maxiter = 100L,
+  attempts = 15L, radius = Inf, radius_max = 16, maxiter = 100L,
   material = 0.1, guard = 50, guard_per_subject = 0.5, rtol = 1e-8,
   value_tol = 1e-3, maxdim = 5L, stop_gain = 0, skip_gain = 5e-3,
   draws = 256L, draws_se = 0.05, draws_max = 16384L, draws_df = 4,
@@ -646,11 +660,10 @@ print.ctLaplaceCorrection <- function(x, ...) {
 # (`draws`, `draws_se`, `draws_max`; laplace_continuation.jl's module
 # docstring), the units the caller names to flag whatever their gap (`force`),
 # points it knows for them (`points`, a list of `units` and a `values` matrix
-# with a column each), whether every unit is scored (`screen`), and whether
-# the climb screens as it goes (`anytime`, `_ctsem_anytime!`). Optional
+# with a column each), and whether every unit is scored (`screen`). Optional
 # entries are left out rather than sent empty, which would hang the bridge.
 .ctLaplaceContinuationArgs <- function(control, force = NULL, points = NULL,
-  screen = TRUE, anytime = FALSE) {
+  screen = TRUE) {
   args <- list(nodes = as.integer(control$nodes),
     tolerance = as.numeric(control$tolerance),
     product_maxdim = as.integer(control$product_maxdim),
@@ -663,7 +676,6 @@ print.ctLaplaceCorrection <- function(x, ...) {
     draws_df = as.numeric(.ctJuliaOr(control$draws_df, 4)),
     draws_scope = as.character(.ctJuliaOr(control[["draws_scope"]], "forced")),
     screen = isTRUE(screen))
-  if (isTRUE(anytime)) args$anytime <- TRUE
   force <- suppressWarnings(as.integer(force))
   force <- force[!is.na(force) & force > 0L]
   if (length(force)) args$force <- .ctJuliaVector(force)
@@ -678,82 +690,6 @@ print.ctLaplaceCorrection <- function(x, ...) {
     }
   }
   args
-}
-
-# The predicted gain, in nats, at which a fit's Laplace run hands over to the
-# climb on the hybrid (`.ctJuliaOptimise(anytime = TRUE)`): the Laplace
-# objective, with its batching and coreset stages, is climbed until a step
-# predicts less than this, and the continuation takes it from there with its
-# own screens at the rungs beneath (`_CONTINUATION_RUNGS`, laplace_continuation.jl).
-# Far out a rule placed would only be placed again; and a hand-over at a
-# step's predicted gain rather than at an iteration count means the same on
-# every model.
-.ctLaplaceAnytimeHandover <- 10
-
-# The continuation a fit climbs from where its Laplace run ended: nothing
-# flagged, so it is the Laplace objective to the bit until a screen at a rung
-# or a jump flags a unit (`_ctsem_anytime!`), with the screen off (only
-# flagged units are scored between screens) and draws for the units a jump
-# names. A run that ended on a jump hands its units and the points the watch
-# saw. NULL, with a warning, where the continuation cannot be built; the fit
-# then finishes on the Laplace objective as before.
-.ctLaplaceAnytimeStart <- function(result, module, objective,
-  control = .ctLaplaceContinueDefaults, verbose = 0L) {
-  x <- as.numeric(result$minimizer)
-  jumped <- identical(as.character(.ctJuliaOr(result$stop_reason, ""))[1L], "jump")
-  units <- if (jumped) as.integer(result$jump_units) else integer(0)
-  units <- units[!is.na(units) & units > 0L]
-  if (length(units)) {
-    message(sprintf(paste0("Laplace: the objective jumped at %s %s; integrating ",
-      "%s by frozen draws from here."), if (length(units) == 1L) "unit" else "units",
-      paste(units, collapse = ", "), if (length(units) == 1L) "it" else "them"))
-  }
-  control$draws <- max(1L, as.integer(.ctJuliaOr(control$draws, 256L)))
-  points <- if (length(units)) list(units = as.integer(result$jump_point_units),
-    values = result$jump_point_values)
-  cont <- try(do.call(module$ctsem_laplace_continuation,
-    c(list(objective, .ctJuliaNumericVector(x)),
-      .ctLaplaceContinuationArgs(control, force = units, points = points,
-        screen = FALSE, anytime = TRUE))), silent = TRUE)
-  if (inherits(cont, "try-error")) {
-    warning("The climb on the quadrature objective could not start (",
-      .ctLaplaceTryReason(cont), "); the fit finishes on the Laplace objective.",
-      call. = FALSE)
-    return(NULL)
-  }
-  cont
-}
-
-# What the climb did, on the run that ended it: the units it flagged (by a
-# screen or a jump), those of them on draws, each event (a screen at a rung
-# or a jump taken in, with the flagged count after it and the predicted gain
-# it fired at), how many jumps, and where the Laplace run handed over. The
-# continuation itself rides along as `continuation` for the correction to
-# place again at the estimate, and is dropped before the fit is built. Warns
-# once past a quarter of the units on draws (`.ctLaplaceDrawsShareWarn()`).
-.ctLaplaceAnytimeRecord <- function(run, module, cont, first, before = NULL) {
-  info <- .ctJuliaGet(module$ctsem_laplace_continuation_info(cont))
-  flagged <- as.integer(info$flagged)[seq_len(info$nflagged)]
-  drawn <- intersect(which(as.logical(info$importance)), flagged)
-  .ctLaplaceDrawsShareWarn(drawn, as.integer(info$nunits)[1L],
-    isTRUE(length(before$draws_units) > 0.25 * as.integer(info$nunits)[1L]))
-  n <- as.integer(.ctJuliaOr(run$anytime_n, 0L))[1L]
-  events <- if (n > 0L) data.frame(
-    kind = as.character(run$anytime_kind)[seq_len(n)],
-    flagged = as.integer(run$anytime_flagged)[seq_len(n)],
-    gain = as.numeric(run$anytime_gain)[seq_len(n)], stringsAsFactors = FALSE) else
-    data.frame(kind = character(0), flagged = integer(0), gain = numeric(0))
-  # The engine's list is the continuation's whole history, every stage's
-  # events in order, so an earlier record on the same continuation
-  # (`before`) adds nothing to it; it says only how many units were on draws
-  # before, for the warning above.
-  handover <- as.character(.ctJuliaOr(first$stop_reason, ""))[1L]
-  run$anytime <- list(units = flagged, draws_units = drawn,
-    jumps = sum(events$kind == "jump") + as.integer(identical(handover, "jump")),
-    events = events, handover = handover,
-    handover_iterations = as.integer(.ctJuliaOr(first$iterations, NA_integer_))[1L])
-  run$continuation <- cont
-  run
 }
 
 # Warns, once, when more than a quarter of the units are integrated by draws.
@@ -839,9 +775,11 @@ print.ctLaplaceCorrection <- function(x, ...) {
   status <- "rounds"
   rows <- list()
   B <- .ctJuliaPut(as.matrix(basis))
+  # The engine reads a radius of 0 as no bound (`_continuation_inside`).
   optimise <- function(from, stationary = FALSE, tol = bar) get(
     module$ctsem_laplace_continuation_optimize(cont, .ctJuliaNumericVector(from),
-      B, radius, maxiter = as.integer(control$maxiter), tol = tol,
+      B, if (is.finite(radius)) radius else 0,
+      maxiter = as.integer(control$maxiter), tol = tol,
       stationary_only = stationary))
   row <- function(round, residual_after, keep, flagged, gain = NA_real_) data.frame(
     round = attempts, radius = radius,
@@ -850,7 +788,7 @@ print.ctLaplaceCorrection <- function(x, ...) {
     gain = gain,
     moved = as.numeric(round$moved), iterations = as.integer(round$iterations),
     f_calls = as.integer(round$f_calls), g_calls = as.integer(round$g_calls),
-    kept = keep, flagged = as.integer(flagged))
+    drifted = isTRUE(round$drifted), kept = keep, flagged = as.integer(flagged))
   # The gain the fixed-node model predicts from the start: half the squared
   # whitened gradient, the Newton gain in nats. One gradient, and it decides
   # whether any round runs at all (`skip_gain`).
@@ -1094,7 +1032,7 @@ print.ctLaplaceCorrection <- function(x, ...) {
 }
 
 .ctLaplaceContinue <- function(fit, cores = 1L, verbose = 0L,
-  control = .ctLaplaceContinueDefaults, cont = NULL) {
+  control = .ctLaplaceContinueDefaults) {
   started <- proc.time()[["elapsed"]]
   seconds <- function() proc.time()[["elapsed"]] - started
   est <- as.numeric(fit$estimate$raw)
@@ -1135,27 +1073,25 @@ print.ctLaplaceCorrection <- function(x, ...) {
     sink(sprintf("Laplace continuation screen (%d nodes) | %8s",
       control$nodes, .ctDuration(seconds())), "update")
   }
-  # The continuation the fit climbed (`cont`, `.ctLaplaceAnytimeRecord()`) is
-  # placed again at the estimate with every unit screened; a fit without one
-  # here (another session, a stan-era fit) builds it, keeping flagged what the
-  # climb flagged (`fit$laplace$anytime$units`), whatever the screen finds.
-  cont <- if (!is.null(cont)) {
-    placed <- try(do.call(module[["ctsem_laplace_continuation_recentre!"]],
-      list(cont, .ctJuliaNumericVector(est), screen = TRUE)), silent = TRUE)
-    if (inherits(placed, "try-error")) placed else cont
-  } else try(do.call(module$ctsem_laplace_continuation,
+  # Units whose Laplace terms jumped in the fit (`fit$laplace$jump`) are
+  # flagged whatever the screen finds, on draws, with the points the line
+  # search saw as components of their proposals; the rounds then climb from
+  # the jump point, which is the fit's estimate.
+  jump <- fit$laplace$jump
+  cont <- try(do.call(module$ctsem_laplace_continuation,
     c(list(.ctJuliaObjective(fit, hybrid = TRUE), .ctJuliaNumericVector(est)),
-      .ctLaplaceContinuationArgs(control, force = fit$laplace$anytime$units))),
+      .ctLaplaceContinuationArgs(control, force = jump$units, points = jump$points))),
     silent = TRUE)
   # The engine's reason, which is what tells an allocation it refused from a
   # point the model cannot evaluate.
   if (inherits(cont, "try-error")) return(failed(paste0(
     "the quadrature could not be evaluated (", .ctLaplaceTryReason(cont), ")")))
   start <- get(module$ctsem_laplace_continuation_info(cont))
+  .ctLaplaceDrawsShareWarn(intersect(which(as.logical(start$importance)),
+    as.integer(start$flagged)[seq_len(start$nflagged)]), as.integer(start$nunits)[1L],
+    FALSE)
   # `loglik_laplace` is the Laplace objective's log likelihood at the point the
-  # correction starts from (the placement's own Laplace terms), not the fit's
-  # reported value there, which on a fit that climbed the hybrid is already
-  # the hybrid's.
+  # correction starts from, from the placement's own Laplace terms.
   record <- list(method = "quadrature", status = "exact", applied = FALSE,
     nodes = as.integer(start$nodes), tolerance = as.numeric(start$tolerance),
     screen = as.numeric(start$screen), gap = as.numeric(start$gap),
@@ -1192,8 +1128,11 @@ print.ctLaplaceCorrection <- function(x, ...) {
     return(failed("the quadrature was not finite at the estimate"))
   }
   # Passed, as the step correction's screen passes: Laplace is exact here to
-  # the tolerance, and the fit is left alone to the bit.
-  if (record$screen <= record$tolerance) {
+  # the tolerance, and the fit is left alone to the bit. Not at a jump: the
+  # screen says the hybrid agrees with Laplace at the point, which is no
+  # optimum of either (round 9's jump point passed the screen with a gradient
+  # of 2.5e5), and the rounds are what climb from it.
+  if (is.null(jump) && record$screen <= record$tolerance) {
     record$seconds <- timed()
     fit$laplace$correction <- record
     return(fit)
@@ -1213,6 +1152,21 @@ print.ctLaplaceCorrection <- function(x, ...) {
     fit
   }
   hessian <- .ctBackendStoredHessian(fit, est)
+  flat <- fit$uncertainty$details$flatdirections$vectors
+  # A fit that ended on a jump was not certified and has no Hessian: the
+  # rounds' basis is the continuation's own curvature at the jump point,
+  # which is continuous there where the Laplace objective is not.
+  if (!is.null(jump) && (is.null(hessian) || !all(is.finite(hessian)))) {
+    if (!is.null(sink)) {
+      sink(sprintf("Laplace continuation hessian at the jump | %8s",
+        .ctDuration(seconds())), "update")
+    }
+    hessian <- try(matrix(as.numeric(.ctBackendJuliaValue(
+      module$ctsem_laplace_continuation_hessian(cont, .ctJuliaNumericVector(est)))),
+      npar, npar), silent = TRUE)
+    if (inherits(hessian, "try-error")) hessian <- NULL
+    flat <- NULL
+  }
   if (is.null(hessian) || !all(is.finite(hessian))) {
     record$status <- "no_hessian"
     record$loglik_quadrature <- sum(as.numeric(start$quadrature_units))
@@ -1220,7 +1174,6 @@ print.ctLaplaceCorrection <- function(x, ...) {
     fit$laplace$correction <- record
     return(fit)
   }
-  flat <- fit$uncertainty$details$flatdirections$vectors
   basis <- .ctLaplaceContinueBasis(hessian, flat, rtol = control$rtol)
   if (is.null(basis) || basis$kept < 1L) {
     record$status <- "no_directions"
@@ -1329,10 +1282,15 @@ print.ctLaplaceCorrection <- function(x, ...) {
   # uncertainty and recentres its draws, as the step correction does, and
   # takes no Hessian at all: on wide blocks that is a large share of a
   # correction's cost, and `stationarity` in the record already says how far
-  # from stationary the estimate is.
+  # from stationary the estimate is. A fit that ended on a jump has no other
+  # curvature, so it takes this one however the rounds ended: its rounds
+  # stall on the draws' re-placement differences (round 9: 0.017 nats of
+  # residual against draws' errors of 0.04), and what the fit reports is
+  # then the hybrid's certification at that point, gap and all.
   reached <- identical(run$status, "converged")
+  takes_hessian <- reached || !is.null(jump)
   hc <- NULL
-  if (reached) {
+  if (takes_hessian) {
     # By forward differences this Hessian was 18.8 minutes of a 22-minute
     # correction on the ordinal fixture that found the silence; it is exact
     # now (laplace_continuation.jl) and can still take minutes. A start and a
@@ -1360,7 +1318,7 @@ print.ctLaplaceCorrection <- function(x, ...) {
   # describes, which the estimate may then be a few thousandths of a standard
   # error from.
   hessian_at <- x
-  if (reached && is.matrix(hc) && all(is.finite(hc))) {
+  if (takes_hessian && is.matrix(hc) && all(is.finite(hc))) {
     finish <- .ctLaplaceContinueFinish(module, cont, x, hc, final,
       value = run$value, bar = run$bar, value_tol = control$value_tol,
       reuse = .ctBackendHessianReuse(.ctBackendFitOptimcontrol(fit)))
@@ -1384,7 +1342,10 @@ print.ctLaplaceCorrection <- function(x, ...) {
   names(delta) <- names(delta_se) <- names(fit$estimate$se)
   record$delta <- delta
   record$delta_se <- delta_se
-  record$material <- isTRUE(max(abs(delta_se), na.rm = TRUE) >= control$material)
+  # No standard errors yet on a fit that ended on a jump (its uncertainty
+  # stage waits for this Hessian), so nothing to measure the move against.
+  record$material <- any(is.finite(delta_se)) &&
+    isTRUE(max(abs(delta_se), na.rm = TRUE) >= control$material)
   record$loglik_quadrature <- sum(as.numeric(info$quadrature_units))
   record$logposterior_quadrature <- as.numeric(info$quadrature)
   record$gap_reported <- as.numeric(info$quadrature) - as.numeric(info$laplace)
@@ -1394,7 +1355,7 @@ print.ctLaplaceCorrection <- function(x, ...) {
   record$error <- .ctLaplaceIntegrationError(info, unscored = record$wide)
   fit$estimate$raw <- x
   fit <- report_quadrature(fit, info)
-  usable <- reached && !inherits(hc, "try-error") && all(is.finite(hc))
+  usable <- takes_hessian && is.matrix(hc) && all(is.finite(hc))
   method <- .ctJuliaOr(fit$uncertainty$settings$method, "hessian")
   # Present even when empty: `$` partial-matches, and without it
   # `correction$hessian` would answer with `hessian_at`.
@@ -1434,6 +1395,14 @@ print.ctLaplaceCorrection <- function(x, ...) {
       parnames = parnames, saddle = saddle)
     record$certification <- certification
     record$hessian <- hc
+    # A fit that ended on a jump has no other certification: this is its
+    # verdict, and the gradient it reports is the hybrid's here, not the
+    # Laplace objective's at the jump.
+    if (!is.null(jump)) {
+      fit$optim$converged <- identical(certification$status, "certified")
+      fit$optim$gradient_norm <- max(abs(gradient))
+      fit$optim$stalled <- FALSE
+    }
     stages["certification"] <- since(certification_started)
   }
   own <- usable && method %in% c("hessian", "checked")

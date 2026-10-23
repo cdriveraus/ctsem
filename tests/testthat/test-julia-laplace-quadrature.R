@@ -157,19 +157,13 @@ test_that("the default is the quadrature correction, and the fit-time one is the
     fits$default$estimate$rawposterior)
   expect_identical(fits$quadrature$estimate$loglik, fits$default$estimate$loglik)
   expect_identical(fits$step$laplace$correction$method, "step")
-  # The fit climbed the hybrid from its Laplace run's hand-over
-  # (`fit$laplace$anytime`); `.ctLaplaceContinue()` applied to the uncorrected
-  # fit climbs it from the Laplace optimum instead. Both land at the same
-  # optimum within a tenth of a standard error, and within the rules' own
-  # error in log likelihood. The step correction is the post-hoc one exactly.
-  expect_gt(length(fits$quadrature$laplace$anytime$units), 0L)
-  expect_true(any(fits$quadrature$laplace$anytime$events$kind == "screen"))
+  # The Laplace run converged (no unit's term jumped, `fit$laplace$jump`), so
+  # what the fit did is `.ctLaplaceContinue()` applied to the uncorrected fit,
+  # exactly, and the same holds for the step.
+  expect_null(fits$quadrature$laplace$jump)
   posthoc <- .ctLaplaceContinue(fits$off)
-  se <- as.numeric(fits$quadrature$estimate$se)
-  expect_lt(max(abs(as.numeric(posthoc$estimate$raw) -
-    as.numeric(fits$quadrature$estimate$raw)) / se), 0.1)
-  expect_equal(posthoc$estimate$loglik, fits$quadrature$estimate$loglik,
-    tolerance = 1e-6)
+  expect_identical(posthoc$estimate$raw, fits$quadrature$estimate$raw)
+  expect_identical(posthoc$estimate$loglik, fits$quadrature$estimate$loglik)
   posthoc <- .ctLaplaceAutoCorrect(fits$off)
   expect_identical(posthoc$estimate$raw, fits$step$estimate$raw)
   expect_identical(posthoc$estimate$loglik, fits$step$estimate$loglik)
@@ -193,9 +187,7 @@ test_that("the continuation lands at the exact marginal's optimum, closer than t
   expect_lt(corr$stationarity, corr$stop_gain)
   expect_identical(corr$stop_gain, .ctBackendGapTolerance(off))
   expect_false(corr$guard$fired)
-  # The correction started where the climb on the hybrid ended, not at the
-  # Laplace optimum (checked against the exact optimum below).
-  expect_false(isTRUE(all.equal(corr$laplace_estimate, as.numeric(off$estimate$raw))))
+  expect_equal(corr$laplace_estimate, as.numeric(off$estimate$raw))
 
   # The independent reference: the exact marginal likelihood, maximised
   # without derivatives from the continuation's estimate.
@@ -213,9 +205,6 @@ test_that("the continuation lands at the exact marginal's optimum, closer than t
   expect_lt(distance(cont$estimate$raw), 0.1)
   expect_lt(distance(cont$estimate$raw), distance(step$estimate$raw))
   expect_lt(distance(step$estimate$raw), distance(off$estimate$raw))
-  # The climb's end, where the correction started, is already nearer the exact
-  # optimum than the Laplace optimum.
-  expect_lt(distance(corr$laplace_estimate), distance(off$estimate$raw))
   # And in exact log likelihood, the order the distances say.
   expect_gt(exact(cont$estimate$raw), exact(step$estimate$raw))
   expect_lt(-best$value - exact(cont$estimate$raw), 0.01)
@@ -489,14 +478,12 @@ test_that("ctLaplaceCheck agrees with a continued fit and refines by continuing"
   expect_lt(max(abs(check$parameters$delta_se), na.rm = TRUE), 0.1)
   # The two reports count the same directions.
   expect_identical(check$dropped_directions, as.integer(cont$identifiability$nweak))
-  # refine = TRUE on the uncorrected fit is the same continuation from the
-  # Laplace optimum, where the fit climbed it from its hand-over: it lands
-  # within a tenth of a standard error of where the fit did.
+  # refine = TRUE on the uncorrected fit is the same continuation, from the
+  # same start and with the same curvature, so it lands where the fit did.
   refined <- ctLaplaceCheck(off, nodes = 5L, refine = TRUE)
   expect_identical(refined$refined_status, "converged")
   expect_true(refined$refined_converged)
-  expect_lt(max(abs(as.numeric(refined$refined) - as.numeric(cont$estimate$raw)) /
-    as.numeric(cont$estimate$se)), 0.1)
+  expect_equal(refined$refined, as.numeric(cont$estimate$raw), tolerance = 1e-8)
 })
 
 test_that("the guard reverts a continuation that moves the objective too far", {
@@ -531,9 +518,8 @@ test_that("a correction predicted to gain less than skip_gain is skipped, and sa
   corr <- out$laplace$correction
   expect_identical(corr$status, "skipped")
   expect_false(corr$applied)
-  # From the Laplace optimum more is left to gain than from the climb's end,
-  # where the fit's own correction started.
-  expect_gt(corr$predicted_gain, fits$quadrature$laplace$correction$predicted_gain)
+  expect_equal(corr$predicted_gain,
+    fits$quadrature$laplace$correction$predicted_gain)
   expect_null(corr$trace)
   # Nothing moved: the estimate and its uncertainty are the Laplace fit's, and
   # the log likelihood reported is the quadrature one there.

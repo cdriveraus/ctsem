@@ -72,8 +72,8 @@ and agree to rounding above it.}
 'sample'} these are the sampler settings described in the Sampling section
 (\code{chains}, \code{warmup}, \code{draws}, \code{seed},
 \code{saveEffects}, \code{processes}, \code{intoverpop},
-\code{tipredMissing}, \code{sampler}, \code{placement}, \code{minESS},
-\code{meanESS}, \code{rhatTarget}, \code{maxDraws}, \code{settleTol},
+\code{tipredMissing}, \code{sampler}, \code{particles}, \code{placement},
+\code{minESS}, \code{meanESS}, \code{rhatTarget}, \code{maxDraws}, \code{settleTol},
 \code{init_scale}, and NUTS's \code{maxdepth}, \code{target_accept},
 \code{adapt_metric} and \code{adapt_effects}); none of the entries below
 apply to it. For every other method, useful entries include
@@ -95,7 +95,12 @@ covariance's scale does, at up to seven times the evaluations. On a Laplace fit 
 importance sampling
 evaluates a weighted subset of the units chosen and checked as it runs, and
 corrects its weights where that subset strays; \code{coreset = FALSE}
-evaluates every unit instead. \code{parsteps} keeps
+evaluates every unit instead. Where the check of \code{'checked'} names
+a direction, the normal is first moved to the posterior's moments by
+doubly adaptive importance sampling (van den Boom, Cremaschi and Thiery
+2026) and checked again there before anything is sampled; \code{dais =
+FALSE} skips that, \code{daisDraws} sets its draws an iteration (the
+dimension, between 64 and 256) and \code{daisMaxIter} its iterations (150). \code{parsteps} keeps
 stepwise-fixed raw parameters fixed (stan only).
 \code{analyticHessian = FALSE} (julia only) asks for the finite-difference
 Hessian instead of the engine's exact one. \code{likelihood} (\code{'fit'},
@@ -319,9 +324,18 @@ faster in comparisons on variance and nested models, where NUTS on the
 joint vector mixes poorly. A marginal target is sampled by NUTS, from a
 metric set to the widths that the normal check of \code{'checked'} measured
 along the directions where the posterior departs from the fit's Hessian;
-a fit made without that check gets one first, at a few hundred gradients.
-\code{adapt_metric}, \code{adapt_effects} and \code{settleTol} belong to
-NUTS and are refused with SAEM's kernel. \code{control$placement} says
+a fit made without that check gets one first, at a few hundred gradients;
+where \code{'checked'} moved the normal to the posterior's moments, the
+metric is that normal's covariance. A marginal target can instead be
+sampled by tempered sequential Monte Carlo, \code{sampler = 'smc'}:
+\code{particles} (200) draws from that normal, carried to the posterior by
+stages of NUTS moves, then each a chain. It is for posteriors NUTS does not
+converge on from the normal -- a mass far from the mode, a loading shell --
+and costs about what NUTS does in gradients. Its chains are many and short,
+so R-hat is reported but not a stopping target there; the effective sample
+size is. \code{adapt_metric}, \code{adapt_effects} and \code{settleTol}
+belong to NUTS's warmup and are refused with SAEM's kernel and with
+tempered SMC. \code{control$placement} says
 where the chains start: \code{'saem'}, the default on the joint posterior,
 runs SAEM from the fit's estimate and starts each chain from SAEM's
 estimate and its draws of the random effects; \code{'fit'} starts them

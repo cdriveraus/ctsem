@@ -209,21 +209,6 @@ _continuation_draws(rule::CTSEMFixedRule) = size(rule.points, 2) +
     sum(sum(_continuation_draws(c) for c in kids; init=0)
         for kids in rule.children; init=0)
 
-"""One thing the climb's checkpoint did: a `:screen` at a rung or a `:jump`
-taken in, how many units were flagged after it, and the predicted gain it
-fired at."""
-const _ContinuationEvent = NamedTuple{(:kind, :flagged, :gain), Tuple{Symbol, Int, Float64}}
-
-"""
-The predicted gains, in nats, at which a climb with `anytime` on screens its
-units (`_ctsem_anytime!`): once the step's predicted gain first falls under
-each. Two: far out the Laplace surface is climbed as it is, since a rule
-placed there would be re-placed anyway; near the end what the screen
-resolves is what the correction would find, and flagging it here lets the
-climb finish on the objective the fit reports.
-"""
-const _CONTINUATION_RUNGS = (1.0, 0.1)
-
 """
     CTSEMLaplaceContinuation
 
@@ -307,18 +292,11 @@ mutable struct CTSEMLaplaceContinuation{L} <: CTSEMOptimisable
     # stages, one after each placement. Kept across placements, which change
     # the objective but not its coordinates.
     lbfgs::Union{Nothing,CTSEMLBFGSMemory}
-    # Whether the climb screens and flags units as it goes (`_ctsem_anytime!`):
-    # at each predicted-gain rung left in `rungs`, and at every jump the
-    # watch names. `events` is what it did, for the fit's record.
-    anytime::Bool
-    rungs::Vector{Float64}
-    events::Vector{_ContinuationEvent}
     # Per flagged rule, its effective number of nodes at the last evaluation
-    # and at the first after its placement (`_continuation_record_ess!`), and
-    # the accepted steps since the last placement.
+    # and at the first after its placement (`_continuation_record_ess!`),
+    # which `_continuation_drifted` compares.
     ess::Vector{Float64}
     ess_placed::Vector{Float64}
-    since_placement::Int
 end
 
 
@@ -1633,9 +1611,8 @@ importance proposal. `screen = false` scores only the units `force` names, the
 rest keeping their Laplace terms unscored: what a fit climbing the hybrid
 needs. `draws_scope = :forced` gives draws only to the units `force` names,
 every other unit too wide for a product rule keeping its Laplace term
-unscored, as with `draws = 0`. `anytime = true` makes `ctsem_optimize` on this
-objective screen and flag units as its climb goes (`_ctsem_anytime!`). See
-the module docstring for the rules and the constants.
+unscored, as with `draws = 0`. See the module docstring for the rules and the
+constants.
 """
 function ctsem_laplace_continuation(laplace::CTSEMLaplaceObjective,
     values::AbstractVector; nodes::Integer=5, tolerance::Real=0.01,
@@ -1643,7 +1620,7 @@ function ctsem_laplace_continuation(laplace::CTSEMLaplaceObjective,
     maxdim::Integer=5, draws::Integer=0, draws_se::Real=0.05,
     draws_max::Integer=16384, draws_floor::Real=0.25, draws_prior::Real=0.2,
     draws_df::Real=4, draws_seed::Integer=20261021, force=nothing,
-    point_units=nothing, point_values=nothing, screen::Bool=true, draws_scope=:all, anytime::Bool=false)
+    point_units=nothing, point_values=nothing, screen::Bool=true, draws_scope=:all)
     nodes >= 1 || throw(ArgumentError("need at least one quadrature node"))
     draws_df > 0 || throw(ArgumentError("draws_df must be positive (Inf for Gaussian)"))
     Symbol(draws_scope) in (:all, :forced) || throw(ArgumentError(
@@ -1665,8 +1642,7 @@ function ctsem_laplace_continuation(laplace::CTSEMLaplaceObjective,
         fill(false, nunits), Bool(screen), Symbol(draws_scope), Int[],
         fill(NaN, nunits), fill(NaN, nunits), fill(false, nunits), NaN, nothing,
         0, 0, 0, 0, 0, 0, 0.0, 0.0, 0.0, 0.0, nothing, nothing, nothing,
-        Bool(anytime), collect(Float64, _CONTINUATION_RUNGS), _ContinuationEvent[],
-        Float64[], Float64[], 0)
+        Float64[], Float64[])
     _continuation_add_points!(o, point_units, point_values)
     _continuation_force!(o, force)
     _continuation_place!(o, theta)
@@ -1796,7 +1772,6 @@ function _continuation_place!(o::CTSEMLaplaceContinuation, theta::Vector{Float64
     o.recentres += 1
     o.ess = fill(NaN, length(o.rules))
     o.ess_placed = fill(NaN, length(o.rules))
-    o.since_placement = 0
     o.cache = nothing
     o.value_cache = nothing
     o.seconds_placements += (time_ns() - started) / 1e9
@@ -1846,8 +1821,8 @@ end
     _continuation_record_ess!(o, f, ess)
 
 Keep flagged rule `f`'s effective number of nodes at the last evaluation
-(`o.ess`), and the first one after its placement (`o.ess_placed`), which the
-climb's checkpoint reads for drift (`_ctsem_anytime!`): a rule whose nodes
+(`o.ess`), and the first one after its placement (`o.ess_placed`), which
+`_continuation_drifted` compares: a rule whose nodes
 were placed at one point carries less and less of the integrand's mass as
 the parameters move, and its weights concentrate on the nodes nearest the
 new mode. Written in the serial part of `_continuation_flagged`.
@@ -1858,6 +1833,26 @@ function _continuation_record_ess!(o::CTSEMLaplaceContinuation, f::Integer, ess:
     isnan(o.ess_placed[f]) && isfinite(ess) && (o.ess_placed[f] = Float64(ess))
     return nothing
 end
+
+"""
+    _continuation_drifted(o, ratio)
+
+Whether any flagged rule's effective number of nodes has fallen under `ratio`
+of what it was at its placement (`_continuation_record_ess!`): nodes fixed
+where they were placed carry less of the integrand as the parameters move,
+and read far from home they can say anything. A round of the correction ends
+on it (`ctsem_laplace_continuation_optimize`), which is as far as a run on
+frozen rules can be trusted: unbounded, a first round on the bench's gA14
+ran 40 standard errors out and was kept 0.3 exact nats below where bounded
+rounds ended.
+"""
+_continuation_drifted(o::CTSEMLaplaceContinuation, ratio::Real) =
+    any(f -> isfinite(o.ess[f]) && isfinite(o.ess_placed[f]) &&
+        o.ess[f] < ratio * o.ess_placed[f], eachindex(o.rules))
+
+# A round's stop: sets `flag` so the round can say it ended on drift.
+_continuation_drift_stop!(o::CTSEMLaplaceContinuation, ratio::Real, flag::Base.RefValue{Bool}) =
+    _continuation_drifted(o, ratio) ? (flag[] = true; true) : false
 
 """
     _continuation_rule_value(o, U, theta, Ls, dL, positions, rule, u, aws,
@@ -2197,8 +2192,8 @@ end
 
 _ctsem_optimise_label(::CTSEMLaplaceContinuation) = "Laplace continuation"
 # The finish walks the hybrid on its own Hessian, as it walks the Laplace
-# objective, where the optimiser takes the hybrid whole (a fit climbing it,
-# `_ctsem_anytime!`): chord, at the cost of the Laplace part's differences.
+# objective, where the optimiser takes the hybrid whole: chord, at the cost
+# of the Laplace part's differences.
 _ctsem_finish_curvature(::CTSEMLaplaceContinuation) = :chord
 _ctsem_hessian_cost(::CTSEMLaplaceContinuation, npar::Integer) = 2 * Int(npar)
 # A continuation built where a Laplace run ended starts from that run's
@@ -2214,90 +2209,14 @@ _ctsem_lbfgs_held(o::CTSEMLaplaceContinuation) =
     o.lbfgs === nothing ? _ctsem_lbfgs_held(o.laplace) : o.lbfgs
 _ctsem_lbfgs_hold!(o::CTSEMLaplaceContinuation, memory::CTSEMLBFGSMemory) =
     (o.lbfgs = memory; nothing)
-_ctsem_anytime_capable(o::CTSEMLaplaceContinuation) = o.anytime
-
-"""
-    _ctsem_anytime!(o, x, gain, event, jump)
-
-The climb's checkpoint on a continuation with `anytime` on, called by
-`_ctsem_lbfgs` after each accepted step (`event = :step`, with the step's
-predicted gain) and where the watch has named a jump (`:jump`). At a jump the
-units whose terms moved are flagged, with the points the watch saw, and every
-flagged unit's rule is placed at `x`. At a step, once the gain has fallen
-under the next rung (`_CONTINUATION_RUNGS`), every unit a product rule can
-score is screened at `x` and what the screen resolves is flagged, the rest
-keeping their Laplace terms; units too wide for a product rule are scored
-only where named (`draws_scope = :forced`). Between rungs a flagged rule that
-has drifted -- its effective number of nodes halved since its placement
-(`_continuation_record_ess!`) -- has every flagged rule placed again at `x`.
-Without that the rules a screen placed far from the optimum stayed there:
-on the bench's gC8 the climb ended 21-42 nats below the baseline, on anomS2's
-spurious start 31. Returns whether the objective changed, which it has not
-when nothing is or was flagged: the loop then reads it again at the point
-and keeps its pairs. Each action is recorded in `o.events`.
-"""
-function _ctsem_anytime!(o::CTSEMLaplaceContinuation, x::AbstractVector, gain::Real,
-    event::Symbol, jump)
-    o.anytime || return false
-    before = length(o.flagged)
-    theta = _laplace_extend(o.laplace, collect(Float64, x))
-    if event === :start
-        # A stage starting away from the last placement -- a resume from a
-        # pulled-back point, or from an estimate the climb's last drift left
-        # behind -- places every flagged rule there first, so it climbs the
-        # rules of where it is and not of where the last stage was.
-        theta == o.centre && return false
-        isempty(o.flagged) && return false
-        _continuation_place!(o, theta)
-        push!(o.events, (kind=:start, flagged=length(o.flagged), gain=Float64(gain)))
-        return true
-    end
-    if event === :jump
-        named = _ctsem_jump_units(o, jump)
-        isempty(named.units) && return false
-        _continuation_force!(o, named.units)
-        named.point_units == [0] ||
-            _continuation_add_points!(o, named.point_units, named.point_values)
-        _continuation_place!(o, theta)
-        push!(o.events, (kind=:jump, flagged=length(o.flagged), gain=Float64(gain)))
-        return true
-    end
-    # Drift: a flagged rule whose effective number of nodes has halved since
-    # its placement is placed again where the climb now is, with every other
-    # flagged rule (the screen stays off, so nothing new is scored). Not
-    # within five accepted steps of a placement, or a rule in a steep region
-    # would be placed every step.
-    o.since_placement += 1
-    if o.since_placement >= 5 && any(f -> isfinite(o.ess[f]) && isfinite(o.ess_placed[f]) &&
-            o.ess[f] < 0.5 * o.ess_placed[f], eachindex(o.rules))
-        _continuation_place!(o, theta)
-        push!(o.events, (kind=:drift, flagged=length(o.flagged), gain=Float64(gain)))
-        return true
-    end
-    (isempty(o.rungs) || !(gain < o.rungs[1])) && return false
-    popfirst!(o.rungs)
-    was = o.screen
-    o.screen = true
-    try
-        _continuation_place!(o, theta)
-    finally
-        o.screen = was
-    end
-    push!(o.events, (kind=:screen, flagged=length(o.flagged), gain=Float64(gain)))
-    return before > 0 || length(o.flagged) > 0
-end
 ctsem_hessian(o::CTSEMLaplaceContinuation, values::AbstractVector;
     chunk::Integer=0, progress=nothing) = ctsem_laplace_continuation_hessian(o, values)
 _ctsem_params(o::CTSEMLaplaceContinuation) = _ctsem_params(o.laplace)
 _ctsem_saturated_for(o::CTSEMLaplaceContinuation, minimizer) =
     _laplace_saturated_parameters(o.laplace, minimizer)
-# The flagged count and what the climb's checkpoint did, with a sentinel
-# where it did nothing (an empty vector is not sent over the bridge).
+# The flagged count, for a run's record.
 _ctsem_optimise_result_extra(o::CTSEMLaplaceContinuation, final, log) =
-    (continuation_flagged=length(o.flagged), anytime_n=length(o.events),
-     anytime_kind=isempty(o.events) ? [""] : String[string(e.kind) for e in o.events],
-     anytime_flagged=isempty(o.events) ? [0] : Int[e.flagged for e in o.events],
-     anytime_gain=isempty(o.events) ? [NaN] : Float64[e.gain for e in o.events])
+    (continuation_flagged=length(o.flagged),)
 
 function _ctsem_optimise_trial(o::CTSEMLaplaceContinuation, x, want_gradient::Bool,
     gradient_method, limit::Real, log)
@@ -2342,14 +2261,18 @@ function _ctsem_probe_value(o::CTSEMLaplaceContinuation, x)
     saved = NamedTuple{_CONTINUATION_STATE}(
         Tuple(getfield(o, f) for f in _CONTINUATION_STATE))
     previous = o.previous
-    # Not a placement the climb made: its drift cooldown and the count of
-    # placements the record reports stay as they were.
-    since = o.since_placement
+    # Not a placement of the correction's own: the count of placements the
+    # record reports stays as it was.
     recentres = o.recentres
     value = -Inf
     try
         _continuation_place!(o, theta)
-        value = o.centre_value
+        # What the hybrid can vouch for there: its value less its own error at
+        # that placement (`_continuation_error`), as the estimate is read
+        # (`_ctsem_probe_baseline`). Read whole, a probe four raw units from
+        # round 9's estimate found 13000 nats on a unit whose draws had
+        # degenerated there, and the fit was certified not converged on it.
+        value = o.centre_value - _continuation_error(o).total
     catch err
         _ctsem_must_propagate(err) && rethrow()
         value = -Inf
@@ -2358,7 +2281,6 @@ function _ctsem_probe_value(o::CTSEMLaplaceContinuation, x)
             setfield!(o, f, getfield(saved, f))
         end
         o.previous = previous
-        o.since_placement = since
         o.recentres = recentres
         o.cache = nothing
         o.value_cache = nothing
@@ -2440,9 +2362,16 @@ parameters, the hybrid's value there and at the start, the optimiser's counts,
 round whose `start_gain` is below `tol` is not run: `stationary` says the point
 is already the answer on these nodes. `stationary_only` asks only that.
 """
+# One round of the correction: L-BFGS on the frozen rules from `values`,
+# in the directions `basis` spans, within `radius` of the start (0 for no
+# bound), and only while the rules have not drifted (`drift`, the share of a
+# rule's placed effective node count under which the round ends,
+# `_continuation_drifted`; 0 for never). `drifted` in the result says it
+# ended so.
 function ctsem_laplace_continuation_optimize(o::CTSEMLaplaceContinuation,
     values::AbstractVector, basis::AbstractMatrix, radius::Real;
-    maxiter::Integer=100, tol::Real=1e-6, stationary_only::Bool=false)
+    maxiter::Integer=100, tol::Real=1e-6, stationary_only::Bool=false,
+    drift::Real=0.5)
     x0 = collect(Float64, values)
     B = Matrix{Float64}(basis)
     size(B, 1) == length(x0) || throw(DimensionMismatch(
@@ -2455,13 +2384,16 @@ function ctsem_laplace_continuation_optimize(o::CTSEMLaplaceContinuation,
     stationary = usable && start_gain < tol
     none = (minimizer=x0, value=start.value, start_value=start.value, iterations=0,
         f_calls=0, g_calls=1, converged=stationary, stopped_by_gap=false, moved=0.0,
-        boundary=false, gradient_norm=NaN, refused=0, start_gain=start_gain,
-        stationary=stationary)
+        boundary=false, drifted=false, gradient_norm=NaN, refused=0,
+        start_gain=start_gain, stationary=stationary)
     (usable && !stationary && !stationary_only) || return none
     newton = sqrt(sum(abs2, gy))
     alpha = radius > 0 ? min(newton, Float64(radius)) : newton
     step = CTSEMContinuationStep(o, x0, B, Float64(radius))
     refused = o.refused
+    drifted = Ref(false)
+    ratio = Float64(drift)
+    stop = ratio > 0 ? (st -> _continuation_drift_stop!(o, ratio, drifted)) : nothing
     res = ctsem_optimize(step, zeros(size(B, 2)); maxiter=Int(maxiter), g_tol=1e-8,
         f_tol=0.0, x_tol=0.0, gap_tol=Float64(tol), converge_tol=Float64(tol),
         overshoot_probe=:off, stall_window=0, batch=false, newton=false,
@@ -2469,14 +2401,15 @@ function ctsem_laplace_continuation_optimize(o::CTSEMLaplaceContinuation,
         # Its basis is whitened by the Hessian, so its first step is Newton's
         # and its prediction is the gain left.
         lbfgs_scaled=true,
-        initial_alpha=max(alpha, 1e-12), progress=false)
+        initial_alpha=max(alpha, 1e-12), progress=false, stop=stop)
     y = collect(Float64, res.minimizer)
     moved = sqrt(sum(abs2, y))
     return (minimizer=_continuation_point(step, y), value=res.maximum_loglik,
         start_value=start.value, iterations=res.iterations, f_calls=res.f_calls,
         g_calls=res.g_calls + 1, converged=res.converged,
         stopped_by_gap=res.stopped_by_gap, moved=moved,
-        boundary=radius > 0 && moved >= 0.9 * radius, gradient_norm=res.gradient_norm,
+        boundary=radius > 0 && moved >= 0.9 * radius, drifted=drifted[],
+        gradient_norm=res.gradient_norm,
         refused=o.refused - refused, start_gain=start_gain, stationary=false)
 end
 
@@ -3230,6 +3163,26 @@ function _continuation_exact_hessian(o::CTSEMLaplaceContinuation, x::Vector{Floa
 end
 
 """
+    _continuation_error(o)
+
+The hybrid's own error against the exact marginal at its placement, in nats:
+the frozen rules' standard errors in quadrature (`draws`), the product rules'
+node errors (`nodes`), what the screen leaves on Laplace (`residual`), and
+their sum (`total`). What `ctsem_laplace_continuation_info` reports, and what
+a probe's value is read net of (`_ctsem_probe_value`).
+"""
+function _continuation_error(o::CTSEMLaplaceContinuation)
+    gaps = o.centre_quadrature .- o.centre_laplace
+    residual = _continuation_screen(gaps[o.rest_units], o.centre_se[o.rest_units])
+    draws = sqrt(sum(abs2(o.centre_se[U]) for U in o.flagged if o.importance[U];
+        init=0.0))
+    nodes = sum(o.centre_error[U] for U in o.flagged
+        if !o.importance[U] && isfinite(o.centre_error[U]); init=0.0)
+    return (draws=draws, nodes=nodes, residual=residual,
+        total=draws + nodes + residual)
+end
+
+"""
     ctsem_laplace_continuation_info(o)
 
 What the continuation's rule looks like at its current centre, for the R side.
@@ -3258,11 +3211,10 @@ function ctsem_laplace_continuation_info(o::CTSEMLaplaceContinuation)
     # The hybrid's own error against the exact marginal, in nats: the frozen
     # rules' standard errors in quadrature, the product rules' node errors,
     # and what the screen leaves on Laplace (`residual`).
-    residual = _continuation_screen(gaps[o.rest_units], o.centre_se[o.rest_units])
-    error_draws = sqrt(sum(abs2(o.centre_se[U]) for U in o.flagged if o.importance[U];
-        init=0.0))
-    error_nodes = sum(o.centre_error[U] for U in o.flagged
-        if !o.importance[U] && isfinite(o.centre_error[U]); init=0.0)
+    err = _continuation_error(o)
+    residual = err.residual
+    error_draws = err.draws
+    error_nodes = err.nodes
     return (flagged=isempty(o.flagged) ? [0] : copy(o.flagged),
         nflagged=length(o.flagged), nunits=nunits,
         screen=_continuation_screen(gaps, o.centre_se),
