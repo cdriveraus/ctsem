@@ -82,7 +82,8 @@ records what was read and done. For \code{uncertainty =
 'sample'} the entries are the sampler settings described in the Sampling section
 (\code{chains}, \code{warmup}, \code{draws}, \code{seed},
 \code{saveEffects}, \code{processes}, \code{intoverpop},
-\code{tipredMissing}, \code{sampler}, \code{particles}, \code{placement},
+\code{tipredMissing}, \code{sampler}, \code{particles}, \code{coreset},
+\code{placement},
 \code{minESS}, \code{meanESS}, \code{rhatTarget}, \code{maxDraws}, \code{settleTol},
 \code{init_scale}, and NUTS's \code{maxdepth}, \code{target_accept},
 \code{adapt_metric} and \code{adapt_effects}); none of the entries below
@@ -341,7 +342,11 @@ sampled by tempered sequential Monte Carlo, \code{sampler = 'smc'}:
 \code{particles} (200) draws from that normal, carried to the posterior by
 stages of NUTS moves, then each a chain. It is for posteriors NUTS does not
 converge on from the normal -- a mass far from the mode, a loading shell --
-and costs about what NUTS does in gradients. Its chains are many and short,
+and costs about what NUTS does in gradients. On the Laplace route its
+particles move on a coreset of the units (\code{coreset}, \code{TRUE}): the
+full density, evaluated once a particle a stage, corrects the moves
+exactly, so a fit with many units pays a fraction of a gradient a move and
+\code{coreset = FALSE} is the oracle. Its chains are many and short,
 so R-hat is reported but not a stopping target there; the effective sample
 size is. \code{adapt_metric}, \code{adapt_effects} and \code{settleTol}
 belong to NUTS's warmup and are refused with SAEM's kernel and with

@@ -332,7 +332,10 @@
     marginal = marginal, state_explicit = isTRUE(state_explicit),
     hessian = fit$uncertainty$hessian, metric = .ctBackendSampleMetric(fit),
     placement = placement, smcstart = .ctBackendSmcStart(fit, estimate),
-    widen = if (is.null(fit$uncertainty$details$dais$cov)) 2 else 1)
+    # A posterior covariance (the importance draws' or DAIS's) starts the
+    # particles at its own width; the check's normal, which is a proposal, at
+    # twice it.
+    widen = if (.ctBackendMetricSource(fit) %in% c("is", "dais")) 1 else 2)
 
   out <- .ctBackendSampleRun(fit, sampletarget, chains = chains, warmup = warmup,
     draws = draws, cores = cores, saveEffects = saveEffects, seed = seed,
@@ -417,6 +420,10 @@
   # How many particles tempered SMC (`sampler = 'smc'`) carries, 200 by
   # default; read by `.ctBackendSampleControl()`.
   "particles",
+  # Whether tempered SMC's particles move on a coreset of the Laplace units
+  # (sample_smc.jl), TRUE by default; FALSE is the oracle, as for 'checked''s
+  # importance sampler.
+  "coreset",
   # Where the chains start on the joint target: 'saem' (SAEM's own run and
   # state, the default there) or 'fit' (the fit's estimate); read by
   # `.ctBackendUncertaintySample()`.
@@ -672,7 +679,13 @@
     adapt_metric = isTRUE(.ctJuliaOr(control$adapt_metric, FALSE)),
     adapt_effects = isTRUE(.ctJuliaOr(control$adapt_effects, FALSE)),
     sampler = .ctBackendSamplerName(control$sampler),
-    particles = max(2L, as.integer(.ctJuliaOr(control$particles, 200L))[1L]))
+    particles = max(2L, as.integer(.ctJuliaOr(control$particles, 200L))[1L]),
+    # Tempered SMC's particles move on a coreset of the Laplace units: the
+    # full density, evaluated once a particle a stage for the weights anyway,
+    # corrects the moves exactly (sample_smc.jl), so this costs accuracy
+    # nothing and `FALSE` is the oracle, as for the importance sampler's
+    # coreset (`.ctCoresetLpg()`). Inert off the Laplace route.
+    coreset = !isFALSE(control$coreset))
 
   # The SAEM kernel draws the effects by SAEM's own sweeps and keeps the
   # parameters' metric at the conditional curvature it was placed with, so
@@ -765,34 +778,72 @@
 # population block and reads this only as a fallback. Only the engine reads
 # it: the sampled fit keeps the exact Hessian as `uncertainty$hessian`, which
 # the identifiability report reads.
+# Where the sampler's metric comes from, best first: 'is', the covariance of
+# `'checked'`'s importance draws where they were used, weighted, and number at
+# least twice the dimension in effective size (`fit$estimate$cov`); 'dais', the
+# normal DAIS moved to the posterior's moments; 'check', the Hessian rescaled
+# to the widths the normal check measured; 'hessian', nothing better.
+#
+# The draws first, because a metric from draws of the posterior beat DAIS's
+# damped covariance by 6.8 times in effective sample per gradient on the
+# 75-parameter time series (the same seed and stopping rule; 5-13 times at
+# three seeds in the chart session's fixed-budget runs,
+# review/SAMPLING-smc-2026-10-23.md): DAIS's spread is 0.75 of the posterior's
+# by design, 0.39 in its worst direction there, and NUTS pays for a metric
+# that is too narrow with slow mixing along what it underestimates. The
+# importance draws are draws of the posterior wherever the check passed them;
+# fewer effective draws than twice the dimension make a covariance noisier in
+# its small directions than the damped one, which is where the bar sits.
+#' @keywords internal
+.ctBackendMetricSource <- function(fit) {
+  d <- fit$uncertainty$details
+  npar <- length(fit$estimate$raw)
+  is <- d$importance_sampling
+  C <- fit$estimate$cov
+  if (isTRUE(is$used) && isTRUE(is$weighted) && is.numeric(is$ess) &&
+      isTRUE(is$ess >= 2 * npar) && is.matrix(C) && nrow(C) == npar &&
+      all(is.finite(C))) return("is")
+  if (!is.null(d$dais$cov) && all(is.finite(d$dais$cov))) return("dais")
+  if (!is.null(fit$uncertainty$hessian) && length(d$normalcheck$widths)) return("check")
+  "hessian"
+}
+
+# A covariance's precision along the directions it holds, and nothing along
+# the rest: a direction the check's covariance dropped as unidentified is a
+# null direction of the posterior's covariance too, and the engine's
+# `_bounded_inverse` then floors it and gives it a wide momentum, as it does
+# for the Hessian's. A plain `solve` here was singular on such a fit
+# (reciprocal condition number 1e-25) and stopped the first sample after it.
+# Returned with the Hessian's sign, which is what the engine reads.
+#' @keywords internal
+.ctBackendCovPrecision <- function(C) {
+  C <- as.matrix(C)
+  e <- eigen((C + t(C)) / 2, symmetric = TRUE)
+  keep <- e$values > .ctFlatDirectionRtol() * max(e$values)
+  V <- e$vectors[, keep, drop = FALSE]
+  P <- V %*% (t(V) / e$values[keep])
+  -(P + t(P)) / 2
+}
+
 .ctBackendSampleMetric <- function(fit) {
-  # The normal `'checked'` moved to the posterior's moments where its check
-  # named directions (`.ctDaisRun()`): the posterior's own covariance, which is
-  # what warmup adaptation would estimate and measurement says not to
-  # re-estimate; read before the Hessian's rescaling, which it supersedes.
-  #
-  # Its precision along the directions the covariance holds, and nothing
-  # along the rest: a direction the check's covariance dropped as
-  # unidentified is a null direction of this one too, and the engine's
-  # `_bounded_inverse` then floors it and gives it a wide momentum, as it
-  # does for the Hessian's. A plain `solve` here was singular on such a fit
-  # (reciprocal condition number 1e-25) and stopped the first sample after it.
-  dais <- fit$uncertainty$details$dais
-  if (!is.null(dais$cov) && all(is.finite(dais$cov))) {
-    C <- as.matrix(dais$cov)
-    e <- eigen((C + t(C)) / 2, symmetric = TRUE)
-    keep <- e$values > .ctFlatDirectionRtol() * max(e$values)
-    V <- e$vectors[, keep, drop = FALSE]
-    P <- V %*% (t(V) / e$values[keep])
-    return(-(P + t(P)) / 2)
-  }
-  H <- fit$uncertainty$hessian
-  check <- fit$uncertainty$details$normalcheck
-  if (is.null(H) || !length(check$widths)) return(NULL)
-  information <- -(H + t(H)) / 2
-  PW <- information %*% check$directions
-  rescaled <- information + PW %*% diag(1 / check$widths - 1, length(check$widths)) %*% t(PW)
-  -(rescaled + t(rescaled)) / 2
+  # The posterior's own covariance where `'checked'` has one -- its importance
+  # draws' where they passed, else the normal DAIS moved to the posterior's
+  # moments (`.ctBackendMetricSource()`) -- which is what warmup adaptation
+  # would estimate and measurement says not to re-estimate; read before the
+  # Hessian's rescaling, which it supersedes.
+  source <- .ctBackendMetricSource(fit)
+  C <- switch(source, is = fit$estimate$cov, dais = fit$uncertainty$details$dais$cov, NULL)
+  if (!is.null(C)) {
+    metric <- .ctBackendCovPrecision(C)
+  } else if (identical(source, "check")) {
+    H <- fit$uncertainty$hessian
+    check <- fit$uncertainty$details$normalcheck
+    information <- -(H + t(H)) / 2
+    PW <- information %*% check$directions
+    rescaled <- information + PW %*% diag(1 / check$widths - 1, length(check$widths)) %*% t(PW)
+    metric <- -(rescaled + t(rescaled)) / 2
+  } else metric <- NULL
+  metric
 }
 
 # The fit with the check `uncertainty = 'checked'` makes
@@ -1100,7 +1151,8 @@
       nparticles = as.integer(settings$particles), maxdepth = settings$maxdepth,
       target_accept = settings$target_accept, maxdelta = settings$maxdelta,
       seed = as.integer(seed)[1L], ndraws = as.integer(draws),
-      widen = as.numeric(target$widen), verbose = isTRUE(progress),
+      widen = as.numeric(target$widen), coreset = isTRUE(settings$coreset),
+      verbose = isTRUE(progress),
       progress_overwrite = .ctProgressOverwrite(verbose),
       progress_sink = if (isTRUE(progress)) .ctProgressSink(
         .ctProgressOverwrite(verbose)) else NULL)
@@ -1375,6 +1427,23 @@
     nstages = if (is.null(result$nstages)) NULL else as.integer(result$nstages),
     stage_beta = if (is.null(result$stage_beta)) NULL else as.numeric(result$stage_beta),
     smc_seconds = if (is.null(result$smc_secs)) NULL else as.numeric(result$smc_secs),
+    # The coreset tempered SMC's particles moved on, where the route is
+    # Laplace: how many of the units each stage's coreset held (0 where a
+    # stage ran on the full objective), the units, the correction's effective
+    # size a stage as a fraction, the final chains' coreset and the fraction
+    # of the draws' effective size their correction to the full density kept;
+    # and how the particles ran ('serial', 'pool' or 'copies').
+    coreset = isTRUE(result$coreset),
+    nunits = if (is.null(result$nunits)) NULL else as.integer(result$nunits),
+    stage_coreset_size = if (is.null(result$stage_coreset_size)) NULL else
+      as.integer(result$stage_coreset_size),
+    stage_correction_ess = if (is.null(result$stage_correction_ess)) NULL else
+      as.numeric(result$stage_correction_ess),
+    final_coreset_size = if (is.null(result$final_coreset_size)) NULL else
+      as.integer(result$final_coreset_size),
+    final_correction_ess = if (is.null(result$final_correction_ess)) NULL else
+      as.numeric(result$final_correction_ess),
+    particles_parallel = if (is.null(result$parallel)) NULL else as.character(result$parallel),
     scale_accept = as.numeric(result$scale_accept),
     ncp_accept = as.numeric(result$ncp_accept),
     processes = FALSE,
@@ -1667,6 +1736,14 @@ print.ctSampleDiagnostics <- function(x, ...) {
     "autocorrelation and is not a stopping target here)\n", sep = "")
   else cat("  ", x$chains, " chains x ", x$draws, " draws (", x$warmup,
     " warmup discarded)\n", sep = "")
+  if (smc && isTRUE(x$coreset)) {
+    sizes <- x$stage_coreset_size[x$stage_coreset_size > 0]
+    if (length(sizes)) cat("  particles moved on a coreset of ",
+      paste(unique(range(sizes)), collapse = "-"), " of ", x$nunits,
+      " units; the final chains' correction to the full density kept ",
+      round(100 * x$final_correction_ess), "% of their effective size\n",
+      sep = "")
+  }
   cat("  divergent: ", x$divergent, " of ", total,
     "   max tree depth reached: ", x$saturated, "\n", sep = "")
   cat("  step size: ", paste(signif(x$stepsize, 3), collapse = ", "),

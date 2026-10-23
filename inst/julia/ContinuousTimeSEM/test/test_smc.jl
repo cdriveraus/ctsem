@@ -1,4 +1,5 @@
-# Tempered SMC (sample_smc.jl) on closed-form targets.
+# Tempered SMC (sample_smc.jl) on closed-form targets, and its coreset on a
+# Laplace fixture.
 #
 # A wrong SMC does not error: it returns a plausible cloud. Two things a
 # closed form can check that a reference sampler cannot. The final moments
@@ -10,6 +11,8 @@
 # centre is the case the sampler exists for.
 
 using LinearAlgebra, Random, Statistics
+
+isdefined(@__MODULE__, :_fresh_linear) || include("laplace_fixtures.jl")
 
 # A Gaussian target as an objective: `ctsem_evaluate` is all the sampler asks of
 # one. Log density -(x - m)' P (x - m) / 2, whose constant is
@@ -96,6 +99,10 @@ end
         @test length(r.accept) == np * r.ndraws
         @test r.stage_beta[end] == 1.0
         @test issorted(r.stage_beta)
+        # No coreset off the Laplace route, and no correction.
+        @test !r.coreset
+        @test all(r.stage_coreset_size .== 0)
+        @test r.final_correction_ess == 1.0
     end
 end
 
@@ -136,4 +143,88 @@ end
         hessian=-Matrix(g.P), nmoves=0)
     @test_throws ArgumentError ContinuousTimeSEM.ctsem_sample_smc(target, g.m;
         hessian=-Matrix(g.P), ess_frac=1.0)
+    @test_throws ArgumentError ContinuousTimeSEM.ctsem_sample_smc(target, g.m;
+        hessian=-Matrix(g.P), coreset_tol=0.0)
+end
+
+# ---- the coreset ------------------------------------------------------------
+
+@testset "a coreset's fit follows a sum of unit terms, and holds out" begin
+    rng = Random.Xoshiro(5)
+    N, n = 60, 240
+    # Units' terms that vary in four dimensions over the cloud, each at its own
+    # level, with a little of their own: a few units carry the sum.
+    Z = randn(rng, 4, n)
+    B = randn(rng, N, 4)
+    terms = B * Z .+ 0.02 .* randn(rng, N, n) .+ randn(rng, N)
+    total = vec(sum(terms; dims=1))
+    cost = fill(1 / N, N)
+    fit = ContinuousTimeSEM._smc_coreset_fit(terms, total, cost, 0.3, 0.5, Random.Xoshiro(1))
+    @test fit !== nothing
+    @test 4 <= length(fit.units) <= 12
+    @test allunique(fit.units)
+    @test all(fit.weights .> 0)
+    @test fit.error <= 0.3
+    @test fit.share <= 0.5
+    predicted = vec(transpose(fit.weights) * terms[fit.units, :])
+    e = predicted .- total
+    e .-= mean(e)
+    @test sqrt(mean(abs2, e)) <= 0.3
+    # A particle the route could not use is left out of the fit, not fitted
+    # to.
+    terms2 = copy(terms); total2 = copy(total)
+    terms2[3, 7] = NaN; total2[11] = -Inf
+    fit2 = ContinuousTimeSEM._smc_coreset_fit(terms2, total2, cost, 0.3, 0.5, Random.Xoshiro(1))
+    @test fit2 !== nothing && fit2.error <= 0.3
+    # Terms that share nothing with the total are not carried within a small
+    # budget.
+    @test ContinuousTimeSEM._smc_coreset_fit(randn(rng, N, n), randn(rng, n), cost,
+        0.1, 0.05, Random.Xoshiro(1)) === nothing
+end
+
+@testset "tempered SMC on a coreset samples the same posterior as the full Laplace objective" begin
+    # Forty subjects of the shared linear model, a standard normal prior on
+    # every raw parameter (without one the scales run to zero), two random
+    # effects: a sum of forty units' terms, which a coreset of a few follows.
+    starts, times, data = _laplace_test_data(40, 1; seed=3)
+    prior = ctsem_objective(_LAPLACE_LINEAR_OBJECTIVE.params, starts, times, data;
+        prior_index=collect(1:8), prior_scale=ones(8))
+    laplace = ctsem_laplace_objective(prior, [1, 2], [6, 7], [8], [1.0, 1.0])
+    x0 = copy(_LAPLACE_LINEAR_VALUES)
+    H = ContinuousTimeSEM.ctsem_hessian(laplace, x0)
+    common = (hessian=H, widen=1.5, nparticles=100, nmoves=2, maxdepth=5, seed=3,
+        ndraws=10, min_ess=80.0, max_draws=40, parallel=false)
+    full = ContinuousTimeSEM.ctsem_sample_smc(laplace, x0; coreset=false, common...)
+    core = ContinuousTimeSEM.ctsem_sample_smc(laplace, x0; coreset=true, common...)
+    @test !full.coreset
+    @test all(full.stage_coreset_size .== 0)
+    @test core.coreset
+    @test core.nunits == 40
+    # Some stage moved on a coreset, and none spent more than the budget's
+    # share of the units.
+    @test any(core.stage_coreset_size .> 0)
+    # A stage run in full records a share of one.
+    @test all(i -> core.stage_coreset_size[i] == 0 ||
+        core.stage_coreset_share[i] <= 0.5 + 1e-12, eachindex(core.stage_coreset_size))
+    @test all(s -> s == 0 || s <= 20, core.stage_coreset_size)
+    # The correction's effective size is reported a stage, in (0, 1].
+    @test all(0 .< core.stage_correction_ess .<= 1)
+    @test 0 < core.final_correction_ess <= 1
+    @test core.parallel == "serial"
+    # The same posterior, within the Monte Carlo error of two runs at an
+    # effective size of about 80.
+    m1 = vec(mean(full.draws; dims=2)); s1 = vec(std(full.draws; dims=2))
+    m2 = vec(mean(core.draws; dims=2)); s2 = vec(std(core.draws; dims=2))
+    @test maximum(abs.(m1 .- m2) ./ s1) < 0.45
+    @test all(0.65 .< s2 ./ s1 .< 1.5)
+    if Threads.nthreads() > 1
+        # Particles spread over the pool on copies: the same seeds per
+        # particle, so the same posterior, laid out differently.
+        par = ContinuousTimeSEM.ctsem_sample_smc(laplace, x0; coreset=true,
+            merge(common, (parallel=true,))...)
+        @test par.parallel == "pool"
+        m3 = vec(mean(par.draws; dims=2)); s3 = vec(std(par.draws; dims=2))
+        @test maximum(abs.(m3 .- m1) ./ s1) < 0.45
+        @test all(0.65 .< s3 ./ s1 .< 1.5)
+    end
 end

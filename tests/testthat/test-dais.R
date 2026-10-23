@@ -132,7 +132,21 @@ test_that("the sampler's metric is the DAIS normal's precision where there is on
   C <- crossprod(matrix(rnorm(25), 5)) + diag(5)
   fit <- list(uncertainty = list(hessian = -diag(5), details = list(dais = list(cov = C),
     normalcheck = list(directions = matrix(1, 5, 1), widths = 4))))
+  expect_identical(ctsem:::.ctBackendMetricSource(fit), "dais")
   expect_equal(-ctsem:::.ctBackendSampleMetric(fit), solve(C), tolerance = 1e-8)
+  # The importance draws' covariance comes first where they were used,
+  # weighted, and number at least twice the dimension in effective size; a
+  # smaller effective size, or draws not used, leave DAIS's.
+  Cis <- crossprod(matrix(rnorm(25), 5)) + 2 * diag(5)
+  fit$estimate <- list(raw = rep(0, 5), cov = Cis)
+  fit$uncertainty$details$importance_sampling <- list(used = TRUE, weighted = TRUE, ess = 50)
+  expect_identical(ctsem:::.ctBackendMetricSource(fit), "is")
+  expect_equal(-ctsem:::.ctBackendSampleMetric(fit), solve(Cis), tolerance = 1e-8)
+  fit$uncertainty$details$importance_sampling$ess <- 9
+  expect_identical(ctsem:::.ctBackendMetricSource(fit), "dais")
+  fit$uncertainty$details$importance_sampling <- list(used = FALSE, weighted = TRUE, ess = 50)
+  expect_identical(ctsem:::.ctBackendMetricSource(fit), "dais")
+  fit$estimate <- NULL
   # A direction the covariance does not hold gets no precision, so the engine
   # floors it wide, as it does for the Hessian's unidentified directions.
   v <- c(1, 0, 0, 0, 0)
@@ -143,5 +157,9 @@ test_that("the sampler's metric is the DAIS normal's precision where there is on
   expect_equal(Pn %*% Cnull %*% Pn, Pn, tolerance = 1e-6)
   fit$uncertainty$details$dais <- NULL
   # Without one, the Hessian rescaled to the check's widths, as before.
+  expect_identical(ctsem:::.ctBackendMetricSource(fit), "check")
   expect_false(isTRUE(all.equal(-ctsem:::.ctBackendSampleMetric(fit), solve(C))))
+  fit$uncertainty$details$normalcheck <- NULL
+  expect_identical(ctsem:::.ctBackendMetricSource(fit), "hessian")
+  expect_null(ctsem:::.ctBackendSampleMetric(fit))
 })
