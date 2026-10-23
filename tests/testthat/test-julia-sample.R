@@ -342,7 +342,7 @@ test_that("the marginal sampler starts from the normal check, made where the fit
   expect_true(all(c("directions", "widths", "centre") %in% names(made)))
   expect_gt(made$draws, 0)
   jumped <- bare
-  jumped$laplace$anytime <- list(units = 1L, jumps = 1L)
+  jumped$laplace$jump <- list(units = 1L)
   expect_identical(ctsem:::.ctBackendSampleCheck(jumped), jumped)
 
   # The sampler asks for it on the marginal target, not on the joint one,

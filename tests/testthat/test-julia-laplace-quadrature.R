@@ -157,11 +157,10 @@ test_that("the default is the quadrature correction, and the fit-time one is the
     fits$default$estimate$rawposterior)
   expect_identical(fits$quadrature$estimate$loglik, fits$default$estimate$loglik)
   expect_identical(fits$step$laplace$correction$method, "step")
-  # A default fit does not climb the hybrid from its Laplace run's hand-over
-  # (`optimcontrol$laplace_climb`; a run that ends on a jump does, and this
-  # one converged), so what the fit did is `.ctLaplaceContinue()` applied to
-  # the uncorrected fit, exactly, and the same holds for the step.
-  expect_null(fits$quadrature$laplace$anytime)
+  # The Laplace run converged (no unit's term jumped, `fit$laplace$jump`), so
+  # what the fit did is `.ctLaplaceContinue()` applied to the uncorrected fit,
+  # exactly, and the same holds for the step.
+  expect_null(fits$quadrature$laplace$jump)
   posthoc <- .ctLaplaceContinue(fits$off)
   expect_identical(posthoc$estimate$raw, fits$quadrature$estimate$raw)
   expect_identical(posthoc$estimate$loglik, fits$quadrature$estimate$loglik)

@@ -644,7 +644,7 @@ function _fresh_2d3_prior()
 end
 
 @testset "a stage after a placement starts from the pairs the last one ended with" begin
-    # A climb's stages after a placement (`_ctsem_anytime!`): one run on the
+    # Stages on the hybrid after a placement: one run on the
     # hybrid, the draws placed again where it ended, and the next run from the
     # curvature the first left on the objective (`lbfgs_pairs = :objective`).
     # It reaches the cold run's point in fewer iterations (5 against 12 when
@@ -709,55 +709,6 @@ _fresh_nested_nonlinear() = (ctsem_laplace_objective(_LAPLACE_NONLINEAR_OBJECTIV
     sd_scale=[1.0, 1.0, 1.0], level_nre=[2, 1],
     group=vcat(1:5, [1, 1, 1, 2, 2]), level_ngroups=[5, 2]),
     [0.1, 0.4, -0.2, 0.05, -0.25, 1.5, 0.2, -0.3])
-
-@testset "a climb with anytime on screens at its rungs, takes a jump in, and leaves a quadratic model alone" begin
-    opts = (maxiter=300, newton=false, certify=false, overshoot_probe=:off,
-        progress=false, lbfgs_pairs=:objective)
-    # Nonlinear: the screen at a rung flags units, and the run ends on the
-    # hybrid, whose value at the end is the continuation's own.
-    laplace, values = _fresh_nonlinear()
-    theta = collect(Float64, values)
-    start = theta .+ 0.3
-    o = ctsem_laplace_continuation(laplace, start; tolerance=0.0, screen=false,
-        anytime=true)
-    @test o.anytime && isempty(o.flagged) && isempty(o.events)
-    r = ctsem_optimize(o, start; opts...)
-    @test r.anytime_n >= 1
-    @test "screen" in r.anytime_kind
-    @test !isempty(o.flagged)
-    @test r.continuation_flagged == length(o.flagged)
-    ev = ctsem_laplace_continuation_evaluate(o, r.minimizer; gradient=false)
-    @test isapprox(r.maximum_loglik, ev.value; rtol=1e-10)
-    # Each flagged rule's effective number of nodes is recorded at every
-    # evaluation, at most its node count, and falls where the parameters have
-    # moved far from the placement.
-    @test length(o.ess) == length(o.rules)
-    @test all(f -> 1 <= o.ess[f] <= size(o.rules[f].roots[1].points, 2) + 1e-9,
-        eachindex(o.rules))
-    @test all(isfinite, o.ess_placed)
-    near = copy(o.ess)
-    ctsem_laplace_continuation_evaluate(o, r.minimizer .+ 1.5; gradient=false)
-    @test any(f -> o.ess[f] < near[f], eachindex(o.rules))
-    # The rungs are spent in order, and no more screens come.
-    @test isempty(o.rungs) || o.rungs[1] < _CONTINUATION_RUNGS[1]
-    # Linear Gaussian, at the screen's own tolerance (at 0 it flags rounding):
-    # every screen flags nothing, the objective never changes, and the run is
-    # the Laplace run to the bit.
-    laplace, values = _fresh_linear()
-    theta = collect(Float64, values)
-    start = theta .+ 0.2
-    o = ctsem_laplace_continuation(laplace, start; screen=false, anytime=true)
-    r1 = ctsem_optimize(o, start; opts...)
-    r0 = ctsem_optimize(laplace, start; opts...)
-    @test isempty(o.flagged)
-    @test r1.anytime_n >= 1
-    @test r1.minimizer == r0.minimizer
-    @test r1.iterations == r0.iterations
-    # A placement with the screen turned on at the end scores every unit.
-    info = ctsem_laplace_continuation_recentre!(o, r1.minimizer; screen=true)
-    @test o.screen
-    @test info.nflagged == 0
-end
 
 @testset "each flagged unit reports its rule's error, and the hybrid its total" begin
     # A product rule's error is its value against the rule two nodes fewer,
@@ -888,23 +839,24 @@ end
     fresh = ctsem_laplace_continuation(laplace, other; tolerance=-1.0)
     rules = o.rules
     value = o.centre_value
-    # The probe's reading is a continuation placed there, and differs from
-    # the frozen rules' reading far from their placement.
+    # The probe's reading is a continuation placed there, net of what that
+    # placement's rules cannot vouch for (`_continuation_error`), and differs
+    # from the frozen rules' reading far from their placement.
     v = C._ctsem_probe_value(o, other)
-    @test isapprox(v, fresh.centre_value; rtol=1e-8)
+    @test isapprox(v, fresh.centre_value - C._continuation_error(fresh).total; rtol=1e-8)
     frozen = ctsem_laplace_continuation_evaluate(o, other; gradient=false).value
     @test abs(frozen - v) > 0
-    # And at the centre it is the centre's value, the baseline a probe's gain
-    # is measured from.
-    @test isapprox(C._ctsem_probe_value(o, theta), value; rtol=1e-10)
-    @test isapprox(C._ctsem_probe_baseline(o, theta, -123.0), value; rtol=1e-10)
+    # And at the centre it is the centre's value read the same way, the
+    # baseline a probe's gain is measured from.
+    net = value - C._continuation_error(o).total
+    @test isapprox(C._ctsem_probe_value(o, theta), net; rtol=1e-10)
+    @test isapprox(C._ctsem_probe_baseline(o, theta, -123.0), net; rtol=1e-10)
     # Nothing of the placement is changed by a probe.
     @test o.centre == theta
     @test o.centre_value == value
     @test o.rules === rules
     @test o.previous === nothing
     @test o.recentres == 1
-    @test o.since_placement == 0
     # Inside a round -- a placement saved for `revert!` -- a probe leaves
     # that saved placement, so the round can still be put back.
     ctsem_laplace_continuation_recentre!(o, other)
@@ -916,29 +868,6 @@ end
     ctsem_laplace_continuation_revert!(o)
     @test o.centre == theta
     @test o.centre_value == value
-end
-
-@testset "a stage starting away from the last placement places the rules there first" begin
-    opts = (maxiter=2, newton=false, certify=false, overshoot_probe=:off,
-        progress=false, lbfgs_pairs=:objective)
-    laplace, values = _fresh_nonlinear()
-    theta = collect(Float64, values)
-    nunits = length(laplace.units.members)
-    # Every unit named, so the climb has rules to place; the screen off, as
-    # during a climb.
-    o = ctsem_laplace_continuation(laplace, theta; screen=false, anytime=true,
-        force=1:nunits)
-    @test length(o.flagged) == nunits
-    r = ctsem_optimize(o, theta .+ 0.3; opts...)
-    @test !isempty(o.events)
-    @test o.events[1].kind == :start
-    @test "start" in r.anytime_kind
-    # From the placement itself there is nothing to place first.
-    o2 = ctsem_laplace_continuation(laplace, theta; screen=false, anytime=true,
-        force=1:nunits)
-    r2 = ctsem_optimize(o2, theta; opts...)
-    @test isempty(o2.events) || o2.events[1].kind != :start
-    @test !("start" in r2.anytime_kind)
 end
 
 @testset "a nested unit wider than maxdim gets frozen draws per block" begin

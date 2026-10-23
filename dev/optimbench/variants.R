@@ -37,13 +37,6 @@ BENCH_VARIANTS <- list(
   # the same point, since the probe then changed no verdict.
   noprobe = list(optimcontrol = list(overshoot = "off")),
 
-  # The climb on the quadrature hybrid off (optimcontrol$laplace_climb): the
-  # Laplace run to its own end, then the correction from there, with every
-  # other change of the build under test. Paired with `default` on one build,
-  # what the climb itself does; paired with the build before the climb, what
-  # the build's other changes do.
-  noclimb = list(optimcontrol = list(laplace_climb = FALSE)),
-
   # L-BFGS's initial inverse Hessian learned per coordinate (Gilbert &
   # Lemarechal's diagonal update) instead of one secant ratio. Paired with
   # `default` on the same build: whether it can be the default.
