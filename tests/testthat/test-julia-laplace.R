@@ -699,6 +699,12 @@ test_that("one subject per study reproduces the subject level fit exactly", {
     T0VAR = matrix(0.5), MANIFESTMEANS = matrix("mmean"), id = "subject")))
   subjectlevel$pars$indvarying <- subjectlevel$pars$param %in% "mmean"
 
+  # On the layer: the subject filter would integrate the subject level's
+  # effect (`CTSEMHybrid`), which is the same likelihood computed otherwise,
+  # so the finish samples behind summary()'s popsd would differ by their
+  # Monte Carlo error. The study level's effect is a coordinate either way.
+  old <- options(ctsem.laplace.hybrid = FALSE)
+  on.exit(options(old), add = TRUE)
   set.seed(99)
   one <- suppressMessages(ctFit(dat, subjectlevel, backend = "julia",
     intoverpop = "laplace", cores = 1))
