@@ -5746,7 +5746,7 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
       second <- optimise_once(as.numeric(result$minimizer))
       result <- .ctLaplaceAnytimeRecord(.ctJuliaAddRunCounts(second,
         .ctJuliaRunCounts(result)), module, continuation, laplace_run)
-      climbed <- result$anytime
+      climbed <- result[["anytime"]]
     }
   }
   # The two early phases belong to the first stage, which is the one that
@@ -5861,8 +5861,12 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
   if (is.null(result$stall_escapes)) result$stall_escapes <- escapes
   # A stage the escape loop kept ran on the hybrid too and carries no record of
   # the climb: the record is rebuilt on it, its own events after the climb's,
-  # and the continuation rides along for the correction.
-  if (!is.null(continuation) && is.null(result$continuation)) {
+  # and the continuation rides along for the correction. `[[`, not `$`: an
+  # engine result carries `continuation_flagged`, which `$continuation`
+  # matched, so the rebuild was skipped and the correction was handed that
+  # count in place of the continuation ("no method matching
+  # ctsem_laplace_continuation_recentre!(::Int64, ...)").
+  if (!is.null(continuation) && is.null(result[["continuation"]])) {
     result <- .ctLaplaceAnytimeRecord(result, module, continuation, laplace_run,
       before = climbed)
   }
@@ -5910,8 +5914,9 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
     # objective from the same specification, so they use it too.
     floor = as.character(.ctJuliaOr(model_spec$laplace$inner$floor, "total")),
     # What the climb on the hybrid flagged and did (`.ctLaplaceAnytimeRecord()`),
-    # or NULL where the fit climbed the Laplace objective alone.
-    anytime = result$anytime,
+    # or NULL where the fit climbed the Laplace objective alone. `[[`: the
+    # engine's `anytime_*` fields are prefixes `$` would match.
+    anytime = result[["anytime"]],
     gated_units = if (is.null(result$gated_units)) NA_integer_ else
       as.integer(result$gated_units),
     inner_converged = isTRUE(result$inner_converged),
@@ -6383,8 +6388,8 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
   # engine object) and handed to the correction.
   cont <- NULL
   take_continuation <- function(result) {
-    if (!is.null(result$continuation)) cont <<- result$continuation
-    result$continuation <- NULL
+    if (!is.null(result[["continuation"]])) cont <<- result[["continuation"]]
+    result[["continuation"]] <- NULL
     result
   }
   optimise_started <- proc.time()[["elapsed"]]
@@ -6443,12 +6448,12 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
       inverse = .ctBackendResumeInverse(endgame),
       hessian = endgame$hessian, hessian_at = endgame$evaluated_at))
   if (certifying) {
-    climbed <- result$anytime
+    climbed <- result[["anytime"]]
     correction <- correct(result)
     result <- correction$result
     # A resume runs on the hybrid the climb ended on (`continuation` above), so
     # what the climb flagged stays flagged; the record is the climb's.
-    if (is.null(result$anytime)) result$anytime <- climbed
+    if (is.null(result[["anytime"]])) result$anytime <- climbed
   }
   # Random restarts, when asked for, only for a fit still not converged -- see
   # R/ctBackendRestarts.R for when they run and when they deliberately do not

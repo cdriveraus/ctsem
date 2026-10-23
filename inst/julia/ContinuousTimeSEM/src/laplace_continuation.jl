@@ -1302,11 +1302,14 @@ function _continuation_unit_rule(laplace::CTSEMLaplaceObjective, U::Integer,
     _laplace_solve_unit_mode!(laplace, U, theta, Ls)
     mode = copy(laplace.modes[U])
     tree = _quadrature_children(blocks)
-    if _continuation_unit_width(laplace, U) > opts.maxdim
-        # Too wide for a product rule: only `_continuation_place` sends such a
-        # unit here, and only when draws are on. A nested unit's outer blocks
-        # take their first components from the curvature, here, before
-        # anything runs in parallel: it is this slot's scratch.
+    if _continuation_unit_width(laplace, U) > opts.maxdim ||
+            U in get(opts, :draw_units, ())
+        # Too wide for a product rule, or named for draws because no product
+        # rule reached the draws' target there (`_continuation_refine!`):
+        # only `_continuation_place` sends such a unit here, and only when
+        # draws are on. A nested unit's outer blocks take their first
+        # components from the curvature, here, before anything runs in
+        # parallel: it is this slot's scratch.
         outer = Vector{Union{Nothing,CTSEMImportanceComponent}}(nothing,
             length(blocks))
         if length(blocks) > 1
@@ -1443,6 +1446,103 @@ function _continuation_node_errors(laplace::CTSEMLaplaceObjective,
                 nothing
             end
             errors[U] = r === nothing ? NaN : abs(placed.quadrature[U] - r.value)
+        end
+        return true
+    end
+    return errors
+end
+
+"""
+The most nodes a product or soft rule is refined to before a unit takes
+draws (`_continuation_refine!`): two steps of two above the default 5, so
+81 member evaluations per gradient on a two-effect block against 25. Past
+that a unit whose rule has not converged is one whose posterior over its
+effects is not one basin the nodes can cover, which draws from a defensive
+mixture can.
+"""
+const _CONTINUATION_NODES_MAX = 9
+
+"""
+    _continuation_refine!(laplace, theta, opts, placed, flagged)
+
+Each flagged unit's rule made honest where its nodes have not converged, and
+every flagged unit's rule error at the centre (`_continuation_node_errors`).
+A product or soft rule whose cheap check -- its value against the rule two
+nodes fewer -- is within `opts.draws_se` keeps its rule and that error. One
+beyond it is checked against the rule two nodes more: the finer rule's
+difference from it is the rule's error, and where that too is beyond
+`draws_se` the finer rule is taken and checked the same way, up to
+`_CONTINUATION_NODES_MAX` nodes; a unit no rule up to there resolves takes
+draws, which stop at `draws_se` on their own standard error
+(`_continuation_importance_rule`), or keeps the finest rule with its error
+where draws are off. `placed`'s arrays are updated in place.
+
+Why: a hybrid is only as honest as its rules. On the bench's gC8 the 5-node
+rules carried 6.9 nats of node error at the climb's end, and on anomS2's
+spurious start 54 nats over 101 units: the climb on that hybrid walked where
+the rules over-credited the Laplace basin and ended 11 and 15 nats below the
+baseline, certified on an objective whose own error was that large. The
+cheap check first, because on a unit whose posterior is one Gaussian basin
+3 nodes already agree with 5, and the finer rule costs `(nodes + 2)^k`
+evaluations a unit a placement.
+"""
+function _continuation_refine!(laplace::CTSEMLaplaceObjective, theta::Vector{Float64},
+    opts, placed, flagged::Vector{Int})
+    errors = _continuation_node_errors(laplace, theta, opts, placed, flagged)
+    target = Float64(opts.draws_se)
+    coarse = [U for U in flagged if !placed.importance[U] &&
+        placed.rules[U] !== nothing && isfinite(errors[U]) && errors[U] > target]
+    isempty(coarse) && return errors
+    Ls = _laplace_popchols(theta, laplace.spec)
+    # Every node count the loop below may ask for, warmed here: the grid
+    # caches are pure reads inside the threads (`_quadrature_warm_caches`).
+    for m in (Int(opts.nodes) + 2):2:_CONTINUATION_NODES_MAX
+        _continuation_warm_caches(laplace, m, opts.soft_maxdirs, opts.product_maxdim)
+    end
+    _laplace_parallel(laplace, 1:length(coarse)) do i
+        local U, n, finer, err, r, ws
+        U = coarse[i]
+        ws = _laplace_workspace!(laplace, Float64, length(theta))
+        n = Int(opts.nodes)
+        finer = false
+        err = errors[U]
+        while n + 2 <= _CONTINUATION_NODES_MAX
+            r = try
+                _continuation_unit_rule(laplace, U, theta, Ls, ws,
+                    merge(opts, (nodes=n + 2,)))
+            catch e
+                _ctsem_must_propagate(e) && rethrow()
+                nothing
+            end
+            r === nothing && break
+            err = abs(r.value - placed.quadrature[U])
+            if err <= target
+                # The coarser rule stands, with the finer one's measure of it.
+                errors[U] = err
+                finer = false
+                break
+            end
+            placed.rules[U] = r.rule
+            placed.quadrature[U] = r.value
+            errors[U] = err
+            finer = true
+            n += 2
+        end
+        if finer && errors[U] > target && opts.draws > 0
+            r = try
+                _continuation_unit_rule(laplace, U, theta, Ls, ws,
+                    merge(opts, (draw_units=(U,),)))
+            catch e
+                _ctsem_must_propagate(e) && rethrow()
+                nothing
+            end
+            if r !== nothing
+                placed.rules[U] = r.rule
+                placed.quadrature[U] = r.value
+                placed.se[U] = r.se
+                placed.importance[U] = true
+                errors[U] = r.se
+            end
         end
         return true
     end
@@ -1675,6 +1775,7 @@ function _continuation_place!(o::CTSEMLaplaceContinuation, theta::Vector{Float64
     # A unit flagged before whose rule could not be placed here keeps its
     # Laplace term: an honest Laplace term beats a rule placed somewhere else.
     filter!(U -> placed.rules[U] !== nothing, flagged)
+    errors = _continuation_refine!(laplace, theta, opts, placed, flagged)
     o.flagged = flagged
     o.rules = CTSEMFixedUnitRule[placed.rules[U] for U in flagged]
     o.rest_units = setdiff(1:nunits, flagged)
@@ -1685,7 +1786,7 @@ function _continuation_place!(o::CTSEMLaplaceContinuation, theta::Vector{Float64
     o.centre_laplace = placed.laplace
     o.centre_se = placed.se
     o.importance = placed.importance
-    o.centre_error = _continuation_node_errors(laplace, theta, opts, placed, flagged)
+    o.centre_error = errors
     o.rule_failed = failed
     prior = _ctsem_log_prior(laplace.objective, theta)
     o.centre_value = sum(_laplace_unit_weight(laplace, U) * placed.laplace[U]
@@ -2140,6 +2241,17 @@ function _ctsem_anytime!(o::CTSEMLaplaceContinuation, x::AbstractVector, gain::R
     o.anytime || return false
     before = length(o.flagged)
     theta = _laplace_extend(o.laplace, collect(Float64, x))
+    if event === :start
+        # A stage starting away from the last placement -- a resume from a
+        # pulled-back point, or from an estimate the climb's last drift left
+        # behind -- places every flagged rule there first, so it climbs the
+        # rules of where it is and not of where the last stage was.
+        theta == o.centre && return false
+        isempty(o.flagged) && return false
+        _continuation_place!(o, theta)
+        push!(o.events, (kind=:start, flagged=length(o.flagged), gain=Float64(gain)))
+        return true
+    end
     if event === :jump
         named = _ctsem_jump_units(o, jump)
         isempty(named.units) && return false
@@ -2203,15 +2315,55 @@ function _ctsem_optimise_trial(o::CTSEMLaplaceContinuation, x, want_gradient::Bo
     return (evaluated=evaluated, valid=valid)
 end
 
+# The estimate read the same way, so a probe's gain is never the placement
+# difference (`_ctsem_probe_baseline`).
+_ctsem_probe_baseline(o::CTSEMLaplaceContinuation, minimizer, value) =
+    _ctsem_probe_value(o, minimizer)
+
+# A probe asks whether the objective is better somewhere else -- the
+# overshoot probe's pullbacks, the stall watch's, the finish's flat and
+# saddle ladders -- and on the hybrid the objective at another point is its
+# value with the rules placed there, not the frozen rules' value far from
+# their placement: a rule's nodes fixed at one point carry less and less of
+# the integrand as the parameters move, and read far away they can say
+# anything. On the bench's anomS2 the climb reached the baseline's optimum,
+# the probe on its frozen rules found a gain of 0.016 nats toward the basin
+# the Laplace terms over-credit, and the escape taken on it ended the fit 2.5
+# exact nats and 6.5 reported nats off. So the rules are placed at the point
+# and the placement put back, around the correction rounds' own saved
+# placement (`o.previous`), which a probe inside a round must not disturb.
 function _ctsem_probe_value(o::CTSEMLaplaceContinuation, x)
-    evaluated = try
-        ctsem_laplace_continuation_evaluate(o, x; gradient=false)
+    theta = try
+        _laplace_extend(o.laplace, collect(Float64, x))
     catch err
         _ctsem_must_propagate(err) && rethrow()
-        nothing
+        return -Inf
     end
-    evaluated === nothing && return -Inf
-    (evaluated.converged && isfinite(evaluated.value)) ? evaluated.value : -Inf
+    saved = NamedTuple{_CONTINUATION_STATE}(
+        Tuple(getfield(o, f) for f in _CONTINUATION_STATE))
+    previous = o.previous
+    # Not a placement the climb made: its drift cooldown and the count of
+    # placements the record reports stay as they were.
+    since = o.since_placement
+    recentres = o.recentres
+    value = -Inf
+    try
+        _continuation_place!(o, theta)
+        value = o.centre_value
+    catch err
+        _ctsem_must_propagate(err) && rethrow()
+        value = -Inf
+    finally
+        for f in _CONTINUATION_STATE
+            setfield!(o, f, getfield(saved, f))
+        end
+        o.previous = previous
+        o.since_placement = since
+        o.recentres = recentres
+        o.cache = nothing
+        o.value_cache = nothing
+    end
+    return isfinite(value) ? value : -Inf
 end
 
 """
