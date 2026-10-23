@@ -203,7 +203,9 @@ end
     # Some stage moved on a coreset, and none spent more than the budget's
     # share of the units.
     @test any(core.stage_coreset_size .> 0)
-    @test all(core.stage_coreset_share .<= 0.5 .+ 1e-12)
+    # A stage run in full records a share of one.
+    @test all(i -> core.stage_coreset_size[i] == 0 ||
+        core.stage_coreset_share[i] <= 0.5 + 1e-12, eachindex(core.stage_coreset_size))
     @test all(s -> s == 0 || s <= 20, core.stage_coreset_size)
     # The correction's effective size is reported a stage, in (0, 1].
     @test all(0 .< core.stage_correction_ess .<= 1)
