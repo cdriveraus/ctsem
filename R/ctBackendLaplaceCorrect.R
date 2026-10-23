@@ -743,9 +743,10 @@ print.ctLaplaceCorrection <- function(x, ...) {
     flagged = as.integer(run$anytime_flagged)[seq_len(n)],
     gain = as.numeric(run$anytime_gain)[seq_len(n)], stringsAsFactors = FALSE) else
     data.frame(kind = character(0), flagged = integer(0), gain = numeric(0))
-  # The stages before this one (`before`, an earlier record on the same
-  # continuation) come first.
-  if (is.data.frame(before$events)) events <- rbind(before$events, events)
+  # The engine's list is the continuation's whole history, every stage's
+  # events in order, so an earlier record on the same continuation
+  # (`before`) adds nothing to it; it says only how many units were on draws
+  # before, for the warning above.
   handover <- as.character(.ctJuliaOr(first$stop_reason, ""))[1L]
   run$anytime <- list(units = flagged, draws_units = drawn,
     jumps = sum(events$kind == "jump") + as.integer(identical(handover, "jump")),
@@ -1077,10 +1078,19 @@ print.ctLaplaceCorrection <- function(x, ...) {
 
 # A try-error's message in a phrase: its first line, without the Julia
 # stacktrace that follows an engine error.
+# The first line that says what went wrong. An engine error arrives as
+# "Evaluation in Julia failed." and then the engine's own message, which is
+# the line a reader needs; the generic one is what a record used to keep.
 .ctLaplaceTryReason <- function(x) {
-  lines <- strsplit(paste(conditionMessage(attr(x, "condition")), collapse = "\n"),
-    "\n", fixed = TRUE)[[1L]]
-  if (length(lines)) trimws(lines[1L]) else ""
+  lines <- trimws(strsplit(paste(conditionMessage(attr(x, "condition")),
+    collapse = "\n"), "\n", fixed = TRUE)[[1L]])
+  lines <- lines[nzchar(lines)]
+  if (!length(lines)) return("")
+  own <- lines[!grepl("^Evaluation in Julia failed|^Original (Julia )?error message",
+    lines)]
+  reason <- if (length(own)) own[1L] else lines[1L]
+  if (nchar(reason) > 300) reason <- paste0(substr(reason, 1, 300), "...")
+  reason
 }
 
 .ctLaplaceContinue <- function(fit, cores = 1L, verbose = 0L,

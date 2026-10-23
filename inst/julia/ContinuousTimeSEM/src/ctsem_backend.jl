@@ -1421,6 +1421,20 @@ function _ctsem_pullback_sets(minimizer, flagged=Int[];
 end
 
 """
+    _ctsem_probe_baseline(objective, minimizer, value)
+
+What a probe's trial values are compared against: the objective's value at
+`minimizer`, which for most objectives is the `value` the optimiser ended
+with. A route whose probe values are not the optimiser's objective -- the
+Laplace continuation, whose probes read the hybrid with its rules placed at
+the probed point where the optimiser climbed the frozen rules -- gives the
+same reading at the estimate, or a gain of the placement difference is
+reported as an overshoot (0.0245 nats on the bench's anomS2, and a fit
+cycling through escapes at one point).
+"""
+_ctsem_probe_baseline(objective, minimizer, value) = value
+
+"""
     _ctsem_overshot(objective, minimizer, saturated_parameters, value, tolerance)
 
 Whether the optimizer walked *past* an optimum into a flat region, rather than
@@ -1498,6 +1512,8 @@ function _ctsem_overshot(objective, minimizer, saturated_parameters, value,
         _ctsem_pullback_sets(minimizer, saturated_parameters; among=among)
     end
     isempty(sets) && return empty_result
+    value = _ctsem_probe_baseline(objective, minimizer, value)
+    isfinite(value) || return empty_result
     keep = collect(minimizer)
     probe = collect(minimizer)
     # No ranking of the points that did not improve. Ordering them by how

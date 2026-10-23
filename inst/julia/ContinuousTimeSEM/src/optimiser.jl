@@ -365,6 +365,10 @@ function _ctsem_lbfgs(fg!, x0::AbstractVector; memory::Integer=20,
         coreset.fg!(coreset.target, F, Gout, y) :
         b === nothing ? fg!(F, Gout, y) : _ctsem_batch_fg!(b, F, Gout, y)
     coreset === nothing || (coreset.g_tol = Float64(g_tol))
+    # A run starting away from where the route last placed itself (a resume
+    # from a pulled-back point, or from an estimate the rules were not placed
+    # at) first lets the route place itself there (`_ctsem_anytime!`).
+    checkpoint === nothing || checkpoint(x, Inf, :start)
     f = evaluate!(batch, 0.0, G, x); fcalls += 1; gcalls += 1
     # Iteration 0 only on a run that is a run of its own; a continuation's
     # starting point is the last row its predecessor already recorded.
