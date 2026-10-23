@@ -246,26 +246,26 @@ nonlinear dynamics, or with non-Gaussian indicators -- \code{'is'}
 reproduces the bias. Expect it to cost several times the fit.
 
 \code{control$likelihood} (julia only) chooses a more exact density to
-sample against. \code{'quadrature'}, for a Laplace fit, integrates each
-unit's random effects by adaptive Gauss-Hermite quadrature
-(\code{control$nodes} per effect, 5 by default), the integral
-\code{\link{ctLaplaceCheck}} measures the Laplace term against.
-\code{'particle'}, for a fit on the filter's route, replaces the filter's
-Gaussian likelihood by a particle filter's (\code{control$particles}, 1000;
-\code{substeps}, 10; \code{transition}, \code{'exponential'} or
+draw against, with \code{'is'} or \code{'checked'}. \code{'quadrature'},
+for a Laplace fit, is the quadrature hybrid the fit's own correction
+climbs (\code{optimcontrol$laplace_correct}): the units the screen flags
+integrated by quadrature rules (\code{control$nodes} per effect, 5 by
+default) or draws, the rest by their Laplace terms, with the error of that
+density reported in \code{fit$laplace$correction$error} and in
+\code{summary()}. A fit made with the correction off is climbed to that
+density's optimum first; one corrected when it was fitted stays where it
+is, as does any fit under \code{correctEstimate = FALSE}. \code{'particle'},
+for a fit on the filter's route and with \code{'is'}, replaces the
+filter's Gaussian likelihood by a particle filter's (\code{control$particles},
+1000; \code{substeps}, 10; \code{transition}, \code{'exponential'} or
 \code{'euler'}; \code{seed}, 1, with draw \code{i} using \code{seed + i -
 1}), the likelihood \code{\link{ctParticleLik}} measures the filter
-against; its Monte Carlo noise widens the weights without biasing them. Each
-draw costs one quadrature or particle-filter evaluation, so this takes
-minutes to hours where the check took seconds. The proposal starts from the
-fit's covariance widened by \code{imisScaleInit} (1.5), runs at most
-\code{imisMaxIter} (10) rounds of \code{isitersize} draws (200, or
-\code{finishsamples} if more, for quadrature), and the estimate moves to
-the corrected point: the quadrature posterior's Newton step from a fit made
-with \code{optimcontrol$laplace_correct = FALSE} (a fit corrected when it
-was fitted stays where it is), or the weighted posterior mean against the
-particle filter. \code{correctEstimate = FALSE} keeps it. What was done is
-recorded, and prints, in \code{fit$laplace_correction} or
+against; its Monte Carlo noise widens the weights without biasing them, each
+draw costs one particle-filter evaluation, the proposal starts from the
+fit's covariance widened by \code{imisScaleInit} (1.5) and runs at most
+\code{imisMaxIter} (10) rounds of \code{isitersize} draws, and the estimate
+moves to the weighted posterior mean unless \code{correctEstimate = FALSE}.
+What was done is recorded in \code{fit$laplace$correction} or, printing,
 \code{fit$particle_correction}. Where too few effective draws survive the
 approximation is too far from the target to repair by reweighting, and
 \code{'sample'} with \code{control = list(intoverpop = 'none')} is the

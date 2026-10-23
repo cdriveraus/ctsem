@@ -169,7 +169,7 @@
 # naming one backend and not the other is exactly the "accepted on one backend,
 # ignored on the other" trap. Hence one helper, called from every writer that
 # would otherwise leave them bare -- `.ctBackendUncertainty()`,
-# `ctOptimUncertainty()`, `.ctLaplaceCorrect()`, `.ctParticleCorrect()` and
+# `ctOptimUncertainty()`, `.ctLaplaceContinue()`, `.ctParticleCorrect()` and
 # `ctFit()`.
 # `ctFitUncertainty(fit, uncertainty = 'sample')` is the exception and needs no
 # call: it names its draws where it builds them and
@@ -2211,10 +2211,18 @@ ctBackendParMatrices <- function(fit, raw = NULL, tipreds = NULL, state = NULL,
       if (identical(object$sample$sampler, "saem")) "SAEM kernel" else "NUTS",
       ") pushed through the transforms.")
   } else if (has_posterior) {
+    # Draws taken on the quadrature hybrid say what that density is known to
+    # (`fit$laplace$correction$error`, piece B of the fitting consolidation).
+    error <- if (!is.null(object$uncertainty$details$laplace_correction$error))
+      object$laplace$correction$error else NULL
     paste0("Julia backend; intervals from ctFitUncertainty(uncertainty='",
       object$uncertainty$settings$method, "'", if (length(likelihood))
         paste0(", likelihood='", likelihood, "'"),
-      ") draws pushed through the transforms.")
+      ") draws pushed through the transforms.",
+      if (!is.null(error) && isTRUE(is.finite(error$nats))) paste0(
+        " The density drawn from is the quadrature hybrid, known to within ",
+        signif(error$nats, 2), " nats (", signif(error$se, 2),
+        " standard errors)."))
   } else {
     paste0("Julia backend; point estimates only. ",
       "Run ctFitUncertainty() for standard errors and intervals.")

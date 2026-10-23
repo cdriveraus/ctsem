@@ -45,8 +45,8 @@ bootstrapHessian <- function(standata, sm, est, finishsamples, cores, scores=NUL
 
 # What the importance sampler actually delivered, said out loud.
 #
-# `.ctLaplaceCorrect()` and `.ctParticleCorrect()` already warn when their
-# importance sampling ends short of its effective-sample-size target.
+# `.ctParticleCorrect()` already warns when its importance sampling ends
+# short of its effective-sample-size target.
 # `uncertainty='is'` did not, and it is the call that most needs it, because
 # the condition that defeats it is ordinary rather than exotic: a likelihood
 # that is flat in some raw direction -- an individually varying parameter with
@@ -68,8 +68,8 @@ bootstrapHessian <- function(standata, sm, est, finishsamples, cores, scores=NUL
 # "These intervals rest on too few effective points to mean what they look like
 # they mean."
 #
-# Four places asked that and each wrote its own answer: here, in
-# `.ctLaplaceCorrect()`, and twice in `.ctParticleCorrect()`. Three of the four
+# Four places asked that and each wrote its own answer: here, in the
+# quadrature corrector of the time, and twice in `.ctParticleCorrect()`. Three of the four
 # did not call this one, and the thresholds had already drifted -- so a change
 # to the rule, or to the wording, had to be made in up to four places to stay
 # consistent, and nothing made it.
@@ -180,7 +180,7 @@ bootstrapHessian <- function(standata, sm, est, finishsamples, cores, scores=NUL
 # to suggest when the effective size is short:
 #
 #   the uncertainty stage's `uncertainty='is'`, against the model's own density;
-#   `.ctLaplaceCorrect()`, against the adaptive-quadrature posterior;
+#   `.ctLaplaceContinue()`, against the quadrature hybrid;
 #   `.ctParticleCorrect()`, against the particle-filter likelihood.
 #
 # The last two are corrections *to a different objective* -- the reference is
@@ -230,9 +230,9 @@ bootstrapHessian <- function(standata, sm, est, finishsamples, cores, scores=NUL
 # The effective sample size every route that produces draws aims for unless
 # told otherwise, named once: `uncertainty = 'sample'` (`minESS`, of the worst
 # parameter), `uncertainty = 'is'` (`isESS`), and the importance-sampling
-# corrections `.ctLaplaceCorrect()` and `.ctParticleCorrect()` (`target_ess`,
-# whose signatures write the number out; test-ess-target.R holds them to
-# this). They differed -- 100 on the corrections, 200 elsewhere, and
+# correction `.ctParticleCorrect()` (`target_ess`, whose signature writes the
+# number out; test-ess-target.R holds it to this). They differed -- 100 on
+# the corrections, 200 elsewhere, and
 # 'sample' stopping at its draw budget below its own 200 -- and one default
 # across them was Charles's decision (2026-09-30).
 #
@@ -629,9 +629,9 @@ bootstrapHessian <- function(standata, sm, est, finishsamples, cores, scores=NUL
 # Read from the attribute and never probed for: a density says what it can do
 # by its attributes, as `'batch'` does, so the julia route's lpg carries one
 # (one bridge call per batch), stan's gets one from `.ctImisPointGradbatch()`,
-# and the quadrature and particle-filter densities of `.ctLaplaceCorrect()` and
-# `.ctParticleCorrect()` carry none and skip the search. Probing would cost a
-# particle filter per call there, and put a row in its evaluation record.
+# and the particle-filter density of `.ctParticleCorrect()` carries none and
+# skips the search. Probing would cost a particle filter per call there, and
+# put a row in its evaluation record.
 .ctImisGradient <- function(parlp, centre) {
   gb <- attr(parlp, 'gradbatch')
   if (is.function(gb)) gb else NULL
@@ -902,7 +902,7 @@ bootstrapHessian <- function(standata, sm, est, finishsamples, cores, scores=NUL
 
 # `cov` is the proposal covariance as the caller wants it used. A caller that
 # has already widened it passes `scaleInit = 1` rather than compounding two
-# scalings, which is what `.ctLaplaceCorrect()` does.
+# scalings, as `.ctParticleCorrect()` does.
 #' @keywords internal
 .ctOptimImisDraws <- function(lpg, centre, cov, finishsamples, remedy,
   nbatch = 1000, target_ess = .ctEssTarget, maxiter = 50,
@@ -3185,15 +3185,15 @@ ctOptimFitLpgFunc <- function(fit, cores=1){
   ctOptimUpdateTransformed(fit, samples=samples, cores=cores)
 }
 
-# `control$likelihood`: the density `uncertainty = 'is'` samples against.
-# Nothing else samples, so naming one for another method is refused rather than
-# ignored.
+# `control$likelihood`: the density `uncertainty = 'is'` or `'checked'` draws
+# against. Nothing else draws, so naming one for another method is refused
+# rather than ignored.
 .ctUncertaintyLikelihood <- function(uncertainty, likelihood) {
   if(is.null(likelihood)) return('fit')
   likelihood <- match.arg(likelihood, .ctBackendUncertaintyLikelihoods)
-  if(!identical(likelihood, 'fit') && !identical(uncertainty, 'is')) stop(
-    "control$likelihood = '", likelihood, "' applies to uncertainty = 'is', ",
-    "which samples against it.", call.=FALSE)
+  if(!identical(likelihood, 'fit') && !uncertainty %in% c('is', 'checked')) stop(
+    "control$likelihood = '", likelihood, "' applies to uncertainty = 'is' or ",
+    "'checked', which draw against it.", call.=FALSE)
   likelihood
 }
 
@@ -3301,26 +3301,26 @@ ctOptimFitLpgFunc <- function(fit, cores=1){
 #' reproduces the bias. Expect it to cost several times the fit.
 #'
 #' \code{control$likelihood} (julia only) chooses a more exact density to
-#' sample against. \code{'quadrature'}, for a Laplace fit, integrates each
-#' unit's random effects by adaptive Gauss-Hermite quadrature
-#' (\code{control$nodes} per effect, 5 by default), the integral
-#' \code{\link{ctLaplaceCheck}} measures the Laplace term against.
-#' \code{'particle'}, for a fit on the filter's route, replaces the filter's
-#' Gaussian likelihood by a particle filter's (\code{control$particles}, 1000;
-#' \code{substeps}, 10; \code{transition}, \code{'exponential'} or
+#' draw against, with \code{'is'} or \code{'checked'}. \code{'quadrature'},
+#' for a Laplace fit, is the quadrature hybrid the fit's own correction
+#' climbs (\code{optimcontrol$laplace_correct}): the units the screen flags
+#' integrated by quadrature rules (\code{control$nodes} per effect, 5 by
+#' default) or draws, the rest by their Laplace terms, with the error of that
+#' density reported in \code{fit$laplace$correction$error} and in
+#' \code{summary()}. A fit made with the correction off is climbed to that
+#' density's optimum first; one corrected when it was fitted stays where it
+#' is, as does any fit under \code{correctEstimate = FALSE}. \code{'particle'},
+#' for a fit on the filter's route and with \code{'is'}, replaces the
+#' filter's Gaussian likelihood by a particle filter's (\code{control$particles},
+#' 1000; \code{substeps}, 10; \code{transition}, \code{'exponential'} or
 #' \code{'euler'}; \code{seed}, 1, with draw \code{i} using \code{seed + i -
 #' 1}), the likelihood \code{\link{ctParticleLik}} measures the filter
-#' against; its Monte Carlo noise widens the weights without biasing them. Each
-#' draw costs one quadrature or particle-filter evaluation, so this takes
-#' minutes to hours where the check took seconds. The proposal starts from the
-#' fit's covariance widened by \code{imisScaleInit} (1.5), runs at most
-#' \code{imisMaxIter} (10) rounds of \code{isitersize} draws (200, or
-#' \code{finishsamples} if more, for quadrature), and the estimate moves to
-#' the corrected point: the quadrature posterior's Newton step from a fit made
-#' with \code{optimcontrol$laplace_correct = FALSE} (a fit corrected when it
-#' was fitted stays where it is), or the weighted posterior mean against the
-#' particle filter. \code{correctEstimate = FALSE} keeps it. What was done is
-#' recorded, and prints, in \code{fit$laplace_correction} or
+#' against; its Monte Carlo noise widens the weights without biasing them, each
+#' draw costs one particle-filter evaluation, the proposal starts from the
+#' fit's covariance widened by \code{imisScaleInit} (1.5) and runs at most
+#' \code{imisMaxIter} (10) rounds of \code{isitersize} draws, and the estimate
+#' moves to the weighted posterior mean unless \code{correctEstimate = FALSE}.
+#' What was done is recorded in \code{fit$laplace$correction} or, printing,
 #' \code{fit$particle_correction}. Where too few effective draws survive the
 #' approximation is too far from the target to repair by reweighting, and
 #' \code{'sample'} with \code{control = list(intoverpop = 'none')} is the
@@ -3726,8 +3726,8 @@ ctFitUncertainty <- function(fit,
     if(uncertainty == 'stored') return(.ctOptimStoredRedraw(fit,
       finishsamples=finishsamples, cores=cores, verbose=verbose))
     if(!identical(likelihood, 'fit')) return(.ctBackendUncertaintyLikelihood(fit,
-      likelihood, finishsamples=finishsamples, cores=cores, control=control,
-      verbose=verbose))
+      uncertainty, likelihood, finishsamples=finishsamples, cores=cores,
+      control=control, verbose=verbose))
     return(.ctBackendUncertainty(fit=fit, uncertainty=uncertainty, draws=draws,
       finishsamples=finishsamples, cores=cores, control=control,
       verbose=verbose))

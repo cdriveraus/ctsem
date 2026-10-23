@@ -204,15 +204,18 @@ test_that("sampling against the quadrature does not apply the correction twice",
     as.numeric(fits$off$optim$gradient)))
   expect_equal(offcheck$parameters$delta + leftover,
     on$laplace$correction$first_delta, tolerance = 1e-8)
-  # And sampling against the quadrature from the uncorrected fit takes that
-  # step first, so its proposal is centred where the target is.
+  # And sampling against the quadrature from the uncorrected fit continues
+  # it first, so its draws are centred where the hybrid's optimum is.
   set.seed(1)
   handcorrected <- suppressWarnings(ctFitUncertainty(fits$off, "is",
     finishsamples = 20, control = list(likelihood = "quadrature",
       isitersize = 20, imisMaxIter = 1L, isESS = 10)))
-  expect_s3_class(handcorrected$laplace_correction, "ctLaplaceCorrection")
-  expect_equal(as.numeric(handcorrected$estimate$raw),
-    as.numeric(handcorrected$laplace_correction$check$corrected))
+  expect_identical(handcorrected$laplace$correction$status, "continued")
+  expect_true(isTRUE(handcorrected$laplace$correction$applied))
+  expect_false(isTRUE(all.equal(as.numeric(handcorrected$estimate$raw),
+    as.numeric(fits$off$estimate$raw))))
+  expect_identical(handcorrected$uncertainty$settings$method, "is")
+  expect_identical(handcorrected$uncertainty$settings$control$likelihood, "quadrature")
 })
 
 test_that("cross-validation uses the Laplace optimum of a corrected fit", {

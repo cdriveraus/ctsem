@@ -1044,8 +1044,8 @@ test_that("imisScaleInit scales the whole proposal covariance, not its diagonal"
   expect_gt(scaled$ess, 2 * elementwise$ess)
 
   # `scale_init = 1` still leaves the proposal alone, which is what
-  # `.ctParticleCorrect()` and `.ctLaplaceCorrect()` rely on when they pre-scale
-  # their own proposal and pass 1: the weighted covariance recovers the target.
+  # `.ctParticleCorrect()` relies on when it pre-scales its own proposal and
+  # passes 1: the weighted covariance recovers the target.
   unscaled <- run(Sigma, 1)
   expect_equal(unscaled$covariance, Sigma, tolerance = 0.1)
 })
@@ -1334,8 +1334,8 @@ test_that("importance sampling records the Pareto k of its weights and warns whe
   expect_no_warning(good <- draw(light))
   expect_lt(good$uncertaintyfit$details$importance_sampling$pareto_k, 0.5)
 
-  # The shared route .ctLaplaceCorrect() and .ctParticleCorrect() take returns
-  # it too, and warns with the caller's own remedy.
+  # The shared route .ctParticleCorrect() takes returns it too, and warns
+  # with the caller's own remedy.
   expect_warning(drawn <- withr::with_seed(3, ctsem:::.ctOptimImisDraws(heavy,
     centre = c(0, 0), cov = diag(2), finishsamples = 50, remedy = 'Caller remedy.',
     nbatch = 2000, target_ess = 1, maxiter = 0, scaleInit = 1, tailScale = 1,

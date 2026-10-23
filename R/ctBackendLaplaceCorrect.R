@@ -1,216 +1,15 @@
-# Apply the Laplace correction, and draw from the corrected posterior.
-#
-# `ctLaplaceCheck()` measures the approximation and reports what it would cost
-# to ignore it. This applies that finding: the estimate moves to the corrected
-# point, and the draws behind every interval the fit reports are drawn against
-# the quadrature posterior rather than the Laplace one.
-#
-# The two halves matter for different reasons. Correcting the estimate alone
-# moves the centre and leaves the width -- and the width is wrong in the same
-# direction, because the Laplace profile is tilted rather than merely shifted.
-# Re-drawing alone would sample a target the proposal is offset from by exactly
-# the bias being corrected, which is the situation importance sampling handles
-# worst. Doing both is what makes the interval mean what it says.
-#
-# The target is available because `ctsem_laplace_quadrature` evaluates the same
-# adaptive Gauss-Hermite rule at an arbitrary parameter vector, and includes the
-# prior term, so it is a log posterior on the same scale as the Laplace
-# objective the fit maximised. Importance sampling needs a density and not a
-# gradient, which is why this costs one quadrature evaluation per draw rather
-# than the `2 * npar` a gradient would.
-
-# `ctFitUncertainty(fit, 'is', control = list(likelihood = 'quadrature'))`.
-#
-# Importance sampling against the adaptive Gauss-Hermite posterior rather than
-# the Laplace approximation to it, with the proposal centred at the corrected
-# point -- a proposal centred at the uncorrected estimate is displaced from its
-# target by the bias being corrected, and a displaced proposal is what
-# importance sampling handles least well. A fit the fit-time correction
-# (`optimcontrol$laplace_correct`) already moved is redrawn around its
-# estimate without moving it again; a fit made with `laplace_correct = FALSE`
-# takes the one Newton step `ctLaplaceCheck()` forms first, unless
-# `correct_estimate = FALSE`.
-#
-# `nodes` is the quadrature's nodes per random effect; its cost is `nodes^k`
-# process log likelihoods per block for every evaluation, so it is the main
-# cost control. `scale` multiplies the fit's covariance for the first proposal,
-# above one because the Hessian covariance is typically narrower than the
-# posterior and a proposal narrower than its target cannot correct it.
-#
-# Returns the fit with the draws, covariance and standard errors replaced, the
-# estimate at the corrected point where it moved, and `laplace_correction`
-# recording the check it was based on, the effective sample size and the
-# estimate before.
-.ctLaplaceCorrect <- function(fit, nodes = 5L, finishsamples = NULL,
-  scale = 1.5, target_ess = 200, nbatch = NULL, maxiter = 10L,
-  correct_estimate = TRUE, cores = NULL, verbose = 0L) {
-
-  if (is.null(fit$model_spec$laplace)) {
-    stop("likelihood = 'quadrature' applies to fits made with ",
-      "intoverpop = 'laplace'. The augmented route carries the random effects ",
-      "in the state and has no separate integral to take by quadrature; ",
-      "likelihood = 'particle' is its exact reference.", call. = FALSE)
-  }
-  covariance <- fit$estimate$cov
-  if (is.null(covariance) || !all(is.finite(as.matrix(covariance)))) {
-    stop("likelihood = 'quadrature' needs the fit's parameter covariance: it ",
-      "is the first proposal, and the correction is a Newton step against it. ",
-      "Run ctFitUncertainty(fit) first, or refit without ",
-      "optimcontrol$estonly.", call. = FALSE)
-  }
-  est <- as.numeric(fit$estimate$raw)
-  npar <- length(est)
-
-  # A fit the fit-time correction (optimcontrol$laplace_correct, either
-  # method) already moved must not be moved again: this would be a second
-  # correction of the same error. What is still worth asking for there is the
-  # shape, so the draws are redrawn around the corrected estimate and it stays
-  # where it is; asking to move it is refused.
-  already <- .ctLaplaceIsCorrected(fit)
-  if (already) {
-    if (!missing(correct_estimate) && isTRUE(correct_estimate)) {
-      stop("This fit was already corrected by quadrature when it was fitted ",
-        "(fit$laplace$correction), so moving the estimate again would correct ",
-        "it twice. Drop correctEstimate to redraw around the corrected ",
-        "estimate, or refit with optimcontrol$laplace_correct = FALSE.",
-        call. = FALSE)
-    }
-    correct_estimate <- FALSE
-  }
-
-  # The check does the correction arithmetic and the reporting, and it already
-  # handles the chunk-count restore, nested groupings, and the near-singular
-  # directions it refuses to correct along. Repeating any of that here would be
-  # a second implementation of it. On an already-corrected fit only its gap is
-  # needed, which is one quadrature evaluation rather than `2 * npar`.
-  check <- ctLaplaceCheck(fit, nodes = nodes, correction = !already,
-    cores = cores, verbose = verbose)
-  if (isTRUE(correct_estimate) && is.null(check$corrected)) {
-    stop("The correction could not be formed; see the warning from ",
-      "ctLaplaceCheck.", call. = FALSE)
-  }
-  centre <- if (isTRUE(correct_estimate)) as.numeric(check$corrected) else est
-
-  module <- .ctJuliaModule(fit$model_spec$project)
-  objective <- .ctJuliaObjective(fit, hybrid = TRUE)
-  # The quadrature posterior, as a scalar log density. `imis_is` asks for
-  # nothing else -- importance weights need the target's density and not its
-  # slope, which is what keeps this to one quadrature evaluation per draw.
-  #
-  # An invalid point returns a large finite penalty rather than aborting, as
-  # the Laplace path's own `lpgFunc` does. Here it is also the right answer
-  # statistically: a proposal draw that lands where the model cannot be
-  # evaluated should carry no weight, and `exp(-1e100 - c)` is zero.
-  quadlp <- function(parm) {
-    value <- try(.ctBackendJuliaValue(module$ctsem_laplace_quadrature(
-      objective, .ctJuliaNumericVector(as.numeric(parm)),
-      nodes = as.integer(nodes))$value), silent = TRUE)
-    value <- if (inherits(value, "try-error")) NaN else as.numeric(value)[1L]
-    if (!is.finite(value)) value <- -1e100
-    value
-  }
-
-  if (is.null(finishsamples)) {
-    finishsamples <- if (!is.null(fit$estimate$rawposterior))
-      nrow(fit$estimate$rawposterior) else 1000L
-  }
-  if (is.null(nbatch)) nbatch <- max(200L, as.integer(finishsamples))
-
-  if (verbose > 0) message("Importance sampling against the quadrature ",
-    "posterior (", nodes, " nodes, ", nbatch, " draws per iteration)")
-  # `.ctOptimImisDraws()` is shared with `.ctParticleCorrect()` and with
-  # `uncertainty='is'` against the fit's own objective: same `imis_is` call,
-  # same weighted covariance with an unweighted fallback, same effective-size
-  # check. What is this function's own is the density (`quadlp`) and the
-  # remedy named below.
-  #
-  # The proposal is already widened by `scale^2` here, so `scaleInit = 1`
-  # rather than compounding two scalings.
-  drawn <- .ctOptimImisDraws(quadlp, centre = centre,
-    cov = as.matrix(covariance) * scale^2,
-    finishsamples = finishsamples, nbatch = nbatch, target_ess = target_ess,
-    maxiter = maxiter, scaleInit = 1, tailScale = 1.2, df = Inf,
-    verbose = verbose,
-    # Said plainly rather than left in a list nobody prints. A corrected
-    # interval resting on a handful of effective draws is worse than the
-    # uncorrected one, because it looks like it has been improved.
-    remedy = paste0("Treat the corrected interval as indicative. ",
-      "ctFitUncertainty(fit, 'sample', control = list(intoverpop = 'none')) ",
-      "samples the joint posterior directly ",
-      "and does not rely on the approximation being close."))
-  is_res <- drawn$is_res
-  samples <- drawn$samples
-  if (is.null(samples) || !nrow(samples)) {
-    stop("Importance sampling returned no usable draws against the ",
-      "quadrature posterior. The Laplace approximation is likely too far ",
-      "from the target to repair by reweighting; use ",
-      "ctFitUncertainty(fit, 'sample', control = list(intoverpop = 'none')) ",
-      "instead.",
-      call. = FALSE)
-  }
-  newcov <- drawn$cov
-  ess <- drawn$ess
-  paretok <- drawn$k
-
-  before <- list(raw = est, cov = fit$estimate$cov, se = fit$estimate$se)
-  if (isTRUE(correct_estimate)) fit$estimate$raw <- centre
-  fit$estimate$cov <- newcov
-  fit$estimate$se <- sqrt(diag(newcov))
-  fit$estimate$rawposterior <- samples
-  fit <- .ctFitNameRawUncertainty(fit)
-  # The constrained draws describe whatever raw draws they were built from, so
-  # they are refreshed here rather than left to disagree with the ones above.
-  fit$transformedpars <- .ctBackendConstrain(fit)
-  fit$laplace_correction <- list(
-    check = check, nodes = as.integer(nodes), ess = ess, draws = "imis",
-    effective_fraction = if (is.finite(ess)) ess / nrow(samples) else NA_real_,
-    corrected_estimate = isTRUE(correct_estimate), corrected_when_fitted = already,
-    proposal_scale = scale, before = before,
-    largest_delta_se = if (is.null(check$parameters)) NA_real_ else
-      max(abs(check$parameters$delta_se), na.rm = TRUE))
-  class(fit$laplace_correction) <- "ctLaplaceCorrection"
-  if (!is.null(fit$uncertainty)) {
-    fit$uncertainty$cov <- newcov
-    # The draws on the fit are now importance-sampled, so the record of how
-    # they were made has to say so. Downstream code reads these to describe the
-    # fit, and leaving them at whatever the original uncertainty pass wrote
-    # would have every summary claim normal draws around a Hessian covariance.
-    fit$uncertainty$draws <- "imis"
-    fit$uncertainty$proposal_cov <- as.matrix(covariance) * scale^2
-    fit$uncertainty$imis <- is_res
-    fit$uncertainty$details$importance_sampling <- list(ess = ess,
-      pareto_k = paretok, df_used = is_res$df_used,
-      covariance = "weighted importance-sampling covariance")
-    fit$uncertainty$details$laplace_correction <- list(
-      nodes = as.integer(nodes), ess = ess,
-      target = "adaptive Gauss-Hermite posterior")
-  }
-  fit
-}
-
-#' @export
-print.ctLaplaceCorrection <- function(x, ...) {
-  cat("Laplace correction applied\n")
-  cat("  quadrature nodes      ", x$nodes, "\n", sep = "")
-  cat("  log marginal gap      ", format(x$check$gap, digits = 4),
-    " (", format(x$check$gap_per_subject, digits = 3), " per subject)\n", sep = "")
-  cat("  largest correction    ", format(x$largest_delta_se, digits = 3),
-    " standard errors\n", sep = "")
-  cat("  draws                 importance sampled against the quadrature ",
-    "posterior\n", sep = "")
-  if (is.finite(x$ess)) {
-    cat("  effective sample size ", format(x$ess, digits = 4),
-      if (is.finite(x$effective_fraction))
-        paste0(" (", format(100 * x$effective_fraction, digits = 3), "% of draws)")
-      else "", "\n", sep = "")
-  }
-  if (isTRUE(x$corrected_when_fitted)) {
-    cat("  estimate as corrected when fitted; draws redrawn around it\n")
-  } else if (!x$corrected_estimate) {
-    cat("  estimate left at the uncorrected point; draws redrawn only\n")
-  }
-  invisible(x)
-}
+# The Laplace corrections: the continuation (`.ctLaplaceContinue()`), which
+# climbs the quadrature hybrid from the estimate and draws the fit's
+# uncertainty on that density, and the step correction before it. A request
+# to sample against the quadrature -- `ctFitUncertainty(fit, 'is' or
+# 'checked', control = list(likelihood = 'quadrature'))`,
+# `.ctBackendUncertaintyQuadrature()` -- is the continuation with the method
+# asked for. The separate importance sampler against the adaptive
+# Gauss-Hermite posterior at every unit (`.ctLaplaceCorrect()`, to
+# 2026-10-23) paid `nodes^k` member evaluations a unit a draw where the hybrid
+# pays them only for the units the screen flags, moved the estimate by one
+# Newton step where the continuation climbs, and reported no error for the
+# density it sampled.
 
 # The correction every Laplace fit gets by default ---------------------------
 #
@@ -1032,7 +831,7 @@ print.ctLaplaceCorrection <- function(x, ...) {
 }
 
 .ctLaplaceContinue <- function(fit, cores = 1L, verbose = 0L,
-  control = .ctLaplaceContinueDefaults) {
+  control = .ctLaplaceContinueDefaults, method = NULL) {
   started <- proc.time()[["elapsed"]]
   seconds <- function() proc.time()[["elapsed"]] - started
   est <- as.numeric(fit$estimate$raw)
@@ -1151,6 +950,12 @@ print.ctLaplaceCorrection <- function(x, ...) {
     fit$estimate$loglik_method <- "quadrature"
     fit
   }
+  # The fit's curvature at the estimate is the rounds' first metric and
+  # basis. Asked for no rounds (`rounds = 0`: the rules placed at the
+  # estimate and the uncertainty drawn there, for a fit already corrected or
+  # one a caller wants left where it is) the continuation needs neither, and
+  # its own Hessian at the end is the one the uncertainty is drawn on.
+  stay <- as.integer(.ctJuliaOr(control$rounds, 0L)) == 0L
   hessian <- .ctBackendStoredHessian(fit, est)
   flat <- fit$uncertainty$details$flatdirections$vectors
   # A fit that ended on a jump was not certified and has no Hessian: the
@@ -1168,19 +973,26 @@ print.ctLaplaceCorrection <- function(x, ...) {
     flat <- NULL
   }
   if (is.null(hessian) || !all(is.finite(hessian))) {
-    record$status <- "no_hessian"
-    record$loglik_quadrature <- sum(as.numeric(start$quadrature_units))
-    fit <- report_quadrature(fit, start)
-    fit$laplace$correction <- record
-    return(fit)
+    if (!stay) {
+      record$status <- "no_hessian"
+      record$loglik_quadrature <- sum(as.numeric(start$quadrature_units))
+      fit <- report_quadrature(fit, start)
+      fit$laplace$correction <- record
+      return(fit)
+    }
+    hessian <- NULL
   }
-  basis <- .ctLaplaceContinueBasis(hessian, flat, rtol = control$rtol)
+  basis <- if (is.null(hessian)) list(basis = diag(npar), kept = npar) else
+    .ctLaplaceContinueBasis(hessian, flat, rtol = control$rtol)
   if (is.null(basis) || basis$kept < 1L) {
-    record$status <- "no_directions"
-    record$loglik_quadrature <- sum(as.numeric(start$quadrature_units))
-    fit <- report_quadrature(fit, start)
-    fit$laplace$correction <- record
-    return(fit)
+    if (!stay) {
+      record$status <- "no_directions"
+      record$loglik_quadrature <- sum(as.numeric(start$quadrature_units))
+      fit <- report_quadrature(fit, start)
+      fit$laplace$correction <- record
+      return(fit)
+    }
+    basis <- list(basis = diag(npar), kept = npar)
   }
   tol <- .ctBackendGapTolerance(fit)
   # What the continuation cost, in the engine's own counts -- whole-objective
@@ -1287,7 +1099,9 @@ print.ctLaplaceCorrection <- function(x, ...) {
   # stall on the draws' re-placement differences (round 9: 0.017 nats of
   # residual against draws' errors of 0.04), and what the fit reports is
   # then the hybrid's certification at that point, gap and all.
-  reached <- identical(run$status, "converged")
+  # A run of no rounds reached the point it was asked to stay at.
+  reached <- identical(run$status, "converged") ||
+    (stay && isTRUE(as.integer(run$attempts) == 0L))
   takes_hessian <- reached || !is.null(jump)
   hc <- NULL
   if (takes_hessian) {
@@ -1356,7 +1170,9 @@ print.ctLaplaceCorrection <- function(x, ...) {
   fit$estimate$raw <- x
   fit <- report_quadrature(fit, info)
   usable <- takes_hessian && is.matrix(hc) && all(is.finite(hc))
-  method <- .ctJuliaOr(fit$uncertainty$settings$method, "hessian")
+  # The uncertainty drawn on the continuation's density: the method asked
+  # for (`likelihood = 'quadrature'`), else the fit's own.
+  method <- .ctJuliaOr(method, .ctJuliaOr(fit$uncertainty$settings$method, "hessian"))
   # Present even when empty: `$` partial-matches, and without it
   # `correction$hessian` would answer with `hessian_at`.
   record["hessian"] <- list(NULL)
@@ -1405,7 +1221,7 @@ print.ctLaplaceCorrection <- function(x, ...) {
     }
     stages["certification"] <- since(certification_started)
   }
-  own <- usable && method %in% c("hessian", "checked")
+  own <- usable && method %in% c("hessian", "checked", "is")
   record$hessian_at <- if (own) "estimate" else "laplace_estimate"
   if (own) {
     uncertainty_started <- proc.time()[["elapsed"]]

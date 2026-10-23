@@ -101,7 +101,7 @@
     memo$rows[[length(memo$rows) + 1L]] <- r
     value <- r$posterior - r$filter + r$particle
     # A proposal draw the model cannot be evaluated at should carry no
-    # weight, and `exp(-1e100 - c)` is zero. Same guard as .ctLaplaceCorrect().
+    # weight, and `exp(-1e100 - c)` is zero: the Laplace path's own guard.
     if (!is.finite(value)) -1e100 else value
   }
   if (is.null(finishsamples)) finishsamples <- if (hasdraws) nrow(posterior) else 1000L
@@ -109,8 +109,8 @@
     message("Importance sampling against the particle posterior (", nbatch,
       " draws per iteration, one particle filter each)")
   }
-  # Shared with .ctLaplaceCorrect() and `uncertainty='is'` against the fit's
-  # own objective; see .ctOptimImisDraws(). This function's own parts are the
+  # Shared with `uncertainty='is'` against the fit's own objective; see
+  # .ctOptimImisDraws(). This function's own parts are the
   # density (`lp`, one particle filter per proposal draw) and the remedy.
   #
   # The proposal is already widened by `scale^2` here, so `scaleInit = 1`
