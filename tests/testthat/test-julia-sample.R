@@ -286,7 +286,50 @@ test_that("the SAEM kernel is refused by name where it cannot apply", {
   expect_identical(.ctBackendSamplerName(NULL, joint = FALSE), "nuts")
   expect_identical(.ctBackendSamplerName("nuts", joint = TRUE), "nuts")
   expect_error(ctFitUncertainty(fit, uncertainty = "sample",
-    control = list(sampler = "hmc")), "'nuts' or 'saem'", fixed = TRUE)
+    control = list(sampler = "hmc")), "'nuts', 'saem' or 'smc'", fixed = TRUE)
+})
+
+test_that("tempered SMC samples the marginal posterior through the same assembly", {
+  skip_without_julia()
+  fit <- .sample_fixture()
+  npar <- length(fit$estimate$raw)
+  # control$sampler = 'smc' (`ctsem_sample_smc`, checked on closed forms in
+  # the engine suite): particles carried from the check's normal to the
+  # posterior, then each a chain. What is left for here is the assembly, the
+  # record, the refusals, and agreement with NUTS on the same marginal.
+  smc <- suppressWarnings(suppressMessages(
+    ctFitUncertainty(fit, uncertainty = "sample", cores = 1,
+      control = list(intoverpop = "laplace", sampler = "smc", particles = 40,
+        draws = 400, processes = FALSE))))
+  d <- smc$sample
+  expect_identical(d$sampler, "smc")
+  expect_identical(d$target, "marginal")
+  expect_identical(d$chains, 40L)
+  expect_identical(d$warmup, 0L)
+  expect_gte(d$draws, 20L)
+  expect_equal(dim(smc$estimate$rawposterior), c(40L * d$draws, npar))
+  expect_true(all(is.finite(smc$estimate$rawposterior)))
+  expect_gte(d$nstages, 1L)
+  expect_equal(utils::tail(d$stage_beta, 1), 1)
+  expect_length(d$stepsize, 40L)
+  expect_true(all(d$stepsize == d$stepsize[1]))
+  expect_true(is.infinite(d$rhat_target))
+  expect_length(d$rhat, npar)
+  expect_output(print(d), "tempered SMC")
+  # The other sampler on the same target, for the means.
+  nuts <- suppressWarnings(suppressMessages(
+    ctFitUncertainty(fit, uncertainty = "sample", cores = 1,
+      control = list(intoverpop = "laplace", chains = 2, warmup = 100, draws = 400,
+        processes = FALSE))))
+  expect_lt(max(abs(colMeans(smc$estimate$rawposterior) -
+    colMeans(nuts$estimate$rawposterior)) / nuts$estimate$se), 0.5)
+  # Refused by name on the joint target, which has no version of it.
+  expect_error(ctFitUncertainty(fit, uncertainty = "sample",
+    control = list(sampler = "smc", intoverpop = "none")),
+    "control$sampler = 'smc'", fixed = TRUE)
+  expect_error(ctFitUncertainty(fit, uncertainty = "sample",
+    control = list(sampler = "smc", intoverpop = "laplace", settleTol = 0.1)),
+    "sampler = 'nuts'", fixed = TRUE)
 })
 
 test_that("a sampled fit keeps the exact Hessian it was built from", {
@@ -342,7 +385,7 @@ test_that("the marginal sampler starts from the normal check, made where the fit
   expect_true(all(c("directions", "widths", "centre") %in% names(made)))
   expect_gt(made$draws, 0)
   jumped <- bare
-  jumped$laplace$anytime <- list(units = 1L, jumps = 1L)
+  jumped$laplace$jump <- list(units = 1L)
   expect_identical(ctsem:::.ctBackendSampleCheck(jumped), jumped)
 
   # The sampler asks for it on the marginal target, not on the joint one,

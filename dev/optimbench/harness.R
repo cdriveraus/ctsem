@@ -145,6 +145,21 @@ REFJL <- tryCatch({
   TRUE
 }, error = function(e) { REFJL_ERR <<- conditionMessage(e); FALSE })
 rec$reference_jl <- if (REFJL) "loaded" else REFJL_ERR
+# ctsem starts a new Julia session when the last one ended inside a call (a
+# fit stopped by the time cap), and the new one has none of reference.jl:
+# gN1 s3's reference on anytime3-5cadd1c7 failed with `bench_probe_units`
+# undefined after a two-hour fit. Included again where it is missing.
+ensure_refjl <- function() {
+  if (!REFJL) return(invisible(FALSE))
+  there <- tryCatch(isTRUE(jeval("isdefined(ContinuousTimeSEM, :bench_probe_units)")),
+    error = function(e) FALSE)
+  if (!there) {
+    jeval(sprintf("Core.eval(ContinuousTimeSEM, :(include(%s)))",
+      deparse(normalizePath(file.path(HERE, "reference.jl"), winslash = "/"))))
+    .stamp("reference.jl included again: the Julia session had restarted")
+  }
+  invisible(TRUE)
+}
 # JuliaConnectoR translates plain values (a Matrix, a Vector) on return and
 # hands back a proxy for anything else; juliaGet only applies to the latter.
 jget <- function(x) if (inherits(x, "JuliaProxy")) JuliaConnectoR::juliaGet(x) else x
@@ -261,11 +276,7 @@ RESULT_KEYS <- c("iterations", "f_calls", "g_calls", "maximum_loglik", "converge
   "newton_subset_hessians", "batch_sizes", "batch_iterations", "stall_escapes",
   "stall_triggers", "gap_tol", "linesearch", "chunks", "overshoot_gain",
   "stopped_by_stall", "stall_gain", "stop_reason", "jump_units",
-  # The climb on the hybrid: how many units its checkpoint flagged, and each
-  # event (a screen at a rung, a drift, a jump, a start) with the flagged
-  # count after it and the gain it fired at (`_ctsem_anytime!`).
-  "continuation_flagged", "anytime_n", "anytime_kind", "anytime_flagged",
-  "anytime_gain")
+  "continuation_flagged")
 rec$instrumented <- c(
   .ctJuliaOptimise = wrap(".ctJuliaOptimise", function(orig) function(...) {
     a <- list(...)
@@ -487,9 +498,9 @@ if (!is.null(fit)) {
     correction = corr[setdiff(names(corr), c("draws"))],
     conditioning = fit$laplace$conditioning, floor = fit$laplace$floor,
     gated_units = fit$laplace$gated_units,
-    # What the climb on the hybrid flagged and did (`fit$laplace$anytime`),
-    # NULL on a build without the climb.
-    anytime = fit$laplace$anytime) else NULL
+    # The units whose Laplace terms jumped (`fit$laplace$jump`), NULL where
+    # none did or on a build without it.
+    jump = fit$laplace$jump) else NULL
   rec$identifiability <- tryCatch(list(nweak = .int1(fit$identifiability$nweak),
     weak = fit$identifiability$weak), error = function(e) NULL)
 }
@@ -501,6 +512,7 @@ if (DOREF && !is.null(est) && length(est) == npar && all(is.finite(est))) {
   refs <- tryCatch({
     setTimeLimit(elapsed = REFCAP, transient = TRUE)
     out <- list()
+    ensure_refjl()
     fresh_objectives()
     obj <- ctsem:::.ctJuliaObjective(if (!is.null(fit)) fit else spec)
     if (laplace) {
@@ -796,20 +808,12 @@ rec$row <- data.frame(
       is.finite(k) && k >= 1L && k <= length(st) && !identical(st[[k]]$kind, "warmup")
     }, logical(1))),
   probe_secs = .num1(probe$secs %||% NA), probe_found = .lgl1(probe$found),
-  # Engine runs the jump watch stopped, and what the climb on the hybrid
-  # flagged: its units, those on draws, its jumps, and its events in order
-  # (kind:flagged@gain).
+  # Engine runs the jump watch stopped, the units they named, and how many
+  # the fit handed to the correction on draws.
   jump_runs = sum(vapply(runs, function(r) identical(r$stop_reason, "jump"), logical(1))),
   jump_units = paste(unique(unlist(lapply(runs, function(r)
     if (identical(r$stop_reason, "jump")) r$jump_units))), collapse = ","),
-  anytime_units = length(rec$laplace_block$anytime$units),
-  anytime_draws = length(rec$laplace_block$anytime$draws_units),
-  anytime_jumps = .int1(rec$laplace_block$anytime$jumps %||% NA),
-  anytime_events = {
-    ev <- rec$laplace_block$anytime$events
-    if (is.data.frame(ev) && nrow(ev)) paste(sprintf("%s:%d@%.3g", ev$kind,
-      ev$flagged, ev$gain), collapse = " ") else NA_character_
-  },
+  jump_fit = length(rec$laplace_block$jump$units),
   lapcorr_wide = .int1(corr$wide %||% NA), lapcorr_flagged = .int1(corr$flagged %||% NA),
   lapcorr_continuation = .chr1(corr$continuation),
   lapcorr_secs = .num1(corr$seconds["total"]), lapcorr_gradients = .num1(corr$evaluations["gradients"]),

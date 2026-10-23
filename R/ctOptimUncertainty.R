@@ -2790,6 +2790,44 @@ ctOptimFitLpgFunc <- function(fit, cores=1){
   # against this: a ring 759 and 454, a five-dimensional shell 1770 and 916,
   # the 100-subject strong-shell Laplace fit 6632 and 1926, at like accuracy.
   checked <- !is.null(directions)
+  widths <- uncertaintyfit$details$normalcheck$widths
+  # Where the check named a direction, the normal is first moved to the
+  # posterior's moments (`.ctDaisRun()`, R/ctDais.R) and checked again there:
+  # the recheck's directions are what is sampled, its centre and widths the
+  # normal held in the rest, and that normal is the answer where nothing is
+  # named or sampling fails. `control$dais = FALSE` leaves the Hessian's.
+  dais <- NULL
+  if (checked && !isFALSE(control$dais) && is.function(.ctImisGradient(lpg, centre))) {
+    # The directions the flat screen confirmed are held at the normal's
+    # width: the data say nothing along them, and a moment-matching step has
+    # no fixed point there (see R/ctDais.R).
+    dais <- .ctDaisRun(lpg, centre, uncertaintyfit$cov, control, verbose = verbose,
+      hold = uncertaintyfit$details$flatdirections$vectors)
+    if (!is.null(dais) && !isTRUE(dais$used)) {
+      uncertaintyfit$details$dais <- dais
+      dais <- NULL
+    }
+  }
+  if (!is.null(dais)) {
+    recheck <- .ctOptimNormalCheck(.ctImisGradient(lpg, centre), dais$mean, dais$cov)
+    cov2 <- ctOptimSafeCov(if (!is.null(recheck$spread)) recheck$spread$cov else dais$cov)
+    dais$check <- c(recheck[c('draws', 'unusable', 'slope', 'shape', 'widths',
+      'parameters', 'centrescale', 'centredraws')],
+      list(directions = ncol(recheck$directions)))
+    # `mean` is the iteration's own; `centre` is where the recheck's step put
+    # it, and `cov` the normal then held and reported.
+    dais$centre <- recheck$centre
+    dais$cov <- cov2
+    centre <- recheck$centre
+    directions <- recheck$directions
+    widths <- recheck$widths
+    uncertaintyfit$cov <- cov2
+    uncertaintyfit$details$dais <- dais
+    if (!ncol(directions)) {
+      return(list(samples = ctOptimNormalDraws(centre, cov2, finishsamples),
+        uncertaintyfit = uncertaintyfit, control = control, draws = 'normal'))
+    }
+  }
   if (is.null(control$isitersize)) control$isitersize <- if (checked) 100 else 1000
   # Rounds: 100 of 100 draws for `'checked'`. At 50, on a 266-parameter fit
   # whose check named 39 directions, sampling stopped at ESS 181 and Pareto k
@@ -2809,7 +2847,7 @@ ctOptimFitLpgFunc <- function(fit, cores=1){
   # `IS-importance-sampling-2026-09-06.md`. `lpg` value-only carries the batch
   # attribute `.ctBackendLpgFunc(fit, gradient=FALSE)` sets, whitened or not.
   is_res <- tryCatch(.ctImisRun(lpg, centre = centre, cov = uncertaintyfit$cov,
-    directions = directions, widths = uncertaintyfit$details$normalcheck$widths,
+    directions = directions, widths = widths,
     complement = isTRUE(control[["imisComplement"]]),
     max_iter = control$imisMaxIter, scale_init = control$imisScaleInit,
     tail_scale = control$imisTailScale, df = control$imisDf,
@@ -2851,7 +2889,8 @@ ctOptimFitLpgFunc <- function(fit, cores=1){
       warning('The normal approximation is unreliable for ',
         paste(named, collapse = ', '), ': the posterior departs from it ',
         'there, and importance sampling could not correct it (Pareto k ',
-        signif(k, 2), '). Their intervals are the Hessian\'s. ', tailremedy,
+        signif(k, 2), '). Their intervals are ', if (is.null(dais)) 'the Hessian\'s. ' else
+          'the moment-matched normal\'s, from the check\'s iteration (DAIS). ', tailremedy,
         call. = FALSE)
       uncertaintyfit$details$importance_sampling <- list(ess = is_res$ess,
         pareto_k = k, used = FALSE, directions = ncol(directions),
@@ -3338,9 +3377,18 @@ ctOptimFitLpgFunc <- function(fit, cores=1){
 #' joint vector mixes poorly. A marginal target is sampled by NUTS, from a
 #' metric set to the widths that the normal check of \code{'checked'} measured
 #' along the directions where the posterior departs from the fit's Hessian;
-#' a fit made without that check gets one first, at a few hundred gradients.
-#' \code{adapt_metric}, \code{adapt_effects} and \code{settleTol} belong to
-#' NUTS and are refused with SAEM's kernel. \code{control$placement} says
+#' a fit made without that check gets one first, at a few hundred gradients;
+#' where \code{'checked'} moved the normal to the posterior's moments, the
+#' metric is that normal's covariance. A marginal target can instead be
+#' sampled by tempered sequential Monte Carlo, \code{sampler = 'smc'}:
+#' \code{particles} (200) draws from that normal, carried to the posterior by
+#' stages of NUTS moves, then each a chain. It is for posteriors NUTS does not
+#' converge on from the normal -- a mass far from the mode, a loading shell --
+#' and costs about what NUTS does in gradients. Its chains are many and short,
+#' so R-hat is reported but not a stopping target there; the effective sample
+#' size is. \code{adapt_metric}, \code{adapt_effects} and \code{settleTol}
+#' belong to NUTS's warmup and are refused with SAEM's kernel and with
+#' tempered SMC. \code{control$placement} says
 #' where the chains start: \code{'saem'}, the default on the joint posterior,
 #' runs SAEM from the fit's estimate and starts each chain from SAEM's
 #' estimate and its draws of the random effects; \code{'fit'} starts them
@@ -3481,8 +3529,8 @@ ctOptimFitLpgFunc <- function(fit, cores=1){
 #' 'sample'} the entries are the sampler settings described in the Sampling section
 #' (\code{chains}, \code{warmup}, \code{draws}, \code{seed},
 #' \code{saveEffects}, \code{processes}, \code{intoverpop},
-#' \code{tipredMissing}, \code{sampler}, \code{placement}, \code{minESS},
-#' \code{meanESS}, \code{rhatTarget}, \code{maxDraws}, \code{settleTol},
+#' \code{tipredMissing}, \code{sampler}, \code{particles}, \code{placement},
+#' \code{minESS}, \code{meanESS}, \code{rhatTarget}, \code{maxDraws}, \code{settleTol},
 #' \code{init_scale}, and NUTS's \code{maxdepth}, \code{target_accept},
 #' \code{adapt_metric} and \code{adapt_effects}); none of the entries below
 #' apply to it. For every other method, useful entries include
@@ -3504,7 +3552,12 @@ ctOptimFitLpgFunc <- function(fit, cores=1){
 #' importance sampling
 #' evaluates a weighted subset of the units chosen and checked as it runs, and
 #' corrects its weights where that subset strays; \code{coreset = FALSE}
-#' evaluates every unit instead. \code{parsteps} keeps
+#' evaluates every unit instead. Where the check of \code{'checked'} names
+#' a direction, the normal is first moved to the posterior's moments by
+#' doubly adaptive importance sampling (van den Boom, Cremaschi and Thiery
+#' 2026) and checked again there before anything is sampled; \code{dais =
+#' FALSE} skips that, \code{daisDraws} sets its draws an iteration (the
+#' dimension, between 64 and 256) and \code{daisMaxIter} its iterations (150). \code{parsteps} keeps
 #' stepwise-fixed raw parameters fixed (stan only).
 #' \code{analyticHessian = FALSE} (julia only) asks for the finite-difference
 #' Hessian instead of the engine's exact one. \code{likelihood} (\code{'fit'},

@@ -79,12 +79,6 @@ Laplace objective and the hybrid built on it. Elsewhere a line search behaves
 exactly as it did before the watch."""
 _ctsem_jump_capable(::Any) = false
 
-"""Whether the objective screens and flags its own units as the climb goes
-(`_ctsem_anytime!`, the Laplace continuation with `anytime` on): the loop
-then gives it each accepted step's predicted gain and any jump the watch
-names, and re-reads the objective where it changed."""
-_ctsem_anytime_capable(::Any) = false
-
 # At or above this a trial's value is the sentinel a route returns for a point
 # it refuses (`ctsem_optimize`'s `invalid_objective`, `floatmax / 1e8`), not a
 # measurement of the objective.
@@ -337,7 +331,7 @@ function _ctsem_lbfgs(fg!, x0::AbstractVector; memory::Integer=20,
         diagonal::Bool=false, nonmonotone::Real=0.0, gll::Integer=0,
         inverse::Union{Nothing,Matrix{Float64}}=nothing, scaled::Bool=false,
         structured=nothing, coreset=nothing,
-        jump::Union{Nothing,CTSEMJump}=nothing, checkpoint=nothing)
+        jump::Union{Nothing,CTSEMJump}=nothing)
     n = length(x0)
     x = collect(Float64, x0)
     dinv = metric === nothing ? ones(n) : begin
@@ -365,10 +359,6 @@ function _ctsem_lbfgs(fg!, x0::AbstractVector; memory::Integer=20,
         coreset.fg!(coreset.target, F, Gout, y) :
         b === nothing ? fg!(F, Gout, y) : _ctsem_batch_fg!(b, F, Gout, y)
     coreset === nothing || (coreset.g_tol = Float64(g_tol))
-    # A run starting away from where the route last placed itself (a resume
-    # from a pulled-back point, or from an estimate the rules were not placed
-    # at) first lets the route place itself there (`_ctsem_anytime!`).
-    checkpoint === nothing || checkpoint(x, Inf, :start)
     f = evaluate!(batch, 0.0, G, x); fcalls += 1; gcalls += 1
     # Iteration 0 only on a run that is a run of its own; a continuation's
     # starting point is the last row its predecessor already recorded.
@@ -533,16 +523,6 @@ function _ctsem_lbfgs(fg!, x0::AbstractVector; memory::Integer=20,
             crept += 1
             if crept >= 3
                 _ctsem_jump_record!(jump, x, s, found_hi, found_lo, found_excess)
-                # A route that takes the jump in (`_ctsem_anytime!`) changes
-                # its objective under the point, which stays where it is: the
-                # step is given up and the objective read again there.
-                if checkpoint !== nothing && checkpoint(x, 0.0, :jump)
-                    jump.seen = false; crept = 0; retried = false
-                    f = evaluate!(batch, 0.0, G, x); fcalls += 1; gcalls += 1
-                    gconv = maximum(abs, G; init=0.0) <= g_tol
-                    C = f; Q = 1.0; recent = [f]
-                    continue
-                end
                 lsfail = true
                 break
             end
@@ -565,13 +545,6 @@ function _ctsem_lbfgs(fg!, x0::AbstractVector; memory::Integer=20,
                 continue
             end
             found && _ctsem_jump_record!(jump, x, s, found_hi, found_lo, found_excess)
-            if found && checkpoint !== nothing && checkpoint(x, 0.0, :jump)
-                jump.seen = false; crept = 0; retried = false
-                f = evaluate!(batch, 0.0, G, x); fcalls += 1; gcalls += 1
-                gconv = maximum(abs, G; init=0.0) <= g_tol
-                C = f; Q = 1.0; recent = [f]
-                continue
-            end
             lsfail = true
             break
         end
@@ -606,16 +579,6 @@ function _ctsem_lbfgs(fg!, x0::AbstractVector; memory::Integer=20,
         shown = _ctsem_coreset_live(coreset) ? f + coreset.offset : f
         stopped = callback !== nothing && callback(CTSEMIterate(
             iteration0 + iteration, shown, maximum(abs, G; init=0.0))) === true
-        # The route's own checkpoint, on the full objective only: given the
-        # step's predicted gain it may screen its units and change itself,
-        # and the objective is then read again at the point, the pairs kept
-        # (they stay positive definite, as carried pairs do).
-        if checkpoint !== nothing && !stopped && batch === nothing &&
-                !_ctsem_coreset_live(coreset) && checkpoint(x, stepgain, :step)
-            f = evaluate!(batch, 0.0, G, x); fcalls += 1; gcalls += 1
-            gconv = maximum(abs, G; init=0.0) <= g_tol
-            C = f; Q = 1.0; recent = [f]
-        end
         # A growing batch changes the objective under the optimiser. The
         # curvature pairs are kept -- the batch objective is scaled to the full
         # data, so they estimate the same curvature -- but no pair spans the

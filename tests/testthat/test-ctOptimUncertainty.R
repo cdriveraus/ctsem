@@ -416,12 +416,27 @@ test_that("checked keeps the normal, and says so, where sampling cannot correct 
     sm = NULL, lpgFunc = lpg, uncertainty = 'checked', finishsamples = 20, verbose = 0))
   expect_gt(ncol(out$details$normalcheck$directions), 0L)
   expect_true(all(2:d %in% out$details$normalcheck$parameters))
+  # From the Hessian's normal (`dais = FALSE`), one round cannot place it and
+  # the normal is kept, said so.
+  set.seed(5)
   expect_warning(drawn <- ctsem:::.ctOptimDrawSamples(out, 'imis',
-    list(imisBudget = 300), mode, 200, lpg = ctsem:::.ctImisPointGradbatch(lpg),
+    list(imisBudget = 300, dais = FALSE), mode, 200,
+    lpg = ctsem:::.ctImisPointGradbatch(lpg),
     parnames = paste0('p', seq_len(d))), "unreliable for p")
   expect_identical(drawn$draws, 'normal')
   expect_equal(drawn$uncertaintyfit$cov, out$cov)
   expect_false(drawn$uncertaintyfit$details$importance_sampling$used)
+  expect_null(drawn$uncertaintyfit$details$dais)
+  # Moved to the shell's moments first (R/ctDais.R), the same budget places
+  # it: the sampler's weights are usable and the draws are kept.
+  set.seed(5)
+  moved <- suppressWarnings(ctsem:::.ctOptimDrawSamples(out, 'imis',
+    list(imisBudget = 300), mode, 200, lpg = ctsem:::.ctImisPointGradbatch(lpg),
+    parnames = paste0('p', seq_len(d))))
+  expect_true(isTRUE(moved$uncertaintyfit$details$dais$used))
+  expect_identical(moved$draws, 'imis')
+  expect_true(moved$uncertaintyfit$details$importance_sampling$used)
+  expect_gt(moved$uncertaintyfit$details$importance_sampling$ess, 50)
 })
 
 test_that("the sampler's metric is the Hessian rescaled to the widths the check measured", {

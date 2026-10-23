@@ -2660,7 +2660,7 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
     saem::Bool=false, saem_maxiter::Integer=10000, saem_seed::Integer=1,
     saem_proposal::AbstractString="rw",
     progress_overwrite::Bool=true, progress_sink=nothing,
-    progress_callback=nothing, callback_every::Real=0.4,
+    progress_callback=nothing, callback_every::Real=0.4, stop=nothing,
     progress::Bool=verbose, progress_label::AbstractString="optimise",
     progress_budget::Bool=false, progress_every::Real=0.0,
     gap_tol::Real=0.0, converge_tol::Real=1e-6,
@@ -2683,10 +2683,6 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
     # (`_ctsem_jump_units`), on a route that can.
     jump = CTSEMJump()
     watch_jump = _ctsem_jump_capable(objective)
-    # A route that screens its own units as the climb goes (`_ctsem_anytime!`).
-    checkpoint = _ctsem_anytime_capable(objective) ?
-        ((x, gain, event) -> _ctsem_anytime!(objective, x, gain, event, jump)) :
-        nothing
     lbfgs_m = lbfgs_memory === nothing ?
         _ctsem_lbfgs_memory(length(start_values)) : Int(lbfgs_memory)
     # Where L-BFGS's curvature starts, and whether the objective keeps where it
@@ -2863,6 +2859,10 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
     seen_iterations = Ref(0)
     stopped_by_gap = Ref(false)
     stopped_by_stall = Ref(false)
+    # The route's own stop (`stop`, a predicate of the iterate): a round on
+    # frozen rules ends where they have drifted
+    # (`ctsem_laplace_continuation_optimize`).
+    stopped_by_stop = Ref(false)
     stopped_by_progress = Ref(false)
     # The window is not scaled to L-BFGS's memory: on a large model that made
     # the watch, the one thing that ends a creeping stage, answer up to twelve
@@ -2924,6 +2924,10 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
         _invoke_callback(watcher, latest.iteration, Int(maxiter),
             -latest.value, latest.g_norm, current_x)
         in_sgd[] && return false
+        if stop !== nothing && stop(latest) === true
+            stopped_by_stop[] = true
+            return true
+        end
         # Stop when the step just taken was predicted to gain less objective
         # than asked for. The predicted gain of the *next* step is not knowable
         # here, and the last one is the standard stand-in: a quasi-Newton
@@ -3046,7 +3050,7 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
         maxiter=max(0, Int(maxiter) - sgd_iterations),
         g_tol=g_tol, f_tol=f_tol, x_tol=x_tol, callback=watch,
         directional=directional, batch=batcher, iteration0=sgd_iterations,
-        coreset=coreseter, jump=watch_jump ? jump : nothing, checkpoint=checkpoint)
+        coreset=coreseter, jump=watch_jump ? jump : nothing)
     if sgd_result !== nothing
         result = CTSEMLBFGSResult(result.minimizer, result.minimum,
             result.gradient, sgd_iterations + result.iterations,
@@ -3107,7 +3111,8 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
     end
     # Why L-BFGS stopped, in one word, since the finish depends on it and the
     # certification reads it.
-    reason_for(r) = stopped_by_gap[] ? "gap" : stopped_by_stall[] ? "stall" :
+    reason_for(r) = stopped_by_stop[] ? "stopped" :
+        stopped_by_gap[] ? "gap" : stopped_by_stall[] ? "stall" :
         stopped_by_progress[] ? "progress" :
         (r.linesearch_failed && jumped_units[] !== nothing) ? "jump" :
         r.linesearch_failed ? "linesearch" :
@@ -3230,7 +3235,7 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
             maxiter=max(0, Int(maxiter) - result.iterations - spent.steps[]),
             g_tol=g_tol, f_tol=f_tol, x_tol=x_tol, callback=watch,
             directional=directional, iteration0=result.iterations + spent.steps[],
-            jump=watch_jump ? jump : nothing, checkpoint=checkpoint)
+            jump=watch_jump ? jump : nothing)
         result = CTSEMLBFGSResult(resumed.minimizer, resumed.minimum,
             resumed.gradient, result.iterations + resumed.iterations,
             result.f_calls + resumed.f_calls, result.g_calls + resumed.g_calls,
