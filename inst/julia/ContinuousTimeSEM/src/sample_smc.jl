@@ -491,29 +491,39 @@ function _smc_each!(f, objective, coreset, np::Int, ndim::Int, maxdepth::Int, mo
         held = _CTSEM_MAX_CHUNKS[]
         _CTSEM_MAX_CHUNKS[] = 1
         try
-            tasks = map(1:ncopies) do c
-                Threads.@spawn begin
-                    obj = deepcopy(objective)
-                    ws = _NUTSWorkspace(ndim, maxdepth)
-                    g = zeros(ndim)
-                    for i in c:ncopies:np
-                        _ctsem_interrupt_check()
-                        f(i, obj, ws, g)
-                    end
-                    nothing
-                end
-            end
+            # Each task's copy, workspace and buffer are built inside a
+            # function of its own (`_smc_run_share`). Built inline in the
+            # spawned block, `ws = ...` and `g = ...` rebound this function's
+            # own `ws` and `g` below, so every task wrote one shared workspace:
+            # moves that ended early, a posterior 0.6 of its width on the time
+            # series, and nothing that failed (2026-10-24).
+            tasks = [Threads.@spawn(_smc_run_share(f, objective, c, ncopies, np, ndim,
+                maxdepth)) for c in 1:ncopies]
             foreach(wait, tasks)
         finally
             _CTSEM_MAX_CHUNKS[] = held
         end
         return nothing
     end
+    _smc_run_share(f, objective, 1, 1, np, ndim, maxdepth; copy=false)
+    return nothing
+end
+
+"""
+    _smc_run_share(f, objective, first, stride, np, ndim, maxdepth; copy)
+
+`f(i, objective_i, ws, g)` for particles `first:stride:np` in turn, on a deep
+copy of `objective` (or the objective itself with `copy = false`) and a NUTS
+workspace and gradient buffer that belong to this call alone.
+"""
+function _smc_run_share(f, objective, first::Int, stride::Int, np::Int, ndim::Int,
+    maxdepth::Int; copy::Bool=true)
+    obj = copy ? deepcopy(objective) : objective
     ws = _NUTSWorkspace(ndim, maxdepth)
     g = zeros(ndim)
-    for i in 1:np
+    for i in first:stride:np
         _ctsem_interrupt_check()
-        f(i, objective, ws, g)
+        f(i, obj, ws, g)
     end
     return nothing
 end
@@ -702,22 +712,25 @@ function ctsem_sample_smc(objective, values::AbstractVector;
         dep = zeros(np)
         ndiv = zeros(Int, np)
         mv = zeros(Int, np)
-        okp = falses(np)
+        # A Vector{Bool}, not a BitVector: particles on other tasks write their
+        # own entries at once, and a BitVector's entries share words.
+        okp = zeros(Bool, np)
         stage_beta = beta
         stage_step = step
         stage_metric = metric
         _smc_each!(objective, cs_stage, np, ndim, mdepth, mode) do i, obj, ws, g
             tdi! = tempered_for(obj, cs_stage, stage_beta)
-            x = Xstart[:, i]
-            logp = tdi!(g, x)
+            # The chain advances its start in place; the start is kept apart.
+            xi = Xstart[:, i]
+            logp = tdi!(g, xi)
             isfinite(logp) || return nothing
             r = _continue_chain(tdi!, ws, Random.Xoshiro(hash((UInt64(seed), stage, i))),
-                x, g, logp, stage_step, stage_metric, nmv, mdepth, mdelta)
+                copy(xi), g, logp, stage_step, stage_metric, nmv, mdepth, mdelta)
             Xnew[:, i] .= r.x
             acc[i] = _smc_mean(r.accept)
             dep[i] = _smc_mean(r.depth)
             ndiv[i] = count(r.divergent)
-            mv[i] = sum(abs2, r.x .- x) > 0 ? 1 : 0
+            mv[i] = r.x != xi ? 1 : 0
             okp[i] = true
             return nothing
         end

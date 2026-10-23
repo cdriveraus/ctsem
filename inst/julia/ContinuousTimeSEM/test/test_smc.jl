@@ -182,6 +182,38 @@ end
         0.1, 0.05, Random.Xoshiro(1)) === nothing
 end
 
+@testset "particles over copies of a one-subject filter objective draw what the serial run draws" begin
+    # A filter objective with fewer subjects than the pool runs its particles
+    # on deep copies, one task each (`_smc_each!`'s `:copies`). Each particle
+    # draws from its own seed, and one subject's arithmetic does not depend on
+    # the layout, so the draws are the serial run's. A shared workspace
+    # between the tasks once left them moving on each other's buffers: early
+    # ends, a posterior 0.6 of its width, and no error.
+    if Threads.nthreads() > 1
+        starts, times, data = _laplace_test_data(1, 1; seed=4)
+        one = ctsem_objective(_LAPLACE_LINEAR_OBJECTIVE.params, starts, times, data;
+            prior_index=collect(1:5), prior_scale=ones(5))
+        x0 = _LAPLACE_LINEAR_VALUES[1:5]
+        H = ContinuousTimeSEM.ctsem_hessian(one, x0)
+        held = ContinuousTimeSEM._CTSEM_MAX_CHUNKS[]
+        ContinuousTimeSEM._CTSEM_MAX_CHUNKS[] = min(4, Threads.nthreads())
+        try
+            common = (hessian=H, widen=2.0, nparticles=24, nmoves=2, maxdepth=5, seed=9,
+                ndraws=5, min_ess=0.0, max_draws=5)
+            ser = ContinuousTimeSEM.ctsem_sample_smc(one, x0; parallel=false, common...)
+            par = ContinuousTimeSEM.ctsem_sample_smc(one, x0; parallel=true, common...)
+            @test ser.parallel == "serial"
+            @test par.parallel == "copies"
+            @test par.nstages == ser.nstages
+            @test par.stage_depth ≈ ser.stage_depth
+            @test maximum(abs, par.draws .- ser.draws) < 1e-8
+            @test all(ser.stage_moved .> 0)
+        finally
+            ContinuousTimeSEM._CTSEM_MAX_CHUNKS[] = held
+        end
+    end
+end
+
 @testset "a move on the coreset owes its error at both ends" begin
     mc = ContinuousTimeSEM._smc_move_correction
     # beta ((lp(y) - lc(y)) - (lp(x) - lc(x))); one for a particle that stayed.
