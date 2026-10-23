@@ -1,0 +1,20 @@
+# climb grid: the cells of the rescue grid where the climb on the hybrid
+# (anytime-hybrid 5cadd1c7, paired against base-5f953d0f) gained or lost, run
+# with the climb off (variant noclimb: optimcontrol$laplace_climb = FALSE) and
+# the build's other changes on. Ids as in rescue.txt, so a cell pairs with
+# its default run on either build.
+#
+# id                                    model        data route      start                    variant
+control.1                               panel        1    augmented  zeros                    control
+gA1.lap.cfg.s1.default                  gA1          cfg  laplace    default:1                noclimb
+gA14.lap.cfg.s2.default                 gA14         cfg  laplace    default:2                noclimb
+gA14.lap.cfg.s3.default                 gA14         cfg  laplace    default:3                noclimb
+gB8.lap.cfg.s1.default                  gB8          cfg  laplace    default:1                noclimb
+gC2.lap.cfg.s1.default                  gC2          cfg  laplace    default:1                noclimb
+gC8.lap.cfg.s1.default                  gC8          cfg  laplace    default:1                noclimb
+gC8.lap.cfg.s2.default                  gC8          cfg  laplace    default:2                noclimb
+gD3.lap.cfg.s1.default                  gD3          cfg  laplace    default:1                noclimb
+gN1.lap.cfg.s1.default                  gN1          cfg  laplace    default:1                noclimb
+gN1.lap.cfg.s3.default                  gN1          cfg  laplace    default:3                noclimb
+gN3.lap.cfg.s1.default                  gN3          cfg  laplace    default:1                noclimb
+anomS2.lap.cfg.anomS2_spurious.default  anomS2       cfg  laplace    stored:anomS2_spurious   noclimb

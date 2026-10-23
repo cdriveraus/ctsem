@@ -290,7 +290,16 @@
   laplace_correct = list(only = 'julia',
     inert = function(v) isFALSE(v),
     msg = paste0("corrects a julia Laplace fit by quadrature over its random ",
-      "effects, and stan has no Laplace term to correct. Drop it"))
+      "effects, and stan has no Laplace term to correct. Drop it")),
+  # Whether a julia Laplace fit climbs the quadrature hybrid from its Laplace
+  # run's hand-over (TRUE, the default) or runs the Laplace objective to its
+  # own end and corrects from there (FALSE, what the fit did before the climb;
+  # the bench's paired comparison of the two). FALSE describes stan.
+  laplace_climb = list(only = 'julia',
+    inert = function(v) isFALSE(v),
+    msg = paste0("chooses whether a julia Laplace fit climbs the quadrature ",
+      "hybrid from its Laplace run's hand-over, and stan has no Laplace term. ",
+      "Drop it"))
 )
 
 # Refuse a control-list name the chosen backend cannot honour, before any data

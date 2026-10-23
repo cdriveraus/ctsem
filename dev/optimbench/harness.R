@@ -145,6 +145,21 @@ REFJL <- tryCatch({
   TRUE
 }, error = function(e) { REFJL_ERR <<- conditionMessage(e); FALSE })
 rec$reference_jl <- if (REFJL) "loaded" else REFJL_ERR
+# ctsem starts a new Julia session when the last one ended inside a call (a
+# fit stopped by the time cap), and the new one has none of reference.jl:
+# gN1 s3's reference on anytime3-5cadd1c7 failed with `bench_probe_units`
+# undefined after a two-hour fit. Included again where it is missing.
+ensure_refjl <- function() {
+  if (!REFJL) return(invisible(FALSE))
+  there <- tryCatch(isTRUE(jeval("isdefined(ContinuousTimeSEM, :bench_probe_units)")),
+    error = function(e) FALSE)
+  if (!there) {
+    jeval(sprintf("Core.eval(ContinuousTimeSEM, :(include(%s)))",
+      deparse(normalizePath(file.path(HERE, "reference.jl"), winslash = "/"))))
+    .stamp("reference.jl included again: the Julia session had restarted")
+  }
+  invisible(TRUE)
+}
 # JuliaConnectoR translates plain values (a Matrix, a Vector) on return and
 # hands back a proxy for anything else; juliaGet only applies to the latter.
 jget <- function(x) if (inherits(x, "JuliaProxy")) JuliaConnectoR::juliaGet(x) else x
@@ -501,6 +516,7 @@ if (DOREF && !is.null(est) && length(est) == npar && all(is.finite(est))) {
   refs <- tryCatch({
     setTimeLimit(elapsed = REFCAP, transient = TRUE)
     out <- list()
+    ensure_refjl()
     fresh_objectives()
     obj <- ctsem:::.ctJuliaObjective(if (!is.null(fit)) fit else spec)
     if (laplace) {

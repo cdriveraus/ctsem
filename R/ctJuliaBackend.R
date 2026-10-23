@@ -6380,8 +6380,11 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
   # (`.ctJuliaOptimise(anytime = )`): where the quadrature correction will
   # read the estimate, and not on a model whose Laplace term is exact, which
   # no screen can flag.
+  # `optimcontrol$laplace_climb = FALSE` keeps the Laplace run to its own end
+  # and corrects from there, as before the climb.
   anytime_on <- is.null(jointobjective) && !is.null(model_spec$laplace) &&
     !isTRUE(model_spec$laplace$quadratic) && !isTRUE(optimcontrol$estonly) &&
+    !isFALSE(optimcontrol$laplace_climb) &&
     identical(.ctLaplaceCorrectResolve(optimcontrol, intoverpop = "laplace",
       optimize = TRUE, intoverstates = TRUE), "quadrature")
   # The continuation the climb ended on, kept out of the fit (it is a live
