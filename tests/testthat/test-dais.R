@@ -88,6 +88,42 @@ test_that("a direction the data do not identify is held, or the run ends as dive
   expect_null(free$cov)
 })
 
+test_that("draws the density cannot use carry no weight and no gradient", {
+  # The skewed target, refusing every draw past 1.5 on its first coordinate:
+  # a value of -Inf there and a gradient of Inf, as a filter overflowing out
+  # in a tail returns. Zero weight times an infinite gradient was NaN in the
+  # weighted means, the stopping rule read NA, and a fit stopped
+  # (test-poprank.R's full-rank augmented fit, on Linux).
+  t <- .skewTarget(d = 6L, a = c(0.5, 1))
+  inner <- attr(t$lpg, 'gradbatch')
+  lpg <- t$lpg
+  attr(lpg, 'gradbatch') <- function(X) {
+    out <- inner(X)
+    bad <- X[, 1] > 1.5
+    out$value[bad] <- -Inf
+    out$gradient[bad, ] <- Inf
+    out
+  }
+  set.seed(19)
+  run <- ctsem:::.ctDaisRun(lpg, t$mode, t$lapcov, list(daisDraws = 64L))
+  expect_true(run$used)
+  expect_gt(run$unusable, 0L)
+  expect_true(all(is.finite(run$mean)))
+  expect_true(all(is.finite(run$cov)))
+  expect_true(all(run$trace[, 'usable'] < 64))
+  # And a normal none of whose draws can be used leaves the check's.
+  attr(lpg, 'gradbatch') <- function(X) {
+    out <- inner(X)
+    out$value[] <- -Inf
+    out$gradient[] <- Inf
+    out
+  }
+  none <- ctsem:::.ctDaisRun(lpg, t$mode, t$lapcov, list(daisDraws = 64L))
+  expect_false(none$used)
+  expect_equal(none$unusable, 64L)
+  expect_null(none$cov)
+})
+
 test_that("DAIS runs inside 'checked' where the check names a direction, and not where it does not", {
   t <- .skewTarget(d = 6L, a = c(0.5, 1))
   set.seed(14)
