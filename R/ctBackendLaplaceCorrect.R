@@ -743,9 +743,10 @@ print.ctLaplaceCorrection <- function(x, ...) {
     flagged = as.integer(run$anytime_flagged)[seq_len(n)],
     gain = as.numeric(run$anytime_gain)[seq_len(n)], stringsAsFactors = FALSE) else
     data.frame(kind = character(0), flagged = integer(0), gain = numeric(0))
-  # The stages before this one (`before`, an earlier record on the same
-  # continuation) come first.
-  if (is.data.frame(before$events)) events <- rbind(before$events, events)
+  # The engine's list is the continuation's whole history, every stage's
+  # events in order, so an earlier record on the same continuation
+  # (`before`) adds nothing to it; it says only how many units were on draws
+  # before, for the warning above.
   handover <- as.character(.ctJuliaOr(first$stop_reason, ""))[1L]
   run$anytime <- list(units = flagged, draws_units = drawn,
     jumps = sum(events$kind == "jump") + as.integer(identical(handover, "jump")),
