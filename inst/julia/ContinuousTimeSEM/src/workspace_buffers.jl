@@ -128,10 +128,17 @@ what Laplace's mode and curvature are taken of; `_HYBRID_FULL` the profile less
 `half_logdet`, their exact integral; `_HYBRID_FIXED` the log likelihood at the
 deviations `dfix` (one per column, the caller's), which is how a unit is
 evaluated in joint coordinates. Every pass leaves `half_logdet`,
-`logdet(M) / 2`; the conditional mode `dhat`; each column's scale `gv`; `Mh`,
-`M` itself; and `r = b - M value(dhat)`, zero in value, whose partials along a
-seeded direction are minus that direction's cross curvature with the
-deviations (`_hybrid_after!` on a `CTSEMHybridCross`).
+`logdet(M) / 2`; `G`, the `q x rd` factor of the columns' deviations,
+`G u` with `u ~ N(0, I)` of dimension `rd` (`gv`, `dgv` its diagonal and
+the diagonal's derivative in the raw own sd, for own variances); the
+conditional mode `dhat` of `u`; `Mh`, `M` itself; and `r = b - M value(dhat)`,
+zero in value, whose partials along a seeded direction are minus that
+direction's cross curvature with `u` (`_hybrid_after!` on a
+`CTSEMHybridCross`). `dfix`, `dhat`, `r`, `bv` and `M` are over `rd`, which is
+`q` for own variances and the level's integrated count for a block; `uitem`
+is the hybrid item each coordinate of `u` belongs to, and `_hybrid_ndev` reads
+`rd` for a pass that may not have run.
+`cov`, `Lb` are a block's covariance and factor scratch.
 """
 mutable struct CTSEMHybridBuffers{T}
     active::Bool
@@ -145,6 +152,10 @@ mutable struct CTSEMHybridBuffers{T}
     r::Vector{T}
     Mh::Matrix{T}
     Mw::Matrix{T}
+    G::Matrix{T}
+    rd::Int
+    uitem::Vector{Int}
+    Lb::Matrix{T}
     q::Int
     col::Vector{Int}
     item::Vector{Int}
@@ -164,7 +175,8 @@ mutable struct CTSEMHybridBuffers{T}
     piv::Vector{Int}
 end
 CTSEMHybridBuffers{T}() where {T} = CTSEMHybridBuffers{T}(false, _HYBRID_PROFILE,
-    zero(T), T[], T[], T[], T[], T[], T[], zeros(T, 0, 0), zeros(T, 0, 0), 0,
+    zero(T), T[], T[], T[], T[], T[], T[], zeros(T, 0, 0), zeros(T, 0, 0),
+    zeros(T, 0, 0), 0, Int[], zeros(T, 0, 0), 0,
     Int[], Int[], Int[], Int[], Float64[],
     zeros(T, 0, 0), zeros(T, 0, 0), zeros(T, 0, 0), zeros(T, 0, 0), zeros(T, 0, 0),
     zeros(T, 0, 0), T[], T[], zeros(T, 0, 0), T[], Int[])

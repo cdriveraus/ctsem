@@ -143,16 +143,27 @@ initial state mean (T0MEANS, `kind` 2) or a continuous intercept (CINT,
 filter's covariances and gains do not depend on them -- they only shift
 means -- so the log likelihood is exactly quadratic in them and their
 Gaussian prior integrates out in closed form (de Jong's augmented filter).
-The filter carries `X`, the state mean's dependence on the deviations: a
-manifest intercept's column starts at zero and shifts its item's observation
-directly (`E`), an initial mean's starts at `slope e_l` and propagates by the
-discrete drift, a continuous intercept's gains the discrete intercept's
-Jacobian in it at every prediction substep (`_hybrid_predict!`). It
-accumulates `S = sum V' S_t^-1 V` and `s = sum V' S_t^-1 y_t` with
+The filter carries `X`, the state mean's dependence on a unit of each cell's
+value: a manifest intercept's column starts at zero and shifts its item's
+observation directly (`E`), an initial mean's starts at `e_l` and propagates
+by the discrete drift, a continuous intercept's gains the discrete
+intercept's Jacobian in it at every prediction substep (`_hybrid_predict!`).
+It accumulates `S = sum V' S_t^-1 V` and `s = sum V' S_t^-1 y_t` with
 `V = Lambda X + E` (`_hybrid_update!`); the pass ends by adding
-`-1/2 logdet(I + G S G) + 1/2 (G s)'(I + G S G)^-1 (G s)`, `G` the items' own
-sds times their transforms' slopes (`_hybrid_marginal!`). Exact for a linear
-Gaussian model; the R side sends it for no other.
+`-1/2 logdet(M) + 1/2 b' M^-1 b`, `M = I + G' S G`, `b = G' s`
+(`_hybrid_marginal!`), where the cells' deviations are `G u`, `u ~ N(0, I)`.
+Exact for a linear Gaussian model; the R side sends it for no other.
+
+Two sources of `G`. Own variances (`block` false): each item its own sd on a
+reduced-rank level (`popunique`), `G` diagonal, the items' sds times their
+slopes, the level's shared loadings left to the Laplace layer. A full-rank
+level's effects (`block` true): the level's covariance taken in the order
+`perm` -- the effects the layer keeps first, the items last -- and factored,
+`[[C_LL, 0], [C_FL, C_FF]]`; the layer keeps the leading columns as its
+coordinates, so the items' conditional mean `C_FL u_L` is in the member's
+values, and the filter integrates the trailing block, `G = slope .* C_FF`, the
+conditional covariance's factor. In both, a subject that never observes a
+manifest item has that row of `G` dropped and keeps every column.
 
 Mutable and empty by default, because the Laplace objective that knows which
 deviations are its own is built after the `EKFParameters` it wraps:
@@ -165,8 +176,13 @@ deviations are its own is built after the `EKFParameters` it wraps:
   * `effect[h]`: its index among the subject level's effects, whose `re_index`
     is the raw position the deviation shifts (reporting adds it there).
   * `sd_scale[h]`, `slope[h]`: its sdscale, and the intercept transform's slope
-    in the raw value, so the deviation in manifest units is
+    in the raw value, so an own variance's deviation in manifest units is
     `slope * (log1p_exp(2 raw - 1) sd_scale + 1e-10) * u`, `u ~ N(0, 1)`.
+  * `block`, and for it the level's construction (`_level_popcov`'s
+    arguments: `lv_sd`, `lv_cor`, `lv_sdfix`, `lv_corfix`, `lv_scale`,
+    `lv_code`), the order `perm` (the layer's effects, then the items in item
+    order), and `lparams`, the raw positions of the level's free scales and
+    correlations, which the closing term's cotangent reaches.
 """
 mutable struct CTSEMHybrid
     kind::Vector{Int}
@@ -175,8 +191,18 @@ mutable struct CTSEMHybrid
     effect::Vector{Int}
     sd_scale::Vector{Float64}
     slope::Vector{Float64}
+    block::Bool
+    lv_sd::Vector{Int}
+    lv_cor::Vector{Int}
+    lv_sdfix::Vector{Float64}
+    lv_corfix::Vector{Float64}
+    lv_scale::Vector{Float64}
+    lv_code::Int
+    perm::Vector{Int}
+    lparams::Vector{Int}
 end
-CTSEMHybrid() = CTSEMHybrid(Int[], Int[], Int[], Int[], Float64[], Float64[])
+CTSEMHybrid() = CTSEMHybrid(Int[], Int[], Int[], Int[], Float64[], Float64[], false,
+    Int[], Int[], Float64[], Float64[], Float64[], 0, Int[], Int[])
 _hybrid_on(h::CTSEMHybrid) = !isempty(h.effect)
 """The model's hybrid item count, the capacity every per-item array is sized by."""
 _hybrid_items(h::CTSEMHybrid) = length(h.effect)

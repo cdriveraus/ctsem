@@ -821,6 +821,7 @@ function ctsem_laplace_objective(objective::CTSEMObjective; re_index=Int[],
     end
     # The deviations the filter integrates, into the shared `EKFParameters`.
     hyb = objective.params.hybrid
+    hyb.block = false
     if isempty(hybrid_effect)
         hyb.kind = Int[]; hyb.target = Int[]; hyb.psi_index = Int[]; hyb.effect = Int[]
         hyb.sd_scale = Float64[]; hyb.slope = Float64[]
@@ -985,14 +986,27 @@ report reads. A report must not factor it -- a draw from an estimate's
 uncertainty can fall far enough past the correlation bound that the matrix,
 valid but near singular, no longer factors in floating point.
 """
-function _laplace_popcov_full(values::AbstractVector{T}, level::CTSEMLaplaceLevel) where {T}
-    k = nrandomeffects(level)
+_laplace_popcov_full(values::AbstractVector, level::CTSEMLaplaceLevel) =
+    _level_popcov(values, level.sd_index, level.cor_index, level.sd_fixed,
+        level.cor_fixed, level.sd_scale, level.covmatcode)
+
+"""
+    _level_popcov(values, sd_index, cor_index, sd_fixed, cor_fixed, sd_scale, covmatcode)
+
+The construction itself, from a level's arrays: `_laplace_popcov_full` for a
+level, and the subject filter's for the effects it integrates on one
+(`CTSEMHybrid`'s `block`), so the two read one definition.
+"""
+function _level_popcov(values::AbstractVector{T}, sd_index::AbstractVector{<:Integer},
+    cor_index::AbstractVector{<:Integer}, sd_fixed::AbstractVector,
+    cor_fixed::AbstractVector, sd_scale::AbstractVector, covmatcode::Integer) where {T}
+    k = length(sd_index)
     k == 0 && return zeros(T, 0, 0)
     scales = Vector{T}(undef, k)
     @inbounds for j in 1:k
-        idx = level.sd_index[j]
-        raw = idx == 0 ? level.sd_fixed[j] : values[idx]
-        scales[j] = log1p_exp(2 * raw - 1) * level.sd_scale[j] + 1e-10
+        idx = sd_index[j]
+        raw = idx == 0 ? sd_fixed[j] : values[idx]
+        scales[j] = log1p_exp(2 * raw - 1) * sd_scale[j] + 1e-10
     end
     base = zeros(T, k, k)
     counter = 0
@@ -1006,8 +1020,8 @@ function _laplace_popcov_full(values::AbstractVector{T}, level::CTSEMLaplaceLeve
                 # objective's bound (`_ctsem_corbound`), the same on every
                 # route; a clamp on the coordinates here once made this route
                 # fit a different parameter space from the augmented one.
-                idx = level.cor_index[counter]
-                base[i, j] = idx == 0 ? level.cor_fixed[counter] : values[idx]
+                idx = cor_index[counter]
+                base[i, j] = idx == 0 ? cor_fixed[counter] : values[idx]
             end
         end
     end
@@ -1021,7 +1035,7 @@ function _laplace_popcov_full(values::AbstractVector{T}, level::CTSEMLaplaceLeve
     # values and not partials. One construction per outer evaluation per level
     # is not a path worth caching anyway.
     buffer = _make_square_buffer(T, k)
-    _sdcovsqrt2cov_uncached!(buffer, base, level.covmatcode, k)
+    _sdcovsqrt2cov_uncached!(buffer, base, Int(covmatcode), k)
     return Matrix(Symmetric(buffer.out, :L))
 end
 

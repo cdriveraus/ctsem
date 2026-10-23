@@ -77,7 +77,7 @@ _hybrid_before!(::CTSEMHybridCross, m, ws) = nothing
 
 function _hybrid_after!(cross::CTSEMHybridCross{T}, m, ws, u) where {T}
     hb = ws.ekf_ws.hyb
-    q = hb.active ? hb.q : 0
+    q = _hybrid_ndev(hb)
     cross.q[m] = q
     q == 0 && return nothing
     nh = length(hb.gv)
@@ -207,10 +207,10 @@ _HybridModeHook{T}(n::Integer) where {T} = _HybridModeHook{T}(zeros(Int, n),
 _hybrid_before!(::_HybridModeHook, m, ws) = nothing
 function _hybrid_after!(h::_HybridModeHook{T}, m, ws, u) where {T}
     hb = ws.ekf_ws.hyb
-    q = hb.active ? hb.q : 0
+    q = _hybrid_ndev(hb)
     h.q[m] = q
     h.dhat[m] = T[hb.dhat[c] for c in 1:q]
-    h.items[m] = hb.item[1:q]
+    h.items[m] = hb.uitem[1:q]
     h.A[m] = T[hb.Mh[a, b] for a in 1:q, b in 1:q]
     return nothing
 end
@@ -236,16 +236,9 @@ end
 function _hybrid_after!(h::_HybridJointHook, m, ws, u)
     hb = ws.ekf_ws.hyb
     q = h.layout.q[m]
-    (hb.active ? hb.q : 0) == q || error(string("member ", m, " integrates ",
-        hb.q, " deviations in joint coordinates laid out for ", q))
-    base = h.layout.offs[m] - h.layout.d
-    @inbounds for c in 1:q
-        acc = hb.gv[c] * hb.s[c]
-        for e in 1:q
-            acc -= hb.gv[c] * hb.S[c, e] * hb.gv[e] * hb.dfix[e]
-        end
-        h.grad[base + c] = acc
-    end
+    _hybrid_ndev(hb) == q || error(string("member ", m, " integrates ",
+        _hybrid_ndev(hb), " deviations in joint coordinates laid out for ", q))
+    _hybrid_fixed_gradient!(h.grad, h.layout.offs[m] - h.layout.d, hb)
     return nothing
 end
 

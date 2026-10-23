@@ -116,10 +116,13 @@ end
 
 The deviations the filter integrated (`CTSEMHybrid`), for the reverse pass:
 what the pass ended with -- `q`, the columns' items and manifests (`item`,
-`col`), the accumulated `S` and `s`, each column's `g` and `dg/draw` -- and the
-reverse state: the cotangents of `S` and `s` from the closing term, the
-cotangent of `X` carried backwards through the rows, and each item's own-sd
-cotangent (`psibar`), which the caller adds to the raw gradient. Scratch for
+`col`), the accumulated `S` and `s`, the factor `G` (`q x rd`), for own
+variances its diagonal `g` and `dg/draw`, for a block the level's free raw
+values `lvals` -- and the reverse state: the cotangents of `S` and `s` from
+the closing term, the cotangent of `X` carried backwards through the rows,
+`Gbar`, and from it each item's own-sd cotangent (`psibar`) or the level's
+(`lpbar`, over `CTSEMHybrid`'s `lparams`), which the caller adds to the raw
+gradient. Scratch for
 the per-row work beside it. Every array is sized by capacity -- the model's
 hybrid item count, the manifest count, the state count -- and grows only, so a
 pass after the first allocates nothing; loops read the leading block they need.
@@ -128,6 +131,12 @@ mutable struct CTSEMHybridTape{T}
     active::Bool
     mode::Int
     dfix::Vector{T}
+    G::Matrix{T}
+    rd::Int
+    block::Bool
+    lvals::Vector{T}
+    Gbar::Matrix{T}
+    lpbar::Vector{T}
     q::Int
     item::Vector{Int}
     col::Vector{Int}
@@ -154,7 +163,8 @@ mutable struct CTSEMHybridTape{T}
     uv::Vector{T}
     beta::Vector{T}
 end
-CTSEMHybridTape{T}() where {T} = CTSEMHybridTape{T}(false, 0, T[], 0, Int[], Int[],
+CTSEMHybridTape{T}() where {T} = CTSEMHybridTape{T}(false, 0, T[], zeros(T, 0, 0), 0,
+    false, T[], zeros(T, 0, 0), T[], 0, Int[], Int[],
     zeros(T, 0, 0), T[], T[], T[], zeros(T, 0, 0), T[], zeros(T, 0, 0), T[],
     zeros(T, 0, 0), zeros(T, 0, 0), zeros(T, 0, 0), zeros(T, 0, 0), zeros(T, 0, 0),
     zeros(T, 0, 0), T[], zeros(T, 0, 0), zeros(T, 0, 0), zeros(T, 0, 0),
@@ -1841,7 +1851,7 @@ function _ctsem_reverse_tape!(tape::CTSEMAdjointTape{T},
         elseif kind === :hybrid
             # The integrated deviations' closing term; last in the forward, so
             # first here (`CTSEMHybrid`).
-            _reverse_hybrid_marginal!(tape.hyb, n, _hybrid_items(sp.hybrid))
+            _reverse_hybrid_marginal!(tape.hyb, n, _hybrid_items(sp.hybrid), sp.hybrid)
         elseif kind === :binary
             # After the Gaussian block of the same row, because the forward
             # applied binary observations before it. By the workspace's type,

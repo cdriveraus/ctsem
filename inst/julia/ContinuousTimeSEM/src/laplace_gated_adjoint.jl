@@ -120,16 +120,9 @@ function _laplace_unit_theta_gradient(laplace::CTSEMLaplaceObjective, U::Integer
         if layout !== nothing
             hb = aws.ekf_ws.hyb
             q = layout.q[m]
-            (hb.active ? hb.q : 0) == q || error(string("member ", m, " integrates ",
-                hb.q, " deviations in joint coordinates laid out for ", q))
-            o = layout.offs[m]
-            @inbounds for c in 1:q
-                acc = hb.gv[c] * hb.s[c]
-                for e in 1:q
-                    acc -= hb.gv[c] * hb.S[c, e] * hb.gv[e] * hb.dfix[e]
-                end
-                Gz[o + c] += acc
-            end
+            _hybrid_ndev(hb) == q || error(string("member ", m, " integrates ",
+                _hybrid_ndev(hb), " deviations in joint coordinates laid out for ", q))
+            _hybrid_fixed_gradient!(Gz, layout.offs[m], hb; add = true)
         end
     end
     @inbounds for a in 1:D
