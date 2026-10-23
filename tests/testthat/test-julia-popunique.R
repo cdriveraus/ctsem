@@ -680,6 +680,30 @@ test_that("the gated floor on integrated deviations is the layer's, unit for uni
         tolerance = 1e-7)
     }
   }
+  # At full rank the intercepts are a block integrated given the dynamics'
+  # effects, and the gate decides on the same joint curvature.
+  options(ctsem.laplace.hybrid = TRUE)
+  fspec <- .pu_spec(d, m, optimcontrol = list(laplace_floor = "gated"))
+  options(ctsem.laplace.hybrid = FALSE)
+  flayer <- .pu_spec(d, m, optimcontrol = list(laplace_floor = "gated"))
+  expect_true(isTRUE(fspec$laplace$hybrid$block))
+  fobj <- list(ctsem:::.ctJuliaObjective(handle(fspec), hybrid = TRUE),
+    ctsem:::.ctJuliaObjective(handle(flayer), hybrid = TRUE))
+  fprev <- lapply(fobj, function(o) ctsem:::.ctJuliaCall(
+    "ContinuousTimeSEM.ctsem_set_laplace_floor!", o, "gated", hi = 0.95))
+  on.exit(for (i in seq_along(fobj)) ctsem:::.ctJuliaCall(
+    "ContinuousTimeSEM.ctsem_set_laplace_floor!", fobj[[i]], "gated",
+    hi = fprev[[i]]$hi), add = TRUE)
+  for (seed in c(2, 4)) {
+    set.seed(seed)
+    x <- rnorm(length(.pu_names(fspec)), 0, 1)
+    full <- .pu_eval(flayer, x)
+    hybrid <- .pu_eval(fspec, x)
+    expect_equal(gated(fobj[[1]]), gated(fobj[[2]]))
+    expect_equal(hybrid$value, full$value, tolerance = 1e-9)
+    expect_equal(as.numeric(hybrid$gradient), as.numeric(full$gradient),
+      tolerance = 1e-7)
+  }
 })
 
 test_that("quadrature integrates the filter's deviations at every node, and spans the shared effects alone", {

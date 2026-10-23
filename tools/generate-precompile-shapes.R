@@ -19,7 +19,9 @@
 # changes what it sends -- provided this script is rerun. The test in
 # test-julia-precompile.R is what notices when it has not been.
 #
-# One model per route and indicator kind, and the list should stay that short.
+# One model per route and indicator kind, and the list should stay that short
+# -- with one exception: on the Laplace route a Gaussian intercept is integrated
+# by the subject filter, so a second Gaussian model keeps a Laplace coordinate.
 # A model's type does not depend on its size, layout or expressions (see the
 # header of inst/julia/ContinuousTimeSEM/src/precompile_workload.jl), so the
 # code one captured fit compiles is the code every model of its route and kind
@@ -131,6 +133,18 @@ shapes <- list(
   gaussian_laplace = list(route = "laplace", model = function() cint_model(c("y1", "y2")),
     data = function() indicators(sim_latent(8, 6), c("y1", "y2")),
     followups = c(followups, sampled_fit)),
+  # The intercept above is integrated by each subject's filter, leaving the
+  # Laplace units no coordinate. A random drift beside it stays a coordinate,
+  # and the filter integrates the intercept given it (a full-rank block,
+  # `CTSEMHybrid`): the inner solve, its probes and the logdet's derivatives
+  # at the Gaussian workspace type, which every Gaussian Laplace fit with a
+  # nonlinear effect runs.
+  gaussian_laplace_block = list(route = "laplace", model = function() {
+      m <- cint_model(c("y1", "y2"))
+      m$pars$indvarying <- m$pars$param %in% c("cint", "drift_eta1")
+      m
+    },
+    data = function() indicators(sim_latent(10, 6), c("y1", "y2"))),
   # A model with a categorical indicator is a different filter workspace type
   # -- the categorical update is gated on it, so Gaussian fits do not carry
   # that code -- so each route needs one. Binary and ordinal share it.
