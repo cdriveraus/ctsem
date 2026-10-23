@@ -476,8 +476,9 @@ print.ctLaplaceCorrection <- function(x, ...) {
 #            the round's L-BFGS runs in the fit's identified directions,
 #            whitened by its curvature, so it starts from the Newton step the
 #            fit's Hessian implies and is confined to `radius` standard errors
-#            of the round's centre; then the nodes are re-placed where it
-#            ended.
+#            of the round's centre -- none until a round has been rejected,
+#            so the first rounds take the frozen rules' own optimum however
+#            far it lies; then the nodes are re-placed where it ended.
 #   target   the FIXED POINT of that iteration: the estimate at which the
 #            gradient of the objective with its nodes placed there is zero.
 #            With the nodes held, that gradient is the quadrature's own
@@ -568,10 +569,18 @@ print.ctLaplaceCorrection <- function(x, ...) {
 # with its nodes, so the iteration contracts more slowly there (the nested
 # fixture's residual fell by a factor of 0.3 to 0.7 a round, where the
 # one-level fixture's fell by 20 to 300). `attempts` (15) bounds the rounds a
-# trust region may reject. `radius` (1 se, doubling to at most `radius_max` =
-# 16 when a kept round ends on the boundary having gained at least three
-# quarters of what its model promised, cut to a quarter of the step when a
-# round is rejected) is the textbook trust-region schedule. Growing it on the
+# trust region may reject. `radius` (`Inf`: no bound until a round is
+# rejected, from which the region is a quarter of that step, doubling to at
+# most `radius_max` = 16 se when a kept round ends on the boundary having
+# gained at least three quarters of what its model promised and cut to a
+# quarter of the step when a round is rejected, the textbook schedule). A
+# first round held to one se stopped short wherever the hybrid's optimum lay
+# several se off: on the bench's gB8 ten rounds were still gaining when the
+# budget ran out, 1.85 exact nats short, and gN1's rounds shrank onto
+# re-placement differences of 0.01 nats 1.3 short, while a climb on the frozen
+# rules reached both in one run (the anytime grids of 2026-10-23). The
+# unbounded round is that run, kept only where the re-placed value holds.
+# Growing the region on the
 # residual instead -- only when a round cut it to a quarter -- held gated-gaps
 # D3 at 0.25 se for six rounds whose gains matched their model's to 2%, and
 # the rounds ran out 0.7 exact nats short of the best-known point. `maxiter`
@@ -612,7 +621,7 @@ print.ctLaplaceCorrection <- function(x, ...) {
 # Gaussian; only a unit's top block takes it.
 .ctLaplaceContinueDefaults <- list(nodes = 5L, tolerance = 0.01,
   product_maxdim = 2L, soft_tau = 3.5, soft_maxdirs = 2L, rounds = 10L,
-  attempts = 15L, radius = 1, radius_max = 16, maxiter = 100L,
+  attempts = 15L, radius = Inf, radius_max = 16, maxiter = 100L,
   material = 0.1, guard = 50, guard_per_subject = 0.5, rtol = 1e-8,
   value_tol = 1e-3, maxdim = 5L, stop_gain = 0, skip_gain = 5e-3,
   draws = 256L, draws_se = 0.05, draws_max = 16384L, draws_df = 4,
@@ -839,9 +848,11 @@ print.ctLaplaceCorrection <- function(x, ...) {
   status <- "rounds"
   rows <- list()
   B <- .ctJuliaPut(as.matrix(basis))
+  # The engine reads a radius of 0 as no bound (`_continuation_inside`).
   optimise <- function(from, stationary = FALSE, tol = bar) get(
     module$ctsem_laplace_continuation_optimize(cont, .ctJuliaNumericVector(from),
-      B, radius, maxiter = as.integer(control$maxiter), tol = tol,
+      B, if (is.finite(radius)) radius else 0,
+      maxiter = as.integer(control$maxiter), tol = tol,
       stationary_only = stationary))
   row <- function(round, residual_after, keep, flagged, gain = NA_real_) data.frame(
     round = attempts, radius = radius,
