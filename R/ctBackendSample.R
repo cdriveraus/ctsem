@@ -264,6 +264,14 @@
       "Use the default sampler, or sample with intoverpop = 'none'.",
       call. = FALSE)
   }
+  if (identical(control$sampler, "smc") && (!marginal || isTRUE(state_explicit))) {
+    stop("control$sampler = 'smc' samples the marginal posterior over population ",
+      "parameters by tempered SMC, and this run asks for ",
+      if (isTRUE(state_explicit)) "the joint posterior over the latent states. "
+      else "the joint posterior over parameters and random effects. ",
+      "Sample with intoverpop = 'laplace' or 'augmented', or use the default sampler.",
+      call. = FALSE)
+  }
   # The sampler, resolved against the target and written back into `control`,
   # which is what the engine call and every worker read it from: the default
   # differs by target, and a worker sees only `control`.
@@ -323,7 +331,8 @@
   sampletarget <- .ctBackendSampleTarget(estimate = estimate, npar = npar,
     marginal = marginal, state_explicit = isTRUE(state_explicit),
     hessian = fit$uncertainty$hessian, metric = .ctBackendSampleMetric(fit),
-    placement = placement)
+    placement = placement, smcstart = .ctBackendSmcStart(fit, estimate),
+    widen = if (is.null(fit$uncertainty$details$dais$cov)) 2 else 1)
 
   out <- .ctBackendSampleRun(fit, sampletarget, chains = chains, warmup = warmup,
     draws = draws, cores = cores, saveEffects = saveEffects, seed = seed,
@@ -405,6 +414,9 @@
   # (NUTS on the whole joint vector); resolved against the target by
   # `.ctBackendUncertaintySample()` and read by `.ctBackendSampleControl()`.
   "sampler",
+  # How many particles tempered SMC (`sampler = 'smc'`) carries, 200 by
+  # default; read by `.ctBackendSampleControl()`.
+  "particles",
   # Where the chains start on the joint target: 'saem' (SAEM's own run and
   # state, the default there) or 'fit' (the fit's estimate); read by
   # `.ctBackendUncertaintySample()`.
@@ -529,6 +541,15 @@
 # them by NUTS, placed and stopped exactly as NUTS is. 'nuts' runs NUTS on the
 # whole vector. Both draw the same posterior.
 #
+# 'smc' runs tempered sequential Monte Carlo with NUTS moves on a marginal
+# target (`ctsem_sample_smc`, sample_smc.jl): particles carried from the
+# check's normal -- the DAIS normal where the fit has one -- to the posterior,
+# then every particle a chain. It is for the posteriors NUTS does not
+# converge on from that normal: a time series whose mass sits far from the
+# mode (R-hat 1.07-1.10 at budget) and a loading shell (1.27), both
+# recovered (review/SAMPLING-smc-2026-10-23.md). The joint target has no
+# version of it.
+#
 # 'saem' is the default on the joint target because it is the more reliable
 # of the two there, not only the faster: through `ctFitUncertainty()` on 13
 # models (dev2, review/POSTERIOR-race-2026-10-02.md) its mean worst error
@@ -541,8 +562,8 @@
 .ctBackendSamplerName <- function(sampler, joint = TRUE) {
   if (is.null(sampler)) return(if (isTRUE(joint)) "saem" else "nuts")
   if (!is.character(sampler) || length(sampler) != 1L ||
-      !sampler %in% c("nuts", "saem")) {
-    stop("control$sampler must be 'nuts' or 'saem'.", call. = FALSE)
+      !sampler %in% c("nuts", "saem", "smc")) {
+    stop("control$sampler must be 'nuts', 'saem' or 'smc'.", call. = FALSE)
   }
   sampler
 }
@@ -650,13 +671,14 @@
     # whose curvature had to be repaired or floored.
     adapt_metric = isTRUE(.ctJuliaOr(control$adapt_metric, FALSE)),
     adapt_effects = isTRUE(.ctJuliaOr(control$adapt_effects, FALSE)),
-    sampler = .ctBackendSamplerName(control$sampler))
+    sampler = .ctBackendSamplerName(control$sampler),
+    particles = max(2L, as.integer(.ctJuliaOr(control$particles, 200L))[1L]))
 
   # The SAEM kernel draws the effects by SAEM's own sweeps and keeps the
   # parameters' metric at the conditional curvature it was placed with, so
   # the joint metric's adaptation and the warmup's early stop have nothing to
   # act on there. Refused by name rather than accepted and ignored.
-  if (identical(settings$sampler, "saem")) {
+  if (settings$sampler %in% c("saem", "smc")) {
     unused <- c(adapt_metric = isTRUE(control$adapt_metric),
       adapt_effects = isTRUE(control$adapt_effects),
       settleTol = !is.null(control$settleTol))
@@ -664,8 +686,8 @@
       stop("control$", paste(names(unused)[unused], collapse = ", control$"),
         " is a setting of the NUTS sampler's joint metric, which the SAEM ",
         "kernel (control$sampler = 'saem', the default on the joint ",
-        "posterior) does not use. Add sampler = 'nuts' to use it.",
-        call. = FALSE)
+        "posterior) and tempered SMC ('smc', no warmup) do not use. Add ",
+        "sampler = 'nuts' to use it.", call. = FALSE)
     }
   }
 
@@ -811,7 +833,7 @@
 
 .ctBackendSampleTarget <- function(estimate, npar, marginal = FALSE,
   state_explicit = FALSE, hessian = NULL, gradient = "adjoint", placement = "fit",
-  metric = NULL) {
+  metric = NULL, smcstart = NULL, widen = 2) {
   list(estimate = as.numeric(estimate), npar = as.integer(npar)[1L],
     marginal = isTRUE(marginal), state_explicit = isTRUE(state_explicit),
     hessian = if (is.null(hessian)) NULL else as.matrix(hessian),
@@ -819,7 +841,43 @@
     # `.ctBackendSampleMetric()`.
     metric = if (is.null(metric)) NULL else as.matrix(metric),
     placement = placement,
-    gradient = gradient)
+    gradient = gradient,
+    # Where tempered SMC's particles start, and how many times the metric's
+    # sds wide: the DAIS normal at 1x where the fit has one, the check's at
+    # 2x otherwise (`.ctBackendSmcStart()`).
+    smcstart = if (is.null(smcstart)) as.numeric(estimate) else as.numeric(smcstart),
+    widen = as.numeric(widen))
+}
+
+# Where tempered SMC starts its particles: the DAIS normal's centre where
+# `'checked'` moved one (`$details$dais$centre`), the check's centre where it
+# made one, the estimate otherwise. Each is nearer the mass than the one
+# before: from the DAIS normal the closed forms took one to three stages
+# against six to fourteen from the check's.
+#' @keywords internal
+.ctBackendSmcStart <- function(fit, estimate) {
+  d <- fit$uncertainty$details
+  start <- .ctJuliaOr(d$dais$centre, .ctJuliaOr(d$normalcheck$centre, estimate))
+  start <- as.numeric(start)
+  if (length(start) != length(estimate) || any(!is.finite(start))) return(as.numeric(estimate))
+  start
+}
+
+# How many draws each of tempered SMC's particles takes at the end, and may
+# extend to. The particles are already at the posterior, so there is no
+# warmup and every draw counts; twenty a particle is where the per-chain
+# autocorrelation can be estimated at all, and the budget is the same
+# multiple of the draws asked for as the chains', spread over the particles.
+#' @keywords internal
+.ctBackendSmcBudget <- function(draws, particles, settings) {
+  particles <- max(2L, as.integer(particles)[1L])
+  ess_target <- max(.ctJuliaOr(settings$min_ess, 0), .ctJuliaOr(settings$mean_ess, 0))
+  first <- max(20L, as.integer(ceiling(ess_target / particles)))
+  max_draws <- if (!is.null(settings$max_draws))
+    max(first, as.integer(ceiling(settings$max_draws / particles))) else
+    max(first, as.integer(ceiling(.ctSampleBudgetMultiple * max(1L, as.integer(draws)) /
+      particles)))
+  list(first = first, max_draws = max_draws)
 }
 
 # The objective a target names, in whichever process asks for it. Both branches
@@ -899,7 +957,13 @@
 # 1.01 unless `rhatTarget` said otherwise, as in the engine's stopping rule.
 #' @keywords internal
 .ctBackendSampleTargetRhat <- function(control) {
-  as.numeric(.ctJuliaOr(.ctBackendSampleControl(control)$rhat_target, 1.01))
+  settings <- .ctBackendSampleControl(control)
+  # Tempered SMC's final phase is many short chains, whose split R-hat reads
+  # their autocorrelation (about `sqrt(1 + (tau - 1) / n)`, 1.12-1.27 at ten
+  # draws where four long chains read 1.008); the particles' independence is
+  # the between-chain guarantee, and the effective size is what it stops on.
+  if (identical(settings$sampler, "smc")) return(Inf)
+  as.numeric(.ctJuliaOr(settings$rhat_target, 1.01))
 }
 
 # Call the engine's sampler, and return what it returned.
@@ -922,7 +986,9 @@
   callback = control$callback, coordinate = NULL) {
 
   settings <- .ctBackendSampleControl(control)
-  budget <- .ctBackendSampleBudget(draws, chains, settings)
+  smc <- identical(settings$sampler, "smc")
+  budget <- if (smc) .ctBackendSmcBudget(draws, settings$particles, settings) else
+    .ctBackendSampleBudget(draws, chains, settings)
   draws <- budget$first
   settings$max_draws <- budget$max_draws
   module <- .ctJuliaModule(fit$model_spec$project)
@@ -1023,6 +1089,29 @@
   }
   entry <- if (isTRUE(target$marginal)) module$ctsem_sample_marginal else
     if (saem) module$ctsem_saem_sample else module$ctsem_sample
+  # Tempered SMC takes the start, the metric, the particle count and the final
+  # phase's targets; none of NUTS's warmup settings, and no R-hat target -- its
+  # final phase is many short chains, whose split R-hat reads their
+  # autocorrelation, not any disagreement (sample_smc.jl). The particles are
+  # independent by construction; the effective size decides.
+  if (smc) {
+    callback_fn <- arguments$progress_callback
+    arguments <- list(objective, .ctJuliaNumericVector(target$smcstart),
+      nparticles = as.integer(settings$particles), maxdepth = settings$maxdepth,
+      target_accept = settings$target_accept, maxdelta = settings$maxdelta,
+      seed = as.integer(seed)[1L], ndraws = as.integer(draws),
+      widen = as.numeric(target$widen), verbose = isTRUE(progress),
+      progress_overwrite = .ctProgressOverwrite(verbose),
+      progress_sink = if (isTRUE(progress)) .ctProgressSink(
+        .ctProgressOverwrite(verbose)) else NULL)
+    for (name in c("min_ess", "mean_ess", "max_draws")) {
+      if (!is.null(settings[[name]])) arguments[[name]] <- settings[[name]]
+    }
+    if (!identical(target$gradient, "adjoint")) arguments$gradient_method <- target$gradient
+    if (!is.null(metric)) arguments$hessian <- .ctJuliaPut(as.matrix(metric))
+    if (!is.null(callback_fn)) arguments$progress_callback <- callback_fn
+    entry <- module$ctsem_sample_smc
+  }
 
   result <- .ctBackendWithMaxChunks(cores,
     .ctJuliaGet(do.call(entry, arguments)))
@@ -1087,6 +1176,7 @@
   # a reader who does not know it is there cannot tell a sample that finished
   # early from one that was cut short. Reported wherever progress is --
   # someone watching a console is exactly the someone who needs it.
+  smc <- identical(.ctBackendSampleControl(control)$sampler, "smc")
   if (isTRUE(progress) || .ctProgressConsole()) {
     settings <- .ctBackendSampleControl(control)
     target_ess <- max(.ctJuliaOr(settings$min_ess, 0),
@@ -1100,7 +1190,14 @@
       else if (isTRUE(target$marginal))
         "the marginal posterior over population parameters"
       else "the joint posterior over population parameters and random effects"
-    budget <- .ctBackendSampleBudget(draws, chains, settings)
+    budget <- if (smc) .ctBackendSmcBudget(draws, settings$particles, settings) else
+      .ctBackendSampleBudget(draws, chains, settings)
+    if (smc) message("Sampling ", targetlabel, " by tempered SMC: ",
+      settings$particles, " particles carried from the normal to the posterior, ",
+      "then ", budget$first, " draws from each",
+      if (target_ess > 0) paste0(", extended to ", budget$max_draws,
+        " until min ESS ", .ctJuliaOr(settings$min_ess, target_ess), " is reached") else "",
+      ".") else
     message("Sampling ", targetlabel,
       if (identical(settings$sampler, "saem")) " with the SAEM kernel" else "",
       ": ", chains, " chain",
@@ -1114,7 +1211,9 @@
         .ctJuliaOr(settings$rhat_target, 1.01), " are reached") else "", ".")
   }
 
-  if (isTRUE(processes) && .ctBackendSampleWorkers(chains, cores) > 1L &&
+  # Tempered SMC runs its particles in this session: they share one cloud at
+  # every stage, which chains in worker processes do not.
+  if (isTRUE(processes) && !smc && .ctBackendSampleWorkers(chains, cores) > 1L &&
       .ctBackendCanWarm()) {
     out <- .ctBackendSampleProcesses(fit, target, chains = chains,
       warmup = warmup, draws = draws, cores = cores, handles = handles,
@@ -1131,7 +1230,9 @@
   # size target the sampler decides when to stop, and reporting the request
   # would describe a run that did not happen.
   .ctBackendSampleAssemble(fit, result, target$npar,
-    isTRUE(saveEffects) && !isTRUE(target$marginal), as.integer(chains), warmup,
+    isTRUE(saveEffects) && !isTRUE(target$marginal),
+    if (smc) as.integer(result$nchains) else as.integer(chains),
+    if (smc) 0L else warmup,
     as.integer(result$ndraws), target$hessian,
     target$estimate[seq_len(target$npar)], marginal = isTRUE(target$marginal),
     ess_target = .ctBackendSampleTargetESS(control),
@@ -1269,6 +1370,11 @@
     # at different effects every iteration does not measure it), and the two
     # acceptance rates are the level scale moves' (centred and non-centred).
     sampler = if (is.null(result$sampler)) "nuts" else as.character(result$sampler),
+    # Tempered SMC's record: stages run, `beta` at each, and the tempering's
+    # seconds before the final phase.
+    nstages = if (is.null(result$nstages)) NULL else as.integer(result$nstages),
+    stage_beta = if (is.null(result$stage_beta)) NULL else as.numeric(result$stage_beta),
+    smc_seconds = if (is.null(result$smc_secs)) NULL else as.numeric(result$smc_secs),
     scale_accept = as.numeric(result$scale_accept),
     ncp_accept = as.numeric(result$ncp_accept),
     processes = FALSE,
@@ -1442,7 +1548,9 @@
 #' @keywords internal
 .ctSampleRhatCeiling <- function(diagnostics) {
   target <- suppressWarnings(as.numeric(diagnostics$rhat_target)[1L])
-  if (length(target) && is.finite(target) && target > 1) target else 1.01
+  # `Inf` is a target too: tempered SMC's, whose short chains' R-hat is not
+  # read (`.ctBackendSampleTargetRhat()`).
+  if (length(target) && !is.na(target) && target > 1) target else 1.01
 }
 
 # The three failures worth interrupting for, in the order a user should read
@@ -1549,10 +1657,15 @@
 print.ctSampleDiagnostics <- function(x, ...) {
   total <- x$chains * x$draws
   saem <- identical(x$sampler, "saem")
+  smc <- identical(x$sampler, "smc")
   cat(if (saem) "ctsem sample, SAEM kernel (effects by SAEM's sweeps, parameters by NUTS given them)\n"
+    else if (smc) "ctsem sample, tempered SMC (particles carried to the posterior by NUTS moves)\n"
     else "ctsem Hamiltonian sample\n")
   if (!is.null(x$target)) cat("  target: ", x$target, " posterior\n", sep = "")
-  cat("  ", x$chains, " chains x ", x$draws, " draws (", x$warmup,
+  if (smc) cat("  ", x$chains, " particles x ", x$draws, " draws each, after ",
+    x$nstages, " tempering stages (no warmup; R-hat over short chains reads ",
+    "autocorrelation and is not a stopping target here)\n", sep = "")
+  else cat("  ", x$chains, " chains x ", x$draws, " draws (", x$warmup,
     " warmup discarded)\n", sep = "")
   cat("  divergent: ", x$divergent, " of ", total,
     "   max tree depth reached: ", x$saturated, "\n", sep = "")

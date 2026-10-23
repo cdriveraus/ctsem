@@ -3377,9 +3377,18 @@ ctOptimFitLpgFunc <- function(fit, cores=1){
 #' joint vector mixes poorly. A marginal target is sampled by NUTS, from a
 #' metric set to the widths that the normal check of \code{'checked'} measured
 #' along the directions where the posterior departs from the fit's Hessian;
-#' a fit made without that check gets one first, at a few hundred gradients.
-#' \code{adapt_metric}, \code{adapt_effects} and \code{settleTol} belong to
-#' NUTS and are refused with SAEM's kernel. \code{control$placement} says
+#' a fit made without that check gets one first, at a few hundred gradients;
+#' where \code{'checked'} moved the normal to the posterior's moments, the
+#' metric is that normal's covariance. A marginal target can instead be
+#' sampled by tempered sequential Monte Carlo, \code{sampler = 'smc'}:
+#' \code{particles} (200) draws from that normal, carried to the posterior by
+#' stages of NUTS moves, then each a chain. It is for posteriors NUTS does not
+#' converge on from the normal -- a mass far from the mode, a loading shell --
+#' and costs about what NUTS does in gradients. Its chains are many and short,
+#' so R-hat is reported but not a stopping target there; the effective sample
+#' size is. \code{adapt_metric}, \code{adapt_effects} and \code{settleTol}
+#' belong to NUTS's warmup and are refused with SAEM's kernel and with
+#' tempered SMC. \code{control$placement} says
 #' where the chains start: \code{'saem'}, the default on the joint posterior,
 #' runs SAEM from the fit's estimate and starts each chain from SAEM's
 #' estimate and its draws of the random effects; \code{'fit'} starts them
@@ -3510,8 +3519,8 @@ ctOptimFitLpgFunc <- function(fit, cores=1){
 #' 'sample'} these are the sampler settings described in the Sampling section
 #' (\code{chains}, \code{warmup}, \code{draws}, \code{seed},
 #' \code{saveEffects}, \code{processes}, \code{intoverpop},
-#' \code{tipredMissing}, \code{sampler}, \code{placement}, \code{minESS},
-#' \code{meanESS}, \code{rhatTarget}, \code{maxDraws}, \code{settleTol},
+#' \code{tipredMissing}, \code{sampler}, \code{particles}, \code{placement},
+#' \code{minESS}, \code{meanESS}, \code{rhatTarget}, \code{maxDraws}, \code{settleTol},
 #' \code{init_scale}, and NUTS's \code{maxdepth}, \code{target_accept},
 #' \code{adapt_metric} and \code{adapt_effects}); none of the entries below
 #' apply to it. For every other method, useful entries include
