@@ -150,9 +150,12 @@ struct CTSEMLaplaceLevel
     order::Vector{Int}
     sd_fixed::Vector{Float64}
     cor_fixed::Vector{Float64}
-    # Effects whose own variance the subject filter integrates rather than this
-    # level (`CTSEMHybrid`): no column of the level's root, no coordinate of
-    # its block. Empty when there are none.
+    # Effects the subject filter integrates rather than this level
+    # (`CTSEMHybrid`): on a reduced level their own variances, which then have
+    # no column of the root; on a full-rank level the effects themselves (a
+    # block, `_laplace_block`), whose columns of the root, taken with them
+    # last, the level drops. No coordinate of its block either way. Empty
+    # when there are none.
     hybrid::Vector{Bool}
     # The effect and dimension of each loading, when the level states a
     # pattern (`_laplace_loading_entries`); empty for the triangle.
@@ -227,8 +230,9 @@ struct CTSEMLaplaceLevel
         if !isempty(hyb)
             length(hyb) == k || throw(DimensionMismatch(
                 "hybrid holds one entry per random effect"))
-            all(p -> !hyb[p] || (!isempty(uniq) && uniq[p] > 0), 1:k) ||
-                throw(ArgumentError("an effect the filter integrates needs an own variance"))
+            (r == k && !patterned) ||
+                all(p -> !hyb[p] || (!isempty(uniq) && uniq[p] > 0), 1:k) ||
+                throw(ArgumentError("on a reduced-rank level, an effect the filter integrates needs an own variance"))
             any(hyb) || (hyb = Bool[])
         end
         isempty(grp) || (minimum(grp) >= 1 && maximum(grp) <= ngroups) ||
@@ -250,6 +254,16 @@ end
 fewer dimensions than it has random effects, or it states a pattern."""
 isreducedrank(level::CTSEMLaplaceLevel) =
     level.rank < length(level.re_index) || !isempty(level.load_row)
+
+"""Whether the subject filter integrates some of this full-rank level's effects
+(`hybrid`): the level then keeps only the leading columns of its root taken in
+`_laplace_block_order`, and the filter the conditional rest (`CTSEMHybrid`)."""
+_laplace_block(level::CTSEMLaplaceLevel) = !isreducedrank(level) && any(level.hybrid)
+
+"""A block level's root order: the effects it keeps, then those the filter
+integrates, each in effect order."""
+_laplace_block_order(level::CTSEMLaplaceLevel) =
+    vcat(findall(!, level.hybrid), findall(level.hybrid))
 
 """
     _laplace_loading_entries(level)
@@ -307,7 +321,8 @@ count, and every site that used it meant one or the other: `re_index[p]` is
 indexed by the parameter count, `u[offset + q]` by the block dimension. A site
 that takes the wrong one still runs and still returns a number.
 """
-nlatent(level::CTSEMLaplaceLevel) = level.rank + nunique(level)
+nlatent(level::CTSEMLaplaceLevel) = level.rank + nunique(level) -
+    (_laplace_block(level) ? count(level.hybrid) : 0)
 
 """
 Number of this level's effects with an own variance (`unique_index`) that the
@@ -470,6 +485,15 @@ function _laplace_coordinate_inert(level::CTSEMLaplaceLevel, q::Integer,
         for t in eachindex(level.load_col)
             level.load_col[t] == q || continue
             insorted(level.load_row[t], inert) || return false
+        end
+        return true
+    end
+    # A block's column `q` has the rows of its order from `q` on: the effects
+    # kept after it and every integrated one.
+    if _laplace_block(level)
+        order = _laplace_block_order(level)
+        for t in q:k
+            insorted(order[t], inert) || return false
         end
         return true
     end
@@ -834,10 +858,24 @@ function ctsem_laplace_objective(objective::CTSEMObjective; re_index=Int[],
         lv = levels[1]
         hyb.kind = Int.(hybrid_kind)
         hyb.target = Int.(hybrid_target)
-        hyb.psi_index = [lv.unique_index[p] for p in hybrid_effect]
         hyb.effect = Int.(hybrid_effect)
-        hyb.sd_scale = [lv.sd_scale[p] for p in hybrid_effect]
         hyb.slope = Float64.(hybrid_slope)
+        if _laplace_block(lv)
+            # The level's construction, in the block order with the items last
+            # in item order, and its free scales and correlations.
+            hyb.block = true
+            hyb.psi_index = zeros(Int, length(hybrid_effect))
+            hyb.sd_scale = zeros(length(hybrid_effect))
+            hyb.lv_sd = copy(lv.sd_index); hyb.lv_cor = copy(lv.cor_index)
+            hyb.lv_sdfix = copy(lv.sd_fixed); hyb.lv_corfix = copy(lv.cor_fixed)
+            hyb.lv_scale = copy(lv.sd_scale); hyb.lv_code = lv.covmatcode
+            hyb.perm = vcat(findall(p -> !(p in hybrid_effect), 1:nrandomeffects(lv)),
+                Int.(hybrid_effect))
+            hyb.lparams = sort!(unique!(filter(>(0), vcat(lv.sd_index, lv.cor_index))))
+        else
+            hyb.psi_index = [lv.unique_index[p] for p in hybrid_effect]
+            hyb.sd_scale = [lv.sd_scale[p] for p in hybrid_effect]
+        end
     end
     inert = nothing
     if !isempty(inert_level)
@@ -967,6 +1005,18 @@ function _laplace_popchol(values::AbstractVector{T}, level::CTSEMLaplaceLevel) w
     k == 0 && return zeros(T, 0, 0)
     isreducedrank(level) && return _laplace_poploading(values, level)
     Sigma = _laplace_popcov_full(values, level)
+    if _laplace_block(level)
+        # `[[C_LL, 0], [C_FL, C_FF]]` in the block order: the leading columns
+        # are the level's, which carry the integrated effects' conditional
+        # mean `C_FL u_L`; the filter integrates `C_FF u_F` (`_hybrid_factor!`).
+        order = _laplace_block_order(level)
+        nL = nlatent(level)
+        S = zeros(T, k, nL)
+        nL == 0 && return S
+        Lp = cholesky(Symmetric(Sigma[order, order])).L
+        S[order, :] = view(Lp, :, 1:nL)
+        return S
+    end
     order = level.order
     if length(order) == k
         Lp = cholesky(Symmetric(Sigma[order, order])).L
@@ -1117,7 +1167,7 @@ function _laplace_order_roots!(laplace::CTSEMLaplaceObjective, theta::AbstractVe
     shares = _laplace_determined_shares(laplace, theta)
     for (l, level) in enumerate(laplace.spec.levels)
         k = nrandomeffects(level)
-        (k < 2 || isreducedrank(level)) && continue
+        (k < 2 || isreducedrank(level) || _laplace_block(level)) && continue
         order = sortperm(shares[l]; rev=true)
         resize!(level.order, k)
         copyto!(level.order, order)
@@ -1242,6 +1292,8 @@ function _laplace_level_covariance(lv::CTSEMLaplaceLevel, x::Vector{Float64})
     else
         _laplace_popcov_full(x, lv)
     end
+    # A block's integrated effects are in the full covariance already.
+    isreducedrank(lv) || return Sigma
     for p in eachindex(lv.hybrid)
         lv.hybrid[p] || continue
         psi = log1p_exp(2 * x[lv.unique_index[p]] - 1) * lv.sd_scale[p] + 1e-10
@@ -7034,11 +7086,12 @@ function ctsem_laplace_subject_values(laplace::CTSEMLaplaceObjective,
             _laplace_restrict_levels(laplace, U, w[U][1:units.dims[U]], from_level))
         # The integrated deviations are the subject level's own.
         if nh > 0 && from_level <= 1
-            psi = [_hybrid_item_sd(hyb, lv, theta, k) for k in items]
+            B = _hybrid_dev_map(hyb, lv, theta)
             for U in eachindex(units.members), (m, i) in enumerate(units.members[U])
                 at = units.dims[U] + (m - 1) * nh
-                for (c, k) in enumerate(items)
-                    shifted[i, lv.re_index[hyb.effect[k]]] += psi[c] * w[U][at + c]
+                for (c, k) in enumerate(items), p in axes(B, 1)
+                    b = B[p, k]
+                    iszero(b) || (shifted[i, lv.re_index[p]] += b * w[U][at + c])
                 end
             end
         end

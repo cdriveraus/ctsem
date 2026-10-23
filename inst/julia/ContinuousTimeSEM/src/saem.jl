@@ -824,6 +824,11 @@ function ctsem_saem_init(laplace::CTSEMLaplaceObjective, theta::AbstractVector;
     # index them; the steps hold them still.
     x = _laplace_extend(laplace, collect(Float64, theta))
     _laplace_check_indices(laplace, length(x))
+    # Its scale step reads a full-rank level's covariance off sampled
+    # deviations, and a block's integrated ones are not sampled.
+    any(_laplace_block, laplace.spec.levels) && throw(ArgumentError(
+        "SAEM needs every effect of a full-rank level as a coordinate; this " *
+        "objective integrates some in the subject filter (build it without the hybrid)"))
     ctsem_laplace_evaluate(laplace, x; gradient=false)
     nunits = length(laplace.units.members)
     K = chains > 0 ? Int(chains) : _saem_default_chains(nunits)

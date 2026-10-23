@@ -2553,14 +2553,18 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
   )
 }
 
-# Which subject-level own variances the subject filter integrates itself
-# instead of the Laplace layer (the engine's `CTSEMHybrid`): a list of the
-# effects (indices into the subject level's), the kind of cell each one moves
-# (1 a manifest intercept, 2 an initial state mean, 3 a continuous
-# intercept), the manifest or latent it moves, and that cell's transform's
-# slope in the raw value -- or NULL.
+# Which subject-level effects the subject filter integrates itself instead of
+# the Laplace layer (the engine's `CTSEMHybrid`): a list of the effects
+# (indices into the subject level's), the kind of cell each one moves (1 a
+# manifest intercept, 2 an initial state mean, 3 a continuous intercept), the
+# manifest or latent it moves, that cell's transform's slope in the raw value,
+# and `block` -- or NULL. On a reduced-rank level the candidates are the own
+# variances (`popunique`), the shared loadings staying in the layer; on a
+# full-rank level every effect is (`block`), and the filter integrates the
+# qualifying ones given the rest, the layer keeping the rest as its
+# coordinates.
 #
-# An own variance qualifies when every matsetup cell carrying its raw position
+# An effect qualifies when every matsetup cell carrying its raw position
 # is a MANIFESTMEANS, T0MEANS or CINT cell of one row with the affine
 # transform (code 0: `(raw * meanscale + inneroffset) * multiplier + offset`,
 # slope `meanscale * multiplier`). Then, for fixed deviations, a linear
@@ -2577,7 +2581,9 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
   if (!isTRUE(getOption("ctsem.laplace.hybrid", TRUE))) return(NULL)
   if (is.null(setup) || !nrow(setup) || !length(levels)) return(NULL)
   lv <- levels[[1]]
-  own <- which(as.integer(lv$unique_index) > 0L)
+  rank <- as.integer(if (is.null(lv$rank)) lv$nrandom else lv$rank)
+  block <- rank == as.integer(lv$nrandom) && is.null(lv$load_row)
+  own <- if (block) seq_along(lv$re_index) else which(as.integer(lv$unique_index) > 0L)
   if (!length(own)) return(NULL)
   if (!isTRUE(model$continuoustime)) return(NULL)
   if (length(model$manifesttype) && any(as.integer(model$manifesttype) != 0L)) return(NULL)
@@ -2607,7 +2613,7 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
     slope <- c(slope, sl[1])
   }
   if (!length(effect)) return(NULL)
-  list(effect = effect, kind = kind, target = target, slope = slope)
+  list(effect = effect, kind = kind, target = target, slope = slope, block = block)
 }
 
 # Whether the model's calculations leave the filter linear and Gaussian with
@@ -4068,6 +4074,9 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
     # per-subject one, and the random effects are described alongside it.
     parameter_table <- .ctJuliaParameterTable(model)
     laplace <- .ctJuliaLaplaceSpec(model, parameter_table, prepared_data, dat)
+    # SAEM samples every effect of a full-rank level to step its covariance,
+    # so a fit that runs it keeps a block's effects in the layer.
+    if (isTRUE(laplace$hybrid$block) && isTRUE(laplacecontrol$saem)) laplace$hybrid <- NULL
     # On the specification rather than passed at optimise time, because the
     # inner tolerance changes the *value* the objective returns: two fits
     # differing only in it are not the same function, and `.ctJuliaObjectiveKey`
@@ -6014,6 +6023,7 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
     tipredMissingIncludeOutcome = .ctJuliaOr(optimcontrol$tipredMissingIncludeOutcome, TRUE),
     laplacecontrol = list(inner_maxiter = optimcontrol$laplace_inner_maxiter,
       inner_tol = optimcontrol$laplace_inner_tol,
+      saem = .ctJuliaSaemIterations(optimcontrol) > 0L,
       # The default is resolved here, at the one place a *new* fit is
       # specified, and only for the routes that have a Laplace term: every
       # rebuild of an existing specification passes its own `inner` instead,
