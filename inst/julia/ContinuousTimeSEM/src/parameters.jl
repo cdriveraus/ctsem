@@ -136,12 +136,18 @@ end
     CTSEMHybrid
 
 Random-effect deviations the subject filter integrates itself rather than the
-Laplace layer: one per item, an own variance (`popunique`) on a manifest
-intercept whose transform is affine. For fixed deviations a linear Gaussian
+Laplace layer: one per item, an own variance (`popunique`) on a cell that
+enters a mean affinely -- a manifest intercept (MANIFESTMEANS, `kind` 1), an
+initial state mean (T0MEANS, `kind` 2) or a continuous intercept (CINT,
+`kind` 3) -- whose transform is affine. For fixed deviations a linear Gaussian
 filter's covariances and gains do not depend on them -- they only shift
 means -- so the log likelihood is exactly quadratic in them and their
 Gaussian prior integrates out in closed form (de Jong's augmented filter).
-The filter carries `X`, the state mean's dependence on the deviations, and
+The filter carries `X`, the state mean's dependence on the deviations: a
+manifest intercept's column starts at zero and shifts its item's observation
+directly (`E`), an initial mean's starts at `slope e_l` and propagates by the
+discrete drift, a continuous intercept's gains the discrete intercept's
+Jacobian in it at every prediction substep (`_hybrid_predict!`). It
 accumulates `S = sum V' S_t^-1 V` and `s = sum V' S_t^-1 y_t` with
 `V = Lambda X + E` (`_hybrid_update!`); the pass ends by adding
 `-1/2 logdet(I + G S G) + 1/2 (G s)'(I + G S G)^-1 (G s)`, `G` the items' own
@@ -152,7 +158,9 @@ Mutable and empty by default, because the Laplace objective that knows which
 deviations are its own is built after the `EKFParameters` it wraps:
 `ctsem_laplace_objective` fills it in place.
 
-  * `manifests[h]`: the manifest whose intercept item `h` shifts.
+  * `kind[h]`: 1 a manifest intercept, 2 an initial state mean, 3 a
+    continuous intercept.
+  * `target[h]`: the manifest item `h` shifts (`kind` 1), else the latent.
   * `psi_index[h]`: the raw position of its own variance.
   * `effect[h]`: its index among the subject level's effects, whose `re_index`
     is the raw position the deviation shifts (reporting adds it there).
@@ -161,14 +169,17 @@ deviations are its own is built after the `EKFParameters` it wraps:
     `slope * (log1p_exp(2 raw - 1) sd_scale + 1e-10) * u`, `u ~ N(0, 1)`.
 """
 mutable struct CTSEMHybrid
-    manifests::Vector{Int}
+    kind::Vector{Int}
+    target::Vector{Int}
     psi_index::Vector{Int}
     effect::Vector{Int}
     sd_scale::Vector{Float64}
     slope::Vector{Float64}
 end
-CTSEMHybrid() = CTSEMHybrid(Int[], Int[], Int[], Float64[], Float64[])
-_hybrid_on(h::CTSEMHybrid) = !isempty(h.manifests)
+CTSEMHybrid() = CTSEMHybrid(Int[], Int[], Int[], Int[], Float64[], Float64[])
+_hybrid_on(h::CTSEMHybrid) = !isempty(h.effect)
+"""The model's hybrid item count, the capacity every per-item array is sized by."""
+_hybrid_items(h::CTSEMHybrid) = length(h.effect)
 
 """
     CTSEMStationaryElements

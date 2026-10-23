@@ -412,7 +412,7 @@ function _hybrid_joint_gated(laplace::CTSEMLaplaceObjective, U::Integer,
     jblocks = [CTSEMLaplaceBlock(0, layout.n, collect(eachindex(members)), 1, Int[])]
     # The layer's unit has a coordinate for every own variance of every member,
     # observed or not, and its eigenvalue cap counts them all.
-    dlayer = length(u) + length(members) * length(laplace.objective.params.hybrid.manifests)
+    dlayer = length(u) + length(members) * _hybrid_items(laplace.objective.params.hybrid)
     return _laplace_gated_term(laplace, U, values, Ls, z, aws; M=curvature(z),
         inner=objective(z), objective=objective, curvature=curvature,
         blocks=jblocks, dcheck=dlayer)
@@ -490,7 +490,7 @@ prior, `psi^2`.
 """
 function _hybrid_add_mode_rows!(raw, rawcov, g, m, slice, laplace, h::CTSEMHybrid,
     lv::CTSEMLaplaceLevel, theta, modes, cross, factors, coupling, blocks, d)
-    nh = length(h.manifests)
+    nh = _hybrid_items(h)
     seen = falses(nh)
     L = _laplace_popchol(theta, lv)
     if modes !== nothing

@@ -497,7 +497,7 @@ function _laplace_gated_unit_adjoint(laplace::CTSEMLaplaceObjective, U::Integer,
             zz -> _hybrid_joint_curvature(laplace, U, theta, Ls, zz, layout).diag[1]
         end
         dcheck = length(uhat) + length(members) *
-            length(laplace.objective.params.hybrid.manifests)
+            _hybrid_items(laplace.objective.params.hybrid)
     else
         layout = nothing
         z0 = copy(uhat)

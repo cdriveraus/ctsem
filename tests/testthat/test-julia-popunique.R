@@ -363,6 +363,72 @@ test_that("own intercept variances the filter integrates match the Laplace coord
   }
 })
 
+# Own variances on an initial mean and a continuous intercept beside the
+# manifest intercepts: every cell affine in a linear Gaussian model, so the
+# filter integrates each kind exactly (an initial mean's column starts at its
+# slope, a continuous intercept's gains the discrete intercept's Jacobian at
+# every substep), and must equal the layer holding them as coordinates.
+.pu_means_model <- function() {
+  m <- suppressWarnings(suppressMessages(ctModel(type = "ct",
+    id = "id", manifestNames = c("Y1", "Y2", "Y3"), latentNames = c("eta1", "eta2"),
+    LAMBDA = matrix(c(1, 0.8, 0, 0, 0.5, 1), 3, 2),
+    DRIFT = matrix(c(-0.6, 0.2, -0.1, -0.4), 2, 2),
+    DIFFUSION = matrix(c(0.5, 0, 0.1, 0.4), 2, 2), MANIFESTVAR = diag(0.4, 3),
+    MANIFESTMEANS = matrix(c("mm1", "mm2", "mm3"), 3, 1),
+    T0VAR = diag(1, 2), T0MEANS = matrix(c("t0m1", 0), 2, 1),
+    CINT = matrix(c(0, "cint2"), 2, 1))))
+  m$pars$indvarying <- m$pars$param %in% c("t0m1", "cint2", "mm1", "mm2", "mm3")
+  m
+}
+
+.pu_means_data <- function() {
+  set.seed(17)
+  n <- 20; t <- 6
+  d <- data.frame(id = rep(seq_len(n), each = t), time = rep(seq_len(t) - 1, n) * 0.7)
+  person <- matrix(rnorm(n * 3), n, 3)
+  for (j in 1:3) d[[paste0("Y", j)]] <- person[d$id, j] + rnorm(n * t)
+  d$Y3[d$id > 14 & d$time > 2] <- NA
+  d
+}
+
+test_that("own variances on an initial mean and a continuous intercept are integrated by the filter, exactly", {
+  skip_without_julia()
+  m <- .pu_means_model()
+  d <- .pu_means_data()
+  old <- options(ctsem.laplace.hybrid = TRUE)
+  on.exit(options(old), add = TRUE)
+  cases <- list(
+    list(rank = 0, pu = TRUE, kinds = c(2L, 3L, 1L, 1L, 1L)),
+    list(rank = 1, pu = c("T0MEANS", "CINT"), kinds = c(2L, 3L)),
+    list(rank = 1, pu = TRUE, kinds = c(2L, 3L, 1L, 1L, 1L)))
+  set.seed(23)
+  for (case in cases) {
+    options(ctsem.laplace.hybrid = TRUE)
+    hy <- .pu_spec(d, m, poprank = case$rank, popunique = case$pu)
+    options(ctsem.laplace.hybrid = FALSE)
+    la <- .pu_spec(d, m, poprank = case$rank, popunique = case$pu)
+    expect_equal(sort(hy$laplace$hybrid$kind), sort(case$kinds))
+    expect_null(la$laplace$hybrid)
+    for (draw in 1:2) {
+      x <- rnorm(length(.pu_names(hy)), 0, 0.3)
+      rh <- .pu_eval(hy, x)
+      rl <- .pu_eval(la, x)
+      expect_equal(rh$value, rl$value, tolerance = 1e-9)
+      expect_equal(as.numeric(rh$gradient), as.numeric(rl$gradient), tolerance = 1e-7)
+      fw <- .pu_eval(hy, x, "forward")
+      expect_equal(rh$value, fw$value, tolerance = 1e-10)
+      expect_equal(as.numeric(rh$gradient), as.numeric(fw$gradient), tolerance = 1e-6)
+    }
+  }
+  # A stationary initial state has no initial mean to shift: that effect stays
+  # in the layer, the continuous intercept's is still integrated.
+  options(ctsem.laplace.hybrid = TRUE)
+  ms <- m
+  ms$stationary <- TRUE
+  st <- .pu_spec(d, ms, poprank = 1, popunique = c("T0MEANS", "CINT"))
+  expect_equal(st$laplace$hybrid$kind, 3L)
+})
+
 test_that("integrated own intercepts beside shared effects on the dynamics are still Laplace exactly", {
   skip_without_julia()
   # The shared effect loads on DRIFT and DIFFUSION, so the deviations'

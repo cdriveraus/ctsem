@@ -2555,21 +2555,24 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
 
 # Which subject-level own variances the subject filter integrates itself
 # instead of the Laplace layer (the engine's `CTSEMHybrid`): a list of the
-# effects (indices into the subject level's), the manifest each one is the
-# intercept of, and that intercept transform's slope in the raw value -- or
-# NULL.
+# effects (indices into the subject level's), the kind of cell each one moves
+# (1 a manifest intercept, 2 an initial state mean, 3 a continuous
+# intercept), the manifest or latent it moves, and that cell's transform's
+# slope in the raw value -- or NULL.
 #
 # An own variance qualifies when every matsetup cell carrying its raw position
-# is a MANIFESTMEANS cell of one manifest with the affine transform (code 0:
-# `(raw * meanscale + inneroffset) * multiplier + offset`, slope
-# `meanscale * multiplier`). Then, for fixed deviations, a linear Gaussian
-# filter's covariances and gains do not depend on them, the log likelihood is
-# exactly quadratic in them, and the filter integrates them in closed form;
-# Laplace runs over what is left. So the model must also be linear and
-# Gaussian: continuous time, every indicator Gaussian, no cell referencing a
-# state, and no calculation that could carry the deviations into a covariance
-# or gain (`.ctJuliaHybridCalcsOk`). Off with `options(ctsem.laplace.hybrid =
-# FALSE)`, which keeps every own variance in the Laplace layer as before.
+# is a MANIFESTMEANS, T0MEANS or CINT cell of one row with the affine
+# transform (code 0: `(raw * meanscale + inneroffset) * multiplier + offset`,
+# slope `meanscale * multiplier`). Then, for fixed deviations, a linear
+# Gaussian filter's covariances and gains do not depend on them, the log
+# likelihood is exactly quadratic in them, and the filter integrates them in
+# closed form; Laplace runs over what is left. So the model must also be
+# linear and Gaussian: continuous time, every indicator Gaussian, no cell
+# referencing a state, and no calculation that could carry the deviations into
+# a covariance or gain (`.ctJuliaHybridCalcsOk`). An initial mean the model
+# replaces by a stationary moment is no initial mean, so a T0MEANS effect
+# stays in the layer there. Off with `options(ctsem.laplace.hybrid = FALSE)`,
+# which keeps every own variance in the Laplace layer as before.
 .ctJuliaLaplaceHybrid <- function(model, setup, levels) {
   if (!isTRUE(getOption("ctsem.laplace.hybrid", TRUE))) return(NULL)
   if (is.null(setup) || !nrow(setup) || !length(levels)) return(NULL)
@@ -2581,30 +2584,39 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
   if (!.ctJuliaHybridCalcsOk(model)) return(NULL)
   if ("stateref" %in% names(setup) && any(as.integer(setup$stateref) > 0L)) return(NULL)
   values <- as.data.frame(model$modelmats$matvalues)
-  code <- .ctMatricesList()$base[["MANIFESTMEANS"]]
+  base <- .ctMatricesList()$base
+  kinds <- c(MANIFESTMEANS = 1L, T0MEANS = 2L, CINT = 3L)
+  codes <- as.integer(base[names(kinds)])
+  stationary <- isTRUE(as.logical(model$stationary)) || !is.null(model$t0stationary)
   param <- as.integer(setup$param)
-  effect <- integer(); manifest <- integer(); slope <- numeric()
+  effect <- integer(); kind <- integer(); target <- integer(); slope <- numeric()
   for (p in own) {
     rows <- which(param == as.integer(lv$re_index[p]))
-    if (!length(rows) || !all(as.integer(setup$matrix[rows]) == code) ||
-        !all(as.integer(setup$transform[rows]) == 0L) ||
+    if (!length(rows)) next
+    mats <- unique(as.integer(setup$matrix[rows]))
+    if (length(mats) != 1L || !mats %in% codes) next
+    k <- kinds[[match(mats, codes)]]
+    if (k == 2L && stationary) next
+    if (!all(as.integer(setup$transform[rows]) == 0L) ||
         length(unique(as.integer(setup$row[rows]))) != 1L) next
     sl <- as.numeric(values$meanscale[rows]) * as.numeric(values$multiplier[rows])
     if (!all(is.finite(sl)) || any(abs(sl - sl[1]) > 0)) next
     effect <- c(effect, p)
-    manifest <- c(manifest, as.integer(setup$row[rows[1]]))
+    kind <- c(kind, k)
+    target <- c(target, as.integer(setup$row[rows[1]]))
     slope <- c(slope, sl[1])
   }
   if (!length(effect)) return(NULL)
-  list(effect = effect, manifest = manifest, slope = slope)
+  list(effect = effect, kind = kind, target = target, slope = slope)
 }
 
 # Whether the model's calculations leave the filter linear and Gaussian with
-# covariances and gains that do not depend on the own intercept deviations, as
+# covariances and gains that do not depend on the integrated deviations, as
 # the hybrid needs (`.ctJuliaLaplaceHybrid`). The deviations enter only through
-# MANIFESTMEANS, and the state estimates through the residual, so a calculation
-# is out when it reads a state (gains through the state) or MANIFESTMEANS, or
-# is itself a MANIFESTMEANS cell. Anything else -- a measurement error written
+# MANIFESTMEANS, T0MEANS and CINT, and the state estimates through the
+# residual, so a calculation is out when it reads a state (gains through the
+# state) or one of those vectors, or is itself a cell of one. Anything else
+# -- a measurement error written
 # in parameters and a time dependent predictor, say, as for a study's known
 # response rounding -- is a fixed matrix for each row, and the filter integrates
 # the deviations exactly through it.
@@ -2645,9 +2657,8 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
   if (!length(calcs)) return(TRUE)
   lhs <- sub("=.*$", "", calcs)
   rhs <- sub("^[^=]*=", "", calcs)
-  !any(grepl("state[", rhs, fixed = TRUE) |
-    grepl("MANIFESTMEANS[", rhs, fixed = TRUE) |
-    grepl("MANIFESTMEANS[", lhs, fixed = TRUE))
+  means <- "\\b(MANIFESTMEANS|T0MEANS|CINT)\\["
+  !any(grepl("state[", rhs, fixed = TRUE) | grepl(means, rhs) | grepl(means, lhs))
 }
 
 # Which random effects cannot reach which groups' data: a matrix of (level,
@@ -4657,7 +4668,8 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
     hybrid <- spec$laplace$hybrid
     if (!is.null(hybrid) && length(hybrid$effect)) {
       laplace_args$hybrid_effect <- V(as.integer(hybrid$effect))
-      laplace_args$hybrid_manifest <- V(as.integer(hybrid$manifest))
+      laplace_args$hybrid_kind <- V(as.integer(hybrid$kind))
+      laplace_args$hybrid_target <- V(as.integer(hybrid$target))
       laplace_args$hybrid_slope <- V(as.numeric(hybrid$slope))
     }
     # Sent only when every unit's inner problem is a concave quadratic

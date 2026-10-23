@@ -90,7 +90,7 @@ function ctsem_laplace_sequential(laplace::CTSEMLaplaceObjective, values::Abstra
     end
     hyb = sp.hybrid
     d = maximum(units.dims; init=0)
-    W = max(d + (_hybrid_on(hyb) ? length(hyb.manifests) : 0), 1)
+    W = max(d + (_hybrid_on(hyb) ? _hybrid_items(hyb) : 0), 1)
     S = ForwardDiff.Dual{_LaplaceSequentialTag,Float64,W}
     _laplace_ensure_pool!(laplace)
     _laplace_parallel(laplace, eachindex(units.members)) do U
@@ -175,7 +175,7 @@ function _laplace_sequential_unit!(out, laplace::CTSEMLaplaceObjective, U::Integ
             # that item still carries.
             tt = min(t + 1, T)
             _laplace_truncate!(so, full, tt)
-            pass_items = hybrid ? collect(1:length(hyb.manifests)) : Int[]
+            pass_items = hybrid ? collect(1:_hybrid_items(hyb)) : Int[]
             D = d + length(pass_items)
             z0 = zeros(Float64, D)
             SigmaP = zeros(Float64, D, D)

@@ -728,12 +728,14 @@ triple says that effect `inert_effect` (an index into that level's effects)
 cannot reach group `inert_group`'s data at level `inert_level`
 (`_laplace_build_units`).
 
-`hybrid_effect`, `hybrid_manifest` and `hybrid_slope`, when sent, are parallel
-too: the subject level's effects (indices into its effects) whose own variance
-the subject filter integrates instead of this objective, the manifest whose
-intercept each one is, and that intercept transform's slope in the raw value
-(`CTSEMHybrid`). They leave the level's root and its block, and fill the
-wrapped objective's `params.hybrid`, which every subject's filter shares.
+`hybrid_effect`, `hybrid_kind`, `hybrid_target` and `hybrid_slope`, when sent,
+are parallel too: the subject level's effects (indices into its effects) whose
+own variance the subject filter integrates instead of this objective, the
+kind of cell each one moves (1 a manifest intercept, 2 an initial state mean,
+3 a continuous intercept), the manifest or latent it moves, and that cell's
+transform's slope in the raw value (`CTSEMHybrid`). They leave the level's
+root and its block, and fill the wrapped objective's `params.hybrid`, which
+every subject's filter shares.
 
 `quadratic`, when sent, says every unit's inner problem is a concave quadratic,
 so the mode probes are skipped (`CTSEMLaplaceObjective`'s field of that name).
@@ -743,7 +745,7 @@ function ctsem_laplace_objective(objective::CTSEMObjective; re_index=Int[],
     group=Int[], level_ngroups=Int[], level_covmatcode=Int[],
     level_rank=Int[], load_index=Int[], sd_fixed=Float64[], cor_fixed=Float64[],
     unique_index=Int[], inert_level=Int[], inert_group=Int[], inert_effect=Int[],
-    hybrid_effect=Int[], hybrid_manifest=Int[], hybrid_slope=Float64[],
+    hybrid_effect=Int[], hybrid_kind=Int[], hybrid_target=Int[], hybrid_slope=Float64[],
     level_nload=Int[], load_row=Int[], load_col=Int[],
     inner_maxiter::Integer=_LAPLACE_INNER_MAXITER[], inner_tol::Real=1e-10,
     floor="total", gate_lo::Real=0.2, gate_hi::Real=0.7, quadratic::Bool=false)
@@ -820,14 +822,17 @@ function ctsem_laplace_objective(objective::CTSEMObjective; re_index=Int[],
     # The deviations the filter integrates, into the shared `EKFParameters`.
     hyb = objective.params.hybrid
     if isempty(hybrid_effect)
-        hyb.manifests = Int[]; hyb.psi_index = Int[]; hyb.effect = Int[]
+        hyb.kind = Int[]; hyb.target = Int[]; hyb.psi_index = Int[]; hyb.effect = Int[]
         hyb.sd_scale = Float64[]; hyb.slope = Float64[]
     else
-        (length(hybrid_manifest) == length(hybrid_effect) == length(hybrid_slope)) ||
-            throw(DimensionMismatch(
-                "hybrid_effect, hybrid_manifest and hybrid_slope must be the same length"))
+        (length(hybrid_target) == length(hybrid_effect) == length(hybrid_slope) ==
+            length(hybrid_kind)) || throw(DimensionMismatch(
+                "hybrid_effect, hybrid_kind, hybrid_target and hybrid_slope must be the same length"))
+        all(k -> k in (1, 2, 3), hybrid_kind) || throw(ArgumentError(
+            "hybrid_kind must be 1 (a manifest intercept), 2 (an initial state mean) or 3 (a continuous intercept)"))
         lv = levels[1]
-        hyb.manifests = Int.(hybrid_manifest)
+        hyb.kind = Int.(hybrid_kind)
+        hyb.target = Int.(hybrid_target)
         hyb.psi_index = [lv.unique_index[p] for p in hybrid_effect]
         hyb.effect = Int.(hybrid_effect)
         hyb.sd_scale = [lv.sd_scale[p] for p in hybrid_effect]
@@ -6882,7 +6887,7 @@ function _laplace_mode_jacobian(laplace::CTSEMLaplaceObjective, theta::Vector{Fl
     Ls = _laplace_popchols(theta, laplace.spec)
     hessians = _laplace_primal_curvature(laplace, theta, Ls)
     hyb = laplace.objective.params.hybrid
-    nh = _hybrid_on(hyb) ? length(hyb.manifests) : 0
+    nh = _hybrid_on(hyb) ? _hybrid_items(hyb) : 0
     slot = nh > 0 ? invperm(sortperm(hyb.effect)) : Int[]
     out = Vector{Matrix{Float64}}(undef, nunits)
     modes = Vector{Vector{Float64}}(undef, nunits)
@@ -6992,7 +6997,7 @@ function ctsem_laplace_subject_values(laplace::CTSEMLaplaceObjective,
     nsubjects = length(laplace.objective.subject_objectives)
     units = laplace.units
     hyb = laplace.objective.params.hybrid
-    nh = _hybrid_on(hyb) ? length(hyb.manifests) : 0
+    nh = _hybrid_on(hyb) ? _hybrid_items(hyb) : 0
     items = nh > 0 ? sortperm(hyb.effect) : Int[]
     lv = laplace.spec.levels[1]
     factors = conditional ? _laplace_conditional_factors(laplace, centre, linear, nh) :

@@ -146,7 +146,7 @@ function ctsem_laplace_effect_draws(laplace::CTSEMLaplaceObjective,
     units = laplace.units
     nunits = length(units.members)
     hyb = laplace.objective.params.hybrid
-    nh = _hybrid_on(hyb) ? length(hyb.manifests) : 0
+    nh = _hybrid_on(hyb) ? _hybrid_items(hyb) : 0
     # A unit's coordinates: its effects, then each member's deviations, one per
     # hybrid item whether the member observes it or not (`_laplace_effect_posterior`).
     widths = [units.dims[U] + nh * length(units.members[U]) for U in 1:nunits]

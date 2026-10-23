@@ -2,20 +2,25 @@
 # forward recursion, the closing term, the tape records and their reverse.
 #
 # Forward, per subject pass, with `q` columns (the hybrid items the subject
-# observes at all) and the filter's own gains and innovation covariances:
+# carries: a manifest intercept's where it observes the item at all, a state
+# mean's always) and the filter's own gains and innovation covariances:
 #
+#   start:    X = 0, except an initial mean's column, slope e_l
 #   update:   V = Lambda[o,:] X + E          (E selects each observed item's column)
 #             S += V' S_t^-1 V,  s += V' S_t^-1 y_t      (through U^-T, never S^-1)
 #             X -= K V
 #   predict:  X = A X                         (A the discrete drift)
+#             + slope J^-1 (A - I) e_l  for a continuous intercept's column
 #   close:    ll += 1/2 b' M^-1 b  [ - 1/2 logdet(M) ],   M = I + G S G,  b = G s
 #
-# with `G = diag(g)`, `g` each item's own sd times its intercept's slope. For
-# fixed deviations a linear Gaussian filter's covariances and gains do not
-# depend on them, so the log likelihood is exactly quadratic in them, and this
-# is its integral against their N(0, I) prior (de Jong's augmented filter).
-# Nothing here propagates a covariance for the deviations: they carry no
-# dynamics but `A X`, and no discretisation at all.
+# with `G = diag(g)`, `g` each item's own sd times its cell's slope. For fixed
+# deviations a linear Gaussian filter's covariances and gains do not depend on
+# them, so the log likelihood is exactly quadratic in them, and this is its
+# integral against their N(0, I) prior (de Jong's augmented filter). Nothing
+# here propagates a covariance for the deviations: a column carries no dynamics
+# but `A X`, and a continuous intercept's the discrete intercept's Jacobian in
+# it, which the filter forms for the intercept itself (`_compute_discrete_time_form!`:
+# the affine block's solve, or the series where its pivots are small).
 #
 # By default the pass returns the profile, `1/2 b' M^-1 b` without the logdet:
 # the joint log density at the deviations' conditional mode. That is what
@@ -31,7 +36,7 @@
 # loops read the leading block a subject or row needs. Products and solves are
 # loops: nothing takes a BLAS or LAPACK lock.
 
-"""Start a pass: which hybrid items this subject observes, and zeroed state."""
+"""Start a pass: which hybrid items this subject carries, and their state."""
 function _hybrid_start!(hb::CTSEMHybridBuffers{T}, h::CTSEMHybrid, data,
     n::Int, m::Int, continuous_time::Bool) where {T}
     hb.active = _hybrid_on(h) && hb.mode != _HYBRID_OFF
@@ -40,30 +45,45 @@ function _hybrid_start!(hb::CTSEMHybridBuffers{T}, h::CTSEMHybrid, data,
     hb.active || return nothing
     continuous_time || throw(ArgumentError(
         "deviations integrated in the filter need a continuous-time model"))
-    nh = length(h.manifests)
+    nh = _hybrid_items(h)
     length(hb.col) == m || (hb.col = zeros(Int, m))
     fill!(hb.col, 0)
-    length(hb.item) >= nh || (hb.item = zeros(Int, nh))
+    if length(hb.item) < nh
+        hb.item = zeros(Int, nh)
+        hb.ckind = zeros(Int, nh)
+        hb.clat = zeros(Int, nh)
+        hb.cslope = zeros(Float64, nh)
+    end
     q = 0
-    @inbounds for (k, j) in enumerate(h.manifests)
-        seen = false
-        for c in axes(data, 2)
-            if _ctsem_observed(data[j, c])
-                seen = true
-                break
+    @inbounds for k in 1:nh
+        kind = h.kind[k]
+        if kind == 1
+            # A manifest intercept's column, where the subject observes the item.
+            j = h.target[k]
+            seen = false
+            for c in axes(data, 2)
+                if _ctsem_observed(data[j, c])
+                    seen = true
+                    break
+                end
             end
-        end
-        if seen
+            seen || continue
             q += 1
             hb.col[j] = q
-            hb.item[q] = k
+        else
+            q += 1
         end
+        hb.item[q] = k
+        hb.ckind[q] = kind
+        hb.clat[q] = kind == 1 ? 0 : h.target[k]
+        hb.cslope[q] = h.slope[k]
     end
     hb.q = q
     q == 0 && return nothing
     if size(hb.X, 1) < n || size(hb.X, 2) < nh
         hb.X = zeros(T, n, nh)
         hb.Xt = zeros(T, n, nh)
+        hb.Xinc = zeros(T, n, nh)
     end
     if size(hb.V, 1) < m || size(hb.V, 2) < nh
         hb.V = zeros(T, m, nh)
@@ -84,7 +104,10 @@ function _hybrid_start!(hb::CTSEMHybridBuffers{T}, h::CTSEMHybrid, data,
     @inbounds for c in 1:q
         for r in 1:n
             hb.X[r, c] = zero(T)
+            hb.Xinc[r, c] = zero(T)
         end
+        # An initial mean's deviation shifts the first state mean by its slope.
+        hb.ckind[c] == 2 && (hb.X[hb.clat[c], c] = T(hb.cslope[c]))
         for a in 1:q
             hb.S[a, c] = zero(T)
         end
@@ -152,8 +175,16 @@ function _hybrid_update!(hb::CTSEMHybridBuffers{T}, L, factor, K, y,
     return nothing
 end
 
-"""One prediction substep's share: `X = A X`, into the spare and swapped in."""
-function _hybrid_predict!(hb::CTSEMHybridBuffers{T}, A, n::Int) where {T}
+"""
+One prediction substep's share: `X = A X`, into the spare and swapped in, and
+for a continuous intercept's column (`ckind` 3) the discrete intercept's
+Jacobian in its deviation, `slope J^-1 (A - I) e_l` over the affine block
+`naff` by the engine's own solve, or `slope Phi e_l` where the substep took the
+series (`series.intercept`, set by `_compute_discrete_time_form!` just
+before); kept in `Xinc` for the tape.
+"""
+function _hybrid_predict!(hb::CTSEMHybridBuffers{T}, A, JAx, series, naff::Int,
+    dt, n::Int) where {T}
     q = hb.q
     X, Xt = hb.X, hb.Xt
     @inbounds for c in 1:q, r in 1:n
@@ -164,6 +195,44 @@ function _hybrid_predict!(hb::CTSEMHybridBuffers{T}, A, n::Int) where {T}
         Xt[r, c] = acc
     end
     hb.X, hb.Xt = Xt, X
+    X, Xinc = hb.X, hb.Xinc
+    phi = nothing
+    @inbounds for c in 1:q
+        hb.ckind[c] == 3 || continue
+        l = hb.clat[c]
+        l <= naff || throw(ArgumentError(
+            "a continuous intercept's deviation on latent $(l) lies outside the affine block of $(naff)"))
+        slope = T(hb.cslope[c])
+        if series.intercept
+            phi === nothing && (phi = _series_intercept!(series, JAx, dt, naff))
+            for r in 1:naff
+                Xinc[r, c] = slope * phi[r, l]
+            end
+        else
+            if size(hb.Jc, 1) < naff
+                hb.Jc = zeros(T, naff, naff)
+                hb.jv = zeros(T, naff)
+                hb.piv = zeros(Int, naff)
+            end
+            Jc, jv = hb.Jc, hb.jv
+            for j in 1:naff, i in 1:naff
+                Jc[i, j] = JAx[i, j]
+            end
+            for i in 1:naff
+                jv[i] = slope * (A[i, l] - (i == l ? one(T) : zero(T)))
+            end
+            _solve_square_system_generic!(Jc, jv, hb.piv, naff)
+            for r in 1:naff
+                Xinc[r, c] = jv[r]
+            end
+        end
+        for r in (naff + 1):n
+            Xinc[r, c] = zero(T)
+        end
+        for r in 1:n
+            X[r, c] += Xinc[r, c]
+        end
+    end
     return nothing
 end
 
@@ -264,6 +333,24 @@ function _hybrid_record_X!(record::Union{CTSEMUpdateRecord{T},CTSEMPredictRecord
     X = hb.X
     @inbounds for c in 1:q, r in 1:n
         Xh[r, c] = X[r, c]
+    end
+    return nothing
+end
+
+"""A prediction record's `Xinc`: what the substep added to each column."""
+_hybrid_record_Xinc!(record, hb, n::Int) = nothing
+function _hybrid_record_Xinc!(record::CTSEMPredictRecord{T},
+    hb::CTSEMHybridBuffers{T}, n::Int) where {T}
+    q = hb.active ? hb.q : 0
+    q == 0 && return nothing
+    Xi = record.Xinc
+    if size(Xi, 1) != n || size(Xi, 2) < q
+        Xi = zeros(T, n, size(hb.Xinc, 2))
+        record.Xinc = Xi
+    end
+    Xinc = hb.Xinc
+    @inbounds for c in 1:q, r in 1:n
+        Xi[r, c] = Xinc[r, c]
     end
     return nothing
 end
@@ -506,15 +593,57 @@ function _hybrid_reverse_update!(rec::CTSEMHybridTape{T}, record::CTSEMUpdateRec
 end
 
 """
-One prediction substep's reverse: `X+ = A X`, so `Abar += Xbar X'` into the
-transition's cotangent and `Xbar = A' Xbar`.
+One prediction substep's reverse: `X+ = A X + Xinc`, so `Abar += Xbar X'` into
+the transition's cotangent and `Xbar = A' Xbar`; and first, while `Xbar` is
+still the cotangent of `X+`, each continuous intercept's column, whose
+increment `Xinc[:, c] = slope J^-1 (A - I) e_l` is reversed as the discrete
+intercept is in `_reverse_predict!`: `sbar = J^-T Xbar[1:naff, c]`,
+`JAx_bar -= sbar Xinc[1:naff, c]'`, `Abar[:, l] += slope sbar`; or on the
+series route the series pullback of `Xbar[1:naff, c] (slope e_l)'`, which reads
+no exponential. Scratch from `sc` (`av1`, `aa1`, `piv`, `series`), used before
+the intercept's own reverse reuses them.
 """
-function _hybrid_reverse_predict!(Abar, A, rec::CTSEMHybridTape{T},
-    record::CTSEMPredictRecord{T}, n::Int) where {T}
+function _hybrid_reverse_predict!(Abar, JAx_bar, A, JAx, rec::CTSEMHybridTape{T},
+    h::CTSEMHybrid, record::CTSEMPredictRecord{T}, n::Int, naff::Int, sc,
+    dt) where {T}
     q = rec.q
     q == 0 && return nothing
     Xh = record.Xh
     Xbar = rec.Xbar
+    Xinc = record.Xinc
+    series_done = false
+    sbar = _rs(sc.av1, naff)
+    aa1 = _rs(sc.aa1, naff, naff)
+    @inbounds for c in 1:q
+        k = rec.item[c]
+        h.kind[k] == 3 || continue
+        l = h.target[k]
+        slope = T(h.slope[k])
+        if record.series_intercept
+            if !series_done
+                _series_intercept!(sc.series, JAx, dt, naff)
+                series_done = true
+            end
+            for j in 1:naff, i in 1:naff
+                aa1[i, j] = j == l ? Xbar[i, c] * slope : zero(T)
+            end
+            _series_intercept_pullback!(JAx_bar, sc.series, naff, aa1)
+        else
+            for i in 1:naff
+                sbar[i] = Xbar[i, c]
+            end
+            for j in 1:naff, i in 1:naff
+                aa1[i, j] = JAx[j, i]
+            end
+            _solve_square_system_generic!(aa1, sbar, sc.piv, naff)
+            for j in 1:naff, i in 1:naff
+                JAx_bar[i, j] -= sbar[i] * Xinc[j, c]
+            end
+            for i in 1:naff
+                Abar[i, l] += sbar[i] * slope
+            end
+        end
+    end
     size(rec.Xt) == size(Xbar) || (rec.Xt = zeros(T, size(Xbar)...))
     Xt = rec.Xt
     @inbounds for j in 1:n, i in 1:n
