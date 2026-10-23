@@ -161,6 +161,7 @@
   trace <- list()
   gamma <- NA_real_
   essw <- NA_real_
+  unusable <- 0L
   for (iter in seq_len(maxiter)) {
     Lc <- t(chol(Gamma))
     half <- S %/% 2L
@@ -178,6 +179,21 @@
       values <- values + S
     }
     ok <- is.finite(value) & value > -1e99 & rowSums(!is.finite(G)) == 0
+    unusable <- unusable + sum(!ok)
+    # A draw the density cannot use carries no weight, and no gradient
+    # either: zero weight times an infinite gradient is NaN, which reached the
+    # weighted means and stopped a fit on the stopping rule's NA
+    # (test-poprank.R's full-rank augmented fit, on Linux).
+    G[!ok, ] <- 0
+    if (sum(ok) < 2L) {
+      if (verbose > 0) message(sprintf(
+        'DAIS: %d of %d draws usable at iteration %d; the check\'s normal stands.',
+        sum(ok), S, iter))
+      return(list(used = FALSE, unusable = unusable, iterations = iter,
+        draws = S, gradients = gradients, values = values,
+        cost = if (is.function(costfun)) costfun() - cost0 else 2 * gradients + values,
+        trace = if (length(trace)) do.call(rbind, trace)))
+    }
     Phi <- ifelse(ok, value - lq, -Inf)
     # Off the held directions, where the normal stands as it is.
     GP <- offhold(G %*% Gamma + sweep(Z, 2, mu))
@@ -233,7 +249,8 @@
     recent[[length(recent) + 1L]] <- list(mu = mu, Gamma = Gamma)
     if (length(recent) > average) recent <- recent[-1L]
     trace[[iter]] <- c(gamma = gamma, ess = essw, natural = natural, noise = noise,
-      elbo = elbo, shift = shift, averaging = as.numeric(averaging > 0L))
+      elbo = elbo, shift = shift, averaging = as.numeric(averaging > 0L),
+      usable = sum(ok))
     # A variance still growing past `maxgrowth` times the start's is a
     # direction with no fixed point: the run ends and the caller keeps the
     # check's normal.
@@ -243,7 +260,7 @@
         'DAIS: the covariance grew %.0f times the normal\'s along a direction after %d iterations; the data do not identify it, and the check\'s normal stands.',
         growth, iter))
       return(list(used = FALSE, diverged = TRUE, iterations = iter, growth = growth,
-        draws = S, gradients = gradients, values = values,
+        unusable = unusable, draws = S, gradients = gradients, values = values,
         cost = if (is.function(costfun)) costfun() - cost0 else 2 * gradients + values,
         trace = do.call(rbind, trace)))
     }
@@ -254,7 +271,9 @@
     # one more than the terms, it inflated every averaged shift and covariance
     # by 21/20, which a held direction's variance of 1.05 showed.
     if (averaging == 0L) {
-      settled <- if (natural <= noise && elbo_settled && travel_settled) settled + 1L else 0L
+      # Each test read as unmet where it cannot be read.
+      settled <- if (isTRUE(natural <= noise) && isTRUE(elbo_settled) &&
+        isTRUE(travel_settled)) settled + 1L else 0L
     }
     if (averaging > 0L || settled >= settle) {
       averaging <- averaging + 1L
@@ -279,6 +298,6 @@
     if (averaging > 0L) 'settled' else 'ran out of iterations'))
   list(used = TRUE, mean = centre + as.numeric(A %*% mu), cov = (covraw + t(covraw)) / 2,
     iterations = length(trace), averaged = averaging, settled = averaging > 0L,
-    gamma = gamma, ess = essw, draws = S, gradients = gradients, values = values,
-    cost = cost, trace = do.call(rbind, trace))
+    gamma = gamma, ess = essw, unusable = unusable, draws = S, gradients = gradients,
+    values = values, cost = cost, trace = do.call(rbind, trace))
 }
