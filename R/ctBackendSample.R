@@ -832,15 +832,18 @@
   # would estimate and measurement says not to re-estimate; read before the
   # Hessian's rescaling, which it supersedes.
   source <- .ctBackendMetricSource(fit)
-  if (identical(source, "is")) return(.ctBackendCovPrecision(fit$estimate$cov))
-  if (identical(source, "dais")) return(.ctBackendCovPrecision(fit$uncertainty$details$dais$cov))
-  H <- fit$uncertainty$hessian
-  check <- fit$uncertainty$details$normalcheck
-  if (is.null(H) || !length(check$widths)) return(NULL)
-  information <- -(H + t(H)) / 2
-  PW <- information %*% check$directions
-  rescaled <- information + PW %*% diag(1 / check$widths - 1, length(check$widths)) %*% t(PW)
-  -(rescaled + t(rescaled)) / 2
+  C <- switch(source, is = fit$estimate$cov, dais = fit$uncertainty$details$dais$cov, NULL)
+  if (!is.null(C)) {
+    metric <- .ctBackendCovPrecision(C)
+  } else if (identical(source, "check")) {
+    H <- fit$uncertainty$hessian
+    check <- fit$uncertainty$details$normalcheck
+    information <- -(H + t(H)) / 2
+    PW <- information %*% check$directions
+    rescaled <- information + PW %*% diag(1 / check$widths - 1, length(check$widths)) %*% t(PW)
+    metric <- -(rescaled + t(rescaled)) / 2
+  } else metric <- NULL
+  metric
 }
 
 # The fit with the check `uncertainty = 'checked'` makes
