@@ -95,7 +95,12 @@ covariance's scale does, at up to seven times the evaluations. On a Laplace fit 
 importance sampling
 evaluates a weighted subset of the units chosen and checked as it runs, and
 corrects its weights where that subset strays; \code{coreset = FALSE}
-evaluates every unit instead. \code{parsteps} keeps
+evaluates every unit instead. Where the check of \code{'checked'} names
+a direction, the normal is first moved to the posterior's moments by
+doubly adaptive importance sampling (van den Boom, Cremaschi and Thiery
+2026) and checked again there before anything is sampled; \code{dais =
+FALSE} skips that, \code{daisDraws} sets its draws an iteration (the
+dimension, between 64 and 256) and \code{daisMaxIter} its iterations (150). \code{parsteps} keeps
 stepwise-fixed raw parameters fixed (stan only).
 \code{analyticHessian = FALSE} (julia only) asks for the finite-difference
 Hessian instead of the engine's exact one. \code{likelihood} (\code{'fit'},

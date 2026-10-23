@@ -744,6 +744,15 @@
 # it: the sampled fit keeps the exact Hessian as `uncertainty$hessian`, which
 # the identifiability report reads.
 .ctBackendSampleMetric <- function(fit) {
+  # The normal `'checked'` moved to the posterior's moments where its check
+  # named directions (`.ctDaisRun()`): the posterior's own covariance, which is
+  # what warmup adaptation would estimate and measurement says not to
+  # re-estimate; read before the Hessian's rescaling, which it supersedes.
+  dais <- fit$uncertainty$details$dais
+  if (!is.null(dais$cov) && all(is.finite(dais$cov))) {
+    P <- solve(ctOptimSafeCov(as.matrix(dais$cov)))
+    return(-(P + t(P)) / 2)
+  }
   H <- fit$uncertainty$hessian
   check <- fit$uncertainty$details$normalcheck
   if (is.null(H) || !length(check$widths)) return(NULL)

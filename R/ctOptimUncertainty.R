@@ -2790,6 +2790,36 @@ ctOptimFitLpgFunc <- function(fit, cores=1){
   # against this: a ring 759 and 454, a five-dimensional shell 1770 and 916,
   # the 100-subject strong-shell Laplace fit 6632 and 1926, at like accuracy.
   checked <- !is.null(directions)
+  widths <- uncertaintyfit$details$normalcheck$widths
+  # Where the check named a direction, the normal is first moved to the
+  # posterior's moments (`.ctDaisRun()`, R/ctDais.R) and checked again there:
+  # the recheck's directions are what is sampled, its centre and widths the
+  # normal held in the rest, and that normal is the answer where nothing is
+  # named or sampling fails. `control$dais = FALSE` leaves the Hessian's.
+  dais <- NULL
+  if (checked && !isFALSE(control$dais) && is.function(.ctImisGradient(lpg, centre))) {
+    dais <- .ctDaisRun(lpg, centre, uncertaintyfit$cov, control, verbose = verbose)
+  }
+  if (!is.null(dais)) {
+    recheck <- .ctOptimNormalCheck(.ctImisGradient(lpg, centre), dais$mean, dais$cov)
+    cov2 <- ctOptimSafeCov(if (!is.null(recheck$spread)) recheck$spread$cov else dais$cov)
+    dais$check <- c(recheck[c('draws', 'unusable', 'slope', 'shape', 'widths',
+      'parameters', 'centrescale', 'centredraws')],
+      list(directions = ncol(recheck$directions)))
+    # `mean` is the iteration's own; `centre` is where the recheck's step put
+    # it, and `cov` the normal then held and reported.
+    dais$centre <- recheck$centre
+    dais$cov <- cov2
+    centre <- recheck$centre
+    directions <- recheck$directions
+    widths <- recheck$widths
+    uncertaintyfit$cov <- cov2
+    uncertaintyfit$details$dais <- dais
+    if (!ncol(directions)) {
+      return(list(samples = ctOptimNormalDraws(centre, cov2, finishsamples),
+        uncertaintyfit = uncertaintyfit, control = control, draws = 'normal'))
+    }
+  }
   if (is.null(control$isitersize)) control$isitersize <- if (checked) 100 else 1000
   # Rounds: 100 of 100 draws for `'checked'`. At 50, on a 266-parameter fit
   # whose check named 39 directions, sampling stopped at ESS 181 and Pareto k
@@ -2809,7 +2839,7 @@ ctOptimFitLpgFunc <- function(fit, cores=1){
   # `IS-importance-sampling-2026-09-06.md`. `lpg` value-only carries the batch
   # attribute `.ctBackendLpgFunc(fit, gradient=FALSE)` sets, whitened or not.
   is_res <- tryCatch(.ctImisRun(lpg, centre = centre, cov = uncertaintyfit$cov,
-    directions = directions, widths = uncertaintyfit$details$normalcheck$widths,
+    directions = directions, widths = widths,
     complement = isTRUE(control[["imisComplement"]]),
     max_iter = control$imisMaxIter, scale_init = control$imisScaleInit,
     tail_scale = control$imisTailScale, df = control$imisDf,
@@ -2851,7 +2881,8 @@ ctOptimFitLpgFunc <- function(fit, cores=1){
       warning('The normal approximation is unreliable for ',
         paste(named, collapse = ', '), ': the posterior departs from it ',
         'there, and importance sampling could not correct it (Pareto k ',
-        signif(k, 2), '). Their intervals are the Hessian\'s. ', tailremedy,
+        signif(k, 2), '). Their intervals are ', if (is.null(dais)) 'the Hessian\'s. ' else
+          'the moment-matched normal\'s, from the check\'s iteration (DAIS). ', tailremedy,
         call. = FALSE)
       uncertaintyfit$details$importance_sampling <- list(ess = is_res$ess,
         pareto_k = k, used = FALSE, directions = ncol(directions),
@@ -3494,7 +3525,12 @@ ctOptimFitLpgFunc <- function(fit, cores=1){
 #' importance sampling
 #' evaluates a weighted subset of the units chosen and checked as it runs, and
 #' corrects its weights where that subset strays; \code{coreset = FALSE}
-#' evaluates every unit instead. \code{parsteps} keeps
+#' evaluates every unit instead. Where the check of \code{'checked'} names
+#' a direction, the normal is first moved to the posterior's moments by
+#' doubly adaptive importance sampling (van den Boom, Cremaschi and Thiery
+#' 2026) and checked again there before anything is sampled; \code{dais =
+#' FALSE} skips that, \code{daisDraws} sets its draws an iteration (the
+#' dimension, between 64 and 256) and \code{daisMaxIter} its iterations (150). \code{parsteps} keeps
 #' stepwise-fixed raw parameters fixed (stan only).
 #' \code{analyticHessian = FALSE} (julia only) asks for the finite-difference
 #' Hessian instead of the engine's exact one. \code{likelihood} (\code{'fit'},
