@@ -233,6 +233,12 @@
 #'  \item{\code{uncertaintyDraws}, \code{finishsamples},
 #'  \code{uncertaintyControl}}{Both. \code{ctFitUncertainty}'s \code{draws}
 #'  (default \code{'auto'}), \code{finishsamples} (1000) and \code{control}.}
+#'  \item{\code{accuracy}, \code{sampleControl}}{Julia. An accuracy in
+#'  posterior standard deviations, off by default: once \code{uncertainty}'s
+#'  method has run, its own account of its error is read against it, and
+#'  where the method falls short, or has none, the fit is sampled to that
+#'  accuracy (\code{ctFitUncertainty}'s \code{control$accuracy});
+#'  \code{sampleControl} holds the sampler's other settings for that run.}
 #'  \item{\code{estonly}}{Both. Default FALSE. Point estimates only: no Hessian,
 #'  so no standard errors and no certification; under
 #'  \code{intoverpop = 'laplace'} no Newton finish and no quadrature
