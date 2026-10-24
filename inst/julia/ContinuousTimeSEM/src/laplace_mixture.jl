@@ -333,8 +333,9 @@ unit, quasi-random, shared equally between the prior and the Laplace posteriors
 given the record cut at rows T/8, T/4, T/2 and T (covariances scaled by
 `scale^2`), so some component sits near every row's posterior, and weighted by
 their mixture (deterministic multiple importance sampling, the balance
-heuristic). `ess` is each unit's smallest effective sample size over its rows.
-Single-level fits. With non-Gaussian indicators, each one's predictive
+heuristic). `ess` is each unit's smallest effective sample size over its rows;
+`Inf` for a unit with no coordinate, whose one draw is exact (the filter
+integrating every effect it has). Single-level fits. With non-Gaussian indicators, each one's predictive
 distribution function just below and at what was observed, in the filter's
 order (`pitlower`, `pitupper`), for the probability integral transforms the
 misfit tests use in place of their errors (item_pit.jl).
@@ -524,7 +525,9 @@ function _laplace_mixture_unit!(out, laplace::CTSEMLaplaceObjective, U::Integer,
         end
         minESS = min(minESS, 1 / sum(abs2, view(WP, :, t)))
     end
-    out.ess[U] = minESS
+    # Nothing sampled is nothing thin: read as 1, a unit the filter integrates
+    # whole made ctFitAdequacy report its errors' sampling as thin.
+    out.ess[U] = d == 0 ? Inf : minESS
 
     # Each non-Gaussian observation's predictive distribution function under
     # the mixture, in the order the filter applies them: the draws weighted by

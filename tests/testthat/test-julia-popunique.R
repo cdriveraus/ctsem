@@ -420,11 +420,13 @@ test_that("own variances on an initial mean and a continuous intercept are integ
       expect_equal(as.numeric(rh$gradient), as.numeric(fw$gradient), tolerance = 1e-6)
     }
   }
-  # A stationary fit fixes every initial cell, so it has no initial mean to
-  # vary; the continuous intercept's own variance is still integrated.
+  # A stationary fit's initial mean is -A^-1 b, which moves with the continuous
+  # intercept's deviation; the filter's intercept column starts at zero, so the
+  # deviation stays in the layer (test-ctScoreTest.R's level form was 39 nats
+  # out when it was integrated).
   options(ctsem.laplace.hybrid = TRUE)
   st <- .pu_spec(d, m, poprank = 1, popunique = "CINT", stationary = TRUE)
-  expect_equal(st$laplace$hybrid$kind, 3L)
+  expect_null(st$laplace$hybrid)
 })
 
 test_that("integrated own intercepts beside shared effects on the dynamics are still Laplace exactly", {

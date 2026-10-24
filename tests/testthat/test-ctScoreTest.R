@@ -336,8 +336,9 @@ test_that("row scores sum to the subjects' scores, on the filter and the Laplace
   expect_equal(postmoments(p3), postmoments(p5), tolerance = 1e-6)
   expect_equal(p3$logmarginal, p5$logmarginal, tolerance = 1e-8)
   module <- ctsem:::.ctJuliaModule(lfit$model_spec$project)
+  # The nodes are the layer's, where both effects are coordinates.
   quad <- ctsem:::.ctBackendJuliaValue(module$ctsem_laplace_quadrature(
-    ctsem:::.ctJuliaObjective(lfit, hybrid = TRUE), ctsem:::.ctJuliaNumericVector(lest),
+    ctsem:::.ctJuliaObjective(lfit), ctsem:::.ctJuliaNumericVector(lest),
     nodes = 3L, contributions = TRUE))
   expect_equal(p3$logmarginal, as.numeric(quad$subject_loglik), tolerance = 1e-10)
 
@@ -362,18 +363,24 @@ test_that("row scores sum to the subjects' scores, on the filter and the Laplace
   # effects (what the error families use where the delta method is
   # approximate). Here the delta method is exact, so the two agree to the
   # sampler's error, and each subject's rows sum to its marginal likelihood.
-  obj <- ctsem:::.ctJuliaObjective(lfit, hybrid = TRUE)
-  old <- ctsem:::.ctBackendJuliaValue(module$ctsem_laplace_sequential(obj,
-    ctsem:::.ctJuliaNumericVector(lest)))
-  mix <- ctsem:::.ctBackendJuliaValue(module$ctsem_laplace_sequential_mixture(obj,
-    ctsem:::.ctJuliaNumericVector(lest), particles = 512L))
-  e <- (mix$y[1, , 1] - old$y[1, , 1]) / sqrt(old$ycov[1, , 1, 1])
-  expect_lt(sqrt(mean(e^2)), 0.02)
-  expect_lt(sqrt(mean((mix$ycov[1, , 1, 1] / old$ycov[1, , 1, 1] - 1)^2)), 0.04)
-  expect_gt(min(mix$ess), 20)
-  q7 <- ctsem:::.ctBackendJuliaValue(module$ctsem_laplace_quadrature(obj,
-    ctsem:::.ctJuliaNumericVector(lest), nodes = 7L, contributions = TRUE))
-  expect_lt(abs(mean(tapply(mix$llrow, mix$subject, sum) - as.numeric(q7$subject_loglik))), 0.02)
+  # On the layer both effects are sampled; on the fit's own objective the
+  # filter integrates them, so there is nothing to sample (ESS Inf) and the
+  # mixture is exact.
+  for (hybrid in c(FALSE, TRUE)) {
+    obj <- ctsem:::.ctJuliaObjective(lfit, hybrid = hybrid)
+    old <- ctsem:::.ctBackendJuliaValue(module$ctsem_laplace_sequential(obj,
+      ctsem:::.ctJuliaNumericVector(lest)))
+    mix <- ctsem:::.ctBackendJuliaValue(module$ctsem_laplace_sequential_mixture(obj,
+      ctsem:::.ctJuliaNumericVector(lest), particles = 512L))
+    e <- (mix$y[1, , 1] - old$y[1, , 1]) / sqrt(old$ycov[1, , 1, 1])
+    expect_lt(sqrt(mean(e^2)), 0.02)
+    expect_lt(sqrt(mean((mix$ycov[1, , 1, 1] / old$ycov[1, , 1, 1] - 1)^2)), 0.04)
+    if (hybrid) expect_true(all(is.infinite(mix$ess))) else expect_gt(min(mix$ess), 20)
+    q7 <- ctsem:::.ctBackendJuliaValue(module$ctsem_laplace_quadrature(obj,
+      ctsem:::.ctJuliaNumericVector(lest), nodes = 7L, contributions = TRUE))
+    expect_lt(abs(mean(tapply(mix$llrow, mix$subject, sum) -
+      as.numeric(q7$subject_loglik))), 0.02)
+  }
 })
 
 test_that("stability along a predicted state finds a drift that depends on it", {
