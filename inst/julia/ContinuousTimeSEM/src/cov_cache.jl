@@ -75,8 +75,8 @@ CovCache{T}(D::Int, code::Int) where {T} = CovCache{T}(
 # type, dimension and construction actually used -- a handful -- and each step
 # is a type test. That is cheaper than the allocation it replaces, let alone
 # than the construction either one is in front of.
-function _covcache(::Type{T}, __d::Union{Int,Val}, code::Int) where {T}
-    d = _val(__d)
+function _covcache(::Type{T}, __d::Int, code::Int) where {T}
+    d = __d
     store = _ctsem_scratch()
     caches = get(store, _COVCACHE_TLS_KEY, nothing)
     if caches === nothing
@@ -96,8 +96,8 @@ end
 
 # The whole of `mat` is the key: the diagonal carries the standard deviations
 # and the lower triangle the off-diagonal coordinates, and both feed the result.
-@inline function _covcache_lookup(c::CovCache{T}, mat, __d::Union{Int,Val}) where {T}
-    d = _val(__d)
+@inline function _covcache_lookup(c::CovCache{T}, mat, __d::Int) where {T}
+    d = __d
     @inbounds for e in 1:c.nslots[]
         k = c.keys[e]
         same = true
@@ -112,8 +112,8 @@ end
     return 0
 end
 
-@inline function _covcache_store!(c::CovCache{T}, mat, out, __d::Union{Int,Val}) where {T}
-    d = _val(__d)
+@inline function _covcache_store!(c::CovCache{T}, mat, out, __d::Int) where {T}
+    d = __d
     slot = c.nextslot[]
     @inbounds begin
         for j in 1:d, i in 1:d

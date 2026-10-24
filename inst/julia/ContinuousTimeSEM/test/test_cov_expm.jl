@@ -51,7 +51,7 @@ end
 function _covexpm_sigma(v, k, code)
     T = eltype(v)
     b = _COVEXPM_BUF(k, T)
-    ContinuousTimeSEM.sdcovsqrt2cov!(b, _covexpm_unpack(v, k, T), code, Val(k))
+    ContinuousTimeSEM.sdcovsqrt2cov!(b, _covexpm_unpack(v, k, T), code, k)
     copy(b.out)
 end
 
@@ -171,12 +171,12 @@ _covexpm_cotangent(k) = [0.03 * (1 + i) + 0.011 * j for i in 1:k, j in 1:k]
                 for f in (1.0, 0.6, 1.4)]
         expected = map(m -> begin
             b = _COVEXPM_BUF(k, Float64)
-            ContinuousTimeSEM.sdcovsqrt2cov!(b, m, 2, Val(k))
+            ContinuousTimeSEM.sdcovsqrt2cov!(b, m, 2, k)
             copy(b.out)
         end, mats)
         for _ in 1:5, (m, want) in zip(mats, expected)
             b = _COVEXPM_BUF(k, Float64)
-            ContinuousTimeSEM.sdcovsqrt2cov!(b, m, 2, Val(k))
+            ContinuousTimeSEM.sdcovsqrt2cov!(b, m, 2, k)
             @test b.out ≈ want
         end
         # and a matrix that has fallen out of the table still comes back right
@@ -184,9 +184,9 @@ _covexpm_cotangent(k) = [0.03 * (1 + i) + 0.011 * j for i in 1:k, j in 1:k]
                 for i in 1:10]
         for m in many
             b = _COVEXPM_BUF(k, Float64)
-            ContinuousTimeSEM.sdcovsqrt2cov!(b, m, 2, Val(k))
+            ContinuousTimeSEM.sdcovsqrt2cov!(b, m, 2, k)
             b2 = _COVEXPM_BUF(k, Float64)
-            ContinuousTimeSEM.sdcovexpm2cov!(b2, m, Val(k))
+            ContinuousTimeSEM.sdcovexpm2cov!(b2, m, k)
             @test b.out ≈ b2.out
         end
     end
@@ -196,9 +196,9 @@ _covexpm_cotangent(k) = [0.03 * (1 + i) + 0.011 * j for i in 1:k, j in 1:k]
             v = _covexpm_coords(k)
             M = _covexpm_unpack(v, k, Float64)
             b = _COVEXPM_BUF(k, Float64)
-            ContinuousTimeSEM.sdcovsqrt2cov!(b, M, 0, Val(k))
+            ContinuousTimeSEM.sdcovsqrt2cov!(b, M, 0, k)
             b2 = _COVEXPM_BUF(k, Float64)
-            ContinuousTimeSEM.constraincorsqrt1_vec!(b2, M, 1e-5, Val(k))
+            ContinuousTimeSEM.constraincorsqrt1_vec!(b2, M, 1e-5, k)
             D = Diagonal([M[i, i] for i in 1:k])
             @test b.out ≈ (D * b2.out) * (D * b2.out)'
             # and the existing pullback still agrees with ForwardDiff, so the
@@ -220,22 +220,22 @@ _covexpm_cotangent(k) = [0.03 * (1 + i) + 0.011 * j for i in 1:k, j in 1:k]
             v = _covexpm_coords(k)
             M = _covexpm_unpack(v, k, Float64)
             b0 = _COVEXPM_BUF(k, Float64)
-            ContinuousTimeSEM.sdcovsqrt2cov!(b0, M, 0, Val(k))
+            ContinuousTimeSEM.sdcovsqrt2cov!(b0, M, 0, k)
             b2 = _COVEXPM_BUF(k, Float64)
-            ContinuousTimeSEM.sdcovsqrt2cov!(b2, M, 2, Val(k))
+            ContinuousTimeSEM.sdcovsqrt2cov!(b2, M, 2, k)
             @test !isapprox(b0.out, b2.out)
             # 0 still reproduces constraincorsqrt1 exactly
             bc = _COVEXPM_BUF(k, Float64)
-            ContinuousTimeSEM.constraincorsqrt1_vec!(bc, M, 1e-5, Val(k))
+            ContinuousTimeSEM.constraincorsqrt1_vec!(bc, M, 1e-5, k)
             D = Diagonal([M[i, i] for i in 1:k])
             @test b0.out ≈ (D * bc.out) * (D * bc.out)'
             # and 2 is the expm construction and not merely "not 0"
             bf = _COVEXPM_BUF(k, Float64)
-            ContinuousTimeSEM.sdcovexpm2cov!(bf, M, Val(k))
+            ContinuousTimeSEM.sdcovexpm2cov!(bf, M, k)
             @test b2.out ≈ bf.out
             # 1 is the factor form, which is neither of the other two
             b1 = _COVEXPM_BUF(k, Float64)
-            ContinuousTimeSEM.sdcovsqrt2cov!(b1, M, 1, Val(k))
+            ContinuousTimeSEM.sdcovsqrt2cov!(b1, M, 1, k)
             @test b1.out ≈ M * M'
             @test !isapprox(b1.out, b0.out)
             @test !isapprox(b1.out, b2.out)

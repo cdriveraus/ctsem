@@ -221,8 +221,8 @@ columns afterwards, so an initial state belongs to `_ctsem_t0_factor!`
 Reading it out of `sdcovsqrt2cov!`'s own scratch buffer would work today and
 would break silently the first time that function reuses the buffer.
 """
-@inline function _ctsem_sdcor_factor!(dest, mat, buffer, dim::Union{Int,Val})
-    d = _val(dim)
+@inline function _ctsem_sdcor_factor!(dest, mat, buffer, dim::Int)
+    d = dim
     constraincorsqrt1_vec!(buffer, mat, 1e-5, dim)
     @inbounds for j in 1:d, i in 1:d
         dest[i, j] = mat[i, i] * buffer.out[i, j]
@@ -518,8 +518,8 @@ function _ctsem_state_row!(ws, pars, data::AbstractMatrix, col::Int,
     resid::AbstractVector{T}, scratch::AbstractVector{T},
     gaussian::AbstractVector{Int}, log2pi, gen) where {T}
 
-    m = _val(ws.manifest_dim)
-    n = _val(ws.state_dim)
+    m = ws.manifest_dim
+    n = ws.state_dim
     types = ws.manifesttype
     row = gen === nothing ? col : gen.offset + col
 
@@ -648,8 +648,8 @@ function _ctsem_state_pass!(ws, params::AbstractVector{T}, data::AbstractMatrix,
     all_params = getdata(pars)
     all_params .= ws.all_params
 
-    n = _val(ws.state_dim)
-    m = _val(ws.manifest_dim)
+    n = ws.state_dim
+    m = ws.manifest_dim
     indices = ws.diffusion_state_indices
     k = length(indices)
     log2pi = log(2 * T(pi))

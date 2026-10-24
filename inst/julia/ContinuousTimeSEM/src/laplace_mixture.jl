@@ -360,8 +360,8 @@ function ctsem_laplace_sequential_mixture(laplace::CTSEMLaplaceObjective,
     particles >= 2 || throw(ArgumentError("need at least two particles"))
     sp = laplace.objective.params
     ws0 = _init_continuous_ekf_workspace(Float64, sp)
-    n = _val(ws0.state_dim)
-    m = _val(ws0.manifest_dim)
+    n = ws0.state_dim
+    m = ws0.manifest_dim
     types = ws0.manifesttype
     Ls = _laplace_popchols(theta, laplace.spec)
     subjects = laplace.objective.subject_objectives

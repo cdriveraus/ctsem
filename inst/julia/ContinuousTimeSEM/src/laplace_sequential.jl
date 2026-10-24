@@ -101,8 +101,8 @@ function ctsem_laplace_sequential(laplace::CTSEMLaplaceObjective, values::Abstra
     sp = laplace.objective.params
     subjects = laplace.objective.subject_objectives
     ws0 = _init_continuous_ekf_workspace(Float64, sp)
-    n = _val(ws0.state_dim)
-    m = _val(ws0.manifest_dim)
+    n = ws0.state_dim
+    m = ws0.manifest_dim
     rows = [size(s.data, 2) for s in subjects]
     first_row = cumsum(vcat(0, rows[1:(end - 1)]))
     nrows = sum(rows)
@@ -154,8 +154,8 @@ function _laplace_sequential_unit!(out, laplace::CTSEMLaplaceObjective, U::Integ
     aws = _laplace_workspace!(laplace, Float64, npar)
     ws = _init_continuous_ekf_workspace(S, sp)
     ws.hyb.mode = _HYBRID_OFF
-    n = _val(ws.state_dim)
-    m = _val(ws.manifest_dim)
+    n = ws.state_dim
+    m = ws.manifest_dim
     nall = length(sp.mutables)
     prevterm = 0.0
     try

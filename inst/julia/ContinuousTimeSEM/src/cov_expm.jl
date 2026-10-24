@@ -125,8 +125,8 @@ end
 # type and a run-time dimension is built on the heap at every call.
 struct _CTSEMExpmCovKey{T} end
 
-function _expm_cov_scratch(::Type{T}, __d::Union{Int,Val}) where {T}
-    d = _val(__d)
+function _expm_cov_scratch(::Type{T}, __d::Int) where {T}
+    d = __d
     table = get!(Dict{Int,ExpmCovScratch{T}}, _ctsem_scratch(),
         _CTSEMExpmCovKey{T}())::Dict{Int,ExpmCovScratch{T}}
     sc = get(table, d, nothing)
@@ -137,8 +137,8 @@ function _expm_cov_scratch(::Type{T}, __d::Union{Int,Val}) where {T}
     return sc
 end
 
-@inline function _blocks_equal(A::AbstractMatrix, B::AbstractMatrix, __d::Union{Int,Val})
-    d = _val(__d)
+@inline function _blocks_equal(A::AbstractMatrix, B::AbstractMatrix, __d::Int)
+    d = __d
     @inbounds for j in 1:d, i in 1:d
         A[i, j] == B[i, j] || return false
     end
@@ -146,8 +146,8 @@ end
 end
 
 # A is hollow symmetric, read from mat's lower triangle.
-@inline function _fill_hollow!(A, mat, __d::Union{Int,Val}, ::Type{T}) where {T}
-    d = _val(__d)
+@inline function _fill_hollow!(A, mat, __d::Int, ::Type{T}) where {T}
+    d = __d
     @inbounds for j in 1:d, i in 1:d
         A[i, j] = i == j ? zero(T) : (i > j ? T(mat[i, j]) : T(mat[j, i]))
     end
@@ -185,8 +185,8 @@ end
 
 Index of the cache slot holding `exp(A)` for this `A`, filling it on a miss.
 """
-function _expm_cov_slot!(sc::ExpmCovScratch{T}, A, __d::Union{Int,Val}) where {T}
-    d = _val(__d)
+function _expm_cov_slot!(sc::ExpmCovScratch{T}, A, __d::Int) where {T}
+    d = __d
     _EXPM_COV_CALLS[] += 1
     @inbounds for e in 1:sc.nslots[]
         _blocks_equal(sc.Atab[e], A, d) && return e
@@ -214,8 +214,8 @@ pullback's 30 x 30 Frechet derivative was 35% of a Laplace gradient
 (the SNSF pilot, dev1). Deep, not on values: an off-diagonal parameter that
 happens to sit at 0 still has a derivative, which the general route keeps.
 """
-@inline function _expm_cov_diagonal(A, __d::Union{Int,Val})
-    d = _val(__d)
+@inline function _expm_cov_diagonal(A, __d::Int)
+    d = __d
     @inbounds for j in 1:d, i in 1:d
         _zero_deep(A[i, j]) || return false
     end
@@ -228,8 +228,8 @@ end
 Write `D * normalise(exp(A)) * D` into `buffer.out`, where `D` is `mat`'s
 diagonal and `A` is hollow symmetric from `mat`'s lower triangle.
 """
-function sdcovexpm2cov!(buffer, mat, __d::Union{Int,Val})
-    d = _val(__d)
+function sdcovexpm2cov!(buffer, mat, __d::Int)
+    d = __d
     T = eltype(buffer.out)
     sc = _expm_cov_scratch(T, d)
     A = sc.A
@@ -268,8 +268,8 @@ function _sdcovexpm2cov_pullback!(mat_bar::AbstractMatrix, mat::AbstractMatrix,
 end
 
 function _sdcovexpm2cov_pullback_body!(mat_bar::AbstractMatrix, mat::AbstractMatrix,
-        cov_bar::AbstractMatrix, __d::Union{Int,Val})
-    d = _val(__d)
+        cov_bar::AbstractMatrix, __d::Int)
+    d = __d
     T = promote_type(eltype(mat), eltype(cov_bar))
     sc = _expm_cov_scratch(T, d)
     A = sc.A

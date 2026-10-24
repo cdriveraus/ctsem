@@ -50,7 +50,7 @@ end
     # otherwise the pullback would be differentiating a different function
     # from the one the filter evaluates.
     Y = zeros(3, 3)
-    ContinuousTimeSEM.my_exp!(Y, copy(A), zeros(3, 3), ContinuousTimeSEM.ExpBuffer{Float64}(3), Val(3))
+    ContinuousTimeSEM.my_exp!(Y, copy(A), zeros(3, 3), ContinuousTimeSEM.ExpBuffer{Float64}(3), 3)
     @test isapprox(Y, ContinuousTimeSEM._ctsem_expm(A); atol=1e-12, rtol=1e-12)
 end
 
@@ -94,7 +94,7 @@ end
         T = promote_type(eltype(Min), eltype(sin))
         Acopy = Matrix{T}(Min)
         Bcopy = Vector{T}(sin)
-        ContinuousTimeSEM._solve_square_system_generic!(Acopy, Bcopy, piv, Val(k))
+        ContinuousTimeSEM._solve_square_system_generic!(Acopy, Bcopy, piv, k)
         return Bcopy
     end
     y = _forward_solve(M, s)
@@ -102,7 +102,7 @@ end
     ybar = [0.6, -0.9, 0.2]
     Mt = permutedims(M)
     sbar = copy(ybar)
-    ContinuousTimeSEM._solve_square_system_generic!(Mt, sbar, piv, Val(k))
+    ContinuousTimeSEM._solve_square_system_generic!(Mt, sbar, piv, k)
     Mbar = zeros(k, k)
     ContinuousTimeSEM._ctsem_outer!(Mbar, sbar, y, -1.0, 1.0)
 
