@@ -722,7 +722,13 @@
     # the run's in the assembled fit.
     placement = result$placement,
     scale_accept = as.numeric(result$scale_accept),
-    ncp_accept = as.numeric(result$ncp_accept))
+    ncp_accept = as.numeric(result$ncp_accept),
+    # The chain's coreset, where it sampled on one (sample_surrogate.jl).
+    coreset = isTRUE(result$coreset), nunits = result$nunits,
+    coreset_size = as.integer(result$coreset_size),
+    coreset_proposed = as.integer(result$coreset_proposed),
+    coreset_accepted = as.integer(result$coreset_accepted),
+    coreset_abandoned = as.logical(result$coreset_abandoned))
 }
 
 # Pool the chains into one engine result, then hand it to the ordinary assembler.
@@ -839,7 +845,13 @@
     sampler = drawn[[1]]$sampler,
     placement = drawn[[1]]$placement,
     scale_accept = unlist(lapply(drawn, function(d) as.numeric(d$scale_accept))),
-    ncp_accept = unlist(lapply(drawn, function(d) as.numeric(d$ncp_accept))))
+    ncp_accept = unlist(lapply(drawn, function(d) as.numeric(d$ncp_accept))),
+    coreset = any(vapply(drawn, function(d) isTRUE(d$coreset), logical(1))),
+    nunits = drawn[[1]]$nunits,
+    coreset_size = unlist(lapply(drawn, function(d) d$coreset_size)),
+    coreset_proposed = unlist(lapply(drawn, function(d) d$coreset_proposed)),
+    coreset_accepted = unlist(lapply(drawn, function(d) d$coreset_accepted)),
+    coreset_abandoned = unlist(lapply(drawn, function(d) d$coreset_abandoned)))
 
   out <- .ctBackendSampleAssemble(fit, result, npar, keepeffects,
     as.integer(chains), warmup, ndraws, target$hessian,

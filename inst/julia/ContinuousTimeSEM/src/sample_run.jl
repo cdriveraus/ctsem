@@ -276,9 +276,12 @@ function _sample_draws!(logdensity!, ws::_NUTSWorkspace, rng::AbstractRNG,
     depth = Vector{Int}(undef, ndraws)
     energy = Vector{Float64}(undef, ndraws)
     for iteration in 1:ndraws
+        # On a coreset, the transition's end is tested against the full density
+        # and may be put back (`_surrogate_correct!`); otherwise both are no-ops.
+        _surrogate_begin!(logdensity!, x, g)
         step = _nuts_transition!(ws, logdensity!, metric, rng, x, g, logp, eps,
             maxdepth, maxdelta)
-        logp = step.logp
+        logp = _surrogate_correct!(logdensity!, x, g, step.logp, rng)
         @inbounds for j in 1:ndim
             draws[j, iteration] = x[j]
         end
@@ -299,6 +302,7 @@ function _sample_draws!(logdensity!, ws::_NUTSWorkspace, rng::AbstractRNG,
     # interval would otherwise never report the finished state at all.
     _invoke_callback(callback, "sampling", ndraws, ndraws, logp,
         count(divergent); force=true)
+    logp = _surrogate_batch!(logdensity!, x, g, logp)
     return (draws=draws, accept=accept, divergent=divergent, depth=depth,
         energy=energy, logp=logp)
 end
@@ -363,6 +367,11 @@ function _run_chain(logdensity!, centre::Vector{Float64},
     raises = 0
     windows = adapt_metric ? _adapt_windows(nwarmup) : Int[]
     window_draws = Vector{Vector{Float64}}()
+    # The warm-up states a coreset is fitted from, where the density wants one
+    # (`_surrogate_warmed!`, sample_surrogate.jl), at `train_at`: a third of
+    # the way in, so the rest of warm-up runs on it too; nothing kept otherwise.
+    trainstates = _surrogate_training(logdensity!) ? Vector{Vector{Float64}}() : nothing
+    train_at = _surrogate_train_at(nwarmup)
     warmup_divergent = 0
     warmup_used = nwarmup
     settled = 0
@@ -371,9 +380,10 @@ function _run_chain(logdensity!, centre::Vector{Float64},
     depths = 0
     while iteration < nwarmup
         iteration += 1
+        _surrogate_begin!(logdensity!, x, g)
         step = _nuts_transition!(ws, logdensity!, current, rng, x, g, logp, eps,
             maxdepth, maxdelta)
-        logp = step.logp
+        logp = _surrogate_correct!(logdensity!, x, g, step.logp, rng)
         depths += step.depth
         step.divergent && (warmup_divergent += 1)
         # `warmup_divergent` counts everything, for the report; the rate that
@@ -381,6 +391,13 @@ function _run_chain(logdensity!, centre::Vector{Float64},
         (step.divergent && iteration > _ADAPT_INIT_BUFFER) &&
             (check_divergent += 1)
         eps = _dual_update!(da, step.accept)
+        if trainstates !== nothing
+            _surrogate_keep!(trainstates, x)
+            if iteration == train_at
+                logp = _surrogate_warmed!(logdensity!, trainstates, x, g, logp)
+                trainstates = nothing
+            end
+        end
         # Raise `target_accept` rather than only reporting divergences.
         #
         # A divergence means the integrator could not follow the geometry at the
@@ -474,9 +491,10 @@ function _run_chain(logdensity!, centre::Vector{Float64},
                 remaining = min(nwarmup - iteration, _ADAPT_TERM_BUFFER)
                 for _ in 1:remaining
                     iteration += 1
+                    _surrogate_begin!(logdensity!, x, g)
                     step = _nuts_transition!(ws, logdensity!, current, rng, x, g,
                         logp, eps, maxdepth, maxdelta)
-                    logp = step.logp
+                    logp = _surrogate_correct!(logdensity!, x, g, step.logp, rng)
                     step.divergent && (warmup_divergent += 1)
                     eps = _dual_update!(da, step.accept)
                 end
@@ -488,6 +506,12 @@ function _run_chain(logdensity!, centre::Vector{Float64},
         end
     end
     eps = _dual_final(da)
+    # A warm-up that ended before `train_at` (an early stop) fits from what it
+    # kept; a coreset whose moves warm-up accepted too rarely is given up
+    # before sampling. `logp` and `g` are the density's in use at `x`.
+    trainstates === nothing || (logp = _surrogate_warmed!(logdensity!,
+        trainstates, x, g, logp))
+    logp = _surrogate_batch!(logdensity!, x, g, logp)
     # Forced: warmup may finish inside a callback interval (a short run, or
     # the settle_tol early-stop above), and the transition to sampling is
     # exactly the state a live watcher should not miss.
@@ -1214,7 +1238,8 @@ function ctsem_sample_marginal(objective, values::AbstractVector;
     max_draws::Integer=0, rhat_target::Real=1.01, settle_tol::Real=0.0,
     resume=nothing, progress_overwrite::Bool=true, progress_callback=nothing,
     progress_sink=nothing, nparameters::Integer=0, stepsize::Real=0.0,
-    starts::Union{Nothing,AbstractMatrix}=nothing, coordinate=nothing)
+    starts::Union{Nothing,AbstractMatrix}=nothing, coordinate=nothing,
+    coreset::Bool=true)
 
     t0 = time()
     forward0 = ctsem_forward_gradients()
@@ -1229,22 +1254,14 @@ function ctsem_sample_marginal(objective, values::AbstractVector;
     # as the name of the returned count so the R side reads what it always did.
     ndim = length(centre)
     npar = ndim
-    logdensity! = function (g, x)
-        result = try
-            ctsem_evaluate(objective, x; gradient=true,
-                gradient_method=gradient_method)
-        catch err
-            err isa InterruptException && rethrow()
-            nothing
-        end
-        if result === nothing || !isfinite(result.value) ||
-            result.gradient === nothing || !all(isfinite, result.gradient)
-            fill!(g, 0.0)
-            return -Inf
-        end
-        copyto!(g, result.gradient)
-        return result.value
-    end
+    logdensity! = (g, x) -> _marginal_density!(objective, gradient_method, g, x)
+    # Where the objective is a sum of units' terms, each chain samples on a
+    # coreset of them after its warm-up, its draws' endpoints tested against
+    # the full density (sample_surrogate.jl); `coreset = false` is the oracle.
+    densities = coreset && _smc_coreset_capable(objective) ?
+        [_SurrogateDensity(objective, gradient_method, ndim,
+            hash((UInt64(seed), c, :surrogate))) for c in 1:nchains] : nothing
+    density_for = densities === nothing ? (_ -> logdensity!) : (c -> densities[c])
 
     # One dense block: at this dimension the whole covariance is affordable to
     # estimate and to factorize, and there is no sparsity to exploit -- the
@@ -1296,7 +1313,7 @@ function ctsem_sample_marginal(objective, values::AbstractVector;
         " dimensions (effects integrated out), chains sequential, ",
         "metric in 1 block")
 
-    run = _sample_to_target(_ -> logdensity!, centre, metric, nchains, false,
+    run = _sample_to_target(density_for, centre, metric, nchains, false,
         seed, nwarmup, ndraws, Int(maxdepth), Float64(target_accept),
         Float64(maxdelta), Float64(init_scale), adapt_metric, nothing,
         Float64(settle_tol), Float64(min_ess), Float64(mean_ess),
@@ -1312,5 +1329,7 @@ function ctsem_sample_marginal(objective, values::AbstractVector;
             stepsize=[r.stepsize for r in results],
             warmup_divergent=[r.warmup_divergent for r in results], trace=run.trace),
         (forward_gradients=ctsem_forward_gradients() - forward0,
-            explosive_passes=ctsem_explosive_passes() - explosive0))
+            explosive_passes=ctsem_explosive_passes() - explosive0,
+            nunits=_smc_coreset_capable(objective) ? length(_smc_unit_cost(objective)) : 0),
+        _surrogate_record(densities))
 end
