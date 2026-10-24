@@ -121,27 +121,12 @@ end
 """The deviations' posterior given the rows the buffers have seen: mean into
 `tr.dq`, covariance into `tr.Cq`; `false` where `M` does not factor."""
 function _mixture_hybrid_posterior!(tr::CTSEMMixtureTrace, hb)
-    q, rd, G = hb.q, hb.rd, hb.G
-    @inbounds for b in 1:rd, a in 1:rd
-        acc = a == b ? 1.0 : 0.0
-        for e in 1:q
-            t = 0.0
-            for c in 1:q
-                t += G[c, a] * hb.S[c, e]
-            end
-            acc += t * G[e, b]
-        end
-        tr.Mq[a, b] = acc
-    end
+    q, rd = hb.q, hb.rd
+    # The filter's own closing (`_hybrid_closing!`), `Cq` its scratch until it
+    # takes the covariance (`q <= rd`, so `rd x q` fits).
+    _hybrid_closing!(tr.Mq, tr.bq, tr.Cq, hb.G, hb.S, hb.s, q, rd)
     F = _ctsem_cholesky(tr.Mq, rd)
     issuccess(F) || return false
-    @inbounds for a in 1:rd
-        acc = 0.0
-        for c in 1:q
-            acc += G[c, a] * hb.s[c]
-        end
-        tr.bq[a] = acc
-    end
     ldiv!(tr.dq, F, tr.bq)
     @inbounds for a in 1:rd
         fill!(tr.eq, 0.0)

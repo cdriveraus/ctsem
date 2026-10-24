@@ -378,6 +378,41 @@ function _hybrid_block_factor!(Lb::AbstractMatrix, h::CTSEMHybrid, values::Abstr
 end
 
 """
+`M = I + G' S G` into `M` (`rd x rd`, both triangles) and `b = G' s` into `b`
+over the subject's `q` columns, through `GS = G' S` (`rd x q`, scratch): the
+closing term's matrices, which the pass, its reverse and the sequential
+mixture (laplace_mixture.jl) all form. `GS` once, then `M` from it, is
+`O(rd q^2 + rd^2 q)` where `G' S` per column of `M` was `O(rd^2 q^2)`.
+"""
+function _hybrid_closing!(M::AbstractMatrix, b::AbstractVector, GS::AbstractMatrix,
+    G::AbstractMatrix, S::AbstractMatrix, s::AbstractVector, q::Int, rd::Int)
+    T = eltype(M)
+    @inbounds for e in 1:q, a in 1:rd
+        acc = zero(T)
+        for c in 1:q
+            acc += G[c, a] * S[c, e]
+        end
+        GS[a, e] = acc
+    end
+    @inbounds for j in 1:rd, a in 1:j
+        acc = a == j ? one(T) : zero(T)
+        for e in 1:q
+            acc += GS[a, e] * G[e, j]
+        end
+        M[a, j] = acc
+        M[j, a] = acc
+    end
+    @inbounds for a in 1:rd
+        acc = zero(T)
+        for c in 1:q
+            acc += G[c, a] * s[c]
+        end
+        b[a] = acc
+    end
+    return nothing
+end
+
+"""
 The closing term, by `hb.mode`: the profile `1/2 b' M^-1 b`, less
 `logdet(M) / 2` for the full integral, or at the caller's `u` (`hb.dfix`)
 `u' b - 1/2 u' (M - I) u`; with `M = I + G' S G` and `b = G' s` over the `rd`
@@ -399,31 +434,14 @@ function _hybrid_marginal!(hb::CTSEMHybridBuffers{T}, h::CTSEMHybrid,
     G, S, s = hb.G, hb.S, hb.s
     Mh, Mw, bv, z = hb.Mh, hb.Mw, hb.bv, hb.dhat
     # `M` twice: `Mw` is factored in place (`_ctsem_cholesky`), and the cross
-    # score and the fixed-deviation value read `M` itself, from `Mh`.
-    @inbounds for b in 1:rd, a in 1:b
-        acc = zero(T)
-        for e in 1:q
-            t = zero(T)
-            for c in 1:q
-                t += G[c, a] * S[c, e]
-            end
-            acc += t * G[e, b]
-        end
-        v = acc + (a == b ? one(T) : zero(T))
-        Mh[a, b] = v
-        Mh[b, a] = v
-        Mw[a, b] = v
-        Mw[b, a] = v
+    # score and the fixed-deviation value read `M` itself, from `Mh`. `Mw` is
+    # the closing's scratch until it takes its copy.
+    _hybrid_closing!(Mh, bv, Mw, G, S, s, q, rd)
+    @inbounds for j in 1:rd, a in 1:rd
+        Mw[a, j] = Mh[a, j]
     end
     F = _ctsem_cholesky(Mw, rd)
     issuccess(F) || return T(NaN)
-    @inbounds for a in 1:rd
-        acc = zero(T)
-        for c in 1:q
-            acc += G[c, a] * s[c]
-        end
-        bv[a] = acc
-    end
     ldiv!(z, F, bv)
     half_logdet = zero(T)
     quad = zero(T)
@@ -629,28 +647,10 @@ function _reverse_hybrid_marginal!(rec::CTSEMHybridTape{T}, n::Int, nh::Int,
         end
     else
         Mw, C, col, unit, beta = rec.Mw, rec.C, rec.wv, rec.uv, rec.beta
-        @inbounds for b in 1:rd, a in 1:b
-            acc = zero(T)
-            for e in 1:q
-                t = zero(T)
-                for c in 1:q
-                    t += G[c, a] * S[c, e]
-                end
-                acc += t * G[e, b]
-            end
-            v = acc + (a == b ? one(T) : zero(T))
-            Mw[a, b] = v
-            Mw[b, a] = v
-        end
+        # `C` is the closing's scratch until it takes `M^-1`, and `col` holds
+        # `b` until beta = M^-1 b is solved.
+        _hybrid_closing!(Mw, col, C, G, S, s, q, rd)
         F = _ctsem_cholesky(Mw, rd)
-        # beta = M^-1 b first, while `col` is free to hold b.
-        @inbounds for a in 1:rd
-            acc = zero(T)
-            for c in 1:q
-                acc += G[c, a] * s[c]
-            end
-            col[a] = acc
-        end
         ldiv!(beta, F, col)
         @inbounds for b in 1:rd
             for a in 1:rd
