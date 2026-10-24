@@ -789,16 +789,22 @@ function _is_learn_scores!(tr::_ISRows, Xs::AbstractMatrix, S::AbstractArray{<:R
 end
 
 """
-    ctsem_is_coreset_gradbatch!(cs, X)
+    ctsem_is_coreset_gradbatch!(cs, X; check=false)
 
 The sampler's gradient batch: on the coreset where it is in force, and in full
 otherwise. A coreset not yet trusted here has its gradient batch checked as a
 batch of values is: its values at a check's draws evaluated in full, and the
 batch's gradients taken in full if they fail. Where that is not expected to
 cost less than the batch in full -- a few gradients, or a coreset that keeps
-failing -- they are taken in full straight away.
+failing -- they are taken in full straight away. `check` checks every batch
+so, trusted or not: for a caller with no value batches of its own to check
+the coreset with, such as DAIS, whose every batch is values and gradients.
+Without it a coreset chosen from DAIS's first draws, three units of 200,
+served the rest of its run unchecked as it moved, and its answer was 0.9
+posterior sds from the full density's.
 """
-function ctsem_is_coreset_gradbatch!(cs::CTSEMISCoreset, X::AbstractMatrix)
+function ctsem_is_coreset_gradbatch!(cs::CTSEMISCoreset, X::AbstractMatrix;
+    check::Bool=false)
     X = Matrix{Float64}(X)
     n = size(X, 2)
     cs.gradsnow += n
@@ -807,14 +813,15 @@ function ctsem_is_coreset_gradbatch!(cs::CTSEMISCoreset, X::AbstractMatrix)
     weights = cs.w[cs.w .> 0]
     share = length(units) / cs.N
     k = min(8, n)
-    !cs.trusted && 2 * share * n + k + _is_failnow(cs) * 2 * n >= 2 * n &&
+    checking = check || !cs.trusted
+    checking && 2 * share * n + k + _is_failnow(cs) * 2 * n >= 2 * n &&
         return ctsem_is_coreset_fullgrad!(cs, X)
     t = time()
     out = ctsem_coreset_batch_gradient(cs.laplace, X, units, weights)
     _is_tally!(cs, :gradient_coreset, time() - t, n)
     cs.cost += 2 * n * share
     value = out[1, :] .+ cs.c
-    if !cs.trusted
+    if checking
         pick = _is_checkpick([isfinite(x) ? x : -Inf for x in value])
         t0 = _is_full!(cs, X[:, pick], :gradient_check)
         good = [isfinite(t0.value[i]) && isfinite(value[pick[i]]) for i in eachindex(pick)]
