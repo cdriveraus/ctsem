@@ -1021,18 +1021,11 @@ imis_is <- function(parlp,
   # `.ctBackendLpgFunc()`. Stan's densities carry no batch attribute, so this
   # is a per-draw loop there. A value the model cannot use gets a finite,
   # negligible weight rather than a NaN in the log-weight arithmetic.
-  batchlp <- attr(parlp, 'batch')
   nevals <- 0L
+  evalcall <- .ctImisEvaluator(parlp, cl)
   evaluate <- function(x) {
-    x <- as.matrix(x)
-    nevals <<- nevals + nrow(x)
-    out <- if (!is.null(batchlp)) as.numeric(batchlp(x)) else
-      if (!is.null(cl) && length(cl) > 1) {
-        parallel::clusterExport(cl, "x", envir = environment())
-        unlist(parallel::parLapply(cl, seq_len(nrow(x)), \(i) parlp(x[i, ])), FALSE)
-      } else vapply(seq_len(nrow(x)), \(i) as.numeric(parlp(x[i, ]))[1L], numeric(1))
-    out[!is.finite(out)] <- -1e100
-    out
+    nevals <<- nevals + nrow(as.matrix(x))
+    evalcall(x)
   }
 
   Sigma_hat <- safe_pd(Sigma_hat)

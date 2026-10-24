@@ -1423,3 +1423,58 @@ test_that("a posterior that has not fallen off far out is reported", {
     'had not fallen off 96 standard errors .*raw parameters 1 \\(above\\), 1 \\(below\\).*Sample it instead')
   expect_setequal(r$uncertaintyfit$details$importance_sampling$paths$reachesLimit, c(1L, -1L))
 })
+
+test_that("'checked' holds a direction improper under the fit's prior at the curvature", {
+  skip_if_not_installed('mvtnorm'); skip_if_not_installed('diagis')
+
+  # A bump on a floor, x1 improper, beside two normal coordinates: the floor
+  # high enough (1.1 nats down) that the check's draws see the departure.
+  lp1 <- function(x) log(0.5 + exp(-0.5 * x[1]^2)) - 0.5 * sum(x[-1]^2)
+  gr1 <- function(x) c(-x[1] * exp(-0.5 * x[1]^2) / (0.5 + exp(-0.5 * x[1]^2)), -x[-1])
+  dens <- function(x) lp1(x)
+  attr(dens, 'batch') <- function(X) apply(as.matrix(X), 1, lp1)
+  attr(dens, 'gradbatch') <- function(X) {
+    X <- as.matrix(X)
+    list(value = apply(X, 1, lp1), gradient = t(apply(X, 1, gr1)))
+  }
+  cov <- diag(c(1.5, 1, 1))
+  check <- withr::with_seed(1, ctsem:::.ctOptimNormalCheck(attr(dens, 'gradbatch'),
+    rep(0, 3), cov))
+  expect_gt(ncol(check$directions), 0L)
+  fit <- list(cov = cov, method = 'checked', details = list(normalcheck = check))
+  draw <- function(proper) withr::with_seed(2, ctsem:::.ctOptimDrawSamples(fit,
+    draws = 'imis', control = list(dais = FALSE, imisMaxIter = 2), est = rep(0, 3),
+    finishsamples = 2000, lpg = dens, parnames = c('a', 'b', 'c'), proper = proper))
+  expect_warning(held <- draw(FALSE),
+    "fallen off 96 standard errors out along a \\(above\\), a \\(below\\).*priors = TRUE")
+  expect_equal(held$uncertaintyfit$details$improper$parameters, 1L)
+  # Nothing else departs, so nothing is left to sample: the normal at the mode.
+  expect_equal(held$draws, 'normal')
+  expect_equal(stats::sd(held$samples[, 1]), sqrt(1.5), tolerance = 0.05)
+  expect_equal(mean(held$samples[, 1]), 0, tolerance = 0.1)
+  # With a prior on everything the walk does not run.
+  plain <- suppressWarnings(draw(TRUE))
+  expect_null(plain$uncertaintyfit$details$improper)
+})
+
+test_that(".ctHoldOff takes held directions out of the sampled span", {
+  cov <- matrix(c(2, 0.5, 0, 0.5, 1, 0.3, 0, 0.3, 0.5), 3)
+  eig <- eigen(cov, symmetric = TRUE)
+  A <- eig$vectors %*% diag(sqrt(eig$values))
+  hold <- cov[, 1, drop = FALSE]
+  # The sampled span holds the held direction and one beside it, and a third
+  # direction is sampled apart from both.
+  hz <- crossprod(A, c(1, 0, 0))
+  V <- qr.Q(qr(cbind(hz, c(0, 1, 1))))
+  out <- ctsem:::.ctHoldOff(A %*% V, c(4, 2), cov, hold, c(1, 1, 1), c(0, 0, 0))
+  # One direction is left, orthogonal to the held one in the normal's metric.
+  expect_equal(ncol(out$directions), 1L)
+  P <- solve(cov)
+  expect_equal(as.numeric(crossprod(out$directions, P %*% hold)), 0, tolerance = 1e-10)
+  # Its width is the check's covariance along it.
+  z <- solve(A, out$directions)
+  Cz <- diag(3) + V %*% diag(c(4, 2) - 1) %*% t(V)
+  expect_equal(out$widths, as.numeric(t(z) %*% Cz %*% z), tolerance = 1e-10)
+  # The centre's move along the held direction is undone.
+  expect_equal(as.numeric(crossprod(out$centre, P %*% hold)), 0, tolerance = 1e-10)
+})
