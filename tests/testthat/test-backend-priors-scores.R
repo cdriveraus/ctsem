@@ -161,8 +161,9 @@ test_that("redundant free T0VAR gives the population parameters no TI-predictor 
 
   # `priors = TRUE` is what refused outright; that this returns at all is half
   # the assertion.
+  # The augmented route by name: Stan's population block is the one it builds.
   julia_spec <- suppressMessages(ctFit(data, model, backend = "julia", fit = FALSE,
-    priors = TRUE))
+    priors = TRUE, intoverpop = "augmented"))
   npar <- max(c(julia_spec$parameter_table$parnumber, julia_spec$ti_effects$coefficient),
     na.rm = TRUE)
 
