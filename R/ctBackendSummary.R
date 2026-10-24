@@ -1077,14 +1077,46 @@ ctBackendParMatrices <- function(fit, raw = NULL, tipreds = NULL, state = NULL,
 # Every level's population at raw draws `samples` (extended,
 # `.ctBackendRawFull()`): each draw's raw covariance of the level's varying
 # parameters, `covariance[draw, i, j]`, and the sds and correlations read off
-# it (`.ctBackendPopulationMoments()`). The covariance is a model matrix,
-# `rawpopcov`, which the engine builds with the draw's other matrices on either
-# route; a `poprank` fit on the augmented route reports the covariance its
-# basis and coefficients imply.
+# it (`.ctBackendPopulationMoments()`). The covariance is the model matrix the
+# engine builds with the draw's other matrices, on either route, so one reader
+# serves both (`.ctBackendPopulationLevels()` says where each level's
+# parameters are listed). A `poprank` fit on the augmented route reports the
+# covariance its basis and coefficients imply (`.ctBackendPopRegressionPopulation()`).
 .ctBackendPopulationsOf <- function(fit, spec, samples, layout, flat) {
-  if (!is.null(spec$laplace)) return(.ctBackendLaplacePopulations(spec, layout, flat))
-  one <- .ctBackendPopulation(spec, samples, layout, flat)
-  if (is.null(one)) NULL else list(one)
+  regression <- .ctBackendPopRegressionPopulation(spec, samples, layout, flat)
+  out <- if (!is.null(regression)) list(regression) else
+    lapply(.ctBackendPopulationLevels(spec), function(level)
+      .ctBackendPopulationMoments(list(parnumber = level$parnumber,
+        param = level$param, level = level$name,
+        covariance = .ctBackendRawPopCovMatrix(layout, flat, level$matrix))))
+  if (length(out)) out else NULL
+}
+
+# The levels whose population covariance is a model matrix: each one's varying
+# parameters (raw positions and labels), its name, and the matrix's. On the
+# Laplace route the specification's levels, `rawpopcov` for the subject and
+# `rawpopcov_<l>` above it; on the augmented route the subject level alone, its
+# parameters those of the population sds (`.ctBackendAugmentedSds()`), in the
+# order R sends the engine their carrier states, which is the matrix's.
+.ctBackendPopulationLevels <- function(spec) {
+  laplace <- spec$laplace
+  if (!is.null(laplace)) {
+    out <- list()
+    for (l in seq_along(laplace$levels)) {
+      level <- laplace$levels[[l]]
+      if (!level$nrandom) next
+      out[[length(out) + 1L]] <- list(parnumber = as.integer(level$re_index),
+        param = .ctBackendParamLabel(level$param, level$re_index),
+        name = level$name,
+        matrix = if (l == 1L) "rawpopcov" else paste0("rawpopcov_", l))
+    }
+    return(out)
+  }
+  augmented <- .ctBackendAugmentedSds(spec)
+  if (is.null(augmented) || any(is.na(augmented$parnumber))) return(list())
+  list(list(parnumber = augmented$parnumber,
+    param = .ctBackendParamLabel(augmented$param, augmented$parnumber),
+    name = spec$model$subjectIDname, matrix = "rawpopcov"))
 }
 
 # The same at the fit's own draws (`samples = NULL`) or at others. The fit's
@@ -1240,21 +1272,6 @@ ctBackendParMatrices <- function(fit, raw = NULL, tipreds = NULL, state = NULL,
   varying <- varying[varying %in% cells$parnumber]
   if (!length(varying)) stop("No individually varying parameters in model!", call. = FALSE)
   varying
-}
-
-# The augmented route's population covariance: the model matrix `rawpopcov`,
-# the carrier block's raw construction before the engine scales it into T0cov,
-# its rows in the order of the population sds (`.ctBackendAugmentedSds()`),
-# which is the order R sends the engine their states.
-.ctBackendAugmentedPopulation <- function(spec, samples, layout, flat) {
-  augmented <- .ctBackendAugmentedSds(spec)
-  if (is.null(augmented)) return(NULL)
-  parnumber <- augmented$parnumber
-  if (any(is.na(parnumber))) return(NULL)
-  .ctBackendPopulationMoments(list(parnumber = parnumber,
-    param = .ctBackendParamLabel(augmented$param, parnumber),
-    covariance = .ctBackendRawPopCovMatrix(layout, flat, "rawpopcov"),
-    level = spec$model$subjectIDname))
 }
 
 # A population covariance model matrix, draws x k x k, which every summary of a
@@ -1435,27 +1452,6 @@ ctBackendParMatrices <- function(fit, raw = NULL, tipreds = NULL, state = NULL,
   out
 }
 
-# The Laplace route's population covariances, one per level: the model
-# matrices `rawpopcov` (the subject level) and `rawpopcov_<l>` (above it),
-# which the engine builds on the raw parameter scale with the draw's other
-# matrices.
-.ctBackendLaplacePopulations <- function(spec, layout, flat) {
-  laplace <- spec$laplace
-  if (is.null(laplace) || !laplace$nrandom) return(NULL)
-  out <- list()
-  for (l in seq_along(laplace$levels)) {
-    level <- laplace$levels[[l]]
-    if (!level$nrandom) next
-    out[[length(out) + 1L]] <- .ctBackendPopulationMoments(list(
-      parnumber = as.integer(level$re_index),
-      param = .ctBackendParamLabel(level$param, level$re_index),
-      covariance = .ctBackendRawPopCovMatrix(layout, flat,
-        if (l == 1L) "rawpopcov" else paste0("rawpopcov_", l)),
-      level = level$name))
-  }
-  if (!length(out)) NULL else out
-}
-
 # The raw population covariance of the varying parameters, one entry per level.
 #
 # `popsd`/`rawpopcorr` report this population the way a summary reads it: the
@@ -1466,11 +1462,10 @@ ctBackendParMatrices <- function(fit, raw = NULL, tipreds = NULL, state = NULL,
 #
 # The level populations are the ones `.ctBackendRandomEffectDraws()`
 # summarises (`.ctBackendPopulations()`), so a stored fit's are read from its
-# constrain cache without Julia. Through `.ctBackendPopulation()` on the
-# augmented route, so a `poprank` fit's implied covariance over *every* varying
-# parameter arrives here: `ctModelLatex()` draws the subject parameter
-# distribution from this, and without it a reduced-rank fit's figure showed
-# only the basis effects. Averaged over draws as a covariance, not as an sd and
+# constrain cache without Julia. A `poprank` fit's implied covariance over
+# *every* varying parameter arrives here: `ctModelLatex()` draws the subject
+# parameter distribution from this, and without it a reduced-rank fit's figure
+# showed only the basis effects. Averaged over draws as a covariance, not as an sd and
 # a correlation separately -- for a skewed posterior those are different
 # numbers, and Stan averages the covariance.
 .ctBackendRawPopCov <- function(fit, samples = NULL) {

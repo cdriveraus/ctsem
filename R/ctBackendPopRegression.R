@@ -2,7 +2,7 @@
 #
 # The design constraint is that everything downstream keeps one code path. The
 # summary's `popsd` and `rawpopcorr` are already *derived* from the population
-# covariance rather than being free parameters -- `.ctBackendAugmentedPopulation()`
+# covariance rather than being free parameters -- `.ctBackendPopulationsOf()`
 # reads the model matrix `rawpopcov` and `.ctBackendRandomEffectLevel()` integrates each parameter's
 # transform over its own marginal spread by quadrature -- so a reduced-rank fit
 # only has to hand them the same thing: one entry per varying parameter, with a
@@ -11,7 +11,7 @@
 # So this file computes the full `k x k` population covariance implied by the
 # basis block and the regression coefficients, and returns it in exactly the
 # shape the full-rank path returns. The single branch is in
-# `.ctBackendPopulation()`; nothing else in the summary knows this feature
+# `.ctBackendPopulationsOf()`; nothing else in the summary knows this feature
 # exists.
 
 # Raw parameter numbers for a set of labels, from the prepared parameter table.
@@ -148,13 +148,6 @@
     level = spec$model$subjectIDname,
     covariance = covariance, rank = regression$rank,
     regressed = regressed, approximate = isTRUE(regression$approximate)))
-}
-
-# The one branch. Everything else in the summary asks for this.
-.ctBackendPopulation <- function(spec, samples, layout, flat) {
-  out <- .ctBackendPopRegressionPopulation(spec, samples, layout, flat)
-  if (!is.null(out)) return(out)
-  .ctBackendAugmentedPopulation(spec, samples, layout, flat)
 }
 
 # The estimated coefficients, as their own table. This is the object a
