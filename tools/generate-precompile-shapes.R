@@ -201,7 +201,9 @@ invisible(ctsem:::.ctJuliaEval(paste(
   "function ctsem_generator_draw_columns(x)",
   "  x isa AbstractMatrix && size(x, 2) > 3 && (x = x[:, 1:3])",
   "  ctsem_generator_literal(x)",
-  "end", sep = "\n")))
+  "end",
+  # An argument's type, for a call's signature (`signature()` below).
+  "ctsem_generator_type(x) = string(typeof(x))", sep = "\n")))
 draws <- c("ctsem_parameter_matrices", "ctsem_laplace_population")
 drawcols <- c("ctsem_evaluate_batch", "ctsem_evaluate_batch_gradient",
   "ctsem_coreset_batch", "ctsem_coreset_batch_gradient", "ctsem_coreset_terms")
@@ -226,6 +228,20 @@ encode <- function(x, fn) {
   }
   stop("an argument is a Julia object no recorded call produced")
 }
+# A call's signature: the engine function, its keywords' names, and every
+# argument's Julia type -- what decides which code a replay compiles. A
+# second call of one signature compiles nothing the first did not, so at most
+# `repeats` of each are kept: the uncertainty stage makes hundreds of batch
+# evaluations of one signature a fit (DAIS's iterations), and every one of them
+# was replayed in every build. Calls that return an object a later call may
+# refer to (a proxy) are always kept, and so are calls that change the
+# engine's state (a name ending in `!`), whose effect later calls may need.
+repeats <- 2L
+signature <- function(fn, args) {
+  nm <- names(args); if (is.null(nm)) nm <- rep("", length(args))
+  types <- vapply(args, function(x) as.character(raw_call("ctsem_generator_type", x)), "")
+  paste(fn, paste(nm, types, sep = ":", collapse = ","), sep = "|")
+}
 recorder <- function(name, ..., .defer = FALSE) {
   if (!isTRUE(rec$on)) return(raw_call(name, ..., .defer = .defer))
   if (identical(name, "RConnector.EnforcedProxy")) {
@@ -237,9 +253,16 @@ recorder <- function(name, ..., .defer = FALSE) {
   if (is.null(fn)) return(raw_call(name, ..., .defer = .defer))
   args <- list(...)
   nm <- names(args); if (is.null(nm)) nm <- rep("", length(args))
+  sig <- signature(fn, args)
   pos <- lapply(args[!nzchar(nm)], encode, fn = fn)
   kw <- lapply(args[nzchar(nm)], encode, fn = fn)
   out <- raw_call(name, ..., .defer = .defer)
+  seen <- if (is.null(rec$seen[[sig]])) 0L else rec$seen[[sig]]
+  rec$seen[[sig]] <- seen + 1L
+  if (seen >= repeats && !inherits(out, "JuliaProxy") && !endsWith(fn, "!")) {
+    rec$skipped <- rec$skipped + 1L
+    return(out)
+  }
   k <- length(rec$calls) + 1L
   rec$calls[[k]] <- list(fn = fn, pos = pos, kw = kw)
   if (inherits(out, "JuliaProxy")) {
@@ -268,7 +291,8 @@ for (name in names(shapes)) {
   # A later model must not find an earlier one's objective in the session cache.
   cache <- get(".ct_julia_cache", envir = ns)
   cache$objectives <- new.env(parent = emptyenv())
-  rec$calls <- list(); rec$proxies <- list(); rec$on <- TRUE
+  rec$calls <- list(); rec$proxies <- list(); rec$seen <- list(); rec$skipped <- 0L
+  rec$on <- TRUE
   # The starting values a user's `inits = NULL` fit draws, from a fixed seed.
   set.seed(1)
   args <- list(dat, model, backend = "julia", intoverpop = s$route, cores = 1L)
@@ -280,8 +304,8 @@ for (name in names(shapes)) {
   if (!any(vapply(rec$calls, function(x) x$fn == "ekf_from_columns", TRUE))) {
     stop(name, ": the fit made no ekf_from_columns call")
   }
-  cat(sprintf("%-22s %3d engine calls, loglik %.3f\n", name, length(rec$calls),
-    fit$estimate$loglik))
+  cat(sprintf("%-22s %3d engine calls (%d repeats left out), loglik %.3f\n", name,
+    length(rec$calls), rec$skipped, fit$estimate$loglik))
   # Recorded into the same replay, after the fit whose objects they use. One
   # that cannot be recorded -- an R callback handed to Julia cannot be replayed
   # at build time -- is said so and left out; the calls it made before that
