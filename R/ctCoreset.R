@@ -100,6 +100,7 @@
     expected_round_cost = if (used) as.numeric(r$expected_round_cost),
     free_checks = as.integer(r$free_checks),
     chosen = as.integer(r$chosen),
+    attempts = as.integer(r$attempts),
     chosen_passed = as.integer(r$chosen_passed),
     seconds = unlist(r$seconds),
     draws = unlist(r$draws),

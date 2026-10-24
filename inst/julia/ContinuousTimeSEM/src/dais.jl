@@ -214,6 +214,12 @@ end
 
 function _dais_evaluate!(vals::Vector{Float64}, grads::Matrix{Float64}, objective,
     cs::CTSEMISCoreset, X::Matrix{Float64}, mode::Symbol)
+    # No more units than the draws move in: no coreset can be chosen, so the
+    # draws go to the objective as they would without one. Through the
+    # coreset's batches they were the same numbers but for the last bits,
+    # enough for DAIS to take another path and stop elsewhere (28 iterations
+    # against 21 on the 266-parameter scale fit with 200 units).
+    _is_coreset_possible(cs) || return _dais_evaluate!(vals, grads, objective, nothing, X, mode)
     fill!(vals, -Inf)
     fill!(grads, 0.0)
     before = cs.cost
@@ -303,7 +309,8 @@ function _ctsem_dais(objective, coreset, c0::Vector{Float64}, cov::AbstractMatri
     # The bound a parameter's drift over the window must stay within, every
     # parameter tested at once at `level` (Bonferroni).
     zp = sqrt(2) * erfinv(1 - P.level / p)
-    mode = coreset === nothing ? _points_mode(objective, parallel) : :coreset
+    mode = coreset === nothing || !_is_coreset_possible(coreset) ?
+        _points_mode(objective, parallel) : :coreset
     rng = Random.Xoshiro(UInt64(seed))
     reporter = CTSEMProgress(verbose; label="DAIS", overwrite=progress_overwrite,
         sink=progress_sink)
@@ -481,7 +488,7 @@ each choice's size and price among it)."""
 _dais_coreset_record(::Nothing) = (coreset=false, coreset_size=0, coreset_chosen=0,
     coreset_failed=0)
 _dais_coreset_record(cs::CTSEMISCoreset) = (coreset=true,
-    coreset_size=cs.phase == :coreset ? _is_active_n(cs) : 0, coreset_chosen=cs.nchoose,
+    coreset_size=cs.phase == :coreset ? _is_active_n(cs) : 0, coreset_chosen=_is_chosen(cs),
     coreset_failed=cs.fails_total, coreset_record=ctsem_is_coreset_record(cs))
 
 """The held directions `hold` (columns, in the parameters) in the whitened
