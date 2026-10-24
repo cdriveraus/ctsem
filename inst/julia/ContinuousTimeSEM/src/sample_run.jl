@@ -331,6 +331,12 @@ function _run_chain(logdensity!, centre::Vector{Float64},
     end
     x, logp = _sample_initial_point(centre, metric, rng, init_scale,
         logdensity!, g)
+    # A first coreset before warm-up, from draws of the normal the chain
+    # starts in, where the density fits one (sample_surrogate.jl).
+    if nwarmup > 0 && _surrogate_training(logdensity!)
+        logp = _surrogate_fit!(logdensity!,
+            _surrogate_seed(logdensity!, centre, metric, _SURROGATE_TRAIN), x, g, logp)
+    end
 
     current = metric
     # A step size the caller fixed, or this chain's own crude estimate.
@@ -367,9 +373,9 @@ function _run_chain(logdensity!, centre::Vector{Float64},
     raises = 0
     windows = adapt_metric ? _adapt_windows(nwarmup) : Int[]
     window_draws = Vector{Vector{Float64}}()
-    # The warm-up states a coreset is fitted from, where the density wants one
-    # (`_surrogate_warmed!`, sample_surrogate.jl), at `train_at`: a third of
-    # the way in, so the rest of warm-up runs on it too; nothing kept otherwise.
+    # The warm-up states the density fits its second coreset from, where it
+    # wants one (`_surrogate_fit!`, sample_surrogate.jl), at `train_at`: a
+    # third of the way in; nothing kept otherwise.
     trainstates = _surrogate_training(logdensity!) ? Vector{Vector{Float64}}() : nothing
     train_at = _surrogate_train_at(nwarmup)
     warmup_divergent = 0
@@ -394,7 +400,7 @@ function _run_chain(logdensity!, centre::Vector{Float64},
         if trainstates !== nothing
             _surrogate_keep!(trainstates, x)
             if iteration == train_at
-                logp = _surrogate_warmed!(logdensity!, trainstates, x, g, logp)
+                logp = _surrogate_fit!(logdensity!, trainstates, x, g, logp)
                 trainstates = nothing
             end
         end
@@ -509,7 +515,7 @@ function _run_chain(logdensity!, centre::Vector{Float64},
     # A warm-up that ended before `train_at` (an early stop) fits from what it
     # kept; a coreset whose moves warm-up accepted too rarely is given up
     # before sampling. `logp` and `g` are the density's in use at `x`.
-    trainstates === nothing || (logp = _surrogate_warmed!(logdensity!,
+    trainstates === nothing || (logp = _surrogate_fit!(logdensity!,
         trainstates, x, g, logp))
     logp = _surrogate_batch!(logdensity!, x, g, logp)
     # Forced: warmup may finish inside a callback interval (a short run, or
