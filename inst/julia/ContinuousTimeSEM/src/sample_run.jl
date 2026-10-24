@@ -714,6 +714,123 @@ function _pool_draws(results::Vector{_ChainResult}, npar::Int)
 end
 
 """
+    _check_sample_arguments(nchains, ndraws, target_accept; nwarmup=0)
+
+The checks every sampler makes of its chain and draw counts and its
+acceptance target.
+"""
+function _check_sample_arguments(nchains::Integer, ndraws::Integer, target_accept::Real;
+    nwarmup::Integer=0)
+    nchains >= 1 || throw(ArgumentError("nchains must be positive"))
+    ndraws >= 1 || throw(ArgumentError("ndraws must be positive"))
+    nwarmup >= 0 || throw(ArgumentError("nwarmup must be non-negative"))
+    0 < target_accept < 1 || throw(ArgumentError("target_accept must be in (0, 1)"))
+    return nothing
+end
+
+"""
+    _sample_pool(results, nchains, ndraws, nkeep; rows=nkeep)
+
+Each chain's draws (their first `nkeep` coordinates) and its per-draw record --
+acceptance, divergence, tree depth, energy -- pooled chain after chain, into a
+draws matrix of `rows` rows; the rows past `nkeep` are the caller's to fill, as
+the joint sampler fills its natural deviations.
+"""
+function _sample_pool(results, nchains::Int, ndraws::Int, nkeep::Int; rows::Int=nkeep)
+    total = nchains * ndraws
+    draws = Matrix{Float64}(undef, rows, total)
+    accept = Vector{Float64}(undef, total)
+    divergent = Vector{Bool}(undef, total)
+    depth = Vector{Int}(undef, total)
+    energy = Vector{Float64}(undef, total)
+    for c in 1:nchains
+        r = results[c]
+        for t in 1:ndraws
+            column = (c - 1) * ndraws + t
+            @inbounds for j in 1:nkeep
+                draws[j, column] = r.draws[j, t]
+            end
+            accept[column] = r.accept[t]
+            divergent[column] = r.divergent[t]
+            depth[column] = r.depth[t]
+            energy[column] = r.energy[t]
+        end
+    end
+    return (draws=draws, accept=accept, divergent=divergent, depth=depth, energy=energy)
+end
+
+"""The effect summary of a run with no effects, as the marginal routes report it."""
+const _NO_EFFECT_SUMMARY = (mean=Float64[], sd=Float64[], cov=Float64[], rows=Int[],
+    cols=Int[])
+
+"""
+    _effect_summary(effect_sum, effect_sq, effect_cross, n, blocks)
+
+The natural deviations' posterior means, sds (on `n - 1`) and within-block
+covariances, from their running sums over `n` draws.
+"""
+function _effect_summary(effect_sum, effect_sq, effect_cross, n::Int, blocks)
+    mean = effect_sum ./ n
+    sd = sqrt.(max.(effect_sq ./ n .- mean .^ 2, 0.0) .* (n / max(n - 1, 1)))
+    cov = _effect_cross_cov(effect_cross, mean, n, blocks)
+    rows, cols = _effect_cross_index(blocks)
+    return (mean=mean, sd=sd, cov=cov, rows=rows, cols=cols)
+end
+
+"""
+    _sample_result(pooled; nchains, ndraws, npar, ndim, maxdepth, stepsize,
+        warmup_divergent, trace, saved_effects, effects, ebfmi, diagnostics)
+
+The record every sampler returns -- the joint and marginal NUTS samplers,
+tempered SMC and SAEM's kernel -- from its pooled draws and per-draw record
+(`pooled`: `draws`, `accept`, `divergent`, `depth`, `energy`, as
+`_sample_pool` returns them). R reads it by name (`R/ctBackendSample.R`), so
+it is built once, here: a field added for one sampler is added for all, and
+each `merge`s its own fields onto it. `diagnostics` defaults to the pooled
+draws'; SMC passes its chains' own, taken before its correction resamples them.
+"""
+function _sample_result(pooled; nchains::Int, ndraws::Int, npar::Int, ndim::Int,
+    maxdepth::Int, stepsize, warmup_divergent, trace, saved_effects::Bool=false,
+    effects=_NO_EFFECT_SUMMARY, ebfmi=_ebfmi(pooled.energy, nchains),
+    diagnostics=ctsem_sample_diagnostics(pooled.draws, nchains))
+    return (
+        draws=pooled.draws, npar=npar, ndim=ndim, nchains=nchains, ndraws=ndraws,
+        saved_effects=saved_effects, effect_mean=effects.mean, effect_sd=effects.sd,
+        effect_cov=effects.cov, effect_cov_rows=effects.rows,
+        effect_cov_cols=effects.cols, rhat=diagnostics.rhat, ess=diagnostics.ess,
+        ess_tail=diagnostics.ess_tail, accept=pooled.accept,
+        divergent=pooled.divergent, depth=pooled.depth, energy=pooled.energy,
+        stepsize=stepsize, warmup_divergent=warmup_divergent,
+        ndivergent=count(pooled.divergent), max_depth=maxdepth,
+        nsaturated=count(==(maxdepth), pooled.depth), ebfmi=ebfmi,
+        # `init=NaN` would be wrong rather than defensive: Julia's `min` and
+        # `max` propagate NaN, so it poisons every result instead of only the
+        # empty one.
+        worst_rhat=_finite_extremum(diagnostics.rhat, maximum),
+        min_ess=_finite_extremum(vcat(diagnostics.ess, diagnostics.ess_tail), minimum),
+        target_trace=trace,
+    )
+end
+
+"""
+    _with_sample_roots(f, laplace, values, kwargs, natural)
+
+`f()` with each full-rank level's effects standardised in a Cholesky ordered
+strongest-determined first for the run (`_with_root_orders`), the forward-mode
+gradients counted (`_with_forward_count`); a caller who passed any of the
+keywords named in `natural` (its own starts or state, in the natural order)
+keeps the natural order.
+"""
+function _with_sample_roots(f, laplace::CTSEMLaplaceObjective, values::AbstractVector,
+    kwargs, natural::Tuple)
+    npar = Int(get(kwargs, :npar, length(values)))
+    own = any(k -> get(kwargs, k, nothing) !== nothing, natural)
+    return _with_root_orders(laplace, collect(Float64, values)[1:npar], own) do
+        _with_forward_count(f)
+    end
+end
+
+"""
     _run_chains(nchains, parallel, seed, label, closing, chain; kwargs...)
 
 Run `nchains` chains and collect their results: concurrently when `parallel`
@@ -903,10 +1020,7 @@ function _ctsem_sample(laplace::CTSEMLaplaceObjective, values::AbstractVector;
 
     t0 = time()
     nchains = Int(nchains); nwarmup = Int(nwarmup); ndraws = Int(ndraws)
-    nchains >= 1 || throw(ArgumentError("nchains must be positive"))
-    ndraws >= 1 || throw(ArgumentError("ndraws must be positive"))
-    nwarmup >= 0 || throw(ArgumentError("nwarmup must be non-negative"))
-    0 < target_accept < 1 || throw(ArgumentError("target_accept must be in (0, 1)"))
+    _check_sample_arguments(nchains, ndraws, target_accept; nwarmup=nwarmup)
 
     # `saem = true`: placed by SAEM's state, as `ctsem_saem_sample` is -- the
     # chains start from its estimate and its chains' effects, and the metric is
@@ -972,11 +1086,8 @@ function _ctsem_sample(laplace::CTSEMLaplaceObjective, values::AbstractVector;
     # (`_laplace_deviations!`), not as the coordinates the sampler moves.
     devstarts, ndev = _laplace_deviation_offsets(laplace)
     kept = save_effects ? npar + ndev : npar
-    draws = Matrix{Float64}(undef, kept, total)
-    accept = Vector{Float64}(undef, total)
-    divergent = Vector{Bool}(undef, total)
-    depth = Vector{Int}(undef, total)
-    energy = Vector{Float64}(undef, total)
+    pooled = _sample_pool(results, nchains, ndraws, npar; rows=kept)
+    draws = pooled.draws
     # Running mean and sum of squares for the effects, so their summary costs
     # nothing whether or not the draws themselves are kept.
     effect_sum = zeros(Float64, ndev)
@@ -989,9 +1100,6 @@ function _ctsem_sample(laplace::CTSEMLaplaceObjective, values::AbstractVector;
         r = results[c]
         for t in 1:ndraws
             column = (c - 1) * ndraws + t
-            @inbounds for j in 1:npar
-                draws[j, column] = r.draws[j, t]
-            end
             Ls = _laplace_popchols(r.draws[1:npar, t], laplace.spec)
             _laplace_deviations!(dev, laplace, Ls, view(r.draws, (npar + 1):ndim, t),
                 devstarts)
@@ -1001,54 +1109,17 @@ function _ctsem_sample(laplace::CTSEMLaplaceObjective, values::AbstractVector;
                 save_effects && (draws[npar + j, column] = dev[j])
             end
             _effect_cross_add!(effect_cross, dev, blocks)
-            accept[column] = r.accept[t]
-            divergent[column] = r.divergent[t]
-            depth[column] = r.depth[t]
-            energy[column] = r.energy[t]
         end
     end
-    effect_mean = effect_sum ./ total
-    effect_sd = sqrt.(max.(effect_sq ./ total .- effect_mean .^ 2, 0.0) .*
-        (total / max(total - 1, 1)))
-    effect_cov = _effect_cross_cov(effect_cross, effect_mean, total, blocks)
-    effect_cov_rows, effect_cov_cols = _effect_cross_index(blocks)
-
-    diagnostics = ctsem_sample_diagnostics(draws, nchains)
-    return (
-        draws=draws,
-        npar=sampler.npar,
-        # The reported joint dimension: the parameters and the natural
-        # deviations, which is what `draws` holds when the effects are kept.
-        ndim=npar + ndev,
-        nchains=nchains,
-        ndraws=ndraws,
-        saved_effects=save_effects,
-        effect_mean=effect_mean,
-        effect_sd=effect_sd,
-        effect_cov=effect_cov,
-        effect_cov_rows=effect_cov_rows,
-        effect_cov_cols=effect_cov_cols,
-        rhat=diagnostics.rhat,
-        ess=diagnostics.ess,
-        ess_tail=diagnostics.ess_tail,
-        accept=accept,
-        divergent=divergent,
-        depth=depth,
-        energy=energy,
-        stepsize=[r.stepsize for r in results],
-        warmup_divergent=[r.warmup_divergent for r in results],
-        ndivergent=count(divergent),
-        max_depth=Int(maxdepth),
-        nsaturated=count(==(Int(maxdepth)), depth),
-        ebfmi=_ebfmi(energy, nchains),
-        # `init=NaN` would be wrong rather than defensive: Julia's `min` and
-        # `max` propagate NaN, so it poisons every result instead of only the
-        # empty one.
-        worst_rhat=_finite_extremum(diagnostics.rhat, maximum),
-        min_ess=_finite_extremum(vcat(diagnostics.ess, diagnostics.ess_tail), minimum),
-        target_trace=run.trace,
-        placement=_saem_placement_summary(placement),
-    )
+    # The reported joint dimension is the parameters and the natural
+    # deviations, which is what `draws` holds when the effects are kept.
+    return merge(_sample_result(pooled; nchains=nchains, ndraws=ndraws, npar=npar,
+            ndim=npar + ndev, maxdepth=Int(maxdepth),
+            stepsize=[r.stepsize for r in results],
+            warmup_divergent=[r.warmup_divergent for r in results], trace=run.trace,
+            saved_effects=save_effects,
+            effects=_effect_summary(effect_sum, effect_sq, effect_cross, total, blocks)),
+        (placement=_saem_placement_summary(placement),))
 end
 
 """
@@ -1059,14 +1130,9 @@ standardised in a Cholesky ordered strongest-determined first for the run
 (`_with_root_orders`). A caller's own `starts` are in the natural order and keep
 it.
 """
-function ctsem_sample(laplace::CTSEMLaplaceObjective, values::AbstractVector;
-    kwargs...)
-    npar = Int(get(kwargs, :npar, length(values)))
-    natural = get(kwargs, :starts, nothing) !== nothing
-    return _with_root_orders(laplace, collect(Float64, values)[1:npar], natural) do
-        _with_forward_count(() -> _ctsem_sample(laplace, values; kwargs...))
-    end
-end
+ctsem_sample(laplace::CTSEMLaplaceObjective, values::AbstractVector; kwargs...) =
+    _with_sample_roots(() -> _ctsem_sample(laplace, values; kwargs...), laplace, values,
+        kwargs, (:starts,))
 
 """
     _sample_joint_starts(starts, centre, npar)
@@ -1154,10 +1220,7 @@ function ctsem_sample_marginal(objective, values::AbstractVector;
     forward0 = ctsem_forward_gradients()
     explosive0 = ctsem_explosive_passes()
     nchains = Int(nchains); nwarmup = Int(nwarmup); ndraws = Int(ndraws)
-    nchains >= 1 || throw(ArgumentError("nchains must be positive"))
-    ndraws >= 1 || throw(ArgumentError("ndraws must be positive"))
-    nwarmup >= 0 || throw(ArgumentError("nwarmup must be non-negative"))
-    0 < target_accept < 1 || throw(ArgumentError("target_accept must be in (0, 1)"))
+    _check_sample_arguments(nchains, ndraws, target_accept; nwarmup=nwarmup)
 
     centre = collect(Float64, values)
     # `ndim` for every coordinate sampled, which is what this entry returns
@@ -1244,42 +1307,10 @@ function ctsem_sample_marginal(objective, values::AbstractVector;
         t0=t0, coordinate=coordinate)
     results = run.results
     ndraws = run.ndraws
-
-    total = nchains * ndraws
-    draws = Matrix{Float64}(undef, npar, total)
-    accept = Vector{Float64}(undef, total)
-    divergent = Vector{Bool}(undef, total)
-    depth = Vector{Int}(undef, total)
-    energy = Vector{Float64}(undef, total)
-    for c in 1:nchains
-        r = results[c]
-        for t in 1:ndraws
-            column = (c - 1) * ndraws + t
-            @inbounds for j in 1:npar
-                draws[j, column] = r.draws[j, t]
-            end
-            accept[column] = r.accept[t]
-            divergent[column] = r.divergent[t]
-            depth[column] = r.depth[t]
-            energy[column] = r.energy[t]
-        end
-    end
-    diagnostics = ctsem_sample_diagnostics(draws, nchains)
-    return (
-        draws=draws, npar=npar, ndim=npar, nchains=nchains, ndraws=ndraws,
-        saved_effects=false, effect_mean=Float64[], effect_sd=Float64[],
-        effect_cov=Float64[], effect_cov_rows=Int[], effect_cov_cols=Int[],
-        rhat=diagnostics.rhat, ess=diagnostics.ess, ess_tail=diagnostics.ess_tail,
-        accept=accept, divergent=divergent, depth=depth, energy=energy,
-        stepsize=[r.stepsize for r in results],
-        warmup_divergent=[r.warmup_divergent for r in results],
-        ndivergent=count(divergent), max_depth=Int(maxdepth),
-        nsaturated=count(==(Int(maxdepth)), depth),
-        ebfmi=_ebfmi(energy, nchains),
-        worst_rhat=_finite_extremum(diagnostics.rhat, maximum),
-        min_ess=_finite_extremum(vcat(diagnostics.ess, diagnostics.ess_tail), minimum),
-        target_trace=run.trace,
-        forward_gradients=ctsem_forward_gradients() - forward0,
-        explosive_passes=ctsem_explosive_passes() - explosive0,
-    )
+    return merge(_sample_result(_sample_pool(results, nchains, ndraws, npar);
+            nchains=nchains, ndraws=ndraws, npar=npar, ndim=npar, maxdepth=Int(maxdepth),
+            stepsize=[r.stepsize for r in results],
+            warmup_divergent=[r.warmup_divergent for r in results], trace=run.trace),
+        (forward_gradients=ctsem_forward_gradients() - forward0,
+            explosive_passes=ctsem_explosive_passes() - explosive0))
 end
