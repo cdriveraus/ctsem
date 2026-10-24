@@ -90,12 +90,16 @@ function _is_passes(err::AbstractVector, rel::AbstractVector, mult::Real=1.0)
 end
 
 """What a sampler round is: its batch of draws, the gradients asked for before
-the next (each as two values), and the checks a batch on a coreset takes."""
+the next (each as two values), the checks a batch on a coreset takes, and how
+many times the tolerances its caller's use allows (`_is_coreset_tolerance!`)."""
 struct _ISRound
     values::Float64
     grads::Float64
     checks::Int
+    tol::Float64
 end
+
+_ISRound(values::Real, grads::Real, checks::Integer) = _ISRound(values, grads, checks, 1.0)
 
 """What a batch of `rd.values` draws is expected to cost on a coreset of `M`
 of `N` units, and in full, in full evaluations: on the coreset its share
@@ -150,7 +154,7 @@ function _is_fail_rate(err::AbstractVector, rel::AbstractVector, pred::AbstractV
             append!(pick, others[unique(round.(Int, range(1, length(others);
                 length=k - ntop)))])
         end
-        _is_passes(err[pick], rel[pick], _IS_CORESET_TOL.drift) || (failures += 1)
+        _is_passes(err[pick], rel[pick], rd.tol * _IS_CORESET_TOL.drift) || (failures += 1)
     end
     return failures / 200
 end
@@ -275,6 +279,7 @@ mutable struct CTSEMISCoreset
     lastgrad_total::Vector{Float64}
     lastgrad_L::Matrix{Float64}
     reused::Int
+    tolscale::Float64
 end
 
 """
@@ -299,7 +304,7 @@ function ctsem_is_coreset(laplace::CTSEMLaplaceObjective; top::Symbol=:run)
         false, Int[], Float64[], 0.0, NaN, NaN, :training, 0.0, Int[], Float64[],
         0, NaN, 0, false, NaN, NaN, 0.0, 0, 0, 0, 0, 0, 0, 0, false, true, 0, 0, 0,
         secs, draws, why, Dict{Vector{Float64},Float64}(), NTuple{8,Float64}[],
-        Dict{Vector{Float64},Int}(), Float64[], Float64[], zeros(N, 0), 0)
+        Dict{Vector{Float64},Int}(), Float64[], Float64[], zeros(N, 0), 0, 1.0)
 end
 
 """The coresets chosen, of the choices tried (`cs.nchoose`, a row each of the
@@ -308,7 +313,21 @@ _is_chosen(cs::CTSEMISCoreset) = count(t -> t[3] == 1.0, cs.trace)
 
 _is_smooth(old, new) = isnan(old) ? Float64(new) : 0.7 * old + 0.3 * new
 _is_round(cs::CTSEMISCoreset) = _ISRound(cs.values,
-    isnan(cs.grads) ? 0.3 * cs.values : cs.grads, 8)
+    isnan(cs.grads) ? 0.3 * cs.values : cs.grads, 8, cs.tolscale)
+
+"""
+How many times its tolerances a coreset's checks, prices and gradient gate
+allow from here on, for a caller whose use of the density damps its errors:
+DAIS weighs its draws by `(pi / q)^gamma` and steps by `gamma` times their
+weighted gradients, so a coreset off by `delta` moves its update by `gamma
+delta`, and `1 / gamma` times the tolerance moves it as far as the tolerance
+does at `gamma = 1`. Read at every batch, so a coreset chosen while the
+damping was strong is held to a tighter bound as it eases; at most ten
+times, because what DAIS averages over its last iterations is what an early
+loose coreset could bias.
+"""
+_is_coreset_tolerance!(cs::CTSEMISCoreset, scale::Real) =
+    (cs.tolscale = clamp(Float64(scale), 1.0, 10.0); nothing)
 _is_active_n(cs::CTSEMISCoreset) = count(>(0), cs.w)
 _is_failnow(cs::CTSEMISCoreset) = (cs.fails + 2 * cs.cf_fail) / (cs.runs + 2)
 _is_predict(cs::CTSEMISCoreset, L::AbstractMatrix) =
@@ -586,7 +605,7 @@ function _is_coreset_choose(tr::_ISRows, rd::_ISRound, start::Vector{Int})
         # it the choice priced every size alike on thin evidence and took the
         # smallest, which failed: 1-16 units on DAIS's 33-parameter shell at
         # 1,000 units, and one unit a choice on a 266-parameter fit with 200.
-        _is_force_error(score, tr, zheld, units, w, top) > _IS_CORESET_TOL.force &&
+        _is_force_error(score, tr, zheld, units, w, top) > rd.tol * _IS_CORESET_TOL.force &&
             return (0.0, bound, nothing)
         # Not `c`: the function's own `c` below would be this one, boxed.
         level = my - sum(mx[units] .* w)
@@ -704,7 +723,7 @@ function _is_inparts!(cs::CTSEMISCoreset, X::AbstractMatrix, why::Symbol)
         left = n - done
         half = left ÷ 2
         r0 = _is_round(cs)
-        r = _ISRound(half, r0.grads, r0.checks)
+        r = _ISRound(half, r0.grads, r0.checks, r0.tol)
         bc = cs.rows.nrows == 0 ? _is_batch_cost(0, 1, r, 0.0) :
             _is_batch_cost(cs.has_cf ? _is_active_n(cs) : 0, cs.N, r, 0.0)
         # Values a gradient batch already gave cost nothing in full.
@@ -731,7 +750,7 @@ end
 size, else in full."""
 function _is_withcoreset!(cs::CTSEMISCoreset, X::AbstractMatrix)
     r0 = _is_round(cs)
-    r = _ISRound(size(X, 2), r0.grads, r0.checks)
+    r = _ISRound(size(X, 2), r0.grads, r0.checks, r0.tol)
     bc = _is_batch_cost(_is_active_n(cs), cs.N, r, _is_failnow(cs))
     bc.coreset < bc.full && return _is_oncoreset!(cs, X)
     return _is_freecheck!(cs, X, :small)
@@ -757,7 +776,7 @@ function _is_freecheck!(cs::CTSEMISCoreset, X::AbstractMatrix, why::Symbol)
         cs.runs += 1
         cs.free_total += 1
         rel = _is_relevance(t0.total[pick][good], _is_top(cs.rows))
-        _is_passes(err, rel, _IS_CORESET_TOL.drift) ? _is_passed!(cs) : _is_failed!(cs)
+        _is_passes(err, rel, cs.tolscale * _IS_CORESET_TOL.drift) ? _is_passed!(cs) : _is_failed!(cs)
     end
     return t0.value
 end
@@ -777,7 +796,7 @@ function _is_oncoreset!(cs::CTSEMISCoreset, X::AbstractMatrix)
         rel = _is_relevance(t0.total[good], _is_top(cs.rows))
         cs.runs += 1
         cs.runs_total += 1
-        if !_is_passes(err, rel, _IS_CORESET_TOL.drift)
+        if !_is_passes(err, rel, cs.tolscale * _IS_CORESET_TOL.drift)
             # Failed. None of the round's values comes from this coreset: the
             # sampler keeps every value it is handed, and a coreset that
             # overrated the draws it ranked highest by 20 log units (a first,
@@ -926,7 +945,7 @@ function ctsem_is_coreset_gradbatch!(cs::CTSEMISCoreset, X::AbstractMatrix;
             _is_learn!(cs.rows, t0; focus=true)
             cs.runs += 1
             rel = _is_relevance(t0.total[good], _is_top(cs.rows))
-            if !_is_passes(err, rel, _IS_CORESET_TOL.drift)
+            if !_is_passes(err, rel, cs.tolscale * _IS_CORESET_TOL.drift)
                 _is_failed!(cs)
                 return ctsem_is_coreset_fullgrad!(cs, X)
             end
