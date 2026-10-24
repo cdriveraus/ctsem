@@ -36,7 +36,8 @@ ctModel(
   n.TIpred = "auto",
   TIpredNames = "auto",
   tipredDefault = TRUE,
-  PARS = NULL
+  PARS = NULL,
+  driftScaled = character()
 )
 }
 \arguments{
@@ -216,6 +217,23 @@ predictor effects, which is the way to exclude a parameter under
 \code{$tipredDefault}.}
 
 \item{PARS}{for types 'ct' and 'dt' only. May be of any structure, only needed to contain extra parameters for certain non-linear models.}
+
+\item{driftScaled}{for type 'ct' only: which of "DIFFUSION" and "CINT" to
+parameterise by what they accrue over one time unit given the process's
+own drift diagonal, rather than by their instantaneous rates. A diffusion
+sd \code{s} becomes \code{s * sqrt(2 a / expm1(2 a))}, \code{s^2} the variance
+the process gains over one time unit from its own noise (its stationary
+variance where the drift is fast, the diffusion variance where it is
+slow); an intercept \code{u} becomes \code{u * a / expm1(a)}. The fit and
+its likelihood are the default parameterisation's; what changes is that
+these parameters no longer have to move with the drift diagonal where
+fast mean reversion and more noise look alike, so that uncertainty and
+sampling are better behaved there. Only the diffusion's diagonal is
+rescaled, so its correlations keep their continuous-time meaning. Each
+such parameter moves, name, transform, random effects and predictor
+effects with it, to a new cell of \code{PARS}, and its own cell becomes an
+expression of that cell and the drift diagonal. Not available with
+\code{covmattransform = 'cholesky'}.}
 }
 \value{
 For \code{type = 'ct'} or \code{'dt'}, a model of class

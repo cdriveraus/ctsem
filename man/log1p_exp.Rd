@@ -10,7 +10,8 @@ log1p_exp(x)
 \item{x}{value to use.}
 }
 \value{
-\code{log(1 + exp(x))}, elementwise.
+\code{log(1 + exp(x))}, elementwise, finite where \code{exp(x)}
+  overflows.
 }
 \description{
 Maps the stan function so the same code works in R.

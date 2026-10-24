@@ -4598,6 +4598,13 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
     objective_args$penalty_index <- V(penalty$index)
     objective_args$penalty_precision <- V(penalty$precision)
   }
+  # The natural-scale prior (R/ctNaturalPrior.R), which only the objective an
+  # uncertainty method integrates over carries; omitted otherwise.
+  if (!is.null(spec$naturalprior) && nrow(spec$naturalprior)) {
+    objective_args$jacobian_index <- V(as.integer(spec$naturalprior$index))
+    objective_args$jacobian_value <- V(as.character(spec$naturalprior$value))
+    objective_args$jacobian_slope <- V(as.character(spec$naturalprior$slope))
+  }
   # The bounded population correlation blocks (R/ctCorBound.R), omitted when
   # there are none.
   bounds <- .ctCorBoundSpec(spec, table)

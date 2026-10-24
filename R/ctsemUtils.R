@@ -249,9 +249,10 @@ inv_logit<-function(x) {
 #'
 #' @examples
 #' log1p_exp(-3)
-#' @return \code{log(1 + exp(x))}, elementwise.
+#' @return \code{log(1 + exp(x))}, elementwise, finite where \code{exp(x)}
+#'   overflows.
 #' @export
-log1p_exp <- function(x) log1p(exp(x))
+log1p_exp <- function(x) pmax(x, 0) + log1p(exp(-abs(x)))
 
 
 ctDensityList<-function(x,xlimsindex='all',ylimsindex='all',cut=FALSE,plot=FALSE,

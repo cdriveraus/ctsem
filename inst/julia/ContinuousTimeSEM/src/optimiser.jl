@@ -867,7 +867,8 @@ function _ctsem_subset_objective(o::CTSEMObjective, idx::AbstractVector{<:Intege
         o.ti_missing_parameter[keep], o.ti_missing_mu[keep], o.ti_missing_sigma[keep],
         Int[renumber[o.ti_missing_subject[k]] for k in keep],
         isempty(o.subject_weights) ? Float64[] : o.subject_weights[idx], o.corbound,
-        o.penalty_index, o.penalty_precision)
+        o.penalty_index, o.penalty_precision, o.jacobian_index, o.jacobian_value,
+        o.jacobian_slope)
 end
 _ctsem_subset_objective(o, idx) = nothing
 
@@ -1942,6 +1943,11 @@ const _CTSEM_FLAT_PROBE_LENGTHS = (0.25, 1.0, 4.0)
 _ctsem_no_probe() = (gain=0.0, length=0.0, longest=0.0, direction=Float64[],
     evaluations=0)
 
+# What `_ctsem_information_split` returns where it can decompose: the type a
+# caller declares for the split it holds, so inference keeps it concrete.
+const _CTSEMInformationSplit = @NamedTuple{values::Vector{Float64},
+    vectors::Matrix{Float64}, scale::Float64, trusted::BitVector, negative::BitVector}
+
 """
     _ctsem_information_split(H; rtol, negative)
 
@@ -2345,7 +2351,15 @@ function _ctsem_newton_finish(objective, x0, f0, G0, fg!; tol::Real=1e-8,
         "newton curvature must be exact, chord or subset, got $(curvature)"))
     valueof = value_at === nothing ? (y -> _ctsem_probe_value(objective, y)) :
         value_at
-    x = collect(Float64, x0); f = Float64(f0); G = collect(Float64, G0)
+    # Typed, as `H`, `Hs` and `split` below are, because they are reassigned
+    # from steps' and ladders' results whose fields infer abstractly: untyped,
+    # the saddle ladder was compiled for `AbstractVector`, `Real` and an
+    # abstract split, and the `IteratorSize` method Tables.jl adds invalidated
+    # it, this finish and every optimiser entry point above (see
+    # `_ctsem_overshot`).
+    x::Vector{Float64} = collect(Float64, x0)
+    f::Float64 = Float64(f0)
+    G::Vector{Float64} = collect(Float64, G0)
     # The closures below count into Refs and are handed the current point, as
     # `_ctsem_lbfgs`'s are: a captured local assigned more than once is a
     # `Core.Box`, and an untyped point sent inference through the objective
@@ -2517,12 +2531,13 @@ function _ctsem_newton_finish(objective, x0, f0, G0, fg!; tol::Real=1e-8,
         hessian0_at !== nothing && size(hessian0) == (length(x), length(x)) &&
         length(hessian0_at) == length(x) && all(isfinite, hessian0) &&
         all(isfinite, hessian0_at)
-    H = seeded ? -Matrix{Float64}(hessian0) : step_hessian(x)
+    H::Union{Nothing,Matrix{Float64}} = seeded ? -Matrix{Float64}(hessian0) : step_hessian(x)
+    local split::Union{Nothing,_CTSEMInformationSplit}
     # What the steps are taken against: `H` itself, except that the chord
     # corrects its copy along the direction it walks (see the refresh below),
     # while `H`, exact where it was evaluated, is what the reuse test and the
     # certification read.
-    Hs = H
+    Hs::Union{Nothing,Matrix{Float64}} = H
     hat = seeded ? collect(Float64, hessian0_at) : copy(x)   # where `H` was evaluated
     exact = seeded || curvature !== :subset   # `H` is the exact Hessian at `hat`
     steps = 0; escapes = 0; gain = Inf

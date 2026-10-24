@@ -137,9 +137,8 @@
   expr <- try(parse(text = gsub("param\\s*\\[\\s*\\d+\\s*\\]", "param",
     as.character(text))), silent = TRUE)
   if (inherits(expr, "try-error")) return(NA_real_)
-  env <- new.env(parent = baseenv())
-  env$log1p_exp <- function(x) ifelse(x > 30, x, log1p(exp(x)))
-  env$inv_logit <- function(x) 1 / (1 + exp(-x))
+  # The package's own `log1p_exp` and `inv_logit`, which a transform names.
+  env <- new.env(parent = asNamespace("ctsem"))
   f <- function(p) {
     env$param <- p
     v <- try(eval(expr[[1L]], envir = env), silent = TRUE)
@@ -264,6 +263,29 @@
         latentsd[i] * sqrt(2 * abs(a))
       } else latentsd[i] * sqrt(max(1 - ar[i]^2, 1e-4))
       set(free$parnumber[k], value)
+    }
+  }
+
+  # A drift-scaled diffusion (R/ctModelDriftScaled.R) is an expression of a
+  # PARS cell, the sd accrued over one time unit, and is started where the
+  # default parameterisation starts the diffusion: the process's stationary
+  # spread at the data's, which over one time unit accrues
+  # latentsd^2 (1 - exp(2 a)). Left at raw zero it starts at 6.93 whatever
+  # the data's scale -- the failure the top of this file describes.
+  if (continuous && "DIFFUSION" %in% model$driftScaled) {
+    for (i in seq_len(nlatent)) {
+      if (is.na(ar[i])) next
+      cell <- model$pars$param[model$pars$matrix %in% "DIFFUSION" &
+        model$pars$row == i & model$pars$col == i]
+      k <- suppressWarnings(as.integer(sub("^PARS\\[([0-9]+),1\\].*$", "\\1",
+        cell[1L])))
+      if (!length(k) || is.na(k)) next
+      row <- pt[pt$matrix %in% "PARS" & pt$row == k & pt$col == 1 &
+        !is.na(pt$parnumber) & !is.na(pt$transform), , drop = FALSE]
+      if (nrow(row) != 1L) next
+      a <- min(max(log(ar[i]) / dtmed[i], -3), -0.02)
+      set(row$parnumber, latentsd[i] * sqrt(1 - exp(2 * a)))
+      free <- rbind(free, row[, names(free), drop = FALSE])
     }
   }
 

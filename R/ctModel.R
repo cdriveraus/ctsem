@@ -173,6 +173,22 @@
 #' 
 #' @param PARS for types 'ct' and 'dt' only. May be of any structure, only needed to contain extra parameters for certain non-linear models.
 #' @param silent Suppress all output to console.
+#' @param driftScaled for type 'ct' only: which of "DIFFUSION" and "CINT" to
+#' parameterise by what they accrue over one time unit given the process's
+#' own drift diagonal, rather than by their instantaneous rates. A diffusion
+#' sd \code{s} becomes \code{s * sqrt(2 a / expm1(2 a))}, \code{s^2} the variance
+#' the process gains over one time unit from its own noise (its stationary
+#' variance where the drift is fast, the diffusion variance where it is
+#' slow); an intercept \code{u} becomes \code{u * a / expm1(a)}. The fit and
+#' its likelihood are the default parameterisation's; what changes is that
+#' these parameters no longer have to move with the drift diagonal where
+#' fast mean reversion and more noise look alike, so that uncertainty and
+#' sampling are better behaved there. Only the diffusion's diagonal is
+#' rescaled, so its correlations keep their continuous-time meaning. Each
+#' such parameter moves, name, transform, random effects and predictor
+#' effects with it, to a new cell of \code{PARS}, and its own cell becomes an
+#' expression of that cell and the drift diagonal. Not available with
+#' \code{covmattransform = 'cholesky'}.
 #'
 #' @details A matrix cell is one of four things, and which one is decided by
 #' what its text looks like:
@@ -315,7 +331,7 @@ ctModel<-function(LAMBDA, type='ct',n.manifest = 'auto', n.latent='auto', Tpoint
   DRIFT="auto", CINT=0, DIFFUSION="auto",
   n.TDpred='auto', TDpredNames='auto', TDPREDEFFECT="auto", TDPREDMEANS="auto", TDPREDVAR="auto",
   n.TIpred='auto', TIpredNames='auto', tipredDefault=TRUE,
-  PARS=NULL){
+  PARS=NULL, driftScaled=character()){
   
   # keep track of whether Tpoints was explicitly provided by user
   TpointsProvided <- !is.null(Tpoints) && !is.na(Tpoints[1])
@@ -665,6 +681,10 @@ ctModel<-function(LAMBDA, type='ct',n.manifest = 'auto', n.latent='auto', Tpoint
   
   
   if(type %in% c('ct','dt','stanct','standt')) completemodel<-ctModelConvertOMX(completemodel,type=type,tipredDefault= tipredDefault)
+  if(length(driftScaled)) {
+    if(type %in% 'omx') stop("driftScaled needs type = 'ct'.", call. = FALSE)
+    completemodel <- .ctModelDriftScaled(completemodel, driftScaled)
+  }
   if(type %in% c('omx')) class(completemodel)<-'ctsemInit'
   if(TpointsProvided) completemodel$Tpoints <- Tpoints
   if(length(covinput) && !type %in% 'omx') completemodel$covinput <- covinput

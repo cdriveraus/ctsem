@@ -395,6 +395,12 @@ expmGetSubsets <- function(m){
     if(ctm$covmattransform=='z') standata$choleskymats<- 2L
     if(!ctm$covmattransform %in% c('rawcorr','rawcorr_indep','cholesky','z')) stop(
       'covmattransform must be "z", "rawcorr", "rawcorr_indep", or "cholesky"')
+    # A drift-scaled diffusion rescales the diagonal as a standard deviation,
+    # which a Cholesky factor's diagonal is not (R/ctModelDriftScaled.R).
+    if('DIFFUSION' %in% ctm$driftScaled && ctm$covmattransform == 'cholesky') stop(
+      "driftScaled = 'DIFFUSION' needs a covariance construction whose diagonal ",
+      "is a standard deviation: covmattransform 'z' or 'rawcorr', not 'cholesky'.",
+      call. = FALSE)
   }
   
   standata$matsetup <- apply(ctm$modelmats$matsetup[,-1],c(1,2),as.integer,.drop=FALSE) #remove parname and convert to int

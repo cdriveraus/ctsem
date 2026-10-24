@@ -637,6 +637,24 @@ bootstrapHessian <- function(standata, sm, est, finishsamples, cores, scores=NUL
   if (is.function(gb)) gb else NULL
 }
 
+# A density's values at the rows of a draws matrix, through its `'batch'`
+# attribute where it has one (`.ctBackendLpgFunc()`), and otherwise a draw at a
+# time, over `cl` when given. A value the model cannot use comes back as a
+# finite, negligible -1e100 rather than a NaN in the arithmetic of weights.
+.ctImisEvaluator <- function(parlp, cl = NULL) {
+  batchlp <- attr(parlp, 'batch')
+  function(x) {
+    x <- as.matrix(x)
+    out <- if (!is.null(batchlp)) as.numeric(batchlp(x)) else
+      if (!is.null(cl) && length(cl) > 1) {
+        parallel::clusterExport(cl, "x", envir = environment())
+        unlist(parallel::parLapply(cl, seq_len(nrow(x)), \(i) parlp(x[i, ])), FALSE)
+      } else vapply(seq_len(nrow(x)), \(i) as.numeric(parlp(x[i, ]))[1L], numeric(1))
+    out[!is.finite(out)] <- -1e100
+    out
+  }
+}
+
 # A per-point density whose value carries a `'gradient'` attribute -- stan's
 # `ctOptimFitLpgFunc()` -- given the `'gradbatch'` attribute `.ctImisGradient()`
 # reads, asking one point at a time. So both backends run the same search.
@@ -755,9 +773,10 @@ bootstrapHessian <- function(standata, sm, est, finishsamples, cores, scores=NUL
 #
 # Every active path moves one Newton step per iteration, so an iteration is
 # one call of `gradfun` for all of them and one or more of `evaluate` for the
-# step halving.
+# step halving. `which` walks those parameters only (`.ctImproperParameters()`).
 .ctImisPaths <- function(gradfun, evaluate, mu, S, first = 3,
-  rungs = c(6, 12, 24, 48, 96), maxdrop = 8, steps = 12, tol = 1e-3, heavy = 0.6) {
+  rungs = c(6, 12, 24, 48, 96), maxdrop = 8, steps = 12, tol = 1e-3, heavy = 0.6,
+  which = seq_along(mu)) {
   d <- length(mu)
   ladder <- c(first, rungs)
   P <- solve(S)
@@ -785,10 +804,11 @@ bootstrapHessian <- function(standata, sm, est, finishsamples, cores, scores=NUL
     mu <- cand[best, ]
     lp0 <- v[best]
   }
-  J <- rep(seq_len(d), each = 2L)
-  side <- rep(c(1, -1), d)
+  J <- rep(which, each = 2L)
+  side <- rep(c(1, -1), length(which))
   np <- length(J)
-  chols <- if (d > 1) lapply(seq_len(d), function(j) chol(P[-j, -j, drop = FALSE])) else NULL
+  chols <- if (d > 1) lapply(seq_len(d), function(j)
+    if (j %in% which) chol(P[-j, -j, drop = FALSE])) else NULL
   rung <- rep(1L, np)
   iter <- rep(0L, np)
   active <- rep(TRUE, np)
@@ -2701,6 +2721,109 @@ ctOptimFitLpgFunc <- function(fit, cores=1){
   draws
 }
 
+# Which of `parameters` a posterior is improper along: each walked out on
+# both sides along its profile (`.ctImisPaths()`: the others at their
+# conditional mode, to 96 standard errors of the curvature `cov`, stopping
+# once the density has fallen 8 below the mode's), and one not fallen off at
+# the last rung reported, as parameter times side (negative below). Run only
+# where a parameter has no prior: with one the walk would stop on its tail,
+# and a long plateau the prior bounds is mass a sampler should find.
+# The 12-subject image model under `priors = FALSE` is the case: its
+# diffusion and population sd each lose 3 nats on a plateau running to raw
+# minus infinity, and 'checked' weighed whichever reach of it its draws
+# covered, so its intervals there followed the seed.
+# (review/UNCERTAINTY-checked-improper-2026-10-24.md)
+#
+# The normal's covariance can be singular -- directions the flat screen held
+# at no width -- and the paths take its inverse as the metric of the others'
+# Newton steps (`imis_is()` hands them the identified subspace's instead). Its
+# eigenvalues are floored at the flat-direction tolerance, a precision that
+# holds those directions where they are. A walk that fails says nothing about
+# the posterior, and 'checked' goes on as without it.
+.ctImproperParameters <- function(lpg, est, cov, parameters) {
+  gradfun <- .ctJuliaOr(attr(lpg, 'fullgradbatch'), .ctImisGradient(lpg, est))
+  if (!is.function(gradfun) || !length(parameters)) return(NULL)
+  eig <- eigen((cov + t(cov)) / 2, symmetric = TRUE)
+  S <- eig$vectors %*% (t(eig$vectors) *
+    pmax(eig$values, .ctFlatDirectionRtol() * max(eig$values)))
+  paths <- tryCatch(.ctImisPaths(gradfun, .ctImisEvaluator(lpg), as.numeric(est), S,
+    which = parameters), error = function(e) NULL)
+  if (is.null(paths)) return(NULL)
+  list(reaches = paths$reachesLimit, limit = paths$limit,
+    gradients = paths$gradients, calls = paths$calls)
+}
+
+# 'checked''s guard against an improper posterior, given the directions it is
+# about to sample (columns of `directions`, in the parameters, at the scale of
+# the normal `cov`, with their `widths`) and the centre it placed the normal
+# at: the parameters in `flagged` and those the directions hold most of the
+# normal's variance of are walked (`.ctImproperParameters()`), less those
+# `state` says were walked already, and every parameter found improper so far
+# is held, its conditional direction under `cov` taken out of the sampled
+# ones (`.ctHoldOff()`). Called before DAIS and again on its recheck, which
+# can name a parameter the first check did not: on the image model DAIS
+# widened the initial variance, the recheck named it, and its plateau at zero
+# made that sd 0.35-0.80 by seed where the curvature's is 0.16. A warning
+# names what each call newly found.
+.ctImproperGuard <- function(lpg, est, cov, directions, widths, centre, flagged,
+  parnames = NULL, state = list(walked = integer(), parameters = integer(),
+    reaches = integer(), gradients = 0L, calls = 0L, limit = NA_real_)) {
+  share <- rowSums(directions^2) / pmax(diag(cov), .Machine$double.xmin)
+  walk <- setdiff(sort(unique(c(flagged, which(share > 0.5)))), state$walked)
+  found <- .ctImproperParameters(lpg, est, cov, walk)
+  state$walked <- sort(c(state$walked, walk))
+  state$gradients <- state$gradients + .ctJuliaOr(found$gradients, 0L)
+  state$calls <- state$calls + .ctJuliaOr(found$calls, 0L)
+  if (!is.null(found$limit)) state$limit <- found$limit
+  new <- found$reaches
+  if (length(new)) {
+    named <- if (length(parnames) == length(est)) parnames else paste0('par', seq_along(est))
+    j <- unique(abs(new))
+    warning('The posterior had not fallen off ', state$limit, ' standard errors out ',
+      'along ', paste0(named[abs(new)], ifelse(new < 0, ' (below)', ' (above)'),
+        collapse = ', '), ': with no prior there it is improper, so the intervals ',
+      'along ', if (length(j) > 1) 'them' else 'it', " are the curvature's at the ",
+      'estimate. priors = TRUE gives a proper posterior.', call. = FALSE)
+    state$reaches <- c(state$reaches, new)
+    state$parameters <- sort(unique(c(state$parameters, j)))
+  }
+  if (length(state$parameters) && NCOL(directions)) {
+    held <- .ctHoldOff(directions, widths, cov, cov[, state$parameters, drop = FALSE],
+      centre, est)
+    directions <- held$directions
+    widths <- held$widths
+    centre <- held$centre
+  }
+  list(directions = directions, widths = widths, centre = centre, state = state)
+}
+
+# The directions 'checked' samples (columns of `directions`, in the
+# parameters, at the scale of the normal `cov`, with their `widths`) and the
+# centre it placed the normal at, with the directions in `hold` (columns, in
+# the parameters) taken out, as the engine's DAIS holds them
+# (`_dais_held_basis`): the sampled span's part outside them, each direction
+# at the width the check's covariance gives it there, and the centre's move
+# from `est` along them undone. A direction mostly inside `hold` -- under a
+# tenth of it outside -- is dropped.
+.ctHoldOff <- function(directions, widths, cov, hold, centre, est) {
+  eig <- eigen((cov + t(cov)) / 2, symmetric = TRUE)
+  keep <- eig$values > .ctFlatDirectionRtol() * max(eig$values)
+  V <- eig$vectors[, keep, drop = FALSE]
+  sq <- sqrt(eig$values[keep])
+  whiten <- function(M) crossprod(V, as.matrix(M)) / sq
+  hs <- svd(whiten(hold))
+  U <- hs$u[, hs$d > 1e-7 * max(hs$d, 0), drop = FALSE]
+  off <- function(M) M - U %*% crossprod(U, M)
+  Vz <- whiten(directions)
+  Cz <- diag(nrow(Vz)) + Vz %*% (t(Vz) * (widths - 1))
+  left <- if (ncol(Vz)) svd(off(Vz)) else list(d = numeric(), u = Vz)
+  Un <- left$u[, left$d > 0.1, drop = FALSE]
+  shift <- whiten(centre - est)
+  list(directions = sweep(V, 2, sq, "*") %*% Un,
+    widths = if (ncol(Un)) colSums(Un * (Cz %*% Un)) else numeric(),
+    centre = as.numeric(centre - sweep(V, 2, sq, "*") %*% (U %*% crossprod(U, shift))))
+}
+
 # uncertainty='stored': redraw from the covariance the fit already carries.
 #
 # Every other method here builds a covariance out of model evaluations -- 2*npar
@@ -2749,8 +2872,12 @@ ctOptimFitLpgFunc <- function(fit, cores=1){
 #
 # @return list(samples, uncertaintyfit, control) -- `control` comes back
 #   because the defaults filled in here are what gets recorded in `$settings`.
+# `proper = FALSE` says the fit's prior does not cover every parameter, so the
+# posterior may be improper where the data leave one flat: 'checked' then
+# walks the parameters its check flags (`.ctImproperParameters()`) and holds
+# the directions it finds improper at the curvature's width.
 .ctOptimDrawSamples <- function(uncertaintyfit, draws, control, est,
-  finishsamples, lpg, verbose = 0, parnames = NULL,
+  finishsamples, lpg, verbose = 0, parnames = NULL, proper = TRUE,
   scaleInit = .ctImisProposalDefaults()$scaleInit,
   tailScale = .ctImisProposalDefaults()$tailScale,
   df = .ctImisProposalDefaults()$df,
@@ -2791,6 +2918,27 @@ ctOptimFitLpgFunc <- function(fit, cores=1){
   # the 100-subject strong-shell Laplace fit 6632 and 1926, at like accuracy.
   checked <- !is.null(directions)
   widths <- uncertaintyfit$details$normalcheck$widths
+  # Where the prior leaves a parameter flat: the parameters whose intervals
+  # the check says the normal misstates, and those the named directions hold
+  # most of the normal's variance of, walked out. A direction found improper
+  # is held at the normal's width and centred at the estimate, by the sampler
+  # and by DAIS alike: no reweighting can represent mass that does not end.
+  hold <- uncertaintyfit$details$flatdirections$vectors
+  guard <- NULL
+  if (checked && !proper) {
+    guard <- .ctImproperGuard(lpg, est, uncertaintyfit$cov, directions, widths, centre,
+      uncertaintyfit$details$normalcheck$parameters, parnames)
+    directions <- guard$directions
+    widths <- guard$widths
+    centre <- guard$centre
+    held <- guard$state$parameters
+    if (length(held)) hold <- cbind(hold, uncertaintyfit$cov[, held, drop = FALSE])
+    uncertaintyfit$details$improper <- guard$state
+    if (!ncol(directions)) {
+      return(list(samples = ctOptimNormalDraws(centre, uncertaintyfit$cov, finishsamples),
+        uncertaintyfit = uncertaintyfit, control = control, draws = 'normal'))
+    }
+  }
   # Where the check named a direction, the normal is first moved to the
   # posterior's moments (`ctsem_dais` in the engine, through `.ctDaisEngine()`;
   # a density without an engine has no such stage) and checked again there:
@@ -2803,7 +2951,7 @@ ctOptimFitLpgFunc <- function(fit, cores=1){
     # width: the data say nothing along them, and a moment-matching step has
     # no fixed point there (see R/ctDais.R).
     dais <- .ctDaisEngine(lpg, centre, uncertaintyfit$cov, control, verbose = verbose,
-      hold = uncertaintyfit$details$flatdirections$vectors)
+      hold = hold)
     if (!is.null(dais) && !isTRUE(dais$used)) {
       uncertaintyfit$details$dais <- dais
       dais <- NULL
@@ -2822,6 +2970,17 @@ ctOptimFitLpgFunc <- function(fit, cores=1){
     centre <- recheck$centre
     directions <- recheck$directions
     widths <- recheck$widths
+    # The recheck about DAIS's normal: walked again for what it names anew,
+    # and every improper direction held out of it.
+    if (!is.null(guard) && ncol(directions)) {
+      guard <- .ctImproperGuard(lpg, est, cov2, directions, widths, centre,
+        recheck$parameters, parnames, guard$state)
+      directions <- guard$directions
+      widths <- guard$widths
+      centre <- guard$centre
+      dais$centre <- centre
+      uncertaintyfit$details$improper <- guard$state
+    }
     uncertaintyfit$cov <- cov2
     uncertaintyfit$details$dais <- dais
     if (!ncol(directions)) {
@@ -2917,6 +3076,10 @@ ctOptimFitLpgFunc <- function(fit, cores=1){
     names(stein$meanerror) <- names(stein$z) <- names(stein$sdratio) <-
       names(stein$spreadz) <- named
     off <- .ctSteinOff(stein)
+    # Those held at the curvature because their posterior is improper: the
+    # draws there are the normal's on purpose, and the warning above said so.
+    if (!is.null(guard)) for (f in c('mean', 'spread'))
+      off[[f]] <- setdiff(off[[f]], guard$state$parameters)
     if (length(off$mean) || length(off$spread)) {
       list3 <- function(i) paste0(paste(utils::head(named[i], 3), collapse = ', '),
         if (length(i) > 3) paste0(' and ', length(i) - 3, ' more'))
@@ -3575,7 +3738,12 @@ ctOptimFitLpgFunc <- function(fit, cores=1){
 #' its iterations (150). \code{parsteps} keeps
 #' stepwise-fixed raw parameters fixed (stan only).
 #' \code{analyticHessian = FALSE} (julia only) asks for the finite-difference
-#' Hessian instead of the engine's exact one. \code{likelihood} (\code{'fit'},
+#' Hessian instead of the engine's exact one. \code{flat = 'natural'}
+#' (\code{'checked'} and \code{'is'}, julia only) makes the parameters without
+#' a prior flat on their natural scale rather than their raw one in the
+#' density sampled: the standard deviation itself rather than its log, say,
+#' so that a likelihood that levels off as an sd goes to zero still has a
+#' proper posterior. The estimate is unchanged. \code{likelihood} (\code{'fit'},
 #' \code{'quadrature'} or \code{'particle'}, julia only) is the density
 #' \code{'is'} samples against, with \code{nodes}, \code{particles},
 #' \code{substeps}, \code{transition}, \code{seed} and
@@ -3699,7 +3867,7 @@ ctFitUncertainty <- function(fit,
     # The fit's own prior is what is sampled under. An ML fit has none on its
     # population sds (or none at all), and where the data allow one near zero
     # the posterior is improper there -- said before the run, not after it.
-    scope <- fit$args$input$priorscope
+    scope <- .ctFitPriorScope(fit)
     varying <- isTRUE(tryCatch(.ctAnyVarying(.ctFitBaseModel(fit)),
       error = function(e) FALSE))
     if(identical(scope, 'none') || (identical(scope, 'randomCorr') && varying))
@@ -3889,6 +4057,7 @@ ctFitUncertainty <- function(fit,
   drawn <- .ctOptimDrawSamples(uncertaintyfit, draws = draws, control = control,
     est = fit$stanfit$rawest, finishsamples = finishsamples,
     parnames = tryCatch(.ctFitRawParNames(fit), error = function(e) NULL),
+    proper = identical(.ctFitPriorScope(fit), 'all'),
     lpg = .ctImisPointGradbatch(lpgsetup$lpg), verbose = verbose,
     scaleInit = stanImis$scaleInit, tailScale = stanImis$tailScale,
     tailremedy = paste0("ctFit(..., optimize = FALSE) samples the posterior ",

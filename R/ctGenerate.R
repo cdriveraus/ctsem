@@ -235,23 +235,28 @@ ctModeltoNumeric <- function(ctmodelobj){
 # because ctFit() reduces 'randomCorr' to TRUE before it is captured; `$args$resolved$priors` records the scope itself, but only since
 # 2026-10-05. A fit made before `priorscope` was recorded has only the logical:
 # under `$args$resolved`; in `$args` itself for a fit saved by 3.11.1; or,
-# failing both, in the prepared data.
+# failing both, in the prepared data (`.ctFitPriorScope()`).
 .ctPriorScopeWarning <- function(fit){
-  scope <- fit$args$input$priorscope
-  if(is.null(scope)){
-    priors <- fit$args$resolved$priors
-    if(is.null(priors)) priors <- fit$args$priors
-    if(is.null(priors) && !is.null(fit$standata$priors))
-      priors <- as.logical(fit$standata$priors)
-    scope <- if(identical(priors, 'randomCorr')) 'randomCorr' else
-      if(is.null(priors) || isTRUE(as.logical(priors))) 'all' else 'none'
-  }
+  scope <- .ctFitPriorScope(fit)
   if(!scope %in% 'all') warning('This fit was specified with ',
     if(scope %in% 'randomCorr') paste0("priors='randomCorr', a prior on the ",
       'random-effect correlations only') else 'priors=FALSE',
     '; these datasets draw every parameter from the prior the model specifies.',
     call.=FALSE)
   invisible(scope)
+}
+
+# Which prior a fit had: 'all', 'none' or 'randomCorr', read from what a fit
+# of any age records (see `.ctPriorScopeWarning()`).
+.ctFitPriorScope <- function(fit){
+  scope <- fit$args$input$priorscope
+  if(!is.null(scope)) return(scope)
+  priors <- fit$args$resolved$priors
+  if(is.null(priors)) priors <- fit$args$priors
+  if(is.null(priors) && !is.null(fit$standata$priors))
+    priors <- as.logical(fit$standata$priors)
+  if(identical(priors, 'randomCorr')) 'randomCorr' else
+    if(is.null(priors) || isTRUE(as.logical(priors))) 'all' else 'none'
 }
 
 # ctsem's prior over the raw parameters, sampled directly.
