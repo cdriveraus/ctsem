@@ -551,6 +551,29 @@ test_that("intoverpop alone says what is sampled", {
   expect_null(ctsem:::.ctBackendSampleCheckControl(list(intoverpop = "none")))
 })
 
+test_that("ctFit(optimize = FALSE) samples the exact marginal where the Laplace term is exact", {
+  skip_without_julia()
+  data <- laplace_fixture_data()
+  prep <- function(model, ...) suppressWarnings(suppressMessages(ctFit(data, model,
+    backend = "julia", cores = 1, optimize = FALSE, fit = FALSE, ...)))
+  route <- function(x) ctsem:::.ctBackendIntOverPop(ctsem:::.ctBackendSpec(x))
+  # A random manifest mean with a Gaussian indicator: the Laplace term is the
+  # exact integral, so 'auto' samples that marginal, and the fit says why.
+  exact <- prep(laplace_fixture_model())
+  expect_identical(route(exact), "laplace")
+  expect_identical(exact$args$resolved$intoverpop, "laplace")
+  expect_match(exact$args$resolved$intoverpopreason, "exact marginal", fixed = TRUE)
+  # Named, the joint is the joint.
+  expect_identical(route(prep(laplace_fixture_model(), intoverpop = "none")), "none")
+  # A random drift is integrated by an approximation, so 'auto' samples the
+  # joint posterior.
+  drift <- laplace_fixture_model()
+  drift$pars$indvarying <- drift$pars$matrix == "DRIFT"
+  approx <- prep(drift)
+  expect_identical(route(approx), "none")
+  expect_identical(approx$args$resolved$intoverpop, "none")
+})
+
 test_that("ctFit(optimize = FALSE, intoverpop = 'laplace') samples the Laplace marginal in worker processes", {
   skip_without_julia()
   # Each worker builds the Laplace objective for its own chain; that the
