@@ -353,6 +353,14 @@ test_that("row scores sum to the subjects' scores, on the filter and the Laplace
   expect_equal(p3$points, array(as.numeric(pe$points), dim(p3$points)), tolerance = 1e-8)
   expect_equal(p3$weights, as.matrix(pe$weights), tolerance = 1e-8)
   expect_equal(p3$logmarginal, as.numeric(pe$logmarginal), tolerance = 1e-8)
+  # The effects family's statistics in closed form there, against the
+  # quadrature's on the evaluated nodes, which errs by up to about 1e-3 a unit.
+  lfe <- lfit
+  lfe$model_spec <- evaluated
+  closed <- ctsem:::.ctAdequacyEffectMoments(lfit, lest, 1L)$M
+  quadrature <- ctsem:::.ctAdequacyEffectMoments(lfe, lest, 1L)$M
+  expect_lt(max(abs(closed - quadrature)), 3e-3)
+  expect_lt(mean(abs(closed - quadrature)), 5e-4)
 
   # The effect-distribution family runs there, and is quiet on normal effects.
   ad <- suppressMessages(ctFitAdequacy(lfit, families = 'effects', cores = 1, nboot = 199))
