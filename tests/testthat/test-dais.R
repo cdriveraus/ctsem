@@ -25,8 +25,11 @@ test_that("'checked' runs DAIS in the engine on a julia fit, and not where asked
   # Its record is the importance sampler's coreset's, choices and all.
   expect_equal(dais$coreset$record$chosen, dais$coreset$chosen)
   expect_equal(dais$coreset$record$failed_checks, dais$coreset$failed)
-  if (dais$coreset$chosen > 0L) {
-    expect_equal(nrow(dais$coreset$record$choices), dais$coreset$chosen)
+  # A row of choices for every choice tried; chosen counts those made.
+  expect_lte(dais$coreset$chosen, dais$coreset$record$attempts)
+  if (dais$coreset$record$attempts > 0L) {
+    expect_equal(nrow(dais$coreset$record$choices), dais$coreset$record$attempts)
+    expect_equal(sum(dais$coreset$record$choices[, "why"] == 1), dais$coreset$chosen)
     expect_true(all(c("M", "fail", "relheld") %in% colnames(dais$coreset$record$choices)))
   }
   expect_equal(nrow(dais$trace), dais$iterations)

@@ -47,6 +47,15 @@ end
     # Too few rows to hold any out: no choice, and why.
     few = CIS._is_coreset_choose(_cis_rows(X[1:8, :], y[1:8]), rd, Int[])
     @test !few.chosen && few.why === :held
+    # Draws that move in d directions: no size of d or fewer is tried, and with
+    # no more units than that none is chosen.
+    tr = _cis_rows(X[1:200, :], y[1:200])
+    tr.dims = 20
+    wide = CIS._is_coreset_choose(tr, rd, Int[])
+    @test !wide.chosen || count(>(0), wide.w) > 20
+    tr.dims = 60
+    none60 = CIS._is_coreset_choose(tr, rd, Int[])
+    @test !none60.chosen && none60.why === :dims
 end
 
 @testset "score rows fit the weights that values alone leave open" begin
