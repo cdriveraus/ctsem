@@ -304,10 +304,21 @@ function _mixture_primes(d::Int)
     out = Int[]
     c = 2
     while length(out) < d
-        all(c % p != 0 for p in out if p * p <= c) && push!(out, c)
+        _mixture_coprime(c, out) && push!(out, c)
         c += 1
     end
     return out
+end
+
+"""Whether `c` has no factor among the ascending `primes` up to its root. A
+loop, not a generator over `c`: a generator is a closure, and one over a
+local assigned twice boxes it."""
+function _mixture_coprime(c::Int, primes::Vector{Int})
+    for p in primes
+        p * p > c && break
+        c % p == 0 && return false
+    end
+    return true
 end
 
 function _logsumexp(x::AbstractVector{Float64})

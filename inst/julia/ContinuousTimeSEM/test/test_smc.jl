@@ -359,11 +359,12 @@ end
     @test maximum(abs.(m1 .- m2) ./ s1) < 0.45
     @test all(0.65 .< s2 ./ s1 .< 1.5)
     # With the backward kernel's weights the stages' log mean weights still
-    # estimate the log constant on a coreset, the same one the full run does,
-    # within the Monte Carlo error of two runs of 100 particles in eight
-    # dimensions (1.6 apart on one build, 0.5 on another). The weights before
-    # the backward kernel were hundreds of nats off.
-    @test abs(sum(core.stage_logz) - sum(full.stage_logz)) < 3.0
+    # estimate the log constant on a coreset: the weights before the backward
+    # kernel were hundreds of nats off. How close is the Monte Carlo error of
+    # two runs of 100 particles: over seeds 3-8 the two differed by -4.3 to
+    # +1.9 (sd 2.2, mean -1.2 +- 0.9), so the bar is three of those sds. The
+    # constant itself is tested against its closed form above.
+    @test abs(sum(core.stage_logz) - sum(full.stage_logz)) < 7.0
     if Threads.nthreads() > 1
         # Particles spread over the pool on copies: the same seeds per
         # particle, so the same posterior, laid out differently.
