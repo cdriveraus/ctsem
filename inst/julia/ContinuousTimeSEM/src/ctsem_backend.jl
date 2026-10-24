@@ -1170,12 +1170,7 @@ gradient kept, the same refusal rule, and the same laplace override (a point
 whose inner solve did not converge is refused however finite its numbers).
 """
 function _ctsem_probe_value_gradient(objective, x)
-    result = try
-        ctsem_evaluate(objective, x; gradient=true)
-    catch err
-        _ctsem_must_propagate(err) && rethrow()
-        nothing
-    end
+    result = _ctsem_try_evaluate(() -> ctsem_evaluate(objective, x; gradient=true))
     result === nothing && return (value=-Inf, gradient=nothing)
     ok = isfinite(result.value) && result.gradient !== nothing &&
         all(isfinite, result.gradient)
@@ -1682,20 +1677,10 @@ curvature history.
 """
 function _ctsem_optimise_trial(o::CTSEMOptimisable, x, want_gradient::Bool,
         gradient_method, limit::Real, log)
-    evaluated = try
-        ctsem_evaluate(o, x; gradient=want_gradient,
-            gradient_method=gradient_method)
-    catch err
-        # A point the model cannot evaluate is invalid; code that is wrong is
-        # an error, and an interrupt stops the fit (`_ctsem_must_propagate`).
-        _ctsem_must_propagate(err) && rethrow()
-        nothing
-    end
-    valid = evaluated !== nothing && isfinite(evaluated.value)
-    if valid && want_gradient
-        valid = all(isfinite, evaluated.gradient) &&
-            all(abs(value) < limit for value in evaluated.gradient)
-    end
+    evaluated = _ctsem_try_evaluate(() -> ctsem_evaluate(o, x; gradient=want_gradient,
+        gradient_method=gradient_method))
+    valid = evaluated !== nothing && isfinite(evaluated.value) &&
+        (!want_gradient || _ctsem_gradient_usable(evaluated.gradient, limit))
     return (evaluated=evaluated, valid=valid)
 end
 
@@ -1731,17 +1716,12 @@ function _ctsem_optimise_trial_scores(o::CTSEMObjective, x, gradient_method,
         limit::Real, log, store::CTSEMScoreStore)
     store.valid = false
     xv = collect(Float64, x)
-    r = try
-        ctsem_subject_gradients(o, xv; prior=false)
-    catch err
-        _ctsem_must_propagate(err) && rethrow()
-        nothing
-    end
+    r = _ctsem_try_evaluate(() -> ctsem_subject_gradients(o, xv; prior=false))
     (r === nothing || !isfinite(r.value) || !all(isfinite, r.scores)) &&
         return (evaluated=nothing, valid=false)
     g = vec(sum(r.scores; dims=1))
     _ctsem_log_prior_gradient!(g, o, xv)
-    valid = all(isfinite, g) && all(abs(v) < limit for v in g)
+    valid = _ctsem_gradient_usable(g, limit)
     if valid
         copyto!(store.S, r.scores); copyto!(store.x, xv); store.valid = true
     end

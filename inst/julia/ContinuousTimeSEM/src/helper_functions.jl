@@ -374,6 +374,27 @@ function _ctsem_must_propagate(err)
         err isa ForwardDiff.DualMismatchError || err isa InterruptException
 end
 
+"""
+    _ctsem_try_evaluate(f)
+
+`f()`, or `nothing` where it throws what a point the model cannot evaluate
+throws; code that is wrong, and an interrupt, still propagate
+(`_ctsem_must_propagate`). Every trial and probe point is read through it.
+"""
+function _ctsem_try_evaluate(f)
+    try
+        return f()
+    catch err
+        _ctsem_must_propagate(err) && rethrow()
+        return nothing
+    end
+end
+
+"""Whether a gradient may steer the optimiser: every entry finite, and under
+`limit` in size."""
+_ctsem_gradient_usable(g, limit::Real) =
+    all(isfinite, g) && all(abs(v) < limit for v in g)
+
 
 """
 Differentiation nested inside code that may itself be differentiated.
