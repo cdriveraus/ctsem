@@ -2495,9 +2495,10 @@ ctFit<-function(datalong, model, stanmodeltext=NA, iter=1000, intoverstates=TRUE
   # .ctFitJuliaBackend(), `as.integer()` made it NA, and the NA guard there
   # turned it into 1 -- so asking for every core silently got one.
   #
-  # `chains` does not cap the julia backend -- it has no MCMC chains. Its
-  # parallelism is over subject chunks, run at whatever ceiling it is given, so
-  # the ceiling is simply the machine.
+  # `chains` does not cap the julia backend: its chains share `cores`
+  # (`.ctBackendWorkerThreads()`), and the rest of its parallelism is over
+  # subject chunks, run at whatever ceiling it is given, so the ceiling is
+  # simply the machine.
   if(is.character(cores) && cores=='maxneeded') {
     cores <- if(backend %in% 'julia') max(1, parallel::detectCores()-1) else
       max(1,min(c(chains,parallel::detectCores()-1)))
@@ -2570,7 +2571,7 @@ ctFit<-function(datalong, model, stanmodeltext=NA, iter=1000, intoverstates=TRUE
       cores=cores, optimcontrol=optimcontrol, forcerecompile=forcerecompile,
       verbose=verbose, fit=fit, priors=priors, priorscope=priorscope,
       optimize=optimize,
-      chains=if(chainsgiven) chains else 4L, iter=iter, control=control,
+      chains=if(chainsgiven) chains else NULL, iter=iter, control=control,
       intoverpop=juliaintoverpop, intoverstates=intoverstates, weights=weights)
     # Replaces whatever narrower `$args` the julia backend built internally
     # (it only ever had the resolved settings, and not all of them) with the

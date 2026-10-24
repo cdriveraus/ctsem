@@ -292,7 +292,7 @@ test_that("the SAEM kernel is refused by name where it cannot apply", {
 test_that("a marginal target's default sampler is chosen by the fit's check", {
   # Tempered SMC where the check named a direction in which the posterior
   # departs from the Hessian's normal, NUTS where it named none or where the
-  # call set a control of NUTS's warmup; the joint target keeps SAEM's kernel.
+  # call set a control only NUTS reads; the joint target keeps SAEM's kernel.
   # The tests below of NUTS's own mechanics on a marginal target -- its
   # worker processes, step size, draw budget, R-hat -- name it for that
   # reason: their fixtures' checks name directions.
@@ -304,6 +304,20 @@ test_that("a marginal target's default sampler is chosen by the fit's check", {
   expect_identical(name(NULL, joint = FALSE, named = 3L, nutsonly = TRUE), "nuts")
   expect_identical(name("nuts", joint = FALSE, named = 3L), "nuts")
   expect_identical(name("smc", joint = FALSE), "smc")
+  # What counts as asking for NUTS: its chain count, warmup or starting step,
+  # or a setting of its warmup metric; not the draws, which SMC reads too.
+  nutsctl <- ctsem:::.ctBackendNutsControls
+  asked <- ctsem:::.ctBackendNutsAsked
+  expect_identical(nutsctl(list()), character(0))
+  expect_identical(nutsctl(list(draws = 10, chains = 2, seed = 1)), "chains")
+  expect_identical(nutsctl(list(stepsize = 0.1, warmup = 50, chains = NULL)),
+    c("warmup", "stepsize"))
+  expect_false(asked(list(draws = 400, minESS = 100, particles = 40)))
+  expect_true(asked(list(chains = 2)))
+  expect_true(asked(list(adapt_metric = TRUE)))
+  # ctFit(optimize = FALSE) folds its own resolved chains into every control,
+  # and says which the caller set instead.
+  expect_false(asked(list(chains = 4, warmup = 200), nutsgiven = character(0)))
 })
 
 test_that("tempered SMC samples the marginal posterior through the same assembly", {
@@ -351,6 +365,10 @@ test_that("tempered SMC samples the marginal posterior through the same assembly
   expect_error(ctFitUncertainty(fit, uncertainty = "sample",
     control = list(sampler = "smc", intoverpop = "laplace", settleTol = 0.1)),
     "sampler = 'nuts'", fixed = TRUE)
+  # As are NUTS's own counts beside it, which SMC would otherwise ignore.
+  expect_error(ctFitUncertainty(fit, uncertainty = "sample",
+    control = list(sampler = "smc", intoverpop = "laplace", chains = 2)),
+    "control$chains is a setting of NUTS", fixed = TRUE)
 })
 
 test_that("a sampled fit keeps the exact Hessian it was built from", {
@@ -502,6 +520,13 @@ test_that("intoverpop alone says what is sampled", {
   expect_identical(route("laplace", requested = TRUE), "laplace")
   expect_identical(route("laplace", requested = "auto"), "none")
   expect_identical(route("laplace", requested = NULL), "none")
+  # Unless the Laplace term is exact (every unit's integrand Gaussian in its
+  # effects): then its marginal is the exact posterior's, and that is sampled.
+  expect_identical(route("laplace", requested = "auto", exact = TRUE), "laplace")
+  expect_identical(route("laplace", requested = NULL, exact = TRUE), "laplace")
+  expect_identical(route("none", requested = "auto", exact = TRUE), "none")
+  expect_identical(route("laplace", requested = "auto", override = "none",
+    exact = TRUE), "none")
   expect_identical(route("augmented", requested = "auto"), "augmented")
   expect_identical(route("none", requested = FALSE), "none")
   # A backend caller passing only the route has named it.
