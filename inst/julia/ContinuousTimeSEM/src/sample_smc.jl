@@ -127,13 +127,26 @@ function _smc_systematic(w::Vector{Float64}, rng::AbstractRNG)
     return idx
 end
 
-"""The effective sample size of log weights."""
-function _smc_ess(logw::Vector{Float64})
+"""
+    _importance_ess(logw)
+
+The effective sample size of log weights, `(sum w)^2 / sum w^2`: 0 where none
+is finite, and at most their number, which equal weights reach exactly but
+the arithmetic can pass by a rounding error. SMC's stages and corrections and
+DAIS's damping read it.
+"""
+function _importance_ess(logw::AbstractVector{Float64})
     m = maximum(logw)
     isfinite(m) || return 0.0
     w = exp.(logw .- m)
-    return sum(w)^2 / sum(abs2, w)
+    return min(Float64(length(w)), sum(w)^2 / sum(abs2, w))
 end
+
+"""`f` of each column of `X`. A function of its own rather than a
+comprehension where `X` is rebound: a comprehension is a closure, and one
+over a local assigned twice boxes it (CLAUDE.md, "Failures that pass every
+check short of loading")."""
+_smc_columns(f, X::AbstractMatrix) = [f(view(X, :, i)) for i in axes(X, 2)]
 
 """
     _smc_shrunk_cov(X, w, Cprev)
@@ -520,7 +533,7 @@ function ctsem_sample_smc(objective, values::AbstractVector;
     X = m0 .+ F0.L * randn(rng, ndim, np)
     full = _smc_terms(objective, X, use_coreset)
     lp = full.value
-    lq = [logq(view(X, :, i)) for i in 1:np]
+    lq = _smc_columns(logq, X)
     beta = 0.0
     step = 0.0
     Cprev = copy(S0)
@@ -534,7 +547,7 @@ function ctsem_sample_smc(objective, values::AbstractVector;
         u = lp .- lq
         u[.!isfinite.(u)] .= -Inf
         target = Float64(ess_frac) * np
-        corr_ess = all(iszero, owed) ? Float64(np) : _smc_ess(owed)
+        corr_ess = all(iszero, owed) ? Float64(np) : _importance_ess(owed)
         delta = 1.0 - beta
         corrected = false
         if corr_ess < target
@@ -545,11 +558,11 @@ function ctsem_sample_smc(objective, values::AbstractVector;
             corrected = true
             corrections += 1
             tol_now /= 2
-        elseif _smc_ess(delta .* u .+ owed) < target
+        elseif _importance_ess(delta .* u .+ owed) < target
             lo, hi = 0.0, delta
             for _ in 1:60
                 mid = (lo + hi) / 2
-                _smc_ess(mid .* u .+ owed) >= target ? (lo = mid) : (hi = mid)
+                _importance_ess(mid .* u .+ owed) >= target ? (lo = mid) : (hi = mid)
             end
             delta = max(lo, 1e-12)
         end
@@ -645,7 +658,7 @@ function ctsem_sample_smc(objective, values::AbstractVector;
                     view(X, :, i) != view(Xpre, :, i))
             end
         end
-        lq = [logq(view(X, :, i)) for i in 1:np]
+        lq = _smc_columns(logq, X)
         push!(stages, (beta=beta, step=step, accept=sum(acc) / nok, depth=sum(dep) / nok,
             moved=sum(mv) / np, divergent=sum(ndiv), shrink=shrunk.lambda, logz=inc,
             coreset_size=cs_stage === nothing ? 0 : length(cs_stage.units),
@@ -757,7 +770,7 @@ function ctsem_sample_smc(objective, values::AbstractVector;
             end
         end
         nfin = count(isfinite, lw)
-        final_correction = nfin > 0 ? _smc_ess(lw) / nfin : 0.0
+        final_correction = nfin > 0 ? _importance_ess(lw) / nfin : 0.0
         if nfin > 0
             mx = maximum(lw)
             wk = exp.(lw .- mx)

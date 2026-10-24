@@ -82,14 +82,6 @@ export ctsem_dais
 """Draws an iteration: the dimension, at least 64 and at most 256, even."""
 _dais_draws(k::Int) = 2 * ceil(Int, min(256, max(64, k)) / 2)
 
-"""The effective sample size of log weights (0 where none is finite)."""
-function _dais_ess(lw::AbstractVector{Float64})
-    m = maximum(lw)
-    isfinite(m) || return 0.0
-    w = exp.(lw .- m)
-    return sum(w)^2 / sum(abs2, w)
-end
-
 """
     ctsem_dais(objective, centre, cov; hold, draws, maxiter, seed, rtol,
         maxgrowth, parallel, verbose, progress_sink, progress_overwrite)
@@ -192,11 +184,11 @@ function ctsem_dais(objective, centre::AbstractVector, cov::AbstractMatrix;
         # Off the held directions, where the normal stands as it is.
         GP = offhold(G * Gamma .+ (Z .- transpose(mu)))
         gamma = 1.0
-        if _dais_ess(Phi) < essfrac * S
+        if _importance_ess(Phi) < essfrac * S
             lo, hi = 0.0, 1.0
             for _ in 1:60
                 mid = (lo + hi) / 2
-                _dais_ess(mid .* Phi) >= essfrac * S ? (lo = mid) : (hi = mid)
+                _importance_ess(mid .* Phi) >= essfrac * S ? (lo = mid) : (hi = mid)
             end
             gamma = max(lo, 1e-12)
         end
@@ -226,7 +218,7 @@ function ctsem_dais(objective, centre::AbstractVector, cov::AbstractMatrix;
                 munew = mu
             end
         end
-        essw = _dais_ess(gamma .* Phi)
+        essw = _importance_ess(gamma .* Phi)
         shift = norm(Lc \ (munew .- mu))
         natural = norm(Lc \ gbar)
         W = Lc \ transpose(GP .- transpose(gbar))
