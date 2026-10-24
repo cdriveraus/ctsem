@@ -202,11 +202,11 @@ const _SMC_CORESET_FOLDS = 4
 
 A coreset for the cloud whose units' terms are the columns of `terms`
 (`nunits x nparticles`) and whose full weighted sum is `total`: the units
-chosen by forward selection on the centred terms -- each step the unit whose
-term, orthogonalised against those in, best explains what is left of the
-centred total with a positive weight -- their weights by non-negative least
-squares (`_ctsem_nnls`), at the smallest size on the path whose held-out
-error is within `tol`. Held out means: the particles are split into
+chosen by forward selection on the centred terms (`_coreset_select`, refitted
+by NNLS each step) -- each step the unit whose term, orthogonalised against
+those in, best explains what is left of the centred total with a positive
+weight -- their weights by non-negative least squares (`_ctsem_nnls`), at the
+smallest size on the path whose held-out error is within `tol`. Held out means: the particles are split into
 `_SMC_CORESET_FOLDS` folds at random (`rng`), the weights are fitted on the
 other folds and the error read on the one left out, as a standard deviation
 over its particles, since a constant offset of the coreset's value cancels in
@@ -238,82 +238,32 @@ function _smc_coreset_fit(terms::AbstractMatrix{Float64}, total::AbstractVector{
         end
     end
     b .-= _smc_mean(b)
-    path = _smc_coreset_path(A, b, cost, budget)
-    isempty(path) && return nothing
     perm = randperm(rng, m)
     nf = _SMC_CORESET_FOLDS
     edges = round.(Int, range(0, m; length=nf + 1))
-    sizes = Int[k for k in _ctsem_coreset_sizes(N) if k < length(path)]
-    push!(sizes, length(path))
-    for k in sizes
-        units = path[1:k]
+    # The first size whose held-out error passes, with a positive weight:
+    # scored one there, after which no larger can score more.
+    value = (units, w) -> begin
         worst = 0.0
         for f in 1:nf
             held = perm[(edges[f] + 1):edges[f + 1]]
             train = vcat(perm[1:edges[f]], perm[(edges[f + 1] + 1):m])
             At = A[train, units]
-            w = _ctsem_nnls(transpose(At) * At, transpose(At) * b[train])
-            e = A[held, units] * w .- b[held]
+            wf = _ctsem_nnls(transpose(At) * At, transpose(At) * b[train])
+            e = A[held, units] * wf .- b[held]
             e .-= _smc_mean(e)
             worst = max(worst, sqrt(sum(abs2, e) / length(e)))
         end
-        if isfinite(worst) && worst <= tol
-            As = A[:, units]
-            w = _ctsem_nnls(transpose(As) * As, transpose(As) * b)
-            keep = findall(>(0), w)
-            isempty(keep) && continue
-            kept = units[keep]
-            return (units=kept, weights=w[keep], error=worst,
-                share=sum(cost[U] for U in kept))
-        end
+        passes = isfinite(worst) && worst <= tol && any(>(0), w)
+        (passes ? 1.0 : 0.0, passes ? 1.0 : 2.0, worst)
     end
-    return nothing
-end
-
-"""
-    _smc_coreset_path(A, b, cost, budget)
-
-Forward selection of the columns of `A` (particles by units, centred) that
-explain `b` (the centred total) with non-negative weights: each step adds the
-unit whose column, orthogonalised against those in, has the largest squared
-correlation with what is left and a positive one, refits the weights by
-`_ctsem_nnls`, and stops when the units' `cost` would pass `budget`, nothing
-positive is left to add, or the residual is below 1e-10 of `b`. The order of
-entry, which `_smc_coreset_fit` cuts at the first size that holds out.
-"""
-function _smc_coreset_path(A::Matrix{Float64}, b::Vector{Float64},
-    cost::AbstractVector{Float64}, budget::Real)
-    m, N = size(A)
-    chosen = Int[]
-    spent = 0.0
-    r = copy(b)
-    nb = sqrt(sum(abs2, b))
-    nb > 0 || return chosen
-    nrm = vec(sum(abs2, A; dims=1))
-    floor0 = 1e-14 * maximum(nrm; init=0.0)
-    along = zeros(N)
-    while length(chosen) < N
-        sqrt(sum(abs2, r)) <= 1e-10 * nb && break
-        mul!(along, transpose(A), r)
-        j = 0
-        top = 0.0
-        @inbounds for U in 1:N
-            (nrm[U] > floor0 && along[U] > 0) || continue
-            s = along[U]^2 / nrm[U]
-            if s > top && !(U in chosen)
-                top = s
-                j = U
-            end
-        end
-        j == 0 && break
-        spent + cost[j] > budget && break
-        push!(chosen, j)
-        spent += cost[j]
-        As = A[:, chosen]
-        w = _ctsem_nnls(transpose(As) * As, transpose(As) * b)
-        r .= b .- As * w
-    end
-    return chosen
+    found = _coreset_select(A, b, cost, budget, _ctsem_coreset_sizes(N), value;
+        refit=true, resid_tol=1e-10)
+    found === nothing && return nothing
+    keep = findall(>(0), found.weights)
+    kept = found.units[keep]
+    return (units=kept, weights=found.weights[keep], error=found.extra,
+        share=sum(cost[U] for U in kept))
 end
 
 # What the sampler asks of an objective whose log density is a sum of units'

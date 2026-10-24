@@ -40,7 +40,13 @@ function _ctsem_nnls(AtA::AbstractMatrix, Atb::AbstractVector)
             idx = findall(P)
             z = zeros(n)
             z[idx] = solve(idx)
-            all(z[i] > 0 for i in idx) && break
+            # A loop, not `all(... for i in idx)`: the generator would close
+            # over `z`, assigned twice, and box it.
+            positive = true
+            for i in idx
+                z[i] > 0 || (positive = false; break)
+            end
+            positive && break
             alpha = Inf
             for i in idx
                 z[i] <= 0 && (alpha = min(alpha, x[i] / (x[i] - z[i])))

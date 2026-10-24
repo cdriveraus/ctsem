@@ -487,9 +487,10 @@ function _is_coreset_choose(tr::_ISRows, rd::_ISRound, start::Vector{Int})
         # coreset was chosen, and the engine was then handed an empty unit
         # list.
         any(>(0), w) || return (0.0, bound, nothing)
-        c = my - sum(mx[units] .* w)
-        fail = maximum(filter(!isnan, [failrate(units, w, c, held),
-            failrate(units, w, c, newest)]); init=-Inf)
+        # Not `c`: the function's own `c` below would be this one, boxed.
+        level = my - sum(mx[units] .* w)
+        fail = maximum(filter(!isnan, [failrate(units, w, level, held),
+            failrate(units, w, level, newest)]); init=-Inf)
         cost = _is_round_cost(count(>(0), w), N, rd, fail)
         cost < priced[].cost && (priced[] = (M=Mu, cost=cost, fail=fail))
         (fullround - cost, bound, (M=Mu, cost=cost, fail=fail))
