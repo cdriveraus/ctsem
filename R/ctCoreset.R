@@ -31,6 +31,18 @@
 # full rounds and tries again with what they teach. At the end it checks the
 # draws that carry the weight and corrects them where needed, so what it hands
 # back is the full density's.
+#
+# It learns from scores as well as values. A full gradient batch returns every
+# unit's term with the gradient at no extra evaluation, and at a few of its
+# draws every unit's score (`ctsem_coreset_terms_gradient`): each such draw
+# gives a row per parameter -- the units' scores against their sum, in nats a
+# posterior sd -- beside its value row, so the weights are fitted to the sum's
+# slopes as well as its level. On the strong-shell fits a coreset fitted so at
+# 30 draws matched one fitted to values at 330
+# (review/SCORES-coreset-training-2026-10-24.md). And a value batch at draws
+# whose gradients were just taken in full -- DAIS asks for both at each
+# iteration -- reads the values from that batch rather than evaluating them
+# again.
 
 # The tolerances, in log density units. A weight is off by exp(error), so an
 # RMS of 0.1 costs about 1% of an effective sample; `max` keeps any one draw
@@ -46,6 +58,11 @@
 # `relevant`, about 55 below the best.
 .ctCoresetTol <- list(rms = 0.1, max = 0.5, drift = 1.5, final = 0.5,
   band = 10, scale = 20, relevant = 0.1)
+# Scores: from at most `per` draws of a full gradient batch, spread through it,
+# and from the newest `kept` such draws in all. A draw's scores are a row per
+# parameter over every unit, so they are what the training matrix grows by;
+# 30 draws were enough on the strong shell at 250 and 1,000 units.
+.ctCoresetScoreDraws <- list(per = 4L, kept = 64L)
 
 .ctCoresetRelevance <- function(y, top = max(y)) {
   exp(-pmax(0, top - y - .ctCoresetTol$band) / .ctCoresetTol$scale)
@@ -145,15 +162,37 @@
 
 # Weights on units `S` for the training `rows` of `X` (draws x units) and `y`
 # (the full sum), the intercept free: least squares on the centred rows, each
-# weighted by its relevance (`.ctCoresetRelevance()`).
-.ctCoresetWeights <- function(X, y, S, rows, rel = .ctCoresetRelevance(y[rows])) {
+# weighted by its relevance (`.ctCoresetRelevance()`), and on the score rows
+# `score` gives (`.ctCoresetScoreRows()`), which the intercept does not reach.
+.ctCoresetWeights <- function(X, y, S, rows, rel = .ctCoresetRelevance(y[rows]),
+  score = NULL) {
   Xs <- X[rows, S, drop = FALSE]
   share <- rel / sum(rel)
   mx <- colSums(Xs * share)
   my <- sum(y[rows] * share)
   root <- sqrt(rel)
-  w <- .ctCoresetNnls(sweep(Xs, 2, mx) * root, (y[rows] - my) * root)
+  A <- sweep(Xs, 2, mx) * root
+  b <- (y[rows] - my) * root
+  if (!is.null(score)) {
+    A <- rbind(A, score$Z[, S, drop = FALSE])
+    b <- c(b, score$z)
+  }
+  w <- .ctCoresetNnls(A, b)
   list(S = S, w = w, c = my - sum(mx * w))
+}
+
+# The score rows for a fit: each stored row (one parameter of one draw: the
+# units' scores, and their sum) times the parameter's spread over the draws
+# that gave scores -- a force in posterior sds, so no parameter's units weigh
+# by its scale alone -- and by the root of its draw's relevance against the
+# value rows' best (`top`). NULL with none.
+.ctCoresetScoreRows <- function(sc, top) {
+  if (is.null(sc) || !length(sc$z)) return(NULL)
+  spread <- if (NROW(sc$draws) > 1L) apply(sc$draws, 2, stats::sd) else
+    rep(1, NCOL(sc$draws))
+  spread[!is.finite(spread) | spread <= 0] <- 1
+  f <- spread[sc$par] * sqrt(.ctCoresetRelevance(sc$total, top))
+  list(Z = sc$Z * f, z = sc$z * f)
 }
 .ctCoresetPredict <- function(cf, Xrows) drop(cf$c + Xrows[, cf$S, drop = FALSE] %*% cf$w)
 
@@ -162,12 +201,16 @@
 # left of the centred sum, and refits the weights. Nested, so a path serves
 # every size as a prefix.
 .ctCoresetPath <- function(X, y, M, rows, start = integer(),
-  rel = .ctCoresetRelevance(y[rows])) {
+  rel = .ctCoresetRelevance(y[rows]), score = NULL) {
   share <- rel / sum(rel)
   root <- sqrt(rel)
   Xr <- X[rows, , drop = FALSE]
   Xc <- sweep(Xr, 2, colSums(Xr * share)) * root
   yc <- (y[rows] - sum(y[rows] * share)) * root
+  if (!is.null(score)) {
+    Xc <- rbind(Xc, score$Z)
+    yc <- c(yc, score$z)
+  }
   S <- start
   r <- if (length(S)) yc - drop(Xc[, S, drop = FALSE] %*%
     .ctCoresetNnls(Xc[, S, drop = FALSE], yc)) else yc
@@ -200,9 +243,11 @@
 # rest. Older checked rows are fitted like any other: held out for good, a
 # coreset fitted mostly on the first rounds' tails could never reach them.
 # Held out deterministically, so that the sampler's random stream is the same
-# with a coreset as without.
+# with a coreset as without. Score rows (`score`, `.ctCoresetScoreRows()`) are
+# fitted with every size and held out from none: the held-out rates read
+# values, which is what a check reads.
 .ctCoresetChoose <- function(X, y, rows, round, start = integer(),
-  focus = integer()) {
+  focus = integer(), score = NULL) {
   focus <- intersect(focus, rows)
   newest <- utils::tail(focus, round$checks)
   plain <- setdiff(rows, newest)
@@ -234,9 +279,10 @@
     # What size M costs if its checks never fail.
     floorcost <- .ctCoresetRoundCost(M, N, round, 0)
     if (M > N || floorcost >= fullround || (!is.null(best) && floorcost >= best$cost)) break
-    if (M > length(path)) path <- .ctCoresetPath(X, y, M, fitrows, path, rel[fitrows])
+    if (M > length(path)) path <- .ctCoresetPath(X, y, M, fitrows, path, rel[fitrows],
+      score)
     if (M > length(path)) break
-    cf <- .ctCoresetWeights(X, y, path[seq_len(M)], fitrows, rel[fitrows])
+    cf <- .ctCoresetWeights(X, y, path[seq_len(M)], fitrows, rel[fitrows], score)
     # Weights that all come out zero leave a constant and no unit to
     # evaluate, which costs nothing by the formula: priced, such a coreset was
     # chosen, and the engine was then handed an empty unit list.
@@ -253,8 +299,8 @@
     return(structure(list(), why = 'cost', best = if (!is.null(best)) best,
       fullround = fullround))
   }
-  S <- .ctCoresetPath(X, y, best$M, rows, start, rel[rows])
-  cf <- .ctCoresetWeights(X, y, S, rows, rel[rows])
+  S <- .ctCoresetPath(X, y, best$M, rows, start, rel[rows], score)
+  cf <- .ctCoresetWeights(X, y, S, rows, rel[rows], score)
   if (!any(cf$w > 0)) return(structure(list(), why = 'empty'))
   # The coreset is the units it was priced by, those with weight: refits on
   # later rows re-weight them, and add none. Keeping the zero-weight units of
@@ -339,6 +385,16 @@
   # matrix product than the one that made them.
   st$known <- new.env(hash = TRUE, parent = emptyenv())
   st$trace <- list()
+  # Score rows (`.ctCoresetScoreRows()`): per stored row the units' scores
+  # (`Z`), their sum (`z`), its parameter (`par`) and its draw's total
+  # (`total`), with the draws that gave them (`draws`) and a draw counter
+  # per row (`draw`) for keeping the newest. And the last full gradient
+  # batch's draws and unit terms, which a value batch at the same draws reads
+  # (`full()`), with the draws so served.
+  st$score <- NULL
+  st$scoredraws <- 0L
+  st$lastgrad <- NULL
+  st$reused <- 0L
   drawkey <- function(X) apply(signif(as.matrix(X), 12), 1L, paste, collapse = ',')
   engine <- local({
     built <- NULL
@@ -378,10 +434,12 @@
   }
   roundinfo <- function() list(values = st$values,
     grads = if (is.na(st$grads)) 0.3 * st$values else st$grads, checks = 8)
+  scorerows <- function() .ctCoresetScoreRows(st$score, max(st$y))
   choose <- function(start = integer()) {
     if (!worth_choosing()) return(FALSE)
     started <- proc.time()[["elapsed"]]
-    cf <- .ctCoresetChoose(st$X, st$y, seq_along(st$y), roundinfo(), start, st$focus)
+    cf <- .ctCoresetChoose(st$X, st$y, seq_along(st$y), roundinfo(), start, st$focus,
+      scorerows())
     tally('choose', proc.time()[["elapsed"]] - started)
     st$nchoose <- st$nchoose + 1L
     st$rows_at_choose <- length(st$y)
@@ -438,9 +496,24 @@
   }
   full <- function(X, why) {
     engine()
-    t0 <- timed('full', terms(X), nrow(X))
-    st$cost <- st$cost + nrow(X)
-    st$why[[why]] <- st$why[[why]] + nrow(X)
+    hit <- if (is.null(st$lastgrad)) rep(NA_integer_, nrow(X)) else
+      match(drawkey(X), st$lastgrad$keys)
+    todo <- which(is.na(hit))
+    t0 <- if (length(todo) == nrow(X)) timed('full', terms(X), nrow(X)) else {
+      g <- st$lastgrad
+      part0 <- list(value = g$value[hit], total = g$total[hit],
+        L = g$L[hit, , drop = FALSE])
+      if (length(todo)) {
+        tt <- timed('full', terms(X[todo, , drop = FALSE]), length(todo))
+        part0$value[todo] <- tt$value
+        part0$total[todo] <- tt$total
+        part0$L[todo, ] <- tt$L
+      }
+      st$reused <- st$reused + sum(!is.na(hit))
+      part0
+    }
+    st$cost <- st$cost + length(todo)
+    st$why[[why]] <- st$why[[why]] + length(todo)
     ok <- is.finite(t0$value)
     if (any(ok)) list2env(stats::setNames(as.list(t0$value[ok]), drawkey(X[ok, , drop = FALSE])),
       envir = st$known)
@@ -487,7 +560,7 @@
     st$trusted <- TRUE
     st$last_passed <- TRUE
     keep <- st$cf[c('cost', 'fail')]
-    refit <- .ctCoresetWeights(st$X, st$y, st$cf$S, seq_along(st$y))
+    refit <- .ctCoresetWeights(st$X, st$y, st$cf$S, seq_along(st$y), score = scorerows())
     # Refitted on the new rows, its weights can all come out zero: chosen
     # again, as after a failure.
     if (!any(refit$w > 0)) {
@@ -508,10 +581,14 @@
     if (st$batches > 0L) st$grads <- smooth(st$grads, st$gradsnow)
     st$batches <- st$batches + 1L
     st$gradsnow <- 0
-    v <- if (st$phase == 'coreset') withcoreset(X) else inparts(X, 'training')
+    v <- if (st$phase != 'coreset') inparts(X, 'training') else
+      if (cached(X)) freecheck(X, 'small') else withcoreset(X)
     v[!is.finite(v)] <- -1e100
     v
   }
+  # Whether every draw of `X` was in the last full gradient batch, whose
+  # values `full()` then reads for nothing.
+  cached <- function(X) !is.null(st$lastgrad) && all(drawkey(X) %in% st$lastgrad$keys)
   # A batch while there is a coreset: on it where that pays for the batch's
   # size, else in full.
   withcoreset <- function(X) {
@@ -520,17 +597,24 @@
     this$values <- n
     bc <- .ctCoresetBatchCost(sum(st$cf$w > 0), ncol(st$X), this, failnow())
     if (bc[['coreset']] < bc[['full']]) return(oncoreset(X))
-    t0 <- full(X, 'small')
-    # In full because the coreset would not pay for its check on a batch this
-    # small, so the check is free: the coreset's prediction from the unit
-    # terms, at the draws a check would read.
+    freecheck(X, 'small')
+  }
+  # A batch in full while there is a coreset -- one too small to pay for the
+  # coreset's check, or whose values a gradient batch already gave -- so the
+  # check is free: the coreset's prediction from the unit terms, at the draws
+  # a check would read.
+  freecheck <- function(X, why) {
+    n <- nrow(X)
+    t0 <- full(X, why)
     pred <- .ctCoresetPredict(st$cf, t0$L)
     pick <- checkpick(ifelse(is.finite(pred), pred, -Inf))
-    good <- is.finite(t0$value[pick]) & is.finite(pred[pick])
+    good <- is.finite(t0$total[pick]) & is.finite(pred[pick])
     learn(part(t0, pick), focus = TRUE)
     learn(part(t0, setdiff(seq_len(n), pick)))
     if (any(good)) {
-      err <- (pred[pick] - t0$value[pick])[good]
+      # Against the units' sum, which the prediction stands in for; the log
+      # posterior adds the prior, which a coreset's evaluation adds itself.
+      err <- (pred[pick] - t0$total[pick])[good]
       st$checks <- c(st$checks, err)
       st$runs <- st$runs + 1L
       st$free_total <- st$free_total + 1L
@@ -551,6 +635,7 @@
     n <- nrow(X)
     v <- rep(NA_real_, n)
     done <- 0L
+    allcached <- cached(X)
     while (done < n) {
       left <- n - done
       half <- left %/% 2L
@@ -558,7 +643,9 @@
       r$values <- half
       bc <- if (is.null(st$X)) .ctCoresetBatchCost(0, 1, r, 0) else
         .ctCoresetBatchCost(if (is.null(st$cf)) 0 else sum(st$cf$w > 0), ncol(st$X), r, 0)
-      take <- if (half > 0L && bc[['coreset']] < bc[['full']]) left - half else left
+      # Values a gradient batch already gave cost nothing in full.
+      take <- if (!allcached && half > 0L && bc[['coreset']] < bc[['full']]) left - half else
+        left
       idx <- done + seq_len(take)
       t0 <- full(X[idx, , drop = FALSE], why)
       v[idx] <- t0$value
@@ -612,12 +699,53 @@
     v[!is.finite(v)] <- -1e100
     v
   }
+  # A full gradient batch through `ctsem_coreset_terms_gradient`: what
+  # `lpg`'s 'gradbatch' returns, and the batch's unit terms kept for a value
+  # batch at the same draws, and the scores of a few of its draws learned.
   gradfull <- function(X) {
     started <- proc.time()[["elapsed"]]
     st$cost <- st$cost + 2 * nrow(X)
-    out <- attr(lpg, 'gradbatch')(X)
-    tally('gradient_full', proc.time()[["elapsed"]] - started, nrow(X))
-    out
+    n <- nrow(X)
+    pick <- unique(as.integer(round(seq(1, n, length.out = min(n,
+      .ctCoresetScoreDraws$per)))))
+    res <- .ctBackendJuliaValue(engine()$module$ctsem_coreset_terms_gradient(
+      engine()$objective, t(X), .ctJuliaVector(pick)))
+    value <- as.numeric(res$value)
+    total <- as.numeric(res$total)
+    L <- t(matrix(as.numeric(res$unit_loglik), ncol = n))
+    G <- t(matrix(as.numeric(res$gradient), ncol = n))
+    st$lastgrad <- list(keys = drawkey(X), value = value, total = total, L = L)
+    ok <- is.finite(value)
+    if (any(ok)) list2env(stats::setNames(as.list(value[ok]), drawkey(X[ok, , drop = FALSE])),
+      envir = st$known)
+    learnscores(X[pick, , drop = FALSE], array(as.numeric(res$scores),
+      c(ncol(L), ncol(X), length(pick))), total[pick])
+    tally('gradient_full', proc.time()[["elapsed"]] - started, n)
+    value[!is.finite(value)] <- -1e100
+    list(value = value, gradient = G)
+  }
+  # Each scored draw's rows: per parameter, the units' scores and their sum.
+  # The newest `.ctCoresetScoreDraws$kept` draws' rows are kept.
+  learnscores <- function(Xs, S, totals) {
+    for (d in seq_len(nrow(Xs))) {
+      Sd <- S[, , d]
+      if (!is.finite(totals[d]) || !all(is.finite(Sd))) next
+      st$scoredraws <- st$scoredraws + 1L
+      add <- list(Z = t(Sd), z = colSums(Sd), par = seq_len(ncol(Sd)),
+        total = rep(totals[d], ncol(Sd)), draw = rep(st$scoredraws, ncol(Sd)),
+        draws = Xs[d, , drop = FALSE])
+      st$score <- if (is.null(st$score)) add else list(Z = rbind(st$score$Z, add$Z),
+        z = c(st$score$z, add$z), par = c(st$score$par, add$par),
+        total = c(st$score$total, add$total), draw = c(st$score$draw, add$draw),
+        draws = rbind(st$score$draws, add$draws))
+    }
+    sc <- st$score
+    if (!is.null(sc) && st$scoredraws > .ctCoresetScoreDraws$kept) {
+      keep <- sc$draw > st$scoredraws - .ctCoresetScoreDraws$kept
+      st$score <- list(Z = sc$Z[keep, , drop = FALSE], z = sc$z[keep], par = sc$par[keep],
+        total = sc$total[keep], draw = sc$draw[keep],
+        draws = utils::tail(sc$draws, .ctCoresetScoreDraws$kept))
+    }
   }
   gradbatch <- function(draws) {
     X <- as.matrix(draws)
@@ -714,6 +842,8 @@
     full_for = st$why,
     choices = if (length(st$trace)) do.call(rbind, st$trace),
     training_draws = length(st$y),
+    score_draws = st$scoredraws,
+    reused_values = st$reused,
     check_rms = if (length(st$checks)) sqrt(mean(st$checks^2)) else NA_real_,
     check_max = if (length(st$checks)) max(abs(st$checks)) else NA_real_,
     final = st$final,

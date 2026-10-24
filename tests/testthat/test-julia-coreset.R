@@ -51,6 +51,20 @@ test_that("the engine's coreset evaluation is the weighted sum of the units it n
   expect_equal(as.numeric(ctsem:::.ctBackendJuliaValue(module$ctsem_coreset_batch(obj,
     t(X), units(5L), weights(2)))), prior + 2 * L[5, ], tolerance = 1e-10)
   expect_error(module$ctsem_coreset_batch(obj, t(X), units(c(1L, 1L)), weights(c(1, 1))))
+  # A gradient batch that teaches: the terms, the batch gradient, and each
+  # unit's score at the columns asked for, which sum to the gradient of the
+  # units' total.
+  tg <- ctsem:::.ctBackendJuliaValue(module$ctsem_coreset_terms_gradient(obj, t(X),
+    ctsem:::.ctJuliaVector(c(1L, 3L))))
+  expect_equal(as.numeric(tg$value), plain, tolerance = 1e-10)
+  expect_equal(as.numeric(tg$total), as.numeric(terms$total), tolerance = 1e-10)
+  expect_equal(matrix(as.numeric(tg$unit_loglik), ncol = 3), L, tolerance = 1e-10)
+  expect_equal(matrix(as.numeric(tg$gradient), ncol = 3), gfull[-1, ], tolerance = 1e-9)
+  sc <- array(as.numeric(tg$scores), c(N, length(est), 2))
+  expect_equal(sc[, , 1], scores, tolerance = 1e-8)
+  scores3 <- as.matrix(ctsem:::.ctJuliaGet(module$ctsem_subject_gradients(obj,
+    ctsem:::.ctJuliaVector(X[3, ]), prior = FALSE))$scores)
+  expect_equal(sc[, , 2], scores3, tolerance = 1e-8)
 })
 
 test_that("the selection finds a small coreset where the units' terms span few dimensions", {
@@ -92,6 +106,43 @@ test_that("the selection finds a small coreset where the units' terms span few d
   expect_lte(sum((b - A %*% x)^2), o$value * (1 + 1e-8) + 1e-10)
 })
 
+test_that("score rows fit the weights that values alone leave open", {
+  # Twelve units whose terms are each a non-negative mix of three functions of
+  # a two-parameter draw, and their scores. Four draws' values cannot fit six
+  # weights; their scores add two rows each, and with them the coreset that
+  # reproduces the sum is found and predicts held-out draws exactly. The rows
+  # are in units of each parameter's spread, so rescaling a parameter changes
+  # nothing.
+  set.seed(7)
+  f <- function(th) cbind(th[, 1], th[, 2]^2, sin(th[, 1]) * th[, 2])
+  df <- function(th) list(cbind(1, 0, cos(th[1]) * th[2]),
+    cbind(0, 2 * th[2], sin(th[1])))
+  mix <- matrix(0, 3, 12)
+  mix[, 1:6] <- matrix(runif(18), 3)
+  ytrue <- rowSums(mix)
+  th <- matrix(rnorm(8), 4)
+  X <- f(th) %*% mix
+  y <- drop(f(th) %*% ytrue)
+  rows <- function(th, scale = c(1, 1)) {
+    Z <- NULL; z <- NULL; par <- NULL
+    for (r in seq_len(nrow(th))) for (j in 1:2) {
+      zr <- drop(df(th[r, ])[[j]] %*% mix) / scale[j]
+      Z <- rbind(Z, zr); z <- c(z, sum(zr)); par <- c(par, j)
+    }
+    list(Z = Z, z = z, par = par, total = rep(max(y), length(z)),
+      draws = sweep(th, 2, scale, "*"))
+  }
+  score <- ctsem:::.ctCoresetScoreRows(rows(th), max(y))
+  cf <- ctsem:::.ctCoresetWeights(X, y, 1:6, 1:4, score = score)
+  held <- matrix(rnorm(20), 10)
+  expect_equal(ctsem:::.ctCoresetPredict(cf, f(held) %*% mix), drop(f(held) %*% ytrue),
+    tolerance = 1e-6)
+  # The second parameter on a scale a thousand times larger: the same weights.
+  big <- ctsem:::.ctCoresetScoreRows(rows(th, c(1, 1000)), max(y))
+  expect_equal(ctsem:::.ctCoresetWeights(X, y, 1:6, 1:4, score = big)$w, cf$w,
+    tolerance = 1e-6)
+})
+
 test_that("the sampler's density with a coreset behind it follows the full density", {
   skip_on_cran()
   skip_if_not(isTRUE(ctsem::ctJuliaStatus()$available))
@@ -109,6 +160,21 @@ test_that("the sampler's density with a coreset behind it follows the full densi
   cov <- as.matrix(fit$estimate$cov)
   set.seed(9)
   draw <- function(n) ctsem:::ctOptimNormalDraws(est, cov * 2, n)
+  # A full gradient batch teaches a coreset its draws' scores, and a value
+  # batch at the same draws -- DAIS asks for both -- costs nothing more and
+  # is the full density's.
+  taught <- ctsem:::.ctCoresetLpg(fit, full)
+  xg <- draw(8)
+  gg <- attr(taught, "gradbatch")(xg)
+  gt <- attr(full, "gradbatch")(xg)
+  expect_equal(gg$value, gt$value, tolerance = 1e-10)
+  expect_equal(gg$gradient, gt$gradient, tolerance = 1e-9)
+  expect_equal(attr(taught, "cost")(), 16)
+  expect_equal(attr(taught, "batch")(xg), attr(full, "batch")(xg), tolerance = 1e-10)
+  expect_equal(attr(taught, "cost")(), 16)
+  rec0 <- attr(taught, "coreset")()
+  expect_equal(rec0$score_draws, 4L)
+  expect_equal(rec0$reused_values, 8L)
   # Rounds with no coreset are the full density, half a round at a time; once
   # one is chosen, the rest of the round runs on it, checked (at most three).
   first <- NULL

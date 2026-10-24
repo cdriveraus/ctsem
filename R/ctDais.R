@@ -75,13 +75,14 @@
 # density's `'gradbatch'` (`.ctBackendLpgFunc()`); 60-150 iterations on the
 # targets measured. On the Laplace route the density is `.ctCoresetLpg()`'s,
 # whose `'gradbatch'` serves gradients on a coreset of the units where it
-# has one it trusts. A coreset learns only from value batches, so where the
-# density carries one (`'coreset'`), each iteration's draws are evaluated as
-# a value batch too: in full while the coreset trains, a third more than the
-# gradients alone, and on the coreset with its checks once chosen, which is
-# what keeps the coreset honest as the normal moves -- it was fitted at the
-# check's draws, and on a shell this moved the normal to where no training
-# draw was. The values the batch returns are the ones weighted.
+# has one it trusts. Where the density carries one (`'coreset'`), each
+# iteration's draws are evaluated as a value batch too: while the coreset
+# trains its gradients are taken in full, which teach it the units' terms
+# and scores, and the value batch reads those values for nothing; once one is
+# chosen the batch runs on the coreset with its checks, which is what keeps
+# the coreset honest as the normal moves -- it was fitted at the check's
+# draws, and on a shell this moved the normal to where no training draw was.
+# The values the batch returns are the ones weighted.
 #
 # A direction the data do not identify has no fixed point here: the
 # gradient along it is zero, so each step multiplies its variance by
