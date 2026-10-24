@@ -178,11 +178,6 @@ end
 const _TRANSFORM_CACHE = Dict{String,Function}()
 const _TRANSFORM_CACHE_LOCK = ReentrantLock()
 
-export ctsem_transform_cache_size, ctsem_clear_transform_cache!
-
-"""How many distinct transform expressions have been compiled this session."""
-ctsem_transform_cache_size() = lock(() -> length(_TRANSFORM_CACHE), _TRANSFORM_CACHE_LOCK)
-
 export ctsem_transforms_cached
 """
     ctsem_transforms_cached(sources)
@@ -222,18 +217,6 @@ function ctsem_transforms_cached(regular, complex=String[]; compile::Bool=false)
         end
         return true
     end
-end
-
-"""
-Empty the transform closure cache.
-
-Only useful for measuring compilation, since the cached closures are immutable
-and shared safely; dropping them does not free the code that was compiled for
-them.
-"""
-function ctsem_clear_transform_cache!()
-    lock(() -> empty!(_TRANSFORM_CACHE), _TRANSFORM_CACHE_LOCK)
-    return nothing
 end
 
 """

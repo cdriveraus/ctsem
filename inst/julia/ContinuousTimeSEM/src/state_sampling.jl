@@ -1105,7 +1105,7 @@ end
 # because a variance whose realisations are also being chosen can always be
 # made to look smaller.
 
-export CTSEMJointObjective, ctsem_joint_objective, ctsem_joint_blocks,
+export CTSEMJointObjective, ctsem_joint_objective,
     ctsem_joint_hessian, ctsem_joint_states, ctsem_joint_dimension
 
 """
@@ -1139,30 +1139,6 @@ end
 
 """Total dimension optimised or sampled: parameters plus innovations."""
 ctsem_joint_dimension(o::CTSEMJointObjective) = o.npar + o.layout.ndim
-
-"""
-    ctsem_joint_blocks(objective)
-
-Where each block of `x` lives: the population parameters, then one block per
-subject.
-
-The joint Hessian is arrow-shaped -- dense in the population block, block
-diagonal in the innovations, coupled between the two -- because a subject's
-innovations enter no other subject's likelihood. Everything below exploits
-that, and a caller building a sampler metric wants the same partition.
-"""
-function ctsem_joint_blocks(o::CTSEMJointObjective)
-    layout = o.layout
-    nsubjects = length(layout.zoffsets)
-    starts = Vector{Int}(undef, nsubjects)
-    stops = Vector{Int}(undef, nsubjects)
-    for i in 1:nsubjects
-        starts[i] = o.npar + layout.zoffsets[i] + 1
-        stops[i] = i < nsubjects ? o.npar + layout.zoffsets[i + 1] :
-            o.npar + layout.ndim
-    end
-    return (npar=o.npar, ndim=layout.ndim, start=starts, stop=stops)
-end
 
 """One subject's slice of the innovation vector, as a range into `x`."""
 @inline function _ctsem_joint_range(o::CTSEMJointObjective, i::Int)

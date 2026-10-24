@@ -15,28 +15,16 @@
 ## three matrices of a given size share the entry and would otherwise evict each
 ## other.
 ##
-## Disabled by `ctsem_cov_cache!(false)`, which exists so a test can measure the
-## uncached cost rather than infer it.
+## Disabled by `_CTSEM_COV_CACHE[] = false`, so the uncached cost can be
+## measured rather than inferred.
 
 const _CTSEM_COV_CACHE = Ref(true)
 
-"""Enable or disable the covariance construction cache. Returns the previous setting."""
-function ctsem_cov_cache!(on::Bool)
-    prev = _CTSEM_COV_CACHE[]
-    _CTSEM_COV_CACHE[] = on
-    return prev
-end
-# Bang-free aliases, as JuliaConnectoR addresses module members by name.
-ctsem_cov_cache(on::Bool) = ctsem_cov_cache!(on)
-ctsem_cov_cache() = _CTSEM_COV_CACHE[]
-
 const _COVCACHE_SLOTS = 8
 const _COVCACHE_TLS_KEY = :ctsem_covcaches
+# Calls into the covariance construction, and how many missed the cache.
 const _COVCACHE_CALLS = Ref(0)
 const _COVCACHE_MISSES = Ref(0)
-
-"""Calls into the covariance construction, and how many missed the cache."""
-ctsem_cov_cache_counts() = (calls = _COVCACHE_CALLS[], misses = _COVCACHE_MISSES[])
 
 """Zero the covariance construction counters."""
 function ctsem_cov_cache_reset_counts()

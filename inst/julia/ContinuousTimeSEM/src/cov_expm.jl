@@ -57,11 +57,10 @@
 # nothing about this construction. Reading a difference in it between the two
 # routes measures how many inner iterations the laplace mode-finder took, which
 # is not the question.
+#
+# Calls into the expm covariance construction, and how many missed the cache.
 const _EXPM_COV_CALLS = Ref(0)
 const _EXPM_COV_MISSES = Ref(0)
-
-"""Calls into the expm covariance construction, and how many missed the cache."""
-ctsem_cov_expm_counts() = (calls = _EXPM_COV_CALLS[], misses = _EXPM_COV_MISSES[])
 
 """Zero the expm covariance counters."""
 function ctsem_cov_expm_reset_counts()

@@ -825,21 +825,12 @@ end
 @inline _invalid_ekf_loglikelihood(ws::ContinuousEKFWorkspace) =
     -one(eltype(ws.state)) * NaN
 
-"""
-    _population_raw_view(ws, all_params)
-
-The raw population covariance matrix as a `k` by `k` view, or `nothing` when
-the model has no separate population covariance.
-
-This is what the reverse pass needs recorded -- the point the construction was
-evaluated at, which cannot be recovered from `subject_values`. Read the same
-way `_apply_population_block!` reads it, so the forward pass and the tape
-cannot disagree about the layout.
-"""
-@inline function _population_raw_view(ws, all_params)
-    isempty(ws.population_indices) && return nothing
-    return _population_raw_block(ws, all_params)
-end
+# The raw population covariance matrix as a `k` by `k` view. This is what the
+# reverse pass needs recorded -- the point the construction was evaluated at,
+# which cannot be recovered from `subject_values`. Read the same way
+# `_apply_population_block!` reads it, so the forward pass and the tape cannot
+# disagree about the layout. A model with no separate population covariance
+# (`isempty(ws.population_indices)`) has none.
 @inline function _population_raw_block(ws, all_params)
     k = length(ws.population_indices)
     return reshape(view(all_params, ws.population_range), k, k)
@@ -1332,9 +1323,9 @@ function _extended_kalman_filter_continuous!(
     copyto!(ws.state, pars.T0MEANS)
     _hybrid_start!(ws.hyb, sp.hybrid, data, _val(ws.state_dim), _val(ws.manifest_dim),
         sp.continuous_time)
-    # Split rather than handed `_population_raw_view`'s result: a union of
-    # `nothing` and a view is not a bits union, so it was boxed on every
-    # traced subject pass.
+    # Split rather than handed a result that is `nothing` or the view: a union
+    # of the two is not a bits union, so it was boxed on every traced subject
+    # pass.
     if isempty(ws.population_indices)
         _record_init!(trace, pars, _val(ws.state_dim), nothing)
     else
