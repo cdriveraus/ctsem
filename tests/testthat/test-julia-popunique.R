@@ -1098,6 +1098,50 @@ test_that("sequential predictions are the fitted model's own, row by row", {
   }
 })
 
+test_that("a unit with every effect in the filter predicts its rows from one pass", {
+  skip_without_julia()
+  # No coordinate, so one filter pass gives every row
+  # (`_laplace_sequential_filtered!`); the layer holds the same effects as
+  # coordinates and re-solves every prefix. A block with a predictor's effect
+  # in continuous time, and own variances in discrete time, with a manifest
+  # missing on some rows.
+  old <- options(ctsem.laplace.hybrid = TRUE)
+  on.exit(options(old), add = TRUE)
+  handle <- function(s) structure(s, class = c("ctJuliaModel", "ctFitModel"))
+  means <- c("t0m1", "cint2", "mm1", "mm2", "mm3")
+  cases <- list(
+    list(type = "ct", td = TRUE, ind = c("td1", "t0m1", "mm1", "mm2", "mm3")),
+    list(type = "dt", td = FALSE, ind = means, rank = 0, pu = TRUE))
+  set.seed(47)
+  for (case in cases) {
+    m <- .pu_affine_model(case$type, case$td, case$ind)
+    d <- .pu_affine_data(case$type, case$td)
+    d$Y2[d$id %in% c(2, 5) & seq_len(nrow(d)) %% 3 == 0] <- NA
+    label <- paste(case$type, if (case$td) "td" else "", case$rank)
+    out <- list()
+    x <- NULL
+    for (h in c(TRUE, FALSE)) {
+      options(ctsem.laplace.hybrid = h)
+      spec <- if (is.null(case$rank)) .pu_spec(d, m, priors = FALSE) else
+        .pu_spec(d, m, poprank = case$rank, popunique = case$pu, priors = FALSE)
+      if (is.null(x)) x <- rnorm(length(.pu_names(spec)), 0, 0.3)
+      module <- ctsem:::.ctJuliaModule(spec$project)
+      o <- ctsem:::.ctJuliaObjective(handle(spec), hybrid = TRUE)
+      expect_identical(isTRUE(ctsem:::.ctJuliaCall("ContinuousTimeSEM._laplace_filter_only",
+        o)), h, info = label)
+      xx <- ctsem:::.ctJuliaNumericVector(x)
+      seq <- ctsem:::.ctBackendJuliaValue(module$ctsem_laplace_sequential(o, xx))
+      value <- ctJuliaEvaluate(handle(spec), x, gradient = FALSE, cores = 1L)$value
+      expect_equal(sum(seq$llrow), value, tolerance = 1e-8, info = label)
+      out[[as.character(h)]] <- seq
+    }
+    for (f in c("eta", "etacov", "y", "ycov", "llrow", "effect", "effectcov")) {
+      expect_equal(out[["TRUE"]][[f]], out[["FALSE"]][[f]], tolerance = 1e-7,
+        info = paste(label, f))
+    }
+  }
+})
+
 test_that("a sequential prediction does not see the subject's later data", {
   skip_without_julia()
   # Subject 1's observations after time 2 withheld: its predicted and updated
