@@ -15,7 +15,10 @@
 # dimensions whatever the subject count -- and 'augmented' the filter's
 # marginal. 'auto' integrates when optimising and samples when sampling, so a
 # Laplace route it chose to optimise is sampled as 'none', and the
-# approximation only places the sampler. `ctFit(optimize=FALSE)` reads its
+# approximation only places the sampler -- unless there is no approximation:
+# where every unit's integrand is Gaussian in its effects
+# (`spec$laplace$quadratic`), the Laplace marginal is the exact marginal, and
+# that is sampled. `ctFit(optimize=FALSE)` reads its
 # own `intoverpop`; `ctFitUncertainty(fit, 'sample')` reads the fit's, and
 # `control$intoverpop` overrides it there. A separate `control$target`
 # ('joint'/'marginal') said the same thing a second way until 2026-10-07, and
@@ -176,15 +179,25 @@
 # reads as 'auto'. A route named by the caller -- 'laplace', or TRUE
 # resolving to it -- is sampled as named. A Laplace route 'auto' chose to
 # optimise is sampled as 'none': 'auto' integrates when optimising and
-# samples when sampling, which is `ctFit(optimize = FALSE)`'s own rule. A
-# backend caller passing only a route has named it.
+# samples when sampling, which is `ctFit(optimize = FALSE)`'s own rule. But
+# where the Laplace term is `exact` -- every unit's integrand Gaussian in its
+# effects (`spec$laplace$quadratic`: Gaussian indicators, effects only in
+# mean vectors through the affine transform) -- its marginal is the exact
+# posterior's, of `npar` dimensions and sampled from the filter's adjoint
+# where the effects are integrated there, so that is sampled. Before 'auto'
+# took the Laplace route when optimising (juliaFit 6fcaf91a) it took the
+# augmented one for these models, and the filter's marginal was sampled; the
+# race found it the fastest accurate route for effects on means
+# (review/POSTERIOR-race-2026-10-02.md). A backend caller passing only a
+# route has named it.
 #
 # `override`, `ctFitUncertainty()`'s `control$intoverpop`, picks another
 # route the fit's specification can carry: 'none' and 'laplace' share one
 # (the Laplace structure says which parameters vary, integrated or not), the
 # augmented one is a different model.
 #' @keywords internal
-.ctBackendSampleRoute <- function(route, requested = route, override = NULL) {
+.ctBackendSampleRoute <- function(route, requested = route, override = NULL,
+  exact = FALSE) {
   route <- as.character(route)[1L]
   if (!is.null(override)) {
     override <- as.character(override)
@@ -212,7 +225,7 @@
   }
   named <- !is.null(requested) && !identical(as.character(requested)[1L], "auto")
   switch(route, augmented = "augmented",
-    laplace = if (named) "laplace" else "none", "none")
+    laplace = if (named || isTRUE(exact)) "laplace" else "none", "none")
 }
 
 # Sample a fit's posterior by MCMC: `uncertainty = 'sample'`
@@ -237,9 +250,20 @@
 # placement optimisation that produced `fit`.
 #' @keywords internal
 .ctBackendUncertaintySample <- function(fit, control = list(), cores = 1L,
-  verbose = 0, state_explicit = FALSE, handles = NULL, checkcores = cores) {
+  verbose = 0, state_explicit = FALSE, handles = NULL, checkcores = cores,
+  nutsgiven = NULL) {
 
   .ctBackendSampleCheckControl(control)
+  # The NUTS-only controls the caller set (`.ctBackendNutsControls()`): read
+  # off `control` here, and handed in by `ctFit(optimize = FALSE)`, whose
+  # control carries its own resolved chain count and warmup either way.
+  if (is.null(nutsgiven)) nutsgiven <- .ctBackendNutsControls(control)
+  if (identical(control$sampler, "smc") && length(nutsgiven)) {
+    stop("control$", paste(nutsgiven, collapse = ", control$"),
+      " is a setting of NUTS, which tempered SMC (control$sampler = 'smc') ",
+      "does not read: its chains are its particles (control$particles), and ",
+      "it has no warmup. Drop it, or use sampler = 'nuts'.", call. = FALSE)
+  }
   # Missing TI predictor values are sampled with the rest unless the fit or
   # `control$tipredMissing` says to impute them; a fit that imputed them, the
   # placement of `ctFit(optimize = FALSE)` among them, gains them here.
@@ -247,7 +271,8 @@
     NROW(fit$model_spec$ti_imputed) > 0L
   if (tisampled) fit <- .ctJuliaTIMissingSampleFit(fit)
   sampled <- .ctBackendSampleRoute(.ctBackendIntOverPop(fit$model_spec),
-    requested = fit$args$input[["intoverpop"]], override = control$intoverpop)
+    requested = fit$args$input[["intoverpop"]], override = control$intoverpop,
+    exact = isTRUE(.ctBackendSpec(fit)$laplace$quadratic))
   marginal <- !identical(sampled, "none")
   # The check the marginal metric is built from, where the fit lacks one. Not
   # with sampled TI values, whose coordinates the fit's objective does not
@@ -275,8 +300,14 @@
   # The sampler, resolved against the target and written back into `control`,
   # which is what the engine call and every worker read it from: the default
   # differs by target, and a worker sees only `control`.
+  # On a marginal target, by what the check named (see there); not with
+  # sampled TI values, whose coordinates the check's normal does not have.
+  directions <- fit$uncertainty$details$normalcheck$directions
   control$sampler <- .ctBackendSamplerName(control$sampler,
-    joint = !marginal && !isTRUE(state_explicit))
+    joint = !marginal && !isTRUE(state_explicit),
+    named = if (marginal && !isTRUE(state_explicit) && !tisampled &&
+      !is.null(directions)) NCOL(directions) else 0L,
+    nutsonly = .ctBackendNutsAsked(control, nutsgiven))
   # Resolved once here for its refusals, before any worker is started or the
   # engine reached: a setting refused deep in a worker process would surface
   # as a failed chain and a fallback rather than as the error it is.
@@ -557,22 +588,57 @@
 # recovered (review/SAMPLING-smc-2026-10-23.md). The joint target has no
 # version of it.
 #
+# On a marginal target the default is chosen by the fit's own check
+# (`$normalcheck`, which the sampler makes where the fit has none): tempered
+# SMC where it named directions in which the posterior departs from the
+# Hessian's normal, NUTS where it named none, and NUTS whenever the call sets
+# a control only NUTS reads (`.ctBackendNutsAsked()`). Over nine fits -- the six small models of
+# scripts/gsm-uncertainty-2026-10/smc_broad_local.R, the time series and two
+# shells -- SMC reached the effective-size target first wherever the check
+# named a direction, by 1.2 to 7 times (NUTS did not converge on the time
+# series or the 250-unit shell), and NUTS did where it named none, by 1.3-1.4
+# times; on the nonlinear model, two named, they tied.
+#
 # 'saem' is the default on the joint target because it is the more reliable
 # of the two there, not only the faster: through `ctFitUncertainty()` on 13
 # models (dev2, review/POSTERIOR-race-2026-10-02.md) its mean worst error
 # against a long reference was 0.34 posterior sds to NUTS's 0.50, at 0.6x the
 # time, and NUTS on the joint vector never reached ESS 200 on three variance
 # and nested models where it reached it everywhere. A marginal or
-# state-explicit target has no effects for its sweeps, so NUTS is the
-# sampler there.
+# state-explicit target has no effects for its sweeps, so NUTS or SMC is the
+# sampler there; the state-explicit one has no check, so NUTS.
 #' @keywords internal
-.ctBackendSamplerName <- function(sampler, joint = TRUE) {
-  if (is.null(sampler)) return(if (isTRUE(joint)) "saem" else "nuts")
+.ctBackendSamplerName <- function(sampler, joint = TRUE, named = 0L, nutsonly = FALSE) {
+  if (is.null(sampler)) {
+    if (isTRUE(joint)) return("saem")
+    return(if (!isTRUE(nutsonly) && isTRUE(named > 0L)) "smc" else "nuts")
+  }
   if (!is.character(sampler) || length(sampler) != 1L ||
       !sampler %in% c("nuts", "saem", "smc")) {
     stop("control$sampler must be 'nuts', 'saem' or 'smc'.", call. = FALSE)
   }
   sampler
+}
+
+# The sample controls only NUTS reads, by the names a caller set: its chain
+# count (tempered SMC's chains are its particles), its warmup (SMC has none)
+# and its starting step size. A call that sets one is asking for NUTS, so on
+# a marginal target it gets NUTS by default, and naming 'smc' beside one is
+# refused rather than the setting ignored. `ctFit(optimize = FALSE)` folds a
+# resolved chain count and warmup into every control it passes on, so it says
+# which of them its caller wrote instead (`.ctJuliaSampleFit()`).
+.CT_NUTS_CONTROL_NAMES <- c("chains", "warmup", "stepsize")
+
+.ctBackendNutsControls <- function(control) {
+  given <- names(control)[!vapply(control, is.null, logical(1))]
+  .CT_NUTS_CONTROL_NAMES[.CT_NUTS_CONTROL_NAMES %in% given]
+}
+
+# Whether a call asks for NUTS on a marginal target: a NUTS-only control it
+# set (`nutsgiven`, names), or a setting of NUTS's warmup metric.
+.ctBackendNutsAsked <- function(control, nutsgiven = .ctBackendNutsControls(control)) {
+  length(nutsgiven) > 0L || isTRUE(control$adapt_metric) ||
+    isTRUE(control$adapt_effects) || !is.null(control$settleTol)
 }
 
 # Where the chains start, `control$placement`. 'saem', the default on the joint
@@ -682,9 +748,11 @@
     particles = max(2L, as.integer(.ctJuliaOr(control$particles, 200L))[1L]),
     # Tempered SMC's particles move on a coreset of the Laplace units: the
     # full density, evaluated once a particle a stage for the weights anyway,
-    # corrects the moves exactly (sample_smc.jl), so this costs accuracy
-    # nothing and `FALSE` is the oracle, as for the importance sampler's
-    # coreset (`.ctCoresetLpg()`). Inert off the Laplace route.
+    # corrects the moves exactly (sample_smc.jl). NUTS on a marginal target
+    # runs its trajectories on one after warm-up and tests each draw's end
+    # against the full density (sample_surrogate.jl). Either way this costs
+    # accuracy nothing and `FALSE` is the oracle, as for the importance
+    # sampler's coreset (`.ctCoresetLpg()`). Inert off the Laplace route.
     coreset = !isFALSE(control$coreset))
 
   # The SAEM kernel draws the effects by SAEM's own sweeps and keeps the
@@ -1009,10 +1077,10 @@
 #' @keywords internal
 .ctBackendSampleTargetRhat <- function(control) {
   settings <- .ctBackendSampleControl(control)
-  # Tempered SMC's final phase is many short chains, whose split R-hat reads
-  # their autocorrelation (about `sqrt(1 + (tau - 1) / n)`, 1.12-1.27 at ten
-  # draws where four long chains read 1.008); the particles' independence is
-  # the between-chain guarantee, and the effective size is what it stops on.
+  # Tempered SMC reports no R-hat (sample_smc.jl): its many short chains
+  # start from particles already drawn from the posterior, so their agreement
+  # says nothing, and their split R-hat reads autocorrelation. The effective
+  # size is what it stops on.
   if (identical(settings$sampler, "smc")) return(Inf)
   as.numeric(.ctJuliaOr(settings$rhat_target, 1.01))
 }
@@ -1127,6 +1195,7 @@
     # at all, so this is deliberately only reachable on the marginal path.
     arguments$gradient_method <- target$gradient
   }
+  if (isTRUE(target$marginal)) arguments$coreset <- isTRUE(settings$coreset)
   metric <- .ctJuliaOr(target$metric, target$hessian)
   if (!is.null(metric)) arguments$hessian <- .ctJuliaPut(as.matrix(metric))
   # How many of the sampled coordinates are model parameters. Only differs
@@ -1444,6 +1513,17 @@
     final_correction_ess = if (is.null(result$final_correction_ess)) NULL else
       as.numeric(result$final_correction_ess),
     particles_parallel = if (is.null(result$parallel)) NULL else as.character(result$parallel),
+    # NUTS's chains on a coreset, per chain: its units (0 where the chain
+    # sampled in full), the moved endpoints the full density tested and the
+    # ones it accepted, and whether the chain gave its coreset up.
+    chain_coreset_size = if (is.null(result$coreset_size)) NULL else
+      as.integer(result$coreset_size),
+    chain_coreset_proposed = if (is.null(result$coreset_proposed)) NULL else
+      as.integer(result$coreset_proposed),
+    chain_coreset_accepted = if (is.null(result$coreset_accepted)) NULL else
+      as.integer(result$coreset_accepted),
+    chain_coreset_abandoned = if (is.null(result$coreset_abandoned)) NULL else
+      as.logical(result$coreset_abandoned),
     scale_accept = as.numeric(result$scale_accept),
     ncp_accept = as.numeric(result$ncp_accept),
     processes = FALSE,
@@ -1732,10 +1812,20 @@ print.ctSampleDiagnostics <- function(x, ...) {
     else "ctsem Hamiltonian sample\n")
   if (!is.null(x$target)) cat("  target: ", x$target, " posterior\n", sep = "")
   if (smc) cat("  ", x$chains, " particles x ", x$draws, " draws each, after ",
-    x$nstages, " tempering stages (no warmup; R-hat over short chains reads ",
-    "autocorrelation and is not a stopping target here)\n", sep = "")
+    x$nstages, " tempering stages (no warmup; no R-hat: the chains start from ",
+    "particles already drawn from the posterior, and the effective size is ",
+    "the stop)\n", sep = "")
   else cat("  ", x$chains, " chains x ", x$draws, " draws (", x$warmup,
     " warmup discarded)\n", sep = "")
+  if (!smc && isTRUE(x$coreset) && any(x$chain_coreset_size > 0)) {
+    sizes <- x$chain_coreset_size[x$chain_coreset_size > 0]
+    cat("  chains moved on a coreset of ", paste(unique(range(sizes)), collapse = "-"),
+      " of ", x$nunits, " units; the full density accepted ",
+      round(100 * sum(x$chain_coreset_accepted) / max(1L, sum(x$chain_coreset_proposed))),
+      "% of their moves", if (any(x$chain_coreset_abandoned))
+        paste0(" (", sum(x$chain_coreset_abandoned), " chain(s) gave it up)") else "",
+      "\n", sep = "")
+  }
   if (smc && isTRUE(x$coreset)) {
     sizes <- x$stage_coreset_size[x$stage_coreset_size > 0]
     if (length(sizes)) cat("  particles moved on a coreset of ",
@@ -1843,6 +1933,14 @@ print.ctSampleDiagnostics <- function(x, ...) {
   inits, cores, optimcontrol, chains, iter, control, priors, priorscope,
   intoverpop, gradient, verbose, intoverstates = TRUE) {
 
+  # `chains` is NULL where ctFit()'s caller did not set it. The chain count and
+  # warmup are resolved below whether set or not and folded into the control
+  # the sampler reads, so which of NUTS's own settings the caller wrote is
+  # said here, and the sampler chooses by that (`.ctBackendNutsControls()`).
+  nutsgiven <- c(if (!is.null(chains)) "chains",
+    intersect(c("warmup", "stepsize"), .ctBackendNutsControls(control)))
+  chains <- as.integer(.ctJuliaOr(chains, 4L))[1L]
+
   # First, because everything after it takes minutes and this takes none.
   # Named as the caller wrote it: ctFit takes these as sampleControl.
   .ctBackendSampleCheckControl(control, listname = "sampleControl")
@@ -1931,8 +2029,16 @@ print.ctSampleDiagnostics <- function(x, ...) {
     spec0 <- .ctJuliaTIMissingSampled(spec0)
   }
   workers <- .ctBackendSampleWorkers(chains, cores)
-  overlap <- processes && workers > 1L && as.integer(cores) > workers &&
-    .ctBackendCanWarm()
+  # Only where the chains will be NUTS's or SAEM's in worker processes. On a
+  # marginal target with no sampler said, the check made after the placement
+  # chooses between NUTS and tempered SMC, which runs in this session
+  # (`.ctBackendSamplerName()`), so workers warmed now might serve nothing;
+  # if NUTS is chosen they start after the check instead.
+  maybesmc <- !identical(intoverpop, "none") && isTRUE(intoverstates) &&
+    !identical(control$sampler, "nuts") &&
+    !(is.null(control$sampler) && .ctBackendNutsAsked(control, nutsgiven))
+  overlap <- processes && !maybesmc && workers > 1L &&
+    as.integer(cores) > workers && .ctBackendCanWarm()
   placementcores <- if (overlap) as.integer(cores) - workers else cores
   handles <- if (overlap) {
     .ctBackendWarmWorkers(spec0, workers = workers, values = start0,
@@ -2010,5 +2116,5 @@ print.ctSampleDiagnostics <- function(x, ...) {
       intoverpop = intoverpop))
   .ctBackendUncertaintySample(placementfit, control = samplecontrol,
     cores = cores, verbose = verbose, state_explicit = !isTRUE(intoverstates),
-    handles = handles, checkcores = placementcores)
+    handles = handles, checkcores = placementcores, nutsgiven = nutsgiven)
 }

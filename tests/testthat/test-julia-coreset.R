@@ -67,6 +67,15 @@ test_that("the engine's coreset evaluation is the weighted sum of the units it n
   scores3 <- as.matrix(ctsem:::.ctJuliaGet(module$ctsem_subject_gradients(obj,
     ctsem:::.ctJuliaVector(X[3, ]), prior = FALSE))$scores)
   expect_equal(sc[, , 2], scores3, tolerance = 1e-8)
+  # Given a count, the scores are those of the columns of highest total.
+  every <- ctsem:::.ctBackendJuliaValue(module$ctsem_coreset_terms_gradient(obj, t(X),
+    ctsem:::.ctJuliaVector(1:3)))
+  scevery <- array(as.numeric(every$scores), c(N, length(est), 3))
+  top <- ctsem:::.ctBackendJuliaValue(module$ctsem_coreset_terms_gradient(obj, t(X), 2L))
+  best <- sort(order(-as.numeric(terms$total))[1:2])
+  expect_equal(as.integer(unlist(top$scored)), best)
+  sctop <- array(as.numeric(top$scores), c(N, length(est), 2))
+  expect_equal(sctop, scevery[, , best], tolerance = 1e-10)
 })
 
 test_that("the sampler's density with a coreset behind it follows the full density", {

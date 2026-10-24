@@ -143,8 +143,12 @@ test_that("sampled effects are each parameter's natural deviation, at reduced ra
   model <- laplace_fixture_model()
   model$pars$indvarying[model$pars$matrix == "T0MEANS" & is.na(model$pars$value)] <- TRUE
   warned <- character()
+  # The joint route by name: 'auto' samples this model's exact marginal (its
+  # effects shift means, with a Gaussian indicator), which has no effects to
+  # save.
   run <- function(m, ...) withCallingHandlers(suppressMessages(ctFit(data, m,
-    backend = "julia", cores = 1, priors = TRUE, optimize = FALSE, ...,
+    backend = "julia", cores = 1, priors = TRUE, optimize = FALSE,
+    intoverpop = "none", ...,
     sampleControl = list(chains = 1L, warmup = 20L, draws = 20L, minESS = 0,
       saveEffects = TRUE, processes = FALSE))),
     warning = function(w) {
@@ -152,9 +156,9 @@ test_that("sampled effects are each parameter's natural deviation, at reduced ra
       invokeRestart("muffleWarning")
     })
 
-  # Rank one, a loading matrix over both effects -- on the route sampling
-  # resolves to ('none'), which builds it as laplace does: one coordinate per
-  # subject, two parameters, so two deviations each.
+  # Rank one, a loading matrix over both effects -- on the joint route
+  # ('none'), which builds it as laplace does: one coordinate per subject, two
+  # parameters, so two deviations each.
   reduced <- run(model, poprank = 1)
   expect_length(reduced$sample$effect_mean, 12L * 2L)
   expect_false(is.null(names(reduced$sample$effect_mean)))
@@ -289,6 +293,37 @@ test_that("the SAEM kernel is refused by name where it cannot apply", {
     control = list(sampler = "hmc")), "'nuts', 'saem' or 'smc'", fixed = TRUE)
 })
 
+test_that("a marginal target's default sampler is chosen by the fit's check", {
+  # Tempered SMC where the check named a direction in which the posterior
+  # departs from the Hessian's normal, NUTS where it named none or where the
+  # call set a control only NUTS reads; the joint target keeps SAEM's kernel.
+  # The tests below of NUTS's own mechanics on a marginal target -- its
+  # worker processes, step size, draw budget, R-hat -- name it for that
+  # reason: their fixtures' checks name directions.
+  name <- ctsem:::.ctBackendSamplerName
+  expect_identical(name(NULL), "saem")
+  expect_identical(name(NULL, joint = TRUE, named = 3L), "saem")
+  expect_identical(name(NULL, joint = FALSE), "nuts")
+  expect_identical(name(NULL, joint = FALSE, named = 3L), "smc")
+  expect_identical(name(NULL, joint = FALSE, named = 3L, nutsonly = TRUE), "nuts")
+  expect_identical(name("nuts", joint = FALSE, named = 3L), "nuts")
+  expect_identical(name("smc", joint = FALSE), "smc")
+  # What counts as asking for NUTS: its chain count, warmup or starting step,
+  # or a setting of its warmup metric; not the draws, which SMC reads too.
+  nutsctl <- ctsem:::.ctBackendNutsControls
+  asked <- ctsem:::.ctBackendNutsAsked
+  expect_identical(nutsctl(list()), character(0))
+  expect_identical(nutsctl(list(draws = 10, chains = 2, seed = 1)), "chains")
+  expect_identical(nutsctl(list(stepsize = 0.1, warmup = 50, chains = NULL)),
+    c("warmup", "stepsize"))
+  expect_false(asked(list(draws = 400, minESS = 100, particles = 40)))
+  expect_true(asked(list(chains = 2)))
+  expect_true(asked(list(adapt_metric = TRUE)))
+  # ctFit(optimize = FALSE) folds its own resolved chains into every control,
+  # and says which the caller set instead.
+  expect_false(asked(list(chains = 4, warmup = 200), nutsgiven = character(0)))
+})
+
 test_that("tempered SMC samples the marginal posterior through the same assembly", {
   skip_without_julia()
   fit <- .sample_fixture()
@@ -314,7 +349,11 @@ test_that("tempered SMC samples the marginal posterior through the same assembly
   expect_length(d$stepsize, 40L)
   expect_true(all(d$stepsize == d$stepsize[1]))
   expect_true(is.infinite(d$rhat_target))
+  # No R-hat: its chains start from particles already drawn from the
+  # posterior, so their agreement says nothing about mixing.
   expect_length(d$rhat, npar)
+  expect_true(all(is.na(d$rhat)))
+  expect_true(all(is.na(summary(smc)$popmeans$Rhat)))
   expect_output(print(d), "tempered SMC")
   # The other sampler on the same target, for the means.
   nuts <- suppressWarnings(suppressMessages(
@@ -330,6 +369,10 @@ test_that("tempered SMC samples the marginal posterior through the same assembly
   expect_error(ctFitUncertainty(fit, uncertainty = "sample",
     control = list(sampler = "smc", intoverpop = "laplace", settleTol = 0.1)),
     "sampler = 'nuts'", fixed = TRUE)
+  # As are NUTS's own counts beside it, which SMC would otherwise ignore.
+  expect_error(ctFitUncertainty(fit, uncertainty = "sample",
+    control = list(sampler = "smc", intoverpop = "laplace", chains = 2)),
+    "control$chains is a setting of NUTS", fixed = TRUE)
 })
 
 test_that("a sampled fit keeps the exact Hessian it was built from", {
@@ -400,6 +443,31 @@ test_that("the marginal sampler starts from the normal check, made where the fit
   for (route in c("laplace", "none")) expect_error(ctFitUncertainty(bare, "sample",
     cores = 1, control = list(intoverpop = route)), "no sampling here")
   expect_length(asked, 1L)
+})
+
+test_that("NUTS on a marginal target records the coreset its chains moved on", {
+  skip_without_julia()
+  fit <- .sample_fixture()
+  # Twelve units: each chain fits a coreset from its warm-up where one passes,
+  # and its draws' ends are tested against the full density
+  # (sample_surrogate.jl, checked against closed forms in the engine suite).
+  # Here, that the record says per chain what happened, and that the oracle
+  # records nothing.
+  run <- function(coreset) suppressWarnings(suppressMessages(
+    ctFitUncertainty(fit, uncertainty = "sample", cores = 1,
+      control = list(sampler = "nuts", chains = 2, warmup = 60, draws = 60,
+        processes = FALSE, minESS = 0, coreset = coreset))))
+  core <- run(TRUE)
+  s <- core$sample
+  expect_length(s$chain_coreset_size, 2L)
+  expect_identical(s$coreset, any(s$chain_coreset_size > 0))
+  expect_true(all(s$chain_coreset_accepted <= s$chain_coreset_proposed))
+  expect_true(all(s$chain_coreset_size == 0 | s$chain_coreset_size <= s$nunits))
+  expect_output(print(s), "ctsem Hamiltonian sample")
+  expect_true(all(is.finite(core$estimate$rawposterior)))
+  full <- run(FALSE)
+  expect_false(full$sample$coreset)
+  expect_true(all(full$sample$chain_coreset_size == 0))
 })
 
 test_that("processes = TRUE reproduces the in-process draws to numerical noise", {
@@ -481,6 +549,13 @@ test_that("intoverpop alone says what is sampled", {
   expect_identical(route("laplace", requested = TRUE), "laplace")
   expect_identical(route("laplace", requested = "auto"), "none")
   expect_identical(route("laplace", requested = NULL), "none")
+  # Unless the Laplace term is exact (every unit's integrand Gaussian in its
+  # effects): then its marginal is the exact posterior's, and that is sampled.
+  expect_identical(route("laplace", requested = "auto", exact = TRUE), "laplace")
+  expect_identical(route("laplace", requested = NULL, exact = TRUE), "laplace")
+  expect_identical(route("none", requested = "auto", exact = TRUE), "none")
+  expect_identical(route("laplace", requested = "auto", override = "none",
+    exact = TRUE), "none")
   expect_identical(route("augmented", requested = "auto"), "augmented")
   expect_identical(route("none", requested = FALSE), "none")
   # A backend caller passing only the route has named it.
@@ -505,6 +580,29 @@ test_that("intoverpop alone says what is sampled", {
   expect_null(ctsem:::.ctBackendSampleCheckControl(list(intoverpop = "none")))
 })
 
+test_that("ctFit(optimize = FALSE) samples the exact marginal where the Laplace term is exact", {
+  skip_without_julia()
+  data <- laplace_fixture_data()
+  prep <- function(model, ...) suppressWarnings(suppressMessages(ctFit(data, model,
+    backend = "julia", cores = 1, optimize = FALSE, fit = FALSE, ...)))
+  route <- function(x) ctsem:::.ctBackendIntOverPop(ctsem:::.ctBackendSpec(x))
+  # A random manifest mean with a Gaussian indicator: the Laplace term is the
+  # exact integral, so 'auto' samples that marginal, and the fit says why.
+  exact <- prep(laplace_fixture_model())
+  expect_identical(route(exact), "laplace")
+  expect_identical(exact$args$resolved$intoverpop, "laplace")
+  expect_match(exact$args$resolved$intoverpopreason, "exact marginal", fixed = TRUE)
+  # Named, the joint is the joint.
+  expect_identical(route(prep(laplace_fixture_model(), intoverpop = "none")), "none")
+  # A random drift is integrated by an approximation, so 'auto' samples the
+  # joint posterior.
+  drift <- laplace_fixture_model()
+  drift$pars$indvarying <- drift$pars$matrix == "DRIFT"
+  approx <- prep(drift)
+  expect_identical(route(approx), "none")
+  expect_identical(approx$args$resolved$intoverpop, "none")
+})
+
 test_that("ctFit(optimize = FALSE, intoverpop = 'laplace') samples the Laplace marginal in worker processes", {
   skip_without_julia()
   # Each worker builds the Laplace objective for its own chain; that the
@@ -514,7 +612,7 @@ test_that("ctFit(optimize = FALSE, intoverpop = 'laplace') samples the Laplace m
   fit <- suppressWarnings(suppressMessages(ctFit(laplace_fixture_data(),
     laplace_fixture_model(), backend = "julia", cores = 2,
     intoverpop = "laplace", priors = TRUE, optimize = FALSE,
-    sampleControl = list(chains = 2, warmup = 30, draws = 30, minESS = 0))))
+    sampleControl = list(sampler = "nuts", chains = 2, warmup = 30, draws = 30, minESS = 0))))
   expect_identical(fit$sample$target, "marginal")
   expect_identical(fit$sample$sampler, "nuts")
   expect_identical(fit$args$resolved$intoverpop, "laplace")
@@ -794,7 +892,7 @@ test_that("a sampled fit reports n_eff and Rhat where a ctStanFit does, and an o
   npar <- length(fit$estimate$raw)
   sampled <- suppressWarnings(suppressMessages(
     ctFitUncertainty(fit, uncertainty = "sample", cores = 1,
-      control = list(chains = 2, warmup = 120, draws = 120))))
+      control = list(sampler = "nuts", chains = 2, warmup = 120, draws = 120))))
   total <- 2L * 120L
 
   summarised <- suppressWarnings(summary(sampled))
@@ -849,7 +947,7 @@ test_that("a run too short to mix says so rather than returning quietly", {
   # crossed by a particular margin.
   broken <- suppressWarnings(suppressMessages(
     ctFitUncertainty(fit, uncertainty = "sample", cores = 1,
-      control = list(chains = 2, warmup = 12, draws = 12))))
+      control = list(sampler = "nuts", chains = 2, warmup = 12, draws = 12))))
   expect_false(isTRUE(broken$sample$converged))
   expect_gt(length(broken$sample$diagnosis), 0L)
   note <- suppressWarnings(summary(broken))$sampleNote
@@ -938,7 +1036,7 @@ test_that("an effective-size target turns the draw count into a budget", {
   # not whether a small fixture mixes.
   met <- suppressWarnings(suppressMessages(ctFitUncertainty(fit,
     uncertainty = "sample", cores = 1,
-    control = list(chains = 2, warmup = 100, draws = 200, processes = FALSE,
+    control = list(sampler = "nuts", chains = 2, warmup = 100, draws = 200, processes = FALSE,
       minESS = 0.5, rhatTarget = 100))))
   expect_lt(met$sample$draws, 200L)
   expect_gt(met$sample$draws, 0L)
@@ -948,7 +1046,7 @@ test_that("an effective-size target turns the draw count into a budget", {
   # default fit stops early, which is the point of it.
   full <- suppressWarnings(suppressMessages(ctFitUncertainty(fit,
     uncertainty = "sample", cores = 1,
-    control = list(chains = 2, warmup = 100, draws = 200, processes = FALSE,
+    control = list(sampler = "nuts", chains = 2, warmup = 100, draws = 200, processes = FALSE,
       minESS = 0))))
   expect_equal(full$sample$draws, 200L)
 
@@ -959,7 +1057,7 @@ test_that("an effective-size target turns the draw count into a budget", {
   # Warned about as well; the recorded diagnosis is what is asserted.
   default <- suppressWarnings(suppressMessages(ctFitUncertainty(fit,
     uncertainty = "sample", cores = 1,
-    control = list(chains = 2, warmup = 100, draws = 200, processes = FALSE))))
+    control = list(sampler = "nuts", chains = 2, warmup = 100, draws = 200, processes = FALSE))))
   expect_gt(default$sample$draws, 200L)
   expect_lte(default$sample$draws, 800L)
   expect_identical(default$sample$ess_target, 200)
@@ -984,7 +1082,7 @@ test_that("a fixed stepsize is what every chain starts from", {
   # differently for no reason.
   fixed <- suppressWarnings(suppressMessages(ctFitUncertainty(fit,
     uncertainty = "sample", cores = 1,
-    control = list(chains = 3, warmup = 0, draws = 20, processes = FALSE,
+    control = list(sampler = "nuts", chains = 3, warmup = 0, draws = 20, processes = FALSE,
       stepsize = 0.05))))
   expect_equal(fixed$sample$stepsize, rep(0.05, 3L))
 
@@ -992,13 +1090,13 @@ test_that("a fixed stepsize is what every chain starts from", {
   # asserted is only that the setting is not silently ignored.
   free <- suppressWarnings(suppressMessages(ctFitUncertainty(fit,
     uncertainty = "sample", cores = 1,
-    control = list(chains = 3, warmup = 0, draws = 20, processes = FALSE))))
+    control = list(sampler = "nuts", chains = 3, warmup = 0, draws = 20, processes = FALSE))))
   expect_false(isTRUE(all.equal(free$sample$stepsize, rep(0.05, 3L))))
 
   # And with warmup it is a starting point rather than the answer.
   moved <- suppressWarnings(suppressMessages(ctFitUncertainty(fit,
     uncertainty = "sample", cores = 1,
-    control = list(chains = 2, warmup = 60, draws = 20, processes = FALSE,
+    control = list(sampler = "nuts", chains = 2, warmup = 60, draws = 20, processes = FALSE,
       stepsize = 0.05))))
   expect_false(isTRUE(all.equal(moved$sample$stepsize, rep(0.05, 2L))))
 })

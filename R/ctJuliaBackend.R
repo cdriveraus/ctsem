@@ -5973,7 +5973,7 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
   priors = FALSE, priorscope = NULL,
   intoverpop = "augmented", optimize = TRUE, chains = 4L,
   iter = 2000L, control = list(), intoverstates = TRUE, forcerecompile = FALSE,
-  weights = NULL) {
+  weights = NULL, exactmarginal = FALSE) {
   .ctJuliaInterruptSafe(.ctFitJuliaBackendImpl(datalong = datalong,
     model = model, prepared_data = prepared_data, inits = inits, cores = cores,
     optimcontrol = optimcontrol,
@@ -5981,7 +5981,7 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
     intoverpop = intoverpop,
     optimize = optimize, chains = chains, iter = iter, control = control,
     intoverstates = intoverstates, forcerecompile = forcerecompile,
-    weights = weights))
+    weights = weights, exactmarginal = exactmarginal))
 }
 
 #' @keywords internal
@@ -5991,7 +5991,7 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
   priors = FALSE, priorscope = NULL,
   intoverpop = "augmented", optimize = TRUE, chains = 4L,
   iter = 2000L, control = list(), intoverstates = TRUE, forcerecompile = FALSE,
-  weights = NULL) {
+  weights = NULL, exactmarginal = FALSE) {
   # The engine environment and a session restart are ctJuliaSetup()'s own
   # `project` and `force = TRUE`; the per-fit copies of both were a second
   # spelling of an exported function, so a fit uses whatever session is set up.
@@ -6066,6 +6066,18 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
         .ctJuliaOr(optimcontrol$laplace_floor, .ctJuliaLaplaceFloorDefault)
         else optimcontrol$laplace_floor))
   model_spec$tipredMissing <- tipredMissing
+  # 'auto' samples the random effects under optimize = FALSE ('none'), but
+  # where the Laplace term is exact -- every unit's integrand Gaussian in its
+  # effects (`laplace$quadratic`) -- the marginal it integrates is the exact
+  # posterior's, so that is sampled, as `ctFitUncertainty()` samples such a fit
+  # (`.ctBackendSampleRoute()`): `npar` dimensions in place of every subject's
+  # effects. 'none' prepares exactly as 'laplace', so only the route changes,
+  # and ctFit() records it from here.
+  if (isTRUE(exactmarginal) && identical(as.character(intoverpop)[1L], "none") &&
+      isTRUE(model_spec$laplace$quadratic)) {
+    intoverpop <- "laplace"
+    model_spec$intoverpop <- "laplace"
+  }
   # Sampling weights, one per subject in the specification's order and
   # normalised (R/ctWeights.R); every objective built from the spec takes them.
   model_spec$subject_weights <- .ctResolveSubjectWeights(model_spec, weights, datalong)

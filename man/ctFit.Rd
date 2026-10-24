@@ -82,7 +82,10 @@ handled: integrated out of the likelihood, or sampled with everything else.
 
 \code{'auto'}, the default, integrates them out when optimizing, as
 \code{TRUE} does, and samples them (\code{'none'}) when
-\code{optimize=FALSE}.
+\code{optimize=FALSE} -- except on julia where every subject's likelihood is
+Gaussian in its effects (Gaussian indicators, effects only on means through
+the affine transform), where they are integrated exactly and the population
+parameters sampled (\code{'laplace'}).
 
 \code{TRUE} integrates them out: by \code{'laplace'} on
 \code{backend='julia'}, and by \code{'augmented'} on stan, which has only
@@ -101,8 +104,8 @@ variation on a DIFFUSION or MANIFESTVAR parameter is then only partly
 identified, which ctFit warns of. \code{FALSE}, or \code{'none'}, samples them, so it needs
 \code{optimize=FALSE}: maximising over every subject's effects would drive
 the population variance to zero. With \code{optimize=FALSE} on julia,
-\code{'none'} (and so \code{'auto'}) samples the joint posterior of
-parameters and random effects; \code{'laplace'} and \code{'augmented'}
+\code{'none'} (and so \code{'auto'}, but for the exception above) samples the
+joint posterior of parameters and random effects; \code{'laplace'} and \code{'augmented'}
 sample the population parameters with the effects integrated out, by the
 Laplace approximation or the filter, and \code{TRUE} by whichever of the two
 it resolves to.}

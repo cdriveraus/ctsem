@@ -733,7 +733,10 @@ T0VARredundancies <- function(ctm) {
 #'
 #' \code{'auto'}, the default, integrates them out when optimizing, as
 #' \code{TRUE} does, and samples them (\code{'none'}) when
-#' \code{optimize=FALSE}.
+#' \code{optimize=FALSE} -- except on julia where every subject's likelihood is
+#' Gaussian in its effects (Gaussian indicators, effects only on means through
+#' the affine transform), where they are integrated exactly and the population
+#' parameters sampled (\code{'laplace'}).
 #'
 #' \code{TRUE} integrates them out: by \code{'laplace'} on
 #' \code{backend='julia'}, and by \code{'augmented'} on stan, which has only
@@ -752,8 +755,8 @@ T0VARredundancies <- function(ctm) {
 #' identified, which ctFit warns of. \code{FALSE}, or \code{'none'}, samples them, so it needs
 #' \code{optimize=FALSE}: maximising over every subject's effects would drive
 #' the population variance to zero. With \code{optimize=FALSE} on julia,
-#' \code{'none'} (and so \code{'auto'}) samples the joint posterior of
-#' parameters and random effects; \code{'laplace'} and \code{'augmented'}
+#' \code{'none'} (and so \code{'auto'}, but for the exception above) samples the
+#' joint posterior of parameters and random effects; \code{'laplace'} and \code{'augmented'}
 #' sample the population parameters with the effects integrated out, by the
 #' Laplace approximation or the filter, and \code{TRUE} by whichever of the two
 #' it resolves to.
@@ -1517,7 +1520,7 @@ ctFit<-function(datalong, model, stanmodeltext=NA, iter=1000, intoverstates=TRUE
     "Maximum a posteriori estimation requested")
   # Naming stan here was wrong for half the fits it described: with
   # backend='julia' the engine runs its own sampler -- SAEM's kernel on the
-  # joint posterior by default, NUTS on a marginal one -- and a user reading
+  # joint posterior by default, NUTS or tempered SMC on a marginal one -- and a user reading
   # "Stan's NUTS sampler" on a julia fit has no reason to believe the julia
   # sampler ran at all. Which kernel is said when sampling starts.
   if(!optimize) message("Bayesian estimation via ",
@@ -2495,9 +2498,10 @@ ctFit<-function(datalong, model, stanmodeltext=NA, iter=1000, intoverstates=TRUE
   # .ctFitJuliaBackend(), `as.integer()` made it NA, and the NA guard there
   # turned it into 1 -- so asking for every core silently got one.
   #
-  # `chains` does not cap the julia backend -- it has no MCMC chains. Its
-  # parallelism is over subject chunks, run at whatever ceiling it is given, so
-  # the ceiling is simply the machine.
+  # `chains` does not cap the julia backend: its chains share `cores`
+  # (`.ctBackendWorkerThreads()`), and the rest of its parallelism is over
+  # subject chunks, run at whatever ceiling it is given, so the ceiling is
+  # simply the machine.
   if(is.character(cores) && cores=='maxneeded') {
     cores <- if(backend %in% 'julia') max(1, parallel::detectCores()-1) else
       max(1,min(c(chains,parallel::detectCores()-1)))
@@ -2547,8 +2551,8 @@ ctFit<-function(datalong, model, stanmodeltext=NA, iter=1000, intoverstates=TRUE
     #   optimize  route          what runs                 sampled dimension
     #   TRUE      'laplace'      Laplace ML                --
     #   TRUE      'augmented'    augmented ML              --
-    #   FALSE     'laplace'      NUTS, Laplace marginal    npar
-    #   FALSE     'augmented'    NUTS, filter marginal     npar
+    #   FALSE     'laplace'      NUTS/SMC, Laplace marginal npar
+    #   FALSE     'augmented'    NUTS/SMC, filter marginal  npar
     #   FALSE     'none'         sampled, joint            npar + effects
     #
     # The route is what `intoverpop` resolved to: TRUE takes 'laplace' or
@@ -2556,8 +2560,9 @@ ctFit<-function(datalong, model, stanmodeltext=NA, iter=1000, intoverstates=TRUE
     # 'none'. The joint row is drawn by SAEM's kernel and placed by SAEM's
     # state unless `sampleControl` says otherwise (`sampler`, `placement`).
     # Under optimize=FALSE the route is what is sampled, and nothing else
-    # says it (`.ctBackendSampleRoute()`): 'auto' never resolves to 'laplace'
-    # there, so a 'laplace' route is one the caller named.
+    # says it (`.ctBackendSampleRoute()`): 'auto' resolves to 'laplace' there
+    # only where the Laplace term is exact, which the prepared specification
+    # says (`exactmarginal`, `.ctFitJuliaBackend()`), and the fit records.
     #
     # Only 'laplace' is julia-only; the guard for that is above. `'none'` is
     # the third route the engine needs, and it prepares the Laplace structure
@@ -2570,8 +2575,15 @@ ctFit<-function(datalong, model, stanmodeltext=NA, iter=1000, intoverstates=TRUE
       cores=cores, optimcontrol=optimcontrol, forcerecompile=forcerecompile,
       verbose=verbose, fit=fit, priors=priors, priorscope=priorscope,
       optimize=optimize,
-      chains=if(chainsgiven) chains else 4L, iter=iter, control=control,
-      intoverpop=juliaintoverpop, intoverstates=intoverstates, weights=weights)
+      chains=if(chainsgiven) chains else NULL, iter=iter, control=control,
+      intoverpop=juliaintoverpop, intoverstates=intoverstates, weights=weights,
+      exactmarginal=!isTRUE(optimize) && identical(juliaintoverpop, 'none') &&
+        !is.na(intoverpopreason) && isTRUE(intoverstates))
+    if(!identical(juliaintoverpop, .ctBackendIntOverPop(.ctBackendSpec(juliafit)))){
+      argsresolved$intoverpop <- .ctBackendIntOverPop(.ctBackendSpec(juliafit))
+      argsresolved$intoverpopreason <- paste0("optimize=FALSE samples the ",
+        "exact marginal: every subject's likelihood is Gaussian in its effects")
+    }
     # Replaces whatever narrower `$args` the julia backend built internally
     # (it only ever had the resolved settings, and not all of them) with the
     # two-sublist form every fit now carries -- see the `argsresolved` comment

@@ -479,7 +479,7 @@ each choice's size and price among it)."""
 _dais_coreset_record(::Nothing) = (coreset=false, coreset_size=0, coreset_chosen=0,
     coreset_failed=0)
 _dais_coreset_record(cs::CTSEMISCoreset) = (coreset=true,
-    coreset_size=cs.phase == :coreset ? _is_active_n(cs) : 0, coreset_chosen=cs.nchoose,
+    coreset_size=cs.phase == :coreset ? _is_active_n(cs) : 0, coreset_chosen=_is_chosen(cs),
     coreset_failed=cs.fails_total, coreset_record=ctsem_is_coreset_record(cs))
 
 """The held directions `hold` (columns, in the parameters) in the whitened

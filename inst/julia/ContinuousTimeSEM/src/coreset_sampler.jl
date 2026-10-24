@@ -48,16 +48,28 @@ unit or two, and a draw 50 down carries exp(-50) of the best one's weight. So a
 draw counts fully within `band` of the best and e-fold less every `scale`
 below that (`_is_relevance`), in the fit as in the test, and `max` reads only
 draws of relevance at least `relevant`, about 55 below the best. `final` is the
-end check's.
+end check's. `force` is how far a coreset's gradient may be from the full
+sum's at held-out scored draws, in log density per sd each parameter moves
+across the draws (`_is_force_error`), for its size to be priced at all: a
+gradient off by e moves the values' error by about e for each sd the draws
+move, so at a log density unit per sd a coreset cannot follow them. Between
+that and a check's tolerance the value checks decide: held at 0.3, twice a
+check's drift, the gate priced coresets of 84 units on the 250-unit strong
+shell where 47-49 had served, at 0.82 full evaluations a gradient against
+0.58-0.62. The sizes that failed there had gradients off by 0.55-11, those
+that served 0.14-0.29 (review/SCORES-coreset-training-2026-10-24.md).
 """
 const _IS_CORESET_TOL = (rms=0.1, max=0.5, drift=1.5, final=0.5, band=10.0,
-    scale=20.0, relevant=0.1)
+    scale=20.0, relevant=0.1, force=1.0)
 
-"""Scores: from at most `per` draws of a full gradient batch, spread through
-it, and from the newest `kept` such draws in all. A draw's scores are a row per
-parameter over every unit, so they are what the training matrix grows by; 30
-draws were enough on the strong shell at 250 and 1,000 units
-(review/SCORES-coreset-training-2026-10-24.md)."""
+"""Scores: from the `per` draws of each full gradient batch of highest total,
+where the weight sits, and from the newest `kept` such draws in all. A draw's
+scores are a row per parameter over every unit, so they are what the training
+matrix grows by; 30 draws were enough on the strong shell at 250 and 1,000
+units (review/SCORES-coreset-training-2026-10-24.md). Drawn spread through the
+batch instead, they were rows the fit weighs by relevance: DAIS's batches on
+the strong shell at 1,000 units put their weight on one or two draws, and
+spread scores came to almost nothing there."""
 const _IS_SCORE_DRAWS = (per=4, kept=64)
 
 """Each draw's weight in a fit or a test: 1 within `band` of `top`, e-fold less
@@ -290,6 +302,10 @@ function ctsem_is_coreset(laplace::CTSEMLaplaceObjective; top::Symbol=:run)
         Dict{Vector{Float64},Int}(), Float64[], Float64[], zeros(N, 0), 0)
 end
 
+"""The coresets chosen, of the choices tried (`cs.nchoose`, a row each of the
+trace; code 1 is a choice made)."""
+_is_chosen(cs::CTSEMISCoreset) = count(t -> t[3] == 1.0, cs.trace)
+
 _is_smooth(old, new) = isnan(old) ? Float64(new) : 0.7 * old + 0.3 * new
 _is_round(cs::CTSEMISCoreset) = _ISRound(cs.values,
     isnan(cs.grads) ? 0.3 * cs.values : cs.grads, 8)
@@ -369,8 +385,6 @@ function _is_full!(cs::CTSEMISCoreset, X::AbstractMatrix, why::Symbol)
     return t0
 end
 
-_is_part(t0, i) = (value=t0.value[i], total=t0.total[i], L=t0.L[:, i])
-
 """The coreset's value at the columns of `X`, solving its units only."""
 function _is_coreset_value!(cs::CTSEMISCoreset, X::AbstractMatrix)
     units = cs.S[cs.w .> 0]
@@ -395,8 +409,11 @@ function _is_score_rows(tr::_ISRows, top::Real)
     spread = ones(p)
     if length(tr.zdraws) > 1
         for i in 1:p
+            # One the draws do not move weighs nothing: its gradient is not
+            # what a check reads (the importance sampler holds all but the
+            # check's named directions at its centre).
             s = std([d[i] for d in tr.zdraws])
-            spread[i] = isfinite(s) && s > 0 ? s : 1.0
+            spread[i] = isfinite(s) ? s : 1.0
         end
     end
     f = spread[tr.zpar] .* sqrt.(_is_relevance(tr.ztotal, top))
@@ -447,6 +464,41 @@ function _is_weights(tr::_ISRows, S::Vector{Int})
     return w, my - sum(mx[S] .* w)
 end
 
+"""The scored draws held out of a fit: every fourth, in the order scored."""
+function _is_held_draws(zdraw::AbstractVector{Int})
+    ids = unique(zdraw)
+    return Set(ids[[i % 4 == 0 for i in eachindex(ids)]])
+end
+
+"""
+How far a coreset (`units`, weights `w`) is from the full sum in gradient at
+the held-out scored draws `zheld`: per draw the norm of the gradient's error,
+each parameter's in log density per sd it moves across the draws (the score
+rows `score`, which also carry the root of the draw's relevance below `top`),
+as a root mean square over the draws by their relevance. 0 where none is held
+out, which lets the values decide.
+"""
+function _is_force_error(score, tr::_ISRows, zheld, units::AbstractVector{Int},
+        w::AbstractVector, top::Real)
+    (score === nothing || isempty(zheld)) && return 0.0
+    err2 = Dict{Int,Float64}()
+    for r in eachindex(tr.zdraw)
+        tr.zdraw[r] in zheld || continue
+        e = -score.z[r]
+        for k in eachindex(units)
+            e += w[k] * score.Z[r, units[k]]
+        end
+        err2[tr.zdraw[r]] = get(err2, tr.zdraw[r], 0.0) + e^2
+    end
+    rel = Dict(tr.zdraw[r] => _is_relevance([tr.ztotal[r]], top)[1]
+        for r in eachindex(tr.zdraw) if tr.zdraw[r] in zheld)
+    total = sum(values(rel); init=0.0)
+    total > 0 || return 0.0
+    # Each draw's rows carry the root of its relevance, so its squared error
+    # already counts by it.
+    return sqrt(sum(values(err2); init=0.0) / total)
+end
+
 """
     _is_coreset_choose(cs, rd, start)
 
@@ -487,13 +539,19 @@ function _is_coreset_choose(tr::_ISRows, rd::_ISRound, start::Vector{Int})
     plain = setdiff(rows, newest)
     held = plain[[i % 4 == 0 for i in 1:length(plain)]]
     fitrows = setdiff(plain, held)
-    rel = _is_relevance(tr.y, _is_top(tr))
+    top = _is_top(tr)
+    rel = _is_relevance(tr.y, top)
     none(why; kw...) = (chosen=false, why=why, kw...)
     length(fitrows) < 10 && return none(:held; relheld=_is_effective(rel[held]))
     N = tr.N
     fullround = _is_full_round(rd)
-    score = _is_score_rows(tr, _is_top(tr))
-    A, b, mx, my = _is_rows(tr, fitrows, rel[fitrows], score)
+    score = _is_score_rows(tr, top)
+    # Every fourth scored draw is held out of the fit, as every fourth value
+    # row is, for the size's force check (`_is_force_error`).
+    zheld = score === nothing ? Set{Int}() : _is_held_draws(tr.zdraw)
+    zin = [!(d in zheld) for d in tr.zdraw]
+    scorefit = score === nothing ? nothing : (Z=score.Z[zin, :], z=score.z[zin])
+    A, b, mx, my = _is_rows(tr, fitrows, rel[fitrows], scorefit)
     mheld = _is_effective(rel[held])
     mnewest = _is_effective(rel[newest])
     failrate(S, w, c, idx, m) = begin
@@ -519,6 +577,17 @@ function _is_coreset_choose(tr::_ISRows, rd::_ISRound, start::Vector{Int})
         # coreset was chosen, and the engine was then handed an empty unit
         # list.
         any(>(0), w) || return (0.0, bound, nothing)
+        # Whether a coreset can follow the draws is the data's to say, not the
+        # parameters': where the units depend on the parameters alike, a few
+        # carry a sum over many parameters, and where each moves in its own
+        # directions no fewer than those can (Campbell 2024 proves the bound
+        # M > d under exactly that, the units' gradients independent). So the
+        # size's gradient is held to the full sum's at held-out draws. Without
+        # it the choice priced every size alike on thin evidence and took the
+        # smallest, which failed: 1-16 units on DAIS's 33-parameter shell at
+        # 1,000 units, and one unit a choice on a 266-parameter fit with 200.
+        _is_force_error(score, tr, zheld, units, w, top) > _IS_CORESET_TOL.force &&
+            return (0.0, bound, nothing)
         # Not `c`: the function's own `c` below would be this one, boxed.
         level = my - sum(mx[units] .* w)
         fail = maximum(filter(!isnan, [failrate(units, w, level, held, mheld),
@@ -770,8 +839,8 @@ function ctsem_is_coreset_fullgrad!(cs::CTSEMISCoreset, X::AbstractMatrix)
     t = time()
     n = size(X, 2)
     cs.cost += 2 * n
-    pick = unique(round.(Int, range(1, n; length=min(n, _IS_SCORE_DRAWS.per))))
-    res = ctsem_coreset_terms_gradient(cs.laplace, X, pick)
+    res = ctsem_coreset_terms_gradient(cs.laplace, X, _IS_SCORE_DRAWS.per)
+    pick = res.scored
     cs.lastgrad = Dict(_is_key(view(X, :, j)) => j for j in 1:n)
     cs.lastgrad_value = res.value
     cs.lastgrad_total = res.total
@@ -938,7 +1007,7 @@ function ctsem_is_coreset_record(cs::CTSEMISCoreset)
         size=cs.has_cf ? _is_active_n(cs) : 0, sizes=cs.sizes, phase=String(cs.phase),
         switches=cs.switches, rounds_on_coreset=cs.runs_total, failed_checks=cs.fails_total,
         expected_round_cost=cs.has_cf ? cs.cf_cost : NaN, free_checks=cs.free_total,
-        chosen=cs.nchoose, chosen_passed=cs.proved,
+        chosen=_is_chosen(cs), attempts=cs.nchoose, chosen_passed=cs.proved,
         seconds=order(cs.secs, (:full, :coreset, :gradient_full, :gradient_coreset, :choose)),
         draws=order(cs.draws, (:full, :coreset, :gradient_full, :gradient_coreset)),
         full_for=order(cs.why, (:training, :small, :check, :gradient_check, :failed_rest, :end)),

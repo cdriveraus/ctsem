@@ -376,3 +376,73 @@ end
         @test all(0.65 .< s3 ./ s1 .< 1.5)
     end
 end
+
+# ---- NUTS on a coreset (sample_surrogate.jl) ---------------------------------
+
+# Two dimensions, forty rank-one units: a few stand for the sum over the
+# posterior, imperfectly, so the endpoint test has work to do.
+function _surrogate_units(seed)
+    d, N = 2, 40
+    rng = Random.Xoshiro(seed)
+    a = 1.5 .* randn(rng, d, N)
+    B = [begin
+        v = randn(rng, d)
+        (2.0 * (0.5 + rand(rng))) .* (v * transpose(v)) ./ dot(v, v)
+    end for _ in 1:N]
+    o = _SMCUnits(a, B, Matrix(0.05I, d, d))
+    P = o.P0 .+ sum(B)
+    S = inv(Symmetric(P))
+    return (o=o, P=P, m=S * sum(B[U] * a[:, U] for U in 1:N), sd=sqrt.(diag(S)))
+end
+
+@testset "a draw on a coreset is tested against the full density at both ends" begin
+    t = _surrogate_units(5)
+    d = ContinuousTimeSEM._SurrogateDensity(t.o, :adjoint, 2, 1)
+    d.coreset = ContinuousTimeSEM.CTSEMCoreset([1, 2, 3], [10.0, 10.0, 10.0])
+    full(x) = ContinuousTimeSEM.ctsem_evaluate(t.o, x).value
+    core(x) = _smcu_density(t.o, d.coreset.units, d.coreset.weights, x).value
+    x0 = t.m .+ [0.5, -0.5] .* t.sd
+    y = t.m .+ [-0.5, 1.0] .* t.sd
+    d.lp = full(x0); d.lc = core(x0)
+    g = zeros(2)
+    ContinuousTimeSEM._surrogate_begin!(d, x0, g)
+    # pi(y) c(x0) / (pi(x0) c(y)): accepted where a uniform falls under it.
+    logratio = (full(y) - core(y)) - (full(x0) - core(x0))
+    rng = Random.Xoshiro(11)
+    accept = log(rand(copy(rng))) < logratio
+    x = copy(y); g .= 1.0
+    lp = ContinuousTimeSEM._surrogate_correct!(d, x, g, core(y), rng)
+    @test d.proposed == 1
+    @test d.accepted == (accept ? 1 : 0)
+    @test x == (accept ? y : x0)
+    @test lp == (accept ? core(y) : core(x0))
+    accept && @test d.lp == full(y)
+    # A transition that did not move owes nothing and asks nothing.
+    ContinuousTimeSEM._surrogate_begin!(d, x, g)
+    @test ContinuousTimeSEM._surrogate_correct!(d, x, g, lp, rng) == lp
+    @test d.proposed == 1
+    # A plain density has nothing to test.
+    @test ContinuousTimeSEM._surrogate_correct!((g, x) -> 0.0, x, g, -3.0, rng) == -3.0
+end
+
+@testset "NUTS on a coreset samples the full posterior" begin
+    t = _surrogate_units(5)
+    common = (hessian=-t.P, nchains=2, nwarmup=300, ndraws=3000, maxdepth=6,
+        seed=4, min_ess=0.0)
+    core = ContinuousTimeSEM.ctsem_sample_marginal(t.o, t.m; coreset=true, common...)
+    full = ContinuousTimeSEM.ctsem_sample_marginal(t.o, t.m; coreset=false, common...)
+    @test core.coreset
+    @test !full.coreset
+    @test core.nunits == 40
+    # Each chain fitted its own coreset from its warm-up, within the budget's
+    # share of the units, and the full density accepted most of its moves.
+    @test all(0 .< core.coreset_size .<= 20)
+    @test all(core.coreset_share .<= 0.5 + 1e-12)
+    rate = core.coreset_accepted ./ core.coreset_proposed
+    @test all(0.3 .< rate .<= 1)
+    @test !any(core.coreset_abandoned)
+    # The full posterior, exactly: within the Monte Carlo error of 6000 draws.
+    X = core.draws
+    @test maximum(abs.(vec(mean(X; dims=2)) .- t.m) ./ t.sd) < 0.1
+    @test all(0.9 .< vec(std(X; dims=2)) ./ t.sd .< 1.1)
+end

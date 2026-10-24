@@ -889,7 +889,7 @@ ctBackendParMatrices <- function(fit, raw = NULL, tipreds = NULL, state = NULL,
     .ctBackendDrawDiagnostics(values, chains)
   if (!is.null(diagnostics)) {
     out$n_eff <- diagnostics$n_eff
-    out$Rhat <- diagnostics$Rhat
+    out$Rhat <- if (isFALSE(attr(chains, "rhat"))) NA_real_ else diagnostics$Rhat
   }
   if (!is.null(mode) && length(mode) && ncol(as.matrix(mode)) == ncol(values)) {
     mode <- as.matrix(mode)
@@ -1803,7 +1803,13 @@ ctBackendParMatrices <- function(fit, raw = NULL, tipreds = NULL, state = NULL,
   lengths <- suppressWarnings(.ctSampleChainDraws(diagnostics))
   if (!length(lengths) || anyNA(lengths) || any(lengths < 1L)) return(NULL)
   if (!identical(nrow(samples), sum(lengths))) return(NULL)
-  if (length(unique(lengths)) > 1L) lengths else length(lengths)
+  out <- if (length(unique(lengths)) > 1L) lengths else length(lengths)
+  # Tempered SMC's chains start from particles already drawn from the
+  # posterior, so their agreement says nothing about mixing, and over their
+  # few draws R-hat reads autocorrelation: no R-hat for them, here as in
+  # `fit$sample` (sample_smc.jl). Their effective size stands.
+  if (identical(diagnostics$sampler, "smc")) attr(out, "rhat") <- FALSE
+  out
 }
 
 # The convergence verdict as one line, from the tables the reader is about to
