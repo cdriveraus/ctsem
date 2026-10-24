@@ -1635,7 +1635,6 @@ function ctsem_laplace_continuation(laplace::CTSEMLaplaceObjective,
     0 < draws_prior < 1 || throw(ArgumentError("draws_prior must be between 0 and 1"))
     draws_floor > 0 || throw(ArgumentError("draws_floor must be positive"))
     theta = _laplace_extend(laplace, collect(Float64, values))
-    _laplace_check_indices(laplace, length(theta))
     nunits = length(laplace.units.members)
     o = CTSEMLaplaceContinuation{typeof(laplace)}(laplace, laplace, collect(1:nunits),
         Int[], CTSEMFixedUnitRule[], theta, Int(nodes), Float64(tolerance),
