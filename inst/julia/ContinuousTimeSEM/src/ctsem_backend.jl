@@ -1456,13 +1456,6 @@ coordinates the curvature or the transforms call flat
 `n` above is then the pool's size. The end-of-run verdict passes it where a
 finish left a Hessian; the in-flight stall probe, which has none, searches
 every coordinate.
-
-Its callers hold `minimizer` and `among` abstractly, so everything here is
-typed at its first line: a `Dict` built from a generator over them dispatched
-`IteratorSize` on an abstract type, and the method Tables.jl adds to it --
-JuliaConnectoR loads Tables before the engine -- invalidated this function and
-every optimiser entry point above it in the package image, which a first fit
-then compiled again.
 """
 function _ctsem_pullback_sets(minimizer, flagged=Int[];
         dense::Integer=_CTSEM_PULLBACK_DENSE, among=nothing)
@@ -1564,8 +1557,31 @@ any improvement settles that. `progress`, when given, is called `(done, total)`
 before each set (`_ctsem_probe_progress`); each set passes an interrupt
 checkpoint, since the value calls themselves refuse every exception as an
 unusable point.
+
+It runs behind an inference barrier (`_ctsem_overshot_probe`), compiled for
+the types it is called with rather than for what inference makes of them at
+the end of an optimisation: there they widen to `Any`, a call dispatched on
+an abstract type has a backedge to every method of its function, and a
+package that adds one invalidates the caller. JuliaConnectoR's server loads
+Tables.jl before the engine, and its `Base.IteratorSize(::Type{DictRowTable})`
+invalidated this probe's compiled code and with it `ctsem_optimize` and
+`ctsem_laplace_optimize` above it, which each session's first fit then
+compiled again (`scripts/first-call-compile/invalidation_engine.jl` lists
+what a package invalidates; the Newton finish's saddle ladder was the same
+case, through the finish's own untyped state). The result's type is
+asserted, so nothing above sees an abstract value.
 """
 function _ctsem_overshot(objective, minimizer, saturated_parameters, value,
+        tolerance; kwargs...)
+    return Base.inferencebarrier(_ctsem_overshot_probe)(objective, minimizer,
+        saturated_parameters, value, tolerance; kwargs...)::_CTSEMOvershot
+end
+
+const _CTSEMOvershot = @NamedTuple{overshot::Bool, gain::Float64,
+    coordinates::Vector{Int}, point::Vector{Float64}}
+
+# `_ctsem_overshot`'s body, which its barrier dispatches to at run time.
+function _ctsem_overshot_probe(objective, minimizer, saturated_parameters, value,
         tolerance; fractions=_CTSEM_PULLBACK_FRACTIONS,
         mode=_CTSEM_OVERSHOOT_PROBE[], progress=nothing, among=nothing)
     gain = 0.0
@@ -1581,8 +1597,8 @@ function _ctsem_overshot(objective, minimizer, saturated_parameters, value,
     isempty(sets) && return empty_result
     value = _ctsem_probe_baseline(objective, minimizer, value)
     isfinite(value) || return empty_result
-    keep = collect(minimizer)
-    probe = collect(minimizer)
+    keep = collect(Float64, minimizer)
+    probe = copy(keep)
     # No ranking of the points that did not improve. Ordering them by how
     # little they lost is a proxy for nothing: the least bad candidate is the
     # one that disturbed the estimate least, which makes it the likeliest to
@@ -1600,13 +1616,13 @@ function _ctsem_overshot(objective, minimizer, saturated_parameters, value,
                 # The point as well as the verdict. It costs a copy and it is
                 # what a caller needs to *act* on an overshoot rather than only
                 # report it -- see `ctsem_pullback`.
-                return (overshot=true, gain=gain, coordinates=sort(set),
-                    point=copy(probe))
+                return (overshot=true, gain=Float64(gain),
+                    coordinates=sort(Vector{Int}(set)), point=copy(probe))
             end
         end
         for p in set; probe[p] = keep[p]; end
     end
-    return (overshot=false, gain=gain, coordinates=Int[], point=Float64[])
+    return (overshot=false, gain=Float64(gain), coordinates=Int[], point=Float64[])
 end
 
 """
