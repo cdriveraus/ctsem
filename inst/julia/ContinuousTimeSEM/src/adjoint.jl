@@ -728,7 +728,7 @@ end
 Three-way gradient comparison: ForwardDiff, central finite differences, and
 (when `adjoint` is true) the reverse-mode adjoint.
 
-This is the acceptance-gate oracle the adjoint roadmap requires. Finite
+This is the oracle the adjoint's acceptance tests compare against. Finite
 differences are the independent referee: ForwardDiff and the adjoint are both
 "clever" and could in principle share a misunderstanding of the primal, whereas
 a central difference only knows the primal's outputs.

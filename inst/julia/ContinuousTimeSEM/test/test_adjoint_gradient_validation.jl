@@ -2,18 +2,16 @@ using DataFrames
 using LinearAlgebra
 using Random
 
-# This file is the acceptance-gate harness docs/src/adjoint-roadmap.md commits
-# to: "compare it [the adjoint] with current ForwardDiff and central finite
-# differences for linear, state/PARS-expression, partial-missing, fully
-# missing, and unequal-length multi-subject models. Require ... gradient
-# relative error within 1e-4." It now runs the full three-way comparison:
+# The adjoint's acceptance gate: it is compared with ForwardDiff and central
+# finite differences for linear, state/PARS-expression, partially missing,
+# fully missing and unequal-length multi-subject models, the gradient to
+# 1e-4 relative. It runs the full three-way comparison:
 # every scenario checks ForwardDiff against central finite differences (which
 # catches primal/dual inconsistencies) *and* the reverse-mode adjoint against
 # ForwardDiff (which catches reverse-pass errors).
 #
 # The two comparisons get very different tolerances on purpose. Finite
-# differences are only good to ~1e-4 relative, so they stay at the roadmap's
-# stated gate. The adjoint, by contrast, computes the same quantity as
+# differences are only good to ~1e-4 relative, so they stay at that gate. The adjoint, by contrast, computes the same quantity as
 # ForwardDiff by a different route through the same arithmetic, so it should
 # agree to near machine precision -- and it does. Holding it to 1e-4 would
 # let a real reverse-pass error (a dropped term that happens to be small at
@@ -344,8 +342,8 @@ end
     # An invalid point (Cholesky failure inside the update) must poison the
     # value *and* the gradient, the same way the ForwardDiff path does, so
     # `ctsem_optimize`'s isfinite guards reject the trial rather than accepting
-    # a silently truncated gradient. This is the roadmap's "must never silently
-    # fall back" requirement, checked rather than assumed.
+    # a silently truncated gradient: the adjoint must never fall back silently,
+    # and this checks it rather than assuming it.
     sp = _ADJOINT_SP_LINEAR_1D
     data = reshape([0.1, -0.2, 0.15], 1, :)
     objective = ContinuousTimeSEM.ctsem_objective(sp, [1], [0.0, 0.5, 1.2], data)
