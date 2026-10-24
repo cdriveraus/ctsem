@@ -359,6 +359,41 @@ function _kalman_store_response_rows!(trace::CTSEMKalmanTrace, kind::Int, row::I
 end
 
 """
+The manifest means `LAMBDA state + MANIFESTMEANS` into `yv` and their
+covariance `Θ + Jy P Jy'` into `Yv`, `P` the state covariance, a row of `Jy P`
+at a time: O(m n^2 + m^2 n), where forming `P Jy[j, :]` again for every pair
+was O(m^2 n^2). The Kalman trace (`_kalman_store!`) and the sequential
+mixture (laplace_mixture.jl) both read rows this way.
+"""
+function _ctsem_manifest_moments!(yv, Yv, pars, Θ, state, statecov, n::Int, m::Int)
+    LAMBDA = pars.LAMBDA
+    MANIFESTMEANS = pars.MANIFESTMEANS
+    Jy = pars.Jy
+    @inbounds for i in 1:m
+        value = MANIFESTMEANS[i, 1]
+        for j in 1:n
+            value += LAMBDA[i, j] * state[j]
+        end
+        yv[i] = value
+    end
+    @inbounds for i in 1:m
+        for j in 1:m
+            Yv[i, j] = Θ[i, j]
+        end
+        for b in 1:n
+            t = zero(eltype(Θ))
+            for a in 1:n
+                t += Jy[i, a] * statecov[a, b]
+            end
+            for j in 1:m
+                Yv[i, j] += t * Jy[j, b]
+            end
+        end
+    end
+    return nothing
+end
+
+"""
     _kalman_store!(trace, kind, row, ws, pars, state, statecov)
 
 Write one (state, covariance) pair and the manifest quantities implied by it.
@@ -374,30 +409,8 @@ function _kalman_store!(trace::CTSEMKalmanTrace, kind::Int, row::Int, ws, pars,
             trace.etacov[kind, row, i, j] = statecov[i, j]
         end
     end
-    @inbounds for i in 1:m
-        value = pars.MANIFESTMEANS[i, 1]
-        for j in 1:n
-            value += pars.LAMBDA[i, j] * state[j]
-        end
-        trace.y[kind, row, i] = value
-    end
-    # Θ + Jy P Jy', a row of `Jy P` at a time: O(m n^2 + m^2 n), where forming
-    # `P Jy[j, :]` again for every pair was O(m^2 n^2).
-    Jy = pars.Jy
-    @inbounds for i in 1:m
-        for j in 1:m
-            trace.ycov[kind, row, i, j] = Θ[i, j]
-        end
-        for b in 1:n
-            t = zero(eltype(Θ))
-            for a in 1:n
-                t += Jy[i, a] * statecov[a, b]
-            end
-            for j in 1:m
-                trace.ycov[kind, row, i, j] += t * Jy[j, b]
-            end
-        end
-    end
+    _ctsem_manifest_moments!(view(trace.y, kind, row, :), view(trace.ycov, kind, row, :, :),
+        pars, Θ, state, statecov, n, m)
     _kalman_store_response!(trace, kind, row, ws, pars, statecov)
     return nothing
 end

@@ -7445,21 +7445,15 @@ coreset stage's trial (`CTSEMCoresetTarget`): its units alone, weighted.
 """
 function _ctsem_optimise_trial(o::CTSEMLaplaceObjective, x, want_gradient::Bool,
         gradient_method, limit::Real, log; scores=nothing, coreset=nothing)
-    evaluated = try
-        ctsem_laplace_evaluate(o, x; gradient=want_gradient,
-            nested_gradient=(Symbol(gradient_method) === :nested), scores=scores,
-            coreset=coreset)
-    catch err
-        _ctsem_must_propagate(err) && rethrow()
-        nothing
-    end
+    evaluated = _ctsem_try_evaluate(() -> ctsem_laplace_evaluate(o, x;
+        gradient=want_gradient, nested_gradient=(Symbol(gradient_method) === :nested),
+        scores=scores, coreset=coreset))
     value = evaluated === nothing ? NaN : evaluated.value
     finite_value = evaluated !== nothing && isfinite(value)
     inner_ok = evaluated !== nothing && evaluated.converged
     valid = finite_value && inner_ok
     if valid && want_gradient
-        valid = all(isfinite, evaluated.gradient) &&
-            all(abs(entry) < limit for entry in evaluated.gradient)
+        valid = _ctsem_gradient_usable(evaluated.gradient, limit)
         if !valid
             log.rejected_gradient += 1
             # Once, and only if asked: the probe prints the whole raw vector
@@ -7499,12 +7493,7 @@ the estimate, pulling coordinates to zero, which is exactly where a warm inner
 solve used to fail.
 """
 function _ctsem_probe_value(o::CTSEMLaplaceObjective, x)
-    evaluated = try
-        ctsem_laplace_evaluate(o, x; gradient=false)
-    catch err
-        _ctsem_must_propagate(err) && rethrow()
-        nothing
-    end
+    evaluated = _ctsem_try_evaluate(() -> ctsem_laplace_evaluate(o, x; gradient=false))
     evaluated === nothing && return -Inf
     (evaluated.converged && isfinite(evaluated.value)) ? evaluated.value : -Inf
 end
@@ -7514,12 +7503,7 @@ The gradient counterpart of the laplace `_ctsem_probe_value`, refusing a point
 whose inner solve did not converge for the same reason.
 """
 function _ctsem_probe_value_gradient(o::CTSEMLaplaceObjective, x)
-    evaluated = try
-        ctsem_laplace_evaluate(o, x; gradient=true)
-    catch err
-        _ctsem_must_propagate(err) && rethrow()
-        nothing
-    end
+    evaluated = _ctsem_try_evaluate(() -> ctsem_laplace_evaluate(o, x; gradient=true))
     evaluated === nothing && return (value=-Inf, gradient=nothing)
     ok = evaluated.converged && isfinite(evaluated.value) &&
         all(isfinite, evaluated.gradient)

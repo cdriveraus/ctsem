@@ -67,7 +67,6 @@ mutable struct CTSEMMixtureTrace
     r::Vector{Float64}
     idx::Vector{Int}
     AC::Matrix{Float64}
-    JP::Matrix{Float64}
 end
 
 function CTSEMMixtureTrace(n::Int, m::Int, nrows::Int, hybrid::CTSEMHybrid)
@@ -78,7 +77,7 @@ function CTSEMMixtureTrace(n::Int, m::Int, nrows::Int, hybrid::CTSEMHybrid)
         fill(NaN, nrows, m), fill(NaN, nrows, m), fill(NaN, nrows, m), false,
         zeros(0, 0), zeros(0, 0), Float64[], Float64[], Float64[],
         zeros(n, 0), zeros(m, 0), zeros(m, m), zeros(m), zeros(Int, m),
-        zeros(max(n, m), 0), zeros(m, n))
+        zeros(max(n, m), 0))
 end
 
 # Every hook this trace does not want, declined as the Kalman trace declines them.
@@ -189,34 +188,6 @@ function _mixture_loadings!(tr::CTSEMMixtureTrace, hb, pars)
     return nothing
 end
 
-"""The measurement model at `state` and `statecov` into `y[row, :]` and
-`ycov[row, :, :]`, as `_kalman_store!` computes it, through `JP = Jy P`."""
-function _mixture_measure!(y, ycov, ws, pars, state, statecov, n::Int, m::Int, row::Int, JP)
-    Θ = ws.bufferΘ.out
-    @inbounds for i in 1:m
-        value = pars.MANIFESTMEANS[i, 1]
-        for j in 1:n
-            value += pars.LAMBDA[i, j] * state[j]
-        end
-        y[row, i] = value
-    end
-    @inbounds for b in 1:n, i in 1:m
-        acc = 0.0
-        for a in 1:n
-            acc += pars.Jy[i, a] * statecov[a, b]
-        end
-        JP[i, b] = acc
-    end
-    @inbounds for j in 1:m, i in 1:m
-        value = Θ[i, j]
-        for b in 1:n
-            value += JP[i, b] * pars.Jy[j, b]
-        end
-        ycov[row, i, j] = value
-    end
-    return nothing
-end
-
 function _record_row_prior!(tr::CTSEMMixtureTrace, ws, pars, row::Int)
     n, m = tr.n, tr.m
     state = ws.state
@@ -227,7 +198,8 @@ function _record_row_prior!(tr::CTSEMMixtureTrace, ws, pars, row::Int)
     @inbounds for i in 1:n
         tr.etaP[row, i] = state[i]
     end
-    _mixture_measure!(tr.yP, tr.yPcov, ws, pars, state, P, n, m, row, tr.JP)
+    _ctsem_manifest_moments!(view(tr.yP, row, :), view(tr.yPcov, row, :, :), pars,
+        ws.bufferΘ.out, state, P, n, m)
     hb = ws.hyb
     if hb.active && hb.q > 0
         if (row == 1 && !_mixture_hybrid_scale!(tr, hb)) || !_mixture_hybrid_posterior!(tr, hb)
@@ -252,7 +224,8 @@ function _record_row_update!(tr::CTSEMMixtureTrace, ws, pars, sp, context, row::
     @inbounds for i in 1:n
         tr.etaU[row, i] = state[i]
     end
-    _mixture_measure!(tr.yU, tr.yUcov, ws, pars, state, P, n, m, row, tr.JP)
+    _ctsem_manifest_moments!(view(tr.yU, row, :), view(tr.yUcov, row, :, :), pars,
+        ws.bufferΘ.out, state, P, n, m)
     hb = ws.hyb
     if hb.active && hb.q > 0 && _mixture_hybrid_posterior!(tr, hb)
         _mixture_loadings!(tr, hb, pars)
