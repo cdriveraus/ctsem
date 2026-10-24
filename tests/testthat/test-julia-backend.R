@@ -160,10 +160,11 @@ test_that("the defaults a sampled or reduced-rank fit resolves to combine", {
     LAMBDA = diag(2)))
   prep <- function(...) suppressWarnings(suppressMessages(ctFit(ctstantestdat,
     m, backend = "julia", fit = FALSE, ...)))
-  # Sampling samples the effects ('none'), and the missing value with them:
+  # Sampling integrates random intercepts with Gaussian indicators exactly and
+  # samples the exact marginal ('laplace'), and the missing value with it:
   # imputed for the placement, a parameter of the sample.
   sampled <- prep(optimize = FALSE)
-  expect_identical(sampled$args$resolved$intoverpop, "none")
+  expect_identical(sampled$args$resolved$intoverpop, "laplace")
   expect_identical(sampled$ti_imputed$predictor, 1L)
   # Sampling keeps the priors it is given, the default included -- it is not
   # switched to TRUE -- and a scope that leaves parameters flat warns before

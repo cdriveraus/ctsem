@@ -143,8 +143,12 @@ test_that("sampled effects are each parameter's natural deviation, at reduced ra
   model <- laplace_fixture_model()
   model$pars$indvarying[model$pars$matrix == "T0MEANS" & is.na(model$pars$value)] <- TRUE
   warned <- character()
+  # The joint route by name: 'auto' samples this model's exact marginal (its
+  # effects shift means, with a Gaussian indicator), which has no effects to
+  # save.
   run <- function(m, ...) withCallingHandlers(suppressMessages(ctFit(data, m,
-    backend = "julia", cores = 1, priors = TRUE, optimize = FALSE, ...,
+    backend = "julia", cores = 1, priors = TRUE, optimize = FALSE,
+    intoverpop = "none", ...,
     sampleControl = list(chains = 1L, warmup = 20L, draws = 20L, minESS = 0,
       saveEffects = TRUE, processes = FALSE))),
     warning = function(w) {
@@ -152,9 +156,9 @@ test_that("sampled effects are each parameter's natural deviation, at reduced ra
       invokeRestart("muffleWarning")
     })
 
-  # Rank one, a loading matrix over both effects -- on the route sampling
-  # resolves to ('none'), which builds it as laplace does: one coordinate per
-  # subject, two parameters, so two deviations each.
+  # Rank one, a loading matrix over both effects -- on the joint route
+  # ('none'), which builds it as laplace does: one coordinate per subject, two
+  # parameters, so two deviations each.
   reduced <- run(model, poprank = 1)
   expect_length(reduced$sample$effect_mean, 12L * 2L)
   expect_false(is.null(names(reduced$sample$effect_mean)))
