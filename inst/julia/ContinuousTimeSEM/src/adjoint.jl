@@ -5,14 +5,14 @@ The hand-derived reverse-mode mathematics lives one level down, in
 `adjoint_primitives.jl` (generic matrix kernels), `adjoint_parameters.jl` (the
 transform layer) and `adjoint_ekf.jl` (the reverse filter). This file holds the
 public entry points: the workspace that caches everything discovered once per
-model, `ctsem_adjoint_gradient`, the gating status, and the validation oracle
-that cross-checks the adjoint against ForwardDiff and finite differences.
+model, `ctsem_adjoint_gradient`, and the validation oracle that cross-checks
+the adjoint against ForwardDiff and finite differences.
 """
 
 using LinearAlgebra
 using ForwardDiff
 
-export ctsem_adjoint_status, ctsem_validate_forward_gradient, ctsem_adjoint_gradient
+export ctsem_validate_forward_gradient, ctsem_adjoint_gradient
 
 """
     CTSEMAdjointWorkspace
@@ -721,28 +721,6 @@ function _get_or_init_adjoint_workspaces!(objective::CTSEMObjective, ::Type{T},
     objective.adjoint_ws = built
     return built
 end
-
-"""
-Report the state of the adjoint implementation.
-
-`available == true` since the acceptance gates in
-`test/test_adjoint_gradient_validation.jl` (adjoint vs. ForwardDiff vs. central
-finite differences, across linear, cross-effect, state/PARS-expression, free
-covariance/mean, TD/TI-predictor, bounded-substep, partially missing, fully
-missing and unequal-length multi-subject models) became part of the always-run
-suite and went green. `fallback == false` is a promise, not a description:
-selecting the adjoint never silently reverts to ForwardDiff.
-
-It is not yet the *default* gradient -- see the performance table in
-`docs/src/adjoint-roadmap.md`; below roughly 40 free parameters ForwardDiff is
-still faster.
-"""
-ctsem_adjoint_status() = (
-    available=true,
-    phase="tape-replay reverse EKF",
-    reference="primitive pullbacks in adjoint_primitives.jl; reverse filter in adjoint_ekf.jl",
-    fallback=false,
-)
 
 """
     ctsem_validate_forward_gradient(objective, values; step=1e-6, adjoint=true)

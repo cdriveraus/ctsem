@@ -1582,7 +1582,7 @@ function _ctsem_coreset_path(c::CTSEMCoresetPlan, steps, budget::Real, value,
 end
 
 """
-    _ctsem_coreset_choose(c, scale, hmul; refit)
+    _ctsem_coreset_choose(c, scale, hmul)
 
 A coreset a stage of `c.stretch` iterations can pay for
 (`_ctsem_coreset_budget`) whose changes in gradient over the steps between
@@ -1600,8 +1600,7 @@ the tolerance in every parameter (`_ctsem_coreset_shortfall`). Fitted in sample,
 optimum passed on an error a fraction of the one it met, its stage ran past
 its floor, and the full objective came out worse.
 """
-function _ctsem_coreset_choose(c::CTSEMCoresetPlan, scale::AbstractVector, hmul;
-        refit::Bool)
+function _ctsem_coreset_choose(c::CTSEMCoresetPlan, scale::AbstractVector, hmul)
     nsteps = length(c.S) - 1
     nsteps >= 2 || return nothing
     t0 = time()
@@ -1707,7 +1706,7 @@ function _ctsem_coreset_step!(c::CTSEMCoresetPlan, x, f, G, hmul, scale;
         c.since >= c.wait || return none
         c.since = 0
         c.stretch = _CTSEM_CORESET_FIRST_STAGE
-        cs = _ctsem_coreset_choose(c, scale, hmul; refit=false)
+        cs = _ctsem_coreset_choose(c, scale, hmul)
         if cs === nothing
             c.wait = max(1, 2c.wait)
             return none
@@ -1796,7 +1795,7 @@ function _ctsem_coreset_check!(c::CTSEMCoresetPlan, x, fc, Gc, hmul, scale;
     if !leave && paid && actual > c.gap_tol * max(n, 1)
         stretch = 2c.stretch
         c.stretch = stretch
-        cs = _ctsem_coreset_choose(c, scale, hmul; refit=true)
+        cs = _ctsem_coreset_choose(c, scale, hmul)
         if cs !== nothing
             _ctsem_coreset_begin!(c, cs, x, ff, Gf, scale, hmul)
             return (act=:refit, x=x, f=ff, G=Gf)

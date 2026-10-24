@@ -272,7 +272,7 @@ test_that("a near-singular unit is scored near its exact integral", {
     0.16969291528676))
   exact <- -9.5832
   laplace <- JuliaConnectoR::juliaGet(module$ctsem_laplace_evaluate(objective,
-    raw, gradient = FALSE, contributions = TRUE))
+    raw, gradient = FALSE))
   quadrature <- JuliaConnectoR::juliaGet(module$ctsem_laplace_quadrature(
     objective, raw, nodes = 5L, contributions = TRUE))
   # The fit's own term over-credits this unit by three nats; that is why it is

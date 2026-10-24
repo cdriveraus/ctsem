@@ -513,7 +513,8 @@ of a few buckets makes every count in a bucket one type. Above 12,
 `pickchunksize`'s width is rounded up the same way, which never adds a sweep.
 The extra lanes of a padded input are zero seeds on inputs the function
 ignores, so the result is the same Jacobian. An empty list is `pickchunksize`.
-`ctsem_set_dual_widths!` sets both lists.
+The two lists are the `Ref`s `_CTSEM_HESSIAN_WIDTHS` and
+`_CTSEM_CURVATURE_WIDTHS`.
 
 The Hessian takes one width, 12, for every parameter count. A padded lane
 costs 5-12% of a small model's Hessian, and a binary model's 5 parameters at
@@ -527,14 +528,6 @@ random effects per unit a single type.
 """
 const _CTSEM_HESSIAN_WIDTHS = Ref(Int[12])
 const _CTSEM_CURVATURE_WIDTHS = Ref(Int[4, 8, 12])
-
-export ctsem_set_dual_widths!
-function ctsem_set_dual_widths!(; hessian=nothing, curvature=nothing)
-    hessian === nothing || (_CTSEM_HESSIAN_WIDTHS[] = sort!(Int.(collect(hessian))))
-    curvature === nothing || (_CTSEM_CURVATURE_WIDTHS[] = sort!(Int.(collect(curvature))))
-    return (hessian = copy(_CTSEM_HESSIAN_WIDTHS[]),
-        curvature = copy(_CTSEM_CURVATURE_WIDTHS[]))
-end
 
 """The width a forward-mode Jacobian over `n` inputs takes from `widths`."""
 function _ctsem_dual_width(n::Integer, widths::Vector{Int})
