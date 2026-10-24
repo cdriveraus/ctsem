@@ -289,6 +289,20 @@ test_that("the SAEM kernel is refused by name where it cannot apply", {
     control = list(sampler = "hmc")), "'nuts', 'saem' or 'smc'", fixed = TRUE)
 })
 
+test_that("a marginal target's default sampler is chosen by the fit's check", {
+  # Tempered SMC where the check named a direction in which the posterior
+  # departs from the Hessian's normal, NUTS where it named none or where the
+  # call set a control of NUTS's warmup; the joint target keeps SAEM's kernel.
+  name <- ctsem:::.ctBackendSamplerName
+  expect_identical(name(NULL), "saem")
+  expect_identical(name(NULL, joint = TRUE, named = 3L), "saem")
+  expect_identical(name(NULL, joint = FALSE), "nuts")
+  expect_identical(name(NULL, joint = FALSE, named = 3L), "smc")
+  expect_identical(name(NULL, joint = FALSE, named = 3L, nutsonly = TRUE), "nuts")
+  expect_identical(name("nuts", joint = FALSE, named = 3L), "nuts")
+  expect_identical(name("smc", joint = FALSE), "smc")
+})
+
 test_that("tempered SMC samples the marginal posterior through the same assembly", {
   skip_without_julia()
   fit <- .sample_fixture()
@@ -314,7 +328,10 @@ test_that("tempered SMC samples the marginal posterior through the same assembly
   expect_length(d$stepsize, 40L)
   expect_true(all(d$stepsize == d$stepsize[1]))
   expect_true(is.infinite(d$rhat_target))
+  # No R-hat: its chains start from particles already drawn from the
+  # posterior, so their agreement says nothing about mixing.
   expect_length(d$rhat, npar)
+  expect_true(all(is.na(d$rhat)))
   expect_output(print(d), "tempered SMC")
   # The other sampler on the same target, for the means.
   nuts <- suppressWarnings(suppressMessages(

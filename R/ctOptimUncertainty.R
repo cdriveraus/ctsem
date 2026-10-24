@@ -3375,23 +3375,26 @@ ctOptimFitLpgFunc <- function(fit, cores=1){
 #' \code{'nuts'} runs NUTS on the parameters and every random effect at once.
 #' Both draw the same posterior; SAEM's kernel was the more reliable and the
 #' faster in comparisons on variance and nested models, where NUTS on the
-#' joint vector mixes poorly. A marginal target is sampled by NUTS, from a
-#' metric set to the widths that the normal check of \code{'checked'} measured
-#' along the directions where the posterior departs from the fit's Hessian;
-#' a fit made without that check gets one first, at a few hundred gradients;
-#' where \code{'checked'} moved the normal to the posterior's moments, the
-#' metric is that normal's covariance. A marginal target can instead be
-#' sampled by tempered sequential Monte Carlo, \code{sampler = 'smc'}:
-#' \code{particles} (200) draws from that normal, carried to the posterior by
+#' joint vector mixes poorly. A marginal target is sampled by tempered
+#' sequential Monte Carlo where the normal check of \code{'checked'} named
+#' directions in which the posterior departs from the fit's Hessian, and by
+#' NUTS where it named none (or where \code{adapt_metric}, \code{adapt_effects}
+#' or \code{settleTol} is set); \code{sampler = 'nuts'} or \code{'smc'}
+#' chooses. A fit made without that check gets one first, at a few hundred
+#' gradients. NUTS starts from a metric set to the widths the check measured
+#' along those directions, or, where \code{'checked'} moved the normal to the
+#' posterior's moments, to that normal's covariance. Tempered SMC
+#' (\code{sampler = 'smc'}) carries
+#' \code{particles} (200) draws from that normal to the posterior by
 #' stages of NUTS moves, then each a chain. It is for posteriors NUTS does not
 #' converge on from the normal -- a mass far from the mode, a loading shell --
 #' and costs about what NUTS does in gradients. On the Laplace route its
 #' particles move on a coreset of the units (\code{coreset}, \code{TRUE}): the
 #' full density, evaluated once a particle a stage, corrects the moves
 #' exactly, so a fit with many units pays a fraction of a gradient a move and
-#' \code{coreset = FALSE} is the oracle. Its chains are many and short,
-#' so R-hat is reported but not a stopping target there; the effective sample
-#' size is. \code{adapt_metric}, \code{adapt_effects} and \code{settleTol}
+#' \code{coreset = FALSE} is the oracle. Its chains are many and short and
+#' start from particles already drawn from the posterior, so it reports no
+#' R-hat; the effective sample size is its stop. \code{adapt_metric}, \code{adapt_effects} and \code{settleTol}
 #' belong to NUTS's warmup and are refused with SAEM's kernel and with
 #' tempered SMC. \code{control$placement} says
 #' where the chains start: \code{'saem'}, the default on the joint posterior,
