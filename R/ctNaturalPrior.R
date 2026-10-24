@@ -24,7 +24,9 @@
 # so that it stays finite far into a transform's saturation. `NULL` where a
 # factor is not one of these and so might change sign.
 .ctNaturalLogAbs <- function(e) {
-  while (is.call(e) && identical(e[[1]], as.name("("))) e <- e[[2]]
+  # Parentheses and a sign change nothing in `log |e|`.
+  while (is.call(e) && length(e) == 2L &&
+      (identical(e[[1]], as.name("(")) || identical(e[[1]], as.name("-")))) e <- e[[2]]
   if (is.numeric(e)) return(if (e == 0) NULL else log(abs(e)))
   if (!is.call(e)) return(NULL)
   f <- as.character(e[[1]])
@@ -34,7 +36,6 @@
   }
   if (f == "*" && length(e) == 3L) return(two("+"))
   if (f == "/" && length(e) == 3L) return(two("-"))
-  if (f == "-" && length(e) == 2L) return(.ctNaturalLogAbs(e[[2]]))
   if (f == "exp" && length(e) == 2L) return(e[[2]])
   if (f == "inv_logit" && length(e) == 2L)
     return(call("-", call("log1p_exp", call("-", e[[2]]))))
