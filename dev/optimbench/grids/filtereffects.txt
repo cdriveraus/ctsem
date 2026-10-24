@@ -1,0 +1,31 @@
+# filter-effects grid: piece F's cost rule (review/FITTING-filter-effects-design-2026-10-23.md).
+# The Gaussian cells with subject-level random effects, on both routes, plus
+# AnomAuth's two configs from their spurious starts. A build that integrates a
+# full-rank level's affine effects in the filter changes the laplace cells;
+# the augmented ones are the route it is measured against. `long` has no
+# random effect, so it has no Laplace cells.
+#
+# id                                    model        data route      start                    variant
+control.1                               panel        1    augmented  zeros                    control
+cf_gaussian.aug.d1.s1.default           cf_gaussian  1    augmented  default:1                default
+cf_gaussian.aug.d1.s2.default           cf_gaussian  1    augmented  default:2                default
+cf_gaussian.lap.d1.s1.default           cf_gaussian  1    laplace    default:1                default
+cf_gaussian.lap.d1.s2.default           cf_gaussian  1    laplace    default:2                default
+panel.aug.d1.s1.default                 panel        1    augmented  default:1                default
+panel.aug.d1.s2.default                 panel        1    augmented  default:2                default
+panel.lap.d1.s1.default                 panel        1    laplace    default:1                default
+panel.lap.d1.s2.default                 panel        1    laplace    default:2                default
+long.aug.d1.s1.default                  long         1    augmented  default:1                default
+long.aug.d1.s2.default                  long         1    augmented  default:2                default
+small.aug.d1.s1.default                 small        1    augmented  default:1                default
+small.aug.d1.s2.default                 small        1    augmented  default:2                default
+small.lap.d1.s1.default                 small        1    laplace    default:1                default
+small.lap.d1.s2.default                 small        1    laplace    default:2                default
+bigp.aug.d1.s1.default                  bigp         1    augmented  default:1                default
+bigp.aug.d1.s2.default                  bigp         1    augmented  default:2                default
+bigp.lap.d1.s1.default                  bigp         1    laplace    default:1                default
+bigp.lap.d1.s2.default                  bigp         1    laplace    default:2                default
+anomS1.lap.cfg.s1.default               anomS1       cfg  laplace    default:1                default
+anomS2.lap.cfg.s1.default               anomS2       cfg  laplace    default:1                default
+anomS1.lap.cfg.anomS1_spurious.default  anomS1       cfg  laplace    stored:anomS1_spurious   default
+anomS2.lap.cfg.anomS2_spurious.default  anomS2       cfg  laplace    stored:anomS2_spurious   default

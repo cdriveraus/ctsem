@@ -146,17 +146,18 @@ function ctsem_laplace_effect_draws(laplace::CTSEMLaplaceObjective,
     units = laplace.units
     nunits = length(units.members)
     hyb = laplace.objective.params.hybrid
-    nh = _hybrid_on(hyb) ? length(hyb.manifests) : 0
+    nh = _hybrid_on(hyb) ? _hybrid_items(hyb) : 0
     # A unit's coordinates: its effects, then each member's deviations, one per
     # hybrid item whether the member observes it or not (`_laplace_effect_posterior`).
     widths = [units.dims[U] + nh * length(units.members[U]) for U in 1:nunits]
     z = randn(MersenneTwister(seed), sum(widths; init=0), ndraws)
     effects = zeros(Float64, sum(units.dims; init=0), ndraws)
-    # Each subject's drawn deviations on the raw scale, `psi * d`, per item.
+    # Each subject's drawn hybrid coordinates per item, which make its raw
+    # deviations through `B` (`_hybrid_dev_map`).
     nsubjects = length(laplace.objective.subject_objectives)
     shifts = zeros(Float64, nsubjects, nh, ndraws)
     lv = laplace.spec.levels[1]
-    psi = [_hybrid_item_sd(hyb, lv, theta, k) for k in 1:nh]
+    B = nh > 0 ? _hybrid_dev_map(hyb, lv, theta) : zeros(0, 0)
     logq = zeros(Float64, nunits, ndraws)
     logprior = zeros(Float64, nunits, ndraws)
     converged = fill(true, nunits)
@@ -189,7 +190,7 @@ function ctsem_laplace_effect_draws(laplace::CTSEMLaplaceObjective,
             w = post.mean .+ scale .* (F.L * zs)
             effects[uslice, s] .= view(w, 1:d)
             for (m, i) in enumerate(units.members[U]), (c, k) in enumerate(post.items)
-                shifts[i, k, s] = psi[k] * w[d + (m - 1) * nh + c]
+                shifts[i, k, s] = w[d + (m - 1) * nh + c]
             end
             logq[U, s] = constant - halflogdet - dot(zs, zs) / 2
             logprior[U, s] = constant - dot(w, w) / 2
@@ -204,8 +205,9 @@ function ctsem_laplace_effect_draws(laplace::CTSEMLaplaceObjective,
     for s in 1:ndraws
         _laplace_deviations!(deviations, laplace, Ls, view(effects, :, s), starts)
         persubject = _laplace_filter_values(laplace, theta; effects=deviations)
-        for i in 1:nsubjects, k in 1:nh
-            persubject[i, lv.re_index[hyb.effect[k]]] += shifts[i, k, s]
+        for i in 1:nsubjects, k in 1:nh, p in axes(B, 1)
+            b = B[p, k]
+            iszero(b) || (persubject[i, lv.re_index[p]] += b * shifts[i, k, s])
         end
         trace = ctsem_kalman(laplace.objective, persubject; subject_matrices=false,
             fields=["llrow"])

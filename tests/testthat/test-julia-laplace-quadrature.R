@@ -537,25 +537,34 @@ test_that("a unit wider than the cap keeps its Laplace term, and the fit says so
   # One effect a subject; a cap of none leaves every subject unscored, with
   # draws off or kept, by default, to the units a rescue named. With them for
   # every unit, a unit of one block past the cap is scored by frozen draws
-  # instead (checked at the end).
+  # instead (checked at the end). The subject filter integrates this
+  # fixture's effect (`CTSEMHybrid`), which leaves its units no coordinate to
+  # be wide, so the cap is read on the same fit with the effect a coordinate:
+  # the objective is built from the specification (`.ctJuliaObjective()`),
+  # and the layer's is the same function.
+  off <- fits$off
+  off$model_spec$laplace$hybrid <- NULL
   narrow <- utils::modifyList(.ctLaplaceContinueDefaults, list(maxdim = 0L,
     draws = 0L))
-  expect_message(out <- .ctLaplaceContinue(fits$off, control = narrow),
+  expect_message(out <- .ctLaplaceContinue(off, control = narrow),
     "kept the Laplace term, having more than 0 random effects")
   corr <- out$laplace$correction
   expect_identical(corr$status, "too_wide")
   expect_false(corr$applied)
   expect_identical(corr$wide, corr$units)
-  expect_identical(out$estimate$raw, fits$off$estimate$raw)
-  expect_identical(out$estimate$loglik, fits$off$estimate$loglik)
+  expect_identical(out$estimate$raw, off$estimate$raw)
+  expect_identical(out$estimate$loglik, off$estimate$loglik)
   expect_true(any(grepl("not corrected: every subject or group has more than 0",
     capture.output(print(out)))))
   # Under the default cap nothing here is wide.
   expect_identical(fits$quadrature$laplace$correction$wide, 0L)
   # Nor past it, with draws: each subject is one block, scored by them, and on
   # this Gaussian integrand every gap is within their error.
-  drawn <- suppressMessages(.ctLaplaceContinue(fits$off,
+  drawn <- suppressMessages(.ctLaplaceContinue(off,
     control = utils::modifyList(narrow, list(draws = 256L, draws_scope = "all"))))
+  # With the filter integrating the effect, nothing is wide at any cap.
+  expect_identical(suppressMessages(.ctLaplaceContinue(fits$off,
+    control = narrow))$laplace$correction$wide, 0L)
   expect_identical(drawn$laplace$correction$wide, 0L)
   expect_identical(drawn$laplace$correction$status, "exact")
 })

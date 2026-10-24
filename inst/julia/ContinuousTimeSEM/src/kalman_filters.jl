@@ -263,7 +263,9 @@ end
     ws.P_predict.data .+= ws.discrete_ca.dDIFFUSION
     _copy_lower_to_upper!(ws.P_predict.data, ws.state_dim)
     ws.hyb.active && ws.hyb.q > 0 &&
-        _hybrid_predict!(ws.hyb, ws.discrete_ca.dDRIFT, _val(ws.state_dim))
+        _hybrid_predict!(ws.hyb, ws.discrete_ca.dDRIFT, pars.JAx,
+            ws.discretization_buffer.series, _val(ws.affine_buffer.dim), Δt,
+            _val(ws.state_dim))
     return nothing
 end
 

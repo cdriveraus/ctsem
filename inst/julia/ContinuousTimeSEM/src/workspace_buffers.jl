@@ -110,10 +110,14 @@ const _HYBRID_OFF = 3
     CTSEMHybridBuffers{T}
 
 One pass's state for the deviations the filter integrates (`CTSEMHybrid`):
-`q` columns, one per hybrid item the subject observes at all (`col[j]` the
-column of manifest `j`, 0 for none; `item[c]` the hybrid item of column `c`);
-`X`, the state mean's dependence on them (`n x q`); the accumulated
-`S = sum V' S_t^-1 V` and `s = sum V' S_t^-1 y_t`; and row scratch. Mutable so
+`q` columns, one per hybrid item the subject carries -- a manifest intercept's
+where the subject observes the item at all, a state mean's always (`col[j]`
+the column of manifest `j`, 0 for none; `item[c]` the hybrid item of column
+`c`; `ckind[c]`, `clat[c]` and `cslope[c]` its kind, latent and slope); `X`,
+the state mean's dependence on them (`n x q`); `Xinc`, what the last
+prediction substep added to a continuous intercept's column, which the tape
+records; the accumulated `S = sum V' S_t^-1 V` and `s = sum V' S_t^-1 y_t`;
+row scratch; and `Jc`, `jv`, `piv` for the intercept Jacobian's solve. Mutable so
 the arrays can grow when a model needs more than the empty default -- the
 workspace may be built before the Laplace objective fills `CTSEMHybrid`.
 
@@ -124,10 +128,18 @@ what Laplace's mode and curvature are taken of; `_HYBRID_FULL` the profile less
 `half_logdet`, their exact integral; `_HYBRID_FIXED` the log likelihood at the
 deviations `dfix` (one per column, the caller's), which is how a unit is
 evaluated in joint coordinates. Every pass leaves `half_logdet`,
-`logdet(M) / 2`; the conditional mode `dhat`; each column's scale `gv`; `Mh`,
-`M` itself; and `r = b - M value(dhat)`, zero in value, whose partials along a
-seeded direction are minus that direction's cross curvature with the
-deviations (`_hybrid_after!` on a `CTSEMHybridCross`).
+`logdet(M) / 2`; `G`, the `q x rd` factor of the columns' deviations,
+`G u` with `u ~ N(0, I)` of dimension `rd` (`gv`, `dgv` its diagonal and
+the diagonal's derivative in the raw own sd, for own variances); the
+conditional mode `dhat` of `u`; `Mh`, `M` itself; and `r = b - M value(dhat)`,
+zero in value, whose partials along a seeded direction are minus that
+direction's cross curvature with `u` (`_hybrid_after!` on a
+`CTSEMHybridCross`). `dfix`, `dhat`, `r`, `bv` and `M` are over `rd`, which is
+`q` for own variances and the level's integrated count for a block; `uitem`
+is the hybrid item each coordinate of `u` belongs to, and `_hybrid_ndev` reads
+`rd` for a pass that may not have run.
+`Lb` is a block's factor, kept with the level parameters it was built at
+(`lkey`, `lok`, `lversion`; `_hybrid_block_cached!`).
 """
 mutable struct CTSEMHybridBuffers{T}
     active::Bool
@@ -141,22 +153,37 @@ mutable struct CTSEMHybridBuffers{T}
     r::Vector{T}
     Mh::Matrix{T}
     Mw::Matrix{T}
+    G::Matrix{T}
+    rd::Int
+    uitem::Vector{Int}
+    Lb::Matrix{T}
+    lkey::Vector{T}
+    lok::Bool
+    lversion::Int
     q::Int
     col::Vector{Int}
     item::Vector{Int}
+    ckind::Vector{Int}
+    clat::Vector{Int}
+    cslope::Vector{Float64}
     X::Matrix{T}
     Xt::Matrix{T}
+    Xinc::Matrix{T}
     V::Matrix{T}
     W::Matrix{T}
     S::Matrix{T}
     s::Vector{T}
     e::Vector{T}
+    Jc::Matrix{T}
+    jv::Vector{T}
+    piv::Vector{Int}
 end
 CTSEMHybridBuffers{T}() where {T} = CTSEMHybridBuffers{T}(false, _HYBRID_PROFILE,
-    zero(T), T[], T[], T[], T[], T[], T[], zeros(T, 0, 0), zeros(T, 0, 0), 0,
-    Int[], Int[],
+    zero(T), T[], T[], T[], T[], T[], T[], zeros(T, 0, 0), zeros(T, 0, 0),
+    zeros(T, 0, 0), 0, Int[], zeros(T, 0, 0), T[], false, -1, 0,
+    Int[], Int[], Int[], Int[], Float64[],
     zeros(T, 0, 0), zeros(T, 0, 0), zeros(T, 0, 0), zeros(T, 0, 0), zeros(T, 0, 0),
-    T[], T[])
+    zeros(T, 0, 0), T[], T[], zeros(T, 0, 0), T[], Int[])
 
 """
     ContinuousEKFWorkspace

@@ -28,8 +28,9 @@
 Per-row output of one filter pass at fixed random effects, with the
 deviations the filter integrates (`CTSEMHybrid`) marginalised at every row from
 the pass's own augmented quantities: given the rows so far the standardised
-deviations are `N(M^-1 G s, M^-1)`, `M = I + G S G`, and they move the state by
-`X G` and the observations by `(Jy X + E) G` (`hybrid_filter.jl`).
+deviations are `N(M^-1 G' s, M^-1)`, `M = I + G' S G`, and they move the state
+by `X G` and the observations by `(Jy X + E) G` (`hybrid_filter.jl`), `G` the
+filter's own factor (`_hybrid_factor!`).
 """
 mutable struct CTSEMMixtureTrace
     n::Int
@@ -38,7 +39,6 @@ mutable struct CTSEMMixtureTrace
     data::Matrix{Float64}
     values::Vector{Float64}
     hybrid::CTSEMHybrid
-    g::Vector{Float64}
     etaP::Matrix{Float64}
     etaPcov::Array{Float64,3}
     etaU::Matrix{Float64}
@@ -71,7 +71,7 @@ mutable struct CTSEMMixtureTrace
 end
 
 function CTSEMMixtureTrace(n::Int, m::Int, nrows::Int, hybrid::CTSEMHybrid)
-    CTSEMMixtureTrace(n, m, nrows, zeros(m, nrows), Float64[], hybrid, Float64[],
+    CTSEMMixtureTrace(n, m, nrows, zeros(m, nrows), Float64[], hybrid,
         zeros(nrows, n), zeros(nrows, n, n), zeros(nrows, n), zeros(nrows, n, n),
         zeros(nrows, m), zeros(nrows, m, m), zeros(nrows, m), zeros(nrows, m, m),
         zeros(nrows), zeros(nrows),
@@ -103,50 +103,56 @@ function _record_binary!(tr::CTSEMMixtureTrace, ws, pars, data, obs_col, rows, n
         collect(Int, rows), 0)
 end
 
-"""Each hybrid column's scale (an item's own sd times its intercept's slope),
-as `_hybrid_marginal!` computes it, and the scratch sized to `q`."""
+"""The columns' factor `G` into the buffers, as `_hybrid_marginal!` computes
+it (`_hybrid_factor!`), and the scratch sized to its `rd` columns; false where
+it does not factor."""
 function _mixture_hybrid_scale!(tr::CTSEMMixtureTrace, hb)
-    q = hb.q
-    h = tr.hybrid
-    length(tr.g) == q || (tr.g = zeros(q))
-    @inbounds for c in 1:q
-        k = hb.item[c]
-        raw = tr.values[h.psi_index[k]]
-        tr.g[c] = h.slope[k] * (log1p_exp(2 * raw - 1) * h.sd_scale[k] + 1e-10)
+    rd = _hybrid_factor!(hb, tr.hybrid, tr.values)
+    rd > 0 || return false
+    if size(tr.Mq, 1) != rd
+        tr.Mq = zeros(rd, rd); tr.Cq = zeros(rd, rd)
+        tr.bq = zeros(rd); tr.dq = zeros(rd); tr.eq = zeros(rd)
+        tr.XG = zeros(tr.n, rd); tr.VG = zeros(tr.m, rd)
+        tr.AC = zeros(max(tr.n, tr.m), rd)
     end
-    if size(tr.Mq, 1) != q
-        tr.Mq = zeros(q, q); tr.Cq = zeros(q, q)
-        tr.bq = zeros(q); tr.dq = zeros(q); tr.eq = zeros(q)
-        tr.XG = zeros(tr.n, q); tr.VG = zeros(tr.m, q)
-        tr.AC = zeros(max(tr.n, tr.m), q)
-    end
-    return nothing
+    return true
 end
 
 """The deviations' posterior given the rows the buffers have seen: mean into
 `tr.dq`, covariance into `tr.Cq`; `false` where `M` does not factor."""
 function _mixture_hybrid_posterior!(tr::CTSEMMixtureTrace, hb)
-    q = hb.q
-    g = tr.g
-    @inbounds for b in 1:q, a in 1:q
-        tr.Mq[a, b] = g[a] * hb.S[a, b] * g[b] + (a == b ? 1.0 : 0.0)
+    q, rd, G = hb.q, hb.rd, hb.G
+    @inbounds for b in 1:rd, a in 1:rd
+        acc = a == b ? 1.0 : 0.0
+        for e in 1:q
+            t = 0.0
+            for c in 1:q
+                t += G[c, a] * hb.S[c, e]
+            end
+            acc += t * G[e, b]
+        end
+        tr.Mq[a, b] = acc
     end
-    F = _ctsem_cholesky(tr.Mq, q)
+    F = _ctsem_cholesky(tr.Mq, rd)
     issuccess(F) || return false
-    @inbounds for c in 1:q
-        tr.bq[c] = g[c] * hb.s[c]
+    @inbounds for a in 1:rd
+        acc = 0.0
+        for c in 1:q
+            acc += G[c, a] * hb.s[c]
+        end
+        tr.bq[a] = acc
     end
     ldiv!(tr.dq, F, tr.bq)
-    @inbounds for c in 1:q
+    @inbounds for a in 1:rd
         fill!(tr.eq, 0.0)
-        tr.eq[c] = 1.0
-        ldiv!(view(tr.Cq, :, c), F, tr.eq)
+        tr.eq[a] = 1.0
+        ldiv!(view(tr.Cq, :, a), F, tr.eq)
     end
     return true
 end
 
 """`mean[row, :] += A d` and `cov[row, :, :] += A C A'`, `A` the first `k` rows
-of a `k x q` loading, through `AC = A C` (`k q^2 + k^2 q`, not `k^2 q^2`)."""
+of a `k x q` loading (`q` the deviations' count), through `AC = A C` (`k q^2 + k^2 q`, not `k^2 q^2`)."""
 function _mixture_add!(mean, cov, A, d, C, k::Int, q::Int, row::Int, AC)
     @inbounds for i in 1:k
         acc = 0.0
@@ -175,17 +181,24 @@ end
 """The state's and the observations' loadings on the deviations, `X G` and
 `(Jy X + E) G`, from the buffers as they stand."""
 function _mixture_loadings!(tr::CTSEMMixtureTrace, hb, pars)
-    n, m, q = tr.n, tr.m, hb.q
+    n, m, q, rd, G = tr.n, tr.m, hb.q, hb.rd, hb.G
+    fill!(tr.XG, 0.0)
+    fill!(tr.VG, 0.0)
     @inbounds for c in 1:q
-        for r in 1:n
-            tr.XG[r, c] = hb.X[r, c] * tr.g[c]
-        end
         for j in 1:m
-            acc = hb.col[j] == c ? 1.0 : 0.0
+            v = hb.col[j] == c ? 1.0 : 0.0
             for k in 1:n
-                acc += pars.Jy[j, k] * hb.X[k, c]
+                v += pars.Jy[j, k] * hb.X[k, c]
             end
-            tr.VG[j, c] = acc * tr.g[c]
+            for a in 1:rd
+                tr.VG[j, a] += v * G[c, a]
+            end
+        end
+        for r in 1:n
+            x = hb.X[r, c]
+            for a in 1:rd
+                tr.XG[r, a] += x * G[c, a]
+            end
         end
     end
     return nothing
@@ -232,14 +245,13 @@ function _record_row_prior!(tr::CTSEMMixtureTrace, ws, pars, row::Int)
     _mixture_measure!(tr.yP, tr.yPcov, ws, pars, state, P, n, m, row, tr.JP)
     hb = ws.hyb
     if hb.active && hb.q > 0
-        row == 1 && _mixture_hybrid_scale!(tr, hb)
-        if !_mixture_hybrid_posterior!(tr, hb)
+        if (row == 1 && !_mixture_hybrid_scale!(tr, hb)) || !_mixture_hybrid_posterior!(tr, hb)
             tr.llgauss[row] = NaN
             return nothing
         end
         _mixture_loadings!(tr, hb, pars)
-        _mixture_add!(tr.etaP, tr.etaPcov, tr.XG, tr.dq, tr.Cq, n, hb.q, row, tr.AC)
-        _mixture_add!(tr.yP, tr.yPcov, tr.VG, tr.dq, tr.Cq, m, hb.q, row, tr.AC)
+        _mixture_add!(tr.etaP, tr.etaPcov, tr.XG, tr.dq, tr.Cq, n, hb.rd, row, tr.AC)
+        _mixture_add!(tr.yP, tr.yPcov, tr.VG, tr.dq, tr.Cq, m, hb.rd, row, tr.AC)
     end
     tr.llgauss[row] = _mixture_row_density(tr, row)
     return nothing
@@ -259,8 +271,8 @@ function _record_row_update!(tr::CTSEMMixtureTrace, ws, pars, sp, context, row::
     hb = ws.hyb
     if hb.active && hb.q > 0 && _mixture_hybrid_posterior!(tr, hb)
         _mixture_loadings!(tr, hb, pars)
-        _mixture_add!(tr.etaU, tr.etaUcov, tr.XG, tr.dq, tr.Cq, n, hb.q, row, tr.AC)
-        _mixture_add!(tr.yU, tr.yUcov, tr.VG, tr.dq, tr.Cq, m, hb.q, row, tr.AC)
+        _mixture_add!(tr.etaU, tr.etaUcov, tr.XG, tr.dq, tr.Cq, n, hb.rd, row, tr.AC)
+        _mixture_add!(tr.yU, tr.yUcov, tr.VG, tr.dq, tr.Cq, m, hb.rd, row, tr.AC)
     end
     tr.llfilter[row] = row_ll === nothing ? NaN : Float64(row_ll)
     return nothing

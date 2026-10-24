@@ -64,9 +64,16 @@
   }
   get(key, envir = .laplace_fit_cache, inherits = FALSE)
 }
-.laplace_exact_fit <- function() .laplace_cached("exact", suppressMessages(
-  ctFit(.laplace_test_data(), .laplace_test_model(), backend = "julia",
-    intoverpop = "laplace", optimcontrol = list(finishsamples = 100))))
+# Under a seed: the start and the finish samples come from the session's
+# generator, and "subject parameters are available at draws" reads the draws'
+# means against a bound they cross at some seeds (0.52 against 0.5 at seed 3,
+# with the effect a coordinate or integrated by the filter alike).
+.laplace_exact_fit <- function() .laplace_cached("exact", {
+  set.seed(1)
+  suppressMessages(ctFit(.laplace_test_data(), .laplace_test_model(),
+    backend = "julia", intoverpop = "laplace",
+    optimcontrol = list(finishsamples = 100)))
+})
 .laplace_augmented_fit <- function() .laplace_cached("augmented", suppressMessages(
   ctFit(.laplace_test_data(), .laplace_test_model(), backend = "julia",
     intoverpop = "augmented", optimcontrol = list(estonly = TRUE))))
@@ -699,6 +706,12 @@ test_that("one subject per study reproduces the subject level fit exactly", {
     T0VAR = matrix(0.5), MANIFESTMEANS = matrix("mmean"), id = "subject")))
   subjectlevel$pars$indvarying <- subjectlevel$pars$param %in% "mmean"
 
+  # On the layer: the subject filter would integrate the subject level's
+  # effect (`CTSEMHybrid`), which is the same likelihood computed otherwise,
+  # so the finish samples behind summary()'s popsd would differ by their
+  # Monte Carlo error. The study level's effect is a coordinate either way.
+  old <- options(ctsem.laplace.hybrid = FALSE)
+  on.exit(options(old), add = TRUE)
   set.seed(99)
   one <- suppressMessages(ctFit(dat, subjectlevel, backend = "julia",
     intoverpop = "laplace", cores = 1))

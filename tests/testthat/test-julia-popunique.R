@@ -363,6 +363,70 @@ test_that("own intercept variances the filter integrates match the Laplace coord
   }
 })
 
+# Own variances on an initial mean and a continuous intercept beside the
+# manifest intercepts: every cell affine in a linear Gaussian model, so the
+# filter integrates each kind exactly (an initial mean's column starts at its
+# slope, a continuous intercept's gains the discrete intercept's Jacobian at
+# every substep), and must equal the layer holding them as coordinates.
+.pu_means_model <- function() {
+  m <- suppressWarnings(suppressMessages(ctModel(type = "ct",
+    id = "id", manifestNames = c("Y1", "Y2", "Y3"), latentNames = c("eta1", "eta2"),
+    LAMBDA = matrix(c(1, 0.8, 0, 0, 0.5, 1), 3, 2),
+    DRIFT = matrix(c(-0.6, 0.2, -0.1, -0.4), 2, 2),
+    DIFFUSION = matrix(c(0.5, 0, 0.1, 0.4), 2, 2), MANIFESTVAR = diag(0.4, 3),
+    MANIFESTMEANS = matrix(c("mm1", "mm2", "mm3"), 3, 1),
+    T0VAR = diag(1, 2), T0MEANS = matrix(c("t0m1", 0), 2, 1),
+    CINT = matrix(c(0, "cint2"), 2, 1))))
+  m$pars$indvarying <- m$pars$param %in% c("t0m1", "cint2", "mm1", "mm2", "mm3")
+  m
+}
+
+.pu_means_data <- function() {
+  set.seed(17)
+  n <- 20; t <- 6
+  d <- data.frame(id = rep(seq_len(n), each = t), time = rep(seq_len(t) - 1, n) * 0.7)
+  person <- matrix(rnorm(n * 3), n, 3)
+  for (j in 1:3) d[[paste0("Y", j)]] <- person[d$id, j] + rnorm(n * t)
+  d$Y3[d$id > 14 & d$time > 2] <- NA
+  d
+}
+
+test_that("own variances on an initial mean and a continuous intercept are integrated by the filter, exactly", {
+  skip_without_julia()
+  m <- .pu_means_model()
+  d <- .pu_means_data()
+  old <- options(ctsem.laplace.hybrid = TRUE)
+  on.exit(options(old), add = TRUE)
+  cases <- list(
+    list(rank = 0, pu = TRUE, kinds = c(2L, 3L, 1L, 1L, 1L)),
+    list(rank = 1, pu = c("T0MEANS", "CINT"), kinds = c(2L, 3L)),
+    list(rank = 1, pu = TRUE, kinds = c(2L, 3L, 1L, 1L, 1L)))
+  set.seed(23)
+  for (case in cases) {
+    options(ctsem.laplace.hybrid = TRUE)
+    hy <- .pu_spec(d, m, poprank = case$rank, popunique = case$pu)
+    options(ctsem.laplace.hybrid = FALSE)
+    la <- .pu_spec(d, m, poprank = case$rank, popunique = case$pu)
+    expect_equal(sort(hy$laplace$hybrid$kind), sort(case$kinds))
+    expect_null(la$laplace$hybrid)
+    for (draw in 1:2) {
+      x <- rnorm(length(.pu_names(hy)), 0, 0.3)
+      rh <- .pu_eval(hy, x)
+      rl <- .pu_eval(la, x)
+      expect_equal(rh$value, rl$value, tolerance = 1e-9)
+      expect_equal(as.numeric(rh$gradient), as.numeric(rl$gradient), tolerance = 1e-7)
+      fw <- .pu_eval(hy, x, "forward")
+      expect_equal(rh$value, fw$value, tolerance = 1e-10)
+      expect_equal(as.numeric(rh$gradient), as.numeric(fw$gradient), tolerance = 1e-6)
+    }
+  }
+  # A stationary fit fixes every initial cell, so it has no initial mean to
+  # vary; the continuous intercept's own variance is still integrated.
+  options(ctsem.laplace.hybrid = TRUE)
+  st <- .pu_spec(d, m, poprank = 1, popunique = "CINT", stationary = TRUE)
+  expect_equal(st$laplace$hybrid$kind, 3L)
+})
+
 test_that("integrated own intercepts beside shared effects on the dynamics are still Laplace exactly", {
   skip_without_julia()
   # The shared effect loads on DRIFT and DIFFUSION, so the deviations'
@@ -393,6 +457,68 @@ test_that("integrated own intercepts beside shared effects on the dynamics are s
     expect_equal(as.numeric(adjoint$gradient), as.numeric(forward$gradient),
       tolerance = 1e-6)
   }
+})
+
+# A full-rank level hands the filter every affine effect, integrated given the
+# level's other effects (a block): the layer keeps those as its coordinates,
+# the leading columns of its root taken with the block last, which carry the
+# block's conditional mean, and the filter integrates the rest of the root.
+# With a random drift beside them the Laplace term is an approximation, the
+# same one either way. A subject that never observes an item keeps that
+# item's column.
+.pu_block_model <- function(ind) {
+  m <- suppressWarnings(suppressMessages(ctModel(type = "ct",
+    id = "id", manifestNames = c("Y1", "Y2", "Y3"), latentNames = c("eta1", "eta2"),
+    LAMBDA = matrix(c(1, 0.8, 0, 0, 0.5, 1), 3, 2),
+    DRIFT = matrix(c("drift11", 0.2, -0.1, -0.4), 2, 2),
+    DIFFUSION = matrix(c(0.5, 0, 0.1, 0.4), 2, 2), MANIFESTVAR = diag(0.4, 3),
+    MANIFESTMEANS = matrix(c("mm1", "mm2", "mm3"), 3, 1),
+    T0VAR = diag(1, 2), T0MEANS = matrix(c("t0m1", 0), 2, 1),
+    CINT = matrix(c(0, "cint2"), 2, 1))))
+  m$pars$indvarying <- m$pars$param %in% ind
+  m
+}
+
+test_that("a full-rank level's affine effects are integrated given the rest, exactly", {
+  skip_without_julia()
+  d <- .pu_means_data()
+  d$Y2[d$id == 3] <- NA
+  old <- options(ctsem.laplace.hybrid = TRUE)
+  on.exit(options(old), add = TRUE)
+  cases <- list(
+    list(ind = c("t0m1", "cint2", "mm1", "mm2", "mm3"), kinds = c(1L, 1L, 1L, 2L, 3L)),
+    list(ind = c("drift11", "mm1", "mm3"), kinds = c(1L, 1L)),
+    list(ind = c("drift11", "t0m1", "cint2", "mm2"), kinds = c(1L, 2L, 3L)))
+  set.seed(29)
+  for (case in cases) {
+    m <- .pu_block_model(case$ind)
+    options(ctsem.laplace.hybrid = TRUE)
+    hy <- .pu_spec(d, m)
+    options(ctsem.laplace.hybrid = FALSE)
+    la <- .pu_spec(d, m)
+    expect_true(isTRUE(hy$laplace$hybrid$block))
+    expect_equal(sort(hy$laplace$hybrid$kind), case$kinds)
+    expect_null(la$laplace$hybrid)
+    for (draw in 1:2) {
+      x <- rnorm(length(.pu_names(hy)), 0, 0.3)
+      rh <- .pu_eval(hy, x)
+      rl <- .pu_eval(la, x)
+      expect_equal(rh$value, rl$value, tolerance = 1e-9)
+      expect_equal(as.numeric(rh$gradient), as.numeric(rl$gradient), tolerance = 1e-7)
+      fw <- .pu_eval(hy, x, "forward")
+      expect_equal(as.numeric(rh$gradient), as.numeric(fw$gradient), tolerance = 1e-6)
+    }
+  }
+  # SAEM samples every effect of the level, so a fit that runs it keeps them
+  # in the layer.
+  options(ctsem.laplace.hybrid = TRUE)
+  sa <- .pu_spec(d, .pu_block_model(c("drift11", "mm1", "mm3")),
+    optimcontrol = list(saem = 5))
+  expect_null(sa$laplace$hybrid)
+  # One affine effect beside the level's others is cheaper as a coordinate
+  # (the cost rule in `.ctJuliaLaplaceHybrid()`); alone it is the filter's.
+  expect_null(.pu_spec(d, .pu_block_model(c("drift11", "mm1")))$laplace$hybrid)
+  expect_true(isTRUE(.pu_spec(d, .pu_block_model("mm1"))$laplace$hybrid$block))
 })
 
 test_that("a measurement error written in a time dependent predictor keeps the deviations integrated, exactly", {
@@ -559,6 +685,34 @@ test_that("the gated floor on integrated deviations is the layer's, unit for uni
         tolerance = 1e-7)
     }
   }
+  # At full rank the intercepts are a block integrated given the dynamics'
+  # effects, and the gate decides on the same joint curvature. At these points
+  # the two inner solves reach the same modes. At seed 2 they do not: 16 units
+  # reach a lower mode with the block, its term at the layer's mode being the
+  # layer's -- a mode search over two coordinates instead of five, not the
+  # gate (review/FITTING-filter-effects-2026-10-24.md).
+  options(ctsem.laplace.hybrid = TRUE)
+  fspec <- .pu_spec(d, m, optimcontrol = list(laplace_floor = "gated"))
+  options(ctsem.laplace.hybrid = FALSE)
+  flayer <- .pu_spec(d, m, optimcontrol = list(laplace_floor = "gated"))
+  expect_true(isTRUE(fspec$laplace$hybrid$block))
+  fobj <- list(ctsem:::.ctJuliaObjective(handle(fspec), hybrid = TRUE),
+    ctsem:::.ctJuliaObjective(handle(flayer), hybrid = TRUE))
+  fprev <- lapply(fobj, function(o) ctsem:::.ctJuliaCall(
+    "ContinuousTimeSEM.ctsem_set_laplace_floor!", o, "gated", hi = 0.95))
+  on.exit(for (i in seq_along(fobj)) ctsem:::.ctJuliaCall(
+    "ContinuousTimeSEM.ctsem_set_laplace_floor!", fobj[[i]], "gated",
+    hi = fprev[[i]]$hi), add = TRUE)
+  for (seed in c(3, 4)) {
+    set.seed(seed)
+    x <- rnorm(length(.pu_names(fspec)), 0, 1)
+    full <- .pu_eval(flayer, x)
+    hybrid <- .pu_eval(fspec, x)
+    expect_equal(gated(fobj[[1]]), gated(fobj[[2]]))
+    expect_equal(hybrid$value, full$value, tolerance = 1e-9)
+    expect_equal(as.numeric(hybrid$gradient), as.numeric(full$gradient),
+      tolerance = 1e-7)
+  }
 })
 
 test_that("quadrature integrates the filter's deviations at every node, and spans the shared effects alone", {
@@ -671,14 +825,19 @@ test_that("reporting through the hybrid is the layer's: population, subjects, mo
   on.exit(options(old), add = TRUE)
   d <- .pu_dyn_data()
   handle <- function(s) structure(s, class = c("ctJuliaModel", "ctFitModel"))
+  # The third case is full rank: the intercepts are a block integrated given
+  # the dynamics' effects.
   cases <- list(list(m = .pu_dyn_model(), rank = 1, pu = "MANIFESTMEANS"),
-    list(m = .pu_model(), rank = 0, pu = TRUE))
+    list(m = .pu_model(), rank = 0, pu = TRUE),
+    list(m = .pu_dyn_model()))
+  spec_of <- function(case) if (is.null(case$rank)) .pu_spec(d, case$m) else
+    .pu_spec(d, case$m, poprank = case$rank, popunique = case$pu)
   set.seed(21)
   for (case in cases) {
     options(ctsem.laplace.hybrid = TRUE)
-    hy <- .pu_spec(d, case$m, poprank = case$rank, popunique = case$pu)
+    hy <- spec_of(case)
     options(ctsem.laplace.hybrid = FALSE)
-    la <- .pu_spec(d, case$m, poprank = case$rank, popunique = case$pu)
+    la <- spec_of(case)
     expect_false(is.null(hy$laplace$hybrid))
     x <- rnorm(length(.pu_names(hy)), 0, 0.3)
     module <- ctsem:::.ctJuliaModule(hy$project)
@@ -756,7 +915,7 @@ test_that("sequential predictions are the fitted model's own, row by row", {
         popcov <- as.matrix(ctsem:::.ctBackendJuliaValue(module$ctsem_laplace_popcov(o,
           xx, 1L)))
         slope <- spec$laplace$hybrid$slope
-        rows <- spec$laplace$hybrid$manifest
+        rows <- spec$laplace$hybrid$target[spec$laplace$hybrid$kind == 1L]
         added <- matrix(0, 3, 3)
         added[rows, rows] <- diag(slope, 3) %*% popcov %*% diag(slope, 3)
         for (r in first) {

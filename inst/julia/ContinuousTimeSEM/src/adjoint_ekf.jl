@@ -77,8 +77,10 @@ mutable struct CTSEMPredictRecord{T}
     series_intercept::Bool
     series_noise::Bool
     Qd::Matrix{T}
-    # `X` entering the substep (`CTSEMHybrid`), `n x q`; `0 x 0` without.
+    # `X` entering the substep (`CTSEMHybrid`), `n x q`, and what the substep
+    # added to a continuous intercept's column; `0 x 0` without.
     Xh::Matrix{T}
+    Xinc::Matrix{T}
 end
 
 """One TD-predictor impulse."""
@@ -114,10 +116,15 @@ end
 
 The deviations the filter integrated (`CTSEMHybrid`), for the reverse pass:
 what the pass ended with -- `q`, the columns' items and manifests (`item`,
-`col`), the accumulated `S` and `s`, each column's `g` and `dg/draw` -- and the
-reverse state: the cotangents of `S` and `s` from the closing term, the
-cotangent of `X` carried backwards through the rows, and each item's own-sd
-cotangent (`psibar`), which the caller adds to the raw gradient. Scratch for
+`col`), the accumulated `S` and `s`, the factor `G` (`q x rd`), for own
+variances its diagonal `g` and `dg/draw`, for a block the level's free raw
+values `lvals` -- and the reverse state: the cotangents of `S` and `s` from
+the closing term, the cotangent of `X` carried backwards through the rows,
+`Gbar`, and from it each item's own-sd cotangent (`psibar`) or the level's
+(`lpbar`, over `CTSEMHybrid`'s `lparams`), which the caller adds to the raw
+gradient; and a block factor's derivatives in the level parameters, kept with
+the values they were taken at (`dkey`, `dLb`, `dok`, `dversion`;
+`_hybrid_block_derivatives!`). Scratch for
 the per-row work beside it. Every array is sized by capacity -- the model's
 hybrid item count, the manifest count, the state count -- and grows only, so a
 pass after the first allocates nothing; loops read the leading block they need.
@@ -126,6 +133,16 @@ mutable struct CTSEMHybridTape{T}
     active::Bool
     mode::Int
     dfix::Vector{T}
+    G::Matrix{T}
+    rd::Int
+    block::Bool
+    lvals::Vector{T}
+    Gbar::Matrix{T}
+    lpbar::Vector{T}
+    dkey::Vector{T}
+    dLb::Array{T,3}
+    dok::Vector{Bool}
+    dversion::Int
     q::Int
     item::Vector{Int}
     col::Vector{Int}
@@ -152,7 +169,8 @@ mutable struct CTSEMHybridTape{T}
     uv::Vector{T}
     beta::Vector{T}
 end
-CTSEMHybridTape{T}() where {T} = CTSEMHybridTape{T}(false, 0, T[], 0, Int[], Int[],
+CTSEMHybridTape{T}() where {T} = CTSEMHybridTape{T}(false, 0, T[], zeros(T, 0, 0), 0,
+    false, T[], zeros(T, 0, 0), T[], T[], zeros(T, 0, 0, 0), Bool[], -1, 0, Int[], Int[],
     zeros(T, 0, 0), T[], T[], T[], zeros(T, 0, 0), T[], zeros(T, 0, 0), T[],
     zeros(T, 0, 0), zeros(T, 0, 0), zeros(T, 0, 0), zeros(T, 0, 0), zeros(T, 0, 0),
     zeros(T, 0, 0), T[], zeros(T, 0, 0), zeros(T, 0, 0), zeros(T, 0, 0),
@@ -829,7 +847,7 @@ _empty_predict_record(::Type{T}, n::Int, k::Int, naff::Int=k) where {T} =
     CTSEMPredictRecord{T}(zeros(T, n), zeros(T, n, n), zeros(T, n, n),
         zeros(T, n, n), zeros(T, n, n), zeros(T, n, n), zeros(T, k, k),
         zeros(T, naff), zeros(T, naff), zero(T), false, false, zeros(T, 0, 0),
-        zeros(T, 0, 0))
+        zeros(T, 0, 0), zeros(T, 0, 0))
 
 """
 Snapshot the substep inputs, which `_ekf_predict_step!` overwrites.
@@ -878,6 +896,7 @@ function _record_predict!(tape::CTSEMAdjointTape{T}, ws, pars,
     if series.noise
         record.Qd = _tape_fill!(record.Qd, view(series.Q, 1:k, 1:k))
     end
+    _hybrid_record_Xinc!(record, ws.hyb, n)
     _tape_push!(tape, :predict, index)
     return nothing
 end
@@ -1067,8 +1086,11 @@ function _reverse_predict!(x̄::Vector{T}, P̄::Matrix{T}, θ̄ca,
 
     # --- mean: x⁺ = A x + dINT
     _ctsem_outer!(Ā, x̄, x, one(T), one(T))
-    # and the integrated deviations' X⁺ = A X (`CTSEMHybrid`).
-    hyb === nothing || _hybrid_reverse_predict!(Ā, A, hyb, record, n)
+    # and the integrated deviations' X⁺ = A X + Xinc (`CTSEMHybrid`), a
+    # continuous intercept's increment reversed through `JAx_bar` and `Ā` as
+    # the intercept's own is below.
+    hyb === nothing || _hybrid_reverse_predict!(Ā, JAx_bar, A, JAx, hyb,
+        aws.sp.hybrid, record, n, aws.affine_dim, sc, record.dt)
     copyto!(dINT_bar, x̄)
     _ctsem_mulTvec!(x̄_new, A, x̄)
 
@@ -1835,7 +1857,7 @@ function _ctsem_reverse_tape!(tape::CTSEMAdjointTape{T},
         elseif kind === :hybrid
             # The integrated deviations' closing term; last in the forward, so
             # first here (`CTSEMHybrid`).
-            _reverse_hybrid_marginal!(tape.hyb, n, length(sp.hybrid.manifests))
+            _reverse_hybrid_marginal!(tape.hyb, n, _hybrid_items(sp.hybrid), sp.hybrid)
         elseif kind === :binary
             # After the Gaussian block of the same row, because the forward
             # applied binary observations before it. By the workspace's type,

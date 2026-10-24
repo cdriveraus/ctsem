@@ -90,7 +90,7 @@ function ctsem_laplace_sequential(laplace::CTSEMLaplaceObjective, values::Abstra
     end
     hyb = sp.hybrid
     d = maximum(units.dims; init=0)
-    W = max(d + (_hybrid_on(hyb) ? length(hyb.manifests) : 0), 1)
+    W = max(d + (_hybrid_on(hyb) ? _hybrid_items(hyb) : 0), 1)
     S = ForwardDiff.Dual{_LaplaceSequentialTag,Float64,W}
     _laplace_ensure_pool!(laplace)
     _laplace_parallel(laplace, eachindex(units.members)) do U
@@ -119,6 +119,7 @@ function _laplace_sequential_unit!(out, laplace::CTSEMLaplaceObjective, U::Integ
     hyb = sp.hybrid
     hybrid = _hybrid_on(hyb)
     lv = spec.levels[1]
+    B = hybrid ? _hybrid_dev_map(hyb, lv, theta) : zeros(0, 0)
     blocks = units.blocks[U]
     d = length(saved.mode)
     npar = length(theta)
@@ -175,7 +176,7 @@ function _laplace_sequential_unit!(out, laplace::CTSEMLaplaceObjective, U::Integ
             # that item still carries.
             tt = min(t + 1, T)
             _laplace_truncate!(so, full, tt)
-            pass_items = hybrid ? collect(1:length(hyb.manifests)) : Int[]
+            pass_items = hybrid ? collect(1:_hybrid_items(hyb)) : Int[]
             D = d + length(pass_items)
             z0 = zeros(Float64, D)
             SigmaP = zeros(Float64, D, D)
@@ -198,14 +199,14 @@ function _laplace_sequential_unit!(out, laplace::CTSEMLaplaceObjective, U::Integ
                 (ia == 0 || ib == 0) && continue
                 SigmaP[a, b] = Sigma[ia, ib]
             end
-            _laplace_sequential_effects!(out, offset, t, T, Ls[1], lv, hyb,
-                theta, pass_items, z0, SigmaP, d, D)
+            _laplace_sequential_effects!(out, offset, t, T, Ls[1], B,
+                pass_items, z0, SigmaP, d, D)
             zd = [_laplace_sequential_seed(S, z0[a], a) for a in 1:D]
             ud = S[zd[a] for a in 1:d]
             x = _laplace_member_values(theta, spec, Ls, ud, units.offsets[U][1])
-            for (c, k) in enumerate(pass_items)
-                psi = _hybrid_item_sd(hyb, lv, theta, k)
-                x[lv.re_index[hyb.effect[k]]] += psi * zd[d + c]
+            for (c, k) in enumerate(pass_items), p in axes(B, 1)
+                b = B[p, k]
+                iszero(b) || (x[lv.re_index[p]] += b * zd[d + c])
             end
             trace = CTSEMKalmanTrace(S, n, m, tt, 1, nall)
             trace.offset = 0
@@ -235,15 +236,15 @@ function _laplace_sequential_unit!(out, laplace::CTSEMLaplaceObjective, U::Integ
 end
 
 """
-    _laplace_sequential_effects!(out, offset, t, T, L, lv, hyb, theta, items, z0, Sigma, d, D)
+    _laplace_sequential_effects!(out, offset, t, T, L, B, items, z0, Sigma, d, D)
 
 The effects' posterior given rows `1:t` on the raw scale, recorded as row `t`'s
 updated value and row `t + 1`'s predicted one: each varying parameter's
 deviation `A z0` and covariance `A Sigma A'`, `A` the level's loading for the
-effects and each integrated item's sd for its deviation.
+effects and `B`'s column (`_hybrid_dev_map`) for each integrated item.
 """
 function _laplace_sequential_effects!(out, offset::Integer, t::Integer, T::Integer,
-    L::AbstractMatrix, lv, hyb, theta::Vector{Float64}, items::Vector{Int},
+    L::AbstractMatrix, B::AbstractMatrix, items::Vector{Int},
     z0::Vector{Float64}, Sigma::Matrix{Float64}, d::Integer, D::Integer)
     k = size(L, 1)
     k == 0 && return out
@@ -251,8 +252,8 @@ function _laplace_sequential_effects!(out, offset::Integer, t::Integer, T::Integ
     @inbounds for a in 1:min(d, size(L, 2)), j in 1:k
         A[j, a] = L[j, a]
     end
-    for (c, item) in enumerate(items)
-        A[hyb.effect[item], d + c] += _hybrid_item_sd(hyb, lv, theta, item)
+    for (c, item) in enumerate(items), p in axes(B, 1)
+        A[p, d + c] += B[p, item]
     end
     # The engine's own products: this runs per row on every thread, where a BLAS
     # matrix product would queue on OpenBLAS's lock.

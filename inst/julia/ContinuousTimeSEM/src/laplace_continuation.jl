@@ -2563,10 +2563,11 @@ member (`entries`), and the `positions` it was built from. `nothing` when a
 random effect sits on a population parameter, which the assembly does not
 handle.
 
-`filtered` are the own variances of deviations the filter integrates
-(`CTSEMHybrid`'s `psi_index`): a level's parameters, but read by the filter
-and no part of `L`, so they are seeded with the active ones, and their
-entries' `dL` is zero.
+`filtered` are the level parameters a member's filter reads itself
+(`_hybrid_filtered`): own variances of deviations the filter integrates, no
+part of `L`, whose entries' `dL` is zero; or a block's scales and
+correlations, which reach the member through `L` as well. They are seeded
+with the active ones.
 """
 function _continuation_hessian_layout(spec::CTSEMLaplaceSpec, npar::Integer,
     positions::Vector{Vector{Int}}, dL, filtered::Vector{Int}=Int[])
@@ -3016,7 +3017,7 @@ function _continuation_flagged_hessian(o::CTSEMLaplaceContinuation,
     positions = Vector{Int}[_laplace_level_positions(spec, l) for l in eachindex(spec.levels)]
     hyb = laplace.objective.params.hybrid
     layout = _continuation_hessian_layout(spec, npar, positions, dL,
-        _hybrid_on(hyb) ? hyb.psi_index : Int[])
+        _hybrid_on(hyb) ? _hybrid_filtered(hyb) : Int[])
     (layout === nothing || isempty(layout.active)) && return nothing
     d2L = _continuation_level_chol_second_derivatives(theta, spec, positions)
     _laplace_ensure_pool!(laplace)
