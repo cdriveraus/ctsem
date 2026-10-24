@@ -47,15 +47,55 @@ end
     # Too few rows to hold any out: no choice, and why.
     few = CIS._is_coreset_choose(_cis_rows(X[1:8, :], y[1:8]), rd, Int[])
     @test !few.chosen && few.why === :held
-    # Draws that move in d directions: no size of d or fewer is tried, and with
-    # no more units than that none is chosen.
-    tr = _cis_rows(X[1:200, :], y[1:200])
-    tr.dims = 20
-    wide = CIS._is_coreset_choose(tr, rd, Int[])
-    @test !wide.chosen || count(>(0), wide.w) > 20
-    tr.dims = 60
-    none60 = CIS._is_coreset_choose(tr, rd, Int[])
-    @test !none60.chosen && none60.why === :dims
+end
+
+@testset "a size is held to the full sum's gradient at held-out scored draws" begin
+    # More parameters (30) than units (20), the draws moving in every one.
+    # Units alike in how they depend on the parameters: one carries the sum's
+    # gradient. Units each moving in a direction of its own: five carry none
+    # of the other fifteen's.
+    rng = Random.Xoshiro(11)
+    N, p, D = 20, 30, 8
+    Xs = randn(rng, p, D)
+    alike = zeros(N, p, D)
+    own = zeros(N, p, D)
+    for d in 1:D
+        g = randn(rng, p)
+        for i in 1:N
+            alike[i, :, d] .= g .* (1 + 1e-4 * randn(rng))
+            own[i, i, d] = randn(rng)
+        end
+    end
+    learnt(S) = begin
+        tr = CIS._ISRows(N)
+        CIS._is_learn_scores!(tr, Xs, S, zeros(D))
+        tr
+    end
+    force(tr, units, w) = CIS._is_force_error(CIS._is_score_rows(tr, 0.0), tr,
+        CIS._is_held_draws(tr.zdraw), units, w, 0.0)
+    tol = CIS._IS_CORESET_TOL.force
+    @test length(CIS._is_held_draws(learnt(alike).zdraw)) == 2
+    @test force(learnt(alike), [1], [Float64(N)]) < tol
+    @test force(learnt(own), collect(1:5), fill(4.0, 5)) > tol
+    @test force(learnt(own), collect(1:N), ones(N)) < 1e-10
+    # A parameter the draws do not move counts for nothing: units alike but
+    # for one such parameter, where one unit is far from the sum.
+    still = copy(alike)
+    for i in 1:N
+        still[i, 25, :] .= Float64(i)
+    end
+    Xstill = copy(Xs)
+    Xstill[25, :] .= 0.0
+    trs = CIS._ISRows(N)
+    CIS._is_learn_scores!(trs, Xstill, still, zeros(D))
+    @test force(trs, [1], [Float64(N)]) < tol
+    trm = CIS._ISRows(N)
+    CIS._is_learn_scores!(trm, Xs, still, zeros(D))
+    @test force(trm, [1], [Float64(N)]) > tol
+    # With no draw held out the values decide.
+    tr3 = CIS._ISRows(N)
+    CIS._is_learn_scores!(tr3, Xs[:, 1:3], own[:, :, 1:3], zeros(3))
+    @test force(tr3, [1], [1.0]) == 0.0
 end
 
 @testset "score rows fit the weights that values alone leave open" begin
