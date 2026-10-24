@@ -2742,6 +2742,50 @@ ctOptimFitLpgFunc <- function(fit, cores=1){
     gradients = paths$gradients, calls = paths$calls)
 }
 
+# 'checked''s guard against an improper posterior, given the directions it is
+# about to sample (columns of `directions`, in the parameters, at the scale of
+# the normal `cov`, with their `widths`) and the centre it placed the normal
+# at: the parameters in `flagged` and those the directions hold most of the
+# normal's variance of are walked (`.ctImproperParameters()`), less those
+# `state` says were walked already, and every parameter found improper so far
+# is held, its conditional direction under `cov` taken out of the sampled
+# ones (`.ctHoldOff()`). Called before DAIS and again on its recheck, which
+# can name a parameter the first check did not: on the image model DAIS
+# widened the initial variance, the recheck named it, and its plateau at zero
+# made that sd 0.35-0.80 by seed where the curvature's is 0.16. A warning
+# names what each call newly found.
+.ctImproperGuard <- function(lpg, est, cov, directions, widths, centre, flagged,
+  parnames = NULL, state = list(walked = integer(), parameters = integer(),
+    reaches = integer(), gradients = 0L, calls = 0L, limit = NA_real_)) {
+  share <- rowSums(directions^2) / pmax(diag(cov), .Machine$double.xmin)
+  walk <- setdiff(sort(unique(c(flagged, which(share > 0.5)))), state$walked)
+  found <- .ctImproperParameters(lpg, est, cov, walk)
+  state$walked <- sort(c(state$walked, walk))
+  state$gradients <- state$gradients + .ctJuliaOr(found$gradients, 0L)
+  state$calls <- state$calls + .ctJuliaOr(found$calls, 0L)
+  if (!is.null(found$limit)) state$limit <- found$limit
+  new <- found$reaches
+  if (length(new)) {
+    named <- if (length(parnames) == length(est)) parnames else paste0('par', seq_along(est))
+    j <- unique(abs(new))
+    warning('The posterior had not fallen off ', state$limit, ' standard errors out ',
+      'along ', paste0(named[abs(new)], ifelse(new < 0, ' (below)', ' (above)'),
+        collapse = ', '), ': with no prior there it is improper, so the intervals ',
+      'along ', if (length(j) > 1) 'them' else 'it', " are the curvature's at the ",
+      'estimate. priors = TRUE gives a proper posterior.', call. = FALSE)
+    state$reaches <- c(state$reaches, new)
+    state$parameters <- sort(unique(c(state$parameters, j)))
+  }
+  if (length(state$parameters) && NCOL(directions)) {
+    held <- .ctHoldOff(directions, widths, cov, cov[, state$parameters, drop = FALSE],
+      centre, est)
+    directions <- held$directions
+    widths <- held$widths
+    centre <- held$centre
+  }
+  list(directions = directions, widths = widths, centre = centre, state = state)
+}
+
 # The directions 'checked' samples (columns of `directions`, in the
 # parameters, at the scale of the normal `cov`, with their `widths`) and the
 # centre it placed the normal at, with the directions in `hold` (columns, in
@@ -2869,33 +2913,18 @@ ctOptimFitLpgFunc <- function(fit, cores=1){
   # is held at the normal's width and centred at the estimate, by the sampler
   # and by DAIS alike: no reweighting can represent mass that does not end.
   hold <- uncertaintyfit$details$flatdirections$vectors
-  improper <- NULL
+  guard <- NULL
   if (checked && !proper) {
-    cov <- uncertaintyfit$cov
-    share <- rowSums(directions^2) / pmax(diag(cov), .Machine$double.xmin)
-    walked <- sort(unique(c(uncertaintyfit$details$normalcheck$parameters,
-      which(share > 0.5))))
-    walk <- .ctImproperParameters(lpg, est, cov, walked)
-    if (length(walk$reaches)) {
-      j <- sort(unique(abs(walk$reaches)))
-      named <- if (length(parnames) == length(est)) parnames else paste0('par', seq_along(est))
-      warning('The posterior had not fallen off ', walk$limit, ' standard errors out ',
-        'along ', paste0(named[abs(walk$reaches)], ifelse(walk$reaches < 0, ' (below)',
-          ' (above)'), collapse = ', '), ': with no prior there it is improper, so ',
-        'the intervals along ', if (length(j) > 1) 'them' else 'it', ' are the ',
-        "curvature's at the estimate. priors = TRUE gives a proper posterior.",
-        call. = FALSE)
-      improper <- cov[, j, drop = FALSE]
-      hold <- cbind(hold, improper)
-      held <- .ctHoldOff(directions, widths, cov, improper, centre, est)
-      directions <- held$directions
-      widths <- held$widths
-      centre <- held$centre
-    }
-    uncertaintyfit$details$improper <- c(walk, list(walked = walked,
-      parameters = if (length(walk$reaches)) j else integer()))
+    guard <- .ctImproperGuard(lpg, est, uncertaintyfit$cov, directions, widths, centre,
+      uncertaintyfit$details$normalcheck$parameters, parnames)
+    directions <- guard$directions
+    widths <- guard$widths
+    centre <- guard$centre
+    held <- guard$state$parameters
+    if (length(held)) hold <- cbind(hold, uncertaintyfit$cov[, held, drop = FALSE])
+    uncertaintyfit$details$improper <- guard$state
     if (!ncol(directions)) {
-      return(list(samples = ctOptimNormalDraws(centre, cov, finishsamples),
+      return(list(samples = ctOptimNormalDraws(centre, uncertaintyfit$cov, finishsamples),
         uncertaintyfit = uncertaintyfit, control = control, draws = 'normal'))
     }
   }
@@ -2930,14 +2959,16 @@ ctOptimFitLpgFunc <- function(fit, cores=1){
     centre <- recheck$centre
     directions <- recheck$directions
     widths <- recheck$widths
-    # The recheck about DAIS's normal names the improper directions again
-    # wherever the density departs along them: held out as before.
-    if (!is.null(improper) && ncol(directions)) {
-      held <- .ctHoldOff(directions, widths, cov2, improper, centre, est)
-      directions <- held$directions
-      widths <- held$widths
-      centre <- held$centre
+    # The recheck about DAIS's normal: walked again for what it names anew,
+    # and every improper direction held out of it.
+    if (!is.null(guard) && ncol(directions)) {
+      guard <- .ctImproperGuard(lpg, est, cov2, directions, widths, centre,
+        recheck$parameters, parnames, guard$state)
+      directions <- guard$directions
+      widths <- guard$widths
+      centre <- guard$centre
       dais$centre <- centre
+      uncertaintyfit$details$improper <- guard$state
     }
     uncertaintyfit$cov <- cov2
     uncertaintyfit$details$dais <- dais
@@ -3034,6 +3065,10 @@ ctOptimFitLpgFunc <- function(fit, cores=1){
     names(stein$meanerror) <- names(stein$z) <- names(stein$sdratio) <-
       names(stein$spreadz) <- named
     off <- .ctSteinOff(stein)
+    # Those held at the curvature because their posterior is improper: the
+    # draws there are the normal's on purpose, and the warning above said so.
+    if (!is.null(guard)) for (f in c('mean', 'spread'))
+      off[[f]] <- setdiff(off[[f]], guard$state$parameters)
     if (length(off$mean) || length(off$spread)) {
       list3 <- function(i) paste0(paste(utils::head(named[i], 3), collapse = ', '),
         if (length(i) > 3) paste0(' and ', length(i) - 3, ' more'))
