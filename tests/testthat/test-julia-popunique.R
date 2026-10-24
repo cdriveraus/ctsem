@@ -576,6 +576,27 @@ test_that("an objective with every effect in the filter sums its units as the ma
     ploop <- get(module$ctsem_laplace_evaluate(o, xx, gradient = FALSE,
       nested_gradient = TRUE, coreset = cs))
     expect_equal(part$value, ploop$value, tolerance = 1e-10)
+    # The importance sampler's entry points (laplace_coreset.jl) on two
+    # columns, as test-julia-coreset.R checks them on a model with
+    # coordinates: a subset's gradient is the full one less the scores off it,
+    # and a gradient batch that teaches returns the units' rows.
+    vec <- ctsem:::.ctJuliaVector
+    value <- ctsem:::.ctBackendJuliaValue
+    X <- cbind(x, rnorm(length(x), 0, 0.3))
+    gfull <- matrix(as.numeric(value(module$ctsem_evaluate_batch_gradient(o, X))),
+      ncol = 2)
+    g <- matrix(as.numeric(value(module$ctsem_coreset_batch_gradient(o, X,
+      vec(units), vec(w)))), ncol = 2)
+    noprior <- as.matrix(get(module$ctsem_subject_gradients(o, xx, prior = FALSE))$scores)
+    expect_equal(g[1, 1], part$value, tolerance = 1e-10)
+    expect_equal(g[-1, 1], as.numeric(part$gradient), tolerance = 1e-10)
+    expect_equal(g[-1, 1], gfull[-1, 1] - colSums(noprior) +
+      colSums(noprior[units, ] * w), tolerance = 1e-8)
+    tg <- value(module$ctsem_coreset_terms_gradient(o, X, vec(1L)))
+    expect_equal(matrix(as.numeric(tg$gradient), ncol = 2), gfull[-1, ],
+      tolerance = 1e-10)
+    expect_equal(array(as.numeric(tg$scores), c(nunits, length(x), 1))[, , 1],
+      noprior, tolerance = 1e-8)
   }
 })
 
