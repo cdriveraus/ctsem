@@ -302,6 +302,13 @@ end
 the coreset is made: DAIS's free directions, its parameters less those it holds."""
 _is_coreset_dims!(cs::CTSEMISCoreset, d::Integer) = (cs.rows.dims = Int(d); nothing)
 
+"""Whether any coreset can be chosen: more units than the draws move in."""
+_is_coreset_possible(cs::CTSEMISCoreset) = cs.rows.dims < cs.N
+
+"""The coresets chosen, of the choices tried (`cs.nchoose`, a row each of the
+trace; code 1 is a choice made)."""
+_is_chosen(cs::CTSEMISCoreset) = count(t -> t[3] == 1.0, cs.trace)
+
 _is_smooth(old, new) = isnan(old) ? Float64(new) : 0.7 * old + 0.3 * new
 _is_round(cs::CTSEMISCoreset) = _ISRound(cs.values,
     isnan(cs.grads) ? 0.3 * cs.values : cs.grads, 8)
@@ -958,7 +965,7 @@ function ctsem_is_coreset_record(cs::CTSEMISCoreset)
         size=cs.has_cf ? _is_active_n(cs) : 0, sizes=cs.sizes, phase=String(cs.phase),
         switches=cs.switches, rounds_on_coreset=cs.runs_total, failed_checks=cs.fails_total,
         expected_round_cost=cs.has_cf ? cs.cf_cost : NaN, free_checks=cs.free_total,
-        chosen=cs.nchoose, chosen_passed=cs.proved,
+        chosen=_is_chosen(cs), attempts=cs.nchoose, chosen_passed=cs.proved,
         seconds=order(cs.secs, (:full, :coreset, :gradient_full, :gradient_coreset, :choose)),
         draws=order(cs.draws, (:full, :coreset, :gradient_full, :gradient_coreset)),
         full_for=order(cs.why, (:training, :small, :check, :gradient_check, :failed_rest, :end)),
