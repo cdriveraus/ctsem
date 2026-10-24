@@ -121,27 +121,12 @@ end
 """The deviations' posterior given the rows the buffers have seen: mean into
 `tr.dq`, covariance into `tr.Cq`; `false` where `M` does not factor."""
 function _mixture_hybrid_posterior!(tr::CTSEMMixtureTrace, hb)
-    q, rd, G = hb.q, hb.rd, hb.G
-    @inbounds for b in 1:rd, a in 1:rd
-        acc = a == b ? 1.0 : 0.0
-        for e in 1:q
-            t = 0.0
-            for c in 1:q
-                t += G[c, a] * hb.S[c, e]
-            end
-            acc += t * G[e, b]
-        end
-        tr.Mq[a, b] = acc
-    end
+    q, rd = hb.q, hb.rd
+    # The filter's own closing (`_hybrid_closing!`), `Cq` its scratch until it
+    # takes the covariance (`q <= rd`, so `rd x q` fits).
+    _hybrid_closing!(tr.Mq, tr.bq, tr.Cq, hb.G, hb.S, hb.s, q, rd)
     F = _ctsem_cholesky(tr.Mq, rd)
     issuccess(F) || return false
-    @inbounds for a in 1:rd
-        acc = 0.0
-        for c in 1:q
-            acc += G[c, a] * hb.s[c]
-        end
-        tr.bq[a] = acc
-    end
     ldiv!(tr.dq, F, tr.bq)
     @inbounds for a in 1:rd
         fill!(tr.eq, 0.0)
@@ -348,8 +333,9 @@ unit, quasi-random, shared equally between the prior and the Laplace posteriors
 given the record cut at rows T/8, T/4, T/2 and T (covariances scaled by
 `scale^2`), so some component sits near every row's posterior, and weighted by
 their mixture (deterministic multiple importance sampling, the balance
-heuristic). `ess` is each unit's smallest effective sample size over its rows.
-Single-level fits. With non-Gaussian indicators, each one's predictive
+heuristic). `ess` is each unit's smallest effective sample size over its rows;
+`Inf` for a unit with no coordinate, whose one draw is exact (the filter
+integrating every effect it has). Single-level fits. With non-Gaussian indicators, each one's predictive
 distribution function just below and at what was observed, in the filter's
 order (`pitlower`, `pitupper`), for the probability integral transforms the
 misfit tests use in place of their errors (item_pit.jl).
@@ -374,8 +360,8 @@ function ctsem_laplace_sequential_mixture(laplace::CTSEMLaplaceObjective,
     particles >= 2 || throw(ArgumentError("need at least two particles"))
     sp = laplace.objective.params
     ws0 = _init_continuous_ekf_workspace(Float64, sp)
-    n = _val(ws0.state_dim)
-    m = _val(ws0.manifest_dim)
+    n = ws0.state_dim
+    m = ws0.manifest_dim
     types = ws0.manifesttype
     Ls = _laplace_popchols(theta, laplace.spec)
     subjects = laplace.objective.subject_objectives
@@ -414,12 +400,8 @@ function _laplace_mixture_unit!(out, laplace::CTSEMLaplaceObjective, U::Integer,
     # record cut at rows T/8, T/4, T/2 and T, each solved as the objective
     # solves it, so that one sits near every row's posterior. The unit's record
     # and retained state are put back afterwards.
-    saved = (mode=copy(laplace.modes[U]), iterations=laplace.inner_iterations[U],
-        gradient=laplace.inner_gradient[U], converged=laplace.inner_converged[U],
-        hrepaired=laplace.hessian_repaired[U], mrepaired=laplace.mode_repaired[U],
-        floored=laplace.logdet_floored[U])
-    full = (data=so.data, timesteps=so.timesteps, tdpreds=so.tdpreds,
-        max_timestep=so.max_timestep)
+    saved = _laplace_unit_saved(laplace, U, so)
+    full = saved.full
     comps = [(mu=zeros(d), vecs=Matrix{Float64}(I, d, d), lam=ones(d), c=1.0)]
     if d > 0
         try
@@ -433,17 +415,7 @@ function _laplace_mixture_unit!(out, laplace::CTSEMLaplaceObjective, U::Integer,
                 push!(comps, (mu=mu, vecs=E.vectors, lam=max.(E.values, 1e-12), c=scale))
             end
         finally
-            so.data = full.data
-            so.timesteps = full.timesteps
-            so.tdpreds = full.tdpreds
-            so.max_timestep = full.max_timestep
-            laplace.modes[U] = saved.mode
-            laplace.inner_iterations[U] = saved.iterations
-            laplace.inner_gradient[U] = saved.gradient
-            laplace.inner_converged[U] = saved.converged
-            laplace.hessian_repaired[U] = saved.hrepaired
-            laplace.mode_repaired[U] = saved.mrepaired
-            laplace.logdet_floored[U] = saved.floored
+            _laplace_unit_restore!(laplace, U, so, saved)
         end
     end
 
@@ -553,7 +525,9 @@ function _laplace_mixture_unit!(out, laplace::CTSEMLaplaceObjective, U::Integer,
         end
         minESS = min(minESS, 1 / sum(abs2, view(WP, :, t)))
     end
-    out.ess[U] = minESS
+    # Nothing sampled is nothing thin: read as 1, a unit the filter integrates
+    # whole made ctFitAdequacy report its errors' sampling as thin.
+    out.ess[U] = d == 0 ? Inf : minESS
 
     # Each non-Gaussian observation's predictive distribution function under
     # the mixture, in the order the filter applies them: the draws weighted by

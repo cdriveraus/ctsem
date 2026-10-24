@@ -207,8 +207,8 @@ function ctsem_effect_information(objective::CTSEMObjective, values::AbstractVec
     # subject writes only its own row of the two outputs.
     run = function (range)
         ws = _init_continuous_ekf_workspace(Float64, sp)
-        n = _val(ws.state_dim)
-        m = _val(ws.manifest_dim)
+        n = ws.state_dim
+        m = ws.manifest_dim
         # One subject's rows at a time, so the trace is sized to the longest
         # subject rather than to the data.
         trace = CTSEMKalmanTrace(Float64, n, m, maxrows, 1, length(sp.mutables))

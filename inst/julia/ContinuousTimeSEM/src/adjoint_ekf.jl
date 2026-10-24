@@ -15,7 +15,7 @@ using ComponentArrays
 # predictors, state-dependent transform groups only exist for nonlinear models,
 # and a fully missing row skips the measurement update entirely. Recording the
 # order the forward pass actually took, rather than assuming a canonical one,
-# is what lets one reverse pass cover every case the roadmap requires --
+# is what lets one reverse pass cover every case the tests check --
 # linear, state/PARS-expression, partially missing, fully missing, and
 # unequal-length multi-subject models -- without special-casing any of them.
 #
@@ -660,8 +660,8 @@ covariance still in `ws.diffusion_buffer.out`, where it left them.
 """
 function _record_stationary!(tape::CTSEMAdjointTape{T}, ws, pars) where {T}
     index = (tape.nstationaries += 1)
-    n = _val(ws.state_dim)
-    naff = _val(ws.affine_buffer.dim)
+    n = ws.state_dim
+    naff = ws.affine_buffer.dim
     k = length(ws.diffusion_state_indices)
     drift = view(pars.DRIFT, 1:naff, 1:naff)
     mean = view(ws.state, 1:naff)
@@ -693,8 +693,8 @@ What a model without means or blocks never computed is recorded and never read.
 """
 function _record_stationary_elements!(tape::CTSEMAdjointTape{T}, ws, pars) where {T}
     index = (tape.nstationaries += 1)
-    n = _val(ws.state_dim)
-    naff = _val(ws.affine_buffer.dim)
+    n = ws.state_dim
+    naff = ws.affine_buffer.dim
     k = length(ws.diffusion_state_indices)
     buf = ws.discretization_buffer
     drift = view(pars.DRIFT, 1:naff, 1:naff)
@@ -863,7 +863,7 @@ function _begin_predict!(tape::CTSEMAdjointTape{T}, ws, n::Int) where {T}
     if index > length(tape.predicts)
         push!(tape.predicts,
             _empty_predict_record(T, n, length(ws.diffusion_state_indices),
-                _val(ws.affine_buffer.dim)))
+                ws.affine_buffer.dim))
     end
     record = tape.predicts[index]
     _tape_fill!(record.state_in, ws.state)
@@ -886,7 +886,7 @@ function _record_predict!(tape::CTSEMAdjointTape{T}, ws, pars,
     # the diffusion one, so they come from `affine_buffer` and from the leading
     # entries of `dINT`. (Unused by the discrete-time reverse pass, which has
     # neither a solve nor a Lyapunov term.)
-    naff = _val(ws.affine_buffer.dim)
+    naff = ws.affine_buffer.dim
     _tape_fill!(record.affine, view(ws.affine_buffer.r, 1:naff))
     _tape_fill!(record.dINT_dynamic, view(ws.discrete_ca.dINT, 1:naff))
     record.dt = T(Δt)

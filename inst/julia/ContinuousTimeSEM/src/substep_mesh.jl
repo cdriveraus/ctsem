@@ -230,7 +230,7 @@ function _ctsem_subject_mesh(sub, x::Vector{Float64}, tol::Float64, cap::Int, pa
     # the defect is identically zero, and the floor is the answer.
     isempty(ws.predict_param_indices) && return (mesh, true, 0)
     tipred_vec = _ctsem_tipred_vector(sub.tipreds, x)
-    rec = CTSEMSubstepRecorder(Float64, nrows, _val(ws.state_dim),
+    rec = CTSEMSubstepRecorder(Float64, nrows, ws.state_dim,
         length(ws.predict_param_indices))
     used = 0
     restarted = false

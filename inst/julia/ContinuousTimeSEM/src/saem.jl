@@ -2123,10 +2123,7 @@ function _ctsem_saem_sample(laplace::CTSEMLaplaceObjective, values::AbstractVect
         state = placement.state
         starts === nothing && (starts = placement.pars)
     end
-    nchains >= 1 || throw(ArgumentError("nchains must be positive"))
-    ndraws >= 1 || throw(ArgumentError("ndraws must be positive"))
-    nwarmup >= 0 || throw(ArgumentError("nwarmup must be non-negative"))
-    0 < target_accept < 1 || throw(ArgumentError("target_accept must be in (0, 1)"))
+    _check_sample_arguments(nchains, ndraws, target_accept; nwarmup=nwarmup)
 
     # Placed as `ctsem_sample` places its chains, in the same order and for
     # the same reasons (see there): the metric solves the modes the start
@@ -2230,50 +2227,26 @@ function _ctsem_saem_sample(laplace::CTSEMLaplaceObjective, values::AbstractVect
     nall = nchains * total
     effect_sum = sum(ch.effect_sum for ch in chains; init=zeros(neffects))
     effect_sq = sum(ch.effect_sq for ch in chains; init=zeros(neffects))
-    effect_mean = effect_sum ./ nall
-    effect_sd = sqrt.(max.(effect_sq ./ nall .- effect_mean .^ 2, 0.0) .*
-        (nall / max(nall - 1, 1)))
     blocks = _laplace_deviation_blocks(laplace)
     effect_cross = sum(ch.effect_cross for ch in chains;
         init=zeros(_effect_cross_length(blocks)))
-    effect_cov = _effect_cross_cov(effect_cross, effect_mean, nall, blocks)
-    effect_cov_rows, effect_cov_cols = _effect_cross_index(blocks)
-    divergent = reduce(vcat, [ch.divergent for ch in chains])
-    depth = reduce(vcat, [ch.depth for ch in chains])
-    diagnostics = ctsem_sample_diagnostics(draws, nchains)
-    return (
-        draws=draws,
-        npar=npar,
-        ndim=npar + neffects,
-        nchains=nchains,
-        ndraws=total,
-        saved_effects=save_effects,
-        effect_mean=effect_mean,
-        effect_sd=effect_sd,
-        effect_cov=effect_cov,
-        effect_cov_rows=effect_cov_rows,
-        effect_cov_cols=effect_cov_cols,
-        rhat=diagnostics.rhat,
-        ess=diagnostics.ess,
-        ess_tail=diagnostics.ess_tail,
-        accept=reduce(vcat, [ch.accept for ch in chains]),
-        divergent=divergent,
-        depth=depth,
-        energy=reduce(vcat, [ch.energy for ch in chains]),
-        stepsize=[ch.eps for ch in chains],
-        warmup_divergent=[ch.warmup_divergent for ch in chains],
-        ndivergent=count(divergent),
-        max_depth=Int(maxdepth),
-        nsaturated=count(==(Int(maxdepth)), depth),
-        ebfmi=fill(NaN, nchains),
-        worst_rhat=_finite_extremum(diagnostics.rhat, maximum),
-        min_ess=_finite_extremum(vcat(diagnostics.ess, diagnostics.ess_tail), minimum),
-        sampler="saem",
-        scale_accept=[ch.nscale == 0 ? NaN : ch.scale_accept / ch.nscale for ch in chains],
-        ncp_accept=[ch.nncp == 0 ? NaN : ch.ncp_accept / ch.nncp for ch in chains],
-        target_trace=run.trace,
-        placement=_saem_placement_summary(placement),
-    )
+    pooled = (draws=draws, accept=reduce(vcat, [ch.accept for ch in chains]),
+        divergent=reduce(vcat, [ch.divergent for ch in chains]),
+        depth=reduce(vcat, [ch.depth for ch in chains]),
+        energy=reduce(vcat, [ch.energy for ch in chains]))
+    # E-BFMI is not computed: an energy taken at different effects every
+    # iteration does not measure it.
+    return merge(_sample_result(pooled; nchains=nchains, ndraws=total, npar=npar,
+            ndim=npar + neffects, maxdepth=Int(maxdepth),
+            stepsize=[ch.eps for ch in chains],
+            warmup_divergent=[ch.warmup_divergent for ch in chains], trace=run.trace,
+            saved_effects=save_effects,
+            effects=_effect_summary(effect_sum, effect_sq, effect_cross, nall, blocks),
+            ebfmi=fill(NaN, nchains)),
+        (sampler="saem",
+            scale_accept=[ch.nscale == 0 ? NaN : ch.scale_accept / ch.nscale for ch in chains],
+            ncp_accept=[ch.nncp == 0 ? NaN : ch.ncp_accept / ch.nncp for ch in chains],
+            placement=_saem_placement_summary(placement)))
 end
 
 """
@@ -2284,15 +2257,9 @@ standardised in a Cholesky ordered strongest-determined first for the run
 (`_with_root_orders`). A caller's own `starts` or `state` are in the natural
 order and keep it.
 """
-function ctsem_saem_sample(laplace::CTSEMLaplaceObjective, values::AbstractVector;
-    kwargs...)
-    npar = Int(get(kwargs, :npar, length(values)))
-    natural = get(kwargs, :starts, nothing) !== nothing ||
-        get(kwargs, :state, nothing) !== nothing
-    return _with_root_orders(laplace, collect(Float64, values)[1:npar], natural) do
-        _with_forward_count(() -> _ctsem_saem_sample(laplace, values; kwargs...))
-    end
-end
+ctsem_saem_sample(laplace::CTSEMLaplaceObjective, values::AbstractVector; kwargs...) =
+    _with_sample_roots(() -> _ctsem_saem_sample(laplace, values; kwargs...), laplace,
+        values, kwargs, (:starts, :state))
 
 """What a result reports of an SAEM placement: where it put the sampler, and
 how SAEM got there; `nothing` when there was none."""

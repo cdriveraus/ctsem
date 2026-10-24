@@ -293,9 +293,9 @@ end
 
 function _compute_discrete_time_form!(discrete_ca, buffer, DIFFUSIONcov, pars, Δt, exp_buffer,
     lyap_buffer, state, diffusion_state_indices, diffusion_buffer,
-    discretization_buffer, dim::Union{Int,Val}, cache=nothing,
+    discretization_buffer, dim::Int, cache=nothing,
     affine_buffer=diffusion_buffer)
-    d = _val(dim)
+    d = dim
     # Stan propagates the local affine EKF model, not the raw DRIFT matrix:
     # f(x) = DRIFT * x + CINT, J = JAx, c = f(x) - J * x.
     slot = _exp_cache_lookup(cache, pars.JAx, Δt, d)
@@ -334,7 +334,7 @@ function _compute_discrete_time_form!(discrete_ca, buffer, DIFFUSIONcov, pars, �
     # anything that has some; c is NOT zero on such a row, so its CINT left the
     # likelihood entirely and the parameter's gradient was exactly zero.
     # Because the block is a leading one, this indexes directly with no gather.
-    naff = _val(affine_buffer.dim)
+    naff = affine_buffer.dim
     # Views bound once: indexing `pars.DRIFT` in a loop rebuilds the view from
     # the layout on every iteration.
     DRIFT = pars.DRIFT
@@ -463,8 +463,8 @@ the offset came out as `-x[i]` and cancelled the state the transition had
 just carried, zeroing every random-effect coordinate at every step.
 """
 function _compute_one_step_form!(discrete_ca, DIFFUSIONcov, pars, state,
-    diffusion_state_indices, dim::Union{Int,Val})
-    d = _val(dim)
+    diffusion_state_indices, dim::Int)
+    d = dim
     copyto!(discrete_ca.eJAx, pars.JAx)
     copyto!(discrete_ca.dDRIFT, pars.JAx)
 

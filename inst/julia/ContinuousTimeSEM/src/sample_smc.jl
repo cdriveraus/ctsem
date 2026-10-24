@@ -562,8 +562,7 @@ function ctsem_sample_smc(objective, values::AbstractVector;
     nfirst = Int(ndraws)
     np >= 2 || throw(ArgumentError("nparticles must be at least 2"))
     nmv >= 1 || throw(ArgumentError("nmoves must be positive"))
-    nfirst >= 1 || throw(ArgumentError("ndraws must be positive"))
-    0 < target_accept < 1 || throw(ArgumentError("target_accept must be in (0, 1)"))
+    _check_sample_arguments(np, nfirst, target_accept)
     0 < ess_frac < 1 || throw(ArgumentError("ess_frac must be in (0, 1)"))
     widen > 0 || throw(ArgumentError("widen must be positive"))
     coreset_tol > 0 || throw(ArgumentError("coreset_tol must be positive"))
@@ -612,11 +611,18 @@ function ctsem_sample_smc(objective, values::AbstractVector;
         end
     end
 
-    verbose && println(_console(), "Sampling by tempered SMC: ", np, " particles, ",
-        npar, " dimensions (effects integrated out), ", nmv,
-        " NUTS moves a stage, from the metric's normal at ", widen, "x",
-        use_coreset ? ", moves on a coreset of the $nunits units" : "",
-        mode == :serial ? "" : ", particles in parallel on copies")
+    # The stages report as every other long call does (progress.jl): through
+    # the caller's sink where it gave one (a front end, a knitr run), in place
+    # on the console otherwise. Printed straight to the console they reached
+    # neither.
+    reporter = CTSEMProgress(verbose; label="tempering", overwrite=progress_overwrite,
+        sink=progress_sink)
+    if _due(reporter, true)
+        _emit(reporter, string("  tempered SMC: ", np, " particles, ", npar,
+            " dimensions, ", nmv, " NUTS moves a stage, from the metric's normal at ",
+            widen, "x", use_coreset ? ", moves on a coreset of the $nunits units" : "",
+            mode == :serial ? "" : ", particles in parallel on copies"))
+    end
 
     rng = Random.Xoshiro(UInt64(seed))
     X = m0 .+ F0.L * randn(rng, ndim, np)
@@ -755,16 +761,20 @@ function ctsem_sample_smc(objective, values::AbstractVector;
             coreset_error=fit === nothing ? NaN : fit.error,
             correction_ess=corr_ess / np, corrected=corrected,
             secs=time() - t0))
-        verbose && println(_console(), "  stage ", stage, ": beta ", round(beta; sigdigits=4),
-            ", step ", round(step; sigdigits=3), ", accept ", round(sum(acc) / nok; digits=2),
-            ", depth ", round(sum(dep) / nok; digits=1),
-            cs_stage === nothing ? "" : ", coreset $(length(cs_stage.units)) of $nunits units",
-            corrected ? ", correction only" : "",
-            ", ", round(time() - t0; digits=0), " s")
+        if _due(reporter, true)
+            _emit(reporter, join(filter(!isempty, [
+                @sprintf("  tempering stage %d", stage),
+                @sprintf("beta %.4g", beta), @sprintf("step %.3g", step),
+                @sprintf("accept %.2f", sum(acc) / nok), @sprintf("depth %.1f", sum(dep) / nok),
+                cs_stage === nothing ? "" : "coreset $(length(cs_stage.units)) of $nunits units",
+                corrected ? "correction only" : "",
+                _duration(time() - t0)]), " | "))
+        end
         _invoke_callback(callback, "tempering", round(Int, 100 * beta), 100,
             _smc_mean(filter(isfinite, lp)), sum(ndiv); force=beta >= 1.0)
         beta >= 1.0 && break
     end
+    _progress_done(reporter, "$(length(stages)) stages")
     beta >= 1.0 || @warn "tempered SMC did not reach the posterior in $(maxstages) stages; the draws are from beta = $(beta)"
     smc_secs = time() - t0
 
@@ -823,24 +833,9 @@ function ctsem_sample_smc(objective, values::AbstractVector;
     nper = run.total
 
     total = np * nper
-    draws = Matrix{Float64}(undef, npar, total)
-    accept = Vector{Float64}(undef, total)
-    divergent = Vector{Bool}(undef, total)
-    depth = Vector{Int}(undef, total)
-    energy = Vector{Float64}(undef, total)
-    for ch in 1:np
-        r = chains[ch]
-        for t in 1:nper
-            column = (ch - 1) * nper + t
-            @inbounds for j in 1:npar
-                draws[j, column] = r.draws[j, t]
-            end
-            accept[column] = r.accept[t]
-            divergent[column] = r.divergent[t]
-            depth[column] = r.depth[t]
-            energy[column] = r.energy[t]
-        end
-    end
+    pooled = _sample_pool(chains, np, nper, npar)
+    draws, accept, divergent = pooled.draws, pooled.accept, pooled.divergent
+    depth, energy = pooled.depth, pooled.energy
     # The chains' own diagnostics, before any correction.
     diagnostics = ctsem_sample_diagnostics(draws, np)
     final_correction = 1.0
@@ -883,19 +878,11 @@ function ctsem_sample_smc(objective, values::AbstractVector;
         end
         final_correction < 0.5 && @warn "the final chains' coreset kept $(round(100 * final_correction; digits=0))% of the draws' effective size after the correction to the full density; a larger coreset_tol budget or coreset = false would give more"
     end
-    return (
-        draws=draws, npar=npar, ndim=npar, nchains=np, ndraws=nper,
-        saved_effects=false, effect_mean=Float64[], effect_sd=Float64[],
-        effect_cov=Float64[], effect_cov_rows=Int[], effect_cov_cols=Int[],
-        rhat=diagnostics.rhat, ess=diagnostics.ess, ess_tail=diagnostics.ess_tail,
-        accept=accept, divergent=divergent, depth=depth, energy=energy,
-        stepsize=fill(step, np), warmup_divergent=zeros(Int, np),
-        ndivergent=count(divergent), max_depth=mdepth,
-        nsaturated=count(==(mdepth), depth),
-        ebfmi=_ebfmi(energy, np),
-        worst_rhat=_finite_extremum(diagnostics.rhat, maximum),
-        min_ess=_finite_extremum(vcat(diagnostics.ess, diagnostics.ess_tail), minimum),
-        target_trace=run.trace,
+    corrected_pool = (draws=draws, accept=accept, divergent=divergent, depth=depth,
+        energy=energy)
+    return merge(_sample_result(corrected_pool; nchains=np, ndraws=nper, npar=npar,
+        ndim=npar, maxdepth=mdepth, stepsize=fill(step, np),
+        warmup_divergent=zeros(Int, np), trace=run.trace, diagnostics=diagnostics), (
         forward_gradients=ctsem_forward_gradients() - forward0,
         explosive_passes=ctsem_explosive_passes() - explosive0,
         sampler="smc", nparticles=np, nmoves=nmv, widen=Float64(widen),
@@ -915,5 +902,5 @@ function ctsem_sample_smc(objective, values::AbstractVector;
         final_coreset_size=cs_final === nothing ? 0 : length(cs_final.units),
         final_correction_ess=final_correction,
         parallel=String(mode),
-    )
+    ))
 end

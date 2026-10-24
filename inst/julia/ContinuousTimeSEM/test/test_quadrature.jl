@@ -346,8 +346,7 @@ end
     C = ContinuousTimeSEM
     # A Gaussian integrand with M >= I: the rule is exact whatever its nodes.
     laplace, values = _fresh_linear()
-    reference = ctsem_laplace_evaluate(laplace, values; gradient=false,
-        contributions=true)
+    reference = ctsem_laplace_evaluate(laplace, values; gradient=false)
     for U in eachindex(laplace.units.members)
         term = sum(reference.subject_loglik[laplace.units.members[U]])
         for n in (1, 3, 5)
@@ -382,8 +381,7 @@ end
     @test C._laplace_soft_weight(0.45, 0.2, 0.7) ≈ 0.5
     # Concave everywhere: the gate accepts every unit and the term is Laplace.
     laplace, values = _fresh_linear()
-    reference = ctsem_laplace_evaluate(laplace, values; gradient=false,
-        contributions=true)
+    reference = ctsem_laplace_evaluate(laplace, values; gradient=false)
     for U in eachindex(laplace.units.members)
         g = C._laplace_gated_unit_reference(laplace, values, U)
         @test !g.flagged

@@ -221,8 +221,8 @@ columns afterwards, so an initial state belongs to `_ctsem_t0_factor!`
 Reading it out of `sdcovsqrt2cov!`'s own scratch buffer would work today and
 would break silently the first time that function reuses the buffer.
 """
-@inline function _ctsem_sdcor_factor!(dest, mat, buffer, dim::Union{Int,Val})
-    d = _val(dim)
+@inline function _ctsem_sdcor_factor!(dest, mat, buffer, dim::Int)
+    d = dim
     constraincorsqrt1_vec!(buffer, mat, 1e-5, dim)
     @inbounds for j in 1:d, i in 1:d
         dest[i, j] = mat[i, i] * buffer.out[i, j]
@@ -518,8 +518,8 @@ function _ctsem_state_row!(ws, pars, data::AbstractMatrix, col::Int,
     resid::AbstractVector{T}, scratch::AbstractVector{T},
     gaussian::AbstractVector{Int}, log2pi, gen) where {T}
 
-    m = _val(ws.manifest_dim)
-    n = _val(ws.state_dim)
+    m = ws.manifest_dim
+    n = ws.state_dim
     types = ws.manifesttype
     row = gen === nothing ? col : gen.offset + col
 
@@ -648,8 +648,8 @@ function _ctsem_state_pass!(ws, params::AbstractVector{T}, data::AbstractMatrix,
     all_params = getdata(pars)
     all_params .= ws.all_params
 
-    n = _val(ws.state_dim)
-    m = _val(ws.manifest_dim)
+    n = ws.state_dim
+    m = ws.manifest_dim
     indices = ws.diffusion_state_indices
     k = length(indices)
     log2pi = log(2 * T(pi))
@@ -1105,7 +1105,7 @@ end
 # because a variance whose realisations are also being chosen can always be
 # made to look smaller.
 
-export CTSEMJointObjective, ctsem_joint_objective, ctsem_joint_blocks,
+export CTSEMJointObjective, ctsem_joint_objective,
     ctsem_joint_hessian, ctsem_joint_states, ctsem_joint_dimension
 
 """
@@ -1139,30 +1139,6 @@ end
 
 """Total dimension optimised or sampled: parameters plus innovations."""
 ctsem_joint_dimension(o::CTSEMJointObjective) = o.npar + o.layout.ndim
-
-"""
-    ctsem_joint_blocks(objective)
-
-Where each block of `x` lives: the population parameters, then one block per
-subject.
-
-The joint Hessian is arrow-shaped -- dense in the population block, block
-diagonal in the innovations, coupled between the two -- because a subject's
-innovations enter no other subject's likelihood. Everything below exploits
-that, and a caller building a sampler metric wants the same partition.
-"""
-function ctsem_joint_blocks(o::CTSEMJointObjective)
-    layout = o.layout
-    nsubjects = length(layout.zoffsets)
-    starts = Vector{Int}(undef, nsubjects)
-    stops = Vector{Int}(undef, nsubjects)
-    for i in 1:nsubjects
-        starts[i] = o.npar + layout.zoffsets[i] + 1
-        stops[i] = i < nsubjects ? o.npar + layout.zoffsets[i + 1] :
-            o.npar + layout.ndim
-    end
-    return (npar=o.npar, ndim=layout.ndim, start=starts, stop=stops)
-end
 
 """One subject's slice of the innovation vector, as a range into `x`."""
 @inline function _ctsem_joint_range(o::CTSEMJointObjective, i::Int)

@@ -244,7 +244,7 @@ end
     # (either by the measurement update or by a copy from ws.P_predict for the
     # next substep), so ridging it in place here is safe and matches Stan row
     # for row rather than only at the final innovation-covariance Cholesky.
-    _ridge_diagonal!(ws.P_update.data, _val(ws.state_dim), 1e-10)
+    _ridge_diagonal!(ws.P_update.data, ws.state_dim, 1e-10)
 
     # The plain matrix, never the `Symmetric` wrapper. `mul!` with a
     # `Symmetric` operand is OpenBLAS's `symm`, which takes a process-wide lock
@@ -264,13 +264,13 @@ end
     _copy_lower_to_upper!(ws.P_predict.data, ws.state_dim)
     ws.hyb.active && ws.hyb.q > 0 &&
         _hybrid_predict!(ws.hyb, ws.discrete_ca.dDRIFT, pars.JAx,
-            ws.discretization_buffer.series, _val(ws.affine_buffer.dim), Δt,
-            _val(ws.state_dim))
+            ws.discretization_buffer.series, ws.affine_buffer.dim, Δt,
+            ws.state_dim)
     return nothing
 end
 
-@inline function _copy_lower_to_upper!(matrix, state_dim::Union{Int,Val})
-    n = _val(state_dim)
+@inline function _copy_lower_to_upper!(matrix, state_dim::Int)
+    n = state_dim
     @inbounds for col in 1:n
         for row in (col + 1):n
             matrix[col, row] = matrix[row, col]
@@ -332,7 +332,7 @@ allocation-free and BLAS-eligible as a hand-written fast path would be.
 """
 function _ekf_update_observed!(ws::ContinuousEKFWorkspace, pars,
     data::AbstractMatrix, obs_col::Int, log2π_const, trace=nothing, generate=nothing)
-    m_full = _val(ws.manifest_dim)
+    m_full = ws.manifest_dim
     n_observed = 0
     @inbounds for i in 1:m_full
         _ctsem_observed(data[i, obs_col]) && (n_observed += 1)
@@ -373,7 +373,7 @@ function _ekf_update_observed!(ws::ContinuousEKFWorkspace, pars,
     # changes at all. The binary chain gets its own record, from the true prior.
     binary_rows = _ekf_binary_subset(ws, observed)
     record = _record_binary!(trace, ws, pars, data, obs_col, binary_rows,
-        _val(ws.state_dim))
+        ws.state_dim)
     binary_loglik = _ekf_binary_rows!(ws, pars, data, obs_col, observed, generate,
         record)
     binary_loglik === nothing && return nothing
@@ -383,7 +383,7 @@ function _ekf_update_observed!(ws::ContinuousEKFWorkspace, pars,
     # `_ekf_masked_update_step!` overwrites ws.state in place, and the reverse
     # pass needs the mean it started from.
     _record_update!(trace, ws, pars, data, obs_col, gaussian,
-        ws.state, ws.P_predict.data, _val(ws.state_dim))
+        ws.state, ws.P_predict.data, ws.state_dim)
 
     if isempty(gaussian)
         # Every observed row was binary: nothing for the Kalman update to do,
@@ -471,7 +471,7 @@ function _ekf_categorical_rows!(ws::ContinuousEKFWorkspace, pars,
     data::AbstractMatrix, obs_col::Int, observed, generate, record)
     T = eltype(ws.state)
     types = ws.manifesttype
-    n = _val(ws.state_dim)
+    n = ws.state_dim
     total = zero(T)
     prior = ws.catprior
     @inbounds for j in 1:n
@@ -652,7 +652,7 @@ differ for state-dependent measurement models.
 function _ekf_masked_update_step!(ws::ContinuousEKFWorkspace, pars,
     data::AbstractMatrix, obs_col::Int, observed::AbstractVector{Int}, generate=nothing)
     m = length(observed)
-    n = _val(ws.state_dim)
+    n = ws.state_dim
 
     Lv = view(pars.LAMBDA, observed, :)
     μv = view(pars.MANIFESTMEANS, observed)
@@ -795,7 +795,7 @@ that already know their data has no missingness and so have no need to
 compute an observed-row count first.
 """
 @inline function _ekf_update_step!(ws::ContinuousEKFWorkspace, pars, data::AbstractMatrix, obs_col::Int)
-    return _ekf_masked_update_step!(ws, pars, data, obs_col, 1:_val(ws.manifest_dim))
+    return _ekf_masked_update_step!(ws, pars, data, obs_col, 1:ws.manifest_dim)
 end
 
 @inline function _apply_td_impulse!(ws::ContinuousEKFWorkspace, pars, tdpreds)
@@ -825,21 +825,12 @@ end
 @inline _invalid_ekf_loglikelihood(ws::ContinuousEKFWorkspace) =
     -one(eltype(ws.state)) * NaN
 
-"""
-    _population_raw_view(ws, all_params)
-
-The raw population covariance matrix as a `k` by `k` view, or `nothing` when
-the model has no separate population covariance.
-
-This is what the reverse pass needs recorded -- the point the construction was
-evaluated at, which cannot be recovered from `subject_values`. Read the same
-way `_apply_population_block!` reads it, so the forward pass and the tape
-cannot disagree about the layout.
-"""
-@inline function _population_raw_view(ws, all_params)
-    isempty(ws.population_indices) && return nothing
-    return _population_raw_block(ws, all_params)
-end
+# The raw population covariance matrix as a `k` by `k` view. This is what the
+# reverse pass needs recorded -- the point the construction was evaluated at,
+# which cannot be recovered from `subject_values`. Read the same way
+# `_apply_population_block!` reads it, so the forward pass and the tape cannot
+# disagree about the layout. A model with no separate population covariance
+# (`isempty(ws.population_indices)`) has none.
 @inline function _population_raw_block(ws, all_params)
     k = length(ws.population_indices)
     return reshape(view(all_params, ws.population_range), k, k)
@@ -873,7 +864,7 @@ free at this point: its T0VAR contents are already in `P_predict`.
         ws.population_covmatcode, ws.population_scale, ws.population_buffer)
 end
 
-# A square buffer's dimension as the `Val` it was built with.
+# A square buffer's dimension, as it was built.
 @inline _square_dim(buffer::SquareBuffer, k::Int) = buffer.dim
 @inline _square_dim(buffer, k::Int) = k
 
@@ -944,11 +935,11 @@ diffusion covariance. None holds anything at the point either caller runs
 this.
 """
 function _ctsem_stationary!(P, x, ws, pars)
-    n = _val(ws.state_dim)
+    n = ws.state_dim
     dyn = ws.diffusion_state_indices
     k = length(dyn)
     ab = ws.affine_buffer
-    naff = _val(ab.dim)
+    naff = ab.dim
 
     # Views bound once: indexing `pars.DRIFT` in the loop rebuilds the view
     # from the layout on every iteration.
@@ -1031,7 +1022,7 @@ the record reads it. `false` when the closure's drift is singular.
 function _ctsem_stationary_elements_mean!(x, ws, pars, se::CTSEMStationaryElements)
     isempty(se.means) && return true
     ab = ws.affine_buffer
-    naff = _val(ab.dim)
+    naff = ab.dim
     inclosure = se.inclosure
     DRIFT = pars.DRIFT
     CINT = pars.CINT
@@ -1073,7 +1064,7 @@ the closure's drift is unstable or `P`'s block is not positive definite.
 function _ctsem_stationary_elements_cov!(P, ws, pars, se::CTSEMStationaryElements)
     isempty(se.blocks) && return true
     T = eltype(P)
-    n = _val(ws.state_dim)
+    n = ws.state_dim
     dyn = ws.diffusion_state_indices
     k = length(dyn)
     inclosure = se.inclosure
@@ -1244,7 +1235,7 @@ elements (`CTSEMStationaryElements`), are placed the same way when it has any.
     if isempty(ws.population_indices) && !stationary && !onelements
         return _ctsem_sdcor_factor!(dest, pars.T0VAR, ws.bufferQ, ws.state_dim)
     end
-    n = _val(ws.state_dim)
+    n = ws.state_dim
     ContinuousTimeSEM.sdcovsqrt2cov!(ws.bufferQ, pars.T0VAR, ws.covmatcode,
         ws.state_dim)
     @inbounds for j in 1:n, i in 1:n
@@ -1330,15 +1321,15 @@ function _extended_kalman_filter_continuous!(
     _copy_lower_to_upper!(ws.P_predict.data, ws.state_dim)
     _apply_population_block!(ws, all_params)
     copyto!(ws.state, pars.T0MEANS)
-    _hybrid_start!(ws.hyb, sp.hybrid, data, _val(ws.state_dim), _val(ws.manifest_dim),
+    _hybrid_start!(ws.hyb, sp.hybrid, data, ws.state_dim, ws.manifest_dim,
         sp.continuous_time)
-    # Split rather than handed `_population_raw_view`'s result: a union of
-    # `nothing` and a view is not a bits union, so it was boxed on every
-    # traced subject pass.
+    # Split rather than handed a result that is `nothing` or the view: a union
+    # of the two is not a bits union, so it was boxed on every traced subject
+    # pass.
     if isempty(ws.population_indices)
-        _record_init!(trace, pars, _val(ws.state_dim), nothing)
+        _record_init!(trace, pars, ws.state_dim, nothing)
     else
-        _record_init!(trace, pars, _val(ws.state_dim),
+        _record_init!(trace, pars, ws.state_dim,
             _population_raw_block(ws, all_params))
     end
 
@@ -1389,7 +1380,7 @@ function _extended_kalman_filter_continuous!(
     apply_complex_transforms_at_indices!(all_params, ws.predict_param_indices, sp.predict_transforms, first_context)
     _record_group!(trace, 2, ws.td_param_indices, all_params, first_context)
     apply_complex_transforms_at_indices!(all_params, ws.td_param_indices, sp.td_transforms, first_context)
-    _record_td!(trace, ws, pars, first_context.tdpreds, _val(ws.state_dim))
+    _record_td!(trace, ws, pars, first_context.tdpreds, ws.state_dim)
     _apply_td_impulse!(ws, pars, first_context.tdpreds)
     update_context = CTSEMRowContext(ws.state, pars, first_context.tdpreds, tipreds,
         timesteps[1], zero(eltype(params)), Int(subject), 1)
@@ -1401,7 +1392,7 @@ function _extended_kalman_filter_continuous!(
     # buffer before anything had filled that slot. Every later row already
     # runs transform, covariance, record in this order.
     ContinuousTimeSEM.sdcovsqrt2cov!(ws.bufferΘ, pars.MANIFESTVAR, ws.covmatcode, ws.manifest_dim)
-    _record_theta!(trace, pars, _val(ws.manifest_dim))
+    _record_theta!(trace, pars, ws.manifest_dim)
     log2π_const = log(2π)
     _record_row_prior!(trace, ws, pars, 1)
     ll = _ekf_update_observed!(ws, pars, data, 1, log2π_const, trace, generate)
@@ -1436,17 +1427,17 @@ function _extended_kalman_filter_continuous!(
                 substep_time, substep_dt, Int(subject), t_idx)
             _record_group!(trace, 1, ws.predict_param_indices, all_params, predict_context)
             apply_complex_transforms_at_indices!(all_params, ws.predict_param_indices, sp.predict_transforms, predict_context)
-            predict_snapshot = _begin_predict!(trace, ws, _val(ws.state_dim))
+            predict_snapshot = _begin_predict!(trace, ws, ws.state_dim)
             _begin_substep!(substep_recorder, ws)
             if ws.diffusion_static
                 _ekf_predict_step!(ws, pars, substep_dt, ws.diffusion_cov)
             else
                 _ekf_predict_step!(ws, pars, substep_dt)
             end
-            _track_growth!(ws.growth, ws.discrete_ca.eJAx, _val(ws.state_dim), subject)
+            _track_growth!(ws.growth, ws.discrete_ca.eJAx, ws.state_dim, subject)
             _record_substep_defect!(substep_recorder, ws, pars, sp, all_params, substep_dt,
                 t_idx, predict_context)
-            _record_predict!(trace, ws, pars, predict_snapshot, substep_dt, _val(ws.state_dim))
+            _record_predict!(trace, ws, pars, predict_snapshot, substep_dt, ws.state_dim)
             _record_transition!(trace, ws, pars, t_idx, substep, n_substeps, Δt)
             # The next bounded step begins from this step's predicted covariance.
             copyto!(ws.P_update.data, ws.P_predict.data)
@@ -1456,7 +1447,7 @@ function _extended_kalman_filter_continuous!(
             curr_timestep, Δt, Int(subject), t_idx)
         _record_group!(trace, 2, ws.td_param_indices, all_params, td_context)
         apply_complex_transforms_at_indices!(all_params, ws.td_param_indices, sp.td_transforms, td_context)
-        _record_td!(trace, ws, pars, td_context.tdpreds, _val(ws.state_dim))
+        _record_td!(trace, ws, pars, td_context.tdpreds, ws.state_dim)
         _apply_td_impulse!(ws, pars, td_context.tdpreds)
         _record_td_transition!(trace, pars, t_idx, size(tdpreds, 1))
 
@@ -1470,7 +1461,7 @@ function _extended_kalman_filter_continuous!(
         # row, against an update that reads only the observed block of it.
         if !ws.manifestvar_static
             ContinuousTimeSEM.sdcovsqrt2cov!(ws.bufferΘ, pars.MANIFESTVAR, ws.covmatcode, ws.manifest_dim)
-            _record_theta!(trace, pars, _val(ws.manifest_dim))
+            _record_theta!(trace, pars, ws.manifest_dim)
         end
         _record_row_prior!(trace, ws, pars, t_idx)
         row_ll = _ekf_update_observed!(ws, pars, data, t_idx, log2π_const, trace, generate)

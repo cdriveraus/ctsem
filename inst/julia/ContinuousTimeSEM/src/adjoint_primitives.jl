@@ -5,18 +5,22 @@ using ChainRulesCore
 # Adjoint primitive layer
 ################################################################################
 #
-# This file holds most of the hand-derived reverse-mode mathematics in the
-# package -- the exception is the discrete-intercept solve pulled back inline
-# at `adjoint_ekf.jl:591-599` (same math as the `linsolve` derivation below,
-# but run at every prediction substep, so it stays hand-inlined against the
-# scratch buffers rather than routed through a pure primitive here; see
-# `test_adjoint_primitives.jl` for its direct test). Everything else in the
-# adjoint path is expressed as a composition of these primitives, which is
-# what `docs/src/adjoint-roadmap.md` calls "primitive-level rrules composed by
-# replay": if the forward filter changes shape (extra substeps, a new
-# predictor kind, a different missingness rule) but keeps expressing its math
-# as calls to these kernels, the reverse pass stays correct without a matching
-# hand-edit.
+# Hand-derived reverse-mode mathematics for single kernels. The reverse filter
+# (`adjoint_ekf.jl`) replays a tape of the forward pass and has most of its
+# pullbacks written out against its own scratch buffers; this file holds two
+# kinds of piece:
+#
+#   * pullbacks the reverse filter calls: `_ctsem_lyap_pullback!` (the
+#     Lyapunov solve), `_sdcovsqrt2cov_pullback!` with its row helpers (the
+#     SD/correlation-square-root construction of a covariance, below) and
+#     `_ctsem_chol_pullback!` (a Cholesky factor);
+#   * pure forms of the matrix exponential and the Lyapunov solve, each with a
+#     `ChainRulesCore.rrule`, and the Fréchet-derivative forms that go with the
+#     exponential. The filter does not call these: it runs the in-place
+#     kernels on its own buffers (`my_exp_frechet!` in `_flush_frechet!`,
+#     `my_lyap!` in `_ctsem_lyap_pullback!`). They are what the tests check
+#     those kernels and their pullbacks against (`test_adjoint_primitives.jl`,
+#     `test_frechet_exponential.jl`).
 #
 # Two kernels need hand-written pullbacks here because their forward
 # implementations bottom out in LAPACK calls (`dgetrf`, `dtrsyl`) that no
@@ -27,16 +31,15 @@ using ChainRulesCore
 #   * the continuous Lyapunov solve `A X + X A' + Q = 0` -- either the packed
 #     `ksolve!` LU or the Schur/`trsyl!` path, depending on size.
 #
-# (The plain square solve `A \ B` is the same LAPACK situation, but see the
-# note above -- its one caller inlines the pullback rather than using a
-# primitive from this file.)
+# (The plain square solve `A \ B` is the same LAPACK situation, but the reverse
+# filter inlines its pullback, in `_reverse_predict!` and the stationary
+# routines, rather than using a primitive from this file.)
 #
 # Each is given here as a *pure* function plus a `ChainRulesCore.rrule`. The
 # pure form matters: the forward filter's kernels (`my_exp!`, `my_lyap!`,
 # `_solve_square_system!`) are in-place and destroy their inputs as documented
 # scratch, which is fine for a primal but has no well-defined cotangent. The
-# pure wrappers give the reverse pass a value-semantics boundary to attach the
-# derivative to.
+# pure wrappers give a derivative a value-semantics boundary to attach to.
 #
 # Derivations (all standard, but written out so they can be checked rather
 # than trusted):
@@ -56,8 +59,9 @@ using ChainRulesCore
 #
 #   linsolve: X = A^{-1} B, so B̄ = A^{-T} X̄ and Ā = -B̄ X'. Reusing the
 #             factorization from the forward solve makes the pullback cheap.
-#             (Hand-inlined at `adjoint_ekf.jl:591-599`, not a primitive here
-#             -- see the note at the top of this file.)
+#             (Inlined in the reverse filter's `_reverse_predict!` and
+#             stationary routines against their scratch buffers, so not a
+#             primitive here.)
 #
 ################################################################################
 
@@ -66,8 +70,8 @@ using ChainRulesCore
 
 The Fréchet derivative `L(A, E)` of the matrix exponential at `A` in direction
 `E`, as the top-right block of `exp([A E; 0 A])`. A reference route, kept so
-tests can check `my_exp_frechet!` against something independent of it; the
-engine calls `_ctsem_exp_frechet_block` below.
+tests can check `my_exp_frechet!` against something independent of it;
+`_ctsem_exp_frechet_block` below is the recurrence itself.
 
 This is the textbook block-exponential identity (Higham, *Functions of
 Matrices*, Thm. 10.13). It costs one exponential of a `2n × 2n` matrix, about

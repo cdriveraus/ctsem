@@ -1,7 +1,6 @@
 # Single- vs multi-threaded agreement for the subject reduction.
 #
-# This is the acceptance gate `docs/src/adjoint-roadmap.md` lists as outstanding
-# under "Acceptance Gates and Cleanup": the objective is a sum over subjects, and
+# The threading acceptance gate: the objective is a sum over subjects, and
 # threading it changes only the order of that sum, so serial and threaded results
 # must agree to floating-point reassociation and nothing more.
 #

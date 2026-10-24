@@ -381,17 +381,21 @@ function _kalman_store!(trace::CTSEMKalmanTrace, kind::Int, row::Int, ws, pars,
         end
         trace.y[kind, row, i] = value
     end
+    # Θ + Jy P Jy', a row of `Jy P` at a time: O(m n^2 + m^2 n), where forming
+    # `P Jy[j, :]` again for every pair was O(m^2 n^2).
+    Jy = pars.Jy
     @inbounds for i in 1:m
         for j in 1:m
-            value = Θ[i, j]
+            trace.ycov[kind, row, i, j] = Θ[i, j]
+        end
+        for b in 1:n
+            t = zero(eltype(Θ))
             for a in 1:n
-                inner = zero(eltype(Θ))
-                for b in 1:n
-                    inner += statecov[a, b] * pars.Jy[j, b]
-                end
-                value += pars.Jy[i, a] * inner
+                t += Jy[i, a] * statecov[a, b]
             end
-            trace.ycov[kind, row, i, j] = value
+            for j in 1:m
+                trace.ycov[kind, row, i, j] += t * Jy[j, b]
+            end
         end
     end
     _kalman_store_response!(trace, kind, row, ws, pars, statecov)
@@ -662,8 +666,8 @@ function ctsem_kalman(objective::CTSEMObjective, values::AbstractVecOrMat;
     # A plug-in filter: a Laplace fit's subjects arrive with any deviations the
     # filter would integrate already in their parameters.
     ws.hyb.mode = _HYBRID_OFF
-    n = _val(ws.state_dim)
-    m = _val(ws.manifest_dim)
+    n = ws.state_dim
+    m = ws.manifest_dim
     nall = length(sp.mutables)
     subjects = objective.subject_objectives
     nrows = sum(size(sub.data, 2) for sub in subjects)
@@ -916,7 +920,7 @@ function _ctsem_generate(ws, objective::CTSEMObjective, values::AbstractVecOrMat
             "one row of parameters per subject is required"))
     raw = persubject ? Vector{Float64}(view(values, 1, :)) : Vector{Float64}(values)
     ws.hyb.mode = _HYBRID_OFF  # as `ctsem_kalman`: deviations are in `values`
-    m = _val(ws.manifest_dim)
+    m = ws.manifest_dim
     nrows = sum(size(sub.data, 2) for sub in subjects)
     size(base) == (m, nrows) ||
         throw(DimensionMismatch("base must be $(m) by $(nrows)"))

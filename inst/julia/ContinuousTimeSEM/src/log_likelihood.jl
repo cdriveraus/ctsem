@@ -18,12 +18,6 @@ function _kalman_loglikelihood_cholesky!(ll_buffer::AbstractVector, S, ỹ, log2
     return _kalman_loglikelihood_cholesky!(ll_buffer, S, ỹ, log2π_const, length((ỹ)))
 end
 
-"""Compile-time-length form, kept for callers that already hold a `Val`."""
-function _kalman_loglikelihood_cholesky!(ll_buffer::AbstractVector, S, ỹ, log2π_const::Real, __d::Union{Int,Val})
-    d = _val(__d)
-    return _kalman_loglikelihood_cholesky!(ll_buffer, S, ỹ, log2π_const, d)
-end
-
 function _kalman_loglikelihood_cholesky!(ll_buffer::AbstractVector, S, ỹ, log2π_const::Real, d::Int)
     # 1) Solve S * z = ỹ using the in-place Cholesky factorization of S.
     #    ll_buffer stores z = S \ ỹ.

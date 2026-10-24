@@ -2575,7 +2575,12 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
 # referencing a state, and no calculation that could carry the deviations into
 # a covariance or gain (`.ctJuliaHybridCalcsOk`). An initial mean the model
 # replaces by a stationary moment is no initial mean, so a T0MEANS effect
-# stays in the layer there. Off with `options(ctsem.laplace.hybrid = FALSE)`,
+# stays in the layer there; and that moment, `-A^-1 b` over the stationary
+# closure, moves with every continuous intercept in the closure, which the
+# filter's intercept column (zero at the first state) does not carry, so such
+# a CINT effect stays too. Integrated, the level form of a random intercept
+# (`ctModelLatentLevel`) read 39 nats under the layer at the same point. Off
+# with `options(ctsem.laplace.hybrid = FALSE)`,
 # which keeps every own variance in the Laplace layer as before.
 .ctJuliaLaplaceHybrid <- function(model, setup, levels) {
   if (!isTRUE(getOption("ctsem.laplace.hybrid", TRUE))) return(NULL)
@@ -2594,6 +2599,11 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
   kinds <- c(MANIFESTMEANS = 1L, T0MEANS = 2L, CINT = 3L)
   codes <- as.integer(base[names(kinds)])
   stationary <- isTRUE(as.logical(model$stationary)) || !is.null(model$t0stationary)
+  # The latents whose intercepts a stationary initial mean reads.
+  t0s <- model$t0stationary
+  meanreads <- if (isTRUE(as.logical(model$stationary))) function(i) TRUE else
+    if (!is.null(t0s) && any(as.logical(t0s$means))) function(i) isTRUE(t0s$closure[i]) else
+    function(i) FALSE
   param <- as.integer(setup$param)
   effect <- integer(); kind <- integer(); target <- integer(); slope <- numeric()
   for (p in own) {
@@ -2603,6 +2613,7 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
     if (length(mats) != 1L || !mats %in% codes) next
     k <- kinds[[match(mats, codes)]]
     if (k == 2L && stationary) next
+    if (k == 3L && meanreads(as.integer(setup$row[rows[1]]))) next
     if (!all(as.integer(setup$transform[rows]) == 0L) ||
         length(unique(as.integer(setup$row[rows]))) != 1L) next
     sl <- as.numeric(values$meanscale[rows]) * as.numeric(values$multiplier[rows])
@@ -4733,14 +4744,15 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
 .ctJuliaObjective <- function(object, hybrid = FALSE) {
   stopifnot(inherits(object, "ctJuliaModel") || inherits(object, "ctJuliaFit"))
   spec <- if (inherits(object, "ctJuliaFit")) object$model_spec else object
-  # Own variances the subject filter integrates (`.ctJuliaLaplaceHybrid`) leave
-  # the Laplace layer with no coordinate for them: no mode, no deviation, no
+  # Effects the subject filter integrates (`.ctJuliaLaplaceHybrid`: own
+  # variances, and a full-rank level's affine effects as a block) leave the
+  # Laplace layer with no coordinate for them: no mode, no deviation, no
   # column of the population root. So only the paths that evaluate the
   # objective a fit optimises ask for it -- the optimiser, evaluation, the
   # Hessian and scores, the marginal sampler, the quadrature check and
   # corrections (which integrate the deviations exactly at every node) -- and
   # the reports that read them back (`.ctBackendHybridReports`). Every other
-  # reader gets the objective with each own variance a coordinate: for a
+  # reader gets the objective with each such effect a coordinate: for a
   # linear model the same function, so a path that does not ask is slower,
   # never wrong.
   if (!isTRUE(hybrid) && !is.null(spec$laplace$hybrid)) spec$laplace$hybrid <- NULL

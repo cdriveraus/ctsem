@@ -62,9 +62,6 @@ Return the absolute value of the primal part of a dual number.
 """
 @inline _custom_abs(x::ForwardDiff.Dual) = abs(ForwardDiff.value(x))
 
-@inline _val(::Val{N}) where {N} = N
-# A dimension may arrive as an Int: the general-types prototype.
-@inline _val(n::Int) = n
 
 """
     _isapprox_default_rtol(T)
@@ -95,11 +92,11 @@ Return a relative tolerance based on the dual number's floating primal type.
 Add the scalar `val` to each diagonal entry of `mat` in place.
 """
 function add_diag!(mat, val::Number)
-    return add_diag!(mat, val, Val(min(size(mat, 1), size(mat, 2))))
+    return add_diag!(mat, val, min(size(mat, 1), size(mat, 2)))
 end
 
-function add_diag!(mat, val::Number, __d::Union{Int,Val})
-    d = _val(__d)
+function add_diag!(mat, val::Number, __d::Int)
+    d = __d
     @boundscheck begin
         size(mat, 1) >= d || throw(DimensionMismatch("matrix row count must be at least d"))
         size(mat, 2) >= d || throw(DimensionMismatch("matrix column count must be at least d"))
@@ -119,8 +116,8 @@ function add_diag!(mat, vals::AbstractVector)
     return add_diag!(mat, vals, length(vals))
 end
 
-function add_diag!(mat, vals::AbstractVector, __d::Union{Int,Val})
-    d = _val(__d)
+function add_diag!(mat, vals::AbstractVector, __d::Int)
+    d = __d
     @boundscheck begin
         length(vals) == d || throw(DimensionMismatch("vals length must match d"))
         size(mat, 1) >= d || throw(DimensionMismatch("matrix row count must be at least d"))
@@ -148,11 +145,11 @@ function _matvec_mul!(
     y::AbstractVector,
     A::AbstractMatrix,
     x::AbstractVector,
-    __rows::Union{Int,Val},
-    __cols::Union{Int,Val},
+    __rows::Int,
+    __cols::Int,
 )
-    rows = _val(__rows)
-    cols = _val(__cols)
+    rows = __rows
+    cols = __cols
     @boundscheck begin
         size(A, 1) == rows && length(y) == rows || throw(DimensionMismatch("A*y output size mismatch"))
         size(A, 2) == cols && length(x) == cols || throw(DimensionMismatch("A*x input size mismatch"))
@@ -182,11 +179,11 @@ function _matvec_mul!(
     y::AbstractVector,
     A::AbstractMatrix,
     x::AbstractMatrix,
-    __rows::Union{Int,Val},
-    __cols::Union{Int,Val},
+    __rows::Int,
+    __cols::Int,
 )
-    rows = _val(__rows)
-    cols = _val(__cols)
+    rows = __rows
+    cols = __cols
     @boundscheck begin
         size(A, 1) == rows && length(y) == rows || throw(DimensionMismatch("A*y output size mismatch"))
         size(x, 2) == 1 || throw(DimensionMismatch("x must be a column matrix"))
@@ -215,13 +212,13 @@ function _mul_right_transpose!(
     C::StridedMatrix{T},
     A::StridedMatrix{T},
     B::StridedMatrix{T},
-    __rows::Union{Int,Val},
-    __cols::Union{Int,Val},
-    __inner::Union{Int,Val},
+    __rows::Int,
+    __cols::Int,
+    __inner::Int,
 ) where {T<:LinearAlgebra.BlasFloat}
-    rows = _val(__rows)
-    cols = _val(__cols)
-    inner = _val(__inner)
+    rows = __rows
+    cols = __cols
+    inner = __inner
     @boundscheck begin
         size(C, 1) == rows && size(A, 1) == rows || throw(DimensionMismatch("A row count must match C row count"))
         size(C, 2) == cols && size(B, 1) == cols || throw(DimensionMismatch("B row count must match C column count"))
@@ -245,13 +242,13 @@ function _mul_right_transpose!(
     C::AbstractMatrix{T},
     A::AbstractMatrix{T},
     B::AbstractMatrix{T},
-    __rows::Union{Int,Val},
-    __cols::Union{Int,Val},
-    __inner::Union{Int,Val},
+    __rows::Int,
+    __cols::Int,
+    __inner::Int,
 ) where {T<:Number}
-    rows = _val(__rows)
-    cols = _val(__cols)
-    inner = _val(__inner)
+    rows = __rows
+    cols = __cols
+    inner = __inner
     @boundscheck begin
         size(C, 1) == rows && size(A, 1) == rows || throw(DimensionMismatch("A row count must match C row count"))
         size(C, 2) == cols && size(B, 1) == cols || throw(DimensionMismatch("B row count must match C column count"))
@@ -290,13 +287,13 @@ end
 function _isapprox_matrix_noalloc(
     A::AbstractMatrix,
     B::AbstractMatrix,
-    __rows::Union{Int,Val},
-    __cols::Union{Int,Val};
+    __rows::Int,
+    __cols::Int;
     atol::Real=0.0,
     rtol::Real=_isapprox_default_rtol(promote_type(eltype(A), eltype(B))),
 )
-    rows = _val(__rows)
-    cols = _val(__cols)
+    rows = __rows
+    cols = __cols
     @boundscheck begin
         size(A, 1) == rows && size(B, 1) == rows || return false
         size(A, 2) == cols && size(B, 2) == cols || return false
@@ -313,9 +310,9 @@ function _isapprox_matrix_noalloc(
     return true
 end
 
-function _matrix_equal_noalloc(A::AbstractMatrix, B::AbstractMatrix, __rows::Union{Int,Val}, __cols::Union{Int,Val})
-    rows = _val(__rows)
-    cols = _val(__cols)
+function _matrix_equal_noalloc(A::AbstractMatrix, B::AbstractMatrix, __rows::Int, __cols::Int)
+    rows = __rows
+    cols = __cols
     @boundscheck begin
         size(A, 1) == rows && size(B, 1) == rows || return false
         size(A, 2) == cols && size(B, 2) == cols || return false
@@ -513,7 +510,8 @@ of a few buckets makes every count in a bucket one type. Above 12,
 `pickchunksize`'s width is rounded up the same way, which never adds a sweep.
 The extra lanes of a padded input are zero seeds on inputs the function
 ignores, so the result is the same Jacobian. An empty list is `pickchunksize`.
-`ctsem_set_dual_widths!` sets both lists.
+The two lists are the `Ref`s `_CTSEM_HESSIAN_WIDTHS` and
+`_CTSEM_CURVATURE_WIDTHS`.
 
 The Hessian takes one width, 12, for every parameter count. A padded lane
 costs 5-12% of a small model's Hessian, and a binary model's 5 parameters at
@@ -527,14 +525,6 @@ random effects per unit a single type.
 """
 const _CTSEM_HESSIAN_WIDTHS = Ref(Int[12])
 const _CTSEM_CURVATURE_WIDTHS = Ref(Int[4, 8, 12])
-
-export ctsem_set_dual_widths!
-function ctsem_set_dual_widths!(; hessian=nothing, curvature=nothing)
-    hessian === nothing || (_CTSEM_HESSIAN_WIDTHS[] = sort!(Int.(collect(hessian))))
-    curvature === nothing || (_CTSEM_CURVATURE_WIDTHS[] = sort!(Int.(collect(curvature))))
-    return (hessian = copy(_CTSEM_HESSIAN_WIDTHS[]),
-        curvature = copy(_CTSEM_CURVATURE_WIDTHS[]))
-end
 
 """The width a forward-mode Jacobian over `n` inputs takes from `widths`."""
 function _ctsem_dual_width(n::Integer, widths::Vector{Int})

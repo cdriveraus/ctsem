@@ -64,8 +64,8 @@ function ctsem_row_scores(objective::CTSEMObjective, values::AbstractVector,
     K == 0 && return out
     ws = _init_continuous_ekf_workspace(_RowScoreDual, sp)
     ws.hyb.mode = _HYBRID_OFF
-    n = _val(ws.state_dim)
-    m = _val(ws.manifest_dim)
+    n = ws.state_dim
+    m = ws.manifest_dim
     nall = length(sp.mutables)
     for c0 in 1:_ROW_SCORE_WIDTH:K
         cols = c0:min(c0 + _ROW_SCORE_WIDTH - 1, K)
@@ -139,14 +139,10 @@ function _laplace_row_scores_unit!(out, laplace::CTSEMLaplaceObjective, U::Integ
     units = laplace.units
     i = units.members[U][1]
     so = laplace.objective.subject_objectives[i]
-    full = (data=so.data, timesteps=so.timesteps, tdpreds=so.tdpreds,
-        max_timestep=so.max_timestep)
+    saved = _laplace_unit_saved(laplace, U, so)
+    full = saved.full
     T = size(full.data, 2)
     K = size(directions, 2)
-    saved = (mode=copy(laplace.modes[U]), iterations=laplace.inner_iterations[U],
-        gradient=laplace.inner_gradient[U], converged=laplace.inner_converged[U],
-        hrepaired=laplace.hessian_repaired[U], mrepaired=laplace.mode_repaired[U],
-        floored=laplace.logdet_floored[U])
     npar = length(theta)
     blocks = units.blocks[U]
     awsd = _laplace_workspace!(laplace, _RowScoreDual, npar)
@@ -188,17 +184,7 @@ function _laplace_row_scores_unit!(out, laplace::CTSEMLaplaceObjective, U::Integ
             end
         end
     finally
-        so.data = full.data
-        so.timesteps = full.timesteps
-        so.tdpreds = full.tdpreds
-        so.max_timestep = full.max_timestep
-        laplace.modes[U] = saved.mode
-        laplace.inner_iterations[U] = saved.iterations
-        laplace.inner_gradient[U] = saved.gradient
-        laplace.inner_converged[U] = saved.converged
-        laplace.hessian_repaired[U] = saved.hrepaired
-        laplace.mode_repaired[U] = saved.mrepaired
-        laplace.logdet_floored[U] = saved.floored
+        _laplace_unit_restore!(laplace, U, so, saved)
     end
     return nothing
 end

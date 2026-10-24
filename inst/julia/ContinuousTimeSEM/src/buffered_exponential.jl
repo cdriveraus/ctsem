@@ -56,8 +56,8 @@ Create an `ExpBuffer` sized and typed from `mat`.
 """
 ExpBuffer(mat::AbstractMatrix) = ExpBuffer{eltype(mat)}(size(mat, 1))
 
-function _opnorm1_noalloc(A::AbstractMatrix{T}, __d::Union{Int,Val}) where {T<:Number}
-    d = _val(__d)
+function _opnorm1_noalloc(A::AbstractMatrix{T}, __d::Int) where {T<:Number}
+    d = __d
     z = zero(_custom_abs(zero(T)))
     max_col_sum = z
     @inbounds for j in 1:d
@@ -83,8 +83,8 @@ function my_exp!(Y::AbstractMatrix{TYPE}, A::AbstractMatrix{TYPE}, W1::AbstractM
     return my_exp!(Y, A, W1, buffer, buffer.dim)
 end
 
-function my_exp!(Y::AbstractMatrix{TYPE}, A::AbstractMatrix{TYPE}, W1::AbstractMatrix{TYPE}, buffer::ExpBuffer{TYPE}, dim::Union{Int,Val}) where {TYPE<:Number}
-    d = _val(dim)
+function my_exp!(Y::AbstractMatrix{TYPE}, A::AbstractMatrix{TYPE}, W1::AbstractMatrix{TYPE}, buffer::ExpBuffer{TYPE}, dim::Int) where {TYPE<:Number}
+    d = dim
     # Higham (2008) scaling-and-squaring with [13/13] Pade approximant.
     _CTSEM_OPCOUNT.exp[] += 1
     a1 = _opnorm1_noalloc(A, dim)

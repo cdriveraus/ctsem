@@ -5,14 +5,14 @@ The hand-derived reverse-mode mathematics lives one level down, in
 `adjoint_primitives.jl` (generic matrix kernels), `adjoint_parameters.jl` (the
 transform layer) and `adjoint_ekf.jl` (the reverse filter). This file holds the
 public entry points: the workspace that caches everything discovered once per
-model, `ctsem_adjoint_gradient`, the gating status, and the validation oracle
-that cross-checks the adjoint against ForwardDiff and finite differences.
+model, `ctsem_adjoint_gradient`, and the validation oracle that cross-checks
+the adjoint against ForwardDiff and finite differences.
 """
 
 using LinearAlgebra
 using ForwardDiff
 
-export ctsem_adjoint_status, ctsem_validate_forward_gradient, ctsem_adjoint_gradient
+export ctsem_validate_forward_gradient, ctsem_adjoint_gradient
 
 """
     CTSEMAdjointWorkspace
@@ -167,8 +167,8 @@ end
 function CTSEMAdjointWorkspace(::Type{T}, sp::EKFParameters, nvalues::Integer,
     ntdpred::Integer) where {T}
     ws = _init_continuous_ekf_workspace(T, sp)
-    n = _val(ws.state_dim)
-    m = _val(ws.manifest_dim)
+    n = ws.state_dim
+    m = ws.manifest_dim
     # The subject vector the regular transforms read: the raw parameters, any
     # stated population values (`EKFParameters.anchors`), then any TI
     # predictor tail (`EKFParameters.ti_tail`).
@@ -216,7 +216,7 @@ function CTSEMAdjointWorkspace(::Type{T}, sp::EKFParameters, nvalues::Integer,
     dual_context = CTSEMDualContext(T, sp, zeros(T, n))
     return CTSEMAdjointWorkspace{T,typeof(sp),typeof(lyap_buffer),
         typeof(frechet_buffer),typeof(ws),typeof(dual_context)}(
-        sp, n, m, _val(ws.affine_buffer.dim),
+        sp, n, m, ws.affine_buffer.dim,
         collect(ws.diffusion_state_indices),
         predict_indices, update_indices, td_indices,
         predict_supports,
@@ -250,7 +250,7 @@ function CTSEMAdjointWorkspace(::Type{T}, sp::EKFParameters, nvalues::Integer,
         frechet_buffer, zeros(T, n, n), zeros(T, n, n), ExpTable(T, n),
         CTSEMCovSqrtScratch(T, max(n, m)),
         CTSEMReverseScratch(T, n, m, length(ws.diffusion_state_indices),
-            _val(ws.affine_buffer.dim)),
+            ws.affine_buffer.dim),
         CTSEMAdjointTape(T, group_relevant),
         ws,
     )
@@ -723,34 +723,12 @@ function _get_or_init_adjoint_workspaces!(objective::CTSEMObjective, ::Type{T},
 end
 
 """
-Report the state of the adjoint implementation.
-
-`available == true` since the acceptance gates in
-`test/test_adjoint_gradient_validation.jl` (adjoint vs. ForwardDiff vs. central
-finite differences, across linear, cross-effect, state/PARS-expression, free
-covariance/mean, TD/TI-predictor, bounded-substep, partially missing, fully
-missing and unequal-length multi-subject models) became part of the always-run
-suite and went green. `fallback == false` is a promise, not a description:
-selecting the adjoint never silently reverts to ForwardDiff.
-
-It is not yet the *default* gradient -- see the performance table in
-`docs/src/adjoint-roadmap.md`; below roughly 40 free parameters ForwardDiff is
-still faster.
-"""
-ctsem_adjoint_status() = (
-    available=true,
-    phase="tape-replay reverse EKF",
-    reference="primitive pullbacks in adjoint_primitives.jl; reverse filter in adjoint_ekf.jl",
-    fallback=false,
-)
-
-"""
     ctsem_validate_forward_gradient(objective, values; step=1e-6, adjoint=true)
 
 Three-way gradient comparison: ForwardDiff, central finite differences, and
 (when `adjoint` is true) the reverse-mode adjoint.
 
-This is the acceptance-gate oracle the adjoint roadmap requires. Finite
+This is the oracle the adjoint's acceptance tests compare against. Finite
 differences are the independent referee: ForwardDiff and the adjoint are both
 "clever" and could in principle share a misunderstanding of the primal, whereas
 a central difference only knows the primal's outputs.

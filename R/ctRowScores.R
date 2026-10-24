@@ -24,11 +24,14 @@
 # Each unit's posterior over its standardised random effects, as the adaptive
 # rule the quadrature integrates with (`nodes` a dimension): `points` (units by
 # nodes^d by d), normalised `weights` (units by nodes^d), and `logmarginal`,
-# each unit's quadrature term. Single-level Laplace fits.
+# each unit's quadrature term. Single-level Laplace fits. On the layer, where
+# every effect is a coordinate: the hybrid integrates affine effects inside the
+# filter, which leaves a unit of only such effects no coordinate to place a
+# node on, and the effects family then reported no random effects at all.
 .ctBackendPosteriorNodes <- function(fit, est, nodes = 5L, cores = 2L) {
   module <- .ctJuliaModule(fit$model_spec$project)
   out <- .ctBackendWithMaxChunks(cores, .ctBackendJuliaValue(
-    module$ctsem_laplace_posterior_nodes(.ctJuliaObjective(fit, hybrid = TRUE),
+    module$ctsem_laplace_posterior_nodes(.ctJuliaObjective(fit),
       .ctJuliaNumericVector(as.numeric(est)), nodes = as.integer(nodes))))
   W <- as.matrix(out$weights)
   d <- length(out$points) / max(1L, length(W))
@@ -36,9 +39,10 @@
     logmarginal = as.numeric(out$logmarginal))
 }
 
-# Each unit's number of random-effect coordinates on the Laplace route.
+# Each unit's number of random effects on the Laplace route: its coordinates
+# on the layer, as `.ctBackendPosteriorNodes()` places nodes on them.
 .ctBackendUnitDims <- function(fit) {
   module <- .ctJuliaModule(fit$model_spec$project)
   as.integer(.ctBackendJuliaValue(module$ctsem_laplace_unit_dims(
-    .ctJuliaObjective(fit, hybrid = TRUE))))
+    .ctJuliaObjective(fit))))
 }

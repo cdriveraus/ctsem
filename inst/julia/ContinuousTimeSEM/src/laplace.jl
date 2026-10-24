@@ -2884,20 +2884,6 @@ and reached 1.1e-12 three iterations later.
 const _LAPLACE_INNER_MAXITER = Ref(200)
 
 """
-    ctsem_set_inner_maxiter!(n)
-
-Set the default inner Newton iteration budget. Returns the previous value.
-Objectives already built keep the budget they were built with.
-"""
-function ctsem_set_inner_maxiter!(n::Integer)
-    previous = _LAPLACE_INNER_MAXITER[]
-    _LAPLACE_INNER_MAXITER[] = Int(n)
-    return previous
-end
-
-export ctsem_set_inner_maxiter!
-
-"""
     ctsem_set_warm_start!(warm)
 
 Start each unit's inner Newton from the retained mode (`true`) or from the
@@ -6090,28 +6076,26 @@ needs a marginal per independent block (leave-one-unit-out, for one) reads
 `unit_loglik`.
 """
 function ctsem_laplace_evaluate(laplace::CTSEMLaplaceObjective, values::AbstractVector;
-    gradient::Bool=true, contributions::Bool=false, nested_gradient::Bool=false,
+    gradient::Bool=true, nested_gradient::Bool=false,
     scores::Union{Nothing,Matrix{Float64}}=nothing,
     coreset::Union{Nothing,CTSEMCoreset}=nothing)
     n = length(values)
     theta = _laplace_extend(laplace, collect(Float64, values))
     length(theta) == n && return _laplace_evaluate(laplace, theta; gradient=gradient,
-        contributions=contributions, nested_gradient=nested_gradient, scores=scores,
-        coreset=coreset)
+        nested_gradient=nested_gradient, scores=scores, coreset=coreset)
     # With stated population values (`CTSEMAnchors`) the gradient and the
     # scores are formed over the extended vector and returned over the
     # caller's.
     full = scores === nothing ? nothing : zeros(Float64, size(scores, 1), length(theta))
     r = _laplace_evaluate(laplace, theta; gradient=gradient,
-        contributions=contributions, nested_gradient=nested_gradient, scores=full,
-        coreset=coreset)
+        nested_gradient=nested_gradient, scores=full, coreset=coreset)
     full === nothing || copyto!(scores, view(full, :, 1:n))
     return _laplace_free_result(r, n)
 end
 
 """`ctsem_laplace_evaluate` at a vector already extended (`_laplace_extend`)."""
 function _laplace_evaluate(laplace::CTSEMLaplaceObjective, theta::Vector{Float64};
-    gradient::Bool=true, contributions::Bool=false, nested_gradient::Bool=false,
+    gradient::Bool=true, nested_gradient::Bool=false,
     scores::Union{Nothing,Matrix{Float64}}=nothing,
     coreset::Union{Nothing,CTSEMCoreset}=nothing)
     _laplace_check_indices(laplace, length(theta))
@@ -8266,60 +8250,6 @@ function ctsem_generate(laplace::CTSEMLaplaceObjective, values::AbstractVector,
     return ctsem_generate(laplace.objective, persubject, base; seed=seed)
 end
 
-"""
-    ctsem_laplace_effect_layout(laplace)
-
-Where each entry of the flat random-effect vector comes from.
-
-The sampler returns the effects as one vector per draw, laid out unit by unit
-and, within a unit, by block offset. With a single level that degenerates to one
-unit per subject with `k` effects each, which the R side can and does work out
-for itself. With more than one level it cannot: a unit's blocks interleave a
-group's own effects with its members', and the arrangement is decided here.
-
-Rather than have R reimplement `_laplace_build_units` and keep the two in step,
-the engine says what it did. One entry per position, giving the unit, the level
-the block belongs to, the block's first member as a global subject index, how
-many members the block covers, and which effect within the block it is -- from
-which R can attach a subject or a group label and the parameter's own name.
-
-`level` is 1 for the subject level and increases outwards. A block covering more
-than one member is a grouping block, and belongs to the group those members
-share at that level.
-"""
-function ctsem_laplace_effect_layout(laplace::CTSEMLaplaceObjective)
-    units = laplace.units
-    nunits = length(units.members)
-    position = Int[]
-    unit = Int[]
-    level = Int[]
-    first_member = Int[]
-    nmembers = Int[]
-    within = Int[]
-    base = 0
-    for U in 1:nunits
-        for block in units.blocks[U]
-            # `offset` is zero-based inside the unit and units concatenate in
-            # order, which is the arithmetic every other consumer of these
-            # blocks already does.
-            for k in 1:block.size
-                push!(position, base + block.offset + k)
-                push!(unit, U)
-                push!(level, block.level)
-                push!(first_member, isempty(block.members) ? 0 :
-                    units.members[U][block.members[1]])
-                push!(nmembers, length(block.members))
-                push!(within, k)
-            end
-        end
-        base += units.dims[U]
-    end
-    order = sortperm(position)
-    return (position=position[order], unit=unit[order], level=level[order],
-        first_member=first_member[order], nmembers=nmembers[order],
-        within=within[order])
-end
-
 # The effects a sampler draws, `u`, are coordinates: each block's deviation of
 # its level's parameters is `d = S u` for a square root `S` of the level's
 # population covariance, and which root is a choice (the Cholesky here). What a
@@ -8454,10 +8384,17 @@ end
 """
     ctsem_laplace_deviation_layout(laplace)
 
-`ctsem_laplace_effect_layout`'s account for the natural deviations a sampled
-fit reports: one entry per position, giving the unit, the level, the block's
-first member, how many members it covers, and which of the level's parameters
-(`within`, 1 to `k`) the position is.
+Where each entry of the flat vector of natural deviations a sampled fit reports
+comes from: one entry per position, giving the unit, the level, the block's
+first member (as a global subject index), how many members it covers, and which
+of the level's parameters (`within`, 1 to `k`) the position is. From these R
+attaches a subject or a group label and the parameter's own name, without
+reimplementing `_laplace_build_units`.
+
+The vector is laid out unit by unit and, within a unit, by block offset.
+`level` is 1 for the subject level and increases outwards. A block covering more
+than one member is a grouping block, and belongs to the group those members
+share at that level.
 """
 function ctsem_laplace_deviation_layout(laplace::CTSEMLaplaceObjective)
     units = laplace.units
