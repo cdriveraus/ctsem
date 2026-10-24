@@ -135,6 +135,8 @@ include("laplace_loo.jl")
 # The coreset entry points for importance sampling; after laplace.jl, which
 # holds `CTSEMCoreset` and the evaluation that takes it.
 include("laplace_coreset.jl")
+# After laplace_coreset.jl: the importance sampler's coreset evaluates through it.
+include("coreset_sampler.jl")
 # After laplace_sequential.jl (record truncation) and laplace.jl (the dual mode
 # and the member likelihood); nothing on a fitting path calls it.
 include("row_scores.jl")

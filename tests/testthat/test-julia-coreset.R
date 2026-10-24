@@ -1,9 +1,11 @@
 # The coreset importance sampling evaluates on the Laplace route (R/ctCoreset.R,
-# laplace_coreset.jl): the engine's subset evaluation against the full one, the
-# selection on a sum it can compress, and the sampler's density with a coreset
-# behind it against the full density. One fit, the shared Laplace fixture at
-# 100 subjects: its seven parameters all move under 'is', so a coreset needs
-# about twice that many units, a small enough share of 100 to pay.
+# laplace_coreset.jl, coreset_sampler.jl): the engine's subset evaluation
+# against the full one, and the sampler's density with a coreset behind it
+# against the full density. The choice on sums it can compress is the
+# engine's own test (test_coreset_sampler.jl). One fit, the shared Laplace
+# fixture at 100 subjects: its seven parameters all move under 'is', so a
+# coreset needs about twice that many units, a small enough share of 100 to
+# pay.
 
 .coreset_fixture <- function() laplace_fixture(nsub = 100L, tp = 6L, seed = 31L)
 
@@ -65,82 +67,6 @@ test_that("the engine's coreset evaluation is the weighted sum of the units it n
   scores3 <- as.matrix(ctsem:::.ctJuliaGet(module$ctsem_subject_gradients(obj,
     ctsem:::.ctJuliaVector(X[3, ]), prior = FALSE))$scores)
   expect_equal(sc[, , 2], scores3, tolerance = 1e-8)
-})
-
-test_that("the selection finds a small coreset where the units' terms span few dimensions", {
-  # Sixty units whose terms are each a non-negative mix of three functions of
-  # the draws: their sum is a mix of the same three, so a handful of units
-  # carry it, and the held-out error says so.
-  set.seed(5)
-  draws <- 240L
-  basis <- cbind(rnorm(draws), rnorm(draws)^2, sin(seq_len(draws) / 9))
-  mix <- matrix(runif(60 * 3), 3)
-  # On a log density's scale: the sum moves a few units across the draws.
-  X <- (basis %*% mix) / 20 + matrix(rnorm(draws * 60, 0, 1e-5), draws)
-  y <- rowSums(X)
-  # Chosen by its expected cost in a round of 100 draws and 30 gradients:
-  # a handful of units, since three carry the sum and every unit costs.
-  round <- list(values = 100, grads = 30, checks = 8)
-  cf <- ctsem:::.ctCoresetChoose(X, y, seq_len(200), round)
-  expect_gt(length(cf), 0L)
-  expect_lte(sum(cf$w > 0), 10L)
-  expect_lt(cf$cost, round$values + 2 * round$grads)
-  held <- 201:draws
-  err <- ctsem:::.ctCoresetPredict(cf, X[held, , drop = FALSE]) - y[held]
-  expect_lt(max(abs(err)), ctsem:::.ctCoresetTol$max)
-  # Units that all move against the sum get zero weights, which leave nothing
-  # to evaluate: never chosen, however cheap that looks, from scratch or from
-  # a coreset that held them (a 200-person fit once handed the engine an
-  # empty unit list).
-  against <- 50 - X
-  expect_length(ctsem:::.ctCoresetChoose(against, y, seq_len(200), round), 0L)
-  expect_length(ctsem:::.ctCoresetChoose(against, y, seq_len(200), round, start = 1:3), 0L)
-  # Non-negative least squares agrees with a bounded optimiser.
-  A <- X[1:200, 1:8]
-  b <- y[1:200]
-  x <- ctsem:::.ctCoresetNnls(A, b)
-  o <- stats::optim(rep(1, 8), function(v) sum((b - A %*% v)^2),
-    function(v) -2 * drop(crossprod(A, b - A %*% v)), method = "L-BFGS-B",
-    lower = 0, control = list(maxit = 5000, factr = 1))
-  expect_true(all(x >= 0))
-  expect_lte(sum((b - A %*% x)^2), o$value * (1 + 1e-8) + 1e-10)
-})
-
-test_that("score rows fit the weights that values alone leave open", {
-  # Twelve units whose terms are each a non-negative mix of three functions of
-  # a two-parameter draw, and their scores. Four draws' values cannot fit six
-  # weights; their scores add two rows each, and with them the coreset that
-  # reproduces the sum is found and predicts held-out draws exactly. The rows
-  # are in units of each parameter's spread, so rescaling a parameter changes
-  # nothing.
-  set.seed(7)
-  f <- function(th) cbind(th[, 1], th[, 2]^2, sin(th[, 1]) * th[, 2])
-  df <- function(th) list(cbind(1, 0, cos(th[1]) * th[2]),
-    cbind(0, 2 * th[2], sin(th[1])))
-  mix <- matrix(0, 3, 12)
-  mix[, 1:6] <- matrix(runif(18), 3)
-  ytrue <- rowSums(mix)
-  th <- matrix(rnorm(8), 4)
-  X <- f(th) %*% mix
-  y <- drop(f(th) %*% ytrue)
-  rows <- function(th, scale = c(1, 1)) {
-    Z <- NULL; z <- NULL; par <- NULL
-    for (r in seq_len(nrow(th))) for (j in 1:2) {
-      zr <- drop(df(th[r, ])[[j]] %*% mix) / scale[j]
-      Z <- rbind(Z, zr); z <- c(z, sum(zr)); par <- c(par, j)
-    }
-    list(Z = Z, z = z, par = par, total = rep(max(y), length(z)),
-      draws = sweep(th, 2, scale, "*"))
-  }
-  score <- ctsem:::.ctCoresetScoreRows(rows(th), max(y))
-  cf <- ctsem:::.ctCoresetWeights(X, y, 1:6, 1:4, score = score)
-  held <- matrix(rnorm(20), 10)
-  expect_equal(ctsem:::.ctCoresetPredict(cf, f(held) %*% mix), drop(f(held) %*% ytrue),
-    tolerance = 1e-6)
-  # The second parameter on a scale a thousand times larger: the same weights.
-  big <- ctsem:::.ctCoresetScoreRows(rows(th, c(1, 1000)), max(y))
-  expect_equal(ctsem:::.ctCoresetWeights(X, y, 1:6, 1:4, score = big)$w, cf$w,
-    tolerance = 1e-6)
 })
 
 test_that("the sampler's density with a coreset behind it follows the full density", {
