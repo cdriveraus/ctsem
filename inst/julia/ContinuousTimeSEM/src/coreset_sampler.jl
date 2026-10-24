@@ -172,7 +172,8 @@ rows read as the newest checks (`focus`), and the score rows -- per row the
 units' scores (`Z`, rows by units), their sum, its parameter, its draw's total
 and a draw counter -- with the draws that gave them. Relevance is measured
 from the best total of every row, or, where `batchtop`, of the newest batch's,
-rows `batch_from` on (`_is_top`).
+rows `batch_from` on (`_is_top`). A coreset has more units than `dims`, the
+directions the caller's draws move in (`_is_coreset_choose`).
 """
 mutable struct _ISRows
     N::Int
@@ -189,10 +190,12 @@ mutable struct _ISRows
     scoredraws::Int
     batchtop::Bool
     batch_from::Int
+    dims::Int
 end
 
-_ISRows(N::Integer; batchtop::Bool=false) = _ISRows(N, zeros(N, 0), 0, Float64[], Int[],
-    zeros(0, N), Float64[], Int[], Float64[], Int[], Vector{Float64}[], 0, batchtop, 1)
+_ISRows(N::Integer; batchtop::Bool=false, dims::Integer=0) = _ISRows(N, zeros(N, 0), 0,
+    Float64[], Int[], zeros(0, N), Float64[], Int[], Float64[], Int[], Vector{Float64}[], 0,
+    batchtop, 1, Int(dims))
 
 """
 The total a draw's relevance is measured from (`_is_relevance`): the best of
@@ -278,20 +281,26 @@ gradient, `ctsem_is_coreset_finalize!` the end check, and
 `ctsem_is_coreset_record` what it did. `top` says how the caller's weights are
 normalised, which is what a draw's relevance is measured against
 (`_is_top`): over the whole run (`:run`, the importance sampler) or within
-each batch (`:batch`, DAIS).
+each batch (`:batch`, DAIS). `dims`, the directions the caller's draws move
+in, bounds a coreset's size from below (`_is_coreset_dims!`).
 """
-function ctsem_is_coreset(laplace::CTSEMLaplaceObjective; top::Symbol=:run)
+function ctsem_is_coreset(laplace::CTSEMLaplaceObjective; top::Symbol=:run,
+    dims::Integer=0)
     top in (:run, :batch) || throw(ArgumentError("top must be :run or :batch, not :$top"))
     N = length(laplace.units.members)
     secs = Dict(k => 0.0 for k in (:full, :coreset, :gradient_full, :gradient_coreset, :choose))
     draws = Dict(k => 0.0 for k in (:full, :coreset, :gradient_full, :gradient_coreset))
     why = Dict(k => 0.0 for k in (:training, :small, :check, :gradient_check, :failed_rest, :end))
-    return CTSEMISCoreset(laplace, N, _ISRows(N; batchtop=top == :batch),
+    return CTSEMISCoreset(laplace, N, _ISRows(N; batchtop=top == :batch, dims=dims),
         false, Int[], Float64[], 0.0, NaN, NaN, :training, 0.0, Int[], Float64[],
         0, NaN, 0, false, NaN, NaN, 0.0, 0, 0, 0, 0, 0, 0, 0, false, true, 0, 0, 0,
         secs, draws, why, Dict{Vector{Float64},Float64}(), NTuple{8,Float64}[],
         Dict{Vector{Float64},Int}(), Float64[], Float64[], zeros(N, 0), 0)
 end
+
+"""The directions the caller's draws move in, where the caller learns them after
+the coreset is made: DAIS's free directions, its parameters less those it holds."""
+_is_coreset_dims!(cs::CTSEMISCoreset, d::Integer) = (cs.rows.dims = Int(d); nothing)
 
 _is_smooth(old, new) = isnan(old) ? Float64(new) : 0.7 * old + 0.3 * new
 _is_round(cs::CTSEMISCoreset) = _ISRound(cs.values,
@@ -452,7 +461,8 @@ end
     _is_coreset_choose(cs, rd, start)
 
 The coreset whose expected round cost (`_is_round_cost`) is least, refitted on
-every row, or why there is none: too few rows to fit (`:held`), none expected
+every row, or why there is none: no more units than the draws move in
+(`:dims`), too few rows to fit (`:held`), none expected
 to cost less than a full round (`:cost`), or weights all zero (`:empty`).
 Sizes are tried along one forward-selection path (`_coreset_select`, refitted
 by NNLS each step), which grows until what a size costs with checks that never
@@ -490,6 +500,12 @@ function _is_coreset_choose(tr::_ISRows, rd::_ISRound, start::Vector{Int})
     fitrows = setdiff(plain, held)
     rel = _is_relevance(tr.y, _is_top(tr))
     none(why; kw...) = (chosen=false, why=why, kw...)
+    # A sum over units that depend on d directions needs more than d of them:
+    # fewer cannot follow it whatever their weights (Campbell 2024, Corollary
+    # 4.3). Below that, every choice failed its check: sizes 1-16 for DAIS's
+    # 33-parameter shell at 1,000 units, and a unit a choice, 20 checks of 21,
+    # on the 266-parameter scale fit with 200 units.
+    tr.dims >= tr.N && return none(:dims)
     length(fitrows) < 10 && return none(:held; relheld=_is_effective(rel[held]))
     N = tr.N
     fullround = _is_full_round(rd)
@@ -504,7 +520,7 @@ function _is_coreset_choose(tr::_ISRows, rd::_ISRound, start::Vector{Int})
     end
     nextsize(M) = M + max(1, M ÷ 10)
     sizes = Int[]
-    M = max(1, length(start))
+    M = max(1, length(start), tr.dims + 1)
     while M <= N && _is_round_cost(M, N, rd, 0.0) < fullround
         push!(sizes, M)
         M = nextsize(M)
@@ -520,6 +536,8 @@ function _is_coreset_choose(tr::_ISRows, rd::_ISRound, start::Vector{Int})
         # coreset was chosen, and the engine was then handed an empty unit
         # list.
         any(>(0), w) || return (0.0, bound, nothing)
+        # Units the weights leave out are not in it: the bound is on the rest.
+        count(>(0), w) > tr.dims || return (0.0, bound, nothing)
         # Not `c`: the function's own `c` below would be this one, boxed.
         level = my - sum(mx[units] .* w)
         fail = maximum(filter(!isnan, [failrate(units, w, level, held, mheld),
@@ -546,6 +564,7 @@ function _is_coreset_choose(tr::_ISRows, rd::_ISRound, start::Vector{Int})
     # the path let refits give them weight, and coresets priced at 28 units of
     # 1,000 grew to 46.
     keep = w .> 0
+    count(keep) > tr.dims || return none(:dims)
     return (chosen=true, S=S[keep], w=w[keep], c=c, cost=found.extra.cost,
         fail=found.extra.fail, relheld=mheld)
 end
@@ -562,7 +581,7 @@ function _is_choose!(cs::CTSEMISCoreset, start::Vector{Int})
     cs.nchoose += 1
     cs.rows_at_choose = cs.rows.nrows
     code = Float64(something(findfirst(==(r.chosen ? :chosen : r.why),
-        (:chosen, :held, :cost, :empty)), 0))
+        (:chosen, :held, :cost, :empty, :dims)), 0))
     get_(nt, k) = haskey(nt, k) ? Float64(nt[k]) : NaN
     push!(cs.trace, (Float64(cs.rows.nrows), r.chosen ? Float64(length(r.S)) : 0.0, code,
         r.chosen ? r.fail : get_(r, :bestfail), r.chosen ? r.cost : get_(r, :bestcost),

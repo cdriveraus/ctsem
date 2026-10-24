@@ -296,6 +296,8 @@ function _ctsem_dais(objective, coreset, c0::Vector{Float64}, cov::AbstractMatri
     S = draws > 0 ? max(4, 2 * ((Int(draws) + 1) ÷ 2)) : _dais_draws(k)
     essfrac = 0.5
     kfree = k - (U === nothing ? 0 : size(U, 2))
+    # The draws move in the free directions: no coreset of as few units follows them.
+    coreset === nothing || _is_coreset_dims!(coreset, kfree)
     P = _DAIS_PRECISION
     need = kfree / P.width^2
     # The bound a parameter's drift over the window must stay within, every
