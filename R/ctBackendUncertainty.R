@@ -106,6 +106,9 @@
   # the quadrature continuation's, say -- carries no such mark and is never
   # replaced by the fit's unit terms.
   attr(fn, "unitsum") <- TRUE
+  # The engine and its objective, for a stage that runs in the engine on this
+  # density rather than calling it batch by batch (`.ctDaisEngine()`).
+  attr(fn, "engine") <- engine
   attr(fn, "batch") <- function(draws) {
     draws <- as.matrix(draws)
     # The engine takes columns as draws; `imis_is`'s `x_new` (and every

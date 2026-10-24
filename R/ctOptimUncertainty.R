@@ -2792,7 +2792,8 @@ ctOptimFitLpgFunc <- function(fit, cores=1){
   checked <- !is.null(directions)
   widths <- uncertaintyfit$details$normalcheck$widths
   # Where the check named a direction, the normal is first moved to the
-  # posterior's moments (`.ctDaisRun()`, R/ctDais.R) and checked again there:
+  # posterior's moments (`ctsem_dais` in the engine, through `.ctDaisEngine()`;
+  # a density without an engine has no such stage) and checked again there:
   # the recheck's directions are what is sampled, its centre and widths the
   # normal held in the rest, and that normal is the answer where nothing is
   # named or sampling fails. `control$dais = FALSE` leaves the Hessian's.
@@ -2801,7 +2802,7 @@ ctOptimFitLpgFunc <- function(fit, cores=1){
     # The directions the flat screen confirmed are held at the normal's
     # width: the data say nothing along them, and a moment-matching step has
     # no fixed point there (see R/ctDais.R).
-    dais <- .ctDaisRun(lpg, centre, uncertaintyfit$cov, control, verbose = verbose,
+    dais <- .ctDaisEngine(lpg, centre, uncertaintyfit$cov, control, verbose = verbose,
       hold = uncertaintyfit$details$flatdirections$vectors)
     if (!is.null(dais) && !isTRUE(dais$used)) {
       uncertaintyfit$details$dais <- dais
@@ -3560,9 +3561,10 @@ ctOptimFitLpgFunc <- function(fit, cores=1){
 #' evaluates every unit instead. Where the check of \code{'checked'} names
 #' a direction, the normal is first moved to the posterior's moments by
 #' doubly adaptive importance sampling (van den Boom, Cremaschi and Thiery
-#' 2026) and checked again there before anything is sampled; \code{dais =
-#' FALSE} skips that, \code{daisDraws} sets its draws an iteration (the
-#' dimension, between 64 and 256) and \code{daisMaxIter} its iterations (150). \code{parsteps} keeps
+#' 2026; julia fits, in the engine) and checked again there before anything is
+#' sampled; \code{dais = FALSE} skips that, \code{daisDraws} sets its draws
+#' an iteration (the dimension, between 64 and 256) and \code{daisMaxIter}
+#' its iterations (150). \code{parsteps} keeps
 #' stepwise-fixed raw parameters fixed (stan only).
 #' \code{analyticHessian = FALSE} (julia only) asks for the finite-difference
 #' Hessian instead of the engine's exact one. \code{likelihood} (\code{'fit'},

@@ -690,6 +690,9 @@
   }
   fn <- function(parm) batch(matrix(parm, 1L))
   attr(fn, 'batch') <- batch
+  # The full objective's engine, for a stage that runs there on the full
+  # density (`.ctDaisEngine()`); the coreset serves only the batches here.
+  attr(fn, 'engine') <- attr(lpg, 'engine')
   attr(fn, 'gradbatch') <- gradbatch
   # The full density's gradient, for a check of the answer
   # (`.ctSteinCheck()`) that a coreset's error must not reach.

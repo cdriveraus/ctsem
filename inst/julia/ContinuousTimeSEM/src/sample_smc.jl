@@ -82,17 +82,12 @@ chains' own, before the resampling. A coreset that follows the cloud poorly
 makes the run slower, not its posterior different, which is what makes it
 safe to run by default: `coreset = false` is the oracle.
 
-**Particles run in parallel on copies** (`parallel = true`): on the Laplace
-route each pool worker takes a copy of the objective (`_laplace_draw_copy`:
-its own modes and flags, everything else shared) and particles are handed to
-the pool, whose nesting bounds the workers alive by the `cores` ceiling
-whether a worker's gradient asks for helpers over its units or not. On a
-filter objective the pool is the subject loop's: where the subjects are fewer
-than the pool (a time series is one) particles are spread over deep copies of
-the objective, one a worker, each running its subject loop alone, so that a
-model with nothing to parallelise over inside a gradient gets the whole
-ceiling across particles; with more subjects than workers the subject loop
-already fills the pool and the particles run one after another.
+**Particles run in parallel** (`parallel = true`), laid out as any set of
+independent points is (`_each_point!`, parallel_points.jl): on the Laplace
+pool with a copy of the objective a worker, or over deep copies of a filter
+objective whose subjects are fewer than the pool (a time series is one), so
+that a model with nothing to parallelise over inside a gradient gets the
+whole ceiling across particles; one after another otherwise.
 
 The final phase's chains are many and short (200 of 20 or so), and split
 R-hat over them measures their autocorrelation rather than any disagreement:
@@ -423,111 +418,6 @@ function _smc_logdensity(objective, coreset, gradient_method)
     end
 end
 
-"""A copy of `laplace` for one worker's particles: fresh modes for the units
-it will solve (the coreset's, or all), its own flags, the rest shared
-(`_laplace_draw_copy`)."""
-function _smc_laplace_copy(laplace::CTSEMLaplaceObjective, coreset)
-    cs = coreset === nothing ? CTSEMCoreset(collect(1:length(laplace.units.members)),
-        ones(length(laplace.units.members))) : coreset
-    return _laplace_draw_copy(laplace, cs)
-end
-
-"""
-    _smc_parallel(objective, parallel)
-
-How the particles run: `:serial`, one after another on the shared objective;
-`:pool`, spread over the Laplace pool on copies; `:copies`, spread over deep
-copies of a filter objective whose subjects are fewer than the pool (its
-subject loop cannot fill it). The pool's width is the `cores` ceiling capped
-by the threads there are.
-"""
-function _smc_parallel(objective, parallel::Bool)
-    (parallel && Threads.nthreads() > 1 && _laplace_pool_width() > 1) || return :serial
-    objective isa CTSEMLaplaceObjective && return :pool
-    if objective isa CTSEMObjective &&
-        length(objective.subject_objectives) < _laplace_pool_width()
-        return :copies
-    end
-    return :serial
-end
-
-"""
-    _smc_each!(f, objective, coreset, np, ndim, maxdepth, mode)
-
-`f(i, objective_i, ws_i, g_i)` for every particle `i` in `1:np`, with the
-objective it may evaluate, a NUTS workspace and a gradient buffer of its own.
-`mode` is `_smc_parallel`'s: serial on the shared objective; on the pool, each
-worker task holding one copy of the Laplace objective, its workspace and
-buffer in task-local storage for the region (a copy keyed by the coreset, so
-a stage with a new coreset makes new ones); or over deep copies of a filter
-objective, as many as the pool is wide, each a task that runs its share of
-the particles with the chunk ceiling held at one so that the copies together
-stay within it. `f` writes only into its particle's own columns and slots.
-"""
-function _smc_each!(f, objective, coreset, np::Int, ndim::Int, maxdepth::Int, mode::Symbol)
-    if mode == :pool && objective isa CTSEMLaplaceObjective
-        key = :ctsem_smc_scratch
-        _laplace_parallel(objective, 1:np) do i
-            _ctsem_interrupt_check()
-            st = task_local_storage()
-            scratch = get(st, key, nothing)
-            if scratch === nothing || scratch.ndim != ndim || scratch.maxdepth != maxdepth ||
-                scratch.coreset !== coreset || scratch.source !== objective
-                scratch = (ndim=ndim, maxdepth=maxdepth, coreset=coreset, source=objective,
-                    obj=_smc_laplace_copy(objective, coreset),
-                    ws=_NUTSWorkspace(ndim, maxdepth), g=zeros(ndim))
-                st[key] = scratch
-            end
-            f(i, scratch.obj, scratch.ws, scratch.g)
-            return true
-        end
-        # The calling task runs items too, and its storage outlives the region:
-        # drop its copy rather than hold it for the session.
-        delete!(task_local_storage(), key)
-        return nothing
-    end
-    if mode == :copies
-        ncopies = min(_laplace_pool_width(), np)
-        held = _CTSEM_MAX_CHUNKS[]
-        _CTSEM_MAX_CHUNKS[] = 1
-        try
-            # Each task's copy, workspace and buffer are built inside a
-            # function of its own (`_smc_run_share`). Built inline in the
-            # spawned block, `ws = ...` and `g = ...` rebound this function's
-            # own `ws` and `g` below, so every task wrote one shared workspace:
-            # moves that ended early, a posterior 0.6 of its width on the time
-            # series, and nothing that failed (2026-10-24).
-            tasks = [Threads.@spawn(_smc_run_share(f, objective, c, ncopies, np, ndim,
-                maxdepth)) for c in 1:ncopies]
-            foreach(wait, tasks)
-        finally
-            _CTSEM_MAX_CHUNKS[] = held
-        end
-        return nothing
-    end
-    _smc_run_share(f, objective, 1, 1, np, ndim, maxdepth; copy=false)
-    return nothing
-end
-
-"""
-    _smc_run_share(f, objective, first, stride, np, ndim, maxdepth; copy)
-
-`f(i, objective_i, ws, g)` for particles `first:stride:np` in turn, on a deep
-copy of `objective` (or the objective itself with `copy = false`) and a NUTS
-workspace and gradient buffer that belong to this call alone.
-"""
-function _smc_run_share(f, objective, first::Int, stride::Int, np::Int, ndim::Int,
-    maxdepth::Int; copy::Bool=true)
-    obj = copy ? deepcopy(objective) : objective
-    ws = _NUTSWorkspace(ndim, maxdepth)
-    g = zeros(ndim)
-    for i in first:stride:np
-        _ctsem_interrupt_check()
-        f(i, obj, ws, g)
-    end
-    return nothing
-end
-
 """
     ctsem_sample_smc(objective, values; kwargs...)
 
@@ -582,7 +472,9 @@ function ctsem_sample_smc(objective, values::AbstractVector;
     use_coreset = coreset && capable
     tol_now = Float64(coreset_tol)
     corrections = 0
-    mode = _smc_parallel(objective, parallel)
+    mode = _points_mode(objective, parallel)
+    # Each worker's NUTS workspace and gradient buffer (`_each_point!`).
+    nuts_scratch = () -> (ws=_NUTSWorkspace(ndim, mdepth), g=zeros(ndim))
     fit_rng = Random.Xoshiro(hash((UInt64(seed), :coreset)))
 
     # The start: the metric's covariance, widened.
@@ -724,14 +616,14 @@ function ctsem_sample_smc(objective, values::AbstractVector;
         stage_beta = beta
         stage_step = step
         stage_metric = metric
-        _smc_each!(objective, cs_stage, np, ndim, mdepth, mode) do i, obj, ws, g
+        _each_point!(objective, np, mode; coreset=cs_stage, scratch=nuts_scratch) do i, obj, s
             tdi! = tempered_for(obj, cs_stage, stage_beta)
             # The chain advances its start in place; the start is kept apart.
             xi = Xstart[:, i]
-            logp = tdi!(g, xi)
+            logp = tdi!(s.g, xi)
             isfinite(logp) || return nothing
-            r = _continue_chain(tdi!, ws, Random.Xoshiro(hash((UInt64(seed), stage, i))),
-                copy(xi), g, logp, stage_step, stage_metric, nmv, mdepth, mdelta)
+            r = _continue_chain(tdi!, s.ws, Random.Xoshiro(hash((UInt64(seed), stage, i))),
+                copy(xi), s.g, logp, stage_step, stage_metric, nmv, mdepth, mdelta)
             Xnew[:, i] .= r.x
             acc[i] = _smc_mean(r.accept)
             dep[i] = _smc_mean(r.depth)
@@ -796,26 +688,26 @@ function ctsem_sample_smc(objective, values::AbstractVector;
     start = collect(1:np)
     final_step = step
     final_metric = metric
-    _smc_each!(objective, cs_final, np, ndim, mdepth, mode) do i, obj, ws, g
+    _each_point!(objective, np, mode; coreset=cs_final, scratch=nuts_scratch) do i, obj, s
         ld = _smc_logdensity(obj, cs_final, gradient_method)
         k = i
-        logp = ld(g, Xf[:, k])
+        logp = ld(s.g, Xf[:, k])
         if !isfinite(logp)
             # A particle whose density is not finite here cannot have moved to
             # it; its chain starts from the next particle instead.
             k = mod1(i + 1, np)
-            logp = ld(g, Xf[:, k])
+            logp = ld(s.g, Xf[:, k])
         end
         start[i] = k
-        first_results[i] = _continue_chain(ld, ws, Random.Xoshiro(hash((UInt64(seed), 0, i))),
-            Xf[:, k], g, logp, final_step, final_metric, nfirst, mdepth, mdelta)
+        first_results[i] = _continue_chain(ld, s.ws, Random.Xoshiro(hash((UInt64(seed), 0, i))),
+            Xf[:, k], s.g, logp, final_step, final_metric, nfirst, mdepth, mdelta)
         return nothing
     end
     held = Ref(first_results)
     extend! = function (wanted, attempt)
         previous = held[]
         more = Vector{_ChainResult}(undef, np)
-        _smc_each!(objective, cs_final, np, ndim, mdepth, mode) do i, obj, ws, g
+        _each_point!(objective, np, mode; coreset=cs_final, scratch=nuts_scratch) do i, obj, s
             ld = _smc_logdensity(obj, cs_final, gradient_method)
             more[i] = _run_chain(ld, previous[i].x, previous[i].metric,
                 Random.Xoshiro(UInt64(seed + 1000 * attempt) + UInt64(i)),

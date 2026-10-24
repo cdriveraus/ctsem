@@ -143,7 +143,9 @@ include("sample_density.jl")
 include("sample_nuts.jl")
 include("sample_adapt.jl")
 include("sample_run.jl")
+include("parallel_points.jl")
 include("sample_smc.jl")
+include("dais.jl")
 # After laplace.jl and particle_filter.jl (which brings in Random): SAEM samples
 # each unit's random effects over the Laplace route's units and curvature, and
 # runs as a phase of `ctsem_optimize` before L-BFGS.
