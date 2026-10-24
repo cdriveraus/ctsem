@@ -202,12 +202,31 @@
       "the states and read the posterior directly.", call. = FALSE)
   }
 
+  # `control$flat = 'natural'`: the parameters without a prior are flat on
+  # their natural scale rather than on the raw one (R/ctNaturalPrior.R), in the
+  # density the method integrates over. `target`, below, is the fit with that
+  # prior on its specification, which builds an objective of its own; the fit,
+  # its estimate and its optimisation objective are untouched.
+  flat <- .ctJuliaOr(control$flat, "raw")
+  control$flat <- NULL
+  if (!identical(flat, "raw") && !identical(flat, "natural")) stop(
+    "control$flat must be 'raw' or 'natural'.", call. = FALSE)
+  if (identical(flat, "natural") && !uncertainty %in% c("checked", "is")) stop(
+    "control$flat = 'natural' applies to uncertainty = 'checked' or 'is', which ",
+    "integrate over a density.", call. = FALSE)
+
   est <- as.numeric(fit$estimate$raw)
   if (!length(est) || any(!is.finite(est))) {
     stop("The fit has no finite raw parameter estimate to work from.", call. = FALSE)
   }
   shape <- .ctBackendDataShape(fit)
-  lpgFunc <- lpg(fit)
+  natural <- NULL
+  target <- fit
+  if (identical(flat, "natural")) {
+    natural <- .ctJuliaNaturalPrior(fit$model_spec)
+    if (nrow(natural)) target$model_spec$naturalprior <- natural
+  }
+  lpgFunc <- lpg(target)
 
   # `cores` here means engine threads, not R processes: the Julia engine splits
   # its own subject loop, so each log-probability evaluation is parallel and
@@ -280,6 +299,12 @@
     .ctBackendHessian(fit, est, verbose = verbose)
   } else NULL
   control$analyticHessian <- NULL
+  # The natural-scale prior's curvature, which is separable: its diagonal.
+  if (!is.null(hessian) && length(natural) && nrow(natural)) {
+    curvature <- .ctNaturalCurvature(natural, .ctBackendRawFull(fit$model_spec, est))
+    hessian[cbind(natural$index, natural$index)] <-
+      hessian[cbind(natural$index, natural$index)] + curvature
+  }
 
   uncertaintyfit <- ctOptimComputeUncertainty(est = est, standata = shape,
     sm = NULL, lpgFunc = lpgFunc, uncertainty = uncertainty,
@@ -314,7 +339,7 @@
   drawn <- .ctOptimDrawSamples(uncertaintyfit, draws = draws, control = control,
     est = est, finishsamples = finishsamples,
     parnames = tryCatch(.ctFitRawParNames(fit), error = function(e) NULL),
-    lpg = .ctCoresetLpg(fit, lpg(fit, gradient = FALSE), control), verbose = verbose,
+    lpg = .ctCoresetLpg(target, lpg(target, gradient = FALSE), control), verbose = verbose,
     scaleInit = juliaImis$scaleInit, tailScale = juliaImis$tailScale,
     tailremedy = "ctFitUncertainty(fit, 'sample') samples the posterior itself.")
   samples <- drawn$samples
@@ -323,6 +348,7 @@
   draws <- drawn$draws
 
   storedControl <- control
+  storedControl$flat <- flat
   uncertaintyfit$draws <- draws
   uncertaintyfit$settings <- list(method = uncertainty, draws = draws,
     finishsamples = finishsamples, cores = cores, control = storedControl)

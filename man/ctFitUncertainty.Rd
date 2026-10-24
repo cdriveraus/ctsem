@@ -115,7 +115,12 @@ an iteration (the dimension, between 64 and 256) and \code{daisMaxIter}
 its iterations (150). \code{parsteps} keeps
 stepwise-fixed raw parameters fixed (stan only).
 \code{analyticHessian = FALSE} (julia only) asks for the finite-difference
-Hessian instead of the engine's exact one. \code{likelihood} (\code{'fit'},
+Hessian instead of the engine's exact one. \code{flat = 'natural'}
+(\code{'checked'} and \code{'is'}, julia only) makes the parameters without
+a prior flat on their natural scale rather than their raw one in the
+density sampled: the standard deviation itself rather than its log, say,
+so that a likelihood that levels off as an sd goes to zero still has a
+proper posterior. The estimate is unchanged. \code{likelihood} (\code{'fit'},
 \code{'quadrature'} or \code{'particle'}, julia only) is the density
 \code{'is'} samples against, with \code{nodes}, \code{particles},
 \code{substeps}, \code{transition}, \code{seed} and

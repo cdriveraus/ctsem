@@ -867,7 +867,8 @@ function _ctsem_subset_objective(o::CTSEMObjective, idx::AbstractVector{<:Intege
         o.ti_missing_parameter[keep], o.ti_missing_mu[keep], o.ti_missing_sigma[keep],
         Int[renumber[o.ti_missing_subject[k]] for k in keep],
         isempty(o.subject_weights) ? Float64[] : o.subject_weights[idx], o.corbound,
-        o.penalty_index, o.penalty_precision)
+        o.penalty_index, o.penalty_precision, o.jacobian_index, o.jacobian_value,
+        o.jacobian_slope)
 end
 _ctsem_subset_objective(o, idx) = nothing
 

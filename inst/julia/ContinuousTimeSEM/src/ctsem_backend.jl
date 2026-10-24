@@ -100,12 +100,30 @@ mutable struct CTSEMObjective{P,O} <: CTSEMOptimisable
     # sets each term's precision (R/ctTIpredSmooth.R). Empty for none.
     penalty_index::Vector{Int}
     penalty_precision::Vector{Float64}
+    # The flat prior on the natural scale (`_ctsem_natural_prior`): for each
+    # raw parameter R names, log |f'(x)| of its own transform and that term's
+    # derivative, as expressions R writes symbolically
+    # (`.ctJuliaNaturalPrior()`). Set only on the objective an uncertainty
+    # method integrates over, never on one a fit optimises; empty for none.
+    jacobian_index::Vector{Int}
+    jacobian_value::Vector{CTSEMExpr}
+    jacobian_slope::Vector{CTSEMExpr}
 end
 
 CTSEMObjective(params, subject_objectives) =
     CTSEMObjective(params, subject_objectives, nothing, Int[], Float64[], 1.0,
         Int[], Float64[], Float64[], Int[], Float64[], CTSEMCorBound[], Int[],
         Float64[])
+
+# Without the natural-scale prior.
+CTSEMObjective(params, subject_objectives, adjoint_ws, prior_index, prior_scale,
+    prior_weight, ti_missing_parameter, ti_missing_mu, ti_missing_sigma,
+    ti_missing_subject, subject_weights, corbound::Vector{CTSEMCorBound},
+    penalty_index, penalty_precision) =
+    CTSEMObjective(params, subject_objectives, adjoint_ws, prior_index, prior_scale,
+        prior_weight, ti_missing_parameter, ti_missing_mu, ti_missing_sigma,
+        ti_missing_subject, subject_weights, corbound, penalty_index,
+        penalty_precision, Int[], CTSEMExpr[], CTSEMExpr[])
 
 # Without smoothing penalties.
 CTSEMObjective(params, subject_objectives, adjoint_ws, prior_index, prior_scale,
@@ -156,7 +174,8 @@ mismatch.
 """
 function _ctsem_log_prior(objective::CTSEMObjective, values::AbstractVector{T}) where {T}
     cells = _ctsem_ti_missing_loglik(objective, values) +
-        _ctsem_corbound(objective, values) + _ctsem_penalty(objective, values)
+        _ctsem_corbound(objective, values) + _ctsem_penalty(objective, values) +
+        _ctsem_natural_prior(objective, values)
     isempty(objective.prior_index) && return cells
     total = zero(T)
     weight = objective.prior_weight
@@ -167,8 +186,30 @@ function _ctsem_log_prior(objective::CTSEMObjective, values::AbstractVector{T}) 
     return weight * total + cells
 end
 
+"""
+    _ctsem_natural_prior(objective, values)
+
+A flat prior on each named raw parameter's natural scale, as a density over
+the raw parameters: `sum log |f_k'(x_k)|`, `f_k` the parameter's own transform.
+Where a transform saturates towards a bound -- a standard deviation towards
+zero, a drift towards zero -- the term falls off with it, so a likelihood that
+levels off at the bound leaves a proper posterior; where it runs off without
+bound the term is constant, as flat as before. No `prior_weight` scales it: it
+is the density's own change of variable, set only on objectives that are
+integrated over, never optimised.
+"""
+function _ctsem_natural_prior(objective::CTSEMObjective, values::AbstractVector{T}) where {T}
+    total = zero(T)
+    @inbounds for k in eachindex(objective.jacobian_value)
+        total += objective.jacobian_value[k](values)
+    end
+    return total
+end
+
 """The prior's precision on each raw parameter, as a vector (zero where a
-parameter has no prior): minus the Hessian of `_ctsem_log_prior`."""
+parameter has no prior): minus the Hessian of `_ctsem_log_prior`. The
+natural-scale prior's curvature is not in it: no objective that carries that
+prior is optimised, and the uncertainty methods add its curvature themselves."""
 function _ctsem_prior_precision(objective::CTSEMObjective, npar::Integer)
     prec = zeros(npar)
     for j in eachindex(objective.prior_index)
@@ -192,6 +233,10 @@ function _ctsem_log_prior_gradient!(gradient::AbstractVector{T},
     cells::Bool=true) where {T}
     cells && _ctsem_ti_missing_loglik_gradient!(gradient, objective, values)
     cells && _ctsem_corbound_gradient!(gradient, objective, values)
+    # The natural-scale prior in `weight`'s share, like the parameter prior.
+    @inbounds for k in eachindex(objective.jacobian_index)
+        gradient[objective.jacobian_index[k]] += weight * objective.jacobian_slope[k](values)
+    end
     # The smoothing penalty in `weight`'s share, as the parameter prior below
     # but with no `prior_weight`: it is part of the model, not eased in.
     @inbounds for k in eachindex(objective.penalty_index)
@@ -222,7 +267,8 @@ function _ctsem_prior_scores!(scores::AbstractMatrix, objective::CTSEMObjective,
     values::AbstractVector, row::AbstractVector{<:Integer}=Base.OneTo(size(scores, 1)))
     nrows = size(scores, 1)
     nrows > 0 || return scores
-    if !isempty(objective.prior_index) || !isempty(objective.penalty_index)
+    if !isempty(objective.prior_index) || !isempty(objective.penalty_index) ||
+            !isempty(objective.jacobian_index)
         share = 1 / nrows
         @inbounds for r in 1:nrows
             _ctsem_log_prior_gradient!(view(scores, r, :), objective, values, share, false)
@@ -540,7 +586,8 @@ function CTSEMObjective(params::EKFParameters, subject_starts::AbstractVector,
     ti_missing_subject=Int[], ti_missing_predictor=Int[], ti_missing_parameter=Int[],
     ti_missing_mu=Float64[], ti_missing_sigma=Float64[], subject_weights=Float64[],
     corbound_k=Int[], corbound_code=Int[], corbound_index=Int[], corbound_fixed=Float64[],
-    penalty_index=Int[], penalty_precision=Float64[])
+    penalty_index=Int[], penalty_precision=Float64[], jacobian_index=Int[],
+    jacobian_value=String[], jacobian_slope=String[])
     length(penalty_index) == length(penalty_precision) ||
         throw(DimensionMismatch("penalty_index and penalty_precision differ in length"))
     all(p -> isfinite(p) && p > 0, penalty_precision) ||
@@ -603,7 +650,21 @@ function CTSEMObjective(params::EKFParameters, subject_starts::AbstractVector,
         Float64.(ti_missing_mu), Float64.(ti_missing_sigma), Int.(ti_missing_subject),
         Float64.(subject_weights),
         _ctsem_corbound_blocks(corbound_k, corbound_code, corbound_index, corbound_fixed),
-        Int.(penalty_index), Float64.(penalty_precision))
+        Int.(penalty_index), Float64.(penalty_precision), Int.(jacobian_index),
+        _ctsem_natural_exprs(jacobian_value), _ctsem_natural_exprs(jacobian_slope))
+end
+
+"""The natural-scale prior's expressions, from the text R writes: each in the
+vocabulary of `CTSEMExpr`, or an error naming it."""
+function _ctsem_natural_exprs(texts)
+    out = CTSEMExpr[]
+    for text in texts
+        e = _ctsem_regular_expr(String(text))
+        e === nothing && throw(ArgumentError(
+            "a natural-scale prior term is outside the expression vocabulary: $(text)"))
+        push!(out, e)
+    end
+    return out
 end
 
 """The bounded blocks from flat vectors, as the R side sends them: a size and
@@ -634,7 +695,8 @@ ctsem_objective(params::EKFParameters, subject_starts, timesteps, data,
     ti_missing_subject=Int[], ti_missing_predictor=Int[], ti_missing_parameter=Int[],
     ti_missing_mu=Float64[], ti_missing_sigma=Float64[], subject_weights=Float64[],
     corbound_k=Int[], corbound_code=Int[], corbound_index=Int[], corbound_fixed=Float64[],
-    penalty_index=Int[], penalty_precision=Float64[]) =
+    penalty_index=Int[], penalty_precision=Float64[], jacobian_index=Int[],
+    jacobian_value=String[], jacobian_slope=String[]) =
     CTSEMObjective(params, subject_starts, timesteps, data, tdpred_data, tipred_data,
         max_timestep; prior_index=prior_index, prior_scale=prior_scale,
         prior_weight=prior_weight, ti_missing_subject=ti_missing_subject,
@@ -642,7 +704,9 @@ ctsem_objective(params::EKFParameters, subject_starts, timesteps, data,
         ti_missing_mu=ti_missing_mu, ti_missing_sigma=ti_missing_sigma,
         subject_weights=subject_weights, corbound_k=corbound_k, corbound_code=corbound_code,
         corbound_index=corbound_index, corbound_fixed=corbound_fixed,
-        penalty_index=penalty_index, penalty_precision=penalty_precision)
+        penalty_index=penalty_index, penalty_precision=penalty_precision,
+        jacobian_index=jacobian_index, jacobian_value=jacobian_value,
+        jacobian_slope=jacobian_slope)
 
 ################################################################################
 # Threading
