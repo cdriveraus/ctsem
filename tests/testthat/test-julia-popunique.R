@@ -523,6 +523,82 @@ test_that("a full-rank level's affine effects are integrated given the rest, exa
   expect_true(isTRUE(.pu_spec(d, .pu_block_model("mm1"))$laplace$hybrid$block))
 })
 
+# The same in discrete time, and a time dependent predictor's effect: affine
+# too, so the filter integrates them -- a discrete model's intercept enters as
+# it stands, a predictor's effect moves its column at the impulse -- and they
+# must equal the layer holding them as coordinates. The predictor is nonzero on
+# about a third of the rows, the first row among them for some subjects.
+.pu_affine_model <- function(type = "ct", td = FALSE, ind) {
+  args <- list(type = type, id = "id", manifestNames = c("Y1", "Y2", "Y3"),
+    latentNames = c("eta1", "eta2"), LAMBDA = matrix(c(1, 0.8, 0, 0, 0.5, 1), 3, 2),
+    DRIFT = if (type == "ct") matrix(c(-0.6, 0.2, -0.1, -0.4), 2, 2) else
+      matrix(c(0.5, 0.1, -0.05, 0.6), 2, 2),
+    DIFFUSION = matrix(c(0.5, 0, 0.1, 0.4), 2, 2), MANIFESTVAR = diag(0.4, 3),
+    MANIFESTMEANS = matrix(c("mm1", "mm2", "mm3"), 3, 1),
+    T0VAR = diag(1, 2), T0MEANS = matrix(c("t0m1", 0), 2, 1),
+    CINT = matrix(c(0, "cint2"), 2, 1))
+  if (td) {
+    args$TDpredNames <- "TD1"
+    args$TDPREDEFFECT <- matrix(c("td1", 0), 2, 1)
+  }
+  m <- suppressWarnings(suppressMessages(do.call(ctModel, args)))
+  m$pars$indvarying <- m$pars$param %in% ind
+  m
+}
+
+.pu_affine_data <- function(type = "ct", td = FALSE) {
+  d <- .pu_means_data()
+  if (type == "dt") d$time <- round(d$time / 0.7)
+  if (td) {
+    set.seed(41)
+    d$TD1 <- ifelse(stats::runif(nrow(d)) < 0.35, stats::rnorm(nrow(d), 1, 0.5), 0)
+  }
+  d
+}
+
+test_that("discrete time and a predictor's effect are integrated by the filter, exactly", {
+  skip_without_julia()
+  old <- options(ctsem.laplace.hybrid = TRUE)
+  on.exit(options(old), add = TRUE)
+  means <- c("t0m1", "cint2", "mm1", "mm2", "mm3")
+  cases <- list(
+    list(type = "dt", td = FALSE, ind = means, kinds = c(1L, 1L, 1L, 2L, 3L)),
+    list(type = "dt", td = FALSE, ind = means, rank = 0, pu = TRUE,
+      kinds = c(1L, 1L, 1L, 2L, 3L)),
+    list(type = "ct", td = TRUE, ind = c("td1", "t0m1", "mm1", "mm2", "mm3"),
+      kinds = c(1L, 1L, 1L, 2L, 4L)),
+    list(type = "ct", td = TRUE, ind = c("td1", "cint2", "mm1"), rank = 0, pu = TRUE,
+      kinds = c(1L, 3L, 4L)),
+    list(type = "dt", td = TRUE, ind = c("td1", "cint2", "mm2"), kinds = c(1L, 3L, 4L)))
+  set.seed(43)
+  for (case in cases) {
+    m <- .pu_affine_model(case$type, case$td, case$ind)
+    d <- .pu_affine_data(case$type, case$td)
+    spec <- function() if (is.null(case$rank)) .pu_spec(d, m) else
+      .pu_spec(d, m, poprank = case$rank, popunique = case$pu)
+    options(ctsem.laplace.hybrid = TRUE)
+    hy <- spec()
+    options(ctsem.laplace.hybrid = FALSE)
+    la <- spec()
+    label <- paste(case$type, if (case$td) "td" else "", case$rank)
+    expect_equal(sort(hy$laplace$hybrid$kind), case$kinds, info = label)
+    if (case$td) expect_equal(hy$laplace$hybrid$pred[hy$laplace$hybrid$kind == 4L], 1L,
+      info = label)
+    expect_null(la$laplace$hybrid)
+    for (draw in 1:2) {
+      x <- rnorm(length(.pu_names(hy)), 0, 0.3)
+      rh <- .pu_eval(hy, x)
+      rl <- .pu_eval(la, x)
+      expect_equal(rh$value, rl$value, tolerance = 1e-9, info = label)
+      expect_equal(as.numeric(rh$gradient), as.numeric(rl$gradient), tolerance = 1e-7,
+        info = label)
+      fw <- .pu_eval(hy, x, "forward")
+      expect_equal(as.numeric(rh$gradient), as.numeric(fw$gradient), tolerance = 1e-6,
+        info = label)
+    }
+  }
+})
+
 test_that("an objective with every effect in the filter sums its units as the marginal route does", {
   skip_without_julia()
   # No unit holds a coordinate -- a block of five affine effects, and own

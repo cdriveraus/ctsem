@@ -914,10 +914,10 @@ ctStanModel <- ctModelConvertOMX
 #     correlations with the others (review/RANDOMEFFECTS-partial-
 #     identification-2026-09-07.md).
 #
-# An affine effect the filter does not take -- on TDPREDEFFECT, in a discrete
-# time model, one parameter in several cells -- is a coordinate too: exact,
-# and dearer than its carrier state, which `intoverpop = 'augmented'` gives
-# it. Stan has one route and keeps it.
+# An affine effect the filter does not take -- one parameter in several cells,
+# or a continuous intercept a stationary initial mean reads -- is a coordinate
+# too: exact, and dearer than its carrier state, which `intoverpop =
+# 'augmented'` gives it. Stan has one route and keeps it.
 .ctIntOverPopAuto <- function(model, backend = 'julia', optimize = TRUE,
   intoverstates = TRUE){
   choose <- function(route, reason) list(route = route, reason = reason)

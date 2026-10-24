@@ -10,7 +10,10 @@
 #             S += V' S_t^-1 V,  s += V' S_t^-1 y_t      (through U^-T, never S^-1)
 #             X -= K V
 #   predict:  X = A X                         (A the discrete drift)
-#             + J^-1 (A - I) e_l  for a continuous intercept's column
+#             + J^-1 (A - I) e_l  for a continuous intercept's column, or
+#             + e_l               for a discrete-time model's intercept
+#   impulse:  X[l, c] += u_p                  a predictor's effect, where the
+#                                             state takes TDPREDEFFECT u
 #   close:    ll += 1/2 b' M^-1 b  [ - 1/2 logdet(M) ],   M = I + G' S G,  b = G' s
 #
 # with the deviations `G u`, `u ~ N(0, I)` of dimension `rd` (`_hybrid_factor!`):
@@ -64,13 +67,11 @@ end
 
 """Start a pass: which hybrid items this subject carries, and their state."""
 function _hybrid_start!(hb::CTSEMHybridBuffers{T}, h::CTSEMHybrid, data,
-    n::Int, m::Int, continuous_time::Bool) where {T}
+    n::Int, m::Int) where {T}
     hb.active = _hybrid_on(h) && hb.mode != _HYBRID_OFF
     hb.q = 0
     hb.half_logdet = zero(T)
     hb.active || return nothing
-    continuous_time || throw(ArgumentError(
-        "deviations integrated in the filter need a continuous-time model"))
     nh = _hybrid_items(h)
     length(hb.col) == m || (hb.col = zeros(Int, m))
     fill!(hb.col, 0)
@@ -80,6 +81,7 @@ function _hybrid_start!(hb::CTSEMHybridBuffers{T}, h::CTSEMHybrid, data,
         hb.ckind = zeros(Int, nh)
         hb.clat = zeros(Int, nh)
         hb.cslope = zeros(Float64, nh)
+        hb.cpred = zeros(Int, nh)
     end
     q = 0
     @inbounds for k in 1:nh
@@ -104,6 +106,7 @@ function _hybrid_start!(hb::CTSEMHybridBuffers{T}, h::CTSEMHybrid, data,
         hb.ckind[q] = kind
         hb.clat[q] = kind == 1 ? 0 : h.target[k]
         hb.cslope[q] = h.slope[k]
+        hb.cpred[q] = kind == 4 ? h.pred[k] : 0
     end
     hb.q = q
     q == 0 && return nothing
@@ -214,10 +217,11 @@ for a continuous intercept's column (`ckind` 3) the discrete intercept's
 Jacobian in a unit of the cell's value, `J^-1 (A - I) e_l` over the affine
 block `naff` by the engine's own solve, or `Phi e_l` where the substep took the
 series (`series.intercept`, set by `_compute_discrete_time_form!` just
-before); kept in `Xinc` for the tape.
+before); in a discrete-time model, whose intercept is added as it stands
+(`_compute_one_step_form!`), `e_l`. Kept in `Xinc` for the tape.
 """
 function _hybrid_predict!(hb::CTSEMHybridBuffers{T}, A, JAx, series, naff::Int,
-    dt, n::Int) where {T}
+    dt, n::Int, continuous_time::Bool) where {T}
     q = hb.q
     X, Xt = hb.X, hb.Xt
     @inbounds for c in 1:q, r in 1:n
@@ -236,6 +240,13 @@ function _hybrid_predict!(hb::CTSEMHybridBuffers{T}, A, JAx, series, naff::Int,
     @inbounds for c in 1:q
         hb.ckind[c] == 3 || continue
         l = hb.clat[c]
+        if !continuous_time
+            for r in 1:n
+                Xinc[r, c] = r == l ? one(T) : zero(T)
+                X[r, c] += Xinc[r, c]
+            end
+            continue
+        end
         l <= naff || throw(ArgumentError(
             "a continuous intercept's deviation on latent $(l) lies outside the affine block of $(naff)"))
         if series.intercept
@@ -271,6 +282,22 @@ function _hybrid_predict!(hb::CTSEMHybridBuffers{T}, A, JAx, series, naff::Int,
         for r in 1:n
             X[r, c] += Xinc[r, c]
         end
+    end
+    return nothing
+end
+
+"""
+A time dependent predictor's impulse share, where the state takes
+`TDPREDEFFECT u` (`_apply_td_impulse!`): a predictor effect's column gains the
+predictor's value at its latent, in a unit of the cell's value as every column
+is. The impulse's own Jacobian is the identity in a linear model, the only kind
+the filter integrates for, so nothing else moves; and its reverse is the
+identity on `X`'s cotangent, which needs no record.
+"""
+function _hybrid_td_impulse!(hb::CTSEMHybridBuffers, tdpreds)
+    @inbounds for c in 1:hb.q
+        hb.ckind[c] == 4 || continue
+        hb.X[hb.clat[c], c] += tdpreds[hb.cpred[c]]
     end
     return nothing
 end
@@ -913,12 +940,13 @@ increment `Xinc[:, c] = J^-1 (A - I) e_l` is reversed as the discrete
 intercept is in `_reverse_predict!`: `sbar = J^-T Xbar[1:naff, c]`,
 `JAx_bar -= sbar Xinc[1:naff, c]'`, `Abar[:, l] += sbar`; or on the
 series route the series pullback of `Xbar[1:naff, c] e_l'`, which reads
-no exponential. Scratch from `sc` (`av1`, `aa1`, `piv`, `series`), used before
-the intercept's own reverse reuses them.
+no exponential. In a discrete-time model (`continuous_time` false) the
+increment is `e_l` and reads no parameter. Scratch from `sc` (`av1`, `aa1`,
+`piv`, `series`), used before the intercept's own reverse reuses them.
 """
 function _hybrid_reverse_predict!(Abar, JAx_bar, A, JAx, rec::CTSEMHybridTape{T},
     h::CTSEMHybrid, record::CTSEMPredictRecord{T}, n::Int, naff::Int, sc,
-    dt) where {T}
+    dt; continuous_time::Bool=true) where {T}
     q = rec.q
     q == 0 && return nothing
     Xh = record.Xh
@@ -932,6 +960,7 @@ function _hybrid_reverse_predict!(Abar, JAx_bar, A, JAx, rec::CTSEMHybridTape{T}
     # record.
     factored = false
     @inbounds for c in 1:q
+        continuous_time || break
         k = rec.item[c]
         h.kind[k] == 3 || continue
         l = h.target[k]
