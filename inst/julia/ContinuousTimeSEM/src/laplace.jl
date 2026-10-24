@@ -6100,6 +6100,12 @@ function _laplace_evaluate(laplace::CTSEMLaplaceObjective, theta::Vector{Float64
     coreset::Union{Nothing,CTSEMCoreset}=nothing)
     _laplace_check_indices(laplace, length(theta))
     laplace.last_values = theta
+    # Nothing left for the layer: every unit's term is its members' filter
+    # integrals, summed as the marginal route sums them. `nested_gradient`
+    # keeps the unit loop, which is what the tests compare this with.
+    if !nested_gradient && _laplace_filter_only(laplace)
+        return _laplace_filter_evaluate(laplace, theta, gradient, coreset, scores)
+    end
     nsubjects = length(laplace.objective.subject_objectives)
     nunits = length(laplace.units.members)
 
@@ -6347,6 +6353,125 @@ function _laplace_evaluate(laplace::CTSEMLaplaceObjective, theta::Vector{Float64
     end
     return (value=value, gradient=grad, subject_loglik=subject_loglik,
         unit_loglik=unit_loglik, converged=_laplace_converged(laplace, coreset))
+end
+
+"""
+    _laplace_filter_only(laplace)
+
+Whether no level holds a coordinate: each level's effects are integrated by the
+subject filter (`CTSEMHybrid`), or it has none. A member's values are then the
+population vector itself (`_laplace_member_values!` shifts nothing) and a
+unit's term is the sum of its members' log likelihoods with the filter's
+deviations integrated (`_HYBRID_FULL`): the marginal route's objective, which
+`_laplace_filter_evaluate` sums as that route does.
+"""
+_laplace_filter_only(laplace::CTSEMLaplaceObjective) =
+    all(l -> nlatent(l) == 0 || nrandomeffects(l) == 0, laplace.spec.levels)
+
+"""
+    _laplace_filter_evaluate(laplace, theta, gradient, coreset, scores)
+
+`_laplace_evaluate` for an objective with no coordinate (`_laplace_filter_only`),
+through the marginal route's chunk (`_ctsem_adjoint_chunk!`) with the filter's
+deviations integrated: one forward and one reverse pass a subject, the
+transform layer unwound once a chunk and the exponential's derivative batched
+across its subjects where the model allows (`CTSEMAdjointWorkspace`'s
+`parameter_layer_shareable` and `defer_frechet`). The unit loop ran a forward
+pass for the value and a forward and reverse pass for the gradient, each with
+the layer and the derivative per subject, and the mode solve's and the gated
+floor's machinery around a unit with nothing to solve.
+
+In the Laplace pool, each piece on its slot's own workspace
+(`_laplace_workspace!`), so a draw's copy (`_laplace_draw_copy`) and a region
+nested in another behave as the unit loop does. A coreset's units only, each
+weighted by the coreset in place of its sampling weight; with `scores`, one
+piece a unit, so each unit's row is its own.
+"""
+function _laplace_filter_evaluate(laplace::CTSEMLaplaceObjective, theta::Vector{Float64},
+    gradient::Bool, coreset::Union{Nothing,CTSEMCoreset},
+    scores::Union{Nothing,Matrix{Float64}})
+    units = laplace.units
+    nunits = length(units.members)
+    objective = laplace.objective
+    subjects = objective.subject_objectives
+    nsubjects = length(subjects)
+    npar = length(theta)
+    list = coreset === nothing ? collect(1:nunits) : coreset.units
+    # Each evaluated subject's weight: its unit's sampling weight, or the
+    # coreset's, which replaces it; zero off the coreset.
+    weights = zeros(Float64, nsubjects)
+    for (k, U) in enumerate(list)
+        w = coreset === nothing ? _laplace_unit_weight(laplace, U) : coreset.weights[k]
+        for i in units.members[U]
+            weights[i] = w
+        end
+        # A unit with nothing to solve, recorded as its solve records it.
+        laplace.modes[U] = Float64[]
+        laplace.inner_iterations[U] = 0
+        laplace.inner_gradient[U] = 0.0
+        laplace.inner_converged[U] = true
+        laplace.hessian_repaired[U] = false
+        laplace.mode_repaired[U] = false
+        laplace.logdet_floored[U] = false
+    end
+    laplace.gated_units = 0
+    _laplace_ensure_pool!(laplace)
+    nslot = _laplace_pool_width()
+    rowwise = gradient && scores !== nothing
+    # Pieces: one unit each where each unit's row is wanted; else about four a
+    # slot, for the queue to balance, each unwinding the layer once.
+    groups = if rowwise
+        [[U] for U in list]
+    else
+        per = max(1, cld(length(list), 4 * nslot))
+        [list[a:min(a + per - 1, length(list))] for a in 1:per:length(list)]
+    end
+    pieces = [reduce(vcat, (units.members[U] for U in g); init=Int[]) for g in groups]
+    npieces = length(pieces)
+    sink = fill(NaN, nsubjects)
+    totals = zeros(Float64, npieces)
+    valid = fill(true, npieces)
+    bad = fill(NaN, npieces)
+    partials = [zeros(Float64, npar) for _ in 1:nslot]
+    rows = rowwise ? [zeros(Float64, npar) for _ in 1:nslot] : partials
+    _laplace_parallel(laplace, 1:npieces) do c
+        local aws, slot, into
+        slot = _laplace_slot()
+        aws = _laplace_workspace!(laplace, Float64, npar)
+        into = rowwise ? fill!(rows[slot], 0.0) : partials[slot]
+        _ctsem_adjoint_chunk!(into, totals, valid, bad, c, pieces, subjects, objective,
+            aws, theta, _HYBRID_FULL, weights, sink, gradient)
+        if rowwise && valid[c]
+            U = groups[c][1]
+            @inbounds for t in 1:npar
+                scores[U, t] = into[t]
+                partials[slot][t] += into[t]
+            end
+        end
+        return true
+    end
+    unit_loglik = zeros(Float64, nunits)
+    for U in list
+        unit_loglik[U] = sum(sink[i] for i in units.members[U]; init=0.0)
+    end
+    converged = _laplace_converged(laplace, coreset)
+    for c in 1:npieces
+        valid[c] && continue
+        coreset === nothing || _laplace_coreset_mask!(unit_loglik, sink, laplace, coreset)
+        return (value=bad[c], gradient=gradient ? fill(NaN, npar) : nothing,
+            subject_loglik=sink, unit_loglik=unit_loglik, converged=converged)
+    end
+    value = sum(totals) + _ctsem_log_prior(objective, theta)
+    coreset === nothing || _laplace_coreset_mask!(unit_loglik, sink, laplace, coreset)
+    gradient || return (value=value, gradient=nothing, subject_loglik=sink,
+        unit_loglik=unit_loglik, converged=converged)
+    grad = zeros(Float64, npar)
+    for w in 1:nslot
+        grad .+= partials[w]
+    end
+    _ctsem_log_prior_gradient!(grad, objective, theta)
+    return (value=value, gradient=grad, subject_loglik=sink, unit_loglik=unit_loglik,
+        converged=converged)
 end
 
 """

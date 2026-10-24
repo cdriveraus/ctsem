@@ -523,6 +523,63 @@ test_that("a full-rank level's affine effects are integrated given the rest, exa
   expect_true(isTRUE(.pu_spec(d, .pu_block_model("mm1"))$laplace$hybrid$block))
 })
 
+test_that("an objective with every effect in the filter sums its units as the marginal route does", {
+  skip_without_julia()
+  # No unit holds a coordinate -- a block of five affine effects, and own
+  # variances at rank 0 -- so the Laplace evaluation sums the members' filter
+  # integrals through the marginal route's chunk (`_laplace_filter_evaluate`)
+  # rather than the unit loop. Against that loop on the same objective: its
+  # value (`nested_gradient` keeps it), and its units' terms differentiated by
+  # forward mode (`_laplace_subject_gradients_forward`), which give the rows
+  # and, summed, the gradient. Then a coreset, which the samplers pass, against
+  # the full evaluation's own unit terms.
+  d <- .pu_means_data()
+  d$Y2[d$id == 3] <- NA
+  old <- options(ctsem.laplace.hybrid = TRUE)
+  on.exit(options(old), add = TRUE)
+  handle <- function(s) structure(s, class = c("ctJuliaModel", "ctFitModel"))
+  specs <- list(
+    block = .pu_spec(d, .pu_block_model(c("t0m1", "cint2", "mm1", "mm2", "mm3"))),
+    own = .pu_spec(d, .pu_means_model(), poprank = 0, popunique = TRUE))
+  set.seed(31)
+  for (spec in specs) {
+    module <- ctsem:::.ctJuliaModule(spec$project)
+    get <- ctsem:::.ctJuliaGet
+    o <- ctsem:::.ctJuliaObjective(handle(spec), hybrid = TRUE)
+    expect_true(isTRUE(ctsem:::.ctJuliaCall("ContinuousTimeSEM._laplace_filter_only", o)))
+    x <- rnorm(length(.pu_names(spec)), 0, 0.3)
+    xx <- ctsem:::.ctJuliaNumericVector(x)
+    summed <- get(module$ctsem_laplace_evaluate(o, xx, gradient = TRUE))
+    loop <- get(module$ctsem_laplace_evaluate(o, xx, gradient = FALSE,
+      nested_gradient = TRUE))
+    expect_true(isTRUE(summed$converged))
+    expect_equal(summed$value, loop$value, tolerance = 1e-10)
+    expect_equal(as.numeric(summed$unit_loglik), as.numeric(loop$unit_loglik),
+      tolerance = 1e-10)
+    rows <- get(module$ctsem_subject_gradients(o, xx))
+    ref <- get(ctsem:::.ctJuliaCall(
+      "ContinuousTimeSEM._laplace_subject_gradients_forward", o, xx))
+    expect_equal(as.numeric(rows$scores), as.numeric(ref$scores), tolerance = 1e-7)
+    expect_equal(as.numeric(summed$gradient), colSums(as.matrix(ref$scores)),
+      tolerance = 1e-7)
+    nunits <- length(summed$unit_loglik)
+    units <- c(2L, 5L, nunits)
+    w <- c(1.5, 2, 0.5)
+    cs <- ctsem:::.ctJuliaCall("ContinuousTimeSEM._laplace_coreset", o, units, w)
+    part <- get(module$ctsem_laplace_evaluate(o, xx, gradient = TRUE, coreset = cs))
+    prior <- summed$value - sum(summed$unit_loglik)
+    expect_equal(part$value - prior, sum(w * summed$unit_loglik[units]),
+      tolerance = 1e-10)
+    rowsums <- as.matrix(rows$scores)
+    expect_true(all(is.na(part$unit_loglik[-units])))
+    expect_equal(as.numeric(part$unit_loglik[units]),
+      as.numeric(summed$unit_loglik[units]), tolerance = 1e-10)
+    ploop <- get(module$ctsem_laplace_evaluate(o, xx, gradient = FALSE,
+      nested_gradient = TRUE, coreset = cs))
+    expect_equal(part$value, ploop$value, tolerance = 1e-10)
+  }
+})
+
 test_that("a measurement error written in a time dependent predictor keeps the deviations integrated, exactly", {
   skip_without_julia()
   # A study's known response rounding as a per-row variance q added to each

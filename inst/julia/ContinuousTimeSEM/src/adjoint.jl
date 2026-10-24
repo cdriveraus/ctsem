@@ -210,7 +210,9 @@ function CTSEMAdjointWorkspace(::Type{T}, sp::EKFParameters, nvalues::Integer,
     dvar_set = Set(_ctsem_component_positions(sp, :DIFFUSION))
     groups_write_diffusion = any(i -> i in dvar_set,
         Iterators.flatten((predict_indices, td_indices, update_indices)))
-    defer_frechet = isempty(sp.ti_parameter_indices) && !groups_write_jax
+    regular_supports = _ctsem_regular_transform_supports(sp, nvalues)
+    defer_frechet = !groups_write_jax &&
+        _ctsem_frechet_deferrable(sp, jax_positions, regular_supports)
 
     frechet_buffer = ExpFrechetBuffer{T}(n)
     dual_context = CTSEMDualContext(T, sp, zeros(T, n))
@@ -225,7 +227,7 @@ function CTSEMAdjointWorkspace(::Type{T}, sp::EKFParameters, nvalues::Integer,
         predict_tipred_supports,
         update_tipred_supports,
         td_tipred_supports,
-        _ctsem_regular_transform_supports(sp, nvalues),
+        regular_supports,
         fill(nan_dual, Int(nvalues)),
         dual_context,
         T[],
@@ -254,6 +256,34 @@ function CTSEMAdjointWorkspace(::Type{T}, sp::EKFParameters, nvalues::Integer,
         CTSEMAdjointTape(T, group_relevant),
         ws,
     )
+end
+
+"""
+    _ctsem_frechet_deferrable(sp, jax_positions, supports)
+
+Whether the exponential's derivative can be batched across subjects
+(`_flush_frechet!`, the workspace's `defer_frechet`). The batch pushes the
+summed `JAx` cotangent through one subject's parameter layer, which is every
+subject's for those cells unless a subject-specific shift reaches what a `JAx`
+cell's transform reads (`supports`, `_ctsem_regular_transform_supports`): a TI
+effect's parameter (`ti_parameter_indices`) or the predictor tail (`ti_tail`).
+A TI effect on an intercept, an initial mean or a measurement parameter leaves
+the `JAx` cells' layer the same for every subject, and the TI pullback of a
+cotangent that reaches no shifted parameter is zero, so the batch is exact
+there; before, any TI effect at all turned it off.
+"""
+function _ctsem_frechet_deferrable(sp::EKFParameters, jax_positions::AbstractVector{Int},
+    supports::AbstractVector{Vector{Int}})
+    shifted = Set{Int}(sp.ti_parameter_indices)
+    union!(shifted, sp.ti_tail)
+    isempty(shifted) && return true
+    # `supports` is indexed by the mutable positions in order.
+    slot = cumsum(sp.mutables)
+    for p in jax_positions
+        sp.mutables[p] || continue
+        any(i -> i in shifted, supports[slot[p]]) && return false
+    end
+    return true
 end
 
 """
@@ -356,7 +386,8 @@ non-finite value *and* a non-finite gradient, matching what the ForwardDiff
 path does and what `ctsem_optimize`'s `fg!` guards expect. There is deliberately
 no silent fallback to ForwardDiff.
 """
-function ctsem_adjoint_gradient(objective::CTSEMObjective, values::AbstractVector{T}) where {T}
+function ctsem_adjoint_gradient(objective::CTSEMObjective, values::AbstractVector{T};
+    hybrid_mode::Int=_HYBRID_PROFILE) where {T}
     # This is the one choke point every adjoint entry runs through --
     # `ctsem_evaluate`'s `:adjoint` branch, and `ctsem_hessian` (which nests
     # ForwardDiff over exactly this function, bypassing `ctsem_evaluate`
@@ -388,7 +419,7 @@ function ctsem_adjoint_gradient(objective::CTSEMObjective, values::AbstractVecto
 
     _ctsem_pull_blocks(nblocks, nchunks) do b, w
         _ctsem_adjoint_chunk!(gradients[b], totals, valid, badvalue, b,
-            ranges, subjects, objective, workspaces[w], values)
+            ranges, subjects, objective, workspaces[w], values, hybrid_mode)
     end
 
     @inbounds for c in 1:nblocks
@@ -550,10 +581,20 @@ end
 
 """
     _ctsem_adjoint_chunk!(gradient, totals, valid, badvalue, c, ranges, subjects,
-                          objective, aws, values)
+                          objective, aws, values, mode=_HYBRID_PROFILE,
+                          weights=nothing, sink=nothing, want_gradient=true)
 
-Accumulate one contiguous chunk of subjects, `ranges[c]`, into its own gradient
-and workspace.
+Accumulate one chunk of subjects, `ranges[c]` (any collection of their
+indices), into its own gradient and workspace.
+
+The trailing arguments are for a caller that sums units rather than the
+objective's own subjects -- a Laplace objective with no coordinate left
+(`_laplace_filter_evaluate`): `mode`, what each subject's filter returns for
+the deviations it integrates (`CTSEMHybridBuffers`; the full integral there);
+`weights`, each subject's weight in place of the objective's sampling weights
+(a coreset's replace them); `sink`, a vector each subject's log likelihood is
+written into; `want_gradient = false`, the values alone, with no tape and no
+reverse pass.
 
 This is the serial adjoint loop, scoped to that range. Everything it touches --
 `aws` and its tape, `gradient`, and slot `c` of the shared result vectors -- is
@@ -566,8 +607,26 @@ the call reaches here through a dynamic dispatch (`aws` comes out of a
 and the range, once per block.
 """
 function _ctsem_adjoint_chunk!(gradient::Vector{T}, totals::Vector{T},
-    valid::Vector{Bool}, badvalue::Vector{T}, c::Int, ranges::Vector{UnitRange{Int}},
-    subjects, objective, aws, values::AbstractVector{T}) where {T}
+    valid::Vector{Bool}, badvalue::Vector{T}, c::Int, ranges::AbstractVector,
+    subjects, objective, aws, values::AbstractVector{T}, mode::Int=_HYBRID_PROFILE,
+    weights=nothing, sink=nothing, want_gradient::Bool=true) where {T}
+    # The deviations the filter integrates, as the caller asks, and back to
+    # the profile however the chunk ends, so a later pass on this workspace
+    # never inherits it (as `_laplace_subject_value_gradient!` does).
+    aws.ekf_ws.hyb.mode = mode
+    try
+        _ctsem_adjoint_chunk_body!(gradient, totals, valid, badvalue, c, ranges,
+            subjects, objective, aws, values, mode, weights, sink, want_gradient)
+    finally
+        aws.ekf_ws.hyb.mode = _HYBRID_PROFILE
+    end
+    return nothing
+end
+
+function _ctsem_adjoint_chunk_body!(gradient::Vector{T}, totals::Vector{T},
+    valid::Vector{Bool}, badvalue::Vector{T}, c::Int, ranges::AbstractVector,
+    subjects, objective, aws, values::AbstractVector{T}, mode::Int,
+    weights, sink, want_gradient::Bool) where {T}
     range = ranges[c]
     params = objective.params
 
@@ -581,10 +640,10 @@ function _ctsem_adjoint_chunk!(gradient::Vector{T}, totals::Vector{T},
     last_tipreds = nothing
     total = zero(T)
 
-    weights = objective.subject_weights
+    sampling = objective.subject_weights
     @inbounds for i in range
         subject_objective = subjects[i]
-        w = isempty(weights) ? 1.0 : weights[i]
+        w = weights === nothing ? (isempty(sampling) ? 1.0 : sampling[i]) : weights[i]
         w == 0 && continue
         # The task's filter workspace, which this chunk's adjoint workspace
         # carries at its own element type (the Laplace route filters through
@@ -596,11 +655,22 @@ function _ctsem_adjoint_chunk!(gradient::Vector{T}, totals::Vector{T},
         # One exponential table for the chunk: a linear model's `exp(JAx * dt)`
         # is the same for every subject at the same interval.
         ws.discretization_cache.exp_table = aws.exp_table
-        tape = _tape_reset!(aws.tape)
         # See the matching comment in `_ctsem_subject_gradient_chunk!`: the
         # forward pass and the group replay need the concrete numeric row, not
         # the (possibly `TIMissingRecipe`) stored one.
         tipred_vec = _ctsem_tipred_fill!(aws.tipreds, subject_objective.tipreds, values)
+        if !want_gradient
+            loglik = _ekf_run(ws, subject_objective, values, tipred_vec, nothing)
+            if !_finite_deep(loglik)
+                valid[c] = false
+                badvalue[c] = loglik
+                return nothing
+            end
+            sink === nothing || (sink[i] = loglik)
+            total += w * loglik
+            continue
+        end
+        tape = _tape_reset!(aws.tape)
 
         loglik = _ekf_run(ws, subject_objective, values, tipred_vec, tape)
         # _finite_deep, not isfinite: under ctsem_hessian this runs at Dual and
@@ -610,6 +680,7 @@ function _ctsem_adjoint_chunk!(gradient::Vector{T}, totals::Vector{T},
             badvalue[c] = loglik
             return nothing
         end
+        sink === nothing || (sink[i] = loglik)
         total += w * loglik
 
         # Forward mode for a subject whose reverse pass would not be stable;
@@ -617,7 +688,7 @@ function _ctsem_adjoint_chunk!(gradient::Vector{T}, totals::Vector{T},
         # chunk's, so nothing of it enters the shared parameter layer.
         if _growth_unstable(ws)
             gf = similar(gradient)
-            _ctsem_forward_subject_gradient!(gf, subject_objective, values)
+            _ctsem_forward_subject_gradient!(gf, subject_objective, values, mode)
             w == 1 ? (gradient .+= gf) : (gradient .+= w .* gf)
             continue
         end
