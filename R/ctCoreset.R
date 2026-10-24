@@ -244,10 +244,8 @@
 # coreset fitted mostly on the first rounds' tails could never reach them.
 # Held out deterministically, so that the sampler's random stream is the same
 # with a coreset as without. Score rows (`score`, `.ctCoresetScoreRows()`) are
-# held out from none, and the held-out rates read values, which is what a check
-# reads. Fitted beside the values, they can cost the values' fit at a size, so
-# each size is fitted with them and without and priced by whichever the
-# held-out values prefer (`scored`).
+# fitted with every size and held out from none: the held-out rates read
+# values, which is what a check reads.
 .ctCoresetChoose <- function(X, y, rows, round, start = integer(),
   focus = integer(), score = NULL) {
   focus <- intersect(focus, rows)
@@ -284,27 +282,14 @@
     if (M > length(path)) path <- .ctCoresetPath(X, y, M, fitrows, path, rel[fitrows],
       score)
     if (M > length(path)) break
+    cf <- .ctCoresetWeights(X, y, path[seq_len(M)], fitrows, rel[fitrows], score)
     # Weights that all come out zero leave a constant and no unit to
     # evaluate, which costs nothing by the formula: priced, such a coreset was
     # chosen, and the engine was then handed an empty unit list.
-    rate <- function(cf) if (any(cf$w > 0))
-      max(failrate(cf, held), failrate(cf, newest), na.rm = TRUE) else Inf
-    cf <- .ctCoresetWeights(X, y, path[seq_len(M)], fitrows, rel[fitrows], score)
-    fail <- rate(cf)
-    scored <- !is.null(score)
-    if (scored) {
-      plaincf <- .ctCoresetWeights(X, y, path[seq_len(M)], fitrows, rel[fitrows])
-      plainfail <- rate(plaincf)
-      if (plainfail < fail) {
-        cf <- plaincf
-        fail <- plainfail
-        scored <- FALSE
-      }
-    }
-    if (is.finite(fail)) {
+    if (any(cf$w > 0)) {
+      fail <- max(failrate(cf, held), failrate(cf, newest), na.rm = TRUE)
       cost <- .ctCoresetRoundCost(sum(cf$w > 0), N, round, fail)
-      if (is.null(best) || cost < best$cost) best <- list(M = M, cost = cost, fail = fail,
-        scored = scored)
+      if (is.null(best) || cost < best$cost) best <- list(M = M, cost = cost, fail = fail)
     }
     # Steps of about a tenth of the size: fine where sizes are small, and a
     # path of hundreds of units is not walked one at a time.
@@ -315,7 +300,7 @@
       fullround = fullround))
   }
   S <- .ctCoresetPath(X, y, best$M, rows, start, rel[rows], score)
-  cf <- .ctCoresetWeights(X, y, S, rows, rel[rows], if (best$scored) score)
+  cf <- .ctCoresetWeights(X, y, S, rows, rel[rows], score)
   if (!any(cf$w > 0)) return(structure(list(), why = 'empty'))
   # The coreset is the units it was priced by, those with weight: refits on
   # later rows re-weight them, and add none. Keeping the zero-weight units of
@@ -326,7 +311,6 @@
   cf$w <- cf$w[keep]
   cf$cost <- best$cost
   cf$fail <- best$fail
-  cf$scored <- best$scored
   cf
 }
 
@@ -383,7 +367,6 @@
   st$trusted <- FALSE
   st$last_passed <- TRUE
   st$nchoose <- 0L
-  st$nscored <- 0L
   st$proved <- 0L
   st$rows_at_choose <- 0L
   # Where the time went, for the record only: seconds and draws by kind of
@@ -471,7 +454,6 @@
     if (!length(cf)) return(FALSE)
     st$cf <- cf
     st$sizes <- c(st$sizes, sum(cf$w > 0))
-    st$nscored <- st$nscored + isTRUE(cf$scored)
     st$runs <- 0L
     st$fails <- 0L
     st$trusted <- st$last_passed
@@ -577,9 +559,8 @@
     if (!st$trusted) st$proved <- st$proved + 1L
     st$trusted <- TRUE
     st$last_passed <- TRUE
-    keep <- st$cf[c('cost', 'fail', 'scored')]
-    refit <- .ctCoresetWeights(st$X, st$y, st$cf$S, seq_along(st$y),
-      score = if (isTRUE(st$cf$scored)) scorerows())
+    keep <- st$cf[c('cost', 'fail')]
+    refit <- .ctCoresetWeights(st$X, st$y, st$cf$S, seq_along(st$y), score = scorerows())
     # Refitted on the new rows, its weights can all come out zero: chosen
     # again, as after a failure.
     if (!any(refit$w > 0)) {
@@ -862,7 +843,6 @@
     choices = if (length(st$trace)) do.call(rbind, st$trace),
     training_draws = length(st$y),
     score_draws = st$scoredraws,
-    chosen_scored = st$nscored,
     reused_values = st$reused,
     check_rms = if (length(st$checks)) sqrt(mean(st$checks^2)) else NA_real_,
     check_max = if (length(st$checks)) max(abs(st$checks)) else NA_real_,
