@@ -6462,12 +6462,9 @@ function _laplace_filter_evaluate(laplace::CTSEMLaplaceObjective, theta::Vector{
         for i in units.members[U]
             weights[i] = w
         end
-        # A unit with nothing to solve, recorded as its solve records it.
-        laplace.modes[U] = Float64[]
-        laplace.inner_iterations[U] = 0
-        laplace.inner_gradient[U] = 0.0
-        laplace.inner_converged[U] = true
-        laplace.hessian_repaired[U] = false
+        # A unit with nothing to solve, recorded as its solve and primal
+        # record it.
+        _laplace_record_empty_mode!(laplace, U)
         laplace.mode_repaired[U] = false
         laplace.logdet_floored[U] = false
     end

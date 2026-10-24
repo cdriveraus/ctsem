@@ -570,7 +570,6 @@ test_that("an objective with every effect in the filter sums its units as the ma
     prior <- summed$value - sum(summed$unit_loglik)
     expect_equal(part$value - prior, sum(w * summed$unit_loglik[units]),
       tolerance = 1e-10)
-    rowsums <- as.matrix(rows$scores)
     expect_true(all(is.na(part$unit_loglik[-units])))
     expect_equal(as.numeric(part$unit_loglik[units]),
       as.numeric(summed$unit_loglik[units]), tolerance = 1e-10)
