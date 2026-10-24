@@ -32,7 +32,7 @@
 
 export ctsem_is_coreset, ctsem_is_coreset_batch!, ctsem_is_coreset_gradbatch!,
     ctsem_is_coreset_fullgrad!, ctsem_is_coreset_finalize!, ctsem_is_coreset_record,
-    ctsem_is_coreset_cost
+    ctsem_is_coreset_cost, ctsem_is_coreset_weigh!
 
 """Full evaluations the coreset density has spent, a gradient as two."""
 ctsem_is_coreset_cost(cs) = cs.cost
@@ -172,7 +172,9 @@ rows read as the newest checks (`focus`), and the score rows -- per row the
 units' scores (`Z`, rows by units), their sum, its parameter, its draw's total
 and a draw counter -- with the draws that gave them. Relevance is measured
 from the best total of every row, or, where `batchtop`, of the newest batch's,
-rows `batch_from` on (`_is_top`).
+rows `batch_from` on (`_is_top`). Each row keeps its draw (`rowkey`) and the
+weight its caller gave it (`rw`, NaN where none), which a fit and a price read
+in place of its relevance (`_is_rowrel`).
 """
 mutable struct _ISRows
     N::Int
@@ -189,10 +191,29 @@ mutable struct _ISRows
     scoredraws::Int
     batchtop::Bool
     batch_from::Int
+    rowkey::Vector{Vector{Float64}}
+    rw::Vector{Float64}
 end
 
 _ISRows(N::Integer; batchtop::Bool=false) = _ISRows(N, zeros(N, 0), 0, Float64[], Int[],
-    zeros(0, N), Float64[], Int[], Float64[], Int[], Vector{Float64}[], 0, batchtop, 1)
+    zeros(0, N), Float64[], Int[], Float64[], Int[], Vector{Float64}[], 0, batchtop, 1,
+    Vector{Float64}[], Float64[])
+
+"""
+Each row's weight in a fit or a price: the weight the caller gave its draw
+(`ctsem_is_coreset_weigh!`), scaled so that its batch's largest is 1, and
+otherwise its relevance below `top`, which is 1 at the top too. A caller that
+knows how much each draw counts says so: DAIS's batches keep half their draws
+by effective size, where relevance below each batch's best counted one or two
+of them on the strong shell at 1,000 units.
+"""
+function _is_rowrel(tr::_ISRows, top::Real)
+    rel = _is_relevance(tr.y, top)
+    for i in eachindex(rel)
+        isnan(tr.rw[i]) || (rel[i] = tr.rw[i])
+    end
+    return rel
+end
 
 """
 The total a draw's relevance is measured from (`_is_relevance`): the best of
@@ -324,10 +345,13 @@ function _is_learn!(tr::_ISRows, t0, idx=1:length(t0.total); focus::Bool=false)
         tr.L = grown
     end
     focus && append!(tr.focus, tr.nrows .+ (1:length(ok)))
+    keys = get(t0, :keys, nothing)
     for j in ok
         tr.nrows += 1
         tr.L[:, tr.nrows] .= view(t0.L, :, j)
         push!(tr.y, t0.total[j])
+        push!(tr.rowkey, keys === nothing ? Float64[] : keys[j])
+        push!(tr.rw, NaN)
     end
     return nothing
 end
@@ -369,10 +393,8 @@ function _is_full!(cs::CTSEMISCoreset, X::AbstractMatrix, why::Symbol)
     for j in 1:n
         isfinite(t0.value[j]) && (cs.known[keys[j]] = t0.value[j])
     end
-    return t0
+    return (value=t0.value, total=t0.total, L=t0.L, keys=keys)
 end
-
-_is_part(t0, i) = (value=t0.value[i], total=t0.total[i], L=t0.L[:, i])
 
 """The coreset's value at the columns of `X`, solving its units only."""
 function _is_coreset_value!(cs::CTSEMISCoreset, X::AbstractMatrix)
@@ -443,7 +465,7 @@ end
 """Weights on units `S` over every training row (`passed`'s refit)."""
 function _is_weights(tr::_ISRows, S::Vector{Int})
     rows = collect(1:tr.nrows)
-    A, b, mx, my = _is_rows(tr, rows, _is_relevance(tr.y, _is_top(tr)),
+    A, b, mx, my = _is_rows(tr, rows, _is_rowrel(tr, _is_top(tr)),
         _is_score_rows(tr, _is_top(tr)))
     As = A[:, S]
     w = _ctsem_nnls(transpose(As) * As, transpose(As) * b)
@@ -490,7 +512,7 @@ function _is_coreset_choose(tr::_ISRows, rd::_ISRound, start::Vector{Int})
     plain = setdiff(rows, newest)
     held = plain[[i % 4 == 0 for i in 1:length(plain)]]
     fitrows = setdiff(plain, held)
-    rel = _is_relevance(tr.y, _is_top(tr))
+    rel = _is_rowrel(tr, _is_top(tr))
     none(why; kw...) = (chosen=false, why=why, kw...)
     length(fitrows) < 10 && return none(:held; relheld=_is_effective(rel[held]))
     N = tr.N
@@ -755,7 +777,8 @@ function ctsem_is_coreset_batch!(cs::CTSEMISCoreset, X::AbstractMatrix)
     cs.batches > 0 && (cs.grads = _is_smooth(cs.grads, cs.gradsnow))
     cs.batches += 1
     cs.gradsnow = 0.0
-    _is_batch_start!(cs.rows)
+    # At the draws of the gradient batch just taken, it is that batch.
+    _is_cached(cs, X) || _is_batch_start!(cs.rows)
     v = cs.phase != :coreset ? _is_inparts!(cs, X, :training) :
         _is_cached(cs, X) ? _is_freecheck!(cs, X, :small) : _is_withcoreset!(cs, X)
     return [isfinite(x) ? x : -1e100 for x in v]
@@ -786,6 +809,31 @@ function ctsem_is_coreset_fullgrad!(cs::CTSEMISCoreset, X::AbstractMatrix)
     _is_tally!(cs, :gradient_full, time() - t, n)
     value = [isfinite(x) ? x : -1e100 for x in res.value]
     return (value=value, gradient=res.gradient)
+end
+
+"""
+    ctsem_is_coreset_weigh!(cs, X, w)
+
+How much each column of `X`, the newest batch's draws, counts to the caller:
+`w`, normalised as the caller weighs them (DAIS's `exp(gamma Phi)`, unusable
+draws 0). The batch's rows take these, scaled to a largest of 1, in place of
+their relevance in every later fit and price; a check, which comes before its
+batch's weights exist, reads relevance still.
+"""
+ctsem_is_coreset_weigh!(cs::CTSEMISCoreset, X::AbstractMatrix, w::AbstractVector) =
+    _is_weigh!(cs.rows, X, w)
+
+function _is_weigh!(tr::_ISRows, X::AbstractMatrix, w::AbstractVector)
+    size(X, 2) == length(w) ||
+        throw(DimensionMismatch("$(size(X, 2)) draws and $(length(w)) weights"))
+    m = maximum(w; init=0.0)
+    (isfinite(m) && m > 0) || return nothing
+    weight = Dict(_is_key(view(X, :, j)) => w[j] / m for j in axes(X, 2))
+    for i in tr.batch_from:tr.nrows
+        v = get(weight, tr.rowkey[i], NaN)
+        isnan(v) || (tr.rw[i] = v)
+    end
+    return nothing
 end
 
 """Each scored draw's rows: per parameter, the units' scores and their sum;
