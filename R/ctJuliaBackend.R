@@ -1422,7 +1422,7 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
     failures <- c(failures, "optimcontrol$is (importance sampling)")
   }
   # `intoverstates=FALSE` fits over the joint density of parameters and states
-  # (see `state_sampling.jl`), which composes with the default `intoverpop` --
+  # (see `state_sampling.jl`), which composes with the augmented route --
   # augmented random effects are extra states, so they are sampled along with
   # every other one -- and does not compose with the Laplace route, which wraps
   # the likelihood in an inner problem the state path replaces.
@@ -4813,7 +4813,7 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
     stop("intoverstates=FALSE cannot be combined with intoverpop='laplace' or ",
       "'none': the Laplace route wraps the likelihood in a per-subject inner ",
       "problem over the random effects, and the state path replaces the ",
-      "likelihood itself. Use the default intoverpop, which carries random ",
+      "likelihood itself. Use intoverpop='augmented', which carries random ",
       "effects as augmented states and so is sampled along with them.",
       call. = FALSE)
   }

@@ -83,8 +83,8 @@ ctParticleLik <- function(fit, particles = 2000, substeps = 20,
   spec <- .ctBackendSpec(fit)
   if (!is.null(spec$laplace)) {
     stop("ctParticleLik is not available for intoverpop = 'laplace' or 'none' fits: ",
-      "the particles carry random effects only as augmented states. Refit with the ",
-      "default intoverpop.", call. = FALSE)
+      "the particles carry random effects only as augmented states. Refit with ",
+      "intoverpop = 'augmented'.", call. = FALSE)
   }
   particles <- as.integer(particles)[1L]
   substeps <- as.integer(substeps)[1L]
