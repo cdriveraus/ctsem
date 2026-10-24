@@ -66,12 +66,15 @@ gives them, `gradient` (`npar x ndraws`) as `ctsem_evaluate_batch_gradient`
 does, and for the columns `scored` names each unit's score, `scores`
 (`nunits x npar x length(scored)`): its term's gradient, with the units'
 sampling weights and without the prior, so that the units' scores sum to the
-gradient of `total`. One gradient evaluation a column, what the batch
-gradient costs; `-Inf`, NaN where a draw is unusable, by
-`_ctsem_probe_value_gradient`'s rule.
+gradient of `total`. Given a count instead, the scores are the `scored`
+usable columns' of highest `total`, where a sampler's weight sits; every
+column's are formed as its gradient is, so choosing costs nothing, and only
+that many are held. `scored` in the result says which columns they are. One
+gradient evaluation a column, what the batch gradient costs; `-Inf`, NaN
+where a draw is unusable, by `_ctsem_probe_value_gradient`'s rule.
 """
 function ctsem_coreset_terms_gradient(laplace::CTSEMLaplaceObjective,
-    values::AbstractMatrix, scored::AbstractVector)
+    values::AbstractMatrix, scored::Union{Integer,AbstractVector})
     n, ncol = size(values)
     ncol >= 1 || throw(ArgumentError("values must have at least one column"))
     nunits = length(laplace.units.members)
@@ -79,13 +82,18 @@ function ctsem_coreset_terms_gradient(laplace::CTSEMLaplaceObjective,
     total = fill(NaN, ncol)
     terms = fill(NaN, nunits, ncol)
     gradient = fill(NaN, n, ncol)
-    scores = fill(NaN, nunits, n, length(scored))
+    listed = scored isa AbstractVector
+    k = listed ? length(scored) : clamp(Int(scored), 0, ncol)
+    slots = [fill(NaN, nunits, n) for _ in 1:k]
+    slotcol = listed ? collect(Int, scored) : zeros(Int, k)
+    slottotal = fill(-Inf, k)
+    S = zeros(Float64, nunits, n)
     for j in 1:ncol
-        k = findfirst(==(j), scored)
-        S = k === nothing ? nothing : zeros(Float64, nunits, n)
+        want = listed ? findfirst(==(j), slotcol) : (k > 0 ? argmin(slottotal) : nothing)
+        want === nothing || fill!(S, 0.0)
         r = try
             ctsem_laplace_evaluate(laplace, Vector{Float64}(view(values, :, j));
-                gradient=true, scores=S)
+                gradient=true, scores=want === nothing ? nothing : S)
         catch err
             _ctsem_must_propagate(err) && rethrow()
             nothing
@@ -96,10 +104,22 @@ function ctsem_coreset_terms_gradient(laplace::CTSEMLaplaceObjective,
         total[j] = _laplace_weighted_total(laplace, r.unit_loglik)
         terms[:, j] .= r.unit_loglik
         gradient[:, j] .= r.gradient
-        k === nothing || (scores[:, :, k] .= S)
+        want === nothing && continue
+        if listed
+            copyto!(slots[want], S)
+        elseif total[j] > slottotal[want]
+            copyto!(slots[want], S)
+            slotcol[want] = j
+            slottotal[want] = total[j]
+        end
+    end
+    keep = listed ? collect(1:k) : sort(findall(>(0), slotcol); by=i -> slotcol[i])
+    scores = Array{Float64}(undef, nunits, n, length(keep))
+    for (a, i) in enumerate(keep)
+        scores[:, :, a] .= slots[i]
     end
     return (value=value, total=total, unit_loglik=terms, gradient=gradient,
-        scores=scores)
+        scores=scores, scored=slotcol[keep])
 end
 
 """

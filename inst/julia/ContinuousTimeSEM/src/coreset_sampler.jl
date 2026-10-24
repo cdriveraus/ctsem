@@ -53,11 +53,14 @@ end check's.
 const _IS_CORESET_TOL = (rms=0.1, max=0.5, drift=1.5, final=0.5, band=10.0,
     scale=20.0, relevant=0.1)
 
-"""Scores: from at most `per` draws of a full gradient batch, spread through
-it, and from the newest `kept` such draws in all. A draw's scores are a row per
-parameter over every unit, so they are what the training matrix grows by; 30
-draws were enough on the strong shell at 250 and 1,000 units
-(review/SCORES-coreset-training-2026-10-24.md)."""
+"""Scores: from the `per` draws of each full gradient batch of highest total,
+where the weight sits, and from the newest `kept` such draws in all. A draw's
+scores are a row per parameter over every unit, so they are what the training
+matrix grows by; 30 draws were enough on the strong shell at 250 and 1,000
+units (review/SCORES-coreset-training-2026-10-24.md). Drawn spread through the
+batch instead, they were rows the fit weighs by relevance: DAIS's batches on
+the strong shell at 1,000 units put their weight on one or two draws, and
+spread scores came to almost nothing there."""
 const _IS_SCORE_DRAWS = (per=4, kept=64)
 
 """Each draw's weight in a fit or a test: 1 within `band` of `top`, e-fold less
@@ -770,8 +773,8 @@ function ctsem_is_coreset_fullgrad!(cs::CTSEMISCoreset, X::AbstractMatrix)
     t = time()
     n = size(X, 2)
     cs.cost += 2 * n
-    pick = unique(round.(Int, range(1, n; length=min(n, _IS_SCORE_DRAWS.per))))
-    res = ctsem_coreset_terms_gradient(cs.laplace, X, pick)
+    res = ctsem_coreset_terms_gradient(cs.laplace, X, _IS_SCORE_DRAWS.per)
+    pick = res.scored
     cs.lastgrad = Dict(_is_key(view(X, :, j)) => j for j in 1:n)
     cs.lastgrad_value = res.value
     cs.lastgrad_total = res.total
