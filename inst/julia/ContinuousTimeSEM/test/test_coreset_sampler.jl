@@ -93,3 +93,20 @@ end
     @test CIS._is_checkpick([3.0, 1.0]) == [1, 2]
     @test CIS._is_checkpick([5.0]) == [1]
 end
+
+@testset "relevance is measured from the run's best, or the newest batch's" begin
+    L = ones(2, 6)
+    learn!(tr, y) = CIS._is_learn!(tr, (value=y, total=y, L=L[:, 1:length(y)]))
+    for batchtop in (false, true)
+        tr = CIS._ISRows(2; batchtop=batchtop)
+        CIS._is_batch_start!(tr)
+        learn!(tr, [0.0, -1.0, -2.0])
+        @test CIS._is_top(tr) == 0.0
+        CIS._is_batch_start!(tr)
+        learn!(tr, [-100.0, -90.0])
+        @test CIS._is_top(tr) == (batchtop ? -90.0 : 0.0)
+        # A batch that has learned nothing yet reads every row.
+        CIS._is_batch_start!(tr)
+        @test CIS._is_top(tr) == 0.0
+    end
+end
