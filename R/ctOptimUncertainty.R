@@ -2733,11 +2733,22 @@ ctOptimFitLpgFunc <- function(fit, cores=1){
 # minus infinity, and 'checked' weighed whichever reach of it its draws
 # covered, so its intervals there followed the seed.
 # (review/UNCERTAINTY-checked-improper-2026-10-24.md)
+#
+# The normal's covariance can be singular -- directions the flat screen held
+# at no width -- and the paths take its inverse as the metric of the others'
+# Newton steps (`imis_is()` hands them the identified subspace's instead). Its
+# eigenvalues are floored at the flat-direction tolerance, a precision that
+# holds those directions where they are. A walk that fails says nothing about
+# the posterior, and 'checked' goes on as without it.
 .ctImproperParameters <- function(lpg, est, cov, parameters) {
   gradfun <- .ctJuliaOr(attr(lpg, 'fullgradbatch'), .ctImisGradient(lpg, est))
   if (!is.function(gradfun) || !length(parameters)) return(NULL)
-  paths <- .ctImisPaths(gradfun, .ctImisEvaluator(lpg), as.numeric(est), cov,
-    which = parameters)
+  eig <- eigen((cov + t(cov)) / 2, symmetric = TRUE)
+  S <- eig$vectors %*% (t(eig$vectors) *
+    pmax(eig$values, .ctFlatDirectionRtol() * max(eig$values)))
+  paths <- tryCatch(.ctImisPaths(gradfun, .ctImisEvaluator(lpg), as.numeric(est), S,
+    which = parameters), error = function(e) NULL)
+  if (is.null(paths)) return(NULL)
   list(reaches = paths$reachesLimit, limit = paths$limit,
     gradients = paths$gradients, calls = paths$calls)
 }
