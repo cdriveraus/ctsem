@@ -131,6 +131,7 @@
 "test-julia-sample.R","uncertainty","core"
 "test-dais.R","uncertainty","core"
 "test-ess-target.R","uncertainty","core"
+"test-backend-accuracy.R","uncertainty","core"
 "test-backend-priors-scores.R","uncertainty","extended"
 "test-ctCoverageCheck.R","uncertainty","extended"
 "test-julia-intoverstates.R","uncertainty","extended"

@@ -64,41 +64,54 @@ point's own columns and slots.
 function _each_point!(f, objective, n::Int, mode::Symbol; coreset=nothing,
     scratch=_points_no_scratch)
     if mode == :pool && objective isa CTSEMLaplaceObjective
-        key = :ctsem_point_scratch
         try
-            _laplace_parallel(objective, 1:n) do i
-                _ctsem_interrupt_check()
-                st = task_local_storage()
-                held = get(st, key, nothing)
-                if held === nothing
-                    held = (obj=_points_laplace_copy(objective, coreset), scratch=scratch())
-                    st[key] = held
-                end
-                f(i, held.obj, held.scratch)
-                return true
-            end
+            _laplace_parallel(i -> _points_pool_item(f, objective, coreset, scratch, i),
+                objective, 1:n)
         finally
             # The calling task runs points too, and its storage outlives the
             # region: drop its copy rather than hold it for the session.
-            delete!(task_local_storage(), key)
+            delete!(task_local_storage(), _POINTS_KEY)
         end
         return nothing
     end
     if mode == :copies
         ncopies = min(_laplace_pool_width(), n)
-        held = _CTSEM_MAX_CHUNKS[]
+        ceiling = _CTSEM_MAX_CHUNKS[]
         _CTSEM_MAX_CHUNKS[] = 1
         try
             tasks = [Threads.@spawn(_points_share(f, objective, c, ncopies, n, scratch))
                 for c in 1:ncopies]
             foreach(wait, tasks)
         finally
-            _CTSEM_MAX_CHUNKS[] = held
+            _CTSEM_MAX_CHUNKS[] = ceiling
         end
         return nothing
     end
     _points_share(f, objective, 1, 1, n, scratch; copy=false)
     return nothing
+end
+
+const _POINTS_KEY = :ctsem_point_scratch
+
+"""
+    _points_pool_item(f, objective, coreset, scratch, i)
+
+Point `i` on the pool: on this worker task's copy of the objective and its
+scratch, built the first time the task runs a point and kept in its storage
+for the rest of the region. A function of its own, not the region's closure:
+written inline, its locals were the enclosing function's, and the tasks
+shared one (CLAUDE.md, "Julia threads").
+"""
+function _points_pool_item(f, objective, coreset, scratch, i::Int)
+    _ctsem_interrupt_check()
+    st = task_local_storage()
+    mine = get(st, _POINTS_KEY, nothing)
+    if mine === nothing
+        mine = (obj=_points_laplace_copy(objective, coreset), scratch=scratch())
+        st[_POINTS_KEY] = mine
+    end
+    f(i, mine.obj, mine.scratch)
+    return true
 end
 
 """

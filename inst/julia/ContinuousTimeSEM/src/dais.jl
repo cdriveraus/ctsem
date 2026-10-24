@@ -101,7 +101,8 @@ columns are directions in the parameters, holds them at the normal's width.
 run. Returns `used`, the settled normal (`mean`, `cov`), and the record:
 iterations, how many were averaged, whether it settled, the last damping and
 effective sample, the unusable draws, the draws an iteration, the gradients
-spent, and the trace, one row an iteration (`trace_names`); `used = false`
+spent, how the draws were evaluated (`parallel`: `_points_mode`'s serial, pool
+or copies), and the trace, one row an iteration (`trace_names`); `used = false`
 with `diverged` (and `growth`) or with no usable draws, and `cov = nothing`.
 """
 function ctsem_dais(objective, centre::AbstractVector, cov::AbstractMatrix;
@@ -292,8 +293,8 @@ function ctsem_dais(objective, centre::AbstractVector, cov::AbstractMatrix;
     return (used=true, diverged=false, growth=NaN, mean=c0 .+ A * mu,
         cov=(covraw .+ transpose(covraw)) ./ 2, iterations=length(trace),
         averaged=averaging, settled=averaging > 0, gamma=gamma, ess=essw,
-        unusable=unusable, draws=S, gradients=gradients, trace=_dais_trace(trace),
-        trace_names=_DAIS_TRACE)
+        unusable=unusable, draws=S, gradients=gradients, parallel=String(mode),
+        trace=_dais_trace(trace), trace_names=_DAIS_TRACE)
 end
 
 """The held directions `hold` (columns, in the parameters) in the whitened

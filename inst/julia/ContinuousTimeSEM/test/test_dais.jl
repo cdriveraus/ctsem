@@ -4,6 +4,7 @@
 # density that refuses a tail.
 
 using LinearAlgebra, Random, Statistics
+isdefined(@__MODULE__, :_fresh_linear) || include("laplace_fixtures.jl")
 
 # A target as an objective: `ctsem_evaluate` is all DAIS asks of one.
 struct _DaisTarget{F}
@@ -109,6 +110,32 @@ end
     @test !none.used
     @test none.unusable == 64
     @test none.cov === nothing
+end
+
+@testset "DAIS draws on the pool what it draws one point after another" begin
+    # On the Laplace route each worker task evaluates its draws on a copy of
+    # the objective of its own. Written as the region's closure, the task's
+    # locals were the enclosing function's, so the tasks shared one variable:
+    # a task could run on another's copy, racing on the units' modes, or find
+    # `nothing` there and stop the fit.
+    starts, times, data = _laplace_test_data(40, 1; seed=3)
+    prior = ctsem_objective(_LAPLACE_LINEAR_OBJECTIVE.params, starts, times, data;
+        prior_index=collect(1:8), prior_scale=ones(8))
+    laplace = ctsem_laplace_objective(prior, [1, 2], [6, 7], [8], [1.0, 1.0])
+    x0 = copy(_LAPLACE_LINEAR_VALUES)
+    C = inv(Symmetric(-ContinuousTimeSEM.ctsem_hessian(laplace, x0)))
+    one = ctsem_dais(laplace, x0, C; draws=32, maxiter=8, seed=22, parallel=false)
+    @test one.used
+    @test one.parallel == "serial"
+    if Threads.nthreads() > 1 && ContinuousTimeSEM._laplace_pool_width() > 1
+        pool = ctsem_dais(laplace, x0, C; draws=32, maxiter=8, seed=22, parallel=true)
+        @test pool.parallel == "pool"
+        @test pool.iterations == one.iterations
+        # The same draws and the same terms; only the order of sums over a
+        # unit's members can differ.
+        @test isapprox(pool.mean, one.mean; rtol=1e-8)
+        @test isapprox(pool.cov, one.cov; rtol=1e-8)
+    end
 end
 
 @testset "DAIS reports to the caller's sink" begin
