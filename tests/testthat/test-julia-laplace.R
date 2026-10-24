@@ -750,6 +750,10 @@ test_that("subject parameters are available at draws, with spread", {
   fit <- .laplace_exact_fit()
 
   point <- ctsem:::.ctBackendSubjectPars(fit, pointest = TRUE)
+  # The conditional draws are random too, from the session's generator, which
+  # the tests run before this one leave in a different state in a parallel
+  # run than in a serial one.
+  set.seed(1)
   draws <- ctsem:::.ctBackendSubjectPars(fit, pointest = FALSE)
   expect_equal(dim(point)[1], 1L)
   expect_gt(dim(draws)[1], 1L)
