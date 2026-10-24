@@ -117,8 +117,7 @@
 # for the uncertainty methods' Hessian: the terms are separable, so this is
 # the diagonal they add.
 .ctNaturalCurvature <- function(natural, x) {
-  env <- list(param = as.numeric(x), inv_logit = stats::plogis,
-    log1p_exp = function(z) ifelse(z > 30, z, log1p(exp(z))))
-  vapply(natural$curvature, function(text) as.numeric(eval(str2lang(text), env)),
-    numeric(1), USE.NAMES = FALSE)
+  env <- list(param = as.numeric(x))
+  vapply(natural$curvature, function(text) as.numeric(eval(str2lang(text), env,
+    asNamespace("ctsem"))), numeric(1), USE.NAMES = FALSE)
 }

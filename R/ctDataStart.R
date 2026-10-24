@@ -137,9 +137,8 @@
   expr <- try(parse(text = gsub("param\\s*\\[\\s*\\d+\\s*\\]", "param",
     as.character(text))), silent = TRUE)
   if (inherits(expr, "try-error")) return(NA_real_)
-  env <- new.env(parent = baseenv())
-  env$log1p_exp <- function(x) ifelse(x > 30, x, log1p(exp(x)))
-  env$inv_logit <- function(x) 1 / (1 + exp(-x))
+  # The package's own `log1p_exp` and `inv_logit`, which a transform names.
+  env <- new.env(parent = asNamespace("ctsem"))
   f <- function(p) {
     env$param <- p
     v <- try(eval(expr[[1L]], envir = env), silent = TRUE)
