@@ -157,10 +157,9 @@ function _is_checkpick(v::AbstractVector)
     return pick
 end
 
-_is_median(v) = (s = sort(v); n = length(s); isodd(n) ? s[(n + 1) ÷ 2] :
-    (s[n ÷ 2] + s[n ÷ 2 + 1]) / 2)
-_is_sd(v) = (n = length(v); n < 2 ? NaN :
-    (m = sum(v) / n; sqrt(sum(abs2, v .- m) / (n - 1))))
+"""How many draws relevances `rel` amount to as the check weighs them, normalised
+among themselves: Kish's effective size, `(sum rel)^2 / sum rel^2`."""
+_is_effective(rel) = (s = sum(rel); s > 0 ? s^2 / sum(abs2, rel) : 0.0)
 _is_key(x::AbstractVector) = [round(v; sigdigits=12) for v in x]
 
 """
@@ -372,7 +371,7 @@ function _is_score_rows(tr::_ISRows, top::Real)
     spread = ones(p)
     if length(tr.zdraws) > 1
         for i in 1:p
-            s = _is_sd([d[i] for d in tr.zdraws])
+            s = length(tr.zdraws) < 2 ? NaN : std([d[i] for d in tr.zdraws])
             spread[i] = isfinite(s) && s > 0 ? s : 1.0
         end
     end
@@ -441,12 +440,20 @@ out deterministically, so that the sampler's random stream is the same with a
 coreset as without. Score rows are held out from none, and the held-out rates
 read values, which is what a check reads.
 
-The failure rate a held-out set shows carries its uncertainty: the set's
-relevance, how many draws near the top it amounts to, counts as that many
-observations, under a uniform prior. A sampler's first rounds are tails, with
-a draw or two near the top between them; a bar on that count kept the first
-coreset back for two to three rounds of 100, a third of a run's full
-evaluations, where pricing an uncertain rate lets the checks decide.
+The failure rate a held-out set shows carries its uncertainty: the set counts
+as as many observations as its draws amount to under the check's own weights
+(`_is_effective`), under a uniform prior. A check weighs its draws' errors by
+their relevance normalised among themselves, so draws that all sit far below
+the top inform it as fully as draws at the top. Counted instead by their
+relevance mass, how many draws near the top they amount to, they counted as
+none, and every size was priced at the prior's 0.5: the cheapest won and
+failed, 27 of 28 choices at 1,000 units on the strong shell while DAIS's
+draws, which vary in every direction, went through the coreset, and 11 or 12
+of 13 for DAIS's own coreset at 250 units. A sampler's first rounds are tails
+with a draw or two near the top between them, which amount to a draw or two
+either way; a bar on that count kept the first coreset back for two to three
+rounds of 100, a third of a run's full evaluations, where pricing an uncertain
+rate lets the checks decide.
 """
 function _is_coreset_choose(tr::_ISRows, rd::_ISRound, start::Vector{Int})
     nrows = tr.nrows
@@ -458,15 +465,16 @@ function _is_coreset_choose(tr::_ISRows, rd::_ISRound, start::Vector{Int})
     fitrows = setdiff(plain, held)
     rel = _is_relevance(tr.y, maximum(tr.y))
     none(why; kw...) = (chosen=false, why=why, kw...)
-    length(fitrows) < 10 && return none(:held; relheld=sum(rel[held]))
+    length(fitrows) < 10 && return none(:held; relheld=_is_effective(rel[held]))
     N = tr.N
     fullround = _is_full_round(rd)
     score = _is_score_rows(tr, maximum(tr.y))
     A, b, mx, my = _is_rows(tr, fitrows, rel[fitrows], score)
-    failrate(S, w, c, idx) = begin
+    mheld = _is_effective(rel[held])
+    mnewest = _is_effective(rel[newest])
+    failrate(S, w, c, idx, m) = begin
         isempty(idx) && return NaN
         pred = [c + sum(w[i] * tr.L[S[i], j] for i in eachindex(S); init=0.0) for j in idx]
-        m = sum(rel[idx])
         (m * _is_fail_rate(pred .- tr.y[idx], rel[idx], pred, rd) + 1) / (m + 2)
     end
     nextsize(M) = M + max(1, M ÷ 10)
@@ -489,8 +497,8 @@ function _is_coreset_choose(tr::_ISRows, rd::_ISRound, start::Vector{Int})
         any(>(0), w) || return (0.0, bound, nothing)
         # Not `c`: the function's own `c` below would be this one, boxed.
         level = my - sum(mx[units] .* w)
-        fail = maximum(filter(!isnan, [failrate(units, w, level, held),
-            failrate(units, w, level, newest)]); init=-Inf)
+        fail = maximum(filter(!isnan, [failrate(units, w, level, held, mheld),
+            failrate(units, w, level, newest, mnewest)]); init=-Inf)
         cost = _is_round_cost(count(>(0), w), N, rd, fail)
         cost < priced[].cost && (priced[] = (M=Mu, cost=cost, fail=fail))
         (fullround - cost, bound, (M=Mu, cost=cost, fail=fail))
@@ -514,7 +522,7 @@ function _is_coreset_choose(tr::_ISRows, rd::_ISRound, start::Vector{Int})
     # 1,000 grew to 46.
     keep = w .> 0
     return (chosen=true, S=S[keep], w=w[keep], c=c, cost=found.extra.cost,
-        fail=found.extra.fail)
+        fail=found.extra.fail, relheld=mheld)
 end
 
 """A choice, made again only once the sampler has added at least as many
@@ -869,7 +877,7 @@ function ctsem_is_coreset_finalize!(cs::CTSEMISCoreset, samples::AbstractMatrix,
     vt = _is_fullvalues!(cs, samples[:, top])
     delta = vt .- logp[top]
     ok = isfinite.(delta)
-    offset = any(ok) ? _is_median(delta[ok]) : 0.0
+    offset = any(ok) ? median(delta[ok]) : 0.0
     worst = any(ok) ? maximum(abs.(delta[ok] .- offset)) : Inf
     cs.has_final = true
     cs.final_checked = length(top)
