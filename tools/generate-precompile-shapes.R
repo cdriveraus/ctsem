@@ -134,9 +134,11 @@ shapes <- list(
     data = function() indicators(sim_latent(8, 6), c("y1", "y2")),
     followups = c(followups, sampled_fit)),
   # The intercept above is integrated by each subject's filter, leaving the
-  # Laplace units no coordinate. A random drift beside it stays a coordinate,
-  # and the filter integrates the intercept given it (a full-rank block,
-  # `CTSEMHybrid`): the inner solve, its probes and the logdet's derivatives
+  # Laplace units no coordinate. A random drift beside it and y2's intercept
+  # stays a coordinate, and the filter integrates the two intercepts given it
+  # (a full-rank block, `CTSEMHybrid`; one alone beside the drift would stay a
+  # coordinate, by the cost rule): the inner solve, its probes and the
+  # logdet's derivatives
   # at the Gaussian workspace type, which every Gaussian Laplace fit with a
   # nonlinear effect runs. Its fit stops at the Hessian's normal, without the
   # quadrature correction or importance sampling: on these ten subjects the
@@ -145,8 +147,14 @@ shapes <- list(
   # build would replay. The correction's rounds and the importance sampler
   # were in no shape before this one either.
   gaussian_laplace_block = list(route = "laplace", model = function() {
-      m <- cint_model(c("y1", "y2"))
-      m$pars$indvarying <- m$pars$param %in% c("cint", "drift_eta1")
+      mvar <- diag(0, 2)
+      diag(mvar) <- "mvar"
+      m <- suppressWarnings(suppressMessages(ctModel(type = "ct", n.latent = 1,
+        n.manifest = 2, manifestNames = c("y1", "y2"), latentNames = "eta1",
+        LAMBDA = matrix(1, 2, 1), MANIFESTMEANS = matrix(c(0, "mm2"), 2, 1),
+        CINT = matrix("cint"), T0MEANS = matrix(0), MANIFESTVAR = mvar,
+        manifesttype = c(0L, 0L))))
+      m$pars$indvarying <- m$pars$param %in% c("cint", "mm2", "drift_eta1")
       m
     },
     data = function() indicators(sim_latent(10, 6), c("y1", "y2")),

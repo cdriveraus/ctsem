@@ -2613,6 +2613,13 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
     slope <- c(slope, sl[1])
   }
   if (!length(effect)) return(NULL)
+  # The cost rule, from dev1's measurements (review/FITTING-filter-effects-
+  # 2026-10-24.md): beside the level's other effects a single effect costs
+  # more in the filter than as a coordinate, 8-27 per cent an evaluation --
+  # the filter's work for one coordinate fewer -- where three cost a quarter
+  # to a third less, and with no coordinate left the filter is three to four
+  # times cheaper. Either way the objective is the same.
+  if (block && length(effect) == 1L && length(lv$re_index) > 1L) return(NULL)
   list(effect = effect, kind = kind, target = target, slope = slope, block = block)
 }
 

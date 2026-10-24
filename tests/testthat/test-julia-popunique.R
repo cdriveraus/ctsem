@@ -512,8 +512,13 @@ test_that("a full-rank level's affine effects are integrated given the rest, exa
   # SAEM samples every effect of the level, so a fit that runs it keeps them
   # in the layer.
   options(ctsem.laplace.hybrid = TRUE)
-  sa <- .pu_spec(d, .pu_block_model(c("drift11", "mm1")), optimcontrol = list(saem = 5))
+  sa <- .pu_spec(d, .pu_block_model(c("drift11", "mm1", "mm3")),
+    optimcontrol = list(saem = 5))
   expect_null(sa$laplace$hybrid)
+  # One affine effect beside the level's others is cheaper as a coordinate
+  # (the cost rule in `.ctJuliaLaplaceHybrid()`); alone it is the filter's.
+  expect_null(.pu_spec(d, .pu_block_model(c("drift11", "mm1")))$laplace$hybrid)
+  expect_true(isTRUE(.pu_spec(d, .pu_block_model("mm1"))$laplace$hybrid$block))
 })
 
 test_that("a measurement error written in a time dependent predictor keeps the deviations integrated, exactly", {
