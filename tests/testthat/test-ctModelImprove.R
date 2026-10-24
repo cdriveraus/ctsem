@@ -36,9 +36,10 @@ test_that("adequacy is reported per family, and the error-based families need no
   ad <- ctFitAdequacy(x$fit, nsamples = 40, cores = 1, nboot = 499)
   expect_s3_class(ad, 'ctFitAdequacy')
   # One manifest variable, so no within-row pairs; the lagged correlations of
-  # the data only when asked for.
+  # the data only when asked for. The fit is on the Laplace route, so the
+  # random effects' distribution is a family of its own.
   expect_setequal(ad$families$family, c('residuals', 'latent', 'volatility', 'periodic',
-    'distribution', 'fit', 'dependence', 'subjects', 'nonlinear'))
+    'distribution', 'fit', 'effects', 'dependence', 'subjects', 'nonlinear'))
   expect_true(all(ad$families$p > 0 & ad$families$p <= 1))
   expect_true(ad$adequate)
   expect_true(ad$close_fit)
