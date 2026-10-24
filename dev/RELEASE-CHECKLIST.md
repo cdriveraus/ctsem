@@ -102,10 +102,13 @@ guard is exercised where it has to hold. `julia-tests.yaml` and
 matrix and no longer runs on a development-branch push; it runs on master, on a
 pull request, weekly, and on demand.
 
-**A release needs the manual run.** `check-standard.yaml` skips vignettes
-unless it is dispatched with "Build vignettes" checked, and only that variant
-installs Julia -- three of the four vignettes use `backend = 'julia'` with no
-eval guard. Do that run before submitting.
+**A release needs the vignettes rendered again, then the manual run.** The
+julia vignettes ship pre-rendered (`vignettes/<name>.html` beside a
+`.html.asis` stub), so a check reads whatever was last rendered, not the tree:
+a changed default or output since then reaches no user. Render them all from
+an install of the release tree (`dev/render-vignettes-parallel.R`, see
+CLAUDE.md), then dispatch `check-standard.yaml` with "Build vignettes" checked,
+which routine runs skip.
 
 ## Numbers and claims
 

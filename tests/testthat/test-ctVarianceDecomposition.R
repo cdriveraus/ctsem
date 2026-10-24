@@ -108,7 +108,10 @@ estmodel <- ctModel(type = 'ct', n.latent = 1, n.manifest = 1,
   MANIFESTMEANS = matrix(0))
 estmodel$pars$indvarying[estmodel$pars$matrix == 'CINT'] <- TRUE
 
-fit <- ctFit(datalong, estmodel, backend = 'julia', cores = 1, verbose = 0)
+# The augmented route by name: the simulation route pins a person by its
+# carrier states, which a Laplace fit does not have (it refuses one, below).
+fit <- ctFit(datalong, estmodel, backend = 'julia', cores = 1, verbose = 0,
+  intoverpop = 'augmented')
 
 # A model whose DRIFT depends on the state, for the two routes' refusals and
 # for the simulation route itself.
@@ -664,6 +667,10 @@ test_that('a level above the subject gets its own between column', {
   # A between person variance that is actually there: the carrier route this
   # replaces returned zero for the same fit.
   expect_gt(min(out$between), 0)
+  # The simulation route pins a person by its carrier states, which a Laplace
+  # fit does not have, and says so.
+  expect_error(ctVarianceDecomposition(fit, method = 'simulation', npaths = 2),
+    'separate coordinates')
   # The drawn route works here too, and is not shrunk: a level's modes are
   # pulled toward the level outside them, and drawing from that level's own
   # fitted covariance is not. The subject level is where it shows, since a

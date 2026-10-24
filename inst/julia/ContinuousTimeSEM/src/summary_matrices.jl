@@ -95,6 +95,19 @@ function ctsem_parameter_layout(objective::CTSEMObjective)
         push!(offset, position)
         position += r * c
     end
+    # The population covariance of the individually varying parameters on the
+    # raw scale, before the state-unit conversion that places it in T0cov:
+    # what Stan reports as `rawpopcov`, and what every population summary
+    # reads (R's `.ctBackendPopulations()`). The Laplace route appends its
+    # levels' own (`ctsem_parameter_layout(::CTSEMLaplaceObjective)`).
+    k = length(sp.population_indices)
+    if k > 0
+        push!(matrix, "rawpopcov")
+        push!(nrow, k)
+        push!(ncol, k)
+        push!(offset, position)
+        position += k * k
+    end
 
     return (matrix=matrix, nrow=nrow, ncol=ncol, offset=offset, size=position,
         nlatent=nlatent, nmanifest=nmanifest,
@@ -377,10 +390,15 @@ function _ctsem_pack_matrices!(column, pars, sp::EKFParameters, layout,
     # covariance became its own matrix: the block came back zero while the
     # filter had it, which is the disagreement this whole separation exists to
     # remove.
+    # The block's raw construction is kept as `rawpopcov`.
+    rawpopcov = nothing
     if !isempty(sp.population_indices)
+        k = length(sp.population_indices)
+        buffer = _make_square_buffer(Float64, k)
         _place_population_block!(t0cov, getdata(pars), sp.population_indices,
             sp.population_range, sp.population_covmatcode, sp.population_scale,
-            _make_square_buffer(Float64, length(sp.population_indices)))
+            buffer)
+        rawpopcov = Matrix{Float64}(buffer.out[1:k, 1:k])
     end
     asym_diffusion, asym_cint = _ctsem_asymptotics(pars.DRIFT, diffusioncov,
         pars.CINT, dyn, nlatent, sp.continuous_time)
@@ -402,8 +420,10 @@ function _ctsem_pack_matrices!(column, pars, sp::EKFParameters, layout,
             fill!(t0cov, NaN)
     end
 
-    derived = (diffusioncov, manifestcov, t0cov, asym_diffusion, asym_cint)
-    nbase = length(layout.matrix) - length(_CTSEM_DERIVED_MATRICES)
+    derived = rawpopcov === nothing ?
+        (diffusioncov, manifestcov, t0cov, asym_diffusion, asym_cint) :
+        (diffusioncov, manifestcov, t0cov, asym_diffusion, asym_cint, rawpopcov)
+    nbase = length(_ctsem_base_layout(sp)[1])
     for (k, block) in enumerate(derived)
         slot = nbase + k
         first = layout.offset[slot] + 1

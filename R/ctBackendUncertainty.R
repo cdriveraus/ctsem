@@ -761,7 +761,8 @@
   message("Computing exact Hessian")
   # On the Laplace route -- `hessian_fn_name` is always "ctsem_hessian" there
   # -- this is `ctsem_laplace_hessian`'s own `2 * npar` gradient loop, the same
-  # slow one the optimiser's finish reports through `hessian_progress`. This
+  # slow one the optimiser's finish reports through `hessian_progress`, unless
+  # no unit holds a coordinate, when it is the marginal route's. This
   # call reaches it from outside any fit's optimisation at all (a bare
   # `ctFitUncertainty()`, or the certification's own re-derivation), which is
   # exactly the case `ctsem_endgame` already exists for -- so this borrows the

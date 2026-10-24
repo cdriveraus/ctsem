@@ -1056,7 +1056,7 @@
   npar <- length(est)
   # A certification that forms its own Hessian is exactly the case a finish
   # never ran for -- the optimiser stopped on its iteration cap or a stall --
-  # and on the Laplace route that Hessian is `2 * npar` gradients, the same
+  # and on the Laplace route that Hessian is up to `2 * npar` gradients, the same
   # slow loop as the finish's own (see `ctsem_laplace_hessian`). Reported
   # through the same line and sink as everything else, at the same default
   # verbosity, so it does not go quiet exactly where the finish's fix does not

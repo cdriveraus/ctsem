@@ -192,8 +192,11 @@ test_that("a julia fit's subject distribution is the one it holds", {
   model$pars$indvarying <- FALSE
   model$pars$indvarying[model$pars$matrix %in% 'CINT'] <- TRUE
 
+  # The augmented route by name, whose carrier block the covariance is checked
+  # against below.
   fit <- suppressWarnings(suppressMessages(ctFit(datalong, model,
-    backend = 'julia', cores = 1, optimcontrol = list(estonly = TRUE))))
+    backend = 'julia', cores = 1, optimcontrol = list(estonly = TRUE),
+    intoverpop = 'augmented')))
 
   # A population the data need not have located: what is under test is whether
   # the equation reports the covariance the fit holds, on the right scale.

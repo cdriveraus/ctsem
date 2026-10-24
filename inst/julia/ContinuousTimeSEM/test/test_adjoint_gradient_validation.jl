@@ -218,6 +218,35 @@ end
     _check_adjoint(objective, values)
 end
 
+# The exponential's derivative is batched across subjects
+# (`_ctsem_frechet_deferrable`) unless a TI effect shifts what a JAx cell
+# reads. The fixture above shifts the TD effect: batched, and the gradient is
+# still exact. The same model with the TI effect on the drift is not batched.
+@testset "TI effects off the drift keep the exponential's derivative batched" begin
+    CT = ContinuousTimeSEM
+    data = reshape([0.1, -0.2, 0.15, 0.05, -0.1, 0.2], 1, :)
+    tdpreds = reshape([0.0, 1.0, 0.0, 0.0, 0.5, 0.0], 1, :)
+    tipreds = reshape([0.4, -0.7], 2, 1)
+    times = [0.0, 0.5, 1.2, 0.0, 0.6, 1.4]
+    aws(sp) = CT.CTSEMAdjointWorkspace(Float64, sp, 3, 1)
+    @test aws(_ADJOINT_SP_TD_TI).defer_frechet
+    df = _adjoint_test_dataframe(
+        drift=[-0.5;;], jax=[-0.5;;], cint=[0.0;;], diffusion=[0.2;;],
+        lambda=[1.0;;], jy=[1.0;;], manifestmeans=[0.0;;], manifestvar=[0.3;;],
+        t0var=[0.5;;], t0means=[0.0;;],
+        tdpredeffect=[0.0;;], jtd=[1.0;;],
+        free=Dict(
+            (:DRIFT, 1, 1) => (1, "-log1p_exp(param[1])"),
+            (:JAx, 1, 1) => (1, "-log1p_exp(param[1])"),
+            (:TDPREDEFFECT, 1, 1) => (2, "param[2]"),
+        ),
+    )
+    ondrift = ekf_from_data_frame(df, DataFrame(parameter=[1], predictor=[1], coefficient=[3]))
+    @test !aws(ondrift).defer_frechet
+    objective = CT.ctsem_objective(ondrift, [1, 4], times, data, tdpreds, tipreds)
+    _check_adjoint(objective, [0.3, -0.4, 0.25])
+end
+
 @testset "Forward-gradient validation: TD predictor with off-diagonal Jtd (2-state)" begin
     # F6: `Jtd[2,1]` free at a 2-latent dimension, so `_reverse_td!`'s
     # `Jtd_bar` line is checked where `P` is not scalar and the operand order

@@ -95,7 +95,10 @@ for converged chains of `n` draws it reads about `sqrt(1 + (tau - 1) / n)`,
 1.12-1.27 at ten draws on the time series where four long chains read 1.008.
 The particles' independence after resampling and moves is the between-chain
 guarantee here, so the caller passes `rhat_target = Inf` and the effective
-size decides; R-hat is still returned, for the record.
+size decides. R-hat is returned as NaN: chains that start from particles
+already drawn from the posterior agree whether or not they mixed, so the
+number measures nothing else, and beside other samplers' R-hat in a summary
+its 1.07-1.53 on runs that matched long NUTS read as a failure to converge.
 
 No evidence is reported. The stages' log mean weights (`stage_logz`) come
 back for the engine tests, whose closed-form targets have a known constant,
@@ -691,8 +694,10 @@ function ctsem_sample_smc(objective, values::AbstractVector;
     pooled = _sample_pool(chains, np, nper, npar)
     draws, accept, divergent = pooled.draws, pooled.accept, pooled.divergent
     depth, energy = pooled.depth, pooled.energy
-    # The chains' own diagnostics, before any correction.
+    # The chains' own diagnostics, before any correction; no R-hat (see the
+    # file comment).
     diagnostics = ctsem_sample_diagnostics(draws, np)
+    diagnostics = merge(diagnostics, (rhat=fill(NaN, length(diagnostics.rhat)),))
     final_correction = 1.0
     if cs_final !== nothing || any(!iszero, owed_f)
         # Each chain's base: what the last stage's moves left owing at its

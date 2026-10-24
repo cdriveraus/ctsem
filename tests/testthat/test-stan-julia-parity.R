@@ -141,7 +141,7 @@ test_that("Stan and Julia agree for a discrete-time model with augmented random 
   stan_spec <- suppressMessages(ctFit(data, model, backend = "stan", fit = FALSE, priors = FALSE))
   stan_fit <- .compiled_stan_fit(stan_spec)
   julia_spec <- suppressMessages(ctFit(data, model, backend = "julia", fit = FALSE,
-    priors = FALSE))
+    priors = FALSE, intoverpop = "augmented"))
 
   # The augmentation is what this test is about, so assert it happened rather
   # than silently checking parity on a two-state model.
@@ -652,7 +652,7 @@ test_that("Julia's adjoint gradient matches its forward gradient and Stan", {
   stan_spec <- suppressMessages(ctFit(data, model, backend = "stan", fit = FALSE, priors = FALSE))
   stan_fit <- .compiled_stan_fit(stan_spec)
   julia_spec <- suppressMessages(ctFit(data, model, backend = "julia", fit = FALSE,
-    priors = FALSE))
+    priors = FALSE, intoverpop = "augmented"))
 
   npar <- max(c(julia_spec$parameter_table$parnumber,
     julia_spec$ti_effects$coefficient), na.rm = TRUE)

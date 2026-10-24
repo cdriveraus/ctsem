@@ -523,6 +523,175 @@ test_that("a full-rank level's affine effects are integrated given the rest, exa
   expect_true(isTRUE(.pu_spec(d, .pu_block_model("mm1"))$laplace$hybrid$block))
 })
 
+# The same in discrete time, and a time dependent predictor's effect: affine
+# too, so the filter integrates them -- a discrete model's intercept enters as
+# it stands, a predictor's effect moves its column at the impulse -- and they
+# must equal the layer holding them as coordinates. The predictor is nonzero on
+# about a third of the rows, the first row among them for some subjects.
+.pu_affine_model <- function(type = "ct", td = FALSE, ind) {
+  args <- list(type = type, id = "id", manifestNames = c("Y1", "Y2", "Y3"),
+    latentNames = c("eta1", "eta2"), LAMBDA = matrix(c(1, 0.8, 0, 0, 0.5, 1), 3, 2),
+    DRIFT = if (type == "ct") matrix(c(-0.6, 0.2, -0.1, -0.4), 2, 2) else
+      matrix(c(0.5, 0.1, -0.05, 0.6), 2, 2),
+    DIFFUSION = matrix(c(0.5, 0, 0.1, 0.4), 2, 2), MANIFESTVAR = diag(0.4, 3),
+    MANIFESTMEANS = matrix(c("mm1", "mm2", "mm3"), 3, 1),
+    T0VAR = diag(1, 2), T0MEANS = matrix(c("t0m1", 0), 2, 1),
+    CINT = matrix(c(0, "cint2"), 2, 1))
+  if (td) {
+    args$TDpredNames <- "TD1"
+    args$TDPREDEFFECT <- matrix(c("td1", 0), 2, 1)
+  }
+  m <- suppressWarnings(suppressMessages(do.call(ctModel, args)))
+  m$pars$indvarying <- m$pars$param %in% ind
+  m
+}
+
+.pu_affine_data <- function(type = "ct", td = FALSE) {
+  d <- .pu_means_data()
+  if (type == "dt") d$time <- round(d$time / 0.7)
+  if (td) {
+    set.seed(41)
+    d$TD1 <- ifelse(stats::runif(nrow(d)) < 0.35, stats::rnorm(nrow(d), 1, 0.5), 0)
+  }
+  d
+}
+
+test_that("discrete time and a predictor's effect are integrated by the filter, exactly", {
+  skip_without_julia()
+  old <- options(ctsem.laplace.hybrid = TRUE)
+  on.exit(options(old), add = TRUE)
+  means <- c("t0m1", "cint2", "mm1", "mm2", "mm3")
+  cases <- list(
+    list(type = "dt", td = FALSE, ind = means, kinds = c(1L, 1L, 1L, 2L, 3L)),
+    list(type = "dt", td = FALSE, ind = means, rank = 0, pu = TRUE,
+      kinds = c(1L, 1L, 1L, 2L, 3L)),
+    list(type = "ct", td = TRUE, ind = c("td1", "t0m1", "mm1", "mm2", "mm3"),
+      kinds = c(1L, 1L, 1L, 2L, 4L)),
+    list(type = "ct", td = TRUE, ind = c("td1", "cint2", "mm1"), rank = 0, pu = TRUE,
+      kinds = c(1L, 3L, 4L)),
+    list(type = "dt", td = TRUE, ind = c("td1", "cint2", "mm2"), kinds = c(1L, 3L, 4L)))
+  set.seed(43)
+  for (case in cases) {
+    m <- .pu_affine_model(case$type, case$td, case$ind)
+    d <- .pu_affine_data(case$type, case$td)
+    spec <- function() if (is.null(case$rank)) .pu_spec(d, m) else
+      .pu_spec(d, m, poprank = case$rank, popunique = case$pu)
+    options(ctsem.laplace.hybrid = TRUE)
+    hy <- spec()
+    options(ctsem.laplace.hybrid = FALSE)
+    la <- spec()
+    label <- paste(case$type, if (case$td) "td" else "", case$rank)
+    expect_equal(sort(hy$laplace$hybrid$kind), case$kinds, info = label)
+    if (case$td) expect_equal(hy$laplace$hybrid$pred[hy$laplace$hybrid$kind == 4L], 1L,
+      info = label)
+    expect_null(la$laplace$hybrid)
+    for (draw in 1:2) {
+      x <- rnorm(length(.pu_names(hy)), 0, 0.3)
+      rh <- .pu_eval(hy, x)
+      rl <- .pu_eval(la, x)
+      expect_equal(rh$value, rl$value, tolerance = 1e-9, info = label)
+      expect_equal(as.numeric(rh$gradient), as.numeric(rl$gradient), tolerance = 1e-7,
+        info = label)
+      fw <- .pu_eval(hy, x, "forward")
+      expect_equal(as.numeric(rh$gradient), as.numeric(fw$gradient), tolerance = 1e-6,
+        info = label)
+    }
+  }
+})
+
+test_that("an objective with every effect in the filter sums its units as the marginal route does", {
+  skip_without_julia()
+  # No unit holds a coordinate -- a block of five affine effects, and own
+  # variances at rank 0 -- so the Laplace evaluation sums the members' filter
+  # integrals through the marginal route's chunk (`_laplace_filter_evaluate`)
+  # rather than the unit loop. Against that loop on the same objective: its
+  # value (`nested_gradient` keeps it), and its units' terms differentiated by
+  # forward mode (`_laplace_subject_gradients_forward`), which give the rows
+  # and, summed, the gradient. Then a coreset, which the samplers pass, against
+  # the full evaluation's own unit terms.
+  d <- .pu_means_data()
+  d$Y2[d$id == 3] <- NA
+  old <- options(ctsem.laplace.hybrid = TRUE)
+  on.exit(options(old), add = TRUE)
+  handle <- function(s) structure(s, class = c("ctJuliaModel", "ctFitModel"))
+  specs <- list(
+    block = .pu_spec(d, .pu_block_model(c("t0m1", "cint2", "mm1", "mm2", "mm3"))),
+    own = .pu_spec(d, .pu_means_model(), poprank = 0, popunique = TRUE))
+  set.seed(31)
+  for (spec in specs) {
+    module <- ctsem:::.ctJuliaModule(spec$project)
+    get <- ctsem:::.ctJuliaGet
+    o <- ctsem:::.ctJuliaObjective(handle(spec), hybrid = TRUE)
+    expect_true(isTRUE(ctsem:::.ctJuliaCall("ContinuousTimeSEM._laplace_filter_only", o)))
+    x <- rnorm(length(.pu_names(spec)), 0, 0.3)
+    xx <- ctsem:::.ctJuliaNumericVector(x)
+    summed <- get(module$ctsem_laplace_evaluate(o, xx, gradient = TRUE))
+    loop <- get(module$ctsem_laplace_evaluate(o, xx, gradient = FALSE,
+      nested_gradient = TRUE))
+    expect_true(isTRUE(summed$converged))
+    expect_equal(summed$value, loop$value, tolerance = 1e-10)
+    expect_equal(as.numeric(summed$unit_loglik), as.numeric(loop$unit_loglik),
+      tolerance = 1e-10)
+    rows <- get(module$ctsem_subject_gradients(o, xx))
+    ref <- get(ctsem:::.ctJuliaCall(
+      "ContinuousTimeSEM._laplace_subject_gradients_forward", o, xx))
+    expect_equal(as.numeric(rows$scores), as.numeric(ref$scores), tolerance = 1e-7)
+    expect_equal(as.numeric(summed$gradient), colSums(as.matrix(ref$scores)),
+      tolerance = 1e-7)
+    nunits <- length(summed$unit_loglik)
+    units <- c(2L, 5L, nunits)
+    w <- c(1.5, 2, 0.5)
+    cs <- ctsem:::.ctJuliaCall("ContinuousTimeSEM._laplace_coreset", o, units, w)
+    part <- get(module$ctsem_laplace_evaluate(o, xx, gradient = TRUE, coreset = cs))
+    prior <- summed$value - sum(summed$unit_loglik)
+    expect_equal(part$value - prior, sum(w * summed$unit_loglik[units]),
+      tolerance = 1e-10)
+    expect_true(all(is.na(part$unit_loglik[-units])))
+    expect_equal(as.numeric(part$unit_loglik[units]),
+      as.numeric(summed$unit_loglik[units]), tolerance = 1e-10)
+    ploop <- get(module$ctsem_laplace_evaluate(o, xx, gradient = FALSE,
+      nested_gradient = TRUE, coreset = cs))
+    expect_equal(part$value, ploop$value, tolerance = 1e-10)
+    # The importance sampler's entry points (laplace_coreset.jl) on two
+    # columns, as test-julia-coreset.R checks them on a model with
+    # coordinates: a subset's gradient is the full one less the scores off it,
+    # and a gradient batch that teaches returns the units' rows.
+    vec <- ctsem:::.ctJuliaVector
+    value <- ctsem:::.ctBackendJuliaValue
+    X <- cbind(x, rnorm(length(x), 0, 0.3))
+    gfull <- matrix(as.numeric(value(module$ctsem_evaluate_batch_gradient(o, X))),
+      ncol = 2)
+    g <- matrix(as.numeric(value(module$ctsem_coreset_batch_gradient(o, X,
+      vec(units), vec(w)))), ncol = 2)
+    noprior <- as.matrix(get(module$ctsem_subject_gradients(o, xx, prior = FALSE))$scores)
+    expect_equal(g[1, 1], part$value, tolerance = 1e-10)
+    expect_equal(g[-1, 1], as.numeric(part$gradient), tolerance = 1e-10)
+    expect_equal(g[-1, 1], gfull[-1, 1] - colSums(noprior) +
+      colSums(noprior[units, ] * w), tolerance = 1e-8)
+    tg <- value(module$ctsem_coreset_terms_gradient(o, X, vec(1L)))
+    expect_equal(matrix(as.numeric(tg$gradient), ncol = 2), gfull[-1, ],
+      tolerance = 1e-10)
+    expect_equal(array(as.numeric(tg$scores), c(nunits, length(x), 1))[, , 1],
+      noprior, tolerance = 1e-8)
+    # The Hessian is the marginal route's, forward mode over the adjoint
+    # (`_laplace_filter_hessian`): against central differences of the forward
+    # reference's gradient, and its columns alone against it.
+    H <- as.matrix(value(module$ctsem_hessian(o, xx)))
+    forward <- function(y) colSums(as.matrix(get(ctsem:::.ctJuliaCall(
+      "ContinuousTimeSEM._laplace_subject_gradients_forward", o,
+      ctsem:::.ctJuliaNumericVector(y)))$scores))
+    step <- 1e-5
+    fd <- vapply(seq_along(x), function(j) {
+      e <- replace(numeric(length(x)), j, step)
+      (forward(x + e) - forward(x - e)) / (2 * step)
+    }, numeric(length(x)))
+    expect_equal(H, (fd + t(fd)) / 2, tolerance = 1e-6)
+    cols <- c(1L, length(x))
+    expect_equal(as.matrix(value(module$ctsem_hessian_columns(o, xx, vec(cols)))),
+      H[, cols], tolerance = 1e-10)
+  }
+})
+
 test_that("a measurement error written in a time dependent predictor keeps the deviations integrated, exactly", {
   skip_without_julia()
   # A study's known response rounding as a per-row variance q added to each
@@ -847,8 +1016,8 @@ test_that("reporting through the hybrid is the layer's: population, subjects, mo
       o <- ctsem:::.ctJuliaObjective(handle(s), hybrid = TRUE)
       xx <- ctsem:::.ctJuliaNumericVector(x)
       list(
-        population = ctsem:::.ctBackendJuliaValue(module$ctsem_laplace_population(o,
-          ctsem:::.ctJuliaPut(matrix(x, 1)), 1L)),
+        population = as.matrix(ctsem:::.ctBackendJuliaValue(
+          module$ctsem_laplace_popcov(o, xx, 1L))),
         subjects = as.numeric(ctsem:::.ctBackendJuliaValue(
           module$ctsem_laplace_subject_values(o, xx))),
         modes = ctsem:::.ctBackendJuliaValue(module$ctsem_laplace_modes(o, xx, 1L)),
@@ -857,10 +1026,7 @@ test_that("reporting through the hybrid is the layer's: population, subjects, mo
     }
     rh <- report(hy)
     rl <- report(la)
-    expect_equal(as.numeric(rh$population$sd), as.numeric(rl$population$sd),
-      tolerance = 1e-10)
-    expect_equal(as.numeric(rh$population$correlation),
-      as.numeric(rl$population$correlation), tolerance = 1e-10)
+    expect_equal(rh$population, rl$population, tolerance = 1e-10)
     expect_equal(rh$subjects, rl$subjects, tolerance = 1e-7)
     expect_equal(as.numeric(rh$modes$raw), as.numeric(rl$modes$raw), tolerance = 1e-7)
     expect_equal(as.numeric(rh$modes$raw_sd), as.numeric(rl$modes$raw_sd),
@@ -928,6 +1094,50 @@ test_that("sequential predictions are the fitted model's own, row by row", {
     }
     for (f in c("eta", "etacov", "y", "ycov", "llrow")) {
       expect_equal(out[["TRUE"]][[f]], out[["FALSE"]][[f]], tolerance = 1e-7, info = f)
+    }
+  }
+})
+
+test_that("a unit with every effect in the filter predicts its rows from one pass", {
+  skip_without_julia()
+  # No coordinate, so one filter pass gives every row
+  # (`_laplace_sequential_filtered!`); the layer holds the same effects as
+  # coordinates and re-solves every prefix. A block with a predictor's effect
+  # in continuous time, and own variances in discrete time, with a manifest
+  # missing on some rows.
+  old <- options(ctsem.laplace.hybrid = TRUE)
+  on.exit(options(old), add = TRUE)
+  handle <- function(s) structure(s, class = c("ctJuliaModel", "ctFitModel"))
+  means <- c("t0m1", "cint2", "mm1", "mm2", "mm3")
+  cases <- list(
+    list(type = "ct", td = TRUE, ind = c("td1", "t0m1", "mm1", "mm2", "mm3")),
+    list(type = "dt", td = FALSE, ind = means, rank = 0, pu = TRUE))
+  set.seed(47)
+  for (case in cases) {
+    m <- .pu_affine_model(case$type, case$td, case$ind)
+    d <- .pu_affine_data(case$type, case$td)
+    d$Y2[d$id %in% c(2, 5) & seq_len(nrow(d)) %% 3 == 0] <- NA
+    label <- paste(case$type, if (case$td) "td" else "", case$rank)
+    out <- list()
+    x <- NULL
+    for (h in c(TRUE, FALSE)) {
+      options(ctsem.laplace.hybrid = h)
+      spec <- if (is.null(case$rank)) .pu_spec(d, m, priors = FALSE) else
+        .pu_spec(d, m, poprank = case$rank, popunique = case$pu, priors = FALSE)
+      if (is.null(x)) x <- rnorm(length(.pu_names(spec)), 0, 0.3)
+      module <- ctsem:::.ctJuliaModule(spec$project)
+      o <- ctsem:::.ctJuliaObjective(handle(spec), hybrid = TRUE)
+      expect_identical(isTRUE(ctsem:::.ctJuliaCall("ContinuousTimeSEM._laplace_filter_only",
+        o)), h, info = label)
+      xx <- ctsem:::.ctJuliaNumericVector(x)
+      seq <- ctsem:::.ctBackendJuliaValue(module$ctsem_laplace_sequential(o, xx))
+      value <- ctJuliaEvaluate(handle(spec), x, gradient = FALSE, cores = 1L)$value
+      expect_equal(sum(seq$llrow), value, tolerance = 1e-8, info = label)
+      out[[as.character(h)]] <- seq
+    }
+    for (f in c("eta", "etacov", "y", "ycov", "llrow", "effect", "effectcov")) {
+      expect_equal(out[["TRUE"]][[f]], out[["FALSE"]][[f]], tolerance = 1e-7,
+        info = paste(label, f))
     }
   }
 })

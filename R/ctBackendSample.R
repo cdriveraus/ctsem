@@ -275,8 +275,15 @@
   # The sampler, resolved against the target and written back into `control`,
   # which is what the engine call and every worker read it from: the default
   # differs by target, and a worker sees only `control`.
+  # On a marginal target, by what the check named (see there); not with
+  # sampled TI values, whose coordinates the check's normal does not have.
+  directions <- fit$uncertainty$details$normalcheck$directions
   control$sampler <- .ctBackendSamplerName(control$sampler,
-    joint = !marginal && !isTRUE(state_explicit))
+    joint = !marginal && !isTRUE(state_explicit),
+    named = if (marginal && !isTRUE(state_explicit) && !tisampled &&
+      !is.null(directions)) NCOL(directions) else 0L,
+    nutsonly = isTRUE(control$adapt_metric) || isTRUE(control$adapt_effects) ||
+      !is.null(control$settleTol))
   # Resolved once here for its refusals, before any worker is started or the
   # engine reached: a setting refused deep in a worker process would surface
   # as a failed chain and a fallback rather than as the error it is.
@@ -557,6 +564,17 @@
 # recovered (review/SAMPLING-smc-2026-10-23.md). The joint target has no
 # version of it.
 #
+# On a marginal target the default is chosen by the fit's own check
+# (`$normalcheck`, which the sampler makes where the fit has none): tempered
+# SMC where it named directions in which the posterior departs from the
+# Hessian's normal, NUTS where it named none, and NUTS whenever the call sets
+# a control of NUTS's warmup. Over nine fits -- the six small models of
+# scripts/gsm-uncertainty-2026-10/smc_broad_local.R, the time series and two
+# shells -- SMC reached the effective-size target first wherever the check
+# named a direction, by 1.2 to 7 times (NUTS did not converge on the time
+# series or the 250-unit shell), and NUTS did where it named none, by 1.3-1.4
+# times; on the nonlinear model, two named, they tied.
+#
 # 'saem' is the default on the joint target because it is the more reliable
 # of the two there, not only the faster: through `ctFitUncertainty()` on 13
 # models (dev2, review/POSTERIOR-race-2026-10-02.md) its mean worst error
@@ -566,8 +584,11 @@
 # state-explicit target has no effects for its sweeps, so NUTS is the
 # sampler there.
 #' @keywords internal
-.ctBackendSamplerName <- function(sampler, joint = TRUE) {
-  if (is.null(sampler)) return(if (isTRUE(joint)) "saem" else "nuts")
+.ctBackendSamplerName <- function(sampler, joint = TRUE, named = 0L, nutsonly = FALSE) {
+  if (is.null(sampler)) {
+    if (isTRUE(joint)) return("saem")
+    return(if (!isTRUE(nutsonly) && isTRUE(named > 0L)) "smc" else "nuts")
+  }
   if (!is.character(sampler) || length(sampler) != 1L ||
       !sampler %in% c("nuts", "saem", "smc")) {
     stop("control$sampler must be 'nuts', 'saem' or 'smc'.", call. = FALSE)
@@ -1009,10 +1030,10 @@
 #' @keywords internal
 .ctBackendSampleTargetRhat <- function(control) {
   settings <- .ctBackendSampleControl(control)
-  # Tempered SMC's final phase is many short chains, whose split R-hat reads
-  # their autocorrelation (about `sqrt(1 + (tau - 1) / n)`, 1.12-1.27 at ten
-  # draws where four long chains read 1.008); the particles' independence is
-  # the between-chain guarantee, and the effective size is what it stops on.
+  # Tempered SMC reports no R-hat (sample_smc.jl): its many short chains
+  # start from particles already drawn from the posterior, so their agreement
+  # says nothing, and their split R-hat reads autocorrelation. The effective
+  # size is what it stops on.
   if (identical(settings$sampler, "smc")) return(Inf)
   as.numeric(.ctJuliaOr(settings$rhat_target, 1.01))
 }
@@ -1732,8 +1753,9 @@ print.ctSampleDiagnostics <- function(x, ...) {
     else "ctsem Hamiltonian sample\n")
   if (!is.null(x$target)) cat("  target: ", x$target, " posterior\n", sep = "")
   if (smc) cat("  ", x$chains, " particles x ", x$draws, " draws each, after ",
-    x$nstages, " tempering stages (no warmup; R-hat over short chains reads ",
-    "autocorrelation and is not a stopping target here)\n", sep = "")
+    x$nstages, " tempering stages (no warmup; no R-hat: the chains start from ",
+    "particles already drawn from the posterior, and the effective size is ",
+    "the stop)\n", sep = "")
   else cat("  ", x$chains, " chains x ", x$draws, " draws (", x$warmup,
     " warmup discarded)\n", sep = "")
   if (smc && isTRUE(x$coreset)) {
