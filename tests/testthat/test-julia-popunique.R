@@ -597,6 +597,22 @@ test_that("an objective with every effect in the filter sums its units as the ma
       tolerance = 1e-10)
     expect_equal(array(as.numeric(tg$scores), c(nunits, length(x), 1))[, , 1],
       noprior, tolerance = 1e-8)
+    # The Hessian is the marginal route's, forward mode over the adjoint
+    # (`_laplace_filter_hessian`): against central differences of the forward
+    # reference's gradient, and its columns alone against it.
+    H <- as.matrix(get(module$ctsem_hessian(o, xx)))
+    forward <- function(y) colSums(as.matrix(get(ctsem:::.ctJuliaCall(
+      "ContinuousTimeSEM._laplace_subject_gradients_forward", o,
+      ctsem:::.ctJuliaNumericVector(y)))$scores))
+    step <- 1e-5
+    fd <- vapply(seq_along(x), function(j) {
+      e <- replace(numeric(length(x)), j, step)
+      (forward(x + e) - forward(x - e)) / (2 * step)
+    }, numeric(length(x)))
+    expect_equal(H, (fd + t(fd)) / 2, tolerance = 1e-6)
+    cols <- c(1L, length(x))
+    expect_equal(as.matrix(get(module$ctsem_hessian_columns(o, xx, vec(cols)))),
+      H[, cols], tolerance = 1e-10)
   }
 })
 

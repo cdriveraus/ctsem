@@ -7887,7 +7887,9 @@ differs from differencing along `c` by the difference rule's truncation.
 gradient evaluations completed so far out of `2n` -- this loop is the one
 place a finish or a certification can go quiet for minutes on a wide Laplace
 model, so the caller reports through it rather than this function printing
-anything itself; see `_progress_fraction` in progress.jl.
+anything itself; see `_progress_fraction` in progress.jl. Where no unit holds
+a coordinate the Hessian is the marginal route's (`_laplace_filter_hessian`),
+and `progress` is called as `ctsem_hessian` calls it.
 """
 function ctsem_laplace_hessian(laplace::CTSEMLaplaceObjective, values::AbstractVector;
     step::Real=1e-4, retries::Integer=2, warm::Bool=true, progress=nothing,
@@ -7913,6 +7915,8 @@ were.
 function _laplace_hessian_columns(laplace::CTSEMLaplaceObjective,
     values::AbstractVector, columns; step::Real=1e-4, retries::Integer=2,
     warm::Bool=true, progress=nothing, localised::Bool=true)
+    _laplace_filter_only(laplace) &&
+        return _laplace_filter_hessian(laplace, values, columns; progress=progress)
     # Over the extended vector (`_laplace_extend`), and returned with the
     # caller's rows.
     nin = length(values)
@@ -8253,6 +8257,31 @@ function ctsem_evaluate(laplace::CTSEMLaplaceObjective, values::AbstractVector;
     # decomposition that the approximation does not have.
     return (value=result.value, gradient=result.gradient,
         subject_loglik=result.subject_loglik)
+end
+
+"""
+    _laplace_filter_hessian(laplace, values, columns; progress)
+
+`_laplace_hessian_columns` for an objective with no coordinate
+(`_laplace_filter_only`). Its gradient is the marginal route's adjoint with the
+filter's deviations integrated (`_laplace_filter_evaluate`), so its curvature
+is that route's: forward mode over the adjoint (`ctsem_hessian`,
+`ctsem_hessian_columns`), exact, and about a gradient a column where central
+differences take two (`_ctsem_hessian_cost`). Over the extended vector
+(`_laplace_extend`), returned with the caller's rows. `progress` is called as
+`ctsem_hessian` calls it, `(done, total, "parameters")`.
+"""
+function _laplace_filter_hessian(laplace::CTSEMLaplaceObjective,
+    values::AbstractVector, columns; progress=nothing)
+    nin = length(values)
+    x = _laplace_extend(laplace, collect(Float64, values))
+    cols = collect(Int, columns)
+    objective = laplace.objective
+    H = cols == 1:length(x) ?
+        ctsem_hessian(objective, x; progress=progress, hybrid_mode=_HYBRID_FULL) :
+        ctsem_hessian_columns(objective, x, cols; progress=progress,
+            hybrid_mode=_HYBRID_FULL)
+    return H[1:nin, :]
 end
 
 """The outer Hessian, for the generic curvature entry point. `progress`, when

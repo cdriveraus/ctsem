@@ -861,7 +861,7 @@ computed once, so the two triangles differ only by floating-point association
 order; averaging them is free and keeps the matrix usable by a Cholesky.
 """
 function ctsem_hessian(objective::CTSEMObjective, values::AbstractVector;
-    chunk::Integer=0, progress=nothing)
+    chunk::Integer=0, progress=nothing, hybrid_mode::Integer=_HYBRID_PROFILE)
     # `progress(done, total, unit)`, when given, is called after each forward
     # sweep with `done` the parameters whose columns are finished. A sweep is
     # the gradient at the dual width, so the Hessian costs about `npar`
@@ -870,7 +870,7 @@ function ctsem_hessian(objective::CTSEMObjective, values::AbstractVector;
     x = collect(Float64, values)
     n = length(x)
     n == 0 && return zeros(Float64, 0, 0)
-    gradient_of = y -> ctsem_adjoint_gradient(objective, y).gradient
+    gradient_of = _CTSEMAdjointGradientOf(objective, Int(hybrid_mode))
     columns = progress === nothing ? nothing :
         (done, total) -> progress(done, total, "parameters")
     # One width for every parameter count (`_CTSEM_HESSIAN_WIDTHS`), so a model
@@ -885,9 +885,25 @@ function ctsem_hessian(objective::CTSEMObjective, values::AbstractVector;
 end
 _ctsem_symmetrised(H::AbstractMatrix) = (H .+ transpose(H)) ./ 2
 
+"""
+The adjoint gradient as a function of the parameters alone, the hybrid's
+deviations handled by `mode` (`ctsem_adjoint_gradient`'s `hybrid_mode`). A type
+rather than a closure, so that the marginal route's Hessian and a
+coordinate-free Laplace objective's (`_laplace_filter_hessian`) run under one
+ForwardDiff tag: a new tag is a new dual type, which compiles the filter and
+its reverse pass again.
+"""
+struct _CTSEMAdjointGradientOf{O}
+    objective::O
+    mode::Int
+end
+(g::_CTSEMAdjointGradientOf)(y) =
+    ctsem_adjoint_gradient(g.objective, y; hybrid_mode=g.mode).gradient
+
 export ctsem_hessian_columns
 """
-    ctsem_hessian_columns(objective, values, columns; progress=nothing)
+    ctsem_hessian_columns(objective, values, columns; progress=nothing,
+        hybrid_mode=_HYBRID_PROFILE)
 
 The Hessian's columns `columns` at `values`, unsymmetrised, as an `n` by
 `length(columns)` matrix: for a caller holding the rest of a Hessian that has
@@ -895,10 +911,11 @@ added coordinates since -- a sampled TI predictor cell's, whose likelihood
 curvature and coupling a prior's diagonal would leave out (R's
 `.ctJuliaTIMissingSampleFit`). Forward-mode derivatives of the adjoint gradient
 along those coordinates alone, as `ctsem_hessian` takes them along all; on the
-Laplace route, its differences of the gradient (`_laplace_hessian_columns`).
+Laplace route, its differences of the gradient (`_laplace_hessian_columns`),
+or these where no unit holds a coordinate (`_laplace_filter_hessian`).
 """
 function ctsem_hessian_columns(objective::CTSEMObjective, values::AbstractVector,
-    columns; progress=nothing)
+    columns; progress=nothing, hybrid_mode::Integer=_HYBRID_PROFILE)
     x = collect(Float64, values)
     cols = collect(Int, columns)
     isempty(cols) && return zeros(Float64, length(x), 0)
@@ -906,7 +923,7 @@ function ctsem_hessian_columns(objective::CTSEMObjective, values::AbstractVector
         y = similar(z, length(x))
         y .= x
         y[cols] .= z
-        ctsem_adjoint_gradient(objective, y).gradient
+        ctsem_adjoint_gradient(objective, y; hybrid_mode=Int(hybrid_mode)).gradient
     end
     report = progress === nothing ? nothing :
         (done, total) -> progress(done, total, "parameters")

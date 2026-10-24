@@ -3726,9 +3726,9 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
 # parameters: the estimate gains the imputed means, and the Hessian -- the
 # sampler's metric where the fit places the chains -- the cells' rows and
 # columns at that point (`ctsem_hessian_columns`, two gradients a cell on the
-# Laplace route): their likelihood's curvature and their coupling to the
-# effects that read them, not their prior's alone. The prior's diagonal stands
-# in only where those columns cannot be had.
+# Laplace route where a unit holds a coordinate): their likelihood's curvature
+# and their coupling to the effects that read them, not their prior's alone.
+# The prior's diagonal stands in only where those columns cannot be had.
 .ctJuliaTIMissingSampleFit <- function(fit) {
   cells <- fit$model_spec$ti_imputed
   if (!NROW(cells)) return(fit)
