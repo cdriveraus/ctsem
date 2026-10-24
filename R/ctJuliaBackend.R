@@ -2556,24 +2556,25 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
 # Which subject-level effects the subject filter integrates itself instead of
 # the Laplace layer (the engine's `CTSEMHybrid`): a list of the effects
 # (indices into the subject level's), the kind of cell each one moves (1 a
-# manifest intercept, 2 an initial state mean, 3 a continuous intercept), the
-# manifest or latent it moves, that cell's transform's slope in the raw value,
-# and `block` -- or NULL. On a reduced-rank level the candidates are the own
+# manifest intercept, 2 an initial state mean, 3 a continuous intercept, 4 a
+# time dependent predictor's effect), the manifest or latent it moves, that
+# cell's transform's slope in the raw value, a predictor effect's predictor
+# (`pred`, 0 for the others), and `block` -- or NULL. On a reduced-rank level the candidates are the own
 # variances (`popunique`), the shared loadings staying in the layer; on a
 # full-rank level every effect is (`block`), and the filter integrates the
 # qualifying ones given the rest, the layer keeping the rest as its
 # coordinates.
 #
 # An effect qualifies when every matsetup cell carrying its raw position
-# is a MANIFESTMEANS, T0MEANS or CINT cell of one row with the affine
+# is one MANIFESTMEANS, T0MEANS, CINT or TDPREDEFFECT cell with the affine
 # transform (code 0: `(raw * meanscale + inneroffset) * multiplier + offset`,
 # slope `meanscale * multiplier`). Then, for fixed deviations, a linear
 # Gaussian filter's covariances and gains do not depend on them, the log
 # likelihood is exactly quadratic in them, and the filter integrates them in
-# closed form; Laplace runs over what is left. So the model must also be
-# linear and Gaussian: continuous time, every indicator Gaussian, no cell
-# referencing a state, and no calculation that could carry the deviations into
-# a covariance or gain (`.ctJuliaHybridCalcsOk`). An initial mean the model
+# closed form, in continuous or discrete time; Laplace runs over what is left.
+# So the model must also be linear and Gaussian: every indicator Gaussian, no
+# cell referencing a state, and no calculation that could carry the
+# deviations into a covariance or gain (`.ctJuliaHybridCalcsOk`). An initial mean the model
 # replaces by a stationary moment is no initial mean, so a T0MEANS effect
 # stays in the layer there; and that moment, `-A^-1 b` over the stationary
 # closure, moves with every continuous intercept in the closure, which the
@@ -2590,13 +2591,12 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
   block <- rank == as.integer(lv$nrandom) && is.null(lv$load_row)
   own <- if (block) seq_along(lv$re_index) else which(as.integer(lv$unique_index) > 0L)
   if (!length(own)) return(NULL)
-  if (!isTRUE(model$continuoustime)) return(NULL)
   if (length(model$manifesttype) && any(as.integer(model$manifesttype) != 0L)) return(NULL)
   if (!.ctJuliaHybridCalcsOk(model)) return(NULL)
   if ("stateref" %in% names(setup) && any(as.integer(setup$stateref) > 0L)) return(NULL)
   values <- as.data.frame(model$modelmats$matvalues)
   base <- .ctMatricesList()$base
-  kinds <- c(MANIFESTMEANS = 1L, T0MEANS = 2L, CINT = 3L)
+  kinds <- c(MANIFESTMEANS = 1L, T0MEANS = 2L, CINT = 3L, TDPREDEFFECT = 4L)
   codes <- as.integer(base[names(kinds)])
   stationary <- isTRUE(as.logical(model$stationary)) || !is.null(model$t0stationary)
   # The latents whose intercepts a stationary initial mean reads.
@@ -2606,6 +2606,7 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
     function(i) FALSE
   param <- as.integer(setup$param)
   effect <- integer(); kind <- integer(); target <- integer(); slope <- numeric()
+  pred <- integer()
   for (p in own) {
     rows <- which(param == as.integer(lv$re_index[p]))
     if (!length(rows)) next
@@ -2615,13 +2616,15 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
     if (k == 2L && stationary) next
     if (k == 3L && meanreads(as.integer(setup$row[rows[1]]))) next
     if (!all(as.integer(setup$transform[rows]) == 0L) ||
-        length(unique(as.integer(setup$row[rows]))) != 1L) next
+        length(unique(as.integer(setup$row[rows]))) != 1L ||
+        length(unique(as.integer(setup$col[rows]))) != 1L) next
     sl <- as.numeric(values$meanscale[rows]) * as.numeric(values$multiplier[rows])
     if (!all(is.finite(sl)) || any(abs(sl - sl[1]) > 0)) next
     effect <- c(effect, p)
     kind <- c(kind, k)
     target <- c(target, as.integer(setup$row[rows[1]]))
     slope <- c(slope, sl[1])
+    pred <- c(pred, if (k == 4L) as.integer(setup$col[rows[1]]) else 0L)
   }
   if (!length(effect)) return(NULL)
   # The cost rule, from dev1's measurements (review/FITTING-filter-effects-
@@ -2631,7 +2634,8 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
   # to a third less, and with no coordinate left the filter is three to four
   # times cheaper. Either way the objective is the same.
   if (block && length(effect) == 1L && length(lv$re_index) > 1L) return(NULL)
-  list(effect = effect, kind = kind, target = target, slope = slope, block = block)
+  list(effect = effect, kind = kind, target = target, slope = slope, pred = pred,
+    block = block)
 }
 
 # Whether the model's calculations leave the filter linear and Gaussian with
@@ -2681,7 +2685,7 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
   if (!length(calcs)) return(TRUE)
   lhs <- sub("=.*$", "", calcs)
   rhs <- sub("^[^=]*=", "", calcs)
-  means <- "\\b(MANIFESTMEANS|T0MEANS|CINT)\\["
+  means <- "\\b(MANIFESTMEANS|T0MEANS|CINT|TDPREDEFFECT)\\["
   !any(grepl("state[", rhs, fixed = TRUE) | grepl(means, rhs) | grepl(means, lhs))
 }
 
@@ -4698,6 +4702,7 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
       laplace_args$hybrid_kind <- V(as.integer(hybrid$kind))
       laplace_args$hybrid_target <- V(as.integer(hybrid$target))
       laplace_args$hybrid_slope <- V(as.numeric(hybrid$slope))
+      if (any(hybrid$kind == 4L)) laplace_args$hybrid_pred <- V(as.integer(hybrid$pred))
     }
     # Sent only when every unit's inner problem is a concave quadratic
     # (`.ctJuliaLaplaceQuadratic`), so every other model crosses as before.

@@ -755,12 +755,14 @@ triple says that effect `inert_effect` (an index into that level's effects)
 cannot reach group `inert_group`'s data at level `inert_level`
 (`_laplace_build_units`).
 
-`hybrid_effect`, `hybrid_kind`, `hybrid_target` and `hybrid_slope`, when sent,
-are parallel too: the subject level's effects (indices into its effects) whose
-own variance the subject filter integrates instead of this objective, the
-kind of cell each one moves (1 a manifest intercept, 2 an initial state mean,
-3 a continuous intercept), the manifest or latent it moves, and that cell's
-transform's slope in the raw value (`CTSEMHybrid`). They leave the level's
+`hybrid_effect`, `hybrid_kind`, `hybrid_target`, `hybrid_slope` and
+`hybrid_pred`, when sent, are parallel too: the subject level's effects
+(indices into its effects) whose own variance the subject filter integrates
+instead of this objective, the kind of cell each one moves (1 a manifest
+intercept, 2 an initial state mean, 3 a continuous intercept, 4 a time
+dependent predictor's effect), the manifest or latent it moves, that cell's
+transform's slope in the raw value, and a predictor effect's predictor, 0 for
+the others (`CTSEMHybrid`). They leave the level's
 root and its block, and fill the wrapped objective's `params.hybrid`, which
 every subject's filter shares.
 
@@ -773,7 +775,7 @@ function ctsem_laplace_objective(objective::CTSEMObjective; re_index=Int[],
     level_rank=Int[], load_index=Int[], sd_fixed=Float64[], cor_fixed=Float64[],
     unique_index=Int[], inert_level=Int[], inert_group=Int[], inert_effect=Int[],
     hybrid_effect=Int[], hybrid_kind=Int[], hybrid_target=Int[], hybrid_slope=Float64[],
-    level_nload=Int[], load_row=Int[], load_col=Int[],
+    hybrid_pred=Int[], level_nload=Int[], load_row=Int[], load_col=Int[],
     inner_maxiter::Integer=_LAPLACE_INNER_MAXITER[], inner_tol::Real=1e-10,
     floor="total", gate_lo::Real=0.2, gate_hi::Real=0.7, quadratic::Bool=false)
     nsubjects = length(objective.subject_objectives)
@@ -852,15 +854,19 @@ function ctsem_laplace_objective(objective::CTSEMObjective; re_index=Int[],
     hyb.version += 1
     if isempty(hybrid_effect)
         hyb.kind = Int[]; hyb.target = Int[]; hyb.psi_index = Int[]; hyb.effect = Int[]
-        hyb.sd_scale = Float64[]; hyb.slope = Float64[]
+        hyb.sd_scale = Float64[]; hyb.slope = Float64[]; hyb.pred = Int[]
     else
+        pred = isempty(hybrid_pred) ? zeros(Int, length(hybrid_effect)) : Int.(hybrid_pred)
         (length(hybrid_target) == length(hybrid_effect) == length(hybrid_slope) ==
-            length(hybrid_kind)) || throw(DimensionMismatch(
-                "hybrid_effect, hybrid_kind, hybrid_target and hybrid_slope must be the same length"))
-        all(k -> k in (1, 2, 3), hybrid_kind) || throw(ArgumentError(
-            "hybrid_kind must be 1 (a manifest intercept), 2 (an initial state mean) or 3 (a continuous intercept)"))
+            length(hybrid_kind) == length(pred)) || throw(DimensionMismatch(
+                "hybrid_effect, hybrid_kind, hybrid_target, hybrid_slope and hybrid_pred must be the same length"))
+        all(k -> k in (1, 2, 3, 4), hybrid_kind) || throw(ArgumentError(
+            "hybrid_kind must be 1 (a manifest intercept), 2 (an initial state mean), 3 (a continuous intercept) or 4 (a time dependent predictor's effect)"))
+        all(i -> hybrid_kind[i] != 4 || pred[i] >= 1, eachindex(pred)) || throw(ArgumentError(
+            "a time dependent predictor's effect (hybrid_kind 4) needs its predictor in hybrid_pred"))
         lv = levels[1]
         hyb.kind = Int.(hybrid_kind)
+        hyb.pred = pred
         hyb.target = Int.(hybrid_target)
         hyb.effect = Int.(hybrid_effect)
         hyb.slope = Float64.(hybrid_slope)
