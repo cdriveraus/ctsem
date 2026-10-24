@@ -101,9 +101,10 @@ test_that("optimcontrol$tipredMissing chooses imputing or sampling, on every rou
   prep <- function(...) suppressWarnings(suppressMessages(ctFit(dat, model,
     backend = "julia", fit = FALSE, ...)))
 
-  # Sampling needs no particular route: 'auto' samples the effects.
+  # Sampling needs no particular route: 'auto' samples this model's exact
+  # marginal (a random initial mean, a Gaussian indicator).
   defaulted <- prep(optimize = FALSE)
-  expect_identical(defaulted$args$resolved$intoverpop, "none")
+  expect_identical(defaulted$args$resolved$intoverpop, "laplace")
   expect_identical(defaulted$tipredMissing, "auto")
   expect_true(ctsem:::.ctJuliaTIMissingSamples(defaulted))
   expect_false(ctsem:::.ctJuliaTIMissingSamples(defaulted, "impute"))
@@ -353,11 +354,12 @@ test_that("closed form via ctFit(): posterior of an isolated missing predictor r
   mu <- mean(c(-2, -1, 1, 2, 0.5))
   sigma <- sd(c(-2, -1, 1, 2, 0.5))
 
-  # On the default route, which samples the random effects jointly.
+  # On the default route, which here samples the exact marginal: the random
+  # initial mean with a Gaussian indicator is integrated exactly.
   fit <- suppressWarnings(suppressMessages(ctFit(dat, model, backend = "julia",
     optimize = FALSE, chains = 1, cores = 1,
     sampleControl = list(iter = 300L, warmup = 150L))))
-  expect_identical(fit$args$resolved$intoverpop, "none")
+  expect_identical(fit$args$resolved$intoverpop, "laplace")
   draws <- fit$estimate$rawposterior[, fit$model_spec$ti_missing$parameter]
 
   # One draw count, not two. The error shrinking with the draws -- the error at

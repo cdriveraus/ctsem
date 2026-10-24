@@ -122,11 +122,15 @@ test_that("an outer level takes laplace", {
   expect_identical(auto$route, "laplace")
   # Whatever the backend: stan then refuses it by name.
   expect_identical(ctsem:::.ctIntOverPopAuto(m, backend = "stan")$route, "laplace")
-  # Sampling integrates nothing at any level: the effects of every level are
-  # sampled with the rest.
+  # Sampling a mean's effects at every level, with a Gaussian indicator,
+  # integrates them exactly and samples the exact marginal; an effect the
+  # Laplace term approximates is sampled with the rest, at every level.
   nested <- .auto_data()
   nested$study <- ifelse(nested$id <= 3, 1L, 2L)
-  expect_identical(.auto_resolve(m, data = nested, optimize = FALSE)$route, "none")
+  expect_identical(.auto_resolve(m, data = nested, optimize = FALSE)$route, "laplace")
+  d <- .auto_model("df", LAMBDA = matrix(1), DRIFT = matrix("df"))
+  d$groupIDnames <- "study"
+  expect_identical(.auto_resolve(d, data = nested, optimize = FALSE)$route, "none")
 })
 
 test_that("the variance-cell warning still fires for an explicit augmented route", {

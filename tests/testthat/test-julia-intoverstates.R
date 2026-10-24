@@ -519,8 +519,10 @@ test_that('the state path draws the carrier states of an augmented model', {
     d[, 'id'] <- i
     d
   }))
+  # Named: 'auto' takes the Laplace route when optimising since juliaFit
+  # 6fcaf91a, which has no carrier states.
   fit <- suppressWarnings(suppressMessages(ctFit(data, model, backend = 'julia',
-    cores = 1, verbose = 0)))
+    cores = 1, verbose = 0, intoverpop = 'augmented')))
 
   layout <- ctsem:::.ctBackendStateLayout(fit)
   augmented <- as.integer(layout$nlatent)

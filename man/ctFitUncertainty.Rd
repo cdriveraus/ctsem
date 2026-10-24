@@ -336,15 +336,17 @@ faster in comparisons on variance and nested models, where NUTS on the
 joint vector mixes poorly. A marginal target is sampled by tempered
 sequential Monte Carlo where the normal check of \code{'checked'} named
 directions in which the posterior departs from the fit's Hessian, and by
-NUTS where it named none (or where \code{adapt_metric}, \code{adapt_effects}
-or \code{settleTol} is set); \code{sampler = 'nuts'} or \code{'smc'}
-chooses. A fit made without that check gets one first, at a few hundred
+NUTS where it named none, or where the call sets a control only NUTS reads
+(\code{chains}, \code{warmup}, \code{stepsize}, \code{adapt_metric},
+\code{adapt_effects}, \code{settleTol}); \code{sampler = 'nuts'} or
+\code{'smc'} chooses, and \code{'smc'} beside \code{chains},
+\code{warmup} or \code{stepsize} is an error, since it reads none of
+them. A fit made without that check gets one first, at a few hundred
 gradients. NUTS starts from a metric set to the widths the check measured
 along those directions, or, where \code{'checked'} moved the normal to the
-posterior's moments, to that normal's covariance. Tempered SMC
-(\code{sampler = 'smc'}) carries
-\code{particles} (200) draws from that normal to the posterior by
-stages of NUTS moves, then each a chain. It is for posteriors NUTS does not
+posterior's moments, to that normal's covariance. Tempered SMC carries
+\code{particles} (200) draws from that normal to the posterior by stages
+of NUTS moves, then each a chain. It is for posteriors NUTS does not
 converge on from the normal -- a mass far from the mode, a loading shell --
 and costs about what NUTS does in gradients. On the Laplace route its
 particles move on a coreset of the units (\code{coreset}, \code{TRUE}): the
