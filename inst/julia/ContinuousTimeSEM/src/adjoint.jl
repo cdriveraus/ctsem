@@ -167,8 +167,8 @@ end
 function CTSEMAdjointWorkspace(::Type{T}, sp::EKFParameters, nvalues::Integer,
     ntdpred::Integer) where {T}
     ws = _init_continuous_ekf_workspace(T, sp)
-    n = _val(ws.state_dim)
-    m = _val(ws.manifest_dim)
+    n = ws.state_dim
+    m = ws.manifest_dim
     # The subject vector the regular transforms read: the raw parameters, any
     # stated population values (`EKFParameters.anchors`), then any TI
     # predictor tail (`EKFParameters.ti_tail`).
@@ -216,7 +216,7 @@ function CTSEMAdjointWorkspace(::Type{T}, sp::EKFParameters, nvalues::Integer,
     dual_context = CTSEMDualContext(T, sp, zeros(T, n))
     return CTSEMAdjointWorkspace{T,typeof(sp),typeof(lyap_buffer),
         typeof(frechet_buffer),typeof(ws),typeof(dual_context)}(
-        sp, n, m, _val(ws.affine_buffer.dim),
+        sp, n, m, ws.affine_buffer.dim,
         collect(ws.diffusion_state_indices),
         predict_indices, update_indices, td_indices,
         predict_supports,
@@ -250,7 +250,7 @@ function CTSEMAdjointWorkspace(::Type{T}, sp::EKFParameters, nvalues::Integer,
         frechet_buffer, zeros(T, n, n), zeros(T, n, n), ExpTable(T, n),
         CTSEMCovSqrtScratch(T, max(n, m)),
         CTSEMReverseScratch(T, n, m, length(ws.diffusion_state_indices),
-            _val(ws.affine_buffer.dim)),
+            ws.affine_buffer.dim),
         CTSEMAdjointTape(T, group_relevant),
         ws,
     )

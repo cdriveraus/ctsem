@@ -12,8 +12,8 @@ Fill `O` with the packed linear system for the continuous Lyapunov equation.
 The rows and columns of `O` correspond to upper-triangular entries of a
 symmetric unknown `X` in the equation `A * X + X * A'`.
 """
-function _ksolve_system_matrix!(O::AbstractMatrix{T}, A::AbstractMatrix{T}, __d::Union{Int,Val}) where {T<:Number}
-    d = _val(__d)
+function _ksolve_system_matrix!(O::AbstractMatrix{T}, A::AbstractMatrix{T}, __d::Int) where {T<:Number}
+    d = __d
     # d = size(A, 1)
     fill!(O, zero(T))
 
@@ -64,8 +64,8 @@ Pack the upper triangle of the symmetric matrix `Q` into `triQ`.
 The packing order matches the system matrix produced by
 `_ksolve_system_matrix!`.
 """
-function _ksolve_pack_upper!(triQ::AbstractVector{T}, Q::AbstractMatrix{T}, __d::Union{Int,Val}) where {T<:Number}
-    d = _val(__d)
+function _ksolve_pack_upper!(triQ::AbstractVector{T}, Q::AbstractMatrix{T}, __d::Int) where {T<:Number}
+    d = __d
     # d = size(Q, 1)
     z = 0
     @inbounds for j in 1:d
@@ -85,8 +85,8 @@ _ksolve_pack_upper!(triQ::AbstractVector{T}, Q::AbstractMatrix{T}) where {T<:Num
 
 Unpack an upper-triangular packed vector into the symmetric matrix `AQ`.
 """
-function _ksolve_unpack_upper!(AQ::AbstractMatrix{T}, triQ::AbstractVector{T}, __d::Union{Int,Val}) where {T<:Number}
-    d = _val(__d)
+function _ksolve_unpack_upper!(AQ::AbstractMatrix{T}, triQ::AbstractVector{T}, __d::Int) where {T<:Number}
+    d = __d
     # d = size(AQ, 1)
     z = 0
     @inbounds for j in 1:d
@@ -126,8 +126,8 @@ the difference between a subject loop that threads and one that does not. See
 `small_linalg.jl`, which makes the same trade for the Cholesky.
 """
 function _solve_square_system!(A::AbstractMatrix{T}, B::AbstractVecOrMat{T},
-    piv::AbstractVector{Int}, size_hint::Union{Int,Val}) where {T<:LinearAlgebra.BlasFloat}
-    n = _val(size_hint)
+    piv::AbstractVector{Int}, size_hint::Int) where {T<:LinearAlgebra.BlasFloat}
+    n = size_hint
     n <= _CTSEM_SMALL_CHOLESKY[] &&
         return _solve_square_system_generic!(A, B, piv, size_hint)
     return _solve_square_system!(A, B, piv)
@@ -136,7 +136,7 @@ end
 """Every other scalar type -- `ForwardDiff.Dual` above all -- has no LAPACK
 route at any size, so it goes straight to the generic loops."""
 _solve_square_system!(A::AbstractMatrix{T}, B::AbstractVecOrMat{T},
-    piv::AbstractVector{Int}, size_hint::Union{Int,Val}) where {T} =
+    piv::AbstractVector{Int}, size_hint::Int) where {T} =
     _solve_square_system_generic!(A, B, piv, size_hint)
 
 """
@@ -150,9 +150,6 @@ BLAS types below `_CTSEM_SMALL_CHOLESKY`. `A` is left holding the factors as
 several times factors it once and calls `_lu_solve_generic!` per right-hand
 side instead.
 """
-_solve_square_system_generic!(A::AbstractMatrix{T}, B::AbstractVecOrMat{T}, piv::AbstractVector{Int}, ::Val{n}) where {T,n} =
-    _solve_square_system_generic!(A, B, piv, n)
-
 function _solve_square_system_generic!(A::AbstractMatrix{T}, B::AbstractVecOrMat{T},
     piv::AbstractVector{Int}, n::Int) where {T}
     @boundscheck begin
@@ -178,7 +175,7 @@ function _solve_square_system!(A::AbstractMatrix, B::AbstractVecOrMat, piv::Abst
     return B
 end
 
-function _solve_square_system!(A::AbstractMatrix, B::AbstractVecOrMat, piv::AbstractVector{Int}, ::Union{Int,Val})
+function _solve_square_system!(A::AbstractMatrix, B::AbstractVecOrMat, piv::AbstractVector{Int}, ::Int)
     return _solve_square_system!(A, B, piv)
 end
 
@@ -271,11 +268,11 @@ function ksolve!(
     O::AbstractMatrix{T},
     triQ::AbstractVector{T},
     piv::AbstractVector{Int},
-    dim::Union{Int,Val},
-    system_dim::Union{Int,Val},
+    dim::Int,
+    system_dim::Int,
 ) where {T<:Number}
-    d = _val(dim)
-    ntri = _val(system_dim)
+    d = dim
+    ntri = system_dim
     @boundscheck begin
         # d = size(A, 1)
         size(A, 1) == d && size(A, 2) == d || throw(DimensionMismatch("A must be square"))
@@ -304,9 +301,9 @@ function ksolve!(
     O::AbstractMatrix{T},
     triQ::AbstractVector{T},
     piv::AbstractVector{Int},
-    dim::Union{Int,Val},
+    dim::Int,
 ) where {T<:Number}
-    d = _val(dim)
+    d = dim
     return ksolve!(AQ, A, Q, O, triQ, piv, dim, (d * (d + 1)) ÷ 2)
 end
 

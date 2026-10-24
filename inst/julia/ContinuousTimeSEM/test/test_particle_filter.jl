@@ -51,7 +51,7 @@ end
 # squaring: `sdcovsqrt2cov` carries a 1e-5 that does not cancel.
 function _pf_variance(sd)
     buffer = ContinuousTimeSEM._make_square_buffer(Float64, 1)
-    ContinuousTimeSEM.sdcovsqrt2cov!(buffer, [sd;;], 0, Val(1))
+    ContinuousTimeSEM.sdcovsqrt2cov!(buffer, [sd;;], 0, 1)
     return buffer.out[1, 1]
 end
 

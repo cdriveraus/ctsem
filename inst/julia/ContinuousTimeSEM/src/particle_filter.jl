@@ -249,8 +249,8 @@ function _ctsem_particle_subject!(sub, sp, x::Vector{Float64}, N::Int, nsubsteps
     all_params = getdata(pars)
     all_params .= ws.all_params
 
-    n = _val(ws.state_dim)
-    m = _val(ws.manifest_dim)
+    n = ws.state_dim
+    m = ws.manifest_dim
     indices = ws.diffusion_state_indices
     k = length(indices)
     log2pi = log(2 * T(pi))

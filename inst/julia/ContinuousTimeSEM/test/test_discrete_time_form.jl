@@ -52,7 +52,7 @@ end
 
     ContinuousTimeSEM._compute_discrete_time_form!(discrete_ca, buffer, [0.2;;],
         pars, Δt, exp_buffer, lyap_buffer, state, [1], diffusion_buffer,
-        discretization_buffer, Val(1))
+        discretization_buffer, 1)
 
     jacobian_transition = exp(-0.7 * Δt)
     f0 = -0.5 * state[1] + 1.0
@@ -95,7 +95,7 @@ end
     Qc = [0.2 0.0; 0.0 0.0]
 
     ContinuousTimeSEM._compute_one_step_form!(discrete_ca, Qc, pars, state,
-        [1], Val(2))
+        [1], 2)
 
     x_next = discrete_ca.dDRIFT * state .+ discrete_ca.dINT
     # Stan's discrete-time map: the dynamic block gets DRIFT*x + CINT, the
@@ -134,7 +134,7 @@ end
     Qc = [0.2 0.0; 0.0 0.0]
 
     ContinuousTimeSEM._compute_one_step_form!(discrete_ca, Qc, pars, state,
-        [1], Val(2))
+        [1], 2)
 
     # A linear model has JAx == DRIFT, so the offset is exactly CINT.
     @test discrete_ca.dINT[1] ≈ 0.4 atol = 1e-12

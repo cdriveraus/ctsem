@@ -25,7 +25,7 @@ end
         E = randn(rng, n, n)
         Y, L = _frechet_pair(A, E)
         Yref = zeros(n, n)
-        ContinuousTimeSEM.my_exp!(Yref, copy(A), zeros(n, n), ContinuousTimeSEM.ExpBuffer{Float64}(n), Val(n))
+        ContinuousTimeSEM.my_exp!(Yref, copy(A), zeros(n, n), ContinuousTimeSEM.ExpBuffer{Float64}(n), n)
         Lref = ContinuousTimeSEM._ctsem_exp_frechet_block_reference(A, E)
         tol = 1e-11 * max(1.0, opnorm(Yref, 1))
         @test isapprox(Y, Yref; atol=tol, rtol=1e-11)

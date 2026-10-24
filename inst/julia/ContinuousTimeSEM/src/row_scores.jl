@@ -64,8 +64,8 @@ function ctsem_row_scores(objective::CTSEMObjective, values::AbstractVector,
     K == 0 && return out
     ws = _init_continuous_ekf_workspace(_RowScoreDual, sp)
     ws.hyb.mode = _HYBRID_OFF
-    n = _val(ws.state_dim)
-    m = _val(ws.manifest_dim)
+    n = ws.state_dim
+    m = ws.manifest_dim
     nall = length(sp.mutables)
     for c0 in 1:_ROW_SCORE_WIDTH:K
         cols = c0:min(c0 + _ROW_SCORE_WIDTH - 1, K)
