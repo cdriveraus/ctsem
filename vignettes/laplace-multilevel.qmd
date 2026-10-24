@@ -418,9 +418,9 @@ when optimizing, take Laplace on the julia backend. It integrates random
 effects that shift a mean in a linear Gaussian model exactly, inside each
 subject's filter, as augmentation would, and every other effect by the Laplace
 approximation; it is the only option for nesting beyond the subject level.
-Name augmentation explicitly for an effect the filter does not take -- a random
-time dependent predictor effect, or a discrete time model -- where its carrier
-state is cheaper than a Laplace coordinate.
+Name augmentation explicitly for an effect the filter does not take -- one
+random parameter shared by several cells, say -- where its carrier state is
+cheaper than a Laplace coordinate.
 
 **Time-independent predictors** work at any level, provided the predictor
 actually varies at that level.
