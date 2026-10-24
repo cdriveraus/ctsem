@@ -76,7 +76,7 @@ end
     tol = CIS._IS_CORESET_TOL.force
     @test length(CIS._is_held_draws(learnt(alike).zdraw)) == 2
     @test force(learnt(alike), [1], [Float64(N)]) < tol
-    @test force(learnt(own), collect(1:5), fill(4.0, 5)) > 10 * tol
+    @test force(learnt(own), collect(1:5), fill(4.0, 5)) > tol
     @test force(learnt(own), collect(1:N), ones(N)) < 1e-10
     # A parameter the draws do not move counts for nothing: units alike but
     # for one such parameter, where one unit is far from the sum.
@@ -91,7 +91,7 @@ end
     @test force(trs, [1], [Float64(N)]) < tol
     trm = CIS._ISRows(N)
     CIS._is_learn_scores!(trm, Xs, still, zeros(D))
-    @test force(trm, [1], [Float64(N)]) > 10 * tol
+    @test force(trm, [1], [Float64(N)]) > tol
     # With no draw held out the values decide.
     tr3 = CIS._ISRows(N)
     CIS._is_learn_scores!(tr3, Xs[:, 1:3], own[:, :, 1:3], zeros(3))

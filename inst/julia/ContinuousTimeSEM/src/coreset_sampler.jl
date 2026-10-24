@@ -50,12 +50,17 @@ below that (`_is_relevance`), in the fit as in the test, and `max` reads only
 draws of relevance at least `relevant`, about 55 below the best. `final` is the
 end check's. `force` is how far a coreset's gradient may be from the full
 sum's at held-out scored draws, in log density per sd each parameter moves
-across the draws (`_is_force_error`): a gradient off by e moves the values'
-error by about e for each sd the draws move, so past twice the drift a check
-allows the coreset cannot follow them.
+across the draws (`_is_force_error`), for its size to be priced at all: a
+gradient off by e moves the values' error by about e for each sd the draws
+move, so at a log density unit per sd a coreset cannot follow them. Between
+that and a check's tolerance the value checks decide: held at 0.3, twice a
+check's drift, the gate priced coresets of 84 units on the 250-unit strong
+shell where 47-49 had served, at 0.82 full evaluations a gradient against
+0.58-0.62. The sizes that failed there had gradients off by 0.55-11, those
+that served 0.14-0.29 (review/SCORES-coreset-training-2026-10-24.md).
 """
 const _IS_CORESET_TOL = (rms=0.1, max=0.5, drift=1.5, final=0.5, band=10.0,
-    scale=20.0, relevant=0.1, force=0.3)
+    scale=20.0, relevant=0.1, force=1.0)
 
 """Scores: from the `per` draws of each full gradient batch of highest total,
 where the weight sits, and from the newest `kept` such draws in all. A draw's
