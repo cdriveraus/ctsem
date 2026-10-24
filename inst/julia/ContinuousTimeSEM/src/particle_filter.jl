@@ -212,6 +212,32 @@ function _ctsem_pf_weigh!(lw::Vector{Float64}, logw::Vector{Float64}, N::Int)
     return (increment, 1 / s2)
 end
 
+"""
+Row `t`'s weights: its increment into `rows[t]`, the variance term and the
+smallest effective size carried on, and a resample where the effective size
+has fallen below `threshold * N`. `(ok, varsum, ess_min)`, `ok` false where the
+increment is not finite.
+"""
+function _ctsem_pf_row!(rows::Vector{Float64}, t::Int, lw::Vector{Float64},
+        logw::Vector{Float64}, N::Int, varsum::Float64, ess_min::Float64,
+        threshold::Real, X::Matrix{Float64}, Xnew::Matrix{Float64}, rng)
+    increment, ess = _ctsem_pf_weigh!(lw, logw, N)
+    rows[t] = increment
+    isfinite(increment) || return (false, varsum, ess_min)
+    # `max(., 0)` because this term is a variance contribution and is
+    # non-negative in exact arithmetic: `ess` is `1 / sum(w^2)` over normalised
+    # weights, so it is at most `N`, reached exactly when the weights are equal.
+    # In floating point the normalisation and the sum of squares can put it an
+    # ulp *above* `N`, making this term a tiny negative -- and a run whose
+    # weights stay near-uniform accumulates enough of those to take `varsum`
+    # below zero, where `sqrt(varsum)` threw a DomainError out of an exported
+    # function. Observed on a fit whose DIFFUSION had gone to a boundary.
+    varsum += max((N / ess - 1) / N, 0.0)
+    ess_min = min(ess_min, ess)
+    ess < threshold * N && _ctsem_pf_resample!(X, Xnew, lw, rng, N)
+    return (true, varsum, ess_min)
+end
+
 """Systematic resampling of the particle columns of `X` by the weights `exp.(lw)`."""
 function _ctsem_pf_resample!(X::Matrix{Float64}, Xnew::Matrix{Float64},
     lw::Vector{Float64}, rng, N::Int)
@@ -316,20 +342,9 @@ function _ctsem_particle_subject!(sub, sp, x::Vector{Float64}, N::Int, nsubsteps
             scratch, gaussian, log2pi, nothing)
         for i in 1:n; X[i, p] = ws.state[i]; end
     end
-    increment, ess = _ctsem_pf_weigh!(lw, logw, N)
-    rows[1] = increment
-    isfinite(increment) || return (-Inf, rows, varsum, 0.0)
-    # `max(., 0)` because this term is a variance contribution and is
-    # non-negative in exact arithmetic: `ess` is `1 / sum(w^2)` over normalised
-    # weights, so it is at most `N`, reached exactly when the weights are equal.
-    # In floating point the normalisation and the sum of squares can put it an
-    # ulp *above* `N`, making this term a tiny negative -- and a run whose
-    # weights stay near-uniform accumulates enough of those to take `varsum`
-    # below zero, where `sqrt(varsum)` threw a DomainError out of an exported
-    # function. Observed on a fit whose DIFFUSION had gone to a boundary.
-    varsum += max((N / ess - 1) / N, 0.0)
-    ess_min = min(ess_min, ess)
-    ess < threshold * N && _ctsem_pf_resample!(X, Xnew, lw, rng, N)
+    ok, varsum, ess_min = _ctsem_pf_row!(rows, 1, lw, logw, N, varsum, ess_min,
+        threshold, X, Xnew, rng)
+    ok || return (-Inf, rows, varsum, 0.0)
 
     prev = ts[1]
     @inbounds for t in 2:nrows
@@ -378,20 +393,9 @@ function _ctsem_particle_subject!(sub, sp, x::Vector{Float64}, N::Int, nsubsteps
                 scratch, gaussian, log2pi, nothing)
             for i in 1:n; X[i, p] = ws.state[i]; end
         end
-        increment, ess = _ctsem_pf_weigh!(lw, logw, N)
-        rows[t] = increment
-        isfinite(increment) || return (-Inf, rows, varsum, 0.0)
-        # `max(., 0)` because this term is a variance contribution and is
-        # non-negative in exact arithmetic: `ess` is `1 / sum(w^2)` over normalised
-        # weights, so it is at most `N`, reached exactly when the weights are equal.
-        # In floating point the normalisation and the sum of squares can put it an
-        # ulp *above* `N`, making this term a tiny negative -- and a run whose
-        # weights stay near-uniform accumulates enough of those to take `varsum`
-        # below zero, where `sqrt(varsum)` threw a DomainError out of an exported
-        # function. Observed on a fit whose DIFFUSION had gone to a boundary.
-        varsum += max((N / ess - 1) / N, 0.0)
-        ess_min = min(ess_min, ess)
-        ess < threshold * N && _ctsem_pf_resample!(X, Xnew, lw, rng, N)
+        ok, varsum, ess_min = _ctsem_pf_row!(rows, t, lw, logw, N, varsum, ess_min,
+            threshold, X, Xnew, rng)
+        ok || return (-Inf, rows, varsum, 0.0)
         prev = ts[t]
     end
     return (sum(rows), rows, varsum, ess_min)
