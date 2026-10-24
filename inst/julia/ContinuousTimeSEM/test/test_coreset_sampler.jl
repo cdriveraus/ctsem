@@ -110,29 +110,3 @@ end
         @test CIS._is_top(tr) == 0.0
     end
 end
-
-@testset "the caller's weights replace relevance for its batch's rows" begin
-    L = ones(2, 4)
-    X = [1.0 2.0 3.0 4.0; 0.0 0.0 0.0 0.0]
-    key(j) = CIS._is_key(view(X, :, j))
-    tr = CIS._ISRows(2)
-    CIS._is_batch_start!(tr)
-    CIS._is_learn!(tr, (value=[0.0, -1.0], total=[0.0, -1.0], L=L[:, 1:2],
-        keys=[key(1), key(2)]))
-    CIS._is_batch_start!(tr)
-    CIS._is_learn!(tr, (value=[-80.0, -90.0], total=[-80.0, -90.0], L=L[:, 3:4],
-        keys=[key(3), key(4)]))
-    before = CIS._is_rowrel(tr, CIS._is_top(tr))
-    @test before[1] == 1.0
-    @test before[3] < 0.1 && before[4] < 0.1
-    # The newest batch's weights, columns in any order; scaled to a largest of 1.
-    CIS._is_weigh!(tr, X[:, [4, 3]], [0.25, 0.75])
-    rel = CIS._is_rowrel(tr, CIS._is_top(tr))
-    @test rel[1:2] == before[1:2]
-    @test rel[3] == 1.0
-    @test rel[4] ≈ 1 / 3
-    # Zero or absent weights change nothing.
-    CIS._is_weigh!(tr, X[:, 3:4], [0.0, 0.0])
-    @test CIS._is_rowrel(tr, CIS._is_top(tr)) == rel
-    @test_throws DimensionMismatch CIS._is_weigh!(tr, X[:, 3:4], [1.0])
-end

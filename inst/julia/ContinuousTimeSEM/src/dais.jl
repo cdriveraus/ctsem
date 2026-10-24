@@ -381,8 +381,6 @@ function _dais(objective, coreset, centre::AbstractVector, cov::AbstractMatrix;
             end
         end
         essw = _importance_ess(gamma .* Phi)
-        # The coreset learns how much each of this batch's draws counted.
-        coreset === nothing || ctsem_is_coreset_weigh!(coreset, X, w)
         shift = norm(Lc \ (munew .- mu))
         natural = norm(Lc \ gbar)
         W = Lc \ transpose(GP .- transpose(gbar))
