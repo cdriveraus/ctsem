@@ -133,9 +133,21 @@
   }, logical(1)))
 }
 
-# Lawson-Hanson non-negative least squares.
+# Lawson-Hanson non-negative least squares. With more rows than columns it
+# runs on the triangle of A's QR, which has A's least squares (|Ax - b|^2 is
+# |Rx - Q'b|^2 and a constant) at n rather than nrow(A) rows: each inner
+# solve was a QR of all the rows, 84 per cent of a choice at 1,000 units and
+# more with score rows. A rank-deficient A keeps its rows, and qr.coef's own
+# handling of the deficiency.
 .ctCoresetNnls <- function(A, b) {
   n <- ncol(A)
+  if (nrow(A) > n) {
+    qa <- qr(A)
+    if (qa$rank == n) {
+      b <- drop(qr.qty(qa, b))[seq_len(n)]
+      A <- qr.R(qa)
+    }
+  }
   x <- numeric(n)
   P <- logical(n)
   w <- drop(crossprod(A, b))
@@ -199,7 +211,10 @@
 # Forward selection to `M` units from `start`: each step adds the unit whose
 # term, orthogonalised against the units already in, best explains what is
 # left of the centred sum, and refits the weights. Nested, so a path serves
-# every size as a prefix.
+# every size as a prefix. The columns are orthogonalised as units join, one
+# rank-one step each (modified Gram-Schmidt), rather than against a QR of all
+# the units in at every step, which made a path's cost grow with the square
+# of its length.
 .ctCoresetPath <- function(X, y, M, rows, start = integer(),
   rel = .ctCoresetRelevance(y[rows]), score = NULL) {
   share <- rel / sum(rel)
@@ -214,17 +229,23 @@
   S <- start
   r <- if (length(S)) yc - drop(Xc[, S, drop = FALSE] %*%
     .ctCoresetNnls(Xc[, S, drop = FALSE], yc)) else yc
+  # Every column orthogonalised against the units in.
+  Xp <- Xc
+  if (length(S)) {
+    Q <- qr.Q(qr(Xc[, S, drop = FALSE]))
+    Xp <- Xp - Q %*% crossprod(Q, Xp)
+  }
   while (length(S) < min(M, ncol(X))) {
     cand <- setdiff(seq_len(ncol(X)), S)
-    Xp <- Xc[, cand, drop = FALSE]
-    if (length(S)) {
-      Q <- qr.Q(qr(Xc[, S, drop = FALSE]))
-      Xp <- Xp - Q %*% crossprod(Q, Xp)
-    }
-    along <- drop(crossprod(Xp, r))
-    score <- ifelse(along > 0, along^2 / pmax(colSums(Xp^2), 1e-300), -Inf)
+    Xq <- Xp[, cand, drop = FALSE]
+    along <- drop(crossprod(Xq, r))
+    score <- ifelse(along > 0, along^2 / pmax(colSums(Xq^2), 1e-300), -Inf)
     if (!any(is.finite(score))) break
-    S <- c(S, cand[which.max(score)])
+    j <- cand[which.max(score)]
+    S <- c(S, j)
+    q <- Xp[, j]
+    qn <- sqrt(sum(q^2))
+    if (qn > 0) Xp <- Xp - tcrossprod(q / qn, crossprod(Xp, q / qn))
     w <- .ctCoresetNnls(Xc[, S, drop = FALSE], yc)
     r <- yc - drop(Xc[, S, drop = FALSE] %*% w)
   }
