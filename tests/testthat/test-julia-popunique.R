@@ -940,8 +940,8 @@ test_that("reporting through the hybrid is the layer's: population, subjects, mo
       o <- ctsem:::.ctJuliaObjective(handle(s), hybrid = TRUE)
       xx <- ctsem:::.ctJuliaNumericVector(x)
       list(
-        population = ctsem:::.ctBackendJuliaValue(module$ctsem_laplace_population(o,
-          ctsem:::.ctJuliaPut(matrix(x, 1)), 1L)),
+        population = as.matrix(ctsem:::.ctBackendJuliaValue(
+          module$ctsem_laplace_popcov(o, xx, 1L))),
         subjects = as.numeric(ctsem:::.ctBackendJuliaValue(
           module$ctsem_laplace_subject_values(o, xx))),
         modes = ctsem:::.ctBackendJuliaValue(module$ctsem_laplace_modes(o, xx, 1L)),
@@ -950,10 +950,7 @@ test_that("reporting through the hybrid is the layer's: population, subjects, mo
     }
     rh <- report(hy)
     rl <- report(la)
-    expect_equal(as.numeric(rh$population$sd), as.numeric(rl$population$sd),
-      tolerance = 1e-10)
-    expect_equal(as.numeric(rh$population$correlation),
-      as.numeric(rl$population$correlation), tolerance = 1e-10)
+    expect_equal(rh$population, rl$population, tolerance = 1e-10)
     expect_equal(rh$subjects, rl$subjects, tolerance = 1e-7)
     expect_equal(as.numeric(rh$modes$raw), as.numeric(rl$modes$raw), tolerance = 1e-7)
     expect_equal(as.numeric(rh$modes$raw_sd), as.numeric(rl$modes$raw_sd),

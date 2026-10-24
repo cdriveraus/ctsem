@@ -3,7 +3,7 @@
 # The design constraint is that everything downstream keeps one code path. The
 # summary's `popsd` and `rawpopcorr` are already *derived* from the population
 # covariance rather than being free parameters -- `.ctBackendAugmentedPopulation()`
-# reads `T0cov` and `.ctBackendRandomEffectLevel()` integrates each parameter's
+# reads the model matrix `rawpopcov` and `.ctBackendRandomEffectLevel()` integrates each parameter's
 # transform over its own marginal spread by quadrature -- so a reduced-rank fit
 # only has to hand them the same thing: one entry per varying parameter, with a
 # marginal raw sd and the correlations among them.
@@ -22,21 +22,6 @@
         !is.na(table$parnumber))
     if (!length(index)) NA_integer_ else as.integer(table$parnumber[index[1L]])
   }, integer(1L))
-}
-
-# The population covariance of the basis effects, on the raw parameter scale.
-#
-# `T0cov` is in state units, and `.ctJuliaAugmentRandomEffects()` folds each
-# carrier state's `multiplier*meanscale` into the sd transform, so both indices
-# have to be divided back out -- the same `scale` the full-rank path divides out
-# of its `rawsd`, applied to a covariance rather than a variance.
-.ctBackendPopBasisCovariance <- function(t0cov, states, scale, ndraws) {
-  r <- length(states)
-  out <- array(0, dim = c(ndraws, r, r))
-  for (i in seq_len(r)) for (j in seq_len(r)) {
-    out[, i, j] <- t0cov[, states[i], states[j]] / (scale[i] * scale[j])
-  }
-  out
 }
 
 # The population moments a `poprank` fit reports: one entry per varying
@@ -91,21 +76,10 @@
 
   meannumber <- .ctBackendPopParnumber(spec, c(basis, regressed))
   if (anyNA(meannumber)) return(NULL)
-  rawsd <- matrix(vapply(seq_len(k), function(i) sqrt(pmax(covariance[, i, i], 0)),
-    numeric(ndraws)), nrow = ndraws)
-  rawcorr <- NULL
-  if (k > 1L) {
-    lower <- which(lower.tri(diag(k)), arr.ind = TRUE)
-    rawcorr <- matrix(vapply(seq_len(nrow(lower)), function(entry) {
-      i <- lower[entry, 1L]; j <- lower[entry, 2L]
-      denominator <- sqrt(covariance[, i, i] * covariance[, j, j])
-      ifelse(denominator > 0, covariance[, i, j] / denominator, NA_real_)
-    }, numeric(ndraws)), nrow = ndraws)
-  }
-  list(parnumber = as.integer(meannumber), param = c(basis, regressed),
-    rawsd = rawsd, rawcorr = rawcorr, level = spec$model$subjectIDname,
+  .ctBackendPopulationMoments(list(parnumber = as.integer(meannumber),
+    param = c(basis, regressed), level = spec$model$subjectIDname,
     covariance = covariance, rank = regression$rank,
-    regressed = regressed, approximate = isTRUE(regression$approximate))
+    regressed = regressed, approximate = isTRUE(regression$approximate)))
 }
 
 .ctBackendPopRegressionPopulation <- function(spec, samples, layout, flat) {
@@ -129,20 +103,17 @@
   augmented <- .ctBackendAugmentedSds(spec)
   if (is.null(augmented)) return(NULL)
 
-  sds <- augmented$sds
   basis <- regression$basis
   regressed <- unique(coefficients$param)
   ndraws <- nrow(samples)
 
   # Basis effects in the order their carrier states appear, which is the order
-  # the full-rank path reports and the order `sds` is already in.
+  # the full-rank path reports and the order the population sds are in.
   basisparam <- as.character(augmented$param)
   basisorder <- match(basisparam, basis)
   if (anyNA(basisorder)) return(NULL)
-  scale <- if (is.null(sds$scale)) rep(1, nrow(sds)) else as.numeric(sds$scale)
-
-  t0cov <- .ctBackendReshape(flat, layout, match("T0cov", layout$matrix))
-  S <- .ctBackendPopBasisCovariance(t0cov, sds$row, scale, ndraws)
+  # The basis effects' covariance, raw, in carrier order: the model matrix.
+  S <- .ctBackendRawPopCovMatrix(layout, flat, "rawpopcov")
 
   # beta, as [regressed, basis] per draw, with columns matched to the basis
   # order S is in.
@@ -173,21 +144,10 @@
   parnumber <- c(as.integer(augmented$parnumber), as.integer(meannumber))
   parname <- c(.ctBackendParamLabel(augmented$param, augmented$parnumber),
     regressed)
-  rawsd <- matrix(vapply(seq_len(k), function(i) sqrt(pmax(covariance[, i, i], 0)),
-    numeric(ndraws)), nrow = ndraws)
-  rawcorr <- NULL
-  if (k > 1L) {
-    lower <- which(lower.tri(diag(k)), arr.ind = TRUE)
-    rawcorr <- matrix(vapply(seq_len(nrow(lower)), function(entry) {
-      i <- lower[entry, 1L]; j <- lower[entry, 2L]
-      denominator <- sqrt(covariance[, i, i] * covariance[, j, j])
-      ifelse(denominator > 0, covariance[, i, j] / denominator, NA_real_)
-    }, numeric(ndraws)), nrow = ndraws)
-  }
-  list(parnumber = parnumber, param = parname, rawsd = rawsd,
-    rawcorr = rawcorr, level = spec$model$subjectIDname,
+  .ctBackendPopulationMoments(list(parnumber = parnumber, param = parname,
+    level = spec$model$subjectIDname,
     covariance = covariance, rank = regression$rank,
-    regressed = regressed, approximate = isTRUE(regression$approximate))
+    regressed = regressed, approximate = isTRUE(regression$approximate)))
 }
 
 # The one branch. Everything else in the summary asks for this.

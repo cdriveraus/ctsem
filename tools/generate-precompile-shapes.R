@@ -204,7 +204,7 @@ invisible(ctsem:::.ctJuliaEval(paste(
   "end",
   # An argument's type, for a call's signature (`signature()` below).
   "ctsem_generator_type(x) = string(typeof(x))", sep = "\n")))
-draws <- c("ctsem_parameter_matrices", "ctsem_laplace_population")
+draws <- c("ctsem_parameter_matrices")
 drawcols <- c("ctsem_evaluate_batch", "ctsem_evaluate_batch_gradient",
   "ctsem_coreset_batch", "ctsem_coreset_batch_gradient", "ctsem_coreset_terms")
 

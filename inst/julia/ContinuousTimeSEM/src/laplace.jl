@@ -7308,42 +7308,6 @@ function _laplace_conditional_factors(laplace::CTSEMLaplaceObjective,
 end
 
 """
-    ctsem_laplace_population(laplace, values, level=1)
-
-Raw-scale population standard deviations and correlations, for a whole matrix
-of raw parameter vectors at once (`values[s, :]` is one draw).
-
-Batched because the caller is the summary, which has a posterior sample rather
-than a point: one call for a thousand draws instead of a thousand calls. The
-correlations come back in the same column-major lower-triangular order as the
-parameters that produced them, which is the order `sdcovsqrt2cov`'s and Stan's
-own correlation coordinates use.
-"""
-function ctsem_laplace_population(laplace::CTSEMLaplaceObjective, values::AbstractMatrix,
-    level::Integer=1)
-    nsamples = size(values, 1)
-    lv = laplace.spec.levels[level]
-    k = nrandomeffects(lv)
-    noffdiagonals = div(k * (k - 1), 2)
-    sd = zeros(Float64, nsamples, k)
-    correlation = zeros(Float64, nsamples, noffdiagonals)
-    for s in 1:nsamples
-        covariance = _laplace_level_covariance(lv, collect(Float64, view(values, s, :)))
-        scales = sqrt.(max.(diag(covariance), 0.0))
-        sd[s, :] = scales
-        counter = 0
-        for j in 1:k, i in (j + 1):k
-            counter += 1
-            denominator = scales[i] * scales[j]
-            correlation[s, counter] = denominator > 0 ? covariance[i, j] / denominator : 0.0
-        end
-    end
-    return (sd=sd, correlation=correlation)
-end
-
-export ctsem_laplace_population
-
-"""
     ctsem_laplace_modes(laplace, values, level=1)
 
 The per-subject random-effect modes at `values`, on both the standardized
@@ -8228,10 +8192,68 @@ export ctsem_laplace_hessian
 #     caller asked for a subject-level one; a refusal is the honest result
 #     until the subject-conditional versions exist.
 
-for f in (:ctsem_parameter_layout, :ctsem_state_dependent_cells, :ctsem_parameter_matrices)
-    @eval $f(laplace::CTSEMLaplaceObjective, args...; kwargs...) =
-        $f(laplace.objective, args...; kwargs...)
+ctsem_state_dependent_cells(laplace::CTSEMLaplaceObjective, args...; kwargs...) =
+    ctsem_state_dependent_cells(laplace.objective, args...; kwargs...)
+
+"""The model matrices' name for level `l`'s population covariance."""
+_laplace_popcov_name(l::Integer) = l == 1 ? "rawpopcov" : string("rawpopcov_", l)
+
+"""
+    ctsem_parameter_layout(laplace)
+
+The wrapped objective's layout, and after it each level's raw-scale
+population covariance (`_laplace_level_covariance`), named `rawpopcov` for the
+subject level and `rawpopcov_<l>` above it: the population is a model matrix
+on this route as on the augmented one, whose `rawpopcov` is its carrier
+block's construction.
+"""
+function ctsem_parameter_layout(laplace::CTSEMLaplaceObjective)
+    base = ctsem_parameter_layout(laplace.objective)
+    matrix = copy(base.matrix)
+    nrow = copy(base.nrow)
+    ncol = copy(base.ncol)
+    offset = copy(base.offset)
+    position = base.size
+    for (l, lv) in enumerate(laplace.spec.levels)
+        k = nrandomeffects(lv)
+        k == 0 && continue
+        push!(matrix, _laplace_popcov_name(l))
+        push!(nrow, k)
+        push!(ncol, k)
+        push!(offset, position)
+        position += k * k
+    end
+    return merge(base, (matrix=matrix, nrow=nrow, ncol=ncol, offset=offset,
+        size=position))
 end
+
+"""The wrapped objective's model matrices at each column of `values`, and
+after them each level's population covariance (`ctsem_parameter_layout`)."""
+function ctsem_parameter_matrices(laplace::CTSEMLaplaceObjective, values::AbstractMatrix;
+    rows=Int[], kwargs...)
+    base = ctsem_parameter_matrices(laplace.objective, values; kwargs...)
+    layout = ctsem_parameter_layout(laplace)
+    out = zeros(Float64, layout.size, size(values, 2))
+    out[1:size(base, 1), :] .= base
+    first_slot = length(ctsem_parameter_layout(laplace.objective).matrix)
+    for column in axes(values, 2)
+        x = _laplace_extend(laplace, collect(Float64, view(values, :, column)))
+        slot = first_slot
+        for lv in laplace.spec.levels
+            nrandomeffects(lv) == 0 && continue
+            slot += 1
+            Sigma = _laplace_level_covariance(lv, x)
+            start = layout.offset[slot] + 1
+            out[start:(start + length(Sigma) - 1), column] .= vec(Sigma)
+        end
+    end
+    isempty(rows) && return out
+    selected = Int.(rows)
+    all(r -> 1 <= r <= layout.size, selected) || throw(BoundsError(out, selected))
+    return out[selected, :]
+end
+ctsem_parameter_matrices(laplace::CTSEMLaplaceObjective, values::AbstractVector; kwargs...) =
+    ctsem_parameter_matrices(laplace, reshape(collect(Float64, values), :, 1); kwargs...)
 
 """
 Evaluate a Laplace objective through the generic entry point.
