@@ -265,7 +265,7 @@ end
     ws.hyb.active && ws.hyb.q > 0 &&
         _hybrid_predict!(ws.hyb, ws.discrete_ca.dDRIFT, pars.JAx,
             ws.discretization_buffer.series, ws.affine_buffer.dim, Δt,
-            ws.state_dim)
+            ws.state_dim, ws.continuous_time)
     return nothing
 end
 
@@ -800,6 +800,9 @@ end
 
 @inline function _apply_td_impulse!(ws::ContinuousEKFWorkspace, pars, tdpreds)
     isempty(tdpreds) && return nothing
+    # A predictor effect the filter integrates moves its column with the state
+    # (`_hybrid_td_impulse!`).
+    ws.hyb.active && ws.hyb.q > 0 && _hybrid_td_impulse!(ws.hyb, tdpreds)
     # Not `_matvec_mul!` at `Val(length(tdpreds))`: a runtime `Val` made it a
     # dynamic call, which boxed both views on every row with a TD predictor.
     _ctsem_mulvec!(ws.bufferQ.r, pars.TDPREDEFFECT, tdpreds)
@@ -1321,8 +1324,7 @@ function _extended_kalman_filter_continuous!(
     _copy_lower_to_upper!(ws.P_predict.data, ws.state_dim)
     _apply_population_block!(ws, all_params)
     copyto!(ws.state, pars.T0MEANS)
-    _hybrid_start!(ws.hyb, sp.hybrid, data, ws.state_dim, ws.manifest_dim,
-        sp.continuous_time)
+    _hybrid_start!(ws.hyb, sp.hybrid, data, ws.state_dim, ws.manifest_dim)
     # Split rather than handed a result that is `nothing` or the view: a union
     # of the two is not a bits union, so it was boxed on every traced subject
     # pass.

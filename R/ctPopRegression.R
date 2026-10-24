@@ -77,8 +77,6 @@
     'THRESHOLDS', 'ASYMPTOTES', 'RESPONSE')
 }
 
-.ctPopVarianceMatrices <- function() c('DIFFUSION', 'MANIFESTVAR', 'T0VAR')
-
 # Labels sitting in T0MEANS. Read before `.ctModelIntOverPop()` runs, while the
 # cell still carries the label rather than a state reference.
 .ctPopT0meansEffects <- function(pars) {

@@ -170,8 +170,11 @@ deviations are its own is built after the `EKFParameters` it wraps:
 `ctsem_laplace_objective` fills it in place.
 
   * `kind[h]`: 1 a manifest intercept, 2 an initial state mean, 3 a
-    continuous intercept.
+    continuous intercept (the discrete one in a discrete-time model), 4 a
+    time dependent predictor's effect.
   * `target[h]`: the manifest item `h` shifts (`kind` 1), else the latent.
+  * `pred[h]`: the time dependent predictor a `kind` 4 effect multiplies, else
+    0.
   * `psi_index[h]`: the raw position of its own variance.
   * `effect[h]`: its index among the subject level's effects, whose `re_index`
     is the raw position the deviation shifts (reporting adds it there).
@@ -203,9 +206,10 @@ mutable struct CTSEMHybrid
     perm::Vector{Int}
     lparams::Vector{Int}
     version::Int
+    pred::Vector{Int}
 end
 CTSEMHybrid() = CTSEMHybrid(Int[], Int[], Int[], Int[], Float64[], Float64[], false,
-    Int[], Int[], Float64[], Float64[], Float64[], 0, Int[], Int[], 0)
+    Int[], Int[], Float64[], Float64[], Float64[], 0, Int[], Int[], 0, Int[])
 _hybrid_on(h::CTSEMHybrid) = !isempty(h.effect)
 """The model's hybrid item count, the capacity every per-item array is sized by."""
 _hybrid_items(h::CTSEMHybrid) = length(h.effect)

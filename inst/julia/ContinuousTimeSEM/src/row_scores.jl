@@ -200,6 +200,12 @@ unit's quadrature term. `sum_j weights[i, j] * g(points[i, j, :])` is then
 E[g(u) | y_i] for a smooth `g`. The nodes are the quadrature's own, through
 `_quadrature_block`'s sink. Single-level fits whose units all have the same
 number of effects; a unit the rule cannot be built for is `NaN`.
+
+Where every unit's term is a concave quadratic in its effects
+(`laplace.quadratic`), the posterior is the normal at the mode with the
+curvature there, and the rule's normalised weights are the Gauss-Hermite
+weights themselves: the nodes are placed without evaluating any, and the
+marginal is the Laplace term, which is exact there.
 """
 function ctsem_laplace_posterior_nodes(laplace::CTSEMLaplaceObjective,
     values::AbstractVector; nodes::Integer=5)
@@ -248,6 +254,8 @@ function _laplace_posterior_nodes_unit!(points, weights, logmarginal,
     M = _laplace_unit_curvature(laplace, U, theta, Ls, mode)
     factorization = _laplace_factor_repaired!(M, blocks)
     factorization.ok || return nothing
+    laplace.quadratic && return _laplace_posterior_nodes_normal!(points, weights,
+        logmarginal, laplace, U, theta, Ls, mode, factorization, nodes, aws)
     tree = _quadrature_children(blocks)
     context = (children=tree.children, nodes=nodes, mode=mode,
         factors=factorization.factors)
@@ -271,6 +279,37 @@ function _laplace_posterior_nodes_unit!(points, weights, logmarginal,
         weights[U, j] = exp(terms[j] - peak) / mass
     end
     logmarginal[U] = total
+    return nothing
+end
+
+"""
+The posterior nodes of a unit whose term is a concave quadratic: the rule
+`_quadrature_block` builds at the mode (the curvature's clipping does nothing,
+since such a curvature is the prior's identity plus a positive semidefinite
+part), and each node's term there is the mode's less `|x|^2`, which the grid's
+log weight adds back, so the normalised weights are the Gauss-Hermite ones.
+"""
+function _laplace_posterior_nodes_normal!(points, weights, logmarginal,
+    laplace::CTSEMLaplaceObjective, U::Integer, theta::Vector{Float64},
+    Ls::Vector{Matrix{Float64}}, mode::Vector{Float64}, factorization, nodes::Int, aws)
+    k = length(mode)
+    rule = _quadrature_clipped_scale(factorization.factors[1], k)
+    grid, logweights = _gh_grid(k, nodes)
+    mass = 0.0
+    @inbounds for j in eachindex(grid)
+        x = grid[j]
+        z = mode .+ sqrt(2) .* (rule.scale * x)
+        for c in 1:k
+            points[U, j, c] = z[c]
+        end
+        w = exp(logweights[j] - dot(x, x))
+        weights[U, j] = w
+        mass += w
+    end
+    @inbounds for j in eachindex(grid)
+        weights[U, j] /= mass
+    end
+    logmarginal[U] = _laplace_unit_term(laplace, U, theta, Ls, mode, aws)
     return nothing
 end
 

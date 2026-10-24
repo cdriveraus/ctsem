@@ -755,12 +755,14 @@ triple says that effect `inert_effect` (an index into that level's effects)
 cannot reach group `inert_group`'s data at level `inert_level`
 (`_laplace_build_units`).
 
-`hybrid_effect`, `hybrid_kind`, `hybrid_target` and `hybrid_slope`, when sent,
-are parallel too: the subject level's effects (indices into its effects) whose
-own variance the subject filter integrates instead of this objective, the
-kind of cell each one moves (1 a manifest intercept, 2 an initial state mean,
-3 a continuous intercept), the manifest or latent it moves, and that cell's
-transform's slope in the raw value (`CTSEMHybrid`). They leave the level's
+`hybrid_effect`, `hybrid_kind`, `hybrid_target`, `hybrid_slope` and
+`hybrid_pred`, when sent, are parallel too: the subject level's effects
+(indices into its effects) whose own variance the subject filter integrates
+instead of this objective, the kind of cell each one moves (1 a manifest
+intercept, 2 an initial state mean, 3 a continuous intercept, 4 a time
+dependent predictor's effect), the manifest or latent it moves, that cell's
+transform's slope in the raw value, and a predictor effect's predictor, 0 for
+the others (`CTSEMHybrid`). They leave the level's
 root and its block, and fill the wrapped objective's `params.hybrid`, which
 every subject's filter shares.
 
@@ -773,7 +775,7 @@ function ctsem_laplace_objective(objective::CTSEMObjective; re_index=Int[],
     level_rank=Int[], load_index=Int[], sd_fixed=Float64[], cor_fixed=Float64[],
     unique_index=Int[], inert_level=Int[], inert_group=Int[], inert_effect=Int[],
     hybrid_effect=Int[], hybrid_kind=Int[], hybrid_target=Int[], hybrid_slope=Float64[],
-    level_nload=Int[], load_row=Int[], load_col=Int[],
+    hybrid_pred=Int[], level_nload=Int[], load_row=Int[], load_col=Int[],
     inner_maxiter::Integer=_LAPLACE_INNER_MAXITER[], inner_tol::Real=1e-10,
     floor="total", gate_lo::Real=0.2, gate_hi::Real=0.7, quadratic::Bool=false)
     nsubjects = length(objective.subject_objectives)
@@ -852,15 +854,19 @@ function ctsem_laplace_objective(objective::CTSEMObjective; re_index=Int[],
     hyb.version += 1
     if isempty(hybrid_effect)
         hyb.kind = Int[]; hyb.target = Int[]; hyb.psi_index = Int[]; hyb.effect = Int[]
-        hyb.sd_scale = Float64[]; hyb.slope = Float64[]
+        hyb.sd_scale = Float64[]; hyb.slope = Float64[]; hyb.pred = Int[]
     else
+        pred = isempty(hybrid_pred) ? zeros(Int, length(hybrid_effect)) : Int.(hybrid_pred)
         (length(hybrid_target) == length(hybrid_effect) == length(hybrid_slope) ==
-            length(hybrid_kind)) || throw(DimensionMismatch(
-                "hybrid_effect, hybrid_kind, hybrid_target and hybrid_slope must be the same length"))
-        all(k -> k in (1, 2, 3), hybrid_kind) || throw(ArgumentError(
-            "hybrid_kind must be 1 (a manifest intercept), 2 (an initial state mean) or 3 (a continuous intercept)"))
+            length(hybrid_kind) == length(pred)) || throw(DimensionMismatch(
+                "hybrid_effect, hybrid_kind, hybrid_target, hybrid_slope and hybrid_pred must be the same length"))
+        all(k -> k in (1, 2, 3, 4), hybrid_kind) || throw(ArgumentError(
+            "hybrid_kind must be 1 (a manifest intercept), 2 (an initial state mean), 3 (a continuous intercept) or 4 (a time dependent predictor's effect)"))
+        all(i -> hybrid_kind[i] != 4 || pred[i] >= 1, eachindex(pred)) || throw(ArgumentError(
+            "a time dependent predictor's effect (hybrid_kind 4) needs its predictor in hybrid_pred"))
         lv = levels[1]
         hyb.kind = Int.(hybrid_kind)
+        hyb.pred = pred
         hyb.target = Int.(hybrid_target)
         hyb.effect = Int.(hybrid_effect)
         hyb.slope = Float64.(hybrid_slope)
@@ -6157,6 +6163,12 @@ function _laplace_evaluate(laplace::CTSEMLaplaceObjective, theta::Vector{Float64
     coreset::Union{Nothing,CTSEMCoreset}=nothing)
     _laplace_check_indices(laplace, length(theta))
     laplace.last_values = theta
+    # Nothing left for the layer: every unit's term is its members' filter
+    # integrals, summed as the marginal route sums them. `nested_gradient`
+    # keeps the unit loop, which is what the tests compare this with.
+    if !nested_gradient && _laplace_filter_only(laplace)
+        return _laplace_filter_evaluate(laplace, theta, gradient, coreset, scores)
+    end
     nsubjects = length(laplace.objective.subject_objectives)
     nunits = length(laplace.units.members)
 
@@ -6404,6 +6416,122 @@ function _laplace_evaluate(laplace::CTSEMLaplaceObjective, theta::Vector{Float64
     end
     return (value=value, gradient=grad, subject_loglik=subject_loglik,
         unit_loglik=unit_loglik, converged=_laplace_converged(laplace, coreset))
+end
+
+"""
+    _laplace_filter_only(laplace)
+
+Whether no level holds a coordinate: each level's effects are integrated by the
+subject filter (`CTSEMHybrid`), or it has none. A member's values are then the
+population vector itself (`_laplace_member_values!` shifts nothing) and a
+unit's term is the sum of its members' log likelihoods with the filter's
+deviations integrated (`_HYBRID_FULL`): the marginal route's objective, which
+`_laplace_filter_evaluate` sums as that route does.
+"""
+_laplace_filter_only(laplace::CTSEMLaplaceObjective) =
+    all(l -> nlatent(l) == 0 || nrandomeffects(l) == 0, laplace.spec.levels)
+
+"""
+    _laplace_filter_evaluate(laplace, theta, gradient, coreset, scores)
+
+`_laplace_evaluate` for an objective with no coordinate (`_laplace_filter_only`),
+through the marginal route's chunk (`_ctsem_adjoint_chunk!`) with the filter's
+deviations integrated: one forward and one reverse pass a subject, the
+transform layer unwound once a chunk and the exponential's derivative batched
+across its subjects where the model allows (`CTSEMAdjointWorkspace`'s
+`parameter_layer_shareable` and `defer_frechet`). The unit loop ran a forward
+pass for the value and a forward and reverse pass for the gradient, each with
+the layer and the derivative per subject, and the mode solve's and the gated
+floor's machinery around a unit with nothing to solve.
+
+In the Laplace pool, each piece on its slot's own workspace
+(`_laplace_workspace!`), so a draw's copy (`_laplace_draw_copy`) and a region
+nested in another behave as the unit loop does. A coreset's units only, each
+weighted by the coreset in place of its sampling weight; with `scores`, one
+piece a unit, so each unit's row is its own.
+"""
+function _laplace_filter_evaluate(laplace::CTSEMLaplaceObjective, theta::Vector{Float64},
+    gradient::Bool, coreset::Union{Nothing,CTSEMCoreset},
+    scores::Union{Nothing,Matrix{Float64}})
+    units = laplace.units
+    nunits = length(units.members)
+    objective = laplace.objective
+    subjects = objective.subject_objectives
+    nsubjects = length(subjects)
+    npar = length(theta)
+    list = coreset === nothing ? collect(1:nunits) : coreset.units
+    # Each evaluated subject's weight: its unit's sampling weight, or the
+    # coreset's, which replaces it; zero off the coreset.
+    weights = zeros(Float64, nsubjects)
+    for (k, U) in enumerate(list)
+        w = coreset === nothing ? _laplace_unit_weight(laplace, U) : coreset.weights[k]
+        for i in units.members[U]
+            weights[i] = w
+        end
+        # A unit with nothing to solve, recorded as its solve and primal
+        # record it.
+        _laplace_record_empty_mode!(laplace, U)
+        laplace.mode_repaired[U] = false
+        laplace.logdet_floored[U] = false
+    end
+    laplace.gated_units = 0
+    _laplace_ensure_pool!(laplace)
+    nslot = _laplace_pool_width()
+    rowwise = gradient && scores !== nothing
+    # Pieces: one unit each where each unit's row is wanted; else about four a
+    # slot, for the queue to balance, each unwinding the layer once.
+    groups = if rowwise
+        [[U] for U in list]
+    else
+        per = max(1, cld(length(list), 4 * nslot))
+        [list[a:min(a + per - 1, length(list))] for a in 1:per:length(list)]
+    end
+    pieces = [reduce(vcat, (units.members[U] for U in g); init=Int[]) for g in groups]
+    npieces = length(pieces)
+    sink = fill(NaN, nsubjects)
+    totals = zeros(Float64, npieces)
+    valid = fill(true, npieces)
+    bad = fill(NaN, npieces)
+    partials = [zeros(Float64, npar) for _ in 1:nslot]
+    rows = rowwise ? [zeros(Float64, npar) for _ in 1:nslot] : partials
+    _laplace_parallel(laplace, 1:npieces) do c
+        local aws, slot, into
+        slot = _laplace_slot()
+        aws = _laplace_workspace!(laplace, Float64, npar)
+        into = rowwise ? fill!(rows[slot], 0.0) : partials[slot]
+        _ctsem_adjoint_chunk!(into, totals, valid, bad, c, pieces, subjects, objective,
+            aws, theta, _HYBRID_FULL, weights, sink, gradient)
+        if rowwise && valid[c]
+            U = groups[c][1]
+            @inbounds for t in 1:npar
+                scores[U, t] = into[t]
+                partials[slot][t] += into[t]
+            end
+        end
+        return true
+    end
+    unit_loglik = zeros(Float64, nunits)
+    for U in list
+        unit_loglik[U] = sum(sink[i] for i in units.members[U]; init=0.0)
+    end
+    converged = _laplace_converged(laplace, coreset)
+    for c in 1:npieces
+        valid[c] && continue
+        coreset === nothing || _laplace_coreset_mask!(unit_loglik, sink, laplace, coreset)
+        return (value=bad[c], gradient=gradient ? fill(NaN, npar) : nothing,
+            subject_loglik=sink, unit_loglik=unit_loglik, converged=converged)
+    end
+    value = sum(totals) + _ctsem_log_prior(objective, theta)
+    coreset === nothing || _laplace_coreset_mask!(unit_loglik, sink, laplace, coreset)
+    gradient || return (value=value, gradient=nothing, subject_loglik=sink,
+        unit_loglik=unit_loglik, converged=converged)
+    grad = zeros(Float64, npar)
+    for w in 1:nslot
+        grad .+= partials[w]
+    end
+    _ctsem_log_prior_gradient!(grad, objective, theta)
+    return (value=value, gradient=grad, subject_loglik=sink, unit_loglik=unit_loglik,
+        converged=converged)
 end
 
 """
@@ -7186,42 +7314,6 @@ function _laplace_conditional_factors(laplace::CTSEMLaplaceObjective,
 end
 
 """
-    ctsem_laplace_population(laplace, values, level=1)
-
-Raw-scale population standard deviations and correlations, for a whole matrix
-of raw parameter vectors at once (`values[s, :]` is one draw).
-
-Batched because the caller is the summary, which has a posterior sample rather
-than a point: one call for a thousand draws instead of a thousand calls. The
-correlations come back in the same column-major lower-triangular order as the
-parameters that produced them, which is the order `sdcovsqrt2cov`'s and Stan's
-own correlation coordinates use.
-"""
-function ctsem_laplace_population(laplace::CTSEMLaplaceObjective, values::AbstractMatrix,
-    level::Integer=1)
-    nsamples = size(values, 1)
-    lv = laplace.spec.levels[level]
-    k = nrandomeffects(lv)
-    noffdiagonals = div(k * (k - 1), 2)
-    sd = zeros(Float64, nsamples, k)
-    correlation = zeros(Float64, nsamples, noffdiagonals)
-    for s in 1:nsamples
-        covariance = _laplace_level_covariance(lv, collect(Float64, view(values, s, :)))
-        scales = sqrt.(max.(diag(covariance), 0.0))
-        sd[s, :] = scales
-        counter = 0
-        for j in 1:k, i in (j + 1):k
-            counter += 1
-            denominator = scales[i] * scales[j]
-            correlation[s, counter] = denominator > 0 ? covariance[i, j] / denominator : 0.0
-        end
-    end
-    return (sd=sd, correlation=correlation)
-end
-
-export ctsem_laplace_population
-
-"""
     ctsem_laplace_modes(laplace, values, level=1)
 
 The per-subject random-effect modes at `values`, on both the standardized
@@ -7765,7 +7857,9 @@ differs from differencing along `c` by the difference rule's truncation.
 gradient evaluations completed so far out of `2n` -- this loop is the one
 place a finish or a certification can go quiet for minutes on a wide Laplace
 model, so the caller reports through it rather than this function printing
-anything itself; see `_progress_fraction` in progress.jl.
+anything itself; see `_progress_fraction` in progress.jl. Where no unit holds
+a coordinate the Hessian is the marginal route's (`_laplace_filter_hessian`),
+and `progress` is called as `ctsem_hessian` calls it.
 """
 function ctsem_laplace_hessian(laplace::CTSEMLaplaceObjective, values::AbstractVector;
     step::Real=1e-4, retries::Integer=2, warm::Bool=true, progress=nothing,
@@ -7791,6 +7885,8 @@ were.
 function _laplace_hessian_columns(laplace::CTSEMLaplaceObjective,
     values::AbstractVector, columns; step::Real=1e-4, retries::Integer=2,
     warm::Bool=true, progress=nothing, localised::Bool=true)
+    _laplace_filter_only(laplace) &&
+        return _laplace_filter_hessian(laplace, values, columns; progress=progress)
     # Over the extended vector (`_laplace_extend`), and returned with the
     # caller's rows.
     nin = length(values)
@@ -8102,10 +8198,68 @@ export ctsem_laplace_hessian
 #     caller asked for a subject-level one; a refusal is the honest result
 #     until the subject-conditional versions exist.
 
-for f in (:ctsem_parameter_layout, :ctsem_state_dependent_cells, :ctsem_parameter_matrices)
-    @eval $f(laplace::CTSEMLaplaceObjective, args...; kwargs...) =
-        $f(laplace.objective, args...; kwargs...)
+ctsem_state_dependent_cells(laplace::CTSEMLaplaceObjective, args...; kwargs...) =
+    ctsem_state_dependent_cells(laplace.objective, args...; kwargs...)
+
+"""The model matrices' name for level `l`'s population covariance."""
+_laplace_popcov_name(l::Integer) = l == 1 ? "rawpopcov" : string("rawpopcov_", l)
+
+"""
+    ctsem_parameter_layout(laplace)
+
+The wrapped objective's layout, and after it each level's raw-scale
+population covariance (`_laplace_level_covariance`), named `rawpopcov` for the
+subject level and `rawpopcov_<l>` above it: the population is a model matrix
+on this route as on the augmented one, whose `rawpopcov` is its carrier
+block's construction.
+"""
+function ctsem_parameter_layout(laplace::CTSEMLaplaceObjective)
+    base = ctsem_parameter_layout(laplace.objective)
+    matrix = copy(base.matrix)
+    nrow = copy(base.nrow)
+    ncol = copy(base.ncol)
+    offset = copy(base.offset)
+    position = base.size
+    for (l, lv) in enumerate(laplace.spec.levels)
+        k = nrandomeffects(lv)
+        k == 0 && continue
+        push!(matrix, _laplace_popcov_name(l))
+        push!(nrow, k)
+        push!(ncol, k)
+        push!(offset, position)
+        position += k * k
+    end
+    return merge(base, (matrix=matrix, nrow=nrow, ncol=ncol, offset=offset,
+        size=position))
 end
+
+"""The wrapped objective's model matrices at each column of `values`, and
+after them each level's population covariance (`ctsem_parameter_layout`)."""
+function ctsem_parameter_matrices(laplace::CTSEMLaplaceObjective, values::AbstractMatrix;
+    rows=Int[], kwargs...)
+    base = ctsem_parameter_matrices(laplace.objective, values; kwargs...)
+    layout = ctsem_parameter_layout(laplace)
+    out = zeros(Float64, layout.size, size(values, 2))
+    out[1:size(base, 1), :] .= base
+    first_slot = length(ctsem_parameter_layout(laplace.objective).matrix)
+    for column in axes(values, 2)
+        x = _laplace_extend(laplace, collect(Float64, view(values, :, column)))
+        slot = first_slot
+        for lv in laplace.spec.levels
+            nrandomeffects(lv) == 0 && continue
+            slot += 1
+            Sigma = _laplace_level_covariance(lv, x)
+            start = layout.offset[slot] + 1
+            out[start:(start + length(Sigma) - 1), column] .= vec(Sigma)
+        end
+    end
+    isempty(rows) && return out
+    selected = Int.(rows)
+    all(r -> 1 <= r <= layout.size, selected) || throw(BoundsError(out, selected))
+    return out[selected, :]
+end
+ctsem_parameter_matrices(laplace::CTSEMLaplaceObjective, values::AbstractVector; kwargs...) =
+    ctsem_parameter_matrices(laplace, reshape(collect(Float64, values), :, 1); kwargs...)
 
 """
 Evaluate a Laplace objective through the generic entry point.
@@ -8131,6 +8285,31 @@ function ctsem_evaluate(laplace::CTSEMLaplaceObjective, values::AbstractVector;
     # decomposition that the approximation does not have.
     return (value=result.value, gradient=result.gradient,
         subject_loglik=result.subject_loglik)
+end
+
+"""
+    _laplace_filter_hessian(laplace, values, columns; progress)
+
+`_laplace_hessian_columns` for an objective with no coordinate
+(`_laplace_filter_only`). Its gradient is the marginal route's adjoint with the
+filter's deviations integrated (`_laplace_filter_evaluate`), so its curvature
+is that route's: forward mode over the adjoint (`ctsem_hessian`,
+`ctsem_hessian_columns`), exact, and about a gradient a column where central
+differences take two (`_ctsem_hessian_cost`). Over the extended vector
+(`_laplace_extend`), returned with the caller's rows. `progress` is called as
+`ctsem_hessian` calls it, `(done, total, "parameters")`.
+"""
+function _laplace_filter_hessian(laplace::CTSEMLaplaceObjective,
+    values::AbstractVector, columns; progress=nothing)
+    nin = length(values)
+    x = _laplace_extend(laplace, collect(Float64, values))
+    cols = collect(Int, columns)
+    objective = laplace.objective
+    H = cols == 1:length(x) ?
+        ctsem_hessian(objective, x; progress=progress, hybrid_mode=_HYBRID_FULL) :
+        ctsem_hessian_columns(objective, x, cols; progress=progress,
+            hybrid_mode=_HYBRID_FULL)
+    return H[1:nin, :]
 end
 
 """The outer Hessian, for the generic curvature entry point. `progress`, when

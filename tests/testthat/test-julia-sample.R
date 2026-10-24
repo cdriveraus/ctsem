@@ -669,7 +669,8 @@ test_that("ctFitUncertainty(fit, 'sample') refuses what it cannot sample", {
   model <- suppressWarnings(suppressMessages(ctModel(type = "ct",
     manifestNames = "Y1", latentNames = "eta1", LAMBDA = matrix(1))))
   augmented <- suppressWarnings(suppressMessages(ctFit(data, model,
-    backend = "julia", cores = 1, optimcontrol = list(estonly = TRUE))))
+    backend = "julia", cores = 1, optimcontrol = list(estonly = TRUE),
+    intoverpop = "augmented")))
   expect_error(ctFitUncertainty(augmented, uncertainty = "sample",
     control = list(intoverpop = "none")), "made with intoverpop = 'augmented'",
     fixed = TRUE)

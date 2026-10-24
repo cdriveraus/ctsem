@@ -14,6 +14,11 @@
 # method, the Jacobian taken by one dual pass seeded in the effects. Each row's
 # log predictive density is the difference of the subject's Laplace terms with
 # and without it, so a subject's rows sum to its term in the objective.
+#
+# A unit with no coordinate, whose effects the filter integrates whole, needs
+# none of that: its model is linear and Gaussian in the deviations, so one pass
+# gives every row (`_laplace_sequential_filtered!`), where the general path
+# filters every prefix again and costs O(T^2) a subject.
 
 struct _LaplaceSequentialTag end
 
@@ -135,6 +140,8 @@ end
 function _laplace_sequential_unit!(out, laplace::CTSEMLaplaceObjective, U::Integer,
     theta::Vector{Float64}, Ls::Vector{Matrix{Float64}}, offset::Integer,
     ::Type{S}) where {S}
+    laplace.units.dims[U] == 0 &&
+        return _laplace_sequential_filtered!(out, laplace, U, theta, Ls, offset, S)
     spec = laplace.spec
     units = laplace.units
     i = units.members[U][1]
@@ -253,6 +260,115 @@ function _laplace_sequential_unit!(out, laplace::CTSEMLaplaceObjective, U::Integ
 end
 
 """
+    _laplace_sequential_filtered!(out, laplace, U, theta, Ls, offset, S)
+
+The rows of a unit with no coordinate, from one filter pass. Every effect it
+has is integrated by its member's filter (`CTSEMHybrid`), which needs a linear
+Gaussian model, or it has none. At deviations `z` (one standard normal
+coordinate per integrated item, mapped by `_hybrid_dev_map`) the plug-in
+filter's prediction of row `r` is then `value_r + V_r z`, with a covariance
+`S_r` that does not depend on `z`, and its log density is quadratic in `z`. So
+one pass seeded at `z = 0` gives each row's `V_r`, `S_r`, value and score, and
+the posterior of `z` given rows `1:t` is Gaussian: precision
+`M_t = I + sum V_r' S_r^-1 V_r` over the observed manifests, mean
+`M_t^-1 g_t`, `g_t` the summed scores. Rows are recorded at that mean, with
+`J Sigma J'` added as the general path adds it; the record's marginal is
+`sum value + g' M^-1 g / 2 - logdet M / 2`, and each row's log predictive
+density is its difference with and without the row. The same numbers as the
+general path, which filters every prefix again.
+"""
+function _laplace_sequential_filtered!(out, laplace::CTSEMLaplaceObjective, U::Integer,
+    theta::Vector{Float64}, Ls::Vector{Matrix{Float64}}, offset::Integer,
+    ::Type{S}) where {S}
+    spec = laplace.spec
+    i = laplace.units.members[U][1]
+    so = laplace.objective.subject_objectives[i]
+    T = size(so.data, 2)
+    sp = laplace.objective.params
+    hyb = sp.hybrid
+    lv = spec.levels[1]
+    D = _hybrid_on(hyb) ? _hybrid_items(hyb) : 0
+    B = D > 0 ? _hybrid_dev_map(hyb, lv, theta) : zeros(Float64, nrandomeffects(lv), 0)
+    items = collect(1:D)
+    ws = _init_continuous_ekf_workspace(S, sp)
+    ws.hyb.mode = _HYBRID_OFF
+    n = ws.state_dim
+    m = ws.manifest_dim
+    x = _laplace_member_values(theta, spec, Ls, S[], laplace.units.offsets[U][1])
+    for c in 1:D
+        zc = _laplace_sequential_seed(S, 0.0, c)
+        for p in axes(B, 1)
+            b = B[p, c]
+            iszero(b) || (x[lv.re_index[p]] += b * zc)
+        end
+    end
+    trace = CTSEMKalmanTrace(S, n, m, T, 1, length(sp.mutables))
+    trace.offset = 0
+    trace.current_subject = 1
+    ll = _extended_kalman_filter_continuous!(ws, x, so.data, collect(so.timesteps),
+        sp, so.tdpreds, _ctsem_tipred_vector(so.tipreds, x), i, so.max_timestep, trace)
+    _laplace_finite(ll) || return nothing
+    # The posterior given rows 1:t, in information form: H the rows' summed
+    # precisions in z, g their summed scores at zero, c their summed values.
+    H = zeros(Float64, D, D)
+    g = zeros(Float64, D)
+    c = 0.0
+    zhat = zeros(Float64, D)
+    Sigma = Matrix{Float64}(LinearAlgebra.I, D, D)
+    prevterm = 0.0
+    V = zeros(Float64, m, D)
+    SV = zeros(Float64, m, D)
+    observed = zeros(Int, m)
+    for t in 0:T
+        if t >= 1
+            lr = trace.llrow[t]
+            c += ForwardDiff.value(lr)
+            p = 0
+            for j in 1:m
+                _ctsem_observed(so.data[j, t]) && (p += 1; observed[p] = j)
+            end
+            if D > 0
+                @inbounds for a in 1:D
+                    g[a] += ForwardDiff.partials(lr)[a]
+                end
+                if p > 0
+                    Sr = zeros(Float64, p, p)
+                    @inbounds for b in 1:p, a in 1:p
+                        Sr[a, b] = ForwardDiff.value(trace.ycov[1, t, observed[a], observed[b]])
+                    end
+                    @inbounds for a in 1:p, e in 1:D
+                        V[a, e] = ForwardDiff.partials(trace.y[1, t, observed[a]])[e]
+                    end
+                    F = _ctsem_cholesky(Sr, p)
+                    issuccess(F) || return nothing
+                    @inbounds for e in 1:D
+                        ldiv!(view(SV, 1:p, e), F, view(V, 1:p, e))
+                    end
+                    @inbounds for f in 1:D, e in 1:D, a in 1:p
+                        H[e, f] += V[a, e] * SV[a, f]
+                    end
+                end
+                M = Matrix{Float64}(LinearAlgebra.I, D, D) .+ H
+                FM = _ctsem_cholesky(M, D)
+                issuccess(FM) || return nothing
+                ldiv!(zhat, FM, g)
+                Sigma = inv(FM)
+                term = c + dot(g, zhat) / 2 - logdet(FM) / 2
+            else
+                term = c
+            end
+            out.llrow[offset + t] = term - prevterm
+            prevterm = term
+            _laplace_sequential_record!(out, 2, offset + t, trace, t, Sigma, D, zhat)
+        end
+        _laplace_sequential_effects!(out, offset, t, T, Ls[1], B, items, zhat, Sigma, 0, D)
+        t + 1 <= T && _laplace_sequential_record!(out, 1, offset + t + 1, trace,
+            t + 1, Sigma, D, zhat)
+    end
+    return nothing
+end
+
+"""
     _laplace_sequential_effects!(out, offset, t, T, L, B, items, z0, Sigma, d, D)
 
 The effects' posterior given rows `1:t` on the raw scale, recorded as row `t`'s
@@ -294,9 +410,10 @@ function _laplace_sequential_effects!(out, offset::Integer, t::Integer, T::Integ
 end
 
 """One row's means and covariances from a seeded pass: the filter's values at
-the effects' posterior means, its covariance plus `J Sigma J'`."""
+the effects' posterior means, its covariance plus `J Sigma J'`. A pass seeded
+at zero rather than at the means moves its values to them, `+ J centre`."""
 function _laplace_sequential_record!(out, k::Integer, row::Integer, trace, r::Integer,
-    Sigma::Matrix{Float64}, D::Integer)
+    Sigma::Matrix{Float64}, D::Integer, centre=nothing)
     for (mean, cov, means, covs) in ((trace.eta, trace.etacov, out.eta, out.etacov),
             (trace.y, trace.ycov, out.y, out.ycov))
         p = size(mean, 3)
@@ -306,6 +423,11 @@ function _laplace_sequential_record!(out, k::Integer, row::Integer, trace, r::In
             means[k, row, a] = ForwardDiff.value(e)
             for b in 1:D
                 J[a, b] = ForwardDiff.partials(e)[b]
+            end
+            if centre !== nothing
+                for b in 1:D
+                    means[k, row, a] += J[a, b] * centre[b]
+                end
             end
         end
         JS = zeros(Float64, p, D)

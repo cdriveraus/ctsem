@@ -84,22 +84,21 @@ handled: integrated out of the likelihood, or sampled with everything else.
 \code{TRUE} does, and samples them (\code{'none'}) when
 \code{optimize=FALSE}.
 
-\code{TRUE} integrates them out by whichever method suits the model:
-\code{'augmented'} where every individual difference shifts a mean
-affinely and every indicator is Gaussian, where it is exact and cheapest,
-and \code{'laplace'} otherwise -- a varying parameter in DRIFT, DIFFUSION,
-MANIFESTVAR or LAMBDA, a non-affine transform, a parameter entering another
-cell's expression, a non-Gaussian indicator, or a grouping level above the
-subject (see \code{id} in \code{\link{ctModel}}). A choice of
-\code{'laplace'} is announced, and \code{fit$args$resolved$intoverpopreason}
-records why. Before 4.0.0 \code{TRUE} always meant \code{'augmented'}.
+\code{TRUE} integrates them out: by \code{'laplace'} on
+\code{backend='julia'}, and by \code{'augmented'} on stan, which has only
+that route, or with \code{intoverstates=FALSE}, which composes with it
+only. \code{fit$args$resolved$intoverpopreason} records why. Before 4.0.0
+\code{TRUE} always meant \code{'augmented'}.
 
-\code{'augmented'} makes each random effect a state of the filter; variation
-on a DIFFUSION or MANIFESTVAR parameter is then only partly identified, and
-ctFit warns. \code{'laplace'} integrates each subject's effects by a Laplace
-approximation at their mode (\code{backend='julia'}): exact when they enter
-the state mean linearly, an approximation elsewhere, which \code{summary()}
-says. \code{FALSE}, or \code{'none'}, samples them, so it needs
+\code{'laplace'} (\code{backend='julia'}) integrates an effect that shifts
+a mean in a linear Gaussian model -- a manifest mean, an initial mean, a
+continuous intercept -- exactly, inside each subject's filter, and every
+other effect by a Laplace approximation at its mode, which \code{summary()}
+reports. \code{'augmented'} makes each random effect a state of the filter:
+exact for effects that shift a mean with Gaussian indicators, a
+linearisation elsewhere that shrinks random effects on the dynamics, and
+variation on a DIFFUSION or MANIFESTVAR parameter is then only partly
+identified, which ctFit warns of. \code{FALSE}, or \code{'none'}, samples them, so it needs
 \code{optimize=FALSE}: maximising over every subject's effects would drive
 the population variance to zero. With \code{optimize=FALSE} on julia,
 \code{'none'} (and so \code{'auto'}) samples the joint posterior of

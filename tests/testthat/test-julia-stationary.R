@@ -340,11 +340,11 @@ test_that("random effects on the dynamics take the route that keeps them fixed p
   expect_error(suppressMessages(ctFit(dat, m, backend = "julia", fit = FALSE,
     stationary = TRUE, intoverpop = "augmented")),
     "carries the individual variation in CINT\\[1,1\\] as a state")
-  expect_message(spec <- ctFit(dat, m, backend = "julia", fit = FALSE,
-    stationary = TRUE), "chose 'laplace'.*stationary initial conditions")
+  spec <- suppressMessages(ctFit(dat, m, backend = "julia", fit = FALSE,
+    stationary = TRUE))
   expect_false(is.null(spec$laplace))
   expect_true(spec$stationary)
-  # Without stationarity the same model stays on the augmented route.
-  plain <- suppressMessages(ctFit(dat, m, backend = "julia", fit = FALSE))
-  expect_true(is.null(plain$laplace))
+  # The stationary mean reads the intercept, which the filter's intercept
+  # column does not carry from the start, so the effect stays a coordinate.
+  expect_null(spec$laplace$hybrid)
 })

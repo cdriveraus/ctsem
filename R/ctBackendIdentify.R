@@ -810,23 +810,16 @@
 # therefore not a confidence statement about anything.
 #' @keywords internal
 .ctBackendCollapsedScales <- function(fit, tolerance = 1e-6) {
-  spec <- fit$model_spec
-  if (is.null(spec$laplace)) return(data.frame())
-  module <- .ctJuliaModule(spec$project)
-  objective <- .ctJuliaObjective(fit)
-  estimate <- .ctJuliaNumericVector(as.numeric(fit$estimate$raw))
-  structure <- .ctSpecRandomEffectLevels(spec)
-  levels <- max(1L, length(structure))
+  # Each level's population covariance at the estimate, on either route
+  # (`.ctBackendPopulations()`).
+  populations <- tryCatch(.ctBackendPopulations(fit,
+    matrix(as.numeric(fit$estimate$raw), nrow = 1L)), error = function(e) NULL)
   rows <- list()
-  for (l in seq_len(levels)) {
-    covariance <- try(.ctBackendJuliaValue(module$ctsem_laplace_popcov(
-      objective, estimate, as.integer(l))), silent = TRUE)
-    if (inherits(covariance, "try-error")) next
-    covariance <- as.matrix(covariance)
-    sds <- sqrt(abs(diag(covariance)))
-    name <- if (l <= length(structure) && !is.null(structure[[l]]$name)) {
-      as.character(structure[[l]]$name)
-    } else as.character(l)
+  for (l in seq_along(populations)) {
+    population <- populations[[l]]
+    sds <- as.numeric(population$rawsd[1L, ])
+    name <- if (!is.null(population$level)) as.character(population$level) else
+      as.character(l)
     collapsed <- which(sds <= tolerance)
     if (length(collapsed)) {
       rows[[length(rows) + 1L]] <- data.frame(level = name,

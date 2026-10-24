@@ -301,8 +301,10 @@ test_that("the julia engine places the population block with the same conversion
 
   stan_spec <- suppressMessages(suppressWarnings(ctFit(data, model,
     backend = "stan", fit = FALSE, priors = FALSE, cores = 1L, verbose = 0L)))
+  # The augmented route by name: it is the one whose engine places the block.
   julia_spec <- suppressMessages(suppressWarnings(ctFit(data, model,
-    backend = "julia", fit = FALSE, priors = FALSE, cores = 1L, verbose = 0L)))
+    backend = "julia", fit = FALSE, priors = FALSE, cores = 1L, verbose = 0L,
+    intoverpop = "augmented")))
 
   sf <- ctsem:::stan_reinitsf(ctsem:::stanmodels$ctsm, stan_spec$standata)
   npar <- rstan::get_num_upars(sf)
