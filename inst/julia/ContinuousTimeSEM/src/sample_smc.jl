@@ -356,32 +356,9 @@ point: the full objective, or the coreset's density where one is given
 (`_smc_coreset_eval`).
 """
 function _smc_logdensity(objective, coreset, gradient_method)
-    if coreset !== nothing
-        return function (g, x)
-            r = _smc_coreset_eval(objective, coreset, x)
-            if r === nothing || !isfinite(r.value) || !all(isfinite, r.gradient)
-                fill!(g, 0.0)
-                return -Inf
-            end
-            copyto!(g, r.gradient)
-            return r.value
-        end
-    end
-    return function (g, x)
-        result = try
-            ctsem_evaluate(objective, x; gradient=true, gradient_method=gradient_method)
-        catch err
-            err isa InterruptException && rethrow()
-            nothing
-        end
-        if result === nothing || !isfinite(result.value) ||
-            result.gradient === nothing || !all(isfinite, result.gradient)
-            fill!(g, 0.0)
-            return -Inf
-        end
-        copyto!(g, result.gradient)
-        return result.value
-    end
+    coreset === nothing &&
+        return (g, x) -> _marginal_density!(objective, gradient_method, g, x)
+    return (g, x) -> _coreset_density!(objective, coreset, g, x)
 end
 
 """

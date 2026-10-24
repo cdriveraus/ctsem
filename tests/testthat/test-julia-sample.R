@@ -441,6 +441,31 @@ test_that("the marginal sampler starts from the normal check, made where the fit
   expect_length(asked, 1L)
 })
 
+test_that("NUTS on a marginal target records the coreset its chains moved on", {
+  skip_without_julia()
+  fit <- .sample_fixture()
+  # Twelve units: each chain fits a coreset from its warm-up where one passes,
+  # and its draws' ends are tested against the full density
+  # (sample_surrogate.jl, checked against closed forms in the engine suite).
+  # Here, that the record says per chain what happened, and that the oracle
+  # records nothing.
+  run <- function(coreset) suppressWarnings(suppressMessages(
+    ctFitUncertainty(fit, uncertainty = "sample", cores = 1,
+      control = list(sampler = "nuts", chains = 2, warmup = 60, draws = 60,
+        processes = FALSE, minESS = 0, coreset = coreset))))
+  core <- run(TRUE)
+  s <- core$sample
+  expect_length(s$chain_coreset_size, 2L)
+  expect_identical(s$coreset, any(s$chain_coreset_size > 0))
+  expect_true(all(s$chain_coreset_accepted <= s$chain_coreset_proposed))
+  expect_true(all(s$chain_coreset_size == 0 | s$chain_coreset_size <= s$nunits))
+  expect_output(print(s), "ctsem Hamiltonian sample")
+  expect_true(all(is.finite(core$estimate$rawposterior)))
+  full <- run(FALSE)
+  expect_false(full$sample$coreset)
+  expect_true(all(full$sample$chain_coreset_size == 0))
+})
+
 test_that("processes = TRUE reproduces the in-process draws to numerical noise", {
   skip_without_julia()
   fit <- .sample_fixture()

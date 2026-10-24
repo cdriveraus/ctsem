@@ -748,9 +748,11 @@
     particles = max(2L, as.integer(.ctJuliaOr(control$particles, 200L))[1L]),
     # Tempered SMC's particles move on a coreset of the Laplace units: the
     # full density, evaluated once a particle a stage for the weights anyway,
-    # corrects the moves exactly (sample_smc.jl), so this costs accuracy
-    # nothing and `FALSE` is the oracle, as for the importance sampler's
-    # coreset (`.ctCoresetLpg()`). Inert off the Laplace route.
+    # corrects the moves exactly (sample_smc.jl). NUTS on a marginal target
+    # runs its trajectories on one after warm-up and tests each draw's end
+    # against the full density (sample_surrogate.jl). Either way this costs
+    # accuracy nothing and `FALSE` is the oracle, as for the importance
+    # sampler's coreset (`.ctCoresetLpg()`). Inert off the Laplace route.
     coreset = !isFALSE(control$coreset))
 
   # The SAEM kernel draws the effects by SAEM's own sweeps and keeps the
@@ -1193,6 +1195,7 @@
     # at all, so this is deliberately only reachable on the marginal path.
     arguments$gradient_method <- target$gradient
   }
+  if (isTRUE(target$marginal)) arguments$coreset <- isTRUE(settings$coreset)
   metric <- .ctJuliaOr(target$metric, target$hessian)
   if (!is.null(metric)) arguments$hessian <- .ctJuliaPut(as.matrix(metric))
   # How many of the sampled coordinates are model parameters. Only differs
@@ -1510,6 +1513,17 @@
     final_correction_ess = if (is.null(result$final_correction_ess)) NULL else
       as.numeric(result$final_correction_ess),
     particles_parallel = if (is.null(result$parallel)) NULL else as.character(result$parallel),
+    # NUTS's chains on a coreset, per chain: its units (0 where the chain
+    # sampled in full), the moved endpoints the full density tested and the
+    # ones it accepted, and whether the chain gave its coreset up.
+    chain_coreset_size = if (is.null(result$coreset_size)) NULL else
+      as.integer(result$coreset_size),
+    chain_coreset_proposed = if (is.null(result$coreset_proposed)) NULL else
+      as.integer(result$coreset_proposed),
+    chain_coreset_accepted = if (is.null(result$coreset_accepted)) NULL else
+      as.integer(result$coreset_accepted),
+    chain_coreset_abandoned = if (is.null(result$coreset_abandoned)) NULL else
+      as.logical(result$coreset_abandoned),
     scale_accept = as.numeric(result$scale_accept),
     ncp_accept = as.numeric(result$ncp_accept),
     processes = FALSE,
@@ -1803,6 +1817,15 @@ print.ctSampleDiagnostics <- function(x, ...) {
     "the stop)\n", sep = "")
   else cat("  ", x$chains, " chains x ", x$draws, " draws (", x$warmup,
     " warmup discarded)\n", sep = "")
+  if (!smc && isTRUE(x$coreset) && any(x$chain_coreset_size > 0)) {
+    sizes <- x$chain_coreset_size[x$chain_coreset_size > 0]
+    cat("  chains moved on a coreset of ", paste(unique(range(sizes)), collapse = "-"),
+      " of ", x$nunits, " units; the full density accepted ",
+      round(100 * sum(x$chain_coreset_accepted) / max(1L, sum(x$chain_coreset_proposed))),
+      "% of their moves", if (any(x$chain_coreset_abandoned))
+        paste0(" (", sum(x$chain_coreset_abandoned), " chain(s) gave it up)") else "",
+      "\n", sep = "")
+  }
   if (smc && isTRUE(x$coreset)) {
     sizes <- x$stage_coreset_size[x$stage_coreset_size > 0]
     if (length(sizes)) cat("  particles moved on a coreset of ",

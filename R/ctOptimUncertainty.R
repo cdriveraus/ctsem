@@ -3396,8 +3396,11 @@ ctOptimFitLpgFunc <- function(fit, cores=1){
 #' exactly, so a fit with many units pays a fraction of a gradient a move and
 #' \code{coreset = FALSE} is the oracle. Its chains are many and short and
 #' start from particles already drawn from the posterior, so it reports no
-#' R-hat; the effective sample size is its stop. \code{adapt_metric}, \code{adapt_effects} and \code{settleTol}
-#' belong to NUTS's warmup and are refused with SAEM's kernel and with
+#' R-hat; the effective sample size is its stop. On the Laplace route NUTS
+#' too runs its trajectories on a coreset after warm-up, each draw's end
+#' accepted or refused by the full density, which keeps the draws exact
+#' whatever the coreset. \code{adapt_metric}, \code{adapt_effects} and
+#' \code{settleTol} belong to NUTS's warmup and are refused with SAEM's kernel and with
 #' tempered SMC. \code{control$placement} says
 #' where the chains start: \code{'saem'}, the default on the joint posterior,
 #' runs SAEM from the fit's estimate and starts each chain from SAEM's
