@@ -109,6 +109,8 @@ include("laplace_sequential.jl")
 # After kalman_trace.jl and laplace.jl: it reads the filter trace on one route
 # and the unit curvature on the other.
 include("effect_information.jl")
+# The coreset selection the optimiser, SMC and the importance sampler share.
+include("coreset_select.jl")
 # After laplace.jl: the batch subsets both the marginal and the laplace objective.
 include("optimiser.jl")
 include("quadrature.jl")
@@ -133,6 +135,8 @@ include("laplace_loo.jl")
 # The coreset entry points for importance sampling; after laplace.jl, which
 # holds `CTSEMCoreset` and the evaluation that takes it.
 include("laplace_coreset.jl")
+# After laplace_coreset.jl: the importance sampler's coreset evaluates through it.
+include("coreset_sampler.jl")
 # After laplace_sequential.jl (record truncation) and laplace.jl (the dual mode
 # and the member likelihood); nothing on a fitting path calls it.
 include("row_scores.jl")
