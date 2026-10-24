@@ -612,11 +612,18 @@ function ctsem_sample_smc(objective, values::AbstractVector;
         end
     end
 
-    verbose && println(_console(), "Sampling by tempered SMC: ", np, " particles, ",
-        npar, " dimensions (effects integrated out), ", nmv,
-        " NUTS moves a stage, from the metric's normal at ", widen, "x",
-        use_coreset ? ", moves on a coreset of the $nunits units" : "",
-        mode == :serial ? "" : ", particles in parallel on copies")
+    # The stages report as every other long call does (progress.jl): through
+    # the caller's sink where it gave one (a front end, a knitr run), in place
+    # on the console otherwise. Printed straight to the console they reached
+    # neither.
+    reporter = CTSEMProgress(verbose; label="tempering", overwrite=progress_overwrite,
+        sink=progress_sink)
+    if _due(reporter, true)
+        _emit(reporter, string("  tempered SMC: ", np, " particles, ", npar,
+            " dimensions, ", nmv, " NUTS moves a stage, from the metric's normal at ",
+            widen, "x", use_coreset ? ", moves on a coreset of the $nunits units" : "",
+            mode == :serial ? "" : ", particles in parallel on copies"))
+    end
 
     rng = Random.Xoshiro(UInt64(seed))
     X = m0 .+ F0.L * randn(rng, ndim, np)
@@ -755,16 +762,20 @@ function ctsem_sample_smc(objective, values::AbstractVector;
             coreset_error=fit === nothing ? NaN : fit.error,
             correction_ess=corr_ess / np, corrected=corrected,
             secs=time() - t0))
-        verbose && println(_console(), "  stage ", stage, ": beta ", round(beta; sigdigits=4),
-            ", step ", round(step; sigdigits=3), ", accept ", round(sum(acc) / nok; digits=2),
-            ", depth ", round(sum(dep) / nok; digits=1),
-            cs_stage === nothing ? "" : ", coreset $(length(cs_stage.units)) of $nunits units",
-            corrected ? ", correction only" : "",
-            ", ", round(time() - t0; digits=0), " s")
+        if _due(reporter, true)
+            _emit(reporter, join(filter(!isempty, [
+                @sprintf("  tempering stage %d", stage),
+                @sprintf("beta %.4g", beta), @sprintf("step %.3g", step),
+                @sprintf("accept %.2f", sum(acc) / nok), @sprintf("depth %.1f", sum(dep) / nok),
+                cs_stage === nothing ? "" : "coreset $(length(cs_stage.units)) of $nunits units",
+                corrected ? "correction only" : "",
+                _duration(time() - t0)]), " | "))
+        end
         _invoke_callback(callback, "tempering", round(Int, 100 * beta), 100,
             _smc_mean(filter(isfinite, lp)), sum(ndiv); force=beta >= 1.0)
         beta >= 1.0 && break
     end
+    _progress_done(reporter, "$(length(stages)) stages")
     beta >= 1.0 || @warn "tempered SMC did not reach the posterior in $(maxstages) stages; the draws are from beta = $(beta)"
     smc_secs = time() - t0
 

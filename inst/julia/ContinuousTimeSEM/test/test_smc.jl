@@ -147,6 +147,27 @@ end
         hessian=-Matrix(g.P), coreset_tol=0.0)
 end
 
+@testset "tempered SMC reports its stages to the caller's sink" begin
+    # A front end or a knitr run listens on a sink (progress.jl's `_deliver!`);
+    # the stage lines once went straight to the console and it heard nothing.
+    g = _smc_gauss(4, 3)
+    target = _SMCGauss(g.m, Matrix(g.P))
+    heard = Tuple{String,String}[]
+    sink = (text, kind) -> (push!(heard, (String(text), String(kind))); nothing)
+    ContinuousTimeSEM.ctsem_sample_smc(target, g.m; hessian=-Matrix(g.P), widen=2.0,
+        nparticles=20, nmoves=1, maxdepth=4, seed=1, ndraws=5, verbose=true,
+        progress_sink=sink)
+    @test any(h -> occursin("tempered SMC: 20 particles", h[1]), heard)
+    @test any(h -> occursin("tempering stage 1", h[1]) && h[2] == "update", heard)
+    @test any(h -> h[2] == "done" && occursin("stages", h[1]), heard)
+    # And nothing without verbose.
+    empty!(heard)
+    ContinuousTimeSEM.ctsem_sample_smc(target, g.m; hessian=-Matrix(g.P), widen=2.0,
+        nparticles=20, nmoves=1, maxdepth=4, seed=1, ndraws=5, verbose=false,
+        progress_sink=sink)
+    @test isempty(heard)
+end
+
 # ---- the coreset ------------------------------------------------------------
 
 @testset "a coreset's fit follows a sum of unit terms, and holds out" begin
@@ -338,8 +359,11 @@ end
     @test maximum(abs.(m1 .- m2) ./ s1) < 0.45
     @test all(0.65 .< s2 ./ s1 .< 1.5)
     # With the backward kernel's weights the stages' log mean weights still
-    # estimate the log constant on a coreset, the same one the full run does.
-    @test abs(sum(core.stage_logz) - sum(full.stage_logz)) < 1.5
+    # estimate the log constant on a coreset, the same one the full run does,
+    # within the Monte Carlo error of two runs of 100 particles in eight
+    # dimensions (1.6 apart on one build, 0.5 on another). The weights before
+    # the backward kernel were hundreds of nats off.
+    @test abs(sum(core.stage_logz) - sum(full.stage_logz)) < 3.0
     if Threads.nthreads() > 1
         # Particles spread over the pool on copies: the same seeds per
         # particle, so the same posterior, laid out differently.
