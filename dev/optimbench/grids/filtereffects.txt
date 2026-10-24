@@ -2,7 +2,8 @@
 # The Gaussian cells with subject-level random effects, on both routes, plus
 # AnomAuth's two configs from their spurious starts. A build that integrates a
 # full-rank level's affine effects in the filter changes the laplace cells;
-# the augmented ones are the route it is measured against.
+# the augmented ones are the route it is measured against. `long` has no
+# random effect, so it has no Laplace cells.
 #
 # id                                    model        data route      start                    variant
 control.1                               panel        1    augmented  zeros                    control
@@ -16,8 +17,6 @@ panel.lap.d1.s1.default                 panel        1    laplace    default:1  
 panel.lap.d1.s2.default                 panel        1    laplace    default:2                default
 long.aug.d1.s1.default                  long         1    augmented  default:1                default
 long.aug.d1.s2.default                  long         1    augmented  default:2                default
-long.lap.d1.s1.default                  long         1    laplace    default:1                default
-long.lap.d1.s2.default                  long         1    laplace    default:2                default
 small.aug.d1.s1.default                 small        1    augmented  default:1                default
 small.aug.d1.s2.default                 small        1    augmented  default:2                default
 small.lap.d1.s1.default                 small        1    laplace    default:1                default
