@@ -230,6 +230,9 @@ function _hybrid_predict!(hb::CTSEMHybridBuffers{T}, A, JAx, series, naff::Int,
     hb.X, hb.Xt = Xt, X
     X, Xinc = hb.X, hb.Xinc
     phi = nothing
+    # Every continuous intercept's column solves against the same `JAx`: it is
+    # factored once, at the first.
+    factored = false
     @inbounds for c in 1:q
         hb.ckind[c] == 3 || continue
         l = hb.clat[c]
@@ -241,19 +244,23 @@ function _hybrid_predict!(hb::CTSEMHybridBuffers{T}, A, JAx, series, naff::Int,
                 Xinc[r, c] = phi[r, l]
             end
         else
-            if size(hb.Jc, 1) < naff
-                hb.Jc = zeros(T, naff, naff)
-                hb.jv = zeros(T, naff)
-                hb.piv = zeros(Int, naff)
+            if !factored
+                if size(hb.Jc, 1) < naff
+                    hb.Jc = zeros(T, naff, naff)
+                    hb.jv = zeros(T, naff)
+                    hb.piv = zeros(Int, naff)
+                end
+                for j in 1:naff, i in 1:naff
+                    hb.Jc[i, j] = JAx[i, j]
+                end
+                _lu_factor_generic!(hb.Jc, hb.piv, naff)
+                factored = true
             end
-            Jc, jv = hb.Jc, hb.jv
-            for j in 1:naff, i in 1:naff
-                Jc[i, j] = JAx[i, j]
-            end
+            jv = hb.jv
             for i in 1:naff
                 jv[i] = A[i, l] - (i == l ? one(T) : zero(T))
             end
-            _solve_square_system_generic!(Jc, jv, hb.piv, naff)
+            _lu_solve_generic!(hb.Jc, hb.piv, jv, naff)
             for r in 1:naff
                 Xinc[r, c] = jv[r]
             end
@@ -920,6 +927,10 @@ function _hybrid_reverse_predict!(Abar, JAx_bar, A, JAx, rec::CTSEMHybridTape{T}
     series_done = false
     sbar = _rs(sc.av1, naff)
     aa1 = _rs(sc.aa1, naff, naff)
+    # `JAx'` is factored once, at the first column that solves against it; the
+    # series route, which uses `aa1` as scratch instead, holds for the whole
+    # record.
+    factored = false
     @inbounds for c in 1:q
         k = rec.item[c]
         h.kind[k] == 3 || continue
@@ -937,10 +948,14 @@ function _hybrid_reverse_predict!(Abar, JAx_bar, A, JAx, rec::CTSEMHybridTape{T}
             for i in 1:naff
                 sbar[i] = Xbar[i, c]
             end
-            for j in 1:naff, i in 1:naff
-                aa1[i, j] = JAx[j, i]
+            if !factored
+                for j in 1:naff, i in 1:naff
+                    aa1[i, j] = JAx[j, i]
+                end
+                _lu_factor_generic!(aa1, sc.piv, naff)
+                factored = true
             end
-            _solve_square_system_generic!(aa1, sbar, sc.piv, naff)
+            _lu_solve_generic!(aa1, sc.piv, sbar, naff)
             for j in 1:naff, i in 1:naff
                 JAx_bar[i, j] -= sbar[i] * Xinc[j, c]
             end

@@ -140,113 +140,28 @@ _solve_square_system!(A::AbstractMatrix{T}, B::AbstractVecOrMat{T},
     _solve_square_system_generic!(A, B, piv, size_hint)
 
 """
-    _solve_square_system!(A, B::AbstractMatrix, piv)
-
-Solve `A * X = B` in place for `ForwardDiff.Dual` matrix right-hand sides.
-
-This custom LU path avoids BLAS/LAPACK calls that do not support dual numbers.
-"""
-_solve_square_system_generic!(A::AbstractMatrix{T}, B::AbstractMatrix{T}, piv::AbstractVector{Int}, ::Val{n}) where {T,n} =
     _solve_square_system_generic!(A, B, piv, n)
 
-function _solve_square_system_generic!(A::AbstractMatrix{T}, B::AbstractMatrix{T}, piv::AbstractVector{Int}, n::Int) where {T}
-    nrhs = size(B, 2)
+Solve `A X = B` in place, `B` a vector or a matrix, by the engine's own LU
+with partial pivoting (`_lu_factor_generic!`, then `_lu_solve_generic!`): the
+route for `ForwardDiff.Dual` and the other types LAPACK cannot take, and for
+BLAS types below `_CTSEM_SMALL_CHOLESKY`. `A` is left holding the factors as
+`_lu_factor_generic!` lays them out. A caller solving against one matrix
+several times factors it once and calls `_lu_solve_generic!` per right-hand
+side instead.
+"""
+_solve_square_system_generic!(A::AbstractMatrix{T}, B::AbstractVecOrMat{T}, piv::AbstractVector{Int}, ::Val{n}) where {T,n} =
+    _solve_square_system_generic!(A, B, piv, n)
+
+function _solve_square_system_generic!(A::AbstractMatrix{T}, B::AbstractVecOrMat{T},
+    piv::AbstractVector{Int}, n::Int) where {T}
     @boundscheck begin
         size(A, 2) == n || throw(DimensionMismatch("A must be square"))
         size(B, 1) == n || throw(DimensionMismatch("B row count must match A size"))
         length(piv) >= n || throw(DimensionMismatch("Pivot buffer too small"))
     end
-
-    @inbounds for k in 1:n
-        _, rel = findmax(_custom_abs, @view A[k:n, k])  # includes k, never empty
-        pivot = k + rel - 1
-        piv[k] = pivot
-
-
-        # Row swap in A and B (manual loops avoid temporary index vectors).
-        if pivot != k
-            for col in k:n
-                A[k, col], A[pivot, col] = A[pivot, col], A[k, col]
-            end
-            for col in 1:nrhs
-                B[k, col], B[pivot, col] = B[pivot, col], B[k, col]
-            end
-        end
-
-        # Elimination step below pivot.
-        akk = A[k, k]
-        for i in (k + 1):n
-            lik = A[i, k] / akk
-            A[i, k] = lik
-            for col in (k + 1):n
-                A[i, col] -= lik * A[k, col]
-            end
-            for col in 1:nrhs
-                B[i, col] -= lik * B[k, col]
-            end
-        end
-    end
-
-    # Back substitution.
-    @inbounds for i in n:-1:1
-        aii = A[i, i]
-        for rhs in 1:nrhs
-            acc = B[i, rhs]
-            for col in (i + 1):n
-                acc -= A[i, col] * B[col, rhs]
-            end
-            B[i, rhs] = acc / aii
-        end
-    end
-    return B
-end
-
-"""
-    _solve_square_system!(A, b::AbstractVector, piv)
-
-Solve `A * x = b` in place for `ForwardDiff.Dual` vector right-hand sides.
-"""
-_solve_square_system_generic!(A::AbstractMatrix{T}, B::AbstractVector{T}, piv::AbstractVector{Int}, ::Val{n}) where {T,n} =
-    _solve_square_system_generic!(A, B, piv, n)
-
-function _solve_square_system_generic!(A::AbstractMatrix{T}, B::AbstractVector{T}, piv::AbstractVector{Int}, n::Int) where {T}
-    @boundscheck begin
-        size(A, 2) == n || throw(DimensionMismatch("A must be square"))
-        length(B) == n || throw(DimensionMismatch("B length must match A size"))
-        length(piv) >= n || throw(DimensionMismatch("Pivot buffer too small"))
-    end
-
-    # Custom LU factorization with partial pivoting, adapted from the standard algorithm but using _custom_abs for comparisons to handle Dual numbers.
-    @inbounds for k in 1:n
-        _, rel = findmax(_custom_abs, @view A[k:n, k])  # includes k, never empty
-        pivot = k + rel - 1
-        piv[k] = pivot
-
-        if pivot != k
-            for col in k:n
-                A[k, col], A[pivot, col] = A[pivot, col], A[k, col]
-            end
-            B[k], B[pivot] = B[pivot], B[k]
-        end
-
-        akk = A[k, k]
-        for i in (k + 1):n
-            lik = A[i, k] / akk
-            A[i, k] = lik
-            for col in (k + 1):n
-                A[i, col] -= lik * A[k, col]
-            end
-            B[i] -= lik * B[k]
-        end
-    end
-
-    @inbounds for i in n:-1:1
-        acc = B[i]
-        for col in (i + 1):n
-            acc -= A[i, col] * B[col]
-        end
-        B[i] = acc / A[i, i]
-    end
+    _lu_factor_generic!(A, piv, n)
+    _lu_solve_generic!(A, piv, B, n)
     return B
 end
 
@@ -273,12 +188,15 @@ end
 LU-factorize the leading `n × n` block of `A` in place with partial pivoting,
 recording the row interchanges in `piv`, without a right-hand side.
 
-The factor-and-solve kernels above swap only the trailing part of each row
-because they apply the same interchange to the right-hand side at the same
-moment. Here the right-hand side arrives later, so whole rows are swapped and
-`_lu_solve_generic!` replays `piv` against it first -- which is exactly what
-LAPACK's `getrf!`/`getrs!` pair does. Used by `LyapKsolveBuffer` to factor
-the packed Lyapunov system once per distinct `A` and solve it many times.
+Step `k` swaps only columns `k:n`, so a multiplier stays where the row it
+belongs to stood when it was formed, and `_lu_solve_generic!` replays each
+interchange just before eliminating its column. Every right-hand-side entry
+then sees the same operations in the same order as an elimination carrying
+the right-hand side along, so factoring apart costs nothing in the result
+(bitwise, for Float64 and Duals) and the solve takes every right-hand side in
+one pass. Unlike LAPACK's `getrf!`, the multipliers are not in permuted
+order. `LyapKsolveBuffer` factors the packed Lyapunov system once per
+distinct `A` and solves it many times.
 """
 function _lu_factor_generic!(A::AbstractMatrix{T}, piv::AbstractVector{Int}, n::Int) where {T}
     @inbounds for k in 1:n
@@ -286,7 +204,7 @@ function _lu_factor_generic!(A::AbstractMatrix{T}, piv::AbstractVector{Int}, n::
         pivot = k + rel - 1
         piv[k] = pivot
         if pivot != k
-            for col in 1:n
+            for col in k:n
                 A[k, col], A[pivot, col] = A[pivot, col], A[k, col]
             end
         end
@@ -303,32 +221,39 @@ function _lu_factor_generic!(A::AbstractMatrix{T}, piv::AbstractVector{Int}, n::
 end
 
 """
-    _lu_solve_generic!(LU, piv, b, n)
+    _lu_solve_generic!(LU, piv, B, n)
 
-Solve `A x = b` in place given the factors `_lu_factor_generic!` left in `LU`.
+Solve `A X = B` in place, `B` a vector or a matrix, given the factors
+`_lu_factor_generic!` left in `LU` and `piv`.
 """
-function _lu_solve_generic!(LU::AbstractMatrix{T}, piv::AbstractVector{Int}, b::AbstractVector{T}, n::Int) where {T}
+function _lu_solve_generic!(LU::AbstractMatrix{T}, piv::AbstractVector{Int},
+    B::AbstractVecOrMat{T}, n::Int) where {T}
+    nrhs = size(B, 2)
     @inbounds for k in 1:n
         p = piv[k]
         if p != k
-            b[k], b[p] = b[p], b[k]
+            for r in 1:nrhs
+                B[k, r], B[p, r] = B[p, r], B[k, r]
+            end
         end
-    end
-    @inbounds for i in 2:n
-        acc = b[i]
-        for col in 1:(i - 1)
-            acc -= LU[i, col] * b[col]
+        for i in (k + 1):n
+            lik = LU[i, k]
+            for r in 1:nrhs
+                B[i, r] -= lik * B[k, r]
+            end
         end
-        b[i] = acc
     end
     @inbounds for i in n:-1:1
-        acc = b[i]
-        for col in (i + 1):n
-            acc -= LU[i, col] * b[col]
+        aii = LU[i, i]
+        for r in 1:nrhs
+            acc = B[i, r]
+            for col in (i + 1):n
+                acc -= LU[i, col] * B[col, r]
+            end
+            B[i, r] = acc / aii
         end
-        b[i] = acc / LU[i, i]
     end
-    return b
+    return B
 end
 
 """
