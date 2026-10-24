@@ -242,9 +242,10 @@ test_that("sampling uses the fitted mesh, on both targets and from ctFitUncertai
     }, .package = "ctsem")
 
   # Two cores, since chains get worker processes only when there are cores
-  # for more than one.
+  # for more than one; NUTS by name, whose chains get them (tempered SMC, the
+  # default where the check names a direction, runs in the session).
   marginal <- run(optimize = FALSE, cores = 2,
-    sampleControl = list(chains = 2, warmup = 10, draws = 10))
+    sampleControl = list(sampler = "nuts", chains = 2, warmup = 10, draws = 10))
   expect_equal(marginal$substeps, optimised$substeps)
   expect_gt(length(sampled), 0L)
   for (s in sampled) expect_identical(s$fit$model_spec$max_timestep, mesh)

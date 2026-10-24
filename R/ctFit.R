@@ -1517,7 +1517,7 @@ ctFit<-function(datalong, model, stanmodeltext=NA, iter=1000, intoverstates=TRUE
     "Maximum a posteriori estimation requested")
   # Naming stan here was wrong for half the fits it described: with
   # backend='julia' the engine runs its own sampler -- SAEM's kernel on the
-  # joint posterior by default, NUTS on a marginal one -- and a user reading
+  # joint posterior by default, NUTS or tempered SMC on a marginal one -- and a user reading
   # "Stan's NUTS sampler" on a julia fit has no reason to believe the julia
   # sampler ran at all. Which kernel is said when sampling starts.
   if(!optimize) message("Bayesian estimation via ",
@@ -2547,8 +2547,8 @@ ctFit<-function(datalong, model, stanmodeltext=NA, iter=1000, intoverstates=TRUE
     #   optimize  route          what runs                 sampled dimension
     #   TRUE      'laplace'      Laplace ML                --
     #   TRUE      'augmented'    augmented ML              --
-    #   FALSE     'laplace'      NUTS, Laplace marginal    npar
-    #   FALSE     'augmented'    NUTS, filter marginal     npar
+    #   FALSE     'laplace'      NUTS/SMC, Laplace marginal npar
+    #   FALSE     'augmented'    NUTS/SMC, filter marginal  npar
     #   FALSE     'none'         sampled, joint            npar + effects
     #
     # The route is what `intoverpop` resolved to: TRUE takes 'laplace' or
