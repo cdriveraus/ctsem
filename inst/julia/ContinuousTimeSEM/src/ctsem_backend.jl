@@ -1456,20 +1456,28 @@ coordinates the curvature or the transforms call flat
 `n` above is then the pool's size. The end-of-run verdict passes it where a
 finish left a Hessian; the in-flight stall probe, which has none, searches
 every coordinate.
+
+Its callers hold `minimizer` and `among` abstractly, so everything here is
+typed at its first line: a `Dict` built from a generator over them dispatched
+`IteratorSize` on an abstract type, and the method Tables.jl adds to it --
+JuliaConnectoR loads Tables before the engine -- invalidated this function and
+every optimiser entry point above it in the package image, which a first fit
+then compiled again.
 """
 function _ctsem_pullback_sets(minimizer, flagged=Int[];
         dense::Integer=_CTSEM_PULLBACK_DENSE, among=nothing)
     total = length(minimizer)
     total == 0 && return Vector{Int}[]
-    extra = sort!(unique(p for p in flagged if 1 <= p <= total))
+    extra = sort!(unique(Int[p for p in flagged if 1 <= p <= total]))
     pool = among === nothing ? collect(1:total) :
-        sort!(unique(vcat([p for p in among if 1 <= p <= total], extra)))
+        sort!(unique(vcat(Int[p for p in among if 1 <= p <= total], extra)))
     n = length(pool)
     n == 0 && return Vector{Int}[]
-    order = pool[sortperm(abs.(collect(minimizer)[pool]); rev=true)]
-    sets = [order[1:k] for k in 1:min(n, dense)]
-    rank = Dict(p => i for (i, p) in enumerate(order))
-    any(p -> rank[p] > dense, extra) && push!(sets, extra)
+    x = collect(minimizer)
+    order = pool[sortperm(Float64[abs(x[p]) for p in pool]; rev=true)]
+    sets = Vector{Int}[order[1:k] for k in 1:min(n, dense)]
+    head = view(order, 1:min(n, dense))
+    any(p -> !(p in head), extra) && push!(sets, extra)
     k = 2 * dense
     while k < n
         push!(sets, order[1:k])
