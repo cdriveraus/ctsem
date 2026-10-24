@@ -174,27 +174,6 @@ end
     sdf = sqrt.(diag(full.cov))
     @test maximum(abs.(viacs.mean .- full.mean) ./ sdf) < 0.3
     @test all(0.75 .< sqrt.(diag(viacs.cov)) ./ sdf .< 1.33)
-    # With no more units than parameters no coreset can be chosen, and DAIS
-    # runs as it does without one: the same draws, the same answer.
-    s5, t5, d5 = _laplace_test_data(5, 1; seed=3)
-    p5 = ctsem_objective(_LAPLACE_LINEAR_OBJECTIVE.params, s5, t5, d5;
-        prior_index=collect(1:8), prior_scale=ones(8))
-    l5 = ctsem_laplace_objective(p5, [1, 2], [6, 7], [8], [1.0, 1.0])
-    C5 = inv(Symmetric(-ContinuousTimeSEM.ctsem_hessian(l5, x0)))
-    # One chunk, so that the units' sums are in one order and two runs agree to
-    # the last bit, as they do not across the pool's workers.
-    old = ContinuousTimeSEM.ctsem_max_chunks().max_chunks
-    full5, cs5 = try
-        ContinuousTimeSEM.ctsem_set_max_chunks!(1)
-        (ctsem_dais(l5, x0, C5; draws=64, seed=23, maxiter=10, parallel=false),
-            ctsem_dais(l5, x0, C5; draws=64, seed=23, maxiter=10, parallel=false,
-                coreset=true))
-    finally
-        ContinuousTimeSEM.ctsem_set_max_chunks!(old)
-    end
-    @test cs5.coreset && cs5.coreset_chosen == 0 && cs5.coreset_size == 0
-    @test cs5.parallel == full5.parallel
-    @test cs5.mean == full5.mean && cs5.cost == full5.cost
 end
 
 @testset "DAIS reports to the caller's sink" begin
