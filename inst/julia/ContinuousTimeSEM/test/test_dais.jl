@@ -47,17 +47,17 @@ end
     @test r.settled
     @test r.averaged > 0
     # It stops once its draws can show every parameter is held to its
-    # precision, not after a fixed count: over eight seeds 27-31 iterations,
+    # precision, not after a fixed count: over twelve seeds 7-12 iterations,
     # where the windows fixed at 20 stopped at 61 at the earliest.
-    @test r.iterations < 45
-    # Every parameter's remaining distance within 0.1 sd, its Monte Carlo
+    @test r.iterations < 20
+    # Every parameter's remaining distance within 0.2 sd, its Monte Carlo
     # error a fraction of that, and the damped fixed point's own bias: the
-    # largest of twenty was 0.07-0.13 over eight seeds.
-    @test maximum(abs.(r.mean .- t.mean) ./ t.sd) < 0.2
+    # largest of twenty was 0.05-0.22 over twelve seeds.
+    @test maximum(abs.(r.mean .- t.mean) ./ t.sd) < 0.25
     # The damped fixed point's sds sit a little under the posterior's: over
-    # eight seeds the smallest ratio was 0.83-0.88, the median 0.93-0.95.
+    # twelve seeds the smallest ratio was 0.78-0.91, the median 0.92-0.96.
     ratio = sqrt.(diag(r.cov)) ./ t.sd
-    @test all(0.78 .< ratio .< 1.1)
+    @test all(0.75 .< ratio .< 1.1)
     # Even draws an iteration, counted; the trace carries one row an iteration.
     @test r.draws == 64
     @test r.gradients == 64 * r.iterations

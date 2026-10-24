@@ -45,8 +45,8 @@ Three things the paper's 10^5 draws an iteration never met at 64-256:
     out right while its eigenstructure is noise. So the answer is the
     average of the iterates over a window at the fixed point (Polyak).
   * When to stop. The answer is held to stated precisions
-    (`_DAIS_PRECISION`): every parameter's mean within `mean_sd` (0.1) of
-    its sd and its variance within `var` (20%) of itself, all parameters at
+    (`_DAIS_PRECISION`): every parameter's mean within `mean_sd` (0.2) of
+    its sd and its variance within `var` (40%) of itself, all parameters at
     once at `level` (5%), and the averaged covariance's Monte Carlo noise
     distorting no direction's width by more than `width` (a third), which
     the normal needs to serve as a sampler's metric. Each iteration takes the
@@ -67,7 +67,10 @@ Three things the paper's 10^5 draws an iteration never met at 64-256:
     75, the rule allowed most of 0.9 sd in one, stopped at 87 iterations
     where the iterate was still moving, and its largest mean error was 0.86
     sd where the run left to go on had 0.43. The ELBO summarises every
-    coordinate too, and it no longer decides.
+    coordinate too, and it no longer decides. The level is a fifth of an sd
+    because that is about what DAIS delivers (`_DAIS_PRECISION`): a tenth
+    asked for more draws than either hard posterior gave in 150 iterations,
+    for no better answer.
 
     Until 2026-10-24 the windows were fixed at 20 iterations, with three
     passes in a row and 20 more iterations averaged: 61 before any stop,
@@ -123,15 +126,24 @@ export ctsem_dais
 _dais_draws(k::Int) = 2 * ceil(Int, min(256, max(64, k)) / 2)
 
 """
-What DAIS's answer is held to (see the file comment): each coordinate's mean
-within `mean_sd` posterior sds and each variance within `var` of itself,
-every parameter at once at `level`, and no direction's width distorted by
-more than `width` by the averaged covariance's Monte Carlo noise. The last
-is the spread of a sample covariance's eigenvalues, `(1 +- sqrt(k / n))^2`
-for `n` effective draws in `k` dimensions, so it asks for `k / width^2` of
-them; it is what the normal needs to serve as a sampler's metric.
+What DAIS's answer is held to (see the file comment): each parameter's mean
+within `mean_sd` of its sd and its variance within `var` of itself, every
+parameter at once at `level`, and no direction's width distorted by more than
+`width` by the averaged covariance's Monte Carlo noise. The last is the
+spread of a sample covariance's eigenvalues, `(1 +- sqrt(k / n))^2` for `n`
+effective draws in `k` dimensions, so it asks for `k / width^2` of them; it is
+what the normal needs to serve as a sampler's metric.
+
+A fifth of an sd is about what DAIS delivers: its damped fixed point sits up
+to 0.4 sd from the posterior's mean on the time series, and 'checked''s
+recheck and importance sampler correct the directions that matter after it.
+From one seed and one start (local, 2026-10-24), against the old rule's 142
+iterations on the time series and 85 on the 250-unit shell, both with the
+largest mean error 0.43 and 0.77 sd: at 0.1, neither settled in 150, for
+0.40 and 0.89; at 0.2, 123 and 112 iterations, 0.42 and 0.73; at 0.3, 105
+and 54, 0.52 and 1.03, the shell's smallest sd ratio 0.64 against 0.83.
 """
-const _DAIS_PRECISION = (mean_sd=0.1, var=0.2, level=0.05, width=1 / 3)
+const _DAIS_PRECISION = (mean_sd=0.2, var=0.4, level=0.05, width=1 / 3)
 
 """
     _dais_window(ess, gamma, se2p, se2v, need, z, tol_mean, tol_var)
