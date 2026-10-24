@@ -381,17 +381,21 @@ function _kalman_store!(trace::CTSEMKalmanTrace, kind::Int, row::Int, ws, pars,
         end
         trace.y[kind, row, i] = value
     end
+    # Θ + Jy P Jy', a row of `Jy P` at a time: O(m n^2 + m^2 n), where forming
+    # `P Jy[j, :]` again for every pair was O(m^2 n^2).
+    Jy = pars.Jy
     @inbounds for i in 1:m
         for j in 1:m
-            value = Θ[i, j]
+            trace.ycov[kind, row, i, j] = Θ[i, j]
+        end
+        for b in 1:n
+            t = zero(eltype(Θ))
             for a in 1:n
-                inner = zero(eltype(Θ))
-                for b in 1:n
-                    inner += statecov[a, b] * pars.Jy[j, b]
-                end
-                value += pars.Jy[i, a] * inner
+                t += Jy[i, a] * statecov[a, b]
             end
-            trace.ycov[kind, row, i, j] = value
+            for j in 1:m
+                trace.ycov[kind, row, i, j] += t * Jy[j, b]
+            end
         end
     end
     _kalman_store_response!(trace, kind, row, ws, pars, statecov)
