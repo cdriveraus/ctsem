@@ -44,23 +44,30 @@ Three things the paper's 10^5 draws an iteration never met at 64-256:
   * The iterate is noisy where it is not wrong: its per-coordinate sds come
     out right while its eigenstructure is noise. So the answer is the
     average of the iterates over a window at the fixed point (Polyak).
-  * When to stop. The answer is held to two stated precisions
-    (`_DAIS_PRECISION`): each coordinate's mean within `mean_sd` (0.1)
-    posterior sds, and the averaged covariance's Monte Carlo noise
+  * When to stop. The answer is held to stated precisions
+    (`_DAIS_PRECISION`): every parameter's mean within `mean_sd` (0.1) of
+    its sd and its variance within `var` (20%) of itself, all parameters at
+    once at `level` (5%), and the averaged covariance's Monte Carlo noise
     distorting no direction's width by more than `width` (a third), which
     the normal needs to serve as a sampler's metric. Each iteration takes the
     shortest trailing window of iterates whose draws could show a departure
-    from those (`_dais_window`): effective draws at least `(2 / mean_sd)^2`
-    and `k / width^2` for `k` free dimensions; a drift of the mean of
-    `mean_sd` a coordinate visible above the random walk its damped steps'
-    noise makes; and a climb in the ELBO worth a `mean_sd` offset a
-    coordinate visible above its noise. It stops where, over that window,
-    the mean has not drifted beyond twice that random walk and the ELBO has
-    not climbed beyond twice its standard error, and the last natural
-    gradient `E_w[Gamma grad Phi]` is within twice its own. The answer is
-    the window's average. So a run that starts near its fixed point stops as
-    soon as its draws can say so, and one still travelling goes on. A test
-    that cannot be read (a batch with no spread) is unmet.
+    from those (`_dais_window`): effective draws at least `k / width^2` for
+    `k` free dimensions, and for every parameter a remaining distance of its
+    mean or variance of that size visible above the random walk its damped
+    steps' noise makes. It stops where, over that window, no parameter's mean
+    or variance has drifted beyond the bound for testing them all at once,
+    and the last natural gradient `E_w[Gamma grad Phi]` is within twice its
+    own. The answer is the window's average. So a run that starts near its
+    fixed point stops as soon as its draws can say so, and one still
+    travelling goes on. A test that cannot be read (a batch with no spread)
+    is unmet.
+
+    The precision is per parameter because an aggregate hides a direction:
+    held to a tenth of an sd a coordinate as a norm over the time series'
+    75, the rule allowed most of 0.9 sd in one, stopped at 87 iterations
+    where the iterate was still moving, and its largest mean error was 0.86
+    sd where the run left to go on had 0.43. The ELBO summarises every
+    coordinate too, and it no longer decides.
 
     Until 2026-10-24 the windows were fixed at 20 iterations, with three
     passes in a row and 20 more iterations averaged: 61 before any stop,
@@ -117,78 +124,53 @@ _dais_draws(k::Int) = 2 * ceil(Int, min(256, max(64, k)) / 2)
 
 """
 What DAIS's answer is held to (see the file comment): each coordinate's mean
-within `mean_sd` posterior sds, and no direction's width distorted by more
-than `width` by the averaged covariance's Monte Carlo noise. The second is
-the spread of a sample covariance's eigenvalues, `(1 +- sqrt(k / n))^2` for
-`n` effective draws in `k` dimensions, so it asks for `k / width^2` of them.
+within `mean_sd` posterior sds and each variance within `var` of itself,
+every parameter at once at `level`, and no direction's width distorted by
+more than `width` by the averaged covariance's Monte Carlo noise. The last
+is the spread of a sample covariance's eigenvalues, `(1 +- sqrt(k / n))^2`
+for `n` effective draws in `k` dimensions, so it asks for `k / width^2` of
+them; it is what the normal needs to serve as a sampler's metric.
 """
-const _DAIS_PRECISION = (mean_sd=0.1, width=1 / 3)
+const _DAIS_PRECISION = (mean_sd=0.1, var=0.2, level=0.05, width=1 / 3)
 
 """
-    _dais_slope_se(se)
-
-The standard error of the least-squares slope over the index of points whose
-own standard errors `se` are known and independent.
-"""
-function _dais_slope_se(se::AbstractVector{Float64})
-    m = length(se)
-    xbar = (m + 1) / 2
-    sxx = 0.0
-    v = 0.0
-    for t in 1:m
-        d = t - xbar
-        sxx += d^2
-        v += d^2 * se[t]^2
-    end
-    return sqrt(v) / sxx
-end
-
-"""The least-squares slope of `e` over its index."""
-function _dais_slope(e::AbstractVector{Float64})
-    m = length(e)
-    xbar = (m + 1) / 2
-    ebar = sum(e) / m
-    sxx = 0.0
-    sxe = 0.0
-    for t in 1:m
-        d = t - xbar
-        sxx += d^2
-        sxe += d * (e[t] - ebar)
-    end
-    return sxe / sxx
-end
-
-"""
-    _dais_window(ess, se2, gamma, elbo_se, need, tol_mean, tol_elbo)
+    _dais_window(ess, gamma, se2p, se2v, need, z, tol_mean, tol_var)
 
 The shortest trailing window of iterates, at least three, whose draws could
 show a departure from what the answer is held to: effective draws (`ess`) at
-least `need`; a remaining distance of the mean of `tol_mean` (in the normal's
-whitened units) visible above the random walk of its damped steps' noise,
-since a distance `d` moves the mean `d` times the window's summed damping
-(`gamma`) while the steps' noise (`se2`, each step's own) walks
-`sqrt(sum(gamma^2 se2))`; and an ELBO climb that would leave `tol_elbo` to
-gain visible above its noise (`elbo_se`), since a climb of `r` an iteration
-leaves about `r / (2 gamma)`. 0 where the run is not yet long enough.
+least `need`, and, for every parameter, a remaining distance of its mean of
+`tol_mean` of its sd, and of its variance of `tol_var` of itself, visible
+above the random walk its damped steps' noise makes. A remaining distance
+`d` moves the mean `d` times the window's summed damping (`gamma`), and the
+steps' noise (`se2p`, `se2v`: a vector per iteration, each step's own, in
+the parameter's sd units) walks `sqrt(sum(gamma^2 se2))`; visible means
+beyond `z + 1` of that walk, `z` the bound a parameter's drift must stay
+within when every parameter is tested at once. Returns the window's length
+(0 where the run is not yet long enough) and each parameter's walk over it.
 """
-function _dais_window(ess::Vector{Float64}, se2::Vector{Float64}, gamma::Vector{Float64},
-    elbo_se::Vector{Float64}, need::Real, tol_mean::Real, tol_elbo::Real)
+function _dais_window(ess::Vector{Float64}, gamma::Vector{Float64},
+    se2p::Vector{Vector{Float64}}, se2v::Vector{Vector{Float64}}, need::Real, z::Real,
+    tol_mean::Real, tol_var::Real)
     n = length(ess)
+    np = n == 0 ? 0 : length(se2p[1])
+    walkp = zeros(np)
+    walkv = zeros(np)
     draws = 0.0
-    walk = 0.0
     damp = 0.0
     for m in 1:n
         t = n - m + 1
         draws += ess[t]
-        walk += gamma[t]^2 * se2[t]
         damp += gamma[t]
+        g2 = gamma[t]^2
+        walkp .+= g2 .* se2p[t]
+        walkv .+= g2 .* se2v[t]
         m >= 3 || continue
         draws >= need || continue
-        2 * sqrt(walk) <= tol_mean * damp || continue
-        _dais_slope_se(view(elbo_se, t:n)) <= damp / m * tol_elbo || continue
-        return m
+        (z + 1) * sqrt(maximum(walkp; init=0.0)) <= tol_mean * damp || continue
+        (z + 1) * sqrt(maximum(walkv; init=0.0)) <= tol_var * damp || continue
+        return (m=m, walkp=sqrt.(walkp), walkv=sqrt.(walkv))
     end
-    return 0
+    return (m=0, walkp=walkp, walkv=walkv)
 end
 
 """
@@ -288,9 +270,10 @@ function _dais(objective, coreset, centre::AbstractVector, cov::AbstractMatrix;
     essfrac = 0.5
     kfree = k - (U === nothing ? 0 : size(U, 2))
     P = _DAIS_PRECISION
-    need = max((2 / P.mean_sd)^2, kfree / P.width^2)
-    tol_mean = P.mean_sd * sqrt(kfree)
-    tol_elbo = P.mean_sd^2 / 2 * kfree
+    need = kfree / P.width^2
+    # The bound a parameter's drift over the window must stay within, every
+    # parameter tested at once at `level` (Bonferroni).
+    zp = sqrt(2) * erfinv(1 - P.level / p)
     mode = coreset === nothing ? _points_mode(objective, parallel) : :coreset
     rng = Random.Xoshiro(UInt64(seed))
     reporter = CTSEMProgress(verbose; label="DAIS", overwrite=progress_overwrite,
@@ -305,10 +288,12 @@ function _dais(objective, coreset, centre::AbstractVector, cov::AbstractMatrix;
     cap = clamp(floor(Int, 2^28 / (8 * k^2)), 2, max(2, Int(maxiter)))
     Gs = Vector{Matrix{Float64}}(undef, cap)
     gammas = Float64[]
-    se2s = Float64[]
     esss = Float64[]
-    elbos = Float64[]
-    elbo_ses = Float64[]
+    # Each step's noise in each parameter's mean and variance, in its sd
+    # units, and each parameter's variance after each iteration.
+    se2ps = Vector{Vector{Float64}}()
+    se2vs = Vector{Vector{Float64}}()
+    varsv = Vector{Vector{Float64}}([vec(sum(abs2, A; dims=2))])
     window = 0
     gradients = 0
     cost = 0.0
@@ -357,6 +342,7 @@ function _dais(objective, coreset, centre::AbstractVector, cov::AbstractMatrix;
         munew = mu
         Gnew = Gamma
         gbar = zeros(k)
+        zbar = zeros(k)
         for attempt in 1:40
             lw = gamma .* Phi
             m = maximum(lw)
@@ -387,18 +373,24 @@ function _dais(objective, coreset, centre::AbstractVector, cov::AbstractMatrix;
         noise = 2 * sqrt(se2)
         lpf = vals[ok]
         elbo = sum(lpf) / length(lpf) + sum(log, diag(Lc))
-        elbo_se = length(lpf) > 1 ? sqrt(sum(abs2, lpf .- sum(lpf) / length(lpf)) /
-            (length(lpf) - 1)) / sqrt(length(lpf)) : NaN
+        # Each parameter's step noise, in the sds of the normal the draws came
+        # from: the mean step's weighted spread, and the variance step's.
+        sig2 = vec(sum(abs2, A * Lc; dims=2))
+        sig2 .= max.(sig2, eps() * maximum(sig2))
+        Gp = (GP .- transpose(gbar)) * transpose(A)
+        Zp = offhold(Z .- transpose(zbar)) * transpose(A)
+        w2 = w .^ 2
+        push!(se2ps, vec(sum(w2 .* Gp .^ 2; dims=1)) ./ sig2)
+        push!(se2vs, vec(sum(w2 .* (Gp .* Zp) .^ 2; dims=1)) ./ sig2 .^ 2)
         push!(gammas, gamma)
-        push!(se2s, se2)
         push!(esss, essw)
-        push!(elbos, elbo)
-        push!(elbo_ses, elbo_se)
         mu = munew
         Gamma = Gnew
         push!(mus, copy(mu))
+        push!(varsv, vec(sum((A * Gamma) .* A; dims=2)))
         Gs[mod1(iter, cap)] = copy(Gamma)
-        m = _dais_window(esss, se2s, gammas, elbo_ses, need, tol_mean, tol_elbo)
+        win = _dais_window(esss, gammas, se2ps, se2vs, need, zp, P.mean_sd, P.var)
+        m = win.m
         push!(trace, [gamma, essw, natural, noise, elbo, shift, 0.0, Float64(nok),
             Float64(m)])
         # A variance still growing past `maxgrowth` times the start's is a
@@ -418,16 +410,15 @@ function _dais(objective, coreset, centre::AbstractVector, cov::AbstractMatrix;
                 iter, gamma, essw, S, natural, noise, elbo,
                 m > 0 ? ", window $m" : ""))
         end
-        # The window's tests: the mean has not drifted beyond twice the random
-        # walk of its steps' noise, the ELBO has not climbed beyond twice its
-        # standard error, and the last natural gradient is within twice its own.
+        # The window's tests: no parameter's mean or variance has drifted over
+        # it beyond `zp` times the random walk of its steps' noise, and the
+        # last natural gradient is within twice its own.
         if m > 0 && isfinite(natural) && isfinite(noise) && natural <= noise
-            n = length(esss)
-            walk = sqrt(sum(gammas[t]^2 * se2s[t] for t in (n - m + 1):n))
-            drift = norm(Lc \ (mus[end] .- mus[end - m]))
-            climb = _dais_slope(view(elbos, (n - m + 1):n))
-            rise = _dais_slope_se(view(elbo_ses, (n - m + 1):n))
-            if drift <= 2 * walk && climb <= 2 * rise
+            sd = sqrt.(max.(varsv[end], eps() * maximum(varsv[end])))
+            drift = abs.(A * (mus[end] .- mus[end - m])) ./ sd
+            vdrift = abs.(varsv[end] .- varsv[end - m]) ./ sd .^ 2
+            if all(drift .<= zp .* win.walkp .+ 1e-12) &&
+                all(vdrift .<= zp .* win.walkv .+ 1e-12)
                 window = m
                 break
             end
