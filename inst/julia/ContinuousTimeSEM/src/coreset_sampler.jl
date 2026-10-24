@@ -167,7 +167,9 @@ The rows a coreset is fitted to: every unit's term at the draws evaluated in
 full (`L`, units by draws, the first `nrows` in use), their totals (`y`), the
 rows read as the newest checks (`focus`), and the score rows -- per row the
 units' scores (`Z`, rows by units), their sum, its parameter, its draw's total
-and a draw counter -- with the draws that gave them.
+and a draw counter -- with the draws that gave them. Relevance is measured
+from the best total of every row, or, where `batchtop`, of the newest batch's,
+rows `batch_from` on (`_is_top`).
 """
 mutable struct _ISRows
     N::Int
@@ -182,10 +184,28 @@ mutable struct _ISRows
     zdraw::Vector{Int}
     zdraws::Vector{Vector{Float64}}
     scoredraws::Int
+    batchtop::Bool
+    batch_from::Int
 end
 
-_ISRows(N::Integer) = _ISRows(N, zeros(N, 0), 0, Float64[], Int[], zeros(0, N),
-    Float64[], Int[], Float64[], Int[], Vector{Float64}[], 0)
+_ISRows(N::Integer; batchtop::Bool=false) = _ISRows(N, zeros(N, 0), 0, Float64[], Int[],
+    zeros(0, N), Float64[], Int[], Float64[], Int[], Vector{Float64}[], 0, batchtop, 1)
+
+"""
+The total a draw's relevance is measured from (`_is_relevance`): the best of
+every row, for a sampler whose weights compare every round's draws, as the
+importance sampler's do; or, where the rows say `batchtop`, the best of the
+newest batch's, for one whose weights are normalised within each batch, as
+DAIS's are. Measured from the best of the run, DAIS's draws on the strong
+shell at 1,000 units sat so far below the run's best draw that a held-out
+set of hundreds amounted to two draws: its coresets were fitted and priced on
+those two, chose a few units, and failed.
+"""
+_is_top(tr::_ISRows) = tr.batchtop && tr.batch_from <= tr.nrows ?
+    maximum(view(tr.y, tr.batch_from:tr.nrows)) : maximum(tr.y)
+
+"""A batch begins: the rows learned from here on are the newest batch's."""
+_is_batch_start!(tr::_ISRows) = (tr.batch_from = tr.nrows + 1; nothing)
 
 """
     CTSEMISCoreset
@@ -246,20 +266,24 @@ mutable struct CTSEMISCoreset
 end
 
 """
-    ctsem_is_coreset(laplace)
+    ctsem_is_coreset(laplace; top=:run)
 
 A coreset density over the Laplace objective `laplace`, for an importance
 sampler: `ctsem_is_coreset_batch!` and `ctsem_is_coreset_gradbatch!` are its
 value and gradient batches, `ctsem_is_coreset_fullgrad!` the full density's
 gradient, `ctsem_is_coreset_finalize!` the end check, and
-`ctsem_is_coreset_record` what it did.
+`ctsem_is_coreset_record` what it did. `top` says how the caller's weights are
+normalised, which is what a draw's relevance is measured against
+(`_is_top`): over the whole run (`:run`, the importance sampler) or within
+each batch (`:batch`, DAIS).
 """
-function ctsem_is_coreset(laplace::CTSEMLaplaceObjective)
+function ctsem_is_coreset(laplace::CTSEMLaplaceObjective; top::Symbol=:run)
+    top in (:run, :batch) || throw(ArgumentError("top must be :run or :batch, not :$top"))
     N = length(laplace.units.members)
     secs = Dict(k => 0.0 for k in (:full, :coreset, :gradient_full, :gradient_coreset, :choose))
     draws = Dict(k => 0.0 for k in (:full, :coreset, :gradient_full, :gradient_coreset))
     why = Dict(k => 0.0 for k in (:training, :small, :check, :gradient_check, :failed_rest, :end))
-    return CTSEMISCoreset(laplace, N, _ISRows(N),
+    return CTSEMISCoreset(laplace, N, _ISRows(N; batchtop=top == :batch),
         false, Int[], Float64[], 0.0, NaN, NaN, :training, 0.0, Int[], Float64[],
         0, NaN, 0, false, NaN, NaN, 0.0, 0, 0, 0, 0, 0, 0, 0, false, true, 0, 0, 0,
         secs, draws, why, Dict{Vector{Float64},Float64}(), NTuple{8,Float64}[],
@@ -371,7 +395,7 @@ function _is_score_rows(tr::_ISRows, top::Real)
     spread = ones(p)
     if length(tr.zdraws) > 1
         for i in 1:p
-            s = length(tr.zdraws) < 2 ? NaN : std([d[i] for d in tr.zdraws])
+            s = std([d[i] for d in tr.zdraws])
             spread[i] = isfinite(s) && s > 0 ? s : 1.0
         end
     end
@@ -416,8 +440,8 @@ end
 """Weights on units `S` over every training row (`passed`'s refit)."""
 function _is_weights(tr::_ISRows, S::Vector{Int})
     rows = collect(1:tr.nrows)
-    A, b, mx, my = _is_rows(tr, rows, _is_relevance(tr.y, maximum(tr.y)),
-        _is_score_rows(tr, maximum(tr.y)))
+    A, b, mx, my = _is_rows(tr, rows, _is_relevance(tr.y, _is_top(tr)),
+        _is_score_rows(tr, _is_top(tr)))
     As = A[:, S]
     w = _ctsem_nnls(transpose(As) * As, transpose(As) * b)
     return w, my - sum(mx[S] .* w)
@@ -463,12 +487,12 @@ function _is_coreset_choose(tr::_ISRows, rd::_ISRound, start::Vector{Int})
     plain = setdiff(rows, newest)
     held = plain[[i % 4 == 0 for i in 1:length(plain)]]
     fitrows = setdiff(plain, held)
-    rel = _is_relevance(tr.y, maximum(tr.y))
+    rel = _is_relevance(tr.y, _is_top(tr))
     none(why; kw...) = (chosen=false, why=why, kw...)
     length(fitrows) < 10 && return none(:held; relheld=_is_effective(rel[held]))
     N = tr.N
     fullround = _is_full_round(rd)
-    score = _is_score_rows(tr, maximum(tr.y))
+    score = _is_score_rows(tr, _is_top(tr))
     A, b, mx, my = _is_rows(tr, fitrows, rel[fitrows], score)
     mheld = _is_effective(rel[held])
     mnewest = _is_effective(rel[newest])
@@ -663,7 +687,7 @@ function _is_freecheck!(cs::CTSEMISCoreset, X::AbstractMatrix, why::Symbol)
         append!(cs.checks, err)
         cs.runs += 1
         cs.free_total += 1
-        rel = _is_relevance(t0.total[pick][good], maximum(cs.rows.y))
+        rel = _is_relevance(t0.total[pick][good], _is_top(cs.rows))
         _is_passes(err, rel, _IS_CORESET_TOL.drift) ? _is_passed!(cs) : _is_failed!(cs)
     end
     return t0.value
@@ -681,7 +705,7 @@ function _is_oncoreset!(cs::CTSEMISCoreset, X::AbstractMatrix)
         append!(cs.checks, err)
         v[pick[good]] .= t0.value[good]
         _is_learn!(cs.rows, t0; focus=true)
-        rel = _is_relevance(t0.total[good], maximum(cs.rows.y))
+        rel = _is_relevance(t0.total[good], _is_top(cs.rows))
         cs.runs += 1
         cs.runs_total += 1
         if !_is_passes(err, rel, _IS_CORESET_TOL.drift)
@@ -728,6 +752,7 @@ function ctsem_is_coreset_batch!(cs::CTSEMISCoreset, X::AbstractMatrix)
     cs.batches > 0 && (cs.grads = _is_smooth(cs.grads, cs.gradsnow))
     cs.batches += 1
     cs.gradsnow = 0.0
+    _is_batch_start!(cs.rows)
     v = cs.phase != :coreset ? _is_inparts!(cs, X, :training) :
         _is_cached(cs, X) ? _is_freecheck!(cs, X, :small) : _is_withcoreset!(cs, X)
     return [isfinite(x) ? x : -1e100 for x in v]
@@ -808,6 +833,7 @@ function ctsem_is_coreset_gradbatch!(cs::CTSEMISCoreset, X::AbstractMatrix;
     X = Matrix{Float64}(X)
     n = size(X, 2)
     cs.gradsnow += n
+    _is_batch_start!(cs.rows)
     cs.phase != :coreset && return ctsem_is_coreset_fullgrad!(cs, X)
     units = cs.S[cs.w .> 0]
     weights = cs.w[cs.w .> 0]
@@ -830,7 +856,7 @@ function ctsem_is_coreset_gradbatch!(cs::CTSEMISCoreset, X::AbstractMatrix;
             append!(cs.checks, err)
             _is_learn!(cs.rows, t0; focus=true)
             cs.runs += 1
-            rel = _is_relevance(t0.total[good], maximum(cs.rows.y))
+            rel = _is_relevance(t0.total[good], _is_top(cs.rows))
             if !_is_passes(err, rel, _IS_CORESET_TOL.drift)
                 _is_failed!(cs)
                 return ctsem_is_coreset_fullgrad!(cs, X)
