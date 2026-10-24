@@ -12,8 +12,8 @@
 # a point the model cannot evaluate, or whose inner solve did not converge,
 # comes back `-Inf` and is never raised, since a sampler's tails are full of them.
 
-export ctsem_coreset_terms, ctsem_coreset_batch, ctsem_coreset_batch_gradient,
-    ctsem_set_coreset_draw_parallel!
+export ctsem_coreset_terms, ctsem_coreset_terms_gradient, ctsem_coreset_batch,
+    ctsem_coreset_batch_gradient, ctsem_set_coreset_draw_parallel!
 
 """
 Whether a coreset's draws are evaluated several at once (`_laplace_coreset_each`).
@@ -55,6 +55,51 @@ function ctsem_coreset_terms(laplace::CTSEMLaplaceObjective, values::AbstractMat
         terms[:, j] .= r.unit_loglik
     end
     return (value=value, total=total, unit_loglik=terms)
+end
+
+"""
+    ctsem_coreset_terms_gradient(laplace, values, scored)
+
+A full gradient batch that also teaches a coreset: per column of `values`
+(`npar x ndraws`) `value`, `total` and `unit_loglik` as `ctsem_coreset_terms`
+gives them, `gradient` (`npar x ndraws`) as `ctsem_evaluate_batch_gradient`
+does, and for the columns `scored` names each unit's score, `scores`
+(`nunits x npar x length(scored)`): its term's gradient, with the units'
+sampling weights and without the prior, so that the units' scores sum to the
+gradient of `total`. One gradient evaluation a column, what the batch
+gradient costs; `-Inf`, NaN where a draw is unusable, by
+`_ctsem_probe_value_gradient`'s rule.
+"""
+function ctsem_coreset_terms_gradient(laplace::CTSEMLaplaceObjective,
+    values::AbstractMatrix, scored::AbstractVector)
+    n, ncol = size(values)
+    ncol >= 1 || throw(ArgumentError("values must have at least one column"))
+    nunits = length(laplace.units.members)
+    value = fill(-Inf, ncol)
+    total = fill(NaN, ncol)
+    terms = fill(NaN, nunits, ncol)
+    gradient = fill(NaN, n, ncol)
+    scores = fill(NaN, nunits, n, length(scored))
+    for j in 1:ncol
+        k = findfirst(==(j), scored)
+        S = k === nothing ? nothing : zeros(Float64, nunits, n)
+        r = try
+            ctsem_laplace_evaluate(laplace, Vector{Float64}(view(values, :, j));
+                gradient=true, scores=S)
+        catch err
+            _ctsem_must_propagate(err) && rethrow()
+            nothing
+        end
+        (r !== nothing && r.converged && isfinite(r.value) &&
+            r.gradient !== nothing && all(isfinite, r.gradient)) || continue
+        value[j] = r.value
+        total[j] = _laplace_weighted_total(laplace, r.unit_loglik)
+        terms[:, j] .= r.unit_loglik
+        gradient[:, j] .= r.gradient
+        k === nothing || (scores[:, :, k] .= S)
+    end
+    return (value=value, total=total, unit_loglik=terms, gradient=gradient,
+        scores=scores)
 end
 
 """

@@ -1,9 +1,11 @@
 # The coreset importance sampling evaluates on the Laplace route (R/ctCoreset.R,
-# laplace_coreset.jl): the engine's subset evaluation against the full one, the
-# selection on a sum it can compress, and the sampler's density with a coreset
-# behind it against the full density. One fit, the shared Laplace fixture at
-# 100 subjects: its seven parameters all move under 'is', so a coreset needs
-# about twice that many units, a small enough share of 100 to pay.
+# laplace_coreset.jl, coreset_sampler.jl): the engine's subset evaluation
+# against the full one, and the sampler's density with a coreset behind it
+# against the full density. The choice on sums it can compress is the
+# engine's own test (test_coreset_sampler.jl). One fit, the shared Laplace
+# fixture at 100 subjects: its seven parameters all move under 'is', so a
+# coreset needs about twice that many units, a small enough share of 100 to
+# pay.
 
 .coreset_fixture <- function() laplace_fixture(nsub = 100L, tp = 6L, seed = 31L)
 
@@ -51,45 +53,20 @@ test_that("the engine's coreset evaluation is the weighted sum of the units it n
   expect_equal(as.numeric(ctsem:::.ctBackendJuliaValue(module$ctsem_coreset_batch(obj,
     t(X), units(5L), weights(2)))), prior + 2 * L[5, ], tolerance = 1e-10)
   expect_error(module$ctsem_coreset_batch(obj, t(X), units(c(1L, 1L)), weights(c(1, 1))))
-})
-
-test_that("the selection finds a small coreset where the units' terms span few dimensions", {
-  # Sixty units whose terms are each a non-negative mix of three functions of
-  # the draws: their sum is a mix of the same three, so a handful of units
-  # carry it, and the held-out error says so.
-  set.seed(5)
-  draws <- 240L
-  basis <- cbind(rnorm(draws), rnorm(draws)^2, sin(seq_len(draws) / 9))
-  mix <- matrix(runif(60 * 3), 3)
-  # On a log density's scale: the sum moves a few units across the draws.
-  X <- (basis %*% mix) / 20 + matrix(rnorm(draws * 60, 0, 1e-5), draws)
-  y <- rowSums(X)
-  # Chosen by its expected cost in a round of 100 draws and 30 gradients:
-  # a handful of units, since three carry the sum and every unit costs.
-  round <- list(values = 100, grads = 30, checks = 8)
-  cf <- ctsem:::.ctCoresetChoose(X, y, seq_len(200), round)
-  expect_gt(length(cf), 0L)
-  expect_lte(sum(cf$w > 0), 10L)
-  expect_lt(cf$cost, round$values + 2 * round$grads)
-  held <- 201:draws
-  err <- ctsem:::.ctCoresetPredict(cf, X[held, , drop = FALSE]) - y[held]
-  expect_lt(max(abs(err)), ctsem:::.ctCoresetTol$max)
-  # Units that all move against the sum get zero weights, which leave nothing
-  # to evaluate: never chosen, however cheap that looks, from scratch or from
-  # a coreset that held them (a 200-person fit once handed the engine an
-  # empty unit list).
-  against <- 50 - X
-  expect_length(ctsem:::.ctCoresetChoose(against, y, seq_len(200), round), 0L)
-  expect_length(ctsem:::.ctCoresetChoose(against, y, seq_len(200), round, start = 1:3), 0L)
-  # Non-negative least squares agrees with a bounded optimiser.
-  A <- X[1:200, 1:8]
-  b <- y[1:200]
-  x <- ctsem:::.ctCoresetNnls(A, b)
-  o <- stats::optim(rep(1, 8), function(v) sum((b - A %*% v)^2),
-    function(v) -2 * drop(crossprod(A, b - A %*% v)), method = "L-BFGS-B",
-    lower = 0, control = list(maxit = 5000, factr = 1))
-  expect_true(all(x >= 0))
-  expect_lte(sum((b - A %*% x)^2), o$value * (1 + 1e-8) + 1e-10)
+  # A gradient batch that teaches: the terms, the batch gradient, and each
+  # unit's score at the columns asked for, which sum to the gradient of the
+  # units' total.
+  tg <- ctsem:::.ctBackendJuliaValue(module$ctsem_coreset_terms_gradient(obj, t(X),
+    ctsem:::.ctJuliaVector(c(1L, 3L))))
+  expect_equal(as.numeric(tg$value), plain, tolerance = 1e-10)
+  expect_equal(as.numeric(tg$total), as.numeric(terms$total), tolerance = 1e-10)
+  expect_equal(matrix(as.numeric(tg$unit_loglik), ncol = 3), L, tolerance = 1e-10)
+  expect_equal(matrix(as.numeric(tg$gradient), ncol = 3), gfull[-1, ], tolerance = 1e-9)
+  sc <- array(as.numeric(tg$scores), c(N, length(est), 2))
+  expect_equal(sc[, , 1], scores, tolerance = 1e-8)
+  scores3 <- as.matrix(ctsem:::.ctJuliaGet(module$ctsem_subject_gradients(obj,
+    ctsem:::.ctJuliaVector(X[3, ]), prior = FALSE))$scores)
+  expect_equal(sc[, , 2], scores3, tolerance = 1e-8)
 })
 
 test_that("the sampler's density with a coreset behind it follows the full density", {
@@ -109,6 +86,21 @@ test_that("the sampler's density with a coreset behind it follows the full densi
   cov <- as.matrix(fit$estimate$cov)
   set.seed(9)
   draw <- function(n) ctsem:::ctOptimNormalDraws(est, cov * 2, n)
+  # A full gradient batch teaches a coreset its draws' scores, and a value
+  # batch at the same draws -- DAIS asks for both -- costs nothing more and
+  # is the full density's.
+  taught <- ctsem:::.ctCoresetLpg(fit, full)
+  xg <- draw(8)
+  gg <- attr(taught, "gradbatch")(xg)
+  gt <- attr(full, "gradbatch")(xg)
+  expect_equal(gg$value, gt$value, tolerance = 1e-10)
+  expect_equal(gg$gradient, gt$gradient, tolerance = 1e-9)
+  expect_equal(attr(taught, "cost")(), 16)
+  expect_equal(attr(taught, "batch")(xg), attr(full, "batch")(xg), tolerance = 1e-10)
+  expect_equal(attr(taught, "cost")(), 16)
+  rec0 <- attr(taught, "coreset")()
+  expect_equal(rec0$score_draws, 4L)
+  expect_equal(rec0$reused_values, 8L)
   # Rounds with no coreset are the full density, half a round at a time; once
   # one is chosen, the rest of the round runs on it, checked (at most three).
   first <- NULL
