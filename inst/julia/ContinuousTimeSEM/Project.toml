@@ -21,6 +21,7 @@ REPL = "3fa0cd96-eef1-5676-8a61-b3b8758bbffb"
 Random = "9a3f8284-a2c9-5f02-9a11-845980a1fd5c"
 Sockets = "6462fe0b-24de-5631-8697-dd941f90decc"
 SpecialFunctions = "276daf66-3868-5448-9aa4-cd146d93841b"
+Statistics = "10745b16-79ce-11e8-11f9-7d13ad32a3b2"
 
 [compat]
 ChainRulesCore = "1.26.0"
@@ -36,18 +37,13 @@ REPL = "1.11.0"
 Random = "1.11.0"
 Sockets = "1.11.0"
 SpecialFunctions = "2"
+Statistics = "1.11"
 
 [extras]
 # DataFrames is test-only: a DataFrame literal is still the clearest way to
 # write a parameter table in a test, but the package itself takes plain columns.
 DataFrames = "a93c6f00-e57d-5684-b7b6-d8193f3e46c0"
-# `Statistics` is a standard library but still has to be declared to be
-# `using`-able: `test_sampler.jl` checks the sampler against the moments of
-# posteriors known in closed form, and means and covariances are the whole
-# assertion. It passed in a scratch environment that happened to have it and
-# errored under `Pkg.test()`, which is the environment that counts.
-Statistics = "10745b16-79ce-11e8-11f9-7d13ad32a3b2"
 Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
 
 [targets]
-test = ["DataFrames", "Statistics", "Test"]
+test = ["DataFrames", "Test"]
