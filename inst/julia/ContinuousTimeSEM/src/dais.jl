@@ -393,6 +393,9 @@ function _ctsem_dais(objective, coreset, c0::Vector{Float64}, cov::AbstractMatri
             end
         end
         essw = _importance_ess(gamma .* Phi)
+        # A coreset's error moves this update by gamma times itself, so the next
+        # batch's checks allow 1 / gamma times their tolerance.
+        coreset === nothing || _is_coreset_tolerance!(coreset, 1 / gamma)
         shift = norm(Lc \ (munew .- mu))
         natural = norm(Lc \ gbar)
         W = Lc \ transpose(GP .- transpose(gbar))
