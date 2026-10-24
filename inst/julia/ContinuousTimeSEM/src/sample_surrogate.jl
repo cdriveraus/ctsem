@@ -18,14 +18,19 @@
 # to `pi`, whatever the coreset: a poor one costs acceptance, not accuracy.
 # `coreset = false` is the oracle.
 #
-# The coreset is fitted once per chain, at the end of its warm-up, from the
-# full density's unit terms at the chain's last warm-up states
-# (`_SURROGATE_TRAIN`), which by then are the posterior's; warm-up itself runs
-# on the full density, so the step size and metric are tuned to it. A batch
-# of draws whose endpoint acceptance falls below `_SURROGATE_MIN_ACCEPT`
-# gives the coreset up for the rest of the run: one change, at a batch's end,
-# after which the kernel is fixed again. A chain resumed in a new call has no
-# warm-up to fit from and samples in full.
+# The coreset is fitted once per chain, a third of the way through its
+# warm-up (`_surrogate_train_at`), from the full density's unit terms at the
+# chain's states so far (the last `_SURROGATE_TRAIN`), which started at the
+# fit and by then cover the posterior; the rest of warm-up runs on it, with
+# the endpoint test, so the step size is tuned to the transitions that will be
+# sampled with. Run in full, warm-up was most of a short run's cost: on a
+# 400-subject model whose coreset was a fortieth of the units, its 200
+# transitions took 12 of the run's 15 s. Warm-up draws are discarded, so the
+# test there only keeps the chain where the posterior is. Warm-up's end and
+# each batch of draws whose endpoint acceptance fell below
+# `_SURROGATE_MIN_ACCEPT` give the coreset up for the rest of the run: one
+# change, after which the kernel is fixed again. A chain resumed in a new call
+# has no warm-up to fit from and samples in full.
 #
 # What one draw costs: the trajectory's leapfrog steps at the coreset's share
 # of a gradient (`_SMC_CORESET_BUDGET` at most), and one full value, no
@@ -131,6 +136,11 @@ end
 
 # The hooks `_run_chain` and `_sample_draws!` call. Any other density answers
 # with nothing to do, so a plain closure samples exactly as before.
+
+"""The warm-up iteration a chain fits its coreset at: a third of the way in
+where that leaves `_SURROGATE_TRAIN` states before it, the end otherwise."""
+_surrogate_train_at(nwarmup::Integer) =
+    nwarmup >= 3 * _SURROGATE_TRAIN ? Int(nwarmup) ÷ 3 : Int(nwarmup)
 
 """Whether a chain's density wants its warm-up states kept, to fit from."""
 _surrogate_training(logdensity!) = false

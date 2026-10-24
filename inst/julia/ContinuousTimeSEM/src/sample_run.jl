@@ -367,9 +367,11 @@ function _run_chain(logdensity!, centre::Vector{Float64},
     raises = 0
     windows = adapt_metric ? _adapt_windows(nwarmup) : Int[]
     window_draws = Vector{Vector{Float64}}()
-    # The last warm-up states, where the density fits a coreset from them
-    # (`_surrogate_warmed!`, sample_surrogate.jl); nothing kept otherwise.
+    # The warm-up states a coreset is fitted from, where the density wants one
+    # (`_surrogate_warmed!`, sample_surrogate.jl), at `train_at`: a third of
+    # the way in, so the rest of warm-up runs on it too; nothing kept otherwise.
     trainstates = _surrogate_training(logdensity!) ? Vector{Vector{Float64}}() : nothing
+    train_at = _surrogate_train_at(nwarmup)
     warmup_divergent = 0
     warmup_used = nwarmup
     settled = 0
@@ -378,9 +380,10 @@ function _run_chain(logdensity!, centre::Vector{Float64},
     depths = 0
     while iteration < nwarmup
         iteration += 1
+        _surrogate_begin!(logdensity!, x, g)
         step = _nuts_transition!(ws, logdensity!, current, rng, x, g, logp, eps,
             maxdepth, maxdelta)
-        logp = step.logp
+        logp = _surrogate_correct!(logdensity!, x, g, step.logp, rng)
         depths += step.depth
         step.divergent && (warmup_divergent += 1)
         # `warmup_divergent` counts everything, for the report; the rate that
@@ -388,7 +391,13 @@ function _run_chain(logdensity!, centre::Vector{Float64},
         (step.divergent && iteration > _ADAPT_INIT_BUFFER) &&
             (check_divergent += 1)
         eps = _dual_update!(da, step.accept)
-        trainstates === nothing || _surrogate_keep!(trainstates, x)
+        if trainstates !== nothing
+            _surrogate_keep!(trainstates, x)
+            if iteration == train_at
+                logp = _surrogate_warmed!(logdensity!, trainstates, x, g, logp)
+                trainstates = nothing
+            end
+        end
         # Raise `target_accept` rather than only reporting divergences.
         #
         # A divergence means the integrator could not follow the geometry at the
@@ -482,9 +491,10 @@ function _run_chain(logdensity!, centre::Vector{Float64},
                 remaining = min(nwarmup - iteration, _ADAPT_TERM_BUFFER)
                 for _ in 1:remaining
                     iteration += 1
+                    _surrogate_begin!(logdensity!, x, g)
                     step = _nuts_transition!(ws, logdensity!, current, rng, x, g,
                         logp, eps, maxdepth, maxdelta)
-                    logp = step.logp
+                    logp = _surrogate_correct!(logdensity!, x, g, step.logp, rng)
                     step.divergent && (warmup_divergent += 1)
                     eps = _dual_update!(da, step.accept)
                 end
@@ -496,10 +506,12 @@ function _run_chain(logdensity!, centre::Vector{Float64},
         end
     end
     eps = _dual_final(da)
-    # The sampling phase may run on a coreset from here, fitted to the last
-    # warm-up states; `logp` and `g` are then the coreset's at `x`.
+    # A warm-up that ended before `train_at` (an early stop) fits from what it
+    # kept; a coreset whose moves warm-up accepted too rarely is given up
+    # before sampling. `logp` and `g` are the density's in use at `x`.
     trainstates === nothing || (logp = _surrogate_warmed!(logdensity!,
         trainstates, x, g, logp))
+    logp = _surrogate_batch!(logdensity!, x, g, logp)
     # Forced: warmup may finish inside a callback interval (a short run, or
     # the settle_tol early-stop above), and the transition to sampling is
     # exactly the state a live watcher should not miss.
