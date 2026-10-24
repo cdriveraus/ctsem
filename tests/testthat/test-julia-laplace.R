@@ -856,9 +856,10 @@ test_that("intoverpop values mean what they say", {
   model <- .laplace_test_model()
   dat <- .laplace_test_data(nsubjects = 4, nobs = 4)
 
-  # TRUE integrates the random effects out by the method the model suits, as
-  # 'auto' does when optimizing: on this model, whose only random effect shifts
-  # a manifest mean with a Gaussian indicator, that is the augmented filter.
+  # TRUE integrates the random effects out by the Laplace route, as 'auto'
+  # does when optimizing: on this model, whose only random effect shifts a
+  # manifest mean with a Gaussian indicator, inside the subject's filter.
+  # 'augmented' names the carrier states.
   logical_spec <- suppressMessages(ctFit(dat, model, backend = "julia",
     intoverpop = TRUE, fit = FALSE))
   named_spec <- suppressMessages(ctFit(dat, model, backend = "julia",
@@ -866,20 +867,20 @@ test_that("intoverpop values mean what they say", {
   auto_spec <- suppressMessages(ctFit(dat, model, backend = "julia",
     intoverpop = "auto", fit = FALSE))
 
-  expect_equal(logical_spec$nlatent_augmented, named_spec$nlatent_augmented)
-  expect_equal(logical_spec$nlatent_augmented, auto_spec$nlatent_augmented)
-  expect_null(logical_spec$laplace)
+  expect_false(is.null(logical_spec$laplace$hybrid))
+  expect_false(is.null(auto_spec$laplace$hybrid))
   expect_null(named_spec$laplace)
-  expect_null(auto_spec$laplace)
-  expect_equal(logical_spec$intoverpop, "augmented")
+  expect_identical(logical_spec$args$resolved$intoverpop, "laplace")
+  expect_identical(auto_spec$args$resolved$intoverpop, "laplace")
+  expect_identical(named_spec$args$resolved$intoverpop, "augmented")
 
-  # Where the augmented filter is not exact -- a random effect on DRIFT -- TRUE
-  # takes the Laplace route and says so; 'augmented' still names the filter.
+  # A random effect on DRIFT is a Laplace coordinate under TRUE; 'augmented'
+  # still names the filter.
   nonlinear <- model
   nonlinear$pars$indvarying[nonlinear$pars$matrix %in% "DRIFT" &
     is.na(nonlinear$pars$value)] <- TRUE
-  expect_message(nonlinear_spec <- ctFit(dat, nonlinear, backend = "julia",
-    intoverpop = TRUE, fit = FALSE), "intoverpop=TRUE integrates by 'laplace'")
+  nonlinear_spec <- suppressMessages(ctFit(dat, nonlinear, backend = "julia",
+    intoverpop = TRUE, fit = FALSE))
   expect_false(is.null(nonlinear_spec$laplace))
   forced <- suppressMessages(ctFit(dat, nonlinear, backend = "julia",
     intoverpop = "augmented", fit = FALSE))

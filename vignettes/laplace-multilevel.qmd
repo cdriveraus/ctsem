@@ -414,12 +414,13 @@ it has done so rather than failing.
 outer level is weakly identified.
 
 **Choosing between them.** `intoverpop = TRUE`, and the default `'auto'`
-when optimizing, choose for you: augmentation where it is exact — random
-effects that shift a mean, Gaussian indicators, one grouping level — and
-Laplace everywhere else, saying so in one line. Augmentation is faster on small
-models. Name Laplace explicitly when the augmented state becomes the
-bottleneck — many varying parameters, so that $n + k$ is much larger than $n$;
-it is the only option for nesting beyond the subject level.
+when optimizing, take Laplace on the julia backend. It integrates random
+effects that shift a mean in a linear Gaussian model exactly, inside each
+subject's filter, as augmentation would, and every other effect by the Laplace
+approximation; it is the only option for nesting beyond the subject level.
+Name augmentation explicitly for an effect the filter does not take -- a random
+time dependent predictor effect, or a discrete time model -- where its carrier
+state is cheaper than a Laplace coordinate.
 
 **Time-independent predictors** work at any level, provided the predictor
 actually varies at that level.
