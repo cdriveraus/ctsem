@@ -139,6 +139,7 @@
 "test-kalman-elements.R","filter","core"
 "test-subject-ids.R","filter","core"
 "test-data-guards.R","spec","core"
+"test-driftscaled.R","spec","core"
 "test-ctcov.R","spec","extended"
 "test-julia-item-pit.R","categorical","core"
 "test-julia-weights.R","uncertainty","core"

@@ -267,6 +267,29 @@
     }
   }
 
+  # A drift-scaled diffusion (R/ctModelDriftScaled.R) is an expression of a
+  # PARS cell, the sd accrued over one time unit, and is started where the
+  # default parameterisation starts the diffusion: the process's stationary
+  # spread at the data's, which over one time unit accrues
+  # latentsd^2 (1 - exp(2 a)). Left at raw zero it starts at 6.93 whatever
+  # the data's scale -- the failure the top of this file describes.
+  if (continuous && "DIFFUSION" %in% model$driftScaled) {
+    for (i in seq_len(nlatent)) {
+      if (is.na(ar[i])) next
+      cell <- model$pars$param[model$pars$matrix %in% "DIFFUSION" &
+        model$pars$row == i & model$pars$col == i]
+      k <- suppressWarnings(as.integer(sub("^PARS\\[([0-9]+),1\\].*$", "\\1",
+        cell[1L])))
+      if (!length(k) || is.na(k)) next
+      row <- pt[pt$matrix %in% "PARS" & pt$row == k & pt$col == 1 &
+        !is.na(pt$parnumber) & !is.na(pt$transform), , drop = FALSE]
+      if (nrow(row) != 1L) next
+      a <- min(max(log(ar[i]) / dtmed[i], -3), -0.02)
+      set(row$parnumber, latentsd[i] * sqrt(1 - exp(2 * a)))
+      free <- rbind(free, row[, names(free), drop = FALSE])
+    }
+  }
+
   if (!any(is.finite(target))) return(NULL)
   out <- rep(NA_real_, npar)
   for (k in seq_len(nrow(free))) {
