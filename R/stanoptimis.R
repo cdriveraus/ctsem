@@ -1064,10 +1064,7 @@ imis_is <- function(parlp,
   # `.ctCoresetLpg()` -- says what it has spent, in full evaluations, and the
   # budget and the record read that instead.
   costfun <- attr(parlp, 'cost')
-  # Its own spending: the coreset may have served a stage before this one
-  # (DAIS, `.ctDaisEngine()`), whose cost is that stage's record.
-  cost0 <- if (is.function(costfun)) costfun() else 0
-  spent <- if (is.function(costfun)) function() costfun() - cost0 else
+  spent <- if (is.function(costfun)) function() costfun() else
     function() nevals + 2 * ngrad
   pathinfo <- NULL
   if (!is.null(gradfun) && isTRUE(paths)) {

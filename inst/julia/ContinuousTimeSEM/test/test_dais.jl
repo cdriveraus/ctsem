@@ -146,10 +146,11 @@ end
     end
 end
 
-@testset "DAIS through the importance sampler's coreset trains it, and lands where the full objective does" begin
-    # 'checked' hands DAIS the coreset the importance sampler then uses: its
-    # gradient batches run on a coreset once one is expected to cost less,
-    # and an iteration in full teaches it, for nothing beyond the gradients.
+@testset "DAIS on a coreset of its own lands where the full objective does, for less" begin
+    # Its gradient batches run on a coreset once one is expected to cost
+    # less, checked every batch, and an iteration in full teaches it for
+    # nothing beyond the gradients. Unchecked once trusted, a coreset of 3-6
+    # units of 200 chosen from the first draws put the answer 0.9 sd off.
     starts, times, data = _laplace_test_data(40, 1; seed=3)
     prior = ctsem_objective(_LAPLACE_LINEAR_OBJECTIVE.params, starts, times, data;
         prior_index=collect(1:8), prior_scale=ones(8))
@@ -157,20 +158,19 @@ end
     x0 = copy(_LAPLACE_LINEAR_VALUES)
     C = inv(Symmetric(-ContinuousTimeSEM.ctsem_hessian(laplace, x0)))
     full = ctsem_dais(laplace, x0, C; draws=64, seed=23, parallel=false)
-    cs = ctsem_is_coreset(laplace)
-    viacs = ctsem_dais(cs, x0, C; draws=64, seed=23)
+    viacs = ctsem_dais(laplace, x0, C; draws=64, seed=23, coreset=true)
     @test full.used && viacs.used
     @test !full.coreset
     @test viacs.coreset
     @test viacs.parallel == "coreset"
-    # In full, a gradient costs two; the coreset never costs more.
+    @test viacs.coreset_chosen >= 1
+    # In full, a gradient costs two; the coreset costs less: on three seeds
+    # 1,242-1,562 full evaluations against 3,968-4,480.
     @test full.cost == 2 * full.gradients
-    @test viacs.cost <= 2 * viacs.gradients + 1e-9
-    @test ContinuousTimeSEM.ctsem_is_coreset_cost(cs) == viacs.cost
-    # It learned every draw it evaluated in full.
-    @test cs.rows.nrows > 0
+    @test viacs.cost < 0.7 * full.cost
     # The same normal, within two runs' Monte Carlo error (each mean to 0.05
-    # sd) and the coreset's (0.1 log units RMS at the draws).
+    # sd) and the coreset's (0.1 log units RMS at the draws): 0.04-0.05 sd on
+    # three seeds.
     sdf = sqrt.(diag(full.cov))
     @test maximum(abs.(viacs.mean .- full.mean) ./ sdf) < 0.3
     @test all(0.75 .< sqrt.(diag(viacs.cov)) ./ sdf .< 1.33)
