@@ -138,13 +138,19 @@ shapes <- list(
   # and the filter integrates the intercept given it (a full-rank block,
   # `CTSEMHybrid`): the inner solve, its probes and the logdet's derivatives
   # at the Gaussian workspace type, which every Gaussian Laplace fit with a
-  # nonlinear effect runs.
+  # nonlinear effect runs. Its fit stops at the Hessian's normal, without the
+  # quadrature correction or importance sampling: on these ten subjects the
+  # drift effect's Laplace term is checked and corrected, and the record was
+  # 2,500 calls, 2,100 of them the continuation's evaluations, which every
+  # build would replay. The correction's rounds and the importance sampler
+  # were in no shape before this one either.
   gaussian_laplace_block = list(route = "laplace", model = function() {
       m <- cint_model(c("y1", "y2"))
       m$pars$indvarying <- m$pars$param %in% c("cint", "drift_eta1")
       m
     },
-    data = function() indicators(sim_latent(10, 6), c("y1", "y2"))),
+    data = function() indicators(sim_latent(10, 6), c("y1", "y2")),
+    optimcontrol = list(laplace_correct = FALSE, uncertainty = "hessian")),
   # A model with a categorical indicator is a different filter workspace type
   # -- the categorical update is gated on it, so Gaussian fits do not carry
   # that code -- so each route needs one. Binary and ordinal share it.
@@ -180,8 +186,17 @@ invisible(ctsem:::.ctJuliaEval(paste(
   "    x = size(x, 1) >= size(x, 2) ? x[1:3, :] : x[:, 1:3]",
   "  end",
   "  ctsem_generator_literal(x)",
+  "end",
+  # The batch evaluations take their draws as columns, whichever dimension
+  # is the larger: the uncertainty stage sends hundreds of them, each with its
+  # draws, and written whole they made the file thirty times its size.
+  "function ctsem_generator_draw_columns(x)",
+  "  x isa AbstractMatrix && size(x, 2) > 3 && (x = x[:, 1:3])",
+  "  ctsem_generator_literal(x)",
   "end", sep = "\n")))
 draws <- c("ctsem_parameter_matrices", "ctsem_laplace_population")
+drawcols <- c("ctsem_evaluate_batch", "ctsem_evaluate_batch_gradient",
+  "ctsem_coreset_batch", "ctsem_coreset_batch_gradient", "ctsem_coreset_terms")
 
 rec <- new.env()
 skip <- c("ctsem_set_max_chunks!", "ctsem_max_chunks", "ctsem_set_interrupt!",
@@ -195,7 +210,8 @@ engine_name <- function(name) {
 # whether it is a matrix of draws.
 encode <- function(x, fn) {
   if (is.function(x)) stop("an R callback cannot be replayed at build time")
-  writer <- if (fn %in% draws) "ctsem_generator_draws" else "ctsem_generator_literal"
+  writer <- if (fn %in% draws) "ctsem_generator_draws" else
+    if (fn %in% drawcols) "ctsem_generator_draw_columns" else "ctsem_generator_literal"
   if (!inherits(x, "JuliaProxy")) return(raw_call(writer, x))
   for (p in rec$proxies) if (identical(p$proxy, x)) {
     return(if (is.null(p$code)) raw_call(writer, x) else p$code)
@@ -247,8 +263,9 @@ for (name in names(shapes)) {
   rec$calls <- list(); rec$proxies <- list(); rec$on <- TRUE
   # The starting values a user's `inits = NULL` fit draws, from a fixed seed.
   set.seed(1)
-  fit <- tryCatch(suppressWarnings(suppressMessages(ctFit(dat, model,
-    backend = "julia", intoverpop = s$route, cores = 1L))),
+  args <- list(dat, model, backend = "julia", intoverpop = s$route, cores = 1L)
+  if (!is.null(s$optimcontrol)) args$optimcontrol <- s$optimcontrol
+  fit <- tryCatch(suppressWarnings(suppressMessages(do.call(ctFit, args))),
     finally = rec$on <- FALSE)
   # A replay that could not build its model would compile nothing and say so
   # only in a stopwatch.
