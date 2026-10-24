@@ -33,6 +33,37 @@ function _laplace_truncate!(so, full, t::Integer)
     return so
 end
 
+"""
+What a pass over a prefix of a unit's record overwrites: its retained mode and
+inner-solve flags, and (in `full`) the member's record that
+`_laplace_truncate!` cuts. `_laplace_unit_restore!` puts both back, in a
+`finally`, so a unit is as the objective left it whatever the pass did.
+"""
+function _laplace_unit_saved(laplace, U::Integer, so)
+    return (mode=copy(laplace.modes[U]), iterations=laplace.inner_iterations[U],
+        gradient=laplace.inner_gradient[U], converged=laplace.inner_converged[U],
+        hrepaired=laplace.hessian_repaired[U], mrepaired=laplace.mode_repaired[U],
+        floored=laplace.logdet_floored[U],
+        full=(data=so.data, timesteps=so.timesteps, tdpreds=so.tdpreds,
+            max_timestep=so.max_timestep))
+end
+
+function _laplace_unit_restore!(laplace, U::Integer, so, saved)
+    full = saved.full
+    so.data = full.data
+    so.timesteps = full.timesteps
+    so.tdpreds = full.tdpreds
+    so.max_timestep = full.max_timestep
+    laplace.modes[U] = saved.mode
+    laplace.inner_iterations[U] = saved.iterations
+    laplace.inner_gradient[U] = saved.gradient
+    laplace.inner_converged[U] = saved.converged
+    laplace.hessian_repaired[U] = saved.hrepaired
+    laplace.mode_repaired[U] = saved.mrepaired
+    laplace.logdet_floored[U] = saved.floored
+    return nothing
+end
+
 """Inverse of a symmetric curvature by its eigenvalues, each floored at
 `1e-8`: a covariance even where the mode is not a strict maximum."""
 function _laplace_sequential_inverse(M::AbstractMatrix)
@@ -108,13 +139,9 @@ function _laplace_sequential_unit!(out, laplace::CTSEMLaplaceObjective, U::Integ
     units = laplace.units
     i = units.members[U][1]
     so = laplace.objective.subject_objectives[i]
-    full = (data=so.data, timesteps=so.timesteps, tdpreds=so.tdpreds,
-        max_timestep=so.max_timestep)
+    saved = _laplace_unit_saved(laplace, U, so)
+    full = saved.full
     T = size(full.data, 2)
-    saved = (mode=copy(laplace.modes[U]), iterations=laplace.inner_iterations[U],
-        gradient=laplace.inner_gradient[U], converged=laplace.inner_converged[U],
-        hrepaired=laplace.hessian_repaired[U], mrepaired=laplace.mode_repaired[U],
-        floored=laplace.logdet_floored[U])
     sp = laplace.objective.params
     hyb = sp.hybrid
     hybrid = _hybrid_on(hyb)
@@ -220,17 +247,7 @@ function _laplace_sequential_unit!(out, laplace::CTSEMLaplaceObjective, U::Integ
                 t + 1, SigmaP, D)
         end
     finally
-        so.data = full.data
-        so.timesteps = full.timesteps
-        so.tdpreds = full.tdpreds
-        so.max_timestep = full.max_timestep
-        laplace.modes[U] = saved.mode
-        laplace.inner_iterations[U] = saved.iterations
-        laplace.inner_gradient[U] = saved.gradient
-        laplace.inner_converged[U] = saved.converged
-        laplace.hessian_repaired[U] = saved.hrepaired
-        laplace.mode_repaired[U] = saved.mrepaired
-        laplace.logdet_floored[U] = saved.floored
+        _laplace_unit_restore!(laplace, U, so, saved)
     end
     return nothing
 end

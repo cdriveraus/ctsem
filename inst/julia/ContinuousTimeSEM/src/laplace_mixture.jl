@@ -399,12 +399,8 @@ function _laplace_mixture_unit!(out, laplace::CTSEMLaplaceObjective, U::Integer,
     # record cut at rows T/8, T/4, T/2 and T, each solved as the objective
     # solves it, so that one sits near every row's posterior. The unit's record
     # and retained state are put back afterwards.
-    saved = (mode=copy(laplace.modes[U]), iterations=laplace.inner_iterations[U],
-        gradient=laplace.inner_gradient[U], converged=laplace.inner_converged[U],
-        hrepaired=laplace.hessian_repaired[U], mrepaired=laplace.mode_repaired[U],
-        floored=laplace.logdet_floored[U])
-    full = (data=so.data, timesteps=so.timesteps, tdpreds=so.tdpreds,
-        max_timestep=so.max_timestep)
+    saved = _laplace_unit_saved(laplace, U, so)
+    full = saved.full
     comps = [(mu=zeros(d), vecs=Matrix{Float64}(I, d, d), lam=ones(d), c=1.0)]
     if d > 0
         try
@@ -418,17 +414,7 @@ function _laplace_mixture_unit!(out, laplace::CTSEMLaplaceObjective, U::Integer,
                 push!(comps, (mu=mu, vecs=E.vectors, lam=max.(E.values, 1e-12), c=scale))
             end
         finally
-            so.data = full.data
-            so.timesteps = full.timesteps
-            so.tdpreds = full.tdpreds
-            so.max_timestep = full.max_timestep
-            laplace.modes[U] = saved.mode
-            laplace.inner_iterations[U] = saved.iterations
-            laplace.inner_gradient[U] = saved.gradient
-            laplace.inner_converged[U] = saved.converged
-            laplace.hessian_repaired[U] = saved.hrepaired
-            laplace.mode_repaired[U] = saved.mrepaired
-            laplace.logdet_floored[U] = saved.floored
+            _laplace_unit_restore!(laplace, U, so, saved)
         end
     end
 
