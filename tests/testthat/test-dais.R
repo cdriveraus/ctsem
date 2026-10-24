@@ -17,7 +17,11 @@ test_that("'checked' runs DAIS in the engine on a julia fit, and not where asked
   expect_true(isTRUE(dais$used))
   expect_gt(dais$iterations, 0L)
   expect_equal(dais$gradients, dais$draws * dais$iterations)
-  expect_equal(dais$cost, 2 * dais$gradients)
+  # A Laplace fit's 'checked' has a coreset, and DAIS's draws go through one
+  # of its own: never dearer than the gradients in full, a gradient as two.
+  expect_true(isTRUE(dais$coreset$used))
+  expect_lte(dais$cost, 2 * dais$gradients)
+  expect_gte(dais$coreset$chosen, 0L)
   expect_equal(nrow(dais$trace), dais$iterations)
   expect_true(all(c("gamma", "natural", "noise", "usable") %in% colnames(dais$trace)))
   npar <- length(fit$estimate$raw)
