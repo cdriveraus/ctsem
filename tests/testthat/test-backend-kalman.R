@@ -399,8 +399,10 @@ test_that("the measurement model is re-evaluated at the updated state", {
   # No priors, so ctJuliaEvaluate() below is the likelihood the trace reports:
   # 'randomCorr' puts a prior on the two intercepts' correlation, and the
   # evaluated objective would then be a posterior.
+  # Augmented by name: the trace is checked on carrier states, and 'auto'
+  # takes the Laplace route since juliaFit 6fcaf91a.
   spec <- suppressMessages(ctFit(data, model, backend = "julia", fit = FALSE,
-    priors = FALSE))
+    priors = FALSE, intoverpop = "augmented"))
   npar <- max(spec$parameter_table$parnumber, na.rm = TRUE)
   set.seed(8)
   raw <- stats::rnorm(npar, 0, .3)
@@ -473,7 +475,10 @@ test_that("the improved reports differ from Stan only where Stan is approximate"
   # measurement intercept accounts for.
   model <- .kalman_indvarmeans_model()
   data <- .kalman_indvarmeans_data()
-  spec <- suppressMessages(ctFit(data, model, backend = "julia", fit = FALSE))
+  # Augmented by name, as stan's model is: 'auto' takes the Laplace route
+  # since juliaFit 6fcaf91a, which has fewer raw parameters.
+  spec <- suppressMessages(ctFit(data, model, backend = "julia", fit = FALSE,
+    intoverpop = "augmented"))
   npar <- max(spec$parameter_table$parnumber, na.rm = TRUE)
   set.seed(8)
   raw <- stats::rnorm(npar, 0, .3)
