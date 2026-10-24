@@ -1341,58 +1341,6 @@ function _ctsem_coreset_record!(c::CTSEMCoresetPlan, x::AbstractVector, G::Abstr
 end
 
 """
-    _ctsem_nnls(AtA, Atb)
-
-Lawson and Hanson's non-negative least squares, from the normal equations:
-the `x >= 0` minimising `|A x - b|^2`, given `A'A` and `A'b`. Each passive set
-is solved by a Cholesky factorization of its block, with a ridge of `1e-12` of
-the diagonal's mean so that collinear units do not stop it.
-"""
-function _ctsem_nnls(AtA::AbstractMatrix, Atb::AbstractVector)
-    n = length(Atb)
-    x = zeros(n)
-    n == 0 && return x
-    P = falses(n)
-    w = collect(Float64, Atb)
-    tol = 1e-10 * max(1.0, maximum(abs, w))
-    ridge = 1e-12 * max(sum(AtA[i, i] for i in 1:n) / n, eps())
-    solve(idx) = begin
-        B = AtA[idx, idx]
-        for i in eachindex(idx)
-            B[i, i] += ridge
-        end
-        F = cholesky!(Symmetric(B); check=false)
-        issuccess(F) ? F \ Atb[idx] : pinv(AtA[idx, idx]) * Atb[idx]
-    end
-    for _ in 1:(3n)
-        j = 0; best = tol
-        for i in 1:n
-            (!P[i] && w[i] > best) && (best = w[i]; j = i)
-        end
-        j == 0 && break
-        P[j] = true
-        z = zeros(n)
-        for _ in 1:(3n)
-            idx = findall(P)
-            z = zeros(n)
-            z[idx] = solve(idx)
-            all(z[i] > 0 for i in idx) && break
-            alpha = Inf
-            for i in idx
-                z[i] <= 0 && (alpha = min(alpha, x[i] / (x[i] - z[i])))
-            end
-            x .+= alpha .* (z .- x)
-            for i in idx
-                x[i] <= 1e-12 && (P[i] = false; x[i] = 0.0)
-            end
-        end
-        x = z
-        w = Atb .- AtA * x
-    end
-    return x
-end
-
-"""
     _ctsem_coreset_information(S, scale)
 
 Each parameter's spread of the units' scores (`S`, units by parameters) about
@@ -1457,17 +1405,6 @@ function _ctsem_coreset_shortfall(S::AbstractMatrix, units, w::AbstractVector, i
     return worst
 end
 
-"""The sizes tried, 1.25 times apart, from one unit to `N`."""
-function _ctsem_coreset_sizes(N::Integer)
-    sizes = Int[]
-    m = 1
-    while m <= N
-        push!(sizes, m)
-        m = max(m + 1, round(Int, 1.25m))
-    end
-    return sizes
-end
-
 """
     _ctsem_coreset_path(c, steps, budget, value, scale; size)
 
@@ -1486,7 +1423,8 @@ evaluation; the weights at each size tried (`_ctsem_coreset_sizes`) are
 non-negative least squares (`_ctsem_nnls`). `value` returns the score, a bound
 on any larger coreset's, and the error to keep; the search stops once the bound
 is no better than the best. With `size`, the path goes to that many units and
-is taken there, unscored.
+is taken there, unscored. The selection is `_coreset_select`'s, on the
+projected residual.
 
 With `information` (`_ctsem_coreset_information`), each parameter that counts
 adds a row: the units' squared deviations of score from the mean over their
@@ -1523,62 +1461,12 @@ function _ctsem_coreset_path(c::CTSEMCoresetPlan, steps, budget::Real, value,
         end
     end
     sum!(reshape(b, rows, 1), A)
-    Ap = copy(A)
-    nrm = vec(sum(abs2, Ap; dims=1))
-    floor0 = 1e-14 * maximum(nrm; init=0.0)
-    r = copy(b)
-    chosen = Int[]
-    spent = 0.0
-    along = zeros(N)
-    t = zeros(N)
-    best = nothing
-    bestv = 0.0
-    for target in (size > 0 ? [min(Int(size), N)] : _ctsem_coreset_sizes(N))
-        while length(chosen) < target
-            mul!(along, transpose(Ap), r)
-            j = 0; top = 0.0
-            @inbounds for U in 1:N
-                a = along[U]
-                if a > 0 && nrm[U] > floor0
-                    s = a^2 / nrm[U]
-                    s > top && (top = s; j = U)
-                end
-            end
-            j == 0 && break
-            spent + c.cost[j] > budget && break
-            push!(chosen, j)
-            spent += c.cost[j]
-            q = Ap[:, j]
-            q ./= norm(q)
-            mul!(t, transpose(Ap), q)
-            LinearAlgebra.BLAS.ger!(-1.0, q, t, Ap)
-            # The lengths by downdating, and afresh every eighth unit, so that
-            # rounding cannot leave a spent column looking long.
-            if length(chosen) % 8 == 0
-                sum!(abs2, reshape(nrm, 1, N), Ap)
-            else
-                @inbounds for U in 1:N
-                    nrm[U] = max(nrm[U] - t[U]^2, 0.0)
-                end
-            end
-            for U in chosen
-                nrm[U] = 0.0
-            end
-            r .-= q .* dot(q, r)
-        end
-        isempty(chosen) && return nothing
-        As = A[:, chosen]
-        w = _ctsem_nnls(transpose(As) * As, transpose(As) * b)
-        size > 0 && return (units=copy(chosen), weights=w, error=NaN)
-        v, bound, err = value(chosen, w)
-        if v > bestv
-            best = (units=copy(chosen), weights=w, error=err)
-            bestv = v
-        end
-        # No larger coreset can do better, or there is none.
-        (bound <= bestv || length(chosen) < target) && break
-    end
-    return best
+    sizes = size > 0 ? [min(Int(size), N)] : _ctsem_coreset_sizes(N)
+    # With `size`, the path is taken there, unscored.
+    judge = size > 0 ? ((units, w) -> (1.0, 0.0, NaN)) : value
+    found = _coreset_select(A, b, c.cost, budget, sizes, judge)
+    found === nothing && return nothing
+    return (units=found.units, weights=found.weights, error=found.extra)
 end
 
 """
