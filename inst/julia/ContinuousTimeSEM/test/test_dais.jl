@@ -46,11 +46,18 @@ end
     @test r.used
     @test r.settled
     @test r.averaged > 0
-    @test maximum(abs.(r.mean .- t.mean) ./ t.sd) < 0.15
+    # It stops once its draws can show the answer is held to its precision,
+    # not after a fixed count: over twelve seeds 11-17 iterations, where the
+    # windows fixed at 20 stopped at 61 at the earliest.
+    @test r.iterations < 40
+    # The rule holds each mean's Monte Carlo error to 0.05 sd; the largest of
+    # twenty adds that and the damped fixed point's own bias: 0.06-0.18 over
+    # twelve seeds.
+    @test maximum(abs.(r.mean .- t.mean) ./ t.sd) < 0.25
     # The damped fixed point's sds sit a little under the posterior's: over
-    # ten seeds the smallest ratio was 0.82-0.86, the median 0.94-0.96.
+    # twelve seeds the smallest ratio was 0.79-0.89, the median 0.93-0.95.
     ratio = sqrt.(diag(r.cov)) ./ t.sd
-    @test all(0.78 .< ratio .< 1.1)
+    @test all(0.75 .< ratio .< 1.1)
     # Even draws an iteration, counted; the trace carries one row an iteration.
     @test r.draws == 64
     @test r.gradients == 64 * r.iterations
@@ -61,6 +68,7 @@ end
     g = _DaisTarget(x -> (-dot(x, P * x) / 2, -(P * x)))
     r0 = ctsem_dais(g, zeros(20), t.lapcov; draws=64, seed=13)
     @test r0.settled
+    @test r0.iterations < 30
     @test maximum(abs.(r0.mean) ./ sqrt.(diag(t.lapcov))) < 0.1
     @test isapprox(r0.cov, t.lapcov; rtol=0.15)
 end
@@ -136,6 +144,36 @@ end
         @test isapprox(pool.mean, one.mean; rtol=1e-8)
         @test isapprox(pool.cov, one.cov; rtol=1e-8)
     end
+end
+
+@testset "DAIS through the importance sampler's coreset trains it, and lands where the full objective does" begin
+    # 'checked' hands DAIS the coreset the importance sampler then uses: its
+    # gradient batches run on a coreset once one is expected to cost less,
+    # and an iteration in full teaches it, for nothing beyond the gradients.
+    starts, times, data = _laplace_test_data(40, 1; seed=3)
+    prior = ctsem_objective(_LAPLACE_LINEAR_OBJECTIVE.params, starts, times, data;
+        prior_index=collect(1:8), prior_scale=ones(8))
+    laplace = ctsem_laplace_objective(prior, [1, 2], [6, 7], [8], [1.0, 1.0])
+    x0 = copy(_LAPLACE_LINEAR_VALUES)
+    C = inv(Symmetric(-ContinuousTimeSEM.ctsem_hessian(laplace, x0)))
+    full = ctsem_dais(laplace, x0, C; draws=64, seed=23, parallel=false)
+    cs = ctsem_is_coreset(laplace)
+    viacs = ctsem_dais(cs, x0, C; draws=64, seed=23)
+    @test full.used && viacs.used
+    @test !full.coreset
+    @test viacs.coreset
+    @test viacs.parallel == "coreset"
+    # In full, a gradient costs two; the coreset never costs more.
+    @test full.cost == 2 * full.gradients
+    @test viacs.cost <= 2 * viacs.gradients + 1e-9
+    @test ContinuousTimeSEM.ctsem_is_coreset_cost(cs) == viacs.cost
+    # It learned every draw it evaluated in full.
+    @test cs.rows.nrows > 0
+    # The same normal, within two runs' Monte Carlo error (each mean to 0.05
+    # sd) and the coreset's (0.1 log units RMS at the draws).
+    sdf = sqrt.(diag(full.cov))
+    @test maximum(abs.(viacs.mean .- full.mean) ./ sdf) < 0.3
+    @test all(0.75 .< sqrt.(diag(viacs.cov)) ./ sdf .< 1.33)
 end
 
 @testset "DAIS reports to the caller's sink" begin

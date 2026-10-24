@@ -101,9 +101,11 @@
   }
   fn <- function(parm) batch(matrix(parm, 1L))
   attr(fn, 'batch') <- batch
-  # The full objective's engine, for a stage that runs there on the full
-  # density (`.ctDaisEngine()`); the coreset serves only the batches here.
+  # The full objective's engine, and the coreset itself, for a stage that runs
+  # in the engine (`.ctDaisEngine()`): DAIS's draws go through the coreset, so
+  # it trains it for the sampler after it.
   attr(fn, 'engine') <- attr(lpg, 'engine')
+  attr(fn, 'iscoreset') <- engine
   attr(fn, 'gradbatch') <- gradbatch
   attr(fn, 'fullgradbatch') <- gradfull
   attr(fn, 'cost') <- function() as.numeric(call('ctsem_is_coreset_cost'))

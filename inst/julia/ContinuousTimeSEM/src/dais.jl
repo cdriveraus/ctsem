@@ -42,17 +42,36 @@ normal was 2.5 off, the sds 0.75 of the posterior's).
 Three things the paper's 10^5 draws an iteration never met at 64-256:
 
   * The iterate is noisy where it is not wrong: its per-coordinate sds come
-    out right while its eigenstructure is noise. So once settled, `average`
-    more iterations are run and their iterates averaged (Polyak), and the
-    average is the answer; the last `average` are averaged where the budget
-    ends first.
-  * When to stop. Four rules failed on the time series; what holds is three
-    tests together over a window of `window` iterations, `settle` times
-    running: the natural gradient `E_w[Gamma grad Phi]` within twice its own
-    weighted standard error; the ELBO's last window within two standard
-    errors of the one before; and the mean's displacement over the window
-    within twice the random walk its damped steps' noise would make. A test
+    out right while its eigenstructure is noise. So the answer is the
+    average of the iterates over a window at the fixed point (Polyak).
+  * When to stop. The answer is held to two stated precisions
+    (`_DAIS_PRECISION`): each coordinate's mean within `mean_sd` (0.1)
+    posterior sds, and the averaged covariance's Monte Carlo noise
+    distorting no direction's width by more than `width` (a third), which
+    the normal needs to serve as a sampler's metric. Each iteration takes the
+    shortest trailing window of iterates whose draws could show a departure
+    from those (`_dais_window`): effective draws at least `(2 / mean_sd)^2`
+    and `k / width^2` for `k` free dimensions; a drift of the mean of
+    `mean_sd` a coordinate visible above the random walk its damped steps'
+    noise makes; and a climb in the ELBO worth a `mean_sd` offset a
+    coordinate visible above its noise. It stops where, over that window,
+    the mean has not drifted beyond twice that random walk and the ELBO has
+    not climbed beyond twice its standard error, and the last natural
+    gradient `E_w[Gamma grad Phi]` is within twice its own. The answer is
+    the window's average. So a run that starts near its fixed point stops as
+    soon as its draws can say so, and one still travelling goes on. A test
     that cannot be read (a batch with no spread) is unmet.
+
+    Until 2026-10-24 the windows were fixed at 20 iterations, with three
+    passes in a row and 20 more iterations averaged: 61 before any stop,
+    however early the iterate had settled. The 266-parameter scale fit
+    stopped at exactly 61. Four rules before that failed on the time series:
+    stopping when `gamma` reached 1, which it never does in many dimensions;
+    when the damped step was small, which it is whenever `gamma` is; when the
+    undamped step was within a crude noise floor, which it always was; and on
+    the ELBO's drift over 5 iterations, which hid 0.4 nats an iteration. Each
+    stopped where too few draws could see the departure. The windows here
+    are as long as seeing it takes, and no longer.
   * A covariance step that is not positive definite halves `gamma` on the
     same draws until it is.
 
@@ -66,11 +85,20 @@ density cannot use carries no weight and no gradient (zero weight times an
 infinite gradient was NaN, and stopped a fit); a batch with fewer than two
 usable draws ends the run the same way.
 
+Where `'checked'` has an importance sampler's coreset (`CTSEMISCoreset`,
+coreset_sampler.jl), the draws go through it: its gradient batch runs on the
+coreset where that is expected to cost less and checks itself, and an
+iteration evaluated in full teaches it, since a value batch at the same draws
+reads the unit terms the gradients computed, for nothing, and is where it
+learns them and chooses. So DAIS pays a coreset's share once one holds, and
+the importance sampler that follows starts trained. Elsewhere the draws are
+evaluated at once, on the pool or on copies of the objective
+(`_each_point!`).
+
 Moved here from R (2026-10-24). In R each iteration crossed the bridge for
 its batch and did its arithmetic and the coreset's refits in R: on the
 266-parameter scale fit the R process used nine hours of CPU against the
-engine's four, and `'checked'` had not finished in nine and a half. Here the
-draws are evaluated at once on the pool or on copies (`_each_point!`), and
+engine's four, and `'checked'` had not finished in nine and a half. Here
 nothing crosses until the answer does.
 """
 
@@ -83,21 +111,152 @@ export ctsem_dais
 _dais_draws(k::Int) = 2 * ceil(Int, min(256, max(64, k)) / 2)
 
 """
+What DAIS's answer is held to (see the file comment): each coordinate's mean
+within `mean_sd` posterior sds, and no direction's width distorted by more
+than `width` by the averaged covariance's Monte Carlo noise. The second is
+the spread of a sample covariance's eigenvalues, `(1 +- sqrt(k / n))^2` for
+`n` effective draws in `k` dimensions, so it asks for `k / width^2` of them.
+"""
+const _DAIS_PRECISION = (mean_sd=0.1, width=1 / 3)
+
+"""
+    _dais_slope_se(se)
+
+The standard error of the least-squares slope over the index of points whose
+own standard errors `se` are known and independent.
+"""
+function _dais_slope_se(se::AbstractVector{Float64})
+    m = length(se)
+    xbar = (m + 1) / 2
+    sxx = 0.0
+    v = 0.0
+    for t in 1:m
+        d = t - xbar
+        sxx += d^2
+        v += d^2 * se[t]^2
+    end
+    return sqrt(v) / sxx
+end
+
+"""The least-squares slope of `e` over its index."""
+function _dais_slope(e::AbstractVector{Float64})
+    m = length(e)
+    xbar = (m + 1) / 2
+    ebar = sum(e) / m
+    sxx = 0.0
+    sxe = 0.0
+    for t in 1:m
+        d = t - xbar
+        sxx += d^2
+        sxe += d * (e[t] - ebar)
+    end
+    return sxe / sxx
+end
+
+"""
+    _dais_window(ess, se2, gamma, elbo_se, need, tol_mean, tol_elbo)
+
+The shortest trailing window of iterates, at least three, whose draws could
+show a departure from what the answer is held to: effective draws (`ess`) at
+least `need`; a remaining distance of the mean of `tol_mean` (in the normal's
+whitened units) visible above the random walk of its damped steps' noise,
+since a distance `d` moves the mean `d` times the window's summed damping
+(`gamma`) while the steps' noise (`se2`, each step's own) walks
+`sqrt(sum(gamma^2 se2))`; and an ELBO climb that would leave `tol_elbo` to
+gain visible above its noise (`elbo_se`), since a climb of `r` an iteration
+leaves about `r / (2 gamma)`. 0 where the run is not yet long enough.
+"""
+function _dais_window(ess::Vector{Float64}, se2::Vector{Float64}, gamma::Vector{Float64},
+    elbo_se::Vector{Float64}, need::Real, tol_mean::Real, tol_elbo::Real)
+    n = length(ess)
+    draws = 0.0
+    walk = 0.0
+    damp = 0.0
+    for m in 1:n
+        t = n - m + 1
+        draws += ess[t]
+        walk += gamma[t]^2 * se2[t]
+        damp += gamma[t]
+        m >= 3 || continue
+        draws >= need || continue
+        2 * sqrt(walk) <= tol_mean * damp || continue
+        _dais_slope_se(view(elbo_se, t:n)) <= damp / m * tol_elbo || continue
+        return m
+    end
+    return 0
+end
+
+"""
+    _dais_evaluate!(vals, grads, objective, coreset, X, mode)
+
+Each column of `X`'s log density and gradient into `vals` and the columns of
+`grads`, `-Inf` and zeros where a draw cannot be used, and the full
+evaluations spent, a gradient as two. Through the importance sampler's
+coreset where one is given: its gradient batch, checked at a few draws in
+full every time (`check`), since DAIS has no value batches to check it with;
+and where that ran in full, a value batch at the same draws, which reads the
+batch's unit terms for nothing and is where the coreset learns them and is
+chosen. Otherwise on the objective, the draws at once (`_each_point!`,
+`mode`).
+"""
+function _dais_evaluate!(vals::Vector{Float64}, grads::Matrix{Float64}, objective,
+    ::Nothing, X::Matrix{Float64}, mode::Symbol)
+    fill!(vals, -Inf)
+    fill!(grads, 0.0)
+    _each_point!(objective, size(X, 2), mode) do i, obj, _
+        r = _ctsem_probe_value_gradient(obj, X[:, i])
+        if r.gradient !== nothing && isfinite(r.value) && all(isfinite, r.gradient)
+            vals[i] = r.value
+            grads[:, i] .= r.gradient
+        end
+        return nothing
+    end
+    return 2.0 * size(X, 2)
+end
+
+function _dais_evaluate!(vals::Vector{Float64}, grads::Matrix{Float64}, objective,
+    cs::CTSEMISCoreset, X::Matrix{Float64}, mode::Symbol)
+    fill!(vals, -Inf)
+    fill!(grads, 0.0)
+    before = cs.cost
+    r = ctsem_is_coreset_gradbatch!(cs, X; check=true)
+    _is_cached(cs, X) && ctsem_is_coreset_batch!(cs, X)
+    for i in axes(X, 2)
+        v = r.value[i]
+        g = view(r.gradient, :, i)
+        if isfinite(v) && v > -1e100 && all(isfinite, g)
+            vals[i] = v
+            grads[:, i] .= g
+        end
+    end
+    return cs.cost - before
+end
+
+"""
     ctsem_dais(objective, centre, cov; hold, draws, maxiter, seed, rtol,
         maxgrowth, parallel, verbose, progress_sink, progress_overwrite)
+    ctsem_dais(coreset::CTSEMISCoreset, centre, cov; ...)
 
 Move the normal `N(centre, cov)` to the posterior's moments by doubly
-adaptive importance sampling (see the file comment). `hold`, a matrix whose
-columns are directions in the parameters, holds them at the normal's width.
-`draws` (0: `_dais_draws` of the dimension) and `maxiter` (150) bound the
-run. Returns `used`, the settled normal (`mean`, `cov`), and the record:
-iterations, how many were averaged, whether it settled, the last damping and
-effective sample, the unusable draws, the draws an iteration, the gradients
-spent, how the draws were evaluated (`parallel`: `_points_mode`'s serial, pool
-or copies), and the trace, one row an iteration (`trace_names`); `used = false`
-with `diverged` (and `growth`) or with no usable draws, and `cov = nothing`.
+adaptive importance sampling (see the file comment), on `objective` or
+through an importance sampler's coreset over its Laplace objective. `hold`, a
+matrix whose columns are directions in the parameters, holds them at the
+normal's width. `draws` (0: `_dais_draws` of the dimension) and `maxiter`
+(150) bound the run. Returns `used`, the settled normal (`mean`, `cov`), and
+the record: iterations, how many were averaged, whether it settled, the last
+damping and effective sample, the unusable draws, the draws an iteration,
+the gradients asked for, the full evaluations they cost (`cost`, a gradient
+as two), whether a coreset served them, how the draws were evaluated
+(`parallel`: `_points_mode`'s serial, pool or copies, or `coreset`), and the
+trace, one row an iteration (`trace_names`); `used = false` with `diverged`
+(and `growth`) or with no usable draws, and `cov = nothing`.
 """
-function ctsem_dais(objective, centre::AbstractVector, cov::AbstractMatrix;
+ctsem_dais(objective, centre::AbstractVector, cov::AbstractMatrix; kwargs...) =
+    _dais(objective, nothing, centre, cov; kwargs...)
+ctsem_dais(coreset::CTSEMISCoreset, centre::AbstractVector, cov::AbstractMatrix;
+    kwargs...) = _dais(coreset.laplace, coreset, centre, cov; kwargs...)
+
+function _dais(objective, coreset, centre::AbstractVector, cov::AbstractMatrix;
     hold::Union{Nothing,AbstractMatrix}=nothing, draws::Integer=0, maxiter::Integer=150,
     seed::Integer=20261024, rtol::Real=1e-10, maxgrowth::Real=1e4, parallel::Bool=true,
     verbose::Bool=false, progress_sink=nothing, progress_overwrite::Bool=true)
@@ -110,8 +269,8 @@ function ctsem_dais(objective, centre::AbstractVector, cov::AbstractMatrix;
     top = maximum(e.values)
     keep = findall(v -> v > rtol * top, e.values)
     k = length(keep)
-    k > 0 || return (used=false, diverged=false, unusable=0, iterations=0, cov=nothing,
-        draws=0, gradients=0, trace=zeros(0, 8), trace_names=_DAIS_TRACE)
+    k > 0 || return _dais_stopped(:empty, NaN, 0, Vector{Float64}[], 0, 0, 0.0,
+        coreset !== nothing)
     V = e.vectors[:, keep]
     sq = sqrt.(e.values[keep])
     A = V .* transpose(sq)
@@ -121,25 +280,32 @@ function ctsem_dais(objective, centre::AbstractVector, cov::AbstractMatrix;
     offhold(M) = U === nothing ? M : M .- (M * U) * transpose(U)
     S = draws > 0 ? max(4, 2 * ((Int(draws) + 1) ÷ 2)) : _dais_draws(k)
     essfrac = 0.5
-    settle = 3
-    window = 20
-    average = 20
-    mode = _points_mode(objective, parallel)
+    kfree = k - (U === nothing ? 0 : size(U, 2))
+    P = _DAIS_PRECISION
+    need = max((2 / P.mean_sd)^2, kfree / P.width^2)
+    tol_mean = P.mean_sd * sqrt(kfree)
+    tol_elbo = P.mean_sd^2 / 2 * kfree
+    mode = coreset === nothing ? _points_mode(objective, parallel) : :coreset
     rng = Random.Xoshiro(UInt64(seed))
     reporter = CTSEMProgress(verbose; label="DAIS", overwrite=progress_overwrite,
         sink=progress_sink)
 
     mu = zeros(k)
     Gamma = Matrix{Float64}(I, k, k)
+    # One entry an iteration: the mean after it (with the start first), and
+    # what the stopping rule reads. The covariances after the last `cap`
+    # iterations, which bounds what a window's average can hold to 256 MB.
+    mus = Vector{Vector{Float64}}([copy(mu)])
+    cap = clamp(floor(Int, 2^28 / (8 * k^2)), 2, max(2, Int(maxiter)))
+    Gs = Vector{Matrix{Float64}}(undef, cap)
+    gammas = Float64[]
+    se2s = Float64[]
+    esss = Float64[]
     elbos = Float64[]
-    mus = Vector{Vector{Float64}}()
-    stepnoise = Float64[]
-    recent = Vector{Tuple{Vector{Float64},Matrix{Float64}}}()
-    averaging = 0
-    settled = 0
-    musum = zeros(k)
-    Gsum = zeros(k, k)
+    elbo_ses = Float64[]
+    window = 0
     gradients = 0
+    cost = 0.0
     unusable = 0
     gamma = NaN
     essw = NaN
@@ -155,19 +321,7 @@ function ctsem_dais(objective, centre::AbstractVector, cov::AbstractMatrix;
         Z = E * transpose(Lc) .+ transpose(mu)
         lq = vec(-0.5 .* sum(abs2, E; dims=2)) .- sum(log, diag(Lc)) .- 0.5 * k * log(2pi)
         X = c0 .+ A * transpose(Z)
-        fill!(vals, -Inf)
-        fill!(grads, 0.0)
-        Xs = X
-        valsv = vals
-        gradsm = grads
-        _each_point!(objective, S, mode) do i, obj, _
-            r = _ctsem_probe_value_gradient(obj, Xs[:, i])
-            if r.gradient !== nothing && isfinite(r.value) && all(isfinite, r.gradient)
-                valsv[i] = r.value
-                gradsm[:, i] .= r.gradient
-            end
-            return nothing
-        end
+        cost += _dais_evaluate!(vals, grads, objective, coreset, X, mode)
         gradients += S
         ok = isfinite.(vals)
         nok = count(ok)
@@ -176,7 +330,8 @@ function ctsem_dais(objective, centre::AbstractVector, cov::AbstractMatrix;
             verbose && _due(reporter, true) && _emit(reporter,
                 "  DAIS: $nok of $S draws usable at iteration $iter; the check's normal stands")
             _progress_done(reporter)
-            return _dais_stopped(:unusable, NaN, unusable, trace, S, gradients)
+            return _dais_stopped(:unusable, NaN, unusable, trace, S, gradients, cost,
+                coreset !== nothing)
         end
         G = transpose(grads) * A
         G[.!ok, :] .= 0.0
@@ -226,24 +381,20 @@ function ctsem_dais(objective, centre::AbstractVector, cov::AbstractMatrix;
         noise = 2 * sqrt(se2)
         lpf = vals[ok]
         elbo = sum(lpf) / length(lpf) + sum(log, diag(Lc))
-        push!(elbos, elbo)
         elbo_se = length(lpf) > 1 ? sqrt(sum(abs2, lpf .- sum(lpf) / length(lpf)) /
             (length(lpf) - 1)) / sqrt(length(lpf)) : NaN
-        n_e = length(elbos)
-        elbo_settled = n_e >= 2window &&
-            (sum(elbos[(n_e - window + 1):n_e]) - sum(elbos[(n_e - 2window + 1):(n_e - window)])) /
-            window <= 2 * elbo_se * sqrt(2 / window)
-        push!(stepnoise, gamma * sqrt(se2))
-        travel_settled = length(mus) >= window &&
-            norm(Lc \ (munew .- mus[end - window + 1])) <=
-            2 * sqrt(sum(abs2, stepnoise[max(1, end - window + 1):end]))
+        push!(gammas, gamma)
+        push!(se2s, se2)
+        push!(esss, essw)
+        push!(elbos, elbo)
+        push!(elbo_ses, elbo_se)
         mu = munew
         Gamma = Gnew
         push!(mus, copy(mu))
-        push!(recent, (copy(mu), copy(Gamma)))
-        length(recent) > average && popfirst!(recent)
-        push!(trace, [gamma, essw, natural, noise, elbo, shift, averaging > 0 ? 1.0 : 0.0,
-            Float64(nok)])
+        Gs[mod1(iter, cap)] = copy(Gamma)
+        m = _dais_window(esss, se2s, gammas, elbo_ses, need, tol_mean, tol_elbo)
+        push!(trace, [gamma, essw, natural, noise, elbo, shift, 0.0, Float64(nok),
+            Float64(m)])
         # A variance still growing past `maxgrowth` times the start's is a
         # direction with no fixed point: the run ends and the caller keeps the
         # check's normal.
@@ -253,40 +404,48 @@ function ctsem_dais(objective, centre::AbstractVector, cov::AbstractMatrix;
                 "  DAIS: the covariance grew %.0f times the normal's after %d iterations; the check's normal stands",
                 growth, iter))
             _progress_done(reporter)
-            return _dais_stopped(:diverged, growth, unusable, trace, S, gradients)
+            return _dais_stopped(:diverged, growth, unusable, trace, S, gradients, cost,
+                coreset !== nothing)
         end
         if _due(reporter)
             _emit(reporter, @sprintf("  DAIS %d: damping %.3g, ESS %.0f of %d, step %.2f (noise %.2f), ELBO %.2f%s",
-                iter, gamma, essw, S, natural, noise, elbo, averaging > 0 ? ", averaging" : ""))
+                iter, gamma, essw, S, natural, noise, elbo,
+                m > 0 ? ", window $m" : ""))
         end
-        # `averaging` counts the iterates summed and is the divisor.
-        if averaging == 0
-            settled = (isfinite(natural) && isfinite(noise) && natural <= noise &&
-                elbo_settled === true && travel_settled === true) ? settled + 1 : 0
-        end
-        if averaging > 0 || settled >= settle
-            averaging += 1
-            musum .+= mu
-            Gsum .+= Gamma
-            averaging >= average && break
+        # The window's tests: the mean has not drifted beyond twice the random
+        # walk of its steps' noise, the ELBO has not climbed beyond twice its
+        # standard error, and the last natural gradient is within twice its own.
+        if m > 0 && isfinite(natural) && isfinite(noise) && natural <= noise
+            n = length(esss)
+            walk = sqrt(sum(gammas[t]^2 * se2s[t] for t in (n - m + 1):n))
+            drift = norm(Lc \ (mus[end] .- mus[end - m]))
+            climb = _dais_slope(view(elbos, (n - m + 1):n))
+            rise = _dais_slope_se(view(elbo_ses, (n - m + 1):n))
+            if drift <= 2 * walk && climb <= 2 * rise
+                window = m
+                break
+            end
         end
     end
-    if averaging > 0
-        mu = musum ./ averaging
-        Gamma = Gsum ./ averaging
-    elseif !isempty(recent)
-        mu = sum(first.(recent)) ./ length(recent)
-        Gamma = sum(last.(recent)) ./ length(recent)
+    # The answer: the window's average where it stopped, the last half's where
+    # the budget ended first.
+    n = length(trace)
+    settled = window > 0
+    nav = min(settled ? window : max(1, n ÷ 2), cap, n)
+    mu = sum(mus[(n - nav + 2):(n + 1)]) ./ nav
+    Gamma = sum(Gs[mod1(t, cap)] for t in (n - nav + 1):n) ./ nav
+    for t in (n - nav + 1):n
+        trace[t][7] = 1.0
     end
     Gamma = (Gamma .+ transpose(Gamma)) ./ 2
     covraw = A * Gamma * transpose(A)
-    _progress_done(reporter, @sprintf("%d iterations, %d averaged, %d gradients",
-        length(trace), averaging, gradients))
+    _progress_done(reporter, @sprintf("%d iterations, %d averaged, %d gradients, %.0f full evaluations",
+        n, nav, gradients, cost))
     return (used=true, diverged=false, growth=NaN, mean=c0 .+ A * mu,
-        cov=(covraw .+ transpose(covraw)) ./ 2, iterations=length(trace),
-        averaged=averaging, settled=averaging > 0, gamma=gamma, ess=essw,
-        unusable=unusable, draws=S, gradients=gradients, parallel=String(mode),
-        trace=_dais_trace(trace), trace_names=_DAIS_TRACE)
+        cov=(covraw .+ transpose(covraw)) ./ 2, iterations=n, averaged=nav,
+        settled=settled, gamma=gamma, ess=essw, unusable=unusable, draws=S,
+        gradients=gradients, cost=cost, coreset=coreset !== nothing,
+        parallel=String(mode), trace=_dais_trace(trace), trace_names=_DAIS_TRACE)
 end
 
 """The held directions `hold` (columns, in the parameters) in the whitened
@@ -300,15 +459,20 @@ function _dais_held_basis(V::AbstractMatrix, sq::AbstractVector, hold)
 end
 
 """A run that ended without a normal: diverged (with the growth that ended
-it) or with no usable draws. The check's normal stands."""
-_dais_stopped(why::Symbol, growth::Real, unusable::Int, trace, S::Int, gradients::Int) =
+it), with no usable draws, or with no direction to move. The check's normal
+stands."""
+_dais_stopped(why::Symbol, growth::Real, unusable::Int, trace, S::Int, gradients::Int,
+    cost::Real, coreset::Bool) =
     (used=false, diverged=why == :diverged, growth=Float64(growth), unusable=unusable,
         iterations=length(trace), cov=nothing, draws=S, gradients=gradients,
-        trace=_dais_trace(trace), trace_names=_DAIS_TRACE)
+        cost=Float64(cost), coreset=coreset, trace=_dais_trace(trace),
+        trace_names=_DAIS_TRACE)
 
-"""The trace's columns, one row an iteration."""
+"""The trace's columns, one row an iteration: `averaging` marks the iterates
+the answer averages, `window` the stopping rule's window at that iteration (0
+before the run could show what the answer is held to)."""
 const _DAIS_TRACE = ["gamma", "ess", "natural", "noise", "elbo", "shift", "averaging",
-    "usable"]
+    "usable", "window"]
 
 _dais_trace(rows::Vector{Vector{Float64}}) =
     isempty(rows) ? zeros(0, length(_DAIS_TRACE)) : Matrix(transpose(reduce(hcat, rows)))
