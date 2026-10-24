@@ -514,17 +514,27 @@ end
 
 # The same stopping rule as NUTS (`_sample_until_target`): a target the first
 # batch cannot meet extends the run, within the budget, and the same seed
-# reproduces it whatever the thread count did.
+# reproduces it at one worker. Above one the pool divides each evaluation's
+# sum over units as workers come free, so its last bits differ from run to
+# run and the chains, which amplify them, part (CLAUDE.md, "A julia test that
+# fails on one machine..."); this asserted reproducibility at any width and
+# failed whenever the suite ran with threads.
 @testset "SAEM sampler: sampled to a target, and reproducible" begin
     laplace, values = _saem_reduced()
     mode = ctsem_laplace_optimize(laplace, values; maxiter=500, progress=false).minimizer
-    s = ctsem_saem_sample(_saem_reduced()[1], mode; nchains=2, nwarmup=100,
-        ndraws=40, min_ess=150, max_draws=600, seed=11)
+    held = ContinuousTimeSEM.ctsem_max_chunks().max_chunks
+    ContinuousTimeSEM.ctsem_set_max_chunks!(1)
+    s, again = try
+        (ctsem_saem_sample(_saem_reduced()[1], mode; nchains=2, nwarmup=100,
+                ndraws=40, min_ess=150, max_draws=600, seed=11),
+            ctsem_saem_sample(_saem_reduced()[1], mode; nchains=2, nwarmup=100,
+                ndraws=40, min_ess=150, max_draws=600, seed=11))
+    finally
+        ContinuousTimeSEM.ctsem_set_max_chunks!(held)
+    end
     @test 40 < s.ndraws <= 600
     @test size(s.draws, 2) == 2 * s.ndraws
     @test s.min_ess >= 150 || s.ndraws == 600
-    again = ctsem_saem_sample(_saem_reduced()[1], mode; nchains=2, nwarmup=100,
-        ndraws=40, min_ess=150, max_draws=600, seed=11)
     @test again.draws == s.draws
     # The effects' summaries are over the same draws, as natural deviations:
     # wider than the rank-one coordinates, one per parameter the level moves.
