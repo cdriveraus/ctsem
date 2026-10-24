@@ -2472,7 +2472,10 @@ estimated, and pulling it back is a move the quadratic model already prices;
 measured on the bench the full search over every coordinate was 5 per cent
 of a fit and up to half of an ordinal Laplace one, and it found an
 overshoot only where a coordinate was flat. Without a Hessian the search is
-over every coordinate, as before (`_ctsem_pullback_sets`).
+over every coordinate, as before (`_ctsem_pullback_sets`), and so is it where
+this pool held something flat and its pullbacks found nothing: the way out
+can need a coordinate with curvature beside the flat one
+(`_ctsem_optimise_verdict`).
 """
 function _ctsem_overshoot_candidates(objective, minimizer, saturated_parameters,
         hessian, flat_rtol::Real, stall_ratio::Real)
@@ -2631,6 +2634,21 @@ function _ctsem_optimise_verdict(objective, minimizer, start_values, value,
         _ctsem_overshot(objective, minimizer, saturated_parameters,
             value, converge_tol; mode=overshoot_probe, progress=progress,
             among=candidates)
+    # The curvature's pool settles "not a maximum" when it finds a gain, but
+    # not "a maximum" when it finds none: the way out can need a coordinate
+    # the curvature does not call flat beside one it does. A drift that went
+    # to a random walk to stand in for a collapsed intercept variance, on a
+    # 12-subject model, had to come back with it; the pool held the variance
+    # alone and the fit stopped 2.95 nats below its maximum
+    # (review/UNCERTAINTY-checked-improper-2026-10-24.md). So where the pool
+    # had something flat and found nothing, the search over every coordinate
+    # decides, once; a fit with nothing flat never pays for it.
+    if !overshoot.overshot && candidates !== nothing && !isempty(candidates)
+        wider = _ctsem_overshot(objective, minimizer, saturated_parameters,
+            value, converge_tol; mode=overshoot_probe, progress=progress)
+        overshoot = wider.overshot ? wider : (overshot=false,
+            gain=max(overshoot.gain, wider.gain), coordinates=Int[], point=Float64[])
+    end
     overshot = overshoot.overshot
     verbose && stalled && println(_console(), label, ": the optimizer made no ",
         "progress from its starting values; reporting this as not converged")
