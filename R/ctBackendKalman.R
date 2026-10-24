@@ -635,14 +635,17 @@ ctBackendKalman <- function(fit, subjects = "all", timestep = "asdata",
 .ctBackendSubjectMatrices <- function(spec, flat) {
   if (is.null(flat)) return(NULL)
   layout <- .ctBackendSummaryLayout(spec)
-  out <- lapply(seq_along(layout$matrix), function(index) {
+  # The population covariances are the population's, not a subject's, and the
+  # Laplace route's subject passes do not carry them.
+  subject <- which(!startsWith(layout$matrix, "rawpopcov"))
+  out <- lapply(subject, function(index) {
     count <- layout$nrow[index] * layout$ncol[index]
     block <- flat[, layout$offset[index] + seq_len(count), , drop = FALSE]
     value <- aperm(array(block, dim = c(dim(flat)[1], layout$nrow[index],
       layout$ncol[index], dim(flat)[3])), c(1L, 4L, 2L, 3L))
     .ctBackendTrimAugmented(value, layout$matrix[index], spec, margin = c(3L, 4L))
   })
-  names(out) <- paste0("subj_", layout$matrix)
+  names(out) <- paste0("subj_", layout$matrix[subject])
   out
 }
 

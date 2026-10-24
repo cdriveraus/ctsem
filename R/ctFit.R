@@ -735,22 +735,21 @@ T0VARredundancies <- function(ctm) {
 #' \code{TRUE} does, and samples them (\code{'none'}) when
 #' \code{optimize=FALSE}.
 #'
-#' \code{TRUE} integrates them out by whichever method suits the model:
-#' \code{'augmented'} where every individual difference shifts a mean
-#' affinely and every indicator is Gaussian, where it is exact and cheapest,
-#' and \code{'laplace'} otherwise -- a varying parameter in DRIFT, DIFFUSION,
-#' MANIFESTVAR or LAMBDA, a non-affine transform, a parameter entering another
-#' cell's expression, a non-Gaussian indicator, or a grouping level above the
-#' subject (see \code{id} in \code{\link{ctModel}}). A choice of
-#' \code{'laplace'} is announced, and \code{fit$args$resolved$intoverpopreason}
-#' records why. Before 4.0.0 \code{TRUE} always meant \code{'augmented'}.
+#' \code{TRUE} integrates them out: by \code{'laplace'} on
+#' \code{backend='julia'}, and by \code{'augmented'} on stan, which has only
+#' that route, or with \code{intoverstates=FALSE}, which composes with it
+#' only. \code{fit$args$resolved$intoverpopreason} records why. Before 4.0.0
+#' \code{TRUE} always meant \code{'augmented'}.
 #'
-#' \code{'augmented'} makes each random effect a state of the filter; variation
-#' on a DIFFUSION or MANIFESTVAR parameter is then only partly identified, and
-#' ctFit warns. \code{'laplace'} integrates each subject's effects by a Laplace
-#' approximation at their mode (\code{backend='julia'}): exact when they enter
-#' the state mean linearly, an approximation elsewhere, which \code{summary()}
-#' says. \code{FALSE}, or \code{'none'}, samples them, so it needs
+#' \code{'laplace'} (\code{backend='julia'}) integrates an effect that shifts
+#' a mean in a linear Gaussian model -- a manifest mean, an initial mean, a
+#' continuous intercept -- exactly, inside each subject's filter, and every
+#' other effect by a Laplace approximation at its mode, which \code{summary()}
+#' reports. \code{'augmented'} makes each random effect a state of the filter:
+#' exact for effects that shift a mean with Gaussian indicators, a
+#' linearisation elsewhere that shrinks random effects on the dynamics, and
+#' variation on a DIFFUSION or MANIFESTVAR parameter is then only partly
+#' identified, which ctFit warns of. \code{FALSE}, or \code{'none'}, samples them, so it needs
 #' \code{optimize=FALSE}: maximising over every subject's effects would drive
 #' the population variance to zero. With \code{optimize=FALSE} on julia,
 #' \code{'none'} (and so \code{'auto'}) samples the joint posterior of
@@ -1531,10 +1530,6 @@ ctFit<-function(datalong, model, stanmodeltext=NA, iter=1000, intoverstates=TRUE
   # settle into, so T0MEANS and T0VAR are no longer parameters: their cells
   # are fixed here and the engine writes the stationary moments over them
   # (`_ctsem_stationary!`). The fixed values are placeholders nothing reads.
-  # Set on the model now rather than with the other flags below, because
-  # `.ctIntOverPopAuto()` reads it to keep random effects on the dynamics off
-  # the augmented route, where they are states and there is no one system to
-  # be stationary in.
   if(!isTRUE(stationary) && !isFALSE(stationary)) stop(
     'stationary must be TRUE or FALSE.', call. = FALSE)
   # Single elements: T0MEANS or T0VAR cells named 'stationary', which the
@@ -1714,31 +1709,24 @@ ctFit<-function(datalong, model, stanmodeltext=NA, iter=1000, intoverstates=TRUE
   # Why 'auto' went the way it did, kept for `fit$args$resolved`; NA when the
   # route was named.
   intoverpopreason <- NA_character_
-  # TRUE asks for the random effects to be integrated out, as it always has,
-  # and since there are now two ways to do that it takes the one the model
-  # suits: the rule 'auto' applies when optimizing, whatever `optimize` is.
-  # Before 4.0.0 it meant 'augmented', the only way there was.
+  # TRUE asks for the random effects to be integrated out, as it always has:
+  # the rule 'auto' applies when optimizing, whatever `optimize` is. Before
+  # 4.0.0 it meant 'augmented', the only way there was.
   if(isTRUE(intoverpop)){
     auto <- .ctIntOverPopAuto(ctm, backend = backend, optimize = TRUE,
       intoverstates = intoverstates)
     intoverpopmethod <- auto$route
     intoverpopreason <- auto$reason
     intoverpop <- identical(auto$route, 'augmented')
-    if(isTRUE(auto$announce)) message("intoverpop=TRUE integrates by 'laplace': ",
-      auto$reason, ".")
   } else if(is.character(intoverpop)){
     intoverpop <- match.arg(intoverpop[1], c('auto','augmented','laplace','none'))
     if(intoverpop %in% 'auto'){
       # See `.ctIntOverPopAuto()` for the rule and the measurements behind it.
-      # An outer level resolves to 'laplace' silently, as it always has: there
-      # is one route for that model, not a choice between two.
       auto <- .ctIntOverPopAuto(ctm, backend = backend, optimize = optimize,
         intoverstates = intoverstates)
       intoverpopmethod <- auto$route
       intoverpopreason <- auto$reason
       intoverpop <- identical(auto$route, 'augmented')
-      if(isTRUE(auto$announce)) message("intoverpop='auto' chose '",
-        auto$route, "': ", auto$reason, ".")
     } else {
       intoverpopmethod <- intoverpop
       intoverpop <- identical(intoverpopmethod,'augmented')

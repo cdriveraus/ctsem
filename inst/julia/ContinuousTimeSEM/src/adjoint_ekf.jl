@@ -1043,7 +1043,7 @@ function _reverse_predict!(x̄::Vector{T}, P̄::Matrix{T}, θ̄ca,
     # (no linear solve). Written out separately rather than branched inside the
     # shared recursion, which would put a test in every step of it.
     if !aws.sp.continuous_time
-        return _reverse_predict_discrete!(x̄, P̄, θ̄ca, record, dyn, n, aws)
+        return _reverse_predict_discrete!(x̄, P̄, θ̄ca, record, dyn, n, aws, hyb)
     end
 
     # Every temporary is a view of a scratch buffer; see `CTSEMReverseScratch`.
@@ -2148,7 +2148,8 @@ deferred as its is (`_defer_diffusion!`): written the obvious way this was a
 dozen arrays and four BLAS products per row.
 """
 function _reverse_predict_discrete!(XBAR::Vector{T}, PBAR::Matrix{T}, THETA,
-    record::CTSEMPredictRecord{T}, dyn::AbstractVector{Int}, n::Int, aws) where {T}
+    record::CTSEMPredictRecord{T}, dyn::AbstractVector{Int}, n::Int, aws,
+    hyb::Union{Nothing,CTSEMHybridTape{T}}=nothing) where {T}
     A = record.A
     JAx = record.JAx
     x = record.state_in
@@ -2167,8 +2168,13 @@ function _reverse_predict_discrete!(XBAR::Vector{T}, PBAR::Matrix{T}, THETA,
     fill!(JAx_bar, zero(T))
     fill!(Abar, zero(T))
 
-    # --- mean: x_next = A x + dINT
+    # --- mean: x_next = A x + dINT, and the integrated deviations'
+    # X_next = A X + Xinc (`CTSEMHybrid`), whose intercept increment reads no
+    # parameter here.
     _ctsem_outer!(Abar, XBAR, x, one(T), one(T))
+    hyb === nothing || _hybrid_reverse_predict!(Abar, JAx_bar, A, JAx, hyb,
+        aws.sp.hybrid, record, n, aws.affine_dim, sc, record.dt;
+        continuous_time=false)
     copyto!(dINT_bar, XBAR)
     _ctsem_mulTvec!(xbar_new, A, XBAR)
 

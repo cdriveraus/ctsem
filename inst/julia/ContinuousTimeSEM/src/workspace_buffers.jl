@@ -113,10 +113,10 @@ One pass's state for the deviations the filter integrates (`CTSEMHybrid`):
 `q` columns, one per hybrid item the subject carries -- a manifest intercept's
 where the subject observes the item at all, a state mean's always (`col[j]`
 the column of manifest `j`, 0 for none; `item[c]` the hybrid item of column
-`c`; `ckind[c]`, `clat[c]` and `cslope[c]` its kind, latent and slope); `X`,
-the state mean's dependence on them (`n x q`); `Xinc`, what the last
-prediction substep added to a continuous intercept's column, which the tape
-records; the accumulated `S = sum V' S_t^-1 V` and `s = sum V' S_t^-1 y_t`;
+`c`; `ckind[c]`, `clat[c]`, `cslope[c]` and `cpred[c]` its kind, latent,
+slope and, for a predictor's effect, predictor); `X`, the state mean's
+dependence on them (`n x q`); `Xinc`, what the last prediction substep added to
+a continuous intercept's column, which the tape records; the accumulated `S = sum V' S_t^-1 V` and `s = sum V' S_t^-1 y_t`;
 row scratch; and `Jc`, `jv`, `piv` for the intercept Jacobian's solve. Mutable so
 the arrays can grow when a model needs more than the empty default -- the
 workspace may be built before the Laplace objective fills `CTSEMHybrid`.
@@ -166,6 +166,7 @@ mutable struct CTSEMHybridBuffers{T}
     ckind::Vector{Int}
     clat::Vector{Int}
     cslope::Vector{Float64}
+    cpred::Vector{Int}
     X::Matrix{T}
     Xt::Matrix{T}
     Xinc::Matrix{T}
@@ -181,7 +182,7 @@ end
 CTSEMHybridBuffers{T}() where {T} = CTSEMHybridBuffers{T}(false, _HYBRID_PROFILE,
     zero(T), T[], T[], T[], T[], T[], T[], zeros(T, 0, 0), zeros(T, 0, 0),
     zeros(T, 0, 0), 0, Int[], zeros(T, 0, 0), T[], false, -1, 0,
-    Int[], Int[], Int[], Int[], Float64[],
+    Int[], Int[], Int[], Int[], Float64[], Int[],
     zeros(T, 0, 0), zeros(T, 0, 0), zeros(T, 0, 0), zeros(T, 0, 0), zeros(T, 0, 0),
     zeros(T, 0, 0), T[], T[], zeros(T, 0, 0), T[], Int[])
 

@@ -263,8 +263,20 @@ function _dais(objective, coreset, centre::AbstractVector, cov::AbstractMatrix;
     hold::Union{Nothing,AbstractMatrix}=nothing, draws::Integer=0, maxiter::Integer=150,
     seed::Integer=20261024, rtol::Real=1e-10, maxgrowth::Real=1e4, parallel::Bool=true,
     verbose::Bool=false, progress_sink=nothing, progress_overwrite::Bool=true)
-
+    # One body whatever keywords were passed: with `hold` absent and present it
+    # was compiled twice, and a session's first default fit compiled for 2 s
+    # the copy the package image did not hold.
     c0 = collect(Float64, centre)
+    held = hold === nothing ? zeros(Float64, length(c0), 0) : Matrix{Float64}(hold)
+    return _ctsem_dais(objective, coreset, c0, cov, held, Int(draws), Int(maxiter), Int(seed),
+        Float64(rtol), Float64(maxgrowth), parallel, verbose, progress_sink,
+        progress_overwrite)
+end
+
+function _ctsem_dais(objective, coreset, c0::Vector{Float64}, cov::AbstractMatrix,
+    hold::Matrix{Float64}, draws::Int, maxiter::Int, seed::Int, rtol::Float64,
+    maxgrowth::Float64, parallel::Bool, verbose::Bool, progress_sink,
+    progress_overwrite::Bool)
     p = length(c0)
     C = Matrix{Float64}((cov .+ transpose(cov)) ./ 2)
     size(C) == (p, p) || throw(DimensionMismatch("cov must be $p x $p"))

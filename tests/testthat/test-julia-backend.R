@@ -404,7 +404,9 @@ test_that("Julia preparation expands individual differences into static states",
   )
   dat <- data.frame(id = rep(1:2, each = 2), time = rep(0:1, 2), Y1 = 0)
 
-  prepared <- suppressMessages(ctFit(dat, model, backend = "julia", fit = FALSE))
+  # The augmented route by name: its preparation is what adds the states.
+  prepared <- suppressMessages(ctFit(dat, model, backend = "julia", fit = FALSE,
+    intoverpop = "augmented"))
   expect_equal(prepared$nlatent, 1L)
   expect_equal(prepared$nlatent_augmented, 2L)
   expect_equal(prepared$dynamic_state_indices, 1L)

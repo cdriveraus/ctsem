@@ -1008,16 +1008,27 @@ ctFitAdequacy <- function(fit, covariates = NULL,
 # studentised mean of it rejected a correct model a third of the time at .05.
 # The posterior is the quadrature's own rule, whose error for these at h = 0.75
 # is at most 1e-4 a unit for one effect (nine nodes) and 3e-3 for three (five),
-# even with a posterior as wide as the prior.
+# even with a posterior as wide as the prior. Where every unit's posterior is
+# normal (`quadratic`: Gaussian, linear, the effects in mean vectors) the
+# expectation is Phi((c - m) / sqrt(h^2 + s^2)) for the axis's posterior mean m
+# and sd s, which two nodes a dimension give exactly.
 .ctAdequacyEffectMoments <- function(fit, x, cores) {
   if (is.null(x)) x <- .ctFitRawEstimate(fit)
   d <- .ctBackendUnitDims(fit)[1]
-  post <- .ctBackendPosteriorNodes(fit, x, nodes = c(9L, 7L, 5L, 4L)[min(d, 4L)], cores)
+  normal <- isTRUE(.ctBackendSpec(fit)$laplace$quadratic)
+  post <- .ctBackendPosteriorNodes(fit, x,
+    nodes = if (normal) 2L else c(9L, 7L, 5L, 4L)[min(d, 4L)], cores)
   W <- post$weights
   h <- 0.75
   cuts <- c(-1.5, -0.75, 0, 0.75, 1.5)
   C <- do.call(cbind, lapply(seq_len(d), function(k) {
     Pk <- matrix(post$points[, , k], nrow(W))
+    if (normal) {
+      m <- rowSums(W * Pk)
+      s2 <- pmax(rowSums(W * Pk^2) - m^2, 0)
+      return(vapply(cuts, function(cc) stats::pnorm((cc - m) / sqrt(h^2 + s2)) -
+        stats::pnorm(cc / sqrt(1 + h^2)), numeric(nrow(W))))
+    }
     vapply(cuts, function(cc) rowSums(W * stats::pnorm((cc - Pk) / h)) -
       stats::pnorm(cc / sqrt(1 + h^2)), numeric(nrow(W)))
   }))

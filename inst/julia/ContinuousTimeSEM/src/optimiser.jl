@@ -1866,10 +1866,13 @@ end
 What one Hessian costs, in gradients: `2 npar` on the Laplace route (central
 differences of the gradient), and about `npar` on the marginal route, whose
 forward-over-reverse sweeps carry one lane per parameter at about a gradient
-each (measured: 750 gradients' time for 715 parameters). The unit the finish
-weighs a Hessian against its steps in, each of which costs a gradient.
+each (measured: 750 gradients' time for 715 parameters), as on a Laplace
+objective with no coordinate, whose Hessian is that route's
+(`_laplace_filter_hessian`). The unit the finish weighs a Hessian against its
+steps in, each of which costs a gradient.
 """
-_ctsem_hessian_cost(::CTSEMLaplaceObjective, npar::Integer) = 2 * Int(npar)
+_ctsem_hessian_cost(laplace::CTSEMLaplaceObjective, npar::Integer) =
+    _laplace_filter_only(laplace) ? Int(npar) : 2 * Int(npar)
 _ctsem_hessian_cost(::Any, npar::Integer) = Int(npar)
 
 """

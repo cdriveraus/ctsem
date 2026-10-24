@@ -349,8 +349,8 @@ one density. Once parameters vary over subjects there is a choice about the
 random effects themselves, and it decides what an interval describes.
 
 - **Integrated out** -- an optimized fit, `intoverpop = TRUE` or the default
-  `'auto'`: the augmented filter where it is exact (random effects that shift a
-  mean, Gaussian indicators), a Laplace approximation everywhere else. Every
+  `'auto'`: exactly inside the filter where it can be (random effects that
+  shift a mean, Gaussian indicators), a Laplace approximation everywhere else. Every
   `uncertainty` method above then describes *that* integrated objective. Where
   the integration is approximate -- random effects on dynamics or variances,
   non-Gaussian indicators -- they all inherit the approximation, `is`

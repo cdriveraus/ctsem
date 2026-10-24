@@ -8,7 +8,7 @@
 A major release: ctsem gains a second estimation engine, written in Julia, which most of what is new below needs. `backend='stan'` remains the default and fits as before.
 
 - New `backend='julia'` for `ctFit()`: an extended Kalman filter engine with an exact gradient and Hessian, threaded over subjects. `ctJuliaInstall()` sets up whatever is missing, asking before it downloads anything, and `ctJuliaStatus()`, `ctJuliaSetup()`, `ctJuliaProcesses()` and `ctJuliaKill()` manage its sessions.
-- Random effects on any parameter -- variances, nonlinear dynamics and non-Gaussian indicators included -- are integrated by a Laplace approximation (`intoverpop='laplace'`, chosen automatically where the augmented filter is not exact), corrected by adaptive quadrature when fitted. Julia backend only.
+- Random effects on any parameter -- variances, nonlinear dynamics and non-Gaussian indicators included -- are integrated by a Laplace approximation (`intoverpop='laplace'`, the default when optimising), exactly where they shift a mean in a linear Gaussian model, and corrected by adaptive quadrature when fitted. Julia backend only.
 - Nested grouping levels, as `id=c('person','couple')`, with each parameter's `indvarying` naming the levels it varies at and `poprank` set per level. Julia backend only.
 - Ordinal, count and censored indicators, and lower and upper asymptotes for binary ones (`ASYMPTOTES` in `ctModel()`). Julia backend only.
 - Posterior sampling with `ctFit(backend='julia', optimize=FALSE)`, or after an optimised fit with `ctFitUncertainty(fit, 'sample')`, running until target effective sample sizes and R-hat are reached.
