@@ -2601,6 +2601,35 @@ end
 ################################################################################
 
 """
+    _laplace_unit_loglik_value(laplace, U, values, Ls, u, aws, gradient)
+
+`_laplace_unit_loglik_gradient`'s `value` and `hlogdet` over every member, by
+one forward pass a member, with `gradient` (empty) handed back as its
+gradient: for a unit with no coordinate, whose gradient in `u` has no entries.
+The reverse sweep that gradient took was a third of such a unit's term, and
+the mode solve's sweep another third.
+"""
+function _laplace_unit_loglik_value(laplace::CTSEMLaplaceObjective, U::Integer,
+    values::AbstractVector{T}, Ls::Vector{<:AbstractMatrix}, u::AbstractVector{T},
+    aws, gradient::AbstractVector) where {T}
+    spec = laplace.spec
+    units = laplace.units
+    shift = _laplace_scratch_vector!(laplace, T, length(values), :loglik_shift)
+    total = zero(T)
+    hsum = zero(T)
+    for (m, i) in enumerate(units.members[U])
+        so = laplace.objective.subject_objectives[i]
+        shifted = _laplace_member_values!(shift, values, spec, Ls, u, units.offsets[U][m])
+        loglik = _ekf_run(aws.ekf_ws, so, shifted,
+            _ctsem_tipred_fill!(aws.tipreds, so.tipreds, shifted), nothing)
+        isfinite(loglik) || return (value=loglik, gradient=gradient, hlogdet=zero(T))
+        total += loglik
+        hsum += aws.ekf_ws.hyb.half_logdet
+    end
+    return (value=total, gradient=gradient, hlogdet=hsum)
+end
+
+"""
     _laplace_unit_loglik_gradient(laplace, U, values, Ls, u, aws, positions)
 
 The summed *process* log likelihood of the given member positions and its
@@ -3485,6 +3514,14 @@ function _laplace_solve_unit_mode!(laplace::CTSEMLaplaceObjective, U::Integer,
     values::AbstractVector{Float64}, Ls::Vector{Matrix{Float64}}, aws;
     retain::Bool=_LAPLACE_WARM_START[])
     d = laplace.units.dims[U]
+    if d == 0
+        # No coordinate: the mode is empty and found, and its value is the
+        # members' profile, one forward pass each.
+        _laplace_record_empty_mode!(laplace, U)
+        value = _laplace_unit_loglik_value(laplace, U, values, Ls, laplace.modes[U], aws,
+            laplace.modes[U]).value
+        return (u=laplace.modes[U], value=value, converged=isfinite(value), final=nothing)
+    end
     # Newton copies its start, so neither needs a vector of its own.
     origin = _laplace_scratch_vector!(laplace, Float64, d, :mode_origin)
     retained = retain ? laplace.modes[U] : fill!(origin, 0.0)
@@ -3548,6 +3585,17 @@ function _laplace_solve_unit_mode!(laplace::CTSEMLaplaceObjective, U::Integer,
     laplace.hessian_repaired[U] = best.repaired
     return (u=best.u, value=best.value, converged=best.converged,
         final=best.final)
+end
+
+"""What the mode solve records for a unit with no coordinate: an empty mode,
+found at once."""
+function _laplace_record_empty_mode!(laplace::CTSEMLaplaceObjective, U::Integer)
+    isempty(laplace.modes[U]) || (laplace.modes[U] = Float64[])
+    laplace.inner_iterations[U] = 0
+    laplace.inner_gradient[U] = 0.0
+    laplace.inner_converged[U] = true
+    laplace.hessian_repaired[U] = false
+    return nothing
 end
 
 """
@@ -4793,10 +4841,16 @@ function _laplace_store_unit_primal!(laplace::CTSEMLaplaceObjective, U::Integer,
     theta::Vector{Float64}, Ls, aws, primal_curvature, primal_matrices,
     primal_gated, unit_loglik, chunk_ok, chunk_bad)
     b0 = _laplace_mark()
-    solved = _laplace_solve_unit_mode!(laplace, U, theta, Ls, aws)
+    # A unit with no coordinate has no mode to solve: the primal is its value.
+    given = if laplace.units.dims[U] == 0
+        _laplace_record_empty_mode!(laplace, U)
+        nothing
+    else
+        _laplace_solve_unit_mode!(laplace, U, theta, Ls, aws).final
+    end
     _laplace_charge!(_LAPLACE_BYTES_MODE, b0)
     primal = _laplace_unit_primal(laplace, U, theta, Ls, laplace.modes[U], aws;
-        given=solved.final)
+        given=given)
     laplace.mode_repaired[U] = primal.fac.repaired
     primal_curvature[U] = (primal.fac.factors, primal.fac.coupling)
     primal_matrices[U] = primal.M
@@ -4854,8 +4908,11 @@ function _laplace_unit_primal(laplace::CTSEMLaplaceObjective, U::Integer,
     b0 = _laplace_mark()
     # The gradient into the slot's: only this call and the gated term below
     # read it, and neither keeps it.
-    inner = _laplace_unit_objective_gradient(laplace, U, values, Ls, u, aws,
-        _laplace_scratch_vector!(laplace, T, length(u), :primal_grad))
+    inner = isempty(u) ?
+        _laplace_unit_loglik_value(laplace, U, values, Ls, u, aws,
+            _laplace_scratch_vector!(laplace, T, 0, :primal_grad)) :
+        _laplace_unit_objective_gradient(laplace, U, values, Ls, u, aws,
+            _laplace_scratch_vector!(laplace, T, length(u), :primal_grad))
     _laplace_charge!(_LAPLACE_BYTES_OBJ, b0)
     # The joint curvature's logdet: the profile's plus the filter-integrated
     # deviations' (`CTSEMHybrid`), before the floor or the gate reads it.
@@ -7445,21 +7502,15 @@ coreset stage's trial (`CTSEMCoresetTarget`): its units alone, weighted.
 """
 function _ctsem_optimise_trial(o::CTSEMLaplaceObjective, x, want_gradient::Bool,
         gradient_method, limit::Real, log; scores=nothing, coreset=nothing)
-    evaluated = try
-        ctsem_laplace_evaluate(o, x; gradient=want_gradient,
-            nested_gradient=(Symbol(gradient_method) === :nested), scores=scores,
-            coreset=coreset)
-    catch err
-        _ctsem_must_propagate(err) && rethrow()
-        nothing
-    end
+    evaluated = _ctsem_try_evaluate(() -> ctsem_laplace_evaluate(o, x;
+        gradient=want_gradient, nested_gradient=(Symbol(gradient_method) === :nested),
+        scores=scores, coreset=coreset))
     value = evaluated === nothing ? NaN : evaluated.value
     finite_value = evaluated !== nothing && isfinite(value)
     inner_ok = evaluated !== nothing && evaluated.converged
     valid = finite_value && inner_ok
     if valid && want_gradient
-        valid = all(isfinite, evaluated.gradient) &&
-            all(abs(entry) < limit for entry in evaluated.gradient)
+        valid = _ctsem_gradient_usable(evaluated.gradient, limit)
         if !valid
             log.rejected_gradient += 1
             # Once, and only if asked: the probe prints the whole raw vector
@@ -7499,12 +7550,7 @@ the estimate, pulling coordinates to zero, which is exactly where a warm inner
 solve used to fail.
 """
 function _ctsem_probe_value(o::CTSEMLaplaceObjective, x)
-    evaluated = try
-        ctsem_laplace_evaluate(o, x; gradient=false)
-    catch err
-        _ctsem_must_propagate(err) && rethrow()
-        nothing
-    end
+    evaluated = _ctsem_try_evaluate(() -> ctsem_laplace_evaluate(o, x; gradient=false))
     evaluated === nothing && return -Inf
     (evaluated.converged && isfinite(evaluated.value)) ? evaluated.value : -Inf
 end
@@ -7514,12 +7560,7 @@ The gradient counterpart of the laplace `_ctsem_probe_value`, refusing a point
 whose inner solve did not converge for the same reason.
 """
 function _ctsem_probe_value_gradient(o::CTSEMLaplaceObjective, x)
-    evaluated = try
-        ctsem_laplace_evaluate(o, x; gradient=true)
-    catch err
-        _ctsem_must_propagate(err) && rethrow()
-        nothing
-    end
+    evaluated = _ctsem_try_evaluate(() -> ctsem_laplace_evaluate(o, x; gradient=true))
     evaluated === nothing && return (value=-Inf, gradient=nothing)
     ok = evaluated.converged && isfinite(evaluated.value) &&
         all(isfinite, evaluated.gradient)

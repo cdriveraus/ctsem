@@ -2225,17 +2225,10 @@ _ctsem_optimise_result_extra(o::CTSEMLaplaceContinuation, final, log) =
 
 function _ctsem_optimise_trial(o::CTSEMLaplaceContinuation, x, want_gradient::Bool,
     gradient_method, limit::Real, log)
-    evaluated = try
-        ctsem_laplace_continuation_evaluate(o, x; gradient=want_gradient)
-    catch err
-        _ctsem_must_propagate(err) && rethrow()
-        nothing
-    end
-    valid = evaluated !== nothing && isfinite(evaluated.value) && evaluated.converged
-    if valid && want_gradient
-        valid = all(isfinite, evaluated.gradient) &&
-            all(abs(entry) < limit for entry in evaluated.gradient)
-    end
+    evaluated = _ctsem_try_evaluate(() ->
+        ctsem_laplace_continuation_evaluate(o, x; gradient=want_gradient))
+    valid = evaluated !== nothing && isfinite(evaluated.value) && evaluated.converged &&
+        (!want_gradient || _ctsem_gradient_usable(evaluated.gradient, limit))
     return (evaluated=evaluated, valid=valid)
 end
 
