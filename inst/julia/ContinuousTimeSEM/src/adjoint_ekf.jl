@@ -15,7 +15,7 @@ using ComponentArrays
 # predictors, state-dependent transform groups only exist for nonlinear models,
 # and a fully missing row skips the measurement update entirely. Recording the
 # order the forward pass actually took, rather than assuming a canonical one,
-# is what lets one reverse pass cover every case the roadmap requires --
+# is what lets one reverse pass cover every case the tests check --
 # linear, state/PARS-expression, partially missing, fully missing, and
 # unequal-length multi-subject models -- without special-casing any of them.
 #

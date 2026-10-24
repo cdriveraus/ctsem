@@ -52,11 +52,10 @@
 
 
 # Instrumentation for this route specifically. `_CTSEM_OPCOUNT.exp` does not
-# serve: it is incremented by `_ctsem_expm`, the wrapper the discretisation
-# uses, not by `my_exp!` itself, so it counts DRIFT exponentials and says
-# nothing about this construction. Reading a difference in it between the two
-# routes measures how many inner iterations the laplace mode-finder took, which
-# is not the question.
+# serve: `my_exp!` increments it for every exponential, the discretisation's
+# DRIFT exponentials as well as this construction's, so a difference in it
+# between the two routes mixes them, and measures as much how many inner
+# iterations the laplace mode-finder took, which is not the question.
 #
 # Calls into the expm covariance construction, and how many missed the cache.
 const _EXPM_COV_CALLS = Ref(0)

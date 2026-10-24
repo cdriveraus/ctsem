@@ -2,9 +2,9 @@ using ForwardDiff
 using ChainRulesCore
 using LinearAlgebra
 
-# The primitive layer (`src/adjoint_primitives.jl`) carries the only
-# hand-derived reverse-mode mathematics in the package, so it gets the most
-# direct possible check: for each primitive, contract its pullback with a
+# The primitive layer (`src/adjoint_primitives.jl`) holds hand-derived
+# pullbacks -- the Lyapunov, sdcovsqrt2cov and Cholesky ones the reverse pass
+# calls, and test-only pure forms -- so it gets the most direct possible check: for each primitive, contract its pullback with a
 # cotangent and compare against the same contraction computed by ForwardDiff
 # through the primal. A `<v, J u>` vs `<J' v, u>` agreement over random `u`
 # and `v` catches transposition and sign errors that a symmetric test case
