@@ -55,7 +55,8 @@
     draws = as.integer(r$draws), gradients = as.integer(r$gradients), values = 0L,
     cost = as.numeric(r$cost), trace = trace,
     coreset = list(used = isTRUE(r$coreset), size = as.integer(r$coreset_size),
-      chosen = as.integer(r$coreset_chosen), failed = as.integer(r$coreset_failed)))
+      chosen = as.integer(r$coreset_chosen), failed = as.integer(r$coreset_failed),
+      record = if (!is.null(r$coreset_record)) .ctCoresetRecord(r$coreset_record)))
   if (isTRUE(r$diverged)) out$growth <- as.numeric(r$growth)
   if (isTRUE(r$used)) {
     out$mean <- as.numeric(r$mean)

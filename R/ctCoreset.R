@@ -68,37 +68,8 @@
       .ctJuliaNumericVector(as.numeric(logp)), .ctJuliaNumericVector(as.numeric(logw)))
     if (is.null(out)) NULL else as.numeric(out)
   }
-  record <- function() {
-    r <- .ctBackendJuliaValue(engine()$module$ctsem_is_coreset_record(engine()$cs))
-    used <- isTRUE(r$used)
-    choices <- as.matrix(r$choices)
-    list(
-      used = used,
-      units = if (r$units > 0) as.integer(r$units),
-      size = if (used) as.integer(r$size),
-      sizes = as.integer(unlist(r$sizes)),
-      phase = r$phase,
-      switches = as.integer(r$switches),
-      rounds_on_coreset = as.integer(r$rounds_on_coreset),
-      failed_checks = as.integer(r$failed_checks),
-      expected_round_cost = if (used) as.numeric(r$expected_round_cost),
-      free_checks = as.integer(r$free_checks),
-      chosen = as.integer(r$chosen),
-      chosen_passed = as.integer(r$chosen_passed),
-      seconds = unlist(r$seconds),
-      draws = unlist(r$draws),
-      full_for = unlist(r$full_for),
-      choices = if (length(choices)) `colnames<-`(choices, c('rows', 'M', 'why', 'fail',
-        'cost', 'full', 'bestM', 'relheld')),
-      training_draws = as.integer(r$training_draws),
-      score_draws = as.integer(r$score_draws),
-      reused_values = as.integer(r$reused_values),
-      check_rms = as.numeric(r$check_rms),
-      check_max = as.numeric(r$check_max),
-      final = if (isTRUE(r$has_final)) list(checked = as.integer(r$final_checked),
-        worst = as.numeric(r$final_worst), corrected = as.integer(r$final_corrected)),
-      cost = as.numeric(r$cost))
-  }
+  record <- function() .ctCoresetRecord(.ctBackendJuliaValue(
+    engine()$module$ctsem_is_coreset_record(engine()$cs)))
   fn <- function(parm) batch(matrix(parm, 1L))
   attr(fn, 'batch') <- batch
   # The full objective's engine, for a stage that runs there on the full
@@ -110,4 +81,37 @@
   attr(fn, 'finalize') <- finalize
   attr(fn, 'coreset') <- record
   fn
+}
+
+# What a coreset did (`ctsem_is_coreset_record`, as the engine returns it), as
+# the importance sampler's record of it and DAIS's report it.
+.ctCoresetRecord <- function(r) {
+  used <- isTRUE(r$used)
+  choices <- as.matrix(r$choices)
+  list(
+    used = used,
+    units = if (r$units > 0) as.integer(r$units),
+    size = if (used) as.integer(r$size),
+    sizes = as.integer(unlist(r$sizes)),
+    phase = r$phase,
+    switches = as.integer(r$switches),
+    rounds_on_coreset = as.integer(r$rounds_on_coreset),
+    failed_checks = as.integer(r$failed_checks),
+    expected_round_cost = if (used) as.numeric(r$expected_round_cost),
+    free_checks = as.integer(r$free_checks),
+    chosen = as.integer(r$chosen),
+    chosen_passed = as.integer(r$chosen_passed),
+    seconds = unlist(r$seconds),
+    draws = unlist(r$draws),
+    full_for = unlist(r$full_for),
+    choices = if (length(choices)) `colnames<-`(choices, c('rows', 'M', 'why', 'fail',
+      'cost', 'full', 'bestM', 'relheld')),
+    training_draws = as.integer(r$training_draws),
+    score_draws = as.integer(r$score_draws),
+    reused_values = as.integer(r$reused_values),
+    check_rms = as.numeric(r$check_rms),
+    check_max = as.numeric(r$check_max),
+    final = if (isTRUE(r$has_final)) list(checked = as.integer(r$final_checked),
+      worst = as.numeric(r$final_worst), corrected = as.integer(r$final_corrected)),
+    cost = as.numeric(r$cost))
 }

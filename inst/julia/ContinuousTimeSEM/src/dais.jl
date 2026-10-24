@@ -458,12 +458,14 @@ function _dais(objective, coreset, centre::AbstractVector, cov::AbstractMatrix;
 end
 
 """What DAIS's coreset did: whether there was one, its last size (0 where
-none held), the coresets it chose and the checks that failed."""
+none held), the coresets it chose and the checks that failed, and its whole
+record as the importance sampler's coreset reports it (`ctsem_is_coreset_record`:
+each choice's size and price among it)."""
 _dais_coreset_record(::Nothing) = (coreset=false, coreset_size=0, coreset_chosen=0,
     coreset_failed=0)
 _dais_coreset_record(cs::CTSEMISCoreset) = (coreset=true,
     coreset_size=cs.phase == :coreset ? _is_active_n(cs) : 0, coreset_chosen=cs.nchoose,
-    coreset_failed=cs.fails_total)
+    coreset_failed=cs.fails_total, coreset_record=ctsem_is_coreset_record(cs))
 
 """The held directions `hold` (columns, in the parameters) in the whitened
 coordinates of the kept eigenvectors `V` and root eigenvalues `sq`,
