@@ -136,6 +136,12 @@ ctModelStatesAndPARS <- function(ctspec, statenames,tdprednames,tiprednames=NULL
   return(ctspec)
 }
 
+# The fitted template of each transform text met in this session
+# (`ctModelTransformsToNum()`): the same text always fits the same shape, and
+# the grid search over the templates was nearly all of a small fit's R-side
+# preparation (0.65 of 0.74 s a ctFit(fit = FALSE), local).
+.ct_transform_fits <- new.env(parent = emptyenv())
+
 ctModelTransformsToNum<-function(ctm){
   
   transformvaluecols <- c('multiplier','offset','meanscale','inneroffset')
@@ -164,6 +170,10 @@ ctModelTransformsToNum<-function(ctm){
     # values.
     
     param = c(seq(-2, 2, .1),seq(-10,10,.5),c(rnorm(10)))
+    # After the draw, so a fit advances the random stream as it always has:
+    # the default starting values are drawn from it next.
+    known <- get0(e, envir = .ct_transform_fits, inherits = FALSE)
+    if (!is.null(known)) return(known)
     y = eval(parse(text=e)) #eval(substitute(substitute(e, list(param = param)), list(e = as.quoted(e)[[1]]))))
     keep <- abs(y) < 1e5 & !is.na(param)
     keep[is.na(keep)] <- FALSE
@@ -178,6 +188,8 @@ ctModelTransformsToNum<-function(ctm){
       for(i in 1:nrow(formula.types)) {
         if(i > 1 && any((formula.types$lsfit < .001) %in% TRUE)) next #found the answer already
         tftype <- formula.types$type[i]
+        # Parsed once per template, not at every point of the grid.
+        tfexpr <- parse(text = formula.types$formula[i])
         
         ff <- function(pars){
           multiplier=pars[1];
@@ -188,7 +200,7 @@ ctModelTransformsToNum<-function(ctm){
           } else{
             meanscale=1;inneroffset=0
           }
-          yest<- suppressWarnings(eval(parse(text=formula.types$formula[i])))
+          yest<- suppressWarnings(eval(tfexpr))
           res <- (sum( ((y-yest)^2)/(abs(y)+.01)))
           if(is.na(res)) res <- 1e100
           return(res)
@@ -270,7 +282,9 @@ ctModelTransformsToNum<-function(ctm){
       success<-TRUE
     }
     
-    return(formula.types[which(formula.types$lsfit %in% min(formula.types$lsfit,na.rm=TRUE))[1],])
+    best <- formula.types[which(formula.types$lsfit %in% min(formula.types$lsfit,na.rm=TRUE))[1],]
+    assign(e, best, envir = .ct_transform_fits)
+    return(best)
   }
   
   rownames(ctm$pars)=1:nrow(ctm$pars)
