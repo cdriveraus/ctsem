@@ -1,166 +1,48 @@
-# Doubly adaptive importance sampling as a stage of 'checked' (R/ctDais.R):
-# the normal moved to the posterior's moments before anything is sampled.
+# Doubly adaptive importance sampling as a stage of 'checked': the normal
+# moved to the posterior's moments before anything is sampled. The method
+# runs in the engine (`ctsem_dais`, dais.jl), whose tests hold it to closed
+# forms (test_dais.jl: a skewed target's moments, a held direction, unusable
+# draws); here, that 'checked' runs it on a julia fit and reads what it
+# returns, and the sampler's metric.
 
-# A skewed target with exact moments: the first k coordinates of a rotated
-# frame are log-gamma(a) (density exp(a y - exp(y)); mean digamma(a),
-# variance trigamma(a)), the rest standard normal. Its Laplace normal at the
-# mode has the mean of a log-gamma(0.5) coordinate 1.3 of its sds off and
-# its sd 0.64 of the truth.
-.skewTarget <- function(d = 20L, a = c(0.5, 0.5, 1, 2), seed = 11L) {
-  set.seed(seed)
-  k <- length(a)
-  Q <- qr.Q(qr(matrix(stats::rnorm(d * d), d)))
-  lpg <- function(x) {
-    y <- as.numeric(crossprod(Q, x))
-    e <- exp(y[seq_len(k)])
-    out <- sum(a * y[seq_len(k)] - e) - 0.5 * sum(y[-seq_len(k)]^2)
-    attr(out, 'gradient') <- as.numeric(Q %*% c(a - e, -y[-seq_len(k)]))
-    out
-  }
-  list(lpg = ctsem:::.ctImisPointGradbatch(lpg),
-    mode = as.numeric(Q %*% c(log(a), rep(0, d - k))),
-    lapcov = Q %*% diag(c(1 / a, rep(1, d - k))) %*% t(Q),
-    mean = as.numeric(Q %*% c(digamma(a), rep(0, d - k))),
-    sd = sqrt(diag(Q %*% diag(c(trigamma(a), rep(1, d - k))) %*% t(Q))))
-}
-
-test_that("DAIS moves a normal from the mode to a skewed posterior's moments", {
-  t <- .skewTarget()
-  # The Laplace normal's mean is off by over half a posterior sd somewhere
-  # (1.3 of its own sds along a log-gamma(0.5) coordinate, diluted over the
-  # rotated frame's parameters).
-  expect_gt(max(abs(t$mode - t$mean) / t$sd), 0.5)
-  set.seed(12)
-  r <- ctsem:::.ctDaisRun(t$lpg, t$mode, t$lapcov, list(daisDraws = 64L))
-  expect_true(r$used)
-  expect_true(r$settled)
-  expect_gt(r$averaged, 0L)
-  expect_lt(max(abs(r$mean - t$mean) / t$sd), 0.15)
-  ratio <- sqrt(diag(r$cov)) / t$sd
-  expect_true(all(ratio > 0.85 & ratio < 1.1))
-  # Even draws an iteration, counted; the trace carries one row per iteration.
-  expect_equal(r$draws, 64L)
-  expect_equal(r$gradients, 64L * r$iterations)
-  expect_equal(nrow(r$trace), r$iterations)
-  # A Gaussian target from its own normal: nothing to move, and it settles
-  # within the window's two lengths plus the averaging.
-  P <- solve(t$lapcov)
-  g <- ctsem:::.ctImisPointGradbatch(function(x) {
-    out <- -0.5 * sum(x * (P %*% x))
-    attr(out, 'gradient') <- -as.numeric(P %*% x)
-    out
-  })
-  set.seed(13)
-  r0 <- ctsem:::.ctDaisRun(g, rep(0, 20), t$lapcov, list(daisDraws = 64L))
-  expect_true(r0$settled)
-  expect_lt(max(abs(r0$mean) / sqrt(diag(t$lapcov))), 0.1)
-  expect_equal(r0$cov, t$lapcov, tolerance = 0.15)
-})
-
-test_that("a direction the data do not identify is held, or the run ends as diverged", {
-  # A skewed target in two coordinates and a third the log density does not
-  # depend on at all: along it the posterior is improper, the normal's width
-  # is whatever it was given, and a moment-matching step would double the
-  # variance with every iteration.
-  a <- c(0.5, 1)
-  lpg <- ctsem:::.ctImisPointGradbatch(function(x) {
-    e <- exp(x[1:2])
-    out <- sum(a * x[1:2] - e)
-    attr(out, 'gradient') <- c(a - e, 0)
-    out
-  })
-  mode <- c(log(a), 0)
-  cov0 <- diag(c(1 / a, 1))
-  set.seed(18)
-  held <- ctsem:::.ctDaisRun(lpg, mode, cov0, list(daisDraws = 64L),
-    hold = matrix(c(0, 0, 1), 3))
-  expect_true(held$used)
-  # The skewed coordinates move to their moments; the held one stays as it was.
-  expect_lt(max(abs(held$mean[1:2] - digamma(a)) / sqrt(trigamma(a))), 0.15)
-  expect_equal(held$mean[3], 0)
-  expect_equal(held$cov[3, 3], 1)
-  expect_equal(held$cov[1:2, 3], c(0, 0))
-  set.seed(18)
-  free <- ctsem:::.ctDaisRun(lpg, mode, cov0, list(daisDraws = 64L))
-  expect_false(free$used)
-  expect_true(free$diverged)
-  expect_gt(free$growth, 1e4)
-  expect_null(free$cov)
-})
-
-test_that("draws the density cannot use carry no weight and no gradient", {
-  # The skewed target, refusing every draw past 1.5 on its first coordinate:
-  # a value of -Inf there and a gradient of Inf, as a filter overflowing out
-  # in a tail returns. Zero weight times an infinite gradient was NaN in the
-  # weighted means, the stopping rule read NA, and a fit stopped
-  # (test-poprank.R's full-rank augmented fit, on Linux).
-  t <- .skewTarget(d = 6L, a = c(0.5, 1))
-  inner <- attr(t$lpg, 'gradbatch')
-  lpg <- t$lpg
-  attr(lpg, 'gradbatch') <- function(X) {
-    out <- inner(X)
-    bad <- X[, 1] > 1.5
-    out$value[bad] <- -Inf
-    out$gradient[bad, ] <- Inf
-    out
-  }
-  set.seed(19)
-  run <- ctsem:::.ctDaisRun(lpg, t$mode, t$lapcov, list(daisDraws = 64L))
-  expect_true(run$used)
-  expect_gt(run$unusable, 0L)
-  expect_true(all(is.finite(run$mean)))
-  expect_true(all(is.finite(run$cov)))
-  expect_true(all(run$trace[, 'usable'] < 64))
-  # And a normal none of whose draws can be used leaves the check's.
-  attr(lpg, 'gradbatch') <- function(X) {
-    out <- inner(X)
-    out$value[] <- -Inf
-    out$gradient[] <- Inf
-    out
-  }
-  none <- ctsem:::.ctDaisRun(lpg, t$mode, t$lapcov, list(daisDraws = 64L))
-  expect_false(none$used)
-  expect_equal(none$unusable, 64L)
-  expect_null(none$cov)
-})
-
-test_that("DAIS runs inside 'checked' where the check names a direction, and not where it does not", {
-  t <- .skewTarget(d = 6L, a = c(0.5, 1))
+test_that("'checked' runs DAIS in the engine on a julia fit, and not where asked not to", {
+  skip_without_julia()
+  # The shared Laplace fixture at 100 subjects, whose check names directions.
+  fit <- laplace_fixture(nsub = 100L, tp = 6L, seed = 31L)
   set.seed(14)
-  out <- suppressMessages(ctsem:::ctOptimComputeUncertainty(t$mode, list(nsubjects = 1),
-    sm = NULL, lpgFunc = t$lpg, uncertainty = 'checked', finishsamples = 20, verbose = 0))
-  expect_gt(ncol(out$details$normalcheck$directions), 0L)
-  set.seed(15)
-  drawn <- suppressWarnings(suppressMessages(ctsem:::.ctOptimDrawSamples(out, 'imis',
-    list(), t$mode, 1000, lpg = t$lpg)))
-  dais <- drawn$uncertaintyfit$details$dais
+  u <- suppressWarnings(ctFitUncertainty(fit, "checked", cores = 1))
+  d <- u$uncertainty$details
+  expect_gt(NCOL(d$normalcheck$directions), 0L)
+  dais <- d$dais
   expect_true(isTRUE(dais$used))
   expect_gt(dais$iterations, 0L)
-  # The recheck's record, and the normal the stage leaves: its covariance is
-  # the fit's proposal, and the draws' means sit on the posterior's.
+  expect_equal(dais$gradients, dais$draws * dais$iterations)
+  expect_equal(dais$cost, 2 * dais$gradients)
+  expect_equal(nrow(dais$trace), dais$iterations)
+  expect_true(all(c("gamma", "natural", "noise", "usable") %in% colnames(dais$trace)))
+  npar <- length(fit$estimate$raw)
+  expect_length(dais$centre, npar)
+  expect_equal(dim(dais$cov), c(npar, npar))
   expect_true(is.numeric(dais$check$directions))
-  expect_equal(dim(dais$cov), c(6L, 6L))
-  expect_lt(max(abs(colMeans(drawn$samples) - t$mean) / t$sd), 0.15)
-  expect_equal(sqrt(diag(drawn$uncertaintyfit$cov)) / t$sd, rep(1, 6), tolerance = 0.2)
-  # Off by name, the Hessian's normal is where sampling starts, as before.
-  set.seed(15)
-  plain <- suppressWarnings(suppressMessages(ctsem:::.ctOptimDrawSamples(out, 'imis',
-    list(dais = FALSE), t$mode, 1000, lpg = t$lpg)))
-  expect_null(plain$uncertaintyfit$details$dais)
-  # And a Gaussian posterior names nothing, so nothing runs.
-  P <- solve(t$lapcov)
-  g <- ctsem:::.ctImisPointGradbatch(function(x) {
-    out <- -0.5 * sum(x * (P %*% x))
-    attr(out, 'gradient') <- -as.numeric(P %*% x)
+  # The same seed, the same stage.
+  set.seed(14)
+  again <- suppressWarnings(ctFitUncertainty(fit, "checked", cores = 1))
+  expect_equal(again$uncertainty$details$dais$cov, dais$cov)
+  # Off by name: no stage, the check's normal as before.
+  set.seed(14)
+  off <- suppressWarnings(ctFitUncertainty(fit, "checked", cores = 1,
+    control = list(dais = FALSE)))
+  expect_null(off$uncertainty$details$dais)
+})
+
+test_that("a density without an engine has no DAIS stage", {
+  # A closed form built in R, as a stan fit's density is: nothing to run it on.
+  lpg <- ctsem:::.ctImisPointGradbatch(function(x) {
+    out <- -0.5 * sum(x^2)
+    attr(out, 'gradient') <- -x
     out
   })
-  set.seed(16)
-  outg <- suppressMessages(ctsem:::ctOptimComputeUncertainty(rep(0, 6), list(nsubjects = 1),
-    sm = NULL, lpgFunc = g, uncertainty = 'checked', finishsamples = 20, verbose = 0))
-  expect_equal(ncol(outg$details$normalcheck$directions), 0L)
-  drawng <- ctsem:::.ctOptimDrawSamples(outg, 'imis', list(), rep(0, 6), 100, lpg = g)
-  expect_null(drawng$uncertaintyfit$details$dais)
-  expect_identical(drawng$draws, 'normal')
+  expect_null(ctsem:::.ctDaisEngine(lpg, rep(0, 3), diag(3)))
 })
 
 test_that("the sampler's metric is the DAIS normal's precision where there is one", {

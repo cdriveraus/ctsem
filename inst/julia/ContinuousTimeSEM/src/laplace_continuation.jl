@@ -1202,6 +1202,10 @@ function _continuation_block_rule(laplace::CTSEMLaplaceObjective, U::Integer,
         constant = nsoft * (log(2) - log(2 * pi)) / 2 - sum(log, lsoft; init=0.0) / 2
     end
     n = size(points, 2)
+    # Bound once for the closure below: `points` and `logweights` are assigned
+    # in both branches above, and a closure over a local assigned twice boxes
+    # it.
+    nodes, nodeweights = points, logweights
     # In parallel over the nodes, each on its own copy of `u`, as an importance
     # rule's draws are (`_continuation_draw!`): a nested unit whose outer block
     # holds 125 nodes, each placing every member's rule beneath it, was placed
@@ -1215,7 +1219,7 @@ function _continuation_block_rule(laplace::CTSEMLaplaceObjective, U::Integer,
         # `local` throughout, as in `_continuation_flagged`.
         local uj, awsj, inner, placed
         uj = copy(u)
-        @inbounds for (t, c) in enumerate(columns); uj[c] = points[t, j]; end
+        @inbounds for (t, c) in enumerate(columns); uj[c] = nodes[t, j]; end
         awsj = _laplace_workspace!(laplace, Float64, npar)
         inner = 0.0
         if leaf
@@ -1233,7 +1237,7 @@ function _continuation_block_rule(laplace::CTSEMLaplaceObjective, U::Integer,
                 inner += placed.value
             end
         end
-        terms[j] = isfinite(inner) ? inner + logweights[j] : -Inf
+        terms[j] = isfinite(inner) ? inner + nodeweights[j] : -Inf
         return true
     end
     placed_all = n * length(block.members) >= 64 ?
@@ -1288,16 +1292,17 @@ function _continuation_unit_rule(laplace::CTSEMLaplaceObjective, U::Integer,
         # draws are on. A nested unit's outer blocks take their first
         # components from the curvature, here, before anything runs in
         # parallel: it is this slot's scratch.
-        outer = Vector{Union{Nothing,CTSEMImportanceComponent}}(nothing,
-            length(blocks))
-        if length(blocks) > 1
-            outer = _continuation_outer_components(
+        # Assigned once: the check below is a closure over it, and a closure
+        # over a local assigned twice boxes it.
+        outer = length(blocks) > 1 ?
+            _continuation_outer_components(
                 _laplace_unit_curvature(laplace, U, theta, Ls, mode), blocks,
                 tree.children, mode, Float64(opts.draws_floor),
-                Float64(opts.draws_df))
+                Float64(opts.draws_df)) :
+            Vector{Union{Nothing,CTSEMImportanceComponent}}(nothing, length(blocks))
+        length(blocks) > 1 &&
             any(b -> !isempty(tree.children[b]) && outer[b] === nothing,
                 eachindex(blocks)) && return nothing
-        end
         context = (children=tree.children, mode=mode, outer=outer)
         roots = CTSEMFixedRule[]
         total = 0.0

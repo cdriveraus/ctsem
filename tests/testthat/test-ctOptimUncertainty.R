@@ -427,16 +427,15 @@ test_that("checked keeps the normal, and says so, where sampling cannot correct 
   expect_equal(drawn$uncertaintyfit$cov, out$cov)
   expect_false(drawn$uncertaintyfit$details$importance_sampling$used)
   expect_null(drawn$uncertaintyfit$details$dais)
-  # Moved to the shell's moments first (R/ctDais.R), the same budget places
-  # it: the sampler's weights are usable and the draws are kept.
+  # A density built in R has no engine, so no DAIS stage either way: the
+  # stage that moves the normal to the shell's moments first runs in the
+  # engine on a julia fit (test_dais.jl, test-dais.R).
   set.seed(5)
-  moved <- suppressWarnings(ctsem:::.ctOptimDrawSamples(out, 'imis',
+  plain <- suppressWarnings(ctsem:::.ctOptimDrawSamples(out, 'imis',
     list(imisBudget = 300), mode, 200, lpg = ctsem:::.ctImisPointGradbatch(lpg),
     parnames = paste0('p', seq_len(d))))
-  expect_true(isTRUE(moved$uncertaintyfit$details$dais$used))
-  expect_identical(moved$draws, 'imis')
-  expect_true(moved$uncertaintyfit$details$importance_sampling$used)
-  expect_gt(moved$uncertaintyfit$details$importance_sampling$ess, 50)
+  expect_null(plain$uncertaintyfit$details$dais)
+  expect_identical(plain$draws, 'normal')
 })
 
 test_that("the sampler's metric is the Hessian rescaled to the widths the check measured", {
