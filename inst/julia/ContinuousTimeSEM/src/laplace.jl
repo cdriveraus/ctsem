@@ -6074,13 +6074,9 @@ likelihood of all its members jointly. `subject_loglik` spreads that evenly
 over the members, which is exact only when a unit is one subject; anything that
 needs a marginal per independent block (leave-one-unit-out, for one) reads
 `unit_loglik`.
-
-`contributions` is accepted and ignored: `subject_loglik` and `unit_loglik` are
-always returned. It stays so callers that pass it, as they do to
-`ctsem_laplace_quadrature`, keep working.
 """
 function ctsem_laplace_evaluate(laplace::CTSEMLaplaceObjective, values::AbstractVector;
-    gradient::Bool=true, contributions::Bool=false, nested_gradient::Bool=false,
+    gradient::Bool=true, nested_gradient::Bool=false,
     scores::Union{Nothing,Matrix{Float64}}=nothing,
     coreset::Union{Nothing,CTSEMCoreset}=nothing)
     n = length(values)
