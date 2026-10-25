@@ -116,3 +116,32 @@ test_that("a scaled diffusion needs a construction whose diagonal is an sd", {
   expect_error(suppressWarnings(suppressMessages(ctFit(.ds_data(), m, backend = "julia",
     fit = FALSE))), "covmattransform")
 })
+
+test_that("a drift-scaled random intercept keeps the Laplace units concave quadratics", {
+  skip_without_julia()
+  # Its effect sits on a PARS cell that only CINT reads, affine in it given the
+  # drift, so each unit is still one Gaussian basin and the probes are skipped
+  # (`.ctJuliaParsAffine()`); a random drift beside it makes the slope vary
+  # with an effect, and they run again. Skipping changes nothing: values and
+  # gradients as with the probes on.
+  d <- .ds_data()
+  spec <- suppressWarnings(suppressMessages(ctFit(d, .ds_model(c("DIFFUSION", "CINT")),
+    backend = "julia", intoverpop = "laplace", fit = FALSE)))
+  expect_true(isTRUE(spec$laplace$quadratic))
+  both <- suppressWarnings(suppressMessages(ctFit(d, .ds_model(c("DIFFUSION", "CINT"),
+    varying = c("cint", "drift_eta1")), backend = "julia", intoverpop = "laplace",
+    fit = FALSE)))
+  expect_false(isTRUE(both$laplace$quadratic))
+  probed <- spec
+  probed$laplace$quadratic <- FALSE
+  handles <- lapply(list(spec, probed), function(s)
+    structure(s, class = c("ctJuliaModel", "ctFitModel")))
+  set.seed(9)
+  for (i in 1:2) {
+    x <- stats::rnorm(ctsem:::.ctBackendNpar(spec), 0, 0.5)
+    a <- ctJuliaEvaluate(handles[[1]], x, gradient = TRUE, cores = 1L)
+    b <- ctJuliaEvaluate(handles[[2]], x, gradient = TRUE, cores = 1L)
+    expect_equal(a$value, b$value, tolerance = 1e-12)
+    expect_equal(a$gradient, b$gradient, tolerance = 1e-10)
+  }
+})

@@ -2661,21 +2661,83 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
 # likelihood is quadratic in them; loadings onto the effects are population
 # parameters and keep it so. Where the probes are needed -- a person's
 # loadings whose sign the data leave open, a person's persistence -- an effect
-# sits in LAMBDA or DRIFT, and this is FALSE.
+# sits in LAMBDA or DRIFT, and this is FALSE. An effect on a PARS cell counts
+# where only mean-vector cells read it, each affine in it
+# (`.ctJuliaParsAffine()`): a drift-scaled intercept, `PARS[k,1] * a /
+# expm1(a)`, is one.
 .ctJuliaLaplaceQuadratic <- function(model, setup, levels) {
   if (is.null(setup) || !nrow(setup) || !length(levels)) return(FALSE)
   if (length(model$manifesttype) && any(as.integer(model$manifesttype) != 0L)) return(FALSE)
   if ("stateref" %in% names(setup) && any(as.integer(setup$stateref) > 0L)) return(FALSE)
-  calcs <- unlist(model$modelmats$calcs)
-  if (length(calcs) && any(grepl("state[", calcs, fixed = TRUE) |
-      grepl("\\b(T0MEANS|CINT|MANIFESTMEANS|TDPREDEFFECT|PARS)\\[", calcs))) return(FALSE)
   base <- .ctMatricesList()$base
   means <- base[c("T0MEANS", "CINT", "MANIFESTMEANS", "TDPREDEFFECT")]
   param <- as.integer(setup$param)
+  # A calculation is out where it reads a state or a mean vector, or where a
+  # cell that is no mean reads a PARS cell carrying an effect, which would take
+  # the effect into a covariance or a gain. A mean computed from a PARS effect
+  # is the loop's question below.
+  effects <- unique(unlist(lapply(levels, function(lv) as.integer(lv$re_index))))
+  carried <- as.integer(setup$matrix) == base[["PARS"]] & param %in% effects
+  carried <- sprintf("PARS[%d,%d]", as.integer(setup$row[carried]), as.integer(setup$col[carried]))
+  calcs <- unlist(model$modelmats$calcs)
+  if (length(calcs)) {
+    lhs <- sub("=.*$", "", calcs)
+    rhs <- gsub("\\s+", "", sub("^[^=]*=", "", calcs))
+    meanlhs <- grepl("^\\s*(T0MEANS|CINT|MANIFESTMEANS|TDPREDEFFECT)\\[", lhs)
+    readsfx <- vapply(rhs, function(r) any(vapply(carried, grepl, logical(1), r,
+      fixed = TRUE)), logical(1))
+    if (any(grepl("state[", rhs, fixed = TRUE) |
+        grepl("\\b(T0MEANS|CINT|MANIFESTMEANS|TDPREDEFFECT)\\[", rhs) |
+        (readsfx & !meanlhs))) return(FALSE)
+  }
   for (lv in levels) for (p in as.integer(lv$re_index)) {
     rows <- which(param == p)
-    if (!length(rows) || !all(as.integer(setup$matrix[rows]) %in% means) ||
-        !all(as.integer(setup$transform[rows]) == 0L)) return(FALSE)
+    if (!length(rows) || !all(as.integer(setup$transform[rows]) == 0L)) return(FALSE)
+    inmean <- as.integer(setup$matrix[rows]) %in% means
+    if (!all(inmean) && !.ctJuliaParsAffine(model, setup[rows[!inmean], , drop = FALSE]))
+      return(FALSE)
+  }
+  TRUE
+}
+
+# Whether the PARS cells in `cells` (matsetup rows) reach the model only through
+# mean-vector cells that are affine in them: every cell whose expression reads
+# one is a T0MEANS, CINT, MANIFESTMEANS or TDPREDEFFECT cell, its derivative in
+# that PARS cell no longer reads it, and every other cell it reads is free of
+# effects and no expression itself. Then for fixed population parameters each
+# such mean is affine in the effect, as it is for an effect in the mean.
+.ctJuliaParsAffine <- function(model, cells) {
+  base <- .ctMatricesList()$base
+  if (!all(as.integer(cells$matrix) == base[["PARS"]])) return(FALSE)
+  pars <- model$pars
+  if (is.null(pars) || !nrow(pars)) return(FALSE)
+  varying <- .ctVaryingRows(model)
+  means <- c("T0MEANS", "CINT", "MANIFESTMEANS", "TDPREDEFFECT")
+  text <- as.character(pars$param)
+  ref <- "\\b([A-Z][A-Z0-9]*)\\[\\s*([0-9]+)\\s*,\\s*([0-9]+)\\s*\\]"
+  for (i in seq_len(nrow(cells))) {
+    at <- sprintf("PARS\\[\\s*%d\\s*,\\s*%d\\s*\\]", as.integer(cells$row[i]),
+      as.integer(cells$col[i]))
+    readers <- which(grepl(at, text) & !(pars$matrix %in% "PARS"))
+    if (any(grepl(at, text[pars$matrix %in% "PARS"]))) return(FALSE)
+    for (r in readers) {
+      if (!pars$matrix[r] %in% means || grepl("state[", text[r], fixed = TRUE)) return(FALSE)
+      f <- tryCatch(str2lang(gsub(at, "x__affine", text[r])), error = function(e) NULL)
+      if (is.null(f)) return(FALSE)
+      d1 <- tryCatch(.ctWithStableDerivRules(Deriv::Deriv(f, "x__affine",
+        cache.exp = FALSE)), error = function(e) NULL)
+      if (is.null(d1) || "x__affine" %in% all.vars(d1)) return(FALSE)
+      others <- regmatches(text[r], gregexpr(ref, text[r]))[[1]]
+      for (o in others) {
+        m <- regmatches(o, regexec(ref, o))[[1]]
+        if (identical(m[2], "PARS") && as.integer(m[3]) == as.integer(cells$row[i]) &&
+            as.integer(m[4]) == as.integer(cells$col[i])) next
+        hit <- which(pars$matrix == m[2] & pars$row == as.integer(m[3]) &
+          pars$col == as.integer(m[4]))
+        if (length(hit) && (any(varying[hit]) || any(grepl("[", text[hit], fixed = TRUE))))
+          return(FALSE)
+      }
+    }
   }
   TRUE
 }
