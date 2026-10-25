@@ -1879,11 +1879,17 @@ ctBackendParMatrices <- function(fit, raw = NULL, tipreds = NULL, state = NULL,
 # with `control$check`, a fit's default), in one sentence; NULL where it named
 # no direction or did not run. Fit-level only: per parameter it names a third
 # of the intervals that are off (review/REVIEW-fit-uncertainty-2026-10-25.md,
-# section 5).
+# section 5). A fit that ended on a jump makes no check -- the Laplace
+# objective jumps where the check would look -- and the jump says what one
+# would: some unit's posterior is not one Gaussian basin.
 .ctUncertaintyCheckNote <- function(fit) {
   u <- fit$uncertainty
+  if (!identical(u$settings$method, "hessian")) return(NULL)
+  if (!is.null(fit$laplace$jump)) return(paste0("Intervals are from the ",
+    "corrected curvature at the estimate, where the Laplace term jumped: ",
+    "ctFitUncertainty(fit, 'sample') samples the posterior for intervals to report."))
   check <- u$details$normalcheck
-  if (!identical(u$settings$method, "hessian") || is.null(check)) return(NULL)
+  if (is.null(check)) return(NULL)
   named <- if (is.matrix(check$directions)) ncol(check$directions) else 0L
   if (!named) return(NULL)
   sprintf(paste0("Intervals are from the curvature at the estimate, and the ",
