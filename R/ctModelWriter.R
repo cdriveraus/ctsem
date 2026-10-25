@@ -139,8 +139,12 @@ ctModelStatesAndPARS <- function(ctspec, statenames,tdprednames,tiprednames=NULL
 # The fitted template of each transform text met in this session
 # (`ctModelTransformsToNum()`): the same text always fits the same shape, and
 # the grid search over the templates was nearly all of a small fit's R-side
-# preparation (0.65 of 0.74 s a ctFit(fit = FALSE), local).
+# preparation (0.65 of 0.74 s a ctFit(fit = FALSE), local). Kept as texts
+# and rows rather than as names in an environment, whose names are limited to
+# 10000 bytes and cannot be empty.
 .ct_transform_fits <- new.env(parent = emptyenv())
+.ct_transform_fits$text <- character()
+.ct_transform_fits$row <- list()
 
 ctModelTransformsToNum<-function(ctm){
   
@@ -172,8 +176,8 @@ ctModelTransformsToNum<-function(ctm){
     param = c(seq(-2, 2, .1),seq(-10,10,.5),c(rnorm(10)))
     # After the draw, so a fit advances the random stream as it always has:
     # the default starting values are drawn from it next.
-    known <- get0(e, envir = .ct_transform_fits, inherits = FALSE)
-    if (!is.null(known)) return(known)
+    known <- match(e, .ct_transform_fits$text)
+    if (!is.na(known)) return(.ct_transform_fits$row[[known]])
     y = eval(parse(text=e)) #eval(substitute(substitute(e, list(param = param)), list(e = as.quoted(e)[[1]]))))
     keep <- abs(y) < 1e5 & !is.na(param)
     keep[is.na(keep)] <- FALSE
@@ -283,7 +287,8 @@ ctModelTransformsToNum<-function(ctm){
     }
     
     best <- formula.types[which(formula.types$lsfit %in% min(formula.types$lsfit,na.rm=TRUE))[1],]
-    assign(e, best, envir = .ct_transform_fits)
+    .ct_transform_fits$text <- c(.ct_transform_fits$text, e)
+    .ct_transform_fits$row <- c(.ct_transform_fits$row, list(best))
     return(best)
   }
   

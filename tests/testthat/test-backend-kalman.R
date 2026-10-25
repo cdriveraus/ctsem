@@ -469,6 +469,23 @@ test_that("the interval transition is the Jacobian of the interval", {
   }
 })
 
+test_that("a raw vector too short for the route is refused, not read past its end", {
+  skip_without_julia()
+  # The test above once handed the default (Laplace) route a vector sized by
+  # the parameter table, one short of the population scale: the engine read
+  # past its end, and on Windows a later garbage collection crashed and hung
+  # the file. Both routes refuse one now.
+  model <- .kalman_indvarmeans_model()
+  data <- .kalman_indvarmeans_data()
+  for (route in c("laplace", "augmented")) {
+    spec <- suppressMessages(ctFit(data, model, backend = "julia", intoverpop = route,
+      fit = FALSE))
+    short <- rep(0, ctsem:::.ctBackendNpar(spec) - 1L)
+    expect_error(ctsem:::.ctBackendKalmanRaw(ctsem:::.ctBackendAsModel(spec), short),
+      "parameter vector", info = route)
+  }
+})
+
 test_that("the improved reports differ from Stan only where Stan is approximate", {
   skip_if_not_installed("rstan")
   skip_without_julia()

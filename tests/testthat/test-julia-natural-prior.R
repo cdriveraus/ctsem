@@ -111,12 +111,24 @@ test_that("'is' with flat = 'natural' samples the natural-flat posterior of a cl
   expect_gt(natural - raw, 0.05)
   draw <- function(flat) {
     set.seed(1)
-    u <- suppressWarnings(suppressMessages(ctFitUncertainty(fit, "is", cores = 1,
+    suppressWarnings(suppressMessages(ctFitUncertainty(fit, "is", cores = 1,
       control = list(flat = flat, isESS = 2000))))
-    mean(f(u$estimate$rawposterior[, 1]))
   }
-  expect_lt(abs(draw("natural") - natural), 0.025)
-  expect_lt(abs(draw("raw") - raw), 0.025)
+  nat <- draw("natural")
+  rw <- draw("raw")
+  expect_lt(abs(mean(f(nat$estimate$rawposterior[, 1])) - natural), 0.025)
+  expect_lt(abs(mean(f(rw$estimate$rawposterior[, 1])) - raw), 0.025)
+  # The fit keeps its objective's curvature: the prior's is the sampled
+  # density's, and the certification, the continuation and a later call read
+  # the stored matrix.
+  expect_equal(nat$uncertainty$hessian, rw$uncertainty$hessian)
+})
+
+test_that("R's log1p_exp is finite at any argument, as the transforms it evaluates need", {
+  x <- c(-800, -40, -3, 0, 3, 40, 800)
+  expect_equal(ctsem:::log1p_exp(x[3:5]), log1p(exp(x[3:5])), tolerance = 1e-15)
+  expect_equal(ctsem:::log1p_exp(c(-800, 0, 40, 800)), c(0, log(2), 40, 800))
+  expect_true(all(is.finite(ctsem:::log1p_exp(x))))
 })
 
 test_that("flat = 'natural' is refused where nothing integrates over a density", {
