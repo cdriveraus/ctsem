@@ -310,6 +310,11 @@ end
     a = 2 * P._ctsem_normal_cdf(-0.5)
     @test P._surrogate_price(0.1, 1.0, 64.0) ≈ 7.4 * (2 - a) / a
     @test P._surrogate_tau(0.0) == Inf
+    # Held to the chain's target acceptance: a size expected to accept less is
+    # not priced at all.
+    held = P._SurrogatePrice(64.0, 1.0, 0.8)
+    @test held(0.1, 0.4) ≈ P._surrogate_price(0.1, 0.4, 64.0)
+    @test held(0.1, 1.0) == Inf
     # Measured acceptance gives the spread back: a coreset accepted as its
     # fit predicted is priced as it was.
     d = P._SurrogateDensity(nothing, :adjoint, 2, 1)

@@ -38,8 +38,17 @@
 # What one draw costs: the trajectory's leapfrog steps at the coreset's share
 # of a gradient, and one full value, no gradient, at a moved endpoint; a
 # refused endpoint repeats the chain's state. So the coreset is the size of
-# least cost per effective transition (`_surrogate_price`), and is given up
-# where the acceptance measured makes that more than a transition in full.
+# least cost per effective transition (`_surrogate_price`) among those whose
+# endpoints are expected to be accepted at least as often as the chain's own
+# transitions are tuned to be (`target_accept`): warm-up adapts the step and
+# metric on the coreset's density, and they serve the full density only where
+# the two are that close. Priced alone, a coreset of cf_mixed's predicted to
+# accept 15 per cent of its endpoints was cheaper than none, and three chains
+# of four gave theirs up after warm-up and sampled the full density on what
+# they had learnt on the coreset: 2,821 draws a chain for the target, against
+# 334 on coresets of 8-12 units accepting 0.86-0.95. A chain gives its coreset
+# up where even the acceptance's upper bound over a batch makes it dearer than
+# a transition in full (`_surrogate_poor`), not on a batch's noise.
 
 """Warm-up states a chain's coreset is fitted from: its last this many."""
 const _SURROGATE_TRAIN = 64
@@ -76,13 +85,20 @@ _surrogate_tau(a::Real) = a > 0 ? (2 - a) / a : Inf
 
 """What a coreset costs a chain's transition (`_surrogate_price`), with the
 error's spread scaled by `inflate`, the variance the last coreset's measured
-acceptance implies over what its fit expected."""
+acceptance implies over what its fit expected; `Inf` where the endpoints are
+expected to be accepted less often than `floor`, the chain's target
+acceptance."""
 struct _SurrogatePrice
     work::Float64
     inflate::Float64
+    floor::Float64
 end
 
-(p::_SurrogatePrice)(share::Real, s::Real) = _surrogate_price(share, s * sqrt(p.inflate), p.work)
+function (p::_SurrogatePrice)(share::Real, s::Real)
+    s_now = s * sqrt(p.inflate)
+    2 * _ctsem_normal_cdf(-s_now / 2) >= p.floor || return Inf
+    return _surrogate_price(share, s_now, p.work)
+end
 
 """
     _surrogate_work(d)
@@ -143,12 +159,16 @@ mutable struct _SurrogateDensity{O}
     fits::Int
     abandoned::Bool
     seed::UInt64
+    # The chain's target acceptance, which a coreset's endpoint acceptance is
+    # held to (`_SurrogatePrice`).
+    floor::Float64
 end
 
-_SurrogateDensity(objective, gradient_method, ndim::Integer, seed::Integer) =
+_SurrogateDensity(objective, gradient_method, ndim::Integer, seed::Integer;
+    floor::Real=0.8) =
     _SurrogateDensity(objective, Symbol(gradient_method), nothing, NaN, NaN,
         zeros(Int(ndim)), zeros(Int(ndim)), 0, 0, 0, 0, 0, 0, 0, 0.0, NaN, 0, false,
-        UInt64(seed))
+        UInt64(seed), Float64(floor))
 
 """The marginal samplers' full log density and gradient at `x`, into `g`;
 `-Inf` and a zero gradient where the point cannot be used. NUTS
@@ -286,7 +306,7 @@ function _surrogate_fit!(d::_SurrogateDensity, states::Vector{Vector{Float64}},
         nothing
     end
     full === nothing && return logp
-    price = _SurrogatePrice(_surrogate_work(d), _surrogate_inflation(d))
+    price = _SurrogatePrice(_surrogate_work(d), _surrogate_inflation(d), d.floor)
     fit = _smc_coreset_fit(full.terms, full.total, _smc_unit_cost(d.objective), price,
         price.work, Random.Xoshiro(d.seed + UInt64(d.fits)))
     if fit === nothing
@@ -374,13 +394,19 @@ function _surrogate_batch!(d::_SurrogateDensity, x::Vector{Float64},
 end
 
 """Whether chain `d`'s coreset has cost more per effective transition than a
-transition in full (`_surrogate_price` at the acceptance measured), over the
-moved endpoints tested since it was fitted or since the last batch, where
-there are at least `_SURROGATE_MIN_PROPOSED`."""
+transition in full (`_surrogate_price`) at the upper bound of the acceptance
+measured over the moved endpoints tested since it was fitted or since the
+last batch, where there are at least `_SURROGATE_MIN_PROPOSED`: Wilson's,
+two standard errors up. Read at the estimate, a batch's noise gave coresets
+that served up."""
 function _surrogate_poor(d::_SurrogateDensity)
-    d.batch_proposed >= _SURROGATE_MIN_PROPOSED || return false
+    n = d.batch_proposed
+    n >= _SURROGATE_MIN_PROPOSED || return false
+    a = d.batch_accepted / n
+    z = 2.0
+    upper = (a + z^2 / (2n) + z * sqrt(a * (1 - a) / n + z^2 / (4n^2))) / (1 + z^2 / n)
     work = _surrogate_work(d)
-    return (work * d.share + 1) * _surrogate_tau(d.batch_accepted / d.batch_proposed) > work
+    return (work * d.share + 1) * _surrogate_tau(upper) > work
 end
 
 """Chain `d` gives its coreset up for the rest of the run: the full log
