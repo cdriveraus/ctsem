@@ -3165,50 +3165,11 @@ function _laplace_unit_curvature(laplace::CTSEMLaplaceObjective, U::Integer,
         # `local` for the reason spelled out in `_laplace_seeded_unit_gradient!`:
         # a name assigned here that is also a local of the enclosing function
         # would be shared by every task, silently.
-        local block, columns, block_of, J, t, a, rows, xb, width, nx, Jw
+        local block, columns, J, t, a, rows, Jw
         block = blocks[b]
         columns = (block.offset + 1):(block.offset + block.size)
-        block_of = function (ub)
-            local S, ws, vs, Lss, uu, tt, c
-            S = eltype(ub)
-            ws = _laplace_workspace!(laplace, S, length(values))
-            vs = _laplace_scratch_vector!(laplace, S, length(values), :curv_vs)
-            copyto!(vs, values)
-            Lss = _laplace_scratch_levels!(laplace, S, Ls, :curv_levels)
-            uu = _laplace_scratch_vector!(laplace, S, length(base), :curv_uu)
-            copyto!(uu, base)
-            @inbounds for (tt, c) in enumerate(columns)
-                uu[c] = ub[tt]
-            end
-            return _laplace_unit_loglik_gradient_vector(laplace, U, vs, Lss, uu, ws,
-                block.members,
-                _laplace_scratch_vector!(laplace, S, length(base), :curv_inner),
-                mode, hook)
-        end
-        # `jacobian!` into a cached result, and views out of it. The jacobian
-        # is as tall as the unit's whole random-effect dimension because that
-        # is what the gradient body returns, while the block reads its own
-        # `block.size` rows and its ancestors' -- fifteen of eighteen hundred
-        # on a two-hundred-subject unit. Allocating it fresh cost 130 KB per
-        # block per Newton step, and the two row slices below copied again.
-        # Computing the whole thing is unavoidable, since forward mode fills
-        # every row of the dual result whether or not it is read; allocating
-        # it repeatedly is not.
-        # At a bucketed width (see `_CTSEM_CURVATURE_WIDTHS`): a block smaller
-        # than its width is padded with zeros `block_of` never reads, and the
-        # padding's columns of the result are ignored.
-        width = _ctsem_dual_width(block.size, _CTSEM_CURVATURE_WIDTHS[])
-        nx = max(block.size, width)
-        xb = _laplace_scratch_vector!(laplace, T, nx, :curv_ub)
-        @inbounds for (t, c) in enumerate(columns)
-            xb[t] = base[c]
-        end
-        @inbounds for t in (block.size + 1):nx
-            xb[t] = zero(T)
-        end
-        Jw = _laplace_scratch_matrix!(laplace, T, length(base), nx, :curv_jac)
-        _ctsem_width_jacobian!(Jw, block_of, xb, block.size, width; whole=true,
-            store=laplace.workspaces[_laplace_slot()])
+        Jw = _laplace_columns_jacobian(laplace, U, values, Ls, base, columns,
+            block.members, mode, hook)
         J = view(Jw, :, 1:block.size)
         # M = I - d2(sum ll)/du du, block by block.
         M.diag[b] .= .-(@view J[columns, :])
@@ -3222,29 +3183,7 @@ function _laplace_unit_curvature(laplace::CTSEMLaplaceObjective, U::Integer,
         return nothing
     end
 
-    # A level with many blocks divides over blocks; a level with one divides
-    # over that block's members instead. A unit's innermost level is one block
-    # per subject, which the member axis cannot touch at all, and its outermost
-    # is a single block spanning every member, which the block axis cannot touch
-    # -- so neither axis alone is enough and the choice is per level.
-    # A level at a time, because blocks of one level cover disjoint members and
-    # blocks of different levels do not. Within a level the pool takes them;
-    # a level holding a single block spends the whole budget on that block's
-    # members instead, which is automatic -- the region below inherits whatever
-    # this one did not claim. A unit's innermost level is one block per subject,
-    # which only this axis can spread, and its outermost is a single block over
-    # every member, which only the member axis can.
-    at = 1
-    while at <= length(blocks)
-        stop = at
-        while stop < length(blocks) && blocks[stop + 1].level == blocks[at].level
-            stop += 1
-        end
-        _laplace_parallel(laplace, at:stop) do b
-            fill_block!(b)
-        end
-        at = stop + 1
-    end
+    _laplace_by_level(fill_block!, laplace, blocks)
     return M
 end
 
@@ -3309,7 +3248,7 @@ function _laplace_unit_curvature_pruned(laplace::CTSEMLaplaceObjective, U::Integ
     # As in `_laplace_unit_curvature`'s block route, over each block's active
     # columns only; `local` for the reason given there.
     fill_block! = function (b::Int)
-        local block, off, columns, n, D, Cp, block_of, width, nx, xb, Jw, rows
+        local block, off, columns, n, D, Cp, Jw, rows
         block = blocks[b]
         off = block.offset
         columns = Int[c for c in (off + 1):(off + block.size) if isactive[c]]
@@ -3323,34 +3262,8 @@ function _laplace_unit_curvature_pruned(laplace::CTSEMLaplaceObjective, U::Integ
             fill!(M.coupling[b][t], zero(T))
         end
         n == 0 && return nothing
-        block_of = function (ub)
-            local S, ws, vs, Lss, uu
-            S = eltype(ub)
-            ws = _laplace_workspace!(laplace, S, length(values))
-            vs = _laplace_scratch_vector!(laplace, S, length(values), :curv_vs)
-            copyto!(vs, values)
-            Lss = _laplace_scratch_levels!(laplace, S, Ls, :curv_levels)
-            uu = _laplace_scratch_vector!(laplace, S, d, :curv_uu)
-            copyto!(uu, base)
-            @inbounds for (t, c) in enumerate(columns)
-                uu[c] = ub[t]
-            end
-            return _laplace_unit_loglik_gradient_vector(laplace, U, vs, Lss, uu, ws,
-                block.members, _laplace_scratch_vector!(laplace, S, d, :curv_inner),
-                mode, hook)
-        end
-        width = _ctsem_dual_width(n, _CTSEM_CURVATURE_WIDTHS[])
-        nx = max(n, width)
-        xb = _laplace_scratch_vector!(laplace, T, nx, :curv_ub)
-        @inbounds for (t, c) in enumerate(columns)
-            xb[t] = base[c]
-        end
-        @inbounds for t in (n + 1):nx
-            xb[t] = zero(T)
-        end
-        Jw = _laplace_scratch_matrix!(laplace, T, d, nx, :curv_jac)
-        _ctsem_width_jacobian!(Jw, block_of, xb, n, width; whole=true,
-            store=laplace.workspaces[_laplace_slot()])
+        Jw = _laplace_columns_jacobian(laplace, U, values, Ls, base, columns,
+            block.members, mode, hook)
         # M = I - d2(sum ll)/du du on the active columns, as the full route.
         @inbounds for (j, cj) in enumerate(columns), ci in columns
             D[ci - off, cj - off] -= Jw[ci, j]
@@ -3364,7 +3277,75 @@ function _laplace_unit_curvature_pruned(laplace::CTSEMLaplaceObjective, U::Integ
         end
         return nothing
     end
-    # A level at a time, as `_laplace_unit_curvature`.
+    _laplace_by_level(fill_block!, laplace, blocks)
+    return M
+end
+
+"""
+    _laplace_columns_jacobian(laplace, U, values, Ls, base, columns, members,
+        mode, hook)
+
+The Jacobian of `members`' log-likelihood gradient in the unit's coordinates
+`columns`, at `base`: what both block routes of `_laplace_unit_curvature` read
+a block's rows of the curvature from, over a block's columns or its active
+ones. As tall as the unit, because that is what the gradient body returns,
+while a block reads its own rows and its ancestors' -- fifteen of eighteen
+hundred on a two-hundred-subject unit; computing every row is unavoidable,
+since forward mode fills the whole dual result, but allocating it is not, so it
+is the slot's scratch (fresh, it cost 130 KB per block per Newton step). At a
+bucketed width (`_CTSEM_CURVATURE_WIDTHS`): its first `length(columns)`
+columns are the ones asked for, and the padding's, which the gradient never
+reads, are ignored.
+"""
+function _laplace_columns_jacobian(laplace::CTSEMLaplaceObjective, U::Integer,
+    values::AbstractVector, Ls::Vector{<:AbstractMatrix}, base::AbstractVector{T},
+    columns, members, mode::Int, hook) where {T}
+    n = length(columns)
+    d = length(base)
+    block_of = function (ub)
+        local S, ws, vs, Lss, uu
+        S = eltype(ub)
+        ws = _laplace_workspace!(laplace, S, length(values))
+        vs = _laplace_scratch_vector!(laplace, S, length(values), :curv_vs)
+        copyto!(vs, values)
+        Lss = _laplace_scratch_levels!(laplace, S, Ls, :curv_levels)
+        uu = _laplace_scratch_vector!(laplace, S, d, :curv_uu)
+        copyto!(uu, base)
+        @inbounds for (t, c) in enumerate(columns)
+            uu[c] = ub[t]
+        end
+        return _laplace_unit_loglik_gradient_vector(laplace, U, vs, Lss, uu, ws,
+            members, _laplace_scratch_vector!(laplace, S, d, :curv_inner), mode, hook)
+    end
+    width = _ctsem_dual_width(n, _CTSEM_CURVATURE_WIDTHS[])
+    nx = max(n, width)
+    xb = _laplace_scratch_vector!(laplace, T, nx, :curv_ub)
+    @inbounds for (t, c) in enumerate(columns)
+        xb[t] = base[c]
+    end
+    @inbounds for t in (n + 1):nx
+        xb[t] = zero(T)
+    end
+    Jw = _laplace_scratch_matrix!(laplace, T, d, nx, :curv_jac)
+    _ctsem_width_jacobian!(Jw, block_of, xb, n, width; whole=true,
+        store=laplace.workspaces[_laplace_slot()])
+    return Jw
+end
+
+"""
+    _laplace_by_level(f, laplace, blocks)
+
+`f(b)` for each of a unit's blocks, a level at a time and the blocks of a
+level in parallel (`_laplace_parallel`): blocks of one level cover disjoint
+members, and blocks of different levels do not, so only within a level may two
+run at once. A level with many blocks divides over blocks; a level with one
+spends the budget on that block's members instead, which is automatic -- the
+region inside inherits whatever this one did not claim. A unit's innermost
+level is one block per subject, which only the block axis can spread, and its
+outermost is a single block over every member, which only the member axis
+can, so the choice is per level.
+"""
+function _laplace_by_level(f, laplace::CTSEMLaplaceObjective, blocks)
     at = 1
     while at <= length(blocks)
         stop = at
@@ -3372,11 +3353,11 @@ function _laplace_unit_curvature_pruned(laplace::CTSEMLaplaceObjective, U::Integ
             stop += 1
         end
         _laplace_parallel(laplace, at:stop) do b
-            fill_block!(b)
+            f(b)
         end
         at = stop + 1
     end
-    return M
+    return nothing
 end
 
 """
