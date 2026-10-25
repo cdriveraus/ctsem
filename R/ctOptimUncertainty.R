@@ -2847,8 +2847,12 @@ ctOptimFitLpgFunc <- function(fit, cores=1){
 # ones (`.ctHoldOff()`). Called before DAIS and again on its recheck, which
 # can name a parameter the first check did not: on the image model DAIS
 # widened the initial variance, the recheck named it, and its plateau at zero
-# made that sd 0.35-0.80 by seed where the curvature's is 0.16. A warning
-# names what each call newly found.
+# made that sd 0.35-0.80 by seed where the curvature's is 0.16. A message,
+# not a warning, names what each call newly found: these parameters have no
+# prior, so the posterior an ML fit's intervals could have reported does not
+# exist there, and the curvature's -- the Wald interval -- is what such a fit
+# reports anyway; a small fit without priors held all seven of its parameters
+# and warned on every call (Charles, 2026-10-25).
 .ctImproperGuard <- function(lpg, est, cov, directions, widths, centre, flagged,
   parnames = NULL, state = list(walked = integer(), parameters = integer(),
     reaches = integer(), gradients = 0L, calls = 0L, limit = NA_real_)) {
@@ -2872,11 +2876,11 @@ ctOptimFitLpgFunc <- function(fit, cores=1){
   if (length(new)) {
     named <- if (length(parnames) == length(est)) parnames else paste0('par', seq_along(est))
     j <- unique(abs(new))
-    warning('The posterior had not fallen off ', state$limit, ' standard errors out ',
+    message('The posterior had not fallen off ', state$limit, ' standard errors out ',
       'along ', paste0(named[abs(new)], ifelse(new < 0, ' (below)', ' (above)'),
         collapse = ', '), ': with no prior there it is improper, so the intervals ',
       'along ', if (length(j) > 1) 'them' else 'it', " are the curvature's at the ",
-      'estimate. priors = TRUE gives a proper posterior.', call. = FALSE)
+      'estimate. priors = TRUE gives a proper posterior.')
     state$reaches <- c(state$reaches, new)
     state$parameters <- sort(unique(c(state$parameters, j)))
   }
