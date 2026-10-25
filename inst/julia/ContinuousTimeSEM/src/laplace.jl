@@ -2672,7 +2672,7 @@ function _laplace_unit_loglik_gradient(laplace::CTSEMLaplaceObjective, U::Intege
     # exactly the coupling that makes the unit one integral. So a task gets its
     # own `inner` and its own total, and they are summed after the join.
     one! = function (m, ws, grad, shift, acc_inner)
-        local i, offsets, shifted, loglik, l, level, k, r, base, L, q, acc, pp
+        local i, offsets, shifted, loglik
         i = members[m]
         offsets = units.offsets[U][m]
         shifted = _laplace_member_values!(shift, values, spec, Ls, u, offsets)
@@ -2683,21 +2683,7 @@ function _laplace_unit_loglik_gradient(laplace::CTSEMLaplaceObjective, U::Intege
             laplace.objective.subject_objectives[i], ws, shifted, nothing, mode)
         isfinite(loglik) || return loglik
         _hybrid_after!(hook, m, ws, u)
-        @inbounds for l in eachindex(spec.levels)
-            level = spec.levels[l]
-            k = nrandomeffects(level)
-            r = nlatent(level)
-            (k == 0 || r == 0) && continue
-            base = offsets[l]
-            L = Ls[l]
-            for q in 1:r
-                acc = zero(T)
-                for pp in 1:k
-                    acc += L[pp, q] * grad[level.re_index[pp]]
-                end
-                acc_inner[base + q] += acc
-            end
-        end
+        _laplace_loading_chain!(acc_inner, grad, spec, Ls, offsets)
         return loglik
     end
 
@@ -6021,6 +6007,36 @@ function _laplace_chol_chain!(out::AbstractVector, grad::AbstractVector,
     return out
 end
 
+"""
+    _laplace_loading_chain!(acc, grad, spec, Ls, offsets)
+
+Add into `acc` a member's gradient in the unit's coordinates `u`: for each
+level, `L' g` over its effects, `g` the member's gradient in its shifted
+parameters (`grad[re_index[p]]`) and `offsets` its places in `u`. The `u` half
+of the chain rule through `L u`, of which `_laplace_chol_chain!` is the
+`theta` half: the unit's log-likelihood gradient
+(`_laplace_unit_loglik_gradient`) and the gated adjoint's
+(`_laplace_unit_theta_gradient`) read it.
+"""
+function _laplace_loading_chain!(acc::AbstractVector, grad::AbstractVector,
+    spec::CTSEMLaplaceSpec, Ls, offsets)
+    @inbounds for l in eachindex(spec.levels)
+        level = spec.levels[l]
+        k = nrandomeffects(level)
+        r = nlatent(level)
+        (k == 0 || r == 0) && continue
+        base = offsets[l]
+        L = Ls[l]
+        for q in 1:r
+            a = zero(promote_type(eltype(L), eltype(grad)))
+            for pp in 1:k
+                a += L[pp, q] * grad[level.re_index[pp]]
+            end
+            acc[base + q] += a
+        end
+    end
+    return acc
+end
 
 """
     _laplace_unit_weights(laplace)
