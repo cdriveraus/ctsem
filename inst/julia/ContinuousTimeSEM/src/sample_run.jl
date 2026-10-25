@@ -1165,6 +1165,76 @@ ctsem_sample(laplace::CTSEMLaplaceObjective, values::AbstractVector; kwargs...) 
         kwargs, (:starts,))
 
 """
+    _marginal_chains_points(objective, densities, gradient_method, mode, ...)
+
+The marginal sampler's chains at once, each on an objective of its own
+(`_each_point!` in `mode`), warmed up and drawn, then extended together by the
+one stopping rule (`_sample_until_target`). A chain's coreset density, where it
+has one, is pointed at whichever copy runs it, since a later call may hand the
+chain to another worker. Before this the chains ran one after another in the
+session, so a filter objective with one subject -- a time series -- sampled on
+one core, and worker processes were the only way to run chains at once.
+"""
+function _marginal_chains_points(objective, densities, gradient_method::Symbol,
+    mode::Symbol, centre::Vector{Float64}, metric::CTSEMMetric, nchains::Int,
+    seed::Integer, nwarmup::Int, ndraws::Int, maxdepth::Int, target_accept::Float64,
+    maxdelta::Float64, init_scale::Float64, adapt_metric::Bool, min_ess::Float64,
+    mean_ess::Float64, max_draws::Int, rhat_target::Float64, npar::Int, verbose::Bool,
+    starts, init_eps::Float64, t0::Float64)
+    held = Ref(Vector{_ChainResult}(undef, nchains))
+    first = held[]
+    _each_point!(objective, nchains, mode) do c, obj, _
+        _marginal_chain_first!(first, c, obj, densities, gradient_method, centre,
+            metric, seed, nwarmup, ndraws, maxdepth, target_accept, maxdelta,
+            init_scale, adapt_metric, starts, init_eps)
+    end
+    extend! = function (wanted, attempt)
+        previous = held[]
+        more = Vector{_ChainResult}(undef, nchains)
+        _each_point!(objective, nchains, mode) do c, obj, _
+            _marginal_chain_more!(more, previous, c, obj, densities, gradient_method,
+                wanted, attempt, seed, maxdepth, maxdelta)
+        end
+        held[] = _merge_chains(previous, more)
+        return nothing
+    end
+    run = _sample_until_target(() -> _pool_draws(held[], npar), extend!, nchains, ndraws,
+        min_ess, mean_ess, max_draws, rhat_target, verbose; t0=t0)
+    return (results=held[], ndraws=run.total, trace=run.trace)
+end
+
+"""Chain `c`'s density on the objective `obj` that runs it."""
+function _marginal_chain_density(obj, densities, gradient_method::Symbol, c::Int)
+    densities === nothing && return (g, x) -> _marginal_density!(obj, gradient_method, g, x)
+    d = densities[c]
+    d.objective = obj
+    return d
+end
+
+"""Chain `c`'s warm-up and first draws, into `out[c]`, on the stream
+`_run_chains` gives chain `c`."""
+function _marginal_chain_first!(out, c::Int, obj, densities, gradient_method::Symbol,
+    centre, metric, seed, nwarmup, ndraws, maxdepth, target_accept, maxdelta,
+    init_scale, adapt_metric, starts, init_eps)
+    ld = _marginal_chain_density(obj, densities, gradient_method, c)
+    start = starts === nothing ? centre : starts[mod1(c, length(starts))]
+    out[c] = _run_chain(ld, start, metric, Random.Xoshiro(UInt64(seed) + UInt64(c)),
+        nwarmup, ndraws, maxdepth, target_accept, maxdelta,
+        starts === nothing ? init_scale : 0.0, adapt_metric, nothing; init_eps=init_eps)
+    return nothing
+end
+
+"""Chain `c` continued by `wanted` draws, into `more[c]`."""
+function _marginal_chain_more!(more, previous, c::Int, obj, densities,
+    gradient_method::Symbol, wanted, attempt, seed, maxdepth, maxdelta)
+    ld = _marginal_chain_density(obj, densities, gradient_method, c)
+    more[c] = _run_chain(ld, previous[c].x, previous[c].metric,
+        Random.Xoshiro(UInt64(seed + 1000 * attempt) + UInt64(c)), 0, wanted, maxdepth,
+        0.8, maxdelta, 0.0, false, nothing; resume=previous[c])
+    return nothing
+end
+
+"""
     _sample_joint_starts(starts, centre, npar)
 
 Chains' starting points on the joint vector from a caller's `starts`: one
@@ -1316,19 +1386,35 @@ function ctsem_sample_marginal(objective, values::AbstractVector;
         _metric_from_covariances([1:ndim], [_bounded_inverse(information)])
     end
 
+    # The chains run at once where the objective can be split between them
+    # (`_points_mode`): on the Laplace pool, a copy per worker; on a filter
+    # objective with fewer subjects than the pool, deep copies. One after
+    # another otherwise, and wherever a resume, another process's coordination
+    # or the settling rule asks for `_sample_to_target`'s own loop.
+    chainstarts = _sample_joint_starts(starts, centre, size(something(starts, centre), 1))
+    mode = (nchains > 1 && resume === nothing && coordinate === nothing &&
+        settle_tol <= 0) ? _points_mode(objective, true) : :serial
     verbose && println(_console(), "Sampling: ", nchains, " chain(s), ", npar,
-        " dimensions (effects integrated out), chains sequential, ",
-        "metric in 1 block")
+        " dimensions (effects integrated out), chains ",
+        mode == :serial ? "sequential" : "concurrent", ", metric in 1 block")
 
-    run = _sample_to_target(density_for, centre, metric, nchains, false,
-        seed, nwarmup, ndraws, Int(maxdepth), Float64(target_accept),
-        Float64(maxdelta), Float64(init_scale), adapt_metric, nothing,
-        Float64(settle_tol), Float64(min_ess), Float64(mean_ess),
-        max(Int(max_draws), ndraws), Float64(rhat_target), npar, resume,
-        verbose, progress_overwrite; progress_callback=progress_callback,
-        progress_sink=progress_sink, init_eps=Float64(stepsize),
-        starts=_sample_joint_starts(starts, centre, size(something(starts, centre), 1)),
-        t0=t0, coordinate=coordinate)
+    run = if mode != :serial
+        _marginal_chains_points(objective, densities, gradient_method, mode, centre,
+            metric, nchains, seed, nwarmup, ndraws, Int(maxdepth),
+            Float64(target_accept), Float64(maxdelta), Float64(init_scale),
+            adapt_metric, Float64(min_ess), Float64(mean_ess),
+            max(Int(max_draws), ndraws), Float64(rhat_target), npar, verbose,
+            chainstarts, Float64(stepsize), t0)
+    else
+        _sample_to_target(density_for, centre, metric, nchains, false,
+            seed, nwarmup, ndraws, Int(maxdepth), Float64(target_accept),
+            Float64(maxdelta), Float64(init_scale), adapt_metric, nothing,
+            Float64(settle_tol), Float64(min_ess), Float64(mean_ess),
+            max(Int(max_draws), ndraws), Float64(rhat_target), npar, resume,
+            verbose, progress_overwrite; progress_callback=progress_callback,
+            progress_sink=progress_sink, init_eps=Float64(stepsize),
+            starts=chainstarts, t0=t0, coordinate=coordinate)
+    end
     results = run.results
     ndraws = run.ndraws
     return merge(_sample_result(_sample_pool(results, nchains, ndraws, npar);
