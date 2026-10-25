@@ -934,7 +934,7 @@ function ctsem_sample_map(laplace::CTSEMLaplaceObjective, values::AbstractVector
             warmup_divergent=[r.warmup_divergent for r in results], trace=final.trace,
             saved_effects=save_effects,
             effects=_effect_summary(effect_sum, effect_sq, effect_cross, total, blocks)),
-        (placement=_saem_placement_summary(nothing),
+        (sampler="map", placement=_saem_placement_summary(nothing),
          map=(gradients=counter[] + extra + (hybrid ? total : 0),
               learn_gradients=learn_gradients, learn_secs=learned,
               windows=windowlog, coordinates=D - npar,
