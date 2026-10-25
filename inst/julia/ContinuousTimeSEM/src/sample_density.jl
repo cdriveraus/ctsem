@@ -242,8 +242,14 @@ function ctsem_sample_density!(gradient::Vector{Float64}, sampler::CTSEMSampler,
                 uview = view(x, _sample_urange(sampler, U))
                 offsets = laplace.units.offsets[U][m]
                 _laplace_member_values!(shifted, theta, spec, Ls, uview, offsets)
+                # The filter-integrated deviations' exact integral
+                # (`_HYBRID_FULL`): on the hybrid objective that makes this the
+                # joint with those effects integrated out; on the layer there
+                # are none and the mode changes nothing. Their profile, the
+                # default, would not be a density.
                 loglik = _laplace_subject_value_gradient!(gsub,
-                    laplace.objective.subject_objectives[i], aws, shifted, ekf)
+                    laplace.objective.subject_objectives[i], aws, shifted, ekf,
+                    _HYBRID_FULL)
                 if !isfinite(loglik)
                     return false
                 end
