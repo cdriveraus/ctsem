@@ -37,11 +37,15 @@ test_that("a sampled fit carries draws the summary machinery can read", {
   skip_without_julia()
   fit <- .sample_fixture()
   npar <- length(fit$estimate$raw)
-  # intoverpop='none': the placement asserted below is SAEM's, which the joint
-  # target takes; the fixture names 'laplace', whose own target is marginal.
+  # intoverpop='none': the placement asserted below is SAEM's, which SAEM's
+  # kernel takes on the joint target; the fixture names 'laplace', whose own
+  # target is marginal. Named, because on this fixture, whose effect the filter
+  # integrates, the joint default is the map sampler, placed at the fit's
+  # estimate (tested below).
   sampled <- suppressWarnings(suppressMessages(
     ctFitUncertainty(fit, uncertainty = "sample", cores = 1,
-      control = list(chains = 2, warmup = 80, draws = 80, intoverpop = "none"))))
+      control = list(chains = 2, warmup = 80, draws = 80, intoverpop = "none",
+        sampler = "saem"))))
 
   expect_s3_class(sampled, "ctJuliaFit")
   # And as a fit, not as a model spec: "ctFitModel" marks an unfitted handle,
@@ -86,9 +90,12 @@ test_that("the diagnostics come back per parameter and per chain", {
   npar <- length(fit$estimate$raw)
   # intoverpop='none': this test asserts on the per-subject effect summaries
   # below, which the marginal target -- the default -- does not carry at all.
+  # SAEM's kernel by name: its diagnostics (the scale moves' acceptance) are
+  # among what is asserted, and on this fixture the joint default is the map.
   sampled <- suppressWarnings(suppressMessages(
     ctFitUncertainty(fit, uncertainty = "sample", cores = 1,
-      control = list(chains = 2, warmup = 80, draws = 80, intoverpop = "none"))))
+      control = list(chains = 2, warmup = 80, draws = 80, intoverpop = "none",
+        sampler = "saem"))))
   diagnostics <- sampled$sample
 
   expect_s3_class(diagnostics, "ctSampleDiagnostics")
@@ -104,7 +111,7 @@ test_that("the diagnostics come back per parameter and per chain", {
   expect_length(diagnostics$accept, 2L * diagnostics$draws)
   # The point the chains started from.
   expect_equal(diagnostics$start, sampled$estimate$placed_raw)
-  # SAEM's kernel, the default on the joint posterior.
+  # SAEM's kernel, as asked.
   expect_identical(diagnostics$sampler, "saem")
   expect_length(diagnostics$scale_accept, 2L)
   expect_output(print(diagnostics), "SAEM kernel")
@@ -388,6 +395,11 @@ test_that("the SAEM kernel is refused by name where it cannot apply", {
   # The default follows the target: the marginal one has no effects for
   # SAEM's sweeps.
   expect_identical(.ctBackendSamplerName(NULL, joint = TRUE), "saem")
+  # The joint default is the map where the filter integrates some of the
+  # effects, as it does this fixture's one.
+  expect_identical(.ctBackendSamplerName(NULL, joint = TRUE, integrable = TRUE), "map")
+  expect_true(.ctBackendMapDefault(.ctBackendSpec(fit)))
+  expect_false(.ctBackendMapDefault(.ctBackendSpec(fit), tisampled = TRUE))
   expect_identical(.ctBackendSamplerName(NULL, joint = FALSE), "nuts")
   expect_identical(.ctBackendSamplerName("nuts", joint = TRUE), "nuts")
   expect_error(ctFitUncertainty(fit, uncertainty = "sample",

@@ -280,7 +280,6 @@
   # `checkcores`, because workers may still be warming (`.ctJuliaSampleFit()`).
   if (marginal && !isTRUE(state_explicit) && !tisampled)
     fit <- .ctBackendSampleCheck(fit, cores = checkcores, verbose = verbose)
-  placement <- .ctBackendPlacementFor(control, marginal || isTRUE(state_explicit))
   if (identical(control$sampler, "map") && (marginal || isTRUE(state_explicit))) {
     stop("control$sampler = 'map' samples the joint posterior over population ",
       "parameters and random effects, and this run asks for ",
@@ -315,7 +314,10 @@
     joint = !marginal && !isTRUE(state_explicit),
     named = if (marginal && !isTRUE(state_explicit) && !tisampled &&
       !is.null(directions)) NCOL(directions) else 0L,
-    nutsonly = .ctBackendNutsAsked(control, nutsgiven))
+    nutsonly = .ctBackendNutsAsked(control, nutsgiven),
+    integrable = .ctBackendMapDefault(.ctBackendSpec(fit), tisampled))
+  # After the sampler: the map's default placement is the fit's estimate.
+  placement <- .ctBackendPlacementFor(control, marginal || isTRUE(state_explicit))
   # The map sampler's warm-up is its learning schedule's (`ctsem_sample_map`'s
   # `nwarmup`, then its windows), not NUTS's 200: a warmup the caller did not
   # write is left to it.
@@ -619,7 +621,14 @@
 # likelihoods, learnt from their scores in warm-up windows. It starts from the
 # fit's estimate, not SAEM's placement.
 #
-# 'saem' is the default on the joint target because it is the more reliable
+# On the joint target the default is 'map' where the filter integrates some
+# of the effects exactly (`.ctBackendMapDefault()`), and 'saem' elsewhere. On
+# the posterior race's 20 fixtures the map was faster than SAEM's kernel on all
+# eight with such effects, by 1.3 to 15 times, and slower on eight of the
+# twelve without, where its partial centring is what SAEM's scale moves already
+# do (review/SAMPLING-general-joint-map-2026-10-25.md).
+#
+# 'saem' is the default on the rest of the joint target because it is the more reliable
 # of the two there, not only the faster: through `ctFitUncertainty()` on 13
 # models (dev2, review/POSTERIOR-race-2026-10-02.md) its mean worst error
 # against a long reference was 0.34 posterior sds to NUTS's 0.50, at 0.6x the
@@ -628,9 +637,10 @@
 # state-explicit target has no effects for its sweeps, so NUTS or SMC is the
 # sampler there; the state-explicit one has no check, so NUTS.
 #' @keywords internal
-.ctBackendSamplerName <- function(sampler, joint = TRUE, named = 0L, nutsonly = FALSE) {
+.ctBackendSamplerName <- function(sampler, joint = TRUE, named = 0L, nutsonly = FALSE,
+  integrable = FALSE) {
   if (is.null(sampler)) {
-    if (isTRUE(joint)) return("saem")
+    if (isTRUE(joint)) return(if (isTRUE(integrable)) "map" else "saem")
     return(if (!isTRUE(nutsonly) && isTRUE(named > 0L)) "smc" else "nuts")
   }
   if (!is.character(sampler) || length(sampler) != 1L ||
@@ -659,6 +669,16 @@
 .ctBackendNutsAsked <- function(control, nutsgiven = .ctBackendNutsControls(control)) {
   length(nutsgiven) > 0L || isTRUE(control$adapt_metric) ||
     isTRUE(control$adapt_effects) || !is.null(control$settleTol)
+}
+
+# Whether the joint target's default sampler is the map: where the subject
+# filter integrates some of the effects exactly (`spec$laplace$hybrid`, set by
+# `.ctJuliaLaplaceHybrid()`), whose integration is the map sampler's main
+# gain. Not with sampled TI predictor values, whose hybrid objective it has
+# not been checked on.
+#' @keywords internal
+.ctBackendMapDefault <- function(spec, tisampled = FALSE) {
+  !isTRUE(tisampled) && !is.null(spec$laplace$hybrid)
 }
 
 # The placement a call's `control` resolves to: `.ctBackendPlacementName()`'s,
@@ -2166,6 +2186,13 @@ print.ctSampleDiagnostics <- function(x, ...) {
   # of how its route was chosen.
   marginal <- !identical(intoverpop, "none")
   jointtarget <- isTRUE(intoverstates) && !marginal
+  # The joint target's default sampler, settled before the placement: the map
+  # starts from an optimised fit and its Hessian, SAEM from the start alone.
+  if (jointtarget && is.null(control$sampler) &&
+      .ctBackendMapDefault(model_spec, NROW(spec0$ti_imputed) > 0L &&
+        .ctJuliaTIMissingSamples(spec0))) {
+    control$sampler <- "map"
+  }
   if (jointtarget && identical(.ctBackendPlacementFor(control, FALSE), "saem")) {
     placementcontrol <- utils::modifyList(placementcontrol,
       list(estonly = TRUE, maxiter = 0L))

@@ -3655,7 +3655,9 @@ ctOptimFitLpgFunc <- function(fit, cores=1){
 #' \code{control$tipredMissing} is \code{'impute'}.
 #'
 #' \emph{The kernel.} \code{control$sampler} chooses it for the joint
-#' posterior: \code{'saem'} (the default there) draws the random effects by
+#' posterior. By default it is \code{'map'} where the Kalman filter can
+#' integrate some of the random effects exactly, and \code{'saem'} elsewhere.
+#' \code{'saem'} draws the random effects by
 #' SAEM's Metropolis-within-Gibbs sweeps and the parameters given them by NUTS,
 #' with moves that re-express the effects for each level's means and scales;
 #' \code{'nuts'} runs NUTS on the parameters and every random effect at once;
