@@ -296,6 +296,16 @@ struct ContinuousEKFWorkspace{T, PARS, BQ, BTHETA, DCA, EBUF, LBUF, DIFBUF, DBUF
     # The last pass's log likelihood, which `_ekf_run` returns through here
     # rather than out of its function barrier; see there.
     loglik::Base.RefValue{T}
+    # Whether a Jy cell reads the state, so that the measurement is nonlinear
+    # in it and each row's Gaussian update is iterated to the posterior mode
+    # (`_ekf_iterated_rows!`). False for a linear measurement, which runs the
+    # update it always did; `ctsem_set_relinearise!` is the oracle.
+    relinearise::Bool
+    # That iteration's prior mean, next iterate and measurement offset at the
+    # linearisation point; empty where it does not run.
+    xprior::Vector{T}
+    xnext::Vector{T}
+    mm_eff::Vector{T}
 end
 
 """
@@ -481,6 +491,7 @@ function _init_continuous_ekf_workspace(::Type{T}, sp::EKFParameters) where {T}
         size(pars.THRESHOLDS, 2) : 0,
         any(==(4), manifesttype) ? (hasproperty(pars, :RESPONSE) ? 5 : 3) : 0,
         any(==(3), manifesttype) ? 1 : 0, any(>(0), sp.asymptoterow) ? 2 : 0))
+    relinearise = _ctsem_measurement_nonlinear(sp, update_param_indices, n)
 
     return ContinuousEKFWorkspace(
         all_params,
@@ -527,6 +538,10 @@ function _init_continuous_ekf_workspace(::Type{T}, sp::EKFParameters) where {T}
         CTSEMHybridBuffers{T}(),
         T[],
         Ref(zero(T)),
+        relinearise,
+        zeros(T, relinearise ? n : 0),
+        zeros(T, relinearise ? n : 0),
+        zeros(T, relinearise ? m : 0),
     )
 end
 

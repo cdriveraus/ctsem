@@ -259,6 +259,49 @@ end
     @test obj([c]) != exact
 end
 
+# Where the measurement reads the state the filter iterates each row's update
+# to the posterior mode (`_ekf_iterated_rows!`); against the grid that is far
+# closer than the EKF it replaces, and a linear measurement is not iterated.
+@testset "an iterated update for a state-dependent loading, against the grid" begin
+    iterates(sp) = ContinuousTimeSEM._init_continuous_ekf_workspace(Float64, sp).relinearise
+    @test iterates(_PF_LOADING)
+    @test !iterates(_PF_LINEAR) && !iterates(_PF_CUBIC) && !iterates(_PF_CATEGORICAL)
+    nsub, nrow = 10, 12
+    starts, times = _pf_times(nsub, nrow, 1.0)
+    v = _pf_variance(0.3)
+    c = 0.6
+    # From the model, so the posterior sits where the update is being tested.
+    rng = MersenneTwister(13)
+    data = zeros(1, nsub * nrow)
+    for s in 1:nsub
+        x = 0.5 + randn(rng)
+        for t in 1:nrow
+            t > 1 && (x = exp(-0.6) * x + 0.5 * sqrt((1 - exp(-1.2)) / 1.2) * randn(rng))
+            data[1, starts[s] + t - 1] = 0.1 + (1 + c * x) * x + sqrt(v) * randn(rng)
+        end
+    end
+    obj = ContinuousTimeSEM.ctsem_objective(_PF_LOADING, starts, times, data)
+    grid = sum(1:nsub) do s
+        cols = starts[s]:(starts[s] + nrow - 1)
+        _pf_grid_loglik(times[cols]; drift=-0.6, cint=0.0, diffusion_sd=0.5,
+            t0mean=0.5, t0sd=1.0) do x, t
+            μ = 0.1 .+ (1 .+ c .* x) .* x
+            -(data[1, cols[t]] .- μ) .^ 2 ./ (2v) .- 0.5 * log(2π * v)
+        end
+    end
+    iterated = obj([c])
+    ekf, linear = try
+        ContinuousTimeSEM.ctsem_set_relinearise!(false)
+        obj([c]), obj([0.0])
+    finally
+        ContinuousTimeSEM.ctsem_set_relinearise!(true)
+    end
+    @test abs(iterated - grid) < abs(ekf - grid) / 3
+    # At c = 0 the measurement is linear, and the two are one.
+    @test obj([0.0]) ≈ linear rtol=1e-12
+    @test ContinuousTimeSEM.ctsem_validate_forward_gradient(obj, [c]).adjoint_relative_error < 1e-9
+end
+
 @testset "state-explicit path takes an Euler transition" begin
     starts, times = _pf_times(3, 4, 1.0)
     rng = MersenneTwister(6)
