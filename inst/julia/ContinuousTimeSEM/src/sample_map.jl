@@ -119,7 +119,11 @@ function _jmap_layout(sampler::CTSEMSampler, cross::Bool)
     end
     positions = reduce(vcat, sampler.positions; init=Int[])
     R = cross ? setdiff(1:sampler.npar, P) : Int[]
-    dep = sort(unique(filter(i -> 1 <= i <= sampler.npar, vcat(P, positions, R))))
+    # The duals take the map's dependence on the effects' positions and the
+    # level scales; the coupling's on theta[R] is linear and taken in closed
+    # form (`_jmap_coupling_gradient!`), so `dep` holds no more of a large
+    # model's parameters than its random effects reach.
+    dep = sort(unique(filter(i -> 1 <= i <= sampler.npar, vcat(P, positions))))
     members = [Int[] for _ in 1:sampler.nunits]
     for s in eachindex(sampler.flat_unit)
         sampler.udims[sampler.flat_unit[s]] > 0 && push!(members[sampler.flat_unit[s]], s)
@@ -238,19 +242,22 @@ function _jmap_umul(F::CTSEMCholesky, b::AbstractVector)
 end
 
 """
-    _jmap_effects(m, theta, xt)
+    _jmap_effects(m, theta, xt; thR)
 
 Every unit's effects at theta for latent `xt`, the map's log Jacobian in the
 units, and each unit's factor, for any number type (the seeded duals take the
-map's dependence on theta through it).
+map's dependence on theta through it). `thR` holds the coupling's theta[R] at
+given values -- the duals' pass hands them in plain, since that dependence is
+taken in closed form.
 """
-function _jmap_effects(m::CTSEMJointMap, theta::AbstractVector{T}, xt::AbstractVector) where {T}
+function _jmap_effects(m::CTSEMJointMap, theta::AbstractVector{T}, xt::AbstractVector;
+    thR::Union{Nothing,AbstractVector}=nothing) where {T}
     sampler = m.sampler
     laplace = sampler.laplace
     th = _laplace_extend(laplace, theta)
     Ls = _laplace_popchols(th, laplace.spec)
     mu = th[m.P]
-    thR = th[m.R]
+    thR = thR === nothing ? th[m.R] : thR
     us = Vector{Vector{T}}(undef, sampler.nunits)
     Fs = Vector{CTSEMCholesky{T,Matrix{T}}}(undef, sampler.nunits)
     logjac = zero(T)
@@ -319,6 +326,7 @@ function (d::CTSEMJointMapDensity)(g::AbstractVector{Float64}, xt::AbstractVecto
     gus = [gj[_sample_urange(sampler, U)] for U in 1:sampler.nunits]
     gtheta = gj[1:npar]
     _jmap_theta_gradient!(gtheta, m, theta, xt, gus)
+    isempty(m.R) || _jmap_coupling_gradient!(gtheta, m, theta, gus, Fs)
     fill!(g, 0.0)
     g[1:npar] .= transpose(m.Ct) * gtheta
     for U in 1:sampler.nunits
@@ -346,7 +354,7 @@ function _jmap_theta_gradient!(gtheta::Vector{Float64}, m::CTSEMJointMap,
             th[dep[a]] = _JMapDual(theta[dep[a]],
                 ForwardDiff.Partials(ntuple(b -> b == a - start + 1 ? 1.0 : 0.0, _JMAP_CHUNK)))
         end
-        uu, lj, _ = _jmap_effects(m, th, xt)
+        uu, lj, _ = _jmap_effects(m, th, xt; thR=theta[m.R])
         acc = lj
         for U in eachindex(uu)
             u = uu[U]
@@ -358,6 +366,46 @@ function _jmap_theta_gradient!(gtheta::Vector{Float64}, m::CTSEMJointMap,
         p = ForwardDiff.partials(acc)
         @inbounds for a in start:stop
             gtheta[dep[a]] += p[a - start + 1]
+        end
+    end
+    return gtheta
+end
+
+# The coupling's share of theta's gradient: each unit's mean moves with
+# theta[R] by `-Q_U^-1 sum_s J_s' G_s`, and the Jacobian not at all, so the
+# contraction with the effects' gradient `g_U` is `-sum_s G_s' J_s Q_U^-1 g_U`,
+# a solve a unit.
+function _jmap_coupling_gradient!(gtheta::Vector{Float64}, m::CTSEMJointMap,
+    theta::Vector{Float64}, gus::Vector{Vector{Float64}}, Fs)
+    sampler = m.sampler
+    laplace = sampler.laplace
+    th = _laplace_extend(laplace, theta)
+    Ls = _laplace_popchols(th, laplace.spec)
+    nP = length(m.P)
+    nR = length(m.R)
+    for U in 1:sampler.nunits
+        d = sampler.udims[U]
+        d == 0 && continue
+        v = Fs[U] \ gus[U]
+        J = zeros(nP, d)
+        w = zeros(nP)
+        for s in m.members[U]
+            _jmap_jacobian!(J, m, Ls, s)
+            @inbounds for a in 1:nP
+                acc = 0.0
+                for q in 1:d
+                    acc += J[a, q] * v[q]
+                end
+                w[a] = acc
+            end
+            G = m.G[s]
+            @inbounds for b in 1:nR
+                acc = 0.0
+                for a in 1:nP
+                    acc += G[a, b] * w[a]
+                end
+                gtheta[m.R[b]] -= acc
+            end
         end
     end
     return gtheta
@@ -827,7 +875,7 @@ Returns `ctsem_sample`'s record, with the draws of theta and, with
 density evaluation and score pass, in gradients) and the learning windows.
 """
 function ctsem_sample_map(laplace::CTSEMLaplaceObjective, values::AbstractVector;
-    npar::Integer=length(values), nchains::Integer=4, nwarmup::Integer=150,
+    npar::Integer=length(values), nchains::Integer=4, nwarmup::Integer=75,
     ndraws::Integer=500, maxdepth::Integer=10, target_accept::Real=0.8,
     maxdelta::Real=1000.0, seed::Integer=20260828, init_scale::Real=1.0,
     adapt_metric::Bool=true, save_effects::Bool=false,
@@ -835,8 +883,8 @@ function ctsem_sample_map(laplace::CTSEMLaplaceObjective, values::AbstractVector
     min_ess::Real=0.0, mean_ess::Real=0.0, max_draws::Integer=0,
     rhat_target::Real=1.01, progress_overwrite::Bool=true, progress_callback=nothing,
     progress_sink=nothing, stepsize::Real=0.0, coordinate=nothing,
-    windows::AbstractVector{<:Integer}=[50, 100, 200], nsettle::Integer=30,
-    ncheck::Integer=50, maxrows::Integer=400, cross::Bool=false,
+    windows::AbstractVector{<:Integer}=[40, 80], nsettle::Integer=25,
+    ncheck::Integer=25, maxrows::Integer=400, cross::Bool=true,
     report::Union{Nothing,CTSEMLaplaceObjective}=nothing)
 
     t0 = time()
@@ -1002,7 +1050,7 @@ of its Jacobian by differences, each as the largest error over the largest
 entry. Both near zero say the change of variables is exact; for tests.
 """
 function ctsem_sample_map_check(laplace::CTSEMLaplaceObjective, values::AbstractVector;
-    hessian::Union{Nothing,AbstractMatrix}=nothing, cross::Bool=false, seed::Integer=1,
+    hessian::Union{Nothing,AbstractMatrix}=nothing, cross::Bool=true, seed::Integer=1,
     nu::Integer=6, h::Real=1e-5)
     sampler = ctsem_sampler(laplace, length(values))
     npar = sampler.npar
