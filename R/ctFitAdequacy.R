@@ -1251,10 +1251,8 @@ ctFitAdequacy <- function(fit, covariates = NULL,
     zf <- z[idx]
     if (all(rowlevel[idx])) {
       R <- stats::cov2cor(crossprod(C[, idx, drop = FALSE]) + diag(1e-12, length(idx)))
-      e <- eigen(R, symmetric = TRUE)
-      keep <- e$values > 1e-8 * e$values[1]
-      Zb <- matrix(stats::rnorm(nboot * sum(keep)), nboot) %*%
-        (sqrt(e$values[keep]) * t(e$vectors[, keep, drop = FALSE]))
+      A <- .ctCovRoot(R, 1e-8)
+      Zb <- matrix(stats::rnorm(nboot * ncol(A)), nboot) %*% t(A)
     } else {
       Zb <- matrix(NA_real_, nboot, length(idx))
       Cf <- C[, idx, drop = FALSE]

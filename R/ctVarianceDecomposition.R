@@ -395,13 +395,10 @@
 }
 
 # A square root of a covariance block that may be singular -- a parameter with
-# no random effect has a zero row and column, and chol() refuses those.
-.ctVarDecompCholesky <- function(cov) {
-  cov <- (cov + t(cov)) / 2
-  e <- eigen(cov, symmetric = TRUE)
-  values <- pmax(e$values, 0)
-  e$vectors %*% diag(sqrt(values), nrow = length(values))
-}
+# no random effect has a zero row and column, and chol() refuses those. The
+# symmetric one (`.ctSymRoot()`): persons are drawn through it, and an
+# eigenvector root moves with the signs LAPACK returns.
+.ctVarDecompCholesky <- function(cov) .ctSymRoot(cov)
 
 # One subject's matrices, pulled out of a level's subject-matrix arrays.
 .ctVarDecompFromArrays <- function(matrices, si, nlatent, augmented = FALSE,

@@ -276,7 +276,10 @@ bootstrapHessian <- function(standata, sm, est, finishsamples, cores, scores=NUL
   # coordinates with a share of the dropped directions at `.ctNullMassBar()`.
   loaded <- if (ncol(nullvectors))
     which(rowSums(nullvectors^2) >= .ctNullMassBar()) else integer()
-  list(V = V, d = d, k = sum(keep), n = nrow(cov), nnull = sum(!keep),
+  # The whitening root, `A A'` the covariance on the kept span
+  # (`.ctCovRoot()`), through which the sampler's draws reach the parameters.
+  list(V = V, d = d, A = V %*% (sqrt(d) * crossprod(V, .ctSpanBasis(V))),
+    k = sum(keep), n = nrow(cov), nnull = sum(!keep),
     nullEigenvalues = values[!keep], nullParameters = loaded)
 }
 
@@ -288,7 +291,7 @@ bootstrapHessian <- function(standata, sm, est, finishsamples, cores, scores=NUL
 # move away from `centre`). Takes and returns a matrix with draws as ROWS,
 # `imis_is`'s own convention for `x_new`.
 .ctImisUnwhitenMatrix <- function(Z, centre, subspace) {
-  A <- sweep(subspace$V, 2, sqrt(subspace$d), '*')
+  A <- subspace$A
   sweep(as.matrix(Z) %*% t(A), 2, as.numeric(centre), '+')
 }
 
@@ -303,7 +306,7 @@ bootstrapHessian <- function(standata, sm, est, finishsamples, cores, scores=NUL
 # profile-path search in `imis_is()`; without it the search would silently
 # not run in the identified subspace.
 .ctImisWhitenDensity <- function(lpg, centre, subspace) {
-  A <- sweep(subspace$V, 2, sqrt(subspace$d), '*')
+  A <- subspace$A
   wrapped <- function(z) lpg(as.numeric(
     .ctImisUnwhitenMatrix(matrix(z, nrow = 1L), centre, subspace)))
   batchbase <- attr(lpg, 'batch')
@@ -359,7 +362,7 @@ bootstrapHessian <- function(standata, sm, est, finishsamples, cores, scores=NUL
 # coreset's end check is handed its own values without the rest's share, so
 # its corrections are differences of the same density.
 .ctImisJointDensity <- function(lpg, centre, cov, subspace, rtol) {
-  A <- sweep(subspace$V, 2, sqrt(subspace$d), '*')
+  A <- subspace$A
   C <- .ctImisRestFactor(cov, subspace, rtol)
   m <- ncol(C)
   drawn <- new.env()
@@ -404,10 +407,8 @@ bootstrapHessian <- function(standata, sm, est, finishsamples, cores, scores=NUL
 # whose two directions were both named ran to 300 rounds at Pareto k 1.2).
 .ctImisRestFactor <- function(cov, subspace, rtol) {
   rest <- cov - tcrossprod(subspace$V)
-  er <- eigen((rest + t(rest)) / 2, symmetric = TRUE)
   top <- max(eigen((cov + t(cov)) / 2, symmetric = TRUE, only.values = TRUE)$values)
-  keep <- er$values > rtol * top
-  sweep(er$vectors[, keep, drop = FALSE], 2, sqrt(er$values[keep]), '*')
+  .ctCovRoot(rest, rtol, top)
 }
 
 # What the rest's spread adds to the log density of the sampled directions,
@@ -436,7 +437,7 @@ bootstrapHessian <- function(standata, sm, est, finishsamples, cores, scores=NUL
   if (!is.function(gradbatch)) return(NULL)
   C <- .ctImisRestFactor(cov, subspace, rtol)
   if (!ncol(C)) return(NULL)
-  A <- sweep(subspace$V, 2, sqrt(subspace$d), '*')
+  A <- subspace$A
   E <- matrix(stats::rnorm(n * ncol(C)), n, ncol(C))
   out <- gradbatch(sweep(rbind(0, E, -E) %*% t(C), 2, as.numeric(centre), '+'))
   G <- as.matrix(out$gradient) %*% A
@@ -536,9 +537,11 @@ bootstrapHessian <- function(standata, sm, est, finishsamples, cores, scores=NUL
   # starts: on a four-dimensional shell it reached an effective sample of 200
   # in 1174 evaluations against the normal's 5789, and as fast elsewhere
   # (scripts/gsm-uncertainty-2026-10/trial_isstart.R).
-  subspace <- if (!is.null(directions)) list(V = directions,
-    d = if (length(widths) == ncol(directions)) widths else rep(1, ncol(directions)),
-    k = ncol(directions)) else
+  subspace <- if (!is.null(directions)) {
+    d <- if (length(widths) == ncol(directions)) widths else rep(1, ncol(directions))
+    list(V = directions, d = d, A = sweep(directions, 2, sqrt(d), '*'),
+      k = ncol(directions))
+  } else
     .ctImisSubspace(cov, rtol = rtol)
   if (is.null(subspace)) return(imis_is(lpg, mu_hat = centre, Sigma_hat = cov, ...))
   wrapped <- if (!is.null(directions) && complement)
@@ -609,7 +612,7 @@ bootstrapHessian <- function(standata, sm, est, finishsamples, cores, scores=NUL
     return(NULL)
   }
   # The sampled directions' gradient, as the sampler's `z` sees it.
-  As <- sweep(subspace$V, 2, sqrt(subspace$d), '*')
+  As <- subspace$A
   Gz <- s$G %*% As
   gbar <- colMeans(Gz)
   se2 <- apply(Gz, 2, stats::var) * (1 / nrow(Gz) + 1 / ess)
@@ -2077,9 +2080,7 @@ ctOptimFullBootstrapDraws <- function(est, standata, sm, n=1000, cores=1,
 # fit; see `.ctNormalCentre()`. The normal's draws are placed there.
 .ctOptimNormalCheck <- function(gradients, est, cov, batch = 8L,
   maxdraws = NULL, coverage = c(0.90, 0.99), centrepairs = 32L) {
-  eig <- .ctEigenSym(cov)
-  keep <- eig$values > .ctFlatDirectionRtol() * max(eig$values)
-  A <- sweep(eig$vectors[, keep, drop = FALSE], 2, sqrt(eig$values[keep]), "*")
+  A <- .ctCovRoot(cov)
   if (is.null(maxdraws)) maxdraws <- as.integer(min(256, max(64, 2 * ncol(A))))
   bars <- .ctNormalResidualBars(coverage)
   Z <- R <- matrix(0, 0L, ncol(A))
@@ -2206,19 +2207,30 @@ ctOptimFullBootstrapDraws <- function(est, standata, sm, n=1000, cores=1,
   record
 }
 
-# The eigendecomposition of a symmetric matrix with each eigenvector's sign
-# fixed, its largest entry in magnitude positive (`.ctSignedVectors()`, which
-# does the same for any basis: singular vectors, a held-off span). LAPACK
-# returns either sign, and which one can change with the matrix's last bits,
-# so a root built from the vectors reflects every draw taken through it. On a
-# 9-parameter Laplace fit 'checked''s normal check named three directions or
-# none under one seed as its covariance moved by a relative 1e-13, which the
-# engine's arithmetic supplies at more than one core: `set.seed()` did not
+# Draws taken through a basis must not move with how LAPACK happens to return
+# it. Either sign of an eigenvector or singular vector is a correct answer, and
+# which one comes back can change with a matrix's last bits; within equal
+# eigenvalues the vectors can turn by O(1) under 1e-13. A root built from them
+# then reflects or rotates every draw taken through it: on a 9-parameter
+# Laplace fit 'checked''s normal check named three directions or none under
+# one seed as its covariance moved by a relative 1e-13, which the engine's
+# arithmetic supplies at more than one core, so `set.seed()` did not
 # reproduce 'checked' (review/UNCERTAINTY-checked-reproducible-2026-10-25.md).
+#
+# `.ctCovRoot()` is the root to draw through: `A = V D^1/2 V'Q` on the kept
+# eigenvectors `V`, with `Q` a basis of their span that depends on the span
+# alone (`.ctSpanBasis()`), so `A A'` is the covariance there and `A` is a
+# continuous function of it, through equal eigenvalues too; where nothing is
+# dropped it is the symmetric root. The engine's DAIS whitens the same way
+# (`_dais_span_basis`). A basis that is itself the answer -- the directions a
+# check names, singular vectors -- carries one sign instead
+# (`.ctSignedVectors()`): its largest entry positive, the first of any that
+# tie within a relative 1e-8, as a pair of exchangeable parameters' do.
 .ctSignedVectors <- function(V) {
   V <- as.matrix(V)
   if (!length(V)) return(V)
-  s <- sign(V[cbind(max.col(abs(t(V)), ties.method = 'first'), seq_len(ncol(V)))])
+  big <- apply(abs(V), 2, function(a) which(a >= max(a) * (1 - 1e-8))[1L])
+  s <- sign(V[cbind(big, seq_len(ncol(V)))])
   s[s == 0] <- 1
   sweep(V, 2, s, '*')
 }
@@ -2226,6 +2238,48 @@ ctOptimFullBootstrapDraws <- function(est, standata, sm, n=1000, cores=1,
   e <- eigen((M + t(M)) / 2, symmetric = TRUE)
   e$vectors <- .ctSignedVectors(e$vectors)
   e
+}
+# Gram-Schmidt over the columns of the projector onto `V`'s span, in index
+# order, twice over each for orthogonality at roundoff.
+.ctSpanBasis <- function(V) {
+  p <- nrow(V)
+  k <- ncol(V)
+  if (k == p) return(diag(p))
+  P <- tcrossprod(V)
+  Q <- matrix(0, p, k)
+  r <- 0L
+  tol <- 0.5 / sqrt(p)
+  for (j in seq_len(p)) {
+    if (r == k) break
+    q <- P[, j]
+    if (r) for (pass in 1:2) {
+      Qr <- Q[, seq_len(r), drop = FALSE]
+      q <- q - Qr %*% crossprod(Qr, q)
+    }
+    nq <- sqrt(sum(q^2))
+    if (nq <= tol) next
+    r <- r + 1L
+    Q[, r] <- q / nq
+  }
+  if (r < k) stop("A basis of the kept span found ", r, " of ", k, " directions.",
+    call. = FALSE)
+  Q
+}
+# `top` is the largest variance the kept directions are measured against: the
+# covariance's own unless a caller roots part of a larger one.
+.ctCovRoot <- function(cov, rtol = .ctFlatDirectionRtol(), top = NULL) {
+  e <- eigen((cov + t(cov)) / 2, symmetric = TRUE)
+  if (is.null(top)) top <- max(e$values)
+  keep <- e$values > rtol * top
+  V <- e$vectors[, keep, drop = FALSE]
+  if (!ncol(V)) return(V)
+  V %*% (sqrt(e$values[keep]) * crossprod(V, .ctSpanBasis(V)))
+}
+# The symmetric root of a positive semidefinite matrix, square and continuous
+# in it, for a caller that draws one normal per coordinate.
+.ctSymRoot <- function(cov) {
+  e <- eigen((cov + t(cov)) / 2, symmetric = TRUE)
+  e$vectors %*% (sqrt(pmax(e$values, 0)) * t(e$vectors))
 }
 
 # The directions the residuals `R` at draws `Z` name, which of them

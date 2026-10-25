@@ -401,7 +401,10 @@ test_that("checked corrects the funnel a variance from six observations makes", 
 
 test_that("checked keeps the normal, and says so, where sampling cannot correct it", {
   # A four-dimensional shell of radius 0.05: the Hessian's normal is many
-  # times too wide around it, and one round of 300 draws cannot place it.
+  # times too wide around it, and the check names all four directions on
+  # every seed. Whether 300 draws place it is the draws' luck -- one seed in
+  # five to ten fails, by the root the draws pass through -- so the failure
+  # is stated rather than drawn: weights whose Pareto k is past the bar.
   d <- 4; r0 <- 0.05; tau <- 0.01; e1 <- c(1, rep(0, d - 1))
   lpg <- function(x) {
     r <- sqrt(sum(x^2))
@@ -416,8 +419,9 @@ test_that("checked keeps the normal, and says so, where sampling cannot correct 
     sm = NULL, lpgFunc = lpg, uncertainty = 'checked', finishsamples = 20, verbose = 0))
   expect_gt(ncol(out$details$normalcheck$directions), 0L)
   expect_true(all(2:d %in% out$details$normalcheck$parameters))
-  # From the Hessian's normal (`dais = FALSE`), one round cannot place it and
-  # the normal is kept, said so.
+  # From the Hessian's normal (`dais = FALSE`), where the weights cannot be
+  # trusted the normal is kept, said so.
+  local_mocked_bindings(.ctImisParetoK = function(...) 2)
   set.seed(5)
   expect_warning(drawn <- ctsem:::.ctOptimDrawSamples(out, 'imis',
     list(imisBudget = 300, dais = FALSE), mode, 200,
@@ -1492,6 +1496,31 @@ test_that("a basis that draws pass through has one sign, whichever LAPACK return
   big <- max.col(abs(t(e$vectors)))
   expect_true(all(e$vectors[cbind(big, seq_len(6))] > 0))
   expect_identical(dim(ctsem:::.ctSignedVectors(matrix(0, 3, 0))), c(3L, 0L))
+  # Two entries equal in magnitude, as exchangeable parameters' are: the
+  # first of them decides, whatever the roundoff between them.
+  tie <- cbind(c(1, -1 + 1e-12, 0) / sqrt(2))
+  expect_identical(ctsem:::.ctSignedVectors(tie), ctsem:::.ctSignedVectors(-tie))
+  expect_gt(ctsem:::.ctSignedVectors(-tie)[1, 1], 0)
+})
+
+test_that("the root draws are taken through is continuous through equal eigenvalues", {
+  # Within equal eigenvalues the eigenvectors turn by O(1) under roundoff; the
+  # root on their span (`.ctCovRoot()`) does not, and squares to the
+  # covariance there, with or without directions dropped.
+  set.seed(2)
+  Q <- qr.Q(qr(matrix(stats::rnorm(36), 6)))
+  for (values in list(c(4, 1, 1, 1, 1, 0.5), c(4, 1, 1, 1, 0, 0))) {
+    M <- Q %*% (values * t(Q))
+    E <- matrix(stats::rnorm(36), 6)
+    M2 <- M * (1 + 1e-13 * (E + t(E)) / 2)
+    A <- ctsem:::.ctCovRoot(M)
+    expect_identical(ncol(A), sum(values > 0))
+    expect_equal(tcrossprod(A), M, tolerance = 1e-10)
+    expect_lt(max(abs(ctsem:::.ctCovRoot(M2) - A)), 1e-6)
+  }
+  # Square where nothing is dropped: the symmetric root.
+  expect_equal(ctsem:::.ctCovRoot(Q %*% (c(4, 3, 2, 1, 1, 1) * t(Q))),
+    ctsem:::.ctSymRoot(Q %*% (c(4, 3, 2, 1, 1, 1) * t(Q))))
 })
 
 test_that("the improper walk sees a plateau however deep it lies inside its drop", {
