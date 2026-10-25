@@ -563,6 +563,39 @@ end
 end
 
 """
+    _ctsem_signed_columns!(V)
+
+Each column of `V` with its largest entry in magnitude positive, the first of
+any that tie within a relative 1e-8. An eigenvector's sign is the
+eigensolver's choice, and `_ctsem_symeig`'s Jacobi rotation turns on
+`theta >= 0` where two diagonals are equal, so it can change between calls on
+nearly the same matrix. Draws taken through the vectors -- the continuation's
+frozen points, the adequacy mixture's -- would then reflect: frozen draws are
+meant to be common random numbers across placements. Signed, they keep the
+lattice on the principal axes, where a lattice rule wants it; a symmetric
+root would turn it off them.
+"""
+function _ctsem_signed_columns!(V::AbstractMatrix{Float64})
+    @inbounds for j in axes(V, 2)
+        big = 0.0
+        for i in axes(V, 1)
+            big = max(big, abs(V[i, j]))
+        end
+        big > 0 || continue
+        for i in axes(V, 1)
+            abs(V[i, j]) >= big * (1 - 1e-8) || continue
+            if V[i, j] < 0
+                for k in axes(V, 1)
+                    V[k, j] = -V[k, j]
+                end
+            end
+            break
+        end
+    end
+    return V
+end
+
+"""
     _ctsem_symeig(A)
 
 Eigenvalues (ascending) and orthonormal eigenvectors of a small symmetric

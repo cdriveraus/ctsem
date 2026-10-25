@@ -644,13 +644,16 @@ function _continuation_draw!(D::_ContinuationDraws, laplace::CTSEMLaplaceObjecti
         reps[(at + 1):(at + sizes[r])] .= r
         at += sizes[r]
     end
+    # Through the component's eigenvectors signed (`_ctsem_signed_columns!`),
+    # so a placement whose eigensolve flips one does not reflect its draws.
+    V = _ctsem_signed_columns!(copy(c.vecs))
     X = Matrix{Float64}(undef, k, m)
     for j in 1:m
         stretch = kz > k ? _continuation_t_scale(c.df, Z[kz, j]) : 1.0
         @inbounds for t in 1:k
             s = 0.0
             for a in 1:k
-                s += c.vecs[t, a] * Z[a, j] / sqrt(c.lam[a])
+                s += V[t, a] * Z[a, j] / sqrt(c.lam[a])
             end
             X[t, j] = c.mu[t] + stretch * s
         end
