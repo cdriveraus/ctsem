@@ -33,7 +33,7 @@ test_that("the Krylov model is the Hessian once its space is the whole space", {
   npar <- length(est)
   model <- ctsem:::.ctJuliaCall("ContinuousTimeSEM.ctsem_krylov_hessian",
     ctsem:::.ctJuliaObjective(fit), est, products = npar, rtol = -Inf)
-  Hk <- matrix(as.numeric(ctsem:::.ctJuliaGet(model)), npar, npar)
+  Hk <- matrix(as.numeric(model), npar, npar)
   # Forward differences of the gradient along the Lanczos vectors against the
   # certification's central differences by coordinate.
   expect_equal(Hk, fit$uncertainty$hessian, tolerance = 1e-3)
