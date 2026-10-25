@@ -316,6 +316,10 @@
     named = if (marginal && !isTRUE(state_explicit) && !tisampled &&
       !is.null(directions)) NCOL(directions) else 0L,
     nutsonly = .ctBackendNutsAsked(control, nutsgiven))
+  # The map sampler's warm-up is its learning schedule's (`ctsem_sample_map`'s
+  # `nwarmup`, then its windows), not NUTS's 200: a warmup the caller did not
+  # write is left to it.
+  if (identical(control$sampler, "map") && !"warmup" %in% nutsgiven) control$warmup <- NULL
   # Resolved once here for its refusals, before any worker is started or the
   # engine reached: a setting refused deep in a worker process would surface
   # as a failed chain and a fallback rather than as the error it is.
@@ -1241,6 +1245,7 @@
     if (!saem && !mapped) arguments$adapt_effects <- settings$adapt_effects
     if (identical(target$placement, "saem") && !mapped) arguments$saem <- TRUE
     if (mapped) arguments$report <- report
+    if (mapped && is.null(control$warmup)) arguments$nwarmup <- NULL
   } else if (!identical(target$gradient, "adjoint")) {
     # `ctsem_sample_marginal`'s own default is `:adjoint`; only said
     # explicitly when something asked for the other one. `ctsem_sample` (the
