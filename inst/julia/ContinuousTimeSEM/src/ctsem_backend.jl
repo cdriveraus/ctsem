@@ -2500,15 +2500,22 @@ over every coordinate, as before (`_ctsem_pullback_sets`), and so is it where
 this pool held something flat and its pullbacks found nothing: the way out
 can need a coordinate with curvature beside the flat one
 (`_ctsem_optimise_verdict`).
+
+After the iteration cap (`capped`) the pool is the transforms' alone, the
+saturated and the relatively flat, and the verdict does not widen it. The cap
+is the caller's budget and the fit is reported unconverged whatever the probe
+finds, which is why no finish runs there either; what is still worth a probe
+is a coordinate run into a flat transform, which a resume should not start
+from. The search over every coordinate cost 26 minutes a set, 22 sets, after
+a one-iteration fit of 1324 Laplace units.
 """
 function _ctsem_overshoot_candidates(objective, minimizer, saturated_parameters,
-        hessian, flat_rtol::Real, stall_ratio::Real)
-    hessian === nothing && return nothing
+        hessian, flat_rtol::Real, stall_ratio::Real; capped::Bool=false)
     n = length(minimizer)
-    (size(hessian, 1) == n && size(hessian, 2) == n && all(isfinite, hessian)) ||
-        return nothing
-    loaded = _ctsem_flat_loaded(hessian; rtol=flat_rtol)
-    loaded === nothing && return nothing
+    usable = hessian !== nothing && size(hessian, 1) == n &&
+        size(hessian, 2) == n && all(isfinite, hessian)
+    loaded = usable ? _ctsem_flat_loaded(hessian; rtol=flat_rtol) : nothing
+    loaded === nothing && !capped && return nothing
     # An objective with no transform layer (`_ctsem_params`) has nothing to
     # ask about responsiveness; the stall watch reads the same absence.
     relative = if hasmethod(_ctsem_params, Tuple{typeof(objective)}) &&
@@ -2519,7 +2526,7 @@ function _ctsem_overshoot_candidates(objective, minimizer, saturated_parameters,
     else
         Int[]
     end
-    return sort!(unique(vcat(loaded, relative,
+    return sort!(unique(vcat(something(loaded, Int[]), relative,
         [p for p in saturated_parameters if 1 <= p <= n])))
 end
 
@@ -2643,8 +2650,8 @@ function _ctsem_optimise_verdict(objective, minimizer, start_values, value,
         g_tol, converge_tol;
         label::AbstractString="ctsem_optimize", verbose::Bool=false,
         overshoot_probe=_CTSEM_OVERSHOOT_PROBE[], progress=nothing,
-        candidates=nothing)
-    moved = isempty(minimizer) ? 0.0 : maximum(abs, minimizer .- start_values)
+        candidates=nothing, widen::Bool=true)
+    moved =isempty(minimizer) ? 0.0 : maximum(abs, minimizer .- start_values)
     saturated = !isempty(saturated_parameters)
     stalled = moved == 0 && (!isfinite(value) || gradient_norm > max(g_tol, 1e-6))
     finite_gradient = isfinite(gradient_norm)
@@ -2669,7 +2676,8 @@ function _ctsem_optimise_verdict(objective, minimizer, start_values, value,
     # decides, once; a fit with nothing flat never pays for it. Only in the
     # default `:magnitude` mode: in `:saturation` the sets are the saturated
     # coordinates whatever the pool, so a second search repeats the first.
-    if !overshoot.overshot && candidates !== nothing && !isempty(candidates) &&
+    # Not after the iteration cap (`widen`; `_ctsem_overshoot_candidates`).
+    if widen && !overshoot.overshot && candidates !== nothing && !isempty(candidates) &&
             _ctsem_overshoot_mode(overshoot_probe) === :magnitude
         wider = _ctsem_overshot(objective, minimizer, saturated_parameters,
             value, converge_tol; mode=overshoot_probe, progress=progress)
@@ -3468,12 +3476,14 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
         overshoot_probe=stop_reason == "jump" ? :off : overshoot_probe,
         progress=_ctsem_probe_progress(reporter),
         # What the probe pulls back, read off the finish's Hessian where
-        # there is one (`_ctsem_overshoot_candidates`).
+        # there is one, and only the flat transforms after the iteration cap
+        # (`_ctsem_overshoot_candidates`).
         candidates=_ctsem_overshoot_candidates(objective, minimizer,
             saturated_parameters,
             (finish === nothing || finish.hessian === nothing) ? nothing :
                 finish.hessian,
-            flat_rtol, stall_ratio))
+            flat_rtol, stall_ratio; capped=stop_reason == "cap"),
+        widen=stop_reason != "cap")
     saturated = verdict.saturated
     stalled = verdict.stalled
     finite_gradient = verdict.finite_gradient
