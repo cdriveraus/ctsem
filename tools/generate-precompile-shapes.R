@@ -117,11 +117,17 @@ followups <- list(
       processes = FALSE), cores = 1L))
 # A sampled fit is a route of its own (`intoverpop = 'auto'` resolves to the
 # joint target when `optimize = FALSE`), the same whatever the shape's route,
-# so it follows one shape only.
+# so it follows one shape only. On that shape the joint goes through the map,
+# the filter integrating its intercept (`ctsem_sample_map`), and so does the
+# `sample` follow-up; SAEM's kernel, the joint's sampler wherever the filter
+# integrates nothing, is asked for by name.
 sampled_fit <- list(sampled = function(fit, dat, model) ctFit(dat, model,
   backend = "julia", optimize = FALSE, priors = TRUE, cores = 1L, verbose = 0,
   sampleControl = list(iter = 10L, chains = 1L, warmup = 5L, maxdepth = 3L,
-    processes = FALSE)))
+    processes = FALSE)),
+  saem = function(fit, dat, model) ctFitUncertainty(fit, "sample",
+    control = list(chains = 1L, warmup = 5L, draws = 5L, maxdepth = 3L,
+      processes = FALSE, intoverpop = "none", sampler = "saem"), cores = 1L))
 
 shapes <- list(
   # One latent, two Gaussian indicators, a random intercept, on each route:
