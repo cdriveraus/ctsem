@@ -87,7 +87,9 @@ end
     @test held.used
     dig = [-1.9635100260214235, -0.5772156649015329]
     trig = [4.934802200544679, 1.6449340668482264]
-    @test maximum(abs.(held.mean[1:2] .- dig) ./ sqrt.(trig)) < 0.15
+    # Within the 0.2 sd DAIS stops at, and its noise: over 24 seeds the
+    # larger of the two was 0.01-0.23.
+    @test maximum(abs.(held.mean[1:2] .- dig) ./ sqrt.(trig)) < 0.25
     @test held.mean[3] ≈ 0 atol = 1e-12
     @test held.cov[3, 3] ≈ 1 atol = 1e-10
     @test all(abs.(held.cov[1:2, 3]) .< 1e-10)
@@ -96,6 +98,30 @@ end
     @test free.diverged
     @test free.growth > 1e4
     @test free.cov === nothing
+end
+
+@testset "DAIS draws the same for one seed whatever eigenbasis LAPACK returns" begin
+    # Five equal eigenvalues, whose eigenvectors LAPACK picks by roundoff, as
+    # it does every column's sign. Drawn through the eigenbasis, one seed's
+    # draws turned with a 1e-13 change of the covariance.
+    t = _dais_skew(6, [0.5, 1.0])
+    noise = 1e-13 .* randn(Random.Xoshiro(23), 6, 6)
+    cov2 = t.lapcov .+ (noise .+ transpose(noise)) ./ 2
+    r1 = ctsem_dais(t.target, t.mode, t.lapcov; draws=64, seed=22)
+    r2 = ctsem_dais(t.target, t.mode, cov2; draws=64, seed=22)
+    @test r1.used && r2.used
+    @test r1.iterations == r2.iterations
+    @test maximum(abs.(r1.mean .- r2.mean) ./ t.sd) < 1e-6
+    @test isapprox(r1.cov, r2.cov; rtol=1e-6)
+    # Where some directions are left out, the kept span's basis is the
+    # span's, whichever orthonormal basis of it, signs included, it comes in.
+    V = Matrix(qr(randn(Random.Xoshiro(24), 6, 3)).Q)[:, 1:3]
+    turn = Matrix(qr(randn(Random.Xoshiro(25), 3, 3)).Q)[:, 1:3] .* [1.0 -1.0 1.0]
+    Q1 = ContinuousTimeSEM._dais_span_basis(V)
+    Q2 = ContinuousTimeSEM._dais_span_basis(V * turn)
+    @test Q1 ≈ Q2 atol = 1e-12
+    @test Q1 * transpose(Q1) ≈ V * transpose(V) atol = 1e-12
+    @test transpose(Q1) * Q1 ≈ Matrix(1.0I, 3, 3) atol = 1e-12
 end
 
 @testset "DAIS gives the draws a density cannot use no weight and no gradient" begin
