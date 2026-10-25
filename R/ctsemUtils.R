@@ -254,6 +254,23 @@ inv_logit<-function(x) {
 #' @export
 log1p_exp <- function(x) pmax(x, 0) + log1p(exp(-abs(x)))
 
+# R's random stream kept for a step whose draws are its own -- from a fixed
+# `seed`, or thrown away -- and must leave the caller's where it was: the
+# stream is set to `seed` if one is given, and the function returned puts the
+# caller's back, or removes it where there was none.
+.ctStreamKeep <- function(seed = NULL) {
+  had <- exists(".Random.seed", envir = globalenv(), inherits = FALSE)
+  saved <- if (had) get(".Random.seed", envir = globalenv(), inherits = FALSE)
+  if (!is.null(seed)) set.seed(seed)
+  function() {
+    if (had) {
+      assign(".Random.seed", saved, envir = globalenv())
+    } else if (exists(".Random.seed", envir = globalenv(), inherits = FALSE)) {
+      rm(".Random.seed", envir = globalenv())
+    }
+  }
+}
+
 
 ctDensityList<-function(x,xlimsindex='all',ylimsindex='all',cut=FALSE,plot=FALSE,
   grouplabels=names(x),

@@ -381,11 +381,8 @@ ctScoreTest <- function(fit, covariates = NULL,
   }
   # The bootstrap draws from its own stream, so a call gives the same answer
   # every time and leaves the caller's random numbers where they were.
-  if (exists('.Random.seed', envir = globalenv(), inherits = FALSE)) {
-    oldseed <- get('.Random.seed', envir = globalenv(), inherits = FALSE)
-    on.exit(assign('.Random.seed', oldseed, envir = globalenv()), add = TRUE)
-  } else on.exit(rm('.Random.seed', envir = globalenv()), add = TRUE)
-  set.seed(20261009L)
+  restore <- .ctStreamKeep(20261009L)
+  on.exit(restore(), add = TRUE)
 
   spec <- fit$model_spec
   est <- .ctFitRawEstimate(fit)

@@ -306,11 +306,8 @@ ctFitAdequacy <- function(fit, covariates = NULL,
   }
   projection <- match.arg(projection)
   if (.ctFitIsJulia(fit)) .ctBackendResolveThreads(cores)
-  if (exists('.Random.seed', envir = globalenv(), inherits = FALSE)) {
-    oldseed <- get('.Random.seed', envir = globalenv(), inherits = FALSE)
-    on.exit(assign('.Random.seed', oldseed, envir = globalenv()), add = TRUE)
-  } else on.exit(rm('.Random.seed', envir = globalenv()), add = TRUE)
-  set.seed(20261010L)
+  restore <- .ctStreamKeep(20261010L)
+  on.exit(restore(), add = TRUE)
 
   statistics <- list(); fams <- list(); size <- NULL; used <- NA_character_
   errors <- NULL
@@ -531,12 +528,9 @@ ctFitAdequacy <- function(fit, covariates = NULL,
     # caller's stream is left where it was. A lattice in the row index was
     # tried first and correlated each row's draw with the next one's, which
     # put a lag-one correlation of 0.11 into a binary item's transforms.
-    oldseed <- if (exists('.Random.seed', envir = globalenv(), inherits = FALSE))
-      get('.Random.seed', envir = globalenv(), inherits = FALSE) else NULL
-    set.seed(20261012L)
+    restore <- .ctStreamKeep(20261012L)
     draw <- matrix(stats::runif(nrows * m), nrows, m)
-    if (is.null(oldseed)) rm('.Random.seed', envir = globalenv()) else
-      assign('.Random.seed', oldseed, envir = globalenv())
+    restore()
     U <- lo + draw * (hi - lo)
   }
   for (r in seq_len(nrows)) {

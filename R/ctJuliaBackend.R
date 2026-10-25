@@ -7110,57 +7110,75 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
     message("No standard errors: an optimised intoverstates=FALSE fit has ",
       "only the profile curvature, which the states flatten. Use ",
       "optimize=FALSE to sample them, or intoverstates=TRUE.")
-  } else if (!isTRUE(optimcontrol$estonly) && is.null(out$laplace$jump)) {
-    # Not on a fit that ended on a jump: the Laplace objective has no
-    # curvature to read there, and the quadrature correction, which climbs
-    # on from the jump, draws the uncertainty from its own Hessian.
-    # With sampling weights the sandwich, unless asked otherwise: the Hessian
-    # alone is the pseudo-likelihood's curvature, not the estimate's spread.
-    # `[[`: `$` falls back to the one field the name begins, so an
-    # `uncertaintyControl` given alone was read as the method and stopped the
-    # fit in `match.arg()`.
-    uncertainty <- .ctJuliaOr(optimcontrol[["uncertainty"]],
-      if (length(out$model_spec$subject_weights)) "sandwich" else "checked")
-    # One way to sample: `ctFit(optimize = FALSE)`, which places the sampler
-    # through this same pipeline before ever reaching this stage (see
-    # `.ctJuliaSampleFit()`, R/ctBackendSample.R). Asking for
-    # `uncertainty = 'sample'` here would mean sampling immediately after an
-    # ML/MAP optimisation that never wanted a metric built for it, on a fit
-    # whose `optimize = TRUE` the caller specifically chose -- refused by
-    # name rather than left to run two optimisations for one fit.
-    if (identical(uncertainty, "sample")) {
-      stop("optimcontrol$uncertainty = 'sample' is refused here: sampling ",
-        "needs its own placement, which optimize = TRUE does not run. Use ",
-        "ctFit(optimize = FALSE) to fit and sample together, or ",
-        "ctFitUncertainty(fit, 'sample') on this fit once it is made.",
-        call. = FALSE)
-    }
-    out <- holdrepair(ctFitUncertainty(fit = out, uncertainty = uncertainty,
-      draws = .ctJuliaOr(optimcontrol$uncertaintyDraws, "auto"),
-      finishsamples = .ctJuliaOr(optimcontrol$finishsamples, 1000L),
-      cores = cores, control = .ctJuliaOr(optimcontrol$uncertaintyControl, list()),
-      verbose = verbose))
-    # An accuracy asked for (`optimcontrol$accuracy`, in posterior sds): the
-    # method's own account of its error read against it, and a brief
-    # sampling run where it falls short (`.ctUncertaintyEscalate()`).
-    if (!is.null(optimcontrol[["accuracy"]])) {
-      out <- holdrepair(.ctUncertaintyEscalate(out, optimcontrol[["accuracy"]],
-        cores = cores, verbose = verbose,
-        control = .ctJuliaOr(optimcontrol$sampleControl, list())))
-    }
+  }
+  # With sampling weights the sandwich, unless asked otherwise: the Hessian
+  # alone is the pseudo-likelihood's curvature, not the estimate's spread.
+  # `[[`: `$` falls back to the one field the name begins, so an
+  # `uncertaintyControl` given alone was read as the method and stopped the
+  # fit in `match.arg()`.
+  uncertainty <- .ctJuliaOr(optimcontrol[["uncertainty"]],
+    if (length(out$model_spec$subject_weights)) "sandwich" else "checked")
+  uncertain <- isTRUE(intoverstates) && !isTRUE(optimcontrol$estonly)
+  # One way to sample: `ctFit(optimize = FALSE)`, which places the sampler
+  # through this same pipeline before ever reaching this stage (see
+  # `.ctJuliaSampleFit()`, R/ctBackendSample.R). Asking for
+  # `uncertainty = 'sample'` here would mean sampling immediately after an
+  # ML/MAP optimisation that never wanted a metric built for it, on a fit
+  # whose `optimize = TRUE` the caller specifically chose -- refused by
+  # name rather than left to run two optimisations for one fit.
+  if (uncertain && identical(uncertainty, "sample")) {
+    stop("optimcontrol$uncertainty = 'sample' is refused here: sampling ",
+      "needs its own placement, which optimize = TRUE does not run. Use ",
+      "ctFit(optimize = FALSE) to fit and sample together, or ",
+      "ctFitUncertainty(fit, 'sample') on this fit once it is made.",
+      call. = FALSE)
+  }
+  measure <- function(fit, method) ctFitUncertainty(fit = fit, uncertainty = method,
+    draws = .ctJuliaOr(optimcontrol$uncertaintyDraws, "auto"),
+    finishsamples = .ctJuliaOr(optimcontrol$finishsamples, 1000L),
+    cores = cores, control = .ctJuliaOr(optimcontrol$uncertaintyControl, list()),
+    verbose = verbose)
+  # A run that ended on a jump has no Laplace answer: the objective is not
+  # continuous there, so it has no maximum and no curvature at that point, and
+  # the quadrature continuation is what finishes it, whatever
+  # `laplace_correct` says. Turned off, the fit came back with no uncertainty
+  # and a warning that blamed `estonly` (anomS1 on the race fixtures).
+  jumped <- !is.null(out$laplace$jump)
+  continuing <- uncertain && !is.null(out$laplace) &&
+    (identical(correctlaplace, "quadrature") || jumped)
+  # Where the continuation runs it draws the uncertainty itself, by the method
+  # asked for, on the hybrid it ends on (`.ctLaplaceContinue()`), so the pass
+  # before it computes only what it starts from: the curvature's normal and
+  # the flat directions. It ran the sampling methods on the Laplace objective
+  # too, and threw the draws away: 134 s of anomS1's 205 s fit
+  # (review/REVIEW-fit-uncertainty-2026-10-25.md, section 3).
+  if (uncertain && !jumped) {
+    first <- if (continuing && uncertainty %in% c("checked", "is")) "hessian" else
+      uncertainty
+    # Its draws are always replaced, so it leaves R's random stream where it
+    # found it: where the continuation leaves the fit alone, the method asked
+    # for then draws exactly what it draws on the uncorrected fit.
+    restore <- if (!identical(first, uncertainty)) .ctStreamKeep() else function() NULL
+    out <- holdrepair(measure(out, first))
+    restore()
   }
 
-  # The quadrature correction, last of the post-optimiser stages: after the
-  # certification has converged the Laplace objective and after the uncertainty
-  # stage has built the Hessian it steps against, which it reuses rather than
-  # computing another. Before the constrained draws below, so that they are
-  # built once from the recentred draws. See `.ctLaplaceContinue()` for
-  # `laplace_correct = 'quadrature'`, the default, which replaces the
-  # covariance and draws with its own when it reaches its fixed point, and
-  # `.ctLaplaceAutoCorrect()` for `'step'`.
+  # The quadrature correction, after the certification has converged the
+  # Laplace objective and the uncertainty stage has built the Hessian it steps
+  # against, which it reuses rather than computing another. Before the
+  # constrained draws below, so that they are built once. See
+  # `.ctLaplaceContinue()` for `laplace_correct = 'quadrature'`, the default,
+  # which replaces the covariance and draws with its own when it reaches its
+  # fixed point, and `.ctLaplaceAutoCorrect()` for `'step'`.
   if (!is.null(out$laplace) && isTRUE(intoverstates)) {
-    if (identical(correctlaplace, "quadrature")) {
-      out <- holdrepair(.ctLaplaceContinue(out, cores = cores, verbose = verbose))
+    if (continuing) {
+      if (!identical(correctlaplace, "quadrature")) {
+        message("The Laplace term jumped where the optimiser stopped, so the ",
+          "fit was finished by the quadrature correction despite ",
+          "optimcontrol$laplace_correct.")
+      }
+      out <- holdrepair(.ctLaplaceContinue(out, cores = cores, verbose = verbose,
+        method = uncertainty))
     } else if (identical(correctlaplace, "step")) {
       out <- holdrepair(.ctLaplaceAutoCorrect(out, cores = cores, verbose = verbose))
     } else {
@@ -7168,6 +7186,23 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
         !isFALSE(optimcontrol$laplace_correct)) "estonly" else "off",
         applied = FALSE)
     }
+  }
+  # The method asked for where the continuation did not draw it: on the
+  # Laplace objective, which the fit's estimate maximises unless the
+  # continuation stopped short of its fixed point, when the draws are taken
+  # at the Laplace optimum and moved with the estimate, as the continuation
+  # moves the normal's (`.ctLaplaceUncertaintyAtOptimum()`).
+  if (uncertain && !jumped && !identical(out$uncertainty$settings$method, uncertainty)) {
+    out <- holdrepair(.ctLaplaceUncertaintyAtOptimum(out,
+      function(fit) measure(fit, uncertainty)))
+  }
+  # An accuracy asked for (`optimcontrol$accuracy`, in posterior sds): the
+  # method's own account of its error read against it, and a brief
+  # sampling run where it falls short (`.ctUncertaintyEscalate()`).
+  if (uncertain && !is.null(optimcontrol[["accuracy"]]) && !is.null(out$uncertainty$settings)) {
+    out <- holdrepair(.ctUncertaintyEscalate(out, optimcontrol[["accuracy"]],
+      cores = cores, verbose = verbose,
+      control = .ctJuliaOr(optimcontrol$sampleControl, list())))
   }
 
   # The draws pushed through the model's transforms, once, exactly as the Stan

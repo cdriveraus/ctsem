@@ -120,15 +120,8 @@
         function(i) stats::rnorm(npar, 0, spread)) else NULL)
   }
   if (is.null(seed)) return(draw())
-  existing <- if (exists(".Random.seed", envir = globalenv(), inherits = FALSE)) {
-    get(".Random.seed", envir = globalenv(), inherits = FALSE)
-  } else NULL
-  set.seed(as.integer(seed)[1L])
-  on.exit({
-    if (is.null(existing)) {
-      suppressWarnings(rm(".Random.seed", envir = globalenv()))
-    } else assign(".Random.seed", existing, envir = globalenv())
-  }, add = TRUE)
+  restore <- .ctStreamKeep(as.integer(seed)[1L])
+  on.exit(restore(), add = TRUE)
   draw()
 }
 

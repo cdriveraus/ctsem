@@ -3528,7 +3528,12 @@ ctOptimFitLpgFunc <- function(fit, cores=1){
 #' a skew or by a width that moves with another parameter, every departing
 #' direction is sampled as \code{'is'} samples (below), the normal kept in
 #' all the rest. This is
-#' what corrects a variance from few groups and the effects it scales. Where
+#' meant to correct a variance from few groups and the effects it scales, but
+#' it weighs the sampled directions with the others held near the centre, so
+#' where their spread moves with the sampled ones -- a population sd and the
+#' effects it scales -- intervals can remain too narrow, and nothing below
+#' detects it: on models with random effects, sample (\code{'sample'}) for
+#' intervals to report. Where
 #' that sampling cannot correct the normal -- a curved ridge such as a loading
 #' vector whose length the data determine and whose direction they barely do,
 #' where the Hessian's intervals can be many times too wide -- the Hessian's
