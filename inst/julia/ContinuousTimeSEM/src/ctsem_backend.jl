@@ -2704,7 +2704,7 @@ The endgame's controls: `newton` turns it on; `certify` says a certification
 will read what it returns, which adds the flat-direction probe and, on a route
 whose Hessian is expensive (Laplace), is what the finish runs for at all;
 `newton_curvature` is `:auto` (the route's own, `_ctsem_finish_curvature`),
-`:exact`, `:chord` or `:subset`; `newton_switch` is the predicted gain at which L-BFGS hands over
+`:exact`, `:chord`, `:subset` or `:krylov`; `newton_switch` is the predicted gain at which L-BFGS hands over
 once the stage has spent at least a Hessian's cost (`_ctsem_hessian_cost`),
 and a finish whose first step shows that hand-over was early gives the point
 back to L-BFGS, which runs on to its own stopping rule before the finish runs
@@ -2734,6 +2734,10 @@ on rather than form again where Hessians are dear (`_ctsem_newton_finish`'s
 `hessian0`). The stall watch's `stall_carried` and `stall_alone`, and with them
 these two, are set only on a stage resumed after a certification (see
 `CTSEMStallWatch`).
+`newton_final = :walked` has the finish return the matrix its last walk stepped
+on (`newton_walked`) instead of forming the exact Hessian where it ends, for a
+stage whose objective the caller is about to change again (`_ctsem_newton_finish`'s
+`final`).
 
 Provenance of the defaults: the stall watch's constants are documented at
 `CTSEMStallWatch`, the batching's at `_ctsem_batch_plan`, and the finish's
@@ -2766,7 +2770,7 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
     newton_curvature=:auto, certify::Bool=false,
     newton_reuse::Real=_CTSEM_HESSIAN_REUSE_SE,
     flat_rtol::Real=_CTSEM_FLAT_RTOL, newton_hessian=nothing,
-    newton_hessian_at=nothing)
+    newton_hessian_at=nothing, newton_final=:exact)
     start_values = collect(start)
     # What the line search saw of a jump, for the route to name its cause
     # (`_ctsem_jump_units`), on a route that can.
@@ -3221,7 +3225,7 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
     # What a finish that gave the point back to L-BFGS had spent, carried into
     # the totals below: its steps, Hessians and calls, and its history.
     spent = (steps=Ref(0), fcalls=Ref(0), gcalls=Ref(0), hessians=Ref(0),
-        subset=Ref(0), history=(kind=String[], gain=Float64[], alpha=Float64[],
+        subset=Ref(0), krylov_models=Ref(0), krylov_products=Ref(0), history=(kind=String[], gain=Float64[], alpha=Float64[],
         value=Float64[]))
     handed_back = false
     # Mirrors `watch` above: every step the finish takes -- a damped Newton
@@ -3273,6 +3277,10 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
         affordable = hessian_cost <= result.iterations
         finish_curvature = Symbol(newton_curvature) === :auto ?
             route_curvature : Symbol(newton_curvature)
+        # The Krylov model where the route chose it, only where the exact
+        # Hessian is dear; where the caller named it, wherever it can be made.
+        krylov_min_cost = Symbol(newton_curvature) === :auto ?
+            Float64(_CTSEM_KRYLOV_MIN_COST) : 0.0
         finish = _ctsem_newton_finish(objective, minimizer, f0, G0, fg!;
             tol=gap_tol, maxit=newton_maxit, callback=record,
             iteration0=result.iterations + spent.steps[],
@@ -3285,7 +3293,8 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
             # The caller's Hessian, for the stage's first finish only: after a
             # hand-back L-BFGS has moved the point on.
             hessian0=handed_back ? nothing : newton_hessian,
-            hessian0_at=handed_back ? nothing : newton_hessian_at)
+            hessian0_at=handed_back ? nothing : newton_hessian_at,
+            krylov_min_cost=krylov_min_cost, final=Symbol(newton_final))
         minimizer = collect(finish.x)
         # The finish's own gain replaces L-BFGS's metric proxy: it is the exact
         # decrement, which is what the verdict below should be judging. A
@@ -3305,6 +3314,8 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
         spent.gcalls[] += finish.gcalls
         spent.hessians[] += finish.full_hessians
         spent.subset[] += finish.subset_hessians
+        spent.krylov_models[] += finish.krylov_models
+        spent.krylov_products[] += finish.krylov_products
         append!(spent.history.kind, finish.history.kind)
         append!(spent.history.gain, finish.history.gain)
         append!(spent.history.alpha, finish.history.alpha)
@@ -3547,6 +3558,13 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
             (finish === nothing ? 0 : finish.full_hessians),
         newton_subset_hessians=spent.subset[] +
             (finish === nothing ? 0 : finish.subset_hessians),
+        # The Krylov models the finish stepped on and the gradients they took
+        # (`CTSEMKrylov`): their Hessian-vector products and the evaluation
+        # each extension starts from.
+        newton_krylov_models=spent.krylov_models[] +
+            (finish === nothing ? 0 : finish.krylov_models),
+        newton_krylov_products=spent.krylov_products[] +
+            (finish === nothing ? 0 : finish.krylov_products),
         # Whether a finish found the hand-over early and gave the point back to
         # L-BFGS (see `_ctsem_newton_finish`); its steps and Hessians are in the
         # counts above.
@@ -3561,6 +3579,12 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
             [0.0] : finish.hessian_at,
         hessian_distance=(finish === nothing || finish.hessian === nothing) ?
             NaN : finish.distance,
+        # Under `newton_final = :walked`, the matrix the finish's last walk
+        # stepped on, of the maximised objective, at the point it returned
+        # (`minimizer`): an approximation, never the certification's.
+        # `zeros(1, 1)` otherwise.
+        newton_walked=(finish === nothing || finish.walked === nothing) ?
+            zeros(1, 1) : finish.walked,
         # The saddle record: whether the final point still has a direction of
         # negative curvature, whether the ladder was tried at it, how many
         # escapes the ladder made on the way, and what they gained; and at the

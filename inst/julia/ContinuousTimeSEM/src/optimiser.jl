@@ -1879,13 +1879,19 @@ _ctsem_hessian_cost(::Any, npar::Integer) = Int(npar)
 """
     _ctsem_finish_curvature(objective)
 
-The route's own curvature for the finish: `:chord` on the marginal and Laplace
-routes, one Hessian walked with SR1 updates and refreshed when the walk stops
-paying for it, whatever it costs; and `nothing` for a route the finish does not
-run on: a pinned profile point, whose wrapper has no Hessian of its own, and
-the state-explicit target, which is never certified.
+The route's own curvature for the finish: `:chord` on the marginal route and a
+Laplace objective with no coordinate, whose Hessians cost about `npar`
+gradients, one Hessian walked with SR1 updates and refreshed when the walk
+stops paying for it; `:krylov` on the Laplace route otherwise, the scores'
+curvature corrected by Hessian-vector products (`CTSEMKrylov`), which falls
+back to the chord where the exact Hessian is cheap (`_CTSEM_KRYLOV_MIN_COST`);
+and `nothing` for a route the finish does not run on: a pinned profile point,
+whose wrapper has no Hessian of its own, and the state-explicit target, which
+is never certified.
 """
-_ctsem_finish_curvature(::Union{CTSEMObjective,CTSEMLaplaceObjective}) = :chord
+_ctsem_finish_curvature(::CTSEMObjective) = :chord
+_ctsem_finish_curvature(laplace::CTSEMLaplaceObjective) =
+    _laplace_filter_only(laplace) ? :chord : :krylov
 _ctsem_finish_curvature(::Any) = nothing
 
 """
@@ -2236,6 +2242,220 @@ function _ctsem_trust_multiplier(curvature::AbstractVector, c::AbstractVector,
 end
 
 """
+    CTSEMKrylov
+
+The finish's model of the Hessian where an exact one is dear (`curvature =
+:krylov` in `_ctsem_newton_finish`): the units' centred score outer product
+plus the prior's precision (`M`, the structured model's `B` with its
+eigenvalues floored at `1e-6` of the largest, so positive definite), corrected
+on the space spanned by `Q`, whose columns are `M`-orthonormal (`Q' M Q = I`)
+and whose Hessian products `W = H Q` were taken by differencing the gradient
+(`_ctsem_hvp!`):
+
+    H~ = M + M Q (T - I) Q' M,   T = (Q' W + W' Q) / 2,
+
+which is `H` on that space, as far as `T` is `Q' H Q`, and `M` elsewhere. Each
+step of the finish extends `Q` by preconditioned Lanczos from its own gradient
+(`_ctsem_krylov_extend!`), and keeps the earlier columns with their products,
+taken where the steps before were: on the affect pilot's saved Hessian (697
+parameters, 4031 units) a step on 60 fresh products left 5e-4 of the Newton
+gain, and two steps with the first's products kept 5e-7, where starting afresh
+each step left 1e-5 (`scripts/pilot-curvature-2026-10/krylov_recycle.R`).
+Steps on one such model corrected by SR1 instead did worse than the first
+step alone: the next gradient lies mostly outside `Q`, where `M` is up to ten
+times off. The scores alone (`T = I`) are no substitute for the Hessian there
+-- the ratio of their curvatures spanned 0.17 to 7.6 between its 10th and
+90th percentiles -- but as the preconditioner they brought conjugate gradients
+from 1912 products to 58 for the same accuracy
+(`scripts/pilot-curvature-2026-10/score_spectra.R`). A localised exact Hessian
+there costs about 273 gradients. `products` counts the products taken.
+"""
+mutable struct CTSEMKrylov
+    M::Matrix{Float64}
+    factor::Cholesky{Float64,Matrix{Float64}}
+    Q::Matrix{Float64}
+    MQ::Matrix{Float64}
+    W::Matrix{Float64}
+    products::Int
+end
+
+"""
+    _ctsem_krylov_model(S, precision)
+
+The model with no products yet (`CTSEMKrylov`): its preconditioner from the
+units' scores `S` (units by parameters) and the prior's `precision`, or
+`nothing` where it cannot be factored.
+"""
+function _ctsem_krylov_model(S::AbstractMatrix, precision::AbstractVector)
+    n = size(S, 2)
+    B = Matrix{Float64}(undef, n, n)
+    mul!(B, transpose(S), S)
+    g = vec(sum(S; dims=1))
+    N = size(S, 1)
+    @inbounds for j in 1:n, i in 1:n
+        B[i, j] -= g[i] * g[j] / N
+    end
+    @inbounds for i in 1:n
+        B[i, i] += precision[i]
+    end
+    all(isfinite, B) || return nothing
+    E = eigen(Symmetric((B .+ transpose(B)) ./ 2))
+    top = maximum(E.values; init=0.0)
+    (isfinite(top) && top > 0) || return nothing
+    M = E.vectors * Diagonal(max.(E.values, 1e-6 * top)) * transpose(E.vectors)
+    M = (M .+ transpose(M)) ./ 2
+    F = cholesky(Symmetric(M); check=false)
+    issuccess(F) || return nothing
+    return CTSEMKrylov(M, F, zeros(n, 0), zeros(n, 0), zeros(n, 0), 0)
+end
+
+"""Drop the model's products, keeping its preconditioner: for a model whose
+products were taken where the curvature is no longer what they say."""
+function _ctsem_krylov_reset!(k::CTSEMKrylov)
+    n = size(k.M, 1)
+    k.Q = zeros(n, 0); k.MQ = zeros(n, 0); k.W = zeros(n, 0)
+    return k
+end
+
+"""The projected curvature `T` and the model's Newton gain from the minimised
+gradient `G`, `c' T^-1 c / 2` with `c = Q' G` (negative curvature taken at its
+size, as the finish takes it)."""
+function _ctsem_krylov_gain(k::CTSEMKrylov, G::AbstractVector)
+    m = size(k.Q, 2)
+    m == 0 && return 0.0
+    T = transpose(k.Q) * k.W
+    T = (T .+ transpose(T)) ./ 2
+    E = eigen(Symmetric(T))
+    c = transpose(E.vectors) * (transpose(k.Q) * G)
+    gain = 0.0
+    for i in eachindex(c)
+        lam = abs(E.values[i])
+        lam > 0 || return Inf
+        gain += abs2(c[i]) / lam
+    end
+    return gain / 2
+end
+
+"""
+    _ctsem_krylov_extend!(k, context, G; maxadd, rtol)
+
+Add up to `maxadd` columns to the model's space by preconditioned Lanczos from
+the minimised gradient `G` at the context's point: the start `M^-1 G`, each
+next column `M^-1 H q` of the last, each made `M`-orthogonal to every column
+already there (twice, for the rounding), with its product `H q` from
+`_ctsem_hvp!` (of the maximised objective, so negated). Stops once a column
+adds less than `rtol` of the model's predicted gain twice running, once the
+start or a next column has nothing left outside the space, or at a product
+that did not converge. `progress(i)`, when given, is called after the `i`th
+product. Returns the columns added.
+"""
+function _ctsem_krylov_extend!(k::CTSEMKrylov, context, G::AbstractVector;
+        maxadd::Integer, rtol::Real=0.01, progress=nothing)
+    added = 0
+    u = k.factor \ collect(Float64, G)
+    scale = sqrt(max(dot(u, k.M * u), 0.0))
+    (isfinite(scale) && scale > 0) || return 0
+    before = _ctsem_krylov_gain(k, G)
+    quiet = 0
+    while added < maxadd
+        if size(k.Q, 2) > 0
+            for _ in 1:2
+                u .-= k.Q * (transpose(k.MQ) * u)
+            end
+        end
+        Mu = k.M * u
+        nb = sqrt(max(dot(u, Mu), 0.0))
+        (isfinite(nb) && nb > 1e-10 * scale) || break
+        q = u ./ nb
+        # A product is a gradient: a checkpoint, so Escape stops a long run of
+        # them whether or not anything is reported.
+        _ctsem_interrupt_check()
+        Hq = _ctsem_hvp!(context, q)
+        k.products += 1
+        progress === nothing || progress(added + 1)
+        Hq === nothing && break
+        w = -Hq
+        k.Q = hcat(k.Q, q); k.MQ = hcat(k.MQ, Mu ./ nb); k.W = hcat(k.W, w)
+        added += 1
+        after = _ctsem_krylov_gain(k, G)
+        quiet = (isfinite(after) && isfinite(before) && after - before < rtol * after) ?
+            quiet + 1 : 0
+        before = after
+        quiet >= 2 && break
+        size(k.Q, 2) >= size(k.M, 1) && break
+        u = k.factor \ w
+    end
+    return added
+end
+
+"""The model's Hessian of the minimised objective, `M + M Q (T - I) Q' M`."""
+function _ctsem_krylov_matrix(k::CTSEMKrylov)
+    m = size(k.Q, 2)
+    m == 0 && return copy(k.M)
+    T = transpose(k.Q) * k.W
+    T = (T .+ transpose(T)) ./ 2
+    H = k.M .+ k.MQ * (T - I) * transpose(k.MQ)
+    return (H .+ transpose(H)) ./ 2
+end
+
+"""
+    _ctsem_krylov_cost(S)
+
+What the exact Hessian costs, in gradients, where its columns are differenced
+over the units that read them (`ctsem_laplace_hessian`'s `localised`): two
+gradients a column, each over the share of the units whose scores in that
+parameter are not zero. What the Krylov model is weighed against.
+"""
+function _ctsem_krylov_cost(S::AbstractMatrix)
+    N = size(S, 1)
+    N == 0 && return 0.0
+    reads = 0
+    @inbounds for j in axes(S, 2), U in axes(S, 1)
+        iszero(S[U, j]) || (reads += 1)
+    end
+    return 2 * reads / N
+end
+
+"""
+The least an exact Hessian has to cost, in gradients, for the finish to step on
+the Krylov model (`CTSEMKrylov`) instead where the route leaves it to choose:
+below this the products the model needs are not much fewer than the
+Hessian's own gradients.
+"""
+const _CTSEM_KRYLOV_MIN_COST = 200
+
+"""
+    ctsem_krylov_hessian(objective, values; products, rtol)
+
+The Krylov model of the Hessian at `values` (`CTSEMKrylov`), of the MAXIMISED
+objective, from one preconditioned Lanczos run started at the gradient there:
+up to `products` Hessian-vector products, by default a sixth of what the
+exact Hessian would cost (`_ctsem_krylov_cost`) and at least ten. For a caller
+that needs a curvature to whiten or bound its steps by rather than the exact
+Hessian, as the quadratic correction's rounds do at a jump
+(`.ctLaplaceContinue()`), where the Laplace objective has no Hessian and the
+continuation's costs `2 npar` gradients. A 1x1 zero where the objective has no
+products or scores there (`_ctsem_hvp_setup`).
+"""
+function ctsem_krylov_hessian(objective, values::AbstractVector;
+        products::Integer=0, rtol::Real=0.01)
+    x = collect(Float64, values)
+    setup = _ctsem_hvp_setup(objective, x; scores=true)
+    (setup === nothing || setup.scores === nothing) && return zeros(1, 1)
+    km = _ctsem_krylov_model(setup.scores, _ctsem_prior_precision(
+        _ctsem_prior_objective(objective), length(x)))
+    km === nothing && return zeros(1, 1)
+    cap = products > 0 ? Int(products) :
+        clamp(ceil(Int, _ctsem_krylov_cost(setup.scores) / 6), 10, length(x))
+    _ctsem_krylov_extend!(km, setup.context, -setup.gradient; maxadd=cap,
+        rtol=rtol)
+    size(km.Q, 2) == 0 && return zeros(1, 1)
+    return -_ctsem_krylov_matrix(km)
+end
+
+export ctsem_krylov_hessian
+
+"""
     _ctsem_newton_finish(objective, x, f, G, fg!; ...)
 
 The endgame, from `x` on the minimised objective behind `fg!` (`f` and `G` its
@@ -2265,7 +2485,19 @@ What the steps are taken against is `curvature`:
   than `reuse_se` standard errors from where the Hessian was taken;
 - `:subset` the likelihood Hessian of a random `subset` share of the units
   (at least `subset_min`), scaled up to the data, with the prior's curvature
-  kept whole -- a chord Hessian at a fraction of the cost.
+  kept whole -- a chord Hessian at a fraction of the cost;
+- `:krylov` the scores' curvature corrected by Hessian-vector products
+  (`CTSEMKrylov`), extended at every step from that step's gradient and
+  keeping the products before, where the objective has such products
+  (`_ctsem_hvp_setup`) and its exact Hessian costs at least `krylov_min_cost`
+  gradients (`_ctsem_krylov_cost`); the chord otherwise. Its walk ends where the
+  model's predicted gain falls below `tol`, and the exact Hessian is formed
+  there, the chord's walk going on from it if it finds more; where the
+  products have cost as much as that Hessian without the walk ending, or a
+  step fails on a fresh model, the exact Hessian is formed where the walk
+  stands. A chord walk on the exact Hessian that ends unconverged returns to
+  the model rather than buying another, so that the exact Hessians formed are
+  those of converged walks.
 
 The final Hessian is the exact one at the final point, with one exception: a
 chord Hessian whose steps converged within `reuse_se` standard errors of where
@@ -2309,6 +2541,12 @@ caller holds -- the certification's, for a stage it resumed -- and is walked on
 in place of forming one at `x`, on the chord and the subset; the exact variant
 forms its own, as it is cheap.
 
+`final = :walked` ends the finish where its walk ends, with the matrix that walk
+stepped on (`walked`, of the maximised objective) and no exact Hessian formed
+for the point, escape or probe: for a stage on an objective its caller is
+about to change, which certifies once those changes settle (the smoothing
+passes in `.ctJuliaOptimiseFit()`).
+
 `take_steps = false` gives the certification's numbers alone: the Hessian at `x`,
 the ladder's measurement along any negative curvature there and the probe, with
 no step and no refresh, for a point the optimiser left without a finish
@@ -2346,9 +2584,12 @@ function _ctsem_newton_finish(objective, x0, f0, G0, fg!; tol::Real=1e-8,
         max_escapes::Integer=3, value_at=nothing, handback::Bool=false,
         certify_tol::Real=0.0, flat_escape::Bool=false,
         flat_allowed=(from, to) -> true,
-        reporter=nothing, hessian0=nothing, hessian0_at=nothing)
-    curvature in (:exact, :chord, :subset) || throw(ArgumentError(
-        "newton curvature must be exact, chord or subset, got $(curvature)"))
+        reporter=nothing, hessian0=nothing, hessian0_at=nothing,
+        krylov_min_cost::Real=_CTSEM_KRYLOV_MIN_COST, final::Symbol=:exact)
+    final in (:exact, :walked) || throw(ArgumentError(
+        "newton final must be exact or walked, got $(final)"))
+    curvature in (:exact, :chord, :subset, :krylov) || throw(ArgumentError(
+        "newton curvature must be exact, chord, subset or krylov, got $(curvature)"))
     valueof = value_at === nothing ? (y -> _ctsem_probe_value(objective, y)) :
         value_at
     # Typed, as `H`, `Hs` and `split` below are, because they are reassigned
@@ -2408,6 +2649,59 @@ function _ctsem_newton_finish(objective, x0, f0, G0, fg!; tol::Real=1e-8,
         -(c .* (Hs .- Diagonal(Hp)) .+ Diagonal(Hp))
     end
     step_hessian(y) = curvature === :subset ? subhess(y) : hess(y)
+    # The Krylov model (`CTSEMKrylov`), made at the first point it is asked
+    # for, from the scores there, and extended at each point after. In Refs,
+    # as the counts above are. `kcost` is what the exact Hessian costs
+    # (`_ctsem_krylov_cost`), `kspent` the gradients the model has taken --
+    # its products and the evaluation each extension starts from -- and
+    # `kable` whether the model can still be used: not where the objective
+    # has no products or scores, the exact Hessian is cheap, or the model has
+    # cost as much as that Hessian.
+    kmodel = Ref{Union{Nothing,CTSEMKrylov}}(nothing)
+    kcost = Ref(NaN); kspent = Ref(0); kmodels = Ref(0)
+    kable = Ref(curvature === :krylov)
+    function krylov_at(y, Gy)
+        kable[] || return nothing
+        # An exact Hessian costs at most `2 npar` gradients: below the bar
+        # whatever the scores say, so none are taken to find out.
+        if kmodel[] === nothing && 2 * length(y) < krylov_min_cost
+            kable[] = false
+            return nothing
+        end
+        local setup = _ctsem_hvp_setup(objective, y; scores=kmodel[] === nothing)
+        setup === nothing && (kable[] = false; return nothing)
+        kspent[] += 1
+        local km = kmodel[]
+        if km === nothing
+            local S = setup.scores
+            S === nothing && (kable[] = false; return nothing)
+            kcost[] = _ctsem_krylov_cost(S)
+            if kcost[] < krylov_min_cost
+                kable[] = false
+                return nothing
+            end
+            km = _ctsem_krylov_model(S, _ctsem_prior_precision(
+                _ctsem_prior_objective(objective), length(y)))
+            km === nothing && (kable[] = false; return nothing)
+            kmodel[] = km
+        end
+        local before = km.products
+        local cap = clamp(ceil(Int, kcost[] / 6), 10, length(y))
+        # Reported per product, against what the exact Hessian would cost: a
+        # product is a gradient, minutes on a large Laplace model.
+        local spent0 = kspent[]
+        local whole = max(1, floor(Int, kcost[]))
+        local tell = hessian_progress === nothing ? nothing :
+            (a -> hessian_progress(min(spent0 + a, whole), whole,
+                "gradients, Krylov model"))
+        _ctsem_krylov_extend!(km, setup.context, Gy; maxadd=cap, progress=tell)
+        kspent[] += km.products - before
+        kmodels[] += 1
+        # Past what the exact Hessian would have cost, the model is not paying.
+        kspent[] >= kcost[] && (kable[] = false)
+        size(km.Q, 2) == 0 && return nothing
+        return _ctsem_krylov_matrix(km)
+    end
     history = (kind=String[], gain=Float64[], alpha=Float64[], value=Float64[])
     remember!(kind, g, a, f) = (push!(history.kind, kind); push!(history.gain, g);
         push!(history.alpha, a); push!(history.value, -f); nothing)
@@ -2531,7 +2825,17 @@ function _ctsem_newton_finish(objective, x0, f0, G0, fg!; tol::Real=1e-8,
         hessian0_at !== nothing && size(hessian0) == (length(x), length(x)) &&
         length(hessian0_at) == length(x) && all(isfinite, hessian0) &&
         all(isfinite, hessian0_at)
-    H::Union{Nothing,Matrix{Float64}} = seeded ? -Matrix{Float64}(hessian0) : step_hessian(x)
+    # `krylov`: `H` is the Krylov model, extended at each step (below).
+    krylov::Bool = false
+    H::Union{Nothing,Matrix{Float64}} = if seeded
+        -Matrix{Float64}(hessian0)
+    elseif curvature === :krylov
+        Hk = krylov_at(x, G)
+        krylov = Hk !== nothing
+        krylov ? Hk : hess(x)
+    else
+        step_hessian(x)
+    end
     local split::Union{Nothing,_CTSEMInformationSplit}
     # What the steps are taken against: `H` itself, except that the chord
     # corrects its copy along the direction it walks (see the refresh below),
@@ -2539,7 +2843,10 @@ function _ctsem_newton_finish(objective, x0, f0, G0, fg!; tol::Real=1e-8,
     # certification read.
     Hs::Union{Nothing,Matrix{Float64}} = H
     hat = seeded ? collect(Float64, hessian0_at) : copy(x)   # where `H` was evaluated
-    exact = seeded || curvature !== :subset   # `H` is the exact Hessian at `hat`
+    # `H` is the exact Hessian at `hat`
+    exact = seeded || (curvature !== :subset && !krylov)
+    # The Krylov model was just extended at `x`; the next step's extends it.
+    fresh = krylov
     steps = 0; escapes = 0; gain = Inf
     saddle = false; ladder_tried = false; ladder_gain = 0.0
     saddle_walked = 0; saddle_gain = NaN
@@ -2547,10 +2854,11 @@ function _ctsem_newton_finish(objective, x0, f0, G0, fg!; tol::Real=1e-8,
     if H === nothing
         return (x=x, f=f, G=G, hessian=nothing, hessian_at=hat, distance=NaN,
             steps=0, gain=Inf, full_hessians=full_hessians[],
-            subset_hessians=subset_hessians[], fcalls=0, gcalls=0, escapes=0,
+            subset_hessians=subset_hessians[], krylov_models=kmodels[],
+            krylov_products=kspent[], fcalls=0, gcalls=0, escapes=0,
             saddle=false, ladder_tried=false, ladder_gain=0.0, saddle_walked=0,
             saddle_gain=NaN, probe=_ctsem_no_probe(), history=history,
-            handback=false)
+            handback=false, walked=nothing)
     end
     at_x = exact && hat == x            # `H` is the exact Hessian at `x`
     # The trust region, in raw units. Each Hessian starts without one -- its
@@ -2575,16 +2883,30 @@ function _ctsem_newton_finish(objective, x0, f0, G0, fg!; tol::Real=1e-8,
     finish_budget = 6 * (hessian_cost + per_hessian)
     budget = curvature === :exact ? per_hessian :
         max(0, floor(Int, finish_budget - hessian_cost * full_hessians[] -
-            subset_cost * subset_hessians[]))
+            subset_cost * subset_hessians[] - kspent[]))
     while true                          # once, and again after an escape or a rewalk
         converged = false
         prevgain = Inf; prevwhole = true; prevrho = 1.0
         # This walk's own record: where it started, the objective after each
         # of its steps, and the curvature its Hessian implies, for `worth`.
         walk_start = steps; walk_values = [f]
-        walk_split = curvature === :exact ? nothing :
+        walk_split = (curvature === :exact || krylov) ? nothing :
             _ctsem_information_split(H; rtol=flat_rtol, negative=negative)
         while take_steps && steps < budget
+            # The Krylov model is extended at each point after the one it was
+            # last extended at, from that point's gradient (`CTSEMKrylov`).
+            # Where it cannot be -- no products there, or it has cost what the
+            # exact Hessian would -- the walk ends, and the exact Hessian here
+            # takes over (the rewalk below).
+            if krylov && !fresh
+                Hk = krylov_at(x, G)
+                if Hk === nothing
+                    krylov = false
+                    break
+                end
+                H = Hk; Hs = Hk; hat = copy(x)
+            end
+            fresh = false
             nt = newton(Hs, G, radius)
             nt === nothing && break
             gain = nt.gain
@@ -2645,8 +2967,10 @@ function _ctsem_newton_finish(objective, x0, f0, G0, fg!; tol::Real=1e-8,
             # nine tenths of its total in its first 25 steps and then walked on
             # for 500 more, as many as its Hessian cost, a few hundredths of a
             # nat a step: seven walks and a resume in 19 hours.
+            # Not on the Krylov model, which takes its next products at the
+            # next point rather than waiting to be replaced.
             k = steps - walk_start
-            if curvature !== :exact && k >= 2
+            if curvature !== :exact && !krylov && k >= 2
                 half = k ÷ 2
                 recent = (walk_values[half + 1] - f) / (k - half)
                 if recent * (hessian_cost + k) < walk_values[1] - f &&
@@ -2677,6 +3001,7 @@ function _ctsem_newton_finish(objective, x0, f0, G0, fg!; tol::Real=1e-8,
                 # one here the steps are over.
                 at_x && break
                 H = hess(x); Hs = H; hat = copy(x); exact = true; at_x = true
+                krylov = false
                 H === nothing && break
                 prevgain = Inf; prevwhole = true; prevrho = 1.0; radius = Inf
                 continue
@@ -2743,6 +3068,13 @@ function _ctsem_newton_finish(objective, x0, f0, G0, fg!; tol::Real=1e-8,
                 H = hess(x); Hs = H; hat = copy(x); exact = true; at_x = true
                 H === nothing && break
                 prevgain = Inf; prevwhole = true; prevrho = 1.0; radius = Inf
+            elseif krylov
+                # The Krylov model takes its next products at the next point
+                # instead of an SR1 update. A step it predicted under a quarter
+                # of drops the products it has: they were taken where the
+                # curvature is no longer what they say.
+                trial.rho < 0.25 && _ctsem_krylov_reset!(kmodel[])
+                prevgain = gain
             else
                 curvature !== :exact && (Hs = _ctsem_sr1(Hs, dx, dg))
                 prevgain = gain
@@ -2752,11 +3084,27 @@ function _ctsem_newton_finish(objective, x0, f0, G0, fg!; tol::Real=1e-8,
         # L-BFGS goes on from here and the finish runs again where it stops.
         handed && return (x=x, f=f, G=G, hessian=nothing, hessian_at=hat,
             distance=NaN, steps=steps, gain=gain, full_hessians=full_hessians[],
-            subset_hessians=subset_hessians[], fcalls=fcalls[], gcalls=gcalls,
+            subset_hessians=subset_hessians[], krylov_models=kmodels[],
+            krylov_products=kspent[], fcalls=fcalls[], gcalls=gcalls,
             escapes=0, saddle=false, ladder_tried=false, ladder_gain=0.0,
             saddle_walked=0, saddle_gain=NaN, probe=_ctsem_no_probe(),
-            history=history, handback=true)
+            history=history, handback=true, walked=nothing)
         H === nothing && break
+        # `final = :walked`: where the walk ended, the matrix it walked on, and
+        # no exact Hessian formed for it -- for a caller that steps again from
+        # here on an objective it is about to change (the smoothing passes,
+        # `.ctJuliaOptimiseFit()`), which certifies once the changes settle.
+        # No escape and no probe either: both read an exact Hessian.
+        if final === :walked
+            return (x=x, f=f, G=G, hessian=at_x ? -H : nothing, hessian_at=hat,
+                distance=at_x ? 0.0 : NaN, steps=steps, gain=gain,
+                full_hessians=full_hessians[], subset_hessians=subset_hessians[],
+                krylov_models=kmodels[], krylov_products=kspent[],
+                fcalls=fcalls[], gcalls=gcalls, escapes=escapes, saddle=false,
+                ladder_tried=false, ladder_gain=0.0, saddle_walked=0,
+                saddle_gain=NaN, probe=_ctsem_no_probe(), history=history,
+                handback=false, walked=-Hs)
+        end
         # The final Hessian. A chord Hessian the steps converged on, taken
         # within `reuse_se` standard errors of here, is kept: the exact one at
         # this point would differ from it by less than the certification can
@@ -2782,11 +3130,33 @@ function _ctsem_newton_finish(objective, x0, f0, G0, fg!; tol::Real=1e-8,
                 _ctsem_hessian_distance(_ctsem_information_split(H;
                     rtol=flat_rtol, negative=negative), hat, x) <= reuse_se
             if !keep && curvature !== :exact
+                # On `:krylov`, a walk on the exact Hessian that ended without
+                # converging goes back to the model, with its products
+                # dropped, rather than buying another Hessian: the exact ones
+                # are for the points walks converge at.
+                left = finish_budget - hessian_cost * full_hessians[] -
+                    subset_cost * subset_hessians[] - kspent[] - steps
+                Hk = if curvature === :krylov && exact && !converged &&
+                        take_steps && left >= 1
+                    kmodel[] === nothing || _ctsem_krylov_reset!(kmodel[])
+                    krylov_at(x, G)
+                else
+                    nothing
+                end
+                if Hk !== nothing
+                    H = Hk; Hs = Hk; hat = copy(x); exact = false; at_x = false
+                    krylov = true; fresh = true; radius = Inf
+                    left = finish_budget - hessian_cost * full_hessians[] -
+                        subset_cost * subset_hessians[] - kspent[] - steps
+                    budget = steps + max(1, floor(Int, left))
+                    continue
+                end
                 H = hess(x); Hs = H; hat = copy(x); exact = true; at_x = true
+                krylov = false
                 H === nothing && break
                 radius = Inf
                 left = finish_budget - hessian_cost * full_hessians[] -
-                    subset_cost * subset_hessians[] - steps
+                    subset_cost * subset_hessians[] - kspent[] - steps
                 if take_steps && left >= 1
                     budget = steps + floor(Int, left)
                     continue
@@ -2927,10 +3297,12 @@ function _ctsem_newton_finish(objective, x0, f0, G0, fg!; tol::Real=1e-8,
     end
     (x=x, f=f, G=G, hessian=H === nothing ? nothing : -H, hessian_at=hat,
      distance=distance, steps=steps, gain=gain, full_hessians=full_hessians[],
-     subset_hessians=subset_hessians[], fcalls=fcalls[], gcalls=gcalls,
+     subset_hessians=subset_hessians[], krylov_models=kmodels[],
+     krylov_products=kspent[], fcalls=fcalls[], gcalls=gcalls,
      escapes=escapes, saddle=saddle, ladder_tried=ladder_tried,
      ladder_gain=ladder_gain, saddle_walked=saddle_walked,
-     saddle_gain=saddle_gain, probe=probed, history=history, handback=false)
+     saddle_gain=saddle_gain, probe=probed, history=history, handback=false,
+     walked=nothing)
 end
 
 """
