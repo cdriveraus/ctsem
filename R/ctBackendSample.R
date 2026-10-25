@@ -996,24 +996,49 @@
 # A fit that ended on a jump keeps its Hessian, the continuation's: the
 # Laplace objective jumps where the check would look, which is why ctFit()
 # does not run 'checked' on it before the correction.
+#
+# Where the check names directions and the fit carries no posterior covariance
+# of its own -- neither 'checked''s importance draws nor its DAIS normal, as a
+# fit with the default 'hessian' does not -- 'checked''s DAIS stage is run
+# here too (`.ctPlaceDais()`), on the Laplace objective, and its normal is the
+# metric (`.ctBackendMetricSource()`, 'dais') and SMC's start. The fit's own
+# record is what the sampled fit replaces, so nothing else is kept.
 #' @keywords internal
 .ctBackendSampleCheck <- function(fit, cores = 1L, verbose = 0) {
   u <- fit$uncertainty
-  if (is.null(u$hessian) || !is.null(u$details$normalcheck) ||
-      !is.null(fit$laplace$jump)) return(fit)
+  if (is.null(u$hessian) || !is.null(fit$laplace$jump)) return(fit)
   previous <- .ctBackendSetMaxChunks(cores)
   on.exit(.ctBackendRestoreMaxChunks(previous), add = TRUE)
-  checked <- tryCatch(ctOptimComputeUncertainty(est = as.numeric(fit$estimate$raw),
-    standata = .ctBackendDataShape(fit), sm = NULL, lpgFunc = .ctBackendLpgFunc(fit),
-    uncertainty = "checked", finishsamples = 2L, cores = cores, matsetup = NA,
-    verbose = verbose, hessian = u$hessian),
+  if (is.null(u$details$normalcheck)) {
+    checked <- tryCatch(ctOptimComputeUncertainty(est = as.numeric(fit$estimate$raw),
+      standata = .ctBackendDataShape(fit), sm = NULL, lpgFunc = .ctBackendLpgFunc(fit),
+      uncertainty = "checked", finishsamples = 2L, cores = cores, matsetup = NA,
+      verbose = verbose, hessian = u$hessian),
+      error = function(e) {
+        warning("The normal check for the sampler's metric failed (",
+          conditionMessage(e), "); sampling from the Hessian's.", call. = FALSE)
+        NULL
+      })
+    if (!is.null(checked$details$normalcheck))
+      fit$uncertainty$details$normalcheck <- checked$details$normalcheck
+  }
+  check <- fit$uncertainty$details$normalcheck
+  if (!.ctBackendMetricSource(fit) %in% c("check", "hessian") ||
+      !is.matrix(check$directions) || !ncol(check$directions)) return(fit)
+  est <- as.numeric(fit$estimate$raw)
+  place <- list(uncertaintyfit = list(cov = ctOptimCovFromHessian(u$hessian, warn = FALSE),
+    details = list()), directions = check$directions, widths = check$widths,
+    centre = .ctJuliaOr(check$centre, est), guard = NULL, dais = NULL)
+  lpg <- .ctCoresetLpg(fit, .ctBackendLpgFunc(fit, gradient = FALSE))
+  placed <- tryCatch(.ctPlaceDais(place, lpg, est, control = list(),
+    hold = u$details$flatdirections$vectors, named = NULL, verbose = verbose),
     error = function(e) {
-      warning("The normal check for the sampler's metric failed (",
-        conditionMessage(e), "); sampling from the Hessian's.", call. = FALSE)
+      warning("DAIS for the sampler's metric failed (", conditionMessage(e),
+        "); sampling from the check's.", call. = FALSE)
       NULL
     })
-  if (!is.null(checked$details$normalcheck))
-    fit$uncertainty$details$normalcheck <- checked$details$normalcheck
+  dais <- placed$uncertaintyfit$details$dais
+  if (isTRUE(dais$used)) fit$uncertainty$details$dais <- dais
   fit
 }
 
