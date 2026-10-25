@@ -2,6 +2,7 @@
 "test-julia-backend.R","bridge","core"
 "test-julia-engine-vendored.R","bridge","core"
 "test-julia-install.R","bridge","core"
+"test-julia-rserver.R","bridge","core"
 "test-julia-interrupt.R","bridge","core"
 "test-julia-precompile.R","bridge","core"
 "test-julia-processes.R","bridge","core"
