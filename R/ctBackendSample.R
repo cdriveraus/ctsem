@@ -1160,6 +1160,10 @@
   module <- .ctJuliaModule(fit$model_spec$project)
   mapped <- identical(settings$sampler, "map") && !isTRUE(target$marginal)
   objective <- .ctBackendSampleObjective(fit, target, hybrid = mapped)
+  # The map sampler reports the effects in the layer's layout, which labels
+  # them (`.ctBackendEffectIndex()`): on the hybrid objective a unit whose
+  # effects are all integrated keeps no block.
+  report <- if (mapped) .ctBackendSampleObjective(fit, target) else NULL
 
   # Chains are the parallel axis, and in one session they can only be concurrent
   # if it was started with threads for them. Said once, here, because the
@@ -1236,6 +1240,7 @@
     arguments$save_effects <- isTRUE(saveEffects)
     if (!saem && !mapped) arguments$adapt_effects <- settings$adapt_effects
     if (identical(target$placement, "saem") && !mapped) arguments$saem <- TRUE
+    if (mapped) arguments$report <- report
   } else if (!identical(target$gradient, "adjoint")) {
     # `ctsem_sample_marginal`'s own default is `:adjoint`; only said
     # explicitly when something asked for the other one. `ctsem_sample` (the

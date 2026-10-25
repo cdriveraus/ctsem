@@ -663,6 +663,50 @@ end
 # Reporting the effects
 ################################################################################
 
+# For each unit, each of the report layout's blocks (`report.units.blocks[U]`)
+# matched to the sampled objective's block of the same level and members, 0
+# where the sampled objective has none -- a unit whose effects are all
+# integrated keeps no block there. The two objectives are built from one fit,
+# so their units and members agree; refused if they do not.
+function _jmap_report_match(report::CTSEMLaplaceObjective, laplace::CTSEMLaplaceObjective)
+    length(report.units.members) == length(laplace.units.members) ||
+        throw(ArgumentError("the report objective's units are not the sampled one's"))
+    match = Vector{Vector{Int}}(undef, length(report.units.members))
+    for U in eachindex(report.units.members)
+        report.units.members[U] == laplace.units.members[U] ||
+            throw(ArgumentError("the report objective's members are not the sampled one's"))
+        mine = laplace.units.blocks[U]
+        match[U] = [something(findfirst(b -> b.level == blk.level && b.members == blk.members,
+            mine), 0) for blk in report.units.blocks[U]]
+    end
+    return match
+end
+
+# One draw's natural deviations in the report layout's coordinates: each
+# block's coordinate part from the sampled objective's matching block, through
+# that objective's roots `Ls` -- zero where all of the block's effects are
+# integrated, whose part is added from their conditional afterwards.
+function _jmap_layer_deviations!(dev, report, laplace, sampler, Ls, x, devstarts, match)
+    fill!(dev, 0.0)
+    @inbounds for U in eachindex(report.units.members)
+        ubase = sampler.uoffsets[U]
+        for (b, hb) in enumerate(match[U])
+            hb == 0 && continue
+            blk = laplace.units.blocks[U][hb]
+            L = Ls[blk.level]
+            s = devstarts[U][b]
+            for p in axes(L, 1)
+                acc = 0.0
+                for q in axes(L, 2)
+                    acc += L[p, q] * x[ubase + blk.offset + q]
+                end
+                dev[s + p] = acc
+            end
+        end
+    end
+    return dev
+end
+
 # Each member's subject-level block start in the natural deviations, -1 where
 # it has none.
 function _jmap_member_blocks(laplace::CTSEMLaplaceObjective, devstarts)
@@ -773,8 +817,10 @@ layer otherwise; the keywords are `ctsem_sample`'s, plus the map's: `windows`
 (draws a chain in each learning window, after `nwarmup` warm-up iterations on
 the map from the fit), `nsettle` (the re-tuning warm-up after each refit and
 before the kept draws), `ncheck` (a check window under the final map),
-`maxrows` (the most draws a refit reads) and `cross` (each member's summary
-coupled to the free parameters outside its effects).
+`maxrows` (the most draws a refit reads), `cross` (each member's summary
+coupled to the free parameters outside its effects) and `report` (the layer's
+objective, whose layout the effects are reported in: a unit whose effects are
+all integrated has no block on the hybrid objective).
 
 Returns `ctsem_sample`'s record, with the draws of theta and, with
 `save_effects`, of the natural deviations, plus the map's: `gradients` (every
@@ -790,7 +836,8 @@ function ctsem_sample_map(laplace::CTSEMLaplaceObjective, values::AbstractVector
     rhat_target::Real=1.01, progress_overwrite::Bool=true, progress_callback=nothing,
     progress_sink=nothing, stepsize::Real=0.0, coordinate=nothing,
     windows::AbstractVector{<:Integer}=[50, 100, 200], nsettle::Integer=30,
-    ncheck::Integer=50, maxrows::Integer=400, cross::Bool=false)
+    ncheck::Integer=50, maxrows::Integer=400, cross::Bool=false,
+    report::Union{Nothing,CTSEMLaplaceObjective}=nothing)
 
     t0 = time()
     nchains = Int(nchains); nwarmup = Int(nwarmup); ndraws = Int(ndraws)
@@ -885,20 +932,23 @@ function ctsem_sample_map(laplace::CTSEMLaplaceObjective, values::AbstractVector
     results = final.results
     ndraws = final.ndraws
 
-    # Theta and the natural deviations at every kept draw.
-    devstarts, ndev = _laplace_deviation_offsets(laplace)
+    # Theta and the natural deviations at every kept draw, in the report
+    # objective's layout.
+    layout = report === nothing ? laplace : report
+    match = _jmap_report_match(layout, laplace)
+    devstarts, ndev = _laplace_deviation_offsets(layout)
     kept = save_effects ? npar + ndev : npar
     pooled = _sample_pool(results, nchains, ndraws, npar; rows=kept)
     draws = pooled.draws
     total = nchains * ndraws
     effect_sum = zeros(Float64, ndev)
     effect_sq = zeros(Float64, ndev)
-    blocks = _laplace_deviation_blocks(laplace)
+    blocks = _laplace_deviation_blocks(layout)
     effect_cross = zeros(Float64, _effect_cross_length(blocks))
     hyb = laplace.objective.params.hybrid
     hybrid = _hybrid_on(hyb)
     lv = laplace.spec.levels[1]
-    mblocks = hybrid ? _jmap_member_blocks(laplace, devstarts) : nothing
+    mblocks = hybrid ? _jmap_member_blocks(layout, devstarts) : nothing
     dev = zeros(Float64, ndev)
     failed = 0
     for c in 1:nchains
@@ -908,7 +958,7 @@ function ctsem_sample_map(laplace::CTSEMLaplaceObjective, values::AbstractVector
             theta, x = _jmap_point(mf, view(r.draws, :, t))
             th = _laplace_extend(laplace, theta)
             Ls = _laplace_popchols(th, laplace.spec)
-            _laplace_deviations!(dev, laplace, Ls, view(x, (npar + 1):D), devstarts)
+            _jmap_layer_deviations!(dev, layout, laplace, sampler, Ls, x, devstarts, match)
             if hybrid && ndev > 0
                 B = _hybrid_dev_map(hyb, lv, th)
                 ok = _laplace_partition((mine, _w) -> _jmap_hybrid_range!(dev, laplace, th,
@@ -940,3 +990,59 @@ function ctsem_sample_map(laplace::CTSEMLaplaceObjective, values::AbstractVector
               windows=windowlog, coordinates=D - npar,
               integrated=hybrid, coupled=length(mf.R))))
 end
+
+"""
+    ctsem_sample_map_check(laplace, values; hessian, cross, seed, nu, h)
+
+The map's exactness at a random latent point, with the map built as
+`ctsem_sample_map` builds it from `values`: the latent density's gradient
+against central differences (in every population coordinate and `nu` effect
+coordinates), and the map's log Jacobian against the log absolute determinant
+of its Jacobian by differences, each as the largest error over the largest
+entry. Both near zero say the change of variables is exact; for tests.
+"""
+function ctsem_sample_map_check(laplace::CTSEMLaplaceObjective, values::AbstractVector;
+    hessian::Union{Nothing,AbstractMatrix}=nothing, cross::Bool=false, seed::Integer=1,
+    nu::Integer=6, h::Real=1e-5)
+    sampler = ctsem_sampler(laplace, length(values))
+    npar = sampler.npar
+    theta0 = collect(Float64, values)[1:npar]
+    prec = _ctsem_prior_precision(laplace.objective, npar)
+    cov = if hessian === nothing
+        Matrix{Float64}(I, npar, npar)
+    else
+        H = Matrix{Float64}(hessian)[1:npar, 1:npar]
+        _prior_bounded_covariance(Symmetric(-(H .+ transpose(H)) ./ 2), prec)
+    end
+    m, _ = _jmap_build(sampler, theta0, cov; cross=cross)
+    D = sampler.ndim
+    rng = Random.Xoshiro(UInt64(seed))
+    xt = 0.3 .* randn(rng, D)
+    d = CTSEMJointMapDensity(m, Threads.Atomic{Int}(0))
+    g = zeros(D)
+    d(g, xt)
+    idx = vcat(1:npar, (npar + 1):min(D, npar + Int(nu)))
+    gp = zeros(D)
+    gerr = 0.0
+    for a in idx
+        xp = copy(xt); xp[a] += h
+        xm = copy(xt); xm[a] -= h
+        gerr = max(gerr, abs((d(gp, xp) - d(gp, xm)) / (2h) - g[a]))
+    end
+    J = zeros(D, D)
+    for a in 1:D
+        xp = copy(xt); xp[a] += h
+        xm = copy(xt); xm[a] -= h
+        theta_p, x_p = _jmap_point(m, xp)
+        theta_m, x_m = _jmap_point(m, xm)
+        J[:, a] .= (x_p .- x_m) ./ (2h)
+    end
+    _, logjac, _ = _jmap_effects(m, m.theta0 .+ m.Ct * view(xt, 1:npar), xt)
+    expected = sum(log, diag(m.Ct)) + logjac
+    numeric = logabsdet(J)[1]
+    return (gradient=gerr / max(maximum(abs, g[idx]), 1e-300),
+        jacobian=abs(numeric - expected) / max(abs(expected), 1.0), ndim=D,
+        coordinates=D - npar)
+end
+
+export ctsem_sample_map_check
