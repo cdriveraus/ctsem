@@ -699,7 +699,7 @@ function ctsem_kalman(objective::CTSEMObjective, values::AbstractVecOrMat;
         tipreds = _ctsem_tipred_vector(sub.tipreds, raw)
         value = _extended_kalman_filter_continuous!(ws, raw, sub.data,
             collect(sub.timesteps), sp, sub.tdpreds, tipreds, i, sub.max_timestep,
-            trace)
+            trace, nothing, nothing, sub.relin)
         loglik[i] = value
         if isfinite(value)
             _kalman_smooth!(trace, ws, offset + 1, nobs)

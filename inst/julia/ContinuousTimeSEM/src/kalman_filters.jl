@@ -24,6 +24,9 @@ mutable struct ContinuousEKFObjective{P,D,TS,TD,TI,MT}
     tipreds::TI
     subject::Int
     max_timestep::MT
+    # Each row's count of steps for the iterated measurement update, frozen
+    # for a fit (`ctsem_relin_plan`); empty, every row iterates to its mode.
+    relin::Vector{Int}
 end
 
 function _validate_continuous_ekf_inputs(timesteps::Vector, data::Matrix)
@@ -68,8 +71,10 @@ function ContinuousEKFObjective(params::EKFParameters, data::Matrix, timesteps::
     # one still gets a plain `Vector{Float64}`, unchanged from before this
     # existed.
     tipreds=eltype(data)[], subject::Integer=1,
-    max_timestep=Inf)
+    max_timestep=Inf, relin_steps::AbstractVector{<:Integer}=Int[])
     _validate_continuous_ekf_inputs(timesteps, data)
+    (isempty(relin_steps) || length(relin_steps) == length(timesteps)) ||
+        throw(DimensionMismatch("an iteration plan needs one entry per row"))
     size(tdpreds, 2) == size(data, 2) || throw(DimensionMismatch("TD predictor columns must match observations"))
     # Data as Float64 whatever R sent: an integer TD predictor or indicator
     # column is a different type for the whole filter, which then compiled
@@ -80,7 +85,8 @@ function ContinuousEKFObjective(params::EKFParameters, data::Matrix, timesteps::
     tipreds isa AbstractVector{<:Integer} && (tipreds = _ctsem_float_data(tipreds))
     rule = _validate_substep_rule(max_timestep, length(timesteps))
     return ContinuousEKFObjective{typeof(params),typeof(data),typeof(timesteps),typeof(tdpreds),typeof(tipreds),typeof(rule)}(
-        params, data, timesteps, tdpreds, tipreds, Int(subject), rule)
+        params, data, timesteps, tdpreds, tipreds, Int(subject), rule,
+        Int[Int(k) for k in relin_steps])
 end
 
 # A task's filter workspace for one element type, and the parameters it was
@@ -156,7 +162,8 @@ end
 @noinline function _ekf_run!(ws::ContinuousEKFWorkspace, o::ContinuousEKFObjective, p,
     tipreds, trace)
     ws.loglik[] = _extended_kalman_filter_continuous!(ws, p, o.data, o.timesteps,
-        o.params, o.tdpreds, tipreds, o.subject, o.max_timestep, trace)
+        o.params, o.tdpreds, tipreds, o.subject, o.max_timestep, trace, nothing, nothing,
+        o.relin)
     return nothing
 end
 
@@ -335,7 +342,7 @@ allocation-free and BLAS-eligible as a hand-written fast path would be.
 """
 function _ekf_update_observed!(ws::ContinuousEKFWorkspace, pars,
     data::AbstractMatrix, obs_col::Int, log2π_const, trace=nothing, generate=nothing,
-    context=nothing)
+    context=nothing, steps::Int=-1, learn=nothing)
     m_full = ws.manifest_dim
     n_observed = 0
     @inbounds for i in 1:m_full
@@ -391,7 +398,7 @@ function _ekf_update_observed!(ws::ContinuousEKFWorkspace, pars,
     ws.relinearise && _CTSEM_RELINEARISE[] && generate === nothing &&
         context !== nothing && !isempty(gaussian) && !(ws.hyb.active && ws.hyb.q > 0) &&
         return _ekf_iterated_rows!(ws, pars, data, obs_col, gaussian, binary_loglik,
-            log2π_const, trace, context)
+            log2π_const, trace, context, steps, learn)
 
     # Recorded after the binary block and before the Gaussian one:
     # `_ekf_masked_update_step!` overwrites ws.state in place, and the reverse
@@ -813,6 +820,20 @@ the most iterations a row takes before it is updated where it got to.
 const _CTSEM_RELIN_TOL = 1e-9
 const _CTSEM_RELIN_MAXIT = 50
 
+"""
+How near the converged mode, in prior sds, a row's frozen count of steps must
+bring its last iterate (`ctsem_relin_plan`). A scalar prototype put the log
+likelihood within 1e-3 nats a subject of the converged one at the plan's own
+values, at a third to a fifth of the steps.
+"""
+const _CTSEM_RELIN_PLAN_TOL = 1e-3
+
+# No plan: every row iterates to its mode. Never written to.
+const _CTSEM_NO_RELIN = Int[]
+
+"""A row's frozen count of steps, or -1 (iterate to the mode) without a plan."""
+@inline _ctsem_relin_steps(plan::Vector{Int}, t::Int) = isempty(plan) ? -1 : plan[t]
+
 # Whether a nonlinear measurement's update is iterated; `ctsem_set_relinearise!`.
 const _CTSEM_RELINEARISE = Ref(true)
 
@@ -890,6 +911,15 @@ update's offset, `_ekf_categorical_offset`), so it runs through
 `_ekf_masked_update_step!`; a linear measurement would give the EKF's update
 exactly, and is never iterated (`_ctsem_measurement_nonlinear`).
 
+Within a fit each row takes a frozen count of steps (`steps`, from the plan
+`ctsem_relin_plan` learns at the fit's start and again at its optimum, as the
+substep mesh is chosen): a fixed computation, so the objective is smooth
+however few the steps, where stopping on a tolerance makes the count jump as
+the parameters move. -1, a row with no plan or one whose steps had to be
+halved, iterates to the mode; `learn`, a vector, has the row's count written
+into it at `obs_col`: the fewest steps whose iterate is within
+`_CTSEM_RELIN_PLAN_TOL` prior sds of the mode, or -1.
+
 Against a grid filter's exact likelihood on one latent, under `(1 + c x) x`,
 `exp`, logistic and cubic measurements, the error a subject fell by 3 to 50
 times wherever the measurement noise was small beside the nonlinearity, and was
@@ -902,7 +932,8 @@ update as a relinearised one; their reverse carries the prior mean's cotangent
 beside the iterate's (`_reverse_relin!`, `_reverse_update!`).
 """
 function _ekf_iterated_rows!(ws::ContinuousEKFWorkspace, pars, data::AbstractMatrix,
-    obs_col::Int, gaussian, binary_loglik, log2π_const, trace, context)
+    obs_col::Int, gaussian, binary_loglik, log2π_const, trace, context, steps::Int=-1,
+    learn=nothing)
     n = ws.state_dim
     m = length(gaussian)
     all_params = getdata(pars)
@@ -912,23 +943,48 @@ function _ekf_iterated_rows!(ws::ContinuousEKFWorkspace, pars, data::AbstractMat
         xp[j] = state[j]
     end
     first = true
-    α = 1.0
-    last = eltype(state)(Inf)
-    for _ in 1:_CTSEM_RELIN_MAXIT
-        _ekf_relin_offset!(ws, pars, gaussian, n)
-        _ekf_relin_mean!(ws, pars, data, obs_col, gaussian) || return nothing
-        step = _ekf_relin_step(ws, n)
-        step <= _CTSEM_RELIN_TOL && break
-        step >= last && (α = max(α / 2, 1 / 1024))
-        last = step
-        _record_relin!(trace, ws, pars, data, obs_col, gaussian, first, α)
-        @inbounds for j in 1:n
-            state[j] += α * (ws.xnext[j] - state[j])
+    if steps >= 0 && learn === nothing
+        for _ in 1:steps
+            _ekf_relin_offset!(ws, pars, gaussian, n)
+            _ekf_relin_mean!(ws, pars, data, obs_col, gaussian) || return nothing
+            _record_relin!(trace, ws, pars, data, obs_col, gaussian, first, 1.0)
+            @inbounds for j in 1:n
+                state[j] = ws.xnext[j]
+            end
+            first = false
+            _record_group!(trace, 3, ws.update_param_indices, all_params, context)
+            apply_complex_transforms_at_indices!(all_params, ws.update_param_indices,
+                ws.sp.update_transforms, context)
         end
-        first = false
-        _record_group!(trace, 3, ws.update_param_indices, all_params, context)
-        apply_complex_transforms_at_indices!(all_params, ws.update_param_indices,
-            ws.sp.update_transforms, context)
+    else
+        α = 1.0
+        last = eltype(state)(Inf)
+        settled = false
+        taken = 0
+        learn === nothing || _ekf_relin_keep!(ws, 0, n)
+        for _ in 1:_CTSEM_RELIN_MAXIT
+            _ekf_relin_offset!(ws, pars, gaussian, n)
+            _ekf_relin_mean!(ws, pars, data, obs_col, gaussian) || return nothing
+            step = _ekf_relin_step(ws, n)
+            if step <= _CTSEM_RELIN_TOL
+                settled = true
+                break
+            end
+            step >= last && (α = max(α / 2, 1 / 1024))
+            last = step
+            _record_relin!(trace, ws, pars, data, obs_col, gaussian, first, α)
+            @inbounds for j in 1:n
+                state[j] += α * (ws.xnext[j] - state[j])
+            end
+            first = false
+            taken += 1
+            learn === nothing || _ekf_relin_keep!(ws, taken, n)
+            _record_group!(trace, 3, ws.update_param_indices, all_params, context)
+            apply_complex_transforms_at_indices!(all_params, ws.update_param_indices,
+                ws.sp.update_transforms, context)
+        end
+        learn === nothing ||
+            (learn[obs_col] = settled && α == 1.0 ? _ekf_relin_need(ws, taken, n) : -1)
     end
     _ekf_relin_offset!(ws, pars, gaussian, n)
     _record_update!(trace, ws, pars, data, obs_col, gaussian, xp, ws.P_predict.data, n,
@@ -1008,6 +1064,35 @@ function _ekf_relin_mean!(ws::ContinuousEKFWorkspace, pars, data::AbstractMatrix
     end
     _ctsem_mulvec!(xn, PHt, a, one(T), one(T))
     return all(isfinite, xn)
+end
+
+"""Keep the iterate `ws.state` as the `k`-th of the row (`k = 0` the prior
+mean), for `_ekf_relin_need`."""
+@inline function _ekf_relin_keep!(ws::ContinuousEKFWorkspace, k::Int, n::Int)
+    H = ws.relin_hist
+    @inbounds for j in 1:n
+        H[j, k + 1] = ws.state[j]
+    end
+    return nothing
+end
+
+"""The fewest steps whose iterate is within `_CTSEM_RELIN_PLAN_TOL` prior sds of
+the last, the mode, of the `taken` kept."""
+function _ekf_relin_need(ws::ContinuousEKFWorkspace, taken::Int, n::Int)
+    H = ws.relin_hist
+    P = ws.P_predict.data
+    @inbounds for k in 0:taken
+        near = true
+        for j in 1:n
+            if abs(H[j, k + 1] - H[j, taken + 1]) >
+                    _CTSEM_RELIN_PLAN_TOL * sqrt(abs(P[j, j]) + 1e-10)
+                near = false
+                break
+            end
+        end
+        near && return k
+    end
+    return taken
 end
 
 """The Gauss-Newton step from `ws.state` to `ws.xnext`: its largest move of a
@@ -1533,6 +1618,10 @@ function _extended_kalman_filter_continuous!(
     # nonlinear each prediction step actually was. Every hook has a `::Nothing`
     # method, so the ordinary paths compile to what they were.
     substep_recorder=nothing,
+    # The rows' iteration plan (`ContinuousEKFObjective.relin`), and `nothing`
+    # or a vector the plan these rows want is written into (`ctsem_relin_plan`).
+    relin::Vector{Int}=_CTSEM_NO_RELIN,
+    relin_learn=nothing,
 )::T where {T}
     # Materialize transformed/free/fixed values into the full parameter vector.
     _materialize_subject_values!(ws.subject_values, params, sp, tipreds)
@@ -1639,7 +1728,7 @@ function _extended_kalman_filter_continuous!(
     # update, it had to be built at every row, 4-6 per cent of its gradient.
     ll = ws.relinearise ?
         _ekf_update_observed!(ws, pars, data, 1, log2π_const, trace, generate,
-            update_context) :
+            update_context, _ctsem_relin_steps(relin, 1), relin_learn) :
         _ekf_update_observed!(ws, pars, data, 1, log2π_const, trace, generate)
     ll === nothing && return _invalid_ekf_loglikelihood(ws)
     generate === nothing || (generate.llrow[generate.offset+1] = ll)
@@ -1711,7 +1800,7 @@ function _extended_kalman_filter_continuous!(
         _record_row_prior!(trace, ws, pars, t_idx)
         row_ll = ws.relinearise ?
             _ekf_update_observed!(ws, pars, data, t_idx, log2π_const, trace, generate,
-                measurement_context) :
+                measurement_context, _ctsem_relin_steps(relin, t_idx), relin_learn) :
             _ekf_update_observed!(ws, pars, data, t_idx, log2π_const, trace, generate)
         row_ll === nothing && return _invalid_ekf_loglikelihood(ws)
         generate === nothing || (generate.llrow[generate.offset+t_idx] = row_ll)

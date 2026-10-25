@@ -78,7 +78,8 @@ function ctsem_row_scores(objective::CTSEMObjective, values::AbstractVector,
             trace.current_subject = 1
             ll = _extended_kalman_filter_continuous!(ws, x, sub.data,
                 collect(sub.timesteps), sp, sub.tdpreds,
-                _ctsem_tipred_vector(sub.tipreds, x), i, sub.max_timestep, trace)
+                _ctsem_tipred_vector(sub.tipreds, x), i, sub.max_timestep, trace,
+                nothing, nothing, sub.relin)
             if isfinite(ForwardDiff.value(ll))
                 @inbounds for r in 1:nobs, (a, col) in enumerate(cols)
                     out[offset + r, col] = ForwardDiff.partials(trace.llrow[r], a)
