@@ -1479,6 +1479,21 @@ test_that(".ctHoldOff takes held directions out of the sampled span", {
   expect_equal(as.numeric(crossprod(out$centre, P %*% hold)), 0, tolerance = 1e-10)
 })
 
+test_that("a basis that draws pass through has one sign, whichever LAPACK returns", {
+  # Either sign of an eigenvector is a correct answer, and which LAPACK gives
+  # can change with a matrix's last bits; a root built from the vectors then
+  # reflects the draws, and the normal check's decision went with them.
+  set.seed(1)
+  M <- crossprod(matrix(stats::rnorm(36), 6))
+  e <- ctsem:::.ctEigenSym(M)
+  expect_equal(e$vectors %*% (t(e$vectors) * e$values), M)
+  flipped <- sweep(e$vectors, 2, c(-1, 1, -1, -1, 1, -1), "*")
+  expect_identical(ctsem:::.ctSignedVectors(flipped), e$vectors)
+  big <- max.col(abs(t(e$vectors)))
+  expect_true(all(e$vectors[cbind(big, seq_len(6))] > 0))
+  expect_identical(dim(ctsem:::.ctSignedVectors(matrix(0, 3, 0))), c(3L, 0L))
+})
+
 test_that("the improper walk sees a plateau however deep it lies inside its drop", {
   # A bump on a floor `floor` below it in density, so the plateau lies
   # -log(floor / (1 + floor)) down: 3.0 and 4.6 nats here, past the 2.7 at
