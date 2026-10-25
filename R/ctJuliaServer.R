@@ -37,7 +37,7 @@
 # How the package is built from its sources: raised with any change to the
 # layout or the build below, so a package built the old way is never taken for
 # one built this way.
-.ctJuliaServerRecipe <- 2L
+.ctJuliaServerRecipe <- 3L
 
 # Where the package for this server source, recipe and Julia lives.
 .ctJuliaServerDir <- function(internals, bin) {
@@ -102,9 +102,12 @@
     "using CtsemRServer",
     "Base.isprecompiled(Base.identify_package(\"CtsemRServer\")) &&",
     "  print(\"CTSEM-RSERVER-READY\")"), script)
+  # In the environment JuliaConnectoR starts Julia in: on Linux, R's
+  # LD_LIBRARY_PATH makes Pkg load the system's libcurl and Julia segfaults.
   out <- tryCatch(suppressWarnings(system2(file.path(bin, .ctJuliaExeName()),
     c("--startup-file=no", "--history-file=no", shQuote(script)),
-    stdout = TRUE, stderr = TRUE, timeout = 900)), error = function(e) conditionMessage(e))
+    stdout = TRUE, stderr = TRUE, timeout = 900, env = internals$env())),
+    error = function(e) conditionMessage(e))
   if (any(grepl("CTSEM-RSERVER-READY", out, fixed = TRUE))) {
     file.create(file.path(dir, "ready"))
     .ctJuliaServerPrune(dir)
