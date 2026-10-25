@@ -688,27 +688,6 @@ function _jmap_refit(m::CTSEMJointMap, Wl::AbstractMatrix, rng; maxrows::Int=400
     return _jmap_with(m; Lam=Lam, h=h, G=G, theta0=theta0, Ct=Ct), refit, shrunk.lambda, rows
 end
 
-"""
-    _jmap_shift(m, m2)
-
-How far a refit moved theta's whitening, in the old map's latent coordinates:
-the larger of the largest variance ratio either way of the new covariance
-there, as a multiple of `log 1.5`, and the largest move of the centre, as a
-multiple of half a latent sd. Over one is a map still moving. A window's draws
-under a poor whitening explore its badly scaled direction slowly and
-understate it, and the refit is shrunk toward the old map, so a fixed number of
-refits from a poor start leaves a direction the kept draws mix slowly along --
-slowly enough that their effective size does not show it.
-"""
-function _jmap_shift(m::CTSEMJointMap, m2::CTSEMJointMap)
-    L = LowerTriangular(m.Ct)
-    A = L \ m2.Ct
-    λ = eigvals(Symmetric(A * transpose(A)))
-    ratio = maximum(x -> max(x, 1 / x), λ)
-    d = L \ (m2.theta0 .- m.theta0)
-    return max(log(ratio) / log(1.5), maximum(abs, d) / 0.5)
-end
-
 """Which chains moved over their last window: one whose draws spread, in
 theta's latent coordinates, under a tenth of the pooled spread in most of them
 has stopped. All stopped reads as all moving: there is then none to restart
@@ -884,10 +863,8 @@ Sample the joint posterior through a learnt map (this file's header). `laplace`
 is the hybrid objective where the model has effects the filter integrates, the
 layer otherwise; the keywords are `ctsem_sample`'s, plus the map's: `windows`
 (draws a chain in each learning window, after `nwarmup` warm-up iterations on
-the map from the fit), `settle` (the most windows, each as long as the
-schedule's last, added after it while a refit still moves theta's whitening,
-`_jmap_shift`), `nsettle` (the re-tuning warm-up after each refit and before
-the kept draws), `ncheck` (a check window under the final map),
+the map from the fit), `nsettle` (the re-tuning warm-up after each refit and
+before the kept draws), `ncheck` (a check window under the final map),
 `maxrows` (the most draws a refit reads), `cross` (each member's summary
 coupled to the free parameters outside its effects) and `report` (the layer's
 objective, whose layout the effects are reported in: a unit whose effects are
@@ -906,7 +883,7 @@ function ctsem_sample_map(laplace::CTSEMLaplaceObjective, values::AbstractVector
     min_ess::Real=0.0, mean_ess::Real=0.0, max_draws::Integer=0,
     rhat_target::Real=1.01, progress_overwrite::Bool=true, progress_callback=nothing,
     progress_sink=nothing, stepsize::Real=0.0, coordinate=nothing,
-    windows::AbstractVector{<:Integer}=[40, 80], settle::Integer=3, nsettle::Integer=25,
+    windows::AbstractVector{<:Integer}=[40, 80], nsettle::Integer=25,
     ncheck::Integer=25, maxrows::Integer=400, cross::Bool=true,
     report::Union{Nothing,CTSEMLaplaceObjective}=nothing)
 
@@ -957,12 +934,7 @@ function ctsem_sample_map(laplace::CTSEMLaplaceObjective, values::AbstractVector
     starts = nothing
     eps = Float64(stepsize)
     windowlog = NamedTuple[]
-    schedule = collect(Int, windows)
-    added = 0
-    w = 0
-    while w < length(schedule)
-        w += 1
-        nw = schedule[w]
+    for (w, nw) in enumerate(windows)
         mw = m
         results = _sample_chains(nchains, parallel, seed + 101 * w, centre, metric,
             w == 1 ? nwarmup : Int(nsettle), Int(nw), Int(maxdepth), Float64(target_accept),
@@ -974,19 +946,12 @@ function ctsem_sample_map(laplace::CTSEMLaplaceObjective, values::AbstractVector
         extra += rows
         starts = _jmap_restarts(m, m2, results, moved, Wl, rng)
         eps = median([r.stepsize for r in results[moved]])
-        shift = _jmap_shift(m, m2)
         push!(windowlog, (window=Int(nw), stopped=count(!, moved), refit=refit,
-            shrink=lambda, stepsize=eps, shift=shift))
-        verbose && println(_console(), "  map window ", w, " of ", length(schedule), ": ",
+            shrink=lambda, stepsize=eps))
+        verbose && println(_console(), "  map window ", w, " of ", length(windows), ": ",
             nw, " draws a chain, ", count(!, moved), " chain(s) restarted, ", refit,
-            " summaries refitted, step ", round(eps; sigdigits=3), ", shift ",
-            round(shift; sigdigits=3))
+            " summaries refitted, step ", round(eps; sigdigits=3))
         m = m2
-        # Learning goes on past the schedule while the whitening still moves.
-        if w == length(schedule) && shift > 1 && added < settle
-            push!(schedule, schedule[end])
-            added += 1
-        end
     end
     if ncheck > 0 && !isempty(windows)
         mc = m
@@ -999,7 +964,7 @@ function ctsem_sample_map(laplace::CTSEMLaplaceObjective, values::AbstractVector
         starts = _jmap_restarts(m, m, results, moved, Wl, rng)
         eps = median([r.stepsize for r in results[moved]])
         push!(windowlog, (window=0, stopped=count(!, moved), refit=0, shrink=NaN,
-            stepsize=eps, shift=NaN))
+            stepsize=eps))
     end
     learned = time() - t0
     learn_gradients = counter[] + extra
