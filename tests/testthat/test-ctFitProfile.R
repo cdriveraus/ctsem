@@ -197,7 +197,11 @@ test_that("a profile separates a determined parameter from one on a flat ray", {
     parameters = c("auto1", "diff_eta2_eta1"), points = 6L, cores = 1)
   fit <- refit(fitted$estimate$raw)
   out <- profile(fit)
-  for (round in 1:2) {
+  # Up to four rounds. Above one thread the subject sums divide differently
+  # from run to run, so which basins the refits pass through moves with the
+  # session; two rounds usually reach the top (-207.019, -205.872, -205.827),
+  # and on dev2 a whole-file run sometimes ended one short, still `$better`.
+  for (round in 1:4) {
     if (is.null(out$better)) break
     # The point `$better` reports is worth what it says: a free fit from it
     # ends at least that far above the base.
