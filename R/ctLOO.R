@@ -1153,7 +1153,9 @@ ctLOO <- function(fit, folds = 10, cores = getOption("mc.cores", 2L), parallelFo
   }
   npar <- length(centre)
   z <- matrix(stats::rnorm(npar * ndraws), npar, ndraws)
-  list(draws = centre + scale * (eig$vectors %*% (sqrt(eig$values) * z)),
+  # Through the symmetric root (`.ctSymRoot()`), whose draws do not move with
+  # the signs LAPACK gives the vectors.
+  list(draws = centre + scale * (.ctSymRoot(covariance) %*% z),
     logq = -npar / 2 * log(2 * pi) - sum(log(eig$values)) / 2 -
       npar * log(scale) - colSums(z^2) / 2)
 }
