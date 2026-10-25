@@ -401,14 +401,17 @@ function _ctsem_dais(objective, coreset, c0::Vector{Float64}, cov::AbstractMatri
             end
         end
         essw = _importance_ess(gamma .* Phi)
-        # A coreset's error moves this update by gamma times itself, so the next
-        # batch's checks allow 1 / gamma times their tolerance.
-        coreset === nothing || _is_coreset_tolerance!(coreset, 1 / gamma)
         shift = norm(Lc \ (munew .- mu))
         natural = norm(Lc \ gbar)
         W = Lc \ transpose(GP .- transpose(gbar))
         se2 = sum(w .^ 2 .* vec(sum(abs2, W; dims=1)))
         noise = 2 * sqrt(se2)
+        # A coreset's error moves this update by gamma times itself, so the next
+        # batch's checks allow 1 / gamma times their tolerance; and its
+        # gradient turns the step by its own error, so while the step is longer
+        # than its noise, a share of what is beyond it.
+        coreset === nothing || _is_coreset_tolerance!(coreset, 1 / gamma,
+            max(natural - noise, 0.0))
         lpf = vals[ok]
         elbo = sum(lpf) / length(lpf) + sum(log, diag(Lc))
         # Each parameter's step noise, in the sds of the normal the draws came

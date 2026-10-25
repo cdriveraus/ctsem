@@ -72,11 +72,20 @@ without, and the engine tests check that on closed forms. An earlier version
 took `exp(beta (lp(y) - lc(y)))` alone, which is right only once the moves
 have mixed to `q_t`; with a few moves it tilted the cloud by the coreset's
 error where the particles began (found by the chart session, 2026-10-23).
-The correction's own effective size (`stage_correction_ess`) is the check: a
-coreset whose error alone drops it under the stage's target is refitted at
-half the tolerance, after a stage that moves `beta` by nothing and only
-corrects; two such stages in a row and the run goes on without a coreset.
-The final phase's chains run on a coreset fitted to the posterior's cloud;
+Since the correction is exact, a coreset's error costs only efficiency, and a
+stage's coreset is the size of least expected cost per unit of tempering
+(`_smc_stage_price`): its share of the moves, the correction's values, and
+the stage's increment, which shrinks as the correction spends the stage's
+effective size. The correction's own effective size (`stage_correction_ess`)
+is the check: the error a stage's correction shows, against what its fit
+expected, sizes the next coreset (`inflate`); a coreset whose error alone
+drops it under the stage's target costs a stage that moves `beta` by nothing
+and only corrects; two such stages in a row and the run goes on without a
+coreset. The final phase's chains run on a coreset fitted to the posterior's
+cloud, priced per effective draw (`_smc_draw_price`), and run until the
+targets divided by the share of effective size the correction keeps -- the
+price's expectation for the first chains, then what their draws show, so that
+the chains are counted for it before any is lengthened;
 the same reversal makes draw `k` of a chain that started at `x0` carry
 `(pi / c)(x_k) / (pi / c)(x0)`, times whatever the last stage's moves left
 owing at `x0`, and the draws are resampled by those weights
@@ -219,82 +228,147 @@ end
 
 # ------------------------------------------------------------------ the coreset
 
-"""The largest share of a full evaluation a stage's coreset may cost. Above
-it the moves save too little for the fit and the correction to be worth
-having; the full values at the stage's end are paid either way."""
-const _SMC_CORESET_BUDGET = 0.5
-
 """Folds the particles are split into to hold each out once when a coreset
 is chosen (`_smc_coreset_fit`)."""
 const _SMC_CORESET_FOLDS = 4
 
+"""A gradient's cost in full values, as the engine counts evaluations: on the
+Laplace route both are mostly the units' inner solves."""
+const _SMC_GRADIENT_VALUES = 2.0
+
 """
-    _smc_coreset_fit(terms, total, cost, tol, budget, rng)
+    _smc_leapfrogs(depths)
+
+The leapfrog steps NUTS transitions of tree depths `depths` take, on
+average: `2^depth - 1` a transition, which a tree stopped by a U-turn inside
+its last doubling takes fewer than. Before any transition has run, a tree of
+depth three.
+"""
+_smc_leapfrogs(depths) = isempty(depths) ? 7.0 : _smc_mean(2.0 .^ depths .- 1)
+
+"""
+    _smc_stage_price(share, s, work, beta, budget)
+
+A tempering stage's cost a particle, in full evaluations, per unit of the
+tempering it does, on a coreset whose units cost `share` of a full
+evaluation and whose error differs across a particle's moves by `s` (an sd,
+log units): the moves' `work` at the coreset's share (`nmoves` transitions of
+their leapfrog steps, each a gradient), one full value at the moves' end and
+the coreset's at both ends for the backward kernel's weight. That weight is
+`beta` times the error's difference, and the stage's effective size allows
+log weights a variance `budget`, `ln(1 / ess_frac)` for log-normal weights:
+the correction spends `beta^2 s^2` of it and the tempering increment, which
+the stages needed go as one over, the rest. `Inf` where the error alone
+spends it. Without a coreset a stage costs `work + 1`.
+"""
+function _smc_stage_price(share::Real, s::Real, work::Real, beta::Real, budget::Real)
+    left = 1 - (beta * s)^2 / budget
+    left > 0 || return Inf
+    return (work * share + 1 + 2 * share) / sqrt(left)
+end
+
+"""
+    _smc_draw_price(share, s, work)
+
+The final phase's cost an effective draw, in full evaluations, on a coreset
+whose units cost `share` of a full evaluation and whose error at a draw
+differs from its chain's start by `s`: the transition's `work` at the
+coreset's share, a full value and a coreset value for the draw's weight, over
+the share of effective size the weights keep, `exp(-s^2)` for log-normal
+weights. Without a coreset a draw costs `work`.
+"""
+_smc_draw_price(share::Real, s::Real, work::Real) = (work * share + 1 + share) * exp(s^2)
+
+"""
+What a coreset costs a tempering stage or the final phase
+(`_smc_stage_price`, `_smc_draw_price`), as a function of its share and the
+spread of its error's difference, and what the same work costs without one
+(`_smc_full_price`). `inflate` is how much more variance the last stage's
+correction showed than its coreset's fit expected: the error's spread over
+the cloud is measured where the particles are, and moves on the coreset take
+them where it can be larger."""
+struct _SMCPrice
+    work::Float64
+    beta::Float64
+    budget::Float64
+    inflate::Float64
+    final::Bool
+end
+
+(p::_SMCPrice)(share::Real, s::Real) = p.final ?
+    _smc_draw_price(share, s * sqrt(p.inflate), p.work) :
+    _smc_stage_price(share, s * sqrt(p.inflate), p.work, p.beta, p.budget)
+_smc_full_price(p::_SMCPrice) = p.final ? p.work : p.work + 1
+
+"""
+    _smc_coreset_fit(terms, total, cost, price, full, rng)
 
 A coreset for the cloud whose units' terms are the columns of `terms`
-(`nunits x nparticles`) and whose full weighted sum is `total`: the units
-chosen by forward selection on the centred terms (`_coreset_select`, refitted
-by NNLS each step) -- each step the unit whose term, orthogonalised against
-those in, best explains what is left of the centred total with a positive
-weight -- their weights by non-negative least squares (`_ctsem_nnls`), at the
-smallest size on the path whose held-out error is within `tol`. Held out means: the particles are split into
-`_SMC_CORESET_FOLDS` folds at random (`rng`), the weights are fitted on the
-other folds and the error read on the one left out, as a standard deviation
-over its particles, since a constant offset of the coreset's value cancels in
-the normalised weights that read it. The sizes tried are
-`_ctsem_coreset_sizes`', 1.25 apart, within `budget` of a full evaluation
-(`cost`: each unit's share). `nothing` where no size within the budget passes,
-or the usable particles are too few to hold any out.
+(`nunits x nparticles`) and whose full weighted sum is `total`, the size of
+least `price(share, s)` below `full`, what the work costs without one.
+`share` is the units' cost (`cost`: each unit's share of a full evaluation)
+and `s` the spread of the coreset's error's difference between two of the
+cloud's points, `sqrt(2)` times its held-out spread over the cloud: the
+weights that correct a coreset read its error at both ends of a move or a
+chain, and a sampler's moves decorrelate the error between them nearly
+fully (lag-three correlations of 0.1-0.5 on the race's fixtures). Held out
+means: the particles are split into `_SMC_CORESET_FOLDS` folds at random
+(`rng`), and for each a selection path on the others (`_coreset_cv`, on the
+centred terms, refitted by NNLS each step) is read on the fold, as a
+standard deviation over its particles, since a constant offset of the
+coreset's value cancels in the normalised weights that read it. The units
+are chosen out of sample as their weights are; the coreset is then fitted
+on every particle at the size chosen. `nothing` where no size is cheaper
+than none, or the usable particles are too few to hold any out.
 
-Returns `(units, weights, error, share)`; the weights replace the units'
-sampling weights, since the total they were fitted to carries those.
+Returns `(units, weights, error, price, share)`: `error` the held-out spread
+over the cloud, `price` the size's; the weights replace the units' sampling
+weights, since the total they were fitted to carries those.
 """
 function _smc_coreset_fit(terms::AbstractMatrix{Float64}, total::AbstractVector{Float64},
-    cost::AbstractVector{Float64}, tol::Real, budget::Real, rng::AbstractRNG)
+    cost::AbstractVector{Float64}, price, full::Real, rng::AbstractRNG)
     N, n = size(terms)
     cols = Int[j for j in 1:n if isfinite(total[j]) && all(isfinite, view(terms, :, j))]
     m = length(cols)
     m >= 2 * _SMC_CORESET_FOLDS || return nothing
     A = Matrix{Float64}(transpose(view(terms, :, cols)))
     b = Float64[total[j] for j in cols]
-    # Centred: the fit is to the variation over the cloud, the level is free.
-    @inbounds for U in 1:N
-        mu = 0.0
-        for i in 1:m
-            mu += A[i, U]
-        end
-        mu /= m
-        for i in 1:m
-            A[i, U] -= mu
-        end
-    end
-    b .-= _smc_mean(b)
-    perm = randperm(rng, m)
-    nf = _SMC_CORESET_FOLDS
-    edges = round.(Int, range(0, m; length=nf + 1))
-    # The first size whose held-out error passes, with a positive weight:
-    # scored one there, after which no larger can score more.
-    value = (units, w) -> begin
-        worst = 0.0
-        for f in 1:nf
-            held = perm[(edges[f] + 1):edges[f + 1]]
-            train = vcat(perm[1:edges[f]], perm[(edges[f + 1] + 1):m])
-            At = A[train, units]
-            wf = _ctsem_nnls(transpose(At) * At, transpose(At) * b[train])
-            e = A[held, units] * wf .- b[held]
+    splits = _coreset_folds(m, _SMC_CORESET_FOLDS, rng)
+    fullcost = Float64(full)
+    judge = (paths, held) -> begin
+        sq = 0.0
+        count_ = 0
+        share = Inf
+        for k in eachindex(paths)
+            P = paths[k]
+            units = P.chosen
+            e = A[held[k], units] * _coreset_weights(P) .- b[held[k]]
             e .-= _smc_mean(e)
-            worst = max(worst, sqrt(sum(abs2, e) / length(e)))
+            sq += sum(abs2, e)
+            count_ += length(e)
+            share = min(share, sum(cost[U] for U in units))
         end
-        passes = isfinite(worst) && worst <= tol && any(>(0), w)
-        (passes ? 1.0 : 0.0, passes ? 1.0 : 2.0, worst)
+        sigma = sqrt(sq / count_)
+        c = price(share, sqrt(2.0) * sigma)
+        # Any larger coreset costs at least its share without error.
+        bound = fullcost - price(share, 0.0)
+        ok = isfinite(c) && c < fullcost
+        (ok ? fullcost - c : 0.0, bound, (error=sigma, price=c))
     end
-    found = _coreset_select(A, b, cost, budget, _ctsem_coreset_sizes(N), value;
-        refit=true, resid_tol=1e-10)
+    found = _coreset_cv(A, b, cost, Inf, _ctsem_coreset_sizes(N), splits, judge;
+        refit=true, resid_tol=1e-10, centre=true)
     found === nothing && return nothing
-    keep = findall(>(0), found.weights)
-    kept = found.units[keep]
-    return (units=kept, weights=found.weights[keep], error=found.extra,
-        share=sum(cost[U] for U in kept))
+    # Centred: the fit is to the variation over the cloud, the level is free.
+    Ac = A .- sum(A; dims=1) ./ m
+    bc = b .- _smc_mean(b)
+    final = _coreset_select(Ac, bc, cost, Inf, [found.size], (u, w) -> (1.0, 0.0, nothing);
+        refit=true, resid_tol=1e-10)
+    final === nothing && return nothing
+    keep = findall(>(0), final.weights)
+    isempty(keep) && return nothing
+    kept = final.units[keep]
+    return (units=kept, weights=final.weights[keep], error=found.extra.error,
+        price=found.extra.price, share=sum(cost[U] for U in kept))
 end
 
 # What the sampler asks of an objective whose log density is a sum of units'
@@ -365,6 +439,24 @@ function _smc_move_correction(beta::Real, lp_y::Real, lc_y::Real, lp_x::Real, lc
     moved || return 0.0
     v = beta * ((lp_y - lc_y) - (lp_x - lc_x))
     return isfinite(v) ? Float64(v) : -Inf
+end
+
+"""
+    _smc_inflation(owed, X, Xpre, beta, error, previous)
+
+How much more variance the stage's correction `owed` showed, over the
+particles that moved, than its coreset's fit expected, `beta^2` times twice
+its held-out spread `error` squared: what the next stage's coreset is priced
+with. `previous` where too few moved to say.
+"""
+function _smc_inflation(owed::AbstractVector{Float64}, X::AbstractMatrix{Float64},
+    Xpre::AbstractMatrix{Float64}, beta::Real, error::Real, previous::Real)
+    v = Float64[owed[i] for i in eachindex(owed)
+        if isfinite(owed[i]) && view(X, :, i) != view(Xpre, :, i)]
+    expected = 2 * (beta * error)^2
+    (length(v) >= 20 && expected > 0 && isfinite(expected)) || return Float64(previous)
+    mu = _smc_mean(v)
+    return sum(abs2, v .- mu) / (length(v) - 1) / expected
 end
 
 """
@@ -469,14 +561,79 @@ function _smc_logdensity(objective, coreset, gradient_method)
 end
 
 """
+The final chains' log weights to the full density, a vector a chain
+(`lw`), each chain's base beside them (`base`); brought up to date by
+`_smc_final_weights!`."""
+struct _SMCFinalWeights
+    base::Vector{Float64}
+    lw::Vector{Vector{Float64}}
+end
+
+_SMCFinalWeights() = _SMCFinalWeights(Float64[], Vector{Float64}[])
+
+"""
+    _smc_final_weights!(fw, objective, cs, owed, lp, Xf, start, chains)
+
+Bring `fw` up to date with every draw the final `chains` hold. Each chain's
+base is what the last stage's moves left owing at its start (`owed`, by
+particle), less the final coreset's error there, since the reversal of a
+chain on the coreset reads its error at both ends; each draw adds the error
+where it sits. Draws already weighed are not evaluated again, so the share
+read on the first draws to size the chains costs nothing at the end. Without
+a final coreset, the base alone. A systematic resample by these weights
+returns the draws unweighted. Returns `fw`.
+"""
+function _smc_final_weights!(fw::_SMCFinalWeights, objective, cs,
+    owed::AbstractVector{Float64}, lp::AbstractVector{Float64},
+    Xf::AbstractMatrix{Float64}, start::AbstractVector{Int},
+    chains::Vector{_ChainResult})
+    nold = length(fw.base)
+    if length(chains) > nold
+        idx = start[(nold + 1):length(chains)]
+        lc0 = cs === nothing ? Float64[] : _smc_coreset_values(objective, Xf[:, idx], cs)
+        for (i, k) in enumerate(idx)
+            push!(fw.base, cs === nothing ? owed[k] : owed[k] - (lp[k] - lc0[i]))
+            push!(fw.lw, Float64[])
+        end
+    end
+    pick = Tuple{Int,Int}[]
+    for c in eachindex(chains), t in (length(fw.lw[c]) + 1):size(chains[c].draws, 2)
+        push!(pick, (c, t))
+    end
+    isempty(pick) && return fw
+    if cs === nothing
+        for (c, _) in pick
+            push!(fw.lw[c], fw.base[c])
+        end
+        return fw
+    end
+    D = Matrix{Float64}(undef, size(chains[1].draws, 1), length(pick))
+    for (j, (c, t)) in enumerate(pick)
+        D[:, j] .= view(chains[c].draws, :, t)
+    end
+    lpf = ctsem_evaluate_batch(objective, D)
+    lpk = _smc_coreset_values(objective, D, cs)
+    for (j, (c, _)) in enumerate(pick)
+        v = fw.base[c] + (lpf[j] - lpk[j])
+        push!(fw.lw[c], isfinite(v) ? v : -Inf)
+    end
+    return fw
+end
+
+"""The share of the draws' effective size that log weights `lw` keep."""
+function _smc_kept(lw::AbstractVector{Float64})
+    nfin = count(isfinite, lw)
+    return nfin > 0 ? _importance_ess(lw) / nfin : 0.0
+end
+
+"""
     ctsem_sample_smc(objective, values; kwargs...)
 
 Sample the marginal posterior of `objective` by tempered SMC from the normal
 `N(values, widen^2 S0)`, `S0` the bounded inverse of `-hessian` (the metric
 the marginal sampler would use; the exact Hessian at `values` when none is
-given). See the file comment for the method, the coreset (`coreset`,
-`coreset_tol`: the held-out error in log units a stage's coreset may have)
-and the particles' parallelism (`parallel`). Returns what
+given). See the file comment for the method, the coreset (`coreset`) and the
+particles' parallelism (`parallel`). Returns what
 `ctsem_sample_marginal` returns, the final phase's chains of `ndraws`
 (extended to the targets) as the draws, with `sampler = "smc"`, the stage
 record, the coreset record and the tempering's seconds beside. The final
@@ -491,7 +648,7 @@ function ctsem_sample_smc(objective, values::AbstractVector;
     ndraws::Integer=20, min_ess::Real=0.0, mean_ess::Real=0.0, max_draws::Integer=0,
     rhat_target::Real=Inf, ess_frac::Real=0.5, maxstages::Integer=500,
     pilot::Integer=30, gradient_method=:adjoint, coreset::Bool=true,
-    coreset_tol::Real=0.3, parallel::Bool=true, verbose::Bool=false,
+    parallel::Bool=true, verbose::Bool=false,
     progress_overwrite::Bool=true, progress_callback=nothing, progress_sink=nothing)
 
     t0 = time()
@@ -508,7 +665,6 @@ function ctsem_sample_smc(objective, values::AbstractVector;
     _check_sample_arguments(np, nfirst, target_accept)
     0 < ess_frac < 1 || throw(ArgumentError("ess_frac must be in (0, 1)"))
     widen > 0 || throw(ArgumentError("widen must be positive"))
-    coreset_tol > 0 || throw(ArgumentError("coreset_tol must be positive"))
 
     m0 = collect(Float64, values)
     ndim = length(m0)
@@ -523,7 +679,11 @@ function ctsem_sample_smc(objective, values::AbstractVector;
     unit_cost = capable ? _smc_unit_cost(objective) : Float64[]
     nunits = capable ? length(unit_cost) : 1
     use_coreset = coreset && capable
-    tol_now = Float64(coreset_tol)
+    # The log-weight variance a stage's effective size allows, and how much
+    # more the last stage's correction showed than its coreset's fit expected.
+    vbudget = log(1 / Float64(ess_frac))
+    inflate = 1.0
+    leap = _smc_leapfrogs(Int[])
     corrections = 0
     mode = _points_mode(objective, parallel)
     # Each worker's NUTS workspace and gradient buffer (`_each_point!`).
@@ -596,11 +756,10 @@ function ctsem_sample_smc(objective, values::AbstractVector;
         if corr_ess < target
             # The coreset's error alone spends the stage's effective size: this
             # stage corrects it and moves `beta` by nothing, and the next fit
-            # is held to half the tolerance.
+            # is priced with the error it showed (`inflate`).
             delta = 0.0
             corrected = true
             corrections += 1
-            tol_now /= 2
         elseif _importance_ess(delta .* u .+ owed) < target
             lo, hi = 0.0, delta
             for _ in 1:60
@@ -626,11 +785,12 @@ function ctsem_sample_smc(objective, values::AbstractVector;
         metric = _metric_from_covariances([1:ndim], [shrunk.cov])
         # The coreset for this stage's moves, from every unit's term at the
         # cloud before it is resampled (the duplicates after it say nothing
-        # new); none where no size within the budget holds out.
+        # new); none where no size is cheaper than moving in full.
         fit = nothing
         if use_coreset && full.terms !== nothing
-            fit = _smc_coreset_fit(full.terms, full.total, unit_cost, tol_now,
-                _SMC_CORESET_BUDGET, fit_rng)
+            price = _SMCPrice(nmv * leap * _SMC_GRADIENT_VALUES, beta, vbudget, inflate, false)
+            fit = _smc_coreset_fit(full.terms, full.total, unit_cost, price,
+                _smc_full_price(price), fit_rng)
         end
         cs_stage = fit === nothing ? nothing : CTSEMCoreset(fit.units, fit.weights)
         idx = _smc_systematic(w, rng)
@@ -667,6 +827,7 @@ function ctsem_sample_smc(objective, values::AbstractVector;
         Xnew = copy(Xstart)
         acc = zeros(np)
         dep = zeros(np)
+        lf = zeros(np)
         ndiv = zeros(Int, np)
         mv = zeros(Int, np)
         # A Vector{Bool}, not a BitVector: particles on other tasks write their
@@ -686,6 +847,7 @@ function ctsem_sample_smc(objective, values::AbstractVector;
             Xnew[:, i] .= r.x
             acc[i] = _smc_mean(r.accept)
             dep[i] = _smc_mean(r.depth)
+            lf[i] = _smc_leapfrogs(r.depth)
             ndiv[i] = count(r.divergent)
             mv[i] = r.x != xi ? 1 : 0
             okp[i] = true
@@ -694,6 +856,7 @@ function ctsem_sample_smc(objective, values::AbstractVector;
         X = Xnew
         Xfrom = Xstart
         nok = max(1, count(okp))
+        count(okp) > 0 && (leap = sum(lf) / nok)
         full = _smc_terms(objective, X, use_coreset)
         lp = full.value
         if cs_stage === nothing
@@ -704,6 +867,7 @@ function ctsem_sample_smc(objective, values::AbstractVector;
                 owed[i] = _smc_move_correction(beta, lp[i], lc[i], lp_pre[i], lc_pre[i],
                     view(X, :, i) != view(Xpre, :, i))
             end
+            inflate = _smc_inflation(owed, X, Xpre, beta, fit.error, inflate)
         end
         lq = _smc_columns(logq, X)
         push!(stages, (beta=beta, step=step, accept=sum(acc) / nok, depth=sum(dep) / nok,
@@ -740,14 +904,22 @@ function ctsem_sample_smc(objective, values::AbstractVector;
     # chains before longer ones (see the file comment), sharing the particles'
     # draw budget.
     tau = _smc_move_tau(Xfrom, X, nmv)
-    target_ess = max(Float64(min_ess), Float64(mean_ess))
     order = _smc_spread_order(np)
     final_fit = nothing
     if use_coreset && full.terms !== nothing
-        final_fit = _smc_coreset_fit(full.terms, full.total, unit_cost, tol_now,
-            _SMC_CORESET_BUDGET, fit_rng)
+        price = _SMCPrice(leap * _SMC_GRADIENT_VALUES, 1.0, vbudget, inflate, true)
+        final_fit = _smc_coreset_fit(full.terms, full.total, unit_cost, price,
+            _smc_full_price(price), fit_rng)
     end
     cs_final = final_fit === nothing ? nothing : CTSEMCoreset(final_fit.units, final_fit.weights)
+    # The share of the chains' effective size the correction to the full
+    # density is expected to keep, which the targets are divided by until the
+    # first chains' draws show it: the chains' diagnostics are their own,
+    # before it.
+    expected_kept = final_fit === nothing ? 1.0 : exp(-2 * inflate * final_fit.error^2)
+    fmin_ess = Float64(min_ess) / expected_kept
+    fmean_ess = Float64(mean_ess) / expected_kept
+    target_ess = max(fmin_ess, fmean_ess)
     Xf = X
     lp_f = lp
     owed_f = copy(owed)
@@ -781,13 +953,26 @@ function ctsem_sample_smc(objective, values::AbstractVector;
         held[] = vcat(held[], res)
         return nothing
     end
+    # The correction's weights, a chain at a time as the chains are run; on a
+    # coreset, the share of effective size they keep is read off the chains so
+    # far and replaces the price's expectation in the targets, so that the
+    # chains are counted for it before any is lengthened: more chains from
+    # unused particles buy more effective draws than longer ones do.
+    fw = _SMCFinalWeights()
+    planned = expected_kept
     start_chains!(order[1:_smc_final_chains(tau, target_ess, nfirst, np)])
     while target_ess > 0 && length(start) < np
         n = length(start)
+        if cs_final !== nothing
+            _smc_final_weights!(fw, objective, cs_final, owed_f, lp_f, Xf, start, held[])
+            planned = max(_smc_kept(reduce(vcat, fw.lw)), 0.01)
+            fmin_ess = Float64(min_ess) / planned
+            fmean_ess = Float64(mean_ess) / planned
+        end
         v = _sample_verdict(_pool_draws(held[], npar), fill(nfirst, n), nfirst, nfirst,
-            Float64(min_ess), Float64(mean_ess), nfirst, Float64(rhat_target), false)
+            fmin_ess, fmean_ess, nfirst, Float64(rhat_target), false)
         v.met && break
-        shortfall = max(min_ess / max(v.worst, 1.0), mean_ess / max(v.average, 1.0))
+        shortfall = max(fmin_ess / max(v.worst, 1.0), fmean_ess / max(v.average, 1.0))
         start_chains!(order[(n + 1):min(np, max(n + 1, ceil(Int, 1.25 * shortfall * n)))])
     end
     nch = length(start)
@@ -808,47 +993,45 @@ function ctsem_sample_smc(objective, values::AbstractVector;
         return nothing
     end
     run = _sample_until_target(() -> _pool_draws(held[], npar), extend!, nch, nfirst,
-        Float64(min_ess), Float64(mean_ess), max_final, Float64(rhat_target), verbose; t0=t0)
-    chains = held[]
+        fmin_ess, fmean_ess, max_final, Float64(rhat_target), verbose; t0=t0)
     nper = run.total
+    trace = run.trace
+    reweigh = cs_final !== nothing || any(!iszero, owed_f)
+    pooled = _sample_pool(held[], nch, nper, npar)
+    reweigh && _smc_final_weights!(fw, objective, cs_final, owed_f, lp_f, Xf, start, held[])
+    lw = reweigh ? reduce(vcat, fw.lw) : Float64[]
+    final_correction = reweigh ? _smc_kept(lw) : 1.0
+    # The draws the correction keeps are what the targets ask for. Where the
+    # chains, lengthened, drifted further and it kept less than they were run
+    # for, they run on, once, to the targets over the share it kept, and the
+    # correction takes in the new draws.
+    if cs_final !== nothing && !isempty(trace.ess) &&
+        trace.ess[end] * final_correction < max(Float64(min_ess), Float64(mean_ess)) &&
+        final_correction < planned && nper < max_final
+        keep_share = max(final_correction, 0.01)
+        extra = _sample_until_target(() -> _pool_draws(held[], npar), extend!, nch, nper,
+            Float64(min_ess) / keep_share, Float64(mean_ess) / keep_share, max_final,
+            Float64(rhat_target), verbose; t0=t0)
+        if extra.total > nper
+            nper = extra.total
+            trace = (draws=vcat(trace.draws, extra.trace.draws),
+                secs=vcat(trace.secs, extra.trace.secs), ess=vcat(trace.ess, extra.trace.ess),
+                rhat=vcat(trace.rhat, extra.trace.rhat))
+            pooled = _sample_pool(held[], nch, nper, npar)
+            _smc_final_weights!(fw, objective, cs_final, owed_f, lp_f, Xf, start, held[])
+            lw = reduce(vcat, fw.lw)
+            final_correction = _smc_kept(lw)
+        end
+    end
 
-    total = nch * nper
-    pooled = _sample_pool(chains, nch, nper, npar)
     draws, accept, divergent = pooled.draws, pooled.accept, pooled.divergent
     depth, energy = pooled.depth, pooled.energy
     # The chains' own diagnostics, before any correction; no R-hat (see the
     # file comment).
     diagnostics = ctsem_sample_diagnostics(draws, nch)
     diagnostics = merge(diagnostics, (rhat=fill(NaN, length(diagnostics.rhat)),))
-    final_correction = 1.0
-    if cs_final !== nothing || any(!iszero, owed_f)
-        # Each chain's base: what the last stage's moves left owing at its
-        # start, less the final coreset's error there (the reversal of a chain
-        # on the coreset reads its error at both ends); each draw adds the
-        # error where it sits. A systematic resample by these weights returns
-        # the draws unweighted.
-        base = zeros(nch)
-        lc0 = cs_final === nothing ? nothing :
-            _smc_coreset_values(objective, Xf[:, start], cs_final)
-        for ch in 1:nch
-            k = start[ch]
-            base[ch] = cs_final === nothing ? owed_f[k] : owed_f[k] - (lp_f[k] - lc0[ch])
-        end
-        lw = Vector{Float64}(undef, total)
-        if cs_final === nothing
-            for j in 1:total
-                lw[j] = base[div(j - 1, nper) + 1]
-            end
-        else
-            lpf = ctsem_evaluate_batch(objective, draws)
-            lpk = _smc_coreset_values(objective, draws, cs_final)
-            for j in 1:total
-                v = base[div(j - 1, nper) + 1] + (lpf[j] - lpk[j])
-                lw[j] = isfinite(v) ? v : -Inf
-            end
-        end
+    if reweigh
         nfin = count(isfinite, lw)
-        final_correction = nfin > 0 ? _importance_ess(lw) / nfin : 0.0
         if nfin > 0
             mx = maximum(lw)
             wk = exp.(lw .- mx)
@@ -859,13 +1042,13 @@ function ctsem_sample_smc(objective, values::AbstractVector;
             depth = depth[idx]
             energy = energy[idx]
         end
-        final_correction < 0.5 && @warn "the final chains' coreset kept $(round(100 * final_correction; digits=0))% of the draws' effective size after the correction to the full density; a larger coreset_tol budget or coreset = false would give more"
+        final_correction < 0.5 * expected_kept && @warn "the final chains' coreset kept $(round(100 * final_correction; digits=0))% of the draws' effective size after the correction to the full density, against $(round(100 * expected_kept; digits=0))% expected; coreset = false would give more"
     end
     corrected_pool = (draws=draws, accept=accept, divergent=divergent, depth=depth,
         energy=energy)
     return merge(_sample_result(corrected_pool; nchains=nch, ndraws=nper, npar=npar,
         ndim=npar, maxdepth=mdepth, stepsize=fill(step, nch),
-        warmup_divergent=zeros(Int, nch), trace=run.trace, diagnostics=diagnostics), (
+        warmup_divergent=zeros(Int, nch), trace=trace, diagnostics=diagnostics), (
         forward_gradients=ctsem_forward_gradients() - forward0,
         explosive_passes=ctsem_explosive_passes() - explosive0,
         sampler="smc", nparticles=np, nmoves=nmv, widen=Float64(widen),
@@ -885,6 +1068,8 @@ function ctsem_sample_smc(objective, values::AbstractVector;
         stage_corrected=[s.corrected for s in stages],
         final_tau=tau,
         final_coreset_size=cs_final === nothing ? 0 : length(cs_final.units),
+        final_coreset_error=final_fit === nothing ? NaN : final_fit.error,
+        final_kept_expected=expected_kept,
         final_correction_ess=final_correction,
         parallel=String(mode),
     ))

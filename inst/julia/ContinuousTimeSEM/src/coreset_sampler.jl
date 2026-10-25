@@ -57,10 +57,13 @@ that and a check's tolerance the value checks decide: held at 0.3, twice a
 check's drift, the gate priced coresets of 84 units on the 250-unit strong
 shell where 47-49 had served, at 0.82 full evaluations a gradient against
 0.58-0.62. The sizes that failed there had gradients off by 0.55-11, those
-that served 0.14-0.29 (review/SCORES-coreset-training-2026-10-24.md).
+that served 0.14-0.29 (review/SCORES-coreset-training-2026-10-24.md). `step`
+is the share of its caller's step a coreset's gradient may be off by while
+the caller is still moving (`_is_coreset_tolerance!`), as the optimiser's
+stages are held to (`_CTSEM_CORESET_TOL`).
 """
 const _IS_CORESET_TOL = (rms=0.1, max=0.5, drift=1.5, final=0.5, band=10.0,
-    scale=20.0, relevant=0.1, force=1.0)
+    scale=20.0, relevant=0.1, force=1.0, step=0.3)
 
 """Scores: from the `per` draws of each full gradient batch of highest total,
 where the weight sits, and from the newest `kept` such draws in all. A draw's
@@ -91,19 +94,21 @@ end
 
 """What a sampler round is: its batch of draws, the gradients asked for before
 the next (each as two values), the checks a batch on a coreset takes, how many
-times the tolerances its caller's use allows (`_is_coreset_tolerance!`), and
-the values a round spends checking its gradient batch, for a caller that
-checks every one (DAIS)."""
+times the tolerances its caller's use allows (`_is_coreset_tolerance!`), the
+values a round spends checking its gradient batch, for a caller that checks
+every one (DAIS), and how far a size's gradient may be off at held-out draws
+(`_is_force_error`)."""
 struct _ISRound
     values::Float64
     grads::Float64
     checks::Int
     tol::Float64
     gradchecks::Float64
+    force::Float64
 end
 
 _ISRound(values::Real, grads::Real, checks::Integer) =
-    _ISRound(values, grads, checks, 1.0, 0.0)
+    _ISRound(values, grads, checks, 1.0, 0.0, _IS_CORESET_TOL.force)
 
 """What a batch of `rd.values` draws is expected to cost on a coreset of `M`
 of `N` units, and in full, in full evaluations: on the coreset its share
@@ -288,6 +293,7 @@ mutable struct CTSEMISCoreset
     lastgrad_L::Matrix{Float64}
     reused::Int
     tolscale::Float64
+    forcetol::Float64
     checkall::Bool
 end
 
@@ -313,7 +319,8 @@ function ctsem_is_coreset(laplace::CTSEMLaplaceObjective; top::Symbol=:run)
         false, Int[], Float64[], 0.0, NaN, NaN, :training, 0.0, Int[], Float64[],
         0, NaN, 0, false, NaN, NaN, 0.0, 0, 0, 0, 0, 0, 0, 0, false, true, 0, 0, 0,
         secs, draws, why, Dict{Vector{Float64},Float64}(), NTuple{8,Float64}[],
-        Dict{Vector{Float64},Int}(), Float64[], Float64[], zeros(N, 0), 0, 1.0, false)
+        Dict{Vector{Float64},Int}(), Float64[], Float64[], zeros(N, 0), 0, 1.0,
+        _IS_CORESET_TOL.force, false)
 end
 
 """The coresets chosen, of the choices tried (`cs.nchoose`, a row each of the
@@ -322,9 +329,12 @@ _is_chosen(cs::CTSEMISCoreset) = count(t -> t[3] == 1.0, cs.trace)
 
 _is_smooth(old, new) = isnan(old) ? Float64(new) : 0.7 * old + 0.3 * new
 _is_round(cs::CTSEMISCoreset) = _ISRound(cs.values,
-    isnan(cs.grads) ? 0.3 * cs.values : cs.grads, 8, cs.tolscale, cs.checkall ? 8.0 : 0.0)
+    isnan(cs.grads) ? 0.3 * cs.values : cs.grads, 8, cs.tolscale, cs.checkall ? 8.0 : 0.0,
+    cs.forcetol)
 
 """
+    _is_coreset_tolerance!(cs, scale, step=0.0)
+
 How many times its tolerances a coreset's value checks and prices allow from
 here on, for a caller whose use of the density damps its errors:
 DAIS weighs its draws by `(pi / q)^gamma` and steps by `gamma` times their
@@ -333,13 +343,27 @@ delta`, and `1 / gamma` times the tolerance moves it as far as the tolerance
 does at `gamma = 1`. Read at every batch, so a coreset chosen while the
 damping was strong is held to a tighter bound as it eases; at most ten
 times, because what DAIS averages over its last iterations is what an early
-loose coreset could bias. The gradient gate is not loosened: whether a size
-can follow the draws at all does not depend on how the caller weighs them,
-and loosened it let a coreset of 196 of 200 units through on a 266-parameter
-fit, where every size had been refused.
+loose coreset could bias. The gradient gate is not loosened by the damping:
+whether a size can follow the draws at all does not depend on how the
+caller weighs them, and loosened so it let a coreset of 196 of 200 units
+through on a 266-parameter fit, where every size had been refused.
+
+It is loosened by how far the caller still moves. `step` is the part of the
+caller's undamped step beyond its own noise, in log density per sd (DAIS's
+natural gradient less its noise): a coreset whose gradient is off by `e`
+there turns that step by `e`, and leads to a fixed point `e` sds from the
+full density's, so while the caller still moves further than that, a
+coreset off by `_IS_CORESET_TOL.step` of the step steers it as the full
+density would, as the optimiser's stages are allowed. At the fixed point,
+where the iterates an answer averages sit, the step is noise and the gate
+its own.
 """
-_is_coreset_tolerance!(cs::CTSEMISCoreset, scale::Real) =
-    (cs.tolscale = clamp(Float64(scale), 1.0, 10.0); nothing)
+function _is_coreset_tolerance!(cs::CTSEMISCoreset, scale::Real, step::Real=0.0)
+    cs.tolscale = clamp(Float64(scale), 1.0, 10.0)
+    cs.forcetol = max(_IS_CORESET_TOL.force,
+        isfinite(step) ? _IS_CORESET_TOL.step * Float64(step) : 0.0)
+    return nothing
+end
 _is_active_n(cs::CTSEMISCoreset) = count(>(0), cs.w)
 _is_failnow(cs::CTSEMISCoreset) = (cs.fails + 2 * cs.cf_fail) / (cs.runs + 2)
 _is_predict(cs::CTSEMISCoreset, L::AbstractMatrix) =
@@ -617,7 +641,7 @@ function _is_coreset_choose(tr::_ISRows, rd::_ISRound, start::Vector{Int})
         # it the choice priced every size alike on thin evidence and took the
         # smallest, which failed: 1-16 units on DAIS's 33-parameter shell at
         # 1,000 units, and one unit a choice on a 266-parameter fit with 200.
-        _is_force_error(score, tr, zheld, units, w, top) > _IS_CORESET_TOL.force &&
+        _is_force_error(score, tr, zheld, units, w, top) > rd.force &&
             return (0.0, bound, nothing)
         # Not `c`: the function's own `c` below would be this one, boxed.
         level = my - sum(mx[units] .* w)
@@ -735,7 +759,7 @@ function _is_inparts!(cs::CTSEMISCoreset, X::AbstractMatrix, why::Symbol)
         left = n - done
         half = left ÷ 2
         r0 = _is_round(cs)
-        r = _ISRound(half, r0.grads, r0.checks, r0.tol, r0.gradchecks)
+        r = _ISRound(half, r0.grads, r0.checks, r0.tol, r0.gradchecks, r0.force)
         bc = cs.rows.nrows == 0 ? _is_batch_cost(0, 1, r, 0.0) :
             _is_batch_cost(cs.has_cf ? _is_active_n(cs) : 0, cs.N, r, 0.0)
         # Values a gradient batch already gave cost nothing in full.
@@ -762,7 +786,7 @@ end
 size, else in full."""
 function _is_withcoreset!(cs::CTSEMISCoreset, X::AbstractMatrix)
     r0 = _is_round(cs)
-    r = _ISRound(size(X, 2), r0.grads, r0.checks, r0.tol, r0.gradchecks)
+    r = _ISRound(size(X, 2), r0.grads, r0.checks, r0.tol, r0.gradchecks, r0.force)
     bc = _is_batch_cost(_is_active_n(cs), cs.N, r, _is_failnow(cs))
     bc.coreset < bc.full && return _is_oncoreset!(cs, X)
     return _is_freecheck!(cs, X, :small)

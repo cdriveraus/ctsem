@@ -200,6 +200,17 @@ end
     sdf = sqrt.(diag(full.cov))
     @test maximum(abs.(viacs.mean .- full.mean) ./ sdf) < 0.3
     @test all(0.75 .< sqrt.(diag(viacs.cov)) ./ sdf .< 1.33)
+    # What DAIS tells its coreset each iteration: the value checks allow one
+    # over the damping, at most ten times; the gradient gate a share of the
+    # step beyond its noise, and its own at the fixed point.
+    cs = ContinuousTimeSEM.ctsem_is_coreset(laplace; top=:batch)
+    ContinuousTimeSEM._is_coreset_tolerance!(cs, 1 / 0.25, 12.0)
+    @test cs.tolscale == 4.0
+    @test cs.forcetol ≈ ContinuousTimeSEM._IS_CORESET_TOL.step * 12
+    @test ContinuousTimeSEM._is_round(cs).force == cs.forcetol
+    ContinuousTimeSEM._is_coreset_tolerance!(cs, 1 / 1e-3, 0.0)
+    @test cs.tolscale == 10.0
+    @test cs.forcetol == ContinuousTimeSEM._IS_CORESET_TOL.force
 end
 
 @testset "DAIS reports to the caller's sink" begin

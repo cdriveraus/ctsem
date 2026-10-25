@@ -728,7 +728,8 @@
     coreset_size = as.integer(result$coreset_size),
     coreset_proposed = as.integer(result$coreset_proposed),
     coreset_accepted = as.integer(result$coreset_accepted),
-    coreset_abandoned = as.logical(result$coreset_abandoned))
+    coreset_abandoned = as.logical(result$coreset_abandoned),
+    coreset_error = as.numeric(result$coreset_error))
 }
 
 # Pool the chains into one engine result, then hand it to the ordinary assembler.
@@ -851,7 +852,8 @@
     coreset_size = unlist(lapply(drawn, function(d) d$coreset_size)),
     coreset_proposed = unlist(lapply(drawn, function(d) d$coreset_proposed)),
     coreset_accepted = unlist(lapply(drawn, function(d) d$coreset_accepted)),
-    coreset_abandoned = unlist(lapply(drawn, function(d) d$coreset_abandoned)))
+    coreset_abandoned = unlist(lapply(drawn, function(d) d$coreset_abandoned)),
+    coreset_error = unlist(lapply(drawn, function(d) d$coreset_error)))
 
   out <- .ctBackendSampleAssemble(fit, result, npar, keepeffects,
     as.integer(chains), warmup, ndraws, target$hessian,
