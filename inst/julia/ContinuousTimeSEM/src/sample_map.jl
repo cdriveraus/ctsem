@@ -644,59 +644,13 @@ function _jmap_build(sampler::CTSEMSampler, theta0::Vector{Float64},
 end
 
 """
-    _jmap_score_target(m, W, counter)
-
-Theta's covariance as the latent density's scores at the rows `W` say it: the
-latent gradient's least-squares regression on the latent positions is minus
-the precision, exactly, for a Gaussian from `npar + 1` rows wherever they were
-drawn -- warm-up rows included -- where a covariance of positions needs many
-draws from the posterior. Its inverse, in theta's coordinates, is the target
-the rows' covariance is shrunk toward (`_smc_shrunk_cov` keeps its shape and
-takes the scale from the positions), so the positions still decide wherever
-they are many: a score fit sees curvature, which is narrower than the spread
-where the posterior is not Gaussian (`SAMPLING-flow-chart-2026-10-23.md`).
-`nothing` where the regression says nothing usable. One gradient a row.
-"""
-function _jmap_score_target(m::CTSEMJointMap, W::AbstractMatrix, counter::Threads.Atomic{Int})
-    npar = m.npar
-    n = size(W, 2)
-    n >= npar + 2 || return nothing
-    d = CTSEMJointMapDensity(m, counter)
-    G = zeros(npar, n)
-    g = zeros(m.sampler.ndim)
-    keep = trues(n)
-    for t in 1:n
-        v = d(g, Vector{Float64}(view(W, :, t)))
-        isfinite(v) || (keep[t] = false; continue)
-        G[:, t] .= view(g, 1:npar)
-    end
-    count(keep) >= npar + 2 || return nothing
-    X = W[1:npar, keep]
-    Y = G[:, keep]
-    Xc = X .- mean(X; dims=2)
-    Yc = Y .- mean(Y; dims=2)
-    XX = Symmetric(Xc * transpose(Xc))
-    F = cholesky(XX; check=false)
-    issuccess(F) || return nothing
-    B = transpose(F \ (Xc * transpose(Yc)))
-    E = eigen(Symmetric(-(B .+ transpose(B)) ./ 2))
-    top = maximum(E.values)
-    top > 0 || return nothing
-    vals = max.(E.values, 1e-3 * top)
-    Cw = E.vectors * Diagonal(1 ./ vals) * transpose(E.vectors)
-    C = m.Ct * Cw * transpose(m.Ct)
-    return (C .+ transpose(C)) ./ 2
-end
-
-"""
     _jmap_refit(m, Wl, rng; maxrows)
 
 The map refitted from latent draws `Wl` (columns, under `m`), at most `maxrows`
 of them: theta's centre and whitening, each member's summary. Returns the new
 map, the members refitted, theta's shrinkage, and the rows' cost in full passes.
 """
-function _jmap_refit(m::CTSEMJointMap, Wl::AbstractMatrix, rng; maxrows::Int=400,
-    scores::Bool=false, counter::Threads.Atomic{Int}=Threads.Atomic{Int}(0))
+function _jmap_refit(m::CTSEMJointMap, Wl::AbstractMatrix, rng; maxrows::Int=400)
     sampler = m.sampler
     npar = m.npar
     n = size(Wl, 2)
@@ -704,9 +658,7 @@ function _jmap_refit(m::CTSEMJointMap, Wl::AbstractMatrix, rng; maxrows::Int=400
     W = Wl[:, pick]
     nr = length(pick)
     thetas = m.theta0 .+ m.Ct * W[1:npar, :]
-    target = scores ? _jmap_score_target(m, W, counter) : nothing
-    shrunk = _smc_shrunk_cov(Matrix{Float64}(thetas), ones(nr),
-        target === nothing ? m.Ct * transpose(m.Ct) : target)
+    shrunk = _smc_shrunk_cov(Matrix{Float64}(thetas), ones(nr), m.Ct * transpose(m.Ct))
     theta0 = vec(mean(thetas; dims=2))
     S = shrunk.cov
     Ct = Matrix(cholesky(Symmetric(S + 1e-12 * max(tr(S), 1.0) / npar * I)).L)
@@ -904,239 +856,6 @@ function _jmap_final(m::CTSEMJointMap, counter::Threads.Atomic{Int}, nchains::In
     return (results=held[], ndraws=run.total, trace=run.trace)
 end
 
-################################################################################
-# The Gibbs kernel: SAEM's kind of sampler on the map's coordinates
-################################################################################
-#
-# SAEM's sampling kernel (`ctsem_saem_sample`) alternates NUTS on theta given
-# the effects with cheap per-unit sweeps of the effects, and adds moves that
-# re-express a level's effects (its mean by Gibbs, its scales centred and not):
-# the non-centring a joint NUTS needs a map for. Those moves read every effect
-# of a full-rank level, so SAEM refuses the collapsed target, whose integrated
-# effects have no value. On the map's latent coordinates they are not needed:
-# theta's move with the units' latent coordinates `z` held is already a
-# partially centred move, through `m_U(theta)` and `R_U(theta)`. So the kernel
-# here is the two halves -- NUTS on `w` given `z`, then each unit's `z` by
-# Metropolis given `w`, the units at once -- with the map supplying both
-# coordinates. A unit's move is a preconditioned Crank-Nicolson proposal
-# around N(0, I), which is what the map makes each unit's `z` near: exact for
-# any shape the unit's posterior takes, where the joint NUTS's single step
-# size meets a unit whose effects bend into each other (gD3's binary items,
-# a random intercept over a random drift near zero).
-
-"""Theta's latent density with the units' latent coordinates held: the map's
-latent density at `[w; z]`, the `w` part of its gradient."""
-struct _JMapThetaDensity{S}
-    d::CTSEMJointMapDensity{S}
-    xt::Vector{Float64}
-    g::Vector{Float64}
-end
-function (t::_JMapThetaDensity)(gw::AbstractVector{Float64}, w::AbstractVector)
-    npar = t.d.map.npar
-    t.xt[1:npar] .= w
-    v = t.d(t.g, t.xt)
-    gw .= view(t.g, 1:npar)
-    return v
-end
-
-"""One Gibbs chain's state, tuning and record."""
-mutable struct _JMapGibbs
-    xt::Vector{Float64}
-    eps::Float64
-    da::_DualAverage
-    ws::_NUTSWorkspace
-    s::Vector{Float64}           # each unit's pCN step, in (0, 1]
-    rng::Random.Xoshiro
-    seed::UInt64
-    iteration::Int
-    draws::Vector{Vector{Float64}}
-    accept::Vector{Float64}
-    divergent::Vector{Bool}
-    depth::Vector{Int}
-    energy::Vector{Float64}
-    zaccept::Float64
-    nz::Int
-    warmup_divergent::Int
-end
-
-# Units `mine`: `sweeps` pCN moves of each unit's latent coordinates at theta
-# (extended `th`, roots `Ls`), the members' likelihoods with the filter's
-# deviations integrated (`_laplace_member_loglik`). Each unit's draws come from
-# a stream seeded by chain, iteration and unit, so a run does not depend on
-# which worker took which unit. Writes the unit's accepted `z` into `xt`, its
-# step into `s` (adapted in warm-up at iteration `k`), and its acceptance into
-# `acc`.
-function _jmap_gibbs_units!(xt, s, acc, m::CTSEMJointMap, th, Ls, mu, thR, seed::UInt64,
-    iteration::Int, sweeps::Int, warm::Bool, k::Int, mine)
-    sampler = m.sampler
-    laplace = sampler.laplace
-    aws = _laplace_workspace!(laplace, Float64, length(th))
-    shifted = similar(th)
-    for U in mine
-        d = sampler.udims[U]
-        d == 0 && continue
-        r = _sample_urange(sampler, U)
-        F, mean = _jmap_unit(m, Ls, mu, thR, U)
-        rng = Random.Xoshiro(hash((seed, iteration, U)))
-        z = xt[r]
-        u = mean .+ _jmap_usolve(F, z)
-        lp = _jmap_gibbs_unit_lp(m, laplace, aws, shifted, th, Ls, U, u, z)
-        total = 0.0
-        for _ in 1:sweeps
-            step = s[U]
-            zp = sqrt(1 - step^2) .* z .+ step .* randn(rng, d)
-            up = mean .+ _jmap_usolve(F, zp)
-            lpp = _jmap_gibbs_unit_lp(m, laplace, aws, shifted, th, Ls, U, up, zp)
-            a = isfinite(lpp) ? min(1.0, exp(lpp - lp)) : 0.0
-            if rand(rng) < a
-                z = zp
-                lp = lpp
-            end
-            total += a
-            warm && (s[U] = clamp(s[U] * exp((a - 0.35) / k^0.6), 1e-3, 1.0))
-        end
-        xt[r] .= z
-        acc[U] = total / sweeps
-    end
-    return true
-end
-
-# The unit's log density in its latent coordinates at theta, up to what does
-# not move with `z`: its members' likelihoods at `u`, the effects' standard
-# normal prior, less the N(0, I) a pCN proposal keeps.
-function _jmap_gibbs_unit_lp(m, laplace, aws, shifted, th, Ls, U, u, z)
-    sampler = m.sampler
-    total = 0.0
-    for (mm, i) in enumerate(laplace.units.members[U])
-        _laplace_member_values!(shifted, th, laplace.spec, Ls, u,
-            laplace.units.offsets[U][mm])
-        v = _laplace_member_loglik(aws, laplace.objective.subject_objectives[i], shifted)
-        isfinite(v) || return -Inf
-        total += v
-    end
-    return total - sum(abs2, u) / 2 + sum(abs2, z) / 2
-end
-
-"""One Gibbs iteration of chain `ch`: theta's NUTS move with `z` held, then
-every unit's `sweeps` moves with theta held. Returns theta's transition."""
-function _jmap_gibbs_iterate!(ch::_JMapGibbs, m::CTSEMJointMap, counter::Threads.Atomic{Int},
-    metric::CTSEMMetric, sweeps::Int, maxdepth::Int, maxdelta::Float64, warm::Bool, k::Int)
-    sampler = m.sampler
-    laplace = sampler.laplace
-    npar = m.npar
-    ch.iteration += 1
-    td = _JMapThetaDensity(CTSEMJointMapDensity(m, counter), copy(ch.xt), zeros(sampler.ndim))
-    w = ch.xt[1:npar]
-    gw = zeros(npar)
-    logp = td(gw, w)
-    isfinite(logp) || throw(DomainError(w, "the map's Gibbs kernel: theta's conditional " *
-        "density is not finite at the chain's own point"))
-    step = _nuts_transition!(ch.ws, td, metric, ch.rng, w, gw, logp, ch.eps, maxdepth, maxdelta)
-    ch.xt[1:npar] .= w
-    if warm
-        ch.eps = _dual_update!(ch.da, step.accept)
-        ch.warmup_divergent += step.divergent
-    end
-    theta = m.theta0 .+ m.Ct * w
-    th = _laplace_extend(laplace, theta)
-    Ls = _laplace_popchols(th, laplace.spec)
-    mu = th[m.P]
-    thR = th[m.R]
-    acc = zeros(sampler.nunits)
-    xt = ch.xt
-    s = ch.s
-    seed = ch.seed
-    iteration = ch.iteration
-    _laplace_partition((mine, _w) -> _jmap_gibbs_units!(xt, s, acc, m, th, Ls, mu, thR, seed,
-        iteration, sweeps, warm, k, mine), laplace, sampler.nunits)
-    # A unit sweep is a pass over that unit's members, so a sweep of all of
-    # them a gradient's worth; and one more for each unit's starting value.
-    Threads.atomic_add!(counter, sweeps + 1)
-    active = count(>(0), sampler.udims)
-    if !warm && active > 0
-        ch.zaccept += sum(acc) / active
-        ch.nz += 1
-    end
-    return step
-end
-
-"""`niter` iterations of chain `ch`, the first `nwarm` adapting theta's step
-and the units' pCN steps and discarded; the rest recorded."""
-function _jmap_gibbs_run!(ch::_JMapGibbs, m::CTSEMJointMap, counter::Threads.Atomic{Int},
-    metric::CTSEMMetric, niter::Int, nwarm::Int, sweeps::Int, maxdepth::Int,
-    maxdelta::Float64)
-    for k in 1:niter
-        warm = k <= nwarm
-        step = _jmap_gibbs_iterate!(ch, m, counter, metric, sweeps, maxdepth, maxdelta, warm, k)
-        if warm
-            k == nwarm && (ch.eps = _dual_final(ch.da))
-        else
-            push!(ch.draws, copy(ch.xt))
-            push!(ch.accept, step.accept)
-            push!(ch.divergent, step.divergent)
-            push!(ch.depth, step.depth)
-            push!(ch.energy, step.energy)
-        end
-    end
-    return ch
-end
-
-"""A Gibbs chain's record as the joint samplers' `_ChainResult`, for the
-pooling and reporting they share."""
-function _jmap_gibbs_result(ch::_JMapGibbs, metric::CTSEMMetric)
-    D = length(ch.xt)
-    draws = isempty(ch.draws) ? zeros(D, 0) : reduce(hcat, ch.draws)
-    return _ChainResult(draws, copy(ch.accept), copy(ch.divergent), copy(ch.depth),
-        copy(ch.energy), ch.eps, ch.warmup_divergent, 0, copy(ch.xt), metric)
-end
-
-"""
-    _jmap_final_gibbs(m, counter, nchains, seed, starts, eps, nwarmup, ndraws, ...)
-
-The kept draws by the Gibbs kernel under the final map: `nwarmup` iterations
-adapting theta's step and the units' pCN steps from `starts`, then `ndraws` a
-chain, extended by `_sample_until_target` judged on theta. Chains at once on
-the pool, as the joint samplers run theirs.
-"""
-function _jmap_final_gibbs(m::CTSEMJointMap, counter::Threads.Atomic{Int}, nchains::Int,
-    seed::Integer, starts, eps::Float64, nwarmup::Int, ndraws::Int, sweeps::Int,
-    maxdepth::Int, target_accept::Float64, maxdelta::Float64, min_ess::Float64,
-    mean_ess::Float64, max_draws::Int, rhat_target::Float64, verbose::Bool, t0::Float64,
-    coordinate)
-    sampler = m.sampler
-    npar = m.npar
-    metric = _metric_from_covariances(UnitRange{Int}[1:npar],
-        Matrix{Float64}[Matrix{Float64}(I, npar, npar)])
-    chains = Vector{_JMapGibbs}(undef, nchains)
-    for c in 1:nchains
-        x0 = starts === nothing ? zeros(sampler.ndim) : copy(starts[mod1(c, length(starts))])
-        e = eps > 0 ? eps : 0.1
-        chains[c] = _JMapGibbs(x0, e, _DualAverage(e, target_accept),
-            _NUTSWorkspace(npar, maxdepth), fill(0.5, sampler.nunits),
-            Random.Xoshiro(UInt64(seed) + UInt64(c)), hash((seed, :gibbs, c)), 0,
-            Vector{Float64}[], Float64[], Bool[], Int[], Float64[], 0.0, 0, 0)
-    end
-    run_all = function (niter, nwarm)
-        _laplace_parallel(1:nchains) do c
-            _jmap_gibbs_run!(chains[c], m, counter, metric, niter, nwarm, sweeps, maxdepth,
-                maxdelta)
-            true
-        end
-        return nothing
-    end
-    run_all(nwarmup + ndraws, nwarmup)
-    pool = () -> m.theta0 .+ m.Ct * _pool_draws([_jmap_gibbs_result(ch, metric) for ch in chains], npar)
-    extend! = function (wanted, attempt)
-        run_all(wanted, 0)
-        return nothing
-    end
-    run = _sample_until_target(pool, extend!, nchains, ndraws, min_ess, mean_ess,
-        max_draws, rhat_target, verbose; t0=t0, coordinate=coordinate)
-    zaccept = [ch.nz > 0 ? ch.zaccept / ch.nz : NaN for ch in chains]
-    return (results=[_jmap_gibbs_result(ch, metric) for ch in chains], ndraws=run.total,
-        trace=run.trace, zaccept=zaccept)
-end
-
 """
     ctsem_sample_map(laplace, values; kwargs...)
 
@@ -1166,8 +885,7 @@ function ctsem_sample_map(laplace::CTSEMLaplaceObjective, values::AbstractVector
     progress_sink=nothing, stepsize::Real=0.0, coordinate=nothing,
     windows::AbstractVector{<:Integer}=[40, 80], nsettle::Integer=25,
     ncheck::Integer=25, maxrows::Integer=400, cross::Bool=true,
-    report::Union{Nothing,CTSEMLaplaceObjective}=nothing, theta_scores::Bool=false,
-    kernel::Union{Symbol,AbstractString}=:nuts, sweeps::Integer=2, gibbs_warmup::Integer=50)
+    report::Union{Nothing,CTSEMLaplaceObjective}=nothing)
 
     t0 = time()
     nchains = Int(nchains); nwarmup = Int(nwarmup); ndraws = Int(ndraws)
@@ -1224,8 +942,7 @@ function ctsem_sample_map(laplace::CTSEMLaplaceObjective, values::AbstractVector
             c -> CTSEMJointMapDensity(mw, counter); init_eps=eps, starts=starts)
         moved = _jmap_moved(results, npar)
         Wl = _pool_draws(results[moved], D)
-        m2, refit, lambda, rows = _jmap_refit(m, Wl, rng; maxrows=Int(maxrows),
-            scores=theta_scores, counter=counter)
+        m2, refit, lambda, rows = _jmap_refit(m, Wl, rng; maxrows=Int(maxrows))
         extra += rows
         starts = _jmap_restarts(m, m2, results, moved, Wl, rng)
         eps = median([r.stepsize for r in results[moved]])
@@ -1254,18 +971,12 @@ function ctsem_sample_map(laplace::CTSEMLaplaceObjective, values::AbstractVector
 
     # The kept draws, under the final map, to the targets, judged on theta.
     mf = m
-    gibbs = Symbol(kernel) === :gibbs
-    final = gibbs ?
-        _jmap_final_gibbs(mf, counter, nchains, seed, starts, eps, Int(gibbs_warmup), ndraws,
-            Int(sweeps), Int(maxdepth), Float64(target_accept), Float64(maxdelta),
-            Float64(min_ess), Float64(mean_ess), max(Int(max_draws), ndraws),
-            Float64(rhat_target), verbose, t0, coordinate) :
-        _jmap_final(mf, counter, nchains, parallel, seed, centre, metric,
-            isempty(windows) ? nwarmup : Int(nsettle), ndraws, Int(maxdepth),
-            Float64(target_accept), Float64(maxdelta), Float64(init_scale), adapt_metric,
-            adapt, eps, starts, Float64(min_ess), Float64(mean_ess),
-            max(Int(max_draws), ndraws), Float64(rhat_target), verbose, progress_overwrite,
-            progress_callback, progress_sink, t0, coordinate)
+    final = _jmap_final(mf, counter, nchains, parallel, seed, centre, metric,
+        isempty(windows) ? nwarmup : Int(nsettle), ndraws, Int(maxdepth),
+        Float64(target_accept), Float64(maxdelta), Float64(init_scale), adapt_metric,
+        adapt, eps, starts, Float64(min_ess), Float64(mean_ess),
+        max(Int(max_draws), ndraws), Float64(rhat_target), verbose, progress_overwrite,
+        progress_callback, progress_sink, t0, coordinate)
     results = final.results
     ndraws = final.ndraws
 
@@ -1325,8 +1036,7 @@ function ctsem_sample_map(laplace::CTSEMLaplaceObjective, values::AbstractVector
          map=(gradients=counter[] + extra + (hybrid ? total : 0),
               learn_gradients=learn_gradients, learn_secs=learned,
               windows=windowlog, coordinates=D - npar,
-              integrated=hybrid, coupled=length(mf.R), kernel=String(Symbol(kernel)),
-              unit_accept=gibbs ? final.zaccept : Float64[])))
+              integrated=hybrid, coupled=length(mf.R))))
 end
 
 """
