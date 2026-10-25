@@ -236,6 +236,19 @@ end
     @test out.overshoot.coordinates == [3]
     @test !verdict([2.5, -0.5, 7.0], Int[], Int[]).overshot
     @test verdict([2.5, -0.5, 7.0], Int[], nothing).overshot
+    # After the iteration cap the pool is the transforms' alone, Hessian or
+    # none (the mock has no transforms, so only the flag), and the verdict
+    # does not widen it: below, the third coordinate has nothing to give and
+    # the first, which would, is asked only where the search may widen.
+    @test CT._ctsem_overshoot_candidates(mock, [2.5, -0.5, 7.0], Int[], nothing,
+        1e-12, 1e-3; capped=true) == Int[]
+    @test CT._ctsem_overshoot_candidates(mock, [2.5, -0.5, 7.0], [1], nothing,
+        1e-12, 1e-3; capped=true) == [1]
+    capped(x, candidates; widen) = CT._ctsem_optimise_verdict(mock, x,
+        zeros(length(x)), -sum(abs2, x), 1e-9, 1e-9, 0.0, Int[], 1e-8, 1e-6;
+        candidates=candidates, widen=widen)
+    @test capped([2.5, -0.5, 0.0], [3]; widen=true).overshot
+    @test !capped([2.5, -0.5, 0.0], [3]; widen=false).overshot
 end
 
 # The reason the probe is not one coordinate at a time. A degenerate corner is

@@ -2235,7 +2235,8 @@ ctBackendParMatrices <- function(fit, raw = NULL, tipreds = NULL, state = NULL,
     # note read "intervals from ctOptimUncertainty(uncertainty='')" -- a normal
     # approximation named on the one fit that does not use one.
     paste0("Julia backend; intervals from posterior draws (",
-      if (identical(object$sample$sampler, "saem")) "SAEM kernel" else "NUTS",
+      if (identical(object$sample$sampler, "saem")) "SAEM kernel" else
+      if (identical(object$sample$sampler, "map")) "NUTS through a learnt map" else "NUTS",
       ") pushed through the transforms.")
   } else if (has_posterior) {
     # Draws taken on the quadrature hybrid say what that density is known to

@@ -37,11 +37,15 @@ test_that("a sampled fit carries draws the summary machinery can read", {
   skip_without_julia()
   fit <- .sample_fixture()
   npar <- length(fit$estimate$raw)
-  # intoverpop='none': the placement asserted below is SAEM's, which the joint
-  # target takes; the fixture names 'laplace', whose own target is marginal.
+  # intoverpop='none': the placement asserted below is SAEM's, which SAEM's
+  # kernel takes on the joint target; the fixture names 'laplace', whose own
+  # target is marginal. Named, because on this fixture, whose effect the filter
+  # integrates, the joint default is the map sampler, placed at the fit's
+  # estimate (tested below).
   sampled <- suppressWarnings(suppressMessages(
     ctFitUncertainty(fit, uncertainty = "sample", cores = 1,
-      control = list(chains = 2, warmup = 80, draws = 80, intoverpop = "none"))))
+      control = list(chains = 2, warmup = 80, draws = 80, intoverpop = "none",
+        sampler = "saem"))))
 
   expect_s3_class(sampled, "ctJuliaFit")
   # And as a fit, not as a model spec: "ctFitModel" marks an unfitted handle,
@@ -86,9 +90,12 @@ test_that("the diagnostics come back per parameter and per chain", {
   npar <- length(fit$estimate$raw)
   # intoverpop='none': this test asserts on the per-subject effect summaries
   # below, which the marginal target -- the default -- does not carry at all.
+  # SAEM's kernel by name: its diagnostics (the scale moves' acceptance) are
+  # among what is asserted, and on this fixture the joint default is the map.
   sampled <- suppressWarnings(suppressMessages(
     ctFitUncertainty(fit, uncertainty = "sample", cores = 1,
-      control = list(chains = 2, warmup = 80, draws = 80, intoverpop = "none"))))
+      control = list(chains = 2, warmup = 80, draws = 80, intoverpop = "none",
+        sampler = "saem"))))
   diagnostics <- sampled$sample
 
   expect_s3_class(diagnostics, "ctSampleDiagnostics")
@@ -104,7 +111,7 @@ test_that("the diagnostics come back per parameter and per chain", {
   expect_length(diagnostics$accept, 2L * diagnostics$draws)
   # The point the chains started from.
   expect_equal(diagnostics$start, sampled$estimate$placed_raw)
-  # SAEM's kernel, the default on the joint posterior.
+  # SAEM's kernel, as asked.
   expect_identical(diagnostics$sampler, "saem")
   expect_length(diagnostics$scale_accept, 2L)
   expect_output(print(diagnostics), "SAEM kernel")
@@ -251,6 +258,107 @@ test_that("NUTS samples the joint posterior through the same runner", {
   expect_equal(d$start, nuts$estimate$placed_raw)
 })
 
+# The map sampler on one fit, and what it is checked against. Its change of
+# variables first, deterministically (`ctsem_sample_map_check`: the latent
+# density's gradient and the map's log Jacobian against differences), then its
+# draws: the parameters' means against `against`'s, as z on both runs'
+# effective sizes, and the reported effects' means against SAEM's kernel,
+# which samples every effect. Widths are not compared: at these sizes the
+# other samplers mix slowly along this fixture's ridge between the initial and
+# manifest means (effective sizes 16-73 there, against the map's 215-634, and
+# SAEM's sds 0.065 against the exact marginal's 0.138), so a width ratio reads
+# the reference's error, not the map's.
+.map_checked <- function(fit, against, draws = 300L) {
+  ask <- function(...) suppressWarnings(suppressMessages(ctFitUncertainty(fit,
+    uncertainty = "sample", cores = 1, control = list(chains = 2, draws = draws,
+      processes = FALSE, ...))))
+  map <- ask(intoverpop = "none", sampler = "map", saveEffects = TRUE)
+  ref <- do.call(ask, against)
+  saem <- ask(intoverpop = "none")
+  a <- map$estimate$rawposterior
+  b <- ref$estimate$rawposterior
+  sb <- apply(b, 2, stats::sd)
+  ess <- function(r) pmax(as.numeric(r$sample$ess), 1)
+  check <- ctsem:::.ctJuliaGet(ctsem:::.ctJuliaModule(fit$model_spec$project)$
+    ctsem_sample_map_check(ctsem:::.ctJuliaObjective(fit, hybrid = TRUE),
+      as.numeric(fit$estimate$raw),
+      hessian = ctsem:::.ctJuliaPut(as.matrix(fit$uncertainty$hessian))))
+  list(map = map, saem = saem, check = check,
+    z = max(abs(colMeans(a) - colMeans(b)) / (sb * sqrt(1 / ess(map) + 1 / ess(ref)))),
+    effects = max(abs(map$sample$effect_mean - saem$sample$effect_mean) /
+      saem$sample$effect_sd))
+}
+
+test_that("the map sampler draws the joint posterior with the filter's effects integrated", {
+  skip_without_julia()
+  fit <- .sample_fixture()
+  npar <- length(fit$estimate$raw)
+  neffects <- length(fit$model_spec$subject_starts) *
+    length(fit$model_spec$laplace$re_index)
+  # control$sampler = 'map' (`ctsem_sample_map`): NUTS through a learnt map on
+  # the hybrid objective. The fixture's one effect is on a manifest mean, which
+  # the filter integrates exactly, so no unit keeps a coordinate: the chains
+  # move the parameters alone, and every effect is reported from its exact
+  # conditional given each draw. Every unit being quadratic, the Laplace
+  # marginal is exact, and NUTS on it is the reference for the parameters.
+  r <- .map_checked(fit, list(intoverpop = "laplace", sampler = "nuts"))
+  expect_equal(r$check$coordinates, 0L)
+  expect_lt(r$check$gradient, 1e-5)
+  expect_lt(r$check$jacobian, 1e-6)
+  d <- r$map$sample
+  expect_identical(d$sampler, "map")
+  expect_identical(d$target, "joint")
+  expect_identical(d$placement$method, "fit")
+  expect_equal(dim(r$map$estimate$rawposterior), c(2L * d$draws, npar))
+  expect_true(all(is.finite(r$map$estimate$rawposterior)))
+  expect_length(d$effect_mean, neffects)
+  expect_identical(names(d$effect_mean), names(r$saem$sample$effect_mean))
+  expect_equal(ncol(d$effects), neffects)
+  expect_true(all(is.finite(d$effects)))
+  expect_true(all(d$effect_sd > 0))
+  # A wrong Jacobian or conditional moves a mean by many Monte Carlo errors
+  # and an effect's mean by a good part of its sd; these see that.
+  expect_lt(r$z, 4)
+  expect_lt(r$effects, 0.5)
+  expect_match(summary(r$map)$uncertaintyNote, "NUTS through a learnt map", fixed = TRUE)
+
+  # Refused where it cannot apply, by name.
+  expect_error(ctFitUncertainty(fit, uncertainty = "sample",
+    control = list(sampler = "map", intoverpop = "laplace")),
+    "control$sampler = 'map'", fixed = TRUE)
+  expect_error(ctFitUncertainty(fit, uncertainty = "sample",
+    control = list(sampler = "map", intoverpop = "none", placement = "saem")),
+    "does not apply to control$sampler = 'map'", fixed = TRUE)
+  expect_error(ctFitUncertainty(fit, uncertainty = "sample",
+    control = list(sampler = "map", intoverpop = "none", adapt_effects = TRUE)),
+    "control$adapt_effects", fixed = TRUE)
+})
+
+test_that("the map sampler maps the effects the filter cannot integrate", {
+  skip_without_julia()
+  # A random drift beside the manifest mean: the drift is not affine in the
+  # filter, so it stays a coordinate, partially non-centred through the
+  # subjects' summaries -- and the manifest mean with it, one qualifying
+  # effect beside another costing more in the filter than as a coordinate
+  # (the hybrid's cost rule). No exact marginal here, so the parameters'
+  # means are read against SAEM's.
+  fit <- fit_cached("map fixture: random drift", {
+    model <- laplace_fixture_model()
+    model$pars$indvarying[model$pars$matrix == "DRIFT"] <- TRUE
+    suppressWarnings(suppressMessages(ctsem::ctFit(laplace_fixture_data(), model,
+      backend = "julia", cores = 1, intoverpop = "laplace", priors = TRUE,
+      optimcontrol = list(finishsamples = 20))))
+  })
+  r <- .map_checked(fit, list(intoverpop = "none"))
+  expect_gte(r$check$coordinates, length(fit$model_spec$subject_starts))
+  expect_lt(r$check$gradient, 1e-5)
+  expect_lt(r$check$jacobian, 1e-6)
+  expect_identical(r$map$sample$sampler, "map")
+  expect_length(r$map$sample$effect_mean, length(r$saem$sample$effect_mean))
+  expect_lt(r$z, 4)
+  expect_lt(r$effects, 0.5)
+})
+
 test_that("placement = 'fit' starts the chains around the fit's own estimate", {
   skip_without_julia()
   fit <- .sample_fixture()
@@ -287,10 +395,15 @@ test_that("the SAEM kernel is refused by name where it cannot apply", {
   # The default follows the target: the marginal one has no effects for
   # SAEM's sweeps.
   expect_identical(.ctBackendSamplerName(NULL, joint = TRUE), "saem")
+  # The joint default is the map where the filter integrates some of the
+  # effects, as it does this fixture's one.
+  expect_identical(.ctBackendSamplerName(NULL, joint = TRUE, integrable = TRUE), "map")
+  expect_true(.ctBackendMapDefault(.ctBackendSpec(fit)))
+  expect_false(.ctBackendMapDefault(.ctBackendSpec(fit), tisampled = TRUE))
   expect_identical(.ctBackendSamplerName(NULL, joint = FALSE), "nuts")
   expect_identical(.ctBackendSamplerName("nuts", joint = TRUE), "nuts")
   expect_error(ctFitUncertainty(fit, uncertainty = "sample",
-    control = list(sampler = "hmc")), "'nuts', 'saem' or 'smc'", fixed = TRUE)
+    control = list(sampler = "hmc")), "'nuts', 'saem', 'map' or 'smc'", fixed = TRUE)
 })
 
 test_that("a marginal target's default sampler is chosen by the fit's check", {

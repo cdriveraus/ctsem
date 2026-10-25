@@ -342,13 +342,22 @@ too, unless the fit's \code{optimcontrol$tipredMissing} or
 \code{control$tipredMissing} is \code{'impute'}.
 
 \emph{The kernel.} \code{control$sampler} chooses it for the joint
-posterior: \code{'saem'} (the default there) draws the random effects by
+posterior. By default it is \code{'map'} where the Kalman filter can
+integrate some of the random effects exactly, and \code{'saem'} elsewhere.
+\code{'saem'} draws the random effects by
 SAEM's Metropolis-within-Gibbs sweeps and the parameters given them by NUTS,
 with moves that re-express the effects for each level's means and scales;
-\code{'nuts'} runs NUTS on the parameters and every random effect at once.
-Both draw the same posterior; SAEM's kernel was the more reliable and the
-faster in comparisons on variance and nested models, where NUTS on the
-joint vector mixes poorly. A marginal target is sampled by tempered
+\code{'nuts'} runs NUTS on the parameters and every random effect at once;
+\code{'map'} runs NUTS through a learnt map, with the random effects the
+Kalman filter can integrate exactly (on intercepts, initial means, manifest
+means and time dependent predictor effects, in a linear Gaussian model)
+integrated out and the rest partially non-centred, unit by unit, from
+Gaussian summaries of each subject's likelihood learnt in warm-up; it
+starts from the fit's estimate (\code{placement = 'fit'}) and reports every
+random effect, the integrated ones drawn from their exact conditional.
+All draw the same posterior; SAEM's kernel was the more reliable and the
+faster than \code{'nuts'} in comparisons on variance and nested models,
+where NUTS on the joint vector mixes poorly. A marginal target is sampled by tempered
 sequential Monte Carlo where the normal check of \code{'checked'} named
 directions in which the posterior departs from the fit's Hessian, and by
 NUTS where it named none, or where the call sets a control only NUTS reads

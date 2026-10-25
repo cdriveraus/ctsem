@@ -280,7 +280,14 @@
   # `checkcores`, because workers may still be warming (`.ctJuliaSampleFit()`).
   if (marginal && !isTRUE(state_explicit) && !tisampled)
     fit <- .ctBackendSampleCheck(fit, cores = checkcores, verbose = verbose)
-  placement <- .ctBackendPlacementName(control$placement, marginal || isTRUE(state_explicit))
+  if (identical(control$sampler, "map") && (marginal || isTRUE(state_explicit))) {
+    stop("control$sampler = 'map' samples the joint posterior over population ",
+      "parameters and random effects, and this run asks for ",
+      if (isTRUE(state_explicit)) "the joint posterior over the latent states. "
+      else "the marginal posterior. ",
+      "Use the default sampler, or sample with intoverpop = 'none'.",
+      call. = FALSE)
+  }
   if (identical(control$sampler, "saem") && (marginal || isTRUE(state_explicit))) {
     stop("control$sampler = 'saem' samples the joint posterior over population ",
       "parameters and random effects, and this run asks for ",
@@ -307,7 +314,14 @@
     joint = !marginal && !isTRUE(state_explicit),
     named = if (marginal && !isTRUE(state_explicit) && !tisampled &&
       !is.null(directions)) NCOL(directions) else 0L,
-    nutsonly = .ctBackendNutsAsked(control, nutsgiven))
+    nutsonly = .ctBackendNutsAsked(control, nutsgiven),
+    integrable = .ctBackendMapDefault(.ctBackendSpec(fit), tisampled))
+  # After the sampler: the map's default placement is the fit's estimate.
+  placement <- .ctBackendPlacementFor(control, marginal || isTRUE(state_explicit))
+  # The map sampler's warm-up is its learning schedule's (`ctsem_sample_map`'s
+  # `nwarmup`, then its windows), not NUTS's 200: a warmup the caller did not
+  # write is left to it.
+  if (identical(control$sampler, "map") && !"warmup" %in% nutsgiven) control$warmup <- NULL
   # Resolved once here for its refusals, before any worker is started or the
   # engine reached: a setting refused deep in a worker process would surface
   # as a failed chain and a fallback rather than as the error it is.
@@ -444,8 +458,9 @@
   # overrides its route; read by `.ctBackendUncertaintySample()`.
   "tipredMissing",
   # Which kernel draws the joint posterior: 'saem' (SAEM's sweeps for the
-  # effects, NUTS for the parameters given them; the default there) or 'nuts'
-  # (NUTS on the whole joint vector); resolved against the target by
+  # effects, NUTS for the parameters given them; the default there), 'nuts'
+  # (NUTS on the whole joint vector) or 'map' (NUTS through a learnt map, the
+  # affine effects integrated exactly); resolved against the target by
   # `.ctBackendUncertaintySample()` and read by `.ctBackendSampleControl()`.
   "sampler",
   # How many particles tempered SMC (`sampler = 'smc'`) carries, 200 by
@@ -599,7 +614,21 @@
 # series or the 250-unit shell), and NUTS did where it named none, by 1.3-1.4
 # times; on the nonlinear model, two named, they tied.
 #
-# 'saem' is the default on the joint target because it is the more reliable
+# 'map' runs NUTS on the joint target through a learnt map
+# (`ctsem_sample_map`, sample_map.jl), on the hybrid objective: the effects the
+# filter integrates exactly are integrated, and each unit's remaining effects
+# are partially non-centred from Gaussian summaries of its members'
+# likelihoods, learnt from their scores in warm-up windows. It starts from the
+# fit's estimate, not SAEM's placement.
+#
+# On the joint target the default is 'map' where the filter integrates some
+# of the effects exactly (`.ctBackendMapDefault()`), and 'saem' elsewhere. On
+# the posterior race's 20 fixtures the map was faster than SAEM's kernel on all
+# eight with such effects, by 1.3 to 15 times, and slower on eight of the
+# twelve without, where its partial centring is what SAEM's scale moves already
+# do (review/SAMPLING-general-joint-map-2026-10-25.md).
+#
+# 'saem' is the default on the rest of the joint target because it is the more reliable
 # of the two there, not only the faster: through `ctFitUncertainty()` on 13
 # models (dev2, review/POSTERIOR-race-2026-10-02.md) its mean worst error
 # against a long reference was 0.34 posterior sds to NUTS's 0.50, at 0.6x the
@@ -608,14 +637,15 @@
 # state-explicit target has no effects for its sweeps, so NUTS or SMC is the
 # sampler there; the state-explicit one has no check, so NUTS.
 #' @keywords internal
-.ctBackendSamplerName <- function(sampler, joint = TRUE, named = 0L, nutsonly = FALSE) {
+.ctBackendSamplerName <- function(sampler, joint = TRUE, named = 0L, nutsonly = FALSE,
+  integrable = FALSE) {
   if (is.null(sampler)) {
-    if (isTRUE(joint)) return("saem")
+    if (isTRUE(joint)) return(if (isTRUE(integrable)) "map" else "saem")
     return(if (!isTRUE(nutsonly) && isTRUE(named > 0L)) "smc" else "nuts")
   }
   if (!is.character(sampler) || length(sampler) != 1L ||
-      !sampler %in% c("nuts", "saem", "smc")) {
-    stop("control$sampler must be 'nuts', 'saem' or 'smc'.", call. = FALSE)
+      !sampler %in% c("nuts", "saem", "map", "smc")) {
+    stop("control$sampler must be 'nuts', 'saem', 'map' or 'smc'.", call. = FALSE)
   }
   sampler
 }
@@ -639,6 +669,33 @@
 .ctBackendNutsAsked <- function(control, nutsgiven = .ctBackendNutsControls(control)) {
   length(nutsgiven) > 0L || isTRUE(control$adapt_metric) ||
     isTRUE(control$adapt_effects) || !is.null(control$settleTol)
+}
+
+# Whether the joint target's default sampler is the map: where the subject
+# filter integrates some of the effects exactly (`spec$laplace$hybrid`, set by
+# `.ctJuliaLaplaceHybrid()`), whose integration is the map sampler's main
+# gain. Not with sampled TI predictor values, whose hybrid objective it has
+# not been checked on.
+#' @keywords internal
+.ctBackendMapDefault <- function(spec, tisampled = FALSE) {
+  !isTRUE(tisampled) && !is.null(spec$laplace$hybrid)
+}
+
+# The placement a call's `control` resolves to: `.ctBackendPlacementName()`'s,
+# except that the map sampler starts from the fit's estimate and its Hessian,
+# which SAEM's placement does not give it -- 'fit' by default there, and
+# 'saem' refused by name rather than ignored.
+#' @keywords internal
+.ctBackendPlacementFor <- function(control, marginal) {
+  if (identical(control$sampler, "map")) {
+    if (identical(control$placement, "saem")) {
+      stop("control$placement = 'saem' does not apply to control$sampler = 'map', ",
+        "which starts from the fit's estimate and learns its map from there.",
+        call. = FALSE)
+    }
+    return("fit")
+  }
+  .ctBackendPlacementName(control$placement, marginal)
 }
 
 # Where the chains start, `control$placement`. 'saem', the default on the joint
@@ -759,6 +816,16 @@
   # parameters' metric at the conditional curvature it was placed with, so
   # the joint metric's adaptation and the warmup's early stop have nothing to
   # act on there. Refused by name rather than accepted and ignored.
+  if (identical(settings$sampler, "map")) {
+    unused <- c(adapt_effects = isTRUE(control$adapt_effects),
+      settleTol = !is.null(control$settleTol))
+    if (any(unused)) {
+      stop("control$", paste(names(unused)[unused], collapse = ", control$"),
+        " is a setting of the NUTS sampler's joint metric, which the map sampler ",
+        "(control$sampler = 'map') replaces with its own coordinates. Add ",
+        "sampler = 'nuts' to use it.", call. = FALSE)
+    }
+  }
   if (settings$sampler %in% c("saem", "smc")) {
     unused <- c(adapt_metric = isTRUE(control$adapt_metric),
       adapt_effects = isTRUE(control$adapt_effects),
@@ -1005,13 +1072,15 @@
 # are cached per process and keyed on content, so a worker pays for the build
 # once and the parent's own handle is reused rather than rebuilt.
 #' @keywords internal
-.ctBackendSampleObjective <- function(fit, target) {
+.ctBackendSampleObjective <- function(fit, target, hybrid = FALSE) {
   if (isTRUE(target$state_explicit)) {
     .ctJuliaJointObjective(fit, target$npar)
   } else {
     # The marginal target is the objective the fit optimised; the joint one
-    # samples every effect, own variances' included.
-    .ctJuliaObjective(fit, hybrid = isTRUE(target$marginal))
+    # samples every effect, own variances' included -- except for the map
+    # sampler (`hybrid`), whose joint density integrates the effects the
+    # filter integrates exactly and reports them from their conditional.
+    .ctJuliaObjective(fit, hybrid = isTRUE(target$marginal) || isTRUE(hybrid))
   }
 }
 
@@ -1113,7 +1182,12 @@
   draws <- budget$first
   settings$max_draws <- budget$max_draws
   module <- .ctJuliaModule(fit$model_spec$project)
-  objective <- .ctBackendSampleObjective(fit, target)
+  mapped <- identical(settings$sampler, "map") && !isTRUE(target$marginal)
+  objective <- .ctBackendSampleObjective(fit, target, hybrid = mapped)
+  # The map sampler reports the effects in the layer's layout, which labels
+  # them (`.ctBackendEffectIndex()`): on the hybrid objective a unit whose
+  # effects are all integrated keeps no block.
+  report <- if (mapped) .ctBackendSampleObjective(fit, target) else NULL
 
   # Chains are the parallel axis, and in one session they can only be concurrent
   # if it was started with threads for them. Said once, here, because the
@@ -1145,7 +1219,7 @@
   # SAEM kernel has none (`.ctBackendSampleControl()` refuses it there).
   if (!saem) arguments$adapt_metric <- settings$adapt_metric
   for (name in c("min_ess", "mean_ess", "max_draws", "rhat_target",
-    if (!saem) "settle_tol")) {
+    if (!saem && !mapped) "settle_tol")) {
     if (!is.null(settings[[name]])) arguments[[name]] <- settings[[name]]
   }
   # A worker process's chains stop when the parent says, not by their own
@@ -1188,8 +1262,10 @@
   if (!isTRUE(target$marginal)) {
     arguments$npar <- as.integer(target$npar)
     arguments$save_effects <- isTRUE(saveEffects)
-    if (!saem) arguments$adapt_effects <- settings$adapt_effects
-    if (identical(target$placement, "saem")) arguments$saem <- TRUE
+    if (!saem && !mapped) arguments$adapt_effects <- settings$adapt_effects
+    if (identical(target$placement, "saem") && !mapped) arguments$saem <- TRUE
+    if (mapped) arguments$report <- report
+    if (mapped && is.null(control$warmup)) arguments$nwarmup <- NULL
   } else if (!identical(target$gradient, "adjoint")) {
     # `ctsem_sample_marginal`'s own default is `:adjoint`; only said
     # explicitly when something asked for the other one. `ctsem_sample` (the
@@ -1210,7 +1286,8 @@
     arguments$nparameters <- as.integer(target$npar)
   }
   entry <- if (isTRUE(target$marginal)) module$ctsem_sample_marginal else
-    if (saem) module$ctsem_saem_sample else module$ctsem_sample
+    if (saem) module$ctsem_saem_sample else
+    if (mapped) module$ctsem_sample_map else module$ctsem_sample
   # Tempered SMC takes the start, the metric, the particle count and the final
   # phase's targets; none of NUTS's warmup settings, and no R-hat target -- its
   # final phase is many short chains, whose split R-hat reads their
@@ -1328,7 +1405,8 @@
       else "each",
       ".") else
     message("Sampling ", targetlabel,
-      if (identical(settings$sampler, "saem")) " with the SAEM kernel" else "",
+      if (identical(settings$sampler, "saem")) " with the SAEM kernel" else
+      if (identical(settings$sampler, "map")) " through a learnt map" else "",
       ": ", chains, " chain",
       if (chains == 1L) "" else "s",
       ", ", warmup, " warmup + ",
@@ -2108,7 +2186,14 @@ print.ctSampleDiagnostics <- function(x, ...) {
   # of how its route was chosen.
   marginal <- !identical(intoverpop, "none")
   jointtarget <- isTRUE(intoverstates) && !marginal
-  if (jointtarget && identical(.ctBackendPlacementName(control$placement, FALSE), "saem")) {
+  # The joint target's default sampler, settled before the placement: the map
+  # starts from an optimised fit and its Hessian, SAEM from the start alone.
+  if (jointtarget && is.null(control$sampler) &&
+      .ctBackendMapDefault(model_spec, NROW(spec0$ti_imputed) > 0L &&
+        .ctJuliaTIMissingSamples(spec0))) {
+    control$sampler <- "map"
+  }
+  if (jointtarget && identical(.ctBackendPlacementFor(control, FALSE), "saem")) {
     placementcontrol <- utils::modifyList(placementcontrol,
       list(estonly = TRUE, maxiter = 0L))
   }
