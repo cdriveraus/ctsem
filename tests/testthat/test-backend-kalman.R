@@ -439,7 +439,10 @@ test_that("the interval transition is the Jacobian of the interval", {
   model <- .kalman_indvarmeans_model()
   data <- .kalman_indvarmeans_data()
   spec <- suppressMessages(ctFit(data, model, backend = "julia", fit = FALSE))
-  npar <- max(spec$parameter_table$parnumber, na.rm = TRUE)
+  # The route's own count: on the default Laplace route the raw vector carries
+  # the population scales past the parameter table, and one sized by the table
+  # alone was read past its end by the engine.
+  npar <- ctsem:::.ctBackendNpar(spec)
   set.seed(8)
   raw <- stats::rnorm(npar, 0, .3)
   asmodel <- ctsem:::.ctBackendAsModel(spec)

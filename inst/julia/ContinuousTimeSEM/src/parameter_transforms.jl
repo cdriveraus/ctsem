@@ -69,6 +69,7 @@ function _materialize_subject_values!(subject_values::AbstractVector, values::Ab
     subject_values isa Vector || throw(ArgumentError("subject parameter buffer must be resizable"))
     nraw = length(values)
     na = _ctsem_anchor_append(sp, nraw)
+    _ctsem_check_raw_length(sp, nraw + na + length(sp.ti_tail))
     resize!(subject_values, nraw + na + length(sp.ti_tail))
     copyto!(subject_values, 1, values, 1, nraw)
     _ctsem_fill_anchors!(subject_values, sp, nraw, na)
@@ -85,6 +86,24 @@ function _materialize_subject_values!(subject_values::AbstractVector, values::Ab
         subject_values[parameter] += _ctsem_ti_effect(sp, values, i) * tipreds[predictor]
     end
     return subject_values
+end
+
+"""
+    _ctsem_check_raw_length(sp, n)
+
+Refuse a subject vector of `n` values -- raw parameters, stated population
+values and TI tail -- too short for the cells that read it (`sp.parnumber`) and
+the TI effects' coefficients, the length a subject buffer is sized by
+(`workspace_buffers.jl`). The cells read it under `@inbounds`, so a short one is
+read past its end without an error; on the Laplace route such a read corrupted
+the heap and hung a session calls later (`_laplace_check_indices`, its twin
+there). Once per subject per pass.
+"""
+@inline function _ctsem_check_raw_length(sp::EKFParameters, n::Integer)
+    need = max(maximum(sp.parnumber; init=0), maximum(sp.ti_coefficient_indices; init=0))
+    n >= need || throw(DimensionMismatch(string("a parameter vector of ", n,
+        " values for a model whose cells read raw parameter ", need)))
+    return nothing
 end
 
 """

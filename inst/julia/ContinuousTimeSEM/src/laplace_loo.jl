@@ -140,7 +140,6 @@ the proposal; see the R side (`.ctBackendLOOPsis`) for why it is above one.
 function ctsem_laplace_effect_draws(laplace::CTSEMLaplaceObjective,
     values::AbstractVector, ndraws::Integer; seed::Integer=1, scale::Real=1.0)
     theta = _laplace_extend(laplace, collect(Float64, values))
-    _laplace_check_indices(laplace, length(theta))
     _laplace_ensure_pool!(laplace)
     Ls = _laplace_popchols(theta, laplace.spec)
     units = laplace.units

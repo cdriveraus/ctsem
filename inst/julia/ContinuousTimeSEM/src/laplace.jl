@@ -932,10 +932,10 @@ function _laplace_check_indices(laplace::CTSEMLaplaceObjective, npar::Integer)
                               ("population scale", level.sd_index),
                               ("correlation", level.cor_index),
                               ("loading", level.load_index),
-                              ("own variance", filter(>(0), level.unique_index)))
-            isempty(index) && continue
-            maximum(index) <= npar || throw(ArgumentError(string(
-                "level ", l, " references ", what, " ", maximum(index),
+                              ("own variance", level.unique_index))
+            top = maximum(index; init=0)
+            top <= npar || throw(ArgumentError(string(
+                "level ", l, " references ", what, " ", top,
                 " but the parameter vector holds ", npar)))
         end
     end
@@ -953,11 +953,20 @@ it through here first, and what it returns per parameter -- a gradient, a
 Hessian, a Jacobian's columns, scores -- goes back at the caller's length. A
 vector that already carries the values, or a model with none, comes back as it
 is, so an entry point reached from another passes through unchanged.
+
+And it refuses a vector too short for the specification
+(`_laplace_check_indices`), here where every entry point passes rather than
+in each: a raw vector sized by the parameter table alone, without the Laplace
+route's population scales, was read past its end under `@inbounds` by
+`ctsem_kalman`'s subject values, and on Windows the garbage read beside it
+corrupted the heap, so a later garbage collection crashed and the session hung
+calls later, wherever that collection fell.
 """
 function _laplace_extend(laplace::CTSEMLaplaceObjective, theta::AbstractVector{T}) where {T}
     sp = laplace.objective.params
     n = length(theta)
     na = _ctsem_anchor_append(sp, n)
+    _laplace_check_indices(laplace, n + na)
     na == 0 && return theta
     out = Vector{T}(undef, n + na)
     copyto!(out, 1, theta, 1, n)
@@ -6890,7 +6899,6 @@ TI-predictor effects, which the filter adds exactly as it does in the fit.
 function ctsem_auto_substeps(laplace::CTSEMLaplaceObjective, values::AbstractVector;
     kwargs...)
     theta = _laplace_extend(laplace, collect(Float64, values))
-    _laplace_check_indices(laplace, length(theta))
     Ls = _laplace_popchols(theta, laplace.spec)
     shifted = _laplace_shifted_values(laplace, theta, Ls, function (U)
         solved = _laplace_solve_unit_mode!(laplace, U, theta, Ls)
@@ -8666,7 +8674,6 @@ function ctsem_laplace_population_deviations(laplace::CTSEMLaplaceObjective,
     length(u) == n || throw(DimensionMismatch(string("u has ", length(u),
         " coordinates where the random effects take ", n)))
     theta = _laplace_extend(laplace, collect(Float64, values))
-    _laplace_check_indices(laplace, length(theta))
     Ls = _laplace_popchols(theta, laplace.spec)
     starts, ndev = _laplace_deviation_offsets(laplace)
     return _laplace_deviations!(zeros(Float64, ndev), laplace, Ls,

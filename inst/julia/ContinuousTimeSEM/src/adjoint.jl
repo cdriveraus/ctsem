@@ -173,6 +173,7 @@ function CTSEMAdjointWorkspace(::Type{T}, sp::EKFParameters, nvalues::Integer,
     # stated population values (`EKFParameters.anchors`), then any TI
     # predictor tail (`EKFParameters.ti_tail`).
     nvalues = Int(nvalues) + _ctsem_anchor_append(sp, nvalues) + length(sp.ti_tail)
+    _ctsem_check_raw_length(sp, nvalues)
 
     predict_indices = findall(sp.predict_transforms_indices)
     update_indices = findall(sp.update_transforms_indices)
