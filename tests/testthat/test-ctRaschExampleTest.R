@@ -19,47 +19,51 @@
 # What replaced the old comparison: augmented ML against Laplace ML, two
 # estimators of the same objective that differ in how the random effects are
 # handled, compared on the raw parameter vector so no Monte Carlo enters. They
-# agree to 0.024 -- an order of magnitude tighter than the check they replace.
+# agree to 0.007 -- far tighter than the check they replace.
 
-# The generating model, stated in full: a free generating cell would be set at
-# its prior's centre and the data would move whenever that convention did.
-# Seven binary indicators through ctsem's own logistic link, each subject's
-# intercept drawn by ctGenerate from the population the model states -- CINT
-# has an identity transform here, so its sdscale of 0.3 is the intercept sd
-# and values sets the mean.
-#
-# Generated rather than looped over subjects by hand. The hand loop had to
-# write each subject's CINT through `$matrices`, because a direct assignment
-# to a ctStanModel's matrix is rebuilt away from `$pars` -- which is how this
-# file once spent a long time fitting a model with individual variation to
-# data that had none. The "not parked at zero" assertion below is what would
-# show that again.
+# The generating process, in base R so that the data move only with R's own
+# random stream: ctGenerate's draw order changes with commits that have nothing
+# to do with this file, and its data here once did. One latent process with
+# drift -0.3 and diffusion sd 0.3, integrated exactly over intervals
+# exp(N(0, 0.2^2)) long, 20 occasions a subject; each subject's intercept from
+# N(0.1, 0.3^2) and its initial state from N(-0.3, 0.5^2). Seven binary
+# indicators through the logistic link the fit uses, P(y = 1) =
+# plogis(eta + difficulty), the first difficulty zero. The "not parked at zero"
+# assertion below is what would show data generated without the individual
+# variation, which this file once spent a long time fitting.
 .rasch_data <- local({
   cache <- NULL
   function() {
     if (!is.null(cache)) return(cache)
     set.seed(1234)
     nsubjects <- 20
-    n.manifest <- 7
+    nt <- 20
     difficulty <- c(m2 = .5, m3 = .5, m4 = .5, m5 = -.5, m6 = -.5, m7 = -.5)
-    gm <- suppressMessages(ctModel(DRIFT = -.3, DIFFUSION = .3,
-      CINT = 'b|param|TRUE|0.3',
-      LAMBDA = rep(1, each = n.manifest),
-      n.latent = 1, n.manifest = n.manifest, Tpoints = 20,
-      MANIFESTVAR = diag(0, n.manifest),
-      MANIFESTMEANS = c(0, difficulty),
-      T0MEANS = -.3, T0VAR = .5))
-    gm$manifesttype[] <- 1L
-    d <- suppressMessages(ctGenerate(gm, n = nsubjects, logdtsd = .2,
-      backend = 'julia', values = c(b = .1)))
+    drift <- -.3
+    diffusion <- .3
+    intercept <- stats::rnorm(nsubjects, .1, .3)
+    d <- do.call(rbind, lapply(seq_len(nsubjects), function(i) {
+      dt <- exp(stats::rnorm(nt - 1, 0, .2))
+      eta <- numeric(nt)
+      eta[1] <- stats::rnorm(1, -.3, .5)
+      for (t in 2:nt) {
+        e <- exp(drift * dt[t - 1])
+        eta[t] <- e * eta[t - 1] + (e - 1) / drift * intercept[i] +
+          stats::rnorm(1, 0, diffusion * sqrt((e^2 - 1) / (2 * drift)))
+      }
+      p <- stats::plogis(outer(eta, c(0, difficulty), "+"))
+      y <- matrix(as.numeric(stats::runif(length(p)) < p), nt)
+      colnames(y) <- paste0("Y", seq_len(ncol(y)))
+      data.frame(id = i, time = c(0, cumsum(dt)), y)
+    }))
     cache <<- list(
       data = d,
       # The realised spread, not the nominal 0.3: 20 draws of an sd 0.3 normal
       # have a sample sd of their own, and it is that the fit can recover.
-      intercept_sd = stats::sd(attr(d, "subjectpars")$b),
+      intercept_sd = stats::sd(intercept),
       # Item difficulties, in the order the fitted model names them m2..m7.
       difficulty = difficulty,
-      drift = -.3, diffusion = .3)
+      drift = drift, diffusion = diffusion)
     cache
   }
 })
@@ -136,8 +140,8 @@ test_that("a Rasch model recovers the item difficulties that generated it", {
   # occasions leave a difficulty with a posterior sd around 0.15, so a point
   # estimate is allowed to be off by that much; what must hold is that the
   # model's own uncertainty covers the truth. The measured margins are
-  # comfortable, the tightest being m7 at -0.301 [-0.576, -0.018] against a
-  # truth of -0.5.
+  # comfortable, the tightest being m3 at 0.276 [-0.009, 0.555] against a
+  # truth of 0.5.
   for (it in items) {
     expect_lt(est[it, "2.5%"], truth[[it]], label = paste0(it, " lower bound"))
     expect_gt(est[it, "97.5%"], truth[[it]], label = paste0(it, " upper bound"))
@@ -158,19 +162,19 @@ test_that("the between-subject spread in the intercept is recovered, not parked 
 
   expect_true("b" %in% rownames(s$popsd))
   # The realised sd of the 20 generated intercepts is 0.304; the fit reports
-  # 0.28 [0.13, 0.49].
+  # 0.35 [0.16, 0.67].
   expect_lt(s$popsd["b", "2.5%"], truth$intercept_sd)
   expect_gt(s$popsd["b", "97.5%"], truth$intercept_sd)
   # The assertion that would have caught the generating bug, which coverage
   # alone would not: it is the distance from zero, rather than the interval's
   # width, that says the random effect is there at all. When every subject is
-  # generated from the same intercept this fit returns 0.046 [0.005, 0.163],
-  # so 0.05 sits between the two measured lower bounds, 0.005 and 0.134.
+  # generated from the same intercept this fit returns 0.071 [0.003, 0.271],
+  # so 0.05 sits between the two measured lower bounds, 0.003 and 0.161.
   expect_gt(s$popsd["b", "2.5%"], 0.05)
 
   # The dynamics, on the same terms. Wide, because seven binary indicators
-  # carry much less than one continuous one: drift -0.271 [-0.521, -0.128]
-  # against -0.3, diffusion 0.253 [0.138, 0.425] against 0.3.
+  # carry much less than one continuous one: drift -0.328 [-0.617, -0.138]
+  # against -0.3, diffusion 0.230 [0.026, 0.448] against 0.3.
   expect_lt(s$popmeans["drift_eta1", "2.5%"], truth$drift)
   expect_gt(s$popmeans["drift_eta1", "97.5%"], truth$drift)
   expect_lt(s$popmeans["diff", "2.5%"], truth$diffusion)
@@ -188,9 +192,7 @@ test_that("the augmented and Laplace estimators find the same optimum", {
   # integrates the random effects through the filter's linearised measurement
   # update, `'laplace'` by a Laplace approximation at each subject's mode. Agreement is
   # therefore a result and not an identity, and it is not exact: the largest
-  # gap is 0.024, on the population sd of T0MEANS -- the parameter the two
-  # treatments of the random effects actually disagree about. The item
-  # difficulties agree to 0.0003.
+  # gap is 0.007, on the drift. The item difficulties agree to 0.0003.
   augmented <- .rasch_raw(.rasch_fit("ct"))
   laplace <- .rasch_raw(.rasch_fit("laplace"))
 
@@ -199,8 +201,7 @@ test_that("the augmented and Laplace estimators find the same optimum", {
   items <- paste0("m", 2:7)
   expect_lt(max(abs(augmented[items] - laplace[items])), 0.01)
   # Two optima of two different objectives, so the likelihoods are close rather
-  # than equal: -1705.20 and -1705.36, which the Laplace fit reports as -1705.31
-  # since its correction screen reports the quadrature log likelihood.
+  # than equal: -1720.70 augmented, -1720.58 as the Laplace fit reports it.
   expect_lt(abs(.rasch_fit("ct")$estimate$loglik -
       .rasch_fit("laplace")$estimate$loglik), 2)
 })
@@ -228,7 +229,7 @@ test_that("the discrete-time twin sees the same measurement model", {
   # The dynamics parameter is *not* shared, and asserting that is what keeps
   # the check above from being vacuous. In discrete time DRIFT is already the
   # one-step transition, so it must come back as an autoregression in (0, 1):
-  # about 0.77 here, against a continuous rate of -0.271.
+  # about 0.75 here, against a continuous rate of -0.328.
   s_ct <- suppressWarnings(suppressMessages(summary(.rasch_fit("ct"))))
   s_dt <- suppressWarnings(suppressMessages(summary(.rasch_fit("dt"))))
   expect_lt(s_ct$popmeans["drift_eta1", "mean"], 0)
@@ -236,8 +237,8 @@ test_that("the discrete-time twin sees the same measurement model", {
   expect_lt(s_dt$popmeans["drift_eta1", "mean"], 1)
 
   # Deliberately not asserted: that the discrete transition equals
-  # exp(drift * dt). It does not reliably. The observed intervals average 1.02
-  # but vary (logdtsd = 0.2), and the discrete likelihood is nearly flat along a
+  # exp(drift * dt). It does not reliably. The observed intervals average 1.01
+  # but vary (sd 0.2 on the log scale), and the discrete likelihood is nearly flat along a
   # ridge trading the autoregression against the innovation variance -- over the
   # configurations measured here the discrete fit landed anywhere from 0.69 to
   # 0.97 while the continuous prediction stayed near 0.76, for differences in
@@ -245,7 +246,7 @@ test_that("the discrete-time twin sees the same measurement model", {
   # of a ridge the optimizer stopped at.
   #
   # What is stable is that the two discretizations describe this data about
-  # equally well: -1705.20 continuous against -1706.18 discrete.
+  # equally well: -1720.70 continuous against -1720.98 discrete.
   expect_lt(abs(.rasch_fit("ct")$estimate$loglik -
       .rasch_fit("dt")$estimate$loglik), 5)
 })

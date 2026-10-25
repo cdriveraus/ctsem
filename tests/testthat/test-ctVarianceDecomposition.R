@@ -85,21 +85,31 @@ traitsd <- 0.3
 nsub <- 25
 tpoints <- 20
 
-generating <- ctModel(type = 'ct', n.latent = 1, n.manifest = 1,
-  LAMBDA = matrix(1), DRIFT = matrix(truedrift),
-  DIFFUSION = matrix(truediffusion), MANIFESTVAR = matrix(truemanifestvar),
-  CINT = matrix(0), T0MEANS = matrix(0), T0VAR = matrix(1),
-  MANIFESTMEANS = matrix(0))
+# One subject's record from that process with intercept `cint`, observed at
+# `times` after `burnin` unit steps from the initial state: the exact
+# discretisation of d eta = (drift eta + cint) dt + diffusion dW, measured with
+# sd `truemanifestvar` (the covariance cells here are sds). In base R, so the
+# data move only with R's own random stream: ctGenerate's draw order changes
+# with commits that have nothing to do with this file.
+.vd_record <- function(id, times, cint, burnin = 20L) {
+  step <- function(eta, dt) {
+    e <- exp(truedrift * dt)
+    e * eta + (e - 1) / truedrift * cint +
+      stats::rnorm(1, 0, truediffusion * sqrt((e^2 - 1) / (2 * truedrift)))
+  }
+  eta <- stats::rnorm(1, 0, 1)
+  for (b in seq_len(burnin)) eta <- step(eta, 1)
+  y <- numeric(length(times))
+  for (t in seq_along(times)) {
+    if (t > 1L) eta <- step(eta, times[t] - times[t - 1L])
+    y[t] <- eta + stats::rnorm(1, 0, truemanifestvar)
+  }
+  cbind(id = id, time = times, Y1 = y)
+}
 
 traits <- stats::rnorm(nsub, 0, traitsd)
-datalong <- do.call(rbind, lapply(seq_len(nsub), function(i) {
-  subjectmodel <- generating
-  subjectmodel$matrices$CINT <- matrix(traits[i])
-  d <- ctGenerate(subjectmodel, n = 1, burnin = 20, dtmean = 1,
-    Tpoints = tpoints, backend = 'r')
-  d[, 'id'] <- i
-  d
-}))
+datalong <- do.call(rbind, lapply(seq_len(nsub), function(i)
+  .vd_record(i, seq_len(tpoints) - 1, traits[i])))
 
 estmodel <- ctModel(type = 'ct', n.latent = 1, n.manifest = 1,
   LAMBDA = matrix(1), DRIFT = matrix(truedrift),
@@ -287,10 +297,16 @@ test_that('simulation and moment agree on a model with random effects', {
   # The harder half of the comparison above, and the one that exercises the
   # engine actually drawing the carrier states: with random effects there is a
   # between person term for the two routes to disagree about.
+  # Both routes draw their persons, so their between terms differ by Monte
+  # Carlo error as well. At 120 simulated persons that error was about 11 per
+  # cent (ten seeds on this fixture: 0.102-0.155 against the moment route's
+  # 0.137 at 4000 persons) and one seed in ten or so fell outside the 15 per
+  # cent below; at 600 it is about 5 per cent (0.131-0.148 over four seeds;
+  # dev1, 2026-10-25).
   set.seed(23)
   moment <- ctVarianceDecomposition(fit, method = 'moment', npersons = 600)
   simulated <- ctVarianceDecomposition(fit, method = 'simulation',
-    npersons = 120, npaths = 30)
+    npersons = 600, npaths = 30)
   expect_equal(simulated$within.measurement, moment$within.measurement)
   expect_equal(simulated$within.stochastic, moment$within.stochastic,
     tolerance = 0.05)
@@ -301,7 +317,7 @@ test_that('simulation and moment agree on a model with random effects', {
   # while the moment route reported the real value, so what is checked is that
   # the two agree *and* that what they agree on is not zero. Scaled by the
   # moment route rather than given an absolute floor, which would depend on
-  # whatever popsd this fixture's fit happens to land on -- 0.049 here, and a
+  # whatever popsd this fixture's fit happens to land on -- 0.224 here, and a
   # floor of 0.1 guessed from another one is how this line first failed.
   expect_gt(min(moment$between), 1e-3)
   expect_gt(min(simulated$between), 0.5 * min(moment$between))
@@ -483,27 +499,17 @@ test_that('the decomposition holds together on any design shape', {
   # Balanced, irregular, ragged and missing, on one fit each. What is checked is
   # the identity and that nothing comes back NA -- the values differ between
   # them because the fits do, and comparing them would be comparing fits.
+  set.seed(53)
   shapes <- list(
     balanced = lapply(1:10, function(i) 0:9),
     irregular = lapply(1:10, function(i) sort(cumsum(c(0, stats::rexp(9, 1))))),
     ragged = lapply(1:10, function(i) 0:(2 + i)))
-  set.seed(53)
   traits <- stats::rnorm(10, 0, 0.35)
-  generating <- estmodel
-  generating$pars$indvarying <- FALSE
 
   for (shape in names(shapes)) {
     times <- shapes[[shape]]
-    dat <- do.call(rbind, lapply(seq_along(traits), function(i) {
-      m <- generating
-      m$matrices$CINT <- matrix(traits[i])
-      d <- suppressMessages(ctGenerate(m, n = 1, burnin = 15,
-        Tpoints = length(times[[i]]), backend = 'r'))
-      d <- as.data.frame(d)
-      d$time <- times[[i]]
-      d$id <- i
-      d
-    }))
+    dat <- as.data.frame(do.call(rbind, lapply(seq_along(traits), function(i)
+      .vd_record(i, times[[i]], traits[i], burnin = 15L))))
     if (identical(shape, 'balanced')) {
       dat$Y1[seq(1, nrow(dat), by = 3)] <- NA   # and a third of it missing
     }
@@ -628,24 +634,16 @@ test_that('a level above the subject gets its own between column', {
   # own route: the carrier one would report a between person variance of zero
   # for every multilevel model and say nothing.
   set.seed(61)
-  generating <- estmodel
-  generating$pars$indvarying <- FALSE
   ngroup <- 4L
   groupeffect <- stats::rnorm(ngroup, 0, 0.5)
   rows <- list()
   unit <- 0L
   for (g in seq_len(ngroup)) for (p in 1:4) {
     unit <- unit + 1L
-    m <- generating
-    m$matrices$CINT <- matrix(groupeffect[g] + stats::rnorm(1, 0, 0.3))
-    d <- suppressMessages(ctGenerate(m, n = 1, burnin = 15,
-      Tpoints = 10, backend = 'r'))
-    d <- as.data.frame(d)
-    d$id <- unit
-    d$study <- g
-    rows[[unit]] <- d
+    rows[[unit]] <- cbind(.vd_record(unit, 0:9,
+      groupeffect[g] + stats::rnorm(1, 0, 0.3), burnin = 15L), study = g)
   }
-  dat <- do.call(rbind, rows)
+  dat <- as.data.frame(do.call(rbind, rows))
 
   model <- ctModel(type = 'ct', n.latent = 1, n.manifest = 1,
     id = c('id', 'study'),
@@ -676,19 +674,21 @@ test_that('a level above the subject gets its own between column', {
   # fitted covariance is not. The subject level is where it shows, since a
   # study aggregates several subjects and is better determined than any of
   # them -- shrinkage follows the information per unit, not the unit count.
+  # (`out` is drawn too -- 'model' is the julia default -- so the comparison
+  # is with the modes, not with it.)
+  modes <- .vd_modes_only(suppressMessages(ctVarianceDecomposition(fit,
+    persons = 'estimated')))
   drawn <- suppressMessages(ctVarianceDecomposition(fit, persons = 'model',
     npersons = 400))
   expect_true(all(c('between.id', 'between.study') %in% names(drawn)))
   expect_equal(drawn$between.id + drawn$between.study, drawn$between)
   expect_equal(drawn$between + drawn$within, drawn$total)
-  expect_gt(min(drawn$between.id), min(out$between.id))
+  expect_gt(min(drawn$between.id), min(modes$between.id))
   # Plausible values are drawn jointly over a unit's levels, so each level's
   # share is that level's part of one draw: the levels still add up, and the
   # subject level is no longer shrunk the way its modes are.
   estimated <- suppressMessages(ctVarianceDecomposition(fit,
     persons = 'estimated', npersons = 400))
-  modes <- .vd_modes_only(suppressMessages(ctVarianceDecomposition(fit,
-    persons = 'estimated')))
   expect_equal(estimated$between.id + estimated$between.study,
     estimated$between)
   expect_gt(min(estimated$between.id), min(modes$between.id))
