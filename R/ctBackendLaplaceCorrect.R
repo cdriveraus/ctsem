@@ -960,16 +960,28 @@
   flat <- fit$uncertainty$details$flatdirections$vectors
   # A fit that ended on a jump was not certified and has no Hessian: the
   # rounds' basis is the continuation's own curvature at the jump point,
-  # which is continuous there where the Laplace objective is not.
+  # which is continuous there where the Laplace objective is not. Its Krylov
+  # model (`ctsem_krylov_hessian`: the scores' curvature corrected by
+  # Hessian-vector products), which serves to whiten and bound the rounds'
+  # steps; the exact one costs `2 npar` gradients, and the continuation forms
+  # its exact Hessian where the rounds end anyway. The exact one where no
+  # model can be made.
   if (!is.null(jump) && (is.null(hessian) || !all(is.finite(hessian)))) {
     if (!is.null(sink)) {
-      sink(sprintf("Laplace continuation hessian at the jump | %8s",
+      sink(sprintf("Laplace continuation curvature at the jump | %8s",
         .ctDuration(seconds())), "update")
     }
-    hessian <- try(matrix(as.numeric(.ctBackendJuliaValue(
-      module$ctsem_laplace_continuation_hessian(cont, .ctJuliaNumericVector(est)))),
-      npar, npar), silent = TRUE)
-    if (inherits(hessian, "try-error")) hessian <- NULL
+    square <- function(h) {
+      h <- if (inherits(h, "try-error")) numeric(0) else as.numeric(h)
+      if (length(h) == npar^2 && all(is.finite(h))) matrix(h, npar, npar) else NULL
+    }
+    hessian <- square(try(.ctBackendJuliaValue(module$ctsem_krylov_hessian(cont,
+      .ctJuliaNumericVector(est))), silent = TRUE))
+    if (is.null(hessian)) {
+      hessian <- square(try(.ctBackendJuliaValue(
+        module$ctsem_laplace_continuation_hessian(cont, .ctJuliaNumericVector(est))),
+        silent = TRUE))
+    }
     flat <- NULL
   }
   if (is.null(hessian) || !all(is.finite(hessian))) {

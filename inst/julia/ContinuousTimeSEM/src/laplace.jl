@@ -8174,6 +8174,99 @@ function _laplace_hessian_point(laplace::CTSEMLaplaceObjective,
     return result
 end
 
+"""
+    CTSEMLaplaceHVP
+
+Products of the Laplace objective's Hessian with vectors at one point, `x`, by
+forward differences of its exact gradient, as `ctsem_laplace_hessian`
+differences it by coordinate: the modes at `x` solved from the origin, every
+differencing point started from them (warm, which is sound for the reason given
+there: every point starts from the same base), the inner budget escalated where
+a point does not converge (`_laplace_hessian_point`), and no coordinate moved by
+more than `step` times `max(1, |x_j|)`, the most a Hessian column moves it. One
+gradient a product, where a column costs two. `g0` is the gradient at `x` from
+the base modes, of the maximised objective, which the products are too; a
+product is `nothing` where its point did not converge. Made by
+`_ctsem_hvp_setup`, used by `_ctsem_hvp!`.
+"""
+mutable struct CTSEMLaplaceHVP
+    laplace::CTSEMLaplaceObjective
+    x::Vector{Float64}
+    g0::Vector{Float64}
+    base::Vector{Vector{Float64}}
+    budget::Int
+    retries::Int
+    step::Float64
+    products::Int
+end
+
+"""
+    _ctsem_hvp_setup(objective, x; scores, step, retries)
+
+Hessian-vector products at `x` (`CTSEMLaplaceHVP`), with the objective's
+gradient there and, with `scores`, the units' scores (without the prior) for
+the products' preconditioner. `nothing` where the objective has no such
+products or `x`'s inner solve did not converge.
+"""
+_ctsem_hvp_setup(objective, x::AbstractVector; kwargs...) = nothing
+function _ctsem_hvp_setup(laplace::CTSEMLaplaceObjective, x::AbstractVector;
+        scores::Bool=false, step::Real=1e-4, retries::Integer=2)
+    _laplace_filter_only(laplace) && return nothing
+    xv = collect(Float64, x)
+    S = scores ? zeros(Float64, length(laplace.units.members), length(xv)) : nothing
+    budget = laplace.inner_maxiter
+    previous = ctsem_set_warm_start!(false)
+    out = try
+        local o = ctsem_laplace_evaluate(laplace, xv; gradient=true, scores=S)
+        local tries = 0
+        while !o.converged && tries < retries &&
+                any(>=(laplace.inner_maxiter), laplace.inner_iterations)
+            tries += 1
+            laplace.inner_maxiter = budget * 4^tries
+            o = ctsem_laplace_evaluate(laplace, xv; gradient=true, scores=S)
+        end
+        o
+    finally
+        laplace.inner_maxiter = budget
+        ctsem_set_warm_start!(previous)
+    end
+    (out.converged && all(isfinite, out.gradient)) || return nothing
+    (S === nothing || all(isfinite, S)) || (S = nothing)
+    ctx = CTSEMLaplaceHVP(laplace, xv, collect(Float64, out.gradient),
+        deepcopy(laplace.modes), budget, Int(retries), Float64(step), 0)
+    return (context=ctx, gradient=ctx.g0, scores=S)
+end
+
+"""The displacement `h` along `v` from `x` that moves no coordinate by more
+than `step` times `max(1, |x_j|)`."""
+function _ctsem_hvp_length(x::AbstractVector, v::AbstractVector, step::Real)
+    worst = 0.0
+    @inbounds for j in eachindex(v)
+        worst = max(worst, abs(v[j]) / max(1.0, abs(x[j])))
+    end
+    return worst > 0 ? step / worst : 0.0
+end
+
+"""`H v` for the Laplace objective at the context's point (`CTSEMLaplaceHVP`),
+of the maximised objective; `nothing` where the differencing point did not
+converge."""
+function _ctsem_hvp!(c::CTSEMLaplaceHVP, v::AbstractVector)
+    h = _ctsem_hvp_length(c.x, v, c.step)
+    h > 0 || return zeros(length(c.x))
+    xp = c.x .+ h .* v
+    previous = ctsem_set_warm_start!(true)
+    p = try
+        _laplace_hessian_point(c.laplace, xp, c.budget, c.retries; from=c.base)
+    finally
+        ctsem_set_warm_start!(previous)
+        _laplace_restore_modes!(c.laplace, c.base)
+    end
+    c.products += 1
+    p.out.converged || return nothing
+    Hv = (p.out.gradient .- c.g0) ./ h
+    return all(isfinite, Hv) ? Hv : nothing
+end
+
 export ctsem_laplace_hessian
 
 ################################################################################

@@ -5268,8 +5268,8 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
 # iterations stay readable as `stage_iterations`, since its trace is the one
 # reported and is read against that count. `spent` is a run or its counts.
 .ctJuliaRunCounters <- c("iterations", "f_calls", "g_calls", "newton_steps",
-  "newton_hessians", "newton_subset_hessians", "forward_gradients",
-  "explosive_passes")
+  "newton_hessians", "newton_subset_hessians", "newton_krylov_models",
+  "newton_krylov_products", "forward_gradients", "explosive_passes")
 
 # The ids of the subjects the engine found explosive at the estimate (its
 # `explosive_subjects`, positions in first-appearance order, `0` for none):
@@ -5424,7 +5424,7 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
   gradient = "adjoint", cores = 1L, verbose = 0L, maxiter = NULL,
   callback = NULL, objective = NULL, progress_label = NULL,
   progress_budget = FALSE, pin = NULL, carried = NULL, inverse = NULL,
-  hessian = NULL, hessian_at = NULL) {
+  hessian = NULL, hessian_at = NULL, walked = FALSE) {
   spec <- structure(model_spec, class = c("ctJuliaModel", "ctFitModel"))
   # A caller may hand in the objective to maximise. `intoverstates=FALSE` does,
   # passing the joint one over `[theta; z]`; everything below is unchanged by
@@ -5521,8 +5521,10 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
     batch = !state_explicit && !identical(optimcontrol$batch, FALSE),
     newton = !state_explicit && !identical(optimcontrol$newton, FALSE),
     # `newton` may also name what the finish's steps are taken against --
-    # 'exact', 'chord' or 'subset'; otherwise the route's own, the chord: one
-    # Hessian walked with SR1 updates and refreshed when its walk stops paying.
+    # 'exact', 'chord', 'subset' or 'krylov'; otherwise the route's own: the
+    # chord, one Hessian walked with SR1 updates and refreshed when its walk
+    # stops paying, or on the Laplace route where that Hessian is dear the
+    # Krylov model, the scores' curvature corrected by Hessian-vector products.
     # See `_ctsem_newton_finish`.
     newton_curvature = if (is.character(optimcontrol$newton))
       as.character(optimcontrol$newton)[1L] else "auto",
@@ -5767,6 +5769,12 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
     common$newton_hessian <- hessian
     common$newton_hessian_at <- .ctJuliaVector(as.numeric(hessian_at))
   }
+  # `walked`: a stage on an objective the caller is about to change again (the
+  # smoothing passes in `.ctJuliaOptimiseFit()`) ends where its finish's walk
+  # ends, with the matrix the walk stepped on as `newton_walked`, and is not
+  # certified: the exact Hessian and the certification are for the stage
+  # after the changes settle. Sent only when asked, for the reason above.
+  if (isTRUE(walked)) common$newton_final <- "walked"
   optimise_once <- function(from, damp = integer(), pin = default_pin,
       carried = NULL, endgame = NULL) {
     args <- common
@@ -5940,7 +5948,7 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
       optimise = stage,
       escape = function(r) .ctBackendStallEscape(r, optimcontrol, model_spec,
         verbose, escapes = !state_explicit),
-      certify = isTRUE(common$certify), verbose = verbose)
+      certify = isTRUE(common$certify) && !isTRUE(walked), verbose = verbose)
     result <- retried$result
     result$stall_escapes <- retried$escapes
     # The work of every stage the loop did not keep, added to the kept stage's
@@ -6182,6 +6190,20 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
     optimcontrol = optimcontrol, verbose = verbose, priors = priors,
     priorscope = priorscope, intoverpop = intoverpop, intoverstates = intoverstates,
     gradient = gradient, correctlaplace = correctlaplace))
+}
+
+# The matrix a `walked` stage's finish last stepped on (the engine's
+# `newton_walked`, of the maximised objective, at the stage's `minimizer`),
+# or NULL where the stage left none: no finish ran, or it ran without a walk.
+# An approximation of the Hessian there, never the certification's.
+#' @keywords internal
+.ctJuliaWalkedHessian <- function(result) {
+  walked <- result[["newton_walked"]]
+  n <- length(as.numeric(result$minimizer))
+  if (is.null(walked)) return(NULL)
+  walked <- as.matrix(walked)
+  if (!identical(dim(walked), c(n, n)) || !all(is.finite(walked))) return(NULL)
+  (walked + t(walked)) / 2
 }
 
 # The optimising route's whole pipeline, from the starting values through the
@@ -6601,24 +6623,62 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
   # per cent. A pass starts where that quadratic model puts the optimum, with
   # its Hessian, so it is mostly a finish. Without a certified Hessian
   # (`estonly`) the smoothing parameters stay where they started.
+  #
+  # Each pass changes the objective, so the passes between the first
+  # certification and the last are not certified: a pass ends where its
+  # finish's walk ends, and the next reads the matrix that walk stepped on
+  # (`walked`, `.ctJuliaWalkedHessian()`) rather than an exact Hessian formed
+  # for a point the next pass leaves. Once the parameters settle on that
+  # curvature, one certified stage forms the exact Hessian, and the fixed
+  # point is checked on it. Certified after every pass, each formed its own:
+  # on a large Laplace model 11-16 hours a pass (the affect pilot,
+  # review/PILOT-curvature-coresets-2026-10-25.md).
   if (!is.null(model_spec$penalty) && nrow(model_spec$penalty)) {
     smoothpasses <- 0L
     if (certifying && !is.null(correction$hessian)) {
+      stagecontrol <- utils::modifyList(optimcontrol, list(batch = FALSE,
+        saem = FALSE, stochastic = FALSE))
+      certified_stage <- function(from) {
+        stage <- .ctJuliaOptimise(model_spec, from, optimcontrol = stagecontrol,
+          gradient = gradient, cores = cores, verbose = verbose,
+          callback = optimcontrol$callback)
+        correct(.ctJuliaAddRunCounts(stage, result))
+      }
+      curvature <- correction$hessian
+      certified <- TRUE
       for (pass in seq_len(10L)) {
         theta <- as.numeric(result$minimizer)
-        gfs <- .ctTIsmoothLambda(model_spec$penalty, correction$hessian, theta,
+        gfs <- .ctTIsmoothLambda(model_spec$penalty, curvature, theta,
           gradient = as.numeric(result$gradient))
         moved <- max(abs(log(gfs$lambda) - log(model_spec$penalty$lambda)))
         model_spec$penalty$edf <- gfs$edf
-        if (moved < 0.01) break
-        model_spec$penalty$lambda <- gfs$lambda
-        smoothpasses <- pass
-        result <- .ctJuliaAddRunCounts(.ctJuliaOptimise(model_spec, gfs$point,
-          optimcontrol = utils::modifyList(optimcontrol, list(batch = FALSE,
-            saem = FALSE, stochastic = FALSE)), gradient = gradient,
-          cores = cores, verbose = verbose, callback = optimcontrol$callback,
-          hessian = gfs$hessian, hessian_at = theta), result)
-        correction <- correct(result)
+        settled <- moved < 0.01
+        if (settled && certified) break
+        if (!settled) {
+          model_spec$penalty$lambda <- gfs$lambda
+          smoothpasses <- pass
+          walk <- .ctJuliaAddRunCounts(.ctJuliaOptimise(model_spec, gfs$point,
+            optimcontrol = stagecontrol, gradient = gradient, cores = cores,
+            verbose = verbose, callback = optimcontrol$callback,
+            hessian = gfs$hessian, hessian_at = theta, walked = TRUE), result)
+          walked <- .ctJuliaWalkedHessian(walk)
+          result <- walk
+          if (!is.null(walked)) {
+            curvature <- walked
+            certified <- FALSE
+            next
+          }
+        }
+        # Settled on a walked curvature, or a pass whose finish left no walk
+        # to read: certified here.
+        correction <- certified_stage(as.numeric(result$minimizer))
+        result <- correction$result
+        curvature <- correction$hessian
+        certified <- TRUE
+        if (is.null(curvature)) break
+      }
+      if (!certified) {
+        correction <- certified_stage(as.numeric(result$minimizer))
         result <- correction$result
       }
     } else message("Smoothing parameters held at their starting values: ",
@@ -6803,6 +6863,12 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
       as.integer(result$newton_hessians),
     newton_subset_hessians = if (is.null(result$newton_subset_hessians)) 0L
       else as.integer(result$newton_subset_hessians),
+    # The Krylov models the finish stepped on where the exact Hessian is dear,
+    # and the gradients they took (`CTSEMKrylov` in the engine).
+    newton_krylov_models = if (is.null(result$newton_krylov_models)) 0L
+      else as.integer(result$newton_krylov_models),
+    newton_krylov_products = if (is.null(result$newton_krylov_products)) 0L
+      else as.integer(result$newton_krylov_products),
     # How many times the finish left a saddle along its negative curvature.
     newton_escapes = if (is.null(result$newton_escapes)) 0L else
       as.integer(result$newton_escapes),

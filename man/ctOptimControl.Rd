@@ -154,9 +154,15 @@ default.
  use; it tries the direction of negative curvature at a saddle and checks
  what the directions with no curvature are worth. Under
  \code{intoverpop = 'laplace'} it runs only when the fit is certified. May
- name the curvature its steps use: \code{'chord'} (the default),
- \code{'exact'} (a fresh Hessian whenever a step contracts slowly) or
- \code{'subset'}. \code{fit$optim$newton_steps} records it.}
+ name the curvature its steps use: \code{'chord'} (the default except as
+ below), \code{'exact'} (a fresh Hessian whenever a step contracts slowly),
+ \code{'subset'}, or \code{'krylov'}: the outer product of the units'
+ scores corrected by Hessian-vector products taken at each step, with the
+ exact Hessian formed where its steps converge. \code{'krylov'} is the
+ default under \code{intoverpop = 'laplace'} where the exact Hessian would
+ cost at least 200 gradients. \code{fit$optim$newton_steps} records the
+ steps, and \code{newton_krylov_products} the gradients the Krylov steps
+ took.}
  \item{\code{certify}}{Default TRUE. The curvature check that certifies a
  fit has converged. \code{estonly} skips it too.}
  \item{\code{gaptol}}{Default \code{1e-6}. How much objective the curvature
