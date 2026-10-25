@@ -2533,6 +2533,79 @@ function _continuation_difference_hessian(o::CTSEMLaplaceContinuation,
     return (H .+ transpose(H)) ./ 2
 end
 
+_ctsem_prior_objective(o::CTSEMLaplaceContinuation) = o.laplace.objective
+
+"""
+    CTSEMContinuationHVP
+
+Products of the continuation's Hessian with vectors at one point, by forward
+differences of its exact gradient (`_continuation_evaluate`), the Laplace
+part's modes started where they were at the point, as
+`_continuation_difference_hessian` differences it by coordinate, and no
+coordinate moved by more than `step` times `max(1, |x_j|)`. Over the extended
+vector (`_laplace_extend`), the products returned at the caller's length
+(`nin`). See `CTSEMLaplaceHVP`.
+"""
+mutable struct CTSEMContinuationHVP
+    o::CTSEMLaplaceContinuation
+    x::Vector{Float64}
+    nin::Int
+    g0::Vector{Float64}
+    base::Vector{Vector{Float64}}
+    step::Float64
+    products::Int
+end
+
+# The continuation's products (`CTSEMContinuationHVP`), with its gradient at
+# `values` and, with `scores`, the Laplace part's units' scores there (the
+# flagged units' are not formed; the scores serve as a preconditioner only).
+function _ctsem_hvp_setup(o::CTSEMLaplaceContinuation, values::AbstractVector;
+        scores::Bool=false, step::Real=1e-4)
+    nin = length(values)
+    x = _laplace_extend(o.laplace, collect(Float64, values))
+    S = scores ? zeros(Float64, length(o.rest.units.members), length(x)) : nothing
+    previous = ctsem_set_warm_start!(false)
+    rest = try
+        ctsem_laplace_evaluate(o.rest, x; gradient=scores, scores=S)
+    finally
+        ctsem_set_warm_start!(previous)
+    end
+    rest.converged || return nothing
+    base = deepcopy(o.rest.modes)
+    previous = ctsem_set_warm_start!(true)
+    g0 = try
+        _laplace_restore_modes!(o.rest, base)
+        _continuation_evaluate(o, x, true)
+    finally
+        ctsem_set_warm_start!(previous)
+    end
+    (g0.converged && all(isfinite, g0.gradient)) || return nothing
+    (S === nothing || all(isfinite, S)) || (S = nothing)
+    ctx = CTSEMContinuationHVP(o, x, nin, collect(Float64, g0.gradient), base,
+        Float64(step), 0)
+    return (context=ctx, gradient=ctx.g0[1:nin],
+        scores=S === nothing ? nothing : S[:, 1:nin])
+end
+
+function _ctsem_hvp!(c::CTSEMContinuationHVP, v::AbstractVector)
+    vx = zeros(length(c.x))
+    vx[1:c.nin] .= v
+    h = _ctsem_hvp_length(c.x, vx, c.step)
+    h > 0 || return zeros(c.nin)
+    previous = ctsem_set_warm_start!(true)
+    gp = try
+        _laplace_restore_modes!(c.o.rest, c.base)
+        _continuation_evaluate(c.o, c.x .+ h .* vx, true)
+    finally
+        ctsem_set_warm_start!(previous)
+        _laplace_restore_modes!(c.o.rest, c.base)
+    end
+    c.products += 1
+    gp.converged || return nothing
+    Hv = (gp.gradient[1:c.nin] .- c.g0[1:c.nin]) ./ h
+    return all(isfinite, Hv) ? Hv : nothing
+end
+
 # The exact Hessian
 #
 # A flagged unit's term is `Q(theta) = log sum_j exp(w_j + h_j(theta)) + c`
