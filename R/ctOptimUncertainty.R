@@ -2822,6 +2822,14 @@ ctOptimFitLpgFunc <- function(fit, cores=1){
 # here it hid every plateau deeper than 2.7 below the mode, which is still a
 # plateau a flat prior gives infinite mass (a bump on a floor 3.0 and 4.6
 # down went unflagged).
+#
+# Each rung's conditional mode is found to a tenth of a nat (`tol`), not the
+# thousandth 'is''s search holds its proposal's points to: what the walk
+# decides on is the density's fall against `maxdrop` (8), and a rung's point
+# is only where the next starts. Most of the walk's time was those Newton
+# steps' evaluations; at 0.1 jflat's took 5.1 s against 11.8, gB8's 6.2
+# against 20.1, each finding the same (scripts/fit-review-2026-10/walk_probe.R,
+# local).
 .ctImproperParameters <- function(lpg, est, cov, parameters) {
   if (!length(parameters)) return(NULL)
   gradfun <- .ctJuliaOr(attr(lpg, 'fullgradbatch'), .ctImisGradient(lpg, est))
@@ -2831,7 +2839,7 @@ ctOptimFitLpgFunc <- function(fit, cores=1){
     S <- eig$vectors %*% (t(eig$vectors) *
       pmax(eig$values, .ctFlatDirectionRtol() * max(eig$values)))
     paths <- .ctImisPaths(gradfun, .ctImisEvaluator(lpg), as.numeric(est), S,
-      which = parameters, heavy = Inf)
+      which = parameters, heavy = Inf, tol = 0.1)
     list(reaches = paths$reachesLimit, limit = paths$limit,
       gradients = paths$gradients, calls = paths$calls)
   }, error = function(e) list(failed = conditionMessage(e)))
