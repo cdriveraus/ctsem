@@ -30,28 +30,77 @@
 # third still most of the 11 s once the rest ran on the coreset. Warm-up
 # draws are discarded, so the test there only keeps the chain where the
 # posterior is, and a normal that fits the posterior poorly costs acceptance
-# until the second fit. Warm-up's end and
-# each batch of draws whose endpoint acceptance fell below
-# `_SURROGATE_MIN_ACCEPT` give the coreset up for the rest of the run: one
-# change, after which the kernel is fixed again. A chain resumed in a new call
-# has no warm-up to fit from and samples in full.
+# until the second fit. Warm-up's end and each batch of draws whose endpoints
+# were accepted too rarely to pay for the coreset give it up for the rest of
+# the run: one change, after which the kernel is fixed again. A chain resumed
+# in a new call has no warm-up to fit from and samples in full.
 #
 # What one draw costs: the trajectory's leapfrog steps at the coreset's share
-# of a gradient (`_SMC_CORESET_BUDGET` at most), and one full value, no
-# gradient, at a moved endpoint.
+# of a gradient, and one full value, no gradient, at a moved endpoint; a
+# refused endpoint wastes the draw. So the coreset is the size of least cost
+# per accepted transition (`_surrogate_price`), and is given up where the
+# acceptance measured makes that more than a transition in full.
 
 """Warm-up states a chain's coreset is fitted from: its last this many."""
 const _SURROGATE_TRAIN = 64
 
-"""The held-out error, in log units over the training states, a chain's
-coreset may have. The endpoint test reads the difference of that error
-between two states, so about 0.3 keeps acceptance near NUTS's own."""
-const _SURROGATE_TOL = 0.3
-
-"""Below this share of moved endpoints accepted over a batch, the chain gives
-its coreset up; read only over at least `_SURROGATE_MIN_PROPOSED`."""
-const _SURROGATE_MIN_ACCEPT = 0.5
+"""Moved endpoints a chain's acceptance is read over, to price its coreset
+again or give it up."""
 const _SURROGATE_MIN_PROPOSED = 20
+
+"""
+    _surrogate_price(share, s, work)
+
+A transition's cost, in full evaluations, per accepted transition, on a
+coreset whose units cost `share` of a full evaluation and whose error differs
+between a transition's ends by `s` (an sd, log units): the trajectory's
+`work` (its leapfrog steps, a gradient each) at the coreset's share and one
+full value at its end, over the endpoint test's acceptance, about
+`2 Phi(-s / 2)` for a normal error. Without a coreset a transition costs
+`work`.
+"""
+_surrogate_price(share::Real, s::Real, work::Real) =
+    (work * share + 1) / (2 * _ctsem_normal_cdf(-s / 2))
+
+"""What a coreset costs a chain's transition (`_surrogate_price`), with the
+error's spread scaled by `inflate`, the variance the last coreset's measured
+acceptance implies over what its fit expected."""
+struct _SurrogatePrice
+    work::Float64
+    inflate::Float64
+end
+
+(p::_SurrogatePrice)(share::Real, s::Real) = _surrogate_price(share, s * sqrt(p.inflate), p.work)
+
+"""
+    _surrogate_work(d)
+
+The leapfrog steps a transition of chain `d` takes on its coreset, each a
+gradient in full values (`_SMC_GRADIENT_VALUES`), on average over the
+transitions so far; before any, a tree of depth three's.
+"""
+function _surrogate_work(d)
+    leap = d.transitions >= 10 ? d.leapfrogs / d.transitions : _smc_leapfrogs(Int[])
+    return _SMC_GRADIENT_VALUES * leap
+end
+
+"""
+    _surrogate_inflation(d)
+
+How much more variance in its error's difference chain `d`'s coreset showed
+than its fit expected: the spread an acceptance `a` implies, `-2
+Phi^-1(a / 2)`, squared, over twice its held-out spread squared. One where
+fewer than `_SURROGATE_MIN_PROPOSED` endpoints were tested, or every one was
+accepted.
+"""
+function _surrogate_inflation(d)
+    (d.coreset === nothing || d.proposed < _SURROGATE_MIN_PROPOSED ||
+        !(d.error > 0)) && return 1.0
+    a = d.accepted / d.proposed
+    0 < a < 1 || return a <= 0 ? 100.0 : 1.0
+    implied = 2 * sqrt(2.0) * erfcinv(a)
+    return implied^2 / (2 * d.error^2)
+end
 
 """
     _SurrogateDensity(objective, gradient_method, ndim, seed)
@@ -73,6 +122,9 @@ mutable struct _SurrogateDensity{O}
     accepted::Int
     batch_proposed::Int
     batch_accepted::Int
+    # Coreset gradients taken, and transitions run on the coreset.
+    leapfrogs::Int
+    transitions::Int
     size::Int
     share::Float64
     error::Float64
@@ -83,7 +135,7 @@ end
 
 _SurrogateDensity(objective, gradient_method, ndim::Integer, seed::Integer) =
     _SurrogateDensity(objective, Symbol(gradient_method), nothing, NaN, NaN,
-        zeros(Int(ndim)), zeros(Int(ndim)), 0, 0, 0, 0, 0, 0.0, NaN, 0, false,
+        zeros(Int(ndim)), zeros(Int(ndim)), 0, 0, 0, 0, 0, 0, 0, 0.0, NaN, 0, false,
         UInt64(seed))
 
 """The marginal samplers' full log density and gradient at `x`, into `g`;
@@ -135,6 +187,7 @@ end
 function (d::_SurrogateDensity)(g::AbstractVector{Float64}, x::AbstractVector)
     cs = d.coreset
     cs === nothing && return _marginal_density!(d.objective, d.gradient_method, g, x)
+    d.leapfrogs += 1
     return _coreset_density!(d.objective, cs, g, x)
 end
 
@@ -217,8 +270,9 @@ function _surrogate_fit!(d::_SurrogateDensity, states::Vector{Vector{Float64}},
         nothing
     end
     full === nothing && return logp
-    fit = _smc_coreset_fit(full.terms, full.total, _smc_unit_cost(d.objective),
-        _SURROGATE_TOL, _SMC_CORESET_BUDGET, Random.Xoshiro(d.seed + UInt64(d.fits)))
+    price = _SurrogatePrice(_surrogate_work(d), _surrogate_inflation(d))
+    fit = _smc_coreset_fit(full.terms, full.total, _smc_unit_cost(d.objective), price,
+        price.work, Random.Xoshiro(d.seed + UInt64(d.fits)))
     fit === nothing && return logp
     previous = d.coreset
     d.coreset = CTSEMCoreset(fit.units, fit.weights)
@@ -262,6 +316,7 @@ _surrogate_correct!(logdensity!, x, g, logp, rng) = logp
 function _surrogate_correct!(d::_SurrogateDensity, x::Vector{Float64},
     g::Vector{Float64}, logp::Float64, rng::AbstractRNG)
     d.coreset === nothing && return logp
+    d.transitions += 1
     x == d.xold && return logp
     d.proposed += 1
     d.batch_proposed += 1
@@ -283,16 +338,18 @@ end
     _surrogate_batch!(logdensity!, x, g, logp)
 
 At the end of a batch of draws: a chain whose moved endpoints were accepted
-too rarely gives its coreset up, and samples in full from here. Returns the
-log density at `x`, its gradient in `g`, under whichever density is now in
-use.
+too rarely for its coreset to cost less per accepted transition than a
+transition in full (`_surrogate_price` at the acceptance measured) gives it
+up, and samples in full from here. Returns the log density at `x`, its
+gradient in `g`, under whichever density is now in use.
 """
 _surrogate_batch!(logdensity!, x, g, logp) = logp
 function _surrogate_batch!(d::_SurrogateDensity, x::Vector{Float64},
     g::Vector{Float64}, logp::Float64)
     d.coreset === nothing && return logp
+    work = _surrogate_work(d)
     poor = d.batch_proposed >= _SURROGATE_MIN_PROPOSED &&
-        d.batch_accepted < _SURROGATE_MIN_ACCEPT * d.batch_proposed
+        d.batch_accepted * work < (work * d.share + 1) * d.batch_proposed
     d.batch_proposed = 0
     d.batch_accepted = 0
     poor || return logp

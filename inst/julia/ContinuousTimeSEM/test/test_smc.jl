@@ -195,8 +195,6 @@ end
         hessian=-Matrix(g.P), nmoves=0)
     @test_throws ArgumentError ContinuousTimeSEM.ctsem_sample_smc(target, g.m;
         hessian=-Matrix(g.P), ess_frac=1.0)
-    @test_throws ArgumentError ContinuousTimeSEM.ctsem_sample_smc(target, g.m;
-        hessian=-Matrix(g.P), coreset_tol=0.0)
 end
 
 @testset "tempered SMC reports its stages to the caller's sink" begin
@@ -232,13 +230,17 @@ end
     terms = B * Z .+ 0.02 .* randn(rng, N, n) .+ randn(rng, N)
     total = vec(sum(terms; dims=1))
     cost = fill(1 / N, N)
-    fit = ContinuousTimeSEM._smc_coreset_fit(terms, total, cost, 0.3, 0.5, Random.Xoshiro(1))
+    # A stage at the posterior: three moves of 32 leapfrog steps.
+    price = ContinuousTimeSEM._SMCPrice(192.0, 1.0, log(2), 1.0, false)
+    full = ContinuousTimeSEM._smc_full_price(price)
+    fit = ContinuousTimeSEM._smc_coreset_fit(terms, total, cost, price, full,
+        Random.Xoshiro(1))
     @test fit !== nothing
-    @test 4 <= length(fit.units) <= 12
+    @test length(fit.units) <= 12
     @test allunique(fit.units)
     @test all(fit.weights .> 0)
+    @test fit.price < full
     @test fit.error <= 0.3
-    @test fit.share <= 0.5
     predicted = vec(transpose(fit.weights) * terms[fit.units, :])
     e = predicted .- total
     e .-= mean(e)
@@ -247,12 +249,83 @@ end
     # to.
     terms2 = copy(terms); total2 = copy(total)
     terms2[3, 7] = NaN; total2[11] = -Inf
-    fit2 = ContinuousTimeSEM._smc_coreset_fit(terms2, total2, cost, 0.3, 0.5, Random.Xoshiro(1))
+    fit2 = ContinuousTimeSEM._smc_coreset_fit(terms2, total2, cost, price, full,
+        Random.Xoshiro(1))
     @test fit2 !== nothing && fit2.error <= 0.3
-    # Terms that share nothing with the total are not carried within a small
-    # budget.
+    # Terms that share nothing with the total cost more than moving in full
+    # at any size.
     @test ContinuousTimeSEM._smc_coreset_fit(randn(rng, N, n), randn(rng, n), cost,
-        0.1, 0.05, Random.Xoshiro(1)) === nothing
+        price, full, Random.Xoshiro(1)) === nothing
+end
+
+@testset "a coreset's held-out error is read on rows its units were not chosen on" begin
+    # Units that carry nothing of the target, more of them than rows: chosen
+    # on every row, twenty of them fit the rows held out too, and reweighting
+    # per fold read the selection's own fit there. Chosen per fold, the
+    # held-out error is the target's own spread.
+    rng = Random.Xoshiro(8)
+    n, N = 40, 200
+    A = randn(rng, n, N)
+    b = randn(rng, n)
+    splits = ContinuousTimeSEM._coreset_folds(n, 4, Random.Xoshiro(1))
+    heldout(units, w, held) = A[held, units] * w .- b[held]
+    seen = Ref(NaN)
+    judge = (paths, held) -> begin
+        e = reduce(vcat, [heldout(paths[k].chosen, ContinuousTimeSEM._coreset_weights(paths[k]),
+            held[k]) for k in eachindex(paths)])
+        seen[] = sqrt(mean(abs2, e))
+        (1.0, 2.0, nothing)
+    end
+    ContinuousTimeSEM._coreset_cv(A, b, ones(N), Inf, [20], splits, judge; refit=true)
+    @test seen[] > 0.8 * std(b)
+    # The units of one path on every row, reweighted per fold: optimistic.
+    one = ContinuousTimeSEM._coreset_select(A, b, ones(N), Inf, [20],
+        (u, w) -> (1.0, 0.0, u); refit=true)
+    e = reduce(vcat, [begin
+        train = setdiff(1:n, held)
+        At = A[train, one.extra]
+        w = ContinuousTimeSEM._ctsem_nnls(transpose(At) * At, transpose(At) * b[train])
+        heldout(one.extra, w, held)
+    end for held in splits])
+    @test sqrt(mean(abs2, e)) < 0.8 * seen[]
+end
+
+@testset "a coreset's price is its cost per unit of what the sampler is after" begin
+    P = ContinuousTimeSEM
+    # No coreset error: the moves at the coreset's share, a full value and two
+    # coreset values; and nothing spent of the stage's increment.
+    @test P._smc_stage_price(0.1, 0.0, 192.0, 1.0, log(2)) ≈ 192 * 0.1 + 1 + 0.2
+    # The correction spends the stage's budget: one over the root of what is
+    # left, and none left at beta s = sqrt(budget).
+    @test P._smc_stage_price(0.1, 0.5, 192.0, 1.0, log(2)) ≈
+        (192 * 0.1 + 1.2) / sqrt(1 - 0.25 / log(2))
+    @test P._smc_stage_price(0.1, 1.001 * sqrt(log(2)), 192.0, 1.0, log(2)) == Inf
+    # At beta near zero the error costs nothing.
+    @test P._smc_stage_price(0.1, 5.0, 192.0, 1e-6, log(2)) ≈ 192 * 0.1 + 1.2 rtol = 1e-9
+    # A final draw: the draws the weights keep, exp(-s^2) of them.
+    @test P._smc_draw_price(0.1, 0.5, 64.0) ≈ (6.4 + 1.1) * exp(0.25)
+    # Delayed acceptance: 2 Phi(-s / 2) of the endpoints accepted.
+    @test P._surrogate_price(0.1, 0.0, 64.0) ≈ 7.4
+    @test P._surrogate_price(0.1, 1.0, 64.0) ≈ 7.4 / (2 * P._ctsem_normal_cdf(-0.5))
+    # Measured acceptance gives the spread back: a coreset accepted as its
+    # fit predicted is priced as it was.
+    d = P._SurrogateDensity(nothing, :adjoint, 2, 1)
+    d.coreset = P.CTSEMCoreset([1, 2], [20.0, 20.0])
+    d.error = 0.4
+    a = 2 * P._ctsem_normal_cdf(-sqrt(2) * 0.4 / 2)
+    d.proposed = 10_000
+    d.accepted = round(Int, a * d.proposed)
+    @test P._surrogate_inflation(d) ≈ 1 rtol = 0.02
+    d.accepted = round(Int, 2 * P._ctsem_normal_cdf(-sqrt(2) * 0.8 / 2) * d.proposed)
+    @test P._surrogate_inflation(d) ≈ 4 rtol = 0.02
+    # SMC: the variance of the correction over what its fit expected, over
+    # the particles that moved.
+    rng = Random.Xoshiro(4)
+    X = randn(rng, 2, 400); Xpre = copy(X); Xpre[:, 1:300] .+= 1.0
+    owed = 0.5 .* sqrt(2 * 3.0) * 0.2 .* randn(rng, 400)
+    @test P._smc_inflation(owed, X, Xpre, 0.5, 0.2, 1.0) ≈ 3 rtol = 0.25
+    # Too few moved: the previous inflation stands.
+    @test P._smc_inflation(owed, X, X, 0.5, 0.2, 1.7) == 1.7
 end
 
 @testset "particles over copies of a one-subject filter objective draw what the serial run draws" begin
@@ -338,10 +411,10 @@ ContinuousTimeSEM._smc_coreset_eval(o::_SMCUnits, cs, x::AbstractVector) =
 
 @testset "a poor coreset slows SMC but leaves its posterior and constant exact" begin
     # Forty units whose precisions are rank one along random directions: their
-    # sum is a well-conditioned normal in four dimensions, and a dozen of them
-    # stand for it with errors of a log unit and more, so the correction does
-    # real work (its effective size falls below a tenth at some stage). One
-    # move a stage, where a weight that assumed the moves had mixed to the
+    # sum is a well-conditioned normal in four dimensions, and a few of them
+    # stand for it with errors the price accepts because they cost so little,
+    # so the correction does real work (its effective size falls to two
+    # thirds at some stage). One move a stage, where a weight that assumed the moves had mixed to the
     # coreset's density is furthest from right: before the backward kernel's
     # weights the stages' log constant was 270-650 nats off on this target;
     # with them, within a nat (2026-10-23).
@@ -362,13 +435,12 @@ ContinuousTimeSEM._smc_coreset_eval(o::_SMCUnits, cs, x::AbstractVector) =
         d / 2 * log(2pi) - logdet(Symmetric(P)) / 2
     start = m .+ vcat([2.0, -2.0], zeros(d - 2)) .* sd
     H = -Matrix(Diagonal(1 ./ (0.25 .* sd .^ 2)))
-    # Its final chains keep about half their effective size, which warns.
     r = @test_logs min_level=Logging.Error ContinuousTimeSEM.ctsem_sample_smc(o, start;
         hessian=H, widen=1.0, nparticles=400, nmoves=1, maxdepth=5, seed=2, ndraws=10,
-        min_ess=0.0, max_draws=10, coreset=true, coreset_tol=1.0, parallel=false)
+        min_ess=0.0, max_draws=10, coreset=true, parallel=false)
     @test r.coreset
     @test all(r.stage_coreset_size .> 0)
-    @test minimum(r.stage_correction_ess) < 0.5
+    @test minimum(r.stage_correction_ess) < 0.9
     X = r.draws
     @test maximum(abs.(vec(mean(X; dims=2)) .- m) ./ sd) < 0.2
     @test all(0.85 .< vec(std(X; dims=2)) ./ sd .< 1.15)
@@ -393,13 +465,11 @@ end
     @test all(full.stage_coreset_size .== 0)
     @test core.coreset
     @test core.nunits == 40
-    # Some stage moved on a coreset, and none spent more than the budget's
-    # share of the units.
+    # Some stage moved on a coreset, priced cheaper than moving in full, so
+    # its share is below one; a stage run in full records a share of one.
     @test any(core.stage_coreset_size .> 0)
-    # A stage run in full records a share of one.
     @test all(i -> core.stage_coreset_size[i] == 0 ||
-        core.stage_coreset_share[i] <= 0.5 + 1e-12, eachindex(core.stage_coreset_size))
-    @test all(s -> s == 0 || s <= 20, core.stage_coreset_size)
+        core.stage_coreset_share[i] < 1, eachindex(core.stage_coreset_size))
     # The correction's effective size is reported a stage, in (0, 1].
     @test all(0 .< core.stage_correction_ess .<= 1)
     @test 0 < core.final_correction_ess <= 1
@@ -486,10 +556,10 @@ end
     @test core.coreset
     @test !full.coreset
     @test core.nunits == 40
-    # Each chain fitted its own coreset from its warm-up, within the budget's
-    # share of the units, and the full density accepted most of its moves.
-    @test all(0 .< core.coreset_size .<= 20)
-    @test all(core.coreset_share .<= 0.5 + 1e-12)
+    # Each chain fitted its own coreset from its warm-up, cheaper than a
+    # transition in full, and the full density accepted most of its moves.
+    @test all(0 .< core.coreset_size .< 40)
+    @test all(core.coreset_share .< 1)
     rate = core.coreset_accepted ./ core.coreset_proposed
     @test all(0.3 .< rate .<= 1)
     @test !any(core.coreset_abandoned)
