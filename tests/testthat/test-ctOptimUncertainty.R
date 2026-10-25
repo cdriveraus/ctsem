@@ -1449,7 +1449,9 @@ test_that("'checked' holds a direction improper under the fit's prior at the cur
   draw <- function(proper) withr::with_seed(2, ctsem:::.ctOptimDrawSamples(fit,
     draws = 'imis', control = list(dais = FALSE, imisMaxIter = 2), est = rep(0, 3),
     finishsamples = 2000, lpg = dens, parnames = c('a', 'b', 'c'), proper = proper))
-  expect_warning(held <- draw(FALSE),
+  # Said in a message: the intervals held are the curvature's, what an ML fit
+  # reports anyway.
+  expect_message(held <- draw(FALSE),
     "fallen off 96 standard errors out along a \\(above\\), a \\(below\\).*priors = TRUE")
   expect_equal(held$uncertaintyfit$details$improper$parameters, 1L)
   # Nothing else departs, so nothing is left to sample: the normal at the mode.
@@ -1457,7 +1459,7 @@ test_that("'checked' holds a direction improper under the fit's prior at the cur
   expect_equal(stats::sd(held$samples[, 1]), sqrt(1.5), tolerance = 0.05)
   expect_equal(mean(held$samples[, 1]), 0, tolerance = 0.1)
   # With a prior on everything the walk does not run.
-  plain <- suppressWarnings(draw(TRUE))
+  plain <- suppressMessages(suppressWarnings(draw(TRUE)))
   expect_null(plain$uncertaintyfit$details$improper)
 })
 

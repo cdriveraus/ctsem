@@ -564,7 +564,17 @@
       .ctJuliaProvisionBlas()
       .ctJuliaAnnounce()
     }
-    tryCatch(suspendInterrupts(withCallingHandlers(wire$ensure(), message = function(m) {
+    # From the precompiled server where there is one (R/ctJuliaServer.R),
+    # built first if this is its first use -- before interrupts are held,
+    # since that takes a minute -- and JuliaConnectoR's own start otherwise.
+    server <- if (!external) .ctJuliaServerPrepare() else NULL
+    tryCatch(suspendInterrupts(withCallingHandlers({
+      if (!is.null(server) && !isTRUE(tryCatch(.ctJuliaServerStart(wire,
+          server$internals, server$dir), error = function(e) FALSE))) {
+        .ct_julia_cache$rserver_off <- TRUE
+      }
+      if (is.null(wire$pkgLocal$con)) wire$ensure()
+    }, message = function(m) {
       if (!external && startsWith(conditionMessage(m), "Starting Julia")) {
         invokeRestart("muffleMessage")
       }
