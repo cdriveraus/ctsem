@@ -2619,13 +2619,18 @@ ctOptimComputeUncertainty <- function(est, standata, sm, lpgFunc,
     # Where this normal misstates the posterior, from gradients at draws from
     # it; `.ctOptimDrawSamples()` importance samples those directions. See
     # `.ctOptimNormalCheck()`.
-    if(uncertainty == 'checked') {
+    # `'hessian'` with `control$check` makes the same check and only records
+    # it: the curvature's normal is reported as it is, and the check says
+    # whether the posterior departs from it (a fit's development default,
+    # `ctFit()`).
+    if(uncertainty == 'checked' ||
+        (uncertainty == 'hessian' && isTRUE(control$check))) {
       method_details$normalcheck <- .ctOptimNormalCheck(.ctJuliaOr(
         .ctImisGradient(lpgFunc, est), attr(.ctImisPointGradbatch(lpgFunc), 'gradbatch')),
         est, cov)
       # The widths its pairs measured where it samples nothing
       # (`.ctNormalSpread()`).
-      if(!is.null(method_details$normalcheck$spread))
+      if(uncertainty == 'checked' && !is.null(method_details$normalcheck$spread))
         cov <- ctOptimSafeCov(method_details$normalcheck$spread$cov)
     }
   }
@@ -3555,8 +3560,13 @@ ctOptimFitLpgFunc <- function(fit, cores=1){
 #' in \code{$uncertainty$details$normalcheck}, and the sampling, when there was
 #' any, in \code{$uncertainty$details$importance_sampling}.}
 #' \item{\code{'hessian'}}{A normal approximation from the Hessian at the
-#' estimate, unchecked -- exact on julia, which differentiates its own
-#' gradient, and by finite differences of the gradient on stan.}
+#' estimate -- exact on julia, which differentiates its own
+#' gradient, and by finite differences of the gradient on stan. With
+#' \code{control = list(check = TRUE)}, a julia fit's default, the normal
+#' check of \code{'checked'} is made and recorded in
+#' \code{$uncertainty$details$normalcheck}, and \code{summary()} says when it
+#' found the posterior departing from the normal; the normal is reported as
+#' it is.}
 #' \item{\code{'bootstrap'}, \code{'sandwich'}, \code{'opg'}}{Built from
 #' per-subject score contributions: one-step score bootstrap draws with
 #' Hessian bread, Hessian bread with score covariance meat, and the outer

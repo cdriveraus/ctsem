@@ -230,8 +230,13 @@ gets the Hessian's covariance, so corrected. The check is recorded
 in \code{$uncertainty$details$normalcheck}, and the sampling, when there was
 any, in \code{$uncertainty$details$importance_sampling}.}
 \item{\code{'hessian'}}{A normal approximation from the Hessian at the
-estimate, unchecked -- exact on julia, which differentiates its own
-gradient, and by finite differences of the gradient on stan.}
+estimate -- exact on julia, which differentiates its own
+gradient, and by finite differences of the gradient on stan. With
+\code{control = list(check = TRUE)}, a julia fit's default, the normal
+check of \code{'checked'} is made and recorded in
+\code{$uncertainty$details$normalcheck}, and \code{summary()} says when it
+found the posterior departing from the normal; the normal is reported as
+it is.}
 \item{\code{'bootstrap'}, \code{'sandwich'}, \code{'opg'}}{Built from
 per-subject score contributions: one-step score bootstrap draws with
 Hessian bread, Hessian bread with score covariance meat, and the outer

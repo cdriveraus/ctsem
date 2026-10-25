@@ -7111,13 +7111,24 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
       "only the profile curvature, which the states flatten. Use ",
       "optimize=FALSE to sample them, or intoverstates=TRUE.")
   }
-  # With sampling weights the sandwich, unless asked otherwise: the Hessian
-  # alone is the pseudo-likelihood's curvature, not the estimate's spread.
-  # `[[`: `$` falls back to the one field the name begins, so an
-  # `uncertaintyControl` given alone was read as the method and stopped the
-  # fit in `match.arg()`.
+  # A fit's default is for building a model: the curvature's normal, on the
+  # density the fit ends on, with the normal check made and recorded beside
+  # it (`control$check`), and one message where the posterior departs from
+  # that normal. To report, sample (`ctFitUncertainty(fit, 'sample')`).
+  # 'checked', the default before, cost 2.3 times as much on the race's
+  # hierarchical fixtures for the same median coverage, and its narrow
+  # intervals were no better announced (review/REVIEW-fit-uncertainty-2026-10-25.md,
+  # section 5). With sampling weights the sandwich, unless asked otherwise:
+  # the Hessian alone is the pseudo-likelihood's curvature, not the
+  # estimate's spread. `[[`: `$` falls back to the one field the name begins,
+  # so an `uncertaintyControl` given alone was read as the method and stopped
+  # the fit in `match.arg()`.
+  weighted <- length(out$model_spec$subject_weights) > 0L
   uncertainty <- .ctJuliaOr(optimcontrol[["uncertainty"]],
-    if (length(out$model_spec$subject_weights)) "sandwich" else "checked")
+    if (weighted) "sandwich" else "hessian")
+  uncertaintycontrol <- .ctJuliaOr(optimcontrol$uncertaintyControl, list())
+  if (is.null(optimcontrol[["uncertainty"]]) && !weighted &&
+      is.null(uncertaintycontrol$check)) uncertaintycontrol$check <- TRUE
   uncertain <- isTRUE(intoverstates) && !isTRUE(optimcontrol$estonly)
   # One way to sample: `ctFit(optimize = FALSE)`, which places the sampler
   # through this same pipeline before ever reaching this stage (see
@@ -7133,11 +7144,11 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
       "ctFitUncertainty(fit, 'sample') on this fit once it is made.",
       call. = FALSE)
   }
-  measure <- function(fit, method) ctFitUncertainty(fit = fit, uncertainty = method,
+  measure <- function(fit, method, control = uncertaintycontrol) ctFitUncertainty(
+    fit = fit, uncertainty = method,
     draws = .ctJuliaOr(optimcontrol$uncertaintyDraws, "auto"),
     finishsamples = .ctJuliaOr(optimcontrol$finishsamples, 1000L),
-    cores = cores, control = .ctJuliaOr(optimcontrol$uncertaintyControl, list()),
-    verbose = verbose)
+    cores = cores, control = control, verbose = verbose)
   # A run that ended on a jump has no Laplace answer: the objective is not
   # continuous there, so it has no maximum and no curvature at that point, and
   # the quadrature continuation is what finishes it, whatever
@@ -7149,18 +7160,26 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
   # Where the continuation runs it draws the uncertainty itself, by the method
   # asked for, on the hybrid it ends on (`.ctLaplaceContinue()`), so the pass
   # before it computes only what it starts from: the curvature's normal and
-  # the flat directions. It ran the sampling methods on the Laplace objective
-  # too, and threw the draws away: 134 s of anomS1's 205 s fit
-  # (review/REVIEW-fit-uncertainty-2026-10-25.md, section 3).
+  # the flat directions, without the check. It ran the sampling methods on
+  # the Laplace objective too, and threw the draws away: 134 s of anomS1's
+  # 205 s fit (review/REVIEW-fit-uncertainty-2026-10-25.md, section 3). Its
+  # draws are always replaced, so it leaves R's random stream where it found
+  # it: where the continuation leaves the fit alone, the method asked for then
+  # draws exactly what it draws on the uncorrected fit.
+  # The default's check is made once, here, on the Laplace objective at its
+  # optimum, against that curvature's normal, where it is cheap and where it
+  # was measured; on the hybrid every draw would place the flagged units'
+  # rules again, some 13 s each on gN3's nested units. Kept for the fit's
+  # final record however the continuation ends (`precheck`).
+  plaincontrol <- uncertaintycontrol[setdiff(names(uncertaintycontrol), "check")]
+  precheck <- NULL
   if (uncertain && !jumped) {
-    first <- if (continuing && uncertainty %in% c("checked", "is")) "hessian" else
-      uncertainty
-    # Its draws are always replaced, so it leaves R's random stream where it
-    # found it: where the continuation leaves the fit alone, the method asked
-    # for then draws exactly what it draws on the uncorrected fit.
-    restore <- if (!identical(first, uncertainty)) .ctStreamKeep() else function() NULL
-    out <- holdrepair(measure(out, first))
-    restore()
+    if (continuing) {
+      restore <- .ctStreamKeep()
+      out <- holdrepair(measure(out, "hessian"))
+      restore()
+      precheck <- out$uncertainty$details$normalcheck
+    } else out <- holdrepair(measure(out, uncertainty))
   }
 
   # The quadrature correction, after the certification has converged the
@@ -7178,7 +7197,7 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
           "optimcontrol$laplace_correct.")
       }
       out <- holdrepair(.ctLaplaceContinue(out, cores = cores, verbose = verbose,
-        method = uncertainty))
+        method = uncertainty, uncertaintycontrol = plaincontrol))
     } else if (identical(correctlaplace, "step")) {
       out <- holdrepair(.ctLaplaceAutoCorrect(out, cores = cores, verbose = verbose))
     } else {
@@ -7192,10 +7211,16 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
   # continuation stopped short of its fixed point, when the draws are taken
   # at the Laplace optimum and moved with the estimate, as the continuation
   # moves the normal's (`.ctLaplaceUncertaintyAtOptimum()`).
-  if (uncertain && !jumped && !identical(out$uncertainty$settings$method, uncertainty)) {
+  if (continuing && !jumped && !identical(out$laplace$correction$draws, "redrawn")) {
     out <- holdrepair(.ctLaplaceUncertaintyAtOptimum(out,
-      function(fit) measure(fit, uncertainty)))
+      function(fit) measure(fit, uncertainty, plaincontrol)))
   }
+  if (!is.null(precheck) && is.null(out$uncertainty$details$normalcheck)) {
+    out$uncertainty$details$normalcheck <- precheck
+  }
+  # What the check beside the curvature found, said once.
+  checknote <- if (uncertain) .ctUncertaintyCheckNote(out) else NULL
+  if (!is.null(checknote)) message(checknote)
   # An accuracy asked for (`optimcontrol$accuracy`, in posterior sds): the
   # method's own account of its error read against it, and a brief
   # sampling run where it falls short (`.ctUncertaintyEscalate()`).

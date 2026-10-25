@@ -583,7 +583,9 @@ test_that("a default julia fit carries uncertainty, as an optimized Stan fit doe
       optimcontrol = list(finishsamples = 50))))
 
   expect_equal(nrow(fit$estimate$rawposterior), 50L)
-  expect_equal(fit$uncertainty$settings$method, "checked")
+  # The curvature's normal, with the normal check made beside it and recorded.
+  expect_equal(fit$uncertainty$settings$method, "hessian")
+  expect_false(is.null(fit$uncertainty$details$normalcheck))
   expect_true(all(is.finite(fit$estimate$se)))
 
   out <- summary(fit, parmatrices = FALSE)

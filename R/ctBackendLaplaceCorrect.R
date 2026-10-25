@@ -872,7 +872,7 @@
 }
 
 .ctLaplaceContinue <- function(fit, cores = 1L, verbose = 0L,
-  control = .ctLaplaceContinueDefaults, method = NULL) {
+  control = .ctLaplaceContinueDefaults, method = NULL, uncertaintycontrol = NULL) {
   started <- proc.time()[["elapsed"]]
   seconds <- function() proc.time()[["elapsed"]] - started
   est <- as.numeric(fit$estimate$raw)
@@ -1228,7 +1228,8 @@
   fit <- report_quadrature(fit, info)
   usable <- takes_hessian && is.matrix(hc) && all(is.finite(hc))
   # The uncertainty drawn on the continuation's density: the method asked
-  # for (`likelihood = 'quadrature'`), else the fit's own.
+  # for (`likelihood = 'quadrature'`, or a fit's), else the fit's own, with
+  # the control asked for, else the fit's.
   method <- .ctJuliaOr(method, .ctJuliaOr(fit$uncertainty$settings$method, "hessian"))
   # Present even when empty: `$` partial-matches, and without it
   # `correction$hessian` would answer with `hessian_at`.
@@ -1290,8 +1291,8 @@
     fit <- .ctBackendUncertainty(fit, uncertainty = method,
       draws = .ctResolveDraws(method, "auto"),
       finishsamples = finishsamples, cores = chunks,
-      control = .ctJuliaOr(settings$control, list()), verbose = verbose,
-      lpg = .ctLaplaceContinueLpg(module, cont))
+      control = .ctJuliaOr(uncertaintycontrol, .ctJuliaOr(settings$control, list())),
+      verbose = verbose, lpg = .ctLaplaceContinueLpg(module, cont))
     record$draws <- "redrawn"
     fit$uncertainty$details$laplace_correction <- list(
       draws = paste0("draws about the continuation's estimate, by '",

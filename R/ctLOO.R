@@ -1122,8 +1122,8 @@ ctLOO <- function(fit, folds = 10, cores = getOption("mc.cores", 2L), parallelFo
 # A fold's stepped estimate is a Newton step from the fit's estimate, and a
 # refitted fold starts L-BFGS from the same metric, so both want the inverse of
 # the fit's curvature there. `fit$estimate$cov` is that only where the
-# uncertainty is the Hessian's normal: 'checked', the default since juliaFit
-# d5d1f195, reports the importance sampler's covariance wherever it sampled,
+# uncertainty is the Hessian's normal: 'checked' reports the importance
+# sampler's covariance wherever it sampled,
 # the posterior's spread rather than the curvature, and on
 # test-julia-loo-approx.R's nested fit the stepped folds then captured 12 nats
 # of a 6-nat penalty. Built from the Hessian the fit kept, as its normal is;
