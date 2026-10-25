@@ -423,11 +423,13 @@ function _laplace_mixture_unit!(out, laplace::CTSEMLaplaceObjective, U::Integer,
         k = 0
         for cmp in comps
             shift = rand(rng, d)
+            # Signed (`_ctsem_signed_columns!`): the lattice is laid along them.
+            V = _ctsem_signed_columns!(copy(cmp.vecs))
             for j in 1:perj
                 z = [sqrt(2.0) * erfinv(clamp(2 * mod(j * alpha[a] + shift[a], 1.0) - 1,
                     -1 + 1e-15, 1 - 1e-15)) for a in 1:d]
                 k += 1
-                draws[k] = cmp.mu .+ cmp.c .* (cmp.vecs * (sqrt.(cmp.lam) .* z))
+                draws[k] = cmp.mu .+ cmp.c .* (V * (sqrt.(cmp.lam) .* z))
             end
         end
         logdens = function (cmp, u)
