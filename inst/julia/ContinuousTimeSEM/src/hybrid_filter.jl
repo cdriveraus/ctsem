@@ -186,28 +186,15 @@ function _hybrid_update!(hb::CTSEMHybridBuffers{T}, L, factor, K, y,
         end
         e[i] = acc / U[i, i]
     end
+    _ctsem_mulTN!(_rs(S, q, q), _rs(W, m, q), _rs(W, m, q), true, true)
     @inbounds for b in 1:q
-        for a in 1:b
-            acc = zero(T)
-            for i in 1:m
-                acc += W[i, a] * W[i, b]
-            end
-            S[a, b] += acc
-            a == b || (S[b, a] += acc)
-        end
         acc = zero(T)
         for i in 1:m
             acc += W[i, b] * e[i]
         end
         s[b] += acc
     end
-    @inbounds for c in 1:q, r in 1:n
-        acc = zero(T)
-        for i in 1:m
-            acc += K[r, i] * V[i, c]
-        end
-        X[r, c] -= acc
-    end
+    _ctsem_mul!(_rs(X, n, q), K, _rs(V, m, q), -1, true)
     return nothing
 end
 
@@ -224,13 +211,7 @@ function _hybrid_predict!(hb::CTSEMHybridBuffers{T}, A, JAx, series, naff::Int,
     dt, n::Int, continuous_time::Bool) where {T}
     q = hb.q
     X, Xt = hb.X, hb.Xt
-    @inbounds for c in 1:q, r in 1:n
-        acc = zero(T)
-        for k in 1:n
-            acc += A[r, k] * X[k, c]
-        end
-        Xt[r, c] = acc
-    end
+    _ctsem_mul!(_rs(Xt, n, q), A, _rs(X, n, q))
     hb.X, hb.Xt = Xt, X
     X, Xinc = hb.X, hb.Xinc
     phi = nothing
@@ -874,21 +855,9 @@ function _hybrid_reverse_update!(rec::CTSEMHybridTape{T}, record::CTSEMUpdateRec
         Z[i, c] = acc
     end
     # X+ = X - K V:  Kbar = -Xbar V',  Vbar = -K' Xbar.
-    @inbounds for i in 1:m, r in 1:n
-        acc = zero(T)
-        for c in 1:q
-            acc -= Xbar[r, c] * V[i, c]
-        end
-        Kbar[r, i] = acc
-    end
+    _ctsem_mulNT!(_rs(Kbar, n, m), _rs(Xbar, n, q), _rs(V, m, q), -1)
     # `W` is spent: it holds `Z Sbar` from here.
-    @inbounds for c in 1:q, i in 1:m
-        acc = zero(T)
-        for b in 1:q
-            acc += Z[i, b] * Sbar[b, c]
-        end
-        W[i, c] = acc
-    end
+    _ctsem_mul!(_rs(W, m, q), _rs(Z, m, q), _rs(Sbar, q, q))
     @inbounds for c in 1:q, i in 1:m
         acc = zero(T)
         for r in 1:n
@@ -914,13 +883,7 @@ function _hybrid_reverse_update!(rec::CTSEMHybridTape{T}, record::CTSEMUpdateRec
         Rbar[i, j] = acc - (ybar[i] * a[j] + a[i] * ybar[j]) / 2
     end
     # V = L X + E:  Lbar = Vbar X',  Xbar(before) = Xbar(after) + L' Vbar.
-    @inbounds for k in 1:n, i in 1:m
-        acc = zero(T)
-        for c in 1:q
-            acc += Vbar[i, c] * Xh[k, c]
-        end
-        Lbar[i, k] = acc
-    end
+    _ctsem_mulNT!(_rs(Lbar, m, n), _rs(Vbar, m, q), _rs(Xh, n, q))
     @inbounds for c in 1:q, k in 1:n
         acc = Xbar[k, c]
         for i in 1:m
@@ -995,20 +958,8 @@ function _hybrid_reverse_predict!(Abar, JAx_bar, A, JAx, rec::CTSEMHybridTape{T}
     end
     size(rec.Xt) == size(Xbar) || (rec.Xt = zeros(T, size(Xbar)...))
     Xt = rec.Xt
-    @inbounds for j in 1:n, i in 1:n
-        acc = zero(T)
-        for c in 1:q
-            acc += Xbar[i, c] * Xh[j, c]
-        end
-        Abar[i, j] += acc
-    end
-    @inbounds for c in 1:q, j in 1:n
-        acc = zero(T)
-        for i in 1:n
-            acc += A[i, j] * Xbar[i, c]
-        end
-        Xt[j, c] = acc
-    end
+    _ctsem_mulNT!(view(Abar, 1:n, 1:n), _rs(Xbar, n, q), _rs(Xh, n, q), true, true)
+    _ctsem_mulTN!(_rs(Xt, n, q), view(A, 1:n, 1:n), _rs(Xbar, n, q))
     rec.Xbar, rec.Xt = Xt, Xbar
     return nothing
 end
