@@ -37,9 +37,9 @@
 #
 # What one draw costs: the trajectory's leapfrog steps at the coreset's share
 # of a gradient, and one full value, no gradient, at a moved endpoint; a
-# refused endpoint wastes the draw. So the coreset is the size of least cost
-# per accepted transition (`_surrogate_price`), and is given up where the
-# acceptance measured makes that more than a transition in full.
+# refused endpoint repeats the chain's state. So the coreset is the size of
+# least cost per effective transition (`_surrogate_price`), and is given up
+# where the acceptance measured makes that more than a transition in full.
 
 """Warm-up states a chain's coreset is fitted from: its last this many."""
 const _SURROGATE_TRAIN = 64
@@ -51,16 +51,28 @@ const _SURROGATE_MIN_PROPOSED = 20
 """
     _surrogate_price(share, s, work)
 
-A transition's cost, in full evaluations, per accepted transition, on a
+A transition's cost, in full evaluations, per effective transition, on a
 coreset whose units cost `share` of a full evaluation and whose error differs
 between a transition's ends by `s` (an sd, log units): the trajectory's
 `work` (its leapfrog steps, a gradient each) at the coreset's share and one
-full value at its end, over the endpoint test's acceptance, about
-`2 Phi(-s / 2)` for a normal error. Without a coreset a transition costs
-`work`.
+full value at its end, times the autocorrelation the refused endpoints add
+(`_surrogate_tau`) at the endpoint test's acceptance, about `2 Phi(-s / 2)`
+for a normal error. Without a coreset a transition costs `work`.
 """
 _surrogate_price(share::Real, s::Real, work::Real) =
-    (work * share + 1) / (2 * _ctsem_normal_cdf(-s / 2))
+    (work * share + 1) * _surrogate_tau(2 * _ctsem_normal_cdf(-s / 2))
+
+"""
+    _surrogate_tau(a)
+
+The transitions an effective one takes where a share `a` of them is accepted
+and the rest repeat the chain's state, for moves that are otherwise
+independent: `(2 - a) / a`, the integrated autocorrelation time of a chain
+that stays put with probability `1 - a`. Counting only the refused
+transitions as lost, `1 / a`, undercounts by `2 - a`: 1.7 times at the
+acceptance of 0.3 a single-unit coreset ran at on cf_mixed.
+"""
+_surrogate_tau(a::Real) = a > 0 ? (2 - a) / a : Inf
 
 """What a coreset costs a chain's transition (`_surrogate_price`), with the
 error's spread scaled by `inflate`, the variance the last coreset's measured
@@ -252,8 +264,12 @@ end
     _surrogate_fit!(logdensity!, states, x, g, logp)
 
 Fit a chain's coreset from the full density's unit terms at `states`, and
-switch the density to it if one passes; a chain that has one keeps it where
-none does. `logp` is the density in use at `x` (the full one before any
+switch the density to it if one is priced cheaper than a transition in full
+(`_surrogate_price`, with the inflation its last coreset's acceptance shows).
+Where none is, a chain keeps the coreset it has unless that coreset's own
+acceptance has made it dearer than a transition in full
+(`_surrogate_poor`): kept, a single-unit coreset of gN1's eight accepted 1
+per cent of its endpoints through the rest of warm-up. `logp` is the density in use at `x` (the full one before any
 coreset); the full value there is kept for the endpoint test. Returns the
 log density in use at `x` afterwards, its gradient in `g`.
 """
@@ -273,7 +289,10 @@ function _surrogate_fit!(d::_SurrogateDensity, states::Vector{Vector{Float64}},
     price = _SurrogatePrice(_surrogate_work(d), _surrogate_inflation(d))
     fit = _smc_coreset_fit(full.terms, full.total, _smc_unit_cost(d.objective), price,
         price.work, Random.Xoshiro(d.seed + UInt64(d.fits)))
-    fit === nothing && return logp
+    if fit === nothing
+        return d.coreset !== nothing && _surrogate_poor(d) ?
+            _surrogate_abandon!(d, x, g) : logp
+    end
     previous = d.coreset
     d.coreset = CTSEMCoreset(fit.units, fit.weights)
     gold = copy(g)
@@ -338,7 +357,7 @@ end
     _surrogate_batch!(logdensity!, x, g, logp)
 
 At the end of a batch of draws: a chain whose moved endpoints were accepted
-too rarely for its coreset to cost less per accepted transition than a
+too rarely for its coreset to cost less per effective transition than a
 transition in full (`_surrogate_price` at the acceptance measured) gives it
 up, and samples in full from here. Returns the log density at `x`, its
 gradient in `g`, under whichever density is now in use.
@@ -347,12 +366,26 @@ _surrogate_batch!(logdensity!, x, g, logp) = logp
 function _surrogate_batch!(d::_SurrogateDensity, x::Vector{Float64},
     g::Vector{Float64}, logp::Float64)
     d.coreset === nothing && return logp
-    work = _surrogate_work(d)
-    poor = d.batch_proposed >= _SURROGATE_MIN_PROPOSED &&
-        d.batch_accepted * work < (work * d.share + 1) * d.batch_proposed
+    poor = _surrogate_poor(d)
     d.batch_proposed = 0
     d.batch_accepted = 0
     poor || return logp
+    return _surrogate_abandon!(d, x, g)
+end
+
+"""Whether chain `d`'s coreset has cost more per effective transition than a
+transition in full (`_surrogate_price` at the acceptance measured), over the
+moved endpoints tested since it was fitted or since the last batch, where
+there are at least `_SURROGATE_MIN_PROPOSED`."""
+function _surrogate_poor(d::_SurrogateDensity)
+    d.batch_proposed >= _SURROGATE_MIN_PROPOSED || return false
+    work = _surrogate_work(d)
+    return (work * d.share + 1) * _surrogate_tau(d.batch_accepted / d.batch_proposed) > work
+end
+
+"""Chain `d` gives its coreset up for the rest of the run: the full log
+density at `x`, its gradient in `g`."""
+function _surrogate_abandon!(d::_SurrogateDensity, x::Vector{Float64}, g::Vector{Float64})
     d.coreset = nothing
     d.abandoned = true
     return _marginal_density!(d.objective, d.gradient_method, g, x)

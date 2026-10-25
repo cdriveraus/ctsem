@@ -304,9 +304,12 @@ end
     @test P._smc_stage_price(0.1, 5.0, 192.0, 1e-6, log(2)) ≈ 192 * 0.1 + 1.2 rtol = 1e-9
     # A final draw: the draws the weights keep, exp(-s^2) of them.
     @test P._smc_draw_price(0.1, 0.5, 64.0) ≈ (6.4 + 1.1) * exp(0.25)
-    # Delayed acceptance: 2 Phi(-s / 2) of the endpoints accepted.
+    # Delayed acceptance: 2 Phi(-s / 2) of the endpoints accepted, each refused
+    # one a repeated state: (2 - a) / a transitions an effective one.
     @test P._surrogate_price(0.1, 0.0, 64.0) ≈ 7.4
-    @test P._surrogate_price(0.1, 1.0, 64.0) ≈ 7.4 / (2 * P._ctsem_normal_cdf(-0.5))
+    a = 2 * P._ctsem_normal_cdf(-0.5)
+    @test P._surrogate_price(0.1, 1.0, 64.0) ≈ 7.4 * (2 - a) / a
+    @test P._surrogate_tau(0.0) == Inf
     # Measured acceptance gives the spread back: a coreset accepted as its
     # fit predicted is priced as it was.
     d = P._SurrogateDensity(nothing, :adjoint, 2, 1)

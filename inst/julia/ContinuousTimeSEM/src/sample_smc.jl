@@ -560,6 +560,47 @@ function _smc_logdensity(objective, coreset, gradient_method)
 end
 
 """
+    _smc_final_weights(objective, cs, owed, lp, Xf, start, draws, nper)
+
+The final chains' log weights to the full density, a draw each (`draws`,
+chain-major, `nper` a chain). Each chain's base is what the last stage's
+moves left owing at its start (`owed`, by particle), less the final
+coreset's error there, since the reversal of a chain on the coreset reads
+its error at both ends; each draw adds the error where it sits. Without a
+final coreset, the base alone. A systematic resample by these weights
+returns the draws unweighted.
+"""
+function _smc_final_weights(objective, cs, owed::AbstractVector{Float64},
+    lp::AbstractVector{Float64}, Xf::AbstractMatrix{Float64}, start::AbstractVector{Int},
+    draws::AbstractMatrix{Float64}, nper::Int)
+    nch = length(start)
+    total = size(draws, 2)
+    lc0 = cs === nothing ? nothing : _smc_coreset_values(objective, Xf[:, start], cs)
+    base = [cs === nothing ? owed[start[ch]] :
+        owed[start[ch]] - (lp[start[ch]] - lc0[ch]) for ch in 1:nch]
+    lw = Vector{Float64}(undef, total)
+    if cs === nothing
+        for j in 1:total
+            lw[j] = base[div(j - 1, nper) + 1]
+        end
+        return lw
+    end
+    lpf = ctsem_evaluate_batch(objective, draws)
+    lpk = _smc_coreset_values(objective, draws, cs)
+    for j in 1:total
+        v = base[div(j - 1, nper) + 1] + (lpf[j] - lpk[j])
+        lw[j] = isfinite(v) ? v : -Inf
+    end
+    return lw
+end
+
+"""The share of the draws' effective size that log weights `lw` keep."""
+function _smc_kept(lw::AbstractVector{Float64})
+    nfin = count(isfinite, lw)
+    return nfin > 0 ? _importance_ess(lw) / nfin : 0.0
+end
+
+"""
     ctsem_sample_smc(objective, values; kwargs...)
 
 Sample the marginal posterior of `objective` by tempered SMC from the normal
@@ -913,46 +954,45 @@ function ctsem_sample_smc(objective, values::AbstractVector;
     end
     run = _sample_until_target(() -> _pool_draws(held[], npar), extend!, nch, nfirst,
         fmin_ess, fmean_ess, max_final, Float64(rhat_target), verbose; t0=t0)
-    chains = held[]
     nper = run.total
+    trace = run.trace
+    reweigh = cs_final !== nothing || any(!iszero, owed_f)
+    pooled = _sample_pool(held[], nch, nper, npar)
+    lw = reweigh ? _smc_final_weights(objective, cs_final, owed_f, lp_f, Xf, start,
+        pooled.draws, nper) : Float64[]
+    final_correction = reweigh ? _smc_kept(lw) : 1.0
+    # The draws the correction keeps are what the targets ask for. Where it
+    # kept less than the chains were run for -- the coreset's error is
+    # measured over the cloud, and the chains on it go where it can be larger
+    # -- they run on, once, to the targets over the share it kept, and the
+    # correction is taken again over every draw.
+    if cs_final !== nothing && !isempty(trace.ess) &&
+        trace.ess[end] * final_correction < max(Float64(min_ess), Float64(mean_ess)) &&
+        final_correction < expected_kept && nper < max_final
+        keep_share = max(final_correction, 0.01)
+        extra = _sample_until_target(() -> _pool_draws(held[], npar), extend!, nch, nper,
+            Float64(min_ess) / keep_share, Float64(mean_ess) / keep_share, max_final, Float64(rhat_target),
+            verbose; t0=t0)
+        if extra.total > nper
+            nper = extra.total
+            trace = (draws=vcat(trace.draws, extra.trace.draws),
+                secs=vcat(trace.secs, extra.trace.secs), ess=vcat(trace.ess, extra.trace.ess),
+                rhat=vcat(trace.rhat, extra.trace.rhat))
+            pooled = _sample_pool(held[], nch, nper, npar)
+            lw = _smc_final_weights(objective, cs_final, owed_f, lp_f, Xf, start,
+                pooled.draws, nper)
+            final_correction = _smc_kept(lw)
+        end
+    end
 
-    total = nch * nper
-    pooled = _sample_pool(chains, nch, nper, npar)
     draws, accept, divergent = pooled.draws, pooled.accept, pooled.divergent
     depth, energy = pooled.depth, pooled.energy
     # The chains' own diagnostics, before any correction; no R-hat (see the
     # file comment).
     diagnostics = ctsem_sample_diagnostics(draws, nch)
     diagnostics = merge(diagnostics, (rhat=fill(NaN, length(diagnostics.rhat)),))
-    final_correction = 1.0
-    if cs_final !== nothing || any(!iszero, owed_f)
-        # Each chain's base: what the last stage's moves left owing at its
-        # start, less the final coreset's error there (the reversal of a chain
-        # on the coreset reads its error at both ends); each draw adds the
-        # error where it sits. A systematic resample by these weights returns
-        # the draws unweighted.
-        base = zeros(nch)
-        lc0 = cs_final === nothing ? nothing :
-            _smc_coreset_values(objective, Xf[:, start], cs_final)
-        for ch in 1:nch
-            k = start[ch]
-            base[ch] = cs_final === nothing ? owed_f[k] : owed_f[k] - (lp_f[k] - lc0[ch])
-        end
-        lw = Vector{Float64}(undef, total)
-        if cs_final === nothing
-            for j in 1:total
-                lw[j] = base[div(j - 1, nper) + 1]
-            end
-        else
-            lpf = ctsem_evaluate_batch(objective, draws)
-            lpk = _smc_coreset_values(objective, draws, cs_final)
-            for j in 1:total
-                v = base[div(j - 1, nper) + 1] + (lpf[j] - lpk[j])
-                lw[j] = isfinite(v) ? v : -Inf
-            end
-        end
+    if reweigh
         nfin = count(isfinite, lw)
-        final_correction = nfin > 0 ? _importance_ess(lw) / nfin : 0.0
         if nfin > 0
             mx = maximum(lw)
             wk = exp.(lw .- mx)
@@ -969,7 +1009,7 @@ function ctsem_sample_smc(objective, values::AbstractVector;
         energy=energy)
     return merge(_sample_result(corrected_pool; nchains=nch, ndraws=nper, npar=npar,
         ndim=npar, maxdepth=mdepth, stepsize=fill(step, nch),
-        warmup_divergent=zeros(Int, nch), trace=run.trace, diagnostics=diagnostics), (
+        warmup_divergent=zeros(Int, nch), trace=trace, diagnostics=diagnostics), (
         forward_gradients=ctsem_forward_gradients() - forward0,
         explosive_passes=ctsem_explosive_passes() - explosive0,
         sampler="smc", nparticles=np, nmoves=nmv, widen=Float64(widen),
@@ -989,6 +1029,8 @@ function ctsem_sample_smc(objective, values::AbstractVector;
         stage_corrected=[s.corrected for s in stages],
         final_tau=tau,
         final_coreset_size=cs_final === nothing ? 0 : length(cs_final.units),
+        final_coreset_error=final_fit === nothing ? NaN : final_fit.error,
+        final_kept_expected=expected_kept,
         final_correction_ess=final_correction,
         parallel=String(mode),
     ))
