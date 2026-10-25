@@ -83,8 +83,9 @@ drops it under the stage's target costs a stage that moves `beta` by nothing
 and only corrects; two such stages in a row and the run goes on without a
 coreset. The final phase's chains run on a coreset fitted to the posterior's
 cloud, priced per effective draw (`_smc_draw_price`), and run until the
-targets divided by the share of effective size the correction is expected to
-keep;
+targets divided by the share of effective size the correction keeps -- the
+price's expectation for the first chains, then what their draws show, so that
+the chains are counted for it before any is lengthened;
 the same reversal makes draw `k` of a chain that started at `x0` carry
 `(pi / c)(x_k) / (pi / c)(x0)`, times whatever the last stage's moves left
 owing at `x0`, and the draws are resampled by those weights
@@ -560,38 +561,63 @@ function _smc_logdensity(objective, coreset, gradient_method)
 end
 
 """
-    _smc_final_weights(objective, cs, owed, lp, Xf, start, draws, nper)
+The final chains' log weights to the full density, a vector a chain
+(`lw`), each chain's base beside them (`base`); brought up to date by
+`_smc_final_weights!`."""
+struct _SMCFinalWeights
+    base::Vector{Float64}
+    lw::Vector{Vector{Float64}}
+end
 
-The final chains' log weights to the full density, a draw each (`draws`,
-chain-major, `nper` a chain). Each chain's base is what the last stage's
-moves left owing at its start (`owed`, by particle), less the final
-coreset's error there, since the reversal of a chain on the coreset reads
-its error at both ends; each draw adds the error where it sits. Without a
-final coreset, the base alone. A systematic resample by these weights
-returns the draws unweighted.
+_SMCFinalWeights() = _SMCFinalWeights(Float64[], Vector{Float64}[])
+
 """
-function _smc_final_weights(objective, cs, owed::AbstractVector{Float64},
-    lp::AbstractVector{Float64}, Xf::AbstractMatrix{Float64}, start::AbstractVector{Int},
-    draws::AbstractMatrix{Float64}, nper::Int)
-    nch = length(start)
-    total = size(draws, 2)
-    lc0 = cs === nothing ? nothing : _smc_coreset_values(objective, Xf[:, start], cs)
-    base = [cs === nothing ? owed[start[ch]] :
-        owed[start[ch]] - (lp[start[ch]] - lc0[ch]) for ch in 1:nch]
-    lw = Vector{Float64}(undef, total)
-    if cs === nothing
-        for j in 1:total
-            lw[j] = base[div(j - 1, nper) + 1]
+    _smc_final_weights!(fw, objective, cs, owed, lp, Xf, start, chains)
+
+Bring `fw` up to date with every draw the final `chains` hold. Each chain's
+base is what the last stage's moves left owing at its start (`owed`, by
+particle), less the final coreset's error there, since the reversal of a
+chain on the coreset reads its error at both ends; each draw adds the error
+where it sits. Draws already weighed are not evaluated again, so the share
+read on the first draws to size the chains costs nothing at the end. Without
+a final coreset, the base alone. A systematic resample by these weights
+returns the draws unweighted. Returns `fw`.
+"""
+function _smc_final_weights!(fw::_SMCFinalWeights, objective, cs,
+    owed::AbstractVector{Float64}, lp::AbstractVector{Float64},
+    Xf::AbstractMatrix{Float64}, start::AbstractVector{Int},
+    chains::Vector{_ChainResult})
+    nold = length(fw.base)
+    if length(chains) > nold
+        idx = start[(nold + 1):length(chains)]
+        lc0 = cs === nothing ? Float64[] : _smc_coreset_values(objective, Xf[:, idx], cs)
+        for (i, k) in enumerate(idx)
+            push!(fw.base, cs === nothing ? owed[k] : owed[k] - (lp[k] - lc0[i]))
+            push!(fw.lw, Float64[])
         end
-        return lw
     end
-    lpf = ctsem_evaluate_batch(objective, draws)
-    lpk = _smc_coreset_values(objective, draws, cs)
-    for j in 1:total
-        v = base[div(j - 1, nper) + 1] + (lpf[j] - lpk[j])
-        lw[j] = isfinite(v) ? v : -Inf
+    pick = Tuple{Int,Int}[]
+    for c in eachindex(chains), t in (length(fw.lw[c]) + 1):size(chains[c].draws, 2)
+        push!(pick, (c, t))
     end
-    return lw
+    isempty(pick) && return fw
+    if cs === nothing
+        for (c, _) in pick
+            push!(fw.lw[c], fw.base[c])
+        end
+        return fw
+    end
+    D = Matrix{Float64}(undef, size(chains[1].draws, 1), length(pick))
+    for (j, (c, t)) in enumerate(pick)
+        D[:, j] .= view(chains[c].draws, :, t)
+    end
+    lpf = ctsem_evaluate_batch(objective, D)
+    lpk = _smc_coreset_values(objective, D, cs)
+    for (j, (c, _)) in enumerate(pick)
+        v = fw.base[c] + (lpf[j] - lpk[j])
+        push!(fw.lw[c], isfinite(v) ? v : -Inf)
+    end
+    return fw
 end
 
 """The share of the draws' effective size that log weights `lw` keep."""
@@ -887,8 +913,9 @@ function ctsem_sample_smc(objective, values::AbstractVector;
     end
     cs_final = final_fit === nothing ? nothing : CTSEMCoreset(final_fit.units, final_fit.weights)
     # The share of the chains' effective size the correction to the full
-    # density is expected to keep, which the targets are divided by: the
-    # chains' diagnostics are their own, before it.
+    # density is expected to keep, which the targets are divided by until the
+    # first chains' draws show it: the chains' diagnostics are their own,
+    # before it.
     expected_kept = final_fit === nothing ? 1.0 : exp(-2 * inflate * final_fit.error^2)
     fmin_ess = Float64(min_ess) / expected_kept
     fmean_ess = Float64(mean_ess) / expected_kept
@@ -926,9 +953,22 @@ function ctsem_sample_smc(objective, values::AbstractVector;
         held[] = vcat(held[], res)
         return nothing
     end
+    # The correction's weights, a chain at a time as the chains are run; on a
+    # coreset, the share of effective size they keep is read off the chains so
+    # far and replaces the price's expectation in the targets, so that the
+    # chains are counted for it before any is lengthened: more chains from
+    # unused particles buy more effective draws than longer ones do.
+    fw = _SMCFinalWeights()
+    planned = expected_kept
     start_chains!(order[1:_smc_final_chains(tau, target_ess, nfirst, np)])
     while target_ess > 0 && length(start) < np
         n = length(start)
+        if cs_final !== nothing
+            _smc_final_weights!(fw, objective, cs_final, owed_f, lp_f, Xf, start, held[])
+            planned = max(_smc_kept(reduce(vcat, fw.lw)), 0.01)
+            fmin_ess = Float64(min_ess) / planned
+            fmean_ess = Float64(mean_ess) / planned
+        end
         v = _sample_verdict(_pool_draws(held[], npar), fill(nfirst, n), nfirst, nfirst,
             fmin_ess, fmean_ess, nfirst, Float64(rhat_target), false)
         v.met && break
@@ -958,29 +998,28 @@ function ctsem_sample_smc(objective, values::AbstractVector;
     trace = run.trace
     reweigh = cs_final !== nothing || any(!iszero, owed_f)
     pooled = _sample_pool(held[], nch, nper, npar)
-    lw = reweigh ? _smc_final_weights(objective, cs_final, owed_f, lp_f, Xf, start,
-        pooled.draws, nper) : Float64[]
+    reweigh && _smc_final_weights!(fw, objective, cs_final, owed_f, lp_f, Xf, start, held[])
+    lw = reweigh ? reduce(vcat, fw.lw) : Float64[]
     final_correction = reweigh ? _smc_kept(lw) : 1.0
-    # The draws the correction keeps are what the targets ask for. Where it
-    # kept less than the chains were run for -- the coreset's error is
-    # measured over the cloud, and the chains on it go where it can be larger
-    # -- they run on, once, to the targets over the share it kept, and the
-    # correction is taken again over every draw.
+    # The draws the correction keeps are what the targets ask for. Where the
+    # chains, lengthened, drifted further and it kept less than they were run
+    # for, they run on, once, to the targets over the share it kept, and the
+    # correction takes in the new draws.
     if cs_final !== nothing && !isempty(trace.ess) &&
         trace.ess[end] * final_correction < max(Float64(min_ess), Float64(mean_ess)) &&
-        final_correction < expected_kept && nper < max_final
+        final_correction < planned && nper < max_final
         keep_share = max(final_correction, 0.01)
         extra = _sample_until_target(() -> _pool_draws(held[], npar), extend!, nch, nper,
-            Float64(min_ess) / keep_share, Float64(mean_ess) / keep_share, max_final, Float64(rhat_target),
-            verbose; t0=t0)
+            Float64(min_ess) / keep_share, Float64(mean_ess) / keep_share, max_final,
+            Float64(rhat_target), verbose; t0=t0)
         if extra.total > nper
             nper = extra.total
             trace = (draws=vcat(trace.draws, extra.trace.draws),
                 secs=vcat(trace.secs, extra.trace.secs), ess=vcat(trace.ess, extra.trace.ess),
                 rhat=vcat(trace.rhat, extra.trace.rhat))
             pooled = _sample_pool(held[], nch, nper, npar)
-            lw = _smc_final_weights(objective, cs_final, owed_f, lp_f, Xf, start,
-                pooled.draws, nper)
+            _smc_final_weights!(fw, objective, cs_final, owed_f, lp_f, Xf, start, held[])
+            lw = reduce(vcat, fw.lw)
             final_correction = _smc_kept(lw)
         end
     end
