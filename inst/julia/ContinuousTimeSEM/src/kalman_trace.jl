@@ -317,7 +317,7 @@ end
 
 function _kalman_store_response_rows!(trace::CTSEMKalmanTrace, kind::Int, row::Int,
     ws, pars, statecov)
-    types = ws.manifesttype
+    types = ws.sp.manifesttype
     n = trace.nlatent
     m = trace.nmanifest
     @inbounds for i in 1:m
@@ -458,7 +458,7 @@ function _record_row_update!(trace::CTSEMKalmanTrace, ws, pars, sp, context,
         sp.td_transforms, context)        # TDPREDEFFECT/Jtd an update-group cell may read
     apply_complex_transforms_at_indices!(all_params, ws.update_param_indices,
         sp.update_transforms, context)
-    ContinuousTimeSEM.sdcovsqrt2cov!(ws.bufferΘ, pars.MANIFESTVAR, ws.covmatcode, ws.manifest_dim)
+    ContinuousTimeSEM.sdcovsqrt2cov!(ws.bufferΘ, pars.MANIFESTVAR, ws.sp.covmatcode, ws.manifest_dim)
 
     _kalman_store!(trace, _CTSEM_KALMAN_UPD, r, ws, pars, ws.state, ws.P_update.data)
     # Jy about the updated state: that is where the smoother takes its
@@ -520,7 +520,7 @@ end
 
 function _kalman_smooth_response_rows!(trace::CTSEMKalmanTrace, ws, row::Int, Jyr,
     Δ, covsm, ysm, ycovsm)
-    types = ws.manifesttype
+    types = ws.sp.manifesttype
     pars = ws.pars
     n = trace.nlatent
     m = trace.nmanifest

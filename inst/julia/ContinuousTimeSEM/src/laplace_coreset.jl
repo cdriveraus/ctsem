@@ -209,20 +209,32 @@ on one objective would overwrite each other's; the subjects and the
 specification are only read, and the workspaces are per slot, which the pool
 gives one task at a time. Modes are rebound per unit
 (`_laplace_solve_unit_mode!`), never written in place, so a shallow copy of the
-others is enough.
+others is enough: every field is the original's unless replaced here, so a
+field added to the objective is shared by a draw's copy without an edit.
 """
-function _laplace_draw_copy(laplace::CTSEMLaplaceObjective{O},
-    coreset::CTSEMCoreset) where {O}
+function _laplace_draw_copy(laplace::CTSEMLaplaceObjective, coreset::CTSEMCoreset)
+    draw = _ctsem_shallow_copy(laplace)
     modes = copy(laplace.modes)
     for U in coreset.units
         modes[U] = zeros(Float64, length(laplace.modes[U]))
     end
-    return CTSEMLaplaceObjective{O}(laplace.objective, laplace.spec, laplace.units,
-        modes, laplace.inner_maxiter, laplace.inner_tol, laplace.workspaces,
-        copy(laplace.inner_iterations), copy(laplace.inner_gradient),
-        copy(laplace.inner_converged), copy(laplace.hessian_repaired),
-        copy(laplace.mode_repaired), copy(laplace.logdet_floored), Float64[],
-        laplace.floor, laplace.gate_lo, laplace.gate_hi, 0, laplace.quadratic)
+    draw.modes = modes
+    draw.inner_iterations = copy(laplace.inner_iterations)
+    draw.inner_gradient = copy(laplace.inner_gradient)
+    draw.inner_converged = copy(laplace.inner_converged)
+    draw.hessian_repaired = copy(laplace.hessian_repaired)
+    draw.mode_repaired = copy(laplace.mode_repaired)
+    draw.logdet_floored = copy(laplace.logdet_floored)
+    draw.last_values = Float64[]
+    draw.gated_units = 0
+    return draw
+end
+
+"""A new object of `x`'s type holding `x`'s fields, by its default
+constructor: for a copy that replaces a few of them, with the list of fields
+in the struct alone."""
+@generated function _ctsem_shallow_copy(x::T) where {T}
+    return :(T($((:(getfield(x, $i)) for i in 1:fieldcount(T))...)))
 end
 
 """One evaluation for the entry points above, or `nothing` where the draw

@@ -359,7 +359,7 @@ its own here.
     apply_complex_transforms_at_indices!(all_params, ws.predict_param_indices,
         sp.predict_transforms, CTSEMRowContext(ws.state, pars, tdpreds, tipreds,
             time, h, subject, t))
-    ContinuousTimeSEM.sdcovsqrt2cov!(ws.bufferQ, pars.DIFFUSION, ws.covmatcode,
+    ContinuousTimeSEM.sdcovsqrt2cov!(ws.bufferQ, pars.DIFFUSION, ws.sp.covmatcode,
         ws.state_dim)
     if transition === :euler && ws.continuous_time
         _matvec_mul!(ws.bufferQ.r, pars.DRIFT, ws.state, ws.state_dim, ws.state_dim)
@@ -666,7 +666,7 @@ function _ctsem_state_row!(ws, pars, data::AbstractMatrix, col::Int,
 
     m = ws.manifest_dim
     n = ws.state_dim
-    types = ws.manifesttype
+    types = ws.sp.manifesttype
     row = gen === nothing ? col : gen.offset + col
 
     # The linear predictor. `pars.LAMBDA` rather than `pars.Jy`, matching the
@@ -681,7 +681,7 @@ function _ctsem_state_row!(ws, pars, data::AbstractMatrix, col::Int,
         pred[i] = acc
     end
 
-    ContinuousTimeSEM.sdcovsqrt2cov!(ws.bufferΘ, pars.MANIFESTVAR, ws.covmatcode,
+    ContinuousTimeSEM.sdcovsqrt2cov!(ws.bufferΘ, pars.MANIFESTVAR, ws.sp.covmatcode,
         ws.manifest_dim)
     @inbounds for j in 1:m, i in 1:m
         theta[i, j] = ws.bufferΘ.out[i, j]

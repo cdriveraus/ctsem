@@ -627,7 +627,7 @@ end
 The row of ASYMPTOTES manifest variable `row` reads, or 0 when it has none.
 """
 @inline _asymptote_row(ws, row::Int) =
-    row <= length(ws.asymptoterow) ? @inbounds(ws.asymptoterow[row]) : 0
+    row <= length(ws.sp.asymptoterow) ? @inbounds(ws.sp.asymptoterow[row]) : 0
 
 """
     _binary_asymptotes(extras, T)
@@ -1709,7 +1709,7 @@ would cost every model a ForwardDiff gradient per cell to support. A running
 sum here costs a handful of additions on a vector of length `K-1`.
 """
 @inline function _ordinal_thresholds!(ws, pars, row::Int)
-    types = ws.manifesttype
+    types = ws.sp.manifesttype
     # A censored row carries its limits and its own standard deviation in the
     # same slot. The standard deviation is `MANIFESTVAR`'s diagonal entry,
     # which is a standard deviation before `sdcovsqrt2cov` turns the matrix
@@ -1721,10 +1721,10 @@ sum here costs a handful of additions on a vector of length `K-1`.
     if row <= length(types) && types[row] == 4
         length(ws.thresholds) >= 3 || return view(ws.thresholds, 1:0)
         @inbounds begin
-            ws.thresholds[1] = row <= length(ws.censormin) ?
-                ws.censormin[row] : -Inf
-            ws.thresholds[2] = row <= length(ws.censormax) ?
-                ws.censormax[row] : Inf
+            ws.thresholds[1] = row <= length(ws.sp.censormin) ?
+                ws.sp.censormin[row] : -Inf
+            ws.thresholds[2] = row <= length(ws.sp.censormax) ?
+                ws.sp.censormax[row] : Inf
             ws.thresholds[3] = pars.MANIFESTVAR[row, row]
         end
         # Its response scale, when the model has one: the half-width each
@@ -1772,7 +1772,7 @@ sum here costs a handful of additions on a vector of length `K-1`.
     hasproperty(pars, :THRESHOLDS) || return view(ws.thresholds, 1:0)
     (row <= length(types) && types[row] == 2) ||
         return view(ws.thresholds, 1:0)
-    ncat = row <= length(ws.ncategories) ? ws.ncategories[row] : 0
+    ncat = row <= length(ws.sp.ncategories) ? ws.sp.ncategories[row] : 0
     k = min(max(ncat - 1, 0), size(pars.THRESHOLDS, 2))
     k == 0 && return view(ws.thresholds, 1:0)
     raw = view(pars.THRESHOLDS, row, :)

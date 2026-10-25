@@ -376,7 +376,7 @@ function _ctsem_pack_matrices!(column, pars, sp::EKFParameters, layout,
           sp.diffusion_state_indices
     # `sp.covmatcode`, not a hardcoded 0: these are the covariances the
     # summaries report, and the filter builds its own with the requested
-    # construction (`kalman_filters.jl` passes `ws.covmatcode`). Hardcoding it
+    # construction (`kalman_filters.jl` passes `ws.sp.covmatcode`). Hardcoding it
     # here meant a fit under 'z' or 'cholesky' was estimated with one
     # construction and reported through another -- T0cov came back 0.083 out
     # with a sign flip, and nothing failed.
