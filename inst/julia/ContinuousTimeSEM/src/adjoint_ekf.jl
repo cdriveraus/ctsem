@@ -1115,11 +1115,20 @@ function _reverse_predict!(x̄::Vector{T}, P̄::Matrix{T}, θ̄ca,
     if record.series_noise
         # --- dDIFF[D,D] = V(JAx[D,D], Qc[D,D], dt), the integral itself; see
         # `series_discretization.jl`. It reads no exponential, so Ād is zero.
+        # Its cotangents wait on the table's powers until `_flush_series!`, so
+        # nothing reaches JAx or DIFFUSION from this row directly.
         fill!(Ād, zero(T))
         fill!(JAxd_bar, zero(T))
         fill!(Qcd_bar, zero(T))
-        _series_noise!(sc.series, JAxd, record.Qd, record.dt, k)
-        _series_noise_pullback!(JAxd_bar, Qcd_bar, sc.series, k, Qb)
+        sr = aws.series_reverse
+        if !(_series_table_matches(sr.noise, JAxd, record.Qd, k) &&
+                _ctsem_same_matrix(sr.diffusion, record.DIFFUSION, n))
+            _flush_series_noise!(aws, θ̄ca, n)
+            _series_table_reset!(sr.noise, JAxd, record.Qd, k)
+            _copy_block!(sr.diffusion, record.DIFFUSION, n, n)
+        end
+        _series_noise_table!(sc.series, sr.noise, record.dt, k)
+        _series_noise_table_pullback!(sr.noise_bar, sc.series, sr.noise, k, Qb)
     else
         X = record.Xlyap
         _ctsem_mulTN!(kk6, Ad, Qb)
@@ -1138,8 +1147,14 @@ function _reverse_predict!(x̄::Vector{T}, P̄::Matrix{T}, θ̄ca,
     if record.series_intercept
         # --- dINT[1:naff] = Phi affine, Phi = int_0^dt e^{JAx s} ds over the
         # leading block, taken as a series; see `series_discretization.jl`.
-        # Like the noise series it reads no exponential, so nothing reaches Ā.
-        Phi = _series_intercept!(sc.series, JAx, record.dt, naff)
+        # Like the noise series it reads no exponential, so nothing reaches Ā,
+        # and its cotangent waits on the table's powers (`_flush_series!`).
+        sr = aws.series_reverse
+        if !_series_table_matches(sr.intercept, JAx, nothing, naff)
+            _flush_series_intercept!(aws, θ̄ca)
+            _series_table_reset!(sr.intercept, JAx, nothing, naff)
+        end
+        Phi = _series_intercept_table!(sc.series, sr.intercept, record.dt, naff)
         @inbounds for i in 1:naff
             acc = zero(T)
             for q in 1:naff
@@ -1150,7 +1165,8 @@ function _reverse_predict!(x̄::Vector{T}, P̄::Matrix{T}, θ̄ca,
         @inbounds for j in 1:naff, i in 1:naff
             aa1[i, j] = dINT_bar[i] * record.affine[j]
         end
-        _series_intercept_pullback!(JAx_bar, sc.series, naff, aa1)
+        _series_intercept_table_pullback!(sr.intercept_bar, sc.series, sr.intercept,
+            naff, aa1)
     else
         # --- dINT[1:naff] = JAx[1:naff,1:naff] \ s   (s̄ = JAx⁻ᵀ dINT_bar, M̄ = -s̄ dINT')
         # The affine block is a leading one, so everything below indexes directly
@@ -1840,6 +1856,8 @@ function _ctsem_reverse_tape!(tape::CTSEMAdjointTape{T},
     # merge into it unseen.
     aws.mvar_pending = false
     aws.dvar_pending = false
+    aws.series_reverse.noise_bar.pending = false
+    aws.series_reverse.intercept_bar.pending = false
     # Constructed here rather than read from the workspace on purpose: a
     # `ComponentVector` view is a free wrapper around `θ̄`, but a workspace
     # field holding one has to be `Any`-typed (its axis type is model
@@ -1878,6 +1896,8 @@ function _ctsem_reverse_tape!(tape::CTSEMAdjointTape{T},
             # ctsem's default model, whose individually varying MANIFESTMEANS
             # puts a group between every pair of prediction substeps in an
             # otherwise entirely linear model.
+            (aws.groups_write_jax || aws.groups_write_diffusion) &&
+                _flush_series!(aws, θ̄ca, n)
             aws.groups_write_jax && _flush_frechet!(aws)
             aws.groups_write_manifestvar && _flush_manifestvar!(aws, θ̄ca, m)
             aws.groups_write_diffusion && _flush_diffusion!(aws, θ̄ca, n)
@@ -1960,6 +1980,8 @@ function _ctsem_reverse_tape!(tape::CTSEMAdjointTape{T},
             throw(ArgumentError("adjoint: unknown tape entry $(kind)"))
         end
     end
+    # Before the diffusion's release, which the noise table's feeds.
+    _flush_series!(aws, θ̄ca, n)
     _flush_manifestvar!(aws, θ̄ca, m)
     _flush_diffusion!(aws, θ̄ca, n)
 
@@ -2023,6 +2045,63 @@ function _defer_diffusion!(aws, mat, cov_bar, θ̄ca, n::Int)
         aws.dvar_bar[i, j] = cov_bar[i, j]
     end
     aws.dvar_pending = true
+    return nothing
+end
+
+"""
+    _flush_series!(aws, θ̄ca, n)
+
+Release the cotangents the series route's intervals left on their tables'
+powers (`SeriesTable`): pull them through the power chains once, into JAx's
+diffusing and affine blocks and, for the noise, into the diffusion covariance,
+which goes on to `_defer_diffusion!` against the raw DIFFUSION the intervals
+read. Linear in what was accumulated, so releasing once for a run of intervals
+on one table is exact. The tape walk calls it when a table's drift changes,
+before a transform group that writes JAx or DIFFUSION cells (whose reverse
+zeroes those cotangents), and at the end of the subject.
+"""
+function _flush_series!(aws, θ̄ca, n::Int)
+    _flush_series_noise!(aws, θ̄ca, n)
+    _flush_series_intercept!(aws, θ̄ca)
+    return nothing
+end
+
+function _flush_series_noise!(aws, θ̄ca, n::Int)
+    sr = aws.series_reverse
+    sr.noise_bar.pending || return nothing
+    T = eltype(sr.Jbar)
+    k = sr.noise.p
+    dyn = aws.diffusion_state_indices
+    Jb = view(sr.Jbar, 1:k, 1:k)
+    Qb = view(sr.Qbar, 1:k, 1:k)
+    fill!(Jb, zero(T))
+    fill!(Qb, zero(T))
+    _series_table_pullback!(sr.Jbar, sr.Qbar, sr.noise, sr.noise_bar)
+    θ̄JAx = θ̄ca.JAx
+    @inbounds for j in 1:k, i in 1:k
+        θ̄JAx[dyn[i], dyn[j]] += Jb[i, j]
+    end
+    Qc = sr.Qfull
+    fill!(Qc, zero(T))
+    @inbounds for j in 1:k, i in 1:k
+        Qc[dyn[i], dyn[j]] = Qb[i, j]
+    end
+    _defer_diffusion!(aws, sr.diffusion, Qc, θ̄ca, n)
+    return nothing
+end
+
+function _flush_series_intercept!(aws, θ̄ca)
+    sr = aws.series_reverse
+    sr.intercept_bar.pending || return nothing
+    T = eltype(sr.Jbar)
+    p = sr.intercept.p
+    Jb = view(sr.Jbar, 1:p, 1:p)
+    fill!(Jb, zero(T))
+    _series_table_pullback!(sr.Jbar, nothing, sr.intercept, sr.intercept_bar)
+    θ̄JAx = θ̄ca.JAx
+    @inbounds for j in 1:p, i in 1:p
+        θ̄JAx[i, j] += Jb[i, j]
+    end
     return nothing
 end
 

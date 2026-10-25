@@ -257,27 +257,9 @@ function _series_intercept_pullback!(Jbar::AbstractMatrix, buf::SeriesKernelBuff
     p::Int, Phibar::AbstractMatrix) where {T}
     s, m, h0 = buf.s, buf.m, buf.h0
     X = _series_block(buf.X, p)
-    Pb = _series_block(buf.b1, p)
-    Eb = _series_block(buf.Ebar, p)
     t1 = _series_block(buf.b2, p)
     t2 = _series_block(buf.b3, p)
-    copyto!(Pb, Phibar)
-    fill!(Eb, zero(T))
-    # Phi_k = Phi_{k-1} + E_{k-1} Phi_{k-1}, and E_k = E_{k-1}^2 while k < s.
-    for k in s:-1:1
-        E = _series_block(buf.Es[k], p)
-        P = _series_block(buf.Ps[k], p)
-        if k < s
-            _ctsem_mulNT!(t1, Eb, E)
-            _ctsem_mulTN!(t1, E, Eb, one(T), one(T))
-        else
-            fill!(t1, zero(T))
-        end
-        _ctsem_mulNT!(t1, Pb, P, one(T), one(T))
-        _ctsem_mulTN!(t2, E, Pb)
-        Pb .+= t2
-        copyto!(Eb, t1)
-    end
+    Pb, Eb = _series_intercept_doubling_pullback!(buf, p, Phibar)
     # Phi_0 = h0 G and E_0 = I + X G.
     G = _series_block(buf.horner[1], p)
     Gb = t2
@@ -308,6 +290,42 @@ function _series_intercept_pullback!(Jbar::AbstractMatrix, buf::SeriesKernelBuff
         Jbar[i, j] += Xb[i, j] * h0
     end
     return Jbar
+end
+
+"""
+    _series_intercept_doubling_pullback!(buf, p, Phibar)
+
+The doubling chain of an intercept series reversed, for cotangent `Phibar` on
+its result: the cotangents of the first scaled integral `Phi(h0)` (in `buf.b1`)
+and of the first exponential `e^{J h0}` (in `buf.Ebar`, zero without doublings).
+`buf` must hold the forward sweep, by either `_series_intercept!` or
+`_series_intercept_table!`; `buf.b2` and `buf.b3` are its scratch.
+"""
+function _series_intercept_doubling_pullback!(buf::SeriesKernelBuffer{T}, p::Int,
+    Phibar::AbstractMatrix) where {T}
+    s = buf.s
+    Pb = _series_block(buf.b1, p)
+    Eb = _series_block(buf.Ebar, p)
+    t1 = _series_block(buf.b2, p)
+    t2 = _series_block(buf.b3, p)
+    copyto!(Pb, Phibar)
+    fill!(Eb, zero(T))
+    # Phi_k = Phi_{k-1} + E_{k-1} Phi_{k-1}, and E_k = E_{k-1}^2 while k < s.
+    for k in s:-1:1
+        E = _series_block(buf.Es[k], p)
+        P = _series_block(buf.Ps[k], p)
+        if k < s
+            _ctsem_mulNT!(t1, Eb, E)
+            _ctsem_mulTN!(t1, E, Eb, one(T), one(T))
+        else
+            fill!(t1, zero(T))
+        end
+        _ctsem_mulNT!(t1, Pb, P, one(T), one(T))
+        _ctsem_mulTN!(t2, E, Pb)
+        Pb .+= t2
+        copyto!(Eb, t1)
+    end
+    return Pb, Eb
 end
 
 """
@@ -394,32 +412,10 @@ function _series_noise_pullback!(Jbar::AbstractMatrix, Qbar::AbstractMatrix,
     s, m, h0 = buf.s, buf.m, buf.h0
     X = _series_block(buf.X, p)
     Qb = _series_block(buf.Q, p)
-    Vb = _series_block(buf.b1, p)
-    Eb = _series_block(buf.Ebar, p)
     t1 = _series_block(buf.b2, p)
-    t2 = _series_block(buf.b3, p)
     Xb = _series_block(buf.Xbar, p)
-    @inbounds for j in 1:p, i in 1:p
-        Vb[i, j] = (Vbar[i, j] + Vbar[j, i]) / 2
-    end
-    fill!(Eb, zero(T))
+    Vb, Eb = _series_noise_doubling_pullback!(buf, p, Vbar)
     fill!(Xb, zero(T))
-    # V_k = V_{k-1} + E V_{k-1} E', and E_k = E^2 while k < s, E = E_{k-1}.
-    for k in s:-1:1
-        E = _series_block(buf.Es[k], p)
-        P = _series_block(buf.Ps[k], p)
-        if k < s
-            _ctsem_mulNT!(t1, Eb, E)
-            _ctsem_mulTN!(t1, E, Eb, one(T), one(T))
-        else
-            fill!(t1, zero(T))
-        end
-        _ctsem_mul!(t2, Vb, E)                     # Vbar E
-        _ctsem_mul!(t1, t2, P, T(2), one(T))       # + 2 Vbar E V
-        copyto!(Eb, t1)
-        _ctsem_mulTN!(t1, E, t2)                   # E' Vbar E
-        Vb .+= t1
-    end
     # E_0 = F_1, with F_{m+1} = I and F_j = I + X F_{j+1} / j.
     if s > 0
         Fb = Eb
@@ -457,6 +453,436 @@ function _series_noise_pullback!(Jbar::AbstractMatrix, Qbar::AbstractMatrix,
         Jbar[i, j] += Xb[i, j] * h0
     end
     return Jbar, Qbar
+end
+
+"""
+    _series_noise_doubling_pullback!(buf, p, Vbar)
+
+The doubling chain of a noise series reversed, for cotangent `Vbar` on its
+result (symmetrised first): the cotangents of the first scaled integral `V(h0)`
+(in `buf.b1`) and of the first exponential `e^{J h0}` (in `buf.Ebar`, zero
+without doublings). `buf` must hold the forward sweep, by either
+`_series_noise!` or `_series_noise_table!`; `buf.b2` and `buf.b3` are its
+scratch.
+"""
+function _series_noise_doubling_pullback!(buf::SeriesKernelBuffer{T}, p::Int,
+    Vbar::AbstractMatrix) where {T}
+    s = buf.s
+    Vb = _series_block(buf.b1, p)
+    Eb = _series_block(buf.Ebar, p)
+    t1 = _series_block(buf.b2, p)
+    t2 = _series_block(buf.b3, p)
+    @inbounds for j in 1:p, i in 1:p
+        Vb[i, j] = (Vbar[i, j] + Vbar[j, i]) / 2
+    end
+    fill!(Eb, zero(T))
+    # V_k = V_{k-1} + E V_{k-1} E', and E_k = E^2 while k < s, E = E_{k-1}.
+    for k in s:-1:1
+        E = _series_block(buf.Es[k], p)
+        P = _series_block(buf.Ps[k], p)
+        if k < s
+            _ctsem_mulNT!(t1, Eb, E)
+            _ctsem_mulTN!(t1, E, Eb, one(T), one(T))
+        else
+            fill!(t1, zero(T))
+        end
+        _ctsem_mul!(t2, Vb, E)                     # Vbar E
+        _ctsem_mul!(t1, t2, P, T(2), one(T))       # + 2 Vbar E V
+        copyto!(Eb, t1)
+        _ctsem_mulTN!(t1, E, t2)                   # E' Vbar E
+        Vb .+= t1
+    end
+    return Vb, Eb
+end
+
+################################################################################
+# The series from powers built once per drift
+################################################################################
+#
+# The kernels above sum their Taylor series by Horner's rule at every
+# interval: about 2m products of the block for the noise integral and its
+# exponential, and m for the intercept, with m 15-18 at the scaled step, and
+# the reverse pass sums them again before pulling back through every term.
+# Where the drift and diffusion do not change from row to row -- every linear
+# model, within a subject's filter pass -- the series' matrices do not change
+# either; only an interval's scalar weights on them do. So a `SeriesTable`
+# holds the powers `J^j` and, for the noise, `L^j(Q)` with
+# `L(W) = J W + W J'`, built once for its `(J, Q)` and extended when a longer
+# series is asked for, and an interval's series is their weighted sum: O(m p^2)
+# where Horner's rule was O(m p^3). Only the doublings stay products. The
+# truncation is `_series_plan!`'s, the same as the kernels above, so the two
+# agree to rounding.
+#
+# The reverse pass adds each interval's cotangents onto the powers
+# (`SeriesTableBar`) and pulls them through the power chains once for the run
+# of intervals that share a table (`_series_table_pullback!`, released by
+# `_flush_series!` in adjoint_ekf.jl as the Fréchet and diffusion cotangents
+# are). A drift that changes every row, as a state-dependent one does, builds
+# and releases a table each row, which costs about what Horner's rule did.
+#
+# On the affect pilot -- thirteen states, a slow tier whose small drift puts
+# almost every interval on the series route -- the series was 56% of a Laplace
+# value and gradient (8 threads, local, 2026-10-25).
+
+"""
+    SeriesTable{T}(n, noise)
+
+Powers of the leading `p x p` block of a drift `J`, for the series kernels:
+`Jp[j] = J^j` for `j = 1:count`, and for a noise table also
+`Lp[j + 1] = L^j(Q)` for `j = 0:count`. `J` and `Q` are copies of the block
+the powers belong to; `_series_table_key!` compares against them.
+"""
+mutable struct SeriesTable{T}
+    p::Int
+    noise::Bool
+    valid::Bool
+    count::Int
+    J::Matrix{T}
+    Q::Matrix{T}
+    Jp::Vector{Matrix{T}}
+    Lp::Vector{Matrix{T}}
+    tmp::Matrix{T}
+end
+
+SeriesTable(::Type{T}, n::Int, noise::Bool) where {T} =
+    SeriesTable{T}(0, noise, false, 0, zeros(T, n, n), zeros(T, n, n),
+        Matrix{T}[], Matrix{T}[], zeros(T, n, n))
+
+"""
+    SeriesTableBar{T}(n)
+
+Cotangents on a `SeriesTable`'s powers, laid out as its `Jp` and `Lp`,
+accumulated over the intervals that read the table; `count` is the highest
+power written and `pending` whether anything has been.
+"""
+mutable struct SeriesTableBar{T}
+    pending::Bool
+    count::Int
+    Jp::Vector{Matrix{T}}
+    Lp::Vector{Matrix{T}}
+end
+
+SeriesTableBar(::Type{T}) where {T} = SeriesTableBar{T}(false, 0, Matrix{T}[],
+    Matrix{T}[])
+
+"""
+    _series_table_key!(tab, J, Q, p)
+
+Whether `tab` holds the powers of the leading `p x p` block of `J` (and of
+`Q`, for a noise table). If not, it is reset to that block with no powers
+built, and the answer is `false`. The comparison is exact, and under
+`ForwardDiff.Dual` it compares partials too (`_blocks_identical`).
+"""
+function _series_table_key!(tab::SeriesTable, J::AbstractMatrix, Q, p::Int)
+    _series_table_matches(tab, J, Q, p) && return true
+    _series_table_reset!(tab, J, Q, p)
+    return false
+end
+
+"""Whether `tab` holds the powers of the leading `p x p` block of `J` (and `Q`)."""
+@inline _series_table_matches(tab::SeriesTable, J::AbstractMatrix, Q, p::Int) =
+    tab.valid && tab.p == p && _blocks_identical(tab.J, J, p, p) &&
+        (!tab.noise || _blocks_identical(tab.Q, Q, p, p))
+
+"""Reset `tab` to the leading `p x p` block of `J` (and `Q`), no powers built."""
+function _series_table_reset!(tab::SeriesTable, J::AbstractMatrix, Q, p::Int)
+    _copy_block!(tab.J, J, p, p)
+    tab.noise && _copy_block!(tab.Q, Q, p, p)
+    tab.p = p
+    tab.count = 0
+    tab.valid = true
+    return tab
+end
+
+"""
+    CTSEMSeriesReverse{T}(n, k)
+
+The reverse pass's series tables (`SeriesTable`), one for the noise over the
+`k` diffusing states and one for the intercept over the affine block, with the
+cotangents waiting on their powers, the raw DIFFUSION matrix the noise table's
+intervals defer their diffusion cotangent against, and scratch for releasing
+them (`_flush_series!` in adjoint_ekf.jl).
+"""
+struct CTSEMSeriesReverse{T}
+    noise::SeriesTable{T}
+    noise_bar::SeriesTableBar{T}
+    intercept::SeriesTable{T}
+    intercept_bar::SeriesTableBar{T}
+    diffusion::Matrix{T}
+    Jbar::Matrix{T}
+    Qbar::Matrix{T}
+    Qfull::Matrix{T}
+end
+
+CTSEMSeriesReverse(::Type{T}, n::Int, k::Int) where {T} = CTSEMSeriesReverse{T}(
+    SeriesTable(T, k, true), SeriesTableBar(T), SeriesTable(T, n, false),
+    SeriesTableBar(T), zeros(T, n, n), zeros(T, n, n), zeros(T, n, n), zeros(T, n, n))
+
+"""Extend `tab`'s powers to `count`, building only those it lacks."""
+function _series_table_extend!(tab::SeriesTable{T}, count::Int) where {T}
+    count <= tab.count && return tab
+    p = tab.p
+    n = size(tab.J, 1)
+    _series_grow!(tab.Jp, count, n)
+    tab.noise && _series_grow!(tab.Lp, count + 1, n)
+    J = _series_block(tab.J, p)
+    t = _series_block(tab.tmp, p)
+    if tab.count == 0 && tab.noise
+        _copy_block!(tab.Lp[1], tab.Q, p, p)
+    end
+    for j in (tab.count + 1):count
+        Jj = _series_block(tab.Jp[j], p)
+        if j == 1
+            copyto!(Jj, J)
+        else
+            _ctsem_mul!(Jj, J, _series_block(tab.Jp[j - 1], p))
+        end
+        if tab.noise
+            # L^j(Q) = J L^{j-1}(Q) + its transpose, symmetric as Q is.
+            _ctsem_mul!(t, J, _series_block(tab.Lp[j], p))
+            Lj = _series_block(tab.Lp[j + 1], p)
+            @inbounds for jj in 1:p, ii in 1:p
+                Lj[ii, jj] = t[ii, jj] + t[jj, ii]
+            end
+        end
+    end
+    tab.count = count
+    return tab
+end
+
+"""`A .+= c .* B` over the leading `p x p` block."""
+@inline function _series_axpy!(A::AbstractMatrix, c, B::AbstractMatrix, p::Int)
+    @inbounds for j in 1:p, i in 1:p
+        A[i, j] += c * B[i, j]
+    end
+    return A
+end
+
+"""
+    _series_doublings!(buf, out, p, noise)
+
+The doubling chain both table kernels end with, from `buf.Es[1]` and
+`buf.Ps[1]` to `out`: `P_{k+1} = P_k + E_k P_k E_k'` for the noise,
+`P_{k+1} = P_k + E_k P_k` for the intercept, `E_{k+1} = E_k^2`; the same
+recurrences, in the same order, as `_series_noise!` and `_series_intercept!`.
+"""
+function _series_doublings!(buf::SeriesKernelBuffer{T}, out::AbstractMatrix, p::Int,
+    noise::Bool) where {T}
+    s = buf.s
+    t1 = _series_block(buf.b1, p)
+    for k in 1:s
+        E = _series_block(buf.Es[k], p)
+        P = _series_block(buf.Ps[k], p)
+        next = k == s ? out : _series_block(buf.Ps[k + 1], p)
+        if noise
+            _ctsem_mul!(t1, E, P)
+            _ctsem_mulNT!(next, t1, E)
+        else
+            _ctsem_mul!(next, E, P)
+        end
+        next .+= P
+        k < s && _ctsem_mul!(_series_block(buf.Es[k + 1], p), E, E)
+    end
+    return out
+end
+
+"""
+    _series_noise_table!(buf, tab, h, p)
+
+`_series_noise!` for the `J` and `Q` that `tab` holds, from its powers:
+`V(h0) = sum_{j=0}^m h0^{j+1} / (j+1)! L^j(Q)` and
+`e^{J h0} = sum_{j=0}^m h0^j / j! J^j`, then the same doublings. Tapes what
+`_series_noise_table_pullback!` needs in `buf`.
+"""
+function _series_noise_table!(buf::SeriesKernelBuffer{T}, tab::SeriesTable{T}, h,
+    p::Int) where {T}
+    _CTSEM_OPCOUNT.series_noise[] += 1
+    _series_plan!(buf, tab.J, h, p, 2.0)
+    s, m, h0 = buf.s, buf.m, buf.h0
+    _series_table_extend!(tab, m)
+    out = _series_block(buf.out, p)
+    first = s == 0 ? out : _series_block(buf.Ps[1], p)
+    c = h0
+    _copy_block!(first, tab.Lp[1], p, p)
+    first .*= c
+    for j in 1:m
+        c *= h0 / (j + 1)
+        _series_axpy!(first, c, tab.Lp[j + 1], p)
+    end
+    if s > 0
+        E0 = _series_block(buf.Es[1], p)
+        fill!(E0, zero(T))
+        _series_add_identity!(E0, p)
+        e = 1.0
+        for j in 1:m
+            e *= h0 / j
+            _series_axpy!(E0, e, tab.Jp[j], p)
+        end
+        _series_doublings!(buf, out, p, true)
+    end
+    @inbounds for j in 1:p, i in 1:(j - 1)
+        v = (out[i, j] + out[j, i]) / 2
+        out[i, j] = v
+        out[j, i] = v
+    end
+    return out
+end
+
+"""
+    _series_intercept_table!(buf, tab, h, p)
+
+`_series_intercept!` for the `J` that `tab` holds, from its powers:
+`Phi(h0) = sum_{j=0}^m h0^{j+1} / (j+1)! J^j` and
+`e^{J h0} = sum_{i=0}^{m+1} h0^i / i! J^i`, then the same doublings. Tapes what
+`_series_intercept_table_pullback!` needs in `buf`.
+"""
+function _series_intercept_table!(buf::SeriesKernelBuffer{T}, tab::SeriesTable{T}, h,
+    p::Int) where {T}
+    _CTSEM_OPCOUNT.series_intercept[] += 1
+    _series_plan!(buf, tab.J, h, p, 1.0)
+    s, m, h0 = buf.s, buf.m, buf.h0
+    _series_table_extend!(tab, s > 0 ? m + 1 : m)
+    out = _series_block(buf.out, p)
+    first = s == 0 ? out : _series_block(buf.Ps[1], p)
+    c = h0
+    fill!(first, zero(T))
+    @inbounds for i in 1:p
+        first[i, i] = c
+    end
+    for j in 1:m
+        c *= h0 / (j + 1)
+        _series_axpy!(first, c, tab.Jp[j], p)
+    end
+    s == 0 && return out
+    E0 = _series_block(buf.Es[1], p)
+    fill!(E0, zero(T))
+    _series_add_identity!(E0, p)
+    e = 1.0
+    for i in 1:(m + 1)
+        e *= h0 / i
+        _series_axpy!(E0, e, tab.Jp[i], p)
+    end
+    return _series_doublings!(buf, out, p, false)
+end
+
+"""Grow `bar` to hold cotangents for powers up to `count` of `tab`'s shape."""
+function _series_bar_grow!(bar::SeriesTableBar{T}, tab::SeriesTable{T},
+    count::Int) where {T}
+    n = size(tab.J, 1)
+    p = tab.p
+    while length(bar.Jp) < count
+        push!(bar.Jp, zeros(T, n, n))
+    end
+    if tab.noise
+        while length(bar.Lp) < count + 1
+            push!(bar.Lp, zeros(T, n, n))
+        end
+    end
+    # Nothing pending is a fresh start, whatever an earlier walk left; past
+    # that, the powers not yet written are zeroed as they are first reached.
+    if !bar.pending
+        bar.count = 0
+        tab.noise && fill!(_series_block(bar.Lp[1], p), zero(T))
+    end
+    for j in (bar.count + 1):count
+        fill!(_series_block(bar.Jp[j], p), zero(T))
+        tab.noise && fill!(_series_block(bar.Lp[j + 1], p), zero(T))
+    end
+    bar.count = max(bar.count, count)
+    bar.pending = true
+    return bar
+end
+
+"""
+    _series_noise_table_pullback!(bar, buf, tab, p, Vbar)
+
+Add to `bar` the cotangents, on `tab`'s powers, of the interval
+`_series_noise_table!` last computed in `buf`, for cotangent `Vbar` on it.
+"""
+function _series_noise_table_pullback!(bar::SeriesTableBar{T}, buf::SeriesKernelBuffer{T},
+    tab::SeriesTable{T}, p::Int, Vbar::AbstractMatrix) where {T}
+    s, m, h0 = buf.s, buf.m, buf.h0
+    Vb, Eb = _series_noise_doubling_pullback!(buf, p, Vbar)
+    _series_bar_grow!(bar, tab, m)
+    c = h0
+    _series_axpy!(bar.Lp[1], c, Vb, p)
+    for j in 1:m
+        c *= h0 / (j + 1)
+        _series_axpy!(bar.Lp[j + 1], c, Vb, p)
+    end
+    if s > 0
+        e = 1.0
+        for j in 1:m
+            e *= h0 / j
+            _series_axpy!(bar.Jp[j], e, Eb, p)
+        end
+    end
+    return bar
+end
+
+"""
+    _series_intercept_table_pullback!(bar, buf, tab, p, Phibar)
+
+Add to `bar` the cotangents, on `tab`'s powers, of the interval
+`_series_intercept_table!` last computed in `buf`, for cotangent `Phibar`.
+"""
+function _series_intercept_table_pullback!(bar::SeriesTableBar{T},
+    buf::SeriesKernelBuffer{T}, tab::SeriesTable{T}, p::Int,
+    Phibar::AbstractMatrix) where {T}
+    s, m, h0 = buf.s, buf.m, buf.h0
+    Pb, Eb = _series_intercept_doubling_pullback!(buf, p, Phibar)
+    _series_bar_grow!(bar, tab, s > 0 ? m + 1 : m)
+    c = h0
+    for j in 1:m
+        c *= h0 / (j + 1)
+        _series_axpy!(bar.Jp[j], c, Pb, p)
+    end
+    if s > 0
+        e = 1.0
+        for i in 1:(m + 1)
+            e *= h0 / i
+            _series_axpy!(bar.Jp[i], e, Eb, p)
+        end
+    end
+    return bar
+end
+
+"""
+    _series_table_pullback!(Jbar, Qbar, tab, bar)
+
+Pull `bar`'s cotangents on `tab`'s powers back through the power chains,
+adding to the leading `p x p` blocks of `Jbar` (and `Qbar`, for a noise
+table), and release `bar`. `J^j = J J^{j-1}`;
+`L^j = J L^{j-1} + L^{j-1} J'` with `L^0 = Q`.
+"""
+function _series_table_pullback!(Jbar::AbstractMatrix, Qbar, tab::SeriesTable{T},
+    bar::SeriesTableBar{T}) where {T}
+    bar.pending || return Jbar
+    p = tab.p
+    c = bar.count
+    J = _series_block(tab.J, p)
+    Jb = _series_block(Jbar, p)
+    if tab.noise
+        for j in c:-1:1
+            Lb = _series_block(bar.Lp[j + 1], p)
+            A = _series_block(tab.Lp[j], p)
+            prev = _series_block(bar.Lp[j], p)
+            _ctsem_mulNT!(Jb, Lb, A, one(T), one(T))
+            _ctsem_mulTN!(Jb, Lb, A, one(T), one(T))
+            _ctsem_mulTN!(prev, J, Lb, one(T), one(T))
+            _ctsem_mul!(prev, Lb, J, one(T), one(T))
+        end
+        _series_axpy!(Qbar, one(T), bar.Lp[1], p)
+    end
+    for j in c:-1:2
+        Pjb = _series_block(bar.Jp[j], p)
+        _ctsem_mulNT!(Jb, Pjb, _series_block(tab.Jp[j - 1], p), one(T), one(T))
+        _ctsem_mulTN!(_series_block(bar.Jp[j - 1], p), J, Pjb, one(T), one(T))
+    end
+    c >= 1 && _series_axpy!(Jb, one(T), bar.Jp[1], p)
+    bar.pending = false
+    bar.count = 0
+    return Jbar
 end
 
 """The smallest diagonal magnitude of the leading `p x p` block, on primal values."""
