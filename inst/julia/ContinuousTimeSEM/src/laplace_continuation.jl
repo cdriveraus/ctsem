@@ -1988,6 +1988,29 @@ function _continuation_tasks(o::CTSEMLaplaceContinuation, nslot::Integer)
 end
 
 """
+    _continuation_task_runs(tasks)
+
+The runs of `tasks` (`_continuation_tasks`) that belong to one flagged unit,
+as `(f, run)` with `run` the tasks' indices: a unit's node ranges sit together
+and in order, so both passes over the flagged units merge a run's pieces into
+the unit's term (`_continuation_flagged`, `_continuation_flagged_hessian`).
+"""
+function _continuation_task_runs(tasks::Vector{Tuple{Int,Union{Nothing,UnitRange{Int}}}})
+    runs = Tuple{Int,UnitRange{Int}}[]
+    at = 1
+    while at <= length(tasks)
+        f = tasks[at][1]
+        stop = at
+        while stop < length(tasks) && tasks[stop + 1][1] == f
+            stop += 1
+        end
+        push!(runs, (f, at:stop))
+        at = stop + 1
+    end
+    return runs
+end
+
+"""
     _continuation_ranges(n, evaluations, share)
 
 A root's `n` nodes, costing `evaluations` member evaluations in all, as the
@@ -2081,25 +2104,19 @@ function _continuation_flagged(o::CTSEMLaplaceContinuation, theta::Vector{Float6
     gradient = zeros(npar)
     ok || return (values=values, gradient=gradient, ok=false)
     g = want_gradient ? zeros(npar) : Float64[]
-    at = 1
-    while at <= ntask
-        f = tasks[at][1]
-        last = at
-        while last < ntask && tasks[last + 1][1] == f
-            last += 1
-        end
+    for (f, run) in _continuation_task_runs(tasks)
         rule = o.rules[f]
-        if tasks[at][2] === nothing
-            values[f] = peaks[at]
-            _continuation_record_ess!(o, f, esss[at])
-            want_gradient && (g .= grads[at])
+        if tasks[first(run)][2] === nothing
+            values[f] = peaks[first(run)]
+            _continuation_record_ess!(o, f, esss[first(run)])
+            want_gradient && (g .= grads[first(run)])
         else
-            P = maximum(@view peaks[at:last])
+            P = maximum(@view peaks[run])
             isfinite(P) || return (values=values, gradient=gradient, ok=false)
             A = 0.0
             B = 0.0
             want_gradient && fill!(g, 0.0)
-            for q in at:last
+            for q in run
                 e = exp(peaks[q] - P)
                 A += accs[q] * e
                 B += acc2s[q] * e * e
@@ -2113,7 +2130,6 @@ function _continuation_flagged(o::CTSEMLaplaceContinuation, theta::Vector{Float6
             all(isfinite, g) || return (values=values, gradient=gradient, ok=false)
             gradient .+= _laplace_unit_weight(laplace, rule.unit) .* g
         end
-        at = last + 1
     end
     return (values=values, gradient=gradient, ok=true)
 end
@@ -3112,25 +3128,19 @@ function _continuation_flagged_hessian(o::CTSEMLaplaceContinuation,
     end
     mean = zeros(npar)
     hess = zeros(npar, npar)
-    at = 1
-    while at <= ntask
-        f, range = tasks[at]
-        last = at
-        while last < ntask && tasks[last + 1][1] == f
-            last += 1
-        end
-        if range !== nothing
-            pieces = [parts[q] for q in at:last if isfinite(parts[q].peak)]
-            isempty(pieces) && return nothing
-            m = _continuation_merge_moments!(mean, hess, pieces)
-            (all(isfinite, mean) && all(isfinite, hess)) || return nothing
-            rule = o.rules[f]
-            values[f] = m.peak + log(m.W) + rule.roots[1].constant
-            w = _laplace_unit_weight(laplace, rule.unit)
-            gradient .+= w .* mean
-            hessian .+= w .* hess
-        end
-        at = last + 1
+    # A whole unit summed into its slot above; a unit taken in node ranges
+    # merged here.
+    for (f, run) in _continuation_task_runs(tasks)
+        tasks[first(run)][2] === nothing && continue
+        pieces = [parts[q] for q in run if isfinite(parts[q].peak)]
+        isempty(pieces) && return nothing
+        m = _continuation_merge_moments!(mean, hess, pieces)
+        (all(isfinite, mean) && all(isfinite, hess)) || return nothing
+        rule = o.rules[f]
+        values[f] = m.peak + log(m.W) + rule.roots[1].constant
+        w = _laplace_unit_weight(laplace, rule.unit)
+        gradient .+= w .* mean
+        hessian .+= w .* hess
     end
     # Dual sweeps, counted as the reverse sweeps they are.
     o.member_sweeps += sum(r.evaluations for r in o.rules; init=0) *
