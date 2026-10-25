@@ -386,9 +386,10 @@ function _ekf_update_observed!(ws::ContinuousEKFWorkspace, pars,
     # A measurement nonlinear in the state is linearised at the row's posterior
     # mode rather than its prior mean. Not while generating: the row's draw is
     # taken from the prior's linearisation, before there is an observation to
-    # iterate on.
+    # iterate on. Nor beside deviations the filter integrates, whose model is
+    # linear (`CTSEMHybrid`): the steps do not carry their columns.
     ws.relinearise && _CTSEM_RELINEARISE[] && generate === nothing &&
-        context !== nothing && !isempty(gaussian) &&
+        context !== nothing && !isempty(gaussian) && !(ws.hyb.active && ws.hyb.q > 0) &&
         return _ekf_iterated_rows!(ws, pars, data, obs_col, gaussian, binary_loglik,
             log2π_const, trace, context)
 
