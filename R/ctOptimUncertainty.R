@@ -262,7 +262,7 @@ bootstrapHessian <- function(standata, sm, est, finishsamples, cores, scores=NUL
 .ctImisSubspace <- function(cov, rtol = .ctFlatDirectionRtol()) {
   cov <- as.matrix(cov)
   cov <- (cov + t(cov)) / 2
-  eig <- try(eigen(cov, symmetric = TRUE), silent = TRUE)
+  eig <- try(.ctEigenSym(cov), silent = TRUE)
   if (inherits(eig, 'try-error')) return(NULL)
   values <- eig$values
   scale <- max(values)
@@ -1294,7 +1294,7 @@ ctOptimSafeCov <- function(cov, ridge=1e-8){
   target = 0.5, longest = 4, bisections = 5L, maxdirections = 20L) {
   if (is.null(lpgFunc) || !is.function(lpgFunc) || is.null(est)) return(NULL)
   cov <- (cov + t(cov)) / 2
-  e <- try(eigen(cov, symmetric = TRUE), silent = TRUE)
+  e <- try(.ctEigenSym(cov), silent = TRUE)
   if ('try-error' %in% class(e) || !length(e$values)) return(NULL)
   top <- max(e$values)
   if (!is.finite(top) || top <= 0) return(NULL)
@@ -2077,7 +2077,7 @@ ctOptimFullBootstrapDraws <- function(est, standata, sm, n=1000, cores=1,
 # fit; see `.ctNormalCentre()`. The normal's draws are placed there.
 .ctOptimNormalCheck <- function(gradients, est, cov, batch = 8L,
   maxdraws = NULL, coverage = c(0.90, 0.99), centrepairs = 32L) {
-  eig <- eigen((cov + t(cov)) / 2, symmetric = TRUE)
+  eig <- .ctEigenSym(cov)
   keep <- eig$values > .ctFlatDirectionRtol() * max(eig$values)
   A <- sweep(eig$vectors[, keep, drop = FALSE], 2, sqrt(eig$values[keep]), "*")
   if (is.null(maxdraws)) maxdraws <- as.integer(min(256, max(64, 2 * ncol(A))))
@@ -2206,12 +2206,34 @@ ctOptimFullBootstrapDraws <- function(est, standata, sm, n=1000, cores=1,
   record
 }
 
+# The eigendecomposition of a symmetric matrix with each eigenvector's sign
+# fixed, its largest entry in magnitude positive (`.ctSignedVectors()`, which
+# does the same for any basis: singular vectors, a held-off span). LAPACK
+# returns either sign, and which one can change with the matrix's last bits,
+# so a root built from the vectors reflects every draw taken through it. On a
+# 9-parameter Laplace fit 'checked''s normal check named three directions or
+# none under one seed as its covariance moved by a relative 1e-13, which the
+# engine's arithmetic supplies at more than one core: `set.seed()` did not
+# reproduce 'checked' (review/UNCERTAINTY-checked-reproducible-2026-10-25.md).
+.ctSignedVectors <- function(V) {
+  V <- as.matrix(V)
+  if (!length(V)) return(V)
+  s <- sign(V[cbind(max.col(abs(t(V)), ties.method = 'first'), seq_len(ncol(V)))])
+  s[s == 0] <- 1
+  sweep(V, 2, s, '*')
+}
+.ctEigenSym <- function(M) {
+  e <- eigen((M + t(M)) / 2, symmetric = TRUE)
+  e$vectors <- .ctSignedVectors(e$vectors)
+  e
+}
+
 # The directions the residuals `R` at draws `Z` name, which of them
 # `.ctOptimNormalCheck()` samples, and whether that choice survives two
 # standard errors on each direction's slope and shape; see there.
 .ctNormalDepartures <- function(Z, R, A, bars) {
   n <- nrow(R)
-  v <- svd(R)$v
+  v <- .ctSignedVectors(svd(R)$v)
   along <- R %*% v
   zalong <- Z %*% v
   slope <- colSums(along * zalong) / colSums(zalong^2)
@@ -2823,7 +2845,7 @@ ctOptimFitLpgFunc <- function(fit, cores=1){
 # from `est` along them undone. A direction mostly inside `hold` -- under a
 # tenth of it outside -- is dropped.
 .ctHoldOff <- function(directions, widths, cov, hold, centre, est) {
-  eig <- eigen((cov + t(cov)) / 2, symmetric = TRUE)
+  eig <- .ctEigenSym(cov)
   keep <- eig$values > .ctFlatDirectionRtol() * max(eig$values)
   V <- eig$vectors[, keep, drop = FALSE]
   sq <- sqrt(eig$values[keep])
@@ -2836,7 +2858,7 @@ ctOptimFitLpgFunc <- function(fit, cores=1){
   left <- if (ncol(Vz)) svd(off(Vz)) else list(d = numeric(), u = Vz)
   Un <- left$u[, left$d > 0.1, drop = FALSE]
   shift <- whiten(centre - est)
-  list(directions = sweep(V, 2, sq, "*") %*% Un,
+  list(directions = .ctSignedVectors(sweep(V, 2, sq, "*") %*% Un),
     widths = if (ncol(Un)) colSums(Un * (Cz %*% Un)) else numeric(),
     centre = as.numeric(centre - sweep(V, 2, sq, "*") %*% (U %*% crossprod(U, shift))))
 }
