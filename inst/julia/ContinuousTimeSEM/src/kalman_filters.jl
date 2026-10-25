@@ -316,9 +316,12 @@ end
 @inline _ctsem_observed(x) = !ismissing(x) && isfinite(x)
 
 """
-    _ekf_update_observed!(ws, pars, data, obs_col, log2π_const, trace, generate)
+    _ekf_update_observed!(ws, pars, data, obs_col, log2π_const, trace, generate,
+        context)
 
-Update the filter using only observed manifest entries in one row.
+Update the filter using only observed manifest entries in one row. `context`
+is the row's measurement context, through which a measurement nonlinear in the
+state is evaluated again at each iterate (`_ekf_iterated_rows!`).
 
 A fully missing row leaves the predicted state/covariance in place and
 contributes zero to the likelihood -- matching Stan's own
@@ -331,7 +334,8 @@ distinct, `UnitRange`-specialised method for the former that is exactly as
 allocation-free and BLAS-eligible as a hand-written fast path would be.
 """
 function _ekf_update_observed!(ws::ContinuousEKFWorkspace, pars,
-    data::AbstractMatrix, obs_col::Int, log2π_const, trace=nothing, generate=nothing)
+    data::AbstractMatrix, obs_col::Int, log2π_const, trace=nothing, generate=nothing,
+    context=nothing)
     m_full = ws.manifest_dim
     n_observed = 0
     @inbounds for i in 1:m_full
@@ -379,6 +383,15 @@ function _ekf_update_observed!(ws::ContinuousEKFWorkspace, pars,
     binary_loglik === nothing && return nothing
     gaussian = _ekf_gaussian_subset(ws, observed)
 
+    # A measurement nonlinear in the state is linearised at the row's posterior
+    # mode rather than its prior mean. Not while generating: the row's draw is
+    # taken from the prior's linearisation, before there is an observation to
+    # iterate on.
+    ws.relinearise && _CTSEM_RELINEARISE[] && generate === nothing &&
+        context !== nothing && !isempty(gaussian) &&
+        return _ekf_iterated_rows!(ws, pars, data, obs_col, gaussian, binary_loglik,
+            log2π_const, trace, context)
+
     # Recorded after the binary block and before the Gaussian one:
     # `_ekf_masked_update_step!` overwrites ws.state in place, and the reverse
     # pass needs the mean it started from.
@@ -392,7 +405,8 @@ function _ekf_update_observed!(ws::ContinuousEKFWorkspace, pars,
         return binary_loglik
     end
 
-    factor = _ekf_masked_update_step!(ws, pars, data, obs_col, gaussian, generate)
+    factor = _ekf_masked_update_step!(ws, pars, data, obs_col, gaussian, generate,
+        Val(false))
     issuccess(factor) || return nothing
     return binary_loglik + _kalman_loglikelihood_cholesky!(
         view(ws.ll_buffer, 1:length(gaussian)),
@@ -633,7 +647,7 @@ function _generate_binary!(gen, ws::ContinuousEKFWorkspace, pars, λ, μ,
 end
 
 """
-    _ekf_masked_update_step!(ws, pars, data, obs_col, observed, generate)
+    _ekf_masked_update_step!(ws, pars, data, obs_col, observed, generate, relin)
 
 Apply one EKF measurement update using only the manifest rows listed in
 `observed` (an arbitrary subset, or `1:manifest_dim` for full observation).
@@ -648,14 +662,20 @@ Jacobian: `pars.LAMBDA` (evaluated at the current state) predicts the
 manifest mean for the innovation, while `pars.Jy` (its Jacobian) propagates
 covariance -- these coincide for models with a fixed/linear LAMBDA but can
 differ for state-dependent measurement models.
+
+`Val(true)` is a measurement linearised away from the prior mean
+(`_ekf_iterated_rows!`): its loading is Jy and its intercept `ws.mm_eff`. A
+flag rather than the two passed in, which cost a linear model's filter 7-10
+per cent where the views were arguments instead of built here.
 """
 function _ekf_masked_update_step!(ws::ContinuousEKFWorkspace, pars,
-    data::AbstractMatrix, obs_col::Int, observed::AbstractVector{Int}, generate=nothing)
+    data::AbstractMatrix, obs_col::Int, observed::AbstractVector{Int}, generate,
+    ::Val{RELIN}) where {RELIN}
     m = length(observed)
     n = ws.state_dim
 
-    Lv = view(pars.LAMBDA, observed, :)
-    μv = view(pars.MANIFESTMEANS, observed)
+    Lv = RELIN ? view(pars.Jy, observed, :) : view(pars.LAMBDA, observed, :)
+    μv = RELIN ? view(ws.mm_eff, 1:m) : view(pars.MANIFESTMEANS, observed)
     predview = view(ws.bufferΘ.r, 1:m)
     # Plain loops rather than the Val-dispatched `_matvec_mul!`: `m` is the
     # number of observed indicators on this row, a runtime quantity, and a
@@ -785,6 +805,222 @@ function _ekf_masked_update_step!(ws::ContinuousEKFWorkspace, pars,
 end
 
 """
+Stopping rule of the iterated update (`_ekf_iterated_rows!`): the largest move
+of an iterate, in prior standard deviations, under which it is the mode, and
+the most iterations a row takes before it is updated where it got to.
+"""
+const _CTSEM_RELIN_TOL = 1e-9
+const _CTSEM_RELIN_MAXIT = 50
+
+# Whether a nonlinear measurement's update is iterated; `ctsem_set_relinearise!`.
+const _CTSEM_RELINEARISE = Ref(true)
+
+"""
+    ctsem_set_relinearise!(on)
+
+Whether a measurement nonlinear in the state has each row's Gaussian update
+iterated to the row's posterior mode (`true`, the default) or linearised once
+at the prior mean, as the extended Kalman filter does (`false`): the oracle for
+comparing the two. Read at every row, so it holds from the next evaluation.
+"""
+function ctsem_set_relinearise!(on::Bool)
+    _CTSEM_RELINEARISE[] = on
+    return on
+end
+
+"""
+    _ctsem_measurement_nonlinear(sp, update_indices, n)
+
+Whether an update-group transform that writes a Jy cell reads the state: the
+measurement is then nonlinear in the state, and its update is iterated
+(`_ekf_iterated_rows!`). Asked by evaluating each such transform at two states
+with everything else held, since the transforms' recorded supports
+(`_ctsem_complex_transform_supports`) are their parameter reads only. A
+transform that throws at the probe is taken to read the state, which costs only
+the iterations.
+"""
+function _ctsem_measurement_nonlinear(sp::EKFParameters,
+    update_indices::AbstractVector{Int}, n::Int)
+    isempty(update_indices) && return false
+    jy = Set(_ctsem_component_positions(sp, :Jy))
+    any(i -> i in jy, update_indices) || return false
+    probe = collect(range(0.31, step=0.013, length=length(sp.mutables)))
+    pars = CTSEMPars(probe, sp.parameter_axis)
+    ntd = hasproperty(pars, :TDPREDEFFECT) ? size(pars.TDPREDEFFECT, 2) : 0
+    tdpreds = collect(range(0.19, step=0.007, length=ntd))
+    a = reshape(collect(range(0.23, step=0.011, length=n)), n, 1)
+    b = a .+ 0.05
+    ctxa = CTSEMRowContext(a, pars, tdpreds, _CTSEMProbePredictors(), 0.5, 0.25, 1, 2)
+    ctxb = CTSEMRowContext(b, pars, tdpreds, _CTSEMProbePredictors(), 0.5, 0.25, 1, 2)
+    transforms = sp.update_transforms
+    for k in eachindex(update_indices)
+        update_indices[k] in jy || continue
+        moved = try
+            !(transforms[k](ctxa) == transforms[k](ctxb))
+        catch
+            true
+        end
+        moved && return true
+    end
+    return false
+end
+
+"""
+    _ekf_iterated_rows!(ws, pars, data, obs_col, gaussian, binary_loglik,
+        log2π_const, trace, context)
+
+A row's Gaussian update with the measurement linearised at the row's posterior
+mode rather than its prior mean: the iterated extended Kalman filter. Each
+iterate `x_i` evaluates the update group there (through `context`, whose state
+is `ws.state`) and moves to the mean of the update linearised at it,
+
+    x_{i+1} = x_p + P H_i' S_i^-1 (y - h(x_i) - H_i (x_p - x_i)),
+
+Gauss-Newton on the row's posterior, until no state moves by
+`_CTSEM_RELIN_TOL` prior standard deviations. Where a step is no shorter than
+the one before it -- an oscillation, as across the two basins of a loading
+that is not monotone -- the row's steps are halved from then on
+(`x_{i+1} = x_i + α (x_GN - x_i)`), which leaves the fixed point where it was. The update linearised at the last
+iterate is then the row's, from the prior -- its gain, its covariance and its
+log likelihood, the Gaussian marginal of `y` under the measurement linearised
+there. That is the ordinary update with `Jy` as the loading and
+`MANIFESTMEANS + (LAMBDA - Jy) x_i` as the intercept (the categorical
+update's offset, `_ekf_categorical_offset`), so it runs through
+`_ekf_masked_update_step!`; a linear measurement would give the EKF's update
+exactly, and is never iterated (`_ctsem_measurement_nonlinear`).
+
+Against a grid filter's exact likelihood on one latent, under `(1 + c x) x`,
+`exp`, logistic and cubic measurements, the error a subject fell by 3 to 50
+times wherever the measurement noise was small beside the nonlinearity, and was
+about the EKF's at large noise; a single relinearisation was often worse than
+none, so the rows iterate to the mode. MANIFESTVAR stays as the prior
+evaluated it, so the iterates climb one posterior.
+
+Each iterate is taped (`_record_relin!`, then its update group) and the final
+update as a relinearised one; their reverse carries the prior mean's cotangent
+beside the iterate's (`_reverse_relin!`, `_reverse_update!`).
+"""
+function _ekf_iterated_rows!(ws::ContinuousEKFWorkspace, pars, data::AbstractMatrix,
+    obs_col::Int, gaussian, binary_loglik, log2π_const, trace, context)
+    n = ws.state_dim
+    m = length(gaussian)
+    all_params = getdata(pars)
+    state = ws.state
+    xp = ws.xprior
+    @inbounds for j in 1:n
+        xp[j] = state[j]
+    end
+    first = true
+    α = 1.0
+    last = eltype(state)(Inf)
+    for _ in 1:_CTSEM_RELIN_MAXIT
+        _ekf_relin_offset!(ws, pars, gaussian, n)
+        _ekf_relin_mean!(ws, pars, data, obs_col, gaussian) || return nothing
+        step = _ekf_relin_step(ws, n)
+        step <= _CTSEM_RELIN_TOL && break
+        step >= last && (α = max(α / 2, 1 / 1024))
+        last = step
+        _record_relin!(trace, ws, pars, data, obs_col, gaussian, first, α)
+        @inbounds for j in 1:n
+            state[j] += α * (ws.xnext[j] - state[j])
+        end
+        first = false
+        _record_group!(trace, 3, ws.update_param_indices, all_params, context)
+        apply_complex_transforms_at_indices!(all_params, ws.update_param_indices,
+            ws.sp.update_transforms, context)
+    end
+    _ekf_relin_offset!(ws, pars, gaussian, n)
+    _record_update!(trace, ws, pars, data, obs_col, gaussian, xp, ws.P_predict.data, n,
+        first ? 1 : 2)
+    @inbounds for j in 1:n
+        state[j] = xp[j]
+    end
+    factor = _ekf_masked_update_step!(ws, pars, data, obs_col, gaussian, nothing,
+        Val(true))
+    issuccess(factor) || return nothing
+    return binary_loglik + _kalman_loglikelihood_cholesky!(view(ws.ll_buffer, 1:m),
+        factor, view(ws.ỹ, 1:m), log2π_const)
+end
+
+"""The measurement's intercept linearised at the current state over the
+observed rows, `MANIFESTMEANS + (LAMBDA - Jy) x`, into `ws.mm_eff`."""
+@inline function _ekf_relin_offset!(ws::ContinuousEKFWorkspace, pars, observed, n::Int)
+    MM = pars.MANIFESTMEANS
+    LAMBDA = pars.LAMBDA
+    Jy = pars.Jy
+    state = ws.state
+    mm = ws.mm_eff
+    @inbounds for i in eachindex(observed)
+        o = observed[i]
+        acc = MM[o]
+        for j in 1:n
+            acc += (LAMBDA[o, j] - Jy[o, j]) * state[j]
+        end
+        mm[i] = acc
+    end
+    return nothing
+end
+
+"""
+    _ekf_relin_mean!(ws, pars, data, obs_col, observed)
+
+The mean of the update linearised at the current state, from the row's prior
+`ws.xprior` and `ws.P_predict`, into `ws.xnext`: the state half of
+`_ekf_masked_update_step!`, with its ridges, on `Jy` and `ws.mm_eff`. False
+where the innovation covariance does not factor or the mean is not finite.
+"""
+function _ekf_relin_mean!(ws::ContinuousEKFWorkspace, pars, data::AbstractMatrix,
+    obs_col::Int, observed)
+    m = length(observed)
+    n = ws.state_dim
+    T = eltype(ws.state)
+    H = view(pars.Jy, observed, :)
+    xp = ws.xprior
+    yv = view(ws.ỹ, 1:m)
+    @inbounds for i in 1:m
+        acc = ws.mm_eff[i]
+        for j in 1:n
+            acc += H[i, j] * xp[j]
+        end
+        yv[i] = data[observed[i], obs_col] - acc
+    end
+    _copy_lower_to_upper!(ws.P_predict.data, n)
+    _ridge_diagonal!(ws.P_predict.data, n, 1e-10)
+    PHt = view(ws.K, :, 1:m)
+    _ctsem_mulNT!(PHt, ws.P_predict.data, H)
+    Sv = view(ws.S.UL.data, 1:m, 1:m)
+    _ctsem_mul!(Sv, H, PHt)
+    Sv .+= view(ws.bufferΘ.out, observed, observed)
+    _ridge_diagonal!(ws.P_predict.data, n, -1e-10)
+    _symmetrize_and_ridge!(Sv, m)
+    factor = if m <= _CTSEM_SMALL_CHOLESKY[]
+        _ctsem_cholesky(Sv, m)
+    else
+        CTSEMCholesky(Sv, m, issuccess(cholesky!(Sv, check=false)))
+    end
+    issuccess(factor) || return false
+    a = view(ws.bufferΘ.row_sq, 1:m)
+    ldiv!(a, factor, yv)
+    xn = ws.xnext
+    @inbounds for j in 1:n
+        xn[j] = xp[j]
+    end
+    _ctsem_mulvec!(xn, PHt, a, one(T), one(T))
+    return all(isfinite, xn)
+end
+
+"""The Gauss-Newton step from `ws.state` to `ws.xnext`: its largest move of a
+state, in that state's prior standard deviations."""
+@inline function _ekf_relin_step(ws::ContinuousEKFWorkspace, n::Int)
+    P = ws.P_predict.data
+    step = zero(eltype(ws.state))
+    @inbounds for j in 1:n
+        step = max(step, abs(ws.xnext[j] - ws.state[j]) / sqrt(abs(P[j, j]) + 1e-10))
+    end
+    return step
+end
+
+"""
     _ekf_update_step!(ws, pars, data, obs_col)
 
 Apply one EKF measurement update assuming every manifest row is observed.
@@ -795,7 +1031,8 @@ that already know their data has no missingness and so have no need to
 compute an observed-row count first.
 """
 @inline function _ekf_update_step!(ws::ContinuousEKFWorkspace, pars, data::AbstractMatrix, obs_col::Int)
-    return _ekf_masked_update_step!(ws, pars, data, obs_col, 1:ws.manifest_dim)
+    return _ekf_masked_update_step!(ws, pars, data, obs_col, 1:ws.manifest_dim, nothing,
+        Val(false))
 end
 
 @inline function _apply_td_impulse!(ws::ContinuousEKFWorkspace, pars, tdpreds)
@@ -1397,7 +1634,12 @@ function _extended_kalman_filter_continuous!(
     _record_theta!(trace, pars, ws.manifest_dim)
     log2π_const = log(2π)
     _record_row_prior!(trace, ws, pars, 1)
-    ll = _ekf_update_observed!(ws, pars, data, 1, log2π_const, trace, generate)
+    # The context only where the update iterates: passed to a linear model's
+    # update, it had to be built at every row, 4-6 per cent of its gradient.
+    ll = ws.relinearise ?
+        _ekf_update_observed!(ws, pars, data, 1, log2π_const, trace, generate,
+            update_context) :
+        _ekf_update_observed!(ws, pars, data, 1, log2π_const, trace, generate)
     ll === nothing && return _invalid_ekf_loglikelihood(ws)
     generate === nothing || (generate.llrow[generate.offset+1] = ll)
     _record_row_update!(trace, ws, pars, sp, update_context, 1, ll)
@@ -1466,7 +1708,10 @@ function _extended_kalman_filter_continuous!(
             _record_theta!(trace, pars, ws.manifest_dim)
         end
         _record_row_prior!(trace, ws, pars, t_idx)
-        row_ll = _ekf_update_observed!(ws, pars, data, t_idx, log2π_const, trace, generate)
+        row_ll = ws.relinearise ?
+            _ekf_update_observed!(ws, pars, data, t_idx, log2π_const, trace, generate,
+                measurement_context) :
+            _ekf_update_observed!(ws, pars, data, t_idx, log2π_const, trace, generate)
         row_ll === nothing && return _invalid_ekf_loglikelihood(ws)
         generate === nothing || (generate.llrow[generate.offset+t_idx] = row_ll)
         _record_row_update!(trace, ws, pars, sp, measurement_context, t_idx, row_ll)
