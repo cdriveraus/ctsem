@@ -254,11 +254,8 @@ ctModelImprove <- function(fit, covariates = NULL,
   held <- NULL
   if (holdout > 0) {
     # A fixed stream, so a search is reproducible, leaving the caller's alone.
-    if (exists('.Random.seed', envir = globalenv(), inherits = FALSE)) {
-      oldseed <- get('.Random.seed', envir = globalenv(), inherits = FALSE)
-      on.exit(assign('.Random.seed', oldseed, envir = globalenv()), add = TRUE)
-    } else on.exit(rm('.Random.seed', envir = globalenv()), add = TRUE)
-    set.seed(20261011L)
+    restore <- .ctStreamKeep(20261011L)
+    on.exit(restore(), add = TRUE)
     ids <- unique(data[[idname]])
     held <- sample(ids, max(2L, round(holdout * length(ids))))
     alldata <- data

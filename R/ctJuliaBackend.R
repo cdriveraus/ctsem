@@ -7155,7 +7155,12 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
   if (uncertain && !jumped) {
     first <- if (continuing && uncertainty %in% c("checked", "is")) "hessian" else
       uncertainty
+    # Its draws are always replaced, so it leaves R's random stream where it
+    # found it: where the continuation leaves the fit alone, the method asked
+    # for then draws exactly what it draws on the uncorrected fit.
+    restore <- if (!identical(first, uncertainty)) .ctStreamKeep() else function() NULL
     out <- holdrepair(measure(out, first))
+    restore()
   }
 
   # The quadrature correction, after the certification has converged the
