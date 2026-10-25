@@ -835,9 +835,9 @@ T0VARredundancies <- function(ctm) {
 #' and sampling together); \code{warmup} (200, or half of \code{iter} if that
 #' is less); \code{draws}, the post-warmup count, which wins over \code{iter}
 #' when given; \code{seed}; \code{saveEffects}, whether every random-effect
-#' draw is kept; and \code{processes} (TRUE), whether the chains run in worker
+#' draw is kept; and \code{processes} (FALSE), whether the chains run in worker
 #' processes -- at most \code{cores} at once, so four chains on two cores run
-#' two at a time.
+#' two at a time -- rather than together in this session.
 #'
 #' For \code{backend='julia'} also \code{sampler} (\code{'saem'}, SAEM's
 #' kernel, on the joint posterior, \code{'nuts'} otherwise or by choice),
