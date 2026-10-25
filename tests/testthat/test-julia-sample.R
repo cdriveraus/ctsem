@@ -330,7 +330,8 @@ test_that("tempered SMC samples the marginal posterior through the same assembly
   npar <- length(fit$estimate$raw)
   # control$sampler = 'smc' (`ctsem_sample_smc`, checked on closed forms in
   # the engine suite): particles carried from the check's normal to the
-  # posterior, then each a chain. What is left for here is the assembly, the
+  # posterior, then as many of them chains as the effective size needs. What
+  # is left for here is the assembly, the
   # record, the refusals, and agreement with NUTS on the same marginal.
   smc <- suppressWarnings(suppressMessages(
     ctFitUncertainty(fit, uncertainty = "sample", cores = 1,
@@ -339,14 +340,16 @@ test_that("tempered SMC samples the marginal posterior through the same assembly
   d <- smc$sample
   expect_identical(d$sampler, "smc")
   expect_identical(d$target, "marginal")
-  expect_identical(d$chains, 40L)
+  expect_identical(d$nparticles, 40L)
+  expect_true(d$chains >= 16L && d$chains <= 40L)
+  expect_gte(d$final_tau, 1)
   expect_identical(d$warmup, 0L)
   expect_gte(d$draws, 20L)
-  expect_equal(dim(smc$estimate$rawposterior), c(40L * d$draws, npar))
+  expect_equal(dim(smc$estimate$rawposterior), c(d$chains * d$draws, npar))
   expect_true(all(is.finite(smc$estimate$rawposterior)))
   expect_gte(d$nstages, 1L)
   expect_equal(utils::tail(d$stage_beta, 1), 1)
-  expect_length(d$stepsize, 40L)
+  expect_length(d$stepsize, d$chains)
   expect_true(all(d$stepsize == d$stepsize[1]))
   expect_true(is.infinite(d$rhat_target))
   # No R-hat: its chains start from particles already drawn from the

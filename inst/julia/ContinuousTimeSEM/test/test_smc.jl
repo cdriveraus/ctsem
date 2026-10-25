@@ -78,8 +78,13 @@ end
             min_ess=200.0, max_draws=40)
         X = r.draws
         @test size(X, 1) == d
-        @test r.nchains == np
-        @test size(X, 2) == np * r.ndraws
+        # The final phase runs as many chains as its target needs at the draws
+        # an effective draw took in the last stage's moves, at most one a
+        # particle.
+        @test r.final_tau >= 1
+        @test r.nchains == ContinuousTimeSEM._smc_final_chains(r.final_tau, 200.0, 10, np)
+        @test r.nchains <= np
+        @test size(X, 2) == r.nchains * r.ndraws
         @test r.sampler == "smc"
         @test r.nstages >= 2
         @test all(isfinite, X)
@@ -94,9 +99,9 @@ end
         @test abs(sum(r.stage_logz) - logz_exact) < 2.5
         # The final phase met the effective-size target and reports per chain.
         @test r.min_ess >= 200 * 0.8
-        @test length(r.stepsize) == np
+        @test length(r.stepsize) == r.nchains
         @test all(r.stepsize .== r.stepsize[1])
-        @test length(r.accept) == np * r.ndraws
+        @test length(r.accept) == r.nchains * r.ndraws
         @test r.stage_beta[end] == 1.0
         @test issorted(r.stage_beta)
         # No coreset off the Laplace route, and no correction.
@@ -104,6 +109,33 @@ end
         @test all(r.stage_coreset_size .== 0)
         @test r.final_correction_ess == 1.0
     end
+end
+
+@testset "the final phase's chains are as many as the moves' autocorrelation needs" begin
+    # Positions a lag apart with correlation 0.125 across the cloud: an AR(1)
+    # at 0.5 a draw over three draws, whose autocorrelation time is 3.
+    rng = Random.Xoshiro(41)
+    n = 20000
+    Xfrom = randn(rng, 3, n)
+    Xto = 0.125 .* Xfrom .+ sqrt(1 - 0.125^2) .* randn(rng, 3, n)
+    Xto[3, :] .= -Xfrom[3, :]
+    @test ContinuousTimeSEM._smc_move_tau(Xfrom, Xto, 3) ≈ 3 rtol = 0.1
+    # A negative correlation is not credited, and a coordinate that does not
+    # vary is passed over.
+    Xto[1:2, :] .= -Xfrom[1:2, :]
+    Xfrom[2, :] .= 0.0
+    @test ContinuousTimeSEM._smc_move_tau(Xfrom, Xto, 3) == 1.0
+    # 1.25 times the target at tau draws each, between 16 and the particles.
+    chains = ContinuousTimeSEM._smc_final_chains
+    @test chains(3.0, 200.0, 20, 200) == 38
+    @test chains(1.0, 200.0, 20, 200) == 16
+    @test chains(1.0, 200.0, 20, 10) == 10
+    @test chains(100.0, 200.0, 20, 200) == 200
+    @test chains(3.0, 0.0, 20, 200) == 200
+    # Spread over the cloud, every index a particle's, none twice.
+    idx = ContinuousTimeSEM._smc_spread(200, 38)
+    @test length(idx) == 38 && allunique(idx) && all(1 .<= idx .<= 200) && idx[1] == 1
+    @test ContinuousTimeSEM._smc_spread(20, 20) == collect(1:20)
 end
 
 @testset "tempered SMC recovers a skewed target from its Laplace normal" begin
