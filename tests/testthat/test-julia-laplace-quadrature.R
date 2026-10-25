@@ -252,8 +252,13 @@ test_that("what a continued fit reports is the continuation's own", {
   # the covariance carries its construction's diagnostics as an attribute.
   information <- -(corr$hessian + t(corr$hessian)) / 2
   details <- cont$uncertainty$details
+  # The method asked for, drawn once, on the continuation's hybrid: the pass
+  # before the continuation took only the curvature's normal.
+  expect_identical(cont$uncertainty$settings$method, "checked")
   if (isTRUE(details$importance_sampling$used)) {
     expect_true(isTRUE(details$importance_sampling$weighted))
+    # The hybrid's density carries the gradient batches the Stein check reads.
+    expect_false(is.null(details$importance_sampling$stein))
     expect_identical(details$proposal_covariance$method, "solve")
     expect_false(isTRUE(details$proposal_covariance$usedNullProjection))
     expect_equal(details$proposal_covariance$minInfoEigenOriginal,
@@ -292,6 +297,61 @@ test_that("what a continued fit reports is the continuation's own", {
   printed <- capture.output(print(cont))
   expect_identical(any(grepl("continued on the quadrature objective", printed)),
     isTRUE(corr$material))
+})
+
+test_that("the hybrid's density places the flagged units' rules at each point", {
+  skip_without_julia()
+  fit <- .lc_fits("nonlinear")$quadrature
+  module <- .ctJuliaModule(fit$model_spec$project)
+  x <- as.numeric(fit$estimate$raw)
+  cont <- do.call(module$ctsem_laplace_continuation,
+    c(list(.ctJuliaObjective(fit, hybrid = TRUE), .ctJuliaNumericVector(x)),
+      .ctLaplaceContinuationArgs(.ctLaplaceContinueDefaults)))
+  info <- .ctJuliaGet(module$ctsem_laplace_continuation_info(cont))
+  flagged <- as.integer(info$flagged)[seq_len(info$nflagged)]
+  expect_gt(length(flagged), 0L)
+  frozen <- function(z) .ctJuliaGet(module$ctsem_laplace_continuation_evaluate(cont,
+    .ctJuliaNumericVector(z), gradient = TRUE))$value
+  before <- frozen(x)
+  lpg <- .ctLaplaceContinueLpg(module, cont)(fit)
+  away <- x + 2 * as.numeric(fit$estimate$se) * rep_len(c(1, -1), length(x))
+  value <- lpg(away)
+  # The same as a continuation placed there from nothing, with the same units
+  # flagged and no screen: the hybrid's value less its own error.
+  there <- .ctJuliaGet(module$ctsem_laplace_continuation_info(do.call(
+    module$ctsem_laplace_continuation, c(list(.ctJuliaObjective(fit, hybrid = TRUE),
+      .ctJuliaNumericVector(away)), .ctLaplaceContinuationArgs(
+        .ctLaplaceContinueDefaults, force = flagged, screen = FALSE)))))
+  expect_equal(as.numeric(value), as.numeric(there$value) - as.numeric(there$error),
+    tolerance = 1e-6)
+  expect_length(attr(value, "gradient"), length(x))
+  expect_true(all(is.finite(attr(value, "gradient"))))
+  # A batch is the points one at a time, values with or without gradients.
+  both <- rbind(away, x)
+  batch <- attr(lpg, "batch")(both)
+  expect_equal(batch[1L], as.numeric(value), tolerance = 1e-8)
+  expect_equal(attr(lpg, "gradbatch")(both)$value, batch, tolerance = 1e-8)
+  # And the continuation is left placed where it was.
+  after <- .ctJuliaGet(module$ctsem_laplace_continuation_info(cont))
+  expect_equal(as.numeric(after$centre), as.numeric(info$centre))
+  expect_identical(after$recentres, info$recentres)
+  expect_equal(frozen(x), before, tolerance = 1e-10)
+})
+
+test_that("drawing a corrected fit on its hybrid leaves it corrected", {
+  skip_without_julia()
+  skip_if_not_installed('mvtnorm'); skip_if_not_installed('diagis')
+  fit <- .lc_fits("nonlinear")$quadrature
+  set.seed(2)
+  redrawn <- suppressWarnings(ctFitUncertainty(fit, "is", finishsamples = 20,
+    control = list(likelihood = "quadrature", isitersize = 20, imisMaxIter = 1L,
+      isESS = 10)))
+  # Drawn on the hybrid, placed where the fit stands: before, the run that
+  # moved nothing returned before drawing, and its record replaced the fit's.
+  expect_false(is.null(redrawn$uncertainty$details$laplace_correction$error))
+  expect_identical(redrawn$laplace$correction, fit$laplace$correction)
+  expect_equal(as.numeric(redrawn$estimate$raw), as.numeric(fit$estimate$raw))
+  expect_identical(redrawn$uncertainty$settings$method, "is")
 })
 
 test_that("the continuation closes on its own Hessian what its rounds' rule left", {

@@ -109,7 +109,17 @@
   # The engine and its objective, for a stage that runs in the engine on this
   # density rather than calling it batch by batch (`.ctDaisEngine()`).
   attr(fn, "engine") <- engine
-  attr(fn, "batch") <- function(draws) {
+  batches <- .ctBackendEngineBatches(engine)
+  attr(fn, "batch") <- batches$batch
+  attr(fn, "gradbatch") <- batches$gradbatch
+  fn
+}
+
+# The `'batch'` and `'gradbatch'` attributes of a density the engine
+# evaluates, on `engine()$objective`: the fit's own (`.ctBackendLpgFunc()`) or
+# the quadrature hybrid's (`.ctLaplaceContinueLpg()`).
+.ctBackendEngineBatches <- function(engine) {
+  batch <- function(draws) {
     draws <- as.matrix(draws)
     # The engine takes columns as draws; `imis_is`'s `x_new` (and every
     # other caller here) has rows as draws, the ordinary R convention for a
@@ -125,7 +135,8 @@
     # this -- unwrap a `JuliaProxy`, pass anything else through.
     out <- as.numeric(.ctBackendJuliaValue(
       engine()$module$ctsem_evaluate_batch(engine()$objective, values)))
-    # Same sentinel as the per-draw closure above, and for the same reason:
+    # Same sentinel as `.ctBackendLpgFunc()`'s per-draw closure, and for the
+    # same reason:
     # a proposal the model cannot evaluate gets a finite, negligible weight
     # rather than an infinite or NaN one reaching `imis_is`'s log-weight
     # arithmetic.
@@ -136,7 +147,7 @@
   # `ctsem_evaluate_batch_gradient`: what `imis_is()`'s profile-path search
   # moves every path by, one Newton step at a time. A point the route
   # cannot use comes back with the value sentinel and a gradient of NaN.
-  attr(fn, "gradbatch") <- function(draws) {
+  gradbatch <- function(draws) {
     draws <- as.matrix(draws)
     out <- matrix(as.numeric(.ctBackendJuliaValue(
       engine()$module$ctsem_evaluate_batch_gradient(engine()$objective, t(draws)))),
@@ -145,7 +156,7 @@
     value[!is.finite(value)] <- -1e100
     list(value = value, gradient = t(out[-1L, , drop = FALSE]))
   }
-  fn
+  list(batch = batch, gradbatch = gradbatch)
 }
 
 # The two counts `ctOptimCheckUncertaintyData` needs. The Julia spec has no
@@ -995,8 +1006,15 @@
   iscontrol <- control[intersect(names(control), shared)]
   fit$uncertainty$settings <- list(method = uncertainty, draws = "imis",
     finishsamples = finishsamples, cores = cores, control = iscontrol)
+  corrected <- fit$laplace$correction
   fit <- .ctLaplaceContinue(fit, cores = cores, verbose = verbose,
     control = settings, method = uncertainty)
+  # A corrected fit stays corrected: its record is what says where the
+  # Laplace optimum was (`.ctLaplaceOptimum()`, which cross-validation scores
+  # at), and the run that only placed rules there for these draws would
+  # replace it with one that says the fit was never moved. What the draws were
+  # taken on is in `fit$uncertainty$details$laplace_correction`.
+  if (already) fit$laplace$correction <- corrected
   drawn <- identical(fit$uncertainty$settings$method, uncertainty) &&
     !is.null(fit$uncertainty$details$laplace_correction$error)
   if (!drawn) {

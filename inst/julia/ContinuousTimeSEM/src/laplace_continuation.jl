@@ -2274,34 +2274,102 @@ function _ctsem_probe_value(o::CTSEMLaplaceContinuation, x)
         _ctsem_must_propagate(err) && rethrow()
         return -Inf
     end
-    saved = NamedTuple{_CONTINUATION_STATE}(
-        Tuple(getfield(o, f) for f in _CONTINUATION_STATE))
-    previous = o.previous
-    # Not a placement of the correction's own: the count of placements the
-    # record reports stays as it was.
-    recentres = o.recentres
-    value = -Inf
-    try
-        _continuation_place!(o, theta)
+    value = try
         # What the hybrid can vouch for there: its value less its own error at
         # that placement (`_continuation_error`), as the estimate is read
         # (`_ctsem_probe_baseline`). Read whole, a probe four raw units from
         # round 9's estimate found 13000 nats on a unit whose draws had
         # degenerated there, and the fit was certified not converged on it.
-        value = o.centre_value - _continuation_error(o).total
+        _continuation_at(() -> o.centre_value - _continuation_error(o).total, o, theta)
     catch err
         _ctsem_must_propagate(err) && rethrow()
-        value = -Inf
+        -Inf
+    end
+    return isfinite(value) ? value : -Inf
+end
+
+"""
+    _continuation_at(f, o, theta; screen=o.screen)
+
+`f()` with `o`'s rules placed at `theta`, every unit scored where `screen` and
+only the flagged units' rules moved otherwise, and `o` put back as it was
+after: its placement, the rounds' saved one (`o.previous`), which a probe
+inside a round must not disturb, and the count of placements its record
+reports, since this is not a placement of the correction's own. Its caches go,
+since what they hold was evaluated under the placement `f` saw.
+"""
+function _continuation_at(f, o::CTSEMLaplaceContinuation, theta::Vector{Float64};
+    screen::Bool=o.screen)
+    saved = NamedTuple{_CONTINUATION_STATE}(
+        Tuple(getfield(o, fld) for fld in _CONTINUATION_STATE))
+    previous = o.previous
+    recentres = o.recentres
+    wide = o.wide
+    was = o.screen
+    try
+        o.screen = screen
+        _continuation_place!(o, theta)
+        return f()
     finally
-        for f in _CONTINUATION_STATE
-            setfield!(o, f, getfield(saved, f))
+        for fld in _CONTINUATION_STATE
+            setfield!(o, fld, getfield(saved, fld))
         end
         o.previous = previous
         o.recentres = recentres
+        o.wide = wide
+        o.screen = was
         o.cache = nothing
         o.value_cache = nothing
     end
-    return isfinite(value) ? value : -Inf
+end
+
+export ctsem_continuation_density
+
+struct CTSEMContinuationDensity{C}
+    continuation::C
+end
+
+"""
+    ctsem_continuation_density(o)
+
+The hybrid `o` as a density over the parameters, for what draws from it and
+weighs or moves the draws -- the uncertainty a corrected fit reports. At each
+point the flagged units' rules are placed there and `o`'s own placement put
+back after (`_continuation_at`); the other units keep their Laplace terms, as
+at the estimate, and are not screened again, which would cost a quadrature of
+every unit at every draw. The value is the probes' (`_ctsem_probe_value`): the
+hybrid's value there less its own error at that placement. The gradient is
+the frozen rules' at the point they were placed at.
+
+`o` itself reads its rules where they were placed, which is what an optimiser
+needs of it -- a fixed objective, smooth in the parameters -- and what no
+draw away from the estimate can use: a rule's nodes carry less of the
+integrand the further the parameters move. Read so, the draws of a corrected
+fit put a population sd's mean 2.9 posterior sds high on the race's gD1,
+where the same fit's draws on its Laplace objective were 0.2 off
+(review/REVIEW-fit-uncertainty-2026-10-25.md).
+
+The generic batch evaluators (`ctsem_evaluate_batch`,
+`ctsem_evaluate_batch_gradient`) and DAIS (`ctsem_dais`) take it as they take
+any objective; its points are evaluated one at a time, since every one moves
+`o`'s rules.
+"""
+ctsem_continuation_density(o::CTSEMLaplaceContinuation) = CTSEMContinuationDensity(o)
+
+function ctsem_evaluate(d::CTSEMContinuationDensity, values::AbstractVector;
+    gradient::Bool=true, contributions::Bool=false, gradient_method=:adjoint)
+    o = d.continuation
+    theta = _laplace_extend(o.laplace, collect(Float64, values))
+    r = _continuation_at(o, theta; screen=false) do
+        error = _continuation_error(o).total
+        e = ctsem_laplace_continuation_evaluate(o, values; gradient=gradient)
+        # Converged, or no value: a finite number away from a mode is not the
+        # objective there, as on the Laplace route.
+        (value=e.converged ? e.value - error : NaN, gradient=e.gradient,
+            subject_loglik=e.subject_loglik)
+    end
+    contributions || return (value=r.value, gradient=r.gradient)
+    return r
 end
 
 """

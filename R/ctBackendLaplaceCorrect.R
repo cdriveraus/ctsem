@@ -128,6 +128,30 @@
 # Whether the default correction moved this fit's estimate.
 .ctLaplaceIsCorrected <- function(fit) isTRUE(fit$laplace$correction$applied)
 
+# `fit` with the uncertainty `measure(fit)` gives on the Laplace objective,
+# for a fit whose continuation did not draw it on the hybrid (`ctFit()`).
+# Where the continuation moved the estimate without reaching its fixed point
+# (`.ctLaplaceContinue()`, `draws = "recentred"`) the stored curvature is the
+# Laplace optimum's, so the method runs there and its draws move with the
+# estimate, as the continuation moves the normal's; otherwise it runs at the
+# estimate.
+.ctLaplaceUncertaintyAtOptimum <- function(fit, measure) {
+  at <- .ctLaplaceOptimum(fit)
+  est <- as.numeric(fit$estimate$raw)
+  if (identical(at, est)) return(measure(fit))
+  laplace <- fit
+  laplace$estimate$raw <- at
+  laplace <- measure(laplace)
+  note <- fit$uncertainty$details$laplace_correction
+  fit$estimate$cov <- laplace$estimate$cov
+  fit$estimate$se <- laplace$estimate$se
+  fit$estimate$rawposterior <- sweep(laplace$estimate$rawposterior, 2L, est - at, "+")
+  fit$uncertainty <- laplace$uncertainty
+  fit$uncertainty$details$laplace_correction <- note
+  fit$identifiability <- laplace$identifiability
+  fit
+}
+
 .ctLaplaceAutoCorrect <- function(fit, cores = 1L, verbose = 0L,
   control = .ctLaplaceCorrectDefaults) {
   est <- as.numeric(fit$estimate$raw)
@@ -766,28 +790,45 @@
     gap_before = before, gap_after = gap$gap)
 }
 
-# A log-posterior function on the continuation's hybrid objective, in the
-# `lpgFunc` contract `.ctBackendUncertainty()` takes: see `.ctBackendLpgFunc()`,
-# whose guard it copies.
+# A log-posterior function on the continuation's hybrid, in the `lpgFunc`
+# contract `.ctBackendUncertainty()` takes, with the engine, batch and
+# gradient-batch attributes `.ctBackendLpgFunc()`'s density carries, so that
+# 'checked' runs DAIS and its Stein check here too and draws cross the bridge
+# a batch at a time. Every point is evaluated with the flagged units' rules
+# placed there (`ctsem_continuation_density`): read where they were placed at
+# the estimate, the rules said less the further a draw moved, and gD1's draws
+# put a population sd 2.9 posterior sds high.
 .ctLaplaceContinueLpg <- function(module, cont) {
+  engine <- local({
+    built <- NULL
+    function() {
+      if (is.null(built)) built <<- list(module = module,
+        objective = module$ctsem_continuation_density(cont))
+      built
+    }
+  })
+  batches <- .ctBackendEngineBatches(engine)
   function(fit, gradient = TRUE) {
     wantgrad <- isTRUE(gradient)
-    function(parm) {
-      result <- try(.ctJuliaGet(
-        module$ctsem_laplace_continuation_evaluate(cont,
-          .ctJuliaNumericVector(as.numeric(parm)), gradient = wantgrad)),
-        silent = TRUE)
-      failed <- inherits(result, "try-error") || !isTRUE(result$converged)
-      value <- if (failed) NaN else as.numeric(result$value)[1L]
-      grad <- if (failed || !wantgrad) NULL else as.numeric(result$gradient)
-      if (!is.finite(value) || (wantgrad && (is.null(grad) ||
-          length(grad) != length(parm) || any(!is.finite(grad))))) {
+    fn <- function(parm) {
+      at <- matrix(as.numeric(parm), nrow = 1L)
+      if (!wantgrad) return(batches$batch(at))
+      result <- batches$gradbatch(at)
+      value <- result$value[1L]
+      grad <- as.numeric(result$gradient)
+      # `.ctBackendLpgFunc()`'s guard: a point the hybrid cannot use is a large
+      # finite penalty with no gradient.
+      if (!is.finite(value) || value <= -1e100 || any(!is.finite(grad))) {
         value <- -1e100
-        grad <- if (wantgrad) rep(0, length(parm)) else NULL
+        grad <- rep(0, length(parm))
       }
-      if (wantgrad) attributes(value) <- list(gradient = grad)
+      attributes(value) <- list(gradient = grad)
       value
     }
+    attr(fn, "engine") <- engine
+    attr(fn, "batch") <- batches$batch
+    attr(fn, "gradbatch") <- batches$gradbatch
+    fn
   }
 }
 
@@ -1043,8 +1084,8 @@
   # Skipped: the fixed-node model promised less than `skip_gain` from the
   # Laplace optimum, so no round ran. The estimate stays, and the log
   # likelihood reported is the quadrature one there, as where a round ran and
-  # gained nothing.
-  if (identical(run$status, "skipped")) {
+  # gained nothing. A run asked to stay goes on to draw there.
+  if (!stay && identical(run$status, "skipped")) {
     record$status <- "skipped"
     record$loglik_quadrature <- sum(as.numeric(start$quadrature_units))
     record$logposterior_quadrature <- as.numeric(start$quadrature)
@@ -1073,11 +1114,14 @@
   # The run moved nothing: no round was kept, the rounds ended lower on the
   # objective than they began, or the guard reverts it. The quadrature log
   # likelihood at the Laplace optimum is reported, as the step correction
-  # reports it when no step raised the objective.
+  # reports it when no step raised the objective. Not a run asked to stay,
+  # which moves nothing by design and goes on to its Hessian and draws there;
+  # returning here, `likelihood = 'quadrature'` on a corrected fit never drew
+  # on the hybrid at all.
   worse <- is.finite(change) && change < -as.numeric(control$value_tol)
   record$ended_lower <- worse
   moved <- run$rounds > 0L && any(run$x != est) && !worse
-  if (isTRUE(record$guard$fired) || !moved) {
+  if (isTRUE(record$guard$fired) || (!moved && !stay)) {
     if (isTRUE(record$guard$fired)) {
       if (!is.null(sink)) sink("", "break")
       warning(sprintf(paste0("The Laplace continuation moved the quadrature ",
@@ -1144,7 +1188,7 @@
   # describes, which the estimate may then be a few thousandths of a standard
   # error from.
   hessian_at <- x
-  if (takes_hessian && is.matrix(hc) && all(is.finite(hc))) {
+  if (!stay && takes_hessian && is.matrix(hc) && all(is.finite(hc))) {
     finish <- .ctLaplaceContinueFinish(module, cont, x, hc, final,
       value = run$value, bar = run$bar, value_tol = control$value_tol,
       reuse = .ctBackendHessianReuse(.ctBackendFitOptimcontrol(fit)))
@@ -1159,8 +1203,9 @@
       record$residual <- as.numeric(info$residual)
     }
   }
-  record$status <- "continued"
-  record$applied <- TRUE
+  # A run asked to stay placed its rules at the estimate and moved nothing.
+  record$status <- if (stay) "placed" else "continued"
+  record$applied <- !stay
   se <- as.numeric(fit$estimate$se)
   delta <- x - est
   delta_se <- if (length(se) == npar) ifelse(se > 0, delta / se, NA_real_) else
