@@ -235,17 +235,20 @@ test_that("sampling uses the fitted mesh, on both targets and from ctFitUncertai
       warmed[[length(warmed) + 1L]] <<- object
       NULL
     },
-    .ctBackendSampleObjective = function(fit, target) {
+    .ctBackendSampleObjective = function(fit, target, ...) {
       sampled[[length(sampled) + 1L]] <<- list(fit = fit, target = target)
       if (isTRUE(target$state_explicit)) stop("handed to the sampler")
-      sampleobjective(fit, target)
+      sampleobjective(fit, target, ...)
     }, .package = "ctsem")
 
-  # Two cores, since chains get worker processes only when there are cores
-  # for more than one; NUTS by name, whose chains get them (tempered SMC, the
-  # default where the check names a direction, runs in the session).
+  # Worker processes, so that the mesh they are handed is checked: chains run
+  # in the session unless `processes = TRUE`, and get processes only when
+  # there are cores for more than one; NUTS by name, whose chains get them
+  # (tempered SMC, the default where the check names a direction, runs in the
+  # session).
   marginal <- run(optimize = FALSE, cores = 2,
-    sampleControl = list(sampler = "nuts", chains = 2, warmup = 10, draws = 10))
+    sampleControl = list(sampler = "nuts", chains = 2, warmup = 10, draws = 10,
+      processes = TRUE))
   expect_equal(marginal$substeps, optimised$substeps)
   expect_gt(length(sampled), 0L)
   for (s in sampled) expect_identical(s$fit$model_spec$max_timestep, mesh)
