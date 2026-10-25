@@ -91,15 +91,21 @@ that a model with nothing to parallelise over inside a gradient gets the
 whole ceiling across particles; one after another otherwise.
 
 **The final phase runs as many chains as its target needs**, at most one a
-particle (`_smc_final_chains`). The last stage's moves at `beta = 1` show the
-draws an effective draw takes: across the cloud, each parameter's correlation
-between where its moves began and where they ended is its autocorrelation at
-that lag, extended to one draw as an AR(1) decay (`_smc_move_tau`). The
-chains are particles spread over the cloud (`_smc_spread`), and they share
-the particles' draw budget. Run from every particle, the final phase took
-4,000-5,000 draws for a target of 200, reached a minimum effective size of
-1,188-2,088 on the loading shells, and was most of a run's time. Where the
-estimate falls short, the stopping rule extends the chains.
+particle. It starts as many as the last stage's moves suggest
+(`_smc_final_chains`): across the cloud, each parameter's correlation between
+where its moves began and where they ended is its autocorrelation at that
+lag, extended to one draw as an AR(1) decay (`_smc_move_tau`). Where their
+effective size falls short it starts more, from the particles not yet used,
+and only once every particle runs does it extend the chains. An unused
+particle is an independent start, worth many draws of a chain that mixes
+slowly, and the moves' short lag does not see a slow tail: on the time
+series, where long NUTS chains take about 44 draws an effective draw, the
+lag-3 estimate said 3.6, and 45 chains extended to 89 draws reached an
+effective size of 87 where 200 chains of 20 had reached 536 (dev1). The
+chains are taken in an order spread over the cloud (`_smc_spread_order`) and
+share the particles' draw budget. Run from every particle on the loading
+shells, the final phase took 4,000-5,000 draws for a target of 200 and
+reached a minimum effective size of 1,188-2,088, most of a run's time.
 
 The final phase's chains are short (20 draws or so), and split
 R-hat over them measures their autocorrelation rather than any disagreement:
@@ -390,7 +396,7 @@ stopping rule reads the effective size across chains, and a chain of 20 draws
 says little about its own autocorrelation."""
 const _SMC_FINAL_MIN_CHAINS = 16
 
-"""How many of `np` particles the final phase runs as chains: enough that
+"""How many of `np` particles the final phase starts as chains: enough that
 their first `ndraws` draws each reach 1.25 times the effective-size `target`
 at `tau` draws an effective draw, and at least `_SMC_FINAL_MIN_CHAINS`, at most
 one a particle. Every particle where there is no target."""
@@ -400,10 +406,32 @@ function _smc_final_chains(tau::Float64, target::Float64, ndraws::Int, np::Int)
     return clamp(n, min(np, _SMC_FINAL_MIN_CHAINS), np)
 end
 
-"""`n` of `np` particle indices spread evenly over the cloud. A systematic
-resample leaves an ancestor's copies side by side, so evenly spread indices
-take fewer copies of one ancestor than the first `n` would."""
-_smc_spread(np::Int, n::Int) = n >= np ? collect(1:np) : [1 + fld((i - 1) * np, n) for i in 1:n]
+"""The particle indices `1:np` in an order whose every prefix is spread
+evenly over the cloud: the van der Corput sequence's points, each taken to
+the index it falls in, first come. A systematic resample leaves an
+ancestor's copies side by side, so a spread prefix takes fewer copies of one
+ancestor than the first indices would, and chains started later from the
+order's next indices fill the gaps."""
+function _smc_spread_order(np::Int)
+    order = Int[]
+    seen = falses(np)
+    k = 0
+    while length(order) < np
+        v, f, n = 0.0, 0.5, k
+        while n > 0
+            v += f * (n & 1)
+            n >>= 1
+            f /= 2
+        end
+        i = 1 + floor(Int, v * np)
+        if !seen[i]
+            seen[i] = true
+            push!(order, i)
+        end
+        k += 1
+    end
+    return order
+end
 
 """
     _smc_logdensity(objective, coreset, gradient_method)
@@ -678,16 +706,16 @@ function ctsem_sample_smc(objective, values::AbstractVector;
     beta >= 1.0 || @warn "tempered SMC did not reach the posterior in $(maxstages) stages; the draws are from beta = $(beta)"
     smc_secs = time() - t0
 
-    # The final phase: as many particles as the effective-size target needs,
-    # each a chain at the posterior, the step and metric the last stage left,
-    # drawn and extended by the one stopping rule; on the coreset fitted to the
-    # posterior's cloud where one holds out, its draws corrected to the full
-    # density afterwards, with what the last stage's moves left owing. Fewer
-    # chains than particles share the particles' draw budget.
+    # The final phase: particles run on as chains at the posterior, with the
+    # step and metric the last stage left, until the one stopping rule is met;
+    # on the coreset fitted to the posterior's cloud where one holds out, their
+    # draws corrected to the full density afterwards, with what the last
+    # stage's moves left owing. As many chains as the target needs, more
+    # chains before longer ones (see the file comment), sharing the particles'
+    # draw budget.
     tau = _smc_move_tau(Xfrom, X, nmv)
-    nch = _smc_final_chains(tau, max(Float64(min_ess), Float64(mean_ess)), nfirst, np)
-    chosen = _smc_spread(np, nch)
-    max_final = cld(max(Int(max_draws), nfirst) * np, nch)
+    target_ess = max(Float64(min_ess), Float64(mean_ess))
+    order = _smc_spread_order(np)
     final_fit = nothing
     if use_coreset && full.terms !== nothing
         final_fit = _smc_coreset_fit(full.terms, full.total, unit_cost, tol_now,
@@ -697,30 +725,52 @@ function ctsem_sample_smc(objective, values::AbstractVector;
     Xf = X
     lp_f = lp
     owed_f = copy(owed)
-    first_results = Vector{_ChainResult}(undef, nch)
-    start = copy(chosen)
+    # Each chain's particle, and the chains.
+    start = Int[]
+    held = Ref(_ChainResult[])
     final_step = step
     final_metric = metric
-    _each_point!(objective, nch, mode; coreset=cs_final, scratch=nuts_scratch) do i, obj, s
-        ld = _smc_logdensity(obj, cs_final, gradient_method)
-        k = chosen[i]
-        logp = ld(s.g, Xf[:, k])
-        if !isfinite(logp)
-            # A particle whose density is not finite here cannot have moved to
-            # it; its chain starts from the next particle instead.
-            k = mod1(k + 1, np)
+    start_chains! = function (ks)
+        off = length(start)
+        res = Vector{_ChainResult}(undef, length(ks))
+        from = copy(ks)
+        _each_point!(objective, length(ks), mode; coreset=cs_final,
+            scratch=nuts_scratch) do i, obj, s
+            ld = _smc_logdensity(obj, cs_final, gradient_method)
+            k = ks[i]
             logp = ld(s.g, Xf[:, k])
+            if !isfinite(logp)
+                # A particle whose density is not finite here cannot have moved
+                # to it; its chain starts from the next particle instead.
+                k = mod1(k + 1, np)
+                logp = ld(s.g, Xf[:, k])
+            end
+            from[i] = k
+            res[i] = _continue_chain(ld, s.ws,
+                Random.Xoshiro(hash((UInt64(seed), 0, off + i))), Xf[:, k], s.g, logp,
+                final_step, final_metric, nfirst, mdepth, mdelta)
+            return nothing
         end
-        start[i] = k
-        first_results[i] = _continue_chain(ld, s.ws, Random.Xoshiro(hash((UInt64(seed), 0, i))),
-            Xf[:, k], s.g, logp, final_step, final_metric, nfirst, mdepth, mdelta)
+        append!(start, from)
+        held[] = vcat(held[], res)
         return nothing
     end
-    held = Ref(first_results)
+    start_chains!(order[1:_smc_final_chains(tau, target_ess, nfirst, np)])
+    while target_ess > 0 && length(start) < np
+        n = length(start)
+        v = _sample_verdict(_pool_draws(held[], npar), fill(nfirst, n), nfirst, nfirst,
+            Float64(min_ess), Float64(mean_ess), nfirst, Float64(rhat_target), false)
+        v.met && break
+        shortfall = max(min_ess / max(v.worst, 1.0), mean_ess / max(v.average, 1.0))
+        start_chains!(order[(n + 1):min(np, max(n + 1, ceil(Int, 1.25 * shortfall * n)))])
+    end
+    nch = length(start)
+    max_final = cld(max(Int(max_draws), nfirst) * np, nch)
     extend! = function (wanted, attempt)
         previous = held[]
-        more = Vector{_ChainResult}(undef, nch)
-        _each_point!(objective, nch, mode; coreset=cs_final, scratch=nuts_scratch) do i, obj, s
+        more = Vector{_ChainResult}(undef, length(previous))
+        _each_point!(objective, length(previous), mode; coreset=cs_final,
+            scratch=nuts_scratch) do i, obj, s
             ld = _smc_logdensity(obj, cs_final, gradient_method)
             more[i] = _run_chain(ld, previous[i].x, previous[i].metric,
                 Random.Xoshiro(UInt64(seed + 1000 * attempt) + UInt64(i)),

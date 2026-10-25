@@ -78,11 +78,11 @@ end
             min_ess=200.0, max_draws=40)
         X = r.draws
         @test size(X, 1) == d
-        # The final phase runs as many chains as its target needs at the draws
-        # an effective draw took in the last stage's moves, at most one a
-        # particle.
+        # The final phase starts as many chains as its target needs at the
+        # draws an effective draw took in the last stage's moves, and more
+        # where they fall short, at most one a particle.
         @test r.final_tau >= 1
-        @test r.nchains == ContinuousTimeSEM._smc_final_chains(r.final_tau, 200.0, 10, np)
+        @test r.nchains >= ContinuousTimeSEM._smc_final_chains(r.final_tau, 200.0, 10, np)
         @test r.nchains <= np
         @test size(X, 2) == r.nchains * r.ndraws
         @test r.sampler == "smc"
@@ -132,10 +132,12 @@ end
     @test chains(1.0, 200.0, 20, 10) == 10
     @test chains(100.0, 200.0, 20, 200) == 200
     @test chains(3.0, 0.0, 20, 200) == 200
-    # Spread over the cloud, every index a particle's, none twice.
-    idx = ContinuousTimeSEM._smc_spread(200, 38)
-    @test length(idx) == 38 && allunique(idx) && all(1 .<= idx .<= 200) && idx[1] == 1
-    @test ContinuousTimeSEM._smc_spread(20, 20) == collect(1:20)
+    # Every particle once, in an order whose prefixes spread over the cloud.
+    o = ContinuousTimeSEM._smc_spread_order(200)
+    @test sort(o) == collect(1:200)
+    @test o[1:4] == [1, 101, 51, 151]
+    @test maximum(diff(sort(o[1:38]))) <= 2 * cld(200, 38)
+    @test sort(ContinuousTimeSEM._smc_spread_order(7)) == collect(1:7)
 end
 
 @testset "tempered SMC recovers a skewed target from its Laplace normal" begin
