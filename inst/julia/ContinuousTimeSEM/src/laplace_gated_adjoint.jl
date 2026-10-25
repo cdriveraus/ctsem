@@ -102,21 +102,7 @@ function _laplace_unit_theta_gradient(laplace::CTSEMLaplaceObjective, U::Integer
             Gtheta[t] += grad[t]
         end
         _laplace_chol_chain!(Gtheta, grad, spec, dL, positions, u, offsets)
-        @inbounds for l in eachindex(spec.levels)
-            level = spec.levels[l]
-            k = nrandomeffects(level)
-            r = nlatent(level)
-            (k == 0 || r == 0) && continue
-            base = offsets[l]
-            L = Ls[l]
-            for qq in 1:r
-                acc = zero(S)
-                for pp in 1:k
-                    acc += L[pp, qq] * grad[level.re_index[pp]]
-                end
-                Gz[base + qq] += acc
-            end
-        end
+        _laplace_loading_chain!(Gz, grad, spec, Ls, offsets)
         if layout !== nothing
             hb = aws.ekf_ws.hyb
             q = layout.q[m]
