@@ -138,6 +138,24 @@ end
     @test ContinuousTimeSEM._smc_spread(20, 20) == collect(1:20)
 end
 
+@testset "a stage's moves set the next stage's step" begin
+    next = ContinuousTimeSEM._smc_next_step
+    # At the target acceptance the step stands; below it the step shrinks and
+    # above it grows, by at most a factor of two.
+    @test next(0.3, 0.8, 0.8) ≈ 0.3
+    @test 0.15 <= next(0.3, 0.6, 0.8) < 0.3
+    @test 0.3 < next(0.3, 0.95, 0.8) <= 0.6
+    @test next(0.3, 1.0, 0.8) == 0.6
+    @test next(0.3, 0.0, 0.8) == 0.15
+    @test next(0.3, NaN, 0.8) == 0.3
+    # The energy error's sd grows as the step's square: at an acceptance of
+    # 2 Phi(-s / 2), the step for 0.8 scales by sqrt(sd(0.8) / s).
+    s = 1.0
+    a = 2 * (0.5 * (1 + ContinuousTimeSEM.SpecialFunctions.erf(-s / 2 / sqrt(2))))
+    sd8 = -2 * sqrt(2) * ContinuousTimeSEM.SpecialFunctions.erfinv(0.8 - 1)
+    @test next(0.3, a, 0.8) ≈ 0.3 * sqrt(sd8 / s)
+end
+
 @testset "tempered SMC recovers a skewed target from its Laplace normal" begin
     d, a = 30, [0.5, 0.5, 1.0, 2.0, 4.0]
     k = length(a)

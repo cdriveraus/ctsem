@@ -37,10 +37,12 @@ learn (review/SAMPLING-smc-2026-10-23.md):
     series). Whitened by the previous metric and shrunk toward the identity
     there by the Schaefer-Strimmer intensity, it keeps what was learned and
     costs what the first version cost.
-  * **The step size is carried across stages**, a pilot of `pilot`
-    dual-averaging iterations on one particle restarted from the last stage's
-    step; found again from scratch each stage it jittered 0.05-0.08 at
-    `beta` near 1.
+  * **The step size is carried across stages**, set by a pilot of
+    `2 pilot` dual-averaging iterations on one particle at the first stage
+    and by every particle's moves after it (`_smc_next_step`): the moves'
+    mean acceptance at one stage sets the step of the next. Found again from
+    scratch each stage it jittered 0.05-0.08 at `beta` near 1; a pilot each
+    stage ran one particle while the others waited.
   * **Particle `i`'s moves at stage `t` draw from `Xoshiro(hash((seed, t,
     i)))`**, so the result does not depend on how the work is laid out: one
     particle after another, or spread over objective copies.
@@ -406,6 +408,25 @@ take fewer copies of one ancestor than the first `n` would."""
 _smc_spread(np::Int, n::Int) = n >= np ? collect(1:np) : [1 + fld((i - 1) * np, n) for i in 1:n]
 
 """
+    _smc_next_step(step, accept, target)
+
+The step for the next stage's moves from this stage's: their mean acceptance
+`accept` at `step`. Where a leapfrog trajectory's energy error is normal with
+sd `sigma`, its mean acceptance is `2 Phi(-sigma / 2)`, and `sigma` grows as
+the step's square (Beskos, Pillai, Roberts, Sanz-Serna and Stuart 2013); so
+the step for `target` is `step sqrt(sigma(target) / sigma(accept))`, held
+within a factor of two a stage. Every particle's moves inform it, where a
+pilot would read one particle's.
+"""
+function _smc_next_step(step::Float64, accept::Float64, target::Float64)
+    isfinite(accept) || return step
+    accept >= 1 && return 2 * step
+    accept <= 0 && return step / 2
+    sig = a -> -2 * sqrt(2) * erfinv(a - 1)
+    return step * clamp(sqrt(sig(target) / sig(accept)), 0.5, 2.0)
+end
+
+"""
     _smc_logdensity(objective, coreset, gradient_method)
 
 The log density and its gradient as a `(g, x)` closure, writing the gradient
@@ -593,25 +614,28 @@ function ctsem_sample_smc(objective, values::AbstractVector;
         # coreset's error at both ends of the move.
         lc_pre = cs_stage === nothing ? lp_pre : _smc_coreset_values(objective, Xpre, cs_stage)
         td! = tempered_for(objective, cs_stage, beta)
-        # The step: one particle's dual averaging from the carried step, twice
-        # as long on the first stage, which has none. A failed pilot keeps the
-        # carried step.
-        npilot = step > 0 ? Int(pilot) : 2 * Int(pilot)
-        piloted = try
-            _run_chain(td!, Xpre[:, 1], metric, Random.Xoshiro(hash((UInt64(seed), stage, 0))),
-                npilot, 1, mdepth, tacc, mdelta, 0.0, false, nothing;
-                init_eps=step)
-        catch err
-            err isa InterruptException && rethrow()
-            nothing
-        end
+        # The step: on the first stage, which has none, one particle's dual
+        # averaging; after it, what the last stage's moves set
+        # (`_smc_next_step`). A failed pilot starts from 0.1.
         Xstart = copy(Xpre)
-        if piloted !== nothing && isfinite(piloted.stepsize) && piloted.stepsize > 0
-            Xstart[:, 1] .= piloted.x
-            step = piloted.stepsize
-        elseif step <= 0
-            step = 0.1
+        tpilot = time()
+        if step <= 0
+            piloted = try
+                _run_chain(td!, Xpre[:, 1], metric,
+                    Random.Xoshiro(hash((UInt64(seed), stage, 0))), 2 * Int(pilot), 1,
+                    mdepth, tacc, mdelta, 0.0, false, nothing; init_eps=step)
+            catch err
+                err isa InterruptException && rethrow()
+                nothing
+            end
+            if piloted !== nothing && isfinite(piloted.stepsize) && piloted.stepsize > 0
+                Xstart[:, 1] .= piloted.x
+                step = piloted.stepsize
+            else
+                step = 0.1
+            end
         end
+        pilot_secs = time() - tpilot
         Xnew = copy(Xstart)
         acc = zeros(np)
         dep = zeros(np)
@@ -660,7 +684,7 @@ function ctsem_sample_smc(objective, values::AbstractVector;
             coreset_share=fit === nothing ? 1.0 : fit.share,
             coreset_error=fit === nothing ? NaN : fit.error,
             correction_ess=corr_ess / np, corrected=corrected,
-            secs=time() - t0))
+            pilot_secs=pilot_secs, secs=time() - t0))
         if _due(reporter, true)
             _emit(reporter, join(filter(!isempty, [
                 @sprintf("  tempering stage %d", stage),
@@ -672,6 +696,8 @@ function ctsem_sample_smc(objective, values::AbstractVector;
         end
         _invoke_callback(callback, "tempering", round(Int, 100 * beta), 100,
             _smc_mean(filter(isfinite, lp)), sum(ndiv); force=beta >= 1.0)
+        # The next stage's step, and the final phase's after the last.
+        step = _smc_next_step(step, sum(acc) / nok, tacc)
         beta >= 1.0 && break
     end
     _progress_done(reporter, "$(length(stages)) stages")
@@ -798,7 +824,8 @@ function ctsem_sample_smc(objective, values::AbstractVector;
         stage_accept=[s.accept for s in stages], stage_depth=[s.depth for s in stages],
         stage_moved=[s.moved for s in stages], stage_divergent=[s.divergent for s in stages],
         stage_shrink=[s.shrink for s in stages], stage_logz=[s.logz for s in stages],
-        stage_secs=[s.secs for s in stages], smc_secs=smc_secs,
+        stage_secs=[s.secs for s in stages], stage_pilot_secs=[s.pilot_secs for s in stages],
+        smc_secs=smc_secs,
         coreset=use_coreset || any(s.coreset_size > 0 for s in stages),
         nunits=nunits,
         stage_coreset_size=[s.coreset_size for s in stages],

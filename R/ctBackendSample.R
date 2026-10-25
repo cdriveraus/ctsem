@@ -1499,6 +1499,8 @@
     nstages = if (is.null(result$nstages)) NULL else as.integer(result$nstages),
     stage_beta = if (is.null(result$stage_beta)) NULL else as.numeric(result$stage_beta),
     smc_seconds = if (is.null(result$smc_secs)) NULL else as.numeric(result$smc_secs),
+    stage_pilot_seconds = if (is.null(result$stage_pilot_secs)) NULL else
+      as.numeric(result$stage_pilot_secs),
     # The particles carried, and the draws an effective draw took in the last
     # stage's moves, which set how many of them the final phase ran as chains.
     nparticles = if (is.null(result$nparticles)) NULL else as.integer(result$nparticles),
