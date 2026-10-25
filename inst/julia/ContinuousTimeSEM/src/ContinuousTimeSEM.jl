@@ -155,6 +155,9 @@ include("dais.jl")
 # each unit's random effects over the Laplace route's units and curvature, and
 # runs as a phase of `ctsem_optimize` before L-BFGS.
 include("saem.jl")
+# After saem.jl and sample_run.jl: the joint sampled through a learnt map, on the
+# chains, the stopping rule and the hybrid's reporting above it.
+include("sample_map.jl")
 
 # Last, because it exercises everything above it.
 include("precompile_workload.jl")
