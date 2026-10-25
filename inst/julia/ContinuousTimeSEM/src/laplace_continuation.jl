@@ -2342,9 +2342,12 @@ weighs or moves the draws -- the uncertainty a corrected fit reports. At each
 point the flagged units' rules are placed there and `o`'s own placement put
 back after (`_continuation_at`); the other units keep their Laplace terms, as
 at the estimate, and are not screened again, which would cost a quadrature of
-every unit at every draw. The value is the probes' (`_ctsem_probe_value`): the
-hybrid's value there less its own error at that placement. The gradient is
-the frozen rules' at the point they were placed at.
+every unit at every draw. The value is the hybrid's there, less its frozen
+draws' error, as a probe guards against draws that degenerate
+(`_ctsem_probe_value`), but not less its product rules' node errors, which a
+probe also subtracts: summed over the flagged units they grow away from the
+mode, and would narrow a density. The gradient is the frozen rules' at the
+point they were placed at.
 
 `o` itself reads its rules where they were placed, which is what an optimiser
 needs of it -- a fixed objective, smooth in the parameters -- and what no
@@ -2366,7 +2369,12 @@ function ctsem_evaluate(d::CTSEMContinuationDensity, values::AbstractVector;
     o = d.continuation
     theta = _laplace_extend(o.laplace, collect(Float64, values))
     r = _continuation_at(o, theta; screen=false) do
-        error = _continuation_error(o).total
+        # Less the frozen draws' error only, the guard the probes take against
+        # draws that degenerate away from the estimate. Not the product rules'
+        # node errors, which the probes subtract too: summed over every
+        # flagged unit they grow away from the mode, and taken off a density
+        # they would narrow it.
+        error = _continuation_error(o).draws
         # Converged, or no value: a finite number away from a mode is not the
         # objective there, as on the Laplace route. A value alone is the
         # placement's own, which evaluating again would compute a second time.

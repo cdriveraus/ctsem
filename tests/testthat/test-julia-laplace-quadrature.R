@@ -317,12 +317,12 @@ test_that("the hybrid's density places the flagged units' rules at each point", 
   away <- x + 2 * as.numeric(fit$estimate$se) * rep_len(c(1, -1), length(x))
   value <- lpg(away)
   # The same as a continuation placed there from nothing, with the same units
-  # flagged and no screen: the hybrid's value less its own error.
+  # flagged and no screen: the hybrid's value less its frozen draws' error.
   there <- .ctJuliaGet(module$ctsem_laplace_continuation_info(do.call(
     module$ctsem_laplace_continuation, c(list(.ctJuliaObjective(fit, hybrid = TRUE),
       .ctJuliaNumericVector(away)), .ctLaplaceContinuationArgs(
         .ctLaplaceContinueDefaults, force = flagged, screen = FALSE)))))
-  expect_equal(as.numeric(value), as.numeric(there$value) - as.numeric(there$error),
+  expect_equal(as.numeric(value), as.numeric(there$value) - as.numeric(there$error_draws),
     tolerance = 1e-6)
   expect_length(attr(value, "gradient"), length(x))
   expect_true(all(is.finite(attr(value, "gradient"))))
