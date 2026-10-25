@@ -385,7 +385,9 @@ function _smc_move_tau(Xfrom::AbstractMatrix{Float64}, Xto::AbstractMatrix{Float
     return tau
 end
 
-"""The fewest chains the final phase runs, where it has more particles."""
+"""The fewest chains the final phase runs, where it has more particles: the
+stopping rule reads the effective size across chains, and a chain of 20 draws
+says little about its own autocorrelation."""
 const _SMC_FINAL_MIN_CHAINS = 16
 
 """How many of `np` particles the final phase runs as chains: enough that
