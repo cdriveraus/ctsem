@@ -2739,18 +2739,26 @@ ctOptimFitLpgFunc <- function(fit, cores=1){
 # Newton steps (`imis_is()` hands them the identified subspace's instead). Its
 # eigenvalues are floored at the flat-direction tolerance, a precision that
 # holds those directions where they are. A walk that fails says nothing about
-# the posterior, and 'checked' goes on as without it.
+# the posterior, and 'checked' goes on as without it, saying so (`failed`).
+#
+# Without `.ctImisPaths()`'s early stop (`heavy`), which ends a path that has
+# fallen more than 2.7 at its first rung: that keeps 'is''s search cheap, and
+# here it hid every plateau deeper than 2.7 below the mode, which is still a
+# plateau a flat prior gives infinite mass (a bump on a floor 3.0 and 4.6
+# down went unflagged).
 .ctImproperParameters <- function(lpg, est, cov, parameters) {
+  if (!length(parameters)) return(NULL)
   gradfun <- .ctJuliaOr(attr(lpg, 'fullgradbatch'), .ctImisGradient(lpg, est))
-  if (!is.function(gradfun) || !length(parameters)) return(NULL)
-  eig <- eigen((cov + t(cov)) / 2, symmetric = TRUE)
-  S <- eig$vectors %*% (t(eig$vectors) *
-    pmax(eig$values, .ctFlatDirectionRtol() * max(eig$values)))
-  paths <- tryCatch(.ctImisPaths(gradfun, .ctImisEvaluator(lpg), as.numeric(est), S,
-    which = parameters), error = function(e) NULL)
-  if (is.null(paths)) return(NULL)
-  list(reaches = paths$reachesLimit, limit = paths$limit,
-    gradients = paths$gradients, calls = paths$calls)
+  if (!is.function(gradfun)) return(list(failed = "the density has no gradient"))
+  tryCatch({
+    eig <- eigen((cov + t(cov)) / 2, symmetric = TRUE)
+    S <- eig$vectors %*% (t(eig$vectors) *
+      pmax(eig$values, .ctFlatDirectionRtol() * max(eig$values)))
+    paths <- .ctImisPaths(gradfun, .ctImisEvaluator(lpg), as.numeric(est), S,
+      which = parameters, heavy = Inf)
+    list(reaches = paths$reachesLimit, limit = paths$limit,
+      gradients = paths$gradients, calls = paths$calls)
+  }, error = function(e) list(failed = conditionMessage(e)))
 }
 
 # 'checked''s guard against an improper posterior, given the directions it is
@@ -2771,6 +2779,15 @@ ctOptimFitLpgFunc <- function(fit, cores=1){
   share <- rowSums(directions^2) / pmax(diag(cov), .Machine$double.xmin)
   walk <- setdiff(sort(unique(c(flagged, which(share > 0.5)))), state$walked)
   found <- .ctImproperParameters(lpg, est, cov, walk)
+  # A walk that could not run walked nothing: said once, and recorded, so a
+  # disabled guard does not read as one that found the posterior proper.
+  if (!is.null(found$failed)) {
+    message("'checked' could not check its directions for an improper posterior (",
+      found$failed, "); it goes on without that check.")
+    state$failed <- c(state$failed, found$failed)
+    found <- NULL
+    walk <- integer()
+  }
   state$walked <- sort(c(state$walked, walk))
   state$gradients <- state$gradients + .ctJuliaOr(found$gradients, 0L)
   state$calls <- state$calls + .ctJuliaOr(found$calls, 0L)
@@ -3968,6 +3985,11 @@ ctFitUncertainty <- function(fit,
     stop("control$likelihood = '", likelihood, "' is only available for ",
       "backend='julia' fits: the quadrature and particle-filter likelihoods are ",
       "the julia engine's. Drop it, or refit with backend='julia'.", call.=FALSE)
+  }
+  if(!is.null(control$flat)) {
+    stop("control$flat is only available for backend='julia' fits: the natural-",
+      "scale prior is evaluated in the julia engine. Drop it, or refit with ",
+      "backend='julia'.", call.=FALSE)
   }
   if(is.null(finishsamples)) {
     finishsamples <- if(!is.null(fit$stanfit$rawposterior))

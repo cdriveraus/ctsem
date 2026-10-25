@@ -44,8 +44,13 @@
     "already per interval.", call. = FALSE)
   pars <- model$pars
   effectcols <- intersect(paste0(model$TIpredNames, "_effect"), names(pars))
+  # A parameter named in one cell only: one shared with another cell -- a PARS
+  # alias, an equality across processes -- keeps its cells as they are, since
+  # rescaling one copy would change what the others mean.
   plain <- function(r) !is.na(pars$param[r]) && is.na(pars$value[r]) &&
-    grepl("^[A-Za-z][A-Za-z0-9_.]*$", pars$param[r])
+    grepl("^[A-Za-z][A-Za-z0-9_.]*$", pars$param[r]) &&
+    sum(pars$param %in% pars$param[r]) == 1L
+  shared <- character()
   driftzero <- function(i) {
     r <- which(pars$matrix == "DRIFT" & pars$row == i & pars$col == i)
     length(r) == 1L && is.na(pars$param[r]) && isTRUE(as.numeric(pars$value[r]) == 0)
@@ -56,6 +61,8 @@
   added <- list()
   for (mat in which) for (i in seq_len(model$n.latent)) {
     r <- which(pars$matrix == mat & pars$row == i & pars$col == (if (mat == "CINT") 1L else i))
+    if (length(r) == 1L && !is.na(pars$param[r]) && is.na(pars$value[r]) &&
+        sum(pars$param %in% pars$param[r]) > 1L) shared <- c(shared, pars$param[r])
     if (length(r) != 1L || !plain(r) || driftzero(i)) next
     nextrow <- nextrow + 1L
     moved <- pars[r, , drop = FALSE]
@@ -88,6 +95,8 @@
     pars <- rbind(pars, do.call(rbind, added))
     rownames(pars) <- NULL
   }
+  if (length(shared)) message("driftScaled leaves ", paste(unique(shared), collapse = ", "),
+    " as written: each is shared with another cell, whose meaning rescaling would change.")
   model$pars <- pars
   model$driftScaled <- which
   .ctModelRawPopVarSync(model)

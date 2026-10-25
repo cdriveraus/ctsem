@@ -299,7 +299,11 @@
     .ctBackendHessian(fit, est, verbose = verbose)
   } else NULL
   control$analyticHessian <- NULL
-  # The natural-scale prior's curvature, which is separable: its diagonal.
+  # The natural-scale prior's curvature, which is separable: its diagonal. For
+  # this call's check and sampling only: the fit keeps its objective's own
+  # curvature (below), which its certification, the continuation, adequacy and
+  # a later raw-flat call read.
+  objectivehessian <- hessian
   if (!is.null(hessian) && length(natural) && nrow(natural)) {
     curvature <- .ctNaturalCurvature(natural, .ctBackendRawFull(fit$model_spec, est))
     hessian[cbind(natural$index, natural$index)] <-
@@ -391,6 +395,8 @@
   # evaluated at: the optimiser's finish may have taken it at the hand-over,
   # within the fit's `hessianreuse` standard errors of `est`, and saying `est`
   # would claim more than was measured.
+  if (!is.null(uncertaintyfit$hessian) && !identical(objectivehessian, hessian))
+    uncertaintyfit$hessian <- objectivehessian
   reused <- !is.null(stored$hessian) && !is.null(uncertaintyfit$hessian) &&
     identical(uncertaintyfit$hessian, stored$hessian)
   if (!is.null(uncertaintyfit$hessian)) {

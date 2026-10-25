@@ -1478,3 +1478,41 @@ test_that(".ctHoldOff takes held directions out of the sampled span", {
   # The centre's move along the held direction is undone.
   expect_equal(as.numeric(crossprod(out$centre, P %*% hold)), 0, tolerance = 1e-10)
 })
+
+test_that("the improper walk sees a plateau however deep it lies inside its drop", {
+  # A bump on a floor `floor` below it in density, so the plateau lies
+  # -log(floor / (1 + floor)) down: 3.0 and 4.6 nats here, past the 2.7 at
+  # which `.ctImisPaths()`'s early stop would end the path at its first rung.
+  for (floor in c(0.05, 0.01)) {
+    lp1 <- function(x) log(floor + exp(-0.5 * x[1]^2)) - 0.5 * sum(x[-1]^2)
+    gr1 <- function(x) c(-x[1] * exp(-0.5 * x[1]^2) / (floor + exp(-0.5 * x[1]^2)), -x[-1])
+    dens <- function(x) lp1(x)
+    attr(dens, 'batch') <- function(X) apply(as.matrix(X), 1, lp1)
+    attr(dens, 'gradbatch') <- function(X) {
+      X <- as.matrix(X)
+      list(value = apply(X, 1, lp1), gradient = t(apply(X, 1, gr1)))
+    }
+    walk <- ctsem:::.ctImproperParameters(dens, rep(0, 3), diag(c(1 + floor, 1, 1)), 1:3)
+    expect_setequal(walk$reaches, c(1L, -1L))
+  }
+  # One that cannot run says so rather than reading as a proper posterior.
+  nograd <- function(x) -0.5 * sum(x^2)
+  expect_false(is.null(ctsem:::.ctImproperParameters(nograd, rep(0, 2), diag(2), 1:2)$failed))
+})
+
+test_that("a transform fitted once a session gives what a fresh fit gives, and draws as before", {
+  model <- suppressMessages(ctModel(type = "ct", n.latent = 1, n.manifest = 1,
+    LAMBDA = diag(1), DRIFT = matrix("drift|-exp(param) * 2")))
+  cache <- asNamespace("ctsem")$.ct_transform_fits
+  saved <- list(text = cache$text, row = cache$row)
+  on.exit({ cache$text <- saved$text; cache$row <- saved$row }, add = TRUE)
+  cache$text <- character(); cache$row <- list()
+  set.seed(4); fresh <- ctsem:::ctModelTransformsToNum(model); after_fresh <- stats::runif(2)
+  fitted <- length(cache$text)
+  set.seed(4); known <- ctsem:::ctModelTransformsToNum(model); after_known <- stats::runif(2)
+  expect_equal(known$pars, fresh$pars)
+  expect_identical(after_known, after_fresh)
+  # The second call read every template from the cache and fitted none.
+  expect_gt(fitted, 0L)
+  expect_equal(length(cache$text), fitted)
+})

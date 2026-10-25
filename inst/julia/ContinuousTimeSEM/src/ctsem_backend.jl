@@ -2666,8 +2666,11 @@ function _ctsem_optimise_verdict(objective, minimizer, start_values, value,
     # alone and the fit stopped 2.95 nats below its maximum
     # (review/UNCERTAINTY-checked-improper-2026-10-24.md). So where the pool
     # had something flat and found nothing, the search over every coordinate
-    # decides, once; a fit with nothing flat never pays for it.
-    if !overshoot.overshot && candidates !== nothing && !isempty(candidates)
+    # decides, once; a fit with nothing flat never pays for it. Only in the
+    # default `:magnitude` mode: in `:saturation` the sets are the saturated
+    # coordinates whatever the pool, so a second search repeats the first.
+    if !overshoot.overshot && candidates !== nothing && !isempty(candidates) &&
+            _ctsem_overshoot_mode(overshoot_probe) === :magnitude
         wider = _ctsem_overshot(objective, minimizer, saturated_parameters,
             value, converge_tol; mode=overshoot_probe, progress=progress)
         overshoot = wider.overshot ? wider : (overshot=false,

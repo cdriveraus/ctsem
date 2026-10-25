@@ -75,6 +75,7 @@ test_that("a drift-scaled model is the default model in other coordinates", {
     c(loglik = fit$estimate$loglik, DRIFT = e$DRIFT[1, 1],
       DIFFUSIONcov = e$DIFFUSIONcov[1, 1], CINT = e$CINT[1, 1])
   }
+  scaled <- list()
   for (route in c("augmented", "laplace")) {
     fits <- lapply(list(character(), c("DIFFUSION", "CINT")), function(s) {
       set.seed(7)
@@ -82,7 +83,29 @@ test_that("a drift-scaled model is the default model in other coordinates", {
         intoverpop = route, cores = 1, verbose = 0)))
     })
     expect_equal(natural(fits[[2]]), natural(fits[[1]]), tolerance = 1e-4, info = route)
+    scaled[[route]] <- natural(fits[[2]])
   }
+  # And the Laplace term is exact for it, as its quadratic flag claims: the
+  # augmented route integrates the intercept exactly, and the two agree.
+  expect_equal(scaled$laplace, scaled$augmented, tolerance = 1e-4)
+})
+
+test_that("a PARS effect read nonlinearly or by a covariance leaves the units unflagged", {
+  skip_without_julia()
+  base <- function(cint, diffusion) {
+    m <- suppressWarnings(suppressMessages(ctModel(type = "ct", n.latent = 1,
+      n.manifest = 2, manifestNames = c("y1", "y2"), latentNames = "eta1",
+      LAMBDA = matrix(1, 2, 1), MANIFESTMEANS = matrix(0, 2, 1), T0MEANS = matrix(0),
+      MANIFESTVAR = matrix(c("mvar", "0", "0", "mvar"), 2, 2), PARS = matrix("cpar"),
+      CINT = matrix(cint), DIFFUSION = matrix(diffusion))))
+    m$pars$indvarying <- m$pars$param %in% "cpar"
+    m
+  }
+  flag <- function(m) isTRUE(suppressWarnings(suppressMessages(ctFit(.ds_data(), m,
+    backend = "julia", intoverpop = "laplace", fit = FALSE)))$laplace$quadratic)
+  expect_true(flag(base("cpar * 2", "diff")))
+  expect_false(flag(base("exp(cpar)", "diff")))
+  expect_false(flag(base("cpar * 2", "cpar * 1 + 0.1")))
 })
 
 test_that("a scaled diffusion starts where the default's does", {
