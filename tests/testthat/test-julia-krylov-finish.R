@@ -34,9 +34,34 @@ test_that("the Krylov model is the Hessian once its space is the whole space", {
   model <- ctsem:::.ctJuliaCall("ContinuousTimeSEM.ctsem_krylov_hessian",
     ctsem:::.ctJuliaObjective(fit), est, products = npar, rtol = -Inf)
   Hk <- matrix(as.numeric(model), npar, npar)
-  # Forward differences of the gradient along the Lanczos vectors against the
-  # certification's central differences by coordinate.
-  expect_equal(Hk, fit$uncertainty$hessian, tolerance = 1e-3)
+  # Forward differences of the gradient along the Lanczos vectors against
+  # central differences by coordinate, at the same point: the fit's own
+  # Hessian may be from up to a tenth of a standard error away
+  # (`hessianreuse`), which moves it by a per cent here.
+  exact <- ctsem:::.ctJuliaCall("ContinuousTimeSEM.ctsem_laplace_hessian",
+    ctsem:::.ctJuliaObjective(fit), est)
+  expect_equal(Hk, matrix(as.numeric(exact), npar, npar), tolerance = 1e-3)
+})
+
+test_that("at a jump, the continuation's Krylov model is its Hessian on the whole space", {
+  skip_without_julia()
+  fit <- .krylov_fit()
+  est <- as.numeric(fit$estimate$raw)
+  npar <- length(est)
+  module <- ctsem:::.ctJuliaModule(fit$model_spec$project)
+  # A unit put on draws as one whose term jumped would be
+  # (`.ctLaplaceContinue()`), so the products go through both parts.
+  cont <- do.call(module$ctsem_laplace_continuation,
+    c(list(ctsem:::.ctJuliaObjective(fit, hybrid = TRUE),
+      ctsem:::.ctJuliaNumericVector(est)),
+      ctsem:::.ctLaplaceContinuationArgs(ctsem:::.ctLaplaceContinueDefaults,
+        force = 1L)))
+  model <- ctsem:::.ctJuliaCall("ContinuousTimeSEM.ctsem_krylov_hessian", cont,
+    est, products = npar, rtol = -Inf)
+  exact <- ctsem:::.ctJuliaCall(
+    "ContinuousTimeSEM.ctsem_laplace_continuation_hessian", cont, est)
+  expect_equal(matrix(as.numeric(model), npar, npar),
+    matrix(as.numeric(exact), npar, npar), tolerance = 1e-3)
 })
 
 test_that("the finish on the Krylov model reaches the chord's maximum for fewer Hessians", {
