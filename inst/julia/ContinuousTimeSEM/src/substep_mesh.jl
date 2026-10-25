@@ -291,14 +291,15 @@ to 1e-9 on the scalar prototype, within 1e-3 nats a subject of the converged
 likelihood at the plan's own values.
 
 -1 for a row whose steps had to be halved, or whose subject's filter is not
-finite at `values`: it iterates to its mode under the plan. Empty where no row
-iterates -- a linear measurement, or the iteration switched off
-(`ctsem_set_relinearise!`) -- which is the same as no plan.
+finite at `values`: it iterates to its mode under the plan. `nothing` where no
+row iterates -- a linear measurement, or the iteration switched off
+(`ctsem_set_relinearise!`) -- which is the same as no plan; not an empty
+vector, which JuliaConnectoR cannot carry back to R.
 """
 function ctsem_relin_plan(objective::CTSEMObjective, values::AbstractVecOrMat)
     subjects = objective.subject_objectives
-    (isempty(subjects) || !_CTSEM_RELINEARISE[]) && return Int[]
-    _get_or_init_objective_workspace!(first(subjects), Float64).relinearise || return Int[]
+    (isempty(subjects) || !_CTSEM_RELINEARISE[]) && return nothing
+    _get_or_init_objective_workspace!(first(subjects), Float64).relinearise || return nothing
     persubject = values isa AbstractMatrix
     persubject && size(values, 1) != length(subjects) && throw(DimensionMismatch(
         "one row of parameters per subject is required"))

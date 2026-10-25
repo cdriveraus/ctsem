@@ -300,6 +300,18 @@ end
     # At c = 0 the measurement is linear, and the two are one.
     @test obj([0.0]) ≈ linear rtol=1e-12
     @test ContinuousTimeSEM.ctsem_validate_forward_gradient(obj, [c]).adjoint_relative_error < 1e-9
+    # A plan of steps a row learnt here (`ctsem_relin_plan`) gives the
+    # converged likelihood to its tolerance at a fraction of the steps, and a
+    # planned objective's adjoint is exact. A linear measurement has none.
+    plan = ContinuousTimeSEM.ctsem_relin_plan(obj, [c])
+    @test plan isa Vector{Int} && length(plan) == length(times)
+    @test 0 < sum(max.(plan, 0)) / length(plan) < 6
+    planned = ContinuousTimeSEM.ctsem_objective(_PF_LOADING, starts, times, data;
+        relin_steps=plan)
+    @test planned([c]) ≈ iterated atol=1e-3 * nsub
+    @test ContinuousTimeSEM.ctsem_validate_forward_gradient(planned, [c]).adjoint_relative_error < 1e-9
+    lin = ContinuousTimeSEM.ctsem_objective(_PF_LINEAR, starts, times, vcat(data, data))
+    @test ContinuousTimeSEM.ctsem_relin_plan(lin, [0.2]) === nothing
 end
 
 @testset "state-explicit path takes an Euler transition" begin
