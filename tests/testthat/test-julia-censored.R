@@ -422,8 +422,16 @@ test_that("a categorical item's measurement is linearised where it reads the sta
   npar <- .ctBackendNpar(gaussian)
   set.seed(3)
   at <- stats::rnorm(npar, 0, 0.3)
+  # The Gaussian update iterates a measurement that reads the state to the
+  # row's posterior mode (`_ekf_iterated_rows!`), and a categorical item is
+  # linearised once, at the prior: the comparison is of the two linearised
+  # where the EKF linearises them.
+  ctsem:::.ctJuliaEval("ContinuousTimeSEM.ctsem_set_relinearise!(false)")
+  on.exit(ctsem:::.ctJuliaEval("ContinuousTimeSEM.ctsem_set_relinearise!(true)"),
+    add = TRUE)
   g <- ctJuliaEvaluate(gaussian, at, gradient = TRUE)
   r <- ctJuliaEvaluate(remote, at, gradient = TRUE)
+  ctsem:::.ctJuliaEval("ContinuousTimeSEM.ctsem_set_relinearise!(true)")
   # The Gaussian update ridges its covariances by 1e-10 and the scalar one
   # does not, so the two agree to that, not to the last bit.
   expect_equal(r$value, g$value, tolerance = 1e-9)
