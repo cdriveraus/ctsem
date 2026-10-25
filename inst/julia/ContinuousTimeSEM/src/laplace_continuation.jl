@@ -297,6 +297,10 @@ mutable struct CTSEMLaplaceContinuation{L} <: CTSEMOptimisable
     # which `_continuation_drifted` compares.
     ess::Vector{Float64}
     ess_placed::Vector{Float64}
+    # Whether the Laplace part's inner solves converged at the centre, so a
+    # value read off the placement (`centre_value`) can be refused as the
+    # evaluation refuses one.
+    centre_converged::Bool
 end
 
 
@@ -1649,7 +1653,7 @@ function ctsem_laplace_continuation(laplace::CTSEMLaplaceObjective,
         fill(false, nunits), Bool(screen), Symbol(draws_scope), Int[],
         fill(NaN, nunits), fill(NaN, nunits), fill(false, nunits), NaN, nothing,
         0, 0, 0, 0, 0, 0, 0.0, 0.0, 0.0, 0.0, nothing, nothing, nothing,
-        Float64[], Float64[])
+        Float64[], Float64[], false)
     _continuation_add_points!(o, point_units, point_values)
     _continuation_force!(o, force)
     _continuation_place!(o, theta)
@@ -1691,7 +1695,7 @@ end
 
 const _CONTINUATION_STATE = (:rest, :rest_units, :flagged, :rules, :centre,
     :centre_quadrature, :centre_laplace, :rule_failed, :centre_value, :centre_se,
-    :centre_error, :importance, :ess, :ess_placed)
+    :centre_error, :importance, :ess, :ess_placed, :centre_converged)
 
 """
     ctsem_laplace_continuation_recentre!(o, values; force=nothing,
@@ -1776,6 +1780,7 @@ function _continuation_place!(o::CTSEMLaplaceContinuation, theta::Vector{Float64
         for U in o.rest_units; init=0.0) +
         sum(_laplace_unit_weight(laplace, U) * placed.quadrature[U]
         for U in flagged; init=0.0) + prior
+    o.centre_converged = placed.converged
     o.recentres += 1
     o.ess = fill(NaN, length(o.rules))
     o.ess_placed = fill(NaN, length(o.rules))
@@ -2362,9 +2367,12 @@ function ctsem_evaluate(d::CTSEMContinuationDensity, values::AbstractVector;
     theta = _laplace_extend(o.laplace, collect(Float64, values))
     r = _continuation_at(o, theta; screen=false) do
         error = _continuation_error(o).total
-        e = ctsem_laplace_continuation_evaluate(o, values; gradient=gradient)
         # Converged, or no value: a finite number away from a mode is not the
-        # objective there, as on the Laplace route.
+        # objective there, as on the Laplace route. A value alone is the
+        # placement's own, which evaluating again would compute a second time.
+        gradient || return (value=o.centre_converged ? o.centre_value - error : NaN,
+            gradient=nothing, subject_loglik=nothing)
+        e = ctsem_laplace_continuation_evaluate(o, values; gradient=true)
         (value=e.converged ? e.value - error : NaN, gradient=e.gradient,
             subject_loglik=e.subject_loglik)
     end
