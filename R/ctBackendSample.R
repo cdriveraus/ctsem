@@ -1515,10 +1515,20 @@
     nunits = if (is.null(result$nunits)) NULL else as.integer(result$nunits),
     stage_coreset_size = if (is.null(result$stage_coreset_size)) NULL else
       as.integer(result$stage_coreset_size),
+    # Each stage's coreset's held-out error over the cloud (NaN where the
+    # stage moved in full), which its price read.
+    stage_coreset_error = if (is.null(result$stage_coreset_error)) NULL else
+      as.numeric(result$stage_coreset_error),
     stage_correction_ess = if (is.null(result$stage_correction_ess)) NULL else
       as.numeric(result$stage_correction_ess),
     final_coreset_size = if (is.null(result$final_coreset_size)) NULL else
       as.integer(result$final_coreset_size),
+    # Its held-out error over the posterior's cloud, and the share of the
+    # draws' effective size its price expected the correction to keep.
+    final_coreset_error = if (is.null(result$final_coreset_error)) NULL else
+      as.numeric(result$final_coreset_error),
+    final_kept_expected = if (is.null(result$final_kept_expected)) NULL else
+      as.numeric(result$final_kept_expected),
     final_correction_ess = if (is.null(result$final_correction_ess)) NULL else
       as.numeric(result$final_correction_ess),
     particles_parallel = if (is.null(result$parallel)) NULL else as.character(result$parallel),
@@ -1533,6 +1543,10 @@
       as.integer(result$coreset_accepted),
     chain_coreset_abandoned = if (is.null(result$coreset_abandoned)) NULL else
       as.logical(result$coreset_abandoned),
+    # And the held-out error over its training states of the coreset it last
+    # fitted, which its price read beside the acceptance it then had.
+    chain_coreset_error = if (is.null(result$coreset_error)) NULL else
+      as.numeric(result$coreset_error),
     scale_accept = as.numeric(result$scale_accept),
     ncp_accept = as.numeric(result$ncp_accept),
     processes = FALSE,

@@ -1266,7 +1266,8 @@ function ctsem_sample_marginal(objective, values::AbstractVector;
     # the full density (sample_surrogate.jl); `coreset = false` is the oracle.
     densities = coreset && _smc_coreset_capable(objective) ?
         [_SurrogateDensity(objective, gradient_method, ndim,
-            hash((UInt64(seed), c, :surrogate))) for c in 1:nchains] : nothing
+            hash((UInt64(seed), c, :surrogate)); floor=target_accept)
+            for c in 1:nchains] : nothing
     density_for = densities === nothing ? (_ -> logdensity!) : (c -> densities[c])
 
     # One dense block: at this dimension the whole covariance is affordable to

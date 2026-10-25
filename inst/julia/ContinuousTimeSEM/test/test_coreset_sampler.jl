@@ -164,7 +164,7 @@ end
     # DAIS: a batch of 64 draws, all of them gradients, each batch checked at 8.
     # A coreset of 196 of 200 units saves less than its checks cost.
     plain = CIS._ISRound(64, 64, 8)
-    checked = CIS._ISRound(64, 64, 8, 1.0, 8.0)
+    checked = CIS._ISRound(64, 64, 8, 1.0, 8.0, 1.0)
     @test CIS._is_round_cost(196, 200, plain, 0.1) < CIS._is_full_round(plain)
     @test CIS._is_round_cost(196, 200, checked, 0.1) > CIS._is_full_round(checked)
     @test CIS._is_round_cost(30, 200, checked, 0.1) < CIS._is_full_round(checked)
