@@ -644,13 +644,59 @@ function _jmap_build(sampler::CTSEMSampler, theta0::Vector{Float64},
 end
 
 """
+    _jmap_score_target(m, W, counter)
+
+Theta's covariance as the latent density's scores at the rows `W` say it: the
+latent gradient's least-squares regression on the latent positions is minus
+the precision, exactly, for a Gaussian from `npar + 1` rows wherever they were
+drawn -- warm-up rows included -- where a covariance of positions needs many
+draws from the posterior. Its inverse, in theta's coordinates, is the target
+the rows' covariance is shrunk toward (`_smc_shrunk_cov` keeps its shape and
+takes the scale from the positions), so the positions still decide wherever
+they are many: a score fit sees curvature, which is narrower than the spread
+where the posterior is not Gaussian (`SAMPLING-flow-chart-2026-10-23.md`).
+`nothing` where the regression says nothing usable. One gradient a row.
+"""
+function _jmap_score_target(m::CTSEMJointMap, W::AbstractMatrix, counter::Threads.Atomic{Int})
+    npar = m.npar
+    n = size(W, 2)
+    n >= npar + 2 || return nothing
+    d = CTSEMJointMapDensity(m, counter)
+    G = zeros(npar, n)
+    g = zeros(m.sampler.ndim)
+    keep = trues(n)
+    for t in 1:n
+        v = d(g, Vector{Float64}(view(W, :, t)))
+        isfinite(v) || (keep[t] = false; continue)
+        G[:, t] .= view(g, 1:npar)
+    end
+    count(keep) >= npar + 2 || return nothing
+    X = W[1:npar, keep]
+    Y = G[:, keep]
+    Xc = X .- mean(X; dims=2)
+    Yc = Y .- mean(Y; dims=2)
+    XX = Symmetric(Xc * transpose(Xc))
+    F = cholesky(XX; check=false)
+    issuccess(F) || return nothing
+    B = transpose(F \ (Xc * transpose(Yc)))
+    E = eigen(Symmetric(-(B .+ transpose(B)) ./ 2))
+    top = maximum(E.values)
+    top > 0 || return nothing
+    vals = max.(E.values, 1e-3 * top)
+    Cw = E.vectors * Diagonal(1 ./ vals) * transpose(E.vectors)
+    C = m.Ct * Cw * transpose(m.Ct)
+    return (C .+ transpose(C)) ./ 2
+end
+
+"""
     _jmap_refit(m, Wl, rng; maxrows)
 
 The map refitted from latent draws `Wl` (columns, under `m`), at most `maxrows`
 of them: theta's centre and whitening, each member's summary. Returns the new
 map, the members refitted, theta's shrinkage, and the rows' cost in full passes.
 """
-function _jmap_refit(m::CTSEMJointMap, Wl::AbstractMatrix, rng; maxrows::Int=400)
+function _jmap_refit(m::CTSEMJointMap, Wl::AbstractMatrix, rng; maxrows::Int=400,
+    scores::Bool=false, counter::Threads.Atomic{Int}=Threads.Atomic{Int}(0))
     sampler = m.sampler
     npar = m.npar
     n = size(Wl, 2)
@@ -658,7 +704,9 @@ function _jmap_refit(m::CTSEMJointMap, Wl::AbstractMatrix, rng; maxrows::Int=400
     W = Wl[:, pick]
     nr = length(pick)
     thetas = m.theta0 .+ m.Ct * W[1:npar, :]
-    shrunk = _smc_shrunk_cov(Matrix{Float64}(thetas), ones(nr), m.Ct * transpose(m.Ct))
+    target = scores ? _jmap_score_target(m, W, counter) : nothing
+    shrunk = _smc_shrunk_cov(Matrix{Float64}(thetas), ones(nr),
+        target === nothing ? m.Ct * transpose(m.Ct) : target)
     theta0 = vec(mean(thetas; dims=2))
     S = shrunk.cov
     Ct = Matrix(cholesky(Symmetric(S + 1e-12 * max(tr(S), 1.0) / npar * I)).L)
@@ -878,14 +926,14 @@ function ctsem_sample_map(laplace::CTSEMLaplaceObjective, values::AbstractVector
     npar::Integer=length(values), nchains::Integer=4, nwarmup::Integer=75,
     ndraws::Integer=500, maxdepth::Integer=10, target_accept::Real=0.8,
     maxdelta::Real=1000.0, seed::Integer=20260828, init_scale::Real=1.0,
-    adapt_metric::Bool=true, save_effects::Bool=false,
+    adapt_metric::Bool=false, save_effects::Bool=false,
     hessian::Union{Nothing,AbstractMatrix}=nothing, verbose::Bool=false,
     min_ess::Real=0.0, mean_ess::Real=0.0, max_draws::Integer=0,
     rhat_target::Real=1.01, progress_overwrite::Bool=true, progress_callback=nothing,
     progress_sink=nothing, stepsize::Real=0.0, coordinate=nothing,
     windows::AbstractVector{<:Integer}=[40, 80], nsettle::Integer=25,
     ncheck::Integer=25, maxrows::Integer=400, cross::Bool=true,
-    report::Union{Nothing,CTSEMLaplaceObjective}=nothing)
+    report::Union{Nothing,CTSEMLaplaceObjective}=nothing, theta_scores::Bool=false)
 
     t0 = time()
     nchains = Int(nchains); nwarmup = Int(nwarmup); ndraws = Int(ndraws)
@@ -942,7 +990,8 @@ function ctsem_sample_map(laplace::CTSEMLaplaceObjective, values::AbstractVector
             c -> CTSEMJointMapDensity(mw, counter); init_eps=eps, starts=starts)
         moved = _jmap_moved(results, npar)
         Wl = _pool_draws(results[moved], D)
-        m2, refit, lambda, rows = _jmap_refit(m, Wl, rng; maxrows=Int(maxrows))
+        m2, refit, lambda, rows = _jmap_refit(m, Wl, rng; maxrows=Int(maxrows),
+            scores=theta_scores, counter=counter)
         extra += rows
         starts = _jmap_restarts(m, m2, results, moved, Wl, rng)
         eps = median([r.stepsize for r in results[moved]])
