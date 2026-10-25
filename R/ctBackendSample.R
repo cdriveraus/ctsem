@@ -322,7 +322,7 @@
   draws <- max(1L, as.integer(.ctJuliaOr(control$draws, 800L))[1L])
   seed <- as.integer(.ctJuliaOr(control$seed, 20260828L))
   saveEffects <- isTRUE(.ctJuliaOr(control$saveEffects, FALSE))
-  processes <- isTRUE(.ctJuliaOr(control$processes, TRUE))
+  processes <- isTRUE(.ctJuliaOr(control$processes, FALSE))
 
   # Whether the chains get processes is decided in `.ctBackendSampleRun()`,
   # which every caller of this function shares. The one part that cannot move
@@ -1254,12 +1254,17 @@
 # the workers could not be used and sampling continues here rather than failing
 # -- a slower answer beats none.
 #
-# `processes` is on by default above one chain because the arithmetic is not
-# close. A worker costs 26-43 s of Julia startup and engine compilation, against
-# a sampling run that is normally minutes to hours -- the startup is noise at
-# any realistic draw count, and only dominates on the short runs used for
-# testing. What it buys is chains that contend for neither the allocator nor the
-# garbage collector.
+# `processes` is off by default: the chains run at once in this session, the
+# joint sampler's in one pool region and the marginal sampler's each on an
+# objective of its own (`_marginal_chains_points`, as SMC's chains run). Measured
+# on 2026-10-25 (scripts/gsm-uncertainty-2026-10/chains_layout.R; dev1 at 8
+# cores, dev3 at 4), the session was faster on every kind of run: marginal NUTS
+# on a coreset 2.5 s against 5.3, on a one-subject time series 0.010 s an
+# effective draw against 0.019, the joint SAEM kernel 100 s against 126-131.
+# Processes were the default while the marginal sampler's chains could only
+# run one after another in the session, which left a small filter objective on
+# one core; a worker still costs a Julia start, which a short run does not
+# recover. `processes = TRUE` keeps them.
 #' @keywords internal
 .ctBackendSampleRun <- function(fit, target, chains, warmup, draws, cores,
   saveEffects, seed, control, verbose, progress = .ctVerboseOn(verbose),
@@ -1996,7 +2001,7 @@ print.ctSampleDiagnostics <- function(x, ...) {
   # Still read, because scripts pass it.
   saveEffects <- isTRUE(.ctJuliaOr(control$saveEffects,
     optimcontrol$saveEffects))
-  processes <- isTRUE(.ctJuliaOr(control$processes, TRUE))
+  processes <- isTRUE(.ctJuliaOr(control$processes, FALSE))
 
   # Whenever the progress line below it will be drawn, not only at `verbose`.
   #

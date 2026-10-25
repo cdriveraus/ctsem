@@ -615,7 +615,8 @@ test_that("ctFit(optimize = FALSE, intoverpop = 'laplace') samples the Laplace m
   fit <- suppressWarnings(suppressMessages(ctFit(laplace_fixture_data(),
     laplace_fixture_model(), backend = "julia", cores = 2,
     intoverpop = "laplace", priors = TRUE, optimize = FALSE,
-    sampleControl = list(sampler = "nuts", chains = 2, warmup = 30, draws = 30, minESS = 0))))
+    sampleControl = list(sampler = "nuts", chains = 2, warmup = 30, draws = 30, minESS = 0,
+      processes = TRUE))))
   expect_identical(fit$sample$target, "marginal")
   expect_identical(fit$sample$sampler, "nuts")
   expect_identical(fit$args$resolved$intoverpop, "laplace")

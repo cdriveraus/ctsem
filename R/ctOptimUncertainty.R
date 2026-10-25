@@ -3712,13 +3712,13 @@ ctOptimFitLpgFunc <- function(fit, cores=1){
 #' fifths in the tails. Short runs are usually limited by whether the chains
 #' agree, so R-hat is the binding check.
 #'
-#' \emph{Processes.} With \code{processes = TRUE} the chains run in up to
-#' \code{cores} worker processes, each starting its own Julia session -- a
-#' fixed cost of some tens of seconds that a run much shorter than a minute
-#' does not recover -- and a worker runs its share of the chains in turn, so
-#' four chains on two cores run two at a time. \code{processes = FALSE}, or
-#' one core, keeps the chains in this session. \code{\link{ctJuliaKill}('workers')}
-#' releases the worker processes, which persist for the next call.
+#' \emph{Processes.} By default the chains run at once in this session,
+#' sharing its \code{cores}. With \code{processes = TRUE} they run in up to
+#' \code{cores} worker processes instead, each starting its own Julia session
+#' -- a fixed cost that a short run does not recover -- and a worker runs its
+#' share of the chains in turn, so four chains on two cores run two at a time.
+#' \code{\link{ctJuliaKill}('workers')} releases the worker processes, which
+#' persist for the next call.
 #'
 #' @section Backend differences:
 #' The methods are the same on both backends and the covariance they produce is
