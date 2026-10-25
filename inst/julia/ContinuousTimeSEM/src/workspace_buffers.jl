@@ -195,10 +195,16 @@ The workspace holds materialized parameters, structured parameter views, matrix
 factorizations, covariance buffers, and log-likelihood scratch storage for one
 scalar type.
 """
-struct ContinuousEKFWorkspace{T, PARS, BQ, BTHETA, DCA, EBUF, LBUF, DIFBUF, DBUF, DSI, ST, DCACHE, BPOP, AFBUF, CAT}
+struct ContinuousEKFWorkspace{T, PARS, BQ, BTHETA, DCA, EBUF, LBUF, DIFBUF, DBUF, DSI, ST, DCACHE, BPOP, AFBUF, CAT, SP}
     all_params::Vector{T}
     subject_values::Vector{T}
     pars::PARS
+    # The model's specification, which the filter reads its model-level
+    # metadata from -- the indicators' kinds, categories, asymptote rows and
+    # censoring limits, the covariance constructions, the population block --
+    # as the adjoint workspace does (`aws.sp`): `pars` is the evaluated
+    # matrices, and has nowhere for them.
+    sp::SP
     predict_param_indices::Vector{Int}
     update_param_indices::Vector{Int}
     td_param_indices::Vector{Int}
@@ -222,15 +228,6 @@ struct ContinuousEKFWorkspace{T, PARS, BQ, BTHETA, DCA, EBUF, LBUF, DIFBUF, DBUF
     P_update::Symmetric{T, Matrix{T}}
     P_predict::Symmetric{T, Matrix{T}}
     ll_buffer::Vector{T}
-    # 0 Gaussian, 1 binary, 2 ordinal, 3 count, 4 censored. Copied from the
-    # `EKFParameters` at
-    # construction because the filter's `pars` is the evaluated matrix
-    # ComponentVector -- LAMBDA, DRIFT and so on -- and has nowhere for
-    # model-level metadata to live. Concrete, so it costs no extra type
-    # parameter. Empty means every variable is Gaussian.
-    manifesttype::Vector{Int}
-    ncategories::Vector{Int}
-    asymptoterow::Vector{Int}
     # Scratch for one categorical row's extras: an ordinal variable's cumulated
     # thresholds, a binary one's asymptotes, a censored one's limits and sd, a
     # count's dispersion. Long enough for the widest of them in the model.
@@ -241,26 +238,6 @@ struct ContinuousEKFWorkspace{T, PARS, BQ, BTHETA, DCA, EBUF, LBUF, DIFBUF, DBUF
     # linearised where the Gaussian update linearises the row. Empty for a
     # model with no categorical indicator.
     catprior::Vector{T}
-    censormin::Vector{Float64}
-    censormax::Vector{Float64}
-    # Which covariance construction the model asked for, copied from the
-    # `EKFParameters` for the same reason `manifesttype` is: `pars` is the
-    # evaluated matrix ComponentVector and has nowhere for model-level metadata.
-    # 0 is the unconstrained correlation square root, 2 is covmattransform='z'.
-    covmatcode::Int
-    # Which augmented states the population covariance accounts for, and where
-    # that matrix sits in the flat parameter vector. Copied from the
-    # `EKFParameters` for the same reason `covmatcode` is. Empty and `0:-1`
-    # when the model has no separate population covariance, which is the
-    # signal the initialisation reads to skip the whole thing.
-    population_indices::Vector{Int}
-    population_range::UnitRange{Int}
-    # The population block's own construction code, copied from the
-    # `EKFParameters` for the same reason `covmatcode` is.
-    population_covmatcode::Int
-    # The per-row state-unit conversion, copied from the `EKFParameters` for the
-    # same reason `population_covmatcode` is.
-    population_scale::Vector{Float64}
     # Scratch for the population construction, sized to the population block
     # and not to the state dimension. Those are not the same number -- the
     # block is as wide as the number of random effects, and every population
@@ -328,7 +305,7 @@ Whether the workspace's model has a non-Gaussian indicator: a constant
 wherever the workspace's type is known.
 """
 @inline _ekf_has_categorical(ws::ContinuousEKFWorkspace) = _val_bool(ws.categorical)
-@inline _ekf_has_categorical(ws) = !isempty(ws.manifesttype)
+@inline _ekf_has_categorical(ws) = !isempty(ws.sp.manifesttype)
 @inline _val_bool(::Val{C}) where {C} = C
 
 """
@@ -494,12 +471,7 @@ function _init_continuous_ekf_workspace(::Type{T}, sp::EKFParameters) where {T}
 
     # Scratch vector for log-likelihood solve.
     ll_buffer = zeros(T, m)
-    manifesttype = isdefined(sp, :manifesttype) ? copy(sp.manifesttype) : Int[]
-    ncategories = isdefined(sp, :ncategories) ? copy(sp.ncategories) : Int[]
-    asymptoterow = isdefined(sp, :asymptoterow) ? copy(sp.asymptoterow) :
-        Int[]
-    censormin = isdefined(sp, :censormin) ? copy(sp.censormin) : Float64[]
-    censormax = isdefined(sp, :censormax) ? copy(sp.censormax) : Float64[]
+    manifesttype = sp.manifesttype
     # At least three, because a censored row borrows this same scratch to carry
     # its lower limit, upper limit and standard deviation (five with a response
     # scale: its half-width and power too) -- one row at a time,
@@ -508,12 +480,13 @@ function _init_continuous_ekf_workspace(::Type{T}, sp::EKFParameters) where {T}
     thresholds = zeros(T, max(hasproperty(pars, :THRESHOLDS) ?
         size(pars.THRESHOLDS, 2) : 0,
         any(==(4), manifesttype) ? (hasproperty(pars, :RESPONSE) ? 5 : 3) : 0,
-        any(==(3), manifesttype) ? 1 : 0, any(>(0), asymptoterow) ? 2 : 0))
+        any(==(3), manifesttype) ? 1 : 0, any(>(0), sp.asymptoterow) ? 2 : 0))
 
     return ContinuousEKFWorkspace(
         all_params,
         subject_values,
         pars,
+        sp,
         predict_param_indices,
         update_param_indices,
         td_param_indices,
@@ -537,18 +510,8 @@ function _init_continuous_ekf_workspace(::Type{T}, sp::EKFParameters) where {T}
         P_update,
         P_predict,
         ll_buffer,
-        manifesttype,
-        ncategories,
-        asymptoterow,
         thresholds,
         zeros(T, isempty(manifesttype) ? 0 : n),
-        censormin,
-        censormax,
-        sp.covmatcode,
-        sp.population_indices,
-        sp.population_range,
-        sp.population_covmatcode,
-        sp.population_scale,
         population_buffer,
         affine_buffer,
         Vector{Int}(undef, m),

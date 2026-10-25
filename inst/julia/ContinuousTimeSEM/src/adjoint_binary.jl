@@ -191,7 +191,7 @@ function _record_binary_rows!(tape, ws, pars, data, obs_col, rows, n)
         resize!(record.thresholds, length(rows))
     @inbounds for (k, i) in enumerate(rows)
         record.y[k] = data[i, obs_col]
-        record.kinds[k] = Int(ws.manifesttype[i])
+        record.kinds[k] = Int(ws.sp.manifesttype[i])
         record.asymptoterows[k] = _asymptote_row(ws, i)
         τ = _ordinal_thresholds!(ws, pars, i)
         if isassigned(record.thresholds, k)

@@ -463,7 +463,7 @@ function _laplace_mixture_unit!(out, laplace::CTSEMLaplaceObjective, U::Integer,
     # First pass: each draw's row log densities, for the weights, and with
     # non-Gaussian indicators each observation's distribution function bounds
     # and log probability under the draw.
-    types = ws.manifesttype
+    types = ws.sp.manifesttype
     cats = [j for j in 1:m if _ekf_is_categorical(types, j)]
     nc = length(cats)
     PL = nc > 0 ? fill(NaN, K, T, nc) : zeros(0, 0, 0)

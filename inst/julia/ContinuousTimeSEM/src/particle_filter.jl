@@ -300,28 +300,14 @@ function _ctsem_particle_subject!(sub, sp, x::Vector{Float64}, N::Int, nsubsteps
     ess_min = Inf
 
     # Initial particles: T0MEANS + the initial covariance's factor applied to
-    # standard normals. `_ctsem_t0_factor!`, not T0VAR's own factor, is what
-    # makes the claim at the top of this file true: a random effect carried as
-    # an augmented state has its spread in RAWPOPVAR, and built from T0VAR alone
-    # every particle started that coordinate at the population mean. A
-    # stationary model runs the predict group first, as the filter does.
-    if sp.stationary || _stationary_elements_on(sp.stationary_elements)
-        copyto!(ws.state, pars.T0MEANS)
-        apply_complex_transforms_at_indices!(all_params, ws.predict_param_indices,
-            sp.predict_transforms, CTSEMRowContext(ws.state, pars,
-                view(tdpreds, :, 1), tipreds, ts[1], zero(T), subject, 1))
-    end
-    _ctsem_t0_factor!(factor, ws, pars, all_params, sp.stationary,
-        sp.stationary_elements)
+    # standard normals, as the state-explicit pass draws its initial state
+    # (`_ctsem_state_initial!`), which is what makes the claim at the top of
+    # this file true for random effects carried as augmented states.
+    _ctsem_state_initial!(factor, ws, pars, all_params, sp, tdpreds, tipreds, ts[1],
+        subject)
     @inbounds for p in 1:N
         randn!(rng, view(z, 1:n))
-        for i in 1:n
-            acc = T(pars.T0MEANS[i])
-            for j in 1:n
-                acc += factor[i, j] * z[j]
-            end
-            X[i, p] = acc
-        end
+        _ctsem_initial_draw!(view(X, :, p), pars, factor, z, 0, n, T)
     end
 
     # Row 1: the three transform groups and the TD impulse at each particle's
@@ -329,15 +315,8 @@ function _ctsem_particle_subject!(sub, sp, x::Vector{Float64}, N::Int, nsubsteps
     # conditional density of the observations.
     @inbounds for p in 1:N
         for i in 1:n; ws.state[i] = X[i, p]; end
-        ctx = CTSEMRowContext(ws.state, pars, view(tdpreds, :, 1), tipreds,
-            ts[1], zero(T), subject, 1)
-        apply_complex_transforms_at_indices!(all_params, ws.predict_param_indices,
-            sp.predict_transforms, ctx)
-        apply_complex_transforms_at_indices!(all_params, ws.td_param_indices,
-            sp.td_transforms, ctx)
-        _ctsem_td_impulse!(ws, pars, ctx.tdpreds)
-        apply_complex_transforms_at_indices!(all_params, ws.update_param_indices,
-            sp.update_transforms, ctx)
+        _ctsem_state_first_row!(ws, pars, all_params, sp, view(tdpreds, :, 1), tipreds,
+            ts[1], zero(T), subject)
         logw[p] = _ctsem_state_row!(ws, pars, data, 1, pred, theta, chol, resid,
             scratch, gaussian, log2pi, nothing)
         for i in 1:n; X[i, p] = ws.state[i]; end
@@ -354,41 +333,12 @@ function _ctsem_particle_subject!(sub, sp, x::Vector{Float64}, N::Int, nsubsteps
         for p in 1:N
             for i in 1:n; ws.state[i] = X[i, p]; end
             for substep in 1:nsub
-                ctx = CTSEMRowContext(ws.state, pars, view(tdpreds, :, t), tipreds,
-                    prev + substep * h, h, subject, t)
-                apply_complex_transforms_at_indices!(all_params, ws.predict_param_indices,
-                    sp.predict_transforms, ctx)
-                ContinuousTimeSEM.sdcovsqrt2cov!(ws.bufferQ, pars.DIFFUSION, ws.covmatcode, ws.state_dim)
                 randn!(rng, view(z, 1:k))
-                if transition === :euler && ws.continuous_time
-                    _matvec_mul!(ws.bufferQ.r, pars.DRIFT, ws.state, ws.state_dim, ws.state_dim)
-                    for i in 1:n
-                        ws.state[i] += (ws.bufferQ.r[i] + pars.CINT[i]) * h
-                    end
-                    _ctsem_add_process_noise!(ws.state, indices, qfactor,
-                        ws.bufferQ.out, z, 0, k, sqrt(h), T)
-                else
-                    if ws.continuous_time
-                        _compute_discrete_time_form!(ws.discrete_ca, ws.bufferQ, ws.bufferQ.out,
-                            pars, h, ws.exp_buffer, ws.lyap_buffer, ws.state, indices,
-                            ws.diffusion_buffer, ws.discretization_buffer, ws.state_dim,
-                            ws.discretization_cache, ws.affine_buffer)
-                    else
-                        _compute_one_step_form!(ws.discrete_ca, ws.bufferQ.out, pars, ws.state,
-                            indices, ws.state_dim)
-                    end
-                    _ctsem_deterministic_step!(ws, n)
-                    _ctsem_add_process_noise!(ws.state, indices, qfactor,
-                        ws.discrete_ca.dDIFFUSION, z, 0, k, one(T), T)
-                end
+                _ctsem_state_substep!(ws, pars, all_params, sp, view(tdpreds, :, t),
+                    tipreds, prev + substep * h, h, subject, t, transition, qfactor, z, 0, T)
             end
-            ctx = CTSEMRowContext(ws.state, pars, view(tdpreds, :, t), tipreds, ts[t], dt,
-                subject, t)
-            apply_complex_transforms_at_indices!(all_params, ws.td_param_indices,
-                sp.td_transforms, ctx)
-            _ctsem_td_impulse!(ws, pars, ctx.tdpreds)
-            apply_complex_transforms_at_indices!(all_params, ws.update_param_indices,
-                sp.update_transforms, ctx)
+            _ctsem_state_row_groups!(ws, pars, all_params, sp, view(tdpreds, :, t),
+                tipreds, ts[t], dt, subject, t)
             logw[p] = _ctsem_state_row!(ws, pars, data, t, pred, theta, chol, resid,
                 scratch, gaussian, log2pi, nothing)
             for i in 1:n; X[i, p] = ws.state[i]; end

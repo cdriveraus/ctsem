@@ -212,7 +212,7 @@ from `pars.DIFFUSION`, which every other caller relies on. Passed rather than
 remembered on the workspace, so no caller can read one left by another pass.
 """
 @inline function _ekf_predict_step!(ws::ContinuousEKFWorkspace, pars, Δt)
-    ContinuousTimeSEM.sdcovsqrt2cov!(ws.bufferQ, pars.DIFFUSION, ws.covmatcode, ws.state_dim)
+    ContinuousTimeSEM.sdcovsqrt2cov!(ws.bufferQ, pars.DIFFUSION, ws.sp.covmatcode, ws.state_dim)
     return _ekf_predict_step!(ws, pars, Δt, ws.bufferQ.out)
 end
 
@@ -409,7 +409,7 @@ Always a view of the same buffer, including when it is empty: returning a
 a union at a call that runs once per row, where it used to be concrete.
 """
 @inline function _ekf_binary_subset(ws::ContinuousEKFWorkspace, observed)
-    types = ws.manifesttype
+    types = ws.sp.manifesttype
     isempty(types) && return view(ws.binary_buf, 1:0)
     n = 0
     @inbounds for i in observed
@@ -423,7 +423,7 @@ end
 
 """Which of `observed` are Gaussian. `observed` itself when none are not."""
 @inline function _ekf_gaussian_subset(ws::ContinuousEKFWorkspace, observed)
-    types = ws.manifesttype
+    types = ws.sp.manifesttype
     isempty(types) && return observed
     any_categorical = false
     @inbounds for i in observed
@@ -470,7 +470,7 @@ end
 function _ekf_categorical_rows!(ws::ContinuousEKFWorkspace, pars,
     data::AbstractMatrix, obs_col::Int, observed, generate, record)
     T = eltype(ws.state)
-    types = ws.manifesttype
+    types = ws.sp.manifesttype
     n = ws.state_dim
     total = zero(T)
     prior = ws.catprior
@@ -833,10 +833,10 @@ end
 # which cannot be recovered from `subject_values`. Read the same way
 # `_apply_population_block!` reads it, so the forward pass and the tape cannot
 # disagree about the layout. A model with no separate population covariance
-# (`isempty(ws.population_indices)`) has none.
+# (`isempty(ws.sp.population_indices)`) has none.
 @inline function _population_raw_block(ws, all_params)
-    k = length(ws.population_indices)
-    return reshape(view(all_params, ws.population_range), k, k)
+    k = length(ws.sp.population_indices)
+    return reshape(view(all_params, ws.sp.population_range), k, k)
 end
 
 """
@@ -863,8 +863,8 @@ free at this point: its T0VAR contents are already in `P_predict`.
 """
 @inline function _apply_population_block!(ws, all_params)
     return _place_population_block!(ws.P_predict.data, all_params,
-        ws.population_indices, ws.population_range,
-        ws.population_covmatcode, ws.population_scale, ws.population_buffer)
+        ws.sp.population_indices, ws.sp.population_range,
+        ws.sp.population_covmatcode, ws.sp.population_scale, ws.population_buffer)
 end
 
 # A square buffer's dimension, as it was built.
@@ -956,7 +956,7 @@ function _ctsem_stationary!(P, x, ws, pars)
     end
     _solve_square_system!(ab.intermediate, ab.s, ab.piv, ab.dim)
 
-    ContinuousTimeSEM.sdcovsqrt2cov!(ws.bufferQ, pars.DIFFUSION, ws.covmatcode,
+    ContinuousTimeSEM.sdcovsqrt2cov!(ws.bufferQ, pars.DIFFUSION, ws.sp.covmatcode,
         ws.state_dim)
     db = ws.diffusion_buffer
     A = view(ws.discretization_buffer.input, 1:k, 1:k)
@@ -1072,7 +1072,7 @@ function _ctsem_stationary_elements_cov!(P, ws, pars, se::CTSEMStationaryElement
     k = length(dyn)
     inclosure = se.inclosure
     DRIFT = pars.DRIFT
-    ContinuousTimeSEM.sdcovsqrt2cov!(ws.bufferQ, pars.DIFFUSION, ws.covmatcode,
+    ContinuousTimeSEM.sdcovsqrt2cov!(ws.bufferQ, pars.DIFFUSION, ws.sp.covmatcode,
         ws.state_dim)
     db = ws.diffusion_buffer
     buf = ws.discretization_buffer
@@ -1235,18 +1235,18 @@ elements (`CTSEMStationaryElements`), are placed the same way when it has any.
         stationary::Bool=false,
         elements::CTSEMStationaryElements=_CTSEM_NO_STATIONARY_ELEMENTS)
     onelements = _stationary_elements_on(elements)
-    if isempty(ws.population_indices) && !stationary && !onelements
+    if isempty(ws.sp.population_indices) && !stationary && !onelements
         return _ctsem_sdcor_factor!(dest, pars.T0VAR, ws.bufferQ, ws.state_dim)
     end
     n = ws.state_dim
-    ContinuousTimeSEM.sdcovsqrt2cov!(ws.bufferQ, pars.T0VAR, ws.covmatcode,
+    ContinuousTimeSEM.sdcovsqrt2cov!(ws.bufferQ, pars.T0VAR, ws.sp.covmatcode,
         ws.state_dim)
     @inbounds for j in 1:n, i in 1:n
         dest[i, j] = ws.bufferQ.out[i, j]
     end
     _copy_lower_to_upper!(dest, ws.state_dim)
-    _place_population_block!(dest, all_params, ws.population_indices,
-        ws.population_range, ws.population_covmatcode, ws.population_scale,
+    _place_population_block!(dest, all_params, ws.sp.population_indices,
+        ws.sp.population_range, ws.sp.population_covmatcode, ws.sp.population_scale,
         ws.population_buffer)
     if stationary && !_ctsem_stationary!(dest, pars.T0MEANS, ws, pars)
         fill!(dest, eltype(dest)(NaN))
@@ -1319,7 +1319,7 @@ function _extended_kalman_filter_continuous!(
     #   P_{1|0} = T0VAR
     # with the latent processes' block replaced by their stationary moments
     # below when the model asks for that.
-    ContinuousTimeSEM.sdcovsqrt2cov!(ws.bufferQ, pars.T0VAR, ws.covmatcode, ws.state_dim)
+    ContinuousTimeSEM.sdcovsqrt2cov!(ws.bufferQ, pars.T0VAR, ws.sp.covmatcode, ws.state_dim)
     copyto!(ws.P_predict.data, ws.bufferQ.out)
     _copy_lower_to_upper!(ws.P_predict.data, ws.state_dim)
     _apply_population_block!(ws, all_params)
@@ -1328,7 +1328,7 @@ function _extended_kalman_filter_continuous!(
     # Split rather than handed a result that is `nothing` or the view: a union
     # of the two is not a bits union, so it was boxed on every traced subject
     # pass.
-    if isempty(ws.population_indices)
+    if isempty(ws.sp.population_indices)
         _record_init!(trace, pars, ws.state_dim, nothing)
     else
         _record_init!(trace, pars, ws.state_dim,
@@ -1393,7 +1393,7 @@ function _extended_kalman_filter_continuous!(
     # written nowhere else, so building the covariance first read the parameter
     # buffer before anything had filled that slot. Every later row already
     # runs transform, covariance, record in this order.
-    ContinuousTimeSEM.sdcovsqrt2cov!(ws.bufferΘ, pars.MANIFESTVAR, ws.covmatcode, ws.manifest_dim)
+    ContinuousTimeSEM.sdcovsqrt2cov!(ws.bufferΘ, pars.MANIFESTVAR, ws.sp.covmatcode, ws.manifest_dim)
     _record_theta!(trace, pars, ws.manifest_dim)
     log2π_const = log(2π)
     _record_row_prior!(trace, ws, pars, 1)
@@ -1412,7 +1412,7 @@ function _extended_kalman_filter_continuous!(
     # per row (`diffusion_static`), as MANIFESTVAR's above; each prediction
     # rebuilt it from `pars.DIFFUSION` otherwise.
     if ws.diffusion_static && nsteps >= 2
-        ContinuousTimeSEM.sdcovsqrt2cov!(ws.bufferQ, pars.DIFFUSION, ws.covmatcode, ws.state_dim)
+        ContinuousTimeSEM.sdcovsqrt2cov!(ws.bufferQ, pars.DIFFUSION, ws.sp.covmatcode, ws.state_dim)
         copyto!(ws.diffusion_cov, ws.bufferQ.out)
     end
     @inbounds for t_idx in 2:nsteps
@@ -1462,7 +1462,7 @@ function _extended_kalman_filter_continuous!(
         # reverse to compare, was the whole manifest-by-manifest matrix every
         # row, against an update that reads only the observed block of it.
         if !ws.manifestvar_static
-            ContinuousTimeSEM.sdcovsqrt2cov!(ws.bufferΘ, pars.MANIFESTVAR, ws.covmatcode, ws.manifest_dim)
+            ContinuousTimeSEM.sdcovsqrt2cov!(ws.bufferΘ, pars.MANIFESTVAR, ws.sp.covmatcode, ws.manifest_dim)
             _record_theta!(trace, pars, ws.manifest_dim)
         end
         _record_row_prior!(trace, ws, pars, t_idx)

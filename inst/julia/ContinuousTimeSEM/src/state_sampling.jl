@@ -239,6 +239,152 @@ end
     return nothing
 end
 
+# A pass that draws the states -- the state-explicit pass and the particle
+# filter -- advances them through the filter's row contract step for step
+# (`_ctsem_state_pass!`'s docstring says why the order matters). The steps are
+# here once; the two passes differ in where the noise comes from (a vector of
+# innovations, or a particle's own draws) and in what they do at a row.
+
+"""
+    _ctsem_state_initial!(factor, ws, pars, all_params, sp, tdpreds, tipreds,
+                          time, subject)
+
+The initial state's factor into `factor`, for drawing the initial state as
+T0MEANS plus `factor` times standard normals (`_ctsem_initial_draw!`).
+Through `_ctsem_t0_factor!` rather than straight from T0VAR, so that a model
+carrying random effects as augmented states draws them -- see that function
+for what building it from T0VAR alone silently did. A stationary model runs
+the predict group first, as the filter does, so the stationary moments read
+DRIFT, CINT and DIFFUSION at their values; they read no state, so the
+placeholder one is harmless.
+"""
+@inline function _ctsem_state_initial!(factor, ws, pars,
+    all_params::AbstractVector{T}, sp, tdpreds, tipreds, time, subject::Int) where {T}
+    if sp.stationary || _stationary_elements_on(sp.stationary_elements)
+        copyto!(ws.state, pars.T0MEANS)
+        apply_complex_transforms_at_indices!(all_params, ws.predict_param_indices,
+            sp.predict_transforms, CTSEMRowContext(ws.state, pars,
+                view(tdpreds, :, 1), tipreds, time, zero(T), subject, 1))
+    end
+    _ctsem_t0_factor!(factor, ws, pars, all_params, sp.stationary,
+        sp.stationary_elements)
+    return factor
+end
+
+"""T0MEANS plus `factor` times `z[at + 1:at + n]`, into `dest`."""
+@inline function _ctsem_initial_draw!(dest, pars, factor, z, at::Int, n::Int,
+    ::Type{T}) where {T}
+    @inbounds for i in 1:n
+        acc = T(pars.T0MEANS[i])
+        for j in 1:n
+            acc += factor[i, j] * T(z[at + j])
+        end
+        dest[i] = acc
+    end
+    return dest
+end
+
+"""
+    _ctsem_state_row_groups!(ws, pars, all_params, sp, tdpreds, tipreds, time,
+                             dt, subject, t)
+
+At row `t`, once the state is there: the time-dependent group, the TD
+impulse, and the update group, at the state the impulse leaves. `tdpreds` is
+the row's column.
+"""
+@inline function _ctsem_state_row_groups!(ws, pars, all_params, sp, tdpreds, tipreds,
+    time, dt, subject::Int, t::Int)
+    context = CTSEMRowContext(ws.state, pars, tdpreds, tipreds, time, dt, subject, t)
+    apply_complex_transforms_at_indices!(all_params, ws.td_param_indices,
+        sp.td_transforms, context)
+    _ctsem_td_impulse!(ws, pars, context.tdpreds)
+    apply_complex_transforms_at_indices!(all_params, ws.update_param_indices,
+        sp.update_transforms, context)
+    return nothing
+end
+
+"""
+    _ctsem_state_first_row!(ws, pars, all_params, sp, tdpreds, tipreds, time,
+                            dt, subject)
+
+Row 1's groups: all three, in the loop's own order, even though row 1 has no
+interval to predict over, since a group supplies *values* as well as a
+prediction. PARS is in the predict group, and an update-group or td-group
+cell -- LAMBDA, MANIFESTMEANS, MANIFESTVAR, Jy, TDPREDEFFECT, Jtd -- may be
+written by a transform that reads one. Running td and update only left that
+read pointing at a parameter slot nothing had written, so it took the zero
+the buffer is filled with: 6.0 log units on one row of a LAMBDA-reads-PARS
+model, and this is the path `intoverstates` takes for a categorical model.
+The filter's row 1 carries the same three groups in the same order. The
+interval `dt` is zero, which no predict-group transform can object to:
+generate_complex_transform_string substitutes only state, PARS and the model
+matrices, so no transform expression can reference the context's interval or
+time.
+"""
+@inline function _ctsem_state_first_row!(ws, pars, all_params, sp, tdpreds, tipreds,
+    time, dt, subject::Int)
+    apply_complex_transforms_at_indices!(all_params, ws.predict_param_indices,
+        sp.predict_transforms, CTSEMRowContext(ws.state, pars, tdpreds, tipreds,
+            time, dt, subject, 1))
+    _ctsem_state_row_groups!(ws, pars, all_params, sp, tdpreds, tipreds, time, dt,
+        subject, 1)
+    return nothing
+end
+
+"""
+    _ctsem_state_substep!(ws, pars, all_params, sp, tdpreds, tipreds, time, h,
+                          subject, t, transition, qfactor, z, at, T)
+
+One substep of length `h` ending at `time`, towards row `t`: the predict
+group at the state, the diffusion's covariance, the step, and the process
+noise from `z[at + 1:at + k]`, `k` the diffusing states. Returns `at + k`.
+
+Euler-Maruyama (`transition = :euler`, continuous time) is `x += f(x) h + L
+sqrt(h) z` with `L L'` the diffusion covariance at `x`: no exponential and no
+Lyapunov solve, so nothing is linearised over the step -- a reference that
+shares no approximation with the filter's mean step. It needs a finer mesh
+than the exponential step for the same accuracy, and is stable only for `h`
+below 2 over the largest drift eigenvalue. Otherwise the filter's
+discretisation at the state, and noise over the diffusing states only:
+everything else is a static coordinate whose covariance the filter propagates
+through the transition alone, and which correspondingly gets no innovation of
+its own here.
+"""
+@inline function _ctsem_state_substep!(ws, pars, all_params, sp, tdpreds, tipreds,
+    time, h, subject::Int, t::Int, transition::Symbol, qfactor, z, at::Int,
+    ::Type{T}) where {T}
+    n = ws.state_dim
+    indices = ws.diffusion_state_indices
+    k = length(indices)
+    apply_complex_transforms_at_indices!(all_params, ws.predict_param_indices,
+        sp.predict_transforms, CTSEMRowContext(ws.state, pars, tdpreds, tipreds,
+            time, h, subject, t))
+    ContinuousTimeSEM.sdcovsqrt2cov!(ws.bufferQ, pars.DIFFUSION, ws.sp.covmatcode,
+        ws.state_dim)
+    if transition === :euler && ws.continuous_time
+        _matvec_mul!(ws.bufferQ.r, pars.DRIFT, ws.state, ws.state_dim, ws.state_dim)
+        for i in 1:n
+            ws.state[i] += (ws.bufferQ.r[i] + pars.CINT[i]) * h
+        end
+        _ctsem_add_process_noise!(ws.state, indices, qfactor, ws.bufferQ.out, z, at, k,
+            sqrt(h), T)
+        return at + k
+    end
+    if ws.continuous_time
+        _compute_discrete_time_form!(ws.discrete_ca, ws.bufferQ, ws.bufferQ.out, pars, h,
+            ws.exp_buffer, ws.lyap_buffer, ws.state, indices, ws.diffusion_buffer,
+            ws.discretization_buffer, ws.state_dim, ws.discretization_cache,
+            ws.affine_buffer)
+    else
+        _compute_one_step_form!(ws.discrete_ca, ws.bufferQ.out, pars, ws.state, indices,
+            ws.state_dim)
+    end
+    _ctsem_deterministic_step!(ws, n)
+    _ctsem_add_process_noise!(ws.state, indices, qfactor, ws.discrete_ca.dDIFFUSION, z,
+        at, k, one(T), T)
+    return at + k
+end
+
 
 ################################################################################
 # Layout
@@ -520,7 +666,7 @@ function _ctsem_state_row!(ws, pars, data::AbstractMatrix, col::Int,
 
     m = ws.manifest_dim
     n = ws.state_dim
-    types = ws.manifesttype
+    types = ws.sp.manifesttype
     row = gen === nothing ? col : gen.offset + col
 
     # The linear predictor. `pars.LAMBDA` rather than `pars.Jy`, matching the
@@ -535,7 +681,7 @@ function _ctsem_state_row!(ws, pars, data::AbstractMatrix, col::Int,
         pred[i] = acc
     end
 
-    ContinuousTimeSEM.sdcovsqrt2cov!(ws.bufferΘ, pars.MANIFESTVAR, ws.covmatcode,
+    ContinuousTimeSEM.sdcovsqrt2cov!(ws.bufferΘ, pars.MANIFESTVAR, ws.sp.covmatcode,
         ws.manifest_dim)
     @inbounds for j in 1:m, i in 1:m
         theta[i, j] = ws.bufferΘ.out[i, j]
@@ -667,58 +813,14 @@ function _ctsem_state_pass!(ws, params::AbstractVector{T}, data::AbstractMatrix,
     gaussian = Vector{Int}(undef, m)
 
     # Initial state: T0MEANS plus the initial covariance's factor applied to the
-    # first block of innovations. Through `_ctsem_t0_factor!` rather than
-    # straight from T0VAR, so that a model carrying random effects as augmented
-    # states draws them -- see that function for what building it from T0VAR
-    # alone silently did. A stationary model runs the predict group first, as
-    # the filter does, so the stationary moments read DRIFT, CINT and DIFFUSION
-    # at their values; they read no state, so the placeholder one is harmless.
-    if sp.stationary || _stationary_elements_on(sp.stationary_elements)
-        copyto!(ws.state, pars.T0MEANS)
-        apply_complex_transforms_at_indices!(all_params, ws.predict_param_indices,
-            sp.predict_transforms, CTSEMRowContext(ws.state, pars,
-                view(tdpreds, :, 1), tipreds, timesteps[1], zero(T), subject, 1))
-    end
-    _ctsem_t0_factor!(factor, ws, pars, all_params, sp.stationary,
-        sp.stationary_elements)
+    # first block of innovations.
+    _ctsem_state_initial!(factor, ws, pars, all_params, sp, tdpreds, tipreds,
+        timesteps[1], subject)
     at = zoffset
-    @inbounds for i in 1:n
-        acc = T(pars.T0MEANS[i])
-        for j in 1:n
-            acc += factor[i, j] * T(z[at + j])
-        end
-        ws.state[i] = acc
-    end
+    _ctsem_initial_draw!(ws.state, pars, factor, z, at, n, T)
     at += n
-
-    # All three groups, in the loop's own order, even though row 1 has no
-    # interval to predict over: a group supplies *values* as well as a
-    # prediction. PARS is in the predict group, and an update-group or td-group
-    # cell -- LAMBDA, MANIFESTMEANS, MANIFESTVAR, Jy, TDPREDEFFECT, Jtd -- may
-    # be written by a transform that reads one. Running td and update only left
-    # that read pointing at a parameter slot nothing had written, so it took
-    # the zero the buffer is filled with: 6.0 log units on one row of a
-    # LAMBDA-reads-PARS model, and this is the path `intoverstates` takes for a
-    # categorical model. The filter's row 1 carries the same three groups in
-    # the same order, which is what the docstring above means by materialising
-    # them at the same three points.
-    #
-    # One context serves all three, as it already served two. Its interval is
-    # zero, which is the only thing about it a predict-group transform could
-    # object to, and none can: generate_complex_transform_string substitutes
-    # only state, PARS and the model matrices, so no transform expression can
-    # reference ctx.dt or ctx.time at all.
-    first_context = CTSEMRowContext(ws.state, pars, view(tdpreds, :, 1), tipreds,
-        timesteps[1], zero(T), subject, 1)
-    apply_complex_transforms_at_indices!(all_params, ws.predict_param_indices,
-        sp.predict_transforms, first_context)
-    apply_complex_transforms_at_indices!(all_params, ws.td_param_indices,
-        sp.td_transforms, first_context)
-    _ctsem_td_impulse!(ws, pars, first_context.tdpreds)
-    update_context = CTSEMRowContext(ws.state, pars, first_context.tdpreds,
-        tipreds, timesteps[1], zero(T), subject, 1)
-    apply_complex_transforms_at_indices!(all_params, ws.update_param_indices,
-        sp.update_transforms, update_context)
+    _ctsem_state_first_row!(ws, pars, all_params, sp, view(tdpreds, :, 1), tipreds,
+        timesteps[1], zero(T), subject)
 
     gen === nothing || _ctsem_record_state!(gen, ws, 1, n)
     total = _ctsem_state_row!(ws, pars, data, 1, pred, theta, chol, resid,
@@ -736,63 +838,12 @@ function _ctsem_state_pass!(ws, params::AbstractVector{T}, data::AbstractMatrix,
         nsub = _ctsem_substeps(dt, max_timestep, t)
         substep_dt = dt / nsub
         for substep in 1:nsub
-            substep_time = prev + substep * substep_dt
-            predict_context = CTSEMRowContext(ws.state, pars,
-                view(tdpreds, :, t), tipreds, substep_time, substep_dt,
-                subject, t)
-            apply_complex_transforms_at_indices!(all_params,
-                ws.predict_param_indices, sp.predict_transforms, predict_context)
-
-            ContinuousTimeSEM.sdcovsqrt2cov!(ws.bufferQ, pars.DIFFUSION, ws.covmatcode,
-                ws.state_dim)
-            if transition === :euler && ws.continuous_time
-                # Euler-Maruyama: x += f(x) h + L sqrt(h) z with L L' the
-                # diffusion covariance at x. No exponential and no Lyapunov
-                # solve, so nothing is linearised over the step -- a reference
-                # that shares no approximation with the filter's mean step. It
-                # needs a finer mesh than the exponential step for the same
-                # accuracy, and is stable only for h below 2 over the largest
-                # drift eigenvalue.
-                _matvec_mul!(ws.bufferQ.r, pars.DRIFT, ws.state, ws.state_dim, ws.state_dim)
-                for i in 1:n
-                    ws.state[i] += (ws.bufferQ.r[i] + pars.CINT[i]) * substep_dt
-                end
-                _ctsem_add_process_noise!(ws.state, indices, qfactor,
-                    ws.bufferQ.out, z, at, k, sqrt(substep_dt), T)
-                at += k
-                continue
-            end
-            if ws.continuous_time
-                _compute_discrete_time_form!(ws.discrete_ca, ws.bufferQ,
-                    ws.bufferQ.out, pars, substep_dt, ws.exp_buffer,
-                    ws.lyap_buffer, ws.state, indices, ws.diffusion_buffer,
-                    ws.discretization_buffer, ws.state_dim,
-                    ws.discretization_cache, ws.affine_buffer)
-            else
-                _compute_one_step_form!(ws.discrete_ca, ws.bufferQ.out, pars,
-                    ws.state, indices, ws.state_dim)
-            end
-
-            _ctsem_deterministic_step!(ws, n)
-            # Process noise, over the diffusing states only. Everything else is
-            # a static coordinate whose covariance the filter propagates through
-            # the transition alone, and which correspondingly gets no
-            # innovation of its own here.
-            _ctsem_add_process_noise!(ws.state, indices, qfactor,
-                ws.discrete_ca.dDIFFUSION, z, at, k, one(T), T)
-            at += k
+            at = _ctsem_state_substep!(ws, pars, all_params, sp, view(tdpreds, :, t),
+                tipreds, prev + substep * substep_dt, substep_dt, subject, t, transition,
+                qfactor, z, at, T)
         end
-
-        td_context = CTSEMRowContext(ws.state, pars, view(tdpreds, :, t),
-            tipreds, timesteps[t], dt, subject, t)
-        apply_complex_transforms_at_indices!(all_params, ws.td_param_indices,
-            sp.td_transforms, td_context)
-        _ctsem_td_impulse!(ws, pars, td_context.tdpreds)
-
-        measurement_context = CTSEMRowContext(ws.state, pars, td_context.tdpreds,
-            tipreds, timesteps[t], dt, subject, t)
-        apply_complex_transforms_at_indices!(all_params, ws.update_param_indices,
-            sp.update_transforms, measurement_context)
+        _ctsem_state_row_groups!(ws, pars, all_params, sp, view(tdpreds, :, t), tipreds,
+            timesteps[t], dt, subject, t)
 
         gen === nothing || _ctsem_record_state!(gen, ws, t, n)
         row_ll = _ctsem_state_row!(ws, pars, data, t, pred, theta, chol, resid,
