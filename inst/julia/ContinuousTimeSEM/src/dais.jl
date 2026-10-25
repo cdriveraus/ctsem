@@ -288,10 +288,18 @@ function _ctsem_dais(objective, coreset, c0::Vector{Float64}, cov::AbstractMatri
         coreset !== nothing)
     V = e.vectors[:, keep]
     sq = sqrt.(e.values[keep])
-    A = V .* transpose(sq)
+    # The whitening `A = V D^1/2 R` turns the eigenbasis by `R = V'Q` onto a
+    # basis `Q` of the kept span that depends on the span alone, so that `A`
+    # is a function of `cov`: its symmetric root where every direction is
+    # kept. An eigenbasis is fixed only up to each column's sign, and within a
+    # cluster of equal eigenvalues only up to a rotation, both of which LAPACK
+    # picks by roundoff: drawn through it, one seed's draws reflected under a
+    # 1e-13 change of `cov`, and `set.seed` did not reproduce 'checked'.
+    R = transpose(V) * _dais_span_basis(V)
+    A = (V .* transpose(sq)) * R
     # The held directions in the whitened coordinates, orthonormal: `A^+ h`
-    # for each, `A^+ = D^-1/2 V'` on the kept eigenvectors.
-    U = _dais_held_basis(V, sq, hold)
+    # for each, `A^+ = R' D^-1/2 V'` on the kept eigenvectors.
+    U = _dais_held_basis(V, sq, R, hold)
     offhold(M) = U === nothing ? M : M .- (M * U) * transpose(U)
     S = draws > 0 ? max(4, 2 * ((Int(draws) + 1) ÷ 2)) : _dais_draws(k)
     essfrac = 0.5
@@ -486,13 +494,43 @@ _dais_coreset_record(cs::CTSEMISCoreset) = (coreset=true,
     coreset_failed=cs.fails_total, coreset_record=ctsem_is_coreset_record(cs))
 
 """The held directions `hold` (columns, in the parameters) in the whitened
-coordinates of the kept eigenvectors `V` and root eigenvalues `sq`,
-orthonormal: `A^+ h` for each, `A^+ = D^-1/2 V'`; `nothing` without any."""
-function _dais_held_basis(V::AbstractMatrix, sq::AbstractVector, hold)
+coordinates of the kept eigenvectors `V`, root eigenvalues `sq` and turn `R`,
+orthonormal: `A^+ h` for each, `A^+ = R' D^-1/2 V'`; `nothing` without any."""
+function _dais_held_basis(V::AbstractMatrix, sq::AbstractVector, R::AbstractMatrix, hold)
     (hold === nothing || size(hold, 2) == 0) && return nothing
-    f = svd((transpose(V) * Matrix{Float64}(hold)) ./ sq)
+    f = svd(transpose(R) * ((transpose(V) * Matrix{Float64}(hold)) ./ sq))
     r = count(>(1e-7 * maximum(f.S; init=0.0)), f.S)
     return r > 0 ? f.U[:, 1:r] : nothing
+end
+
+"""An orthonormal basis of the span of `V`'s orthonormal columns that depends
+on the span alone: Gram-Schmidt over the columns of its projector `V V'` in
+index order, passing over a column whose remainder is under `0.5 / sqrt(p)`.
+That leaves no direction of the span out: a unit `u` in it has a coordinate
+`j` of at least `1 / sqrt(p)`, which is the component along `u` of column
+`j`'s remainder against any basis vectors orthogonal to `u`. The identity
+where `V` is square."""
+function _dais_span_basis(V::AbstractMatrix)
+    p, k = size(V)
+    k == p && return Matrix{Float64}(I, p, p)
+    Pv = V * transpose(V)
+    Q = zeros(p, k)
+    tol = 0.5 / sqrt(p)
+    r = 0
+    for j in 1:p
+        r == k && break
+        q = Pv[:, j]
+        for _ in 1:2, i in 1:r    # twice, to orthogonality at roundoff
+            qi = view(Q, :, i)
+            q .-= dot(qi, q) .* qi
+        end
+        nq = norm(q)
+        nq > tol || continue
+        r += 1
+        Q[:, r] .= q ./ nq
+    end
+    r == k || error("DAIS: a basis of the kept span found $r of $k directions")
+    return Q
 end
 
 """A run that ended without a normal: diverged (with the growth that ended
