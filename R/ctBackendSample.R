@@ -261,7 +261,7 @@
   if (identical(control$sampler, "smc") && length(nutsgiven)) {
     stop("control$", paste(nutsgiven, collapse = ", control$"),
       " is a setting of NUTS, which tempered SMC (control$sampler = 'smc') ",
-      "does not read: its chains are its particles (control$particles), and ",
+      "does not read: its chains start from its particles (control$particles), and ",
       "it has no warmup. Drop it, or use sampler = 'nuts'.", call. = FALSE)
   }
   # Missing TI predictor values are sampled with the rest unless the fit or
@@ -621,7 +621,7 @@
 }
 
 # The sample controls only NUTS reads, by the names a caller set: its chain
-# count (tempered SMC's chains are its particles), its warmup (SMC has none)
+# count (tempered SMC's chains start from its particles), its warmup (SMC has none)
 # and its starting step size. A call that sets one is asking for NUTS, so on
 # a marginal target it gets NUTS by default, and naming 'smc' beside one is
 # refused rather than the setting ignored. `ctFit(optimize = FALSE)` folds a
@@ -982,11 +982,13 @@
   start
 }
 
-# How many draws each of tempered SMC's particles takes at the end, and may
-# extend to. The particles are already at the posterior, so there is no
-# warmup and every draw counts; twenty a particle is where the per-chain
+# How many draws each of tempered SMC's final chains takes, and may extend
+# to. The chains start from particles already at the posterior, so there is no
+# warmup and every draw counts; twenty a chain is where the per-chain
 # autocorrelation can be estimated at all, and the budget is the same
 # multiple of the draws asked for as the chains', spread over the particles.
+# The engine runs as many of them as the effective-size target needs and
+# shares the particles' budget among those (sample_smc.jl).
 #' @keywords internal
 .ctBackendSmcBudget <- function(draws, particles, settings) {
   particles <- max(2L, as.integer(particles)[1L])
@@ -1315,9 +1317,10 @@
       .ctBackendSampleBudget(draws, chains, settings)
     if (smc) message("Sampling ", targetlabel, " by tempered SMC: ",
       settings$particles, " particles carried from the normal to the posterior, ",
-      "then ", budget$first, " draws from each",
-      if (target_ess > 0) paste0(", extended to ", budget$max_draws,
-        " until min ESS ", .ctJuliaOr(settings$min_ess, target_ess), " is reached") else "",
+      "then ", budget$first, " draws from ",
+      if (target_ess > 0) paste0("as many of them as min ESS ",
+        .ctJuliaOr(settings$min_ess, target_ess), " needs, extended until it is reached")
+      else "each",
       ".") else
     message("Sampling ", targetlabel,
       if (identical(settings$sampler, "saem")) " with the SAEM kernel" else "",
@@ -1496,6 +1499,12 @@
     nstages = if (is.null(result$nstages)) NULL else as.integer(result$nstages),
     stage_beta = if (is.null(result$stage_beta)) NULL else as.numeric(result$stage_beta),
     smc_seconds = if (is.null(result$smc_secs)) NULL else as.numeric(result$smc_secs),
+    stage_pilot_seconds = if (is.null(result$stage_pilot_secs)) NULL else
+      as.numeric(result$stage_pilot_secs),
+    # The particles carried, and the draws an effective draw took in the last
+    # stage's moves, which set how many of them the final phase ran as chains.
+    nparticles = if (is.null(result$nparticles)) NULL else as.integer(result$nparticles),
+    final_tau = if (is.null(result$final_tau)) NULL else as.numeric(result$final_tau),
     # The coreset tempered SMC's particles moved on, where the route is
     # Laplace: how many of the units each stage's coreset held (0 where a
     # stage ran on the full objective), the units, the correction's effective
@@ -1811,7 +1820,9 @@ print.ctSampleDiagnostics <- function(x, ...) {
     else if (smc) "ctsem sample, tempered SMC (particles carried to the posterior by NUTS moves)\n"
     else "ctsem Hamiltonian sample\n")
   if (!is.null(x$target)) cat("  target: ", x$target, " posterior\n", sep = "")
-  if (smc) cat("  ", x$chains, " particles x ", x$draws, " draws each, after ",
+  if (smc) cat("  ", x$chains,
+    if (isTRUE(x$nparticles > x$chains)) paste0(" of ", x$nparticles) else "",
+    " particles x ", x$draws, " draws each, after ",
     x$nstages, " tempering stages (no warmup; no R-hat: the chains start from ",
     "particles already drawn from the posterior, and the effective size is ",
     "the stop)\n", sep = "")

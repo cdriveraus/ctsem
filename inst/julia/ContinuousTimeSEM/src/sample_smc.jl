@@ -14,8 +14,9 @@ posterior by tempering instead: `nparticles` draws from the start normal
 weights keep an effective sample of `ess_frac` of the particles, then
 systematic resampling, then `nmoves` NUTS transitions of every particle at the
 stage's density. At `beta = 1` every particle is a chain at the posterior, and
-the final phase draws `ndraws` from each and extends them under the one
-stopping rule every sampler here stops by (`_sample_until_target`).
+the final phase runs as many of them as its effective-size target needs,
+draws `ndraws` from each and extends them under the one stopping rule every
+sampler here stops by (`_sample_until_target`).
 
 What it reuses, which is the point: the transition (`_nuts_transition!`
 through `_continue_chain`), the pilot that sets a step size (`_run_chain`
@@ -36,10 +37,12 @@ learn (review/SAMPLING-smc-2026-10-23.md):
     series). Whitened by the previous metric and shrunk toward the identity
     there by the Schaefer-Strimmer intensity, it keeps what was learned and
     costs what the first version cost.
-  * **The step size is carried across stages**, a pilot of `pilot`
-    dual-averaging iterations on one particle restarted from the last stage's
-    step; found again from scratch each stage it jittered 0.05-0.08 at
-    `beta` near 1.
+  * **The step size is carried across stages**, set by a pilot of
+    `2 pilot` dual-averaging iterations on one particle at the first stage
+    and by every particle's moves after it (`_smc_next_step`): the moves'
+    mean acceptance at one stage sets the step of the next. Found again from
+    scratch each stage it jittered 0.05-0.08 at `beta` near 1; a pilot each
+    stage ran one particle while the others waited.
   * **Particle `i`'s moves at stage `t` draw from `Xoshiro(hash((seed, t,
     i)))`**, so the result does not depend on how the work is laid out: one
     particle after another, or spread over objective copies.
@@ -89,7 +92,24 @@ objective whose subjects are fewer than the pool (a time series is one), so
 that a model with nothing to parallelise over inside a gradient gets the
 whole ceiling across particles; one after another otherwise.
 
-The final phase's chains are many and short (200 of 20 or so), and split
+**The final phase runs as many chains as its target needs**, at most one a
+particle. It starts as many as the last stage's moves suggest
+(`_smc_final_chains`): across the cloud, each parameter's correlation between
+where its moves began and where they ended is its autocorrelation at that
+lag, extended to one draw as an AR(1) decay (`_smc_move_tau`). Where their
+effective size falls short it starts more, from the particles not yet used,
+and only once every particle runs does it extend the chains. An unused
+particle is an independent start, worth many draws of a chain that mixes
+slowly, and the moves' short lag does not see a slow tail: on the time
+series, where long NUTS chains take about 44 draws an effective draw, the
+lag-3 estimate said 3.6, and 45 chains extended to 89 draws reached an
+effective size of 87 where 200 chains of 20 had reached 536 (dev1). The
+chains are taken in an order spread over the cloud (`_smc_spread_order`) and
+share the particles' draw budget. Run from every particle on the loading
+shells, the final phase took 4,000-5,000 draws for a target of 200 and
+reached a minimum effective size of 1,188-2,088, most of a run's time.
+
+The final phase's chains are short (20 draws or so), and split
 R-hat over them measures their autocorrelation rather than any disagreement:
 for converged chains of `n` draws it reads about `sqrt(1 + (tau - 1) / n)`,
 1.12-1.27 at ten draws on the time series where four long chains read 1.008.
@@ -348,6 +368,93 @@ function _smc_move_correction(beta::Real, lp_y::Real, lc_y::Real, lp_x::Real, lc
 end
 
 """
+    _smc_move_tau(Xfrom, Xto, nmoves)
+
+The draws an effective draw takes for a chain moved by the last stage's
+kernel, read off the cloud. Where the particles sit at the posterior, each
+parameter's correlation across them between where they began the stage's
+`nmoves` moves (`Xfrom`) and where they ended (`Xto`) is its autocorrelation
+at that lag. An AR(1) decay from it, `r = rho^(1 / nmoves)` a draw, gives the
+integrated autocorrelation time `(1 + r) / (1 - r)`. Returns the largest over
+the parameters, and at least 1: a negative correlation is not credited.
+"""
+function _smc_move_tau(Xfrom::AbstractMatrix{Float64}, Xto::AbstractMatrix{Float64},
+    nmoves::Int)
+    tau = 1.0
+    for j in axes(Xto, 1)
+        a = view(Xfrom, j, :)
+        b = view(Xto, j, :)
+        (std(a) > 0 && std(b) > 0) || continue
+        rho = cor(a, b)
+        (isfinite(rho) && rho > 0) || continue
+        r = min(rho^(1 / nmoves), 0.999)
+        tau = max(tau, (1 + r) / (1 - r))
+    end
+    return tau
+end
+
+"""The fewest chains the final phase runs, where it has more particles: the
+stopping rule reads the effective size across chains, and a chain of 20 draws
+says little about its own autocorrelation."""
+const _SMC_FINAL_MIN_CHAINS = 16
+
+"""How many of `np` particles the final phase starts as chains: enough that
+their first `ndraws` draws each reach 1.25 times the effective-size `target`
+at `tau` draws an effective draw, and at least `_SMC_FINAL_MIN_CHAINS`, at most
+one a particle. Every particle where there is no target."""
+function _smc_final_chains(tau::Float64, target::Float64, ndraws::Int, np::Int)
+    (target > 0 && isfinite(tau)) || return np
+    n = ceil(Int, min(1.25 * tau * target / ndraws, Float64(np)))
+    return clamp(n, min(np, _SMC_FINAL_MIN_CHAINS), np)
+end
+
+"""The particle indices `1:np` in an order whose every prefix is spread
+evenly over the cloud: the van der Corput sequence's points, each taken to
+the index it falls in, first come. A systematic resample leaves an
+ancestor's copies side by side, so a spread prefix takes fewer copies of one
+ancestor than the first indices would, and chains started later from the
+order's next indices fill the gaps."""
+function _smc_spread_order(np::Int)
+    order = Int[]
+    seen = falses(np)
+    k = 0
+    while length(order) < np
+        v, f, n = 0.0, 0.5, k
+        while n > 0
+            v += f * (n & 1)
+            n >>= 1
+            f /= 2
+        end
+        i = 1 + floor(Int, v * np)
+        if !seen[i]
+            seen[i] = true
+            push!(order, i)
+        end
+        k += 1
+    end
+    return order
+end
+
+"""
+    _smc_next_step(step, accept, target)
+
+The step for the next stage's moves from this stage's: their mean acceptance
+`accept` at `step`. Where a leapfrog trajectory's energy error is normal with
+sd `sigma`, its mean acceptance is `2 Phi(-sigma / 2)`, and `sigma` grows as
+the step's square (Beskos, Pillai, Roberts, Sanz-Serna and Stuart 2013); so
+the step for `target` is `step sqrt(sigma(target) / sigma(accept))`, held
+within a factor of two a stage. Every particle's moves inform it, where a
+pilot would read one particle's.
+"""
+function _smc_next_step(step::Float64, accept::Float64, target::Float64)
+    isfinite(accept) || return step
+    accept >= 1 && return 2 * step
+    accept <= 0 && return step / 2
+    sig = a -> -2 * sqrt(2) * erfinv(a - 1)
+    return step * clamp(sqrt(sig(target) / sig(accept)), 0.5, 2.0)
+end
+
+"""
     _smc_logdensity(objective, coreset, gradient_method)
 
 The log density and its gradient as a `(g, x)` closure, writing the gradient
@@ -370,9 +477,12 @@ the marginal sampler would use; the exact Hessian at `values` when none is
 given). See the file comment for the method, the coreset (`coreset`,
 `coreset_tol`: the held-out error in log units a stage's coreset may have)
 and the particles' parallelism (`parallel`). Returns what
-`ctsem_sample_marginal` returns, the final phase's `nparticles` chains of
-`ndraws` (extended to the targets) as the draws, with `sampler = "smc"`, the
-stage record, the coreset record and the tempering's seconds beside.
+`ctsem_sample_marginal` returns, the final phase's chains of `ndraws`
+(extended to the targets) as the draws, with `sampler = "smc"`, the stage
+record, the coreset record and the tempering's seconds beside. The final
+phase runs as many chains as `min_ess` and `mean_ess` need (`final_tau`, the
+draws an effective draw takes, says how many), at most `nparticles`; they
+share the particles' budget, `max_draws` a particle.
 """
 function ctsem_sample_smc(objective, values::AbstractVector;
     hessian::Union{Nothing,AbstractMatrix}=nothing, widen::Real=2.0,
@@ -472,6 +582,9 @@ function ctsem_sample_smc(objective, values::AbstractVector;
     # What the last moves left owing, a log weight per particle
     # (`_smc_move_correction`): zero after moves on the full objective.
     owed = zeros(np)
+    # Where the last stage's moves began, which the final phase reads its
+    # chain count from (`_smc_move_tau`).
+    Xfrom = X
     for stage in 1:Int(maxstages)
         _ctsem_interrupt_check()
         u = lp .- lq
@@ -529,25 +642,28 @@ function ctsem_sample_smc(objective, values::AbstractVector;
         # coreset's error at both ends of the move.
         lc_pre = cs_stage === nothing ? lp_pre : _smc_coreset_values(objective, Xpre, cs_stage)
         td! = tempered_for(objective, cs_stage, beta)
-        # The step: one particle's dual averaging from the carried step, twice
-        # as long on the first stage, which has none. A failed pilot keeps the
-        # carried step.
-        npilot = step > 0 ? Int(pilot) : 2 * Int(pilot)
-        piloted = try
-            _run_chain(td!, Xpre[:, 1], metric, Random.Xoshiro(hash((UInt64(seed), stage, 0))),
-                npilot, 1, mdepth, tacc, mdelta, 0.0, false, nothing;
-                init_eps=step)
-        catch err
-            err isa InterruptException && rethrow()
-            nothing
-        end
+        # The step: on the first stage, which has none, one particle's dual
+        # averaging; after it, what the last stage's moves set
+        # (`_smc_next_step`). A failed pilot starts from 0.1.
         Xstart = copy(Xpre)
-        if piloted !== nothing && isfinite(piloted.stepsize) && piloted.stepsize > 0
-            Xstart[:, 1] .= piloted.x
-            step = piloted.stepsize
-        elseif step <= 0
-            step = 0.1
+        tpilot = time()
+        if step <= 0
+            piloted = try
+                _run_chain(td!, Xpre[:, 1], metric,
+                    Random.Xoshiro(hash((UInt64(seed), stage, 0))), 2 * Int(pilot), 1,
+                    mdepth, tacc, mdelta, 0.0, false, nothing; init_eps=step)
+            catch err
+                err isa InterruptException && rethrow()
+                nothing
+            end
+            if piloted !== nothing && isfinite(piloted.stepsize) && piloted.stepsize > 0
+                Xstart[:, 1] .= piloted.x
+                step = piloted.stepsize
+            else
+                step = 0.1
+            end
         end
+        pilot_secs = time() - tpilot
         Xnew = copy(Xstart)
         acc = zeros(np)
         dep = zeros(np)
@@ -576,6 +692,7 @@ function ctsem_sample_smc(objective, values::AbstractVector;
             return nothing
         end
         X = Xnew
+        Xfrom = Xstart
         nok = max(1, count(okp))
         full = _smc_terms(objective, X, use_coreset)
         lp = full.value
@@ -595,7 +712,7 @@ function ctsem_sample_smc(objective, values::AbstractVector;
             coreset_share=fit === nothing ? 1.0 : fit.share,
             coreset_error=fit === nothing ? NaN : fit.error,
             correction_ess=corr_ess / np, corrected=corrected,
-            secs=time() - t0))
+            pilot_secs=pilot_secs, secs=time() - t0))
         if _due(reporter, true)
             _emit(reporter, join(filter(!isempty, [
                 @sprintf("  tempering stage %d", stage),
@@ -607,17 +724,24 @@ function ctsem_sample_smc(objective, values::AbstractVector;
         end
         _invoke_callback(callback, "tempering", round(Int, 100 * beta), 100,
             _smc_mean(filter(isfinite, lp)), sum(ndiv); force=beta >= 1.0)
+        # The next stage's step, and the final phase's after the last.
+        step = _smc_next_step(step, sum(acc) / nok, tacc)
         beta >= 1.0 && break
     end
     _progress_done(reporter, "$(length(stages)) stages")
     beta >= 1.0 || @warn "tempered SMC did not reach the posterior in $(maxstages) stages; the draws are from beta = $(beta)"
     smc_secs = time() - t0
 
-    # The final phase: every particle a chain at the posterior, the step and
-    # metric the last stage left, drawn and extended by the one stopping rule;
-    # on the coreset fitted to the posterior's cloud where one holds out, its
+    # The final phase: particles run on as chains at the posterior, with the
+    # step and metric the last stage left, until the one stopping rule is met;
+    # on the coreset fitted to the posterior's cloud where one holds out, their
     # draws corrected to the full density afterwards, with what the last
-    # stage's moves left owing.
+    # stage's moves left owing. As many chains as the target needs, more
+    # chains before longer ones (see the file comment), sharing the particles'
+    # draw budget.
+    tau = _smc_move_tau(Xfrom, X, nmv)
+    target_ess = max(Float64(min_ess), Float64(mean_ess))
+    order = _smc_spread_order(np)
     final_fit = nothing
     if use_coreset && full.terms !== nothing
         final_fit = _smc_coreset_fit(full.terms, full.total, unit_cost, tol_now,
@@ -627,30 +751,52 @@ function ctsem_sample_smc(objective, values::AbstractVector;
     Xf = X
     lp_f = lp
     owed_f = copy(owed)
-    first_results = Vector{_ChainResult}(undef, np)
-    start = collect(1:np)
+    # Each chain's particle, and the chains.
+    start = Int[]
+    held = Ref(_ChainResult[])
     final_step = step
     final_metric = metric
-    _each_point!(objective, np, mode; coreset=cs_final, scratch=nuts_scratch) do i, obj, s
-        ld = _smc_logdensity(obj, cs_final, gradient_method)
-        k = i
-        logp = ld(s.g, Xf[:, k])
-        if !isfinite(logp)
-            # A particle whose density is not finite here cannot have moved to
-            # it; its chain starts from the next particle instead.
-            k = mod1(i + 1, np)
+    start_chains! = function (ks)
+        off = length(start)
+        res = Vector{_ChainResult}(undef, length(ks))
+        from = copy(ks)
+        _each_point!(objective, length(ks), mode; coreset=cs_final,
+            scratch=nuts_scratch) do i, obj, s
+            ld = _smc_logdensity(obj, cs_final, gradient_method)
+            k = ks[i]
             logp = ld(s.g, Xf[:, k])
+            if !isfinite(logp)
+                # A particle whose density is not finite here cannot have moved
+                # to it; its chain starts from the next particle instead.
+                k = mod1(k + 1, np)
+                logp = ld(s.g, Xf[:, k])
+            end
+            from[i] = k
+            res[i] = _continue_chain(ld, s.ws,
+                Random.Xoshiro(hash((UInt64(seed), 0, off + i))), Xf[:, k], s.g, logp,
+                final_step, final_metric, nfirst, mdepth, mdelta)
+            return nothing
         end
-        start[i] = k
-        first_results[i] = _continue_chain(ld, s.ws, Random.Xoshiro(hash((UInt64(seed), 0, i))),
-            Xf[:, k], s.g, logp, final_step, final_metric, nfirst, mdepth, mdelta)
+        append!(start, from)
+        held[] = vcat(held[], res)
         return nothing
     end
-    held = Ref(first_results)
+    start_chains!(order[1:_smc_final_chains(tau, target_ess, nfirst, np)])
+    while target_ess > 0 && length(start) < np
+        n = length(start)
+        v = _sample_verdict(_pool_draws(held[], npar), fill(nfirst, n), nfirst, nfirst,
+            Float64(min_ess), Float64(mean_ess), nfirst, Float64(rhat_target), false)
+        v.met && break
+        shortfall = max(min_ess / max(v.worst, 1.0), mean_ess / max(v.average, 1.0))
+        start_chains!(order[(n + 1):min(np, max(n + 1, ceil(Int, 1.25 * shortfall * n)))])
+    end
+    nch = length(start)
+    max_final = cld(max(Int(max_draws), nfirst) * np, nch)
     extend! = function (wanted, attempt)
         previous = held[]
-        more = Vector{_ChainResult}(undef, np)
-        _each_point!(objective, np, mode; coreset=cs_final, scratch=nuts_scratch) do i, obj, s
+        more = Vector{_ChainResult}(undef, length(previous))
+        _each_point!(objective, length(previous), mode; coreset=cs_final,
+            scratch=nuts_scratch) do i, obj, s
             ld = _smc_logdensity(obj, cs_final, gradient_method)
             more[i] = _run_chain(ld, previous[i].x, previous[i].metric,
                 Random.Xoshiro(UInt64(seed + 1000 * attempt) + UInt64(i)),
@@ -661,19 +807,18 @@ function ctsem_sample_smc(objective, values::AbstractVector;
         held[] = _merge_chains(previous, more)
         return nothing
     end
-    run = _sample_until_target(() -> _pool_draws(held[], npar), extend!, np, nfirst,
-        Float64(min_ess), Float64(mean_ess), max(Int(max_draws), nfirst),
-        Float64(rhat_target), verbose; t0=t0)
+    run = _sample_until_target(() -> _pool_draws(held[], npar), extend!, nch, nfirst,
+        Float64(min_ess), Float64(mean_ess), max_final, Float64(rhat_target), verbose; t0=t0)
     chains = held[]
     nper = run.total
 
-    total = np * nper
-    pooled = _sample_pool(chains, np, nper, npar)
+    total = nch * nper
+    pooled = _sample_pool(chains, nch, nper, npar)
     draws, accept, divergent = pooled.draws, pooled.accept, pooled.divergent
     depth, energy = pooled.depth, pooled.energy
     # The chains' own diagnostics, before any correction; no R-hat (see the
     # file comment).
-    diagnostics = ctsem_sample_diagnostics(draws, np)
+    diagnostics = ctsem_sample_diagnostics(draws, nch)
     diagnostics = merge(diagnostics, (rhat=fill(NaN, length(diagnostics.rhat)),))
     final_correction = 1.0
     if cs_final !== nothing || any(!iszero, owed_f)
@@ -682,11 +827,12 @@ function ctsem_sample_smc(objective, values::AbstractVector;
         # on the coreset reads its error at both ends); each draw adds the
         # error where it sits. A systematic resample by these weights returns
         # the draws unweighted.
-        base = zeros(np)
-        lc0 = cs_final === nothing ? nothing : _smc_coreset_values(objective, Xf, cs_final)
-        for ch in 1:np
+        base = zeros(nch)
+        lc0 = cs_final === nothing ? nothing :
+            _smc_coreset_values(objective, Xf[:, start], cs_final)
+        for ch in 1:nch
             k = start[ch]
-            base[ch] = cs_final === nothing ? owed_f[k] : owed_f[k] - (lp_f[k] - lc0[k])
+            base[ch] = cs_final === nothing ? owed_f[k] : owed_f[k] - (lp_f[k] - lc0[ch])
         end
         lw = Vector{Float64}(undef, total)
         if cs_final === nothing
@@ -717,9 +863,9 @@ function ctsem_sample_smc(objective, values::AbstractVector;
     end
     corrected_pool = (draws=draws, accept=accept, divergent=divergent, depth=depth,
         energy=energy)
-    return merge(_sample_result(corrected_pool; nchains=np, ndraws=nper, npar=npar,
-        ndim=npar, maxdepth=mdepth, stepsize=fill(step, np),
-        warmup_divergent=zeros(Int, np), trace=run.trace, diagnostics=diagnostics), (
+    return merge(_sample_result(corrected_pool; nchains=nch, ndraws=nper, npar=npar,
+        ndim=npar, maxdepth=mdepth, stepsize=fill(step, nch),
+        warmup_divergent=zeros(Int, nch), trace=run.trace, diagnostics=diagnostics), (
         forward_gradients=ctsem_forward_gradients() - forward0,
         explosive_passes=ctsem_explosive_passes() - explosive0,
         sampler="smc", nparticles=np, nmoves=nmv, widen=Float64(widen),
@@ -728,7 +874,8 @@ function ctsem_sample_smc(objective, values::AbstractVector;
         stage_accept=[s.accept for s in stages], stage_depth=[s.depth for s in stages],
         stage_moved=[s.moved for s in stages], stage_divergent=[s.divergent for s in stages],
         stage_shrink=[s.shrink for s in stages], stage_logz=[s.logz for s in stages],
-        stage_secs=[s.secs for s in stages], smc_secs=smc_secs,
+        stage_secs=[s.secs for s in stages], stage_pilot_secs=[s.pilot_secs for s in stages],
+        smc_secs=smc_secs,
         coreset=use_coreset || any(s.coreset_size > 0 for s in stages),
         nunits=nunits,
         stage_coreset_size=[s.coreset_size for s in stages],
@@ -736,6 +883,7 @@ function ctsem_sample_smc(objective, values::AbstractVector;
         stage_coreset_error=[s.coreset_error for s in stages],
         stage_correction_ess=[s.correction_ess for s in stages],
         stage_corrected=[s.corrected for s in stages],
+        final_tau=tau,
         final_coreset_size=cs_final === nothing ? 0 : length(cs_final.units),
         final_correction_ess=final_correction,
         parallel=String(mode),
