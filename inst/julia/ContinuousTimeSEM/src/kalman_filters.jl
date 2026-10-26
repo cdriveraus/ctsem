@@ -961,6 +961,47 @@ function _ctsem_dynamics_nonlinear(sp::EKFParameters,
 end
 
 """
+    _ctsem_moment_states(sp, predict_indices, avg, n)
+
+The states the averaged cells `avg` read (`_ctsem_moment_cells`), first, then
+the rest: `(perm, s)` with the first `s` of `perm` read. A moment-matched
+prediction needs cubature over those `s` alone (`_ekf_moment_cells!`). Asked as
+`_ctsem_dynamics_nonlinear` asks, by running the whole group with one state
+moved at a time, so a cell reading a state through another cell of the group
+counts. A group that throws at the probe reads every state.
+"""
+function _ctsem_moment_states(sp::EKFParameters, predict_indices::AbstractVector{Int},
+    avg::AbstractVector{Int}, n::Int)
+    probe = collect(range(0.31, step=0.013, length=length(sp.mutables)))
+    base = reshape(collect(range(0.23, step=0.011, length=n)), n, 1)
+    run = function (state)
+        pk = copy(probe)
+        parsk = CTSEMPars(pk, sp.parameter_axis)
+        ntd = hasproperty(parsk, :TDPREDEFFECT) ? size(parsk.TDPREDEFFECT, 2) : 0
+        tdpreds = collect(range(0.19, step=0.007, length=ntd))
+        ctx = CTSEMRowContext(state, parsk, tdpreds, _CTSEMProbePredictors(), 0.5, 0.25,
+            1, 2)
+        apply_complex_transforms_at_indices!(pk, predict_indices, sp.predict_transforms, ctx)
+        return pk
+    end
+    reads = falses(n)
+    try
+        at = run(base)
+        for k in 1:n
+            moved = copy(base)
+            moved[k, 1] += 0.37
+            pk = run(moved)
+            reads[k] = any(i -> !(pk[i] == at[i]), avg)
+        end
+    catch
+        fill!(reads, true)
+    end
+    any(reads) || fill!(reads, true)
+    perm = vcat(findall(reads), findall(.!reads))
+    return perm, count(reads)
+end
+
+"""
     _ctsem_moment_cells(sp, predict_indices)
 
 The predict group's cells a moment-matched prediction averages over its
@@ -1012,14 +1053,22 @@ function _ekf_moment_cells!(ws::ContinuousEKFWorkspace{T}, pars, sp, all_params,
     idx = ws.predict_param_indices
     avg = ws.moment_avg
     oth = ws.moment_oth
+    perm = ws.moment_perm
+    s = ws.moment_s
     m = ws.moment_m
     U = ws.moment_U
     D = ws.moment_d
     c = ws.moment_c
     acc = ws.moment_acc
     drifts = ws.moment_drifts
+    # The states the averaged cells read first (`_ctsem_moment_states`): with
+    # `L = U'` the factor of P in that order, the cubature of the `s` read
+    # states' Gaussian, carried to the rest by their regression on them, puts
+    # its points along L's first `s` columns -- `P[:, S] L_SS^-T` -- at radius
+    # `sqrt(s)`. Exact as the full rule is (third degree in what the cells
+    # read), at `2s` group evaluations rather than `2n`.
     @inbounds for j in 1:n, i in 1:j
-        U[i, j] = P[j, i]
+        U[i, j] = P[perm[j], perm[i]]
     end
     _ridge_diagonal!(U, n, 1e-10)
     if !_ctsem_cholesky!(U, n)
@@ -1035,18 +1084,20 @@ function _ekf_moment_cells!(ws::ContinuousEKFWorkspace{T}, pars, sp, all_params,
     end
     fill!(acc, zero(T))
     fill!(c, zero(T))
-    npoints = 2n
+    npoints = 2s
     w = inv(T(npoints))
-    r = sqrt(T(n))
+    r = sqrt(T(s))
     DRIFT = pars.DRIFT
     first = 0
     point = 0
-    @inbounds for j in 1:n, sgn in (1, -1)
+    @inbounds for j in 1:s, sgn in (1, -1)
         point += 1
-        # Column j of L = U' is row j of U, from its diagonal on.
+        # Column j of L = U' is row j of U, from its diagonal on, in the
+        # permuted order; the offsets are kept in the state's own.
         for q in 1:n
-            D[q, point] = q >= j ? sgn * r * U[j, q] : zero(T)
-            ws.state[q] = m[q] + D[q, point]
+            v = q >= j ? sgn * r * U[j, q] : zero(T)
+            D[perm[q], point] = v
+            ws.state[perm[q]] = m[perm[q]] + v
         end
         g = _record_moment_group!(trace, 1, idx, all_params, ctx)
         point == 1 && (first = g)

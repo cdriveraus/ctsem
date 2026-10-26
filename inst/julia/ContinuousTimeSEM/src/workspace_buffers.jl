@@ -328,6 +328,10 @@ struct ContinuousEKFWorkspace{T, PARS, BQ, BTHETA, DCA, EBUF, LBUF, DIFBUF, DBUF
     # reads. Empty where the dynamics are linear.
     moment_avg::Vector{Int}
     moment_oth::Vector{Int}
+    # The states, those the averaged cells read first, and how many those
+    # are (`_ctsem_moment_states`): the cubature spans only them.
+    moment_perm::Vector{Int}
+    moment_s::Int
     moment_m::Vector{T}
     moment_U::Matrix{T}
     moment_d::Matrix{T}
@@ -524,6 +528,8 @@ function _init_continuous_ekf_workspace(::Type{T}, sp::EKFParameters) where {T}
     moment = _ctsem_dynamics_nonlinear(sp, predict_param_indices, n)
     moment_avg, moment_oth = moment ? _ctsem_moment_cells(sp, predict_param_indices) :
         (Int[], Int[])
+    moment_perm, moment_s = moment ?
+        _ctsem_moment_states(sp, predict_param_indices, moment_avg, n) : (Int[], 0)
     nm = moment ? n : 0
 
     return ContinuousEKFWorkspace(
@@ -580,6 +586,8 @@ function _init_continuous_ekf_workspace(::Type{T}, sp::EKFParameters) where {T}
         Ref(false),
         moment_avg,
         moment_oth,
+        moment_perm,
+        moment_s,
         zeros(T, nm),
         zeros(T, nm, nm),
         zeros(T, nm, 2nm),
