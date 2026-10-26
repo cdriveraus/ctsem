@@ -194,6 +194,10 @@ test_that("a per-row matrix's expression that reads no state is evaluated once a
   }
   testthat::expect_match(once$transform[cell(once, 'MANIFESTMEANS', 1, 1)], 'tipreds[1]',
     fixed = TRUE)
+  # That read is a parameter position by the time the engine builds the
+  # transform, which it interprets: no compile to announce for it.
+  testthat::expect_false(ctsem:::.ctJuliaAnnounceCompilation(
+    ctsem:::.ctJuliaModule(spec$once$project), once))
   npar <- ctsem:::.ctBackendNpar(spec$once)
   testthat::expect_equal(npar, ctsem:::.ctBackendNpar(spec$per_row))
   for (k in 1:2) {
