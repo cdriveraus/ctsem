@@ -2987,12 +2987,30 @@ const _LAPLACE_PROBE_REACH = 3.0
 """
 How far, in nats, a unit's value at a probe start may differ from the found
 mode's quadratic there for the line to count as Gaussian without its screening
-gradient (`_laplace_probe_modes`). On the affect pilot a trace of every start
-found no line the gradient screen called non-Gaussian within 1.3e-3, the nine
-that reached Newton at 0.37 and more, and the two better modes at 1.09 and
-more; over half the starts were Gaussian to roundoff.
+gradient (`_laplace_probe_modes`). The gradient sends a start on where Newton
+from it would land more than a posterior sd from the mode, and at a start `r`
+sds out a departure from the quadratic rising as the `p`-th power of the
+distance moves the value by `r / p` of that landing distance: under 0.1 nats
+at `r = 3`, Newton lands within a sd unless the departure rises faster than the
+30th power. That holds along a soft direction's probe, three sds out, not at
+the reflection (`_LAPLACE_PROBE_REFLECT_TOL`). On the affect pilot a trace of
+every start found the nine that reached Newton at 0.37 nats and more, and the
+two better modes at 1.09 and more. At 1e-3 the screen sent on 1218 of 1320
+starts on the nonlinear nl10 benchmark, where the gradients flagged 7 lines,
+all above 0.1, and Newton ran from none: 18% of its gradient.
 """
-const _LAPLACE_PROBE_VALUE_TOL = 1e-3
+const _LAPLACE_PROBE_VALUE_TOL = 0.1
+
+"""
+`_LAPLACE_PROBE_VALUE_TOL` at the reflection through the origin, which lies
+many posterior sds from a pinned mode, where the unit can cross the mode's
+quadratic: at a crossing the value agrees with a Gaussian line, so only a line
+Gaussian to this tolerance goes without its gradient. At 0.1 a pinned person
+on test-julia-laplace-modes.R's sign fixture had their better mode past the
+origin missed so; 1e-3 is the screen's tolerance from the affect pilot's
+trace, where no line the gradient called non-Gaussian lay within 1.3e-3.
+"""
+const _LAPLACE_PROBE_REFLECT_TOL = 1e-3
 
 """
     ctsem_set_mode_probes!(on)
@@ -4154,13 +4172,16 @@ function _laplace_probe_modes(laplace::CTSEMLaplaceObjective, U::Integer,
             # The value first, a forward pass: where it is the found mode's
             # quadratic to `_LAPLACE_PROBE_VALUE_TOL`, the line is Gaussian as
             # far as the screen below could tell, without its gradient. On the
-            # nonlinear nl10 benchmark every start was Gaussian and the
-            # screening gradients were 30% of a gradient
-            # (review/BENCH-nl10-laplace-cost-2026-10-26.md). A value that
-            # disagrees for another reason only sends the start on to them.
+            # nonlinear nl10 benchmark the screening gradients were 30% of a
+            # gradient (review/BENCH-nl10-laplace-cost-2026-10-26.md). A value
+            # that disagrees for another reason only sends the start on to them.
+            # The reflection at `_LAPLACE_PROBE_REFLECT_TOL`: it lies far from
+            # the found mode, where the unit can cross the mode's quadratic.
             v = _laplace_unit_loglik_value(laplace, U, values, Ls, start, aws,
                 atgrad).value
             _CTSEM_OPCOUNT.probe_values[] += 1
+            tol = probe <= 2 * nsoft ? _LAPLACE_PROBE_VALUE_TOL :
+                _LAPLACE_PROBE_REFLECT_TOL
             if isfinite(v)
                 drop = 0.0
                 @inbounds for i in 1:d
@@ -4170,8 +4191,8 @@ function _laplace_probe_modes(laplace::CTSEMLaplaceObjective, U::Integer,
                     end
                     drop += (start[i] - found.u[i]) * acc
                 end
-                abs(v - dot(start, start) / 2 - (found.value - drop / 2)) <
-                    _LAPLACE_PROBE_VALUE_TOL && continue
+                abs(v - dot(start, start) / 2 - (found.value - drop / 2)) < tol &&
+                    continue
             end
             at = _laplace_unit_objective_gradient(laplace, U, values, Ls, start,
                 aws, atgrad)
