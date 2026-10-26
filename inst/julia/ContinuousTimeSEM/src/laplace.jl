@@ -697,6 +697,9 @@ mutable struct CTSEMLaplaceObjective{O} <: CTSEMOptimisable
     # unit is concave in these, so the probes search only the span the others
     # move (`_laplace_probe_span`).
     affine::Vector{Vector{Bool}}
+    # Per level and group, the effects that cannot reach the group's data
+    # (`_laplace_build_units`'s `inert`); empty where none are known.
+    inert::Vector{Vector{Vector{Int}}}
 end
 
 # `gate_lo = 0.2` and `gate_hi = 0.7` are measured, not derived: see the
@@ -717,7 +720,8 @@ function CTSEMLaplaceObjective(objective::CTSEMObjective, spec::CTSEMLaplaceSpec
         Int(inner_maxiter), Float64(inner_tol), [Dict{Any,Any}()],
         zeros(Int, nunits), zeros(Float64, nunits), falses(nunits), falses(nunits),
         falses(nunits), falses(nunits), Float64[], Symbol(floor), Float64(gate_lo),
-        Float64(gate_hi), 0, quadratic, affine)
+        Float64(gate_hi), 0, quadratic, affine,
+        inert === nothing ? Vector{Vector{Int}}[] : inert)
 end
 
 """
@@ -4268,45 +4272,34 @@ end
 
 An orthonormal basis, `d` by `n`, of the coordinates of unit `U`'s `u` along
 which it can have a second maximum, or `nothing` where that is every
-coordinate. Two kinds are left out. An inactive coordinate moves only effects
-that cannot reach the unit's data (`CTSEMLaplaceUnits`), so the unit is the
-prior's quadratic along it and its mode there is 0. And where the objective
-knows which effects enter as the quadratic test's mean effects (`affine`),
-the span is that of the loadings' rows for the other effects: with those
-fixed, the mean effects move every predicted mean affinely and no covariance
-or gain, so the unit is concave in what is left, with one maximum, and every
-maximum of the unit is that one at some point of the span.
+coordinate: the span of the loadings' rows for the effects that reach the
+unit's data and are not the quadratic test's mean effects (`affine`).
+
+The likelihood reads `u` only through the rows of the effects that reach the
+data, so across their null space the unit is the prior's standard normal and
+its mode is 0, on any model. On the affect pilot half the probe lines lay
+there, the person's own intercepts cancelling a shared dimension on every item
+they answered; an inactive coordinate (`CTSEMLaplaceUnits`) is the case of one
+axis. And with the other effects fixed, the mean effects move every predicted
+mean affinely and no covariance or gain, so the unit is concave in what their
+rows add, with one maximum, and every maximum of the unit is that one at some
+point of the span. Without pruning (`ctsem_set_laplace_prune!`) every effect
+counts as reaching, which makes it the oracle for this as for the inert skip.
 
 Each level's rows are taken alone, so a parameter that several levels move
 adds a row per level: their span holds the summed rows', and is no smaller.
 """
 function _laplace_probe_span(laplace::CTSEMLaplaceObjective, U::Integer,
     Ls::Vector{Matrix{Float64}}, d::Integer)
-    act = _laplace_active_columns(laplace, U)
     affine = laplace.affine
-    if isempty(affine)
-        (act === nothing || length(act) == d) && return nothing
-        Q = _laplace_scratch_matrix!(laplace, Float64, d, length(act), :probe_span)
-        fill!(Q, 0.0)
-        @inbounds for t in eachindex(act)
-            Q[act[t], t] = 1.0
-        end
-        return Q
-    end
-    keep = _laplace_scratch_vector!(laplace, Float64, d, :probe_keep)
-    if act === nothing
-        fill!(keep, 1.0)
-    else
-        fill!(keep, 0.0)
-        @inbounds for c in act
-            keep[c] = 1.0
-        end
-    end
+    inert = _LAPLACE_PRUNE[] ? laplace.inert : Vector{Vector{Int}}[]
+    (isempty(affine) && isempty(inert)) && return nothing
     G = _laplace_scratch_matrix!(laplace, Float64, d, d, :probe_G)
     fill!(G, 0.0)
     spec = laplace.spec
     units = laplace.units
-    @inbounds for m in eachindex(units.members[U])
+    left = 0
+    @inbounds for (m, i) in enumerate(units.members[U])
         offsets = units.offsets[U][m]
         for l in eachindex(spec.levels)
             level = spec.levels[l]
@@ -4315,19 +4308,25 @@ function _laplace_probe_span(laplace::CTSEMLaplaceObjective, U::Integer,
             (k == 0 || r == 0) && continue
             base = offsets[l]
             L = Ls[l]
-            flags = affine[l]
+            out = isempty(inert) ? Int[] : inert[l][level.group[i]]
             for p in 1:k
-                flags[p] && continue
+                if (!isempty(affine) && affine[l][p]) || insorted(p, out)
+                    left += 1
+                    continue
+                end
                 for b in 1:r
-                    lb = L[p, b] * keep[base + b]
+                    lb = L[p, b]
                     iszero(lb) && continue
                     for a in 1:r
-                        G[base + a, base + b] += L[p, a] * keep[base + a] * lb
+                        G[base + a, base + b] += L[p, a] * lb
                     end
                 end
             end
         end
     end
+    # Every row reaches and moves a nonlinear effect: the loadings span every
+    # coordinate, and the probes are as before.
+    left == 0 && return nothing
     top = maximum(abs, G)
     n = 0
     if top > 0
