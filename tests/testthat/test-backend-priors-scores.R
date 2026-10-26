@@ -95,6 +95,9 @@ test_that("Stan and Julia agree with priors=TRUE, with random effects and a TI p
   skip_without_julia()
   skip_if_not_installed("rstan")
   skip_if_not_installed("digest")
+  # A random effect on the dynamics is a state the drift reads, which julia
+  # predicts by moments and stan linearises: compared on stan's filter.
+  local_julia_ekf()
   model <- .prior_full_model()
   data <- .prior_full_data()
 

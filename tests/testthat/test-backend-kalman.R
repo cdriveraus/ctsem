@@ -158,6 +158,9 @@ test_that("tracing does not change the filter", {
 test_that("ctKalmanArray matches Stan through the whole R path", {
   skip_if_not_installed("rstan")
   skip_without_julia()
+  # A random effect on the dynamics is a state the drift reads, which julia
+  # predicts by moments and stan linearises: compared on stan's filter.
+  local_julia_ekf()
   fits <- .kalman_indvar_fits()
   stan_fit <- fits$stan
   julia_fit <- fits$julia
@@ -190,6 +193,9 @@ test_that("ctKalmanArray matches Stan through the whole R path", {
 test_that("ctPredict interpolates a time grid the same way Stan does", {
   skip_if_not_installed("rstan")
   skip_without_julia()
+  # A random effect on the dynamics is a state the drift reads, which julia
+  # predicts by moments and stan linearises: compared on stan's filter.
+  local_julia_ekf()
   data <- .kalman_indvar_data()
   fits <- .kalman_indvar_fits()
   stan_fit <- fits$stan
@@ -220,6 +226,9 @@ test_that("ctPredict interpolates a time grid the same way Stan does", {
 test_that("subject matrices match Stan's, and only the varying ones vary", {
   skip_if_not_installed("rstan")
   skip_without_julia()
+  # A random effect on the dynamics is a state the drift reads, which julia
+  # predicts by moments and stan linearises: compared on stan's filter.
+  local_julia_ekf()
   model <- .kalman_indvar_model()
   data <- .kalman_indvar_data()
   # Augmented by name: compared with stan's subject matrices, and 'auto'
