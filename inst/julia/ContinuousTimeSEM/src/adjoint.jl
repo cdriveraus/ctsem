@@ -15,6 +15,39 @@ using ForwardDiff
 export ctsem_validate_forward_gradient, ctsem_adjoint_gradient
 
 """
+    CTSEMDeferredGroup{T}
+
+What a chunk holds back for one parameter layer, one group of its subjects
+(`_ctsem_subject_group!`): the JAx cotangent of their Frechet derivatives, and
+their covariance batches -- DIFFUSION, MANIFESTVAR, T0VAR and the population
+block, each a raw matrix, the cotangent summed against it and whether one is
+pending -- with the TI predictor row that keys the group and a member's
+parameter values, for its pass through the layer (`_release_groups!`).
+"""
+mutable struct CTSEMDeferredGroup{T}
+    jax::Matrix{T}
+    dvar_bar::Matrix{T}
+    dvar_mat::Matrix{T}
+    dvar_pending::Bool
+    mvar_bar::Matrix{T}
+    mvar_mat::Matrix{T}
+    mvar_pending::Bool
+    t0var_bar::Matrix{T}
+    t0var_mat::Matrix{T}
+    t0var_pending::Bool
+    pop_bar::Matrix{T}
+    pop_mat::Matrix{T}
+    pop_pending::Bool
+    key::Vector{Float64}
+    values::Vector{T}
+end
+
+CTSEMDeferredGroup(::Type{T}, n::Int, m::Int, k::Int) where {T} = CTSEMDeferredGroup{T}(
+    zeros(T, n, n), zeros(T, n, n), zeros(T, n, n), false, zeros(T, m, m), zeros(T, m, m),
+    false, zeros(T, n, n), zeros(T, n, n), false, zeros(T, k, k), zeros(T, k, k), false,
+    Float64[], T[])
+
+"""
     CTSEMAdjointWorkspace
 
 Per-model state for the reverse pass, built once and reused across evaluations.
@@ -96,27 +129,31 @@ mutable struct CTSEMAdjointWorkspace{T,SP,LB,FB,WS,DC}
     frechet_accums::Vector{Matrix{T}}
     # The parameter layer each queued direction's JAx cotangent belongs to:
     # 0, the subject walking now (`theta_bar`); g, the chunk's group g
-    # (`jax_bar_groups`). `frechet_group` is the walking subject's.
+    # (`groups`). `frechet_group` is the walking subject's.
     frechet_tags::Vector{Int}
     frechet_group::Int
-    # Frechet contributions held back so the batch can span subjects too, one
-    # matrix per parameter layer: the chunk pushes each through its layer once
-    # (`_release_frechet_groups!`). Where no TI effect reaches a JAx cell every
-    # subject has the same layer, and there is one group; otherwise
-    # (`frechet_keyed`) the subjects with the same TI predictor row share one,
-    # keyed by that row (`jax_group_keys`) with a member's parameter values
-    # (`jax_group_values`). Two groups for a binary predictor, where each
-    # subject used to pay its own Frechet derivatives: 20% of a 20-latent
-    # gradient. A subject whose predictor value is sampled is its own layer
-    # and flushes its directions with its walk.
-    jax_bar_groups::Vector{Matrix{T}}
-    jax_group_keys::Vector{Vector{Float64}}
-    jax_group_values::Vector{Vector{T}}
-    jax_group_count::Int
-    frechet_keyed::Bool
-    # Whether the batch spans subjects at all: not where a transform group
-    # writes a JAx cell, whose reverse would consume a pending direction, nor
-    # in the walks that want each subject's own gradient
+    # --- pullbacks deferred across a chunk's subjects, by parameter layer
+    # Every subject paid its own Frechet derivatives and its own pullbacks of
+    # DIFFUSION, MANIFESTVAR, T0VAR and the population block -- about 60% of a
+    # 20-latent gradient -- for matrices its fellows share. Subjects whose
+    # parameter layers are the same share all of them, so a chunk holds them
+    # back per layer (`CTSEMDeferredGroup`) and pushes each group through its
+    # layer once (`_release_groups!`). Where no TI effect reaches a deferred
+    # cell every subject has one layer, and there is one group; otherwise
+    # (`group_keyed`) the subjects with the same TI predictor row share one
+    # (`_ctsem_subject_group!`), up to `_CTSEM_FRECHET_GROUPS` at once. A
+    # subject whose predictor value is sampled is its own layer, and walks in
+    # `own_group` with nothing deferred past its walk. The covariance fields
+    # below (`dvar_*`, `mvar_*`, `t0var_*`, `pop_*`) are the walking subject's
+    # group's (`_ctsem_enter_group!`).
+    groups::Vector{CTSEMDeferredGroup{T}}
+    own_group::CTSEMDeferredGroup{T}
+    group_count::Int
+    group_current::Int
+    group_keyed::Bool
+    # Whether the Frechet batch spans subjects at all: not where a transform
+    # group writes a JAx cell, whose reverse would consume a pending
+    # direction, nor in the walks that want each subject's own gradient
     # (`_ctsem_subject_gradient_chunk!`, the Laplace unit loop).
     defer_frechet::Bool
     # Whether any state-dependent transform group writes a JAx cell. Such a
@@ -147,17 +184,11 @@ mutable struct CTSEMAdjointWorkspace{T,SP,LB,FB,WS,DC}
     dvar_bar::Matrix{T}
     dvar_mat::Matrix{T}
     dvar_pending::Bool
-    # --- covariance pullbacks deferred across a chunk's subjects
-    # The batches above end with each subject's walk, and every subject then
-    # pays its own pullbacks of DIFFUSION, MANIFESTVAR, T0VAR and the
-    # population block: on a 20-latent model with 40 effects, 41% of the
-    # gradient, for matrices every subject shares. Where a covariance's cells
-    # have one parameter layer for every subject (no TI effect reaches them,
-    # `_ctsem_layer_subject_invariant`) and no transform group writes them, the
-    # batch runs on across the chunk's subjects instead, and the chunk pushes
-    # it through the layer once, as it does the deferred Frechet derivative
-    # (`_flush_chunk_covariances!`). `chunk_active` is set by the summed
-    # gradient's chunk alone; every other walk flushes per subject.
+    # Whether the walking subject's covariance batches run on past its walk,
+    # in its group (`chunk_active`: set by the summed gradient's chunk alone,
+    # for a subject in a group; every other walk flushes them per subject),
+    # and which covariances may: those no transform group writes, whose
+    # reverse would consume a pending cotangent.
     chunk_active::Bool
     chunk_dvar::Bool
     chunk_mvar::Bool
@@ -259,21 +290,25 @@ function CTSEMAdjointWorkspace(::Type{T}, sp::EKFParameters, nvalues::Integer,
     groups_write_diffusion = any(i -> i in dvar_set,
         Iterators.flatten((predict_indices, td_indices, update_indices)))
     regular_supports = _ctsem_regular_transform_supports(sp, nvalues)
+    # What a chunk may hold back past a subject's walk: what no transform group
+    # writes, whose reverse would consume a pending cotangent. Grouped by TI
+    # predictor row where a TI effect reaches any of it.
     defer_frechet = !groups_write_jax
-    frechet_keyed = defer_frechet &&
-        !_ctsem_layer_subject_invariant(sp, jax_positions, regular_supports)
-    chunk_dvar = !groups_write_diffusion &&
-        _ctsem_layer_subject_invariant(sp, collect(dvar_set), regular_supports)
-    chunk_mvar = !groups_write_manifestvar &&
-        _ctsem_layer_subject_invariant(sp, collect(mvar_set), regular_supports)
+    chunk_dvar = !groups_write_diffusion
+    chunk_mvar = !groups_write_manifestvar
+    written = Set{Int}(Iterators.flatten((predict_indices, td_indices, update_indices)))
     t0var_positions = _ctsem_component_positions(sp, :T0VAR)
-    chunk_t0var = !any(i -> i in Set(t0var_positions),
-        Iterators.flatten((predict_indices, td_indices, update_indices))) &&
-        _ctsem_layer_subject_invariant(sp, t0var_positions, regular_supports)
+    chunk_t0var = !any(in(written), t0var_positions)
     npop = length(sp.population_indices)
-    chunk_pop = npop > 0 && !any(i -> i in sp.population_range,
-        Iterators.flatten((predict_indices, td_indices, update_indices))) &&
-        _ctsem_layer_subject_invariant(sp, collect(sp.population_range), regular_supports)
+    chunk_pop = npop > 0 && !any(in(written), sp.population_range)
+    deferred = Int[]
+    defer_frechet && append!(deferred, jax_positions)
+    chunk_dvar && append!(deferred, dvar_set)
+    chunk_mvar && append!(deferred, mvar_set)
+    chunk_t0var && append!(deferred, t0var_positions)
+    chunk_pop && append!(deferred, sp.population_range)
+    group_keyed = !_ctsem_layer_subject_invariant(sp, deferred, regular_supports)
+    own = CTSEMDeferredGroup(T, n, m, npop)
 
     frechet_buffer = ExpFrechetBuffer{T}(n)
     dual_context = CTSEMDualContext(T, sp, zeros(T, n))
@@ -306,15 +341,14 @@ function CTSEMAdjointWorkspace(::Type{T}, sp::EKFParameters, nvalues::Integer,
         [zeros(T, n, n) for _ in 1:_CTSEM_FRECHET_TABLE],
         [zeros(T, n, n) for _ in 1:_CTSEM_FRECHET_TABLE],
         zeros(Int, _CTSEM_FRECHET_TABLE), 0,
-        [zeros(T, n, n) for _ in 1:_CTSEM_FRECHET_GROUPS],
-        [Float64[] for _ in 1:_CTSEM_FRECHET_GROUPS],
-        [T[] for _ in 1:_CTSEM_FRECHET_GROUPS], 0, frechet_keyed,
+        [CTSEMDeferredGroup(T, n, m, npop) for _ in 1:_CTSEM_FRECHET_GROUPS], own,
+        0, 0, group_keyed,
         defer_frechet, groups_write_jax, groups_write_manifestvar,
-        zeros(T, m, m), zeros(T, m, m), false,
-        groups_write_diffusion, zeros(T, n, n), zeros(T, n, n), false,
+        own.mvar_bar, own.mvar_mat, false,
+        groups_write_diffusion, own.dvar_bar, own.dvar_mat, false,
         false, chunk_dvar, chunk_mvar, chunk_t0var, chunk_pop,
-        zeros(T, n, n), zeros(T, n, n), false,
-        zeros(T, npop, npop), zeros(T, npop, npop), false,
+        own.t0var_bar, own.t0var_mat, false,
+        own.pop_bar, own.pop_mat, false,
         jax_positions,
         frechet_buffer, zeros(T, n, n), zeros(T, n, n), ExpTable(T, n),
         CTSEMSeriesReverse(T, n, length(ws.diffusion_state_indices)),
@@ -332,9 +366,9 @@ end
 
 Whether the cells at `positions` (flat `all_params` positions) have the same
 parameter layer for every subject, so that a cotangent on them summed across
-subjects can be pushed through one subject's layer: the exponential's
-derivative (`_flush_frechet!`, the workspace's `defer_frechet`, on the `JAx`
-cells) and the covariance pullbacks (`_flush_chunk_covariances!`). A cell's
+subjects can be pushed through one subject's layer: the cells a chunk defers
+-- the exponential's derivative on the `JAx` cells, the covariance batches --
+in one group rather than one per TI predictor row (`group_keyed`). A cell's
 layer is every subject's unless a subject-specific shift reaches what its
 transform reads (`supports`, `_ctsem_regular_transform_supports`): a TI
 effect's parameter (`ti_parameter_indices`) or the predictor tail (`ti_tail`).
@@ -690,8 +724,11 @@ function _ctsem_adjoint_chunk!(gradient::Vector{T}, totals::Vector{T},
             subjects, objective, aws, values, mode, weights, sink, want_gradient)
     finally
         aws.ekf_ws.hyb.mode = _HYBRID_PROFILE
+        # Every other walk on this workspace flushes per subject, in its own
+        # buffers.
         aws.chunk_active = false
         aws.frechet_group = 0
+        _ctsem_enter_group!(aws, 0)
     end
     return nothing
 end
@@ -707,15 +744,9 @@ function _ctsem_adjoint_chunk_body!(gradient::Vector{T}, totals::Vector{T},
     shared && fill!(aws.theta_bar, zero(T))
     # A previous call that bailed out on an invalid trial point can leave a
     # queued Frechet direction behind; it belongs to that call's cotangent.
-    # So can a covariance batch, now that one spans the chunk's subjects.
+    # So can a group's deferred pullbacks.
     aws.frechet_count = 0
-    foreach(J -> fill!(J, zero(T)), aws.jax_bar_groups)
-    aws.jax_group_count = 0
-    aws.dvar_pending = false
-    aws.mvar_pending = false
-    aws.t0var_pending = false
-    aws.pop_pending = false
-    aws.chunk_active = want_gradient
+    _ctsem_reset_groups!(aws)
     last_subject_values = nothing
     last_tipreds = nothing
     total = zero(T)
@@ -773,11 +804,15 @@ function _ctsem_adjoint_chunk_body!(gradient::Vector{T}, totals::Vector{T},
             continue
         end
 
-        # The parameter layer this subject's queued Frechet directions belong
-        # to; before the weight's scaling, since a full group table is
-        # released here into the gradient.
-        aws.defer_frechet && (aws.frechet_group = _frechet_group!(gradient, aws,
-            subject_objective.tipreds, tipred_vec, tape.subject_values, params, values))
+        # The group whose parameter layer this subject's deferred pullbacks
+        # belong to (`_ctsem_subject_group!`), whose buffers it walks in; before
+        # the weight's scaling, since a full group table is released here into
+        # the gradient.
+        g = _ctsem_subject_group!(gradient, aws, subject_objective.tipreds, tipred_vec,
+            tape.subject_values, params, values)
+        _ctsem_enter_group!(aws, g)
+        aws.chunk_active = g > 0
+        aws.frechet_group = aws.defer_frechet ? g : 0
 
         # A sampling weight. The reverse pass below adds this subject's
         # cotangents into the chunk's accumulators -- the gradient, the shared
@@ -801,64 +836,127 @@ function _ctsem_adjoint_chunk_body!(gradient::Vector{T}, totals::Vector{T},
         # `_ctsem_parameter_layer!`.
         last_subject_values = tape.subject_values
         last_tipreds = subject_objective.tipreds
-        # A subject that is its own layer for the Frechet batch (a sampled TI
-        # predictor value): its directions go into its own cotangent now.
-        aws.defer_frechet && aws.frechet_group == 0 && _flush_frechet!(aws)
+        # A subject that is its own layer (a sampled TI predictor value): its
+        # Frechet directions go into its own cotangent now; its covariance
+        # batches were flushed with its walk.
+        aws.defer_frechet && g == 0 && _flush_frechet!(aws)
         if !shared
             _ctsem_parameter_layer!(gradient, aws.theta_bar, tape.subject_values,
                 subject_objective.params, aws, subject_objective.tipreds, values)
         end
         w == 1 || _ctsem_scale_accumulators!(gradient, aws, shared, w)
+        _ctsem_leave_group!(aws)
     end
 
     if shared && last_subject_values !== nothing
-        # Every subject in this chunk shares one parameter layer; unwind once,
-        # with the covariance batches the chunk's subjects left.
-        _flush_chunk_covariances!(aws, aws.theta_bar,
+        # Every subject in this chunk shares one parameter layer, and so one
+        # group; unwind once, with that group's covariance batches.
+        aws.group_count > 0 && _ctsem_flush_group_covariances!(aws, 1, aws.theta_bar,
             CTSEMPars(aws.theta_bar, params.parameter_axis))
         _ctsem_parameter_layer!(gradient, aws.theta_bar, last_subject_values,
             params, aws, last_tipreds, values)
     end
 
-    # The deferred matrix-exponential Frechet contributions, one pass through
-    # the parameter layer per group of subjects sharing one, and where the
-    # layer is per subject the covariance batches with the first.
-    if last_subject_values !== nothing &&
-            (aws.defer_frechet || (!shared && _chunk_covariances_pending(aws)))
-        _release_frechet_groups!(gradient, aws, params, values, last_subject_values,
-            last_tipreds, !shared)
-    end
+    # Each group's deferred pullbacks, one pass through its parameter layer.
+    last_subject_values !== nothing && aws.group_count > 0 &&
+        _release_groups!(gradient, aws, params, values, last_subject_values, last_tipreds)
 
     totals[c] = total
     return nothing
 end
 
 """
-    _frechet_group!(gradient, aws, tipreds, tipred_vec, subject_values, params, values)
+    _ctsem_subject_group!(gradient, aws, tipreds, tipred_vec, subject_values, params, values)
 
-The group whose parameter layer a subject's Frechet directions are pushed
-through (`frechet_group`): 1 where every subject shares the JAx cells' layer;
-otherwise the group of subjects with this TI predictor row, which joins the
-table if it is new; 0, the subject's own, where a predictor value is sampled
-(a `TIMissingRecipe`). A full table is released into `gradient` first.
+The group whose parameter layer a subject's deferred pullbacks are pushed
+through: 1 where every subject shares the deferred cells' layer; otherwise the
+group of subjects with this TI predictor row, which joins the table if it is
+new; 0, the subject's own (`own_group`, nothing deferred past its walk), where
+a predictor value is sampled (a `TIMissingRecipe`). A full table is released
+into `gradient` first.
 """
-function _frechet_group!(gradient, aws, tipreds, tipred_vec, subject_values, params, values)
-    aws.frechet_keyed || return 1
-    tipreds isa TIMissingRecipe && return 0
-    @inbounds for g in 1:aws.jax_group_count
-        _ctsem_same_row(aws.jax_group_keys[g], tipred_vec) && return g
+function _ctsem_subject_group!(gradient, aws, tipreds, tipred_vec, subject_values, params,
+    values)
+    if !aws.group_keyed
+        aws.group_count = 1
+        return 1
     end
-    aws.jax_group_count == length(aws.jax_bar_groups) &&
-        _release_frechet_groups!(gradient, aws, params, values, subject_values, tipreds, false)
-    g = aws.jax_group_count + 1
-    key = aws.jax_group_keys[g]
-    resize!(key, length(tipred_vec))
-    copyto!(key, tipred_vec)
-    held = aws.jax_group_values[g]
-    resize!(held, length(subject_values))
-    copyto!(held, subject_values)
-    aws.jax_group_count = g
+    tipreds isa TIMissingRecipe && return 0
+    @inbounds for g in 1:aws.group_count
+        _ctsem_same_row(aws.groups[g].key, tipred_vec) && return g
+    end
+    aws.group_count == length(aws.groups) &&
+        _release_groups!(gradient, aws, params, values, subject_values, tipreds)
+    g = aws.group_count + 1
+    G = aws.groups[g]
+    resize!(G.key, length(tipred_vec))
+    copyto!(G.key, tipred_vec)
+    resize!(G.values, length(subject_values))
+    copyto!(G.values, subject_values)
+    aws.group_count = g
     return g
+end
+
+"""
+    _ctsem_enter_group!(aws, g)
+
+Point the workspace's covariance batch fields (`dvar_*`, `mvar_*`, `t0var_*`,
+`pop_*`) at group `g`'s (`own_group` for 0), which the tape's deferral and
+flush functions then accumulate in. References, not copies; the pending flags
+are copied in and `_ctsem_leave_group!` copies them back.
+"""
+function _ctsem_enter_group!(aws, g::Int)
+    G = g == 0 ? aws.own_group : aws.groups[g]
+    aws.dvar_bar = G.dvar_bar
+    aws.dvar_mat = G.dvar_mat
+    aws.dvar_pending = G.dvar_pending
+    aws.mvar_bar = G.mvar_bar
+    aws.mvar_mat = G.mvar_mat
+    aws.mvar_pending = G.mvar_pending
+    aws.t0var_bar_acc = G.t0var_bar
+    aws.t0var_mat = G.t0var_mat
+    aws.t0var_pending = G.t0var_pending
+    aws.pop_bar_acc = G.pop_bar
+    aws.pop_mat = G.pop_mat
+    aws.pop_pending = G.pop_pending
+    aws.group_current = g
+    return nothing
+end
+
+"""Copy the walking group's pending flags back into it (`_ctsem_enter_group!`)."""
+function _ctsem_leave_group!(aws)
+    g = aws.group_current
+    G = g == 0 ? aws.own_group : aws.groups[g]
+    G.dvar_pending = aws.dvar_pending
+    G.mvar_pending = aws.mvar_pending
+    G.t0var_pending = aws.t0var_pending
+    G.pop_pending = aws.pop_pending
+    return nothing
+end
+
+"""Empty every group, and walk in the workspace's own buffers."""
+function _ctsem_reset_groups!(aws)
+    T = eltype(aws.theta_bar)
+    for G in aws.groups
+        fill!(G.jax, zero(T))
+        G.dvar_pending = G.mvar_pending = G.t0var_pending = G.pop_pending = false
+    end
+    own = aws.own_group
+    own.dvar_pending = own.mvar_pending = own.t0var_pending = own.pop_pending = false
+    aws.group_count = 0
+    _ctsem_enter_group!(aws, 0)
+    return nothing
+end
+
+"""Release group `g`'s covariance batches into `θ̄` (`θ̄ca` its component view)."""
+function _ctsem_flush_group_covariances!(aws, g::Int, θ̄, θ̄ca)
+    _ctsem_enter_group!(aws, g)
+    _flush_diffusion!(aws, θ̄ca, aws.n)
+    _flush_manifestvar!(aws, θ̄ca, aws.m)
+    _flush_t0var!(aws, θ̄ca, aws.n)
+    _flush_population!(aws, θ̄, length(aws.sp.population_indices))
+    _ctsem_leave_group!(aws)
+    return nothing
 end
 
 """Exact elementwise equality of two predictor rows."""
@@ -871,41 +969,38 @@ end
 end
 
 """
-    _release_frechet_groups!(gradient, aws, params, values, last_values, last_tipreds, covariances)
+    _release_groups!(gradient, aws, params, values, last_values, last_tipreds)
 
-Push the deferred Frechet derivatives through the parameter layer, one pass
-per group (`jax_bar_groups`): a keyed group through its own member's values
-and predictor row, the single unkeyed one through `last_values` and
-`last_tipreds`, any subject's. With `covariances`, the chunk's covariance
-batches (`_flush_chunk_covariances!`) ride on the first pass: their cells'
-layer is every subject's. `jax_positions` lists the JAx component's flat
+Push every group's deferred pullbacks -- its JAx cotangent from the Frechet
+derivatives and its covariance batches -- through its parameter layer, one
+pass per group: a keyed group through its own member's values and predictor
+row, the single unkeyed one through `last_values` and `last_tipreds`, any
+subject's. Empties the table. `jax_positions` lists the JAx component's flat
 positions in the column-major order the matrices are stored in.
 """
-function _release_frechet_groups!(gradient::AbstractVector{T}, aws, params, values,
-    last_values, last_tipreds, covariances::Bool) where {T}
+function _release_groups!(gradient::AbstractVector{T}, aws, params, values,
+    last_values, last_tipreds) where {T}
     aws.defer_frechet && _flush_frechet!(aws)
     θ̄ = aws.theta_bar
-    ngroups = !aws.defer_frechet ? 0 : aws.frechet_keyed ? aws.jax_group_count : 1
-    @inbounds for g in 1:max(ngroups, covariances ? 1 : 0)
+    θ̄ca = CTSEMPars(θ̄, params.parameter_axis)
+    @inbounds for g in 1:aws.group_count
+        G = aws.groups[g]
         fill!(θ̄, zero(T))
-        if g <= ngroups
-            J = aws.jax_bar_groups[g]
-            for k in eachindex(aws.jax_positions)
-                θ̄[aws.jax_positions[k]] = J[k]
-            end
-            fill!(J, zero(T))
+        J = G.jax
+        for k in eachindex(aws.jax_positions)
+            θ̄[aws.jax_positions[k]] = J[k]
         end
-        covariances && g == 1 &&
-            _flush_chunk_covariances!(aws, θ̄, CTSEMPars(θ̄, params.parameter_axis))
-        if aws.frechet_keyed && g <= ngroups
-            _ctsem_parameter_layer!(gradient, θ̄, aws.jax_group_values[g], params, aws,
-                aws.jax_group_keys[g], values)
+        fill!(J, zero(T))
+        _ctsem_flush_group_covariances!(aws, g, θ̄, θ̄ca)
+        if aws.group_keyed
+            _ctsem_parameter_layer!(gradient, θ̄, G.values, params, aws, G.key, values)
         else
-            _ctsem_parameter_layer!(gradient, θ̄, last_values, params, aws,
-                last_tipreds, values)
+            _ctsem_parameter_layer!(gradient, θ̄, last_values, params, aws, last_tipreds,
+                values)
         end
     end
-    aws.jax_group_count = 0
+    aws.group_count = 0
+    _ctsem_enter_group!(aws, 0)
     return nothing
 end
 
@@ -927,11 +1022,15 @@ sampling weight in `_ctsem_adjoint_chunk!`.
         # Every group's, not only this subject's: a queue that fills during
         # this subject's walk releases the other groups' directions into
         # their matrices at this scale too.
-        foreach(J -> (J .*= s), aws.jax_bar_groups)
+        @inbounds for h in 1:aws.group_count
+            aws.groups[h].jax .*= s
+        end
         @inbounds for e in 1:aws.frechet_count
             aws.frechet_accums[e] .*= s
         end
     end
+    # The walking subject's group's covariance batches: its walk touches no
+    # other group's.
     if aws.chunk_active
         aws.chunk_dvar && aws.dvar_pending && (aws.dvar_bar .*= s)
         aws.chunk_mvar && aws.mvar_pending && (aws.mvar_bar .*= s)

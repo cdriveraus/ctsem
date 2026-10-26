@@ -218,13 +218,15 @@ end
     _check_adjoint(objective, values)
 end
 
-# The exponential's derivative is batched across subjects, in one group where
-# no TI effect shifts what a JAx cell reads (`_ctsem_layer_subject_invariant`),
-# and otherwise in one group per TI predictor row (`frechet_keyed`). The
-# fixture above shifts the TD effect: one group, and the gradient is still
-# exact. The same model with the TI effect on the drift is keyed: two subjects,
-# two groups; then twelve subjects with ten distinct rows, more than a chunk's
-# table holds (`_CTSEM_FRECHET_GROUPS`), so a full table is released mid-chunk.
+# The exponential's derivative and the covariance pullbacks are batched across
+# subjects, in one group where no TI effect shifts what a deferred cell reads
+# (`_ctsem_layer_subject_invariant`), and otherwise in one group per TI
+# predictor row (`group_keyed`). The fixture above shifts the TD effect: one
+# group, and the gradient is still exact. The same model with the TI effect on
+# the drift is keyed: two subjects, two groups; then twelve subjects with ten
+# distinct rows, more than a chunk's table holds (`_CTSEM_FRECHET_GROUPS`), so
+# a full table is released mid-chunk; then the TI effect on a free DIFFUSION
+# instead, where the covariance batch is what the key keeps apart.
 @testset "TI effects on and off the drift: the exponential's derivative batched by layer" begin
     CT = ContinuousTimeSEM
     data = reshape([0.1, -0.2, 0.15, 0.05, -0.1, 0.2], 1, :)
@@ -233,7 +235,7 @@ end
     times = [0.0, 0.5, 1.2, 0.0, 0.6, 1.4]
     aws(sp) = CT.CTSEMAdjointWorkspace(Float64, sp, 3, 1)
     @test aws(_ADJOINT_SP_TD_TI).defer_frechet
-    @test !aws(_ADJOINT_SP_TD_TI).frechet_keyed
+    @test !aws(_ADJOINT_SP_TD_TI).group_keyed
     df = _adjoint_test_dataframe(
         drift=[-0.5;;], jax=[-0.5;;], cint=[0.0;;], diffusion=[0.2;;],
         lambda=[1.0;;], jy=[1.0;;], manifestmeans=[0.0;;], manifestvar=[0.3;;],
@@ -246,7 +248,7 @@ end
         ),
     )
     ondrift = ekf_from_data_frame(df, DataFrame(parameter=[1], predictor=[1], coefficient=[3]))
-    @test aws(ondrift).defer_frechet && aws(ondrift).frechet_keyed
+    @test aws(ondrift).defer_frechet && aws(ondrift).group_keyed
     objective = CT.ctsem_objective(ondrift, [1, 4], times, data, tdpreds, tipreds)
     _check_adjoint(objective, [0.3, -0.4, 0.25])
 
@@ -263,6 +265,30 @@ end
     g = CT.ctsem_adjoint_gradient(many, [0.3, -0.4, 0.25]).gradient
     scores = CT.ctsem_subject_gradients(many, [0.3, -0.4, 0.25]).scores
     @test isapprox(vec(sum(scores; dims=1)), g; rtol=1e-11)
+
+    dfd = _adjoint_test_dataframe(
+        drift=[-0.5;;], jax=[-0.5;;], cint=[0.0;;], diffusion=[0.2;;],
+        lambda=[1.0;;], jy=[1.0;;], manifestmeans=[0.0;;], manifestvar=[0.3;;],
+        t0var=[0.5;;], t0means=[0.0;;],
+        tdpredeffect=[0.0;;], jtd=[1.0;;],
+        free=Dict(
+            (:DRIFT, 1, 1) => (1, "-log1p_exp(param[1])"),
+            (:JAx, 1, 1) => (1, "-log1p_exp(param[1])"),
+            (:TDPREDEFFECT, 1, 1) => (2, "param[2]"),
+            (:DIFFUSION, 1, 1) => (3, "exp(param[3])"),
+        ),
+    )
+    ondiffusion = ekf_from_data_frame(dfd, DataFrame(parameter=[3], predictor=[1], coefficient=[4]))
+    w = CT.CTSEMAdjointWorkspace(Float64, ondiffusion, 4, 1)
+    @test w.defer_frechet && w.chunk_dvar && w.group_keyed
+    keyed = CT.ctsem_objective(ondiffusion, collect(1:3:(3ns)),
+        repeat([0.0, 0.5, 1.2], ns) .+ repeat(0.1 .* (1:ns), inner=3),
+        reshape(0.2 .* sin.(1:(3ns)), 1, :), reshape(repeat([0.0, 1.0, 0.0], ns), 1, :),
+        reshape(rows, ns, 1))
+    x = [0.3, -0.4, -0.2, 0.35]
+    _check_adjoint(keyed, x)
+    @test isapprox(vec(sum(CT.ctsem_subject_gradients(keyed, x).scores; dims=1)),
+        CT.ctsem_adjoint_gradient(keyed, x).gradient; rtol=1e-11)
 end
 
 @testset "Forward-gradient validation: TD predictor with off-diagonal Jtd (2-state)" begin

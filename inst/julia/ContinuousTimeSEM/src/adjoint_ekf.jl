@@ -54,11 +54,11 @@ const _CTSEM_RIDGE = 1e-10
 # what the last-value rule did plus a scan of 32 scalars per substep.
 const _CTSEM_FRECHET_TABLE = 32
 
-# Parameter layers a chunk holds deferred Fréchet derivatives for at once
-# (`jax_bar_groups`): the distinct TI predictor rows among its subjects, where
-# a TI effect reaches a JAx cell. A full table is released, one pass through
-# the layer per group, so predictors with many distinct values cost what a
-# release per subject did.
+# Parameter layers a chunk holds deferred pullbacks for at once (`groups`,
+# `CTSEMDeferredGroup`): the distinct TI predictor rows among its subjects,
+# where a TI effect reaches a deferred cell. A full table is released, one pass
+# through the layer per group, so predictors with many distinct values cost
+# what a release per subject did.
 const _CTSEM_FRECHET_GROUPS = 8
 
 ################################################################################
@@ -1158,7 +1158,7 @@ function _flush_frechet!(aws)
         if tag == 0
             _frechet_add!(CTSEMPars(aws.theta_bar, aws.sp.parameter_axis).JAx, L, dt, n)
         else
-            _frechet_add!(aws.jax_bar_groups[tag], L, dt, n)
+            _frechet_add!(aws.groups[tag].jax, L, dt, n)
         end
     end
     return nothing
@@ -2600,26 +2600,6 @@ function _flush_population!(aws, θ̄, k::Int)
     aws.pop_pending || return nothing
     aws.pop_pending = false
     _pullback_population!(θ̄, aws.pop_mat, aws.pop_bar_acc, aws, k)
-    return nothing
-end
-
-"""Whether a covariance batch spanning the chunk's subjects is waiting."""
-@inline _chunk_covariances_pending(aws) =
-    (aws.chunk_dvar && aws.dvar_pending) || (aws.chunk_mvar && aws.mvar_pending) ||
-    aws.t0var_pending || aws.pop_pending
-
-"""
-    _flush_chunk_covariances!(aws, θ̄, θ̄ca)
-
-Release the covariance batches a chunk's subjects left pending (`chunk_active`)
-into the flat cotangent `θ̄` (`θ̄ca` its component view), for the chunk's one
-pass through the parameter layer.
-"""
-function _flush_chunk_covariances!(aws, θ̄, θ̄ca)
-    aws.chunk_dvar && _flush_diffusion!(aws, θ̄ca, aws.n)
-    aws.chunk_mvar && _flush_manifestvar!(aws, θ̄ca, aws.m)
-    _flush_t0var!(aws, θ̄ca, aws.n)
-    _flush_population!(aws, θ̄, length(aws.sp.population_indices))
     return nothing
 end
 
