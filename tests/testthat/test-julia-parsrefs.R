@@ -141,3 +141,71 @@ test_that("a circular t0 reference is still refused", {
       LAMBDA = diag(2), T0MEANS = c('eta2', 'eta1'))),
     "Circular dependency")
 })
+
+test_that("a per-row matrix's expression that reads no state is evaluated once a subject", {
+  # DRIFT, CINT, DIFFUSION, the measurement matrices and the rest are the ones
+  # the engine can also evaluate per row, and an expression cell in them used
+  # to be, whatever it read. One reading only parameters, other cells and the
+  # TI predictors -- the drift-scaled diffusion and intercept reading their
+  # DRIFT diagonal, a mean switched by a TI predictor -- is composed into an
+  # ordinary transform instead (`.ctJuliaParameterTable()`). The oracle is the
+  # same model with each of those cells also reading a state at zero weight,
+  # which keeps it per row: the objective and gradient must not move.
+  set.seed(4)
+  d <- as.data.frame(.parsref_data(n = 10))
+  d$z <- as.numeric(d$id %% 2 == 0)
+  build <- function(per_row) {
+    m <- suppressWarnings(suppressMessages(ctModel(type = 'ct', n.latent = 2,
+      n.manifest = 2, manifestNames = c('Y1','Y2'), latentNames = c('eta1','eta2'),
+      LAMBDA = diag(2), MANIFESTMEANS = matrix(c('mm', 0), 2),
+      CINT = matrix(c('cint_a', 'cint_b'), 2), PARS = matrix(c('p1', 'p2'), 1, 2),
+      TIpredNames = 'z', driftScaled = c('DIFFUSION', 'CINT'))))
+    m$pars$indvarying <- FALSE
+    mm <- m$pars$matrix == 'MANIFESTMEANS' & m$pars$row == 1
+    m$pars$param[mm] <- '(1 - z) * p1 + z * p2'
+    expression <- !is.na(m$pars$param) & grepl('[', m$pars$param, fixed = TRUE)
+    if (per_row) {
+      cells <- expression & m$pars$matrix %in% c('DIFFUSION', 'CINT') | mm
+      m$pars$param[cells] <- paste0(m$pars$param[cells], ' + 0 * state[1]')
+    }
+    m
+  }
+  spec <- lapply(c(once = FALSE, per_row = TRUE), function(per_row)
+    suppressWarnings(suppressMessages(ctFit(datalong = d, model = build(per_row),
+      fit = FALSE, backend = 'julia'))))
+  rowwise <- function(pt) {
+    blank <- function(x) ifelse(is.na(x), '', as.character(x))
+    nzchar(paste0(blank(pt$predicttransform), blank(pt$updatetransform),
+      blank(pt$tdtransform)))
+  }
+  once <- spec$once$parameter_table
+  per_row <- spec$per_row$parameter_table
+  cell <- function(pt, mat, r, c) which(pt$matrix == mat & pt$row == r & pt$col == c)
+  # No cell of the first is per row; the diffusion diagonals, the intercepts
+  # and the switched mean of the second are, and the first reads the
+  # predictor from the parameter vector's tail.
+  testthat::expect_false(any(rowwise(once)))
+  for (rc in list(c('DIFFUSION', 1, 1), c('DIFFUSION', 2, 2), c('CINT', 1, 1),
+      c('MANIFESTMEANS', 1, 1))) {
+    testthat::expect_true(rowwise(per_row)[cell(per_row, rc[1], rc[2], rc[3])],
+      info = paste(rc, collapse = ' '))
+    testthat::expect_false(is.na(once$transform[cell(once, rc[1], rc[2], rc[3])]),
+      info = paste(rc, collapse = ' '))
+  }
+  testthat::expect_match(once$transform[cell(once, 'MANIFESTMEANS', 1, 1)], 'tipreds[1]',
+    fixed = TRUE)
+  # That read is a parameter position by the time the engine builds the
+  # transform, which it interprets: no compile to announce for it.
+  testthat::expect_false(ctsem:::.ctJuliaAnnounceCompilation(
+    ctsem:::.ctJuliaModule(spec$once$project), once))
+  npar <- ctsem:::.ctBackendNpar(spec$once)
+  testthat::expect_equal(npar, ctsem:::.ctBackendNpar(spec$per_row))
+  for (k in 1:2) {
+    x <- stats::rnorm(npar, 0, 0.3)
+    a <- ctJuliaEvaluate(spec$once, x, cores = 1)
+    b <- ctJuliaEvaluate(spec$per_row, x, cores = 1)
+    testthat::expect_equal(a$value, b$value, tolerance = 1e-10)
+    testthat::expect_equal(as.numeric(a$gradient), as.numeric(b$gradient),
+      tolerance = 1e-8)
+  }
+})

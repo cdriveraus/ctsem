@@ -4017,6 +4017,7 @@ function _laplace_probe_modes(laplace::CTSEMLaplaceObjective, U::Integer,
     end
     reflected = any(!iszero, found.u)
     (nsoft > 0 || reflected) || return found
+    _CTSEM_OPCOUNT.probe_units[] += 1
     F = _ctsem_cholesky(copyto!(_laplace_scratch_matrix!(laplace, Float64, d, d,
         :probe_F), M), d)
     screened = issuccess(F)
@@ -4031,6 +4032,7 @@ function _laplace_probe_modes(laplace::CTSEMLaplaceObjective, U::Integer,
     for probe in 1:(2 * nsoft + (reflected ? 1 : 0))
         # The slot's: Newton reads its start and does not keep it.
         start = _laplace_scratch_vector!(laplace, Float64, d, :probe_start)
+        _CTSEM_OPCOUNT.probe_starts[] += 1
         if probe <= 2 * nsoft
             j = (probe + 1) >> 1
             reach = min(_LAPLACE_PROBE_REACH / sqrt(max(E.values[j], 1e-8)), 3.0)
@@ -4042,6 +4044,7 @@ function _laplace_probe_modes(laplace::CTSEMLaplaceObjective, U::Integer,
         if screened
             at = _laplace_unit_objective_gradient(laplace, U, values, Ls, start,
                 aws, atgrad)
+            _CTSEM_OPCOUNT.probe_gradients[] += 1
             isfinite(at.value) || continue
             # miss = a + M (p - u)
             @inbounds for i in 1:d
@@ -4052,6 +4055,7 @@ function _laplace_probe_modes(laplace::CTSEMLaplaceObjective, U::Integer,
                 miss[i] = acc
             end
             dot(miss, ldiv!(solved, F, miss)) > 1 || continue
+            _CTSEM_OPCOUNT.probe_nongaussian[] += 1
             # And only where a second maximum can lie on the line: past the
             # found one the line falls, and a maximum beyond a valley makes it
             # rise again, so the slope along it turns outward somewhere. The
@@ -4073,6 +4077,7 @@ function _laplace_probe_modes(laplace::CTSEMLaplaceObjective, U::Integer,
                     end
                     rg = _laplace_unit_objective_gradient(laplace, U, values, Ls,
                         ray, aws, raygrad)
+                    _CTSEM_OPCOUNT.probe_gradients[] += 1
                     isfinite(rg.value) || continue
                     if dot(rg.gradient, start) - dot(rg.gradient, found.u) > 0
                         copyto!(start, ray)
@@ -4084,6 +4089,7 @@ function _laplace_probe_modes(laplace::CTSEMLaplaceObjective, U::Integer,
             outward || continue
         end
         r = _laplace_newton_unit_mode(laplace, U, values, Ls, aws, start)
+        _CTSEM_OPCOUNT.probe_newtons[] += 1
         (r.converged && isfinite(r.value)) || continue
         any(m -> _laplace_maxabsdiff(m, r.u) < 1e-4, seen) && continue
         push!(seen, r.u)
@@ -4101,6 +4107,7 @@ function _laplace_probe_modes(laplace::CTSEMLaplaceObjective, U::Integer,
             repaired=found.repaired || r.repaired, curvature=nothing,
             final=r.final)
         bestterm = term
+        _CTSEM_OPCOUNT.probe_better[] += 1
     end
     return best
 end

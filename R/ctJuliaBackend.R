@@ -1658,7 +1658,11 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
 # better message, by `ctModelCycleCheck.R` when the model is built. Both are
 # worth having: this one also covers a chain that only exists after
 # `.ctModelIntOverPop()` has rewritten the cells.
-.CT_JULIA_PARSREF <- "\\bPARS\\s*\\[\\s*\\d+\\s*,\\s*\\d+\\s*\\]"
+# Any cell of the table read by matrix, row and column -- PARS, or another
+# system matrix such as the `DRIFT[1,1]` a drift-scaled diffusion reads. The
+# name is matched against the table's matrices, so `state[k]`, `tdpreds[k]`
+# and `tipreds[j]`, which take one index, are never cells.
+.CT_JULIA_CELLREF <- "\\b([A-Za-z][A-Za-z0-9_]*)\\s*\\[\\s*(\\d+)\\s*,\\s*(\\d+)\\s*\\]"
 # A T0MEANS or T0VAR cell may also read the subject's TI predictors, which
 # `ctModelWriter.R` has already written as `tipreds[j]`. They stay in the text:
 # the engine reads them from a tail of the subject's parameter vector
@@ -1666,12 +1670,28 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
 # before any row, with no row context to read them from.
 .CT_JULIA_TIPREDREF <- "\\btipreds\\s*\\[\\s*\\d+\\s*\\]"
 
-.ctJuliaResolveStaticRefs <- function(p, rows) {
+# `required` says, per row, whether a cell that cannot be resolved is an error
+# (a matrix the engine evaluates only from the parameters) or stays as it is (a
+# matrix it can also evaluate per row; see `.ctJuliaParameterTable()`). Every
+# cell is resolved against the table as it was passed in and the results
+# applied afterwards, so a cell reading another that is resolved here reads
+# its expression, not the row that resolving it left behind. Which rows
+# resolved is the result's attribute `resolved`.
+.ctJuliaResolveStaticRefs <- function(p, rows, required = rep(TRUE, length(rows))) {
 
-  refs_of <- function(x) unique(gsub("[[:space:]]", "",
-    regmatches(x, gregexpr(.CT_JULIA_PARSREF, x, perl = TRUE))[[1L]]))
+  matrices <- unique(as.character(p$matrix))
+  refs_of <- function(x) {
+    found <- regmatches(x, gregexpr(.CT_JULIA_CELLREF, x, perl = TRUE))[[1L]]
+    found <- gsub("[[:space:]]", "", found)
+    unique(found[sub("\\[.*$", "", found) %in% matrices])
+  }
+  name_of <- function(ref) sub("\\[.*$", "", ref)
   index_of <- function(ref) as.integer(regmatches(ref, gregexpr("\\d+", ref))[[1L]])
   cellname <- function(i) paste0(p$matrix[i], "[", p$row[i], ",", p$col[i], "]")
+  refpattern <- function(ref) {
+    kc <- index_of(ref)
+    paste0("\\b", name_of(ref), "\\s*\\[\\s*", kc[1L], "\\s*,\\s*", kc[2L], "\\s*\\]")
+  }
 
   # `resolve` and `compose` are mutually recursive -- a PARS cell may itself
   # be an expression over another PARS cell -- which works because both are
@@ -1681,7 +1701,7 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
       "It is a circular reference: ", paste(c(visited, key), collapse = " -> "),
       ". Break the chain by making one of those cells a fixed value")))
     kc <- index_of(key)
-    row_k <- which(p$matrix == "PARS" & p$row == kc[1L] & p$col == kc[2L])
+    row_k <- which(p$matrix == name_of(key) & p$row == kc[1L] & p$col == kc[2L])
     if (!length(row_k)) return(list(kind = "no", why = paste0(
       "It references ", key, ", which the model does not define")))
     row_k <- row_k[1L]
@@ -1709,10 +1729,10 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
       what, " depends on a latent state")))
     refs <- refs_of(text)
     reads_tipreds <- grepl(.CT_JULIA_TIPREDREF, text, perl = TRUE)
-    # Anything indexed but PARS and the TI predictors is not something this
-    # matrix can read.
-    other <- gsub(.CT_JULIA_TIPREDREF, "", gsub(.CT_JULIA_PARSREF, "", text, perl = TRUE),
-      perl = TRUE)
+    # Anything indexed but the table's cells and the TI predictors is not
+    # something this matrix can read.
+    other <- gsub(.CT_JULIA_TIPREDREF, "", text, perl = TRUE)
+    for (ref in refs) other <- gsub(refpattern(ref), "", other, perl = TRUE)
     if (grepl("[", other, fixed = TRUE) || (!length(refs) && !reads_tipreds)) {
       return(list(kind = "no", why = paste0(
         what, " contains an index the julia backend does not recognise: ", text)))
@@ -1734,9 +1754,7 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
     marks <- paste0("\001", seq_along(refs), "\001")
     outer <- text
     for (k in seq_along(refs)) {
-      kc <- index_of(refs[k])
-      outer <- gsub(paste0("\\bPARS\\s*\\[\\s*", kc[1L], "\\s*,\\s*",
-        kc[2L], "\\s*\\]"), marks[k], outer, perl = TRUE)
+      outer <- gsub(refpattern(refs[k]), marks[k], outer, perl = TRUE)
     }
     for (k in seq_along(refs)) {
       outer <- gsub(marks[k], if (identical(inner[[k]]$kind, "fixed")) {
@@ -1764,12 +1782,18 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
       text = outer)
   }
 
-  for (i in rows) {
-    r <- compose(as.character(p$param[i]), character(0), cellname(i))
+  results <- lapply(rows, function(i)
+    compose(as.character(p$param[i]), character(0), cellname(i)))
+  resolved <- logical(length(rows))
+  for (j in seq_along(rows)) {
+    i <- rows[j]
+    r <- results[[j]]
     if (identical(r$kind, "no")) {
+      if (!required[j]) next
       stop("Julia backend cannot resolve ", cellname(i), " = ", p$param[i], ". ",
         r$why, ".", call. = FALSE)
     }
+    resolved[j] <- TRUE
     p$param[i] <- NA_character_
     if (identical(r$kind, "fixed")) {
       p$value[i] <- r$value
@@ -1791,6 +1815,7 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
       p$transform[i] <- r$text
     }
   }
+  attr(p, "resolved") <- resolved
   p
 }
 
@@ -2032,13 +2057,28 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
   predict_matrices <- c("PARS", "DRIFT", "CINT", "DIFFUSION", "JAx")
   update_matrices <- c("LAMBDA", "MANIFESTMEANS", "MANIFESTVAR", "Jy", "RESPONSE")
   td_matrices <- c("TDPREDEFFECT", "Jtd")
-  p$predicttransform[dynamic & p$matrix %in% predict_matrices] <- .ctJuliaTDExpression(p$param[dynamic & p$matrix %in% predict_matrices])
-  p$updatetransform[dynamic & p$matrix %in% update_matrices] <- .ctJuliaTDExpression(p$param[dynamic & p$matrix %in% update_matrices])
-  p$tdtransform[dynamic & p$matrix %in% td_matrices] <- .ctJuliaTDExpression(p$param[dynamic & p$matrix %in% td_matrices])
-  unsupported_dynamic <- dynamic & !(p$matrix %in% c(predict_matrices, update_matrices, td_matrices))
-  if (any(unsupported_dynamic)) {
-    p <- .ctJuliaResolveStaticRefs(p, which(unsupported_dynamic))
-  }
+  # A cell written as an expression is evaluated per row only where it reads a
+  # latent state or a time dependent predictor, directly or through the cells
+  # it reads. One that reads only parameters, other cells and the unit's TI
+  # predictors is a constant of the subject: it is composed into an ordinary
+  # transform here (`.ctJuliaResolveStaticRefs()`) and evaluated once a
+  # subject, as the matrices with no per-row evaluation always were. Evaluated
+  # per row it was recomputed at every prediction or update, and a per-row
+  # group writing JAx, DIFFUSION or MANIFESTVAR makes the reverse pass release
+  # every deferred cotangent at every row (`_ctsem_reverse_tape!`). On the
+  # affect pilot that was 296 cells -- set points tracking slower processes,
+  # drift-scaled diffusions, varying residual sds, window loadings -- none of
+  # which read a state.
+  candidates <- which(dynamic)
+  per_row_capable <- p$matrix[candidates] %in%
+    c(predict_matrices, update_matrices, td_matrices)
+  p <- .ctJuliaResolveStaticRefs(p, candidates, required = !per_row_capable)
+  per_row <- dynamic
+  per_row[candidates[attr(p, "resolved")]] <- FALSE
+  attr(p, "resolved") <- NULL
+  p$predicttransform[per_row & p$matrix %in% predict_matrices] <- .ctJuliaTDExpression(p$param[per_row & p$matrix %in% predict_matrices])
+  p$updatetransform[per_row & p$matrix %in% update_matrices] <- .ctJuliaTDExpression(p$param[per_row & p$matrix %in% update_matrices])
+  p$tdtransform[per_row & p$matrix %in% td_matrices] <- .ctJuliaTDExpression(p$param[per_row & p$matrix %in% td_matrices])
   p$param[dynamic] <- NA_character_
   bare <- free & is.na(p$transform)
   p$transform[bare] <- paste0("param[", p$parnumber[bare], "]")
@@ -4369,6 +4409,19 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
   regular <- .ctJuliaNoNA(as.character(table$transform), "")[free]
   numbers <- .ctJuliaNoNA(as.integer(table$parnumber), 0L)[free]
   regular <- ifelse(nzchar(regular), regular, paste0("param[", numbers, "]"))
+  # A TI predictor a regular transform reads is a parameter-vector position by
+  # the time the engine builds it (`_ctsem_ti_tail_rendering`, past every raw
+  # parameter), and the engine's query refuses `tipreds[j]` as text: asked as
+  # written, every such cell announced a compile that never happened.
+  past <- max(c(0L, numbers))
+  regular <- vapply(regular, function(text) {
+    hits <- regmatches(text, gregexpr(.CT_JULIA_TIPREDREF, text, perl = TRUE))[[1L]]
+    for (hit in unique(hits)) {
+      j <- as.integer(regmatches(hit, regexpr("\\d+", hit)))
+      text <- gsub(hit, paste0("param[", past + j, "]"), text, fixed = TRUE)
+    }
+    text
+  }, character(1), USE.NAMES = FALSE)
   complex <- c(.ctJuliaNoNA(as.character(table$predicttransform), ""),
     .ctJuliaNoNA(as.character(table$updatetransform), ""),
     .ctJuliaNoNA(as.character(table$tdtransform), ""))
