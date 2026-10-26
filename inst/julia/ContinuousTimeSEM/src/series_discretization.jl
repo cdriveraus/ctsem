@@ -907,17 +907,18 @@ end
 The conditioning of the Lyapunov operator a buffer last solved against: the
 smallest pivot of the packed system's LU, or, on the Schur route, the smallest
 `|s_ii + s_jj|` over the Schur factor's diagonal -- the eigenvalue sums the
-operator divides by, a 2x2 block contributing its real part twice.
+operator divides by, a 2x2 block (standardised, so its diagonal is the pair's
+real part) contributing its real part twice. NaN where the Schur iteration did
+not converge, which sends the interval to the series.
 """
-_series_lyap_conditioning(buffer::LyapKsolveBuffer{T}) where {T} =
-    _series_min_pivot(buffer.ksolve_O, buffer.ksolve_system_dim)
-
-function _series_lyap_conditioning(buffer::LyapSchurBuffer)
+function _series_lyap_conditioning(buffer::LyapBuffer)
+    buffer.schur || return _series_min_pivot(buffer.ksolve_O, buffer.ksolve_system_dim)
+    buffer.converged || return NaN
     S = buffer.S
-    k = size(S, 1)
+    k = buffer.dim
     smallest = Inf
     @inbounds for j in 1:k, i in 1:j
-        smallest = min(smallest, abs(Float64(S[i, i] + S[j, j])))
+        smallest = min(smallest, abs(Float64(_primal(S[i, i] + S[j, j]))))
     end
     return smallest
 end

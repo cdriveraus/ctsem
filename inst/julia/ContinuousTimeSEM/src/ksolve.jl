@@ -192,7 +192,7 @@ then sees the same operations in the same order as an elimination carrying
 the right-hand side along, so factoring apart costs nothing in the result
 (bitwise, for Float64 and Duals) and the solve takes every right-hand side in
 one pass. Unlike LAPACK's `getrf!`, the multipliers are not in permuted
-order. `LyapKsolveBuffer` factors the packed Lyapunov system once per
+order. `LyapBuffer`'s packed route factors the Lyapunov system once per
 distinct `A` and solves it many times.
 """
 function _lu_factor_generic!(A::AbstractMatrix{T}, piv::AbstractVector{Int}, n::Int) where {T}

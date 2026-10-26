@@ -176,8 +176,7 @@ function _ctsem_asymptotics(DRIFT, DIFFUSIONcov, CINT, dyn, nlatent,
             # shares the one place that decides packed-versus-Schur. Naming the
             # packed solver here meant a session that had raised the threshold
             # with `ctsem_set_lyapunov_schur_above!` got its choice honoured in
-            # the filter and silently ignored in the summary. Inert at the
-            # default, which is never-Schur, and wrong the moment it changes.
+            # the filter and silently ignored in the summary.
             # The buffer is built per call either way -- the previous code
             # allocated its three workspaces per call too.
             my_lyap!(X, A, Q, LyapBuffer(Float64, k))
