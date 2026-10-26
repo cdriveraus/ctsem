@@ -104,11 +104,26 @@ position's row of `P`, `dep` the free positions the effects' map reads.
 # tanh, and a sinh-arcsinh marginal (Jones & Pewsey 2009; skew `eps`, tail
 # weight `delta`). Both directions are in closed form and each component is
 # increasing in its own coordinate, so it is a bijection everywhere and the
-# sampler exact whatever was learnt. Fitted from the race's long references it
-# made the map 1.78 times as efficient, learnt from the windows 1.52 times
+# sampler exact whatever was learnt
 # (`review/SAMPLING-general-joint-map-2026-10-25.md`).
+#
+# The windows give a few hundred draws, and the map must not extrapolate past
+# them. The earlier coordinates enter `f_k` and `a_k` through `c tanh(u / c)`
+# (`_jmap_tri_sat`): the same map near the centre, a location and scale that
+# stop bending beyond about `c` sd. Read as `u`, quadratics fitted from 480
+# draws moved later locations by up to 22 sd at a draw 14 sd out on gN1, and
+# its worst held-out draw lost 970 nats to the normal; saturated, 9, and the
+# mean gain grew. And
+# `delta` is held at most 1, tails no lighter than the normal's: a small sample
+# misses the tails, a fit from it makes them light, and the latent target is
+# then heavy-tailed, where NUTS mixes slowly
+# (`scripts/marginal-default-2026-10/tri_saturate.R`).
 
 const _JMAP_TRI_CAP = 3.0
+"""Beyond about this many whitened sd an earlier coordinate stops bending a
+later one's location and scale."""
+const _JMAP_TRI_SAT = 3.0
+_jmap_tri_sat(u) = _JMAP_TRI_SAT * tanh(u / _JMAP_TRI_SAT)
 """Theta's triangular map is learnt for up to this many free parameters; a
 component's fit has `3k + 1` coefficients and a Newton step over them."""
 const _JMAP_TRI_MAXPAR = 30
@@ -134,8 +149,9 @@ function _jmap_tri_forward(tri::_JMapTri, w::AbstractVector{T}) where {T<:Real}
         f = T(tri.f0[k])
         a = T(tri.a0[k])
         for j in 1:(k - 1)
-            f += tri.f1[k, j] * u[j] + tri.f2[k, j] * u[j]^2
-            a += tri.a1[k, j] * u[j]
+            s = _jmap_tri_sat(u[j])
+            f += tri.f1[k, j] * s + tri.f2[k, j] * s^2
+            a += tri.a1[k, j] * s
         end
         a = A * tanh(a / A)
         delta = exp(tri.ld[k])
@@ -155,8 +171,9 @@ function _jmap_tri_inverse(tri::_JMapTri, u::AbstractVector)
         f = tri.f0[k]
         a = tri.a0[k]
         for j in 1:(k - 1)
-            f += tri.f1[k, j] * u[j] + tri.f2[k, j] * u[j]^2
-            a += tri.a1[k, j] * u[j]
+            s = _jmap_tri_sat(u[j])
+            f += tri.f1[k, j] * s + tri.f2[k, j] * s^2
+            a += tri.a1[k, j] * s
         end
         a = A * tanh(a / A)
         v = (u[k] - f) * exp(-a)
@@ -183,25 +200,27 @@ end
 
 # A component's negative log likelihood over whitened draws `U` (a column each),
 # coefficients `p` = f0, f1[1:k-1], f2[1:k-1], a0, a1[1:k-1], eps, log delta,
-# with a unit ridge on all but the level and the scale.
+# with a unit ridge on all but the level and the scale. `pinned`: `p` stops at
+# eps and log delta is 0.
 struct _JMapTriNLL{M}
     U::M
     k::Int
+    pinned::Bool
 end
 function (F::_JMapTriNLL)(p::AbstractVector{T}) where {T}
     U = F.U
     k = F.k
     A = _JMAP_TRI_CAP
-    delta = exp(p[3k + 1])
+    delta = F.pinned ? one(T) : exp(p[3k + 1])
     epsk = p[3k]
     s = zero(T)
     @inbounds for i in axes(U, 2)
         f = p[1]
         a = p[2k]
         for j in 1:(k - 1)
-            uj = U[j, i]
-            f += p[1 + j] * uj + p[k + j] * uj^2
-            a += p[2k + j] * uj
+            sj = _jmap_tri_sat(U[j, i])
+            f += p[1 + j] * sj + p[k + j] * sj^2
+            a += p[2k + j] * sj
         end
         a = A * tanh(a / A)
         v = (U[k, i] - f) * exp(-a)
@@ -209,18 +228,47 @@ function (F::_JMapTriNLL)(p::AbstractVector{T}) where {T}
         s += sinh(r)^2 / 2 - (log(delta) + log(cosh(r)) - log1p(v^2) / 2) + a
     end
     reg = zero(T)
-    for j in 2:(3k + 1)
+    for j in 2:length(p)
         j == 2k && continue
         reg += p[j]^2
     end
     return s + reg / 2
 end
 
+# Damped Newton on `F` from `p`, on the Hessian's eigenvalues floored.
+function _jmap_tri_newton(F::_JMapTriNLL, p::Vector{Float64}, iters::Int)
+    val = F(p)
+    for _ in 1:iters
+        g = ForwardDiff.gradient(F, p)
+        H = ForwardDiff.hessian(F, p)
+        ev = eigen(Symmetric((H .+ transpose(H)) ./ 2))
+        lam = max.(ev.values, 1e-6 * maximum(abs, ev.values) + 1e-8)
+        step = -(ev.vectors * ((transpose(ev.vectors) * g) ./ lam))
+        t = 1.0
+        improved = false
+        for _ in 1:30
+            pn = p .+ t .* step
+            vn = F(pn)
+            if isfinite(vn) && vn < val - 1e-10 * abs(val)
+                improved = abs(val - vn) > 1e-9 * max(1.0, abs(val))
+                p = pn
+                val = vn
+                break
+            end
+            t /= 2
+        end
+        improved || break
+    end
+    return p
+end
+
 """
     _jmap_tri_fit(U; iters)
 
 The triangular map fitted to whitened draws `U` (a column each) by maximum
-likelihood, a component at a time, by damped Newton from the identity.
+likelihood, a component at a time, by damped Newton from the identity; a
+component whose tails come out lighter than the normal's is fitted again with
+its tail weight held at the normal's.
 """
 function _jmap_tri_fit(U::AbstractMatrix; iters::Int=60)
     n = size(U, 1)
@@ -228,29 +276,9 @@ function _jmap_tri_fit(U::AbstractMatrix; iters::Int=60)
     a0 = zeros(n); a1 = zeros(n, n); epsv = zeros(n); ld = zeros(n)
     X = Matrix{Float64}(U)
     for k in 1:n
-        F = _JMapTriNLL(X, k)
-        p = zeros(3k + 1)
-        val = F(p)
-        for _ in 1:iters
-            g = ForwardDiff.gradient(F, p)
-            H = Symmetric(ForwardDiff.hessian(F, p))
-            ev = eigen(Symmetric((H .+ transpose(H)) ./ 2))
-            lam = max.(ev.values, 1e-6 * maximum(abs, ev.values) + 1e-8)
-            step = -(ev.vectors * ((transpose(ev.vectors) * g) ./ lam))
-            t = 1.0
-            improved = false
-            for _ in 1:30
-                pn = p .+ t .* step
-                vn = F(pn)
-                if isfinite(vn) && vn < val - 1e-10 * abs(val)
-                    improved = abs(val - vn) > 1e-9 * max(1.0, abs(val))
-                    p = pn
-                    val = vn
-                    break
-                end
-                t /= 2
-            end
-            improved || break
+        p = _jmap_tri_newton(_JMapTriNLL(X, k, false), zeros(3k + 1), iters)
+        if p[3k + 1] > 0
+            p = vcat(_jmap_tri_newton(_JMapTriNLL(X, k, true), p[1:(3k)], iters), 0.0)
         end
         f0[k] = p[1]
         for j in 1:(k - 1)
