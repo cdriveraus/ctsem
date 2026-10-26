@@ -127,6 +127,89 @@ end
     end
 end
 
+# The tables (`SeriesTable`) sum the same truncated series from powers built
+# once per drift, and their pullback releases a run of intervals' cotangents in
+# one pass through the power chains: against the reference, against Horner's
+# kernels, and against the sum of Horner's pullbacks over the run.
+@testset "series tables reproduce the kernels and their pullbacks" begin
+    CT = ContinuousTimeSEM
+    rng = MersenneTwister(3)
+    cases = [
+        ("stable", [-0.8 0.3 0.1; 0.2 -0.5 0.05; -0.1 0.2 -1.2], (1e-3, 0.3, 0.7, 2.7)),
+        ("singular", [-1.0 0.5; 0.5 -0.25], (0.8, 4.0)),
+        ("stiff with a near-zero eigenvalue", [-40.0 0.0; 3.0 -1e-9], (1e-4, 1.3)),
+        ("long interval", [-0.5 0.2; 0.1 -0.3], (25.0, 0.01)),
+        ("explosive", [0.4 0.1; 0.0 0.2], (3.0,)),
+    ]
+    for (label, J, hs) in cases
+        p = size(J, 1)
+        n = p + 1
+        Jn = zeros(n, n)
+        Jn[1:p, 1:p] = J
+        B = randn(rng, p, p)
+        Q = B * B' + 0.1I
+        Qn = zeros(n, n)
+        Qn[1:p, 1:p] = Q
+        noise = CT.SeriesTable(Float64, n, true)
+        intercept = CT.SeriesTable(Float64, n, false)
+        @test !CT._series_table_key!(noise, Jn, Qn, p)
+        @test !CT._series_table_key!(intercept, Jn, nothing, p)
+        @test CT._series_table_key!(noise, Jn, Qn, p)
+        noise_bar = CT.SeriesTableBar(Float64)
+        intercept_bar = CT.SeriesTableBar(Float64)
+        Jb_sum = zeros(n, n)
+        Qb_sum = zeros(n, n)
+        Ji_sum = zeros(n, n)
+        for h in hs
+            horner = CT.SeriesKernelBuffer(Float64, n)
+            table = CT.SeriesKernelBuffer(Float64, n)
+            V = copy(CT._series_noise!(horner, Jn, Qn, h, p))
+            Vt = copy(CT._series_noise_table!(table, noise, h, p))
+            @test _series_relerr(Vt, _series_reference_noise(J, Q, h)) < 1e-13
+            @test Vt ≈ V rtol = 1e-13
+            @test Vt == Vt'
+            C = randn(rng, p, p)
+            CT._series_noise_pullback!(Jb_sum, Qb_sum, horner, p, C)
+            CT._series_noise_table_pullback!(noise_bar, table, noise, p, C)
+
+            Phi = copy(CT._series_intercept!(horner, Jn, h, p))
+            Phit = copy(CT._series_intercept_table!(table, intercept, h, p))
+            @test _series_relerr(Phit, _series_reference_phi(J, h)) < 1e-13
+            @test Phit ≈ Phi rtol = 1e-13
+            C = randn(rng, p, p)
+            CT._series_intercept_pullback!(Ji_sum, horner, p, C)
+            CT._series_intercept_table_pullback!(intercept_bar, table, intercept, p, C)
+        end
+        Jb = zeros(n, n)
+        Qb = zeros(n, n)
+        CT._series_table_pullback!(Jb, Qb, noise, noise_bar)
+        @test Jb ≈ Jb_sum rtol = 1e-11 atol = 1e-13
+        @test Qb ≈ Qb_sum rtol = 1e-11 atol = 1e-13
+        Ji = zeros(n, n)
+        CT._series_table_pullback!(Ji, nothing, intercept, intercept_bar)
+        @test Ji ≈ Ji_sum rtol = 1e-11 atol = 1e-13
+        # Released: a second release adds nothing, and the next run starts
+        # from zero however long the last one was.
+        @test !noise_bar.pending
+        CT._series_table_pullback!(Jb, Qb, noise, noise_bar)
+        @test Jb ≈ Jb_sum rtol = 1e-11 atol = 1e-13
+        table = CT.SeriesKernelBuffer(Float64, n)
+        CT._series_noise_table!(table, noise, hs[1], p)
+        C = randn(rng, p, p)
+        CT._series_noise_table_pullback!(noise_bar, table, noise, p, C)
+        horner = CT.SeriesKernelBuffer(Float64, n)
+        CT._series_noise!(horner, Jn, Qn, hs[1], p)
+        J1 = zeros(n, n)
+        Q1 = zeros(n, n)
+        CT._series_noise_pullback!(J1, Q1, horner, p, C)
+        J2 = zeros(n, n)
+        Q2 = zeros(n, n)
+        CT._series_table_pullback!(J2, Q2, noise, noise_bar)
+        @test J2 ≈ J1 rtol = 1e-11 atol = 1e-13
+        @test Q2 ≈ Q1 rtol = 1e-11 atol = 1e-13
+    end
+end
+
 # Two states whose cross effect is one parameter in both cells, as in the R
 # fixture that found this: det(DRIFT) = a1 a2 - c^2, which is exactly zero at
 # a1 = -1, a2 = -0.25, c = 0.5 -- an eigenvalue of zero, so both the intercept
