@@ -91,6 +91,28 @@ categorical_model <- function(names, type) {
   m$pars$indvarying <- m$pars$param %in% "cint"
   m
 }
+# A Gaussian indicator and an interval-censored one: a recorded 0-10 value is
+# the interval of the latent response its category covers, on a response scale
+# whose half-width and power are free (RESPONSE), as on the affect pilot.
+censored <- function(d) {
+  d$y1 <- d$eta + stats::rnorm(nrow(d), 0, 0.5)
+  d$c1 <- pmin(pmax(round(5 + 2 * d$eta + stats::rnorm(nrow(d), 0, 0.7)), 0), 10)
+  d$eta <- NULL
+  d
+}
+censored_model <- function() {
+  mvar <- diag(0, 2)
+  mvar[1, 1] <- "mvar"
+  mvar[2, 2] <- "mvc"
+  m <- suppressWarnings(suppressMessages(ctModel(type = "ct", n.latent = 1,
+    n.manifest = 2, manifestNames = c("y1", "c1"), latentNames = "eta1",
+    LAMBDA = matrix(1, 2, 1), MANIFESTMEANS = matrix(c(0, "mmc"), 2, 1),
+    CINT = matrix("cint"), T0MEANS = matrix(0), MANIFESTVAR = mvar,
+    manifesttype = c(0L, 4L), censormin = c(-Inf, 0), censormax = c(Inf, 10),
+    RESPONSE = matrix(c("0", "1", "0.5", "0.8"), 2, 2, byrow = TRUE))))
+  m$pars$indvarying <- m$pars$param %in% "cint"
+  m
+}
 # What a user does with a fit after making it. Each of these compiled 1-7 s on
 # its first call in a fresh session (scripts/first-call-compile, 2026-10-16:
 # sampling 3.6 s and a sampled ctFit 7.2 s, ctGenerateFromFit 3.3, a profile
@@ -180,7 +202,16 @@ shapes <- list(
     data = function() categorical(sim_latent(8, 6), c("b1", "b2"), 1L)),
   ordinal_laplace = list(route = "laplace",
     model = function() categorical_model(c("o1", "o2"), 2L),
-    data = function() categorical(sim_latent(10, 6), c("o1", "o2"), 2L))
+    data = function() categorical(sim_latent(10, 6), c("o1", "o2"), 2L)),
+  # A censored item's moments are taken in forward mode
+  # (`_binary_moment_dual!`), which no ordinal or binary item reaches, at the
+  # width its observation reads: three, with the response scale's half-width
+  # and power free. A Laplace unit's curvature differentiates them at its own
+  # dual type, so a model with such an item compiled them at its first
+  # evaluation: about 90 s of the affect pilot's
+  # (review/PRECOMPILE-curvature-width-2026-10-26.md).
+  censored_laplace = list(route = "laplace", model = censored_model,
+    data = function() censored(sim_latent(10, 6)))
 )
 only <- Sys.getenv("CTSEM_PRECOMPILE_SHAPES", "")
 if (nzchar(only)) shapes <- shapes[strsplit(only, ",", fixed = TRUE)[[1]]]
