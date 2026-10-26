@@ -2985,6 +2985,16 @@ the point a probe starts at has to be past the valley, not merely towards it.
 const _LAPLACE_PROBE_REACH = 3.0
 
 """
+How far, in nats, a unit's value at a probe start may differ from the found
+mode's quadratic there for the line to count as Gaussian without its screening
+gradient (`_laplace_probe_modes`). On the affect pilot a trace of every start
+found no line the gradient screen called non-Gaussian within 1.3e-3, the nine
+that reached Newton at 0.37 and more, and the two better modes at 1.09 and
+more; over half the starts were Gaussian to roundoff.
+"""
+const _LAPLACE_PROBE_VALUE_TOL = 1e-3
+
+"""
     ctsem_set_mode_probes!(on)
 
 Turn the inner solve's probes for a better mode (`_laplace_probe_modes`) on or
@@ -4000,13 +4010,14 @@ the reflection the found mode's quadratic is wrong by construction, so the
 screen passes it, and near the origin, where the reflection is the found mode,
 the screen stops it.
 
-A probe is screened before Newton runs from it, at the cost of one gradient:
-where `g_U` is the quadratic the found mode's curvature `M` describes, the
-gradient at `p` is `-M (p - u)` and a Newton step from `p` lands on `u`. Newton
-runs only where the actual gradient `a` would land it more than one posterior
-sd away, `(a + M (p - u))' M^-1 (a + M (p - u)) > 1`, or where `M` does not
-factor. Most probes return to the mode they started from, and this is what
-they cost then.
+A probe is screened before Newton runs from it, at the cost of one value and,
+where that is not the found mode's quadratic to `_LAPLACE_PROBE_VALUE_TOL`,
+one gradient: where `g_U` is the quadratic the found mode's curvature `M`
+describes, the gradient at `p` is `-M (p - u)` and a Newton step from `p` lands
+on `u`. Newton runs only where the actual gradient `a` would land it more than
+one posterior sd away, `(a + M (p - u))' M^-1 (a + M (p - u)) > 1`, or where `M`
+does not factor. Most probes return to the mode they started from, and this
+is what they cost then.
 
 Between two maxima the term (`_laplace_unit_primal`), not `g_U`, decides:
 where their terms cross, the larger is the better single-mode approximation of
@@ -4140,6 +4151,28 @@ function _laplace_probe_modes(laplace::CTSEMLaplaceObjective, U::Integer,
             start .= .-found.u
         end
         if screened
+            # The value first, a forward pass: where it is the found mode's
+            # quadratic to `_LAPLACE_PROBE_VALUE_TOL`, the line is Gaussian as
+            # far as the screen below could tell, without its gradient. On the
+            # nonlinear nl10 benchmark every start was Gaussian and the
+            # screening gradients were 30% of a gradient
+            # (review/BENCH-nl10-laplace-cost-2026-10-26.md). A value that
+            # disagrees for another reason only sends the start on to them.
+            v = _laplace_unit_loglik_value(laplace, U, values, Ls, start, aws,
+                atgrad).value
+            _CTSEM_OPCOUNT.probe_values[] += 1
+            if isfinite(v)
+                drop = 0.0
+                @inbounds for i in 1:d
+                    acc = 0.0
+                    for k in 1:d
+                        acc += M[i, k] * (start[k] - found.u[k])
+                    end
+                    drop += (start[i] - found.u[i]) * acc
+                end
+                abs(v - dot(start, start) / 2 - (found.value - drop / 2)) <
+                    _LAPLACE_PROBE_VALUE_TOL && continue
+            end
             at = _laplace_unit_objective_gradient(laplace, U, values, Ls, start,
                 aws, atgrad)
             _CTSEM_OPCOUNT.probe_gradients[] += 1

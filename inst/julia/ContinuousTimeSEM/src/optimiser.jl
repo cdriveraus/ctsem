@@ -439,11 +439,12 @@ function _ctsem_lbfgs(fg!, x0::AbstractVector; memory::Integer=20,
         # The trials' lengths and their excess over the linear model, for the
         # jump watch (`jump`); empty when nothing watches. A trial the route
         # refused comes back as a huge sentinel and is no measurement of the
-        # objective, so it is not one of them. Not in a coreset stage, whose
-        # objective weights a few units many times over: a spike there is one
-        # unit's, scaled, and a search that fails in a stage leaves it for the
-        # full objective, where the watch sees the jump if there is one.
-        watching = jump !== nothing && !_ctsem_coreset_live(coreset)
+        # objective, so it is not one of them. A coreset stage watches but
+        # names nothing: its objective weights a few units many times over, so
+        # a spike there is one unit's, scaled. A search that fails in a stage
+        # leaves it for the full objective, where the watch sees the jump if
+        # there is one, and so does one that creeps (below).
+        watching = jump !== nothing
         trial_alpha = Float64[]
         trial_excess = Float64[]
         found = false
@@ -499,6 +500,23 @@ function _ctsem_lbfgs(fg!, x0::AbstractVector; memory::Integer=20,
         if accepted && xn == x
             accepted = false
         end
+        # A jump the watch saw counts only once backtracking has confirmed it:
+        # the search, retried as it always is, found no step at all (below), or
+        # found one only below the jump's scale for the third search running
+        # -- creeping along a spike's top. A plateau backtracking gets past is
+        # no jump, and the search goes on as it always did.
+        if accepted && found && alpha < found_lo
+            crept += 1
+        elseif accepted
+            crept = 0
+        end
+        creeping = accepted && crept >= 3
+        # A stage creeping so never fails its search, and its iterations are
+        # outside the stall watch's windows: the affect pilot's v3_sub40ns
+        # crept along one person's spike for ten stage iterations, |g| 1.2e3
+        # and 0.01 nats gained. It leaves for the full objective, keeping the
+        # count, so one more such search there names the jump.
+        creeping && _ctsem_coreset_live(coreset) && (accepted = false)
         if !accepted && _ctsem_coreset_live(coreset)
             # A coreset whose line search finds nothing has stopped leading
             # anywhere the full objective goes: check it and leave the stage.
@@ -514,20 +532,10 @@ function _ctsem_lbfgs(fg!, x0::AbstractVector; memory::Integer=20,
             C = f; Q = 1.0; recent = [f]
             continue
         end
-        # A jump the watch saw counts only once backtracking has confirmed it:
-        # the search, retried as it always is, found no step at all (below), or
-        # found one only below the jump's scale for the third search running
-        # -- creeping along a spike's top. A plateau backtracking gets past is
-        # no jump, and the search goes on as it always did.
-        if accepted && found && alpha < found_lo
-            crept += 1
-            if crept >= 3
-                _ctsem_jump_record!(jump, x, s, found_hi, found_lo, found_excess)
-                lsfail = true
-                break
-            end
-        elseif accepted
-            crept = 0
+        if creeping
+            _ctsem_jump_record!(jump, x, s, found_hi, found_lo, found_excess)
+            lsfail = true
+            break
         end
         if !accepted && took_structured
             # The structured model's step found nothing: plain L-BFGS from
