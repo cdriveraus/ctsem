@@ -79,16 +79,6 @@ end
 # `_series_terms`.
 const _CTSEM_SERIES_THETA = 0.25
 const _CTSEM_SERIES_MAXTERMS = 20
-# The same for the tables (`SeriesTable`), whose terms are sums rather than
-# products, so a longer step costs terms instead of doublings: at 1 the noise
-# series takes 27 terms and two doublings fewer. Rounding in the sum grows
-# about as e^(2 theta) against a contracting drift's result, a few units in
-# the last place at 1. On a 10-state block with one slow state and 30
-# intervals a drift, a value-and-gradient interval cost 2.3 times less than
-# Horner's at 0.25, 3.0 at 1 and 3.25 at 2
-# (scripts/pilot-curvature-2026-10/series_bench.jl, local, one thread).
-const _CTSEM_SERIES_TABLE_THETA = 1.0
-const _CTSEM_SERIES_TABLE_MAXTERMS = 48
 # Doublings are capped so that an absurd trial point cannot grow the tapes
 # without bound. Past || J dt || = 0.25 * 2^64, about 5e18, the scaled step no
 # longer meets the Taylor bound and the result is inaccurate -- a point no fit
@@ -167,36 +157,30 @@ The smallest `m` for which the tail's third derivative, about
 engine differentiates the likelihood (the Laplace route's outer gradient,
 through its inner curvature).
 """
-function _series_terms(z::Float64, maxterms::Int=_CTSEM_SERIES_MAXTERMS)
+function _series_terms(z::Float64)
     k = 2
     term = z^2 / 2
-    while term > 1e-17 && k < maxterms - 2
+    while term > 1e-17 && k < _CTSEM_SERIES_MAXTERMS - 2
         k += 1
         term *= z / k
     end
     return k + 2
 end
 
-"""
-Doublings and scaled step for `h * J`, and the Taylor terms for `factor * z`,
-with the scaled step's norm at most `theta`. Horner's kernels keep the
-defaults: each of their terms is a product. The tables' terms are sums
-(`SeriesTable`), so they take a longer step and fewer doublings.
-"""
+"""Doublings and scaled step for `h * J`, and the Taylor terms for `factor * z`."""
 function _series_plan!(buf::SeriesKernelBuffer, J::AbstractMatrix, h, p::Int,
-    factor::Float64, theta::Float64=_CTSEM_SERIES_THETA,
-    maxterms::Int=_CTSEM_SERIES_MAXTERMS)
+    factor::Float64)
     hval = Float64(_primal(h))
     nrm = _series_norm1(J, p) * hval
     s = 0
-    if isfinite(nrm) && nrm > theta
-        s = min(ceil(Int, log2(nrm / theta)), _CTSEM_SERIES_MAXDOUBLINGS)
+    if isfinite(nrm) && nrm > _CTSEM_SERIES_THETA
+        s = min(ceil(Int, log2(nrm / _CTSEM_SERIES_THETA)), _CTSEM_SERIES_MAXDOUBLINGS)
     end
     scale = 2.0^s
     h0 = hval / scale
     z = isfinite(nrm) ? factor * nrm / scale : 0.0
     buf.s = s
-    buf.m = _series_terms(z, maxterms)
+    buf.m = _series_terms(z)
     buf.h0 = h0
     n = buf.n
     _series_grow!(buf.horner, buf.m, n)
@@ -536,9 +520,17 @@ end
 # are). A drift that changes every row, as a state-dependent one does, builds
 # and releases a table each row, which costs about what Horner's rule did.
 #
-# On the affect pilot -- thirteen states, a slow tier whose small drift puts
-# almost every interval on the series route -- the series was 56% of a Laplace
-# value and gradient (8 threads, local, 2026-10-25).
+# On the affect pilot -- a slow tier whose small drift puts almost every
+# interval on the series route -- the series was 56% of a Laplace value and
+# gradient (8 threads, local, 2026-10-25). Per interval, a value and gradient
+# through the tables cost 2.3 times less than Horner's on a 10-state block
+# with 30 intervals to a drift (scripts/pilot-curvature-2026-10/
+# series_bench.jl, local, one thread); the doublings are most of what is left.
+# A longer scaled step trades doublings for terms, which the tables make
+# cheap (3.0 times at a step of norm 1), but it costs digits where the series
+# matters most: with the series forced, the explosive drift over a 43-day gap
+# in test_adjoint_gradient_validation.jl read 1.2e-5 off BigFloat, over the
+# test's 1e-5. So the tables keep Horner's step.
 
 """
     SeriesTable{T}(n, noise)
@@ -714,8 +706,7 @@ end
 function _series_noise_table!(buf::SeriesKernelBuffer{T}, tab::SeriesTable{T}, h,
     p::Int) where {T}
     _CTSEM_OPCOUNT.series_noise[] += 1
-    _series_plan!(buf, tab.J, h, p, 2.0, _CTSEM_SERIES_TABLE_THETA,
-        _CTSEM_SERIES_TABLE_MAXTERMS)
+    _series_plan!(buf, tab.J, h, p, 2.0)
     s, m, h0 = buf.s, buf.m, buf.h0
     _series_table_extend!(tab, m)
     out = _series_block(buf.out, p)
@@ -757,8 +748,7 @@ end
 function _series_intercept_table!(buf::SeriesKernelBuffer{T}, tab::SeriesTable{T}, h,
     p::Int) where {T}
     _CTSEM_OPCOUNT.series_intercept[] += 1
-    _series_plan!(buf, tab.J, h, p, 1.0, _CTSEM_SERIES_TABLE_THETA,
-        _CTSEM_SERIES_TABLE_MAXTERMS)
+    _series_plan!(buf, tab.J, h, p, 1.0)
     s, m, h0 = buf.s, buf.m, buf.h0
     _series_table_extend!(tab, s > 0 ? m + 1 : m)
     out = _series_block(buf.out, p)
