@@ -218,11 +218,16 @@ end
     _check_adjoint(objective, values)
 end
 
-# The exponential's derivative is batched across subjects
-# (`_ctsem_frechet_deferrable`) unless a TI effect shifts what a JAx cell
-# reads. The fixture above shifts the TD effect: batched, and the gradient is
-# still exact. The same model with the TI effect on the drift is not batched.
-@testset "TI effects off the drift keep the exponential's derivative batched" begin
+# The exponential's derivative and the covariance pullbacks are batched across
+# subjects, in one group where no TI effect shifts what a deferred cell reads
+# (`_ctsem_layer_subject_invariant`), and otherwise in one group per TI
+# predictor row (`group_keyed`). The fixture above shifts the TD effect: one
+# group, and the gradient is still exact. The same model with the TI effect on
+# the drift is keyed: two subjects, two groups; then twelve subjects with ten
+# distinct rows, more than a chunk's table holds (`_CTSEM_FRECHET_GROUPS`), so
+# a full table is released mid-chunk; then the TI effect on a free DIFFUSION
+# instead, where the covariance batch is what the key keeps apart.
+@testset "TI effects on and off the drift: the exponential's derivative batched by layer" begin
     CT = ContinuousTimeSEM
     data = reshape([0.1, -0.2, 0.15, 0.05, -0.1, 0.2], 1, :)
     tdpreds = reshape([0.0, 1.0, 0.0, 0.0, 0.5, 0.0], 1, :)
@@ -230,6 +235,7 @@ end
     times = [0.0, 0.5, 1.2, 0.0, 0.6, 1.4]
     aws(sp) = CT.CTSEMAdjointWorkspace(Float64, sp, 3, 1)
     @test aws(_ADJOINT_SP_TD_TI).defer_frechet
+    @test !aws(_ADJOINT_SP_TD_TI).group_keyed
     df = _adjoint_test_dataframe(
         drift=[-0.5;;], jax=[-0.5;;], cint=[0.0;;], diffusion=[0.2;;],
         lambda=[1.0;;], jy=[1.0;;], manifestmeans=[0.0;;], manifestvar=[0.3;;],
@@ -242,9 +248,47 @@ end
         ),
     )
     ondrift = ekf_from_data_frame(df, DataFrame(parameter=[1], predictor=[1], coefficient=[3]))
-    @test !aws(ondrift).defer_frechet
+    @test aws(ondrift).defer_frechet && aws(ondrift).group_keyed
     objective = CT.ctsem_objective(ondrift, [1, 4], times, data, tdpreds, tipreds)
     _check_adjoint(objective, [0.3, -0.4, 0.25])
+
+    rows = [0.4, -0.7, 0.4, 0.1, 0.2, 0.3, -0.1, -0.2, -0.3, 0.5, 0.6, 0.4]
+    ns = length(rows)
+    @test length(unique(rows)) > CT._CTSEM_FRECHET_GROUPS
+    many = CT.ctsem_objective(ondrift, collect(1:3:(3ns)),
+        repeat([0.0, 0.5, 1.2], ns) .+ repeat(0.1 .* (1:ns), inner=3),
+        reshape(0.2 .* sin.(1:(3ns)), 1, :), reshape(repeat([0.0, 1.0, 0.0], ns), 1, :),
+        reshape(rows, ns, 1))
+    _check_adjoint(many, [0.3, -0.4, 0.25])
+    # The summed gradient against the subjects' own (`ctsem_subject_gradients`
+    # flushes every subject's derivatives within its walk).
+    g = CT.ctsem_adjoint_gradient(many, [0.3, -0.4, 0.25]).gradient
+    scores = CT.ctsem_subject_gradients(many, [0.3, -0.4, 0.25]).scores
+    @test isapprox(vec(sum(scores; dims=1)), g; rtol=1e-11)
+
+    dfd = _adjoint_test_dataframe(
+        drift=[-0.5;;], jax=[-0.5;;], cint=[0.0;;], diffusion=[0.2;;],
+        lambda=[1.0;;], jy=[1.0;;], manifestmeans=[0.0;;], manifestvar=[0.3;;],
+        t0var=[0.5;;], t0means=[0.0;;],
+        tdpredeffect=[0.0;;], jtd=[1.0;;],
+        free=Dict(
+            (:DRIFT, 1, 1) => (1, "-log1p_exp(param[1])"),
+            (:JAx, 1, 1) => (1, "-log1p_exp(param[1])"),
+            (:TDPREDEFFECT, 1, 1) => (2, "param[2]"),
+            (:DIFFUSION, 1, 1) => (3, "exp(param[3])"),
+        ),
+    )
+    ondiffusion = ekf_from_data_frame(dfd, DataFrame(parameter=[3], predictor=[1], coefficient=[4]))
+    w = CT.CTSEMAdjointWorkspace(Float64, ondiffusion, 4, 1)
+    @test w.defer_frechet && w.chunk_dvar && w.group_keyed
+    keyed = CT.ctsem_objective(ondiffusion, collect(1:3:(3ns)),
+        repeat([0.0, 0.5, 1.2], ns) .+ repeat(0.1 .* (1:ns), inner=3),
+        reshape(0.2 .* sin.(1:(3ns)), 1, :), reshape(repeat([0.0, 1.0, 0.0], ns), 1, :),
+        reshape(rows, ns, 1))
+    x = [0.3, -0.4, -0.2, 0.35]
+    _check_adjoint(keyed, x)
+    @test isapprox(vec(sum(CT.ctsem_subject_gradients(keyed, x).scores; dims=1)),
+        CT.ctsem_adjoint_gradient(keyed, x).gradient; rtol=1e-11)
 end
 
 @testset "Forward-gradient validation: TD predictor with off-diagonal Jtd (2-state)" begin
@@ -595,7 +639,7 @@ function _adjoint_moment_parameters(kind::Symbol)
     elseif kind in (:cubic2, :cubic2c)
         # The cubic beside a linear second state, uncoupled or driven by the
         # first (`:cubic2c`): the drift cells read only state 1, so the
-        # cubature spans it alone (`_ctsem_moment_states`).
+        # cubature spans it alone (`_ctsem_moment_classes`).
         cross = kind === :cubic2c ? 0.3 : 0.0
         return ekf_from_data_frame(_adjoint_test_dataframe(
             drift=[0.0 0.0; cross -0.5], jax=[0.0 0.0; cross -0.5], cint=[0.0; 0.0;;],
@@ -609,6 +653,27 @@ function _adjoint_moment_parameters(kind::Symbol)
                 (:T0MEANS, 1, 1) => (6, "param[6]")),
             predict=Dict((:DRIFT, 1, 1) => "PARS[1,1] * (1 + PARS[2,1] * state[1]^2)",
                 (:JAx, 1, 1) => "PARS[1,1] * (1 + 3 * PARS[2,1] * state[1]^2)")))
+    elseif kind === :cubic2both
+        # Two cubic states that do not interact, each the one-state cubic's
+        # model with its parameters: each cell reads one state, so each is
+        # integrated over that state alone.
+        return ekf_from_data_frame(_adjoint_test_dataframe(
+            drift=[0.0 0.0; 0.0 0.0], jax=[0.0 0.0; 0.0 0.0], cint=[0.0; 0.0;;],
+            diffusion=[0.7 0.0; 0.0 0.7], lambda=[1.0 0.0; 0.0 1.0], jy=[1.0 0.0; 0.0 1.0],
+            manifestmeans=[0.0; 0.0;;], manifestvar=[0.4 0.0; 0.0 0.4],
+            t0var=[1.0 0.0; 0.0 1.0], t0means=[0.0; 0.0;;], pars=[0.0; 0.0;;],
+            free=Dict((:PARS, 1, 1) => (1, "param[1]"),
+                (:PARS, 2, 1) => (2, "log1p_exp(param[2])"),
+                (:DIFFUSION, 1, 1) => (3, "log1p_exp(param[3])"),
+                (:DIFFUSION, 2, 2) => (3, "log1p_exp(param[3])"),
+                (:CINT, 1, 1) => (4, "param[4]"), (:CINT, 2, 1) => (4, "param[4]"),
+                (:MANIFESTVAR, 1, 1) => (5, "log1p_exp(param[5])"),
+                (:MANIFESTVAR, 2, 2) => (5, "log1p_exp(param[5])"),
+                (:T0MEANS, 1, 1) => (6, "param[6]"), (:T0MEANS, 2, 1) => (6, "param[6]")),
+            predict=Dict((:DRIFT, 1, 1) => "PARS[1,1] * (1 + PARS[2,1] * state[1]^2)",
+                (:JAx, 1, 1) => "PARS[1,1] * (1 + 3 * PARS[2,1] * state[1]^2)",
+                (:DRIFT, 2, 2) => "PARS[1,1] * (1 + PARS[2,1] * state[2]^2)",
+                (:JAx, 2, 2) => "PARS[1,1] * (1 + 3 * PARS[2,1] * state[2]^2)")))
     end
     return ekf_from_data_frame(_adjoint_test_dataframe(
         drift=[0.0;;], jax=[0.0;;], cint=[0.0;;], diffusion=[0.7;;],
@@ -658,7 +723,12 @@ end
     # state 1 sat at radius sqrt(2) and it did not.
     ws = ContinuousTimeSEM._init_continuous_ekf_workspace(Float64,
         _adjoint_moment_parameters(:cubic2c))
-    @test ws.moment_s == 1 && ws.moment_perm == [1, 2]
+    @test [cl.states for cl in ws.moment_classes] == [[1]]
+    # Each cell over the states it reads: van der Pol's damping and its
+    # Jacobian's diagonal read state 1, the Jacobian's other cell both.
+    ws = ContinuousTimeSEM._init_continuous_ekf_workspace(Float64,
+        _adjoint_moment_parameters(:vanderpol))
+    @test sort([cl.states for cl in ws.moment_classes]) == [[1], [1, 2]]
     values = [-0.4, 0.3, 0.2, 0.1, -0.5, 0.2]
     both = ContinuousTimeSEM.ctsem_objective(_adjoint_moment_parameters(:cubic2), [1, 8],
         times, data2, zeros(0, 14), zeros(2, 0), 0.25)
@@ -671,6 +741,15 @@ end
         ContinuousTimeSEM.ctsem_set_moment_predict!(true)
     end
     @test both(values) ≈ one(values) + linear rtol = 1e-10
+    # Two cubic states that do not interact: the likelihood is each one's, as
+    # each cell is integrated over its own state. A rule over both put each
+    # state's points at radius sqrt(2).
+    twin = ContinuousTimeSEM.ctsem_objective(_adjoint_moment_parameters(:cubic2both),
+        [1, 8], times, data2, zeros(0, 14), zeros(2, 0), 0.25)
+    other = ContinuousTimeSEM.ctsem_objective(_adjoint_moment_parameters(:cubic), [1, 8],
+        times, data2[2:2, :], zeros(0, 14), zeros(2, 0), 0.25)
+    @test twin(values) ≈ one(values) + other(values) rtol = 1e-10
+    _check_adjoint(twin, values)
 end
 
 @testset "discretization cache cannot go stale" begin

@@ -475,11 +475,20 @@ function _group_replay!(written, working, indices, transforms::Tuple, ctx, k::In
     return _group_replay!(written, working, indices, Base.tail(transforms), ctx, k + 1)
 end
 
-# A group of `CTSEMExpr`s is one type, so it is walked by index.
+# A group of `CTSEMExpr`s is one type, so it is walked by index, with the long
+# expressions' task buffers fetched once (`_ctsem_expr_eval`).
 function _group_replay!(written, working, indices, transforms::Vector{CTSEMExpr}, ctx,
     k::Int)
+    _ctsem_expr_any_long(transforms) ||
+        return _group_replay_exprs!(written, working, indices, transforms, ctx, k, nothing)
+    return _group_replay_exprs!(written, working, indices, transforms, ctx, k,
+        _ctsem_expr_scratches(ctx))
+end
+
+function _group_replay_exprs!(written, working, indices, transforms::Vector{CTSEMExpr},
+    ctx, k::Int, scratch)
     @inbounds for j in k:length(transforms)
-        value = transforms[j](ctx)
+        value = _ctsem_expr_eval(transforms[j], ctx, scratch)
         written[j] = value
         working[indices[j]] = value
     end
@@ -528,6 +537,15 @@ end
 # those alone: a random effect's `10*state[k]` once rather than once per state.
 function _group_reverse_walk!(all_params_bar, state_bar, transforms::Vector{CTSEMExpr},
     indices, supports, saved, dual_ctx, dctx, ti, k::Int)
+    # The long expressions' task buffers, fetched once for the group.
+    sc = _ctsem_expr_any_long(transforms) ? _ctsem_expr_scratch(eltype(state_bar)) : nothing
+    _group_reverse_exprs!(all_params_bar, state_bar, transforms, indices, saved, dual_ctx,
+        dctx, ti, k, sc)
+    return nothing
+end
+
+function _group_reverse_exprs!(all_params_bar, state_bar, transforms::Vector{CTSEMExpr},
+    indices, saved, dual_ctx, dctx, ti, k::Int, sc)
     @inbounds for m in k:-1:1
         transform = transforms[m]
         idx = indices[m]
@@ -540,12 +558,13 @@ function _group_reverse_walk!(all_params_bar, state_bar, transforms::Vector{CTSE
             else
                 V = eltype(state_bar)
                 n = length(transform.op)
-                if n <= 8
+                # Tuples up to four nodes, the group's buffers past that, as
+                # the forward evaluation (`_ctsem_expr_eval`).
+                if n <= 4
                     _ctsem_expr_pullback!(all_params_bar, state_bar, transform, dctx, ti,
-                        cotangent, V, ntuple(_ -> zero(V), Val(8)),
-                        Base.setindex(ntuple(_ -> zero(V), Val(8)), one(V), transform.root))
+                        cotangent, V, ntuple(_ -> zero(V), Val(4)),
+                        Base.setindex(ntuple(_ -> zero(V), Val(4)), one(V), transform.root))
                 else
-                    sc = _ctsem_expr_scratch(V)
                     g = _ctsem_expr_buffer(sc.b, n)
                     fill!(view(g, 1:n), zero(V))
                     g[transform.root] = one(V)

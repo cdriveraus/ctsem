@@ -172,13 +172,7 @@ function _ctsem_asymptotics(DRIFT, DIFFUSIONcov, CINT, dyn, nlatent,
     solved = try
         if continuous_time
             X = zeros(Float64, k, k)
-            # Through `my_lyap!` rather than calling `ksolve!` by name, so this
-            # shares the one place that decides packed-versus-Schur. Naming the
-            # packed solver here meant a session that had raised the threshold
-            # with `ctsem_set_lyapunov_schur_above!` got its choice honoured in
-            # the filter and silently ignored in the summary.
-            # The buffer is built per call either way -- the previous code
-            # allocated its three workspaces per call too.
+            # The filter's own solve, built per call.
             my_lyap!(X, A, Q, LyapBuffer(Float64, k))
             all(isfinite, X) ? X : nothing
         else

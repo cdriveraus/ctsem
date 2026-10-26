@@ -961,44 +961,109 @@ function _ctsem_dynamics_nonlinear(sp::EKFParameters,
 end
 
 """
-    _ctsem_moment_states(sp, predict_indices, avg, n)
+    _ctsem_moment_classes(sp, predict_indices, avg, n)
 
-The states the averaged cells `avg` read (`_ctsem_moment_cells`), first, then
-the rest: `(perm, s)` with the first `s` of `perm` read. A moment-matched
-prediction needs cubature over those `s` alone (`_ekf_moment_cells!`). Asked as
+The averaged cells `avg` (`_ctsem_moment_cells`) grouped by the states each
+reads (`CTSEMMomentClass`): a moment-matched prediction integrates each class
+over those states alone (`_ekf_moment_cells!`). Asked as
 `_ctsem_dynamics_nonlinear` asks, by running the whole group with one state
 moved at a time, so a cell reading a state through another cell of the group
-counts. A group that throws at the probe reads every state.
+counts; a group that throws at the probe reads every state in every cell. A
+cell that reads no state -- only a time-dependent predictor -- is in no class
+and keeps its value at the mean. A class evaluates its cells and the group's
+cells they read (`_ctsem_complex_transform_supports`), in group order, where
+the group is interpreted, and the whole group where it is compiled closures,
+whose subsets would each be a type of their own.
 """
-function _ctsem_moment_states(sp::EKFParameters, predict_indices::AbstractVector{Int},
+function _ctsem_moment_classes(sp::EKFParameters, predict_indices::AbstractVector{Int},
     avg::AbstractVector{Int}, n::Int)
     probe = collect(range(0.31, step=0.013, length=length(sp.mutables)))
     base = reshape(collect(range(0.23, step=0.011, length=n)), n, 1)
+    parsp = CTSEMPars(copy(probe), sp.parameter_axis)
+    ntd = hasproperty(parsp, :TDPREDEFFECT) ? size(parsp.TDPREDEFFECT, 2) : 0
     run = function (state)
         pk = copy(probe)
         parsk = CTSEMPars(pk, sp.parameter_axis)
-        ntd = hasproperty(parsk, :TDPREDEFFECT) ? size(parsk.TDPREDEFFECT, 2) : 0
         tdpreds = collect(range(0.19, step=0.007, length=ntd))
         ctx = CTSEMRowContext(state, parsk, tdpreds, _CTSEMProbePredictors(), 0.5, 0.25,
             1, 2)
         apply_complex_transforms_at_indices!(pk, predict_indices, sp.predict_transforms, ctx)
         return pk
     end
-    reads = falses(n)
+    reads = falses(n, length(avg))
     try
         at = run(base)
         for k in 1:n
             moved = copy(base)
             moved[k, 1] += 0.37
             pk = run(moved)
-            reads[k] = any(i -> !(pk[i] == at[i]), avg)
+            for (q, i) in enumerate(avg)
+                reads[k, q] = !(pk[i] == at[i])
+            end
         end
     catch
         fill!(reads, true)
     end
-    any(reads) || fill!(reads, true)
-    perm = vcat(findall(reads), findall(.!reads))
-    return perm, count(reads)
+    position = Dict(p => g for (g, p) in enumerate(predict_indices))
+    supports, _ = _ctsem_complex_transform_supports(sp.predict_transforms, predict_indices,
+        sp, n, ntd)
+    interpreted = sp.predict_transforms isa Vector{CTSEMExpr}
+    drift = _ctsem_component_positions(sp, :DRIFT)
+    nr = size(parsp.DRIFT, 1)
+    members = Dict{Vector{Int},Vector{Int}}()
+    order = Vector{Int}[]
+    for q in eachindex(avg)
+        R = findall(view(reads, :, q))
+        isempty(R) && continue
+        haskey(members, R) || (members[R] = Int[]; push!(order, R))
+        push!(members[R], q)
+    end
+    classes = CTSEMMomentClass[]
+    point0 = 0
+    col0 = 0
+    dval0 = 0
+    for R in order
+        cells = members[R]
+        if interpreted
+            needed = Set(position[avg[q]] for q in cells)
+            stack = collect(needed)
+            while !isempty(stack)
+                g = pop!(stack)
+                for p in supports[g]
+                    h = get(position, p, 0)
+                    (h == 0 || h in needed) && continue
+                    push!(needed, h)
+                    push!(stack, h)
+                end
+            end
+            sub = sort!(collect(needed))
+            exprs = sp.predict_transforms[sub]
+        else
+            sub = collect(eachindex(predict_indices))
+            exprs = CTSEMExpr[]
+        end
+        dr = NTuple{3,Int}[]
+        for q in cells
+            t = findfirst(==(avg[q]), drift)
+            t === nothing && continue
+            push!(dr, (q, (t - 1) % nr + 1, (t - 1) ÷ nr + 1))
+        end
+        r = length(R)
+        push!(classes, CTSEMMomentClass(R, cells, sub, predict_indices[sub], exprs, dr,
+            point0, col0, dval0))
+        point0 += 2r
+        col0 += r
+        dval0 += 2r * length(dr)
+    end
+    return classes
+end
+
+"""The points, factor columns and point DRIFT values a substep's classes take."""
+function _ctsem_moment_sizes(classes::Vector{CTSEMMomentClass})
+    isempty(classes) && return 0, 0, 0
+    last = classes[end]
+    r = length(last.states)
+    return last.point0 + 2r, last.col0 + r, last.dval0 + 2r * length(last.drift)
 end
 
 """
@@ -1030,22 +1095,33 @@ the assumed-density (Gaussian) prediction. For `x ~ N(m, P)` the moments of
 (Stein's lemma for `E[f(x) (x - m)']`), which is the EKF's prediction with
 `J(m)` replaced by `E J(x)` and `f(m)` by `E f(x)`. So the substep's
 discretisation runs as it always does on the group's JAx, DRIFT and CINT cells
-averaged over the third-degree spherical cubature points `m +- sqrt(n) L e_j`
-(`P + eps I = L L'`, weights `1 / 2n`), plus a correction to the mean the
-averaged matrices miss, `c = E[DRIFT(x) (x - m)]`, which the discretisation adds
-to its affine offset (`ws.moment_c`). The rule integrates the mean exactly for
-a drift cubic in the state and the slope for one quadratic, where the EKF
-drops the curvature terms: on a cubic damping the EKF's likelihood was 36 nats
-from the particle filter's at the true values and this one 2.4
+averaged by third-degree cubature, plus a correction to the mean the averaged
+matrices miss, `c = E[DRIFT(x) (x - m)]`, which the discretisation adds to its
+affine offset (`ws.moment_c`). The rule integrates the mean exactly for a drift
+cubic in the state and the slope for one quadratic, where the EKF drops the
+curvature terms: on a cubic damping the EKF's likelihood was 36 nats from the
+particle filter's at the true values and this one 2.4
 (`scripts/iekf-2026-10/gaussian_prediction_1d.R`).
 
-The group is evaluated at each point in turn on the tape (`_record_moment_group!`,
-reversed by `_reverse_moment!`), the averages written into its JAx, DRIFT and
-CINT cells and its other cells put back to their values at the mean, where the
+Each cell is averaged over the states it reads alone, by the spherical rule of
+their Gaussian: the cells reading the same `r` states (`CTSEMMomentClass`) at
+the `2r` points `m +- sqrt(r) B e_j`, weights `1 / 2r`, where
+`B = P[:, R] U^-1` and `U'U` is `P` over those states (`_moment_class_factor!`):
+the read states at the rule's points and the rest at their regression on them,
+which is what the mean correction's `x - m` needs. A rule over every state the
+group reads put a cell reading one of `s` states at radius `sqrt(s)` rather
+than one: integrated over the cells' own states, a model whose states do not
+interact gives each one's likelihood, which the joint rule did not, and a cell
+costs `2r` evaluations rather than the group's `2s` each.
+
+The class's cells, and the group's cells they read, are evaluated at each of
+its points on the tape (`_record_moment_group!`, reversed by
+`_reverse_moment!`); then the averages are written into the averaged cells
+and the group's other cells put back to their values at the mean, where the
 caller evaluated it first. Returns false, leaving the mean's evaluation as it
-was, where the covariance does not factor. `P` is the state's covariance, the
-substep's incoming one unless the mesh's defect asks at another
-(`_record_substep_defect!`).
+was, where a class's covariance does not factor. `P` is the state's
+covariance, the substep's incoming one unless the mesh's defect asks at
+another (`_record_substep_defect!`); its lower triangle is read.
 """
 function _ekf_moment_cells!(ws::ContinuousEKFWorkspace{T}, pars, sp, all_params, ctx,
     trace, P::AbstractMatrix=ws.P_update.data) where {T}
@@ -1053,27 +1129,18 @@ function _ekf_moment_cells!(ws::ContinuousEKFWorkspace{T}, pars, sp, all_params,
     idx = ws.predict_param_indices
     avg = ws.moment_avg
     oth = ws.moment_oth
-    perm = ws.moment_perm
-    s = ws.moment_s
+    classes = ws.moment_classes
     m = ws.moment_m
-    U = ws.moment_U
+    B = ws.moment_B
     D = ws.moment_d
     c = ws.moment_c
     acc = ws.moment_acc
-    drifts = ws.moment_drifts
-    # The states the averaged cells read first (`_ctsem_moment_states`): with
-    # `L = U'` the factor of P in that order, the cubature of the `s` read
-    # states' Gaussian, carried to the rest by their regression on them, puts
-    # its points along L's first `s` columns -- `P[:, S] L_SS^-T` -- at radius
-    # `sqrt(s)`. Exact as the full rule is (third degree in what the cells
-    # read), at `2s` group evaluations rather than `2n`.
-    @inbounds for j in 1:n, i in 1:j
-        U[i, j] = P[perm[j], perm[i]]
-    end
-    _ridge_diagonal!(U, n, 1e-10)
-    if !_ctsem_cholesky!(U, n)
-        fill!(c, zero(T))
-        return false
+    dvals = ws.moment_dvals
+    for cl in classes
+        if !_moment_class_factor!(B, P, cl.states, cl.col0, n)
+            fill!(c, zero(T))
+            return false
+        end
     end
     @inbounds for i in 1:n
         m[i] = ws.state[i]
@@ -1082,39 +1149,47 @@ function _ekf_moment_cells!(ws::ContinuousEKFWorkspace{T}, pars, sp, all_params,
     @inbounds for k in eachindex(oth)
         saved[k] = all_params[oth[k]]
     end
-    fill!(acc, zero(T))
+    # A cell in no class reads no state and keeps its value at the mean.
+    @inbounds for k in eachindex(avg)
+        acc[k] = all_params[avg[k]]
+    end
     fill!(c, zero(T))
-    npoints = 2s
-    w = inv(T(npoints))
-    r = sqrt(T(s))
-    DRIFT = pars.DRIFT
     first = 0
-    point = 0
-    @inbounds for j in 1:s, sgn in (1, -1)
-        point += 1
-        # Column j of L = U' is row j of U, from its diagonal on, in the
-        # permuted order; the offsets are kept in the state's own.
-        for q in 1:n
-            v = q >= j ? sgn * r * U[j, q] : zero(T)
-            D[perm[q], point] = v
-            ws.state[perm[q]] = m[perm[q]] + v
+    @inbounds for cl in classes
+        r = length(cl.states)
+        w = inv(T(2r))
+        rad = sqrt(T(r))
+        nd = length(cl.drift)
+        for q in cl.cells
+            acc[q] = zero(T)
         end
-        g = _record_moment_group!(trace, 1, idx, all_params, ctx)
-        point == 1 && (first = g)
-        apply_complex_transforms_at_indices!(all_params, idx, sp.predict_transforms, ctx)
-        for k in eachindex(avg)
-            acc[k] += w * all_params[avg[k]]
-        end
-        offset = (point - 1) * n
-        for b in 1:n, a in 1:n
-            drifts[a, offset + b] = DRIFT[a, b]
-        end
-        for a in 1:n
-            s = zero(T)
-            for b in 1:n
-                s += DRIFT[a, b] * D[b, point]
+        for p in 1:(2r)
+            point = cl.point0 + p
+            col = cl.col0 + ((p + 1) >> 1)
+            scale = isodd(p) ? rad : -rad
+            for a in 1:n
+                v = scale * B[a, col]
+                D[a, point] = v
+                ws.state[a] = m[a] + v
             end
-            c[a] += w * s
+            g = _record_moment_group!(trace, 1, idx, all_params, ctx)
+            point == 1 && (first = g)
+            if isempty(cl.exprs)
+                apply_complex_transforms_at_indices!(all_params, idx, sp.predict_transforms,
+                    ctx)
+            else
+                apply_complex_transforms_at_indices!(all_params, cl.indices, cl.exprs, ctx)
+            end
+            for q in cl.cells
+                acc[q] += w * all_params[avg[q]]
+            end
+            base = cl.dval0 + (p - 1) * nd
+            for t in 1:nd
+                q, a, b = cl.drift[t]
+                v = all_params[avg[q]]
+                dvals[base + t] = v
+                c[a] += w * v * D[b, point]
+            end
         end
     end
     @inbounds for i in 1:n
@@ -1126,7 +1201,52 @@ function _ekf_moment_cells!(ws::ContinuousEKFWorkspace{T}, pars, sp, all_params,
     @inbounds for k in eachindex(oth)
         all_params[oth[k]] = saved[k]
     end
-    _record_moment!(trace, ws, first, npoints, n)
+    _record_moment!(trace, ws, first)
+    return true
+end
+
+"""Entry `(a, b)` of a symmetric matrix from its lower triangle."""
+@inline _ctsem_lower(P, a::Int, b::Int) = a >= b ? P[a, b] : P[b, a]
+
+"""
+    _moment_class_factor!(B, P, R, col0, n)
+
+A class's factor columns, `B[:, col0 .+ (1:r)] = P[:, R] U^-1`, where `U'U` is
+`P` over the states `R` ridged as the filter ridges a covariance
+(`_ridge_diagonal!`): its rows `R` are `U'`, Cholesky's lower factor, and the
+others are the regression of every state on those, so the offsets
+`+-sqrt(r) B[:, j]` put `R` at the spherical rule's points and the rest where
+their conditional means put them. O(n r^2). False where `P` over `R` does not
+factor.
+"""
+function _moment_class_factor!(B::AbstractMatrix{T}, P::AbstractMatrix, R::Vector{Int},
+    col0::Int, n::Int) where {T}
+    r = length(R)
+    @inbounds for j in 1:r
+        cj = col0 + j
+        Rj = R[j]
+        d = _ctsem_lower(P, Rj, Rj) + T(1e-10)
+        for q in 1:(j - 1)
+            d -= B[Rj, col0 + q]^2
+        end
+        (d > zero(d) && isfinite(d)) || return false
+        ljj = sqrt(d)
+        # Every row but the class's earlier states, which are above the
+        # factor's diagonal: the class's later states and the other states
+        # alike, by the same recurrence.
+        for a in 1:n
+            k = findfirst(==(a), R)
+            if k !== nothing && k <= j
+                B[a, cj] = k == j ? ljj : zero(T)
+                continue
+            end
+            t = _ctsem_lower(P, a, Rj)
+            for q in 1:(j - 1)
+                t -= B[a, col0 + q] * B[Rj, col0 + q]
+            end
+            B[a, cj] = t / ljj
+        end
+    end
     return true
 end
 

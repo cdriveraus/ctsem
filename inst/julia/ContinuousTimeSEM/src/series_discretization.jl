@@ -55,8 +55,8 @@ Conditioning, in units of the interval, below which the discretisation takes
 the series route.
 
 Compared against the smallest LU pivot of the intercept block times `dt`, and
-separately against the smallest pivot of the packed Lyapunov operator times
-`dt`, so each piece switches on its own. At 0.01 the closed forms are good to
+separately against the smallest eigenvalue sum of the Lyapunov operator
+(`_series_lyap_conditioning`) times `dt`, so each piece switches on its own. At 0.01 the closed forms are good to
 about 2e-14 in value, 2e-12 in gradient and 2e-10 in curvature where they hand
 over, which is also the size of the step the switch makes: small enough for a
 central-difference Hessian with steps of 1e-4 to see about 0.02 in the worst
@@ -957,14 +957,15 @@ end
 
 """
 The conditioning of the Lyapunov operator a buffer last solved against: the
-smallest pivot of the packed system's LU, or, on the Schur route, the smallest
-`|s_ii + s_jj|` over the Schur factor's diagonal -- the eigenvalue sums the
-operator divides by, a 2x2 block (standardised, so its diagonal is the pair's
-real part) contributing its real part twice. NaN where the Schur iteration did
-not converge, which sends the interval to the series.
+smallest `|s_ii + s_jj|` over the Schur factor's diagonal -- the eigenvalue
+sums the operator divides by, a 2x2 block (standardised, so its diagonal is
+the pair's real part) contributing its real part twice. NaN where the Schur
+iteration did not converge, which sends the interval to the series. A Dual's
+is its value type's (`LyapTangents`), so the Dual and Float64 filters route
+alike.
 """
 function _series_lyap_conditioning(buffer::LyapBuffer)
-    buffer.schur || return _series_min_pivot(buffer.ksolve_O, buffer.ksolve_system_dim)
+    buffer.tangents === nothing || return _series_lyap_conditioning(buffer.tangents.primal)
     buffer.converged || return NaN
     S = buffer.S
     k = buffer.dim
