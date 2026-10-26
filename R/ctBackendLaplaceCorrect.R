@@ -838,6 +838,12 @@
       attributes(value) <- list(gradient = grad)
       value
     }
+    # A sum over the units too -- the flagged units' rules, the rest's Laplace
+    # terms -- which a coreset of them may stand in for (`.ctCoresetLpg()`),
+    # on the density's own terms: every draw a placement of every flagged
+    # unit's rule was most of 'checked''s time here (anomS1: 804 s against
+    # 224 with the rules read where they were placed).
+    attr(fn, "unitsum") <- TRUE
     attr(fn, "engine") <- engine
     attr(fn, "batch") <- batches$batch
     attr(fn, "gradbatch") <- batches$gradbatch

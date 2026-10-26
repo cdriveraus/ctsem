@@ -101,10 +101,8 @@
       built
     }
   })
-  # This density is the fit's own sum over units, which a coreset of them may
-  # stand in for (`.ctCoresetLpg()`); a density built on another objective --
-  # the quadrature continuation's, say -- carries no such mark and is never
-  # replaced by the fit's unit terms.
+  # This density is a sum over the fit's units, which a coreset of them may
+  # stand in for (`.ctCoresetLpg()`), built on `engine()$objective`.
   attr(fn, "unitsum") <- TRUE
   # The engine and its objective, for a stage that runs in the engine on this
   # density rather than calling it batch by batch (`.ctDaisEngine()`).

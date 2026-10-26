@@ -254,7 +254,7 @@ function ctsem_dais(objective, centre::AbstractVector, cov::AbstractMatrix;
     coreset::Bool=false, kwargs...)
     # DAIS normalises its weights within each iteration's batch, so a draw's
     # relevance is measured from the batch's best (`_is_top`).
-    cs = coreset && _smc_coreset_capable(objective) ?
+    cs = coreset && _is_coreset_capable(objective) ?
         ctsem_is_coreset(objective; top=:batch) : nothing
     return _dais(objective, cs, centre, cov; kwargs...)
 end

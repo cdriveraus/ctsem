@@ -1784,17 +1784,27 @@ function ctsem_laplace_continuation_revert!(o::CTSEMLaplaceContinuation)
     return ctsem_laplace_continuation_info(o)
 end
 
-function _continuation_place!(o::CTSEMLaplaceContinuation, theta::Vector{Float64})
+"""The options every placement of `o`'s rules reads: the rules' constants,
+which units it places, and the draws and node counts the units keep."""
+_continuation_opts(o::CTSEMLaplaceContinuation) = (nodes=o.nodes,
+    product_maxdim=o.product_maxdim, soft_tau=o.soft_tau, maxdim=o.maxdim,
+    soft_maxdirs=o.soft_maxdirs, draws=o.draws, draws_se=o.draws_se,
+    draws_max=o.draws_max, draws_floor=o.draws_floor, draws_prior=o.draws_prior,
+    draws_df=o.draws_df, draws_seed=o.draws_seed, points=o.points,
+    only=o.screen ? nothing : Set(o.flagged),
+    drawable=o.draws_scope === :all ? nothing : Set(o.forced),
+    draw_units=Set(o.drawn), unit_nodes=o.unit_nodes)
+
+# `refine = false` places each rule as the units keep it, without the refine's
+# checks (`_continuation_refine!`): what a density over the parameters reads
+# at a draw, where a choice made afresh would make the density differ from a
+# coreset of its units (`_continuation_coreset`), and the checks cost a rule
+# of two nodes fewer a unit.
+function _continuation_place!(o::CTSEMLaplaceContinuation, theta::Vector{Float64};
+    refine::Bool=true)
     started = time_ns()
     laplace = o.laplace
-    opts = (nodes=o.nodes, product_maxdim=o.product_maxdim, soft_tau=o.soft_tau,
-        maxdim=o.maxdim,
-        soft_maxdirs=o.soft_maxdirs, draws=o.draws, draws_se=o.draws_se,
-        draws_max=o.draws_max, draws_floor=o.draws_floor, draws_prior=o.draws_prior,
-        draws_df=o.draws_df, draws_seed=o.draws_seed, points=o.points,
-        only=o.screen ? nothing : Set(o.flagged),
-        drawable=o.draws_scope === :all ? nothing : Set(o.forced),
-        draw_units=Set(o.drawn), unit_nodes=o.unit_nodes)
+    opts = _continuation_opts(o)
     placed = _continuation_place(laplace, theta, opts)
     nunits = length(laplace.units.members)
     failed = [placed.rules[U] === nothing && !isempty(laplace.units.blocks[U]) &&
@@ -1806,7 +1816,8 @@ function _continuation_place!(o::CTSEMLaplaceContinuation, theta::Vector{Float64
     # A unit flagged before whose rule could not be placed here keeps its
     # Laplace term: an honest Laplace term beats a rule placed somewhere else.
     filter!(U -> placed.rules[U] !== nothing, flagged)
-    errors = _continuation_refine!(laplace, theta, opts, placed, flagged)
+    errors = refine ? _continuation_refine!(laplace, theta, opts, placed, flagged) :
+        [placed.importance[U] ? placed.se[U] : NaN for U in 1:nunits]
     # A unit narrow enough for a product rule that is on draws all the same
     # took them in the refine's fallback, and keeps them (`o.drawn`).
     o.drawn = sort!(union(o.drawn, [U for U in flagged if placed.importance[U] &&
@@ -2093,9 +2104,10 @@ end
 """The flagged units' fixed-rule terms at `theta`, and their summed gradient,
 in parallel over units and, where there are few of them, over a wide unit's
 nodes (`_continuation_tasks`). Each piece's result is kept by the piece and
-summed in order afterwards."""
+summed in order afterwards. With `scores` (`nunits x length(theta)`), each
+flagged unit's row is its term's gradient times its sampling weight."""
 function _continuation_flagged(o::CTSEMLaplaceContinuation, theta::Vector{Float64},
-    want_gradient::Bool)
+    want_gradient::Bool; scores::Union{Nothing,Matrix{Float64}}=nothing)
     laplace = o.laplace
     spec = laplace.spec
     nf = length(o.rules)
@@ -2190,6 +2202,8 @@ function _continuation_flagged(o::CTSEMLaplaceContinuation, theta::Vector{Float6
         if want_gradient
             all(isfinite, g) || return (values=values, gradient=gradient, ok=false)
             gradient .+= _laplace_unit_weight(laplace, rule.unit) .* g
+            scores === nothing ||
+                (scores[rule.unit, :] .= _laplace_unit_weight(laplace, rule.unit) .* g)
         end
     end
     return (values=values, gradient=gradient, ok=true)
@@ -2231,11 +2245,20 @@ _continuation_copy(r) = (value=r.value,
     unit_loglik=copy(r.unit_loglik), subject_loglik=copy(r.subject_loglik),
     converged=r.converged)
 
+# With `scores` (`nunits x length(theta)`), every unit's score, as the Laplace
+# route gives them (`ctsem_laplace_evaluate`): the rest's from it, the flagged
+# units' from their rules.
 function _continuation_evaluate(o::CTSEMLaplaceContinuation, theta::Vector{Float64},
-    gradient::Bool)
+    gradient::Bool; scores::Union{Nothing,Matrix{Float64}}=nothing)
     started = time_ns()
-    rest = ctsem_laplace_evaluate(o.rest, theta; gradient=gradient)
-    flagged = _continuation_flagged(o, theta, gradient)
+    rs = scores === nothing ? nothing : zeros(length(o.rest_units), length(theta))
+    rest = ctsem_laplace_evaluate(o.rest, theta; gradient=gradient, scores=rs)
+    flagged = _continuation_flagged(o, theta, gradient; scores=scores)
+    if scores !== nothing
+        for (position, U) in enumerate(o.rest_units)
+            scores[U, :] .= view(rs, position, :)
+        end
+    end
     gradient ? (o.gradient_calls += 1) : (o.value_calls += 1)
     evaluations = sum(r.evaluations for r in o.rules; init=0)
     gradient ? (o.member_sweeps += evaluations) : (o.member_values += evaluations)
@@ -2350,17 +2373,18 @@ function _ctsem_probe_value(o::CTSEMLaplaceContinuation, x)
 end
 
 """
-    _continuation_at(f, o, theta; screen=o.screen)
+    _continuation_at(f, o, theta; screen=o.screen, refine=true)
 
 `f()` with `o`'s rules placed at `theta`, every unit scored where `screen` and
-only the flagged units' rules moved otherwise, and `o` put back as it was
+only the flagged units' rules moved otherwise (refined where `refine`,
+`_continuation_place!`), and `o` put back as it was
 after: its placement, the rounds' saved one (`o.previous`), which a probe
 inside a round must not disturb, and the count of placements its record
 reports, since this is not a placement of the correction's own. Its caches go,
 since what they hold was evaluated under the placement `f` saw.
 """
 function _continuation_at(f, o::CTSEMLaplaceContinuation, theta::Vector{Float64};
-    screen::Bool=o.screen)
+    screen::Bool=o.screen, refine::Bool=true)
     saved = NamedTuple{_CONTINUATION_STATE}(
         Tuple(getfield(o, fld) for fld in _CONTINUATION_STATE))
     previous = o.previous
@@ -2369,7 +2393,7 @@ function _continuation_at(f, o::CTSEMLaplaceContinuation, theta::Vector{Float64}
     was = o.screen
     try
         o.screen = screen
-        _continuation_place!(o, theta)
+        _continuation_place!(o, theta; refine=refine)
         return f()
     finally
         for fld in _CONTINUATION_STATE
@@ -2411,7 +2435,10 @@ draw away from the estimate can use: a rule's nodes carry less of the
 integrand the further the parameters move. Read so, the draws of a corrected
 fit put a population sd's mean 2.9 posterior sds high on the race's gD1,
 where the same fit's draws on its Laplace objective were 0.2 off
-(review/REVIEW-fit-uncertainty-2026-10-25.md).
+(review/REVIEW-fit-uncertainty-2026-10-25.md). Each rule is placed as its
+unit keeps it -- its node count, or draws -- and not refined there
+(`refine = false`), so the density is a sum of the units' terms that a coreset
+of them can stand in for (`ctsem_is_coreset`, `_continuation_coreset`).
 
 The generic batch evaluators (`ctsem_evaluate_batch`,
 `ctsem_evaluate_batch_gradient`) and DAIS (`ctsem_dais`) take it as they take
@@ -2424,7 +2451,7 @@ function ctsem_evaluate(d::CTSEMContinuationDensity, values::AbstractVector;
     gradient::Bool=true, contributions::Bool=false, gradient_method=:adjoint)
     o = d.continuation
     theta = _laplace_extend(o.laplace, collect(Float64, values))
-    r = _continuation_at(o, theta; screen=false) do
+    r = _continuation_at(o, theta; screen=false, refine=false) do
         # Less the frozen draws' error only, the guard the probes take against
         # draws that degenerate away from the estimate. Not the product rules'
         # node errors, which the probes subtract too: summed over every
