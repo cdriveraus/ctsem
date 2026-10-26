@@ -78,8 +78,8 @@ end
 
     # Above the threshold the Float64 solve and its pullback take the Schur
     # route, its transposed solve on A's own factors; ForwardDiff through the
-    # primal takes the packed route at Dual type. So this checks the one
-    # against the other.
+    # primal takes it too, by tangent solves. So this checks the adjoint's
+    # formula against the tangent's, two derivations on one factorisation.
     n = ContinuousTimeSEM._CTSEM_LYAP_SCHUR_ABOVE[] + 2
     rng = MersenneTwister(57)
     Al = 0.3 .* randn(rng, n, n) .- 0.7 .* I(n)

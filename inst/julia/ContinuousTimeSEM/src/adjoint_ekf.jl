@@ -54,6 +54,13 @@ const _CTSEM_RIDGE = 1e-10
 # what the last-value rule did plus a scan of 32 scalars per substep.
 const _CTSEM_FRECHET_TABLE = 32
 
+# Parameter layers a chunk holds deferred Fréchet derivatives for at once
+# (`jax_bar_groups`): the distinct TI predictor rows among its subjects, where
+# a TI effect reaches a JAx cell. A full table is released, one pass through
+# the layer per group, so predictors with many distinct values cost what a
+# release per subject did.
+const _CTSEM_FRECHET_GROUPS = 8
+
 ################################################################################
 # Tape records
 ################################################################################
@@ -1145,10 +1152,13 @@ function _flush_frechet!(aws)
         my_exp_frechet!(aws.frechet_Y, L, transpose(aws.frechet_As[e]),
             aws.frechet_accums[e], aws.frechet_buffer)
         dt = aws.frechet_dts[e]
-        if aws.defer_frechet
-            _frechet_add!(aws.jax_bar_deferred, L, dt, n)
-        else
+        # Into the parameter layer the direction belongs to (`frechet_tags`):
+        # the walking subject's cotangent, or a group's deferred matrix.
+        tag = aws.frechet_tags[e]
+        if tag == 0
             _frechet_add!(CTSEMPars(aws.theta_bar, aws.sp.parameter_axis).JAx, L, dt, n)
+        else
+            _frechet_add!(aws.jax_bar_groups[tag], L, dt, n)
         end
     end
     return nothing
@@ -1165,20 +1175,24 @@ end
 """
 Queue the direction `Ā` for the exponential of `scaled = JAx * dt`.
 
-A direction whose key is already in the table is added to that entry; a new
-key takes the next free slot, and a full table is flushed first. `dt` is
-compared before the matrix, so a schedule of irregular intervals pays one
-scalar comparison per live entry and no matrix comparison at all.
+A direction whose key -- the interval, the matrix and the parameter layer it
+belongs to (`frechet_group`) -- is already in the table is added to that
+entry; a new key takes the next free slot, and a full table is flushed first.
+`dt` is compared before the matrix, so a schedule of irregular intervals pays
+one scalar comparison per live entry and no matrix comparison at all.
 """
 function _frechet_enqueue!(aws, dt, scaled::AbstractMatrix, Ā::AbstractMatrix)
+    group = aws.frechet_group
     @inbounds for e in 1:aws.frechet_count
-        if aws.frechet_dts[e] == dt && aws.frechet_As[e] == scaled
+        if aws.frechet_dts[e] == dt && aws.frechet_tags[e] == group &&
+                aws.frechet_As[e] == scaled
             aws.frechet_accums[e] .+= Ā
             return nothing
         end
     end
     aws.frechet_count == length(aws.frechet_dts) && _flush_frechet!(aws)
     e = aws.frechet_count + 1
+    aws.frechet_tags[e] = group
     aws.frechet_dts[e] = dt
     copyto!(aws.frechet_As[e], scaled)
     copyto!(aws.frechet_accums[e], Ā)
@@ -2218,9 +2232,10 @@ function _ctsem_reverse_tape!(tape::CTSEMAdjointTape{T},
     # A walk starts with nothing deferred. The end of a walk flushes both, but
     # a walk an exception left would hand its pending cotangent to the next
     # subject's, which with `_defer_diffusion!`'s comparison skipped would
-    # merge into it unseen.
-    aws.mvar_pending = false
-    aws.dvar_pending = false
+    # merge into it unseen. Except a batch that spans the chunk's subjects
+    # (`chunk_active`), which the chunk clears when it starts.
+    (aws.chunk_active && aws.chunk_mvar) || (aws.mvar_pending = false)
+    (aws.chunk_active && aws.chunk_dvar) || (aws.dvar_pending = false)
     aws.series_reverse.noise_bar.pending = false
     aws.series_reverse.intercept_bar.pending = false
     # Constructed here rather than read from the workspace on purpose: a
@@ -2310,23 +2325,11 @@ function _ctsem_reverse_tape!(tape::CTSEMAdjointTape{T},
                     popbar[a, b] = popscale[a] * popscale[b] *
                         P̄[popidx[a], popidx[b]]
                 end
-                popraw_bar = _rs(sc.nn2, k, k)
-                fill!(popraw_bar, zero(T))
-                # The POPULATION code, not the model's: the forward pass
-                # built this block with it, and a reverse pass differentiating
-                # the other construction gives a gradient for a different
-                # model than the likelihood.
-                _sdcovsqrt2cov_pullback!(popraw_bar, tape.inits[index].POPRAW,
-                    _symmetrize_into!(_rs(sc.nn3, k, k), popbar), k;
-                    scratch=aws.covsqrt_scratch,
-                    covmatcode=aws.sp.population_covmatcode)
-                # Written through the flat cotangent by range rather than by
-                # name: `θ̄ca.RAWPOPVAR` would have to compile for models
-                # whose axis has no such block, and cannot.
-                rng = aws.sp.population_range
-                popslot = reshape(view(θ̄, rng), k, k)
-                @inbounds for b in 1:k, a in 1:k
-                    popslot[a, b] += popraw_bar[a, b]
+                popsym = _symmetrize_into!(_rs(sc.nn3, k, k), popbar)
+                if aws.chunk_active && aws.chunk_pop
+                    _defer_population!(aws, tape.inits[index].POPRAW, popsym, θ̄, k)
+                else
+                    _pullback_population!(θ̄, tape.inits[index].POPRAW, popsym, aws, k)
                 end
                 @inbounds for sidx in popidx
                     for j in 1:n
@@ -2337,26 +2340,22 @@ function _ctsem_reverse_tape!(tape::CTSEMAdjointTape{T},
                     end
                 end
             end
-            # Its own workspace slot rather than `aws.covsqrt_scratch`, which
-            # the pullback on the next line consumes.
-            t0var_bar = _rs(aws.reverse_scratch.t0var_bar, n, n)
-            fill!(t0var_bar, zero(T))
             sym = _symmetrize_into!(_rs(aws.reverse_scratch.sym, n, n), P̄)
-            _sdcovsqrt2cov_pullback!(t0var_bar, tape.inits[index].T0VAR, sym, n;
-                scratch=aws.covsqrt_scratch, covmatcode=aws.sp.covmatcode)
-            θ̄T0V = θ̄ca.T0VAR
-            @inbounds for j in 1:n, i in 1:n
-                θ̄T0V[i, j] += t0var_bar[i, j]
+            if aws.chunk_active && aws.chunk_t0var
+                _defer_t0var!(aws, tape.inits[index].T0VAR, sym, θ̄ca, n)
+            else
+                _pullback_t0var!(θ̄ca, tape.inits[index].T0VAR, sym, aws, n)
             end
             fill!(P̄, zero(T))
         else
             throw(ArgumentError("adjoint: unknown tape entry $(kind)"))
         end
     end
-    # Before the diffusion's release, which the noise table's feeds.
+    # Before the diffusion's release, which the noise table's feeds. A batch
+    # that spans the chunk's subjects stays pending; the chunk releases it.
     _flush_series!(aws, θ̄ca, n)
-    _flush_manifestvar!(aws, θ̄ca, m)
-    _flush_diffusion!(aws, θ̄ca, n)
+    (aws.chunk_active && aws.chunk_mvar) || _flush_manifestvar!(aws, θ̄ca, m)
+    (aws.chunk_active && aws.chunk_dvar) || _flush_diffusion!(aws, θ̄ca, n)
 
     return θ̄
 end
@@ -2496,6 +2495,131 @@ function _flush_manifestvar!(aws, θ̄ca, m::Int)
     # exactly what the intermediate buffer used to be copied for.
     _sdcovsqrt2cov_pullback!(θ̄ca.MANIFESTVAR, aws.mvar_mat, aws.mvar_bar, m;
         scratch=aws.covsqrt_scratch, covmatcode=aws.sp.covmatcode)
+    return nothing
+end
+
+"""
+    _pullback_t0var!(θ̄ca, mat, cov_bar, aws, n)
+
+Pull the initial covariance's (symmetric) cotangent `cov_bar` back through
+T0VAR's covariance construction at the raw matrix `mat`, onto the T0VAR cells.
+"""
+function _pullback_t0var!(θ̄ca, mat, cov_bar, aws, n::Int)
+    T = eltype(cov_bar)
+    # Its own workspace slot rather than `aws.covsqrt_scratch`, which the
+    # pullback consumes.
+    t0var_bar = _rs(aws.reverse_scratch.t0var_bar, n, n)
+    fill!(t0var_bar, zero(T))
+    _sdcovsqrt2cov_pullback!(t0var_bar, mat, cov_bar, n;
+        scratch=aws.covsqrt_scratch, covmatcode=aws.sp.covmatcode)
+    θ̄T0V = θ̄ca.T0VAR
+    @inbounds for j in 1:n, i in 1:n
+        θ̄T0V[i, j] += t0var_bar[i, j]
+    end
+    return nothing
+end
+
+"""
+    _pullback_population!(θ̄, mat, cov_bar, aws, k)
+
+Pull the population block's (symmetric, already scaled) cotangent `cov_bar`
+back through its covariance construction at the raw block `mat`, onto the
+population cells of the flat cotangent `θ̄`.
+"""
+function _pullback_population!(θ̄, mat, cov_bar, aws, k::Int)
+    T = eltype(cov_bar)
+    popraw_bar = _rs(aws.reverse_scratch.nn2, k, k)
+    fill!(popraw_bar, zero(T))
+    # The POPULATION code, not the model's: the forward pass built this block
+    # with it, and a reverse pass differentiating the other construction gives
+    # a gradient for a different model than the likelihood.
+    _sdcovsqrt2cov_pullback!(popraw_bar, mat, cov_bar, k;
+        scratch=aws.covsqrt_scratch, covmatcode=aws.sp.population_covmatcode)
+    # Written through the flat cotangent by range rather than by name:
+    # `θ̄ca.RAWPOPVAR` would have to compile for models whose axis has no such
+    # block, and cannot.
+    popslot = reshape(view(θ̄, aws.sp.population_range), k, k)
+    @inbounds for b in 1:k, a in 1:k
+        popslot[a, b] += popraw_bar[a, b]
+    end
+    return nothing
+end
+
+"""
+    _defer_t0var!(aws, mat, cov_bar, θ̄ca, n)
+
+Hold a subject's initial-covariance cotangent for the chunk's T0VAR batch
+(`chunk_active`), as `_defer_manifestvar!` does a row's: summed while the raw
+matrix is the one already pending, otherwise that batch released first.
+"""
+function _defer_t0var!(aws, mat, cov_bar, θ̄ca, n::Int)
+    acc = aws.t0var_bar_acc
+    if aws.t0var_pending && _ctsem_same_matrix(aws.t0var_mat, mat, n)
+        @inbounds for j in 1:n, i in 1:n
+            acc[i, j] += cov_bar[i, j]
+        end
+        return nothing
+    end
+    _flush_t0var!(aws, θ̄ca, n)
+    @inbounds for j in 1:n, i in 1:n
+        aws.t0var_mat[i, j] = mat[i, j]
+        acc[i, j] = cov_bar[i, j]
+    end
+    aws.t0var_pending = true
+    return nothing
+end
+
+"""Push back whatever `_defer_t0var!` is holding, if anything."""
+function _flush_t0var!(aws, θ̄ca, n::Int)
+    aws.t0var_pending || return nothing
+    aws.t0var_pending = false
+    _pullback_t0var!(θ̄ca, aws.t0var_mat, aws.t0var_bar_acc, aws, n)
+    return nothing
+end
+
+"""`_defer_t0var!` for the population block."""
+function _defer_population!(aws, mat, cov_bar, θ̄, k::Int)
+    acc = aws.pop_bar_acc
+    if aws.pop_pending && _ctsem_same_matrix(aws.pop_mat, mat, k)
+        @inbounds for j in 1:k, i in 1:k
+            acc[i, j] += cov_bar[i, j]
+        end
+        return nothing
+    end
+    _flush_population!(aws, θ̄, k)
+    @inbounds for j in 1:k, i in 1:k
+        aws.pop_mat[i, j] = mat[i, j]
+        acc[i, j] = cov_bar[i, j]
+    end
+    aws.pop_pending = true
+    return nothing
+end
+
+"""Push back whatever `_defer_population!` is holding, if anything."""
+function _flush_population!(aws, θ̄, k::Int)
+    aws.pop_pending || return nothing
+    aws.pop_pending = false
+    _pullback_population!(θ̄, aws.pop_mat, aws.pop_bar_acc, aws, k)
+    return nothing
+end
+
+"""Whether a covariance batch spanning the chunk's subjects is waiting."""
+@inline _chunk_covariances_pending(aws) =
+    (aws.chunk_dvar && aws.dvar_pending) || (aws.chunk_mvar && aws.mvar_pending) ||
+    aws.t0var_pending || aws.pop_pending
+
+"""
+    _flush_chunk_covariances!(aws, θ̄, θ̄ca)
+
+Release the covariance batches a chunk's subjects left pending (`chunk_active`)
+into the flat cotangent `θ̄` (`θ̄ca` its component view), for the chunk's one
+pass through the parameter layer.
+"""
+function _flush_chunk_covariances!(aws, θ̄, θ̄ca)
+    aws.chunk_dvar && _flush_diffusion!(aws, θ̄ca, aws.n)
+    aws.chunk_mvar && _flush_manifestvar!(aws, θ̄ca, aws.m)
+    _flush_t0var!(aws, θ̄ca, aws.n)
+    _flush_population!(aws, θ̄, length(aws.sp.population_indices))
     return nothing
 end
 

@@ -50,19 +50,47 @@ function ctsem_set_lyapunov_schur_above!(k::Integer)
 end
 
 """
+    LyapTangents{V, B}
+
+The Schur route at a `ForwardDiff.Dual` element type: the value parts of `A`
+and `Q` (`A`, `Q`), solved on a buffer of the value type (`primal`, itself on
+the Schur route; a nested Dual recurses), then each partial as the same
+equation on the same factors -- differentiating `A X + X A' + Q = 0`,
+
+    A dX + dX A' + (dA X + X dA' + dQ) = 0,
+
+so `dX` is a Lyapunov solve with `Q` replaced by `dA X + X dA' + dQ`. Exact,
+and a solve against cached factors per partial, where pushing the Duals
+through a factorisation costs it once per partial and, on the packed route,
+O(k^6) each time. `X`, `R` (that right-hand side), `dA` and `tmp` are scratch;
+`parts` holds the partials' solutions.
+"""
+struct LyapTangents{V,B}
+    primal::B
+    A::Matrix{V}
+    Q::Matrix{V}
+    X::Matrix{V}
+    R::Matrix{V}
+    dA::Matrix{V}
+    tmp::Matrix{V}
+    parts::Vector{Matrix{V}}
+end
+
+"""
     LyapBuffer{T}
 
 Workspace for the Lyapunov solve `A X + X A' + Q = 0` on a `dim x dim` block,
 by the packed `ksolve!` system or by the real Schur factors of `A`
 (`real_schur.jl`), whichever `LyapBuffer(T, n)` chose: Schur above
-`_CTSEM_LYAP_SCHUR_ABOVE` for `Float64` and `Float32`, the packed system
-otherwise and for every `ForwardDiff.Dual`.
+`_CTSEM_LYAP_SCHUR_ABOVE` for `Float64`, `Float32` and every
+`ForwardDiff.Dual` over them (`LyapTangents`), the packed system otherwise.
 
-One type for both routes, with the route a run-time field, so that a
-workspace's type does not depend on the model's size: two types here would
-compile the filter again for every model above the threshold (CLAUDE.md, "A
-model's types do not depend on the model"). The fields of the route not taken
-are empty.
+One type per element type for both routes, with the route a run-time field,
+so that a workspace's type does not depend on the model's size: two types
+here would compile the filter again for every model above the threshold
+(CLAUDE.md, "A model's types do not depend on the model"). The fields of the
+route not taken are empty; `tangents` is `nothing` unless the element type is
+a Dual.
 
 Either route keeps its factors across calls and rebuilds them only when `A`
 changes (`last_A`; `_blocks_identical` compares Dual partials too, so a factor
@@ -70,7 +98,7 @@ never serves a point it was not built at). The reverse pass solves against one
 `A` at every substep of a linear model; without the cache the packed route
 made the 6-latent reverse pass 8% slower (dev1).
 """
-mutable struct LyapBuffer{TYPE<:Number}
+mutable struct LyapBuffer{TYPE<:Number,TG}
     dim::Int
     schur::Bool
     # The packed route: the system's LU, the right-hand side, the pivots.
@@ -92,25 +120,49 @@ mutable struct LyapBuffer{TYPE<:Number}
     converged::Bool
     last_A::Matrix{TYPE}
     valid::Bool
+    tangents::TG
 end
 
 """
     LyapBuffer(T, n)
 
 A Lyapunov workspace for `n × n` matrices with scalar type `T`, on the Schur
-route for `Float64` and `Float32` above `_CTSEM_LYAP_SCHUR_ABOVE` and on the
-packed route otherwise.
+route above `_CTSEM_LYAP_SCHUR_ABOVE` for `Float64`, `Float32` and Duals over
+them, and on the packed route otherwise.
 """
 function LyapBuffer(::Type{TYPE}, n::Int) where {TYPE<:Number}
-    schur = TYPE <: LinearAlgebra.BlasReal && n > _CTSEM_LYAP_SCHUR_ABOVE[]
+    schur = _lyap_schur_route(TYPE, n)
     tri_n = schur ? 0 : gauss_summation(n)
     s = schur ? n : 0
-    return LyapBuffer{TYPE}(n, schur,
+    return LyapBuffer{TYPE,Nothing}(n, schur,
         zeros(TYPE, tri_n, tri_n), zeros(TYPE, tri_n), zeros(Int, tri_n), n, tri_n,
         zeros(TYPE, s, s), zeros(TYPE, s, s), zeros(TYPE, s, s), zeros(TYPE, s, s),
         zeros(TYPE, schur ? max(2n, 4) : 0), zeros(TYPE, schur ? 4 : 0, schur ? 4 : 0),
-        false, zeros(TYPE, n, n), false)
+        false, zeros(TYPE, n, n), false, nothing)
 end
+
+function LyapBuffer(::Type{D}, n::Int) where {Tg,V,N,D<:ForwardDiff.Dual{Tg,V,N}}
+    schur = _lyap_schur_route(D, n)
+    s = schur ? n : 0
+    tangents = LyapTangents(LyapBuffer(V, s),
+        zeros(V, s, s), zeros(V, s, s), zeros(V, s, s), zeros(V, s, s), zeros(V, s, s),
+        zeros(V, s, s), [zeros(V, s, s) for _ in 1:N])
+    tri_n = schur ? 0 : gauss_summation(n)
+    return LyapBuffer{D,typeof(tangents)}(n, schur,
+        zeros(D, tri_n, tri_n), zeros(D, tri_n), zeros(Int, tri_n), n, tri_n,
+        zeros(D, 0, 0), zeros(D, 0, 0), zeros(D, 0, 0), zeros(D, 0, 0), zeros(D, 0),
+        zeros(D, 0, 0), false, zeros(D, n, n), false, tangents)
+end
+
+"""
+Whether `LyapBuffer(T, n)` takes the Schur route: above the threshold for
+`Float64` and `Float32`, and for a Dual where its value type would, so a Dual
+over BigFloat, as the adjoint's BigFloat checks run, stays packed.
+"""
+_lyap_schur_route(::Type{T}, n::Int) where {T<:Number} =
+    T <: LinearAlgebra.BlasReal && n > _CTSEM_LYAP_SCHUR_ABOVE[]
+_lyap_schur_route(::Type{<:ForwardDiff.Dual{Tg,V}}, n::Int) where {Tg,V} =
+    _lyap_schur_route(V, n)
 
 """
     LyapBuffer(mat::AbstractMatrix)
@@ -176,14 +228,54 @@ product goes through the engine's kernels (`small_linalg.jl`). Where the QR
 iteration did not converge, or `A` was not finite, `X` is NaN, as a
 non-finite `A` leaves the packed route's.
 
-Defined for `Float64` and `Float32` only, which are the only buffers
+Defined for `Float64` and `Float32`, and for Duals over them by tangents on
+the value type's factors (`LyapTangents`), which are the only buffers
 `LyapBuffer(T, n)` puts on this route. The route is chosen by a run-time
-field, so without the fallback below every Dual type a model runs would
+field, so without the fallback below any other element type (BigFloat) would
 compile the whole route as well, although it never takes it.
 """
 _lyap_schur!(X::AbstractMatrix, A::AbstractMatrix, Q::AbstractMatrix, buffer::LyapBuffer,
     transposed::Bool) =
-    throw(ArgumentError("the Schur Lyapunov route is for Float64 and Float32 buffers"))
+    throw(ArgumentError("the Schur Lyapunov route is for Float64, Float32 and Duals over them"))
+
+function _lyap_schur!(X::AbstractMatrix, A::AbstractMatrix, Q::AbstractMatrix,
+    buffer::LyapBuffer{D}, transposed::Bool) where {Tg,V,N,D<:ForwardDiff.Dual{Tg,V,N}}
+    n = buffer.dim
+    tg = buffer.tangents
+    Av = tg.A
+    Qv = tg.Q
+    Xv = tg.X
+    R = tg.R
+    dA = tg.dA
+    tmp = tg.tmp
+    @inbounds for j in 1:n, i in 1:n
+        Av[i, j] = ForwardDiff.value(A[i, j])
+        Qv[i, j] = ForwardDiff.value(Q[i, j])
+    end
+    # `dA` is free scratch for the packed route's transpose here and below.
+    _lyap_route!(Xv, Av, Qv, tg.primal, dA, transposed)
+    parts = tg.parts
+    @inbounds for p in 1:N
+        for j in 1:n, i in 1:n
+            dA[i, j] = ForwardDiff.partials(A[i, j], p)
+        end
+        # `dA X + X dA'` is `tmp + tmp'` with `tmp = dA X`, `X` symmetric;
+        # transposed, `dA' X + X dA`.
+        transposed ? _ctsem_mulTN!(tmp, dA, Xv) : _ctsem_mul!(tmp, dA, Xv)
+        for j in 1:n, i in 1:n
+            R[i, j] = tmp[i, j] + tmp[j, i] + ForwardDiff.partials(Q[i, j], p)
+        end
+        _lyap_route!(parts[p], Av, R, tg.primal, dA, transposed)
+    end
+    @inbounds for j in 1:n, i in 1:n
+        X[i, j] = D(Xv[i, j], ForwardDiff.Partials(ntuple(p -> parts[p][i, j], Val(N))))
+    end
+    return X
+end
+
+"""`A X + X A' + Q = 0`, or `A' X + X A + Q = 0` when `transposed`, on `buffer`."""
+@inline _lyap_route!(X, A, Q, buffer, At, transposed::Bool) =
+    transposed ? my_lyap_transposed!(X, A, Q, buffer, At) : my_lyap!(X, A, Q, buffer)
 
 function _lyap_schur!(X::AbstractMatrix, A::AbstractMatrix, Q::AbstractMatrix,
     buffer::LyapBuffer{T}, transposed::Bool) where {T<:LinearAlgebra.BlasReal}

@@ -24,9 +24,12 @@ using Random
     # The packed system is not allocated on the Schur route, nor the factors
     # on the packed one.
     @test isempty(large.ksolve_O) && isempty(small.S)
-    # Every Dual stays on the packed route.
+    # A Dual goes where its value type would: Schur over Float64 above the
+    # threshold, packed over BigFloat.
     D = ForwardDiff.Dual{Nothing,Float64,2}
-    @test !CT.LyapBuffer(D, threshold + 5).schur
+    @test CT.LyapBuffer(D, threshold + 5).schur
+    @test !CT.LyapBuffer(D, threshold).schur
+    @test !CT.LyapBuffer(ForwardDiff.Dual{Nothing,BigFloat,2}, threshold + 5).schur
     # The setter moves the line for buffers built after it.
     CT.ctsem_set_lyapunov_schur_above!(3)
     @test CT.LyapBuffer(Float64, 4).schur
@@ -140,6 +143,67 @@ end
     # And the next finite A is solved again.
     CT.my_lyap!(X, A, Q, buffer)
     @test isapprox(A * X + X * A' + Q, zeros(n, n); atol=1e-10)
+end
+
+@testset "Duals on the Schur route: tangents on the value's factors" begin
+    CT = ContinuousTimeSEM
+    threshold = CT._CTSEM_LYAP_SCHUR_ABOVE[]
+    n = threshold + 3
+    rng = MersenneTwister(33)
+    A0 = 0.3 .* randn(rng, n, n) .- 0.7 .* I(n)
+    B = randn(rng, n, n); Q0 = B * B' + I
+    dA = [randn(rng, n, n) for _ in 1:3]
+    dQ = [let C = randn(rng, n, n); C + C' end for _ in 1:3]
+    D = ForwardDiff.Dual{Nothing,Float64,3}
+    A = [D(A0[i, j], ForwardDiff.Partials(ntuple(p -> dA[p][i, j], 3))) for i in 1:n, j in 1:n]
+    Q = [D(Q0[i, j], ForwardDiff.Partials(ntuple(p -> dQ[p][i, j], 3))) for i in 1:n, j in 1:n]
+    schur = CT.LyapBuffer(D, n)
+    @test schur.schur && schur.tangents.primal.schur
+    @test typeof(schur) === typeof(CT.LyapBuffer(D, 2))    # one type either side
+    @test !CT.LyapBuffer(D, 2).schur
+    try
+        CT.ctsem_set_lyapunov_schur_above!(typemax(Int))
+        packed = CT.LyapBuffer(D, n)
+        CT.ctsem_set_lyapunov_schur_above!(threshold)
+        @test !packed.schur
+        for transposed in (false, true)
+            X1 = zeros(D, n, n); X2 = zeros(D, n, n)
+            if transposed
+                CT.my_lyap_transposed!(X1, A, Q, packed, zeros(D, n, n))
+                CT.ctsem_reset_opcounts!()
+                CT.my_lyap_transposed!(X2, A, Q, schur, zeros(D, n, n))
+            else
+                CT.my_lyap!(X1, A, Q, packed)
+                CT.ctsem_reset_opcounts!()
+                CT.my_lyap!(X2, A, Q, schur)
+            end
+            # One factorisation of the values serves all three partials.
+            @test CT.ctsem_opcounts().lyap_schur <= 1
+            @test isapprox(ForwardDiff.value.(X2), ForwardDiff.value.(X1); rtol=1e-11)
+            for p in 1:3
+                @test isapprox(ForwardDiff.partials.(X2, p), ForwardDiff.partials.(X1, p);
+                    rtol=1e-9, atol=1e-11)
+            end
+        end
+    finally
+        CT.ctsem_set_lyapunov_schur_above!(threshold)
+    end
+    # A nested Dual, as a Hessian over the adjoint runs: second derivatives
+    # of a scalar function of the solution against differences of first
+    # derivatives.
+    f(t) = begin
+        T = typeof(t)
+        At = T.(A0) .+ t .* T.(dA[1])
+        Qt = T.(Q0) .+ t .* T.(dQ[1])
+        X = zeros(T, n, n)
+        CT.my_lyap!(X, At, Qt, CT.LyapBuffer(T, n))
+        sum(abs2, X)
+    end
+    d2 = ForwardDiff.derivative(t -> ForwardDiff.derivative(f, t), 0.0)
+    h = 1e-5
+    fd = (ForwardDiff.derivative(f, h) - ForwardDiff.derivative(f, -h)) / (2h)
+    @test isapprox(d2, fd; rtol=1e-6)
+    @test CT.LyapBuffer(typeof(ForwardDiff.Dual(ForwardDiff.Dual(0.0, 1.0), 1.0)), n).schur
 end
 
 # Rather than compare against one implementation detail, validate the defining

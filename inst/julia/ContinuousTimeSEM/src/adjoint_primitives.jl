@@ -181,9 +181,9 @@ Solve the continuous Lyapunov equation `A X + X A' + Q = 0` for `X`.
 every use in the filter, where `Q` is a covariance.
 
 Uses `LyapBuffer`, i.e. exactly the same size-dependent choice the primal
-filter makes: the Schur route for `Float64` systems above
-`_CTSEM_LYAP_SCHUR_ABOVE`, the packed `ksolve!` otherwise (including every
-`ForwardDiff.Dual` case).
+filter makes: the Schur route above `_CTSEM_LYAP_SCHUR_ABOVE` for `Float64`
+systems and Duals over them (tangents on the values' factors), the packed
+`ksolve!` otherwise.
 
 **This matters far more than it looks.** `ksolve!` solves an
 `n(n+1)/2`-square dense system, so its cost is `O(n^6)` against the Schur

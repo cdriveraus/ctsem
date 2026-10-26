@@ -218,11 +218,14 @@ end
     _check_adjoint(objective, values)
 end
 
-# The exponential's derivative is batched across subjects
-# (`_ctsem_frechet_deferrable`) unless a TI effect shifts what a JAx cell
-# reads. The fixture above shifts the TD effect: batched, and the gradient is
-# still exact. The same model with the TI effect on the drift is not batched.
-@testset "TI effects off the drift keep the exponential's derivative batched" begin
+# The exponential's derivative is batched across subjects, in one group where
+# no TI effect shifts what a JAx cell reads (`_ctsem_layer_subject_invariant`),
+# and otherwise in one group per TI predictor row (`frechet_keyed`). The
+# fixture above shifts the TD effect: one group, and the gradient is still
+# exact. The same model with the TI effect on the drift is keyed: two subjects,
+# two groups; then twelve subjects with ten distinct rows, more than a chunk's
+# table holds (`_CTSEM_FRECHET_GROUPS`), so a full table is released mid-chunk.
+@testset "TI effects on and off the drift: the exponential's derivative batched by layer" begin
     CT = ContinuousTimeSEM
     data = reshape([0.1, -0.2, 0.15, 0.05, -0.1, 0.2], 1, :)
     tdpreds = reshape([0.0, 1.0, 0.0, 0.0, 0.5, 0.0], 1, :)
@@ -230,6 +233,7 @@ end
     times = [0.0, 0.5, 1.2, 0.0, 0.6, 1.4]
     aws(sp) = CT.CTSEMAdjointWorkspace(Float64, sp, 3, 1)
     @test aws(_ADJOINT_SP_TD_TI).defer_frechet
+    @test !aws(_ADJOINT_SP_TD_TI).frechet_keyed
     df = _adjoint_test_dataframe(
         drift=[-0.5;;], jax=[-0.5;;], cint=[0.0;;], diffusion=[0.2;;],
         lambda=[1.0;;], jy=[1.0;;], manifestmeans=[0.0;;], manifestvar=[0.3;;],
@@ -242,9 +246,23 @@ end
         ),
     )
     ondrift = ekf_from_data_frame(df, DataFrame(parameter=[1], predictor=[1], coefficient=[3]))
-    @test !aws(ondrift).defer_frechet
+    @test aws(ondrift).defer_frechet && aws(ondrift).frechet_keyed
     objective = CT.ctsem_objective(ondrift, [1, 4], times, data, tdpreds, tipreds)
     _check_adjoint(objective, [0.3, -0.4, 0.25])
+
+    rows = [0.4, -0.7, 0.4, 0.1, 0.2, 0.3, -0.1, -0.2, -0.3, 0.5, 0.6, 0.4]
+    ns = length(rows)
+    @test length(unique(rows)) > CT._CTSEM_FRECHET_GROUPS
+    many = CT.ctsem_objective(ondrift, collect(1:3:(3ns)),
+        repeat([0.0, 0.5, 1.2], ns) .+ repeat(0.1 .* (1:ns), inner=3),
+        reshape(0.2 .* sin.(1:(3ns)), 1, :), reshape(repeat([0.0, 1.0, 0.0], ns), 1, :),
+        reshape(rows, ns, 1))
+    _check_adjoint(many, [0.3, -0.4, 0.25])
+    # The summed gradient against the subjects' own (`ctsem_subject_gradients`
+    # flushes every subject's derivatives within its walk).
+    g = CT.ctsem_adjoint_gradient(many, [0.3, -0.4, 0.25]).gradient
+    scores = CT.ctsem_subject_gradients(many, [0.3, -0.4, 0.25]).scores
+    @test isapprox(vec(sum(scores; dims=1)), g; rtol=1e-11)
 end
 
 @testset "Forward-gradient validation: TD predictor with off-diagonal Jtd (2-state)" begin

@@ -961,10 +961,12 @@ smallest pivot of the packed system's LU, or, on the Schur route, the smallest
 `|s_ii + s_jj|` over the Schur factor's diagonal -- the eigenvalue sums the
 operator divides by, a 2x2 block (standardised, so its diagonal is the pair's
 real part) contributing its real part twice. NaN where the Schur iteration did
-not converge, which sends the interval to the series.
+not converge, which sends the interval to the series. A Dual's is its value
+type's (`LyapTangents`), so the Dual and Float64 filters route alike.
 """
 function _series_lyap_conditioning(buffer::LyapBuffer)
     buffer.schur || return _series_min_pivot(buffer.ksolve_O, buffer.ksolve_system_dim)
+    buffer.tangents === nothing || return _series_lyap_conditioning(buffer.tangents.primal)
     buffer.converged || return NaN
     S = buffer.S
     k = buffer.dim
