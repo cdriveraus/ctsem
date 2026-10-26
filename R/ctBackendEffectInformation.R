@@ -94,8 +94,11 @@
 # NULL when the model has no random effects or the engine cannot evaluate the
 # point: this is a report, and nothing about a fit depends on it succeeding.
 # `point` is the words the record and the message use for where it was taken.
+# `alone = FALSE` leaves out the pass per effect of a reduced-rank level
+# (`.ctEffectAlone()`), and the record says so (`alone`). A caller that wants
+# only the groups' posteriors reads `.ctEffectEvaluate()`'s single pass.
 #' @keywords internal
-.ctEffectInformation <- function(spec, values, point) {
+.ctEffectInformation <- function(spec, values, point, alone = TRUE) {
   started <- proc.time()[["elapsed"]]
   values <- as.numeric(values)
   at <- .ctEffectEvaluate(spec, values)
@@ -104,7 +107,12 @@
   table$reference <- NA_real_
   table$referenceinformation <- NA_real_
   table$referencesd <- NA_real_
-  table <- .ctEffectAlone(spec, values, table)
+  # One engine pass per effect of a reduced-rank level (`.ctEffectAlone()`):
+  # an estonly fit, which builds no identifiability report, skips it, and its
+  # shares are then the dimensions' rather than each effect's own. On the
+  # affect pilot (106 effects at rank 11, 1324 units) the passes ran for
+  # hours after a one-iteration start fit.
+  if (alone) table <- .ctEffectAlone(spec, values, table)
   # Effects whose population sd is below the starting spread, whose sd is a
   # coordinate with the standard transform (raw zero is that spread there),
   # and whose information at the estimate would flag them.
@@ -123,7 +131,7 @@
   }
   table$weak <- .ctEffectWeak(table)
   table$sdindex <- NULL
-  out <- list(point = point, values = values, route = at$route,
+  out <- list(point = point, values = values, route = at$route, alone = alone,
     table = table, groups = at$groups, thresholds = .ctEffectThresholds(),
     ranks = .ctEffectRanks(spec, at$route, table), posterior = at$posterior)
   if (!is.null(at$mins)) {
@@ -544,11 +552,13 @@
       paste0("at its estimated raw-scale population sd of ",
         signif(row$popsd, 2))
     # A reduced-rank level measures the effect alone (`.ctEffectAlone()`), and
-    # the rank is part of where that was.
+    # the rank is part of where that was; where that pass was left out (an
+    # estonly fit's), the share is its dimension's.
     rank <- ranks$rank[match(row$level, ranks$level)]
     width <- ranks$effects[match(row$level, ranks$level)]
     if (isTRUE(rank < width)) at <- paste0(at, " in a rank-", rank,
-      " covariance, varying alone")
+      " covariance, ", if (isFALSE(effects$alone)) "by the dimension it shares" else
+        "varying alone")
     rests <- if (!is.finite(n) || n < 0.01) paste0("the ", row$groups, " ",
       units, if (raised) " would carry" else " carry", " almost no ",
       "information about it") else paste0("that sd ",

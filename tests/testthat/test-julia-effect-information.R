@@ -320,6 +320,13 @@ test_that("at a reduced rank each effect is measured alone, not by the dimension
   expect_match(advice, "in a rank-1 covariance, varying alone", fixed = TRUE)
   # Rank 1 is as low as it goes: only the switch is offered.
   expect_match(advice, "Consider indvarying = FALSE for drift.", fixed = TRUE)
+  # Without the pass per effect -- an estonly fit's -- the shares are the
+  # dimension's, from the same single pass, and the record says which.
+  quick <- ctsem:::.ctEffectInformation(spec, at[names], point = "x", alone = FALSE)
+  expect_false(quick$alone)
+  expect_true(record$alone)
+  expect_null(quick$table$dimension)
+  expect_equal(quick$table$determined[quick$table$effect == "drift"], drift$dimension)
 })
 
 test_that("a fit takes it at its estimate, keeps it, and says nothing when every effect is informed", {

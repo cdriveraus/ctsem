@@ -198,10 +198,9 @@
   smp <- fit$sample
   spec <- .ctBackendSpec(fit)
   if (!length(smp$effect_mean) || !length(smp$effect_cov)) {
-    check <- .ctEffectInformation(fit$model_spec, fit$estimate$raw,
-      point = "at the posterior mean")
-    if (is.null(check)) return(NULL)
-    return(.ctRandomEffectsStore(fit, check$posterior))
+    at <- .ctEffectEvaluate(fit$model_spec, fit$estimate$raw)
+    if (is.null(at)) return(NULL)
+    return(.ctRandomEffectsStore(fit, at$posterior))
   }
   layout <- .ctJuliaGet(.ctJuliaModule(spec$project)$ctsem_laplace_deviation_layout(
     .ctJuliaObjective(fit)))
