@@ -871,9 +871,13 @@ test_that("chains in worker processes stop together, by the run's rule", {
   expect_identical(answered, 0L)
 })
 
-test_that("chains sampled in this session run one after another, whatever the pool holds", {
+test_that("chains sampled at once in this session keep to their own streams, whatever the pool holds", {
   skip_without_julia()
-  fit <- .sample_fixture()
+  # The metric placed on the fit first (`.ctBackendSampleCheck()`), as a fit
+  # with a 'checked' covariance carries it: a default fit has none, so each
+  # call would place its own from its seed, and the second chain of a run
+  # seeded 777 would move on 777's metric, not on the 778 run's.
+  fit <- ctsem:::.ctBackendSampleCheck(.sample_fixture(), cores = 2L, seed = 1L)
   # With one thread there is no second worker to put a chain on, and nothing
   # here can fail.
   skip_if(!isTRUE(ctsem:::.ctBackendSessionThreads() >= 2L),
