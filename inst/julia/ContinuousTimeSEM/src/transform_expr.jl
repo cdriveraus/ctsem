@@ -140,13 +140,15 @@ function _ctsem_expr_eval(e::CTSEMExpr, ctx, scratch)
     k === _XK_CONST && return convert(T, @inbounds e.val[r])
     S = _ctsem_expr_datatype(ctx)
     n = length(e.op)
-    # Up to eight nodes in tuples, which live on the stack -- as short as the
-    # expression allows, since a write selects across the tuple; past that in
-    # the task's buffers (`_ctsem_expr_scratch`), whose lookup costs less than
-    # the selects would.
+    # Up to four nodes in tuples, which live on the stack; past that in the
+    # task's buffers (`_ctsem_expr_scratch`), since a write into a tuple
+    # selects across it. Five to eight nodes go to tuples only where nobody
+    # has fetched the buffers, whose lookup then costs more than the selects:
+    # with them in hand the buffers were faster, up to four times at Dual
+    # types (`scripts/stangrad-2026-10/bench_expr.jl`, local).
     n <= 4 && return _ctsem_expr_flat(e, ctx, T, S,
         ntuple(_ -> zero(T), Val(4)), ntuple(_ -> zero(S), Val(4)))
-    n <= 8 && return _ctsem_expr_flat(e, ctx, T, S,
+    scratch === nothing && n <= 8 && return _ctsem_expr_flat(e, ctx, T, S,
         ntuple(_ -> zero(T), Val(8)), ntuple(_ -> zero(S), Val(8)))
     scT, scS = scratch === nothing ? _ctsem_expr_scratches(ctx) : scratch
     return _ctsem_expr_flat(e, ctx, T, S, _ctsem_expr_buffer(scT.a, n),
@@ -160,7 +162,7 @@ end
 """Whether any of a group's expressions is long enough to use the task buffers."""
 @inline function _ctsem_expr_any_long(transforms::Vector{CTSEMExpr})
     @inbounds for e in transforms
-        length(e.op) > 8 && return true
+        length(e.op) > 4 && return true
     end
     return false
 end

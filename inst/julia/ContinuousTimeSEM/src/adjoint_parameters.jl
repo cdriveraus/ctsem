@@ -558,10 +558,12 @@ function _group_reverse_exprs!(all_params_bar, state_bar, transforms::Vector{CTS
             else
                 V = eltype(state_bar)
                 n = length(transform.op)
-                if n <= 8
+                # Tuples up to four nodes, the group's buffers past that, as
+                # the forward evaluation (`_ctsem_expr_eval`).
+                if n <= 4
                     _ctsem_expr_pullback!(all_params_bar, state_bar, transform, dctx, ti,
-                        cotangent, V, ntuple(_ -> zero(V), Val(8)),
-                        Base.setindex(ntuple(_ -> zero(V), Val(8)), one(V), transform.root))
+                        cotangent, V, ntuple(_ -> zero(V), Val(4)),
+                        Base.setindex(ntuple(_ -> zero(V), Val(4)), one(V), transform.root))
                 else
                     g = _ctsem_expr_buffer(sc.b, n)
                     fill!(view(g, 1:n), zero(V))
