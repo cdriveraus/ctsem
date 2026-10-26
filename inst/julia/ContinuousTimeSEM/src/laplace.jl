@@ -4041,7 +4041,7 @@ function _laplace_probe_modes(laplace::CTSEMLaplaceObjective, U::Integer,
         :probe_F), M), d)
     screened = issuccess(F)
     # The soft directions, each a column of `D` already scaled to its reach,
-    # softest first, and their precisions. Over the span a second mode can
+    # softest first. Over the span a second mode can
     # lie in (`_laplace_probe_span`): there a direction's precision is its
     # marginal one, the Schur complement, and its line moves the coordinates
     # outside the span to their conditional mean given it, `M^-1 Q (Q' M^-1
@@ -4058,9 +4058,7 @@ function _laplace_probe_modes(laplace::CTSEMLaplaceObjective, U::Integer,
             nsoft += 1
         end
         D = _laplace_scratch_matrix!(laplace, Float64, d, nsoft, :probe_dirs)
-        precision = _laplace_scratch_vector!(laplace, Float64, nsoft, :probe_prec)
         @inbounds for j in 1:nsoft
-            precision[j] = E.values[j]
             reach = min(_LAPLACE_PROBE_REACH / sqrt(max(E.values[j], 1e-8)), 3.0)
             for i in 1:d
                 D[i, j] = reach * E.vectors[i, j]
@@ -4092,10 +4090,8 @@ function _laplace_probe_modes(laplace::CTSEMLaplaceObjective, U::Integer,
             nsoft += 1
         end
         D = _laplace_scratch_matrix!(laplace, Float64, d, nsoft, :probe_dirs)
-        precision = _laplace_scratch_vector!(laplace, Float64, nsoft, :probe_prec)
         @inbounds for j in 1:nsoft
             c = E.values[n + 1 - j]
-            precision[j] = 1 / c
             # Reach `r` marginal sds along the direction is `r sqrt(c)` there,
             # and `M^-1 Q C^-1` maps it into `u`: `X w r sqrt(c) / c`.
             scale = min(_LAPLACE_PROBE_REACH * sqrt(c), 3.0) / c
@@ -4129,7 +4125,6 @@ function _laplace_probe_modes(laplace::CTSEMLaplaceObjective, U::Integer,
     atgrad = _laplace_scratch_vector!(laplace, Float64, d, :probe_grad)
     miss = _laplace_scratch_vector!(laplace, Float64, d, :probe_miss)
     solved = _laplace_scratch_vector!(laplace, Float64, d, :probe_solve)
-    trv0 = NaN
     # Each soft direction either way, then the reflection.
     for probe in 1:(2 * nsoft + (reflected ? 1 : 0))
         # The slot's: Newton reads its start and does not keep it.
@@ -4142,45 +4137,11 @@ function _laplace_probe_modes(laplace::CTSEMLaplaceObjective, U::Integer,
         else
             start .= .-found.u
         end
-        tr = _PROBE_TRACE_ON[] && screened
-        trΔ = NaN; trg = NaN; trshare = NaN
-        trlam = probe <= 2 * nsoft ? precision[(probe + 1) >> 1] : NaN
-        if tr
-            if isnan(trv0)
-                trv0 = _laplace_unit_loglik_value(laplace, U, values, Ls,
-                    copy(found.u), aws, Float64[]).value - dot(found.u, found.u) / 2
-            end
-            vs = _laplace_unit_loglik_value(laplace, U, values, Ls, copy(start),
-                aws, Float64[]).value - dot(start, start) / 2
-            dq = 0.0
-            @inbounds for i in 1:d, k in 1:d
-                dq += (start[i] - found.u[i]) * M[i, k] * (start[k] - found.u[k])
-            end
-            trΔ = vs - (trv0 - dq / 2)
-            mask = _PROBE_MEANMASK[]
-            if !isempty(mask)
-                o1 = laplace.units.offsets[U][1]
-                a1 = _laplace_member_values!(zeros(length(values)), values,
-                    laplace.spec, Ls, start, o1)
-                a0 = _laplace_member_values!(zeros(length(values)), values,
-                    laplace.spec, Ls, found.u, o1)
-                num = 0.0; den = 0.0
-                for i in eachindex(a1)
-                    dd = (a1[i] - a0[i])^2
-                    den += dd
-                    (i <= length(mask) && mask[i]) || (num += dd)
-                end
-                trshare = den > 0 ? num / den : NaN
-            end
-        end
         if screened
             at = _laplace_unit_objective_gradient(laplace, U, values, Ls, start,
                 aws, atgrad)
             _CTSEM_OPCOUNT.probe_gradients[] += 1
-            if !isfinite(at.value)
-                tr && _probe_trace!(U, probe, trlam, trΔ, NaN, 0, trshare, trv0 - found.value)
-                continue
-            end
+            isfinite(at.value) || continue
             # miss = a + M (p - u)
             @inbounds for i in 1:d
                 acc = at.gradient[i]
@@ -4189,11 +4150,7 @@ function _laplace_probe_modes(laplace::CTSEMLaplaceObjective, U::Integer,
                 end
                 miss[i] = acc
             end
-            trg = dot(miss, ldiv!(solved, F, miss))
-            if !(trg > 1)
-                tr && _probe_trace!(U, probe, trlam, trΔ, trg, 1, trshare, trv0 - found.value)
-                continue
-            end
+            dot(miss, ldiv!(solved, F, miss)) > 1 || continue
             _CTSEM_OPCOUNT.probe_nongaussian[] += 1
             # And only where a second maximum can lie on the line: past the
             # found one the line falls, and a maximum beyond a valley makes it
@@ -4225,38 +4182,22 @@ function _laplace_probe_modes(laplace::CTSEMLaplaceObjective, U::Integer,
                     end
                 end
             end
-            if !outward
-                tr && _probe_trace!(U, probe, trlam, trΔ, trg, 2, trshare, trv0 - found.value)
-                continue
-            end
+            outward || continue
         end
         r = _laplace_newton_unit_mode(laplace, U, values, Ls, aws, start)
         _CTSEM_OPCOUNT.probe_newtons[] += 1
-        if !(r.converged && isfinite(r.value))
-            tr && _probe_trace!(U, probe, trlam, trΔ, trg, 3, trshare, trv0 - found.value)
-            continue
-        end
-        if any(m -> _laplace_maxabsdiff(m, r.u) < 1e-4, seen)
-            tr && _probe_trace!(U, probe, trlam, trΔ, trg, 4, trshare, trv0 - found.value)
-            continue
-        end
+        (r.converged && isfinite(r.value)) || continue
+        any(m -> _laplace_maxabsdiff(m, r.u) < 1e-4, seen) && continue
         push!(seen, r.u)
         if _laplace_modes_separated(laplace, U, values, Ls, aws, best, r)
             isnan(bestterm) && (bestterm = _laplace_unit_primal(laplace, U,
                 values, Ls, copy(best.u), aws).term)
             term = _laplace_unit_primal(laplace, U, values, Ls, copy(r.u), aws).term
-            if !(isfinite(term) && (!isfinite(bestterm) || term > bestterm))
-                tr && _probe_trace!(U, probe, trlam, trΔ, trg, 5, trshare, trv0 - found.value)
-                continue
-            end
+            (isfinite(term) && (!isfinite(bestterm) || term > bestterm)) || continue
         else
-            if !(r.value > best.value)
-                tr && _probe_trace!(U, probe, trlam, trΔ, trg, 5, trshare, trv0 - found.value)
-                continue
-            end
+            r.value > best.value || continue
             term = NaN
         end
-        tr && _probe_trace!(U, probe, trlam, trΔ, trg, 6, trshare, trv0 - found.value)
         best = (u=r.u, value=r.value, gradmax=r.gradmax, converged=true,
             iterations=found.iterations + r.iterations,
             repaired=found.repaired || r.repaired, curvature=nothing,
@@ -4292,8 +4233,9 @@ adds a row per level: their span holds the summed rows', and is no smaller.
 function _laplace_probe_span(laplace::CTSEMLaplaceObjective, U::Integer,
     Ls::Vector{Matrix{Float64}}, d::Integer)
     affine = laplace.affine
-    inert = _LAPLACE_PRUNE[] ? laplace.inert : Vector{Vector{Int}}[]
-    (isempty(affine) && isempty(inert)) && return nothing
+    inert = laplace.inert
+    prune = _LAPLACE_PRUNE[] && !isempty(inert)
+    (isempty(affine) && !prune) && return nothing
     G = _laplace_scratch_matrix!(laplace, Float64, d, d, :probe_G)
     fill!(G, 0.0)
     spec = laplace.spec
@@ -4308,9 +4250,9 @@ function _laplace_probe_span(laplace::CTSEMLaplaceObjective, U::Integer,
             (k == 0 || r == 0) && continue
             base = offsets[l]
             L = Ls[l]
-            out = isempty(inert) ? Int[] : inert[l][level.group[i]]
+            g = level.group[i]
             for p in 1:k
-                if (!isempty(affine) && affine[l][p]) || insorted(p, out)
+                if (!isempty(affine) && affine[l][p]) || (prune && insorted(p, inert[l][g]))
                     left += 1
                     continue
                 end
@@ -4344,26 +4286,6 @@ function _laplace_probe_span(laplace::CTSEMLaplaceObjective, U::Integer,
     end
     return Q
 end
-
-const _PROBE_TRACE_ON = Ref(false)
-const _PROBE_TRACE = Vector{NTuple{8,Float64}}()
-const _PROBE_TRACE_LOCK = ReentrantLock()
-const _PROBE_MEANMASK = Ref(Bool[])
-function _probe_trace!(U, probe, lam, Δ, g, stage, share, v0err)
-    lock(_PROBE_TRACE_LOCK) do
-        push!(_PROBE_TRACE, (Float64(U), Float64(probe), Float64(lam), Float64(Δ),
-            Float64(g), Float64(stage), Float64(share), Float64(v0err)))
-    end
-    nothing
-end
-function ctsem_probe_trace(on::Bool; mask=Bool[])
-    _PROBE_TRACE_ON[] = on
-    _PROBE_MEANMASK[] = Bool.(collect(mask))
-    empty!(_PROBE_TRACE)
-    nothing
-end
-ctsem_probe_trace_get() = reduce(vcat, [collect(t)' for t in _PROBE_TRACE];
-    init=zeros(0, 8))
 
 """`maximum(abs, a .- b)` without the difference vector."""
 function _laplace_maxabsdiff(a::AbstractVector, b::AbstractVector)
