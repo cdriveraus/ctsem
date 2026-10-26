@@ -1,0 +1,50 @@
+# sticky grid: the rescue grid's default cells on the configs whose quadrature
+# correction runs (the jump rescue and the rounds), for a continuation unit that
+# keeps its draws and its node count once the refine chose them and rounds that
+# stop at the frozen draws' resolution (branch sticky-rules), paired against
+# juliaFit before it. gD1 and gD3 keep their first starts and stored points.
+#
+# id                                    model        data route      start                    variant
+control.1                               panel        1    augmented  zeros                    control
+gA1.lap.cfg.s1.default                  gA1          cfg  laplace    default:1                default
+gA1.lap.cfg.s2.default                  gA1          cfg  laplace    default:2                default
+gA1.lap.cfg.s3.default                  gA1          cfg  laplace    default:3                default
+gA14.lap.cfg.s1.default                 gA14         cfg  laplace    default:1                default
+gA14.lap.cfg.s2.default                 gA14         cfg  laplace    default:2                default
+gA14.lap.cfg.s3.default                 gA14         cfg  laplace    default:3                default
+gB2.lap.cfg.s1.default                  gB2          cfg  laplace    default:1                default
+gB2.lap.cfg.s2.default                  gB2          cfg  laplace    default:2                default
+gB2.lap.cfg.s3.default                  gB2          cfg  laplace    default:3                default
+gB8.lap.cfg.s1.default                  gB8          cfg  laplace    default:1                default
+gB8.lap.cfg.s2.default                  gB8          cfg  laplace    default:2                default
+gB8.lap.cfg.s3.default                  gB8          cfg  laplace    default:3                default
+gC2.lap.cfg.s1.default                  gC2          cfg  laplace    default:1                default
+gC2.lap.cfg.s2.default                  gC2          cfg  laplace    default:2                default
+gC2.lap.cfg.s3.default                  gC2          cfg  laplace    default:3                default
+gC8.lap.cfg.s1.default                  gC8          cfg  laplace    default:1                default
+gC8.lap.cfg.s2.default                  gC8          cfg  laplace    default:2                default
+gC8.lap.cfg.s3.default                  gC8          cfg  laplace    default:3                default
+gD1.lap.cfg.s1.default                  gD1          cfg  laplace    default:1                default
+gD1.lap.cfg.s2.default                  gD1          cfg  laplace    default:2                default
+gD1.lap.cfg.s3.default                  gD1          cfg  laplace    default:3                default
+gD3.lap.cfg.s1.default                  gD3          cfg  laplace    default:1                default
+gD3.lap.cfg.s2.default                  gD3          cfg  laplace    default:2                default
+gD3.lap.cfg.s3.default                  gD3          cfg  laplace    default:3                default
+acnonlin.lap.cfg.s1.default             acnonlin     cfg  laplace    default:1                default
+acnonlin.lap.cfg.s2.default             acnonlin     cfg  laplace    default:2                default
+jflat.lap.cfg.flatdrift8.default        jflat        cfg  laplace    stored:flatdrift8        default
+jflat.lap.cfg.s1.default                jflat        cfg  laplace    default:1                default
+gN1.lap.cfg.s1.default                  gN1          cfg  laplace    default:1                default
+gN1.lap.cfg.s2.default                  gN1          cfg  laplace    default:2                default
+gN1.lap.cfg.s3.default                  gN1          cfg  laplace    default:3                default
+gN3.lap.cfg.s1.default                  gN3          cfg  laplace    default:1                default
+gN3.lap.cfg.s2.default                  gN3          cfg  laplace    default:2                default
+gN3.lap.cfg.s3.default                  gN3          cfg  laplace    default:3                default
+anomS1.lap.cfg.s1.default               anomS1       cfg  laplace    default:1                default
+anomS2.lap.cfg.s1.default               anomS2       cfg  laplace    default:1                default
+anomS1.lap.cfg.anomS1_spurious.default  anomS1       cfg  laplace    stored:anomS1_spurious   default
+anomS2.lap.cfg.anomS2_spurious.default  anomS2       cfg  laplace    stored:anomS2_spurious   default
+gD1.lap.cfg.hist_gD1.default            gD1          cfg  laplace    stored:hist_gD1          default
+gD3.lap.cfg.s4.default                  gD3          cfg  laplace    default:4                default
+gD3.lap.cfg.s5.default                  gD3          cfg  laplace    default:5                default
+gD3.lap.cfg.hist_gD3.default            gD3          cfg  laplace    stored:hist_gD3          default
