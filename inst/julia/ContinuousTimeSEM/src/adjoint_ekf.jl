@@ -109,6 +109,36 @@ mutable struct CTSEMUpdateRecord{T}
     y::Vector{T}             # observed data for this row
     # `X` entering the update (`CTSEMHybrid`), `n x q`; `0 x 0` without.
     Xh::Matrix{T}
+    # A relinearised update (`_ekf_iterated_rows!`): 0 for the EKF's, 1 when
+    # linearised at the prior mean `state_in` itself, 2 at a later iterate.
+    # `Lambda` and `manifestmeans` are then the loading and intercept it used,
+    # Jy and `MANIFESTMEANS + (LAMBDA - Jy) x_lin`, and `Lambda_lin` is LAMBDA
+    # at the linearisation point `x_lin`.
+    relin::Int
+    x_lin::Vector{T}
+    Lambda_lin::Matrix{T}
+end
+
+"""
+One step of an iterated update (`_ekf_relin_mean!`): the mean of the update
+linearised at `x_lin`, from the row's prior `state_in` and `P_in` (unridged),
+over the observed rows -- `H` the Jacobian there, `offset` the intercept
+`MANIFESTMEANS + (LAMBDA - H) x_lin`, `Lambda` LAMBDA there -- and the step
+`x_lin + alpha (mean - x_lin)` taken towards it. `first` when `x_lin` is the
+prior mean itself.
+"""
+mutable struct CTSEMRelinRecord{T}
+    observed::Vector{Int}
+    state_in::Vector{T}
+    P_in::Matrix{T}
+    H::Matrix{T}
+    offset::Vector{T}
+    Lambda::Matrix{T}
+    x_lin::Vector{T}
+    R::Matrix{T}
+    y::Vector{T}
+    first::Bool
+    alpha::Float64
 end
 
 """
@@ -282,6 +312,12 @@ mutable struct CTSEMAdjointTape{T}
     # transforms' recorded read sets and their written indices. This is what
     # a group record snapshots instead of the whole parameter vector.
     group_relevant::Vector{Vector{Int}}
+    # An iterated update's steps (`CTSEMRelinRecord`), and the row's prior
+    # mean's cotangent, which its steps' reverses add to until the first of
+    # them hands it on (`_relin_route!`).
+    relins::Vector{CTSEMRelinRecord{T}}
+    nrelins::Int
+    xp_bar::Vector{T}
 end
 
 CTSEMAdjointTape(::Type{T}, group_relevant=[Int[], Int[], Int[]]) where {T} =
@@ -290,7 +326,7 @@ CTSEMAdjointTape(::Type{T}, group_relevant=[Int[], Int[], Int[]]) where {T} =
         CTSEMUpdateRecord{T}[], CTSEMGroupRecord{T}[], CTSEMThetaRecord{T}[],
         CTSEMInitRecord{T}[], CTSEMBinaryRecord{T}[],
         CTSEMStationaryRecord{T}[], 0, 0, 0, 0, 0, 0, 0, 0,
-        T[], CTSEMHybridTape{T}(), group_relevant)
+        T[], CTSEMHybridTape{T}(), group_relevant, CTSEMRelinRecord{T}[], 0, T[])
 
 """
 Transition growth above which a subject's gradient is taken by forward mode
@@ -534,7 +570,7 @@ function _tape_reset!(tape::CTSEMAdjointTape)
     empty!(tape.program)
     tape.npredicts = 0; tape.ntds = 0; tape.nupdates = 0
     tape.ngroups = 0; tape.nthetas = 0; tape.ninits = 0
-    tape.nbinaries = 0; tape.nstationaries = 0
+    tape.nbinaries = 0; tape.nstationaries = 0; tape.nrelins = 0
     tape.hyb.active = false
     return tape
 end
@@ -617,6 +653,9 @@ end
 @inline _record_group!(::Nothing, args...) = nothing
 @inline _record_td!(::Nothing, args...) = nothing
 @inline _record_update!(::Nothing, args...) = nothing
+# Every trace but the adjoint's ignores an iterated update's steps: what they
+# record of a row is its final update.
+@inline _record_relin!(trace, args...) = nothing
 @inline _begin_predict!(::Nothing, args...) = nothing
 @inline _record_predict!(::Nothing, args...) = nothing
 @inline _record_stationary!(::Nothing, args...) = nothing
@@ -802,7 +841,7 @@ function _record_td!(tape::CTSEMAdjointTape{T}, ws, pars, tdpreds, n::Int) where
 end
 
 function _record_update!(tape::CTSEMAdjointTape{T}, ws, pars, data, obs_col::Int,
-    observed::AbstractVector{Int}, state_in, P_in, n::Int) where {T}
+    observed::AbstractVector{Int}, state_in, P_in, n::Int, relin::Int=0) where {T}
     index = (tape.nupdates += 1)
     # `T[...]` rather than `[float(...)]`: the observed data is a constant with
     # respect to the parameters, so it is Float64 whatever the tape's element
@@ -816,8 +855,9 @@ function _record_update!(tape::CTSEMAdjointTape{T}, ws, pars, data, obs_col::Int
             o, collect(vec(state_in)), Matrix(P_in),
             Matrix(pars.LAMBDA[o, 1:n]), collect(pars.MANIFESTMEANS[o]),
             Matrix(pars.Jy[o, 1:n]), Matrix(ws.bufferΘ.out[o, o]),
-            T[data[i, obs_col] for i in o], zeros(T, 0, 0)))
+            T[data[i, obs_col] for i in o], zeros(T, 0, 0), 0, T[], zeros(T, 0, 0)))
         _hybrid_record_X!(tape.updates[index], ws.hyb, n)
+        _record_update_relin!(tape.updates[index], ws, pars, relin, n)
         _tape_push!(tape, :update, index)
         return nothing
     end
@@ -836,7 +876,50 @@ function _record_update!(tape::CTSEMAdjointTape{T}, ws, pars, data, obs_col::Int
         record.y[j] = T(data[o[j], obs_col])
     end
     _hybrid_record_X!(record, ws.hyb, n)
+    _record_update_relin!(record, ws, pars, relin, n)
     _tape_push!(tape, :update, index)
+    return nothing
+end
+
+# A relinearised update (`_ekf_iterated_rows!`) loads on Jy with the intercept
+# at its linearisation point, `ws.state` when it is recorded; the record keeps
+# LAMBDA there and the point, for the reverse.
+function _record_update_relin!(record::CTSEMUpdateRecord{T}, ws, pars, relin::Int,
+    n::Int) where {T}
+    record.relin = relin
+    relin == 0 && return nothing
+    o = record.observed
+    record.Lambda_lin = _tape_gather!(record.Lambda_lin, pars.LAMBDA, o, n)
+    record.Lambda = _tape_gather!(record.Lambda, pars.Jy, o, n)
+    _tape_fill!(record.manifestmeans, view(ws.mm_eff, 1:length(o)))
+    _tape_fill!(record.x_lin, vec(ws.state))
+    return nothing
+end
+
+function _record_relin!(tape::CTSEMAdjointTape{T}, ws, pars, data, obs_col::Int,
+    observed::AbstractVector{Int}, first::Bool, alpha::Float64) where {T}
+    n = ws.state_dim
+    m = length(observed)
+    index = (tape.nrelins += 1)
+    index > length(tape.relins) && push!(tape.relins, CTSEMRelinRecord{T}(Int[], T[],
+        zeros(T, 0, 0), zeros(T, 0, 0), T[], zeros(T, 0, 0), T[], zeros(T, 0, 0), T[],
+        first, alpha))
+    record = tape.relins[index]
+    o = _tape_fill!(record.observed, observed)
+    _tape_fill!(record.state_in, ws.xprior)
+    record.P_in = _tape_fill!(record.P_in, view(ws.P_predict.data, 1:n, 1:n))
+    record.H = _tape_gather!(record.H, pars.Jy, o, n)
+    _tape_fill!(record.offset, view(ws.mm_eff, 1:m))
+    record.Lambda = _tape_gather!(record.Lambda, pars.LAMBDA, o, n)
+    _tape_fill!(record.x_lin, vec(ws.state))
+    record.R = _tape_gather_square!(record.R, ws.bufferΘ.out, o)
+    resize!(record.y, m)
+    @inbounds for j in 1:m
+        record.y[j] = T(data[o[j], obs_col])
+    end
+    record.first = first
+    record.alpha = alpha
+    _tape_push!(tape, :relin, index)
     return nothing
 end
 
@@ -1537,9 +1620,12 @@ function _reverse_td!(x̄::Vector{T}, P̄::Matrix{T}, θ̄ca,
 end
 
 """
-    _reverse_update!(x̄, P̄, Θ̄, θ̄ca, record, n, sc)
+    _reverse_update!(x̄, P̄, Θ̄, θ̄ca, record, n, sc, hyb, xp̄)
 
-Undo one measurement update, including its log-likelihood contribution.
+Undo one measurement update, including its log-likelihood contribution. A
+relinearised update (`record.relin > 0`, `_ekf_iterated_rows!`) scatters its
+loading and intercept back to the cells they were built from, and its prior
+mean's cotangent waits in `xp̄` (`_relin_route!`).
 
 Forward (on the observed subset, with `ε` the Stan-matching ridge):
 
@@ -1582,7 +1668,7 @@ previous derivation was 24% off, `H̄` to 2e-6 where it was 28% off.
 """
 function _reverse_update!(x̄::Vector{T}, P̄::Matrix{T}, Θ̄::Matrix{T}, θ̄ca,
     record::CTSEMUpdateRecord{T}, n::Int, sc::CTSEMReverseScratch{T},
-    hyb::Union{Nothing,CTSEMHybridTape{T}}=nothing) where {T}
+    hyb::Union{Nothing,CTSEMHybridTape{T}}, xp̄::Vector{T}) where {T}
     o = record.observed
     m = length(o)
     H = record.H
@@ -1813,19 +1899,176 @@ function _reverse_update!(x̄::Vector{T}, P̄::Matrix{T}, Θ̄::Matrix{T}, θ̄c
     θ̄MM = θ̄ca.MANIFESTMEANS
     θ̄LAMBDA = θ̄ca.LAMBDA
     θ̄Jy = θ̄ca.Jy
-    @inbounds for i in 1:m
-        θ̄MM[o[i]] -= ỹ̄[i]
-        for j in 1:n
-            θ̄LAMBDA[o[i], j] += Λ̄[i, j]
-            θ̄Jy[o[i], j] += H̄[i, j]
+    if record.relin == 0
+        @inbounds for i in 1:m
+            θ̄MM[o[i]] -= ỹ̄[i]
+            for j in 1:n
+                θ̄LAMBDA[o[i], j] += Λ̄[i, j]
+                θ̄Jy[o[i], j] += H̄[i, j]
+            end
+            for j in 1:m
+                Θ̄[o[i], o[j]] += R̄[i, j]
+            end
         end
-        for j in 1:m
-            Θ̄[o[i], o[j]] += R̄[i, j]
+    else
+        # Relinearised (`_ekf_iterated_rows!`): the loading was Jy and the
+        # intercept `c = MANIFESTMEANS + (LAMBDA - Jy) x_lin`, whose cotangent
+        # is `-ỹ̄`, all three at the linearisation point.
+        xl = record.x_lin
+        @inbounds for i in 1:m
+            c̄ = -ỹ̄[i]
+            θ̄MM[o[i]] += c̄
+            for j in 1:n
+                θ̄LAMBDA[o[i], j] += c̄ * xl[j]
+                θ̄Jy[o[i], j] += Λ̄[i, j] + H̄[i, j] - c̄ * xl[j]
+            end
+            for j in 1:m
+                Θ̄[o[i], o[j]] += R̄[i, j]
+            end
         end
     end
 
     copyto!(x̄, x̄_new)
     copyto!(P̄, P̄_new)
+    record.relin > 0 && _relin_route!(x̄, xp̄, record.Lambda_lin, H, ỹ̄, n, m,
+        record.relin == 1)
+    return nothing
+end
+
+"""
+    _relin_route!(x̄, xp̄, Λ, H, ỹ̄, n, m, first)
+
+The end of a relinearised step's reverse. `x̄` holds the cotangent of the row's
+prior mean, which joins `xp̄`, and leaves as that of the linearisation point,
+through the intercept `c = MANIFESTMEANS + (Λ - H) x_lin` whose cotangent is
+`-ỹ̄`. At the first step the point is the prior mean itself, so the two meet
+there and `xp̄` is spent.
+"""
+function _relin_route!(x̄::Vector{T}, xp̄::Vector{T}, Λ, H, ỹ̄, n::Int, m::Int,
+    first::Bool) where {T}
+    @inbounds for j in 1:n
+        xp̄[j] += x̄[j]
+        acc = zero(T)
+        for i in 1:m
+            acc -= (Λ[i, j] - H[i, j]) * ỹ̄[i]
+        end
+        x̄[j] = acc
+    end
+    if first
+        @inbounds for j in 1:n
+            x̄[j] += xp̄[j]
+            xp̄[j] = zero(T)
+        end
+    end
+    return nothing
+end
+
+"""
+    _reverse_relin!(x̄, xp̄, P̄, Θ̄, θ̄ca, record, n, sc)
+
+Undo one step of an iterated update (`_ekf_relin_mean!`),
+
+    x⁺ = x_p + Pr H' a,   a = S⁻¹ ỹ,   S = sym(H Pr H' + R) + εI,
+    ỹ = y - H x_p - c,    c = MANIFESTMEANS + (LAMBDA - H) x_lin,
+
+with `Pr = P + εI`, as the forward ridges, and the step `x_lin + α (x⁺ - x_lin)`
+taken towards it. `x̄` is the cotangent of that step: the
+prior mean's share goes to `xp̄`, the covariance's to `P̄` (the prior's, the
+covariance at this point of the row), the innovation covariance's to `Θ̄`, the
+measurement's to `θ̄ca`, and `x̄` leaves as the linearisation point's
+(`_relin_route!`).
+"""
+function _reverse_relin!(x̄::Vector{T}, xp̄::Vector{T}, P̄::Matrix{T}, Θ̄::Matrix{T},
+    θ̄ca, record::CTSEMRelinRecord{T}, n::Int, sc::CTSEMReverseScratch{T}) where {T}
+    o = record.observed
+    m = length(o)
+    H = record.H
+    xp = record.state_in
+    xl = record.x_lin
+    Pr  = _rs(sc.Pr, n, n)
+    PHt = _rs(sc.PHt, n, m)
+    mm1 = _rs(sc.mm1, m, m)
+    S   = _rs(sc.S, m, m)
+    mm2 = _rs(sc.mm2, m, m)
+    S̄   = _rs(sc.Sbar, m, m)
+    SH  = _rs(sc.Lbar, m, n)
+    H̄   = _rs(sc.Hbar, m, n)
+    ỹ   = _rs(sc.ytilde, m)
+    ỹ̄   = _rs(sc.ybar, m)
+    a   = _rs(sc.alpha, m)
+    w   = _rs(sc.alphabar, m)
+    v   = _rs(sc.xnew, n)
+    Ha  = _rs(sc.nv1, n)
+    keep = view(_rs(sc.nn3, n, n), :, 1)
+    oneT = one(T)
+
+    # The forward's intermediates, with its ridges and its factorization.
+    copyto!(Pr, record.P_in)
+    _ridge_diagonal!(Pr, n, _CTSEM_RIDGE)
+    _ctsem_mulNT!(PHt, Pr, H)
+    _ctsem_mul!(mm1, H, PHt)
+    mm1 .+= record.R
+    _symmetrize_into!(S, mm1)
+    _ridge_diagonal!(S, m, _CTSEM_RIDGE)
+    copyto!(mm2, S)
+    F = if m <= _CTSEM_SMALL_CHOLESKY[]
+        _ctsem_cholesky(mm2, m)
+    else
+        CTSEMCholesky(mm2, m, issuccess(cholesky!(mm2, check=false)))
+    end
+    if !issuccess(F)
+        # Poisoned as `_reverse_update!` poisons a declined `S`.
+        fill!(x̄, _ctsem_nan(T))
+        fill!(xp̄, _ctsem_nan(T))
+        fill!(P̄, _ctsem_nan(T))
+        fill!(Θ̄, _ctsem_nan(T))
+        fill!(θ̄ca, _ctsem_nan(T))
+        return nothing
+    end
+    copyto!(ỹ, record.offset)
+    _ctsem_mulvec!(ỹ, H, xp, oneT, oneT)
+    ỹ .= record.y .- ỹ
+    ldiv!(a, F, ỹ)
+
+    # The step: `α x̄` reaches the mean `x⁺`, the rest the point it left.
+    α = T(record.alpha)
+    @inbounds for j in 1:n
+        keep[j] = (oneT - α) * x̄[j]
+        x̄[j] *= α
+    end
+    _ctsem_mulvec!(v, Pr, x̄)                         # Pr x̄
+    _ctsem_mulvec!(w, H, v)                          # ā = H Pr x̄
+    ldiv!(ỹ̄, F, w)                                   # ỹ̄ = S⁻¹ ā
+    _ctsem_mulTvec!(Ha, H, a)                        # H' a
+    @inbounds for j in 1:m, i in 1:m                 # S̄ = -sym(ỹ̄ a')
+        S̄[i, j] = -T(0.5) * (ỹ̄[i] * a[j] + a[i] * ỹ̄[j])
+    end
+    @inbounds for j in 1:n, i in 1:n                 # P̄ += sym(x̄ (H'a)')
+        P̄[i, j] += T(0.5) * (x̄[i] * Ha[j] + Ha[i] * x̄[j])
+    end
+    _ctsem_mul!(SH, S̄, H)
+    _ctsem_mulTN!(P̄, H, SH, oneT, oneT)              # P̄ += H' S̄ H
+    _ctsem_mul!(H̄, SH, Pr, T(2), false)             # H̄ = 2 S̄ H Pr
+    @inbounds for j in 1:n, i in 1:m                 # + a v' + ỹ̄ (x_lin - x_p)'
+        H̄[i, j] += a[i] * v[j] + ỹ̄[i] * (xl[j] - xp[j])
+    end
+
+    θ̄MM = θ̄ca.MANIFESTMEANS
+    θ̄LAMBDA = θ̄ca.LAMBDA
+    θ̄Jy = θ̄ca.Jy
+    @inbounds for i in 1:m
+        θ̄MM[o[i]] -= ỹ̄[i]
+        for j in 1:n
+            θ̄LAMBDA[o[i], j] -= ỹ̄[i] * xl[j]
+            θ̄Jy[o[i], j] += H̄[i, j]
+        end
+        for j in 1:m
+            Θ̄[o[i], o[j]] += S̄[i, j]
+        end
+    end
+    _ctsem_mulTvec!(x̄, H, ỹ̄, -oneT, oneT)           # x_p's: x̄ - H' ỹ̄
+    _relin_route!(x̄, xp̄, record.Lambda, H, ỹ̄, n, m, record.first)
+    x̄ .+= keep
     return nothing
 end
 
@@ -1850,6 +2093,8 @@ function _ctsem_reverse_tape!(tape::CTSEMAdjointTape{T},
     Θ̄ = aws.manifest_cov_bar
     θ̄ = aws.theta_bar
     fill!(x̄, zero(T)); fill!(P̄, zero(T)); fill!(Θ̄, zero(T))
+    resize!(tape.xp_bar, n)
+    fill!(tape.xp_bar, zero(T))
     # A walk starts with nothing deferred. The end of a walk flushes both, but
     # a walk an exception left would hand its pending cotangent to the next
     # subject's, which with `_defer_diffusion!`'s comparison skipped would
@@ -1871,7 +2116,12 @@ function _ctsem_reverse_tape!(tape::CTSEMAdjointTape{T},
         kind, index = tape.program[entry_index]
         if kind === :update
             _reverse_update!(x̄, P̄, Θ̄, θ̄ca, tape.updates[index], n, aws.reverse_scratch,
-                tape.hyb.active && tape.hyb.q > 0 ? tape.hyb : nothing)
+                tape.hyb.active && tape.hyb.q > 0 ? tape.hyb : nothing, tape.xp_bar)
+        elseif kind === :relin
+            # A step of an iterated update, between the row's final update and
+            # its update-group evaluations (`_ekf_iterated_rows!`).
+            _reverse_relin!(x̄, tape.xp_bar, P̄, Θ̄, θ̄ca, tape.relins[index], n,
+                aws.reverse_scratch)
         elseif kind === :hybrid
             # The integrated deviations' closing term; last in the forward, so
             # first here (`CTSEMHybrid`).

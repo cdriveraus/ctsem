@@ -268,6 +268,20 @@ test_that("NUTS samples the joint posterior through the same runner", {
 # manifest means (effective sizes 16-73 there, against the map's 215-634, and
 # SAEM's sds 0.065 against the exact marginal's 0.138), so a width ratio reads
 # the reference's error, not the map's.
+# The laplace fixture's initial and manifest means trade off along a ridge that
+# only the trajectories' decay separates: their sum is identified, their split
+# barely. At four chains of 1,500 draws SAEM and the map each put the split's
+# sd anywhere from 0.065 to 0.23 from run to run, with effective sizes of
+# hundreds that do not show it (`scripts/marginal-default-2026-10/
+# map_start_diag.R`), and the sum the same in every run. So the means are
+# compared with the pair's sum in place of the pair.
+.map_ridge <- function(X) {
+  pair <- c("T0m_eta1", "mm_Y1")
+  if (!all(pair %in% colnames(X))) return(X)
+  cbind(X[, setdiff(colnames(X), pair), drop = FALSE],
+    ridge_sum = X[, pair[1]] + X[, pair[2]])
+}
+
 .map_checked <- function(fit, against, draws = 300L) {
   ask <- function(...) suppressWarnings(suppressMessages(ctFitUncertainty(fit,
     uncertainty = "sample", cores = 1, control = list(chains = 2, draws = draws,
@@ -275,10 +289,17 @@ test_that("NUTS samples the joint posterior through the same runner", {
   map <- ask(intoverpop = "none", sampler = "map", saveEffects = TRUE)
   ref <- do.call(ask, against)
   saem <- ask(intoverpop = "none")
-  a <- map$estimate$rawposterior
-  b <- ref$estimate$rawposterior
+  a <- .map_ridge(map$estimate$rawposterior)
+  b <- .map_ridge(ref$estimate$rawposterior)
   sb <- apply(b, 2, stats::sd)
-  ess <- function(r) pmax(as.numeric(r$sample$ess), 1)
+  # The pair's own effective sizes, the smaller, for their sum.
+  ess <- function(r) {
+    e <- pmax(as.numeric(r$sample$ess), 1)
+    names(e) <- colnames(r$estimate$rawposterior)
+    keep <- e[setdiff(names(e), c("T0m_eta1", "mm_Y1"))]
+    if (length(keep) == length(e)) e else
+      c(keep, ridge_sum = min(e[c("T0m_eta1", "mm_Y1")]))
+  }
   check <- ctsem:::.ctJuliaGet(ctsem:::.ctJuliaModule(fit$model_spec$project)$
     ctsem_sample_map_check(ctsem:::.ctJuliaObjective(fit, hybrid = TRUE),
       as.numeric(fit$estimate$raw),
@@ -534,9 +555,26 @@ test_that("the marginal sampler starts from the normal check, made where the fit
   skip_without_julia()
   fit <- .sample_fixture()
   expect_false(is.null(fit$uncertainty$details$normalcheck))
-  # A fit that has its check keeps it; one without gets 'checked''s; one
-  # whose climb took a jump in keeps its Hessian.
-  expect_identical(ctsem:::.ctBackendSampleCheck(fit), fit)
+  # A fit that has its check keeps it, gaining only DAIS's normal where the
+  # check named directions and the fit has no posterior covariance of its own;
+  # one without gets 'checked''s; one whose climb took a jump in keeps its
+  # Hessian.
+  kept <- ctsem:::.ctBackendSampleCheck(fit)
+  expect_identical(kept$uncertainty$details$normalcheck,
+    fit$uncertainty$details$normalcheck)
+  added <- setdiff(names(kept$uncertainty$details), names(fit$uncertainty$details))
+  expect_true(all(added %in% "dais"))
+  # A default fit carries the curvature's normal and the check beside it, and
+  # where the check names a direction DAIS is made for the metric, as
+  # 'checked' would have made it.
+  named <- fit
+  named$uncertainty$details[c("importance_sampling", "dais")] <- NULL
+  named$uncertainty$details$normalcheck$directions <-
+    diag(length(fit$estimate$raw))[, 1L, drop = FALSE]
+  named$uncertainty$details$normalcheck$widths <- 1.5
+  set.seed(2)
+  daised <- ctsem:::.ctBackendSampleCheck(named)
+  expect_identical(ctsem:::.ctBackendMetricSource(daised), "dais")
   bare <- fit
   bare$uncertainty$details$normalcheck <- NULL
   set.seed(1)
@@ -551,7 +589,7 @@ test_that("the marginal sampler starts from the normal check, made where the fit
   # whose engine builds its own population block.
   asked <- list()
   testthat::local_mocked_bindings(
-    .ctBackendSampleCheck = function(fit, cores = 1L, verbose = 0) {
+    .ctBackendSampleCheck = function(fit, cores = 1L, verbose = 0, seed = NULL) {
       asked[[length(asked) + 1L]] <<- cores
       fit
     },

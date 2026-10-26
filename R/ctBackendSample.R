@@ -278,8 +278,11 @@
   # with sampled TI values, whose coordinates the fit's objective does not
   # have, nor on the state-explicit target, whose metric covers the states too.
   # `checkcores`, because workers may still be warming (`.ctJuliaSampleFit()`).
+  # From the sampler's own seed, as its chains are, so that a sample call
+  # draws the same whatever R's stream holds.
   if (marginal && !isTRUE(state_explicit) && !tisampled)
-    fit <- .ctBackendSampleCheck(fit, cores = checkcores, verbose = verbose)
+    fit <- .ctBackendSampleCheck(fit, cores = checkcores, verbose = verbose,
+      seed = as.integer(.ctJuliaOr(control$seed, 20260828L)))
   if (identical(control$sampler, "map") && (marginal || isTRUE(state_explicit))) {
     stop("control$sampler = 'map' samples the joint posterior over population ",
       "parameters and random effects, and this run asks for ",
@@ -429,6 +432,18 @@
   out
 }
 
+# The map's learning record (`ctsem_sample_map`): its cost in gradients and
+# learning's share of it, and per window its draws a chain, the chains
+# restarted, the summaries refitted, theta's shrinkage (NaN for the check
+# window) and the step.
+.ctBackendMapRecord <- function(m) {
+  w <- m$windows
+  windows <- if (length(w)) do.call(rbind, lapply(w, function(x)
+    as.data.frame(lapply(x, function(v) as.numeric(v)[1L])))) else NULL
+  list(gradients = as.numeric(m$gradients), learn_gradients = as.numeric(m$learn_gradients),
+    learn_seconds = as.numeric(m$learn_secs), coordinates = as.integer(m$coordinates),
+    integrated = isTRUE(m$integrated), coupled = as.integer(m$coupled), windows = windows)
+}
 
 # Every name the sampler reads out of `control`, in one place.
 #
@@ -996,24 +1011,58 @@
 # A fit that ended on a jump keeps its Hessian, the continuation's: the
 # Laplace objective jumps where the check would look, which is why ctFit()
 # does not run 'checked' on it before the correction.
+#
+# Where the check names directions and the fit carries no posterior covariance
+# of its own -- neither 'checked''s importance draws nor its DAIS normal, as a
+# fit with the default 'hessian' does not -- 'checked''s DAIS stage is run
+# here too (`.ctPlaceDais()`), on the Laplace objective, and its normal is the
+# metric (`.ctBackendMetricSource()`, 'dais') and SMC's start. The fit's own
+# record is what the sampled fit replaces, so nothing else is kept.
+#
+# `seed` draws both from a stream of their own, the caller's left as it was:
+# seeded from R's stream, two sample calls one after the other, the same
+# `control$seed` given, took different DAIS normals and so different metrics
+# and draws (test-julia-sample.R's processes test, dev2).
 #' @keywords internal
-.ctBackendSampleCheck <- function(fit, cores = 1L, verbose = 0) {
+.ctBackendSampleCheck <- function(fit, cores = 1L, verbose = 0, seed = NULL) {
   u <- fit$uncertainty
-  if (is.null(u$hessian) || !is.null(u$details$normalcheck) ||
-      !is.null(fit$laplace$jump)) return(fit)
+  if (is.null(u$hessian) || !is.null(fit$laplace$jump)) return(fit)
+  if (!is.null(seed)) {
+    restore <- .ctStreamKeep(seed)
+    on.exit(restore(), add = TRUE)
+  }
   previous <- .ctBackendSetMaxChunks(cores)
   on.exit(.ctBackendRestoreMaxChunks(previous), add = TRUE)
-  checked <- tryCatch(ctOptimComputeUncertainty(est = as.numeric(fit$estimate$raw),
-    standata = .ctBackendDataShape(fit), sm = NULL, lpgFunc = .ctBackendLpgFunc(fit),
-    uncertainty = "checked", finishsamples = 2L, cores = cores, matsetup = NA,
-    verbose = verbose, hessian = u$hessian),
+  if (is.null(u$details$normalcheck)) {
+    checked <- tryCatch(ctOptimComputeUncertainty(est = as.numeric(fit$estimate$raw),
+      standata = .ctBackendDataShape(fit), sm = NULL, lpgFunc = .ctBackendLpgFunc(fit),
+      uncertainty = "checked", finishsamples = 2L, cores = cores, matsetup = NA,
+      verbose = verbose, hessian = u$hessian),
+      error = function(e) {
+        warning("The normal check for the sampler's metric failed (",
+          conditionMessage(e), "); sampling from the Hessian's.", call. = FALSE)
+        NULL
+      })
+    if (!is.null(checked$details$normalcheck))
+      fit$uncertainty$details$normalcheck <- checked$details$normalcheck
+  }
+  check <- fit$uncertainty$details$normalcheck
+  if (!.ctBackendMetricSource(fit) %in% c("check", "hessian") ||
+      !is.matrix(check$directions) || !ncol(check$directions)) return(fit)
+  est <- as.numeric(fit$estimate$raw)
+  place <- list(uncertaintyfit = list(cov = ctOptimCovFromHessian(u$hessian, warn = FALSE),
+    details = list()), directions = check$directions, widths = check$widths,
+    centre = .ctJuliaOr(check$centre, est), guard = NULL, dais = NULL)
+  lpg <- .ctCoresetLpg(fit, .ctBackendLpgFunc(fit, gradient = FALSE))
+  placed <- tryCatch(.ctPlaceDais(place, lpg, est, control = list(),
+    hold = u$details$flatdirections$vectors, named = NULL, verbose = verbose),
     error = function(e) {
-      warning("The normal check for the sampler's metric failed (",
-        conditionMessage(e), "); sampling from the Hessian's.", call. = FALSE)
+      warning("DAIS for the sampler's metric failed (", conditionMessage(e),
+        "); sampling from the check's.", call. = FALSE)
       NULL
     })
-  if (!is.null(checked$details$normalcheck))
-    fit$uncertainty$details$normalcheck <- checked$details$normalcheck
+  dais <- placed$uncertaintyfit$details$dais
+  if (isTRUE(dais$used)) fit$uncertainty$details$dais <- dais
   fit
 }
 
@@ -1637,6 +1686,7 @@
       list(method = "saem", saem_iterations = as.integer(result$placement$saem_iterations),
         saem_settled = isTRUE(result$placement$saem_settled),
         saem_seconds = as.numeric(result$placement$saem_secs)),
+    map = if (is.null(result$map)) NULL else .ctBackendMapRecord(result$map),
     start = placed)
   if (length(out$sample$effect_mean)) {
     out$sample$effectIndex <- .ctBackendEffectIndex(fit)

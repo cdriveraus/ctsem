@@ -230,10 +230,13 @@
 #'
 #' @section Uncertainty:
 #' \describe{
-#'  \item{\code{uncertainty}}{Both. Default \code{'checked'} on julia
-#'  (\code{'sandwich'} with subject weights) and \code{'hessian'} on stan.
-#'  The method computed when the optimiser ends, as in
-#'  \code{\link{ctFitUncertainty}}.
+#'  \item{\code{uncertainty}}{Both. Default \code{'hessian'}
+#'  (\code{'sandwich'} with subject weights on julia). The method computed
+#'  when the optimiser ends, as in \code{\link{ctFitUncertainty}}. The
+#'  default is for building a model: on julia it also makes \code{'checked'}'s
+#'  normal check at draws of the curvature's normal, and says in a message
+#'  when the posterior departs from that normal; for intervals to report,
+#'  sample with \code{ctFitUncertainty(fit, 'sample')}.
 #'  \code{'sample'} is refused here: use \code{optimize = FALSE}, or
 #'  \code{ctFitUncertainty(fit, 'sample')} on the fit.}
 #'  \item{\code{uncertaintyDraws}, \code{finishsamples},

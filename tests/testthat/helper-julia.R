@@ -247,9 +247,19 @@ test_backends <- function() {
 #' honour.
 #'
 #' Returns a named list, always with `$julia`, `$stan` only when asked for.
+#'
+#' Stan linearises a measurement that reads the state once, at the prior mean;
+#' julia iterates it to each row's posterior mode (`_ekf_iterated_rows!`). So
+#' a julia fit made beside its stan twin is made as stan makes it.
 fit_backends <- function(..., backends = test_backends(), stanargs = list()) {
   args <- list(...)
   if (!is.null(args$backend)) stop("fit_backends() chooses the backend")
+  if (all(c("julia", "stan") %in% backends)) {
+    ctsem:::.ctJuliaModule()
+    ctsem:::.ctJuliaEval("ContinuousTimeSEM.ctsem_set_relinearise!(false)")
+    on.exit(ctsem:::.ctJuliaEval("ContinuousTimeSEM.ctsem_set_relinearise!(true)"),
+      add = TRUE)
+  }
   out <- list()
   for (be in backends) {
     a <- args

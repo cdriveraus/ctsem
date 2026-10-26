@@ -1875,6 +1875,29 @@ ctBackendParMatrices <- function(fit, raw = NULL, tipreds = NULL, state = NULL,
   note
 }
 
+# What the normal check beside a curvature-only uncertainty found (`'hessian'`
+# with `control$check`, a fit's default), in one sentence; NULL where it named
+# no direction or did not run. Fit-level only: per parameter it names a third
+# of the intervals that are off (review/REVIEW-fit-uncertainty-2026-10-25.md,
+# section 5). A fit that ended on a jump makes no check -- the Laplace
+# objective jumps where the check would look -- and the jump says what one
+# would: some unit's posterior is not one Gaussian basin.
+.ctUncertaintyCheckNote <- function(fit) {
+  u <- fit$uncertainty
+  if (!identical(u$settings$method, "hessian")) return(NULL)
+  if (!is.null(fit$laplace$jump)) return(paste0("Intervals are from the ",
+    "corrected curvature at the estimate, where the Laplace term jumped: ",
+    "ctFitUncertainty(fit, 'sample') samples the posterior for intervals to report."))
+  check <- u$details$normalcheck
+  if (is.null(check)) return(NULL)
+  named <- if (is.matrix(check$directions)) ncol(check$directions) else 0L
+  if (!named) return(NULL)
+  sprintf(paste0("Intervals are from the curvature at the estimate, and the ",
+    "posterior departs from that normal in %d direction%s ",
+    "(fit$uncertainty$details$normalcheck): ctFitUncertainty(fit, 'sample') ",
+    "samples it for intervals to report."), named, if (named > 1L) "s" else "")
+}
+
 .ctBackendSummary <- function(object, timeinterval = 1, digits = 3, parmatrices = TRUE,
   residualcov = TRUE, ...) {
   has_posterior <- !is.null(object$estimate$rawposterior)
@@ -2211,6 +2234,7 @@ ctBackendParMatrices <- function(fit, raw = NULL, tipreds = NULL, state = NULL,
       nrow(object$estimate$rawposterior)
   }
   likelihood <- object$uncertainty$settings$control$likelihood
+  checknote <- .ctUncertaintyCheckNote(object)
   out$uncertaintyNote <- if (!is.null(chains)) {
     # A sampled fit ran no uncertainty pass, and saying it did was not a
     # cosmetic slip: `uncertainty$settings$method` is NULL on this route, so the
@@ -2232,7 +2256,8 @@ ctBackendParMatrices <- function(fit, raw = NULL, tipreds = NULL, state = NULL,
       if (!is.null(error) && isTRUE(is.finite(error$nats))) paste0(
         " The density drawn from is the quadrature hybrid, known to within ",
         signif(error$nats, 2), " nats (", signif(error$se, 2),
-        " standard errors)."))
+        " standard errors)."),
+      if (!is.null(checknote)) paste0(" ", checknote))
   } else {
     paste0("Julia backend; point estimates only. ",
       "Run ctFitUncertainty() for standard errors and intervals.")

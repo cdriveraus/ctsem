@@ -2046,7 +2046,7 @@ function _laplace_subject_value_gradient!(gradient::AbstractVector{T},
             subject_objective.data, subject_objective.timesteps,
             subject_objective.params, subject_objective.tdpreds,
             tipreds, subject_objective.subject,
-            subject_objective.max_timestep, tape)
+            subject_objective.max_timestep, tape, nothing, nothing, subject_objective.relin)
         _laplace_charge!(_LAPLACE_BYTES_FWD, bf)
         isfinite(loglik) || return loglik
         if _growth_unstable(ws)
@@ -6903,6 +6903,18 @@ function ctsem_auto_substeps(laplace::CTSEMLaplaceObjective, values::AbstractVec
             zeros(Float64, laplace.units.dims[U])
     end)
     return ctsem_auto_substeps(laplace.objective, shifted; kwargs...)
+end
+
+# The plan likewise, each subject at its random-effect modes.
+function ctsem_relin_plan(laplace::CTSEMLaplaceObjective, values::AbstractVector)
+    theta = _laplace_extend(laplace, collect(Float64, values))
+    Ls = _laplace_popchols(theta, laplace.spec)
+    shifted = _laplace_shifted_values(laplace, theta, Ls, function (U)
+        solved = _laplace_solve_unit_mode!(laplace, U, theta, Ls)
+        return isfinite(solved.value) ? solved.u :
+            zeros(Float64, laplace.units.dims[U])
+    end)
+    return ctsem_relin_plan(laplace.objective, shifted)
 end
 
 """

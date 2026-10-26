@@ -178,9 +178,18 @@ skip_if(.Platform$OS.type == "windows" && R.version$major %in% 4 &&
     for (be in c('julia', 'stan')) {
       spec <- ctFit(datalong = d, model = test_, fit = FALSE, backend = be)
       testthat::expect_equal(spec$standata$recompile, 1)
-      # The state-dependent DRIFT cell has to reach matsetup as a state
-      # reference, not as a parameter. Column 10 is `stateref`.
-      testthat::expect_true(sum(spec$standata$matsetup[, 10] != 0) > 0)
+      # The state-dependent DRIFT cell has to reach matsetup as a
+      # calculation, not as a parameter: no parameter of its own, and a row
+      # the calculations replace (`when = -999`). Column 10, `stateref`, is a
+      # cell that is a state itself; this one only reads one, and the rows
+      # that carried a stateref here were the augmented intercepts, which the
+      # julia spec no longer has once 'auto' takes the Laplace route.
+      ms <- spec$standata$matsetup
+      drift21 <- ms[ms[, 'matrix'] == 3 & ms[, 'row'] == 2 & ms[, 'col'] == 1, ,
+        drop = FALSE]
+      testthat::expect_equal(nrow(drift21), 1L)
+      testthat::expect_equal(unname(drift21[1, 'param']), 0)
+      testthat::expect_equal(unname(drift21[1, 'when']), -999)
     }
 
     f <- ctFit(datalong = d, model = test_, backend = 'julia')

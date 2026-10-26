@@ -583,7 +583,9 @@ test_that("a default julia fit carries uncertainty, as an optimized Stan fit doe
       optimcontrol = list(finishsamples = 50))))
 
   expect_equal(nrow(fit$estimate$rawposterior), 50L)
-  expect_equal(fit$uncertainty$settings$method, "checked")
+  # The curvature's normal, with the normal check made beside it and recorded.
+  expect_equal(fit$uncertainty$settings$method, "hessian")
+  expect_false(is.null(fit$uncertainty$details$normalcheck))
   expect_true(all(is.finite(fit$estimate$se)))
 
   out <- summary(fit, parmatrices = FALSE)
@@ -816,4 +818,20 @@ test_that("marking a row blanks its width and keeps its estimate", {
   expect_equal(marked[2, ], table[2, ])
   # Nothing flagged, nothing changed.
   expect_equal(ctsem:::.ctBackendMarkNoWidth(table, c(FALSE, FALSE)), table)
+})
+
+test_that("a default fit's note says where the check found the normal wrong, or the fit jumped", {
+  note <- ctsem:::.ctUncertaintyCheckNote
+  fit <- list(uncertainty = list(settings = list(method = "hessian"),
+    details = list(normalcheck = list(directions = matrix(0, 3, 0)))))
+  expect_null(note(fit))
+  fit$uncertainty$details$normalcheck$directions <- matrix(1, 3, 2)
+  expect_match(note(fit), "departs from that normal in 2 directions", fixed = TRUE)
+  # A jump makes no check, and says what one would.
+  fit$uncertainty$details$normalcheck <- NULL
+  fit$laplace$jump <- list(units = 1L)
+  expect_match(note(fit), "Laplace term jumped", fixed = TRUE)
+  # Only the curvature's normal gets the note: 'checked' samples what it finds.
+  fit$uncertainty$settings$method <- "checked"
+  expect_null(note(fit))
 })

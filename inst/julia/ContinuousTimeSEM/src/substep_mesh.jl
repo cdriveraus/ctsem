@@ -47,7 +47,7 @@ decides the mesh from the starting values, fits, decides again at the optimum
 and refits once if the mesh moved. `maxtimestep` remains a floor on the count.
 """
 
-export ctsem_auto_substeps
+export ctsem_auto_substeps, ctsem_relin_plan
 
 """Default tolerance for the substep indicator; see `ctsem_auto_substeps`."""
 # 0.01 from review/INTEGRATOR-substeps: on a simulated process with a
@@ -239,7 +239,7 @@ function _ctsem_subject_mesh(sub, x::Vector{Float64}, tol::Float64, cap::Int, pa
         pass += 1
         fill!(rec.indicator, 0.0)
         ll = _extended_kalman_filter_continuous!(ws, x, sub.data, ts, sub.params,
-            sub.tdpreds, tipred_vec, sub.subject, mesh, nothing, nothing, rec)
+            sub.tdpreds, tipred_vec, sub.subject, mesh, nothing, nothing, rec, sub.relin)
         used = pass
         if !isfinite(ll)
             # Not finite at this mesh. Once, restart from the mesh the caller
@@ -272,4 +272,48 @@ function _ctsem_subject_mesh(sub, x::Vector{Float64}, tol::Float64, cap::Int, pa
         changed || break
     end
     return (mesh, true, used)
+end
+
+"""
+    ctsem_relin_plan(objective, values)
+
+Each row's count of steps for the iterated measurement update
+(`_ekf_iterated_rows!`), learnt at `values` -- one parameter vector, or one row
+a subject -- as the substep mesh is: R learns it at a fit's start, fits, learns
+it again at the optimum and refits once if it moved, and every objective built
+from the specification then takes exactly those steps a row. A frozen count is
+a fixed computation, so the objective is smooth however few the steps; a
+tolerance on the step makes the count jump as the parameters move, which was
+why the update iterated to 1e-9 and cost three to four times the EKF's
+gradient. A row's count is the fewest steps whose iterate is within
+`_CTSEM_RELIN_PLAN_TOL` prior sds of its mode: a third to a fifth of the steps
+to 1e-9 on the scalar prototype, within 1e-3 nats a subject of the converged
+likelihood at the plan's own values.
+
+-1 for a row whose steps had to be halved, or whose subject's filter is not
+finite at `values`: it iterates to its mode under the plan. `nothing` where no
+row iterates -- a linear measurement, or the iteration switched off
+(`ctsem_set_relinearise!`) -- which is the same as no plan; not an empty
+vector, which JuliaConnectoR cannot carry back to R.
+"""
+function ctsem_relin_plan(objective::CTSEMObjective, values::AbstractVecOrMat)
+    subjects = objective.subject_objectives
+    (isempty(subjects) || !_CTSEM_RELINEARISE[]) && return nothing
+    _get_or_init_objective_workspace!(first(subjects), Float64).relinearise || return nothing
+    persubject = values isa AbstractMatrix
+    persubject && size(values, 1) != length(subjects) && throw(DimensionMismatch(
+        "one row of parameters per subject is required"))
+    x = persubject ? Vector{Float64}(undef, size(values, 2)) : Vector{Float64}(values)
+    plan = Int[]
+    for (i, sub) in enumerate(subjects)
+        persubject && copyto!(x, view(values, i, :))
+        learn = zeros(Int, length(sub.timesteps))
+        ws = _get_or_init_objective_workspace!(sub, Float64)
+        ll = _extended_kalman_filter_continuous!(ws, x, sub.data, sub.timesteps,
+            sub.params, sub.tdpreds, _ctsem_tipred_vector(sub.tipreds, x), sub.subject,
+            sub.max_timestep, nothing, nothing, nothing, _CTSEM_NO_RELIN, learn)
+        isfinite(ll) || fill!(learn, -1)
+        append!(plan, learn)
+    end
+    return plan
 end

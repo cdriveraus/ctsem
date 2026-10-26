@@ -198,14 +198,20 @@ optimum. `uncertainty` in `optimcontrol` (at fit time) or in
 `ctOptimUncertainty()`, still available) selects among several:
 
 - `hessian`: finite-difference (stan) or exact forward-mode (julia) curvature
-  at the optimum, with normal draws. The cheapest.
+  at the optimum, with normal draws. The cheapest, and the default when
+  fitting: on julia the fit also checks the normal against the log
+  posterior's gradients, as `checked` does, and says when the posterior
+  departs from it -- a fit for building a model, whose intervals to report
+  come from sampling it.
 - `checked`: the `hessian` normal, checked against the log posterior's
-  gradients at 16 to 64 draws from it, and importance sampled in the
+  gradients at 16 to 256 draws from it, and importance sampled in the
   directions where its intervals would be wrong -- a skew, a variance that
   scales other parameters' widths. Where sampling within the fit's own cost
   cannot correct it, as on a curved ridge, the `hessian` normal is kept and
   a warning names the parameters. With nothing found, exactly the `hessian`
-  normal. The default for `backend = 'julia'` and for `ctFitUncertainty()`.
+  normal. It samples those directions with the others held near the centre,
+  so where a population sd widens the effects it scales, its intervals can
+  remain too narrow. The default for `ctFitUncertainty()`.
 - `opg`: an information estimate from the variability of per-subject score
   contributions, with no Hessian involved. Included as a diagnostic; it tends
   to disagree with the others most exactly where the Hessian's curvature
@@ -503,7 +509,7 @@ whatever `ctFit()`'s own default is for optimizing.
   setting; they differ in whether the answer is a set of draws or a point plus
   a local approximation.
 - Around an optimum, `uncertainty` chooses which approximation: `hessian` is
-  the cheapest, `checked` (the julia default) corrects it where it is wrong,
+  the cheapest and a fit's default, `checked` corrects it where it is wrong,
   `opg`/`sandwich`/`bootstrap` use per-subject scores and need enough subjects
   to be stable, `fullbootstrap` (stan only) is the most literal and most
   expensive, and `is` turns the same curvature into an importance-sampling

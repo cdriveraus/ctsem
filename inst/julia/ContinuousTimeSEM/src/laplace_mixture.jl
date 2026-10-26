@@ -346,7 +346,7 @@ function ctsem_laplace_sequential_mixture(laplace::CTSEMLaplaceObjective,
     ws0 = _init_continuous_ekf_workspace(Float64, sp)
     n = ws0.state_dim
     m = ws0.manifest_dim
-    types = ws0.manifesttype
+    types = ws0.sp.manifesttype
     Ls = _laplace_popchols(theta, laplace.spec)
     subjects = laplace.objective.subject_objectives
     rows = [size(s.data, 2) for s in subjects]
@@ -456,7 +456,8 @@ function _laplace_mixture_unit!(out, laplace::CTSEMLaplaceObjective, U::Integer,
         x = _laplace_member_values(theta, spec, Ls, draws[k], units.offsets[U][1])
         tr.values = collect(Float64, x)
         ll = _extended_kalman_filter_continuous!(ws, x, so.data, timesteps, sp,
-            so.tdpreds, _ctsem_tipred_vector(so.tipreds, x), i, so.max_timestep, tr)
+            so.tdpreds, _ctsem_tipred_vector(so.tipreds, x), i, so.max_timestep, tr,
+            nothing, nothing, so.relin)
         return isfinite(ll)
     end
 

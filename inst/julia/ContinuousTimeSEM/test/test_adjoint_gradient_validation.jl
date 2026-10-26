@@ -510,6 +510,49 @@ _ADJOINT_SP_INTRA_GROUP = _adjoint_intra_group_ordering_parameters()
     _check_adjoint(objective, values)
 end
 
+# A measurement nonlinear in the state has each row's update iterated to the
+# row's posterior mode (`_ekf_iterated_rows!`): the tape holds every step and
+# its update-group evaluation, and the reverse carries the prior mean's
+# cotangent past them. Two latents and three manifests -- a loading growing
+# with its state through a free PARS, an exp link on the second latent -- with
+# a free intercept, residual sd, initial mean and drift, and data missing in
+# places, including a whole row.
+function _adjoint_iterated_measurement_parameters()
+    df = _adjoint_test_dataframe(
+        drift=[-0.5 0.2; 0.1 -0.4], jax=[-0.5 0.2; 0.1 -0.4], cint=[0.0; 0.0;;],
+        diffusion=[0.4 0.0; 0.1 0.3],
+        lambda=[1.0 0.0; 0.8 0.0; 0.0 0.0], jy=[1.0 0.0; 0.8 0.0; 0.0 0.0],
+        manifestmeans=[0.0; 0.1; 0.0;;],
+        manifestvar=[0.3 0.0 0.0; 0.0 0.2 0.0; 0.0 0.0 0.25],
+        t0var=[1.0 0.0; 0.2 1.0], t0means=[0.5; 0.0;;], pars=[0.8;;],
+        free=Dict(
+            (:DRIFT, 1, 1) => (1, "-log1p_exp(param[1])"),
+            (:JAx, 1, 1) => (1, "-log1p_exp(param[1])"),
+            (:PARS, 1, 1) => (2, "param[2]"),
+            (:MANIFESTMEANS, 1, 1) => (3, "param[3]"),
+            (:MANIFESTVAR, 2, 2) => (4, "log1p_exp(param[4])"),
+            (:T0MEANS, 1, 1) => (5, "param[5]"),
+        ),
+        update=Dict(
+            (:LAMBDA, 2, 1) => "PARS[1,1] + 0.3 * state[1]",
+            (:Jy, 2, 1) => "PARS[1,1] + 0.6 * state[1]",
+            (:MANIFESTMEANS, 3, 1) => "exp(0.5 * state[2])",
+            (:Jy, 3, 2) => "0.5 * exp(0.5 * state[2])",
+        ),
+    )
+    ekf_from_data_frame(df)
+end
+
+@testset "Forward-gradient validation: iterated nonlinear measurement" begin
+    sp = _adjoint_iterated_measurement_parameters()
+    @test ContinuousTimeSEM._init_continuous_ekf_workspace(Float64, sp).relinearise
+    times = repeat(collect(0.0:0.8:4.8), 2)
+    data = 0.7 .* randn(MersenneTwister(21), 3, 14) .+ [0.3, 0.6, 1.2]
+    data[2, 3] = NaN; data[1, 9] = NaN; data[:, 12] .= NaN
+    objective = ContinuousTimeSEM.ctsem_objective(sp, [1, 8], times, data)
+    _check_adjoint(objective, [0.2, 0.7, 0.1, -0.5, 0.3])
+end
+
 @testset "discretization cache cannot go stale" begin
     # `DiscretizationCache` reuses the matrix exponential and the asymptotic
     # diffusion solve across rows, guarded by a comparison against the inputs

@@ -2619,13 +2619,18 @@ ctOptimComputeUncertainty <- function(est, standata, sm, lpgFunc,
     # Where this normal misstates the posterior, from gradients at draws from
     # it; `.ctOptimDrawSamples()` importance samples those directions. See
     # `.ctOptimNormalCheck()`.
-    if(uncertainty == 'checked') {
+    # `'hessian'` with `control$check` makes the same check and only records
+    # it: the curvature's normal is reported as it is, and the check says
+    # whether the posterior departs from it (a fit's development default,
+    # `ctFit()`).
+    if(uncertainty == 'checked' ||
+        (uncertainty == 'hessian' && isTRUE(control$check))) {
       method_details$normalcheck <- .ctOptimNormalCheck(.ctJuliaOr(
         .ctImisGradient(lpgFunc, est), attr(.ctImisPointGradbatch(lpgFunc), 'gradbatch')),
         est, cov)
       # The widths its pairs measured where it samples nothing
       # (`.ctNormalSpread()`).
-      if(!is.null(method_details$normalcheck$spread))
+      if(uncertainty == 'checked' && !is.null(method_details$normalcheck$spread))
         cov <- ctOptimSafeCov(method_details$normalcheck$spread$cov)
     }
   }
@@ -2822,6 +2827,14 @@ ctOptimFitLpgFunc <- function(fit, cores=1){
 # here it hid every plateau deeper than 2.7 below the mode, which is still a
 # plateau a flat prior gives infinite mass (a bump on a floor 3.0 and 4.6
 # down went unflagged).
+#
+# Each rung's conditional mode is found to a tenth of a nat (`tol`), not the
+# thousandth 'is''s search holds its proposal's points to: what the walk
+# decides on is the density's fall against `maxdrop` (8), and a rung's point
+# is only where the next starts. Most of the walk's time was those Newton
+# steps' evaluations; at 0.1 jflat's took 5.1 s against 11.8, gB8's 6.2
+# against 20.1, each finding the same (scripts/fit-review-2026-10/walk_probe.R,
+# local).
 .ctImproperParameters <- function(lpg, est, cov, parameters) {
   if (!length(parameters)) return(NULL)
   gradfun <- .ctJuliaOr(attr(lpg, 'fullgradbatch'), .ctImisGradient(lpg, est))
@@ -2831,7 +2844,7 @@ ctOptimFitLpgFunc <- function(fit, cores=1){
     S <- eig$vectors %*% (t(eig$vectors) *
       pmax(eig$values, .ctFlatDirectionRtol() * max(eig$values)))
     paths <- .ctImisPaths(gradfun, .ctImisEvaluator(lpg), as.numeric(est), S,
-      which = parameters, heavy = Inf)
+      which = parameters, heavy = Inf, tol = 0.1)
     list(reaches = paths$reachesLimit, limit = paths$limit,
       gradients = paths$gradients, calls = paths$calls)
   }, error = function(e) list(failed = conditionMessage(e)))
@@ -3555,8 +3568,13 @@ ctOptimFitLpgFunc <- function(fit, cores=1){
 #' in \code{$uncertainty$details$normalcheck}, and the sampling, when there was
 #' any, in \code{$uncertainty$details$importance_sampling}.}
 #' \item{\code{'hessian'}}{A normal approximation from the Hessian at the
-#' estimate, unchecked -- exact on julia, which differentiates its own
-#' gradient, and by finite differences of the gradient on stan.}
+#' estimate -- exact on julia, which differentiates its own
+#' gradient, and by finite differences of the gradient on stan. With
+#' \code{control = list(check = TRUE)}, a julia fit's default, the normal
+#' check of \code{'checked'} is made and recorded in
+#' \code{$uncertainty$details$normalcheck}, and \code{summary()} says when it
+#' found the posterior departing from the normal; the normal is reported as
+#' it is.}
 #' \item{\code{'bootstrap'}, \code{'sandwich'}, \code{'opg'}}{Built from
 #' per-subject score contributions: one-step score bootstrap draws with
 #' Hessian bread, Hessian bread with score covariance meat, and the outer
