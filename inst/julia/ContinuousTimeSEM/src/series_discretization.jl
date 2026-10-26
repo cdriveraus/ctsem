@@ -136,6 +136,58 @@ end
 
 @inline _series_block(A::AbstractMatrix, p::Int) = view(A, 1:p, 1:p)
 
+"""
+    CTSEMSeriesChain{T}()
+
+One substep's series kernel as its pullback reads it: the plan (`s`, `m`,
+`h0`), the doubling chain's exponentials and integrals (`Es`, `Ps`) and the
+result (`out`), each `p x p`. The adjoint tape keeps one per kernel a substep
+used (`CTSEMPredictRecord`), so the reverse pass loads the chain the forward
+pass computed (`_series_chain_load!`) where it ran the kernel again: that was
+a third of the chain's products in a gradient, and the chains were a third of
+a Laplace value and gradient on the affect pilot.
+"""
+mutable struct CTSEMSeriesChain{T}
+    s::Int
+    m::Int
+    h0::Float64
+    Es::Vector{Matrix{T}}
+    Ps::Vector{Matrix{T}}
+    out::Matrix{T}
+end
+
+CTSEMSeriesChain(::Type{T}) where {T} = CTSEMSeriesChain{T}(0, 0, 0.0, Matrix{T}[],
+    Matrix{T}[], zeros(T, 0, 0))
+
+"""Copy the leading `p x p` blocks of `buf`'s last kernel into `chain`."""
+function _series_chain_store!(chain::CTSEMSeriesChain{T}, buf::SeriesKernelBuffer{T},
+    p::Int) where {T}
+    chain.s, chain.m, chain.h0 = buf.s, buf.m, buf.h0
+    _series_grow!(chain.Es, buf.s, p)
+    _series_grow!(chain.Ps, buf.s, p)
+    size(chain.out, 1) == p || (chain.out = zeros(T, p, p))
+    @inbounds for k in 1:buf.s
+        _copy_block!(chain.Es[k], buf.Es[k], p, p)
+        _copy_block!(chain.Ps[k], buf.Ps[k], p, p)
+    end
+    _copy_block!(chain.out, buf.out, p, p)
+    return chain
+end
+
+"""Load `chain` into `buf` as its kernel left it, for the pullbacks."""
+function _series_chain_load!(buf::SeriesKernelBuffer{T}, chain::CTSEMSeriesChain{T},
+    p::Int) where {T}
+    buf.s, buf.m, buf.h0 = chain.s, chain.m, chain.h0
+    _series_grow!(buf.Es, chain.s, buf.n)
+    _series_grow!(buf.Ps, chain.s, buf.n)
+    @inbounds for k in 1:chain.s
+        _copy_block!(buf.Es[k], chain.Es[k], p, p)
+        _copy_block!(buf.Ps[k], chain.Ps[k], p, p)
+    end
+    _copy_block!(buf.out, chain.out, p, p)
+    return buf
+end
+
 """The 1-norm of the leading `p x p` block of `J`, on primal values."""
 @inline function _series_norm1(J::AbstractMatrix, p::Int)
     nrm = 0.0

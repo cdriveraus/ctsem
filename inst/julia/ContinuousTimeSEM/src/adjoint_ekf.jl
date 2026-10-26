@@ -72,11 +72,15 @@ mutable struct CTSEMPredictRecord{T}
     dt::T
     # Which pieces took the series route (`series_discretization.jl`), and the
     # diffusion block the noise series integrated, which its pullback needs
-    # where the closed form needed only `Xlyap`. Empty until a substep uses
-    # it, so a model that never takes the series carries no extra storage.
+    # where the closed form needed only `Xlyap`, and each series kernel's
+    # doubling chain, which its pullback reads (`CTSEMSeriesChain`). Empty
+    # until a substep uses them, so a model that never takes the series
+    # carries no extra storage.
     series_intercept::Bool
     series_noise::Bool
     Qd::Matrix{T}
+    noise_chain::CTSEMSeriesChain{T}
+    icpt_chain::CTSEMSeriesChain{T}
     # `X` entering the substep (`CTSEMHybrid`), `n x q`, and what the substep
     # added to a continuous intercept's column; `0 x 0` without.
     Xh::Matrix{T}
@@ -1032,7 +1036,8 @@ _empty_predict_record(::Type{T}, n::Int, k::Int, naff::Int=k) where {T} =
     CTSEMPredictRecord{T}(zeros(T, n), zeros(T, n, n), zeros(T, n, n),
         zeros(T, n, n), zeros(T, n, n), zeros(T, n, n), zeros(T, k, k),
         zeros(T, naff), zeros(T, naff), zero(T), false, false, zeros(T, 0, 0),
-        zeros(T, 0, 0), zeros(T, 0, 0), false)
+        CTSEMSeriesChain(T), CTSEMSeriesChain(T), zeros(T, 0, 0), zeros(T, 0, 0),
+        false)
 
 """
 Snapshot the substep inputs, which `_ekf_predict_step!` overwrites.
@@ -1076,11 +1081,14 @@ function _record_predict!(tape::CTSEMAdjointTape{T}, ws, pars,
     _tape_fill!(record.dINT_dynamic, view(ws.discrete_ca.dINT, 1:naff))
     record.dt = T(Δt)
     series = ws.discretization_buffer.series
-    record.series_intercept = series.intercept
+    icpt = ws.discretization_buffer.series_icpt
+    record.series_intercept = icpt.intercept
     record.series_noise = series.noise
     if series.noise
         record.Qd = _tape_fill!(record.Qd, view(series.Q, 1:k, 1:k))
+        _series_chain_store!(record.noise_chain, series, k)
     end
+    icpt.intercept && _series_chain_store!(record.icpt_chain, icpt, naff)
     _hybrid_record_Xinc!(record, ws.hyb, n)
     record.moment = ws.moment_now[]
     _tape_push!(tape, :predict, index)
@@ -1313,7 +1321,10 @@ function _reverse_predict!(x̄::Vector{T}, P̄::Matrix{T}, θ̄ca,
             _series_table_reset!(sr.noise, JAxd, record.Qd, k)
             _copy_block!(sr.diffusion, record.DIFFUSION, n, n)
         end
-        _series_noise_table!(sc.series, sr.noise, record.dt, k)
+        # The chain the forward pass computed, and the powers its pullback
+        # adds onto, which the flush pulls through.
+        _series_chain_load!(sc.series, record.noise_chain, k)
+        _series_table_extend!(sr.noise, sc.series.m)
         _series_noise_table_pullback!(sr.noise_bar, sc.series, sr.noise, k, Qb)
     else
         X = record.Xlyap
@@ -1340,7 +1351,9 @@ function _reverse_predict!(x̄::Vector{T}, P̄::Matrix{T}, θ̄ca,
             _flush_series_intercept!(aws, θ̄ca)
             _series_table_reset!(sr.intercept, JAx, nothing, naff)
         end
-        Phi = _series_intercept_table!(sc.series, sr.intercept, record.dt, naff)
+        _series_chain_load!(sc.series, record.icpt_chain, naff)
+        _series_table_extend!(sr.intercept, sc.series.s > 0 ? sc.series.m + 1 : sc.series.m)
+        Phi = _series_block(sc.series.out, naff)
         @inbounds for i in 1:naff
             acc = zero(T)
             for q in 1:naff

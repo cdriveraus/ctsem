@@ -401,10 +401,11 @@ function _compute_discrete_time_form!(discrete_ca, buffer, DIFFUSIONcov, pars, �
     # has lost its digits, and the integral is taken as a series instead; see
     # `series_discretization.jl`.
     series = discretization_buffer.series
-    series.intercept = _series_needed(
+    icpt = discretization_buffer.series_icpt
+    icpt.intercept = _series_needed(
         _series_min_pivot(affine_buffer.intermediate, naff), Δt)
-    if series.intercept
-        Phi = _series_intercept_cached!(series, cache, pars.JAx, Δt, naff)
+    if icpt.intercept
+        Phi = _series_intercept_cached!(icpt, cache, pars.JAx, Δt, naff)
         @inbounds for i in 1:naff
             acc = zero(eltype(discrete_ca.dINT))
             for j in 1:naff
