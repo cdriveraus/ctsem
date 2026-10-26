@@ -7376,7 +7376,7 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
   # session had, and left the worker pool at full width behind it.
   effectcheck <- if (isTRUE(intoverstates)) .ctBackendWithMaxChunks(cores,
     .ctEffectInformation(out$model_spec, out$estimate$raw,
-      point = "at the estimate")) else NULL
+      point = "at the estimate", alone = !isTRUE(optimcontrol$estonly))) else NULL
   if (!is.null(effectcheck)) {
     # Each group's posterior from the same pass, stored once for every
     # person-level report (R/ctRandomEffects.R).
