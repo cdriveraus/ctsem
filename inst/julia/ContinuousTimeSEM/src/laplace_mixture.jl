@@ -346,7 +346,7 @@ function ctsem_laplace_sequential_mixture(laplace::CTSEMLaplaceObjective,
     ws0 = _init_continuous_ekf_workspace(Float64, sp)
     n = ws0.state_dim
     m = ws0.manifest_dim
-    types = ws0.manifesttype
+    types = ws0.sp.manifesttype
     Ls = _laplace_popchols(theta, laplace.spec)
     subjects = laplace.objective.subject_objectives
     rows = [size(s.data, 2) for s in subjects]
