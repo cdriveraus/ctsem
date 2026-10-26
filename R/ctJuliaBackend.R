@@ -2575,7 +2575,8 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
   }
 
   total <- sum(vapply(levels, function(x) x$nrandom, integer(1)))
-  list(
+  affine <- .ctJuliaLaplaceAffine(model, setup, levels)
+  out <- list(
     levels = levels,
     # Level-one fields kept at the top for every existing single-level caller.
     re_index = levels[[1]]$re_index,
@@ -2589,8 +2590,12 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
     npar = as.integer(cursor),
     inert = .ctJuliaLaplaceInert(model, setup, levels, dat),
     hybrid = .ctJuliaLaplaceHybrid(model, setup, levels),
-    quadratic = .ctJuliaLaplaceQuadratic(model, setup, levels)
+    quadratic = !is.null(affine) && all(unlist(affine))
   )
+  # Where some effects are mean effects and others not, and only then, so
+  # every other model's specification is as it was.
+  if (!is.null(affine) && any(unlist(affine)) && !all(unlist(affine))) out$affine <- affine
+  out
 }
 
 # Which subject-level effects the subject filter integrates itself instead of
@@ -2706,38 +2711,50 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
 # (`.ctJuliaParsAffine()`): a drift-scaled intercept, `PARS[k,1] * a /
 # expm1(a)`, is one.
 .ctJuliaLaplaceQuadratic <- function(model, setup, levels) {
-  if (is.null(setup) || !nrow(setup) || !length(levels)) return(FALSE)
-  if (length(model$manifesttype) && any(as.integer(model$manifesttype) != 0L)) return(FALSE)
-  if ("stateref" %in% names(setup) && any(as.integer(setup$stateref) > 0L)) return(FALSE)
+  affine <- .ctJuliaLaplaceAffine(model, setup, levels)
+  !is.null(affine) && all(unlist(affine))
+}
+
+# That test effect by effect: per level, whether each effect is one of its
+# mean effects, or NULL where a condition on the whole model fails (an
+# indicator not Gaussian, a cell or calculation reading a state, a
+# calculation reading a mean vector). Where some effects pass and others do
+# not, a unit is concave in the passing ones given the rest, so its second
+# maxima differ in the rest, and the engine probes only their span
+# (`_laplace_probe_span`).
+.ctJuliaLaplaceAffine <- function(model, setup, levels) {
+  if (is.null(setup) || !nrow(setup) || !length(levels)) return(NULL)
+  if (length(model$manifesttype) && any(as.integer(model$manifesttype) != 0L)) return(NULL)
+  if ("stateref" %in% names(setup) && any(as.integer(setup$stateref) > 0L)) return(NULL)
   base <- .ctMatricesList()$base
   means <- base[c("T0MEANS", "CINT", "MANIFESTMEANS", "TDPREDEFFECT")]
   param <- as.integer(setup$param)
-  # A calculation is out where it reads a state or a mean vector, or where a
-  # cell that is no mean reads a PARS cell carrying an effect, which would take
-  # the effect into a covariance or a gain. A mean computed from a PARS effect
+  # A calculation is out where it reads a state or a mean vector. An effect
+  # is out where a cell that is no mean reads a PARS cell carrying it, which
+  # takes it into a covariance or a gain. A mean computed from a PARS effect
   # is the loop's question below.
   effects <- unique(unlist(lapply(levels, function(lv) as.integer(lv$re_index))))
-  carried <- as.integer(setup$matrix) == base[["PARS"]] & param %in% effects
-  carried <- sprintf("PARS[%d,%d]", as.integer(setup$row[carried]), as.integer(setup$col[carried]))
+  pars <- as.integer(setup$matrix) == base[["PARS"]] & param %in% effects
+  carried <- sprintf("PARS[%d,%d]", as.integer(setup$row[pars]), as.integer(setup$col[pars]))
+  leaked <- integer()
   calcs <- unlist(model$modelmats$calcs)
   if (length(calcs)) {
     lhs <- sub("=.*$", "", calcs)
     rhs <- gsub("\\s+", "", sub("^[^=]*=", "", calcs))
     meanlhs <- grepl("^\\s*(T0MEANS|CINT|MANIFESTMEANS|TDPREDEFFECT)\\[", lhs)
-    readsfx <- vapply(rhs, function(r) any(vapply(carried, grepl, logical(1), r,
-      fixed = TRUE)), logical(1))
     if (any(grepl("state[", rhs, fixed = TRUE) |
-        grepl("\\b(T0MEANS|CINT|MANIFESTMEANS|TDPREDEFFECT)\\[", rhs) |
-        (readsfx & !meanlhs))) return(FALSE)
+        grepl("\\b(T0MEANS|CINT|MANIFESTMEANS|TDPREDEFFECT)\\[", rhs))) return(NULL)
+    for (j in seq_along(carried)) {
+      if (any(grepl(carried[j], rhs[!meanlhs], fixed = TRUE))) leaked <- c(leaked, param[pars][j])
+    }
   }
-  for (lv in levels) for (p in as.integer(lv$re_index)) {
+  lapply(levels, function(lv) vapply(as.integer(lv$re_index), function(p) {
     rows <- which(param == p)
-    if (!length(rows) || !all(as.integer(setup$transform[rows]) == 0L)) return(FALSE)
+    if (!length(rows) || p %in% leaked ||
+        !all(as.integer(setup$transform[rows]) == 0L)) return(FALSE)
     inmean <- as.integer(setup$matrix[rows]) %in% means
-    if (!all(inmean) && !.ctJuliaParsAffine(model, setup[rows[!inmean], , drop = FALSE]))
-      return(FALSE)
-  }
-  TRUE
+    all(inmean) || .ctJuliaParsAffine(model, setup[rows[!inmean], , drop = FALSE])
+  }, logical(1)))
 }
 
 # Whether the PARS cells in `cells` (matsetup rows) reach the model only through
@@ -4832,6 +4849,14 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
     # Sent only when every unit's inner problem is a concave quadratic
     # (`.ctJuliaLaplaceQuadratic`), so every other model crosses as before.
     if (isTRUE(spec$laplace$quadratic)) laplace_args$quadratic <- TRUE
+    # Which effects are mean effects where some are and some not
+    # (`.ctJuliaLaplaceAffine`), as (level, effect) pairs.
+    affine <- spec$laplace$affine
+    if (!is.null(affine)) {
+      on <- unlist(affine)
+      laplace_args$affine_level <- V(rep(seq_along(affine), lengths(affine))[on])
+      laplace_args$affine_effect <- V(sequence(lengths(affine))[on])
+    }
     # Absent unless the fit asked for them, so the engine's own defaults stay
     # the defaults and a spec built before this existed is byte-for-byte as it
     # was. `inner_maxiter` must cross as an integer; see .ctJuliaLaplaceInner().

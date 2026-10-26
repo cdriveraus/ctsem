@@ -691,6 +691,15 @@ mutable struct CTSEMLaplaceObjective{O} <: CTSEMOptimisable
     # has one maximum, Newton from the origin finds it, and the mode probes,
     # which look for another, are skipped (`_laplace_solve_unit_mode!`).
     quadratic::Bool
+    # Per level, which effects enter every unit's inner problem as that test's
+    # mean effects (R's `.ctJuliaLaplaceAffine()`), where the test holds for
+    # some effects and not all; empty otherwise. Given the other effects, a
+    # unit is concave in these, so the probes search only the span the others
+    # move (`_laplace_probe_span`).
+    affine::Vector{Vector{Bool}}
+    # Per level and group, the effects that cannot reach the group's data
+    # (`_laplace_build_units`'s `inert`); empty where none are known.
+    inert::Vector{Vector{Vector{Int}}}
 end
 
 # `gate_lo = 0.2` and `gate_hi = 0.7` are measured, not derived: see the
@@ -698,7 +707,8 @@ end
 function CTSEMLaplaceObjective(objective::CTSEMObjective, spec::CTSEMLaplaceSpec;
     inner_maxiter::Integer=_LAPLACE_INNER_MAXITER[], inner_tol::Real=1e-10,
     floor=:total, gate_lo::Real=0.2, gate_hi::Real=0.7,
-    inert::Union{Nothing,Vector{Vector{Vector{Int}}}}=nothing, quadratic::Bool=false)
+    inert::Union{Nothing,Vector{Vector{Vector{Int}}}}=nothing, quadratic::Bool=false,
+    affine::Vector{Vector{Bool}}=Vector{Bool}[])
     Symbol(floor) in (:total, :gated) ||
         throw(ArgumentError("the Laplace floor must be :total or :gated"))
     0 < gate_lo < gate_hi || throw(ArgumentError("the gate needs 0 < lo < hi"))
@@ -710,7 +720,8 @@ function CTSEMLaplaceObjective(objective::CTSEMObjective, spec::CTSEMLaplaceSpec
         Int(inner_maxiter), Float64(inner_tol), [Dict{Any,Any}()],
         zeros(Int, nunits), zeros(Float64, nunits), falses(nunits), falses(nunits),
         falses(nunits), falses(nunits), Float64[], Symbol(floor), Float64(gate_lo),
-        Float64(gate_hi), 0, quadratic)
+        Float64(gate_hi), 0, quadratic, affine,
+        inert === nothing ? Vector{Vector{Int}}[] : inert)
 end
 
 """
@@ -768,6 +779,9 @@ every subject's filter shares.
 
 `quadratic`, when sent, says every unit's inner problem is a concave quadratic,
 so the mode probes are skipped (`CTSEMLaplaceObjective`'s field of that name).
+`affine_level` and `affine_effect`, when sent, are parallel: each pair names an
+effect (an index into that level's effects) that enters as that test's mean
+effects do where it holds for some effects and not all (the field `affine`).
 """
 function ctsem_laplace_objective(objective::CTSEMObjective; re_index=Int[],
     sd_index=Int[], cor_index=Int[], sd_scale=Float64[], level_nre=Int[],
@@ -777,7 +791,8 @@ function ctsem_laplace_objective(objective::CTSEMObjective; re_index=Int[],
     hybrid_effect=Int[], hybrid_kind=Int[], hybrid_target=Int[], hybrid_slope=Float64[],
     hybrid_pred=Int[], level_nload=Int[], load_row=Int[], load_col=Int[],
     inner_maxiter::Integer=_LAPLACE_INNER_MAXITER[], inner_tol::Real=1e-10,
-    floor="total", gate_lo::Real=0.2, gate_hi::Real=0.7, quadratic::Bool=false)
+    floor="total", gate_lo::Real=0.2, gate_hi::Real=0.7, quadratic::Bool=false,
+    affine_level=Int[], affine_effect=Int[])
     nsubjects = length(objective.subject_objectives)
     counts = isempty(level_nre) ? [length(re_index)] : Vector{Int}(Int.(level_nre))
     ngroups = isempty(level_ngroups) ? [nsubjects] : Vector{Int}(Int.(level_ngroups))
@@ -901,9 +916,21 @@ function ctsem_laplace_objective(objective::CTSEMObjective; re_index=Int[],
         end
         foreach(lv -> foreach(x -> unique!(sort!(x)), lv), inert)
     end
+    affine = Vector{Bool}[]
+    if !isempty(affine_level)
+        length(affine_effect) == length(affine_level) || throw(DimensionMismatch(
+            "affine_level and affine_effect must be the same length"))
+        affine = [fill(false, counts[l]) for l in eachindex(counts)]
+        for (l, p) in zip(affine_level, affine_effect)
+            (1 <= l <= length(counts) && 1 <= p <= counts[l]) || throw(ArgumentError(
+                "affine entry (level $l, effect $p) is outside the hierarchy"))
+            affine[l][p] = true
+        end
+    end
     return CTSEMLaplaceObjective(objective, CTSEMLaplaceSpec(levels);
         inner_maxiter=inner_maxiter, inner_tol=inner_tol, floor=Symbol(floor),
-        gate_lo=gate_lo, gate_hi=gate_hi, inert=inert, quadratic=quadratic)
+        gate_lo=gate_lo, gate_hi=gate_hi, inert=inert, quadratic=quadratic,
+        affine=affine)
 end
 
 """Positional convenience form, for single-level calls written in Julia."""
@@ -3944,7 +3971,9 @@ The unit's mode with the largest Laplace term among `found`, the one Newton
 reached from the origin, and those Newton reaches from `_LAPLACE_PROBE_REACH`
 posterior sds either way (at most three prior sds) along each of `found`'s soft
 directions -- precision below `_LAPLACE_PROBE_SOFT`, a negative one included --
-and from `-found.u`, its reflection through the origin.
+and from `-found.u`, its reflection through the origin. Only within the span
+where the unit can have a second maximum (`_laplace_probe_span`), whose soft
+directions are those of its marginal precision.
 
 Why. Where `g_U` has two maxima, Newton from the origin reaches whichever one
 the origin's basin holds, and as the parameters move the basin's edge crosses
@@ -4010,19 +4039,87 @@ function _laplace_probe_modes(laplace::CTSEMLaplaceObjective, U::Integer,
         Msym[i, j] = (M[i, j] + M[j, i]) / 2
     end
     M = Msym
-    E = _ctsem_symeig!(_laplace_scratch_symeig!(laplace, d), M)
-    all(isfinite, E.values) || return found
-    # The values ascend, so the soft directions are the first `nsoft`.
-    nsoft = 0
-    while nsoft < d && E.values[nsoft + 1] < _LAPLACE_PROBE_SOFT
-        nsoft += 1
-    end
-    reflected = any(!iszero, found.u)
-    (nsoft > 0 || reflected) || return found
-    _CTSEM_OPCOUNT.probe_units[] += 1
     F = _ctsem_cholesky(copyto!(_laplace_scratch_matrix!(laplace, Float64, d, d,
         :probe_F), M), d)
     screened = issuccess(F)
+    # The soft directions, each a column of `D` already scaled to its reach,
+    # softest first. Over the span a second mode can
+    # lie in (`_laplace_probe_span`): there a direction's precision is its
+    # marginal one, the Schur complement, and its line moves the coordinates
+    # outside the span to their conditional mean given it, `M^-1 Q (Q' M^-1
+    # Q)^-1` of the step in the span. With the span every coordinate those are
+    # the eigenvectors of `M`, as here when it is not known or `M` does not
+    # factor.
+    span = screened ? _laplace_probe_span(laplace, U, Ls, d) : nothing
+    if span === nothing
+        E = _ctsem_symeig!(_laplace_scratch_symeig!(laplace, d), M)
+        all(isfinite, E.values) || return found
+        # The values ascend, so the soft directions are the first `nsoft`.
+        nsoft = 0
+        while nsoft < d && E.values[nsoft + 1] < _LAPLACE_PROBE_SOFT
+            nsoft += 1
+        end
+        D = _laplace_scratch_matrix!(laplace, Float64, d, nsoft, :probe_dirs)
+        @inbounds for j in 1:nsoft
+            reach = min(_LAPLACE_PROBE_REACH / sqrt(max(E.values[j], 1e-8)), 3.0)
+            for i in 1:d
+                D[i, j] = reach * E.vectors[i, j]
+            end
+        end
+        reflected = any(!iszero, found.u)
+    else
+        n = size(span, 2)
+        # No span: the unit is concave, or the prior's quadratic, everywhere.
+        n == 0 && return found
+        X = _laplace_scratch_matrix!(laplace, Float64, d, n, :probe_X)
+        @inbounds for t in 1:n
+            ldiv!(view(X, :, t), F, view(span, :, t))
+        end
+        C = _laplace_scratch_matrix!(laplace, Float64, n, n, :probe_C)
+        @inbounds for b in 1:n, a in 1:n
+            acc = 0.0
+            for i in 1:d
+                acc += span[i, a] * X[i, b]
+            end
+            C[a, b] = acc
+        end
+        E = _ctsem_symeig!(_laplace_scratch_symeig!(laplace, n), C)
+        all(isfinite, E.values) || return found
+        # Variances ascend, so the soft directions, precision `1 / c` under
+        # the threshold, are the last; softest first.
+        nsoft = 0
+        while nsoft < n && E.values[n - nsoft] > 1 / _LAPLACE_PROBE_SOFT
+            nsoft += 1
+        end
+        D = _laplace_scratch_matrix!(laplace, Float64, d, nsoft, :probe_dirs)
+        @inbounds for j in 1:nsoft
+            c = E.values[n + 1 - j]
+            # Reach `r` marginal sds along the direction is `r sqrt(c)` there,
+            # and `M^-1 Q C^-1` maps it into `u`: `X w r sqrt(c) / c`.
+            scale = min(_LAPLACE_PROBE_REACH * sqrt(c), 3.0) / c
+            for i in 1:d
+                acc = 0.0
+                for t in 1:n
+                    acc += X[i, t] * E.vectors[t, n + 1 - j]
+                end
+                D[i, j] = scale * acc
+            end
+        end
+        # The reflection only where the found mode is off the origin within
+        # the span: outside it the unit is concave, and from `-found.u` Newton
+        # returns to the found mode.
+        inside = 0.0
+        @inbounds for t in 1:n
+            acc = 0.0
+            for i in 1:d
+                acc += span[i, t] * found.u[i]
+            end
+            inside += acc^2
+        end
+        reflected = inside > 1e-16 * max(1.0, sum(abs2, found.u))
+    end
+    (nsoft > 0 || reflected) || return found
+    _CTSEM_OPCOUNT.probe_units[] += 1
     best = found
     bestterm = NaN
     seen = [found.u]
@@ -4037,9 +4134,8 @@ function _laplace_probe_modes(laplace::CTSEMLaplaceObjective, U::Integer,
         _CTSEM_OPCOUNT.probe_starts[] += 1
         if probe <= 2 * nsoft
             j = (probe + 1) >> 1
-            reach = min(_LAPLACE_PROBE_REACH / sqrt(max(E.values[j], 1e-8)), 3.0)
             sign = isodd(probe) ? -1.0 : 1.0
-            start .= found.u .+ (sign * reach) .* view(E.vectors, :, j)
+            start .= found.u .+ sign .* view(D, :, j)
         else
             start .= .-found.u
         end
@@ -4112,6 +4208,85 @@ function _laplace_probe_modes(laplace::CTSEMLaplaceObjective, U::Integer,
         _CTSEM_OPCOUNT.probe_better[] += 1
     end
     return best
+end
+
+"""
+    _laplace_probe_span(laplace, U, Ls, d)
+
+An orthonormal basis, `d` by `n`, of the coordinates of unit `U`'s `u` along
+which it can have a second maximum, or `nothing` where that is every
+coordinate: the span of the loadings' rows for the effects that reach the
+unit's data and are not the quadratic test's mean effects (`affine`).
+
+The likelihood reads `u` only through the rows of the effects that reach the
+data, so across their null space the unit is the prior's standard normal and
+its mode is 0, on any model. On the affect pilot half the probe lines lay
+there, the person's own intercepts cancelling a shared dimension on every item
+they answered; an inactive coordinate (`CTSEMLaplaceUnits`) is the case of one
+axis. And with the other effects fixed, the mean effects move every predicted
+mean affinely and no covariance or gain, so the unit is concave in what their
+rows add, with one maximum, and every maximum of the unit is that one at some
+point of the span. Without pruning (`ctsem_set_laplace_prune!`) every effect
+counts as reaching, which makes it the oracle for this as for the inert skip.
+
+Each level's rows are taken alone, so a parameter that several levels move
+adds a row per level: their span holds the summed rows', and is no smaller.
+"""
+function _laplace_probe_span(laplace::CTSEMLaplaceObjective, U::Integer,
+    Ls::Vector{Matrix{Float64}}, d::Integer)
+    affine = laplace.affine
+    inert = laplace.inert
+    prune = _LAPLACE_PRUNE[] && !isempty(inert)
+    (isempty(affine) && !prune) && return nothing
+    G = _laplace_scratch_matrix!(laplace, Float64, d, d, :probe_G)
+    fill!(G, 0.0)
+    spec = laplace.spec
+    units = laplace.units
+    left = 0
+    @inbounds for (m, i) in enumerate(units.members[U])
+        offsets = units.offsets[U][m]
+        for l in eachindex(spec.levels)
+            level = spec.levels[l]
+            k = nrandomeffects(level)
+            r = nlatent(level)
+            (k == 0 || r == 0) && continue
+            base = offsets[l]
+            L = Ls[l]
+            g = level.group[i]
+            for p in 1:k
+                if (!isempty(affine) && affine[l][p]) || (prune && insorted(p, inert[l][g]))
+                    left += 1
+                    continue
+                end
+                for b in 1:r
+                    lb = L[p, b]
+                    iszero(lb) && continue
+                    for a in 1:r
+                        G[base + a, base + b] += L[p, a] * lb
+                    end
+                end
+            end
+        end
+    end
+    # Every row reaches and moves a nonlinear effect: the loadings span every
+    # coordinate, and the probes are as before.
+    left == 0 && return nothing
+    top = maximum(abs, G)
+    n = 0
+    if top > 0
+        E = _ctsem_symeig!(_laplace_scratch_symeig!(laplace, d), G)
+        # Ascending, so the span is the last `n`: rows whose loadings are
+        # roundoff of the largest add nothing a probe could reach.
+        while n < d && E.values[d - n] > 1e-12 * E.values[d]
+            n += 1
+        end
+        n == d && return nothing
+    end
+    Q = _laplace_scratch_matrix!(laplace, Float64, d, n, :probe_span)
+    @inbounds for t in 1:n, i in 1:d
+        Q[i, t] = E.vectors[i, d + 1 - t]
+    end
+    return Q
 end
 
 """`maximum(abs, a .- b)` without the difference vector."""
