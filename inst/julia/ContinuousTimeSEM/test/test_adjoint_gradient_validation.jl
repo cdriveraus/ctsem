@@ -553,6 +553,88 @@ end
     _check_adjoint(objective, [0.2, 0.7, 0.1, -0.5, 0.3])
 end
 
+# Dynamics whose Jacobian moves nonlinearly with the state are predicted by
+# moments (`_ekf_moment_cells!`): each substep evaluates the predict group at
+# cubature points of the state's Gaussian, and the reverse carries each
+# point's cotangent back through its own group record and the covariance's
+# Cholesky factor (`_reverse_moment!`). A cubic damping, continuous with and
+# without substeps and in discrete time; a van der Pol oscillator with data
+# missing; and a drift read through a state-dependent PARS cell, which the
+# cubature does not average.
+function _adjoint_moment_parameters(kind::Symbol)
+    if kind === :vanderpol
+        return ekf_from_data_frame(_adjoint_test_dataframe(
+            drift=[0.0 1.0; -1.0 0.0], jax=[0.0 1.0; -1.0 0.0], cint=[0.0; 0.0;;],
+            diffusion=[0.3 0.0; 0.0 0.4], lambda=[1.0 0.0; 0.0 1.0], jy=[1.0 0.0; 0.0 1.0],
+            manifestmeans=[0.0; 0.0;;], manifestvar=[0.3 0.0; 0.0 0.3],
+            t0var=[1.0 0.0; 0.2 1.0], t0means=[0.5; 0.0;;], pars=[0.0;;],
+            free=Dict((:PARS, 1, 1) => (1, "param[1]"),
+                (:DIFFUSION, 2, 2) => (2, "log1p_exp(param[2])"),
+                (:CINT, 2, 1) => (3, "param[3]"),
+                (:MANIFESTVAR, 1, 1) => (4, "log1p_exp(param[4])"),
+                (:T0MEANS, 1, 1) => (5, "param[5]"),
+                (:DRIFT, 2, 1) => (6, "-log1p_exp(param[6])")),
+            predict=Dict((:DRIFT, 2, 2) => "PARS[1,1] * (1 - state[1]^2)",
+                (:JAx, 2, 2) => "PARS[1,1] * (1 - state[1]^2)",
+                (:JAx, 2, 1) => "DRIFT[2,1] - 2 * PARS[1,1] * state[1] * state[2]")))
+    elseif kind === :parscell
+        df = _adjoint_test_dataframe(
+            drift=[0.0;;], jax=[0.0;;], cint=[0.0;;], diffusion=[0.5;;],
+            lambda=[1.0;;], jy=[1.0;;], manifestmeans=[0.0;;], manifestvar=[0.3;;],
+            t0var=[0.8;;], t0means=[0.0;;], pars=[0.3; 0.0;;],
+            free=Dict((:PARS, 1, 1) => (1, "param[1]"),
+                (:DIFFUSION, 1, 1) => (2, "log1p_exp(param[2])"),
+                (:T0MEANS, 1, 1) => (3, "param[3]")),
+            predict=Dict((:PARS, 2, 1) => "exp(PARS[1,1] * state[1])",
+                (:DRIFT, 1, 1) => "-PARS[2,1]",
+                (:JAx, 1, 1) => "-PARS[2,1] * (1 + PARS[1,1] * state[1])"))
+        # PARS first, as ctsem lays the table out (`.ctJuliaParameterTable()`),
+        # so the group writes the cell before the cells reading it.
+        pars = df.matrix .== :PARS
+        return ekf_from_data_frame(df[vcat(findall(pars), findall(.!pars)), :])
+    end
+    return ekf_from_data_frame(_adjoint_test_dataframe(
+        drift=[0.0;;], jax=[0.0;;], cint=[0.0;;], diffusion=[0.7;;],
+        lambda=[1.0;;], jy=[1.0;;], manifestmeans=[0.0;;], manifestvar=[0.4;;],
+        t0var=[1.0;;], t0means=[0.0;;], pars=[0.0; 0.0;;],
+        free=Dict((:PARS, 1, 1) => (1, "param[1]"), (:PARS, 2, 1) => (2, "log1p_exp(param[2])"),
+            (:DIFFUSION, 1, 1) => (3, "log1p_exp(param[3])"), (:CINT, 1, 1) => (4, "param[4]"),
+            (:MANIFESTVAR, 1, 1) => (5, "log1p_exp(param[5])"),
+            (:T0MEANS, 1, 1) => (6, "param[6]")),
+        predict=Dict((:DRIFT, 1, 1) => "PARS[1,1] * (1 + PARS[2,1] * state[1]^2)",
+            (:JAx, 1, 1) => "PARS[1,1] * (1 + 3 * PARS[2,1] * state[1]^2)"));
+        continuous_time=kind !== :discrete)
+end
+
+@testset "Forward-gradient validation: moment-matched nonlinear dynamics" begin
+    times = repeat(collect(0.0:0.7:4.2), 2)
+    rng = MersenneTwister(5)
+    data1 = 0.8 .* randn(rng, 1, 14)
+    data1[1, 4] = NaN
+    data2 = 0.8 .* randn(rng, 2, 14)
+    data2[2, 3] = NaN; data2[:, 10] .= NaN
+    for (kind, data, values, step) in (
+        (:cubic, data1, [-0.4, 0.3, 0.2, 0.1, -0.5, 0.2], Inf),
+        (:cubic, data1, [-0.4, 0.3, 0.2, 0.1, -0.5, 0.2], 0.25),
+        (:discrete, data1, [-0.3, 0.3, 0.2, 0.1, -0.5, 0.2], Inf),
+        (:vanderpol, data2, [0.4, 0.1, 0.2, -0.3, 0.3, 0.2], 0.3),
+        (:parscell, data1, [0.4, 0.1, 0.2], 0.35),
+    )
+        sp = _adjoint_moment_parameters(kind)
+        @test ContinuousTimeSEM._init_continuous_ekf_workspace(Float64, sp).moment
+        objective = ContinuousTimeSEM.ctsem_objective(sp, [1, 8], times, data,
+            zeros(0, 14), zeros(2, 0), step)
+        _check_adjoint(objective, values)
+        ekf = try
+            ContinuousTimeSEM.ctsem_set_moment_predict!(false)
+            objective(values)
+        finally
+            ContinuousTimeSEM.ctsem_set_moment_predict!(true)
+        end
+        @test !(objective(values) ≈ ekf)
+    end
+end
+
 @testset "discretization cache cannot go stale" begin
     # `DiscretizationCache` reuses the matrix exponential and the asymptotic
     # diffusion solve across rows, guarded by a comparison against the inputs

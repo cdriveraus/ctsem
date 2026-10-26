@@ -314,6 +314,108 @@ end
     @test ContinuousTimeSEM.ctsem_relin_plan(lin, [0.2]) === nothing
 end
 
+# The grid recursion for a nonlinear drift `f`: each interval's transition
+# composed from Euler steps of at most `h` on the grid.
+function _pf_grid_loglik_euler(rowlogpdf, times; f, diffusion_sd, t0mean, t0sd,
+    h=0.02, grid=range(-5.0, 5.0; length=1001))
+    q = _pf_variance(diffusion_sd)
+    x = collect(grid)
+    p = exp.(-(x .- t0mean) .^ 2 ./ (2 * _pf_variance(t0sd)))
+    p ./= sum(p)
+    kernels = Dict{Float64,Matrix{Float64}}()
+    total = 0.0
+    for t in eachindex(times)
+        if t > 1
+            dt = times[t] - times[t - 1]
+            K = get!(kernels, dt) do
+                n = max(1, ceil(Int, dt / h))
+                s = dt / n
+                Ks = [exp(-(xi - xj - f(xj) * s)^2 / (2 * q * s)) for xi in x, xj in x]
+                Ks ./= sum(Ks; dims=1)
+                Ks^n
+            end
+            p = K * p
+        end
+        l = exp.(rowlogpdf(x, t))
+        z = sum(p .* l)
+        total += log(z)
+        p .*= l ./ z
+    end
+    return total
+end
+
+# Where the drift's Jacobian moves nonlinearly with the state, each prediction
+# substep is moment-matched (`_ekf_moment_cells!`): the drift, its Jacobian and
+# the intercept averaged over cubature points of the state's Gaussian. Against
+# the grid that is far closer than the EKF. Where the Jacobian is constant or
+# affine in the state the prediction is the EKF's.
+@testset "moment-matched prediction for a cubic drift, against the grid" begin
+    moments(sp) = ContinuousTimeSEM._init_continuous_ekf_workspace(Float64, sp).moment
+    @test moments(_PF_CUBIC) && moments(_PF_CROSS)
+    @test !moments(_PF_LINEAR) && !moments(_PF_LOADING) && !moments(_PF_CATEGORICAL)
+    # A quadratic drift, -0.6 (1 + c x) x: its Jacobian is affine in the state.
+    quadratic = ekf_from_data_frame(_pf_dataframe(
+        drift=[0.0;;], jax=[0.0;;], cint=[0.0;;], diffusion=[0.5;;], lambda=[1.0;;],
+        jy=[1.0;;], manifestmeans=[0.0;;], manifestvar=[0.3;;], t0var=[1.0;;],
+        t0means=[0.5;;], pars=[0.0;;],
+        free=Dict((:PARS, 1, 1) => (1, "param[1]")),
+        predict=Dict((:DRIFT, 1, 1) => "-0.6 * (1 + PARS[1,1] * state[1])",
+            (:JAx, 1, 1) => "-0.6 * (1 + 2 * PARS[1,1] * state[1])")))
+    @test !moments(quadratic)
+    oracle(obj, θ) = try
+        ContinuousTimeSEM.ctsem_set_moment_predict!(false)
+        obj(θ)
+    finally
+        ContinuousTimeSEM.ctsem_set_moment_predict!(true)
+    end
+    # The grid is resolved here: halving its step and spacing moved it 0.04.
+    # The EKF was 2.65 under it, the moments 0.19 at the filter's step of 0.1
+    # (dev2, 2026-10-26).
+    nsub, nrow = 10, 12
+    starts, times = _pf_times(nsub, nrow, 1.5)
+    v = _pf_variance(0.3)
+    q = _pf_variance(0.5)
+    c = 2.0
+    drift(x) = -0.6 * (1 + c * x^2) * x
+    # From the model, so the states visit where the drift bends.
+    rng = MersenneTwister(31)
+    data = zeros(1, nsub * nrow)
+    for s in 1:nsub
+        x = 2.0 + randn(rng)
+        for t in 1:nrow
+            if t > 1
+                for _ in 1:300
+                    x += drift(x) * 0.005 + sqrt(q * 0.005) * randn(rng)
+                end
+            end
+            data[1, starts[s] + t - 1] = x + sqrt(v) * randn(rng)
+        end
+    end
+    grid = sum(1:nsub) do s
+        cols = starts[s]:(starts[s] + nrow - 1)
+        _pf_grid_loglik_euler(times[cols]; f=drift, diffusion_sd=0.5, t0mean=2.0,
+            t0sd=1.0) do x, t
+            -(data[1, cols[t]] .- x) .^ 2 ./ (2v) .- 0.5 * log(2π * v)
+        end
+    end
+    θ = [log(expm1(c))]
+    obj = ContinuousTimeSEM.ctsem_objective(_PF_CUBIC, starts, times, data,
+        zeros(0, length(times)), zeros(nsub, 0), 0.1)
+    moment = obj(θ)
+    ekf = oracle(obj, θ)
+    @test isfinite(grid) && isfinite(moment) && isfinite(ekf)
+    @test abs(moment - grid) < abs(ekf - grid) / 5
+    @test ContinuousTimeSEM.ctsem_validate_forward_gradient(obj, θ).adjoint_relative_error < 1e-9
+    # At zero strength the cross effect's Jacobian is constant, and the averages
+    # are the EKF's.
+    cross = ContinuousTimeSEM.ctsem_objective(_PF_CROSS, starts, times,
+        0.5 .* randn(MersenneTwister(32), 2, length(times)))
+    @test cross([0.0]) ≈ oracle(cross, [0.0]) rtol=1e-12
+    @test cross([0.3]) != oracle(cross, [0.3])
+    quad = ContinuousTimeSEM.ctsem_objective(quadratic, starts, times, data)
+    @test quad([0.4]) == oracle(quad, [0.4])
+end
+
 @testset "state-explicit path takes an Euler transition" begin
     starts, times = _pf_times(3, 4, 1.0)
     rng = MersenneTwister(6)
