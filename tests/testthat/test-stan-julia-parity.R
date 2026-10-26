@@ -376,7 +376,7 @@ test_that("Stan and Julia agree for a moderate-dimensional model mixing both kin
 
   # Distilled from ctsemTutorial.qmd's individual-differences example, which
   # originally crashed Julia outright with a LAPACKException from the
-  # Schur-based Lyapunov solver (`_lyap_solve_factorized!`/`trsyl!`) before
+  # Schur-based Lyapunov solver (then LAPACK's `trsyl!`) before
   # `dynamic_state_indices` was fixed in `.ctJuliaAugmentRandomEffects`
   # (ctsem/R/ctJuliaBackend.R), and separately mismatched Stan's T0VAR
   # population SD before the `multiplier*meanscale` rescaling above was
@@ -385,8 +385,8 @@ test_that("Stan and Julia agree for a moderate-dimensional model mixing both kin
   # still-dynamic states with directly indvarying T0MEANS (`t0a`, `t0b`) and
   # two newly-created static carrier states for non-T0MEANS random effects
   # (`cross21` on DRIFT, `B1`/`B2` on CINT) -- five augmented states total,
-  # one more than the `n > 4` threshold that selects the Schur solver over
-  # the small-system `ksolve!` path. If either fix regresses, this either
+  # one more than the `n > 4` threshold that then selected the Schur solver
+  # over the small-system `ksolve!` path. If either fix regresses, this either
   # throws (dynamic_state_indices) or the value/gradient checks below fail
   # (meanscale rescaling).
   model <- suppressWarnings(ctModel(

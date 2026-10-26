@@ -1,6 +1,7 @@
 using ForwardDiff
 using ChainRulesCore
 using LinearAlgebra
+using Random
 
 # The primitive layer (`src/adjoint_primitives.jl`) holds hand-derived
 # pullbacks -- the Lyapunov, sdcovsqrt2cov and Cholesky ones the reverse pass
@@ -74,6 +75,19 @@ end
     sym_pull = ChainRulesCore.rrule(ContinuousTimeSEM._ctsem_lyap, A, Q)[2](symmetric)
     @test isapprox(asym_pull[2], sym_pull[2]; atol=1e-12)
     @test isapprox(asym_pull[3], sym_pull[3]; atol=1e-12)
+
+    # Above the threshold the Float64 solve and its pullback take the Schur
+    # route, its transposed solve on A's own factors; ForwardDiff through the
+    # primal takes the packed route at Dual type. So this checks the one
+    # against the other.
+    n = ContinuousTimeSEM._CTSEM_LYAP_SCHUR_ABOVE[] + 2
+    rng = MersenneTwister(57)
+    Al = 0.3 .* randn(rng, n, n) .- 0.7 .* I(n)
+    Bl = randn(rng, n, n)
+    Ql = Bl * Bl' + I
+    @test ContinuousTimeSEM.LyapBuffer(Float64, n).schur
+    cl = randn(rng, n, n)
+    _check_pullback(ContinuousTimeSEM._ctsem_lyap, (Al, Ql), (cl .+ cl') ./ 2; symmetric_args=(2,))
 end
 
 @testset "discrete-intercept solve pullback matches production (adjoint_ekf.jl:591-599)" begin

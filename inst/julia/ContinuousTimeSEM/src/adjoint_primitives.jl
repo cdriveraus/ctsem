@@ -23,13 +23,13 @@ using ChainRulesCore
 #     `test_frechet_exponential.jl`).
 #
 # Two kernels need hand-written pullbacks here because their forward
-# implementations bottom out in LAPACK calls (`dgetrf`, `dtrsyl`) that no
-# reverse-mode AD in the Julia ecosystem differentiates today:
+# implementations bottom out in factorisations (an LU, a Schur decomposition)
+# that reverse-mode AD should not be asked to differentiate:
 #
 #   * the matrix exponential   `exp(A)`          -- Padé + scaling/squaring,
 #     whose inner Padé solve is an LU factorization;
 #   * the continuous Lyapunov solve `A X + X A' + Q = 0` -- either the packed
-#     `ksolve!` LU or the Schur/`trsyl!` path, depending on size.
+#     `ksolve!` LU or the Schur route (`real_schur.jl`), depending on size.
 #
 # (The plain square solve `A \ B` is the same LAPACK situation, but the reverse
 # filter inlines its pullback, in `_reverse_predict!` and the stationary
@@ -181,18 +181,18 @@ Solve the continuous Lyapunov equation `A X + X A' + Q = 0` for `X`.
 every use in the filter, where `Q` is a covariance.
 
 Uses `LyapBuffer`, i.e. exactly the same size-dependent choice the primal
-filter makes: a Schur solve for `Float64` systems above
-`_CTSEM_LYAP_SCHUR_ABOVE` (ten states), the packed
-`ksolve!` otherwise (including every `ForwardDiff.Dual` case, which LAPACK
-cannot take).
+filter makes: the Schur route for `Float64` systems above
+`_CTSEM_LYAP_SCHUR_ABOVE`, the packed `ksolve!` otherwise (including every
+`ForwardDiff.Dual` case).
 
 **This matters far more than it looks.** `ksolve!` solves an
 `n(n+1)/2`-square dense system, so its cost is `O(n^6)` against the Schur
 path's `O(n^3)`: at 20 latents that is a 210x210 LU instead of a 20x20 Schur
-decomposition, per prediction substep. An earlier revision pinned this to
-`ksolve!` -- a workaround for a Mooncake evaluation that was then abandoned --
-and profiling showed the resulting LU accounting for ~58% of the entire
-reverse pass on a 20-latent model.
+decomposition, per prediction substep. Twice the packed route served every
+size -- once for a Mooncake evaluation, later because the Schur route was
+LAPACK's and locked -- and both times profiling found the LU over half the
+work on a 20-latent model: 58% of the reverse pass, then 56% of the gradient
+of a drift that reads the state.
 """
 function _ctsem_lyap(A::AbstractMatrix, Q::AbstractMatrix,
     buffer=LyapBuffer(promote_type(eltype(A), eltype(Q)), size(A, 1)))
@@ -253,15 +253,10 @@ function _ctsem_lyap_pullback!(Ā::AbstractMatrix{T}, W::AbstractMatrix{T},
     @inbounds for j in 1:n, i in 1:n
         rhs[i, j] = (X̄[i, j] + X̄[j, i]) / 2
     end
-    # A transposed copy rather than `adjoint(A)`: `my_lyap!` wants a matrix it
-    # can compare and factor, and a product with an `adjoint` operand does not
-    # reach `gemm` and does not thread (0.18x on 23 threads at this size),
-    # which left this the last serialised piece of the reverse tape. See
-    # `small_linalg.jl`.
-    @inbounds for j in 1:n, i in 1:n
-        At[j, i] = A[i, j]
-    end
-    my_lyap!(W, At, rhs, buffer)
+    # On `A`'s own factors where the route allows (Schur), so a reverse pass
+    # factorises only where `A` changes; otherwise against a transposed copy
+    # in `At`.
+    my_lyap_transposed!(W, A, rhs, buffer, At)
     _ctsem_mulNT!(Ā, W, X)
     _ctsem_mulTN!(Ā, W, X, one(T), one(T))
     return Ā, W
