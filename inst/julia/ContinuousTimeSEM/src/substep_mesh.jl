@@ -104,22 +104,41 @@ function _record_substep_defect!(rec::CTSEMSubstepRecorder{T}, ws, pars, sp, all
     x1 = ws.state
     n = length(x0)
     idx = ws.predict_param_indices
-    # The drift at the start state, with the matrices the step actually used.
-    _ctsem_affine_field!(rec.f0, pars, x0, n)
-    # Re-materialise the predict group at the new state. `ctx.state` is
-    # `ws.state` itself, which the step has just moved, so the same context
-    # evaluates the transforms at `x1`. The cells are restored afterwards, so
-    # nothing downstream -- the TD and measurement groups, or a trace -- can
-    # tell this ran.
+    # The cells are restored at the end, so nothing downstream -- the TD and
+    # measurement groups, or a trace -- can tell this ran.
     @inbounds for (k, i) in enumerate(idx)
         rec.saved[k] = all_params[i]
     end
+    # The drift at the start state, with the matrices the step used: for a
+    # moment-matched step (`_ekf_moment_cells!`) the cubature's averages and
+    # its mean correction, the moment field `E f(x)` at the incoming moments.
+    _ctsem_affine_field!(rec.f0, pars, x0, n)
+    moment = ws.moment_now[]
+    if moment
+        @inbounds for i in 1:n
+            rec.f0[i] += ws.moment_c[i]
+        end
+    end
+    # Re-materialise the predict group at the new state. `ctx.state` is
+    # `ws.state` itself, which the step has just moved, so the same context
+    # evaluates the transforms at `x1`. For a moment-matched step, the moment
+    # field there, at the predicted moments: what the step's affine model
+    # missed includes the covariance's change, which the mean path alone does
+    # not see.
     apply_complex_transforms_at_indices!(all_params, idx, sp.predict_transforms, ctx)
-    _ctsem_affine_field!(rec.f1, pars, x1, n)
+    if moment && _ekf_moment_cells!(ws, pars, sp, all_params, ctx, nothing,
+            ws.P_predict.data)
+        _ctsem_affine_field!(rec.f1, pars, x1, n)
+        @inbounds for i in 1:n
+            rec.f1[i] += ws.moment_c[i]
+        end
+    else
+        _ctsem_affine_field!(rec.f1, pars, x1, n)
+    end
     @inbounds for (k, i) in enumerate(idx)
         all_params[i] = rec.saved[k]
     end
-    # Defect against the linearisation the step used (JAx is restored above).
+    # Defect against the step's own affine model (JAx is restored above).
     P = ws.P_predict.data
     worst = zero(T)
     JAx = pars.JAx

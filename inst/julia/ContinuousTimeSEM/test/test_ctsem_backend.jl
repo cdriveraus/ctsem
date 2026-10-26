@@ -1852,7 +1852,10 @@ end
     laplace = _endgame_laplace_objective(; nsubjects=5)
     curvature = ContinuousTimeSEM._ctsem_finish_curvature
     @test curvature(laplace.objective) === :chord
-    @test curvature(laplace) === :chord
+    # A Laplace objective whose units have coordinates walks the Krylov model,
+    # which falls back to the chord where the exact Hessian is cheap
+    # (`_CTSEM_KRYLOV_MIN_COST`).
+    @test curvature(laplace) === :krylov
     @test curvature(nothing) === nothing
     @test ContinuousTimeSEM._ctsem_hessian_cost(laplace.objective, 529) == 529
     @test ContinuousTimeSEM._ctsem_hessian_cost(laplace, 529) == 1058

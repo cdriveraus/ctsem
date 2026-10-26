@@ -248,18 +248,13 @@ test_backends <- function() {
 #'
 #' Returns a named list, always with `$julia`, `$stan` only when asked for.
 #'
-#' Stan linearises a measurement that reads the state once, at the prior mean;
-#' julia iterates it to each row's posterior mode (`_ekf_iterated_rows!`). So
-#' a julia fit made beside its stan twin is made as stan makes it.
+#' Stan's filter is the EKF's; julia's is not where the model is nonlinear in
+#' the state (`local_julia_ekf()`). So a julia fit made beside its stan twin is
+#' made as stan makes it.
 fit_backends <- function(..., backends = test_backends(), stanargs = list()) {
   args <- list(...)
   if (!is.null(args$backend)) stop("fit_backends() chooses the backend")
-  if (all(c("julia", "stan") %in% backends)) {
-    ctsem:::.ctJuliaModule()
-    ctsem:::.ctJuliaEval("ContinuousTimeSEM.ctsem_set_relinearise!(false)")
-    on.exit(ctsem:::.ctJuliaEval("ContinuousTimeSEM.ctsem_set_relinearise!(true)"),
-      add = TRUE)
-  }
+  if (all(c("julia", "stan") %in% backends)) local_julia_ekf()
   out <- list()
   for (be in backends) {
     a <- args
@@ -268,6 +263,22 @@ fit_backends <- function(..., backends = test_backends(), stanargs = list()) {
     out[[be]] <- do.call(ctsem::ctFit, a)
   }
   out
+}
+
+#' Julia's filter as stan's, the extended Kalman filter, until `env` exits.
+#'
+#' Stan linearises a measurement that reads the state once, at the prior mean,
+#' and nonlinear dynamics at the mean; julia iterates the first to each row's
+#' posterior mode (`_ekf_iterated_rows!`) and predicts the second by moments
+#' (`_ekf_moment_cells!`). A comparison with stan turns both off.
+local_julia_ekf <- function(env = parent.frame()) {
+  ctsem:::.ctJuliaModule()
+  ctsem:::.ctJuliaEval(paste0("ContinuousTimeSEM.ctsem_set_relinearise!(false); ",
+    "ContinuousTimeSEM.ctsem_set_moment_predict!(false)"))
+  withr::defer(ctsem:::.ctJuliaEval(paste0(
+    "ContinuousTimeSEM.ctsem_set_relinearise!(true); ",
+    "ContinuousTimeSEM.ctsem_set_moment_predict!(true)")), envir = env)
+  invisible(NULL)
 }
 
 # ---------------------------------------------------------------------------

@@ -458,12 +458,8 @@ test_that("Stan and Julia agree for a state/TD-dependent measurement equation wi
   expect_equal(rstan::get_num_upars(stan_fit), length(raw))
 
   stan_value <- rstan::log_prob(stan_fit, upars = raw, adjust_transform = FALSE, gradient = TRUE)
-  # Stan linearises the measurement once, at the prior mean; julia iterates a
-  # state-dependent measurement to the row's posterior mode
-  # (`_ekf_iterated_rows!`), so the comparison is with that off.
-  ctsem:::.ctJuliaEval("ContinuousTimeSEM.ctsem_set_relinearise!(false)")
-  on.exit(ctsem:::.ctJuliaEval("ContinuousTimeSEM.ctsem_set_relinearise!(true)"),
-    add = TRUE)
+  # Stan's filter is the EKF's (`local_julia_ekf()`).
+  local_julia_ekf()
   julia_value <- ctJuliaEvaluate(julia_spec, raw, gradient = TRUE)
   # Same sub-micro nonlinear-EKF-linearisation tolerance as the other
   # nonlinear-model test above.

@@ -81,6 +81,64 @@ mutable struct CTSEMPredictRecord{T}
     # added to a continuous intercept's column; `0 x 0` without.
     Xh::Matrix{T}
     Xinc::Matrix{T}
+    # Whether the substep was moment-matched (`_ekf_moment_cells!`): its JAx,
+    # DRIFT and CINT are the cubature's averages and `affine` carries the
+    # mean's correction, whose cotangent the reverse leaves for
+    # `_reverse_moment!` (`_moment_cbar!`).
+    moment::Bool
+end
+
+"""
+One moment-matched prediction substep's cubature (`_ekf_moment_cells!`): the
+tape index of its first point's group record (the points' records follow it,
+off the program, since this record's reverse walks them), how many points,
+the ridged covariance's upper Cholesky factor (its upper triangle), the
+points' offsets from the mean (a column each), and the drift at each point
+(`n x n` blocks side by side).
+"""
+mutable struct CTSEMMomentRecord{T}
+    first::Int
+    npoints::Int
+    U::Matrix{T}
+    D::Matrix{T}
+    DRIFTs::Matrix{T}
+end
+
+"""
+Scratch for `_reverse_moment!`, sized to the state where the model's dynamics
+are moment-matched and empty elsewhere, except `cbar`, the mean correction's
+cotangent, which the prediction reverse writes on every moment-matched
+substep. `drift_rc` lists the averaged cells that are DRIFT's, as (position
+among them, row, column).
+"""
+struct CTSEMMomentScratch{T}
+    cbar::Vector{T}
+    cellbar::Vector{T}
+    savedoth::Vector{T}
+    xs::Vector{T}
+    dbar::Vector{T}
+    mbar::Vector{T}
+    Ubar::Matrix{T}
+    B::Matrix{T}
+    Z::Matrix{T}
+    drift_rc::Vector{NTuple{3,Int}}
+end
+
+function CTSEMMomentScratch(::Type{T}, sp, ws) where {T}
+    n = ws.state_dim
+    nm = ws.moment ? n : 0
+    avg = ws.moment_avg
+    drift = _ctsem_component_positions(sp, :DRIFT)
+    nr = size(ws.pars.DRIFT, 1)
+    rc = NTuple{3,Int}[]
+    for (k, p) in enumerate(avg)
+        q = findfirst(==(p), drift)
+        q === nothing && continue
+        push!(rc, (k, (q - 1) % nr + 1, (q - 1) ÷ nr + 1))
+    end
+    return CTSEMMomentScratch{T}(zeros(T, n), zeros(T, length(avg)),
+        zeros(T, length(ws.moment_oth)), zeros(T, nm), zeros(T, nm), zeros(T, nm),
+        zeros(T, nm, nm), zeros(T, nm, nm), zeros(T, nm, nm), rc)
 end
 
 """One TD-predictor impulse."""
@@ -318,6 +376,9 @@ mutable struct CTSEMAdjointTape{T}
     relins::Vector{CTSEMRelinRecord{T}}
     nrelins::Int
     xp_bar::Vector{T}
+    # A moment-matched prediction's cubature (`CTSEMMomentRecord`).
+    moments::Vector{CTSEMMomentRecord{T}}
+    nmoments::Int
 end
 
 CTSEMAdjointTape(::Type{T}, group_relevant=[Int[], Int[], Int[]]) where {T} =
@@ -326,7 +387,8 @@ CTSEMAdjointTape(::Type{T}, group_relevant=[Int[], Int[], Int[]]) where {T} =
         CTSEMUpdateRecord{T}[], CTSEMGroupRecord{T}[], CTSEMThetaRecord{T}[],
         CTSEMInitRecord{T}[], CTSEMBinaryRecord{T}[],
         CTSEMStationaryRecord{T}[], 0, 0, 0, 0, 0, 0, 0, 0,
-        T[], CTSEMHybridTape{T}(), group_relevant, CTSEMRelinRecord{T}[], 0, T[])
+        T[], CTSEMHybridTape{T}(), group_relevant, CTSEMRelinRecord{T}[], 0, T[],
+        CTSEMMomentRecord{T}[], 0)
 
 """
 Transition growth above which a subject's gradient is taken by forward mode
@@ -571,6 +633,7 @@ function _tape_reset!(tape::CTSEMAdjointTape)
     tape.npredicts = 0; tape.ntds = 0; tape.nupdates = 0
     tape.ngroups = 0; tape.nthetas = 0; tape.ninits = 0
     tape.nbinaries = 0; tape.nstationaries = 0; tape.nrelins = 0
+    tape.nmoments = 0
     tape.hyb.active = false
     return tape
 end
@@ -783,9 +846,22 @@ the reverse pass needs.
 """
 function _record_group!(tape::CTSEMAdjointTape{T}, group::Int,
     indices::AbstractVector{Int}, all_params, ctx::CTSEMRowContext) where {T}
+    index = _record_group_slot!(tape, group, indices, all_params, ctx)
+    index == 0 || _tape_push!(tape, :group, index)
+    return nothing
+end
+
+"""
+Record a transform group into the tape's next group slot without a program
+entry, and return the slot (0 for an empty group): `_record_group!`'s record,
+and a cubature point's (`_record_moment_group!`), which its moment record's
+reverse walks instead.
+"""
+function _record_group_slot!(tape::CTSEMAdjointTape{T}, group::Int,
+    indices::AbstractVector{Int}, all_params, ctx::CTSEMRowContext) where {T}
     # Linear models have no state-dependent cells at all; skipping the
     # snapshot there keeps the tape out of the common case entirely.
-    isempty(indices) && return nothing
+    isempty(indices) && return 0
     relevant = tape.group_relevant[group]
     index = (tape.ngroups += 1)
     # Explicit `{T}` for the same reason as in `_record_update!`: the TD
@@ -816,7 +892,33 @@ function _record_group!(tape::CTSEMAdjointTape{T}, group::Int,
         push!(tape.groups, CTSEMGroupRecord{T}(group, compact, collect(vec(ctx.state)),
             T[x for x in ctx.tdpreds], T(ctx.time), T(ctx.dt), ctx.row))
     end
-    _tape_push!(tape, :group, index)
+    return index
+end
+
+# A cubature point's group evaluation (`_ekf_moment_cells!`): on the tape, a
+# slot its moment record's reverse walks; nothing on any other trace.
+@inline _record_moment_group!(::Any, args...) = 0
+@inline _record_moment_group!(tape::CTSEMAdjointTape, group::Int,
+    indices::AbstractVector{Int}, all_params, ctx::CTSEMRowContext) =
+    _record_group_slot!(tape, group, indices, all_params, ctx)
+
+@inline _record_moment!(::Any, args...) = nothing
+
+"""Record a moment-matched substep's cubature (`CTSEMMomentRecord`)."""
+function _record_moment!(tape::CTSEMAdjointTape{T}, ws, first::Int, npoints::Int,
+    n::Int) where {T}
+    index = (tape.nmoments += 1)
+    if index > length(tape.moments)
+        push!(tape.moments, CTSEMMomentRecord{T}(0, 0, zeros(T, 0, 0), zeros(T, 0, 0),
+            zeros(T, 0, 0)))
+    end
+    record = tape.moments[index]
+    record.first = first
+    record.npoints = npoints
+    record.U = _tape_fill!(record.U, view(ws.moment_U, 1:n, 1:n))
+    record.D = _tape_fill!(record.D, view(ws.moment_d, 1:n, 1:npoints))
+    record.DRIFTs = _tape_fill!(record.DRIFTs, view(ws.moment_drifts, 1:n, 1:(n * npoints)))
+    _tape_push!(tape, :moment, index)
     return nothing
 end
 
@@ -930,7 +1032,7 @@ _empty_predict_record(::Type{T}, n::Int, k::Int, naff::Int=k) where {T} =
     CTSEMPredictRecord{T}(zeros(T, n), zeros(T, n, n), zeros(T, n, n),
         zeros(T, n, n), zeros(T, n, n), zeros(T, n, n), zeros(T, k, k),
         zeros(T, naff), zeros(T, naff), zero(T), false, false, zeros(T, 0, 0),
-        zeros(T, 0, 0), zeros(T, 0, 0))
+        zeros(T, 0, 0), zeros(T, 0, 0), false)
 
 """
 Snapshot the substep inputs, which `_ekf_predict_step!` overwrites.
@@ -980,6 +1082,7 @@ function _record_predict!(tape::CTSEMAdjointTape{T}, ws, pars,
         record.Qd = _tape_fill!(record.Qd, view(series.Q, 1:k, 1:k))
     end
     _hybrid_record_Xinc!(record, ws.hyb, n)
+    record.moment = ws.moment_now[]
     _tape_push!(tape, :predict, index)
     return nothing
 end
@@ -1293,6 +1396,9 @@ function _reverse_predict!(x̄::Vector{T}, P̄::Matrix{T}, θ̄ca,
         JAx_bar[i, j] -= contribution
         x̄_new[j] += (record.DRIFT[i, j] - JAx[i, j]) * affine_bar[i]
     end
+    # The affine offset also carried a moment-matched substep's mean
+    # correction, whose cotangent is the offset's (`_reverse_moment!`).
+    record.moment && _moment_cbar!(aws, affine_bar, naff)
 
     # Scatter the dynamic-block contributions back into the full matrices.
     @inbounds for j in 1:k, i in 1:k
@@ -2139,6 +2245,9 @@ function _ctsem_reverse_tape!(tape::CTSEMAdjointTape{T},
         elseif kind === :predict
             _reverse_predict!(x̄, P̄, θ̄ca, tape.predicts[index], dyn, n, aws.lyap_buffer, aws,
                 tape.hyb.active && tape.hyb.q > 0 ? tape.hyb : nothing)
+        elseif kind === :moment
+            # Between its substep's prediction and the group at the mean.
+            _reverse_moment!(x̄, P̄, θ̄, θ̄ca, tape.moments[index], tape, sp, aws, n, m)
         elseif kind === :group
             # Only a group that writes a JAx cell can consume a queued Fréchet
             # contribution (its reverse zeroes that cell's cotangent).
@@ -2410,6 +2519,156 @@ function _ctsem_parameter_layer!(values_bar::AbstractVector{T}, θ̄::AbstractVe
     return values_bar
 end
 
+"""Keep the affine offset's cotangent for `_reverse_moment!` (`CTSEMMomentScratch`)."""
+@inline function _moment_cbar!(aws, bar, k::Int)
+    cbar = aws.moment.cbar
+    fill!(cbar, zero(eltype(cbar)))
+    @inbounds for i in 1:k
+        cbar[i] = bar[i]
+    end
+    return nothing
+end
+
+"""
+    _reverse_moment!(x̄, P̄, θ̄, θ̄ca, record, tape, sp, aws, n, m)
+
+Undo a moment-matched substep's cubature (`_ekf_moment_cells!`). Forward, with
+`P + eps I = U'U`, the offsets `d_i = +-sqrt(n) U[j, :]'` and points
+`x_i = m + d_i`, weights `w = 1 / 2n`:
+
+    cell_k = sum_i w cell_k(x_i)        the group's JAx, DRIFT and CINT cells
+    c      = sum_i w DRIFT(x_i) d_i     the mean's correction
+
+and the group's other cells hold their values at the mean. The prediction's
+reverse has left the averaged cells' cotangent in `θ̄` and `c`'s in
+`aws.moment.cbar`. Each point gets its share in its cells, `c`'s in its DRIFT
+cells and its offset, and its group record is reversed with a state cotangent
+of its own, which reaches the mean and, through the offset, the factor and so
+`P`. The other cells' cotangent is set aside while the points run -- what they
+send those cells flows on to the group at the mean, which wrote the values
+they read -- and handed back for that group's own reverse, next on the walk.
+"""
+function _reverse_moment!(x̄::Vector{T}, P̄::Matrix{T}, θ̄::Vector{T}, θ̄ca,
+    record::CTSEMMomentRecord{T}, tape::CTSEMAdjointTape{T}, sp::EKFParameters, aws,
+    n::Int, m::Int) where {T}
+    # As before any group that writes these cells; see `_ctsem_reverse_tape!`.
+    (aws.groups_write_jax || aws.groups_write_diffusion) && _flush_series!(aws, θ̄ca, n)
+    aws.groups_write_jax && _flush_frechet!(aws)
+    aws.groups_write_manifestvar && _flush_manifestvar!(aws, θ̄ca, m)
+    aws.groups_write_diffusion && _flush_diffusion!(aws, θ̄ca, n)
+    ews = aws.ekf_ws
+    avg = ews.moment_avg
+    oth = ews.moment_oth
+    ms = aws.moment
+    cellbar = ms.cellbar
+    savedoth = ms.savedoth
+    @inbounds for k in eachindex(avg)
+        cellbar[k] = θ̄[avg[k]]
+        θ̄[avg[k]] = zero(T)
+    end
+    @inbounds for k in eachindex(oth)
+        savedoth[k] = θ̄[oth[k]]
+        θ̄[oth[k]] = zero(T)
+    end
+    cbar = ms.cbar
+    U = record.U
+    D = record.D
+    DRIFTs = record.DRIFTs
+    np = record.npoints
+    w = inv(T(np))
+    r = sqrt(T(n))
+    Ubar = ms.Ubar
+    fill!(Ubar, zero(T))
+    mbar = ms.mbar
+    fill!(mbar, zero(T))
+    dbar = ms.dbar
+    xs = ms.xs
+    @inbounds for i in np:-1:1
+        for k in eachindex(avg)
+            θ̄[avg[k]] += w * cellbar[k]
+        end
+        for (k, a, b) in ms.drift_rc
+            θ̄[avg[k]] += w * cbar[a] * D[b, i]
+        end
+        offset = (i - 1) * n
+        for b in 1:n
+            acc = zero(T)
+            for a in 1:n
+                acc += DRIFTs[a, offset + b] * cbar[a]
+            end
+            dbar[b] = w * acc
+        end
+        fill!(xs, zero(T))
+        _reverse_group!(θ̄, xs, tape.groups[record.first + i - 1], sp, aws)
+        for q in 1:n
+            mbar[q] += xs[q]
+            dbar[q] += xs[q]
+        end
+        j = (i + 1) >> 1
+        scale = isodd(i) ? r : -r
+        for q in j:n
+            Ubar[j, q] += scale * dbar[q]
+        end
+    end
+    @inbounds for k in eachindex(oth)
+        θ̄[oth[k]] += savedoth[k]
+    end
+    @inbounds for q in 1:n
+        x̄[q] += mbar[q]
+    end
+    _moment_cholesky_pullback!(P̄, U, Ubar, ms.B, ms.Z, n)
+    return nothing
+end
+
+"""
+    _moment_cholesky_pullback!(P̄, U, Ū, B, Z, n)
+
+Add to `P̄` the cotangent of a symmetric `P` through its upper Cholesky factor
+`P = U'U`, given the factor's cotangent `Ū` (upper triangles of both read).
+With `L = U'`, `P̄ += sym(L^-T Phi(L' L̄) L^-1)` (Murray 2016), `Phi` the lower
+triangle with its diagonal halved; here `L' L̄ = U Ū'` and `L^-T = U^-1`.
+`B` and `Z` are scratch.
+"""
+function _moment_cholesky_pullback!(P̄::AbstractMatrix{T}, U::AbstractMatrix{T},
+    Ū::AbstractMatrix{T}, B::AbstractMatrix{T}, Z::AbstractMatrix{T}, n::Int) where {T}
+    @inbounds for j in 1:n
+        for i in 1:(j - 1)
+            B[i, j] = zero(T)
+        end
+        for i in j:n
+            acc = zero(T)
+            for q in i:n
+                acc += U[i, q] * Ū[j, q]
+            end
+            B[i, j] = i == j ? acc / 2 : acc
+        end
+    end
+    # Z = U^-1 B, by back substitution a column at a time.
+    @inbounds for col in 1:n
+        for i in n:-1:1
+            acc = B[i, col]
+            for q in (i + 1):n
+                acc -= U[i, q] * Z[q, col]
+            end
+            Z[i, col] = acc / U[i, i]
+        end
+    end
+    # S' = U^-1 Z', into B, whose Phi is no longer read.
+    @inbounds for col in 1:n
+        for i in n:-1:1
+            acc = Z[col, i]
+            for q in (i + 1):n
+                acc -= U[i, q] * B[q, col]
+            end
+            B[i, col] = acc / U[i, i]
+        end
+    end
+    @inbounds for j in 1:n, i in 1:n
+        P̄[i, j] += (B[i, j] + B[j, i]) / 2
+    end
+    return P̄
+end
+
 """Reverse one recorded state-dependent transform group."""
 function _reverse_group!(θ̄::Vector{T}, x̄::Vector{T}, record::CTSEMGroupRecord{T},
     sp::EKFParameters, aws) where {T}
@@ -2529,6 +2788,7 @@ function _reverse_predict_discrete!(XBAR::Vector{T}, PBAR::Matrix{T}, THETA,
         JAx_bar[i, j] -= contribution
         xbar_new[j] += (record.DRIFT[i, j] - JAx[i, j]) * dINT_bar[i]
     end
+    record.moment && _moment_cbar!(aws, dINT_bar, n)
 
     # --- A is JAx itself, so its cotangent simply adds.
     @inbounds for j in 1:n, i in 1:n
