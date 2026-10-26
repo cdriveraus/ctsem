@@ -534,6 +534,11 @@ export CTSEMObjective, ctsem_objective, ctsem_evaluate, ctsem_optimize
 _ctsem_subject_substeps(rule::Real, r) = rule
 _ctsem_subject_substeps(mesh::AbstractVector, r) = Int[Int(m) for m in view(mesh, r)]
 
+"""One subject's rows `r` of an iteration plan (`ctsem_relin_plan`); no plan
+stays none."""
+_ctsem_subject_relin(plan::AbstractVector, r) =
+    isempty(plan) ? Int[] : Int[Int(k) for k in view(plan, r)]
+
 function _ctsem_row_loglikelihood(objective::CTSEMObjective, values::AbstractVector)
     contributions = Vector{eltype(values)}()
     for subject_objective in objective.subject_objectives
@@ -545,7 +550,8 @@ function _ctsem_row_loglikelihood(objective::CTSEMObjective, values::AbstractVec
                 collect(subject_objective.timesteps[1:row]);
                 tdpreds=Matrix(subject_objective.tdpreds[:, 1:row]),
                 tipreds=subject_objective.tipreds, subject=subject_objective.subject,
-                max_timestep=_ctsem_subject_substeps(subject_objective.max_timestep, 1:row))
+                max_timestep=_ctsem_subject_substeps(subject_objective.max_timestep, 1:row),
+                relin_steps=_ctsem_subject_relin(subject_objective.relin, 1:row))
             current = prefix(values)
             push!(contributions, current - previous)
             previous = current
@@ -587,7 +593,7 @@ function CTSEMObjective(params::EKFParameters, subject_starts::AbstractVector,
     ti_missing_mu=Float64[], ti_missing_sigma=Float64[], subject_weights=Float64[],
     corbound_k=Int[], corbound_code=Int[], corbound_index=Int[], corbound_fixed=Float64[],
     penalty_index=Int[], penalty_precision=Float64[], jacobian_index=Int[],
-    jacobian_value=String[], jacobian_slope=String[])
+    jacobian_value=String[], jacobian_slope=String[], relin_steps=Int[])
     length(penalty_index) == length(penalty_precision) ||
         throw(DimensionMismatch("penalty_index and penalty_precision differ in length"))
     all(p -> isfinite(p) && p > 0, penalty_precision) ||
@@ -603,6 +609,9 @@ function CTSEMObjective(params::EKFParameters, subject_starts::AbstractVector,
     # subject exactly as `timesteps` is; a `maxtimestep` rule is shared.
     max_timestep isa AbstractVector && length(max_timestep) != length(timesteps) &&
         throw(DimensionMismatch("a substep mesh needs one entry per row of the data"))
+    # An iteration plan likewise (`ctsem_relin_plan`).
+    (isempty(relin_steps) || length(relin_steps) == length(timesteps)) ||
+        throw(DimensionMismatch("an iteration plan needs one entry per row of the data"))
     size(tdpred_data, 2) == size(data, 2) || throw(DimensionMismatch("TD predictor columns must match observations"))
     size(tipred_data, 1) == length(ranges) || throw(DimensionMismatch("TI predictor rows must match subjects"))
     nmissing = length(ti_missing_subject)
@@ -640,7 +649,8 @@ function CTSEMObjective(params::EKFParameters, subject_starts::AbstractVector,
             else
                 vec(tipred_data[i, :])
             end,
-            subject=i, max_timestep=_ctsem_subject_substeps(max_timestep, r))
+            subject=i, max_timestep=_ctsem_subject_substeps(max_timestep, r),
+            relin_steps=_ctsem_subject_relin(relin_steps, r))
         for (i, r) in enumerate(ranges)
     ]
     length(prior_index) == length(prior_scale) ||
@@ -696,7 +706,7 @@ ctsem_objective(params::EKFParameters, subject_starts, timesteps, data,
     ti_missing_mu=Float64[], ti_missing_sigma=Float64[], subject_weights=Float64[],
     corbound_k=Int[], corbound_code=Int[], corbound_index=Int[], corbound_fixed=Float64[],
     penalty_index=Int[], penalty_precision=Float64[], jacobian_index=Int[],
-    jacobian_value=String[], jacobian_slope=String[]) =
+    jacobian_value=String[], jacobian_slope=String[], relin_steps=Int[]) =
     CTSEMObjective(params, subject_starts, timesteps, data, tdpred_data, tipred_data,
         max_timestep; prior_index=prior_index, prior_scale=prior_scale,
         prior_weight=prior_weight, ti_missing_subject=ti_missing_subject,
@@ -706,7 +716,7 @@ ctsem_objective(params::EKFParameters, subject_starts, timesteps, data,
         corbound_index=corbound_index, corbound_fixed=corbound_fixed,
         penalty_index=penalty_index, penalty_precision=penalty_precision,
         jacobian_index=jacobian_index, jacobian_value=jacobian_value,
-        jacobian_slope=jacobian_slope)
+        jacobian_slope=jacobian_slope, relin_steps=relin_steps)
 
 ################################################################################
 # Threading

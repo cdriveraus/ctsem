@@ -4687,6 +4687,9 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
     objective_args$ti_missing_mu <- V(as.numeric(spec$ti_missing$mu))
     objective_args$ti_missing_sigma <- V(as.numeric(spec$ti_missing$sigma))
   }
+  # Each row's count of steps for an iterated measurement update, frozen for
+  # the fit (`.ctJuliaRelinPlan()`); without one every row iterates to its mode.
+  if (length(spec$relinsteps)) objective_args$relin_steps <- V(as.integer(spec$relinsteps))
   # The Laplace route wraps the ordinary objective rather than replacing it:
   # the process likelihood, the parameter layer and the TI-predictor effects
   # are all still the same code, evaluated per subject at a shifted parameter
@@ -5340,6 +5343,21 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
   list(spec = spec, summary = summary)
 }
 
+# Each row's count of steps for the iterated measurement update, learnt at
+# `values` (`ctsem_relin_plan`, kalman_filters.jl) and held on the spec, so
+# that every objective built from it takes them: frozen within a fit, as the
+# substep mesh is, which keeps the objective smooth at a fraction of the steps
+# iterating each row to its mode takes. On the Laplace route each subject is
+# at its random-effect modes. NULL where no row iterates -- a linear
+# measurement -- which is the same as no plan.
+.ctJuliaRelinPlan <- function(spec, values) {
+  module <- .ctJuliaModule(spec$project)
+  objective <- .ctJuliaObjective(structure(spec, class = c("ctJuliaModel", "ctFitModel")))
+  plan <- module$ctsem_relin_plan(objective, .ctJuliaNumericVector(values))
+  spec$relinsteps <- if (length(plan)) as.integer(plan) else NULL
+  spec
+}
+
 # The fitted specification's integration step, carried onto `spec`: the same
 # model re-prepared over other rows, as prediction and cross-validation do.
 # Re-preparing gives back the maxtimestep rule, which applies to any rows. A
@@ -5353,7 +5371,18 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
 # not reproduce it: the fit chose its mesh at an earlier optimum, before a
 # refit or a correction moved the estimate it reports. Anything else gets the
 # mesh the fit would choose for these rows at `values`, its estimate.
+#
+# The iteration plan (`.ctJuliaRelinPlan()`) is one count per row in the same
+# way, and is carried the same way.
 .ctJuliaCarrySubsteps <- function(spec, fitted, values) {
+  values <- as.numeric(values)[seq_len(.ctBackendNpar(spec))]
+  if (length(fitted$relinsteps)) {
+    rows <- .ctJuliaFittedRows(spec, fitted)
+    spec <- if (is.null(rows)) .ctJuliaRelinPlan(spec, values) else {
+      spec$relinsteps <- fitted$relinsteps[rows]
+      spec
+    }
+  }
   if (!is.integer(fitted$max_timestep)) {
     spec$max_timestep <- fitted$max_timestep
     return(spec)
@@ -5364,7 +5393,7 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
     spec$max_timestep <- fitted$max_timestep[rows]
     return(spec)
   }
-  .ctJuliaAutoSubsteps(spec, as.numeric(values)[seq_len(.ctBackendNpar(spec))])$spec
+  .ctJuliaAutoSubsteps(spec, values)$spec
 }
 
 # For each row of `spec`, the row of `fitted` it is, or NULL unless every row
@@ -6486,6 +6515,12 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
     substeps <- remesh(start[seq_len(npar)])
     if (!is.null(jointobjective)) start <- c(start[seq_len(npar)], numeric(nstate))
   }
+  # The iterated measurement update's steps a row, chosen as the mesh is: at
+  # the start, again at the optimum, one refit if they moved
+  # (`.ctJuliaRelinPlan()`). Not on the state-explicit target, which has no
+  # measurement update.
+  replan <- is.null(jointobjective)
+  if (replan) model_spec <- .ctJuliaRelinPlan(model_spec, start[seq_len(npar)])
   # The engine loaded first, so a first fit's install and compile -- minutes,
   # once per machine -- is not counted as this fit's own time, which says how
   # slow work repeating the fit would be (`.ctWorkerFitSeconds`). Counted, it
@@ -6497,24 +6532,33 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
     optimcontrol = startcontrol, gradient = gradient, cores = cores,
     verbose = verbose, callback = optimcontrol$callback,
     objective = jointobjective)
+  optimum <- as.numeric(result$minimizer)[seq_len(npar)]
+  moved <- FALSE
   if (!is.null(substeps) && isTRUE(substeps$finite)) {
     before <- model_spec$max_timestep
-    optimum <- as.numeric(result$minimizer)[seq_len(npar)]
     substeps <- remesh(optimum)
     if (!identical(model_spec$max_timestep, before)) {
       substeps$refit <- TRUE
-      restart <- if (is.null(jointobjective)) optimum else c(optimum, numeric(nstate))
-      first <- result
-      # From the coarser mesh's optimum, so without the early phases, which
-      # are for a stage that starts away from one.
-      result <- .ctJuliaAddRunCounts(.ctJuliaOptimise(
-        model_spec, restart,
-        optimcontrol = utils::modifyList(optimcontrol,
-          list(saem = FALSE, stochastic = FALSE, batch = FALSE)), gradient = gradient,
-        cores = cores,
-        verbose = verbose, callback = optimcontrol$callback,
-        objective = jointobjective), first)
+      moved <- TRUE
     }
+  }
+  if (replan && length(model_spec$relinsteps)) {
+    before <- model_spec$relinsteps
+    model_spec <- .ctJuliaRelinPlan(model_spec, optimum)
+    moved <- moved || !identical(model_spec$relinsteps, before)
+  }
+  if (moved) {
+    restart <- if (is.null(jointobjective)) optimum else c(optimum, numeric(nstate))
+    first <- result
+    # From the earlier mesh's or plan's optimum, so without the early phases,
+    # which are for a stage that starts away from one.
+    result <- .ctJuliaAddRunCounts(.ctJuliaOptimise(
+      model_spec, restart,
+      optimcontrol = utils::modifyList(optimcontrol,
+        list(saem = FALSE, stochastic = FALSE, batch = FALSE)), gradient = gradient,
+      cores = cores,
+      verbose = verbose, callback = optimcontrol$callback,
+      objective = jointobjective), first)
   }
   if (!is.null(substeps)) message(.ctJuliaSubstepMessage(substeps))
   # What the curvature says about the point the optimiser stopped at, and a

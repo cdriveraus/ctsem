@@ -219,7 +219,7 @@ function ctsem_effect_information(objective::CTSEMObjective, values::AbstractVec
             value = _extended_kalman_filter_continuous!(ws, raw, sub.data,
                 collect(sub.timesteps), sp, sub.tdpreds,
                 _ctsem_tipred_vector(sub.tipreds, raw), i,
-                sub.max_timestep, trace)
+                sub.max_timestep, trace, nothing, nothing, sub.relin)
             isfinite(value) || continue
             smoothed, centre = _effect_smoothed_initial(trace, nobs, n)
             for (j, s) in enumerate(states)
