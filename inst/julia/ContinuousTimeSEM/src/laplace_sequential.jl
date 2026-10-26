@@ -247,7 +247,7 @@ function _laplace_sequential_unit!(out, laplace::CTSEMLaplaceObjective, U::Integ
             trace.current_subject = 1
             ll = _extended_kalman_filter_continuous!(ws, x, so.data, collect(so.timesteps),
                 sp, so.tdpreds, _ctsem_tipred_vector(so.tipreds, x), i, so.max_timestep,
-                trace)
+                trace, nothing, nothing, so.relin)
             _laplace_finite(ll) || continue
             t >= 1 && _laplace_sequential_record!(out, 2, offset + t, trace, t, SigmaP, D)
             t + 1 <= T && _laplace_sequential_record!(out, 1, offset + t + 1, trace,
@@ -306,7 +306,8 @@ function _laplace_sequential_filtered!(out, laplace::CTSEMLaplaceObjective, U::I
     trace.offset = 0
     trace.current_subject = 1
     ll = _extended_kalman_filter_continuous!(ws, x, so.data, collect(so.timesteps),
-        sp, so.tdpreds, _ctsem_tipred_vector(so.tipreds, x), i, so.max_timestep, trace)
+        sp, so.tdpreds, _ctsem_tipred_vector(so.tipreds, x), i, so.max_timestep, trace,
+        nothing, nothing, so.relin)
     _laplace_finite(ll) || return nothing
     # The posterior given rows 1:t, in information form: H the rows' summed
     # precisions in z, g their summed scores at zero, c their summed values.

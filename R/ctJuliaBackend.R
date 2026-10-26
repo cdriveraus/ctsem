@@ -4687,6 +4687,9 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
     objective_args$ti_missing_mu <- V(as.numeric(spec$ti_missing$mu))
     objective_args$ti_missing_sigma <- V(as.numeric(spec$ti_missing$sigma))
   }
+  # Each row's count of steps for an iterated measurement update, frozen for
+  # the fit (`.ctJuliaRelinPlan()`); without one every row iterates to its mode.
+  if (length(spec$relinsteps)) objective_args$relin_steps <- V(as.integer(spec$relinsteps))
   # The Laplace route wraps the ordinary objective rather than replacing it:
   # the process likelihood, the parameter layer and the TI-predictor effects
   # are all still the same code, evaluated per subject at a shifted parameter
@@ -5340,6 +5343,21 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
   list(spec = spec, summary = summary)
 }
 
+# Each row's count of steps for the iterated measurement update, learnt at
+# `values` (`ctsem_relin_plan`, kalman_filters.jl) and held on the spec, so
+# that every objective built from it takes them: frozen within a fit, as the
+# substep mesh is, which keeps the objective smooth at a fraction of the steps
+# iterating each row to its mode takes. On the Laplace route each subject is
+# at its random-effect modes. NULL where no row iterates -- a linear
+# measurement -- which is the same as no plan.
+.ctJuliaRelinPlan <- function(spec, values) {
+  module <- .ctJuliaModule(spec$project)
+  objective <- .ctJuliaObjective(structure(spec, class = c("ctJuliaModel", "ctFitModel")))
+  plan <- module$ctsem_relin_plan(objective, .ctJuliaNumericVector(values))
+  spec$relinsteps <- if (length(plan)) as.integer(plan) else NULL
+  spec
+}
+
 # The fitted specification's integration step, carried onto `spec`: the same
 # model re-prepared over other rows, as prediction and cross-validation do.
 # Re-preparing gives back the maxtimestep rule, which applies to any rows. A
@@ -5353,7 +5371,18 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
 # not reproduce it: the fit chose its mesh at an earlier optimum, before a
 # refit or a correction moved the estimate it reports. Anything else gets the
 # mesh the fit would choose for these rows at `values`, its estimate.
+#
+# The iteration plan (`.ctJuliaRelinPlan()`) is one count per row in the same
+# way, and is carried the same way.
 .ctJuliaCarrySubsteps <- function(spec, fitted, values) {
+  values <- as.numeric(values)[seq_len(.ctBackendNpar(spec))]
+  if (length(fitted$relinsteps)) {
+    rows <- .ctJuliaFittedRows(spec, fitted)
+    spec <- if (is.null(rows)) .ctJuliaRelinPlan(spec, values) else {
+      spec$relinsteps <- fitted$relinsteps[rows]
+      spec
+    }
+  }
   if (!is.integer(fitted$max_timestep)) {
     spec$max_timestep <- fitted$max_timestep
     return(spec)
@@ -5364,7 +5393,7 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
     spec$max_timestep <- fitted$max_timestep[rows]
     return(spec)
   }
-  .ctJuliaAutoSubsteps(spec, as.numeric(values)[seq_len(.ctBackendNpar(spec))])$spec
+  .ctJuliaAutoSubsteps(spec, values)$spec
 }
 
 # For each row of `spec`, the row of `fitted` it is, or NULL unless every row
@@ -6486,6 +6515,12 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
     substeps <- remesh(start[seq_len(npar)])
     if (!is.null(jointobjective)) start <- c(start[seq_len(npar)], numeric(nstate))
   }
+  # The iterated measurement update's steps a row, chosen as the mesh is: at
+  # the start, again at the optimum, one refit if they moved
+  # (`.ctJuliaRelinPlan()`). Not on the state-explicit target, which has no
+  # measurement update.
+  replan <- is.null(jointobjective)
+  if (replan) model_spec <- .ctJuliaRelinPlan(model_spec, start[seq_len(npar)])
   # The engine loaded first, so a first fit's install and compile -- minutes,
   # once per machine -- is not counted as this fit's own time, which says how
   # slow work repeating the fit would be (`.ctWorkerFitSeconds`). Counted, it
@@ -6497,24 +6532,33 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
     optimcontrol = startcontrol, gradient = gradient, cores = cores,
     verbose = verbose, callback = optimcontrol$callback,
     objective = jointobjective)
+  optimum <- as.numeric(result$minimizer)[seq_len(npar)]
+  moved <- FALSE
   if (!is.null(substeps) && isTRUE(substeps$finite)) {
     before <- model_spec$max_timestep
-    optimum <- as.numeric(result$minimizer)[seq_len(npar)]
     substeps <- remesh(optimum)
     if (!identical(model_spec$max_timestep, before)) {
       substeps$refit <- TRUE
-      restart <- if (is.null(jointobjective)) optimum else c(optimum, numeric(nstate))
-      first <- result
-      # From the coarser mesh's optimum, so without the early phases, which
-      # are for a stage that starts away from one.
-      result <- .ctJuliaAddRunCounts(.ctJuliaOptimise(
-        model_spec, restart,
-        optimcontrol = utils::modifyList(optimcontrol,
-          list(saem = FALSE, stochastic = FALSE, batch = FALSE)), gradient = gradient,
-        cores = cores,
-        verbose = verbose, callback = optimcontrol$callback,
-        objective = jointobjective), first)
+      moved <- TRUE
     }
+  }
+  if (replan && length(model_spec$relinsteps)) {
+    before <- model_spec$relinsteps
+    model_spec <- .ctJuliaRelinPlan(model_spec, optimum)
+    moved <- moved || !identical(model_spec$relinsteps, before)
+  }
+  if (moved) {
+    restart <- if (is.null(jointobjective)) optimum else c(optimum, numeric(nstate))
+    first <- result
+    # From the earlier mesh's or plan's optimum, so without the early phases,
+    # which are for a stage that starts away from one.
+    result <- .ctJuliaAddRunCounts(.ctJuliaOptimise(
+      model_spec, restart,
+      optimcontrol = utils::modifyList(optimcontrol,
+        list(saem = FALSE, stochastic = FALSE, batch = FALSE)), gradient = gradient,
+      cores = cores,
+      verbose = verbose, callback = optimcontrol$callback,
+      objective = jointobjective), first)
   }
   if (!is.null(substeps)) message(.ctJuliaSubstepMessage(substeps))
   # What the curvature says about the point the optimiser stopped at, and a
@@ -7111,13 +7155,24 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
       "only the profile curvature, which the states flatten. Use ",
       "optimize=FALSE to sample them, or intoverstates=TRUE.")
   }
-  # With sampling weights the sandwich, unless asked otherwise: the Hessian
-  # alone is the pseudo-likelihood's curvature, not the estimate's spread.
-  # `[[`: `$` falls back to the one field the name begins, so an
-  # `uncertaintyControl` given alone was read as the method and stopped the
-  # fit in `match.arg()`.
+  # A fit's default is for building a model: the curvature's normal, on the
+  # density the fit ends on, with the normal check made and recorded beside
+  # it (`control$check`), and one message where the posterior departs from
+  # that normal. To report, sample (`ctFitUncertainty(fit, 'sample')`).
+  # 'checked', the default before, cost 2.3 times as much on the race's
+  # hierarchical fixtures for the same median coverage, and its narrow
+  # intervals were no better announced (review/REVIEW-fit-uncertainty-2026-10-25.md,
+  # section 5). With sampling weights the sandwich, unless asked otherwise:
+  # the Hessian alone is the pseudo-likelihood's curvature, not the
+  # estimate's spread. `[[`: `$` falls back to the one field the name begins,
+  # so an `uncertaintyControl` given alone was read as the method and stopped
+  # the fit in `match.arg()`.
+  weighted <- length(out$model_spec$subject_weights) > 0L
   uncertainty <- .ctJuliaOr(optimcontrol[["uncertainty"]],
-    if (length(out$model_spec$subject_weights)) "sandwich" else "checked")
+    if (weighted) "sandwich" else "hessian")
+  uncertaintycontrol <- .ctJuliaOr(optimcontrol$uncertaintyControl, list())
+  if (is.null(optimcontrol[["uncertainty"]]) && !weighted &&
+      is.null(uncertaintycontrol$check)) uncertaintycontrol$check <- TRUE
   uncertain <- isTRUE(intoverstates) && !isTRUE(optimcontrol$estonly)
   # One way to sample: `ctFit(optimize = FALSE)`, which places the sampler
   # through this same pipeline before ever reaching this stage (see
@@ -7133,11 +7188,11 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
       "ctFitUncertainty(fit, 'sample') on this fit once it is made.",
       call. = FALSE)
   }
-  measure <- function(fit, method) ctFitUncertainty(fit = fit, uncertainty = method,
+  measure <- function(fit, method, control = uncertaintycontrol) ctFitUncertainty(
+    fit = fit, uncertainty = method,
     draws = .ctJuliaOr(optimcontrol$uncertaintyDraws, "auto"),
     finishsamples = .ctJuliaOr(optimcontrol$finishsamples, 1000L),
-    cores = cores, control = .ctJuliaOr(optimcontrol$uncertaintyControl, list()),
-    verbose = verbose)
+    cores = cores, control = control, verbose = verbose)
   # A run that ended on a jump has no Laplace answer: the objective is not
   # continuous there, so it has no maximum and no curvature at that point, and
   # the quadrature continuation is what finishes it, whatever
@@ -7149,18 +7204,26 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
   # Where the continuation runs it draws the uncertainty itself, by the method
   # asked for, on the hybrid it ends on (`.ctLaplaceContinue()`), so the pass
   # before it computes only what it starts from: the curvature's normal and
-  # the flat directions. It ran the sampling methods on the Laplace objective
-  # too, and threw the draws away: 134 s of anomS1's 205 s fit
-  # (review/REVIEW-fit-uncertainty-2026-10-25.md, section 3).
+  # the flat directions, without the check. It ran the sampling methods on
+  # the Laplace objective too, and threw the draws away: 134 s of anomS1's
+  # 205 s fit (review/REVIEW-fit-uncertainty-2026-10-25.md, section 3). Its
+  # draws are always replaced, so it leaves R's random stream where it found
+  # it: where the continuation leaves the fit alone, the method asked for then
+  # draws exactly what it draws on the uncorrected fit.
+  # The default's check is made once, here, on the Laplace objective at its
+  # optimum, against that curvature's normal, where it is cheap and where it
+  # was measured; on the hybrid every draw would place the flagged units'
+  # rules again, some 13 s each on gN3's nested units. Kept for the fit's
+  # final record however the continuation ends (`precheck`).
+  plaincontrol <- uncertaintycontrol[setdiff(names(uncertaintycontrol), "check")]
+  precheck <- NULL
   if (uncertain && !jumped) {
-    first <- if (continuing && uncertainty %in% c("checked", "is")) "hessian" else
-      uncertainty
-    # Its draws are always replaced, so it leaves R's random stream where it
-    # found it: where the continuation leaves the fit alone, the method asked
-    # for then draws exactly what it draws on the uncorrected fit.
-    restore <- if (!identical(first, uncertainty)) .ctStreamKeep() else function() NULL
-    out <- holdrepair(measure(out, first))
-    restore()
+    if (continuing) {
+      restore <- .ctStreamKeep()
+      out <- holdrepair(measure(out, "hessian"))
+      restore()
+      precheck <- out$uncertainty$details$normalcheck
+    } else out <- holdrepair(measure(out, uncertainty))
   }
 
   # The quadrature correction, after the certification has converged the
@@ -7178,7 +7241,7 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
           "optimcontrol$laplace_correct.")
       }
       out <- holdrepair(.ctLaplaceContinue(out, cores = cores, verbose = verbose,
-        method = uncertainty))
+        method = uncertainty, uncertaintycontrol = plaincontrol))
     } else if (identical(correctlaplace, "step")) {
       out <- holdrepair(.ctLaplaceAutoCorrect(out, cores = cores, verbose = verbose))
     } else {
@@ -7192,10 +7255,16 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
   # continuation stopped short of its fixed point, when the draws are taken
   # at the Laplace optimum and moved with the estimate, as the continuation
   # moves the normal's (`.ctLaplaceUncertaintyAtOptimum()`).
-  if (uncertain && !jumped && !identical(out$uncertainty$settings$method, uncertainty)) {
+  if (continuing && !jumped && !identical(out$laplace$correction$draws, "redrawn")) {
     out <- holdrepair(.ctLaplaceUncertaintyAtOptimum(out,
-      function(fit) measure(fit, uncertainty)))
+      function(fit) measure(fit, uncertainty, plaincontrol)))
   }
+  if (!is.null(precheck) && is.null(out$uncertainty$details$normalcheck)) {
+    out$uncertainty$details$normalcheck <- precheck
+  }
+  # What the check beside the curvature found, said once.
+  checknote <- if (uncertain) .ctUncertaintyCheckNote(out) else NULL
+  if (!is.null(checknote)) message(checknote)
   # An accuracy asked for (`optimcontrol$accuracy`, in posterior sds): the
   # method's own account of its error read against it, and a brief
   # sampling run where it falls short (`.ctUncertaintyEscalate()`).

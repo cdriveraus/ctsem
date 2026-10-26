@@ -555,9 +555,26 @@ test_that("the marginal sampler starts from the normal check, made where the fit
   skip_without_julia()
   fit <- .sample_fixture()
   expect_false(is.null(fit$uncertainty$details$normalcheck))
-  # A fit that has its check keeps it; one without gets 'checked''s; one
-  # whose climb took a jump in keeps its Hessian.
-  expect_identical(ctsem:::.ctBackendSampleCheck(fit), fit)
+  # A fit that has its check keeps it, gaining only DAIS's normal where the
+  # check named directions and the fit has no posterior covariance of its own;
+  # one without gets 'checked''s; one whose climb took a jump in keeps its
+  # Hessian.
+  kept <- ctsem:::.ctBackendSampleCheck(fit)
+  expect_identical(kept$uncertainty$details$normalcheck,
+    fit$uncertainty$details$normalcheck)
+  added <- setdiff(names(kept$uncertainty$details), names(fit$uncertainty$details))
+  expect_true(all(added %in% "dais"))
+  # A default fit carries the curvature's normal and the check beside it, and
+  # where the check names a direction DAIS is made for the metric, as
+  # 'checked' would have made it.
+  named <- fit
+  named$uncertainty$details[c("importance_sampling", "dais")] <- NULL
+  named$uncertainty$details$normalcheck$directions <-
+    diag(length(fit$estimate$raw))[, 1L, drop = FALSE]
+  named$uncertainty$details$normalcheck$widths <- 1.5
+  set.seed(2)
+  daised <- ctsem:::.ctBackendSampleCheck(named)
+  expect_identical(ctsem:::.ctBackendMetricSource(daised), "dais")
   bare <- fit
   bare$uncertainty$details$normalcheck <- NULL
   set.seed(1)
@@ -572,7 +589,7 @@ test_that("the marginal sampler starts from the normal check, made where the fit
   # whose engine builds its own population block.
   asked <- list()
   testthat::local_mocked_bindings(
-    .ctBackendSampleCheck = function(fit, cores = 1L, verbose = 0) {
+    .ctBackendSampleCheck = function(fit, cores = 1L, verbose = 0, seed = NULL) {
       asked[[length(asked) + 1L]] <<- cores
       fit
     },

@@ -306,6 +306,9 @@ struct ContinuousEKFWorkspace{T, PARS, BQ, BTHETA, DCA, EBUF, LBUF, DIFBUF, DBUF
     xprior::Vector{T}
     xnext::Vector{T}
     mm_eff::Vector{T}
+    # The row's iterates, a column each, while a plan is learnt
+    # (`_ekf_relin_need`); empty where the update does not iterate.
+    relin_hist::Matrix{T}
 end
 
 """
@@ -542,6 +545,7 @@ function _init_continuous_ekf_workspace(::Type{T}, sp::EKFParameters) where {T}
         zeros(T, relinearise ? n : 0),
         zeros(T, relinearise ? n : 0),
         zeros(T, relinearise ? m : 0),
+        zeros(T, relinearise ? n : 0, relinearise ? _CTSEM_RELIN_MAXIT + 1 : 0),
     )
 end
 
