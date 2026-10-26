@@ -322,21 +322,16 @@ end
 _fresh_nonlinear_two() = (ctsem_laplace_objective(_LAPLACE_NONLINEAR_OBJECTIVE,
     [1, 2], [5, 6], [7], [1.0, 1.0]), [0.1, -2.0, -0.2, 0.05, -0.25, 2.0, 0.0])
 
-# The trace terms' jet sweeps (`CTSEMTraceJet`) and the hyper-dual sweep a
-# direction they replace compute the same sums of second derivatives, so the
-# gradients agree to roundoff, with one effect and with two.
-@testset "jet sweeps give the hyper-dual sweeps' Laplace gradient" begin
+# The trace terms' jet sweeps (`CTSEMTraceJet`) against the nested gradient,
+# which shares only the primal with them, with one effect and with two: a
+# block's directions go through a sweep together.
+@testset "jet sweeps give the nested Laplace gradient" begin
     for (laplace, values) in (_fresh_nonlinear(), _fresh_nonlinear_two())
-        @test ContinuousTimeSEM._laplace_jets_ok(laplace)
         jet = ctsem_laplace_evaluate(laplace, values; gradient=true)
-        previous = ctsem_set_laplace_jets!(false)
-        hyper = try
-            ctsem_laplace_evaluate(laplace, values; gradient=true)
-        finally
-            ctsem_set_laplace_jets!(previous)
-        end
-        @test jet.value == hyper.value
-        @test isapprox(jet.gradient, hyper.gradient; rtol=1e-12, atol=1e-13)
+        nested = ctsem_laplace_evaluate(laplace, values; gradient=true,
+            nested_gradient=true)
+        @test jet.value == nested.value
+        @test isapprox(jet.gradient, nested.gradient; rtol=1e-9, atol=1e-11)
     end
 end
 
