@@ -3026,6 +3026,7 @@ function ctsem_set_mode_probes!(on::Bool)
 end
 
 export ctsem_set_mode_probes!
+export ctsem_set_laplace_jets!
 
 """Unit size at or above which the blocked curvature beats the dense one."""
 const _LAPLACE_BLOCK_THRESHOLD = Ref(14)
@@ -5405,6 +5406,81 @@ function _laplace_unit_seeded_gradient_(laplace::CTSEMLaplaceObjective, U::Integ
     return (ok=true, d0=d0, d1c=d1c, d12=d12)
 end
 
+const _LAPLACE_JETS = Ref(true)
+
+"""
+    ctsem_set_laplace_jets!(on)
+
+Whether the Laplace gradient's diagonal trace terms take a block's directions
+together in jet sweeps (`_laplace_unit_jet_gradient`, `CTSEMTraceJet`) or one
+hyper-dual sweep each, as before: the oracle for comparing the two. Returns the
+previous setting.
+"""
+function ctsem_set_laplace_jets!(on::Bool)
+    previous = _LAPLACE_JETS[]
+    _LAPLACE_JETS[] = on
+    return previous
+end
+
+"""
+Whether a unit's diagonal trace terms take jet sweeps: where the switch is on
+and every member's pass is the plain filter's -- no categorical item, whose
+moments differentiate themselves inside the pass, and no deviations the filter
+integrates (`CTSEMHybrid`). Elsewhere the hyper-dual sweeps, which serve every
+route.
+"""
+_laplace_jets_ok(laplace::CTSEMLaplaceObjective) = _LAPLACE_JETS[] &&
+    isempty(laplace.objective.params.manifesttype) &&
+    !_hybrid_on(laplace.objective.params.hybrid)
+
+"""
+    _laplace_unit_jet_gradient(laplace, U, values, Ls, u, members, D, ndirs)
+
+One reverse sweep over the given members at `CTSEMTraceJet{_CTSEM_JET_WIDTH}`,
+seeded along the first `ndirs` columns of `D` (raw-parameter directions, the
+rest of the width zero): for each member, as `npar x length(members)`
+matrices, the gradient (`d0`) and the sum over the directions of its second
+directional derivatives (`dS`) -- what `ndirs` order-2 sweeps of
+`_laplace_unit_seeded_gradient` along those directions return as `d0` and the
+sum of their `d12`, in one pass.
+"""
+function _laplace_unit_jet_gradient(laplace::CTSEMLaplaceObjective, U::Integer,
+    values::Vector{Float64}, Ls::Vector{Matrix{Float64}}, u::Vector{Float64},
+    members, D::Matrix{Float64}, ndirs::Int)
+    spec = laplace.spec
+    units = laplace.units
+    unitmembers = units.members[U]
+    npar = length(values)
+    nm = length(members)
+    J = CTSEMTraceJet{_CTSEM_JET_WIDTH}
+    d0 = _laplace_scratch_matrix!(laplace, Float64, npar, nm, :jet_d0)
+    dS = _laplace_scratch_matrix!(laplace, Float64, npar, nm, :jet_dS)
+    one_member! = function (c::Int, m)
+        local aws, gradient, x, shifted, t
+        aws = _laplace_workspace!(laplace, J, npar)
+        gradient = _laplace_scratch_vector!(laplace, J, npar, :jet_grad)
+        x = _laplace_scratch_vector!(laplace, J, npar, :jet_x)
+        shifted = _laplace_member_values!(
+            _laplace_scratch_vector!(laplace, Float64, npar, :jet_shift),
+            values, spec, Ls, u, units.offsets[U][m])
+        @inbounds for t in 1:npar
+            x[t] = J(shifted[t], ntuple(j -> j <= ndirs ? D[t, j] : 0.0,
+                Val(_CTSEM_JET_WIDTH)), 0.0)
+        end
+        _laplace_member_pass_finite!(gradient,
+            laplace.objective.subject_objectives[unitmembers[m]], aws, x) ||
+            return false
+        @inbounds for t in 1:npar
+            d0[t, c] = gradient[t].v
+            dS[t, c] = gradient[t].s
+        end
+        return true
+    end
+    _laplace_run_members(one_member!, laplace, members) ||
+        return (ok=false, d0=_LAPLACE_NO_MATRIX, dS=_LAPLACE_NO_MATRIX)
+    return (ok=true, d0=d0, dS=dS)
+end
+
 # Whether one member's pass came out finite, deep. The sweeps' workspace is a
 # slot's, which `_laplace_workspace!` cannot type, so the pass is a dynamic call:
 # returning its dual log likelihood boxed it, once per member per sweep, where a
@@ -5529,6 +5605,8 @@ function _laplace_seeded_unit_gradient!(out::Vector{Float64},
     end
     # A sweep this function runs itself, on its own slot and serially: the
     # parallelism here is one level out, over members.
+    # The diagonal terms' route, decided once for the unit (`_laplace_jets_ok`).
+    jets = _laplace_jets_ok(laplace)
     sweep = (mm, a1, a2, order) -> _laplace_unit_seeded_gradient(laplace, U,
         values, Ls, uhat, mm, a1, a2, order)
     sweep_at = (mm, a1, a2, order) -> _laplace_unit_seeded_gradient(
@@ -5600,6 +5678,7 @@ function _laplace_seeded_unit_gradient!(out::Vector{Float64},
         # result. It surfaces as a BoundsError indexing column 7 of a
         # one-column matrix, and would otherwise be a wrong gradient.
         local ownedA, b, block, l, L, k, subsA, FC, Q, j, dir, pass, c, m, t
+        local Dj, nd, jpass
         local kparl, la, nb, na, accumulate, Cab, Vcross, e, q, i, tt
         local Cs, dir1, dir2, T1, p, x, y, z, acc
         # This worker's own: `_laplace_scratch_*` is keyed by the calling slot,
@@ -5680,7 +5759,44 @@ function _laplace_seeded_unit_gradient!(out::Vector{Float64},
         # The first probe of this used the one-latent fixture and reported 1.8x,
         # which is why the measurement above names its model. See
         # `review/LAPLACE-where-the-time-goes-2026-09-23.md`.
+        #
+        # What the trace needs is the *sum* over the directions, and that sum
+        # propagates on the directions' first derivatives alone, so a jet
+        # (`CTSEMTraceJet`) carries `W` directions in `W + 2` components where
+        # the nested dual above carried `(1 + W)^2`: about `4W + 3`
+        # multiplies a product against `9W` for `W` hyper-dual sweeps, and one
+        # sweep's fixed cost. Where the route allows it (`_laplace_jets_ok`) the
+        # directions go `_CTSEM_JET_WIDTH` at a time.
+        if jets
+            Dj = _laplace_scratch_matrix!(laplace, Float64, npar, _CTSEM_JET_WIDTH,
+                :sg_jetdirs)
+            nd = 0
+            for j in 1:k
+                if isactive[block.offset + j]
+                    nd += 1
+                    scatter!(dir1, l, view(Q, :, j))
+                    @inbounds for t in 1:npar
+                        Dj[t, nd] = dir1[t]
+                    end
+                end
+                (nd == _CTSEM_JET_WIDTH || (j == k && nd > 0)) || continue
+                jpass = _laplace_unit_jet_gradient(laplace, U, values, Ls, uhat, subsA,
+                    Dj, nd)
+                nd = 0
+                jpass.ok || (_LAPLACE_DIAG[] = 12; return false)
+                (all(isfinite, jpass.dS) && all(isfinite, jpass.d0)) ||
+                    (_LAPLACE_DIAG[] = 13; return false)
+                for (c, m) in enumerate(subsA)
+                    for t in 1:npar
+                        Pm[t, m] += jpass.dS[t, c]
+                        seen[m] || (llvm[t, m] = jpass.d0[t, c])
+                    end
+                    seen[m] = true
+                end
+            end
+        end
         for j in 1:k
+            jets && break
             isactive[block.offset + j] || continue
             dir = scatter!(dir1, l, view(Q, :, j))
             pass = sweep_at(subsA, dir, dir, 2)

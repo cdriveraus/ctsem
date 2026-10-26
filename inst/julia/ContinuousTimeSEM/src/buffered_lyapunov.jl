@@ -94,6 +94,17 @@ function LyapBuffer(::Type{D}, n::Int) where {Tg,V,N,D<:ForwardDiff.Dual{Tg,V,N}
         zeros(D, 0, 0), false, zeros(D, 0, 0), false, tangents)
 end
 
+# A jet (`CTSEMTraceJet`): its values and each direction's first part as a
+# Dual's, and one solve more, in the last of `parts`, for the summed second.
+function LyapBuffer(::Type{J}, n::Int) where {W,J<:CTSEMTraceJet{W}}
+    tangents = LyapTangents(LyapBuffer(Float64, n),
+        zeros(n, n), zeros(n, n), zeros(n, n), zeros(n, n), zeros(n, n),
+        zeros(n, n), [zeros(n, n) for _ in 1:(W + 1)])
+    return LyapBuffer{J,typeof(tangents)}(n,
+        zeros(J, 0, 0), zeros(J, 0, 0), zeros(J, 0, 0), zeros(J, 0, 0), zeros(J, 0),
+        zeros(J, 0, 0), false, zeros(J, 0, 0), false, tangents)
+end
+
 """
     LyapBuffer(mat::AbstractMatrix)
 
@@ -195,6 +206,59 @@ function _lyap_solve!(X::AbstractMatrix, A::AbstractMatrix, Q::AbstractMatrix,
     end
     @inbounds for j in 1:n, i in 1:n
         X[i, j] = D(Xv[i, j], ForwardDiff.Partials(ntuple(p -> parts[p][i, j], Val(N))))
+    end
+    return X
+end
+
+# A jet: as a Dual for the values and each direction's first part `dX_p`; then,
+# differentiating `A X + X A' + Q = 0` twice along each direction and summing,
+#
+#     A S_X + S_X A' + (S_A X + X S_A' + 2 sum_p (dA_p dX_p + dX_p dA_p') + S_Q) = 0,
+#
+# one solve more on the same factors (transposed: `dA_p'` and `S_A'`).
+function _lyap_solve!(X::AbstractMatrix, A::AbstractMatrix, Q::AbstractMatrix,
+    buffer::LyapBuffer{J}, transposed::Bool) where {W,J<:CTSEMTraceJet{W}}
+    n = buffer.dim
+    tg = buffer.tangents
+    Av = tg.A
+    Qv = tg.Q
+    Xv = tg.X
+    R = tg.R
+    dA = tg.dA
+    tmp = tg.tmp
+    @inbounds for j in 1:n, i in 1:n
+        Av[i, j] = A[i, j].v
+        Qv[i, j] = Q[i, j].v
+    end
+    _lyap_solve!(Xv, Av, Qv, tg.primal, transposed)
+    parts = tg.parts
+    # The summed second part's right-hand side, built up beside the first parts.
+    S = parts[W + 1]
+    @inbounds for j in 1:n, i in 1:n
+        dA[i, j] = A[i, j].s
+    end
+    transposed ? _ctsem_mulTN!(tmp, dA, Xv) : _ctsem_mul!(tmp, dA, Xv)
+    @inbounds for j in 1:n, i in 1:n
+        S[i, j] = tmp[i, j] + tmp[j, i] + Q[i, j].s
+    end
+    @inbounds for p in 1:W
+        for j in 1:n, i in 1:n
+            dA[i, j] = A[i, j].d[p]
+        end
+        transposed ? _ctsem_mulTN!(tmp, dA, Xv) : _ctsem_mul!(tmp, dA, Xv)
+        for j in 1:n, i in 1:n
+            R[i, j] = tmp[i, j] + tmp[j, i] + Q[i, j].d[p]
+        end
+        _lyap_solve!(parts[p], Av, R, tg.primal, transposed)
+        transposed ? _ctsem_mulTN!(tmp, dA, parts[p]) : _ctsem_mul!(tmp, dA, parts[p])
+        for j in 1:n, i in 1:n
+            S[i, j] += 2 * (tmp[i, j] + tmp[j, i])
+        end
+    end
+    copyto!(R, S)
+    _lyap_solve!(S, Av, R, tg.primal, transposed)
+    @inbounds for j in 1:n, i in 1:n
+        X[i, j] = J(Xv[i, j], ntuple(p -> parts[p][i, j], Val(W)), S[i, j])
     end
     return X
 end

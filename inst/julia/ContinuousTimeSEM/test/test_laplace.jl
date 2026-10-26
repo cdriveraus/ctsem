@@ -322,6 +322,24 @@ end
 _fresh_nonlinear_two() = (ctsem_laplace_objective(_LAPLACE_NONLINEAR_OBJECTIVE,
     [1, 2], [5, 6], [7], [1.0, 1.0]), [0.1, -2.0, -0.2, 0.05, -0.25, 2.0, 0.0])
 
+# The trace terms' jet sweeps (`CTSEMTraceJet`) and the hyper-dual sweep a
+# direction they replace compute the same sums of second derivatives, so the
+# gradients agree to roundoff, with one effect and with two.
+@testset "jet sweeps give the hyper-dual sweeps' Laplace gradient" begin
+    for (laplace, values) in (_fresh_nonlinear(), _fresh_nonlinear_two())
+        @test ContinuousTimeSEM._laplace_jets_ok(laplace)
+        jet = ctsem_laplace_evaluate(laplace, values; gradient=true)
+        previous = ctsem_set_laplace_jets!(false)
+        hyper = try
+            ctsem_laplace_evaluate(laplace, values; gradient=true)
+        finally
+            ctsem_set_laplace_jets!(previous)
+        end
+        @test jet.value == hyper.value
+        @test isapprox(jet.gradient, hyper.gradient; rtol=1e-12, atol=1e-13)
+    end
+end
+
 @testset "the hand-written symmetric eigensolver matches LAPACK" begin
     rng = MersenneTwister(3)
     for n in (1, 2, 3, 6, 12)

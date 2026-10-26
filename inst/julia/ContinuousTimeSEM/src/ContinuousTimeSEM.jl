@@ -78,6 +78,7 @@ include("transform_expr.jl")
 # anywhere; here it is beside the rest of the R-facing surface.
 include("bridge_tuning.jl")
 include("helper_functions.jl")
+include("trace_jet.jl")
 include("square_solve.jl")
 include("real_schur.jl")
 include("parameter_transforms.jl")
