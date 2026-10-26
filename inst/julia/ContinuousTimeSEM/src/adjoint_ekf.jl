@@ -121,6 +121,7 @@ struct CTSEMMomentScratch{T}
     Ubar::Matrix{T}
     B::Matrix{T}
     Z::Matrix{T}
+    Pp::Matrix{T}
     drift_rc::Vector{NTuple{3,Int}}
 end
 
@@ -138,7 +139,7 @@ function CTSEMMomentScratch(::Type{T}, sp, ws) where {T}
     end
     return CTSEMMomentScratch{T}(zeros(T, n), zeros(T, length(avg)),
         zeros(T, length(ws.moment_oth)), zeros(T, nm), zeros(T, nm), zeros(T, nm),
-        zeros(T, nm, nm), zeros(T, nm, nm), zeros(T, nm, nm), rc)
+        zeros(T, nm, nm), zeros(T, nm, nm), zeros(T, nm, nm), zeros(T, nm, nm), rc)
 end
 
 """One TD-predictor impulse."""
@@ -2576,7 +2577,8 @@ function _reverse_moment!(x̄::Vector{T}, P̄::Matrix{T}, θ̄::Vector{T}, θ̄c
     DRIFTs = record.DRIFTs
     np = record.npoints
     w = inv(T(np))
-    r = sqrt(T(n))
+    r = sqrt(T(np >> 1))
+    perm = ews.moment_perm
     Ubar = ms.Ubar
     fill!(Ubar, zero(T))
     mbar = ms.mbar
@@ -2607,7 +2609,7 @@ function _reverse_moment!(x̄::Vector{T}, P̄::Matrix{T}, θ̄::Vector{T}, θ̄c
         j = (i + 1) >> 1
         scale = isodd(i) ? r : -r
         for q in j:n
-            Ubar[j, q] += scale * dbar[q]
+            Ubar[j, q] += scale * dbar[perm[q]]
         end
     end
     @inbounds for k in eachindex(oth)
@@ -2616,7 +2618,14 @@ function _reverse_moment!(x̄::Vector{T}, P̄::Matrix{T}, θ̄::Vector{T}, θ̄c
     @inbounds for q in 1:n
         x̄[q] += mbar[q]
     end
-    _moment_cholesky_pullback!(P̄, U, Ubar, ms.B, ms.Z, n)
+    # The factor is of P in the permuted order; its cotangent goes back to
+    # the state's own.
+    Pp = ms.Pp
+    fill!(Pp, zero(T))
+    _moment_cholesky_pullback!(Pp, U, Ubar, ms.B, ms.Z, n)
+    @inbounds for b in 1:n, a in 1:n
+        P̄[perm[a], perm[b]] += Pp[a, b]
+    end
     return nothing
 end
 
