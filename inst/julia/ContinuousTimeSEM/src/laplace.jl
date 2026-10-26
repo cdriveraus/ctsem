@@ -4028,6 +4028,7 @@ function _laplace_probe_modes(laplace::CTSEMLaplaceObjective, U::Integer,
     atgrad = _laplace_scratch_vector!(laplace, Float64, d, :probe_grad)
     miss = _laplace_scratch_vector!(laplace, Float64, d, :probe_miss)
     solved = _laplace_scratch_vector!(laplace, Float64, d, :probe_solve)
+    trv0 = NaN
     # Each soft direction either way, then the reflection.
     for probe in 1:(2 * nsoft + (reflected ? 1 : 0))
         # The slot's: Newton reads its start and does not keep it.
@@ -4041,11 +4042,45 @@ function _laplace_probe_modes(laplace::CTSEMLaplaceObjective, U::Integer,
         else
             start .= .-found.u
         end
+        tr = _PROBE_TRACE_ON[] && screened
+        trΔ = NaN; trg = NaN; trshare = NaN
+        trlam = probe <= 2 * nsoft ? E.values[(probe + 1) >> 1] : NaN
+        if tr
+            if isnan(trv0)
+                trv0 = _laplace_unit_loglik_value(laplace, U, values, Ls,
+                    copy(found.u), aws, Float64[]).value - dot(found.u, found.u) / 2
+            end
+            vs = _laplace_unit_loglik_value(laplace, U, values, Ls, copy(start),
+                aws, Float64[]).value - dot(start, start) / 2
+            dq = 0.0
+            @inbounds for i in 1:d, k in 1:d
+                dq += (start[i] - found.u[i]) * M[i, k] * (start[k] - found.u[k])
+            end
+            trΔ = vs - (trv0 - dq / 2)
+            mask = _PROBE_MEANMASK[]
+            if !isempty(mask)
+                o1 = laplace.units.offsets[U][1]
+                a1 = _laplace_member_values!(zeros(length(values)), values,
+                    laplace.spec, Ls, start, o1)
+                a0 = _laplace_member_values!(zeros(length(values)), values,
+                    laplace.spec, Ls, found.u, o1)
+                num = 0.0; den = 0.0
+                for i in eachindex(a1)
+                    dd = (a1[i] - a0[i])^2
+                    den += dd
+                    (i <= length(mask) && mask[i]) || (num += dd)
+                end
+                trshare = den > 0 ? num / den : NaN
+            end
+        end
         if screened
             at = _laplace_unit_objective_gradient(laplace, U, values, Ls, start,
                 aws, atgrad)
             _CTSEM_OPCOUNT.probe_gradients[] += 1
-            isfinite(at.value) || continue
+            if !isfinite(at.value)
+                tr && _probe_trace!(U, probe, trlam, trΔ, NaN, 0, trshare, trv0 - found.value)
+                continue
+            end
             # miss = a + M (p - u)
             @inbounds for i in 1:d
                 acc = at.gradient[i]
@@ -4054,7 +4089,11 @@ function _laplace_probe_modes(laplace::CTSEMLaplaceObjective, U::Integer,
                 end
                 miss[i] = acc
             end
-            dot(miss, ldiv!(solved, F, miss)) > 1 || continue
+            trg = dot(miss, ldiv!(solved, F, miss))
+            if !(trg > 1)
+                tr && _probe_trace!(U, probe, trlam, trΔ, trg, 1, trshare, trv0 - found.value)
+                continue
+            end
             _CTSEM_OPCOUNT.probe_nongaussian[] += 1
             # And only where a second maximum can lie on the line: past the
             # found one the line falls, and a maximum beyond a valley makes it
@@ -4086,22 +4125,38 @@ function _laplace_probe_modes(laplace::CTSEMLaplaceObjective, U::Integer,
                     end
                 end
             end
-            outward || continue
+            if !outward
+                tr && _probe_trace!(U, probe, trlam, trΔ, trg, 2, trshare, trv0 - found.value)
+                continue
+            end
         end
         r = _laplace_newton_unit_mode(laplace, U, values, Ls, aws, start)
         _CTSEM_OPCOUNT.probe_newtons[] += 1
-        (r.converged && isfinite(r.value)) || continue
-        any(m -> _laplace_maxabsdiff(m, r.u) < 1e-4, seen) && continue
+        if !(r.converged && isfinite(r.value))
+            tr && _probe_trace!(U, probe, trlam, trΔ, trg, 3, trshare, trv0 - found.value)
+            continue
+        end
+        if any(m -> _laplace_maxabsdiff(m, r.u) < 1e-4, seen)
+            tr && _probe_trace!(U, probe, trlam, trΔ, trg, 4, trshare, trv0 - found.value)
+            continue
+        end
         push!(seen, r.u)
         if _laplace_modes_separated(laplace, U, values, Ls, aws, best, r)
             isnan(bestterm) && (bestterm = _laplace_unit_primal(laplace, U,
                 values, Ls, copy(best.u), aws).term)
             term = _laplace_unit_primal(laplace, U, values, Ls, copy(r.u), aws).term
-            (isfinite(term) && (!isfinite(bestterm) || term > bestterm)) || continue
+            if !(isfinite(term) && (!isfinite(bestterm) || term > bestterm))
+                tr && _probe_trace!(U, probe, trlam, trΔ, trg, 5, trshare, trv0 - found.value)
+                continue
+            end
         else
-            r.value > best.value || continue
+            if !(r.value > best.value)
+                tr && _probe_trace!(U, probe, trlam, trΔ, trg, 5, trshare, trv0 - found.value)
+                continue
+            end
             term = NaN
         end
+        tr && _probe_trace!(U, probe, trlam, trΔ, trg, 6, trshare, trv0 - found.value)
         best = (u=r.u, value=r.value, gradmax=r.gradmax, converged=true,
             iterations=found.iterations + r.iterations,
             repaired=found.repaired || r.repaired, curvature=nothing,
@@ -4111,6 +4166,26 @@ function _laplace_probe_modes(laplace::CTSEMLaplaceObjective, U::Integer,
     end
     return best
 end
+
+const _PROBE_TRACE_ON = Ref(false)
+const _PROBE_TRACE = Vector{NTuple{8,Float64}}()
+const _PROBE_TRACE_LOCK = ReentrantLock()
+const _PROBE_MEANMASK = Ref(Bool[])
+function _probe_trace!(U, probe, lam, Δ, g, stage, share, v0err)
+    lock(_PROBE_TRACE_LOCK) do
+        push!(_PROBE_TRACE, (Float64(U), Float64(probe), Float64(lam), Float64(Δ),
+            Float64(g), Float64(stage), Float64(share), Float64(v0err)))
+    end
+    nothing
+end
+function ctsem_probe_trace(on::Bool; mask=Bool[])
+    _PROBE_TRACE_ON[] = on
+    _PROBE_MEANMASK[] = Bool.(collect(mask))
+    empty!(_PROBE_TRACE)
+    nothing
+end
+ctsem_probe_trace_get() = reduce(vcat, [collect(t)' for t in _PROBE_TRACE];
+    init=zeros(0, 8))
 
 """`maximum(abs, a .- b)` without the difference vector."""
 function _laplace_maxabsdiff(a::AbstractVector, b::AbstractVector)
