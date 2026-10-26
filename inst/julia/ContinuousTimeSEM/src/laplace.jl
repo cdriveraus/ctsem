@@ -5411,21 +5411,31 @@ end
 """
     _laplace_unit_jet_gradient(laplace, U, values, Ls, u, members, D, ndirs)
 
-One reverse sweep over the given members at `CTSEMTraceJet{_CTSEM_JET_WIDTH}`,
-seeded along the first `ndirs` columns of `D` (raw-parameter directions, the
-rest of the width zero): for each member, as `npar x length(members)`
-matrices, the gradient (`d0`) and the sum over the directions of its second
-directional derivatives (`dS`), in one pass.
+One reverse sweep over the given members at `CTSEMTraceJet{W}`, `W` the
+width `_ctsem_jet_width(ndirs)`, seeded along the first `ndirs` columns of `D`
+(raw-parameter directions, the rest of the width zero): for each member, as
+`npar x length(members)` matrices, the gradient (`d0`) and the sum over the
+directions of its second directional derivatives (`dS`), in one pass.
 """
+_laplace_unit_jet_gradient(laplace::CTSEMLaplaceObjective, U::Integer,
+    values::Vector{Float64}, Ls::Vector{Matrix{Float64}}, u::Vector{Float64},
+    members, D::Matrix{Float64}, ndirs::Int) =
+    _ctsem_jet_width(ndirs) == _CTSEM_JET_NARROW ?
+        _laplace_unit_jet_gradient(laplace, U, values, Ls, u, members, D, ndirs,
+            Val(_CTSEM_JET_NARROW)) :
+        _laplace_unit_jet_gradient(laplace, U, values, Ls, u, members, D, ndirs,
+            Val(_CTSEM_JET_WIDTH))
+
 function _laplace_unit_jet_gradient(laplace::CTSEMLaplaceObjective, U::Integer,
     values::Vector{Float64}, Ls::Vector{Matrix{Float64}}, u::Vector{Float64},
-    members, D::Matrix{Float64}, ndirs::Int)
+    members, D::Matrix{Float64}, ndirs::Int, ::Val{W}) where {W}
+    ndirs <= W || throw(ArgumentError("$(ndirs) directions for a jet of width $(W)"))
     spec = laplace.spec
     units = laplace.units
     unitmembers = units.members[U]
     npar = length(values)
     nm = length(members)
-    J = CTSEMTraceJet{_CTSEM_JET_WIDTH}
+    J = CTSEMTraceJet{W}
     d0 = _laplace_scratch_matrix!(laplace, Float64, npar, nm, :jet_d0)
     dS = _laplace_scratch_matrix!(laplace, Float64, npar, nm, :jet_dS)
     one_member! = function (c::Int, m)
@@ -5437,8 +5447,7 @@ function _laplace_unit_jet_gradient(laplace::CTSEMLaplaceObjective, U::Integer,
             _laplace_scratch_vector!(laplace, Float64, npar, :jet_shift),
             values, spec, Ls, u, units.offsets[U][m])
         @inbounds for t in 1:npar
-            x[t] = J(shifted[t], ntuple(j -> j <= ndirs ? D[t, j] : 0.0,
-                Val(_CTSEM_JET_WIDTH)), 0.0)
+            x[t] = J(shifted[t], ntuple(j -> j <= ndirs ? D[t, j] : 0.0, Val(W)), 0.0)
         end
         _laplace_member_pass_finite!(gradient,
             laplace.objective.subject_objectives[unitmembers[m]], aws, x) ||

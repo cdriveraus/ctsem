@@ -335,6 +335,31 @@ _fresh_nonlinear_two() = (ctsem_laplace_objective(_LAPLACE_NONLINEAR_OBJECTIVE,
     end
 end
 
+# A sweep of one or two directions runs at the narrow width
+# (`_ctsem_jet_width`); the same directions at the wide width, the rest of it
+# zero, give the same sums.
+@testset "a jet sweep's width does not change its sums" begin
+    laplace, values = _fresh_nonlinear_two()
+    ctsem_laplace_evaluate(laplace, values; gradient=false)
+    theta = ContinuousTimeSEM._laplace_extend(laplace, collect(Float64, values))
+    Ls = ContinuousTimeSEM._laplace_popchols(theta, laplace.spec)
+    D = randn(MersenneTwister(5), length(theta), ContinuousTimeSEM._CTSEM_JET_WIDTH)
+    for U in eachindex(laplace.units.members), nd in (1, 2)
+        members = eachindex(laplace.units.members[U])
+        u = copy(laplace.modes[U])
+        narrow = ContinuousTimeSEM._laplace_unit_jet_gradient(laplace, U, theta, Ls,
+            u, members, D, nd, Val(ContinuousTimeSEM._CTSEM_JET_NARROW))
+        narrow = (ok=narrow.ok, d0=copy(narrow.d0), dS=copy(narrow.dS))
+        wide = ContinuousTimeSEM._laplace_unit_jet_gradient(laplace, U, theta, Ls,
+            u, members, D, nd, Val(ContinuousTimeSEM._CTSEM_JET_WIDTH))
+        @test narrow.ok && wide.ok
+        @test isapprox(narrow.d0, wide.d0; rtol=1e-13, atol=1e-13)
+        @test isapprox(narrow.dS, wide.dS; rtol=1e-12, atol=1e-12)
+    end
+    @test ContinuousTimeSEM._ctsem_jet_width(2) == ContinuousTimeSEM._CTSEM_JET_NARROW
+    @test ContinuousTimeSEM._ctsem_jet_width(3) == ContinuousTimeSEM._CTSEM_JET_WIDTH
+end
+
 @testset "the hand-written symmetric eigensolver matches LAPACK" begin
     rng = MersenneTwister(3)
     for n in (1, 2, 3, 6, 12)
