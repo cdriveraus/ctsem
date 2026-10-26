@@ -70,11 +70,15 @@ mutable struct CTSEMSubstepRecorder{T}
     f0::Vector{T}
     f1::Vector{T}
     saved::Vector{T}
+    # The step's end state while the group is evaluated at its start, and the
+    # Jacobian there.
+    x1::Vector{T}
+    J0::Matrix{T}
 end
 
 CTSEMSubstepRecorder(::Type{T}, nrows::Int, n::Int, npredict::Int) where {T} =
     CTSEMSubstepRecorder{T}(zeros(T, nrows), zeros(T, n), zeros(T, n), zeros(T, n),
-        zeros(T, npredict))
+        zeros(T, npredict), zeros(T, n), zeros(T, n, n))
 
 @inline _begin_substep!(::Nothing, ws) = nothing
 @inline _record_substep_defect!(::Nothing, ws, pars, sp, all_params, h, t, ctx) = nothing
@@ -104,25 +108,43 @@ function _record_substep_defect!(rec::CTSEMSubstepRecorder{T}, ws, pars, sp, all
     x1 = ws.state
     n = length(x0)
     idx = ws.predict_param_indices
-    # The drift at the start state, with the matrices the step actually used.
-    _ctsem_affine_field!(rec.f0, pars, x0, n)
-    # Re-materialise the predict group at the new state. `ctx.state` is
-    # `ws.state` itself, which the step has just moved, so the same context
-    # evaluates the transforms at `x1`. The cells are restored afterwards, so
-    # nothing downstream -- the TD and measurement groups, or a trace -- can
-    # tell this ran.
+    # The cells are restored at the end, so nothing downstream -- the TD and
+    # measurement groups, or a trace -- can tell this ran.
     @inbounds for (k, i) in enumerate(idx)
         rec.saved[k] = all_params[i]
     end
+    if ws.moment_now[]
+        # A moment-matched step (`_ekf_moment_cells!`) leaves the cubature's
+        # averages standing. The defect is the mean path's, as for the EKF, so
+        # the drift and its Jacobian at the start state come from the group
+        # evaluated there: `ctx.state` is `ws.state` itself.
+        copyto!(rec.x1, x1)
+        @inbounds for i in 1:n
+            x1[i] = x0[i]
+        end
+        apply_complex_transforms_at_indices!(all_params, idx, sp.predict_transforms, ctx)
+        _ctsem_affine_field!(rec.f0, pars, x0, n)
+        copyto!(rec.J0, view(pars.JAx, 1:n, 1:n))
+        @inbounds for i in 1:n
+            x1[i] = rec.x1[i]
+        end
+    else
+        # The drift at the start state, with the matrices the step used.
+        _ctsem_affine_field!(rec.f0, pars, x0, n)
+        copyto!(rec.J0, view(pars.JAx, 1:n, 1:n))
+    end
+    # Re-materialise the predict group at the new state. `ctx.state` is
+    # `ws.state` itself, which the step has just moved, so the same context
+    # evaluates the transforms at `x1`.
     apply_complex_transforms_at_indices!(all_params, idx, sp.predict_transforms, ctx)
     _ctsem_affine_field!(rec.f1, pars, x1, n)
     @inbounds for (k, i) in enumerate(idx)
         all_params[i] = rec.saved[k]
     end
-    # Defect against the linearisation the step used (JAx is restored above).
+    # Defect against the start state's linearisation.
     P = ws.P_predict.data
     worst = zero(T)
-    JAx = pars.JAx
+    JAx = rec.J0
     @inbounds for i in 1:n
         r = rec.f1[i] - rec.f0[i]
         for j in 1:n

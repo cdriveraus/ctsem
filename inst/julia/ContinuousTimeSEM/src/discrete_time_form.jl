@@ -321,7 +321,7 @@ end
 function _compute_discrete_time_form!(discrete_ca, buffer, DIFFUSIONcov, pars, Î”t, exp_buffer,
     lyap_buffer, state, diffusion_state_indices, diffusion_buffer,
     discretization_buffer, dim::Int, cache=nothing,
-    affine_buffer=diffusion_buffer)
+    affine_buffer=diffusion_buffer, affine_extra=_CTSEM_NO_AFFINE_EXTRA)
     d = dim
     # Stan propagates the local affine EKF model, not the raw DRIFT matrix:
     # f(x) = DRIFT * x + CINT, J = JAx, c = f(x) - J * x.
@@ -373,6 +373,13 @@ function _compute_discrete_time_form!(discrete_ca, buffer, DIFFUSIONcov, pars, Î
             affine += (DRIFT[i, j] - JAx[i, j]) * state[j]
         end
         affine_buffer.r[i] = affine
+    end
+    # The moment-matched prediction's correction to the drift's mean
+    # (`_ekf_moment_cells!`); empty otherwise.
+    if !isempty(affine_extra)
+        @inbounds for i in 1:naff
+            affine_buffer.r[i] += affine_extra[i]
+        end
     end
     @inbounds for j in 1:naff, i in 1:naff
         affine_buffer.intermediate[i, j] = JAx[i, j]
@@ -490,7 +497,7 @@ the offset came out as `-x[i]` and cancelled the state the transition had
 just carried, zeroing every random-effect coordinate at every step.
 """
 function _compute_one_step_form!(discrete_ca, DIFFUSIONcov, pars, state,
-    diffusion_state_indices, dim::Int)
+    diffusion_state_indices, dim::Int, affine_extra=_CTSEM_NO_AFFINE_EXTRA)
     d = dim
     copyto!(discrete_ca.eJAx, pars.JAx)
     copyto!(discrete_ca.dDRIFT, pars.JAx)
@@ -503,6 +510,7 @@ function _compute_one_step_form!(discrete_ca, DIFFUSIONcov, pars, state,
         for j in 1:d
             affine += (DRIFT[i, j] - JAx[i, j]) * state[j]
         end
+        isempty(affine_extra) || (affine += affine_extra[i])
         discrete_ca.dINT[i] = affine
     end
 

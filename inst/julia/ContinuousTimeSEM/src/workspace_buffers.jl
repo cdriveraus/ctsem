@@ -309,6 +309,28 @@ struct ContinuousEKFWorkspace{T, PARS, BQ, BTHETA, DCA, EBUF, LBUF, DIFBUF, DBUF
     # The row's iterates, a column each, while a plan is learnt
     # (`_ekf_relin_need`); empty where the update does not iterate.
     relin_hist::Matrix{T}
+    # Whether a predict-group transform that writes a JAx cell reads the
+    # state, so that the dynamics are nonlinear in it and each prediction
+    # substep is moment-matched (`_ekf_moment_cells!`); `ctsem_set_moment_predict!`
+    # is the oracle. Whether this substep's prediction was, for its record.
+    moment::Bool
+    moment_now::Base.RefValue{Bool}
+    # The predict group's JAx, DRIFT and CINT cells, averaged over the
+    # cubature points, and its other cells, which keep their values at the
+    # mean; then the mean, the ridged covariance's upper Cholesky factor, the
+    # points' offsets from the mean (a column each), the drift's mean
+    # correction, scratch for the averages and the other cells' values, and
+    # the drift at each point (`n x n` blocks side by side), which the reverse
+    # reads. Empty where the dynamics are linear.
+    moment_avg::Vector{Int}
+    moment_oth::Vector{Int}
+    moment_m::Vector{T}
+    moment_U::Matrix{T}
+    moment_d::Matrix{T}
+    moment_c::Vector{T}
+    moment_acc::Vector{T}
+    moment_saved::Vector{T}
+    moment_drifts::Matrix{T}
 end
 
 """
@@ -495,6 +517,10 @@ function _init_continuous_ekf_workspace(::Type{T}, sp::EKFParameters) where {T}
         any(==(4), manifesttype) ? (hasproperty(pars, :RESPONSE) ? 5 : 3) : 0,
         any(==(3), manifesttype) ? 1 : 0, any(>(0), sp.asymptoterow) ? 2 : 0))
     relinearise = _ctsem_measurement_nonlinear(sp, update_param_indices, n)
+    moment = _ctsem_dynamics_nonlinear(sp, predict_param_indices, n)
+    moment_avg, moment_oth = moment ? _ctsem_moment_cells(sp, predict_param_indices) :
+        (Int[], Int[])
+    nm = moment ? n : 0
 
     return ContinuousEKFWorkspace(
         all_params,
@@ -546,6 +572,17 @@ function _init_continuous_ekf_workspace(::Type{T}, sp::EKFParameters) where {T}
         zeros(T, relinearise ? n : 0),
         zeros(T, relinearise ? m : 0),
         zeros(T, relinearise ? n : 0, relinearise ? _CTSEM_RELIN_MAXIT + 1 : 0),
+        moment,
+        Ref(false),
+        moment_avg,
+        moment_oth,
+        zeros(T, nm),
+        zeros(T, nm, nm),
+        zeros(T, nm, 2nm),
+        zeros(T, nm),
+        zeros(T, length(moment_avg)),
+        zeros(T, length(moment_oth)),
+        zeros(T, nm, 2nm * nm),
     )
 end
 

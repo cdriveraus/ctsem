@@ -146,6 +146,8 @@ mutable struct CTSEMAdjointWorkspace{T,SP,LB,FB,WS,DC}
     # Working storage for the reverse pass; see `CTSEMReverseScratch` for why
     # the temporaries come from here rather than from the heap.
     reverse_scratch::CTSEMReverseScratch{T}
+    # A moment-matched prediction's reverse (`_reverse_moment!`).
+    moment::CTSEMMomentScratch{T}
     tape::CTSEMAdjointTape{T}
     # The forward filter's own workspace, held here so that its *type* is known
     # where the reverse pass calls the forward.
@@ -258,6 +260,7 @@ function CTSEMAdjointWorkspace(::Type{T}, sp::EKFParameters, nvalues::Integer,
         CTSEMCovSqrtScratch(T, max(n, m)),
         CTSEMReverseScratch(T, n, m, length(ws.diffusion_state_indices),
             ws.affine_buffer.dim),
+        CTSEMMomentScratch(T, sp, ws),
         CTSEMAdjointTape(T, group_relevant),
         ws,
     )

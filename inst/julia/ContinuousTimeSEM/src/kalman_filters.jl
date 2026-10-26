@@ -227,14 +227,17 @@ end
     DIFFUSIONcov::AbstractMatrix)
     # Map continuous-time dynamics to discrete time. Discretization provides:
     #   A_d = dDRIFT, b_d = dINT, Q_d = dDIFFUSION
+    # The moment-matched prediction's correction to the mean
+    # (`_ekf_moment_cells!`), empty when this substep is the EKF's.
+    extra = view(ws.moment_c, 1:(ws.moment_now[] ? length(ws.moment_c) : 0))
     if ws.continuous_time
         _compute_discrete_time_form!(ws.discrete_ca, ws.bufferQ, DIFFUSIONcov, pars, Δt,
             ws.exp_buffer, ws.lyap_buffer, ws.state, ws.diffusion_state_indices,
             ws.diffusion_buffer, ws.discretization_buffer, ws.state_dim,
-            ws.discretization_cache, ws.affine_buffer)
+            ws.discretization_cache, ws.affine_buffer, extra)
     else
         _compute_one_step_form!(ws.discrete_ca, DIFFUSIONcov, pars, ws.state,
-            ws.diffusion_state_indices, ws.state_dim)
+            ws.diffusion_state_indices, ws.state_dim, extra)
     end
 
     # Predict mean and covariance.
@@ -837,6 +840,12 @@ const _CTSEM_NO_RELIN = Int[]
 # Whether a nonlinear measurement's update is iterated; `ctsem_set_relinearise!`.
 const _CTSEM_RELINEARISE = Ref(true)
 
+# Whether nonlinear dynamics are predicted by moments; `ctsem_set_moment_predict!`.
+const _CTSEM_MOMENT_PREDICT = Ref(true)
+
+# No mean correction to the discretisation's affine offset. Never written to.
+const _CTSEM_NO_AFFINE_EXTRA = Float64[]
+
 """
     ctsem_set_relinearise!(on)
 
@@ -885,6 +894,174 @@ function _ctsem_measurement_nonlinear(sp::EKFParameters,
         moved && return true
     end
     return false
+end
+
+"""
+    ctsem_set_moment_predict!(on)
+
+Whether dynamics nonlinear in the state are predicted by moments (`true`, the
+default: `_ekf_moment_cells!`) or linearised at the mean, as the extended
+Kalman filter does (`false`): the oracle for comparing the two. Read at every
+substep, so it holds from the next evaluation.
+"""
+function ctsem_set_moment_predict!(on::Bool)
+    _CTSEM_MOMENT_PREDICT[] = on
+    return on
+end
+
+"""
+    _ctsem_dynamics_nonlinear(sp, predict_indices, n)
+
+Whether the predict group writes a JAx cell that moves with the state: the
+dynamics are then nonlinear in it, and each prediction substep is
+moment-matched (`_ekf_moment_cells!`). Asked by running the whole group, in
+order, at two states with everything else held, so that a JAx cell reading the
+state through another cell of the group -- a PARS cell that reads it -- counts.
+A group that throws at the probe is taken to read the state, which costs only
+the cubature.
+"""
+function _ctsem_dynamics_nonlinear(sp::EKFParameters,
+    predict_indices::AbstractVector{Int}, n::Int)
+    isempty(predict_indices) && return false
+    jax = _ctsem_component_positions(sp, :JAx)
+    jset = Set(jax)
+    any(i -> i in jset, predict_indices) || return false
+    probe = collect(range(0.31, step=0.013, length=length(sp.mutables)))
+    pa = copy(probe)
+    pb = copy(probe)
+    parsa = CTSEMPars(pa, sp.parameter_axis)
+    parsb = CTSEMPars(pb, sp.parameter_axis)
+    ntd = hasproperty(parsa, :TDPREDEFFECT) ? size(parsa.TDPREDEFFECT, 2) : 0
+    tdpreds = collect(range(0.19, step=0.007, length=ntd))
+    a = reshape(collect(range(0.23, step=0.011, length=n)), n, 1)
+    b = a .+ 0.05
+    ctxa = CTSEMRowContext(a, parsa, tdpreds, _CTSEMProbePredictors(), 0.5, 0.25, 1, 2)
+    ctxb = CTSEMRowContext(b, parsb, tdpreds, _CTSEMProbePredictors(), 0.5, 0.25, 1, 2)
+    try
+        apply_complex_transforms_at_indices!(pa, predict_indices, sp.predict_transforms, ctxa)
+        apply_complex_transforms_at_indices!(pb, predict_indices, sp.predict_transforms, ctxb)
+    catch
+        return true
+    end
+    return any(i -> i in jset && !(pa[i] == pb[i]), predict_indices)
+end
+
+"""
+    _ctsem_moment_cells(sp, predict_indices)
+
+The predict group's cells a moment-matched prediction averages over its
+cubature points -- those of JAx, DRIFT and CINT -- and the rest, which keep
+their values at the mean (`_ekf_moment_cells!`).
+"""
+function _ctsem_moment_cells(sp::EKFParameters, predict_indices::AbstractVector{Int})
+    marker = CTSEMPars(zeros(Int, length(sp.mutables)), sp.parameter_axis)
+    averaged = Set{Int}(_ctsem_component_positions(sp, :JAx))
+    union!(averaged, _ctsem_component_positions(sp, :DRIFT))
+    hasproperty(marker, :CINT) && union!(averaged, _ctsem_component_positions(sp, :CINT))
+    avg = Int[i for i in predict_indices if i in averaged]
+    oth = Int[i for i in predict_indices if !(i in averaged)]
+    return avg, oth
+end
+
+"""
+    _ekf_moment_cells!(ws, pars, sp, all_params, ctx, trace)
+
+The predict group's dynamics linearised by moments rather than at the mean:
+the assumed-density (Gaussian) prediction. For `x ~ N(m, P)` the moments of
+`dx = f(x) dt + G dW` evolve as
+
+    dm/dt = E f(x),    dP/dt = E[J(x)] P + P E[J(x)]' + G G'
+
+(Stein's lemma for `E[f(x) (x - m)']`), which is the EKF's prediction with
+`J(m)` replaced by `E J(x)` and `f(m)` by `E f(x)`. So the substep's
+discretisation runs as it always does on the group's JAx, DRIFT and CINT cells
+averaged over the third-degree spherical cubature points `m +- sqrt(n) L e_j`
+(`P + eps I = L L'`, weights `1 / 2n`), plus a correction to the mean the
+averaged matrices miss, `c = E[DRIFT(x) (x - m)]`, which the discretisation adds
+to its affine offset (`ws.moment_c`). The rule integrates the mean exactly for
+a drift cubic in the state and the slope for one quadratic, where the EKF
+drops the curvature terms: on a cubic damping the EKF's likelihood was 36 nats
+from the particle filter's at the true values and this one 2.4
+(`scripts/iekf-2026-10/gaussian_prediction_1d.R`).
+
+The group is evaluated at each point in turn on the tape (`_record_moment_group!`,
+reversed by `_reverse_moment!`), the averages written into its JAx, DRIFT and
+CINT cells and its other cells put back to their values at the mean, where the
+caller evaluated it first. Returns false, leaving the mean's evaluation as it
+was, where the covariance does not factor.
+"""
+function _ekf_moment_cells!(ws::ContinuousEKFWorkspace{T}, pars, sp, all_params, ctx,
+    trace) where {T}
+    n = ws.state_dim
+    idx = ws.predict_param_indices
+    avg = ws.moment_avg
+    oth = ws.moment_oth
+    m = ws.moment_m
+    U = ws.moment_U
+    D = ws.moment_d
+    c = ws.moment_c
+    acc = ws.moment_acc
+    drifts = ws.moment_drifts
+    P = ws.P_update.data
+    @inbounds for j in 1:n, i in 1:j
+        U[i, j] = P[j, i]
+    end
+    _ridge_diagonal!(U, n, 1e-10)
+    if !_ctsem_cholesky!(U, n)
+        fill!(c, zero(T))
+        return false
+    end
+    @inbounds for i in 1:n
+        m[i] = ws.state[i]
+    end
+    saved = ws.moment_saved
+    @inbounds for k in eachindex(oth)
+        saved[k] = all_params[oth[k]]
+    end
+    fill!(acc, zero(T))
+    fill!(c, zero(T))
+    npoints = 2n
+    w = inv(T(npoints))
+    r = sqrt(T(n))
+    DRIFT = pars.DRIFT
+    first = 0
+    point = 0
+    @inbounds for j in 1:n, sgn in (1, -1)
+        point += 1
+        # Column j of L = U' is row j of U, from its diagonal on.
+        for q in 1:n
+            D[q, point] = q >= j ? sgn * r * U[j, q] : zero(T)
+            ws.state[q] = m[q] + D[q, point]
+        end
+        g = _record_moment_group!(trace, 1, idx, all_params, ctx)
+        point == 1 && (first = g)
+        apply_complex_transforms_at_indices!(all_params, idx, sp.predict_transforms, ctx)
+        for k in eachindex(avg)
+            acc[k] += w * all_params[avg[k]]
+        end
+        offset = (point - 1) * n
+        for b in 1:n, a in 1:n
+            drifts[a, offset + b] = DRIFT[a, b]
+        end
+        for a in 1:n
+            s = zero(T)
+            for b in 1:n
+                s += DRIFT[a, b] * D[b, point]
+            end
+            c[a] += w * s
+        end
+    end
+    @inbounds for i in 1:n
+        ws.state[i] = m[i]
+    end
+    @inbounds for k in eachindex(avg)
+        all_params[avg[k]] = acc[k]
+    end
+    @inbounds for k in eachindex(oth)
+        all_params[oth[k]] = saved[k]
+    end
+    _record_moment!(trace, ws, first, npoints, n)
+    return true
 end
 
 """
@@ -1747,6 +1924,11 @@ function _extended_kalman_filter_continuous!(
         ContinuousTimeSEM.sdcovsqrt2cov!(ws.bufferQ, pars.DIFFUSION, ws.sp.covmatcode, ws.state_dim)
         copyto!(ws.diffusion_cov, ws.bufferQ.out)
     end
+    # Nonlinear dynamics are moment-matched (`_ekf_moment_cells!`), except when
+    # generating, which simulates the states, and beside the filter's own
+    # integrated deviations, which need a linear model.
+    moment_on = ws.moment && _CTSEM_MOMENT_PREDICT[] && generate === nothing &&
+        !(ws.hyb.active && ws.hyb.q > 0)
     @inbounds for t_idx in 2:nsteps
         curr_timestep = timesteps[t_idx]
         Δt = curr_timestep - prev_timestep
@@ -1761,6 +1943,8 @@ function _extended_kalman_filter_continuous!(
                 substep_time, substep_dt, Int(subject), t_idx)
             _record_group!(trace, 1, ws.predict_param_indices, all_params, predict_context)
             apply_complex_transforms_at_indices!(all_params, ws.predict_param_indices, sp.predict_transforms, predict_context)
+            ws.moment_now[] = moment_on &&
+                _ekf_moment_cells!(ws, pars, sp, all_params, predict_context, trace)
             predict_snapshot = _begin_predict!(trace, ws, ws.state_dim)
             _begin_substep!(substep_recorder, ws)
             if ws.diffusion_static
@@ -1772,6 +1956,7 @@ function _extended_kalman_filter_continuous!(
             _record_substep_defect!(substep_recorder, ws, pars, sp, all_params, substep_dt,
                 t_idx, predict_context)
             _record_predict!(trace, ws, pars, predict_snapshot, substep_dt, ws.state_dim)
+            ws.moment_now[] = false
             _record_transition!(trace, ws, pars, t_idx, substep, n_substeps, Δt)
             # The next bounded step begins from this step's predicted covariance.
             copyto!(ws.P_update.data, ws.P_predict.data)
