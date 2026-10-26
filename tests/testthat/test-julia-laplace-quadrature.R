@@ -75,11 +75,14 @@
   if (!exists(key, envir = .lc_cache, inherits = FALSE)) {
     data <- if (identical(which, "linear")) .lc_linear_data() else .lc_nonlinear_data()
     model <- if (identical(which, "linear")) .lc_linear_model() else .lc_nonlinear_model()
-    fitwith <- function(correct) {
+    # 'checked' by name: what these tests read is the draws a corrected fit
+    # takes on the hybrid, which the default's curvature does not take.
+    fitwith <- function(correct, uncertainty = "checked") {
       set.seed(11)
       suppressMessages(ctFit(data, model, backend = "julia",
         intoverpop = "laplace", cores = 1,
-        optimcontrol = list(finishsamples = 100, laplace_correct = correct)))
+        optimcontrol = list(finishsamples = 100, laplace_correct = correct,
+          uncertainty = uncertainty)))
     }
     fits <- list(off = fitwith(FALSE), quadrature = fitwith("quadrature"))
     if (!identical(which, "linear")) {
@@ -87,6 +90,8 @@
       # compared against.
       fits$step <- fitwith("step")
       fits$default <- fitwith(NULL)
+      # Every default: the curvature's normal, checked on the hybrid.
+      fits$development <- fitwith(NULL, uncertainty = NULL)
     }
     assign(key, fits, envir = .lc_cache)
   }
@@ -241,8 +246,8 @@ test_that("what a continued fit reports is the continuation's own", {
   expect_equal(cont$uncertainty$hessian, corr$hessian)
   expect_false(isTRUE(all.equal(as.matrix(cont$estimate$cov),
     as.matrix(off$estimate$cov))))
-  # The normal is the continuation's Hessian's inverse. 'checked', the default,
-  # reports it unless its check finds it wrong along some direction; then it
+  # The normal is the continuation's Hessian's inverse. 'checked', asked for
+  # here, reports it unless its check finds it wrong along some direction; then it
   # importance-samples the continuation's quadrature objective from it and
   # reports the weighted draws' covariance, the normal's construction kept as
   # the proposal's (`details$proposal_covariance`). On this fixture the check
@@ -297,6 +302,32 @@ test_that("what a continued fit reports is the continuation's own", {
   printed <- capture.output(print(cont))
   expect_identical(any(grepl("continued on the quadrature objective", printed)),
     isTRUE(corr$material))
+})
+
+test_that("a default fit reports the continuation's curvature, and the check made before it", {
+  skip_without_julia()
+  fits <- .lc_fits("nonlinear")
+  dev <- fits$development
+  corr <- dev$laplace$correction
+  # Corrected as the fit asking for 'checked' was: the uncertainty comes after.
+  expect_identical(corr$status, "continued")
+  expect_equal(dev$estimate$raw, fits$default$estimate$raw)
+  expect_identical(corr$draws, "redrawn")
+  expect_identical(dev$uncertainty$settings$method, "hessian")
+  # The normal is the continuation's curvature's, as it is. The check, made on
+  # the Laplace objective at its optimum before the continuation, is kept in
+  # the record and changes nothing.
+  information <- -(corr$hessian + t(corr$hessian)) / 2
+  expect_equal(as.numeric(dev$estimate$cov), as.numeric(solve(information)),
+    tolerance = 1e-6)
+  check <- dev$uncertainty$details$normalcheck
+  expect_false(is.null(check))
+  expect_null(dev$uncertainty$details$importance_sampling)
+  # And summary() says what it found, where it found something.
+  named <- if (is.matrix(check$directions)) ncol(check$directions) else 0L
+  note <- suppressMessages(summary(dev, parmatrices = FALSE))$uncertaintyNote
+  expect_identical(grepl("ctFitUncertainty(fit, 'sample')", note, fixed = TRUE),
+    named > 0L)
 })
 
 test_that("the hybrid's density places the flagged units' rules at each point", {

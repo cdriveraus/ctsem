@@ -227,7 +227,11 @@ test_that("uncertainty='stored' redraws a julia fit without touching the engine"
   skip_without_julia()
   model <- .backend_uncertainty_model()
   data <- .backend_uncertainty_data()[1:96, ]
-  fit <- suppressMessages(ctFit(data, model, backend = "julia", verbose = 0))
+  # 'checked' by name: its redraw centres where the check put the posterior
+  # mean, the branch worth pinning; a 'hessian' normal is centred at the
+  # estimate.
+  fit <- suppressMessages(ctFit(data, model, backend = "julia", verbose = 0,
+    optimcontrol = list(uncertainty = "checked")))
 
   cov0 <- fit$estimate$cov
   se0 <- fit$estimate$se
