@@ -224,9 +224,13 @@ test_that("a better mode past the origin is found where the found one is pinned"
 # maximum, and the probes are skipped (`.ctJuliaLaplaceQuadratic()`). The
 # claim to hold is that nothing else changes: the same values and gradients as
 # with the probes running. The sign fixture above is the other side: its
-# effect is a loading, which is why it has two maxima, and it keeps them.
+# effect is a loading, which is why it has two maxima, and it keeps them. On
+# the layer, where the effects are coordinates; the hybrid would integrate
+# them, and neither side would probe anything. Run, the probes find every line
+# the found mode's quadratic by its value, and spend no gradient.
 test_that("a model of concave units goes unprobed and evaluates as when probed", {
   skip_without_julia()
+  withr::local_options(ctsem.laplace.hybrid = FALSE)
   data <- .modes_sign_data()
   model <- suppressWarnings(suppressMessages(ctModel(type = "ct", id = "id",
     manifestNames = "Y1", latentNames = "eta1", LAMBDA = matrix(1),
@@ -256,9 +260,13 @@ test_that("a model of concave units goes unprobed and evaluates as when probed",
   for (i in 1:3) {
     x <- stats::rnorm(npar, 0, 0.5)
     a <- ctJuliaEvaluate(handles[[1]], x, gradient = TRUE, cores = 1L)
+    ctsem:::.ctJuliaEval("ContinuousTimeSEM.ctsem_reset_opcounts!()")
     b <- ctJuliaEvaluate(handles[[2]], x, gradient = TRUE, cores = 1L)
+    counts <- ctsem:::.ctJuliaGet(ctsem:::.ctJuliaEval("ContinuousTimeSEM.ctsem_opcounts()"))
     expect_equal(a$value, b$value, tolerance = 1e-12)
     expect_equal(a$gradient, b$gradient, tolerance = 1e-10)
+    expect_gt(counts$probe_values, 0)
+    expect_equal(counts$probe_gradients, 0)
   }
 })
 
