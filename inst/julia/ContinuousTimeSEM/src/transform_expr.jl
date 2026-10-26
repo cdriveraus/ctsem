@@ -120,7 +120,18 @@ Base.show(io::IO, e::CTSEMExpr) = print(io, "CTSEMExpr(", repr(e.source), ")")
 @inline _ctsem_expr_datatype(ctx) =
     promote_type(Float64, eltype(ctx.tdpreds), eltype(ctx.tipreds))
 
-function (e::CTSEMExpr)(ctx)
+(e::CTSEMExpr)(ctx) = _ctsem_expr_eval(e, ctx, nothing)
+
+"""
+    _ctsem_expr_eval(e, ctx, scratch)
+
+Evaluate `e` in `ctx`. `scratch` is the pair of task buffers a long expression
+evaluates in (`_ctsem_expr_scratches(ctx)`), or `nothing` to look them up here.
+A loop over a group's expressions fetches them once (`_ctsem_expr_any_long`):
+the lookup is two `IdDict` reads per element type, and per expression it was
+about 5% of a nonlinear Laplace gradient.
+"""
+function _ctsem_expr_eval(e::CTSEMExpr, ctx, scratch)
     T = _ctsem_expr_type(ctx)
     # `fc * x` with `x` in `T`, as `10 * state[3]` multiplies in the closure.
     e.form === _XFORM_SCALED_STATE && return convert(T, e.fc * convert(T, @inbounds ctx.state[e.fa]))
@@ -137,8 +148,21 @@ function (e::CTSEMExpr)(ctx)
         ntuple(_ -> zero(T), Val(4)), ntuple(_ -> zero(S), Val(4)))
     n <= 8 && return _ctsem_expr_flat(e, ctx, T, S,
         ntuple(_ -> zero(T), Val(8)), ntuple(_ -> zero(S), Val(8)))
-    return _ctsem_expr_flat(e, ctx, T, S, _ctsem_expr_buffer(_ctsem_expr_scratch(T).a, n),
-        _ctsem_expr_buffer(_ctsem_expr_scratch(S).b, n))
+    scT, scS = scratch === nothing ? _ctsem_expr_scratches(ctx) : scratch
+    return _ctsem_expr_flat(e, ctx, T, S, _ctsem_expr_buffer(scT.a, n),
+        _ctsem_expr_buffer(scS.b, n))
+end
+
+"""The task buffers `ctx`'s long expressions evaluate in, one per element type."""
+@inline _ctsem_expr_scratches(ctx) =
+    (_ctsem_expr_scratch(_ctsem_expr_type(ctx)), _ctsem_expr_scratch(_ctsem_expr_datatype(ctx)))
+
+"""Whether any of a group's expressions is long enough to use the task buffers."""
+@inline function _ctsem_expr_any_long(transforms::Vector{CTSEMExpr})
+    @inbounds for e in transforms
+        length(e.op) > 8 && return true
+    end
+    return false
 end
 
 # Nodes are stored children first (`_ctsem_expr_node!`), so one pass in index

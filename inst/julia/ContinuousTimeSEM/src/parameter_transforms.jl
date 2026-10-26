@@ -51,6 +51,30 @@ function apply_complex_transforms_at_indices!(
     return all_params
 end
 
+# A group of `CTSEMExpr`s, the interpreted cells: the long ones' task buffers
+# are fetched once for the group (`_ctsem_expr_eval`).
+function apply_complex_transforms_at_indices!(
+    all_params::AbstractVector,
+    indices::AbstractVector{Int},
+    transforms::Vector{CTSEMExpr},
+    context::CTSEMRowContext,
+)
+    @boundscheck length(indices) == length(transforms) || throw(DimensionMismatch("Transform indices/functions mismatch"))
+    _ctsem_expr_any_long(transforms) ||
+        return _apply_expr_group!(all_params, indices, transforms, context, nothing)
+    return _apply_expr_group!(all_params, indices, transforms, context,
+        _ctsem_expr_scratches(context))
+end
+
+function _apply_expr_group!(all_params, indices, transforms::Vector{CTSEMExpr},
+    context, scratch)
+    P = eltype(all_params)
+    @inbounds for k in eachindex(indices)
+        all_params[indices[k]] = convert(P, _ctsem_expr_eval(transforms[k], context, scratch))::P
+    end
+    return all_params
+end
+
 function apply_complex_transforms_at_indices!(all_params, indices, transforms, state, pars)
     @boundscheck length(indices) == length(transforms) || throw(DimensionMismatch("Transform indices/functions mismatch"))
     P = eltype(all_params)
