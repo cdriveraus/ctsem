@@ -301,6 +301,14 @@ mutable struct CTSEMLaplaceContinuation{L} <: CTSEMOptimisable
     # value read off the placement (`centre_value`) can be refused as the
     # evaluation refuses one.
     centre_converged::Bool
+    # The units on importance draws because no product rule reached the draws'
+    # target at some placement (`_continuation_refine!`), which keep their
+    # draws at every later one. Let go, a unit whose product rule's error sits
+    # at the target switched between the two from one placement to the next,
+    # and the value with it, by more than either's error: gN3's unit 3, its
+    # rule's error 0.050 against a target of 0.05, cost 0.11-0.135 nats at
+    # four of fourteen rounds, each then rejected, and the rounds stalled.
+    drawn::Vector{Int}
 end
 
 
@@ -1653,7 +1661,7 @@ function ctsem_laplace_continuation(laplace::CTSEMLaplaceObjective,
         fill(false, nunits), Bool(screen), Symbol(draws_scope), Int[],
         fill(NaN, nunits), fill(NaN, nunits), fill(false, nunits), NaN, nothing,
         0, 0, 0, 0, 0, 0, 0.0, 0.0, 0.0, 0.0, nothing, nothing, nothing,
-        Float64[], Float64[], false)
+        Float64[], Float64[], false, Int[])
     _continuation_add_points!(o, point_units, point_values)
     _continuation_force!(o, force)
     _continuation_place!(o, theta)
@@ -1695,7 +1703,7 @@ end
 
 const _CONTINUATION_STATE = (:rest, :rest_units, :flagged, :rules, :centre,
     :centre_quadrature, :centre_laplace, :rule_failed, :centre_value, :centre_se,
-    :centre_error, :importance, :ess, :ess_placed, :centre_converged)
+    :centre_error, :importance, :ess, :ess_placed, :centre_converged, :drawn)
 
 """
     ctsem_laplace_continuation_recentre!(o, values; force=nothing,
@@ -1750,7 +1758,8 @@ function _continuation_place!(o::CTSEMLaplaceContinuation, theta::Vector{Float64
         draws_max=o.draws_max, draws_floor=o.draws_floor, draws_prior=o.draws_prior,
         draws_df=o.draws_df, draws_seed=o.draws_seed, points=o.points,
         only=o.screen ? nothing : Set(o.flagged),
-        drawable=o.draws_scope === :all ? nothing : Set(o.forced))
+        drawable=o.draws_scope === :all ? nothing : Set(o.forced),
+        draw_units=Set(o.drawn))
     placed = _continuation_place(laplace, theta, opts)
     nunits = length(laplace.units.members)
     failed = [placed.rules[U] === nothing && !isempty(laplace.units.blocks[U]) &&
@@ -1763,6 +1772,10 @@ function _continuation_place!(o::CTSEMLaplaceContinuation, theta::Vector{Float64
     # Laplace term: an honest Laplace term beats a rule placed somewhere else.
     filter!(U -> placed.rules[U] !== nothing, flagged)
     errors = _continuation_refine!(laplace, theta, opts, placed, flagged)
+    # A unit narrow enough for a product rule that is on draws all the same
+    # took them in the refine's fallback, and keeps them (`o.drawn`).
+    o.drawn = sort!(union(o.drawn, [U for U in flagged if placed.importance[U] &&
+        _continuation_unit_width(laplace, U) <= o.maxdim]))
     o.flagged = flagged
     o.rules = CTSEMFixedUnitRule[placed.rules[U] for U in flagged]
     o.rest_units = setdiff(1:nunits, flagged)
