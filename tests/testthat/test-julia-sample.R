@@ -300,10 +300,16 @@ test_that("NUTS samples the joint posterior through the same runner", {
     if (length(keep) == length(e)) e else
       c(keep, ridge_sum = min(e[c("T0m_eta1", "mm_Y1")]))
   }
-  check <- ctsem:::.ctJuliaGet(ctsem:::.ctJuliaModule(fit$model_spec$project)$
-    ctsem_sample_map_check(ctsem:::.ctJuliaObjective(fit, hybrid = TRUE),
-      as.numeric(fit$estimate$raw),
-      hessian = ctsem:::.ctJuliaPut(as.matrix(fit$uncertainty$hessian))))
+  # And with a random triangular map on theta (`_JMapTri`), whose log
+  # Jacobian and pullback the learnt one uses.
+  checks <- lapply(c(FALSE, TRUE), function(tri)
+    ctsem:::.ctJuliaGet(ctsem:::.ctJuliaModule(fit$model_spec$project)$
+      ctsem_sample_map_check(ctsem:::.ctJuliaObjective(fit, hybrid = TRUE),
+        as.numeric(fit$estimate$raw),
+        hessian = ctsem:::.ctJuliaPut(as.matrix(fit$uncertainty$hessian)), tri = tri)))
+  check <- checks[[1]]
+  check$gradient <- max(checks[[1]]$gradient, checks[[2]]$gradient)
+  check$jacobian <- max(checks[[1]]$jacobian, checks[[2]]$jacobian)
   list(map = map, saem = saem, check = check,
     z = max(abs(colMeans(a) - colMeans(b)) / (sb * sqrt(1 / ess(map) + 1 / ess(ref)))),
     effects = max(abs(map$sample$effect_mean - saem$sample$effect_mean) /
