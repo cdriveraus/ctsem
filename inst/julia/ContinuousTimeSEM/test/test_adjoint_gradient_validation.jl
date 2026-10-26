@@ -592,6 +592,23 @@ function _adjoint_moment_parameters(kind::Symbol)
         # so the group writes the cell before the cells reading it.
         pars = df.matrix .== :PARS
         return ekf_from_data_frame(df[vcat(findall(pars), findall(.!pars)), :])
+    elseif kind in (:cubic2, :cubic2c)
+        # The cubic beside a linear second state, uncoupled or driven by the
+        # first (`:cubic2c`): the drift cells read only state 1, so the
+        # cubature spans it alone (`_ctsem_moment_states`).
+        cross = kind === :cubic2c ? 0.3 : 0.0
+        return ekf_from_data_frame(_adjoint_test_dataframe(
+            drift=[0.0 0.0; cross -0.5], jax=[0.0 0.0; cross -0.5], cint=[0.0; 0.0;;],
+            diffusion=[0.7 0.0; 0.0 0.6], lambda=[1.0 0.0; 0.0 1.0], jy=[1.0 0.0; 0.0 1.0],
+            manifestmeans=[0.0; 0.0;;], manifestvar=[0.4 0.0; 0.0 0.3],
+            t0var=[1.0 0.0; 0.0 1.0], t0means=[0.0; 0.0;;], pars=[0.0; 0.0;;],
+            free=Dict((:PARS, 1, 1) => (1, "param[1]"),
+                (:PARS, 2, 1) => (2, "log1p_exp(param[2])"),
+                (:DIFFUSION, 1, 1) => (3, "log1p_exp(param[3])"), (:CINT, 1, 1) => (4, "param[4]"),
+                (:MANIFESTVAR, 1, 1) => (5, "log1p_exp(param[5])"),
+                (:T0MEANS, 1, 1) => (6, "param[6]")),
+            predict=Dict((:DRIFT, 1, 1) => "PARS[1,1] * (1 + PARS[2,1] * state[1]^2)",
+                (:JAx, 1, 1) => "PARS[1,1] * (1 + 3 * PARS[2,1] * state[1]^2)")))
     end
     return ekf_from_data_frame(_adjoint_test_dataframe(
         drift=[0.0;;], jax=[0.0;;], cint=[0.0;;], diffusion=[0.7;;],
@@ -619,6 +636,7 @@ end
         (:discrete, data1, [-0.3, 0.3, 0.2, 0.1, -0.5, 0.2], Inf),
         (:vanderpol, data2, [0.4, 0.1, 0.2, -0.3, 0.3, 0.2], 0.3),
         (:parscell, data1, [0.4, 0.1, 0.2], 0.35),
+        (:cubic2c, data2, [-0.4, 0.3, 0.2, 0.1, -0.5, 0.2], 0.25),
     )
         sp = _adjoint_moment_parameters(kind)
         @test ContinuousTimeSEM._init_continuous_ekf_workspace(Float64, sp).moment
@@ -633,6 +651,26 @@ end
         end
         @test !(objective(values) ≈ ekf)
     end
+    # The cubature spans only the states the drift cells read. A second state
+    # uncoupled from the cubic one changes nothing: the likelihood splits into
+    # the one-state model's and the linear state's own, which the EKF (the
+    # oracle) gives exactly. Spanning both states, the cubature's points along
+    # state 1 sat at radius sqrt(2) and it did not.
+    ws = ContinuousTimeSEM._init_continuous_ekf_workspace(Float64,
+        _adjoint_moment_parameters(:cubic2c))
+    @test ws.moment_s == 1 && ws.moment_perm == [1, 2]
+    values = [-0.4, 0.3, 0.2, 0.1, -0.5, 0.2]
+    both = ContinuousTimeSEM.ctsem_objective(_adjoint_moment_parameters(:cubic2), [1, 8],
+        times, data2, zeros(0, 14), zeros(2, 0), 0.25)
+    one = ContinuousTimeSEM.ctsem_objective(_adjoint_moment_parameters(:cubic), [1, 8],
+        times, data2[1:1, :], zeros(0, 14), zeros(2, 0), 0.25)
+    linear = try
+        ContinuousTimeSEM.ctsem_set_moment_predict!(false)
+        both(values) - one(values)
+    finally
+        ContinuousTimeSEM.ctsem_set_moment_predict!(true)
+    end
+    @test both(values) ≈ one(values) + linear rtol = 1e-10
 end
 
 @testset "discretization cache cannot go stale" begin
