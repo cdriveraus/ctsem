@@ -116,6 +116,57 @@ const _MOMENT_CASES = [
     end
 end
 
+# A censored row's partials are written by hand (`_censored_partials!`); forward
+# mode through `_binary_moment_dual!`, which they replaced, is the oracle. The
+# extras are (lower, upper, sd) and, with a response scale, (half-width,
+# power): the cases cover each limit, a value recorded exactly and as an
+# interval, an end held at a limit, and a power at one (read, so the general
+# transform), near zero (the series branch) and negative.
+@testset "censored moments' partials by hand match forward mode" begin
+    CT = ContinuousTimeSEM
+    cases = [
+        ("interior", 0.5, 0.64, 2.5, [0.0, 5.0, 0.6]),
+        ("at lower limit", 0.5, 0.64, 0.0, [0.0, 5.0, 0.6]),
+        ("at upper limit", 4.5, 0.81, 5.0, [0.0, 5.0, 0.6]),
+        ("one-sided, deep", -3.0, 0.5, 0.0, [0.0, Inf, 0.4]),
+        ("interval", 2.1, 0.7, 3.0, [0.0, 10.0, 0.8, 0.5, 0.7]),
+        ("interval, power one", 2.1, 0.7, 3.0, [0.0, 10.0, 0.8, 0.5, 1.0]),
+        ("interval, power near zero", 1.0, 0.7, 3.0, [0.0, 10.0, 0.8, 0.5, 1e-9]),
+        ("interval, negative power", 1.0, 0.4, 2.0, [0.0, 10.0, 0.5, 0.5, -0.3]),
+        ("interval, end held at the floor", 0.3, 0.6, 0.2, [0.0, 10.0, 0.8, 0.5, 0.7]),
+        ("at the floor, with a scale", 0.3, 0.6, 0.0, [0.0, 10.0, 0.8, 0.5, 0.7]),
+        ("at the ceiling, with a scale", 8.5, 2.0, 10.0, [0.0, 10.0, 0.8, 0.5, 0.7]),
+        ("narrow interval far out", -2.0, 0.3, 6.0, [0.0, 10.0, 0.3, 0.05, 0.9]),
+        ("exact value, with a power", 2.1, 0.7, 3.0, [0.0, 10.0, 0.8, 0.0, 0.7]),
+    ]
+    for (label, a, b, y, extras) in cases
+        n = length(extras)
+        oracle = zeros(3, 2 + n)
+        lz, m, v, ok = CT._binary_moment_dual!(oracle, a, b, y, Float64[], Float64[],
+            extras, _CENSORED)
+        hlz, hm, hv, J = CT._binary_moment_jacobian(a, b, y, Float64[], Float64[],
+            extras, _CENSORED)
+        @testset "$label" begin
+            @test ok
+            @test (hlz, hm, hv) == (lz, m, v) ||
+                isapprox([hlz, hm, hv], [lz, m, v]; rtol=1e-13, atol=1e-14)
+            @test J ≈ oracle rtol = 1e-9 atol = 1e-12
+        end
+    end
+    # Under an outer dual, as inside the Laplace curvature: the hand partials'
+    # own derivatives in the outer seed match forward mode's.
+    outer(v, p=0.0) = ForwardDiff.Dual{ForwardDiff.Tag{typeof(sin),Float64}}(v, p)
+    D = typeof(outer(0.0))
+    a, b = outer(2.1, 1.0), outer(0.7, 0.3)
+    extras = D[outer(0.0), outer(10.0), outer(0.8, 0.2), outer(0.5), outer(0.7, -0.1)]
+    oracle = zeros(D, 3, 7)
+    CT._binary_moment_dual!(oracle, a, b, 3.0, Float64[], Float64[], extras, _CENSORED)
+    _, _, _, J = CT._binary_moment_jacobian(a, b, 3.0, Float64[], Float64[], extras,
+        _CENSORED)
+    @test ForwardDiff.value.(J) ≈ ForwardDiff.value.(oracle) rtol = 1e-9 atol = 1e-12
+    @test ForwardDiff.partials.(J, 1) ≈ ForwardDiff.partials.(oracle, 1) rtol = 1e-8 atol = 1e-11
+end
+
 @testset "_binary_mode solves the scalar posterior's first-order condition" begin
     for (label, etabar, s, y, thresholds, kind) in _MOMENT_CASES
         s2 = s^2

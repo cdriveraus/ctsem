@@ -3117,34 +3117,17 @@ function _laplace_unit_curvature(laplace::CTSEMLaplaceObjective, U::Integer,
         return _laplace_unit_curvature_pruned(laplace, U, values, Ls, base, act;
             hook=hook, mode=mode)
     if length(blocks) <= 1 || length(u) < _LAPLACE_BLOCK_THRESHOLD[]
-        gradient_of = function (uu)
-            S = eltype(uu)
-            ws = _laplace_workspace!(laplace, S, length(values))
-            vs = _laplace_scratch_vector!(laplace, S, length(values), :curv_vs)
-            copyto!(vs, values)
-            Lss = _laplace_scratch_levels!(laplace, S, Ls, :curv_levels)
-            return _laplace_unit_loglik_gradient_vector(laplace, U, vs, Lss, uu, ws,
-                nothing,
-                _laplace_scratch_vector!(laplace, S, length(uu), :curv_inner),
-                mode, hook)
-        end
-        # Bucketed width: see `_CTSEM_CURVATURE_WIDTHS`. Into the slot's
-        # scratch, padded input and all, as the blocked route below does: the
-        # padding is `n + 1:nx` of `uu`, which no member reads, and the rows of
-        # the gradient it adds are zero and not read either. Built fresh, the
-        # padded input, the Jacobian, its leading block, the identity, the
-        # symmetrised copy and the dense curvature were six arrays a Newton
-        # step, most of what a small unit's mode solve allocated.
+        # One Jacobian over every column and member, through the routine the
+        # blocked routes use (`_LaplaceColumnsGradient`), into the slot's
+        # scratch. Built fresh, the padded input, the Jacobian, its leading
+        # block, the identity, the symmetrised copy and the dense curvature
+        # were six arrays a Newton step, most of what a small unit's mode solve
+        # allocated.
         n = length(base)
-        width = _ctsem_dual_width(n, _CTSEM_CURVATURE_WIDTHS[])
-        nx = max(n, width)
-        xb = _laplace_scratch_vector!(laplace, T, nx, :curv_ub)
-        @inbounds for t in 1:nx
-            xb[t] = t <= n ? base[t] : zero(T)
-        end
-        Jw = _laplace_scratch_matrix!(laplace, T, nx, nx, :curv_jac)
-        _ctsem_width_jacobian!(Jw, gradient_of, xb, n, width; whole=true,
-            store=laplace.workspaces[_laplace_slot()])
+        Jw = _laplace_columns_jacobian(laplace, U, values, Ls, base,
+            _laplace_index_scratch!(laplace, n, :curv_cols),
+            _laplace_index_scratch!(laplace, length(laplace.units.members[U]),
+                :curv_members), mode, hook)
         # M = I - (J + J') / 2, block by block. A matrix of its own unless the
         # caller handed one: `_laplace_unit_primal`'s is kept until the gradient
         # reads it.
@@ -3181,7 +3164,8 @@ function _laplace_unit_curvature(laplace::CTSEMLaplaceObjective, U::Integer,
         local block, columns, J, t, a, rows, Jw
         block = blocks[b]
         columns = (block.offset + 1):(block.offset + block.size)
-        Jw = _laplace_columns_jacobian(laplace, U, values, Ls, base, columns,
+        Jw = _laplace_columns_jacobian(laplace, U, values, Ls, base,
+            _laplace_index_scratch!(laplace, block.size, :curv_cols, block.offset),
             block.members, mode, hook)
         J = view(Jw, :, 1:block.size)
         # M = I - d2(sum ll)/du du, block by block.
@@ -3220,35 +3204,11 @@ function _laplace_unit_curvature_pruned(laplace::CTSEMLaplaceObjective, U::Integ
     if length(blocks) <= 1 || d < _LAPLACE_BLOCK_THRESHOLD[]
         dense = Matrix{T}(LinearAlgebra.I, d, d)
         if !isempty(act)
-            gradient_of = function (ua)
-                local S, ws, vs, Lss, full, g, out
-                S = eltype(ua)
-                ws = _laplace_workspace!(laplace, S, length(values))
-                vs = _laplace_scratch_vector!(laplace, S, length(values), :curv_vs)
-                copyto!(vs, values)
-                Lss = _laplace_scratch_levels!(laplace, S, Ls, :curv_levels)
-                full = _laplace_scratch_vector!(laplace, S, d, :curv_full)
-                @inbounds for c in 1:d
-                    full[c] = base[c]
-                end
-                @inbounds for (t, c) in enumerate(act)
-                    full[c] = ua[t]
-                end
-                g = _laplace_unit_loglik_gradient(laplace, U, vs, Lss, full, ws,
-                    eachindex(laplace.units.members[U]),
-                    _laplace_scratch_vector!(laplace, S, d, :curv_inner),
-                    mode, hook).gradient
-                out = _laplace_scratch_vector!(laplace, S, length(act), :curv_act)
-                @inbounds for (t, c) in enumerate(act)
-                    out[t] = g[c]
-                end
-                return out
-            end
-            # Bucketed width: see `_CTSEM_CURVATURE_WIDTHS`.
-            A = _laplace_symmetrise(_ctsem_width_jacobian(gradient_of, base[act],
-                _CTSEM_CURVATURE_WIDTHS[]))
+            Jw = _laplace_columns_jacobian(laplace, U, values, Ls, base, act,
+                _laplace_index_scratch!(laplace, length(laplace.units.members[U]),
+                    :curv_members), mode, hook)
             @inbounds for (j, cj) in enumerate(act), (i, ci) in enumerate(act)
-                dense[ci, cj] -= A[i, j]
+                dense[ci, cj] -= (Jw[ci, j] + Jw[cj, i]) / 2
             end
         end
         return _laplace_block_of(dense, blocks)
@@ -3295,6 +3255,61 @@ function _laplace_unit_curvature_pruned(laplace::CTSEMLaplaceObjective, U::Integ
 end
 
 """
+The gradient a unit curvature's forward-mode Jacobian differentiates: of
+`members`' log likelihood (positions in the unit's member list) in the unit's
+coordinates, with `columns` taken from the input and the rest held at `base`.
+
+One type for every route of `_laplace_unit_curvature` -- dense or blocked,
+pruned or not -- because it is the Jacobian's tag, and the tag is the dual
+type of everything the unit term differentiates: the filter, its reverse pass,
+a categorical item's moments. As a closure per route, a unit of 14 or more
+effects (the blocked routes) compiled all of that again beside the small units
+the package image holds; on the affect pilot's first evaluation, with its
+interval-censored items, that was most of what remained to compile once the
+width was one (review/PRECOMPILE-curvature-width-2026-10-26.md). `columns` and
+`members` are plain vectors for the same reason.
+"""
+struct _LaplaceColumnsGradient{L,V,LS,B,H}
+    laplace::L
+    U::Int
+    values::V
+    Ls::LS
+    base::B
+    columns::Vector{Int}
+    members::Vector{Int}
+    mode::Int
+    hook::H
+end
+
+function (g::_LaplaceColumnsGradient)(ub)
+    laplace = g.laplace
+    S = eltype(ub)
+    d = length(g.base)
+    ws = _laplace_workspace!(laplace, S, length(g.values))
+    vs = _laplace_scratch_vector!(laplace, S, length(g.values), :curv_vs)
+    copyto!(vs, g.values)
+    Lss = _laplace_scratch_levels!(laplace, S, g.Ls, :curv_levels)
+    uu = _laplace_scratch_vector!(laplace, S, d, :curv_uu)
+    copyto!(uu, g.base)
+    @inbounds for (t, c) in enumerate(g.columns)
+        uu[c] = ub[t]
+    end
+    return _laplace_unit_loglik_gradient_vector(laplace, g.U, vs, Lss, uu, ws,
+        g.members, _laplace_scratch_vector!(laplace, S, d, :curv_inner), g.mode,
+        g.hook)
+end
+
+"""`offset + 1:offset + n` in the slot's `Int` scratch under `tag`."""
+function _laplace_index_scratch!(laplace::CTSEMLaplaceObjective, n::Integer,
+    tag::Symbol, offset::Integer=0)
+    v = _laplace_scratch_vector!(laplace, Int, n, tag)
+    @inbounds for t in 1:n
+        v[t] = offset + t
+    end
+    return v
+end
+
+"""
     _laplace_columns_jacobian(laplace, U, values, Ls, base, columns, members,
         mode, hook)
 
@@ -3312,24 +3327,11 @@ reads, are ignored.
 """
 function _laplace_columns_jacobian(laplace::CTSEMLaplaceObjective, U::Integer,
     values::AbstractVector, Ls::Vector{<:AbstractMatrix}, base::AbstractVector{T},
-    columns, members, mode::Int, hook) where {T}
+    columns::Vector{Int}, members::Vector{Int}, mode::Int, hook) where {T}
     n = length(columns)
     d = length(base)
-    block_of = function (ub)
-        local S, ws, vs, Lss, uu
-        S = eltype(ub)
-        ws = _laplace_workspace!(laplace, S, length(values))
-        vs = _laplace_scratch_vector!(laplace, S, length(values), :curv_vs)
-        copyto!(vs, values)
-        Lss = _laplace_scratch_levels!(laplace, S, Ls, :curv_levels)
-        uu = _laplace_scratch_vector!(laplace, S, d, :curv_uu)
-        copyto!(uu, base)
-        @inbounds for (t, c) in enumerate(columns)
-            uu[c] = ub[t]
-        end
-        return _laplace_unit_loglik_gradient_vector(laplace, U, vs, Lss, uu, ws,
-            members, _laplace_scratch_vector!(laplace, S, d, :curv_inner), mode, hook)
-    end
+    block_of = _LaplaceColumnsGradient(laplace, Int(U), values, Ls, base, columns,
+        members, mode, hook)
     width = _ctsem_dual_width(n, _CTSEM_CURVATURE_WIDTHS[])
     nx = max(n, width)
     xb = _laplace_scratch_vector!(laplace, T, nx, :curv_ub)
