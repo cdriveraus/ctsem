@@ -16,7 +16,9 @@ exponential they reach. `lyap_schur` counts factorisations actually performed,
 not solves against cached factors. `series_intercept` and `series_noise` count
 evaluations of the series kernels in `series_discretization.jl`, forward or
 recomputed by a pullback alike; they stay at zero unless some interval was
-short against a pivot of the drift.
+short against a pivot of the drift. `series_tables` counts the series tables
+built (`SeriesTable`): one per drift a run of intervals shares, so its ratio to
+the kernels' counts says how far they were shared.
 
 A threaded subject loop increments these racily, so the counts are then lower
 bounds. Read them from a single-threaded run when the exact number matters.
@@ -32,6 +34,7 @@ const _CTSEM_OPCOUNT = (
     frechet = Ref(0),
     series_intercept = Ref(0),
     series_noise = Ref(0),
+    series_tables = Ref(0),
 )
 
 """Zero every operation counter."""

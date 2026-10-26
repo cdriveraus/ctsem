@@ -84,11 +84,38 @@ mutable struct DiscretizationCache{T}
     # the noise takes the series route (see `series_discretization.jl`). Kept
     # with the solution because a hit skips the factorization it is read from.
     lyap_conditioning::Float64
+    # The series route's powers of the drift, for the noise over the diffusing
+    # block and the intercept over the affine one, built once for a drift
+    # (`SeriesTable`).
+    series_noise::SeriesTable{T}
+    series_intercept::SeriesTable{T}
 end
 
 function DiscretizationCache(::Type{T}, n::Int, k::Int) where {T}
     return DiscretizationCache{T}(ExpTable(T, n),
-        zeros(T, k, k), zeros(T, k, k), zeros(T, k, k), false, 0.0)
+        zeros(T, k, k), zeros(T, k, k), zeros(T, k, k), false, 0.0,
+        SeriesTable(T, k, true), SeriesTable(T, n, false))
+end
+
+# The series kernels from the cache's tables where there is a cache of the
+# kernels' own element type, by Horner's rule otherwise.
+_series_intercept_cached!(series, cache, JAx, h, p::Int) =
+    _series_intercept!(series, JAx, h, p)
+function _series_intercept_cached!(series::SeriesKernelBuffer{T},
+    cache::DiscretizationCache{T}, JAx, h, p::Int) where {T}
+    tab = cache.series_intercept
+    _series_table_key!(tab, JAx, nothing, p)
+    return _series_intercept_table!(series, tab, h, p)
+end
+_series_noise_cached!(series, cache, J, Q, h, p::Int) = _series_noise!(series, J, Q, h, p)
+function _series_noise_cached!(series::SeriesKernelBuffer{T},
+    cache::DiscretizationCache{T}, J, Q, h, p::Int) where {T}
+    tab = cache.series_noise
+    _series_table_key!(tab, J, Q, p)
+    # The adjoint's tape reads the diffusion block back from `series.Q`, which
+    # Horner's kernel fills; so does this.
+    _copy_block!(series.Q, Q, p, p)
+    return _series_noise_table!(series, tab, h, p)
 end
 
 """
@@ -370,7 +397,7 @@ function _compute_discrete_time_form!(discrete_ca, buffer, DIFFUSIONcov, pars, �
     series.intercept = _series_needed(
         _series_min_pivot(affine_buffer.intermediate, naff), Δt)
     if series.intercept
-        Phi = _series_intercept!(series, pars.JAx, Δt, naff)
+        Phi = _series_intercept_cached!(series, cache, pars.JAx, Δt, naff)
         @inbounds for i in 1:naff
             acc = zero(eltype(discrete_ca.dINT))
             for j in 1:naff
@@ -407,8 +434,8 @@ function _compute_discrete_time_form!(discrete_ca, buffer, DIFFUSIONcov, pars, �
     # taken as a series instead, as for the intercept above.
     series.noise = _series_needed(conditioning, Δt)
     if series.noise
-        V = _series_noise!(series, dynamic_jacobian, diffusion_buffer.intermediate,
-            Δt, kdim)
+        V = _series_noise_cached!(series, cache, dynamic_jacobian,
+            diffusion_buffer.intermediate, Δt, kdim)
         @inbounds for j in 1:kdim, i in 1:kdim
             discrete_ca.dDIFFUSION[diffusion_state_indices[i], diffusion_state_indices[j]] =
                 V[i, j]

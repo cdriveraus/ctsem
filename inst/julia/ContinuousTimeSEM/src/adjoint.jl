@@ -137,6 +137,9 @@ mutable struct CTSEMAdjointWorkspace{T,SP,LB,FB,WS,DC}
     # The forward exponential table every subject in this chunk shares while
     # the chunk runs; see `ExpTable`.
     exp_table::ExpTable{T}
+    # The series route's powers and the cotangents waiting on them, released
+    # by `_flush_series!`; see `SeriesTable`.
+    series_reverse::CTSEMSeriesReverse{T}
     # Scratch for `_sdcovsqrt2cov_pullback!`, sized to the larger of the state
     # and manifest dimensions; one set serves DIFFUSION, T0VAR and MANIFESTVAR.
     covsqrt_scratch::CTSEMCovSqrtScratch{T}
@@ -251,6 +254,7 @@ function CTSEMAdjointWorkspace(::Type{T}, sp::EKFParameters, nvalues::Integer,
         groups_write_diffusion, zeros(T, n, n), zeros(T, n, n), false,
         jax_positions,
         frechet_buffer, zeros(T, n, n), zeros(T, n, n), ExpTable(T, n),
+        CTSEMSeriesReverse(T, n, length(ws.diffusion_state_indices)),
         CTSEMCovSqrtScratch(T, max(n, m)),
         CTSEMReverseScratch(T, n, m, length(ws.diffusion_state_indices),
             ws.affine_buffer.dim),
