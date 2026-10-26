@@ -253,6 +253,7 @@ _ctsem_nan(::Type{CTSEMTraceJet{W}}) where {W} =
 @inline _can_reuse_same_exponential(A::AbstractMatrix{<:CTSEMTraceJet},
     B::AbstractMatrix{<:CTSEMTraceJet}, dim) = _matrix_equal_noalloc(A, B, dim, dim)
 @inline _primal(x::CTSEMTraceJet) = x.v
+_carries_derivatives(::Type{<:CTSEMTraceJet}) = true
 _primal_type(::Type{<:CTSEMTraceJet}) = Float64
 @inline _laplace_deepvalue(x::CTSEMTraceJet) = x.v
 @inline _laplace_finite(x::CTSEMTraceJet) = _finite_deep(x)

@@ -286,6 +286,12 @@ comparison has no business seeing derivative information at all.
 _primal_type(::Type{T}) where {T} = T
 _primal_type(::Type{ForwardDiff.Dual{G,V,N}}) where {G,V,N} = _primal_type(V)
 
+"""Whether arithmetic in `T` carries derivatives, which a mode solved on
+values must then be given by Newton steps in `T`: a dual, or a jet
+(`CTSEMTraceJet`)."""
+_carries_derivatives(::Type) = false
+_carries_derivatives(::Type{<:ForwardDiff.Dual}) = true
+
 """
     _primals(v)
 
@@ -1181,11 +1187,11 @@ budget is iterated in the caller's arithmetic, as before.
 """
 @inline function _binary_mode(ηbar::T, s2::T, y::Real, thresholds,
     kind::Int) where {T}
-    τ = T <: ForwardDiff.Dual ? _primals(thresholds) : thresholds
+    τ = _carries_derivatives(T) ? _primals(thresholds) : thresholds
     base, curvature, converged = _binary_mode_solve(_primal(ηbar),
         _primal(s2), _primal(y), τ, kind)
     if !converged
-        T <: ForwardDiff.Dual || return (base, curvature, false)
+        _carries_derivatives(T) || return (base, curvature, false)
         offset, curvature, _ = _binary_mode_solve(ηbar, s2, y, thresholds,
             kind)
         return (offset, curvature, false)

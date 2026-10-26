@@ -124,7 +124,10 @@ Add `d/dtheta [alpha g + beta' grad g + tr(Gamma M)]` at fixed `z` to
 `thetabar` and return its `z`-gradient, or `nothing` if a pass fails. `G` is
 `_laplace_unit_theta_gradient` at the unit's coordinates; `beta` and `Gamma`
 may be `nothing`. `M = -hess g`, so `tr(Gamma M) = -sum_i sigma_i gamma_i' hess
-g gamma_i` over `Gamma`'s eigenpairs, one second-order pass each.
+g gamma_i` over `Gamma`'s eigenpairs: a sum of second directional derivatives,
+along `sqrt(|sigma_i|) gamma_i`, which a jet (`CTSEMTraceJet`) carries
+`_CTSEM_JET_WIDTH` directions at a time, the positive and the negative
+`sigma_i` in passes of their own.
 """
 function _laplace_gated_vjp!(thetabar::Vector{Float64}, G, z::Vector{Float64},
     alpha::Float64, beta, Gamma)
@@ -155,18 +158,22 @@ function _laplace_gated_vjp!(thetabar::Vector{Float64}, G, z::Vector{Float64},
     end
     if Gamma !== nothing
         E = _ctsem_symeig(Gamma)
-        e1, e2 = _laplace_seed_pair()
-        for i in 1:D
-            sigma = E.values[i]
-            iszero(sigma) && continue
-            zz = [z[a] + e1 * E.vectors[a, i] + e2 * E.vectors[a, i] for a in 1:D]
-            r = G(zz)
-            r === nothing && return nothing
-            @inbounds for t in 1:npar
-                thetabar[t] -= sigma * ForwardDiff.partials(ForwardDiff.partials(r.theta[t])[1])[1]
-            end
-            @inbounds for a in 1:D
-                zbar[a] -= sigma * ForwardDiff.partials(ForwardDiff.partials(r.z[a])[1])[1]
+        W = _CTSEM_JET_WIDTH
+        for sgn in (1.0, -1.0)
+            dirs = [i for i in 1:D if sign(E.values[i]) == sgn]
+            for first in 1:W:length(dirs)
+                chunk = dirs[first:min(first + W - 1, length(dirs))]
+                zz = [CTSEMTraceJet{W}(z[a], ntuple(j -> j <= length(chunk) ?
+                    sqrt(abs(E.values[chunk[j]])) * E.vectors[a, chunk[j]] : 0.0,
+                    Val(W)), 0.0) for a in 1:D]
+                r = G(zz)
+                r === nothing && return nothing
+                @inbounds for t in 1:npar
+                    thetabar[t] -= sgn * r.theta[t].s
+                end
+                @inbounds for a in 1:D
+                    zbar[a] -= sgn * r.z[a].s
+                end
             end
         end
     end
