@@ -1167,9 +1167,11 @@ hybrid objective).
 
 Returns `ctsem_sample`'s record, with the draws of theta and, with
 `save_effects`, of the natural deviations, plus the map's: `gradients` (every
-density evaluation and score pass, in gradients), the learning windows, and
-`learnt_draws`, the draws a chain kept from them. E-BFMI reads only the draws
-under the final map: an energy is a latent density's, and each map has its own.
+density evaluation and score pass, in gradients), the learning windows,
+`learnt_draws`, the draws a chain kept from them, and the kept draws' latent
+mean and sd per coordinate (`latent_mean`, `latent_sd`, theta's first). E-BFMI
+reads only the draws under the final map: an energy is a latent density's, and
+each map has its own.
 """
 function ctsem_sample_map(laplace::CTSEMLaplaceObjective, values::AbstractVector;
     npar::Integer=length(values), nchains::Integer=4, nwarmup::Integer=75,
@@ -1341,6 +1343,19 @@ function ctsem_sample_map(laplace::CTSEMLaplaceObjective, values::AbstractVector
     energy = npre == 0 ? pooled.energy :
         reduce(vcat, [pooled.energy[((c - 1) * ndraws + npre + 1):(c * ndraws)]
                       for c in 1:nchains])
+    # The kept draws' latent mean and sd per coordinate: 0 and 1 where the map
+    # is right, so they say where it is not.
+    lsum = zeros(D)
+    lsq = zeros(D)
+    for c in 1:nchains
+        X = results[c].draws
+        @inbounds for t in 1:ndraws, j in 1:D
+            lsum[j] += X[j, t]
+            lsq[j] += X[j, t]^2
+        end
+    end
+    lmean = lsum ./ total
+    lsd = sqrt.(max.(lsq ./ total .- lmean .^ 2, 0.0))
     return merge(_sample_result(pooled; nchains=nchains, ndraws=ndraws, npar=npar,
             ndim=npar + ndev, maxdepth=Int(maxdepth),
             stepsize=[r.stepsize for r in results],
@@ -1351,7 +1366,8 @@ function ctsem_sample_map(laplace::CTSEMLaplaceObjective, values::AbstractVector
          map=(gradients=counter[] + extra + (hybrid ? total : 0),
               learn_gradients=learn_gradients, learn_secs=learned,
               windows=windowlog, coordinates=D - npar, learnt_draws=npre,
-              integrated=hybrid, coupled=length(mf.R))))
+              latent_mean=lmean, latent_sd=lsd, integrated=hybrid,
+              coupled=length(mf.R))))
 end
 
 """
