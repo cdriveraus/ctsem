@@ -2,6 +2,12 @@ using LinearAlgebra
 using ForwardDiff
 using Random
 
+# Both Lyapunov thresholds, saved and put back around a test that moves them:
+# the setter with one argument sets the Dual one too.
+_lyap_thresholds() = (ContinuousTimeSEM._CTSEM_LYAP_SCHUR_ABOVE[],
+    ContinuousTimeSEM._CTSEM_LYAP_TANGENTS_ABOVE[])
+_lyap_restore!(t) = ContinuousTimeSEM.ctsem_set_lyapunov_schur_above!(t[1]; tangents=t[2])
+
 # Buffer construction chooses the route by size and scalar type. This guards
 # the intended split between the packed solve and the Schur route, and that
 # both answer the same equation.
@@ -17,6 +23,7 @@ using Random
     # One concrete type on both sides of the threshold, for the same reason:
     # the workspace's type must not depend on the diffusion block's size.
     threshold = CT._CTSEM_LYAP_SCHUR_ABOVE[]
+    saved = _lyap_thresholds()
     small = CT.LyapBuffer(Float64, threshold)
     large = CT.LyapBuffer(Float64, threshold + 1)
     @test !small.schur && large.schur
@@ -24,16 +31,22 @@ using Random
     # The packed system is not allocated on the Schur route, nor the factors
     # on the packed one.
     @test isempty(large.ksolve_O) && isempty(small.S)
-    # A Dual goes where its value type would: Schur over Float64 above the
-    # threshold, packed over BigFloat.
+    # A Dual leaves the packed route for tangents above its own threshold, its
+    # values solved as their type's rule says: Schur over Float64 above the
+    # values' threshold, packed below it and over BigFloat.
     D = ForwardDiff.Dual{Nothing,Float64,2}
-    @test CT.LyapBuffer(D, threshold + 5).schur
-    @test !CT.LyapBuffer(D, threshold).schur
-    @test !CT.LyapBuffer(ForwardDiff.Dual{Nothing,BigFloat,2}, threshold + 5).schur
+    tangents = CT._CTSEM_LYAP_TANGENTS_ABOVE[]
+    @test tangents <= threshold
+    @test !CT.LyapBuffer(D, tangents).schur
+    @test CT.LyapBuffer(D, tangents + 1).schur
+    @test CT.LyapBuffer(D, threshold + 5).tangents.primal.schur
+    tangents < threshold && @test !CT.LyapBuffer(D, threshold).tangents.primal.schur
+    big = CT.LyapBuffer(ForwardDiff.Dual{Nothing,BigFloat,2}, threshold + 5)
+    @test big.schur && !big.tangents.primal.schur
     # The setter moves the line for buffers built after it.
     CT.ctsem_set_lyapunov_schur_above!(3)
     @test CT.LyapBuffer(Float64, 4).schur
-    CT.ctsem_set_lyapunov_schur_above!(threshold)
+    _lyap_restore!(saved)
     @test !CT.LyapBuffer(Float64, 4).schur
     # Both routes keep their factors across calls: a second solve against the
     # same A must not refactor, a changed A must, and every answer must match
@@ -44,7 +57,7 @@ using Random
         for above in (typemax(Int), 2)
             CT.ctsem_set_lyapunov_schur_above!(above)
             buffer = CT.LyapBuffer(Float64, 3)
-            CT.ctsem_set_lyapunov_schur_above!(threshold)
+            _lyap_restore!(saved)
             @test buffer.schur == (above == 2)
             X = zeros(3, 3)
             CT.ctsem_reset_opcounts!()
@@ -66,6 +79,7 @@ end
     CT = ContinuousTimeSEM
     rng = MersenneTwister(31)
     threshold = CT._CTSEM_LYAP_SCHUR_ABOVE[]
+    saved = _lyap_thresholds()
     try
         for n in (3, 8, threshold, threshold + 1, 16, 21)
             for rep in 1:3
@@ -76,13 +90,16 @@ end
                 packed = CT.LyapBuffer(Float64, n)
                 CT.ctsem_set_lyapunov_schur_above!(1)
                 schur = CT.LyapBuffer(Float64, n)
-                CT.ctsem_set_lyapunov_schur_above!(threshold)
+                _lyap_restore!(saved)
                 X1 = zeros(n, n); X2 = zeros(n, n)
                 CT.my_lyap!(X1, A, Q, packed)
                 CT.my_lyap!(X2, A, Q, schur)
                 @test isapprox(X2, X1; rtol=1e-11)
                 @test X2 == X2'
-                @test isapprox(A * X2 + X2 * A' + Q, zeros(n, n); atol=1e-11 * opnorm(Q, 1))
+                # A backward-stable solve's residual is relative to the terms
+                # it cancels, `|A||X|`, not to `Q` alone.
+                scale(Y) = n * (2 * opnorm(A, 1) * opnorm(Y, 1) + opnorm(Q, 1))
+                @test opnorm(A * X2 + X2 * A' + Q, 1) <= 1e-13 * scale(X2)
                 # The transposed solve on A's own factors, against the packed
                 # route's solve with the transpose.
                 W1 = zeros(n, n); W2 = zeros(n, n)
@@ -91,7 +108,7 @@ end
                 CT.my_lyap_transposed!(W2, A, Q, schur, zeros(n, n))
                 @test CT.ctsem_opcounts().lyap_schur == 0    # factors reused
                 @test isapprox(W2, W1; rtol=1e-11)
-                @test isapprox(A' * W2 + W2 * A + Q, zeros(n, n); atol=1e-11 * opnorm(Q, 1))
+                @test opnorm(A' * W2 + W2 * A + Q, 1) <= 1e-13 * scale(W2)
                 # The series route's conditioning reads the factors: the
                 # smallest real part of an eigenvalue sum.
                 ev = eigvals(A)
@@ -100,13 +117,14 @@ end
             end
         end
     finally
-        CT.ctsem_set_lyapunov_schur_above!(threshold)
+        _lyap_restore!(saved)
     end
 end
 
 @testset "Schur route: blocks larger than the solve, failure, no allocation" begin
     CT = ContinuousTimeSEM
     threshold = CT._CTSEM_LYAP_SCHUR_ABOVE[]
+    saved = _lyap_thresholds()
     n = threshold + 2
     rng = MersenneTwister(32)
     A = 0.3 .* randn(rng, n, n) .- 0.7 .* I(n)
@@ -148,6 +166,7 @@ end
 @testset "Duals on the Schur route: tangents on the value's factors" begin
     CT = ContinuousTimeSEM
     threshold = CT._CTSEM_LYAP_SCHUR_ABOVE[]
+    saved = _lyap_thresholds()
     n = threshold + 3
     rng = MersenneTwister(33)
     A0 = 0.3 .* randn(rng, n, n) .- 0.7 .* I(n)
@@ -164,7 +183,7 @@ end
     try
         CT.ctsem_set_lyapunov_schur_above!(typemax(Int))
         packed = CT.LyapBuffer(D, n)
-        CT.ctsem_set_lyapunov_schur_above!(threshold)
+        _lyap_restore!(saved)
         @test !packed.schur
         for transposed in (false, true)
             X1 = zeros(D, n, n); X2 = zeros(D, n, n)
@@ -186,7 +205,7 @@ end
             end
         end
     finally
-        CT.ctsem_set_lyapunov_schur_above!(threshold)
+        _lyap_restore!(saved)
     end
     # A nested Dual, as a Hessian over the adjoint runs: second derivatives
     # of a scalar function of the solution against differences of first

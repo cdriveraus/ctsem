@@ -33,19 +33,50 @@ and against cached factors as a linear model's rows solve
     Schur, cached     1.5   2.8   4.5   5.8   5.4  10.3   17.3    48.8
 
 Fresh, the Schur route wins from k = 8 on both machines; against cached
-factors from 12-14, losing about a microsecond a solve below that. Ten sits
-between them. Eight tasks each refactoring on their own buffer ran 4.9-5.1
-times one task's throughput on the Schur route and 3.2-4.6 times on the packed
-one (local), so neither waits on the other. A buffer's route is fixed when it
-is made (`LyapBuffer(T, n)`), so `ctsem_set_lyapunov_schur_above!` reaches the
-workspaces built after it.
+factors from 12-14, losing a microsecond or two a solve below that. The costs
+are not symmetric -- a fresh packed factorisation grows as k^6, a cached
+solve's loss stays a few microseconds -- so the line is drawn where fresh
+factorisations win: Schur above eight. Eight tasks each refactoring on their
+own buffer ran 4.9-5.1 times one task's throughput on the Schur route and
+3.2-4.6 times on the packed one (local), so neither waits on the other. A
+buffer's route is fixed when it is made (`LyapBuffer(T, n)`), so
+`ctsem_set_lyapunov_schur_above!` reaches the workspaces built after it.
 """
-const _CTSEM_LYAP_SCHUR_ABOVE = Ref(10)
+const _CTSEM_LYAP_SCHUR_ABOVE = Ref(8)
 
-"""Set the diffusion-block size above which the Schur Lyapunov route is used."""
-function ctsem_set_lyapunov_schur_above!(k::Integer)
-    k >= 1 || throw(ArgumentError("threshold must be at least 1"))
+"""
+Diffusion-block size above which a `ForwardDiff.Dual` Lyapunov solve takes
+the tangent route (`LyapTangents`): its values solved on whichever route their
+own type takes at that size, then one solve per partial on the same factors,
+where the packed route pushes the Duals through the LU. Microseconds a solve
+at dual width 4 (a Laplace unit's curvature) and 8, local i9-12900KS,
+`bench_lyap_dual2.jl`:
+
+    k                         3      5      8     10     12
+    w4 packed Dual, fresh   0.7    7.2     31    258    707
+    w4 tangents, fresh      1.0    3.5   13.5     37     54
+    w4 packed Dual, cached  0.1    1.5    2.3     20     39
+    w4 tangents, cached     0.8    2.3    7.9     17     32
+    w8 packed Dual, fresh   0.8    7.9     90    300    808
+    w8 tangents, fresh      1.7    5.5     27     58     84
+    w8 packed Dual, cached  0.3    1.6    9.5     22     44
+    w8 tangents, cached     1.5    4.4   15.4     34     58
+
+Tangents win fresh from five states, cached from ten to twelve; by the same
+asymmetry as the values' line, above four.
+"""
+const _CTSEM_LYAP_TANGENTS_ABOVE = Ref(4)
+
+"""
+    ctsem_set_lyapunov_schur_above!(k; tangents = k)
+
+Set the diffusion-block sizes above which a Lyapunov solve takes the Schur
+route (`Float64`, `Float32`) and above which a Dual's takes tangents.
+"""
+function ctsem_set_lyapunov_schur_above!(k::Integer; tangents::Integer=k)
+    (k >= 1 && tangents >= 1) || throw(ArgumentError("thresholds must be at least 1"))
     _CTSEM_LYAP_SCHUR_ABOVE[] = Int(k)
+    _CTSEM_LYAP_TANGENTS_ABOVE[] = Int(tangents)
     return _CTSEM_LYAP_SCHUR_ABOVE[]
 end
 
@@ -155,14 +186,15 @@ function LyapBuffer(::Type{D}, n::Int) where {Tg,V,N,D<:ForwardDiff.Dual{Tg,V,N}
 end
 
 """
-Whether `LyapBuffer(T, n)` takes the Schur route: above the threshold for
-`Float64` and `Float32`, and for a Dual where its value type would, so a Dual
-over BigFloat, as the adjoint's BigFloat checks run, stays packed.
+Whether `LyapBuffer(T, n)` leaves the packed route: for `Float64` and
+`Float32` the Schur route, above `_CTSEM_LYAP_SCHUR_ABOVE`; for a Dual the
+tangent route, above `_CTSEM_LYAP_TANGENTS_ABOVE`, its values then solved as
+their own type's rule says (a Dual over BigFloat, as the adjoint's BigFloat
+checks run, solves its values packed).
 """
 _lyap_schur_route(::Type{T}, n::Int) where {T<:Number} =
     T <: LinearAlgebra.BlasReal && n > _CTSEM_LYAP_SCHUR_ABOVE[]
-_lyap_schur_route(::Type{<:ForwardDiff.Dual{Tg,V}}, n::Int) where {Tg,V} =
-    _lyap_schur_route(V, n)
+_lyap_schur_route(::Type{<:ForwardDiff.Dual}, n::Int) = n > _CTSEM_LYAP_TANGENTS_ABOVE[]
 
 """
     LyapBuffer(mat::AbstractMatrix)
