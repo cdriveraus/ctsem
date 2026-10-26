@@ -261,3 +261,78 @@ test_that("a model of concave units goes unprobed and evaluates as when probed",
     expect_equal(a$gradient, b$gradient, tolerance = 1e-10)
   }
 })
+
+# Between those two cases: a unit can have a second maximum only within the
+# span of the loadings' rows for the effects that reach its data and are not
+# the quadratic test's mean effects (`_laplace_probe_span`). Across the rest
+# its likelihood is flat, or concave given the rest. The sign fixture with a
+# second item, whose loading is the person's and which half the people never
+# answer, and an intercept on each item with an own variance beside one shared
+# dimension, on the layer (the hybrid would integrate the own variances). For
+# those without the second item, its loading, intercept and own variance reach
+# nothing, and the shared dimension's move of the first intercept is undone by
+# that intercept's own coordinate: a flat direction that is no coordinate
+# axis. The intercepts are mean effects. So the span is the loading's row,
+# and nothing for those without the item. Each exclusion is compared with the
+# probes without it -- the mean effects unsent, then pruning off, which counts
+# every effect as reaching -- for the same values and fewer starts.
+test_that("the probes search only where a unit can have a second maximum", {
+  skip_without_julia()
+  withr::local_options(ctsem.laplace.hybrid = FALSE)
+  data <- .modes_sign_data()
+  data$Y2 <- data$Y1 / 1.5 + stats::rnorm(nrow(data), 0, 0.3)
+  data$Y2[data$id > 6] <- NA
+  model <- suppressWarnings(suppressMessages(ctModel(type = "ct", id = "id",
+    manifestNames = c("Y1", "Y2"), latentNames = "eta1",
+    LAMBDA = matrix(c("1", "lambda"), 2, 1), DRIFT = matrix(-0.5),
+    DIFFUSION = matrix(0.8), MANIFESTVAR = diag(0.3, 2),
+    MANIFESTMEANS = matrix(c("mm1", "mm2"), 2, 1), T0MEANS = matrix(0),
+    T0VAR = matrix(1), CINT = matrix(0))))
+  model$pars$indvarying <- model$pars$param %in% c("lambda", "mm1", "mm2")
+  model$pars$transform[model$pars$param %in% "lambda"] <- "param"
+  spec <- suppressMessages(ctFit(data, model, backend = "julia",
+    intoverpop = "laplace", poprank = 1, popunique = "MANIFESTMEANS",
+    fit = FALSE))
+  level <- spec$laplace$levels[[1]]
+  expect_null(spec$laplace$hybrid)
+  expect_false(isTRUE(spec$laplace$quadratic))
+  expect_equal(unname(unlist(spec$laplace$affine)), level$param != "lambda")
+  full <- spec
+  full$laplace$affine <- NULL
+  handles <- lapply(list(spec, full), function(s)
+    structure(s, class = c("ctJuliaModel", "ctFitModel")))
+  # The engine holds the mean effects and the inert ones.
+  held <- ctsem:::.ctJuliaEval(
+    "o -> [sum(sum, o.affine; init = 0), sum(g -> sum(length, g; init = 0), o.inert; init = 0)]")
+  expect_equal(as.numeric(held(ctsem:::.ctJuliaObjective(handles[[1]],
+    hybrid = TRUE))), c(2, nrow(spec$laplace$inert)))
+
+  prune <- function(on) invisible(ctsem:::.ctJuliaCall(
+    "ContinuousTimeSEM.ctsem_set_laplace_prune!", on))
+  on.exit(prune(TRUE), add = TRUE)
+  run <- function(handle, x) {
+    ctsem:::.ctJuliaEval("ContinuousTimeSEM.ctsem_reset_opcounts!()")
+    r <- ctJuliaEvaluate(handle, x, gradient = TRUE, cores = 1L)
+    list(value = r$value, gradient = r$gradient, starts = ctsem:::.ctJuliaGet(
+      ctsem:::.ctJuliaEval("ContinuousTimeSEM.ctsem_opcounts()"))$probe_starts)
+  }
+  # Small population sds, so every direction is soft and probed, at two of
+  # the loading's means.
+  for (mean in c(0, 0.4)) {
+    x <- rep(0.3, ctsem:::.ctBackendNpar(spec))
+    for (f in c("sd_index", "unique_index")) x[level[[f]][level[[f]] > 0]] <- -1.5
+    x[level$load_index[level$load_index > 0]] <- 0.1
+    x[level$re_index[level$param == "lambda"]] <- mean
+    a <- run(handles[[1]], x)
+    b <- run(handles[[2]], x)
+    prune(FALSE)
+    c <- run(handles[[2]], x)
+    prune(TRUE)
+    expect_equal(a$value, c$value, tolerance = 1e-8)
+    expect_equal(b$value, c$value, tolerance = 1e-8)
+    expect_equal(a$gradient, c$gradient, tolerance = 1e-6)
+    expect_equal(b$gradient, c$gradient, tolerance = 1e-6)
+    expect_lt(a$starts, b$starts)
+    expect_lt(b$starts, c$starts)
+  }
+})

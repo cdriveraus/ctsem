@@ -793,13 +793,25 @@ one; on a slider's 0.05-wide interval at ten predicted sds from the response
 that leaves about ten digits.
 """
 @inline function _interval_moments(lo, hi)
+    logZ, m, d, _, _ = _interval_terms(lo, hi)
+    return (logZ, m, d)
+end
+
+"""
+    _interval_terms(lo, hi)
+
+`_interval_moments` and the density at each end over the probability,
+`phi(lo) / Z` and `phi(hi) / Z` (zero at an open end), which its derivatives
+are written in (`_censored_partials!`).
+"""
+@inline function _interval_terms(lo, hi)
     if lo === nothing
         λ = _mills(hi)
-        return (_norm_logcdf(hi), -λ, hi * λ + λ * λ)
+        return (_norm_logcdf(hi), -λ, hi * λ + λ * λ, zero(λ), λ)
     elseif hi === nothing
         b = -lo
         λ = _mills(b)
-        return (_norm_logcdf(b), λ, b * λ + λ * λ)
+        return (_norm_logcdf(b), λ, b * λ + λ * λ, λ, zero(λ))
     end
     flip = lo + hi > 0
     a, b = flip ? (-hi, -lo) : (lo, hi)
@@ -810,7 +822,8 @@ that leaves about ten digits.
     rb = exp(_norm_logpdf(b) - logZ)
     m = ra - rb
     d = b * rb - a * ra + m * m
-    return (logZ, flip ? -m : m, d)
+    # The density is symmetric, so reflecting swaps the ends' ratios.
+    return flip ? (logZ, -m, d, rb, ra) : (logZ, m, d, ra, rb)
 end
 
 """
@@ -886,6 +899,158 @@ transform's slope.
     offset = (s2 / rootV) * m
     variance = s2 - (s2 * s2 / V) * d
     return (logZ, offset, max(variance, zero(variance)))
+end
+
+"""
+    _censored_partials!(J, a, s, y, thresholds)
+
+`_censored_moments(a, s, y, thresholds)` with its partials written into `J`
+by hand, as `_binary_moment_jacobian` lays them out: rows `logZ`, mean offset
+and variance; columns `a`, `b = s^2`, then the extras, of which the standard
+deviation (3), the half-width (4) and the power (5) are read
+(`_extras_read`). Returns `(logZ, offset, variance, true)`.
+
+The moments of a standard normal restricted to `[α, β)` move with its ends as
+`d logZ = rb dβ - ra dα`, `d m = rb (β - m) dβ + ra (m - α) dα` and
+`d (1 - var) = rb (var - (β - m)^2) dβ + ra ((m - α)^2 - var) dα`, with `ra`
+and `rb` the density at each end over the probability (`_interval_terms`).
+The ends are `(G(r) - a) / sqrt(V)`, `V = sd^2 + b`, where `G` is the response
+transform (`_response_transform`) and `r` is set by the record and the
+half-width (`_response_interval`). A value recorded exactly is a Gaussian
+density of `G(y)`. The derivative of `max(y - half, lower)` at a tie is the
+limit's, zero, as forward mode's ordering of duals (`_censored_at`) also takes
+it.
+
+This replaced forward mode through `_binary_moment_dual!`: a dual of the
+row's reads carried over the filter's own type, which inside the Laplace
+curvature was a dual of duals of duals, and a type no workload model compiled.
+On the affect pilot that compile was 86 s of every session's first
+evaluation (`review/PRECOMPILE-curvature-width-2026-10-26.md`).
+"""
+function _censored_partials!(J::Matrix{T}, a::T, s::T, y::Real,
+    thresholds) where {T}
+    n = length(thresholds)
+    lower, upper, sd = _censor_limits(thresholds, T)
+    half, power = _censor_response(thresholds, T)
+    # The power is read, and so differentiated, only with a response scale;
+    # then it takes the general transform even at one, as a seeded dual did.
+    response = n >= 5
+    s2 = s * s
+    sd2 = sd * sd
+    V = sd2 + s2
+    rootV = sqrt(V)
+    atlower = _censored_at(y, lower, false)
+    atupper = _censored_at(y, upper, true)
+    origin = _response_origin(lower)
+    if !atlower && !atupper && !(_primal(half) > 0)
+        g, _, gκ = _response_partials(y, origin, power, response)
+        dev = g - a
+        z = dev / rootV
+        u = response ? log1p(y - origin) : zero(T)
+        logZ = -z * z / 2 - log(rootV) - log(sqrt(2 * T(pi))) +
+            (response ? (power - 1) * u : zero(T))
+        LV = (z * z - 1) / (2 * V)
+        J[1, 1] = dev / V
+        J[1, 2] = LV
+        J[2, 1] = -s2 / V
+        J[2, 2] = dev * sd2 / (V * V)
+        J[3, 2] = (sd2 / V)^2
+        if n >= 3
+            J[1, 5] = 2 * sd * LV
+            J[2, 5] = -2 * sd * dev * s2 / (V * V)
+            J[3, 5] = 2 * sd * (s2 / V)^2
+        end
+        if response
+            J[1, 7] = -dev / V * gκ + u
+            J[2, 7] = s2 / V * gκ
+        end
+        return (logZ, dev * s2 / V, s2 * sd2 / V, true)
+    end
+    # The interval's ends on the latent response, as `_response_interval`
+    # places them, with their derivatives in the half-width and the power.
+    lo, lo_h, lo_κ = atlower ? (zero(T), zero(T), zero(T)) :
+        _censored_end(atupper ? upper - half : y - half > lower ? y - half : lower,
+            atupper || y - half > lower ? -1 : 0, origin, power, response, T)
+    hi, hi_h, hi_κ = atupper ? (zero(T), zero(T), zero(T)) :
+        _censored_end(atlower ? lower + half : y + half < upper ? y + half : upper,
+            atlower || y + half < upper ? 1 : 0, origin, power, response, T)
+    α = (lo - a) / rootV
+    β = (hi - a) / rootV
+    logZ, m, d, ra, rb = _interval_terms(atlower ? nothing : α, atupper ? nothing : β)
+    var = 1 - d
+    # Each moment's derivatives in α and β (an open end's ratio is zero), and
+    # the ends' in `a`, in `V` (so `b`, and `sd` at `2 sd`), in the half-width
+    # and in the power.
+    L = (-ra, rb)
+    M = (atlower ? zero(T) : ra * (m - α), atupper ? zero(T) : rb * (β - m))
+    D = (atlower ? zero(T) : ra * ((m - α)^2 - var),
+        atupper ? zero(T) : rb * (var - (β - m)^2))
+    ea = (-1 / rootV, -1 / rootV)
+    eV = (atlower ? zero(T) : -α / (2 * V), atupper ? zero(T) : -β / (2 * V))
+    eh = (lo_h / rootV, hi_h / rootV)
+    eκ = (lo_κ / rootV, hi_κ / rootV)
+    c1 = s2 / rootV
+    c2 = s2 * s2 / V
+    variance = s2 - c2 * d
+    LV, MV, DV = _censored_chain(L, eV), _censored_chain(M, eV), _censored_chain(D, eV)
+    J[1, 1] = _censored_chain(L, ea)
+    J[1, 2] = LV
+    J[2, 1] = c1 * _censored_chain(M, ea)
+    J[2, 2] = (2 * V - s2) / (2 * V * rootV) * m + c1 * MV
+    clamped = variance < zero(variance)
+    if !clamped
+        J[3, 1] = -c2 * _censored_chain(D, ea)
+        J[3, 2] = 1 - (2 * s2 / V - c2 / V) * d - c2 * DV
+    end
+    if n >= 3
+        J[1, 5] = 2 * sd * LV
+        J[2, 5] = -s2 * sd / (V * rootV) * m + c1 * 2 * sd * MV
+        clamped || (J[3, 5] = 2 * sd * c2 / V * d - c2 * 2 * sd * DV)
+    end
+    if response
+        J[1, 6] = _censored_chain(L, eh)
+        J[2, 6] = c1 * _censored_chain(M, eh)
+        J[1, 7] = _censored_chain(L, eκ)
+        J[2, 7] = c1 * _censored_chain(M, eκ)
+        if !clamped
+            J[3, 6] = -c2 * _censored_chain(D, eh)
+            J[3, 7] = -c2 * _censored_chain(D, eκ)
+        end
+    end
+    return (logZ, c1 * m, max(variance, zero(variance)), true)
+end
+
+"""A moment's derivative through the two ends: `Q[1] x[1] + Q[2] x[2]`."""
+@inline _censored_chain(Q::NTuple{2}, x::NTuple{2}) = Q[1] * x[1] + Q[2] * x[2]
+
+"""
+    _censored_end(r, dr, origin, power, general, T)
+
+An interval end on the latent response, `G(r)`, with its derivatives in the
+half-width (`r` moves `dr` with it) and in the power, as `T`.
+"""
+@inline function _censored_end(r, dr::Int, origin, power, general::Bool, ::Type{T}) where {T}
+    g, gr, gκ = _response_partials(r, origin, power, general)
+    return (convert(T, g), convert(T, dr * gr), convert(T, gκ))
+end
+
+"""
+    _response_partials(r, origin, power, general)
+
+`_response_transform(r, origin, power)` and its derivatives in `r` and in the
+power. With `general` false the transform is the identity and the power is
+not read.
+"""
+@inline function _response_partials(r, origin::Real, power, general::Bool)
+    general || return (r, one(r), zero(r))
+    u = log1p(r - origin)
+    κu = power * u
+    slope = exp((power - 1) * u)
+    if abs(_primal(power)) < 1e-8
+        return (origin + u * (1 + κu / 2), slope, u * u / 2)
+    end
+    e = expm1(κu)
+    return (origin + e / power, slope, (u * (e + 1) - e / power) / power)
 end
 
 """
@@ -1890,12 +2055,13 @@ written out and accumulated in the rule's own loop (`_binary_quadrature` with a
 returns, and their exact derivative, with the mode's partials from the implicit
 function theorem. That replaced one nested dual carrying every seeded input
 through every operation of every node, which under the Laplace seeds was a dual
-of duals of duals and most of a categorical gradient's time.
+of duals of duals and most of a categorical gradient's time. A censored row's
+closed form is differentiated by hand the same way (`_censored_partials!`).
 
-Forward mode stays for what that does not cover (`_binary_moment_dual!`): a
-censored row's closed form, the asymptote mixture, and a mode solve that used
-its budget, where the implicit function theorem does not describe what the
-iteration returned. It sits behind an inference barrier, so a model that never
+Forward mode stays for what that does not cover (`_binary_moment_dual!`): the
+asymptote mixture, a predicted variance under `_CTSEM_MIN_VARIANCE`, and a mode
+solve that used its budget, where the implicit function theorem does not
+describe what the iteration returned. It sits behind an inference barrier, so a model that never
 reaches it does not compile it. Its dual is seeded by hand
 (`_ctsem_nested_seed`, under the nested tag for the reason given there) with
 only the extras the observation reads, its width a type parameter.
@@ -1941,9 +2107,10 @@ the rule's analytic partials cover and `_binary_moment_dual!` has to take it.
     nodes, weights, thresholds, kind::Int) where {T}
     s = sqrt(b)
     handled = promote_type(T, eltype(thresholds)) === T &&
-        s * s > T(_CTSEM_MIN_VARIANCE[]) && kind != CTSEM_OBS_CENSORED &&
+        s * s > T(_CTSEM_MIN_VARIANCE[]) &&
         !(kind == CTSEM_OBS_BINARY && length(thresholds) >= 2)
     handled || return (T(-Inf), zero(T), zero(T), false)
+    kind == CTSEM_OBS_CENSORED && return _censored_partials!(J, a, s, y, thresholds)
     return _binary_quadrature(a, s, y, nodes, weights, thresholds, kind, J)
 end
 
