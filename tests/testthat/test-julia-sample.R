@@ -589,7 +589,7 @@ test_that("the marginal sampler starts from the normal check, made where the fit
   # whose engine builds its own population block.
   asked <- list()
   testthat::local_mocked_bindings(
-    .ctBackendSampleCheck = function(fit, cores = 1L, verbose = 0) {
+    .ctBackendSampleCheck = function(fit, cores = 1L, verbose = 0, seed = NULL) {
       asked[[length(asked) + 1L]] <<- cores
       fit
     },

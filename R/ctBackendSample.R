@@ -278,8 +278,11 @@
   # with sampled TI values, whose coordinates the fit's objective does not
   # have, nor on the state-explicit target, whose metric covers the states too.
   # `checkcores`, because workers may still be warming (`.ctJuliaSampleFit()`).
+  # From the sampler's own seed, as its chains are, so that a sample call
+  # draws the same whatever R's stream holds.
   if (marginal && !isTRUE(state_explicit) && !tisampled)
-    fit <- .ctBackendSampleCheck(fit, cores = checkcores, verbose = verbose)
+    fit <- .ctBackendSampleCheck(fit, cores = checkcores, verbose = verbose,
+      seed = as.integer(.ctJuliaOr(control$seed, 20260828L)))
   if (identical(control$sampler, "map") && (marginal || isTRUE(state_explicit))) {
     stop("control$sampler = 'map' samples the joint posterior over population ",
       "parameters and random effects, and this run asks for ",
@@ -1015,10 +1018,19 @@
 # here too (`.ctPlaceDais()`), on the Laplace objective, and its normal is the
 # metric (`.ctBackendMetricSource()`, 'dais') and SMC's start. The fit's own
 # record is what the sampled fit replaces, so nothing else is kept.
+#
+# `seed` draws both from a stream of their own, the caller's left as it was:
+# seeded from R's stream, two sample calls one after the other, the same
+# `control$seed` given, took different DAIS normals and so different metrics
+# and draws (test-julia-sample.R's processes test, dev2).
 #' @keywords internal
-.ctBackendSampleCheck <- function(fit, cores = 1L, verbose = 0) {
+.ctBackendSampleCheck <- function(fit, cores = 1L, verbose = 0, seed = NULL) {
   u <- fit$uncertainty
   if (is.null(u$hessian) || !is.null(fit$laplace$jump)) return(fit)
+  if (!is.null(seed)) {
+    restore <- .ctStreamKeep(seed)
+    on.exit(restore(), add = TRUE)
+  }
   previous <- .ctBackendSetMaxChunks(cores)
   on.exit(.ctBackendRestoreMaxChunks(previous), add = TRUE)
   if (is.null(u$details$normalcheck)) {
