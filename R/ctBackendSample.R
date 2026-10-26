@@ -433,16 +433,18 @@
 }
 
 # The map's learning record (`ctsem_sample_map`): its cost in gradients and
-# learning's share of it, and per window its draws a chain, the chains
-# restarted, the summaries refitted, theta's shrinkage (NaN for the check
-# window) and the step.
+# learning's share of it, the draws a chain kept from learning, and per window
+# its draws a chain, the chains restarted, the summaries refitted, theta's
+# shrinkage (NaN for the check window) and the step.
 .ctBackendMapRecord <- function(m) {
   w <- m$windows
   windows <- if (length(w)) do.call(rbind, lapply(w, function(x)
     as.data.frame(lapply(x, function(v) as.numeric(v)[1L])))) else NULL
   list(gradients = as.numeric(m$gradients), learn_gradients = as.numeric(m$learn_gradients),
-    learn_seconds = as.numeric(m$learn_secs), coordinates = as.integer(m$coordinates),
-    integrated = isTRUE(m$integrated), coupled = as.integer(m$coupled), windows = windows)
+    learn_seconds = as.numeric(m$learn_secs),
+    learnt_draws = as.integer(.ctJuliaOr(m[["learnt_draws"]], 0L)),
+    coordinates = as.integer(m$coordinates), integrated = isTRUE(m$integrated),
+    coupled = as.integer(m$coupled), windows = windows)
 }
 
 # Every name the sampler reads out of `control`, in one place.
