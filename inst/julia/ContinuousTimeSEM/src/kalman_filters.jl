@@ -912,38 +912,52 @@ end
 """
     _ctsem_dynamics_nonlinear(sp, predict_indices, n)
 
-Whether the predict group writes a JAx cell that moves with the state: the
-dynamics are then nonlinear in it, and each prediction substep is
-moment-matched (`_ekf_moment_cells!`). Asked by running the whole group, in
-order, at two states with everything else held, so that a JAx cell reading the
-state through another cell of the group -- a PARS cell that reads it -- counts.
-A group that throws at the probe is taken to read the state, which costs only
-the cubature.
+Whether the drift's Jacobian is nonlinear in the state: some JAx cell the
+predict group writes is not affine in it. Each prediction substep is then
+moment-matched (`_ekf_moment_cells!`). Where the Jacobian is affine in the
+state -- a drift quadratic or bilinear in it, as a random effect on the
+dynamics carried as a state makes it -- `E J(x)` is `J(m)`, the moments'
+covariance is the EKF's, and all moment matching changes is the mean's
+second-order term, which measured as nothing: a logistic's likelihood moved
+from 0.4 to 1.0 nats of the particle filter's, and an augmented random drift's
+population sd from 0.80 of the truth to 0.79, at 16 times the fit's time
+(`review/FILTER-moment-prediction-2026-10-26.md`). Asked by running the whole
+group, in order, at three states on a line with everything else held, so that a
+JAx cell reading the state through another cell of the group -- a PARS cell
+that reads it -- counts, and taking the cells' second differences. A group
+that throws at the probe is taken to be nonlinear, which costs only the
+cubature.
 """
 function _ctsem_dynamics_nonlinear(sp::EKFParameters,
     predict_indices::AbstractVector{Int}, n::Int)
     isempty(predict_indices) && return false
-    jax = _ctsem_component_positions(sp, :JAx)
-    jset = Set(jax)
+    jset = Set(_ctsem_component_positions(sp, :JAx))
     any(i -> i in jset, predict_indices) || return false
     probe = collect(range(0.31, step=0.013, length=length(sp.mutables)))
-    pa = copy(probe)
-    pb = copy(probe)
-    parsa = CTSEMPars(pa, sp.parameter_axis)
-    parsb = CTSEMPars(pb, sp.parameter_axis)
-    ntd = hasproperty(parsa, :TDPREDEFFECT) ? size(parsa.TDPREDEFFECT, 2) : 0
-    tdpreds = collect(range(0.19, step=0.007, length=ntd))
     a = reshape(collect(range(0.23, step=0.011, length=n)), n, 1)
-    b = a .+ 0.05
-    ctxa = CTSEMRowContext(a, parsa, tdpreds, _CTSEMProbePredictors(), 0.5, 0.25, 1, 2)
-    ctxb = CTSEMRowContext(b, parsb, tdpreds, _CTSEMProbePredictors(), 0.5, 0.25, 1, 2)
-    try
-        apply_complex_transforms_at_indices!(pa, predict_indices, sp.predict_transforms, ctxa)
-        apply_complex_transforms_at_indices!(pb, predict_indices, sp.predict_transforms, ctxb)
-    catch
-        return true
+    values = Vector{Vector{Float64}}(undef, 3)
+    for k in 1:3
+        pk = copy(probe)
+        parsk = CTSEMPars(pk, sp.parameter_axis)
+        ntd = hasproperty(parsk, :TDPREDEFFECT) ? size(parsk.TDPREDEFFECT, 2) : 0
+        tdpreds = collect(range(0.19, step=0.007, length=ntd))
+        state = a .+ 0.4 * (k - 1) .* reshape(collect(range(1.0, step=0.37, length=n)), n, 1)
+        ctx = CTSEMRowContext(state, parsk, tdpreds, _CTSEMProbePredictors(), 0.5, 0.25,
+            1, 2)
+        try
+            apply_complex_transforms_at_indices!(pk, predict_indices,
+                sp.predict_transforms, ctx)
+        catch
+            return true
+        end
+        values[k] = pk
     end
-    return any(i -> i in jset && !(pa[i] == pb[i]), predict_indices)
+    for i in predict_indices
+        i in jset || continue
+        v1, v2, v3 = values[1][i], values[2][i], values[3][i]
+        abs(v1 - 2v2 + v3) > 1e-8 * (1 + abs(v1) + abs(v2) + abs(v3)) && return true
+    end
+    return false
 end
 
 """
@@ -988,10 +1002,12 @@ The group is evaluated at each point in turn on the tape (`_record_moment_group!
 reversed by `_reverse_moment!`), the averages written into its JAx, DRIFT and
 CINT cells and its other cells put back to their values at the mean, where the
 caller evaluated it first. Returns false, leaving the mean's evaluation as it
-was, where the covariance does not factor.
+was, where the covariance does not factor. `P` is the state's covariance, the
+substep's incoming one unless the mesh's defect asks at another
+(`_record_substep_defect!`).
 """
 function _ekf_moment_cells!(ws::ContinuousEKFWorkspace{T}, pars, sp, all_params, ctx,
-    trace) where {T}
+    trace, P::AbstractMatrix=ws.P_update.data) where {T}
     n = ws.state_dim
     idx = ws.predict_param_indices
     avg = ws.moment_avg
@@ -1002,7 +1018,6 @@ function _ekf_moment_cells!(ws::ContinuousEKFWorkspace{T}, pars, sp, all_params,
     c = ws.moment_c
     acc = ws.moment_acc
     drifts = ws.moment_drifts
-    P = ws.P_update.data
     @inbounds for j in 1:n, i in 1:j
         U[i, j] = P[j, i]
     end
