@@ -373,9 +373,6 @@ test_that("Stan and Julia agree for a T0MEANS-indvarying population SD with non-
 test_that("Stan and Julia agree for a moderate-dimensional model mixing both kinds of random effect", {
   skip_without_julia()
   skip_if_not_installed("rstan")
-  # A random effect on the dynamics is a state the drift reads, which julia
-  # predicts by moments and stan linearises: compared on stan's filter.
-  local_julia_ekf()
 
   # Distilled from ctsemTutorial.qmd's individual-differences example, which
   # originally crashed Julia outright with a LAPACKException from the
@@ -602,9 +599,6 @@ test_that("Stan and Julia agree for 3 original (not just augmented) latents", {
 test_that("Stan and Julia's actual optimizers converge to the same fit for TD/TI + individual differences", {
   skip_without_julia()
   skip_if_not_installed("rstan")
-  # A random effect on the dynamics is a state the drift reads, which julia
-  # predicts by moments and stan linearises: compared on stan's filter.
-  local_julia_ekf()
 
   # Every other test here checks log_prob/gradient agreement at one fixed
   # raw-parameter point -- necessary but not sufficient: the T0-SD meanscale
