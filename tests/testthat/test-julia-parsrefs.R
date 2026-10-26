@@ -152,7 +152,7 @@ test_that("a per-row matrix's expression that reads no state is evaluated once a
   # same model with each of those cells also reading a state at zero weight,
   # which keeps it per row: the objective and gradient must not move.
   set.seed(4)
-  d <- .parsref_data(n = 10)
+  d <- as.data.frame(.parsref_data(n = 10))
   d$z <- as.numeric(d$id %% 2 == 0)
   build <- function(per_row) {
     m <- suppressWarnings(suppressMessages(ctModel(type = 'ct', n.latent = 2,
