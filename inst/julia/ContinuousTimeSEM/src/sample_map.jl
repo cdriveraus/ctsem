@@ -79,14 +79,6 @@ struct _JMapTag end
 
 const _JMapDual = ForwardDiff.Dual{_JMapTag,Float64,_JMAP_CHUNK}
 
-"""
-    CTSEMJointMap
-
-The map: theta's centre and whitening factor, and per member of each unit its
-Gaussian summary in its raw effects (`Lam`, `h`) and coupling `G` to
-`theta[R]`. `P` are the raw positions varying at some level, `row` a raw
-position's row of `P`, `dep` the free positions the effects' map reads.
-"""
 ################################################################################
 # Theta's triangular map
 ################################################################################
@@ -293,6 +285,14 @@ function _jmap_tri_fit(U::AbstractMatrix; iters::Int=60)
     return _JMapTri(n, f0, f1, f2, a0, a1, epsv, ld)
 end
 
+"""
+    CTSEMJointMap
+
+The map: theta's centre and whitening factor, and per member of each unit its
+Gaussian summary in its raw effects (`Lam`, `h`) and coupling `G` to
+`theta[R]`. `P` are the raw positions varying at some level, `row` a raw
+position's row of `P`, `dep` the free positions the effects' map reads.
+"""
 struct CTSEMJointMap{S}
     sampler::S
     npar::Int
