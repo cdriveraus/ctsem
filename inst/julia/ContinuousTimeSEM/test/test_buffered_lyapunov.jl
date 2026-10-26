@@ -2,218 +2,171 @@ using LinearAlgebra
 using ForwardDiff
 using Random
 
-# Both Lyapunov thresholds, saved and put back around a test that moves them:
-# the setter with one argument sets the Dual one too.
-_lyap_thresholds() = (ContinuousTimeSEM._CTSEM_LYAP_SCHUR_ABOVE[],
-    ContinuousTimeSEM._CTSEM_LYAP_TANGENTS_ABOVE[])
-_lyap_restore!(t) = ContinuousTimeSEM.ctsem_set_lyapunov_schur_above!(t[1]; tangents=t[2])
+# The Lyapunov solve is the Schur route at every size and element type. Its
+# reference here is the Kronecker system `(I ⊗ A + A ⊗ I) vec(X) = -vec(Q)`,
+# solved by LinearAlgebra's generic LU, which takes Float64, BigFloat and
+# Duals alike: an independent derivation, so agreement says the factors, the
+# quasi triangular solve and the tangents are right rather than that two of
+# the engine's routes agree.
+_kron_lyap(A, Q) = (n = size(A, 1); reshape(-((kron(Matrix{eltype(A)}(I, n, n), A) +
+    kron(A, Matrix{eltype(A)}(I, n, n))) \ vec(Q)), n, n))
 
-# Buffer construction chooses the route by size and scalar type. This guards
-# the intended split between the packed solve and the Schur route, and that
-# both answer the same equation.
-@testset "Lyapunov buffer selection" begin
-    CT = ContinuousTimeSEM
-    @test CT.gauss_summation(5) == 15
-    ksolve_buffer = CT.LyapBuffer(Float64, 2)
-    @test !ksolve_buffer.schur
-    # Run-time integers, not `Val`s: a size in a type compiles again for every
-    # model (CLAUDE.md, "A model's types do not depend on the model").
-    @test ksolve_buffer.ksolve_dim === 2
-    @test ksolve_buffer.ksolve_system_dim === 3
-    # One concrete type on both sides of the threshold, for the same reason:
-    # the workspace's type must not depend on the diffusion block's size.
-    threshold = CT._CTSEM_LYAP_SCHUR_ABOVE[]
-    saved = _lyap_thresholds()
-    small = CT.LyapBuffer(Float64, threshold)
-    large = CT.LyapBuffer(Float64, threshold + 1)
-    @test !small.schur && large.schur
-    @test typeof(small) === typeof(large)
-    # The packed system is not allocated on the Schur route, nor the factors
-    # on the packed one.
-    @test isempty(large.ksolve_O) && isempty(small.S)
-    # A Dual leaves the packed route for tangents above its own threshold, its
-    # values solved as their type's rule says: Schur over Float64 above the
-    # values' threshold, packed below it and over BigFloat.
-    D = ForwardDiff.Dual{Nothing,Float64,2}
-    tangents = CT._CTSEM_LYAP_TANGENTS_ABOVE[]
-    @test tangents <= threshold
-    @test !CT.LyapBuffer(D, tangents).schur
-    @test CT.LyapBuffer(D, tangents + 1).schur
-    @test CT.LyapBuffer(D, threshold + 5).tangents.primal.schur
-    tangents < threshold && @test !CT.LyapBuffer(D, threshold).tangents.primal.schur
-    big = CT.LyapBuffer(ForwardDiff.Dual{Nothing,BigFloat,2}, threshold + 5)
-    @test big.schur && !big.tangents.primal.schur
-    # The setter moves the line for buffers built after it.
-    CT.ctsem_set_lyapunov_schur_above!(3)
-    @test CT.LyapBuffer(Float64, 4).schur
-    _lyap_restore!(saved)
-    @test !CT.LyapBuffer(Float64, 4).schur
-    # Both routes keep their factors across calls: a second solve against the
-    # same A must not refactor, a changed A must, and every answer must match
-    # a fresh ksolve! to roundoff.
-    let A = [-0.9 0.3 0.1; 0.2 -0.6 0.0; 0.05 -0.1 -0.8], Q1 = [0.4 0.1 0.0; 0.1 0.35 0.05; 0.0 0.05 0.5],
-        Q2 = [1.0 0.2 0.1; 0.2 0.8 0.0; 0.1 0.0 0.6], A2 = A .- 0.1 .* I(3)
-        fresh(Aa, Qq) = CT.ksolve!(zeros(3, 3), Aa, Qq, zeros(6, 6), zeros(6))
-        for above in (typemax(Int), 2)
-            CT.ctsem_set_lyapunov_schur_above!(above)
-            buffer = CT.LyapBuffer(Float64, 3)
-            _lyap_restore!(saved)
-            @test buffer.schur == (above == 2)
-            X = zeros(3, 3)
-            CT.ctsem_reset_opcounts!()
-            CT.my_lyap!(X, A, Q1, buffer)
-            @test isapprox(X, fresh(A, Q1); atol=1e-13)
-            CT.my_lyap!(X, A, Q2, buffer)
-            @test isapprox(X, fresh(A, Q2); atol=1e-13)
-            CT.my_lyap!(X, A2, Q1, buffer)
-            @test isapprox(X, fresh(A2, Q1); atol=1e-13)
-            counts = CT.ctsem_opcounts()
-            # The fresh ksolve! calls count too: three of them, plus the
-            # buffer's own two factorisations.
-            @test (buffer.schur ? counts.lyap_schur : counts.lyap_ksolve - 3) == 2
-        end
+# Drifts the subject loop meets: a random stable one, a repeated eigenvalue
+# (diagonal, already in Schur form), a defective, non-normal one (a Jordan
+# block), and an oscillator (a 2x2 block, complex pair).
+function _lyap_drifts(rng, n)
+    out = Any[0.4 .* randn(rng, n, n) .- 0.8 .* I(n)]
+    push!(out, -Matrix(Diagonal(fill(0.7, n))))
+    J = -0.6 .* Matrix(1.0I, n, n)
+    for i in 1:(n - 1)
+        J[i, i + 1] = 1.3
     end
+    push!(out, J)
+    if n >= 2
+        O = 0.2 .* randn(rng, n, n) .- 0.5 .* I(n)
+        O[1:2, 1:2] = [-0.05 2.0; -2.0 -0.05]
+        push!(out, O)
+    end
+    return out
 end
 
-@testset "Schur and packed routes agree across the threshold" begin
+@testset "Lyapunov buffer: one type at every size, factors kept" begin
+    CT = ContinuousTimeSEM
+    # Run-time sizes, one concrete type: a size in a type compiles the filter
+    # again for every model (CLAUDE.md, "A model's types do not depend on the
+    # model").
+    @test typeof(CT.LyapBuffer(Float64, 2)) === typeof(CT.LyapBuffer(Float64, 30))
+    D = ForwardDiff.Dual{Nothing,Float64,2}
+    @test typeof(CT.LyapBuffer(D, 2)) === typeof(CT.LyapBuffer(D, 30))
+    @test CT.LyapBuffer(D, 3).tangents.primal isa CT.LyapBuffer{Float64}
+    @test CT.LyapBuffer(Float64, 0).dim == 0     # no diffusing state
+    # A second solve against the same A does not refactor, a changed A does.
+    A = [-0.9 0.3 0.1; 0.2 -0.6 0.0; 0.05 -0.1 -0.8]
+    Q1 = [0.4 0.1 0.0; 0.1 0.35 0.05; 0.0 0.05 0.5]
+    Q2 = [1.0 0.2 0.1; 0.2 0.8 0.0; 0.1 0.0 0.6]
+    A2 = A .- 0.1 .* I(3)
+    buffer = CT.LyapBuffer(Float64, 3)
+    X = zeros(3, 3)
+    CT.ctsem_reset_opcounts!()
+    CT.my_lyap!(X, A, Q1, buffer)
+    @test isapprox(X, _kron_lyap(A, Q1); atol=1e-14)
+    CT.my_lyap!(X, A, Q2, buffer)
+    @test isapprox(X, _kron_lyap(A, Q2); atol=1e-14)
+    CT.my_lyap!(X, A2, Q1, buffer)
+    @test isapprox(X, _kron_lyap(A2, Q1); atol=1e-14)
+    @test CT.ctsem_opcounts().lyap_schur == 2
+end
+
+@testset "Schur solve against the Kronecker system, every size" begin
     CT = ContinuousTimeSEM
     rng = MersenneTwister(31)
-    threshold = CT._CTSEM_LYAP_SCHUR_ABOVE[]
-    saved = _lyap_thresholds()
-    try
-        for n in (3, 8, threshold, threshold + 1, 16, 21)
-            for rep in 1:3
-                A = 0.4 .* randn(rng, n, n) .- 0.8 .* I(n)
-                B = randn(rng, n, n)
-                Q = B * B' + 0.1I
-                CT.ctsem_set_lyapunov_schur_above!(typemax(Int))
-                packed = CT.LyapBuffer(Float64, n)
-                CT.ctsem_set_lyapunov_schur_above!(1)
-                schur = CT.LyapBuffer(Float64, n)
-                _lyap_restore!(saved)
-                X1 = zeros(n, n); X2 = zeros(n, n)
-                CT.my_lyap!(X1, A, Q, packed)
-                CT.my_lyap!(X2, A, Q, schur)
-                @test isapprox(X2, X1; rtol=1e-11)
-                @test X2 == X2'
-                # A backward-stable solve's residual is relative to the terms
-                # it cancels, `|A||X|`, not to `Q` alone.
-                scale(Y) = n * (2 * opnorm(A, 1) * opnorm(Y, 1) + opnorm(Q, 1))
-                @test opnorm(A * X2 + X2 * A' + Q, 1) <= 1e-13 * scale(X2)
-                # The transposed solve on A's own factors, against the packed
-                # route's solve with the transpose.
-                W1 = zeros(n, n); W2 = zeros(n, n)
-                CT.my_lyap_transposed!(W1, A, Q, packed, zeros(n, n))
-                CT.ctsem_reset_opcounts!()
-                CT.my_lyap_transposed!(W2, A, Q, schur, zeros(n, n))
-                @test CT.ctsem_opcounts().lyap_schur == 0    # factors reused
-                @test isapprox(W2, W1; rtol=1e-11)
-                @test opnorm(A' * W2 + W2 * A + Q, 1) <= 1e-13 * scale(W2)
-                # The series route's conditioning reads the factors: the
-                # smallest real part of an eigenvalue sum.
-                ev = eigvals(A)
-                @test isapprox(CT._series_lyap_conditioning(schur),
-                    minimum(abs(real(a) + real(b)) for a in ev, b in ev); rtol=1e-8)
-            end
-        end
-    finally
-        _lyap_restore!(saved)
+    for n in (1, 2, 3, 5, 8, 9, 16, 21), A in _lyap_drifts(rng, n)
+        B = randn(rng, n, n)
+        Q = B * B' + 0.1I
+        buffer = CT.LyapBuffer(Float64, n)
+        X = zeros(n, n)
+        CT.my_lyap!(X, A, Q, buffer)
+        @test isapprox(X, _kron_lyap(A, Q); rtol=1e-10)
+        @test X == X'
+        # A backward-stable solve's residual is relative to the terms it
+        # cancels, `|A||X|`, not to `Q` alone.
+        scale(Y) = n * (2 * opnorm(A, 1) * opnorm(Y, 1) + opnorm(Q, 1))
+        @test opnorm(A * X + X * A' + Q, 1) <= 1e-13 * scale(X)
+        # The transposed solve on A's own factors.
+        W = zeros(n, n)
+        CT.ctsem_reset_opcounts!()
+        CT.my_lyap_transposed!(W, A, Q, buffer)
+        @test CT.ctsem_opcounts().lyap_schur == 0    # factors reused
+        @test isapprox(W, _kron_lyap(Matrix(A'), Q); rtol=1e-10)
+        @test opnorm(A' * W + W * A + Q, 1) <= 1e-13 * scale(W)
+        # The series route's conditioning reads the factors: the smallest
+        # real part of an eigenvalue sum.
+        ev = eigvals(A)
+        @test isapprox(CT._series_lyap_conditioning(buffer),
+            minimum(abs(real(a) + real(b)) for a in ev, b in ev); rtol=1e-6)
     end
 end
 
 @testset "Schur route: blocks larger than the solve, failure, no allocation" begin
     CT = ContinuousTimeSEM
-    threshold = CT._CTSEM_LYAP_SCHUR_ABOVE[]
-    saved = _lyap_thresholds()
-    n = threshold + 2
-    rng = MersenneTwister(32)
-    A = 0.3 .* randn(rng, n, n) .- 0.7 .* I(n)
-    B = randn(rng, n, n); Q = B * B' + I
-    buffer = CT.LyapBuffer(Float64, n)
-    @test buffer.schur
-    # Buffers larger than the block: only the leading block is read and
-    # written, as the packed route's unpacking does.
-    Xbig = fill(7.0, n + 2, n + 3)
-    Qbig = fill(NaN, n + 1, n + 1); Qbig[1:n, 1:n] = Q
-    CT.my_lyap!(Xbig, A, Qbig, buffer)
-    @test isapprox(A * Xbig[1:n, 1:n] + Xbig[1:n, 1:n] * A' + Q, zeros(n, n); atol=1e-10)
-    @test all(==(7.0), Xbig[(n + 1):end, :]) && all(==(7.0), Xbig[:, (n + 1):end])
-    # A view of a larger matrix as A, as the discretisation passes it.
-    big = randn(rng, n + 3, n + 3); big[1:n, 1:n] = A
-    X = zeros(n, n)
-    CT.my_lyap!(X, view(big, 1:n, 1:n), Q, buffer)
-    @test isapprox(A * X + X * A' + Q, zeros(n, n); atol=1e-10)
-    # Nothing allocated per call, refactoring or not.
-    A2 = A .- 0.01 .* I(n)
-    W = zeros(n, n); At = zeros(n, n)
-    CT.my_lyap!(X, A2, Q, buffer); CT.my_lyap!(X, A, Q, buffer)
-    CT.my_lyap_transposed!(W, A2, Q, buffer, At)
-    @test (@allocated CT.my_lyap!(X, A, Q, buffer)) == 0
-    @test (@allocated CT.my_lyap!(X, A, Q, buffer)) == 0
-    @test (@allocated CT.my_lyap_transposed!(W, A2, Q, buffer, At)) == 0
-    # A non-finite A gives NaN, and conditioning NaN, which sends the interval
-    # to the series route, rather than an error or a loop.
-    Abad = copy(A); Abad[2, 3] = Inf
-    CT.my_lyap!(X, Abad, Q, buffer)
-    @test all(isnan, X)
-    @test isnan(CT._series_lyap_conditioning(buffer))
-    @test CT._series_needed(CT._series_lyap_conditioning(buffer), 1.0)
-    # And the next finite A is solved again.
-    CT.my_lyap!(X, A, Q, buffer)
-    @test isapprox(A * X + X * A' + Q, zeros(n, n); atol=1e-10)
+    for n in (2, 10)
+        rng = MersenneTwister(32 + n)
+        A = 0.3 .* randn(rng, n, n) .- 0.7 .* I(n)
+        B = randn(rng, n, n); Q = B * B' + I
+        buffer = CT.LyapBuffer(Float64, n)
+        # Buffers larger than the block: only the leading block is read and
+        # written.
+        Xbig = fill(7.0, n + 2, n + 3)
+        Qbig = fill(NaN, n + 1, n + 1); Qbig[1:n, 1:n] = Q
+        CT.my_lyap!(Xbig, A, Qbig, buffer)
+        @test isapprox(A * Xbig[1:n, 1:n] + Xbig[1:n, 1:n] * A' + Q, zeros(n, n); atol=1e-10)
+        @test all(==(7.0), Xbig[(n + 1):end, :]) && all(==(7.0), Xbig[:, (n + 1):end])
+        # A view of a larger matrix as A, as the discretisation passes it.
+        big = randn(rng, n + 3, n + 3); big[1:n, 1:n] = A
+        X = zeros(n, n)
+        CT.my_lyap!(X, view(big, 1:n, 1:n), Q, buffer)
+        @test isapprox(A * X + X * A' + Q, zeros(n, n); atol=1e-10)
+        # Nothing allocated per call, refactoring or not.
+        A2 = A .- 0.01 .* I(n)
+        W = zeros(n, n)
+        CT.my_lyap!(X, A2, Q, buffer); CT.my_lyap!(X, A, Q, buffer)
+        CT.my_lyap_transposed!(W, A2, Q, buffer)
+        @test (@allocated CT.my_lyap!(X, A, Q, buffer)) == 0
+        @test (@allocated CT.my_lyap!(X, A, Q, buffer)) == 0
+        @test (@allocated CT.my_lyap_transposed!(W, A2, Q, buffer)) == 0
+        # A non-finite A gives NaN, and conditioning NaN, which sends the
+        # interval to the series route, rather than an error or a loop.
+        Abad = copy(A); Abad[2, 1] = Inf
+        CT.my_lyap!(X, Abad, Q, buffer)
+        @test all(isnan, X)
+        @test isnan(CT._series_lyap_conditioning(buffer))
+        @test CT._series_needed(CT._series_lyap_conditioning(buffer), 1.0)
+        # And the next finite A is solved again.
+        CT.my_lyap!(X, A, Q, buffer)
+        @test isapprox(A * X + X * A' + Q, zeros(n, n); atol=1e-10)
+    end
 end
 
-@testset "Duals on the Schur route: tangents on the value's factors" begin
+@testset "Duals: tangents on the value's factors" begin
     CT = ContinuousTimeSEM
-    threshold = CT._CTSEM_LYAP_SCHUR_ABOVE[]
-    saved = _lyap_thresholds()
-    n = threshold + 3
-    rng = MersenneTwister(33)
-    A0 = 0.3 .* randn(rng, n, n) .- 0.7 .* I(n)
-    B = randn(rng, n, n); Q0 = B * B' + I
-    dA = [randn(rng, n, n) for _ in 1:3]
-    dQ = [let C = randn(rng, n, n); C + C' end for _ in 1:3]
-    D = ForwardDiff.Dual{Nothing,Float64,3}
-    A = [D(A0[i, j], ForwardDiff.Partials(ntuple(p -> dA[p][i, j], 3))) for i in 1:n, j in 1:n]
-    Q = [D(Q0[i, j], ForwardDiff.Partials(ntuple(p -> dQ[p][i, j], 3))) for i in 1:n, j in 1:n]
-    schur = CT.LyapBuffer(D, n)
-    @test schur.schur && schur.tangents.primal.schur
-    @test typeof(schur) === typeof(CT.LyapBuffer(D, 2))    # one type either side
-    @test !CT.LyapBuffer(D, 2).schur
-    try
-        CT.ctsem_set_lyapunov_schur_above!(typemax(Int))
-        packed = CT.LyapBuffer(D, n)
-        _lyap_restore!(saved)
-        @test !packed.schur
+    for n in (1, 2, 3, 11)
+        rng = MersenneTwister(33 + n)
+        A0 = 0.3 .* randn(rng, n, n) .- 0.7 .* I(n)
+        B = randn(rng, n, n); Q0 = B * B' + I
+        dA = [randn(rng, n, n) for _ in 1:3]
+        dQ = [let C = randn(rng, n, n); C + C' end for _ in 1:3]
+        D = ForwardDiff.Dual{Nothing,Float64,3}
+        A = [D(A0[i, j], ForwardDiff.Partials(ntuple(p -> dA[p][i, j], 3))) for i in 1:n, j in 1:n]
+        Q = [D(Q0[i, j], ForwardDiff.Partials(ntuple(p -> dQ[p][i, j], 3))) for i in 1:n, j in 1:n]
+        buffer = CT.LyapBuffer(D, n)
         for transposed in (false, true)
-            X1 = zeros(D, n, n); X2 = zeros(D, n, n)
-            if transposed
-                CT.my_lyap_transposed!(X1, A, Q, packed, zeros(D, n, n))
-                CT.ctsem_reset_opcounts!()
-                CT.my_lyap_transposed!(X2, A, Q, schur, zeros(D, n, n))
-            else
-                CT.my_lyap!(X1, A, Q, packed)
-                CT.ctsem_reset_opcounts!()
-                CT.my_lyap!(X2, A, Q, schur)
-            end
-            # One factorisation of the values serves all three partials.
-            @test CT.ctsem_opcounts().lyap_schur <= 1
-            @test isapprox(ForwardDiff.value.(X2), ForwardDiff.value.(X1); rtol=1e-11)
+            X = zeros(D, n, n)
+            CT.ctsem_reset_opcounts!()
+            transposed ? CT.my_lyap_transposed!(X, A, Q, buffer) : CT.my_lyap!(X, A, Q, buffer)
+            # One factorisation of the values serves all three partials, and
+            # the transposed solve reuses the forward one's.
+            @test CT.ctsem_opcounts().lyap_schur == (transposed ? 0 : 1)
+            # ForwardDiff through the generic LU of the Kronecker system.
+            ref = _kron_lyap(transposed ? Matrix(transpose(A)) : A, Q)
+            @test isapprox(ForwardDiff.value.(X), ForwardDiff.value.(ref); rtol=1e-10)
             for p in 1:3
-                @test isapprox(ForwardDiff.partials.(X2, p), ForwardDiff.partials.(X1, p);
+                @test isapprox(ForwardDiff.partials.(X, p), ForwardDiff.partials.(ref, p);
                     rtol=1e-9, atol=1e-11)
             end
         end
-    finally
-        _lyap_restore!(saved)
     end
     # A nested Dual, as a Hessian over the adjoint runs: second derivatives
     # of a scalar function of the solution against differences of first
     # derivatives.
+    n = 4
+    rng = MersenneTwister(40)
+    A0 = 0.3 .* randn(rng, n, n) .- 0.7 .* I(n)
+    B = randn(rng, n, n); Q0 = B * B' + I
+    dA1 = randn(rng, n, n); dQ1 = let C = randn(rng, n, n); C + C' end
     f(t) = begin
         T = typeof(t)
-        At = T.(A0) .+ t .* T.(dA[1])
-        Qt = T.(Q0) .+ t .* T.(dQ[1])
+        At = T.(A0) .+ t .* T.(dA1)
+        Qt = T.(Q0) .+ t .* T.(dQ1)
         X = zeros(T, n, n)
         CT.my_lyap!(X, At, Qt, CT.LyapBuffer(T, n))
         sum(abs2, X)
@@ -222,11 +175,40 @@ end
     h = 1e-5
     fd = (ForwardDiff.derivative(f, h) - ForwardDiff.derivative(f, -h)) / (2h)
     @test isapprox(d2, fd; rtol=1e-6)
-    @test CT.LyapBuffer(typeof(ForwardDiff.Dual(ForwardDiff.Dual(0.0, 1.0), 1.0)), n).schur
 end
 
-# Rather than compare against one implementation detail, validate the defining
-# Lyapunov equation residual for both solver paths.
+# The adjoint's BigFloat checks (CLAUDE.md, "An adjoint can be exactly right
+# and numerically wrong") run the filter in BigFloat, so the route has to
+# solve to that precision, not to Float64's.
+@testset "BigFloat: the Schur route at its own precision" begin
+    CT = ContinuousTimeSEM
+    setprecision(BigFloat, 256) do
+        rng = MersenneTwister(41)
+        for n in (1, 2, 5), A64 in _lyap_drifts(rng, n)
+            A = BigFloat.(A64)
+            B = BigFloat.(randn(rng, n, n)); Q = B * B' + I
+            X = zeros(BigFloat, n, n)
+            CT.my_lyap!(X, A, Q, CT.LyapBuffer(BigFloat, n))
+            @test maximum(abs, X - _kron_lyap(A, Q)) <= 1e-60 * maximum(abs, X)
+            @test maximum(abs, A * X + X * A' + Q) <=
+                1e-60 * (maximum(abs, A) * maximum(abs, X) + maximum(abs, Q))
+        end
+        # A Dual over BigFloat: tangents on BigFloat factors.
+        n = 3
+        A0 = BigFloat.(0.3 .* randn(rng, n, n) .- 0.7 .* I(n))
+        B = BigFloat.(randn(rng, n, n)); Q0 = B * B' + I
+        dA = BigFloat.(randn(rng, n, n))
+        D = ForwardDiff.Dual{Nothing,BigFloat,1}
+        A = [D(A0[i, j], ForwardDiff.Partials((dA[i, j],))) for i in 1:n, j in 1:n]
+        Q = D.(Q0)
+        X = zeros(D, n, n)
+        CT.my_lyap!(X, A, Q, CT.LyapBuffer(D, n))
+        ref = _kron_lyap(A, Q)
+        @test maximum(abs, ForwardDiff.partials.(X, 1) - ForwardDiff.partials.(ref, 1)) <=
+            1e-60 * maximum(abs, ForwardDiff.partials.(ref, 1))
+    end
+end
+
 @testset "Buffered Lyapunov residuals" begin
     for n in (2, 5, 14)
         A = -Matrix(Diagonal(collect(1.0:n)))

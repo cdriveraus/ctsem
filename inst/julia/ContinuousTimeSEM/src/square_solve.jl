@@ -1,106 +1,8 @@
 using LinearAlgebra
 
 ################################################################################
-# ksolve
+# Square linear solves without LAPACK
 ################################################################################
-
-"""
-    _ksolve_system_matrix!(O, A)
-
-Fill `O` with the packed linear system for the continuous Lyapunov equation.
-
-The rows and columns of `O` correspond to upper-triangular entries of a
-symmetric unknown `X` in the equation `A * X + X * A'`.
-"""
-function _ksolve_system_matrix!(O::AbstractMatrix{T}, A::AbstractMatrix{T}, __d::Int) where {T<:Number}
-    d = __d
-    # d = size(A, 1)
-    fill!(O, zero(T))
-
-    if d == 1
-        O[1, 1] = 2 * A[1, 1]
-        return O
-    end
-
-    # For symmetric X packed by upper triangle, row (i,j) of O corresponds to:
-    # (A*X + X*A')_ij = sum_k A[i,k] * X[k,j] + sum_k X[i,k] * A[j,k]
-    @inbounds for j in 1:d
-        base_j = ((j - 1) * j) ÷ 2
-
-        for k in 1:d
-            ajk = A[j, k]
-            tri_k = ((k - 1) * k) ÷ 2
-            y1 = k <= j ? base_j + k : tri_k + j
-            m = min(j, k)
-
-            # i <= k  => packed(i,k) = tri_k + i
-            for i in 1:m
-                z = base_j + i
-                O[z, y1] += A[i, k]
-                O[z, tri_k + i] += ajk
-            end
-
-            # i > k   => packed(k,i) = base_i + k
-            base_i = (m * (m + 1)) ÷ 2
-            for i in (m + 1):j
-                z = base_j + i
-                O[z, y1] += A[i, k]
-                O[z, base_i + k] += ajk
-                base_i += i
-            end
-        end
-    end
-    return O
-end
-
-_ksolve_system_matrix!(O::AbstractMatrix{T}, A::AbstractMatrix{T}) where {T<:Number} =
-    _ksolve_system_matrix!(O, A, size(A, 1))
-
-"""
-    _ksolve_pack_upper!(triQ, Q)
-
-Pack the upper triangle of the symmetric matrix `Q` into `triQ`.
-
-The packing order matches the system matrix produced by
-`_ksolve_system_matrix!`.
-"""
-function _ksolve_pack_upper!(triQ::AbstractVector{T}, Q::AbstractMatrix{T}, __d::Int) where {T<:Number}
-    d = __d
-    # d = size(Q, 1)
-    z = 0
-    @inbounds for j in 1:d
-        for i in 1:j
-            z += 1
-            triQ[z] = Q[i, j]
-        end
-    end
-    return triQ
-end
-
-_ksolve_pack_upper!(triQ::AbstractVector{T}, Q::AbstractMatrix{T}) where {T<:Number} =
-    _ksolve_pack_upper!(triQ, Q, size(Q, 1))
-
-"""
-    _ksolve_unpack_upper!(AQ, triQ)
-
-Unpack an upper-triangular packed vector into the symmetric matrix `AQ`.
-"""
-function _ksolve_unpack_upper!(AQ::AbstractMatrix{T}, triQ::AbstractVector{T}, __d::Int) where {T<:Number}
-    d = __d
-    # d = size(AQ, 1)
-    z = 0
-    @inbounds for j in 1:d
-        for i in 1:j
-            z += 1
-            AQ[i, j] = triQ[z]
-            AQ[j, i] = triQ[z]
-        end
-    end
-    return AQ
-end
-
-_ksolve_unpack_upper!(AQ::AbstractMatrix{T}, triQ::AbstractVector{T}) where {T<:Number} =
-    _ksolve_unpack_upper!(AQ, triQ, size(AQ, 1))
 
 """
     _solve_square_system!(A, B, piv)
@@ -192,8 +94,7 @@ then sees the same operations in the same order as an elimination carrying
 the right-hand side along, so factoring apart costs nothing in the result
 (bitwise, for Float64 and Duals) and the solve takes every right-hand side in
 one pass. Unlike LAPACK's `getrf!`, the multipliers are not in permuted
-order. `LyapBuffer`'s packed route factors the Lyapunov system once per
-distinct `A` and solves it many times.
+order.
 """
 function _lu_factor_generic!(A::AbstractMatrix{T}, piv::AbstractVector{Int}, n::Int) where {T}
     @inbounds for k in 1:n
@@ -251,79 +152,4 @@ function _lu_solve_generic!(LU::AbstractMatrix{T}, piv::AbstractVector{Int},
         end
     end
     return B
-end
-
-"""
-    ksolve!(AQ, A, Q, O, triQ, piv)
-
-Solve the continuous Lyapunov equation `A * X + X * A' + Q = 0`.
-
-The result is written to `AQ`. The arguments `O`, `triQ`, and `piv` are reusable
-workspace buffers.
-"""
-function ksolve!(
-    AQ::AbstractMatrix{T},
-    A::AbstractMatrix{T},
-    Q::AbstractMatrix{T},
-    O::AbstractMatrix{T},
-    triQ::AbstractVector{T},
-    piv::AbstractVector{Int},
-    dim::Int,
-    system_dim::Int,
-) where {T<:Number}
-    d = dim
-    ntri = system_dim
-    @boundscheck begin
-        # d = size(A, 1)
-        size(A, 1) == d && size(A, 2) == d || throw(DimensionMismatch("A must be square"))
-        size(Q, 1) == d && size(Q, 2) == d || throw(DimensionMismatch("Q must match size(A)"))
-        size(AQ, 1) == d && size(AQ, 2) == d || throw(DimensionMismatch("AQ must match size(A)"))
-
-        ntri == (d * (d + 1)) ÷ 2 || throw(DimensionMismatch("system_dim must match the packed size for A"))
-        size(O, 1) == ntri && size(O, 2) == ntri || throw(DimensionMismatch("O must be ntri×ntri"))
-        length(triQ) == ntri || throw(DimensionMismatch("triQ length must be ntri"))
-        length(piv) >= ntri || throw(DimensionMismatch("Pivot buffer too small"))
-    end
-
-    _CTSEM_OPCOUNT.lyap_ksolve[] += 1
-    _ksolve_system_matrix!(O, A, dim)
-    _ksolve_pack_upper!(triQ, Q, dim)
-    _solve_square_system!(O, triQ, piv, system_dim)
-    rmul!(triQ, -one(T))
-    _ksolve_unpack_upper!(AQ, triQ, dim)
-    return AQ
-end
-
-function ksolve!(
-    AQ::AbstractMatrix{T},
-    A::AbstractMatrix{T},
-    Q::AbstractMatrix{T},
-    O::AbstractMatrix{T},
-    triQ::AbstractVector{T},
-    piv::AbstractVector{Int},
-    dim::Int,
-) where {T<:Number}
-    d = dim
-    return ksolve!(AQ, A, Q, O, triQ, piv, dim, (d * (d + 1)) ÷ 2)
-end
-
-function ksolve!(
-    AQ::AbstractMatrix{T},
-    A::AbstractMatrix{T},
-    Q::AbstractMatrix{T},
-    O::AbstractMatrix{T},
-    triQ::AbstractVector{T},
-    piv::AbstractVector{Int},
-) where {T<:Number}
-    return ksolve!(AQ, A, Q, O, triQ, piv, size(A, 1))
-end
-
-"""
-    ksolve!(AQ, A, Q, O, triQ)
-
-Solve the continuous Lyapunov equation using internally allocated pivot storage.
-"""
-function ksolve!(AQ::AbstractMatrix{T}, A::AbstractMatrix{T}, Q::AbstractMatrix{T}, O::AbstractMatrix{T}, triQ::AbstractVector{T}) where {T<:Number}
-    piv = Vector{Int}(undef, length(triQ))
-    return ksolve!(AQ, A, Q, O, triQ, piv, size(A, 1))
 end

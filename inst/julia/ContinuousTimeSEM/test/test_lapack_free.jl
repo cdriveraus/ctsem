@@ -2,15 +2,15 @@ using LinearAlgebra
 using Random
 
 # The subject loop is LAPACK-free by default: the hand-written Cholesky and LU
-# at every size, the packed Lyapunov solve or the hand-written Schur route
-# (`real_schur.jl`) by size, `my_exp!` for every exponential. These pin the
+# at every size, the hand-written Schur route (`real_schur.jl`) for every
+# Lyapunov solve, `my_exp!` for every exponential. These pin the
 # defaults and the three pieces the Laplace and quadrature routes now take
 # from the engine's own factorization.
 
 @testset "LAPACK-free defaults" begin
     @test ContinuousTimeSEM._CTSEM_SMALL_CHOLESKY[] == typemax(Int)
-    # The Schur route is the engine's own, so a large block takes it.
-    @test ContinuousTimeSEM.LyapBuffer(Float64, 40).schur
+    # The Lyapunov solve is the engine's own Schur route at every size.
+    @test ContinuousTimeSEM.LyapBuffer(Float64, 40).S isa Matrix{Float64}
 end
 
 @testset "CTSEMCholesky solves, inverse and U inverse match LinearAlgebra" begin

@@ -6,11 +6,13 @@
 # form of `A` (Bartels-Stewart): `A = U S U'` with `S` quasi upper triangular,
 # then `S Y + Y S' = -U' Q U` by back substitution over its blocks, and
 # `X = U Y U'`. LAPACK's `schur!` and `trsyl!` take OpenBLAS's process-wide lock
-# on every call and allocate, so the subject loop used the packed `ksolve!`
-# instead, which is O(k^6): at k = 20 a 210x210 LU per factorisation, refactored
-# per subject wherever the drift's Jacobian reads the state. These are the
-# Schur route written out as the rest of `small_linalg.jl` is: no library call,
-# no allocation, nothing touched outside the arguments, so it threads.
+# on every call and allocate, so the subject loop once used a packed solve over
+# the k(k+1)/2 symmetric unknowns instead, which is O(k^6): at k = 20 a 210x210
+# LU per factorisation, refactored per subject wherever the drift's Jacobian
+# reads the state. These are the Schur route written out as the rest of
+# `small_linalg.jl` is: no library call, no allocation, nothing touched outside
+# the arguments, so it threads. Generic in the element type, so BigFloat checks
+# take it too (`eps(T)`, `floatmin(T)`).
 #
 # The decomposition follows LAPACK's unblocked path, which is what LAPACK
 # itself runs at these sizes: Householder reduction to Hessenberg form (as

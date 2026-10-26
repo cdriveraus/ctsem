@@ -29,10 +29,10 @@ function _check_pullback(primal, args, cotangent; tol=_PRIM_TOL, symmetric_args=
     for k in eachindex(args)
         u = randn(size(args[k]))
         # Arguments the primal only reads symmetrically (the Lyapunov `Q`)
-        # must be perturbed symmetrically: the derivative in a non-symmetric
-        # direction is a property of the packing convention inside `ksolve!`,
-        # not of the mathematical map, and every caller in the filter supplies
-        # a covariance.
+        # must be perturbed symmetrically: the solve reads one triangle of
+        # `Q`, so the derivative in a non-symmetric direction is a property of
+        # that convention, not of the mathematical map, and every caller in
+        # the filter supplies a covariance.
         k in symmetric_args && (u = (u .+ transpose(u)) ./ 2)
         directional = ForwardDiff.derivative(
             ε -> dot(cotangent, primal(ntuple(j -> j == k ? args[j] .+ ε .* u : args[j], length(args))...)),
@@ -76,16 +76,15 @@ end
     @test isapprox(asym_pull[2], sym_pull[2]; atol=1e-12)
     @test isapprox(asym_pull[3], sym_pull[3]; atol=1e-12)
 
-    # Above the threshold the Float64 solve and its pullback take the Schur
-    # route, its transposed solve on A's own factors; ForwardDiff through the
-    # primal takes it too, by tangent solves. So this checks the adjoint's
-    # formula against the tangent's, two derivations on one factorisation.
-    n = ContinuousTimeSEM._CTSEM_LYAP_SCHUR_ABOVE[] + 2
+    # The pullback's transposed solve runs on A's own factors; ForwardDiff
+    # through the primal solves by tangents on the same factors. So this
+    # checks the adjoint's formula against the tangent's, two derivations on
+    # one factorisation, at a larger block too.
+    n = 10
     rng = MersenneTwister(57)
     Al = 0.3 .* randn(rng, n, n) .- 0.7 .* I(n)
     Bl = randn(rng, n, n)
     Ql = Bl * Bl' + I
-    @test ContinuousTimeSEM.LyapBuffer(Float64, n).schur
     cl = randn(rng, n, n)
     _check_pullback(ContinuousTimeSEM._ctsem_lyap, (Al, Ql), (cl .+ cl') ./ 2; symmetric_args=(2,))
 end
@@ -93,7 +92,7 @@ end
 @testset "discrete-intercept solve pullback matches production (adjoint_ekf.jl:591-599)" begin
     # F4: production differentiates `dINT[D] = JAxd \ s` by hand at
     # `adjoint_ekf.jl:591-599`, using `_solve_square_system_generic!` (the
-    # same LU kernel the forward pass uses, see `ksolve.jl`) rather than a
+    # same LU kernel the forward pass uses, see `square_solve.jl`) rather than a
     # tested primitive. The primitive that *was* tested here, `_ctsem_linsolve`,
     # was called by nothing and has been deleted. This reproduces the block's
     # exact two solves and its exact accumulation (`s̄ = M⁻ᵀ ȳ`, `M̄ = -s̄ yᵀ`)

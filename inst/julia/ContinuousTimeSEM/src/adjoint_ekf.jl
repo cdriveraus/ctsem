@@ -1353,7 +1353,7 @@ function _reverse_predict!(x̄::Vector{T}, P̄::Matrix{T}, θ̄ca,
         Ād .= .-Ād                                     # Ād = -(Qb Ad X' + Qb' Ad X)
 
         # --- X = lyap(JAx[D,D], Qc[D,D])
-        _ctsem_lyap_pullback!(JAxd_bar, Qcd_bar, sc.kk9, sc.kk10, JAxd, X, X̄, lyap_buffer)
+        _ctsem_lyap_pullback!(JAxd_bar, Qcd_bar, sc.kk9, JAxd, X, X̄, lyap_buffer)
     end
 
     if record.series_intercept
@@ -1512,7 +1512,7 @@ function _reverse_stationary!(x̄::Vector{T}, P̄::Matrix{T}, θ̄ca,
     end
     Ād = sc.kk7
     Q̄d = sc.kk8
-    _ctsem_lyap_pullback!(Ād, Q̄d, sc.kk9, sc.kk10, Ad, record.X, X̄,
+    _ctsem_lyap_pullback!(Ād, Q̄d, sc.kk9, Ad, record.X, X̄,
         aws.lyap_buffer)
     @inbounds for j in 1:k, i in 1:k
         θ̄DRIFT[dyn[i], dyn[j]] += Ād[i, j]
@@ -1708,7 +1708,7 @@ function _reverse_stationary_elements!(x̄::Vector{T}, P̄::Matrix{T}, θ̄ca,
     end
     Ād = sc.kk7
     Q̄d = sc.kk8
-    _ctsem_lyap_pullback!(Ād, Q̄d, sc.kk9, sc.kk10, Ad, record.X, X̄,
+    _ctsem_lyap_pullback!(Ād, Q̄d, sc.kk9, Ad, record.X, X̄,
         aws.lyap_buffer)
     Qc_bar = _rs(sc.nn5, n, n)
     fill!(Qc_bar, zero(T))

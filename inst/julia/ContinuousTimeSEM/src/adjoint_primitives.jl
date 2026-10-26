@@ -28,8 +28,8 @@ using ChainRulesCore
 #
 #   * the matrix exponential   `exp(A)`          -- Padé + scaling/squaring,
 #     whose inner Padé solve is an LU factorization;
-#   * the continuous Lyapunov solve `A X + X A' + Q = 0` -- either the packed
-#     `ksolve!` LU or the Schur route (`real_schur.jl`), depending on size.
+#   * the continuous Lyapunov solve `A X + X A' + Q = 0` -- a real Schur
+#     decomposition (`real_schur.jl`).
 #
 # (The plain square solve `A \ B` is the same LAPACK situation, but the reverse
 # filter inlines its pullback, in `_reverse_predict!` and the stationary
@@ -180,19 +180,13 @@ Solve the continuous Lyapunov equation `A X + X A' + Q = 0` for `X`.
 `Q` must be symmetric, and `X` is symmetric by construction. Both hold for
 every use in the filter, where `Q` is a covariance.
 
-Uses `LyapBuffer`, i.e. exactly the same size-dependent choice the primal
-filter makes: the Schur route above `_CTSEM_LYAP_SCHUR_ABOVE` for `Float64`
-systems and Duals over them (tangents on the values' factors), the packed
-`ksolve!` otherwise.
-
-**This matters far more than it looks.** `ksolve!` solves an
-`n(n+1)/2`-square dense system, so its cost is `O(n^6)` against the Schur
-path's `O(n^3)`: at 20 latents that is a 210x210 LU instead of a 20x20 Schur
-decomposition, per prediction substep. Twice the packed route served every
-size -- once for a Mooncake evaluation, later because the Schur route was
-LAPACK's and locked -- and both times profiling found the LU over half the
-work on a 20-latent model: 58% of the reverse pass, then 56% of the gradient
-of a drift that reads the state.
+Uses `LyapBuffer`, the primal filter's solve: the Schur route, with Duals
+solved by tangents on their values' factors. Twice a packed solve over the
+`n(n+1)/2` symmetric unknowns served every size -- once for a Mooncake
+evaluation, later because the Schur route was LAPACK's and locked -- and both
+times profiling found its O(n^6) LU over half the work on a 20-latent model:
+58% of the reverse pass, then 56% of the gradient of a drift that reads the
+state.
 """
 function _ctsem_lyap(A::AbstractMatrix, Q::AbstractMatrix,
     buffer=LyapBuffer(promote_type(eltype(A), eltype(Q)), size(A, 1)))
@@ -222,11 +216,11 @@ Return `(Ā, Q̄)` for `X = _ctsem_lyap(A, Q)`.
 `Q̄` is the solution `W` of the transposed Lyapunov equation
 `A' W + W A + X̄ = 0`, and `Ā = W X' + W' X`.
 
-**The incoming cotangent is symmetrised first, and it must be.** `ksolve!`
-solves the Lyapunov equation over *symmetric* unknowns only (it packs the
-system into `n(n+1)/2` triangular unknowns), so handing it a non-symmetric
-right-hand side does not fail -- it quietly returns the symmetric matrix
-nearest to solving it, which is not the `W` this pullback needs. Symmetrising
+**The incoming cotangent is symmetrised first, and it must be.** The solve
+works on one triangle of a symmetric unknown and mirrors it, so handing it a
+non-symmetric right-hand side does not fail -- it quietly returns a symmetric
+matrix that does not solve the equation, which is not the `W` this pullback
+needs. Symmetrising
 is also the mathematically correct thing to do rather than a workaround:
 `_ctsem_lyap` always returns a symmetric `X`, so `dX` is symmetric and
 `<X̄, dX> = <sym(X̄), dX>` for any `X̄`.
@@ -236,27 +230,26 @@ function _ctsem_lyap_pullback(A::AbstractMatrix, X::AbstractMatrix, X̄::Abstrac
     T = promote_type(eltype(A), eltype(X), eltype(X̄))
     n = size(A, 1)
     return _ctsem_lyap_pullback!(Matrix{T}(undef, n, n), Matrix{T}(undef, n, n),
-        Matrix{T}(undef, n, n), Matrix{T}(undef, n, n), A, X, X̄, buffer)
+        Matrix{T}(undef, n, n), A, X, X̄, buffer)
 end
 
 """
-    _ctsem_lyap_pullback!(Ā, W, rhs, At, A, X, X̄, buffer)
+    _ctsem_lyap_pullback!(Ā, W, rhs, A, X, X̄, buffer)
 
 The pullback above into caller-owned storage: `Ā` and `W` receive the two
-cotangents, `rhs` and `At` are scratch. Four fresh matrices per prediction
-substep is what the allocating form cost (`Profile.Allocs`, dev1).
+cotangents, `rhs` is scratch. Fresh matrices per prediction substep are what
+the allocating form cost (`Profile.Allocs`, dev1).
 """
 function _ctsem_lyap_pullback!(Ā::AbstractMatrix{T}, W::AbstractMatrix{T},
-    rhs::AbstractMatrix{T}, At::AbstractMatrix{T},
+    rhs::AbstractMatrix{T},
     A::AbstractMatrix, X::AbstractMatrix, X̄::AbstractMatrix, buffer) where {T}
     n = size(A, 1)
     @inbounds for j in 1:n, i in 1:n
         rhs[i, j] = (X̄[i, j] + X̄[j, i]) / 2
     end
-    # On `A`'s own factors where the route allows (Schur), so a reverse pass
-    # factorises only where `A` changes; otherwise against a transposed copy
-    # in `At`.
-    my_lyap_transposed!(W, A, rhs, buffer, At)
+    # On `A`'s own factors, so a reverse pass factorises only where `A`
+    # changes.
+    my_lyap_transposed!(W, A, rhs, buffer)
     _ctsem_mulNT!(Ā, W, X)
     _ctsem_mulTN!(Ā, W, X, one(T), one(T))
     return Ā, W

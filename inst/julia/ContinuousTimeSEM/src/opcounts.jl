@@ -37,7 +37,6 @@ const _CTSEM_OPCOUNT = (
     exp_cache_hit = Ref(0),
     exp_cache_miss = Ref(0),
     lyap_schur = Ref(0),
-    lyap_ksolve = Ref(0),
     lyap_cache_hit = Ref(0),
     lyap_cache_miss = Ref(0),
     frechet = Ref(0),
