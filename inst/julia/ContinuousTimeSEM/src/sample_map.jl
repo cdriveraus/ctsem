@@ -87,6 +87,184 @@ Gaussian summary in its raw effects (`Lam`, `h`) and coupling `G` to
 `theta[R]`. `P` are the raw positions varying at some level, `row` a raw
 position's row of `P`, `dep` the free positions the effects' map reads.
 """
+################################################################################
+# Theta's triangular map
+################################################################################
+#
+# The whitening `u = Ct^-1 (theta - theta0)` is linear, and theta's posterior is
+# not a linear transform of a normal: locations bend with other coordinates,
+# scales move with them, marginals are skewed and heavy-tailed. Between the
+# latent `w` and `u` sits a monotone triangular map (Marzouk, Moselhy, Parno &
+# Spantini 2016; Parno & Marzouk 2018), learnt from the pooled draws of the
+# learning windows. Component k, from `u` to `w`:
+#
+#     v_k = (u_k - f_k(u_<k)) exp(-a_k(u_<k)),   w_k = sinh(delta_k asinh(v_k) - eps_k)
+#
+# `f_k` quadratic in each earlier coordinate, `a_k` linear in them and capped by
+# tanh, and a sinh-arcsinh marginal (Jones & Pewsey 2009; skew `eps`, tail
+# weight `delta`). Both directions are in closed form and each component is
+# increasing in its own coordinate, so it is a bijection everywhere and the
+# sampler exact whatever was learnt. Fitted from the race's long references it
+# made the map 1.78 times as efficient, learnt from the windows 1.52 times
+# (`review/SAMPLING-general-joint-map-2026-10-25.md`).
+
+const _JMAP_TRI_CAP = 3.0
+"""Theta's triangular map is learnt for up to this many free parameters; a
+component's fit has `3k + 1` coefficients and a Newton step over them."""
+const _JMAP_TRI_MAXPAR = 30
+
+struct _JMapTri
+    n::Int
+    f0::Vector{Float64}
+    f1::Matrix{Float64}
+    f2::Matrix{Float64}
+    a0::Vector{Float64}
+    a1::Matrix{Float64}
+    eps::Vector{Float64}
+    ld::Vector{Float64}
+end
+
+"""The whitened coordinates at latent `w` and the log Jacobian of that map."""
+function _jmap_tri_forward(tri::_JMapTri, w::AbstractVector{T}) where {T<:Real}
+    n = tri.n
+    A = _JMAP_TRI_CAP
+    u = Vector{T}(undef, n)
+    lj = zero(T)
+    @inbounds for k in 1:n
+        f = T(tri.f0[k])
+        a = T(tri.a0[k])
+        for j in 1:(k - 1)
+            f += tri.f1[k, j] * u[j] + tri.f2[k, j] * u[j]^2
+            a += tri.a1[k, j] * u[j]
+        end
+        a = A * tanh(a / A)
+        delta = exp(tri.ld[k])
+        r = (asinh(w[k]) + tri.eps[k]) / delta
+        u[k] = f + exp(a) * sinh(r)
+        lj += a + log(cosh(r)) - log(delta) - log1p(w[k]^2) / 2
+    end
+    return u, lj
+end
+
+"""The latent at whitened `u`."""
+function _jmap_tri_inverse(tri::_JMapTri, u::AbstractVector)
+    n = tri.n
+    A = _JMAP_TRI_CAP
+    w = zeros(n)
+    @inbounds for k in 1:n
+        f = tri.f0[k]
+        a = tri.a0[k]
+        for j in 1:(k - 1)
+            f += tri.f1[k, j] * u[j] + tri.f2[k, j] * u[j]^2
+            a += tri.a1[k, j] * u[j]
+        end
+        a = A * tanh(a / A)
+        v = (u[k] - f) * exp(-a)
+        w[k] = sinh(exp(tri.ld[k]) * asinh(v) - tri.eps[k])
+    end
+    return w
+end
+
+struct _JMapTriForward
+    tri::_JMapTri
+end
+function (F::_JMapTriForward)(w::AbstractVector{T}) where {T}
+    u, lj = _jmap_tri_forward(F.tri, w)
+    return vcat(u, lj)
+end
+
+"""The latent gradient from the whitened one, `gu`, the log Jacobian's own
+gradient included."""
+function _jmap_tri_pullback(tri::_JMapTri, w::AbstractVector, gu::AbstractVector)
+    n = tri.n
+    J = ForwardDiff.jacobian(_JMapTriForward(tri), collect(Float64, w))
+    return transpose(view(J, 1:n, :)) * gu .+ view(J, n + 1, :)
+end
+
+# A component's negative log likelihood over whitened draws `U` (a column each),
+# coefficients `p` = f0, f1[1:k-1], f2[1:k-1], a0, a1[1:k-1], eps, log delta,
+# with a unit ridge on all but the level and the scale.
+struct _JMapTriNLL{M}
+    U::M
+    k::Int
+end
+function (F::_JMapTriNLL)(p::AbstractVector{T}) where {T}
+    U = F.U
+    k = F.k
+    A = _JMAP_TRI_CAP
+    delta = exp(p[3k + 1])
+    epsk = p[3k]
+    s = zero(T)
+    @inbounds for i in axes(U, 2)
+        f = p[1]
+        a = p[2k]
+        for j in 1:(k - 1)
+            uj = U[j, i]
+            f += p[1 + j] * uj + p[k + j] * uj^2
+            a += p[2k + j] * uj
+        end
+        a = A * tanh(a / A)
+        v = (U[k, i] - f) * exp(-a)
+        r = delta * asinh(v) - epsk
+        s += sinh(r)^2 / 2 - (log(delta) + log(cosh(r)) - log1p(v^2) / 2) + a
+    end
+    reg = zero(T)
+    for j in 2:(3k + 1)
+        j == 2k && continue
+        reg += p[j]^2
+    end
+    return s + reg / 2
+end
+
+"""
+    _jmap_tri_fit(U; iters)
+
+The triangular map fitted to whitened draws `U` (a column each) by maximum
+likelihood, a component at a time, by damped Newton from the identity.
+"""
+function _jmap_tri_fit(U::AbstractMatrix; iters::Int=60)
+    n = size(U, 1)
+    f0 = zeros(n); f1 = zeros(n, n); f2 = zeros(n, n)
+    a0 = zeros(n); a1 = zeros(n, n); epsv = zeros(n); ld = zeros(n)
+    X = Matrix{Float64}(U)
+    for k in 1:n
+        F = _JMapTriNLL(X, k)
+        p = zeros(3k + 1)
+        val = F(p)
+        for _ in 1:iters
+            g = ForwardDiff.gradient(F, p)
+            H = Symmetric(ForwardDiff.hessian(F, p))
+            ev = eigen(Symmetric((H .+ transpose(H)) ./ 2))
+            lam = max.(ev.values, 1e-6 * maximum(abs, ev.values) + 1e-8)
+            step = -(ev.vectors * ((transpose(ev.vectors) * g) ./ lam))
+            t = 1.0
+            improved = false
+            for _ in 1:30
+                pn = p .+ t .* step
+                vn = F(pn)
+                if isfinite(vn) && vn < val - 1e-10 * abs(val)
+                    improved = abs(val - vn) > 1e-9 * max(1.0, abs(val))
+                    p = pn
+                    val = vn
+                    break
+                end
+                t /= 2
+            end
+            improved || break
+        end
+        f0[k] = p[1]
+        for j in 1:(k - 1)
+            f1[k, j] = p[1 + j]
+            f2[k, j] = p[k + j]
+            a1[k, j] = p[2k + j]
+        end
+        a0[k] = p[2k]
+        epsv[k] = p[3k]
+        ld[k] = p[3k + 1]
+    end
+    return _JMapTri(n, f0, f1, f2, a0, a1, epsv, ld)
+end
+
 struct CTSEMJointMap{S}
     sampler::S
     npar::Int
@@ -101,11 +279,65 @@ struct CTSEMJointMap{S}
     thref::Vector{Float64}
     theta0::Vector{Float64}
     Ct::Matrix{Float64}
+    tri::Union{Nothing,_JMapTri}
 end
 
-_jmap_with(m::CTSEMJointMap; Lam=m.Lam, h=m.h, G=m.G, theta0=m.theta0, Ct=m.Ct) =
+_jmap_with(m::CTSEMJointMap; Lam=m.Lam, h=m.h, G=m.G, theta0=m.theta0, Ct=m.Ct,
+    tri=m.tri) =
     CTSEMJointMap(m.sampler, m.npar, m.P, m.row, m.dep, m.R, m.members, Lam, h, G,
-        m.thref, theta0, Ct)
+        m.thref, theta0, Ct, tri)
+
+"""
+    _jmap_learn_tri(m, pooled)
+
+The map with theta's triangular map fitted from `pooled`, theta's draws over
+every learning window so far, whitened by `m`'s own centre and factor; `m` as
+it is while there are fewer than ten draws a coefficient of the largest
+component. At most 4000 draws are read, spread through the pool.
+"""
+function _jmap_learn_tri(m::CTSEMJointMap, pooled::AbstractMatrix)
+    n = m.npar
+    N = size(pooled, 2)
+    N >= 10 * (3n + 1) || return m
+    pick = N > 4000 ? round.(Int, range(1, N; length=4000)) : collect(1:N)
+    U = LowerTriangular(m.Ct) \ (pooled[:, pick] .- m.theta0)
+    return _jmap_with(m; tri=_jmap_tri_fit(U))
+end
+
+"""Theta at latent `w`, and the log Jacobian of theta's triangular map (zero
+without one; the whitening's, `log det Ct`, is a constant and left out)."""
+function _jmap_theta(m::CTSEMJointMap, w::AbstractVector{<:Real})
+    m.tri === nothing && return m.theta0 .+ m.Ct * w, 0.0
+    u, lj = _jmap_tri_forward(m.tri, w)
+    return m.theta0 .+ m.Ct * u, lj
+end
+
+"""Theta at each column of latent `W`."""
+function _jmap_thetas(m::CTSEMJointMap, W::AbstractMatrix)
+    m.tri === nothing && return m.theta0 .+ m.Ct * W
+    out = zeros(m.npar, size(W, 2))
+    for t in axes(W, 2)
+        out[:, t] .= _jmap_theta(m, view(W, :, t))[1]
+    end
+    return out
+end
+
+"""Theta's latent coordinates."""
+function _jmap_theta_inverse(m::CTSEMJointMap, theta::AbstractVector)
+    u = LowerTriangular(m.Ct) \ (theta .- m.theta0)
+    m.tri === nothing && return u
+    return _jmap_tri_inverse(m.tri, u)
+end
+
+"""The latent gradient in theta's coordinates from the joint's gradient in
+theta, `gtheta`, through the whitening and the triangular map, its log
+Jacobian's gradient included."""
+function _jmap_theta_pullback(m::CTSEMJointMap, w::AbstractVector, gtheta::AbstractVector)
+    gu = transpose(m.Ct) * gtheta
+    m.tri === nothing && return gu
+    return _jmap_tri_pullback(m.tri, w, gu)
+end
+
 
 function _jmap_layout(sampler::CTSEMSampler, cross::Bool)
     laplace = sampler.laplace
@@ -299,7 +531,7 @@ function (d::CTSEMJointMapDensity)(g::AbstractVector{Float64}, xt::AbstractVecto
     m = d.map
     sampler = m.sampler
     npar = m.npar
-    theta = m.theta0 .+ m.Ct * view(xt, 1:npar)
+    theta, ltheta = _jmap_theta(m, view(xt, 1:npar))
     mapped = try
         _jmap_effects(m, theta, xt)
     catch err
@@ -328,12 +560,12 @@ function (d::CTSEMJointMapDensity)(g::AbstractVector{Float64}, xt::AbstractVecto
     _jmap_theta_gradient!(gtheta, m, theta, xt, gus)
     isempty(m.R) || _jmap_coupling_gradient!(gtheta, m, theta, gus, Fs)
     fill!(g, 0.0)
-    g[1:npar] .= transpose(m.Ct) * gtheta
+    g[1:npar] .= _jmap_theta_pullback(m, view(xt, 1:npar), gtheta)
     for U in 1:sampler.nunits
         r = _sample_urange(sampler, U)
         isempty(r) || (g[r] .= _jmap_utsolve(Fs[U], gus[U]))
     end
-    return v + logjac
+    return v + logjac + ltheta
 end
 
 # The effects' and the Jacobian's dependence on theta at fixed latent z,
@@ -416,7 +648,7 @@ function _jmap_inverse(m::CTSEMJointMap, theta::AbstractVector, x::AbstractVecto
     sampler = m.sampler
     laplace = sampler.laplace
     xt = zeros(sampler.ndim)
-    xt[1:m.npar] .= LowerTriangular(m.Ct) \ (theta .- m.theta0)
+    xt[1:m.npar] .= _jmap_theta_inverse(m, theta)
     th = _laplace_extend(laplace, collect(Float64, theta))
     Ls = _laplace_popchols(th, laplace.spec)
     mu = th[m.P]
@@ -433,7 +665,7 @@ end
 """`(theta, x)`: the parameters and the joint sampler's vector at latent `xt`."""
 function _jmap_point(m::CTSEMJointMap, xt::AbstractVector)
     sampler = m.sampler
-    theta = m.theta0 .+ m.Ct * view(xt, 1:m.npar)
+    theta, _ = _jmap_theta(m, view(xt, 1:m.npar))
     us, _, _ = _jmap_effects(m, theta, xt)
     x = zeros(sampler.ndim)
     x[1:m.npar] .= theta
@@ -638,7 +870,7 @@ function _jmap_build(sampler::CTSEMSampler, theta0::Vector{Float64},
     S = Symmetric((Matrix{Float64}(cov) .+ transpose(Matrix{Float64}(cov))) ./ 2)
     Ct = Matrix(cholesky(Symmetric(Matrix(S) + 1e-12 * max(tr(S), 1.0) / npar * I)).L)
     m = CTSEMJointMap(sampler, npar, P, row, dep, R, members, Lam, h, G, th[R],
-        copy(theta0), Ct)
+        copy(theta0), Ct, nothing)
     # The differences' passes, and about five for the units' mode solves.
     return m, isempty(flat) ? 0 : 2 * nP + 6
 end
@@ -657,7 +889,7 @@ function _jmap_refit(m::CTSEMJointMap, Wl::AbstractMatrix, rng; maxrows::Int=400
     pick = n > maxrows ? sort(randperm(rng, n)[1:maxrows]) : collect(1:n)
     W = Wl[:, pick]
     nr = length(pick)
-    thetas = m.theta0 .+ m.Ct * W[1:npar, :]
+    thetas = _jmap_thetas(m, W[1:npar, :])
     shrunk = _smc_shrunk_cov(Matrix{Float64}(thetas), ones(nr), m.Ct * transpose(m.Ct))
     theta0 = vec(mean(thetas; dims=2))
     S = shrunk.cov
@@ -850,7 +1082,7 @@ function _jmap_final(m::CTSEMJointMap, counter::Threads.Atomic{Int}, nchains::In
                 progress_sink=progress_sink))
         return nothing
     end
-    run = _sample_until_target(() -> m.theta0 .+ m.Ct * _pool_draws(held[], npar),
+    run = _sample_until_target(() -> _jmap_thetas(m, _pool_draws(held[], npar)),
         extend!, nchains, ndraws, min_ess, mean_ess, max_draws, rhat_target, verbose;
         t0=t0, coordinate=coordinate)
     return (results=held[], ndraws=run.total, trace=run.trace)
@@ -883,9 +1115,9 @@ function ctsem_sample_map(laplace::CTSEMLaplaceObjective, values::AbstractVector
     min_ess::Real=0.0, mean_ess::Real=0.0, max_draws::Integer=0,
     rhat_target::Real=1.01, progress_overwrite::Bool=true, progress_callback=nothing,
     progress_sink=nothing, stepsize::Real=0.0, coordinate=nothing,
-    windows::AbstractVector{<:Integer}=[40, 80], nsettle::Integer=25,
+    windows::Union{Nothing,AbstractVector{<:Integer}}=nothing, nsettle::Integer=25,
     ncheck::Integer=25, maxrows::Integer=400, cross::Bool=true,
-    report::Union{Nothing,CTSEMLaplaceObjective}=nothing)
+    report::Union{Nothing,CTSEMLaplaceObjective}=nothing, theta_map::Bool=true)
 
     t0 = time()
     nchains = Int(nchains); nwarmup = Int(nwarmup); ndraws = Int(ndraws)
@@ -934,6 +1166,11 @@ function ctsem_sample_map(laplace::CTSEMLaplaceObjective, values::AbstractVector
     starts = nothing
     eps = Float64(stepsize)
     windowlog = NamedTuple[]
+    # Theta's triangular map is learnt from the windows' pooled draws, over a
+    # third window, up to `_JMAP_TRI_MAXPAR` parameters.
+    learn = theta_map && npar <= _JMAP_TRI_MAXPAR
+    windows = windows === nothing ? (learn ? [40, 80, 160] : [40, 80]) : windows
+    pooled = zeros(npar, 0)
     for (w, nw) in enumerate(windows)
         mw = m
         results = _sample_chains(nchains, parallel, seed + 101 * w, centre, metric,
@@ -943,6 +1180,10 @@ function ctsem_sample_map(laplace::CTSEMLaplaceObjective, values::AbstractVector
         moved = _jmap_moved(results, npar)
         Wl = _pool_draws(results[moved], D)
         m2, refit, lambda, rows = _jmap_refit(m, Wl, rng; maxrows=Int(maxrows))
+        if learn
+            pooled = hcat(pooled, _jmap_thetas(m, Wl[1:npar, :]))
+            m2 = _jmap_learn_tri(m2, pooled)
+        end
         extra += rows
         starts = _jmap_restarts(m, m2, results, moved, Wl, rng)
         eps = median([r.stepsize for r in results[moved]])
@@ -1051,7 +1292,7 @@ entry. Both near zero say the change of variables is exact; for tests.
 """
 function ctsem_sample_map_check(laplace::CTSEMLaplaceObjective, values::AbstractVector;
     hessian::Union{Nothing,AbstractMatrix}=nothing, cross::Bool=true, seed::Integer=1,
-    nu::Integer=6, h::Real=1e-5)
+    nu::Integer=6, h::Real=1e-5, tri::Bool=false)
     sampler = ctsem_sampler(laplace, length(values))
     npar = sampler.npar
     theta0 = collect(Float64, values)[1:npar]
@@ -1065,6 +1306,12 @@ function ctsem_sample_map_check(laplace::CTSEMLaplaceObjective, values::Abstract
     m, _ = _jmap_build(sampler, theta0, cov; cross=cross)
     D = sampler.ndim
     rng = Random.Xoshiro(UInt64(seed))
+    if tri
+        n = npar
+        lower(sc) = [j < k ? sc * randn(rng) : 0.0 for k in 1:n, j in 1:n]
+        m = _jmap_with(m; tri=_JMapTri(n, 0.1 .* randn(rng, n), lower(0.2), lower(0.1),
+            0.1 .* randn(rng, n), lower(0.2), 0.2 .* randn(rng, n), 0.2 .* randn(rng, n)))
+    end
     xt = 0.3 .* randn(rng, D)
     d = CTSEMJointMapDensity(m, Threads.Atomic{Int}(0))
     g = zeros(D)
@@ -1085,8 +1332,9 @@ function ctsem_sample_map_check(laplace::CTSEMLaplaceObjective, values::Abstract
         theta_m, x_m = _jmap_point(m, xm)
         J[:, a] .= (x_p .- x_m) ./ (2h)
     end
-    _, logjac, _ = _jmap_effects(m, m.theta0 .+ m.Ct * view(xt, 1:npar), xt)
-    expected = sum(log, diag(m.Ct)) + logjac
+    theta, ltheta = _jmap_theta(m, view(xt, 1:npar))
+    _, logjac, _ = _jmap_effects(m, theta, xt)
+    expected = sum(log, diag(m.Ct)) + ltheta + logjac
     numeric = logabsdet(J)[1]
     return (gradient=gerr / max(maximum(abs, g[idx]), 1e-300),
         jacobian=abs(numeric - expected) / max(abs(expected), 1.0), ndim=D,
