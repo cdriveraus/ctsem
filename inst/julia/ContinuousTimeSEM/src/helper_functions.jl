@@ -678,8 +678,8 @@ at run time, and `f` is compiled only when a call actually reaches it.
 
 For code a model can reach and seldom runs: forward mode for the categorical
 moments' Jacobian (`_binary_moment_dual!`), which `_binary_moment_jacobian`
-falls back to only for a censored row, an asymptote item or a mode solve that
-used its budget. The price is one dynamic dispatch per call and a result that
+falls back to only for an asymptote item, a variance too small to integrate or
+a mode solve that used its budget. The price is one dynamic dispatch per call and a result that
 inference cannot see, so a caller that uses the result asserts its type.
 
 Code that a whole class of models never reaches is better gated on a type, as
