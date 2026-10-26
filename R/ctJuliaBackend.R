@@ -4409,6 +4409,19 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
   regular <- .ctJuliaNoNA(as.character(table$transform), "")[free]
   numbers <- .ctJuliaNoNA(as.integer(table$parnumber), 0L)[free]
   regular <- ifelse(nzchar(regular), regular, paste0("param[", numbers, "]"))
+  # A TI predictor a regular transform reads is a parameter-vector position by
+  # the time the engine builds it (`_ctsem_ti_tail_rendering`, past every raw
+  # parameter), and the engine's query refuses `tipreds[j]` as text: asked as
+  # written, every such cell announced a compile that never happened.
+  past <- max(c(0L, numbers))
+  regular <- vapply(regular, function(text) {
+    hits <- regmatches(text, gregexpr(.CT_JULIA_TIPREDREF, text, perl = TRUE))[[1L]]
+    for (hit in unique(hits)) {
+      j <- as.integer(regmatches(hit, regexpr("\\d+", hit)))
+      text <- gsub(hit, paste0("param[", past + j, "]"), text, fixed = TRUE)
+    }
+    text
+  }, character(1), USE.NAMES = FALSE)
   complex <- c(.ctJuliaNoNA(as.character(table$predicttransform), ""),
     .ctJuliaNoNA(as.character(table$updatetransform), ""),
     .ctJuliaNoNA(as.character(table$tdtransform), ""))
