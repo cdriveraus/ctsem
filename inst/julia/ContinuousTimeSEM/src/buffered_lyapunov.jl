@@ -14,16 +14,30 @@ Return the triangular number `n * (n + 1) ÷ 2`.
 Diffusion-block size above which a `Float64` Lyapunov solve takes the Schur
 route (`real_schur.jl`) rather than the packed `ksolve!`.
 
-`ksolve!` solves a `k(k+1)/2`-square dense system, O(k^6) to factor; the Schur
-route is O(k^3). Both are written out, with no LAPACK call and no lock, so the
-choice is arithmetic alone. Measured single-threaded, a fresh factorisation
-and solve each call as a state-dependent drift pays at every substep:
+`ksolve!` solves a `k(k+1)/2`-square dense system, O(k^6) to factor and O(k^4)
+to solve against its factors; the Schur route is O(k^3) for both. Both are
+written out, with no LAPACK call and no lock, so the choice is arithmetic
+alone. Microseconds a solve, single-threaded, minimum of ten batches, with a
+fresh factorisation each call as a state-dependent drift pays at every row,
+and against cached factors as a linear model's rows solve
+(`scripts/stangrad-2026-10`'s bench_lyap.jl; local i9-12900KS / dev2 EPYC 7702):
 
-    MEASUREMENT TABLE TO COME
+    k                   6     8    10    11    12    16     20      30
+    packed, fresh     1.9   8.1  25.7  42.9    70   358   1280   23211   local
+    Schur, fresh      2.9   7.0  10.2  13.3  14.6  26.2   43.4     114
+    packed, fresh     3.3  12.3  36.5  61.0    97   525   1931   38700   dev2
+    Schur, fresh      5.4  12.2  18.5  24.3  27.4  42.7   76.7     210
+    packed, cached    0.3   0.7   1.5   2.1   2.9   8.4   18.9    89.8   local
+    Schur, cached     0.7   1.6   2.6   3.5   3.5   5.9    9.8    25.4
+    packed, cached    0.6   1.6   3.4   4.8   6.1  18.6   41.9     190   dev2
+    Schur, cached     1.5   2.8   4.5   5.8   5.4  10.3   17.3    48.8
 
-Above the threshold a solve against cached factors costs O(k^3) as well, where
-the packed one is O(k^4). A buffer's route is fixed when it is made
-(`LyapBuffer(T, n)`), so `ctsem_set_lyapunov_schur_above!` reaches the
+Fresh, the Schur route wins from k = 8 on both machines; against cached
+factors from 12-14, losing about a microsecond a solve below that. Ten sits
+between them. Eight tasks each refactoring on their own buffer ran 4.9-5.1
+times one task's throughput on the Schur route and 3.2-4.6 times on the packed
+one (local), so neither waits on the other. A buffer's route is fixed when it
+is made (`LyapBuffer(T, n)`), so `ctsem_set_lyapunov_schur_above!` reaches the
 workspaces built after it.
 """
 const _CTSEM_LYAP_SCHUR_ABOVE = Ref(10)
@@ -161,9 +175,18 @@ quasi triangular solve (`_ctsem_quasitri_lyap!`, `S Y + Y S' = C`, or
 product goes through the engine's kernels (`small_linalg.jl`). Where the QR
 iteration did not converge, or `A` was not finite, `X` is NaN, as a
 non-finite `A` leaves the packed route's.
+
+Defined for `Float64` and `Float32` only, which are the only buffers
+`LyapBuffer(T, n)` puts on this route. The route is chosen by a run-time
+field, so without the fallback below every Dual type a model runs would
+compile the whole route as well, although it never takes it.
 """
+_lyap_schur!(X::AbstractMatrix, A::AbstractMatrix, Q::AbstractMatrix, buffer::LyapBuffer,
+    transposed::Bool) =
+    throw(ArgumentError("the Schur Lyapunov route is for Float64 and Float32 buffers"))
+
 function _lyap_schur!(X::AbstractMatrix, A::AbstractMatrix, Q::AbstractMatrix,
-    buffer::LyapBuffer{T}, transposed::Bool) where {T}
+    buffer::LyapBuffer{T}, transposed::Bool) where {T<:LinearAlgebra.BlasReal}
     n = buffer.dim
     S = buffer.S
     U = buffer.U

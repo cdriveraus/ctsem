@@ -918,7 +918,7 @@ function _series_lyap_conditioning(buffer::LyapBuffer)
     k = buffer.dim
     smallest = Inf
     @inbounds for j in 1:k, i in 1:j
-        smallest = min(smallest, abs(Float64(S[i, i] + S[j, j])))
+        smallest = min(smallest, abs(Float64(_primal(S[i, i] + S[j, j]))))
     end
     return smallest
 end
