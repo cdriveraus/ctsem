@@ -14,8 +14,8 @@ the O(n^3) kernel it sits beside, so they stay on.
 `_CTSEM_SMALL_CHOLESKY`); `frechet` counts the blocks themselves, whichever
 exponential they reach. `lyap_schur` counts factorisations actually performed,
 not solves against cached factors. `series_intercept` and `series_noise` count
-evaluations of the series kernels in `series_discretization.jl`, forward or
-recomputed by a pullback alike; they stay at zero unless some interval was
+evaluations of the series kernels in `series_discretization.jl`, by the forward
+pass (the adjoint's pullbacks read the chain it taped); they stay at zero unless some interval was
 short against a pivot of the drift. `series_tables` counts the series tables
 built (`SeriesTable`): one per drift a run of intervals shares, so its ratio to
 the kernels' counts says how far they were shared.

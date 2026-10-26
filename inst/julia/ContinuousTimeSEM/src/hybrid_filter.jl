@@ -204,7 +204,8 @@ for a continuous intercept's column (`ckind` 3) the discrete intercept's
 Jacobian in a unit of the cell's value, `J^-1 (A - I) e_l` over the affine
 block `naff` by the engine's own solve, or `Phi e_l` where the substep took the
 series (`series.intercept`, set by `_compute_discrete_time_form!` just
-before); in a discrete-time model, whose intercept is added as it stands
+before, which left `Phi` in `series.out`: `series` is the intercept kernel's
+buffer); in a discrete-time model, whose intercept is added as it stands
 (`_compute_one_step_form!`), `e_l`. Kept in `Xinc` for the tape.
 """
 function _hybrid_predict!(hb::CTSEMHybridBuffers{T}, A, JAx, series, naff::Int,
@@ -231,7 +232,7 @@ function _hybrid_predict!(hb::CTSEMHybridBuffers{T}, A, JAx, series, naff::Int,
         l <= naff || throw(ArgumentError(
             "a continuous intercept's deviation on latent $(l) lies outside the affine block of $(naff)"))
         if series.intercept
-            phi === nothing && (phi = _series_intercept!(series, JAx, dt, naff))
+            phi === nothing && (phi = _series_block(series.out, naff))
             for r in 1:naff
                 Xinc[r, c] = phi[r, l]
             end

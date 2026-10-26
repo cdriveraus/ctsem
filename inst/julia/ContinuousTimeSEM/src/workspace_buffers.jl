@@ -67,14 +67,18 @@ struct DiscretizationBuffer{T,EB}
     dim::Int
     # The series kernels for a pivot small against the interval, and the
     # record of which of them the last discretisation used; see
-    # `series_discretization.jl`.
+    # `series_discretization.jl`. The noise kernel's and the intercept's
+    # each, so both chains are whole when the adjoint tape copies them and
+    # the hybrid reads the intercept's integral (`_hybrid_predict!`).
     series::SeriesKernelBuffer{T}
+    series_icpt::SeriesKernelBuffer{T}
 end
 
 function _make_discretization_buffer(::Type{T}, n::Int) where {T}
     dim = 2 * n
     return DiscretizationBuffer(zeros(T, dim, dim), zeros(T, dim, dim),
-        zeros(T, dim, dim), ExpBuffer{T}(dim), dim, SeriesKernelBuffer(T, n))
+        zeros(T, dim, dim), ExpBuffer{T}(dim), dim, SeriesKernelBuffer(T, n),
+        SeriesKernelBuffer(T, n))
 end
 
 """
