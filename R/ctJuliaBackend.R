@@ -7446,6 +7446,8 @@ print.ctJuliaFit <- function(x, ...) {
   if (isTRUE(corr$applied) && isTRUE(corr$material)) {
     cat("  Laplace estimate ", if (identical(corr$method, "quadrature"))
         paste0("continued on the quadrature objective",
+          if (identical(corr$continuation, "resolution"))
+            ", to within its draws' error of its fixed point" else
           if (!identical(corr$continuation, "converged")) ", short of its fixed point")
       else "corrected by quadrature",
       ": up to ", format(max(abs(corr$delta_se), na.rm = TRUE), digits = 2),
