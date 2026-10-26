@@ -527,12 +527,11 @@ curvature's (the unit's random-effect dimension).
 type, so every parameter count compiled the whole filter and reverse pass
 again: about 30 s on dev2 for one more free parameter on a model the session,
 or the package image, had already compiled. Rounding the width up to the next
-of a few buckets makes every count in a bucket one type. Above 12,
-`pickchunksize`'s width is rounded up the same way, which never adds a sweep.
-The extra lanes of a padded input are zero seeds on inputs the function
-ignores, so the result is the same Jacobian. An empty list is `pickchunksize`.
-The two lists are the `Ref`s `_CTSEM_HESSIAN_WIDTHS` and
-`_CTSEM_CURVATURE_WIDTHS`.
+of a few buckets makes every count in a bucket one type, and past the largest
+the width is the largest, in more sweeps. The extra lanes of a padded input are
+zero seeds on inputs the function ignores, so the result is the same
+Jacobian. An empty list is `pickchunksize`. The two lists are the `Ref`s
+`_CTSEM_HESSIAN_WIDTHS` and `_CTSEM_CURVATURE_WIDTHS`.
 
 The Hessian takes one width, 12, for every parameter count. A padded lane
 costs 5-12% of a small model's Hessian, and a binary model's 5 parameters at
@@ -540,20 +539,31 @@ width 8 cost 31% more (dev1, job H2: 7.4 -> 9.8 ms) -- milliseconds, a few
 times a fit -- where each width the session had not run compiled the filter
 and its reverse pass again, about 37 s on dev2 for a model whose every other
 type the package image already holds, since the model's other types no longer
-depend on its size. The curvature's buckets cost a Laplace evaluation 2% (one
-or two random effects, Gaussian) to 8% (one, ordinal) and make one to four
-random effects per unit a single type.
+depend on its size. The curvature takes one width too, 4, whatever the unit's
+size: a unit of more effects takes more sweeps. Its width is the unit's dual
+type for everything the unit term differentiates -- the filter, its reverse
+pass, a categorical item's moments -- so widths 8 and 12 for units of 5 to 24
+effects, which the package image did not hold, compiled 1800 s of it on the
+affect pilot's first evaluation (units of about 60 effects, interval-censored
+items; review/PRECOMPILE-curvature-width-2026-10-26.md). Width 4 costs a unit
+of 60 effects about 15 per cent more on its curvature (15 sweeps of 5 lanes'
+work against 5 of 13), and one of one effect 2-8 per cent of an evaluation
+against no padding.
 """
 const _CTSEM_HESSIAN_WIDTHS = Ref(Int[12])
-const _CTSEM_CURVATURE_WIDTHS = Ref(Int[4, 8, 12])
+const _CTSEM_CURVATURE_WIDTHS = Ref(Int[4])
 
-"""The width a forward-mode Jacobian over `n` inputs takes from `widths`."""
+"""
+The width a forward-mode Jacobian over `n` inputs takes from `widths`: the
+smallest at least `pickchunksize(n)`, or the largest where none is.
+"""
 function _ctsem_dual_width(n::Integer, widths::Vector{Int})
     w0 = ForwardDiff.pickchunksize(n)
+    isempty(widths) && return w0
     for w in widths
         w >= w0 && return w
     end
-    return w0
+    return last(widths)
 end
 
 """
