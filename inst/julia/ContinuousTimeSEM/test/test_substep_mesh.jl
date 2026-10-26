@@ -114,13 +114,18 @@ end
     # Each tightening of the tolerance brings the likelihood closer to a fine
     # mesh: the mechanism, not a calibration -- the tolerance's meaning in
     # likelihood units is what review/INTEGRATOR-substeps measures on simulated
-    # data, and it depends on the model.
-    with_mesh(mesh) = ContinuousTimeSEM.ctsem_objective(_MESH_NONLINEAR, starts, times, data,
-        zeros(0, length(times)), zeros(20, 0), mesh)(θ)
-    ll_fine = with_mesh(fill(64, length(times)))
-    err_one = abs(obj(θ) - ll_fine)
-    err_loose = abs(with_mesh(loose.mesh) - ll_fine)
-    err_tight = abs(with_mesh(tight.mesh) - ll_fine)
+    # data, and it depends on the model. Row by row: the rows' errors differ in
+    # sign, and their sum over the panel moved by cancellation -- the loose
+    # mesh's total was further off than one step's with the prediction
+    # moment-matched, though every row's own error shrank.
+    rows(mesh) = ContinuousTimeSEM._ctsem_row_loglikelihood(
+        ContinuousTimeSEM.ctsem_objective(_MESH_NONLINEAR, starts, times, data,
+            zeros(0, length(times)), zeros(20, 0), mesh), θ)
+    ll_fine = rows(fill(64, length(times)))
+    err(mesh) = sum(abs, rows(mesh) .- ll_fine)
+    err_one = err(fill(1, length(times)))
+    err_loose = err(loose.mesh)
+    err_tight = err(tight.mesh)
     @test err_tight < err_loose < err_one
     @test err_tight < 0.25 * err_one
     # A mesh at the tolerance re-measures as within tolerance (fixed point).
