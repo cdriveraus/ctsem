@@ -639,7 +639,7 @@ function _adjoint_moment_parameters(kind::Symbol)
     elseif kind in (:cubic2, :cubic2c)
         # The cubic beside a linear second state, uncoupled or driven by the
         # first (`:cubic2c`): the drift cells read only state 1, so the
-        # cubature spans it alone (`_ctsem_moment_states`).
+        # cubature spans it alone (`_ctsem_moment_classes`).
         cross = kind === :cubic2c ? 0.3 : 0.0
         return ekf_from_data_frame(_adjoint_test_dataframe(
             drift=[0.0 0.0; cross -0.5], jax=[0.0 0.0; cross -0.5], cint=[0.0; 0.0;;],
@@ -653,6 +653,27 @@ function _adjoint_moment_parameters(kind::Symbol)
                 (:T0MEANS, 1, 1) => (6, "param[6]")),
             predict=Dict((:DRIFT, 1, 1) => "PARS[1,1] * (1 + PARS[2,1] * state[1]^2)",
                 (:JAx, 1, 1) => "PARS[1,1] * (1 + 3 * PARS[2,1] * state[1]^2)")))
+    elseif kind === :cubic2both
+        # Two cubic states that do not interact, each the one-state cubic's
+        # model with its parameters: each cell reads one state, so each is
+        # integrated over that state alone.
+        return ekf_from_data_frame(_adjoint_test_dataframe(
+            drift=[0.0 0.0; 0.0 0.0], jax=[0.0 0.0; 0.0 0.0], cint=[0.0; 0.0;;],
+            diffusion=[0.7 0.0; 0.0 0.7], lambda=[1.0 0.0; 0.0 1.0], jy=[1.0 0.0; 0.0 1.0],
+            manifestmeans=[0.0; 0.0;;], manifestvar=[0.4 0.0; 0.0 0.4],
+            t0var=[1.0 0.0; 0.0 1.0], t0means=[0.0; 0.0;;], pars=[0.0; 0.0;;],
+            free=Dict((:PARS, 1, 1) => (1, "param[1]"),
+                (:PARS, 2, 1) => (2, "log1p_exp(param[2])"),
+                (:DIFFUSION, 1, 1) => (3, "log1p_exp(param[3])"),
+                (:DIFFUSION, 2, 2) => (3, "log1p_exp(param[3])"),
+                (:CINT, 1, 1) => (4, "param[4]"), (:CINT, 2, 1) => (4, "param[4]"),
+                (:MANIFESTVAR, 1, 1) => (5, "log1p_exp(param[5])"),
+                (:MANIFESTVAR, 2, 2) => (5, "log1p_exp(param[5])"),
+                (:T0MEANS, 1, 1) => (6, "param[6]"), (:T0MEANS, 2, 1) => (6, "param[6]")),
+            predict=Dict((:DRIFT, 1, 1) => "PARS[1,1] * (1 + PARS[2,1] * state[1]^2)",
+                (:JAx, 1, 1) => "PARS[1,1] * (1 + 3 * PARS[2,1] * state[1]^2)",
+                (:DRIFT, 2, 2) => "PARS[1,1] * (1 + PARS[2,1] * state[2]^2)",
+                (:JAx, 2, 2) => "PARS[1,1] * (1 + 3 * PARS[2,1] * state[2]^2)")))
     end
     return ekf_from_data_frame(_adjoint_test_dataframe(
         drift=[0.0;;], jax=[0.0;;], cint=[0.0;;], diffusion=[0.7;;],
@@ -702,7 +723,12 @@ end
     # state 1 sat at radius sqrt(2) and it did not.
     ws = ContinuousTimeSEM._init_continuous_ekf_workspace(Float64,
         _adjoint_moment_parameters(:cubic2c))
-    @test ws.moment_s == 1 && ws.moment_perm == [1, 2]
+    @test [cl.states for cl in ws.moment_classes] == [[1]]
+    # Each cell over the states it reads: van der Pol's damping and its
+    # Jacobian's diagonal read state 1, the Jacobian's other cell both.
+    ws = ContinuousTimeSEM._init_continuous_ekf_workspace(Float64,
+        _adjoint_moment_parameters(:vanderpol))
+    @test sort([cl.states for cl in ws.moment_classes]) == [[1], [1, 2]]
     values = [-0.4, 0.3, 0.2, 0.1, -0.5, 0.2]
     both = ContinuousTimeSEM.ctsem_objective(_adjoint_moment_parameters(:cubic2), [1, 8],
         times, data2, zeros(0, 14), zeros(2, 0), 0.25)
@@ -715,6 +741,15 @@ end
         ContinuousTimeSEM.ctsem_set_moment_predict!(true)
     end
     @test both(values) ≈ one(values) + linear rtol = 1e-10
+    # Two cubic states that do not interact: the likelihood is each one's, as
+    # each cell is integrated over its own state. A rule over both put each
+    # state's points at radius sqrt(2).
+    twin = ContinuousTimeSEM.ctsem_objective(_adjoint_moment_parameters(:cubic2both),
+        [1, 8], times, data2, zeros(0, 14), zeros(2, 0), 0.25)
+    other = ContinuousTimeSEM.ctsem_objective(_adjoint_moment_parameters(:cubic), [1, 8],
+        times, data2[2:2, :], zeros(0, 14), zeros(2, 0), 0.25)
+    @test twin(values) ≈ one(values) + other(values) rtol = 1e-10
+    _check_adjoint(twin, values)
 end
 
 @testset "discretization cache cannot go stale" begin

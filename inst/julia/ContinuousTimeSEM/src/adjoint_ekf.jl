@@ -103,24 +103,25 @@ end
 One moment-matched prediction substep's cubature (`_ekf_moment_cells!`): the
 tape index of its first point's group record (the points' records follow it,
 off the program, since this record's reverse walks them), how many points,
-the ridged covariance's upper Cholesky factor (its upper triangle), the
-points' offsets from the mean (a column each), and the drift at each point
-(`n x n` blocks side by side).
+the classes' factor columns side by side (`_moment_class_factor!`), the
+points' offsets from the mean (a column each), and each point's DRIFT cell
+values.
 """
 mutable struct CTSEMMomentRecord{T}
     first::Int
     npoints::Int
-    U::Matrix{T}
+    B::Matrix{T}
     D::Matrix{T}
-    DRIFTs::Matrix{T}
+    dvals::Vector{T}
 end
 
 """
 Scratch for `_reverse_moment!`, sized to the state where the model's dynamics
 are moment-matched and empty elsewhere, except `cbar`, the mean correction's
 cotangent, which the prediction reverse writes on every moment-matched
-substep. `drift_rc` lists the averaged cells that are DRIFT's, as (position
-among them, row, column).
+substep: the factor columns' cotangent, a class's factor pullback's scratch
+(`_moment_class_factor_pullback!`), which averaged cells some class integrates,
+and each class's transforms' supports, as `_reverse_group!` takes them.
 """
 struct CTSEMMomentScratch{T}
     cbar::Vector{T}
@@ -129,28 +130,35 @@ struct CTSEMMomentScratch{T}
     xs::Vector{T}
     dbar::Vector{T}
     mbar::Vector{T}
+    Bbar::Matrix{T}
+    G::Matrix{T}
+    U::Matrix{T}
     Ubar::Matrix{T}
-    B::Matrix{T}
-    Z::Matrix{T}
+    cholB::Matrix{T}
+    cholZ::Matrix{T}
     Pp::Matrix{T}
-    drift_rc::Vector{NTuple{3,Int}}
+    inclass::Vector{Bool}
+    supports::Vector{Vector{Vector{Int}}}
+    tipred::Vector{Vector{Vector{Int}}}
 end
 
-function CTSEMMomentScratch(::Type{T}, sp, ws) where {T}
+function CTSEMMomentScratch(::Type{T}, sp, ws, supports::Vector{Vector{Int}},
+    tipred_supports::Vector{Vector{Int}}) where {T}
     n = ws.state_dim
     nm = ws.moment ? n : 0
-    avg = ws.moment_avg
-    drift = _ctsem_component_positions(sp, :DRIFT)
-    nr = size(ws.pars.DRIFT, 1)
-    rc = NTuple{3,Int}[]
-    for (k, p) in enumerate(avg)
-        q = findfirst(==(p), drift)
-        q === nothing && continue
-        push!(rc, (k, (q - 1) % nr + 1, (q - 1) ÷ nr + 1))
+    classes = ws.moment_classes
+    _, ncols, _ = _ctsem_moment_sizes(classes)
+    rmax = maximum((length(cl.states) for cl in classes); init=0)
+    inclass = fill(false, length(ws.moment_avg))
+    for cl in classes, q in cl.cells
+        inclass[q] = true
     end
-    return CTSEMMomentScratch{T}(zeros(T, n), zeros(T, length(avg)),
+    return CTSEMMomentScratch{T}(zeros(T, n), zeros(T, length(ws.moment_avg)),
         zeros(T, length(ws.moment_oth)), zeros(T, nm), zeros(T, nm), zeros(T, nm),
-        zeros(T, nm, nm), zeros(T, nm, nm), zeros(T, nm, nm), zeros(T, nm, nm), rc)
+        zeros(T, nm, ncols), zeros(T, nm, rmax), zeros(T, rmax, rmax),
+        zeros(T, rmax, rmax), zeros(T, rmax, rmax), zeros(T, rmax, rmax),
+        zeros(T, rmax, rmax), inclass,
+        [supports[cl.sub] for cl in classes], [tipred_supports[cl.sub] for cl in classes])
 end
 
 """One TD-predictor impulse."""
@@ -917,19 +925,18 @@ end
 @inline _record_moment!(::Any, args...) = nothing
 
 """Record a moment-matched substep's cubature (`CTSEMMomentRecord`)."""
-function _record_moment!(tape::CTSEMAdjointTape{T}, ws, first::Int, npoints::Int,
-    n::Int) where {T}
+function _record_moment!(tape::CTSEMAdjointTape{T}, ws, first::Int) where {T}
     index = (tape.nmoments += 1)
     if index > length(tape.moments)
         push!(tape.moments, CTSEMMomentRecord{T}(0, 0, zeros(T, 0, 0), zeros(T, 0, 0),
-            zeros(T, 0, 0)))
+            T[]))
     end
     record = tape.moments[index]
     record.first = first
-    record.npoints = npoints
-    record.U = _tape_fill!(record.U, view(ws.moment_U, 1:n, 1:n))
-    record.D = _tape_fill!(record.D, view(ws.moment_d, 1:n, 1:npoints))
-    record.DRIFTs = _tape_fill!(record.DRIFTs, view(ws.moment_drifts, 1:n, 1:(n * npoints)))
+    record.npoints = size(ws.moment_d, 2)
+    record.B = _tape_fill!(record.B, ws.moment_B)
+    record.D = _tape_fill!(record.D, ws.moment_d)
+    record.dvals = _tape_fill!(record.dvals, ws.moment_dvals)
     _tape_push!(tape, :moment, index)
     return nothing
 end
@@ -2650,21 +2657,24 @@ end
 """
     _reverse_moment!(x̄, P̄, θ̄, θ̄ca, record, tape, sp, aws, n, m)
 
-Undo a moment-matched substep's cubature (`_ekf_moment_cells!`). Forward, with
-`P + eps I = U'U`, the offsets `d_i = +-sqrt(n) U[j, :]'` and points
-`x_i = m + d_i`, weights `w = 1 / 2n`:
+Undo a moment-matched substep's cubature (`_ekf_moment_cells!`). Forward, for
+each class (`CTSEMMomentClass`) of `r` states `R`, with `B = P[:, R] U^-1`
+(`_moment_class_factor!`), offsets `d = +-sqrt(r) B e_j`, points `x = m + d`
+and weights `w = 1 / 2r`:
 
-    cell_k = sum_i w cell_k(x_i)        the group's JAx, DRIFT and CINT cells
-    c      = sum_i w DRIFT(x_i) d_i     the mean's correction
+    cell_k = sum_points w cell_k(x)          the class's averaged cells
+    c     += sum_points w DRIFT_ab(x) d_b    the class's DRIFT cells
 
-and the group's other cells hold their values at the mean. The prediction's
-reverse has left the averaged cells' cotangent in `θ̄` and `c`'s in
-`aws.moment.cbar`. Each point gets its share in its cells, `c`'s in its DRIFT
-cells and its offset, and its group record is reversed with a state cotangent
-of its own, which reaches the mean and, through the offset, the factor and so
-`P`. The other cells' cotangent is set aside while the points run -- what they
-send those cells flows on to the group at the mean, which wrote the values
-they read -- and handed back for that group's own reverse, next on the walk.
+and the group's other cells hold their values at the mean, as does an
+averaged cell that reads no state. The prediction's reverse has left the
+averaged cells' cotangent in `θ̄` and `c`'s in `aws.moment.cbar`. Each point
+gets its share in its class's cells, `c`'s in its DRIFT cells and its offset,
+and its group record is reversed -- the class's transforms only, where the
+group is interpreted -- with a state cotangent of its own, which reaches the
+mean and, through the offset, the class's factor and so `P`. The other cells'
+cotangent is set aside while the points run -- what they send those cells
+flows on to the group at the mean, which wrote the values they read -- and
+handed back for that group's own reverse, next on the walk.
 """
 function _reverse_moment!(x̄::Vector{T}, P̄::Matrix{T}, θ̄::Vector{T}, θ̄ca,
     record::CTSEMMomentRecord{T}, tape::CTSEMAdjointTape{T}, sp::EKFParameters, aws,
@@ -2677,6 +2687,7 @@ function _reverse_moment!(x̄::Vector{T}, P̄::Matrix{T}, θ̄::Vector{T}, θ̄c
     ews = aws.ekf_ws
     avg = ews.moment_avg
     oth = ews.moment_oth
+    classes = ews.moment_classes
     ms = aws.moment
     cellbar = ms.cellbar
     savedoth = ms.savedoth
@@ -2689,61 +2700,122 @@ function _reverse_moment!(x̄::Vector{T}, P̄::Matrix{T}, θ̄::Vector{T}, θ̄c
         θ̄[oth[k]] = zero(T)
     end
     cbar = ms.cbar
-    U = record.U
+    B = record.B
     D = record.D
-    DRIFTs = record.DRIFTs
-    np = record.npoints
-    w = inv(T(np))
-    r = sqrt(T(np >> 1))
-    perm = ews.moment_perm
-    Ubar = ms.Ubar
-    fill!(Ubar, zero(T))
+    dvals = record.dvals
+    Bbar = ms.Bbar
+    fill!(Bbar, zero(T))
     mbar = ms.mbar
     fill!(mbar, zero(T))
     dbar = ms.dbar
     xs = ms.xs
-    @inbounds for i in np:-1:1
-        for k in eachindex(avg)
-            θ̄[avg[k]] += w * cellbar[k]
-        end
-        for (k, a, b) in ms.drift_rc
-            θ̄[avg[k]] += w * cbar[a] * D[b, i]
-        end
-        offset = (i - 1) * n
-        for b in 1:n
-            acc = zero(T)
-            for a in 1:n
-                acc += DRIFTs[a, offset + b] * cbar[a]
+    @inbounds for ci in length(classes):-1:1
+        cl = classes[ci]
+        r = length(cl.states)
+        w = inv(T(2r))
+        rad = sqrt(T(r))
+        nd = length(cl.drift)
+        for p in (2r):-1:1
+            point = cl.point0 + p
+            for q in cl.cells
+                θ̄[avg[q]] += w * cellbar[q]
             end
-            dbar[b] = w * acc
-        end
-        fill!(xs, zero(T))
-        _reverse_group!(θ̄, xs, tape.groups[record.first + i - 1], sp, aws)
-        for q in 1:n
-            mbar[q] += xs[q]
-            dbar[q] += xs[q]
-        end
-        j = (i + 1) >> 1
-        scale = isodd(i) ? r : -r
-        for q in j:n
-            Ubar[j, q] += scale * dbar[perm[q]]
+            fill!(dbar, zero(T))
+            base = cl.dval0 + (p - 1) * nd
+            for t in 1:nd
+                q, a, b = cl.drift[t]
+                θ̄[avg[q]] += w * cbar[a] * D[b, point]
+                dbar[b] += w * dvals[base + t] * cbar[a]
+            end
+            fill!(xs, zero(T))
+            group = tape.groups[record.first + point - 1]
+            if isempty(cl.exprs)
+                _reverse_group!(θ̄, xs, group, sp, aws)
+            else
+                _reverse_group!(θ̄, xs, group, sp, aws, cl.exprs, cl.indices,
+                    ms.supports[ci], ms.tipred[ci])
+            end
+            for q in 1:n
+                mbar[q] += xs[q]
+                dbar[q] += xs[q]
+            end
+            col = cl.col0 + ((p + 1) >> 1)
+            scale = isodd(p) ? rad : -rad
+            for a in 1:n
+                Bbar[a, col] += scale * dbar[a]
+            end
         end
     end
     @inbounds for k in eachindex(oth)
         θ̄[oth[k]] += savedoth[k]
     end
+    @inbounds for k in eachindex(avg)
+        ms.inclass[k] || (θ̄[avg[k]] += cellbar[k])
+    end
     @inbounds for q in 1:n
         x̄[q] += mbar[q]
     end
-    # The factor is of P in the permuted order; its cotangent goes back to
-    # the state's own.
-    Pp = ms.Pp
-    fill!(Pp, zero(T))
-    _moment_cholesky_pullback!(Pp, U, Ubar, ms.B, ms.Z, n)
-    @inbounds for b in 1:n, a in 1:n
-        P̄[perm[a], perm[b]] += Pp[a, b]
+    for cl in classes
+        _moment_class_factor_pullback!(P̄, B, Bbar, cl.states, cl.col0, n, ms)
     end
     return nothing
+end
+
+"""
+    _moment_class_factor_pullback!(P̄, B, B̄, R, col0, n, ms)
+
+Add to `P̄` the cotangent of `P` through a class's factor columns
+(`_moment_class_factor!`), given theirs. With `L = U'` and
+`B = P[:, R] L^-T` (rows `R` of which are `L`), `B L' = P[:, R]` gives
+`G = B̄ L^-1` for `P[:, R]` and `L̄ = -G'B` for the factor of `P` over `R`,
+which `_moment_cholesky_pullback!` carries back; both go into `P̄`
+symmetrised, as the factor read its lower triangle. O(n r^2).
+"""
+function _moment_class_factor_pullback!(P̄::AbstractMatrix{T}, B::AbstractMatrix{T},
+    B̄::AbstractMatrix{T}, R::Vector{Int}, col0::Int, n::Int, ms) where {T}
+    r = length(R)
+    G = ms.G
+    U = ms.U
+    Ū = ms.Ubar
+    Pp = ms.Pp
+    @inbounds for j in 1:r, i in 1:r
+        U[i, j] = i <= j ? B[R[j], col0 + i] : zero(T)
+    end
+    # G L = B̄, a row at a time; L[q, j] = U[j, q].
+    @inbounds for a in 1:n
+        for j in r:-1:1
+            t = B̄[a, col0 + j]
+            for q in (j + 1):r
+                t -= G[a, q] * U[j, q]
+            end
+            G[a, j] = t / U[j, j]
+        end
+    end
+    # Ū = L̄' over its upper triangle: Ū[i, j] = L̄[j, i] = -sum_a G[a, j] B[a, i].
+    @inbounds for j in 1:r, i in 1:r
+        if i <= j
+            t = zero(T)
+            for a in 1:n
+                t -= G[a, j] * B[a, col0 + i]
+            end
+            Ū[i, j] = t
+        else
+            Ū[i, j] = zero(T)
+        end
+    end
+    @inbounds for j in 1:r, i in 1:r
+        Pp[i, j] = zero(T)
+    end
+    _moment_cholesky_pullback!(Pp, U, Ū, ms.cholB, ms.cholZ, r)
+    @inbounds for j in 1:r, i in 1:r
+        P̄[R[i], R[j]] += Pp[i, j]
+    end
+    @inbounds for j in 1:r, a in 1:n
+        g = G[a, j] / 2
+        P̄[a, R[j]] += g
+        P̄[R[j], a] += g
+    end
+    return P̄
 end
 
 """

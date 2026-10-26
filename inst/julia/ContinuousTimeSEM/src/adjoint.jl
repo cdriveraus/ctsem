@@ -355,7 +355,7 @@ function CTSEMAdjointWorkspace(::Type{T}, sp::EKFParameters, nvalues::Integer,
         CTSEMCovSqrtScratch(T, max(n, m)),
         CTSEMReverseScratch(T, n, m, length(ws.diffusion_state_indices),
             ws.affine_buffer.dim),
-        CTSEMMomentScratch(T, sp, ws),
+        CTSEMMomentScratch(T, sp, ws, predict_supports, predict_tipred_supports),
         CTSEMAdjointTape(T, group_relevant),
         ws,
     )

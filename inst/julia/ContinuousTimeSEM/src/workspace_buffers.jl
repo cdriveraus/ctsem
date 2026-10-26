@@ -191,6 +191,31 @@ CTSEMHybridBuffers{T}() where {T} = CTSEMHybridBuffers{T}(false, _HYBRID_PROFILE
     zeros(T, 0, 0), T[], T[], zeros(T, 0, 0), T[], Int[])
 
 """
+    CTSEMMomentClass
+
+The averaged cells of a moment-matched prediction that read the same states
+(`_ctsem_moment_classes`), integrated over those alone (`_ekf_moment_cells!`):
+the states; the cells, as positions among `moment_avg`; the group transforms
+evaluated at its points -- its cells and the group's cells they read, in
+group order -- as positions in the group (`sub`), their parameter positions
+and, for an interpreted group, their expressions (empty for compiled
+closures, which evaluate the whole group); its DRIFT cells, as (position
+among `moment_avg`, row, column); and where its points, factor columns and
+points' DRIFT values start among the substep's.
+"""
+struct CTSEMMomentClass
+    states::Vector{Int}
+    cells::Vector{Int}
+    sub::Vector{Int}
+    indices::Vector{Int}
+    exprs::Vector{CTSEMExpr}
+    drift::Vector{NTuple{3,Int}}
+    point0::Int
+    col0::Int
+    dval0::Int
+end
+
+"""
     ContinuousEKFWorkspace
 
 Reusable workspace for continuous-time extended Kalman filter evaluations.
@@ -321,24 +346,22 @@ struct ContinuousEKFWorkspace{T, PARS, BQ, BTHETA, DCA, EBUF, LBUF, DIFBUF, DBUF
     moment_now::Base.RefValue{Bool}
     # The predict group's JAx, DRIFT and CINT cells, averaged over the
     # cubature points, and its other cells, which keep their values at the
-    # mean; then the mean, the ridged covariance's upper Cholesky factor, the
-    # points' offsets from the mean (a column each), the drift's mean
-    # correction, scratch for the averages and the other cells' values, and
-    # the drift at each point (`n x n` blocks side by side), which the reverse
-    # reads. Empty where the dynamics are linear.
+    # mean; the averaged cells by the states they read
+    # (`_ctsem_moment_classes`); then the mean, each class's factor columns
+    # side by side (`_moment_class_factor!`), the points' offsets from the
+    # mean (a column each), the drift's mean correction, scratch for the
+    # averages and the other cells' values, and each point's DRIFT cell
+    # values, which the reverse reads. Empty where the dynamics are linear.
     moment_avg::Vector{Int}
     moment_oth::Vector{Int}
-    # The states, those the averaged cells read first, and how many those
-    # are (`_ctsem_moment_states`): the cubature spans only them.
-    moment_perm::Vector{Int}
-    moment_s::Int
+    moment_classes::Vector{CTSEMMomentClass}
     moment_m::Vector{T}
-    moment_U::Matrix{T}
+    moment_B::Matrix{T}
     moment_d::Matrix{T}
     moment_c::Vector{T}
     moment_acc::Vector{T}
     moment_saved::Vector{T}
-    moment_drifts::Matrix{T}
+    moment_dvals::Vector{T}
 end
 
 """
@@ -528,8 +551,10 @@ function _init_continuous_ekf_workspace(::Type{T}, sp::EKFParameters) where {T}
     moment = _ctsem_dynamics_nonlinear(sp, predict_param_indices, n)
     moment_avg, moment_oth = moment ? _ctsem_moment_cells(sp, predict_param_indices) :
         (Int[], Int[])
-    moment_perm, moment_s = moment ?
-        _ctsem_moment_states(sp, predict_param_indices, moment_avg, n) : (Int[], 0)
+    moment_classes = moment ?
+        _ctsem_moment_classes(sp, predict_param_indices, moment_avg, n) :
+        CTSEMMomentClass[]
+    npoints, ncols, ndvals = _ctsem_moment_sizes(moment_classes)
     nm = moment ? n : 0
 
     return ContinuousEKFWorkspace(
@@ -586,15 +611,14 @@ function _init_continuous_ekf_workspace(::Type{T}, sp::EKFParameters) where {T}
         Ref(false),
         moment_avg,
         moment_oth,
-        moment_perm,
-        moment_s,
+        moment_classes,
         zeros(T, nm),
-        zeros(T, nm, nm),
-        zeros(T, nm, 2nm),
+        zeros(T, nm, ncols),
+        zeros(T, nm, npoints),
         zeros(T, nm),
         zeros(T, length(moment_avg)),
         zeros(T, length(moment_oth)),
-        zeros(T, nm, 2nm * nm),
+        zeros(T, ndvals),
     )
 end
 
