@@ -78,10 +78,18 @@ test_that("the inner solve ends at a maximum, scored as the evaluation scores it
   expect_equal(u[, "term"], as.numeric(off$subject_loglik), tolerance = 1e-10)
   expect_equal(u[, "g"], u[, "g_origin"], tolerance = 1e-12)
   probes(TRUE)
+  ctsem:::.ctJuliaEval("ContinuousTimeSEM.ctsem_reset_opcounts!()")
   on <- evaluate(x)
+  counts <- ctsem:::.ctJuliaGet(ctsem:::.ctJuliaEval("ContinuousTimeSEM.ctsem_opcounts()"))
   u <- units(x)
   expect_equal(u[, "term"], as.numeric(on$subject_loglik), tolerance = 1e-10)
   expect_true(all(u[, "g"] > u[, "g_origin"] + 0.1))
+  # And the probes' counts say so: each person's better maximum came from a
+  # probe's Newton solve. (At the origin the curvature need not factor, and
+  # then a probe goes to Newton unscreened.)
+  expect_gte(counts$probe_better, nrow(u))
+  expect_gte(counts$probe_newtons, counts$probe_better)
+  expect_gte(counts$probe_starts, counts$probe_newtons)
 
   # Away from zero the origin lies in a basin, and the probes' choice is a
   # smooth function there: the gradient is the value's.

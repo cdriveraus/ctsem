@@ -20,6 +20,14 @@ short against a pivot of the drift. `series_tables` counts the series tables
 built (`SeriesTable`): one per drift a run of intervals shares, so its ratio to
 the kernels' counts says how far they were shared.
 
+The `probe_*` counts are the Laplace inner solve's mode probes
+(`_laplace_probe_modes`): units probed, probe starts, unit gradients spent
+screening them, starts the screen found non-Gaussian along their line, Newton
+solves from a start, and probes whose mode replaced the one found. On the
+affect pilot one value probed every unit at about 100 starts each, nearly all
+of them refused by the first screening gradient, and kept 2 better modes from
+9 Newton solves: the screen's gradients were most of the evaluation.
+
 A threaded subject loop increments these racily, so the counts are then lower
 bounds. Read them from a single-threaded run when the exact number matters.
 """
@@ -35,6 +43,12 @@ const _CTSEM_OPCOUNT = (
     series_intercept = Ref(0),
     series_noise = Ref(0),
     series_tables = Ref(0),
+    probe_units = Ref(0),
+    probe_starts = Ref(0),
+    probe_gradients = Ref(0),
+    probe_nongaussian = Ref(0),
+    probe_newtons = Ref(0),
+    probe_better = Ref(0),
 )
 
 """Zero every operation counter."""
