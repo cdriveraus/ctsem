@@ -29,21 +29,24 @@
 # strayed; see `imis_is()`) and 'coreset' (the record
 # `$details$importance_sampling$coreset` reports). `lpg` itself comes back
 # where a coreset cannot apply: off the Laplace route, `control$coreset` FALSE,
-# or a density that is not the fit's own sum over units (its 'unitsum' mark).
-# The coreset's terms are the fit's Laplace terms, so on any other density --
-# the quadrature continuation's -- it would sample the wrong one without a
-# word.
+# or a density that is not a sum over the fit's units (its 'unitsum' mark).
+# The coreset is built on the density's own engine object (its 'engine'), which
+# says what a unit's term is: the fit's Laplace terms (`.ctBackendLpgFunc()`),
+# or the quadrature hybrid's, its flagged units' rules placed at each draw
+# (`.ctLaplaceContinueLpg()`).
 .ctCoresetLpg <- function(fit, lpg, control = list()) {
   if (isFALSE(control$coreset) || !.ctBackendIsLaplace(fit) ||
     !isTRUE(attr(lpg, 'unitsum')) || !is.function(attr(lpg, 'batch')) ||
-    !is.function(attr(lpg, 'gradbatch'))) return(lpg)
+    !is.function(attr(lpg, 'gradbatch')) || !is.function(attr(lpg, 'engine'))) {
+    return(lpg)
+  }
   engine <- local({
     built <- NULL
     function() {
       if (is.null(built)) {
-        module <- .ctJuliaModule(fit$model_spec$project)
-        built <<- list(module = module, cs = module$ctsem_is_coreset(
-          .ctJuliaObjective(fit, hybrid = TRUE)))
+        density <- attr(lpg, 'engine')()
+        built <<- list(module = density$module,
+          cs = density$module$ctsem_is_coreset(density$objective))
       }
       built
     }

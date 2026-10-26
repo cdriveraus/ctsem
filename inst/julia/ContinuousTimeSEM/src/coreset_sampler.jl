@@ -244,7 +244,7 @@ The importance sampler's density with a coreset behind it: the training rows
 (`ctsem_is_coreset`).
 """
 mutable struct CTSEMISCoreset
-    laplace::CTSEMLaplaceObjective
+    laplace::_CoresetObjective
     N::Int
     rows::_ISRows
     # The coreset in force: units, weights, intercept, and the expected round
@@ -300,8 +300,8 @@ end
 """
     ctsem_is_coreset(laplace; top=:run)
 
-A coreset density over the Laplace objective `laplace`, for an importance
-sampler: `ctsem_is_coreset_batch!` and `ctsem_is_coreset_gradbatch!` are its
+A coreset density over the Laplace objective `laplace`, or the quadrature
+hybrid's density (`ctsem_continuation_density`), for an importance sampler: `ctsem_is_coreset_batch!` and `ctsem_is_coreset_gradbatch!` are its
 value and gradient batches, `ctsem_is_coreset_fullgrad!` the full density's
 gradient, `ctsem_is_coreset_finalize!` the end check, and
 `ctsem_is_coreset_record` what it did. `top` says how the caller's weights are
@@ -309,9 +309,9 @@ normalised, which is what a draw's relevance is measured against
 (`_is_top`): over the whole run (`:run`, the importance sampler) or within
 each batch (`:batch`, DAIS).
 """
-function ctsem_is_coreset(laplace::CTSEMLaplaceObjective; top::Symbol=:run)
+function ctsem_is_coreset(laplace::_CoresetObjective; top::Symbol=:run)
     top in (:run, :batch) || throw(ArgumentError("top must be :run or :batch, not :$top"))
-    N = length(laplace.units.members)
+    N = _coreset_units(laplace)
     secs = Dict(k => 0.0 for k in (:full, :coreset, :gradient_full, :gradient_coreset, :choose))
     draws = Dict(k => 0.0 for k in (:full, :coreset, :gradient_full, :gradient_coreset))
     why = Dict(k => 0.0 for k in (:training, :small, :check, :gradient_check, :failed_rest, :end))
@@ -322,6 +322,12 @@ function ctsem_is_coreset(laplace::CTSEMLaplaceObjective; top::Symbol=:run)
         Dict{Vector{Float64},Int}(), Float64[], Float64[], zeros(N, 0), 0, 1.0,
         _IS_CORESET_TOL.force, false)
 end
+
+"""Whether a coreset can stand in for `objective` (`ctsem_is_coreset`): the
+samplers' Laplace objectives (`_smc_coreset_capable`), and the hybrid's
+density, each of two units or more."""
+_is_coreset_capable(objective) = _smc_coreset_capable(objective)
+_is_coreset_capable(d::CTSEMContinuationDensity) = _coreset_units(d) >= 2
 
 """The coresets chosen, of the choices tried (`cs.nchoose`, a row each of the
 trace; code 1 is a choice made)."""

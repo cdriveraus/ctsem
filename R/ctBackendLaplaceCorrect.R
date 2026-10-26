@@ -351,7 +351,11 @@
 #            model predicts from the Laplace optimum (the residual there);
 #            below `skip_gain` nothing moves (status `skipped`).
 #   stop     when that residual is below the fit's certification tolerance,
-#            or after `rounds` kept rounds or `attempts` rounds in all.
+#            or after `rounds` kept rounds or `attempts` rounds in all, or
+#            (status `resolution`) when what a round can promise is under the
+#            frozen draws' resolution, twice their combined standard error,
+#            and the last round rose by less: a gain the keep rule cannot
+#            read. Zero where no unit is on draws.
 #            `stop_gain` > 0 stops instead on predicted gain in nats: the
 #            residual below it once the last kept round realised less (a
 #            round raising the re-placed objective by more being kept even if
@@ -593,6 +597,14 @@
   start <- get(module$ctsem_laplace_continuation_info(cont))
   value <- as.numeric(start$quadrature)
   radius <- as.numeric(control$radius)
+  # Where flagged units are integrated by frozen draws the value carries their
+  # error, and a change within twice its combined standard error is no
+  # change the rounds can read (the draws are the same at every placement,
+  # so this overstates the error of a difference): the keep rule's allowance,
+  # and the least gain worth a round.
+  resolution_at <- function(info) 2 * sqrt(sum(as.numeric(info$centre_se)^2,
+    na.rm = TRUE))
+  resolution <- resolution_at(start)
   kept <- 0L
   attempts <- 0L
   status <- "rounds"
@@ -644,6 +656,9 @@
     if (stop_gain > 0 && promise < stop_gain && !rising) {
       status <- "stalled"; break
     }
+    if (promise < resolution && realised < resolution) {
+      status <- "resolution"; break
+    }
     attempts <- attempts + 1L
     # Below the bar, the round's own tolerance goes below the residual, so
     # that it takes its step rather than reporting itself stationary.
@@ -678,11 +693,7 @@
     # start. A kept rise is a rise in the objective the fit reports, so this
     # cannot walk downhill, and each such round gains at least the bar, so it
     # cannot cycle.
-    # Where flagged units are integrated by frozen draws the value carries their
-    # error, and a change within twice its combined standard error is no
-    # change the rounds can read (the draws are the same at every placement,
-    # so this overstates the error of a difference).
-    noise <- 2 * sqrt(sum(as.numeric(placed$centre_se)^2, na.rm = TRUE))
+    noise <- resolution_at(placed)
     rise <- max(stop_gain, as.numeric(control$value_tol)) + noise
     keep <- is.finite(after) && is.finite(gain) &&
       ((after < residual && gain >= -(as.numeric(control$value_tol) + noise)) ||
@@ -704,6 +715,7 @@
       kept <- kept + 1L
       x <- xn
       value <- as.numeric(placed$quadrature)
+      resolution <- noise
       # Grown when the round ended on the boundary and the re-placed value
       # rose by three quarters or more of what the fixed-node model promised:
       # the model is right, and the region is what holds the rounds back.
@@ -728,6 +740,7 @@
   info <- get(module$ctsem_laplace_continuation_info(cont))
   list(x = x, status = status, rounds = kept, attempts = attempts,
     radius = radius, residual = residual, predicted = predicted, bar = bar,
+    resolution = resolution,
     trace = if (length(rows)) do.call(rbind, rows) else NULL,
     start = start, info = info, value = value)
 }
@@ -825,6 +838,12 @@
       attributes(value) <- list(gradient = grad)
       value
     }
+    # A sum over the units too -- the flagged units' rules, the rest's Laplace
+    # terms -- which a coreset of them may stand in for (`.ctCoresetLpg()`),
+    # on the density's own terms: every draw a placement of every flagged
+    # unit's rule was most of 'checked''s time here (anomS1: 804 s against
+    # 224 with the rules read where they were placed).
+    attr(fn, "unitsum") <- TRUE
     attr(fn, "engine") <- engine
     attr(fn, "batch") <- batches$batch
     attr(fn, "gradbatch") <- batches$gradbatch
@@ -1081,6 +1100,7 @@
   record$predicted_gain <- as.numeric(run$predicted)
   record$skip_gain <- as.numeric(.ctJuliaOr(control$skip_gain, 0))
   record$stop_gain <- as.numeric(run$bar)
+  record$resolution <- as.numeric(run$resolution)
   # Skipped: the fixed-node model promised less than `skip_gain` from the
   # Laplace optimum, so no round ran. The estimate stays, and the log
   # likelihood reported is the quadrature one there, as where a round ran and
@@ -1156,7 +1176,7 @@
   # residual against draws' errors of 0.04), and what the fit reports is
   # then the hybrid's certification at that point, gap and all.
   # A run of no rounds reached the point it was asked to stay at.
-  reached <- identical(run$status, "converged") ||
+  reached <- run$status %in% c("converged", "resolution") ||
     (stay && isTRUE(as.integer(run$attempts) == 0L))
   takes_hessian <- reached || !is.null(jump)
   hc <- NULL
@@ -1263,8 +1283,11 @@
     if (inherits(parnames, "try-error")) parnames <- NULL
     # Certified to the bar the rounds stopped on, not the Laplace fit's: the
     # quadrature rule is not resolved to 1e-6 nats, and a continuation that
-    # met its own stopping rule is not a failure to converge.
-    certification <- .ctBackendCertificationRecord(gap, probe, tolerance = run$bar,
+    # met its own stopping rule is not a failure to converge. Nor is one
+    # within its draws' resolution of the fixed point, which no round can
+    # read past; the gap the record keeps says how far it is.
+    certification <- .ctBackendCertificationRecord(gap, probe,
+      tolerance = max(run$bar, run$resolution),
       saturated = isTRUE(fit$optim$saturated), overshot = FALSE,
       parnames = parnames, saddle = saddle)
     record$certification <- certification

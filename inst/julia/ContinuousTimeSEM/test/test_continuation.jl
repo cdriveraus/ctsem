@@ -870,6 +870,61 @@ end
     @test o.centre_value == value
 end
 
+@testset "a coreset of the hybrid's density over every unit is the density" begin
+    # What `ctsem_is_coreset` reads of the hybrid (`_coreset_column`,
+    # `_continuation_coreset`): every unit's term, the gradient and each unit's
+    # score at a draw, and a weighted subset's value and gradient. Over every
+    # unit at its weight the subset is the density, less only the frozen
+    # draws' error a coreset's intercept carries; and the scores sum to the
+    # gradient. Once on rules (soft, three effects a unit), once on draws.
+    C = ContinuousTimeSEM
+    laplace, values = _fresh_2d3()
+    theta = collect(Float64, values)
+    N = length(laplace.units.members)
+    X = hcat(theta, theta .+ 0.05, theta .- 0.08)
+    for o in (ctsem_laplace_continuation(laplace, theta; force=[1, 3], screen=false),
+              ctsem_laplace_continuation(laplace, theta; maxdim=2, draws=256,
+                  force=[1, 3], screen=false))
+        @test o.flagged == [1, 3]
+        d = ctsem_continuation_density(o)
+        rules = o.rules
+        t = C.ctsem_coreset_terms_gradient(d, X, size(X, 2))
+        v = C.ctsem_coreset_terms(d, X)
+        all_units = C.ctsem_coreset_batch_gradient(d, X, collect(1:N), ones(N))
+        sub = C.ctsem_coreset_batch_gradient(d, X, [1, 2], [2.0, 0.5])
+        @test isapprox(C.ctsem_coreset_batch(d, X, [1, 2], [2.0, 0.5]), sub[1, :];
+            rtol=1e-10)
+        for j in 1:size(X, 2)
+            x = X[:, j]
+            e = C.ctsem_evaluate(d, x; gradient=true)
+            prior = C._ctsem_log_prior(laplace.objective, x)
+            pg = zeros(length(x))
+            C._ctsem_log_prior_gradient!(pg, laplace.objective, x)
+            @test isapprox(t.value[j], e.value; rtol=1e-10)
+            @test isapprox(v.value[j], e.value; rtol=1e-10)
+            @test isapprox(t.gradient[:, j], e.gradient; rtol=1e-8, atol=1e-10)
+            @test isapprox(t.total[j], e.value - prior; rtol=1e-10)
+            @test isapprox(v.unit_loglik[:, j], t.unit_loglik[:, j]; rtol=1e-10)
+            a = findfirst(==(j), t.scored)
+            @test isapprox(vec(sum(t.scores[:, :, a]; dims=1)), e.gradient .- pg;
+                rtol=1e-8, atol=1e-10)
+            # Every unit at weight one: the density plus its draws' error.
+            err = C._continuation_at(() -> C._continuation_error(o).draws, o,
+                C._laplace_extend(laplace, x); screen=false, refine=false)
+            @test isapprox(all_units[1, j], e.value + err; rtol=1e-10)
+            @test isapprox(all_units[2:end, j], e.gradient; rtol=1e-8, atol=1e-10)
+            # Two units, one on a rule and one on Laplace, at their weights.
+            @test isapprox(sub[1, j], prior + 2.0 * t.unit_loglik[1, j] +
+                0.5 * t.unit_loglik[2, j]; rtol=1e-10)
+            @test isapprox(sub[2:end, j], pg .+ 2.0 .* t.scores[1, :, a] .+
+                0.5 .* t.scores[2, :, a]; rtol=1e-8, atol=1e-10)
+        end
+        # The draws leave the placement as it was.
+        @test o.centre == theta
+        @test o.rules === rules
+    end
+end
+
 @testset "a nested unit wider than maxdim gets frozen draws per block" begin
     # At the default `draws_df`: a t at the top block and Gaussians beneath.
     # A t beneath read 0.03-0.12 nats high here (`_continuation_importance_rule`).

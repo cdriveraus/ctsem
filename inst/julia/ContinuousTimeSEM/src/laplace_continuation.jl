@@ -301,6 +301,21 @@ mutable struct CTSEMLaplaceContinuation{L} <: CTSEMOptimisable
     # value read off the placement (`centre_value`) can be refused as the
     # evaluation refuses one.
     centre_converged::Bool
+    # The units on importance draws because no product rule reached the draws'
+    # target at some placement (`_continuation_refine!`), which keep their
+    # draws at every later one. Let go, a unit whose product rule's error sits
+    # at the target switched between the two from one placement to the next,
+    # and the value with it, by more than either's error: gN3's unit 3, its
+    # rule's error 0.050 against a target of 0.05, cost 0.11-0.135 nats at
+    # four of fourteen rounds, each then rejected, and the rounds stalled.
+    drawn::Vector{Int}
+    # Each unit's node count where the refine took more than `nodes`
+    # (`_continuation_refine!`), kept at every later placement; zero where it
+    # took none. Let go, a rule whose cheap check sat near the target took the
+    # finer count at one placement and the default at the next, and the value
+    # moved by the difference between the two rules: on gN3, with `drawn`
+    # kept, the two rounds still rejected were that switch.
+    unit_nodes::Vector{Int}
 end
 
 
@@ -1361,7 +1376,12 @@ function _continuation_place(laplace::CTSEMLaplaceObjective, theta::Vector{Float
     lap = ctsem_laplace_evaluate(laplace, theta; gradient=false)
     Ls = _laplace_popchols(theta, laplace.spec)
     _laplace_ensure_pool!(laplace)
-    _continuation_warm_caches(laplace, opts.nodes, opts.soft_maxdirs, opts.product_maxdim)
+    # Each unit's node count: `opts.nodes`, or more where it keeps more
+    # (`_continuation_unit_opts`).
+    nodes = [_continuation_unit_opts(opts, U).nodes for U in 1:nunits]
+    for m in unique(nodes)
+        _continuation_warm_caches(laplace, m, opts.soft_maxdirs, opts.product_maxdim)
+    end
     rules = Vector{Union{Nothing,CTSEMFixedUnitRule}}(nothing, nunits)
     values = fill(NaN, nunits)
     ses = zeros(nunits)
@@ -1378,7 +1398,8 @@ function _continuation_place(laplace::CTSEMLaplaceObjective, theta::Vector{Float
         (only === nothing || U in only) || return true
         placed = try
             _continuation_unit_rule(laplace, U, theta, Ls,
-                _laplace_workspace!(laplace, Float64, length(theta)), opts)
+                _laplace_workspace!(laplace, Float64, length(theta)),
+                _continuation_unit_opts(opts, U))
         catch err
             # A point the model cannot evaluate places no rule; code that is
             # wrong is an error (`_ctsem_must_propagate`).
@@ -1397,7 +1418,19 @@ function _continuation_place(laplace::CTSEMLaplaceObjective, theta::Vector{Float
     end
     return (rules=rules, quadrature=values, laplace=copy(lap.unit_loglik),
         laplace_value=lap.value, converged=lap.converged, wide=wide, se=ses,
-        importance=importance)
+        importance=importance, nodes=nodes)
+end
+
+"""
+    _continuation_unit_opts(opts, U)
+
+`opts` with unit `U`'s own node count where it keeps more than `opts.nodes`
+(`o.unit_nodes`, passed as `opts.unit_nodes`).
+"""
+function _continuation_unit_opts(opts, U::Integer)
+    kept = get(opts, :unit_nodes, nothing)
+    (kept === nothing || kept[U] <= opts.nodes) && return opts
+    return merge(opts, (nodes=kept[U],))
 end
 
 """
@@ -1405,9 +1438,9 @@ end
 
 Each flagged unit's rule error at the centre, in nats: a frozen rule's
 standard error; for a product or soft rule the difference between its value
-at `opts.nodes` and at two nodes fewer, placed again here (a mode solve and
-a 3-node rule beside the 5-node rule already placed), `NaN` where that rule
-cannot be placed or `nodes` is under 3. `NaN` for an unflagged unit, whose
+at its own node count (`placed.nodes`) and at two nodes fewer, placed again
+here (a mode solve and a 3-node rule beside the 5-node rule already placed),
+`NaN` where that rule cannot be placed or its count is under 3. `NaN` for an unflagged unit, whose
 term is Laplace's. What `ctsem_laplace_continuation_info` sums into the
 hybrid's own error (`error`), the one number a fit reports for how far its
 objective is from the exact marginal.
@@ -1417,20 +1450,21 @@ function _continuation_node_errors(laplace::CTSEMLaplaceObjective,
     nunits = length(laplace.units.members)
     errors = fill(NaN, nunits)
     isempty(flagged) && return errors
-    fewer = Int(opts.nodes) - 2
-    opts3 = merge(opts, (nodes=max(fewer, 1),))
     Ls = _laplace_popchols(theta, laplace.spec)
-    _continuation_warm_caches(laplace, opts3.nodes, opts.soft_maxdirs,
-        opts.product_maxdim)
+    for m in unique(placed.nodes[flagged])
+        m >= 3 && _continuation_warm_caches(laplace, m - 2, opts.soft_maxdirs,
+            opts.product_maxdim)
+    end
     _laplace_parallel(laplace, 1:length(flagged)) do i
         local U, r
         U = flagged[i]
         if placed.importance[U]
             errors[U] = placed.se[U]
-        elseif fewer >= 1 && placed.rules[U] !== nothing
+        elseif placed.nodes[U] >= 3 && placed.rules[U] !== nothing
             r = try
                 _continuation_unit_rule(laplace, U, theta, Ls,
-                    _laplace_workspace!(laplace, Float64, length(theta)), opts3)
+                    _laplace_workspace!(laplace, Float64, length(theta)),
+                    merge(opts, (nodes=placed.nodes[U] - 2,)))
             catch err
                 _ctsem_must_propagate(err) && rethrow()
                 nothing
@@ -1465,7 +1499,11 @@ difference from it is the rule's error, and where that too is beyond
 `_CONTINUATION_NODES_MAX` nodes; a unit no rule up to there resolves takes
 draws, which stop at `draws_se` on their own standard error
 (`_continuation_importance_rule`), or keeps the finest rule with its error
-where draws are off. `placed`'s arrays are updated in place.
+where draws are off. `placed`'s arrays are updated in place. Each unit starts
+from its own count (`placed.nodes`), which the continuation keeps once the
+refine has raised it (`o.unit_nodes`), and draws once it has taken them
+(`o.drawn`): a choice made afresh at every placement switched wherever a
+unit's error sat at the target, and the value with it.
 
 Why: a hybrid is only as honest as its rules. On the bench's gC8 the 5-node
 rules carried 6.9 nats of node error at the climb's end, and on anomS2's
@@ -1493,7 +1531,7 @@ function _continuation_refine!(laplace::CTSEMLaplaceObjective, theta::Vector{Flo
         local U, n, finer, err, r, ws
         U = coarse[i]
         ws = _laplace_workspace!(laplace, Float64, length(theta))
-        n = Int(opts.nodes)
+        n = placed.nodes[U]
         finer = false
         err = errors[U]
         while n + 2 <= _CONTINUATION_NODES_MAX
@@ -1514,11 +1552,15 @@ function _continuation_refine!(laplace::CTSEMLaplaceObjective, theta::Vector{Flo
             end
             placed.rules[U] = r.rule
             placed.quadrature[U] = r.value
+            placed.nodes[U] = n + 2
             errors[U] = err
             finer = true
             n += 2
         end
-        if finer && errors[U] > target && opts.draws > 0
+        # A unit kept at the most nodes has no finer rule to try, and takes
+        # draws where that rule is still short, as it did when it got there.
+        if (finer || n + 2 > _CONTINUATION_NODES_MAX) && errors[U] > target &&
+                opts.draws > 0
             r = try
                 _continuation_unit_rule(laplace, U, theta, Ls, ws,
                     merge(opts, (draw_units=(U,),)))
@@ -1653,7 +1695,7 @@ function ctsem_laplace_continuation(laplace::CTSEMLaplaceObjective,
         fill(false, nunits), Bool(screen), Symbol(draws_scope), Int[],
         fill(NaN, nunits), fill(NaN, nunits), fill(false, nunits), NaN, nothing,
         0, 0, 0, 0, 0, 0, 0.0, 0.0, 0.0, 0.0, nothing, nothing, nothing,
-        Float64[], Float64[], false)
+        Float64[], Float64[], false, Int[], zeros(Int, nunits))
     _continuation_add_points!(o, point_units, point_values)
     _continuation_force!(o, force)
     _continuation_place!(o, theta)
@@ -1695,7 +1737,8 @@ end
 
 const _CONTINUATION_STATE = (:rest, :rest_units, :flagged, :rules, :centre,
     :centre_quadrature, :centre_laplace, :rule_failed, :centre_value, :centre_se,
-    :centre_error, :importance, :ess, :ess_placed, :centre_converged)
+    :centre_error, :importance, :ess, :ess_placed, :centre_converged, :drawn,
+    :unit_nodes)
 
 """
     ctsem_laplace_continuation_recentre!(o, values; force=nothing,
@@ -1741,16 +1784,27 @@ function ctsem_laplace_continuation_revert!(o::CTSEMLaplaceContinuation)
     return ctsem_laplace_continuation_info(o)
 end
 
-function _continuation_place!(o::CTSEMLaplaceContinuation, theta::Vector{Float64})
+"""The options every placement of `o`'s rules reads: the rules' constants,
+which units it places, and the draws and node counts the units keep."""
+_continuation_opts(o::CTSEMLaplaceContinuation) = (nodes=o.nodes,
+    product_maxdim=o.product_maxdim, soft_tau=o.soft_tau, maxdim=o.maxdim,
+    soft_maxdirs=o.soft_maxdirs, draws=o.draws, draws_se=o.draws_se,
+    draws_max=o.draws_max, draws_floor=o.draws_floor, draws_prior=o.draws_prior,
+    draws_df=o.draws_df, draws_seed=o.draws_seed, points=o.points,
+    only=o.screen ? nothing : Set(o.flagged),
+    drawable=o.draws_scope === :all ? nothing : Set(o.forced),
+    draw_units=Set(o.drawn), unit_nodes=o.unit_nodes)
+
+# `refine = false` places each rule as the units keep it, without the refine's
+# checks (`_continuation_refine!`): what a density over the parameters reads
+# at a draw, where a choice made afresh would make the density differ from a
+# coreset of its units (`_continuation_coreset`), and the checks cost a rule
+# of two nodes fewer a unit.
+function _continuation_place!(o::CTSEMLaplaceContinuation, theta::Vector{Float64};
+    refine::Bool=true)
     started = time_ns()
     laplace = o.laplace
-    opts = (nodes=o.nodes, product_maxdim=o.product_maxdim, soft_tau=o.soft_tau,
-        maxdim=o.maxdim,
-        soft_maxdirs=o.soft_maxdirs, draws=o.draws, draws_se=o.draws_se,
-        draws_max=o.draws_max, draws_floor=o.draws_floor, draws_prior=o.draws_prior,
-        draws_df=o.draws_df, draws_seed=o.draws_seed, points=o.points,
-        only=o.screen ? nothing : Set(o.flagged),
-        drawable=o.draws_scope === :all ? nothing : Set(o.forced))
+    opts = _continuation_opts(o)
     placed = _continuation_place(laplace, theta, opts)
     nunits = length(laplace.units.members)
     failed = [placed.rules[U] === nothing && !isempty(laplace.units.blocks[U]) &&
@@ -1762,7 +1816,20 @@ function _continuation_place!(o::CTSEMLaplaceContinuation, theta::Vector{Float64
     # A unit flagged before whose rule could not be placed here keeps its
     # Laplace term: an honest Laplace term beats a rule placed somewhere else.
     filter!(U -> placed.rules[U] !== nothing, flagged)
-    errors = _continuation_refine!(laplace, theta, opts, placed, flagged)
+    errors = refine ? _continuation_refine!(laplace, theta, opts, placed, flagged) :
+        [placed.importance[U] ? placed.se[U] : NaN for U in 1:nunits]
+    # A unit narrow enough for a product rule that is on draws all the same
+    # took them in the refine's fallback, and keeps them (`o.drawn`).
+    o.drawn = sort!(union(o.drawn, [U for U in flagged if placed.importance[U] &&
+        _continuation_unit_width(laplace, U) <= o.maxdim]))
+    # And a unit whose rule it made finer keeps that count (`o.unit_nodes`): a
+    # new vector, since a saved placement holds the old one.
+    kept = copy(o.unit_nodes)
+    for U in flagged
+        placed.importance[U] || placed.nodes[U] <= o.nodes ||
+            (kept[U] = max(kept[U], placed.nodes[U]))
+    end
+    o.unit_nodes = kept
     o.flagged = flagged
     o.rules = CTSEMFixedUnitRule[placed.rules[U] for U in flagged]
     o.rest_units = setdiff(1:nunits, flagged)
@@ -2037,9 +2104,10 @@ end
 """The flagged units' fixed-rule terms at `theta`, and their summed gradient,
 in parallel over units and, where there are few of them, over a wide unit's
 nodes (`_continuation_tasks`). Each piece's result is kept by the piece and
-summed in order afterwards."""
+summed in order afterwards. With `scores` (`nunits x length(theta)`), each
+flagged unit's row is its term's gradient times its sampling weight."""
 function _continuation_flagged(o::CTSEMLaplaceContinuation, theta::Vector{Float64},
-    want_gradient::Bool)
+    want_gradient::Bool; scores::Union{Nothing,Matrix{Float64}}=nothing)
     laplace = o.laplace
     spec = laplace.spec
     nf = length(o.rules)
@@ -2134,6 +2202,8 @@ function _continuation_flagged(o::CTSEMLaplaceContinuation, theta::Vector{Float6
         if want_gradient
             all(isfinite, g) || return (values=values, gradient=gradient, ok=false)
             gradient .+= _laplace_unit_weight(laplace, rule.unit) .* g
+            scores === nothing ||
+                (scores[rule.unit, :] .= _laplace_unit_weight(laplace, rule.unit) .* g)
         end
     end
     return (values=values, gradient=gradient, ok=true)
@@ -2175,11 +2245,20 @@ _continuation_copy(r) = (value=r.value,
     unit_loglik=copy(r.unit_loglik), subject_loglik=copy(r.subject_loglik),
     converged=r.converged)
 
+# With `scores` (`nunits x length(theta)`), every unit's score, as the Laplace
+# route gives them (`ctsem_laplace_evaluate`): the rest's from it, the flagged
+# units' from their rules.
 function _continuation_evaluate(o::CTSEMLaplaceContinuation, theta::Vector{Float64},
-    gradient::Bool)
+    gradient::Bool; scores::Union{Nothing,Matrix{Float64}}=nothing)
     started = time_ns()
-    rest = ctsem_laplace_evaluate(o.rest, theta; gradient=gradient)
-    flagged = _continuation_flagged(o, theta, gradient)
+    rs = scores === nothing ? nothing : zeros(length(o.rest_units), length(theta))
+    rest = ctsem_laplace_evaluate(o.rest, theta; gradient=gradient, scores=rs)
+    flagged = _continuation_flagged(o, theta, gradient; scores=scores)
+    if scores !== nothing
+        for (position, U) in enumerate(o.rest_units)
+            scores[U, :] .= view(rs, position, :)
+        end
+    end
     gradient ? (o.gradient_calls += 1) : (o.value_calls += 1)
     evaluations = sum(r.evaluations for r in o.rules; init=0)
     gradient ? (o.member_sweeps += evaluations) : (o.member_values += evaluations)
@@ -2294,17 +2373,18 @@ function _ctsem_probe_value(o::CTSEMLaplaceContinuation, x)
 end
 
 """
-    _continuation_at(f, o, theta; screen=o.screen)
+    _continuation_at(f, o, theta; screen=o.screen, refine=true)
 
 `f()` with `o`'s rules placed at `theta`, every unit scored where `screen` and
-only the flagged units' rules moved otherwise, and `o` put back as it was
+only the flagged units' rules moved otherwise (refined where `refine`,
+`_continuation_place!`), and `o` put back as it was
 after: its placement, the rounds' saved one (`o.previous`), which a probe
 inside a round must not disturb, and the count of placements its record
 reports, since this is not a placement of the correction's own. Its caches go,
 since what they hold was evaluated under the placement `f` saw.
 """
 function _continuation_at(f, o::CTSEMLaplaceContinuation, theta::Vector{Float64};
-    screen::Bool=o.screen)
+    screen::Bool=o.screen, refine::Bool=true)
     saved = NamedTuple{_CONTINUATION_STATE}(
         Tuple(getfield(o, fld) for fld in _CONTINUATION_STATE))
     previous = o.previous
@@ -2313,7 +2393,7 @@ function _continuation_at(f, o::CTSEMLaplaceContinuation, theta::Vector{Float64}
     was = o.screen
     try
         o.screen = screen
-        _continuation_place!(o, theta)
+        _continuation_place!(o, theta; refine=refine)
         return f()
     finally
         for fld in _CONTINUATION_STATE
@@ -2355,7 +2435,10 @@ draw away from the estimate can use: a rule's nodes carry less of the
 integrand the further the parameters move. Read so, the draws of a corrected
 fit put a population sd's mean 2.9 posterior sds high on the race's gD1,
 where the same fit's draws on its Laplace objective were 0.2 off
-(review/REVIEW-fit-uncertainty-2026-10-25.md).
+(review/REVIEW-fit-uncertainty-2026-10-25.md). Each rule is placed as its
+unit keeps it -- its node count, or draws -- and not refined there
+(`refine = false`), so the density is a sum of the units' terms that a coreset
+of them can stand in for (`ctsem_is_coreset`, `_continuation_coreset`).
 
 The generic batch evaluators (`ctsem_evaluate_batch`,
 `ctsem_evaluate_batch_gradient`) and DAIS (`ctsem_dais`) take it as they take
@@ -2368,7 +2451,7 @@ function ctsem_evaluate(d::CTSEMContinuationDensity, values::AbstractVector;
     gradient::Bool=true, contributions::Bool=false, gradient_method=:adjoint)
     o = d.continuation
     theta = _laplace_extend(o.laplace, collect(Float64, values))
-    r = _continuation_at(o, theta; screen=false) do
+    r = _continuation_at(o, theta; screen=false, refine=false) do
         # Less the frozen draws' error only, the guard the probes take against
         # draws that degenerate away from the estimate. Not the product rules'
         # node errors, which the probes subtract too: summed over every

@@ -27,6 +27,16 @@ const _LAPLACE_CORESET_DRAWS = Ref(true)
 ctsem_set_coreset_draw_parallel!(on::Bool) = (_LAPLACE_CORESET_DRAWS[] = on)
 
 """
+The objectives a coreset can stand in for: the Laplace route's, and the
+quadrature hybrid's density (`ctsem_continuation_density`), each a sum of unit
+terms and a prior.
+"""
+const _CoresetObjective = Union{CTSEMLaplaceObjective,CTSEMContinuationDensity}
+
+_coreset_units(laplace::CTSEMLaplaceObjective) = length(laplace.units.members)
+_coreset_units(d::CTSEMContinuationDensity) = length(d.continuation.laplace.units.members)
+
+"""
     ctsem_coreset_terms(laplace, values)
 
 Every unit's term at each column of `values` (`npar x ndraws`), for fitting a
@@ -40,21 +50,78 @@ coreset's weights, with
 `ctsem_unit_terms` is the leave-one-unit-out version, which raises on what a
 proposal's tails produce; this is for draws from a sampler.
 """
-function ctsem_coreset_terms(laplace::CTSEMLaplaceObjective, values::AbstractMatrix)
+function ctsem_coreset_terms(laplace::_CoresetObjective, values::AbstractMatrix)
     ncol = size(values, 2)
     ncol >= 1 || throw(ArgumentError("values must have at least one column"))
-    nunits = length(laplace.units.members)
+    nunits = _coreset_units(laplace)
     value = fill(-Inf, ncol)
     total = fill(NaN, ncol)
     terms = fill(NaN, nunits, ncol)
     for j in 1:ncol
-        r = _laplace_coreset_try(laplace, Vector{Float64}(view(values, :, j)), false, nothing)
+        r = _coreset_column(laplace, Vector{Float64}(view(values, :, j)), false, nothing)
         r === nothing && continue
         value[j] = r.value
-        total[j] = _laplace_weighted_total(laplace, r.unit_loglik)
-        terms[:, j] .= r.unit_loglik
+        total[j] = r.total
+        terms[:, j] .= r.terms
     end
     return (value=value, total=total, unit_loglik=terms)
+end
+
+"""
+    _coreset_column(objective, x, gradient, scores)
+
+The full density at `x` as a coreset reads it: `value`, `total` (the value less
+the log prior, what the units' weighted terms stand in for), each unit's term
+(`terms`) and, with `gradient`, the gradient at `x`'s length, with each unit's
+score in `scores`' rows where that is given. `nothing` where the draw cannot
+be used.
+"""
+function _coreset_column(laplace::CTSEMLaplaceObjective, x::Vector{Float64},
+    gradient::Bool, scores::Union{Nothing,Matrix{Float64}})
+    r = try
+        ctsem_laplace_evaluate(laplace, x; gradient=gradient, scores=scores)
+    catch err
+        _ctsem_must_propagate(err) && rethrow()
+        nothing
+    end
+    (r !== nothing && r.converged && isfinite(r.value) && (!gradient ||
+        (r.gradient !== nothing && all(isfinite, r.gradient)))) || return nothing
+    return (value=r.value, total=_laplace_weighted_total(laplace, r.unit_loglik),
+        terms=r.unit_loglik, gradient=r.gradient)
+end
+
+# On the hybrid every column moves its rules (`_continuation_at`), placed as
+# the density places them; a value is the placement's own, every flagged
+# unit's term its rule's there and every other unit's its Laplace term. The
+# value is less the frozen draws' error, as the density's is, and so is
+# `total`: a coreset's intercept carries it.
+function _coreset_column(d::CTSEMContinuationDensity, x::Vector{Float64},
+    gradient::Bool, scores::Union{Nothing,Matrix{Float64}})
+    o = d.continuation
+    try
+        theta = _laplace_extend(o.laplace, x)
+        wide = scores === nothing ? nothing : zeros(size(scores, 1), length(theta))
+        return _continuation_at(o, theta; screen=false, refine=false) do
+            o.centre_converged || return nothing
+            prior = _ctsem_log_prior(o.laplace.objective, theta)
+            error = _continuation_error(o).draws
+            if !gradient
+                terms = copy(o.centre_laplace)
+                terms[o.flagged] .= o.centre_quadrature[o.flagged]
+                return (value=o.centre_value - error,
+                    total=o.centre_value - error - prior, terms=terms, gradient=nothing)
+            end
+            e = _continuation_evaluate(o, theta, true; scores=wide)
+            (e.converged && isfinite(e.value) && all(isfinite, e.gradient)) ||
+                return nothing
+            wide === nothing || copyto!(scores, view(wide, :, 1:length(x)))
+            return (value=e.value - error, total=e.value - error - prior,
+                terms=e.unit_loglik, gradient=e.gradient[1:length(x)])
+        end
+    catch err
+        _ctsem_must_propagate(err) && rethrow()
+        return nothing
+    end
 end
 
 """
@@ -73,11 +140,11 @@ that many are held. `scored` in the result says which columns they are. One
 gradient evaluation a column, what the batch gradient costs; `-Inf`, NaN
 where a draw is unusable, by `_ctsem_probe_value_gradient`'s rule.
 """
-function ctsem_coreset_terms_gradient(laplace::CTSEMLaplaceObjective,
+function ctsem_coreset_terms_gradient(laplace::_CoresetObjective,
     values::AbstractMatrix, scored::Union{Integer,AbstractVector})
     n, ncol = size(values)
     ncol >= 1 || throw(ArgumentError("values must have at least one column"))
-    nunits = length(laplace.units.members)
+    nunits = _coreset_units(laplace)
     value = fill(-Inf, ncol)
     total = fill(NaN, ncol)
     terms = fill(NaN, nunits, ncol)
@@ -91,18 +158,12 @@ function ctsem_coreset_terms_gradient(laplace::CTSEMLaplaceObjective,
     for j in 1:ncol
         want = listed ? findfirst(==(j), slotcol) : (k > 0 ? argmin(slottotal) : nothing)
         want === nothing || fill!(S, 0.0)
-        r = try
-            ctsem_laplace_evaluate(laplace, Vector{Float64}(view(values, :, j));
-                gradient=true, scores=want === nothing ? nothing : S)
-        catch err
-            _ctsem_must_propagate(err) && rethrow()
-            nothing
-        end
-        (r !== nothing && r.converged && isfinite(r.value) &&
-            r.gradient !== nothing && all(isfinite, r.gradient)) || continue
+        r = _coreset_column(laplace, Vector{Float64}(view(values, :, j)), true,
+            want === nothing ? nothing : S)
+        r === nothing && continue
         value[j] = r.value
-        total[j] = _laplace_weighted_total(laplace, r.unit_loglik)
-        terms[:, j] .= r.unit_loglik
+        total[j] = r.total
+        terms[:, j] .= r.terms
         gradient[:, j] .= r.gradient
         want === nothing && continue
         if listed
@@ -168,6 +229,118 @@ function ctsem_coreset_batch_gradient(laplace::CTSEMLaplaceObjective,
     end
     return out
 end
+
+"""
+    _continuation_coreset(d, values, units, weights, gradient)
+
+The hybrid's coreset at each column of `values`, as `ctsem_coreset_batch` and
+`ctsem_coreset_batch_gradient` return the Laplace route's: the log prior plus
+`sum(weights .* terms)` over `units`, a flagged unit's term its rule placed at
+the column as the density places it (`_continuation_unit_rule`, at the node
+count or on the draws the unit keeps), every other unit's its Laplace term
+through the Laplace route's coreset. The columns one after another, each over
+its units in parallel.
+"""
+function _continuation_coreset(d::CTSEMContinuationDensity, values::AbstractMatrix,
+    units::AbstractVector, weights::AbstractVector, gradient::Bool)
+    o = d.continuation
+    laplace = o.laplace
+    n, ncol = size(values)
+    ncol >= 1 || throw(ArgumentError("values must have at least one column"))
+    _laplace_coreset(laplace, units, weights)    # checks the units and weights
+    isflagged = falses(_coreset_units(d))
+    isflagged[o.flagged] .= true
+    ruled = Int[Int(units[i]) for i in eachindex(units) if isflagged[units[i]]]
+    w = Float64[Float64(weights[i]) for i in eachindex(units) if isflagged[units[i]]]
+    rest = [i for i in eachindex(units) if !isflagged[units[i]]]
+    coreset = isempty(rest) ? nothing : _laplace_coreset(laplace, units[rest], weights[rest])
+    opts = _continuation_opts(o)
+    _laplace_ensure_pool!(laplace)
+    for m in unique(Int[_continuation_unit_opts(opts, U).nodes for U in ruled])
+        _continuation_warm_caches(laplace, m, opts.soft_maxdirs, opts.product_maxdim)
+    end
+    out = fill(NaN, n + 1, ncol)
+    for j in 1:ncol
+        r = try
+            _continuation_coreset_point(o, Vector{Float64}(view(values, :, j)), coreset,
+                ruled, w, opts, gradient)
+        catch err
+            _ctsem_must_propagate(err) && rethrow()
+            nothing
+        end
+        out[1, j] = r === nothing ? -Inf : r.value
+        r === nothing || !gradient || (out[2:end, j] .= view(r.gradient, 1:n))
+    end
+    return out
+end
+
+function _continuation_coreset_point(o::CTSEMLaplaceContinuation, x::Vector{Float64},
+    coreset, ruled::Vector{Int}, w::Vector{Float64}, opts, gradient::Bool)
+    laplace = o.laplace
+    spec = laplace.spec
+    theta = _laplace_extend(laplace, x)
+    npar = length(theta)
+    # The Laplace units with the prior, or the prior alone.
+    if coreset === nothing
+        value = _ctsem_log_prior(laplace.objective, theta)
+        g = zeros(npar)
+        gradient && _ctsem_log_prior_gradient!(g, laplace.objective, theta)
+    else
+        r = _laplace_coreset_try(laplace, theta, gradient, coreset)
+        r === nothing && return nothing
+        value = r.value
+        g = gradient ? copy(r.gradient) : Float64[]
+    end
+    isempty(ruled) && return (value=value, gradient=g)
+    Ls = _laplace_popchols(theta, spec)
+    dL = gradient ? _laplace_level_chol_derivatives(theta, spec) : nothing
+    positions = [_laplace_level_positions(spec, l) for l in eachindex(spec.levels)]
+    terms = fill(NaN, length(ruled))
+    grads = [gradient ? zeros(npar) : Float64[] for _ in ruled]
+    ok = _laplace_parallel(laplace, 1:length(ruled)) do i
+        local U, aws, placed, scratch, u, r, total
+        U = ruled[i]
+        try
+            aws = _laplace_workspace!(laplace, Float64, npar)
+            placed = _continuation_unit_rule(laplace, U, theta, Ls, aws,
+                _continuation_unit_opts(opts, U))
+            placed === nothing && return false
+            if !gradient
+                terms[i] = placed.value
+                return isfinite(placed.value)
+            end
+            scratch = _continuation_scratch(laplace, npar)
+            u = zeros(laplace.units.dims[U])
+            total = 0.0
+            for root in placed.rule.roots
+                r = _continuation_rule_value(o, U, theta, Ls, dL, positions, root, u,
+                    aws, scratch, true)
+                isfinite(r.value) || return false
+                total += r.value
+                grads[i] .+= r.gradient
+            end
+            terms[i] = total
+            return all(isfinite, grads[i])
+        catch err
+            _ctsem_must_propagate(err) && rethrow()
+            return false
+        end
+    end
+    ok || return nothing
+    for i in eachindex(ruled)
+        value += w[i] * terms[i]
+        gradient && (g .+= w[i] .* grads[i])
+    end
+    return (value=value, gradient=g)
+end
+
+ctsem_coreset_batch(d::CTSEMContinuationDensity, values::AbstractMatrix,
+    units::AbstractVector, weights::AbstractVector) =
+    _continuation_coreset(d, values, units, weights, false)[1, :]
+
+ctsem_coreset_batch_gradient(d::CTSEMContinuationDensity, values::AbstractMatrix,
+    units::AbstractVector, weights::AbstractVector) =
+    _continuation_coreset(d, values, units, weights, true)
 
 """
     _laplace_coreset_each(laplace, values, coreset, gradient)
