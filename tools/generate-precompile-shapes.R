@@ -117,15 +117,20 @@ followups <- list(
       processes = FALSE), cores = 1L))
 # A sampled fit is a route of its own (`intoverpop = 'auto'` resolves to the
 # joint target when `optimize = FALSE`), the same whatever the shape's route,
-# so it follows one shape only. On that shape the joint goes through the map,
-# the filter integrating its intercept (`ctsem_sample_map`), and so does the
-# `sample` follow-up; SAEM's kernel, the joint's sampler wherever the filter
-# integrates nothing, is asked for by name, and so is 'checked' (its normal
-# check, DAIS and importance sampler), which a default fit no longer runs.
+# so it follows one shape only. That shape's Laplace term is exact, so the
+# sampled fit and the `sample` follow-up both take its exact marginal; the
+# joint is asked for by name (`intoverpop = 'none'`), where it goes through the
+# map, the filter integrating the intercept (`ctsem_sample_map`). SAEM's
+# kernel, the joint's sampler wherever the filter integrates nothing, is asked
+# for by name too, and so is 'checked' (its normal check, DAIS and importance
+# sampler), which a default fit no longer runs.
 sampled_fit <- list(sampled = function(fit, dat, model) ctFit(dat, model,
   backend = "julia", optimize = FALSE, priors = TRUE, cores = 1L, verbose = 0,
   sampleControl = list(iter = 10L, chains = 1L, warmup = 5L, maxdepth = 3L,
     processes = FALSE)),
+  map = function(fit, dat, model) ctFitUncertainty(fit, "sample",
+    control = list(chains = 1L, warmup = 5L, draws = 5L, maxdepth = 3L,
+      processes = FALSE, intoverpop = "none"), cores = 1L),
   saem = function(fit, dat, model) ctFitUncertainty(fit, "sample",
     control = list(chains = 1L, warmup = 5L, draws = 5L, maxdepth = 3L,
       processes = FALSE, intoverpop = "none", sampler = "saem"), cores = 1L),
