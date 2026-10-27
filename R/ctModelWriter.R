@@ -146,6 +146,99 @@ ctModelStatesAndPARS <- function(ctspec, statenames,tdprednames,tiprednames=NULL
 .ct_transform_fits$text <- character()
 .ct_transform_fits$row <- list()
 
+# A transform text read exactly as one of the shapes ctsem's templates take,
+# `offset + multiplier * g(param * meanscale + inneroffset)` with `g` one of
+# `tformshapes()`'s first six (identity, log1p_exp, exp, inverse logit, cube,
+# log1p), or NULL where none reproduces it. The argument of `g` is found in
+# the expression -- an argument of a call in it that is affine in `param`, or
+# that argument negated, which is how `1/(1+exp(-x))` reads its `x` --
+# `meanscale` and `inneroffset` read off it at two points, and `multiplier`
+# and `offset` fitted against `g` over a fixed grid; a template is taken only
+# where it then reproduces the text at every point of the grid, to rounding.
+# Exact where the grid search below is a least-squares approximation: that
+# search lost every constant too small to move its residual -- the 1e-10
+# floor on a variance -- and took most of a small fit's R-side preparation.
+.ctTransformMatch <- function(text) {
+  expr <- tryCatch(str2lang(text), error = function(e) NULL)
+  if (is.null(expr) || !"param" %in% all.names(expr)) return(NULL)
+  # Evaluated where ctsem's own functions (log1p_exp, inv_logit) are found.
+  at <- function(e, p) tryCatch(suppressWarnings(as.numeric(
+    eval(e, list(param = p), asNamespace("ctsem")))), error = function(err) NULL)
+  grid <- c(-2.1, -1.4, -0.85, -0.4, -0.1, 0.15, 0.5, 0.95, 1.5, 2.2)
+  y <- at(expr, grid)
+  if (length(y) != length(grid)) return(NULL)
+  ok <- is.finite(y)
+  if (sum(ok) < 6L) return(NULL)
+  # Candidate arguments of `g`: every call argument in the expression that
+  # holds `param`, each also negated.
+  args <- list()
+  collect <- function(e) {
+    if (!is.call(e)) return(invisible(NULL))
+    for (a in as.list(e)[-1]) {
+      if ("param" %in% all.names(a)) {
+        args[[length(args) + 1L]] <<- a
+        collect(a)
+      }
+    }
+    invisible(NULL)
+  }
+  collect(expr)
+  # The numbers the text writes, either sign.
+  numbers <- function(e) if (is.numeric(e)) e else if (is.call(e))
+    unlist(lapply(as.list(e)[-1], numbers)) else numeric()
+  written <- as.numeric(numbers(expr))
+  literals <- unique(c(written, -written))
+  literals <- literals[is.finite(literals) & literals != 0]
+  inners <- list()
+  for (a in args) {
+    u <- at(a, grid)
+    if (length(u) != length(grid) || !all(is.finite(u[ok]))) next
+    s <- (u[grid == 0.5] - u[grid == -0.1]) / 0.6
+    i <- u[grid == -0.1] + 0.1 * s
+    if (!is.finite(s) || abs(s) < 1e-12) next
+    if (max(abs(u[ok] - (s * grid[ok] + i))) > 1e-10 * (1 + max(abs(u[ok])))) next
+    for (sg in c(1, -1)) inners[[length(inners) + 1L]] <- c(sg * s, sg * i)
+  }
+  # A positive meanscale first: the inverse logit and the cube each read
+  # exactly both ways (1 - inv_logit(-x) is inv_logit(x)), and the
+  # templates' own form is the positive one.
+  if (length(inners)) inners <- inners[order(vapply(inners, function(v) v[1] < 0,
+    logical(1)))]
+  shapes <- list(function(x) x, log1p_exp, exp, function(x) 1 / (1 + exp(-x)),
+    function(x) x^3, log1p)
+  for (type in seq_along(shapes) - 1L) {
+    for (inner in if (type == 0L) list(c(1, 0)) else inners) {
+      g <- suppressWarnings(shapes[[type + 1L]](inner[1] * grid + inner[2]))
+      use <- ok & is.finite(g)
+      if (sum(use) < 6L || stats::sd(g[use]) == 0) next
+      fit <- stats::lm.fit(cbind(1, g[use]), y[use])
+      o <- unname(fit$coefficients[1])
+      m <- unname(fit$coefficients[2])
+      if (!is.finite(o) || !is.finite(m) || m == 0) next
+      if (max(abs(y[use] - (o + m * g[use]))) > 1e-9 * (1 + max(abs(y[use])))) next
+      # The offset again where the transform is smallest, where rounding
+      # costs least: fitted against values near 5, a floor of 1e-10 kept only
+      # its first four figures.
+      k <- which(use)[which.min(abs(y[use]))]
+      o <- y[k] - m * g[k]
+      # The arithmetic's last bits off: a number within a millionth of one the
+      # text writes is that number (the floor's 1e-10 itself), any other is
+      # kept to 12 figures, which turns 4.999999999999999 into 5.
+      snap <- function(x) {
+        if (abs(x) < 1e-13 * (1 + abs(m))) return(0)
+        near <- literals[abs(x - literals) <= 1e-6 * abs(literals)]
+        if (length(near)) near[1] else signif(x, 12)
+      }
+      return(data.frame(type = type,
+        formula = tformshapes(singletext = TRUE)[type + 1L],
+        offset = snap(o), inneroffset = if (type == 0L) 0 else snap(inner[2]),
+        multiplier = snap(m), meanscale = if (type == 0L) 1 else snap(inner[1]),
+        lsfit = 0, exact = TRUE, stringsAsFactors = FALSE))
+    }
+  }
+  NULL
+}
+
 ctModelTransformsToNum<-function(ctm){
   
   transformvaluecols <- c('multiplier','offset','meanscale','inneroffset')
@@ -178,6 +271,12 @@ ctModelTransformsToNum<-function(ctm){
     # the default starting values are drawn from it next.
     known <- match(e, .ct_transform_fits$text)
     if (!is.na(known)) return(.ct_transform_fits$row[[known]])
+    exact <- .ctTransformMatch(e)
+    if (!is.null(exact)) {
+      .ct_transform_fits$text <- c(.ct_transform_fits$text, e)
+      .ct_transform_fits$row <- c(.ct_transform_fits$row, list(exact))
+      return(exact)
+    }
     y = eval(parse(text=e)) #eval(substitute(substitute(e, list(param = param)), list(e = as.quoted(e)[[1]]))))
     keep <- abs(y) < 1e5 & !is.na(param)
     keep[is.na(keep)] <- FALSE
@@ -287,6 +386,7 @@ ctModelTransformsToNum<-function(ctm){
     }
     
     best <- formula.types[which(formula.types$lsfit %in% min(formula.types$lsfit,na.rm=TRUE))[1],]
+    best$exact <- FALSE
     .ct_transform_fits$text <- c(.ct_transform_fits$text, e)
     .ct_transform_fits$row <- c(.ct_transform_fits$row, list(best))
     return(best)
@@ -307,7 +407,12 @@ ctModelTransformsToNum<-function(ctm){
     eqmatch <- match(eqs, uniqueeqs)
     df=data.frame(do.call(rbind,l))
     df[1:length(eqmatch),] <- df[eqmatch,]
-    df[,] <- lapply(df,function(x) if(is.numeric(x)) return(round(x,6)) else return(x))
+    # The search's estimates rounded to six places, which its residual cannot
+    # resolve beyond; an exact reading kept as it is, floors and all.
+    searched <- !as.logical(df$exact)
+    df$exact <- NULL
+    df[searched,] <- lapply(df[searched, , drop=FALSE],
+      function(x) if(is.numeric(x)) return(round(x,6)) else return(x))
     df$formula <- eqs
     df[df$lsfit > .1,c('offset','inneroffset','multiplier','meanscale')]<-NA
     colnames(df)[1] <- 'transform'
