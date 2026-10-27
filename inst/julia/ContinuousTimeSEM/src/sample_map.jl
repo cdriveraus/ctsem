@@ -967,35 +967,6 @@ function _jmap_restarts(m::CTSEMJointMap, m2::CTSEMJointMap, results, moved, Wl,
             _jmap_carry(m, m2, Wl[:, rand(rng, 1:size(Wl, 2))]) for c in eachindex(results)]
 end
 
-"""Two runs of the same chains one after the other, `b` continuing `a`: their
-draws joined, and `b`'s state, step and warm-up."""
-_jmap_join(a::Vector{_ChainResult}, b::Vector{_ChainResult}) =
-    [_ChainResult(hcat(a[c].draws, b[c].draws), vcat(a[c].accept, b[c].accept),
-        vcat(a[c].divergent, b[c].divergent), vcat(a[c].depth, b[c].depth),
-        vcat(a[c].energy, b[c].energy), b[c].stepsize, b[c].warmup_divergent,
-        b[c].warmup_used, b[c].x, b[c].metric) for c in eachindex(a)]
-
-"""
-    _jmap_keep(prefix, results, moved, m, m2)
-
-The learning draws kept so far, `prefix`, with a window's `results` run under
-`m` after them, carried into `m2`'s latent coordinates; `nothing` where a chain
-stopped in the window, which drops every earlier window's draws too, since the
-chain then restarts elsewhere. Each map is exact, so a window's draws after its
-warm-up are draws of the target as the kept ones are, and carrying a draw is
-the bijection `m2^-1 m`.
-"""
-function _jmap_keep(prefix, results::Vector{_ChainResult}, moved, m::CTSEMJointMap,
-    m2::CTSEMJointMap)
-    all(moved) || return nothing
-    seg = prefix === nothing ? results : _jmap_join(prefix, results)
-    m2 === m && return seg
-    return [_ChainResult(reduce(hcat, [_jmap_carry(m, m2, view(s.draws, :, t))
-                for t in axes(s.draws, 2)]), s.accept, s.divergent, s.depth, s.energy,
-            s.stepsize, s.warmup_divergent, s.warmup_used, _jmap_carry(m, m2, s.x),
-            s.metric) for s in seg]
-end
-
 ################################################################################
 # Reporting the effects
 ################################################################################
@@ -1113,8 +1084,7 @@ end
         ndraws, ...)
 
 The kept draws under the final map `m`: a re-tuning warm-up and `ndraws` a
-chain from `starts`, after the learning draws kept (`prefix`, in `m`'s
-coordinates, or `nothing`), then extended by the one stopping rule
+chain from `starts`, then extended by the one stopping rule
 (`_sample_until_target`) judged on theta rather than on its latent
 coordinates. `_sample_to_target` with the map's pooling, in a function of its
 own so that its continuation captures nothing that is assigned again.
@@ -1123,18 +1093,15 @@ function _jmap_final(m::CTSEMJointMap, counter::Threads.Atomic{Int}, nchains::In
     parallel::Bool, seed::Integer, centre::Vector{Float64}, metric::CTSEMMetric,
     nwarmup::Int, ndraws::Int, maxdepth::Int, target_accept::Float64,
     maxdelta::Float64, init_scale::Float64, adapt_metric::Bool, adapt, eps::Float64,
-    starts, prefix, min_ess::Float64, mean_ess::Float64, max_draws::Int,
-    rhat_target::Float64, verbose::Bool, overwrite::Bool, progress_callback,
-    progress_sink, t0::Float64, coordinate)
+    starts, min_ess::Float64, mean_ess::Float64, max_draws::Int, rhat_target::Float64,
+    verbose::Bool, overwrite::Bool, progress_callback, progress_sink, t0::Float64,
+    coordinate)
     npar = m.npar
-    batch = _sample_chains(nchains, parallel, seed, centre, metric, nwarmup, ndraws,
+    held = Ref(_sample_chains(nchains, parallel, seed, centre, metric, nwarmup, ndraws,
         maxdepth, target_accept, maxdelta, init_scale, adapt_metric, adapt,
         c -> CTSEMJointMapDensity(m, counter); init_eps=eps, starts=starts,
         progress=verbose, overwrite=overwrite, progress_callback=progress_callback,
-        progress_sink=progress_sink)
-    npre = prefix === nothing ? 0 : size(prefix[1].draws, 2)
-    held = Ref(prefix === nothing ? batch : _jmap_join(prefix, batch))
-    ntotal = ndraws + npre
+        progress_sink=progress_sink))
     extend! = function (wanted, attempt)
         held[] = _merge_chains(held[],
             _continue_chains(nchains, parallel, seed + 1000 * attempt, wanted, maxdepth,
@@ -1144,9 +1111,9 @@ function _jmap_final(m::CTSEMJointMap, counter::Threads.Atomic{Int}, nchains::In
         return nothing
     end
     run = _sample_until_target(() -> _jmap_thetas(m, _pool_draws(held[], npar)),
-        extend!, nchains, ntotal, min_ess, mean_ess, max(max_draws, ntotal), rhat_target,
-        verbose; t0=t0, coordinate=coordinate)
-    return (results=held[], ndraws=run.total, trace=run.trace, npre=npre)
+        extend!, nchains, ndraws, min_ess, mean_ess, max_draws, rhat_target, verbose;
+        t0=t0, coordinate=coordinate)
+    return (results=held[], ndraws=run.total, trace=run.trace)
 end
 
 """
@@ -1159,19 +1126,15 @@ layer otherwise; the keywords are `ctsem_sample`'s, plus the map's: `windows`
 the map from the fit), `nsettle` (the re-tuning warm-up after each refit and
 before the kept draws), `ncheck` (a check window under the final map),
 `maxrows` (the most draws a refit reads), `cross` (each member's summary
-coupled to the free parameters outside its effects), `keep_windows` (how many
-of the last learning windows' draws, with the check window's, open the kept
-draws) and `report` (the layer's objective, whose layout the effects are
-reported in: a unit whose effects are all integrated has no block on the
-hybrid objective).
+coupled to the free parameters outside its effects) and `report` (the layer's
+objective, whose layout the effects are reported in: a unit whose effects are
+all integrated has no block on the hybrid objective).
 
 Returns `ctsem_sample`'s record, with the draws of theta and, with
 `save_effects`, of the natural deviations, plus the map's: `gradients` (every
-density evaluation and score pass, in gradients), the learning windows,
-`learnt_draws`, the draws a chain kept from them, and the kept draws' latent
-mean and sd per coordinate (`latent_mean`, `latent_sd`, theta's first). E-BFMI
-reads only the draws under the final map: an energy is a latent density's, and
-each map has its own.
+density evaluation and score pass, in gradients), the learning windows, and
+the kept draws' latent mean and sd per coordinate (`latent_mean`,
+`latent_sd`, theta's first).
 """
 function ctsem_sample_map(laplace::CTSEMLaplaceObjective, values::AbstractVector;
     npar::Integer=length(values), nchains::Integer=4, nwarmup::Integer=75,
@@ -1184,8 +1147,7 @@ function ctsem_sample_map(laplace::CTSEMLaplaceObjective, values::AbstractVector
     progress_sink=nothing, stepsize::Real=0.0, coordinate=nothing,
     windows::Union{Nothing,AbstractVector{<:Integer}}=nothing, nsettle::Integer=25,
     ncheck::Integer=25, maxrows::Integer=400, cross::Bool=true,
-    report::Union{Nothing,CTSEMLaplaceObjective}=nothing, theta_map::Bool=true,
-    keep_windows::Integer=0)
+    report::Union{Nothing,CTSEMLaplaceObjective}=nothing, theta_map::Bool=true)
 
     t0 = time()
     nchains = Int(nchains); nwarmup = Int(nwarmup); ndraws = Int(ndraws)
@@ -1239,8 +1201,6 @@ function ctsem_sample_map(laplace::CTSEMLaplaceObjective, values::AbstractVector
     learn = theta_map && npar <= _JMAP_TRI_MAXPAR
     windows = windows === nothing ? (learn ? [40, 80, 160] : [40, 80]) : windows
     pooled = zeros(npar, 0)
-    keep = clamp(Int(keep_windows), 0, length(windows))
-    prefix = nothing
     for (w, nw) in enumerate(windows)
         mw = m
         results = _sample_chains(nchains, parallel, seed + 101 * w, centre, metric,
@@ -1255,7 +1215,6 @@ function ctsem_sample_map(laplace::CTSEMLaplaceObjective, values::AbstractVector
             m2 = _jmap_learn_tri(m2, pooled)
         end
         extra += rows
-        w > length(windows) - keep && (prefix = _jmap_keep(prefix, results, moved, m, m2))
         starts = _jmap_restarts(m, m2, results, moved, Wl, rng)
         eps = median([r.stepsize for r in results[moved]])
         push!(windowlog, (window=Int(nw), stopped=count(!, moved), refit=refit,
@@ -1273,7 +1232,6 @@ function ctsem_sample_map(laplace::CTSEMLaplaceObjective, values::AbstractVector
             starts=starts)
         moved = _jmap_moved(results, npar)
         Wl = _pool_draws(results[moved], D)
-        keep > 0 && (prefix = _jmap_keep(prefix, results, moved, m, m))
         starts = _jmap_restarts(m, m, results, moved, Wl, rng)
         eps = median([r.stepsize for r in results[moved]])
         push!(windowlog, (window=0, stopped=count(!, moved), refit=0, shrink=NaN,
@@ -1287,12 +1245,11 @@ function ctsem_sample_map(laplace::CTSEMLaplaceObjective, values::AbstractVector
     final = _jmap_final(mf, counter, nchains, parallel, seed, centre, metric,
         isempty(windows) ? nwarmup : Int(nsettle), ndraws, Int(maxdepth),
         Float64(target_accept), Float64(maxdelta), Float64(init_scale), adapt_metric,
-        adapt, eps, starts, prefix, Float64(min_ess), Float64(mean_ess),
+        adapt, eps, starts, Float64(min_ess), Float64(mean_ess),
         max(Int(max_draws), ndraws), Float64(rhat_target), verbose, progress_overwrite,
         progress_callback, progress_sink, t0, coordinate)
     results = final.results
     ndraws = final.ndraws
-    npre = final.npre
 
     # Theta and the natural deviations at every kept draw, in the report
     # objective's layout.
@@ -1340,9 +1297,6 @@ function ctsem_sample_map(laplace::CTSEMLaplaceObjective, values::AbstractVector
     end
     failed > 0 && verbose && println(_console(), "  ", failed,
         " draw(s) had a subject whose integrated effects could not be evaluated")
-    energy = npre == 0 ? pooled.energy :
-        reduce(vcat, [pooled.energy[((c - 1) * ndraws + npre + 1):(c * ndraws)]
-                      for c in 1:nchains])
     # The kept draws' latent mean and sd per coordinate: 0 and 1 where the map
     # is right, so they say where it is not.
     lsum = zeros(D)
@@ -1360,14 +1314,13 @@ function ctsem_sample_map(laplace::CTSEMLaplaceObjective, values::AbstractVector
             ndim=npar + ndev, maxdepth=Int(maxdepth),
             stepsize=[r.stepsize for r in results],
             warmup_divergent=[r.warmup_divergent for r in results], trace=final.trace,
-            saved_effects=save_effects, ebfmi=_ebfmi(energy, nchains),
+            saved_effects=save_effects,
             effects=_effect_summary(effect_sum, effect_sq, effect_cross, total, blocks)),
         (sampler="map", placement=_saem_placement_summary(nothing),
          map=(gradients=counter[] + extra + (hybrid ? total : 0),
               learn_gradients=learn_gradients, learn_secs=learned,
-              windows=windowlog, coordinates=D - npar, learnt_draws=npre,
-              latent_mean=lmean, latent_sd=lsd, integrated=hybrid,
-              coupled=length(mf.R))))
+              windows=windowlog, coordinates=D - npar, latent_mean=lmean,
+              latent_sd=lsd, integrated=hybrid, coupled=length(mf.R))))
 end
 
 """
