@@ -260,6 +260,37 @@ test_that("a fresh session's first fit of a model the workload never saw compile
   }
 })
 
+# Not captured either: a loading that reads the state and a cubic drift. No
+# workload model has either, so what puts their iterated update and moment
+# prediction in the image is that every filter compiles them, reached or not.
+# Walled off behind barriers, each session's first fit of such a model compiled
+# them, 30 s on dev2 (review/PRECOMPILE-walls-and-types-2026-10-27.md).
+.nonlinear_model <- function() {
+  m <- suppressWarnings(suppressMessages(ctModel(type = "ct", n.latent = 1,
+    n.manifest = 2, manifestNames = c("y1", "y2"), latentNames = "eta1",
+    PARS = c("drift|-log1p_exp(param)"), DRIFT = matrix("PARS[1,1] - 0.1 * eta1^2"),
+    LAMBDA = matrix(c(1, "exp(0.2 * eta1)"), 2, 1), MANIFESTMEANS = matrix(0, 2, 1),
+    CINT = matrix("cint"), T0MEANS = matrix(0))))
+  m$pars$indvarying <- m$pars$param %in% "cint"
+  m
+}
+
+test_that("a fresh session's first fit of a nonlinear model compiles almost nothing", {
+  skip_without_julia()
+  .skip_without_workload()
+  for (route in c("augmented", "laplace")) {
+    res <- .first_fit_compiles(.nonlinear_model, .precompile_data, route,
+      list(kalman = function(fit) ctKalman(fit)))
+    .expect_compiles_little(res, sprintf("a nonlinear model on the %s route", route))
+    if (!isTRUE(res$finished)) next
+    expect_true(is.na(res$then$kalman$error), label = sprintf(
+      "the first ctKalman after a nonlinear %s fit ran (%s)", route,
+      res$then$kalman$error))
+    expect_lt(res$then$kalman$seconds, 5, label = sprintf(
+      "seconds of compile in the first ctKalman after a nonlinear %s fit", route))
+  }
+})
+
 test_that("a fresh session's first follow-ups of a fit compile almost nothing", {
   skip_without_julia()
   .skip_without_workload()
