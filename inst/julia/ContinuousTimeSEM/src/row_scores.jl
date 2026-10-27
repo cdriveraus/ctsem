@@ -19,27 +19,20 @@
 #                                the model.
 #
 # Neither touches a fitting path. The derivatives are forward mode, seeded in
-# at most `_ROW_SCORE_WIDTH` directions a pass, so one dual type is compiled
-# for a model shape whatever the number of directions; a call asking for more
-# makes more passes rather than a wider type.
+# as many directions a pass as the Hessian's sweeps carry, at the Hessian's own
+# dual type (`_ctsem_hessian_dual`): a call asking for more directions makes
+# more passes rather than a wider type, and the filter at that type is in the
+# package image, where a type of their own compiled it at a user's first call.
 
-struct _RowScoreTag end
-
-"""The partials a row-score pass carries: directions are taken this many at a
-time, and a narrower set is padded with zero directions, so a model compiles
-one dual type for any number of them."""
-const _ROW_SCORE_WIDTH = 8
-
-const _RowScoreDual = ForwardDiff.Dual{_RowScoreTag,Float64,_ROW_SCORE_WIDTH}
-
-"""The raw parameters as duals seeded in `directions[:, cols]`, padded with
-zero directions to the pass's width."""
-function _row_score_seed(theta::Vector{Float64}, directions::AbstractMatrix,
-    cols::UnitRange{Int})
+"""The raw parameters as duals of type `S` seeded in `directions[:, cols]`,
+padded with zero directions to its width."""
+function _row_score_seed(::Type{S}, theta::Vector{Float64}, directions::AbstractMatrix,
+    cols::UnitRange{Int}) where {S}
+    W = ForwardDiff.npartials(S)
     k = length(cols)
-    return [_RowScoreDual(theta[j], ForwardDiff.Partials{_ROW_SCORE_WIDTH,Float64}(
+    return S[S(theta[j], ForwardDiff.Partials{W,Float64}(
         ntuple(a -> a <= k ? Float64(directions[j, cols[a]]) : 0.0,
-            Val(_ROW_SCORE_WIDTH)))) for j in eachindex(theta)]
+            Val(W)))) for j in eachindex(theta)]
 end
 
 """
@@ -57,23 +50,34 @@ function ctsem_row_scores(objective::CTSEMObjective, values::AbstractVector,
     size(directions, 1) == length(theta) || throw(DimensionMismatch(
         "directions needs one row per raw parameter"))
     K = size(directions, 2)
-    sp = objective.params
-    subjects = objective.subject_objectives
-    rows = [size(s.data, 2) for s in subjects]
+    rows = [size(s.data, 2) for s in objective.subject_objectives]
     out = fill(NaN, sum(rows; init=0), K)
     K == 0 && return out
-    ws = _init_continuous_ekf_workspace(_RowScoreDual, sp)
+    # The width is a run-time value, so the type is one too: the passes are a
+    # call of their own, specialised on it.
+    _row_scores!(out, objective, theta, directions, rows, _ctsem_hessian_dual(objective))
+    return out
+end
+
+function _row_scores!(out::Matrix{Float64}, objective::CTSEMObjective,
+    theta::Vector{Float64}, directions::AbstractMatrix, rows::Vector{Int},
+    ::Type{S}) where {S}
+    K = size(directions, 2)
+    W = ForwardDiff.npartials(S)
+    sp = objective.params
+    subjects = objective.subject_objectives
+    ws = _init_continuous_ekf_workspace(S, sp)
     ws.hyb.mode = _HYBRID_OFF
     n = ws.state_dim
     m = ws.manifest_dim
     nall = length(sp.mutables)
-    for c0 in 1:_ROW_SCORE_WIDTH:K
-        cols = c0:min(c0 + _ROW_SCORE_WIDTH - 1, K)
-        x = _row_score_seed(theta, directions, cols)
+    for c0 in 1:W:K
+        cols = c0:min(c0 + W - 1, K)
+        x = _row_score_seed(S, theta, directions, cols)
         offset = 0
         for (i, sub) in enumerate(subjects)
             nobs = rows[i]
-            trace = CTSEMKalmanTrace(_RowScoreDual, n, m, nobs, 1, nall)
+            trace = CTSEMKalmanTrace(S, n, m, nobs, 1, nall)
             trace.offset = 0
             trace.current_subject = 1
             ll = _extended_kalman_filter_continuous!(ws, x, sub.data,
@@ -125,9 +129,19 @@ function ctsem_row_scores(laplace::CTSEMLaplaceObjective, values::AbstractVector
     K == 0 && return out
     Ls = _laplace_popchols(theta, laplace.spec)
     _laplace_ensure_pool!(laplace)
+    # At the Hessian's dual type, a run-time value: see `ctsem_row_scores` above.
+    _laplace_row_scores!(out, laplace, theta, Ls, along, first_row,
+        _ctsem_hessian_dual(laplace.objective))
+    return out
+end
+
+function _laplace_row_scores!(out, laplace::CTSEMLaplaceObjective, theta::Vector{Float64},
+    Ls::Vector{Matrix{Float64}}, along::AbstractMatrix, first_row::Vector{Int},
+    ::Type{S}) where {S}
+    units = laplace.units
     _laplace_parallel(laplace, eachindex(units.members)) do U
         _laplace_row_scores_unit!(out, laplace, U, theta, Ls, along,
-            first_row[units.members[U][1]])
+            first_row[units.members[U][1]], S)
         return true
     end
     return out
@@ -135,7 +149,7 @@ end
 
 function _laplace_row_scores_unit!(out, laplace::CTSEMLaplaceObjective, U::Integer,
     theta::Vector{Float64}, Ls::Vector{Matrix{Float64}}, directions::AbstractMatrix,
-    offset::Integer)
+    offset::Integer, ::Type{S}) where {S}
     spec = laplace.spec
     units = laplace.units
     i = units.members[U][1]
@@ -146,7 +160,8 @@ function _laplace_row_scores_unit!(out, laplace::CTSEMLaplaceObjective, U::Integ
     K = size(directions, 2)
     npar = length(theta)
     blocks = units.blocks[U]
-    awsd = _laplace_workspace!(laplace, _RowScoreDual, npar)
+    W = ForwardDiff.npartials(S)
+    awsd = _laplace_workspace!(laplace, S, npar)
     previous = zeros(Float64, K)
     current = zeros(Float64, K)
     try
@@ -160,9 +175,9 @@ function _laplace_row_scores_unit!(out, laplace::CTSEMLaplaceObjective, U::Integ
             fac = _laplace_factor_repaired!(M, blocks)
             curvature = (fac.factors, fac.coupling)
             ok = true
-            for c0 in 1:_ROW_SCORE_WIDTH:K
-                cols = c0:min(c0 + _ROW_SCORE_WIDTH - 1, K)
-                x = _row_score_seed(theta, directions, cols)
+            for c0 in 1:W:K
+                cols = c0:min(c0 + W - 1, K)
+                x = _row_score_seed(S, theta, directions, cols)
                 Lsd = _laplace_popchols(x, spec)
                 ud = _laplace_dual_unit_mode(laplace, U, x, Lsd, u, curvature, awsd)
                 term = _laplace_unit_term(laplace, U, x, Lsd, ud, awsd)

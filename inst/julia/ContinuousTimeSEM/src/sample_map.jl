@@ -70,14 +70,6 @@ references throughout.
 
 export ctsem_sample_map
 
-"""Width of the seeded duals the map's dependence on theta is taken in: one
-width for every model, so no model compiles a type of its own."""
-const _JMAP_CHUNK = 8
-
-"""Tag for the map's seeded duals."""
-struct _JMapTag end
-
-const _JMapDual = ForwardDiff.Dual{_JMapTag,Float64,_JMAP_CHUNK}
 
 ################################################################################
 # Theta's triangular map
@@ -600,21 +592,32 @@ end
 
 # The effects' and the Jacobian's dependence on theta at fixed latent z,
 # contracted with the joint's gradient in the effects, added into `gtheta`:
-# `_JMAP_CHUNK` positions of `dep` a pass, seeded as duals.
+# as many positions of `dep` a pass as the Hessian's sweeps carry, seeded as
+# duals of the Hessian's type (`_ctsem_hessian_dual`), which the package image
+# holds the population covariance and the solves at, rather than a type of the
+# map's own. The type is a run-time value, so the passes are a call of their own.
 function _jmap_theta_gradient!(gtheta::Vector{Float64}, m::CTSEMJointMap,
     theta::Vector{Float64}, xt::AbstractVector, gus::Vector{Vector{Float64}})
+    isempty(m.dep) && return gtheta
+    return _jmap_theta_gradient!(gtheta, m, theta, xt, gus,
+        _ctsem_hessian_dual(m.sampler.laplace.objective))
+end
+
+function _jmap_theta_gradient!(gtheta::Vector{Float64}, m::CTSEMJointMap,
+    theta::Vector{Float64}, xt::AbstractVector, gus::Vector{Vector{Float64}},
+    ::Type{S}) where {S}
     dep = m.dep
     nd = length(dep)
-    nd == 0 && return gtheta
-    th = Vector{_JMapDual}(undef, length(theta))
-    for start in 1:_JMAP_CHUNK:nd
+    W = ForwardDiff.npartials(S)
+    th = Vector{S}(undef, length(theta))
+    for start in 1:W:nd
         @inbounds for j in eachindex(theta)
-            th[j] = _JMapDual(theta[j])
+            th[j] = S(theta[j])
         end
-        stop = min(start + _JMAP_CHUNK - 1, nd)
+        stop = min(start + W - 1, nd)
         @inbounds for a in start:stop
-            th[dep[a]] = _JMapDual(theta[dep[a]],
-                ForwardDiff.Partials(ntuple(b -> b == a - start + 1 ? 1.0 : 0.0, _JMAP_CHUNK)))
+            th[dep[a]] = S(theta[dep[a]],
+                ForwardDiff.Partials(ntuple(b -> b == a - start + 1 ? 1.0 : 0.0, Val(W))))
         end
         uu, lj, _ = _jmap_effects(m, th, xt; thR=theta[m.R])
         acc = lj
