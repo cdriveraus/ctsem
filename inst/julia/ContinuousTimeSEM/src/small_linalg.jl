@@ -80,31 +80,21 @@ is a setter for a single-threaded run on a large model, not a default.
 """
 const _CTSEM_SMALL_PRODUCT = Ref(typemax(Int))
 
-"""
-Arithmetic budget above which a matrix-vector product goes to BLAS `gemv`, in
-`length(y) * inner`. BLAS's matrix-vector products take no buffer and no lock:
-with eight threads calling at once they cost what they cost serially (12x12:
-33 against 35 ns locally, 67 against 101 on dev2), so this stays where the
-hand loop stops being quicker.
-"""
-const _CTSEM_SMALL_MATVEC = Ref(64)
-
 export ctsem_set_small_linalg!
 """
-    ctsem_set_small_linalg!(; dimension, product, matvec)
+    ctsem_set_small_linalg!(; dimension, product)
 
 Move the thresholds separating the engine's own small-matrix kernels from
 LAPACK and BLAS. Exposed because the crossover is a property of the machine, not
 of the mathematics -- the same reason `ctsem_set_block_threshold!` exists.
 """
 function ctsem_set_small_linalg!(; dimension::Integer=_CTSEM_SMALL_CHOLESKY[],
-    product::Integer=_CTSEM_SMALL_PRODUCT[], matvec::Integer=_CTSEM_SMALL_MATVEC[])
-    dimension >= 0 && product >= 0 && matvec >= 0 ||
+    product::Integer=_CTSEM_SMALL_PRODUCT[])
+    dimension >= 0 && product >= 0 ||
         throw(ArgumentError("thresholds must be non-negative"))
     _CTSEM_SMALL_CHOLESKY[] = Int(dimension)
     _CTSEM_SMALL_PRODUCT[] = Int(product)
-    _CTSEM_SMALL_MATVEC[] = Int(matvec)
-    return (dimension=Int(dimension), product=Int(product), matvec=Int(matvec))
+    return (dimension=Int(dimension), product=Int(product))
 end
 
 """
@@ -357,10 +347,6 @@ Is this product to be done by the engine's kernels rather than by BLAS?
 @inline _ctsem_small_product(C, inner::Integer) =
     length(C) * inner <= _CTSEM_SMALL_PRODUCT[]
 
-"""The matrix-vector form of `_ctsem_small_product`, against `_CTSEM_SMALL_MATVEC`."""
-@inline _ctsem_small_matvec(y, inner::Integer) =
-    length(y) * inner <= _CTSEM_SMALL_MATVEC[]
-
 """Inner dimension from which the column kernel (`_ctsem_colmul!`) is used."""
 const _CTSEM_COLUMN_KERNEL = 8
 
@@ -525,10 +511,23 @@ end
     return C
 end
 
-"""`y = alpha * A * x + beta * y`."""
+"""
+`y = alpha * A * x + beta * y`, writing `y[1:size(A, 1)]` and reading
+`x[1:size(A, 2)]`.
+
+Below an inner dimension of `_CTSEM_COLUMN_KERNEL`, a dot product per row;
+from there, `y` as a running sum of the columns of `A`, four a pass
+(`_ctsem_colmatvec!`), contiguous in the row index, so it vectorises. Never
+BLAS. One thread on dev3, ns a call: the column form 41 against `gemv`'s 67
+at 12 states, 612 against 705 at 64, level at 128, and quicker than
+LinearAlgebra's generic `mul!` at dual types from 8 up; the row-wise dot form
+it replaces from 8 up was 81 at 12 and 3100 at 64. The call to BLAS also went
+through `_ctsem_barrier`, a dynamic call that boxed its views on every row of
+a model of nine or more states, and compiled `mul!` at each dual type at a
+user's first fit (`scripts/precompile-build/matvec_kernels.jl`).
+"""
 @inline function _ctsem_mulvec!(y, A, x, alpha=true, beta=false)
-    _ctsem_small_matvec(y, size(A, 2)) ||
-        return (_ctsem_barrier(mul!, y, A, x, alpha, beta); y)
+    size(A, 2) >= _CTSEM_COLUMN_KERNEL && return _ctsem_colmatvec!(y, A, x, alpha, beta)
     @inbounds for i in axes(A, 1)
         acc = zero(eltype(y))
         for k in axes(A, 2)
@@ -539,16 +538,62 @@ end
     return y
 end
 
-"""`y = alpha * A' * x + beta * y`."""
+"""
+`y = alpha * A' * x + beta * y`: a dot product of `x` with each column of `A`,
+contiguous, the reduction under `@simd`. Never BLAS (see `_ctsem_mulvec!`):
+within 1.2 times `gemv` up to 128 states on one thread, and quicker below 64.
+"""
 @inline function _ctsem_mulTvec!(y, A, x, alpha=true, beta=false)
-    _ctsem_small_matvec(y, size(A, 1)) ||
-        return (_ctsem_barrier(mul!, y, transpose(A), x, alpha, beta); y)
     @inbounds for i in axes(A, 2)
         acc = zero(eltype(y))
-        for k in axes(A, 1)
+        @simd for k in axes(A, 1)
             acc += A[k, i] * x[k]
         end
         y[i] = iszero(beta) ? alpha * acc : alpha * acc + beta * y[i]
+    end
+    return y
+end
+
+"""
+    _ctsem_colmatvec!(y, A, x, alpha, beta)
+
+`_ctsem_mulvec!`'s column kernel: `y[1:m]` scaled by `beta` (overwritten where
+it is zero), then the columns of `A` added four a pass, each weighted by
+`alpha * x[k]`, as `_ctsem_colmul!` builds a column of a product.
+"""
+@noinline function _ctsem_colmatvec!(y, A, x, alpha, beta)
+    m = size(A, 1)
+    K = size(A, 2)
+    T = eltype(y)
+    @inbounds begin
+        if iszero(beta)
+            @simd for i in 1:m
+                y[i] = zero(T)
+            end
+        elseif !isone(beta)
+            @simd for i in 1:m
+                y[i] *= beta
+            end
+        end
+        k = 1
+        while k + 3 <= K
+            x1 = alpha * x[k]
+            x2 = alpha * x[k + 1]
+            x3 = alpha * x[k + 2]
+            x4 = alpha * x[k + 3]
+            @simd for i in 1:m
+                y[i] = muladd(A[i, k], x1, muladd(A[i, k + 1], x2,
+                    muladd(A[i, k + 2], x3, muladd(A[i, k + 3], x4, y[i]))))
+            end
+            k += 4
+        end
+        while k <= K
+            xk = alpha * x[k]
+            @simd for i in 1:m
+                y[i] = muladd(A[i, k], xk, y[i])
+            end
+            k += 1
+        end
     end
     return y
 end

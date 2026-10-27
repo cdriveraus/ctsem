@@ -277,8 +277,7 @@ formed from the whole pre-step state before any of it is overwritten. Shared by
 the particle filter and the state-explicit pass, which wrote it out identically.
 """
 @inline function _ctsem_deterministic_step!(ws, n::Int)
-    _matvec_mul!(ws.bufferQ.r, ws.discrete_ca.dDRIFT, ws.state,
-        ws.state_dim, ws.state_dim)
+    _ctsem_mulvec!(ws.bufferQ.r, ws.discrete_ca.dDRIFT, ws.state)
     for i in 1:n
         ws.state[i] = ws.bufferQ.r[i] + ws.discrete_ca.dINT[i]
     end

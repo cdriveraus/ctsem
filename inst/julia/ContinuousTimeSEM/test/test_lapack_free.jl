@@ -1,5 +1,6 @@
 using LinearAlgebra
 using Random
+using ForwardDiff
 
 # The subject loop is LAPACK-free by default: the hand-written Cholesky and LU
 # at every size, the hand-written Schur route (`real_schur.jl`) for every
@@ -37,6 +38,46 @@ end
     for n in (3, 20, 30)
         A = 0.2 .* randn(rng, n, n) .- 0.5 .* I(n)
         @test isapprox(ContinuousTimeSEM._ctsem_expm(A), exp(A); rtol=1e-11, atol=1e-13)
+    end
+end
+
+@testset "the engine's matrix-vector products: both kernels exact, never BLAS" begin
+    CT = ContinuousTimeSEM
+    @test !isdefined(CT, :_CTSEM_SMALL_MATVEC)
+    rng = MersenneTwister(12)
+    # Inner dimensions either side of the column kernel's threshold, with every
+    # remainder of four; non-square; a column-matrix x; views; alpha and beta;
+    # at Float64 and at a dual type.
+    for (m, K) in ((3, 2), (5, 7), (4, 8), (9, 9), (6, 10), (12, 11), (7, 13),
+            (16, 16), (30, 64))
+        A = randn(rng, m, K); x = randn(rng, K); At = randn(rng, K, m)
+        for (alpha, beta) in ((true, false), (2.5, 0.0), (1.0, 1.0), (-0.5, 0.3))
+            y0 = randn(rng, m)
+            @test CT._ctsem_mulvec!(copy(y0), A, x, alpha, beta) ≈ alpha .* (A * x) .+ beta .* y0
+            @test CT._ctsem_mulTvec!(copy(y0), At, x, alpha, beta) ≈
+                alpha .* (At' * x) .+ beta .* y0
+        end
+        @test CT._ctsem_mulvec!(zeros(m), A, reshape(x, :, 1)) ≈ A * x
+        # beta = 0 must not read y.
+        @test !any(isnan, CT._ctsem_mulvec!(fill(NaN, m), A, x))
+        @test !any(isnan, CT._ctsem_mulTvec!(fill(NaN, m), At, x))
+        # An output longer than the product, and an input longer than the
+        # inner dimension: only the leading entries are written and read.
+        ybig = fill(7.0, m + 3)
+        CT._ctsem_mulvec!(ybig, A, vcat(x, fill(NaN, 2)))
+        @test ybig[1:m] ≈ A * x
+        @test all(==(7.0), ybig[(m + 1):end])
+        big = randn(rng, m + 3, K + 3)
+        Av = view(big, 2:(m + 1), 3:(K + 2))
+        @test CT._ctsem_mulvec!(zeros(m), Av, x) ≈ Matrix(Av) * x
+        D = ForwardDiff.Dual{Nothing}
+        Ad = map(v -> D(v, randn(rng), randn(rng)), A)
+        xd = map(v -> D(v, randn(rng), randn(rng)), x)
+        yd = CT._ctsem_mulvec!(similar(xd, m), Ad, xd)
+        ref = Ad * xd
+        @test ForwardDiff.value.(yd) ≈ ForwardDiff.value.(ref)
+        @test ForwardDiff.partials.(yd, 1) ≈ ForwardDiff.partials.(ref, 1)
+        @test ForwardDiff.partials.(yd, 2) ≈ ForwardDiff.partials.(ref, 2)
     end
 end
 

@@ -243,7 +243,7 @@ end
     # Predict mean and covariance.
     #   x_{t|t-1} = A_d * x_{t-1|t-1} + b_d
     #   P_{t|t-1} = A_d * P_{t-1|t-1} * A_d' + Q_d
-    _matvec_mul!(ws.bufferQ.r, ws.discrete_ca.dDRIFT, ws.state, ws.state_dim, ws.state_dim)
+    _ctsem_mulvec!(ws.bufferQ.r, ws.discrete_ca.dDRIFT, ws.state)
     @. ws.state = ws.bufferQ.r + ws.discrete_ca.dINT
 
     # Stan ridges the incoming posterior covariance before every propagation
@@ -688,9 +688,8 @@ function _ekf_masked_update_step!(ws::ContinuousEKFWorkspace, pars,
     Lv = RELIN ? view(pars.Jy, observed, :) : view(pars.LAMBDA, observed, :)
     μv = RELIN ? view(ws.mm_eff, 1:m) : view(pars.MANIFESTMEANS, observed)
     predview = view(ws.bufferΘ.r, 1:m)
-    # Plain loops rather than the Val-dispatched `_matvec_mul!`: `m` is the
-    # number of observed indicators on this row, a runtime quantity, and a
-    # `Val` built from it is a dynamic dispatch and an allocation per row.
+    # Plain loops over the observed rows: `m` is a runtime quantity, and a
+    # `Val` built from it would be a dynamic dispatch and an allocation per row.
     state = ws.state
     @inbounds for i in 1:m
         acc = zero(eltype(predview))
@@ -1491,8 +1490,8 @@ end
     # (`_hybrid_td_impulse!`).
     ws.hyb.active && ws.hyb.q > 0 &&
         _ekf_gaussian_call(ws, _hybrid_td_impulse!, _ekf_hybrid_refused, ws.hyb, tdpreds)
-    # Not `_matvec_mul!` at `Val(length(tdpreds))`: a runtime `Val` made it a
-    # dynamic call, which boxed both views on every row with a TD predictor.
+    # Not at a `Val(length(tdpreds))`: a runtime `Val` made it a dynamic call,
+    # which boxed both views on every row with a TD predictor.
     _ctsem_mulvec!(ws.bufferQ.r, pars.TDPREDEFFECT, tdpreds)
     ws.state .+= ws.bufferQ.r
     _ctsem_mul!(ws.bufferQ.intermediate, pars.Jtd, ws.P_predict.data)
