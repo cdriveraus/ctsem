@@ -1,4 +1,5 @@
-# Sampling a julia backend fit: NUTS, or SAEM's kernel on the joint posterior.
+# Sampling a julia backend fit: on the joint posterior NUTS through a learnt
+# map, or SAEM's kernel; on a marginal one NUTS or tempered SMC.
 #
 # `intoverpop='laplace'` approximates each unit's integral by a Gaussian at its
 # mode. That is exact when the integrand is Gaussian in the random effects and
@@ -7,7 +8,7 @@
 # error and corrects it to first order. Sampling removes it: the joint
 # posterior over population parameters *and* random effects makes no Gaussian
 # assumption anywhere, and the fit is then used only to place the chains --
-# by default through SAEM's state, which starts from it.
+# by default the map's, which starts from its estimate and Hessian.
 #
 # What is sampled is said by `intoverpop`, in its own words, and by nothing
 # else (`.ctBackendSampleRoute()`): 'none' samples the joint posterior over
@@ -318,7 +319,7 @@
     named = if (marginal && !isTRUE(state_explicit) && !tisampled &&
       !is.null(directions)) NCOL(directions) else 0L,
     nutsonly = .ctBackendNutsAsked(control, nutsgiven),
-    integrable = .ctBackendMapDefault(.ctBackendSpec(fit), tisampled))
+    tisampled = tisampled)
   # After the sampler: the map's default placement is the fit's estimate.
   placement <- .ctBackendPlacementFor(control, marginal || isTRUE(state_explicit))
   # The map sampler's warm-up is its learning schedule's (`ctsem_sample_map`'s
@@ -630,21 +631,24 @@
 # times; on the nonlinear model, two named, they tied.
 #
 # 'map' runs NUTS on the joint target through a learnt map
-# (`ctsem_sample_map`, sample_map.jl), on the hybrid objective: the effects the
+# (`ctsem_sample_map`, sample_map.jl), on the hybrid objective: any effects the
 # filter integrates exactly are integrated, and each unit's remaining effects
 # are partially non-centred from Gaussian summaries of its members'
 # likelihoods, learnt from their scores in warm-up windows. It starts from the
 # fit's estimate, not SAEM's placement.
 #
-# On the joint target the default is 'map' where the filter integrates some
-# of the effects exactly (`.ctBackendMapDefault()`), and 'saem' elsewhere. On
-# the posterior race's 20 fixtures the map was faster than SAEM's kernel on all
-# eight with such effects, by 1.3 to 15 times, and slower on eight of the
-# twelve without, where its partial centring is what SAEM's scale moves already
-# do (review/SAMPLING-general-joint-map-2026-10-25.md).
+# On the joint target the default is 'map', and 'saem' with sampled TI
+# predictor values, whose objective the map has not been checked on. Through
+# `ctFitUncertainty()` on the posterior race's 20 fixtures, two seeds each, at
+# the default target (dev2, review/SAMPLING-general-joint-map-2026-10-25.md),
+# the map reached the target in 39 runs of 40 and SAEM's kernel in 23, and
+# the map took 2.3 times less time an effective draw: 1.4 times on the twelve
+# where the filter integrates nothing, though slower on three of them (5.5
+# times on a binary item). Before the map was triangular (in the engine) SAEM
+# was the faster on eight of those twelve, and the default there.
 #
-# 'saem' is the default on the rest of the joint target because it is the more reliable
-# of the two there, not only the faster: through `ctFitUncertainty()` on 13
+# 'saem' had been the joint default because it is more reliable than NUTS on
+# the joint vector, not only faster: through `ctFitUncertainty()` on 13
 # models (dev2, review/POSTERIOR-race-2026-10-02.md) its mean worst error
 # against a long reference was 0.34 posterior sds to NUTS's 0.50, at 0.6x the
 # time, and NUTS on the joint vector never reached ESS 200 on three variance
@@ -653,9 +657,9 @@
 # sampler there; the state-explicit one has no check, so NUTS.
 #' @keywords internal
 .ctBackendSamplerName <- function(sampler, joint = TRUE, named = 0L, nutsonly = FALSE,
-  integrable = FALSE) {
+  tisampled = FALSE) {
   if (is.null(sampler)) {
-    if (isTRUE(joint)) return(if (isTRUE(integrable)) "map" else "saem")
+    if (isTRUE(joint)) return(if (isTRUE(tisampled)) "saem" else "map")
     return(if (!isTRUE(nutsonly) && isTRUE(named > 0L)) "smc" else "nuts")
   }
   if (!is.character(sampler) || length(sampler) != 1L ||
@@ -686,16 +690,6 @@
     isTRUE(control$adapt_effects) || !is.null(control$settleTol)
 }
 
-# Whether the joint target's default sampler is the map: where the subject
-# filter integrates some of the effects exactly (`spec$laplace$hybrid`, set by
-# `.ctJuliaLaplaceHybrid()`), whose integration is the map sampler's main
-# gain. Not with sampled TI predictor values, whose hybrid objective it has
-# not been checked on.
-#' @keywords internal
-.ctBackendMapDefault <- function(spec, tisampled = FALSE) {
-  !isTRUE(tisampled) && !is.null(spec$laplace$hybrid)
-}
-
 # The placement a call's `control` resolves to: `.ctBackendPlacementName()`'s,
 # except that the map sampler starts from the fit's estimate and its Hessian,
 # which SAEM's placement does not give it -- 'fit' by default there, and
@@ -714,8 +708,10 @@
 }
 
 # Where the chains start, `control$placement`. 'saem', the default on the joint
-# target, runs SAEM from the fit's estimate (or, under `ctFit(optimize =
-# FALSE)`, from the start and prior warm-up alone) and starts the chains from
+# target for SAEM's kernel and NUTS (the map starts from the fit's estimate,
+# `.ctBackendPlacementFor()`), runs SAEM from the fit's estimate (or, under
+# `ctFit(optimize = FALSE)`, from the start and prior warm-up alone) and
+# starts the chains from
 # its state: its estimate, which targets the exact marginal posterior where the
 # fit's optimum targets the Laplace approximation to it, and its chains'
 # effects. 'fit' starts them around the fit's own estimate, as before. A
@@ -848,8 +844,8 @@
     if (any(unused)) {
       stop("control$", paste(names(unused)[unused], collapse = ", control$"),
         " is a setting of the NUTS sampler's joint metric, which the SAEM ",
-        "kernel (control$sampler = 'saem', the default on the joint ",
-        "posterior) and tempered SMC ('smc', no warmup) do not use. Add ",
+        "kernel (control$sampler = 'saem') and tempered SMC ('smc', no ",
+        "warmup) do not use. Add ",
         "sampler = 'nuts' to use it.", call. = FALSE)
     }
   }
@@ -2224,8 +2220,8 @@ print.ctSampleDiagnostics <- function(x, ...) {
     list(laplace_correct = FALSE, uncertainty = "hessian", estonly = FALSE,
       finishsamples = 2L))
   # When SAEM places the chains (`control$placement = 'saem'`, the default on
-  # the joint target), it runs from this fit's point, so this fit needs only
-  # the start and the prior warm-up: the Laplace approximation's optimum is
+  # the joint target for its kernel), it runs from this fit's point, so this
+  # fit needs only the start and the prior warm-up: the Laplace approximation's optimum is
   # not where the exact posterior is, and SAEM is what finds that. No
   # Hessian, so no identifiability report from a placement optimum either; the
   # sampler's own flat-region check stands in.
@@ -2238,10 +2234,9 @@ print.ctSampleDiagnostics <- function(x, ...) {
   jointtarget <- isTRUE(intoverstates) && !marginal
   # The joint target's default sampler, settled before the placement: the map
   # starts from an optimised fit and its Hessian, SAEM from the start alone.
-  if (jointtarget && is.null(control$sampler) &&
-      .ctBackendMapDefault(model_spec, NROW(spec0$ti_imputed) > 0L &&
-        .ctJuliaTIMissingSamples(spec0))) {
-    control$sampler <- "map"
+  if (jointtarget && is.null(control$sampler)) {
+    control$sampler <- .ctBackendSamplerName(NULL, tisampled =
+      NROW(spec0$ti_imputed) > 0L && .ctJuliaTIMissingSamples(spec0))
   }
   if (jointtarget && identical(.ctBackendPlacementFor(control, FALSE), "saem")) {
     placementcontrol <- utils::modifyList(placementcontrol,

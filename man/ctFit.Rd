@@ -176,8 +176,9 @@ into the engine; for live output use \code{optimcontrol$callback}.}
 maximum a posteriori with \code{priors=TRUE} -- with uncertainty from the
 curvature at the estimate. If FALSE, sample the posterior: with Stan's HMC
 sampler for \code{backend='stan'}, and for \code{backend='julia'} with
-SAEM's kernel on the joint posterior of parameters and random effects, or
-NUTS when there are none or \code{intoverpop} integrates them out -- slower,
+NUTS through a learnt map on the joint posterior of parameters and random
+effects, or NUTS or tempered SMC when there are none or \code{intoverpop}
+integrates them out -- slower,
 but exact rather than a normal approximation at a mode. Other uncertainty methods for an optimised fit,
 importance sampling among them, are in \code{\link{ctFitUncertainty}}. A
 sampled fit's point estimate is the per-parameter median of the draws on
@@ -306,11 +307,13 @@ draw is kept; and \code{processes} (FALSE), whether the chains run in worker
 processes -- at most \code{cores} at once, so four chains on two cores run
 two at a time -- rather than together in this session.
 
-For \code{backend='julia'} also \code{sampler} (\code{'saem'}, SAEM's
-kernel, on the joint posterior, \code{'nuts'} otherwise or by choice),
-\code{placement} (\code{'saem'} on the joint posterior: SAEM's state places
-the chains, so no Laplace optimum is needed; \code{'fit'} places them
-around an optimised fit), the stopping target \code{minESS} (200, of the
+For \code{backend='julia'} also \code{sampler} (\code{'map'}, NUTS
+through a learnt map, on the joint posterior; \code{'saem'}, SAEM's kernel,
+or \code{'nuts'} by choice), \code{placement} (the map starts from an
+optimised fit; for \code{'saem'} and \code{'nuts'} on the joint posterior
+\code{'saem'}: SAEM's state places the chains, so no Laplace optimum is
+needed; \code{'fit'} places them around an optimised fit), the stopping
+target \code{minESS} (200, of the
 worst parameter) and \code{rhatTarget} (1.01), with \code{meanESS},
 \code{maxDraws} and \code{settleTol}, and NUTS's \code{maxdepth},
 \code{target_accept}, \code{maxdelta}, \code{init_scale},
