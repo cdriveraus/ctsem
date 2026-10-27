@@ -583,7 +583,11 @@ simplifystanfunction<-function(bcalc,simplify=TRUE){ #input text of list of comp
   bcalcs2 = gsub("]", "___rightsquarebracket___", bcalcs2, fixed = TRUE)
   
   bcalcs2c=paste0('c(',paste0(bcalcs2,collapse=', '),')')
-  if(simplify) scalcs2=Deriv::Deriv(bcalcs2c,nderiv=0)  else scalcs2=bcalcs2c 
+  # With ctsem's rules for log1p_exp and inv_logit: without one, Deriv inlines
+  # the function's body, and log1p_exp's overflow-free body (pmax) fails there
+  # with "invalid .Internal() argument", which stopped every stan fit of a
+  # model with log1p_exp in a state-dependent cell.
+  if(simplify) scalcs2=.ctWithStableDerivRules(Deriv::Deriv(bcalcs2c,nderiv=0))  else scalcs2=bcalcs2c
   if(simplify && !grepl('\\.e',scalcs2)) scalcs2=bcalcs2c #hack to avoid weird leftovers from non reduced simplify
   
   if(scalcs2 == 'NULL') return('') else{

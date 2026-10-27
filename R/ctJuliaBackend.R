@@ -230,12 +230,11 @@
   }
   managed <- .ctJuliaManagedBin()
   if (!is.null(managed)) return(managed)
+  # The PATH's, else juliaup's, either one a launcher to follow.
   onpath <- Sys.which("julia")[[1]]
-  if (nzchar(onpath)) {
-    return(.ctJuliaLauncherTarget(normalizePath(dirname(onpath), winslash = "/",
-      mustWork = TRUE)))
-  }
-  .ctJuliaLauncherTarget(.ctJuliaJuliaupBin())
+  found <- if (nzchar(onpath)) normalizePath(dirname(onpath), winslash = "/",
+    mustWork = TRUE) else .ctJuliaJuliaupBin()
+  .ctJuliaLauncherTarget(found)
 }
 
 .ctJuliaRequire <- function() {
