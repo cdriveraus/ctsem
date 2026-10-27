@@ -105,7 +105,9 @@ const _JMapDual = ForwardDiff.Dual{_JMapTag,Float64,_JMAP_CHUNK}
 # stop bending beyond about `c` sd. Read as `u`, quadratics fitted from 480
 # draws moved later locations by up to 22 sd at a draw 14 sd out on gN1, and
 # its worst held-out draw lost 970 nats to the normal; saturated, 9, and the
-# mean gain grew. And
+# mean gain grew. `c` is 5: against 3, on nine race fixtures at twelve seeds,
+# the map was about as efficient (1.08 times the effective draws a gradient)
+# and one run of 108 ended under min ESS 60 to five. And
 # `delta` is held at most 1, tails no lighter than the normal's: a small sample
 # misses the tails, a fit from it makes them light, and the latent target is
 # then heavy-tailed, where NUTS mixes slowly
@@ -114,7 +116,7 @@ const _JMapDual = ForwardDiff.Dual{_JMapTag,Float64,_JMAP_CHUNK}
 const _JMAP_TRI_CAP = 3.0
 """Beyond about this many whitened sd an earlier coordinate stops bending a
 later one's location and scale."""
-const _JMAP_TRI_SAT = 3.0
+const _JMAP_TRI_SAT = 5.0
 _jmap_tri_sat(u) = _JMAP_TRI_SAT * tanh(u / _JMAP_TRI_SAT)
 """Theta's triangular map is learnt for up to this many free parameters; a
 component's fit has `3k + 1` coefficients and a Newton step over them."""

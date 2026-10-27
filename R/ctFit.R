@@ -772,8 +772,9 @@ T0VARredundancies <- function(ctm) {
 #' maximum a posteriori with \code{priors=TRUE} -- with uncertainty from the
 #' curvature at the estimate. If FALSE, sample the posterior: with Stan's HMC
 #' sampler for \code{backend='stan'}, and for \code{backend='julia'} with
-#' SAEM's kernel on the joint posterior of parameters and random effects, or
-#' NUTS when there are none or \code{intoverpop} integrates them out -- slower,
+#' NUTS through a learnt map on the joint posterior of parameters and random
+#' effects, or NUTS or tempered SMC when there are none or \code{intoverpop}
+#' integrates them out -- slower,
 #' but exact rather than a normal approximation at a mode. Other uncertainty methods for an optimised fit,
 #' importance sampling among them, are in \code{\link{ctFitUncertainty}}. A
 #' sampled fit's point estimate is the per-parameter median of the draws on
@@ -839,11 +840,13 @@ T0VARredundancies <- function(ctm) {
 #' processes -- at most \code{cores} at once, so four chains on two cores run
 #' two at a time -- rather than together in this session.
 #'
-#' For \code{backend='julia'} also \code{sampler} (\code{'saem'}, SAEM's
-#' kernel, on the joint posterior, \code{'nuts'} otherwise or by choice),
-#' \code{placement} (\code{'saem'} on the joint posterior: SAEM's state places
-#' the chains, so no Laplace optimum is needed; \code{'fit'} places them
-#' around an optimised fit), the stopping target \code{minESS} (200, of the
+#' For \code{backend='julia'} also \code{sampler} (\code{'map'}, NUTS
+#' through a learnt map, on the joint posterior; \code{'saem'}, SAEM's kernel,
+#' or \code{'nuts'} by choice), \code{placement} (the map starts from an
+#' optimised fit; for \code{'saem'} and \code{'nuts'} on the joint posterior
+#' \code{'saem'}: SAEM's state places the chains, so no Laplace optimum is
+#' needed; \code{'fit'} places them around an optimised fit), the stopping
+#' target \code{minESS} (200, of the
 #' worst parameter) and \code{rhatTarget} (1.01), with \code{meanESS},
 #' \code{maxDraws} and \code{settleTol}, and NUTS's \code{maxdepth},
 #' \code{target_accept}, \code{maxdelta}, \code{init_scale},
@@ -1519,8 +1522,9 @@ ctFit<-function(datalong, model, stanmodeltext=NA, iter=1000, intoverstates=TRUE
   if(optimize && priorscope %in% 'all') message(
     "Maximum a posteriori estimation requested")
   # Naming stan here was wrong for half the fits it described: with
-  # backend='julia' the engine runs its own sampler -- SAEM's kernel on the
-  # joint posterior by default, NUTS or tempered SMC on a marginal one -- and a user reading
+  # backend='julia' the engine runs its own sampler -- NUTS through a learnt
+  # map on the joint posterior by default, NUTS or tempered SMC on a marginal
+  # one -- and a user reading
   # "Stan's NUTS sampler" on a julia fit has no reason to believe the julia
   # sampler ran at all. Which kernel is said when sampling starts.
   if(!optimize) message("Bayesian estimation via ",
@@ -2557,8 +2561,8 @@ ctFit<-function(datalong, model, stanmodeltext=NA, iter=1000, intoverstates=TRUE
     #
     # The route is what `intoverpop` resolved to: TRUE takes 'laplace' or
     # 'augmented' as the model suits, and 'auto' under optimize=FALSE takes
-    # 'none'. The joint row is drawn by SAEM's kernel and placed by SAEM's
-    # state unless `sampleControl` says otherwise (`sampler`, `placement`).
+    # 'none'. The joint row is drawn through a learnt map from an optimised
+    # placement unless `sampleControl` says otherwise (`sampler`, `placement`).
     # Under optimize=FALSE the route is what is sampled, and nothing else
     # says it (`.ctBackendSampleRoute()`): 'auto' resolves to 'laplace' there
     # only where the Laplace term is exact, which the prepared specification

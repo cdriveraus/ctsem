@@ -121,7 +121,7 @@ followups <- list(
 # sampled fit and the `sample` follow-up both take its exact marginal; the
 # joint is asked for by name (`intoverpop = 'none'`), where it goes through the
 # map, the filter integrating the intercept (`ctsem_sample_map`). SAEM's
-# kernel, the joint's sampler wherever the filter integrates nothing, is asked
+# kernel, the joint's sampler where TI predictor values are sampled, is asked
 # for by name too, and so is 'checked' (its normal check, DAIS and importance
 # sampler), which a default fit no longer runs.
 sampled_fit <- list(sampled = function(fit, dat, model) ctFit(dat, model,
