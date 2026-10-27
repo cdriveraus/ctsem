@@ -42,9 +42,9 @@ discrete time, with every state diffusing, TI predictors observed, TD
 predictors entering as impulses, initial moments stated or stationary (in
 continuous time, without integrated deviations or cells evaluated by row), no
 population block, deviations integrated whole or profiled (not at fixed
-values), and no forward-mode subjects. Cells evaluated by row are covered
-where the filter neither iterates the update nor moment-matches the
-prediction, and not beside integrated deviations.
+values), and no forward-mode subjects. Cells evaluated by row are covered,
+with the iterated update a nonlinear measurement takes, where the filter does
+not moment-match the prediction, and not beside integrated deviations.
 """
 function _tan_refusal(objective::CTSEMObjective, hybrid_mode::Integer=_HYBRID_PROFILE)
     subjects = objective.subject_objectives
@@ -53,7 +53,6 @@ function _tan_refusal(objective::CTSEMObjective, hybrid_mode::Integer=_HYBRID_PR
     any(t -> t != 0, sp.manifesttype) && return "categorical indicators"
     if _tan_rows_model(sp)
         ws = _init_continuous_ekf_workspace(Float64, sp)
-        ws.relinearise && _CTSEM_RELINEARISE[] && return "an iterated measurement update"
         ws.moment && _CTSEM_MOMENT_PREDICT[] && return "moment-matched predictions"
         sp.stationary && return "stationary moments beside cells evaluated by row"
         _hybrid_on(sp.hybrid) && hybrid_mode != _HYBRID_OFF &&

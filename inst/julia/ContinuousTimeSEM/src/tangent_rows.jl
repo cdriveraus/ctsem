@@ -43,12 +43,31 @@ function _tan_snap_load!(mod::TanModel, s::TanSnap)
 end
 
 """
+One step of an iterated update (`_ekf_iterated_rows!`), with tangents: from
+the prior mean `xp` and covariance `P`, the measurement linearised at the
+iterate `xl` -- loading `H` (Jy's observed rows), intercept `c`, `R` the
+observed block of the covariance the prior evaluated -- and its update's mean.
+"""
+mutable struct TanRelinRec{W}
+    o::Vector{Int}
+    xp::TanVec{W}; P::TanMat{W}
+    H::TanMat{W}; Lam::TanMat{W}; c::TanVec{W}; xl::TanVec{W}; R::TanMat{W}
+    y::TanVec{W}
+    first::Bool
+    alpha::Float64
+end
+TanRelinRec(n::Int, mo::Int, ::Val{W}) where {W} = TanRelinRec{W}(Int[], TanVec{W}(n),
+    TanMat{W}(n, n), TanMat{W}(mo, n), TanMat{W}(mo, n), TanVec{W}(mo), TanVec{W}(n),
+    TanMat{W}(mo, mo), TanVec{W}(mo), true, 1.0)
+
+"""
 A worker's state for subjects whose cells change by row: its workspace at the
 Hessian's dual (whose tape holds the group records), the subject's cells and
 their cotangents, the state and its cotangent as duals, the snapshots, the
 layer's own (`base`), and the forward's program: `(kind, index, snapshot)`,
 kind 1 a group (its tape slot), 2 a prediction substep, 3 a TD impulse, 4 an
-update (the row), each with the snapshot it read.
+update (the row), 5 a step of an iterated update, each with the snapshot it
+read.
 """
 mutable struct TanRows{W,DW,A}
     awsW::A
@@ -60,12 +79,21 @@ mutable struct TanRows{W,DW,A}
     base::TanSnap{W,DW}
     prog::Vector{NTuple{3,Int}}
     ng::Int
+    # An iterated update's steps (kind 5), the row's measurement covariance as
+    # its prior evaluated it, which its steps keep, and the prior mean's
+    # cotangent the reverse carries beside the iterates'.
+    relins::Vector{TanRelinRec{W}}
+    nrl::Int
+    Rrow::TanSnap{W,DW}
+    xpbar::TanVec{W}
+    xn::TanVec{W}
 end
 function TanRows(awsW, sp, n::Int, m::Int, ntd::Int, ::Val{W}, ::Type{DW}) where {W,DW}
     nall = length(sp.mutables)
     return TanRows{W,DW,typeof(awsW)}(awsW, zeros(DW, nall), zeros(DW, nall),
         zeros(DW, n), zeros(DW, n), TanSnap{W,DW}[], TanSnap{W,DW}(n, m, ntd),
-        NTuple{3,Int}[], 0)
+        NTuple{3,Int}[], 0, TanRelinRec{W}[], 0, TanSnap{W,DW}(n, m, ntd), TanVec{W}(n),
+        TanVec{W}(n))
 end
 
 """`out` the duals of `X`'s values and tangents, lane `w` its `w`-th."""
@@ -113,7 +141,7 @@ where the group is empty.
 """
 function _tan_rows_group!(R::TanRows{W,DW}, g::Int, x::TanVec{W}, mod::TanModel{W},
     sw::TanSweep{W}, sp, so, subject::Int, t::Int, time::Float64, dt::Float64,
-    snap::Int, nl::Int) where {W,DW}
+    snap::Int, nl::Int, keepR::Bool=false) where {W,DW}
     awsW = R.awsW
     indices = g == 1 ? awsW.predict_indices : g == 2 ? awsW.td_indices : awsW.update_indices
     isempty(indices) && return snap
@@ -131,11 +159,15 @@ function _tan_rows_group!(R::TanRows{W,DW}, g::Int, x::TanVec{W}, mod::TanModel{
         apply_complex_transforms_at_indices!(R.allW, indices, sp.update_transforms, ctx)
     end
     _tan_rows_refresh!(mod, R, sp, nl)
+    # An iterated update's steps keep the measurement covariance its prior
+    # evaluated (`_ekf_iterated_rows!`).
+    keepR && _tan_copy!(mod.R, R.Rrow.R)
     # The drift's factors for the predictions that read it.
     g == 1 && _tan_sweep_begin!(sw, mod)
     R.ng += 1
     R.ng > length(R.snaps) && push!(R.snaps, TanSnap{W,DW}(sw.n, sw.m, mod.ntd))
     _tan_snap_save!(R.snaps[R.ng], mod, R.allW, sp)
+    keepR && (R.snaps[R.ng].rawR .= R.Rrow.rawR)
     push!(R.prog, (1, slot, R.ng))
     return R.ng
 end
@@ -188,6 +220,8 @@ function _tan_sweep_rows!(acc::TanAcc{W}, Hb::Matrix{Float64}, sw::TanSweep{W},
     _tan_sweep_begin!(sw, mod)
     snap = 0
     npred = 0
+    R.nrl = 0
+    relin = awsW.ekf_ws.relinearise && _CTSEM_RELINEARISE[]
     for t in 1:T
         if t == 1
             # The predict group once at the first row, with no prediction.
@@ -213,14 +247,21 @@ function _tan_sweep_rows!(acc::TanAcc{W}, Hb::Matrix{Float64}, sw::TanSweep{W},
         end
         snap = _tan_rows_group!(R, 3, x, mod, sw, sp, so, i, t, times[t], dt, snap, nl)
         t > length(sw.upds) && push!(sw.upds, TanUpdRec(n, sw.m, sw.nh, W))
-        _tan_update!(x, P, sw.upds[t], fw, mod, view(Y, :, t), sw.ll, hs) ||
-            return _TAN_INVALID
+        upd = sw.upds[t]
+        upd.relin = 0
+        if relin && any(isfinite, view(Y, :, t))
+            snap = _tan_relin_row!(x, P, upd, R, mod, sw, sp, so, i, t, times[t], dt, snap,
+                nl, view(Y, :, t))
+            snap < 0 && return _TAN_INVALID
+        end
+        _tan_update!(x, P, upd, fw, mod, view(Y, :, t), sw.ll, hs) || return _TAN_INVALID
         push!(R.prog, (4, t, snap))
     end
     isfinite(sw.ll[1]) || return _TAN_INVALID
 
     # The reverse walk.
     xbar, Pbar = _tan_zero!(sw.xbar), _tan_zero!(sw.Pbar)
+    _tan_zero!(R.xpbar)
     held = -1     # the snapshot the model holds
     factored = -1 # the snapshot the drift's factors are of
     for e in length(R.prog):-1:1
@@ -238,9 +279,19 @@ function _tan_sweep_rows!(acc::TanAcc{W}, Hb::Matrix{Float64}, sw::TanSweep{W},
             _tan_snap_load!(mod, s == 0 ? R.base : R.snaps[s])
             held = s
         end
-        if kind == 4
-            _tan_reverse_row_update!(xbar, Pbar, sw.upds[idx], fw, mod, acc, 1.0, hs) ||
+        if kind == 5
+            _tan_reverse_relin!(xbar, R.xpbar, Pbar, R.relins[idx], acc, fw) ||
                 return _TAN_INVALID
+        elseif kind == 4
+            upd = sw.upds[idx]
+            _tan_reverse_row_update!(xbar, Pbar, upd, fw, mod, acc, 1.0, hs) ||
+                return _TAN_INVALID
+            # An iterated update's prior mean and linearisation point.
+            if upd.relin > 0
+                u = _tan_row(fw, length(upd.o)).u
+                _tan_relin_route!(xbar, R.xpbar, upd.Lam, u.H, u.ybarbar, upd.relin == 1,
+                    _tan_row(fw, length(upd.o)).H)
+            end
         elseif kind == 3
             _tan_reverse_td!(xbar, Pbar, sw, mod, acc, 1.0, view(TD, :, idx), idx)
         else
@@ -265,4 +316,215 @@ function _tan_sweep_rows!(acc::TanAcc{W}, Hb::Matrix{Float64}, sw::TanSweep{W},
         Hb[j, l] += w * ForwardDiff.partials(vb[j], l)
     end
     return _TAN_OK
+end
+
+"""
+The measurement linearised at the state `x` on the observed rows `o`, into
+`rr`: Jy's and LAMBDA's rows, the intercept `MANIFESTMEANS + (LAMBDA - Jy) x`
+(`_ekf_relin_offset!`), the linearisation point, and `R`'s block.
+"""
+function _tan_relin_linearise!(rr::TanRelinRec{W}, mod::TanModel{W}, x::TanVec{W},
+    o::Vector{Int}) where {W}
+    n, mo = length(x.v), length(o)
+    if size(rr.H.v, 1) != mo
+        rr.H, rr.Lam, rr.c, rr.R, rr.y = TanMat{W}(mo, n), TanMat{W}(mo, n), TanVec{W}(mo),
+            TanMat{W}(mo, mo), TanVec{W}(mo)
+    end
+    resize!(rr.o, mo)
+    copyto!(rr.o, o)
+    _tan_gather!(rr.H, mod.Jy, o, 1:n)
+    _tan_gather!(rr.Lam, mod.LAMBDA, o, 1:n)
+    _tan_gather!(rr.c, mod.MM, o)
+    _tan_mulvec!(rr.c, rr.Lam, x, true, true)
+    _tan_mulvec!(rr.c, rr.H, x, -1.0, true)
+    _tan_copy!(rr.xl, x)
+    _tan_gather!(rr.R, mod.R, o, o)
+    return rr
+end
+
+"""
+The mean of the update linearised as `rr` says, from its prior
+(`_ekf_relin_mean!`): `xp + Pr H' S^-1 (y - c - H xp)`, `Pr = P + eps I`,
+`S = sym(H Pr H' + R) + eps I`, into `xn`. `false` where S does not factor or
+the mean is not finite.
+"""
+function _tan_relin_mean!(xn::TanVec{W}, rr::TanRelinRec{W}, rs::TanRowScratch{W}) where {W}
+    yt = rs.yt
+    _tan_copy!(yt, rr.c)
+    _tan_mulvec!(yt, rr.H, rr.xp, true, true)
+    _tan_lincomb!(yt, true, rr.y, -1.0, yt)
+    _tan_copy!(rs.Pr, rr.P)
+    _tan_diag!(rs.Pr, 1e-10)
+    _tan_mulNT!(rs.PHt, rs.Pr, rr.H)
+    _tan_mul!(rs.S, rr.H, rs.PHt)
+    _tan_comb!(rs.S, ((1.0, rr.R),), true)
+    _tan_sym!(rs.Xc, rs.S)
+    _tan_copy!(rs.S, rs.Xc)
+    _tan_diag!(rs.S, 1e-10)
+    _tan_cholinv!(rs.Ui, rs.S, rs.Xc, rs.Tc, rs.F) || return false
+    _tan_mulTvec!(rs.e, rs.Ui, yt, true, false, Val(:AupperT))
+    _tan_mulvec!(rs.a, rs.Ui, rs.e, true, false, Val(:Aupper))
+    _tan_copy!(xn, rr.xp)
+    _tan_mulvec!(xn, rs.PHt, rs.a, true, true)
+    return all(isfinite, xn.v)
+end
+
+"""
+Row `t`'s iterated update before its final update (`_ekf_iterated_rows!`):
+the frozen count of steps where the subject's plan gives one, else to the
+mode, halving the steps where they stop shrinking; each step recorded
+(program kind 5) and the update group evaluated at the new iterate, the
+measurement covariance kept as the prior evaluated it. Leaves `x` at the prior
+mean and `upd` set for the final update, linearised at the last iterate.
+Returns the snapshot the model holds, or -1 where a step fails.
+"""
+function _tan_relin_row!(x::TanVec{W}, P::TanMat{W}, upd::TanUpdRec{W},
+    R::TanRows{W,DW}, mod::TanModel{W}, sw::TanSweep{W}, sp, so, i::Int, t::Int,
+    time::Float64, dt::Float64, snap::Int, nl::Int,
+    y::AbstractVector{Float64}) where {W,DW}
+    n = sw.n
+    o = Int[k for k in eachindex(y) if isfinite(y[k])]
+    mo = length(o)
+    rs = _tan_row(sw.fw, mo)
+    # The covariance the prior evaluated, and the prior mean.
+    _tan_snap_save!(R.Rrow, mod, R.allW, sp)
+    xp = R.xn
+    _tan_copy!(xp, x)
+    first = true
+    steps = _ctsem_relin_steps(so.relin, t)
+    alpha = 1.0
+    last = Inf
+    for it in 1:(steps >= 0 ? steps : _CTSEM_RELIN_MAXIT)
+        R.nrl += 1
+        R.nrl > length(R.relins) && push!(R.relins, TanRelinRec(n, mo, Val(W)))
+        rr = R.relins[R.nrl]
+        _tan_relin_linearise!(rr, mod, x, o)
+        _tan_copy!(rr.xp, xp)
+        _tan_copy!(rr.P, P)
+        @inbounds for k in 1:mo
+            rr.y.v[k] = y[o[k]]
+        end
+        _tan_setnz!(rr.y, false)
+        xn = rs.u.xbar   # scratch: the reverse's, unused in the forward
+        _tan_relin_mean!(xn, rr, rs) || return -1
+        if steps < 0
+            step = 0.0
+            @inbounds for j in 1:n
+                step = max(step, abs(xn.v[j] - x.v[j]) / sqrt(abs(P.v[j, j]) + 1e-10))
+            end
+            if step <= _CTSEM_RELIN_TOL
+                R.nrl -= 1
+                break
+            end
+            step >= last && (alpha = max(alpha / 2, 1 / 1024))
+            last = step
+        end
+        rr.first = first
+        rr.alpha = alpha
+        push!(R.prog, (5, R.nrl, snap))
+        # x <- x + alpha (xn - x).
+        _tan_lincomb!(x, 1.0 - alpha, x, alpha, xn)
+        first = false
+        snap = _tan_rows_group!(R, 3, x, mod, sw, sp, so, i, t, time, dt, snap, nl, true)
+    end
+    # The final update, linearised at the last iterate, from the prior.
+    upd.relin = first ? 1 : 2
+    mo == size(upd.Lam.v, 1) || (upd.c = TanVec{W}(mo); upd.Lam = TanMat{W}(mo, n))
+    _tan_gather!(upd.Lam, mod.LAMBDA, o, 1:n)
+    _tan_gather!(upd.c, mod.MM, o)
+    _tan_mulvec!(upd.c, upd.Lam, x, true, true)
+    _tan_gather!(rs.H, mod.Jy, o, 1:n)
+    _tan_mulvec!(upd.c, rs.H, x, -1.0, true)
+    _tan_copy!(upd.xl, x)
+    _tan_copy!(x, xp)
+    return snap
+end
+
+"""
+The end of an iterated update's reverse (`_relin_route!`): `xbar`, the prior
+mean's cotangent, joins `xpbar` and leaves as the linearisation point's,
+through the intercept `c = MANIFESTMEANS + (Lam - H) xl`, `-(Lam - H)' ybar`;
+at the first step the point is the prior mean, and `xpbar` is spent. `D` is
+scratch the shape of `H`.
+"""
+function _tan_relin_route!(xbar::TanVec{W}, xpbar::TanVec{W}, Lam::TanMat{W}, H::TanMat{W},
+    ybar::TanVec{W}, first::Bool, D::TanMat{W}) where {W}
+    _tan_lincomb!(xpbar, true, xpbar, true, xbar)
+    _tan_comb!(D, ((1.0, Lam), (-1.0, H)))
+    _tan_mulTvec!(xbar, D, ybar, -1.0, false)
+    if first
+        _tan_lincomb!(xbar, true, xbar, true, xpbar)
+        _tan_zero!(xpbar)
+    end
+    return xbar
+end
+
+"""
+Undo one step of an iterated update (`_reverse_relin!`): `xbar` the step's
+cotangent, `alpha` of it the mean's; the prior mean's share into `xpbar`, the
+prior covariance's into `Pbar`, the measurement's and its covariance's into
+`acc`, and `xbar` left as the linearisation point's. `false` where S does not
+factor.
+"""
+function _tan_reverse_relin!(xbar::TanVec{W}, xpbar::TanVec{W}, Pbar::TanMat{W},
+    rr::TanRelinRec{W}, acc::TanAcc{W}, fw::TanForward{W}) where {W}
+    o = rr.o
+    mo = length(o)
+    n = fw.n
+    rs = _tan_row(fw, mo)
+    u = rs.u
+    H, xp, xl = rr.H, rr.xp, rr.xl
+    # The forward's intermediates, with its ridges and its factorization.
+    Pr, PHt, S, Ui = rs.Pr, rs.PHt, rs.S, rs.Ui
+    _tan_copy!(Pr, rr.P)
+    _tan_diag!(Pr, 1e-10)
+    _tan_mulNT!(PHt, Pr, H)
+    _tan_mul!(S, H, PHt)
+    _tan_comb!(S, ((1.0, rr.R),), true)
+    _tan_sym!(rs.Xc, S)
+    _tan_copy!(S, rs.Xc)
+    _tan_diag!(S, 1e-10)
+    _tan_cholinv!(Ui, S, rs.Xc, rs.Tc, rs.F) || return false
+    yt, e, a = rs.yt, rs.e, rs.a
+    _tan_copy!(yt, rr.c)
+    _tan_mulvec!(yt, H, xp, true, true)
+    _tan_lincomb!(yt, true, rr.y, -1.0, yt)
+    _tan_mulTvec!(e, Ui, yt, true, false, Val(:AupperT))
+    _tan_mulvec!(a, Ui, e, true, false, Val(:Aupper))
+    # The step: alpha xbar reaches the mean, the rest the point it left.
+    keep = u.We
+    _tan_lincomb!(keep, 1.0 - rr.alpha, xbar, false, xbar)
+    _tan_scale!(xbar, rr.alpha)
+    v = u.HKx
+    _tan_mulvec!(v, Pr, xbar)                              # Pr xbar
+    wv, ybar = u.Kx, u.yt
+    _tan_mulvec!(wv, H, v)                                 # abar = H Pr xbar
+    _tan_mulTvec!(u.a, Ui, wv, true, false, Val(:AupperT))
+    _tan_mulvec!(ybar, Ui, u.a, true, false, Val(:Aupper))   # ybar = S^-1 abar
+    Ha = u.Ky
+    _tan_mulTvec!(Ha, H, a)                                # H' a
+    Sbar = u.Y
+    _tan_ger!(Sbar, -0.5, ybar, a, false)                  # Sbar = -sym(ybar a')
+    _tan_ger!(Sbar, -0.5, a, ybar, true)
+    _tan_ger!(Pbar, 0.5, xbar, Ha, true)                   # Pbar += sym(xbar (H'a)')
+    _tan_ger!(Pbar, 0.5, Ha, xbar, true)
+    SH, Hbar = rs.L, u.Hbar
+    _tan_mul!(SH, Sbar, H)
+    _tan_mulTN!(Pbar, H, SH, true, true)                   # Pbar += H' Sbar H
+    _tan_mul!(Hbar, SH, Pr, 2.0, false)                    # Hbar = 2 Sbar H Pr
+    _tan_ger!(Hbar, true, a, v, true)                      # + a v'
+    dxv = u.Ppx
+    _tan_lincomb!(dxv, true, xl, -1.0, xp)
+    _tan_ger!(Hbar, true, ybar, dxv, true)                 # + ybar (xl - xp)'
+    allstates = 1:n
+    _tan_scatter!(acc.MM, -1.0, ybar, o)
+    G = rs.H
+    _tan_ger!(G, true, ybar, xl, false)
+    _tan_scatter!(acc.LAMBDA, -1.0, G, o, allstates)
+    _tan_scatter!(acc.Jy, 1.0, Hbar, o, allstates)
+    _tan_scatter!(acc.R, 1.0, Sbar, o, o)
+    _tan_mulTvec!(xbar, H, ybar, -1.0, true)               # xp's: xbar - H' ybar
+    _tan_relin_route!(xbar, xpbar, rr.Lam, H, ybar, rr.first, rs.H)
+    _tan_lincomb!(xbar, true, xbar, true, keep)
+    return true
 end

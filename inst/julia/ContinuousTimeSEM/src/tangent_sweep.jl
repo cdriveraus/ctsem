@@ -76,6 +76,9 @@ TanPredRec(n::Int, nh::Int, W::Int) = TanPredRec{W}(TanMat{W}(n, n), TanVec{W}(n
 """
 What the reverse of an update reads (`CTSEMUpdateRecord`), with tangents: the
 manifests observed (`o`, none where the row updates nothing) and their values.
+An iterated update's (`relin` 1 at its first step, 2 after): the measurement
+linearised at `xl`, its loading Jy, its intercept `c = MANIFESTMEANS +
+(LAMBDA - Jy) xl` on the observed rows, and those rows of LAMBDA (`Lam`).
 """
 mutable struct TanUpdRec{W}
     o::Vector{Int}
@@ -83,9 +86,14 @@ mutable struct TanUpdRec{W}
     x::TanVec{W}            # the predicted state
     y::TanVec{W}            # the observed values (no tangent)
     Xh::TanMat{W}           # the hybrid's columns in
+    relin::Int
+    c::TanVec{W}
+    xl::TanVec{W}
+    Lam::TanMat{W}
 end
 TanUpdRec(n::Int, m::Int, nh::Int, W::Int) = TanUpdRec{W}(Int[], TanMat{W}(n, n),
-    TanVec{W}(n), TanVec{W}(m), TanMat{W}(n, nh))
+    TanVec{W}(n), TanVec{W}(m), TanMat{W}(n, nh), 0, TanVec{W}(0), TanVec{W}(n),
+    TanMat{W}(0, n))
 
 """
 An update's scratch for a row observing `mo` manifests: the gathered loadings,
@@ -353,14 +361,19 @@ function _tan_update!(x::TanVec{W}, P::TanMat{W}, rec::TanUpdRec{W}, fw::TanForw
     allstates = 1:n
     H, MM, R = rs.H, rs.MM, rs.R
     # The gain's loading, Jy, which is LAMBDA in a linear model; the mean's,
-    # LAMBDA.
+    # LAMBDA, or Jy too where the update is iterated, its intercept then the
+    # linearised one.
     _tan_gather!(H, mod.rows ? mod.Jy : mod.LAMBDA, o, allstates)
     L = H
-    if mod.rows
+    if mod.rows && rec.relin == 0
         L = rs.L
         _tan_gather!(L, mod.LAMBDA, o, allstates)
     end
-    _tan_gather!(MM, mod.MM, o)
+    if rec.relin > 0
+        _tan_copy!(MM, rec.c)
+    else
+        _tan_gather!(MM, mod.MM, o)
+    end
     _tan_gather!(R, mod.R, o, o)
     # yt = y - (Lambda x + mu).
     yt = rs.yt
@@ -750,17 +763,23 @@ function _tan_reverse_row_update!(xbar::TanVec{W}, Pbar::TanMat{W}, rec::TanUpdR
     o = rec.o
     isempty(o) && return true
     allstates = 1:fw.n
-    u = _tan_row(fw, length(o)).u
+    rs = _tan_row(fw, length(o))
+    u = rs.u
+    rel = rec.relin > 0
     _tan_copy!(u.P_in, rec.P)
     _tan_gather!(u.H, mod.rows ? mod.Jy : mod.LAMBDA, o, allstates)
-    if mod.rows
+    if mod.rows && !rel
         _tan_gather!(u.Lambda, mod.LAMBDA, o, allstates)
     else
         _tan_copy!(u.Lambda, u.H)
     end
     _tan_gather!(u.R, mod.R, o, o)
     _tan_copy!(u.x, rec.x)
-    _tan_gather!(u.mu, mod.MM, o)
+    if rel
+        _tan_copy!(u.mu, rec.c)
+    else
+        _tan_gather!(u.mu, mod.MM, o)
+    end
     _tan_copy!(u.y, rec.y)
     _tan_copy!(u.xbar, xbar)
     _tan_copy!(u.Pbar, Pbar)
@@ -770,9 +789,20 @@ function _tan_reverse_row_update!(xbar::TanVec{W}, Pbar::TanMat{W}, rec::TanUpdR
     _tan_copy!(xbar, u.xbar)
     _tan_copy!(Pbar, u.Pbar)
     _tan_scatter!(acc.R, w, u.Rbar, o, o)
-    _tan_scatter!(mod.rows ? acc.Jy : acc.LAMBDA, w, u.Hbar, o, allstates)
-    _tan_scatter!(acc.LAMBDA, w, u.Lbar, o, allstates)
     _tan_scatter!(acc.MM, -w, u.ybarbar, o)
+    if rel
+        # Iterated: both loadings were Jy, and the intercept
+        # c = MANIFESTMEANS + (LAMBDA - Jy) xl, whose cotangent is -ybarbar.
+        _tan_scatter!(acc.Jy, w, u.Hbar, o, allstates)
+        _tan_scatter!(acc.Jy, w, u.Lbar, o, allstates)
+        G = rs.L
+        _tan_ger!(G, true, u.ybarbar, rec.xl, false)
+        _tan_scatter!(acc.LAMBDA, -w, G, o, allstates)
+        _tan_scatter!(acc.Jy, w, G, o, allstates)
+    else
+        _tan_scatter!(mod.rows ? acc.Jy : acc.LAMBDA, w, u.Hbar, o, allstates)
+        _tan_scatter!(acc.LAMBDA, w, u.Lbar, o, allstates)
+    end
     return true
 end
 
@@ -826,6 +856,7 @@ function _tan_sweep!(acc::TanAcc{W}, sw::TanSweep{W}, mod::TanModel{W},
         end
         mod.ntd > 0 && _tan_td!(x, P, sw, mod, view(TD, :, t), t)
         t > length(sw.upds) && push!(sw.upds, TanUpdRec(n, sw.m, sw.nh, W))
+        sw.upds[t].relin = 0
         _tan_update!(x, P, sw.upds[t], fw, mod, view(Y, :, t), sw.ll, hs) ||
             return _TAN_INVALID
     end

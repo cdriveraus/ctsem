@@ -14,7 +14,7 @@ isdefined(@__MODULE__, :_adjoint_test_dataframe) ||
     include(joinpath(@__DIR__, "adjoint_fixtures.jl"))
 
 function _tangent_test_model(; driftscale=1.0, max_timestep=Inf, perrow=false, ti=false,
-    td=false, stationary=false, continuous=true, rows=false)
+    td=false, stationary=false, continuous=true, rows=false, relin=false, plan=-1)
     drift = [-0.6 0.2; 0.1 -0.5]
     lambda = [1.0 0.0; 0.7 0.0; 0.0 1.0]
     # `driftscale` shrinks every drift cell: near zero, the filter integrates
@@ -66,6 +66,15 @@ function _tangent_test_model(; driftscale=1.0, max_timestep=Inf, perrow=false, t
         predict[(:DIFFUSION, 2, 2)] = "log1p_exp(PARS[2,1]) * (1 + 0.1 * state[1]^2)"
         update[(:MANIFESTMEANS, 3, 1)] = "PARS[2,1] + 0.2 * state[1]^2"
     end
+    # `relin`: a loading and its Jacobian reading the state, so the filter
+    # iterates each row's update to its mode; `plan`, a frozen count of steps
+    # a row (-1 to the mode).
+    if relin
+        delete!(free, (:LAMBDA, 2, 1))
+        delete!(free, (:Jy, 2, 1))
+        update[(:LAMBDA, 2, 1)] = "PARS[1,1] + 0.3 * state[1]"
+        update[(:Jy, 2, 1)] = "PARS[1,1] + 0.6 * state[1]"
+    end
     # `td`: a TD predictor whose effects on both states are parameters 23 and 24.
     if td
         free[(:TDPREDEFFECT, 1, 1)] = (23, "param[23]")
@@ -112,6 +121,8 @@ function _tangent_test_model(; driftscale=1.0, max_timestep=Inf, perrow=false, t
         td ? reduce(hcat, tdcolumns) : zeros(0, length(times)), tipreds, max_timestep;
         prior_index=collect(1:npar), prior_scale=fill(2.0, npar),
         subject_weights=[1.0, 2.0, 0.5, 1.0, 0.0, 1.5])
+    plan >= 0 && foreach(so -> append!(so.relin, fill(plan, length(so.timesteps))),
+        objective.subject_objectives)
     values = [0.3, 0.15, -0.1, 0.2, -0.4, 0.2, -0.3, 0.1, -0.2, 0.6, 0.05, -0.1,
         0.15, -1.0, -0.8, -1.2, 0.1, 0.2, -0.1, 0.0, 0.3, -0.5]
     ti && append!(values, [0.1, -0.15, 0.2, 0.05, -0.1, 0.12, 0.08, -0.2, 0.15])
@@ -133,7 +144,8 @@ end
 @testset "the hand-coded Hessian is the dual's" begin
     for opts in ((;), (max_timestep=0.4,), (ti=true,), (max_timestep=0.4, td=true),
         (stationary=true,), (continuous=false, td=true), (rows=true,),
-        (rows=true, max_timestep=0.4), (rows=true, continuous=false), (perrow=true,))
+        (rows=true, max_timestep=0.4), (rows=true, continuous=false), (perrow=true,),
+        (rows=true, relin=true), (rows=true, relin=true, plan=2))
         objective, values = _tangent_test_model(; opts...)
         n = length(values)
         @test ContinuousTimeSEM._tan_refusal(objective) === nothing
@@ -172,10 +184,13 @@ end
     end
 end
 
-@testset "what the hand route does not cover is refused" begin
-    # An iterated update: the measurement reads the state through Jy.
-    objective, values = _tangent_test_model(rows=true)
-    sp = objective.params
-    @test !ContinuousTimeSEM._init_continuous_ekf_workspace(Float64, sp).relinearise
-    @test !ContinuousTimeSEM._init_continuous_ekf_workspace(Float64, sp).moment
+@testset "the test models take the filter's routes they are meant to" begin
+    # Cells by row without iterating the update; with a loading's Jacobian
+    # reading the state, iterated; neither moment-matched.
+    for (relin, iterated) in ((false, false), (true, true))
+        objective, _ = _tangent_test_model(rows=true, relin=relin)
+        ws = ContinuousTimeSEM._init_continuous_ekf_workspace(Float64, objective.params)
+        @test ws.relinearise == iterated
+        @test !ws.moment
+    end
 end
