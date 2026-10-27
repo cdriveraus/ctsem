@@ -68,10 +68,10 @@ end
 """
     _hybrid_inactive!(hb, h, categorical)
 
-The buffers before a pass's start says what it integrates (`_hybrid_start!`):
-nothing. A model with a non-Gaussian indicator stops here, as its filter has
-no hybrid hooks (`_ekf_gaussian_call`), and a specification that asks it for
-integrated deviations is refused.
+Set the buffers to integrate nothing, before `_hybrid_start!` says what a
+pass integrates. A model with a non-Gaussian indicator stops here, as its
+filter has no hybrid hooks (`_ekf_gaussian_call`), and a specification that
+asks it for integrated deviations is refused.
 """
 function _hybrid_inactive!(hb::CTSEMHybridBuffers{T}, h::CTSEMHybrid,
     categorical::Bool) where {T}

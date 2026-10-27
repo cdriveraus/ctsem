@@ -273,9 +273,9 @@ end
     ws.P_predict.data .+= ws.discrete_ca.dDIFFUSION
     _copy_lower_to_upper!(ws.P_predict.data, ws.state_dim)
     ws.hyb.active && ws.hyb.q > 0 &&
-        _ekf_gaussian_call(ws, _hybrid_predict!, _ekf_hybrid_refused, ws.hyb, ws.discrete_ca.dDRIFT, pars.JAx,
-            ws.discretization_buffer.series_icpt, ws.affine_buffer.dim, Δt,
-            ws.state_dim, ws.continuous_time)
+        _ekf_gaussian_call(ws, _hybrid_predict!, _ekf_hybrid_refused, ws.hyb,
+            ws.discrete_ca.dDRIFT, pars.JAx, ws.discretization_buffer.series_icpt,
+            ws.affine_buffer.dim, Δt, ws.state_dim, ws.continuous_time)
     return nothing
 end
 
@@ -397,10 +397,7 @@ function _ekf_update_observed!(ws::ContinuousEKFWorkspace, pars,
     # mode rather than its prior mean. Not while generating: the row's draw is
     # taken from the prior's linearisation, before there is an observation to
     # iterate on. Nor beside deviations the filter integrates, whose model is
-    # linear (`CTSEMHybrid`): the steps do not carry their columns. Behind a
-    # barrier, so it is compiled only at the number types a model with such a
-    # measurement runs at (`_ctsem_barrier`), not into every filter; a row it
-    # serves costs several update-group evaluations beside one dispatch.
+    # linear (`CTSEMHybrid`): the steps do not carry their columns.
     ws.relinearise && _CTSEM_RELINEARISE[] && generate === nothing &&
         context !== nothing && !isempty(gaussian) && !(ws.hyb.active && ws.hyb.q > 0) &&
         return _ekf_iterated_rows!(ws, pars, data, obs_col, gaussian, binary_loglik,
@@ -814,7 +811,8 @@ function _ekf_masked_update_step!(ws::ContinuousEKFWorkspace, pars,
     _copy_lower_to_upper!(ws.P_update.data, ws.state_dim)
     # The integrated deviations' share of this update (`CTSEMHybrid`).
     ws.hyb.active && ws.hyb.q > 0 &&
-        _ekf_gaussian_call(ws, _hybrid_update!, _ekf_hybrid_refused, ws.hyb, Lv, factor, KRv, yv, observed, n)
+        _ekf_gaussian_call(ws, _hybrid_update!, _ekf_hybrid_refused, ws.hyb, Lv, factor,
+            KRv, yv, observed, n)
     return factor
 end
 
@@ -2135,8 +2133,6 @@ function _extended_kalman_filter_continuous!(
                 substep_time, substep_dt, Int(subject), t_idx)
             _record_group!(trace, 1, ws.predict_param_indices, all_params, predict_context)
             apply_complex_transforms_at_indices!(all_params, ws.predict_param_indices, sp.predict_transforms, predict_context)
-            # Behind a barrier, as the iterated update is: compiled only where a
-            # model with nonlinear dynamics reaches it.
             ws.moment_now[] = moment_on &&
                 _ekf_moment_cells!(ws, pars, sp, all_params, predict_context, trace)
             predict_snapshot = _begin_predict!(trace, ws, ws.state_dim)

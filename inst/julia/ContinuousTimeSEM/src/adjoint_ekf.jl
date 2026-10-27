@@ -2261,8 +2261,7 @@ function _ctsem_reverse_tape!(tape::CTSEMAdjointTape{T},
                 _ekf_hybrid_tape(aws.ekf_ws, tape), tape.xp_bar)
         elseif kind === :relin
             # A step of an iterated update, between the row's final update and
-            # its update-group evaluations (`_ekf_iterated_rows!`); behind a
-            # barrier as the forward step is.
+            # its update-group evaluations (`_ekf_iterated_rows!`).
             _reverse_relin!(x̄, tape.xp_bar, P̄, Θ̄, θ̄ca, tape.relins[index], n,
                 aws.reverse_scratch)
         elseif kind === :hybrid
@@ -2284,8 +2283,7 @@ function _ctsem_reverse_tape!(tape::CTSEMAdjointTape{T},
             _reverse_predict!(x̄, P̄, θ̄ca, tape.predicts[index], dyn, n, aws.lyap_buffer, aws,
                 _ekf_hybrid_tape(aws.ekf_ws, tape))
         elseif kind === :moment
-            # Between its substep's prediction and the group at the mean;
-            # behind a barrier as the forward step is.
+            # Between its substep's prediction and the group at the mean.
             _reverse_moment!(x̄, P̄, θ̄, θ̄ca, tape.moments[index], tape, sp, aws, n, m)
         elseif kind === :group
             # Only a group that writes a JAx cell can consume a queued Fréchet
