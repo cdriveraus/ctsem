@@ -3387,8 +3387,9 @@ function _laplace_columns_jacobian(laplace::CTSEMLaplaceObjective, U::Integer,
     # By the hand-coded second order where it covers the model
     # (`tangent_laplace.jl`), the gated floor's cross curvature read off the
     # same sweeps; the other hooks and element types take the dual.
-    if (hook === nothing || hook isa CTSEMHybridCross{Float64}) && T === Float64 &&
-            eltype(values) === Float64
+    if (hook === nothing || hook isa CTSEMHybridCross{Float64} ||
+            (hook isa _HybridFixedCross && hook.cross isa CTSEMHybridCross{Float64})) &&
+            T === Float64 && eltype(values) === Float64
         Jh = _laplace_scratch_matrix!(laplace, Float64, d, nx, :curv_jac)
         _tan_laplace_columns_jacobian!(Jh, laplace, U, values, Ls, base, columns, members,
             mode, hook) && return Jh

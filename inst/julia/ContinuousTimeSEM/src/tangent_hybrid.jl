@@ -143,11 +143,12 @@ end
 """
 The closing term and its reverse (`_hybrid_marginal!`,
 `_reverse_hybrid_marginal!`): adds `1/2 b' beta - w/2 logdet M` and its
-tangents to `ll`, and leaves `Sbar`, `sbar` for the walk and `Gbar` for the
-layer. `false` where `M` does not factor.
+tangents to `ll`, or with deviations held at `dfix` (`_HYBRID_FIXED`, its
+tangents zero) `d' b - 1/2 d' (M - I) d`; and leaves `Sbar`, `sbar` for the
+walk and `Gbar` for the layer. `false` where `M` does not factor.
 """
 function _tan_hybrid_closing!(hs::TanHybState{W}, G::TanMat{W}, w::Float64,
-    ll::Vector{Float64}) where {W}
+    ll::Vector{Float64}, dfix::Union{Nothing,TanVec{W}}=nothing) where {W}
     nh = size(G.v, 1)
     M, b, beta = hs.M, hs.b, hs.beta
     _tan_mulTN!(hs.GS, G, hs.S)
@@ -160,6 +161,7 @@ function _tan_hybrid_closing!(hs::TanHybState{W}, G::TanMat{W}, w::Float64,
     UiM = hs.UiM
     _tan_mulNT!(hs.Minv, UiM, UiM, true, false, Val(:full), Val(true))
     _tan_mulvec!(beta, hs.Minv, b)
+    dfix === nothing || return _tan_hybrid_fixed!(hs, G, ll, dfix)
     # ll += 1/2 b' beta - w/2 logdet M, logdet M = -2 sum log UiM_ii.
     quad = 0.0
     ld = 0.0
@@ -186,6 +188,43 @@ function _tan_hybrid_closing!(hs::TanHybState{W}, G::TanMat{W}, w::Float64,
     _tan_mulvec!(hs.sbar, G, beta)
     _tan_mul!(hs.Gbar, hs.S, hs.GM, 2.0, false)
     _tan_ger!(hs.Gbar, true, hs.s, beta)
+    _tan_zero!(hs.Xbar)
+    return true
+end
+
+"""
+The closing term at fixed deviations `d` (`_tan_hybrid_closing!`): adds
+`d' b - 1/2 d' (M - I) d` and its tangents to `ll`; `Mbar = -d d' / 2` and
+`bbar = d`, so `Sbar = G Mbar G'`, `sbar = G d`, `Gbar = 2 S G Mbar + s d'`.
+"""
+function _tan_hybrid_fixed!(hs::TanHybState{W}, G::TanMat{W}, ll::Vector{Float64},
+    d::TanVec{W}) where {W}
+    nh = size(G.v, 1)
+    M, b = hs.M, hs.b
+    val = 0.0
+    @inbounds for a in 1:nh
+        val += d.v[a] * b.v[a]
+        for c in 1:nh
+            val -= d.v[a] * (M.v[a, c] - (a == c ? 1.0 : 0.0)) * d.v[c] / 2
+        end
+    end
+    ll[1] += val
+    @inbounds for t in 1:W
+        dv = 0.0
+        for a in 1:nh
+            dv += d.v[a] * b.d[t, a]
+            for c in 1:nh
+                dv -= d.v[a] * M.d[t, a, c] * d.v[c] / 2
+            end
+        end
+        ll[1 + t] += dv
+    end
+    _tan_ger!(hs.Mbar, -0.5, d, d, false)
+    _tan_mul!(hs.GM, G, hs.Mbar)
+    _tan_mulNT!(hs.Sbar, hs.GM, G)
+    _tan_mulvec!(hs.sbar, G, d)
+    _tan_mul!(hs.Gbar, hs.S, hs.GM, 2.0, false)
+    _tan_ger!(hs.Gbar, true, hs.s, d)
     _tan_zero!(hs.Xbar)
     return true
 end

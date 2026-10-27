@@ -125,7 +125,8 @@ reads `DmJ = DRIFT - JAx`, the update's gain `Jy`, and where the prediction
 is moment-matched (`momon`) the offset gains the cubature's mean correction
 `mc` (`_ekf_moment_cells!`). Where the filter
 integrates deviations, their spec, their factor `G` and the closing term's
-weight on the logdet (1 for the integral, 0 for the profile).
+weight on the logdet (1 for the integral, 0 for the profile); or, `fixed`,
+the deviations held at `dfix` (`_HYBRID_FIXED`), one per item.
 """
 struct TanModel{W}
     n::Int
@@ -152,15 +153,18 @@ struct TanModel{W}
     hyb::CTSEMHybrid
     G::TanMat{W}
     wlog::Float64
+    fixed::Bool
+    dfix::TanVec{W}
 end
 TanModel(n::Int, m::Int, W::Int; ct::Bool=true, stat::Bool=false, rows::Bool=false,
     gmask::Vector{Bool}=Bool[], na::Int=n, dyn::Vector{Int}=collect(1:n), ntd::Int=0,
-    hyb::CTSEMHybrid=CTSEMHybrid(), nh::Int=0, wlog::Float64=1.0) =
+    hyb::CTSEMHybrid=CTSEMHybrid(), nh::Int=0, wlog::Float64=1.0, fixed::Bool=false) =
     TanModel{W}(n, m, ct, stat, rows, TanMat{W}(n, n), TanMat{W}(n, n), TanMat{W}(n, n),
     TanVec{W}(n), TanMat{W}(n, n), TanMat{W}(m, n), TanMat{W}(m, n), TanVec{W}(m),
     TanMat{W}(m, m), TanVec{W}(n), TanMat{W}(n, n), TanVec{W}(n), Ref(false), gmask,
     na, dyn, na < n || dyn != 1:n, TanMat{W}(na, na), TanMat{W}(length(dyn), length(dyn)),
-    TanMat{W}(length(dyn), length(dyn)), ntd, TanMat{W}(n, ntd), TanMat{W}(n, n), nh, hyb, TanMat{W}(nh, nh), wlog)
+    TanMat{W}(length(dyn), length(dyn)), ntd, TanMat{W}(n, ntd), TanMat{W}(n, n), nh, hyb,
+    TanMat{W}(nh, nh), wlog, fixed, _tan_setnz!(TanVec{W}(nh), false))
 
 """
 What the blocks of a model with states outside them need (`TanModel.aug`):
@@ -909,11 +913,14 @@ One subject, weight `w`: `times`, the observations `Y` (m x T, NaN where
 missing), its TD predictors `TD` (ntd x T) and the filter's substep rule
 (`_ctsem_substeps`). Adds its cotangents, times `w`, into `acc` and queues its
 exponential directions there; leaves its log likelihood in `sw.ll`.
-`_tan_sweep_begin!` first, once a block.
+`_tan_sweep_begin!` first, once a block. `forward` stops before the reverse,
+each row's log likelihood kept; `rec`, with it, records each row's predicted
+and updated moments (`TanTraceRecorder`).
 """
 function _tan_sweep!(acc::TanAcc{W}, sw::TanSweep{W}, mod::TanModel{W},
     times::AbstractVector{Float64}, Y::AbstractMatrix{Float64},
-    TD::AbstractMatrix{Float64}, rule, w::Float64; forward::Bool=false) where {W}
+    TD::AbstractMatrix{Float64}, rule, w::Float64; forward::Bool=false,
+    rec=nothing) where {W}
     n, fw, rv = sw.n, sw.fw, sw.rv
     T = length(times)
     # The predictions, row by row: a row's substeps in order, then its update.
@@ -945,16 +952,19 @@ function _tan_sweep!(acc::TanAcc{W}, sw::TanSweep{W}, mod::TanModel{W},
         mod.ntd > 0 && _tan_td!(x, P, sw, mod, view(TD, :, t), t)
         t > length(sw.upds) && push!(sw.upds, TanUpdRec(n, sw.m, sw.nh, W))
         sw.upds[t].relin = 0
+        rec === nothing || _tan_record!(rec, 1, t, x, P, sw)
         _tan_update!(x, P, sw.upds[t], fw, mod, view(Y, :, t), sw.ll, hs) ||
             return _TAN_INVALID
         forward && _tan_llrow!(sw, t)
+        rec === nothing || _tan_record!(rec, 2, t, x, P, sw)
     end
     first[T + 1] = npred + 1
     # The row scores need the forward alone.
     forward && return isfinite(sw.ll[1]) ? _TAN_OK : _TAN_INVALID
     # The closing term, and its reverse, which starts the walk.
     if mod.nh > 0
-        _tan_hybrid_closing!(hs, mod.G, mod.wlog, sw.ll) || return _TAN_INVALID
+        _tan_hybrid_closing!(hs, mod.G, mod.wlog, sw.ll, mod.fixed ? mod.dfix : nothing) ||
+            return _TAN_INVALID
         _tan_comb!(acc.Gbar, ((w, hs.Gbar),), true)
     end
     isfinite(sw.ll[1]) || return _TAN_INVALID

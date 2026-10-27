@@ -96,3 +96,36 @@ end
         C.ctsem_set_tangent_hessian!(true)
     end
 end
+
+@testset "hand-coded sequential predictions against the dual" begin
+    C = ContinuousTimeSEM
+    cases = [
+        ("means", () -> _fresh_linear()),
+        ("dynamics and noise", () -> (ctsem_laplace_objective(_LAPLACE_LINEAR_OBJECTIVE,
+            [3, 4], [6, 7], [8], [1.0, 1.0]), copy(_LAPLACE_LINEAR_VALUES))),
+        ("drift by row", () -> _fresh_nonlinear()),
+    ]
+    try
+        for (name, make) in cases
+            laplace, values = make()
+            C.ctsem_set_tangent_hessian!(true)
+            hand = C.ctsem_laplace_sequential(laplace, values)
+            served = get(laplace.workspaces[C._laplace_slot()],
+                (:tan_curvature, length(values), C._HYBRID_OFF), nothing) !== nothing
+            C.ctsem_set_tangent_hessian!(false)
+            dual = C.ctsem_laplace_sequential(laplace, values)
+            @testset "$name" begin
+                @test served
+                for f in (:eta, :etacov, :y, :ycov, :llrow, :effect, :effectcov)
+                    a, b = getproperty(hand, f), getproperty(dual, f)
+                    @test isequal(isnan.(a), isnan.(b))
+                    ok = .!isnan.(b)
+                    @test any(ok)
+                    @test maximum(abs, a[ok] .- b[ok]) <= 1e-9 * max(1.0, maximum(abs, b[ok]))
+                end
+            end
+        end
+    finally
+        C.ctsem_set_tangent_hessian!(true)
+    end
+end

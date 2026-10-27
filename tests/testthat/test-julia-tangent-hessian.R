@@ -67,7 +67,7 @@
     "  xe = M._laplace_extend(lap, collect(Float64, x))",
     "  M.ctsem_laplace_evaluate(lap, xe; gradient = false)",
     "  Ls = M._laplace_popchols(xe, lap.spec)",
-    "  errM = 0.0; errH = 0.0; ncross = 0; units = 0",
+    "  errM = 0.0; errH = 0.0; errJ = 0.0; ncross = 0; units = 0",
     "  for U in eachindex(lap.units.members)",
     "    u = lap.modes[U]",
     "    isempty(u) && continue",
@@ -84,7 +84,7 @@
     "    A0, c0 = run(false)",
     "    errM = max(errM, maximum(abs.(A1 .- A0)) / maximum(abs.(A0)))",
     "    for m in 1:nm",
-    "      c1.q[m] == c0.q[m] || return (errM = Inf, errH = Inf, ncross = -1,",
+    "      c1.q[m] == c0.q[m] || return (errM = Inf, errH = Inf, errJ = Inf, ncross = -1,",
     "        units = units, served = false)",
     "      q = c0.q[m]",
     "      q == 0 && continue",
@@ -93,9 +93,22 @@
     "      errH = max(errH, rel(c1.H[m][1:q, :], c0.H[m][1:q, :]),",
     "        rel(c1.A[m][1:q, 1:q], c0.A[m][1:q, 1:q]), rel(c1.dhat[m][1:q], c0.dhat[m][1:q]))",
     "    end",
+    "    # The joint curvature, the deviations fixed a little off their modes.",
+    "    any(>(0), c0.q) || continue",
+    "    layout = M._hybrid_layout(d, c0.q)",
+    "    z = vcat(u, reduce(vcat, [c0.dhat[m][1:c0.q[m]] .+ 0.1 for m in 1:nm]))",
+    "    function joint(on)",
+    "      M.ctsem_set_tangent_hessian!(on)",
+    "      try M._hybrid_joint_curvature(lap, U, xe, Ls, z, layout).diag[1]",
+    "      finally M.ctsem_set_tangent_hessian!(true) end",
+    "    end",
+    "    J1, J0 = joint(true), joint(false)",
+    "    errJ = max(errJ, maximum(abs.(J1 .- J0)) / maximum(abs.(J0)))",
     "  end",
-    "  served = M._tan_laplace_context(lap, xe, M._HYBRID_PROFILE) !== nothing",
-    "  (errM = errM, errH = errH, ncross = ncross, units = units, served = served)",
+    "  served = M._tan_laplace_context(lap, xe, M._HYBRID_PROFILE) !== nothing &&",
+    "    M._tan_laplace_context(lap, xe, M._HYBRID_FIXED) !== nothing",
+    "  (errM = errM, errH = errH, errJ = errJ, ncross = ncross, units = units,",
+    "    served = served)",
     "end", sep = "\n"))
   f(ctsem:::.ctJuliaObjective(fit, hybrid = TRUE),
     ctsem:::.ctJuliaNumericVector(as.numeric(fit$estimate$raw)))
@@ -119,6 +132,7 @@ test_that("the hand-coded unit curvature is the dual's, cross terms included", {
     expect_gt(r$ncross, 0)
     expect_lt(r$errM, 1e-10)
     expect_lt(r$errH, 1e-10)
+    expect_lt(r$errJ, 1e-10)
   }
 })
 

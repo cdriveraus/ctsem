@@ -341,7 +341,7 @@ _tan_model_like(mod::TanModel{W}) where {W} = TanModel{W}(mod.n, mod.m,
     Ref(false), mod.gmask, mod.na, mod.dyn, mod.aug, TanMat{W}(mod.na, mod.na),
     TanMat{W}(length(mod.dyn), length(mod.dyn)), TanMat{W}(length(mod.dyn), length(mod.dyn)),
     mod.ntd, TanMat{W}(mod.n, mod.ntd), TanMat{W}(mod.n, mod.n),
-    mod.nh, mod.hyb, mod.G, mod.wlog)
+    mod.nh, mod.hyb, mod.G, mod.wlog, mod.fixed, mod.dfix)
 
 """
 One block's subjects swept into `acc`. With a shared layer (`L === nothing`)

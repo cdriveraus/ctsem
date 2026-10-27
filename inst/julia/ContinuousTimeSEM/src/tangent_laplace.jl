@@ -7,9 +7,10 @@
 # intercept's sweep carries tangents on the mean alone, which the dual carries
 # as zeros through every covariance. The gated floor's cross curvature with the
 # deviations the filter integrates (`CTSEMHybridCross`) is read off the same
-# sweeps. The dual route serves the other hooks, an element type other than
-# Float64, and what the sweep does not cover (`_tan_refusal`); it is the oracle
-# (`ctsem_set_tangent_hessian!(false)`).
+# sweeps, at their profile or at the fixed values of its joint coordinates
+# (`_HybridFixedCross`). The dual route serves the other hooks, an element type
+# other than Float64, and what the sweep does not cover (`_tan_refusal`); it is
+# the oracle (`ctsem_set_tangent_hessian!(false)`).
 
 """A slot's hand-coded curvature: the member's layer at the curvature's dual,
 its sweep, and their scratch."""
@@ -36,7 +37,9 @@ function _tan_laplace_context(laplace::CTSEMLaplaceObjective, values::AbstractVe
     haskey(store, key) && return store[key]
     objective = laplace.objective
     DC = _laplace_curvature_dual(laplace)
-    ctx = _tan_refusal(objective, mode) === nothing ?
+    # Fixed deviations are the joint curvature's, which this route serves where
+    # it serves their profile; the Hessian's refusal of them is its own.
+    ctx = _tan_refusal(objective, mode == _HYBRID_FIXED ? _HYBRID_PROFILE : mode) === nothing ?
         _tan_laplace_build(objective, values, mode, DC,
             Val(ForwardDiff.npartials(DC))) : nothing
     store[key] = ctx
@@ -59,7 +62,7 @@ function _tan_laplace_build(objective::CTSEMObjective, values::AbstractVector, m
         Bool[k > length(sp.manifesttype) || sp.manifesttype[k] == 0 for k in 1:m] : Bool[]
     mod = TanModel(n, m, W; ct=sp.continuous_time, stat=sp.stationary, rows=rows,
         gmask=gmask, na=na, dyn=dyn, ntd=ntd, hyb=h, nh=nh,
-        wlog=mode == _HYBRID_FULL ? 1.0 : 0.0)
+        wlog=mode == _HYBRID_FULL ? 1.0 : 0.0, fixed=mode == _HYBRID_FIXED && nh > 0)
     awsW = CTSEMAdjointWorkspace(DC, sp, nv, ntd)
     return TanLaplaceContext(awsW, mod, TanAcc(n, m, ntd, nh, W),
         rows ? TanRows(awsW, sp, n, m, ntd, Val(W), DC) : nothing,
@@ -72,13 +75,15 @@ end
 likelihood gradient in the unit's coordinates `columns` at `base`, by the
 hand-coded sweeps, the rest zero; `false` where they do not serve, and the
 caller takes the dual. A member whose filter fails makes it `NaN`, as the
-dual's gradient does. `cross`, where given, is filled as `_hybrid_after!` fills
-it from the dual's passes.
+dual's gradient does. `cross`, a hook where given (`CTSEMHybridCross`, or
+`_HybridFixedCross` at fixed deviations), is read and filled as the dual's
+passes read and fill it (`_hybrid_before!`, `_hybrid_after!`).
 """
 function _tan_laplace_columns_jacobian!(Jw::Matrix{Float64}, laplace::CTSEMLaplaceObjective,
     U::Integer, values::AbstractVector{Float64}, Ls::Vector{<:AbstractMatrix},
     base::AbstractVector{Float64}, columns::Vector{Int}, members::Vector{Int}, mode::Int,
-    cross::Union{Nothing,CTSEMHybridCross{Float64}}=nothing)
+    cross=nothing)
+    (mode == _HYBRID_FIXED) == (cross isa _HybridFixedCross) || return false
     _CTSEM_TANGENT_HESSIAN[] || return false
     ctx = _tan_laplace_context(laplace, values, mode)
     ctx === nothing && return false
@@ -185,10 +190,12 @@ function _tan_laplace_members!(J::Matrix{Float64}, ctx::TanLaplaceContext{W,DC},
             # its cross curvature's `M` and mode are still read.
             cross === nothing && !_tan_any_lanes(xw) && continue
             i = units.members[U][m]
+            data = objective.subject_objectives[i].data
+            cross isa _HybridFixedCross && _tan_laplace_dfix!(ctx.mod, cross.joint, m, data)
             st = _tan_laplace_member!(ctx, objective, i, xw, nl)
             st == _TAN_OK || return st
-            cross === nothing || _tan_laplace_cross!(cross, m, ctx.sw.hs, ctx.mod,
-                objective.subject_objectives[i].data, columns, cols)
+            cross === nothing || _tan_laplace_cross!(cross isa _HybridFixedCross ?
+                cross.cross : cross, m, ctx.sw.hs, ctx.mod, data, columns, cols)
             @inbounds for (a, t) in enumerate(cols)
                 _laplace_loading_chain!(view(J, :, t), view(ctx.Hb, :, a), spec, Ls,
                     offsets)
@@ -199,10 +206,42 @@ function _tan_laplace_members!(J::Matrix{Float64}, ctx::TanLaplaceContext{W,DC},
 end
 
 """
+Whether a subject observes hybrid item `k` in the filter's sense
+(`_hybrid_start!`): any item but a manifest intercept, and that where any row
+observes its manifest.
+"""
+_tan_hybrid_seen(h::CTSEMHybrid, k::Int, data::AbstractMatrix) = h.kind[k] != 1 ||
+    any(c -> _ctsem_observed(data[h.target[k], c]), axes(data, 2))
+
+"""
+Member `m`'s fixed deviations from the joint coordinates (`_HybridJointHook`,
+as `_hybrid_before!` hands them to the filter) into the model's `dfix`, one
+per item: the filter's coordinates mapped as `_tan_laplace_cross!` maps them,
+an item the subject does not observe at zero.
+"""
+function _tan_laplace_dfix!(mod::TanModel, joint, m::Int, data::AbstractMatrix)
+    h = mod.hyb
+    dfix = mod.dfix
+    fill!(dfix.v, 0.0)
+    _tan_setnz!(dfix, false)
+    q = joint.layout.q[m]
+    q == 0 && return nothing
+    off = joint.layout.offs[m]
+    c = 0
+    @inbounds for k in 1:mod.nh
+        (h.block || _tan_hybrid_seen(h, k, data)) || continue
+        c += 1
+        c <= q && (dfix.v[k] = joint.z[off + c])
+    end
+    return nothing
+end
+
+"""
 Member `m`'s cross curvature with the deviations its filter integrates, into
 `cross` as `_hybrid_after!` reads it off the dual's pass: `M` and the
-conditional mode `dhat` at their values, and `H = -d(b - M dhat)/du` along the
-chunk's coordinates, `dhat` held fixed. In the filter's coordinates
+conditional mode `dhat` at their values, and `H = -d(b - M d)/du` along the
+chunk's coordinates at the deviations `d` the pass is at -- the conditional
+mode, or the fixed ones -- held fixed. In the filter's coordinates
 (`_hybrid_factor!`): an own variance's items in order, those a manifest
 intercept's subject never observes left out, where the sweep keeps every
 item's (`tangent_hybrid.jl`); a block's columns, every one.
@@ -211,8 +250,7 @@ function _tan_laplace_cross!(cross::CTSEMHybridCross{Float64}, m::Int, hs::TanHy
     mod::TanModel{W}, data::AbstractMatrix, columns::Vector{Int}, cols) where {W}
     h = mod.hyb
     nh = mod.nh
-    seen(k) = h.kind[k] != 1 ||
-        any(c -> _ctsem_observed(data[h.target[k], c]), axes(data, 2))
+    seen(k) = _tan_hybrid_seen(h, k, data)
     nobs = nh == 0 ? 0 : count(seen, 1:nh)
     q = nobs == 0 ? 0 : (h.block ? nh : nobs)
     cross.q[m] = q
@@ -224,6 +262,7 @@ function _tan_laplace_cross!(cross::CTSEMHybridCross{Float64}, m::Int, hs::TanHy
     end
     A, dhat, H = cross.A[m], cross.dhat[m], cross.H[m]
     M, b, beta = hs.M, hs.b, hs.beta
+    dref = mod.fixed ? mod.dfix : beta
     keep(k) = h.block || seen(k)
     ci = 0
     @inbounds for k in 1:nh
@@ -239,12 +278,91 @@ function _tan_laplace_cross!(cross::CTSEMHybridCross{Float64}, m::Int, hs::TanHy
         for (a, t) in enumerate(cols)
             r = b.d[a, k]
             for k2 in 1:nh
-                r -= M.d[a, k, k2] * beta.v[k2]
+                r -= M.d[a, k, k2] * dref.v[k2]
             end
             H[ci, columns[t]] = -r
         end
     end
     return nothing
+end
+
+"""
+What the Kalman trace (`CTSEMKalmanTrace`) keeps of a hand-coded forward sweep
+(`_tan_sweep!`, `_tan_sweep_rows!` with `rec`): at each row's prediction (kind
+1) and update (2) the state and its covariance as duals of the lanes, recorded
+by the engine's own (`_record_row_prior!`, `_record_row_update!`) at the cells
+the row's filter holds -- the layer's, or by row `TanRows.allW` -- so the trace
+is the filter's at the dual, response scale and all, without the filter there.
+"""
+struct TanTraceRecorder{TR,WS,V,SO,SP}
+    trace::TR
+    ws::WS
+    cells::V
+    so::SO
+    sp::SP
+    i::Int
+    tp::Base.RefValue{AbstractVector}   # the TI predictors the cells read
+end
+
+function _tan_record!(rec::TanTraceRecorder, kind::Int, t::Int, x::TanVec, P::TanMat,
+    sw::TanSweep{W}) where {W}
+    ws, sp = rec.ws, rec.sp
+    n = length(x.v)
+    _tan_to_duals!(view(ws.state, 1:n), x)
+    _tan_to_duals!(kind == 1 ? ws.P_predict.data : ws.P_update.data, P)
+    pars = CTSEMPars(rec.cells, sp.parameter_axis)
+    if kind == 1
+        sdcovsqrt2cov!(ws.bufferΘ, pars.MANIFESTVAR, ws.sp.covmatcode, ws.manifest_dim)
+        _record_row_prior!(rec.trace, ws, pars, t)
+        return nothing
+    end
+    DC = eltype(ws.state)
+    o = (t - 1) * (1 + W)
+    ll = DC(sw.llrow[o + 1], ForwardDiff.Partials(ntuple(a -> sw.llrow[o + 1 + a], Val(W))))
+    times = rec.so.timesteps
+    ctx = CTSEMRowContext(ws.state, pars, view(rec.so.tdpreds, :, t), rec.tp[], times[t],
+        t == 1 ? 0.0 : times[t] - times[t - 1], rec.i, t)
+    _record_row_update!(rec.trace, ws, pars, sp, ctx, t, ll)
+    return nothing
+end
+
+"""
+Subject `i`'s plug-in Kalman trace at the duals `xw` (the curvature's, their
+first `nl` lanes seeded), by the hand-coded forward sweep, into `trace`, as
+`_extended_kalman_filter_continuous!` at that dual writes it with the
+deviations the filter integrates off: `true` where the pass came out finite,
+`false` where not, `nothing` where the sweep does not serve and the caller
+filters at the dual.
+"""
+function _tan_laplace_trace!(trace::CTSEMKalmanTrace, laplace::CTSEMLaplaceObjective,
+    values::AbstractVector{Float64}, i::Int, xw::Vector, nl::Int)
+    _CTSEM_TANGENT_HESSIAN[] || return nothing
+    ctx = _tan_laplace_context(laplace, values, _HYBRID_OFF)
+    ctx === nothing && return nothing
+    st = _tan_laplace_trace_sweep!(trace, ctx, laplace.objective, i, xw, nl)::Int
+    st == _TAN_REFUSED && return nothing
+    return st == _TAN_OK
+end
+
+function _tan_laplace_trace_sweep!(trace::CTSEMKalmanTrace, ctx::TanLaplaceContext{W,DC},
+    objective::CTSEMObjective, i::Int, xw::Vector, nl::Int) where {W,DC}
+    eltype(xw) === DC || return _TAN_REFUSED
+    sp = objective.params
+    so = objective.subject_objectives[i]
+    mod, sw = ctx.mod, ctx.sw
+    _tan_layer_fill!(mod, ctx.awsW, sp, xw, nl, so.tipreds) || return _TAN_REFUSED
+    ws = ctx.awsW.ekf_ws
+    if ctx.rows === nothing
+        rec = TanTraceRecorder(trace, ws, ws.all_params, so, sp, i,
+            Ref{AbstractVector}(_ctsem_tipred_vector(so.tipreds, xw)))
+        _tan_sweep_begin!(sw, mod)
+        return _tan_sweep!(ctx.acc, sw, mod, so.timesteps, so.data, so.tdpreds,
+            so.max_timestep, 1.0; forward=true, rec=rec)
+    end
+    R = ctx.rows
+    rec = TanTraceRecorder(trace, ws, R.allW, so, sp, i, R.tp)
+    return _tan_sweep_rows!(ctx.acc, zeros(0, 0), sw, mod, R, objective, i, 1.0, xw, nl;
+        forward=true, rec=rec)
 end
 
 """Whether any of `xw`'s partials is nonzero."""

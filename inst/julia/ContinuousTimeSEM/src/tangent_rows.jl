@@ -307,7 +307,7 @@ cells from the layer at `xw` (`_tan_layer_fill!`), `mod` its matrices.
 """
 function _tan_sweep_rows!(acc::TanAcc{W}, Hb::Matrix{Float64}, sw::TanSweep{W},
     mod::TanModel{W}, R::TanRows{W,DW}, objective::CTSEMObjective, i::Int, w::Float64,
-    xw::Vector, nl::Int; forward::Bool=false, g0=nothing) where {W,DW}
+    xw::Vector, nl::Int; forward::Bool=false, g0=nothing, rec=nothing) where {W,DW}
     sp = objective.params
     so = objective.subject_objectives[i]
     awsW = R.awsW
@@ -382,6 +382,7 @@ function _tan_sweep_rows!(acc::TanAcc{W}, Hb::Matrix{Float64}, sw::TanSweep{W},
         upd.relin = 0
         # A row's categorical observations first, each an exact scalar
         # conditioning, then its Gaussian ones from there.
+        rec === nothing || _tan_record!(rec, 1, t, x, P, sw)
         if cat && _tan_rows_categorical!(x, P, R, mod, sw, sp, Y, t, snap, nl) < 0
             return _TAN_INVALID
         end
@@ -394,6 +395,7 @@ function _tan_sweep_rows!(acc::TanAcc{W}, Hb::Matrix{Float64}, sw::TanSweep{W},
         _tan_update!(x, P, upd, fw, mod, view(Y, :, t), sw.ll, hs) || return _TAN_INVALID
         push!(R.prog, (4, t, snap))
         forward && _tan_llrow!(sw, t)
+        rec === nothing || _tan_record!(rec, 2, t, x, P, sw)
     end
     isfinite(sw.ll[1]) || return _TAN_INVALID
     # The row scores need the forward alone.
