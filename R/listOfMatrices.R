@@ -1,19 +1,18 @@
 listOfMatrices <- function(df,matnames=NA){
-  mats <- unique(df$matrix)
   mlist <- list()
-  for(mi in mats){
-    mlist[[mi]] <- matrix(NA, max(df$row[df$matrix %in% mi]), max(df$col[df$matrix %in% mi]))
-    for(ci in 1:max(df$col[df$matrix %in% mi])){
-      for(ri in 1:max(df$row[df$matrix %in% mi])){
-        if(is.na(df$value[df$matrix %in% mi & df$row == ri & df$col==ci])) {
-          mlist[[mi]][ri,ci] <- df$param[df$matrix %in% mi & df$row == ri & df$col==ci]
-        } else {
-          mlist[[mi]][ri,ci] <- df$value[df$matrix %in% mi & df$row == ri & df$col==ci]
-        }
-      }
-    }
+  for(mi in unique(df$matrix)){
+    sel <- df$matrix %in% mi
+    rc <- cbind(df$row[sel], df$col[sel])
+    value <- df$value[sel]
+    fixed <- !is.na(value) #a fixed cell holds its value, a free one its parameter
+    m <- matrix(NA, max(rc[,1]), max(rc[,2]))
+    # Values, then parameters: a matrix with a free cell is character, its
+    # values as as.character() writes them.
+    if(any(fixed)) m[rc[fixed,,drop=FALSE]] <- value[fixed]
+    if(any(!fixed)) m[rc[!fixed,,drop=FALSE]] <- df$param[sel][!fixed]
+    mlist[[mi]] <- m
   }
-  
+
   if(!is.na(matnames[1])){
     for(mi in matnames){
       if(is.null(mlist[[mi]])) mlist[[mi]] <- matrix(NA,0,0)

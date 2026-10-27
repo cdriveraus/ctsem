@@ -83,12 +83,13 @@ unfoldmats <- function(ml){
 }
 
 # `expr` with Deriv differentiating `inv_logit` and `log1p_exp` by rules that
-# do not overflow (see `.ctStableLogistic()`), rather than through their bodies.
-# Deriv's rule table is its own and other code may use it, so the rules are
-# added for this call and the table put back as it was.
+# do not overflow (see `.ctStableLogistic()`), rather than through their bodies,
+# and `inv` by its own rule, which Deriv lacks. Deriv's rule table is its own
+# and other code may use it, so the rules are added for this call and the table
+# put back as it was.
 .ctWithStableDerivRules <- function(expr) {
   rules <- Deriv::drule
-  added <- c("inv_logit", "log1p_exp")
+  added <- c("inv_logit", "log1p_exp", "inv")
   previous <- mget(added, envir = rules, ifnotfound = list(NULL), inherits = FALSE)
   on.exit(for (name in added) {
     if (is.null(previous[[name]])) {
@@ -97,7 +98,38 @@ unfoldmats <- function(ml){
   }, add = TRUE)
   assign("inv_logit", alist(x = inv_logit(x) * inv_logit(-x)), envir = rules)
   assign("log1p_exp", alist(x = inv_logit(x)), envir = rules)
+  assign("inv", alist(x = -inv(x)^2), envir = rules)
   expr
+}
+
+# `min(a, b)` and `max(a, b)` written through `abs`, which Deriv differentiates
+# (to `sign`, in the engine's vocabulary): Deriv takes no rule for a primitive
+# of `...`, and differentiated `min` and `max` to 0, so a state-dependent cell
+# using either got a Jacobian of zero there and a wrong linearisation. More
+# than two arguments fold pairwise. Text with neither is returned as it came.
+.ctMinMaxAsAbs <- function(text) {
+  changed <- FALSE
+  walk <- function(e) {
+    if (!is.call(e)) return(e)
+    for (i in seq_along(e)[-1L]) e[[i]] <- walk(e[[i]])
+    f <- e[[1]]
+    if (!(identical(f, as.name("min")) || identical(f, as.name("max"))) ||
+        length(e) < 3L) return(e)
+    changed <<- TRUE
+    sgn <- if (identical(f, as.name("max"))) "+" else "-"
+    out <- e[[2]]
+    for (k in 3:length(e)) {
+      a <- call("(", out)
+      b <- call("(", e[[k]])
+      out <- call("/", call("(", call(sgn, call("+", a, b),
+        call("abs", call("-", a, b)))), 2)
+    }
+    out
+  }
+  parsed <- walk(str2lang(text))
+  if (!changed) return(text)
+  gsub(" ", "", paste(deparse(parsed, width.cutoff = 500L, control = "digits17"),
+    collapse = ""), fixed = TRUE)
 }
 
 ctJacobian <- function(m,types=c('J0','JAx','Jtd','Jy'),simplify=TRUE ){
@@ -122,7 +154,16 @@ ctJacobian <- function(m,types=c('J0','JAx','Jtd','Jy'),simplify=TRUE ){
   matnames <- names(.ctMatricesList(unsafe=TRUE)$base)
   
   mats <- unfoldmats(mats)
-  
+  # Whether a cell's text reads a latent state, and a coefficient's text in the
+  # form the functions take below.
+  reads <- function(x) grepl('state[', x, fixed = TRUE)
+  escape <- function(x) {
+    x <- gsub(' ', '', x, fixed = TRUE)
+    x <- gsub(',', '___comma___', x, fixed = TRUE)
+    x <- gsub('[', '___leftsquarebracket___', x, fixed = TRUE)
+    gsub(']', '___rightsquarebracket___', x, fixed = TRUE)
+  }
+
   Jout <- list()
   for(typei in types){
     if(typei=='JAx'){
@@ -149,7 +190,9 @@ ctJacobian <- function(m,types=c('J0','JAx','Jtd','Jy'),simplify=TRUE ){
         # if(!m$continuoustime && is.na(mats$DRIFT[row,row])) fn[row] <- paste0("state[", as.character(row), "] +",fn[row])
         if(!is.na(mats$CINT[row])) fn[row] = paste0(fn[row],' + ',mats$CINT[row]) #checking for NA because CINT is not always as large as DRIFT
       }
-      # browser()
+      coef <- matrix(as.character(mats$DRIFT), ndim, ndim)
+      affine <- vapply(seq_len(ndim), function(row) !any(reads(c(mats$DRIFT[row, ],
+        if(!is.na(mats$CINT[row])) mats$CINT[row]))), logical(1))
     }
     
     
@@ -161,7 +204,11 @@ ctJacobian <- function(m,types=c('J0','JAx','Jtd','Jy'),simplify=TRUE ){
       Jrows = nrow(mats$T0MEANS)
       tdrows=nrow(mats$TDPREDEFFECT)
       fn = paste0('state[',1:ndim,']')
-      fn[1:tdrows] = paste0(fn[1:tdrows],' + ', prodSymb(mats$TDPREDEFFECT, cbind(rep(1,m$n.TDpred))))
+      tdterm <- prodSymb(mats$TDPREDEFFECT, cbind(rep(1,m$n.TDpred)))
+      fn[1:tdrows] = paste0(fn[1:tdrows],' + ', tdterm)
+      coef <- matrix('0', ndim, ndim)
+      diag(coef) <- '1'
+      affine <- !c(reads(tdterm), rep(FALSE, ndim - tdrows))
     }
     
     if(typei=='J0') {
@@ -172,12 +219,18 @@ ctJacobian <- function(m,types=c('J0','JAx','Jtd','Jy'),simplify=TRUE ){
         return(out)
       })
       fn = prodSymb(diag(nrow(mats$T0MEANS)), matrix(t0func,ncol=1))
+      coef <- matrix('0', Jrows, ndim)
+      diag(coef) <- '1'
+      affine <- !reads(mats$T0MEANS[,1])
     }
     if(typei=='Jy') {
       Jrows = nrow(mats$MANIFESTMEANS)
       Jybase <- mats$LAMBDA
       Jybase <- cbind(Jybase,matrix(0,nrow(Jybase),ncol=nrow(mats$T0MEANS)-ncol(Jybase)))
       fn = paste0(mats$MANIFESTMEANS,' + ',prodSymb(Jybase,cbind(paste0('state[',1:ndim,']'))))
+      coef <- matrix(as.character(Jybase), Jrows, ndim)
+      affine <- vapply(seq_len(Jrows), function(i)
+        !any(reads(c(mats$MANIFESTMEANS[i], Jybase[i, ]))), logical(1))
     }
     
     
@@ -191,6 +244,10 @@ ctJacobian <- function(m,types=c('J0','JAx','Jtd','Jy'),simplify=TRUE ){
     
     
     fn=gsub(' ','',fn,fixed=TRUE)
+    # min and max through abs (`.ctMinMaxAsAbs()`) before the commas are
+    # escaped below: escaped, `min(a,b)` reads as a call of one argument named
+    # `a___comma___b`, which Deriv takes for a constant.
+    fn = vapply(fn, .ctMinMaxAsAbs, character(1))
     #probably redundant now but maybe useful at some point?
     # replace remaining commas and square brackets for cOde Jacobian
     fn = gsub(",", "___comma___", fn, fixed = TRUE)
@@ -198,12 +255,18 @@ ctJacobian <- function(m,types=c('J0','JAx','Jtd','Jy'),simplify=TRUE ){
     fn = gsub("]", "___rightsquarebracket___", fn, fixed = TRUE)
     
     # 3): calculate Jacobian of fn symbolically, with logistics in the form
-    # whose derivative stays finite (`.ctStableLogistic()`).
+    # whose derivative stays finite (`.ctStableLogistic()`). A row whose
+    # coefficients and constant read no state is affine in the states, and its
+    # derivatives are its coefficients: Deriv is called only for a row that
+    # reads one. Every row went to Deriv, once per state, a quarter of a
+    # 20-latent model's preparation (60 augmented states, 14400 derivatives,
+    # all of them linear).
     fn = vapply(fn, .ctStableLogistic, character(1))
-    J = .ctWithStableDerivRules(sapply(state,function(statei){ #use Deriv package to calculate Jacobian to handle new functions
-        sapply(fn, function(fni){
-        Deriv::Deriv(fni, statei,cache.exp = FALSE)
-      })}))
+    J <- matrix(escape(coef), length(fn), ndim)
+    stateful <- which(!affine)
+    if(length(stateful)) J[stateful, ] <- .ctWithStableDerivRules(sapply(state,
+      function(statei) vapply(fn[stateful], function(fni)
+        Deriv::Deriv(fni, statei, cache.exp = FALSE), character(1))))
     # browser()
     # 4): create Jacobian list in STAN format
     # J = sapply(J,Simplify)

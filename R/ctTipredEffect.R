@@ -87,9 +87,10 @@
 # coefficients, not one. Constraining an age effect and a sex effect to be
 # equal is a different claim from constraining two parameters' age effects to
 # be equal, and only the second is what a shared name says.
+#
+# `label` is for a caller that has read a whole column's labels already.
 #' @keywords internal
-.ctTipredEffectKey <- function(x, predictor, parnumber) {
-  label <- .ctTipredEffectLabel(x)
+.ctTipredEffectKey <- function(x, predictor, parnumber, label = .ctTipredEffectLabel(x)) {
   ifelse(is.na(label), paste0(predictor, ':#', parnumber),
     paste0(predictor, ':', label))
 }

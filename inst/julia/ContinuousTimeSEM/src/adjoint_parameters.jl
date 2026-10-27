@@ -672,6 +672,7 @@ end
     op === _XEXPM1 && return y + 1
     op === _XSIN && return cos(a)
     op === _XCOS && return -sin(a)
+    op === _XSIGN && return zero(a)
     return -inv(a^2)
 end
 

@@ -46,6 +46,7 @@ A major release: ctsem gains a second estimation engine, written in Julia, which
 - Fixed: `ctACF()` and `ctACFresiduals()` dropped lag 0 from cross correlations.
 - Fixed: `ctDiscretePars()` given subjects out of ascending order labelled each subject's results with another's id.
 - Fixed: data values that do not read as numbers were treated as missing; `ctFit()` now stops and names them.
+- Fixed: in a nonlinear model, a cell using `min()` or `max()` of a state was linearised as if it did not depend on that state.
 
 ## 29/6/2026
 ### 3.11.0

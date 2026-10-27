@@ -1569,9 +1569,12 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
   # copy of those steps stood here, and missed every step added to ctFit. The
   # caller's random stream is put back: the setup's draws are a fit's, for
   # its starting values, and nothing here fits.
+  # The route is the one an optimising julia fit takes, chosen on the model as
+  # set up, as the generator chooses it: a 'stationary' T0MEANS cell is a
+  # varying intercept until the setup fixes it.
   keep <- .ctStreamKeep()
-  tryCatch(.ctFitModelSetup(model, intoverpop = if (.ctAnyVarying(model))
-    "laplace" else "augmented", checks = FALSE)$ctm, finally = keep())
+  tryCatch(.ctFitModelSetup(model, intoverpop = "auto", checks = FALSE)$ctm,
+    finally = keep())
 }
 
 # A reference inside a matrix the engine evaluates once, from the parameters
@@ -2100,43 +2103,35 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
   if (any(table$matrix == matrix)) {
     return(.ctJuliaPadMatrix(table, matrix, nrow, ncol))
   }
-  template <- table[1L, , drop = FALSE]
-  entries <- vector("list", nrow * ncol)
-  k <- 0L
-  for (row in seq_len(nrow)) for (col in seq_len(ncol)) {
-    entry <- template
-    entry[] <- NA
-    entry$matrix <- matrix
-    entry$row <- row
-    entry$col <- col
-    entry$value <- 0
-    entry$indvarying <- FALSE
-    effect_columns <- grep("_effect$", names(entry), value = TRUE)
-    if (length(effect_columns)) entry[effect_columns] <- "FALSE"
-    k <- k + 1L
-    entries[[k]] <- entry
-  }
-  rbind(table, do.call(rbind, entries))
+  .ctJuliaZeroCells(table, 1L, matrix, nrow, ncol)
 }
 
 .ctJuliaPadMatrix <- function(table, matrix, nrow, ncol) {
   present <- table$matrix == matrix
   if (!any(present)) return(table)
-  template <- table[which(present)[1L], , drop = FALSE]
-  for (row in seq_len(nrow)) for (col in seq_len(ncol)) {
-    if (any(table$matrix == matrix & table$row == row & table$col == col)) next
-    entry <- template
-    entry[] <- NA
-    entry$matrix <- matrix
-    entry$row <- row
-    entry$col <- col
-    entry$value <- 0
-    entry$indvarying <- FALSE
-    effect_columns <- grep("_effect$", names(entry), value = TRUE)
-    if (length(effect_columns)) entry[effect_columns] <- "FALSE"
-    table <- rbind(table, entry)
-  }
-  table
+  .ctJuliaZeroCells(table, which(present)[1L], matrix, nrow, ncol,
+    have = paste(table$row[present], table$col[present]))
+}
+
+# The cells of an nrow x ncol matrix the table lacks (`have`, as "row col"),
+# appended in row-major order, each fixed at 0 on the template row's columns.
+# Bound once: appended a cell at a time, an augmented 20-latent model's padding
+# took four seconds.
+.ctJuliaZeroCells <- function(table, template, matrix, nrow, ncol, have = character()) {
+  row <- rep(seq_len(nrow), each = ncol)
+  col <- rep(seq_len(ncol), times = nrow)
+  keep <- !paste(row, col) %in% have
+  if (!any(keep)) return(table)
+  entry <- table[rep(template, sum(keep)), , drop = FALSE]
+  entry[] <- NA
+  entry$matrix <- matrix
+  entry$row <- row[keep]
+  entry$col <- col[keep]
+  entry$value <- 0
+  entry$indvarying <- FALSE
+  effect_columns <- grep("_effect$", names(entry), value = TRUE)
+  if (length(effect_columns)) entry[effect_columns] <- "FALSE"
+  rbind(table, entry)
 }
 
 # Which parameter cells are written by a state-dependent expression. Shared by
@@ -3125,6 +3120,10 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
     tryCatch(.ctFitModelSetup(model, intoverpop = "augmented", checks = FALSE)$ctm,
       finally = keep())
   }
+  # Everything below reads the model as set up, as a fit hands it here: read
+  # as written, a reduced-rank population's loading form was missed and its
+  # scales looked for in a matsetup that has none.
+  model <- expanded
   augmented_indices <- as.integer(expanded$intoverpopindvaryingindex)
   nlatent_augmented <- max(expanded$pars$row[expanded$pars$matrix == "T0MEANS"])
   table <- .ctJuliaParameterTable(expanded)
@@ -3938,7 +3937,6 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
   # allocates as it walks the cells, this walks predictors then parameters --
   # but which effects are *the same coefficient* has to match, or the two
   # backends fit different models from one specification.
-  keys <- list()
   for (predictor in seq_along(model$TIpredNames)) {
     column <- effect_columns[predictor]
     if (!column %in% available) next
@@ -3952,22 +3950,19 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
     # nothing. Both of those are other functions' behaviour, and the julia
     # refusal says only that it is not supported yet, so the day it is the
     # wrong test here would silently free an effect the user fixed.
-    freeeffects <- direct & .ctTipredEffectFree(table[[column]])
-    parameters <- sort(unique(table$parnumber[freeeffects]))
-    for (parameter in parameters) {
-      # Cells sharing a parameter are required to state the same effects
-      # (R/ctModelSpecCheck.R), so the first of them carries the label.
-      first <- which(freeeffects & table$parnumber %in% parameter)[1L]
-      key <- .ctTipredEffectKey(table[[column]][first], predictor, parameter)
-      if (is.null(keys[[key]])) {
-        coefficient <- coefficient + 1L
-        keys[[key]] <- coefficient
-      }
-      entries[[length(entries) + 1L]] <- data.frame(
-        parameter = as.integer(parameter), predictor = as.integer(predictor),
-        coefficient = as.integer(keys[[key]])
-      )
-    }
+    freeeffects <- which(direct & .ctTipredEffectFree(table[[column]]))
+    # Cells sharing a parameter are required to state the same effects
+    # (R/ctModelSpecCheck.R), so the first of them carries the label.
+    first <- freeeffects[!duplicated(table$parnumber[freeeffects])]
+    first <- first[order(table$parnumber[first])]
+    if (!length(first)) next
+    key <- .ctTipredEffectKey(table[[column]][first], predictor, table$parnumber[first])
+    # A key holds its predictor, so a predictor's coefficients are new to it.
+    entries[[length(entries) + 1L]] <- data.frame(
+      parameter = as.integer(table$parnumber[first]), predictor = as.integer(predictor),
+      coefficient = as.integer(coefficient + match(key, unique(key)))
+    )
+    coefficient <- coefficient + length(unique(key))
   }
   if (!length(entries)) return(data.frame(parameter = integer(), predictor = integer(), coefficient = integer()))
   do.call(rbind, entries)

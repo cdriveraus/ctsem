@@ -254,6 +254,11 @@ inv_logit<-function(x) {
 #' @export
 log1p_exp <- function(x) pmax(x, 0) + log1p(exp(-abs(x)))
 
+# `inv` of the engine's cell vocabulary, so R evaluates and differentiates a
+# cell that uses it (`.ctWithStableDerivRules()` gives Deriv its rule): without
+# a function of that name Deriv stopped the model's preparation.
+inv <- function(x) 1 / x
+
 # R's random stream kept for a step whose draws are its own -- from a fixed
 # `seed`, or thrown away -- and must leave the caller's where it was: the
 # stream is set to `seed` if one is given, and the function returned puts the

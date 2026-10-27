@@ -37,6 +37,8 @@ _tx_same(a, b) = ForwardDiff.value(a) === ForwardDiff.value(b) &&
         "state[1]^0.5 * log(DRIFT[1,2]) - expm1(state[2]) + cos(state[3])^2",
         "state[1]/3 + PARS[1]*ctx.tdpreds[1]/4 - (ctx.tdpreds[2]*2 + 1)*state[2]",
         "exp(ctx.tipreds[1]/2)*PARS[2,1] + 1/(1 + exp(-state[3]))",
+        # sign: what ctJacobian writes for the derivative of abs, min and max.
+        "sign(state[2] - PARS[1]) * state[1] + inv(2 + state[3]^2)",
         # Past eight nodes: evaluated in the task's buffers.
         "-PARS[1,1]*(1 + 0.5*state[1]^2 - 0.2*state[1]^3 + 0.1*state[1]^4)/(1 + exp(-PARS[2,1]*state[1])) - LAMBDA[1,1]*sin(state[2])^2*ctx.tdpreds[1]",
     ]
@@ -98,6 +100,7 @@ end
         "state[1]^0.5 * log(DRIFT[1,2]) - expm1(state[2])",
         "exp(ctx.tipreds[1]/2)*PARS[2,1] + 1/(1 + exp(-state[3]))",
         "cos(state[3])^2 - sin(state[1]) * logit(0.3 + 0.1*state[1])",
+        "sign(state[2] - PARS[1]) * state[1] + inv(2 + state[3]^2)",
         "-PARS[1,1]*(1 + 0.5*state[1]^2 - 0.2*state[1]^3 + 0.1*state[1]^4)/(1 + exp(-PARS[2,1]*state[1])) - LAMBDA[1,1]*sin(state[2])^2*ctx.tdpreds[1]",
     ]
     seeded(e, k, which) = begin

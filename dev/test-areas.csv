@@ -119,6 +119,7 @@
 "test-reshaping.R","spec","core"
 "test-t0var-redundancies.R","spec","core"
 "test-transform-match.R","spec","core"
+"test-jacobian-vocabulary.R","spec","core"
 "test-corrcheck.R","stan","core"
 "test-stan-convergence.R","stan","core"
 "test-stan-nonlinear-writer.R","stan","core"

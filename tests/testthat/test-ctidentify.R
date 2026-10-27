@@ -24,11 +24,16 @@
 # `intoverpop='augmented'` the variance cell's effect is a state the
 # observation mean function does not see, so the Kalman update never moves it
 # and it is learned about only through its correlation with the drift effect:
-# partially identified, not unidentified.
+# partially identified, not unidentified. That is the full-rank covariance's
+# finding, so the rank is stated: by default (`poprank = 'auto'`) the augmented
+# route keeps only the dimensions that reach the observation mean, here one,
+# and the diffusion effect's loading is then identified through its product
+# with the drift's. ctIdentify() analyses the model as ctFit() sets it up.
 .identify_varying_model <- function() {
   model <- .identify_model()
   model$pars$indvarying <- FALSE
   model$pars$indvarying[model$pars$matrix %in% c("DIFFUSION", "DRIFT")] <- TRUE
+  model$poprank <- NA
   model
 }
 
