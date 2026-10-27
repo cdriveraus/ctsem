@@ -1035,8 +1035,11 @@
   # past the check's own noise, the fit is left alone; otherwise the units
   # carrying the move are flagged on draws as jump units are, and the rounds
   # climb as before. Not at a jump, whose units are named already and whose
-  # point is no optimum to take a step from.
-  check <- if (is.null(jump) && !isFALSE(control$check)) {
+  # point is no optimum to take a step from, nor where every unit's integrand
+  # is Gaussian in its effects (`laplace$quadratic`): Laplace is exact there,
+  # and the screen's product rules say so for less.
+  check <- if (is.null(jump) && !isFALSE(control$check) &&
+      !isTRUE(fit$model_spec$laplace$quadratic)) {
     if (!is.null(sink)) sink(sprintf("Laplace check, every unit on %d draws | %8s",
       as.integer(.ctJuliaOr(control$check_draws, 128L)), .ctDuration(seconds())), "update")
     tryCatch(.ctLaplaceShiftCheck(fit,
