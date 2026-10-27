@@ -1171,12 +1171,21 @@ end
 # objective, wherever its coreset's error pointed, from raw -2 to -9.5, and the
 # fit ended there, 7.8 below the optimum the full sum reached.
 #
-# Looking for a coreset backs off: after a search that found none, the next
-# waits twice as many full iterations as the last wait, and one that finds one
-# starts the count again, so a run where nothing passes searches about `log2`
-# of its full iterations' times. Counted in iterations, not timed: decisions
-# that read the clock made a fit's path depend on the machine's load, and two
-# identical fits at one core ended at different points.
+# Looking for a coreset backs off: after a search that found none, or a stage
+# that did not pay or was sent back, the next waits twice as many full
+# iterations as the last wait, and a stage that paid starts the count again,
+# so a run where nothing passes, or nothing pays, searches about `log2` of its
+# full iterations' times. A stage that does not pay is the same evidence as a
+# search that finds nothing: on the affect pilot (903 parameters) a stage's
+# check rules ended nearly every stage after one or two iterations, whose
+# steps were as good as full ones (the full objective gained 0.99-1.00 of the
+# coreset's prediction), and at a share of 0.4-0.6 none could pay for its
+# check. Entered again after the next full iteration each time, a stage's
+# iterations took 1.1-2 times as long as full ones, and in two runs the fit
+# gained 17 and 63 per cent less a minute while in them (dev1, dev3,
+# review/PILOT-curvature-coresets-2026-10-25.md). Counted in iterations, not
+# timed: decisions that read the clock made a fit's path depend on the
+# machine's load, and two identical fits at one core ended at different points.
 
 """
     CTSEMCoresetTarget(laplace, coreset, anchor, correction)
@@ -1572,8 +1581,8 @@ After an accepted L-BFGS step to `x`, with value `f` and gradient `G` (of the
 minimised objective in force). On the full objective: keep the point, and,
 where the step gained more than `gap_tol`, look for a coreset
 (`_ctsem_coreset_choose`) once the full iterations since the last search
-number `wait`, which doubles after a search that finds none and is one after
-one that finds one. In a
+number `wait`, which doubles after a search that finds none (and after a
+stage that does not pay, `_ctsem_coreset_check!`). In a
 stage: check it with a full gradient (`_ctsem_coreset_check!`) once it has run
 its planned iterations, once what L-BFGS's model says is left to gain on the
 coreset (`G' H G / 2`) is no more than the coreset's error, once its gradient
@@ -1608,7 +1617,6 @@ function _ctsem_coreset_step!(c::CTSEMCoresetPlan, x, f, G, hmul, scale;
             c.wait = max(1, 2c.wait)
             return none
         end
-        c.wait = 1
         push!(c.entered, c.total_iterations)
         _ctsem_coreset_begin!(c, cs, x, f, G, scale, hmul)
         return (act=:enter, x=x, f=f, G=G)
@@ -1664,7 +1672,8 @@ as long, if this one paid -- its iterations times the full objective's gain
 over the coreset's predicted one, against its iterations' share of the work and
 its check -- the full objective gained more than `gap_tol` an iteration over
 it, and some coreset the longer stage can pay for is accurate enough; the full
-objective otherwise.
+objective otherwise. The next search waits one full iteration after a stage
+that paid, and twice the last wait after one sent back or not paid for.
 """
 function _ctsem_coreset_check!(c::CTSEMCoresetPlan, x, fc, Gc, hmul, scale;
         leave::Bool=false)
@@ -1685,10 +1694,12 @@ function _ctsem_coreset_check!(c::CTSEMCoresetPlan, x, fc, Gc, hmul, scale;
     if !ok || ff > c.f0
         c.reverted += 1
         c.f_last = c.f0
+        c.wait = max(1, 2c.wait)
         return (act=:revert, x=c.x0, f=c.f0, G=c.G0)
     end
     c.f_last = ff
     paid = n * fidelity > n * c.shares[end] + 1
+    c.wait = paid ? 1 : max(1, 2c.wait)
     if !leave && paid && actual > c.gap_tol * max(n, 1)
         stretch = 2c.stretch
         c.stretch = stretch
