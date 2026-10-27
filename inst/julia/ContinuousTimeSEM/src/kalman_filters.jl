@@ -273,7 +273,7 @@ end
     ws.P_predict.data .+= ws.discrete_ca.dDIFFUSION
     _copy_lower_to_upper!(ws.P_predict.data, ws.state_dim)
     ws.hyb.active && ws.hyb.q > 0 &&
-        _hybrid_predict!(ws.hyb, ws.discrete_ca.dDRIFT, pars.JAx,
+        _ekf_gaussian_call(ws, _hybrid_predict!, _ekf_hybrid_refused, ws.hyb, ws.discrete_ca.dDRIFT, pars.JAx,
             ws.discretization_buffer.series_icpt, ws.affine_buffer.dim, Δt,
             ws.state_dim, ws.continuous_time)
     return nothing
@@ -397,7 +397,10 @@ function _ekf_update_observed!(ws::ContinuousEKFWorkspace, pars,
     # mode rather than its prior mean. Not while generating: the row's draw is
     # taken from the prior's linearisation, before there is an observation to
     # iterate on. Nor beside deviations the filter integrates, whose model is
-    # linear (`CTSEMHybrid`): the steps do not carry their columns.
+    # linear (`CTSEMHybrid`): the steps do not carry their columns. Behind a
+    # barrier, so it is compiled only at the number types a model with such a
+    # measurement runs at (`_ctsem_barrier`), not into every filter; a row it
+    # serves costs several update-group evaluations beside one dispatch.
     ws.relinearise && _CTSEM_RELINEARISE[] && generate === nothing &&
         context !== nothing && !isempty(gaussian) && !(ws.hyb.active && ws.hyb.q > 0) &&
         return _ekf_iterated_rows!(ws, pars, data, obs_col, gaussian, binary_loglik,
@@ -811,7 +814,7 @@ function _ekf_masked_update_step!(ws::ContinuousEKFWorkspace, pars,
     _copy_lower_to_upper!(ws.P_update.data, ws.state_dim)
     # The integrated deviations' share of this update (`CTSEMHybrid`).
     ws.hyb.active && ws.hyb.q > 0 &&
-        _hybrid_update!(ws.hyb, Lv, factor, KRv, yv, observed, n)
+        _ekf_gaussian_call(ws, _hybrid_update!, _ekf_hybrid_refused, ws.hyb, Lv, factor, KRv, yv, observed, n)
     return factor
 end
 
@@ -1488,7 +1491,8 @@ end
     isempty(tdpreds) && return nothing
     # A predictor effect the filter integrates moves its column with the state
     # (`_hybrid_td_impulse!`).
-    ws.hyb.active && ws.hyb.q > 0 && _hybrid_td_impulse!(ws.hyb, tdpreds)
+    ws.hyb.active && ws.hyb.q > 0 &&
+        _ekf_gaussian_call(ws, _hybrid_td_impulse!, _ekf_hybrid_refused, ws.hyb, tdpreds)
     # Not `_matvec_mul!` at `Val(length(tdpreds))`: a runtime `Val` made it a
     # dynamic call, which boxed both views on every row with a TD predictor.
     _ctsem_mulvec!(ws.bufferQ.r, pars.TDPREDEFFECT, tdpreds)
@@ -2014,7 +2018,8 @@ function _extended_kalman_filter_continuous!(
     _copy_lower_to_upper!(ws.P_predict.data, ws.state_dim)
     _apply_population_block!(ws, all_params)
     copyto!(ws.state, pars.T0MEANS)
-    _hybrid_start!(ws.hyb, sp.hybrid, data, ws.state_dim, ws.manifest_dim)
+    _ekf_gaussian_call(ws, _hybrid_start!, _hybrid_start_categorical!, ws.hyb, sp.hybrid,
+        data, ws.state_dim, ws.manifest_dim)
     # Split rather than handed a result that is `nothing` or the view: a union
     # of the two is not a bits union, so it was boxed on every traced subject
     # pass.
@@ -2129,6 +2134,8 @@ function _extended_kalman_filter_continuous!(
                 substep_time, substep_dt, Int(subject), t_idx)
             _record_group!(trace, 1, ws.predict_param_indices, all_params, predict_context)
             apply_complex_transforms_at_indices!(all_params, ws.predict_param_indices, sp.predict_transforms, predict_context)
+            # Behind a barrier, as the iterated update is: compiled only where a
+            # model with nonlinear dynamics reaches it.
             ws.moment_now[] = moment_on &&
                 _ekf_moment_cells!(ws, pars, sp, all_params, predict_context, trace)
             predict_snapshot = _begin_predict!(trace, ws, ws.state_dim)
@@ -2181,7 +2188,8 @@ function _extended_kalman_filter_continuous!(
         prev_timestep = curr_timestep
     end
     # The integrated deviations' closing term (`CTSEMHybrid`).
-    ws.hyb.active && (ll += _hybrid_marginal!(ws.hyb, sp.hybrid, params, trace))
+    ws.hyb.active && (ll += _ekf_gaussian_call(ws, _hybrid_marginal!, _ekf_hybrid_refused,
+        ws.hyb, sp.hybrid, params, trace))
     return ll
 end
 

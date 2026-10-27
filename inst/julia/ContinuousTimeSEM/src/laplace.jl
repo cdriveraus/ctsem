@@ -2088,7 +2088,8 @@ function _laplace_subject_value_gradient!(gradient::AbstractVector{T},
         fill!(gradient, zero(T))
         _ctsem_parameter_layer!(gradient, aws.theta_bar, tape.subject_values,
             subject_objective.params, aws, subject_objective.tipreds, values)
-        _hybrid_scatter!(gradient, tape.hyb, subject_objective.params.hybrid)
+        _ekf_gaussian_call(aws.ekf_ws, _hybrid_scatter!, _ctsem_noop, gradient, tape.hyb,
+            subject_objective.params.hybrid)
         _ctsem_tipred_scatter!(gradient, aws, subject_objective.tipreds)
         _laplace_charge!(_LAPLACE_BYTES_REV, br)
         return loglik

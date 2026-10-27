@@ -673,7 +673,8 @@ function _ctsem_subject_gradient_chunk!(scores::Matrix{T}, totals::Vector{T},
             _ctsem_parameter_layer!(view(scores, i, :), aws.theta_bar,
                 tape.subject_values, subject_objective.params, aws,
                 subject_objective.tipreds, values)
-            _hybrid_scatter!(view(scores, i, :), tape.hyb, subject_objective.params.hybrid)
+            _ekf_gaussian_call(aws.ekf_ws, _hybrid_scatter!, _ctsem_noop, view(scores, i, :),
+                tape.hyb, subject_objective.params.hybrid)
             _ctsem_tipred_scatter!(view(scores, i, :), aws, subject_objective.tipreds)
             w == 1 || (view(scores, i, :) .*= w)
         end
@@ -827,7 +828,8 @@ function _ctsem_adjoint_chunk_body!(gradient::Vector{T}, totals::Vector{T},
         # Per subject and straight onto raw positions, so before or after a
         # shared parameter layer alike (`CTSEMHybrid`, a sampled TI predictor
         # a cell reads).
-        _hybrid_scatter!(gradient, tape.hyb, subject_objective.params.hybrid)
+        _ekf_gaussian_call(aws.ekf_ws, _hybrid_scatter!, _ctsem_noop, gradient, tape.hyb,
+            subject_objective.params.hybrid)
         _ctsem_tipred_scatter!(gradient, aws, subject_objective.tipreds)
         # Kept for the shared parameter layer below, and for the deferred
         # Frechet pass; with either of those enabled every subject sees the
