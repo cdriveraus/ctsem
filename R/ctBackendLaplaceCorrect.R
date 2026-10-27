@@ -11,9 +11,9 @@
 # Newton step where the continuation climbs, and reported no error for the
 # density it sampled.
 
-# The correction every Laplace fit gets by default ---------------------------
+# The step correction ----------------------------------------------------------
 #
-# `optimcontrol$laplace_correct` (default TRUE) runs `ctsem_laplace_autocorrect`
+# `optimcontrol$laplace_correct = 'step'` runs `ctsem_laplace_autocorrect`
 # at the end of an optimised `intoverpop='laplace'` fit: after the optimiser,
 # after the curvature certification and its Newton continuation have converged
 # the Laplace objective, and after the uncertainty stage has built the fit's
@@ -45,8 +45,8 @@
 #                                `fit$uncertainty$evaluated_at`
 #   fit$laplace$correction       what was done, and where
 #
-# `'quadrature'`, the default, runs a different stage in the same place: see
-# `.ctLaplaceContinue()` below.
+# `'check'`, the default, and `'quadrature'` (or TRUE) run a different stage
+# in the same place: see `.ctLaplaceContinue()` below.
 #
 # Provenance of the constants (Appendix B of
 # review/OPTIM-consolidation-plan-2026-09-25.md):
@@ -72,10 +72,15 @@
 .ctLaplaceCorrectDefaults <- list(nodes = 5L, tolerance = 0.01, maxsteps = 3L,
   gain_tol = 1e-3, step_tol = 0.1, step = 1e-3, material = 0.1)
 
-# Which correction this fit gets -- FALSE, "step" or "quadrature" -- refusing
-# by name a request that cannot apply. FALSE is accepted anywhere, since it
-# describes what every other route does. TRUE, and the default, are
-# "quadrature", the continuation: on the known-broken cases of
+# Which correction this fit gets -- FALSE, "check", "step" or "quadrature" --
+# refusing by name a request that cannot apply. FALSE is accepted anywhere,
+# since it describes what every other route does. The default is "check":
+# the shift check alone, which warns where Laplace's error moves an estimate
+# and names the corrections, rather than running one (Charles, 2026-10-27).
+# The rounds cost as much as sampling the joint posterior on nested units
+# (gN3: 244 s against 242 s, scripts/lapcheck-2026-10/rounds_cost.R), and on
+# wide units by draws far more, so which to pay for is the user's call. TRUE
+# is "quadrature", the continuation: on the known-broken cases of
 # review/OPTIM-consolidation-plan-2026-09-25.md section 10 it ended higher in
 # exact log likelihood than the step correction on 9 of 11 and level on the
 # other 2, and never below the Laplace optimum, where the step correction
@@ -86,13 +91,14 @@
   explicit <- !is.null(value)
   valid <- (is.logical(value) && length(value) == 1L && !is.na(value)) ||
     (is.character(value) && length(value) == 1L &&
-      value %in% c("step", "quadrature"))
+      value %in% c("check", "step", "quadrature"))
   if (explicit && !valid) {
-    stop("optimcontrol$laplace_correct must be TRUE or FALSE, or 'step' or ",
-      "'quadrature'.", call. = FALSE)
+    stop("optimcontrol$laplace_correct must be TRUE or FALSE, or 'check', ",
+      "'step' or 'quadrature'.", call. = FALSE)
   }
   if (explicit && isFALSE(value)) return(FALSE)
-  method <- if (is.character(value)) value else "quadrature"
+  method <- if (is.character(value)) value else if (isTRUE(value))
+    "quadrature" else "check"
   why <- if (!identical(as.character(intoverpop)[1L], "laplace")) {
     paste0("applies to intoverpop='laplace' only; with intoverpop='",
       intoverpop, "' there is no Laplace term to correct")
@@ -456,7 +462,10 @@
 # `check_seeds` (4) seeds. Where the step correcting Laplace would take is
 # resolved under `material` the rounds do not run; otherwise the units
 # carrying it are forced into the rounds, on product rules up to `maxdim`
-# effects and on draws beyond. 128 draws resolved the step to 0.05 se
+# effects and on draws beyond -- or, under `.ctLaplaceContinue(correct =
+# FALSE)`, the default fit's, named in a warning with the calls that correct
+# them, and kept in the record (`check$carriers`) for the post-hoc
+# correction to force. 128 draws resolved the step to 0.05 se
 # on the bench's narrow fixtures and 32 did not (0.17-0.45 se of noise where
 # nothing moved); four seeds give the noise, which at ten effects a unit with
 # a weakly identified covariance was larger than the step itself
@@ -654,7 +663,8 @@
 
 # What a fit keeps of the shift check (`fit$laplace$correction$check`): the
 # verdict, the largest step and its noise by parameter name, the Laplace gap,
-# and how many units carried the step. NULL where no check ran.
+# how many units carried the step and which (`carriers`, the engine's unit
+# indices, which a correction made later forces). NULL where no check ran.
 .ctLaplaceShiftRecord <- function(check, fit) {
   if (is.null(check)) return(NULL)
   names <- .ctBackendRawParameterNames(fit, length(check$shift))
@@ -663,7 +673,25 @@
     shift = stats::setNames(check$shift, names),
     shift_noise = stats::setNames(check$noise, names), bar = check$bar,
     gap = check$gap, gap_se = check$gap_se, carrying = length(check$carrying),
+    carriers = as.integer(check$carrying),
     draws = check$draws, seeds = check$seeds, seconds = check$seconds)
+}
+
+# What a fit the check flagged and nothing corrected says, in its warning and
+# in print(): the move, and the calls that remove it -- the rounds after the
+# fit, and sampling the joint posterior, which has no Laplace error. Only the
+# sampling where correcting by draws costs more (`costly`).
+.ctLaplaceShiftMessage <- function(shift, worst, carrying, units, costly) {
+  sample <- "ctFitUncertainty(fit, 'sample', control = list(intoverpop = 'none'))"
+  paste0("Laplace's error moves the estimates by up to ", format(shift, digits = 2),
+    " standard errors here (", worst, "), carried by ", carrying, " of ", units,
+    " units", if (costly) " too wide for a product rule", ", and is not corrected",
+    if (costly) paste0(": correcting it by draws costs more than sampling the ",
+      "joint posterior, which ", sample, " does.") else paste0(". ",
+      "ctFitUncertainty(fit, 'hessian', control = list(likelihood = ",
+      "'quadrature')) corrects it by quadrature, and ", sample,
+      " samples the joint posterior."),
+    " See fit$laplace$correction$check.")
 }
 
 # The rounds, shared by the fit (`.ctLaplaceContinue()`) and by
@@ -984,8 +1012,14 @@
   reason
 }
 
+# `correct = FALSE` is the default fit's (`laplace_correct = 'check'`): the
+# shift check alone, and where it finds Laplace's error moving an estimate, a
+# warning naming the corrections and the estimate left where it is. `force`
+# adds units to those the rounds integrate whatever the screen says: a
+# correction asked for after such a fit forces the units its check named.
 .ctLaplaceContinue <- function(fit, cores = 1L, verbose = 0L,
-  control = .ctLaplaceContinueDefaults, method = NULL, uncertaintycontrol = NULL) {
+  control = .ctLaplaceContinueDefaults, method = NULL, uncertaintycontrol = NULL,
+  correct = TRUE, force = NULL) {
   started <- proc.time()[["elapsed"]]
   seconds <- function() proc.time()[["elapsed"]] - started
   est <- as.numeric(fit$estimate$raw)
@@ -1053,18 +1087,41 @@
   # carrying the move are flagged on draws as jump units are, and the rounds
   # climb as before. Not at a jump, whose units are named already and whose
   # point is no optimum to take a step from.
-  check <- if (is.null(jump) && !isFALSE(control$check)) {
+  checkfailed <- NULL
+  check <- if (is.null(jump) && (!correct || !isFALSE(control$check))) {
     if (!is.null(sink)) sink(sprintf("Laplace check, every unit on %d draws | %8s",
       as.integer(.ctJuliaOr(control$check_draws, 128L)), .ctDuration(seconds())), "update")
     tryCatch(.ctLaplaceShiftCheck(fit,
       draws = as.integer(.ctJuliaOr(control$check_draws, 128L)),
       seeds = seq_len(as.integer(.ctJuliaOr(control$check_seeds, 4L))),
       bar = as.numeric(control$material), control = control),
-      error = function(e) NULL)
+      error = function(e) {
+        checkfailed <<- .ctLaplaceTryReason(structure("", condition = e))
+        NULL
+      })
   }
   checkrecord <- .ctLaplaceShiftRecord(check, fit)
+  # Asked only to check, and the check could not be made: said, unless the
+  # fit has no curvature to check against, which its uncertainty stage has
+  # said already.
+  if (!correct && is.null(check)) {
+    if (!is.null(sink)) sink("", "break")
+    if (!is.null(checkfailed) || !is.null(.ctBackendStoredHessian(fit, est))) {
+      warning("Laplace's error could not be checked at this estimate",
+        if (!is.null(checkfailed)) paste0(" (", checkfailed, ")"),
+        "; ctLaplaceCheck(fit) measures it.", call. = FALSE)
+    }
+    fit$laplace$correction <- list(method = "quadrature", status = "unchecked",
+      applied = FALSE, message = checkfailed, laplace_estimate = est,
+      loglik_laplace = as.numeric(fit$estimate$loglik),
+      seconds = c(check = seconds(), total = seconds()))
+    return(fit)
+  }
+  # Left alone where the check resolved no move, and, asked only to check,
+  # where it resolved none either way: a step that may or may not reach
+  # `material` is no reason to warn.
   if (identical(check$status, "passed") ||
-      (identical(check$status, "unresolved") && !length(check$carrying))) {
+      (identical(check$status, "unresolved") && (!correct || !length(check$carrying)))) {
     # Left alone to the bit, as a passed screen leaves it: "exact" where the
     # corrected terms equal Laplace's to the screen's tolerance, "checked"
     # where they differ without moving the estimate. Every unit was looked
@@ -1087,23 +1144,23 @@
     fit$laplace$correction <- record
     return(fit)
   }
-  # Past a quarter of the units on draws a gradient costs more than the Laplace
-  # route saves and sampling is the better route (`.ctLaplaceDrawsShareWarn()`).
-  # Only units too wide for a product rule go on draws, and the check spreads
-  # the step over most units of a wide model -- 97 to 99 of 100 at twenty
-  # effects a unit -- where the rounds on draws would run for hours, so it
-  # says so rather than starting them. Narrow units' product rules are cheap.
+  # A move found and not to be made here: asked only to check, or, asked to
+  # correct, past a quarter of the units on draws, where a gradient costs more
+  # than the Laplace route saves and sampling is the better route
+  # (`.ctLaplaceDrawsShareWarn()`). Only units too wide for a product rule go
+  # on draws, and the check spreads the step over most units of a wide model
+  # -- 97 to 99 of 100 at twenty effects a unit -- where the rounds on draws
+  # would run for hours. Said once, with the calls that correct it, and kept
+  # in the record for print().
   drawn <- check$carrying[check$width[check$carrying] > as.integer(control$maxdim)]
-  if (!is.null(check) && length(drawn) > 0.25 * check$units) {
-    warning(sprintf(paste0("Laplace's error moves the estimates by up to %.1f ",
-      "standard errors here (%s), carried by %d of %d units too wide for a ",
-      "product rule: correcting it by draws costs more than sampling the ",
-      "joint posterior, which ctFitUncertainty(fit, 'sample', control = ",
-      "list(intoverpop = 'none')) does. See fit$laplace$correction$check."),
-      check$max_shift, checkrecord$worst, length(drawn), check$units),
-      call. = FALSE)
+  costly <- !is.null(check) && length(drawn) > 0.25 * check$units
+  if (!is.null(check) && (!correct || costly)) {
+    if (!is.null(sink)) sink("", "break")
+    said <- .ctLaplaceShiftMessage(check$max_shift, checkrecord$worst,
+      if (costly) length(drawn) else length(check$carrying), check$units, costly)
+    warning(said, call. = FALSE)
     fit$laplace$correction <- list(method = "quadrature", status = "flagged",
-      applied = FALSE, laplace_estimate = est,
+      applied = FALSE, costly = costly, message = said, laplace_estimate = est,
       loglik_laplace = as.numeric(fit$estimate$loglik),
       units = as.integer(check$units), check = checkrecord,
       seconds = c(check = seconds(), total = seconds()))
@@ -1111,7 +1168,8 @@
   }
   cont <- try(do.call(module$ctsem_laplace_continuation,
     c(list(.ctJuliaObjective(fit, hybrid = TRUE), .ctJuliaNumericVector(est)),
-      .ctLaplaceContinuationArgs(control, force = union(jump$units, check$carrying),
+      .ctLaplaceContinuationArgs(control,
+        force = union(union(jump$units, check$carrying), as.integer(force)),
         points = jump$points))),
     silent = TRUE)
   # The engine's reason, which is what tells an allocation it refused from a

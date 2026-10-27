@@ -153,8 +153,8 @@
 #' better tool for it.
 #'
 #' \strong{Both methods cross-validate the Laplace objective.} A Laplace fit's
-#' estimate is corrected by quadrature by default
-#' (\code{optimcontrol$laplace_correct}, see \code{\link{ctFit}}). The folds are
+#' estimate can be corrected by quadrature (\code{optimcontrol$laplace_correct
+#' = TRUE}, see \code{\link{ctOptimControl}}). The folds are
 #' refits of the Laplace objective, scored by it, and are not corrected -- each
 #' would need its own Hessian and quadrature gradient -- so the in-sample side,
 #' the folds' starting point and the PSIS proposal all use the Laplace optimum,

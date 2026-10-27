@@ -1,6 +1,7 @@
-# The quadrature correction, `optimcontrol$laplace_correct = 'quadrature'` and
-# the default (`.ctLaplaceContinue()` in R/ctBackendLaplaceCorrect.R,
-# laplace_continuation.jl in the engine), beside the step correction.
+# The quadrature correction, `optimcontrol$laplace_correct = 'quadrature'`,
+# and the default's check (`.ctLaplaceContinue()` in
+# R/ctBackendLaplaceCorrect.R, laplace_continuation.jl in the engine), beside
+# the step correction.
 #
 # What is pinned here: that a model on which Laplace is exact is left alone to
 # the bit; that on a nonlinear one the continuation lands at the optimum of the
@@ -8,8 +9,10 @@
 # Nelder-Mead, sharing nothing with the continuation but the model -- closer
 # than the step correction does; that what the fit then reports is the
 # continuation's own (estimate, quadrature log likelihood, covariance from its
-# Hessian, certification); that it is what the default does; that the guard
-# reverts; and that each request that cannot apply is refused by name.
+# Hessian, certification); that the default checks, warns and leaves the
+# estimate, and that the correction its warning names is the fit-time one;
+# that the guard reverts; and that each request that cannot apply is refused
+# by name.
 
 # A random effect on an identity-transformed MANIFESTMEANS: Laplace is exact.
 .lc_linear_model <- function() {
@@ -77,20 +80,29 @@
     model <- if (identical(which, "linear")) .lc_linear_model() else .lc_nonlinear_model()
     # 'checked' by name: what these tests read is the draws a corrected fit
     # takes on the hybrid, which the default's curvature does not take.
+    # The warnings are kept on the fit, for the tests that read them: the
+    # default's check warns where it finds a move.
     fitwith <- function(correct, uncertainty = "checked") {
       set.seed(11)
-      suppressMessages(ctFit(data, model, backend = "julia",
-        intoverpop = "laplace", cores = 1,
+      warned <- character()
+      fit <- withCallingHandlers(suppressMessages(ctFit(data, model,
+        backend = "julia", intoverpop = "laplace", cores = 1,
         optimcontrol = list(finishsamples = 100, laplace_correct = correct,
-          uncertainty = uncertainty)))
+          uncertainty = uncertainty))),
+        warning = function(w) {
+          warned <<- c(warned, conditionMessage(w))
+          invokeRestart("muffleWarning")
+        })
+      attr(fit, "warned") <- warned
+      fit
     }
     fits <- list(off = fitwith(FALSE), quadrature = fitwith("quadrature"))
     if (!identical(which, "linear")) {
-      # Asked for by name: the step correction is what the default is
-      # compared against.
+      # Asked for by name: the step correction is what the quadrature
+      # correction is compared against.
       fits$step <- fitwith("step")
       fits$default <- fitwith(NULL)
-      # Every default: the curvature's normal, checked on the hybrid.
+      # Every default: the curvature's normal, and the shift check alone.
       fits$development <- fitwith(NULL, uncertainty = NULL)
     }
     assign(key, fits, envir = .lc_cache)
@@ -152,15 +164,39 @@ test_that("a model on which Laplace is exact is screened and left alone", {
   expect_null(fits$quadrature$estimate$loglik_method)
 })
 
-test_that("the default is the quadrature correction, and the fit-time one is the post-hoc one", {
+test_that("the default checks and warns, and the correction it names is the fit-time one", {
   skip_without_julia()
   fits <- .lc_fits("nonlinear")
-  expect_identical(fits$default$laplace$correction$method, "quadrature")
-  expect_identical(fits$quadrature$estimate$raw, fits$default$estimate$raw)
-  expect_identical(fits$quadrature$estimate$cov, fits$default$estimate$cov)
-  expect_identical(fits$quadrature$estimate$rawposterior,
-    fits$default$estimate$rawposterior)
-  expect_identical(fits$quadrature$estimate$loglik, fits$default$estimate$loglik)
+  default <- fits$default
+  corr <- default$laplace$correction
+  # Correcting Laplace moves the population sd here, resolved past the
+  # check's noise, so the default says so, names the corrections, and leaves
+  # the estimate, its log likelihood and its draws as the uncorrected fit's.
+  expect_identical(corr$method, "quadrature")
+  expect_identical(corr$status, "flagged")
+  expect_false(corr$applied)
+  expect_false(corr$costly)
+  expect_identical(corr$check$status, "flagged")
+  expect_gt(corr$check$carrying, 0L)
+  expect_length(corr$check$carriers, corr$check$carrying)
+  expect_identical(default$estimate$raw, fits$off$estimate$raw)
+  expect_identical(default$estimate$loglik, fits$off$estimate$loglik)
+  expect_identical(default$estimate$rawposterior, fits$off$estimate$rawposterior)
+  expect_null(default$estimate$loglik_method)
+  warned <- attr(default, "warned")
+  expect_true(any(grepl("likelihood = 'quadrature'", warned, fixed = TRUE)))
+  expect_true(any(grepl("intoverpop = 'none'", warned, fixed = TRUE)))
+  expect_true(any(grepl(corr$message, capture.output(print(default)), fixed = TRUE)))
+  # The correction it names is the fit-time one: the rounds on the units its
+  # check named, from the same estimate, then the hybrid's own curvature.
+  corrected <- suppressMessages(ctFitUncertainty(default, "hessian",
+    control = list(likelihood = "quadrature")))
+  expect_identical(corrected$laplace$correction$status, "continued")
+  expect_equal(corrected$estimate$raw, fits$quadrature$estimate$raw, tolerance = 1e-6)
+  expect_equal(corrected$estimate$loglik, fits$quadrature$estimate$loglik,
+    tolerance = 1e-6)
+  expect_identical(corrected$uncertainty$settings$method, "hessian")
+  expect_identical(corrected$uncertainty$settings$draws, "normal")
   expect_identical(fits$step$laplace$correction$method, "step")
   # The Laplace run converged (no unit's term jumped, `fit$laplace$jump`), so
   # what the fit did is `.ctLaplaceContinue()` applied to the uncorrected fit,
@@ -173,7 +209,7 @@ test_that("the default is the quadrature correction, and the fit-time one is the
   expect_identical(posthoc$estimate$raw, fits$step$estimate$raw)
   expect_identical(posthoc$estimate$loglik, fits$step$estimate$loglik)
   # And sampling against the quadrature will not apply it a second time.
-  expect_error(ctFitUncertainty(fits$default, "is", control = list(
+  expect_error(ctFitUncertainty(fits$quadrature, "is", control = list(
     likelihood = "quadrature", correctEstimate = TRUE)), "already corrected")
 })
 
@@ -304,20 +340,21 @@ test_that("what a continued fit reports is the continuation's own", {
     isTRUE(corr$material))
 })
 
-test_that("a default fit reports the continuation's curvature, and the check made before it", {
+test_that("a default fit keeps the Laplace curvature's normal, beside both checks", {
   skip_without_julia()
   fits <- .lc_fits("nonlinear")
   dev <- fits$development
   corr <- dev$laplace$correction
-  # Corrected as the fit asking for 'checked' was: the uncertainty comes after.
-  expect_identical(corr$status, "continued")
-  expect_equal(dev$estimate$raw, fits$default$estimate$raw)
-  expect_identical(corr$draws, "redrawn")
+  # Checked as the fit asking for 'checked' was, on the same curvature, and
+  # left where it is.
+  expect_identical(corr$status, "flagged")
+  expect_equal(corr$check$shift, fits$default$laplace$correction$check$shift)
+  expect_equal(dev$estimate$raw, fits$off$estimate$raw)
   expect_identical(dev$uncertainty$settings$method, "hessian")
-  # The normal is the continuation's curvature's, as it is. The check, made on
-  # the Laplace objective at its optimum before the continuation, is kept in
-  # the record and changes nothing.
-  information <- -(corr$hessian + t(corr$hessian)) / 2
+  # The normal is the Laplace curvature's at the estimate, and the normal
+  # check, made beside it, is kept and changes nothing.
+  hessian <- dev$uncertainty$hessian
+  information <- -(hessian + t(hessian)) / 2
   expect_equal(as.numeric(dev$estimate$cov), as.numeric(solve(information)),
     tolerance = 1e-6)
   check <- dev$uncertainty$details$normalcheck
@@ -677,7 +714,8 @@ test_that("requests that cannot apply are refused by name", {
   resolve <- function(oc, intoverpop = "laplace", optimize = TRUE,
     intoverstates = TRUE) .ctLaplaceCorrectResolve(oc, intoverpop, optimize,
       intoverstates)
-  expect_identical(resolve(list()), "quadrature")
+  expect_identical(resolve(list()), "check")
+  expect_identical(resolve(list(laplace_correct = "check")), "check")
   expect_identical(resolve(list(laplace_correct = TRUE)), "quadrature")
   expect_identical(resolve(list(laplace_correct = "step")), "step")
   expect_identical(resolve(list(laplace_correct = "quadrature")), "quadrature")

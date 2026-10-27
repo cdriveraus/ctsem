@@ -51,15 +51,15 @@
 #' point estimate is approximation-limited and the interval will not cover
 #' whatever width it has.
 #'
-#' Every Laplace fit is now corrected this way by default when it is fitted
-#' (\code{optimcontrol$laplace_correct}, see \code{\link{ctFit}}), so on such a
-#' fit this check is made at the corrected estimate, which is not a Laplace
-#' optimum: the correction reported is then the \emph{further} Newton step on
-#' the quadrature objective from there, with the Laplace gradient included, and
-#' \code{at} on the result is \code{'corrected'}. A small further step says the
-#' default correction got there; a large one says one step was not enough. On
-#' a fit made with \code{laplace_correct = FALSE}, or one saved before the
-#' default existed, it is the first step, as before.
+#' A fit can be corrected by quadrature when it is fitted
+#' (\code{optimcontrol$laplace_correct = TRUE}, see \code{\link{ctOptimControl}};
+#' by default the fit only checks, and warns where a correction would move an
+#' estimate). On a corrected fit this check is made at the corrected estimate,
+#' which is not a Laplace optimum: the correction reported is then the
+#' \emph{further} Newton step on the quadrature objective from there, with the
+#' Laplace gradient included, and \code{at} on the result is
+#' \code{'corrected'}. A small further step says the correction got there; a
+#' large one says it did not. On any other fit it is the first step.
 #'
 #' Nested groupings are handled. A group's integral does not factor over its
 #' members, but it does factor \emph{conditionally} -- given the group effect

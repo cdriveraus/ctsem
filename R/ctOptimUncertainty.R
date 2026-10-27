@@ -3486,14 +3486,19 @@ ctOptimFitLpgFunc <- function(fit, cores=1){
 }
 
 # `control$likelihood`: the density `uncertainty = 'is'` or `'checked'` draws
-# against. Nothing else draws, so naming one for another method is refused
-# rather than ignored.
+# against, or, for the quadrature hybrid, whose maximum the continuation
+# certifies on its exact Hessian, whose curvature `'hessian'` reads. Nothing
+# else reads one, so naming one for another method is refused rather than
+# ignored.
 .ctUncertaintyLikelihood <- function(uncertainty, likelihood) {
   if(is.null(likelihood)) return('fit')
   likelihood <- match.arg(likelihood, .ctBackendUncertaintyLikelihoods)
-  if(!identical(likelihood, 'fit') && !uncertainty %in% c('is', 'checked')) stop(
-    "control$likelihood = '", likelihood, "' applies to uncertainty = 'is' or ",
-    "'checked', which draw against it.", call.=FALSE)
+  methods <- if(identical(likelihood, 'quadrature')) c('hessian', 'is', 'checked') else
+    c('is', 'checked')
+  if(!identical(likelihood, 'fit') && !uncertainty %in% methods) stop(
+    "control$likelihood = '", likelihood, "' applies to uncertainty = ",
+    paste0("'", methods[-length(methods)], "'", collapse = ", "), " or '",
+    methods[length(methods)], "'.", call.=FALSE)
   likelihood
 }
 
@@ -3510,8 +3515,8 @@ ctOptimFitLpgFunc <- function(fit, cores=1){
 #' Every method except \code{'sample'} writes \emph{pseudo-posterior} draws to
 #' \code{$rawposterior}: a sample from a covariance fitted to the
 #' log-posterior surface around the optimum, not a sample from the posterior
-#' itself, and the point estimate stays at the optimum -- unless \code{'is'}
-#' samples against a more exact likelihood than the fit's
+#' itself, and the point estimate stays at the optimum -- unless the method
+#' is taken against a more exact likelihood than the fit's
 #' (\code{control$likelihood}), when it moves to the corrected point.
 #' \code{uncertainty = 'sample'} is the other thing, genuine posterior draws
 #' by Markov chain Monte Carlo, and it moves the point estimate too:
@@ -3613,13 +3618,17 @@ ctOptimFitLpgFunc <- function(fit, cores=1){
 #' \code{control$likelihood} (julia only) chooses a more exact density to
 #' draw against, with \code{'is'} or \code{'checked'}. \code{'quadrature'},
 #' for a Laplace fit, is the quadrature hybrid the fit's own correction
-#' climbs (\code{optimcontrol$laplace_correct}): the units the screen flags
-#' integrated by quadrature rules (\code{control$nodes} per effect, 5 by
-#' default) or draws, the rest by their Laplace terms, with the error of that
-#' density reported in \code{fit$laplace$correction$error} and in
-#' \code{summary()}. A fit made with the correction off is climbed to that
-#' density's optimum first; one corrected when it was fitted stays where it
-#' is, as does any fit under \code{correctEstimate = FALSE}. \code{'particle'},
+#' climbs (\code{optimcontrol$laplace_correct}): the units the screen flags,
+#' and those the fit's check named, integrated by quadrature rules
+#' (\code{control$nodes} per effect, 5 by default) or draws, the rest by
+#' their Laplace terms, with the error of that density reported in
+#' \code{fit$laplace$correction$error} and in \code{summary()}. A fit made
+#' without the correction -- the default, which only checks and warns -- is
+#' climbed to that density's optimum first; one corrected when it was fitted
+#' stays where it is, as does any fit under \code{correctEstimate = FALSE}.
+#' With \code{'quadrature'}, \code{'hessian'} is taken too: the hybrid's
+#' curvature where the climb ends, which is what
+#' \code{laplace_correct = TRUE} gives at fit time. \code{'particle'},
 #' for a fit on the filter's route and with \code{'is'}, replaces the
 #' filter's Gaussian likelihood by a particle filter's (\code{control$particles},
 #' 1000; \code{substeps}, 10; \code{transition}, \code{'exponential'} or
@@ -3931,7 +3940,7 @@ ctOptimFitLpgFunc <- function(fit, cores=1){
 #' \code{optimize = FALSE}, which reaches \code{uncertainty = 'sample'}
 #' through the same pipeline that placed the fit being sampled.
 #' \code{\link{ctLaplaceCheck}} and \code{\link{ctParticleLik}} measure the
-#' approximations a julia fit's likelihood makes, which \code{'is'} with
+#' approximations a julia fit's likelihood makes, which
 #' \code{control$likelihood} corrects.
 #' @examples
 #' # Redraw from the covariance already on the fit, evaluating no model:

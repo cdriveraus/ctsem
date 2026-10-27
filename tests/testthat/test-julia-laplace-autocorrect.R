@@ -241,9 +241,9 @@ test_that("requests that cannot apply are refused by name", {
   resolve <- function(oc, intoverpop = "laplace", optimize = TRUE,
     intoverstates = TRUE) .ctLaplaceCorrectResolve(oc, intoverpop, optimize,
       intoverstates)
-  # The resolved method: TRUE and the default are the quadrature correction,
-  # and the step is asked for by name.
-  expect_identical(resolve(list()), "quadrature")
+  # The resolved method: the default checks, TRUE is the quadrature
+  # correction, and the step is asked for by name.
+  expect_identical(resolve(list()), "check")
   expect_identical(resolve(list(laplace_correct = "step")), "step")
   expect_false(resolve(list(laplace_correct = FALSE)))
   expect_error(resolve(list(laplace_correct = "yes")), "TRUE or FALSE")
