@@ -281,10 +281,10 @@ test_that("a reduced level's block spans its rank, not its effect count", {
   expect_equal(latent(reduced), c(3L, 2L, 1L))
 })
 
-test_that("a reduced fit does not silently fall back to the nested gradient", {
+test_that("a reduced fit does not silently fall back from the seeded gradient", {
   # The seeded assembly returns `false` on a failed factorization and the
-  # caller quietly recomputes the whole gradient by the nested route. That is
-  # correct and several times slower, and from outside it is indistinguishable
+  # caller quietly recomputes that unit's gradient by the fallback route. That
+  # is correct and slower, and from outside it is indistinguishable
   # from the seeded route having worked: the numbers agree with finite
   # differences either way, because the fallback is what produced them. An
   # earlier version of this feature failed on every gradient for exactly that
@@ -345,7 +345,7 @@ test_that("a level says so when its rank exceeds its groups, and not before", {
 })
 
 test_that("the gradient fallback count reaches the fit", {
-  # The seeded assembly falls back to the nested route on a failed
+  # The seeded assembly falls back to another route on a failed
   # factorization, silently, because the answer is right either way. A
   # reduced-rank level once failed on every gradient and the only symptom was
   # a slow fit.

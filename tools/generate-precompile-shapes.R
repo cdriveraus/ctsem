@@ -80,13 +80,14 @@ categorical <- function(d, names, type) {
   d$eta <- NULL
   d
 }
-categorical_model <- function(names, type) {
+categorical_model <- function(names, type, asymptotes = NULL) {
   n <- length(names)
   args <- list(type = "ct", n.latent = 1, n.manifest = n, manifestNames = names,
     latentNames = "eta1", LAMBDA = matrix(1, n, 1), CINT = matrix("cint"),
     T0MEANS = matrix(0), MANIFESTVAR = diag(0, n), manifesttype = rep(type, n))
   if (type == 1L) args$MANIFESTMEANS <- matrix(0, n, 1)
   if (type == 2L) args$ncategories <- rep(4L, n)
+  if (!is.null(asymptotes)) args$ASYMPTOTES <- asymptotes
   m <- suppressWarnings(suppressMessages(do.call(ctModel, args)))
   m$pars$indvarying <- m$pars$param %in% "cint"
   m
@@ -136,12 +137,17 @@ sampled_fit <- list(sampled = function(fit, dat, model) ctFit(dat, model,
       processes = FALSE, intoverpop = "none", sampler = "saem"), cores = 1L),
   checked = function(fit, dat, model) ctFitUncertainty(fit, "checked", cores = 1L))
 
-# The Laplace correction's continuation up to its screen, stopped before any
-# round (`skip_gain = Inf`) and without the shift check before it: what a fit
-# whose check flags units runs first.
-correction_screen <- function(fit, dat, model) ns$.ctLaplaceContinue(fit,
-  control = utils::modifyList(ns$.ctLaplaceContinueDefaults,
-    list(check = FALSE, skip_gain = Inf)))
+# What the quadrature correction runs once its shift check flags units: the
+# continuation, its screen, its rounds and the continuation's Hessian. A
+# shape whose own fit's check left it alone records them all the same, by
+# running the continuation again without the check, whose screen then sets
+# the rounds off as it did before the check came first. Where the fit's
+# correction moved the estimate, the fit has recorded them already.
+correction_rounds <- function(fit, dat, model) {
+  if (isTRUE(fit$laplace$correction$applied)) return(invisible(NULL))
+  ns$.ctLaplaceContinue(fit, control = utils::modifyList(
+    ns$.ctLaplaceContinueDefaults, list(check = FALSE)))
+}
 
 shapes <- list(
   # One latent, two Gaussian indicators, a random intercept, on each route:
@@ -160,16 +166,14 @@ shapes <- list(
   # coordinate, by the cost rule): the inner solve, its probes and the
   # logdet's derivatives
   # at the Gaussian workspace type, which every Gaussian Laplace fit with a
-  # nonlinear effect runs. Its fit stops at the Hessian's normal, without the
-  # quadrature correction or importance sampling: on these ten subjects the
-  # drift effect's Laplace term is checked and corrected, and the record was
-  # 2,500 calls, 2,100 of them the continuation's evaluations, which every
-  # build would replay. The correction's rounds and the importance sampler
-  # were in no shape before this one either. So the correction's first steps
-  # follow the fit, at settings that stop short of the rounds: the shift
-  # check, and the continuation's screen. Every Gaussian Laplace fit with a
-  # nonlinear effect runs both, and the shape above, where Laplace is exact,
-  # reaches neither.
+  # nonlinear effect runs, and the quadrature correction's rounds, which the
+  # drift effect sets off on these ten subjects. Its fit stops at the Hessian's
+  # normal, without importance sampling. The correction was off here while
+  # every call was recorded (2,100 of 2,500 were the continuation's
+  # evaluations); at two calls a signature it is about 40, and without it a
+  # session's first such fit compiled the rounds. The shift check comes first
+  # in the correction, and the rounds follow it whatever it finds
+  # (`correction_rounds`).
   gaussian_laplace_block = list(route = "laplace", model = function() {
       mvar <- diag(0, 2)
       diag(mvar) <- "mvar"
@@ -182,24 +186,31 @@ shapes <- list(
       m
     },
     data = function() indicators(sim_latent(10, 6), c("y1", "y2")),
-    optimcontrol = list(laplace_correct = FALSE, uncertainty = "hessian"),
-    followups = list(
-      check = function(fit, dat, model) ns$.ctLaplaceShiftCheck(fit,
-        draws = 16L, seeds = 1:2),
-      screen = correction_screen)),
+    optimcontrol = list(uncertainty = "hessian"),
+    followups = list(rounds = correction_rounds)),
   # A model with a categorical indicator is a different filter workspace type
   # -- the categorical update is gated on it, so Gaussian fits do not carry
   # that code -- so each route needs one. Binary and ordinal share it.
   binary_augmented = list(route = "augmented",
     model = function() categorical_model(c("b1", "b2"), 1L),
     data = function() categorical(sim_latent(8, 6), c("b1", "b2"), 1L)),
-  # Its default fit makes the shift check, which passes here, so the screen
-  # follows as on the Gaussian block: a categorical fit whose check flags runs
-  # the continuation at the categorical type.
   ordinal_laplace = list(route = "laplace",
     model = function() categorical_model(c("o1", "o2"), 2L),
-    data = function() categorical(sim_latent(10, 6), c("o1", "o2"), 2L),
-    followups = list(screen = correction_screen))
+    data = function() categorical(sim_latent(10, 6), c("o1", "o2"), 2L)),
+  # A guessing asymptote on one binary item, on enough subjects that the
+  # quadrature correction runs its rounds and forms the continuation's Hessian
+  # at the categorical workspace type, which without it a session's first such
+  # fit compiled; and the asymptote's own mixture moments
+  # (`_asymptote_partials!`), which the binary and ordinal shapes do not reach.
+  # Recorded while a failed unit sweep still fell back to forward mode over
+  # every unit, it set that off once and took the build from 11.8 to 17.0 GB
+  # (dev2); without that fallback it costs about 50 s of build and no memory.
+  asymptote_laplace = list(route = "laplace",
+    model = function() categorical_model(c("b1", "b2"), 1L,
+      asymptotes = c("guess", NA)),
+    data = function() categorical(sim_latent(40, 12, cints = stats::rnorm(40, 0, 1)),
+      c("b1", "b2"), 1L),
+    followups = list(rounds = correction_rounds))
 )
 only <- Sys.getenv("CTSEM_PRECOMPILE_SHAPES", "")
 if (nzchar(only)) shapes <- shapes[strsplit(only, ",", fixed = TRUE)[[1]]]
