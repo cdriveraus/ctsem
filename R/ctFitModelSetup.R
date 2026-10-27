@@ -433,24 +433,19 @@
   # site and the post-fit `.ctBackendIdentifyWarn()`. That is where an exact
   # version belongs.
   #
-  # It must run before `.ctModelIntOverPop()` below, which clears `indvarying`
-  # on the cells it rewrites into state references, and MANIFESTVAR rows for
-  # non-Gaussian indicators are excluded because they are fixed further down
-  # (the `errfix` block) and warning about them would contradict that message.
+  # The parameters are read here, before `.ctModelIntOverPop()` below clears
+  # `indvarying` on the cells it rewrites into state references, and
+  # MANIFESTVAR rows for non-Gaussian indicators are excluded because they are
+  # fixed further down (the `errfix` block) and warning about them would
+  # contradict that message. The warning waits for the rank, below.
+  partialvar <- character()
   if(checks && intoverpop){
     revarpars <- ctm$pars$matrix %in% c('DIFFUSION','MANIFESTVAR') &
       ctm$pars$indvarying & is.na(ctm$pars$value)
     if(any(revarpars)) revarpars <- revarpars &
       !(ctm$pars$matrix %in% 'MANIFESTVAR' &
           ctm$pars$row %in% which(ctm$manifesttype > 0 & ctm$manifesttype != 4))
-    if(any(revarpars)) warning(
-      "Individual variation on DIFFUSION or MANIFESTVAR is only partially ",
-      "identified with intoverpop='augmented': the random effect enters only ",
-      "the predicted covariance, so the filter never updates it, and the data ",
-      "determines its covariance with the other random effects but not the ",
-      "split of that covariance into a standard deviation and correlations. ",
-      "Affected: ", paste(unique(ctm$pars$param[revarpars]), collapse=', '),
-      ". intoverpop='laplace' identifies these separately.", call.=FALSE)
+    partialvar <- unique(ctm$pars$param[revarpars])
   }
 
   ctm <- ctModel0DRIFT(ctm, ctm$continuoustime) #offset 0 drift
@@ -695,6 +690,18 @@
       if(!is.null(popregression)) ctm <- .ctPopRegressionDemote(ctm, popregression)
     }
   }
+  # Said for the effects the rank leaves in a full covariance only. One the
+  # rank regresses on the others has no split into a scale and correlations
+  # left to be a ridge, and the rank's own message says why it is regressed.
+  partialvar <- setdiff(partialvar, popregression$regressed)
+  if(length(partialvar)) warning(
+    "Individual variation on DIFFUSION or MANIFESTVAR is only partially ",
+    "identified with intoverpop='augmented': the random effect enters only ",
+    "the predicted covariance, so the filter never updates it, and the data ",
+    "determines its covariance with the other random effects but not the ",
+    "split of that covariance into a standard deviation and correlations. ",
+    "Affected: ", paste(partialvar, collapse=', '),
+    ". intoverpop='laplace' identifies these separately.", call.=FALSE)
   if(intoverpop)   ctm <- .ctModelIntOverPop(ctm) #extend system matrices for individual differences
   if(!is.null(popregression)){
     ctm <- .ctPopRegressionRewrite(ctm, popregression)

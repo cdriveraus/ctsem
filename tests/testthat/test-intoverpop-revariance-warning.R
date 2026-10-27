@@ -60,6 +60,21 @@ test_that("indvarying MANIFESTVAR warns under augmented", {
   expect_match(w, "mvary2")
 })
 
+test_that("a variance effect the default rank regresses is not called partial", {
+  # On the julia augmented route the default rank keeps the dimensions that
+  # reach the observation mean (here the two MANIFESTMEANS effects) and
+  # regresses the DIFFUSION effects on them: no split into a scale and
+  # correlations is left to be a ridge, and the rank's message says why.
+  # At full rank the ridge is there, and so is the warning.
+  skip_without_julia()
+  m <- .revar_model()
+  m$pars$indvarying[m$pars$matrix %in% "DIFFUSION"] <- TRUE
+  expect_length(.revar_warnings(m, intoverpop = "augmented", backend = "julia"), 0)
+  w <- .revar_warnings(m, intoverpop = "augmented", backend = "julia", poprank = NA)
+  expect_length(w, 1)
+  expect_match(w, "diff_eta1")
+})
+
 test_that("indvarying DIFFUSION is silent under laplace", {
   skip_without_julia()
   m <- .revar_model()
