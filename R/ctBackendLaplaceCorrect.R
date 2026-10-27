@@ -647,6 +647,7 @@
     max_shift = max(abs(shift)), worst = which.max(abs(shift)),
     carrying = carrying, gap = mean(gaps), gap_se = stats::sd(gaps) / sqrt(length(gaps)),
     units = length(laplace_units), draws = as.integer(draws), seeds = sum(scored),
+    width = as.integer(r$unit_width),
     seconds = proc.time()[["elapsed"]] - started)
 }
 
@@ -1071,15 +1072,18 @@
   }
   # Past a quarter of the units on draws a gradient costs more than the Laplace
   # route saves and sampling is the better route (`.ctLaplaceDrawsShareWarn()`).
-  # The check spreads the step over most units of a wide model -- 97 to 99 of
-  # 100 at twenty effects a unit -- where the rounds on draws would run for
-  # hours, so it says so rather than starting them.
-  if (!is.null(check) && length(check$carrying) > 0.25 * check$units) {
+  # Only units too wide for a product rule go on draws, and the check spreads
+  # the step over most units of a wide model -- 97 to 99 of 100 at twenty
+  # effects a unit -- where the rounds on draws would run for hours, so it
+  # says so rather than starting them. Narrow units' product rules are cheap.
+  drawn <- check$carrying[check$width[check$carrying] > as.integer(control$maxdim)]
+  if (!is.null(check) && length(drawn) > 0.25 * check$units) {
     warning(sprintf(paste0("Laplace's error moves the estimates by up to %.1f ",
-      "standard errors here (%s), carried by %d of %d units: correcting it by ",
-      "draws costs more than sampling the posterior, which ",
-      "ctFitUncertainty(fit, 'sample') does. See fit$laplace$correction$check."),
-      check$max_shift, checkrecord$worst, length(check$carrying), check$units),
+      "standard errors here (%s), carried by %d of %d units too wide for a ",
+      "product rule: correcting it by draws costs more than sampling the ",
+      "posterior, which ctFitUncertainty(fit, 'sample') does. See ",
+      "fit$laplace$correction$check."),
+      check$max_shift, checkrecord$worst, length(drawn), check$units),
       call. = FALSE)
     fit$laplace$correction <- list(method = "quadrature", status = "flagged",
       applied = FALSE, laplace_estimate = est,

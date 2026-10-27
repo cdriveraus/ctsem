@@ -696,6 +696,27 @@ test_that("requests that cannot apply are refused by name", {
     "laplace_correct")
 })
 
+test_that("the shift check scores every unit, and the rounds follow its step", {
+  skip_without_julia()
+  # One effect a subject on a nonlinear drift: the check finds correcting
+  # Laplace would move an estimate past 0.1 se, the units carrying that go to
+  # the rounds (on product rules, each one effect wide), and the rounds move
+  # the largest coordinate the way the step pointed. On the linear fixture
+  # there is nothing to move.
+  fits <- .lc_fits("nonlinear")
+  corr <- fits$quadrature$laplace$correction
+  check <- corr$check
+  expect_true(is.list(check))
+  expect_identical(check$seeds, 4L)
+  expect_length(check$shift, length(fits$quadrature$estimate$raw))
+  expect_true(check$status %in% c("flagged", "unresolved"))
+  expect_gt(check$carrying, 0L)
+  expect_true(isTRUE(corr$applied))
+  w <- which.max(abs(check$shift))
+  expect_identical(sign(unname(check$shift[w])), sign(unname(corr$delta_se[w])))
+  expect_lt(.lc_fits("linear")$quadrature$laplace$correction$check$max_shift, 0.1)
+})
+
 test_that("a corrected fit reports how far its objective is from the exact marginal", {
   skip_without_julia()
   fits <- .lc_fits("linear")

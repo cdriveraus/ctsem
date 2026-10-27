@@ -3729,8 +3729,10 @@ identified covariance one seed's predicted shift was mostly noise.
 x seeds) its corrected term and that term's replicate standard error;
 `gradient` (free parameters x seeds) the corrected minus the Laplace gradient;
 with `unit_scores`, `unit_gradient` (units x free parameters) each unit's
-corrected minus Laplace score, averaged over the seeds that scored. A seed
-whose rules could not score every unit leaves its columns NaN.
+corrected minus Laplace score, averaged over the seeds that scored; and
+`unit_width`, each unit's widest path of effects, which decides whether the
+rounds would score it by a product rule or by draws. A seed whose rules could
+not score every unit leaves its columns NaN.
 """
 function ctsem_laplace_check(laplace::CTSEMLaplaceObjective, values::AbstractVector;
     draws::Integer=128, seeds=1:4, draws_df::Real=4, unit_scores::Bool=true)
@@ -3767,5 +3769,6 @@ function ctsem_laplace_check(laplace::CTSEMLaplaceObjective, values::AbstractVec
     return (laplace_unit=collect(Float64, lap.unit_loglik), laplace_value=Float64(lap.value),
         check_unit=check_unit, check_se=check_se, gradient=gradient,
         unit_gradient=unit_gradient, scored=scored,
+        unit_width=[_continuation_unit_width(laplace, U) for U in 1:nunits],
         seconds=(time_ns() - started) / 1e9)
 end
