@@ -40,6 +40,7 @@
 "test-julia-fixedpopmeans.R","laplace","core"
 "test-julia-popblocks.R","laplace","core"
 "test-julia-popunique.R","laplace","core"
+"test-julia-tangent-hessian.R","laplace","core"
 "test-laplace-slot-bands.R","laplace","core"
 "test-poprank.R","laplace","core"
 "test-intoverpop-revariance-warning.R","laplace","extended"
