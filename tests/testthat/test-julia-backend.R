@@ -211,10 +211,11 @@ test_that("a bracketed expression is resolved or refused for the reason it actua
   # A state reference reaches the canonical table as `state[1]`, which is what
   # the message keys on -- so assert the rewriting as well as the refusal,
   # since the refusal reads the rewritten text and not what was written.
+  # Spaces aside: the model is set up as a fit sets it up, which strips them.
   canonical <- ctsem:::.ctJuliaCanonicalModel(mk("T0VAR", "0.5 * eta1"))
   cell <- canonical$pars$param[canonical$pars$matrix %in% "T0VAR" &
     canonical$pars$row == 2 & canonical$pars$col == 1]
-  expect_equal(as.character(cell), "0.5 * state[1]")
+  expect_equal(gsub(" ", "", as.character(cell)), "0.5*state[1]")
 
   expect_error(ctsem:::.ctJuliaParameterTable(mk("T0VAR", "0.5 * eta1")),
     "cannot resolve T0VAR\\[2,1\\]")
@@ -229,8 +230,8 @@ test_that("a bracketed expression is resolved or refused for the reason it actua
   cell <- resolved[resolved$matrix %in% "T0VAR" & resolved$row == 2 &
     resolved$col == 1, ]
   expect_equal(nrow(cell), 1L)
-  expect_match(as.character(cell$transform),
-    "^0[.]5 [*] [(]param\\[[0-9]+[]][)]$")
+  expect_match(gsub(" ", "", as.character(cell$transform)),
+    "^0[.]5[*][(]param\\[[0-9]+[]][)]$")
 
   # The three groups still take one, so the refusal above is about T0VAR being
   # outside them rather than about bracketed expressions in general.
@@ -248,9 +249,11 @@ test_that("Julia parameter preparation emits state and Jacobian expressions", {
     T0VAR = matrix(1, 1, 1), T0MEANS = matrix(0, 1, 1)
   )
   table <- ctsem:::.ctJuliaParameterTable(model)
-  expect_equal(table$updatetransform[table$matrix == "LAMBDA"], "1 + state[1]")
+  # Spaces aside, as a fit's setup leaves them out.
+  nospace <- function(x) gsub(" ", "", x)
+  expect_equal(nospace(table$updatetransform[table$matrix == "LAMBDA"]), "1+state[1]")
   expect_equal(table$value[table$matrix == "JAx"], -.2)
-  expect_equal(table$updatetransform[table$matrix == "Jy"], "1 + 2 * state[1]")
+  expect_equal(nospace(table$updatetransform[table$matrix == "Jy"]), "1+2*state[1]")
 })
 
 test_that("Julia reuses the canonical raw transform for shared parameters", {
