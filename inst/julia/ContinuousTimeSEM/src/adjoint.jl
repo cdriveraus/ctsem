@@ -1191,16 +1191,39 @@ function ctsem_hessian_columns(objective::CTSEMObjective, values::AbstractVector
     x = collect(Float64, values)
     cols = collect(Int, columns)
     isempty(cols) && return zeros(Float64, length(x), 0)
-    gradient_at = z -> begin
-        y = similar(z, length(x))
-        y .= x
-        y[cols] .= z
-        ctsem_adjoint_gradient(objective, y; hybrid_mode=Int(hybrid_mode)).gradient
+    H = zeros(Float64, length(x), length(cols))
+    # At `ctsem_hessian`'s own dual type, seeded along `cols` alone: the
+    # function of `cols` this differentiated before was a closure, a tag and so
+    # a dual type of its own, the filter and its reverse pass compiled again at
+    # a session's first call. Behind a barrier: the type is the objective's.
+    _ctsem_barrier(_ctsem_hessian_columns!, H,
+        _CTSEMAdjointGradientOf(objective, Int(hybrid_mode)), x, cols,
+        _ctsem_hessian_dual(objective), progress)
+    return H
+end
+
+function _ctsem_hessian_columns!(H::Matrix{Float64}, gradient_of, x::Vector{Float64},
+    cols::Vector{Int}, ::Type{D}, progress) where {D}
+    W = ForwardDiff.npartials(D)
+    n = length(x)
+    y = Vector{D}(undef, n)
+    zero_partials = zero(ForwardDiff.Partials{W,Float64})
+    for start in 1:W:length(cols)
+        chunk = start:min(start + W - 1, length(cols))
+        @inbounds for i in 1:n
+            y[i] = D(x[i], zero_partials)
+        end
+        @inbounds for (k, c) in enumerate(chunk)
+            y[cols[c]] = D(x[cols[c]],
+                ForwardDiff.Partials{W,Float64}(ntuple(j -> j == k ? 1.0 : 0.0, Val(W))))
+        end
+        g = gradient_of(y)
+        @inbounds for (k, c) in enumerate(chunk), i in 1:n
+            H[i, c] = ForwardDiff.partials(g[i], k)
+        end
+        progress === nothing || progress(last(chunk), length(cols), "parameters")
     end
-    report = progress === nothing ? nothing :
-        (done, total) -> progress(done, total, "parameters")
-    return _ctsem_width_jacobian(gradient_at, x[cols], _CTSEM_HESSIAN_WIDTHS[];
-        progress=report)
+    return H
 end
 
 export ctsem_hessian_forward
