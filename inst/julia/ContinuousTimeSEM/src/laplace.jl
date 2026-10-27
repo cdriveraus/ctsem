@@ -7640,6 +7640,28 @@ function _laplace_mode_cross(laplace::CTSEMLaplaceObjective, U::Integer,
     D = length(z)
     npar = length(theta)
     H = zeros(Float64, D, npar)
+    # By the hand-coded sweeps where they serve, a chunk of coordinates a pass
+    # (`_tan_laplace_theta_gradient!`).
+    W = last(_CTSEM_CURVATURE_WIDTHS[])
+    Gt = zeros(Float64, npar, 1 + W)
+    Gz = zeros(Float64, D, 1 + W)
+    B = zeros(Float64, D, W)
+    hand = true
+    for first in 1:W:D
+        chunk = first:min(first + W - 1, D)
+        fill!(B, 0.0)
+        for (w, a) in enumerate(chunk)
+            B[a, w] = 1.0
+        end
+        r = _tan_laplace_theta_gradient!(Gt, Gz, laplace, U, theta, Ls, dL, positions, z,
+            B, length(chunk), layout)
+        r === nothing && (hand = false; break)
+        r || return nothing
+        @inbounds for (w, a) in enumerate(chunk), t in 1:npar
+            H[a, t] = Gt[t, 1 + w]
+        end
+    end
+    hand && return H
     seed = ForwardDiff.Dual{_LaplaceSeedInner}(0.0, 1.0)
     for a in 1:D
         zz = [z[b] + seed * (b == a ? 1.0 : 0.0) for b in 1:D]

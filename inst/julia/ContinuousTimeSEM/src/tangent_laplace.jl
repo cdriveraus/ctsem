@@ -605,11 +605,11 @@ function _tan_laplace_seeded!(ctx::TanLaplaceContext{W,DC}, laplace::CTSEMLaplac
         st = _tan_laplace_member!(cx, objective, unitmembers[m], xw, 1; g0=g0)
         st == _TAN_REFUSED && (refused[] = true; return false)
         st == _TAN_OK || return false
-        g1 = view(d1c, :, c)
+        g1 = view(d1c, :, c:c)
         @inbounds for t in 1:npar
-            g1[t] = cx.Hb[t, 1]
+            g1[t, 1] = cx.Hb[t, 1]
         end
-        hyb && _tan_laplace_gbar!(g0, g1, cx.acc.Gbar, h, values, dG)
+        hyb && _tan_laplace_gbar!(g0, g1, cx.acc.Gbar, h, values, dG, 1)
         return true
     end
     ok = _laplace_run_members(one_member!, laplace, members)
@@ -619,33 +619,243 @@ function _tan_laplace_seeded!(ctx::TanLaplaceContext{W,DC}, laplace::CTSEMLaplac
 end
 
 """
-The hybrid factor's cotangent `Gbar` (with its tangent along lane 1) pushed
-onto its raw positions, as `_hybrid_scatter!` does: the gradient into `g0` and
-its derivative along a direction that does not move the factor into `g1`, so
-by G's first derivative alone -- an own sd's in closed form, a block's from
-`dG` (`_tan_hybrid_block_dG`).
+The hybrid factor's cotangent `Gbar` (with its tangents along its first `nl`
+lanes) pushed onto its raw positions, as `_hybrid_scatter!` does: the gradient
+into `g0` and its derivatives along directions that do not move the factor
+into `H`'s columns, so by G's first derivative alone -- an own sd's in closed
+form, a block's from `dG` (`_tan_hybrid_block_dG`).
 """
-function _tan_laplace_gbar!(g0::AbstractVector{Float64}, g1::AbstractVector{Float64},
-    Gbar::TanMat, h::CTSEMHybrid, values::AbstractVector{Float64}, dG)
+function _tan_laplace_gbar!(g0::AbstractVector{Float64}, H::AbstractMatrix{Float64},
+    Gbar::TanMat, h::CTSEMHybrid, values::AbstractVector{Float64}, dG, nl::Int)
     nh = _hybrid_items(h)
     if !h.block
         @inbounds for k in 1:nh
             idx = h.psi_index[k]
             _, dg, _ = _tan_hybrid_own(h, values, k)
             g0[idx] += Gbar.v[k, k] * dg
-            g1[idx] += Gbar.d[1, k, k] * dg
+            for a in 1:nl
+                H[idx, a] += Gbar.d[a, k, k] * dg
+            end
         end
         return nothing
     end
     @inbounds for j in eachindex(h.lparams)
         a0 = 0.0
-        a1 = 0.0
         for c in 1:nh, f in 1:c
             a0 += Gbar.v[c, f] * dG[c, f, j]
-            a1 += Gbar.d[1, c, f] * dG[c, f, j]
         end
         g0[h.lparams[j]] += a0
-        g1[h.lparams[j]] += a1
+        for a in 1:nl
+            a1 = 0.0
+            for c in 1:nh, f in 1:c
+                a1 += Gbar.d[a, c, f] * dG[c, f, j]
+            end
+            H[h.lparams[j], a] += a1
+        end
+    end
+    return nothing
+end
+
+"""
+`_laplace_unit_theta_gradient` at `z` and its derivatives along the first `nl`
+columns of `B` (directions in `z`), by the hand-coded sweeps, into `Gt`
+(`npar x (1 + nl)`) and `Gz` (`length(z) x (1 + nl)`), the value first: what
+the gated rule's first-order pass and the mode's cross derivatives seeded a
+dual in `z` for. In joint coordinates (`layout`) each member's filter is at the
+deviations `z` fixes, their directions among the lanes. `nothing` where the
+sweep does not serve, `false` where a member cannot be evaluated.
+"""
+function _tan_laplace_theta_gradient!(Gt::Matrix{Float64}, Gz::Matrix{Float64},
+    laplace::CTSEMLaplaceObjective, U::Integer, theta::Vector{Float64},
+    Ls::Vector{Matrix{Float64}}, dL, positions, z::Vector{Float64},
+    B::AbstractMatrix{Float64}, nl::Int, layout)
+    _CTSEM_TANGENT_HESSIAN[] || return nothing
+    mode = layout === nothing ? _HYBRID_PROFILE : _HYBRID_FIXED
+    ctx = _tan_laplace_context(laplace, theta, mode)
+    ctx === nothing && return nothing
+    st = _tan_laplace_theta_gradient_!(Gt, Gz, ctx, laplace, Int(U), theta, Ls, dL,
+        positions, z, B, nl, layout)::Int
+    st == _TAN_REFUSED && return nothing
+    return st == _TAN_OK
+end
+
+function _tan_laplace_theta_gradient_!(Gt::Matrix{Float64}, Gz::Matrix{Float64},
+    ctx::TanLaplaceContext{W,DC}, laplace::CTSEMLaplaceObjective, U::Int,
+    theta::Vector{Float64}, Ls::Vector{Matrix{Float64}}, dL, positions,
+    z::Vector{Float64}, B::AbstractMatrix{Float64}, nl::Int, layout) where {W,DC}
+    spec, units = laplace.spec, laplace.units
+    objective = laplace.objective
+    members = units.members[U]
+    npar = length(theta)
+    D = length(z)
+    d = layout === nothing ? D : layout.d
+    fill!(Gt, 0.0)
+    fill!(Gz, 0.0)
+    _tan_laplace_hybrid!(ctx, theta) || return _TAN_INVALID
+    mod = ctx.mod
+    h = objective.params.hybrid
+    hyb = mod.nh > 0
+    dG = hyb && h.block ? _tan_hybrid_block_dG(h, theta,
+        ForwardDiff.Dual{_tan_tag(_ctsem_hessian_dual(objective)),Float64,1}) : nothing
+    hyb && h.block && dG === nothing && return _TAN_INVALID
+    uw = ctx.uw
+    length(uw) == d || resize!(uw, d)
+    @inbounds for a in 1:d
+        uw[a] = DC(z[a], ForwardDiff.Partials(ntuple(w -> w <= nl ? B[a, w] : 0.0, Val(W))))
+    end
+    u = view(z, 1:d)
+    g0 = view(Gt, :, 1)
+    gm = zeros(npar)
+    for m in eachindex(members)
+        offsets = units.offsets[U][m]
+        i = members[m]
+        xw = _laplace_member_values!(ctx.xw, theta, spec, Ls, uw, offsets)
+        layout === nothing || _tan_laplace_dfix_lanes!(mod, layout, m, z, B, nl,
+            objective.subject_objectives[i].data)
+        st = _tan_laplace_member!(ctx, objective, i, xw, nl; g0=gm)
+        st == _TAN_OK || return st
+        Hb = ctx.Hb
+        hyb && _tan_laplace_gbar!(gm, Hb, ctx.acc.Gbar, h, theta, dG, nl)
+        @inbounds for t in 1:npar
+            g0[t] += gm[t]
+        end
+        @inbounds for a in 1:nl, t in 1:npar
+            Gt[t, 1 + a] += Hb[t, a]
+        end
+        # Through `L z`: the population parameters' share, and `z`'s.
+        _laplace_chol_chain!(g0, gm, spec, dL, positions, u, offsets)
+        _laplace_loading_chain!(view(Gz, :, 1), gm, spec, Ls, offsets)
+        for a in 1:nl
+            _laplace_chol_chain!(view(Gt, :, 1 + a), view(Hb, :, a), spec, dL, positions,
+                u, offsets)
+            _laplace_chol_chain!(view(Gt, :, 1 + a), gm, spec, dL, positions,
+                view(B, 1:d, a), offsets)
+            _laplace_loading_chain!(view(Gz, :, 1 + a), view(Hb, :, a), spec, Ls, offsets)
+        end
+        layout === nothing || _tan_laplace_fixed_gradient!(Gz, ctx.sw.hs, mod, layout, m,
+            nl, objective.subject_objectives[i].data)
+    end
+    @inbounds for a in 1:D
+        Gz[a, 1] -= z[a]
+        for w in 1:nl
+            Gz[a, 1 + w] -= B[a, w]
+        end
+    end
+    return _TAN_OK
+end
+
+"""
+Subject `i`'s log likelihood at `shifted`, its gradient `g` and that gradient's
+derivatives along the raw positions `active` (`Hs`, rows and columns in
+`active`'s order), by the hand-coded sweeps a chunk of the curvature's lanes a
+pass: what `_continuation_member_hessian!` seeds a dual for, as
+`(loglik, status)`, status 1 where the filter fails. `nothing` where the sweep
+does not serve, and where the filter integrates deviations, whose factor the
+population parameters among `active` would move.
+"""
+function _tan_laplace_member_hessian!(Hs::AbstractMatrix{Float64}, g::Vector{Float64},
+    laplace::CTSEMLaplaceObjective, i::Integer, theta::Vector{Float64},
+    shifted::AbstractVector{Float64}, active::Vector{Int})
+    _CTSEM_TANGENT_HESSIAN[] || return nothing
+    ctx = _tan_laplace_context(laplace, theta, _HYBRID_FULL)
+    (ctx === nothing || ctx.mod.nh > 0) && return nothing
+    return _tan_laplace_member_hessian_!(Hs, g, ctx, laplace.objective, Int(i), shifted,
+        active)
+end
+
+"""Whether `_tan_laplace_member_hessian!` serves `laplace`'s members at `theta`."""
+function _tan_laplace_serves_member_hessian(laplace::CTSEMLaplaceObjective,
+    theta::AbstractVector)
+    _CTSEM_TANGENT_HESSIAN[] || return false
+    ctx = _tan_laplace_context(laplace, theta, _HYBRID_FULL)
+    return ctx !== nothing && ctx.mod.nh == 0
+end
+
+function _tan_laplace_member_hessian_!(Hs::AbstractMatrix{Float64}, g::Vector{Float64},
+    ctx::TanLaplaceContext{W,DC}, objective::CTSEMObjective, i::Int,
+    shifted::AbstractVector{Float64}, active::Vector{Int}) where {W,DC}
+    na = length(active)
+    xw = ctx.xw
+    loglik = NaN
+    for lo in 0:W:(na - 1)
+        ncol = min(W, na - lo)
+        @inbounds for t in eachindex(shifted)
+            xw[t] = DC(shifted[t])
+        end
+        @inbounds for c in 1:ncol
+            t = active[lo + c]
+            xw[t] = DC(shifted[t], ForwardDiff.Partials(ntuple(q -> q == c ? 1.0 : 0.0,
+                Val(W))))
+        end
+        st = _tan_laplace_member!(ctx, objective, i, xw, ncol; g0=lo == 0 ? g : nothing)
+        st == _TAN_REFUSED && return nothing
+        st == _TAN_OK || return (NaN, 1)
+        lo == 0 && (loglik = ctx.sw.ll[1])
+        @inbounds for c in 1:ncol, r in 1:na
+            Hs[r, lo + c] = ctx.Hb[active[r], c]
+        end
+    end
+    return (loglik, 0)
+end
+
+"""
+Member `m`'s fixed deviations from joint coordinates `z` into the model's
+`dfix`, as `_tan_laplace_dfix!`, with their tangents from the rows of `B`
+that lay them out.
+"""
+function _tan_laplace_dfix_lanes!(mod::TanModel{W}, layout, m::Int, z::Vector{Float64},
+    B::AbstractMatrix{Float64}, nl::Int, data::AbstractMatrix) where {W}
+    h = mod.hyb
+    dfix = mod.dfix
+    fill!(dfix.v, 0.0)
+    fill!(dfix.d, 0.0)
+    q = layout.q[m]
+    off = layout.offs[m]
+    c = 0
+    @inbounds for k in 1:mod.nh
+        (h.block || _tan_hybrid_seen(h, k, data)) || continue
+        c += 1
+        c <= q || continue
+        dfix.v[k] = z[off + c]
+        for a in 1:nl
+            dfix.d[a, k] = B[off + c, a]
+        end
+    end
+    _tan_setnz_from!(dfix)
+    return nothing
+end
+
+"""
+Member `m`'s gradient in its fixed deviations, `b - (M - I) d`
+(`_hybrid_fixed_gradient!`), and its tangents, added into `Gz`'s rows that
+lay them out, in the filter's coordinates as `_tan_laplace_cross!` maps them.
+"""
+function _tan_laplace_fixed_gradient!(Gz::Matrix{Float64}, hs::TanHybState{W},
+    mod::TanModel{W}, layout, m::Int, nl::Int, data::AbstractMatrix) where {W}
+    h = mod.hyb
+    nh = mod.nh
+    q = layout.q[m]
+    q == 0 && return nothing
+    off = layout.offs[m]
+    M, b, dfix = hs.M, hs.b, mod.dfix
+    c = 0
+    @inbounds for k in 1:nh
+        (h.block || _tan_hybrid_seen(h, k, data)) || continue
+        c += 1
+        c <= q || continue
+        v = b.v[k]
+        for k2 in 1:nh
+            v -= (M.v[k, k2] - (k == k2 ? 1.0 : 0.0)) * dfix.v[k2]
+        end
+        Gz[off + c, 1] += v
+        for a in 1:nl
+            t = b.d[a, k]
+            for k2 in 1:nh
+                t -= M.d[a, k, k2] * dfix.v[k2] +
+                    (M.v[k, k2] - (k == k2 ? 1.0 : 0.0)) * dfix.d[a, k2]
+            end
+            Gz[off + c, 1 + a] += t
+        end
     end
     return nothing
 end

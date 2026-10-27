@@ -194,7 +194,8 @@ end
 
 """
 The closing term at fixed deviations `d` (`_tan_hybrid_closing!`): adds
-`d' b - 1/2 d' (M - I) d` and its tangents to `ll`; `Mbar = -d d' / 2` and
+`d' b - 1/2 d' (M - I) d` and its tangents to `ll`, `d`'s own among them where
+it has any (a direction in joint coordinates); `Mbar = -d d' / 2` and
 `bbar = d`, so `Sbar = G Mbar G'`, `sbar = G d`, `Gbar = 2 S G Mbar + s d'`.
 """
 function _tan_hybrid_fixed!(hs::TanHybState{W}, G::TanMat{W}, ll::Vector{Float64},
@@ -215,6 +216,15 @@ function _tan_hybrid_fixed!(hs::TanHybState{W}, G::TanMat{W}, ll::Vector{Float64
             dv += d.v[a] * b.d[t, a]
             for c in 1:nh
                 dv -= d.v[a] * M.d[t, a, c] * d.v[c] / 2
+            end
+        end
+        if _tan_nz(d)
+            for a in 1:nh
+                r = b.v[a]
+                for c in 1:nh
+                    r -= (M.v[a, c] - (a == c ? 1.0 : 0.0)) * d.v[c]
+                end
+                dv += d.d[t, a] * r
             end
         end
         ll[1 + t] += dv

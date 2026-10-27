@@ -118,6 +118,47 @@ function _laplace_unit_theta_gradient(laplace::CTSEMLaplaceObjective, U::Integer
 end
 
 """
+`_laplace_unit_theta_gradient` for one unit, at its point `zz`: what the gated
+rule's passes call. A type rather than a closure, so a pass along a direction
+can take the hand-coded sweeps (`_tan_laplace_theta_gradient!`).
+"""
+struct _GatedThetaGradient{L,DL,P,Y}
+    laplace::L
+    U::Int
+    theta::Vector{Float64}
+    Ls::Vector{Matrix{Float64}}
+    dL::DL
+    positions::P
+    layout::Y
+end
+(g::_GatedThetaGradient)(zz) = _laplace_unit_theta_gradient(g.laplace, g.U, g.theta,
+    g.Ls, g.dL, g.positions, zz, g.layout)
+
+"""
+`G`'s gradients and their derivatives along `beta`, `(theta, z)` as
+`G(z + eps beta)`'s partials: by the hand-coded sweeps where they serve,
+otherwise a pass at the seed's dual. `nothing` if a member cannot be
+evaluated.
+"""
+function _gated_directional(G, z::Vector{Float64}, beta::Vector{Float64})
+    if G isa _GatedThetaGradient
+        npar, D = length(G.theta), length(z)
+        Gt = zeros(Float64, npar, 2)
+        Gz = zeros(Float64, D, 2)
+        hand = _tan_laplace_theta_gradient!(Gt, Gz, G.laplace, G.U, G.theta, G.Ls, G.dL,
+            G.positions, z, reshape(beta, D, 1), 1, G.layout)
+        hand === false && return nothing
+        hand === true && return (theta=Gt[:, 2], z=Gz[:, 2])
+    end
+    seed = ForwardDiff.Dual{_LaplaceSeedInner}(0.0, 1.0)
+    zz = [z[a] + seed * beta[a] for a in eachindex(z)]
+    r = G(zz)
+    r === nothing && return nothing
+    return (theta=[ForwardDiff.partials(x)[1] for x in r.theta],
+        z=[ForwardDiff.partials(x)[1] for x in r.z])
+end
+
+"""
     _laplace_gated_vjp!(thetabar, G, z, alpha, beta, Gamma)
 
 Add `d/dtheta [alpha g + beta' grad g + tr(Gamma M)]` at fixed `z` to
@@ -145,15 +186,13 @@ function _laplace_gated_vjp!(thetabar::Vector{Float64}, G, z::Vector{Float64},
         end
     end
     if beta !== nothing && any(!iszero, beta)
-        seed = ForwardDiff.Dual{_LaplaceSeedInner}(0.0, 1.0)
-        zz = [z[a] + seed * beta[a] for a in 1:D]
-        r = G(zz)
+        r = _gated_directional(G, z, collect(Float64, beta))
         r === nothing && return nothing
         @inbounds for t in 1:npar
-            thetabar[t] += ForwardDiff.partials(r.theta[t])[1]
+            thetabar[t] += r.theta[t]
         end
         @inbounds for a in 1:D
-            zbar[a] += ForwardDiff.partials(r.z[a])[1]
+            zbar[a] += r.z[a]
         end
     end
     if Gamma !== nothing
@@ -506,11 +545,6 @@ function _laplace_gated_unit_adjoint(laplace::CTSEMLaplaceObjective, U::Integer,
             Ls, zz), blocks, length(zz))
         dcheck = length(uhat)
     end
-    # `let`: `layout` is assigned on both branches, and a captured local
-    # assigned more than once is a `Core.Box`.
-    G = let layout = layout
-        zz -> _laplace_unit_theta_gradient(laplace, U, theta, Ls, dL, positions, zz,
-            layout)
-    end
+    G = _GatedThetaGradient(laplace, Int(U), theta, Ls, dL, positions, layout)
     return _laplace_gated_reverse(laplace, z0, objf, curvf, G, dcheck, npar)
 end

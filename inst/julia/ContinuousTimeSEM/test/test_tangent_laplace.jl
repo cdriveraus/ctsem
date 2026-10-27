@@ -129,3 +129,42 @@ end
         C.ctsem_set_tangent_hessian!(true)
     end
 end
+
+@testset "hand-coded mode Jacobian and gated adjoint against the dual" begin
+    C = ContinuousTimeSEM
+    cases = [
+        ("means", () -> _fresh_linear()),
+        ("dynamics and noise", () -> (ctsem_laplace_objective(_LAPLACE_LINEAR_OBJECTIVE,
+            [3, 4], [6, 7], [8], [1.0, 1.0]), copy(_LAPLACE_LINEAR_VALUES))),
+        ("drift by row", () -> _fresh_nonlinear()),
+        ("two levels", () -> _fresh_twolevel()),
+    ]
+    rel(a, b) = maximum(abs, a .- b) / max(1.0, maximum(abs, b))
+    try
+        for (name, make) in cases
+            laplace, values = make()
+            C.ctsem_laplace_evaluate(laplace, values; gradient=false)
+            run(on) = (C.ctsem_set_tangent_hessian!(on);
+                C.ctsem_laplace_mode_jacobian(laplace, values))
+            hand, dual = run(true), run(false)
+            adj(on) = (C.ctsem_set_tangent_hessian!(on);
+                [C._laplace_gated_unit_adjoint(laplace, U, values)
+                 for U in eachindex(laplace.modes)])
+            ahand, adual = adj(true), adj(false)
+            @testset "$name" begin
+                @test length(hand) == length(dual)
+                for (a, b) in zip(hand, dual)
+                    @test all(isfinite, a)
+                    @test rel(a, b) <= 1e-9
+                end
+                @test any(!isnothing, adual)
+                for (a, b) in zip(ahand, adual)
+                    @test (a === nothing) == (b === nothing)
+                    b === nothing || @test rel(a, b) <= 1e-8
+                end
+            end
+        end
+    finally
+        C.ctsem_set_tangent_hessian!(true)
+    end
+end

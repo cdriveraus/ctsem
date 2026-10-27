@@ -2968,8 +2968,20 @@ function _continuation_member_hessian!(gnode::Vector{Float64},
     g = sc.g
     Hs = sc.Hs
     loglik = NaN
+    # By the hand-coded sweeps where they serve (`_tan_laplace_member_hessian!`).
+    hand = _tan_laplace_member_hessian!(Hs, g, laplace, units.members[U][m], theta,
+        shifted, active)
+    if hand !== nothing
+        loglik, status = hand
+        status == 0 || return (loglik, status)
+        isfinite(loglik) || return (loglik, 1)
+        all(isfinite, g) || return (NaN, 1)
+        @inbounds for a in layout.pop
+            iszero(g[a]) || return (NaN, 2)
+        end
+    end
     zero_seed = zero(ForwardDiff.Partials{N,Float64})
-    for lo in 0:N:(na - 1)
+    for lo in (hand === nothing ? (0:N:(na - 1)) : (0:N:-1))
         ncol = min(N, na - lo)
         @inbounds for t in 1:npar
             x[t] = S(shifted[t], zero_seed)
@@ -3232,6 +3244,8 @@ function _continuation_hessian_width(o::CTSEMLaplaceContinuation,
     na = length(layout.active)
     wide = ForwardDiff.pickchunksize(max(na, 1))
     (wide <= 1 || isempty(o.rules)) && return 1
+    # The hand-coded sweeps take their own lanes: the width is the dual's.
+    _tan_laplace_serves_member_hessian(o.laplace, theta) && return 1
     key = (typeof(o.laplace.objective.params), wide)
     lock(() -> key in _CONTINUATION_WIDE_SEEN, _CONTINUATION_WIDE_LOCK) && return wide
     laplace = o.laplace
