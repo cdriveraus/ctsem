@@ -22,8 +22,9 @@
 # `value` on the scale summary() reports population means on, and `raw`, the
 # value its transform maps there. NULL when there are none.
 #
-# The transform is the cell's own, text as ctStanModel() writes it. ctFit()
-# converts before anything rewrites the model -- the augmented route moves a
+# The transform is the cell's own, text as ctStanModel() writes it. The model
+# setup (`.ctFitModelSetup()`, which ctFit() and the generator run) converts
+# before anything rewrites the model -- the augmented route moves a
 # varying intercept into a carrier state that holds it raw, the scaling into
 # the cell that reads the state -- and keeps the result as
 # `fixedpopmeansraw`, used while it still describes the stated means.

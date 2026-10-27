@@ -21,6 +21,17 @@
   estonly = FALSE) {
   ctstanmodel <- model
 
+  # Stated population means (ctPar(mean=); R/ctFixedPopMeans.R), converted to
+  # raw values from the cells' own transforms before anything here rewrites a
+  # cell: the augmented route moves a varying intercept into a carrier state.
+  # Done in ctFit() before it called this, the conversion never reached the
+  # generator, which drew persons about ten times a MANIFESTMEANS mean.
+  if(length(ctstanmodel[['fixedpopmeans']])){
+    if(!backend %in% 'julia') stop("Stated population means, ctPar(mean=), ",
+      "need backend='julia'.", call.=FALSE)
+    ctstanmodel[['fixedpopmeansraw']] <- .ctFixedPopMeans(ctstanmodel)
+  }
+
   # The working copy carries a logical column per level; the model the fit
   # keeps as its base (`modelbase`, `ctstanmodelbase`) stays as the user wrote
   # it. See .ctResolveLevels().
