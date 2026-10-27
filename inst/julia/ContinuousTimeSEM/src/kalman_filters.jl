@@ -403,9 +403,8 @@ function _ekf_update_observed!(ws::ContinuousEKFWorkspace, pars,
     # serves costs several update-group evaluations beside one dispatch.
     ws.relinearise && _CTSEM_RELINEARISE[] && generate === nothing &&
         context !== nothing && !isempty(gaussian) && !(ws.hyb.active && ws.hyb.q > 0) &&
-        return _ctsem_barrier(_ekf_iterated_rows!, ws, pars, data, obs_col, gaussian,
-            binary_loglik, log2π_const, trace, context, steps,
-            learn)::Union{Nothing,typeof(binary_loglik)}
+        return _ekf_iterated_rows!(ws, pars, data, obs_col, gaussian, binary_loglik,
+            log2π_const, trace, context, steps, learn)
 
     # Recorded after the binary block and before the Gaussian one:
     # `_ekf_masked_update_step!` overwrites ws.state in place, and the reverse
@@ -2138,8 +2137,8 @@ function _extended_kalman_filter_continuous!(
             apply_complex_transforms_at_indices!(all_params, ws.predict_param_indices, sp.predict_transforms, predict_context)
             # Behind a barrier, as the iterated update is: compiled only where a
             # model with nonlinear dynamics reaches it.
-            ws.moment_now[] = moment_on && _ctsem_barrier(_ekf_moment_cells!, ws, pars,
-                sp, all_params, predict_context, trace)::Bool
+            ws.moment_now[] = moment_on &&
+                _ekf_moment_cells!(ws, pars, sp, all_params, predict_context, trace)
             predict_snapshot = _begin_predict!(trace, ws, ws.state_dim)
             _begin_substep!(substep_recorder, ws)
             if ws.diffusion_static
