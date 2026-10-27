@@ -404,6 +404,56 @@ end
 _ekf_categorical_call(ws, f::F, args...) where {F} = _ctsem_barrier(f, args...)
 
 """
+    _ekf_gaussian_call(ws, f, g, args...)
+
+`f(args...)` where the workspace's model has only Gaussian indicators, and
+`g()` where it has a non-Gaussian one, by the workspace's type as
+`_ekf_categorical_call` decides. For the deviations the filter integrates
+(`CTSEMHybrid`): a model with a non-Gaussian indicator has none
+(`.ctJuliaLaplaceHybrid()` requires every indicator Gaussian, and
+`_hybrid_inactive!` refuses one that asks), so the filters compiled for such a
+model leave out the hybrid's hooks, its tape records and their reverse; `g` is
+what such a model does instead, `_ctsem_noop` or `_ekf_hybrid_refused`. It
+takes no arguments: handed the hook's, it boxed them in every categorical
+filter, which grew the update step by half.
+
+On the workspace's existing flag rather than a flag of its own: the hybrid
+runs at nearly every number type a Gaussian model's filter does, and a type
+flag would compile every filter kernel again for models without it.
+"""
+@generated function _ekf_gaussian_call(ws::ContinuousEKFWorkspace, f::F, g::G,
+    args...) where {F,G}
+    flag = fieldtype(ws, :categorical)
+    flag === Val{false} && return :(f(args...))
+    flag === Val{true} && return :(g())
+    return :(_ctsem_barrier(f, args...))
+end
+_ekf_gaussian_call(ws, f::F, g::G, args...) where {F,G} = _ctsem_barrier(f, args...)
+
+"""Does nothing: the categorical arm of a hybrid hook that has no effect where
+nothing is integrated (`_ekf_gaussian_call`)."""
+_ctsem_noop() = nothing
+
+"""The categorical arm of a hybrid hook that must not run there
+(`_ekf_gaussian_call`): a hybrid can only be active in an all-Gaussian model."""
+@noinline _ekf_hybrid_refused() = throw(ArgumentError(
+    "the filter integrates deviations only in a model whose indicators are all Gaussian"))
+
+"""
+    _ekf_hybrid_tape(ws, tape)
+
+The tape's hybrid record for a reverse step to read, or `nothing` where it
+integrates nothing: `nothing` by type in a categorical model's reverse pass,
+so its reverse kernels compile only their `Nothing` instance
+(`_ekf_gaussian_call`).
+"""
+@generated function _ekf_hybrid_tape(ws::ContinuousEKFWorkspace, tape)
+    fieldtype(ws, :categorical) === Val{true} && return :(nothing)
+    return :(tape.hyb.active && tape.hyb.q > 0 ? tape.hyb : nothing)
+end
+_ekf_hybrid_tape(ws, tape) = tape.hyb.active && tape.hyb.q > 0 ? tape.hyb : nothing
+
+"""
     _ctsem_affine_dim(sp, diffusion_state_indices, n)
 
 The leading block of genuine dynamics, over which the intercept solve runs.

@@ -977,7 +977,7 @@ function _record_update!(tape::CTSEMAdjointTape{T}, ws, pars, data, obs_col::Int
             Matrix(pars.LAMBDA[o, 1:n]), collect(pars.MANIFESTMEANS[o]),
             Matrix(pars.Jy[o, 1:n]), Matrix(ws.bufferΘ.out[o, o]),
             T[data[i, obs_col] for i in o], zeros(T, 0, 0), 0, T[], zeros(T, 0, 0)))
-        _hybrid_record_X!(tape.updates[index], ws.hyb, n)
+        _ekf_gaussian_call(ws, _hybrid_record_X!, _ctsem_noop, tape.updates[index], ws.hyb, n)
         _record_update_relin!(tape.updates[index], ws, pars, relin, n)
         _tape_push!(tape, :update, index)
         return nothing
@@ -996,7 +996,7 @@ function _record_update!(tape::CTSEMAdjointTape{T}, ws, pars, data, obs_col::Int
     @inbounds for j in eachindex(o)
         record.y[j] = T(data[o[j], obs_col])
     end
-    _hybrid_record_X!(record, ws.hyb, n)
+    _ekf_gaussian_call(ws, _hybrid_record_X!, _ctsem_noop, record, ws.hyb, n)
     _record_update_relin!(record, ws, pars, relin, n)
     _tape_push!(tape, :update, index)
     return nothing
@@ -1073,7 +1073,7 @@ function _begin_predict!(tape::CTSEMAdjointTape{T}, ws, n::Int) where {T}
     record = tape.predicts[index]
     _tape_fill!(record.state_in, ws.state)
     record.P_in = _tape_fill!(record.P_in, view(ws.P_update.data, 1:n, 1:n))
-    _hybrid_record_X!(record, ws.hyb, n)
+    _ekf_gaussian_call(ws, _hybrid_record_X!, _ctsem_noop, record, ws.hyb, n)
     return record
 end
 
@@ -1104,7 +1104,7 @@ function _record_predict!(tape::CTSEMAdjointTape{T}, ws, pars,
         _series_chain_store!(record.noise_chain, series, k)
     end
     icpt.intercept && _series_chain_store!(record.icpt_chain, icpt, naff)
-    _hybrid_record_Xinc!(record, ws.hyb, n)
+    _ekf_gaussian_call(ws, _hybrid_record_Xinc!, _ctsem_noop, record, ws.hyb, n)
     record.moment = ws.moment_now[]
     _tape_push!(tape, :predict, index)
     return nothing
@@ -2258,7 +2258,7 @@ function _ctsem_reverse_tape!(tape::CTSEMAdjointTape{T},
         kind, index = tape.program[entry_index]
         if kind === :update
             _reverse_update!(x̄, P̄, Θ̄, θ̄ca, tape.updates[index], n, aws.reverse_scratch,
-                tape.hyb.active && tape.hyb.q > 0 ? tape.hyb : nothing, tape.xp_bar)
+                _ekf_hybrid_tape(aws.ekf_ws, tape), tape.xp_bar)
         elseif kind === :relin
             # A step of an iterated update, between the row's final update and
             # its update-group evaluations (`_ekf_iterated_rows!`).
@@ -2267,7 +2267,8 @@ function _ctsem_reverse_tape!(tape::CTSEMAdjointTape{T},
         elseif kind === :hybrid
             # The integrated deviations' closing term; last in the forward, so
             # first here (`CTSEMHybrid`).
-            _reverse_hybrid_marginal!(tape.hyb, n, _hybrid_items(sp.hybrid), sp.hybrid)
+            _ekf_gaussian_call(aws.ekf_ws, _reverse_hybrid_marginal!, _ekf_hybrid_refused,
+                tape.hyb, n, _hybrid_items(sp.hybrid), sp.hybrid)
         elseif kind === :binary
             # After the Gaussian block of the same row, because the forward
             # applied binary observations before it. By the workspace's type,
@@ -2280,7 +2281,7 @@ function _ctsem_reverse_tape!(tape::CTSEMAdjointTape{T},
             _reverse_td!(x̄, P̄, θ̄ca, tape.tds[index], n, aws.reverse_scratch)
         elseif kind === :predict
             _reverse_predict!(x̄, P̄, θ̄ca, tape.predicts[index], dyn, n, aws.lyap_buffer, aws,
-                tape.hyb.active && tape.hyb.q > 0 ? tape.hyb : nothing)
+                _ekf_hybrid_tape(aws.ekf_ws, tape))
         elseif kind === :moment
             # Between its substep's prediction and the group at the mean.
             _reverse_moment!(x̄, P̄, θ̄, θ̄ca, tape.moments[index], tape, sp, aws, n, m)

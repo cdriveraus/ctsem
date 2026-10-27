@@ -554,6 +554,20 @@ const _CTSEM_HESSIAN_WIDTHS = Ref(Int[12])
 const _CTSEM_CURVATURE_WIDTHS = Ref(Int[4])
 
 """
+    _ctsem_hessian_dual(objective)
+
+The dual type `ctsem_hessian`'s sweeps run `objective`'s filter at: the tag of
+`_CTSEMAdjointGradientOf` through `_CTSEMLeading`, at the Hessian's width. A
+forward pass seeded in parameter directions that is never nested in another
+derivative -- a row's scores -- runs at it rather than at a type of its own,
+since every type is a compile of the filter and its reverse pass, and the
+package image holds this one for any model a fit forms a Hessian for.
+"""
+_ctsem_hessian_dual(objective) = ForwardDiff.Dual{ForwardDiff.Tag{
+    typeof(_CTSEMLeading(_CTSEMAdjointGradientOf(objective, 0), 0)),Float64},Float64,
+    last(_CTSEM_HESSIAN_WIDTHS[])}
+
+"""
 The width a forward-mode Jacobian over `n` inputs takes from `widths`: the
 smallest at least `pickchunksize(n)`, or the largest where none is.
 """

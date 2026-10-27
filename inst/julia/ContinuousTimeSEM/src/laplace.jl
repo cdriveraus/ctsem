@@ -2088,7 +2088,8 @@ function _laplace_subject_value_gradient!(gradient::AbstractVector{T},
         fill!(gradient, zero(T))
         _ctsem_parameter_layer!(gradient, aws.theta_bar, tape.subject_values,
             subject_objective.params, aws, subject_objective.tipreds, values)
-        _hybrid_scatter!(gradient, tape.hyb, subject_objective.params.hybrid)
+        _ekf_gaussian_call(aws.ekf_ws, _hybrid_scatter!, _ctsem_noop, gradient, tape.hyb,
+            subject_objective.params.hybrid)
         _ctsem_tipred_scatter!(gradient, aws, subject_objective.tipreds)
         _laplace_charge!(_LAPLACE_BYTES_REV, br)
         return loglik
@@ -3295,9 +3296,14 @@ effects (the blocked routes) compiled all of that again beside the small units
 the package image holds; on the affect pilot's first evaluation, with its
 interval-censored items, that was most of what remained to compile once the
 width was one (review/PRECOMPILE-curvature-width-2026-10-26.md). `columns` and
-`members` are plain vectors for the same reason.
+`members` are plain vectors for the same reason, and `hook` is held untyped: as
+a type parameter, the hybrid's two hooks (`CTSEMHybridCross`,
+`_HybridFixedCross`) made two more tags beside the plain curvature's, and the
+package image held the filter and its reverse at all three. The hook is read
+only around each member's pass (`_hybrid_before!`, `_hybrid_after!`), so the
+one dynamic call a sweep costs nothing beside the sweep.
 """
-struct _LaplaceColumnsGradient{L,V,LS,B,H}
+struct _LaplaceColumnsGradient{L,V,LS,B}
     laplace::L
     U::Int
     values::V
@@ -3306,7 +3312,7 @@ struct _LaplaceColumnsGradient{L,V,LS,B,H}
     columns::Vector{Int}
     members::Vector{Int}
     mode::Int
-    hook::H
+    hook::Any
 end
 
 function (g::_LaplaceColumnsGradient)(ub)
@@ -3322,9 +3328,27 @@ function (g::_LaplaceColumnsGradient)(ub)
     @inbounds for (t, c) in enumerate(g.columns)
         uu[c] = ub[t]
     end
+    # Dispatched on the hook at run time (see above), so the result is asserted.
     return _laplace_unit_loglik_gradient_vector(laplace, g.U, vs, Lss, uu, ws,
         g.members, _laplace_scratch_vector!(laplace, S, d, :curv_inner), g.mode,
-        g.hook)
+        g.hook)::Vector{S}
+end
+
+"""
+    _laplace_curvature_dual(laplace)
+
+The dual type a unit's curvature sweeps run at (`_laplace_columns_jacobian`):
+the tag of `_LaplaceColumnsGradient` through `_CTSEMLeading`, at the
+curvature's width. A forward pass seeded in a unit's coordinates that is never
+nested in another derivative -- the sequential predictions' -- runs at it
+rather than at a type of its own, since every type is a compile of the filter
+and its reverse pass, and a Laplace fit has compiled this one.
+"""
+function _laplace_curvature_dual(laplace::CTSEMLaplaceObjective)
+    g = _LaplaceColumnsGradient(laplace, 0, Float64[], Matrix{Float64}[], Float64[],
+        Int[], Int[], 0, nothing)
+    return ForwardDiff.Dual{ForwardDiff.Tag{typeof(_CTSEMLeading(g, 0, true)),Float64},
+        Float64,last(_CTSEM_CURVATURE_WIDTHS[])}
 end
 
 """`offset + 1:offset + n` in the slot's `Int` scratch under `tag`."""

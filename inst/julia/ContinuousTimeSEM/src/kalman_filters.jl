@@ -273,9 +273,9 @@ end
     ws.P_predict.data .+= ws.discrete_ca.dDIFFUSION
     _copy_lower_to_upper!(ws.P_predict.data, ws.state_dim)
     ws.hyb.active && ws.hyb.q > 0 &&
-        _hybrid_predict!(ws.hyb, ws.discrete_ca.dDRIFT, pars.JAx,
-            ws.discretization_buffer.series_icpt, ws.affine_buffer.dim, Δt,
-            ws.state_dim, ws.continuous_time)
+        _ekf_gaussian_call(ws, _hybrid_predict!, _ekf_hybrid_refused, ws.hyb,
+            ws.discrete_ca.dDRIFT, pars.JAx, ws.discretization_buffer.series_icpt,
+            ws.affine_buffer.dim, Δt, ws.state_dim, ws.continuous_time)
     return nothing
 end
 
@@ -811,7 +811,8 @@ function _ekf_masked_update_step!(ws::ContinuousEKFWorkspace, pars,
     _copy_lower_to_upper!(ws.P_update.data, ws.state_dim)
     # The integrated deviations' share of this update (`CTSEMHybrid`).
     ws.hyb.active && ws.hyb.q > 0 &&
-        _hybrid_update!(ws.hyb, Lv, factor, KRv, yv, observed, n)
+        _ekf_gaussian_call(ws, _hybrid_update!, _ekf_hybrid_refused, ws.hyb, Lv, factor,
+            KRv, yv, observed, n)
     return factor
 end
 
@@ -1488,7 +1489,8 @@ end
     isempty(tdpreds) && return nothing
     # A predictor effect the filter integrates moves its column with the state
     # (`_hybrid_td_impulse!`).
-    ws.hyb.active && ws.hyb.q > 0 && _hybrid_td_impulse!(ws.hyb, tdpreds)
+    ws.hyb.active && ws.hyb.q > 0 &&
+        _ekf_gaussian_call(ws, _hybrid_td_impulse!, _ekf_hybrid_refused, ws.hyb, tdpreds)
     # Not `_matvec_mul!` at `Val(length(tdpreds))`: a runtime `Val` made it a
     # dynamic call, which boxed both views on every row with a TD predictor.
     _ctsem_mulvec!(ws.bufferQ.r, pars.TDPREDEFFECT, tdpreds)
@@ -2014,7 +2016,9 @@ function _extended_kalman_filter_continuous!(
     _copy_lower_to_upper!(ws.P_predict.data, ws.state_dim)
     _apply_population_block!(ws, all_params)
     copyto!(ws.state, pars.T0MEANS)
-    _hybrid_start!(ws.hyb, sp.hybrid, data, ws.state_dim, ws.manifest_dim)
+    _hybrid_inactive!(ws.hyb, sp.hybrid, _ekf_has_categorical(ws))
+    _ekf_gaussian_call(ws, _hybrid_start!, _ctsem_noop, ws.hyb, sp.hybrid, data,
+        ws.state_dim, ws.manifest_dim)
     # Split rather than handed a result that is `nothing` or the view: a union
     # of the two is not a bits union, so it was boxed on every traced subject
     # pass.
@@ -2181,7 +2185,8 @@ function _extended_kalman_filter_continuous!(
         prev_timestep = curr_timestep
     end
     # The integrated deviations' closing term (`CTSEMHybrid`).
-    ws.hyb.active && (ll += _hybrid_marginal!(ws.hyb, sp.hybrid, params, trace))
+    ws.hyb.active && (ll += _ekf_gaussian_call(ws, _hybrid_marginal!, _ekf_hybrid_refused,
+        ws.hyb, sp.hybrid, params, trace))
     return ll
 end
 

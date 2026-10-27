@@ -65,6 +65,23 @@ function _hybrid_fixed_gradient!(out::AbstractVector, base::Integer,
     return out
 end
 
+"""
+    _hybrid_inactive!(hb, h, categorical)
+
+Set the buffers to integrate nothing, before `_hybrid_start!` says what a
+pass integrates. A model with a non-Gaussian indicator stops here, as its
+filter has no hybrid hooks (`_ekf_gaussian_call`), and a specification that
+asks it for integrated deviations is refused.
+"""
+function _hybrid_inactive!(hb::CTSEMHybridBuffers{T}, h::CTSEMHybrid,
+    categorical::Bool) where {T}
+    hb.active = false
+    hb.q = 0
+    hb.half_logdet = zero(T)
+    categorical && _hybrid_on(h) && hb.mode != _HYBRID_OFF && _ekf_hybrid_refused()
+    return nothing
+end
+
 """Start a pass: which hybrid items this subject carries, and their state."""
 function _hybrid_start!(hb::CTSEMHybridBuffers{T}, h::CTSEMHybrid, data,
     n::Int, m::Int) where {T}
