@@ -962,7 +962,11 @@
 # record reports (`fit$laplace$correction$error`). A fit the fit-time
 # correction already moved is placed where it stands and not moved again
 # (`rounds = 0`), as is any fit under `correctEstimate = FALSE`; one made
-# with the correction off is climbed first. Where the screen finds Laplace
+# without the correction is climbed first, with the units its shift check
+# named (`check$carriers`, the default fit's warning) integrated whatever the
+# screen says, as the fit-time correction integrates them. `'hessian'` takes
+# the hybrid's own curvature at the end, the fit-time default's uncertainty
+# after a correction. Where the screen finds Laplace
 # exact at the estimate the hybrid is the fit's own objective there, and the
 # draws are taken on it; where the continuation could not draw (no Hessian
 # to certify its end, every unit too wide) the draws are taken on the fit's
@@ -1005,11 +1009,12 @@
       nrow(fit$estimate$rawposterior) else 1000L
   }
   iscontrol <- control[intersect(names(control), shared)]
-  fit$uncertainty$settings <- list(method = uncertainty, draws = "imis",
+  draws <- .ctResolveDraws(uncertainty, "auto")
+  fit$uncertainty$settings <- list(method = uncertainty, draws = draws,
     finishsamples = finishsamples, cores = cores, control = iscontrol)
   corrected <- fit$laplace$correction
   fit <- .ctLaplaceContinue(fit, cores = cores, verbose = verbose,
-    control = settings, method = uncertainty)
+    control = settings, method = uncertainty, force = corrected$check$carriers)
   # A corrected fit stays corrected: its record is what says where the
   # Laplace optimum was (`.ctLaplaceOptimum()`, which cross-validation scores
   # at), and the run that only placed rules there for these draws would
@@ -1021,10 +1026,10 @@
   if (!drawn) {
     status <- as.character(.ctJuliaOr(fit$laplace$correction$status, ""))[1L]
     if (!identical(status, "exact")) {
-      message("The quadrature hybrid could not be sampled (", status,
+      message("The quadrature hybrid could not be drawn on (", status,
         "); the draws are against the fit's own objective.")
     }
-    fit <- .ctBackendUncertainty(fit, uncertainty = uncertainty, draws = "imis",
+    fit <- .ctBackendUncertainty(fit, uncertainty = uncertainty, draws = draws,
       finishsamples = finishsamples, cores = cores, control = iscontrol,
       verbose = verbose)
   }

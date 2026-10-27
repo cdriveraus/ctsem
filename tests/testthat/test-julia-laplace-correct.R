@@ -111,9 +111,11 @@ test_that("correctEstimate = FALSE leaves the point where it was", {
 test_that("requests it cannot serve are refused by name", {
   skip_without_julia()
   fit <- .correct_fit()
-  # Only the methods that draw take a likelihood.
-  expect_error(ctFitUncertainty(fit, "hessian",
-    control = list(likelihood = "quadrature")), "applies to uncertainty = 'is'")
+  # Only the methods that draw take a likelihood, and 'hessian' the
+  # quadrature hybrid's, whose maximum the continuation certifies.
+  expect_error(ctFitUncertainty(fit, "sandwich",
+    control = list(likelihood = "quadrature")),
+    "applies to uncertainty = 'hessian', 'is' or 'checked'", fixed = TRUE)
   # Each likelihood takes its own settings and the shared ones, nothing else.
   expect_error(ctFitUncertainty(fit, "is",
     control = list(likelihood = "quadrature", particles = 100)),

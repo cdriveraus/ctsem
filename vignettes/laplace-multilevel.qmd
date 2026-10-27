@@ -110,12 +110,15 @@ transform (`DRIFT`, `DIFFUSION`, and any state-dependent parameter), and the
 approximation is better the more informative each subject's data is about its
 own effects.
 
-`ctFit()` measures that error itself and corrects for it by default
+`ctFit()` measures that error itself by default
 (`optimcontrol$laplace_correct`): it checks each unit's integral at draws
-from that unit's posterior, and where taking the integrals exactly would move
-an estimate it continues the fit on the quadrature objective for the units
-that carry the move, reporting the quadrature log likelihood;
-`print(fit)` says when the estimate moved. `ctLaplaceCheck()` reports the same
+from that unit's posterior, and warns where taking the integrals exactly
+would move an estimate by a tenth of a standard error or more.
+`ctFitUncertainty(fit, 'hessian', control = list(likelihood = 'quadrature'))`
+then continues the fit on the quadrature objective for the units that carry
+the move, reporting the quadrature log likelihood, and `laplace_correct =
+TRUE` does the same at fit time; `print(fit)` says when the estimate moved,
+or should have. `ctLaplaceCheck()` reports the same
 measurement on any Laplace fit, as how far the estimate would move if the
 integral were taken exactly. Read `delta_se`: well below one says the
 approximation is not what limits the answer, and near or above one says it
@@ -130,8 +133,11 @@ the intervals as well as their centre.
 The correction moves the estimate and its curvature; the intervals are still
 a normal approximation at a mode, which understates the skew a population
 standard deviation estimated from few groups has. For the exact posterior,
-`ctFitUncertainty(fit, 'sample')` samples the parameters and every unit's
-random effects jointly, with the Laplace fit only as a starting point; a short
+`ctFitUncertainty(fit, 'sample', control = list(intoverpop = 'none'))`
+samples the parameters and every unit's random effects jointly, with the
+Laplace fit only as a starting point; on a fit made with `intoverpop =
+'laplace'`, as here, the plain call samples the Laplace marginal instead,
+which keeps its error. A short
 run is often enough to improve on the normal approximation
 (`vignette('uncertainty')`).
 

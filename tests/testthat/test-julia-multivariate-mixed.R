@@ -187,23 +187,28 @@ test_that("the Laplace correction handles more than one random effect", {
   # to compute: that is the contract `na.rm` above relies on.
   expect_true(all(check$parameters$se[is.na(delta)] == 0))
 
-  # The default fit from the same start, whose quadrature correction is what a
-  # user gets: the same two-effect blocks, on the same product rule. The screen
-  # finds a gap (0.03 when measured), but the gain the correction predicts
-  # from the Laplace optimum is 8e-5 nats, under `skip_gain`, so it is skipped:
-  # the estimate stays, and the log likelihood reported is the quadrature one.
-  # That agrees with the check above, whose own first-order step, computed
-  # independently by finite differences of the gap, is under a tenth of a
-  # standard error (measured 0.019).
+  # The default fit from the same start, whose shift check is what a user
+  # gets: every unit scored at draws of its posterior. Correcting Laplace
+  # moves no estimate by a resolved tenth of a standard error here, so
+  # nothing is said and the estimate and its log likelihood are Laplace's.
+  # That agrees
+  # with the check above, whose own first-order step, computed independently
+  # by finite differences of the gap, is under a tenth of a standard error
+  # (measured 0.019).
   set.seed(seed)
-  default <- suppressWarnings(suppressMessages(ctFit(d, m, backend = "julia",
-    intoverpop = "laplace", optimcontrol = list(finishsamples = 100))))
+  warned <- character()
+  default <- withCallingHandlers(suppressMessages(ctFit(d, m, backend = "julia",
+    intoverpop = "laplace", optimcontrol = list(finishsamples = 100))),
+    warning = function(w) {
+      warned <<- c(warned, conditionMessage(w))
+      invokeRestart("muffleWarning")
+    })
   corr <- default$laplace$correction
   expect_identical(corr$method, "quadrature")
-  expect_identical(corr$status, "skipped")
+  expect_true(corr$status %in% c("exact", "checked"))
   expect_false(corr$applied)
-  expect_lt(corr$predicted_gain, corr$skip_gain)
-  expect_equal(default$estimate$loglik, corr$loglik_quadrature)
-  expect_identical(default$estimate$loglik_method, "quadrature")
+  expect_false(any(grepl("Laplace's error", warned, fixed = TRUE)))
+  expect_true(corr$check$status %in% c("passed", "unresolved"))
+  expect_null(default$estimate$loglik_method)
   expect_lt(max(abs(delta), na.rm = TRUE), 0.1)
 })

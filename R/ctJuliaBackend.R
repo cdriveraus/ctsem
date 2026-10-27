@@ -7271,18 +7271,23 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
   # Laplace objective and the uncertainty stage has built the Hessian it steps
   # against, which it reuses rather than computing another. Before the
   # constrained draws below, so that they are built once. See
-  # `.ctLaplaceContinue()` for `laplace_correct = 'quadrature'`, the default,
-  # which replaces the covariance and draws with its own when it reaches its
-  # fixed point, and `.ctLaplaceAutoCorrect()` for `'step'`.
+  # `.ctLaplaceContinue()` for `laplace_correct = 'quadrature'`, which
+  # replaces the covariance and draws with its own when it reaches its fixed
+  # point, and for `'check'`, the default, which only checks and warns, and
+  # `.ctLaplaceAutoCorrect()` for `'step'`.
   if (!is.null(out$laplace) && isTRUE(intoverstates)) {
     if (continuing) {
       if (!identical(correctlaplace, "quadrature")) {
         message("The Laplace term jumped where the optimiser stopped, so the ",
-          "fit was finished by the quadrature correction despite ",
-          "optimcontrol$laplace_correct.")
+          "fit was finished by the quadrature correction",
+          if (!is.null(optimcontrol$laplace_correct))
+            " despite optimcontrol$laplace_correct", ".")
       }
       out <- holdrepair(.ctLaplaceContinue(out, cores = cores, verbose = verbose,
         method = uncertainty, uncertaintycontrol = plaincontrol))
+    } else if (identical(correctlaplace, "check")) {
+      out <- holdrepair(.ctLaplaceContinue(out, cores = cores, verbose = verbose,
+        correct = FALSE))
     } else if (identical(correctlaplace, "step")) {
       out <- holdrepair(.ctLaplaceAutoCorrect(out, cores = cores, verbose = verbose))
     } else {
@@ -7457,12 +7462,8 @@ print.ctJuliaFit <- function(x, ...) {
       " here and no quadrature step improved on it; the log likelihood ",
       "reported is the quadrature one. See fit$laplace$correction.\n", sep = "")
   } else if (identical(corr$status, "flagged")) {
-    cat("  Laplace estimate not corrected: its error moves estimates by up to ",
-      format(corr$check$max_shift, digits = 2), " standard errors (",
-      corr$check$worst, "), carried by ", corr$check$carrying, " of ",
-      corr$units, " units, more than draws can correct cheaply; ",
-      "ctFitUncertainty(fit, 'sample', control = list(intoverpop = 'none')) ",
-      "samples the joint posterior. See fit$laplace$correction$check.\n", sep = "")
+    # What the fit's warning said (`.ctLaplaceShiftMessage()`).
+    cat("  ", corr$message, "\n", sep = "")
   } else if (identical(corr$status, "too_wide")) {
     cat("  Laplace estimate not corrected: every subject or group has more than ",
       corr$maxdim, " random effects. See fit$laplace$correction.\n", sep = "")
