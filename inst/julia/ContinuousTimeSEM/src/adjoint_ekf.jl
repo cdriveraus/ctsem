@@ -2263,8 +2263,8 @@ function _ctsem_reverse_tape!(tape::CTSEMAdjointTape{T},
             # A step of an iterated update, between the row's final update and
             # its update-group evaluations (`_ekf_iterated_rows!`); behind a
             # barrier as the forward step is.
-            _reverse_relin!(x̄, tape.xp_bar, P̄, Θ̄, θ̄ca, tape.relins[index], n,
-                aws.reverse_scratch)
+            _ctsem_barrier(_reverse_relin!, x̄, tape.xp_bar, P̄, Θ̄, θ̄ca,
+                tape.relins[index], n, aws.reverse_scratch)
         elseif kind === :hybrid
             # The integrated deviations' closing term; last in the forward, so
             # first here (`CTSEMHybrid`).
@@ -2286,7 +2286,8 @@ function _ctsem_reverse_tape!(tape::CTSEMAdjointTape{T},
         elseif kind === :moment
             # Between its substep's prediction and the group at the mean;
             # behind a barrier as the forward step is.
-            _reverse_moment!(x̄, P̄, θ̄, θ̄ca, tape.moments[index], tape, sp, aws, n, m)
+            _ctsem_barrier(_reverse_moment!, x̄, P̄, θ̄, θ̄ca, tape.moments[index], tape,
+                sp, aws, n, m)
         elseif kind === :group
             # Only a group that writes a JAx cell can consume a queued Fréchet
             # contribution (its reverse zeroes that cell's cotangent).

@@ -126,8 +126,8 @@ function _record_substep_defect!(rec::CTSEMSubstepRecorder{T}, ws, pars, sp, all
     # missed includes the covariance's change, which the mean path alone does
     # not see.
     apply_complex_transforms_at_indices!(all_params, idx, sp.predict_transforms, ctx)
-    if moment && _ekf_moment_cells!(ws, pars, sp, all_params, ctx, nothing,
-            ws.P_predict.data)
+    if moment && _ctsem_barrier(_ekf_moment_cells!, ws, pars, sp, all_params, ctx,
+            nothing, ws.P_predict.data)::Bool
         _ctsem_affine_field!(rec.f1, pars, x1, n)
         @inbounds for i in 1:n
             rec.f1[i] += ws.moment_c[i]
