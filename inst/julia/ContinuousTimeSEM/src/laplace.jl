@@ -3334,6 +3334,23 @@ function (g::_LaplaceColumnsGradient)(ub)
         g.hook)::Vector{S}
 end
 
+"""
+    _laplace_curvature_dual(laplace)
+
+The dual type a unit's curvature sweeps run at (`_laplace_columns_jacobian`):
+the tag of `_LaplaceColumnsGradient` through `_CTSEMLeading`, at the
+curvature's width. A forward pass seeded in a unit's coordinates that is never
+nested in another derivative -- the sequential predictions' -- runs at it
+rather than at a type of its own, since every type is a compile of the filter
+and its reverse pass, and a Laplace fit has compiled this one.
+"""
+function _laplace_curvature_dual(laplace::CTSEMLaplaceObjective)
+    g = _LaplaceColumnsGradient(laplace, 0, Float64[], Matrix{Float64}[], Float64[],
+        Int[], Int[], 0, nothing)
+    return ForwardDiff.Dual{ForwardDiff.Tag{typeof(_CTSEMLeading(g, 0, true)),Float64},
+        Float64,last(_CTSEM_CURVATURE_WIDTHS[])}
+end
+
 """`offset + 1:offset + n` in the slot's `Int` scratch under `tag`."""
 function _laplace_index_scratch!(laplace::CTSEMLaplaceObjective, n::Integer,
     tag::Symbol, offset::Integer=0)

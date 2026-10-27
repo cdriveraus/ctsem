@@ -20,13 +20,23 @@
 # gives every row (`_laplace_sequential_filtered!`), where the general path
 # filters every prefix again and costs O(T^2) a subject.
 
-struct _LaplaceSequentialTag end
+# The seeded passes run at the dual type of a unit's curvature sweeps
+# (`_laplace_curvature_dual`), each carrying as many of the coordinates as that
+# type has lanes. A type of their own, as wide as a unit's coordinates, compiled
+# the filter again for each width at a user's first call.
 
+"""Coordinate `a`'s value as a dual of a pass seeded in coordinates
+`offset + 1:offset + N`, its partial `a - offset` one where the pass carries
+it."""
 @inline function _laplace_sequential_seed(::Type{ForwardDiff.Dual{G,V,N}}, v,
-    a::Integer) where {G,V,N}
+    a::Integer, offset::Integer=0) where {G,V,N}
     return ForwardDiff.Dual{G,V,N}(V(v), ForwardDiff.Partials{N,V}(
-        ntuple(j -> j == a ? one(V) : zero(V), Val(N))))
+        ntuple(j -> j == a - offset ? one(V) : zero(V), Val(N))))
 end
+
+"""The pass, and the lane in it, that carries coordinate `b` at `W` a pass."""
+@inline _laplace_sequential_lane(b::Integer, W::Integer) =
+    ((b - 1) ÷ W + 1, (b - 1) % W + 1)
 
 """A truncated copy of a subject's record, rows `1:t`, in place on `so`."""
 function _laplace_truncate!(so, full, t::Integer)
@@ -124,10 +134,7 @@ function ctsem_laplace_sequential(laplace::CTSEMLaplaceObjective, values::Abstra
     for (i, r) in enumerate(rows)
         out.subject[(first_row[i] + 1):(first_row[i] + r)] .= i
     end
-    hyb = sp.hybrid
-    d = maximum(units.dims; init=0)
-    W = max(d + (_hybrid_on(hyb) ? _hybrid_items(hyb) : 0), 1)
-    S = ForwardDiff.Dual{_LaplaceSequentialTag,Float64,W}
+    S = _laplace_curvature_dual(laplace)
     _laplace_ensure_pool!(laplace)
     _laplace_parallel(laplace, eachindex(units.members)) do U
         _laplace_sequential_unit!(out, laplace, U, theta, Ls,
@@ -235,22 +242,29 @@ function _laplace_sequential_unit!(out, laplace::CTSEMLaplaceObjective, U::Integ
             end
             _laplace_sequential_effects!(out, offset, t, T, Ls[1], B,
                 pass_items, z0, SigmaP, d, D)
-            zd = [_laplace_sequential_seed(S, z0[a], a) for a in 1:D]
-            ud = S[zd[a] for a in 1:d]
-            x = _laplace_member_values(theta, spec, Ls, ud, units.offsets[U][1])
-            for (c, k) in enumerate(pass_items), p in axes(B, 1)
-                b = B[p, k]
-                iszero(b) || (x[lv.re_index[p]] += b * zd[d + c])
+            traces = CTSEMKalmanTrace{S}[]
+            for pass in 1:max(cld(D, W), 1)
+                zd = [_laplace_sequential_seed(S, z0[a], a, (pass - 1) * W) for a in 1:D]
+                ud = S[zd[a] for a in 1:d]
+                x = _laplace_member_values(theta, spec, Ls, ud, units.offsets[U][1])
+                for (c, k) in enumerate(pass_items), p in axes(B, 1)
+                    b = B[p, k]
+                    iszero(b) || (x[lv.re_index[p]] += b * zd[d + c])
+                end
+                trace = CTSEMKalmanTrace(S, n, m, tt, 1, nall)
+                trace.offset = 0
+                trace.current_subject = 1
+                ll = _extended_kalman_filter_continuous!(ws, x, so.data,
+                    collect(so.timesteps), sp, so.tdpreds,
+                    _ctsem_tipred_vector(so.tipreds, x), i, so.max_timestep, trace,
+                    nothing, nothing, so.relin)
+                _laplace_finite(ll) || break
+                push!(traces, trace)
             end
-            trace = CTSEMKalmanTrace(S, n, m, tt, 1, nall)
-            trace.offset = 0
-            trace.current_subject = 1
-            ll = _extended_kalman_filter_continuous!(ws, x, so.data, collect(so.timesteps),
-                sp, so.tdpreds, _ctsem_tipred_vector(so.tipreds, x), i, so.max_timestep,
-                trace, nothing, nothing, so.relin)
-            _laplace_finite(ll) || continue
-            t >= 1 && _laplace_sequential_record!(out, 2, offset + t, trace, t, SigmaP, D)
-            t + 1 <= T && _laplace_sequential_record!(out, 1, offset + t + 1, trace,
+            length(traces) == max(cld(D, W), 1) || continue
+            t >= 1 && _laplace_sequential_record!(out, 2, offset + t, traces, W, t,
+                SigmaP, D)
+            t + 1 <= T && _laplace_sequential_record!(out, 1, offset + t + 1, traces, W,
                 t + 1, SigmaP, D)
         end
     finally
@@ -294,21 +308,27 @@ function _laplace_sequential_filtered!(out, laplace::CTSEMLaplaceObjective, U::I
     ws.hyb.mode = _HYBRID_OFF
     n = ws.state_dim
     m = ws.manifest_dim
-    x = _laplace_member_values(theta, spec, Ls, S[], laplace.units.offsets[U][1])
-    for c in 1:D
-        zc = _laplace_sequential_seed(S, 0.0, c)
-        for p in axes(B, 1)
-            b = B[p, c]
-            iszero(b) || (x[lv.re_index[p]] += b * zc)
+    W = ForwardDiff.npartials(S)
+    traces = CTSEMKalmanTrace{S}[]
+    for pass in 1:max(cld(D, W), 1)
+        x = _laplace_member_values(theta, spec, Ls, S[], laplace.units.offsets[U][1])
+        for c in 1:D
+            zc = _laplace_sequential_seed(S, 0.0, c, (pass - 1) * W)
+            for p in axes(B, 1)
+                b = B[p, c]
+                iszero(b) || (x[lv.re_index[p]] += b * zc)
+            end
         end
+        trace = CTSEMKalmanTrace(S, n, m, T, 1, length(sp.mutables))
+        trace.offset = 0
+        trace.current_subject = 1
+        ll = _extended_kalman_filter_continuous!(ws, x, so.data, collect(so.timesteps),
+            sp, so.tdpreds, _ctsem_tipred_vector(so.tipreds, x), i, so.max_timestep, trace,
+            nothing, nothing, so.relin)
+        _laplace_finite(ll) || return nothing
+        push!(traces, trace)
     end
-    trace = CTSEMKalmanTrace(S, n, m, T, 1, length(sp.mutables))
-    trace.offset = 0
-    trace.current_subject = 1
-    ll = _extended_kalman_filter_continuous!(ws, x, so.data, collect(so.timesteps),
-        sp, so.tdpreds, _ctsem_tipred_vector(so.tipreds, x), i, so.max_timestep, trace,
-        nothing, nothing, so.relin)
-    _laplace_finite(ll) || return nothing
+    trace = traces[1]
     # The posterior given rows 1:t, in information form: H the rows' summed
     # precisions in z, g their summed scores at zero, c their summed values.
     H = zeros(Float64, D, D)
@@ -330,7 +350,8 @@ function _laplace_sequential_filtered!(out, laplace::CTSEMLaplaceObjective, U::I
             end
             if D > 0
                 @inbounds for a in 1:D
-                    g[a] += ForwardDiff.partials(lr)[a]
+                    pass, lane = _laplace_sequential_lane(a, W)
+                    g[a] += ForwardDiff.partials(traces[pass].llrow[t])[lane]
                 end
                 if p > 0
                     Sr = zeros(Float64, p, p)
@@ -338,7 +359,8 @@ function _laplace_sequential_filtered!(out, laplace::CTSEMLaplaceObjective, U::I
                         Sr[a, b] = ForwardDiff.value(trace.ycov[1, t, observed[a], observed[b]])
                     end
                     @inbounds for a in 1:p, e in 1:D
-                        V[a, e] = ForwardDiff.partials(trace.y[1, t, observed[a]])[e]
+                        pass, lane = _laplace_sequential_lane(e, W)
+                        V[a, e] = ForwardDiff.partials(traces[pass].y[1, t, observed[a]])[lane]
                     end
                     F = _ctsem_cholesky(Sr, p)
                     issuccess(F) || return nothing
@@ -360,10 +382,10 @@ function _laplace_sequential_filtered!(out, laplace::CTSEMLaplaceObjective, U::I
             end
             out.llrow[offset + t] = term - prevterm
             prevterm = term
-            _laplace_sequential_record!(out, 2, offset + t, trace, t, Sigma, D, zhat)
+            _laplace_sequential_record!(out, 2, offset + t, traces, W, t, Sigma, D, zhat)
         end
         _laplace_sequential_effects!(out, offset, t, T, Ls[1], B, items, zhat, Sigma, 0, D)
-        t + 1 <= T && _laplace_sequential_record!(out, 1, offset + t + 1, trace,
+        t + 1 <= T && _laplace_sequential_record!(out, 1, offset + t + 1, traces, W,
             t + 1, Sigma, D, zhat)
     end
     return nothing
@@ -410,20 +432,24 @@ function _laplace_sequential_effects!(out, offset::Integer, t::Integer, T::Integ
     return out
 end
 
-"""One row's means and covariances from a seeded pass: the filter's values at
-the effects' posterior means, its covariance plus `J Sigma J'`. A pass seeded
-at zero rather than at the means moves its values to them, `+ J centre`."""
-function _laplace_sequential_record!(out, k::Integer, row::Integer, trace, r::Integer,
-    Sigma::Matrix{Float64}, D::Integer, centre=nothing)
-    for (mean, cov, means, covs) in ((trace.eta, trace.etacov, out.eta, out.etacov),
-            (trace.y, trace.ycov, out.y, out.ycov))
+"""One row's means and covariances from the seeded passes (`W` coordinates a
+pass): the filter's values at the effects' posterior means, its covariance plus
+`J Sigma J'`. A pass seeded at zero rather than at the means moves its values
+to them, `+ J centre`."""
+function _laplace_sequential_record!(out, k::Integer, row::Integer, traces::Vector,
+    W::Integer, r::Integer, Sigma::Matrix{Float64}, D::Integer, centre=nothing)
+    trace = traces[1]
+    for (mean, cov, means, covs, parts) in (
+            (trace.eta, trace.etacov, out.eta, out.etacov, [tr.eta for tr in traces]),
+            (trace.y, trace.ycov, out.y, out.ycov, [tr.y for tr in traces]))
         p = size(mean, 3)
         J = zeros(Float64, p, D)
         @inbounds for a in 1:p
             e = mean[k, r, a]
             means[k, row, a] = ForwardDiff.value(e)
             for b in 1:D
-                J[a, b] = ForwardDiff.partials(e)[b]
+                pass, lane = _laplace_sequential_lane(b, W)
+                J[a, b] = ForwardDiff.partials(parts[pass][k, r, a])[lane]
             end
             if centre !== nothing
                 for b in 1:D
