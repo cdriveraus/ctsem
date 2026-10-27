@@ -136,6 +136,13 @@ sampled_fit <- list(sampled = function(fit, dat, model) ctFit(dat, model,
       processes = FALSE, intoverpop = "none", sampler = "saem"), cores = 1L),
   checked = function(fit, dat, model) ctFitUncertainty(fit, "checked", cores = 1L))
 
+# The Laplace correction's continuation up to its screen, stopped before any
+# round (`skip_gain = Inf`) and without the shift check before it: what a fit
+# whose check flags units runs first.
+correction_screen <- function(fit, dat, model) ns$.ctLaplaceContinue(fit,
+  control = utils::modifyList(ns$.ctLaplaceContinueDefaults,
+    list(check = FALSE, skip_gain = Inf)))
+
 shapes <- list(
   # One latent, two Gaussian indicators, a random intercept, on each route:
   # `image_model()` in tests/testthat/helper-julia.R, which tests fit so that a
@@ -179,18 +186,20 @@ shapes <- list(
     followups = list(
       check = function(fit, dat, model) ns$.ctLaplaceShiftCheck(fit,
         draws = 16L, seeds = 1:2),
-      screen = function(fit, dat, model) ns$.ctLaplaceContinue(fit,
-        control = utils::modifyList(ns$.ctLaplaceContinueDefaults,
-          list(check = FALSE, skip_gain = Inf))))),
+      screen = correction_screen)),
   # A model with a categorical indicator is a different filter workspace type
   # -- the categorical update is gated on it, so Gaussian fits do not carry
   # that code -- so each route needs one. Binary and ordinal share it.
   binary_augmented = list(route = "augmented",
     model = function() categorical_model(c("b1", "b2"), 1L),
     data = function() categorical(sim_latent(8, 6), c("b1", "b2"), 1L)),
+  # Its default fit makes the shift check, which passes here, so the screen
+  # follows as on the Gaussian block: a categorical fit whose check flags runs
+  # the continuation at the categorical type.
   ordinal_laplace = list(route = "laplace",
     model = function() categorical_model(c("o1", "o2"), 2L),
-    data = function() categorical(sim_latent(10, 6), c("o1", "o2"), 2L))
+    data = function() categorical(sim_latent(10, 6), c("o1", "o2"), 2L),
+    followups = list(screen = correction_screen))
 )
 only <- Sys.getenv("CTSEM_PRECOMPILE_SHAPES", "")
 if (nzchar(only)) shapes <- shapes[strsplit(only, ",", fixed = TRUE)[[1]]]
