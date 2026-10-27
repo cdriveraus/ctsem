@@ -111,9 +111,10 @@ approximation is better the more informative each subject's data is about its
 own effects.
 
 `ctFit()` measures that error itself and corrects for it by default
-(`optimcontrol$laplace_correct`): it recomputes each unit's integral by
-adaptive Gauss-Hermite quadrature, and wherever the two disagree it continues
-the fit on the quadrature objective, reporting the quadrature log likelihood;
+(`optimcontrol$laplace_correct`): it checks each unit's integral at draws
+from that unit's posterior, and where taking the integrals exactly would move
+an estimate it continues the fit on the quadrature objective for the units
+that carry the move, reporting the quadrature log likelihood;
 `print(fit)` says when the estimate moved. `ctLaplaceCheck()` reports the same
 measurement on any Laplace fit, as how far the estimate would move if the
 integral were taken exactly. Read `delta_se`: well below one says the

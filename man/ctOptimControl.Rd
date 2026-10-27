@@ -217,13 +217,18 @@ default.
  \code{'step'} or FALSE. Corrects the estimate for the Laplace
  approximation's error by the adaptive Gauss-Hermite quadrature of
  \code{\link{ctLaplaceCheck}} (5 nodes per random effect), last, after the
- certification and the standard errors. Where the two agree to 0.01 in total
- -- every model whose effects enter linearly -- nothing changes. Elsewhere
- \code{fit$estimate$loglik} is the quadrature log likelihood (the Laplace one
- is kept in \code{loglik_laplace}). \code{'quadrature'} continues the fit on
- the quadrature objective for the units whose values differ; \code{'step'}
- takes up to three Newton steps toward its optimum. A unit with more than
- five effects keeps the Laplace term. Refused with \code{estonly}.
+ certification and the standard errors. \code{'quadrature'} first checks
+ every unit, whatever its number of effects, at draws of its posterior:
+ where taking the integrals exactly would move no estimate by 0.1 standard
+ errors -- every model whose effects enter linearly -- nothing changes.
+ Elsewhere it continues the fit on the quadrature objective for the units
+ that carry the move, on draws for a unit with more than five effects, and
+ \code{fit$estimate$loglik} is the quadrature log likelihood (the Laplace
+ one is kept in \code{loglik_laplace}); where more than a quarter of the
+ units would need draws it warns and leaves the estimate, since sampling
+ costs less there. \code{'step'} takes up to three Newton steps toward the
+ quadrature optimum, and leaves a unit with more than five effects on the
+ Laplace term. Refused with \code{estonly}.
  \code{fit$laplace$correction} records what was done, and \code{print(fit)}
  says when the estimate moved.}
 }

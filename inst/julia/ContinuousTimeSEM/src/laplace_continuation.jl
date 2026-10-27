@@ -3712,3 +3712,63 @@ function _continuation_node_terms!(terms::Vector{Float64}, o::CTSEMLaplaceContin
     end
     return true
 end
+
+"""
+    ctsem_laplace_check(laplace, values; draws=128, seeds=1:4, draws_df=4,
+        unit_scores=true)
+
+The Laplace term checked at `values` on every unit, whatever its width
+(review/PROPOSAL-laplace-check-every-unit-2026-10-27.md): at each seed every
+unit on `draws` frozen importance draws (the continuation with `maxdim = 0`
+and every unit flagged), and the corrected objective's value and gradient
+against the Laplace objective's. The seeds are independent replicates, so
+their spread is the check's own noise: at ten effects a unit with a weakly
+identified covariance one seed's predicted shift was mostly noise.
+
+`laplace_unit` is each unit's Laplace term; `check_unit` and `check_se` (units
+x seeds) its corrected term and that term's replicate standard error;
+`gradient` (free parameters x seeds) the corrected minus the Laplace gradient;
+with `unit_scores`, `unit_gradient` (units x free parameters) each unit's
+corrected minus Laplace score, averaged over the seeds that scored; and
+`unit_width`, each unit's widest path of effects, which decides whether the
+rounds would score it by a product rule or by draws. A seed whose rules could
+not score every unit leaves its columns NaN.
+"""
+function ctsem_laplace_check(laplace::CTSEMLaplaceObjective, values::AbstractVector;
+    draws::Integer=128, seeds=1:4, draws_df::Real=4, unit_scores::Bool=true)
+    draws >= 1 || throw(ArgumentError("draws must be at least one"))
+    started = time_ns()
+    n = length(values)
+    x = collect(Float64, values)
+    theta = _laplace_extend(laplace, x)
+    nunits = length(laplace.units.members)
+    seeds = collect(Int, seeds)
+    ns = length(seeds)
+    lscores = unit_scores ? zeros(nunits, n) : nothing
+    lap = ctsem_laplace_evaluate(laplace, x; gradient=true, scores=lscores)
+    gradient = fill(NaN, n, ns)
+    check_unit = fill(NaN, nunits, ns)
+    check_se = fill(NaN, nunits, ns)
+    unit_gradient = unit_scores ? zeros(nunits, n) : nothing
+    cscores = unit_scores ? zeros(nunits, length(theta)) : nothing
+    scored = 0
+    for (j, seed) in enumerate(seeds)
+        o = ctsem_laplace_continuation(laplace, x; draws=draws, draws_max=draws,
+            draws_se=1.0, maxdim=0, tolerance=-1.0, draws_seed=seed,
+            draws_scope=:all, draws_df=draws_df)
+        unit_scores && fill!(cscores, 0.0)
+        r = _continuation_evaluate(o, theta, true; scores=cscores)
+        (r.converged && all(isfinite, r.gradient)) || continue
+        gradient[:, j] .= view(r.gradient, 1:n) .- lap.gradient
+        check_unit[:, j] .= r.unit_loglik
+        check_se[:, j] .= o.centre_se
+        unit_scores && (unit_gradient .+= view(cscores, :, 1:n) .- lscores)
+        scored += 1
+    end
+    unit_scores && scored > 0 && (unit_gradient ./= scored)
+    return (laplace_unit=collect(Float64, lap.unit_loglik), laplace_value=Float64(lap.value),
+        check_unit=check_unit, check_se=check_se, gradient=gradient,
+        unit_gradient=unit_gradient, scored=scored,
+        unit_width=[_continuation_unit_width(laplace, U) for U in 1:nunits],
+        seconds=(time_ns() - started) / 1e9)
+end

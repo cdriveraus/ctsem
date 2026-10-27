@@ -680,7 +680,11 @@
   # A non-positive diagonal is not a wider interval, it is no curvature at all;
   # `.ctBackendIdentifiability()` is what reports that, so it is left NA here
   # rather than counted as a ratio of infinity and reported twice.
-  curvature <- ifelse(diagonal > 0, 1 / sqrt(diagonal), NA_real_)
+  # Indexed, not `ifelse()`, which takes the root of every entry and warns
+  # "NaNs produced" after the fit for the ones it then discards.
+  curvature <- rep(NA_real_, n)
+  positive <- which(diagonal > 0)
+  curvature[positive] <- 1 / sqrt(diagonal[positive])
   ratio <- se / curvature
   supplied <- suppressWarnings(as.numeric(mass))
   mass <- if (length(supplied) == n && !all(is.na(supplied))) supplied else

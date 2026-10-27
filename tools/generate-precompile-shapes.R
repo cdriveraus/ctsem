@@ -137,6 +137,18 @@ sampled_fit <- list(sampled = function(fit, dat, model) ctFit(dat, model,
       processes = FALSE, intoverpop = "none", sampler = "saem"), cores = 1L),
   checked = function(fit, dat, model) ctFitUncertainty(fit, "checked", cores = 1L))
 
+# What the quadrature correction runs once its shift check flags units: the
+# continuation, its screen, its rounds and the continuation's Hessian. A
+# shape whose own fit's check left it alone records them all the same, by
+# running the continuation again without the check, whose screen then sets
+# the rounds off as it did before the check came first. Where the fit's
+# correction moved the estimate, the fit has recorded them already.
+correction_rounds <- function(fit, dat, model) {
+  if (isTRUE(fit$laplace$correction$applied)) return(invisible(NULL))
+  ns$.ctLaplaceContinue(fit, control = utils::modifyList(
+    ns$.ctLaplaceContinueDefaults, list(check = FALSE)))
+}
+
 shapes <- list(
   # One latent, two Gaussian indicators, a random intercept, on each route:
   # `image_model()` in tests/testthat/helper-julia.R, which tests fit so that a
@@ -159,7 +171,9 @@ shapes <- list(
   # normal, without importance sampling. The correction was off here while
   # every call was recorded (2,100 of 2,500 were the continuation's
   # evaluations); at two calls a signature it is about 40, and without it a
-  # session's first such fit compiled the rounds.
+  # session's first such fit compiled the rounds. The shift check comes first
+  # in the correction, and the rounds follow it whatever it finds
+  # (`correction_rounds`).
   gaussian_laplace_block = list(route = "laplace", model = function() {
       mvar <- diag(0, 2)
       diag(mvar) <- "mvar"
@@ -172,7 +186,8 @@ shapes <- list(
       m
     },
     data = function() indicators(sim_latent(10, 6), c("y1", "y2")),
-    optimcontrol = list(uncertainty = "hessian")),
+    optimcontrol = list(uncertainty = "hessian"),
+    followups = list(rounds = correction_rounds)),
   # A model with a categorical indicator is a different filter workspace type
   # -- the categorical update is gated on it, so Gaussian fits do not carry
   # that code -- so each route needs one. Binary and ordinal share it.
@@ -194,7 +209,8 @@ shapes <- list(
     model = function() categorical_model(c("b1", "b2"), 1L,
       asymptotes = c("guess", NA)),
     data = function() categorical(sim_latent(40, 12, cints = stats::rnorm(40, 0, 1)),
-      c("b1", "b2"), 1L))
+      c("b1", "b2"), 1L),
+    followups = list(rounds = correction_rounds))
 )
 only <- Sys.getenv("CTSEM_PRECOMPILE_SHAPES", "")
 if (nzchar(only)) shapes <- shapes[strsplit(only, ",", fixed = TRUE)[[1]]]

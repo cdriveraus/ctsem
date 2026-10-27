@@ -7456,6 +7456,13 @@ print.ctJuliaFit <- function(x, ...) {
       " the quadrature value by ", format(abs(corr$gap_reported), digits = 3),
       " here and no quadrature step improved on it; the log likelihood ",
       "reported is the quadrature one. See fit$laplace$correction.\n", sep = "")
+  } else if (identical(corr$status, "flagged")) {
+    cat("  Laplace estimate not corrected: its error moves estimates by up to ",
+      format(corr$check$max_shift, digits = 2), " standard errors (",
+      corr$check$worst, "), carried by ", corr$check$carrying, " of ",
+      corr$units, " units, more than draws can correct cheaply; ",
+      "ctFitUncertainty(fit, 'sample') samples the posterior. ",
+      "See fit$laplace$correction$check.\n", sep = "")
   } else if (identical(corr$status, "too_wide")) {
     cat("  Laplace estimate not corrected: every subject or group has more than ",
       corr$maxdim, " random effects. See fit$laplace$correction.\n", sep = "")

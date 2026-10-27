@@ -624,19 +624,14 @@ test_that("a correction predicted to gain less than skip_gain is skipped, and sa
 
 test_that("a unit wider than the cap keeps its Laplace term, and the fit says so", {
   skip_without_julia()
-  fits <- .lc_fits("linear")
-  # One effect a subject; a cap of none leaves every subject unscored, with
-  # draws off or kept, by default, to the units a rescue named. With them for
-  # every unit, a unit of one block past the cap is scored by frozen draws
-  # instead (checked at the end). The subject filter integrates this
-  # fixture's effect (`CTSEMHybrid`), which leaves its units no coordinate to
-  # be wide, so the cap is read on the same fit with the effect a coordinate:
-  # the objective is built from the specification (`.ctJuliaObjective()`),
-  # and the layer's is the same function.
+  # One effect a subject on a nonlinear drift; a cap of none leaves every
+  # subject unscored by the screen, with draws off or kept, by default, to the
+  # units a rescue or the shift check named. With them for every unit, a unit
+  # of one block past the cap is scored by frozen draws instead.
+  fits <- .lc_fits("nonlinear")
   off <- fits$off
-  off$model_spec$laplace$hybrid <- NULL
   narrow <- utils::modifyList(.ctLaplaceContinueDefaults, list(maxdim = 0L,
-    draws = 0L))
+    draws = 0L, check = FALSE))
   expect_message(out <- .ctLaplaceContinue(off, control = narrow),
     "kept the Laplace term, having more than 0 random effects")
   corr <- out$laplace$correction
@@ -649,15 +644,32 @@ test_that("a unit wider than the cap keeps its Laplace term, and the fit says so
     capture.output(print(out)))))
   # Under the default cap nothing here is wide.
   expect_identical(fits$quadrature$laplace$correction$wide, 0L)
-  # Nor past it, with draws: each subject is one block, scored by them, and on
-  # this Gaussian integrand every gap is within their error.
-  drawn <- suppressMessages(.ctLaplaceContinue(off,
-    control = utils::modifyList(narrow, list(draws = 256L, draws_scope = "all"))))
-  # With the filter integrating the effect, nothing is wide at any cap.
-  expect_identical(suppressMessages(.ctLaplaceContinue(fits$off,
-    control = narrow))$laplace$correction$wide, 0L)
+  # Nor past it, with draws: each subject is one block, scored by them. Read
+  # after the screen, before any round.
+  drawn <- suppressMessages(.ctLaplaceContinue(off, control = utils::modifyList(
+    narrow, list(draws = 256L, draws_scope = "all", skip_gain = Inf))))
   expect_identical(drawn$laplace$correction$wide, 0L)
-  expect_identical(drawn$laplace$correction$status, "exact")
+  expect_true(drawn$laplace$correction$status %in% c("skipped", "exact"))
+  # The shift check takes no notice of the cap: it scores every unit on the
+  # same frozen draws, and reads the same step as the default fit's did.
+  checked <- suppressWarnings(suppressMessages(.ctLaplaceContinue(off,
+    control = utils::modifyList(.ctLaplaceContinueDefaults,
+      list(maxdim = 0L, skip_gain = Inf)))))
+  expect_equal(checked$laplace$correction$check$shift,
+    fits$quadrature$laplace$correction$check$shift)
+  # On a Gaussian integrand Laplace is exact at any width: no check, no
+  # screen, and nothing reported as left on Laplace -- with the effect a
+  # coordinate as much as with the subject filter integrating it.
+  linear <- .lc_fits("linear")$off
+  layer <- linear
+  layer$model_spec$laplace$hybrid <- NULL
+  for (f in list(linear, layer)) {
+    expect_no_message(exact <- .ctLaplaceContinue(f, control = narrow))
+    expect_identical(exact$laplace$correction$status, "exact")
+    expect_identical(exact$laplace$correction$wide, 0L)
+    expect_null(exact$laplace$correction$check)
+    expect_identical(exact$estimate$raw, f$estimate$raw)
+  }
 })
 
 test_that("requests that cannot apply are refused by name", {
@@ -681,6 +693,27 @@ test_that("requests that cannot apply are refused by name", {
   expect_error(resolve(list(laplace_correct = "quadrature", estonly = TRUE)), "estonly")
   expect_error(.ctFitCheckControls(list(laplace_correct = "quadrature"), "stan"),
     "laplace_correct")
+})
+
+test_that("the shift check scores every unit, and the rounds follow its step", {
+  skip_without_julia()
+  # One effect a subject on a nonlinear drift: the check finds correcting
+  # Laplace would move an estimate past 0.1 se, the units carrying that go to
+  # the rounds (on product rules, each one effect wide), and the rounds move
+  # the largest coordinate the way the step pointed. On the linear fixture
+  # Laplace is exact, and no check runs.
+  fits <- .lc_fits("nonlinear")
+  corr <- fits$quadrature$laplace$correction
+  check <- corr$check
+  expect_true(is.list(check))
+  expect_identical(check$seeds, 4L)
+  expect_length(check$shift, length(fits$quadrature$estimate$raw))
+  expect_true(check$status %in% c("flagged", "unresolved"))
+  expect_gt(check$carrying, 0L)
+  expect_true(isTRUE(corr$applied))
+  w <- which.max(abs(check$shift))
+  expect_identical(sign(unname(check$shift[w])), sign(unname(corr$delta_se[w])))
+  expect_null(.lc_fits("linear")$quadrature$laplace$correction$check)
 })
 
 test_that("a corrected fit reports how far its objective is from the exact marginal", {
