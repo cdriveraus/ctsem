@@ -455,7 +455,8 @@
 # unit, whatever its width, on `check_draws` (128) frozen draws at each of
 # `check_seeds` (4) seeds. Where the step correcting Laplace would take is
 # resolved under `material` the rounds do not run; otherwise the units
-# carrying it are forced onto draws. 128 draws resolved the step to 0.05 se
+# carrying it are forced into the rounds, on product rules up to `maxdim`
+# effects and on draws beyond. 128 draws resolved the step to 0.05 se
 # on the bench's narrow fixtures and 32 did not (0.17-0.45 se of noise where
 # nothing moved); four seeds give the noise, which at ten effects a unit with
 # a weakly identified covariance was larger than the step itself
@@ -1097,8 +1098,8 @@
     warning(sprintf(paste0("Laplace's error moves the estimates by up to %.1f ",
       "standard errors here (%s), carried by %d of %d units too wide for a ",
       "product rule: correcting it by draws costs more than sampling the ",
-      "posterior, which ctFitUncertainty(fit, 'sample') does. See ",
-      "fit$laplace$correction$check."),
+      "joint posterior, which ctFitUncertainty(fit, 'sample', control = ",
+      "list(intoverpop = 'none')) does. See fit$laplace$correction$check."),
       check$max_shift, checkrecord$worst, length(drawn), check$units),
       call. = FALSE)
     fit$laplace$correction <- list(method = "quadrature", status = "flagged",
