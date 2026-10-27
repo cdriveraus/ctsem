@@ -232,9 +232,10 @@
   if (!is.null(managed)) return(managed)
   onpath <- Sys.which("julia")[[1]]
   if (nzchar(onpath)) {
-    return(normalizePath(dirname(onpath), winslash = "/", mustWork = TRUE))
+    return(.ctJuliaLauncherTarget(normalizePath(dirname(onpath), winslash = "/",
+      mustWork = TRUE)))
   }
-  .ctJuliaJuliaupBin()
+  .ctJuliaLauncherTarget(.ctJuliaJuliaupBin())
 }
 
 .ctJuliaRequire <- function() {
