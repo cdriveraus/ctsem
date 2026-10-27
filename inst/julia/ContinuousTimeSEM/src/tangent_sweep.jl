@@ -138,6 +138,14 @@ struct TanModel{W}
     T0M::TanVec{W}; T0V::TanMat{W}
     mc::TanVec{W}; momon::Base.RefValue{Bool}
     gmask::Vector{Bool}         # the Gaussian manifests (empty: every one)
+    # The leading block of genuine dynamics (`na`) and the diffusing states
+    # (`dyn`), which the intercept's solve and the noise's Lyapunov solve run
+    # over; `aug` where they are not every state, as with the random effects'
+    # carriers of the augmented route. JAx's and Qc's blocks.
+    na::Int
+    dyn::Vector{Int}
+    aug::Bool
+    JAa::TanMat{W}; JAd::TanMat{W}; Qd::TanMat{W}
     ntd::Int
     TDE::TanMat{W}; Jtd::TanMat{W}
     nh::Int
@@ -146,12 +154,45 @@ struct TanModel{W}
     wlog::Float64
 end
 TanModel(n::Int, m::Int, W::Int; ct::Bool=true, stat::Bool=false, rows::Bool=false,
-    gmask::Vector{Bool}=Bool[], ntd::Int=0, hyb::CTSEMHybrid=CTSEMHybrid(), nh::Int=0,
-    wlog::Float64=1.0) =
+    gmask::Vector{Bool}=Bool[], na::Int=n, dyn::Vector{Int}=collect(1:n), ntd::Int=0,
+    hyb::CTSEMHybrid=CTSEMHybrid(), nh::Int=0, wlog::Float64=1.0) =
     TanModel{W}(n, m, ct, stat, rows, TanMat{W}(n, n), TanMat{W}(n, n), TanMat{W}(n, n),
     TanVec{W}(n), TanMat{W}(n, n), TanMat{W}(m, n), TanMat{W}(m, n), TanVec{W}(m),
     TanMat{W}(m, m), TanVec{W}(n), TanMat{W}(n, n), TanVec{W}(n), Ref(false), gmask,
-    ntd, TanMat{W}(n, ntd), TanMat{W}(n, n), nh, hyb, TanMat{W}(nh, nh), wlog)
+    na, dyn, na < n || dyn != 1:n, TanMat{W}(na, na), TanMat{W}(length(dyn), length(dyn)),
+    TanMat{W}(length(dyn), length(dyn)), ntd, TanMat{W}(n, ntd), TanMat{W}(n, n), nh, hyb, TanMat{W}(nh, nh), wlog)
+
+"""
+What the blocks of a model with states outside them need (`TanModel.aug`):
+the Lyapunov solve and its solution over the diffusing states, JAx's factors
+over the leading block of genuine dynamics and its transpose's for the
+reverse, the two series at the blocks' sizes, and scratch.
+"""
+struct TanAugFw{W}
+    lya::TanLyap{W}; Xd::TanMat{W}
+    FJa::Matrix{Float64}; pivJa::Vector{Int}
+    JTa::TanMat{W}; FTa::Matrix{Float64}; pivTa::Vector{Int}
+    seria::TanSeries{W}; serna::TanSeries{W}
+    Aa::TanMat{W}; Ad::TanMat{W}; kk1::TanMat{W}; kk2::TanMat{W}; Qb::TanMat{W}
+    Xbar::TanMat{W}; Adbar::TanMat{W}; JAdbar::TanMat{W}; Qdbar::TanMat{W}
+    JAabar::TanMat{W}; Phibar::TanMat{W}
+    ra::TanVec{W}; dINTa::TanVec{W}; sbar::TanVec{W}; affa::TanVec{W}
+    dD::TanMat{W}
+end
+TanAugFw(n::Int, na::Int, k::Int, W::Int) = TanAugFw{W}(TanLyap(k, W), TanMat{W}(k, k),
+    zeros(na, na), zeros(Int, na), TanMat{W}(na, na), zeros(na, na), zeros(Int, na),
+    TanSeries(na, W), TanSeries(k, W), TanMat{W}(na, na),
+    (TanMat{W}(k, k) for _ in 1:8)..., TanMat{W}(na, na), TanMat{W}(na, na),
+    (TanVec{W}(na) for _ in 1:4)..., TanMat{W}(n, n))
+
+"""JAx's and Qc's blocks into the model, where it has blocks."""
+function _tan_aug_refresh!(mod::TanModel)
+    mod.aug || return mod
+    _tan_gather!(mod.JAa, mod.JAx, 1:mod.na, 1:mod.na)
+    _tan_gather!(mod.JAd, mod.JAx, mod.dyn, mod.dyn)
+    _tan_gather!(mod.Qd, mod.Qc, mod.dyn, mod.dyn)
+    return mod
+end
 
 """
 A block's forward state: the Lyapunov solution and the drift's factors, which
@@ -164,6 +205,7 @@ struct TanForward{W}
     n::Int
     m::Int
     nh::Int
+    aug::Union{Nothing,TanAugFw{W}}     # the blocks' own, where there are blocks
     fr::TanFrechet{W}
     ly::TanLyap{W}
     X::TanMat{W}                        # lyap(JAx, Qc)
@@ -180,7 +222,8 @@ struct TanForward{W}
     seri::TanSeries{W}      # the intercept's series, and the noise's
     sern::TanSeries{W}
 end
-TanForward(n::Int, m::Int, nh::Int, W::Int) = TanForward{W}(n, m, nh, TanFrechet(n, W),
+TanForward(n::Int, m::Int, nh::Int, W::Int, na::Int=n, k::Int=n) = TanForward{W}(n, m, nh,
+    na < n || k < n ? TanAugFw(n, na, k, W) : nothing, TanFrechet(n, W),
     TanLyap(n, W),
     TanMat{W}(n, n), zeros(n, n), zeros(Int, n), Ref(0.0), Ref(0.0),
     zeros(_CTSEM_EXP_TABLE), [TanMat{W}(n, n) for _ in 1:_CTSEM_EXP_TABLE], Ref(0), Ref(1),
@@ -209,6 +252,15 @@ function _tan_forward_begin!(fw::TanForward{W}, mod::TanModel{W}) where {W}
     fw.next[] = 1
     # A discrete-time step reads none of them.
     mod.ct || return fw
+    if mod.aug
+        fa = fw.aug::TanAugFw{W}
+        _tan_lyap!(fa.Xd, mod.JAd, mod.Qd, fa.lya, false)
+        fw.conditioning[] = _series_lyap_conditioning(fa.lya.buf)
+        copyto!(fa.FJa, mod.JAa.v)
+        _lu_factor_generic!(fa.FJa, fa.pivJa, mod.na)
+        fw.minpivot[] = _series_min_pivot(fa.FJa, mod.na)
+        return fw
+    end
     _tan_lyap!(fw.X, mod.JAx, mod.Qc, fw.ly, false)
     fw.conditioning[] = _series_lyap_conditioning(fw.ly.buf)
     copyto!(fw.FJ, mod.JAx.v)
@@ -243,6 +295,7 @@ series instead, and so does this (`tangent_series.jl`).
 function _tan_predict!(x::TanVec{W}, P::TanMat{W}, rec::TanPredRec{W}, fw::TanForward{W},
     mod::TanModel{W}, dt::Float64, hs::TanHybState{W}) where {W}
     mod.ct || return _tan_predict_dt!(x, P, rec, fw, mod, hs)
+    mod.aug && return _tan_predict_aug!(x, P, rec, fw, mod, dt)
     sint = _series_needed(fw.minpivot[], dt)
     snoise = _series_needed(fw.conditioning[], dt)
     rec.sint[] = sint
@@ -546,6 +599,7 @@ function _tan_reverse_predict!(xbar::TanVec{W}, Pbar::TanMat{W}, rec::TanPredRec
     rv::TanPredRev{W}, fw::TanForward{W}, mod::TanModel{W}, acc::TanAcc{W},
     w::Float64, hs::TanHybState{W}) where {W}
     mod.ct || return _tan_reverse_predict_dt!(xbar, Pbar, rec, rv, mod, acc, w, hs)
+    mod.aug && return _tan_reverse_predict_aug!(xbar, Pbar, rec, rv, fw, mod, acc, w)
     A, JAx, X = rec.A, mod.JAx, fw.X
     Abar, JAxbar, Ps = rv.Abar, rv.JAxbar, rv.Ps
     sint, snoise, dt = rec.sint[], rec.snoise[], rec.dt[]
@@ -701,8 +755,8 @@ struct TanSweep{W}
     x0::TanVec{W}               # the stationary mean
     Lsd::Matrix{Float64}        # the stationary covariance's check
 end
-TanSweep(n::Int, m::Int, ntd::Int, nh::Int, W::Int) = TanSweep{W}(n, m,
-    TanForward(n, m, nh, W), TanPredRev(n, W),
+TanSweep(n::Int, m::Int, ntd::Int, nh::Int, W::Int, na::Int=n, k::Int=n) = TanSweep{W}(n, m,
+    TanForward(n, m, nh, W, na, k), TanPredRev(n, W),
     TanPredRec{W}[], TanUpdRec{W}[],
     TanVec{W}(n), TanMat{W}(n, n), TanVec{W}(n), TanMat{W}(n, n), TanMat{W}(n, n), zeros(1 + W),
     Int[], nh, TanHybState(n, nh, W), TanMat{W}[], TanVec{W}(ntd), TanMat{W}(n, n),
@@ -820,6 +874,13 @@ end
 function _tan_sweep_begin!(sw::TanSweep{W}, mod::TanModel{W}) where {W}
     _tan_forward_begin!(sw.fw, mod)
     mod.ct || return sw
+    if mod.aug
+        fa = sw.fw.aug::TanAugFw{W}
+        _tan_add!(fa.JTa, true, mod.JAa, false, Val(:T))
+        copyto!(fa.FTa, fa.JTa.v)
+        _lu_factor_generic!(fa.FTa, fa.pivTa, mod.na)
+        return sw
+    end
     rv = sw.rv
     _tan_add!(rv.JT, true, mod.JAx, false, Val(:T))
     copyto!(rv.FT, rv.JT.v)
@@ -896,4 +957,146 @@ function _tan_sweep!(acc::TanAcc{W}, sw::TanSweep{W}, mod::TanModel{W},
         _tan_comb!(acc.T0V, ((w, rv.Ps),), true)
     end
     return _TAN_OK
+end
+
+"""
+`_tan_predict!` where the model has states outside its blocks
+(`_compute_discrete_time_form!`'s `naff` and `dyn`): the exponential over every
+state, the intercept's solve over the leading block of genuine dynamics,
+`dINT = JAa \\ (Aa affine_a - affine_a)` or its series, zero beyond it, and the
+noise over the diffusing states, `X - Ad X Ad'` or its series, zero elsewhere.
+"""
+function _tan_predict_aug!(x::TanVec{W}, P::TanMat{W}, rec::TanPredRec{W},
+    fw::TanForward{W}, mod::TanModel{W}, dt::Float64) where {W}
+    fa = fw.aug::TanAugFw{W}
+    na, dyn = mod.na, mod.dyn
+    sint = _series_needed(fw.minpivot[], dt)
+    snoise = _series_needed(fw.conditioning[], dt)
+    rec.sint[] = sint
+    rec.snoise[] = snoise
+    A = _tan_exp_cached!(fw, mod, dt)
+    _tan_copy!(rec.A, A)
+    _tan_copy!(rec.x, x)
+    _tan_copy!(rec.P, P)
+    rec.dt[] = dt
+    _tan_copy!(rec.affine, mod.CINT)
+    mod.rows && _tan_mulvec!(rec.affine, mod.DmJ, x, true, true)
+    mod.momon[] && _tan_lincomb!(rec.affine, true, rec.affine, true, mod.mc)
+    ra, da = fa.ra, fa.dINTa
+    _tan_gather!(ra, rec.affine, 1:na)
+    if sint
+        _tan_mulvec!(da, _tan_series_intercept!(fa.seria, mod.JAa, dt), ra)
+    else
+        _tan_gather!(fa.Aa, A, 1:na, 1:na)
+        _tan_mulvec!(da, fa.Aa, ra)
+        _tan_lincomb!(da, true, da, -1.0, ra)
+        _tan_solve!(da, fa.FJa, fa.pivJa, mod.JAa)
+    end
+    dINT = rec.dINT
+    _tan_zero!(dINT)
+    _tan_scatter!(dINT, 1.0, da, 1:na)
+    _tan_mulvec!(fw.v1, A, x)
+    _tan_lincomb!(x, true, fw.v1, true, dINT)
+    _tan_diag!(P, 1e-10)
+    _tan_lower_to_upper!(P)
+    _tan_mul!(fw.nn1, A, P)
+    _tan_mulNT!(fw.nn2, fw.nn1, A)
+    D = fa.dD
+    _tan_zero!(D)
+    if snoise
+        _tan_scatter!(D, 1.0, _tan_series_noise!(fa.serna, mod.JAd, mod.Qd, dt), dyn, dyn)
+    else
+        _tan_gather!(fa.Ad, A, dyn, dyn)
+        _tan_mul!(fa.kk1, fa.Ad, fa.Xd)
+        _tan_copy!(fa.kk2, fa.Xd)
+        _tan_mulNT!(fa.kk2, fa.kk1, fa.Ad, -1.0, true)
+        _tan_scatter!(D, 1.0, fa.kk2, dyn, dyn)
+    end
+    _tan_comb!(P, ((1.0, fw.nn2), (1.0, D)))
+    _tan_lower_to_upper!(P)
+    return true
+end
+
+"""Undo `_tan_predict_aug!`, as `_tan_reverse_predict!` undoes the full-state one."""
+function _tan_reverse_predict_aug!(xbar::TanVec{W}, Pbar::TanMat{W}, rec::TanPredRec{W},
+    rv::TanPredRev{W}, fw::TanForward{W}, mod::TanModel{W}, acc::TanAcc{W},
+    w::Float64) where {W}
+    fa = fw.aug::TanAugFw{W}
+    na, dyn = mod.na, mod.dyn
+    A = rec.A
+    Abar, JAxbar, Ps = rv.Abar, rv.JAxbar, rv.Ps
+    sint, snoise, dt = rec.sint[], rec.snoise[], rec.dt[]
+    _tan_zero!(JAxbar)
+    # The mean, x+ = A x + dINT.
+    _tan_ger!(Abar, true, xbar, rec.x, false)
+    _tan_mulTvec!(rv.xnew, A, xbar)
+    # The covariance, P+ = A (P + eps I) A' + dDIFF.
+    _tan_sym!(Ps, Pbar)
+    _tan_copy!(rv.Pt, rec.P)
+    _tan_diag!(rv.Pt, 1e-10)
+    _tan_mul!(rv.nn1, Ps, A)
+    _tan_mul!(Abar, rv.nn1, rv.Pt, 2.0, true)
+    _tan_mulTN!(rv.nn2, A, Ps)
+    _tan_mul!(rv.Pnew, rv.nn2, A)
+    # The noise over the diffusing states.
+    Qb = fa.Qb
+    _tan_gather!(Qb, Ps, dyn, dyn)
+    _tan_zero!(fa.JAdbar)
+    _tan_zero!(fa.Qdbar)
+    if snoise
+        _tan_series_noise!(fa.serna, mod.JAd, mod.Qd, dt)
+        _tan_series_noise_pullback!(fa.JAdbar, fa.Qdbar, fa.serna, Qb)
+    else
+        Ad, Xd = fa.Ad, fa.Xd
+        _tan_gather!(Ad, A, dyn, dyn)
+        _tan_mulTN!(fa.kk1, Ad, Qb)
+        _tan_mul!(fa.Xbar, fa.kk1, Ad)
+        _tan_comb!(fa.Xbar, ((1.0, Qb),), -1.0)  # Xbar = Qb - Ad' Qb Ad
+        _tan_mul!(fa.kk1, Qb, Ad)
+        _tan_mulNT!(fa.Adbar, fa.kk1, Xd)
+        _tan_mulTN!(fa.kk1, Qb, Ad)
+        _tan_mul!(fa.Adbar, fa.kk1, Xd, true, true)
+        _tan_scale!(fa.Adbar, -1.0)
+        _tan_scatter!(Abar, 1.0, fa.Adbar, dyn, dyn)
+        _tan_lyap_pullback!(fa.JAdbar, fa.Qdbar, fa.lya, mod.JAd, Xd, fa.Xbar)
+    end
+    _tan_scatter!(JAxbar, 1.0, fa.JAdbar, dyn, dyn)
+    _tan_scatter!(acc.Qc, w, fa.Qdbar, dyn, dyn)
+    # The intercept over the leading block.
+    ra, xa, affa = fa.ra, fa.sbar, fa.affa
+    _tan_gather!(ra, rec.affine, 1:na)
+    _tan_gather!(xa, xbar, 1:na)
+    if sint
+        Phi = _tan_series_intercept!(fa.seria, mod.JAa, dt)
+        _tan_mulTvec!(affa, Phi, xa)
+        _tan_ger!(fa.Phibar, true, xa, ra, false)
+        _tan_zero!(fa.JAabar)
+        _tan_series_intercept_pullback!(fa.JAabar, fa.seria, fa.Phibar)
+        _tan_scatter!(JAxbar, 1.0, fa.JAabar, 1:na, 1:na)
+    else
+        # dINT_a = JAa \ s, s = Aa affine_a - affine_a: sbar = JAa' \ dINTbar_a.
+        _tan_solve!(xa, fa.FTa, fa.pivTa, fa.JTa)
+        _tan_gather!(fa.dINTa, rec.dINT, 1:na)
+        _tan_ger!(fa.JAabar, -1.0, xa, fa.dINTa, false)
+        _tan_scatter!(JAxbar, 1.0, fa.JAabar, 1:na, 1:na)
+        _tan_gather!(fa.Aa, A, 1:na, 1:na)
+        _tan_mulTvec!(affa, fa.Aa, xa)
+        _tan_lincomb!(affa, true, affa, -1.0, xa)
+        _tan_ger!(fa.Phibar, true, xa, ra, false)
+        _tan_scatter!(Abar, 1.0, fa.Phibar, 1:na, 1:na)
+    end
+    affbar = rv.affbar
+    _tan_zero!(affbar)
+    _tan_scatter!(affbar, 1.0, affa, 1:na)
+    _tan_lincomb!(acc.CINT, true, acc.CINT, w, affbar)
+    if mod.rows
+        _tan_ger!(acc.DRIFT, w, affbar, rec.x, true)
+        _tan_ger!(JAxbar, -1.0, affbar, rec.x, true)
+        _tan_mulTvec!(rv.xnew, mod.DmJ, affbar, true, true)
+    end
+    _tan_comb!(acc.JAx, ((w, JAxbar),), true)
+    _tan_enqueue!(acc, dt, Abar, w)
+    _tan_copy!(xbar, rv.xnew)
+    _tan_copy!(Pbar, rv.Pnew)
+    return xbar, Pbar
 end

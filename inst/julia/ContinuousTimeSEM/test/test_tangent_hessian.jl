@@ -189,6 +189,82 @@ end
     end
 end
 
+# The augmented route's shape: two latents and a third state carrying a
+# random intercept on the first's drift, static, with no diffusion and its
+# population variance a block of its own (`RAWPOPVAR`, `_place_population_block!`);
+# the intercept's solve then runs over the two latents and the noise's over
+# the diffusing ones (`affine_dim`, `diffusion_state_indices`).
+function _tangent_aug_model(; continuous=true, max_timestep=Inf, driftscale=1.0)
+    carry = continuous ? 0.0 : 1.0
+    drift = [-0.6 0.2 1.0; 0.1 -0.5 0.0; 0.0 0.0 carry]
+    lambda = [1.0 0.0 0.0; 0.7 0.0 0.0; 0.0 1.0 0.0]
+    d(e) = driftscale == 1 ? e : "$(driftscale) * ($(e))"
+    free = Dict(
+        (:DRIFT, 1, 1) => (1, d("-log1p_exp(param[1])")),
+        (:JAx, 1, 1) => (1, d("-log1p_exp(param[1])")),
+        (:DRIFT, 2, 1) => (2, d("param[2]")), (:JAx, 2, 1) => (2, d("param[2]")),
+        (:DRIFT, 2, 2) => (3, d("-log1p_exp(param[3])")),
+        (:JAx, 2, 2) => (3, d("-log1p_exp(param[3])")),
+        (:DIFFUSION, 1, 1) => (4, "log1p_exp(param[4])"),
+        (:DIFFUSION, 2, 1) => (5, "param[5]"),
+        (:DIFFUSION, 2, 2) => (6, "log1p_exp(param[6])"),
+        (:CINT, 2, 1) => (7, "param[7]"),
+        (:LAMBDA, 2, 1) => (8, "param[8]"), (:Jy, 2, 1) => (8, "param[8]"),
+        (:MANIFESTMEANS, 1, 1) => (9, "param[9]"),
+        (:MANIFESTMEANS, 3, 1) => (10, "param[10]"),
+        (:MANIFESTVAR, 1, 1) => (11, "log1p_exp(param[11])"),
+        (:MANIFESTVAR, 2, 2) => (12, "log1p_exp(param[12])"),
+        (:MANIFESTVAR, 3, 3) => (13, "log1p_exp(param[13])"),
+        (:T0MEANS, 1, 1) => (14, "param[14]"),
+        (:T0VAR, 1, 1) => (15, "log1p_exp(param[15])"),
+        (:T0VAR, 2, 2) => (16, "log1p_exp(param[16])"),
+        (:RAWPOPVAR, 1, 1) => (17, "log1p_exp(param[17])"),
+        (:T0MEANS, 3, 1) => (18, "param[18]"),
+    )
+    df = _adjoint_test_dataframe(drift=drift, jax=drift, cint=zeros(3, 1),
+        diffusion=zeros(3, 3), lambda=lambda, jy=lambda, manifestmeans=zeros(3, 1),
+        manifestvar=Matrix(0.3I, 3, 3), t0var=[1.0 0.0 0.0; 0.0 1.0 0.0; 0.0 0.0 0.0],
+        t0means=zeros(3, 1), free=free, extra=[:RAWPOPVAR => zeros(1, 1)])
+    sp = ekf_from_data_frame(df, DataFrame(parameter=Int[], predictor=Int[],
+        coefficient=Int[]), [1, 2]; continuous_time=continuous, affine_dim=2,
+        population_indices=[3], population_scale=[1.0])
+    starts = Int[]
+    times = Float64[]
+    columns = Vector{Float64}[]
+    for s in 1:6
+        push!(starts, length(times) + 1)
+        t = 0.0
+        for r in 1:(5 + s % 4)
+            push!(times, t)
+            y = [0.5 * sin(1.3s + r) + 0.3 * sin(s), 0.4 * cos(0.7s - 2r), 0.3 * sin(s * r)]
+            (s + r) % 5 == 0 && (y[2] = NaN)
+            push!(columns, y)
+            t += 0.3 + 0.9 * abs(sin(2.1s + 1.7r))
+        end
+    end
+    objective = ctsem_objective(sp, starts, times, reduce(hcat, columns),
+        zeros(0, length(times)), zeros(6, 0), max_timestep;
+        prior_index=collect(1:18), prior_scale=fill(2.0, 18),
+        subject_weights=[1.0, 2.0, 0.5, 1.0, 0.0, 1.5])
+    values = [0.3, 0.15, 0.2, -0.4, 0.2, 0.1, -0.2, 0.6, 0.05, -0.1, -1.0, -0.8, -1.2,
+        0.1, 0.0, -0.5, -0.3, 0.2]
+    return objective, values
+end
+
+@testset "the augmented route's static carriers and population block" begin
+    for opts in ((;), (max_timestep=0.4,), (continuous=false,), (driftscale=0.02,))
+        objective, values = _tangent_aug_model(; opts...)
+        n = length(values)
+        @test ContinuousTimeSEM._tan_refusal(objective) === nothing
+        H = zeros(n, n)
+        @test ContinuousTimeSEM._tan_hessian_columns!(H, objective, values, collect(1:n),
+            nothing)
+        reference = _tangent_dual_hessian(objective, values)
+        @test all(isfinite, reference)
+        @test (H .+ H') ./ 2 ≈ reference rtol = 1e-10
+    end
+end
+
 @testset "intervals taken as series" begin
     # A drift close to zero against the intervals: the filter integrates every
     # interval's intercept and noise as series. At 0.02, with substeps, some

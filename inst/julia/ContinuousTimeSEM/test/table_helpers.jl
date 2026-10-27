@@ -25,7 +25,8 @@ call shape the tests were written against.
 function ekf_from_data_frame(df::DataFrame,
     ti_effects::DataFrame=DataFrame(parameter=Int[], predictor=Int[], coefficient=Int[]),
     diffusion_state_indices::AbstractVector=Int[]; continuous_time::Bool=true,
-    stationary::Bool=false, manifesttype=Int[], ncategories=Int[])
+    stationary::Bool=false, manifesttype=Int[], ncategories=Int[], affine_dim::Int=0,
+    population_indices=Int[], population_scale=Float64[])
     return ContinuousTimeSEM.ekf_from_columns(
         df.matrix, df.row, df.col,
         _tbl_int(_tbl_column(df, :parnumber, missing)),
@@ -41,7 +42,9 @@ function ekf_from_data_frame(df::DataFrame,
             Float64.(ti_effects.value) : Float64[],
         diffusion_state_indices=Int.(diffusion_state_indices),
         continuous_time=continuous_time, stationary=stationary,
-        manifesttype=Int.(manifesttype), ncategories=Int.(ncategories))
+        manifesttype=Int.(manifesttype), ncategories=Int.(ncategories),
+        affine_dim=affine_dim, population_indices=Int.(population_indices),
+        population_scale=Float64.(population_scale))
 end
 
 """Test-only wrapper: axis for a layout given as a `DataFrame`."""

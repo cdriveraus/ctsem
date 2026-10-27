@@ -42,6 +42,7 @@ function _tan_snap_load!(mod::TanModel, s::TanSnap)
     _tan_copy!(mod.LAMBDA, s.LAMBDA); _tan_copy!(mod.Jy, s.Jy); _tan_copy!(mod.MM, s.MM)
     _tan_copy!(mod.R, s.R); _tan_copy!(mod.TDE, s.TDE); _tan_copy!(mod.Jtd, s.Jtd)
     _tan_copy!(mod.mc, s.mc); mod.momon[] = s.momon[]
+    _tan_aug_refresh!(mod)
     return mod
 end
 
@@ -138,6 +139,7 @@ function _tan_rows_refresh!(mod::TanModel{W}, R::TanRows, sp, nl::Int) where {W}
         _tan_lanes!(_tan_layer_field(mod, k), getproperty(mw, k), nl)
     end
     _tan_comb!(mod.DmJ, ((1.0, mod.DRIFT), (-1.0, mod.JAx)))
+    _tan_aug_refresh!(mod)
     return mod
 end
 
@@ -257,8 +259,7 @@ subject's own, which no group writes), and `acc` emptied.
 function _tan_rows_flush!(R::TanRows{W,DW}, acc::TanAcc{W}, sp, s::TanSnap) where {W,DW}
     C = NamedTuple{_TAN_LAYER_NAMES}(map(k -> _tan_duals(_tan_layer_field(acc, k), DW),
         _TAN_LAYER_NAMES))
-    pars = CTSEMPars(R.allW, sp.parameter_axis)
-    _tan_bar_of!(R.allbar, R.awsW, sp, C, s.rawD, s.rawR, pars.T0VAR)
+    _tan_bar_of!(R.allbar, R.awsW, sp, C, s.rawD, s.rawR, R.allW)
     _tan_acc_zero!(acc)
     return R
 end

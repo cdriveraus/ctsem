@@ -59,9 +59,13 @@ function _tan_refusal(objective::CTSEMObjective, hybrid_mode::Integer=_HYBRID_PR
     end
     _stationary_elements_on(sp.stationary_elements) && return "stationary elements"
     sp.stationary && !sp.continuous_time && return "stationary moments in discrete time"
+    ws0 = _init_continuous_ekf_workspace(Float64, sp)
+    blocks = ws0.affine_buffer.dim < ws0.state_dim ||
+        ws0.diffusion_state_indices != 1:ws0.state_dim
+    sp.stationary && blocks && return "stationary moments beside static states"
+    _hybrid_on(sp.hybrid) && blocks && return "integrated deviations beside static states"
     sp.stationary && _hybrid_on(sp.hybrid) && hybrid_mode != _HYBRID_OFF &&
         return "stationary moments beside integrated deviations"
-    isempty(sp.population_indices) || return "a population block"
     isempty(objective.ti_missing_parameter) || return "sampled TI predictor values"
     _hybrid_on(sp.hybrid) && hybrid_mode == _HYBRID_FIXED &&
         return "deviations at fixed values"
@@ -104,6 +108,18 @@ function _tan_mats_of(aws, sp, all_params::AbstractVector)
         Matrix(view(buf.out, 1:d, 1:d)))
     T0V = cov(pars.T0VAR, n, ws.bufferQ)
     _copy_lower_to_upper!(T0V, n)
+    # The population block, added (`_place_population_block!`).
+    pidx = sp.population_indices
+    if !isempty(pidx)
+        k = length(pidx)
+        raw = reshape(view(all_params, sp.population_range), k, k)
+        sdcovsqrt2cov!(ws.population_buffer, raw, sp.population_covmatcode,
+            _square_dim(ws.population_buffer, k))
+        @inbounds for b in 1:k, a in 1:k
+            T0V[pidx[a], pidx[b]] += sp.population_scale[a] * sp.population_scale[b] *
+                ws.population_buffer.out[a, b]
+        end
+    end
     # The TD predictors' effects and the impulse's Jacobian, where the model
     # has them.
     S = eltype(all_params)
@@ -121,7 +137,7 @@ The matrices' cotangents `C` added into `tb`, the cells' (`all_params`'), the
 covariances pulled back through their constructions at the cells `rawD`,
 `rawR` and `rawT0` (DIFFUSION's, MANIFESTVAR's and T0VAR's).
 """
-function _tan_bar_of!(tb::AbstractVector{S}, aws, sp, C, rawD, rawR, rawT0) where {S}
+function _tan_bar_of!(tb::AbstractVector{S}, aws, sp, C, rawD, rawR, cells) where {S}
     ws = aws.ekf_ws
     n, m = ws.state_dim, ws.manifest_dim
     tc = CTSEMPars(tb, sp.parameter_axis)
@@ -138,8 +154,26 @@ function _tan_bar_of!(tb::AbstractVector{S}, aws, sp, C, rawD, rawR, rawT0) wher
         scratch=aws.covsqrt_scratch, covmatcode=sp.covmatcode)
     pullback!(tc.DIFFUSION, rawD, C.Qc, n)
     pullback!(tc.MANIFESTVAR, rawR, C.R, m)
+    T0Vbar = C.T0V
+    pidx = sp.population_indices
+    if !isempty(pidx) && any(!iszero, T0Vbar)
+        # The population block's cotangent, scaled as it was placed, through its
+        # own construction (`_pullback_population!`); then its rows and columns
+        # masked out of T0VAR's, as the adjoint does.
+        k = length(pidx)
+        sc = sp.population_scale
+        popsym = [(sc[a] * sc[b] * T0Vbar[pidx[a], pidx[b]] +
+            sc[b] * sc[a] * T0Vbar[pidx[b], pidx[a]]) / 2 for a in 1:k, b in 1:k]
+        popbar = zeros(S, k, k)
+        _sdcovsqrt2cov_pullback!(popbar, reshape(view(cells, sp.population_range), k, k),
+            popsym, k; scratch=aws.covsqrt_scratch, covmatcode=sp.population_covmatcode)
+        reshape(view(tb, sp.population_range), k, k) .+= popbar
+        T0Vbar = copy(T0Vbar)
+        T0Vbar[pidx, :] .= zero(S)
+        T0Vbar[:, pidx] .= zero(S)
+    end
     t0 = zeros(S, n, n)
-    pullback!(t0, rawT0, C.T0V, n)
+    pullback!(t0, view(CTSEMPars(cells, sp.parameter_axis).T0VAR, 1:n, 1:n), T0Vbar, n)
     view(tc.T0VAR, 1:n, 1:n) .+= t0
     return tb
 end
@@ -166,9 +200,10 @@ back through the layer: the adjoint's own pullbacks (`_sdcovsqrt2cov_pullback!`,
 `_ctsem_regular_pullback!`, `_ctsem_ti_pullback!`), at `xv`'s element type.
 """
 function _tan_layer_reverse(aws, sp, xv::AbstractVector{S}, C, tipreds) where {S}
-    pars = CTSEMPars(_tan_layer_values!(aws, sp, xv, tipreds), sp.parameter_axis)
+    cells = _tan_layer_values!(aws, sp, xv, tipreds)
+    pars = CTSEMPars(cells, sp.parameter_axis)
     tb = zeros(S, length(sp.mutables))
-    _tan_bar_of!(tb, aws, sp, C, pars.DIFFUSION, pars.MANIFESTVAR, pars.T0VAR)
+    _tan_bar_of!(tb, aws, sp, C, pars.DIFFUSION, pars.MANIFESTVAR, cells)
     return _tan_values_reverse(aws, sp, xv, tb, tipreds)
 end
 
@@ -178,12 +213,13 @@ _tan_tag(::Type{<:ForwardDiff.Dual{T}}) where {T} = T
 @inline _tan_layer_field(X, k::Symbol) = getproperty(X, k === :LAM ? :LAMBDA : k)
 
 """A worker's sweep, kept in its scratch store between calls."""
-function _tan_sweep_scratch(n::Int, m::Int, ntd::Int, nh::Int, ::Val{W}) where {W}
+function _tan_sweep_scratch(n::Int, m::Int, ntd::Int, nh::Int, ::Val{W}, na::Int=n,
+    k::Int=n) where {W}
     store = _ctsem_scratch()
-    key = (:tangent_sweep, W, n, m, ntd, nh)
+    key = (:tangent_sweep, W, n, m, ntd, nh, na, k)
     sw = get(store, key, nothing)
     if sw === nothing
-        sw = TanSweep(n, m, ntd, nh, W)
+        sw = TanSweep(n, m, ntd, nh, W, na, k)
         store[key] = sw
     end
     return sw::TanSweep{W}
@@ -270,6 +306,7 @@ function _tan_layer_fill!(mod::TanModel{W}, awsW, sp, xw::Vector, nl::Int,
         _tan_lanes!(_tan_layer_field(mod, k), getproperty(mw, k), nl)
     end
     mod.rows && _tan_comb!(mod.DmJ, ((1.0, mod.DRIFT), (-1.0, mod.JAx)))
+    _tan_aug_refresh!(mod)
     return true
 end
 
@@ -295,7 +332,9 @@ _tan_model_like(mod::TanModel{W}) where {W} = TanModel{W}(mod.n, mod.m,
     TanMat{W}(mod.n, mod.n), TanVec{W}(mod.n), TanMat{W}(mod.n, mod.n),
     TanMat{W}(mod.m, mod.n), TanMat{W}(mod.m, mod.n), TanVec{W}(mod.m),
     TanMat{W}(mod.m, mod.m), TanVec{W}(mod.n), TanMat{W}(mod.n, mod.n), TanVec{W}(mod.n),
-    Ref(false), mod.gmask, mod.ntd, TanMat{W}(mod.n, mod.ntd), TanMat{W}(mod.n, mod.n),
+    Ref(false), mod.gmask, mod.na, mod.dyn, mod.aug, TanMat{W}(mod.na, mod.na),
+    TanMat{W}(length(mod.dyn), length(mod.dyn)), TanMat{W}(length(mod.dyn), length(mod.dyn)),
+    mod.ntd, TanMat{W}(mod.n, mod.ntd), TanMat{W}(mod.n, mod.n),
     mod.nh, mod.hyb, mod.G, mod.wlog)
 
 """
@@ -371,8 +410,8 @@ function _tan_hessian_columns!(H::Matrix{Float64}, objective::CTSEMObjective,
     awsW = CTSEMAdjointWorkspace(DW, sp, npar, 0)
     m0 = _tan_layer_mats(aws0, sp, x, subjects[1].tipreds)
     n, m, ntd = size(m0.JAx, 1), size(m0.LAM, 1), size(m0.TDE, 2)
-    # Every state diffusing, none static.
-    (aws0.diffusion_state_indices == 1:n && aws0.affine_dim == n) || return false
+    # The leading block of genuine dynamics and the diffusing states.
+    na, dyn = aws0.affine_dim, collect(aws0.diffusion_state_indices)
     lanes(chunk) = [DW(x[i], ForwardDiff.Partials(ntuple(w -> w <= length(chunk) &&
         cols[chunk[w]] == i ? 1.0 : 0.0, Val(W)))) for i in 1:npar]
     # The deviations the filter integrates, whole (`_HYBRID_FULL`) or profiled.
@@ -381,7 +420,8 @@ function _tan_hessian_columns!(H::Matrix{Float64}, objective::CTSEMObjective,
     gmask = any(t -> t != 0, sp.manifesttype) ?
         Bool[k > length(sp.manifesttype) || sp.manifesttype[k] == 0 for k in 1:m] : Bool[]
     mod = TanModel(n, m, W; ct=sp.continuous_time, stat=sp.stationary, rows=rows,
-        gmask=gmask, ntd=ntd, hyb=h, nh=nh, wlog=hybrid_mode == _HYBRID_FULL ? 1.0 : 0.0)
+        gmask=gmask, na=na, dyn=dyn, ntd=ntd, hyb=h, nh=nh,
+        wlog=hybrid_mode == _HYBRID_FULL ? 1.0 : 0.0)
     Lb = h.block && nh > 0 ? zeros(length(h.perm), length(h.perm)) : zeros(0, 0)
     if nh > 0 && h.block
         if !_hybrid_block_factor!(Lb, h, x)
@@ -441,7 +481,7 @@ function _tan_hessian_columns!(H::Matrix{Float64}, objective::CTSEMObjective,
         # layer is shared, once a subject where it is not.
         fill!(status, _TAN_OK)
         _ctsem_pull_blocks(nblocks, nworkers) do b, wk
-            sw = _tan_sweep_scratch(n, m, ntd, nh, Val(W))
+            sw = _tan_sweep_scratch(n, m, ntd, nh, Val(W), na, length(dyn))
             status[b] = _tan_block!(accs[b], Hbs[b], sw, mod,
                 layers === nothing ? nothing : layers[wk], objective, ranges[b], xw, nl)
             return nothing
