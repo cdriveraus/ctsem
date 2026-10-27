@@ -56,13 +56,11 @@ function _tan_refusal(objective::CTSEMObjective, hybrid_mode::Integer=_HYBRID_PR
         _hybrid_on(sp.hybrid) && hybrid_mode != _HYBRID_OFF &&
             return "integrated deviations beside cells evaluated by row"
     end
-    _stationary_elements_on(sp.stationary_elements) && return "stationary elements"
     # The engine itself refuses stationary moments in discrete time.
     sp.stationary && !sp.continuous_time && return "stationary moments in discrete time"
     ws0 = _init_continuous_ekf_workspace(Float64, sp)
     blocks = ws0.affine_buffer.dim < ws0.state_dim ||
         ws0.diffusion_state_indices != 1:ws0.state_dim
-    sp.stationary && blocks && return "stationary moments beside static states"
     _hybrid_on(sp.hybrid) && blocks && hybrid_mode != _HYBRID_OFF &&
         return "integrated deviations beside static states"
     sp.stationary && _hybrid_on(sp.hybrid) && hybrid_mode != _HYBRID_OFF &&
@@ -75,12 +73,18 @@ end
 
 """
 Whether the subjects' sweeps run by row (`tangent_rows.jl`): a cell evaluated
-by row, or a categorical indicator, whose update runs as the engine's own at
-the Hessian's dual.
+by row, a categorical indicator, or stationary initial conditions the hand
+sweep's own do not cover -- single elements, or beside static states -- each of
+which runs as the engine's own at the Hessian's dual.
 """
-_tan_rows_model(sp) = any(sp.predict_transforms_indices) ||
-    any(sp.update_transforms_indices) || any(sp.td_transforms_indices) ||
-    any(t -> t != 0, sp.manifesttype)
+function _tan_rows_model(sp)
+    (any(sp.predict_transforms_indices) || any(sp.update_transforms_indices) ||
+        any(sp.td_transforms_indices) || any(t -> t != 0, sp.manifesttype) ||
+        _stationary_elements_on(sp.stationary_elements)) && return true
+    sp.stationary || return false
+    ws = _init_continuous_ekf_workspace(Float64, sp)
+    return ws.affine_buffer.dim < ws.state_dim || ws.diffusion_state_indices != 1:ws.state_dim
+end
 
 """
 The subject values and cells at `xv` into `aws`'s filter workspace; the cells.

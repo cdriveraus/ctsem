@@ -249,6 +249,36 @@ function _tan_rows_categorical!(x::TanVec{W}, P::TanMat{W}, R::TanRows{W,DW},
     return snap
 end
 
+"""
+The first row's stationary moments (`_ctsem_stationary!`) or stationary
+elements (`_ctsem_stationary_elements_mean!`, `_cov!`), the engine's own at the
+Hessian's dual on the worker's workspace: the initial state and covariance in
+as duals and back, the record on the workspace's tape (program kind 8 or 10).
+`false` where they do not exist.
+"""
+function _tan_rows_stationary!(x::TanVec{W}, P::TanMat{W}, R::TanRows{W,DW},
+    sw::TanSweep{W}, sp, snap::Int, nl::Int, elements::Bool) where {W,DW}
+    awsW = R.awsW
+    ws = awsW.ekf_ws
+    n = sw.n
+    _tan_to_duals!(ws.state, x)
+    _tan_to_duals!(ws.P_predict.data, P)
+    pars = CTSEMPars(R.allW, sp.parameter_axis)
+    if elements
+        se = sp.stationary_elements
+        (_ctsem_stationary_elements_mean!(ws.state, ws, pars, se) &&
+            _ctsem_stationary_elements_cov!(ws.P_predict.data, ws, pars, se)) || return false
+        _record_stationary_elements!(awsW.tape, ws, pars)
+    else
+        _ctsem_stationary!(ws.P_predict.data, ws.state, ws, pars) || return false
+        _record_stationary!(awsW.tape, ws, pars)
+    end
+    _tan_from_lanes!(x, view(ws.state, 1:n), nl)
+    _tan_from_lanes!(P, ws.P_predict.data, nl)
+    push!(R.prog, (elements ? 10 : 8, awsW.tape.nstationaries, snap))
+    return true
+end
+
 """`X`'s values and tangents set from the duals `D`, lanes past `nl` zero."""
 function _tan_from_lanes!(X::Union{TanMat{W},TanVec{W}}, D::AbstractArray, nl::Int) where {W}
     return _tan_lanes!(X, D, nl)
@@ -291,6 +321,10 @@ function _tan_sweep_rows!(acc::TanAcc{W}, Hb::Matrix{Float64}, sw::TanSweep{W},
     awsW.tape.ngroups = 0
     awsW.tape.nmoments = 0
     awsW.tape.nbinaries = 0
+    awsW.tape.nstationaries = 0
+    # The records the engine's own steps push their program entries to; this
+    # sweep keeps its own program.
+    empty!(awsW.tape.program)
     mod.momon[] = false
     empty!(R.prog)
     R.ng = 0
@@ -302,17 +336,15 @@ function _tan_sweep_rows!(acc::TanAcc{W}, Hb::Matrix{Float64}, sw::TanSweep{W},
     hs = sw.hs
     _tan_sweep_begin!(sw, mod)
     snap = 0
-    if mod.stat
+    _tan_copy!(x, mod.T0M)
+    _tan_copy!(P, mod.T0V)
+    elements = _stationary_elements_on(sp.stationary_elements)
+    if mod.stat || elements
         # The predict group once ahead of the stationary moments, which read
-        # what it writes (`_ekf_filter!`'s first row); they need the drift its
-        # own Jacobian, as R's refusing a state-reading drift there makes it.
+        # what it writes (the filter's first row), then the moments as the
+        # engine's own at the Hessian's dual.
         snap = _tan_rows_group!(R, 1, x, mod, sw, sp, so, i, 1, times[1], 0.0, snap, nl)
-        (mod.DRIFT.v == mod.JAx.v && mod.DRIFT.d == mod.JAx.d) || return _TAN_REFUSED
-        _tan_stationary!(x, P, sw, mod) || return _TAN_INVALID
-        push!(R.prog, (8, 0, snap))
-    else
-        _tan_copy!(x, mod.T0M)
-        _tan_copy!(P, mod.T0V)
+        _tan_rows_stationary!(x, P, R, sw, sp, snap, nl, elements) || return _TAN_INVALID
     end
     npred = 0
     R.nrl = 0
@@ -387,20 +419,24 @@ function _tan_sweep_rows!(acc::TanAcc{W}, Hb::Matrix{Float64}, sw::TanSweep{W},
             _tan_snap_load!(mod, s == 0 ? R.base : R.snaps[s])
             held = s
         end
-        if kind == 8
-            # The stationary moments, at the drift and diffusion they read.
-            if s != held
-                _tan_snap_load!(mod, s == 0 ? R.base : R.snaps[s])
-                held = s
+        if kind == 8 || kind == 10
+            # The stationary moments or elements, by the engine's own reverse
+            # at the Hessian's dual; its deferred diffusion cotangent released
+            # onto the cells.
+            _tan_to_duals!(R.xbarW, xbar)
+            _tan_to_duals!(R.PbarW, Pbar)
+            tc = CTSEMPars(R.allbar, sp.parameter_axis)
+            rec = awsW.tape.stationaries[idx]
+            if kind == 8
+                _reverse_stationary!(R.xbarW, R.PbarW, tc, rec, awsW.diffusion_state_indices,
+                    n, awsW)
+            else
+                _reverse_stationary_elements!(R.xbarW, R.PbarW, tc, rec,
+                    awsW.diffusion_state_indices, n, awsW, sp.stationary_elements)
             end
-            if s != factored
-                _tan_sweep_begin!(sw, mod)
-                factored = s
-            end
-            _tan_reverse_stationary!(xbar, Pbar, sw, mod, acc, 1.0)
-            # They overwrote the initial state and covariance.
-            _tan_zero!(xbar)
-            _tan_zero!(Pbar)
+            _flush_diffusion!(awsW, tc, n)
+            _tan_from_lanes!(xbar, R.xbarW, nl)
+            _tan_from_lanes!(Pbar, R.PbarW, nl)
             continue
         elseif kind == 7
             # A row's categorical observations, by the engine's own reverse at

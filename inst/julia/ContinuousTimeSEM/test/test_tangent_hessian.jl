@@ -15,7 +15,7 @@ isdefined(@__MODULE__, :_adjoint_test_dataframe) ||
 
 function _tangent_test_model(; driftscale=1.0, max_timestep=Inf, perrow=false, ti=false,
     td=false, stationary=false, continuous=true, rows=false, relin=false, plan=-1,
-    moment=false, cat=false, timiss=false)
+    moment=false, cat=false, timiss=false, elements=false)
     drift = [-0.6 0.2; 0.1 -0.5]
     lambda = [1.0 0.0; 0.7 0.0; 0.0 1.0]
     # `driftscale` shrinks every drift cell: near zero, the filter integrates
@@ -112,7 +112,11 @@ function _tangent_test_model(; driftscale=1.0, max_timestep=Inf, perrow=false, t
     sp = ekf_from_data_frame(df, ti ? tieffects : DataFrame(parameter=Int[],
         predictor=Int[], coefficient=Int[]); continuous_time=continuous,
         stationary=stationary, manifesttype=cat ? [0, 2, 1] : Int[],
-        ncategories=cat ? [0, 3, 2] : Int[])
+        ncategories=cat ? [0, 3, 2] : Int[],
+        # `elements`: the first latent's initial mean and variance stationary,
+        # over the closure the second drives into it.
+        stationary_mean=elements ? [1, 0] : Int[], stationary_block=elements ? [1, 0] : Int[],
+        stationary_closure=elements ? [1, 1] : Int[])
     npar = ti ? (timiss ? 33 : 31) : cat ? 28 : rows ? 26 : td ? 24 : 22
     starts = Int[]
     times = Float64[]
@@ -178,7 +182,7 @@ end
         (rows=true, moment=true), (rows=true, moment=true, relin=true, max_timestep=0.4),
         (rows=true, moment=true, continuous=false), (cat=true,), (cat=true, td=true),
         (cat=true, rows=true, relin=true), (cat=true, continuous=false, max_timestep=0.4),
-        (stationary=true, perrow=true),
+        (stationary=true, perrow=true), (elements=true,), (elements=true, perrow=true),
         (ti=true, timiss=true))
         objective, values = _tangent_test_model(; opts...)
         n = length(values)
@@ -203,7 +207,8 @@ end
 # population variance a block of its own (`RAWPOPVAR`, `_place_population_block!`);
 # the intercept's solve then runs over the two latents and the noise's over
 # the diffusing ones (`affine_dim`, `diffusion_state_indices`).
-function _tangent_aug_model(; continuous=true, max_timestep=Inf, driftscale=1.0)
+function _tangent_aug_model(; continuous=true, max_timestep=Inf, driftscale=1.0,
+    stationary=false)
     carry = continuous ? 0.0 : 1.0
     drift = [-0.6 0.2 1.0; 0.1 -0.5 0.0; 0.0 0.0 carry]
     lambda = [1.0 0.0 0.0; 0.7 0.0 0.0; 0.0 1.0 0.0]
@@ -236,7 +241,7 @@ function _tangent_aug_model(; continuous=true, max_timestep=Inf, driftscale=1.0)
         t0means=zeros(3, 1), free=free, extra=[:RAWPOPVAR => zeros(1, 1)])
     sp = ekf_from_data_frame(df, DataFrame(parameter=Int[], predictor=Int[],
         coefficient=Int[]), [1, 2]; continuous_time=continuous, affine_dim=2,
-        population_indices=[3], population_scale=[1.0])
+        population_indices=[3], population_scale=[1.0], stationary=stationary)
     starts = Int[]
     times = Float64[]
     columns = Vector{Float64}[]
@@ -261,7 +266,8 @@ function _tangent_aug_model(; continuous=true, max_timestep=Inf, driftscale=1.0)
 end
 
 @testset "the augmented route's static carriers and population block" begin
-    for opts in ((;), (max_timestep=0.4,), (continuous=false,), (driftscale=0.02,))
+    for opts in ((;), (max_timestep=0.4,), (continuous=false,), (driftscale=0.02,),
+        (stationary=true,))
         objective, values = _tangent_aug_model(; opts...)
         n = length(values)
         @test ContinuousTimeSEM._tan_refusal(objective) === nothing
