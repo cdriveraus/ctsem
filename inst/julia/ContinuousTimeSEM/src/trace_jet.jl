@@ -40,8 +40,22 @@ struct CTSEMTraceJet{W} <: Real
     s::Float64
 end
 
-"""The width every jet sweep runs at: one width, so one compiled type."""
+"""
+The widths jet sweeps run at: `_CTSEM_JET_WIDTH` directions a sweep, and
+`_CTSEM_JET_NARROW` where a sweep carries at most that many
+(`_ctsem_jet_width`). A product costs about `3 + 3W` multiplies whatever
+number of the `W` directions are in use, so a block of one effect swept at
+width 8 paid 27 for the 9 of the hyper-dual sweep it replaced: a hybrid unit
+with one Laplace coordinate beside the filter's took 24% longer a gradient
+(`scripts/hybrid-accuracy-2026-10/jets_bench.R`, local). Two widths, two
+compiled types: the narrow one took the hyper-dual's place.
+"""
 const _CTSEM_JET_WIDTH = 8
+const _CTSEM_JET_NARROW = 2
+
+"""The width a sweep of `ndirs` directions runs at."""
+@inline _ctsem_jet_width(ndirs::Integer) =
+    ndirs <= _CTSEM_JET_NARROW ? _CTSEM_JET_NARROW : _CTSEM_JET_WIDTH
 
 const _JetReal = Union{AbstractFloat,Integer,Rational,AbstractIrrational}
 # What the mixed operations take directly. An irrational reaches them by
