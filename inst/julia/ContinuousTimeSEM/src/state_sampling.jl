@@ -362,7 +362,7 @@ its own here.
     ContinuousTimeSEM.sdcovsqrt2cov!(ws.bufferQ, pars.DIFFUSION, ws.sp.covmatcode,
         ws.state_dim)
     if transition === :euler && ws.continuous_time
-        _matvec_mul!(ws.bufferQ.r, pars.DRIFT, ws.state, ws.state_dim, ws.state_dim)
+        _ctsem_mulvec!(ws.bufferQ.r, pars.DRIFT, ws.state)
         for i in 1:n
             ws.state[i] += (ws.bufferQ.r[i] + pars.CINT[i]) * h
         end

@@ -1560,16 +1560,30 @@ moments would subtract two numbers of order `ηbar^2`, which is the cancellation
 """
 @inline function _asymptote_moments(ηbar::T, s::T, y::Real, nodes, weights,
     thresholds) where {T}
-    s2 = s * s
     c, d = _binary_asymptotes(thresholds, T)
-    flat = y > 0.5 ? c : one(c) - d
-    span = d - c
     logZq, offsetq, varq = _binary_quadrature(ηbar, s, y, nodes, weights, (),
         CTSEM_OBS_BINARY)
+    logZ, offset, variance, _ = _asymptote_mix(T, logZq, offsetq, varq, s * s, y, c, d)
+    return (logZ, offset, variance)
+end
+
+"""
+    _asymptote_mix(T, logZq, offsetq, varq, s2, y, c, d)
+
+`_asymptote_moments`' mixture of the prior (variance `s2`) and the plain
+binary posterior `(logZq, offsetq, varq)`, for asymptotes `(c, d)`:
+`(logZ, offset, variance, w)`, `w` the plain component's weight. One for the
+values and their partials (`_asymptote_partials!`), so the two compute the
+same numbers.
+"""
+@inline function _asymptote_mix(::Type{T}, logZq, offsetq, varq, s2, y::Real, c,
+    d) where {T}
+    flat = y > 0.5 ? c : one(c) - d
+    span = d - c
     if span > zero(span)
         logspan = log(span) + logZq
         logZ = _logaddexp(log(flat), logspan)
-        isfinite(logZ) || return (T(-Inf), zero(T), s2)
+        isfinite(logZ) || return (T(-Inf), zero(T), s2, zero(T))
         # The weight on the logistic component. Taken as a ratio of logarithms
         # so that a vanishing `flat` gives exactly one rather than `0/0`.
         w = exp(logspan - logZ)
@@ -1583,13 +1597,85 @@ moments would subtract two numbers of order `ηbar^2`, which is the cancellation
         # at `span = 0` the weight is zero and the posterior is the prior.
         Zq = exp(logZq)
         Z = flat + span * Zq
-        Z > zero(Z) || return (T(-Inf), zero(T), s2)
+        Z > zero(Z) || return (T(-Inf), zero(T), s2, zero(T))
         logZ = log(Z)
         w = span * Zq / Z
     end
     offset = w * offsetq
     second = (one(w) - w) * s2 + w * (varq + offsetq * offsetq)
-    return (logZ, offset, max(second - offset * offset, zero(second)))
+    return (logZ, offset, max(second - offset * offset, zero(second)), w)
+end
+
+"""
+    _asymptote_partials!(J, a, s, y, nodes, weights, thresholds)
+
+`_asymptote_moments` at `ηbar = a` with its exact partials written into `J`
+(rows `logZ`, offset and variance; columns `a`, `b = s^2` and the two
+asymptotes), and a fourth return, `false` where the plain posterior's rule
+could not take them and forward mode has to (`_binary_quadrature`'s mode
+solve used its budget). The plain component's partials come from the rule,
+written into `J`'s first two columns and read before they are overwritten,
+and reach the mixture through its weight `w = (d - c) Zq / Z` by the chain
+rule; the asymptotes move only the flat part and the span.
+
+In place of forward mode (`_binary_moment_dual!`), which every observation
+of an asymptote item took behind `_ctsem_barrier`: a dynamic call each, and at
+a session's first fit of such a model a compile of forward mode through the
+rule, which no precompile workload model reaches -- 400 s of compile against
+6 s for the same model without an asymptote (dev3,
+`scripts/precompile-build/asym_first_fit.R`).
+"""
+@inline function _asymptote_partials!(J::Matrix{T}, a::T, s::T, y::Real, nodes,
+    weights, thresholds) where {T}
+    s2 = s * s
+    c, d = _binary_asymptotes(thresholds, T)
+    logZq, offq, varq, ok = _binary_quadrature(a, s, y, nodes, weights, (),
+        CTSEM_OBS_BINARY, J)
+    ok || return (T(-Inf), zero(T), zero(T), false)
+    logZ, offset, variance, w = _asymptote_mix(T, logZq, offq, varq, s2, y, c, d)
+    isfinite(logZ) || return (logZ, offset, variance, true)
+    # Where the rule found no mass its columns are not written, and its weight
+    # is zero: its partials are taken as none.
+    plain = isfinite(logZq)
+    @inbounds begin
+        lq = plain ? (J[1, 1], J[1, 2]) : (zero(T), zero(T))
+        oq = plain ? (J[2, 1], J[2, 2]) : (zero(T), zero(T))
+        vq = plain ? (J[3, 1], J[3, 2]) : (zero(T), zero(T))
+    end
+    # Zq / Z and 1 / Z from logs: Z can be far from Zq's scale.
+    zr = exp(logZq - logZ)
+    iz = exp(-logZ)
+    gap = varq + offq * offq - s2
+    correct = y > 0.5
+    positive = variance > zero(variance)
+    @inbounds for col in 1:4
+        if col <= 2
+            dlq = lq[col]
+            doq = oq[col]
+            dvq = vq[col]
+            dL = w * dlq
+            dw = w * (dlq - dL)
+            ds2 = col == 2 ? one(T) : zero(T)
+        else
+            # The lower asymptote shrinks the span and is the flat part of a
+            # correct response; the upper one widens the span and lowers the
+            # flat part of an incorrect one.
+            dflat = col == 3 ? (correct ? one(T) : zero(T)) :
+                (correct ? zero(T) : -one(T))
+            dspan = col == 3 ? -one(T) : one(T)
+            dL = dflat * iz + dspan * zr
+            dw = dspan * zr - w * dL
+            doq = zero(T)
+            dvq = zero(T)
+            ds2 = zero(T)
+        end
+        doffset = dw * offq + w * doq
+        dsecond = dw * gap + (one(T) - w) * ds2 + w * (dvq + 2 * offq * doq)
+        J[1, col] = dL
+        J[2, col] = doffset
+        J[3, col] = positive ? dsecond - 2 * offset * doffset : zero(T)
+    end
+    return (logZ, offset, variance, true)
 end
 
 """
@@ -2064,10 +2150,11 @@ through every operation of every node, which under the Laplace seeds was a dual
 of duals of duals and most of a categorical gradient's time. A censored row's
 closed form is differentiated by hand the same way (`_censored_partials!`).
 
-Forward mode stays for what that does not cover (`_binary_moment_dual!`): the
-asymptote mixture, a predicted variance under `_CTSEM_MIN_VARIANCE`, and a mode
-solve that used its budget, where the implicit function theorem does not
-describe what the iteration returned. It sits behind an inference barrier, so a model that never
+An asymptote item's mixture of the prior and that posterior takes the same
+partials through its weights (`_asymptote_partials!`). Forward mode stays for
+what that does not cover (`_binary_moment_dual!`): a predicted variance under
+`_CTSEM_MIN_VARIANCE`, and a mode solve that used its budget, where the
+implicit function theorem does not describe what the iteration returned. It sits behind an inference barrier, so a model that never
 reaches it does not compile it. Its dual is seeded by hand
 (`_ctsem_nested_seed`, under the nested tag for the reason given there) with
 only the extras the observation reads, its width a type parameter.
@@ -2113,10 +2200,11 @@ the rule's analytic partials cover and `_binary_moment_dual!` has to take it.
     nodes, weights, thresholds, kind::Int) where {T}
     s = sqrt(b)
     handled = promote_type(T, eltype(thresholds)) === T &&
-        s * s > T(_CTSEM_MIN_VARIANCE[]) &&
-        !(kind == CTSEM_OBS_BINARY && length(thresholds) >= 2)
+        s * s > T(_CTSEM_MIN_VARIANCE[])
     handled || return (T(-Inf), zero(T), zero(T), false)
     kind == CTSEM_OBS_CENSORED && return _censored_partials!(J, a, s, y, thresholds)
+    kind == CTSEM_OBS_BINARY && length(thresholds) >= 2 &&
+        return _asymptote_partials!(J, a, s, y, nodes, weights, thresholds)
     return _binary_quadrature(a, s, y, nodes, weights, thresholds, kind, J)
 end
 

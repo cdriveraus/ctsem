@@ -167,6 +167,72 @@ end
     @test ForwardDiff.partials.(J, 1) ≈ ForwardDiff.partials.(oracle, 1) rtol = 1e-8 atol = 1e-11
 end
 
+# An asymptote item's partials are carried by hand through its mixture
+# (`_asymptote_partials!`); forward mode, which they replaced, is the oracle:
+# each response, asymptotes near their bounds and crossed, a wide and a
+# narrow prior, a prior far below and above the item. Except in an asymptote
+# whose response makes the flat part exactly zero -- a ceiling of one and an
+# incorrect response, a floor of zero and a correct one -- where forward mode
+# goes through `log(0)` and drops that term's derivative; there the column is
+# checked against differences of the values. Such a cell is fixed in
+# a model (a probability transform does not reach its bound), so the column
+# is not read.
+@testset "asymptote moments' partials by hand match forward mode" begin
+    CT = ContinuousTimeSEM
+    nodes, weights = CT._gauss_hermite(CT._CTSEM_BINARY_NODES[])
+    cases = [
+        ("guess, correct", 0.3, 0.8, 1.0, [0.2, 1.0]),
+        ("guess, incorrect", 0.3, 0.8, 0.0, [0.2, 1.0]),
+        ("both, correct", -0.4, 1.5, 1.0, [0.15, 0.9]),
+        ("both, incorrect", -0.4, 1.5, 0.0, [0.15, 0.9]),
+        ("near the bounds", 1.2, 0.5, 1.0, [1e-6, 1 - 1e-6]),
+        ("crossed", 0.5, 0.7, 1.0, [0.8, 0.3]),
+        ("crossed, incorrect", 0.5, 0.7, 0.0, [0.8, 0.3]),
+        ("prior far below", -5.0, 2.0, 1.0, [0.2, 0.95]),
+        ("prior far above", 4.0, 0.3, 0.0, [0.25, 0.85]),
+        ("narrow prior", 0.1, 1e-3, 1.0, [0.2, 0.9]),
+    ]
+    for (label, a, b, y, extras) in cases
+        oracle = zeros(3, 4)
+        lz, m, v, ok = CT._binary_moment_dual!(oracle, a, b, y, nodes, weights,
+            extras, CT.CTSEM_OBS_BINARY)
+        hlz, hm, hv, J = CT._binary_moment_jacobian(a, b, y, nodes, weights, extras,
+            CT.CTSEM_OBS_BINARY)
+        flatzero = (y > 0.5 && extras[1] == 0) || (y < 0.5 && extras[2] == 1)
+        cols = [1, 2, 3, 4]
+        flatzero && setdiff!(cols, y > 0.5 ? 3 : 4)
+        @testset "$label" begin
+            @test ok
+            @test isapprox([hlz, hm, hv], [lz, m, v]; rtol=1e-13, atol=1e-14)
+            @test J[:, cols] ≈ oracle[:, cols] rtol = 1e-8 atol = 1e-11
+            if flatzero
+                # One-sided, second order, stepping inward: past the bound the
+                # flat part is negative, and its log throws.
+                col = y > 0.5 ? 3 : 4
+                inward = col == 3 ? 1.0 : -1.0
+                h = 1e-5
+                at(t) = (e = copy(extras); e[col - 2] += inward * t; e)
+                f(e) = collect(CT._binary_moments(a, sqrt(b), y, nodes, weights, e,
+                    CT.CTSEM_OBS_BINARY))
+                d = inward .* (-3 .* f(at(0.0)) .+ 4 .* f(at(h)) .- f(at(2h))) ./ (2h)
+                @test J[:, col] ≈ d rtol = 1e-6 atol = 1e-8
+            end
+        end
+    end
+    # Under an outer dual, as inside the Laplace curvature.
+    outer(v, p=0.0) = ForwardDiff.Dual{ForwardDiff.Tag{typeof(sin),Float64}}(v, p)
+    D = typeof(outer(0.0))
+    a, b = outer(-0.4, 1.0), outer(1.5, 0.3)
+    extras = D[outer(0.15, 0.2), outer(0.9, -0.1)]
+    oracle = zeros(D, 3, 4)
+    CT._binary_moment_dual!(oracle, a, b, 1.0, nodes, weights, extras,
+        CT.CTSEM_OBS_BINARY)
+    _, _, _, J = CT._binary_moment_jacobian(a, b, 1.0, nodes, weights, extras,
+        CT.CTSEM_OBS_BINARY)
+    @test ForwardDiff.value.(J) ≈ ForwardDiff.value.(oracle) rtol = 1e-8 atol = 1e-11
+    @test ForwardDiff.partials.(J, 1) ≈ ForwardDiff.partials.(oracle, 1) rtol = 1e-7 atol = 1e-10
+end
+
 @testset "_binary_mode solves the scalar posterior's first-order condition" begin
     for (label, etabar, s, y, thresholds, kind) in _MOMENT_CASES
         s2 = s^2

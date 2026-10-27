@@ -19,10 +19,10 @@ end
     x = [0.5, -1.0, 2.0]
     y = zeros(2)
 
-    ContinuousTimeSEM._matvec_mul!(y, A, x)
+    ContinuousTimeSEM._ctsem_mulvec!(y, A, x)
     @test y ≈ A * x
 
-    ContinuousTimeSEM._matvec_mul!(y, A, reshape(x, :, 1))
+    ContinuousTimeSEM._ctsem_mulvec!(y, A, reshape(x, :, 1))
     @test y ≈ A * x
 
     B = [2.0 -1.0 0.5; 0.0 1.5 -2.0]
