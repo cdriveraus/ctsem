@@ -11,10 +11,17 @@
 # (`_HybridFixedCross`). The dual route serves the other hooks, an element type
 # other than Float64, and what the sweep does not cover (`_tan_refusal`); it is
 # the oracle (`ctsem_set_tangent_hessian!(false)`).
+#
+# A member whose coordinates reach only the means -- the initial state, the
+# intercepts, the TD effects -- of a linear model needs no reverse sweep: its
+# innovations are affine in the coordinates and their covariances do not move
+# with them, so its curvature is exactly the Gauss-Newton sum over rows of the
+# whitened innovations' tangents (`_tan_laplace_gn_member!`), from the forward
+# sweep alone.
 
 """A slot's hand-coded curvature: the member's layer at the curvature's dual,
 its sweep, and their scratch."""
-struct TanLaplaceContext{W,DC,A,R}
+struct TanLaplaceContext{W,DC,A,R,B}
     awsW::A
     mod::TanModel{W}
     acc::TanAcc{W}
@@ -24,6 +31,17 @@ struct TanLaplaceContext{W,DC,A,R}
     xw::Vector{DC}              # its shifted values
     uw::Vector{DC}              # the unit's coordinates, seeded
     Lb::Matrix{Float64}         # a hybrid block's factor
+    # The Gauss-Newton route (`_tan_laplace_gn_member!`): whether the model
+    # admits it at all -- linear, no integrated deviations, every state in the
+    # dynamics -- each chunk's whitened innovation tangents, a row's W at a
+    # time, the columns' positions by coordinate, a member's coordinates, and
+    # the members left to the full sweeps.
+    gn::Bool
+    gnE::Vector{Vector{Float64}}
+    colpos::Vector{Int}
+    coords::Vector{Int}
+    rest::Vector{Int}
+    buf::B                      # the member layer's (`_tan_layer_buffers`)
 end
 
 """
@@ -67,7 +85,9 @@ function _tan_laplace_build(objective::CTSEMObjective, values::AbstractVector, m
     return TanLaplaceContext(awsW, mod, TanAcc(n, m, ntd, nh, W),
         rows ? TanRows(awsW, sp, n, m, ntd, Val(W), DC) : nothing,
         TanSweep(n, m, ntd, nh, W, na, length(dyn)), zeros(nv, W), zeros(DC, nv),
-        DC[], h.block && nh > 0 ? zeros(length(h.perm), length(h.perm)) : zeros(0, 0))
+        DC[], h.block && nh > 0 ? zeros(length(h.perm), length(h.perm)) : zeros(0, 0),
+        !rows && nh == 0 && !mod.aug, Vector{Float64}[], Int[], Int[], Int[],
+        _tan_layer_buffers(DC, awsW, sp, nv, ntd))
 end
 
 """
@@ -172,6 +192,27 @@ function _tan_laplace_members!(J::Matrix{Float64}, ctx::TanLaplaceContext{W,DC},
     d = length(base)
     uw = ctx.uw
     length(uw) == d || resize!(uw, d)
+    # The members the Gauss-Newton route serves first; the rest swept below.
+    if cross === nothing && ctx.gn
+        colpos = ctx.colpos
+        length(colpos) < d && append!(colpos, zeros(Int, d - length(colpos)))
+        @inbounds for (t, c) in enumerate(columns)
+            colpos[c] = t
+        end
+        rest = empty!(ctx.rest)
+        st = _TAN_OK
+        for p in mine
+            st = _tan_laplace_gn_member!(J, ctx, laplace, U, values, Ls, base, members[p])
+            st == _TAN_FULL && (push!(rest, p); st = _TAN_OK)
+            st == _TAN_OK || break
+        end
+        @inbounds for c in columns
+            colpos[c] = 0
+        end
+        st == _TAN_OK || return st
+        mine = rest
+        isempty(mine) && return _TAN_OK
+    end
     for start in 1:W:length(columns)
         cols = start:min(start + W - 1, length(columns))
         nl = length(cols)
@@ -365,6 +406,107 @@ function _tan_laplace_trace_sweep!(trace::CTSEMKalmanTrace, ctx::TanLaplaceConte
         forward=true, rec=rec)
 end
 
+# A member the Gauss-Newton route leaves to the full sweeps.
+const _TAN_FULL = -1
+
+"""
+Whether the layer just filled into `mod` moves only the means -- the initial
+state, the intercepts, the TD effects -- along its lanes, in a model whose
+every other matrix it leaves fixed: the innovations then are affine in the
+lanes and their covariances are not moved by them.
+"""
+_tan_gn_quadratic(mod::TanModel) = !(_tan_nz(mod.JAx) || _tan_nz(mod.DRIFT) ||
+    _tan_nz(mod.Qc) || _tan_nz(mod.LAMBDA) || _tan_nz(mod.Jy) || _tan_nz(mod.R) ||
+    _tan_nz(mod.T0V) || _tan_nz(mod.Jtd))
+
+"""Each updated row's whitened innovation tangents, `W` a row, into `E`."""
+struct TanGNRecorder
+    E::Vector{Float64}
+end
+
+function _tan_record!(rec::TanGNRecorder, kind::Int, t::Int, x::TanVec, P::TanMat,
+    sw::TanSweep{W}) where {W}
+    kind == 2 || return nothing
+    mo = length(sw.upds[t].o)
+    mo == 0 && return nothing
+    e = _tan_row(sw.fw, mo).e
+    @inbounds for i in 1:mo, a in 1:W
+        push!(rec.E, e.d[a, i])
+    end
+    return nothing
+end
+
+"""
+Unit member `m`'s curvature over the columns at `ctx.colpos` into `J`, by
+Gauss-Newton where its coordinates move only the means (`_tan_gn_quadratic`):
+a row's log likelihood is `-1/2 (e'e + logdet S)` with `e = Ui' (y - Lambda x
+- mu)` affine in them and `S` fixed, so its second derivative is `-de' de`
+exactly, from the forward sweeps alone, a chunk of the member's coordinates
+each. `_TAN_FULL` where they move anything else, and the caller sweeps the
+member in full. A status code otherwise.
+"""
+function _tan_laplace_gn_member!(J::Matrix{Float64}, ctx::TanLaplaceContext{W,DC},
+    laplace::CTSEMLaplaceObjective, U::Int, values::AbstractVector{Float64},
+    Ls::Vector{<:AbstractMatrix}, base::AbstractVector{Float64}, m::Int) where {W,DC}
+    spec, units = laplace.spec, laplace.units
+    objective = laplace.objective
+    offsets = units.offsets[U][m]
+    i = units.members[U][m]
+    so = objective.subject_objectives[i]
+    sp = objective.params
+    coords = empty!(ctx.coords)
+    for (l, level) in enumerate(spec.levels)
+        (nrandomeffects(level) == 0 || nlatent(level) == 0) && continue
+        for q in 1:nlatent(level)
+            push!(coords, offsets[l] + q)
+        end
+    end
+    # Nothing it can add to these columns.
+    any(c -> ctx.colpos[c] != 0, coords) || return _TAN_OK
+    nc = length(coords)
+    nch = cld(nc, W)
+    while length(ctx.gnE) < nch
+        push!(ctx.gnE, Float64[])
+    end
+    uw, mod, sw = ctx.uw, ctx.mod, ctx.sw
+    for ch in 1:nch
+        lanes = ((ch - 1) * W + 1):min(ch * W, nc)
+        @inbounds for c in coords
+            uw[c] = DC(base[c])
+        end
+        @inbounds for (a, k) in enumerate(lanes)
+            c = coords[k]
+            uw[c] = DC(base[c], ForwardDiff.Partials(ntuple(w -> w == a ? 1.0 : 0.0, Val(W))))
+        end
+        xw = _laplace_member_values!(ctx.xw, values, spec, Ls, uw, offsets)
+        _tan_layer_fill!(mod, ctx.awsW, sp, xw, length(lanes), so.tipreds, ctx.buf) ||
+            return _TAN_REFUSED
+        _tan_gn_quadratic(mod) || return _TAN_FULL
+        rec = TanGNRecorder(empty!(ctx.gnE[ch]))
+        _tan_sweep_begin!(sw, mod)
+        st = _tan_sweep!(ctx.acc, sw, mod, so.timesteps, so.data, so.tdpreds,
+            so.max_timestep, 1.0; forward=true, rec=rec)
+        st == _TAN_OK || return st
+    end
+    nr = length(ctx.gnE[1]) ÷ W
+    @inbounds for b in 1:nc
+        t = ctx.colpos[coords[b]]
+        t == 0 && continue
+        Eb = ctx.gnE[(b - 1) ÷ W + 1]
+        lb = (b - 1) % W + 1
+        for a in 1:nc
+            Ea = ctx.gnE[(a - 1) ÷ W + 1]
+            la = (a - 1) % W + 1
+            s = 0.0
+            for r in 0:(nr - 1)
+                s += Ea[r * W + la] * Eb[r * W + lb]
+            end
+            J[coords[a], t] -= s
+        end
+    end
+    return _TAN_OK
+end
+
 """Whether any of `xw`'s partials is nonzero."""
 function _tan_any_lanes(xw::Vector{DC}) where {DC}
     @inbounds for x in xw
@@ -384,20 +526,24 @@ function _tan_laplace_member!(ctx::TanLaplaceContext{W,DC}, objective::CTSEMObje
     sp = objective.params
     so = objective.subject_objectives[i]
     mod, sw, Hb = ctx.mod, ctx.sw, ctx.Hb
-    _tan_layer_fill!(mod, ctx.awsW, sp, xw, nl, so.tipreds) || return _TAN_REFUSED
+    rows = ctx.rows !== nothing
+    _tan_layer_fill!(mod, ctx.awsW, sp, xw, nl, so.tipreds, rows ? nothing : ctx.buf) ||
+        return _TAN_REFUSED
     fill!(Hb, 0.0)
-    ctx.rows === nothing ||
-        return _tan_sweep_rows!(ctx.acc, Hb, sw, mod, ctx.rows, objective, i, 1.0, xw, nl;
-            g0=g0)
+    rows && return _tan_sweep_rows!(ctx.acc, Hb, sw, mod, ctx.rows, objective, i, 1.0, xw,
+        nl; g0=g0)
     _tan_sweep_begin!(sw, mod)
     sa = _tan_acc_zero!(ctx.acc)
     st = _tan_sweep!(sa, sw, mod, so.timesteps, so.data, so.tdpreds, so.max_timestep, 1.0)
     st == _TAN_OK || return st
     _tan_flush_frechet!(sa, sw.fw, mod, sw.sT)
-    # The layer's reverse (`_tan_layer_columns!`), its values kept too.
-    C = NamedTuple{_TAN_LAYER_NAMES}(map(k -> _tan_duals(_tan_layer_field(sa, k), DC),
-        _TAN_LAYER_NAMES))
-    g = _tan_layer_reverse(ctx.awsW, sp, xw, C, so.tipreds)
+    # The layer's reverse (`_tan_layer_columns!`), its values kept too, at
+    # the cells the fill left and in the context's buffers.
+    buf = ctx.buf
+    for k in _TAN_LAYER_NAMES
+        _tan_to_duals!(getproperty(buf.C, k), _tan_layer_field(sa, k))
+    end
+    g = _tan_layer_reverse(ctx.awsW, sp, xw, buf.C, so.tipreds, buf)
     @inbounds for w in 1:nl, j in eachindex(g)
         Hb[j, w] = ForwardDiff.partials(g[j], w)
     end

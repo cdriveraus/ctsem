@@ -102,16 +102,32 @@ end
 _tan_layer_mats(aws, sp, xv::AbstractVector, tipreds) =
     _tan_mats_of(aws, sp, _tan_layer_values!(aws, sp, xv, tipreds))
 
+"""Matrices of element type `S` shaped as the layer's (`_TAN_LAYER_NAMES`)."""
+_tan_mats_alloc(::Type{S}, n::Int, m::Int, ntd::Int) where {S} =
+    NamedTuple{_TAN_LAYER_NAMES}((zeros(S, n, n), zeros(S, n, n), zeros(S, n),
+        zeros(S, n, n), zeros(S, m, n), zeros(S, m, n), zeros(S, m), zeros(S, m, m),
+        zeros(S, n), zeros(S, n, n), zeros(S, n, ntd), zeros(S, n, n)))
+
 """The parameter matrices of the cells `all_params`, as the filter builds them."""
 function _tan_mats_of(aws, sp, all_params::AbstractVector)
+    pars = CTSEMPars(all_params, sp.parameter_axis)
+    ws = aws.ekf_ws
+    ntd = hasproperty(pars, :TDPREDEFFECT) ? size(pars.TDPREDEFFECT, 2) : 0
+    return _tan_mats_of!(_tan_mats_alloc(eltype(all_params), ws.state_dim,
+        ws.manifest_dim, ntd), aws, sp, all_params)
+end
+
+"""`_tan_mats_of` into the matrices `dst` (`_tan_mats_alloc`)."""
+function _tan_mats_of!(dst, aws, sp, all_params::AbstractVector)
     ws = aws.ekf_ws
     pars = CTSEMPars(all_params, sp.parameter_axis)
     n, m = ws.state_dim, ws.manifest_dim
     # As the filter builds them: MANIFESTVAR's and DIFFUSION's covariances as
     # the construction leaves them, T0VAR's with its lower triangle copied up.
-    cov(mat, d, buf) = (sdcovsqrt2cov!(buf, mat, sp.covmatcode, d);
-        Matrix(view(buf.out, 1:d, 1:d)))
-    T0V = cov(pars.T0VAR, n, ws.bufferQ)
+    cov!(out, mat, d, buf) = (sdcovsqrt2cov!(buf, mat, sp.covmatcode, d);
+        copyto!(out, view(buf.out, 1:d, 1:d)))
+    T0V = dst.T0V
+    cov!(T0V, pars.T0VAR, n, ws.bufferQ)
     _copy_lower_to_upper!(T0V, n)
     # The population block, added (`_place_population_block!`).
     pidx = sp.population_indices
@@ -128,13 +144,39 @@ function _tan_mats_of(aws, sp, all_params::AbstractVector)
     # The TD predictors' effects and the impulse's Jacobian, where the model
     # has them.
     S = eltype(all_params)
-    TDE = hasproperty(pars, :TDPREDEFFECT) ? Matrix(pars.TDPREDEFFECT) : zeros(S, n, 0)
-    Jtd = hasproperty(pars, :Jtd) ? Matrix(view(pars.Jtd, 1:n, 1:n)) : Matrix{S}(I, n, n)
-    return (JAx=Matrix(view(pars.JAx, 1:n, 1:n)), DRIFT=Matrix(view(pars.DRIFT, 1:n, 1:n)),
-        CINT=collect(view(pars.CINT, 1:n)), Qc=cov(pars.DIFFUSION, n, ws.bufferQ),
-        LAM=Matrix(view(pars.LAMBDA, 1:m, 1:n)), Jy=Matrix(view(pars.Jy, 1:m, 1:n)),
-        MM=collect(view(pars.MANIFESTMEANS, 1:m)), R=cov(pars.MANIFESTVAR, m, ws.bufferΘ),
-        T0M=collect(view(pars.T0MEANS, 1:n)), T0V=T0V, TDE=TDE, Jtd=Jtd)
+    hasproperty(pars, :TDPREDEFFECT) && copyto!(dst.TDE, pars.TDPREDEFFECT)
+    if hasproperty(pars, :Jtd)
+        copyto!(dst.Jtd, view(pars.Jtd, 1:n, 1:n))
+    else
+        @inbounds for j in 1:n, i in 1:n
+            dst.Jtd[i, j] = i == j ? one(S) : zero(S)
+        end
+    end
+    copyto!(dst.JAx, view(pars.JAx, 1:n, 1:n))
+    copyto!(dst.DRIFT, view(pars.DRIFT, 1:n, 1:n))
+    copyto!(dst.CINT, view(pars.CINT, 1:n))
+    cov!(dst.Qc, pars.DIFFUSION, n, ws.bufferQ)
+    copyto!(dst.LAM, view(pars.LAMBDA, 1:m, 1:n))
+    copyto!(dst.Jy, view(pars.Jy, 1:m, 1:n))
+    copyto!(dst.MM, view(pars.MANIFESTMEANS, 1:m))
+    cov!(dst.R, pars.MANIFESTVAR, m, ws.bufferΘ)
+    copyto!(dst.T0M, view(pars.T0MEANS, 1:n))
+    return dst
+end
+
+"""
+A member layer's buffers at element type `S` (`_tan_layer_fill!`,
+`_tan_layer_reverse`): the matrices, their cotangents, and the cells', subject
+values' and raw values' cotangents. Handed in, the reverse also reads the cells
+and subject values the fill materialised on the same workspace, which nothing
+between the two touches, rather than materialising them twice more.
+"""
+function _tan_layer_buffers(::Type{S}, aws, sp, nv::Int, ntd::Int) where {S}
+    ws = aws.ekf_ws
+    n, m = ws.state_dim, ws.manifest_dim
+    return (mats=_tan_mats_alloc(S, n, m, ntd), C=_tan_mats_alloc(S, n, m, ntd),
+        tb=zeros(S, length(sp.mutables)), svb=zeros(S, length(ws.subject_values)),
+        vb=zeros(S, nv), t0=zeros(S, n, n))
 end
 
 """
@@ -142,7 +184,8 @@ The matrices' cotangents `C` added into `tb`, the cells' (`all_params`'), the
 covariances pulled back through their constructions at the cells `rawD`,
 `rawR` and `rawT0` (DIFFUSION's, MANIFESTVAR's and T0VAR's).
 """
-function _tan_bar_of!(tb::AbstractVector{S}, aws, sp, C, rawD, rawR, cells) where {S}
+function _tan_bar_of!(tb::AbstractVector{S}, aws, sp, C, rawD, rawR, cells,
+    t0=nothing) where {S}
     ws = aws.ekf_ws
     n, m = ws.state_dim, ws.manifest_dim
     tc = CTSEMPars(tb, sp.parameter_axis)
@@ -177,7 +220,7 @@ function _tan_bar_of!(tb::AbstractVector{S}, aws, sp, C, rawD, rawR, cells) wher
         T0Vbar[pidx, :] .= zero(S)
         T0Vbar[:, pidx] .= zero(S)
     end
-    t0 = zeros(S, n, n)
+    t0 = t0 === nothing ? zeros(S, n, n) : fill!(t0, zero(S))
     pullback!(t0, view(CTSEMPars(cells, sp.parameter_axis).T0VAR, 1:n, 1:n), T0Vbar, n)
     view(tc.T0VAR, 1:n, 1:n) .+= t0
     return tb
@@ -186,16 +229,21 @@ end
 """
 The raw gradient from the cells' cotangent `tb`: the regular transforms' and
 TI effects' pullbacks (`_ctsem_regular_pullback!`, `_ctsem_ti_pullback!`) at
-`xv`'s element type.
+`xv`'s element type; with `buf` (`_tan_layer_buffers`), on the subject values
+the fill left and into its buffers.
 """
-function _tan_values_reverse(aws, sp, xv::AbstractVector{S}, tb, tipreds) where {S}
+function _tan_values_reverse(aws, sp, xv::AbstractVector{S}, tb, tipreds,
+    buf=nothing) where {S}
     ws = aws.ekf_ws
-    _materialize_subject_values!(ws.subject_values, xv, sp,
+    buf === nothing && _materialize_subject_values!(ws.subject_values, xv, sp,
         _ctsem_tipred_vector(tipreds, xv))
-    svb = zeros(S, length(ws.subject_values))
+    # Sized here: a workspace's subject values have their length once first
+    # materialised, which a buffer built beside it may precede.
+    svb = buf === nothing ? zeros(S, length(ws.subject_values)) :
+        fill!(resize!(buf.svb, length(ws.subject_values)), zero(S))
     _ctsem_regular_pullback!(svb, tb, ws.subject_values, sp, aws.regular_supports,
         aws.regular_dual_scratch)
-    vb = zeros(S, length(xv))
+    vb = buf === nothing ? zeros(S, length(xv)) : fill!(buf.vb, zero(S))
     _ctsem_ti_pullback!(vb, svb, sp, tipreds, xv)
     return vb
 end
@@ -203,14 +251,17 @@ end
 """
 The raw gradient of `<C, matrices(xv)>`, the matrices' cotangents `C` pushed
 back through the layer: the adjoint's own pullbacks (`_sdcovsqrt2cov_pullback!`,
-`_ctsem_regular_pullback!`, `_ctsem_ti_pullback!`), at `xv`'s element type.
+`_ctsem_regular_pullback!`, `_ctsem_ti_pullback!`), at `xv`'s element type;
+with `buf`, at the cells the fill left (`_tan_layer_buffers`).
 """
-function _tan_layer_reverse(aws, sp, xv::AbstractVector{S}, C, tipreds) where {S}
-    cells = _tan_layer_values!(aws, sp, xv, tipreds)
+function _tan_layer_reverse(aws, sp, xv::AbstractVector{S}, C, tipreds,
+    buf=nothing) where {S}
+    cells = buf === nothing ? _tan_layer_values!(aws, sp, xv, tipreds) : aws.ekf_ws.all_params
     pars = CTSEMPars(cells, sp.parameter_axis)
-    tb = zeros(S, length(sp.mutables))
-    _tan_bar_of!(tb, aws, sp, C, pars.DIFFUSION, pars.MANIFESTVAR, cells)
-    return _tan_values_reverse(aws, sp, xv, tb, tipreds)
+    tb = buf === nothing ? zeros(S, length(sp.mutables)) : fill!(buf.tb, zero(S))
+    _tan_bar_of!(tb, aws, sp, C, pars.DIFFUSION, pars.MANIFESTVAR, cells,
+        buf === nothing ? nothing : buf.t0)
+    return _tan_values_reverse(aws, sp, xv, tb, tipreds, buf)
 end
 
 const _TAN_LAYER_NAMES = (:JAx, :DRIFT, :CINT, :Qc, :LAM, :Jy, :MM, :R, :T0M, :T0V, :TDE,
@@ -300,11 +351,12 @@ _tan_same(a::AbstractArray, b::AbstractArray) = size(a) == size(b) &&
 The matrices of the layer into `mod`, values and tangents, for the subject
 whose TI predictors are `tipreds`: one pass at `xw`, the raw values seeded
 with the chunk's `nl` columns as lanes. `false` where the drift is not its own
-Jacobian.
+Jacobian. `buf` (`_tan_layer_buffers`) holds the matrices where given.
 """
 function _tan_layer_fill!(mod::TanModel{W}, awsW, sp, xw::Vector, nl::Int,
-    tipreds) where {W}
-    mw = _tan_layer_mats(awsW, sp, xw, tipreds)
+    tipreds, buf=nothing) where {W}
+    mw = buf === nothing ? _tan_layer_mats(awsW, sp, xw, tipreds) :
+        _tan_mats_of!(buf.mats, awsW, sp, _tan_layer_values!(awsW, sp, xw, tipreds))
     # Where no cell changes by row, the drift and the measurement must be
     # their own Jacobians; otherwise the offset and the gain read each.
     mod.rows || (_tan_same(mw.JAx, mw.DRIFT) && _tan_same(mw.Jy, mw.LAM)) || return false
