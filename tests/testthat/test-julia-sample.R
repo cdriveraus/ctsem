@@ -154,11 +154,12 @@ test_that("sampled effects are each parameter's natural deviation, at reduced ra
   # The joint route by name: 'auto' samples this model's exact marginal (its
   # effects shift means, with a Gaussian indicator), which has no effects to
   # save.
-  run <- function(m, ...) withCallingHandlers(suppressMessages(ctFit(data, m,
+  run <- function(m, ..., sampler = NULL) withCallingHandlers(suppressMessages(ctFit(data, m,
     backend = "julia", cores = 1, priors = TRUE, optimize = FALSE,
     intoverpop = "none", ...,
-    sampleControl = list(chains = 1L, warmup = 20L, draws = 20L, minESS = 0,
-      saveEffects = TRUE, processes = FALSE))),
+    sampleControl = c(list(chains = 1L, warmup = 20L, draws = 20L, minESS = 0,
+      saveEffects = TRUE, processes = FALSE),
+      if (!is.null(sampler)) list(sampler = sampler)))),
     warning = function(w) {
       warned <<- c(warned, conditionMessage(w))
       invokeRestart("muffleWarning")
@@ -166,23 +167,32 @@ test_that("sampled effects are each parameter's natural deviation, at reduced ra
 
   # Rank one, a loading matrix over both effects -- on the joint route
   # ('none'), which builds it as laplace does: one coordinate per subject, two
-  # parameters, so two deviations each.
+  # parameters, so two deviations each. Through the map, the default, and
+  # SAEM's kernel by name.
   reduced <- run(model, poprank = 1)
-  expect_length(reduced$sample$effect_mean, 12L * 2L)
-  expect_false(is.null(names(reduced$sample$effect_mean)))
-  expect_equal(dim(reduced$sample$effects), c(reduced$sample$draws, 24L))
-  expect_true(all(is.finite(reduced$sample$effects)))
-  # SAEM places these chains, and the optimisation before it runs no
+  expect_identical(reduced$sample$sampler, "map")
+  saem <- run(model, poprank = 1, sampler = "saem")
+  for (r in list(reduced, saem)) {
+    expect_length(r$sample$effect_mean, 12L * 2L)
+    expect_identical(names(r$sample$effect_mean), names(reduced$sample$effect_mean))
+    expect_false(is.null(names(r$sample$effect_mean)))
+    expect_equal(dim(r$sample$effects), c(r$sample$draws, 24L))
+    expect_true(all(is.finite(r$sample$effects)))
+  }
+  # SAEM places its chains, and the optimisation before it runs no
   # iterations, so its verdict ("no progress ... Treat this fit as failed") is
   # kept on the fit rather than raised, and neither it nor that optimisation's
-  # log likelihood is reported as the sampled fit's.
+  # log likelihood is reported as the sampled fit's. The map's placement is
+  # optimised, and the same holds of it.
   expect_false(any(grepl("Treat this fit as failed", warned)))
-  expect_true(any(grepl("no progress", reduced$optim$placement_warnings)))
-  printed <- utils::capture.output(print(reduced))
-  expect_false(any(grepl("^  converged:|log likelihood", printed)))
-  s <- summary(reduced)
-  expect_null(s$loglik)
-  expect_null(s$aic)
+  expect_true(any(grepl("no progress", saem$optim$placement_warnings)))
+  for (r in list(reduced, saem)) {
+    printed <- utils::capture.output(print(r))
+    expect_false(any(grepl("^  converged:|log likelihood", printed)))
+    s <- summary(r)
+    expect_null(s$loglik)
+    expect_null(s$aic)
+  }
 
   # Nested: a study-level effect on the manifest mean too -- 12 subjects x 2
   # plus 4 studies x 1, labelled from the engine's deviation layout.
