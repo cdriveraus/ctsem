@@ -436,22 +436,29 @@ if (identical(Sys.getenv('NOT_CRAN'), 'true')) {
       abs(correlation(withcell(2, 1, 0.5))), tolerance = 1e-6)
   })
 
-  # ctIdentify deliberately assesses the *unrestricted* covariance, whatever
-  # ctFit's poprank default is, and this pins that rather than leaving it to be
-  # "fixed" later. Its job is to say what the data identifies -- nweak on the
-  # full-rank model is exactly why poprank exists, and reporting the reduced
-  # model's 0 instead would hide the finding. Routing it through
-  # ctFit(fit = FALSE) to pick up poprank was tried and reverted: it made
-  # ctIdentify consume random numbers (it is documented as leaving the RNG
-  # alone), broke intoverpop='laplace' through it, and changed an error
-  # message, for a diagnostic that was already answering the right question.
-  test_that('ctIdentify assesses the unrestricted covariance, not the reduced one', {
+  # ctIdentify checks the model ctFit() would fit with the same arguments,
+  # rank included (decided 2026-10-27; from a277549f until then it checked the
+  # unrestricted covariance whatever ctFit's rank, when augmented was ctFit's
+  # route). On the augmented route the default rank removes the direction the
+  # filter cannot see, so that model is identified; poprank = NA asks for the
+  # full covariance and its flat direction. The rank reaches ctIdentify
+  # through `...`, so it has no argument of its own. At its default three
+  # points: at the origin every loading is zero, so the reduced model's
+  # loadings are flat there alone, which one point would report as flat.
+  test_that('ctIdentify checks the rank ctFit fits, and the full one on request', {
     dat <- poprank_data(nsub = 60L)
-    id <- suppressWarnings(suppressMessages(ctIdentify(dat, poprank_model(),
-      nstart = 1L, cores = 1L, verbose = 0L)))
-    # three population parameters, and the flat direction poprank removes
-    expect_equal(id$npar, 6L)
-    expect_gte(id$nweak, 1L)
+    check <- function(...) suppressWarnings(suppressMessages(ctIdentify(dat,
+      poprank_model(), cores = 1L, verbose = 0L, intoverpop = 'augmented', ...)))
+    reduced <- check()
+    full <- check(poprank = NA)
+    # three population parameters at full rank, one fewer once the diffusion
+    # effect is a regression on the drift's
+    expect_equal(full$npar, 6L)
+    expect_equal(reduced$npar, 5L)
+    expect_gte(full$nweak, 1L)
+    expect_true('popsd_df11' %in% full$parameters)
+    expect_equal(reduced$nweak, 0L)
+    expect_length(reduced$parameters, 0L)
     expect_false('poprank' %in% names(formals(ctIdentify)))
   })
 
