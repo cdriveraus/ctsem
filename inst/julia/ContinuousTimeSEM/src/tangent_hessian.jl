@@ -44,13 +44,13 @@ continuous time, without integrated deviations or cells evaluated by row), no
 population block, deviations integrated whole or profiled (not at fixed
 values), and no forward-mode subjects. Cells evaluated by row are covered,
 with the iterated update a nonlinear measurement takes and the moment-matched
-prediction a bending drift takes, but not beside integrated deviations.
+prediction a bending drift takes, and categorical indicators, but neither
+beside integrated deviations.
 """
 function _tan_refusal(objective::CTSEMObjective, hybrid_mode::Integer=_HYBRID_PROFILE)
     subjects = objective.subject_objectives
     isempty(subjects) && return "no subjects"
     sp = objective.params
-    any(t -> t != 0, sp.manifesttype) && return "categorical indicators"
     if _tan_rows_model(sp)
         ws = _init_continuous_ekf_workspace(Float64, sp)
         sp.stationary && return "stationary moments beside cells evaluated by row"
@@ -72,9 +72,14 @@ function _tan_refusal(objective::CTSEMObjective, hybrid_mode::Integer=_HYBRID_PR
     return nothing
 end
 
-"""Whether any of the model's cells is evaluated by row."""
+"""
+Whether the subjects' sweeps run by row (`tangent_rows.jl`): a cell evaluated
+by row, or a categorical indicator, whose update runs as the engine's own at
+the Hessian's dual.
+"""
 _tan_rows_model(sp) = any(sp.predict_transforms_indices) ||
-    any(sp.update_transforms_indices) || any(sp.td_transforms_indices)
+    any(sp.update_transforms_indices) || any(sp.td_transforms_indices) ||
+    any(t -> t != 0, sp.manifesttype)
 
 """The subject values and cells at `xv` into `aws`'s filter workspace; the cells."""
 function _tan_layer_values!(aws, sp, xv::AbstractVector, tipreds)
@@ -290,7 +295,7 @@ _tan_model_like(mod::TanModel{W}) where {W} = TanModel{W}(mod.n, mod.m,
     TanMat{W}(mod.n, mod.n), TanVec{W}(mod.n), TanMat{W}(mod.n, mod.n),
     TanMat{W}(mod.m, mod.n), TanMat{W}(mod.m, mod.n), TanVec{W}(mod.m),
     TanMat{W}(mod.m, mod.m), TanVec{W}(mod.n), TanMat{W}(mod.n, mod.n), TanVec{W}(mod.n),
-    Ref(false), mod.ntd, TanMat{W}(mod.n, mod.ntd), TanMat{W}(mod.n, mod.n),
+    Ref(false), mod.gmask, mod.ntd, TanMat{W}(mod.n, mod.ntd), TanMat{W}(mod.n, mod.n),
     mod.nh, mod.hyb, mod.G, mod.wlog)
 
 """
@@ -373,8 +378,10 @@ function _tan_hessian_columns!(H::Matrix{Float64}, objective::CTSEMObjective,
     # The deviations the filter integrates, whole (`_HYBRID_FULL`) or profiled.
     h = sp.hybrid
     nh = _hybrid_on(h) && hybrid_mode != _HYBRID_OFF ? _hybrid_items(h) : 0
-    mod = TanModel(n, m, W; ct=sp.continuous_time, stat=sp.stationary, rows=rows, ntd=ntd,
-        hyb=h, nh=nh, wlog=hybrid_mode == _HYBRID_FULL ? 1.0 : 0.0)
+    gmask = any(t -> t != 0, sp.manifesttype) ?
+        Bool[k > length(sp.manifesttype) || sp.manifesttype[k] == 0 for k in 1:m] : Bool[]
+    mod = TanModel(n, m, W; ct=sp.continuous_time, stat=sp.stationary, rows=rows,
+        gmask=gmask, ntd=ntd, hyb=h, nh=nh, wlog=hybrid_mode == _HYBRID_FULL ? 1.0 : 0.0)
     Lb = h.block && nh > 0 ? zeros(length(h.perm), length(h.perm)) : zeros(0, 0)
     if nh > 0 && h.block
         if !_hybrid_block_factor!(Lb, h, x)

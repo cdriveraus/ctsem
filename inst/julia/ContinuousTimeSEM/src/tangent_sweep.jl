@@ -137,6 +137,7 @@ struct TanModel{W}
     LAMBDA::TanMat{W}; Jy::TanMat{W}; MM::TanVec{W}; R::TanMat{W}
     T0M::TanVec{W}; T0V::TanMat{W}
     mc::TanVec{W}; momon::Base.RefValue{Bool}
+    gmask::Vector{Bool}         # the Gaussian manifests (empty: every one)
     ntd::Int
     TDE::TanMat{W}; Jtd::TanMat{W}
     nh::Int
@@ -145,10 +146,11 @@ struct TanModel{W}
     wlog::Float64
 end
 TanModel(n::Int, m::Int, W::Int; ct::Bool=true, stat::Bool=false, rows::Bool=false,
-    ntd::Int=0, hyb::CTSEMHybrid=CTSEMHybrid(), nh::Int=0, wlog::Float64=1.0) =
+    gmask::Vector{Bool}=Bool[], ntd::Int=0, hyb::CTSEMHybrid=CTSEMHybrid(), nh::Int=0,
+    wlog::Float64=1.0) =
     TanModel{W}(n, m, ct, stat, rows, TanMat{W}(n, n), TanMat{W}(n, n), TanMat{W}(n, n),
     TanVec{W}(n), TanMat{W}(n, n), TanMat{W}(m, n), TanMat{W}(m, n), TanVec{W}(m),
-    TanMat{W}(m, m), TanVec{W}(n), TanMat{W}(n, n), TanVec{W}(n), Ref(false),
+    TanMat{W}(m, m), TanVec{W}(n), TanMat{W}(n, n), TanVec{W}(n), Ref(false), gmask,
     ntd, TanMat{W}(n, ntd), TanMat{W}(n, n), nh, hyb, TanMat{W}(nh, nh), wlog)
 
 """
@@ -349,8 +351,9 @@ function _tan_update!(x::TanVec{W}, P::TanMat{W}, rec::TanUpdRec{W}, fw::TanForw
     n = fw.n
     o = rec.o
     empty!(o)
+    # The Gaussian manifests observed; a categorical row's took its own update.
     for i in eachindex(y)
-        isfinite(y[i]) && push!(o, i)
+        isfinite(y[i]) && (isempty(mod.gmask) || mod.gmask[i]) && push!(o, i)
     end
     mo = length(o)
     mo == 0 && return true

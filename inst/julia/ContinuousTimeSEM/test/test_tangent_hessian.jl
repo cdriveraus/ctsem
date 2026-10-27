@@ -15,7 +15,7 @@ isdefined(@__MODULE__, :_adjoint_test_dataframe) ||
 
 function _tangent_test_model(; driftscale=1.0, max_timestep=Inf, perrow=false, ti=false,
     td=false, stationary=false, continuous=true, rows=false, relin=false, plan=-1,
-    moment=false)
+    moment=false, cat=false)
     drift = [-0.6 0.2; 0.1 -0.5]
     lambda = [1.0 0.0; 0.7 0.0; 0.0 1.0]
     # `driftscale` shrinks every drift cell: near zero, the filter integrates
@@ -84,6 +84,12 @@ function _tangent_test_model(; driftscale=1.0, max_timestep=Inf, perrow=false, t
         update[(:LAMBDA, 2, 1)] = "PARS[1,1] + 0.3 * state[1]"
         update[(:Jy, 2, 1)] = "PARS[1,1] + 0.6 * state[1]"
     end
+    # `cat`: the second manifest ordinal in three categories, its thresholds
+    # parameters 27 and 28, and the third binary.
+    if cat
+        free[(:THRESHOLDS, 2, 1)] = (27, "param[27]")
+        free[(:THRESHOLDS, 2, 2)] = (28, "log1p_exp(param[28])")
+    end
     # `td`: a TD predictor whose effects on both states are parameters 23 and 24.
     if td
         free[(:TDPREDEFFECT, 1, 1)] = (23, "param[23]")
@@ -94,7 +100,8 @@ function _tangent_test_model(; driftscale=1.0, max_timestep=Inf, perrow=false, t
         manifestmeans=zeros(3, 1), manifestvar=Matrix(0.3I, 3, 3),
         t0var=[1.0 0.0; 0.2 1.0], t0means=zeros(2, 1), free=free,
         tdpredeffect=td ? zeros(2, 1) : nothing, jtd=td ? [1.0 0.0; 0.0 1.0] : nothing,
-        pars=rows ? zeros(2, 1) : zeros(1, 1), predict=predict, update=update)
+        pars=rows ? zeros(2, 1) : zeros(1, 1), predict=predict, update=update,
+        extra=cat ? [:THRESHOLDS => zeros(3, 2)] : Pair{Symbol,Matrix{Float64}}[])
     # `ti`: two TI predictors, with effects on a drift cell, a diffusion sd and
     # correlation, an intercept, a loading, a mean, a measurement sd, an
     # initial mean and an initial sd -- each subject a layer of its own.
@@ -104,8 +111,9 @@ function _tangent_test_model(; driftscale=1.0, max_timestep=Inf, perrow=false, t
     # false, the same cells as a discrete-time model.
     sp = ekf_from_data_frame(df, ti ? tieffects : DataFrame(parameter=Int[],
         predictor=Int[], coefficient=Int[]); continuous_time=continuous,
-        stationary=stationary)
-    npar = ti ? 31 : rows ? 26 : td ? 24 : 22
+        stationary=stationary, manifesttype=cat ? [0, 2, 1] : Int[],
+        ncategories=cat ? [0, 3, 2] : Int[])
+    npar = ti ? 31 : cat ? 28 : rows ? 26 : td ? 24 : 22
     starts = Int[]
     times = Float64[]
     columns = Vector{Float64}[]
@@ -116,6 +124,10 @@ function _tangent_test_model(; driftscale=1.0, max_timestep=Inf, perrow=false, t
         for r in 1:(5 + s % 4)
             push!(times, t)
             y = [0.5 * sin(1.3s + r), 0.4 * cos(0.7s - 2r), 0.3 * sin(s * r)]
+            if cat
+                y[2] = 1.0 + (y[2] > -0.15) + (y[2] > 0.2)
+                y[3] = y[3] > 0 ? 1.0 : 0.0
+            end
             (s + r) % 5 == 0 && (y[2] = NaN)
             (s + 2r) % 7 == 0 && (y[1] = NaN)
             s == 3 && r == 2 && (y .= NaN)
@@ -137,6 +149,7 @@ function _tangent_test_model(; driftscale=1.0, max_timestep=Inf, perrow=false, t
     ti && append!(values, [0.1, -0.15, 0.2, 0.05, -0.1, 0.12, 0.08, -0.2, 0.15])
     td && append!(values, [0.7, -0.4])
     rows && append!(values, [0.3, -0.2])
+    cat && (append!(values, zeros(28 - length(values))); values[27:28] = [-0.3, 0.2])
     return objective, values
 end
 
@@ -156,7 +169,8 @@ end
         (rows=true, max_timestep=0.4), (rows=true, continuous=false), (perrow=true,),
         (rows=true, relin=true), (rows=true, relin=true, plan=2),
         (rows=true, moment=true), (rows=true, moment=true, relin=true, max_timestep=0.4),
-        (rows=true, moment=true, continuous=false))
+        (rows=true, moment=true, continuous=false), (cat=true,), (cat=true, td=true),
+        (cat=true, rows=true, relin=true), (cat=true, continuous=false, max_timestep=0.4))
         objective, values = _tangent_test_model(; opts...)
         n = length(values)
         @test ContinuousTimeSEM._tan_refusal(objective) === nothing

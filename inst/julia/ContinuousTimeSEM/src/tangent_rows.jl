@@ -213,6 +213,43 @@ function _tan_rows_moment!(R::TanRows{W,DW}, x::TanVec{W}, P::TanMat{W}, mod::Ta
 end
 
 """
+Row `t`'s categorical observations (`_ekf_binary_rows!`), the engine's own at
+the Hessian's dual on the worker's workspace: the state and covariance in as
+duals and back, the row's log likelihood's share into `sw.ll`, the record on
+the workspace's tape (program kind 7). Returns the snapshot, or -1 where an
+observation has no support.
+"""
+function _tan_rows_categorical!(x::TanVec{W}, P::TanMat{W}, R::TanRows{W,DW},
+    mod::TanModel{W}, sw::TanSweep{W}, sp, Y::AbstractMatrix, t::Int, snap::Int,
+    nl::Int) where {W,DW}
+    any(k -> isfinite(Y[k, t]) && !mod.gmask[k], axes(Y, 1)) || return snap
+    awsW = R.awsW
+    ws = awsW.ekf_ws
+    n = sw.n
+    observed = Int[k for k in axes(Y, 1) if isfinite(Y[k, t])]
+    _tan_to_duals!(ws.state, x)
+    _tan_to_duals!(ws.P_predict.data, P)
+    pars = CTSEMPars(R.allW, sp.parameter_axis)
+    record = _record_binary!(awsW.tape, ws, pars, Y, t, _ekf_binary_subset(ws, observed), n)
+    ll = _ekf_binary_rows!(ws, pars, Y, t, observed, nothing, record)
+    ll === nothing && return -1
+    _tan_from_lanes!(x, view(ws.state, 1:n), nl)
+    _tan_from_lanes!(P, ws.P_predict.data, nl)
+    sw.ll[1] += ForwardDiff.value(ll)
+    p = ForwardDiff.partials(ll)
+    @inbounds for w in 1:nl
+        sw.ll[1 + w] += p[w]
+    end
+    push!(R.prog, (7, awsW.tape.nbinaries, snap))
+    return snap
+end
+
+"""`X`'s values and tangents set from the duals `D`, lanes past `nl` zero."""
+function _tan_from_lanes!(X::Union{TanMat{W},TanVec{W}}, D::AbstractArray, nl::Int) where {W}
+    return _tan_lanes!(X, D, nl)
+end
+
+"""
 The matrices' cotangents in `acc` moved onto the cells' (`R.allbar`), the
 covariances through their constructions at `s`'s cells (T0VAR's at the
 subject's own, which no group writes), and `acc` emptied.
@@ -249,6 +286,7 @@ function _tan_sweep_rows!(acc::TanAcc{W}, Hb::Matrix{Float64}, sw::TanSweep{W},
     _ctsem_tipred_bar_reset!(awsW, so.tipreds, _ctsem_tipred_length(so.tipreds))
     awsW.tape.ngroups = 0
     awsW.tape.nmoments = 0
+    awsW.tape.nbinaries = 0
     mod.momon[] = false
     empty!(R.prog)
     R.ng = 0
@@ -265,6 +303,7 @@ function _tan_sweep_rows!(acc::TanAcc{W}, Hb::Matrix{Float64}, sw::TanSweep{W},
     R.nrl = 0
     relin = awsW.ekf_ws.relinearise && _CTSEM_RELINEARISE[]
     moment = awsW.ekf_ws.moment && _CTSEM_MOMENT_PREDICT[]
+    cat = !isempty(mod.gmask)
     for t in 1:T
         if t == 1
             # The predict group once at the first row, with no prediction.
@@ -294,7 +333,13 @@ function _tan_sweep_rows!(acc::TanAcc{W}, Hb::Matrix{Float64}, sw::TanSweep{W},
         t > length(sw.upds) && push!(sw.upds, TanUpdRec(n, sw.m, sw.nh, W))
         upd = sw.upds[t]
         upd.relin = 0
-        if relin && any(isfinite, view(Y, :, t))
+        # A row's categorical observations first, each an exact scalar
+        # conditioning, then its Gaussian ones from there.
+        if cat && _tan_rows_categorical!(x, P, R, mod, sw, sp, Y, t, snap, nl) < 0
+            return _TAN_INVALID
+        end
+        if relin && any(k -> isfinite(Y[k, t]) && (isempty(mod.gmask) || mod.gmask[k]),
+            axes(Y, 1))
             snap = _tan_relin_row!(x, P, upd, R, mod, sw, sp, so, i, t, times[t], dt, snap,
                 nl, view(Y, :, t))
             snap < 0 && return _TAN_INVALID
@@ -324,7 +369,17 @@ function _tan_sweep_rows!(acc::TanAcc{W}, Hb::Matrix{Float64}, sw::TanSweep{W},
             _tan_snap_load!(mod, s == 0 ? R.base : R.snaps[s])
             held = s
         end
-        if kind == 6
+        if kind == 7
+            # A row's categorical observations, by the engine's own reverse at
+            # the Hessian's dual (`_reverse_binary!`).
+            _tan_to_duals!(R.xbarW, xbar)
+            _tan_to_duals!(R.PbarW, Pbar)
+            _reverse_binary!(R.xbarW, R.PbarW, CTSEMPars(R.allbar, sp.parameter_axis),
+                awsW.tape.binaries[idx], n)
+            _tan_from_lanes!(xbar, R.xbarW, nl)
+            _tan_from_lanes!(Pbar, R.PbarW, nl)
+            continue
+        elseif kind == 6
             # A moment-matched step's cubature: the averaged cells' cotangents
             # onto the cells, its correction's from the prediction's reverse,
             # then through the points to the mean and the covariance.
@@ -445,7 +500,8 @@ function _tan_relin_row!(x::TanVec{W}, P::TanMat{W}, upd::TanUpdRec{W},
     time::Float64, dt::Float64, snap::Int, nl::Int,
     y::AbstractVector{Float64}) where {W,DW}
     n = sw.n
-    o = Int[k for k in eachindex(y) if isfinite(y[k])]
+    o = Int[k for k in eachindex(y) if isfinite(y[k]) &&
+        (isempty(mod.gmask) || mod.gmask[k])]
     mo = length(o)
     rs = _tan_row(sw.fw, mo)
     # The covariance the prior evaluated, and the prior mean.
