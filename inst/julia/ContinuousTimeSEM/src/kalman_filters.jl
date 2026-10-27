@@ -2019,8 +2019,9 @@ function _extended_kalman_filter_continuous!(
     _copy_lower_to_upper!(ws.P_predict.data, ws.state_dim)
     _apply_population_block!(ws, all_params)
     copyto!(ws.state, pars.T0MEANS)
-    _ekf_gaussian_call(ws, _hybrid_start!, _hybrid_start_categorical!, ws.hyb, sp.hybrid,
-        data, ws.state_dim, ws.manifest_dim)
+    _hybrid_inactive!(ws.hyb, sp.hybrid, _ekf_has_categorical(ws))
+    _ekf_gaussian_call(ws, _hybrid_start!, _ctsem_noop, ws.hyb, sp.hybrid, data,
+        ws.state_dim, ws.manifest_dim)
     # Split rather than handed a result that is `nothing` or the view: a union
     # of the two is not a bits union, so it was boxed on every traced subject
     # pass.

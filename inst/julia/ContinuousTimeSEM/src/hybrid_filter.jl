@@ -66,18 +66,19 @@ function _hybrid_fixed_gradient!(out::AbstractVector, base::Integer,
 end
 
 """
-    _hybrid_start_categorical!(hb, h, data, n, m)
+    _hybrid_inactive!(hb, h, categorical)
 
-`_hybrid_start!` in a model with a non-Gaussian indicator, which integrates
-nothing (`_ekf_gaussian_call`): the buffers say so, and a specification that
-asks for integrated deviations there is refused.
+The buffers before a pass's start says what it integrates (`_hybrid_start!`):
+nothing. A model with a non-Gaussian indicator stops here, as its filter has
+no hybrid hooks (`_ekf_gaussian_call`), and a specification that asks it for
+integrated deviations is refused.
 """
-function _hybrid_start_categorical!(hb::CTSEMHybridBuffers{T}, h::CTSEMHybrid, data,
-    n::Int, m::Int) where {T}
+function _hybrid_inactive!(hb::CTSEMHybridBuffers{T}, h::CTSEMHybrid,
+    categorical::Bool) where {T}
     hb.active = false
     hb.q = 0
     hb.half_logdet = zero(T)
-    _hybrid_on(h) && hb.mode != _HYBRID_OFF && _ekf_hybrid_refused()
+    categorical && _hybrid_on(h) && hb.mode != _HYBRID_OFF && _ekf_hybrid_refused()
     return nothing
 end
 
