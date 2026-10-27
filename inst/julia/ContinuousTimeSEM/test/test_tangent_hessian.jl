@@ -5,12 +5,14 @@ using DataFrames, ForwardDiff, LinearAlgebra
 # they agree to rounding. One model exercises what the hand route covers --
 # every drift cell, a cross-loading, correlated diffusion and measurement
 # errors, missing values and a row with none observed, substeps, unequal and
-# zero subject weights, a prior, and two chunks of columns.
+# zero subject weights, a prior, two chunks of columns, TI predictors whose
+# effects give each subject its own parameter layer, and a TD predictor.
 
 isdefined(@__MODULE__, :_adjoint_test_dataframe) ||
     include(joinpath(@__DIR__, "adjoint_fixtures.jl"))
 
-function _tangent_test_model(; driftscale=1.0, max_timestep=Inf, perrow=false)
+function _tangent_test_model(; driftscale=1.0, max_timestep=Inf, perrow=false, ti=false,
+    td=false)
     drift = [-0.6 0.2; 0.1 -0.5]
     lambda = [1.0 0.0; 0.7 0.0; 0.0 1.0]
     # `driftscale` shrinks every drift cell: near zero, the filter integrates
@@ -43,15 +45,28 @@ function _tangent_test_model(; driftscale=1.0, max_timestep=Inf, perrow=false)
     # `perrow`: JAx[1,1] read from DRIFT at every row, as a state-dependent
     # drift's Jacobian is, which the hand route refuses.
     perrow && delete!(free, (:JAx, 1, 1))
+    # `td`: a TD predictor whose effects on both states are parameters 23 and 24.
+    if td
+        free[(:TDPREDEFFECT, 1, 1)] = (23, "param[23]")
+        free[(:TDPREDEFFECT, 2, 1)] = (24, "param[24]")
+    end
     df = _adjoint_test_dataframe(drift=drift, jax=drift, cint=[0.1; -0.1;;],
         diffusion=[0.5 0.0; 0.1 0.4], lambda=lambda, jy=lambda,
         manifestmeans=zeros(3, 1), manifestvar=Matrix(0.3I, 3, 3),
         t0var=[1.0 0.0; 0.2 1.0], t0means=zeros(2, 1), free=free,
+        tdpredeffect=td ? zeros(2, 1) : nothing, jtd=td ? [1.0 0.0; 0.0 1.0] : nothing,
         predict=perrow ? Dict((:JAx, 1, 1) => "DRIFT[1,1]") : Dict())
-    sp = ekf_from_data_frame(df)
+    # `ti`: two TI predictors, with effects on a drift cell, a diffusion sd and
+    # correlation, an intercept, a loading, a mean, a measurement sd, an
+    # initial mean and an initial sd -- each subject a layer of its own.
+    tieffects = DataFrame(parameter=[1, 5, 6, 8, 10, 12, 14, 18, 20],
+        predictor=[1, 2, 1, 2, 1, 2, 1, 2, 1], coefficient=collect(23:31))
+    sp = ti ? ekf_from_data_frame(df, tieffects) : ekf_from_data_frame(df)
+    npar = ti ? 31 : td ? 24 : 22
     starts = Int[]
     times = Float64[]
     columns = Vector{Float64}[]
+    tdcolumns = Vector{Float64}[]
     for s in 1:6
         push!(starts, length(times) + 1)
         t = 0.0
@@ -62,15 +77,20 @@ function _tangent_test_model(; driftscale=1.0, max_timestep=Inf, perrow=false)
             (s + 2r) % 7 == 0 && (y[1] = NaN)
             s == 3 && r == 2 && (y .= NaN)
             push!(columns, y)
+            push!(tdcolumns, [r % 3 == 1 ? 1.0 : 0.4 * sin(s + r)])
             t += 0.3 + 0.9 * abs(sin(2.1s + 1.7r))
         end
     end
+    tipreds = ti ? [0.3 -1.1; -0.8 0.4; 1.2 0.9; 0.0 -0.5; 0.5 1.4; -1.3 -0.2] :
+        zeros(6, 0)
     objective = ctsem_objective(sp, starts, times, reduce(hcat, columns),
-        zeros(0, length(times)), zeros(6, 0), max_timestep;
-        prior_index=collect(1:22), prior_scale=fill(2.0, 22),
+        td ? reduce(hcat, tdcolumns) : zeros(0, length(times)), tipreds, max_timestep;
+        prior_index=collect(1:npar), prior_scale=fill(2.0, npar),
         subject_weights=[1.0, 2.0, 0.5, 1.0, 0.0, 1.5])
     values = [0.3, 0.15, -0.1, 0.2, -0.4, 0.2, -0.3, 0.1, -0.2, 0.6, 0.05, -0.1,
         0.15, -1.0, -0.8, -1.2, 0.1, 0.2, -0.1, 0.0, 0.3, -0.5]
+    ti && append!(values, [0.1, -0.15, 0.2, 0.05, -0.1, 0.12, 0.08, -0.2, 0.15])
+    td && append!(values, [0.7, -0.4])
     return objective, values
 end
 
@@ -85,8 +105,9 @@ function _tangent_dual_hessian(objective, values)
 end
 
 @testset "the hand-coded Hessian is the dual's" begin
-    for max_timestep in (Inf, 0.4)
-        objective, values = _tangent_test_model(max_timestep=max_timestep)
+    for (max_timestep, ti, td) in ((Inf, false, false), (0.4, false, false),
+        (Inf, true, false), (0.4, false, true))
+        objective, values = _tangent_test_model(max_timestep=max_timestep, ti=ti, td=td)
         n = length(values)
         @test ContinuousTimeSEM._tan_refusal(objective) === nothing
         H = zeros(n, n)

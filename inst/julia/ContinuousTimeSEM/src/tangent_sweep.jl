@@ -64,9 +64,11 @@ struct TanPredRec{W}
     affine::TanVec{W}       # CINT: DRIFT = JAx, so the offset reads no state
     dINT::TanVec{W}
     dt::Base.RefValue{Float64}
+    Xh::TanMat{W}           # the hybrid's columns in, and the intercepts' increment
+    Xinc::TanMat{W}
 end
-TanPredRec(n::Int, W::Int) = TanPredRec{W}(TanMat{W}(n, n), TanVec{W}(n), TanMat{W}(n, n), TanVec{W}(n),
-    TanVec{W}(n), Ref(0.0))
+TanPredRec(n::Int, nh::Int, W::Int) = TanPredRec{W}(TanMat{W}(n, n), TanVec{W}(n),
+    TanMat{W}(n, n), TanVec{W}(n), TanVec{W}(n), Ref(0.0), TanMat{W}(n, nh), TanMat{W}(n, nh))
 
 """
 What the reverse of an update reads (`CTSEMUpdateRecord`), with tangents: the
@@ -77,8 +79,10 @@ mutable struct TanUpdRec{W}
     P::TanMat{W}            # the predicted covariance, unridged
     x::TanVec{W}            # the predicted state
     y::TanVec{W}            # the observed values (no tangent)
+    Xh::TanMat{W}           # the hybrid's columns in
 end
-TanUpdRec(n::Int, m::Int, W::Int) = TanUpdRec{W}(Int[], TanMat{W}(n, n), TanVec{W}(n), TanVec{W}(m))
+TanUpdRec(n::Int, m::Int, nh::Int, W::Int) = TanUpdRec{W}(Int[], TanMat{W}(n, n),
+    TanVec{W}(n), TanVec{W}(m), TanMat{W}(n, nh))
 
 """
 An update's scratch for a row observing `mo` manifests: the gathered loadings,
@@ -90,25 +94,39 @@ struct TanRowScratch{W}
     Pr::TanMat{W}; PHt::TanMat{W}; S::TanMat{W}; Ui::TanMat{W}; Xc::TanMat{W}; Tc::TanMat{W}; F::Matrix{Float64}
     yt::TanVec{W}; e::TanVec{W}; a::TanVec{W}; Kb::TanMat{W}; K::TanMat{W}; Mm::TanMat{W}; nn1::TanMat{W}; nm1::TanMat{W}
     u::TanUpdate{W}
+    hr::TanHybRow{W}
 end
-function TanRowScratch(n::Int, mo::Int, W::Int)
+function TanRowScratch(n::Int, mo::Int, nh::Int, W::Int)
     T, V = TanMat{W}, TanVec{W}
     return TanRowScratch{W}(T(mo, n), V(mo), T(mo, mo),
         T(n, n), T(n, mo), T(mo, mo), T(mo, mo), T(mo, mo), T(mo, mo), zeros(mo, mo),
         V(mo), V(mo), V(mo), T(n, mo), T(n, mo), T(n, n), T(n, n), T(n, mo),
-        TanUpdate(n, mo, W))
+        TanUpdate(n, mo, W), TanHybRow(n, mo, nh, W))
 end
 
-"""The parameter matrices of a linear Gaussian model, with tangents."""
+"""
+The parameter matrices of a linear Gaussian model, with tangents, `ntd` TD
+predictors' among them; and where the filter integrates deviations, their
+spec, their factor `G` and the closing term's weight on the logdet (1 for the
+integral, 0 for the profile).
+"""
 struct TanModel{W}
     n::Int
     m::Int
     JAx::TanMat{W}; CINT::TanVec{W}; Qc::TanMat{W}
     LAMBDA::TanMat{W}; MM::TanVec{W}; R::TanMat{W}
     T0M::TanVec{W}; T0V::TanMat{W}
+    ntd::Int
+    TDE::TanMat{W}; Jtd::TanMat{W}
+    nh::Int
+    hyb::CTSEMHybrid
+    G::TanMat{W}
+    wlog::Float64
 end
-TanModel(n::Int, m::Int, W::Int) = TanModel{W}(n, m, TanMat{W}(n, n), TanVec{W}(n), TanMat{W}(n, n),
-    TanMat{W}(m, n), TanVec{W}(m), TanMat{W}(m, m), TanVec{W}(n), TanMat{W}(n, n))
+TanModel(n::Int, m::Int, W::Int; ntd::Int=0, hyb::CTSEMHybrid=CTSEMHybrid(), nh::Int=0,
+    wlog::Float64=1.0) = TanModel{W}(n, m, TanMat{W}(n, n), TanVec{W}(n), TanMat{W}(n, n),
+    TanMat{W}(m, n), TanVec{W}(m), TanMat{W}(m, m), TanVec{W}(n), TanMat{W}(n, n),
+    ntd, TanMat{W}(n, ntd), TanMat{W}(n, n), nh, hyb, TanMat{W}(nh, nh), wlog)
 
 """
 A block's forward state: the Lyapunov solution and the drift's factors, which
@@ -120,6 +138,7 @@ number of manifests a row observes.
 struct TanForward{W}
     n::Int
     m::Int
+    nh::Int
     fr::TanFrechet{W}
     ly::TanLyap{W}
     X::TanMat{W}                        # lyap(JAx, Qc)
@@ -134,7 +153,8 @@ struct TanForward{W}
     As::TanMat{W}; nn1::TanMat{W}; nn2::TanMat{W}; v1::TanVec{W}
     rows::Vector{Union{Nothing,TanRowScratch{W}}}
 end
-TanForward(n::Int, m::Int, W::Int) = TanForward{W}(n, m, TanFrechet(n, W), TanLyap(n, W),
+TanForward(n::Int, m::Int, nh::Int, W::Int) = TanForward{W}(n, m, nh, TanFrechet(n, W),
+    TanLyap(n, W),
     TanMat{W}(n, n), zeros(n, n), zeros(Int, n), Ref(0.0), Ref(0.0),
     zeros(_CTSEM_EXP_TABLE), [TanMat{W}(n, n) for _ in 1:_CTSEM_EXP_TABLE], Ref(0), Ref(1),
     TanMat{W}(n, n), TanMat{W}(n, n), TanMat{W}(n, n), TanVec{W}(n),
@@ -144,7 +164,7 @@ TanForward(n::Int, m::Int, W::Int) = TanForward{W}(n, m, TanFrechet(n, W), TanLy
 function _tan_row(fw::TanForward{W}, mo::Int) where {W}
     r = fw.rows[mo]
     r === nothing || return r
-    r = TanRowScratch(fw.n, mo, W)
+    r = TanRowScratch(fw.n, mo, fw.nh, W)
     fw.rows[mo] = r
     return r
 end
@@ -187,7 +207,7 @@ recorded into `rec`. `false` where the filter would take the interval as a
 series (`_series_needed`), which this does not cover.
 """
 function _tan_predict!(x::TanVec{W}, P::TanMat{W}, rec::TanPredRec{W}, fw::TanForward{W},
-    mod::TanModel{W}, dt::Float64) where {W}
+    mod::TanModel{W}, dt::Float64, hs::TanHybState{W}) where {W}
     (_series_needed(fw.minpivot[], dt) || _series_needed(fw.conditioning[], dt)) &&
         return false
     A = _tan_exp_cached!(fw, mod, dt)
@@ -214,6 +234,8 @@ function _tan_predict!(x::TanVec{W}, P::TanMat{W}, rec::TanPredRec{W}, fw::TanFo
     _tan_comb!(P, ((1.0, fw.nn2), (1.0, fw.X)))
     _tan_mulNT!(P, fw.nn1, A, -1.0, true)
     _tan_lower_to_upper!(P)
+    mod.nh > 0 && _tan_hybrid_predict!(hs, rec.Xh, rec.Xinc, mod.hyb, A, mod.JAx, fw.FJ,
+        fw.pivJ)
     return true
 end
 
@@ -224,7 +246,8 @@ tangents). A row observing nothing leaves the state as it is. `false` where S
 does not factor.
 """
 function _tan_update!(x::TanVec{W}, P::TanMat{W}, rec::TanUpdRec{W}, fw::TanForward{W},
-    mod::TanModel{W}, y::AbstractVector{Float64}, ll::Vector{Float64}) where {W}
+    mod::TanModel{W}, y::AbstractVector{Float64}, ll::Vector{Float64},
+    hs::TanHybState{W}) where {W}
     n = fw.n
     o = rec.o
     empty!(o)
@@ -241,6 +264,7 @@ function _tan_update!(x::TanVec{W}, P::TanMat{W}, rec::TanUpdRec{W}, fw::TanForw
     _tan_setnz!(rec.y, false)
     _tan_copy!(rec.P, P)
     _tan_copy!(rec.x, x)
+    mod.nh > 0 && _tan_copy!(rec.Xh, hs.X)
     allstates = 1:n
     H, MM, R = rs.H, rs.MM, rs.R
     _tan_gather!(H, mod.LAMBDA, o, allstates)
@@ -298,6 +322,7 @@ function _tan_update!(x::TanVec{W}, P::TanMat{W}, rec::TanUpdRec{W}, fw::TanForw
     _tan_mul!(rs.nm1, rs.K, R)
     _tan_mulNT!(P, rs.nm1, rs.K, true, true)
     _tan_lower_to_upper!(P)
+    mod.nh > 0 && _tan_hybrid_update!(hs, rs.hr, mod.hyb, o, H, Ui, e, rs.K)
     return true
 end
 
@@ -310,12 +335,15 @@ struct TanAcc{W}
     JAx::TanMat{W}; CINT::TanVec{W}; Qc::TanMat{W}
     LAMBDA::TanMat{W}; MM::TanVec{W}; R::TanMat{W}
     T0M::TanVec{W}; T0V::TanMat{W}
+    TDE::TanMat{W}; Jtd::TanMat{W}
+    Gbar::TanMat{W}             # the hybrid's factor's
     queue::Dict{Float64,Int}    # interval -> its slot in Abars
     Abars::Vector{TanMat{W}}
 end
-TanAcc(n::Int, m::Int, W::Int) = TanAcc{W}(TanMat{W}(n, n), TanVec{W}(n), TanMat{W}(n, n),
-    TanMat{W}(m, n), TanVec{W}(m), TanMat{W}(m, m), TanVec{W}(n), TanMat{W}(n, n),
-    Dict{Float64,Int}(), TanMat{W}[])
+TanAcc(n::Int, m::Int, ntd::Int, nh::Int, W::Int) = TanAcc{W}(TanMat{W}(n, n),
+    TanVec{W}(n), TanMat{W}(n, n), TanMat{W}(m, n), TanVec{W}(m), TanMat{W}(m, m),
+    TanVec{W}(n), TanMat{W}(n, n), TanMat{W}(n, ntd), TanMat{W}(n, n),
+    TanMat{W}(nh, nh), Dict{Float64,Int}(), TanMat{W}[])
 
 function _tan_zero!(X)
     fill!(X.v, 0.0)
@@ -325,7 +353,8 @@ end
 
 """Every cotangent zero and the queue empty."""
 function _tan_acc_zero!(acc::TanAcc)
-    for X in (acc.JAx, acc.CINT, acc.Qc, acc.LAMBDA, acc.MM, acc.R, acc.T0M, acc.T0V)
+    for X in (acc.JAx, acc.CINT, acc.Qc, acc.LAMBDA, acc.MM, acc.R, acc.T0M, acc.T0V,
+        acc.TDE, acc.Jtd, acc.Gbar)
         _tan_zero!(X)
     end
     empty!(acc.queue)
@@ -342,6 +371,9 @@ function _tan_acc_add!(acc::TanAcc{W}, b::TanAcc{W}) where {W}
     _tan_comb!(acc.R, ((1.0, b.R),), true)
     _tan_lincomb!(acc.T0M, true, acc.T0M, true, b.T0M)
     _tan_comb!(acc.T0V, ((1.0, b.T0V),), true)
+    _tan_comb!(acc.TDE, ((1.0, b.TDE),), true)
+    _tan_comb!(acc.Jtd, ((1.0, b.Jtd),), true)
+    _tan_comb!(acc.Gbar, ((1.0, b.Gbar),), true)
     for (dt, k) in b.queue
         _tan_enqueue!(acc, dt, b.Abars[k], 1.0)
     end
@@ -395,11 +427,14 @@ direction queued by interval.
 """
 function _tan_reverse_predict!(xbar::TanVec{W}, Pbar::TanMat{W}, rec::TanPredRec{W},
     rv::TanPredRev{W}, fw::TanForward{W}, mod::TanModel{W}, acc::TanAcc{W},
-    w::Float64) where {W}
+    w::Float64, hs::TanHybState{W}) where {W}
     A, JAx, X = rec.A, mod.JAx, fw.X
     Abar, JAxbar, Ps = rv.Abar, rv.JAxbar, rv.Ps
-    # The mean: x+ = A x + dINT.
+    _tan_zero!(JAxbar)
+    # The mean: x+ = A x + dINT; and the hybrid's columns, X+ = A X + Xinc.
     _tan_ger!(Abar, true, xbar, rec.x, false)
+    mod.nh > 0 && _tan_hybrid_reverse_predict!(hs, mod.hyb, rec.Xh, rec.Xinc, A, Abar,
+        JAxbar, rv.JT, rv.FT, rv.pivT)
     _tan_mulTvec!(rv.xnew, A, xbar)
     # The covariance: P+ = A (P + eps I) A' + dDIFF.
     _tan_sym!(Ps, Pbar)
@@ -423,7 +458,7 @@ function _tan_reverse_predict!(xbar::TanVec{W}, Pbar::TanMat{W}, rec::TanPredRec
     # dINT = JAx \ s, s = A affine - affine: sbar = JAx' \ dINTbar.
     _tan_copy!(rv.sbar, xbar)
     _tan_solve!(rv.sbar, rv.FT, rv.pivT, rv.JT)
-    _tan_ger!(JAxbar, -1.0, rv.sbar, rec.dINT, false)
+    _tan_ger!(JAxbar, -1.0, rv.sbar, rec.dINT, true)
     _tan_mulTvec!(rv.affbar, A, rv.sbar)
     _tan_lincomb!(rv.affbar, true, rv.affbar, -1.0, rv.sbar)
     _tan_ger!(Abar, true, rv.sbar, rec.affine, true)
@@ -456,11 +491,71 @@ struct TanSweep{W}
     sT::TanMat{W}               # dt JAx', the flush's argument
     ll::Vector{Float64}         # the log likelihood and its W tangents
     first::Vector{Int}          # each row's first prediction record
+    nh::Int
+    hs::TanHybState{W}
+    tdP::Vector{TanMat{W}}      # each row's covariance before its TD impulse
+    tdv::TanVec{W}              # a row's TD predictors (no tangent)
+    tdn1::TanMat{W}; tdn2::TanMat{W}
 end
-TanSweep(n::Int, m::Int, W::Int) = TanSweep{W}(n, m, TanForward(n, m, W), TanPredRev(n, W),
+TanSweep(n::Int, m::Int, ntd::Int, nh::Int, W::Int) = TanSweep{W}(n, m,
+    TanForward(n, m, nh, W), TanPredRev(n, W),
     TanPredRec{W}[], TanUpdRec{W}[],
     TanVec{W}(n), TanMat{W}(n, n), TanVec{W}(n), TanMat{W}(n, n), TanMat{W}(n, n), zeros(1 + W),
-    Int[])
+    Int[], nh, TanHybState(n, nh, W), TanMat{W}[], TanVec{W}(ntd), TanMat{W}(n, n),
+    TanMat{W}(n, n))
+
+"""
+A row's TD impulse (`_apply_td_impulse!`): `x += TDE u`, `P = Jtd P Jtd'`, with
+`u` the row's predictors `td`, the covariance before it recorded for row `t`;
+and a predictor effect the filter integrates (`kind` 4) gains `u` in its
+column at its latent (`_hybrid_td_impulse!`).
+"""
+function _tan_td!(x::TanVec{W}, P::TanMat{W}, sw::TanSweep{W}, mod::TanModel{W},
+    td::AbstractVector{Float64}, t::Int) where {W}
+    tdv = sw.tdv
+    @inbounds for j in eachindex(td)
+        tdv.v[j] = td[j]
+    end
+    _tan_setnz!(tdv, false)
+    t > length(sw.tdP) && push!(sw.tdP, TanMat{W}(sw.n, sw.n))
+    _tan_copy!(sw.tdP[t], P)
+    _tan_mulvec!(x, mod.TDE, tdv, true, true)
+    _tan_mul!(sw.tdn1, mod.Jtd, P)
+    _tan_mulNT!(P, sw.tdn1, mod.Jtd)
+    if mod.nh > 0
+        h = mod.hyb
+        @inbounds for k in eachindex(h.kind)
+            h.kind[k] == 4 && (sw.hs.X.v[h.target[k], k] += td[h.pred[k]])
+        end
+    end
+    return nothing
+end
+
+"""
+Undo row `t`'s TD impulse (`_reverse_td!`): `TDE`'s and `Jtd`'s cotangents into
+`acc`, times `w`; `xbar` passes through, `Pbar <- Jtd' Ps Jtd`; the hybrid's
+columns' cotangent passes through too.
+"""
+function _tan_reverse_td!(xbar::TanVec{W}, Pbar::TanMat{W}, sw::TanSweep{W},
+    mod::TanModel{W}, acc::TanAcc{W}, w::Float64, td::AbstractVector{Float64},
+    t::Int) where {W}
+    tdv = sw.tdv
+    @inbounds for j in eachindex(td)
+        tdv.v[j] = td[j]
+    end
+    _tan_setnz!(tdv, false)
+    _tan_ger!(acc.TDE, w, xbar, tdv, true)
+    Ps = sw.rv.Ps
+    _tan_sym!(Ps, Pbar)
+    # Jtd_bar = Ps Jtd P' + Ps' Jtd P, P the covariance before the impulse.
+    _tan_mul!(sw.tdn1, Ps, mod.Jtd)
+    _tan_mulNT!(sw.tdn2, sw.tdn1, sw.tdP[t])
+    _tan_mul!(sw.tdn2, sw.tdn1, sw.tdP[t], true, true)
+    _tan_comb!(acc.Jtd, ((w, sw.tdn2),), true)
+    _tan_mulTN!(sw.tdn1, mod.Jtd, Ps)
+    _tan_mul!(Pbar, sw.tdn1, mod.Jtd)
+    return nothing
+end
 
 """What a block's subjects share: `_tan_forward_begin!`, and JAx' and its factors."""
 function _tan_sweep_begin!(sw::TanSweep{W}, mod::TanModel{W}) where {W}
@@ -474,13 +569,14 @@ end
 
 """
 One subject, weight `w`: `times`, the observations `Y` (m x T, NaN where
-missing) and the filter's substep rule (`_ctsem_substeps`). Adds its
-cotangents, times `w`, into `acc` and queues its exponential directions there;
-leaves its log likelihood in `sw.ll`. `_tan_sweep_begin!` first, once a block.
+missing), its TD predictors `TD` (ntd x T) and the filter's substep rule
+(`_ctsem_substeps`). Adds its cotangents, times `w`, into `acc` and queues its
+exponential directions there; leaves its log likelihood in `sw.ll`.
+`_tan_sweep_begin!` first, once a block.
 """
 function _tan_sweep!(acc::TanAcc{W}, sw::TanSweep{W}, mod::TanModel{W},
-    times::AbstractVector{Float64}, Y::AbstractMatrix{Float64}, rule,
-    w::Float64) where {W}
+    times::AbstractVector{Float64}, Y::AbstractMatrix{Float64},
+    TD::AbstractMatrix{Float64}, rule, w::Float64) where {W}
     n, fw, rv = sw.n, sw.fw, sw.rv
     T = length(times)
     # The predictions, row by row: a row's substeps in order, then its update.
@@ -490,6 +586,8 @@ function _tan_sweep!(acc::TanAcc{W}, sw::TanSweep{W}, mod::TanModel{W},
     _tan_copy!(x, mod.T0M)
     _tan_copy!(P, mod.T0V)
     fill!(sw.ll, 0.0)
+    hs = sw.hs
+    mod.nh > 0 && _tan_hybrid_start!(hs, mod.hyb)
     for t in 1:T
         first[t] = npred + 1
         if t > 1
@@ -498,14 +596,21 @@ function _tan_sweep!(acc::TanAcc{W}, sw::TanSweep{W}, mod::TanModel{W},
             h = dtrow / k
             for _ in 1:k
                 npred += 1
-                npred > length(sw.preds) && push!(sw.preds, TanPredRec(n, W))
-                _tan_predict!(x, P, sw.preds[npred], fw, mod, h) || return _TAN_REFUSED
+                npred > length(sw.preds) && push!(sw.preds, TanPredRec(n, sw.nh, W))
+                _tan_predict!(x, P, sw.preds[npred], fw, mod, h, hs) || return _TAN_REFUSED
             end
         end
-        t > length(sw.upds) && push!(sw.upds, TanUpdRec(n, sw.m, W))
-        _tan_update!(x, P, sw.upds[t], fw, mod, view(Y, :, t), sw.ll) || return _TAN_INVALID
+        mod.ntd > 0 && _tan_td!(x, P, sw, mod, view(TD, :, t), t)
+        t > length(sw.upds) && push!(sw.upds, TanUpdRec(n, sw.m, sw.nh, W))
+        _tan_update!(x, P, sw.upds[t], fw, mod, view(Y, :, t), sw.ll, hs) ||
+            return _TAN_INVALID
     end
     first[T + 1] = npred + 1
+    # The closing term, and its reverse, which starts the walk.
+    if mod.nh > 0
+        _tan_hybrid_closing!(hs, mod.G, mod.wlog, sw.ll) || return _TAN_INVALID
+        _tan_comb!(acc.Gbar, ((w, hs.Gbar),), true)
+    end
     isfinite(sw.ll[1]) || return _TAN_INVALID
 
     # The reverse walk.
@@ -527,7 +632,9 @@ function _tan_sweep!(acc::TanAcc{W}, sw::TanSweep{W}, mod::TanModel{W},
             _tan_copy!(u.y, rec.y)
             _tan_copy!(u.xbar, xbar)
             _tan_copy!(u.Pbar, Pbar)
-            _tan_reverse_update!(u) || return _TAN_INVALID
+            hook = mod.nh > 0 ?
+                (hs=hs, hr=_tan_row(fw, length(o)).hr, h=mod.hyb, o=o, Xh=rec.Xh) : nothing
+            _tan_reverse_update!(u, hook) || return _TAN_INVALID
             _tan_copy!(xbar, u.xbar)
             _tan_copy!(Pbar, u.Pbar)
             _tan_scatter!(acc.R, w, u.Rbar, o, o)
@@ -535,8 +642,9 @@ function _tan_sweep!(acc::TanAcc{W}, sw::TanSweep{W}, mod::TanModel{W},
             _tan_scatter!(acc.LAMBDA, w, u.Lbar, o, allstates)
             _tan_scatter!(acc.MM, -w, u.ybarbar, o)
         end
+        mod.ntd > 0 && _tan_reverse_td!(xbar, Pbar, sw, mod, acc, w, view(TD, :, t), t)
         for j in (first[t + 1] - 1):-1:first[t]
-            _tan_reverse_predict!(xbar, Pbar, sw.preds[j], rv, fw, mod, acc, w)
+            _tan_reverse_predict!(xbar, Pbar, sw.preds[j], rv, fw, mod, acc, w, hs)
         end
     end
     _tan_lincomb!(acc.T0M, true, acc.T0M, w, xbar)
