@@ -133,6 +133,41 @@
   NULL
 }
 
+# A juliaup launcher is not a Julia installation: it starts one of juliaup's,
+# and Julia finds its system image from JULIA_BINDIR, which ctsem sets to the
+# directory it found. Pointed at the launcher's directory, Julia looks for
+# ../lib/julia/sys.so beside the launcher and does not start ("could not load
+# library"), so a user whose Julia came from juliaup -- the usual way -- failed
+# at the first session. A directory found on the PATH or among juliaup's files
+# with no system image beside it is therefore asked where the Julia it starts
+# lives, and that is used.
+.ctJuliaLauncherTarget <- function(bin) {
+  if (is.null(bin) || .ctJuliaHasSysimage(bin)) return(bin)
+  target <- .ctJuliaAskBindir(bin)
+  if (.ctJuliaIsBinDir(target) && .ctJuliaHasSysimage(target)) {
+    return(normalizePath(target, winslash = "/", mustWork = TRUE))
+  }
+  bin
+}
+
+.ctJuliaHasSysimage <- function(bin) {
+  length(list.files(file.path(bin, "..", "lib", "julia"),
+    pattern = "^sys\\.(so|dylib|dll)$")) > 0L
+}
+
+# The Sys.BINDIR of the Julia a launcher starts, or NA. JULIA_BINDIR is
+# cleared for the call: the launcher's own directory there is the fault.
+.ctJuliaAskBindir <- function(bin) {
+  old <- Sys.getenv("JULIA_BINDIR", unset = NA)
+  Sys.unsetenv("JULIA_BINDIR")
+  on.exit(if (!is.na(old)) Sys.setenv(JULIA_BINDIR = old))
+  out <- tryCatch(suppressWarnings(
+    system2(file.path(bin, .ctJuliaExeName()),
+      c("--startup-file=no", "-e", shQuote("print(Sys.BINDIR)")),
+      stdout = TRUE, stderr = FALSE, timeout = 120)), error = function(e) character())
+  if (!length(out)) NA_character_ else out[[length(out)]]
+}
+
 # The version a Julia binary directory actually reports, or NA. Asking the
 # binary rather than reading its directory name is the only reliable form: a
 # juliaup shim's directory name says nothing about what it launches.

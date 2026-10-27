@@ -162,6 +162,30 @@ test_that("a ctsem-installed Julia is found again without any environment variab
     normalizePath(other, winslash = "/"))
 })
 
+test_that("a juliaup launcher is followed to the Julia it starts", {
+  # Set as JULIA_BINDIR, a launcher's directory makes Julia look for its system
+  # image beside the launcher, and the session never starts.
+  root <- withr::local_tempdir()
+  launcher <- file.path(root, ".juliaup", "bin")
+  real <- file.path(root, ".julia", "juliaup", "julia-1.12.7", "bin")
+  for (bin in c(launcher, real)) {
+    dir.create(bin, recursive = TRUE)
+    writeLines("not really julia", file.path(bin, ctsem:::.ctJuliaExeName()))
+  }
+  dir.create(file.path(dirname(real), "lib", "julia"), recursive = TRUE)
+  writeLines("", file.path(dirname(real), "lib", "julia", "sys.so"))
+  asked <- 0L
+  testthat::local_mocked_bindings(.ctJuliaAskBindir = function(bin) {
+    asked <<- asked + 1L
+    real
+  }, .package = "ctsem")
+  expect_identical(ctsem:::.ctJuliaLauncherTarget(launcher),
+    normalizePath(real, winslash = "/"))
+  # A real installation is used as found, without asking it anything.
+  expect_identical(ctsem:::.ctJuliaLauncherTarget(real), real)
+  expect_identical(asked, 1L)
+})
+
 test_that("a model still prepares on a machine with no Julia at all", {
   # ctFit(fit=FALSE) is pure R, and CRAN's check machines are exactly the case
   # it has to keep working on: JuliaConnectoR installed, because Suggests are,
