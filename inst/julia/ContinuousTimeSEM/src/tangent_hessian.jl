@@ -36,22 +36,25 @@ const _TAN_WIDTH = 12
 
 """
 Why the hand-coded Hessian does not serve `objective` in `hybrid_mode`, or
-`nothing`: what its sweep covers is a linear Gaussian continuous-time model
-with every state diffusing, TI predictors observed, TD predictors entering as
-impulses, no stationary or population block, deviations integrated whole or
-profiled (not at fixed values), and no forward-mode subjects.
+`nothing`: what its sweep covers is a linear Gaussian model, in continuous or
+discrete time, with every state diffusing, TI predictors observed, TD
+predictors entering as impulses, initial moments stated or stationary (in
+continuous time, without integrated deviations), no population block,
+deviations integrated whole or profiled (not at fixed values), and no
+forward-mode subjects.
 """
 function _tan_refusal(objective::CTSEMObjective, hybrid_mode::Integer=_HYBRID_PROFILE)
     subjects = objective.subject_objectives
     isempty(subjects) && return "no subjects"
     sp = objective.params
-    sp.continuous_time || return "discrete time"
     any(sp.predict_transforms_indices) && return "per-row predict transforms"
     any(sp.update_transforms_indices) && return "per-row update transforms"
     any(sp.td_transforms_indices) && return "per-row TD transforms"
     any(t -> t != 0, sp.manifesttype) && return "categorical indicators"
-    (sp.stationary || _stationary_elements_on(sp.stationary_elements)) &&
-        return "stationary moments"
+    _stationary_elements_on(sp.stationary_elements) && return "stationary elements"
+    sp.stationary && !sp.continuous_time && return "stationary moments in discrete time"
+    sp.stationary && _hybrid_on(sp.hybrid) && hybrid_mode != _HYBRID_OFF &&
+        return "stationary moments beside integrated deviations"
     isempty(sp.population_indices) || return "a population block"
     isempty(objective.ti_missing_parameter) || return "sampled TI predictor values"
     _hybrid_on(sp.hybrid) && hybrid_mode == _HYBRID_FIXED &&
@@ -224,7 +227,7 @@ end
 
 """A model with `mod`'s shape and its hybrid's factor, for a subject's own layer."""
 _tan_model_like(mod::TanModel{W}) where {W} = TanModel{W}(mod.n, mod.m,
-    TanMat{W}(mod.n, mod.n), TanVec{W}(mod.n), TanMat{W}(mod.n, mod.n),
+    mod.ct, mod.stat, TanMat{W}(mod.n, mod.n), TanVec{W}(mod.n), TanMat{W}(mod.n, mod.n),
     TanMat{W}(mod.m, mod.n), TanVec{W}(mod.m), TanMat{W}(mod.m, mod.m), TanVec{W}(mod.n),
     TanMat{W}(mod.n, mod.n), mod.ntd, TanMat{W}(mod.n, mod.ntd), TanMat{W}(mod.n, mod.n),
     mod.nh, mod.hyb, mod.G, mod.wlog)
@@ -299,8 +302,8 @@ function _tan_hessian_columns!(H::Matrix{Float64}, objective::CTSEMObjective,
     # The deviations the filter integrates, whole (`_HYBRID_FULL`) or profiled.
     h = sp.hybrid
     nh = _hybrid_on(h) && hybrid_mode != _HYBRID_OFF ? _hybrid_items(h) : 0
-    mod = TanModel(n, m, W; ntd=ntd, hyb=h, nh=nh,
-        wlog=hybrid_mode == _HYBRID_FULL ? 1.0 : 0.0)
+    mod = TanModel(n, m, W; ct=sp.continuous_time, stat=sp.stationary, ntd=ntd, hyb=h,
+        nh=nh, wlog=hybrid_mode == _HYBRID_FULL ? 1.0 : 0.0)
     Lb = h.block && nh > 0 ? zeros(length(h.perm), length(h.perm)) : zeros(0, 0)
     if nh > 0 && h.block
         if !_hybrid_block_factor!(Lb, h, x)

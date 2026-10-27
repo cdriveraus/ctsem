@@ -6,13 +6,14 @@ using DataFrames, ForwardDiff, LinearAlgebra
 # every drift cell, a cross-loading, correlated diffusion and measurement
 # errors, missing values and a row with none observed, substeps, unequal and
 # zero subject weights, a prior, two chunks of columns, TI predictors whose
-# effects give each subject its own parameter layer, and a TD predictor.
+# effects give each subject its own parameter layer, a TD predictor, stationary
+# initial moments, and the same cells in discrete time.
 
 isdefined(@__MODULE__, :_adjoint_test_dataframe) ||
     include(joinpath(@__DIR__, "adjoint_fixtures.jl"))
 
 function _tangent_test_model(; driftscale=1.0, max_timestep=Inf, perrow=false, ti=false,
-    td=false)
+    td=false, stationary=false, continuous=true)
     drift = [-0.6 0.2; 0.1 -0.5]
     lambda = [1.0 0.0; 0.7 0.0; 0.0 1.0]
     # `driftscale` shrinks every drift cell: near zero, the filter integrates
@@ -61,7 +62,11 @@ function _tangent_test_model(; driftscale=1.0, max_timestep=Inf, perrow=false, t
     # initial mean and an initial sd -- each subject a layer of its own.
     tieffects = DataFrame(parameter=[1, 5, 6, 8, 10, 12, 14, 18, 20],
         predictor=[1, 2, 1, 2, 1, 2, 1, 2, 1], coefficient=collect(23:31))
-    sp = ti ? ekf_from_data_frame(df, tieffects) : ekf_from_data_frame(df)
+    # `stationary`: the first row's prior the stationary moments; `continuous`
+    # false, the same cells as a discrete-time model.
+    sp = ekf_from_data_frame(df, ti ? tieffects : DataFrame(parameter=Int[],
+        predictor=Int[], coefficient=Int[]); continuous_time=continuous,
+        stationary=stationary)
     npar = ti ? 31 : td ? 24 : 22
     starts = Int[]
     times = Float64[]
@@ -105,9 +110,9 @@ function _tangent_dual_hessian(objective, values)
 end
 
 @testset "the hand-coded Hessian is the dual's" begin
-    for (max_timestep, ti, td) in ((Inf, false, false), (0.4, false, false),
-        (Inf, true, false), (0.4, false, true))
-        objective, values = _tangent_test_model(max_timestep=max_timestep, ti=ti, td=td)
+    for opts in ((;), (max_timestep=0.4,), (ti=true,), (max_timestep=0.4, td=true),
+        (stationary=true,), (continuous=false, td=true))
+        objective, values = _tangent_test_model(; opts...)
         n = length(values)
         @test ContinuousTimeSEM._tan_refusal(objective) === nothing
         H = zeros(n, n)
