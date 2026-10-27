@@ -33,6 +33,7 @@ const _XEXPM1 = 0x1a
 const _XSIN = 0x1b
 const _XCOS = 0x1c
 const _XINV = 0x1d
+const _XSIGN = 0x1e   # the derivative ctJacobian writes for abs, min and max
 const _XPOWI = 0x2f   # a ^ b, b an integer literal: b stored in `b`
 const _XADD = 0x30
 const _XSUB = 0x31
@@ -52,7 +53,7 @@ const _CTSEM_EXPR_UNARY = Dict{Symbol,UInt8}(:exp => _XEXP, :log => _XLOG,
     :sqrt => _XSQRT, :abs => _XABS, :log1p_exp => _XLOG1PEXP,
     :inv_logit => _XINVLOGIT, :logit => _XLOGIT, :tanh => _XTANH,
     :log1p => _XLOG1P, :expm1 => _XEXPM1, :sin => _XSIN, :cos => _XCOS,
-    :inv => _XINV)
+    :inv => _XINV, :sign => _XSIGN)
 const _CTSEM_EXPR_BINARY = Dict{Symbol,UInt8}(:+ => _XADD, :- => _XSUB,
     :* => _XMUL, :/ => _XDIV, :^ => _XPOW, :min => _XMIN, :max => _XMAX)
 
@@ -292,6 +293,9 @@ end
     op === _XEXPM1 && return expm1(x)
     op === _XSIN && return sin(x)
     op === _XCOS && return cos(x)
+    # In `x`'s own type with zero partials, as Base's sign gives a Dual away
+    # from zero; `zero(x) - one(x)`, since `-one(x)`'s partials are -0.0.
+    op === _XSIGN && return x > 0 ? one(x) : x < 0 ? zero(x) - one(x) : zero(x)
     return inv(x)
 end
 
