@@ -15,7 +15,7 @@ isdefined(@__MODULE__, :_adjoint_test_dataframe) ||
 
 function _tangent_test_model(; driftscale=1.0, max_timestep=Inf, perrow=false, ti=false,
     td=false, stationary=false, continuous=true, rows=false, relin=false, plan=-1,
-    moment=false, cat=false)
+    moment=false, cat=false, timiss=false)
     drift = [-0.6 0.2; 0.1 -0.5]
     lambda = [1.0 0.0; 0.7 0.0; 0.0 1.0]
     # `driftscale` shrinks every drift cell: near zero, the filter integrates
@@ -113,7 +113,7 @@ function _tangent_test_model(; driftscale=1.0, max_timestep=Inf, perrow=false, t
         predictor=Int[], coefficient=Int[]); continuous_time=continuous,
         stationary=stationary, manifesttype=cat ? [0, 2, 1] : Int[],
         ncategories=cat ? [0, 3, 2] : Int[])
-    npar = ti ? 31 : cat ? 28 : rows ? 26 : td ? 24 : 22
+    npar = ti ? (timiss ? 33 : 31) : cat ? 28 : rows ? 26 : td ? 24 : 22
     starts = Int[]
     times = Float64[]
     columns = Vector{Float64}[]
@@ -138,15 +138,22 @@ function _tangent_test_model(; driftscale=1.0, max_timestep=Inf, perrow=false, t
     end
     tipreds = ti ? [0.3 -1.1; -0.8 0.4; 1.2 0.9; 0.0 -0.5; 0.5 1.4; -1.3 -0.2] :
         zeros(6, 0)
+    # `timiss`: the first predictor missing for subjects 2 and 5, its values
+    # sampled as parameters 32 and 33 (`TIMissingRecipe`).
+    timiss && (tipreds[2, 1] = 99999.0; tipreds[5, 1] = 99999.0)
+    missing_kw = timiss ? (ti_missing_subject=[2, 5], ti_missing_predictor=[1, 1],
+        ti_missing_parameter=[32, 33], ti_missing_mu=[0.1, 0.1],
+        ti_missing_sigma=[0.8, 0.8]) : (;)
     objective = ctsem_objective(sp, starts, times, reduce(hcat, columns),
         td ? reduce(hcat, tdcolumns) : zeros(0, length(times)), tipreds, max_timestep;
         prior_index=collect(1:npar), prior_scale=fill(2.0, npar),
-        subject_weights=[1.0, 2.0, 0.5, 1.0, 0.0, 1.5])
+        subject_weights=[1.0, 2.0, 0.5, 1.0, 0.0, 1.5], missing_kw...)
     plan >= 0 && foreach(so -> append!(so.relin, fill(plan, length(so.timesteps))),
         objective.subject_objectives)
     values = [0.3, 0.15, -0.1, 0.2, -0.4, 0.2, -0.3, 0.1, -0.2, 0.6, 0.05, -0.1,
         0.15, -1.0, -0.8, -1.2, 0.1, 0.2, -0.1, 0.0, 0.3, -0.5]
     ti && append!(values, [0.1, -0.15, 0.2, 0.05, -0.1, 0.12, 0.08, -0.2, 0.15])
+    timiss && append!(values, [0.4, -0.6])
     td && append!(values, [0.7, -0.4])
     rows && append!(values, [0.3, -0.2])
     cat && (append!(values, zeros(28 - length(values))); values[27:28] = [-0.3, 0.2])
@@ -170,7 +177,9 @@ end
         (rows=true, relin=true), (rows=true, relin=true, plan=2),
         (rows=true, moment=true), (rows=true, moment=true, relin=true, max_timestep=0.4),
         (rows=true, moment=true, continuous=false), (cat=true,), (cat=true, td=true),
-        (cat=true, rows=true, relin=true), (cat=true, continuous=false, max_timestep=0.4))
+        (cat=true, rows=true, relin=true), (cat=true, continuous=false, max_timestep=0.4),
+        (stationary=true, perrow=true),
+        (ti=true, timiss=true))
         objective, values = _tangent_test_model(; opts...)
         n = length(values)
         @test ContinuousTimeSEM._tan_refusal(objective) === nothing
@@ -262,6 +271,30 @@ end
         reference = _tangent_dual_hessian(objective, values)
         @test all(isfinite, reference)
         @test (H .+ H') ./ 2 ≈ reference rtol = 1e-10
+    end
+end
+
+@testset "the row scores by the hand-coded forward are the filter's" begin
+    # `ctsem_row_scores` along 15 directions, two chunks of lanes, against the
+    # filter at the Hessian's dual, its oracle.
+    for (make, opts) in ((_tangent_test_model, (;)), (_tangent_test_model, (ti=true,)),
+        (_tangent_test_model, (rows=true, relin=true, max_timestep=0.4)),
+        (_tangent_test_model, (cat=true, moment=true, rows=true)),
+        (_tangent_aug_model, (;)))
+        objective, values = make(; opts...)
+        dirs = [sin(1.7i + 0.9j) for i in eachindex(values), j in 1:15]
+        hand = ctsem_row_scores(objective, values, dirs)
+        rows = [size(s.data, 2) for s in objective.subject_objectives]
+        H = fill(NaN, sum(rows), 15)
+        @test ContinuousTimeSEM._tan_row_scores!(H, objective, collect(values), dirs, rows)
+        ContinuousTimeSEM.ctsem_set_tangent_hessian!(false)
+        dual = try
+            ctsem_row_scores(objective, values, dirs)
+        finally
+            ContinuousTimeSEM.ctsem_set_tangent_hessian!(true)
+        end
+        @test all(isfinite, dual)
+        @test hand ≈ dual rtol = 1e-10
     end
 end
 

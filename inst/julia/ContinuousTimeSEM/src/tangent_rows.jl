@@ -96,13 +96,16 @@ mutable struct TanRows{W,DW,A}
     PW::Matrix{DW}
     PbarW::Matrix{DW}
     cbar::TanVec{W}
+    # The subject's TI predictors as its cells read them: its row, or with
+    # sampled values the duals `_ctsem_tipred_fill!` builds.
+    tp::Base.RefValue{AbstractVector}
 end
 function TanRows(awsW, sp, n::Int, m::Int, ntd::Int, ::Val{W}, ::Type{DW}) where {W,DW}
     nall = length(sp.mutables)
     return TanRows{W,DW,typeof(awsW)}(awsW, zeros(DW, nall), zeros(DW, nall),
         zeros(DW, n), zeros(DW, n), TanSnap{W,DW}[], TanSnap{W,DW}(n, m, ntd),
         NTuple{3,Int}[], 0, TanRelinRec{W}[], 0, TanSnap{W,DW}(n, m, ntd), TanVec{W}(n),
-        TanVec{W}(n), zeros(DW, n, n), zeros(DW, n, n), TanVec{W}(n))
+        TanVec{W}(n), zeros(DW, n, n), zeros(DW, n, n), TanVec{W}(n), Ref{AbstractVector}(Float64[]))
 end
 
 """`out` the duals of `X`'s values and tangents, lane `w` its `w`-th."""
@@ -157,7 +160,7 @@ function _tan_rows_group!(R::TanRows{W,DW}, g::Int, x::TanVec{W}, mod::TanModel{
     isempty(indices) && return snap
     _tan_to_duals!(R.xW, x)
     pars = CTSEMPars(R.allW, sp.parameter_axis)
-    ctx = CTSEMRowContext(R.xW, pars, view(so.tdpreds, :, t), so.tipreds, time, dt,
+    ctx = CTSEMRowContext(R.xW, pars, view(so.tdpreds, :, t), R.tp[], time, dt,
         subject, t)
     slot = _record_group_slot!(awsW.tape, g, indices, R.allW, ctx)
     # One call per group: the three transform collections are different types.
@@ -200,7 +203,7 @@ function _tan_rows_moment!(R::TanRows{W,DW}, x::TanVec{W}, P::TanMat{W}, mod::Ta
     _tan_to_duals!(ws.state, x)
     _tan_to_duals!(R.PW, P)
     pars = CTSEMPars(R.allW, sp.parameter_axis)
-    ctx = CTSEMRowContext(ws.state, pars, view(so.tdpreds, :, t), so.tipreds, time, dt,
+    ctx = CTSEMRowContext(ws.state, pars, view(so.tdpreds, :, t), R.tp[], time, dt,
         subject, t)
     _ekf_moment_cells!(ws, pars, sp, R.allW, ctx, awsW.tape, R.PW) || return snap
     _tan_rows_refresh!(mod, R, sp, nl)
@@ -274,7 +277,7 @@ cells from the layer at `xw` (`_tan_layer_fill!`), `mod` its matrices.
 """
 function _tan_sweep_rows!(acc::TanAcc{W}, Hb::Matrix{Float64}, sw::TanSweep{W},
     mod::TanModel{W}, R::TanRows{W,DW}, objective::CTSEMObjective, i::Int, w::Float64,
-    xw::Vector, nl::Int) where {W,DW}
+    xw::Vector, nl::Int; forward::Bool=false) where {W,DW}
     sp = objective.params
     so = objective.subject_objectives[i]
     awsW = R.awsW
@@ -283,7 +286,7 @@ function _tan_sweep_rows!(acc::TanAcc{W}, Hb::Matrix{Float64}, sw::TanSweep{W},
     T = length(times)
     copyto!(R.allW, awsW.ekf_ws.all_params)
     fill!(R.allbar, zero(DW))
-    _ctsem_tipred_fill!(awsW.tipreds, so.tipreds, xw)
+    R.tp[] = _ctsem_tipred_fill!(awsW.tipreds, so.tipreds, xw)
     _ctsem_tipred_bar_reset!(awsW, so.tipreds, _ctsem_tipred_length(so.tipreds))
     awsW.tape.ngroups = 0
     awsW.tape.nmoments = 0
@@ -294,12 +297,23 @@ function _tan_sweep_rows!(acc::TanAcc{W}, Hb::Matrix{Float64}, sw::TanSweep{W},
     _tan_snap_save!(R.base, mod, R.allW, sp)
     _tan_acc_zero!(acc)
     x, P = sw.x, sw.P
-    _tan_copy!(x, mod.T0M)
-    _tan_copy!(P, mod.T0V)
     fill!(sw.ll, 0.0)
+    fill!(sw.llprev, 0.0)
     hs = sw.hs
     _tan_sweep_begin!(sw, mod)
     snap = 0
+    if mod.stat
+        # The predict group once ahead of the stationary moments, which read
+        # what it writes (`_ekf_filter!`'s first row); they need the drift its
+        # own Jacobian, as R's refusing a state-reading drift there makes it.
+        snap = _tan_rows_group!(R, 1, x, mod, sw, sp, so, i, 1, times[1], 0.0, snap, nl)
+        (mod.DRIFT.v == mod.JAx.v && mod.DRIFT.d == mod.JAx.d) || return _TAN_REFUSED
+        _tan_stationary!(x, P, sw, mod) || return _TAN_INVALID
+        push!(R.prog, (8, 0, snap))
+    else
+        _tan_copy!(x, mod.T0M)
+        _tan_copy!(P, mod.T0V)
+    end
     npred = 0
     R.nrl = 0
     relin = awsW.ekf_ws.relinearise && _CTSEM_RELINEARISE[]
@@ -347,8 +361,11 @@ function _tan_sweep_rows!(acc::TanAcc{W}, Hb::Matrix{Float64}, sw::TanSweep{W},
         end
         _tan_update!(x, P, upd, fw, mod, view(Y, :, t), sw.ll, hs) || return _TAN_INVALID
         push!(R.prog, (4, t, snap))
+        forward && _tan_llrow!(sw, t)
     end
     isfinite(sw.ll[1]) || return _TAN_INVALID
+    # The row scores need the forward alone.
+    forward && return _TAN_OK
 
     # The reverse walk.
     xbar, Pbar = _tan_zero!(sw.xbar), _tan_zero!(sw.Pbar)
@@ -370,7 +387,22 @@ function _tan_sweep_rows!(acc::TanAcc{W}, Hb::Matrix{Float64}, sw::TanSweep{W},
             _tan_snap_load!(mod, s == 0 ? R.base : R.snaps[s])
             held = s
         end
-        if kind == 7
+        if kind == 8
+            # The stationary moments, at the drift and diffusion they read.
+            if s != held
+                _tan_snap_load!(mod, s == 0 ? R.base : R.snaps[s])
+                held = s
+            end
+            if s != factored
+                _tan_sweep_begin!(sw, mod)
+                factored = s
+            end
+            _tan_reverse_stationary!(xbar, Pbar, sw, mod, acc, 1.0)
+            # They overwrote the initial state and covariance.
+            _tan_zero!(xbar)
+            _tan_zero!(Pbar)
+            continue
+        elseif kind == 7
             # A row's categorical observations, by the engine's own reverse at
             # the Hessian's dual (`_reverse_binary!`).
             _tan_to_duals!(R.xbarW, xbar)
@@ -430,6 +462,8 @@ function _tan_sweep_rows!(acc::TanAcc{W}, Hb::Matrix{Float64}, sw::TanSweep{W},
     # runs unweighted, since a group's pullback sends the cells' cotangents
     # into the state's, which the kernels carry unweighted.
     vb = _tan_values_reverse(awsW, sp, xw, R.allbar, so.tipreds)
+    # What cells reading a sampled TI predictor sent back to it.
+    _ctsem_tipred_scatter!(vb, awsW, so.tipreds)
     @inbounds for l in 1:nl, j in eachindex(vb)
         Hb[j, l] += w * ForwardDiff.partials(vb[j], l)
     end

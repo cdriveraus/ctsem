@@ -754,13 +754,29 @@ struct TanSweep{W}
     tdn1::TanMat{W}; tdn2::TanMat{W}
     x0::TanVec{W}               # the stationary mean
     Lsd::Matrix{Float64}        # the stationary covariance's check
+    # Each row's log likelihood and its tangents, (1 + W) a row, for the row
+    # scores (`_tan_row_scores!`), and the running total they difference.
+    llrow::Vector{Float64}
+    llprev::Vector{Float64}
 end
 TanSweep(n::Int, m::Int, ntd::Int, nh::Int, W::Int, na::Int=n, k::Int=n) = TanSweep{W}(n, m,
     TanForward(n, m, nh, W, na, k), TanPredRev(n, W),
     TanPredRec{W}[], TanUpdRec{W}[],
     TanVec{W}(n), TanMat{W}(n, n), TanVec{W}(n), TanMat{W}(n, n), TanMat{W}(n, n), zeros(1 + W),
     Int[], nh, TanHybState(n, nh, W), TanMat{W}[], TanVec{W}(ntd), TanMat{W}(n, n),
-    TanMat{W}(n, n), TanVec{W}(n), zeros(n, n))
+    TanMat{W}(n, n), TanVec{W}(n), zeros(n, n), Float64[], zeros(1 + W))
+
+"""Row `t`'s log likelihood and its tangents, what the total gained since the
+last row, kept in `sw.llrow`."""
+function _tan_llrow!(sw::TanSweep{W}, t::Int) where {W}
+    o = (t - 1) * (1 + W)
+    length(sw.llrow) < o + 1 + W && resize!(sw.llrow, o + 1 + W)
+    @inbounds for a in 1:(1 + W)
+        sw.llrow[o + a] = sw.ll[a] - sw.llprev[a]
+        sw.llprev[a] = sw.ll[a]
+    end
+    return sw
+end
 
 """
 A row's TD impulse (`_apply_td_impulse!`): `x += TDE u`, `P = Jtd P Jtd'`, with
@@ -897,7 +913,7 @@ exponential directions there; leaves its log likelihood in `sw.ll`.
 """
 function _tan_sweep!(acc::TanAcc{W}, sw::TanSweep{W}, mod::TanModel{W},
     times::AbstractVector{Float64}, Y::AbstractMatrix{Float64},
-    TD::AbstractMatrix{Float64}, rule, w::Float64) where {W}
+    TD::AbstractMatrix{Float64}, rule, w::Float64; forward::Bool=false) where {W}
     n, fw, rv = sw.n, sw.fw, sw.rv
     T = length(times)
     # The predictions, row by row: a row's substeps in order, then its update.
@@ -911,6 +927,7 @@ function _tan_sweep!(acc::TanAcc{W}, sw::TanSweep{W}, mod::TanModel{W},
         _tan_copy!(P, mod.T0V)
     end
     fill!(sw.ll, 0.0)
+    fill!(sw.llprev, 0.0)
     hs = sw.hs
     mod.nh > 0 && _tan_hybrid_start!(hs, mod.hyb)
     for t in 1:T
@@ -930,8 +947,11 @@ function _tan_sweep!(acc::TanAcc{W}, sw::TanSweep{W}, mod::TanModel{W},
         sw.upds[t].relin = 0
         _tan_update!(x, P, sw.upds[t], fw, mod, view(Y, :, t), sw.ll, hs) ||
             return _TAN_INVALID
+        forward && _tan_llrow!(sw, t)
     end
     first[T + 1] = npred + 1
+    # The row scores need the forward alone.
+    forward && return isfinite(sw.ll[1]) ? _TAN_OK : _TAN_INVALID
     # The closing term, and its reverse, which starts the walk.
     if mod.nh > 0
         _tan_hybrid_closing!(hs, mod.G, mod.wlog, sw.ll) || return _TAN_INVALID

@@ -53,26 +53,23 @@ function _tan_refusal(objective::CTSEMObjective, hybrid_mode::Integer=_HYBRID_PR
     sp = objective.params
     if _tan_rows_model(sp)
         ws = _init_continuous_ekf_workspace(Float64, sp)
-        sp.stationary && return "stationary moments beside cells evaluated by row"
         _hybrid_on(sp.hybrid) && hybrid_mode != _HYBRID_OFF &&
             return "integrated deviations beside cells evaluated by row"
     end
     _stationary_elements_on(sp.stationary_elements) && return "stationary elements"
+    # The engine itself refuses stationary moments in discrete time.
     sp.stationary && !sp.continuous_time && return "stationary moments in discrete time"
     ws0 = _init_continuous_ekf_workspace(Float64, sp)
     blocks = ws0.affine_buffer.dim < ws0.state_dim ||
         ws0.diffusion_state_indices != 1:ws0.state_dim
     sp.stationary && blocks && return "stationary moments beside static states"
-    _hybrid_on(sp.hybrid) && blocks && return "integrated deviations beside static states"
+    _hybrid_on(sp.hybrid) && blocks && hybrid_mode != _HYBRID_OFF &&
+        return "integrated deviations beside static states"
     sp.stationary && _hybrid_on(sp.hybrid) && hybrid_mode != _HYBRID_OFF &&
         return "stationary moments beside integrated deviations"
-    isempty(objective.ti_missing_parameter) || return "sampled TI predictor values"
     _hybrid_on(sp.hybrid) && hybrid_mode == _HYBRID_FIXED &&
         return "deviations at fixed values"
     isfinite(_CTSEM_ADJOINT_GROWTH[]) && return "forward-mode subjects"
-    for so in subjects
-        so.tipreds isa AbstractVector || return "sampled TI predictor values"
-    end
     return nothing
 end
 
@@ -85,10 +82,14 @@ _tan_rows_model(sp) = any(sp.predict_transforms_indices) ||
     any(sp.update_transforms_indices) || any(sp.td_transforms_indices) ||
     any(t -> t != 0, sp.manifesttype)
 
-"""The subject values and cells at `xv` into `aws`'s filter workspace; the cells."""
+"""
+The subject values and cells at `xv` into `aws`'s filter workspace; the cells.
+A subject's sampled TI predictor values (`TIMissingRecipe`) are `xv`'s.
+"""
 function _tan_layer_values!(aws, sp, xv::AbstractVector, tipreds)
     ws = aws.ekf_ws
-    _materialize_subject_values!(ws.subject_values, xv, sp, tipreds)
+    _materialize_subject_values!(ws.subject_values, xv, sp,
+        _ctsem_tipred_vector(tipreds, xv))
     _materialize_all_params!(ws.all_params, ws.subject_values, sp)
     return ws.all_params
 end
@@ -185,7 +186,8 @@ TI effects' pullbacks (`_ctsem_regular_pullback!`, `_ctsem_ti_pullback!`) at
 """
 function _tan_values_reverse(aws, sp, xv::AbstractVector{S}, tb, tipreds) where {S}
     ws = aws.ekf_ws
-    _materialize_subject_values!(ws.subject_values, xv, sp, tipreds)
+    _materialize_subject_values!(ws.subject_values, xv, sp,
+        _ctsem_tipred_vector(tipreds, xv))
     svb = zeros(S, length(ws.subject_values))
     _ctsem_regular_pullback!(svb, tb, ws.subject_values, sp, aws.regular_supports,
         aws.regular_dual_scratch)
