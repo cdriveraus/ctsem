@@ -3445,8 +3445,8 @@ Each took its own `ForwardDiff.jacobian` of a closure of its own before, and a
 closure's tag is a new dual type through the whole filter and its reverse
 pass: about 75 s of compilation (local) in the first correction of a session
 on ord4, for numbers that come out the same to the bit. A block of a nested
-unit takes the Jacobian over its own coordinates, as both did, through this one
-closure rather than two.
+unit takes the Jacobian over its own coordinates through the same callable
+(`_laplace_columns_jacobian`), its members' gradient in those columns.
 """
 function _laplace_block_precision(laplace::CTSEMLaplaceObjective, U::Integer,
     theta::Vector{Float64}, Ls::Vector{Matrix{Float64}}, u::Vector{Float64},
@@ -3462,20 +3462,9 @@ function _laplace_block_precision(laplace::CTSEMLaplaceObjective, U::Integer,
     length(blocks) == 1 &&
         return Matrix{Float64}(_laplace_unit_curvature(laplace, U, theta, Ls, work;
             mode=mode).diag[1])
-    members = block.members
-    gradient_of = function (zz)
-        local S, ws, uu, r
-        S = eltype(zz)
-        ws = _laplace_workspace!(laplace, S, length(theta))
-        uu = convert(Vector{S}, work)
-        @inbounds for (t, c) in enumerate(columns)
-            uu[c] = zz[t]
-        end
-        r = _laplace_unit_loglik_gradient(laplace, U, convert(Vector{S}, theta),
-            [convert(Matrix{S}, L) for L in Ls], uu, ws, members, nothing, mode)
-        return [r.gradient[c] for c in columns]
-    end
-    A = _ctsem_jacobian(gradient_of, collect(Float64, z), _CTSEM_CURVATURE_WIDTHS[])
+    J = _laplace_columns_jacobian(laplace, U, theta, Ls, work, collect(columns),
+        block.members, mode, nothing)
+    A = Matrix{Float64}(J[columns, 1:k])
     return Matrix{Float64}(LinearAlgebra.I, k, k) .- _laplace_symmetrise(A)
 end
 
@@ -4991,21 +4980,27 @@ end
 """
     _laplace_gated_unit_gradient(laplace, U, theta, curvature)
 
-The exact gradient of a flagged unit's gated term: ForwardDiff over the term,
-the inner mode's first derivative from `_laplace_dual_unit_mode`, along the
-positions the unit can depend on (`_laplace_unit_reach`) alone. The others'
-derivatives are exactly zero, and on a model with per-study effects and items
-a subject never answers they are most of the vector: each forward pass here
-repeats the whole gated rule, so the count of them is the cost.
+The gradient of a flagged unit's gated term: by its reverse pass
+(laplace_gated_adjoint.jl), at a cost that does not grow with the parameter
+count, and where that declines -- a value it reads is not finite -- by central
+differences of the unit's term (`_laplace_unit_term_difference!`), at Float64.
+
+What follows them is the oracle both are tested against
+(`ctsem_set_gated_adjoint!(false)`): ForwardDiff over the term, the inner
+mode's first derivative from `_laplace_dual_unit_mode`, along the positions the
+unit can depend on (`_laplace_unit_reach`) alone. It runs the whole rule under
+a dual type of its own, a compile of the filter and its reverse pass at every
+dual width the rule nests, so a fit never takes it (see
+`_laplace_unit_gradient_fallback!`).
 """
 function _laplace_gated_unit_gradient(laplace::CTSEMLaplaceObjective, U::Integer,
     theta::Vector{Float64}, curvature)
-    # The reverse pass (laplace_gated_adjoint.jl), at a cost that does not grow
-    # with the parameter count; what follows is the route it falls back to
-    # where it does not apply, and the oracle it is tested against.
     if _LAPLACE_GATED_ADJOINT[]
         adjoint = _laplace_gated_unit_adjoint(laplace, U, theta)
         adjoint === nothing || return adjoint
+        gradient = zeros(Float64, length(theta))
+        _laplace_unit_term_difference!(gradient, laplace, U, theta)
+        return gradient
     end
     uhat = laplace.modes[U]
     # A repaired unit's factors are of a shifted curvature, which is not the
@@ -5057,6 +5052,104 @@ function _laplace_gated_unit_gradient(laplace::CTSEMLaplaceObjective, U::Integer
         gradient[t] = partial[k]
     end
     return gradient
+end
+
+"""
+    _laplace_unit_gradient_fallback!(row, laplace, U, theta)
+
+Unit `U`'s gradient where its own route failed -- a factorization the seeded
+sweeps need, a sweep that came back non-finite, or the floored term's pass --
+written into `row`, which it zeroes; `true` if it is finite.
+
+Where the gated floor is on and the unit's term is not the floor's bound, by
+the gated term's reverse pass (`_laplace_gated_unit_adjoint`): for a unit the
+rule did not flag, its curvature is above the gate and the pass returns the
+plain Laplace term's gradient. It shares only the primal with the seeded
+sweeps -- a dense eigendecomposition where they factor blocks -- so it is a
+different route, not a retry. Otherwise, or where it declines, by central
+differences of the unit's term (`_laplace_unit_term_difference!`).
+
+Both run at types a Laplace fit has compiled, and only the failing unit is
+redone. The fallback this replaced, `_laplace_nested_gradient` over every
+unit, differentiated the whole objective under a closure's dual type: the
+first time any unit failed in a session it compiled the filter and its reverse
+pass again at that type and at the curvature's nested in it, and recorded in
+the precompile workload (a guessing-asymptote shape whose 40 subjects set it
+off once) it took the image's build from 11.8 to 17.0 GB on dev2.
+"""
+function _laplace_unit_gradient_fallback!(row::Vector{Float64},
+    laplace::CTSEMLaplaceObjective, U::Integer, theta::Vector{Float64})
+    fill!(row, 0.0)
+    if _LAPLACE_PRIOR_FLOOR[] && laplace.floor === :gated && !laplace.logdet_floored[U]
+        g = _laplace_gated_unit_adjoint(laplace, U, theta)
+        if g !== nothing && all(isfinite, g)
+            row .= g
+            return true
+        end
+    end
+    return _laplace_unit_term_difference!(row, laplace, U, theta)
+end
+
+# The relative step of `_laplace_unit_term_difference!`: the term is found to
+# the inner solve's precision, so a central difference at 1e-5 is accurate to
+# about 1e-9 of the term's scale, well inside what a fallback needs.
+const _LAPLACE_DIFFERENCE_STEP = 1e-5
+
+"""
+    _laplace_unit_term_difference!(row, laplace, U, theta)
+
+Unit `U`'s term differentiated by central differences along the positions it
+can depend on (`_laplace_unit_reach`; the rest of `row` is zero), `true` if
+every difference is finite and `row` all `NaN` otherwise. At each displaced
+point the unit's mode is found by Newton from its mode at `theta`, so in the
+same basin, and the term scored as the objective scores it
+(`_laplace_unit_primal`): `2 length(reach)` mode solves of one unit, at
+Float64 -- no dual type, so nothing to compile. The unit's cached curvature is
+put back at `theta` afterwards; its mode is never moved.
+"""
+function _laplace_unit_term_difference!(row::Vector{Float64},
+    laplace::CTSEMLaplaceObjective, U::Integer, theta::Vector{Float64})
+    fill!(row, 0.0)
+    Ls = _laplace_popchols(theta, laplace.spec)
+    reach = _laplace_unit_reach(laplace, U, theta, Ls)
+    if reach === nothing
+        fill!(row, NaN)
+        return false
+    end
+    start = copy(laplace.modes[U])
+    x = copy(theta)
+    ok = true
+    for t in reach
+        h = _LAPLACE_DIFFERENCE_STEP * max(1.0, abs(theta[t]))
+        x[t] = theta[t] + h
+        up = _laplace_unit_term_near(laplace, U, x, start)
+        x[t] = theta[t] - h
+        down = _laplace_unit_term_near(laplace, U, x, start)
+        x[t] = theta[t]
+        row[t] = (up - down) / (2 * h)
+        if !isfinite(row[t])
+            ok = false
+            break
+        end
+    end
+    _laplace_unit_primal(laplace, U, theta, Ls, laplace.modes[U],
+        _laplace_workspace!(laplace, Float64, length(theta)))
+    ok || fill!(row, NaN)
+    return ok
+end
+
+"""Unit `U`'s term at `x`, its mode found by Newton from `start` (`NaN` if not)."""
+function _laplace_unit_term_near(laplace::CTSEMLaplaceObjective, U::Integer,
+    x::Vector{Float64}, start::Vector{Float64})
+    Ls = _laplace_popchols(x, laplace.spec)
+    aws = _laplace_workspace!(laplace, Float64, length(x))
+    u = start
+    if !isempty(start)
+        r = _laplace_newton_unit_mode(laplace, U, x, Ls, aws, start)
+        r.converged || return NaN
+        u = r.u
+    end
+    return Float64(_laplace_unit_primal(laplace, U, x, Ls, u, aws).term)
 end
 
 """
@@ -6462,7 +6555,8 @@ _laplace_converged(laplace::CTSEMLaplaceObjective, coreset::Union{Nothing,CTSEMC
     coreset === nothing ? all(laplace.inner_converged) :
     all(U -> laplace.inner_converged[U], coreset.units)
 
-"""How often the seeded gradient assembly was abandoned for the nested route."""
+"""How many units' gradients the seeded route failed on, and the fallback took
+(`_laplace_unit_gradient_fallback!`)."""
 const _CTSEM_LAPLACE_FALLBACKS = Ref(0)
 
 """
@@ -6655,79 +6749,64 @@ function _laplace_evaluate(laplace::CTSEMLaplaceObjective, theta::Vector{Float64
         # races: piece `c` and the worker holding slot `c` would share one
         # accumulator.
         partials = [zeros(Float64, length(theta)) for _ in 1:nslot]
-        # With `scores`, each unit's gradient is formed in a row buffer of the
-        # slot's and then added both to the slot's sum and to the unit's row:
-        # the units' own gradients are the score rows
-        # (`ctsem_subject_gradients`). Without, the buffer is the sum itself.
-        # With sampling weights too: each unit's gradient is then its weight
-        # times the row.
-        weighted = !isempty(laplace.objective.subject_weights)
-        separate = scores !== nothing || weighted || coreset !== nothing
-        rows = separate ? [zeros(Float64, length(theta)) for _ in 1:nslot] : partials
+        # Each unit's gradient is formed in a row buffer of the slot's and then
+        # added to the slot's sum, times its weight (sampling weights, a
+        # coreset's), and with `scores` written to the unit's row: the units'
+        # own gradients are the score rows (`ctsem_subject_gradients`). A unit
+        # whose route fails leaves its row half-written, so the buffer is what
+        # lets that unit alone be redone (`_laplace_unit_gradient_fallback!`).
+        rows = [zeros(Float64, length(theta)) for _ in 1:nslot]
+        fallbacks = zeros(Int, nslot)
         fill!(chunk_ok, true)
         run_gradient = function (c)
             @inbounds for U in ranges[c]
-                separate && fill!(rows[_laplace_slot()], 0.0)
-                # One pass, so a unit handled early can `break` to the row below.
-                for _ in 1:1
-                    # A unit the gated floor scored is differentiated through its
-                    # own term; see `_laplace_gated_unit_gradient`.
-                    if primal_gated[U]
-                        local gg
-                        gg = _laplace_gated_unit_gradient(laplace, U, theta,
-                            primal_curvature[U])
-                        if !all(isfinite, gg)
-                            chunk_ok[_laplace_slot()] = false
-                            return nothing
-                        end
-                        rows[_laplace_slot()] .+= gg
-                        break
-                    end
+                # `local` throughout: a name the enclosing function also
+                # assigns would be one boxed variable shared by every task.
+                local row, good, s, w
+                row = rows[_laplace_slot()]
+                fill!(row, 0.0)
+                good = if primal_gated[U]
+                    # A unit the gated floor scored is differentiated through
+                    # its own term, its own fallback included; see
+                    # `_laplace_gated_unit_gradient`.
+                    local gg
+                    gg = _laplace_gated_unit_gradient(laplace, U, theta,
+                        primal_curvature[U])
+                    row .= gg
+                    all(isfinite, gg)
+                elseif laplace.logdet_floored[U]
                     # A floored unit is differentiated whole; see
                     # `_laplace_floored_unit_gradient!`.
-                    if laplace.logdet_floored[U]
-                        if !_laplace_floored_unit_gradient!(
-                                rows[_laplace_slot()], laplace, U,
-                                theta, Ls, dLlevels)
-                            chunk_ok[_laplace_slot()] = false
-                            return nothing
-                        end
-                        break
-                    end
+                    _laplace_floored_unit_gradient!(row, laplace, U, theta, Ls,
+                        dLlevels) && all(isfinite, row)
+                else
+                    local bg, factors, elim
                     factors, elim = primal_curvature[U]
-                    local bg
                     bg = _laplace_mark()
-                    if !_laplace_seeded_unit_gradient!(rows[_laplace_slot()],
-                            laplace, U, theta,
-                            Ls, dLlevels, dLsolved, primal_matrices[U], factors, elim)
-                        chunk_ok[_laplace_slot()] = false
-                        return nothing
-                    end
                     # A sweep can return success and still have accumulated a
                     # non-finite contribution: it reports whether its
-                    # factorizations worked, not whether the numbers that came out
-                    # of them are usable. One NaN here is the whole gradient, and
-                    # the trial point is then rejected with a perfectly good
-                    # objective value attached to it -- 54 of one fit's 267
-                    # evaluations went that way, and the fit stopped 0.14 log units
-                    # short with a gradient of 3.2.
-                    #
-                    # The fallback below exists for exactly this and was reachable
-                    # only through a failed factorization. It computes the same
-                    # quantity by ForwardDiff over the whole per-unit term, sharing
-                    # only the primal, so it is a genuinely different route rather
-                    # than a retry.
+                    # factorizations worked, not whether the numbers that came
+                    # out of them are usable. Rejected whole, 54 of one fit's
+                    # 267 trial points went that way with good values attached,
+                    # and the fit stopped 0.14 log units short with a gradient of
+                    # 3.2; so the unit goes to the fallback instead.
+                    s = _laplace_seeded_unit_gradient!(row, laplace, U, theta, Ls,
+                        dLlevels, dLsolved, primal_matrices[U], factors, elim)
                     _laplace_charge!(_LAPLACE_BYTES_GRAD, bg)
-                    if !all(isfinite, rows[_laplace_slot()])
-                        chunk_ok[_laplace_slot()] = false
-                        return nothing
-                    end
+                    s && all(isfinite, row)
                 end
-                if separate
-                    w = coreset === nothing ? _laplace_unit_weight(laplace, U) : coreset_w[U]
-                    partials[_laplace_slot()] .+= w .* rows[_laplace_slot()]
-                    scores === nothing || (scores[U, :] .= w .* rows[_laplace_slot()])
+                if !good && !primal_gated[U]
+                    fallbacks[_laplace_slot()] += 1
+                    good = _laplace_unit_gradient_fallback!(row, laplace, U, theta)
                 end
+                if !good
+                    chunk_ok[_laplace_slot()] = false
+                    scores === nothing || (scores[U, :] .= NaN)
+                    continue
+                end
+                w = coreset === nothing ? _laplace_unit_weight(laplace, U) : coreset_w[U]
+                partials[_laplace_slot()] .+= w .* row
+                scores === nothing || (scores[U, :] .= w .* row)
             end
             return nothing
         end
@@ -6735,6 +6814,7 @@ function _laplace_evaluate(laplace::CTSEMLaplaceObjective, theta::Vector{Float64
             run_gradient(c)
             return true
         end
+        _CTSEM_LAPLACE_FALLBACKS[] += sum(fallbacks)
         # Not `ok`: `run_primal` assigns that name, and a closure binds an
         # enclosing local rather than shadowing it, so a function-level `ok`
         # here made every concurrent unit share one boxed `ok` between its
@@ -6746,14 +6826,9 @@ function _laplace_evaluate(laplace::CTSEMLaplaceObjective, theta::Vector{Float64
             end
             _ctsem_log_prior_gradient!(grad, laplace.objective, theta)
         else
-            # A failed factorization or a non-finite sweep is not a licence to
-            # return a partial sum: fall back to the route that does not need
-            # those factorizations.
-            fill!(grad, 0.0)
-            grad .= _laplace_nested_gradient(laplace, theta, Ls, primal_curvature;
-                unitweights=coreset_w)
-            _CTSEM_LAPLACE_FALLBACKS[] += 1
-            scores === nothing || fill!(scores, NaN)
+            # A unit no route could differentiate: the gradient is not a
+            # partial sum of the others.
+            fill!(grad, NaN)
         end
     else
         grad .= _laplace_nested_gradient(laplace, theta, Ls, primal_curvature;
@@ -6975,8 +7050,10 @@ The exact outer gradient by ForwardDiff over the whole per-unit term.
 
 `O(npar * k)` reverse sweeps per unit, which is what
 `_laplace_seeded_unit_gradient!` exists to avoid. Retained as the oracle the
-seeded path is tested against at one, two and three levels, and as its fallback
-when a factorization the seeded path needs is not available.
+seeded path is tested against at one, two and three levels
+(`nested_gradient = true`), and nothing else: it runs the whole objective
+under a closure's dual type, a compile of the filter and its reverse pass, so a
+failing unit goes to `_laplace_unit_gradient_fallback!` instead.
 """
 function _laplace_nested_gradient(laplace::CTSEMLaplaceObjective,
     theta::Vector{Float64}, Ls::Vector{Matrix{Float64}},
@@ -7446,14 +7523,18 @@ end
 population parameters move.
 
 The mode is defined implicitly by `dg/dz = 0`, so differentiating that gives
-`dzhat/dtheta = C * d2g/dz dtheta`, and `_laplace_dual_mode` already produces
-exactly that -- one Newton step from the converged mode taken in dual
-arithmetic. Seeding `theta` with a full set of forward directions turns the
-single directional answer into the whole Jacobian.
+`dzhat/dtheta = M^-1 d2g/dz dtheta`, `M` the curvature at the mode: the unit's
+stored factors, as one Newton step from the mode would solve with. Row `a` of
+`d2g/dz dtheta` is the derivative along `z_a` of the gradient with respect to
+`theta` (`_laplace_unit_theta_gradient`), one seeded reverse pass at the type
+the Laplace fit's seeded sweeps run at, giving every parameter's column at
+once (`_laplace_mode_cross`).
 
-Costs one forward sweep per parameter chunk over each unit, once, which is why
-it is worth computing here and reusing across every posterior draw rather than
-re-solving a mode per draw.
+Costs one such pass per coordinate of each unit, once, which is why it is
+worth computing here and reusing across every posterior draw rather than
+re-solving a mode per draw. It was forward mode over the parameters, one pass
+per chunk of them under a closure's dual type: a compile of the filter and its
+reverse pass at a session's first call.
 
 Returns a vector of `dim(u) x npar` matrices, one per unit.
 
@@ -7483,6 +7564,9 @@ function _laplace_mode_jacobian(laplace::CTSEMLaplaceObjective, theta::Vector{Fl
     nunits = length(units.members)
     Ls = _laplace_popchols(theta, laplace.spec)
     hessians = _laplace_primal_curvature(laplace, theta, Ls)
+    dL = _laplace_level_chol_derivatives(theta, laplace.spec)
+    positions = [_laplace_level_positions(laplace.spec, l)
+        for l in eachindex(laplace.spec.levels)]
     hyb = laplace.objective.params.hybrid
     nh = _hybrid_on(hyb) ? _hybrid_items(hyb) : 0
     slot = nh > 0 ? invperm(sortperm(hyb.effect)) : Int[]
@@ -7498,26 +7582,13 @@ function _laplace_mode_jacobian(laplace::CTSEMLaplaceObjective, theta::Vector{Fl
             continue
         end
         uhat = laplace.modes[U]
-        mode_of = function (x)
-            local S, wsd, Lsd, u, w, hook, r
-            S = eltype(x)
-            wsd = _laplace_workspace!(laplace, S, length(x))
-            Lsd = _laplace_popchols(x, laplace.spec)
-            u = d == 0 ? S[] :
-                _laplace_dual_unit_mode(laplace, U, x, Lsd, uhat, hessians[U], wsd)
-            nh == 0 && return u
-            w = zeros(S, D)
-            w[1:d] .= u
-            hook = _HybridModeHook{S}(nm)
-            r = _laplace_unit_loglik_gradient(laplace, U, x, Lsd, u, wsd,
-                eachindex(units.members[U]), nothing, _HYBRID_PROFILE, hook)
-            isfinite(r.value) || return fill(S(NaN), D)
-            for m in 1:nm, (c, k) in enumerate(hook.items[m])
-                w[d + (m - 1) * nh + slot[k]] = hook.dhat[m][c]
-            end
-            return w
+        out[U] = if nh == 0
+            _laplace_unit_mode_jacobian(laplace, U, theta, Ls, dL, positions, uhat,
+                hessians[U])
+        else
+            _laplace_hybrid_mode_jacobian(laplace, U, theta, Ls, dL, positions, uhat,
+                D, nh, slot)
         end
-        out[U] = _ctsem_jacobian(mode_of, theta)
         if nh == 0
             modes[U] = copy(uhat)
         else
@@ -7538,6 +7609,92 @@ function _laplace_mode_jacobian(laplace::CTSEMLaplaceObjective, theta::Vector{Fl
 end
 
 export ctsem_laplace_mode_jacobian
+
+"""
+    _laplace_mode_cross(laplace, U, theta, Ls, dL, positions, z, layout)
+
+`d2g/dz dtheta` at `z`, `size(z) x npar`, or `nothing` if a member cannot be
+evaluated: row `a` the derivative along `z_a` of the unit objective's gradient
+with respect to `theta` (`_laplace_unit_theta_gradient`), one pass seeded in
+`z`, at the seed type the gated rule's passes and the seeded sweeps use.
+`layout` as there: `nothing` for the unit's own coordinates, the joint layout
+for `z = (u, d_1, ...)`.
+"""
+function _laplace_mode_cross(laplace::CTSEMLaplaceObjective, U::Integer,
+    theta::Vector{Float64}, Ls::Vector{Matrix{Float64}}, dL, positions,
+    z::Vector{Float64}, layout)
+    D = length(z)
+    npar = length(theta)
+    H = zeros(Float64, D, npar)
+    seed = ForwardDiff.Dual{_LaplaceSeedInner}(0.0, 1.0)
+    for a in 1:D
+        zz = [z[b] + seed * (b == a ? 1.0 : 0.0) for b in 1:D]
+        r = _laplace_unit_theta_gradient(laplace, U, theta, Ls, dL, positions, zz,
+            layout)
+        r === nothing && return nothing
+        @inbounds for t in 1:npar
+            H[a, t] = ForwardDiff.partials(r.theta[t])[1]
+        end
+    end
+    return H
+end
+
+"""`_laplace_mode_jacobian`'s rows for a unit of the layer's own coordinates."""
+function _laplace_unit_mode_jacobian(laplace::CTSEMLaplaceObjective, U::Integer,
+    theta::Vector{Float64}, Ls::Vector{Matrix{Float64}}, dL, positions,
+    uhat::Vector{Float64}, curvature)
+    npar = length(theta)
+    d = length(uhat)
+    H = _laplace_mode_cross(laplace, U, theta, Ls, dL, positions, uhat, nothing)
+    H === nothing && return fill(NaN, d, npar)
+    factors, coupling = curvature
+    blocks = laplace.units.blocks[U]
+    J = zeros(Float64, d, npar)
+    @inbounds for t in 1:npar
+        J[:, t] = _laplace_block_solve(factors, coupling, blocks, H[:, t])
+    end
+    return J
+end
+
+"""
+`_laplace_mode_jacobian`'s rows for a unit whose members' filters integrate
+deviations: in joint coordinates `(u, d_1, ...)`, whose mode is the effects'
+mode and each member's deviations' conditional mode given it, by the same
+identity on the joint curvature (`_hybrid_joint_curvature`), the rows laid out
+as `_laplace_mode_jacobian` documents.
+"""
+function _laplace_hybrid_mode_jacobian(laplace::CTSEMLaplaceObjective, U::Integer,
+    theta::Vector{Float64}, Ls::Vector{Matrix{Float64}}, dL, positions,
+    uhat::Vector{Float64}, D::Integer, nh::Integer, slot::Vector{Int})
+    npar = length(theta)
+    d = length(uhat)
+    members = laplace.units.members[U]
+    nm = length(members)
+    aws = _laplace_workspace!(laplace, Float64, npar)
+    hook = _HybridModeHook{Float64}(nm)
+    r = _laplace_unit_loglik_gradient(laplace, U, theta, Ls, uhat, aws,
+        eachindex(members), nothing, _HYBRID_PROFILE, hook)
+    isfinite(r.value) || return fill(NaN, D, npar)
+    layout = _hybrid_layout(d, hook.q)
+    z0 = zeros(Float64, layout.n)
+    z0[1:d] .= uhat
+    for m in 1:nm, c in 1:layout.q[m]
+        z0[layout.offs[m] + c] = hook.dhat[m][c]
+    end
+    H = _laplace_mode_cross(laplace, U, theta, Ls, dL, positions, z0, layout)
+    H === nothing && return fill(NaN, D, npar)
+    M = Matrix{Float64}(_hybrid_joint_curvature(laplace, U, theta, Ls, z0,
+        layout).diag[1])
+    F = cholesky(Symmetric((M .+ transpose(M)) ./ 2); check=false)
+    issuccess(F) || return fill(NaN, D, npar)
+    Jz = F \ H
+    J = zeros(Float64, D, npar)
+    J[1:d, :] .= Jz[1:d, :]
+    for m in 1:nm, (c, k) in enumerate(hook.items[m])
+        J[d + (m - 1) * nh + slot[k], :] .= Jz[layout.offs[m] + c, :]
+    end
+    return J
+end
 
 """
     ctsem_laplace_subject_values(laplace, draws, thetahat)
@@ -8041,13 +8198,13 @@ _ctsem_optimise_result_extra(o::CTSEMLaplaceObjective, final, log) = (
     unit_min_eigenvalue=ctsem_laplace_conditioning(o).min_eigenvalue,
     laplace_floor=String(o.floor),
     gated_units=o.gated_units,
-    # How many gradients were computed twice. The seeded assembly returns
-    # `false` on a failed factorization and the caller silently recomputes the
-    # whole thing by the nested route, which is correct and much slower -- and
-    # invisible, because the answer is right either way. A reduced-rank level
-    # once failed on *every* gradient for a structural reason and the only
-    # symptom was a fit that crawled. Counted already for the verbose report;
-    # carried out here so a caller can see it without asking for one.
+    # How many units' gradients the seeded route failed on, which the
+    # fallback then took (`_laplace_unit_gradient_fallback!`): correct and
+    # slower, and invisible, because the answer is right either way. A
+    # reduced-rank level once failed on *every* gradient for a structural
+    # reason and the only symptom was a fit that crawled. Counted already for
+    # the verbose report; carried out here so a caller can see it without
+    # asking for one.
     gradient_fallbacks=_CTSEM_LAPLACE_FALLBACKS[])
 
 """
@@ -8090,7 +8247,7 @@ function _ctsem_optimise_verbose_report(o::CTSEMLaplaceObjective,
         " for an inner mode solve that did not converge, ",
         log.rejected_gradient, " for the gradient; ",
         _CTSEM_LAPLACE_FALLBACKS[],
-        " gradient(s) fell back to the nested route")
+        " unit gradient(s) taken by the fallback route")
     nfloored = count(o.logdet_floored)
     nfloored > 0 && println(_console(), "Laplace: the prior floor bound for ",
         nfloored, "/", length(o.logdet_floored), " unit(s) at the last ",
@@ -8794,9 +8951,11 @@ there to measure.
 
 The rows are the units' own gradients from the evaluation's seeded reverse
 sweep (`ctsem_laplace_evaluate`'s `scores`), so they cost one gradient and run
-in parallel over units like it. They were a forward-mode Jacobian of the
-per-unit terms (`_laplace_subject_gradients_forward`, still the fallback): one
-dual pass per chunk of parameters over every unit, on one thread. The batched
+in parallel over units like it, a unit whose seeded sweep fails taking the
+evaluation's own fallback (`_laplace_unit_gradient_fallback!`); a unit no route
+can differentiate keeps a `NaN` row. They were a forward-mode Jacobian of the
+per-unit terms (`_laplace_subject_gradients_forward`, now only a test oracle):
+one dual pass per chunk of parameters over every unit, on one thread. The batched
 optimiser takes every gradient of a batch stage from here, and on the SNSF
 pilot (310 parameters, 493 single-member units) its first iterations then took
 5-20 minutes each at one core, against seconds once the batch was full.
@@ -8814,10 +8973,6 @@ function ctsem_subject_gradients(laplace::CTSEMLaplaceObjective,
     S = zeros(Float64, nunits, length(theta))
     r = ctsem_laplace_evaluate(laplace, theta; gradient=true, scores=S)
     isfinite(r.value) || return (value=r.value, scores=fill(NaN, nunits, n))
-    if !all(isfinite, S)
-        f = _laplace_subject_gradients_forward(laplace, theta; prior=prior)
-        return (value=f.value, scores=size(f.scores, 2) == n ? f.scores : f.scores[:, 1:n])
-    end
     # Each unit carries its share of the prior, as the forward route's rows do.
     prior && _ctsem_prior_scores!(S, laplace.objective, theta,
         _laplace_unit_of_subject(laplace))

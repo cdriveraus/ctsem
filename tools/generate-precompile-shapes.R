@@ -80,13 +80,14 @@ categorical <- function(d, names, type) {
   d$eta <- NULL
   d
 }
-categorical_model <- function(names, type) {
+categorical_model <- function(names, type, asymptotes = NULL) {
   n <- length(names)
   args <- list(type = "ct", n.latent = 1, n.manifest = n, manifestNames = names,
     latentNames = "eta1", LAMBDA = matrix(1, n, 1), CINT = matrix("cint"),
     T0MEANS = matrix(0), MANIFESTVAR = diag(0, n), manifesttype = rep(type, n))
   if (type == 1L) args$MANIFESTMEANS <- matrix(0, n, 1)
   if (type == 2L) args$ncategories <- rep(4L, n)
+  if (!is.null(asymptotes)) args$ASYMPTOTES <- asymptotes
   m <- suppressWarnings(suppressMessages(do.call(ctModel, args)))
   m$pars$indvarying <- m$pars$param %in% "cint"
   m
@@ -153,12 +154,12 @@ shapes <- list(
   # coordinate, by the cost rule): the inner solve, its probes and the
   # logdet's derivatives
   # at the Gaussian workspace type, which every Gaussian Laplace fit with a
-  # nonlinear effect runs. Its fit stops at the Hessian's normal, without the
-  # quadrature correction or importance sampling: on these ten subjects the
-  # drift effect's Laplace term is checked and corrected, and the record was
-  # 2,500 calls, 2,100 of them the continuation's evaluations, which every
-  # build would replay. The correction's rounds and the importance sampler
-  # were in no shape before this one either.
+  # nonlinear effect runs, and the quadrature correction's rounds, which the
+  # drift effect sets off on these ten subjects. Its fit stops at the Hessian's
+  # normal, without importance sampling. The correction was off here while
+  # every call was recorded (2,100 of 2,500 were the continuation's
+  # evaluations); at two calls a signature it is about 40, and without it a
+  # session's first such fit compiled the rounds.
   gaussian_laplace_block = list(route = "laplace", model = function() {
       mvar <- diag(0, 2)
       diag(mvar) <- "mvar"
@@ -171,7 +172,7 @@ shapes <- list(
       m
     },
     data = function() indicators(sim_latent(10, 6), c("y1", "y2")),
-    optimcontrol = list(laplace_correct = FALSE, uncertainty = "hessian")),
+    optimcontrol = list(uncertainty = "hessian")),
   # A model with a categorical indicator is a different filter workspace type
   # -- the categorical update is gated on it, so Gaussian fits do not carry
   # that code -- so each route needs one. Binary and ordinal share it.
@@ -180,7 +181,20 @@ shapes <- list(
     data = function() categorical(sim_latent(8, 6), c("b1", "b2"), 1L)),
   ordinal_laplace = list(route = "laplace",
     model = function() categorical_model(c("o1", "o2"), 2L),
-    data = function() categorical(sim_latent(10, 6), c("o1", "o2"), 2L))
+    data = function() categorical(sim_latent(10, 6), c("o1", "o2"), 2L)),
+  # A guessing asymptote on one binary item, on enough subjects that the
+  # quadrature correction runs its rounds and forms the continuation's Hessian
+  # at the categorical workspace type, which without it a session's first such
+  # fit compiled; and the asymptote's own mixture moments
+  # (`_asymptote_partials!`), which the binary and ordinal shapes do not reach.
+  # Recorded while a failed unit sweep still fell back to forward mode over
+  # every unit, it set that off once and took the build from 11.8 to 17.0 GB
+  # (dev2); without that fallback it costs about 50 s of build and no memory.
+  asymptote_laplace = list(route = "laplace",
+    model = function() categorical_model(c("b1", "b2"), 1L,
+      asymptotes = c("guess", NA)),
+    data = function() categorical(sim_latent(40, 12, cints = stats::rnorm(40, 0, 1)),
+      c("b1", "b2"), 1L))
 )
 only <- Sys.getenv("CTSEM_PRECOMPILE_SHAPES", "")
 if (nzchar(only)) shapes <- shapes[strsplit(only, ",", fixed = TRUE)[[1]]]
