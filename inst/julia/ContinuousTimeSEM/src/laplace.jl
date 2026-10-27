@@ -7924,7 +7924,8 @@ _ctsem_saturated_for(o::CTSEMLaplaceObjective, minimizer) =
 
 _ctsem_scores_supported(o::CTSEMLaplaceObjective) = _ctsem_scores_supported(o.objective)
 
-# The Laplace route's scores come from the same evaluation as its gradient.
+# The Laplace route's scores come from the same evaluation as its gradient,
+# and its units' terms with them.
 function _ctsem_optimise_trial_scores(o::CTSEMLaplaceObjective, x, gradient_method,
         limit::Real, log, store::CTSEMScoreStore)
     store.valid = false
@@ -7932,7 +7933,8 @@ function _ctsem_optimise_trial_scores(o::CTSEMLaplaceObjective, x, gradient_meth
     trial = _ctsem_optimise_trial(o, x, true, gradient_method, limit, log;
         scores=store.S)
     if trial.valid && all(isfinite, store.S)
-        copyto!(store.x, x); store.valid = true
+        copyto!(store.x, x); copyto!(store.u, trial.evaluated.unit_loglik)
+        store.valid = true
     end
     return trial
 end

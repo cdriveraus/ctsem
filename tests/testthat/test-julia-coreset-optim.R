@@ -48,6 +48,47 @@ test_that("coreset stages reach the full objective's optimum in fewer full gradi
   expect_lt(on$optim$full_gradients, off$optim$full_gradients)
 })
 
+test_that("a stage begins on what the full evaluation at its start left", {
+  skip_on_cran()
+  skip_if_not(isTRUE(ctsem::ctJuliaStatus()$available))
+  # `_ctsem_coreset_anchor!`: the coreset's value where a stage begins, and the
+  # correction that makes the stage's gradient the full one there, read from
+  # the units' terms and scores the full evaluation at that point kept, rather
+  # than by evaluating the coreset again. On the objective the fit optimises
+  # and on the layer, whose routes keep the scores differently.
+  fit <- .coreset_optim_fits()$on
+  ctsem:::.ctJuliaEval('
+    function _ctsem_test_anchor(o, x, units, w)
+      M = ContinuousTimeSEM
+      x = collect(Float64, x)
+      store = M.CTSEMScoreStore(M._ctsem_nunits(o), length(x))
+      trial = M._ctsem_optimise_trial_scores(o, x, :adjoint, Inf,
+        M._ctsem_optimise_log(o, false), store)
+      plan = M._ctsem_coreset_plan(o, nothing, store)
+      cs = M._laplace_coreset(o, collect(Int, units), collect(Float64, w))
+      plan.target = M.CTSEMCoresetTarget(o, cs, copy(x), zeros(length(x)))
+      f = -trial.evaluated.value
+      fc = M._ctsem_coreset_anchor!(plan, x, f)
+      correction = copy(plan.target.correction)
+      e = M.ctsem_laplace_evaluate(o, x; gradient=true, coreset=cs)
+      return (valid=store.valid, value=fc, evaluated=-e.value, correction=correction,
+        difference=trial.evaluated.gradient .- e.gradient,
+        elsewhere=M._ctsem_coreset_anchor!(plan, x .+ 1e-3, f) === nothing)
+    end')
+  set.seed(4)
+  x <- as.numeric(fit$estimate$raw) + rnorm(length(fit$estimate$raw), 0, 0.05)
+  for (hybrid in c(TRUE, FALSE)) {
+    r <- ctsem:::.ctJuliaGet(ctsem:::.ctJuliaCall("_ctsem_test_anchor",
+      ctsem:::.ctJuliaObjective(fit, hybrid = hybrid), ctsem:::.ctJuliaNumericVector(x),
+      ctsem:::.ctJuliaVector(c(3L, 40L, 41L, 117L, 300L)),
+      ctsem:::.ctJuliaVector(c(30, 55, 12.5, 80, 40))))
+    expect_true(isTRUE(r$valid))
+    expect_equal(r$value, r$evaluated, tolerance = 1e-10)
+    expect_equal(as.numeric(r$correction), as.numeric(r$difference), tolerance = 1e-8)
+    expect_true(isTRUE(r$elsewhere))
+  }
+})
+
 test_that("the coreset weights are non-negative least squares", {
   skip_on_cran()
   skip_if_not(isTRUE(ctsem::ctJuliaStatus()$available))
