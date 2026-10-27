@@ -28,7 +28,9 @@
 # finding, so the rank is stated: by default (`poprank = 'auto'`) the augmented
 # route keeps only the dimensions that reach the observation mean, here one,
 # and the diffusion effect's loading is then identified through its product
-# with the drift's. ctIdentify() analyses the model as ctFit() sets it up.
+# with the drift's. ctIdentify() analyses the model as ctFit() sets it up, on
+# ctFit's default route unless told otherwise, so the tests of the augmented
+# route's finding name the route.
 .identify_varying_model <- function() {
   model <- .identify_model()
   model$pars$indvarying <- FALSE
@@ -120,7 +122,7 @@ test_that("two identical calls give identical output", {
 test_that("a random effect on a variance cell reports the covariance as determined", {
   skip_without_julia()
   result <- suppressMessages(ctIdentify(.identify_data(),
-    .identify_varying_model(), cores = 1))
+    .identify_varying_model(), cores = 1, intoverpop = "augmented"))
   expect_gte(result$nweak, 1L)
   # The population sd of the diffusion effect and its correlation with the
   # drift effect, together, are the ridge -- and it is the *sd* the message is
@@ -210,7 +212,7 @@ test_that("a genuinely redundant parameter still gets the fix-or-remove advice",
 test_that("the flat subspace is aggregated by subspace, not by name", {
   skip_without_julia()
   result <- suppressMessages(ctIdentify(.identify_data(),
-    .identify_varying_model(), cores = 1))
+    .identify_varying_model(), cores = 1, intoverpop = "augmented"))
   # The loading rotates along the ridge, so the names implicated at one point
   # are not the names implicated at the next. Intersecting them emptied
   # `$parameters` and moved everything into `$sometimes`; the union of what
@@ -431,9 +433,9 @@ test_that("partial identification is a finding about the augmented route only", 
 
 test_that("the laplace specification agrees with the one ctFit builds", {
   skip_without_julia()
-  # The fallback added for the unprepared model must find the same random
-  # effects `.ctPrepareData()` does, or `ctIdentify(intoverpop='laplace')`
-  # would answer a question about a different model than the fit does.
+  # The fallback for a model no fit has set up must find the same random
+  # effects `.ctPrepareData()` does, or a specification prepared from it would
+  # describe a different model than the fit does.
   data <- .identify_data()
   model <- .identify_varying_model()
   bare <- suppressMessages(.ctFitJuliaBackend(data, model, fit = FALSE,

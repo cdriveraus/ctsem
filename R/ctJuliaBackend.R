@@ -2363,8 +2363,8 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
   } else {
     # Neither, which is a model straight from `ctModel()`. `ctFit()` always
     # supplies both -- it builds `modelmats` and hands `.ctPrepareData()`'s
-    # output over as `prepared_data` -- so this branch is for the callers that
-    # prepare a specification without fitting one, `ctIdentify()` among them.
+    # output over as `prepared_data` -- so this branch is for a caller that
+    # prepares a specification from a model no fit has set up.
     # Without it `nrandom` came out zero on a model that plainly has random
     # effects and `intoverpop='laplace'` was refused as "no parameters are
     # marked indvarying", which is the opposite of what the model said.
