@@ -114,6 +114,8 @@ include("summary_matrices.jl")
 include("kalman_trace.jl")
 include("laplace.jl")
 include("hybrid_joint.jl")
+# After hybrid_joint.jl, whose cross curvature it fills.
+include("tangent_laplace.jl")
 include("laplace_gated_adjoint.jl")
 include("laplace_sequential.jl")
 # After kalman_trace.jl and laplace.jl: it reads the filter trace on one route

@@ -247,7 +247,7 @@ _tan_hessian_columns!(H::Matrix{Float64}, objective::CTSEMObjective,
 The hybrid's own sds: each item's `g = slope (log1p_exp(2 r - 1) sd + 1e-10)`
 at its raw `r` (`_hybrid_factor!`), and the first two derivatives in `r`.
 """
-function _tan_hybrid_own(h::CTSEMHybrid, x::Vector{Float64}, k::Int)
+function _tan_hybrid_own(h::CTSEMHybrid, x::AbstractVector{Float64}, k::Int)
     r = x[h.psi_index[k]]
     z = 2 * r - 1
     sig = 1 / (1 + exp(-z))

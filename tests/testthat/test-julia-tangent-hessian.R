@@ -55,6 +55,73 @@
     ctsem:::.ctJuliaNumericVector(as.numeric(fit$estimate$raw)))
 }
 
+# The unit curvature by the hand-coded sweeps (`tangent_laplace.jl`) against the
+# dual's, with the gated floor's cross curvature read off the same sweeps
+# (`CTSEMHybridCross`), at each unit's mode: the largest differences in the
+# curvature, and in the cross terms, mode and `M`, relative to their largest
+# entries, the members with a cross term, and whether the hand route served.
+.th_curvature <- function(fit) {
+  f <- ctsem:::.ctJuliaEval(paste(
+    "function (lap, x)",
+    "  M = ContinuousTimeSEM",
+    "  xe = M._laplace_extend(lap, collect(Float64, x))",
+    "  M.ctsem_laplace_evaluate(lap, xe; gradient = false)",
+    "  Ls = M._laplace_popchols(xe, lap.spec)",
+    "  errM = 0.0; errH = 0.0; ncross = 0; units = 0",
+    "  for U in eachindex(lap.units.members)",
+    "    u = lap.modes[U]",
+    "    isempty(u) && continue",
+    "    units += 1",
+    "    d, nm = length(u), length(lap.units.members[U])",
+    "    function run(on)",
+    "      M.ctsem_set_tangent_hessian!(on)",
+    "      c = M.CTSEMHybridCross{Float64}(d, nm)",
+    "      Mb = try M._laplace_unit_curvature(lap, U, xe, Ls, u; hook = c)",
+    "      finally M.ctsem_set_tangent_hessian!(true) end",
+    "      (M._laplace_block_dense(Mb, lap.units.blocks[U], d), c)",
+    "    end",
+    "    A1, c1 = run(true)",
+    "    A0, c0 = run(false)",
+    "    errM = max(errM, maximum(abs.(A1 .- A0)) / maximum(abs.(A0)))",
+    "    for m in 1:nm",
+    "      c1.q[m] == c0.q[m] || return (errM = Inf, errH = Inf, ncross = -1,",
+    "        units = units, served = false)",
+    "      q = c0.q[m]",
+    "      q == 0 && continue",
+    "      ncross += 1",
+    "      rel(a, b) = maximum(abs.(a .- b)) / max(1.0, maximum(abs.(b)))",
+    "      errH = max(errH, rel(c1.H[m][1:q, :], c0.H[m][1:q, :]),",
+    "        rel(c1.A[m][1:q, 1:q], c0.A[m][1:q, 1:q]), rel(c1.dhat[m][1:q], c0.dhat[m][1:q]))",
+    "    end",
+    "  end",
+    "  served = M._tan_laplace_context(lap, xe, M._HYBRID_PROFILE) !== nothing",
+    "  (errM = errM, errH = errH, ncross = ncross, units = units, served = served)",
+    "end", sep = "\n"))
+  f(ctsem:::.ctJuliaObjective(fit, hybrid = TRUE),
+    ctsem:::.ctJuliaNumericVector(as.numeric(fit$estimate$raw)))
+}
+
+test_that("the hand-coded unit curvature is the dual's, cross terms included", {
+  skip_without_julia()
+  d <- .th_data()
+  m <- .th_model()
+  # A random drift, a coordinate, beside the intercepts the filter integrates.
+  m$pars$indvarying[m$pars$matrix == "DRIFT" & m$pars$row == 1 & m$pars$col == 1] <- TRUE
+  for (own in c(FALSE, TRUE)) {
+    args <- list(d, m, backend = "julia", intoverpop = "laplace", cores = 1,
+      optimcontrol = list(estonly = TRUE))
+    if (own) args <- c(args, list(poprank = 0, popunique = TRUE))
+    fit <- suppressWarnings(suppressMessages(do.call(ctFit, args)))
+    r <- .th_curvature(fit)
+    info <- if (own) "own variances" else "a block"
+    expect_true(r$served, info = info)
+    expect_gt(r$units, 0)
+    expect_gt(r$ncross, 0)
+    expect_lt(r$errM, 1e-10)
+    expect_lt(r$errH, 1e-10)
+  }
+})
+
 test_that("the hand-coded Hessian is the dual's where the filter integrates deviations", {
   skip_without_julia()
   d <- .th_data()

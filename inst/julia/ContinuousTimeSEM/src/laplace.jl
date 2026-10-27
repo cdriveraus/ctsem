@@ -3382,10 +3382,19 @@ function _laplace_columns_jacobian(laplace::CTSEMLaplaceObjective, U::Integer,
     columns::Vector{Int}, members::Vector{Int}, mode::Int, hook) where {T}
     n = length(columns)
     d = length(base)
-    block_of = _LaplaceColumnsGradient(laplace, Int(U), values, Ls, base, columns,
-        members, mode, hook)
     width = _ctsem_dual_width(n, _CTSEM_CURVATURE_WIDTHS[])
     nx = max(n, width)
+    # By the hand-coded second order where it covers the model
+    # (`tangent_laplace.jl`), the gated floor's cross curvature read off the
+    # same sweeps; the other hooks and element types take the dual.
+    if (hook === nothing || hook isa CTSEMHybridCross{Float64}) && T === Float64 &&
+            eltype(values) === Float64
+        Jh = _laplace_scratch_matrix!(laplace, Float64, d, nx, :curv_jac)
+        _tan_laplace_columns_jacobian!(Jh, laplace, U, values, Ls, base, columns, members,
+            mode, hook) && return Jh
+    end
+    block_of = _LaplaceColumnsGradient(laplace, Int(U), values, Ls, base, columns,
+        members, mode, hook)
     xb = _laplace_scratch_vector!(laplace, T, nx, :curv_ub)
     @inbounds for (t, c) in enumerate(columns)
         xb[t] = base[c]
@@ -5441,6 +5450,10 @@ function _laplace_unit_seeded_gradient_(laplace::CTSEMLaplaceObjective, U::Integ
     values::Vector{Float64}, Ls::Vector{Matrix{Float64}}, u::Vector{Float64},
     members, d1::Vector{Float64})
 
+    # By the hand-coded second order where it covers the model
+    # (`_tan_laplace_seeded`).
+    hand = _tan_laplace_seeded(laplace, U, values, Ls, u, members, d1)
+    hand === nothing || return hand
     spec = laplace.spec
     units = laplace.units
     unitmembers = units.members[U]

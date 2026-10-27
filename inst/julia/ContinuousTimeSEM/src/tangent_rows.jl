@@ -307,7 +307,7 @@ cells from the layer at `xw` (`_tan_layer_fill!`), `mod` its matrices.
 """
 function _tan_sweep_rows!(acc::TanAcc{W}, Hb::Matrix{Float64}, sw::TanSweep{W},
     mod::TanModel{W}, R::TanRows{W,DW}, objective::CTSEMObjective, i::Int, w::Float64,
-    xw::Vector, nl::Int; forward::Bool=false) where {W,DW}
+    xw::Vector, nl::Int; forward::Bool=false, g0=nothing) where {W,DW}
     sp = objective.params
     so = objective.subject_objectives[i]
     awsW = R.awsW
@@ -502,6 +502,12 @@ function _tan_sweep_rows!(acc::TanAcc{W}, Hb::Matrix{Float64}, sw::TanSweep{W},
     _ctsem_tipred_scatter!(vb, awsW, so.tipreds)
     @inbounds for l in 1:nl, j in eachindex(vb)
         Hb[j, l] += w * ForwardDiff.partials(vb[j], l)
+    end
+    # The gradient itself, where the caller asks (`g0`).
+    if g0 !== nothing
+        @inbounds for j in eachindex(vb)
+            g0[j] = w * ForwardDiff.value(vb[j])
+        end
     end
     return _TAN_OK
 end
