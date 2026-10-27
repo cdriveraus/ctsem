@@ -1569,9 +1569,12 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
   # copy of those steps stood here, and missed every step added to ctFit. The
   # caller's random stream is put back: the setup's draws are a fit's, for
   # its starting values, and nothing here fits.
+  # The route is the one an optimising julia fit takes, chosen on the model as
+  # set up, as the generator chooses it: a 'stationary' T0MEANS cell is a
+  # varying intercept until the setup fixes it.
   keep <- .ctStreamKeep()
-  tryCatch(.ctFitModelSetup(model, intoverpop = if (.ctAnyVarying(model))
-    "laplace" else "augmented", checks = FALSE)$ctm, finally = keep())
+  tryCatch(.ctFitModelSetup(model, intoverpop = "auto", checks = FALSE)$ctm,
+    finally = keep())
 }
 
 # A reference inside a matrix the engine evaluates once, from the parameters
@@ -3117,6 +3120,10 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
     tryCatch(.ctFitModelSetup(model, intoverpop = "augmented", checks = FALSE)$ctm,
       finally = keep())
   }
+  # Everything below reads the model as set up, as a fit hands it here: read
+  # as written, a reduced-rank population's loading form was missed and its
+  # scales looked for in a matsetup that has none.
+  model <- expanded
   augmented_indices <- as.integer(expanded$intoverpopindvaryingindex)
   nlatent_augmented <- max(expanded$pars$row[expanded$pars$matrix == "T0MEANS"])
   table <- .ctJuliaParameterTable(expanded)

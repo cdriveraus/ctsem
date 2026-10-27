@@ -289,8 +289,6 @@
     }
   }
 
-  varying <- .ctAnyVarying(model)
-  route <- if (varying) "laplace" else "augmented"
   # The model set up as a fit sets it up (`.ctFitModelSetup()`, the same code
   # ctFit() runs), then prepared as a fit prepares it. Messages from both are
   # about fitting -- a T0VAR row the population block covers, a level with
@@ -298,10 +296,14 @@
   # The setup draws from the random stream (`ctModelTransformsToNum()`'s grid),
   # which a fit keeps for its starting values; the generator's draws follow
   # from the seed alone, so the stream is put back.
+  # The route is the one an optimising julia fit takes, chosen on the model
+  # as set up: a 'stationary' T0MEANS cell is a varying intercept until the
+  # setup fixes it.
   keep <- .ctStreamKeep()
-  setup <- tryCatch(suppressMessages(.ctFitModelSetup(model, intoverpop = route,
+  setup <- tryCatch(suppressMessages(.ctFitModelSetup(model, intoverpop = "auto",
     priors = FALSE, nsubjects = length(unique(skeleton[[model$subjectIDname]])),
     checks = FALSE)), finally = keep())
+  route <- if (identical(setup$intoverpopmethod, "laplace")) "laplace" else "augmented"
   spec <- suppressMessages(.ctJuliaPrepare(skeleton, setup$ctm, project = project,
     priors = FALSE, intoverpop = route))
   # The transforms the reads below take, as the fit's are: covariances given
@@ -484,7 +486,7 @@
     if (length(parts)) message("Generating values -- ",
       paste(parts, collapse = "; "), ".")
   }
-  list(handle = handle, raw = raw, varying = varying)
+  list(handle = handle, raw = raw)
 }
 
 # How many standard normals one draw of every random effect takes; zero when the
