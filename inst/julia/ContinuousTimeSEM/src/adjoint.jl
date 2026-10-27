@@ -1131,6 +1131,12 @@ a per-evaluation cost.
 The result is symmetrised. The exact Hessian is symmetric, and each entry is
 computed once, so the two triangles differ only by floating-point association
 order; averaging them is free and keeps the matrix usable by a Cholesky.
+
+Where the hand-coded second order covers the model (`tangent_hessian.jl`,
+`_tan_refusal`) it computes the same derivative instead, the subjects' sweeps
+carrying the directions as Float64 tangents rather than through a dual: faster,
+and the dual route its oracle (`ctsem_set_tangent_hessian!(false)`). A `chunk`
+asks for the dual route.
 """
 function ctsem_hessian(objective::CTSEMObjective, values::AbstractVector;
     chunk::Integer=0, progress=nothing, hybrid_mode::Integer=_HYBRID_PROFILE)
