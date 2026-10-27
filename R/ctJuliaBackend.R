@@ -7461,8 +7461,8 @@ print.ctJuliaFit <- function(x, ...) {
       format(corr$check$max_shift, digits = 2), " standard errors (",
       corr$check$worst, "), carried by ", corr$check$carrying, " of ",
       corr$units, " units, more than draws can correct cheaply; ",
-      "ctFitUncertainty(fit, 'sample') samples the posterior. ",
-      "See fit$laplace$correction$check.\n", sep = "")
+      "ctFitUncertainty(fit, 'sample', control = list(intoverpop = 'none')) ",
+      "samples the joint posterior. See fit$laplace$correction$check.\n", sep = "")
   } else if (identical(corr$status, "too_wide")) {
     cat("  Laplace estimate not corrected: every subject or group has more than ",
       corr$maxdim, " random effects. See fit$laplace$correction.\n", sep = "")
