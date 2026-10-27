@@ -451,13 +451,22 @@
 # Student t whose tails cover what a Gaussian's at the mode missed (0.6 to 1.0
 # nats over gA1's 40 units with the replicates' spread saying 0.1), `Inf` for
 # Gaussian; only a unit's top block takes it.
+# `check` (TRUE) runs the shift check first (`.ctLaplaceShiftCheck()`): every
+# unit, whatever its width, on `check_draws` (128) frozen draws at each of
+# `check_seeds` (4) seeds. Where the step correcting Laplace would take is
+# resolved under `material` the rounds do not run; otherwise the units
+# carrying it are forced onto draws. 128 draws resolved the step to 0.05 se
+# on the bench's narrow fixtures and 32 did not (0.17-0.45 se of noise where
+# nothing moved); four seeds give the noise, which at ten effects a unit with
+# a weakly identified covariance was larger than the step itself
+# (scripts/lapcheck-2026-10/highdim_check.R).
 .ctLaplaceContinueDefaults <- list(nodes = 5L, tolerance = 0.01,
   product_maxdim = 2L, soft_tau = 3.5, soft_maxdirs = 2L, rounds = 10L,
   attempts = 15L, radius = Inf, radius_max = 16, maxiter = 100L,
   material = 0.1, guard = 50, guard_per_subject = 0.5, rtol = 1e-8,
   value_tol = 1e-3, maxdim = 5L, stop_gain = 0, skip_gain = 5e-3,
   draws = 256L, draws_se = 0.05, draws_max = 16384L, draws_df = 4,
-  draws_scope = "forced")
+  draws_scope = "forced", check = TRUE, check_draws = 128L, check_seeds = 4L)
 
 # How far the hybrid's objective is from the exact marginal, from the engine's
 # info at a placement (`ctsem_laplace_continuation_info`): `nats`, the frozen
@@ -570,6 +579,89 @@
     diag(1 / sqrt(abs(e$values[keep])), nrow = sum(keep), ncol = sum(keep))
   list(basis = basis, kept = sum(keep), frozen = n - sum(keep),
     measured_flat = measured, negative = sum(e$values[keep] < 0))
+}
+
+# The Laplace term checked on every unit, whatever its width
+# (review/PROPOSAL-laplace-check-every-unit-2026-10-27.md): each unit on
+# `draws` frozen importance draws at the estimate, at each of `seeds`
+# independently (`ctsem_laplace_check`), and the Newton step the corrected
+# gradient takes in the rounds' basis -- how far correcting Laplace would move
+# each estimate, in its standard errors. The seeds are replicates, so the step
+# is their mean and its noise their spread over sqrt(seeds): at ten effects a
+# unit with a weakly identified covariance one seed's step was mostly noise.
+# `status` is "passed" where every parameter's step is resolved under `bar`
+# (its size plus twice its noise), "flagged" where one is resolved over it,
+# and "unresolved" where the noise decides neither. `carrying` are the units
+# whose own steps account for the step, largest first, until what is left is
+# under `bar`. `gap` is the corrected minus the Laplace log likelihood, with
+# its standard error. NULL where the fit has no curvature to step on or fewer
+# than two seeds scored.
+.ctLaplaceShiftCheck <- function(fit, draws = 128L, seeds = 1:4, bar = 0.1,
+  control = .ctLaplaceContinueDefaults) {
+  est <- as.numeric(fit$estimate$raw)
+  hessian <- .ctBackendStoredHessian(fit, est)
+  if (is.null(hessian) || !all(is.finite(hessian))) return(NULL)
+  basis <- .ctLaplaceContinueBasis(hessian,
+    fit$uncertainty$details$flatdirections$vectors, rtol = control$rtol)
+  if (is.null(basis)) return(NULL)
+  # In the curvature's widths along the directions it identifies, the basis
+  # the step is taken in. A coordinate the fit reports with a near-zero
+  # standard error because it lies where there is no curvature has no width
+  # here either, and no step: divided by the reported one, a 20-effect fit
+  # with most directions held showed steps of thousands of standard errors.
+  B <- basis$basis
+  se <- sqrt(rowSums(B^2))
+  held <- !is.finite(se) | se <= 1e-8 * max(se[is.finite(se)], 0)
+  se[held] <- 1
+  module <- .ctJuliaModule(fit$model_spec$project)
+  started <- proc.time()[["elapsed"]]
+  r <- .ctJuliaGet(module$ctsem_laplace_check(.ctJuliaObjective(fit, hybrid = TRUE),
+    .ctJuliaNumericVector(est), draws = as.integer(draws),
+    seeds = .ctJuliaVector(as.integer(seeds)), draws_df = as.numeric(control$draws_df)))
+  G <- matrix(as.numeric(r$gradient), nrow = length(est))
+  scored <- apply(G, 2L, function(g) all(is.finite(g)))
+  if (sum(scored) < 2L) return(NULL)
+  project <- B %*% t(B)
+  project[held, ] <- 0
+  Z <- (project %*% G[, scored, drop = FALSE]) / se
+  shift <- rowMeans(Z)
+  noise <- apply(Z, 1L, stats::sd) / sqrt(ncol(Z))
+  status <- if (all(abs(shift) + 2 * noise < bar)) "passed" else
+    if (any(abs(shift) - 2 * noise >= bar)) "flagged" else "unresolved"
+  # Each unit's own step, units in rows; the units carrying the step taken in
+  # order of their largest component until what is left is under `bar`.
+  U <- matrix(as.numeric(r$unit_gradient), ncol = length(est))
+  steps <- t((project %*% t(U)) / se)
+  order <- order(-apply(abs(steps), 1L, max))
+  left <- shift
+  carrying <- integer()
+  for (u in order) {
+    if (max(abs(left)) < bar) break
+    carrying <- c(carrying, u)
+    left <- left - steps[u, ]
+  }
+  laplace_units <- as.numeric(r$laplace_unit)
+  checked <- matrix(as.numeric(r$check_unit), nrow = length(laplace_units))
+  gaps <- colSums(checked[, scored, drop = FALSE]) - sum(laplace_units)
+  list(status = status, shift = shift, noise = noise, bar = bar,
+    max_shift = max(abs(shift)), worst = which.max(abs(shift)),
+    carrying = carrying, gap = mean(gaps), gap_se = stats::sd(gaps) / sqrt(length(gaps)),
+    units = length(laplace_units), draws = as.integer(draws), seeds = sum(scored),
+    seconds = proc.time()[["elapsed"]] - started)
+}
+
+# What a fit keeps of the shift check (`fit$laplace$correction$check`): the
+# verdict, the largest step and its noise by parameter name, the Laplace gap,
+# and how many units carried the step. NULL where no check ran.
+.ctLaplaceShiftRecord <- function(check, fit) {
+  if (is.null(check)) return(NULL)
+  names <- .ctBackendRawParameterNames(fit, length(check$shift))
+  list(status = check$status, max_shift = check$max_shift,
+    worst = names[check$worst], noise = check$noise[check$worst],
+    shift = stats::setNames(check$shift, names),
+    shift_noise = stats::setNames(check$noise, names), bar = check$bar,
+    gap = check$gap, gap_se = check$gap_se, carrying = length(check$carrying),
+    draws = check$draws, seeds = check$seeds, seconds = check$seconds)
 }
 
 # The rounds, shared by the fit (`.ctLaplaceContinue()`) and by
@@ -937,9 +1029,69 @@
   # search saw as components of their proposals; the rounds then climb from
   # the jump point, which is the fit's estimate.
   jump <- fit$laplace$jump
+  # The shift check first, on every unit whatever its width: where correcting
+  # Laplace would move no estimate by `material` standard errors, resolved
+  # past the check's own noise, the fit is left alone; otherwise the units
+  # carrying the move are flagged on draws as jump units are, and the rounds
+  # climb as before. Not at a jump, whose units are named already and whose
+  # point is no optimum to take a step from.
+  check <- if (is.null(jump) && !isFALSE(control$check)) {
+    if (!is.null(sink)) sink(sprintf("Laplace check, every unit on %d draws | %8s",
+      as.integer(.ctJuliaOr(control$check_draws, 128L)), .ctDuration(seconds())), "update")
+    tryCatch(.ctLaplaceShiftCheck(fit,
+      draws = as.integer(.ctJuliaOr(control$check_draws, 128L)),
+      seeds = seq_len(as.integer(.ctJuliaOr(control$check_seeds, 4L))),
+      bar = as.numeric(control$material), control = control),
+      error = function(e) NULL)
+  }
+  checkrecord <- .ctLaplaceShiftRecord(check, fit)
+  if (identical(check$status, "passed") ||
+      (identical(check$status, "unresolved") && !length(check$carrying))) {
+    # Left alone to the bit, as a passed screen leaves it: "exact" where the
+    # corrected terms equal Laplace's to the screen's tolerance, "checked"
+    # where they differ without moving the estimate. Every unit was looked
+    # at, so none is unscored, and the estimate's distance from the
+    # exact-marginal optimum is the check's resolved step, not the bound a
+    # value gap of that size would give.
+    gap <- abs(check$gap)
+    if (!is.finite(gap) || gap < 1e-8) gap <- 0
+    record <- list(method = "quadrature",
+      status = if (gap <= control$tolerance) "exact" else "checked",
+      applied = FALSE, nodes = as.integer(control$nodes),
+      tolerance = as.numeric(control$tolerance), screen = gap, gap = check$gap,
+      laplace_estimate = est, loglik_laplace = as.numeric(fit$estimate$loglik),
+      flagged = 0L, units = as.integer(check$units), wide = 0L,
+      maxdim = as.integer(control$maxdim), check = checkrecord)
+    bound <- if (gap > 0) max(abs(check$shift) + 2 * check$noise) else 0
+    record$error <- list(nats = gap, se = bound, draws = check$gap_se, nodes = 0,
+      residual = 0, units = NULL, unscored = 0L)
+    record$seconds <- c(check = seconds(), total = seconds())
+    fit$laplace$correction <- record
+    return(fit)
+  }
+  # Past a quarter of the units on draws a gradient costs more than the Laplace
+  # route saves and sampling is the better route (`.ctLaplaceDrawsShareWarn()`).
+  # The check spreads the step over most units of a wide model -- 97 to 99 of
+  # 100 at twenty effects a unit -- where the rounds on draws would run for
+  # hours, so it says so rather than starting them.
+  if (!is.null(check) && length(check$carrying) > 0.25 * check$units) {
+    warning(sprintf(paste0("Laplace's error moves the estimates by up to %.1f ",
+      "standard errors here (%s), carried by %d of %d units: correcting it by ",
+      "draws costs more than sampling the posterior, which ",
+      "ctFitUncertainty(fit, 'sample') does. See fit$laplace$correction$check."),
+      check$max_shift, checkrecord$worst, length(check$carrying), check$units),
+      call. = FALSE)
+    fit$laplace$correction <- list(method = "quadrature", status = "flagged",
+      applied = FALSE, laplace_estimate = est,
+      loglik_laplace = as.numeric(fit$estimate$loglik),
+      units = as.integer(check$units), check = checkrecord,
+      seconds = c(check = seconds(), total = seconds()))
+    return(fit)
+  }
   cont <- try(do.call(module$ctsem_laplace_continuation,
     c(list(.ctJuliaObjective(fit, hybrid = TRUE), .ctJuliaNumericVector(est)),
-      .ctLaplaceContinuationArgs(control, force = jump$units, points = jump$points))),
+      .ctLaplaceContinuationArgs(control, force = union(jump$units, check$carrying),
+        points = jump$points))),
     silent = TRUE)
   # The engine's reason, which is what tells an allocation it refused from a
   # point the model cannot evaluate.
@@ -958,6 +1110,7 @@
     flagged = as.integer(start$nflagged), units = as.integer(start$nunits),
     rule_failures = as.integer(start$rule_failures),
     wide = as.integer(start$nwide), maxdim = as.integer(start$maxdim))
+  record$check <- checkrecord
   # What the objective is known to at the screen; the paths that place again
   # replace it with the final placement's.
   record$error <- .ctLaplaceIntegrationError(start, unscored = record$wide)
@@ -969,8 +1122,9 @@
   since <- function(from) proc.time()[["elapsed"]] - from
   # Units wider than `maxdim` are not scored and keep the Laplace term (see
   # laplace_continuation.jl for the measured cost). Said in one line, since
-  # the correction then covers less than the fit, or none of it.
-  if (record$wide > 0L) {
+  # the correction then covers less than the fit, or none of it -- unless the
+  # shift check ran, which looked at them all.
+  if (record$wide > 0L && is.null(check)) {
     if (!is.null(sink)) sink("", "break")
     message(sprintf(paste0("Quadrature correction: %d of %d %s kept the ",
       "Laplace term, having more than %d random effects."), record$wide,
@@ -990,8 +1144,9 @@
   # the tolerance, and the fit is left alone to the bit. Not at a jump: the
   # screen says the hybrid agrees with Laplace at the point, which is no
   # optimum of either (round 9's jump point passed the screen with a gradient
-  # of 2.5e5), and the rounds are what climb from it.
-  if (is.null(jump) && record$screen <= record$tolerance) {
+  # of 2.5e5), and the rounds are what climb from it. Nor where the shift
+  # check found a move to make: the screen reads values, the check the move.
+  if (is.null(jump) && is.null(check) && record$screen <= record$tolerance) {
     record$seconds <- timed()
     fit$laplace$correction <- record
     return(fit)

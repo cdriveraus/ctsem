@@ -635,8 +635,21 @@ test_that("a unit wider than the cap keeps its Laplace term, and the fit says so
   # and the layer's is the same function.
   off <- fits$off
   off$model_spec$laplace$hybrid <- NULL
+  # The shift check scores every unit whatever the cap: on this Gaussian
+  # integrand it finds nothing to move, leaves the fit alone and leaves no
+  # unit unscored. What follows reads the screen alone, without it.
+  expect_no_message(checked <- .ctLaplaceContinue(off,
+    control = utils::modifyList(.ctLaplaceContinueDefaults, list(maxdim = 0L))),
+    message = "kept the Laplace term")
+  # Left alone: the draws' t proposal leaves a few hundredths of a standard
+  # error of noise even on a Gaussian unit, under the bar either way.
+  expect_true(checked$laplace$correction$status %in% c("exact", "checked"))
+  expect_identical(checked$laplace$correction$wide, 0L)
+  expect_lt(checked$laplace$correction$check$max_shift, 0.1)
+  expect_identical(checked$laplace$correction$check$carrying, 0L)
+  expect_identical(checked$estimate$raw, off$estimate$raw)
   narrow <- utils::modifyList(.ctLaplaceContinueDefaults, list(maxdim = 0L,
-    draws = 0L))
+    draws = 0L, check = FALSE))
   expect_message(out <- .ctLaplaceContinue(off, control = narrow),
     "kept the Laplace term, having more than 0 random effects")
   corr <- out$laplace$correction

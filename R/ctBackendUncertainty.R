@@ -995,6 +995,9 @@
       "first, or refit without optimcontrol$estonly.", call. = FALSE)
   }
   settings <- .ctLaplaceContinueDefaults
+  # The hybrid was asked for by name, so its rules are placed whatever the
+  # shift check would have said about the estimate.
+  settings$check <- FALSE
   if (!is.null(control$nodes)) settings$nodes <- as.integer(control$nodes)
   if (stay) settings$rounds <- 0L
   if (is.null(finishsamples)) {
