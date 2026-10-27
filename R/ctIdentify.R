@@ -183,8 +183,14 @@
 #' only parameters lying in the flat subspace at every one of them are reported
 #' as uninformed.
 #'
+#' The model is prepared by \code{\link{ctFit}}, with any of its arguments
+#' given in \code{...}, so what is checked is the model a fit with the same
+#' arguments would estimate.
+#'
 #' Not every flat direction means the same thing. A random effect on a variance
-#' cell (DIFFUSION, MANIFESTVAR) under \code{intoverpop = 'augmented'} is
+#' cell (DIFFUSION, MANIFESTVAR) under \code{intoverpop = 'augmented'} with a
+#' full-rank population covariance (\code{poprank = NA}; the route's default
+#' rank leaves out the directions its filter cannot see) is
 #' partially identified: the population covariances it generates with the other
 #' individually varying parameters are determined, while their decomposition
 #' into a scale and correlations is a ridge. The printed summary distinguishes
@@ -210,10 +216,11 @@
 #'   the question is what the \emph{data} can inform: a prior informs every
 #'   direction, so a model unidentified by its data looks fine with priors on
 #'   and the check stops being able to say anything.
-#' @param intoverpop Integration approach, as for \code{\link{ctFit}}.
-#' @param cores Passed to the engine, and also the subject-chunk ceiling for
-#'   every engine call this function makes, restored on exit.
-#' @param verbose Passed to the engine.
+#' @param cores As for \code{\link{ctFit}}, and also the subject-chunk ceiling
+#'   for every engine call this function makes, restored on exit.
+#' @param verbose As for \code{\link{ctFit}}.
+#' @param ... Further arguments to \code{\link{ctFit}} that shape the model,
+#'   such as \code{intoverpop} or \code{poprank}, with ctFit's defaults.
 #' @param rtol A direction counts as uninformed when the information along it
 #'   falls below this fraction of the best-informed direction's. The default
 #'   separates zero from merely small: on the scaled information a structurally
@@ -277,11 +284,18 @@
 #'
 #' @export
 ctIdentify <- function(datalong, model, inits = NULL, nstart = 3L,
-  spread = 0.5, priors = FALSE, intoverpop = "augmented", cores = getOption("mc.cores", 2L),
-  verbose = 0L, rtol = 1e-13, seed = 1L) {
+  spread = 0.5, priors = FALSE, cores = getOption("mc.cores", 2L),
+  verbose = 0L, rtol = 1e-13, seed = 1L, ...) {
 
-  spec <- .ctFitJuliaBackend(datalong, model, fit = FALSE,
-    priors = priors, intoverpop = intoverpop, cores = cores, verbose = verbose)
+  # Prepared as a fit prepares it, defaults and all, so the model checked is
+  # the one ctFit() would estimate. Preparing it here instead, with a route of
+  # its own, once checked the augmented route's reduced-rank model while the
+  # fit took Laplace at full rank. The setup draws from the random stream for
+  # a fit's starting values, and nothing here fits, so the caller's stream is
+  # put back.
+  keep <- .ctStreamKeep()
+  spec <- tryCatch(ctFit(datalong, model, backend = "julia", fit = FALSE,
+    priors = priors, cores = cores, verbose = verbose, ...), finally = keep())
   # Under `cores` for the rest of this function, as the optimiser and the
   # uncertainty phase are. Every point below is a separate engine call
   # (`.ctIdentifyInformation()`'s per-subject scores, `.ctEffectInformation()`'s

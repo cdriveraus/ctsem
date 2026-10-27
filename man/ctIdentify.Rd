@@ -11,11 +11,11 @@ ctIdentify(
   nstart = 3L,
   spread = 0.5,
   priors = FALSE,
-  intoverpop = "augmented",
   cores = getOption("mc.cores", 2L),
   verbose = 0L,
   rtol = 1e-13,
-  seed = 1L
+  seed = 1L,
+  ...
 )
 }
 \arguments{
@@ -39,12 +39,10 @@ the question is what the \emph{data} can inform: a prior informs every
 direction, so a model unidentified by its data looks fine with priors on
 and the check stops being able to say anything.}
 
-\item{intoverpop}{Integration approach, as for \code{\link{ctFit}}.}
+\item{cores}{As for \code{\link{ctFit}}, and also the subject-chunk ceiling
+for every engine call this function makes, restored on exit.}
 
-\item{cores}{Passed to the engine, and also the subject-chunk ceiling for
-every engine call this function makes, restored on exit.}
-
-\item{verbose}{Passed to the engine.}
+\item{verbose}{As for \code{\link{ctFit}}.}
 
 \item{rtol}{A direction counts as uninformed when the information along it
 falls below this fraction of the best-informed direction's. The default
@@ -59,6 +57,9 @@ calls give identical output. The session's random stream is restored
 afterwards, so this neither depends on it nor disturbs it. \code{NULL}
 draws from the session stream instead, which makes the result depend on
 where that had got to.}
+
+\item{...}{Further arguments to \code{\link{ctFit}} that shape the model,
+such as \code{intoverpop} or \code{poprank}, with ctFit's defaults.}
 }
 \value{
 An object of class \code{ctIdentify} with \code{$parameters} (names
@@ -85,8 +86,14 @@ perfectly informed at the estimate, which is why several points are used and
 only parameters lying in the flat subspace at every one of them are reported
 as uninformed.
 
+The model is prepared by \code{\link{ctFit}}, with any of its arguments
+given in \code{...}, so what is checked is the model a fit with the same
+arguments would estimate.
+
 Not every flat direction means the same thing. A random effect on a variance
-cell (DIFFUSION, MANIFESTVAR) under \code{intoverpop = 'augmented'} is
+cell (DIFFUSION, MANIFESTVAR) under \code{intoverpop = 'augmented'} with a
+full-rank population covariance (\code{poprank = NA}; the route's default
+rank leaves out the directions its filter cannot see) is
 partially identified: the population covariances it generates with the other
 individually varying parameters are determined, while their decomposition
 into a scale and correlations is a ridge. The printed summary distinguishes
