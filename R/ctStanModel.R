@@ -4,24 +4,24 @@ ctModelUnlist<-function(ctmodelobj,
     stringsAsFactors =FALSE) 
   out[1:sum(sapply(ctmodelobj[names(ctmodelobj) %in% matnames],length)),]=out
 
-  rowcount <- 0
+  # Each matrix's cells by row, gathered and written a column at a time:
+  # written a row at a time, a 20-latent model's took a quarter of a second.
+  cells <- list()
   for(obji in matnames){
-    if(!is.null(dim(ctmodelobj[[obji]])) && !is.null(ctmodelobj[[obji]]) && !is.na(ctmodelobj[[obji]][1])){
-      for(rowi in 1:nrow(ctmodelobj[[obji]])){
-        for(coli in 1:ncol(ctmodelobj[[obji]])){
-          rowcount <- rowcount + 1
-          out[rowcount,]<-list(obji,rowi,coli,
-            ifelse(is.na(suppressWarnings(as.numeric(ctmodelobj[[obji]][rowi,coli]))), #ifelse element is character string
-              ctmodelobj[[obji]][rowi,coli],
-              NA),
-            ifelse(!is.na(suppressWarnings(as.numeric(ctmodelobj[[obji]][rowi,coli]))), #ifelse element is numeric
-              as.numeric(ctmodelobj[[obji]][rowi,coli]),
-              NA)
-          )
-        }
-      }
+    x <- ctmodelobj[[obji]]
+    if(!is.null(dim(x)) && !is.na(x[1])){
+      x <- as.vector(t(x))
+      value <- suppressWarnings(as.numeric(x))
+      cells[[length(cells) + 1]] <- list(matrix = rep(obji, length(x)),
+        row = rep(seq_len(nrow(ctmodelobj[[obji]])), each = ncol(ctmodelobj[[obji]])),
+        col = rep(seq_len(ncol(ctmodelobj[[obji]])), times = nrow(ctmodelobj[[obji]])),
+        param = as.character(ifelse(is.na(value), x, NA)), #a character string
+        value = value) #a number
     }
   }
+  rows <- seq_len(sum(vapply(cells, function(x) length(x$value), integer(1))))
+  if(length(rows) > nrow(out)) out[(nrow(out) + 1):length(rows),] <- NA
+  if(length(rows)) for(column in names(out)) out[[column]][rows] <- unlist(lapply(cells, `[[`, column))
   return(out)
 }
 

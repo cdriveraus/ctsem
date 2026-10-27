@@ -714,13 +714,12 @@ simplifystanfunction<-function(bcalc,simplify=TRUE){ #input text of list of comp
   mats <- .ctMatricesList(unsafe=TRUE)
   ctspec <- ctm$pars
   n.TIpred <- ctm$n.TIpred
-  matsetup <-list()
-  matvalues <-list()
   freepar <- 0
   freeparcounter <- 0
-  
+
   indvaryingcounter <- 0
-  TIPREDEFFECTsetup <- matrix(0,0,n.TIpred)
+  # One row per free parameter, at most one per cell; trimmed after the loop.
+  TIPREDEFFECTsetup <- matrix(0,nrow(ctspec),n.TIpred)
   # Coefficient index by `.ctTipredEffectKey()`, so two parameters given the
   # same effect name reuse one index instead of each taking a fresh one. The
   # julia path keeps the same map in `.ctJuliaTIEffects()`; the two number
@@ -731,9 +730,7 @@ simplifystanfunction<-function(bcalc,simplify=TRUE){ #input text of list of comp
   extratformcounter <- 0
   extratforms <- c()
   calcs<-ctm$calcs
-  matsetup<-NULL
-  mval<-NULL
-  
+
   
   matlist <- listOfMatrices(ctspec) #put back into matrix form
   # matlist <- unfoldmats(matlist) #unfold references to basic state
@@ -741,18 +738,28 @@ simplifystanfunction<-function(bcalc,simplify=TRUE){ #input text of list of comp
   ctspecp <- ctModelStatesAndPARS(ctspecp,statenames=ctm$latentNames,tdprednames=ctm$TDpredNames) #ensure PARS[,] refs are not replaced by names
   ctspec[order(ctspec$matrix, ctspec$row,ctspec$col),colnames(ctspecp)] <-  
     ctspecp[order(ctspecp$matrix, ctspecp$row,ctspecp$col),] #replace updated columns, free of direct references
-  
-  
-  for(i in 1:nrow(ctspec)){ 
+
+  # Filled cell by cell and made into a table once: grown a row at a time by
+  # rbind, with a scan of the earlier names for each cell, the table took
+  # seconds on a 20-latent model.
+  param_v <- indvarying_v <- tipred_v <- matrix_v <- when_v <- stateref_v <- integer(nrow(ctspec))
+  matrixname_v <- character(nrow(ctspec))
+  firstrow <- new.env(hash = TRUE) #the first cell of each parameter name
+  # Each cell's TI effects, read a column at a time. The cells that reach them
+  # below are not rewritten by the loop.
+  if(n.TIpred > 0) {
+    effectcols <- ctspec[paste0(ctm$TIpredNames,'_effect')]
+    tifree <- do.call(cbind, lapply(effectcols, .ctTipredEffectFree))
+    tilabel <- do.call(cbind, lapply(effectcols, .ctTipredEffectLabel))
+  }
+
+  for(i in 1:nrow(ctspec)){
     nm = ctspec$matrix[i]
     m = mats$all[names(mats$all) %in% nm]
     when = 0 #default, static parameter
     parameter = 0 #for fixed values
     stateref = 0 #state index for a cell that materialises from a state, not a parameter -- see matsetup column 10
     dynpar=FALSE
-    copymatrix=0
-    copyrow=0
-    copycol=0
     simplestate <- FALSE
     tipred <- 0L
     if(!is.na(ctspec$param[i])){ #if non fixed parameter,
@@ -805,16 +812,13 @@ simplifystanfunction<-function(bcalc,simplify=TRUE){ #input text of list of comp
       
       else if(!grepl('[',ctspec$param[i],fixed=TRUE)){ #if non calculation parameter (consider removing duplication / copyrow checks)
         
-        if(i > 1 && any(ctspec$param[1:(i-1)] %in% ctspec$param[i])){ #and after row 1, check for duplication
-          
-          rowmatch <- match(ctspec$param[i], matsetup$parname)#find which freepar corresponds to duplicate
-          parameter <- matsetup$param[rowmatch]
-          indvar <- matsetup$indvarying[rowmatch] #ifelse(ctspec$indvarying[i],  matsetup[,'indvarying'][ match(ctspec$param[i], matsetup$parname) ],0)#and which indvar corresponds to duplicate
-          tipred <- matsetup$tipred[rowmatch]
-          
+        rowmatch <- firstrow[[paste0('p', ctspec$param[i])]]
+        if(!is.null(rowmatch)){ #a name an earlier cell has: that cell's parameter
+          parameter <- param_v[rowmatch]
+          indvar <- indvarying_v[rowmatch]
+          tipred <- tipred_v[rowmatch]
+
         } else { #if not duplicated
-          TIPREDEFFECTsetup <- rbind(TIPREDEFFECTsetup,rep(0,ncol(TIPREDEFFECTsetup))) #add an extra row...
-          
           if(ctspec$indvarying[i]) {
             indvaryingcounter <- indvaryingcounter + 1
             indvar <- indvaryingcounter
@@ -837,10 +841,8 @@ simplifystanfunction<-function(bcalc,simplify=TRUE){ #input text of list of comp
             # Only the *free* effects are numbered. A fixed one carries its
             # value rather than a parameter slot, so counting it here would
             # shift every index after it.
-            effectspec <- ctspec[i,paste0(ctm$TIpredNames,'_effect')]
-            freeeffects <- .ctTipredEffectFree(effectspec)
-            for(ei in which(freeeffects)){
-              key <- .ctTipredEffectKey(effectspec[[ei]], ei, freepar)
+            for(ei in which(tifree[i,])){
+              key <- .ctTipredEffectKey(predictor = ei, parnumber = freepar, label = tilabel[i,ei])
               if(is.null(tipredkeys[[key]])){
                 tipredkeys[[key]] <- tipredcounter
                 tipredcounter <- tipredcounter + 1L
@@ -852,28 +854,39 @@ simplifystanfunction<-function(bcalc,simplify=TRUE){ #input text of list of comp
         }#end not duplicated loop
       } #end non calculation parameters
     } #end non fixed value loop
-    # if(simplestate) 
-    
-    mdatnew <- data.frame(
-      parname=ctspec$param[i],
-      row=ctspec$row[i],
-      col=ctspec$col[i],
-      param=parameter, # ifelse(!is.na(ctspec$param[i]) && !grepl('[',ctspec$param[i],fixed=TRUE),freepar, 0), #freepar reference
-      transform=ifelse(is.na(suppressWarnings(as.integer(ctspec$transform[i]))), -1, ctspec$transform[i]), #transform
-      indvarying=ifelse(!is.na(ctspec$param[i]),indvar,0), #indvarying
-      tipred=tipred, #ifelse(any(TIPREDEFFECTsetup[freepar,] > 0) && !dynpar, 1, 0), #tipredvarying
-      matrix=m, #matrix reference
-      when=when,#when to compute
-      copymatrix=copymatrix,copyrow=copyrow,copycol=copycol,
-      stateref=stateref, #state index for a state-referencing cell -- kept out of `param` so nothing can mistake it for a parameter number. Appended last so it lands as the final matsetup column and no existing stan column index shifts.
-      stringsAsFactors = FALSE)
-    
-    if(is.null(matsetup)) matsetup <- mdatnew else matsetup<-rbind(matsetup,mdatnew)
-    mvalnew<-ctspec[i,c('value','multiplier','meanscale','offset','sdscale','inneroffset'),drop=FALSE]
-    if(is.null(mval)) mval <- mvalnew else mval<-rbind(mval,mvalnew)
+
+    param_v[i] <- parameter
+    indvarying_v[i] <- if(!is.na(ctspec$param[i])) indvar else 0
+    tipred_v[i] <- tipred
+    matrix_v[i] <- m
+    matrixname_v[i] <- nm
+    when_v[i] <- when
+    stateref_v[i] <- stateref
+    if(!is.na(ctspec$param[i]) && is.null(firstrow[[paste0('p', ctspec$param[i])]])){
+      assign(paste0('p', ctspec$param[i]), i, envir = firstrow)
+    }
   }
-  if(!is.null(mval)) mval[is.na(mval)] <- 99999 else mval <- array(0L,dim=c(0,6))
-  
+  # No cell writes its row of ctspec after its own pass, so the columns are
+  # read whole here.
+  transform_v <- suppressWarnings(as.integer(ctspec$transform))
+  matsetup <- data.frame(
+    parname=ctspec$param,
+    row=ctspec$row,
+    col=ctspec$col,
+    param=param_v, #freepar reference
+    transform=ifelse(is.na(transform_v), -1L, transform_v),
+    indvarying=indvarying_v,
+    tipred=tipred_v,
+    matrix=matrix_v, #matrix reference
+    when=when_v, #when to compute
+    copyrow=0L, #no cell copies another any more; the column stays because readers, the Stan programs among them, index matsetup by position
+    stateref=stateref_v, #state index for a state-referencing cell -- kept out of `param` so nothing can mistake it for a parameter number. Appended last so it lands as the final matsetup column and no existing stan column index shifts.
+    row.names = make.unique(matrixname_v, sep = ''), #rows named by matrix
+    stringsAsFactors = FALSE)
+  TIPREDEFFECTsetup <- TIPREDEFFECTsetup[seq_len(freeparcounter),,drop=FALSE]
+  mval <- ctspec[,c('value','multiplier','meanscale','offset','sdscale','inneroffset'),drop=FALSE]
+  mval[is.na(mval)] <- 99999
+
   
   
   matrixdims <- array(0L,dim=c(max(mats$all),2)) #get dims for each matrix
@@ -897,33 +910,6 @@ simplifystanfunction<-function(bcalc,simplify=TRUE){ #input text of list of comp
   matsetup[,!colnames(matsetup) %in% 'parname'] <- lapply(matsetup[,!colnames(matsetup) %in% 'parname'],as.integer)
   #set numeric types
   matvalues <- data.frame(apply(mval,2,as.numeric,.drop=FALSE),stringsAsFactors = FALSE  )
-  
-  #copy handling -- find which matsetup row contains the reference
-  for(i in 1:nrow(matsetup)){
-    if(matsetup$copymatrix[i] > 0){
-      matsetup$copyrow[i] <- which(matsetup$row == matsetup$copyrow[i] &
-          matsetup$col == matsetup$copycol[i] &
-          matsetup$matrix == matsetup$copymatrix[i])[1] #select first element in case of multiple matches
-    }
-  }
-  
-  for(i in 1:nrow(matsetup)){#check for nested copying and unnest
-    if(matsetup$copyrow[i] > 0 && matsetup$copyrow[matsetup$copyrow[i]] >0){
-      matsetup$copyrow[i] <- matsetup$copyrow[matsetup$copyrow[i]]
-    }
-  }
-  
-  for(i in 1:nrow(matsetup)){ #copy elements of reference row to copyrow
-    if(matsetup$copyrow[i] > 0){
-      matsetup[i,c('param','transform','indvarying','tipred','when','stateref')] <-
-        matsetup[matsetup$copyrow[i],c('param','transform','indvarying','tipred','when','stateref')]
-    }
-  }
-  
-  matsetup$copyrow[unique(matsetup$copyrow[matsetup$copyrow > 0])] <-
-    -unique(matsetup$copyrow[matsetup$copyrow > 0]) #set rows to be copied from to neg of their own row num
-  
-  matsetup$copymatrix <-  matsetup$copycol <- NULL #not needed columns after processing
   
   #sort order so PARS are computed first (in case of state dependency in PARS, further dependencies on PARS must happen after)
   matvalues = rbind(matvalues[matsetup$matrix==10,],matvalues[matsetup$matrix!=10,])
