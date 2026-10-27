@@ -667,6 +667,20 @@ ctGenerate<-function(ctmodelobj,n=100,burnin=0,dtmean=1,logdtsd=0,dtmat=NA,
       'generator has no measurement link. Use backend="julia" for ',
       'binary, ordinal or count data.', call.=FALSE)
   }
+  # Refusals first: the note below describes data that is then generated, and
+  # before them it named a 'stationary' cell's placeholder as a random effect
+  # in front of the refusal of the model that held it.
+  if(backend == 'r' && stationary) {
+    stop("This model names 'stationary' initial conditions, which ctGenerate's ",
+      "own generator cannot place. Use backend='julia' (the default for such ",
+      "models).", call.=FALSE)
+  }
+  if(backend == 'r' && nonlinear) {
+    stop("This model is nonlinear, and ctGenerate's own generator integrates a ",
+      "linear system: it has no way to apply a state-dependent specification. ",
+      "Use backend='julia' (the default for such models), which simulates ",
+      "the model directly.", call.=FALSE)
+  }
   # What the R generator does not draw, named, since the julia path draws it
   # and the two otherwise look alike from the call.
   if(backend == 'r' && specified) {
@@ -683,17 +697,6 @@ ctGenerate<-function(ctmodelobj,n=100,burnin=0,dtmean=1,logdtsd=0,dtmat=NA,
       if(length(tieffects)) paste0('effects of ', paste(tieffects, collapse=', ')),
       " are not drawn, and free parameters are filled with fixed defaults. ",
       "backend='julia' draws them from the population the model states.")
-  }
-  if(backend == 'r' && stationary) {
-    stop("This model names 'stationary' initial conditions, which ctGenerate's ",
-      "own generator cannot place. Use backend='julia' (the default for such ",
-      "models).", call.=FALSE)
-  }
-  if(backend == 'r' && nonlinear) {
-    stop("This model is nonlinear, and ctGenerate's own generator integrates a ",
-      "linear system: it has no way to apply a state-dependent specification. ",
-      "Use backend='julia' (the default for such models), which simulates ",
-      "the model directly.", call.=FALSE)
   }
   if(backend == 'julia'){
     if(!'ctStanModel' %in% class(ctmodelobj)) {
