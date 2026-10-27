@@ -1,0 +1,546 @@
+# A subject's filter sweep with its tangents by hand, on `tangent_primitives.jl`
+# and `tangent_kernels.jl`: the forward pass, recorded, then the reverse walk,
+# for a linear Gaussian continuous-time model (DRIFT = JAx, LAMBDA = Jy), every
+# state diffusing (`dyn = 1:n`, `naff = n`), any manifests missing, and the
+# discretisation's closed forms (an interval needing the series refuses). The
+# forward is the operations of `my_exp!`, `_compute_discrete_time_form!`,
+# `_ekf_predict_step!` and `_ekf_masked_update_step!` in their order, the
+# reverse those of `_reverse_update!` and `_reverse_predict!`, each paired with
+# its tangent: what the adjoint gradient's subject pass computes at the
+# Hessian's dual, up to the parameter layer (`tangent_hessian.jl`), into the
+# parameter matrices' cotangents and their tangents.
+
+"""`f.Y = exp(A)` with tangents, as `my_exp!` computes it (Padé 13, squaring
+in pairs); `f`'s other buffers are scratch."""
+function _tan_exp!(f::TanFrechet{W}, A::TanMat{W}) where {W}
+    n = f.n
+    As, Y = f.As, f.Y
+    a1 = _opnorm1_noalloc(A.v, n)
+    if !isfinite(a1)
+        fill!(Y.v, NaN)
+        fill!(Y.d, NaN)
+        Y.nz[] = true
+        return Y
+    end
+    theta = 5.371920351148152
+    s = a1 <= theta ? 0 : ceil(Int, log2(a1 / theta))
+    _tan_copy!(As, A)
+    _tan_scale!(As, inv(2.0^s))
+    A2, A4, A6, W1, Wm, Z1, V, U, T1 = f.A2, f.A4, f.A6, f.W1, f.Wm, f.Z1, f.V, f.U, f.T1
+    _tan_mul!(A2, As, As)
+    _tan_mul!(A4, A2, A2)
+    _tan_mul!(A6, A4, A2)
+    b = _pade13_b(Float64)
+    _tan_comb!(W1, ((b[14], A6), (b[12], A4), (b[10], A2)))
+    _tan_mul!(Wm, A6, W1)
+    _tan_comb!(Wm, ((b[8], A6), (b[6], A4), (b[4], A2)), true)
+    _tan_diag!(Wm, b[2])
+    _tan_mul!(U, As, Wm)
+    _tan_comb!(Z1, ((b[13], A6), (b[11], A4), (b[9], A2)))
+    _tan_mul!(V, A6, Z1)
+    _tan_comb!(V, ((b[7], A6), (b[5], A4), (b[3], A2)), true)
+    _tan_diag!(V, b[1])
+    _tan_comb!(T1, ((1.0, V), (-1.0, U)))
+    _tan_comb!(Y, ((1.0, V), (1.0, U)))
+    copyto!(f.F, T1.v)
+    _lu_factor_generic!(f.F, f.piv, n)
+    _tan_solve!(Y, f.F, f.piv, T1)
+    for _ in 1:div(s, 2)
+        _tan_mul!(W1, Y, Y)
+        _tan_mul!(Y, W1, W1)
+    end
+    if isodd(s)
+        _tan_mul!(W1, Y, Y)
+        _tan_copy!(Y, W1)
+    end
+    return Y
+end
+
+"""What the reverse of a prediction reads (`CTSEMPredictRecord`), with tangents."""
+struct TanPredRec{W}
+    A::TanMat{W}            # exp(JAx dt)
+    x::TanVec{W}            # the state in
+    P::TanMat{W}            # the covariance in
+    affine::TanVec{W}       # CINT: DRIFT = JAx, so the offset reads no state
+    dINT::TanVec{W}
+    dt::Base.RefValue{Float64}
+end
+TanPredRec(n::Int, W::Int) = TanPredRec{W}(TanMat{W}(n, n), TanVec{W}(n), TanMat{W}(n, n), TanVec{W}(n),
+    TanVec{W}(n), Ref(0.0))
+
+"""
+What the reverse of an update reads (`CTSEMUpdateRecord`), with tangents: the
+manifests observed (`o`, none where the row updates nothing) and their values.
+"""
+mutable struct TanUpdRec{W}
+    o::Vector{Int}
+    P::TanMat{W}            # the predicted covariance, unridged
+    x::TanVec{W}            # the predicted state
+    y::TanVec{W}            # the observed values (no tangent)
+end
+TanUpdRec(n::Int, m::Int, W::Int) = TanUpdRec{W}(Int[], TanMat{W}(n, n), TanVec{W}(n), TanVec{W}(m))
+
+"""
+An update's scratch for a row observing `mo` manifests: the gathered loadings,
+means and measurement covariance, the forward's intermediates, and the
+reverse's workspace (`TanUpdate`).
+"""
+struct TanRowScratch{W}
+    H::TanMat{W}; MM::TanVec{W}; R::TanMat{W}
+    Pr::TanMat{W}; PHt::TanMat{W}; S::TanMat{W}; Ui::TanMat{W}; Xc::TanMat{W}; Tc::TanMat{W}; F::Matrix{Float64}
+    yt::TanVec{W}; e::TanVec{W}; a::TanVec{W}; Kb::TanMat{W}; K::TanMat{W}; Mm::TanMat{W}; nn1::TanMat{W}; nm1::TanMat{W}
+    u::TanUpdate{W}
+end
+function TanRowScratch(n::Int, mo::Int, W::Int)
+    T, V = TanMat{W}, TanVec{W}
+    return TanRowScratch{W}(T(mo, n), V(mo), T(mo, mo),
+        T(n, n), T(n, mo), T(mo, mo), T(mo, mo), T(mo, mo), T(mo, mo), zeros(mo, mo),
+        V(mo), V(mo), V(mo), T(n, mo), T(n, mo), T(n, n), T(n, n), T(n, mo),
+        TanUpdate(n, mo, W))
+end
+
+"""The parameter matrices of a linear Gaussian model, with tangents."""
+struct TanModel{W}
+    n::Int
+    m::Int
+    JAx::TanMat{W}; CINT::TanVec{W}; Qc::TanMat{W}
+    LAMBDA::TanMat{W}; MM::TanVec{W}; R::TanMat{W}
+    T0M::TanVec{W}; T0V::TanMat{W}
+end
+TanModel(n::Int, m::Int, W::Int) = TanModel{W}(n, m, TanMat{W}(n, n), TanVec{W}(n), TanMat{W}(n, n),
+    TanMat{W}(m, n), TanVec{W}(m), TanMat{W}(m, m), TanVec{W}(n), TanMat{W}(n, n))
+
+"""
+A block's forward state: the Lyapunov solution and the drift's factors, which
+every prediction of a linear model shares, with the two numbers the series
+test reads (`_series_needed`); the exponentials by interval, a ring of
+`_CTSEM_EXP_TABLE` as the filter's `ExpTable`; and an update's scratch by the
+number of manifests a row observes.
+"""
+struct TanForward{W}
+    n::Int
+    m::Int
+    fr::TanFrechet{W}
+    ly::TanLyap{W}
+    X::TanMat{W}                        # lyap(JAx, Qc)
+    FJ::Matrix{Float64}                 # LU of JAx's values
+    pivJ::Vector{Int}
+    minpivot::Base.RefValue{Float64}    # JAx's smallest pivot
+    conditioning::Base.RefValue{Float64}  # the Lyapunov operator's smallest sum
+    dts::Vector{Float64}
+    exps::Vector{TanMat{W}}
+    count::Base.RefValue{Int}
+    next::Base.RefValue{Int}
+    As::TanMat{W}; nn1::TanMat{W}; nn2::TanMat{W}; v1::TanVec{W}
+    rows::Vector{Union{Nothing,TanRowScratch{W}}}
+end
+TanForward(n::Int, m::Int, W::Int) = TanForward{W}(n, m, TanFrechet(n, W), TanLyap(n, W),
+    TanMat{W}(n, n), zeros(n, n), zeros(Int, n), Ref(0.0), Ref(0.0),
+    zeros(_CTSEM_EXP_TABLE), [TanMat{W}(n, n) for _ in 1:_CTSEM_EXP_TABLE], Ref(0), Ref(1),
+    TanMat{W}(n, n), TanMat{W}(n, n), TanMat{W}(n, n), TanVec{W}(n),
+    Union{Nothing,TanRowScratch{W}}[nothing for _ in 1:m])
+
+"""The scratch for a row observing `mo` manifests, built at first use."""
+function _tan_row(fw::TanForward{W}, mo::Int) where {W}
+    r = fw.rows[mo]
+    r === nothing || return r
+    r = TanRowScratch(fw.n, mo, W)
+    fw.rows[mo] = r
+    return r
+end
+
+"""
+What every prediction of a block shares: X = lyap(JAx, Qc) and JAx's factors,
+and the series test's two numbers from them; the exponential ring emptied.
+"""
+function _tan_forward_begin!(fw::TanForward{W}, mod::TanModel{W}) where {W}
+    _tan_lyap!(fw.X, mod.JAx, mod.Qc, fw.ly, false)
+    fw.conditioning[] = _series_lyap_conditioning(fw.ly.buf)
+    copyto!(fw.FJ, mod.JAx.v)
+    _lu_factor_generic!(fw.FJ, fw.pivJ, fw.n)
+    fw.minpivot[] = _series_min_pivot(fw.FJ, fw.n)
+    fw.count[] = 0
+    fw.next[] = 1
+    return fw
+end
+
+"""exp(JAx dt) with tangents, from the ring or computed into it."""
+function _tan_exp_cached!(fw::TanForward{W}, mod::TanModel{W}, dt::Float64) where {W}
+    @inbounds for e in 1:fw.count[]
+        fw.dts[e] == dt && return fw.exps[e]
+    end
+    _tan_copy!(fw.As, mod.JAx)
+    _tan_scale!(fw.As, dt)
+    E = _tan_exp!(fw.fr, fw.As)
+    slot = fw.next[]
+    fw.dts[slot] = dt
+    _tan_copy!(fw.exps[slot], E)
+    fw.count[] = max(fw.count[], slot)
+    fw.next[] = slot == length(fw.dts) ? 1 : slot + 1
+    return fw.exps[slot]
+end
+
+"""
+One prediction over `dt`: `x <- A x + dINT`, `P <- A (P + eps I) A' + dDIFF`,
+`A = exp(JAx dt)`, `dINT = JAx \\ (A CINT - CINT)`, `dDIFF = X - A X A'`;
+recorded into `rec`. `false` where the filter would take the interval as a
+series (`_series_needed`), which this does not cover.
+"""
+function _tan_predict!(x::TanVec{W}, P::TanMat{W}, rec::TanPredRec{W}, fw::TanForward{W},
+    mod::TanModel{W}, dt::Float64) where {W}
+    (_series_needed(fw.minpivot[], dt) || _series_needed(fw.conditioning[], dt)) &&
+        return false
+    A = _tan_exp_cached!(fw, mod, dt)
+    _tan_copy!(rec.A, A)
+    _tan_copy!(rec.x, x)
+    _tan_copy!(rec.P, P)
+    rec.dt[] = dt
+    # The intercept: s = A affine - affine, dINT = JAx \ s.
+    _tan_copy!(rec.affine, mod.CINT)
+    dINT = rec.dINT
+    _tan_mulvec!(dINT, A, rec.affine)
+    _tan_lincomb!(dINT, true, dINT, -1.0, rec.affine)
+    _tan_solve!(dINT, fw.FJ, fw.pivJ, mod.JAx)
+    # The mean.
+    _tan_mulvec!(fw.v1, A, x)
+    _tan_lincomb!(x, true, fw.v1, true, dINT)
+    # The covariance, ridged before the propagation as the filter does.
+    _tan_diag!(P, 1e-10)
+    _tan_lower_to_upper!(P)
+    _tan_mul!(fw.nn1, A, P)
+    _tan_mulNT!(fw.nn2, fw.nn1, A)  # A P A'
+    # dDIFF = X - (A X) A', added in.
+    _tan_mul!(fw.nn1, A, fw.X)
+    _tan_comb!(P, ((1.0, fw.nn2), (1.0, fw.X)))
+    _tan_mulNT!(P, fw.nn1, A, -1.0, true)
+    _tan_lower_to_upper!(P)
+    return true
+end
+
+"""
+One measurement update on the manifests `y` observes (finite), recorded into
+`rec`; the row's log likelihood and its tangents into `ll` (a value and W
+tangents). A row observing nothing leaves the state as it is. `false` where S
+does not factor.
+"""
+function _tan_update!(x::TanVec{W}, P::TanMat{W}, rec::TanUpdRec{W}, fw::TanForward{W},
+    mod::TanModel{W}, y::AbstractVector{Float64}, ll::Vector{Float64}) where {W}
+    n = fw.n
+    o = rec.o
+    empty!(o)
+    for i in eachindex(y)
+        isfinite(y[i]) && push!(o, i)
+    end
+    mo = length(o)
+    mo == 0 && return true
+    rs = _tan_row(fw, mo)
+    length(rec.y.v) == mo || (rec.y = TanVec{W}(mo))
+    @inbounds for k in 1:mo
+        rec.y.v[k] = y[o[k]]
+    end
+    _tan_setnz!(rec.y, false)
+    _tan_copy!(rec.P, P)
+    _tan_copy!(rec.x, x)
+    allstates = 1:n
+    H, MM, R = rs.H, rs.MM, rs.R
+    _tan_gather!(H, mod.LAMBDA, o, allstates)
+    _tan_gather!(MM, mod.MM, o)
+    _tan_gather!(R, mod.R, o, o)
+    # yt = y - (Lambda x + mu).
+    yt = rs.yt
+    _tan_copy!(yt, MM)
+    _tan_mulvec!(yt, H, x, true, true)
+    _tan_lincomb!(yt, true, rec.y, -1.0, yt)
+    # S = sym(H Pr H' + R) + ridge, Pr = P + ridge.
+    Pr = rs.Pr
+    _tan_copy!(Pr, P)
+    _tan_diag!(Pr, 1e-10)
+    _tan_mulNT!(rs.PHt, Pr, H)
+    _tan_mul!(rs.S, H, rs.PHt)
+    _tan_comb!(rs.S, ((1.0, R),), true)
+    _tan_sym!(rs.Xc, rs.S)
+    _tan_copy!(rs.S, rs.Xc)
+    _tan_diag!(rs.S, 1e-10)
+    _tan_cholinv!(rs.Ui, rs.S, rs.Xc, rs.Tc, rs.F) || return false
+    Ui, e, a = rs.Ui, rs.e, rs.a
+    # The log likelihood: -1/2 (mo log 2pi + logdet S + e'e), e = Ui' yt,
+    # logdet S = -2 sum log Ui_ii.
+    _tan_mulTvec!(e, Ui, yt, true, false, Val(:AupperT))
+    q = 0.0
+    ld = 0.0
+    @inbounds for i in 1:mo
+        q += e.v[i]^2
+        ld -= 2 * log(Ui.v[i, i])
+    end
+    ll[1] += -0.5 * (mo * log(2pi) + ld + q)
+    if _tan_nz(e) || _tan_nz(Ui)
+        @inbounds for w in 1:W
+            dq = 0.0
+            dld = 0.0
+            for i in 1:mo
+                dq += 2 * e.v[i] * e.d[w, i]
+                dld -= 2 * Ui.d[w, i, i] / Ui.v[i, i]
+            end
+            ll[1 + w] += -0.5 * (dld + dq)
+        end
+    end
+    # x <- x + PHt S^-1 yt, S^-1 yt = Ui e.
+    _tan_mulvec!(a, Ui, e, true, false, Val(:Aupper))
+    _tan_mulvec!(x, rs.PHt, a, true, true)
+    # P <- M P M' + K R K', K = PHt S^-1, M = I - K H, on the unridged P.
+    _tan_mul!(rs.Kb, rs.PHt, Ui, true, false, Val(:Bupper))
+    _tan_mulNT!(rs.K, rs.Kb, Ui, true, false, Val(:BupperT))
+    Mm = rs.Mm
+    _tan_mul!(Mm, rs.K, H, -1.0, false)
+    _tan_diag!(Mm, 1.0)
+    _tan_mul!(rs.nn1, Mm, P)
+    _tan_mulNT!(P, rs.nn1, Mm)
+    _tan_mul!(rs.nm1, rs.K, R)
+    _tan_mulNT!(P, rs.nm1, rs.K, true, true)
+    _tan_lower_to_upper!(P)
+    return true
+end
+
+"""
+The parameter matrices' cotangents with their tangents, and the exponential's
+directions queued by interval (`_frechet_enqueue!`), which a block flushes once
+for all its subjects (`_tan_flush_frechet!`).
+"""
+struct TanAcc{W}
+    JAx::TanMat{W}; CINT::TanVec{W}; Qc::TanMat{W}
+    LAMBDA::TanMat{W}; MM::TanVec{W}; R::TanMat{W}
+    T0M::TanVec{W}; T0V::TanMat{W}
+    queue::Dict{Float64,Int}    # interval -> its slot in Abars
+    Abars::Vector{TanMat{W}}
+end
+TanAcc(n::Int, m::Int, W::Int) = TanAcc{W}(TanMat{W}(n, n), TanVec{W}(n), TanMat{W}(n, n),
+    TanMat{W}(m, n), TanVec{W}(m), TanMat{W}(m, m), TanVec{W}(n), TanMat{W}(n, n),
+    Dict{Float64,Int}(), TanMat{W}[])
+
+function _tan_zero!(X)
+    fill!(X.v, 0.0)
+    _tan_setnz!(X, false)
+    return X
+end
+
+"""Every cotangent zero and the queue empty."""
+function _tan_acc_zero!(acc::TanAcc)
+    for X in (acc.JAx, acc.CINT, acc.Qc, acc.LAMBDA, acc.MM, acc.R, acc.T0M, acc.T0V)
+        _tan_zero!(X)
+    end
+    empty!(acc.queue)
+    return acc
+end
+
+"""`acc += b`, the queues merged by interval; both flushed or both not."""
+function _tan_acc_add!(acc::TanAcc{W}, b::TanAcc{W}) where {W}
+    _tan_comb!(acc.JAx, ((1.0, b.JAx),), true)
+    _tan_lincomb!(acc.CINT, true, acc.CINT, true, b.CINT)
+    _tan_comb!(acc.Qc, ((1.0, b.Qc),), true)
+    _tan_comb!(acc.LAMBDA, ((1.0, b.LAMBDA),), true)
+    _tan_lincomb!(acc.MM, true, acc.MM, true, b.MM)
+    _tan_comb!(acc.R, ((1.0, b.R),), true)
+    _tan_lincomb!(acc.T0M, true, acc.T0M, true, b.T0M)
+    _tan_comb!(acc.T0V, ((1.0, b.T0V),), true)
+    for (dt, k) in b.queue
+        _tan_enqueue!(acc, dt, b.Abars[k], 1.0)
+    end
+    return acc
+end
+
+"""Queue `w Abar`, the exponential's direction at interval `dt`."""
+function _tan_enqueue!(acc::TanAcc{W}, dt::Float64, Abar::TanMat{W}, w::Float64) where {W}
+    k = get(acc.queue, dt, 0)
+    if k == 0
+        k = length(acc.queue) + 1
+        acc.queue[dt] = k
+        length(acc.Abars) < k && push!(acc.Abars, TanMat{W}(size(Abar.v)...))
+        _tan_comb!(acc.Abars[k], ((w, Abar),))
+    else
+        _tan_comb!(acc.Abars[k], ((w, Abar),), true)
+    end
+    return acc
+end
+
+"""The queued directions into JAx's cotangent: `dt L(dt JAx', Abar)` each."""
+function _tan_flush_frechet!(acc::TanAcc{W}, fw::TanForward{W}, mod::TanModel{W},
+    sT::TanMat{W}) where {W}
+    for (dt, k) in acc.queue
+        _tan_add!(sT, dt, mod.JAx, false, Val(:T))
+        _tan_exp_frechet!(fw.fr, sT, acc.Abars[k])
+        _tan_comb!(acc.JAx, ((dt, fw.fr.L),), true)
+    end
+    empty!(acc.queue)
+    return acc
+end
+
+"""The reverse of a prediction's scratch, and JAx' with its factors."""
+struct TanPredRev{W}
+    Abar::TanMat{W}; JAxbar::TanMat{W}; Pnew::TanMat{W}; Ps::TanMat{W}; Pt::TanMat{W}
+    nn1::TanMat{W}; nn2::TanMat{W}; Xbar::TanMat{W}; Adbar::TanMat{W}; kk6::TanMat{W}
+    JAxdbar::TanMat{W}; Qcdbar::TanMat{W}
+    xnew::TanVec{W}; sbar::TanVec{W}; affbar::TanVec{W}
+    JT::TanMat{W}
+    FT::Matrix{Float64}
+    pivT::Vector{Int}
+end
+TanPredRev(n::Int, W::Int) = TanPredRev{W}((TanMat{W}(n, n) for _ in 1:12)...,
+    (TanVec{W}(n) for _ in 1:3)..., TanMat{W}(n, n), zeros(n, n), zeros(Int, n))
+
+"""
+Undo one prediction (`_reverse_predict!`, continuous time, closed forms, every
+state diffusing, DRIFT = JAx): `xbar`, `Pbar` in and out, the matrices'
+cotangents into `acc` with the subject's weight `w`, the exponential's
+direction queued by interval.
+"""
+function _tan_reverse_predict!(xbar::TanVec{W}, Pbar::TanMat{W}, rec::TanPredRec{W},
+    rv::TanPredRev{W}, fw::TanForward{W}, mod::TanModel{W}, acc::TanAcc{W},
+    w::Float64) where {W}
+    A, JAx, X = rec.A, mod.JAx, fw.X
+    Abar, JAxbar, Ps = rv.Abar, rv.JAxbar, rv.Ps
+    # The mean: x+ = A x + dINT.
+    _tan_ger!(Abar, true, xbar, rec.x, false)
+    _tan_mulTvec!(rv.xnew, A, xbar)
+    # The covariance: P+ = A (P + eps I) A' + dDIFF.
+    _tan_sym!(Ps, Pbar)
+    _tan_copy!(rv.Pt, rec.P)
+    _tan_diag!(rv.Pt, 1e-10)
+    _tan_mul!(rv.nn1, Ps, A)
+    _tan_mul!(Abar, rv.nn1, rv.Pt, 2.0, true)
+    _tan_mulTN!(rv.nn2, A, Ps)
+    _tan_mul!(rv.Pnew, rv.nn2, A)
+    # dDIFF = X - A X A', its cotangent Ps (symmetric already).
+    _tan_mulTN!(rv.kk6, A, Ps)
+    _tan_mul!(rv.Xbar, rv.kk6, A)
+    _tan_comb!(rv.Xbar, ((1.0, Ps),), -1.0)  # Xbar = Qb - A' Qb A
+    _tan_mul!(rv.kk6, Ps, A)
+    _tan_mulNT!(rv.Adbar, rv.kk6, X)
+    _tan_mulTN!(rv.kk6, Ps, A)
+    _tan_mul!(rv.Adbar, rv.kk6, X, true, true)
+    _tan_scale!(rv.Adbar, -1.0)  # -(Qb A X' + Qb' A X)
+    # X = lyap(JAx, Qc).
+    _tan_lyap_pullback!(rv.JAxdbar, rv.Qcdbar, fw.ly, JAx, X, rv.Xbar)
+    # dINT = JAx \ s, s = A affine - affine: sbar = JAx' \ dINTbar.
+    _tan_copy!(rv.sbar, xbar)
+    _tan_solve!(rv.sbar, rv.FT, rv.pivT, rv.JT)
+    _tan_ger!(JAxbar, -1.0, rv.sbar, rec.dINT, false)
+    _tan_mulTvec!(rv.affbar, A, rv.sbar)
+    _tan_lincomb!(rv.affbar, true, rv.affbar, -1.0, rv.sbar)
+    _tan_ger!(Abar, true, rv.sbar, rec.affine, true)
+    # affine = CINT + (DRIFT - JAx) x: CINT's cotangent; DRIFT's and JAx's
+    # parts cancel, DRIFT being JAx.
+    _tan_lincomb!(acc.CINT, true, acc.CINT, w, rv.affbar)
+    _tan_comb!(Abar, ((1.0, rv.Adbar),), true)
+    _tan_comb!(JAxbar, ((1.0, rv.JAxdbar),), true)
+    _tan_comb!(acc.JAx, ((w, JAxbar),), true)
+    _tan_comb!(acc.Qc, ((w, rv.Qcdbar),), true)
+    _tan_enqueue!(acc, rec.dt[], Abar, w)
+    _tan_copy!(xbar, rv.xnew)
+    _tan_copy!(Pbar, rv.Pnew)
+    return xbar, Pbar
+end
+
+const _TAN_OK = 0
+const _TAN_INVALID = 1     # the filter's invalid point: S did not factor, or worse
+const _TAN_REFUSED = 2     # an interval the filter takes as a series
+
+"""A worker's sweep: its records, the walk's state, its scratch."""
+struct TanSweep{W}
+    n::Int
+    m::Int
+    fw::TanForward{W}
+    rv::TanPredRev{W}
+    preds::Vector{TanPredRec{W}}
+    upds::Vector{TanUpdRec{W}}
+    x::TanVec{W}; P::TanMat{W}; xbar::TanVec{W}; Pbar::TanMat{W}
+    sT::TanMat{W}               # dt JAx', the flush's argument
+    ll::Vector{Float64}         # the log likelihood and its W tangents
+    first::Vector{Int}          # each row's first prediction record
+end
+TanSweep(n::Int, m::Int, W::Int) = TanSweep{W}(n, m, TanForward(n, m, W), TanPredRev(n, W),
+    TanPredRec{W}[], TanUpdRec{W}[],
+    TanVec{W}(n), TanMat{W}(n, n), TanVec{W}(n), TanMat{W}(n, n), TanMat{W}(n, n), zeros(1 + W),
+    Int[])
+
+"""What a block's subjects share: `_tan_forward_begin!`, and JAx' and its factors."""
+function _tan_sweep_begin!(sw::TanSweep{W}, mod::TanModel{W}) where {W}
+    _tan_forward_begin!(sw.fw, mod)
+    rv = sw.rv
+    _tan_add!(rv.JT, true, mod.JAx, false, Val(:T))
+    copyto!(rv.FT, rv.JT.v)
+    _lu_factor_generic!(rv.FT, rv.pivT, sw.n)
+    return sw
+end
+
+"""
+One subject, weight `w`: `times`, the observations `Y` (m x T, NaN where
+missing) and the filter's substep rule (`_ctsem_substeps`). Adds its
+cotangents, times `w`, into `acc` and queues its exponential directions there;
+leaves its log likelihood in `sw.ll`. `_tan_sweep_begin!` first, once a block.
+"""
+function _tan_sweep!(acc::TanAcc{W}, sw::TanSweep{W}, mod::TanModel{W},
+    times::AbstractVector{Float64}, Y::AbstractMatrix{Float64}, rule,
+    w::Float64) where {W}
+    n, fw, rv = sw.n, sw.fw, sw.rv
+    T = length(times)
+    # The predictions, row by row: a row's substeps in order, then its update.
+    npred = 0
+    first = resize!(sw.first, T + 1)
+    x, P = sw.x, sw.P
+    _tan_copy!(x, mod.T0M)
+    _tan_copy!(P, mod.T0V)
+    fill!(sw.ll, 0.0)
+    for t in 1:T
+        first[t] = npred + 1
+        if t > 1
+            dtrow = times[t] - times[t - 1]
+            k = _ctsem_substeps(dtrow, rule, t)
+            h = dtrow / k
+            for _ in 1:k
+                npred += 1
+                npred > length(sw.preds) && push!(sw.preds, TanPredRec(n, W))
+                _tan_predict!(x, P, sw.preds[npred], fw, mod, h) || return _TAN_REFUSED
+            end
+        end
+        t > length(sw.upds) && push!(sw.upds, TanUpdRec(n, sw.m, W))
+        _tan_update!(x, P, sw.upds[t], fw, mod, view(Y, :, t), sw.ll) || return _TAN_INVALID
+    end
+    first[T + 1] = npred + 1
+    isfinite(sw.ll[1]) || return _TAN_INVALID
+
+    # The reverse walk.
+    xbar, Pbar = _tan_zero!(sw.xbar), _tan_zero!(sw.Pbar)
+    allstates = 1:n
+    for t in T:-1:1
+        rec = sw.upds[t]
+        o = rec.o
+        if !isempty(o)
+            # On the manifests the row observed: its gathered loadings, means and
+            # measurement covariance, and the cotangents scattered back.
+            u = _tan_row(fw, length(o)).u
+            _tan_copy!(u.P_in, rec.P)
+            _tan_gather!(u.H, mod.LAMBDA, o, allstates)
+            _tan_copy!(u.Lambda, u.H)
+            _tan_gather!(u.R, mod.R, o, o)
+            _tan_copy!(u.x, rec.x)
+            _tan_gather!(u.mu, mod.MM, o)
+            _tan_copy!(u.y, rec.y)
+            _tan_copy!(u.xbar, xbar)
+            _tan_copy!(u.Pbar, Pbar)
+            _tan_reverse_update!(u) || return _TAN_INVALID
+            _tan_copy!(xbar, u.xbar)
+            _tan_copy!(Pbar, u.Pbar)
+            _tan_scatter!(acc.R, w, u.Rbar, o, o)
+            _tan_scatter!(acc.LAMBDA, w, u.Hbar, o, allstates)
+            _tan_scatter!(acc.LAMBDA, w, u.Lbar, o, allstates)
+            _tan_scatter!(acc.MM, -w, u.ybarbar, o)
+        end
+        for j in (first[t + 1] - 1):-1:first[t]
+            _tan_reverse_predict!(xbar, Pbar, sw.preds[j], rv, fw, mod, acc, w)
+        end
+    end
+    _tan_lincomb!(acc.T0M, true, acc.T0M, w, xbar)
+    _tan_sym!(rv.Ps, Pbar)
+    _tan_comb!(acc.T0V, ((w, rv.Ps),), true)
+    return _TAN_OK
+end

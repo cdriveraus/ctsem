@@ -251,6 +251,27 @@ test_that("a fresh session's first fit of a precompiled model compiles almost no
     "augmented"), "the captured model")
 })
 
+# The generator's `gaussian_fixed`: the captured model without its random
+# effect, whose Hessians take the hand-coded second order (tangent_hessian.jl),
+# which no shape with random effects reaches. Must stay identical to it.
+.fixed_model <- function() {
+  mvar <- diag(0, 2); diag(mvar) <- "mvar"
+  m <- suppressWarnings(suppressMessages(ctModel(type = "ct", n.latent = 1,
+    n.manifest = 2, manifestNames = c("y1", "y2"), latentNames = "eta1",
+    LAMBDA = matrix(1, 2, 1), MANIFESTMEANS = matrix(0, 2, 1),
+    CINT = matrix("cint"), T0MEANS = matrix(0), MANIFESTVAR = mvar,
+    manifesttype = c(0L, 0L))))
+  m$pars$indvarying <- FALSE
+  m
+}
+
+test_that("a fresh session's first fit of a model without random effects compiles almost nothing", {
+  skip_without_julia()
+  .skip_without_workload()
+  .expect_compiles_little(.first_fit_compiles(.fixed_model, .precompile_data,
+    "augmented"), "a model without random effects")
+})
+
 test_that("a fresh session's first fit of a model the workload never saw compiles almost nothing", {
   skip_without_julia()
   .skip_without_workload()

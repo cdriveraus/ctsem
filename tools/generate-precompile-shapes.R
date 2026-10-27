@@ -159,6 +159,16 @@ shapes <- list(
   gaussian_laplace = list(route = "laplace", model = function() cint_model(c("y1", "y2")),
     data = function() indicators(sim_latent(8, 6), c("y1", "y2")),
     followups = c(followups, sampled_fit)),
+  # The same without the random effect: the plain filter, whose Hessians (the
+  # Newton finish's and the certification's) take the hand-coded second order
+  # (`tangent_hessian.jl`), which the shapes with random effects do not reach.
+  # Its follow-ups are the augmented shape's code, so it has none.
+  gaussian_fixed = list(route = "augmented", model = function() {
+      m <- cint_model(c("y1", "y2"))
+      m$pars$indvarying <- FALSE
+      m
+    },
+    data = function() indicators(sim_latent(8, 6), c("y1", "y2"))),
   # The intercept above is integrated by each subject's filter, leaving the
   # Laplace units no coordinate. A random drift beside it and y2's intercept
   # stays a coordinate, and the filter integrates the two intercepts given it
