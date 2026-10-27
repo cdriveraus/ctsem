@@ -3,11 +3,12 @@
 # (`tangent_sweep.jl`), where `ctsem_hessian`'s other route runs the adjoint
 # gradient at a 12-wide dual. The parameter layer -- subject values, the
 # regular transforms, the covariance constructions, their pullbacks and the
-# prior -- is the engine's own code, run once per column at a width-1 dual:
-# forward along the column for the parameter matrices' tangents, and back with
-# their cotangents carrying the column's tangent, so the result's partial is
-# the column. Without TI predictors that layer is every subject's, run once a
-# column; with them each subject's, run once a column a subject. What the
+# prior -- is the engine's own code, run once a chunk of columns at the
+# Hessian's own dual, each column a lane: forward for the parameter matrices'
+# tangents, and back with their cotangents carrying the tangents, so the
+# result's partials are the columns. Without TI predictors that layer is every
+# subject's, run once a chunk; with them each subject's. The filter, which is
+# where the dual's compile and memory went, never runs at it. What the
 # sweep does not cover goes to the dual (`_tan_refusal`), as does a point where
 # an interval needs the series. The dual route is the oracle
 # (`ctsem_set_tangent_hessian!(false)`, test_tangent_hessian.jl). Deviations the
@@ -177,50 +178,64 @@ function _tan_hybrid_block_G(h::CTSEMHybrid, Lb::AbstractMatrix, c::Int, f::Int)
     return f <= c ? h.slope[c] * Lb[nL + f, nL + c] : zero(eltype(Lb))
 end
 
-"""
-The matrices of the layer at `x` into `mod`'s values, and their tangents along
-each seeded copy of `x` in `xs` into its tangents, for the subject whose TI
-predictors are `tipreds`. `false` where the drift is not its own Jacobian.
-"""
-function _tan_layer_fill!(mod::TanModel{W}, aws0, aws1, sp, x::Vector{Float64},
-    xs::Vector, tipreds) where {W}
-    m0 = _tan_layer_mats(aws0, sp, x, tipreds)
-    (m0.JAx == m0.DRIFT && m0.Jy == m0.LAM) || return false
-    for k in _TAN_LAYER_NAMES
-        X = _tan_layer_field(mod, k)
-        X.v .= getproperty(m0, k)
-        fill!(X.d, 0.0)
-    end
-    for (w, xw) in enumerate(xs)
-        mw = _tan_layer_mats(aws1, sp, xw, tipreds)
-        (mw.JAx == mw.DRIFT && mw.Jy == mw.LAM) || return false
-        for k in _TAN_LAYER_NAMES
-            X = _tan_layer_field(mod, k)
-            P = ForwardDiff.partials.(getproperty(mw, k), 1)
-            X.d isa Matrix ? (X.d[w, :] .= P) : (X.d[w, :, :] .= P)
+"""`X`'s values and tangents from the duals `M`, lane `w` its `w`-th tangent,
+those past `nl` zero."""
+function _tan_lanes!(X::Union{TanMat{W},TanVec{W}}, M::AbstractArray, nl::Int) where {W}
+    @inbounds for idx in eachindex(M)
+        X.v[idx] = ForwardDiff.value(M[idx])
+        p = ForwardDiff.partials(M[idx])
+        for w in 1:W
+            X.d[w + W * (idx - 1)] = w <= nl ? p[w] : 0.0
         end
     end
-    foreach(k -> _tan_setnz_from!(_tan_layer_field(mod, k)), _TAN_LAYER_NAMES)
+    _tan_setnz_from!(X)
+    return X
+end
+
+"""`X` as duals of type `DW`: its values, its tangents their partials."""
+function _tan_duals(X::Union{TanMat{W},TanVec{W}}, ::Type{DW}) where {W,DW}
+    out = similar(X.v, DW)
+    @inbounds for idx in eachindex(X.v)
+        o = W * (idx - 1)
+        out[idx] = DW(X.v[idx], ForwardDiff.Partials(ntuple(w -> X.d[o + w], Val(W))))
+    end
+    return out
+end
+
+"""Whether the duals `a` and `b` are the same, partials included: `==` on a
+dual reads its value alone."""
+_tan_same(a::AbstractArray, b::AbstractArray) = size(a) == size(b) &&
+    all(i -> ForwardDiff.value(a[i]) == ForwardDiff.value(b[i]) &&
+        ForwardDiff.partials(a[i]) == ForwardDiff.partials(b[i]), eachindex(a))
+
+"""
+The matrices of the layer into `mod`, values and tangents, for the subject
+whose TI predictors are `tipreds`: one pass at `xw`, the raw values seeded
+with the chunk's `nl` columns as lanes. `false` where the drift is not its own
+Jacobian.
+"""
+function _tan_layer_fill!(mod::TanModel{W}, awsW, sp, xw::Vector, nl::Int,
+    tipreds) where {W}
+    mw = _tan_layer_mats(awsW, sp, xw, tipreds)
+    (_tan_same(mw.JAx, mw.DRIFT) && _tan_same(mw.Jy, mw.LAM)) || return false
+    for k in _TAN_LAYER_NAMES
+        _tan_lanes!(_tan_layer_field(mod, k), getproperty(mw, k), nl)
+    end
     return true
 end
 
 """
-The layer's reverse along each seeded copy of `x` in `xs`, from the matrices'
-cotangents in `acc` with their tangents: the `w`-th column into `Hc[:, w]`,
-added.
+The layer's reverse at `xw`, from the matrices' cotangents in `acc` with their
+tangents as partials: lane `w`'s result into `Hc[:, w]`, added, for the
+chunk's `nl` columns.
 """
-function _tan_layer_columns!(Hc::AbstractMatrix{Float64}, acc::TanAcc{W}, aws1, sp,
-    xs::Vector{Vector{D1}}, tipreds) where {W,D1}
-    for (w, xw) in enumerate(xs)
-        C = NamedTuple{_TAN_LAYER_NAMES}(map(_TAN_LAYER_NAMES) do k
-            X = _tan_layer_field(acc, k)
-            dv = X.d isa Matrix ? X.d[w, :] : X.d[w, :, :]
-            D1.(X.v, ForwardDiff.Partials.(tuple.(dv)))
-        end)
-        g = _tan_layer_reverse(aws1, sp, xw, C, tipreds)
-        @inbounds for i in eachindex(g)
-            Hc[i, w] += ForwardDiff.partials(g[i], 1)
-        end
+function _tan_layer_columns!(Hc::AbstractMatrix{Float64}, acc::TanAcc{W}, awsW, sp,
+    xw::Vector{DW}, nl::Int, tipreds) where {W,DW}
+    C = NamedTuple{_TAN_LAYER_NAMES}(map(k -> _tan_duals(_tan_layer_field(acc, k), DW),
+        _TAN_LAYER_NAMES))
+    g = _tan_layer_reverse(awsW, sp, xw, C, tipreds)
+    @inbounds for w in 1:nl, i in eachindex(g)
+        Hc[i, w] += ForwardDiff.partials(g[i], w)
     end
     return Hc
 end
@@ -240,8 +255,8 @@ pulled back through its own layer into `Hb`, the block's columns; the
 hybrid's factor's cotangent is summed in `acc` either way. A status code.
 """
 function _tan_block!(acc::TanAcc{W}, Hb::Matrix{Float64}, sw::TanSweep{W},
-    mod::TanModel{W}, L, objective::CTSEMObjective, range, x::Vector{Float64},
-    xs::Vector) where {W}
+    mod::TanModel{W}, L, objective::CTSEMObjective, range, xw::Vector,
+    nl::Int) where {W}
     subjects, weights, sp = objective.subject_objectives, objective.subject_weights,
         objective.params
     _tan_acc_zero!(acc)
@@ -263,7 +278,7 @@ function _tan_block!(acc::TanAcc{W}, Hb::Matrix{Float64}, sw::TanSweep{W},
         so = subjects[i]
         wt = isempty(weights) ? 1.0 : weights[i]
         wt == 0 && continue
-        _tan_layer_fill!(L.mod, L.aws0, L.aws1, sp, x, xs, so.tipreds) || return _TAN_REFUSED
+        _tan_layer_fill!(L.mod, L.awsW, sp, xw, nl, so.tipreds) || return _TAN_REFUSED
         _tan_sweep_begin!(sw, L.mod)
         sa = _tan_acc_zero!(L.acc)
         st = _tan_sweep!(sa, sw, L.mod, so.timesteps, so.data, so.tdpreds,
@@ -271,7 +286,7 @@ function _tan_block!(acc::TanAcc{W}, Hb::Matrix{Float64}, sw::TanSweep{W},
         st == _TAN_OK || return st
         _tan_flush_frechet!(sa, sw.fw, L.mod, sw.sT)
         L.mod.nh > 0 && _tan_comb!(acc.Gbar, ((1.0, sa.Gbar),), true)
-        _tan_layer_columns!(Hb, sa, L.aws1, sp, xs, so.tipreds)
+        _tan_layer_columns!(Hb, sa, L.awsW, sp, xw, nl, so.tipreds)
     end
     return _TAN_OK
 end
@@ -281,9 +296,11 @@ function _tan_hessian_columns!(H::Matrix{Float64}, objective::CTSEMObjective,
     ::Val{W})::Bool where {W}
     sp = objective.params
     npar = length(x)
-    # Width 1 at the Hessian's own tag: the layer's own seeded duals nest inside
-    # it as they nest inside the 12-wide one.
-    D1 = ForwardDiff.Dual{_tan_tag(_ctsem_hessian_dual(objective)),Float64,1}
+    # The layer at the Hessian's own dual, its lanes the chunk's columns; a
+    # block's factor at width 1 of the same tag, nested.
+    DW = _ctsem_hessian_dual(objective)
+    ForwardDiff.npartials(DW) == W || return false
+    D1 = ForwardDiff.Dual{_tan_tag(DW),Float64,1}
     subjects = objective.subject_objectives
     # Without TI predictors every subject's layer is the same, and any
     # subject's predictor row gives it; with them each subject has its own.
@@ -293,12 +310,13 @@ function _tan_hessian_columns!(H::Matrix{Float64}, objective::CTSEMObjective,
     nblocks = _ctsem_nblocks(nsub, nworkers)
     ranges = _ctsem_chunk_ranges(nsub, nblocks)
     aws0 = CTSEMAdjointWorkspace(Float64, sp, npar, 0)
-    aws1 = CTSEMAdjointWorkspace(D1, sp, npar, 0)
+    awsW = CTSEMAdjointWorkspace(DW, sp, npar, 0)
     m0 = _tan_layer_mats(aws0, sp, x, subjects[1].tipreds)
     n, m, ntd = size(m0.JAx, 1), size(m0.LAM, 1), size(m0.TDE, 2)
     # Every state diffusing, none static.
     (aws0.diffusion_state_indices == 1:n && aws0.affine_dim == n) || return false
-    seed(c) = [D1(x[i], ForwardDiff.Partials((i == c ? 1.0 : 0.0,))) for i in 1:npar]
+    lanes(chunk) = [DW(x[i], ForwardDiff.Partials(ntuple(w -> w <= length(chunk) &&
+        cols[chunk[w]] == i ? 1.0 : 0.0, Val(W)))) for i in 1:npar]
     # The deviations the filter integrates, whole (`_HYBRID_FULL`) or profiled.
     h = sp.hybrid
     nh = _hybrid_on(h) && hybrid_mode != _HYBRID_OFF ? _hybrid_items(h) : 0
@@ -317,16 +335,16 @@ function _tan_hessian_columns!(H::Matrix{Float64}, objective::CTSEMObjective,
     accs = [TanAcc(n, m, ntd, nh, W) for _ in 1:nblocks]
     # Each worker's own layer and the cotangents of one subject, and each
     # block's columns, where the layer is the subject's.
-    layers = shared ? nothing : [(aws0=CTSEMAdjointWorkspace(Float64, sp, npar, 0),
-        aws1=CTSEMAdjointWorkspace(D1, sp, npar, 0), mod=_tan_model_like(mod),
-        acc=TanAcc(n, m, ntd, nh, W)) for _ in 1:nworkers]
+    layers = shared ? nothing : [(awsW=CTSEMAdjointWorkspace(DW, sp, npar, 0),
+        mod=_tan_model_like(mod), acc=TanAcc(n, m, ntd, nh, W)) for _ in 1:nworkers]
     Hbs = [zeros(shared ? 0 : npar, shared ? 0 : W) for _ in 1:nblocks]
     status = zeros(Int, nblocks)
     for start in 1:W:length(cols)
         chunk = start:min(start + W - 1, length(cols))
-        xs = [seed(cols[p]) for p in chunk]
+        nl = length(chunk)
+        xw = lanes(chunk)
         # The matrices' tangents along the chunk's columns.
-        shared && (_tan_layer_fill!(mod, aws0, aws1, sp, x, xs, subjects[1].tipreds) ||
+        shared && (_tan_layer_fill!(mod, awsW, sp, xw, nl, subjects[1].tipreds) ||
             return false)
         # The hybrid's factor, and its tangents along the chunk's columns.
         if nh > 0
@@ -362,7 +380,7 @@ function _tan_hessian_columns!(H::Matrix{Float64}, objective::CTSEMObjective,
         _ctsem_pull_blocks(nblocks, nworkers) do b, wk
             sw = _tan_sweep_scratch(n, m, ntd, nh, Val(W))
             status[b] = _tan_block!(accs[b], Hbs[b], sw, mod,
-                layers === nothing ? nothing : layers[wk], objective, ranges[b], x, xs)
+                layers === nothing ? nothing : layers[wk], objective, ranges[b], xw, nl)
             return nothing
         end
         any(==(_TAN_REFUSED), status) && return false
@@ -375,24 +393,24 @@ function _tan_hessian_columns!(H::Matrix{Float64}, objective::CTSEMObjective,
         for b in 2:nblocks
             _tan_acc_add!(tot, accs[b])
         end
-        # Each column: the layer's reverse at a width-1 dual seeded along it,
-        # the cotangents carrying their tangent along it, or the subjects'
-        # own, summed; the prior; and the hybrid's factor.
+        # The columns: the layer's reverse, the cotangents carrying their
+        # tangents, or the subjects' own, summed; the prior; and the hybrid's
+        # factor.
         Hc = view(H, :, chunk)
         fill!(Hc, 0.0)
         if shared
-            _tan_layer_columns!(Hc, tot, aws1, sp, xs, subjects[1].tipreds)
+            _tan_layer_columns!(Hc, tot, awsW, sp, xw, nl, subjects[1].tipreds)
         else
             for b in 1:nblocks
-                Hc .+= view(Hbs[b], :, 1:length(chunk))
+                Hc .+= view(Hbs[b], :, 1:nl)
             end
         end
+        gp = zeros(DW, npar)
+        _ctsem_log_prior_gradient!(gp, objective, xw)
+        @inbounds for w in 1:nl, i in 1:npar
+            Hc[i, w] += ForwardDiff.partials(gp[i], w)
+        end
         for (w, p) in enumerate(chunk)
-            gp = zeros(D1, npar)
-            _ctsem_log_prior_gradient!(gp, objective, xs[w])
-            @inbounds for i in 1:npar
-                H[i, p] += ForwardDiff.partials(gp[i], 1)
-            end
             # The hybrid's factor's cotangent, straight onto its raw positions
             # (`_hybrid_scatter!`): `Gbar` with its tangent along the column,
             # times G's first derivative, and `Gbar` times its second.

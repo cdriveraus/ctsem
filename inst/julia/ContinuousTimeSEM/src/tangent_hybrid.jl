@@ -114,11 +114,12 @@ end
 """
 A prediction's share (`_hybrid_predict!`): `X = A X`, and a continuous
 intercept's column (`kind` 3) gains `J^-1 (A - I) e_l` (`Xinc`, recorded), by
-the drift's factors (`FJ`) as the intercept is.
+the drift's factors (`FJ`) as the intercept is, or `Phi e_l` where the
+interval's intercept was taken as a series (`Phi` not `nothing`).
 """
 function _tan_hybrid_predict!(hs::TanHybState{W}, Xh::TanMat{W}, Xinc::TanMat{W},
     h::CTSEMHybrid, A::TanMat{W}, JAx::TanMat{W}, FJ::Matrix{Float64},
-    pivJ::Vector{Int}) where {W}
+    pivJ::Vector{Int}, Phi::Union{Nothing,TanMat{W}}) where {W}
     _tan_copy!(Xh, hs.X)
     _tan_mul!(hs.X, A, Xh)
     _tan_zero!(Xinc)
@@ -126,9 +127,13 @@ function _tan_hybrid_predict!(hs::TanHybState{W}, Xh::TanMat{W}, Xinc::TanMat{W}
         h.kind[k] == 3 || continue
         l = h.target[k]
         inc = hs.inc
-        _tan_getcol!(inc, A, l)
-        inc.v[l] -= 1.0
-        _tan_solve!(inc, FJ, pivJ, JAx)
+        if Phi === nothing
+            _tan_getcol!(inc, A, l)
+            inc.v[l] -= 1.0
+            _tan_solve!(inc, FJ, pivJ, JAx)
+        else
+            _tan_getcol!(inc, Phi, l)
+        end
         _tan_addcol!(Xinc, k, 1.0, inc)
         _tan_addcol!(hs.X, k, 1.0, inc)
     end
@@ -223,18 +228,23 @@ end
 """
 A prediction's reverse share (`_hybrid_reverse_predict!`): a continuous
 intercept's column first, `sbar = J^-T Xbar[:, c]`, `JAxbar -= sbar Xinc[:, c]'`,
-`Abar[:, l] += sbar`; then `Abar += Xbar X'` and `Xbar = A' Xbar`. `JT`, `FT`
-are JAx' and its factors.
+`Abar[:, l] += sbar` -- or, where the interval's intercept was a series,
+`Phibar[:, l] += Xbar[:, c]`, which the caller pulls back with its own; then
+`Abar += Xbar X'` and `Xbar = A' Xbar`. `JT`, `FT` are JAx' and its factors.
 """
 function _tan_hybrid_reverse_predict!(hs::TanHybState{W}, h::CTSEMHybrid, Xh::TanMat{W},
     Xinc::TanMat{W}, A::TanMat{W}, Abar::TanMat{W}, JAxbar::TanMat{W}, JT::TanMat{W},
-    FT::Matrix{Float64}, pivT::Vector{Int}) where {W}
+    FT::Matrix{Float64}, pivT::Vector{Int}, Phibar::Union{Nothing,TanMat{W}}) where {W}
     Xbar = hs.Xbar
     @inbounds for k in eachindex(h.kind)
         h.kind[k] == 3 || continue
         l = h.target[k]
         sv, inc = hs.sv, hs.inc
         _tan_getcol!(sv, Xbar, k)
+        if Phibar !== nothing
+            _tan_addcol!(Phibar, l, 1.0, sv)
+            continue
+        end
         _tan_solve!(sv, FT, pivT, JT)
         _tan_getcol!(inc, Xinc, k)
         _tan_ger!(JAxbar, -1.0, sv, inc)

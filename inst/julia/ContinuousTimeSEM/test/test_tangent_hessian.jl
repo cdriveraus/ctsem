@@ -130,15 +130,24 @@ end
     end
 end
 
-@testset "an interval taken as a series goes to the dual" begin
-    # A drift close to zero against the intervals: the filter integrates those
-    # intervals as series, which the hand route does not cover.
-    objective, values = _tangent_test_model(driftscale=1e-5)
-    n = length(values)
-    @test ContinuousTimeSEM._tan_refusal(objective) === nothing
-    @test !ContinuousTimeSEM._tan_hessian_columns!(zeros(n, n), objective, values,
-        collect(1:n), nothing)
-    @test ctsem_hessian(objective, values) == _tangent_dual_hessian(objective, values)
+@testset "intervals taken as series" begin
+    # A drift close to zero against the intervals: the filter integrates every
+    # interval's intercept and noise as series. At 0.02, with substeps, some
+    # intervals take them and some the closed forms.
+    for opts in ((driftscale=1e-5,), (driftscale=0.02, max_timestep=0.4))
+        objective, values = _tangent_test_model(; opts...)
+        n = length(values)
+        counts = ContinuousTimeSEM._CTSEM_OPCOUNT
+        before = (counts.series_intercept[], counts.series_noise[])
+        reference = _tangent_dual_hessian(objective, values)
+        # The filter took both series somewhere.
+        @test counts.series_intercept[] > before[1]
+        @test counts.series_noise[] > before[2]
+        H = zeros(n, n)
+        @test ContinuousTimeSEM._tan_hessian_columns!(H, objective, values, collect(1:n),
+            nothing)
+        @test (H .+ H') ./ 2 ≈ reference rtol = 1e-10
+    end
 end
 
 @testset "what the hand route does not cover is refused" begin

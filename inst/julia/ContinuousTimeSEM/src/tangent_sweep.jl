@@ -66,9 +66,12 @@ struct TanPredRec{W}
     dt::Base.RefValue{Float64}
     Xh::TanMat{W}           # the hybrid's columns in, and the intercepts' increment
     Xinc::TanMat{W}
+    sint::Base.RefValue{Bool}   # the intercept's integral taken as a series
+    snoise::Base.RefValue{Bool} # and the noise's
 end
 TanPredRec(n::Int, nh::Int, W::Int) = TanPredRec{W}(TanMat{W}(n, n), TanVec{W}(n),
-    TanMat{W}(n, n), TanVec{W}(n), TanVec{W}(n), Ref(0.0), TanMat{W}(n, nh), TanMat{W}(n, nh))
+    TanMat{W}(n, n), TanVec{W}(n), TanVec{W}(n), Ref(0.0), TanMat{W}(n, nh), TanMat{W}(n, nh),
+    Ref(false), Ref(false))
 
 """
 What the reverse of an update reads (`CTSEMUpdateRecord`), with tangents: the
@@ -156,16 +159,22 @@ struct TanForward{W}
     next::Base.RefValue{Int}
     As::TanMat{W}; nn1::TanMat{W}; nn2::TanMat{W}; v1::TanVec{W}
     rows::Vector{Union{Nothing,TanRowScratch{W}}}
+    seri::TanSeries{W}      # the intercept's series, and the noise's
+    sern::TanSeries{W}
 end
 TanForward(n::Int, m::Int, nh::Int, W::Int) = TanForward{W}(n, m, nh, TanFrechet(n, W),
     TanLyap(n, W),
     TanMat{W}(n, n), zeros(n, n), zeros(Int, n), Ref(0.0), Ref(0.0),
     zeros(_CTSEM_EXP_TABLE), [TanMat{W}(n, n) for _ in 1:_CTSEM_EXP_TABLE], Ref(0), Ref(1),
     TanMat{W}(n, n), TanMat{W}(n, n), TanMat{W}(n, n), TanVec{W}(n),
-    Union{Nothing,TanRowScratch{W}}[nothing for _ in 1:m])
+    Union{Nothing,TanRowScratch{W}}[nothing for _ in 1:m], TanSeries(n, W), TanSeries(n, W))
 
-"""The scratch for a row observing `mo` manifests, built at first use."""
-function _tan_row(fw::TanForward{W}, mo::Int) where {W}
+"""
+The scratch for a row observing `mo` manifests, built at first use. Its type
+stated: built from `W` as a value, it is not inferred, and every row's update
+then read its fields dynamically, a quarter of a sweep.
+"""
+function _tan_row(fw::TanForward{W}, mo::Int)::TanRowScratch{W} where {W}
     r = fw.rows[mo]
     r === nothing || return r
     r = TanRowScratch(fw.n, mo, fw.nh, W)
@@ -209,25 +218,34 @@ end
 """
 One prediction over `dt`: `x <- A x + dINT`, `P <- A (P + eps I) A' + dDIFF`,
 `A = exp(JAx dt)`, `dINT = JAx \\ (A CINT - CINT)`, `dDIFF = X - A X A'`;
-recorded into `rec`. `false` where the filter would take the interval as a
-series (`_series_needed`), which this does not cover.
+recorded into `rec`. Where a pivot is small against the interval
+(`_series_needed`) the filter takes `dINT = Phi CINT` and `dDIFF = V` as
+series instead, and so does this (`tangent_series.jl`).
 """
 function _tan_predict!(x::TanVec{W}, P::TanMat{W}, rec::TanPredRec{W}, fw::TanForward{W},
     mod::TanModel{W}, dt::Float64, hs::TanHybState{W}) where {W}
     mod.ct || return _tan_predict_dt!(x, P, rec, fw, mod, hs)
-    (_series_needed(fw.minpivot[], dt) || _series_needed(fw.conditioning[], dt)) &&
-        return false
+    sint = _series_needed(fw.minpivot[], dt)
+    snoise = _series_needed(fw.conditioning[], dt)
+    rec.sint[] = sint
+    rec.snoise[] = snoise
     A = _tan_exp_cached!(fw, mod, dt)
     _tan_copy!(rec.A, A)
     _tan_copy!(rec.x, x)
     _tan_copy!(rec.P, P)
     rec.dt[] = dt
-    # The intercept: s = A affine - affine, dINT = JAx \ s.
+    # The intercept: s = A affine - affine, dINT = JAx \ s; or Phi affine.
     _tan_copy!(rec.affine, mod.CINT)
     dINT = rec.dINT
-    _tan_mulvec!(dINT, A, rec.affine)
-    _tan_lincomb!(dINT, true, dINT, -1.0, rec.affine)
-    _tan_solve!(dINT, fw.FJ, fw.pivJ, mod.JAx)
+    Phi = nothing
+    if sint
+        Phi = _tan_series_intercept!(fw.seri, mod.JAx, dt)
+        _tan_mulvec!(dINT, Phi, rec.affine)
+    else
+        _tan_mulvec!(dINT, A, rec.affine)
+        _tan_lincomb!(dINT, true, dINT, -1.0, rec.affine)
+        _tan_solve!(dINT, fw.FJ, fw.pivJ, mod.JAx)
+    end
     # The mean.
     _tan_mulvec!(fw.v1, A, x)
     _tan_lincomb!(x, true, fw.v1, true, dINT)
@@ -236,13 +254,17 @@ function _tan_predict!(x::TanVec{W}, P::TanMat{W}, rec::TanPredRec{W}, fw::TanFo
     _tan_lower_to_upper!(P)
     _tan_mul!(fw.nn1, A, P)
     _tan_mulNT!(fw.nn2, fw.nn1, A)  # A P A'
-    # dDIFF = X - (A X) A', added in.
-    _tan_mul!(fw.nn1, A, fw.X)
-    _tan_comb!(P, ((1.0, fw.nn2), (1.0, fw.X)))
-    _tan_mulNT!(P, fw.nn1, A, -1.0, true)
+    # dDIFF = X - (A X) A', or V, added in.
+    if snoise
+        _tan_comb!(P, ((1.0, fw.nn2), (1.0, _tan_series_noise!(fw.sern, mod.JAx, mod.Qc, dt))))
+    else
+        _tan_mul!(fw.nn1, A, fw.X)
+        _tan_comb!(P, ((1.0, fw.nn2), (1.0, fw.X)))
+        _tan_mulNT!(P, fw.nn1, A, -1.0, true)
+    end
     _tan_lower_to_upper!(P)
     mod.nh > 0 && _tan_hybrid_predict!(hs, rec.Xh, rec.Xinc, mod.hyb, A, mod.JAx, fw.FJ,
-        fw.pivJ)
+        fw.pivJ, Phi)
     return true
 end
 
@@ -468,9 +490,11 @@ struct TanPredRev{W}
     JT::TanMat{W}
     FT::Matrix{Float64}
     pivT::Vector{Int}
+    Phibar::TanMat{W}           # the intercept series' cotangent
 end
 TanPredRev(n::Int, W::Int) = TanPredRev{W}((TanMat{W}(n, n) for _ in 1:12)...,
-    (TanVec{W}(n) for _ in 1:3)..., TanMat{W}(n, n), zeros(n, n), zeros(Int, n))
+    (TanVec{W}(n) for _ in 1:3)..., TanMat{W}(n, n), zeros(n, n), zeros(Int, n),
+    TanMat{W}(n, n))
 
 """
 Undo one prediction (`_reverse_predict!`, continuous time, closed forms, every
@@ -484,11 +508,13 @@ function _tan_reverse_predict!(xbar::TanVec{W}, Pbar::TanMat{W}, rec::TanPredRec
     mod.ct || return _tan_reverse_predict_dt!(xbar, Pbar, rec, rv, mod, acc, w, hs)
     A, JAx, X = rec.A, mod.JAx, fw.X
     Abar, JAxbar, Ps = rv.Abar, rv.JAxbar, rv.Ps
+    sint, snoise, dt = rec.sint[], rec.snoise[], rec.dt[]
     _tan_zero!(JAxbar)
+    sint && _tan_zero!(rv.Phibar)
     # The mean: x+ = A x + dINT; and the hybrid's columns, X+ = A X + Xinc.
     _tan_ger!(Abar, true, xbar, rec.x, false)
     mod.nh > 0 && _tan_hybrid_reverse_predict!(hs, mod.hyb, rec.Xh, rec.Xinc, A, Abar,
-        JAxbar, rv.JT, rv.FT, rv.pivT)
+        JAxbar, rv.JT, rv.FT, rv.pivT, sint ? rv.Phibar : nothing)
     _tan_mulTvec!(rv.xnew, A, xbar)
     # The covariance: P+ = A (P + eps I) A' + dDIFF.
     _tan_sym!(Ps, Pbar)
@@ -498,28 +524,45 @@ function _tan_reverse_predict!(xbar::TanVec{W}, Pbar::TanMat{W}, rec::TanPredRec
     _tan_mul!(Abar, rv.nn1, rv.Pt, 2.0, true)
     _tan_mulTN!(rv.nn2, A, Ps)
     _tan_mul!(rv.Pnew, rv.nn2, A)
-    # dDIFF = X - A X A', its cotangent Ps (symmetric already).
-    _tan_mulTN!(rv.kk6, A, Ps)
-    _tan_mul!(rv.Xbar, rv.kk6, A)
-    _tan_comb!(rv.Xbar, ((1.0, Ps),), -1.0)  # Xbar = Qb - A' Qb A
-    _tan_mul!(rv.kk6, Ps, A)
-    _tan_mulNT!(rv.Adbar, rv.kk6, X)
-    _tan_mulTN!(rv.kk6, Ps, A)
-    _tan_mul!(rv.Adbar, rv.kk6, X, true, true)
-    _tan_scale!(rv.Adbar, -1.0)  # -(Qb A X' + Qb' A X)
-    # X = lyap(JAx, Qc).
-    _tan_lyap_pullback!(rv.JAxdbar, rv.Qcdbar, fw.ly, JAx, X, rv.Xbar)
-    # dINT = JAx \ s, s = A affine - affine: sbar = JAx' \ dINTbar.
-    _tan_copy!(rv.sbar, xbar)
-    _tan_solve!(rv.sbar, rv.FT, rv.pivT, rv.JT)
-    _tan_ger!(JAxbar, -1.0, rv.sbar, rec.dINT, true)
-    _tan_mulTvec!(rv.affbar, A, rv.sbar)
-    _tan_lincomb!(rv.affbar, true, rv.affbar, -1.0, rv.sbar)
-    _tan_ger!(Abar, true, rv.sbar, rec.affine, true)
+    if snoise
+        # dDIFF = V, its series run again and pulled back; it reads no A.
+        _tan_series_noise!(fw.sern, JAx, mod.Qc, dt)
+        _tan_zero!(rv.JAxdbar)
+        _tan_zero!(rv.Qcdbar)
+        _tan_series_noise_pullback!(rv.JAxdbar, rv.Qcdbar, fw.sern, Ps)
+    else
+        # dDIFF = X - A X A', its cotangent Ps (symmetric already).
+        _tan_mulTN!(rv.kk6, A, Ps)
+        _tan_mul!(rv.Xbar, rv.kk6, A)
+        _tan_comb!(rv.Xbar, ((1.0, Ps),), -1.0)  # Xbar = Qb - A' Qb A
+        _tan_mul!(rv.kk6, Ps, A)
+        _tan_mulNT!(rv.Adbar, rv.kk6, X)
+        _tan_mulTN!(rv.kk6, Ps, A)
+        _tan_mul!(rv.Adbar, rv.kk6, X, true, true)
+        _tan_scale!(rv.Adbar, -1.0)  # -(Qb A X' + Qb' A X)
+        _tan_comb!(Abar, ((1.0, rv.Adbar),), true)
+        # X = lyap(JAx, Qc).
+        _tan_lyap_pullback!(rv.JAxdbar, rv.Qcdbar, fw.ly, JAx, X, rv.Xbar)
+    end
+    if sint
+        # dINT = Phi affine, the series run again: affine's cotangent Phi'
+        # xbar, and Phi's, with the hybrid's columns', pulled back.
+        Phi = _tan_series_intercept!(fw.seri, JAx, dt)
+        _tan_mulTvec!(rv.affbar, Phi, xbar)
+        _tan_ger!(rv.Phibar, true, xbar, rec.affine, true)
+        _tan_series_intercept_pullback!(JAxbar, fw.seri, rv.Phibar)
+    else
+        # dINT = JAx \ s, s = A affine - affine: sbar = JAx' \ dINTbar.
+        _tan_copy!(rv.sbar, xbar)
+        _tan_solve!(rv.sbar, rv.FT, rv.pivT, rv.JT)
+        _tan_ger!(JAxbar, -1.0, rv.sbar, rec.dINT, true)
+        _tan_mulTvec!(rv.affbar, A, rv.sbar)
+        _tan_lincomb!(rv.affbar, true, rv.affbar, -1.0, rv.sbar)
+        _tan_ger!(Abar, true, rv.sbar, rec.affine, true)
+    end
     # affine = CINT + (DRIFT - JAx) x: CINT's cotangent; DRIFT's and JAx's
     # parts cancel, DRIFT being JAx.
     _tan_lincomb!(acc.CINT, true, acc.CINT, w, rv.affbar)
-    _tan_comb!(Abar, ((1.0, rv.Adbar),), true)
     _tan_comb!(JAxbar, ((1.0, rv.JAxdbar),), true)
     _tan_comb!(acc.JAx, ((w, JAxbar),), true)
     _tan_comb!(acc.Qc, ((w, rv.Qcdbar),), true)
