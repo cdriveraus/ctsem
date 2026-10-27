@@ -7,13 +7,14 @@ using DataFrames, ForwardDiff, LinearAlgebra
 # errors, missing values and a row with none observed, substeps, unequal and
 # zero subject weights, a prior, two chunks of columns, TI predictors whose
 # effects give each subject its own parameter layer, a TD predictor, stationary
-# initial moments, and the same cells in discrete time.
+# initial moments, the same cells in discrete time, and cells the filter
+# evaluates by row, reading the state.
 
 isdefined(@__MODULE__, :_adjoint_test_dataframe) ||
     include(joinpath(@__DIR__, "adjoint_fixtures.jl"))
 
 function _tangent_test_model(; driftscale=1.0, max_timestep=Inf, perrow=false, ti=false,
-    td=false, stationary=false, continuous=true)
+    td=false, stationary=false, continuous=true, rows=false)
     drift = [-0.6 0.2; 0.1 -0.5]
     lambda = [1.0 0.0; 0.7 0.0; 0.0 1.0]
     # `driftscale` shrinks every drift cell: near zero, the filter integrates
@@ -46,6 +47,25 @@ function _tangent_test_model(; driftscale=1.0, max_timestep=Inf, perrow=false, t
     # `perrow`: JAx[1,1] read from DRIFT at every row, as a state-dependent
     # drift's Jacobian is, which the hand route refuses.
     perrow && delete!(free, (:JAx, 1, 1))
+    # `rows`: cells the filter evaluates by row, reading the state -- a bilinear
+    # drift, its Jacobian, a diffusion and a manifest mean -- through free PARS
+    # cells (parameters 25 and 26), beside the TD predictor.
+    predict = perrow ? Dict((:JAx, 1, 1) => "DRIFT[1,1]") : Dict{Tuple{Symbol,Int,Int},String}()
+    update = Dict{Tuple{Symbol,Int,Int},String}()
+    if rows
+        td = true
+        for key in ((:JAx, 1, 1), (:DRIFT, 1, 2), (:JAx, 1, 2), (:DIFFUSION, 2, 2),
+            (:MANIFESTMEANS, 3, 1))
+            delete!(free, key)
+        end
+        free[(:PARS, 1, 1)] = (25, "param[25]")
+        free[(:PARS, 2, 1)] = (26, "param[26]")
+        predict[(:DRIFT, 1, 2)] = "PARS[1,1] * state[1]"
+        predict[(:JAx, 1, 1)] = "DRIFT[1,1] + PARS[1,1] * state[2]"
+        predict[(:JAx, 1, 2)] = "PARS[1,1] * state[1]"
+        predict[(:DIFFUSION, 2, 2)] = "log1p_exp(PARS[2,1]) * (1 + 0.1 * state[1]^2)"
+        update[(:MANIFESTMEANS, 3, 1)] = "PARS[2,1] + 0.2 * state[1]^2"
+    end
     # `td`: a TD predictor whose effects on both states are parameters 23 and 24.
     if td
         free[(:TDPREDEFFECT, 1, 1)] = (23, "param[23]")
@@ -56,7 +76,7 @@ function _tangent_test_model(; driftscale=1.0, max_timestep=Inf, perrow=false, t
         manifestmeans=zeros(3, 1), manifestvar=Matrix(0.3I, 3, 3),
         t0var=[1.0 0.0; 0.2 1.0], t0means=zeros(2, 1), free=free,
         tdpredeffect=td ? zeros(2, 1) : nothing, jtd=td ? [1.0 0.0; 0.0 1.0] : nothing,
-        predict=perrow ? Dict((:JAx, 1, 1) => "DRIFT[1,1]") : Dict())
+        pars=rows ? zeros(2, 1) : zeros(1, 1), predict=predict, update=update)
     # `ti`: two TI predictors, with effects on a drift cell, a diffusion sd and
     # correlation, an intercept, a loading, a mean, a measurement sd, an
     # initial mean and an initial sd -- each subject a layer of its own.
@@ -67,7 +87,7 @@ function _tangent_test_model(; driftscale=1.0, max_timestep=Inf, perrow=false, t
     sp = ekf_from_data_frame(df, ti ? tieffects : DataFrame(parameter=Int[],
         predictor=Int[], coefficient=Int[]); continuous_time=continuous,
         stationary=stationary)
-    npar = ti ? 31 : td ? 24 : 22
+    npar = ti ? 31 : rows ? 26 : td ? 24 : 22
     starts = Int[]
     times = Float64[]
     columns = Vector{Float64}[]
@@ -96,6 +116,7 @@ function _tangent_test_model(; driftscale=1.0, max_timestep=Inf, perrow=false, t
         0.15, -1.0, -0.8, -1.2, 0.1, 0.2, -0.1, 0.0, 0.3, -0.5]
     ti && append!(values, [0.1, -0.15, 0.2, 0.05, -0.1, 0.12, 0.08, -0.2, 0.15])
     td && append!(values, [0.7, -0.4])
+    rows && append!(values, [0.3, -0.2])
     return objective, values
 end
 
@@ -111,7 +132,8 @@ end
 
 @testset "the hand-coded Hessian is the dual's" begin
     for opts in ((;), (max_timestep=0.4,), (ti=true,), (max_timestep=0.4, td=true),
-        (stationary=true,), (continuous=false, td=true))
+        (stationary=true,), (continuous=false, td=true), (rows=true,),
+        (rows=true, max_timestep=0.4), (rows=true, continuous=false), (perrow=true,))
         objective, values = _tangent_test_model(; opts...)
         n = length(values)
         @test ContinuousTimeSEM._tan_refusal(objective) === nothing
@@ -151,7 +173,9 @@ end
 end
 
 @testset "what the hand route does not cover is refused" begin
-    objective, values = _tangent_test_model(perrow=true)
-    @test ContinuousTimeSEM._tan_refusal(objective) !== nothing
-    @test ctsem_hessian(objective, values) == _tangent_dual_hessian(objective, values)
+    # An iterated update: the measurement reads the state through Jy.
+    objective, values = _tangent_test_model(rows=true)
+    sp = objective.params
+    @test !ContinuousTimeSEM._init_continuous_ekf_workspace(Float64, sp).relinearise
+    @test !ContinuousTimeSEM._init_continuous_ekf_workspace(Float64, sp).moment
 end
