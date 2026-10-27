@@ -1564,48 +1564,15 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
   # dispatches to a backend. Reusing it keeps the state and parameter ordering
   # identical to Stan's matsetup/matvalues contract.
   if (!is.null(model$modelmats) && !is.null(model$intoverpop)) return(model)
-  ctm <- ctModel0DRIFT(model, model$continuoustime)
-  ctm$pars <- ctModelStatesAndPARS(
-    ctm$pars, statenames = ctm$latentNames, tdprednames = ctm$TDpredNames,
-    tiprednames = ctm$TIpredNames
-  )
-  jacobian <- try(ctJacobian(ctm), silent = TRUE)
-  if (inherits(jacobian, "try-error")) jacobian <- ctJacobian(ctm, simplify = FALSE)
-  jacobian <- jacobian[names(.ctMatricesList()$jacobian)]
-  jacobian_rows <- ctModelUnlist(jacobian, names(jacobian))
-  jacobian_rows <- jacobian_rows[apply(jacobian_rows, 1L, function(x) any(!is.na(x))), , drop = FALSE]
-  if (nrow(jacobian_rows)) {
-    template <- ctm$pars[rep(1L, nrow(jacobian_rows)), , drop = FALSE]
-    for (name in intersect(c("matrix", "row", "col", "param", "value"), names(jacobian_rows))) {
-      template[[name]] <- jacobian_rows[[name]]
-    }
-    # Jacobian entries derived from a named ctsem parameter inherit its
-    # transform and free-coordinate mapping; state expressions are rewritten
-    # below after the Jacobian rows have been appended.
-    for (i in seq_len(nrow(template))) {
-      source <- if (is.na(template$param[i])) NA_integer_ else match(template$param[i], ctm$pars$param)
-      if (!is.na(source)) {
-        for (name in setdiff(names(ctm$pars), c("matrix", "row", "col"))) {
-          template[[name]][i] <- ctm$pars[[name]][source]
-        }
-      }
-    }
-    existing_key <- paste(ctm$pars$matrix, ctm$pars$row, ctm$pars$col, sep = "\r")
-    template_key <- paste(template$matrix, template$row, template$col, sep = "\r")
-    existing <- match(template_key, existing_key)
-    for (i in seq_len(nrow(template))) {
-      if (is.na(existing[i])) {
-        ctm$pars <- rbind(ctm$pars, template[i, , drop = FALSE])
-      } else {
-        ctm$pars[existing[i], names(template)] <- template[i, names(template)]
-      }
-    }
-  }
-  ctm$pars <- ctModelStatesAndPARS(
-    ctm$pars, statenames = ctm$latentNames, tdprednames = ctm$TDpredNames,
-    tiprednames = ctm$TIpredNames
-  )
-  T0VARredundancies(ctm)
+  # A model no fit has set up -- an internal caller, or a test, handing the
+  # preparation a model as written -- set up as a fit sets it up, by the same
+  # code (`.ctFitModelSetup()`), on the route that does not augment. A partial
+  # copy of those steps stood here, and missed every step added to ctFit. The
+  # caller's random stream is put back: the setup's draws are a fit's, for
+  # its starting values, and nothing here fits.
+  keep <- .ctStreamKeep()
+  tryCatch(.ctFitModelSetup(model, intoverpop = if (.ctAnyVarying(model))
+    "laplace" else "augmented", checks = FALSE)$ctm, finally = keep())
 }
 
 # A reference inside a matrix the engine evaluates once, from the parameters
@@ -3151,12 +3118,13 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
       random_effects = data.frame(), rewritten_cells = data.frame()))
   }
 
+  # A model no fit has set up, augmented as a fit augments it
+  # (`.ctFitModelSetup()`, the same code ctFit() runs), the caller's random
+  # stream put back as `.ctJuliaCanonicalModel()` puts it.
   expanded <- if (prepared_augmentation) model else {
-    prepared <- ctModel0DRIFT(model, model$continuoustime)
-    prepared$pars <- ctModelStatesAndPARS(prepared$pars,
-      statenames = prepared$latentNames, tdprednames = prepared$TDpredNames,
-      tiprednames = prepared$TIpredNames)
-    .ctModelIntOverPop(prepared)
+    keep <- .ctStreamKeep()
+    tryCatch(.ctFitModelSetup(model, intoverpop = "augmented", checks = FALSE)$ctm,
+      finally = keep())
   }
   augmented_indices <- as.integer(expanded$intoverpopindvaryingindex)
   nlatent_augmented <- max(expanded$pars$row[expanded$pars$matrix == "T0MEANS"])

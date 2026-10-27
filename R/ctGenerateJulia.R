@@ -276,11 +276,6 @@
 #' @keywords internal
 .ctGeneratePrepare <- function(model, skeleton, values = NULL,
   project = NULL, quiet = FALSE) {
-  model <- .ctCovRefresh(model)
-  # 'stationary' initial conditions, placed as a fit places them: generation
-  # hands the model to `.ctJuliaPrepare()` without passing through ctFit().
-  model$t0stationary <- NULL
-  if (any(model$pars$param %in% 'stationary')) model <- .ctStationaryElements(model)
   fixedti <- list()
   for (k in seq_along(model$TIpredNames)) {
     column <- paste0(model$TIpredNames[k], "_effect")
@@ -295,12 +290,23 @@
   }
 
   varying <- .ctAnyVarying(model)
-  model <- .ctModelRawPopVarSync(model)
-  # Messages from preparation are about fitting -- a T0VAR row the population
-  # block covers, a level with fewer groups than its rank -- and generation
-  # names its own values below.
-  spec <- suppressMessages(.ctJuliaPrepare(skeleton, model, project = project,
-    priors = FALSE, intoverpop = if (varying) "laplace" else "augmented"))
+  route <- if (varying) "laplace" else "augmented"
+  # The model set up as a fit sets it up (`.ctFitModelSetup()`, the same code
+  # ctFit() runs), then prepared as a fit prepares it. Messages from both are
+  # about fitting -- a T0VAR row the population block covers, a level with
+  # fewer groups than its rank -- and generation names its own values below.
+  # The setup draws from the random stream (`ctModelTransformsToNum()`'s grid),
+  # which a fit keeps for its starting values; the generator's draws follow
+  # from the seed alone, so the stream is put back.
+  keep <- .ctStreamKeep()
+  setup <- tryCatch(suppressMessages(.ctFitModelSetup(model, intoverpop = route,
+    priors = FALSE, nsubjects = length(unique(skeleton[[model$subjectIDname]])),
+    checks = FALSE)), finally = keep())
+  spec <- suppressMessages(.ctJuliaPrepare(skeleton, setup$ctm, project = project,
+    priors = FALSE, intoverpop = route))
+  # The transforms the reads below take, as the fit's are: covariances given
+  # as ctCov() in the construction in force now.
+  model <- .ctCovRefresh(model)
   handle <- structure(spec, class = c("ctJuliaModel", "ctFitModel"))
   raw <- numeric(.ctBackendNpar(spec))
 
