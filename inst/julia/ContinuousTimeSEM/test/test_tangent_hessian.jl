@@ -14,7 +14,8 @@ isdefined(@__MODULE__, :_adjoint_test_dataframe) ||
     include(joinpath(@__DIR__, "adjoint_fixtures.jl"))
 
 function _tangent_test_model(; driftscale=1.0, max_timestep=Inf, perrow=false, ti=false,
-    td=false, stationary=false, continuous=true, rows=false, relin=false, plan=-1)
+    td=false, stationary=false, continuous=true, rows=false, relin=false, plan=-1,
+    moment=false)
     drift = [-0.6 0.2; 0.1 -0.5]
     lambda = [1.0 0.0; 0.7 0.0; 0.0 1.0]
     # `driftscale` shrinks every drift cell: near zero, the filter integrates
@@ -69,6 +70,14 @@ function _tangent_test_model(; driftscale=1.0, max_timestep=Inf, perrow=false, t
     # `relin`: a loading and its Jacobian reading the state, so the filter
     # iterates each row's update to its mode; `plan`, a frozen count of steps
     # a row (-1 to the mode).
+    # `moment`: the first drift cell cubic in its state, its Jacobian bending, so
+    # the filter moment-matches each prediction.
+    if moment
+        delete!(free, (:DRIFT, 1, 1))
+        predict[(:DRIFT, 1, 1)] = "-log1p_exp(PARS[2,1]) * (1 + 0.2 * state[1]^2)"
+        predict[(:JAx, 1, 1)] =
+            "-log1p_exp(PARS[2,1]) * (1 + 0.6 * state[1]^2) + PARS[1,1] * state[2]"
+    end
     if relin
         delete!(free, (:LAMBDA, 2, 1))
         delete!(free, (:Jy, 2, 1))
@@ -145,7 +154,9 @@ end
     for opts in ((;), (max_timestep=0.4,), (ti=true,), (max_timestep=0.4, td=true),
         (stationary=true,), (continuous=false, td=true), (rows=true,),
         (rows=true, max_timestep=0.4), (rows=true, continuous=false), (perrow=true,),
-        (rows=true, relin=true), (rows=true, relin=true, plan=2))
+        (rows=true, relin=true), (rows=true, relin=true, plan=2),
+        (rows=true, moment=true), (rows=true, moment=true, relin=true, max_timestep=0.4),
+        (rows=true, moment=true, continuous=false))
         objective, values = _tangent_test_model(; opts...)
         n = length(values)
         @test ContinuousTimeSEM._tan_refusal(objective) === nothing
@@ -187,10 +198,10 @@ end
 @testset "the test models take the filter's routes they are meant to" begin
     # Cells by row without iterating the update; with a loading's Jacobian
     # reading the state, iterated; neither moment-matched.
-    for (relin, iterated) in ((false, false), (true, true))
-        objective, _ = _tangent_test_model(rows=true, relin=relin)
+    for (relin, moment) in ((false, false), (true, false), (false, true))
+        objective, _ = _tangent_test_model(rows=true, relin=relin, moment=moment)
         ws = ContinuousTimeSEM._init_continuous_ekf_workspace(Float64, objective.params)
-        @test ws.relinearise == iterated
-        @test !ws.moment
+        @test ws.relinearise == relin
+        @test ws.moment == moment
     end
 end

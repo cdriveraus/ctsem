@@ -15,18 +15,20 @@ struct TanSnap{W,DW}
     JAx::TanMat{W}; DRIFT::TanMat{W}; DmJ::TanMat{W}; CINT::TanVec{W}; Qc::TanMat{W}
     LAMBDA::TanMat{W}; Jy::TanMat{W}; MM::TanVec{W}; R::TanMat{W}
     TDE::TanMat{W}; Jtd::TanMat{W}
+    mc::TanVec{W}; momon::Base.RefValue{Bool}
     rawD::Matrix{DW}; rawR::Matrix{DW}
 end
 TanSnap{W,DW}(n::Int, m::Int, ntd::Int) where {W,DW} = TanSnap{W,DW}(TanMat{W}(n, n),
     TanMat{W}(n, n), TanMat{W}(n, n), TanVec{W}(n), TanMat{W}(n, n), TanMat{W}(m, n),
     TanMat{W}(m, n), TanVec{W}(m), TanMat{W}(m, m), TanMat{W}(n, ntd), TanMat{W}(n, n),
-    zeros(DW, n, n), zeros(DW, m, m))
+    TanVec{W}(n), Ref(false), zeros(DW, n, n), zeros(DW, m, m))
 
 function _tan_snap_save!(s::TanSnap, mod::TanModel, allW::AbstractVector, sp)
     _tan_copy!(s.JAx, mod.JAx); _tan_copy!(s.DRIFT, mod.DRIFT); _tan_copy!(s.DmJ, mod.DmJ)
     _tan_copy!(s.CINT, mod.CINT); _tan_copy!(s.Qc, mod.Qc)
     _tan_copy!(s.LAMBDA, mod.LAMBDA); _tan_copy!(s.Jy, mod.Jy); _tan_copy!(s.MM, mod.MM)
     _tan_copy!(s.R, mod.R); _tan_copy!(s.TDE, mod.TDE); _tan_copy!(s.Jtd, mod.Jtd)
+    _tan_copy!(s.mc, mod.mc); s.momon[] = mod.momon[]
     pars = CTSEMPars(allW, sp.parameter_axis)
     n, m = size(s.rawD, 1), size(s.rawR, 1)
     s.rawD .= view(pars.DIFFUSION, 1:n, 1:n)
@@ -39,6 +41,7 @@ function _tan_snap_load!(mod::TanModel, s::TanSnap)
     _tan_copy!(mod.CINT, s.CINT); _tan_copy!(mod.Qc, s.Qc)
     _tan_copy!(mod.LAMBDA, s.LAMBDA); _tan_copy!(mod.Jy, s.Jy); _tan_copy!(mod.MM, s.MM)
     _tan_copy!(mod.R, s.R); _tan_copy!(mod.TDE, s.TDE); _tan_copy!(mod.Jtd, s.Jtd)
+    _tan_copy!(mod.mc, s.mc); mod.momon[] = s.momon[]
     return mod
 end
 
@@ -87,17 +90,22 @@ mutable struct TanRows{W,DW,A}
     Rrow::TanSnap{W,DW}
     xpbar::TanVec{W}
     xn::TanVec{W}
+    # A moment-matched step's covariance and cotangents as duals, and its mean
+    # correction's cotangent, from its prediction's reverse (`affbar`).
+    PW::Matrix{DW}
+    PbarW::Matrix{DW}
+    cbar::TanVec{W}
 end
 function TanRows(awsW, sp, n::Int, m::Int, ntd::Int, ::Val{W}, ::Type{DW}) where {W,DW}
     nall = length(sp.mutables)
     return TanRows{W,DW,typeof(awsW)}(awsW, zeros(DW, nall), zeros(DW, nall),
         zeros(DW, n), zeros(DW, n), TanSnap{W,DW}[], TanSnap{W,DW}(n, m, ntd),
         NTuple{3,Int}[], 0, TanRelinRec{W}[], 0, TanSnap{W,DW}(n, m, ntd), TanVec{W}(n),
-        TanVec{W}(n))
+        TanVec{W}(n), zeros(DW, n, n), zeros(DW, n, n), TanVec{W}(n))
 end
 
 """`out` the duals of `X`'s values and tangents, lane `w` its `w`-th."""
-function _tan_to_duals!(out::AbstractVector{DW}, X::Union{TanMat{W},TanVec{W}}) where {W,DW}
+function _tan_to_duals!(out::AbstractArray{DW}, X::Union{TanMat{W},TanVec{W}}) where {W,DW}
     @inbounds for idx in eachindex(X.v)
         o = W * (idx - 1)
         out[idx] = DW(X.v[idx], ForwardDiff.Partials(ntuple(w -> X.d[o + w], Val(W))))
@@ -106,7 +114,7 @@ function _tan_to_duals!(out::AbstractVector{DW}, X::Union{TanMat{W},TanVec{W}}) 
 end
 
 """`X += D`, the duals' values and their first `nl` lanes as tangents."""
-function _tan_add_lanes!(X::TanVec{W}, D::AbstractVector, nl::Int) where {W}
+function _tan_add_lanes!(X::Union{TanMat{W},TanVec{W}}, D::AbstractArray, nl::Int) where {W}
     @inbounds for i in eachindex(D)
         X.v[i] += ForwardDiff.value(D[i])
         p = ForwardDiff.partials(D[i])
@@ -159,6 +167,7 @@ function _tan_rows_group!(R::TanRows{W,DW}, g::Int, x::TanVec{W}, mod::TanModel{
         apply_complex_transforms_at_indices!(R.allW, indices, sp.update_transforms, ctx)
     end
     _tan_rows_refresh!(mod, R, sp, nl)
+    mod.momon[] = false
     # An iterated update's steps keep the measurement covariance its prior
     # evaluated (`_ekf_iterated_rows!`).
     keepR && _tan_copy!(mod.R, R.Rrow.R)
@@ -169,6 +178,37 @@ function _tan_rows_group!(R::TanRows{W,DW}, g::Int, x::TanVec{W}, mod::TanModel{
     _tan_snap_save!(R.snaps[R.ng], mod, R.allW, sp)
     keepR && (R.snaps[R.ng].rawR .= R.Rrow.rawR)
     push!(R.prog, (1, slot, R.ng))
+    return R.ng
+end
+
+"""
+The prediction substep's dynamics moment-matched (`_ekf_moment_cells!`), run as
+the engine's own at the Hessian's dual on the subject's cells, after the
+predict group at the mean: the cubature's points from `x` and the incoming
+covariance `P`, each point's group recorded on the workspace's tape, the
+averaged cells written and the mean correction into `mod.mc`; the model
+refreshed and kept. Returns the snapshot, `snap` where the covariance does
+not factor and the step stays the EKF's.
+"""
+function _tan_rows_moment!(R::TanRows{W,DW}, x::TanVec{W}, P::TanMat{W}, mod::TanModel{W},
+    sw::TanSweep{W}, sp, so, subject::Int, t::Int, time::Float64, dt::Float64,
+    snap::Int, nl::Int) where {W,DW}
+    awsW = R.awsW
+    ws = awsW.ekf_ws
+    _tan_to_duals!(ws.state, x)
+    _tan_to_duals!(R.PW, P)
+    pars = CTSEMPars(R.allW, sp.parameter_axis)
+    ctx = CTSEMRowContext(ws.state, pars, view(so.tdpreds, :, t), so.tipreds, time, dt,
+        subject, t)
+    _ekf_moment_cells!(ws, pars, sp, R.allW, ctx, awsW.tape, R.PW) || return snap
+    _tan_rows_refresh!(mod, R, sp, nl)
+    _tan_lanes!(mod.mc, view(ws.moment_c, 1:sw.n), nl)
+    mod.momon[] = true
+    _tan_sweep_begin!(sw, mod)
+    R.ng += 1
+    R.ng > length(R.snaps) && push!(R.snaps, TanSnap{W,DW}(sw.n, sw.m, mod.ntd))
+    _tan_snap_save!(R.snaps[R.ng], mod, R.allW, sp)
+    push!(R.prog, (6, awsW.tape.nmoments, R.ng))
     return R.ng
 end
 
@@ -208,6 +248,8 @@ function _tan_sweep_rows!(acc::TanAcc{W}, Hb::Matrix{Float64}, sw::TanSweep{W},
     _ctsem_tipred_fill!(awsW.tipreds, so.tipreds, xw)
     _ctsem_tipred_bar_reset!(awsW, so.tipreds, _ctsem_tipred_length(so.tipreds))
     awsW.tape.ngroups = 0
+    awsW.tape.nmoments = 0
+    mod.momon[] = false
     empty!(R.prog)
     R.ng = 0
     _tan_snap_save!(R.base, mod, R.allW, sp)
@@ -222,6 +264,7 @@ function _tan_sweep_rows!(acc::TanAcc{W}, Hb::Matrix{Float64}, sw::TanSweep{W},
     npred = 0
     R.nrl = 0
     relin = awsW.ekf_ws.relinearise && _CTSEM_RELINEARISE[]
+    moment = awsW.ekf_ws.moment && _CTSEM_MOMENT_PREDICT[]
     for t in 1:T
         if t == 1
             # The predict group once at the first row, with no prediction.
@@ -233,6 +276,8 @@ function _tan_sweep_rows!(acc::TanAcc{W}, Hb::Matrix{Float64}, sw::TanSweep{W},
             for s in 1:k
                 snap = _tan_rows_group!(R, 1, x, mod, sw, sp, so, i, t,
                     times[t - 1] + s * h, h, snap, nl)
+                moment && (snap = _tan_rows_moment!(R, x, P, mod, sw, sp, so, i, t,
+                    times[t - 1] + s * h, h, snap, nl))
                 npred += 1
                 npred > length(sw.preds) && push!(sw.preds, TanPredRec(n, sw.nh, W))
                 _tan_predict!(x, P, sw.preds[npred], fw, mod, h, hs) || return _TAN_REFUSED
@@ -279,7 +324,22 @@ function _tan_sweep_rows!(acc::TanAcc{W}, Hb::Matrix{Float64}, sw::TanSweep{W},
             _tan_snap_load!(mod, s == 0 ? R.base : R.snaps[s])
             held = s
         end
-        if kind == 5
+        if kind == 6
+            # A moment-matched step's cubature: the averaged cells' cotangents
+            # onto the cells, its correction's from the prediction's reverse,
+            # then through the points to the mean and the covariance.
+            _tan_rows_flush!(R, acc, sp, R.snaps[s])
+            ms = awsW.moment
+            _tan_to_duals!(view(ms.cbar, 1:n), R.cbar)
+            fill!(R.xbarW, zero(DW))
+            fill!(R.PbarW, zero(DW))
+            _reverse_moment!(R.xbarW, R.PbarW, R.allbar,
+                CTSEMPars(R.allbar, sp.parameter_axis), awsW.tape.moments[idx], awsW.tape,
+                sp, awsW, n, sw.m)
+            _tan_add_lanes!(xbar, R.xbarW, nl)
+            _tan_add_lanes!(Pbar, R.PbarW, nl)
+            continue
+        elseif kind == 5
             _tan_reverse_relin!(xbar, R.xpbar, Pbar, R.relins[idx], acc, fw) ||
                 return _TAN_INVALID
         elseif kind == 4
@@ -302,6 +362,8 @@ function _tan_sweep_rows!(acc::TanAcc{W}, Hb::Matrix{Float64}, sw::TanSweep{W},
             _tan_reverse_predict!(xbar, Pbar, sw.preds[idx], rv, fw, mod, acc, 1.0, hs)
             # The exponential's direction belongs to this step's drift.
             _tan_flush_frechet!(acc, fw, mod, sw.sT)
+            # A moment-matched step's correction's cotangent, its offset's.
+            mod.momon[] && _tan_copy!(R.cbar, rv.affbar)
         end
     end
     _tan_lincomb!(acc.T0M, true, acc.T0M, 1.0, xbar)

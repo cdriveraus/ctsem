@@ -121,7 +121,9 @@ predictors' among them; whether it is in continuous time (`ct`), starts from
 its stationary moments (`stat`), and has cells evaluated by row (`rows`,
 `tangent_rows.jl`), where DRIFT need not be the drift's Jacobian JAx, nor the
 measurement's Jacobian Jy its loadings: the local affine model's offset
-reads `DmJ = DRIFT - JAx`, the update's gain `Jy`. Where the filter
+reads `DmJ = DRIFT - JAx`, the update's gain `Jy`, and where the prediction
+is moment-matched (`momon`) the offset gains the cubature's mean correction
+`mc` (`_ekf_moment_cells!`). Where the filter
 integrates deviations, their spec, their factor `G` and the closing term's
 weight on the logdet (1 for the integral, 0 for the profile).
 """
@@ -134,6 +136,7 @@ struct TanModel{W}
     JAx::TanMat{W}; DRIFT::TanMat{W}; DmJ::TanMat{W}; CINT::TanVec{W}; Qc::TanMat{W}
     LAMBDA::TanMat{W}; Jy::TanMat{W}; MM::TanVec{W}; R::TanMat{W}
     T0M::TanVec{W}; T0V::TanMat{W}
+    mc::TanVec{W}; momon::Base.RefValue{Bool}
     ntd::Int
     TDE::TanMat{W}; Jtd::TanMat{W}
     nh::Int
@@ -145,7 +148,7 @@ TanModel(n::Int, m::Int, W::Int; ct::Bool=true, stat::Bool=false, rows::Bool=fal
     ntd::Int=0, hyb::CTSEMHybrid=CTSEMHybrid(), nh::Int=0, wlog::Float64=1.0) =
     TanModel{W}(n, m, ct, stat, rows, TanMat{W}(n, n), TanMat{W}(n, n), TanMat{W}(n, n),
     TanVec{W}(n), TanMat{W}(n, n), TanMat{W}(m, n), TanMat{W}(m, n), TanVec{W}(m),
-    TanMat{W}(m, m), TanVec{W}(n), TanMat{W}(n, n),
+    TanMat{W}(m, m), TanVec{W}(n), TanMat{W}(n, n), TanVec{W}(n), Ref(false),
     ntd, TanMat{W}(n, ntd), TanMat{W}(n, n), nh, hyb, TanMat{W}(nh, nh), wlog)
 
 """
@@ -251,6 +254,7 @@ function _tan_predict!(x::TanVec{W}, P::TanMat{W}, rec::TanPredRec{W}, fw::TanFo
     # affine = CINT + (DRIFT - JAx) x, the local affine model's offset.
     _tan_copy!(rec.affine, mod.CINT)
     mod.rows && _tan_mulvec!(rec.affine, mod.DmJ, x, true, true)
+    mod.momon[] && _tan_lincomb!(rec.affine, true, rec.affine, true, mod.mc)
     dINT = rec.dINT
     Phi = nothing
     if sint
@@ -297,6 +301,7 @@ function _tan_predict_dt!(x::TanVec{W}, P::TanMat{W}, rec::TanPredRec{W},
     # The offset, CINT + (DRIFT - JAx) x.
     _tan_copy!(rec.affine, mod.CINT)
     mod.rows && _tan_mulvec!(rec.affine, mod.DmJ, x, true, true)
+    mod.momon[] && _tan_lincomb!(rec.affine, true, rec.affine, true, mod.mc)
     _tan_mulvec!(fw.v1, A, x)
     _tan_lincomb!(x, true, fw.v1, true, rec.affine)
     _tan_diag!(P, 1e-10)
@@ -618,6 +623,8 @@ function _tan_reverse_predict_dt!(xbar::TanVec{W}, Pbar::TanMat{W}, rec::TanPred
     rv::TanPredRev{W}, mod::TanModel{W}, acc::TanAcc{W}, w::Float64,
     hs::TanHybState{W}) where {W}
     A, Abar, Ps = mod.JAx, rv.Abar, rv.Ps
+    # The offset's cotangent, which a moment-matched step's reverse reads.
+    _tan_copy!(rv.affbar, xbar)
     # The mean: x+ = A x + CINT + (DRIFT - JAx) x; the hybrid's columns,
     # X+ = A X (+ e_l).
     _tan_ger!(Abar, true, xbar, rec.x, false)

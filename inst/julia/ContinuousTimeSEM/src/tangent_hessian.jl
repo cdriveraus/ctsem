@@ -43,8 +43,8 @@ predictors entering as impulses, initial moments stated or stationary (in
 continuous time, without integrated deviations or cells evaluated by row), no
 population block, deviations integrated whole or profiled (not at fixed
 values), and no forward-mode subjects. Cells evaluated by row are covered,
-with the iterated update a nonlinear measurement takes, where the filter does
-not moment-match the prediction, and not beside integrated deviations.
+with the iterated update a nonlinear measurement takes and the moment-matched
+prediction a bending drift takes, but not beside integrated deviations.
 """
 function _tan_refusal(objective::CTSEMObjective, hybrid_mode::Integer=_HYBRID_PROFILE)
     subjects = objective.subject_objectives
@@ -53,7 +53,6 @@ function _tan_refusal(objective::CTSEMObjective, hybrid_mode::Integer=_HYBRID_PR
     any(t -> t != 0, sp.manifesttype) && return "categorical indicators"
     if _tan_rows_model(sp)
         ws = _init_continuous_ekf_workspace(Float64, sp)
-        ws.moment && _CTSEM_MOMENT_PREDICT[] && return "moment-matched predictions"
         sp.stationary && return "stationary moments beside cells evaluated by row"
         _hybrid_on(sp.hybrid) && hybrid_mode != _HYBRID_OFF &&
             return "integrated deviations beside cells evaluated by row"
@@ -290,7 +289,8 @@ _tan_model_like(mod::TanModel{W}) where {W} = TanModel{W}(mod.n, mod.m,
     mod.ct, mod.stat, mod.rows, TanMat{W}(mod.n, mod.n), TanMat{W}(mod.n, mod.n),
     TanMat{W}(mod.n, mod.n), TanVec{W}(mod.n), TanMat{W}(mod.n, mod.n),
     TanMat{W}(mod.m, mod.n), TanMat{W}(mod.m, mod.n), TanVec{W}(mod.m),
-    TanMat{W}(mod.m, mod.m), TanVec{W}(mod.n), TanMat{W}(mod.n, mod.n), mod.ntd, TanMat{W}(mod.n, mod.ntd), TanMat{W}(mod.n, mod.n),
+    TanMat{W}(mod.m, mod.m), TanVec{W}(mod.n), TanMat{W}(mod.n, mod.n), TanVec{W}(mod.n),
+    Ref(false), mod.ntd, TanMat{W}(mod.n, mod.ntd), TanMat{W}(mod.n, mod.n),
     mod.nh, mod.hyb, mod.G, mod.wlog)
 
 """
