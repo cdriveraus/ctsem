@@ -121,6 +121,7 @@
 "test-transform-match.R","spec","core"
 "test-corrcheck.R","stan","core"
 "test-stan-convergence.R","stan","core"
+"test-stan-nonlinear-writer.R","stan","core"
 "test-sunspots.R","stan","core"
 "test-ukfpoptest.R","stan","core"
 "test-stan-julia-parity.R","stan","extended"
