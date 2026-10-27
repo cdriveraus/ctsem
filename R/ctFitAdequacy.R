@@ -1254,7 +1254,7 @@ ctFitAdequacy <- function(fit, covariates = NULL,
         X <- Cf[sample.int(n, n, replace = TRUE), , drop = FALSE]
         u <- colSums(X)
         vb <- (colSums(X^2) - u^2 / n) * n / (n - 1)
-        Zb[b, ] <- ifelse(vb > 0, u / sqrt(vb), NA_real_)
+        Zb[b, ] <- ifelse(vb > 0, u / sqrt(pmax(vb, 0)), NA_real_)
       }
     }
     Ub[, at] <<- sweep(Zb, 2, sqrt(v[idx]), '*')

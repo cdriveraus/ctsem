@@ -1030,16 +1030,29 @@
   # search saw as components of their proposals; the rounds then climb from
   # the jump point, which is the fit's estimate.
   jump <- fit$laplace$jump
+  # Where every unit's integrand is Gaussian in its effects
+  # (`laplace$quadratic`), each Laplace term is that unit's exact integral, at
+  # any width: nothing to score and nothing to move. The screen's product
+  # rules used to run here for nothing, and a unit wider than `maxdim` was
+  # reported as left uncorrected.
+  if (is.null(jump) && isTRUE(fit$model_spec$laplace$quadratic)) {
+    fit$laplace$correction <- list(method = "quadrature", status = "exact",
+      applied = FALSE, nodes = as.integer(control$nodes),
+      tolerance = as.numeric(control$tolerance), screen = 0, gap = 0,
+      laplace_estimate = est, loglik_laplace = as.numeric(fit$estimate$loglik),
+      flagged = 0L, wide = 0L, maxdim = as.integer(control$maxdim),
+      error = list(nats = 0, se = 0, draws = 0, nodes = 0, residual = 0,
+        units = NULL, unscored = 0L),
+      seconds = c(total = seconds()))
+    return(fit)
+  }
   # The shift check first, on every unit whatever its width: where correcting
   # Laplace would move no estimate by `material` standard errors, resolved
   # past the check's own noise, the fit is left alone; otherwise the units
   # carrying the move are flagged on draws as jump units are, and the rounds
   # climb as before. Not at a jump, whose units are named already and whose
-  # point is no optimum to take a step from, nor where every unit's integrand
-  # is Gaussian in its effects (`laplace$quadratic`): Laplace is exact there,
-  # and the screen's product rules say so for less.
-  check <- if (is.null(jump) && !isFALSE(control$check) &&
-      !isTRUE(fit$model_spec$laplace$quadratic)) {
+  # point is no optimum to take a step from.
+  check <- if (is.null(jump) && !isFALSE(control$check)) {
     if (!is.null(sink)) sink(sprintf("Laplace check, every unit on %d draws | %8s",
       as.integer(.ctJuliaOr(control$check_draws, 128L)), .ctDuration(seconds())), "update")
     tryCatch(.ctLaplaceShiftCheck(fit,

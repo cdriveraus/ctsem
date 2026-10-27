@@ -158,7 +158,11 @@ shapes <- list(
   # drift effect's Laplace term is checked and corrected, and the record was
   # 2,500 calls, 2,100 of them the continuation's evaluations, which every
   # build would replay. The correction's rounds and the importance sampler
-  # were in no shape before this one either.
+  # were in no shape before this one either. So the correction's first steps
+  # follow the fit, at settings that stop short of the rounds: the shift
+  # check, and the continuation's screen. Every Gaussian Laplace fit with a
+  # nonlinear effect runs both, and the shape above, where Laplace is exact,
+  # reaches neither.
   gaussian_laplace_block = list(route = "laplace", model = function() {
       mvar <- diag(0, 2)
       diag(mvar) <- "mvar"
@@ -171,7 +175,13 @@ shapes <- list(
       m
     },
     data = function() indicators(sim_latent(10, 6), c("y1", "y2")),
-    optimcontrol = list(laplace_correct = FALSE, uncertainty = "hessian")),
+    optimcontrol = list(laplace_correct = FALSE, uncertainty = "hessian"),
+    followups = list(
+      check = function(fit, dat, model) ns$.ctLaplaceShiftCheck(fit,
+        draws = 16L, seeds = 1:2),
+      screen = function(fit, dat, model) ns$.ctLaplaceContinue(fit,
+        control = utils::modifyList(ns$.ctLaplaceContinueDefaults,
+          list(check = FALSE, skip_gain = Inf))))),
   # A model with a categorical indicator is a different filter workspace type
   # -- the categorical update is gated on it, so Gaussian fits do not carry
   # that code -- so each route needs one. Binary and ordinal share it.
