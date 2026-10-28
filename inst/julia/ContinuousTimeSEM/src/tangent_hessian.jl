@@ -269,6 +269,26 @@ const _TAN_LAYER_NAMES = (:JAx, :DRIFT, :CINT, :Qc, :LAM, :Jy, :MM, :R, :T0M, :T
 _tan_tag(::Type{<:ForwardDiff.Dual{T}}) where {T} = T
 @inline _tan_layer_field(X, k::Symbol) = getproperty(X, k === :LAM ? :LAMBDA : k)
 
+"""
+`f(X's field, N's field)` for each of the layer's matrices (`_TAN_LAYER_NAMES`),
+`X` a model or accumulator, `N` the matrices by name: unrolled, so each name is
+a constant. A loop over the names reads each field at a run-time symbol, a
+dynamic call each.
+"""
+@inline function _tan_each_layer(f::F, X, N) where {F}
+    ntuple(Val(length(_TAN_LAYER_NAMES))) do i
+        k = _TAN_LAYER_NAMES[i]
+        f(_tan_layer_field(X, k), getproperty(N, k))
+        nothing
+    end
+    return nothing
+end
+
+"""The accumulator's cotangents as duals of type `DW`, by name."""
+_tan_layer_duals(acc::TanAcc, ::Type{DW}) where {DW} = NamedTuple{_TAN_LAYER_NAMES}(
+    ntuple(i -> _tan_duals(_tan_layer_field(acc, _TAN_LAYER_NAMES[i]), DW),
+        Val(length(_TAN_LAYER_NAMES))))
+
 """A worker's sweep, kept in its scratch store between calls."""
 function _tan_sweep_scratch(n::Int, m::Int, ntd::Int, nh::Int, ::Val{W}, na::Int=n,
     k::Int=n) where {W}
@@ -360,9 +380,7 @@ function _tan_layer_fill!(mod::TanModel{W}, awsW, sp, xw::Vector, nl::Int,
     # Where no cell changes by row, the drift and the measurement must be
     # their own Jacobians; otherwise the offset and the gain read each.
     mod.rows || (_tan_same(mw.JAx, mw.DRIFT) && _tan_same(mw.Jy, mw.LAM)) || return false
-    for k in _TAN_LAYER_NAMES
-        _tan_lanes!(_tan_layer_field(mod, k), getproperty(mw, k), nl)
-    end
+    _tan_each_layer((X, M) -> _tan_lanes!(X, M, nl), mod, mw)
     mod.rows && _tan_comb!(mod.DmJ, ((1.0, mod.DRIFT), (-1.0, mod.JAx)))
     _tan_aug_refresh!(mod)
     return true
@@ -375,9 +393,7 @@ chunk's `nl` columns.
 """
 function _tan_layer_columns!(Hc::AbstractMatrix{Float64}, acc::TanAcc{W}, awsW, sp,
     xw::Vector{DW}, nl::Int, tipreds) where {W,DW}
-    C = NamedTuple{_TAN_LAYER_NAMES}(map(k -> _tan_duals(_tan_layer_field(acc, k), DW),
-        _TAN_LAYER_NAMES))
-    g = _tan_layer_reverse(awsW, sp, xw, C, tipreds)
+    g = _tan_layer_reverse(awsW, sp, xw, _tan_layer_duals(acc, DW), tipreds)
     @inbounds for w in 1:nl, i in eachindex(g)
         Hc[i, w] += ForwardDiff.partials(g[i], w)
     end

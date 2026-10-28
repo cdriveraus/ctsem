@@ -759,9 +759,7 @@ function _tan_laplace_member!(ctx::TanLaplaceContext{W,DC}, objective::CTSEMObje
     # The layer's reverse (`_tan_layer_columns!`), its values kept too, at
     # the cells the fill left and in the context's buffers.
     buf = ctx.buf
-    for k in _TAN_LAYER_NAMES
-        _tan_to_duals!(getproperty(buf.C, k), _tan_layer_field(sa, k))
-    end
+    _tan_each_layer((X, D) -> _tan_to_duals!(D, X), sa, buf.C)
     g = _tan_layer_reverse(ctx.awsW, sp, xw, buf.C, so.tipreds, buf)
     @inbounds for w in 1:nl, j in eachindex(g)
         Hb[j, w] = ForwardDiff.partials(g[j], w)

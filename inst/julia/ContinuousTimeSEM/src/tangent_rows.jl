@@ -138,9 +138,7 @@ them, their lanes the tangents, and `DmJ`.
 """
 function _tan_rows_refresh!(mod::TanModel{W}, R::TanRows, sp, nl::Int) where {W}
     mw = _tan_mats_of(R.awsW, sp, R.allW)
-    for k in _TAN_LAYER_NAMES
-        _tan_lanes!(_tan_layer_field(mod, k), getproperty(mw, k), nl)
-    end
+    _tan_each_layer((X, M) -> _tan_lanes!(X, M, nl), mod, mw)
     _tan_comb!(mod.DmJ, ((1.0, mod.DRIFT), (-1.0, mod.JAx)))
     _tan_aug_refresh!(mod)
     return mod
@@ -290,9 +288,7 @@ covariances through their constructions at `s`'s cells (T0VAR's at the
 subject's own, which no group writes), and `acc` emptied.
 """
 function _tan_rows_flush!(R::TanRows{W,DW}, acc::TanAcc{W}, sp, s::TanSnap) where {W,DW}
-    C = NamedTuple{_TAN_LAYER_NAMES}(map(k -> _tan_duals(_tan_layer_field(acc, k), DW),
-        _TAN_LAYER_NAMES))
-    _tan_bar_of!(R.allbar, R.awsW, sp, C, s.rawD, s.rawR, R.allW)
+    _tan_bar_of!(R.allbar, R.awsW, sp, _tan_layer_duals(acc, DW), s.rawD, s.rawR, R.allW)
     _tan_acc_zero!(acc)
     return R
 end
