@@ -25,7 +25,8 @@
 # Cost grows as (2 halfwidth / h)^nsoft, so it is used for d <= 3 only.
 #
 # bench_probe_is: importance sampling with a multivariate t (df 4) proposal at
-# the mode, scale inflate / sqrt(max(eigenvalue, 1)) per eigendirection.
+# the mode, scale inflate / sqrt(max(eigenvalue, 1)) per eigendirection, drawn
+# through the symmetric root so the sample is a continuous function of M.
 using LinearAlgebra, Random
 
 function bench_probe_units(laplace, theta::Vector{Float64})
@@ -168,8 +169,14 @@ function bench_probe_is(laplace, theta::Vector{Float64}, U::Integer; n::Integer=
     M = _laplace_block_dense(_laplace_unit_curvature(laplace, U, theta, Ls, uhat),
         laplace.units.blocks[U], d)
     E = eigen(Symmetric(M))
-    S = E.vectors * Diagonal(inflate ./ sqrt.(max.(E.values, 1.0)))
-    logdetS = sum(log, inflate ./ sqrt.(max.(E.values, 1.0)))
+    s = inflate ./ sqrt.(max.(E.values, 1.0))
+    # The symmetric root, a continuous function of M. Laid along the
+    # eigenvectors as the solver returns them, a sign or a rotation it chose
+    # from M's last bits re-drew the whole sample: the nested cells' references
+    # moved 0.01-0.03 nats between builds whose curvatures differed only in
+    # rounding (rescue grid, juliaFit 3a780671 against 70f7d34a).
+    S = E.vectors * Diagonal(s) * transpose(E.vectors)
+    logdetS = sum(log, s)
     c = _bench_lgamma((df + d) / 2) - _bench_lgamma(df / 2) - d / 2 * log(df * pi)
     lw = Vector{Float64}(undef, n)
     for i in 1:n
