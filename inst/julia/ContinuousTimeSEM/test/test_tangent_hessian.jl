@@ -7,15 +7,17 @@ using DataFrames, ForwardDiff, LinearAlgebra
 # errors, missing values and a row with none observed, substeps, unequal and
 # zero subject weights, a prior, two chunks of columns, TI predictors whose
 # effects give each subject its own parameter layer, a TD predictor, stationary
-# initial moments, the same cells in discrete time, and cells the filter
-# evaluates by row, reading the state.
+# initial moments, the same cells in discrete time, cells the filter
+# evaluates by row, reading the state, and categorical indicators of every
+# kind (`tangent_categorical.jl`).
 
 isdefined(@__MODULE__, :_adjoint_test_dataframe) ||
     include(joinpath(@__DIR__, "adjoint_fixtures.jl"))
 
 function _tangent_test_model(; driftscale=1.0, max_timestep=Inf, perrow=false, ti=false,
     td=false, stationary=false, continuous=true, rows=false, relin=false, plan=-1,
-    moment=false, cat=false, timiss=false, elements=false)
+    moment=false, cat=false, timiss=false, elements=false, count=false, censor=false,
+    response=false, asym=false)
     drift = [-0.6 0.2; 0.1 -0.5]
     lambda = [1.0 0.0; 0.7 0.0; 0.0 1.0]
     # `driftscale` shrinks every drift cell: near zero, the filter integrates
@@ -85,10 +87,30 @@ function _tangent_test_model(; driftscale=1.0, max_timestep=Inf, perrow=false, t
         update[(:Jy, 2, 1)] = "PARS[1,1] + 0.6 * state[1]"
     end
     # `cat`: the second manifest ordinal in three categories, its thresholds
-    # parameters 27 and 28, and the third binary.
+    # parameters 27 and 28, and the third binary. With it, `count` makes the
+    # first a count, its dispersion MANIFESTVAR's first sd; `censor` makes it
+    # censored at -0.3 and 0.4, its sd the same cell, and `response` gives it
+    # a response scale, a half-width and power (parameters 29 and 30); `asym`
+    # gives the binary asymptotes (the next two).
+    extra = Pair{Symbol,Matrix{Float64}}[]
+    npar_cat = 28
     if cat
         free[(:THRESHOLDS, 2, 1)] = (27, "param[27]")
         free[(:THRESHOLDS, 2, 2)] = (28, "log1p_exp(param[28])")
+        push!(extra, :THRESHOLDS => zeros(3, 2))
+        if response
+            free[(:RESPONSE, 1, 1)] = (29, "0.05 + 0.1 * inv_logit(param[29])")
+            free[(:RESPONSE, 1, 2)] = (30, "log1p_exp(param[30])")
+            push!(extra, :RESPONSE => [0.0 1.0; 0.0 1.0; 0.0 1.0])
+            npar_cat = 30
+        end
+        if asym
+            free[(:ASYMPTOTES, 1, 1)] = (npar_cat + 1, "0.2 * inv_logit(param[$(npar_cat + 1)])")
+            free[(:ASYMPTOTES, 1, 2)] = (npar_cat + 2,
+                "0.8 + 0.2 * inv_logit(param[$(npar_cat + 2)])")
+            push!(extra, :ASYMPTOTES => [0.0 1.0])
+            npar_cat += 2
+        end
     end
     # `td`: a TD predictor whose effects on both states are parameters 23 and 24.
     if td
@@ -101,7 +123,7 @@ function _tangent_test_model(; driftscale=1.0, max_timestep=Inf, perrow=false, t
         t0var=[1.0 0.0; 0.2 1.0], t0means=zeros(2, 1), free=free,
         tdpredeffect=td ? zeros(2, 1) : nothing, jtd=td ? [1.0 0.0; 0.0 1.0] : nothing,
         pars=rows ? zeros(2, 1) : zeros(1, 1), predict=predict, update=update,
-        extra=cat ? [:THRESHOLDS => zeros(3, 2)] : Pair{Symbol,Matrix{Float64}}[])
+        extra=extra)
     # `ti`: two TI predictors, with effects on a drift cell, a diffusion sd and
     # correlation, an intercept, a loading, a mean, a measurement sd, an
     # initial mean and an initial sd -- each subject a layer of its own.
@@ -109,15 +131,18 @@ function _tangent_test_model(; driftscale=1.0, max_timestep=Inf, perrow=false, t
         predictor=[1, 2, 1, 2, 1, 2, 1, 2, 1], coefficient=collect(23:31))
     # `stationary`: the first row's prior the stationary moments; `continuous`
     # false, the same cells as a discrete-time model.
+    first_kind = count ? 3 : censor ? 4 : 0
     sp = ekf_from_data_frame(df, ti ? tieffects : DataFrame(parameter=Int[],
         predictor=Int[], coefficient=Int[]); continuous_time=continuous,
-        stationary=stationary, manifesttype=cat ? [0, 2, 1] : Int[],
-        ncategories=cat ? [0, 3, 2] : Int[],
+        stationary=stationary, manifesttype=cat ? [first_kind, 2, 1] : Int[],
+        ncategories=cat ? [0, 3, 2] : Int[], asymptoterow=asym ? [0, 0, 1] : Int[],
+        censormin=censor ? [-0.3, -Inf, -Inf] : Float64[],
+        censormax=censor ? [0.4, Inf, Inf] : Float64[],
         # `elements`: the first latent's initial mean and variance stationary,
         # over the closure the second drives into it.
         stationary_mean=elements ? [1, 0] : Int[], stationary_block=elements ? [1, 0] : Int[],
         stationary_closure=elements ? [1, 1] : Int[])
-    npar = ti ? (timiss ? 33 : 31) : cat ? 28 : rows ? 26 : td ? 24 : 22
+    npar = ti ? (timiss ? 33 : 31) : cat ? npar_cat : rows ? 26 : td ? 24 : 22
     starts = Int[]
     times = Float64[]
     columns = Vector{Float64}[]
@@ -131,6 +156,8 @@ function _tangent_test_model(; driftscale=1.0, max_timestep=Inf, perrow=false, t
             if cat
                 y[2] = 1.0 + (y[2] > -0.15) + (y[2] > 0.2)
                 y[3] = y[3] > 0 ? 1.0 : 0.0
+                count && (y[1] = round(2 + 4 * y[1]))
+                censor && (y[1] = clamp(y[1], -0.3, 0.4))
             end
             (s + r) % 5 == 0 && (y[2] = NaN)
             (s + 2r) % 7 == 0 && (y[1] = NaN)
@@ -160,7 +187,11 @@ function _tangent_test_model(; driftscale=1.0, max_timestep=Inf, perrow=false, t
     timiss && append!(values, [0.4, -0.6])
     td && append!(values, [0.7, -0.4])
     rows && append!(values, [0.3, -0.2])
-    cat && (append!(values, zeros(28 - length(values))); values[27:28] = [-0.3, 0.2])
+    if cat
+        append!(values, zeros(npar_cat - length(values)))
+        values[27:28] = [-0.3, 0.2]
+        npar_cat > 28 && (values[29:npar_cat] = 0.3 .* sin.(29:npar_cat))
+    end
     return objective, values
 end
 
@@ -182,6 +213,9 @@ end
         (rows=true, moment=true), (rows=true, moment=true, relin=true, max_timestep=0.4),
         (rows=true, moment=true, continuous=false), (cat=true,), (cat=true, td=true),
         (cat=true, rows=true, relin=true), (cat=true, continuous=false, max_timestep=0.4),
+        (cat=true, count=true), (cat=true, censor=true), (cat=true, count=true, asym=true),
+        (cat=true, censor=true, response=true, asym=true), (cat=true, stationary=true),
+        (cat=true, censor=true, response=true, rows=true),
         (stationary=true, perrow=true), (elements=true,), (elements=true, perrow=true),
         (ti=true, timiss=true))
         objective, values = _tangent_test_model(; opts...)
@@ -286,6 +320,8 @@ end
     for (make, opts) in ((_tangent_test_model, (;)), (_tangent_test_model, (ti=true,)),
         (_tangent_test_model, (rows=true, relin=true, max_timestep=0.4)),
         (_tangent_test_model, (cat=true, moment=true, rows=true)),
+        (_tangent_test_model, (cat=true, count=true, asym=true)),
+        (_tangent_test_model, (cat=true, censor=true, response=true)),
         (_tangent_aug_model, (;)))
         objective, values = make(; opts...)
         dirs = [sin(1.7i + 0.9j) for i in eachindex(values), j in 1:15]

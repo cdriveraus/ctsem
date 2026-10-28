@@ -37,34 +37,32 @@ const _TAN_WIDTH = 12
 
 """
 Why the hand-coded Hessian does not serve `objective` in `hybrid_mode`, or
-`nothing`: what its sweep covers is a Gaussian model, in continuous or
-discrete time, with every state diffusing, TI predictors observed, TD
-predictors entering as impulses, initial moments stated or stationary (in
-continuous time, without integrated deviations or cells evaluated by row), no
-population block, deviations integrated whole or profiled (not at fixed
-values), and no forward-mode subjects. Cells evaluated by row are covered,
-with the iterated update a nonlinear measurement takes and the moment-matched
-prediction a bending drift takes, and categorical indicators, but neither
-beside integrated deviations.
+`nothing`. Its sweep covers continuous and discrete time, states that do not
+diffuse or sit outside the dynamics and a population block (the augmented
+route's carriers), TI predictors observed or sampled, TD predictors entering
+as impulses, initial moments stated, stationary or stationary by element,
+categorical indicators (`tangent_categorical.jl`), cells evaluated by row with
+the iterated update and the moment-matched prediction (`tangent_rows.jl`), and
+deviations the filter integrates, whole or profiled. It refuses those
+deviations beside categorical indicators, an iterated update or a
+moment-matched prediction, none of which the filter integrates them beside
+(R builds them for linear Gaussian models alone); deviations at fixed values,
+which the Laplace route's joint curvature serves itself; and forward-mode
+subjects.
 """
 function _tan_refusal(objective::CTSEMObjective, hybrid_mode::Integer=_HYBRID_PROFILE)
     subjects = objective.subject_objectives
     isempty(subjects) && return "no subjects"
     sp = objective.params
-    if _tan_rows_model(sp)
+    if _hybrid_on(sp.hybrid) && hybrid_mode != _HYBRID_OFF
+        any(t -> t != 0, sp.manifesttype) &&
+            return "integrated deviations beside categorical indicators"
         ws = _init_continuous_ekf_workspace(Float64, sp)
-        _hybrid_on(sp.hybrid) && hybrid_mode != _HYBRID_OFF &&
-            return "integrated deviations beside cells evaluated by row"
+        (ws.relinearise || ws.moment) &&
+            return "integrated deviations beside a measurement or drift that bends"
     end
     # The engine itself refuses stationary moments in discrete time.
     sp.stationary && !sp.continuous_time && return "stationary moments in discrete time"
-    ws0 = _init_continuous_ekf_workspace(Float64, sp)
-    blocks = ws0.affine_buffer.dim < ws0.state_dim ||
-        ws0.diffusion_state_indices != 1:ws0.state_dim
-    _hybrid_on(sp.hybrid) && blocks && hybrid_mode != _HYBRID_OFF &&
-        return "integrated deviations beside static states"
-    sp.stationary && _hybrid_on(sp.hybrid) && hybrid_mode != _HYBRID_OFF &&
-        return "stationary moments beside integrated deviations"
     _hybrid_on(sp.hybrid) && hybrid_mode == _HYBRID_FIXED &&
         return "deviations at fixed values"
     isfinite(_CTSEM_ADJOINT_GROWTH[]) && return "forward-mode subjects"
@@ -73,13 +71,13 @@ end
 
 """
 Whether the subjects' sweeps run by row (`tangent_rows.jl`): a cell evaluated
-by row, a categorical indicator, or stationary initial conditions the hand
-sweep's own do not cover -- single elements, or beside static states -- each of
-which runs as the engine's own at the Hessian's dual.
+by row, or stationary initial conditions the hand sweep's own do not cover --
+single elements, or beside static states -- each of which runs as the
+engine's own at the Hessian's dual.
 """
 function _tan_rows_model(sp)
     (any(sp.predict_transforms_indices) || any(sp.update_transforms_indices) ||
-        any(sp.td_transforms_indices) || any(t -> t != 0, sp.manifesttype) ||
+        any(sp.td_transforms_indices) ||
         _stationary_elements_on(sp.stationary_elements)) && return true
     sp.stationary || return false
     ws = _init_continuous_ekf_workspace(Float64, sp)
@@ -102,11 +100,12 @@ end
 _tan_layer_mats(aws, sp, xv::AbstractVector, tipreds) =
     _tan_mats_of(aws, sp, _tan_layer_values!(aws, sp, xv, tipreds))
 
-"""Matrices of element type `S` shaped as the layer's (`_TAN_LAYER_NAMES`)."""
-_tan_mats_alloc(::Type{S}, n::Int, m::Int, ntd::Int) where {S} =
+"""Matrices of element type `S` shaped as the layer's (`_TAN_LAYER_NAMES`), with
+`nxc` categorical extras' cells (`_tan_cat_each`)."""
+_tan_mats_alloc(::Type{S}, n::Int, m::Int, ntd::Int, nxc::Int=0) where {S} =
     NamedTuple{_TAN_LAYER_NAMES}((zeros(S, n, n), zeros(S, n, n), zeros(S, n),
         zeros(S, n, n), zeros(S, m, n), zeros(S, m, n), zeros(S, m), zeros(S, m, m),
-        zeros(S, n), zeros(S, n, n), zeros(S, n, ntd), zeros(S, n, n)))
+        zeros(S, n), zeros(S, n, n), zeros(S, n, ntd), zeros(S, n, n), zeros(S, nxc)))
 
 """The parameter matrices of the cells `all_params`, as the filter builds them."""
 function _tan_mats_of(aws, sp, all_params::AbstractVector)
@@ -114,7 +113,7 @@ function _tan_mats_of(aws, sp, all_params::AbstractVector)
     ws = aws.ekf_ws
     ntd = hasproperty(pars, :TDPREDEFFECT) ? size(pars.TDPREDEFFECT, 2) : 0
     return _tan_mats_of!(_tan_mats_alloc(eltype(all_params), ws.state_dim,
-        ws.manifest_dim, ntd), aws, sp, all_params)
+        ws.manifest_dim, ntd, _tan_cat_ncells(sp)), aws, sp, all_params)
 end
 
 """`_tan_mats_of` into the matrices `dst` (`_tan_mats_alloc`)."""
@@ -161,6 +160,9 @@ function _tan_mats_of!(dst, aws, sp, all_params::AbstractVector)
     copyto!(dst.MM, view(pars.MANIFESTMEANS, 1:m))
     cov!(dst.R, pars.MANIFESTVAR, m, ws.bufferΘ)
     copyto!(dst.T0M, view(pars.T0MEANS, 1:n))
+    # The categorical extras' cells as they are.
+    XC = dst.XC
+    _tan_cat_each((k, cell, i) -> (@inbounds XC[k] = all_params[cell]), sp)
     return dst
 end
 
@@ -174,7 +176,8 @@ between the two touches, rather than materialising them twice more.
 function _tan_layer_buffers(::Type{S}, aws, sp, nv::Int, ntd::Int) where {S}
     ws = aws.ekf_ws
     n, m = ws.state_dim, ws.manifest_dim
-    return (mats=_tan_mats_alloc(S, n, m, ntd), C=_tan_mats_alloc(S, n, m, ntd),
+    nxc = _tan_cat_ncells(sp)
+    return (mats=_tan_mats_alloc(S, n, m, ntd, nxc), C=_tan_mats_alloc(S, n, m, ntd, nxc),
         tb=zeros(S, length(sp.mutables)), svb=zeros(S, length(ws.subject_values)),
         vb=zeros(S, nv), t0=zeros(S, n, n))
 end
@@ -200,8 +203,13 @@ function _tan_bar_of!(tb::AbstractVector{S}, aws, sp, C, rawD, rawR, cells,
     hasproperty(tc, :Jtd) && (view(tc.Jtd, 1:n, 1:n) .+= C.Jtd)
     pullback!(target, mat, cbar, d) = _sdcovsqrt2cov_pullback!(target, mat, cbar, d;
         scratch=aws.covsqrt_scratch, covmatcode=sp.covmatcode)
-    pullback!(tc.DIFFUSION, rawD, C.Qc, n)
-    pullback!(tc.MANIFESTVAR, rawR, C.R, m)
+    # A covariance with no cotangent has none to pull back: a group that writes
+    # only means flushes zeros here at every row.
+    any(!iszero, C.Qc) && pullback!(tc.DIFFUSION, rawD, C.Qc, n)
+    any(!iszero, C.R) && pullback!(tc.MANIFESTVAR, rawR, C.R, m)
+    # The categorical extras' cells, straight onto them (`_extras_cotangent!`).
+    XCbar = C.XC
+    _tan_cat_each((k, cell, i) -> (@inbounds tb[cell] += XCbar[k]), sp)
     T0Vbar = C.T0V
     pidx = sp.population_indices
     if !isempty(pidx) && any(!iszero, T0Vbar)
@@ -220,6 +228,7 @@ function _tan_bar_of!(tb::AbstractVector{S}, aws, sp, C, rawD, rawR, cells,
         T0Vbar[pidx, :] .= zero(S)
         T0Vbar[:, pidx] .= zero(S)
     end
+    any(!iszero, T0Vbar) || return tb
     t0 = t0 === nothing ? zeros(S, n, n) : fill!(t0, zero(S))
     pullback!(t0, view(CTSEMPars(cells, sp.parameter_axis).T0VAR, 1:n, 1:n), T0Vbar, n)
     view(tc.T0VAR, 1:n, 1:n) .+= t0
@@ -265,7 +274,7 @@ function _tan_layer_reverse(aws, sp, xv::AbstractVector{S}, C, tipreds,
 end
 
 const _TAN_LAYER_NAMES = (:JAx, :DRIFT, :CINT, :Qc, :LAM, :Jy, :MM, :R, :T0M, :T0V, :TDE,
-    :Jtd)
+    :Jtd, :XC)
 _tan_tag(::Type{<:ForwardDiff.Dual{T}}) where {T} = T
 
 """
@@ -279,6 +288,7 @@ fifth of a member sweep's bytes and a twentieth of its time.
     f(X.JAx, N.JAx); f(X.DRIFT, N.DRIFT); f(X.CINT, N.CINT); f(X.Qc, N.Qc)
     f(X.LAMBDA, N.LAM); f(X.Jy, N.Jy); f(X.MM, N.MM); f(X.R, N.R)
     f(X.T0M, N.T0M); f(X.T0V, N.T0V); f(X.TDE, N.TDE); f(X.Jtd, N.Jtd)
+    f(X.XC, N.XC)
     return nothing
 end
 
@@ -287,7 +297,8 @@ _tan_layer_duals(acc::TanAcc, ::Type{DW}) where {DW} = (JAx=_tan_duals(acc.JAx, 
     DRIFT=_tan_duals(acc.DRIFT, DW), CINT=_tan_duals(acc.CINT, DW),
     Qc=_tan_duals(acc.Qc, DW), LAM=_tan_duals(acc.LAMBDA, DW), Jy=_tan_duals(acc.Jy, DW),
     MM=_tan_duals(acc.MM, DW), R=_tan_duals(acc.R, DW), T0M=_tan_duals(acc.T0M, DW),
-    T0V=_tan_duals(acc.T0V, DW), TDE=_tan_duals(acc.TDE, DW), Jtd=_tan_duals(acc.Jtd, DW))
+    T0V=_tan_duals(acc.T0V, DW), TDE=_tan_duals(acc.TDE, DW), Jtd=_tan_duals(acc.Jtd, DW),
+    XC=_tan_duals(acc.XC, DW))
 
 """A worker's sweep, kept in its scratch store between calls."""
 function _tan_sweep_scratch(n::Int, m::Int, ntd::Int, nh::Int, ::Val{W}, na::Int=n,
@@ -436,8 +447,15 @@ tangents as partials: lane `w`'s result into `Hc[:, w]`, added, for the
 chunk's `nl` columns.
 """
 function _tan_layer_columns!(Hc::AbstractMatrix{Float64}, acc::TanAcc{W}, awsW, sp,
-    xw::Vector{DW}, nl::Int, tipreds) where {W,DW}
-    g = _tan_layer_reverse(awsW, sp, xw, _tan_layer_duals(acc, DW), tipreds)
+    xw::Vector{DW}, nl::Int, tipreds, buf=nothing) where {W,DW}
+    # With `buf` (`_tan_layer_buffers`), into its matrices and on the cells the
+    # fill left there, as a subject's own layer takes it.
+    g = if buf === nothing
+        _tan_layer_reverse(awsW, sp, xw, _tan_layer_duals(acc, DW), tipreds)
+    else
+        _tan_each_layer((X, D) -> _tan_to_duals!(D, X), acc, buf.C)
+        _tan_layer_reverse(awsW, sp, xw, buf.C, tipreds, buf)
+    end
     @inbounds for w in 1:nl, i in eachindex(g)
         Hc[i, w] += ForwardDiff.partials(g[i], w)
     end
@@ -453,7 +471,7 @@ _tan_model_like(mod::TanModel{W}) where {W} = TanModel{W}(mod.n, mod.m,
     Ref(false), mod.gmask, mod.na, mod.dyn, mod.aug, TanMat{W}(mod.na, mod.na),
     TanMat{W}(length(mod.dyn), length(mod.dyn)), TanMat{W}(length(mod.dyn), length(mod.dyn)),
     mod.ntd, TanMat{W}(mod.n, mod.ntd), TanMat{W}(mod.n, mod.n),
-    mod.nh, mod.hyb, mod.G, mod.wlog, mod.fixed, mod.dfix)
+    mod.nh, mod.hyb, mod.G, mod.wlog, mod.fixed, mod.dfix, TanVec{W}(mod.cat.nxc), mod.cat)
 
 """
 One block's subjects swept into `acc`. With a shared layer (`L === nothing`)
@@ -486,10 +504,11 @@ function _tan_block!(acc::TanAcc{W}, Hb::Matrix{Float64}, sw::TanSweep{W},
         so = subjects[i]
         wt = isempty(weights) ? 1.0 : weights[i]
         wt == 0 && continue
-        _tan_layer_fill!(L.mod, L.awsW, sp, xw, nl, so.tipreds) || return _TAN_REFUSED
+        _tan_layer_fill!(L.mod, L.awsW, sp, xw, nl, so.tipreds, L.buf) || return _TAN_REFUSED
         if L.rows !== nothing
             st = _tan_sweep_rows!(L.acc, Hb, sw, L.mod, L.rows, objective, i, wt, xw, nl)
             st == _TAN_OK || return st
+            L.mod.nh > 0 && _tan_comb!(acc.Gbar, ((wt, L.acc.Gbar),), true)
             continue
         end
         _tan_sweep_begin!(sw, L.mod)
@@ -499,7 +518,7 @@ function _tan_block!(acc::TanAcc{W}, Hb::Matrix{Float64}, sw::TanSweep{W},
         st == _TAN_OK || return st
         _tan_flush_frechet!(sa, sw.fw, L.mod, sw.sT)
         L.mod.nh > 0 && _tan_comb!(acc.Gbar, ((1.0, sa.Gbar),), true)
-        _tan_layer_columns!(Hb, sa, L.awsW, sp, xw, nl, so.tipreds)
+        _tan_layer_columns!(Hb, sa, L.awsW, sp, xw, nl, so.tipreds, L.buf)
     end
     return _TAN_OK
 end
@@ -535,11 +554,10 @@ function _tan_hessian_columns!(H::Matrix{Float64}, objective::CTSEMObjective,
     # The deviations the filter integrates, whole (`_HYBRID_FULL`) or profiled.
     h = sp.hybrid
     nh = _hybrid_on(h) && hybrid_mode != _HYBRID_OFF ? _hybrid_items(h) : 0
-    gmask = any(t -> t != 0, sp.manifesttype) ?
-        Bool[k > length(sp.manifesttype) || sp.manifesttype[k] == 0 for k in 1:m] : Bool[]
+    gmask, cat = _tan_cat_masks(sp, m)
     mod = TanModel(n, m, W; ct=sp.continuous_time, stat=sp.stationary, rows=rows,
         gmask=gmask, na=na, dyn=dyn, ntd=ntd, hyb=h, nh=nh,
-        wlog=hybrid_mode == _HYBRID_FULL ? 1.0 : 0.0)
+        wlog=hybrid_mode == _HYBRID_FULL ? 1.0 : 0.0, cat=cat)
     Lb = h.block && nh > 0 ? zeros(length(h.perm), length(h.perm)) : zeros(0, 0)
     if nh > 0 && h.block
         if !_hybrid_block_factor!(Lb, h, x)
@@ -550,13 +568,14 @@ function _tan_hessian_columns!(H::Matrix{Float64}, objective::CTSEMObjective,
     # A block's factor's derivatives in its level's parameters, once: the
     # columns read them by arithmetic.
     hd = nh > 0 && h.block ? _tan_hybrid_block_derivs(h, x, D1) : nothing
-    accs = [TanAcc(n, m, ntd, nh, W) for _ in 1:nblocks]
+    accs = [TanAcc(n, m, ntd, nh, W, cat.nxc) for _ in 1:nblocks]
     # Each worker's own layer and the cotangents of one subject, and each
     # block's columns, where the layer is the subject's.
     layers = shared ? nothing : map(1:nworkers) do _
         awsWk = CTSEMAdjointWorkspace(DW, sp, npar, ntd)
-        (awsW=awsWk, mod=_tan_model_like(mod), acc=TanAcc(n, m, ntd, nh, W),
-            rows=rows ? TanRows(awsWk, sp, n, m, ntd, Val(W), DW) : nothing)
+        (awsW=awsWk, mod=_tan_model_like(mod), acc=TanAcc(n, m, ntd, nh, W, cat.nxc),
+            rows=rows ? TanRows(awsWk, sp, n, m, ntd, Val(W), DW) : nothing,
+            buf=_tan_layer_buffers(DW, awsWk, sp, npar, ntd))
     end
     Hbs = [zeros(shared ? 0 : npar, shared ? 0 : W) for _ in 1:nblocks]
     status = zeros(Int, nblocks)

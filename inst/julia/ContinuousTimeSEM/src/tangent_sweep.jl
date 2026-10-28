@@ -127,7 +127,9 @@ is moment-matched (`momon`) the offset gains the cubature's mean correction
 `mc` (`_ekf_moment_cells!`). Where the filter
 integrates deviations, their spec, their factor `G` and the closing term's
 weight on the logdet (1 for the integral, 0 for the profile); or, `fixed`,
-the deviations held at `dfix` (`_HYBRID_FIXED`), one per item.
+the deviations held at `dfix` (`_HYBRID_FIXED`), one per item. Where
+manifests are categorical (`gmask`), the cells their extras read (`XC`) and
+how each row's are assembled from them (`cat`, `tangent_categorical.jl`).
 """
 struct TanModel{W}
     n::Int
@@ -156,16 +158,30 @@ struct TanModel{W}
     wlog::Float64
     fixed::Bool
     dfix::TanVec{W}
+    XC::TanVec{W}
+    cat::TanCatPlan
 end
 TanModel(n::Int, m::Int, W::Int; ct::Bool=true, stat::Bool=false, rows::Bool=false,
     gmask::Vector{Bool}=Bool[], na::Int=n, dyn::Vector{Int}=collect(1:n), ntd::Int=0,
-    hyb::CTSEMHybrid=CTSEMHybrid(), nh::Int=0, wlog::Float64=1.0, fixed::Bool=false) =
+    hyb::CTSEMHybrid=CTSEMHybrid(), nh::Int=0, wlog::Float64=1.0, fixed::Bool=false,
+    cat::TanCatPlan=TanCatPlan()) =
     TanModel{W}(n, m, ct, stat, rows, TanMat{W}(n, n), TanMat{W}(n, n), TanMat{W}(n, n),
     TanVec{W}(n), TanMat{W}(n, n), TanMat{W}(m, n), TanMat{W}(m, n), TanVec{W}(m),
     TanMat{W}(m, m), TanVec{W}(n), TanMat{W}(n, n), TanVec{W}(n), Ref(false), gmask,
     na, dyn, na < n || dyn != 1:n, TanMat{W}(na, na), TanMat{W}(length(dyn), length(dyn)),
     TanMat{W}(length(dyn), length(dyn)), ntd, TanMat{W}(n, ntd), TanMat{W}(n, n), nh, hyb,
-    TanMat{W}(nh, nh), wlog, fixed, _tan_setnz!(TanVec{W}(nh), false))
+    TanMat{W}(nh, nh), wlog, fixed, _tan_setnz!(TanVec{W}(nh), false), TanVec{W}(cat.nxc),
+    cat)
+
+"""
+Which manifests are Gaussian (`TanModel.gmask`), empty where every one is,
+and where the categorical ones' extras are (`TanModel.cat`).
+"""
+function _tan_cat_masks(sp, m::Int)
+    any(t -> t != 0, sp.manifesttype) || return (gmask=Bool[], cat=TanCatPlan())
+    return (gmask=Bool[k > length(sp.manifesttype) || sp.manifesttype[k] == 0 for k in 1:m],
+        cat=_tan_cat_plan(sp, m))
+end
 
 """
 What the blocks of a model with states outside them need (`TanModel.aug`):
@@ -300,7 +316,7 @@ series instead, and so does this (`tangent_series.jl`).
 function _tan_predict!(x::TanVec{W}, P::TanMat{W}, rec::TanPredRec{W}, fw::TanForward{W},
     mod::TanModel{W}, dt::Float64, hs::TanHybState{W}) where {W}
     mod.ct || return _tan_predict_dt!(x, P, rec, fw, mod, hs)
-    mod.aug && return _tan_predict_aug!(x, P, rec, fw, mod, dt)
+    mod.aug && return _tan_predict_aug!(x, P, rec, fw, mod, dt, hs)
     sint = _series_needed(fw.minpivot[], dt)
     snoise = _series_needed(fw.conditioning[], dt)
     rec.sint[] = sint
@@ -536,11 +552,12 @@ struct TanAcc{W}
     Gbar::TanMat{W}             # the hybrid's factor's
     queue::Dict{Float64,Int}    # interval -> its slot in Abars
     Abars::Vector{TanMat{W}}
+    XC::TanVec{W}               # the categorical extras' cells'
 end
-TanAcc(n::Int, m::Int, ntd::Int, nh::Int, W::Int) = TanAcc{W}(TanMat{W}(n, n),
+TanAcc(n::Int, m::Int, ntd::Int, nh::Int, W::Int, nxc::Int=0) = TanAcc{W}(TanMat{W}(n, n),
     TanMat{W}(n, n), TanVec{W}(n), TanMat{W}(n, n), TanMat{W}(m, n), TanMat{W}(m, n),
     TanVec{W}(m), TanMat{W}(m, m), TanVec{W}(n), TanMat{W}(n, n), TanMat{W}(n, ntd),
-    TanMat{W}(n, n), TanMat{W}(nh, nh), Dict{Float64,Int}(), TanMat{W}[])
+    TanMat{W}(n, n), TanMat{W}(nh, nh), Dict{Float64,Int}(), TanMat{W}[], TanVec{W}(nxc))
 
 function _tan_zero!(X)
     fill!(X.v, 0.0)
@@ -555,7 +572,7 @@ function _tan_acc_zero!(acc::TanAcc)
     _tan_zero!(acc.JAx); _tan_zero!(acc.DRIFT); _tan_zero!(acc.CINT); _tan_zero!(acc.Qc)
     _tan_zero!(acc.LAMBDA); _tan_zero!(acc.Jy); _tan_zero!(acc.MM); _tan_zero!(acc.R)
     _tan_zero!(acc.T0M); _tan_zero!(acc.T0V); _tan_zero!(acc.TDE); _tan_zero!(acc.Jtd)
-    _tan_zero!(acc.Gbar)
+    _tan_zero!(acc.Gbar); _tan_zero!(acc.XC)
     empty!(acc.queue)
     return acc
 end
@@ -575,6 +592,7 @@ function _tan_acc_add!(acc::TanAcc{W}, b::TanAcc{W}) where {W}
     _tan_comb!(acc.TDE, ((1.0, b.TDE),), true)
     _tan_comb!(acc.Jtd, ((1.0, b.Jtd),), true)
     _tan_comb!(acc.Gbar, ((1.0, b.Gbar),), true)
+    _tan_lincomb!(acc.XC, true, acc.XC, true, b.XC)
     for (dt, k) in b.queue
         _tan_enqueue!(acc, dt, b.Abars[k], 1.0)
     end
@@ -632,7 +650,7 @@ function _tan_reverse_predict!(xbar::TanVec{W}, Pbar::TanMat{W}, rec::TanPredRec
     rv::TanPredRev{W}, fw::TanForward{W}, mod::TanModel{W}, acc::TanAcc{W},
     w::Float64, hs::TanHybState{W}) where {W}
     mod.ct || return _tan_reverse_predict_dt!(xbar, Pbar, rec, rv, mod, acc, w, hs)
-    mod.aug && return _tan_reverse_predict_aug!(xbar, Pbar, rec, rv, fw, mod, acc, w)
+    mod.aug && return _tan_reverse_predict_aug!(xbar, Pbar, rec, rv, fw, mod, acc, w, hs)
     A, JAx, X = rec.A, mod.JAx, fw.X
     Abar, JAxbar, Ps = rv.Abar, rv.JAxbar, rv.Ps
     sint, snoise, dt = rec.sint[], rec.snoise[], rec.dt[]
@@ -800,13 +818,18 @@ struct TanSweep{W}
     # scores (`_tan_row_scores!`), and the running total they difference.
     llrow::Vector{Float64}
     llprev::Vector{Float64}
+    # Each row's categorical observations, and their scratch
+    # (`tangent_categorical.jl`).
+    cats::Vector{TanCatRec{W}}
+    cat::TanCatScratch{W}
 end
 TanSweep(n::Int, m::Int, ntd::Int, nh::Int, W::Int, na::Int=n, k::Int=n) = TanSweep{W}(n, m,
     TanForward(n, m, nh, W, na, k), TanPredRev(n, W),
     TanPredRec{W}[], TanUpdRec{W}[],
     TanVec{W}(n), TanMat{W}(n, n), TanVec{W}(n), TanMat{W}(n, n), TanMat{W}(n, n), zeros(2 + W),
     Int[], nh, TanHybState(n, nh, W), TanMat{W}[], TanVec{W}(ntd), TanMat{W}(n, n),
-    TanMat{W}(n, n), TanVec{W}(n), zeros(n, n), Float64[], zeros(2 + W))
+    TanMat{W}(n, n), TanVec{W}(n), zeros(n, n), Float64[], zeros(2 + W), TanCatRec{W}[],
+    TanCatScratch(n, Val(W)))
 
 """Row `t`'s log likelihood and its tangents, what the total gained since the
 last row, kept in `sw.llrow`."""
@@ -964,6 +987,7 @@ function _tan_sweep!(acc::TanAcc{W}, sw::TanSweep{W}, mod::TanModel{W},
     rec=nothing) where {W}
     n, fw, rv = sw.n, sw.fw, sw.rv
     T = length(times)
+    cat = !isempty(mod.gmask)
     # The predictions, row by row: a row's substeps in order, then its update.
     npred = 0
     first = resize!(sw.first, T + 1)
@@ -994,6 +1018,12 @@ function _tan_sweep!(acc::TanAcc{W}, sw::TanSweep{W}, mod::TanModel{W},
         t > length(sw.upds) && push!(sw.upds, TanUpdRec(n, sw.m, sw.nh, W))
         sw.upds[t].relin = 0
         rec === nothing || _tan_record!(rec, 1, t, x, P, sw)
+        # A row's categorical observations first, each an exact scalar
+        # conditioning, then its Gaussian ones from there.
+        if cat
+            st = _tan_cat_row!(x, P, sw, mod, view(Y, :, t), t)
+            st == _TAN_OK || return st
+        end
         _tan_update!(x, P, sw.upds[t], fw, mod, view(Y, :, t), sw.ll, hs) ||
             return _TAN_INVALID
         forward && _tan_llrow!(sw, t)
@@ -1015,6 +1045,7 @@ function _tan_sweep!(acc::TanAcc{W}, sw::TanSweep{W}, mod::TanModel{W},
     for t in T:-1:1
         _tan_reverse_row_update!(xbar, Pbar, sw.upds[t], fw, mod, acc, w, hs) ||
             return _TAN_INVALID
+        cat && _tan_reverse_cat_row!(xbar, Pbar, sw, mod, acc, w, t)
         mod.ntd > 0 && _tan_reverse_td!(xbar, Pbar, sw, mod, acc, w, view(TD, :, t), t)
         for j in (first[t + 1] - 1):-1:first[t]
             _tan_reverse_predict!(xbar, Pbar, sw.preds[j], rv, fw, mod, acc, w, hs)
@@ -1035,10 +1066,11 @@ end
 (`_compute_discrete_time_form!`'s `naff` and `dyn`): the exponential over every
 state, the intercept's solve over the leading block of genuine dynamics,
 `dINT = JAa \\ (Aa affine_a - affine_a)` or its series, zero beyond it, and the
-noise over the diffusing states, `X - Ad X Ad'` or its series, zero elsewhere.
+noise over the diffusing states, `X - Ad X Ad'` or its series, zero elsewhere;
+the hybrid's columns as the intercept (`_tan_hybrid_predict_aug!`).
 """
 function _tan_predict_aug!(x::TanVec{W}, P::TanMat{W}, rec::TanPredRec{W},
-    fw::TanForward{W}, mod::TanModel{W}, dt::Float64) where {W}
+    fw::TanForward{W}, mod::TanModel{W}, dt::Float64, hs::TanHybState{W}) where {W}
     fa = fw.aug::TanAugFw{W}
     na, dyn = mod.na, mod.dyn
     sint = _series_needed(fw.minpivot[], dt)
@@ -1085,21 +1117,44 @@ function _tan_predict_aug!(x::TanVec{W}, P::TanMat{W}, rec::TanPredRec{W},
     end
     _tan_comb!(P, ((1.0, fw.nn2), (1.0, D)))
     _tan_lower_to_upper!(P)
+    # The hybrid's columns, on scratch the intercept is done with; each branch
+    # a call of its own, as `_tan_reverse_predict!`'s.
+    if mod.nh > 0
+        if sint
+            _tan_hybrid_predict_aug!(hs, rec.Xh, rec.Xinc, mod.hyb, A, fa.Aa, mod.JAa,
+                fa.FJa, fa.pivJa, fa.seria.out, na, fa.ra)
+        else
+            _tan_gather!(fa.Aa, A, 1:na, 1:na)
+            _tan_hybrid_predict_aug!(hs, rec.Xh, rec.Xinc, mod.hyb, A, fa.Aa, mod.JAa,
+                fa.FJa, fa.pivJa, nothing, na, fa.ra)
+        end
+    end
     return true
 end
 
 """Undo `_tan_predict_aug!`, as `_tan_reverse_predict!` undoes the full-state one."""
 function _tan_reverse_predict_aug!(xbar::TanVec{W}, Pbar::TanMat{W}, rec::TanPredRec{W},
     rv::TanPredRev{W}, fw::TanForward{W}, mod::TanModel{W}, acc::TanAcc{W},
-    w::Float64) where {W}
+    w::Float64, hs::TanHybState{W}) where {W}
     fa = fw.aug::TanAugFw{W}
     na, dyn = mod.na, mod.dyn
     A = rec.A
     Abar, JAxbar, Ps = rv.Abar, rv.JAxbar, rv.Ps
     sint, snoise, dt = rec.sint[], rec.snoise[], rec.dt[]
     _tan_zero!(JAxbar)
-    # The mean, x+ = A x + dINT.
+    # The mean, x+ = A x + dINT; and the hybrid's columns, X+ = A X + Xinc, a
+    # series intercept's column into Phibar before the intercept's own.
     _tan_ger!(Abar, true, xbar, rec.x, false)
+    sint && _tan_zero!(fa.Phibar)
+    if mod.nh > 0
+        if sint
+            _tan_hybrid_reverse_predict_aug!(hs, mod.hyb, rec.Xh, rec.Xinc, A, Abar, JAxbar,
+                fa.JTa, fa.FTa, fa.pivTa, fa.Phibar, na, fa.affa, fa.dINTa, fa.JAabar)
+        else
+            _tan_hybrid_reverse_predict_aug!(hs, mod.hyb, rec.Xh, rec.Xinc, A, Abar, JAxbar,
+                fa.JTa, fa.FTa, fa.pivTa, nothing, na, fa.affa, fa.dINTa, fa.JAabar)
+        end
+    end
     _tan_mulTvec!(rv.xnew, A, xbar)
     # The covariance, P+ = A (P + eps I) A' + dDIFF.
     _tan_sym!(Ps, Pbar)
@@ -1140,7 +1195,7 @@ function _tan_reverse_predict_aug!(xbar::TanVec{W}, Pbar::TanMat{W}, rec::TanPre
     if sint
         Phi = _tan_series_intercept!(fa.seria, mod.JAa, dt)
         _tan_mulTvec!(affa, Phi, xa)
-        _tan_ger!(fa.Phibar, true, xa, ra, false)
+        _tan_ger!(fa.Phibar, true, xa, ra, true)
         _tan_zero!(fa.JAabar)
         _tan_series_intercept_pullback!(fa.JAabar, fa.seria, fa.Phibar)
         _tan_scatter!(JAxbar, 1.0, fa.JAabar, 1:na, 1:na)
