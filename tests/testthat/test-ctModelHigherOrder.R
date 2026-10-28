@@ -323,6 +323,29 @@ test_that("a cycle is a noiseless clock pair driving the latents asked for", {
   expect_error(ctModelPeriodicComponent(m, -1), 'period')
 })
 
+# A linear model's Jacobians are its drift and loadings to the last bit: the
+# filter reads DRIFT - JAx as an offset, and the hand-coded second order
+# refuses a JAx that is not DRIFT. Written as text, 2 pi / 24 came back as
+# 0.2617994.
+test_that("a cycle's drift is its Jacobian exactly", {
+  m <- .ho_ct()
+  k <- which(m$pars$matrix == 'LAMBDA' & m$pars$row == 1 & m$pars$col == 2)
+  m$pars$param[k] <- NA; m$pars$value[k] <- 1 / 3
+  cm <- ctModelPeriodicComponent(m, 24, indices = 1, individual = FALSE)
+  p <- suppressMessages(ctsem:::.ctFitModelSetup(cm, intoverpop = 'laplace',
+    checks = FALSE))$ctm$pars
+  cells <- function(mx, cols) {
+    q <- p[p$matrix == mx, ]
+    q <- q[order(q$row, q$col), cols]
+    rownames(q) <- NULL
+    q
+  }
+  keep <- c('row', 'col', 'param', 'value', 'transform', 'indvarying')
+  expect_identical(cells('JAx', keep), cells('DRIFT', keep))
+  expect_identical(cells('Jy', keep), cells('LAMBDA', keep))
+  expect_identical(p$value[p$matrix == 'JAx' & p$row == 4 & p$col == 3], 2 * pi / 24)
+})
+
 test_that("the phase predictors are the clock at each subject's first row", {
   d <- data.frame(id = rep(1:2, each = 3), time = c(8, 12, 20, 30, 34, 42))
   out <- ctPeriodicPhases(d, period = 24)

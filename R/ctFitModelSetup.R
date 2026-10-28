@@ -737,6 +737,18 @@
         ctm$pars[which(ctm$pars$param %in% jl2$param[i])[1], !colnames(ctm$pars) %in% list('matrix','row','col')]
     }
   }
+  # A Jacobian row that reads no state is its matrix's row, so its cells are
+  # DRIFT's or LAMBDA's own, copied whole. Through text a fixed value kept 15
+  # digits, JAx was then not exactly DRIFT, the filter's offset DRIFT - JAx
+  # read the difference, and the hand-coded second order refused the model.
+  key <- function(d) paste(d$matrix, d$row, d$col)
+  same <- !colnames(jl2) %in% c('matrix', 'row', 'col')
+  for(jm in c('JAx', 'Jy')){
+    sel <- which(jl2$matrix %in% jm & jl2$row %in% which(attr(ctm$jacobian[[jm]], 'affine')))
+    b <- match(paste(c(JAx = 'DRIFT', Jy = 'LAMBDA')[[jm]], jl2$row[sel], jl2$col[sel]),
+      key(ctm$pars))
+    jl2[sel[!is.na(b)], same] <- ctm$pars[b[!is.na(b)], !colnames(ctm$pars) %in% c('matrix', 'row', 'col')]
+  }
 
   ctm$pars <- rbind(ctm$pars,jl2)
 
