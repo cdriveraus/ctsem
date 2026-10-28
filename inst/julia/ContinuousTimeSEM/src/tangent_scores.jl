@@ -4,20 +4,22 @@
 # directions the lanes of the parameter layer at the Hessian's dual. The
 # forward of `tangent_sweep.jl` and `tangent_rows.jl`, stopped before their
 # reverse, with each row's share of the log likelihood kept (`_tan_llrow!`).
-# The filter at the Hessian's dual (`_row_scores!`) is the oracle.
+# The filter at the Hessian's dual is the tests' oracle (test/dual_oracles.jl).
+# A forward sweep, so subjects whose reverse is unstable (`_CTSEM_ADJOINT_GROWTH`)
+# take it too.
 
 """
 The row scores into `out` (rows of every subject in order, a column per
-direction) by the hand-coded forward sweep, the filter's deviations off as
-`_row_scores!` has them. `false` where the sweep does not cover the model or
-this point, and the caller takes the dual route; a subject whose filter fails
-leaves its rows as they were (`NaN`).
+direction) by the hand-coded forward sweep, the filter's deviations off; a
+subject whose filter fails leaves its rows as they were (`NaN`). An error for
+what the sweep does not take (`_tan_check`, `_TAN_NOT_JACOBIAN`).
 """
 function _tan_row_scores!(out::Matrix{Float64}, objective::CTSEMObjective,
-    theta::Vector{Float64}, directions::AbstractMatrix, rows::Vector{Int})::Bool
-    _CTSEM_TANGENT_HESSIAN[] || return false
-    _tan_refusal(objective, _HYBRID_OFF) === nothing || return false
-    return _tan_row_scores!(out, objective, theta, directions, rows, Val(_TAN_WIDTH))
+    theta::Vector{Float64}, directions::AbstractMatrix, rows::Vector{Int})
+    _tan_check(objective, _HYBRID_OFF)
+    _tan_row_scores!(out, objective, theta, directions, rows, Val(_TAN_WIDTH)) ||
+        throw(ArgumentError(_TAN_NOT_JACOBIAN))
+    return out
 end
 
 function _tan_row_scores!(out::Matrix{Float64}, objective::CTSEMObjective,
@@ -28,6 +30,7 @@ function _tan_row_scores!(out::Matrix{Float64}, objective::CTSEMObjective,
     DW = _ctsem_hessian_dual(objective)
     ForwardDiff.npartials(DW) == W || return false
     subjects = objective.subject_objectives
+    isempty(subjects) && return true
     rowsmode = _tan_rows_model(sp)
     shared = !rowsmode && isempty(sp.ti_parameter_indices) && isempty(sp.ti_tail)
     nsub = length(subjects)

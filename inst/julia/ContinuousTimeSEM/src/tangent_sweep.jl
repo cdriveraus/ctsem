@@ -576,6 +576,24 @@ function _tan_acc_zero!(acc::TanAcc)
     empty!(acc.queue)
     return acc
 end
+"""The cotangents of the layer's matrices in `mask` (`_TAN_M_*`) zero; the
+hybrid factor's and the exponential's queue left as they are."""
+function _tan_acc_zero!(acc::TanAcc, mask::UInt16)
+    (mask & _TAN_M_JAX) != 0 && _tan_zero!(acc.JAx)
+    (mask & _TAN_M_DRIFT) != 0 && _tan_zero!(acc.DRIFT)
+    (mask & _TAN_M_CINT) != 0 && _tan_zero!(acc.CINT)
+    (mask & _TAN_M_QC) != 0 && _tan_zero!(acc.Qc)
+    (mask & _TAN_M_LAM) != 0 && _tan_zero!(acc.LAMBDA)
+    (mask & _TAN_M_JY) != 0 && _tan_zero!(acc.Jy)
+    (mask & _TAN_M_MM) != 0 && _tan_zero!(acc.MM)
+    (mask & _TAN_M_R) != 0 && _tan_zero!(acc.R)
+    (mask & _TAN_M_T0M) != 0 && _tan_zero!(acc.T0M)
+    (mask & _TAN_M_T0V) != 0 && _tan_zero!(acc.T0V)
+    (mask & _TAN_M_TDE) != 0 && _tan_zero!(acc.TDE)
+    (mask & _TAN_M_JTD) != 0 && _tan_zero!(acc.Jtd)
+    (mask & _TAN_M_XC) != 0 && _tan_zero!(acc.XC)
+    return acc
+end
 
 """`acc += b`, the queues merged by interval; both flushed or both not."""
 function _tan_acc_add!(acc::TanAcc{W}, b::TanAcc{W}) where {W}

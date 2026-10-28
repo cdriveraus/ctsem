@@ -18,22 +18,9 @@
 #                                expectations average to their prior ones under
 #                                the model.
 #
-# Neither touches a fitting path. The derivatives are forward mode, seeded in
-# as many directions a pass as the Hessian's sweeps carry, at the Hessian's own
-# dual type (`_ctsem_hessian_dual`): a call asking for more directions makes
-# more passes rather than a wider type, and the filter at that type is in the
-# package image, where a type of their own compiled it at a user's first call.
-
-"""The raw parameters as duals of type `S` seeded in `directions[:, cols]`,
-padded with zero directions to its width."""
-function _row_score_seed(::Type{S}, theta::Vector{Float64}, directions::AbstractMatrix,
-    cols::UnitRange{Int}) where {S}
-    W = ForwardDiff.npartials(S)
-    k = length(cols)
-    return S[S(theta[j], ForwardDiff.Partials{W,Float64}(
-        ntuple(a -> a <= k ? Float64(directions[j, cols[a]]) : 0.0,
-            Val(W)))) for j in eachindex(theta)]
-end
+# Neither touches a fitting path. On the filter routes the derivatives are the
+# hand-coded forward sweep's (`_tan_row_scores!`); on the Laplace route each
+# truncated record's unit gradient, as the evaluation forms it.
 
 """
     ctsem_row_scores(objective, values, directions)
@@ -53,48 +40,7 @@ function ctsem_row_scores(objective::CTSEMObjective, values::AbstractVector,
     rows = [size(s.data, 2) for s in objective.subject_objectives]
     out = fill(NaN, sum(rows; init=0), K)
     K == 0 && return out
-    # By the hand-coded forward sweep where it covers the model
-    # (`_tan_row_scores!`); otherwise the filter at the Hessian's dual.
-    _tan_row_scores!(out, objective, theta, directions, rows) && return out
-    # The width is a run-time value, so the type is one too: the passes are a
-    # call of their own, specialised on it.
-    _row_scores!(out, objective, theta, directions, rows, _ctsem_hessian_dual(objective))
-    return out
-end
-
-function _row_scores!(out::Matrix{Float64}, objective::CTSEMObjective,
-    theta::Vector{Float64}, directions::AbstractMatrix, rows::Vector{Int},
-    ::Type{S}) where {S}
-    K = size(directions, 2)
-    W = ForwardDiff.npartials(S)
-    sp = objective.params
-    subjects = objective.subject_objectives
-    ws = _init_continuous_ekf_workspace(S, sp)
-    ws.hyb.mode = _HYBRID_OFF
-    n = ws.state_dim
-    m = ws.manifest_dim
-    nall = length(sp.mutables)
-    for c0 in 1:W:K
-        cols = c0:min(c0 + W - 1, K)
-        x = _row_score_seed(S, theta, directions, cols)
-        offset = 0
-        for (i, sub) in enumerate(subjects)
-            nobs = rows[i]
-            trace = CTSEMKalmanTrace(S, n, m, nobs, 1, nall)
-            trace.offset = 0
-            trace.current_subject = 1
-            ll = _extended_kalman_filter_continuous!(ws, x, sub.data,
-                collect(sub.timesteps), sp, sub.tdpreds,
-                _ctsem_tipred_vector(sub.tipreds, x), i, sub.max_timestep, trace,
-                nothing, nothing, sub.relin)
-            if isfinite(ForwardDiff.value(ll))
-                @inbounds for r in 1:nobs, (a, col) in enumerate(cols)
-                    out[offset + r, col] = ForwardDiff.partials(trace.llrow[r], a)
-                end
-            end
-            offset += nobs
-        end
-    end
+    _tan_row_scores!(out, objective, theta, directions, rows)
     return out
 end
 
@@ -105,10 +51,9 @@ The same for a Laplace fit, from the predictions `ctsem_laplace_sequential`
 makes: a row's log predictive density is the difference of the subject's
 Laplace terms on its record up to the row and up to the row before, each with
 the effects' mode solved on that truncated record, so its score is the
-difference of those terms' derivatives. Each term's derivative is the dual
-term at the dual mode (`_laplace_dual_unit_mode`, the implicit function
-theorem by one Newton step), seeded in the directions. Single-level fits only,
-as for the sequential predictions.
+difference of those terms' derivatives. Each term's derivative is its unit's
+gradient as the evaluation forms it (`_laplace_unit_gradient_route!`), along
+the directions. Single-level fits only, as for the sequential predictions.
 """
 function ctsem_row_scores(laplace::CTSEMLaplaceObjective, values::AbstractVector,
     directions::AbstractMatrix)
@@ -118,8 +63,8 @@ function ctsem_row_scores(laplace::CTSEMLaplaceObjective, values::AbstractVector
     # direction anyone asks along: a zero row for each, after the caller's.
     theta = _laplace_extend(laplace, collect(Float64, values))
     na = length(theta) - length(values)
-    along = na == 0 ? directions :
-        vcat(directions, zeros(eltype(directions), na, size(directions, 2)))
+    along = na == 0 ? Matrix{Float64}(directions) :
+        vcat(Matrix{Float64}(directions), zeros(Float64, na, size(directions, 2)))
     units = laplace.units
     all(length(mm) == 1 for mm in units.members) || throw(ArgumentError(
         "row scores need every subject to be its own unit: a single level of " *
@@ -131,29 +76,26 @@ function ctsem_row_scores(laplace::CTSEMLaplaceObjective, values::AbstractVector
     out = fill(NaN, sum(rows; init=0), K)
     K == 0 && return out
     Ls = _laplace_popchols(theta, laplace.spec)
+    dLlevels = _laplace_level_chol_derivatives(theta, laplace.spec)
+    dLsolved = _laplace_level_chol_solves(laplace.spec, Ls, dLlevels)
     _laplace_ensure_pool!(laplace)
-    # At the Hessian's dual type, a run-time value: see `ctsem_row_scores` above.
-    _laplace_row_scores!(out, laplace, theta, Ls, along, first_row,
-        _ctsem_hessian_dual(laplace.objective))
-    return out
-end
-
-function _laplace_row_scores!(out, laplace::CTSEMLaplaceObjective, theta::Vector{Float64},
-    Ls::Vector{Matrix{Float64}}, along::AbstractMatrix, first_row::Vector{Int},
-    ::Type{S}) where {S}
-    units = laplace.units
+    # The evaluation's per-unit records (`_laplace_store_unit_primal!`).
+    nunits = length(units.members)
+    nslot = _laplace_pool_width()
+    records = (Vector{_LaplaceFactorization{Float64}}(undef, nunits),
+        Vector{CTSEMBlockMatrix{Float64}}(undef, nunits), fill(false, nunits),
+        zeros(Float64, nunits), fill(true, nslot), fill(NaN, nslot))
     _laplace_parallel(laplace, eachindex(units.members)) do U
-        _laplace_row_scores_unit!(out, laplace, U, theta, Ls, along,
-            first_row[units.members[U][1]], S)
+        _laplace_row_scores_unit!(out, laplace, U, theta, Ls, dLlevels, dLsolved,
+            records, along, first_row[units.members[U][1]])
         return true
     end
     return out
 end
 
 function _laplace_row_scores_unit!(out, laplace::CTSEMLaplaceObjective, U::Integer,
-    theta::Vector{Float64}, Ls::Vector{Matrix{Float64}}, directions::AbstractMatrix,
-    offset::Integer, ::Type{S}) where {S}
-    spec = laplace.spec
+    theta::Vector{Float64}, Ls::Vector{Matrix{Float64}}, dLlevels, dLsolved, records,
+    directions::Matrix{Float64}, offset::Integer)
     units = laplace.units
     i = units.members[U][1]
     so = laplace.objective.subject_objectives[i]
@@ -162,39 +104,27 @@ function _laplace_row_scores_unit!(out, laplace::CTSEMLaplaceObjective, U::Integ
     T = size(full.data, 2)
     K = size(directions, 2)
     npar = length(theta)
-    blocks = units.blocks[U]
-    W = ForwardDiff.npartials(S)
-    awsd = _laplace_workspace!(laplace, S, npar)
+    curvatures, matrices, gated, terms, chunk_ok, chunk_bad = records
+    aws = _laplace_workspace!(laplace, Float64, npar)
+    row = zeros(Float64, npar)
     previous = zeros(Float64, K)
     current = zeros(Float64, K)
     try
         for t in 1:T
             _laplace_truncate!(so, full, t)
             # From the previous row's mode, as the sequential pass solves.
-            _laplace_solve_unit_mode!(laplace, U, theta, Ls; retain=t > 1)
-            u = copy(laplace.modes[U])
-            M = isempty(u) ? CTSEMBlockMatrix(Float64, blocks) :
-                _laplace_unit_curvature(laplace, U, theta, Ls, u)
-            fac = _laplace_factor_repaired!(M, blocks)
-            curvature = (fac.factors, fac.coupling)
-            ok = true
-            for c0 in 1:W:K
-                cols = c0:min(c0 + W - 1, K)
-                x = _row_score_seed(S, theta, directions, cols)
-                Lsd = _laplace_popchols(x, spec)
-                ud = _laplace_dual_unit_mode(laplace, U, x, Lsd, u, curvature, awsd)
-                term = _laplace_unit_term(laplace, U, x, Lsd, ud, awsd)
-                if !isfinite(ForwardDiff.value(term))
-                    ok = false
-                    break
-                end
-                for (a, col) in enumerate(cols)
-                    current[col] = ForwardDiff.partials(term, a)
-                end
-            end
+            ok = _laplace_store_unit_primal!(laplace, U, theta, Ls, aws, curvatures,
+                matrices, gated, terms, chunk_ok, chunk_bad; retain=t > 1) &&
+                first(_laplace_unit_gradient_route!(row, laplace, U, theta, Ls,
+                    dLlevels, dLsolved, gated[U], matrices[U], curvatures[U]))
             if ok
                 @inbounds for col in 1:K
-                    out[offset + t, col] = current[col] - previous[col]
+                    s = 0.0
+                    for j in 1:npar
+                        s += directions[j, col] * row[j]
+                    end
+                    current[col] = s
+                    out[offset + t, col] = s - previous[col]
                 end
                 copyto!(previous, current)
             else

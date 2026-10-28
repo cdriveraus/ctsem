@@ -8,9 +8,10 @@
 # as zeros through every covariance. The gated floor's cross curvature with the
 # deviations the filter integrates (`CTSEMHybridCross`) is read off the same
 # sweeps, at their profile or at the fixed values of its joint coordinates
-# (`_HybridFixedCross`). The dual route serves the other hooks, an element type
-# other than Float64, and what the sweep does not cover (`_tan_refusal`); it is
-# the oracle (`ctsem_set_tangent_hessian!(false)`).
+# (`_HybridFixedCross`). The member gradient's Jacobian at the curvature's dual
+# serves an element type other than Float64 -- the nested-gradient oracle's --
+# and with the other dual routes these sweeps replaced is the tests' oracle
+# (test/dual_oracles.jl).
 #
 # A member whose coordinates reach only the means -- the initial state, the
 # intercepts, the TD effects -- of a linear model needs no reverse sweep: its
@@ -59,7 +60,8 @@ end
 
 """
 The slot's hand-coded curvature for `laplace` in hybrid `mode`, built at its
-first use from `values`; `nothing` where the sweep does not cover the model.
+first use from `values`; an error for what the sweep does not take
+(`_tan_check`).
 """
 function _tan_laplace_context(laplace::CTSEMLaplaceObjective, values::AbstractVector,
     mode::Int, slot::Int=_laplace_slot())
@@ -70,12 +72,17 @@ function _tan_laplace_context(laplace::CTSEMLaplaceObjective, values::AbstractVe
     DC = _laplace_curvature_dual(laplace)
     # Fixed deviations are the joint curvature's, which this route serves where
     # it serves their profile; the Hessian's refusal of them is its own.
-    ctx = _tan_refusal(objective, mode == _HYBRID_FIXED ? _HYBRID_PROFILE : mode) === nothing ?
-        _tan_laplace_build(objective, values, mode, DC,
-            Val(ForwardDiff.npartials(DC))) : nothing
+    _tan_check(objective, mode == _HYBRID_FIXED ? _HYBRID_PROFILE : mode)
+    ctx = _tan_laplace_build(objective, values, mode, DC, Val(ForwardDiff.npartials(DC)))
     store[key] = ctx
     return ctx
 end
+
+"""Where a raw direction moves the factor of the deviations the filter
+integrates, which the sweeps hold at its values (`_tan_moves_factor`): no
+production direction does, since each is along the effects' own positions."""
+const _TAN_MOVES_FACTOR = "a direction that moves the factor of the deviations the " *
+    "filter integrates"
 
 function _tan_laplace_build(objective::CTSEMObjective, values::AbstractVector, mode::Int,
     ::Type{DC}, ::Val{W}) where {DC,W}
@@ -108,23 +115,23 @@ end
 """
 `Jw`'s first `length(columns)` columns, the Jacobian of `members`' log
 likelihood gradient in the unit's coordinates `columns` at `base`, by the
-hand-coded sweeps, the rest zero; `false` where they do not serve, and the
-caller takes the dual. A member whose filter fails makes it `NaN`, as the
-dual's gradient does. `cross`, a hook where given (`CTSEMHybridCross`, or
-`_HybridFixedCross` at fixed deviations), is read and filled as the dual's
-passes read and fill it (`_hybrid_before!`, `_hybrid_after!`).
+hand-coded sweeps, the rest zero; `true`. A member whose filter fails makes it
+`NaN`, as a failed gradient does. `cross`, a hook where given
+(`CTSEMHybridCross`, or `_HybridFixedCross` at fixed deviations), is read and
+filled as a pass of the member's gradient reads and fills it
+(`_hybrid_before!`, `_hybrid_after!`).
 """
 function _tan_laplace_columns_jacobian!(Jw::Matrix{Float64}, laplace::CTSEMLaplaceObjective,
     U::Integer, values::AbstractVector{Float64}, Ls::Vector{<:AbstractMatrix},
     base::AbstractVector{Float64}, columns::Vector{Int}, members::Vector{Int}, mode::Int,
     cross=nothing)
-    (mode == _HYBRID_FIXED) == (cross isa _HybridFixedCross) || return false
-    _CTSEM_TANGENT_HESSIAN[] || return false
+    (mode == _HYBRID_FIXED) == (cross isa _HybridFixedCross) || throw(ArgumentError(
+        "fixed deviations' curvature takes their hook, and only theirs"))
     ctx = _tan_laplace_context(laplace, values, mode)
-    ctx === nothing && return false
     # A run-time context, so one dynamic call; everything under it is typed.
-    return _tan_laplace_columns!(Jw, ctx, laplace, Int(U), values, Ls, base, columns,
-        members, mode, cross)::Bool
+    _tan_laplace_columns!(Jw, ctx, laplace, Int(U), values, Ls, base, columns,
+        members, mode, cross)::Bool || throw(ArgumentError(_TAN_NOT_JACOBIAN))
+    return true
 end
 
 function _tan_laplace_columns!(Jw::Matrix{Float64}, ctx::TanLaplaceContext{W},
@@ -404,16 +411,13 @@ Subject `i`'s plug-in Kalman trace at the duals `xw` (the curvature's, their
 first `nl` lanes seeded), by the hand-coded forward sweep, into `trace`, as
 `_extended_kalman_filter_continuous!` at that dual writes it with the
 deviations the filter integrates off: `true` where the pass came out finite,
-`false` where not, `nothing` where the sweep does not serve and the caller
-filters at the dual.
+`false` where not.
 """
 function _tan_laplace_trace!(trace::CTSEMKalmanTrace, laplace::CTSEMLaplaceObjective,
     values::AbstractVector{Float64}, i::Int, xw::Vector, nl::Int)
-    _CTSEM_TANGENT_HESSIAN[] || return nothing
     ctx = _tan_laplace_context(laplace, values, _HYBRID_OFF)
-    ctx === nothing && return nothing
     st = _tan_laplace_trace_sweep!(trace, ctx, laplace.objective, i, xw, nl)::Int
-    st == _TAN_REFUSED && return nothing
+    st == _TAN_REFUSED && throw(ArgumentError(_TAN_NOT_JACOBIAN))
     return st == _TAN_OK
 end
 
@@ -806,17 +810,17 @@ end
 `_laplace_unit_seeded_gradient`'s sweeps by the hand-coded second order: each
 member's gradient in its shifted values (`d0`) and its derivative along the
 raw direction `d1` (`d1c`), one lane of the curvature's context; the members
-on the pool as the dual's are. `nothing` where the sweep does not serve, and
-the caller takes the dual.
+on the pool.
 """
 function _tan_laplace_seeded(laplace::CTSEMLaplaceObjective, U::Integer,
     values::Vector{Float64}, Ls::Vector{Matrix{Float64}}, u::Vector{Float64}, members,
     d1::Vector{Float64})
-    _CTSEM_TANGENT_HESSIAN[] || return nothing
-    _tan_moves_factor(laplace.objective.params.hybrid, d1, 1) && return nothing
+    _tan_moves_factor(laplace.objective.params.hybrid, d1, 1) &&
+        throw(ArgumentError(_TAN_MOVES_FACTOR))
     ctx = _tan_laplace_context(laplace, values, _HYBRID_PROFILE)
-    ctx === nothing && return nothing
-    return _tan_laplace_seeded!(ctx, laplace, Int(U), values, Ls, u, members, d1)
+    r = _tan_laplace_seeded!(ctx, laplace, Int(U), values, Ls, u, members, d1)
+    r === nothing && throw(ArgumentError(_TAN_NOT_JACOBIAN))
+    return r
 end
 
 function _tan_laplace_seeded!(ctx::TanLaplaceContext{W,DC}, laplace::CTSEMLaplaceObjective,
@@ -910,20 +914,18 @@ columns of `B` (directions in `z`), by the hand-coded sweeps, into `Gt`
 (`npar x (1 + nl)`) and `Gz` (`length(z) x (1 + nl)`), the value first: what
 the gated rule's first-order pass and the mode's cross derivatives seeded a
 dual in `z` for. In joint coordinates (`layout`) each member's filter is at the
-deviations `z` fixes, their directions among the lanes. `nothing` where the
-sweep does not serve, `false` where a member cannot be evaluated.
+deviations `z` fixes, their directions among the lanes. `false` where a
+member cannot be evaluated.
 """
 function _tan_laplace_theta_gradient!(Gt::Matrix{Float64}, Gz::Matrix{Float64},
     laplace::CTSEMLaplaceObjective, U::Integer, theta::Vector{Float64},
     Ls::Vector{Matrix{Float64}}, dL, positions, z::Vector{Float64},
     B::AbstractMatrix{Float64}, nl::Int, layout)
-    _CTSEM_TANGENT_HESSIAN[] || return nothing
     mode = layout === nothing ? _HYBRID_PROFILE : _HYBRID_FIXED
     ctx = _tan_laplace_context(laplace, theta, mode)
-    ctx === nothing && return nothing
     st = _tan_laplace_theta_gradient_!(Gt, Gz, ctx, laplace, Int(U), theta, Ls, dL,
         positions, z, B, nl, layout)::Int
-    st == _TAN_REFUSED && return nothing
+    st == _TAN_REFUSED && throw(ArgumentError(_TAN_NOT_JACOBIAN))
     return st == _TAN_OK
 end
 
@@ -999,16 +1001,16 @@ derivatives along the raw positions `active` (`Hs`, rows and columns in
 pass: what `_continuation_member_hessian!` seeds a dual for, as
 `(loglik, status)`, status 1 where the filter fails and 2 where the gradient
 reaches a population parameter in `pop`, which the continuation then
-differences. Where the filter integrates deviations, whose factor those
-parameters move, an ordinary pass's gradient decides that, and otherwise
-(`nothing`) the dual serves, as it does where the sweep does not.
+differences. Where the filter integrates deviations an ordinary pass's
+gradient decides that, and the factor's own parameters are among `active`
+(`_hybrid_filtered`): the curvature's sweeps hold the factor at its values, so
+the member's Hessian is the marginal one's, which carries its tangents, for
+that subject alone (`_tan_hessian_columns!`'s `subjects`).
 """
 function _tan_laplace_member_hessian!(Hs::AbstractMatrix{Float64}, g::Vector{Float64},
     laplace::CTSEMLaplaceObjective, i::Integer, theta::Vector{Float64},
     shifted::AbstractVector{Float64}, active::Vector{Int}, pop)
-    _CTSEM_TANGENT_HESSIAN[] || return nothing
     ctx = _tan_laplace_context(laplace, theta, _HYBRID_FULL)
-    ctx === nothing && return nothing
     if ctx.mod.nh > 0
         aws = _laplace_workspace!(laplace, Float64, length(theta))
         loglik = _laplace_subject_value_gradient!(g, laplace.objective.subject_objectives[i],
@@ -1016,18 +1018,20 @@ function _tan_laplace_member_hessian!(Hs::AbstractMatrix{Float64}, g::Vector{Flo
         isfinite(loglik) || return (loglik, 1)
         all(isfinite, g) || return (NaN, 1)
         any(a -> !iszero(g[a]), pop) && return (NaN, 2)
-        return nothing
+        H = zeros(length(shifted), length(active))
+        _tan_hessian_columns!(H, laplace.objective, collect(Float64, shifted), active,
+            nothing, _HYBRID_FULL, Val(_TAN_WIDTH); subjects=[Int(i)]) ||
+            throw(ArgumentError(_TAN_NOT_JACOBIAN))
+        all(isfinite, H) || return (NaN, 2)
+        @inbounds for c in eachindex(active), r in eachindex(active)
+            Hs[r, c] = H[active[r], c]
+        end
+        return (loglik, 0)
     end
-    return _tan_laplace_member_hessian_!(Hs, g, ctx, laplace.objective, Int(i), shifted,
+    r = _tan_laplace_member_hessian_!(Hs, g, ctx, laplace.objective, Int(i), shifted,
         active)
-end
-
-"""Whether `_tan_laplace_member_hessian!` serves `laplace`'s members at `theta`."""
-function _tan_laplace_serves_member_hessian(laplace::CTSEMLaplaceObjective,
-    theta::AbstractVector)
-    _CTSEM_TANGENT_HESSIAN[] || return false
-    ctx = _tan_laplace_context(laplace, theta, _HYBRID_FULL)
-    return ctx !== nothing && ctx.mod.nh == 0
+    r === nothing && throw(ArgumentError(_TAN_NOT_JACOBIAN))
+    return r
 end
 
 function _tan_laplace_member_hessian_!(Hs::AbstractMatrix{Float64}, g::Vector{Float64},
@@ -1198,16 +1202,11 @@ struct TanJetContext{W,J,A,B,R}
     Gs::Matrix{Float64}
 end
 
-"""Whether the hand-coded jet sweeps cover `objective`'s members, at the
-deviations' profile where the filter integrates some."""
-_tan_jet_serves(objective::CTSEMObjective) =
-    _tan_refusal(objective, _HYBRID_PROFILE) === nothing
-
 """
 The slot's hand-coded jet sweeps at jet type `J`, built at first use from
 `values` (under `_TAN_JETS`, so its quantities carry second parts), with the
 deviations the filter integrates at their profile, or (`_HYBRID_FIXED`) at
-fixed values; `nothing` where they do not serve.
+fixed values; an error for what they do not take (`_tan_check`).
 """
 function _tan_jet_context(laplace::CTSEMLaplaceObjective, values::AbstractVector,
     ::Type{J}, mode::Int=_HYBRID_PROFILE, slot::Int=_laplace_slot()) where {J}
@@ -1215,9 +1214,9 @@ function _tan_jet_context(laplace::CTSEMLaplaceObjective, values::AbstractVector
     key = (:tan_jet, length(values), J, mode)
     haskey(store, key) && return store[key]
     objective = laplace.objective
-    ctx = _tan_jet_serves(objective) ?
-        Base.ScopedValues.with(() -> _tan_jet_build(objective, values, J, mode,
-            Val(last(_CTSEM_CURVATURE_WIDTHS[]))), _TAN_JETS => true) : nothing
+    _tan_check(objective, _HYBRID_PROFILE)
+    ctx = Base.ScopedValues.with(() -> _tan_jet_build(objective, values, J, mode,
+        Val(last(_CTSEM_CURVATURE_WIDTHS[]))), _TAN_JETS => true)
     store[key] = ctx
     return ctx
 end
@@ -1256,17 +1255,17 @@ _tan_jet_width(::Type{CTSEMTraceJet{JW}}) where {JW} = JW
 `_laplace_unit_jet_gradient`'s sweeps by hand: each member's gradient at its
 shifted values (`d0`) and the sum over the first `ndirs` columns of `D` (raw
 directions) of that gradient's second directional derivatives (`dS`), the
-members on the pool as the jet's are. `nothing` where the sweeps do not serve,
-and the caller takes the jet.
+members on the pool.
 """
 function _tan_laplace_jet(laplace::CTSEMLaplaceObjective, U::Integer,
     values::Vector{Float64}, Ls::Vector{Matrix{Float64}}, u::Vector{Float64}, members,
     D::Matrix{Float64}, ndirs::Int, ::Type{J}) where {J}
-    _CTSEM_TANGENT_HESSIAN[] || return nothing
-    _tan_moves_factor(laplace.objective.params.hybrid, D, ndirs) && return nothing
+    _tan_moves_factor(laplace.objective.params.hybrid, D, ndirs) &&
+        throw(ArgumentError(_TAN_MOVES_FACTOR))
     ctx = _tan_jet_context(laplace, values, J)
-    ctx === nothing && return nothing
-    return _tan_laplace_jet!(ctx, laplace, Int(U), values, Ls, u, members, D, ndirs)
+    r = _tan_laplace_jet!(ctx, laplace, Int(U), values, Ls, u, members, D, ndirs)
+    r === nothing && throw(ArgumentError(_TAN_NOT_JACOBIAN))
+    return r
 end
 
 function _tan_laplace_jet!(ctx::TanJetContext{W,CTSEMTraceJet{JW}},
@@ -1560,22 +1559,20 @@ reads off jets in `z` (`_laplace_gated_jet_pass!`). Each member's gradient
 linearly; the prior `-z` has none. In joint coordinates (`layout`) each
 member's filter holds its deviations at `z`'s, which the directions move too
 (`_tan_jet_dfix!`), and their gradient's second parts join `Gzs`
-(`_tan_jet_fixed_s!`). `nothing` where the sweeps do not serve, and `false`
-where a member cannot be evaluated.
+(`_tan_jet_fixed_s!`). `false` where a member cannot be evaluated.
 """
 function _tan_laplace_theta_jet!(Gts::Vector{Float64}, Gzs::Vector{Float64},
     laplace::CTSEMLaplaceObjective, U::Integer, theta::Vector{Float64},
     Ls::Vector{Matrix{Float64}}, dL, positions, z::Vector{Float64},
     B::AbstractMatrix{Float64}, nd::Int, layout, ::Type{J}) where {J}
-    _CTSEM_TANGENT_HESSIAN[] || return nothing
     mode = layout === nothing ? _HYBRID_PROFILE : _HYBRID_FIXED
     ctx = _tan_jet_context(laplace, theta, J, mode)
-    ctx === nothing && return nothing
     # Integrated deviations take joint coordinates, and nothing else does.
-    (ctx.mod.nh > 0) == (layout !== nothing) || return nothing
+    (ctx.mod.nh > 0) == (layout !== nothing) || throw(ArgumentError(
+        "integrated deviations take joint coordinates, and nothing else does"))
     st = _tan_laplace_theta_jet_!(Gts, Gzs, ctx, laplace, Int(U), theta, Ls, dL,
         positions, z, B, nd, layout)::Int
-    st == _TAN_REFUSED && return nothing
+    st == _TAN_REFUSED && throw(ArgumentError(_TAN_NOT_JACOBIAN))
     return st == _TAN_OK
 end
 

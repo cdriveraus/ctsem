@@ -272,11 +272,11 @@ ctJacobian <- function(m,types=c('J0','JAx','Jtd','Jy'),simplify=TRUE ){
     # J = sapply(J,Simplify)
     
     J = gsub(" ", "", J, fixed = TRUE) #remove spaces
-    if(simplify) J=sapply(J,Simplify) else { #remove wrapping brackets only
-      J=sapply(J,function(x){
-        x <- gsub('^\\((\\d+)\\)$','\\1',x)
-        return(x)
-      })
+    # Only derivatives are simplified: an affine row is its coefficients' own
+    # text, and Simplify writes numbers to seven digits (2 pi as 6.283185).
+    derived <- row(J) %in% stateful
+    if(simplify) J[derived] <- vapply(J[derived], Simplify, character(1)) else {
+      J[derived] <- gsub('^\\((\\d+)\\)$', '\\1', J[derived]) #wrapping brackets only
     }
     
     for(statei in 1:ndim){
@@ -308,6 +308,8 @@ ctJacobian <- function(m,types=c('J0','JAx','Jtd','Jy'),simplify=TRUE ){
       }
     }
 
+    # Which rows read no state, so are their matrix's own (ctFitModelSetup).
+    attr(Jm, 'affine') <- affine
     Jout[[typei]] <- Jm
   }#end type loop
   return(Jout)

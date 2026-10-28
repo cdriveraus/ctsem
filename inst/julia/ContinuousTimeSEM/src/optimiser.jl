@@ -3666,7 +3666,7 @@ function ctsem_hessian_progress(objective, values::AbstractVector;
         progress_overwrite, progress_sink, progress_every)
     cb = _ctsem_hessian_progress(reporter)
     forward ? ctsem_hessian_forward(objective, values; chunk=chunk, progress=cb) :
-        ctsem_hessian(objective, values; chunk=chunk, progress=cb)
+        ctsem_hessian(objective, values; progress=cb)
 end
 
 export ctsem_hessian_progress

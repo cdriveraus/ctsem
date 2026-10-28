@@ -290,7 +290,9 @@ function _reverse_binary!(x̄::Vector{T}, P̄::Matrix{T}, θ̄ca,
             # `continue` did -- drops all of it, and drops it exactly where a
             # variance is collapsing, which is where an optimiser most needs
             # the gradient to point somewhere sensible.
-            score, _ = _category_score(a, record.y[j], τ, record.kinds[j])
+            Jf = zeros(T, 3, 2 + length(τ))
+            _category_floor_partials!(Jf, a, record.y[j], τ, record.kinds[j])
+            score = Jf[1, 1]
             θ̄Jy = θ̄ca.Jy
             @inbounds for i in 1:n
                 x̄[i] += score * λ[i]
@@ -304,12 +306,8 @@ function _reverse_binary!(x̄::Vector{T}, P̄::Matrix{T}, θ̄ca,
             # has no reason to have. Its cotangent rides `b`, which is
             # degenerate here.
             if !isempty(τ) && record.kinds[j] != CTSEM_OBS_COUNT
-                dτ = _ctsem_nested_gradient(
-                    t -> _category_loglikelihood(a, record.y[j], t,
-                        record.kinds[j]),
-                    collect(T, τ))
                 _extras_cotangent!(θ̄ca, row, record.asymptoterows[j], τ,
-                    record.kinds[j], i -> dτ[i])
+                    record.kinds[j], i -> Jf[1, 2 + i])
             end
             continue
         end
