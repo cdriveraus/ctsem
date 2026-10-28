@@ -2017,7 +2017,7 @@ struct _LocalQuadratic
     H::Matrix{Float64}
 end
 ContinuousTimeSEM._ctsem_local_columns(o::_LocalQuadratic, x::AbstractVector,
-    cols::AbstractVector{Int}; progress=nothing) = o.H[:, cols]
+    cols::AbstractVector{Int}, S::AbstractMatrix; progress=nothing) = o.H[:, cols]
 
 @testset "the local curvature is exact where it is cheap and the scores' elsewhere" begin
     # `CTSEMLocalCurvature`: three parameters read by 3 of 40 units take their
@@ -2030,7 +2030,12 @@ ContinuousTimeSEM._ctsem_local_columns(o::_LocalQuadratic, x::AbstractVector,
     S[4:N, C] .= 0
     cols, cost = C3._ctsem_local_select(S)
     @test cols == collect(C)
-    @test cost ≈ 1 + 2 * 9 / N
+    @test cost ≈ 9 / N
+    # Columns no unit reads twice share a point: here the three local ones are
+    # read by the same three units, so each needs its own; with readers apart,
+    # one point serves two.
+    @test length(C3._ctsem_local_colours([[1, 2], [1, 3], [2]], 3)) == 2
+    @test sort(length.(C3._ctsem_local_colours([[1, 2], [3], [4, 5]], 5))) == [3]
     precision = fill(0.5, n)
     B = C3._ctsem_score_information!(zeros(n, n), S, precision)
     Sc = S .- sum(S; dims=1) ./ N
@@ -2066,18 +2071,21 @@ ContinuousTimeSEM._ctsem_local_columns(o::_LocalQuadratic, x::AbstractVector,
     @test !C3._ctsem_local_due(lc, x)
     copyto!(store.S, S); copyto!(store.x, x); store.valid = true
     @test !C3._ctsem_local_due(lc, x)
-    lc.since = 2
+    lc.since = 1
     @test C3._ctsem_local_due(lc, x)
     @test C3._ctsem_local_build!(lc, x) ≈ Pinv
     @test (lc.builds, lc.since, lc.spent) == (1, 0, cost)
-    lc.since = 2
+    # Each rebuild waits twice as long as the last: at a cost of one
+    # gradient, two after the first build, four after the second.
+    lc.cost = 1.0
+    lc.since = 1
     @test !C3._ctsem_local_due(lc, x)
-    lc.since = 3
+    lc.since = 2
     @test C3._ctsem_local_due(lc, x)
     C3._ctsem_local_build!(lc, x)
-    lc.since = 5
+    lc.since = 3
     @test !C3._ctsem_local_due(lc, x)
-    lc.since = 6
+    lc.since = 4
     @test C3._ctsem_local_due(lc, x)
     shared = C3.CTSEMLocalCurvature(_LocalQuadratic(H), C3.CTSEMScoreStore(N, n),
         precision)

@@ -494,12 +494,12 @@ _ctsem_hessian_progress(reporter) = (reporter === nothing || !reporter.enabled) 
 The `(done, total)` callback the local curvature's columns report through
 (`CTSEMLocalCurvature`), as `_ctsem_hessian_progress` does a Hessian's, or
 `nothing` when there is nothing to report through. `done` and `total` count
-gradients, two a column.
+columns.
 """
 _ctsem_local_progress(reporter) = (reporter === nothing || !reporter.enabled) ?
     nothing : function (done::Integer, total::Integer)
         _due(reporter) && _progress_fraction(reporter,
-            @sprintf("local curvature %d of %d columns", done ÷ 2, total ÷ 2))
+            @sprintf("local curvature %d of %d columns", done, total))
         nothing
     end
 

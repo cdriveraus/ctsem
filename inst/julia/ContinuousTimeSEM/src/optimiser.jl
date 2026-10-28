@@ -2578,9 +2578,9 @@ end
 
 """
 The most a Hessian column may cost, in gradients, for the local curvature
-(`CTSEMLocalCurvature`) to take it exactly: two gradients over a tenth of the
+(`CTSEMLocalCurvature`) to take it exactly: one gradient over a tenth of the
 units, a parameter read by at most a tenth of them. So the exact columns cost
-at most a tenth of a dense Hessian, and usually far less.
+at most a twentieth of a dense Hessian, and usually far less.
 
 On the affect pilot's joint fit (697 parameters, 4031 units; its Hessian and
 scores at the estimate, `scripts/pilot-curvature-2026-10/block_local.R`) the
@@ -2591,15 +2591,15 @@ to leave a hundredth of a Newton step's gain, were:
 |---|---|---|---|
 | per-coordinate diagonal of `H` | -- | 6.1e6 | 754 |
 | the scores alone | 0 | 3.7e6 | 58 |
-| exact, read by <= 5% of units (134 columns) | 5 | 1.3e6 | 37 |
-| exact, read by <= 10% (330) | 30 | 1100 | 15 |
-| exact, read by <= 25% (551) | 100 | 260 | 5 |
+| exact, read by <= 5% of units (134 columns) | 2.6 | 1.3e6 | 37 |
+| exact, read by <= 10% (330) | 15 | 1100 | 15 |
+| exact, read by <= 25% (551) | 50 | 260 | 5 |
 
 The scores' worst directions lay 0.89 (median) on parameters read by a tenth
 of the units or fewer. The scores' model of the shared parameters is needed
 whole: its diagonal in its place left 630 products.
 """
-const _CTSEM_LOCAL_COLUMN_COST = 0.2
+const _CTSEM_LOCAL_COLUMN_COST = 0.1
 
 """
     CTSEMLocalCurvature(objective, store, precision; progress)
@@ -2629,10 +2629,9 @@ cannot difference a column over its units alone (`_ctsem_local_capable`) --
 it is never built, and L-BFGS runs as without it.
 
 `P` and `inverse` are the last build's; `columns` the cheap parameters and
-`cost` a build's gradients (one for the modes and scores the columns are
-differenced from, and two over each column's units); `spent` the gradients
-every build took, `since` the run's gradients since the last, `builds` how
-many.
+`cost` a build's gradients (one over each column's units,
+`_ctsem_local_columns`); `spent` the gradients every build took, `since` the
+run's gradients since the last, `builds` how many.
 """
 mutable struct CTSEMLocalCurvature{O}
     objective::O
@@ -2660,12 +2659,109 @@ column costs what every unit costs, and there is no local curvature."""
 _ctsem_local_capable(o::CTSEMLaplaceObjective) = !_laplace_filter_only(o)
 _ctsem_local_capable(o) = false
 
-"""The minimised objective's Hessian columns `cols` at `x`, `n` by
-`length(cols)`, each differenced over the units that read its parameter; NaN
-where a column's points did not solve."""
-_ctsem_local_columns(o::CTSEMLaplaceObjective, x::AbstractVector,
-        cols::AbstractVector{Int}; progress=nothing) =
-    -_laplace_hessian_columns(o, x, cols; progress=progress)
+"""
+    _ctsem_local_columns(o, x, cols, S; progress, step)
+
+The minimised objective's Hessian columns `cols` at `x`, `n` by
+`length(cols)`, NaN where a column's point did not solve. Each is a forward
+difference of the units' scores, from `S`, the units' scores at `x` the
+optimiser already holds (`CTSEMScoreStore`), over the units that read its
+parameter, plus the prior's column, differenced alone. Parameters whose
+readers do not overlap are moved together, one point for each such group
+(`_ctsem_local_colours`), evaluated over the union of their units as a coreset
+of the objective (`CTSEMCoreset`): a unit's change in score is then the one
+parameter's it reads. So a build costs one gradient over each column's units
+and no evaluation at `x`. Each column taken alone, centrally, over its own
+units, cost the affect pilot twice that in unit evaluations, and twice that
+again in time: a few dozen units leave most of 24 threads idle, behind the
+slowest. Units start from their modes at `x` -- the run's anchors in an
+optimisation, `o.modes` otherwise -- so each stays in its basin; the modes are
+put back after.
+"""
+function _ctsem_local_columns(o::CTSEMLaplaceObjective, x::AbstractVector,
+        cols::AbstractVector{Int}, S::AbstractMatrix; progress=nothing,
+        step::Real=1e-4)
+    n = length(x)
+    NU = size(S, 1)
+    reads = [findall(!iszero, view(S, :, j)) for j in cols]
+    colours = _ctsem_local_colours(reads, NU)
+    H = fill(NaN, n, length(cols))
+    xv = collect(Float64, x)
+    xe = _laplace_extend(o, xv)
+    gp0 = zeros(length(xe))
+    _ctsem_log_prior_gradient!(gp0, o.objective, xe)
+    base = deepcopy(o.modes)
+    Sc = zeros(NU, n)
+    done = 0
+    previous = ctsem_set_warm_start!(true)
+    try
+        for colour in colours
+            units = sort!(reduce(vcat, (reads[k] for k in colour); init=Int[]))
+            y = copy(xv)
+            for k in colour
+                j = cols[k]
+                y[j] += step * max(1.0, abs(xv[j]))
+            end
+            fill!(Sc, 0.0)
+            _laplace_restore_modes!(o, base)
+            core = _laplace_coreset(o, units,
+                [_laplace_unit_weight(o, U) for U in units])
+            out = _ctsem_try_evaluate(() -> ctsem_laplace_evaluate(o, y;
+                gradient=true, scores=Sc, coreset=core))
+            solved = out !== nothing && out.converged &&
+                all(isfinite, view(Sc, units, :))
+            for k in colour
+                j = cols[k]
+                h = y[j] - xv[j]
+                if solved
+                    col = zeros(n)
+                    for U in reads[k]
+                        col .+= view(Sc, U, :) .- view(S, U, :)
+                    end
+                    ye = copy(xe)
+                    ye[j] += h
+                    gp = zeros(length(xe))
+                    _ctsem_log_prior_gradient!(gp, o.objective, ye)
+                    col .+= view(gp, 1:n) .- view(gp0, 1:n)
+                    H[:, k] .= -col ./ h
+                end
+            end
+            done += length(colour)
+            progress === nothing || progress(done, length(cols))
+        end
+    finally
+        ctsem_set_warm_start!(previous)
+        _laplace_restore_modes!(o, base)
+    end
+    return H
+end
+
+"""
+    _ctsem_local_colours(reads, nunits)
+
+The columns grouped so that no two in a group are read by one unit -- which
+may then be moved together and told apart by their units' scores
+(`_ctsem_local_columns`) -- greedily, the most widely read first, each into the
+first group whose units it does not share. `reads[k]` holds the units reading
+column `k`; returns the groups as positions in `reads`.
+"""
+function _ctsem_local_colours(reads::AbstractVector, nunits::Integer)
+    colours = Vector{Int}[]
+    taken = BitVector[]
+    for k in sortperm(length.(reads); rev=true)
+        c = findfirst(t -> !any(U -> t[U], reads[k]), taken)
+        if c === nothing
+            push!(colours, [k])
+            t = falses(nunits)
+            t[reads[k]] .= true
+            push!(taken, t)
+        else
+            push!(colours[c], k)
+            taken[c][reads[k]] .= true
+        end
+    end
+    return colours
+end
 
 """
     _ctsem_local_select(S)
@@ -2681,8 +2777,8 @@ function _ctsem_local_select(S::AbstractMatrix)
     @inbounds for j in 1:n, U in 1:N
         iszero(S[U, j]) || (reads[j] += 1)
     end
-    cols = findall(r -> r > 0 && 2r <= _CTSEM_LOCAL_COLUMN_COST * N, reads)
-    cost = 1 + 2 * sum(view(reads, cols); init=0) / max(N, 1)
+    cols = findall(r -> r > 0 && r <= _CTSEM_LOCAL_COLUMN_COST * N, reads)
+    cost = sum(view(reads, cols); init=0) / max(N, 1)
     return cols, cost
 end
 
@@ -2713,7 +2809,8 @@ The local curvature at `x` (`CTSEMLocalCurvature`), its inverse returned, or
 usable; the gradients are counted either way.
 """
 function _ctsem_local_build!(lc::CTSEMLocalCurvature, x::AbstractVector)
-    Hc = _ctsem_local_columns(lc.objective, x, lc.columns; progress=lc.progress)
+    Hc = _ctsem_local_columns(lc.objective, x, lc.columns, lc.store.S;
+        progress=lc.progress)
     lc.spent += lc.cost
     lc.since = 0
     lc.builds += 1
