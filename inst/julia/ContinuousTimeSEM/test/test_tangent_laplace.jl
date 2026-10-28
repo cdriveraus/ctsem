@@ -219,7 +219,7 @@ end
             [1, 2], [6, 7], [8], [1.0, 1.0]), copy(_LAPLACE_LINEAR_VALUES))),
         ("two levels", () -> _fresh_twolevel()),
         ("three levels", () -> _fresh_threelevel()),
-        # Cells by row: not served, the jet's own.
+        # Cells by row: the engine's own code at the jet, a chunk at a time.
         ("drift by row", () -> _fresh_nonlinear()),
     ]
     try
@@ -253,8 +253,9 @@ end
                     end
                 end
                 served = get(laplace.workspaces[C._laplace_slot()],
-                    (:tan_jet, npar, C.CTSEMTraceJet{C._CTSEM_JET_WIDTH}), nothing) !== nothing
-                @test served == (name != "drift by row")
+                    (:tan_jet, npar, C.CTSEMTraceJet{C._CTSEM_JET_WIDTH}, C._HYBRID_PROFILE),
+                    nothing) !== nothing
+                @test served
             end
         end
     finally

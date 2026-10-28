@@ -224,6 +224,33 @@ end
 function _laplace_gated_jet_pass!(thetabar, zbar, G, z, E, chunk, sgn::Float64,
     ::Val{W}) where {W}
     D = length(z)
+    # By the hand-coded jet sweeps where they serve (`_tan_laplace_theta_jet!`).
+    if G isa _GatedThetaGradient
+        B = zeros(D, length(chunk))
+        @inbounds for (j, c) in enumerate(chunk), a in 1:D
+            B[a, j] = sqrt(abs(E.values[c])) * E.vectors[a, c]
+        end
+        Gts, Gzs = zeros(length(thetabar)), zeros(D)
+        hand = _tan_laplace_theta_jet!(Gts, Gzs, G.laplace, G.U, G.theta, G.Ls, G.dL,
+            G.positions, z, B, length(chunk), G.layout, CTSEMTraceJet{W})
+        hand === false && return false
+        if hand === true
+            @inbounds for t in eachindex(thetabar)
+                thetabar[t] -= sgn * Gts[t]
+            end
+            @inbounds for a in 1:D
+                zbar[a] -= sgn * Gzs[a]
+            end
+            return true
+        end
+    end
+    return _ctsem_barrier(_laplace_gated_jet_pass_dual!, thetabar, zbar, G, z, E, chunk,
+        sgn, Val(W))::Bool
+end
+
+function _laplace_gated_jet_pass_dual!(thetabar, zbar, G, z, E, chunk, sgn::Float64,
+    ::Val{W}) where {W}
+    D = length(z)
     zz = [CTSEMTraceJet{W}(z[a], ntuple(j -> j <= length(chunk) ?
         sqrt(abs(E.values[chunk[j]])) * E.vectors[a, chunk[j]] : 0.0,
         Val(W)), 0.0) for a in 1:D]

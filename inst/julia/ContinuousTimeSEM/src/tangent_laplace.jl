@@ -168,9 +168,9 @@ function _tan_laplace_columns!(Jw::Matrix{Float64}, ctx::TanLaplaceContext{W},
     return true
 end
 
-"""The hybrid's factor into the context's model, at `values`; `false` where
-its block has none."""
-function _tan_laplace_hybrid!(ctx::TanLaplaceContext, values::AbstractVector{Float64})
+"""The hybrid's factor into the context's model (a curvature's or a jet's),
+at `values`; `false` where its block has none."""
+function _tan_laplace_hybrid!(ctx, values::AbstractVector{Float64})
     mod = ctx.mod
     nh = mod.nh
     nh == 0 && return true
@@ -1128,42 +1128,55 @@ end
 # reverse (`_tan_into_jets!`). So the filter never runs at a jet's type.
 
 """A slot's hand-coded jet sweeps: the member's layer at the jet `J`, the sweep
-at the curvature's width as jets, and their scratch."""
-struct TanJetContext{W,J,A,B}
+at the curvature's width as jets, and their scratch; where the filter
+integrates deviations, a block's factor (`Lb`) and the factor's cotangent
+gathered over a pass's chunks, values (`Gv`), first parts (`Gd`, the jet's
+width deep) and second parts (`Gs`)."""
+struct TanJetContext{W,J,A,B,R}
     awsJ::A
     mod::TanModel{W}
     acc::TanAcc{W}
     sw::TanSweep{W}
     buf::B                      # the layer's at `J` (`_tan_layer_buffers`)
     xj::Vector{J}
+    # Cells evaluated by row (`TanRows` at `J`): the engine's own code at the
+    # jet, one chunk of the directions at a time (`_tan_jet_rows!`), on the
+    # values with that chunk's alone (`xm`), and each chunk's lanes (`Hc`).
+    rows::R
+    xm::Vector{J}
+    Hc::Matrix{Float64}
+    Lb::Matrix{Float64}
+    Gv::Matrix{Float64}
+    Gd::Array{Float64,3}
+    Gs::Matrix{Float64}
 end
 
-"""Whether the hand-coded jet sweeps cover `objective`'s members: Gaussian,
-no cell evaluated by row, no deviations the filter integrates."""
+"""Whether the hand-coded jet sweeps cover `objective`'s members, at the
+deviations' profile where the filter integrates some."""
 _tan_jet_serves(objective::CTSEMObjective) =
-    _tan_refusal(objective, _HYBRID_PROFILE) === nothing &&
-    !_tan_rows_model(objective.params) && !_hybrid_on(objective.params.hybrid)
+    _tan_refusal(objective, _HYBRID_PROFILE) === nothing
 
 """
 The slot's hand-coded jet sweeps at jet type `J`, built at first use from
-`values` (under `_TAN_JETS`, so its quantities carry second parts); `nothing`
-where they do not serve.
+`values` (under `_TAN_JETS`, so its quantities carry second parts), with the
+deviations the filter integrates at their profile, or (`_HYBRID_FIXED`) at
+fixed values; `nothing` where they do not serve.
 """
 function _tan_jet_context(laplace::CTSEMLaplaceObjective, values::AbstractVector,
-    ::Type{J}, slot::Int=_laplace_slot()) where {J}
+    ::Type{J}, mode::Int=_HYBRID_PROFILE, slot::Int=_laplace_slot()) where {J}
     store = laplace.workspaces[slot]
-    key = (:tan_jet, length(values), J)
+    key = (:tan_jet, length(values), J, mode)
     haskey(store, key) && return store[key]
     objective = laplace.objective
     ctx = _tan_jet_serves(objective) ?
-        Base.ScopedValues.with(() -> _tan_jet_build(objective, values, J,
+        Base.ScopedValues.with(() -> _tan_jet_build(objective, values, J, mode,
             Val(last(_CTSEM_CURVATURE_WIDTHS[]))), _TAN_JETS => true) : nothing
     store[key] = ctx
     return ctx
 end
 
 function _tan_jet_build(objective::CTSEMObjective, values::AbstractVector, ::Type{J},
-    ::Val{W}) where {J,W}
+    mode::Int, ::Val{W}) where {J,W}
     sp = objective.params
     nv = length(values)
     aws0 = CTSEMAdjointWorkspace(Float64, sp, nv, 0)
@@ -1171,13 +1184,27 @@ function _tan_jet_build(objective::CTSEMObjective, values::AbstractVector, ::Typ
         objective.subject_objectives[1].tipreds)
     n, m, ntd = size(m0.JAx, 1), size(m0.LAM, 1), size(m0.TDE, 2)
     na, dyn = aws0.affine_dim, collect(aws0.diffusion_state_indices)
-    mod = TanModel(n, m, W; ct=sp.continuous_time, stat=sp.stationary, na=na, dyn=dyn,
-        ntd=ntd)
+    h = sp.hybrid
+    nh = _hybrid_on(h) ? _hybrid_items(h) : 0
+    rows = _tan_rows_model(sp)
+    gmask = any(t -> t != 0, sp.manifesttype) ?
+        Bool[k > length(sp.manifesttype) || sp.manifesttype[k] == 0 for k in 1:m] : Bool[]
+    # The deviations at their profile (the closing term's logdet weight 0), or
+    # held at fixed values.
+    mod = TanModel(n, m, W; ct=sp.continuous_time, stat=sp.stationary, rows=rows,
+        gmask=gmask, na=na, dyn=dyn, ntd=ntd, hyb=h, nh=nh, wlog=0.0,
+        fixed=mode == _HYBRID_FIXED && nh > 0)
     awsJ = CTSEMAdjointWorkspace(J, sp, nv, ntd)
-    return TanJetContext(awsJ, mod, TanAcc(n, m, ntd, 0, W),
-        TanSweep(n, m, ntd, 0, W, na, length(dyn)), _tan_layer_buffers(J, awsJ, sp, nv, ntd),
-        zeros(J, nv))
+    return TanJetContext(awsJ, mod, TanAcc(n, m, ntd, nh, W),
+        TanSweep(n, m, ntd, nh, W, na, length(dyn)), _tan_layer_buffers(J, awsJ, sp, nv, ntd),
+        zeros(J, nv), rows ? TanRows(awsJ, sp, n, m, ntd, Val(W), J) : nothing, zeros(J, nv),
+        zeros(nv, W),
+        h.block && nh > 0 ? zeros(length(h.perm), length(h.perm)) : zeros(0, 0),
+        zeros(nh, nh), zeros(_tan_jet_width(J), nh, nh), zeros(nh, nh))
 end
+
+"""A trace jet's number of directions."""
+_tan_jet_width(::Type{CTSEMTraceJet{JW}}) where {JW} = JW
 
 """
 `_laplace_unit_jet_gradient`'s sweeps by hand: each member's gradient at its
@@ -1208,9 +1235,18 @@ function _tan_laplace_jet!(ctx::TanJetContext{W,CTSEMTraceJet{JW}},
     d0 = _laplace_scratch_matrix!(laplace, Float64, npar, nm, :jet_d0)
     dS = _laplace_scratch_matrix!(laplace, Float64, npar, nm, :jet_dS)
     refused = Ref(false)
+    # The hybrid block's factor's derivatives in its level's parameters, once a
+    # call: the factor's cotangent is pushed back through them.
+    h = objective.params.hybrid
+    hyb = ctx.mod.nh > 0
+    dG = hyb && h.block ? _tan_hybrid_block_dG(h, values,
+        ForwardDiff.Dual{_tan_tag(_ctsem_hessian_dual(objective)),Float64,1}) : nothing
+    hyb && h.block && dG === nothing &&
+        return (ok=false, d0=_LAPLACE_NO_MATRIX, dS=_LAPLACE_NO_MATRIX)
     one_member! = function (c::Int, m)
         local cx, shifted, xj, st
         cx = _tan_jet_context(laplace, values, J)::typeof(ctx)
+        _tan_laplace_hybrid!(cx, values) || return false
         shifted = _laplace_member_values!(
             _laplace_scratch_vector!(laplace, Float64, npar, :jet_shift),
             values, spec, Ls, u, units.offsets[U][m])
@@ -1221,7 +1257,8 @@ function _tan_laplace_jet!(ctx::TanJetContext{W,CTSEMTraceJet{JW}},
         # Under `_TAN_JETS`: what a sweep builds as it goes -- a row's scratch,
         # a prediction's record -- carries second parts too.
         st = Base.ScopedValues.with(() -> _tan_jet_member!(view(d0, :, c), view(dS, :, c),
-            cx, objective, unitmembers[m], xj, ndirs), _TAN_JETS => true)::Int
+            cx, objective, unitmembers[m], xj, ndirs, nothing, values, dG),
+            _TAN_JETS => true)::Int
         st == _TAN_REFUSED && (refused[] = true; return false)
         return st == _TAN_OK
     end
@@ -1233,15 +1270,20 @@ end
 
 """
 Subject `i`'s gradient at the jets `xj` (its values, their first `nd` first
-parts the directions) and its second parts into `g0` and `gS`: the layer once
-at the jet type, the sweep a chunk of `W` directions at a time, the first
-carrying the layer's second parts, and the cotangents gathered into jets for
-the layer's reverse. A status code; a pass whose log likelihood is not finite
-in every part is invalid, as the jet's is.
+parts the directions) and its second parts into `g0` and `gS`, and its first
+parts into `Hb`'s columns where given: the layer once at the jet type, the
+sweep a chunk of `W` directions at a time, the first carrying the layer's
+second parts, and the cotangents gathered into jets for the layer's reverse. A
+status code; a pass whose log likelihood is not finite in every part is
+invalid, as the jet's is. With deviations at fixed values, `fixed` says where
+in the joint coordinates and directions they lie (`_tan_jet_dfix!`) and takes
+their gradient's second parts (`_tan_jet_fixed_s!`).
 """
 function _tan_jet_member!(g0::AbstractVector{Float64}, gS::AbstractVector{Float64},
     ctx::TanJetContext{W,J}, objective::CTSEMObjective, i::Int, xj::Vector{J},
-    nd::Int) where {W,J}
+    nd::Int, Hb=nothing, values=nothing, dG=nothing, fixed=nothing) where {W,J}
+    ctx.rows === nothing ||
+        return _tan_jet_rows!(g0, gS, ctx, ctx.rows, objective, i, xj, nd, Hb)
     sp = objective.params
     so = objective.subject_objectives[i]
     mod, sw, acc, buf = ctx.mod, ctx.sw, ctx.acc, ctx.buf
@@ -1256,19 +1298,274 @@ function _tan_jet_member!(g0::AbstractVector{Float64}, gS::AbstractVector{Float6
         first = ch == 1
         _tan_each_layer((X, M) -> _tan_jet_lanes!(X, M, lane0, nl, first), mod, mats)
         _tan_aug_refresh!(mod)
+        fixed === nothing || _tan_jet_dfix!(mod, fixed.layout, fixed.m, fixed.z, fixed.B,
+            lane0, nl, so.data)
         _tan_sweep_begin!(sw, mod)
         sa = _tan_acc_zero!(acc)
         st = _tan_sweep!(sa, sw, mod, so.timesteps, so.data, so.tdpreds, so.max_timestep,
             1.0)
         st == _TAN_OK || return st
         all(isfinite, sw.ll) || return _TAN_INVALID
+        fixed === nothing || _tan_jet_fixed_s!(fixed.Gzs, sw.hs, mod, fixed.layout,
+            fixed.m, so.data)
         _tan_flush_frechet!(sa, sw.fw, mod, sw.sT)
         _tan_each_layer((X, C) -> _tan_into_jets!(C, X, lane0, nl, first), sa, buf.C)
+        mod.nh > 0 && _tan_jet_gather_gbar!(ctx, sa.Gbar, lane0, nl, first)
     end
     g = _tan_layer_reverse(ctx.awsJ, sp, xj, buf.C, so.tipreds, buf)
     @inbounds for t in eachindex(g)
         g0[t] = g[t].v
         gS[t] = g[t].s
+    end
+    if Hb !== nothing
+        @inbounds for j in 1:nd, t in eachindex(g)
+            Hb[t, j] = g[t].d[j]
+        end
+    end
+    mod.nh > 0 && _tan_jet_gbar!(g0, gS, Hb, ctx, objective.params.hybrid, values, dG, nd)
+    return _TAN_OK
+end
+
+"""
+`_tan_jet_member!` where cells are evaluated by row (`_tan_sweep_rows!`), on
+the engine's own code at the jet there: a chunk of the directions at a time,
+the layer run on the values with that chunk's directions alone, so that every
+jet the engine computes carries that chunk's first parts and second parts and
+nothing of another's; the gradient's second parts summed over the chunks.
+"""
+function _tan_jet_rows!(g0::AbstractVector{Float64}, gS::AbstractVector{Float64},
+    ctx::TanJetContext{W,CTSEMTraceJet{JW}}, R::TanRows, objective::CTSEMObjective,
+    i::Int, xj::Vector{CTSEMTraceJet{JW}}, nd::Int, Hb) where {W,JW}
+    J = CTSEMTraceJet{JW}
+    sp = objective.params
+    so = objective.subject_objectives[i]
+    mod, sw, acc, buf, xm, Hc = ctx.mod, ctx.sw, ctx.acc, ctx.buf, ctx.xm, ctx.Hc
+    fill!(gS, 0.0)
+    for ch in 1:max(1, cld(nd, W))
+        lane0 = (ch - 1) * W
+        nl = clamp(nd - lane0, 0, W)
+        @inbounds for t in eachindex(xj)
+            x = xj[t]
+            xm[t] = J(x.v, ntuple(j -> lane0 < j <= lane0 + nl ? x.d[j] : 0.0, Val(JW)), 0.0)
+        end
+        mats = _tan_mats_of!(buf.mats, ctx.awsJ, sp,
+            _tan_layer_values!(ctx.awsJ, sp, xm, so.tipreds))
+        _tan_each_layer((X, M) -> _tan_jet_lanes!(X, M, lane0, nl, true), mod, mats)
+        _tan_comb!(mod.DmJ, ((1.0, mod.DRIFT), (-1.0, mod.JAx)))
+        _tan_aug_refresh!(mod)
+        R.lane0 = lane0
+        fill!(Hc, 0.0)
+        st = _tan_sweep_rows!(acc, Hc, sw, mod, R, objective, i, 1.0, xm, nl; g0=g0, gS=gS)
+        st == _TAN_OK || return st
+        all(isfinite, sw.ll) || return _TAN_INVALID
+        if Hb !== nothing
+            @inbounds for a in 1:nl, t in axes(Hc, 1)
+                Hb[t, lane0 + a] = Hc[t, a]
+            end
+        end
+    end
+    return _TAN_OK
+end
+
+"""
+Member `m`'s fixed deviations from the joint coordinates `z` into the model's
+`dfix`, as `_tan_laplace_dfix_lanes!` lays them out, their tangents the rows of
+`B`'s columns `lane0 + 1` on that lay them out; their second parts zero, the
+directions being straight lines.
+"""
+function _tan_jet_dfix!(mod::TanModel{W}, layout, m::Int, z::Vector{Float64},
+    B::AbstractMatrix{Float64}, lane0::Int, nl::Int, data::AbstractMatrix) where {W}
+    h = mod.hyb
+    dfix = mod.dfix
+    fill!(dfix.v, 0.0)
+    fill!(dfix.d, 0.0)
+    q = layout.q[m]
+    off = layout.offs[m]
+    c = 0
+    @inbounds for k in 1:mod.nh
+        (h.block || _tan_hybrid_seen(h, k, data)) || continue
+        c += 1
+        c <= q || continue
+        dfix.v[k] = z[off + c]
+        for a in 1:nl
+            dfix.d[a, k] = B[off + c, lane0 + a]
+        end
+    end
+    _tan_setnz_from!(dfix)
+    _tan_setsnz!(dfix, false)
+    return nothing
+end
+
+"""
+The second parts of member `m`'s gradient in its fixed deviations, `b - (M -
+I) d` (`_tan_laplace_fixed_gradient!`), from a chunk of a jet sweep, added
+into `Gzs`'s rows that lay them out.
+"""
+function _tan_jet_fixed_s!(Gzs::Vector{Float64}, hs::TanHybState{W}, mod::TanModel{W},
+    layout, m::Int, data::AbstractMatrix) where {W}
+    h = mod.hyb
+    nh = mod.nh
+    q = layout.q[m]
+    q == 0 && return nothing
+    off = layout.offs[m]
+    M, b, dfix = hs.M, hs.b, mod.dfix
+    sb, sm, sd = _tan_snz(b), _tan_snz(M), _tan_snz(dfix)
+    cross = _tan_nz(M) && _tan_nz(dfix)
+    V = Val(W)
+    c = 0
+    @inbounds for k in 1:nh
+        (h.block || _tan_hybrid_seen(h, k, data)) || continue
+        c += 1
+        c <= q || continue
+        v = sb ? b.s[k] : 0.0
+        for k2 in 1:nh
+            sm && (v -= M.s[k, k2] * dfix.v[k2])
+            sd && (v -= (M.v[k, k2] - (k == k2 ? 1.0 : 0.0)) * dfix.s[k2])
+            cross && (v -= 2 * _tan_dot(M.d, _tan_off(M.d, V, k, k2), dfix.d,
+                W * (k2 - 1), V))
+        end
+        Gzs[off + c] += v
+    end
+    return nothing
+end
+
+"""The hybrid factor's cotangent from a chunk of a jet sweep: its values, its
+`nl` lanes as first parts `lane0 + 1` on, its second parts summed."""
+function _tan_jet_gather_gbar!(ctx::TanJetContext{W}, Gbar::TanMat{W}, lane0::Int,
+    nl::Int, first::Bool) where {W}
+    Gv, Gd, Gs = ctx.Gv, ctx.Gd, ctx.Gs
+    if first
+        copyto!(Gv, Gbar.v)
+        fill!(Gd, 0.0)
+        fill!(Gs, 0.0)
+    end
+    nh = size(Gv, 1)
+    @inbounds for f in 1:nh, c in 1:nh
+        for w in 1:nl
+            Gd[lane0 + w, c, f] = Gbar.d[w, c, f]
+        end
+        _tan_snz(Gbar) && (Gs[c, f] += Gbar.s[c, f])
+    end
+    return nothing
+end
+
+"""
+The hybrid factor's cotangent pushed onto its raw positions, as
+`_tan_laplace_gbar!` does for the curvature: through the factor's first
+derivative alone, since a jet's directions move the effects and not the
+factor -- the gradient into `g0`, its first parts into `Hb` where given, its
+second parts into `gS`.
+"""
+function _tan_jet_gbar!(g0, gS, Hb, ctx::TanJetContext, h::CTSEMHybrid,
+    values::AbstractVector{Float64}, dG, nd::Int)
+    nh = _hybrid_items(h)
+    Gv, Gd, Gs = ctx.Gv, ctx.Gd, ctx.Gs
+    if !h.block
+        @inbounds for k in 1:nh
+            idx = h.psi_index[k]
+            _, dg, _ = _tan_hybrid_own(h, values, k)
+            g0[idx] += Gv[k, k] * dg
+            gS[idx] += Gs[k, k] * dg
+            if Hb !== nothing
+                for a in 1:nd
+                    Hb[idx, a] += Gd[a, k, k] * dg
+                end
+            end
+        end
+        return nothing
+    end
+    @inbounds for j in eachindex(h.lparams)
+        a0 = 0.0
+        aS = 0.0
+        for c in 1:nh, f in 1:c
+            a0 += Gv[c, f] * dG[c, f, j]
+            aS += Gs[c, f] * dG[c, f, j]
+        end
+        g0[h.lparams[j]] += a0
+        gS[h.lparams[j]] += aS
+        if Hb !== nothing
+            for a in 1:nd
+                a1 = 0.0
+                for c in 1:nh, f in 1:c
+                    a1 += Gd[a, c, f] * dG[c, f, j]
+                end
+                Hb[h.lparams[j], a] += a1
+            end
+        end
+    end
+    return nothing
+end
+
+"""
+`_laplace_unit_theta_gradient`'s second parts along the first `nd` columns of
+`B` (directions in the unit's coordinates `z`) by the hand-coded jet sweeps,
+into `Gts` (`npar`) and `Gzs` (`length(z)`): what the gated rule's trace pass
+reads off jets in `z` (`_laplace_gated_jet_pass!`). Each member's gradient
+`g` enters the raw gradient as itself, through `L(theta) u` bilinearly with
+`u = z` (`_laplace_chol_chain!`), whose second parts are `s(g)`'s and
+`2 sum_a` of `dg_a` against the direction `B_a`, and through the loadings
+linearly; the prior `-z` has none. In joint coordinates (`layout`) each
+member's filter holds its deviations at `z`'s, which the directions move too
+(`_tan_jet_dfix!`), and their gradient's second parts join `Gzs`
+(`_tan_jet_fixed_s!`). `nothing` where the sweeps do not serve, and `false`
+where a member cannot be evaluated.
+"""
+function _tan_laplace_theta_jet!(Gts::Vector{Float64}, Gzs::Vector{Float64},
+    laplace::CTSEMLaplaceObjective, U::Integer, theta::Vector{Float64},
+    Ls::Vector{Matrix{Float64}}, dL, positions, z::Vector{Float64},
+    B::AbstractMatrix{Float64}, nd::Int, layout, ::Type{J}) where {J}
+    _CTSEM_TANGENT_HESSIAN[] || return nothing
+    mode = layout === nothing ? _HYBRID_PROFILE : _HYBRID_FIXED
+    ctx = _tan_jet_context(laplace, theta, J, mode)
+    ctx === nothing && return nothing
+    # Integrated deviations take joint coordinates, and nothing else does.
+    (ctx.mod.nh > 0) == (layout !== nothing) || return nothing
+    st = _tan_laplace_theta_jet_!(Gts, Gzs, ctx, laplace, Int(U), theta, Ls, dL,
+        positions, z, B, nd, layout)::Int
+    st == _TAN_REFUSED && return nothing
+    return st == _TAN_OK
+end
+
+function _tan_laplace_theta_jet_!(Gts::Vector{Float64}, Gzs::Vector{Float64},
+    ctx::TanJetContext{W,CTSEMTraceJet{JW}}, laplace::CTSEMLaplaceObjective, U::Int,
+    theta::Vector{Float64}, Ls::Vector{Matrix{Float64}}, dL, positions,
+    z::Vector{Float64}, B::AbstractMatrix{Float64}, nd::Int, layout) where {W,JW}
+    J = CTSEMTraceJet{JW}
+    spec, units = laplace.spec, laplace.units
+    objective = laplace.objective
+    members = units.members[U]
+    npar = length(theta)
+    d = layout === nothing ? length(z) : layout.d
+    fill!(Gts, 0.0)
+    fill!(Gzs, 0.0)
+    _tan_laplace_hybrid!(ctx, theta) || return _TAN_INVALID
+    h = objective.params.hybrid
+    dG = ctx.mod.nh > 0 && h.block ? _tan_hybrid_block_dG(h, theta,
+        ForwardDiff.Dual{_tan_tag(_ctsem_hessian_dual(objective)),Float64,1}) : nothing
+    ctx.mod.nh > 0 && h.block && dG === nothing && return _TAN_INVALID
+    uj = J[J(z[a], ntuple(j -> j <= nd ? B[a, j] : 0.0, Val(JW)), 0.0) for a in 1:d]
+    u = view(z, 1:d)
+    g0, gS, h2 = zeros(npar), zeros(npar), zeros(npar)
+    Hb = zeros(npar, JW)
+    for m in eachindex(members)
+        offsets = units.offsets[U][m]
+        xj = _laplace_member_values!(ctx.xj, theta, spec, Ls, uj, offsets)
+        fixed = layout === nothing ? nothing :
+            (layout=layout, m=m, z=z, B=B, Gzs=Gzs)
+        st = Base.ScopedValues.with(() -> _tan_jet_member!(g0, gS, ctx, objective,
+            members[m], xj, nd, Hb, theta, dG, fixed), _TAN_JETS => true)::Int
+        st == _TAN_OK || return st
+        @inbounds for t in 1:npar
+            Gts[t] += gS[t]
+        end
+        _laplace_chol_chain!(Gts, gS, spec, dL, positions, u, offsets)
+        for a in 1:nd
+            @inbounds for t in 1:npar
+                h2[t] = 2 * Hb[t, a]
+            end
+            _laplace_chol_chain!(Gts, h2, spec, dL, positions, view(B, 1:d, a), offsets)
+        end
+        _laplace_loading_chain!(Gzs, gS, spec, Ls, offsets)
     end
     return _TAN_OK
 end

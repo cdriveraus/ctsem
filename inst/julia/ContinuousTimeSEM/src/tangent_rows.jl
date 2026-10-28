@@ -99,6 +99,8 @@ mutable struct TanRows{W,DW,A,M}
     # The subject's TI predictors as its cells read them: its row, or with
     # sampled values the duals `_ctsem_tipred_fill!` builds.
     tp::Base.RefValue{AbstractVector}
+    # A jet sweep's chunk: its lanes sit at `lane0 + 1` on of the engine's jets.
+    lane0::Int
     # The matrices a group's cells give, and the matrices' cotangents as duals
     # for a flush (`_tan_mats_alloc`), and a row's observed manifests: reused,
     # where each row's or flush's own were most of what a sweep allocated.
@@ -113,7 +115,7 @@ function TanRows(awsW, sp, n::Int, m::Int, ntd::Int, ::Val{W}, ::Type{DW}) where
         zeros(DW, n), zeros(DW, n), TanSnap{W,DW}[], TanSnap{W,DW}(n, m, ntd),
         NTuple{3,Int}[], 0, TanRelinRec{W}[], 0, TanSnap{W,DW}(n, m, ntd), TanVec{W}(n),
         TanVec{W}(n), zeros(DW, n, n), zeros(DW, n, n), TanVec{W}(n),
-        Ref{AbstractVector}(Float64[]), mats, _tan_mats_alloc(DW, n, m, ntd), Int[])
+        Ref{AbstractVector}(Float64[]), 0, mats, _tan_mats_alloc(DW, n, m, ntd), Int[])
 end
 
 """`out` the duals of `X`'s values and tangents, lane `w` its `w`-th."""
@@ -123,6 +125,77 @@ function _tan_to_duals!(out::AbstractArray{DW}, X::Union{TanMat{W},TanVec{W}}) w
         out[idx] = DW(X.v[idx], ForwardDiff.Partials(ntuple(w -> X.d[o + w], Val(W))))
     end
     return out
+end
+
+"""
+The sweep's conversions to and from the engine's element type `DW`: a dual's
+partials are the lanes; a jet's (`CTSEMTraceJet`) first parts `R.lane0 + 1` on
+are, beside its second parts, the chunk of a jet sweep (`_tan_jet_member!`).
+"""
+@inline _tan_rows_to!(out::AbstractArray, X, R::TanRows) = _tan_to_duals!(out, X)
+@inline _tan_rows_to!(out::AbstractArray{CTSEMTraceJet{JW}}, X,
+    R::TanRows{W,CTSEMTraceJet{JW}}) where {W,JW} = _tan_to_jets!(out, X, R.lane0)
+@inline _tan_rows_from!(X, D::AbstractArray, nl::Int, R::TanRows) = _tan_lanes!(X, D, nl)
+@inline _tan_rows_from!(X, D::AbstractArray{CTSEMTraceJet{JW}}, nl::Int,
+    R::TanRows{W,CTSEMTraceJet{JW}}) where {W,JW} = _tan_jet_lanes!(X, D, R.lane0, nl, true)
+@inline _tan_rows_add!(X, D::AbstractArray, nl::Int, R::TanRows) = _tan_add_lanes!(X, D, nl)
+@inline _tan_rows_add!(X, D::AbstractArray{CTSEMTraceJet{JW}}, nl::Int,
+    R::TanRows{W,CTSEMTraceJet{JW}}) where {W,JW} = _tan_add_jet_lanes!(X, D, R.lane0, nl)
+
+"""A row's categorical log likelihood `ll` into the sweep's: its value, its
+lanes, and a jet's second parts."""
+function _tan_rows_ll!(sw::TanSweep{W}, ll, nl::Int, R::TanRows) where {W}
+    sw.ll[1] += ForwardDiff.value(ll)
+    p = ForwardDiff.partials(ll)
+    @inbounds for w in 1:nl
+        sw.ll[1 + w] += p[w]
+    end
+    return nothing
+end
+function _tan_rows_ll!(sw::TanSweep{W}, ll::CTSEMTraceJet, nl::Int, R::TanRows) where {W}
+    sw.ll[1] += ll.v
+    @inbounds for w in 1:nl
+        sw.ll[1 + w] += ll.d[R.lane0 + w]
+    end
+    sw.ll[2 + W] += ll.s
+    return nothing
+end
+
+"""The jets `out` from `X`: its values, its tangents as first parts `lane0 + 1`
+on (those past the jet's width dropped, zero there), its second parts."""
+function _tan_to_jets!(out::AbstractArray{CTSEMTraceJet{JW}},
+    X::Union{TanMat{W},TanVec{W}}, lane0::Int) where {W,JW}
+    son = _tan_snz(X)
+    @inbounds for idx in eachindex(X.v)
+        o = W * (idx - 1)
+        d = ntuple(j -> lane0 < j <= lane0 + W ? X.d[o + j - lane0] : 0.0, Val(JW))
+        out[idx] = CTSEMTraceJet{JW}(X.v[idx], d, son ? X.s[idx] : 0.0)
+    end
+    return out
+end
+
+"""`X += D`, the jets' values, their first parts `lane0 + 1` on as `nl`
+tangents, and their second parts."""
+function _tan_add_jet_lanes!(X::Union{TanMat{W},TanVec{W}},
+    D::AbstractArray{CTSEMTraceJet{JW}}, lane0::Int, nl::Int) where {W,JW}
+    @inbounds for i in eachindex(D)
+        di = D[i]
+        X.v[i] += di.v
+        for w in 1:nl
+            p = di.d[lane0 + w]
+            iszero(p) && continue
+            X.nz[] = true
+            X.d[w + W * (i - 1)] += p
+        end
+        if !iszero(di.s)
+            if !_tan_snz(X)
+                fill!(X.s, 0.0)
+                X.snz[] = true
+            end
+            X.s[i] += di.s
+        end
+    end
+    return X
 end
 
 """`X += D`, the duals' values and their first `nl` lanes as tangents."""
@@ -146,7 +219,7 @@ them, their lanes the tangents, and `DmJ`.
 """
 function _tan_rows_refresh!(mod::TanModel{W}, R::TanRows, sp, nl::Int) where {W}
     mw = _tan_mats_of!(R.mats, R.awsW, sp, R.allW)
-    _tan_each_layer((X, M) -> _tan_lanes!(X, M, nl), mod, mw)
+    _tan_each_layer((X, M) -> _tan_rows_from!(X, M, nl, R), mod, mw)
     _tan_comb!(mod.DmJ, ((1.0, mod.DRIFT), (-1.0, mod.JAx)))
     _tan_aug_refresh!(mod)
     return mod
@@ -173,7 +246,7 @@ function _tan_rows_group_eval!(R::TanRows{W,DW}, g::Int, indices::Vector{Int},
     x::TanVec{W}, mod::TanModel{W}, sw::TanSweep{W}, sp, so, subject::Int, t::Int,
     time::Float64, dt::Float64, nl::Int, keepR::Bool) where {W,DW}
     awsW = R.awsW
-    _tan_to_duals!(R.xW, x)
+    _tan_rows_to!(R.xW, x, R)
     pars = CTSEMPars(R.allW, sp.parameter_axis)
     ctx = CTSEMRowContext(R.xW, pars, view(so.tdpreds, :, t), R.tp[], time, dt,
         subject, t)
@@ -215,14 +288,14 @@ function _tan_rows_moment!(R::TanRows{W,DW}, x::TanVec{W}, P::TanMat{W}, mod::Ta
     snap::Int, nl::Int) where {W,DW}
     awsW = R.awsW
     ws = awsW.ekf_ws
-    _tan_to_duals!(ws.state, x)
-    _tan_to_duals!(R.PW, P)
+    _tan_rows_to!(ws.state, x, R)
+    _tan_rows_to!(R.PW, P, R)
     pars = CTSEMPars(R.allW, sp.parameter_axis)
     ctx = CTSEMRowContext(ws.state, pars, view(so.tdpreds, :, t), R.tp[], time, dt,
         subject, t)
     _ekf_moment_cells!(ws, pars, sp, R.allW, ctx, awsW.tape, R.PW) || return snap
     _tan_rows_refresh!(mod, R, sp, nl)
-    _tan_lanes!(mod.mc, view(ws.moment_c, 1:sw.n), nl)
+    _tan_rows_from!(mod.mc, view(ws.moment_c, 1:sw.n), nl, R)
     mod.momon[] = true
     _tan_sweep_begin!(sw, mod)
     R.ng += 1
@@ -250,19 +323,15 @@ function _tan_rows_categorical!(x::TanVec{W}, P::TanMat{W}, R::TanRows{W,DW},
     for k in axes(Y, 1)
         isfinite(Y[k, t]) && push!(observed, k)
     end
-    _tan_to_duals!(ws.state, x)
-    _tan_to_duals!(ws.P_predict.data, P)
+    _tan_rows_to!(ws.state, x, R)
+    _tan_rows_to!(ws.P_predict.data, P, R)
     pars = CTSEMPars(R.allW, sp.parameter_axis)
     record = _record_binary!(awsW.tape, ws, pars, Y, t, _ekf_binary_subset(ws, observed), n)
     ll = _ekf_binary_rows!(ws, pars, Y, t, observed, nothing, record)
     ll === nothing && return -1
-    _tan_from_lanes!(x, view(ws.state, 1:n), nl)
-    _tan_from_lanes!(P, ws.P_predict.data, nl)
-    sw.ll[1] += ForwardDiff.value(ll)
-    p = ForwardDiff.partials(ll)
-    @inbounds for w in 1:nl
-        sw.ll[1 + w] += p[w]
-    end
+    _tan_rows_from!(x, view(ws.state, 1:n), nl, R)
+    _tan_rows_from!(P, ws.P_predict.data, nl, R)
+    _tan_rows_ll!(sw, ll, nl, R)
     push!(R.prog, (7, awsW.tape.nbinaries, snap))
     return snap
 end
@@ -279,8 +348,8 @@ function _tan_rows_stationary!(x::TanVec{W}, P::TanMat{W}, R::TanRows{W,DW},
     awsW = R.awsW
     ws = awsW.ekf_ws
     n = sw.n
-    _tan_to_duals!(ws.state, x)
-    _tan_to_duals!(ws.P_predict.data, P)
+    _tan_rows_to!(ws.state, x, R)
+    _tan_rows_to!(ws.P_predict.data, P, R)
     pars = CTSEMPars(R.allW, sp.parameter_axis)
     if elements
         se = sp.stationary_elements
@@ -291,15 +360,10 @@ function _tan_rows_stationary!(x::TanVec{W}, P::TanMat{W}, R::TanRows{W,DW},
         _ctsem_stationary!(ws.P_predict.data, ws.state, ws, pars) || return false
         _record_stationary!(awsW.tape, ws, pars)
     end
-    _tan_from_lanes!(x, view(ws.state, 1:n), nl)
-    _tan_from_lanes!(P, ws.P_predict.data, nl)
+    _tan_rows_from!(x, view(ws.state, 1:n), nl, R)
+    _tan_rows_from!(P, ws.P_predict.data, nl, R)
     push!(R.prog, (elements ? 10 : 8, awsW.tape.nstationaries, snap))
     return true
-end
-
-"""`X`'s values and tangents set from the duals `D`, lanes past `nl` zero."""
-function _tan_from_lanes!(X::Union{TanMat{W},TanVec{W}}, D::AbstractArray, nl::Int) where {W}
-    return _tan_lanes!(X, D, nl)
 end
 
 """
@@ -308,7 +372,7 @@ covariances through their constructions at `s`'s cells (T0VAR's at the
 subject's own, which no group writes), and `acc` emptied.
 """
 function _tan_rows_flush!(R::TanRows{W,DW}, acc::TanAcc{W}, sp, s::TanSnap) where {W,DW}
-    _tan_each_layer((X, D) -> _tan_to_duals!(D, X), acc, R.C)
+    _tan_each_layer((X, D) -> _tan_rows_to!(D, X, R), acc, R.C)
     _tan_bar_of!(R.allbar, R.awsW, sp, R.C, s.rawD, s.rawR, R.allW)
     _tan_acc_zero!(acc)
     return R
@@ -324,7 +388,8 @@ cells from the layer at `xw` (`_tan_layer_fill!`), `mod` its matrices.
 """
 function _tan_sweep_rows!(acc::TanAcc{W}, Hb::Matrix{Float64}, sw::TanSweep{W},
     mod::TanModel{W}, R::TanRows{W,DW}, objective::CTSEMObjective, i::Int, w::Float64,
-    xw::Vector, nl::Int; forward::Bool=false, g0=nothing, rec=nothing) where {W,DW}
+    xw::Vector, nl::Int; forward::Bool=false, g0=nothing, gS=nothing,
+    rec=nothing) where {W,DW}
     sp = objective.params
     so = objective.subject_objectives[i]
     awsW = R.awsW
@@ -431,7 +496,7 @@ function _tan_sweep_rows!(acc::TanAcc{W}, Hb::Matrix{Float64}, sw::TanSweep{W},
             _tan_rows_flush!(R, acc, sp, R.snaps[s])
             fill!(R.xbarW, zero(DW))
             _reverse_group!(R.allbar, R.xbarW, awsW.tape.groups[idx], sp, awsW)
-            _tan_add_lanes!(xbar, R.xbarW, nl)
+            _tan_rows_add!(xbar, R.xbarW, nl, R)
             continue
         end
         if s != held
@@ -442,8 +507,8 @@ function _tan_sweep_rows!(acc::TanAcc{W}, Hb::Matrix{Float64}, sw::TanSweep{W},
             # The stationary moments or elements, by the engine's own reverse
             # at the Hessian's dual; its deferred diffusion cotangent released
             # onto the cells.
-            _tan_to_duals!(R.xbarW, xbar)
-            _tan_to_duals!(R.PbarW, Pbar)
+            _tan_rows_to!(R.xbarW, xbar, R)
+            _tan_rows_to!(R.PbarW, Pbar, R)
             tc = CTSEMPars(R.allbar, sp.parameter_axis)
             rec = awsW.tape.stationaries[idx]
             if kind == 8
@@ -454,18 +519,18 @@ function _tan_sweep_rows!(acc::TanAcc{W}, Hb::Matrix{Float64}, sw::TanSweep{W},
                     awsW.diffusion_state_indices, n, awsW, sp.stationary_elements)
             end
             _flush_diffusion!(awsW, tc, n)
-            _tan_from_lanes!(xbar, R.xbarW, nl)
-            _tan_from_lanes!(Pbar, R.PbarW, nl)
+            _tan_rows_from!(xbar, R.xbarW, nl, R)
+            _tan_rows_from!(Pbar, R.PbarW, nl, R)
             continue
         elseif kind == 7
             # A row's categorical observations, by the engine's own reverse at
             # the Hessian's dual (`_reverse_binary!`).
-            _tan_to_duals!(R.xbarW, xbar)
-            _tan_to_duals!(R.PbarW, Pbar)
+            _tan_rows_to!(R.xbarW, xbar, R)
+            _tan_rows_to!(R.PbarW, Pbar, R)
             _reverse_binary!(R.xbarW, R.PbarW, CTSEMPars(R.allbar, sp.parameter_axis),
                 awsW.tape.binaries[idx], n)
-            _tan_from_lanes!(xbar, R.xbarW, nl)
-            _tan_from_lanes!(Pbar, R.PbarW, nl)
+            _tan_rows_from!(xbar, R.xbarW, nl, R)
+            _tan_rows_from!(Pbar, R.PbarW, nl, R)
             continue
         elseif kind == 6
             # A moment-matched step's cubature: the averaged cells' cotangents
@@ -473,14 +538,14 @@ function _tan_sweep_rows!(acc::TanAcc{W}, Hb::Matrix{Float64}, sw::TanSweep{W},
             # then through the points to the mean and the covariance.
             _tan_rows_flush!(R, acc, sp, R.snaps[s])
             ms = awsW.moment
-            _tan_to_duals!(view(ms.cbar, 1:n), R.cbar)
+            _tan_rows_to!(view(ms.cbar, 1:n), R.cbar, R)
             fill!(R.xbarW, zero(DW))
             fill!(R.PbarW, zero(DW))
             _reverse_moment!(R.xbarW, R.PbarW, R.allbar,
                 CTSEMPars(R.allbar, sp.parameter_axis), awsW.tape.moments[idx], awsW.tape,
                 sp, awsW, n, sw.m)
-            _tan_add_lanes!(xbar, R.xbarW, nl)
-            _tan_add_lanes!(Pbar, R.PbarW, nl)
+            _tan_rows_add!(xbar, R.xbarW, nl, R)
+            _tan_rows_add!(Pbar, R.PbarW, nl, R)
             continue
         elseif kind == 5
             _tan_reverse_relin!(xbar, R.xpbar, Pbar, R.relins[idx], acc, fw) ||
@@ -519,16 +584,42 @@ function _tan_sweep_rows!(acc::TanAcc{W}, Hb::Matrix{Float64}, sw::TanSweep{W},
     vb = _tan_values_reverse(awsW, sp, xw, R.allbar, so.tipreds)
     # What cells reading a sampled TI predictor sent back to it.
     _ctsem_tipred_scatter!(vb, awsW, so.tipreds)
+    _tan_rows_out!(Hb, g0, gS, vb, w, nl, R)
+    return _TAN_OK
+end
+
+"""
+The raw gradient `vb` at the engine's element type, times `w`, out: its lanes
+into `Hb`'s columns, its values into `g0` where given, and a jet's second
+parts into `gS` where given (added: a jet sweep's chunks sum them).
+"""
+function _tan_rows_out!(Hb, g0, gS, vb::AbstractVector, w::Float64, nl::Int, R::TanRows)
     @inbounds for l in 1:nl, j in eachindex(vb)
         Hb[j, l] += w * ForwardDiff.partials(vb[j], l)
     end
-    # The gradient itself, where the caller asks (`g0`).
     if g0 !== nothing
         @inbounds for j in eachindex(vb)
             g0[j] = w * ForwardDiff.value(vb[j])
         end
     end
-    return _TAN_OK
+    return nothing
+end
+function _tan_rows_out!(Hb, g0, gS, vb::AbstractVector{CTSEMTraceJet{JW}}, w::Float64,
+    nl::Int, R::TanRows) where {JW}
+    @inbounds for l in 1:nl, j in eachindex(vb)
+        Hb[j, l] += w * vb[j].d[R.lane0 + l]
+    end
+    if g0 !== nothing
+        @inbounds for j in eachindex(vb)
+            g0[j] = w * vb[j].v
+        end
+    end
+    if gS !== nothing
+        @inbounds for j in eachindex(vb)
+            gS[j] += w * vb[j].s
+        end
+    end
+    return nothing
 end
 
 """
