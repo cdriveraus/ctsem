@@ -732,12 +732,21 @@
   status <- "rounds"
   rows <- list()
   B <- .ctJuliaPut(as.matrix(basis))
+  # A round reports its iterations on the correction's own line: on the affect
+  # pilot (903 parameters) one ran for an hour and said nothing until it ended.
+  # Its closing line is an update like the rest, so the line stays one line in
+  # place, as the rounds' own summaries keep it.
+  round_sink <- if (is.null(sink)) NULL else function(text, kind = "update")
+    sink(text, if (identical(kind, "done")) "update" else kind)
   # The engine reads a radius of 0 as no bound (`_continuation_inside`).
   optimise <- function(from, stationary = FALSE, tol = bar) get(
     module$ctsem_laplace_continuation_optimize(cont, .ctJuliaNumericVector(from),
       B, if (is.finite(radius)) radius else 0,
       maxiter = as.integer(control$maxiter), tol = tol,
-      stationary_only = stationary))
+      stationary_only = stationary, progress = !is.null(round_sink),
+      progress_sink = round_sink,
+      progress_overwrite = .ctProgressOverwrite(verbose),
+      progress_label = sprintf("Laplace continuation round %d", attempts)))
   row <- function(round, residual_after, keep, flagged, gain = NA_real_) data.frame(
     round = attempts, radius = radius,
     residual = as.numeric(round$start_gain), residual_after = residual_after,

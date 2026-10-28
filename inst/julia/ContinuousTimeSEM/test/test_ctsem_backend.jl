@@ -1031,7 +1031,7 @@ ContinuousTimeSEM._ctsem_jump_units(m::_EndgameMock, jump) = _ENDGAME_JUMP_NAMES
     @test out.jumped.units == [2]
     @test out.hessian === nothing
     @test jump.seen
-    @test (jump.alpha_hi, jump.alpha_lo) == (100.0, 1.0)
+    @test (jump.alpha_hi, jump.alpha_lo) == (C._CTSEM_FINISH_JUMP_RATIO, 1.0)
     @test isapprox(jump.excess, 0.3; atol=0.01)
     # Where the steps stood: on the spike, three creeping steps in at most.
     @test sqrt(sum(abs2, out.x .- x0)) < 1e-6
@@ -1062,6 +1062,36 @@ ContinuousTimeSEM._ctsem_jump_units(m::_EndgameMock, jump) = _ENDGAME_JUMP_NAMES
     @test s.jumped === nothing
     @test !quiet.seen
     @test s.x ≈ a atol=1e-4
+end
+
+@testset "the finish sees a jump whose searches start near its scale" begin
+    C = ContinuousTimeSEM
+    # The affect pilot's creep (v3_sub40ns from its 11th finish step, dev4):
+    # each step lands where a unit's inner solve keeps a better mode that any
+    # longer step loses, and each step found was shorter than the last, so
+    # here the width the mode is kept within shrinks eightfold at every step
+    # taken (where its gradient is). The trust radius carries over, so no
+    # search shrinks a hundredfold: the first accepts after one refusal, the
+    # second after two (fourfold each), the third sixteenfold below its first
+    # trial and over sixty below the model's whole step.
+    x0 = [1.0, -2.0]
+    a = x0 .+ 0.1
+    anchor = Ref(copy(x0)); width = Ref(0.05)
+    creep = x -> -0.5 * sum(abs2, x .- a) -
+        (sqrt(sum(abs2, x .- anchor[])) > width[] ? 0.3 : 0.0)
+    moved = function (x)
+        x == anchor[] || (anchor[] = copy(x); width[] /= 8)
+        return -(x .- a)
+    end
+    m = _endgame_mock(creep; g = moved, h = x -> -Matrix{Float64}(I, 2, 2))
+    jump = C.CTSEMJump()
+    out = _endgame_run(m, x0; jump=jump, probe=false)
+    @test out.jumped !== nothing
+    @test out.jumped.units == [2]
+    @test out.hessian === nothing
+    @test isapprox(jump.excess, 0.3; atol=0.01)
+    # Seen in the third search, confirmed by the third step below it.
+    @test out.steps <= 5
 end
 
 @testset "at a saddle the ascent is looked for along the negative curvature" begin
