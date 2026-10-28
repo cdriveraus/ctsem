@@ -312,6 +312,22 @@ end
             weights, Float64[], _BINARY)
         @test handled
     end
+    # The blend joins each rule smoothly to every order: just inside the band,
+    # the blended log P and its first three derivatives in s are the single
+    # rule's. The Laplace gradient reads the third. A quintic smoothstep put a
+    # difference of about 60 times the rules' gap (1e-6) into the third
+    # derivative here.
+    d1(f) = x -> ForwardDiff.derivative(f, x)
+    for (s, single) in ((lo + 0.02 * (hi - lo),
+            s -> CT._binary_quadrature_eta(promote(0.4, s)..., 1.0, nodes, weights, (),
+                _BINARY)[1]),
+        (hi - 0.02 * (hi - lo), s -> CT._binary_vquadrature(promote(0.4, s)..., false)[1]))
+        blend(s) = CT._binary_moments(promote(0.4, s)..., 1.0, nodes, weights, (),
+            _BINARY)[1]
+        for f in (identity, d1, d1 ∘ d1, d1 ∘ d1 ∘ d1)
+            @test f(blend)(s) ≈ f(single)(s) atol = 1e-9
+        end
+    end
     # At a trace jet, as the hand second order's jet sweeps run it: the
     # moments' first parts are their directional derivatives and the second
     # part the second, which nested forward mode through the values gives.
