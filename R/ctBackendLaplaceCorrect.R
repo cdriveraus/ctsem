@@ -77,9 +77,12 @@
 # since it describes what every other route does. The default is "check":
 # the shift check alone, which warns where Laplace's error moves an estimate
 # and names the corrections, rather than running one (Charles, 2026-10-27).
-# The rounds cost as much as sampling the joint posterior on nested units
-# (gN3: 244 s against 242 s, scripts/lapcheck-2026-10/rounds_cost.R), and on
-# wide units by draws far more, so which to pay for is the user's call. TRUE
+# The rounds add seconds to hours to a fit. Wherever both were measured they
+# cost no more than sampling the joint posterior -- 1/25 to 1/200 of it on
+# one level, as much on nested units (gN3: 244 s against 242 s), under a
+# quarter on wide units by draws (k5: 2.8 h against over 13;
+# scripts/lapcheck-2026-10/rounds_cost.R, sample_cost.R) -- but whether to
+# pay for either is the user's call. TRUE
 # is "quadrature", the continuation: on the known-broken cases of
 # review/OPTIM-consolidation-plan-2026-09-25.md section 10 it ended higher in
 # exact log likelihood than the step correction on 9 of 11 and level on the
@@ -538,24 +541,6 @@
   args
 }
 
-# Warns, once, when more than a quarter of the units are integrated by draws.
-# A unit on draws costs about a dozen Laplace units a gradient (2048 draws of
-# one member against the inner solves of 40 units on the round-9 fit, local),
-# so past that share each gradient is several times the Laplace route's, and
-# sampling the posterior (`optimize = FALSE`) is the honest route. Returns
-# whether it has warned.
-.ctLaplaceDrawsShareWarn <- function(units, nunits, warned) {
-  if (isTRUE(warned) || nunits < 4L || length(units) <= 0.25 * nunits) {
-    return(isTRUE(warned))
-  }
-  warning(sprintf(paste0("%d of %d units' Laplace terms jumped and are ",
-    "integrated by draws, which costs more a gradient than the Laplace route ",
-    "saves; sampling the fit (optimize = FALSE) may be the better route."),
-    length(units), nunits), call. = FALSE)
-  TRUE
-}
-
-
 # The directions a round moves in: the Laplace curvature's identified ones,
 # each scaled to one of its standard errors, so the round's L-BFGS starts from
 # that curvature and its trust region is measured in standard errors.
@@ -679,18 +664,17 @@
 
 # What a fit the check flagged and nothing corrected says, in its warning and
 # in print(): the move, and the calls that remove it -- the rounds after the
-# fit, and sampling the joint posterior, which has no Laplace error. Only the
-# sampling where correcting by draws costs more (`costly`).
-.ctLaplaceShiftMessage <- function(shift, worst, carrying, units, costly) {
+# fit, and sampling the joint posterior, which has no Laplace error -- and,
+# where `drawn` units would go on draws, that both may take hours.
+.ctLaplaceShiftMessage <- function(shift, worst, carrying, units, drawn = 0L) {
   sample <- "ctFitUncertainty(fit, 'sample', control = list(intoverpop = 'none'))"
   paste0("Laplace's error moves the estimates by up to ", format(shift, digits = 2),
     " standard errors here (", worst, "), carried by ", carrying, " of ", units,
-    " units", if (costly) " too wide for a product rule", ", and is not corrected",
-    if (costly) paste0(": correcting it by draws costs more than sampling the ",
-      "joint posterior, which ", sample, " does.") else paste0(". ",
-      "ctFitUncertainty(fit, 'hessian', control = list(likelihood = ",
-      "'quadrature')) corrects it by quadrature, and ", sample,
-      " samples the joint posterior."),
+    " units, and is not corrected. ctFitUncertainty(fit, 'hessian', control = ",
+    "list(likelihood = 'quadrature')) corrects it by quadrature, and ", sample,
+    " samples the joint posterior.",
+    if (drawn > 0L) paste0(" Both may take hours here, where ", drawn,
+      " of those units are too wide for a product rule."),
     " See fit$laplace$correction$check.")
 }
 
@@ -1153,23 +1137,27 @@
     fit$laplace$correction <- record
     return(fit)
   }
-  # A move found and not to be made here: asked only to check, or, asked to
-  # correct, past a quarter of the units on draws, where a gradient costs more
-  # than the Laplace route saves and sampling is the better route
-  # (`.ctLaplaceDrawsShareWarn()`). Only units too wide for a product rule go
-  # on draws, and the check spreads the step over most units of a wide model
-  # -- 97 to 99 of 100 at twenty effects a unit -- where the rounds on draws
-  # would run for hours. Said once, with the calls that correct it, and kept
-  # in the record for print().
-  drawn <- check$carrying[check$width[check$carrying] > as.integer(control$maxdim)]
-  costly <- !is.null(check) && length(drawn) > 0.25 * check$units
-  if (!is.null(check) && (!correct || costly)) {
+  # A move found and asked only to check: said once, with the calls that
+  # correct it, and kept in the record for print(). The carrying units too
+  # wide for a product rule go on draws, each about a dozen Laplace units a
+  # gradient (2048 draws of one member against 40 units' inner solves on the
+  # round-9 fit, local); past a quarter of all units a correction's gradient
+  # is several times a Laplace one's, and the check spreads the step over
+  # most units of a wide model (97 to 99 of 100 at twenty effects a unit), so
+  # the warning says it may take hours. So may sampling, which is no cheaper
+  # there: on 100 units of five effects, all on draws, the rounds took 2.8
+  # hours at 8 cores and sampling the joint posterior had not finished in 13
+  # (`scripts/lapcheck-2026-10/`). Asked to correct, the rounds run however
+  # many units are on draws.
+  if (!correct) {
+    checkrecord$wide <- sum(check$width[check$carrying] > as.integer(control$maxdim))
     if (!is.null(sink)) sink("", "break")
     said <- .ctLaplaceShiftMessage(check$max_shift, checkrecord$worst,
-      if (costly) length(drawn) else length(check$carrying), check$units, costly)
+      length(check$carrying), check$units,
+      drawn = if (checkrecord$wide > 0.25 * check$units) checkrecord$wide else 0L)
     warning(said, call. = FALSE)
     fit$laplace$correction <- list(method = "quadrature", status = "flagged",
-      applied = FALSE, costly = costly, message = said, laplace_estimate = est,
+      applied = FALSE, message = said, laplace_estimate = est,
       loglik_laplace = as.numeric(fit$estimate$loglik),
       units = as.integer(check$units), check = checkrecord,
       seconds = c(check = seconds(), total = seconds()))
@@ -1186,9 +1174,6 @@
   if (inherits(cont, "try-error")) return(failed(paste0(
     "the quadrature could not be evaluated (", .ctLaplaceTryReason(cont), ")")))
   start <- get(module$ctsem_laplace_continuation_info(cont))
-  .ctLaplaceDrawsShareWarn(intersect(which(as.logical(start$importance)),
-    as.integer(start$flagged)[seq_len(start$nflagged)]), as.integer(start$nunits)[1L],
-    FALSE)
   # `loglik_laplace` is the Laplace objective's log likelihood at the point the
   # correction starts from, from the placement's own Laplace terms.
   record <- list(method = "quadrature", status = "exact", applied = FALSE,

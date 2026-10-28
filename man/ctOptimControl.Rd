@@ -229,9 +229,8 @@ default.
  \code{\link{ctLaplaceCheck}} (5 nodes per random effect), on draws for a
  unit with more than five effects, and \code{fit$estimate$loglik} is the
  quadrature log likelihood (the Laplace one is kept in
- \code{loglik_laplace}); where more than a quarter of the units would need
- draws it warns and leaves the estimate, since sampling costs less there.
- Where the units nest it can cost about as much as sampling.
+ \code{loglik_laplace}). Where many units need draws it can take hours,
+ and where the units nest it can cost about as much as sampling.
  \code{'step'} takes up to three Newton steps toward the quadrature
  optimum, and leaves a unit with more than five effects on the Laplace
  term. A fit whose optimiser stopped where a unit's Laplace term jumps is

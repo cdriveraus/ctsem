@@ -175,8 +175,9 @@ test_that("the default checks and warns, and the correction it names is the fit-
   expect_identical(corr$method, "quadrature")
   expect_identical(corr$status, "flagged")
   expect_false(corr$applied)
-  expect_false(corr$costly)
   expect_identical(corr$check$status, "flagged")
+  expect_identical(corr$check$wide, 0L)
+  expect_false(grepl("hours", corr$message, fixed = TRUE))
   expect_gt(corr$check$carrying, 0L)
   expect_length(corr$check$carriers, corr$check$carrying)
   expect_identical(default$estimate$raw, fits$off$estimate$raw)
@@ -776,20 +777,24 @@ test_that("a corrected fit reports how far its objective is from the exact margi
   expect_true(is.na(.ctLaplaceIntegrationError(list(error = NA_real_))$se))
 })
 
-test_that("a climb warns once past a quarter of the units on draws", {
+test_that("draws' defaults reach the engine, and a flag names both corrections", {
   # No julia needed.
   control <- .ctLaplaceContinueDefaults
   expect_identical(control$draws_se, 0.05)
   expect_identical(control$draws_max, 16384L)
   expect_identical(control$draws_df, 4)
   expect_identical(.ctLaplaceContinuationArgs(control)$draws_df, 4)
-  # The share warning: once, past a quarter, and not on a handful of units.
-  expect_silent(expect_false(.ctLaplaceDrawsShareWarn(1:10, 40L, FALSE)))
-  expect_warning(warned <- .ctLaplaceDrawsShareWarn(1:11, 40L, FALSE),
-    "11 of 40 units.*optimize = FALSE")
-  expect_true(warned)
-  expect_silent(expect_true(.ctLaplaceDrawsShareWarn(1:20, 40L, TRUE)))
-  expect_silent(expect_false(.ctLaplaceDrawsShareWarn(1L, 2L, FALSE)))
+  # Units on draws make both routes slow, and the message says so without
+  # dropping either.
+  plain <- .ctLaplaceShiftMessage(0.63, "popsd_drift", 27L, 40L)
+  wide <- .ctLaplaceShiftMessage(2.3, "popsd_mm_Y5", 97L, 100L, drawn = 97L)
+  for (said in c(plain, wide)) {
+    expect_match(said, "likelihood = 'quadrature'", fixed = TRUE)
+    expect_match(said, "intoverpop = 'none'", fixed = TRUE)
+  }
+  expect_no_match(plain, "hours", fixed = TRUE)
+  expect_match(wide, "Both may take hours here, where 97 of those units",
+    fixed = TRUE)
 })
 
 # The gated-gaps A14 config (review/LAPLACE-gated-gaps-2026-09-24.md): 40
