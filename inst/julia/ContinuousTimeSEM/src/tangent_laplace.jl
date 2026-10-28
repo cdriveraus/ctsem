@@ -213,7 +213,13 @@ function _tan_laplace_members!(J::Matrix{Float64}, ctx::TanLaplaceContext{W,DC},
         mine = rest
         isempty(mine) && return _TAN_OK
     end
-    for start in 1:W:length(columns)
+    # Each member's pass fills `cross`, so a unit with no columns -- every
+    # effect integrated by the filter, as a one-effect block is -- still runs
+    # one pass, of no lanes, as the dual runs its padded chunk.
+    nchunks = cld(length(columns), W)
+    cross === nothing || (nchunks = max(nchunks, 1))
+    for chunk in 1:nchunks
+        start = (chunk - 1) * W + 1
         cols = start:min(start + W - 1, length(columns))
         nl = length(cols)
         @inbounds for c in 1:d
