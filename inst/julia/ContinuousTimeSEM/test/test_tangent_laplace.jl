@@ -1,11 +1,32 @@
 # The hand-coded Laplace unit curvature (`tangent_laplace.jl`) against the
 # member gradient's Jacobian at the curvature's dual, its oracle
 # (`ctsem_set_tangent_hessian!(false)`): the dense and blocked routes, one to
-# three levels, effects on the means and on the dynamics and noise, and a
-# drift evaluated by row.
+# three levels, effects on the means and on the dynamics and noise, both at
+# once by the split route, a curved mean, and a drift evaluated by row.
 
 isdefined(@__MODULE__, :_LAPLACE_LINEAR_OBJECTIVE) ||
     include(joinpath(@__DIR__, "laplace_fixtures.jl"))
+
+# The linear model with its initial mean's transform curved: an effect there
+# moves the innovations nonlinearly, so Gauss-Newton is not its curvature, and
+# the objective says so as R's would, `affine` naming only the intercept.
+const _TAN_CURVED_MEAN_OBJECTIVE = let
+    df = _laplace_test_dataframe(
+        drift=[-0.5;;], jax=[-0.5;;], cint=[0.0;;], diffusion=[0.2;;],
+        lambda=[1.0;;], jy=[1.0;;], manifestmeans=[0.0;;], manifestvar=[0.3;;],
+        t0var=[0.4;;], t0means=[0.0;;],
+        free=Dict(
+            (:T0MEANS, 1, 1) => (1, "2 * log1p_exp(param[1])"),
+            (:CINT, 1, 1) => (2, "param[2]"),
+            (:DRIFT, 1, 1) => (3, "-log1p_exp(param[3])"),
+            (:JAx, 1, 1) => (3, "-log1p_exp(param[3])"),
+            (:DIFFUSION, 1, 1) => (4, "log1p_exp(param[4])"),
+            (:MANIFESTMEANS, 1, 1) => (5, "param[5]"),
+        ),
+    )
+    subject_starts, times, data = _laplace_test_data(6, 1)
+    ctsem_objective(ekf_from_data_frame(df), subject_starts, times, data)
+end
 
 @testset "hand-coded Laplace curvature against the dual" begin
     C = ContinuousTimeSEM
@@ -33,6 +54,21 @@ isdefined(@__MODULE__, :_LAPLACE_LINEAR_OBJECTIVE) ||
     end
     cases = [
         ("means", () -> _fresh_linear()),
+        # Every effect in the means affinely: Gauss-Newton for the whole member.
+        ("means, quadratic", () -> (ctsem_laplace_objective(_LAPLACE_LINEAR_OBJECTIVE,
+            [1, 2], [6, 7], [8], [1.0, 1.0]; quadratic=true), copy(_LAPLACE_LINEAR_VALUES))),
+        # Two effects on the dynamics and noise beside three in the means: the
+        # split, one full sweep and one forward (`_tan_laplace_split_member!`).
+        ("means beside dynamics, split", () -> (ctsem_laplace_objective(
+            _LAPLACE_LINEAR_OBJECTIVE, [1, 2, 5, 3, 4], collect(6:10), collect(11:20),
+            ones(5); affine_level=[1, 1, 1], affine_effect=[1, 2, 3]),
+            vcat(_LAPLACE_LINEAR_VALUES[1:5], [-0.3, -0.15, -0.2, -0.4, -0.35],
+                0.1 .* sin.(1:10)))),
+        # An intercept beside an initial mean whose transform is curved: the
+        # objective's `affine` keeps the member off Gauss-Newton.
+        ("curved mean", () -> (ctsem_laplace_objective(_TAN_CURVED_MEAN_OBJECTIVE,
+            [1, 2], [6, 7], [8], [1.0, 1.0]; affine_level=[1], affine_effect=[2]),
+            copy(_LAPLACE_LINEAR_VALUES))),
         ("dynamics and noise", () -> (ctsem_laplace_objective(_LAPLACE_LINEAR_OBJECTIVE,
             [3, 4], [6, 7], [8], [1.0, 1.0]), copy(_LAPLACE_LINEAR_VALUES))),
         ("drift by row", () -> _fresh_nonlinear()),

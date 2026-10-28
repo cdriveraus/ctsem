@@ -42,6 +42,18 @@ struct TanLaplaceContext{W,DC,A,R,B}
     coords::Vector{Int}
     rest::Vector{Int}
     buf::B                      # the member layer's (`_tan_layer_buffers`)
+    # The split route (`_tan_laplace_split_member!`): a member's raw effect
+    # positions, whether each enters the means affinely, the order its lanes
+    # take them in, its Hessian in them (flat), a direction among them, and the
+    # member's values and a raw vector.
+    pos::Vector{Int}
+    posgn::Vector{Bool}
+    posof::Vector{Int}          # each level's effects' places in `pos`, in turn
+    order::Vector{Int}
+    Hpp::Vector{Float64}
+    vdir::Vector{Float64}
+    sv::Vector{Float64}
+    gv::Vector{Float64}
 end
 
 """
@@ -87,7 +99,8 @@ function _tan_laplace_build(objective::CTSEMObjective, values::AbstractVector, m
         TanSweep(n, m, ntd, nh, W, na, length(dyn)), zeros(nv, W), zeros(DC, nv),
         DC[], h.block && nh > 0 ? zeros(length(h.perm), length(h.perm)) : zeros(0, 0),
         !rows && nh == 0 && !mod.aug, Vector{Float64}[], Int[], Int[], Int[],
-        _tan_layer_buffers(DC, awsW, sp, nv, ntd))
+        _tan_layer_buffers(DC, awsW, sp, nv, ntd), Int[], Bool[], Int[], Int[],
+        Float64[], Float64[], zeros(nv), zeros(nv))
 end
 
 """
@@ -192,17 +205,22 @@ function _tan_laplace_members!(J::Matrix{Float64}, ctx::TanLaplaceContext{W,DC},
     d = length(base)
     uw = ctx.uw
     length(uw) == d || resize!(uw, d)
-    # The members the Gauss-Newton route serves first; the rest swept below.
+    # The members the Gauss-Newton route serves first, whole or split by their
+    # effects; the rest swept below.
     if cross === nothing && ctx.gn
         colpos = ctx.colpos
         length(colpos) < d && append!(colpos, zeros(Int, d - length(colpos)))
         @inbounds for (t, c) in enumerate(columns)
             colpos[c] = t
         end
+        # A unit's members share their effects' positions.
+        _tan_member_positions!(ctx, laplace)
         rest = empty!(ctx.rest)
         st = _TAN_OK
         for p in mine
             st = _tan_laplace_gn_member!(J, ctx, laplace, U, values, Ls, base, members[p])
+            st == _TAN_FULL && (st = _tan_laplace_split_member!(J, ctx, laplace, U, values,
+                Ls, base, members[p]))
             st == _TAN_FULL && (push!(rest, p); st = _TAN_OK)
             st == _TAN_OK || break
         end
@@ -438,16 +456,20 @@ end
 
 """
 Unit member `m`'s curvature over the columns at `ctx.colpos` into `J`, by
-Gauss-Newton where its coordinates move only the means (`_tan_gn_quadratic`):
-a row's log likelihood is `-1/2 (e'e + logdet S)` with `e = Ui' (y - Lambda x
-- mu)` affine in them and `S` fixed, so its second derivative is `-de' de`
-exactly, from the forward sweeps alone, a chunk of the member's coordinates
-each. `_TAN_FULL` where they move anything else, and the caller sweeps the
-member in full. A status code otherwise.
+Gauss-Newton where every effect its coordinates move enters the means affinely
+(`ctx.posgn`): a row's log likelihood is `-1/2 (e'e + logdet S)` with `e = Ui'
+(y - Lambda x - mu)` affine in them and `S` fixed, so its second derivative is
+`-de' de` exactly, from the forward sweeps alone, a chunk of the member's
+coordinates each. The layer's tangents show only which matrices the lanes move
+(`_tan_gn_quadratic`), not that a mean moves affinely: a nonlinear transform
+on an intercept would leave `e` curved and this short by `e'` times its
+curvature. `_TAN_FULL` where they move anything else, and the caller splits
+the member or sweeps it in full. A status code otherwise.
 """
 function _tan_laplace_gn_member!(J::Matrix{Float64}, ctx::TanLaplaceContext{W,DC},
     laplace::CTSEMLaplaceObjective, U::Int, values::AbstractVector{Float64},
     Ls::Vector{<:AbstractMatrix}, base::AbstractVector{Float64}, m::Int) where {W,DC}
+    all(ctx.posgn) || return _TAN_FULL
     spec, units = laplace.spec, laplace.units
     objective = laplace.objective
     offsets = units.offsets[U][m]
@@ -503,6 +525,203 @@ function _tan_laplace_gn_member!(J::Matrix{Float64}, ctx::TanLaplaceContext{W,DC
             end
             J[coords[a], t] -= s
         end
+    end
+    return _TAN_OK
+end
+
+"""
+Whether effect `p` of level `l` enters every unit's means affinely, as the
+quadratic test's mean effects do (R's `.ctJuliaLaplaceAffine()`): every effect
+where the objective is quadratic, those `affine` names where it is sent, none
+where neither is.
+"""
+_tan_gn_effect(laplace::CTSEMLaplaceObjective, l::Int, p::Int) =
+    laplace.quadratic || (!isempty(laplace.affine) && laplace.affine[l][p])
+
+"""
+A unit member's raw effect positions into `ctx.pos`, once each however many of
+its levels move one, whether each enters the means affinely at every level that
+moves it (`_tan_gn_effect`) into `ctx.posgn`, and each level's effects' places
+among them into `ctx.posof`, level after level. The same for every member.
+"""
+function _tan_member_positions!(ctx::TanLaplaceContext, laplace::CTSEMLaplaceObjective)
+    pos, gn, posof = empty!(ctx.pos), empty!(ctx.posgn), empty!(ctx.posof)
+    for (l, level) in enumerate(laplace.spec.levels)
+        (nrandomeffects(level) == 0 || nlatent(level) == 0) && continue
+        for p in 1:nrandomeffects(level)
+            j = level.re_index[p]
+            a = 0
+            @inbounds for b in eachindex(pos)
+                pos[b] == j && (a = b; break)
+            end
+            f = _tan_gn_effect(laplace, l, p)
+            if a == 0
+                push!(pos, j)
+                push!(gn, f)
+                a = length(pos)
+            else
+                gn[a] &= f
+            end
+            push!(posof, a)
+        end
+    end
+    return pos
+end
+
+# What a forward sweep costs as a share of a full one -- the layer, the forward,
+# its reverse and the Fréchet flush -- for the split route's choice
+# (`_tan_laplace_split_member!`): 0.27-0.3 on the curvature of two- and
+# four-latent members (dev4, `scripts/hand-tangent-2026-10/lap_profile.R`).
+const _TAN_FORWARD_SHARE = 0.3
+
+"""`xw` at the values `sv`, lane `w` seeded on the position `pos[order[lanes[w]]]`."""
+function _tan_seed_positions!(xw::Vector{DC}, sv::Vector{Float64}, pos::Vector{Int},
+    order::Vector{Int}, lanes, ::Val{W}) where {DC,W}
+    @inbounds for t in eachindex(sv)
+        xw[t] = DC(sv[t])
+    end
+    @inbounds for (w, k) in enumerate(lanes)
+        j = pos[order[k]]
+        xw[j] = DC(sv[j], ForwardDiff.Partials(ntuple(q -> q == w ? 1.0 : 0.0, Val(W))))
+    end
+    return xw
+end
+
+"""
+Unit member `m`'s curvature over the columns at `ctx.colpos` into `J` by raw
+effect lanes, where some of its effects enter the means affinely (`ctx.posgn`)
+and some do not. The others' lanes, with as many affine ones as fill their
+chunks, are swept in full, which gives every row of their columns of the
+member's Hessian in its effects; the affine ones left take their block among
+themselves by Gauss-Newton from forward sweeps, exact as in
+`_tan_laplace_gn_member!` since the innovations are affine in them jointly
+with the rest held; their rows against the full lanes are those lanes' columns
+read across. Then `J_m' H J_m` through the loadings. Taken where it costs fewer
+full sweeps, a forward one at `_TAN_FORWARD_SHARE`, than the coordinate lanes:
+a random drift beside four intercepts takes one full sweep and one forward
+where the coordinates took two full. `_TAN_FULL` otherwise, and where a
+forward sweep's lanes move more than the means, for the caller to sweep the
+member by coordinates. A status code otherwise.
+"""
+function _tan_laplace_split_member!(J::Matrix{Float64}, ctx::TanLaplaceContext{W,DC},
+    laplace::CTSEMLaplaceObjective, U::Int, values::AbstractVector{Float64},
+    Ls::Vector{<:AbstractMatrix}, base::AbstractVector{Float64}, m::Int) where {W,DC}
+    spec, units = laplace.spec, laplace.units
+    objective = laplace.objective
+    offsets = units.offsets[U][m]
+    pos, posgn, posof, colpos = ctx.pos, ctx.posgn, ctx.posof, ctx.colpos
+    npos = length(pos)
+    ndyn = count(!, posgn)
+    (ndyn == 0 || ndyn == npos) && return _TAN_FULL
+    # The asked-for columns among the member's coordinates, which the
+    # coordinate lanes would sweep.
+    cm = 0
+    for (l, level) in enumerate(spec.levels)
+        (nrandomeffects(level) == 0 || nlatent(level) == 0) && continue
+        for q in 1:nlatent(level)
+            colpos[offsets[l] + q] != 0 && (cm += 1)
+        end
+    end
+    cm == 0 && return _TAN_OK
+    nfull = cld(ndyn, W)
+    nlf = min(npos, nfull * W)
+    nfwd = cld(npos - nlf, W)
+    nfull + _TAN_FORWARD_SHARE * nfwd < cld(cm, W) || return _TAN_FULL
+    i = units.members[U][m]
+    so = objective.subject_objectives[i]
+    sp = objective.params
+    mod, sw, xw = ctx.mod, ctx.sw, ctx.xw
+    order = empty!(ctx.order)
+    for a in 1:npos
+        posgn[a] || push!(order, a)
+    end
+    for a in 1:npos
+        posgn[a] && push!(order, a)
+    end
+    length(ctx.Hpp) < npos^2 && resize!(ctx.Hpp, npos^2)
+    H = ctx.Hpp
+    sv = _laplace_member_values!(ctx.sv, values, spec, Ls, base, offsets)
+    # The full lanes: every row of their columns.
+    for ch in 1:nfull
+        lanes = ((ch - 1) * W + 1):min(ch * W, nlf)
+        _tan_seed_positions!(xw, sv, pos, order, lanes, Val(W))
+        st = _tan_laplace_member!(ctx, objective, i, xw, length(lanes))
+        st == _TAN_OK || return st
+        @inbounds for (w, k) in enumerate(lanes), r in 1:npos
+            H[r + (order[k] - 1) * npos] = ctx.Hb[pos[r], w]
+        end
+    end
+    # The affine ones left, among themselves by Gauss-Newton.
+    ng = npos - nlf
+    if ng > 0
+        while length(ctx.gnE) < nfwd
+            push!(ctx.gnE, Float64[])
+        end
+        for ch in 1:nfwd
+            lanes = (nlf + (ch - 1) * W + 1):min(nlf + ch * W, npos)
+            _tan_seed_positions!(xw, sv, pos, order, lanes, Val(W))
+            _tan_layer_fill!(mod, ctx.awsW, sp, xw, length(lanes), so.tipreds, ctx.buf) ||
+                return _TAN_REFUSED
+            _tan_gn_quadratic(mod) || return _TAN_FULL
+            rec = TanGNRecorder(empty!(ctx.gnE[ch]))
+            _tan_sweep_begin!(sw, mod)
+            st = _tan_sweep!(ctx.acc, sw, mod, so.timesteps, so.data, so.tdpreds,
+                so.max_timestep, 1.0; forward=true, rec=rec)
+            st == _TAN_OK || return st
+        end
+        nr = length(ctx.gnE[1]) ÷ W
+        @inbounds for b in 1:ng
+            Eb = ctx.gnE[(b - 1) ÷ W + 1]
+            lb = (b - 1) % W + 1
+            cb = order[nlf + b]
+            for a in 1:ng
+                Ea = ctx.gnE[(a - 1) ÷ W + 1]
+                la = (a - 1) % W + 1
+                s = 0.0
+                for r in 0:(nr - 1)
+                    s += Ea[r * W + la] * Eb[r * W + lb]
+                end
+                H[order[nlf + a] + (cb - 1) * npos] = -s
+            end
+            for k in 1:nlf
+                ra = order[k]
+                H[ra + (cb - 1) * npos] = H[cb + (ra - 1) * npos]
+            end
+        end
+    end
+    # `J_m' H J_m` on the asked-for columns: each coordinate's raw direction
+    # through H, and back through the loadings.
+    vdir, gv = ctx.vdir, ctx.gv
+    length(vdir) < npos && resize!(vdir, npos)
+    at = 0
+    for (l, level) in enumerate(spec.levels)
+        k, r = nrandomeffects(level), nlatent(level)
+        (k == 0 || r == 0) && continue
+        L = Ls[l]
+        for q in 1:r
+            t = colpos[offsets[l] + q]
+            t == 0 && continue
+            @inbounds begin
+                for a in 1:npos
+                    vdir[a] = 0.0
+                end
+                for p in 1:k
+                    vdir[posof[at + p]] += L[p, q]
+                end
+                for a in 1:npos
+                    s = 0.0
+                    for b in 1:npos
+                        s += H[a + (b - 1) * npos] * vdir[b]
+                    end
+                    gv[pos[a]] = s
+                end
+            end
+            _laplace_loading_chain!(view(J, :, t), gv, spec, Ls, offsets)
+            @inbounds for a in 1:npos
+                gv[pos[a]] = 0.0
+            end
+        end
+        at += k
     end
     return _TAN_OK
 end
