@@ -577,9 +577,11 @@ end
 
 # What a forward sweep costs as a share of a full one -- the layer, the forward,
 # its reverse and the Fréchet flush -- for the split route's choice
-# (`_tan_laplace_split_member!`): 0.27-0.3 on the curvature of two- and
-# four-latent members (dev4, `scripts/hand-tangent-2026-10/lap_profile.R`).
-const _TAN_FORWARD_SHARE = 0.3
+# (`_tan_laplace_split_member!`): about a third, from the stages' shares of the
+# curvature of two- and four-latent members (dev4,
+# `scripts/hand-tangent-2026-10/lap_profile.R`). The choice is between two exact
+# routes, so this sets only which is taken where they cost about the same.
+const _TAN_FORWARD_SHARE = 0.35
 
 """`xw` at the values `sv`, lane `w` seeded on the position `pos[order[lanes[w]]]`."""
 function _tan_seed_positions!(xw::Vector{DC}, sv::Vector{Float64}, pos::Vector{Int},
