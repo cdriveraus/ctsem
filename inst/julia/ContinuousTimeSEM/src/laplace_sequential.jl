@@ -166,10 +166,9 @@ function _laplace_sequential_unit!(out, laplace::CTSEMLaplaceObjective, U::Integ
     npar = length(theta)
     W = ForwardDiff.npartials(S)
     aws = _laplace_workspace!(laplace, Float64, npar)
-    ws = _init_continuous_ekf_workspace(S, sp)
-    ws.hyb.mode = _HYBRID_OFF
-    n = ws.state_dim
-    m = ws.manifest_dim
+    ews = _laplace_workspace!(laplace, Float64, length(theta)).ekf_ws
+    n = ews.state_dim
+    m = ews.manifest_dim
     nall = length(sp.mutables)
     prevterm = 0.0
     try
@@ -254,7 +253,7 @@ function _laplace_sequential_unit!(out, laplace::CTSEMLaplaceObjective, U::Integ
                 trace = CTSEMKalmanTrace(S, n, m, tt, 1, nall)
                 trace.offset = 0
                 trace.current_subject = 1
-                _laplace_sequential_pass!(trace, laplace, theta, i, so, sp, ws, x,
+                _laplace_sequential_pass!(trace, laplace, theta, i, x,
                     clamp(D - (pass - 1) * W, 0, W)) || break
                 push!(traces, trace)
             end
@@ -301,10 +300,9 @@ function _laplace_sequential_filtered!(out, laplace::CTSEMLaplaceObjective, U::I
     D = _hybrid_on(hyb) ? _hybrid_items(hyb) : 0
     B = D > 0 ? _hybrid_dev_map(hyb, lv, theta) : zeros(Float64, nrandomeffects(lv), 0)
     items = collect(1:D)
-    ws = _init_continuous_ekf_workspace(S, sp)
-    ws.hyb.mode = _HYBRID_OFF
-    n = ws.state_dim
-    m = ws.manifest_dim
+    ews = _laplace_workspace!(laplace, Float64, length(theta)).ekf_ws
+    n = ews.state_dim
+    m = ews.manifest_dim
     W = ForwardDiff.npartials(S)
     traces = CTSEMKalmanTrace{S}[]
     for pass in 1:max(cld(D, W), 1)
@@ -319,7 +317,7 @@ function _laplace_sequential_filtered!(out, laplace::CTSEMLaplaceObjective, U::I
         trace = CTSEMKalmanTrace(S, n, m, T, 1, length(sp.mutables))
         trace.offset = 0
         trace.current_subject = 1
-        _laplace_sequential_pass!(trace, laplace, theta, i, so, sp, ws, x,
+        _laplace_sequential_pass!(trace, laplace, theta, i, x,
             clamp(D - (pass - 1) * W, 0, W)) || return nothing
         push!(traces, trace)
     end
@@ -388,24 +386,12 @@ end
 
 """
 One seeded plug-in pass of subject `i` at the duals `x` (`nl` lanes seeded)
-into `trace`: by the hand-coded forward sweep where it serves
-(`_tan_laplace_trace!`), otherwise the filter at the dual on `ws`, behind a
-barrier so that the image does not compile the filter at that dual for a
-fallback no workload model takes. Whether it came out finite.
+into `trace`, by the hand-coded forward sweep (`_tan_laplace_trace!`). Whether
+it came out finite.
 """
-function _laplace_sequential_pass!(trace::CTSEMKalmanTrace, laplace::CTSEMLaplaceObjective,
-    theta::Vector{Float64}, i::Integer, so, sp, ws, x::Vector, nl::Integer)
-    hand = _tan_laplace_trace!(trace, laplace, theta, Int(i), x, Int(nl))
-    hand === nothing || return hand
-    return _ctsem_barrier(_laplace_sequential_dual_pass!, trace, so, sp, ws, x, i)::Bool
-end
-
-function _laplace_sequential_dual_pass!(trace, so, sp, ws, x, i)
-    ll = _extended_kalman_filter_continuous!(ws, x, so.data, collect(so.timesteps),
-        sp, so.tdpreds, _ctsem_tipred_vector(so.tipreds, x), i, so.max_timestep, trace,
-        nothing, nothing, so.relin)
-    return _laplace_finite(ll)
-end
+_laplace_sequential_pass!(trace::CTSEMKalmanTrace, laplace::CTSEMLaplaceObjective,
+    theta::Vector{Float64}, i::Integer, x::Vector, nl::Integer) =
+    _tan_laplace_trace!(trace, laplace, theta, Int(i), x, Int(nl))
 
 """
     _laplace_sequential_effects!(out, offset, t, T, L, B, items, z0, Sigma, d, D)

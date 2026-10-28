@@ -118,9 +118,10 @@ function _laplace_unit_theta_gradient(laplace::CTSEMLaplaceObjective, U::Integer
 end
 
 """
-`_laplace_unit_theta_gradient` for one unit, at its point `zz`: what the gated
-rule's passes call. A type rather than a closure, so a pass along a direction
-can take the hand-coded sweeps (`_tan_laplace_theta_gradient!`).
+The gated rule's unit, its point's parameters and layout, which its passes
+hand the hand-coded sweeps (`_tan_laplace_theta_gradient!`,
+`_tan_laplace_theta_jet!`). Called, `_laplace_unit_theta_gradient` at `zz`:
+what the tests' oracle differentiates (test/dual_oracles.jl).
 """
 struct _GatedThetaGradient{L,DL,P,Y}
     laplace::L
@@ -136,32 +137,17 @@ end
 
 """
 `G`'s gradients and their derivatives along `beta`, `(theta, z)` as
-`G(z + eps beta)`'s partials: by the hand-coded sweeps where they serve,
-otherwise a pass at the seed's dual. `nothing` if a member cannot be
-evaluated.
+`G(z + eps beta)`'s partials, by the hand-coded sweeps. `nothing` if a member
+cannot be evaluated.
 """
-function _gated_directional(G, z::Vector{Float64}, beta::Vector{Float64})
-    if G isa _GatedThetaGradient
-        npar, D = length(G.theta), length(z)
-        Gt = zeros(Float64, npar, 2)
-        Gz = zeros(Float64, D, 2)
-        hand = _tan_laplace_theta_gradient!(Gt, Gz, G.laplace, G.U, G.theta, G.Ls, G.dL,
-            G.positions, z, reshape(beta, D, 1), 1, G.layout)
-        hand === false && return nothing
-        hand === true && return (theta=Gt[:, 2], z=Gz[:, 2])
-    end
-    # The dual behind a barrier, as `_laplace_unit_seeded_gradient`'s.
-    return _ctsem_barrier(_gated_directional_dual, G, z,
-        beta)::Union{Nothing,NamedTuple{(:theta, :z),Tuple{Vector{Float64},Vector{Float64}}}}
-end
-
-function _gated_directional_dual(G, z::Vector{Float64}, beta::Vector{Float64})
-    seed = ForwardDiff.Dual{_LaplaceSeedInner}(0.0, 1.0)
-    zz = [z[a] + seed * beta[a] for a in eachindex(z)]
-    r = G(zz)
-    r === nothing && return nothing
-    return (theta=[ForwardDiff.partials(x)[1] for x in r.theta],
-        z=[ForwardDiff.partials(x)[1] for x in r.z])
+function _gated_directional(G::_GatedThetaGradient, z::Vector{Float64},
+    beta::Vector{Float64})
+    npar, D = length(G.theta), length(z)
+    Gt = zeros(Float64, npar, 2)
+    Gz = zeros(Float64, D, 2)
+    _tan_laplace_theta_gradient!(Gt, Gz, G.laplace, G.U, G.theta, G.Ls, G.dL,
+        G.positions, z, reshape(beta, D, 1), 1, G.layout) || return nothing
+    return (theta=Gt[:, 2], z=Gz[:, 2])
 end
 
 """
@@ -221,46 +207,22 @@ end
 
 # One jet pass of `_laplace_gated_vjp!`'s trace term along `chunk`'s
 # eigendirections, at width `W`: `false` where the pass fails.
-function _laplace_gated_jet_pass!(thetabar, zbar, G, z, E, chunk, sgn::Float64,
-    ::Val{W}) where {W}
+function _laplace_gated_jet_pass!(thetabar, zbar, G::_GatedThetaGradient, z, E, chunk,
+    sgn::Float64, ::Val{W}) where {W}
     D = length(z)
-    # By the hand-coded jet sweeps where they serve (`_tan_laplace_theta_jet!`).
-    if G isa _GatedThetaGradient
-        B = zeros(D, length(chunk))
-        @inbounds for (j, c) in enumerate(chunk), a in 1:D
-            B[a, j] = sqrt(abs(E.values[c])) * E.vectors[a, c]
-        end
-        Gts, Gzs = zeros(length(thetabar)), zeros(D)
-        hand = _tan_laplace_theta_jet!(Gts, Gzs, G.laplace, G.U, G.theta, G.Ls, G.dL,
-            G.positions, z, B, length(chunk), G.layout, CTSEMTraceJet{W})
-        hand === false && return false
-        if hand === true
-            @inbounds for t in eachindex(thetabar)
-                thetabar[t] -= sgn * Gts[t]
-            end
-            @inbounds for a in 1:D
-                zbar[a] -= sgn * Gzs[a]
-            end
-            return true
-        end
+    # By the hand-coded jet sweeps (`_tan_laplace_theta_jet!`).
+    B = zeros(D, length(chunk))
+    @inbounds for (j, c) in enumerate(chunk), a in 1:D
+        B[a, j] = sqrt(abs(E.values[c])) * E.vectors[a, c]
     end
-    return _ctsem_barrier(_laplace_gated_jet_pass_dual!, thetabar, zbar, G, z, E, chunk,
-        sgn, Val(W))::Bool
-end
-
-function _laplace_gated_jet_pass_dual!(thetabar, zbar, G, z, E, chunk, sgn::Float64,
-    ::Val{W}) where {W}
-    D = length(z)
-    zz = [CTSEMTraceJet{W}(z[a], ntuple(j -> j <= length(chunk) ?
-        sqrt(abs(E.values[chunk[j]])) * E.vectors[a, chunk[j]] : 0.0,
-        Val(W)), 0.0) for a in 1:D]
-    r = G(zz)
-    r === nothing && return false
+    Gts, Gzs = zeros(length(thetabar)), zeros(D)
+    _tan_laplace_theta_jet!(Gts, Gzs, G.laplace, G.U, G.theta, G.Ls, G.dL,
+        G.positions, z, B, length(chunk), G.layout, CTSEMTraceJet{W}) || return false
     @inbounds for t in eachindex(thetabar)
-        thetabar[t] -= sgn * r.theta[t].s
+        thetabar[t] -= sgn * Gts[t]
     end
     @inbounds for a in 1:D
-        zbar[a] -= sgn * r.z[a].s
+        zbar[a] -= sgn * Gzs[a]
     end
     return true
 end

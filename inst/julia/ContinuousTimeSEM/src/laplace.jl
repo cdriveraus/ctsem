@@ -438,7 +438,7 @@ struct CTSEMLaplaceUnits
     # The blocks of `u`, and which members each one belongs to. A subject block
     # belongs to one member; a study block to every member of the study. This
     # is what makes the curvature sparse and, more importantly, what makes
-    # *forming* it cheap -- see `_laplace_unit_hessian`.
+    # *forming* it cheap -- see `_laplace_unit_curvature`.
     #
     # Each entry is `(offset, size, member positions)`, positions indexing into
     # `members[U]`.
@@ -1666,7 +1666,7 @@ function _laplace_partition(f, laplace::CTSEMLaplaceObjective, n::Int)
     # Sizing the store is this function's job, not its callers'.
     #
     # It used to be "called at the top of every entry point", and three entry
-    # points did not: `_laplace_unit_hessian`, `ctsem_sample_start` and
+    # points did not: the dense unit Hessian, `ctsem_sample_start` and
     # `ctsem_sample_metric`, each of which is reached on an objective this
     # session may never have evaluated -- `ctFitUncertainty(fit, uncertainty =
     # 'sample')` on a reloaded fit builds a fresh one. The band lives on the
@@ -3046,60 +3046,6 @@ function ctsem_set_block_threshold!(n::Integer)
 end
 
 """
-    _laplace_unit_hessian(laplace, U, values, Ls, u)
-
-`d2 g_U / du du` -- the unit's inner curvature.
-
-Formed one *block* of `u` at a time rather than one column at a time, and that
-distinction is the difference between quadratic and linear cost in study size.
-
-Column block `b` of the curvature is `d(dg/du)/du_b`, and a member that does
-not sit under `b` has no dependence on `u_b` at all -- so its contribution is
-structurally zero and it need not be filtered at all. Seeding a subject block
-therefore costs one subject sweep, not one per member of the study. Summed over
-blocks the cost is `n * sum_of_k_over_levels`, against `(k_study + n*k_subject)
-* n` for differentiating the whole gradient at once. On a 40-subject study with
-two effects at each level that is 160 sweeps rather than 3280.
-
-The subtracted identity is the `-u'u/2` term, applied once here rather than
-inside each block.
-
-Nothing in the fitting path calls this any more: the production route is
-`_laplace_unit_curvature`, which produces the same curvature negated and in
-block form without materializing a dense matrix. It is kept because it computes
-that quantity by a route knowing nothing about the block structure, which is
-what makes it a usable reference for the tests that check the block assembly
-and the block factorization.
-"""
-function _laplace_unit_hessian(laplace::CTSEMLaplaceObjective, U::Integer,
-    values::AbstractVector{T}, Ls::Vector{<:AbstractMatrix}, u::AbstractVector{T}
-    ) where {T}
-    # An entry point in its own right: tests and the dense curvature route both
-    # reach it directly, and it divides inside. `_laplace_ensure_pool!` is a
-    # no-op for a task that already holds a band, so calling it here is right
-    # whether this is the outermost call or one worker of an outer region.
-    #
-    # The `slot::Integer=1` that used to sit here was doing nothing at all --
-    # the body takes the ambient slot -- and an argument accepted and ignored is
-    # worse than no argument, because a caller reads it as a promise.
-    _laplace_ensure_pool!(laplace)
-    d = length(u)
-    d == 0 && return zeros(T, 0, 0)
-    inner_of = function (uu)
-        S = eltype(uu)
-        ws = _laplace_workspace!(laplace, S, length(values))
-        vs = _laplace_scratch_vector!(laplace, S, length(values), :curv_vs)
-        copyto!(vs, values)
-        Lss = _laplace_scratch_levels!(laplace, S, Ls, :curv_levels)
-        return _laplace_unit_objective_gradient(laplace, U, vs, Lss, uu, ws,
-            _laplace_scratch_vector!(laplace, S, length(uu), :curv_inner)
-            ).gradient
-    end
-    H = _ctsem_jacobian(inner_of, collect(u), _CTSEM_CURVATURE_WIDTHS[])
-    return (H .+ transpose(H)) ./ 2
-end
-
-"""
     _laplace_unit_curvature(laplace, U, values, Ls, u)
 
 `-d2g/du du` for a unit, in block form, assembled without ever building the
@@ -3384,15 +3330,18 @@ function _laplace_columns_jacobian(laplace::CTSEMLaplaceObjective, U::Integer,
     d = length(base)
     width = _ctsem_dual_width(n, _CTSEM_CURVATURE_WIDTHS[])
     nx = max(n, width)
-    # By the hand-coded second order where it covers the model
-    # (`tangent_laplace.jl`), the gated floor's cross curvature read off the
-    # same sweeps; the other hooks and element types take the dual.
-    if (hook === nothing || hook isa CTSEMHybridCross{Float64} ||
-            (hook isa _HybridFixedCross && hook.cross isa CTSEMHybridCross{Float64})) &&
-            T === Float64 && eltype(values) === Float64
+    # By the hand-coded second order (`tangent_laplace.jl`), the gated floor's
+    # cross curvature read off the same sweeps; at another element type -- the
+    # nested-gradient oracle's -- forward mode over the members' gradient.
+    if T === Float64 && eltype(values) === Float64
+        (hook === nothing || hook isa CTSEMHybridCross{Float64} ||
+            (hook isa _HybridFixedCross && hook.cross isa CTSEMHybridCross{Float64})) ||
+            throw(ArgumentError(string("a curvature hook the sweeps do not read: ",
+                typeof(hook))))
         Jh = _laplace_scratch_matrix!(laplace, Float64, d, nx, :curv_jac)
         _tan_laplace_columns_jacobian!(Jh, laplace, U, values, Ls, base, columns, members,
-            mode, hook) && return Jh
+            mode, hook)
+        return Jh
     end
     block_of = _LaplaceColumnsGradient(laplace, Int(U), values, Ls, base, columns,
         members, mode, hook)
@@ -5186,14 +5135,14 @@ solve's and the primal's results each came back boxed through one.
 """
 function _laplace_store_unit_primal!(laplace::CTSEMLaplaceObjective, U::Integer,
     theta::Vector{Float64}, Ls, aws, primal_curvature, primal_matrices,
-    primal_gated, unit_loglik, chunk_ok, chunk_bad)
+    primal_gated, unit_loglik, chunk_ok, chunk_bad; retain::Bool=_LAPLACE_WARM_START[])
     b0 = _laplace_mark()
     # A unit with no coordinate has no mode to solve: the primal is its value.
     given = if laplace.units.dims[U] == 0
         _laplace_record_empty_mode!(laplace, U)
         nothing
     else
-        _laplace_solve_unit_mode!(laplace, U, theta, Ls, aws).final
+        _laplace_solve_unit_mode!(laplace, U, theta, Ls, aws; retain=retain).final
     end
     _laplace_charge!(_LAPLACE_BYTES_MODE, b0)
     primal = _laplace_unit_primal(laplace, U, theta, Ls, laplace.modes[U], aws;
@@ -5451,58 +5400,8 @@ function _laplace_unit_seeded_gradient_(laplace::CTSEMLaplaceObjective, U::Integ
     values::Vector{Float64}, Ls::Vector{Matrix{Float64}}, u::Vector{Float64},
     members, d1::Vector{Float64})
 
-    # By the hand-coded second order where it covers the model
-    # (`_tan_laplace_seeded`); the dual behind a barrier, so that the image does
-    # not compile the filter at the seed's dual for a fallback.
-    hand = _tan_laplace_seeded(laplace, U, values, Ls, u, members, d1)
-    hand === nothing || return hand
-    return _ctsem_barrier(_laplace_unit_seeded_gradient_dual, laplace, U, values, Ls, u,
-        members, d1)::typeof((ok=true, d0=_LAPLACE_NO_MATRIX, d1c=_LAPLACE_NO_MATRIX))
-end
-
-function _laplace_unit_seeded_gradient_dual(laplace::CTSEMLaplaceObjective, U::Integer,
-    values::Vector{Float64}, Ls::Vector{Matrix{Float64}}, u::Vector{Float64},
-    members, d1::Vector{Float64})
-    spec = laplace.spec
-    units = laplace.units
-    unitmembers = units.members[U]
-    npar = length(values)
-    nm = length(members)
-    failure = (ok=false, d0=_LAPLACE_NO_MATRIX, d1c=_LAPLACE_NO_MATRIX)
-
-    # Not zeroed, and not freshly allocated. Every column is written by the
-    # member that owns it before anything reads one, and a member that fails
-    # abandons the whole sweep -- so there is no path that reads an entry this
-    # call did not write. The one caller that *keeps* a result past the next
-    # sweep copies it; see `levelsweeps` below, which is the reason this is
-    # spelled out rather than left to be noticed.
-    d0 = _laplace_scratch_matrix!(laplace, Float64, npar, nm, :sweep_d0)
-    d1c = _laplace_scratch_matrix!(laplace, Float64, npar, nm, :sweep_d1c)
-
-    seed = ForwardDiff.Dual{_LaplaceSeedInner}(0.0, 1.0)
-    S1 = typeof(seed)
-    one_member! = function (c::Int, m)
-        local aws, gradient, x, shifted, t
-        aws = _laplace_workspace!(laplace, S1, npar)
-        gradient = _laplace_scratch_vector!(laplace, S1, npar, :sweep_grad)
-        x = _laplace_scratch_vector!(laplace, S1, npar, :sweep_x)
-        shifted = _laplace_member_values!(
-            _laplace_scratch_vector!(laplace, Float64, npar, :sweep_shift),
-            values, spec, Ls, u, units.offsets[U][m])
-        @inbounds for t in 1:npar
-            x[t] = shifted[t] + seed * d1[t]
-        end
-        _laplace_member_pass_finite!(gradient,
-            laplace.objective.subject_objectives[unitmembers[m]], aws, x) ||
-            return false
-        @inbounds for t in 1:npar
-            d0[t, c] = ForwardDiff.value(gradient[t])
-            d1c[t, c] = ForwardDiff.partials(gradient[t])[1]
-        end
-        return true
-    end
-    _laplace_run_members(one_member!, laplace, members) || return failure
-    return (ok=true, d0=d0, d1c=d1c)
+    # By the hand-coded second order (`_tan_laplace_seeded`).
+    return _tan_laplace_seeded(laplace, U, values, Ls, u, members, d1)
 end
 
 """
@@ -5569,51 +5468,9 @@ function _laplace_unit_jet_gradient(laplace::CTSEMLaplaceObjective, U::Integer,
     values::Vector{Float64}, Ls::Vector{Matrix{Float64}}, u::Vector{Float64},
     members, D::Matrix{Float64}, ndirs::Int, ::Val{W}) where {W}
     ndirs <= W || throw(ArgumentError("$(ndirs) directions for a jet of width $(W)"))
-    # By the hand-coded sweeps with second parts where they cover the model
-    # (`_tan_laplace_jet`); the filter at the jet behind a barrier, so that the
-    # image compiles it only for what they do not cover.
-    hand = _tan_laplace_jet(laplace, U, values, Ls, u, members, D, ndirs,
+    # By the hand-coded sweeps with second parts (`_tan_laplace_jet`).
+    return _tan_laplace_jet(laplace, U, values, Ls, u, members, D, ndirs,
         CTSEMTraceJet{W})
-    hand === nothing || return hand
-    return _ctsem_barrier(_laplace_unit_jet_gradient_dual, laplace, U, values, Ls, u,
-        members, D, ndirs, Val(W))::typeof((ok=true, d0=_LAPLACE_NO_MATRIX,
-        dS=_LAPLACE_NO_MATRIX))
-end
-
-function _laplace_unit_jet_gradient_dual(laplace::CTSEMLaplaceObjective, U::Integer,
-    values::Vector{Float64}, Ls::Vector{Matrix{Float64}}, u::Vector{Float64},
-    members, D::Matrix{Float64}, ndirs::Int, ::Val{W}) where {W}
-    spec = laplace.spec
-    units = laplace.units
-    unitmembers = units.members[U]
-    npar = length(values)
-    nm = length(members)
-    J = CTSEMTraceJet{W}
-    d0 = _laplace_scratch_matrix!(laplace, Float64, npar, nm, :jet_d0)
-    dS = _laplace_scratch_matrix!(laplace, Float64, npar, nm, :jet_dS)
-    one_member! = function (c::Int, m)
-        local aws, gradient, x, shifted, t
-        aws = _laplace_workspace!(laplace, J, npar)
-        gradient = _laplace_scratch_vector!(laplace, J, npar, :jet_grad)
-        x = _laplace_scratch_vector!(laplace, J, npar, :jet_x)
-        shifted = _laplace_member_values!(
-            _laplace_scratch_vector!(laplace, Float64, npar, :jet_shift),
-            values, spec, Ls, u, units.offsets[U][m])
-        @inbounds for t in 1:npar
-            x[t] = J(shifted[t], ntuple(j -> j <= ndirs ? D[t, j] : 0.0, Val(W)), 0.0)
-        end
-        _laplace_member_pass_finite!(gradient,
-            laplace.objective.subject_objectives[unitmembers[m]], aws, x) ||
-            return false
-        @inbounds for t in 1:npar
-            d0[t, c] = gradient[t].v
-            dS[t, c] = gradient[t].s
-        end
-        return true
-    end
-    _laplace_run_members(one_member!, laplace, members) ||
-        return (ok=false, d0=_LAPLACE_NO_MATRIX, dS=_LAPLACE_NO_MATRIX)
-    return (ok=true, d0=d0, dS=dS)
 end
 
 # Whether one member's pass came out finite, deep. The sweeps' workspace is a
@@ -6798,43 +6655,12 @@ function _laplace_evaluate(laplace::CTSEMLaplaceObjective, theta::Vector{Float64
             @inbounds for U in ranges[c]
                 # `local` throughout: a name the enclosing function also
                 # assigns would be one boxed variable shared by every task.
-                local row, good, s, w
+                local row, good, fell, w
                 row = rows[_laplace_slot()]
-                fill!(row, 0.0)
-                good = if primal_gated[U]
-                    # A unit the gated floor scored is differentiated through
-                    # its own term, its own fallback included; see
-                    # `_laplace_gated_unit_gradient`.
-                    local gg
-                    gg = _laplace_gated_unit_gradient(laplace, U, theta,
-                        primal_curvature[U])
-                    row .= gg
-                    all(isfinite, gg)
-                elseif laplace.logdet_floored[U]
-                    # A floored unit is differentiated whole; see
-                    # `_laplace_floored_unit_gradient!`.
-                    _laplace_floored_unit_gradient!(row, laplace, U, theta, Ls,
-                        dLlevels) && all(isfinite, row)
-                else
-                    local bg, factors, elim
-                    factors, elim = primal_curvature[U]
-                    bg = _laplace_mark()
-                    # A sweep can return success and still have accumulated a
-                    # non-finite contribution: it reports whether its
-                    # factorizations worked, not whether the numbers that came
-                    # out of them are usable. Rejected whole, 54 of one fit's
-                    # 267 trial points went that way with good values attached,
-                    # and the fit stopped 0.14 log units short with a gradient of
-                    # 3.2; so the unit goes to the fallback instead.
-                    s = _laplace_seeded_unit_gradient!(row, laplace, U, theta, Ls,
-                        dLlevels, dLsolved, primal_matrices[U], factors, elim)
-                    _laplace_charge!(_LAPLACE_BYTES_GRAD, bg)
-                    s && all(isfinite, row)
-                end
-                if !good && !primal_gated[U]
-                    fallbacks[_laplace_slot()] += 1
-                    good = _laplace_unit_gradient_fallback!(row, laplace, U, theta)
-                end
+                good, fell = _laplace_unit_gradient_route!(row, laplace, U, theta, Ls,
+                    dLlevels, dLsolved, primal_gated[U], primal_matrices[U],
+                    primal_curvature[U])
+                fell && (fallbacks[_laplace_slot()] += 1)
                 if !good
                     chunk_ok[_laplace_slot()] = false
                     scores === nothing || (scores[U, :] .= NaN)
@@ -6873,6 +6699,47 @@ function _laplace_evaluate(laplace::CTSEMLaplaceObjective, theta::Vector{Float64
     end
     return (value=value, gradient=grad, subject_loglik=subject_loglik,
         unit_loglik=unit_loglik, converged=_laplace_converged(laplace, coreset))
+end
+
+"""
+Unit `U`'s gradient into `row`, unweighted, by the route its primal
+(`_laplace_store_unit_primal!`) set: the gated rule's, the floor's, or the
+seeded sweeps', and the fallback where a sweep fails
+(`_laplace_unit_gradient_fallback!`). Returns `(good, fell)`: a finite row, and
+whether the fallback made it.
+"""
+function _laplace_unit_gradient_route!(row::Vector{Float64}, laplace::CTSEMLaplaceObjective,
+    U::Integer, theta::Vector{Float64}, Ls, dLlevels, dLsolved, gated::Bool, M,
+    curvature)
+    fill!(row, 0.0)
+    if gated
+        # A unit the gated floor scored is differentiated through its own term,
+        # its own fallback included; see `_laplace_gated_unit_gradient`.
+        gg = _laplace_gated_unit_gradient(laplace, U, theta, curvature)
+        row .= gg
+        return (all(isfinite, gg), false)
+    end
+    good = if laplace.logdet_floored[U]
+        # A floored unit is differentiated whole; see
+        # `_laplace_floored_unit_gradient!`.
+        _laplace_floored_unit_gradient!(row, laplace, U, theta, Ls, dLlevels) &&
+            all(isfinite, row)
+    else
+        factors, elim = curvature
+        bg = _laplace_mark()
+        # A sweep can return success and still have accumulated a non-finite
+        # contribution: it reports whether its factorizations worked, not
+        # whether the numbers that came out of them are usable. Rejected whole,
+        # 54 of one fit's 267 trial points went that way with good values
+        # attached, and the fit stopped 0.14 log units short with a gradient of
+        # 3.2; so the unit goes to the fallback instead.
+        s = _laplace_seeded_unit_gradient!(row, laplace, U, theta, Ls, dLlevels,
+            dLsolved, M, factors, elim)
+        _laplace_charge!(_LAPLACE_BYTES_GRAD, bg)
+        s && all(isfinite, row)
+    end
+    good && return (true, false)
+    return (_laplace_unit_gradient_fallback!(row, laplace, U, theta), true)
 end
 
 """
@@ -7662,46 +7529,22 @@ function _laplace_mode_cross(laplace::CTSEMLaplaceObjective, U::Integer,
     D = length(z)
     npar = length(theta)
     H = zeros(Float64, D, npar)
-    # By the hand-coded sweeps where they serve, a chunk of coordinates a pass
+    # By the hand-coded sweeps, a chunk of coordinates a pass
     # (`_tan_laplace_theta_gradient!`).
     W = last(_CTSEM_CURVATURE_WIDTHS[])
     Gt = zeros(Float64, npar, 1 + W)
     Gz = zeros(Float64, D, 1 + W)
     B = zeros(Float64, D, W)
-    hand = true
     for first in 1:W:D
         chunk = first:min(first + W - 1, D)
         fill!(B, 0.0)
         for (w, a) in enumerate(chunk)
             B[a, w] = 1.0
         end
-        r = _tan_laplace_theta_gradient!(Gt, Gz, laplace, U, theta, Ls, dL, positions, z,
-            B, length(chunk), layout)
-        r === nothing && (hand = false; break)
-        r || return nothing
+        _tan_laplace_theta_gradient!(Gt, Gz, laplace, U, theta, Ls, dL, positions, z,
+            B, length(chunk), layout) || return nothing
         @inbounds for (w, a) in enumerate(chunk), t in 1:npar
             H[a, t] = Gt[t, 1 + w]
-        end
-    end
-    hand && return H
-    # The dual behind a barrier, as `_laplace_unit_seeded_gradient`'s.
-    return _ctsem_barrier(_laplace_mode_cross_dual!, H, laplace, U, theta, Ls, dL,
-        positions, z, layout)::Union{Nothing,Matrix{Float64}}
-end
-
-function _laplace_mode_cross_dual!(H::Matrix{Float64}, laplace::CTSEMLaplaceObjective,
-    U::Integer, theta::Vector{Float64}, Ls::Vector{Matrix{Float64}}, dL, positions,
-    z::Vector{Float64}, layout)
-    D = length(z)
-    npar = length(theta)
-    seed = ForwardDiff.Dual{_LaplaceSeedInner}(0.0, 1.0)
-    for a in 1:D
-        zz = [z[b] + seed * (b == a ? 1.0 : 0.0) for b in 1:D]
-        r = _laplace_unit_theta_gradient(laplace, U, theta, Ls, dL, positions, zz,
-            layout)
-        r === nothing && return nothing
-        @inbounds for t in 1:npar
-            H[a, t] = ForwardDiff.partials(r.theta[t])[1]
         end
     end
     return H
@@ -9053,8 +8896,7 @@ end
     _laplace_subject_gradients_forward(laplace, values)
 
 `ctsem_subject_gradients` by a forward-mode Jacobian of the per-unit terms: the
-reference its seeded rows are tested against, and its fallback when the seeded
-sweep fails. One sweep, not one per unit: the per-unit terms are assembled into
+reference its seeded rows are tested against. One sweep, not one per unit: the per-unit terms are assembled into
 a vector and differentiated together, so the same forward directions serve
 every row.
 """
