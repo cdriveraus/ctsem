@@ -2,10 +2,58 @@
 # member gradient's Jacobian at the curvature's dual, its oracle
 # (`ctsem_set_tangent_hessian!(false)`): the dense and blocked routes, one to
 # three levels, effects on the means and on the dynamics and noise, both at
-# once by the split route, a curved mean, and a drift evaluated by row.
+# once by the split route, a curved mean, a drift evaluated by row, and
+# categorical indicators.
 
 isdefined(@__MODULE__, :_LAPLACE_LINEAR_OBJECTIVE) ||
     include(joinpath(@__DIR__, "laplace_fixtures.jl"))
+isdefined(@__MODULE__, :_adjoint_test_dataframe) ||
+    include(joinpath(@__DIR__, "adjoint_fixtures.jl"))
+
+# One latent read by an ordinal item in three categories, a count and an item
+# censored at -0.25 and 0.3 (`tangent_categorical.jl`): the thresholds, the
+# count's dispersion and intercept and the censored item's sd and intercept
+# free, and random effects on the initial mean, the intercept and the drift.
+const _TAN_CATEGORICAL_OBJECTIVE = let
+    df = _adjoint_test_dataframe(
+        drift=[-0.5;;], jax=[-0.5;;], cint=[0.0;;], diffusion=[0.3;;],
+        lambda=[1.0; 0.6; 0.8;;], jy=[1.0; 0.6; 0.8;;], manifestmeans=zeros(3, 1),
+        manifestvar=Matrix(0.3I, 3, 3), t0var=[0.5;;], t0means=[0.0;;],
+        free=Dict(
+            (:T0MEANS, 1, 1) => (1, "param[1]"),
+            (:CINT, 1, 1) => (2, "param[2]"),
+            (:DRIFT, 1, 1) => (3, "-log1p_exp(param[3])"),
+            (:JAx, 1, 1) => (3, "-log1p_exp(param[3])"),
+            (:DIFFUSION, 1, 1) => (4, "log1p_exp(param[4])"),
+            (:MANIFESTMEANS, 2, 1) => (5, "param[5]"),
+            (:THRESHOLDS, 1, 1) => (6, "param[6]"),
+            (:THRESHOLDS, 1, 2) => (7, "log1p_exp(param[7])"),
+            (:MANIFESTVAR, 2, 2) => (8, "log1p_exp(param[8])"),
+            (:MANIFESTVAR, 3, 3) => (9, "log1p_exp(param[9])"),
+            (:MANIFESTMEANS, 3, 1) => (10, "param[10]"),
+        ),
+        extra=[:THRESHOLDS => zeros(3, 2)])
+    sp = ekf_from_data_frame(df; manifesttype=[2, 3, 4], ncategories=[3, 0, 0],
+        censormin=[-Inf, -Inf, -0.25], censormax=[Inf, Inf, 0.3])
+    starts, times, data = _laplace_test_data(6, 3; seed=4)
+    for c in axes(data, 2)
+        v = data[:, c]
+        data[1, c] = 1.0 + (v[1] > -0.1) + (v[1] > 0.15)
+        data[2, c] = round(2 + 4 * v[2])
+        data[3, c] = clamp(v[3], -0.25, 0.3)
+        c % 5 == 2 && (data[2, c] = NaN)
+        c % 7 == 3 && (data[1, c] = NaN)
+    end
+    ctsem_objective(sp, starts, times, data)
+end
+_fresh_categorical() = (ctsem_laplace_objective(_TAN_CATEGORICAL_OBJECTIVE, [1, 2, 3],
+    [11, 12, 13], [14, 15, 16], [1.0, 1.0, 1.0]),
+    [0.1, -0.1, 0.2, -0.3, 0.2, -0.2, 0.3, -0.8, -1.0, 0.05, -0.3, -0.4, -0.5, 0.1,
+        -0.1, 0.2])
+# One effect, the intercept's: a unit's moments along its one lane
+# (`_tan_cat_moments_lanes!`).
+_fresh_categorical1() = (ctsem_laplace_objective(_TAN_CATEGORICAL_OBJECTIVE, [2], [11],
+    Int[], [1.0]), [0.1, -0.1, 0.2, -0.3, 0.2, -0.2, 0.3, -0.8, -1.0, 0.05, -0.3])
 
 # The linear model with its initial mean's transform curved: an effect there
 # moves the innovations nonlinearly, so Gauss-Newton is not its curvature, and
@@ -74,6 +122,8 @@ end
         ("drift by row", () -> _fresh_nonlinear()),
         ("two levels", () -> _fresh_twolevel()),
         ("three levels", () -> _fresh_threelevel()),
+        ("categorical", () -> _fresh_categorical()),
+        ("categorical, one effect", () -> _fresh_categorical1()),
     ]
     threshold = C._LAPLACE_BLOCK_THRESHOLD[]
     try
@@ -102,6 +152,7 @@ end
         ("means", () -> _fresh_linear()),
         ("drift by row", () -> _fresh_nonlinear()),
         ("three levels", () -> _fresh_threelevel()),
+        ("categorical", () -> _fresh_categorical()),
     ]
     try
         for (name, make) in cases
@@ -140,6 +191,7 @@ end
         ("dynamics and noise", () -> (ctsem_laplace_objective(_LAPLACE_LINEAR_OBJECTIVE,
             [3, 4], [6, 7], [8], [1.0, 1.0]), copy(_LAPLACE_LINEAR_VALUES))),
         ("drift by row", () -> _fresh_nonlinear()),
+        ("categorical", () -> _fresh_categorical()),
     ]
     try
         for (name, make) in cases
@@ -174,6 +226,7 @@ end
             [3, 4], [6, 7], [8], [1.0, 1.0]), copy(_LAPLACE_LINEAR_VALUES))),
         ("drift by row", () -> _fresh_nonlinear()),
         ("two levels", () -> _fresh_twolevel()),
+        ("categorical", () -> _fresh_categorical()),
     ]
     rel(a, b) = maximum(abs, a .- b) / max(1.0, maximum(abs, b))
     try
@@ -221,6 +274,8 @@ end
         ("three levels", () -> _fresh_threelevel()),
         # Cells by row: the engine's own code at the jet, a chunk at a time.
         ("drift by row", () -> _fresh_nonlinear()),
+        ("categorical", () -> _fresh_categorical()),
+        ("categorical, one effect", () -> _fresh_categorical1()),
     ]
     try
         for (name, make) in cases

@@ -149,6 +149,40 @@ function _tan_hybrid_predict!(hs::TanHybState{W}, Xh::TanMat{W}, Xinc::TanMat{W}
 end
 
 """
+`_tan_hybrid_predict!` where the model has states outside its leading block of
+genuine dynamics (`TanModel.aug`, `_hybrid_predict!`'s `naff`): a continuous
+intercept's increment `Ja^-1 (Aa - I) e_l` over the block `na` by its factors
+(`FJa`; `Aa` the exponential's block), or `Phia e_l` where the interval's
+intercept was a series, zero beyond the block. `ia` is scratch of the block's
+length.
+"""
+function _tan_hybrid_predict_aug!(hs::TanHybState{W}, Xh::TanMat{W}, Xinc::TanMat{W},
+    h::CTSEMHybrid, A::TanMat{W}, Aa::TanMat{W}, JAa::TanMat{W}, FJa::Matrix{Float64},
+    pivJa::Vector{Int}, Phia::Union{Nothing,TanMat{W}}, na::Int, ia::TanVec{W}) where {W}
+    _tan_copy!(Xh, hs.X)
+    _tan_mul!(hs.X, A, Xh)
+    _tan_zero!(Xinc)
+    @inbounds for k in eachindex(h.kind)
+        h.kind[k] == 3 || continue
+        l = h.target[k]
+        l <= na || throw(ArgumentError(
+            "a continuous intercept's deviation on latent $(l) lies outside the affine block of $(na)"))
+        if Phia === nothing
+            _tan_getcol!(ia, Aa, l)
+            ia.v[l] -= 1.0
+            _tan_solve!(ia, FJa, pivJa, JAa)
+        else
+            _tan_getcol!(ia, Phia, l)
+        end
+        inc = _tan_zero!(hs.inc)
+        _tan_scatter!(inc, 1.0, ia, 1:na)
+        _tan_addcol!(Xinc, k, 1.0, inc)
+        _tan_addcol!(hs.X, k, 1.0, inc)
+    end
+    return hs
+end
+
+"""
 The closing term and its reverse (`_hybrid_marginal!`,
 `_reverse_hybrid_marginal!`): adds `1/2 b' beta - w/2 logdet M` and its
 tangents to `ll`, or with deviations held at `dfix` (`_HYBRID_FIXED`, its
@@ -360,6 +394,45 @@ function _tan_hybrid_reverse_predict!(hs::TanHybState{W}, h::CTSEMHybrid, Xh::Ta
         _tan_getcol!(inc, Xinc, k)
         _tan_ger!(JAxbar, -1.0, sv, inc)
         _tan_addcol!(Abar, l, 1.0, sv)
+    end
+    _tan_mulNT!(Abar, Xbar, Xh, true, true)
+    _tan_copy!(hs.Xt, Xbar)
+    _tan_mulTN!(Xbar, A, hs.Xt)
+    return hs
+end
+
+"""
+`_tan_hybrid_reverse_predict!` over the leading block `na`
+(`_tan_hybrid_predict_aug!`): `sa = Ja^-T Xbar[1:na, c]`, `JAxbar[1:na, 1:na]
+-= sa Xinc[1:na, c]'`, `Abar[1:na, l] += sa`, or `Phibar[:, l] +=
+Xbar[1:na, c]` on the series route; then `Abar += Xbar X'`, `Xbar = A' Xbar`.
+`JTa`, `FTa` are Ja' and its factors; `sa`, `ia` (the block's length) and `Ma`
+(its square) scratch.
+"""
+function _tan_hybrid_reverse_predict_aug!(hs::TanHybState{W}, h::CTSEMHybrid,
+    Xh::TanMat{W}, Xinc::TanMat{W}, A::TanMat{W}, Abar::TanMat{W}, JAxbar::TanMat{W},
+    JTa::TanMat{W}, FTa::Matrix{Float64}, pivTa::Vector{Int},
+    Phibar::Union{Nothing,TanMat{W}}, na::Int, sa::TanVec{W}, ia::TanVec{W},
+    Ma::TanMat{W}) where {W}
+    Xbar = hs.Xbar
+    blk = 1:na
+    @inbounds for k in eachindex(h.kind)
+        h.kind[k] == 3 || continue
+        l = h.target[k]
+        _tan_getcol!(hs.sv, Xbar, k)
+        _tan_gather!(sa, hs.sv, blk)
+        if Phibar !== nothing
+            _tan_addcol!(Phibar, l, 1.0, sa)
+            continue
+        end
+        _tan_solve!(sa, FTa, pivTa, JTa)
+        _tan_getcol!(hs.inc, Xinc, k)
+        _tan_gather!(ia, hs.inc, blk)
+        _tan_ger!(Ma, -1.0, sa, ia, false)
+        _tan_scatter!(JAxbar, 1.0, Ma, blk, blk)
+        inc = _tan_zero!(hs.inc)
+        _tan_scatter!(inc, 1.0, sa, blk)
+        _tan_addcol!(Abar, l, 1.0, inc)
     end
     _tan_mulNT!(Abar, Xbar, Xh, true, true)
     _tan_copy!(hs.Xt, Xbar)
