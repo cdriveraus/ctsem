@@ -17,18 +17,19 @@ struct TanSnap{W,DW}
     TDE::TanMat{W}; Jtd::TanMat{W}
     mc::TanVec{W}; momon::Base.RefValue{Bool}
     rawD::Matrix{DW}; rawR::Matrix{DW}
+    XC::TanVec{W}
 end
-TanSnap{W,DW}(n::Int, m::Int, ntd::Int) where {W,DW} = TanSnap{W,DW}(TanMat{W}(n, n),
+TanSnap{W,DW}(n::Int, m::Int, ntd::Int, nxc::Int) where {W,DW} = TanSnap{W,DW}(TanMat{W}(n, n),
     TanMat{W}(n, n), TanMat{W}(n, n), TanVec{W}(n), TanMat{W}(n, n), TanMat{W}(m, n),
     TanMat{W}(m, n), TanVec{W}(m), TanMat{W}(m, m), TanMat{W}(n, ntd), TanMat{W}(n, n),
-    TanVec{W}(n), Ref(false), zeros(DW, n, n), zeros(DW, m, m))
+    TanVec{W}(n), Ref(false), zeros(DW, n, n), zeros(DW, m, m), TanVec{W}(nxc))
 
 function _tan_snap_save!(s::TanSnap, mod::TanModel, allW::AbstractVector, sp)
     _tan_copy!(s.JAx, mod.JAx); _tan_copy!(s.DRIFT, mod.DRIFT); _tan_copy!(s.DmJ, mod.DmJ)
     _tan_copy!(s.CINT, mod.CINT); _tan_copy!(s.Qc, mod.Qc)
     _tan_copy!(s.LAMBDA, mod.LAMBDA); _tan_copy!(s.Jy, mod.Jy); _tan_copy!(s.MM, mod.MM)
     _tan_copy!(s.R, mod.R); _tan_copy!(s.TDE, mod.TDE); _tan_copy!(s.Jtd, mod.Jtd)
-    _tan_copy!(s.mc, mod.mc); s.momon[] = mod.momon[]
+    _tan_copy!(s.mc, mod.mc); s.momon[] = mod.momon[]; _tan_copy!(s.XC, mod.XC)
     pars = CTSEMPars(allW, sp.parameter_axis)
     n, m = size(s.rawD, 1), size(s.rawR, 1)
     s.rawD .= view(pars.DIFFUSION, 1:n, 1:n)
@@ -41,7 +42,7 @@ function _tan_snap_load!(mod::TanModel, s::TanSnap)
     _tan_copy!(mod.CINT, s.CINT); _tan_copy!(mod.Qc, s.Qc)
     _tan_copy!(mod.LAMBDA, s.LAMBDA); _tan_copy!(mod.Jy, s.Jy); _tan_copy!(mod.MM, s.MM)
     _tan_copy!(mod.R, s.R); _tan_copy!(mod.TDE, s.TDE); _tan_copy!(mod.Jtd, s.Jtd)
-    _tan_copy!(mod.mc, s.mc); mod.momon[] = s.momon[]
+    _tan_copy!(mod.mc, s.mc); mod.momon[] = s.momon[]; _tan_copy!(mod.XC, s.XC)
     _tan_aug_refresh!(mod)
     return mod
 end
@@ -70,8 +71,9 @@ Hessian's dual (whose tape holds the group records), the subject's cells and
 their cotangents, the state and its cotangent as duals, the snapshots, the
 layer's own (`base`), and the forward's program: `(kind, index, snapshot)`,
 kind 1 a group (its tape slot), 2 a prediction substep, 3 a TD impulse, 4 an
-update (the row), 5 a step of an iterated update, each with the snapshot it
-read.
+update (the row), 5 a step of an iterated update, 6 a moment-matched step's
+cubature, 7 a row's categorical observations (the row), 8 and 10 the
+stationary moments or elements, each with the snapshot it read.
 """
 mutable struct TanRows{W,DW,A,M}
     awsW::A
@@ -102,20 +104,22 @@ mutable struct TanRows{W,DW,A,M}
     # A jet sweep's chunk: its lanes sit at `lane0 + 1` on of the engine's jets.
     lane0::Int
     # The matrices a group's cells give, and the matrices' cotangents as duals
-    # for a flush (`_tan_mats_alloc`), and a row's observed manifests: reused,
-    # where each row's or flush's own were most of what a sweep allocated.
+    # for a flush (`_tan_mats_alloc`): reused, where each row's or flush's own
+    # were most of what a sweep allocated.
     mats::M
     C::M
-    obs::Vector{Int}
+    t0::Matrix{DW}      # a flush's initial covariance scratch (`_tan_bar_of!`)
 end
 function TanRows(awsW, sp, n::Int, m::Int, ntd::Int, ::Val{W}, ::Type{DW}) where {W,DW}
     nall = length(sp.mutables)
-    mats = _tan_mats_alloc(DW, n, m, ntd)
+    nxc = _tan_cat_ncells(sp)
+    mats = _tan_mats_alloc(DW, n, m, ntd, nxc)
     return TanRows{W,DW,typeof(awsW),typeof(mats)}(awsW, zeros(DW, nall), zeros(DW, nall),
-        zeros(DW, n), zeros(DW, n), TanSnap{W,DW}[], TanSnap{W,DW}(n, m, ntd),
-        NTuple{3,Int}[], 0, TanRelinRec{W}[], 0, TanSnap{W,DW}(n, m, ntd), TanVec{W}(n),
+        zeros(DW, n), zeros(DW, n), TanSnap{W,DW}[], TanSnap{W,DW}(n, m, ntd, nxc),
+        NTuple{3,Int}[], 0, TanRelinRec{W}[], 0, TanSnap{W,DW}(n, m, ntd, nxc), TanVec{W}(n),
         TanVec{W}(n), zeros(DW, n, n), zeros(DW, n, n), TanVec{W}(n),
-        Ref{AbstractVector}(Float64[]), 0, mats, _tan_mats_alloc(DW, n, m, ntd), Int[])
+        Ref{AbstractVector}(Float64[]), 0, mats, _tan_mats_alloc(DW, n, m, ntd, nxc),
+        zeros(DW, n, n))
 end
 
 """`out` the duals of `X`'s values and tangents, lane `w` its `w`-th."""
@@ -141,25 +145,6 @@ are, beside its second parts, the chunk of a jet sweep (`_tan_jet_member!`).
 @inline _tan_rows_add!(X, D::AbstractArray, nl::Int, R::TanRows) = _tan_add_lanes!(X, D, nl)
 @inline _tan_rows_add!(X, D::AbstractArray{CTSEMTraceJet{JW}}, nl::Int,
     R::TanRows{W,CTSEMTraceJet{JW}}) where {W,JW} = _tan_add_jet_lanes!(X, D, R.lane0, nl)
-
-"""A row's categorical log likelihood `ll` into the sweep's: its value, its
-lanes, and a jet's second parts."""
-function _tan_rows_ll!(sw::TanSweep{W}, ll, nl::Int, R::TanRows) where {W}
-    sw.ll[1] += ForwardDiff.value(ll)
-    p = ForwardDiff.partials(ll)
-    @inbounds for w in 1:nl
-        sw.ll[1 + w] += p[w]
-    end
-    return nothing
-end
-function _tan_rows_ll!(sw::TanSweep{W}, ll::CTSEMTraceJet, nl::Int, R::TanRows) where {W}
-    sw.ll[1] += ll.v
-    @inbounds for w in 1:nl
-        sw.ll[1 + w] += ll.d[R.lane0 + w]
-    end
-    sw.ll[2 + W] += ll.s
-    return nothing
-end
 
 """The jets `out` from `X`: its values, its tangents as first parts `lane0 + 1`
 on (those past the jet's width dropped, zero there), its second parts."""
@@ -267,7 +252,8 @@ function _tan_rows_group_eval!(R::TanRows{W,DW}, g::Int, indices::Vector{Int},
     # The drift's factors for the predictions that read it.
     g == 1 && _tan_sweep_begin!(sw, mod)
     R.ng += 1
-    R.ng > length(R.snaps) && push!(R.snaps, TanSnap{W,DW}(sw.n, sw.m, mod.ntd))
+    R.ng > length(R.snaps) &&
+        push!(R.snaps, TanSnap{W,DW}(sw.n, sw.m, mod.ntd, length(mod.XC.v)))
     _tan_snap_save!(R.snaps[R.ng], mod, R.allW, sp)
     keepR && (R.snaps[R.ng].rawR .= R.Rrow.rawR)
     push!(R.prog, (1, slot, R.ng))
@@ -299,41 +285,11 @@ function _tan_rows_moment!(R::TanRows{W,DW}, x::TanVec{W}, P::TanMat{W}, mod::Ta
     mod.momon[] = true
     _tan_sweep_begin!(sw, mod)
     R.ng += 1
-    R.ng > length(R.snaps) && push!(R.snaps, TanSnap{W,DW}(sw.n, sw.m, mod.ntd))
+    R.ng > length(R.snaps) &&
+        push!(R.snaps, TanSnap{W,DW}(sw.n, sw.m, mod.ntd, length(mod.XC.v)))
     _tan_snap_save!(R.snaps[R.ng], mod, R.allW, sp)
     push!(R.prog, (6, awsW.tape.nmoments, R.ng))
     return R.ng
-end
-
-"""
-Row `t`'s categorical observations (`_ekf_binary_rows!`), the engine's own at
-the Hessian's dual on the worker's workspace: the state and covariance in as
-duals and back, the row's log likelihood's share into `sw.ll`, the record on
-the workspace's tape (program kind 7). Returns the snapshot, or -1 where an
-observation has no support.
-"""
-function _tan_rows_categorical!(x::TanVec{W}, P::TanMat{W}, R::TanRows{W,DW},
-    mod::TanModel{W}, sw::TanSweep{W}, sp, Y::AbstractMatrix, t::Int, snap::Int,
-    nl::Int) where {W,DW}
-    any(k -> isfinite(Y[k, t]) && !mod.gmask[k], axes(Y, 1)) || return snap
-    awsW = R.awsW
-    ws = awsW.ekf_ws
-    n = sw.n
-    observed = empty!(R.obs)
-    for k in axes(Y, 1)
-        isfinite(Y[k, t]) && push!(observed, k)
-    end
-    _tan_rows_to!(ws.state, x, R)
-    _tan_rows_to!(ws.P_predict.data, P, R)
-    pars = CTSEMPars(R.allW, sp.parameter_axis)
-    record = _record_binary!(awsW.tape, ws, pars, Y, t, _ekf_binary_subset(ws, observed), n)
-    ll = _ekf_binary_rows!(ws, pars, Y, t, observed, nothing, record)
-    ll === nothing && return -1
-    _tan_rows_from!(x, view(ws.state, 1:n), nl, R)
-    _tan_rows_from!(P, ws.P_predict.data, nl, R)
-    _tan_rows_ll!(sw, ll, nl, R)
-    push!(R.prog, (7, awsW.tape.nbinaries, snap))
-    return snap
 end
 
 """
@@ -373,7 +329,7 @@ subject's own, which no group writes), and `acc` emptied.
 """
 function _tan_rows_flush!(R::TanRows{W,DW}, acc::TanAcc{W}, sp, s::TanSnap) where {W,DW}
     _tan_each_layer((X, D) -> _tan_rows_to!(D, X, R), acc, R.C)
-    _tan_bar_of!(R.allbar, R.awsW, sp, R.C, s.rawD, s.rawR, R.allW)
+    _tan_bar_of!(R.allbar, R.awsW, sp, R.C, s.rawD, s.rawR, R.allW, R.t0)
     _tan_acc_zero!(acc)
     return R
 end
@@ -420,6 +376,7 @@ function _tan_sweep_rows!(acc::TanAcc{W}, Hb::Matrix{Float64}, sw::TanSweep{W},
     snap = 0
     _tan_copy!(x, mod.T0M)
     _tan_copy!(P, mod.T0V)
+    mod.nh > 0 && _tan_hybrid_start!(hs, mod.hyb)
     elements = _stationary_elements_on(sp.stationary_elements)
     if mod.stat || elements
         # The predict group once ahead of the stationary moments, which read
@@ -463,10 +420,13 @@ function _tan_sweep_rows!(acc::TanAcc{W}, Hb::Matrix{Float64}, sw::TanSweep{W},
         upd = sw.upds[t]
         upd.relin = 0
         # A row's categorical observations first, each an exact scalar
-        # conditioning, then its Gaussian ones from there.
+        # conditioning (`tangent_categorical.jl`), then its Gaussian ones from
+        # there.
         rec === nothing || _tan_record!(rec, 1, t, x, P, sw)
-        if cat && _tan_rows_categorical!(x, P, R, mod, sw, sp, Y, t, snap, nl) < 0
-            return _TAN_INVALID
+        if cat
+            st = _tan_cat_row!(x, P, sw, mod, view(Y, :, t), t)
+            st == _TAN_OK || return st
+            push!(R.prog, (7, t, snap))
         end
         if relin && any(k -> isfinite(Y[k, t]) && (isempty(mod.gmask) || mod.gmask[k]),
             axes(Y, 1))
@@ -482,6 +442,13 @@ function _tan_sweep_rows!(acc::TanAcc{W}, Hb::Matrix{Float64}, sw::TanSweep{W},
     isfinite(sw.ll[1]) || return _TAN_INVALID
     # The row scores need the forward alone.
     forward && return _TAN_OK
+    # The deviations the filter integrates: the closing term, whose reverse
+    # starts the walk (`_tan_sweep!`'s).
+    if mod.nh > 0
+        (mod.fixed ? _tan_hybrid_closing!(hs, mod.G, mod.wlog, sw.ll, mod.dfix) :
+            _tan_hybrid_closing!(hs, mod.G, mod.wlog, sw.ll)) || return _TAN_INVALID
+        isfinite(sw.ll[1]) || return _TAN_INVALID
+    end
 
     # The reverse walk.
     xbar, Pbar = _tan_zero!(sw.xbar), _tan_zero!(sw.Pbar)
@@ -523,14 +490,8 @@ function _tan_sweep_rows!(acc::TanAcc{W}, Hb::Matrix{Float64}, sw::TanSweep{W},
             _tan_rows_from!(Pbar, R.PbarW, nl, R)
             continue
         elseif kind == 7
-            # A row's categorical observations, by the engine's own reverse at
-            # the Hessian's dual (`_reverse_binary!`).
-            _tan_rows_to!(R.xbarW, xbar, R)
-            _tan_rows_to!(R.PbarW, Pbar, R)
-            _reverse_binary!(R.xbarW, R.PbarW, CTSEMPars(R.allbar, sp.parameter_axis),
-                awsW.tape.binaries[idx], n)
-            _tan_rows_from!(xbar, R.xbarW, nl, R)
-            _tan_rows_from!(Pbar, R.PbarW, nl, R)
+            # A row's categorical observations.
+            _tan_reverse_cat_row!(xbar, Pbar, sw, mod, acc, 1.0, idx)
             continue
         elseif kind == 6
             # A moment-matched step's cubature: the averaged cells' cotangents
@@ -578,6 +539,9 @@ function _tan_sweep_rows!(acc::TanAcc{W}, Hb::Matrix{Float64}, sw::TanSweep{W},
     _tan_sym!(rv.Ps, Pbar)
     _tan_comb!(acc.T0V, ((1.0, rv.Ps),), true)
     _tan_rows_flush!(R, acc, sp, R.base)
+    # The hybrid factor's cotangent, unweighted as the walk is, left in `acc`
+    # for the caller after the flushes that empty it.
+    mod.nh > 0 && _tan_comb!(acc.Gbar, ((1.0, hs.Gbar),))
     # The cells back to the raw parameters, and the subject's weight: the walk
     # runs unweighted, since a group's pullback sends the cells' cotangents
     # into the state's, which the kernels carry unweighted.

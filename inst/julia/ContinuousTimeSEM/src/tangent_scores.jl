@@ -38,17 +38,17 @@ function _tan_row_scores!(out::Matrix{Float64}, objective::CTSEMObjective,
     m0 = _tan_layer_mats(aws0, sp, theta, subjects[1].tipreds)
     n, m, ntd = size(m0.JAx, 1), size(m0.LAM, 1), size(m0.TDE, 2)
     na, dyn = aws0.affine_dim, collect(aws0.diffusion_state_indices)
-    gmask = any(t -> t != 0, sp.manifesttype) ?
-        Bool[k > length(sp.manifesttype) || sp.manifesttype[k] == 0 for k in 1:m] : Bool[]
+    gmask, cat = _tan_cat_masks(sp, m)
     mod = TanModel(n, m, W; ct=sp.continuous_time, stat=sp.stationary, rows=rowsmode,
-        gmask=gmask, na=na, dyn=dyn, ntd=ntd)
+        gmask=gmask, na=na, dyn=dyn, ntd=ntd, cat=cat)
     awsW = CTSEMAdjointWorkspace(DW, sp, npar, ntd)
     layers = shared ? nothing : map(1:nworkers) do _
         awsWk = CTSEMAdjointWorkspace(DW, sp, npar, ntd)
-        (awsW=awsWk, mod=_tan_model_like(mod), acc=TanAcc(n, m, ntd, 0, W),
-            rows=rowsmode ? TanRows(awsWk, sp, n, m, ntd, Val(W), DW) : nothing)
+        (awsW=awsWk, mod=_tan_model_like(mod), acc=TanAcc(n, m, ntd, 0, W, cat.nxc),
+            rows=rowsmode ? TanRows(awsWk, sp, n, m, ntd, Val(W), DW) : nothing,
+            buf=_tan_layer_buffers(DW, awsWk, sp, npar, ntd))
     end
-    accs = [TanAcc(n, m, ntd, 0, W) for _ in 1:nworkers]
+    accs = [TanAcc(n, m, ntd, 0, W, cat.nxc) for _ in 1:nworkers]
     offsets = cumsum(vcat(0, rows))
     status = zeros(Int, nblocks)
     K = size(directions, 2)
@@ -83,7 +83,8 @@ function _tan_score_block!(out::Matrix{Float64}, offsets::Vector{Int}, rows::Vec
             st = _tan_sweep!(acc, sw, mod, so.timesteps, so.data, so.tdpreds,
                 so.max_timestep, 1.0; forward=true)
         else
-            _tan_layer_fill!(L.mod, L.awsW, sp, xw, nl, so.tipreds) || return _TAN_REFUSED
+            _tan_layer_fill!(L.mod, L.awsW, sp, xw, nl, so.tipreds, L.buf) ||
+                return _TAN_REFUSED
             st = if L.rows !== nothing
                 _tan_sweep_rows!(L.acc, zeros(0, 0), sw, L.mod, L.rows, objective, i, 1.0,
                     xw, nl; forward=true)

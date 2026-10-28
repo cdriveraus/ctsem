@@ -33,8 +33,8 @@ struct TanLaplaceContext{W,DC,A,R,B}
     Lb::Matrix{Float64}         # a hybrid block's factor
     Lbfor::Vector{Float64}      # the values it is of (`_tan_laplace_hybrid!`)
     # The Gauss-Newton route (`_tan_laplace_gn_member!`): whether the model
-    # admits it at all -- linear, no integrated deviations, every state in the
-    # dynamics -- each chunk's whitened innovation tangents, a row's W at a
+    # admits it at all -- linear, Gaussian, no integrated deviations, every
+    # state in the dynamics -- each chunk's whitened innovation tangents, a row's W at a
     # time, the columns' positions by coordinate, a member's coordinates, and
     # the members left to the full sweeps.
     gn::Bool
@@ -89,17 +89,18 @@ function _tan_laplace_build(objective::CTSEMObjective, values::AbstractVector, m
     rows = _tan_rows_model(sp)
     h = sp.hybrid
     nh = _hybrid_on(h) && mode != _HYBRID_OFF ? _hybrid_items(h) : 0
-    gmask = any(t -> t != 0, sp.manifesttype) ?
-        Bool[k > length(sp.manifesttype) || sp.manifesttype[k] == 0 for k in 1:m] : Bool[]
+    gmask, cat = _tan_cat_masks(sp, m)
     mod = TanModel(n, m, W; ct=sp.continuous_time, stat=sp.stationary, rows=rows,
         gmask=gmask, na=na, dyn=dyn, ntd=ntd, hyb=h, nh=nh,
-        wlog=mode == _HYBRID_FULL ? 1.0 : 0.0, fixed=mode == _HYBRID_FIXED && nh > 0)
+        wlog=mode == _HYBRID_FULL ? 1.0 : 0.0, fixed=mode == _HYBRID_FIXED && nh > 0,
+        cat=cat)
     awsW = CTSEMAdjointWorkspace(DC, sp, nv, ntd)
-    return TanLaplaceContext(awsW, mod, TanAcc(n, m, ntd, nh, W),
+    return TanLaplaceContext(awsW, mod, TanAcc(n, m, ntd, nh, W, cat.nxc),
         rows ? TanRows(awsW, sp, n, m, ntd, Val(W), DC) : nothing,
         TanSweep(n, m, ntd, nh, W, na, length(dyn)), zeros(nv, W), zeros(DC, nv),
         DC[], h.block && nh > 0 ? zeros(length(h.perm), length(h.perm)) : zeros(0, 0),
-        Float64[], !rows && nh == 0 && !mod.aug, Vector{Float64}[], Int[], Int[], Int[],
+        Float64[], !rows && nh == 0 && !mod.aug && isempty(gmask), Vector{Float64}[],
+        Int[], Int[], Int[],
         _tan_layer_buffers(DC, awsW, sp, nv, ntd), Int[], Bool[], Int[], Int[],
         Float64[], Float64[], zeros(nv), zeros(nv))
 end
@@ -422,7 +423,7 @@ function _tan_laplace_trace_sweep!(trace::CTSEMKalmanTrace, ctx::TanLaplaceConte
     sp = objective.params
     so = objective.subject_objectives[i]
     mod, sw = ctx.mod, ctx.sw
-    _tan_layer_fill!(mod, ctx.awsW, sp, xw, nl, so.tipreds) || return _TAN_REFUSED
+    _tan_layer_fill!(mod, ctx.awsW, sp, xw, nl, so.tipreds, ctx.buf) || return _TAN_REFUSED
     ws = ctx.awsW.ekf_ws
     if ctx.rows === nothing
         rec = TanTraceRecorder(trace, ws, ws.all_params, so, sp, i,
@@ -761,8 +762,7 @@ function _tan_laplace_member!(ctx::TanLaplaceContext{W,DC}, objective::CTSEMObje
     so = objective.subject_objectives[i]
     mod, sw, Hb = ctx.mod, ctx.sw, ctx.Hb
     rows = ctx.rows !== nothing
-    _tan_layer_fill!(mod, ctx.awsW, sp, xw, nl, so.tipreds, rows ? nothing : ctx.buf) ||
-        return _TAN_REFUSED
+    _tan_layer_fill!(mod, ctx.awsW, sp, xw, nl, so.tipreds, ctx.buf) || return _TAN_REFUSED
     fill!(Hb, 0.0)
     rows && return _tan_sweep_rows!(ctx.acc, Hb, sw, mod, ctx.rows, objective, i, 1.0, xw,
         nl; g0=g0)
@@ -788,6 +788,21 @@ function _tan_laplace_member!(ctx::TanLaplaceContext{W,DC}, objective::CTSEMObje
 end
 
 """
+Whether the raw directions `D` (its first `ndirs` columns) move the hybrid's
+factor `G` -- a level's own sds, or its root's parameters -- which the
+hand-coded sweeps hold at its values (`_tan_laplace_hybrid!`) and push back
+through at the end. The Laplace gradient's directions move effects alone; one
+that moves `G` goes to the dual, which carries it through the filter.
+"""
+function _tan_moves_factor(h::CTSEMHybrid, D::AbstractVecOrMat, ndirs::Int)
+    _hybrid_on(h) || return false
+    @inbounds for t in (h.block ? h.lparams : h.psi_index), j in 1:ndirs
+        iszero(D[t, j]) || return true
+    end
+    return false
+end
+
+"""
 `_laplace_unit_seeded_gradient`'s sweeps by the hand-coded second order: each
 member's gradient in its shifted values (`d0`) and its derivative along the
 raw direction `d1` (`d1c`), one lane of the curvature's context; the members
@@ -798,6 +813,7 @@ function _tan_laplace_seeded(laplace::CTSEMLaplaceObjective, U::Integer,
     values::Vector{Float64}, Ls::Vector{Matrix{Float64}}, u::Vector{Float64}, members,
     d1::Vector{Float64})
     _CTSEM_TANGENT_HESSIAN[] || return nothing
+    _tan_moves_factor(laplace.objective.params.hybrid, d1, 1) && return nothing
     ctx = _tan_laplace_context(laplace, values, _HYBRID_PROFILE)
     ctx === nothing && return nothing
     return _tan_laplace_seeded!(ctx, laplace, Int(U), values, Ls, u, members, d1)
@@ -1218,15 +1234,14 @@ function _tan_jet_build(objective::CTSEMObjective, values::AbstractVector, ::Typ
     h = sp.hybrid
     nh = _hybrid_on(h) ? _hybrid_items(h) : 0
     rows = _tan_rows_model(sp)
-    gmask = any(t -> t != 0, sp.manifesttype) ?
-        Bool[k > length(sp.manifesttype) || sp.manifesttype[k] == 0 for k in 1:m] : Bool[]
+    gmask, cat = _tan_cat_masks(sp, m)
     # The deviations at their profile (the closing term's logdet weight 0), or
     # held at fixed values.
     mod = TanModel(n, m, W; ct=sp.continuous_time, stat=sp.stationary, rows=rows,
         gmask=gmask, na=na, dyn=dyn, ntd=ntd, hyb=h, nh=nh, wlog=0.0,
-        fixed=mode == _HYBRID_FIXED && nh > 0)
+        fixed=mode == _HYBRID_FIXED && nh > 0, cat=cat)
     awsJ = CTSEMAdjointWorkspace(J, sp, nv, ntd)
-    return TanJetContext(awsJ, mod, TanAcc(n, m, ntd, nh, W),
+    return TanJetContext(awsJ, mod, TanAcc(n, m, ntd, nh, W, cat.nxc),
         TanSweep(n, m, ntd, nh, W, na, length(dyn)), _tan_layer_buffers(J, awsJ, sp, nv, ntd),
         zeros(J, nv), rows ? TanRows(awsJ, sp, n, m, ntd, Val(W), J) : nothing, zeros(J, nv),
         zeros(nv, W),
@@ -1248,6 +1263,7 @@ function _tan_laplace_jet(laplace::CTSEMLaplaceObjective, U::Integer,
     values::Vector{Float64}, Ls::Vector{Matrix{Float64}}, u::Vector{Float64}, members,
     D::Matrix{Float64}, ndirs::Int, ::Type{J}) where {J}
     _CTSEM_TANGENT_HESSIAN[] || return nothing
+    _tan_moves_factor(laplace.objective.params.hybrid, D, ndirs) && return nothing
     ctx = _tan_jet_context(laplace, values, J)
     ctx === nothing && return nothing
     return _tan_laplace_jet!(ctx, laplace, Int(U), values, Ls, u, members, D, ndirs)
@@ -1313,8 +1329,8 @@ their gradient's second parts (`_tan_jet_fixed_s!`).
 function _tan_jet_member!(g0::AbstractVector{Float64}, gS::AbstractVector{Float64},
     ctx::TanJetContext{W,J}, objective::CTSEMObjective, i::Int, xj::Vector{J},
     nd::Int, Hb=nothing, values=nothing, dG=nothing, fixed=nothing) where {W,J}
-    ctx.rows === nothing ||
-        return _tan_jet_rows!(g0, gS, ctx, ctx.rows, objective, i, xj, nd, Hb)
+    ctx.rows === nothing || return _tan_jet_rows!(g0, gS, ctx, ctx.rows, objective, i, xj,
+        nd, Hb, values, dG, fixed)
     sp = objective.params
     so = objective.subject_objectives[i]
     mod, sw, acc, buf = ctx.mod, ctx.sw, ctx.acc, ctx.buf
@@ -1366,7 +1382,7 @@ nothing of another's; the gradient's second parts summed over the chunks.
 """
 function _tan_jet_rows!(g0::AbstractVector{Float64}, gS::AbstractVector{Float64},
     ctx::TanJetContext{W,CTSEMTraceJet{JW}}, R::TanRows, objective::CTSEMObjective,
-    i::Int, xj::Vector{CTSEMTraceJet{JW}}, nd::Int, Hb) where {W,JW}
+    i::Int, xj::Vector{CTSEMTraceJet{JW}}, nd::Int, Hb, values, dG, fixed) where {W,JW}
     J = CTSEMTraceJet{JW}
     sp = objective.params
     so = objective.subject_objectives[i]
@@ -1384,17 +1400,23 @@ function _tan_jet_rows!(g0::AbstractVector{Float64}, gS::AbstractVector{Float64}
         _tan_each_layer((X, M) -> _tan_jet_lanes!(X, M, lane0, nl, true), mod, mats)
         _tan_comb!(mod.DmJ, ((1.0, mod.DRIFT), (-1.0, mod.JAx)))
         _tan_aug_refresh!(mod)
+        fixed === nothing || _tan_jet_dfix!(mod, fixed.layout, fixed.m, fixed.z, fixed.B,
+            lane0, nl, so.data)
         R.lane0 = lane0
         fill!(Hc, 0.0)
         st = _tan_sweep_rows!(acc, Hc, sw, mod, R, objective, i, 1.0, xm, nl; g0=g0, gS=gS)
         st == _TAN_OK || return st
         all(isfinite, sw.ll) || return _TAN_INVALID
+        fixed === nothing || _tan_jet_fixed_s!(fixed.Gzs, sw.hs, mod, fixed.layout,
+            fixed.m, so.data)
+        mod.nh > 0 && _tan_jet_gather_gbar!(ctx, acc.Gbar, lane0, nl, ch == 1)
         if Hb !== nothing
             @inbounds for a in 1:nl, t in axes(Hc, 1)
                 Hb[t, lane0 + a] = Hc[t, a]
             end
         end
     end
+    mod.nh > 0 && _tan_jet_gbar!(g0, gS, Hb, ctx, objective.params.hybrid, values, dG, nd)
     return _TAN_OK
 end
 
