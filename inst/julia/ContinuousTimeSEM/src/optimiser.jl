@@ -921,7 +921,9 @@ function _ctsem_subset_objective(L::CTSEMLaplaceObjective, keep::AbstractVector{
         :inner_converged => falses(n), :hessian_repaired => falses(n),
         :mode_repaired => falses(n), :logdet_floored => falses(n),
         # per-run: where the objective was last evaluated, and a counter
-        :last_values => Float64[], :gated_units => 0)
+        :last_values => Float64[], :gated_units => 0,
+        # Part of the objective, not state: the subset's units keep theirs.
+        :known => L.known[keep])
     args = map(fieldnames(typeof(L))) do name
         haskey(fresh, name) && return fresh[name]
         v = getfield(L, name)

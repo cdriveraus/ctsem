@@ -344,3 +344,71 @@ test_that("the probes search only where a unit can have a second maximum", {
     expect_lt(b$starts, c$starts)
   }
 })
+
+# Known modes (`spec$laplace$known`, `_laplace_known_modes`): starts a unit's
+# solve takes besides the origin and the probes, kept where a fit saw the
+# unit's term jump (`.ctJuliaOptimise()`). The sign fixture at a population
+# mean of zero, where every origin is the stationary point between a person's
+# two maxima: with the probes off Newton stops there, and given the modes the
+# probes find it reaches them without the probes. Nearby the objective with
+# them is smooth, its gradient the value's.
+test_that("a unit's solve also starts from its known modes", {
+  skip_without_julia()
+  spec <- suppressMessages(ctFit(.modes_sign_data(), .modes_sign_model(),
+    backend = "julia", intoverpop = "laplace", fit = FALSE))
+  handle <- structure(spec, class = c("ctJuliaModel", "ctFitModel"))
+  probes <- function(on) invisible(ctsem:::.ctJuliaCall(
+    "ContinuousTimeSEM.ctsem_set_mode_probes!", on))
+  on.exit(probes(TRUE), add = TRUE)
+  evaluate <- function(h, x) ctJuliaEvaluate(h, x, gradient = TRUE,
+    contributions = TRUE, cores = 1L)
+  modes <- ctsem:::.ctJuliaEval("o -> reduce(hcat, o.modes)")
+  x <- c(0, 0.5)
+  probed <- evaluate(handle, x)
+  found <- as.matrix(modes(ctsem:::.ctJuliaObjective(handle, hybrid = TRUE)))
+  n <- ncol(found)
+  known <- spec
+  known$laplace$known <- list(units = seq_len(n), values = found)
+  kept <- structure(known, class = c("ctJuliaModel", "ctFitModel"))
+  # The engine holds what it was sent.
+  held <- ctsem:::.ctJuliaEval("o -> sum(length, o.known)")
+  expect_equal(held(ctsem:::.ctJuliaObjective(kept, hybrid = TRUE)), n)
+  probes(FALSE)
+  plain <- evaluate(handle, x)
+  withknown <- evaluate(kept, x)
+  # Without the probes every solve stops at the origin, scored by the gated
+  # rule (the first test above), and lands elsewhere than the probes' maxima.
+  expect_gt(max(abs(probed$subject_loglik - plain$subject_loglik)), 0.1)
+  expect_equal(as.numeric(withknown$subject_loglik),
+    as.numeric(probed$subject_loglik), tolerance = 1e-8)
+  # Off the stationary point, still without the probes.
+  x <- c(0.05, 0.5)
+  r <- evaluate(kept, x)
+  set.seed(1)
+  v <- stats::rnorm(2)
+  v <- v / sqrt(sum(v^2))
+  h <- 1e-5
+  fd <- (evaluate(kept, x + h * v)$value - evaluate(kept, x - h * v)$value) / (2 * h)
+  expect_equal(fd, sum(as.numeric(r$gradient) * v), tolerance = 1e-5)
+})
+
+# What a jump adds to the known modes (`.ctJuliaKnownModes()`): the columns of
+# the units it named, padded to the longer matrix, none already held.
+test_that("a jump's modes join the known ones once each", {
+  result <- list(stop_reason = "jump", jump_units = c(3L, 5L),
+    jump_point_units = c(3L, 3L, 4L, 5L),
+    jump_point_values = matrix(c(1, 2, 3, 4, 5, 6, 7, 8), 2))
+  first <- ctsem:::.ctJuliaKnownModes(NULL, result)
+  expect_equal(first$units, c(3L, 3L, 5L))
+  expect_equal(first$values, matrix(c(1, 2, 3, 4, 7, 8), 2))
+  # Seen again, nothing is new.
+  expect_null(ctsem:::.ctJuliaKnownModes(first, result))
+  # A longer unit's mode pads the rows of those held.
+  wider <- list(stop_reason = "jump", jump_units = 7L, jump_point_units = 7L,
+    jump_point_values = matrix(c(9, 9, 9), 3))
+  both <- ctsem:::.ctJuliaKnownModes(first, wider)
+  expect_equal(both$units, c(3L, 3L, 5L, 7L))
+  expect_equal(both$values, cbind(rbind(first$values, 0), c(9, 9, 9)))
+  expect_null(ctsem:::.ctJuliaKnownModes(first, list(stop_reason = "jump",
+    jump_units = 0L, jump_point_units = 0L, jump_point_values = matrix(0))))
+})

@@ -4820,6 +4820,16 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
       laplace_args$affine_level <- V(rep(seq_along(affine), lengths(affine))[on])
       laplace_args$affine_effect <- V(sequence(lengths(affine))[on])
     }
+    # Modes units' inner solves also start from, kept where a fit's line search
+    # or finish saw their terms jump (`.ctJuliaOptimise()`): column `j` of
+    # `values` a mode of unit `units[j]`. Sent only when there are some.
+    known <- spec$laplace$known
+    if (!is.null(known) && length(known$units)) {
+      laplace_args$known_unit <- V(as.integer(known$units))
+      values <- as.matrix(known$values)
+      storage.mode(values) <- "double"
+      laplace_args$known_values <- values
+    }
     # Absent unless the fit asked for them, so the engine's own defaults stay
     # the defaults and a spec built before this existed is byte-for-byte as it
     # was. `inner_maxiter` must cross as an integer; see .ctJuliaLaplaceInner().
@@ -5490,6 +5500,52 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
     length(model_spec$manifest_data) >= .ctCoresetAutoCells
 }
 
+# How many times a run that ends on a jump resumes with the named units' modes
+# kept as starts (`.ctJuliaOptimise()`) before the jump is handed on.
+.ctJuliaKnownRounds <- 4L
+
+# Whether an engine optimisation ended on a jump the route named.
+.ctJuliaJumped <- function(result) {
+  identical(as.character(.ctJuliaOr(result$stop_reason, ""))[1L], "jump")
+}
+
+# The units a jump named, from an engine result.
+.ctJuliaJumpNamed <- function(result) {
+  named <- as.integer(result$jump_units)
+  named[!is.na(named) & named > 0L]
+}
+
+# The known modes (`spec$laplace$known`: `units`, one per column of `values`)
+# with the modes a jump's result saw for the units it named added, or NULL
+# where it adds none: every column of `jump_point_values` belonging to a named
+# unit, its rows zero-padded to the longer of the two matrices (the engine
+# reads a unit's first `dims` entries).
+.ctJuliaKnownModes <- function(known, result) {
+  named <- .ctJuliaJumpNamed(result)
+  if (!length(named)) return(NULL)
+  units <- as.integer(result$jump_point_units)
+  values <- as.matrix(result$jump_point_values)
+  if (length(units) != ncol(values)) return(NULL)
+  take <- units %in% named
+  if (!any(take)) return(NULL)
+  units <- units[take]
+  values <- values[, take, drop = FALSE]
+  old_units <- if (is.null(known)) integer() else as.integer(known$units)
+  old_values <- if (is.null(known)) matrix(0, nrow(values), 0) else as.matrix(known$values)
+  rows <- max(nrow(values), nrow(old_values))
+  pad <- function(m) rbind(m, matrix(0, rows - nrow(m), ncol(m)))
+  values <- pad(values)
+  old_values <- pad(old_values)
+  fresh <- vapply(seq_along(units), function(j) {
+    same <- which(old_units == units[j])
+    !any(vapply(same, function(k) max(abs(old_values[, k] - values[, j])) < 1e-8,
+      logical(1)))
+  }, logical(1))
+  if (!any(fresh)) return(NULL)
+  list(units = c(old_units, units[fresh]),
+    values = cbind(old_values, values[, fresh, drop = FALSE]))
+}
+
 .ctJuliaOptimise <- function(model_spec, start, optimcontrol = list(),
   gradient = "adjoint", cores = 1L, verbose = 0L, maxiter = NULL,
   callback = NULL, objective = NULL, progress_label = NULL,
@@ -5925,25 +5981,6 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
     out
   }
   result <- optimise_once(start)
-  # A run the line search ended on a jump (`stop_reason == "jump"`: a unit's
-  # Laplace term moved with where its inner solve stopped) is at no optimum
-  # of anything continuous, so nothing here certifies it. The quadrature
-  # correction integrates the units named by draws from this point and
-  # climbs on (`.ctLaplaceContinue()`, through `fit$laplace$jump`); without
-  # it the fit stops here. `jumprecord`, since `$jump` on an engine result
-  # would match its `jump_units`.
-  if (identical(as.character(.ctJuliaOr(result$stop_reason, ""))[1L], "jump")) {
-    named <- as.integer(result$jump_units)
-    named <- named[!is.na(named) & named > 0L]
-    result$jumprecord <- list(units = named,
-      points = if (length(named)) list(units = as.integer(result$jump_point_units),
-        values = result$jump_point_values),
-      iterations = as.integer(.ctJuliaOr(result$iterations, NA_integer_))[1L])
-    message(sprintf(paste0("Laplace: the objective jumped at %s %s (its term moved ",
-      "with where the inner solve stopped); the quadrature correction integrates ",
-      "%s by draws from here."), if (length(named) == 1L) "unit" else "units",
-      paste(named, collapse = ", "), if (length(named) == 1L) "it" else "them"))
-  }
   # The two early phases belong to the first stage, which is the one that
   # starts away from the optimum. An escape below resumes from a pulled-back
   # point beside it, so neither runs again there -- and SAEM's record is the
@@ -5961,6 +5998,50 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
   if (isTRUE(saem_record$saem_iterations > 0) && !isTRUE(saem_record$saem_settled)) {
     message("SAEM had not settled after ", saem_record$saem_iterations,
       " iterations; a larger optimcontrol$saem may help.")
+  }
+  # A run that ended on a jump (`stop_reason == "jump"`: a unit's Laplace term
+  # moved with where its inner solve stopped) is at no optimum of anything
+  # continuous. Where the solve reached a unit's better mode only at isolated
+  # points, that mode, kept as a start for the unit's solve
+  # (`spec$laplace$known`, `_laplace_known_modes` in the engine), makes its
+  # term continuous there: the modes the watch saw join the objective, and the
+  # fit resumes from where it stopped. On the affect pilot (v3_sub40ns, step 11
+  # of its finish) the objective then moved as its gradient said, where every
+  # step had lost a person's 3.85 nats (`scripts/pilot-curvature-2026-10/
+  # known_modes.R`). A jump whose units' modes are all known already, or one
+  # more after `.ctJuliaKnownRounds` resumes, is handed on as before.
+  rounds <- 0L
+  while (.ctJuliaJumped(result) && !state_explicit && !is.null(model_spec$laplace) &&
+      rounds < .ctJuliaKnownRounds) {
+    known <- .ctJuliaKnownModes(model_spec$laplace$known, result)
+    if (is.null(known)) break
+    named <- .ctJuliaJumpNamed(result)
+    message(sprintf(paste0("Laplace: the objective jumped at %s %s (its term moved ",
+      "with where the inner solve stopped); its modes there are kept as starts ",
+      "and the fit goes on."), if (length(named) == 1L) "unit" else "units",
+      paste(named, collapse = ", ")))
+    model_spec$laplace$known <- known
+    spec <- structure(model_spec, class = c("ctJuliaModel", "ctFitModel"))
+    objective <- .ctJuliaObjective(spec, hybrid = TRUE)
+    rounds <- rounds + 1L
+    result <- .ctJuliaAddRunCounts(optimise_once(as.numeric(result$minimizer),
+      carried = 0), result)
+  }
+  # A run still ended on a jump is certified by nothing here. The quadrature
+  # correction integrates the units named by draws from this point and
+  # climbs on (`.ctLaplaceContinue()`, through `fit$laplace$jump`); without
+  # it the fit stops here. `jumprecord`, since `$jump` on an engine result
+  # would match its `jump_units`.
+  if (.ctJuliaJumped(result)) {
+    named <- .ctJuliaJumpNamed(result)
+    result$jumprecord <- list(units = named,
+      points = if (length(named)) list(units = as.integer(result$jump_point_units),
+        values = result$jump_point_values),
+      iterations = as.integer(.ctJuliaOr(result$iterations, NA_integer_))[1L])
+    message(sprintf(paste0("Laplace: the objective jumped at %s %s (its term moved ",
+      "with where the inner solve stopped); the quadrature correction integrates ",
+      "%s by draws from here."), if (length(named) == 1L) "unit" else "units",
+      paste(named, collapse = ", "), if (length(named) == 1L) "it" else "them"))
   }
   # A fit that stopped short is tried again under one budget
   # (`.ctBackendCorrectResult()`, `optimcontrol$stallretries`): from the
@@ -6031,6 +6112,10 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
     result$stall_escapes <- 0L
   }
   for (nm in names(saem_record)) result[nm] <- list(saem_record[[nm]])
+  # The modes kept at jumps, for the fit's specification: every objective
+  # built from it afterwards (certification, curvature, uncertainty, a stored
+  # fit in a later session) is then the one this run optimised.
+  result$laplace_known <- model_spec$laplace$known
   if (!is.null(failure)) {
     warning("The progress callback failed and was disabled after the first ",
       "error; the fit itself is unaffected. The error was: ", failure,
@@ -6569,10 +6654,18 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
   # seconds.
   invisible(.ctJuliaModule(model_spec$project))
   optimise_started <- proc.time()[["elapsed"]]
-  result <- .ctJuliaOptimise(model_spec, start,
+  # The modes a kept run held as starts where its terms jumped
+  # (`.ctJuliaOptimise()`'s `laplace_known`) belong to the objective from then
+  # on: every stage and evaluation below, and the fit, build it from
+  # `model_spec`.
+  keepknown <- function(r) {
+    if (!is.null(r$laplace_known)) model_spec$laplace$known <<- r$laplace_known
+    invisible(r)
+  }
+  result <- keepknown(.ctJuliaOptimise(model_spec, start,
     optimcontrol = startcontrol, gradient = gradient, cores = cores,
     verbose = verbose, callback = optimcontrol$callback,
-    objective = jointobjective)
+    objective = jointobjective))
   optimum <- as.numeric(result$minimizer)[seq_len(npar)]
   moved <- FALSE
   if (!is.null(substeps) && isTRUE(substeps$finite)) {
@@ -6593,13 +6686,13 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
     first <- result
     # From the earlier mesh's or plan's optimum, so without the early phases,
     # which are for a stage that starts away from one.
-    result <- .ctJuliaAddRunCounts(.ctJuliaOptimise(
+    result <- keepknown(.ctJuliaAddRunCounts(.ctJuliaOptimise(
       model_spec, restart,
       optimcontrol = utils::modifyList(optimcontrol,
         list(saem = FALSE, stochastic = FALSE, batch = FALSE)), gradient = gradient,
       cores = cores,
       verbose = verbose, callback = optimcontrol$callback,
-      objective = jointobjective), first)
+      objective = jointobjective), first))
   }
   if (!is.null(substeps)) message(.ctJuliaSubstepMessage(substeps))
   # What the curvature says about the point the optimiser stopped at, and a
@@ -6645,7 +6738,7 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
       cores = if (fitseconds > .ctWorkerFitSeconds) cores else 1L,
       current = as.numeric(result$maximum_loglik)[1L], report = reporting)
     if (!is.null(restarts$best)) {
-      result <- restarts$best
+      result <- keepknown(restarts$best)
       if (certifying) {
         correction <- correct(result)
         result <- correction$result
@@ -6693,7 +6786,7 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
         for (nm in grep("^saem_", names(saemrun), value = TRUE)) {
           plain[nm] <- list(saemrun[[nm]])
         }
-        result <- .ctJuliaAddRunCounts(plain, saemrun)
+        result <- keepknown(.ctJuliaAddRunCounts(plain, saemrun))
         correction <- plaincorrection
         message(sprintf(paste0("SAEM reached a maximum with log posterior %.2f; ",
           "finishing without it reached %.2f, which the fit keeps. See ",
@@ -6724,9 +6817,9 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
       stagecontrol <- utils::modifyList(optimcontrol, list(batch = FALSE,
         saem = FALSE, stochastic = FALSE))
       certified_stage <- function(from) {
-        stage <- .ctJuliaOptimise(model_spec, from, optimcontrol = stagecontrol,
-          gradient = gradient, cores = cores, verbose = verbose,
-          callback = optimcontrol$callback)
+        stage <- keepknown(.ctJuliaOptimise(model_spec, from,
+          optimcontrol = stagecontrol, gradient = gradient, cores = cores,
+          verbose = verbose, callback = optimcontrol$callback))
         correct(.ctJuliaAddRunCounts(stage, result))
       }
       curvature <- correction$hessian
@@ -6742,10 +6835,10 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
         if (!settled) {
           model_spec$penalty$lambda <- gfs$lambda
           smoothpasses <- pass
-          walk <- .ctJuliaAddRunCounts(.ctJuliaOptimise(model_spec, gfs$point,
-            optimcontrol = stagecontrol, gradient = gradient, cores = cores,
-            verbose = verbose, callback = optimcontrol$callback,
-            hessian = gfs$hessian, hessian_at = theta, walked = TRUE), result)
+          walk <- keepknown(.ctJuliaAddRunCounts(.ctJuliaOptimise(model_spec,
+            gfs$point, optimcontrol = stagecontrol, gradient = gradient,
+            cores = cores, verbose = verbose, callback = optimcontrol$callback,
+            hessian = gfs$hessian, hessian_at = theta, walked = TRUE), result))
           walked <- .ctJuliaWalkedHessian(walk)
           result <- walk
           if (!is.null(walked)) {

@@ -700,6 +700,12 @@ mutable struct CTSEMLaplaceObjective{O} <: CTSEMOptimisable
     # Per level and group, the effects that cannot reach the group's data
     # (`_laplace_build_units`'s `inert`); empty where none are known.
     inert::Vector{Vector{Vector{Int}}}
+    # Per unit, modes its inner solve also starts Newton from
+    # (`_laplace_known_modes`): those a fit's line search or finish saw where
+    # the unit's term jumped, kept so the solve reaches the better mode at
+    # every point rather than only where a probe happens to. Fixed for the
+    # objective's life, so its value is still a function of theta alone.
+    known::Vector{Vector{Vector{Float64}}}
 end
 
 # `gate_lo = 0.2` and `gate_hi = 0.7` are measured, not derived: see the
@@ -708,7 +714,8 @@ function CTSEMLaplaceObjective(objective::CTSEMObjective, spec::CTSEMLaplaceSpec
     inner_maxiter::Integer=_LAPLACE_INNER_MAXITER[], inner_tol::Real=1e-10,
     floor=:total, gate_lo::Real=0.2, gate_hi::Real=0.7,
     inert::Union{Nothing,Vector{Vector{Vector{Int}}}}=nothing, quadratic::Bool=false,
-    affine::Vector{Vector{Bool}}=Vector{Bool}[])
+    affine::Vector{Vector{Bool}}=Vector{Bool}[],
+    known::Vector{Vector{Vector{Float64}}}=Vector{Vector{Float64}}[])
     Symbol(floor) in (:total, :gated) ||
         throw(ArgumentError("the Laplace floor must be :total or :gated"))
     0 < gate_lo < gate_hi || throw(ArgumentError("the gate needs 0 < lo < hi"))
@@ -721,7 +728,8 @@ function CTSEMLaplaceObjective(objective::CTSEMObjective, spec::CTSEMLaplaceSpec
         zeros(Int, nunits), zeros(Float64, nunits), falses(nunits), falses(nunits),
         falses(nunits), falses(nunits), Float64[], Symbol(floor), Float64(gate_lo),
         Float64(gate_hi), 0, quadratic, affine,
-        inert === nothing ? Vector{Vector{Int}}[] : inert)
+        inert === nothing ? Vector{Vector{Int}}[] : inert,
+        isempty(known) ? [Vector{Float64}[] for _ in 1:nunits] : known)
 end
 
 """
@@ -779,6 +787,9 @@ every subject's filter shares.
 
 `quadratic`, when sent, says every unit's inner problem is a concave quadratic,
 so the mode probes are skipped (`CTSEMLaplaceObjective`'s field of that name).
+`known_unit` and `known_values`, when sent, are the modes units' solves also
+start from (the field `known`): column `j` of `known_values` is a mode of unit
+`known_unit[j]`, its first `dims` entries, the rest padding.
 `affine_level` and `affine_effect`, when sent, are parallel: each pair names an
 effect (an index into that level's effects) that enters as that test's mean
 effects do where it holds for some effects and not all (the field `affine`).
@@ -792,7 +803,8 @@ function ctsem_laplace_objective(objective::CTSEMObjective; re_index=Int[],
     hybrid_pred=Int[], level_nload=Int[], load_row=Int[], load_col=Int[],
     inner_maxiter::Integer=_LAPLACE_INNER_MAXITER[], inner_tol::Real=1e-10,
     floor="total", gate_lo::Real=0.2, gate_hi::Real=0.7, quadratic::Bool=false,
-    affine_level=Int[], affine_effect=Int[])
+    affine_level=Int[], affine_effect=Int[], known_unit=Int[],
+    known_values=Matrix{Float64}(undef, 0, 0))
     nsubjects = length(objective.subject_objectives)
     counts = isempty(level_nre) ? [length(re_index)] : Vector{Int}(Int.(level_nre))
     ngroups = isempty(level_ngroups) ? [nsubjects] : Vector{Int}(Int.(level_ngroups))
@@ -927,10 +939,39 @@ function ctsem_laplace_objective(objective::CTSEMObjective; re_index=Int[],
             affine[l][p] = true
         end
     end
-    return CTSEMLaplaceObjective(objective, CTSEMLaplaceSpec(levels);
+    laplace = CTSEMLaplaceObjective(objective, CTSEMLaplaceSpec(levels);
         inner_maxiter=inner_maxiter, inner_tol=inner_tol, floor=Symbol(floor),
         gate_lo=gate_lo, gate_hi=gate_hi, inert=inert, quadratic=quadratic,
         affine=affine)
+    # A one-entry matrix may cross the bridge as a number.
+    isempty(known_unit) || _laplace_add_known!(laplace, Int.(collect(known_unit)),
+        known_values isa Number ? fill(Float64(known_values), 1, 1) :
+            Matrix{Float64}(reshape(known_values, size(known_values, 1), :)))
+    return laplace
+end
+
+"""
+    _laplace_add_known!(laplace, units, values)
+
+Adds column `j` of `values`, its first `dims` entries, to unit `units[j]`'s
+known modes (the field `known`), leaving out any within 1e-8 of one it has.
+"""
+function _laplace_add_known!(laplace::CTSEMLaplaceObjective, units::Vector{Int},
+    values::Matrix{Float64})
+    length(units) == size(values, 2) || throw(DimensionMismatch(
+        "known_unit needs one entry per column of known_values"))
+    for (j, U) in enumerate(units)
+        1 <= U <= length(laplace.known) || throw(ArgumentError(
+            "known mode for unit $U, outside the objective's units"))
+        d = laplace.units.dims[U]
+        size(values, 1) >= d || throw(DimensionMismatch(
+            "a known mode of unit $U needs $d entries"))
+        u = values[1:d, j]
+        all(isfinite, u) || continue
+        any(k -> _laplace_maxabsdiff(k, u) < 1e-8, laplace.known[U]) && continue
+        push!(laplace.known[U], u)
+    end
+    return laplace
 end
 
 """Positional convenience form, for single-level calls written in Julia."""
@@ -3640,6 +3681,9 @@ function _laplace_solve_unit_mode!(laplace::CTSEMLaplaceObjective, U::Integer,
             !(fromwarm && _LAPLACE_WARM_START[])
         best = _laplace_probe_modes(laplace, U, values, Ls, aws, best)
     end
+    # And from the modes the fit saw where this unit's term jumped.
+    (best.converged && !isempty(laplace.known[U])) &&
+        (best = _laplace_known_modes(laplace, U, values, Ls, aws, best))
     laplace.modes[U] = best.u
     laplace.inner_iterations[U] = best.iterations
     laplace.inner_gradient[U] = best.gradmax
@@ -4268,21 +4312,75 @@ function _laplace_probe_modes(laplace::CTSEMLaplaceObjective, U::Integer,
         (r.converged && isfinite(r.value)) || continue
         any(m -> _laplace_maxabsdiff(m, r.u) < 1e-4, seen) && continue
         push!(seen, r.u)
-        if _laplace_modes_separated(laplace, U, values, Ls, aws, best, r)
-            isnan(bestterm) && (bestterm = _laplace_unit_primal(laplace, U,
-                values, Ls, copy(best.u), aws).term)
-            term = _laplace_unit_primal(laplace, U, values, Ls, copy(r.u), aws).term
-            (isfinite(term) && (!isfinite(bestterm) || term > bestterm)) || continue
-        else
-            r.value > best.value || continue
-            term = NaN
-        end
-        best = (u=r.u, value=r.value, gradmax=r.gradmax, converged=true,
-            iterations=found.iterations + r.iterations,
-            repaired=found.repaired || r.repaired, curvature=nothing,
-            final=r.final)
-        bestterm = term
-        _CTSEM_OPCOUNT.probe_better[] += 1
+        best, bestterm, better = _laplace_prefer_mode(laplace, U, values, Ls, aws,
+            best, bestterm, r, found)
+        better && (_CTSEM_OPCOUNT.probe_better[] += 1)
+    end
+    return best
+end
+
+"""
+    _laplace_prefer_mode(laplace, U, values, Ls, aws, best, bestterm, r, found)
+
+Whether Newton's end point `r` replaces `best` as unit `U`'s mode, by the rule
+`_laplace_probe_modes` describes: between separate maxima the larger Laplace
+term (`_laplace_unit_primal`), otherwise the higher `g_U`. `bestterm` is
+`best`'s term where it has been computed, `NaN` until then; `found` is the
+solve the search started from, whose iterations and repairs the new mode's
+record adds to. Returns `(best, bestterm, better)`.
+"""
+function _laplace_prefer_mode(laplace::CTSEMLaplaceObjective, U::Integer,
+    values::AbstractVector{Float64}, Ls::Vector{Matrix{Float64}}, aws, best,
+    bestterm::Float64, r, found)
+    if _laplace_modes_separated(laplace, U, values, Ls, aws, best, r)
+        isnan(bestterm) && (bestterm = _laplace_unit_primal(laplace, U,
+            values, Ls, copy(best.u), aws).term)
+        term = _laplace_unit_primal(laplace, U, values, Ls, copy(r.u), aws).term
+        (isfinite(term) && (!isfinite(bestterm) || term > bestterm)) ||
+            return (best, bestterm, false)
+    else
+        r.value > best.value || return (best, bestterm, false)
+        term = NaN
+    end
+    return ((u=r.u, value=r.value, gradmax=r.gradmax, converged=true,
+        iterations=found.iterations + r.iterations,
+        repaired=found.repaired || r.repaired, curvature=nothing,
+        final=r.final), term, true)
+end
+
+"""
+    _laplace_known_modes(laplace, U, values, Ls, aws, found)
+
+Unit `U`'s mode once Newton has also run from each of its known modes (the
+field `known`), chosen as the probes choose (`_laplace_prefer_mode`).
+
+Why. Where a probe's Newton reaches a unit's better mode only at isolated
+points, each such point sits above its neighbourhood by that mode's gain and
+an optimiser creeps on it (CLAUDE.md, "A unit's term has one definition, and
+its mode is chosen"). On the affect pilot (v3_sub40ns, step 11 of its finish,
+dev4) unit 694 lost 3.85 nats at every step from 1e-6 to 1e-4 along the
+gradient, and units 764 and 546 1.3 and 0.35 at other lengths; solved also
+from the modes at that point, the objective moved as its gradient said, 2e-4
+nats at 1e-6 and 0.17 at 1e-3, and 694 kept its better mode to a step of 0.1
+(`CT-SEM/scripts/pilot-curvature-2026-10/known_modes.R`). The search from the
+origin runs first and still decides wherever a known start lands worse: from
+the modes alone the solve missed what the probes found, by up to 3.2 nats at
+a step of 0.3.
+"""
+function _laplace_known_modes(laplace::CTSEMLaplaceObjective, U::Integer,
+    values::AbstractVector{Float64}, Ls::Vector{Matrix{Float64}}, aws, found)
+    best = found
+    bestterm = NaN
+    d = length(found.u)
+    for start in laplace.known[U]
+        length(start) == d || continue
+        # A start at the mode the search found returns it.
+        _laplace_maxabsdiff(start, best.u) < 1e-4 && continue
+        r = _laplace_newton_unit_mode(laplace, U, values, Ls, aws, start)
+        (r.converged && isfinite(r.value)) || continue
+        _laplace_maxabsdiff(r.u, best.u) < 1e-4 && continue
+        best, bestterm, _ = _laplace_prefer_mode(laplace, U, values, Ls, aws,
+            best, bestterm, r, found)
     end
     return best
 end
