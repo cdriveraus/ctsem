@@ -1766,18 +1766,20 @@ are bumps, keep the rule in `η` at every `s`.
     Lm, Lb, Dm, Db, Vm, Vb = vout[5]
     pv = ((q * Lm, Lb, -q * Lm), (Dm, q * Db, -Dm), (q * Vm, Vb, -q * Vm))
     tcol = 2 + pos
+    # The rule in V's mode solve ends at the mode from any finite input
+    # (`_binary_vmode_solve`), so its partials are always its own; an input
+    # that is not finite is an invalid point.
     if !(sp < hi)
+        (okv && isfinite(lzv)) || return _quadrature_out(J, T(-Inf), zero(T), s * s)
         J === nothing && return (lzv, dv, varv)
-        okv || return _quadrature_out(J, T(-Inf), zero(T), s * s, false)
-        isfinite(lzv) || return _quadrature_out(J, T(-Inf), zero(T), s * s)
         _binary_vcolumns!(J, pv, tcol, pos > 0)
         return (lzv, dv, varv, true)
     end
     xout = _binary_quadrature_eta(ηbar, s, y, nodes, weights, thresholds, kind, J)
     lzx, dx, varx = xout[1], xout[2], xout[3]
-    J === nothing || (xout[4] && okv) ||
+    J === nothing || xout[4] ||
         return _quadrature_out(J, T(-Inf), zero(T), s * s, false)
-    (isfinite(lzx) && isfinite(lzv)) ||
+    (okv && isfinite(lzx) && isfinite(lzv)) ||
         return _quadrature_out(J, T(-Inf), zero(T), s * s)
     w, dw = _binary_vweight(s)
     out = (lzx + w * (lzv - lzx), dx + w * (dv - dx), varx + w * (varv - varx))
@@ -2029,15 +2031,13 @@ end
 `(mode, curvature, converged)` of `_binary_vquadrature`'s posterior in `V`:
 solved on values (`_binary_vmode_solve`), then polished in the caller's
 arithmetic, which gives the mode its partials by the implicit function
-theorem, exactly as `_binary_mode` does in `η`.
+theorem, as `_binary_mode` does in `η`. The solve ends at the mode from any
+finite input, so there is no iteration in the caller's arithmetic to fall back
+on; `converged` is false only for a non-finite one.
 """
 @inline function _binary_vmode(m::T, s::T) where {T}
     base, curvature, converged = _binary_vmode_solve(_primal(m), _primal(s))
-    if !converged
-        _carries_derivatives(T) || return (convert(T, base), convert(T, curvature),
-            false)
-        return _binary_vmode_solve(m, s)
-    end
+    converged || return (convert(T, base), convert(T, curvature), false)
     v = convert(T, base)
     for _ in 1:_mode_polish_steps(T)
         g, C = _binary_vslope(v, m, s)
@@ -2050,45 +2050,63 @@ end
 """
     _binary_vmode_solve(m, s)
 
-Newton with a line search on `_binary_vobjective`, which is strictly concave,
-by `_binary_mode_solve`'s rules (see there for why the step is searched).
+The root of `f'` (`_binary_vslope`), on values. `f` is strictly concave, so
+`f'` is strictly decreasing, and a root is always bracketed: `f'(0) =
+-λ(m/s)/s` is negative, and far to the left `f'` tends to one. So Newton steps
+are kept inside a bracket and replaced by its midpoint where they would leave
+it, which converges from any start, and the solve needs neither a line search
+nor a budget that can run out (`_binary_mode_solve`'s, and the forward-mode
+fallback behind it). It stops on that solve's rule, the predicted gain under
+`_mode_tolerance`, or where the bracket has closed to roundoff.
+
 It starts at zero, the logistic's own mode, or at `m + s²` where that is
 below: there an observation the prediction makes unlikely puts the posterior
 in the logistic's left tail, where `log psi` has slope one and the mode
-solves `λ(c) = s`, so `c` is about `-s`.
+solves `λ(c) = s`, so `c` is about `-s`. A left end is found by doubling steps
+from there.
 """
 @inline function _binary_vmode_solve(m::T, s::T) where {T}
+    (isfinite(m) && isfinite(s)) || return (T(NaN), T(NaN), false)
     v = min(zero(T), m + s * s)
-    value = _binary_vobjective(v, m, s)
     g, C = _binary_vslope(v, m, s)
-    converged = false
-    @inbounds for _ in 1:_CTSEM_MODE_MAXITER[]
-        step = g / C
-        if _newton_gain(g, step) <= _mode_tolerance(value)
-            converged = true
-            break
-        end
-        scale = one(T)
-        accepted = false
-        for _ in 1:_CTSEM_MODE_BACKTRACKS
-            candidate = v + scale * step
-            trial = _binary_vobjective(candidate, m, s)
-            if isfinite(trial) && trial >= value
-                v = candidate
-                value = trial
-                g, C = _binary_vslope(v, m, s)
-                accepted = true
-                break
-            end
-            scale /= 2
-        end
-        if !accepted
-            converged = true
-            break
+    lo = hi = v
+    if g > zero(T)
+        hi = zero(T)
+    else
+        width = one(T)
+        while true
+            hi = lo
+            lo -= width
+            width *= 2
+            gl, _ = _binary_vslope(lo, m, s)
+            gl > zero(T) && break
         end
     end
-    return (v, C, converged)
+    value = _binary_vobjective(v, m, s)
+    @inbounds for _ in 1:_CTSEM_VMODE_MAXITER
+        if g > zero(T)
+            lo = v
+        elseif g < zero(T)
+            hi = v
+        else
+            break
+        end
+        step = g / C
+        _newton_gain(g, step) <= _mode_tolerance(value) && break
+        candidate = v + step
+        (lo < candidate < hi) || (candidate = (lo + hi) / 2)
+        (candidate == v || hi - lo <= 4 * eps(T) * (one(T) + abs(v))) && break
+        v = candidate
+        value = _binary_vobjective(v, m, s)
+        g, C = _binary_vslope(v, m, s)
+    end
+    _, C = _binary_vslope(v, m, s)
+    return (v, C, true)
 end
+
+"""Steps `_binary_vmode_solve` may take: enough for bisection alone to close
+the widest bracket it can start from to roundoff; Newton ends it in a few."""
+const _CTSEM_VMODE_MAXITER = 200
 
 """
     _binary_quadrature_eta(ηbar, s, y, nodes, weights, thresholds, kind, J=nothing)

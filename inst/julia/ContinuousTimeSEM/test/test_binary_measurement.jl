@@ -297,6 +297,21 @@ end
             @test ForwardDiff.partials.(J, 1) ≈ ForwardDiff.partials.(oracle, 1) rtol = 1e-7 atol = 1e-9
         end
     end
+    # The mode solve in V is bracketed, so it ends at the mode from any finite
+    # input and the rule's partials are always its own: no observation above
+    # the band goes to forward mode, at predicted means far either side of
+    # the threshold and at any width.
+    for s in (3.6, 50.0, 1e4), z in (-40.0, -5.0, 0.0, 5.0, 40.0)
+        m = z * s
+        v, C, ok = CT._binary_vmode(m, s)
+        g, _ = CT._binary_vslope(v, m, s)
+        @test ok
+        @test abs(g / C) <= 1e-10 * (1 + abs(v))
+        J = zeros(3, 2)
+        _, _, _, handled = CT._binary_moment_partials!(J, m, s^2, 1.0, nodes,
+            weights, Float64[], _BINARY)
+        @test handled
+    end
     # At a trace jet, as the hand second order's jet sweeps run it: the
     # moments' first parts are their directional derivatives and the second
     # part the second, which nested forward mode through the values gives.
