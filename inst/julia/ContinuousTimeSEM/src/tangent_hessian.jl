@@ -267,27 +267,27 @@ end
 const _TAN_LAYER_NAMES = (:JAx, :DRIFT, :CINT, :Qc, :LAM, :Jy, :MM, :R, :T0M, :T0V, :TDE,
     :Jtd)
 _tan_tag(::Type{<:ForwardDiff.Dual{T}}) where {T} = T
-@inline _tan_layer_field(X, k::Symbol) = getproperty(X, k === :LAM ? :LAMBDA : k)
 
 """
 `f(X's field, N's field)` for each of the layer's matrices (`_TAN_LAYER_NAMES`),
-`X` a model or accumulator, `N` the matrices by name: unrolled, so each name is
-a constant. A loop over the names reads each field at a run-time symbol, a
-dynamic call each.
+`X` a model or accumulator, `N` the matrices by name: each field written out. A
+loop over the names reads each at a run-time symbol, and an `ntuple` over them
+did not fold the names either: a dynamic call each, and on two latents a
+fifth of a member sweep's bytes and a twentieth of its time.
 """
 @inline function _tan_each_layer(f::F, X, N) where {F}
-    ntuple(Val(length(_TAN_LAYER_NAMES))) do i
-        k = _TAN_LAYER_NAMES[i]
-        f(_tan_layer_field(X, k), getproperty(N, k))
-        nothing
-    end
+    f(X.JAx, N.JAx); f(X.DRIFT, N.DRIFT); f(X.CINT, N.CINT); f(X.Qc, N.Qc)
+    f(X.LAMBDA, N.LAM); f(X.Jy, N.Jy); f(X.MM, N.MM); f(X.R, N.R)
+    f(X.T0M, N.T0M); f(X.T0V, N.T0V); f(X.TDE, N.TDE); f(X.Jtd, N.Jtd)
     return nothing
 end
 
 """The accumulator's cotangents as duals of type `DW`, by name."""
-_tan_layer_duals(acc::TanAcc, ::Type{DW}) where {DW} = NamedTuple{_TAN_LAYER_NAMES}(
-    ntuple(i -> _tan_duals(_tan_layer_field(acc, _TAN_LAYER_NAMES[i]), DW),
-        Val(length(_TAN_LAYER_NAMES))))
+_tan_layer_duals(acc::TanAcc, ::Type{DW}) where {DW} = (JAx=_tan_duals(acc.JAx, DW),
+    DRIFT=_tan_duals(acc.DRIFT, DW), CINT=_tan_duals(acc.CINT, DW),
+    Qc=_tan_duals(acc.Qc, DW), LAM=_tan_duals(acc.LAMBDA, DW), Jy=_tan_duals(acc.Jy, DW),
+    MM=_tan_duals(acc.MM, DW), R=_tan_duals(acc.R, DW), T0M=_tan_duals(acc.T0M, DW),
+    T0V=_tan_duals(acc.T0V, DW), TDE=_tan_duals(acc.TDE, DW), Jtd=_tan_duals(acc.Jtd, DW))
 
 """A worker's sweep, kept in its scratch store between calls."""
 function _tan_sweep_scratch(n::Int, m::Int, ntd::Int, nh::Int, ::Val{W}, na::Int=n,

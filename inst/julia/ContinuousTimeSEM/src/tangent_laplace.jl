@@ -1015,7 +1015,8 @@ function _tan_laplace_member_hessian_!(Hs::AbstractMatrix{Float64}, g::Vector{Fl
             xw[t] = DC(shifted[t], ForwardDiff.Partials(ntuple(q -> q == c ? 1.0 : 0.0,
                 Val(W))))
         end
-        st = _tan_laplace_member!(ctx, objective, i, xw, ncol; g0=lo == 0 ? g : nothing)
+        st = lo == 0 ? _tan_laplace_member!(ctx, objective, i, xw, ncol; g0=g) :
+            _tan_laplace_member!(ctx, objective, i, xw, ncol)
         st == _TAN_REFUSED && return nothing
         st == _TAN_OK || return (NaN, 1)
         lo == 0 && (loglik = ctx.sw.ll[1])

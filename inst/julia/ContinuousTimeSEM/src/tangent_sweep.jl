@@ -521,12 +521,13 @@ function _tan_zero!(X)
     return X
 end
 
-"""Every cotangent zero and the queue empty."""
+"""Every cotangent zero and the queue empty. Each written out: a loop over
+them, matrices and vectors, called `_tan_zero!` dynamically."""
 function _tan_acc_zero!(acc::TanAcc)
-    for X in (acc.JAx, acc.DRIFT, acc.CINT, acc.Qc, acc.LAMBDA, acc.Jy, acc.MM, acc.R,
-        acc.T0M, acc.T0V, acc.TDE, acc.Jtd, acc.Gbar)
-        _tan_zero!(X)
-    end
+    _tan_zero!(acc.JAx); _tan_zero!(acc.DRIFT); _tan_zero!(acc.CINT); _tan_zero!(acc.Qc)
+    _tan_zero!(acc.LAMBDA); _tan_zero!(acc.Jy); _tan_zero!(acc.MM); _tan_zero!(acc.R)
+    _tan_zero!(acc.T0M); _tan_zero!(acc.T0V); _tan_zero!(acc.TDE); _tan_zero!(acc.Jtd)
+    _tan_zero!(acc.Gbar)
     empty!(acc.queue)
     return acc
 end
@@ -611,8 +612,17 @@ function _tan_reverse_predict!(xbar::TanVec{W}, Pbar::TanMat{W}, rec::TanPredRec
     sint && _tan_zero!(rv.Phibar)
     # The mean: x+ = A x + dINT; and the hybrid's columns, X+ = A X + Xinc.
     _tan_ger!(Abar, true, xbar, rec.x, false)
-    mod.nh > 0 && _tan_hybrid_reverse_predict!(hs, mod.hyb, rec.Xh, rec.Xinc, A, Abar,
-        JAxbar, rv.JT, rv.FT, rv.pivT, sint ? rv.Phibar : nothing)
+    # Each branch a call of its own: an argument that is a matrix or `nothing`
+    # made it a dynamic call every substep.
+    if mod.nh > 0
+        if sint
+            _tan_hybrid_reverse_predict!(hs, mod.hyb, rec.Xh, rec.Xinc, A, Abar, JAxbar,
+                rv.JT, rv.FT, rv.pivT, rv.Phibar)
+        else
+            _tan_hybrid_reverse_predict!(hs, mod.hyb, rec.Xh, rec.Xinc, A, Abar, JAxbar,
+                rv.JT, rv.FT, rv.pivT, nothing)
+        end
+    end
     _tan_mulTvec!(rv.xnew, A, xbar)
     # The covariance: P+ = A (P + eps I) A' + dDIFF.
     _tan_sym!(Ps, Pbar)
@@ -867,9 +877,12 @@ function _tan_reverse_row_update!(xbar::TanVec{W}, Pbar::TanMat{W}, rec::TanUpdR
     _tan_copy!(u.y, rec.y)
     _tan_copy!(u.xbar, xbar)
     _tan_copy!(u.Pbar, Pbar)
-    hook = mod.nh > 0 ?
-        (hs=hs, hr=_tan_row(fw, length(o)).hr, h=mod.hyb, o=o, Xh=rec.Xh) : nothing
-    _tan_reverse_update!(u, hook) || return false
+    # The hook in a branch of its own: a hook that is a NamedTuple or `nothing`
+    # made the reverse a dynamic call each row, and its bytes a third of a
+    # hybrid member sweep's.
+    ok = mod.nh > 0 ? _tan_reverse_update!(u,
+        (hs=hs, hr=rs.hr, h=mod.hyb, o=o, Xh=rec.Xh)) : _tan_reverse_update!(u, nothing)
+    ok || return false
     _tan_copy!(xbar, u.xbar)
     _tan_copy!(Pbar, u.Pbar)
     _tan_scatter!(acc.R, w, u.Rbar, o, o)
@@ -963,8 +976,8 @@ function _tan_sweep!(acc::TanAcc{W}, sw::TanSweep{W}, mod::TanModel{W},
     forward && return isfinite(sw.ll[1]) ? _TAN_OK : _TAN_INVALID
     # The closing term, and its reverse, which starts the walk.
     if mod.nh > 0
-        _tan_hybrid_closing!(hs, mod.G, mod.wlog, sw.ll, mod.fixed ? mod.dfix : nothing) ||
-            return _TAN_INVALID
+        (mod.fixed ? _tan_hybrid_closing!(hs, mod.G, mod.wlog, sw.ll, mod.dfix) :
+            _tan_hybrid_closing!(hs, mod.G, mod.wlog, sw.ll)) || return _TAN_INVALID
         _tan_comb!(acc.Gbar, ((w, hs.Gbar),), true)
     end
     isfinite(sw.ll[1]) || return _TAN_INVALID
