@@ -10,7 +10,13 @@
 # onto the cells, through the covariance constructions at the cells of the
 # stretch it began, then pulls them through its transforms.
 
-"""The model's matrices as a group left them, and its covariances' cells."""
+"""
+The model's matrices as a group left them, and its covariances' cells; which
+matrices the group wrote (`mask`, `_TAN_M_*`), and the drift's version
+(`dv`): one count a sweep, raised where a step wrote JAx or the diffusion, so
+that steps of one version share the drift's factors and the exponential's
+directions.
+"""
 struct TanSnap{W,DW}
     JAx::TanMat{W}; DRIFT::TanMat{W}; DmJ::TanMat{W}; CINT::TanVec{W}; Qc::TanMat{W}
     LAMBDA::TanMat{W}; Jy::TanMat{W}; MM::TanVec{W}; R::TanMat{W}
@@ -18,11 +24,14 @@ struct TanSnap{W,DW}
     mc::TanVec{W}; momon::Base.RefValue{Bool}
     rawD::Matrix{DW}; rawR::Matrix{DW}
     XC::TanVec{W}
+    mask::Base.RefValue{UInt16}
+    dv::Base.RefValue{Int}
 end
 TanSnap{W,DW}(n::Int, m::Int, ntd::Int, nxc::Int) where {W,DW} = TanSnap{W,DW}(TanMat{W}(n, n),
     TanMat{W}(n, n), TanMat{W}(n, n), TanVec{W}(n), TanMat{W}(n, n), TanMat{W}(m, n),
     TanMat{W}(m, n), TanVec{W}(m), TanMat{W}(m, m), TanMat{W}(n, ntd), TanMat{W}(n, n),
-    TanVec{W}(n), Ref(false), zeros(DW, n, n), zeros(DW, m, m), TanVec{W}(nxc))
+    TanVec{W}(n), Ref(false), zeros(DW, n, n), zeros(DW, m, m), TanVec{W}(nxc),
+    Ref(_TAN_M_ALL), Ref(0))
 
 function _tan_snap_save!(s::TanSnap, mod::TanModel, allW::AbstractVector, sp)
     _tan_copy!(s.JAx, mod.JAx); _tan_copy!(s.DRIFT, mod.DRIFT); _tan_copy!(s.DmJ, mod.DmJ)
@@ -109,6 +118,10 @@ mutable struct TanRows{W,DW,A,M}
     mats::M
     C::M
     t0::Matrix{DW}      # a flush's initial covariance scratch (`_tan_bar_of!`)
+    # What each group (predict, TD, update) writes (`_tan_layer_mask`), and
+    # the drift's version count (`TanSnap.dv`).
+    gmasks::NTuple{3,UInt16}
+    dvn::Int
 end
 function TanRows(awsW, sp, n::Int, m::Int, ntd::Int, ::Val{W}, ::Type{DW}) where {W,DW}
     nall = length(sp.mutables)
@@ -119,7 +132,9 @@ function TanRows(awsW, sp, n::Int, m::Int, ntd::Int, ::Val{W}, ::Type{DW}) where
         NTuple{3,Int}[], 0, TanRelinRec{W}[], 0, TanSnap{W,DW}(n, m, ntd, nxc), TanVec{W}(n),
         TanVec{W}(n), zeros(DW, n, n), zeros(DW, n, n), TanVec{W}(n),
         Ref{AbstractVector}(Float64[]), 0, mats, _tan_mats_alloc(DW, n, m, ntd, nxc),
-        zeros(DW, n, n))
+        zeros(DW, n, n), (_tan_layer_mask(sp, awsW.predict_indices),
+            _tan_layer_mask(sp, awsW.td_indices), _tan_layer_mask(sp, awsW.update_indices)),
+        0)
 end
 
 """`out` the duals of `X`'s values and tangents, lane `w` its `w`-th."""
@@ -199,14 +214,16 @@ function _tan_add_lanes!(X::Union{TanMat{W},TanVec{W}}, D::AbstractArray, nl::In
 end
 
 """
-The model's matrices from the subject's cells `R.allW` as the filter builds
-them, their lanes the tangents, and `DmJ`.
+The model's matrices in `mask` (`_TAN_M_*`) from the subject's cells
+`R.allW` as the filter builds them, their lanes the tangents, and `DmJ`.
 """
-function _tan_rows_refresh!(mod::TanModel{W}, R::TanRows, sp, nl::Int) where {W}
-    mw = _tan_mats_of!(R.mats, R.awsW, sp, R.allW)
-    _tan_each_layer((X, M) -> _tan_rows_from!(X, M, nl, R), mod, mw)
-    _tan_comb!(mod.DmJ, ((1.0, mod.DRIFT), (-1.0, mod.JAx)))
-    _tan_aug_refresh!(mod)
+function _tan_rows_refresh!(mod::TanModel{W}, R::TanRows, sp, nl::Int,
+    mask::UInt16=_TAN_M_ALL) where {W}
+    mw = _tan_mats_of!(R.mats, R.awsW, sp, R.allW, mask)
+    _tan_each_layer((X, M) -> _tan_rows_from!(X, M, nl, R), mod, mw, mask)
+    (mask & (_TAN_M_DRIFT | _TAN_M_JAX)) != 0 &&
+        _tan_comb!(mod.DmJ, ((1.0, mod.DRIFT), (-1.0, mod.JAx)))
+    (mask & (_TAN_M_JAX | _TAN_M_QC)) != 0 && _tan_aug_refresh!(mod)
     return mod
 end
 
@@ -244,18 +261,25 @@ function _tan_rows_group_eval!(R::TanRows{W,DW}, g::Int, indices::Vector{Int},
     else
         apply_complex_transforms_at_indices!(R.allW, indices, sp.update_transforms, ctx)
     end
-    _tan_rows_refresh!(mod, R, sp, nl)
+    # Only what the group writes: an iterated update's steps keep the
+    # measurement covariance its prior evaluated (`_ekf_iterated_rows!`), so
+    # theirs flushes it too, as that prior's.
+    mask = R.gmasks[g] | (keepR ? _TAN_M_R : 0x0000)
+    _tan_rows_refresh!(mod, R, sp, nl, mask)
     mod.momon[] = false
-    # An iterated update's steps keep the measurement covariance its prior
-    # evaluated (`_ekf_iterated_rows!`).
     keepR && _tan_copy!(mod.R, R.Rrow.R)
-    # The drift's factors for the predictions that read it.
-    g == 1 && _tan_sweep_begin!(sw, mod)
+    # The drift's factors for the predictions that read it, where it moved.
+    drift = (mask & (_TAN_M_JAX | _TAN_M_QC)) != 0
+    drift && (R.dvn += 1)
+    g == 1 && drift && _tan_sweep_begin!(sw, mod)
     R.ng += 1
     R.ng > length(R.snaps) &&
         push!(R.snaps, TanSnap{W,DW}(sw.n, sw.m, mod.ntd, length(mod.XC.v)))
-    _tan_snap_save!(R.snaps[R.ng], mod, R.allW, sp)
-    keepR && (R.snaps[R.ng].rawR .= R.Rrow.rawR)
+    sn = R.snaps[R.ng]
+    _tan_snap_save!(sn, mod, R.allW, sp)
+    keepR && (sn.rawR .= R.Rrow.rawR)
+    sn.mask[] = mask
+    sn.dv[] = R.dvn
     push!(R.prog, (1, slot, R.ng))
     return R.ng
 end
@@ -284,10 +308,14 @@ function _tan_rows_moment!(R::TanRows{W,DW}, x::TanVec{W}, P::TanMat{W}, mod::Ta
     _tan_rows_from!(mod.mc, view(ws.moment_c, 1:sw.n), nl, R)
     mod.momon[] = true
     _tan_sweep_begin!(sw, mod)
+    R.dvn += 1
     R.ng += 1
     R.ng > length(R.snaps) &&
         push!(R.snaps, TanSnap{W,DW}(sw.n, sw.m, mod.ntd, length(mod.XC.v)))
-    _tan_snap_save!(R.snaps[R.ng], mod, R.allW, sp)
+    sn = R.snaps[R.ng]
+    _tan_snap_save!(sn, mod, R.allW, sp)
+    sn.mask[] = _TAN_M_ALL
+    sn.dv[] = R.dvn
     push!(R.prog, (6, awsW.tape.nmoments, R.ng))
     return R.ng
 end
@@ -323,14 +351,19 @@ function _tan_rows_stationary!(x::TanVec{W}, P::TanMat{W}, R::TanRows{W,DW},
 end
 
 """
-The matrices' cotangents in `acc` moved onto the cells' (`R.allbar`), the
-covariances through their constructions at `s`'s cells (T0VAR's at the
-subject's own, which no group writes), and `acc` emptied.
+The cotangents in `acc` of the matrices in `mask` (`_TAN_M_*`) moved onto
+the cells' (`R.allbar`), the covariances through their constructions at `s`'s
+cells (T0VAR's at the subject's own, which no group writes), and emptied. A
+group's flush moves what it wrote: the other matrices' cotangents keep
+gathering until the walk reaches the cells that made them -- an earlier
+group's, or the layer's -- whose covariances' cells they are pulled back at.
+The exponential's queue must be empty where JAx is moved.
 """
-function _tan_rows_flush!(R::TanRows{W,DW}, acc::TanAcc{W}, sp, s::TanSnap) where {W,DW}
-    _tan_each_layer((X, D) -> _tan_rows_to!(D, X, R), acc, R.C)
-    _tan_bar_of!(R.allbar, R.awsW, sp, R.C, s.rawD, s.rawR, R.allW, R.t0)
-    _tan_acc_zero!(acc)
+function _tan_rows_flush!(R::TanRows{W,DW}, acc::TanAcc{W}, sp, s::TanSnap,
+    mask::UInt16=_TAN_M_ALL) where {W,DW}
+    _tan_each_layer((X, D) -> _tan_rows_to!(D, X, R), acc, R.C, mask)
+    _tan_bar_of!(R.allbar, R.awsW, sp, R.C, s.rawD, s.rawR, R.allW, R.t0, mask)
+    _tan_acc_zero!(acc, mask)
     return R
 end
 
@@ -366,7 +399,10 @@ function _tan_sweep_rows!(acc::TanAcc{W}, Hb::Matrix{Float64}, sw::TanSweep{W},
     mod.momon[] = false
     empty!(R.prog)
     R.ng = 0
+    R.dvn = 0
     _tan_snap_save!(R.base, mod, R.allW, sp)
+    R.base.mask[] = _TAN_M_ALL
+    R.base.dv[] = 0
     _tan_acc_zero!(acc)
     x, P = sw.x, sw.P
     fill!(sw.ll, 0.0)
@@ -454,20 +490,29 @@ function _tan_sweep_rows!(acc::TanAcc{W}, Hb::Matrix{Float64}, sw::TanSweep{W},
     xbar, Pbar = _tan_zero!(sw.xbar), _tan_zero!(sw.Pbar)
     _tan_zero!(R.xpbar)
     held = -1     # the snapshot the model holds
-    factored = -1 # the snapshot the drift's factors are of
+    factored = -1 # the drift's version its factors are of
+    snapof(s) = s == 0 ? R.base : R.snaps[s]
     for e in length(R.prog):-1:1
         kind, idx, s = R.prog[e]
         if kind == 1
-            # The stretch this group began is over: its cotangents onto the
-            # cells, then through the group.
-            _tan_rows_flush!(R, acc, sp, R.snaps[s])
+            # The stretch this group began is over: the cotangents of what it
+            # wrote onto the cells -- the exponential's directions first where
+            # it wrote the drift, on the drift they were queued at -- then
+            # through the group.
+            sn = R.snaps[s]
+            (sn.mask[] & _TAN_M_JAX) != 0 && _tan_flush_frechet!(acc, fw, mod, sw.sT)
+            _tan_rows_flush!(R, acc, sp, sn, sn.mask[])
             fill!(R.xbarW, zero(DW))
             _reverse_group!(R.allbar, R.xbarW, awsW.tape.groups[idx], sp, awsW)
             _tan_rows_add!(xbar, R.xbarW, nl, R)
             continue
         end
         if s != held
-            _tan_snap_load!(mod, s == 0 ? R.base : R.snaps[s])
+            # The exponential's directions queued on the drift held, flushed
+            # before the walk moves to another.
+            held >= 0 && snapof(s).dv[] != snapof(held).dv[] &&
+                _tan_flush_frechet!(acc, fw, mod, sw.sT)
+            _tan_snap_load!(mod, snapof(s))
             held = s
         end
         if kind == 8 || kind == 10
@@ -497,6 +542,7 @@ function _tan_sweep_rows!(acc::TanAcc{W}, Hb::Matrix{Float64}, sw::TanSweep{W},
             # A moment-matched step's cubature: the averaged cells' cotangents
             # onto the cells, its correction's from the prediction's reverse,
             # then through the points to the mean and the covariance.
+            _tan_flush_frechet!(acc, fw, mod, sw.sT)
             _tan_rows_flush!(R, acc, sp, R.snaps[s])
             ms = awsW.moment
             _tan_rows_to!(view(ms.cbar, 1:n), R.cbar, R)
@@ -524,17 +570,18 @@ function _tan_sweep_rows!(acc::TanAcc{W}, Hb::Matrix{Float64}, sw::TanSweep{W},
         elseif kind == 3
             _tan_reverse_td!(xbar, Pbar, sw, mod, acc, 1.0, view(TD, :, idx), idx)
         else
-            if s != factored
+            if snapof(s).dv[] != factored
                 _tan_sweep_begin!(sw, mod)
-                factored = s
+                factored = snapof(s).dv[]
             end
+            # The exponential's direction queued by interval on this drift
+            # (`_tan_enqueue!`), flushed where the walk leaves it.
             _tan_reverse_predict!(xbar, Pbar, sw.preds[idx], rv, fw, mod, acc, 1.0, hs)
-            # The exponential's direction belongs to this step's drift.
-            _tan_flush_frechet!(acc, fw, mod, sw.sT)
             # A moment-matched step's correction's cotangent, its offset's.
             mod.momon[] && _tan_copy!(R.cbar, rv.affbar)
         end
     end
+    _tan_flush_frechet!(acc, fw, mod, sw.sT)
     _tan_lincomb!(acc.T0M, true, acc.T0M, 1.0, xbar)
     _tan_sym!(rv.Ps, Pbar)
     _tan_comb!(acc.T0V, ((1.0, rv.Ps),), true)

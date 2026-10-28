@@ -107,6 +107,50 @@ _tan_mats_alloc(::Type{S}, n::Int, m::Int, ntd::Int, nxc::Int=0) where {S} =
         zeros(S, n, n), zeros(S, m, n), zeros(S, m, n), zeros(S, m), zeros(S, m, m),
         zeros(S, n), zeros(S, n, n), zeros(S, n, ntd), zeros(S, n, n), zeros(S, nxc)))
 
+# The layer's matrices as bits: what a group of cells evaluated by row writes
+# (`_tan_layer_mask`), so that its refresh, its flush and the drift's factors
+# touch only what it changed.
+const _TAN_M_JAX = 0x0001
+const _TAN_M_DRIFT = 0x0002
+const _TAN_M_CINT = 0x0004
+const _TAN_M_QC = 0x0008
+const _TAN_M_LAM = 0x0010
+const _TAN_M_JY = 0x0020
+const _TAN_M_MM = 0x0040
+const _TAN_M_R = 0x0080
+const _TAN_M_T0M = 0x0100
+const _TAN_M_T0V = 0x0200
+const _TAN_M_TDE = 0x0400
+const _TAN_M_JTD = 0x0800
+const _TAN_M_XC = 0x1000
+const _TAN_M_ALL = 0xffff
+
+"""The layer's matrices (`_TAN_M_*`) that the cells `indices` belong to."""
+function _tan_layer_mask(sp, indices)
+    l = sp.parameter_axis
+    owners = ((:JAx, _TAN_M_JAX), (:DRIFT, _TAN_M_DRIFT), (:CINT, _TAN_M_CINT),
+        (:DIFFUSION, _TAN_M_QC), (:LAMBDA, _TAN_M_LAM), (:Jy, _TAN_M_JY),
+        (:MANIFESTMEANS, _TAN_M_MM), (:MANIFESTVAR, _TAN_M_R), (:T0MEANS, _TAN_M_T0M),
+        (:T0VAR, _TAN_M_T0V), (:TDPREDEFFECT, _TAN_M_TDE), (:Jtd, _TAN_M_JTD),
+        (:THRESHOLDS, _TAN_M_XC), (:ASYMPTOTES, _TAN_M_XC), (:RESPONSE, _TAN_M_XC))
+    mask = 0x0000
+    for k in indices
+        for (name, bit) in owners
+            s = _layout_index(l, name)
+            s == 0 && continue
+            f = l.first[s]
+            f <= k < f + l.nrows[s] * l.ncols[s] && (mask |= bit)
+        end
+        # The population block's cells, which T0VAR's covariance takes.
+        k in sp.population_range && (mask |= _TAN_M_T0V)
+    end
+    # A count's or censored row's sd is MANIFESTVAR's cell and an extra too.
+    xc = Ref(false)
+    _tan_cat_each((j, cell, i) -> (cell in indices && (xc[] = true)), sp)
+    xc[] && (mask |= _TAN_M_XC)
+    return mask
+end
+
 """The parameter matrices of the cells `all_params`, as the filter builds them."""
 function _tan_mats_of(aws, sp, all_params::AbstractVector)
     pars = CTSEMPars(all_params, sp.parameter_axis)
@@ -116,21 +160,23 @@ function _tan_mats_of(aws, sp, all_params::AbstractVector)
         ws.manifest_dim, ntd, _tan_cat_ncells(sp)), aws, sp, all_params)
 end
 
-"""`_tan_mats_of` into the matrices `dst` (`_tan_mats_alloc`)."""
-function _tan_mats_of!(dst, aws, sp, all_params::AbstractVector)
+"""`_tan_mats_of` into the matrices `dst` (`_tan_mats_alloc`): those in `mask`
+(`_TAN_M_*`), the others left as they are."""
+function _tan_mats_of!(dst, aws, sp, all_params::AbstractVector, mask::UInt16=_TAN_M_ALL)
     ws = aws.ekf_ws
     pars = CTSEMPars(all_params, sp.parameter_axis)
     n, m = ws.state_dim, ws.manifest_dim
+    on(bit) = (mask & bit) != 0
     # As the filter builds them: MANIFESTVAR's and DIFFUSION's covariances as
     # the construction leaves them, T0VAR's with its lower triangle copied up.
     cov!(out, mat, d, buf) = (sdcovsqrt2cov!(buf, mat, sp.covmatcode, d);
         copyto!(out, view(buf.out, 1:d, 1:d)))
     T0V = dst.T0V
-    cov!(T0V, pars.T0VAR, n, ws.bufferQ)
-    _copy_lower_to_upper!(T0V, n)
+    on(_TAN_M_T0V) && cov!(T0V, pars.T0VAR, n, ws.bufferQ)
+    on(_TAN_M_T0V) && _copy_lower_to_upper!(T0V, n)
     # The population block, added (`_place_population_block!`).
     pidx = sp.population_indices
-    if !isempty(pidx)
+    if on(_TAN_M_T0V) && !isempty(pidx)
         k = length(pidx)
         raw = reshape(view(all_params, sp.population_range), k, k)
         sdcovsqrt2cov!(ws.population_buffer, raw, sp.population_covmatcode,
@@ -143,26 +189,27 @@ function _tan_mats_of!(dst, aws, sp, all_params::AbstractVector)
     # The TD predictors' effects and the impulse's Jacobian, where the model
     # has them.
     S = eltype(all_params)
-    hasproperty(pars, :TDPREDEFFECT) && copyto!(dst.TDE, pars.TDPREDEFFECT)
-    if hasproperty(pars, :Jtd)
+    on(_TAN_M_TDE) && hasproperty(pars, :TDPREDEFFECT) && copyto!(dst.TDE, pars.TDPREDEFFECT)
+    if !on(_TAN_M_JTD)
+    elseif hasproperty(pars, :Jtd)
         copyto!(dst.Jtd, view(pars.Jtd, 1:n, 1:n))
     else
         @inbounds for j in 1:n, i in 1:n
             dst.Jtd[i, j] = i == j ? one(S) : zero(S)
         end
     end
-    copyto!(dst.JAx, view(pars.JAx, 1:n, 1:n))
-    copyto!(dst.DRIFT, view(pars.DRIFT, 1:n, 1:n))
-    copyto!(dst.CINT, view(pars.CINT, 1:n))
-    cov!(dst.Qc, pars.DIFFUSION, n, ws.bufferQ)
-    copyto!(dst.LAM, view(pars.LAMBDA, 1:m, 1:n))
-    copyto!(dst.Jy, view(pars.Jy, 1:m, 1:n))
-    copyto!(dst.MM, view(pars.MANIFESTMEANS, 1:m))
-    cov!(dst.R, pars.MANIFESTVAR, m, ws.bufferΘ)
-    copyto!(dst.T0M, view(pars.T0MEANS, 1:n))
+    on(_TAN_M_JAX) && copyto!(dst.JAx, view(pars.JAx, 1:n, 1:n))
+    on(_TAN_M_DRIFT) && copyto!(dst.DRIFT, view(pars.DRIFT, 1:n, 1:n))
+    on(_TAN_M_CINT) && copyto!(dst.CINT, view(pars.CINT, 1:n))
+    on(_TAN_M_QC) && cov!(dst.Qc, pars.DIFFUSION, n, ws.bufferQ)
+    on(_TAN_M_LAM) && copyto!(dst.LAM, view(pars.LAMBDA, 1:m, 1:n))
+    on(_TAN_M_JY) && copyto!(dst.Jy, view(pars.Jy, 1:m, 1:n))
+    on(_TAN_M_MM) && copyto!(dst.MM, view(pars.MANIFESTMEANS, 1:m))
+    on(_TAN_M_R) && cov!(dst.R, pars.MANIFESTVAR, m, ws.bufferΘ)
+    on(_TAN_M_T0M) && copyto!(dst.T0M, view(pars.T0MEANS, 1:n))
     # The categorical extras' cells as they are.
     XC = dst.XC
-    _tan_cat_each((k, cell, i) -> (@inbounds XC[k] = all_params[cell]), sp)
+    on(_TAN_M_XC) && _tan_cat_each((k, cell, i) -> (@inbounds XC[k] = all_params[cell]), sp)
     return dst
 end
 
@@ -188,28 +235,32 @@ covariances pulled back through their constructions at the cells `rawD`,
 `rawR` and `rawT0` (DIFFUSION's, MANIFESTVAR's and T0VAR's).
 """
 function _tan_bar_of!(tb::AbstractVector{S}, aws, sp, C, rawD, rawR, cells,
-    t0=nothing) where {S}
+    t0=nothing, mask::UInt16=_TAN_M_ALL) where {S}
     ws = aws.ekf_ws
     n, m = ws.state_dim, ws.manifest_dim
     tc = CTSEMPars(tb, sp.parameter_axis)
-    view(tc.JAx, 1:n, 1:n) .+= C.JAx
-    view(tc.DRIFT, 1:n, 1:n) .+= C.DRIFT
-    view(tc.CINT, 1:n) .+= C.CINT
-    view(tc.LAMBDA, 1:m, 1:n) .+= C.LAM
-    view(tc.Jy, 1:m, 1:n) .+= C.Jy
-    view(tc.MANIFESTMEANS, 1:m) .+= C.MM
-    view(tc.T0MEANS, 1:n) .+= C.T0M
-    hasproperty(tc, :TDPREDEFFECT) && (tc.TDPREDEFFECT .+= C.TDE)
-    hasproperty(tc, :Jtd) && (view(tc.Jtd, 1:n, 1:n) .+= C.Jtd)
+    # Only the matrices in `mask` (`_TAN_M_*`): a group's flush moves those it
+    # wrote and leaves the others' cotangents to gather until the cells that
+    # made them are reached (`_tan_rows_flush!`).
+    on(bit) = (mask & bit) != 0
+    on(_TAN_M_JAX) && (view(tc.JAx, 1:n, 1:n) .+= C.JAx)
+    on(_TAN_M_DRIFT) && (view(tc.DRIFT, 1:n, 1:n) .+= C.DRIFT)
+    on(_TAN_M_CINT) && (view(tc.CINT, 1:n) .+= C.CINT)
+    on(_TAN_M_LAM) && (view(tc.LAMBDA, 1:m, 1:n) .+= C.LAM)
+    on(_TAN_M_JY) && (view(tc.Jy, 1:m, 1:n) .+= C.Jy)
+    on(_TAN_M_MM) && (view(tc.MANIFESTMEANS, 1:m) .+= C.MM)
+    on(_TAN_M_T0M) && (view(tc.T0MEANS, 1:n) .+= C.T0M)
+    on(_TAN_M_TDE) && hasproperty(tc, :TDPREDEFFECT) && (tc.TDPREDEFFECT .+= C.TDE)
+    on(_TAN_M_JTD) && hasproperty(tc, :Jtd) && (view(tc.Jtd, 1:n, 1:n) .+= C.Jtd)
     pullback!(target, mat, cbar, d) = _sdcovsqrt2cov_pullback!(target, mat, cbar, d;
         scratch=aws.covsqrt_scratch, covmatcode=sp.covmatcode)
-    # A covariance with no cotangent has none to pull back: a group that writes
-    # only means flushes zeros here at every row.
-    any(!iszero, C.Qc) && pullback!(tc.DIFFUSION, rawD, C.Qc, n)
-    any(!iszero, C.R) && pullback!(tc.MANIFESTVAR, rawR, C.R, m)
+    # A covariance with no cotangent has none to pull back.
+    on(_TAN_M_QC) && any(!iszero, C.Qc) && pullback!(tc.DIFFUSION, rawD, C.Qc, n)
+    on(_TAN_M_R) && any(!iszero, C.R) && pullback!(tc.MANIFESTVAR, rawR, C.R, m)
     # The categorical extras' cells, straight onto them (`_extras_cotangent!`).
     XCbar = C.XC
-    _tan_cat_each((k, cell, i) -> (@inbounds tb[cell] += XCbar[k]), sp)
+    on(_TAN_M_XC) && _tan_cat_each((k, cell, i) -> (@inbounds tb[cell] += XCbar[k]), sp)
+    on(_TAN_M_T0V) || return tb
     T0Vbar = C.T0V
     pidx = sp.population_indices
     if !isempty(pidx) && any(!iszero, T0Vbar)
@@ -289,6 +340,23 @@ fifth of a member sweep's bytes and a twentieth of its time.
     f(X.LAMBDA, N.LAM); f(X.Jy, N.Jy); f(X.MM, N.MM); f(X.R, N.R)
     f(X.T0M, N.T0M); f(X.T0V, N.T0V); f(X.TDE, N.TDE); f(X.Jtd, N.Jtd)
     f(X.XC, N.XC)
+    return nothing
+end
+"""`_tan_each_layer` over the matrices in `mask` (`_TAN_M_*`) alone."""
+@inline function _tan_each_layer(f::F, X, N, mask::UInt16) where {F}
+    (mask & _TAN_M_JAX) != 0 && f(X.JAx, N.JAx)
+    (mask & _TAN_M_DRIFT) != 0 && f(X.DRIFT, N.DRIFT)
+    (mask & _TAN_M_CINT) != 0 && f(X.CINT, N.CINT)
+    (mask & _TAN_M_QC) != 0 && f(X.Qc, N.Qc)
+    (mask & _TAN_M_LAM) != 0 && f(X.LAMBDA, N.LAM)
+    (mask & _TAN_M_JY) != 0 && f(X.Jy, N.Jy)
+    (mask & _TAN_M_MM) != 0 && f(X.MM, N.MM)
+    (mask & _TAN_M_R) != 0 && f(X.R, N.R)
+    (mask & _TAN_M_T0M) != 0 && f(X.T0M, N.T0M)
+    (mask & _TAN_M_T0V) != 0 && f(X.T0V, N.T0V)
+    (mask & _TAN_M_TDE) != 0 && f(X.TDE, N.TDE)
+    (mask & _TAN_M_JTD) != 0 && f(X.Jtd, N.Jtd)
+    (mask & _TAN_M_XC) != 0 && f(X.XC, N.XC)
     return nothing
 end
 
