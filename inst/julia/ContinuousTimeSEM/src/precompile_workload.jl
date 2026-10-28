@@ -25,8 +25,9 @@
 # code every model on its route runs. What still differs between models: a
 # categorical indicator (a workspace type, so Gaussian fits carry none of its
 # code -- hence a categorical model per route here), a Laplace unit with more
-# than four random effects (the next curvature width), and an expression outside
-# `CTSEMExpr`'s vocabulary (its own closure).
+# than two random effects (the trace jet's full width, `_ctsem_jet_width`, and
+# with categorical indicators the moments' five-wide dual, `_tan_cat_live`),
+# and an expression outside `CTSEMExpr`'s vocabulary (its own closure).
 #
 # ## What it costs
 #

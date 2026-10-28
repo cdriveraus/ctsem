@@ -187,13 +187,14 @@ end
 What the blocks of a model with states outside them need (`TanModel.aug`):
 the Lyapunov solve and its solution over the diffusing states, JAx's factors
 over the leading block of genuine dynamics and its transpose's for the
-reverse, the two series at the blocks' sizes, and scratch.
+reverse, the two series at the blocks' sizes and their tables, and scratch.
 """
 struct TanAugFw{W}
     lya::TanLyap{W}; Xd::TanMat{W}
     FJa::Matrix{Float64}; pivJa::Vector{Int}
     JTa::TanMat{W}; FTa::Matrix{Float64}; pivTa::Vector{Int}
     seria::TanSeries{W}; serna::TanSeries{W}
+    tabi::TanSeriesTable{W}; tabn::TanSeriesTable{W}
     Aa::TanMat{W}; Ad::TanMat{W}; kk1::TanMat{W}; kk2::TanMat{W}; Qb::TanMat{W}
     Xbar::TanMat{W}; Adbar::TanMat{W}; JAdbar::TanMat{W}; Qdbar::TanMat{W}
     JAabar::TanMat{W}; Phibar::TanMat{W}
@@ -202,7 +203,8 @@ struct TanAugFw{W}
 end
 TanAugFw(n::Int, na::Int, k::Int, W::Int) = TanAugFw{W}(TanLyap(k, W), TanMat{W}(k, k),
     zeros(na, na), zeros(Int, na), TanMat{W}(na, na), zeros(na, na), zeros(Int, na),
-    TanSeries(na, W), TanSeries(k, W), TanMat{W}(na, na),
+    TanSeries(na, W), TanSeries(k, W), TanSeriesTable(na, W, false),
+    TanSeriesTable(k, W, true), TanMat{W}(na, na),
     (TanMat{W}(k, k) for _ in 1:8)..., TanMat{W}(na, na), TanMat{W}(na, na),
     (TanVec{W}(na) for _ in 1:4)..., TanMat{W}(n, n))
 
@@ -242,6 +244,8 @@ struct TanForward{W}
     rows::Vector{Union{Nothing,TanRowScratch{W}}}
     seri::TanSeries{W}      # the intercept's series, and the noise's
     sern::TanSeries{W}
+    tabi::TanSeriesTable{W} # their tables, where the drift holds over the rows
+    tabn::TanSeriesTable{W}
 end
 TanForward(n::Int, m::Int, nh::Int, W::Int, na::Int=n, k::Int=n) = TanForward{W}(n, m, nh,
     na < n || k < n ? TanAugFw(n, na, k, W) : nothing, TanFrechet(n, W),
@@ -249,7 +253,8 @@ TanForward(n::Int, m::Int, nh::Int, W::Int, na::Int=n, k::Int=n) = TanForward{W}
     TanMat{W}(n, n), zeros(n, n), zeros(Int, n), Ref(0.0), Ref(0.0),
     zeros(_CTSEM_EXP_TABLE), [TanMat{W}(n, n) for _ in 1:_CTSEM_EXP_TABLE], Ref(0), Ref(1),
     TanMat{W}(n, n), TanMat{W}(n, n), TanMat{W}(n, n), TanVec{W}(n),
-    Union{Nothing,TanRowScratch{W}}[nothing for _ in 1:m], TanSeries(n, W), TanSeries(n, W))
+    Union{Nothing,TanRowScratch{W}}[nothing for _ in 1:m], TanSeries(n, W), TanSeries(n, W),
+    TanSeriesTable(n, W, false), TanSeriesTable(n, W, true))
 
 """
 The scratch for a row observing `mo` manifests, built at first use. Its type
@@ -334,7 +339,7 @@ function _tan_predict!(x::TanVec{W}, P::TanMat{W}, rec::TanPredRec{W}, fw::TanFo
     dINT = rec.dINT
     Phi = nothing
     if sint
-        Phi = _tan_series_intercept!(fw.seri, mod.JAx, dt)
+        Phi = _tan_intercept_series!(fw.seri, fw.tabi, mod.JAx, dt, mod.rows)
         _tan_mulvec!(dINT, Phi, rec.affine)
     else
         _tan_mulvec!(dINT, A, rec.affine)
@@ -351,7 +356,8 @@ function _tan_predict!(x::TanVec{W}, P::TanMat{W}, rec::TanPredRec{W}, fw::TanFo
     _tan_mulNT!(fw.nn2, fw.nn1, A)  # A P A'
     # dDIFF = X - (A X) A', or V, added in.
     if snoise
-        _tan_comb!(P, ((1.0, fw.nn2), (1.0, _tan_series_noise!(fw.sern, mod.JAx, mod.Qc, dt))))
+        _tan_comb!(P, ((1.0, fw.nn2),
+            (1.0, _tan_noise_series!(fw.sern, fw.tabn, mod.JAx, mod.Qc, dt, mod.rows))))
     else
         _tan_mul!(fw.nn1, A, fw.X)
         _tan_comb!(P, ((1.0, fw.nn2), (1.0, fw.X)))
@@ -631,7 +637,9 @@ function _tan_enqueue!(acc::TanAcc{W}, dt::Float64, Abar::TanMat{W}, w::Float64)
     return acc
 end
 
-"""The queued directions into JAx's cotangent: `dt L(dt JAx', Abar)` each."""
+"""The queued directions into JAx's cotangent, `dt L(dt JAx', Abar)` each, and
+the series tables' pending cotangents into JAx's and Qc's
+(`_tan_series_release!`)."""
 function _tan_flush_frechet!(acc::TanAcc{W}, fw::TanForward{W}, mod::TanModel{W},
     sT::TanMat{W}) where {W}
     for (dt, k) in acc.queue
@@ -640,7 +648,42 @@ function _tan_flush_frechet!(acc::TanAcc{W}, fw::TanForward{W}, mod::TanModel{W}
         _tan_comb!(acc.JAx, ((dt, fw.fr.L),), true)
     end
     empty!(acc.queue)
+    _tan_series_release!(acc, fw, mod)
     return acc
+end
+
+"""The forward's series tables' pending cotangents, weighted as they were
+added, pulled back through their powers into `acc`: JAx's and Qc's, or their
+blocks' where the model has blocks (`TanAugFw`)."""
+function _tan_series_release!(acc::TanAcc{W}, fw::TanForward{W}, mod::TanModel{W}) where {W}
+    if mod.aug
+        fa = fw.aug::TanAugFw{W}
+        _tan_table_release!(fa.tabi) &&
+            _tan_scatter!(acc.JAx, 1.0, fa.tabi.Jbar, 1:mod.na, 1:mod.na)
+        if _tan_table_release!(fa.tabn)
+            _tan_scatter!(acc.JAx, 1.0, fa.tabn.Jbar, mod.dyn, mod.dyn)
+            _tan_scatter!(acc.Qc, 1.0, fa.tabn.Qbar, mod.dyn, mod.dyn)
+        end
+        return acc
+    end
+    _tan_table_release!(fw.tabi) && _tan_comb!(acc.JAx, ((1.0, fw.tabi.Jbar),), true)
+    if _tan_table_release!(fw.tabn)
+        _tan_comb!(acc.JAx, ((1.0, fw.tabn.Jbar),), true)
+        _tan_comb!(acc.Qc, ((1.0, fw.tabn.Qbar),), true)
+    end
+    return acc
+end
+
+"""Drop the series tables' cotangents: what a walk that stopped short left."""
+function _tan_series_drop!(fw::TanForward{W}) where {W}
+    fw.tabi.pending = false
+    fw.tabn.pending = false
+    if fw.aug !== nothing
+        fa = fw.aug::TanAugFw{W}
+        fa.tabi.pending = false
+        fa.tabn.pending = false
+    end
+    return fw
 end
 
 """The reverse of a prediction's scratch, and JAx' with its factors."""
@@ -697,11 +740,16 @@ function _tan_reverse_predict!(xbar::TanVec{W}, Pbar::TanMat{W}, rec::TanPredRec
     _tan_mulTN!(rv.nn2, A, Ps)
     _tan_mul!(rv.Pnew, rv.nn2, A)
     if snoise
-        # dDIFF = V, its series run again and pulled back; it reads no A.
-        _tan_series_noise!(fw.sern, JAx, mod.Qc, dt)
+        # dDIFF = V, its series run again and pulled back -- onto its table's
+        # powers, weighted, where it has one; it reads no A.
+        _tan_noise_series!(fw.sern, fw.tabn, JAx, mod.Qc, dt, mod.rows)
         _tan_zero!(rv.JAxdbar)
         _tan_zero!(rv.Qcdbar)
-        _tan_series_noise_pullback!(rv.JAxdbar, rv.Qcdbar, fw.sern, Ps)
+        if mod.rows
+            _tan_series_noise_pullback!(rv.JAxdbar, rv.Qcdbar, fw.sern, Ps)
+        else
+            _tan_series_noise_table_pullback!(fw.tabn, fw.sern, Ps, w)
+        end
     else
         # dDIFF = X - A X A', its cotangent Ps (symmetric already).
         _tan_mulTN!(rv.kk6, A, Ps)
@@ -719,10 +767,14 @@ function _tan_reverse_predict!(xbar::TanVec{W}, Pbar::TanMat{W}, rec::TanPredRec
     if sint
         # dINT = Phi affine, the series run again: affine's cotangent Phi'
         # xbar, and Phi's, with the hybrid's columns', pulled back.
-        Phi = _tan_series_intercept!(fw.seri, JAx, dt)
+        Phi = _tan_intercept_series!(fw.seri, fw.tabi, JAx, dt, mod.rows)
         _tan_mulTvec!(rv.affbar, Phi, xbar)
         _tan_ger!(rv.Phibar, true, xbar, rec.affine, true)
-        _tan_series_intercept_pullback!(JAxbar, fw.seri, rv.Phibar)
+        if mod.rows
+            _tan_series_intercept_pullback!(JAxbar, fw.seri, rv.Phibar)
+        else
+            _tan_series_intercept_table_pullback!(fw.tabi, fw.seri, rv.Phibar, w)
+        end
     else
         # dINT = JAx \ s, s = A affine - affine: sbar = JAx' \ dINTbar.
         _tan_copy!(rv.sbar, xbar)
@@ -972,9 +1024,11 @@ function _tan_reverse_row_update!(xbar::TanVec{W}, Pbar::TanMat{W}, rec::TanUpdR
     return true
 end
 
-"""What a block's subjects share: `_tan_forward_begin!`, and JAx' and its factors."""
+"""What a block's subjects share: `_tan_forward_begin!`, and JAx' and its
+factors; no series cotangents pending."""
 function _tan_sweep_begin!(sw::TanSweep{W}, mod::TanModel{W}) where {W}
     _tan_forward_begin!(sw.fw, mod)
+    _tan_series_drop!(sw.fw)
     mod.ct || return sw
     if mod.aug
         fa = sw.fw.aug::TanAugFw{W}
@@ -1106,7 +1160,7 @@ function _tan_predict_aug!(x::TanVec{W}, P::TanMat{W}, rec::TanPredRec{W},
     ra, da = fa.ra, fa.dINTa
     _tan_gather!(ra, rec.affine, 1:na)
     if sint
-        _tan_mulvec!(da, _tan_series_intercept!(fa.seria, mod.JAa, dt), ra)
+        _tan_mulvec!(da, _tan_intercept_series!(fa.seria, fa.tabi, mod.JAa, dt, mod.rows), ra)
     else
         _tan_gather!(fa.Aa, A, 1:na, 1:na)
         _tan_mulvec!(da, fa.Aa, ra)
@@ -1125,7 +1179,8 @@ function _tan_predict_aug!(x::TanVec{W}, P::TanMat{W}, rec::TanPredRec{W},
     D = fa.dD
     _tan_zero!(D)
     if snoise
-        _tan_scatter!(D, 1.0, _tan_series_noise!(fa.serna, mod.JAd, mod.Qd, dt), dyn, dyn)
+        _tan_scatter!(D, 1.0,
+            _tan_noise_series!(fa.serna, fa.tabn, mod.JAd, mod.Qd, dt, mod.rows), dyn, dyn)
     else
         _tan_gather!(fa.Ad, A, dyn, dyn)
         _tan_mul!(fa.kk1, fa.Ad, fa.Xd)
@@ -1188,8 +1243,12 @@ function _tan_reverse_predict_aug!(xbar::TanVec{W}, Pbar::TanMat{W}, rec::TanPre
     _tan_zero!(fa.JAdbar)
     _tan_zero!(fa.Qdbar)
     if snoise
-        _tan_series_noise!(fa.serna, mod.JAd, mod.Qd, dt)
-        _tan_series_noise_pullback!(fa.JAdbar, fa.Qdbar, fa.serna, Qb)
+        _tan_noise_series!(fa.serna, fa.tabn, mod.JAd, mod.Qd, dt, mod.rows)
+        if mod.rows
+            _tan_series_noise_pullback!(fa.JAdbar, fa.Qdbar, fa.serna, Qb)
+        else
+            _tan_series_noise_table_pullback!(fa.tabn, fa.serna, Qb, w)
+        end
     else
         Ad, Xd = fa.Ad, fa.Xd
         _tan_gather!(Ad, A, dyn, dyn)
@@ -1211,12 +1270,16 @@ function _tan_reverse_predict_aug!(xbar::TanVec{W}, Pbar::TanMat{W}, rec::TanPre
     _tan_gather!(ra, rec.affine, 1:na)
     _tan_gather!(xa, xbar, 1:na)
     if sint
-        Phi = _tan_series_intercept!(fa.seria, mod.JAa, dt)
+        Phi = _tan_intercept_series!(fa.seria, fa.tabi, mod.JAa, dt, mod.rows)
         _tan_mulTvec!(affa, Phi, xa)
         _tan_ger!(fa.Phibar, true, xa, ra, true)
-        _tan_zero!(fa.JAabar)
-        _tan_series_intercept_pullback!(fa.JAabar, fa.seria, fa.Phibar)
-        _tan_scatter!(JAxbar, 1.0, fa.JAabar, 1:na, 1:na)
+        if mod.rows
+            _tan_zero!(fa.JAabar)
+            _tan_series_intercept_pullback!(fa.JAabar, fa.seria, fa.Phibar)
+            _tan_scatter!(JAxbar, 1.0, fa.JAabar, 1:na, 1:na)
+        else
+            _tan_series_intercept_table_pullback!(fa.tabi, fa.seria, fa.Phibar, w)
+        end
     else
         # dINT_a = JAa \ s, s = Aa affine_a - affine_a: sbar = JAa' \ dINTbar_a.
         _tan_solve!(xa, fa.FTa, fa.pivTa, fa.JTa)
