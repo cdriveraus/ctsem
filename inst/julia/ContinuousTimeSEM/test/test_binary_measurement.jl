@@ -233,6 +233,72 @@ end
     @test ForwardDiff.partials.(J, 1) ≈ ForwardDiff.partials.(oracle, 1) rtol = 1e-7 atol = 1e-10
 end
 
+# A binary observation or an ordinal end category at a predicted sd above
+# `_CTSEM_BINARY_VBAND`'s lower end is integrated in the logistic variable,
+# blended with the rule in eta across the band (`_binary_quadrature`). The
+# rule in eta alone put P(1) + P(0) at 1.06 for s = 500, with an error that
+# changed sign as s grew, and fits stopped on the spurious maxima it made.
+# Inside the band the rule in eta keeps part of the weight, and with it its own
+# error there, about 3e-5 at s = 3; above it the rule in V is good to 1e-6.
+@testset "one-sided observations at large predicted sd" begin
+    CT = ContinuousTimeSEM
+    nodes, weights = CT._binary_rule()
+    tau = [-1.0, 0.4, 1.9]
+    lo, hi = CT._CTSEM_BINARY_VBAND
+    tol(s, outside) = lo < s < hi ? 1e-4 : outside
+    for s in (2.0, 2.9, 3.4, 4.0, 10.0, 100.0, 1000.0), z in (-2.0, 0.0, 0.7)
+        etabar = z * s
+        p = [exp(CT._binary_moments(etabar, s, y, nodes, weights, (), _BINARY)[1])
+            for y in (0.0, 1.0)]
+        po = [exp(CT._binary_moments(etabar, s, k, nodes, weights, tau, _ORDINAL)[1])
+            for k in 1:4]
+        @test sum(p) ≈ 1 atol = tol(s, 1e-6)
+        @test sum(po) ≈ 1 atol = tol(s, 1e-6)
+    end
+    # Against the dense reference, in the band and above it.
+    for s in (2.8, 3.2, 5.0, 40.0), z in (-2.0, 0.0, 1.5),
+        (y, th, kind) in ((1.0, (), _BINARY), (0.0, (), _BINARY), (1, tau, _ORDINAL),
+            (4, tau, _ORDINAL))
+        etabar = z * s
+        dense = _dense_categorical_moments(etabar, s, y, th, kind)
+        logZ, offset, variance = CT._binary_moments(etabar, s, y, nodes, weights, th,
+            kind)
+        @test logZ ≈ dense.logZ atol = tol(s, 2e-6)
+        @test (etabar + offset) / s ≈ dense.mean / s atol = tol(s, 2e-6)
+        @test variance / s^2 ≈ dense.variance / s^2 atol = tol(s, 2e-6)
+    end
+    # The partials by hand against forward mode through the same function, in
+    # the band (where the blend's weight moves) and above it; an asymptote
+    # item, whose logistic part is this; and under an outer dual, as inside
+    # the Laplace curvature and the hand second order.
+    for b in (2.7^2, 3.0^2, 3.3^2, 4.0^2, 20.0^2, 300.0^2), z in (-2.0, 0.3),
+        (y, th, kind) in ((1.0, Float64[], _BINARY), (0.0, Float64[], _BINARY),
+            (1, tau, _ORDINAL), (4, tau, _ORDINAL), (1.0, [0.2, 0.95], _BINARY))
+        a = z * sqrt(b)
+        oracle = zeros(3, 2 + length(th))
+        lz, m, v, ok = CT._binary_moment_dual!(oracle, a, b, y, nodes, weights, th,
+            kind)
+        hlz, hm, hv, J = CT._binary_moment_jacobian(a, b, y, nodes, weights, th,
+            kind)
+        @test ok
+        @test isapprox([hlz, hm, hv], [lz, m, v]; rtol=1e-12, atol=1e-12)
+        @test J ≈ oracle rtol = 1e-8 atol = 1e-10
+    end
+    outer(v, p=0.0) = ForwardDiff.Dual{ForwardDiff.Tag{typeof(sin),Float64}}(v, p)
+    D = typeof(outer(0.0))
+    for (a, b) in ((outer(-0.6, 1.0), outer(3.1^2, 0.3)),
+        (outer(-0.6, 1.0), outer(12.0^2, 5.0)))
+        for (y, th, kind) in ((1.0, D[], _BINARY),
+            (4, D[outer(-1.0, 0.2), outer(0.4), outer(1.9, -0.1)], _ORDINAL))
+            oracle = zeros(D, 3, 2 + length(th))
+            CT._binary_moment_dual!(oracle, a, b, y, nodes, weights, th, kind)
+            _, _, _, J = CT._binary_moment_jacobian(a, b, y, nodes, weights, th, kind)
+            @test ForwardDiff.value.(J) ≈ ForwardDiff.value.(oracle) rtol = 1e-8 atol = 1e-10
+            @test ForwardDiff.partials.(J, 1) ≈ ForwardDiff.partials.(oracle, 1) rtol = 1e-7 atol = 1e-9
+        end
+    end
+end
+
 @testset "_binary_mode solves the scalar posterior's first-order condition" begin
     for (label, etabar, s, y, thresholds, kind) in _MOMENT_CASES
         s2 = s^2

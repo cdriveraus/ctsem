@@ -96,12 +96,51 @@ categories of a `τ = (-1.0, 0.4, 1.9)` variable:
 An interior category is a bump rather than a step, and a mode-centred rule has
 less work to do on a bump. The end categories are the binary case again.
 
-Large `s` is where this is hardest: the posterior is then dominated by the
-likelihood and genuinely skewed, so a mode-centred Gaussian rule has real work
-to do. It is also where the answer is least determined, so the error matters
-least.
+Large `s` is where this rule fails, and it is not where the error matters
+least. Against a prior of sd `s` much above the logistic's unit width, a binary
+posterior is a step at the threshold attached to a body of width `s`: the rule's
+scale, set by the curvature at a mode just past the step, spaces its nodes far
+wider than the step, and its error depends on where the step falls between
+them. At `s = 100` it put `P(1) + P(0)` at 1.03, at 500 at 1.06, and the sign
+changes with `s`, so a likelihood flat towards large variance had spurious
+maxima tens of nats high, where fits stopped. So above `s` of 2.5 a binary
+observation or an ordinal end category is integrated in the logistic variable
+instead (`_binary_vquadrature`), and more nodes here would not have done:
+the error falls as about `1/n`.
 """
 const _CTSEM_BINARY_NODES = Ref(21)
+
+"""
+Nodes for the rule in the logistic variable (`_binary_vquadrature`): 41. Its
+integrand has the logistic density's exponential tails, which a Gaussian rule
+takes more nodes to follow than the near-Gaussian posteriors the rule in `η`
+sees at small `s`. Worst error in `log P` over predicted means within five sds
+of the threshold, against direct integration
+(`scripts/binary-quadrature-2026-10/proto_dual.R`, in the CT-SEM project):
+
+    nodes    s=2      s=3      s=4      s=6      s>=16
+       31   1.1e-6   3.8e-6   1.8e-4   3.6e-6   ~1e-5
+       41   1.2e-7   4.9e-7   1.5e-5   3.1e-7   ~5e-8
+
+The `s = 4` column is observations the prediction makes unlikely, where the
+posterior in `V` sits in the logistic's tail. The rule in `η` at 21 nodes is
+2.6e-4 there and 0.07-0.7 from `s = 45` up.
+"""
+const _CTSEM_BINARY_VNODES = Ref(41)
+
+"""
+The predicted sds over which a one-sided observation moves from the rule in
+`η` to the rule in `V`, blended by a smoothstep between (`_binary_quadrature`).
+A switch would put a step of the two rules' difference into the objective
+wherever a row's `s` crossed it. Placed above the rows of the bench's
+categorical fits, whose largest `s` was 3.2 and 99th percentile at most 2.6, so
+that the rows paying for both rules are few: a row in the band costs about 3.6
+times a row below it, one above about 2.4 times (local, `_binary_moments`).
+Inside the band the error is the rule in `η`'s share of its own, up to about
+6e-5 in `log P`, which is what it was before; a band at 2-3 would cut that to
+2e-6 and put ord4's end categories, at `s` of 2.0-2.3, in it.
+"""
+const _CTSEM_BINARY_VBAND = (2.5, 3.5)
 
 # The rule `_binary_rule` hands out, with the node count it was built for.
 # Mutable, so the atomic field below holds a pointer: Julia implements an
@@ -119,24 +158,29 @@ mutable struct _CTSEMBinaryRule
     @atomic rule::_CTSEMBinaryRuleValue
 end
 const _CTSEM_BINARY_RULE = _CTSEMBinaryRule(_CTSEMBinaryRuleValue(0, Float64[], Float64[]))
+const _CTSEM_BINARY_VRULE = _CTSEMBinaryRule(_CTSEMBinaryRuleValue(0, Float64[], Float64[]))
 
 """
-    _binary_rule()
+    _binary_rule(rule = _CTSEM_BINARY_RULE, count = _CTSEM_BINARY_NODES)
 
-`_gauss_hermite(_CTSEM_BINARY_NODES[])` without taking its lock. Every
+`_gauss_hermite(count[])` without taking its lock. Every
 categorical observation of every pass asks for this rule, and on ord4 (local)
 the uncontended lock alone was 2% of an ordinal gradient and 5% of a value.
 An atomic read of the rule last built, rebuilt through the locked cache when
 the node count has changed; the vectors are never written after they are built.
+`_binary_vrule()` is the rule in the logistic variable, cached the same way.
 """
-@inline function _binary_rule()
-    cached = @atomic :acquire _CTSEM_BINARY_RULE.rule
-    m = _CTSEM_BINARY_NODES[]
+@inline function _binary_rule(rule::_CTSEMBinaryRule=_CTSEM_BINARY_RULE,
+    count::Base.RefValue{Int}=_CTSEM_BINARY_NODES)
+    cached = @atomic :acquire rule.rule
+    m = count[]
     cached.m == m && return (cached.nodes, cached.weights)
     nodes, weights = _gauss_hermite(m)
-    @atomic :release _CTSEM_BINARY_RULE.rule = _CTSEMBinaryRuleValue(m, nodes, weights)
+    @atomic :release rule.rule = _CTSEMBinaryRuleValue(m, nodes, weights)
     return (nodes, weights)
 end
+
+@inline _binary_vrule() = _binary_rule(_CTSEM_BINARY_VRULE, _CTSEM_BINARY_VNODES)
 
 
 """
@@ -1495,7 +1539,10 @@ and scaled by its curvature, so the integrand it sees is close to the Gaussian
 the rule is exact for. A fixed rule centred on the prior instead sees
 `inv_logit(ηbar + √2 s t)`, which becomes a step in `t` as `s` grows -- and a
 polynomial rule converges slowly on a step, which is precisely where the
-measured error was.
+measured error was. Centring on the mode moves that failure out but does not
+remove it: once `s` is several times the step's width the mode-centred rule's
+nodes straddle the step too, so a one-sided observation is integrated in the
+logistic variable there (`_binary_quadrature`).
 
 `_gauss_hermite` returns physicists' nodes, so `∫f(t)e^{-t²}dt ≈ Σ wᵢf(tᵢ)`;
 re-centring turns that into `∫h(η)dη ≈ √2σ̂ Σ wᵢ exp(tᵢ²) h(η̂ + √2σ̂tᵢ)`.
@@ -1689,9 +1736,368 @@ Given a `3 x (2 + e)` matrix `J`, also its exact partials, written there as
 `_binary_moment_jacobian` describes, and a fourth return, `false` when they
 could not be taken this way (a mode solve that used its budget): the same loop
 and the same numbers, with the partials accumulated beside them rather than
-carried as dual numbers. The derivation is at `_quadrature_partials!`.
+carried as dual numbers.
+
+A one-sided observation -- binary, or an ordinal end category, whose likelihood
+is a step at one threshold -- is integrated in `η` (`_binary_quadrature_eta`)
+up to the predicted sd `s` where that rule stops resolving the step, and in the
+logistic variable above it (`_binary_vquadrature`), with the two blended across
+`_CTSEM_BINARY_VBAND` by the smoothstep `w(s) = t³(10 - 15t + 6t²)`. `w` and its
+first two derivatives vanish at both ends, so the objective, its gradient and
+its Hessian stay continuous; the blend's partials are the rules' mixed by `w`
+and, in the `s²` column, `w'(s)/2s` times the rules' difference. Which rule, or
+both, is decided on values. Interior categories and counts, whose likelihoods
+are bumps, keep the rule in `η` at every `s`.
 """
 @inline function _binary_quadrature(ηbar::T, s::T, y::Real, nodes, weights,
+    thresholds, kind::Int, J=nothing) where {T}
+    pos, q = _binary_side(y, thresholds, kind)
+    lo, hi = _CTSEM_BINARY_VBAND
+    sp = _primal(s)
+    (q == 0 || !(sp > lo)) &&
+        return _binary_quadrature_eta(ηbar, s, y, nodes, weights, thresholds, kind,
+            J)
+    τ = pos > 0 ? thresholds[pos] : zero(ηbar)
+    vout = _binary_vquadrature(promote(q * (ηbar - τ), s)..., J !== nothing)
+    lzv, dv, varv, okv = vout[1], q * vout[2], vout[3], vout[4]
+    # The rule's partials in the reflected predictor `m = q (ηbar - τ)` and in
+    # `b = s²`, carried to `ηbar`, `b` and the threshold read: `dm/dηbar = q`,
+    # `dm/dτ = -q`, and the offset is `q` times the reflected one.
+    Lm, Lb, Dm, Db, Vm, Vb = vout[5]
+    pv = ((q * Lm, Lb, -q * Lm), (Dm, q * Db, -Dm), (q * Vm, Vb, -q * Vm))
+    tcol = 2 + pos
+    if !(sp < hi)
+        J === nothing && return (lzv, dv, varv)
+        okv || return _quadrature_out(J, T(-Inf), zero(T), s * s, false)
+        isfinite(lzv) || return _quadrature_out(J, T(-Inf), zero(T), s * s)
+        _binary_vcolumns!(J, pv, tcol, pos > 0)
+        return (lzv, dv, varv, true)
+    end
+    xout = _binary_quadrature_eta(ηbar, s, y, nodes, weights, thresholds, kind, J)
+    lzx, dx, varx = xout[1], xout[2], xout[3]
+    J === nothing || (xout[4] && okv) ||
+        return _quadrature_out(J, T(-Inf), zero(T), s * s, false)
+    (isfinite(lzx) && isfinite(lzv)) ||
+        return _quadrature_out(J, T(-Inf), zero(T), s * s)
+    w, dw = _binary_vweight(s)
+    out = (lzx + w * (lzv - lzx), dx + w * (dv - dx), varx + w * (varv - varx))
+    J === nothing && return out
+    gap = (lzv - lzx, dv - dx, varv - varx)
+    @inbounds for r in 1:3
+        J[r, 1] += w * (pv[r][1] - J[r, 1])
+        J[r, 2] += w * (pv[r][2] - J[r, 2]) + dw * gap[r]
+        pos > 0 && (J[r, tcol] += w * (pv[r][3] - J[r, tcol]))
+    end
+    return (out[1], out[2], out[3], true)
+end
+
+"""
+    _binary_side(y, thresholds, kind)
+
+`(position, q)` for an observation whose likelihood is a step at one
+threshold: `q = 1` where it is `F(η - τ)`, `-1` where it is `F(τ - η)`, and
+`τ` the threshold at `position`, or zero at position zero, a binary item's.
+`(-1, 0)` for an interior ordinal category and for a count, which the rule in
+`η` keeps.
+"""
+@inline function _binary_side(y::Real, thresholds, kind::Int)
+    kind == CTSEM_OBS_COUNT && return (-1, 0)
+    (kind == CTSEM_OBS_BINARY || isempty(thresholds)) &&
+        return (0, y > 0.5 ? 1 : -1)
+    k = Int(y)
+    n = length(thresholds)
+    k <= 1 && return (1, -1)
+    k > n && return (n, 1)
+    return (-1, 0)
+end
+
+"""
+    _binary_vweight(s)
+
+The blend's weight on the rule in `V` at predicted sd `s` inside
+`_CTSEM_BINARY_VBAND`, and its derivative in `b = s²`.
+"""
+@inline function _binary_vweight(s::T) where {T}
+    lo, hi = _CTSEM_BINARY_VBAND
+    width = T(hi - lo)
+    t = (s - T(lo)) / width
+    w = t * t * t * (10 + t * (6 * t - 15))
+    u = t * (1 - t)
+    return (w, 30 * u * u / (width * 2 * s))
+end
+
+"""Write the rule in `V`'s partials `pv` (rows by output, `(ηbar, b, τ)`) into
+`J`'s columns 1, 2 and, for an ordinal end category, the threshold's."""
+@inline function _binary_vcolumns!(J, pv, tcol::Int, threshold::Bool)
+    @inbounds for r in 1:3
+        J[r, 1] = pv[r][1]
+        J[r, 2] = pv[r][2]
+        threshold && (J[r, tcol] = pv[r][3])
+    end
+    return nothing
+end
+
+"""
+    _binary_vquadrature(m, s, partials::Bool)
+
+`P(y = 1)`, with `F` the logistic and `x ~ N(m, s²)`, and the posterior's
+mean less `m` and variance, by integrating over the logistic variable instead
+of `x`: `(logZ, offset, variance, converged, (Lm, Lb, Dm, Db, Vm, Vb))`, the
+last the three outputs' partials in `m` and `b = s²` (zeros unless
+`partials`). An observation at a threshold `τ`, or of a zero, is this at
+`m = ±(ηbar - τ)` (`_binary_quadrature`).
+
+# Why another variable
+
+`F(x) = P(V <= x)` for `V` standard logistic, so exchanging the integrals,
+
+    P = E_x[F(x)] = E_V[Phi((m - V)/s)]
+
+The first integrand is a step of unit width against a Gaussian of width `s`,
+which a Gaussian rule resolves only when `s` is small. The second is the
+logistic density, of unit width, times `Phi` of width `s`, which is smooth on
+its posterior's scale when `s` is large. Given `V = v`, `x` is `N(m, s²)`
+truncated below at `v`, whose moments are closed form: with `c = (m - v)/s`
+and `λ = phi(c)/Phi(c)` (`_mills`), mean `m + sλ` and variance
+`s²(1 - Λ)`, `Λ = λ(c + λ)`. So
+
+    offset = s <λ>,   variance = s² (<1 - Λ> + Var(λ))
+
+under the posterior in `V`, `psi(v) Phi(c)`, which is log-concave: a
+mode-centred Gauss-Hermite rule as in `η`, its mode found on values and
+polished in the caller's arithmetic as `_binary_mode` does. `Var(λ)` is taken
+about the mode's `λ`, where the nodes' values differ little.
+
+# Partials
+
+Of the rule as computed, as `_quadrature_partials!` takes the rule in `η`'s.
+With `f(v) = log psi(v) + log Phi(c)` and the curvature `C = 2 psi(v) +
+Λ/s²` at the mode, the implicit function theorem gives the mode's partials
+`dv/dθ = (∂f'/∂θ)/C`, and `ρ = -(dC/dθ)/2C` is the scale's `d log σ/dθ`. A node
+at `v = mode + σ t` moves by `dv + ρ (v - mode)`, its `c` by `∂c/∂θ - dv/s`,
+its exponent by `-tanh(v/2) dv + λ dc`, its `λ` by `-Λ dc` and its `Λ` by
+`Λ' dc`, `Λ' = λ (1 - (c + λ)(c + 2λ))`; `d logZ = ρ + <de>`, and each average
+moves by its own change plus its covariance with `de`.
+"""
+function _binary_vquadrature(m::T, s::T, partials::Bool) where {T}
+    nodes, weights = _binary_vrule()
+    vm, C, converged = _binary_vmode(m, s)
+    zeropart = (zero(T), zero(T), zero(T), zero(T), zero(T), zero(T))
+    σ = sqrt(2 / C)
+    is = inv(s)
+    b = s * s
+    # The mode's own quantities, for the partials and for `Var(λ)`'s centre.
+    cm = (m - vm) * is
+    λm = _mills(cm)
+    Z = zero(T)
+    S1 = zero(T)
+    S2 = zero(T)
+    SW = zero(T)
+    emax = T(-Inf)
+    # Per input, the mode's and the scale's moves (`dv`, `ρ`) and the explicit
+    # move of `c` as the node's factor: `∂c/∂m = 1/s`, `∂c/∂b = -c/2b`.
+    dvm = dvb = ρm = ρb = zero(T)
+    if partials
+        Λm = λm * (cm + λm)
+        Λpm = λm * (1 - (cm + λm) * (cm + 2 * λm))
+        pv = _logistic(vm)
+        pn = _logistic(-vm)
+        ψ = pv * pn
+        s3 = b * s
+        dvm = Λm / (b * C)
+        dvb = (λm - Λm * cm) / (2 * s3 * C)
+        Cv = -2 * ψ * (pv - pn) - Λpm / s3
+        ρm = -(Cv * dvm + Λpm / s3) / (2 * C)
+        ρb = -(Cv * dvb - (cm * Λpm / 2 + Λm) / (b * b)) / (2 * C)
+    end
+    # Twelve sums for the partials, six per input: <de>, <dλ>, <d de>, <W de>,
+    # <dW>, <d dλ>, <d² de>, with `d = λ - λm` and `W = 1 - Λ`; held as two
+    # tuples so the rescaling below multiplies them in one line.
+    Am = (zero(T), zero(T), zero(T), zero(T), zero(T), zero(T), zero(T))
+    Ab = Am
+    @inbounds for i in eachindex(nodes)
+        t = T(nodes[i])
+        v = vm + σ * t
+        c = (m - v) * is
+        lΦ = _norm_logcdf(c)
+        e = t * t + _logistic_logpdf(v) + lΦ
+        if e > emax
+            ratio = isfinite(emax) ? exp(emax - e) : zero(T)
+            Z *= ratio
+            S1 *= ratio
+            S2 *= ratio
+            SW *= ratio
+            if partials
+                Am = Am .* ratio
+                Ab = Ab .* ratio
+            end
+            emax = e
+        end
+        u = T(weights[i]) * exp(e - emax)
+        λ = exp(_norm_logpdf(c) - lΦ)
+        d = λ - λm
+        W = 1 - λ * (c + λ)
+        Z += u
+        S1 += u * d
+        S2 += u * d * d
+        SW += u * W
+        if partials
+            Λ = 1 - W
+            Λp = λ * (1 - (c + λ) * (c + 2 * λ))
+            th = _logistic(v) - _logistic(-v)
+            Am = Am .+ _binary_vnode_sums(u, σ * t, dvm, ρm, is, -th, λ, d, W, Λ, Λp, is)
+            Ab = Ab .+ _binary_vnode_sums(u, σ * t, dvb, ρb, is, -th, λ, d, W, Λ, Λp,
+                -c / (2 * b))
+        end
+    end
+    isfinite(emax) && Z > zero(T) ||
+        return (T(-Inf), zero(T), b, converged, zeropart)
+    iz = inv(Z)
+    mλ = λm + S1 * iz
+    between = S2 * iz - (S1 * iz)^2
+    within = SW * iz
+    logZ = log(Z) + emax + log(σ)
+    offset = s * mλ
+    variance = b * (within + between)
+    positive = variance > zero(T)
+    variance = max(variance, zero(T))
+    partials || return (logZ, offset, variance, converged, zeropart)
+    d1 = S1 * iz
+    d2 = S2 * iz
+    Lm, Dm, Vm = _binary_vmoves(Am .* iz, ρm, zero(T), zero(T), d1, d2, mλ,
+        within, between, s, b, positive)
+    Lb, Db, Vb = _binary_vmoves(Ab .* iz, ρb, is / 2, one(T), d1, d2, mλ, within,
+        between, s, b, positive)
+    return (logZ, offset, variance, converged, (Lm, Lb, Dm, Db, Vm, Vb))
+end
+
+"""
+`_binary_vquadrature`'s outputs' partials in one input, from its seven
+normalised sums `A`, the scale's move `ρ`, `ds/dθ` and `db/dθ`, and the
+averages `<d>`, `<d²>`, `<λ>`, `<W>` and `Var(λ)`: each average moves by its
+own change plus its covariance with the exponent's, and then `offset = s <λ>`,
+`variance = b (<W> + Var(λ))`.
+"""
+@inline function _binary_vmoves(A, ρ, dsdθ, dbdθ, d1, d2, mλ, within, between, s,
+    b, positive::Bool)
+    de, dλ, dde, Wde, dW, ddλ, d2de = A
+    dmλ = dλ + dde - d1 * de
+    dwithin = dW + Wde - within * de
+    dbetween = 2 * (ddλ - d1 * dλ) + d2de - d2 * de - 2 * d1 * (dde - d1 * de)
+    return (ρ + de, dsdθ * mλ + s * dmλ,
+        positive ? dbdθ * (within + between) + b * (dwithin + dbetween) :
+        zero(de))
+end
+
+"""
+One node's terms of `_binary_vquadrature`'s seven sums for one input: its
+weight `u`, distance `σt` from the mode, the input's mode and scale moves
+`dvθ` and `ρ`, `1/s`, the slope `-tanh(v/2)` of `log psi`, the node's `λ`,
+`d = λ - λm`, `W = 1 - Λ`, `Λ`, `Λ'`, and `∂c/∂θ`.
+"""
+@inline function _binary_vnode_sums(u, σt, dvθ, ρ, is, slope, λ, d, W, Λ, Λp, cθ)
+    dv = dvθ + ρ * σt
+    dc = cθ - dv * is
+    de = slope * dv + λ * dc
+    dλ = -Λ * dc
+    ude = u * de
+    return (ude, u * dλ, d * ude, W * ude, -u * Λp * dc, u * d * dλ, d * d * ude)
+end
+
+"""`log psi(v)`, the standard logistic log density, from one exponential."""
+@inline _logistic_logpdf(v::Real) = (a = abs(v); -a - 2 * log1p(exp(-a)))
+
+"""
+    _binary_vslope(v, m, s)
+
+`(f'(v), -f''(v))` of `_binary_vquadrature`'s log posterior in `V`,
+`f(v) = log psi(v) + log Phi((m - v)/s)`.
+"""
+@inline function _binary_vslope(v::T, m::T, s::T) where {T}
+    c = (m - v) / s
+    λ = _mills(c)
+    pv = _logistic(v)
+    pn = _logistic(-v)
+    return (pn - pv - λ / s, 2 * pv * pn + λ * (c + λ) / (s * s))
+end
+
+@inline _binary_vobjective(v, m, s) = _logistic_logpdf(v) + _norm_logcdf((m - v) / s)
+
+"""
+    _binary_vmode(m, s)
+
+`(mode, curvature, converged)` of `_binary_vquadrature`'s posterior in `V`:
+solved on values (`_binary_vmode_solve`), then polished in the caller's
+arithmetic, which gives the mode its partials by the implicit function
+theorem, exactly as `_binary_mode` does in `η`.
+"""
+@inline function _binary_vmode(m::T, s::T) where {T}
+    base, curvature, converged = _binary_vmode_solve(_primal(m), _primal(s))
+    if !converged
+        _carries_derivatives(T) || return (convert(T, base), convert(T, curvature),
+            false)
+        return _binary_vmode_solve(m, s)
+    end
+    v = convert(T, base)
+    for _ in 1:_mode_polish_steps(T)
+        g, C = _binary_vslope(v, m, s)
+        v += g / C
+    end
+    _, C = _binary_vslope(v, m, s)
+    return (v, C, true)
+end
+
+"""
+    _binary_vmode_solve(m, s)
+
+Newton with a line search on `_binary_vobjective`, which is strictly concave,
+by `_binary_mode_solve`'s rules (see there for why the step is searched).
+It starts at zero, the logistic's own mode, or at `m + s²` where that is
+below: there an observation the prediction makes unlikely puts the posterior
+in the logistic's left tail, where `log psi` has slope one and the mode
+solves `λ(c) = s`, so `c` is about `-s`.
+"""
+@inline function _binary_vmode_solve(m::T, s::T) where {T}
+    v = min(zero(T), m + s * s)
+    value = _binary_vobjective(v, m, s)
+    g, C = _binary_vslope(v, m, s)
+    converged = false
+    @inbounds for _ in 1:_CTSEM_MODE_MAXITER[]
+        step = g / C
+        if _newton_gain(g, step) <= _mode_tolerance(value)
+            converged = true
+            break
+        end
+        scale = one(T)
+        accepted = false
+        for _ in 1:_CTSEM_MODE_BACKTRACKS
+            candidate = v + scale * step
+            trial = _binary_vobjective(candidate, m, s)
+            if isfinite(trial) && trial >= value
+                v = candidate
+                value = trial
+                g, C = _binary_vslope(v, m, s)
+                accepted = true
+                break
+            end
+            scale /= 2
+        end
+        if !accepted
+            converged = true
+            break
+        end
+    end
+    return (v, C, converged)
+end
+
+"""
+    _binary_quadrature_eta(ηbar, s, y, nodes, weights, thresholds, kind, J=nothing)
+
+The rule in `η` (`_binary_quadrature`): Gauss-Hermite centred on the mode of
+the scalar posterior and scaled by its curvature. The derivation of its
+partials is at `_quadrature_partials!`.
+"""
+@inline function _binary_quadrature_eta(ηbar::T, s::T, y::Real, nodes, weights,
     thresholds, kind::Int, J=nothing) where {T}
     s2 = s * s
     # An interior category's `log(1 - e^-gap)` does not depend on η: taken once,
