@@ -2532,7 +2532,8 @@ _ctsem_probe_value(s::CTSEMContinuationStep, y) = _continuation_inside(s, y) ?
 
 """
     ctsem_laplace_continuation_optimize(o, values, basis, radius; maxiter=100,
-        tol=1e-6, stationary_only=false)
+        tol=1e-6, stationary_only=false, progress=false, progress_sink=nothing,
+        progress_overwrite=true, progress_label="round")
 
 One round: maximise the hybrid, its nodes where they are, over
 `values + basis * y` with `|y| <= radius`, by the engine's own `ctsem_optimize`.
@@ -2544,6 +2545,11 @@ parameters, the hybrid's value there and at the start, the optimiser's counts,
 `start_gain` is `|basis' g|^2 / 2`, the gain that Newton step predicts, and a
 round whose `start_gain` is below `tol` is not run: `stationary` says the point
 is already the answer on these nodes. `stationary_only` asks only that.
+
+The `progress` keywords are `ctsem_optimize`'s: a round reports its iterations
+on the line the correction reports on, since on a large model one runs for an
+hour (the affect pilot, 903 parameters, 2026-10-28) and said nothing until it
+ended.
 """
 # One round of the correction: L-BFGS on the frozen rules from `values`,
 # in the directions `basis` spans, within `radius` of the start (0 for no
@@ -2554,7 +2560,8 @@ is already the answer on these nodes. `stationary_only` asks only that.
 function ctsem_laplace_continuation_optimize(o::CTSEMLaplaceContinuation,
     values::AbstractVector, basis::AbstractMatrix, radius::Real;
     maxiter::Integer=100, tol::Real=1e-6, stationary_only::Bool=false,
-    drift::Real=0.5)
+    drift::Real=0.5, progress::Bool=false, progress_sink=nothing,
+    progress_overwrite::Bool=true, progress_label::AbstractString="round")
     x0 = collect(Float64, values)
     B = Matrix{Float64}(basis)
     size(B, 1) == length(x0) || throw(DimensionMismatch(
@@ -2584,7 +2591,9 @@ function ctsem_laplace_continuation_optimize(o::CTSEMLaplaceContinuation,
         # Its basis is whitened by the Hessian, so its first step is Newton's
         # and its prediction is the gain left.
         lbfgs_scaled=true,
-        initial_alpha=max(alpha, 1e-12), progress=false, stop=stop)
+        initial_alpha=max(alpha, 1e-12), progress=progress,
+        progress_sink=progress_sink, progress_overwrite=progress_overwrite,
+        progress_label=progress_label, stop=stop)
     y = collect(Float64, res.minimizer)
     moved = sqrt(sum(abs2, y))
     return (minimizer=_continuation_point(step, y), value=res.maximum_loglik,
