@@ -75,12 +75,12 @@ function _ctsem_jump_record!(jump::CTSEMJump, x, s, alpha_hi, alpha_lo, excess)
     return jump
 end
 
-# How far below the model's whole step the Newton finish's shortest refused
-# trial must lie before the finish evaluates that trial's step again, and how
-# many times longer it then evaluates it (`_ctsem_newton_finish`'s `trust`).
-# Over sixteenfold a smooth shortfall grows at least 256-fold and a jump's not
-# at all. At a hundredfold the model's own error at the long end, growing with
-# the square of the step, hid a jump of a few nats on the affect pilot.
+# How many times longer the Newton finish evaluates its shortest refused
+# trial's step again, to tell a jump from a model gone wrong
+# (`_ctsem_newton_finish`'s `trust`). Over sixteenfold a smooth shortfall grows
+# at least 256-fold and a jump's not at all. At a hundredfold the model's own
+# error at the long end, growing with the square of the step, hid a jump of a
+# few nats on the affect pilot.
 const _CTSEM_FINISH_JUMP_RATIO = 16.0
 
 """Whether the route can name the units a jump came from
@@ -2789,7 +2789,7 @@ function _ctsem_newton_finish(objective, x0, f0, G0, fg!; tol::Real=1e-8,
         push!(history.alpha, a); push!(history.value, -f); nothing)
     fcalls = Ref(0); gcalls = 0
     # The shortest refused trial the jump watch has not yet tested below
-    # (`trust`): a quarter of the last one that found no jump.
+    # (`trust`): half the last one that found no jump.
     below = Ref(Inf)
     # The model the steps are taken on: the eigen-decomposition of the matrix
     # they use, with the curvatures described below. Kept until that matrix
@@ -2878,23 +2878,27 @@ function _ctsem_newton_finish(objective, x0, f0, G0, fg!; tol::Real=1e-8,
     #
     # `watch`: the jump watch `_ctsem_lbfgs`'s line search keeps, put to one
     # line. A search whose shortest refused trial lies far below the model's
-    # whole step -- sixteenfold, `_CTSEM_FINISH_JUMP_RATIO` -- may have met a
-    # jump rather than a model gone wrong at that scale. A refused trial's
-    # shortfall below the model (`shortfall`) tells the two apart only along
-    # one line, since the re-solved steps turn as they shrink, so the
-    # shortest refused trial that fell short by more than the value's
-    # resolution, step `s`, is evaluated once more at sixteen times `s`: a
-    # smooth objective's shortfall grows at least with the square of the
-    # step, a jump's stays put, and where the short one keeps a quarter of
-    # the long one's it is a jump between them (`seen`, with its length `lo`,
+    # whole step -- eightfold or more -- may have met a jump rather than a
+    # model gone wrong at that scale. A refused trial's shortfall below the
+    # model (`shortfall`) tells the two apart only along one line, since the
+    # re-solved steps turn as they shrink, so the shortest refused trial that
+    # fell short by more than the value's resolution, step `s`, is evaluated
+    # once more at sixteen times `s` (`_CTSEM_FINISH_JUMP_RATIO`): a smooth
+    # objective's shortfall grows at least with the square of the step, a
+    # jump's stays put, and where the short one keeps a quarter of the long
+    # one's it is a jump between them (`seen`, with its length `lo`,
     # shortfall and step). Below the whole step, not the search's first
     # trial, because the radius carries over: on the affect pilot (v3_sub40ns
     # from its 11th finish step, juliaFit 3a780671, dev4) each search started
     # near the spike's scale and shrank 16- to 64-fold, and a watch waiting
     # for a hundredfold within one search watched the steps creep, gaining
     # 1.5, 0.12 and 0.014 nats. A test that finds no jump is not made again
-    # above a quarter of its length (`below`), so a smooth walk pays for one
-    # now and then. On v3_sub40n (juliaFit 57a9758d, dev1) an unwatched spike
+    # above half its length (`below`), so a smooth walk pays for one now and
+    # then. A refused step is re-solved a quarter as long, so from the whole
+    # step a search refuses trials at 1, 1/4, 1/16 of it: both bars sit
+    # between those, where the last bits of a re-solved length cannot decide
+    # them. At sixteenfold, the pilot's third refusal missed the bar by 1e-6
+    # of its length. On v3_sub40n (juliaFit 57a9758d, dev1) an unwatched spike
     # held the walk at -854881.07, |g| 68, for 21 steps, each found only
     # below it, and the walk then bought a 1272-gradient Hessian, five hours,
     # that gained 1.4 nats and crept again.
@@ -2917,9 +2921,9 @@ function _ctsem_newton_finish(objective, x0, f0, G0, fg!; tol::Real=1e-8,
             if ok || !(at.predicted > floor && k < 100)
                 local seen = false
                 if watch && isfinite(lo) && lo < below[] &&
-                        nt.length / nt.fraction >= _CTSEM_FINISH_JUMP_RATIO * lo
+                        nt.length / nt.fraction >= 8 * lo
                     seen = line_jump(Hm, x, f, G, s, short)
-                    seen || (below[] = lo / 4)
+                    seen || (below[] = lo / 2)
                 end
                 return (ok=ok, x=ok ? xn : x, f=ok ? fn : f, rho=rho, nt=at,
                     radius=r, seen=seen, lo=lo, shortfall=short, s=s)
