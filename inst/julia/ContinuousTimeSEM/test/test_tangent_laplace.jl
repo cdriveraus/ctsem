@@ -362,3 +362,66 @@ end
     finally
     end
 end
+
+@testset "hand-coded Laplace sweeps on the series' tables against the dual and the jet" begin
+    # Every interval on the series (`ctsem_set_series_discretization_below!`):
+    # the curvature, the seeded sweeps and the trace jets take it by its tables
+    # (`TanSeriesTable`), whose cotangents each member's sweep releases at its
+    # flush; the oracles take the filter's own series at the dual and the jet.
+    C = ContinuousTimeSEM
+    below = C._CTSEM_SERIES_BELOW[]
+    cases = [
+        ("means", () -> _fresh_linear()),
+        ("dynamics and noise", () -> (ctsem_laplace_objective(_LAPLACE_LINEAR_OBJECTIVE,
+            [3, 4], [6, 7], [8], [1.0, 1.0]), copy(_LAPLACE_LINEAR_VALUES))),
+        ("categorical", () -> _fresh_categorical()),
+    ]
+    tol(a, b) = maximum(abs, a .- b) <= 1e-9 * max(1.0, maximum(abs, b))
+    try
+        C.ctsem_set_series_discretization_below!(Inf)
+        counts = C._CTSEM_OPCOUNT
+        for (name, make) in cases
+            laplace, values = make()
+            Ls = C._laplace_popchols(values, laplace.spec)
+            rng = Random.MersenneTwister(5)
+            npar = length(values)
+            @testset "$name" begin
+                for U in eachindex(laplace.units.members)
+                    d = sum(b -> b.size, laplace.units.blocks[U]; init=0)
+                    d == 0 && continue
+                    u = 0.4 .* randn(rng, d)
+                    nm = length(laplace.units.members[U])
+                    hand = C._laplace_block_dense(C._laplace_unit_curvature(laplace, U,
+                        values, Ls, u), laplace.units.blocks[U], d)
+                    before = (counts.series_intercept[], counts.series_noise[])
+                    dual = -_oracle_unit_hessian(laplace, U, values, Ls, u)
+                    # The filter took both series.
+                    @test counts.series_intercept[] > before[1]
+                    @test counts.series_noise[] > before[2]
+                    @test tol(hand, dual)
+                    d1 = randn(rng, npar)
+                    hs = C._laplace_unit_seeded_gradient(laplace, U, values, Ls, u, 1:nm, d1)
+                    h0, h1 = copy(hs.d0), copy(hs.d1c)
+                    ds = _oracle_seeded_gradient(laplace, U, values, Ls, u, 1:nm, d1)
+                    @test hs.ok && ds.ok
+                    @test tol(h0, ds.d0)
+                    @test tol(h1, ds.d1c)
+                    for nd in (1, 7)
+                        D = zeros(npar, C._CTSEM_JET_WIDTH)
+                        D[:, 1:nd] .= randn(rng, npar, nd)
+                        hj = C._laplace_unit_jet_gradient(laplace, U, values, Ls, u, 1:nm,
+                            D, nd)
+                        j0, jS = copy(hj.d0), copy(hj.dS)
+                        jet = _oracle_jet_gradient(laplace, U, values, Ls, u, 1:nm, D, nd,
+                            C._ctsem_jet_width(nd))
+                        @test hj.ok && jet.ok
+                        @test tol(j0, jet.d0)
+                        @test tol(jS, jet.dS)
+                    end
+                end
+            end
+        end
+    finally
+        C.ctsem_set_series_discretization_below!(below)
+    end
+end
