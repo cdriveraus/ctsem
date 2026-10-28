@@ -45,11 +45,13 @@ CTSEMIterate(iteration, value, g_norm, gain=NaN) =
     CTSEMIterate(iteration, value, g_norm, gain, nothing)
 
 """
-A jump the line search saw (`_ctsem_lbfgs`'s `jump`): from `x` along `s`, a
-trial at `alpha_lo` kept at least a quarter of the excess over the line
-search's linear model, `excess`, that a trial at `alpha_hi`, a hundred times
-longer or more, had. A smooth objective's excess shrinks with the square of
-the step, so that is a jump of about `excess` between the two, not curvature:
+A jump a search saw (`_ctsem_lbfgs`'s line search, or the Newton finish's
+along one line): from `x` along `s`, a trial at `alpha_lo` kept at least a
+quarter of the excess over the search's model, `excess`, that a trial at
+`alpha_hi` had, a hundred times longer or more in L-BFGS and sixteen times in
+the finish (`_CTSEM_FINISH_JUMP_RATIO`). A smooth objective's excess shrinks at
+least with the square of the step, so that is a jump of about `excess` between
+the two, not curvature:
 on the Laplace route, a unit whose term moved with where its inner solve
 stopped (`_ctsem_jump_units`). `seen` is false until one is.
 """
@@ -72,6 +74,14 @@ function _ctsem_jump_record!(jump::CTSEMJump, x, s, alpha_hi, alpha_lo, excess)
     jump.excess = excess
     return jump
 end
+
+# How far below the model's whole step the Newton finish's shortest refused
+# trial must lie before the finish evaluates that trial's step again, and how
+# many times longer it then evaluates it (`_ctsem_newton_finish`'s `trust`).
+# Over sixteenfold a smooth shortfall grows at least 256-fold and a jump's not
+# at all. At a hundredfold the model's own error at the long end, growing with
+# the square of the step, hid a jump of a few nats on the affect pilot.
+const _CTSEM_FINISH_JUMP_RATIO = 16.0
 
 """Whether the route can name the units a jump came from
 (`_ctsem_jump_units`), and so whether its line searches watch for one: the
@@ -2778,6 +2788,9 @@ function _ctsem_newton_finish(objective, x0, f0, G0, fg!; tol::Real=1e-8,
     remember!(kind, g, a, f) = (push!(history.kind, kind); push!(history.gain, g);
         push!(history.alpha, a); push!(history.value, -f); nothing)
     fcalls = Ref(0); gcalls = 0
+    # The shortest refused trial the jump watch has not yet tested below
+    # (`trust`): a quarter of the last one that found no jump.
+    below = Ref(Inf)
     # The model the steps are taken on: the eigen-decomposition of the matrix
     # they use, with the curvatures described below. Kept until that matrix
     # changes, since a step the trust region refuses is re-solved on it.
@@ -2864,20 +2877,27 @@ function _ctsem_newton_finish(objective, x0, f0, G0, fg!; tol::Real=1e-8,
     # cannot rebind the finish's own.
     #
     # `watch`: the jump watch `_ctsem_lbfgs`'s line search keeps, put to one
-    # line. A search that had to shrink its step a hundredfold below its first
-    # trial, past trials the objective refused, may have met a jump rather
-    # than a model gone wrong at that scale. A refused trial's shortfall below
-    # the model (`shortfall`) tells the two apart only along one line, since
-    # the re-solved steps turn as they shrink, so the shortest refused trial
-    # that fell short by more than the value's resolution, step `s`, is
-    # evaluated once more at `100 s`: a smooth objective's shortfall grows
-    # with the square of the step, a jump's stays put, and where the short one
-    # keeps a quarter of the long one's it is a jump between them (`seen`,
-    # with its length `lo`, shortfall and step). On the affect pilot
-    # (v3_sub40n, juliaFit 57a9758d, dev1) a person's spike held the walk at
-    # -854881.07, |g| 68, for 21 steps, each found only below it, and the walk
-    # then bought a 1272-gradient Hessian, five hours, that gained 1.4 nats
-    # and crept again.
+    # line. A search whose shortest refused trial lies far below the model's
+    # whole step -- sixteenfold, `_CTSEM_FINISH_JUMP_RATIO` -- may have met a
+    # jump rather than a model gone wrong at that scale. A refused trial's
+    # shortfall below the model (`shortfall`) tells the two apart only along
+    # one line, since the re-solved steps turn as they shrink, so the
+    # shortest refused trial that fell short by more than the value's
+    # resolution, step `s`, is evaluated once more at sixteen times `s`: a
+    # smooth objective's shortfall grows at least with the square of the
+    # step, a jump's stays put, and where the short one keeps a quarter of
+    # the long one's it is a jump between them (`seen`, with its length `lo`,
+    # shortfall and step). Below the whole step, not the search's first
+    # trial, because the radius carries over: on the affect pilot (v3_sub40ns
+    # from its 11th finish step, juliaFit 3a780671, dev4) each search started
+    # near the spike's scale and shrank 16- to 64-fold, and a watch waiting
+    # for a hundredfold within one search watched the steps creep, gaining
+    # 1.5, 0.12 and 0.014 nats. A test that finds no jump is not made again
+    # above a quarter of its length (`below`), so a smooth walk pays for one
+    # now and then. On v3_sub40n (juliaFit 57a9758d, dev1) an unwatched spike
+    # held the walk at -854881.07, |g| 68, for 21 steps, each found only
+    # below it, and the walk then bought a 1272-gradient Hessian, five hours,
+    # that gained 1.4 nats and crept again.
     function trust(Hm, nt, radius, x, f, G, watch::Bool)
         local floor = max(abs(f), 1.0) * eps()
         local at = nt
@@ -2895,8 +2915,12 @@ function _ctsem_newton_finish(objective, x0, f0, G0, fg!; tol::Real=1e-8,
                 e > 1e-8 * (1 + abs(f)) && (lo = at.length; short = e; s = at.step)
             end
             if ok || !(at.predicted > floor && k < 100)
-                local seen = watch && isfinite(lo) && nt.length >= 100 * lo &&
-                    line_jump(Hm, x, f, G, s, short)
+                local seen = false
+                if watch && isfinite(lo) && lo < below[] &&
+                        nt.length / nt.fraction >= _CTSEM_FINISH_JUMP_RATIO * lo
+                    seen = line_jump(Hm, x, f, G, s, short)
+                    seen || (below[] = lo / 4)
+                end
                 return (ok=ok, x=ok ? xn : x, f=ok ? fn : f, rho=rho, nt=at,
                     radius=r, seen=seen, lo=lo, shortfall=short, s=s)
             end
@@ -2914,7 +2938,7 @@ function _ctsem_newton_finish(objective, x0, f0, G0, fg!; tol::Real=1e-8,
         return dot(c, z) - 0.5 * sum(M.curvature .* abs2.(z); init=0.0)
     end
     function line_jump(Hm, x, f, G, s, short)
-        local v = 100 .* s
+        local v = _CTSEM_FINISH_JUMP_RATIO .* s
         local fn = fg!(0.0, nothing, x .+ v)
         fcalls[] += 1
         (isfinite(fn) && fn < _CTSEM_REFUSED) || return false
@@ -2945,7 +2969,8 @@ function _ctsem_newton_finish(objective, x0, f0, G0, fg!; tol::Real=1e-8,
     # `nothing` where it names none, which ends the watch for this finish --
     # its steps go on as they did before there was one.
     function name_jump(seen)
-        _ctsem_jump_record!(jump, seen.x, seen.s, 100.0, 1.0, seen.shortfall)
+        _ctsem_jump_record!(jump, seen.x, seen.s, _CTSEM_FINISH_JUMP_RATIO, 1.0,
+            seen.shortfall)
         local named = try
             _ctsem_jump_units(objective, jump)
         catch err
@@ -3002,10 +3027,8 @@ function _ctsem_newton_finish(objective, x0, f0, G0, fg!; tol::Real=1e-8,
     # found a step only below it, and the units the route named once one was
     # confirmed, as `_ctsem_lbfgs` counts and confirms them -- a search that
     # found no step, or the third running to find one only below the jump.
-    # The trust region keeps its radius between searches, so a search after
-    # the first starts near the jump's scale and does not shrink a
-    # hundredfold again: what one search saw is held until a step at or above
-    # its scale is taken.
+    # What one search saw is held until a step at or above its scale is
+    # taken, and no search tests for another while it is.
     watching = jump !== nothing && take_steps
     seen = nothing
     crept = 0
@@ -3164,7 +3187,7 @@ function _ctsem_newton_finish(objective, x0, f0, G0, fg!; tol::Real=1e-8,
                 break
             end
             steps == 0 && (firstgain = gain)
-            trial = trust(Hs, nt, radius, x, f, G, watching)
+            trial = trust(Hs, nt, radius, x, f, G, watching && seen === nothing)
             # The watch's verdict comes first: a confirmed jump ends the finish
             # where it stands, the step not taken, since neither a fresh
             # Hessian nor a shorter step crosses it.
@@ -3356,7 +3379,7 @@ function _ctsem_newton_finish(objective, x0, f0, G0, fg!; tol::Real=1e-8,
                     nt = newton(H, G, radius)
                     gain = nt === nothing ? Inf : nt.gain
                     (nt === nothing || gain < tol || steps >= maxit + 5) && break
-                    trial = trust(H, nt, radius, x, f, G, watching)
+                    trial = trust(H, nt, radius, x, f, G, watching && seen === nothing)
                     if watching
                         verdict = watch_verdict(trial, x, seen, crept)
                         seen = verdict.seen; crept = verdict.crept

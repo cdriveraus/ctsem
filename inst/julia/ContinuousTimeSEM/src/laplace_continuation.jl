@@ -3563,9 +3563,10 @@ The units whose terms jumped along the step the line search saw jump
 either side, as `(units, changes, point_units, point_values)`; `nothing` on a
 route with no units to name. On the Laplace route each unit's term is taken at
 `x`, `x + alpha_lo s` and `x + alpha_hi s`: a unit whose change over the short
-step keeps a quarter of its change over the long one, a hundred times longer,
-and carries a tenth of the jump, moved with where its inner solve stopped
-rather than with the parameters (`CT-SEM/review/LAPLACE-shoulders-frozen-draws-2026-10-21.md`).
+step keeps a quarter of its change over the long one, sixteen or a hundred
+times longer, and carries a tenth of the jump, moved with where its inner
+solve stopped rather than with the parameters
+(`CT-SEM/review/LAPLACE-shoulders-frozen-draws-2026-10-21.md`).
 Its modes at the three points are what a frozen importance rule for it starts
 from (`ctsem_laplace_continuation`'s `point_units`): at one point the solve
 returns one of them, and the rule needs both sides.
