@@ -73,7 +73,7 @@ kind 1 a group (its tape slot), 2 a prediction substep, 3 a TD impulse, 4 an
 update (the row), 5 a step of an iterated update, each with the snapshot it
 read.
 """
-mutable struct TanRows{W,DW,A}
+mutable struct TanRows{W,DW,A,M}
     awsW::A
     allW::Vector{DW}
     allbar::Vector{DW}
@@ -99,13 +99,21 @@ mutable struct TanRows{W,DW,A}
     # The subject's TI predictors as its cells read them: its row, or with
     # sampled values the duals `_ctsem_tipred_fill!` builds.
     tp::Base.RefValue{AbstractVector}
+    # The matrices a group's cells give, and the matrices' cotangents as duals
+    # for a flush (`_tan_mats_alloc`), and a row's observed manifests: reused,
+    # where each row's or flush's own were most of what a sweep allocated.
+    mats::M
+    C::M
+    obs::Vector{Int}
 end
 function TanRows(awsW, sp, n::Int, m::Int, ntd::Int, ::Val{W}, ::Type{DW}) where {W,DW}
     nall = length(sp.mutables)
-    return TanRows{W,DW,typeof(awsW)}(awsW, zeros(DW, nall), zeros(DW, nall),
+    mats = _tan_mats_alloc(DW, n, m, ntd)
+    return TanRows{W,DW,typeof(awsW),typeof(mats)}(awsW, zeros(DW, nall), zeros(DW, nall),
         zeros(DW, n), zeros(DW, n), TanSnap{W,DW}[], TanSnap{W,DW}(n, m, ntd),
         NTuple{3,Int}[], 0, TanRelinRec{W}[], 0, TanSnap{W,DW}(n, m, ntd), TanVec{W}(n),
-        TanVec{W}(n), zeros(DW, n, n), zeros(DW, n, n), TanVec{W}(n), Ref{AbstractVector}(Float64[]))
+        TanVec{W}(n), zeros(DW, n, n), zeros(DW, n, n), TanVec{W}(n),
+        Ref{AbstractVector}(Float64[]), mats, _tan_mats_alloc(DW, n, m, ntd), Int[])
 end
 
 """`out` the duals of `X`'s values and tangents, lane `w` its `w`-th."""
@@ -137,7 +145,7 @@ The model's matrices from the subject's cells `R.allW` as the filter builds
 them, their lanes the tangents, and `DmJ`.
 """
 function _tan_rows_refresh!(mod::TanModel{W}, R::TanRows, sp, nl::Int) where {W}
-    mw = _tan_mats_of(R.awsW, sp, R.allW)
+    mw = _tan_mats_of!(R.mats, R.awsW, sp, R.allW)
     _tan_each_layer((X, M) -> _tan_lanes!(X, M, nl), mod, mw)
     _tan_comb!(mod.DmJ, ((1.0, mod.DRIFT), (-1.0, mod.JAx)))
     _tan_aug_refresh!(mod)
@@ -148,14 +156,23 @@ end
 Group `g`'s cells at the state `x` (a context as the filter's for row `t`,
 `time`, `dt`): recorded on the workspace's tape, applied to the cells, the
 model refreshed and kept. Returns the snapshot the model now holds, `snap`
-where the group is empty.
+where the group is empty -- decided before the call, which most rows of most
+models make three times for nothing.
 """
-function _tan_rows_group!(R::TanRows{W,DW}, g::Int, x::TanVec{W}, mod::TanModel{W},
-    sw::TanSweep{W}, sp, so, subject::Int, t::Int, time::Float64, dt::Float64,
-    snap::Int, nl::Int, keepR::Bool=false) where {W,DW}
+@inline function _tan_rows_group!(R::TanRows{W,DW}, g::Int, x::TanVec{W},
+    mod::TanModel{W}, sw::TanSweep{W}, sp, so, subject::Int, t::Int, time::Float64,
+    dt::Float64, snap::Int, nl::Int, keepR::Bool=false) where {W,DW}
     awsW = R.awsW
     indices = g == 1 ? awsW.predict_indices : g == 2 ? awsW.td_indices : awsW.update_indices
     isempty(indices) && return snap
+    return _tan_rows_group_eval!(R, g, indices, x, mod, sw, sp, so, subject, t, time, dt,
+        nl, keepR)
+end
+
+function _tan_rows_group_eval!(R::TanRows{W,DW}, g::Int, indices::Vector{Int},
+    x::TanVec{W}, mod::TanModel{W}, sw::TanSweep{W}, sp, so, subject::Int, t::Int,
+    time::Float64, dt::Float64, nl::Int, keepR::Bool) where {W,DW}
+    awsW = R.awsW
     _tan_to_duals!(R.xW, x)
     pars = CTSEMPars(R.allW, sp.parameter_axis)
     ctx = CTSEMRowContext(R.xW, pars, view(so.tdpreds, :, t), R.tp[], time, dt,
@@ -229,7 +246,10 @@ function _tan_rows_categorical!(x::TanVec{W}, P::TanMat{W}, R::TanRows{W,DW},
     awsW = R.awsW
     ws = awsW.ekf_ws
     n = sw.n
-    observed = Int[k for k in axes(Y, 1) if isfinite(Y[k, t])]
+    observed = empty!(R.obs)
+    for k in axes(Y, 1)
+        isfinite(Y[k, t]) && push!(observed, k)
+    end
     _tan_to_duals!(ws.state, x)
     _tan_to_duals!(ws.P_predict.data, P)
     pars = CTSEMPars(R.allW, sp.parameter_axis)
@@ -288,7 +308,8 @@ covariances through their constructions at `s`'s cells (T0VAR's at the
 subject's own, which no group writes), and `acc` emptied.
 """
 function _tan_rows_flush!(R::TanRows{W,DW}, acc::TanAcc{W}, sp, s::TanSnap) where {W,DW}
-    _tan_bar_of!(R.allbar, R.awsW, sp, _tan_layer_duals(acc, DW), s.rawD, s.rawR, R.allW)
+    _tan_each_layer((X, D) -> _tan_to_duals!(D, X), acc, R.C)
+    _tan_bar_of!(R.allbar, R.awsW, sp, R.C, s.rawD, s.rawR, R.allW)
     _tan_acc_zero!(acc)
     return R
 end
