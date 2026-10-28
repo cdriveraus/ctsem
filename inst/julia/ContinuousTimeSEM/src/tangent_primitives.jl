@@ -43,7 +43,10 @@
 building and running a jet sweep (`with(_TAN_JETS => true)`)."""
 const _TAN_JETS = Base.ScopedValues.ScopedValue(false)
 
-struct TanMat{W}
+# Mutable, so that a call passes one pointer: immutable, its reference fields
+# were passed and rooted one by one, and with the second parts' two more a
+# 2 x 2 product cost 74 ns a call where it costs 37 (dev4).
+mutable struct TanMat{W}
     v::Matrix{Float64}
     d::Array{Float64,3}     # W x r x c
     nz::Base.RefValue{Bool}
@@ -57,7 +60,7 @@ function TanMat{W}(r::Int, c::Int) where {W}
         Ref(false), j)
 end
 
-struct TanVec{W}
+mutable struct TanVec{W}
     v::Vector{Float64}
     d::Matrix{Float64}      # W x len
     nz::Base.RefValue{Bool}
