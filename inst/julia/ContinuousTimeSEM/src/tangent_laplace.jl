@@ -31,6 +31,7 @@ struct TanLaplaceContext{W,DC,A,R,B}
     xw::Vector{DC}              # its shifted values
     uw::Vector{DC}              # the unit's coordinates, seeded
     Lb::Matrix{Float64}         # a hybrid block's factor
+    Lbfor::Vector{Float64}      # the values it is of (`_tan_laplace_hybrid!`)
     # The Gauss-Newton route (`_tan_laplace_gn_member!`): whether the model
     # admits it at all -- linear, no integrated deviations, every state in the
     # dynamics -- each chunk's whitened innovation tangents, a row's W at a
@@ -98,7 +99,7 @@ function _tan_laplace_build(objective::CTSEMObjective, values::AbstractVector, m
         rows ? TanRows(awsW, sp, n, m, ntd, Val(W), DC) : nothing,
         TanSweep(n, m, ntd, nh, W, na, length(dyn)), zeros(nv, W), zeros(DC, nv),
         DC[], h.block && nh > 0 ? zeros(length(h.perm), length(h.perm)) : zeros(0, 0),
-        !rows && nh == 0 && !mod.aug, Vector{Float64}[], Int[], Int[], Int[],
+        Float64[], !rows && nh == 0 && !mod.aug, Vector{Float64}[], Int[], Int[], Int[],
         _tan_layer_buffers(DC, awsW, sp, nv, ntd), Int[], Bool[], Int[], Int[],
         Float64[], Float64[], zeros(nv), zeros(nv))
 end
@@ -183,7 +184,13 @@ function _tan_laplace_hybrid!(ctx, values::AbstractVector{Float64})
             G.v[k, k] = _tan_hybrid_own(h, values, k)[1]
         end
     else
-        _hybrid_block_factor!(ctx.Lb, h, values) || return false
+        # Kept while the values are unchanged: every member of every unit of
+        # an evaluation reads the same factor.
+        if ctx.Lbfor != values
+            _hybrid_block_factor!(ctx.Lb, h, values) || return false
+            resize!(ctx.Lbfor, length(values))
+            copyto!(ctx.Lbfor, values)
+        end
         for c in 1:nh, f in 1:c
             G.v[c, f] = _tan_hybrid_block_G(h, ctx.Lb, c, f)
         end
@@ -799,7 +806,7 @@ function _tan_laplace_seeded!(ctx::TanLaplaceContext{W,DC}, laplace::CTSEMLaplac
     h = objective.params.hybrid
     hyb = ctx.mod.nh > 0
     # A block's factor's derivatives in its level's parameters, once a call.
-    dG = hyb && h.block ? _tan_hybrid_block_dG(h, values,
+    dG = hyb && h.block ? _tan_block_dG_cached(laplace, h, values,
         ForwardDiff.Dual{_tan_tag(_ctsem_hessian_dual(objective)),Float64,1}) : nothing
     hyb && h.block && dG === nothing &&
         return (ok=false, d0=_LAPLACE_NO_MATRIX, d1c=_LAPLACE_NO_MATRIX)
@@ -912,7 +919,7 @@ function _tan_laplace_theta_gradient_!(Gt::Matrix{Float64}, Gz::Matrix{Float64},
     mod = ctx.mod
     h = objective.params.hybrid
     hyb = mod.nh > 0
-    dG = hyb && h.block ? _tan_hybrid_block_dG(h, theta,
+    dG = hyb && h.block ? _tan_block_dG_cached(laplace, h, theta,
         ForwardDiff.Dual{_tan_tag(_ctsem_hessian_dual(objective)),Float64,1}) : nothing
     hyb && h.block && dG === nothing && return _TAN_INVALID
     uw = ctx.uw
@@ -1090,6 +1097,21 @@ function _tan_laplace_fixed_gradient!(Gz::Matrix{Float64}, hs::TanHybState{W},
 end
 
 """
+`_tan_hybrid_block_dG` at `values`, kept on the slot while they are unchanged:
+every unit's sweeps of an evaluation read the same, and built afresh at each
+they were most of a hybrid fit's bytes and a fifth of its gradient.
+"""
+function _tan_block_dG_cached(laplace::CTSEMLaplaceObjective, h::CTSEMHybrid,
+    values::AbstractVector{Float64}, ::Type{D1}) where {D1}
+    store = laplace.workspaces[_laplace_slot()]
+    c = get(store, :tan_block_dG, nothing)
+    c !== nothing && c[1] == values && return c[2]::Union{Nothing,Array{Float64,3}}
+    dG = _tan_hybrid_block_dG(h, values, D1)
+    store[:tan_block_dG] = (collect(Float64, values), dG)
+    return dG
+end
+
+"""
 A block's factor's first derivatives in its level's parameters at `values`,
 `dG[:, :, j]` along `h.lparams[j]`, from `_hybrid_block_factor!` at the
 width-1 dual `D1`; `nothing` where the block does not factor.
@@ -1146,6 +1168,7 @@ struct TanJetContext{W,J,A,B,R}
     xm::Vector{J}
     Hc::Matrix{Float64}
     Lb::Matrix{Float64}
+    Lbfor::Vector{Float64}
     Gv::Matrix{Float64}
     Gd::Array{Float64,3}
     Gs::Matrix{Float64}
@@ -1199,7 +1222,7 @@ function _tan_jet_build(objective::CTSEMObjective, values::AbstractVector, ::Typ
         TanSweep(n, m, ntd, nh, W, na, length(dyn)), _tan_layer_buffers(J, awsJ, sp, nv, ntd),
         zeros(J, nv), rows ? TanRows(awsJ, sp, n, m, ntd, Val(W), J) : nothing, zeros(J, nv),
         zeros(nv, W),
-        h.block && nh > 0 ? zeros(length(h.perm), length(h.perm)) : zeros(0, 0),
+        h.block && nh > 0 ? zeros(length(h.perm), length(h.perm)) : zeros(0, 0), Float64[],
         zeros(nh, nh), zeros(_tan_jet_width(J), nh, nh), zeros(nh, nh))
 end
 
@@ -1239,7 +1262,7 @@ function _tan_laplace_jet!(ctx::TanJetContext{W,CTSEMTraceJet{JW}},
     # call: the factor's cotangent is pushed back through them.
     h = objective.params.hybrid
     hyb = ctx.mod.nh > 0
-    dG = hyb && h.block ? _tan_hybrid_block_dG(h, values,
+    dG = hyb && h.block ? _tan_block_dG_cached(laplace, h, values,
         ForwardDiff.Dual{_tan_tag(_ctsem_hessian_dual(objective)),Float64,1}) : nothing
     hyb && h.block && dG === nothing &&
         return (ok=false, d0=_LAPLACE_NO_MATRIX, dS=_LAPLACE_NO_MATRIX)
@@ -1540,7 +1563,7 @@ function _tan_laplace_theta_jet_!(Gts::Vector{Float64}, Gzs::Vector{Float64},
     fill!(Gzs, 0.0)
     _tan_laplace_hybrid!(ctx, theta) || return _TAN_INVALID
     h = objective.params.hybrid
-    dG = ctx.mod.nh > 0 && h.block ? _tan_hybrid_block_dG(h, theta,
+    dG = ctx.mod.nh > 0 && h.block ? _tan_block_dG_cached(laplace, h, theta,
         ForwardDiff.Dual{_tan_tag(_ctsem_hessian_dual(objective)),Float64,1}) : nothing
     ctx.mod.nh > 0 && h.block && dG === nothing && return _TAN_INVALID
     uj = J[J(z[a], ntuple(j -> j <= nd ? B[a, j] : 0.0, Val(JW)), 0.0) for a in 1:d]
