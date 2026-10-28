@@ -18,11 +18,15 @@
 function _tan_getcol!(v::TanVec{W}, A::TanMat{W}, c::Int) where {W}
     n = length(v.v)
     on = _tan_nz(A)
+    son = _tan_snz(A)
+    _tan_jet_check(v, son)
     @inbounds for r in 1:n
         v.v[r] = A.v[r, c]
         on && _tan_put!(v, r, _tan_col(A, r, c))
+        son && (v.s[r] = A.s[r, c])
     end
     on ? (v.nz[] = true) : _tan_setnz!(v, false)
+    son ? (v.snz[] = true) : _tan_setsnz!(v, false)
     return v
 end
 
@@ -30,11 +34,15 @@ end
 function _tan_addcol!(A::TanMat{W}, c::Int, alpha::Float64, v::TanVec{W}) where {W}
     n = length(v.v)
     on = _tan_nz(v)
+    son = _tan_snz(v)
+    _tan_jet_check(A, son)
     @inbounds for r in 1:n
         A.v[r, c] = muladd(alpha, v.v[r], A.v[r, c])
         on && _tan_put!(A, r, c, _tan_axpby(1.0, _tan_col(A, r, c), alpha, _tan_col(v, r)))
+        son && (A.s[r, c] = muladd(alpha, v.s[r], A.s[r, c]))
     end
     on && (A.nz[] = true)
+    son && (A.snz[] = true)
     return A
 end
 
@@ -179,6 +187,24 @@ function _tan_hybrid_closing!(hs::TanHybState{W}, G::TanMat{W}, w::Float64,
         end
         ll[1 + t] += dq / 2 - w * dld / 2
     end
+    # A jet's: s(b' beta) and s(log UiM_aa), as the update's.
+    if b.jet
+        sq = 0.0
+        sl = 0.0
+        @inbounds for a in 1:nh
+            _tan_snz(b) && (sq += b.s[a] * beta.v[a])
+            _tan_snz(beta) && (sq += b.v[a] * beta.s[a])
+            (_tan_nz(b) && _tan_nz(beta)) &&
+                (sq += 2 * _tan_dot(b.d, W * (a - 1), beta.d, W * (a - 1), Val(W)))
+            u = UiM.v[a, a]
+            _tan_snz(UiM) && (sl += UiM.s[a, a] / u)
+            if _tan_nz(UiM)
+                o = _tan_off(UiM.d, Val(W), a, a)
+                sl -= _tan_dot(UiM.d, o, UiM.d, o, Val(W)) / (u * u)
+            end
+        end
+        ll[2 + W] += sq / 2 + w * sl
+    end
     # Mbar = -(w M^-1 + beta beta')/2; Sbar = G Mbar G', sbar = G beta,
     # Gbar = 2 S G Mbar + s beta'.
     _tan_comb!(hs.Mbar, ((-w / 2, hs.Minv),))
@@ -229,6 +255,7 @@ function _tan_hybrid_fixed!(hs::TanHybState{W}, G::TanMat{W}, ll::Vector{Float64
         end
         ll[1 + t] += dv
     end
+    b.jet && (ll[2 + W] += _tan_hybrid_fixed_s(M, b, d, nh))
     _tan_ger!(hs.Mbar, -0.5, d, d, false)
     _tan_mul!(hs.GM, G, hs.Mbar)
     _tan_mulNT!(hs.Sbar, hs.GM, G)
@@ -237,6 +264,41 @@ function _tan_hybrid_fixed!(hs::TanHybState{W}, G::TanMat{W}, ll::Vector{Float64
     _tan_ger!(hs.Gbar, true, hs.s, d)
     _tan_zero!(hs.Xbar)
     return true
+end
+
+"""
+`_tan_hybrid_fixed!`'s value `d' b - 1/2 d' (M - I) d`, its second parts: each
+product's, `s(xy) = s(x) y + x s(y) + 2 sum_w dx_w dy_w`, through the bilinear
+and the quadratic forms.
+"""
+function _tan_hybrid_fixed_s(M::TanMat{W}, b::TanVec{W}, d::TanVec{W}, nh::Int) where {W}
+    V = Val(W)
+    sd, sb, sm = _tan_snz(d), _tan_snz(b), _tan_snz(M)
+    dd, db, dm = _tan_nz(d), _tan_nz(b), _tan_nz(M)
+    val = 0.0
+    @inbounds for a in 1:nh
+        sd && (val += d.s[a] * b.v[a])
+        sb && (val += d.v[a] * b.s[a])
+        (dd && db) && (val += 2 * _tan_dot(d.d, W * (a - 1), b.d, W * (a - 1), V))
+        for c in 1:nh
+            n = M.v[a, c] - (a == c ? 1.0 : 0.0)
+            # s(d_a N_ac d_c): every pair of factors' cross term, and each
+            # factor's own second part.
+            q = 0.0
+            sd && (q += d.s[a] * n * d.v[c] + d.v[a] * n * d.s[c])
+            sm && (q += d.v[a] * M.s[a, c] * d.v[c])
+            if dd
+                q += 2 * n * _tan_dot(d.d, W * (a - 1), d.d, W * (c - 1), V)
+                if dm
+                    om = _tan_off(M.d, V, a, c)
+                    q += 2 * d.v[c] * _tan_dot(d.d, W * (a - 1), M.d, om, V)
+                    q += 2 * d.v[a] * _tan_dot(M.d, om, d.d, W * (c - 1), V)
+                end
+            end
+            val -= q / 2
+        end
+    end
+    return val
 end
 
 """

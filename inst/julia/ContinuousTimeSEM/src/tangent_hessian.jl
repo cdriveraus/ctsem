@@ -267,7 +267,27 @@ end
 const _TAN_LAYER_NAMES = (:JAx, :DRIFT, :CINT, :Qc, :LAM, :Jy, :MM, :R, :T0M, :T0V, :TDE,
     :Jtd)
 _tan_tag(::Type{<:ForwardDiff.Dual{T}}) where {T} = T
-@inline _tan_layer_field(X, k::Symbol) = getproperty(X, k === :LAM ? :LAMBDA : k)
+
+"""
+`f(X's field, N's field)` for each of the layer's matrices (`_TAN_LAYER_NAMES`),
+`X` a model or accumulator, `N` the matrices by name: each field written out. A
+loop over the names reads each at a run-time symbol, and an `ntuple` over them
+did not fold the names either: a dynamic call each, and on two latents a
+fifth of a member sweep's bytes and a twentieth of its time.
+"""
+@inline function _tan_each_layer(f::F, X, N) where {F}
+    f(X.JAx, N.JAx); f(X.DRIFT, N.DRIFT); f(X.CINT, N.CINT); f(X.Qc, N.Qc)
+    f(X.LAMBDA, N.LAM); f(X.Jy, N.Jy); f(X.MM, N.MM); f(X.R, N.R)
+    f(X.T0M, N.T0M); f(X.T0V, N.T0V); f(X.TDE, N.TDE); f(X.Jtd, N.Jtd)
+    return nothing
+end
+
+"""The accumulator's cotangents as duals of type `DW`, by name."""
+_tan_layer_duals(acc::TanAcc, ::Type{DW}) where {DW} = (JAx=_tan_duals(acc.JAx, DW),
+    DRIFT=_tan_duals(acc.DRIFT, DW), CINT=_tan_duals(acc.CINT, DW),
+    Qc=_tan_duals(acc.Qc, DW), LAM=_tan_duals(acc.LAMBDA, DW), Jy=_tan_duals(acc.Jy, DW),
+    MM=_tan_duals(acc.MM, DW), R=_tan_duals(acc.R, DW), T0M=_tan_duals(acc.T0M, DW),
+    T0V=_tan_duals(acc.T0V, DW), TDE=_tan_duals(acc.TDE, DW), Jtd=_tan_duals(acc.Jtd, DW))
 
 """A worker's sweep, kept in its scratch store between calls."""
 function _tan_sweep_scratch(n::Int, m::Int, ntd::Int, nh::Int, ::Val{W}, na::Int=n,
@@ -331,6 +351,47 @@ function _tan_lanes!(X::Union{TanMat{W},TanVec{W}}, M::AbstractArray, nl::Int) w
     return X
 end
 
+"""
+`X`'s values, tangents and second parts from the jets `M` (a jet `X`): lane
+`w` the jets' `lane0 + w`-th first part, those past `nl` zero, and their second
+parts where `withs`, zero otherwise -- a jet sweep's first chunk of directions
+carries the layer's second parts, and the others only their own lanes'.
+"""
+function _tan_jet_lanes!(X::Union{TanMat{W},TanVec{W}}, M::AbstractArray{CTSEMTraceJet{JW}},
+    lane0::Int, nl::Int, withs::Bool) where {W,JW}
+    @inbounds for idx in eachindex(M)
+        m = M[idx]
+        X.v[idx] = m.v
+        for w in 1:W
+            X.d[w + W * (idx - 1)] = w <= nl ? m.d[lane0 + w] : 0.0
+        end
+        withs && (X.s[idx] = m.s)
+    end
+    _tan_setnz_from!(X)
+    withs ? _tan_setsnz_from!(X) : _tan_setsnz!(X, false)
+    return X
+end
+
+"""
+The jets `out` from `X`'s values, its `nl` tangents as their first parts
+`lane0 + 1` on and its second parts: the first chunk of a jet sweep's
+directions sets them, a later one adds its lanes and its second parts, which
+sum over the directions.
+"""
+function _tan_into_jets!(out::AbstractArray{CTSEMTraceJet{JW}},
+    X::Union{TanMat{W},TanVec{W}}, lane0::Int, nl::Int, first::Bool) where {W,JW}
+    son = _tan_snz(X)
+    @inbounds for idx in eachindex(X.v)
+        o = W * (idx - 1)
+        prev = out[idx]
+        d = ntuple(j -> lane0 < j <= lane0 + nl ? X.d[o + j - lane0] :
+            (first ? 0.0 : prev.d[j]), Val(JW))
+        s = (son ? X.s[idx] : 0.0) + (first ? 0.0 : prev.s)
+        out[idx] = CTSEMTraceJet{JW}(X.v[idx], d, s)
+    end
+    return out
+end
+
 """`X` as duals of type `DW`: its values, its tangents their partials."""
 function _tan_duals(X::Union{TanMat{W},TanVec{W}}, ::Type{DW}) where {W,DW}
     out = similar(X.v, DW)
@@ -346,6 +407,9 @@ dual reads its value alone."""
 _tan_same(a::AbstractArray, b::AbstractArray) = size(a) == size(b) &&
     all(i -> ForwardDiff.value(a[i]) == ForwardDiff.value(b[i]) &&
         ForwardDiff.partials(a[i]) == ForwardDiff.partials(b[i]), eachindex(a))
+# A jet's `==` reads every part.
+_tan_same(a::AbstractArray{<:CTSEMTraceJet}, b::AbstractArray{<:CTSEMTraceJet}) =
+    size(a) == size(b) && all(i -> a[i] == b[i], eachindex(a))
 
 """
 The matrices of the layer into `mod`, values and tangents, for the subject
@@ -360,9 +424,7 @@ function _tan_layer_fill!(mod::TanModel{W}, awsW, sp, xw::Vector, nl::Int,
     # Where no cell changes by row, the drift and the measurement must be
     # their own Jacobians; otherwise the offset and the gain read each.
     mod.rows || (_tan_same(mw.JAx, mw.DRIFT) && _tan_same(mw.Jy, mw.LAM)) || return false
-    for k in _TAN_LAYER_NAMES
-        _tan_lanes!(_tan_layer_field(mod, k), getproperty(mw, k), nl)
-    end
+    _tan_each_layer((X, M) -> _tan_lanes!(X, M, nl), mod, mw)
     mod.rows && _tan_comb!(mod.DmJ, ((1.0, mod.DRIFT), (-1.0, mod.JAx)))
     _tan_aug_refresh!(mod)
     return true
@@ -375,9 +437,7 @@ chunk's `nl` columns.
 """
 function _tan_layer_columns!(Hc::AbstractMatrix{Float64}, acc::TanAcc{W}, awsW, sp,
     xw::Vector{DW}, nl::Int, tipreds) where {W,DW}
-    C = NamedTuple{_TAN_LAYER_NAMES}(map(k -> _tan_duals(_tan_layer_field(acc, k), DW),
-        _TAN_LAYER_NAMES))
-    g = _tan_layer_reverse(awsW, sp, xw, C, tipreds)
+    g = _tan_layer_reverse(awsW, sp, xw, _tan_layer_duals(acc, DW), tipreds)
     @inbounds for w in 1:nl, i in eachindex(g)
         Hc[i, w] += ForwardDiff.partials(g[i], w)
     end
