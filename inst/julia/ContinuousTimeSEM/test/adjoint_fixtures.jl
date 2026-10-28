@@ -15,6 +15,7 @@ function _adjoint_test_dataframe(;
     tdpredeffect::Union{Nothing,AbstractMatrix}=nothing,
     jtd::Union{Nothing,AbstractMatrix}=nothing,
     free::Dict=Dict(), predict::Dict=Dict(), update::Dict=Dict(),
+    extra::Vector=Pair{Symbol,Matrix{Float64}}[],
 )
     matrices = Symbol[]
     rows = Int[]
@@ -46,6 +47,10 @@ function _adjoint_test_dataframe(;
     addmat!(:T0VAR, t0var); addmat!(:T0MEANS, t0means); addmat!(:PARS, pars)
     if tdpredeffect !== nothing
         addmat!(:TDPREDEFFECT, tdpredeffect); addmat!(:Jtd, jtd)
+    end
+    # Further matrices, THRESHOLDS among them, as `name => matrix`.
+    for (name, mat) in extra
+        addmat!(name, mat)
     end
 
     DataFrame(matrix=matrices, row=rows, col=cols, parnumber=parnumber, value=value,

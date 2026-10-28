@@ -3382,10 +3382,20 @@ function _laplace_columns_jacobian(laplace::CTSEMLaplaceObjective, U::Integer,
     columns::Vector{Int}, members::Vector{Int}, mode::Int, hook) where {T}
     n = length(columns)
     d = length(base)
-    block_of = _LaplaceColumnsGradient(laplace, Int(U), values, Ls, base, columns,
-        members, mode, hook)
     width = _ctsem_dual_width(n, _CTSEM_CURVATURE_WIDTHS[])
     nx = max(n, width)
+    # By the hand-coded second order where it covers the model
+    # (`tangent_laplace.jl`), the gated floor's cross curvature read off the
+    # same sweeps; the other hooks and element types take the dual.
+    if (hook === nothing || hook isa CTSEMHybridCross{Float64} ||
+            (hook isa _HybridFixedCross && hook.cross isa CTSEMHybridCross{Float64})) &&
+            T === Float64 && eltype(values) === Float64
+        Jh = _laplace_scratch_matrix!(laplace, Float64, d, nx, :curv_jac)
+        _tan_laplace_columns_jacobian!(Jh, laplace, U, values, Ls, base, columns, members,
+            mode, hook) && return Jh
+    end
+    block_of = _LaplaceColumnsGradient(laplace, Int(U), values, Ls, base, columns,
+        members, mode, hook)
     xb = _laplace_scratch_vector!(laplace, T, nx, :curv_ub)
     @inbounds for (t, c) in enumerate(columns)
         xb[t] = base[c]
@@ -5441,6 +5451,18 @@ function _laplace_unit_seeded_gradient_(laplace::CTSEMLaplaceObjective, U::Integ
     values::Vector{Float64}, Ls::Vector{Matrix{Float64}}, u::Vector{Float64},
     members, d1::Vector{Float64})
 
+    # By the hand-coded second order where it covers the model
+    # (`_tan_laplace_seeded`); the dual behind a barrier, so that the image does
+    # not compile the filter at the seed's dual for a fallback.
+    hand = _tan_laplace_seeded(laplace, U, values, Ls, u, members, d1)
+    hand === nothing || return hand
+    return _ctsem_barrier(_laplace_unit_seeded_gradient_dual, laplace, U, values, Ls, u,
+        members, d1)::typeof((ok=true, d0=_LAPLACE_NO_MATRIX, d1c=_LAPLACE_NO_MATRIX))
+end
+
+function _laplace_unit_seeded_gradient_dual(laplace::CTSEMLaplaceObjective, U::Integer,
+    values::Vector{Float64}, Ls::Vector{Matrix{Float64}}, u::Vector{Float64},
+    members, d1::Vector{Float64})
     spec = laplace.spec
     units = laplace.units
     unitmembers = units.members[U]
@@ -7626,6 +7648,38 @@ function _laplace_mode_cross(laplace::CTSEMLaplaceObjective, U::Integer,
     D = length(z)
     npar = length(theta)
     H = zeros(Float64, D, npar)
+    # By the hand-coded sweeps where they serve, a chunk of coordinates a pass
+    # (`_tan_laplace_theta_gradient!`).
+    W = last(_CTSEM_CURVATURE_WIDTHS[])
+    Gt = zeros(Float64, npar, 1 + W)
+    Gz = zeros(Float64, D, 1 + W)
+    B = zeros(Float64, D, W)
+    hand = true
+    for first in 1:W:D
+        chunk = first:min(first + W - 1, D)
+        fill!(B, 0.0)
+        for (w, a) in enumerate(chunk)
+            B[a, w] = 1.0
+        end
+        r = _tan_laplace_theta_gradient!(Gt, Gz, laplace, U, theta, Ls, dL, positions, z,
+            B, length(chunk), layout)
+        r === nothing && (hand = false; break)
+        r || return nothing
+        @inbounds for (w, a) in enumerate(chunk), t in 1:npar
+            H[a, t] = Gt[t, 1 + w]
+        end
+    end
+    hand && return H
+    # The dual behind a barrier, as `_laplace_unit_seeded_gradient`'s.
+    return _ctsem_barrier(_laplace_mode_cross_dual!, H, laplace, U, theta, Ls, dL,
+        positions, z, layout)::Union{Nothing,Matrix{Float64}}
+end
+
+function _laplace_mode_cross_dual!(H::Matrix{Float64}, laplace::CTSEMLaplaceObjective,
+    U::Integer, theta::Vector{Float64}, Ls::Vector{Matrix{Float64}}, dL, positions,
+    z::Vector{Float64}, layout)
+    D = length(z)
+    npar = length(theta)
     seed = ForwardDiff.Dual{_LaplaceSeedInner}(0.0, 1.0)
     for a in 1:D
         zz = [z[b] + seed * (b == a ? 1.0 : 0.0) for b in 1:D]

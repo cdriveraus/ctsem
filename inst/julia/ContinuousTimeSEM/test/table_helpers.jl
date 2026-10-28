@@ -17,14 +17,17 @@ _tbl_string(column) = [ismissing(v) ? "" : String(v) for v in column]
 
 """
     ekf_from_data_frame(df, ti_effects=..., diffusion_state_indices=Int[];
-                        continuous_time=true)
+                        continuous_time=true, stationary=false)
 
 Test-only wrapper around `ContinuousTimeSEM.ekf_from_columns`, preserving the
 call shape the tests were written against.
 """
 function ekf_from_data_frame(df::DataFrame,
     ti_effects::DataFrame=DataFrame(parameter=Int[], predictor=Int[], coefficient=Int[]),
-    diffusion_state_indices::AbstractVector=Int[]; continuous_time::Bool=true)
+    diffusion_state_indices::AbstractVector=Int[]; continuous_time::Bool=true,
+    stationary::Bool=false, manifesttype=Int[], ncategories=Int[], affine_dim::Int=0,
+    population_indices=Int[], population_scale=Float64[], stationary_mean=Int[],
+    stationary_block=Int[], stationary_closure=Int[])
     return ContinuousTimeSEM.ekf_from_columns(
         df.matrix, df.row, df.col,
         _tbl_int(_tbl_column(df, :parnumber, missing)),
@@ -39,7 +42,11 @@ function ekf_from_data_frame(df::DataFrame,
         ti_fixed_value=hasproperty(ti_effects, :value) ?
             Float64.(ti_effects.value) : Float64[],
         diffusion_state_indices=Int.(diffusion_state_indices),
-        continuous_time=continuous_time)
+        continuous_time=continuous_time, stationary=stationary,
+        manifesttype=Int.(manifesttype), ncategories=Int.(ncategories),
+        affine_dim=affine_dim, population_indices=Int.(population_indices),
+        population_scale=Float64.(population_scale), stationary_mean=Int.(stationary_mean),
+        stationary_block=Int.(stationary_block), stationary_closure=Int.(stationary_closure))
 end
 
 """Test-only wrapper: axis for a layout given as a `DataFrame`."""

@@ -47,9 +47,12 @@ end
 The reverse update with tangents, reading the record and the incoming `xbar`,
 `Pbar` from `u`, and leaving the outgoing `xbar`, `Pbar` there and the
 parameter-side cotangents in `u.Rbar`, `u.Hbar`, `u.Lbar` and `u.ybarbar`
-(MANIFESTMEANS' is its negative). `false` where `S` does not factor.
+(MANIFESTMEANS' is its negative). `false` where `S` does not factor. `hook`,
+where the filter integrates deviations, is the hybrid's row
+(`_tan_hybrid_reverse_update!`), whose cotangents join this reverse's own where
+`_reverse_update!` adds them.
 """
-function _tan_reverse_update!(u::TanUpdate{W}) where {W}
+function _tan_reverse_update!(u::TanUpdate{W}, hook=nothing) where {W}
     n, m = u.n, u.m
     # Pr = P_in + ridge, PHt = Pr H', S = sym(H PHt + R) + ridge.
     _tan_copy!(u.Pr, u.P_in)
@@ -70,6 +73,8 @@ function _tan_reverse_update!(u::TanUpdate{W}) where {W}
     _tan_mulvec!(a, Ui, e, true, false, Val(:Aupper))  # a = Ui e
     _tan_mul!(Kb, u.PHt, Ui, true, false, Val(:Bupper))  # Kb = PHt Ui
     _tan_mulNT!(K, Kb, Ui, true, false, Val(:BupperT))  # K = Kb Ui'
+    hook === nothing || _tan_hybrid_reverse_update!(hook.hs, hook.hr, hook.h, hook.o,
+        hook.Xh, u.Lambda, Ui, K, a)
     _tan_mul!(M, K, u.H, -1.0, false)  # M = I - K H
     @inbounds for i in 1:n; M.v[i, i] += 1.0; end
     _tan_mulTN!(Wh, Ui, u.H, true, false, Val(:AupperT))  # Wh = Ui' H
@@ -104,6 +109,8 @@ function _tan_reverse_update!(u::TanUpdate{W}) where {W}
     _tan_mul!(Kc, u.Ps, K, -2eps, false)
     _tan_mul!(Mc, u.Ps, M, -2eps, false)
     _tan_mulNT!(Kc, Mc, u.H, -1.0, true)
+    # The gain's cotangent from the integrated deviations rides the same path.
+    hook === nothing || _tan_comb!(Kc, ((1.0, hook.hr.Kbar),), true)
     _tan_mul!(u.nm1, Kc, Ui, true, false, Val(:Bupper))
     _tan_mul!(u.nn1, u.nm1, Wh)
     _tan_add!(Pn, 0.5, u.nn1)
@@ -138,6 +145,7 @@ function _tan_reverse_update!(u::TanUpdate{W}) where {W}
     _tan_add!(Hbar, true, u.nm1, true, Val(:T))
     _tan_mulTN!(u.mm2, K, u.KcS, -1.0, false)
     _tan_sym!(u.S0, u.mm2)
+    hook === nothing || _tan_comb!(u.S0, ((1.0, hook.hr.Rbar),), true)
     Lbar = u.Lbar
     _tan_mul!(Lbar, u.S0, u.H)
     _tan_mulTN!(Pn, u.H, Lbar, true, true, Val(:full), Val(true))
@@ -147,8 +155,10 @@ function _tan_reverse_update!(u::TanUpdate{W}) where {W}
     # yt through x+ = x + K yt and the log likelihood.
     yb = u.ybarbar
     _tan_lincomb!(yb, true, Kx, -1.0, a)
+    hook === nothing || _tan_lincomb!(yb, true, yb, true, hook.hr.ybar)
     _tan_copy!(u.xbar_new, xb)
     _tan_ger!(Lbar, -1.0, yb, u.x, false)
+    hook === nothing || _tan_comb!(Lbar, ((1.0, hook.hr.Lbar),), true)
     _tan_mulTvec!(u.xbar_new, u.Lambda, yb, -1.0, true)
     _tan_copy!(u.xbar, u.xbar_new)
     _tan_copy!(u.Pbar, Pn)

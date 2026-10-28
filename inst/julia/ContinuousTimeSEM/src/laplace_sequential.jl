@@ -254,11 +254,8 @@ function _laplace_sequential_unit!(out, laplace::CTSEMLaplaceObjective, U::Integ
                 trace = CTSEMKalmanTrace(S, n, m, tt, 1, nall)
                 trace.offset = 0
                 trace.current_subject = 1
-                ll = _extended_kalman_filter_continuous!(ws, x, so.data,
-                    collect(so.timesteps), sp, so.tdpreds,
-                    _ctsem_tipred_vector(so.tipreds, x), i, so.max_timestep, trace,
-                    nothing, nothing, so.relin)
-                _laplace_finite(ll) || break
+                _laplace_sequential_pass!(trace, laplace, theta, i, so, sp, ws, x,
+                    clamp(D - (pass - 1) * W, 0, W)) || break
                 push!(traces, trace)
             end
             length(traces) == max(cld(D, W), 1) || continue
@@ -322,10 +319,8 @@ function _laplace_sequential_filtered!(out, laplace::CTSEMLaplaceObjective, U::I
         trace = CTSEMKalmanTrace(S, n, m, T, 1, length(sp.mutables))
         trace.offset = 0
         trace.current_subject = 1
-        ll = _extended_kalman_filter_continuous!(ws, x, so.data, collect(so.timesteps),
-            sp, so.tdpreds, _ctsem_tipred_vector(so.tipreds, x), i, so.max_timestep, trace,
-            nothing, nothing, so.relin)
-        _laplace_finite(ll) || return nothing
+        _laplace_sequential_pass!(trace, laplace, theta, i, so, sp, ws, x,
+            clamp(D - (pass - 1) * W, 0, W)) || return nothing
         push!(traces, trace)
     end
     trace = traces[1]
@@ -389,6 +384,27 @@ function _laplace_sequential_filtered!(out, laplace::CTSEMLaplaceObjective, U::I
             t + 1, Sigma, D, zhat)
     end
     return nothing
+end
+
+"""
+One seeded plug-in pass of subject `i` at the duals `x` (`nl` lanes seeded)
+into `trace`: by the hand-coded forward sweep where it serves
+(`_tan_laplace_trace!`), otherwise the filter at the dual on `ws`, behind a
+barrier so that the image does not compile the filter at that dual for a
+fallback no workload model takes. Whether it came out finite.
+"""
+function _laplace_sequential_pass!(trace::CTSEMKalmanTrace, laplace::CTSEMLaplaceObjective,
+    theta::Vector{Float64}, i::Integer, so, sp, ws, x::Vector, nl::Integer)
+    hand = _tan_laplace_trace!(trace, laplace, theta, Int(i), x, Int(nl))
+    hand === nothing || return hand
+    return _ctsem_barrier(_laplace_sequential_dual_pass!, trace, so, sp, ws, x, i)::Bool
+end
+
+function _laplace_sequential_dual_pass!(trace, so, sp, ws, x, i)
+    ll = _extended_kalman_filter_continuous!(ws, x, so.data, collect(so.timesteps),
+        sp, so.tdpreds, _ctsem_tipred_vector(so.tipreds, x), i, so.max_timestep, trace,
+        nothing, nothing, so.relin)
+    return _laplace_finite(ll)
 end
 
 """

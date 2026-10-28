@@ -1150,9 +1150,10 @@ function ctsem_hessian(objective::CTSEMObjective, values::AbstractVector;
     n == 0 && return zeros(Float64, 0, 0)
     # The hand-coded second order where it covers the model and the point
     # (`tangent_hessian.jl`); an explicit `chunk` asks for the dual.
-    if chunk == 0 && _CTSEM_TANGENT_HESSIAN[] && _tan_refusal(objective) === nothing
+    if chunk == 0 && _CTSEM_TANGENT_HESSIAN[] &&
+            _tan_refusal(objective, hybrid_mode) === nothing
         H = zeros(Float64, n, n)
-        _tan_hessian_columns!(H, objective, x, collect(1:n), progress) &&
+        _tan_hessian_columns!(H, objective, x, collect(1:n), progress, hybrid_mode) &&
             return _ctsem_symmetrised(H)
     end
     gradient_of = _CTSEMAdjointGradientOf(objective, Int(hybrid_mode))
@@ -1205,8 +1206,8 @@ function ctsem_hessian_columns(objective::CTSEMObjective, values::AbstractVector
     cols = collect(Int, columns)
     isempty(cols) && return zeros(Float64, length(x), 0)
     H = zeros(Float64, length(x), length(cols))
-    _CTSEM_TANGENT_HESSIAN[] && _tan_refusal(objective) === nothing &&
-        _tan_hessian_columns!(H, objective, x, cols, progress) && return H
+    _CTSEM_TANGENT_HESSIAN[] && _tan_refusal(objective, hybrid_mode) === nothing &&
+        _tan_hessian_columns!(H, objective, x, cols, progress, hybrid_mode) && return H
     # At `ctsem_hessian`'s own dual type, seeded along `cols` alone: the
     # function of `cols` this differentiated before was a closure, a tag and so
     # a dual type of its own, the filter and its reverse pass compiled again at

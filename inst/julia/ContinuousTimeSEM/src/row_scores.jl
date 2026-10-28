@@ -53,6 +53,9 @@ function ctsem_row_scores(objective::CTSEMObjective, values::AbstractVector,
     rows = [size(s.data, 2) for s in objective.subject_objectives]
     out = fill(NaN, sum(rows; init=0), K)
     K == 0 && return out
+    # By the hand-coded forward sweep where it covers the model
+    # (`_tan_row_scores!`); otherwise the filter at the Hessian's dual.
+    _tan_row_scores!(out, objective, theta, directions, rows) && return out
     # The width is a run-time value, so the type is one too: the passes are a
     # call of their own, specialised on it.
     _row_scores!(out, objective, theta, directions, rows, _ctsem_hessian_dual(objective))
