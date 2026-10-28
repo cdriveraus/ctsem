@@ -389,13 +389,18 @@ end
 """
 One seeded plug-in pass of subject `i` at the duals `x` (`nl` lanes seeded)
 into `trace`: by the hand-coded forward sweep where it serves
-(`_tan_laplace_trace!`), otherwise the filter at the dual on `ws`. Whether it
-came out finite.
+(`_tan_laplace_trace!`), otherwise the filter at the dual on `ws`, behind a
+barrier so that the image does not compile the filter at that dual for a
+fallback no workload model takes. Whether it came out finite.
 """
 function _laplace_sequential_pass!(trace::CTSEMKalmanTrace, laplace::CTSEMLaplaceObjective,
     theta::Vector{Float64}, i::Integer, so, sp, ws, x::Vector, nl::Integer)
     hand = _tan_laplace_trace!(trace, laplace, theta, Int(i), x, Int(nl))
     hand === nothing || return hand
+    return _ctsem_barrier(_laplace_sequential_dual_pass!, trace, so, sp, ws, x, i)::Bool
+end
+
+function _laplace_sequential_dual_pass!(trace, so, sp, ws, x, i)
     ll = _extended_kalman_filter_continuous!(ws, x, so.data, collect(so.timesteps),
         sp, so.tdpreds, _ctsem_tipred_vector(so.tipreds, x), i, so.max_timestep, trace,
         nothing, nothing, so.relin)

@@ -749,16 +749,27 @@ Subject `i`'s log likelihood at `shifted`, its gradient `g` and that gradient's
 derivatives along the raw positions `active` (`Hs`, rows and columns in
 `active`'s order), by the hand-coded sweeps a chunk of the curvature's lanes a
 pass: what `_continuation_member_hessian!` seeds a dual for, as
-`(loglik, status)`, status 1 where the filter fails. `nothing` where the sweep
-does not serve, and where the filter integrates deviations, whose factor the
-population parameters among `active` would move.
+`(loglik, status)`, status 1 where the filter fails and 2 where the gradient
+reaches a population parameter in `pop`, which the continuation then
+differences. Where the filter integrates deviations, whose factor those
+parameters move, an ordinary pass's gradient decides that, and otherwise
+(`nothing`) the dual serves, as it does where the sweep does not.
 """
 function _tan_laplace_member_hessian!(Hs::AbstractMatrix{Float64}, g::Vector{Float64},
     laplace::CTSEMLaplaceObjective, i::Integer, theta::Vector{Float64},
-    shifted::AbstractVector{Float64}, active::Vector{Int})
+    shifted::AbstractVector{Float64}, active::Vector{Int}, pop)
     _CTSEM_TANGENT_HESSIAN[] || return nothing
     ctx = _tan_laplace_context(laplace, theta, _HYBRID_FULL)
-    (ctx === nothing || ctx.mod.nh > 0) && return nothing
+    ctx === nothing && return nothing
+    if ctx.mod.nh > 0
+        aws = _laplace_workspace!(laplace, Float64, length(theta))
+        loglik = _laplace_subject_value_gradient!(g, laplace.objective.subject_objectives[i],
+            aws, collect(Float64, shifted), nothing, _HYBRID_FULL)
+        isfinite(loglik) || return (loglik, 1)
+        all(isfinite, g) || return (NaN, 1)
+        any(a -> !iszero(g[a]), pop) && return (NaN, 2)
+        return nothing
+    end
     return _tan_laplace_member_hessian_!(Hs, g, ctx, laplace.objective, Int(i), shifted,
         active)
 end

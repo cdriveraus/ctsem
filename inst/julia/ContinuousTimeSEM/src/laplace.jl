@@ -5452,9 +5452,17 @@ function _laplace_unit_seeded_gradient_(laplace::CTSEMLaplaceObjective, U::Integ
     members, d1::Vector{Float64})
 
     # By the hand-coded second order where it covers the model
-    # (`_tan_laplace_seeded`).
+    # (`_tan_laplace_seeded`); the dual behind a barrier, so that the image does
+    # not compile the filter at the seed's dual for a fallback.
     hand = _tan_laplace_seeded(laplace, U, values, Ls, u, members, d1)
     hand === nothing || return hand
+    return _ctsem_barrier(_laplace_unit_seeded_gradient_dual, laplace, U, values, Ls, u,
+        members, d1)::typeof((ok=true, d0=_LAPLACE_NO_MATRIX, d1c=_LAPLACE_NO_MATRIX))
+end
+
+function _laplace_unit_seeded_gradient_dual(laplace::CTSEMLaplaceObjective, U::Integer,
+    values::Vector{Float64}, Ls::Vector{Matrix{Float64}}, u::Vector{Float64},
+    members, d1::Vector{Float64})
     spec = laplace.spec
     units = laplace.units
     unitmembers = units.members[U]
@@ -7662,6 +7670,16 @@ function _laplace_mode_cross(laplace::CTSEMLaplaceObjective, U::Integer,
         end
     end
     hand && return H
+    # The dual behind a barrier, as `_laplace_unit_seeded_gradient`'s.
+    return _ctsem_barrier(_laplace_mode_cross_dual!, H, laplace, U, theta, Ls, dL,
+        positions, z, layout)::Union{Nothing,Matrix{Float64}}
+end
+
+function _laplace_mode_cross_dual!(H::Matrix{Float64}, laplace::CTSEMLaplaceObjective,
+    U::Integer, theta::Vector{Float64}, Ls::Vector{Matrix{Float64}}, dL, positions,
+    z::Vector{Float64}, layout)
+    D = length(z)
+    npar = length(theta)
     seed = ForwardDiff.Dual{_LaplaceSeedInner}(0.0, 1.0)
     for a in 1:D
         zz = [z[b] + seed * (b == a ? 1.0 : 0.0) for b in 1:D]

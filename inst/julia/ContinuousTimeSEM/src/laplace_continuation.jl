@@ -2970,7 +2970,7 @@ function _continuation_member_hessian!(gnode::Vector{Float64},
     loglik = NaN
     # By the hand-coded sweeps where they serve (`_tan_laplace_member_hessian!`).
     hand = _tan_laplace_member_hessian!(Hs, g, laplace, units.members[U][m], theta,
-        shifted, active)
+        shifted, active, layout.pop)
     if hand !== nothing
         loglik, status = hand
         status == 0 || return (loglik, status)
@@ -2980,8 +2980,30 @@ function _continuation_member_hessian!(gnode::Vector{Float64},
             iszero(g[a]) || return (NaN, 2)
         end
     end
+    if hand === nothing
+        # The dual behind a barrier, so the image compiles the filter at the
+        # seed's dual only for the models whose sweeps it serves.
+        r = _ctsem_barrier(_continuation_member_dual!, Hs, g, sc, subject, aws, shifted,
+            active, layout, N, npar)::Tuple{Float64,Int}
+        r[2] == 0 || return r
+        loglik = r[1]
+    end
+    all(isfinite, Hs) || return (NaN, 2)
+    return _continuation_member_assemble!(gnode, hnode, laplace, U, m, theta, Ls, dL, d2L,
+        layout, u, sc, g, Hs, loglik)
+end
+
+"""The member's gradient and Hessian in `active` at the seed's dual, as
+`(loglik, status)`: `_continuation_member_hessian!`'s fallback."""
+function _continuation_member_dual!(Hs, g, sc, subject, aws, shifted, active, layout,
+    N::Int, npar::Int)
+    S = eltype(sc.x)
+    x = sc.x
+    gd = sc.gradient
+    na = length(active)
+    loglik = NaN
     zero_seed = zero(ForwardDiff.Partials{N,Float64})
-    for lo in (hand === nothing ? (0:N:(na - 1)) : (0:N:-1))
+    for lo in 0:N:(na - 1)
         ncol = min(N, na - lo)
         @inbounds for t in 1:npar
             x[t] = S(shifted[t], zero_seed)
@@ -3008,7 +3030,18 @@ function _continuation_member_hessian!(gnode::Vector{Float64},
             Hs[r, lo + c] = ForwardDiff.partials(gd[active[r]], c)
         end
     end
-    all(isfinite, Hs) || return (NaN, 2)
+    return (Float64(loglik), 0)
+end
+
+"""The member's share of the flagged units' gradient and Hessian from its
+gradient `g` and Hessian `Hs` in the active parameters."""
+function _continuation_member_assemble!(gnode, hnode, laplace, U, m, theta, Ls, dL, d2L,
+    layout, u, sc, g, Hs, loglik)
+    spec = laplace.spec
+    offsets = laplace.units.offsets[U][m]
+    npar = length(theta)
+    active = layout.active
+    na = length(active)
     # The gradient, J' g: what `_continuation_member!` adds.
     @inbounds for t in 1:npar
         gnode[t] += g[t]
@@ -3249,6 +3282,18 @@ function _continuation_hessian_width(o::CTSEMLaplaceContinuation,
     key = (typeof(o.laplace.objective.params), wide)
     lock(() -> key in _CONTINUATION_WIDE_SEEN, _CONTINUATION_WIDE_LOCK) && return wide
     laplace = o.laplace
+    # Behind a barrier: the filter at the seed's dual is compiled only where a
+    # width is chosen for the dual's sweeps.
+    best = _ctsem_barrier(_continuation_dual_sweep_time, laplace, theta, o,
+        layout)::Float64
+    sweeps = sum(r.evaluations for r in o.rules; init=0)
+    workers = min(_laplace_pool_width(), length(o.rules))
+    return best * na * sweeps / workers > _CONTINUATION_WIDE_AFTER[] ? wide : 1
+end
+
+"""The best of three timed dual sweeps of the first flagged rule's subject."""
+function _continuation_dual_sweep_time(laplace::CTSEMLaplaceObjective,
+    theta::Vector{Float64}, o, layout)
     npar = length(theta)
     S = ForwardDiff.Dual{_LaplaceSeedInner,Float64,1}
     subject = laplace.objective.subject_objectives[laplace.units.members[o.rules[1].unit][1]]
@@ -3262,9 +3307,7 @@ function _continuation_hessian_width(o::CTSEMLaplaceContinuation,
         _laplace_subject_value_gradient!(gd, subject, aws, x, nothing, _HYBRID_FULL)
         best = min(best, (time_ns() - started) / 1e9)
     end
-    sweeps = sum(r.evaluations for r in o.rules; init=0)
-    workers = min(_laplace_pool_width(), length(o.rules))
-    return best * na * sweeps / workers > _CONTINUATION_WIDE_AFTER[] ? wide : 1
+    return best
 end
 
 """

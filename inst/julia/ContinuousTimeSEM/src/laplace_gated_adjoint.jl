@@ -150,6 +150,12 @@ function _gated_directional(G, z::Vector{Float64}, beta::Vector{Float64})
         hand === false && return nothing
         hand === true && return (theta=Gt[:, 2], z=Gz[:, 2])
     end
+    # The dual behind a barrier, as `_laplace_unit_seeded_gradient`'s.
+    return _ctsem_barrier(_gated_directional_dual, G, z,
+        beta)::Union{Nothing,NamedTuple{(:theta, :z),Tuple{Vector{Float64},Vector{Float64}}}}
+end
+
+function _gated_directional_dual(G, z::Vector{Float64}, beta::Vector{Float64})
     seed = ForwardDiff.Dual{_LaplaceSeedInner}(0.0, 1.0)
     zz = [z[a] + seed * beta[a] for a in eachindex(z)]
     r = G(zz)
