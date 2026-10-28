@@ -33,7 +33,11 @@
 # and a linear operation's is its own on `s`. `snz` says whether `s` may be
 # nonzero, as `nz` does for the tangents. Each primitive computes its output's
 # `s` where the output is a jet; one that is not, handed an operand whose `s`
-# is live, throws rather than drop it.
+# is live, throws rather than drop it. The second parts are each a function of
+# their own, never inlined: inlined, their locals enlarged every primitive's
+# frame, which is cleared at each call, and the curvature of a two-latent model,
+# which carries no second parts, ran 60 per cent slower, a seventh of it in
+# that clearing.
 
 """Whether quantities built now carry second parts (`TanMat.jet`): set around
 building and running a jet sweep (`with(_TAN_JETS => true)`)."""
@@ -108,13 +112,15 @@ function _tan_copy!(C::Union{TanMat,TanVec}, A::Union{TanMat,TanVec})
         _tan_setnz!(C, false)
     end
     _tan_jet_check(C, _tan_snz(A))
-    if C.jet
-        if _tan_snz(A)
-            _tan_copyto!(C.s, A.s)
-            C.snz[] = true
-        else
-            _tan_setsnz!(C, false)
-        end
+    C.jet && _tan_copy_s!(C, A)
+    return C
+end
+@noinline function _tan_copy_s!(C::Union{TanMat,TanVec}, A::Union{TanMat,TanVec})
+    if _tan_snz(A)
+        _tan_copyto!(C.s, A.s)
+        C.snz[] = true
+    else
+        _tan_setsnz!(C, false)
     end
     return C
 end
@@ -270,7 +276,7 @@ from the operands as the product reads them -- so before the product where
 `C` is one of them. A triangular factor's second parts are triangular as its
 tangents are.
 """
-function _tan_prod_s!(C::TanMat{W}, A::TanMat{W}, B::TanMat{W}, alpha::Float64,
+@noinline function _tan_prod_s!(C::TanMat{W}, A::TanMat{W}, B::TanMat{W}, alpha::Float64,
     beta::Float64, tri::Int, sym::Bool, ta::Bool, tb::Bool) where {W}
     sa, sb, x = _tan_snz(A), _tan_snz(B), _tan_nz(A) && _tan_nz(B)
     keep = !iszero(beta) && _tan_snz(C)
@@ -372,7 +378,7 @@ function _tan_prodvec!(y::TanVec{W}, A::TanMat{W}, x::TanVec{W}, alpha::Float64,
 end
 
 """The matrix-vector product's second parts, as `_tan_prod_s!`'s."""
-function _tan_prodvec_s!(y::TanVec{W}, A::TanMat{W}, x::TanVec{W}, alpha::Float64,
+@noinline function _tan_prodvec_s!(y::TanVec{W}, A::TanMat{W}, x::TanVec{W}, alpha::Float64,
     beta::Float64, tri::Int, ta::Bool) where {W}
     sa, sx, c = _tan_snz(A), _tan_snz(x), _tan_nz(A) && _tan_nz(x)
     keep = !iszero(beta) && _tan_snz(y)
@@ -441,19 +447,7 @@ function _tan_sym!(S::TanMat{W}, A::TanMat{W}) where {W}
         Sv[j, i] = s
     end
     _tan_jet_check(S, _tan_snz(A))
-    if S.jet
-        if _tan_snz(A)
-            As, Ss = A.s, S.s
-            @inbounds for j in 1:n, i in 1:j
-                s = (As[i, j] + As[j, i]) / 2
-                Ss[i, j] = s
-                Ss[j, i] = s
-            end
-            S.snz[] = true
-        else
-            _tan_setsnz!(S, false)
-        end
-    end
+    S.jet && _tan_sym_s!(S, A)
     _tan_nz(A) || return _tan_setnz!(S, false)
     @inbounds for j in 1:n, i in 1:j
         t = _tan_axpby(0.5, _tan_col(A, i, j), 0.5, _tan_col(A, j, i))
@@ -461,6 +455,19 @@ function _tan_sym!(S::TanMat{W}, A::TanMat{W}) where {W}
         _tan_put!(S, j, i, t)
     end
     S.nz[] = true
+    return S
+end
+
+@noinline function _tan_sym_s!(S::TanMat, A::TanMat)
+    _tan_snz(A) || return _tan_setsnz!(S, false)
+    n = size(A.v, 1)
+    As, Ss = A.s, S.s
+    @inbounds for j in 1:n, i in 1:j
+        s = (As[i, j] + As[j, i]) / 2
+        Ss[i, j] = s
+        Ss[j, i] = s
+    end
+    S.snz[] = true
     return S
 end
 
@@ -475,21 +482,7 @@ function _tan_add_impl!(C::TanMat{W}, alpha::Float64, A::TanMat{W}, beta::Float6
     Cv, Av, dA, dC = C.v, A.v, A.d, C.d
     bz = iszero(beta)
     _tan_jet_check(C, _tan_snz(A))
-    if C.jet
-        keep = !bz && _tan_snz(C)
-        if _tan_snz(A)
-            As, Cs = A.s, C.s
-            @inbounds for j in 1:c, i in 1:r
-                la = (i - 1) * sai + (j - 1) * saj
-                Cs[i, j] = keep ? muladd(alpha, As[la + 1], beta * Cs[i, j]) : alpha * As[la + 1]
-            end
-            C.snz[] = true
-        elseif !keep
-            _tan_setsnz!(C, false)
-        elseif !isone(beta)
-            C.s .*= beta
-        end
-    end
+    C.jet && _tan_add_s!(C, alpha, A, beta, tr)
     @inbounds for j in 1:c, i in 1:r
         la = (i - 1) * sai + (j - 1) * saj
         Cv[i, j] = bz ? alpha * Av[la + 1] : muladd(alpha, Av[la + 1], beta * Cv[i, j])
@@ -506,6 +499,27 @@ function _tan_add_impl!(C::TanMat{W}, alpha::Float64, A::TanMat{W}, beta::Float6
         _tan_setnz!(C, false)
     elseif !isone(beta)
         C.d .*= beta
+    end
+    return C
+end
+
+@noinline function _tan_add_s!(C::TanMat, alpha::Float64, A::TanMat, beta::Float64,
+    tr::Bool)
+    r, c = size(C.v)
+    lda = size(A.v, 1)
+    sai, saj = tr ? (lda, 1) : (1, lda)
+    keep = !iszero(beta) && _tan_snz(C)
+    if _tan_snz(A)
+        As, Cs = A.s, C.s
+        @inbounds for j in 1:c, i in 1:r
+            la = (i - 1) * sai + (j - 1) * saj
+            Cs[i, j] = keep ? muladd(alpha, As[la + 1], beta * Cs[i, j]) : alpha * As[la + 1]
+        end
+        C.snz[] = true
+    elseif !keep
+        _tan_setsnz!(C, false)
+    elseif !isone(beta)
+        C.s .*= beta
     end
     return C
 end
@@ -550,7 +564,7 @@ function _tan_ger_impl!(C::TanMat{W}, alpha::Float64, x::TanVec{W}, y::TanVec{W}
 end
 """The outer product's second parts: `alpha (s(x) y' + x s(y)' + 2 sum_w dx_w
 dy_w') + beta s(C)`."""
-function _tan_ger_s!(C::TanMat{W}, alpha::Float64, x::TanVec{W}, y::TanVec{W},
+@noinline function _tan_ger_s!(C::TanMat{W}, alpha::Float64, x::TanVec{W}, y::TanVec{W},
     beta::Float64) where {W}
     sx, sy, c = _tan_snz(x), _tan_snz(y), _tan_nz(x) && _tan_nz(y)
     keep = !iszero(beta) && _tan_snz(C)
@@ -587,20 +601,7 @@ function _tan_comb!(C::TanMat{W}, terms::Tuple, beta=false) where {W}
     Cv = C.v
     bz = iszero(beta)
     _tan_jet_check(C, _tan_comb_snz(terms))
-    if C.jet
-        keep = !bz && _tan_snz(C)
-        if _tan_comb_snz(terms)
-            Cs = C.s
-            @inbounds for j in 1:c, i in 1:r
-                Cs[i, j] = _tan_comb_sval(keep ? beta * Cs[i, j] : 0.0, terms, i, j)
-            end
-            C.snz[] = true
-        elseif !keep
-            _tan_setsnz!(C, false)
-        elseif !isone(beta)
-            C.s .*= beta
-        end
-    end
+    C.jet && _tan_comb_s!(C, terms, Float64(beta))
     @inbounds for j in 1:c, i in 1:r
         Cv[i, j] = _tan_comb_val(bz ? 0.0 : beta * Cv[i, j], terms, i, j)
     end
@@ -617,6 +618,22 @@ function _tan_comb!(C::TanMat{W}, terms::Tuple, beta=false) where {W}
         _tan_setnz!(C, false)
     elseif !isone(beta)
         C.d .*= beta
+    end
+    return C
+end
+@noinline function _tan_comb_s!(C::TanMat, terms::Tuple, beta::Float64)
+    r, c = size(C.v)
+    keep = !iszero(beta) && _tan_snz(C)
+    if _tan_comb_snz(terms)
+        Cs = C.s
+        @inbounds for j in 1:c, i in 1:r
+            Cs[i, j] = _tan_comb_sval(keep ? beta * Cs[i, j] : 0.0, terms, i, j)
+        end
+        C.snz[] = true
+    elseif !keep
+        _tan_setsnz!(C, false)
+    elseif !isone(beta)
+        C.s .*= beta
     end
     return C
 end
@@ -705,7 +722,7 @@ end
 
 """`_tan_solve!`'s second parts, after its tangents: `X.s` holds the
 right-hand side's, `X.d` the solution's tangents."""
-function _tan_solve_s!(X::Union{TanMat{W},TanVec{W}}, F::Matrix{Float64},
+@noinline function _tan_solve_s!(X::Union{TanMat{W},TanVec{W}}, F::Matrix{Float64},
     piv::Vector{Int}, Q::TanMat{W}) where {W}
     n = size(X.v, 1)
     r = size(X.v, 2)
@@ -812,16 +829,23 @@ end
 function _tan_lincomb_impl!(z::TanVec{W}, a::Float64, x::TanVec{W}, b::Float64, y::TanVec{W}) where {W}
     zv, xv, yv = z.v, x.v, y.v
     on = _tan_nz(x) || _tan_nz(y)
-    sx, sy = _tan_snz(x), _tan_snz(y)
-    _tan_jet_check(z, sx || sy)
-    son = z.jet && (sx || sy)
+    _tan_jet_check(z, _tan_snz(x) || _tan_snz(y))
+    # The second parts first: `z` may be `x` or `y`.
+    z.jet && _tan_lincomb_s!(z, a, x, b, y)
     @inbounds for i in eachindex(zv)
         zv[i] = muladd(a, xv[i], b * yv[i])
         on && _tan_put!(z, i, _tan_axpby(a, _tan_col(x, i), b, _tan_col(y, i)))
-        son && (z.s[i] = muladd(a, sx ? x.s[i] : 0.0, b * (sy ? y.s[i] : 0.0)))
     end
     on ? (z.nz[] = true) : _tan_setnz!(z, false)
-    son ? (z.snz[] = true) : _tan_setsnz!(z, false)
+    return z
+end
+@noinline function _tan_lincomb_s!(z::TanVec, a::Float64, x::TanVec, b::Float64, y::TanVec)
+    sx, sy = _tan_snz(x), _tan_snz(y)
+    (sx || sy) || return _tan_setsnz!(z, false)
+    @inbounds for i in eachindex(z.s)
+        z.s[i] = muladd(a, sx ? x.s[i] : 0.0, b * (sy ? y.s[i] : 0.0))
+    end
+    z.snz[] = true
     return z
 end
 
@@ -885,7 +909,7 @@ dS_w Ui)` on and above its diagonal (`-Z_w` there; `Z_w` is zero below), and
 `X.s`, `T.s` are scratch. `cross` where the tangents are live. Each term of
 `Y`'s sum is a product of two `Z_w`, so `X.d` serves for `Z_w` as it stands.
 """
-function _tan_cholinv_s!(Ui::TanMat{W}, S::TanMat{W}, X::TanMat{W}, T::TanMat{W},
+@noinline function _tan_cholinv_s!(Ui::TanMat{W}, S::TanMat{W}, X::TanMat{W}, T::TanMat{W},
     cross::Bool) where {W}
     m = size(S.v, 1)
     ss = _tan_snz(S)

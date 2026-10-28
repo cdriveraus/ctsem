@@ -350,7 +350,7 @@ differentiated, `A s(X) + s(X) A' + R = 0` with `R = s(A) X + X s(A)' +
 2 sum_w (dA_w' dX_w + dX_w dA_w) + s(Q)`), solved on the same Schur factors
 as a width-one direction. The scratch's second parts hold its matrices.
 """
-function _tan_lyap_s!(X::TanMat{W}, A::TanMat{W}, Q::TanMat{W}, h::TanLyap{W},
+@noinline function _tan_lyap_s!(X::TanMat{W}, A::TanMat{W}, Q::TanMat{W}, h::TanLyap{W},
     transposed::Bool) where {W}
     sa, sq, c = _tan_snz(A), _tan_snz(Q), _tan_nz(A) && _tan_nz(X)
     (sa || sq || c) || return _tan_setsnz!(X, false)

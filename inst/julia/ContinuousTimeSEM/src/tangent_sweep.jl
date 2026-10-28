@@ -503,7 +503,7 @@ A row's log likelihood's second parts into `ll[2 + W]`, a jet's: of `-1/2
 (e'e - 2 sum_i log Ui_ii)`, `s(e'e) = 2 sum_i (e_i s(e_i) + sum_w de_iw^2)` and
 `s(log Ui_ii) = s(Ui_ii) / Ui_ii - sum_w (dUi_iiw / Ui_ii)^2`.
 """
-function _tan_ll_s!(ll::Vector{Float64}, e::TanVec{W}, Ui::TanMat{W}, mo::Int) where {W}
+@noinline function _tan_ll_s!(ll::Vector{Float64}, e::TanVec{W}, Ui::TanMat{W}, mo::Int) where {W}
     se, su, de, du = _tan_snz(e), _tan_snz(Ui), _tan_nz(e), _tan_nz(Ui)
     (se || su || de || du) || return nothing
     sq = 0.0
