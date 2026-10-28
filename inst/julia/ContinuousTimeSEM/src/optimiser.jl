@@ -403,6 +403,10 @@ function _ctsem_lbfgs(fg!, x0::AbstractVector; memory::Integer=20,
     # judged against the worst of the last `gll` values the steps reached, the
     # acceptance sgd() uses (`_ctsem_sgd`). `recent` is set beside C.
     reference(recent, C) = gll > 0 ? maximum(@view recent[max(1, end - gll + 1):end]) : C
+    # Whether each of the last three searches accepted its first trial, as
+    # bits, newest lowest: the first trial carries the gradient while at least
+    # two did (below).
+    whole = 0b111
     while !stopped && !gconv && iteration < maxiter
         # `structured` (R's `lbfgs_scores`): a second model of the curvature,
         # whose step is taken while it predicts better than this one
@@ -437,13 +441,24 @@ function _ctsem_lbfgs(fg!, x0::AbstractVector; memory::Integer=20,
             B = nothing; Dinv = inverse; C = f; Q = 1.0; recent = [f]
             continue
         end
-        # The first trial carries the gradient too: most steps are accepted
-        # whole, and then the iteration has cost one gradient and nothing else.
+        # The first trial carries the gradient too while first trials are
+        # being accepted: then the iteration costs one gradient and nothing
+        # else. Where two of the last three were refused it is a value alone,
+        # and the gradient is taken at the step the search accepts: carried, it
+        # was a wasted gradient on most iterations of the affect pilot, whose
+        # first trials were mostly refused, and a gradient there cost nine
+        # tenths of a value again (dev3, 2026-10-28).
         alpha = 1.0
         xn = x .+ s
         Gn = similar(G)
-        fn = evaluate!(batch, 0.0, Gn, xn); fcalls += 1; gcalls += 1
-        have_gradient = true
+        have_gradient = count_ones(whole) >= 2
+        fn = if have_gradient
+            fcalls += 1; gcalls += 1
+            evaluate!(batch, 0.0, Gn, xn)
+        else
+            fcalls += 1
+            evaluate!(batch, 0.0, nothing, xn)
+        end
         accepted = isfinite(fn) && fn <= reference(recent, C) + c1 * alpha * dphi
         k = 0
         # The trials' lengths and their excess over the linear model, for the
@@ -510,6 +525,7 @@ function _ctsem_lbfgs(fg!, x0::AbstractVector; memory::Integer=20,
         if accepted && xn == x
             accepted = false
         end
+        whole = ((whole << 1) | (accepted && k == 0 ? 1 : 0)) & 0b111
         # A jump the watch saw counts only once backtracking has confirmed it:
         # the search, retried as it always is, found no step at all (below), or
         # found one only below the jump's scale for the third search running
@@ -923,7 +939,9 @@ function _ctsem_subset_objective(L::CTSEMLaplaceObjective, keep::AbstractVector{
         # per-run: where the objective was last evaluated, and a counter
         :last_values => Float64[], :gated_units => 0,
         # Part of the objective, not state: the subset's units keep theirs.
-        :known => L.known[keep])
+        :known => L.known[keep],
+        # The run's, for the units the subset holds.
+        :anchors => isempty(L.anchors) ? Vector{Float64}[] : L.anchors[keep])
     args = map(fieldnames(typeof(L))) do name
         haskey(fresh, name) && return fresh[name]
         v = getfield(L, name)

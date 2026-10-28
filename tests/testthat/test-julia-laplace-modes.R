@@ -412,3 +412,57 @@ test_that("a jump's modes join the known ones once each", {
   expect_null(ctsem:::.ctJuliaKnownModes(first, list(stop_reason = "jump",
     jump_units = 0L, jump_point_units = 0L, jump_point_values = matrix(0))))
 })
+
+# Anchors (`_ctsem_anchor_start!`): within an optimisation each unit's solve
+# starts from its mode at the last accepted point instead of searching. Near
+# that point it reaches the mode a search reaches, so values and gradients
+# agree; a fit anchored reaches the optimum a fit searching at every evaluation
+# reaches (`ctsem_set_mode_anchors!(false)`, the oracle), and leaves no anchors
+# on the objective R caches. The reflect fixture, whose people include one a
+# search finds only past the origin.
+test_that("anchored solves reach the searched modes, and a fit leaves none", {
+  skip_without_julia()
+  m <- .modes_sign_model()
+  m$pars$value[m$pars$matrix %in% "T0MEANS"] <- 1
+  data <- .modes_reflect_data()
+  spec <- suppressMessages(ctFit(data, m, backend = "julia",
+    intoverpop = "laplace", fit = FALSE))
+  handle <- structure(spec, class = c("ctJuliaModel", "ctFitModel"))
+  objective <- ctsem:::.ctJuliaObjective(handle, hybrid = TRUE)
+  anchor <- ctsem:::.ctJuliaEval(
+    "(o, x) -> ContinuousTimeSEM._ctsem_anchor_start!(o, x)")
+  clear <- ctsem:::.ctJuliaEval(
+    "o -> ContinuousTimeSEM.ctsem_laplace_clear_anchors!(o)")
+  held <- ctsem:::.ctJuliaEval("o -> length(o.anchors)")
+  x <- c(0.5, 0.5)
+  anchor(objective, ctsem:::.ctJuliaNumericVector(x))
+  expect_equal(held(objective), length(unique(data$id)))
+  near <- x + c(0.01, -0.02)
+  a <- ctJuliaEvaluate(handle, near, gradient = TRUE, contributions = TRUE,
+    cores = 1L)
+  clear(objective)
+  expect_equal(held(objective), 0)
+  s <- ctJuliaEvaluate(handle, near, gradient = TRUE, contributions = TRUE,
+    cores = 1L)
+  expect_equal(as.numeric(a$subject_loglik), as.numeric(s$subject_loglik),
+    tolerance = 1e-8)
+  expect_equal(as.numeric(a$gradient), as.numeric(s$gradient), tolerance = 1e-6)
+
+  fitwith <- function(on) {
+    previous <- ctsem:::.ctJuliaCall("ContinuousTimeSEM.ctsem_set_mode_anchors!", on)
+    on.exit(ctsem:::.ctJuliaCall("ContinuousTimeSEM.ctsem_set_mode_anchors!",
+      previous), add = TRUE)
+    set.seed(5)
+    suppressWarnings(suppressMessages(ctFit(data, m, backend = "julia",
+      intoverpop = "laplace", cores = 1L,
+      optimcontrol = list(laplace_correct = FALSE))))
+  }
+  anchored <- fitwith(TRUE)
+  searched <- fitwith(FALSE)
+  expect_equal(anchored$estimate$loglik, searched$estimate$loglik,
+    tolerance = 1e-6)
+  # The population mean; the sd collapses here, along a flat direction where
+  # a fit stops anywhere (raw -4.78 and -4.76 at one setting).
+  expect_equal(anchored$estimate$raw[1], searched$estimate$raw[1], tolerance = 1e-4)
+  expect_equal(held(ctsem:::.ctJuliaObjective(anchored, hybrid = TRUE)), 0)
+})

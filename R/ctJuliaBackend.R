@@ -5500,9 +5500,14 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
     length(model_spec$manifest_data) >= .ctCoresetAutoCells
 }
 
-# How many times a run that ends on a jump resumes with the named units' modes
-# kept as starts (`.ctJuliaOptimise()`) before the jump is handed on.
+# How many times a run resumes with modes kept as starts (`.ctJuliaOptimise()`)
+# -- a jump's, or better ones its closing search found -- before it is left.
 .ctJuliaKnownRounds <- 4L
+
+# How far, in nats, the modes a run's closing search preferred must move the
+# objective at its end before the run resumes with them (`.ctJuliaOptimise()`):
+# under it they are kept as starts and the run is left where it ended.
+.ctJuliaKnownResumeGain <- 1e-3
 
 # Whether an engine optimisation ended on a jump the route named.
 .ctJuliaJumped <- function(result) {
@@ -5518,8 +5523,7 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
 # The known modes (`spec$laplace$known`: `units`, one per column of `values`)
 # with the modes a jump's result saw for the units it named added, or NULL
 # where it adds none: every column of `jump_point_values` belonging to a named
-# unit, its rows zero-padded to the longer of the two matrices (the engine
-# reads a unit's first `dims` entries).
+# unit (`.ctJuliaKnownAdd()`).
 .ctJuliaKnownModes <- function(known, result) {
   named <- .ctJuliaJumpNamed(result)
   if (!length(named)) return(NULL)
@@ -5527,6 +5531,19 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
   values <- as.matrix(result$jump_point_values)
   if (length(units) != ncol(values)) return(NULL)
   take <- units %in% named
+  if (!any(take)) return(NULL)
+  .ctJuliaKnownAdd(known, units[take], values[, take, drop = FALSE])
+}
+
+# The known modes with column `j` of `values`, a mode of unit `units[j]`,
+# added where it is not one already held, or NULL where none is added; rows
+# zero-padded to the longer of the two matrices (the engine reads a unit's
+# first `dims` entries). A unit of 0 is the engine's "none".
+.ctJuliaKnownAdd <- function(known, units, values) {
+  units <- as.integer(units)
+  values <- as.matrix(values)
+  if (!length(units) || length(units) != ncol(values)) return(NULL)
+  take <- !is.na(units) & units > 0L
   if (!any(take)) return(NULL)
   units <- units[take]
   values <- values[, take, drop = FALSE]
@@ -5566,6 +5583,10 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
   # 1e-8, and stopped 387 nats short with neither rule having fired once.
   state_explicit <- !is.null(objective)
   if (is.null(objective)) objective <- .ctJuliaObjective(spec, hybrid = TRUE)
+  # A run the engine anchors (`_ctsem_anchor_start!`) clears its anchors at
+  # its end; one an interrupt ends leaves them on the objective R caches.
+  on.exit(try(.ctJuliaCall("ContinuousTimeSEM.ctsem_laplace_clear_anchors!",
+    objective, .defer = TRUE), silent = TRUE), add = TRUE)
   module <- .ctJuliaModule(model_spec$project)
   # The shared optimcontrol vocabulary (see the table at the top of R/ctFit.R).
   # `tol` is the objective criterion on both backends -- mize's `abs_tol` there,
@@ -5999,30 +6020,56 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
     message("SAEM had not settled after ", saem_record$saem_iterations,
       " iterations; a larger optimcontrol$saem may help.")
   }
-  # A run that ended on a jump (`stop_reason == "jump"`: a unit's Laplace term
-  # moved with where its inner solve stopped) is at no optimum of anything
-  # continuous. Where the solve reached a unit's better mode only at isolated
-  # points, that mode, kept as a start for the unit's solve
-  # (`spec$laplace$known`, `_laplace_known_modes` in the engine), makes its
-  # term continuous there: the modes the watch saw join the objective, and the
-  # fit resumes from where it stopped. On the affect pilot (v3_sub40ns, step 11
-  # of its finish) the objective then moved as its gradient said, where every
-  # step had lost a person's 3.85 nats (`scripts/pilot-curvature-2026-10/
-  # known_modes.R`). A jump whose units' modes are all known already, or one
-  # more after `.ctJuliaKnownRounds` resumes, is handed on as before.
+  # Modes a run's end puts in the objective (`spec$laplace$known`, the inner
+  # solve's further starts: `_laplace_known_modes` in the engine), and the
+  # run resumed from where it ended on them:
+  # - where it ended on a jump (`stop_reason == "jump"`: a unit's term moved
+  #   with where its inner solve stopped, at no optimum of anything
+  #   continuous), the modes the watch saw. Where the solve reached a unit's
+  #   better mode only at isolated points, that mode kept as a start makes its
+  #   term continuous there: on the affect pilot (v3_sub40ns, step 11 of its
+  #   finish) the objective then moved as its gradient said, where every step
+  #   had lost a person's 3.85 nats (`scripts/pilot-curvature-2026-10/
+  #   known_modes.R`);
+  # - from the engine's closing search (`_ctsem_anchor_finish!`): modes the
+  #   anchored run reached that a search from the origin misses, kept so
+  #   every objective built for the fit afterwards reaches them; and better
+  #   ones it found that the run missed, which resume the run where they are
+  #   worth `.ctJuliaKnownResumeGain`.
+  # Up to `.ctJuliaKnownRounds` resumes; a jump past them, or one whose modes
+  # are known already, is handed on as before.
   rounds <- 0L
-  while (.ctJuliaJumped(result) && !state_explicit && !is.null(model_spec$laplace) &&
-      rounds < .ctJuliaKnownRounds) {
-    known <- .ctJuliaKnownModes(model_spec$laplace$known, result)
-    if (is.null(known)) break
-    named <- .ctJuliaJumpNamed(result)
-    message(sprintf(paste0("Laplace: the objective jumped at %s %s (its term moved ",
-      "with where the inner solve stopped); its modes there are kept as starts ",
-      "and the fit goes on."), if (length(named) == 1L) "unit" else "units",
-      paste(named, collapse = ", ")))
-    model_spec$laplace$known <- known
-    spec <- structure(model_spec, class = c("ctJuliaModel", "ctFitModel"))
-    objective <- .ctJuliaObjective(spec, hybrid = TRUE)
+  while (!state_explicit && !is.null(model_spec$laplace)) {
+    known <- model_spec$laplace$known
+    jumpknown <- .ctJuliaKnownModes(known, result)
+    if (!is.null(jumpknown)) known <- jumpknown
+    kept <- .ctJuliaKnownAdd(known, result$anchor_kept_units,
+      result$anchor_kept_values)
+    if (!is.null(kept)) known <- kept
+    missed <- .ctJuliaKnownAdd(known, result$anchor_missed_units,
+      result$anchor_missed_values)
+    if (!is.null(missed)) known <- missed
+    gain <- as.numeric(.ctJuliaOr(result$anchor_missed_gain, 0))[1L]
+    resume <- !is.null(jumpknown) ||
+      (!is.null(missed) && isTRUE(abs(gain) > .ctJuliaKnownResumeGain))
+    if (!identical(known, model_spec$laplace$known)) {
+      model_spec$laplace$known <- known
+      spec <- structure(model_spec, class = c("ctJuliaModel", "ctFitModel"))
+      objective <- .ctJuliaObjective(spec, hybrid = TRUE)
+    }
+    if (!resume || rounds >= .ctJuliaKnownRounds) break
+    if (!is.null(jumpknown)) {
+      named <- .ctJuliaJumpNamed(result)
+      message(sprintf(paste0("Laplace: the objective jumped at %s %s (its term ",
+        "moved with where the inner solve stopped); its modes there are kept as ",
+        "starts and the fit goes on."), if (length(named) == 1L) "unit" else "units",
+        paste(named, collapse = ", ")))
+    } else {
+      n <- sum(as.integer(result$anchor_missed_units) > 0L)
+      message(sprintf(paste0("Laplace: a search at the end found better modes for ",
+        "%d %s, worth %.3g; they are kept as starts and the fit goes on."), n,
+        if (n == 1L) "unit" else "units", gain))
+    }
     rounds <- rounds + 1L
     result <- .ctJuliaAddRunCounts(optimise_once(as.numeric(result$minimizer),
       carried = 0), result)

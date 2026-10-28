@@ -706,6 +706,10 @@ mutable struct CTSEMLaplaceObjective{O} <: CTSEMOptimisable
     # every point rather than only where a probe happens to. Fixed for the
     # objective's life, so its value is still a function of theta alone.
     known::Vector{Vector{Vector{Float64}}}
+    # Within an optimisation, each unit's mode at the last accepted point, which
+    # every evaluation's solve then starts from instead of searching
+    # (`_laplace_solve_unit_mode!`, `_ctsem_anchor_start!`); empty outside one.
+    anchors::Vector{Vector{Float64}}
 end
 
 # `gate_lo = 0.2` and `gate_hi = 0.7` are measured, not derived: see the
@@ -729,7 +733,8 @@ function CTSEMLaplaceObjective(objective::CTSEMObjective, spec::CTSEMLaplaceSpec
         falses(nunits), falses(nunits), Float64[], Symbol(floor), Float64(gate_lo),
         Float64(gate_hi), 0, quadratic, affine,
         inert === nothing ? Vector{Vector{Int}}[] : inert,
-        isempty(known) ? [Vector{Float64}[] for _ in 1:nunits] : known)
+        isempty(known) ? [Vector{Float64}[] for _ in 1:nunits] : known,
+        Vector{Float64}[])
 end
 
 """
@@ -3625,6 +3630,20 @@ function _laplace_solve_unit_mode!(laplace::CTSEMLaplaceObjective, U::Integer,
             laplace.modes[U]).value
         return (u=laplace.modes[U], value=value, converged=isfinite(value), final=nothing)
     end
+    # Within an optimisation, from the unit's mode at the last accepted point
+    # and nothing else (`_ctsem_anchor_start!`): see there for why.
+    if !retain && !isempty(laplace.anchors) && length(laplace.anchors[U]) == d
+        held = _laplace_newton_unit_mode(laplace, U, values, Ls, aws,
+            laplace.anchors[U])
+        if held.converged && isfinite(held.value)
+            laplace.modes[U] = held.u
+            laplace.inner_iterations[U] = held.iterations
+            laplace.inner_gradient[U] = held.gradmax
+            laplace.inner_converged[U] = true
+            laplace.hessian_repaired[U] = held.repaired
+            return (u=held.u, value=held.value, converged=true, final=held.final)
+        end
+    end
     # Newton copies its start, so neither needs a vector of its own.
     origin = _laplace_scratch_vector!(laplace, Float64, d, :mode_origin)
     retained = retain ? laplace.modes[U] : fill!(origin, 0.0)
@@ -3632,8 +3651,10 @@ function _laplace_solve_unit_mode!(laplace::CTSEMLaplaceObjective, U::Integer,
     warm = _laplace_newton_unit_mode(laplace, U, values, Ls, aws, retained)
     best = warm
     fromwarm = started_warm
-    # The start is the origin, and that is not a detail of the iteration: it is
-    # what makes the value a function of theta.
+    # A search's start is the origin, and that is not a detail of the
+    # iteration: it is what makes the value a function of theta. (An anchored
+    # solve, above, does not search; a run's anchors are its own, and its end
+    # searches again: `_ctsem_anchor_start!`.)
     #
     # Newton warm-started from the mode the last evaluation left is the obvious
     # economy, and it is sound exactly when `g_U` has one mode -- which it does
@@ -4384,6 +4405,164 @@ function _laplace_known_modes(laplace::CTSEMLaplaceObjective, U::Integer,
     end
     return best
 end
+
+"""
+Whether an optimisation anchors each unit's solve at its mode at the last
+accepted point (`_ctsem_anchor_start!`). On by default;
+`ctsem_set_mode_anchors!(false)` searches at every evaluation, the oracle.
+"""
+const _LAPLACE_ANCHORS = Ref(true)
+
+"""
+    ctsem_set_mode_anchors!(on)
+
+Turn the anchoring `_ctsem_anchor_start!` describes on or off. Returns the
+previous setting.
+"""
+function ctsem_set_mode_anchors!(on::Bool)
+    previous = _LAPLACE_ANCHORS[]
+    _LAPLACE_ANCHORS[] = on
+    return previous
+end
+
+"""
+    _ctsem_anchor_start!(objective, x)
+
+Anchors an optimisation's inner solves: a full search at `x` -- Newton from the
+origin, the probes, the known modes (`_laplace_solve_unit_mode!`) -- and its
+modes kept (`anchors`), from which every later evaluation's solve starts
+instead of searching, until the next accepted point moves them
+(`_ctsem_anchor_here!`, from the optimiser's per-step callbacks) and the run's
+end clears them (`_ctsem_anchor_finish!`).
+
+Why. A search costs Newton from the origin, twelve iterations a unit on the
+affect pilot, and the probes, fifteen screening gradients a unit that found
+nothing there; from the last accepted point's mode Newton takes one. Measured
+on 150 of the pilot's units at a checkpoint (`CT-SEM/scripts/
+pilot-curvature-2026-10/pilot_levers.R`, dev3): a value 0.86 s a unit
+searching, 0.73 without the probes, 0.17 anchored, every unit's value the same.
+Where a unit has one maximum, Newton reaches it from any start and stops on
+the exact step (`_laplace_newton_unit_mode`), so the start changes nothing the
+arithmetic resolves. Where it has two, the anchor keeps the unit in the basin
+the last accepted point found, so the term moves continuously with the
+parameters: the spikes a search makes where it reaches the better mode only at
+isolated points (CLAUDE.md, "A unit's term has one definition") do not arise
+between searches. A better mode a search would find is missed until the next
+search, at the run's end, which a run far from its optimum loses little by; the
+end's search says what it missed, and the caller resumes from there with those
+modes known (`.ctJuliaOptimise()` in R). An anchor from an earlier fit would
+make one fit's objective depend on another's path, so a run starts with a
+search and leaves none behind.
+"""
+_ctsem_anchor_start!(::CTSEMOptimisable, x) = nothing
+function _ctsem_anchor_start!(laplace::CTSEMLaplaceObjective, x::AbstractVector)
+    laplace.anchors = Vector{Float64}[]
+    _LAPLACE_ANCHORS[] || return nothing
+    r = ctsem_laplace_evaluate(laplace, collect(Float64, x); gradient=false)
+    isfinite(r.value) || return nothing
+    laplace.anchors = [copy(m) for m in laplace.modes]
+    return nothing
+end
+
+"""
+    _ctsem_anchor_here!(objective)
+
+Moves the anchors to the modes the last evaluation left: called after an
+accepted step, whose point that evaluation was. A coreset stage's evaluation
+leaves the other units' modes where they were, which is where they stay.
+"""
+_ctsem_anchor_here!(::CTSEMOptimisable) = nothing
+function _ctsem_anchor_here!(laplace::CTSEMLaplaceObjective)
+    isempty(laplace.anchors) && return nothing
+    laplace.anchors = [copy(m) for m in laplace.modes]
+    return nothing
+end
+
+"""
+    _ctsem_anchor_finish!(objective, x)
+
+The end of an anchored run: the anchored evaluation at `x` and a search there
+(the anchors cleared), compared unit by unit where they ended at different
+points, by the search's own rule (`_laplace_prefer_mode`). Where it prefers
+the anchored mode, the anchor reached a mode a search from the origin misses,
+and it is returned (`kept`) for the caller to add to the known modes, so every
+later objective built for the fit reaches it too; where it prefers the
+search's, the run missed a better mode (`missed`, with `gain`, the change it
+makes to the objective at `x`), and the caller resumes from `x` with it known. Both as units and a zero-padded matrix of modes, `[0]`
+and `zeros(1, 1)` where none. The anchors are left cleared.
+"""
+_ctsem_anchor_finish!(::CTSEMOptimisable, x) = nothing
+function _ctsem_anchor_finish!(laplace::CTSEMLaplaceObjective, x::AbstractVector)
+    isempty(laplace.anchors) && return nothing
+    xv = collect(Float64, x)
+    held = try
+        ctsem_laplace_evaluate(laplace, xv; gradient=false)
+    catch err
+        _ctsem_must_propagate(err) && rethrow()
+        laplace.anchors = Vector{Float64}[]
+        return nothing
+    end
+    hu = collect(Float64, held.unit_loglik)
+    hm = [copy(m) for m in laplace.modes]
+    laplace.anchors = Vector{Float64}[]
+    searched = try
+        ctsem_laplace_evaluate(laplace, xv; gradient=false)
+    catch err
+        _ctsem_must_propagate(err) && rethrow()
+        return nothing
+    end
+    su = collect(Float64, searched.unit_loglik)
+    sm = [copy(m) for m in laplace.modes]
+    # Where the two ended at different points, which one the search's own rule
+    # prefers (`_laplace_prefer_mode`): by the larger term only between
+    # separate maxima. Compared by term alone, a stationary point beside a
+    # maximum, which the gated rule can score above it, would be kept.
+    theta = _laplace_extend(laplace, xv)
+    Ls = _laplace_popchols(theta, laplace.spec)
+    aws = _laplace_workspace!(laplace, Float64, length(theta))
+    kept = Int[]; missed = Int[]; gain = 0.0
+    for U in eachindex(hu)
+        (isfinite(hu[U]) && isfinite(su[U])) || continue
+        (isempty(hm[U]) || _laplace_maxabsdiff(hm[U], sm[U]) < 1e-4) && continue
+        s = _laplace_newton_unit_mode(laplace, U, theta, Ls, aws, sm[U])
+        a = _laplace_newton_unit_mode(laplace, U, theta, Ls, aws, hm[U])
+        (s.converged && a.converged && isfinite(s.value) && isfinite(a.value)) ||
+            continue
+        _, _, anchored_better = _laplace_prefer_mode(laplace, U, theta, Ls, aws,
+            s, NaN, a, s)
+        if anchored_better
+            push!(kept, U)
+        else
+            push!(missed, U)
+            gain += su[U] - hu[U]
+        end
+    end
+    columns(units, modes) = begin
+        isempty(units) && return ([0], zeros(1, 1))
+        width = maximum(U -> length(modes[U]), units; init=1)
+        m = zeros(width, length(units))
+        for (j, U) in enumerate(units)
+            m[1:length(modes[U]), j] = modes[U]
+        end
+        (units, m)
+    end
+    kept_units, kept_values = columns(kept, hm)
+    missed_units, missed_values = columns(missed, sm)
+    return (kept_units=kept_units, kept_values=kept_values,
+        missed_units=missed_units, missed_values=missed_values, missed_gain=gain)
+end
+
+"""
+    ctsem_laplace_clear_anchors!(objective)
+
+Clears an optimisation's anchors (`_ctsem_anchor_start!`): R's `on.exit` for a
+run an interrupt ended before `_ctsem_anchor_finish!` could.
+"""
+ctsem_laplace_clear_anchors!(::Any) = nothing
+ctsem_laplace_clear_anchors!(laplace::CTSEMLaplaceObjective) =
+    (laplace.anchors = Vector{Float64}[]; nothing)
+
+export ctsem_set_mode_anchors!, ctsem_laplace_clear_anchors!
 
 """
     _laplace_probe_span(laplace, U, Ls, d)
@@ -8186,6 +8365,9 @@ function _ctsem_optimise_setup!(o::CTSEMLaplaceObjective)
     for mode in o.modes
         fill!(mode, 0.0)
     end
+    # An interrupted run's anchors, which `_ctsem_anchor_finish!` would have
+    # cleared.
+    o.anchors = Vector{Float64}[]
     # The diagnostics describe the run that is about to happen, and
     # `_ctsem_optimise_verbose_shape` reads `inner_converged` before the first
     # evaluation of it -- so leaving the previous fit's values here reports one
