@@ -1786,16 +1786,19 @@ end
     CTSEMScoreStore(nunits, npar)
 
 The per-unit scores at the last point an optimiser evaluated with a gradient,
-for R's `lbfgs_scores` control: `x` the point, `S` its units' scores without
-the prior (units by parameters), `valid` whether they describe `x`.
+for R's `lbfgs_scores` control and the coreset stages: `x` the point, `S` its
+units' scores without the prior (units by parameters), `u` each unit's term
+there on the Laplace route (unweighted, NaN on the marginal route), `valid`
+whether they describe `x`.
 """
 mutable struct CTSEMScoreStore
     x::Vector{Float64}
     S::Matrix{Float64}
+    u::Vector{Float64}
     valid::Bool
 end
 CTSEMScoreStore(nunits::Integer, npar::Integer) =
-    CTSEMScoreStore(fill(NaN, npar), zeros(nunits, npar), false)
+    CTSEMScoreStore(fill(NaN, npar), zeros(nunits, npar), fill(NaN, nunits), false)
 
 """Whether a route can give the optimiser per-unit scores with its gradient:
 the marginal and Laplace routes, without a sampled TI predictor (whose

@@ -1171,12 +1171,21 @@ end
 # objective, wherever its coreset's error pointed, from raw -2 to -9.5, and the
 # fit ended there, 7.8 below the optimum the full sum reached.
 #
-# Looking for a coreset backs off: after a search that found none, the next
-# waits twice as many full iterations as the last wait, and one that finds one
-# starts the count again, so a run where nothing passes searches about `log2`
-# of its full iterations' times. Counted in iterations, not timed: decisions
-# that read the clock made a fit's path depend on the machine's load, and two
-# identical fits at one core ended at different points.
+# Looking for a coreset backs off: after a search that found none, or a stage
+# that did not pay or was sent back, the next waits twice as many full
+# iterations as the last wait, and a stage that paid starts the count again,
+# so a run where nothing passes, or nothing pays, searches about `log2` of its
+# full iterations' times. A stage that does not pay is the same evidence as a
+# search that finds nothing: on the affect pilot (903 parameters) a stage's
+# check rules ended nearly every stage after one or two iterations, whose
+# steps were as good as full ones (the full objective gained 0.99-1.00 of the
+# coreset's prediction), and at a share of 0.4-0.6 none could pay for its
+# check. Entered again after the next full iteration each time, a stage's
+# iterations took 1.1-2 times as long as full ones, and in two runs the fit
+# gained 17 and 63 per cent less a minute while in them (dev1, dev3,
+# review/PILOT-curvature-coresets-2026-10-25.md). Counted in iterations, not
+# timed: decisions that read the clock made a fit's path depend on the
+# machine's load, and two identical fits at one core ended at different points.
 
 """
     CTSEMCoresetTarget(laplace, coreset, anchor, correction)
@@ -1235,7 +1244,7 @@ const _CTSEM_CORESET_FOLDS = 4
 
 The state of the coreset stages in one L-BFGS run (`_ctsem_lbfgs`'s
 `coreset`): the full objective and the caller's trial (`fg!(target, F, G, x)`),
-the store the full trials leave their units' scores in, each unit's sampling
+the store the full trials leave their units' scores and terms in, each unit's sampling
 weight (which its scores carry) and share of a full evaluation's work, the
 training points (each point, its units' scores without the prior, and the full
 gradient of the maximised objective there), the stage in force -- its target,
@@ -1572,8 +1581,8 @@ After an accepted L-BFGS step to `x`, with value `f` and gradient `G` (of the
 minimised objective in force). On the full objective: keep the point, and,
 where the step gained more than `gap_tol`, look for a coreset
 (`_ctsem_coreset_choose`) once the full iterations since the last search
-number `wait`, which doubles after a search that finds none and is one after
-one that finds one. In a
+number `wait`, which doubles after a search that finds none (and after a
+stage that does not pay, `_ctsem_coreset_check!`). In a
 stage: check it with a full gradient (`_ctsem_coreset_check!`) once it has run
 its planned iterations, once what L-BFGS's model says is left to gain on the
 coreset (`G' H G / 2`) is no more than the coreset's error, once its gradient
@@ -1608,7 +1617,6 @@ function _ctsem_coreset_step!(c::CTSEMCoresetPlan, x, f, G, hmul, scale;
             c.wait = max(1, 2c.wait)
             return none
         end
-        c.wait = 1
         push!(c.entered, c.total_iterations)
         _ctsem_coreset_begin!(c, cs, x, f, G, scale, hmul)
         return (act=:enter, x=x, f=f, G=G)
@@ -1664,7 +1672,8 @@ as long, if this one paid -- its iterations times the full objective's gain
 over the coreset's predicted one, against its iterations' share of the work and
 its check -- the full objective gained more than `gap_tol` an iteration over
 it, and some coreset the longer stage can pay for is accurate enough; the full
-objective otherwise.
+objective otherwise. The next search waits one full iteration after a stage
+that paid, and twice the last wait after one sent back or not paid for.
 """
 function _ctsem_coreset_check!(c::CTSEMCoresetPlan, x, fc, Gc, hmul, scale;
         leave::Bool=false)
@@ -1685,10 +1694,12 @@ function _ctsem_coreset_check!(c::CTSEMCoresetPlan, x, fc, Gc, hmul, scale;
     if !ok || ff > c.f0
         c.reverted += 1
         c.f_last = c.f0
+        c.wait = max(1, 2c.wait)
         return (act=:revert, x=c.x0, f=c.f0, G=c.G0)
     end
     c.f_last = ff
     paid = n * fidelity > n * c.shares[end] + 1
+    c.wait = paid ? 1 : max(1, 2c.wait)
     if !leave && paid && actual > c.gap_tol * max(n, 1)
         stretch = 2c.stretch
         c.stretch = stretch
@@ -1701,16 +1712,61 @@ function _ctsem_coreset_check!(c::CTSEMCoresetPlan, x, fc, Gc, hmul, scale;
     return (act=:leave, x=x, f=ff, G=Gf)
 end
 
+"""
+    _ctsem_coreset_anchor!(c, x, f)
+
+The coreset's value where a stage begins, at `x` (the full value there `f`,
+both minimised), and the correction that makes the stage's gradient the full
+one there (`CTSEMCoresetTarget`), read from what the full evaluation at `x`
+left in the store rather than by evaluating the coreset again: its value is
+its units' terms at its weights, its gradient their scores -- which carry the
+sampling weight -- at its weights over their sampling weights, and the prior
+and anything else outside the units are the full objective's too, so they
+cancel from both differences. Sets the offset and returns the value, or
+`nothing` where the store does not describe `x`. Evaluated there, the coreset
+cost the affect pilot's stages 0.4-0.75 of a full gradient each, as much as
+the stage's first iteration.
+"""
+function _ctsem_coreset_anchor!(c::CTSEMCoresetPlan, x, f)
+    st = c.store
+    (st.valid && st.x == x) || return nothing
+    cs = c.target.coreset
+    total = _laplace_weighted_total(c.full, st.u)
+    inside = 0.0
+    for (k, U) in enumerate(cs.units)
+        inside += cs.weights[k] * st.u[U]
+    end
+    (isfinite(total) && isfinite(inside)) || return nothing
+    # Maximised: the full sum's scores less the coreset's.
+    corr = c.target.correction
+    sum!(reshape(corr, 1, :), st.S)
+    for (k, U) in enumerate(cs.units)
+        s = c.sampling[U]
+        s > 0 || continue
+        a = cs.weights[k] / s
+        @inbounds for i in eachindex(corr)
+            corr[i] -= a * st.S[U, i]
+        end
+    end
+    c.offset = inside - total
+    return f - c.offset
+end
+
 """The objective in force after a coreset action `r` (`_ctsem_coreset_step!`):
-for a stage that begins, the coreset's value at its point, read through
-`evaluate!` (which reads the plan), and the full gradient, which the stage's
-correction makes its own there; the full ones if the coreset cannot be
-evaluated there, and otherwise. Returns the point, value, gradient and the
-number of evaluations it took."""
+for a stage that begins, the coreset's value at its point and the full
+gradient, which the stage's correction makes its own there -- from the store
+(`_ctsem_coreset_anchor!`), or where the store does not describe the point,
+read through `evaluate!` (which reads the plan); the full ones if the coreset
+cannot be evaluated there, and otherwise. Returns the point, value, gradient
+and the number of evaluations it took, the check's among them for a stage
+carried on."""
 function _ctsem_coreset_switch!(c::CTSEMCoresetPlan, r, evaluate!, batch)
     r.act === :none && return (r.x, r.f, r.G, 0)
     if r.act === :enter || r.act === :refit
+        checked = r.act === :refit ? 1 : 0
         t = c.target
+        fa = _ctsem_coreset_anchor!(c, r.x, r.f)
+        fa === nothing || return (r.x, fa, copy(r.G), checked)
         fill!(t.correction, 0.0)
         Gc = similar(r.G)
         fc = evaluate!(batch, 0.0, Gc, r.x)
@@ -1719,10 +1775,10 @@ function _ctsem_coreset_switch!(c::CTSEMCoresetPlan, r, evaluate!, batch)
             # arrays.
             t.correction .= Gc .- r.G
             c.offset = r.f - fc
-            return (r.x, Float64(fc), copy(r.G), 1)
+            return (r.x, Float64(fc), copy(r.G), 1 + checked)
         end
         c.live = false
-        return (r.x, r.f, r.G, 1)
+        return (r.x, r.f, r.G, 1 + checked)
     end
     return (r.x, r.f, r.G, 1)
 end
