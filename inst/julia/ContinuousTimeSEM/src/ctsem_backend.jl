@@ -3315,8 +3315,19 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
             # hand-back L-BFGS has moved the point on.
             hessian0=handed_back ? nothing : newton_hessian,
             hessian0_at=handed_back ? nothing : newton_hessian_at,
-            krylov_min_cost=krylov_min_cost, final=Symbol(newton_final))
+            krylov_min_cost=krylov_min_cost, final=Symbol(newton_final),
+            jump=watch_jump ? jump : nothing)
         minimizer = collect(finish.x)
+        # A jump the finish's steps confirmed and the route named: the run
+        # ends there as it does on L-BFGS's ("jump", above), with no Hessian.
+        if finish.jumped !== nothing
+            jumped_units[] = finish.jumped
+            stop_reason = "jump"
+            verbose && println(_console(), label, ": the objective jumped by ",
+                jump.excess, " along the finish's step; unit(s) ",
+                finish.jumped.units, " moved with where their inner solve stopped")
+            break
+        end
         # The finish's own gain replaces L-BFGS's metric proxy: it is the exact
         # decrement, which is what the verdict below should be judging. A
         # finish with no Hessian has none (`Inf`), and the proxy stays: put
@@ -3642,7 +3653,8 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
         newton_history_value=isempty(newton_history.value) ? [NaN] :
             newton_history.value,
         # Why L-BFGS stopped: "gap", "stall", "progress", "jump",
-        # "linesearch", "gradient", "tolerance", "cap" or "other".
+        # "linesearch", "gradient", "tolerance", "cap" or "other"; "jump" too
+        # where the finish's steps confirmed one.
         stop_reason=stop_reason,
         # A jump the route named (`stop_reason == "jump"`): the units whose
         # terms jumped, their changes along the step, and where each one's

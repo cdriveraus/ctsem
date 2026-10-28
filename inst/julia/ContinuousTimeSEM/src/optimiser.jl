@@ -2623,6 +2623,13 @@ step whole, or that step does not contract the predicted gain by
 `contraction`, the point is outside Newton's region and the finish returns
 there, with `handback` set and no final Hessian, for L-BFGS to go on from.
 
+`jump`, a `CTSEMJump`, asks every step's search to watch for a jump as
+`_ctsem_lbfgs`'s line search does, along one line (`trust`): one confirmed (a
+search that found no step, or the third running that found one only below it)
+and named by the route (`_ctsem_jump_units`) ends the finish where its steps
+stand, with no Hessian and the units in `jumped`. A jump the route names
+nothing for ends the watch, and the steps go on.
+
 `value_at(y)`, the maximised objective or `-Inf` for the ladder and the probe,
 defaults to the route's own predicate (`_ctsem_probe_value`); `fg!` is the
 optimiser's trial path, for the steps.
@@ -2634,7 +2641,7 @@ subset Hessians formed and the calls made; the saddle record (`escapes`,
 `saddle`, `ladder_tried`, `ladder_gain`, and at the returned point
 `saddle_walked` and `saddle_gain`, 0 and `NaN` when no ladder ran there); the
 probe record; whether it handed
-back (`handback`); and the history of the steps, one entry each (`kind` is "newton", "exact", "saddle" or "flat", and `alpha`
+back (`handback`); the units a jump was named for (`jumped`, else `nothing`); and the history of the steps, one entry each (`kind` is "newton", "exact", "saddle" or "flat", and `alpha`
 the share of its Newton step's length the step took).
 """
 function _ctsem_newton_finish(objective, x0, f0, G0, fg!; tol::Real=1e-8,
@@ -2649,7 +2656,8 @@ function _ctsem_newton_finish(objective, x0, f0, G0, fg!; tol::Real=1e-8,
         certify_tol::Real=0.0, flat_escape::Bool=false,
         flat_allowed=(from, to) -> true,
         reporter=nothing, hessian0=nothing, hessian0_at=nothing,
-        krylov_min_cost::Real=_CTSEM_KRYLOV_MIN_COST, final::Symbol=:exact)
+        krylov_min_cost::Real=_CTSEM_KRYLOV_MIN_COST, final::Symbol=:exact,
+        jump::Union{Nothing,CTSEMJump}=nothing)
     final in (:exact, :walked) || throw(ArgumentError(
         "newton final must be exact or walked, got $(final)"))
     curvature in (:exact, :chord, :subset, :krylov) || throw(ArgumentError(
@@ -2854,25 +2862,99 @@ function _ctsem_newton_finish(objective, x0, f0, G0, fg!; tol::Real=1e-8,
     # enough step would take an increase of 1e-14, spending a step on a point
     # no different from the one it left. The names inside are `local` so they
     # cannot rebind the finish's own.
-    function trust(Hm, nt, radius, x, f, G)
+    #
+    # `watch`: the jump watch `_ctsem_lbfgs`'s line search keeps, put to one
+    # line. A search that had to shrink its step a hundredfold below its first
+    # trial, past trials the objective refused, may have met a jump rather
+    # than a model gone wrong at that scale. A refused trial's shortfall below
+    # the model (`shortfall`) tells the two apart only along one line, since
+    # the re-solved steps turn as they shrink, so the shortest refused trial
+    # that fell short by more than the value's resolution, step `s`, is
+    # evaluated once more at `100 s`: a smooth objective's shortfall grows
+    # with the square of the step, a jump's stays put, and where the short one
+    # keeps a quarter of the long one's it is a jump between them (`seen`,
+    # with its length `lo`, shortfall and step). On the affect pilot
+    # (v3_sub40n, juliaFit 57a9758d, dev1) a person's spike held the walk at
+    # -854881.07, |g| 68, for 21 steps, each found only below it, and the walk
+    # then bought a 1272-gradient Hessian, five hours, that gained 1.4 nats
+    # and crept again.
+    function trust(Hm, nt, radius, x, f, G, watch::Bool)
         local floor = max(abs(f), 1.0) * eps()
         local at = nt
         local r = radius
         local k = 0
+        local lo = NaN; local short = NaN; local s = Float64[]
         while true
             local xn = x .+ at.step
             local fn = fg!(0.0, nothing, xn)
             fcalls[] += 1
             local rho = isfinite(fn) ? (f - fn) / at.predicted : -Inf
-            if isfinite(fn) && rho > 1e-4 && f - fn > floor
-                return (ok=true, x=xn, f=fn, rho=rho, nt=at, radius=r)
+            local ok = isfinite(fn) && rho > 1e-4 && f - fn > floor
+            if !ok && watch && isfinite(fn) && fn < _CTSEM_REFUSED
+                local e = fn - f + at.predicted
+                e > 1e-8 * (1 + abs(f)) && (lo = at.length; short = e; s = at.step)
             end
-            (at.predicted > floor && k < 100) ||
-                return (ok=false, x=x, f=f, rho=rho, nt=at, radius=r)
+            if ok || !(at.predicted > floor && k < 100)
+                local seen = watch && isfinite(lo) && nt.length >= 100 * lo &&
+                    line_jump(Hm, x, f, G, s, short)
+                return (ok=ok, x=ok ? xn : x, f=ok ? fn : f, rho=rho, nt=at,
+                    radius=r, seen=seen, lo=lo, shortfall=short, s=s)
+            end
             k += 1
             r = at.length / 4
             at = newton(Hm, G, r)
         end
+    end
+    # What the model of `newton` (the step's own) predicts a step `v` gains:
+    # `predicted` for one of its steps, any other `v` on the same curvatures.
+    function model_gain(Hm, G, v)
+        local M = model(Hm)
+        local z = -(transpose(M.vectors) * v)
+        local c = transpose(M.vectors) * G
+        return dot(c, z) - 0.5 * sum(M.curvature .* abs2.(z); init=0.0)
+    end
+    function line_jump(Hm, x, f, G, s, short)
+        local v = 100 .* s
+        local fn = fg!(0.0, nothing, x .+ v)
+        fcalls[] += 1
+        (isfinite(fn) && fn < _CTSEM_REFUSED) || return false
+        local e = fn - f + model_gain(Hm, G, v)
+        return e > 0 && short >= e / 4
+    end
+    # The watch's verdict on a search (`trust`), from what it held before:
+    # what it holds now -- the jump first seen and where the steps stood, held
+    # while every step found is shorter than it, and the searches in a row
+    # that found one only so -- and whether the jump is confirmed.
+    function watch_verdict(trial, x, seen, crept)
+        if seen === nothing && trial.seen
+            seen = (x=copy(x), s=collect(Float64, trial.s), lo=trial.lo,
+                shortfall=trial.shortfall)
+        end
+        if trial.ok
+            if seen !== nothing && trial.nt.length < seen.lo
+                crept += 1
+            else
+                seen = nothing; crept = 0
+            end
+        end
+        return (seen=seen, crept=crept,
+            confirmed=seen !== nothing && (!trial.ok || crept >= 3))
+    end
+    # A jump the watch confirmed (`seen`, where the steps stood when it was
+    # seen), named by the route (`_ctsem_jump_units`): the named units, or
+    # `nothing` where it names none, which ends the watch for this finish --
+    # its steps go on as they did before there was one.
+    function name_jump(seen)
+        _ctsem_jump_record!(jump, seen.x, seen.s, 100.0, 1.0, seen.shortfall)
+        local named = try
+            _ctsem_jump_units(objective, jump)
+        catch err
+            _ctsem_must_propagate(err) && rethrow()
+            nothing
+        end
+        (named === nothing || isempty(named.units)) || return named
+        jump.seen = false
+        return nothing
     end
     report(g, steps, f, G, x) = callback === nothing || callback(CTSEMIterate(iteration0 + steps,
         f, maximum(abs, G; init=0.0), g, x))
@@ -2915,6 +2997,30 @@ function _ctsem_newton_finish(objective, x0, f0, G0, fg!; tol::Real=1e-8,
     saddle = false; ladder_tried = false; ladder_gain = 0.0
     saddle_walked = 0; saddle_gain = NaN
     firstgain = Inf; firstwhole = true; handed = false
+    # The jump watch (`trust`'s `watch`), where the caller asks for it: the
+    # jump a search saw (`seen`) and where, the searches in a row since that
+    # found a step only below it, and the units the route named once one was
+    # confirmed, as `_ctsem_lbfgs` counts and confirms them -- a search that
+    # found no step, or the third running to find one only below the jump.
+    # The trust region keeps its radius between searches, so a search after
+    # the first starts near the jump's scale and does not shrink a
+    # hundredfold again: what one search saw is held until a step at or above
+    # its scale is taken.
+    watching = jump !== nothing && take_steps
+    seen = nothing
+    crept = 0
+    jumped = nothing
+    # What a finish ended on a jump returns: the point the steps stand on and
+    # no Hessian, final or walked, since the objective has no curvature there;
+    # the route ends the run on the units named (`ctsem_optimize`'s "jump").
+    on_jump(named, x, f, G, hat, steps, gain, gcalls, escapes) = (x=x, f=f, G=G,
+        hessian=nothing, hessian_at=hat, distance=NaN, steps=steps, gain=gain,
+        full_hessians=full_hessians[], subset_hessians=subset_hessians[],
+        krylov_models=kmodels[], krylov_products=kspent[], fcalls=fcalls[],
+        gcalls=gcalls, escapes=escapes, saddle=false, ladder_tried=false,
+        ladder_gain=0.0, saddle_walked=0, saddle_gain=NaN,
+        probe=_ctsem_no_probe(), history=history, handback=false,
+        walked=nothing, jumped=named)
     if H === nothing
         return (x=x, f=f, G=G, hessian=nothing, hessian_at=hat, distance=NaN,
             steps=0, gain=Inf, full_hessians=full_hessians[],
@@ -2922,7 +3028,7 @@ function _ctsem_newton_finish(objective, x0, f0, G0, fg!; tol::Real=1e-8,
             krylov_products=kspent[], fcalls=0, gcalls=0, escapes=0,
             saddle=false, ladder_tried=false, ladder_gain=0.0, saddle_walked=0,
             saddle_gain=NaN, probe=_ctsem_no_probe(), history=history,
-            handback=false, walked=nothing)
+            handback=false, walked=nothing, jumped=nothing)
     end
     at_x = exact && hat == x            # `H` is the exact Hessian at `x`
     # The trust region, in raw units. Each Hessian starts without one -- its
@@ -3058,7 +3164,19 @@ function _ctsem_newton_finish(objective, x0, f0, G0, fg!; tol::Real=1e-8,
                 break
             end
             steps == 0 && (firstgain = gain)
-            trial = trust(Hs, nt, radius, x, f, G)
+            trial = trust(Hs, nt, radius, x, f, G, watching)
+            # The watch's verdict comes first: a confirmed jump ends the finish
+            # where it stands, the step not taken, since neither a fresh
+            # Hessian nor a shorter step crosses it.
+            if watching
+                verdict = watch_verdict(trial, x, seen, crept)
+                seen = verdict.seen; crept = verdict.crept
+                if verdict.confirmed
+                    jumped = name_jump(seen)
+                    jumped === nothing || break
+                    watching = false; seen = nothing; crept = 0
+                end
+            end
             if !trial.ok
                 # The model promises nothing the objective can represent at
                 # any radius: a stale matrix is replaced, and on the exact
@@ -3152,7 +3270,9 @@ function _ctsem_newton_finish(objective, x0, f0, G0, fg!; tol::Real=1e-8,
             krylov_products=kspent[], fcalls=fcalls[], gcalls=gcalls,
             escapes=0, saddle=false, ladder_tried=false, ladder_gain=0.0,
             saddle_walked=0, saddle_gain=NaN, probe=_ctsem_no_probe(),
-            history=history, handback=true, walked=nothing)
+            history=history, handback=true, walked=nothing, jumped=nothing)
+        jumped === nothing ||
+            return on_jump(jumped, x, f, G, hat, steps, gain, gcalls, escapes)
         H === nothing && break
         # `final = :walked`: where the walk ended, the matrix it walked on, and
         # no exact Hessian formed for it -- for a caller that steps again from
@@ -3167,7 +3287,7 @@ function _ctsem_newton_finish(objective, x0, f0, G0, fg!; tol::Real=1e-8,
                 fcalls=fcalls[], gcalls=gcalls, escapes=escapes, saddle=false,
                 ladder_tried=false, ladder_gain=0.0, saddle_walked=0,
                 saddle_gain=NaN, probe=_ctsem_no_probe(), history=history,
-                handback=false, walked=-Hs)
+                handback=false, walked=-Hs, jumped=nothing)
         end
         # The final Hessian. A chord Hessian the steps converged on, taken
         # within `reuse_se` standard errors of here, is kept: the exact one at
@@ -3236,7 +3356,17 @@ function _ctsem_newton_finish(objective, x0, f0, G0, fg!; tol::Real=1e-8,
                     nt = newton(H, G, radius)
                     gain = nt === nothing ? Inf : nt.gain
                     (nt === nothing || gain < tol || steps >= maxit + 5) && break
-                    trial = trust(H, nt, radius, x, f, G)
+                    trial = trust(H, nt, radius, x, f, G, watching)
+                    if watching
+                        verdict = watch_verdict(trial, x, seen, crept)
+                        seen = verdict.seen; crept = verdict.crept
+                        if verdict.confirmed
+                            jumped = name_jump(seen)
+                            jumped === nothing || return on_jump(jumped, x, f,
+                                G, hat, steps, gain, gcalls, escapes)
+                            watching = false; seen = nothing; crept = 0
+                        end
+                    end
                     trial.ok || break
                     Gn = similar(G)
                     fg!(nothing, Gn, trial.x); gcalls += 1
@@ -3366,7 +3496,7 @@ function _ctsem_newton_finish(objective, x0, f0, G0, fg!; tol::Real=1e-8,
      escapes=escapes, saddle=saddle, ladder_tried=ladder_tried,
      ladder_gain=ladder_gain, saddle_walked=saddle_walked,
      saddle_gain=saddle_gain, probe=probed, history=history, handback=false,
-     walked=nothing)
+     walked=nothing, jumped=nothing)
 end
 
 """

@@ -1007,6 +1007,63 @@ end
     @test short.longest == 1
 end
 
+# Whether the mock's route names a jump's units (`_ctsem_jump_units`), and
+# which: a Laplace route names the units whose terms moved with where their
+# inner solves stopped; the mock names unit 2, or none.
+const _ENDGAME_JUMP_NAMES = Ref(true)
+ContinuousTimeSEM._ctsem_jump_units(m::_EndgameMock, jump) = _ENDGAME_JUMP_NAMES[] ?
+    (units=[2], changes=[-jump.excess], point_units=[0], point_values=zeros(1, 1)) :
+    nothing
+
+@testset "the finish names a jump its steps creep along rather than crossing it" begin
+    C = ContinuousTimeSEM
+    # A quadratic whose value is 0.3 higher within 1e-6 of where the finish
+    # starts: a Laplace unit whose inner solve reaches a better mode only at
+    # isolated points. The maximum is 0.14 away, worth 0.01, so every step
+    # off the spike loses, and only steps below its width are taken.
+    x0 = [1.0, -2.0]
+    a = x0 .+ 0.1
+    spike = x -> -0.5 * sum(abs2, x .- a) - (sqrt(sum(abs2, x .- x0)) > 1e-6 ? 0.3 : 0.0)
+    m = _endgame_mock(spike)
+    jump = C.CTSEMJump()
+    out = _endgame_run(m, x0; jump=jump, probe=false)
+    @test out.jumped !== nothing
+    @test out.jumped.units == [2]
+    @test out.hessian === nothing
+    @test jump.seen
+    @test (jump.alpha_hi, jump.alpha_lo) == (100.0, 1.0)
+    @test isapprox(jump.excess, 0.3; atol=0.01)
+    # Where the steps stood: on the spike, three creeping steps in at most.
+    @test sqrt(sum(abs2, out.x .- x0)) < 1e-6
+    @test out.steps <= 3
+    # Unwatched, the steps creep on the spike as long as the finish lets them.
+    plain = _endgame_run(m, x0; probe=false)
+    @test plain.jumped === nothing
+    @test sqrt(sum(abs2, plain.x .- x0)) < 1e-6
+    # A jump the route names nothing for ends the watch, and the steps go on
+    # as they would unwatched.
+    _ENDGAME_JUMP_NAMES[] = false
+    try
+        unnamed = _endgame_run(m, x0; jump=C.CTSEMJump(), probe=false)
+        @test unnamed.jumped === nothing
+        @test unnamed.steps == plain.steps
+        @test unnamed.x == plain.x
+    finally
+        _ENDGAME_JUMP_NAMES[] = true
+    end
+    # A smooth objective whose curvature the model puts at a millionth of its
+    # own: every search shrinks its step a hundredfold and more, past refused
+    # trials, and the test along one line finds the shortfall growing with
+    # the square of the step -- no jump -- and the finish converges.
+    smooth = x -> -0.5 * sum(abs2, x .- a)
+    flat = _endgame_mock(smooth; h = x -> -1e-6 * Matrix{Float64}(I, 2, 2))
+    quiet = C.CTSEMJump()
+    s = _endgame_run(flat, x0; jump=quiet, probe=false, curvature=:chord, tol=1e-12)
+    @test s.jumped === nothing
+    @test !quiet.seen
+    @test s.x ≈ a atol=1e-4
+end
+
 @testset "at a saddle the ascent is looked for along the negative curvature" begin
     # f(x, y) = x^2/2 - y^2/2, maximised, has a saddle at the origin: a maximum
     # in y, a minimum in x. The Newton step over the trusted direction (y) has
