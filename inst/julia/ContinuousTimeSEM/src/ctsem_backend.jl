@@ -2082,6 +2082,13 @@ end
 _ctsem_optimise_label(p::CTSEMPinnedObjective) =
     string(_ctsem_optimise_label(p.objective), " (pinned)")
 _ctsem_optimise_setup!(p::CTSEMPinnedObjective) = _ctsem_optimise_setup!(p.objective)
+_ctsem_pinned_point(p::CTSEMPinnedObjective, x) =
+    (y = collect(Float64, x); y[p.index] .= p.value; y)
+_ctsem_anchor_start!(p::CTSEMPinnedObjective, x) =
+    _ctsem_anchor_start!(p.objective, _ctsem_pinned_point(p, x))
+_ctsem_anchor_here!(p::CTSEMPinnedObjective) = _ctsem_anchor_here!(p.objective)
+_ctsem_anchor_finish!(p::CTSEMPinnedObjective, x) =
+    _ctsem_anchor_finish!(p.objective, _ctsem_pinned_point(p, x))
 _ctsem_optimise_log(p::CTSEMPinnedObjective, verbose::Bool) =
     _ctsem_optimise_log(p.objective, verbose)
 _ctsem_optimise_trace_keys(p::CTSEMPinnedObjective) =
@@ -2816,6 +2823,9 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
     gradient_limit = sqrt(floatmax(eltype(start_values)))
     label = _ctsem_optimise_label(objective)
     _ctsem_optimise_setup!(objective)
+    # Each unit's inner solve anchored at its mode at the last accepted point,
+    # from a search here; see `_ctsem_anchor_start!`.
+    _ctsem_anchor_start!(objective, start_values)
     # The route's own call accounting, or `nothing` where it keeps none. Passed
     # to every trial so the counting happens where the validity is decided.
     call_log = _ctsem_optimise_log(objective, verbose)
@@ -3002,6 +3012,8 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
     in_sgd = Ref(false)
     watch = function (state)
         latest = state isa AbstractVector ? last(state) : state
+        # After an accepted step, whose point the last evaluation was.
+        _ctsem_anchor_here!(objective)
         _record!(trace, latest.iteration, -latest.value, latest.g_norm,
             _ctsem_predicted_gain(directional),
             _ctsem_optimise_trace_values(objective)...)
@@ -3262,6 +3274,7 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
     # percentage honestly, rather than leaving it frozen at whatever L-BFGS
     # last reported while the fit finishes the rest of its work.
     record = function (state)
+        _ctsem_anchor_here!(objective)
         _record!(trace, state.iteration, -state.value, state.g_norm,
             state.gain, _ctsem_optimise_trace_values(objective)...)
         seen_iterations[] = max(seen_iterations[], Int(state.iteration))
@@ -3510,6 +3523,9 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
         widen=stop_reason != "cap")
     saturated = verdict.saturated
     stalled = verdict.stalled
+    # The run's anchored modes against a search at the estimate, and the
+    # anchors cleared (`_ctsem_anchor_finish!`).
+    anchored = _ctsem_anchor_finish!(objective, minimizer)
     finite_gradient = verdict.finite_gradient
     converged_enough = verdict.converged_enough
     overshoot = verdict.overshoot
@@ -3540,6 +3556,16 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
     return (
         minimizer=minimizer,
         maximum_loglik=final.value,
+        # Modes the anchored run reached that a search at the estimate does not
+        # (`anchor_kept_*`), and better ones the search found that the run
+        # missed (`anchor_missed_*`, worth `anchor_missed_gain`), for the
+        # caller's known modes; `[0]` where none or not anchored.
+        anchor_kept_units=anchored === nothing ? [0] : anchored.kept_units,
+        anchor_kept_values=anchored === nothing ? zeros(1, 1) : anchored.kept_values,
+        anchor_missed_units=anchored === nothing ? [0] : anchored.missed_units,
+        anchor_missed_values=anchored === nothing ? zeros(1, 1) :
+            anchored.missed_values,
+        anchor_missed_gain=anchored === nothing ? 0.0 : anchored.missed_gain,
         gradient=collect(final.gradient),
         subject_loglik=collect(final.subject_loglik),
         result_extra...,
