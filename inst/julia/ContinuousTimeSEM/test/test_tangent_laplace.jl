@@ -1,6 +1,6 @@
-# The hand-coded Laplace unit curvature (`tangent_laplace.jl`) against the
-# member gradient's Jacobian at the curvature's dual, its oracle
-# (`ctsem_set_tangent_hessian!(false)`): the dense and blocked routes, one to
+# The hand-coded Laplace sweeps (`tangent_laplace.jl`) against forward mode
+# through the filter at the duals and jets they replaced, their oracles
+# (`dual_oracles.jl`): the curvature's dense and blocked routes, one to
 # three levels, effects on the means and on the dynamics and noise, both at
 # once by the split route, a curved mean, a drift evaluated by row, and
 # categorical indicators.
@@ -9,16 +9,21 @@ isdefined(@__MODULE__, :_LAPLACE_LINEAR_OBJECTIVE) ||
     include(joinpath(@__DIR__, "laplace_fixtures.jl"))
 isdefined(@__MODULE__, :_adjoint_test_dataframe) ||
     include(joinpath(@__DIR__, "adjoint_fixtures.jl"))
+isdefined(@__MODULE__, :_oracle_hessian) ||
+    include(joinpath(@__DIR__, "dual_oracles.jl"))
 
 # One latent read by an ordinal item in three categories, a count and an item
 # censored at -0.25 and 0.3 (`tangent_categorical.jl`): the thresholds, the
 # count's dispersion and intercept and the censored item's sd and intercept
-# free, and random effects on the initial mean, the intercept and the drift.
+# free, and random effects on the initial mean, the intercept and the drift. A
+# fourth item, ordinal on the first's thresholds, reads no state, so its
+# predictor has no variance: the filter adds its likelihood at its mean, which
+# shares the censored item's intercept, and moves nothing.
 const _TAN_CATEGORICAL_OBJECTIVE = let
     df = _adjoint_test_dataframe(
         drift=[-0.5;;], jax=[-0.5;;], cint=[0.0;;], diffusion=[0.3;;],
-        lambda=[1.0; 0.6; 0.8;;], jy=[1.0; 0.6; 0.8;;], manifestmeans=zeros(3, 1),
-        manifestvar=Matrix(0.3I, 3, 3), t0var=[0.5;;], t0means=[0.0;;],
+        lambda=[1.0; 0.6; 0.8; 0.0;;], jy=[1.0; 0.6; 0.8; 0.0;;], manifestmeans=zeros(4, 1),
+        manifestvar=Matrix(0.3I, 4, 4), t0var=[0.5;;], t0means=[0.0;;],
         free=Dict(
             (:T0MEANS, 1, 1) => (1, "param[1]"),
             (:CINT, 1, 1) => (2, "param[2]"),
@@ -31,16 +36,20 @@ const _TAN_CATEGORICAL_OBJECTIVE = let
             (:MANIFESTVAR, 2, 2) => (8, "log1p_exp(param[8])"),
             (:MANIFESTVAR, 3, 3) => (9, "log1p_exp(param[9])"),
             (:MANIFESTMEANS, 3, 1) => (10, "param[10]"),
+            (:MANIFESTMEANS, 4, 1) => (10, "0.5 * param[10] - 0.2"),
+            (:THRESHOLDS, 4, 1) => (6, "param[6]"),
+            (:THRESHOLDS, 4, 2) => (7, "log1p_exp(param[7])"),
         ),
-        extra=[:THRESHOLDS => zeros(3, 2)])
-    sp = ekf_from_data_frame(df; manifesttype=[2, 3, 4], ncategories=[3, 0, 0],
-        censormin=[-Inf, -Inf, -0.25], censormax=[Inf, Inf, 0.3])
-    starts, times, data = _laplace_test_data(6, 3; seed=4)
+        extra=[:THRESHOLDS => zeros(4, 2)])
+    sp = ekf_from_data_frame(df; manifesttype=[2, 3, 4, 2], ncategories=[3, 0, 0, 3],
+        censormin=[-Inf, -Inf, -0.25, -Inf], censormax=[Inf, Inf, 0.3, Inf])
+    starts, times, data = _laplace_test_data(6, 4; seed=4)
     for c in axes(data, 2)
         v = data[:, c]
         data[1, c] = 1.0 + (v[1] > -0.1) + (v[1] > 0.15)
         data[2, c] = round(2 + 4 * v[2])
         data[3, c] = clamp(v[3], -0.25, 0.3)
+        data[4, c] = 1.0 + (v[4] > -0.2) + (v[4] > 0.1)
         c % 5 == 2 && (data[2, c] = NaN)
         c % 7 == 3 && (data[1, c] = NaN)
     end
@@ -87,12 +96,11 @@ end
                 sum(b -> b.size, laplace.units.blocks[U])
             d == 0 && continue
             u = 0.4 .* randn(rng, d)
-            dense(on) = (C.ctsem_set_tangent_hessian!(on);
-                C._laplace_block_dense(C._laplace_unit_curvature(laplace, U, values, Ls, u),
-                    laplace.units.blocks[U], d))
-            push!(out, (dense(true), dense(false)))
+            hand = C._laplace_block_dense(C._laplace_unit_curvature(laplace, U, values, Ls,
+                u), laplace.units.blocks[U], d)
+            # The curvature is minus the unit objective's Hessian.
+            push!(out, (hand, -_oracle_unit_hessian(laplace, U, values, Ls, u)))
         end
-        C.ctsem_set_tangent_hessian!(true)
         return out
     end
     function served(laplace, values)
@@ -142,7 +150,6 @@ end
         end
     finally
         C.ctsem_set_block_threshold!(threshold)
-        C.ctsem_set_tangent_hessian!(true)
     end
 end
 
@@ -154,37 +161,34 @@ end
         ("three levels", () -> _fresh_threelevel()),
         ("categorical", () -> _fresh_categorical()),
     ]
-    try
-        for (name, make) in cases
-            laplace, values = make()
-            Ls = C._laplace_popchols(values, laplace.spec)
-            rng = Random.MersenneTwister(7)
-            @testset "$name" begin
-                for U in eachindex(laplace.units.members)
-                    d = sum(b -> b.size, laplace.units.blocks[U]; init=0)
-                    u = 0.4 .* randn(rng, d)
-                    nm = length(laplace.units.members[U])
-                    for d1 in (randn(rng, length(values)), zeros(length(values)))
-                        C.ctsem_set_tangent_hessian!(true)
-                        hand = C._laplace_unit_seeded_gradient(laplace, U, values, Ls, u,
-                            1:nm, d1)
-                        h0, h1 = copy(hand.d0), copy(hand.d1c)
-                        C.ctsem_set_tangent_hessian!(false)
-                        dual = C._laplace_unit_seeded_gradient(laplace, U, values, Ls, u,
-                            1:nm, d1)
-                        @test hand.ok && dual.ok
-                        @test maximum(abs, h0 .- dual.d0) <= 1e-9 * max(1.0, maximum(abs, dual.d0))
-                        @test maximum(abs, h1 .- dual.d1c) <= 1e-9 * max(1.0, maximum(abs, dual.d1c))
-                    end
+    for (name, make) in cases
+        laplace, values = make()
+        Ls = C._laplace_popchols(values, laplace.spec)
+        rng = Random.MersenneTwister(7)
+        @testset "$name" begin
+            for U in eachindex(laplace.units.members)
+                d = sum(b -> b.size, laplace.units.blocks[U]; init=0)
+                u = 0.4 .* randn(rng, d)
+                nm = length(laplace.units.members[U])
+                for d1 in (randn(rng, length(values)), zeros(length(values)))
+                    hand = C._laplace_unit_seeded_gradient(laplace, U, values, Ls, u,
+                        1:nm, d1)
+                    h0, h1 = copy(hand.d0), copy(hand.d1c)
+                    dual = _oracle_seeded_gradient(laplace, U, values, Ls, u, 1:nm, d1)
+                    @test hand.ok && dual.ok
+                    @test maximum(abs, h0 .- dual.d0) <= 1e-9 * max(1.0, maximum(abs, dual.d0))
+                    @test maximum(abs, h1 .- dual.d1c) <= 1e-9 * max(1.0, maximum(abs, dual.d1c))
                 end
             end
         end
-    finally
-        C.ctsem_set_tangent_hessian!(true)
     end
 end
 
-@testset "hand-coded sequential predictions against the dual" begin
+@testset "hand-coded sequential predictions' passes against the dual" begin
+    # Each subject's seeded plug-in pass (`_tan_laplace_trace!`), which the
+    # sequential predictions build from, against the filter at the curvature's
+    # dual on the same duals: the moments and row likelihoods it records, values
+    # and lanes.
     C = ContinuousTimeSEM
     cases = [
         ("means", () -> _fresh_linear()),
@@ -193,32 +197,59 @@ end
         ("drift by row", () -> _fresh_nonlinear()),
         ("categorical", () -> _fresh_categorical()),
     ]
-    try
-        for (name, make) in cases
-            laplace, values = make()
-            C.ctsem_set_tangent_hessian!(true)
-            hand = C.ctsem_laplace_sequential(laplace, values)
-            served = get(laplace.workspaces[C._laplace_slot()],
-                (:tan_curvature, length(values), C._HYBRID_OFF), nothing) !== nothing
-            C.ctsem_set_tangent_hessian!(false)
-            dual = C.ctsem_laplace_sequential(laplace, values)
-            @testset "$name" begin
-                @test served
-                for f in (:eta, :etacov, :y, :ycov, :llrow, :effect, :effectcov)
-                    a, b = getproperty(hand, f), getproperty(dual, f)
-                    @test isequal(isnan.(a), isnan.(b))
-                    ok = .!isnan.(b)
-                    @test any(ok)
-                    @test maximum(abs, a[ok] .- b[ok]) <= 1e-9 * max(1.0, maximum(abs, b[ok]))
+    for (name, make) in cases
+        laplace, values = make()
+        out = C.ctsem_laplace_sequential(laplace, values)
+        served = get(laplace.workspaces[C._laplace_slot()],
+            (:tan_curvature, length(values), C._HYBRID_OFF), nothing) !== nothing
+        S = C._laplace_curvature_dual(laplace)
+        W = ForwardDiff.npartials(S)
+        theta = C._laplace_extend(laplace, collect(Float64, values))
+        Ls = C._laplace_popchols(theta, laplace.spec)
+        sp = laplace.objective.params
+        ews = C._laplace_workspace!(laplace, Float64, length(theta)).ekf_ws
+        rng = Random.MersenneTwister(5)
+        vals(A) = map(ForwardDiff.value, A)
+        lane(A, w) = map(z -> ForwardDiff.partials(z, w), A)
+        @testset "$name" begin
+            @test served
+            @test any(isfinite, out.llrow)
+            for U in eachindex(laplace.units.members)
+                i = laplace.units.members[U][1]
+                u = 0.3 .* randn(rng, laplace.units.dims[U])
+                shifted = C._laplace_member_values!(zeros(length(theta)), theta,
+                    laplace.spec, Ls, u, laplace.units.offsets[U][1])
+                dirs = randn(rng, length(theta), W)
+                x = S[S(shifted[t], ForwardDiff.Partials(ntuple(w -> dirs[t, w], Val(W))))
+                    for t in eachindex(theta)]
+                T = size(laplace.objective.subject_objectives[i].data, 2)
+                function trace()
+                    tr = C.CTSEMKalmanTrace(S, ews.state_dim, ews.manifest_dim, T, 1,
+                        length(sp.mutables))
+                    tr.offset = 0
+                    tr.current_subject = 1
+                    return tr
+                end
+                th, to = trace(), trace()
+                okh = C._tan_laplace_trace!(th, laplace, theta, i, x, W)
+                @test okh == _oracle_trace!(to, laplace, i, x)
+                okh || continue
+                for f in (:eta, :etacov, :y, :ycov, :llrow)
+                    a, b = getfield(th, f), getfield(to, f)
+                    for get in (vals, (A -> lane(A, 1)), (A -> lane(A, W)))
+                        ga, gb = get(a), get(b)
+                        @test isequal(isnan.(ga), isnan.(gb))
+                        ok = .!isnan.(gb)
+                        @test maximum(abs, ga[ok] .- gb[ok]; init=0.0) <=
+                            1e-9 * max(1.0, maximum(abs, gb[ok]; init=0.0))
+                    end
                 end
             end
         end
-    finally
-        C.ctsem_set_tangent_hessian!(true)
     end
 end
 
-@testset "hand-coded mode Jacobian and gated adjoint against the dual" begin
+@testset "hand-coded mode cross derivatives and gated passes against the dual" begin
     C = ContinuousTimeSEM
     cases = [
         ("means", () -> _fresh_linear()),
@@ -229,32 +260,49 @@ end
         ("categorical", () -> _fresh_categorical()),
     ]
     rel(a, b) = maximum(abs, a .- b) / max(1.0, maximum(abs, b))
-    try
-        for (name, make) in cases
-            laplace, values = make()
-            C.ctsem_laplace_evaluate(laplace, values; gradient=false)
-            run(on) = (C.ctsem_set_tangent_hessian!(on);
-                C.ctsem_laplace_mode_jacobian(laplace, values))
-            hand, dual = run(true), run(false)
-            adj(on) = (C.ctsem_set_tangent_hessian!(on);
-                [C._laplace_gated_unit_adjoint(laplace, U, values)
-                 for U in eachindex(laplace.modes)])
-            ahand, adual = adj(true), adj(false)
-            @testset "$name" begin
-                @test length(hand) == length(dual)
-                for (a, b) in zip(hand, dual)
-                    @test all(isfinite, a)
-                    @test rel(a, b) <= 1e-9
-                end
-                @test any(!isnothing, adual)
-                for (a, b) in zip(ahand, adual)
-                    @test (a === nothing) == (b === nothing)
-                    b === nothing || @test rel(a, b) <= 1e-8
+    for (name, make) in cases
+        laplace, values = make()
+        C.ctsem_laplace_evaluate(laplace, values; gradient=false)
+        theta = C._laplace_extend(laplace, collect(Float64, values))
+        spec = laplace.spec
+        Ls = C._laplace_popchols(theta, spec)
+        dL = C._laplace_level_chol_derivatives(theta, spec)
+        positions = Vector{Int}[C._laplace_level_positions(spec, l)
+            for l in eachindex(spec.levels)]
+        rng = Random.MersenneTwister(9)
+        @testset "$name" begin
+            # The mode Jacobian runs whole on the cross derivatives.
+            @test all(J -> all(isfinite, J), C.ctsem_laplace_mode_jacobian(laplace, values))
+            for U in eachindex(laplace.modes)
+                z = copy(laplace.modes[U])
+                isempty(z) && continue
+                # The mode's cross derivatives (`_laplace_mode_cross`).
+                H = C._laplace_mode_cross(laplace, U, theta, Ls, dL, positions, z, nothing)
+                Hd = _oracle_mode_cross(laplace, U, theta, Ls, dL, positions, z, nothing)
+                @test all(isfinite, H)
+                @test rel(H, Hd) <= 1e-9
+                # The gated rule's first-order pass and trace jet pass.
+                G = C._GatedThetaGradient(laplace, U, theta, Ls, dL, positions, nothing)
+                beta = randn(rng, length(z))
+                r = C._gated_directional(G, z, beta)
+                rd = _oracle_gated_directional(G, z, beta)
+                @test rel(r.theta, rd.theta) <= 1e-8
+                @test rel(r.z, rd.z) <= 1e-8
+                A = randn(rng, length(z), length(z))
+                E = C._ctsem_symeig(A .+ A')
+                for chunk in ([1], collect(1:length(z)))
+                    W = C._ctsem_jet_width(length(chunk))
+                    tb, zb = zeros(length(theta)), zeros(length(z))
+                    @test C._laplace_gated_jet_pass!(tb, zb, G, z, E, chunk, 1.0, Val(W))
+                    jd = _oracle_gated_jet(G, z, E, chunk, W)
+                    @test rel(-tb, jd.theta) <= 1e-8
+                    @test rel(-zb, jd.z) <= 1e-8
                 end
             end
+            # The gated adjoint runs whole on those passes.
+            @test any(!isnothing, [C._laplace_gated_unit_adjoint(laplace, U, values)
+                for U in eachindex(laplace.modes)])
         end
-    finally
-        C.ctsem_set_tangent_hessian!(true)
     end
 end
 
@@ -293,13 +341,11 @@ end
                     for nd in (1, 3, 7)
                         D = zeros(npar, C._CTSEM_JET_WIDTH)
                         D[:, 1:nd] .= randn(rng, npar, nd)
-                        C.ctsem_set_tangent_hessian!(true)
                         hand = C._laplace_unit_jet_gradient(laplace, U, values, Ls, u,
                             1:nm, D, nd)
                         h0, hS = copy(hand.d0), copy(hand.dS)
-                        C.ctsem_set_tangent_hessian!(false)
-                        jet = C._laplace_unit_jet_gradient(laplace, U, values, Ls, u,
-                            1:nm, D, nd)
+                        jet = _oracle_jet_gradient(laplace, U, values, Ls, u, 1:nm, D, nd,
+                            C._ctsem_jet_width(nd))
                         @test hand.ok && jet.ok
                         @test maximum(abs, h0 .- jet.d0) <=
                             1e-9 * max(1.0, maximum(abs, jet.d0))
@@ -314,6 +360,5 @@ end
             end
         end
     finally
-        C.ctsem_set_tangent_hessian!(true)
     end
 end

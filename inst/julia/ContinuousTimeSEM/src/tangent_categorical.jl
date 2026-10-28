@@ -292,7 +292,7 @@ One categorical observation as the forward applied it, for the reverse: its
 manifest, kind and value, the extras it reads (`lo` on, `nr` of them), the
 state and covariance it was applied to, `c = P λ`, `a`, `b`, the moments, and
 their Jacobian in `(a, b,` the extras read`)` with its tangents and second
-parts.
+parts; and whether `b` was at the floor, where the step moved nothing.
 """
 mutable struct TanCatObs{W}
     i::Int
@@ -311,10 +311,12 @@ mutable struct TanCatObs{W}
     Jv::Matrix{Float64}     # 3 x 5
     Jd::Array{Float64,3}    # W x 3 x 5
     Js::Matrix{Float64}
+    floor::Bool
 end
 TanCatObs(n::Int, ::Val{W}) where {W} = TanCatObs{W}(0, 0, 0.0, 1, 0, TanVec{W}(n),
     TanMat{W}(n, n), TanVec{W}(n), TanS{W}(0.0), TanS{W}(0.0), TanS{W}(0.0), TanS{W}(0.0),
-    TanS{W}(0.0), zeros(3, 5), zeros(W, 3, 5), zeros(3, 5))
+    TanS{W}(0.0), zeros(3, 5), zeros(W, 3, 5), zeros(3, 5), false)
+
 
 """A row's categorical observations: how many, each, and the row's prior,
 which their intercepts read, and its cotangent."""
@@ -428,9 +430,8 @@ Observation `o`'s moments and their Jacobian at its `a`, `b` and the row's
 `e` assembled extras `tau`: the moment function at `_TanCatDual`, an input it
 reads a partial, its moments' tangents along the lanes and its Jacobian's
 contracted from the partials. A status code: `_TAN_REFUSED` where the
-partials are not the rule's own (`_binary_moment_partials!`: a variance at
-the floor, a mode solve that used its budget), `_TAN_INVALID` where the
-observation has no support.
+partials are not the rule's own (`_binary_moment_partials!`), `_TAN_INVALID`
+where the observation has no support.
 """
 function _tan_cat_moments!(o::TanCatObs{W}, cs::TanCatScratch{W}, tau::TanVec{W},
     e::Int) where {W}
@@ -596,10 +597,11 @@ function _tan_cat_obs!(x::TanVec{W}, P::TanMat{W}, rec::TanCatRec{W},
         b = _ts_add(b, _ts_mul(sig, sig))
     end
     o.a, o.b = a, b
-    # At the floor the filter moves nothing and adds the likelihood at `a`.
-    b.v > _CTSEM_MIN_VARIANCE[] || return _TAN_REFUSED
     read = _extras_read(yi, view(cs.tau.v, 1:e), kind)
     o.lo, o.nr = first(read), length(read)
+    # At the floor the filter adds the likelihood at `a` and moves nothing
+    # (`_binary_moments`, `_ekf_binary_update!`).
+    o.floor = !(b.v > _CTSEM_MIN_VARIANCE[])
     # Along at most two lanes, the moments at two partials; otherwise in every
     # input they read, or along the jet sweep's lanes.
     narrow = W >= 2 && _tan_cat_live(o, cs.tau) <= 2
@@ -615,6 +617,7 @@ function _tan_cat_obs!(x::TanVec{W}, P::TanMat{W}, rec::TanCatRec{W},
         ll[1 + w] += o.logZ.d[w]
     end
     x.jet && (ll[2 + W] += o.logZ.s)
+    o.floor && return _TAN_OK
     # x += c m/b; P -= c c' (1 - v/b)/b, on the lower triangle and mirrored.
     shift = _ts_div(o.m, b)
     shrink = _ts_div(_ts_sub(TanS{W}(1.0), _ts_div(o.v, b)), b)
@@ -654,6 +657,7 @@ function _tan_reverse_cat_obs!(xbar::TanVec{W}, Pbar::TanMat{W}, o::TanCatObs{W}
     i = o.i
     _tan_cat_loading!(cs, mod, i)
     lam, c, b, m, v = cs.lam, o.c, o.b, o.m, o.v
+    o.floor && return _tan_reverse_cat_floor!(xbar, o, rec, cs, mod, acc, w)
     one_ = TanS{W}(1.0)
     shift = _ts_div(m, b)
     shrink = _ts_div(_ts_sub(one_, _ts_div(v, b)), b)
@@ -718,5 +722,38 @@ function _tan_reverse_cat_obs!(xbar::TanVec{W}, Pbar::TanMat{W}, o::TanCatObs{W}
     _tan_ger!(Pbar, 1.0, cbar, lam, true)
     _tan_mulvec!(Pc, o.P, cbar)
     _ts_rowadd!(acc.Jy, i, w, Pc)
+    return nothing
+end
+
+"""
+`_tan_reverse_cat_obs!` at the floor, where the step added the likelihood at
+`a` and moved nothing: its cotangent through `a = λ'x + μ` and onto the
+extras it reads; `b`, which it did not read, has none.
+"""
+function _tan_reverse_cat_floor!(xbar::TanVec{W}, o::TanCatObs{W}, rec::TanCatRec{W},
+    cs::TanCatScratch{W}, mod, acc, w::Float64) where {W}
+    plan = mod.cat::TanCatPlan
+    i = o.i
+    lam = cs.lam
+    Jg(cc) = @inbounds TanS{W}(o.Jv[1, cc], ntuple(q -> o.Jd[q, 1, cc], Val(W)),
+        o.Js[1, cc])
+    abar = Jg(1)
+    if o.kind != CTSEM_OBS_COUNT && o.nr > 0
+        e = plan.ne[i]
+        tb = cs.taub
+        @inbounds for t in 1:e
+            tb[t] = TanS{W}(0.0)
+        end
+        @inbounds for q in 1:o.nr
+            tb[o.lo + q - 1] = Jg(2 + q)
+        end
+        _tan_cat_extras_bar!(acc.XC, plan, i, tb, e, w)
+    end
+    _ts_vaxpy!(xbar, abar, lam)
+    _ts_rowaxpy!(acc.Jy, i, w, abar, o.x)
+    _ts_addat!(acc.MM, i, _ts_scale(abar, w))
+    _ts_rowaxpy!(acc.LAMBDA, i, w, abar, rec.prior)
+    _ts_rowaxpy!(acc.Jy, i, -w, abar, rec.prior)
+    _ts_vaxpy!(rec.priorbar, abar, cs.dl)
     return nothing
 end

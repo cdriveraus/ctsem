@@ -185,34 +185,20 @@ end
     @test after.gradient == before.gradient
 end
 
-@testset "the Hessian reports each sweep and is the same matrix for it" begin
-    # One forward sweep per `width` parameters, each the gradient at that dual
-    # width: about npar gradients in all, a quarter of an hour at 715
-    # parameters, which the finish's progress line sat through frozen. The
-    # report comes from counting the sweeps under the gradient's own tag, so
-    # the duals the reverse pass sees are the ones it sees without it and the
-    # matrix is the same to the bit.
+@testset "the Hessian reports each chunk of columns and is the same matrix for it" begin
+    # One chunk of `_TAN_WIDTH` columns a pass of the hand-coded sweeps, about
+    # npar gradients in all: a quarter of an hour at 715 parameters, which the
+    # finish's progress line sat through frozen. Reporting changes nothing the
+    # sweeps compute, so the matrix is the same to the bit.
     objective, values = _hessian_test_model()
     n = length(values)
-    for chunk in (0, 4)
-        seen = Tuple{Int,Int,String}[]
-        H = ctsem_hessian(objective, values; chunk=chunk,
-            progress=(done, total, unit) -> push!(seen, (done, total, unit)))
-        @test H == ctsem_hessian(objective, values; chunk=chunk)
-        # The width the engine picks for `n` (`_CTSEM_HESSIAN_WIDTHS`).
-        width = chunk > 0 ? chunk :
-            ContinuousTimeSEM._ctsem_dual_width(n, ContinuousTimeSEM._CTSEM_HESSIAN_WIDTHS[])
-        @test cld(n, width) > 1                 # more than one sweep to report
-        @test first.(seen) == [min(k * width, n) for k in 1:cld(n, width)]
-        @test all(s -> s[2] == n && s[3] == "parameters", seen)
-    end
-end
-
-@testset "the Hessian is chunk-size independent" begin
-    objective, values = _hessian_test_model()
-    full = ctsem_hessian(objective, values; chunk=length(values))
-    @test ctsem_hessian(objective, values; chunk=1) ≈ full rtol = 1e-12
-    @test ctsem_hessian(objective, values; chunk=4) ≈ full rtol = 1e-12
+    seen = Tuple{Int,Int,String}[]
+    H = ctsem_hessian(objective, values;
+        progress=(done, total, unit) -> push!(seen, (done, total, unit)))
+    @test H == ctsem_hessian(objective, values)
+    width = ContinuousTimeSEM._TAN_WIDTH
+    @test first.(seen) == [min(k * width, n) for k in 1:cld(n, width)]
+    @test all(s -> s[2] == n && s[3] == "parameters", seen)
 end
 
 # Columns for coordinates added to a Hessian in hand (a sampled TI predictor

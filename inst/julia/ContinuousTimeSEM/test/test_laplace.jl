@@ -22,6 +22,8 @@ using DataFrames, ForwardDiff, LinearAlgebra, Random
 # Shared with `test_quadrature.jl`; see `laplace_fixtures.jl`.
 isdefined(@__MODULE__, :_LAPLACE_LINEAR_OBJECTIVE) ||
     include(joinpath(@__DIR__, "laplace_fixtures.jl"))
+isdefined(@__MODULE__, :_oracle_hessian) ||
+    include(joinpath(@__DIR__, "dual_oracles.jl"))
 
 ################################################################################
 # Independent references
@@ -564,7 +566,9 @@ end
     # tags this threw DualMismatchError.
     e1, e2 = ContinuousTimeSEM._laplace_seed_pair()
     x = 0.3 + e1
-    g = ContinuousTimeSEM._ctsem_nested_gradient(z -> z[1]^2 * x, [x])
+    f = z -> z[1]^2 * x
+    g = ForwardDiff.gradient(f, [x], ForwardDiff.GradientConfig(f, [x],
+        ForwardDiff.Chunk(1), ContinuousTimeSEM._ctsem_nested_tag([x])), Val{false}())
     @test typeof(g[1]) == typeof(x)
     @test ForwardDiff.value(ForwardDiff.value(g[1])) ≈ 2 * 0.3^2
     @test ForwardDiff.partials(ForwardDiff.value(g[1]))[1] ≈ 4 * 0.3
@@ -681,7 +685,7 @@ end
             u = 0.1 .* collect(1.0:laplace.units.dims[U])
             # `_laplace_unit_curvature`, which is what production calls, against
             # the dense Hessian. Both arguments used to be
-            # `_laplace_unit_hessian` -- once with the default and once with a
+            # `_oracle_unit_hessian` -- once with the default and once with a
             # `dense=true` keyword whose ternary made both the same path, so the
             # test compared a value with itself and passed without checking
             # anything. That keyword and its unreachable branch are gone; the
@@ -695,7 +699,7 @@ end
                 laplace, U, theta, Ls, u)
             blocked = ContinuousTimeSEM._laplace_block_dense(curvature, blocks,
                 laplace.units.dims[U])
-            reference = -ContinuousTimeSEM._laplace_unit_hessian(laplace, U, theta, Ls, u)
+            reference = -_oracle_unit_hessian(laplace, U, theta, Ls, u)
             @test size(blocked) == size(reference)
             @test norm(blocked - reference) / max(norm(reference), 1) < 1e-10
         end
@@ -712,7 +716,7 @@ end
     Ls = ContinuousTimeSEM._laplace_popchols(theta, laplace.spec)
     U = 1
     u = 0.1 .* collect(1.0:laplace.units.dims[U])
-    H = ContinuousTimeSEM._laplace_unit_hessian(laplace, U, theta, Ls, u)
+    H = _oracle_unit_hessian(laplace, U, theta, Ls, u)
 
     blocks = laplace.units.blocks[U]
     subjectblocks = [b for b in blocks if length(b.members) == 1]
@@ -778,7 +782,7 @@ end
     for U in eachindex(laplace.units.members)
         blocks = laplace.units.blocks[U]
         u = 0.1 .* collect(1.0:laplace.units.dims[U])
-        H = ContinuousTimeSEM._laplace_unit_hessian(laplace, U, theta, Ls, u)
+        H = _oracle_unit_hessian(laplace, U, theta, Ls, u)
         _, M = ContinuousTimeSEM._laplace_negate_definite(H)
 
         blocked = ContinuousTimeSEM._laplace_block_of(M, blocks)

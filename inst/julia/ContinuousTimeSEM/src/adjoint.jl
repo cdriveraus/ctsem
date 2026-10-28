@@ -1101,7 +1101,7 @@ end
 export ctsem_hessian
 
 """
-    ctsem_hessian(objective, values; chunk=0, progress=nothing)
+    ctsem_hessian(objective, values; progress=nothing, hybrid_mode=_HYBRID_PROFILE)
 
 The Hessian of the log posterior, by forward-mode differentiation *of the
 reverse-mode gradient*. `progress`, when given, hears after each sweep how many
@@ -1120,64 +1120,71 @@ is where this engine's work already is. `ForwardDiff.hessian` would need
 `O(npar^2 / chunksize)` primal passes; differentiating the adjoint needs
 `O(npar / chunksize)`, each one a single traced forward sweep plus its reverse.
 
-The nesting works because every layer below is generic in its element type: the
-workspace is `CTSEMAdjointWorkspace{T}`, built for whatever `T` the values
-arrive as, and the transform layer's own dual scratch is
-`Dual{Nothing,T,1}` -- so with a dual `T` it simply becomes a nested dual. The
-workspace cache is keyed on `T`, so a Hessian call rebuilds it once and the
-next ordinary gradient rebuilds it back; that is one model-inspection pass, not
-a per-evaluation cost.
+By the hand-coded second order (`tangent_hessian.jl`): the subjects' sweeps
+carry the directions as Float64 tangents, and only the parameter layer runs at
+a dual, so the filter is never compiled at one. The forward mode over the
+adjoint gradient it replaced is the tests' oracle (test/dual_oracles.jl).
+Where subjects take their gradient by forward mode (`_CTSEM_ADJOINT_GROWTH`,
+R's `explosive_forward` optimcontrol) because their reverse pass is unstable,
+the Hessian is central differences of that gradient instead
+(`_ctsem_difference_columns!`).
 
 The result is symmetrised. The exact Hessian is symmetric, and each entry is
 computed once, so the two triangles differ only by floating-point association
 order; averaging them is free and keeps the matrix usable by a Cholesky.
-
-Where the hand-coded second order covers the model (`tangent_hessian.jl`,
-`_tan_refusal`) it computes the same derivative instead, the subjects' sweeps
-carrying the directions as Float64 tangents rather than through a dual: faster,
-and the dual route its oracle (`ctsem_set_tangent_hessian!(false)`). A `chunk`
-asks for the dual route.
 """
 function ctsem_hessian(objective::CTSEMObjective, values::AbstractVector;
-    chunk::Integer=0, progress=nothing, hybrid_mode::Integer=_HYBRID_PROFILE)
-    # `progress(done, total, unit)`, when given, is called after each forward
-    # sweep with `done` the parameters whose columns are finished. A sweep is
-    # the gradient at the dual width, so the Hessian costs about `npar`
-    # gradients -- a quarter of an hour on a 715-parameter model, which the
-    # finish's progress line used to sit through frozen.
+    progress=nothing, hybrid_mode::Integer=_HYBRID_PROFILE)
+    # `progress(done, total, unit)`, when given, is called after each chunk of
+    # columns with `done` the parameters whose columns are finished. A chunk
+    # costs a few gradients, so the Hessian costs about `npar` -- a quarter of
+    # an hour on a 715-parameter model, which the finish's progress line used
+    # to sit through frozen.
     x = collect(Float64, values)
     n = length(x)
     n == 0 && return zeros(Float64, 0, 0)
-    # The hand-coded second order where it covers the model and the point
-    # (`tangent_hessian.jl`); an explicit `chunk` asks for the dual.
-    if chunk == 0 && _CTSEM_TANGENT_HESSIAN[] &&
-            _tan_refusal(objective, hybrid_mode) === nothing
-        H = zeros(Float64, n, n)
-        _tan_hessian_columns!(H, objective, x, collect(1:n), progress, hybrid_mode) &&
-            return _ctsem_symmetrised(H)
+    H = zeros(Float64, n, n)
+    if isfinite(_CTSEM_ADJOINT_GROWTH[])
+        _ctsem_difference_columns!(H, objective, x, collect(1:n), Int(hybrid_mode),
+            progress)
+    else
+        _tan_hessian_columns!(H, objective, x, collect(1:n), progress, hybrid_mode)
     end
-    gradient_of = _CTSEMAdjointGradientOf(objective, Int(hybrid_mode))
-    columns = progress === nothing ? nothing :
-        (done, total) -> progress(done, total, "parameters")
-    # One width for every parameter count (`_CTSEM_HESSIAN_WIDTHS`), so a model
-    # of another size compiles no new dual type.
-    chunk > 0 || return _ctsem_symmetrised(
-        _ctsem_width_jacobian(gradient_of, x, _CTSEM_HESSIAN_WIDTHS[];
-            progress=columns))
-    chunksize = min(Int(chunk), n)
-    # A run-time width: behind the barrier, as in `_ctsem_width_jacobian!`.
-    return _ctsem_symmetrised(_ctsem_barrier(_ctsem_reported_jacobian, gradient_of, x,
-        ForwardDiff.Chunk{chunksize}(), columns, n)::Matrix{Float64})
+    return _ctsem_symmetrised(H)
 end
 _ctsem_symmetrised(H::AbstractMatrix) = (H .+ transpose(H)) ./ 2
 
 """
+The Hessian's columns `cols` into `H` by central differences of the gradient
+(`ctsem_adjoint_gradient`, at `hybrid_mode`), each at a step of `cbrt(eps)`
+of the parameter's size: where subjects take their gradient by forward mode,
+whose stability the hand-coded sweeps' reverse would not share.
+"""
+function _ctsem_difference_columns!(H::Matrix{Float64}, objective::CTSEMObjective,
+    x::Vector{Float64}, cols::Vector{Int}, hybrid_mode::Int, progress)
+    y = copy(x)
+    for (k, c) in enumerate(cols)
+        h = cbrt(eps(Float64)) * max(1.0, abs(x[c]))
+        y[c] = x[c] + h
+        up = ctsem_adjoint_gradient(objective, y; hybrid_mode=hybrid_mode).gradient
+        y[c] = x[c] - h
+        down = ctsem_adjoint_gradient(objective, y; hybrid_mode=hybrid_mode).gradient
+        y[c] = x[c]
+        @inbounds for i in eachindex(x)
+            H[i, k] = (up[i] - down[i]) / (2h)
+        end
+        progress === nothing || progress(k, length(cols), "parameters")
+    end
+    return H
+end
+
+"""
 The adjoint gradient as a function of the parameters alone, the hybrid's
 deviations handled by `mode` (`ctsem_adjoint_gradient`'s `hybrid_mode`). A type
-rather than a closure, so that the marginal route's Hessian and a
-coordinate-free Laplace objective's (`_laplace_filter_hessian`) run under one
-ForwardDiff tag: a new tag is a new dual type, which compiles the filter and
-its reverse pass again.
+rather than a closure: it names the Hessian's dual tag (`_ctsem_hessian_dual`),
+which the hand-coded second order's parameter layer runs at, and which the
+tests' oracle differentiates this at (test/dual_oracles.jl), so that the two
+share one dual type.
 """
 struct _CTSEMAdjointGradientOf{O}
     objective::O
@@ -1195,10 +1202,10 @@ The Hessian's columns `columns` at `values`, unsymmetrised, as an `n` by
 `length(columns)` matrix: for a caller holding the rest of a Hessian that has
 added coordinates since -- a sampled TI predictor cell's, whose likelihood
 curvature and coupling a prior's diagonal would leave out (R's
-`.ctJuliaTIMissingSampleFit`). Forward-mode derivatives of the adjoint gradient
-along those coordinates alone, as `ctsem_hessian` takes them along all; on the
-Laplace route, its differences of the gradient (`_laplace_hessian_columns`),
-or these where no unit holds a coordinate (`_laplace_filter_hessian`).
+`.ctJuliaTIMissingSampleFit`). Its derivatives along those coordinates alone,
+as `ctsem_hessian` takes them along all; on the Laplace route, its differences
+of the gradient (`_laplace_hessian_columns`), or these where no unit holds a
+coordinate (`_laplace_filter_hessian`).
 """
 function ctsem_hessian_columns(objective::CTSEMObjective, values::AbstractVector,
     columns; progress=nothing, hybrid_mode::Integer=_HYBRID_PROFILE)
@@ -1206,39 +1213,9 @@ function ctsem_hessian_columns(objective::CTSEMObjective, values::AbstractVector
     cols = collect(Int, columns)
     isempty(cols) && return zeros(Float64, length(x), 0)
     H = zeros(Float64, length(x), length(cols))
-    _CTSEM_TANGENT_HESSIAN[] && _tan_refusal(objective, hybrid_mode) === nothing &&
-        _tan_hessian_columns!(H, objective, x, cols, progress, hybrid_mode) && return H
-    # At `ctsem_hessian`'s own dual type, seeded along `cols` alone: the
-    # function of `cols` this differentiated before was a closure, a tag and so
-    # a dual type of its own, the filter and its reverse pass compiled again at
-    # a session's first call. Behind a barrier: the type is the objective's.
-    _ctsem_barrier(_ctsem_hessian_columns!, H,
-        _CTSEMAdjointGradientOf(objective, Int(hybrid_mode)), x, cols,
-        _ctsem_hessian_dual(objective), progress)
-    return H
-end
-
-function _ctsem_hessian_columns!(H::Matrix{Float64}, gradient_of, x::Vector{Float64},
-    cols::Vector{Int}, ::Type{D}, progress) where {D}
-    W = ForwardDiff.npartials(D)
-    n = length(x)
-    y = Vector{D}(undef, n)
-    zero_partials = zero(ForwardDiff.Partials{W,Float64})
-    for start in 1:W:length(cols)
-        chunk = start:min(start + W - 1, length(cols))
-        @inbounds for i in 1:n
-            y[i] = D(x[i], zero_partials)
-        end
-        @inbounds for (k, c) in enumerate(chunk)
-            y[cols[c]] = D(x[cols[c]],
-                ForwardDiff.Partials{W,Float64}(ntuple(j -> j == k ? 1.0 : 0.0, Val(W))))
-        end
-        g = gradient_of(y)
-        @inbounds for (k, c) in enumerate(chunk), i in 1:n
-            H[i, c] = ForwardDiff.partials(g[i], k)
-        end
-        progress === nothing || progress(last(chunk), length(cols), "parameters")
-    end
+    isfinite(_CTSEM_ADJOINT_GROWTH[]) && return _ctsem_difference_columns!(H, objective,
+        x, cols, Int(hybrid_mode), progress)
+    _tan_hessian_columns!(H, objective, x, cols, progress, hybrid_mode)
     return H
 end
 

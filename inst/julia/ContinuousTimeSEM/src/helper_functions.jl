@@ -376,10 +376,6 @@ seeds are the ones `ForwardDiff.jacobian` builds, so the numbers are the same.
     ForwardDiff.Dual{ForwardDiff.Tag{CTSEMNestedTag,T},T,N}(value,
         ForwardDiff.Partials{N,T}(ntuple(j -> j == i ? one(T) : zero(T), Val(N))))
 
-"""`ForwardDiff.gradient(f, x)` under `CTSEMNestedTag`; see there."""
-_ctsem_nested_gradient(f::F, x::AbstractArray) where {F} =
-    _ctsem_barrier(_ctsem_nested_gradient_at, f, x, ForwardDiff.Chunk(x))::Vector{eltype(x)}
-
 """
     _ctsem_gradient(f, x[, widths]), _ctsem_jacobian(f, x[, widths]),
     _ctsem_dual_hessian(f, x[, chunk; widths])
@@ -444,9 +440,6 @@ _ctsem_gradient_at(f::F, x, chunk::ForwardDiff.Chunk) where {F} =
     ForwardDiff.gradient(f, x, ForwardDiff.GradientConfig(f, x, chunk))
 _ctsem_hessian_at(f::F, x, chunk::ForwardDiff.Chunk) where {F} =
     ForwardDiff.hessian(f, x, ForwardDiff.HessianConfig(f, x, chunk))
-_ctsem_nested_gradient_at(f::F, x, chunk::ForwardDiff.Chunk) where {F} =
-    ForwardDiff.gradient(f, x,
-        ForwardDiff.GradientConfig(f, x, chunk, _ctsem_nested_tag(x)), Val{false}())
 
 """
 Dual widths for the forward-mode Jacobians whose input length is a property of

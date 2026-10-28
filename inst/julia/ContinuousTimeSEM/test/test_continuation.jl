@@ -367,24 +367,20 @@ _fresh_2d2() = (ctsem_laplace_objective(_CONTINUATION_2D_OBJECTIVE, [1, 5],
     pop, act = layout.pop, layout.active
     @test maximum(abs, reference[pop, act]) > 1e-2 * scale
     @test maximum(abs, reference[pop, pop]) > 1e-2 * scale
-    for width in (1, 2, 6)
-        S = ForwardDiff.Dual{CT._LaplaceSeedInner,Float64,width}
-        aws = CT._laplace_workspace!(laplace, S, npar)
-        sc = CT._continuation_hessian_scratch(laplace, S, npar, layout, 1)
-        g = zeros(npar)
-        H = zeros(npar, npar)
-        ll, status = CT._continuation_member_hessian!(g, H, laplace, U, m, theta, Ls,
-            dL, d2L, layout, u, aws, sc)
-        @test (width, status) == (width, 0)
-        @test (width, isapprox(ll, f(theta); rtol=1e-12)) == (width, true)
-        for i in 1:npar
-            @test (width, i, isapprox(g[i], gradient[i]; rtol=1e-10,
-                atol=1e-12 * maximum(abs, gradient))) == (width, i, true)
-        end
-        for i in 1:npar, j in 1:npar
-            @test (width, i, j, isapprox(H[i, j], reference[i, j]; rtol=1e-9,
-                atol=1e-11 * scale)) == (width, i, j, true)
-        end
+    sc = CT._continuation_hessian_scratch(laplace, npar, layout, 1)
+    g = zeros(npar)
+    H = zeros(npar, npar)
+    ll, status = CT._continuation_member_hessian!(g, H, laplace, U, m, theta, Ls,
+        dL, d2L, layout, u, sc)
+    @test status == 0
+    @test isapprox(ll, f(theta); rtol=1e-12)
+    for i in 1:npar
+        @test (i, isapprox(g[i], gradient[i]; rtol=1e-10,
+            atol=1e-12 * maximum(abs, gradient))) == (i, true)
+    end
+    for i in 1:npar, j in 1:npar
+        @test (i, j, isapprox(H[i, j], reference[i, j]; rtol=1e-9,
+            atol=1e-11 * scale)) == (i, j, true)
     end
 end
 
@@ -423,13 +419,6 @@ end
         for i in eachindex(x), j in eachindex(x)
             @test (label, i, j, isapprox(He[i, j], Hr[i, j]; rtol=1e-7,
                 atol=1e-9 * scale)) == (label, i, j, true)
-        end
-        # A sweep's width changes nothing but rounding: a direction a sweep,
-        # two (several sweeps a node, the last one short), all at once.
-        for width in (1, 2, 5, 6)
-            Hw = ctsem_laplace_continuation_hessian(o, x; width=width)
-            @test (label, width, maximum(abs, Hw .- He) <= 1e-11 * scale) ==
-                (label, width, true)
         end
     end
 end

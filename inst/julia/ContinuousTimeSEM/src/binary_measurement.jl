@@ -2195,17 +2195,87 @@ end
 `_binary_moments` at `ηbar = a`, `s = sqrt(b)`, with the rule's partials
 written into `J`, and a fourth return, `false` when this observation is not one
 the rule's analytic partials cover and `_binary_moment_dual!` has to take it.
+At the variance floor, `_category_floor_partials!`.
 """
 @inline function _binary_moment_partials!(J::Matrix{T}, a::T, b::T, y::Real,
     nodes, weights, thresholds, kind::Int) where {T}
     s = sqrt(b)
-    handled = promote_type(T, eltype(thresholds)) === T &&
-        s * s > T(_CTSEM_MIN_VARIANCE[])
-    handled || return (T(-Inf), zero(T), zero(T), false)
+    promote_type(T, eltype(thresholds)) === T || return (T(-Inf), zero(T), zero(T), false)
+    s * s > T(_CTSEM_MIN_VARIANCE[]) ||
+        return _category_floor_partials!(J, a, y, thresholds, kind)
     kind == CTSEM_OBS_CENSORED && return _censored_partials!(J, a, s, y, thresholds)
     kind == CTSEM_OBS_BINARY && length(thresholds) >= 2 &&
         return _asymptote_partials!(J, a, s, y, nodes, weights, thresholds)
     return _binary_quadrature(a, s, y, nodes, weights, thresholds, kind, J)
+end
+
+"""
+    _category_floor_partials!(J, a, y, thresholds, kind)
+
+At the variance floor, where the filter adds the observation's likelihood at
+`a` and moves nothing (`_binary_moments`): that likelihood, and its partials
+in `J`'s first row as `_binary_moment_partials!` lays them out -- `a`, then the
+extras it reads (`_extras_read`) -- by hand; the moments, and `b`'s column,
+zero, since nothing there reads `b`. `J` zero on entry. The slope and the
+thresholds' partials are `_category_parts`', an asymptote's are the mixture's
+own, and a censored item's are its moments' (`_censored_partials!`) at no
+prior variance, where its likelihood is this one. Generic in `T`, so the
+hand-coded sweeps take its tangents at their own types, as from the rule's.
+"""
+function _category_floor_partials!(J::Matrix{T}, a::T, y::Real, thresholds,
+    kind::Int) where {T}
+    logZ = _category_loglikelihood(a, y, thresholds, kind)
+    isfinite(logZ) || return (logZ, zero(T), zero(T), true)
+    if kind == CTSEM_OBS_CENSORED
+        _censored_partials!(J, a, zero(T), y, thresholds)
+        @inbounds for cc in axes(J, 2)
+            J[2, cc] = zero(T)
+            J[3, cc] = zero(T)
+        end
+        J[1, 2] = zero(T)
+        return (logZ, zero(T), zero(T), true)
+    end
+    if kind == CTSEM_OBS_BINARY && length(thresholds) >= 2
+        # `q = c + (d - c) F(a)` for a one, `1 - d + (d - c)(1 - F(a))` for a
+        # zero (`_category_loglikelihood`).
+        c, d = _binary_asymptotes(thresholds, T)
+        F = _logistic(a)
+        q = exp(logZ)
+        if y > 0.5
+            J[1, 1] = (d - c) * F * (one(T) - F) / q
+            J[1, 3] = (one(T) - F) / q
+            J[1, 4] = F / q
+        else
+            J[1, 1] = -(d - c) * F * (one(T) - F) / q
+            J[1, 3] = -(one(T) - F) / q
+            J[1, 4] = -F / q
+        end
+        return (logZ, zero(T), zero(T), true)
+    end
+    # Count, binary and ordinal: the slope `A - B`, and an ordinal row's
+    # bounding thresholds `-A - g'` and `B + g'` (`_category_parts`).
+    n = kind == CTSEM_OBS_ORDINAL ? length(thresholds) : 0
+    k = n > 0 ? Int(y) : 0
+    gapterm = zero(T)
+    gapslope = zero(T)
+    if 1 < k <= n
+        gap = thresholds[k] - thresholds[k - 1]
+        gapterm = log(-expm1(-gap))
+        gapslope = inv(expm1(gap))
+    end
+    _, A, B = _category_parts(a, y, thresholds, kind, k, gapterm)
+    J[1, 1] = A - B
+    if n > 0
+        if k <= 1
+            J[1, 3] = B
+        elseif k > n
+            J[1, 2 + n] = -A
+        else
+            J[1, 2 + k - 1] = -A - gapslope
+            J[1, 2 + k] = B + gapslope
+        end
+    end
+    return (logZ, zero(T), zero(T), true)
 end
 
 """

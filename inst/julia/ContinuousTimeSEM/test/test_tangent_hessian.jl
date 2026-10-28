@@ -1,7 +1,8 @@
 using DataFrames, ForwardDiff, LinearAlgebra
 
 # The hand-coded second order (`tangent_hessian.jl`) against the Hessian's dual
-# route, its oracle: the two compute the same derivative of the same filter, so
+# route (`dual_oracles.jl`), its oracle: the two compute the same derivative of
+# the same filter, so
 # they agree to rounding. One model exercises what the hand route covers --
 # every drift cell, a cross-loading, correlated diffusion and measurement
 # errors, missing values and a row with none observed, substeps, unequal and
@@ -13,13 +14,20 @@ using DataFrames, ForwardDiff, LinearAlgebra
 
 isdefined(@__MODULE__, :_adjoint_test_dataframe) ||
     include(joinpath(@__DIR__, "adjoint_fixtures.jl"))
+isdefined(@__MODULE__, :_oracle_hessian) ||
+    include(joinpath(@__DIR__, "dual_oracles.jl"))
 
 function _tangent_test_model(; driftscale=1.0, max_timestep=Inf, perrow=false, ti=false,
     td=false, stationary=false, continuous=true, rows=false, relin=false, plan=-1,
     moment=false, cat=false, timiss=false, elements=false, count=false, censor=false,
-    response=false, asym=false)
+    response=false, asym=false, floor=false)
     drift = [-0.6 0.2; 0.1 -0.5]
-    lambda = [1.0 0.0; 0.7 0.0; 0.0 1.0]
+    # `floor`: the first and third manifests load on nothing, so with `cat`
+    # their predictors have no variance -- the first a count or censored item
+    # with `count` or `censor`, the third binary, with asymptotes under `asym`
+    # -- and the filter adds their likelihoods at their means and moves
+    # nothing.
+    lambda = [(floor ? 0.0 : 1.0) 0.0; 0.7 0.0; 0.0 (floor ? 0.0 : 1.0)]
     # `driftscale` shrinks every drift cell: near zero, the filter integrates
     # the intervals as series.
     d(e) = driftscale == 1 ? e : "$(driftscale) * ($(e))"
@@ -195,15 +203,8 @@ function _tangent_test_model(; driftscale=1.0, max_timestep=Inf, perrow=false, t
     return objective, values
 end
 
-# The dual route's Hessian, whatever the default.
-function _tangent_dual_hessian(objective, values)
-    ContinuousTimeSEM.ctsem_set_tangent_hessian!(false)
-    try
-        return ctsem_hessian(objective, values)
-    finally
-        ContinuousTimeSEM.ctsem_set_tangent_hessian!(true)
-    end
-end
+# The dual route's Hessian (`dual_oracles.jl`).
+_tangent_dual_hessian(objective, values) = _oracle_hessian(objective, values)
 
 @testset "the hand-coded Hessian is the dual's" begin
     for opts in ((;), (max_timestep=0.4,), (ti=true,), (max_timestep=0.4, td=true),
@@ -215,7 +216,9 @@ end
         (cat=true, rows=true, relin=true), (cat=true, continuous=false, max_timestep=0.4),
         (cat=true, count=true), (cat=true, censor=true), (cat=true, count=true, asym=true),
         (cat=true, censor=true, response=true, asym=true), (cat=true, stationary=true),
-        (cat=true, censor=true, response=true, rows=true),
+        (cat=true, censor=true, response=true, rows=true), (cat=true, floor=true),
+        (cat=true, floor=true, count=true, asym=true),
+        (cat=true, floor=true, censor=true, response=true),
         (stationary=true, perrow=true), (elements=true,), (elements=true, perrow=true),
         (ti=true, timiss=true))
         objective, values = _tangent_test_model(; opts...)
@@ -233,6 +236,27 @@ end
         @test ctsem_hessian(objective, values) == (H .+ H') ./ 2
         cols = [3, 7, 13, 20]
         @test ctsem_hessian_columns(objective, values, cols) ≈ reference[:, cols] rtol = 1e-11
+    end
+end
+
+# The floor's likelihood and partials (`_category_floor_partials!`) serve the
+# adjoint and the hand-coded sweeps alike, so their agreement says nothing about
+# the partials themselves: the gradient against central differences of the
+# value, which `_category_loglikelihood` gives directly.
+@testset "the variance floor's gradient is its likelihood's" begin
+    for opts in ((cat=true, floor=true), (cat=true, floor=true, count=true, asym=true),
+        (cat=true, floor=true, censor=true, response=true))
+        objective, values = _tangent_test_model(; opts...)
+        g = ContinuousTimeSEM.ctsem_adjoint_gradient(objective, values).gradient
+        h = 1e-6
+        fd = map(eachindex(values)) do j
+            e = zeros(length(values))
+            e[j] = h
+            (ContinuousTimeSEM.ctsem_adjoint_gradient(objective, values .+ e).value -
+             ContinuousTimeSEM.ctsem_adjoint_gradient(objective, values .- e).value) / (2h)
+        end
+        @test all(isfinite, g)
+        @test maximum(abs, g .- fd) <= 1e-6 * max(1.0, maximum(abs, fd))
     end
 end
 
@@ -328,13 +352,9 @@ end
         hand = ctsem_row_scores(objective, values, dirs)
         rows = [size(s.data, 2) for s in objective.subject_objectives]
         H = fill(NaN, sum(rows), 15)
-        @test ContinuousTimeSEM._tan_row_scores!(H, objective, collect(values), dirs, rows)
-        ContinuousTimeSEM.ctsem_set_tangent_hessian!(false)
-        dual = try
-            ctsem_row_scores(objective, values, dirs)
-        finally
-            ContinuousTimeSEM.ctsem_set_tangent_hessian!(true)
-        end
+        ContinuousTimeSEM._tan_row_scores!(H, objective, collect(values), dirs, rows)
+        @test isequal(H, hand)
+        dual = _oracle_row_scores(objective, values, dirs)
         @test all(isfinite, dual)
         @test hand ≈ dual rtol = 1e-10
     end
