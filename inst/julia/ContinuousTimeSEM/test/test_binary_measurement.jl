@@ -297,6 +297,24 @@ end
             @test ForwardDiff.partials.(J, 1) ≈ ForwardDiff.partials.(oracle, 1) rtol = 1e-7 atol = 1e-9
         end
     end
+    # At a trace jet, as the hand second order's jet sweeps run it: the
+    # moments' first parts are their directional derivatives and the second
+    # part the second, which nested forward mode through the values gives.
+    for (a0, b0, y) in ((-0.6, 3.1^2, 1.0), (2.0, 15.0^2, 0.0))
+        da, db = 0.7, -0.4 * b0
+        jet(x, d) = CT.CTSEMTraceJet{1}(x, (d,), 0.0)
+        Jm = zeros(CT.CTSEMTraceJet{1}, 3, 2)
+        logZ, m, v, ok = CT._binary_moment_partials!(Jm, jet(a0, da), jet(b0, db), y,
+            nodes, weights, CT.CTSEMTraceJet{1}[], _BINARY)
+        @test ok
+        along(f) = t -> f(CT._binary_moments(a0 + t * da, sqrt(b0 + t * db), y, nodes,
+            weights, (), _BINARY))
+        for (k, x) in enumerate((logZ, m, v))
+            g = along(r -> r[k])
+            @test x.d[1] ≈ ForwardDiff.derivative(g, 0.0) rtol = 1e-7 atol = 1e-9
+            @test x.s ≈ ForwardDiff.derivative(t -> ForwardDiff.derivative(g, t), 0.0) rtol = 1e-6 atol = 1e-8
+        end
+    end
 end
 
 @testset "_binary_mode solves the scalar posterior's first-order condition" begin
