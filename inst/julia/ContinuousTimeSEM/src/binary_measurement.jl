@@ -130,7 +130,8 @@ const _CTSEM_BINARY_VNODES = Ref(41)
 
 """
 The predicted sds over which a one-sided observation moves from the rule in
-`η` to the rule in `V`, blended by a smoothstep between (`_binary_quadrature`).
+`η` to the rule in `V`, blended between by a weight smooth to every order
+(`_binary_vweight`).
 A switch would put a step of the two rules' difference into the objective
 wherever a row's `s` crossed it. Placed above the rows of the bench's
 categorical fits, whose largest `s` was 3.2 and 99th percentile at most 2.6, so
@@ -1742,12 +1743,13 @@ A one-sided observation -- binary, or an ordinal end category, whose likelihood
 is a step at one threshold -- is integrated in `η` (`_binary_quadrature_eta`)
 up to the predicted sd `s` where that rule stops resolving the step, and in the
 logistic variable above it (`_binary_vquadrature`), with the two blended across
-`_CTSEM_BINARY_VBAND` by the smoothstep `w(s) = t³(10 - 15t + 6t²)`. `w` and its
-first two derivatives vanish at both ends, so the objective, its gradient and
-its Hessian stay continuous; the blend's partials are the rules' mixed by `w`
-and, in the `s²` column, `w'(s)/2s` times the rules' difference. Which rule, or
-both, is decided on values. Interior categories and counts, whose likelihoods
-are bumps, keep the rule in `η` at every `s`.
+`_CTSEM_BINARY_VBAND` by a weight `w(s)` whose every derivative vanishes at both
+ends (`_binary_vweight`), so the objective and all its derivatives stay
+continuous, as the Laplace route needs at third order and beyond; the blend's
+partials are the rules' mixed by `w` and, in the `s²` column, `w'(s)/2s` times
+the rules' difference. Which rule, or both, is decided on values. Interior
+categories and counts, whose likelihoods are bumps, keep the rule in `η` at
+every `s`.
 """
 @inline function _binary_quadrature(ηbar::T, s::T, y::Real, nodes, weights,
     thresholds, kind::Int, J=nothing) where {T}
@@ -1817,15 +1819,24 @@ end
     _binary_vweight(s)
 
 The blend's weight on the rule in `V` at predicted sd `s` inside
-`_CTSEM_BINARY_VBAND`, and its derivative in `b = s²`.
+`_CTSEM_BINARY_VBAND`, and its derivative in `b = s²`: with `t` the position
+across the band, `w = F(1/(1-t) - 1/t)`, which is
+`e^(-1/t) / (e^(-1/t) + e^(-1/(1-t)))`. Every derivative of it vanishes at both
+ends, so the blend joins each rule to all orders. A polynomial smoothstep joins
+to its degree only, and the Laplace route differentiates a row's likelihood
+three times and more (the log determinant's gradient, its Hessian): at second
+order, the quintic `t³(10 - 15t + 6t²)` left the Laplace gradient a kink at
+each end of the band, of the rules' difference times 60.
 """
 @inline function _binary_vweight(s::T) where {T}
     lo, hi = _CTSEM_BINARY_VBAND
     width = T(hi - lo)
     t = (s - T(lo)) / width
-    w = t * t * t * (10 + t * (6 * t - 15))
-    u = t * (1 - t)
-    return (w, 30 * u * u / (width * 2 * s))
+    u = 1 - t
+    g = inv(u) - inv(t)
+    w = _logistic(g)
+    dwdt = w * _logistic(-g) * (inv(u * u) + inv(t * t))
+    return (w, dwdt / (width * 2 * s))
 end
 
 """Write the rule in `V`'s partials `pv` (rows by output, `(ηbar, b, τ)`) into
