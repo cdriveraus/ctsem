@@ -5569,6 +5569,20 @@ function _laplace_unit_jet_gradient(laplace::CTSEMLaplaceObjective, U::Integer,
     values::Vector{Float64}, Ls::Vector{Matrix{Float64}}, u::Vector{Float64},
     members, D::Matrix{Float64}, ndirs::Int, ::Val{W}) where {W}
     ndirs <= W || throw(ArgumentError("$(ndirs) directions for a jet of width $(W)"))
+    # By the hand-coded sweeps with second parts where they cover the model
+    # (`_tan_laplace_jet`); the filter at the jet behind a barrier, so that the
+    # image compiles it only for what they do not cover.
+    hand = _tan_laplace_jet(laplace, U, values, Ls, u, members, D, ndirs,
+        CTSEMTraceJet{W})
+    hand === nothing || return hand
+    return _ctsem_barrier(_laplace_unit_jet_gradient_dual, laplace, U, values, Ls, u,
+        members, D, ndirs, Val(W))::typeof((ok=true, d0=_LAPLACE_NO_MATRIX,
+        dS=_LAPLACE_NO_MATRIX))
+end
+
+function _laplace_unit_jet_gradient_dual(laplace::CTSEMLaplaceObjective, U::Integer,
+    values::Vector{Float64}, Ls::Vector{Matrix{Float64}}, u::Vector{Float64},
+    members, D::Matrix{Float64}, ndirs::Int, ::Val{W}) where {W}
     spec = laplace.spec
     units = laplace.units
     unitmembers = units.members[U]

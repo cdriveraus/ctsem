@@ -351,6 +351,47 @@ function _tan_lanes!(X::Union{TanMat{W},TanVec{W}}, M::AbstractArray, nl::Int) w
     return X
 end
 
+"""
+`X`'s values, tangents and second parts from the jets `M` (a jet `X`): lane
+`w` the jets' `lane0 + w`-th first part, those past `nl` zero, and their second
+parts where `withs`, zero otherwise -- a jet sweep's first chunk of directions
+carries the layer's second parts, and the others only their own lanes'.
+"""
+function _tan_jet_lanes!(X::Union{TanMat{W},TanVec{W}}, M::AbstractArray{CTSEMTraceJet{JW}},
+    lane0::Int, nl::Int, withs::Bool) where {W,JW}
+    @inbounds for idx in eachindex(M)
+        m = M[idx]
+        X.v[idx] = m.v
+        for w in 1:W
+            X.d[w + W * (idx - 1)] = w <= nl ? m.d[lane0 + w] : 0.0
+        end
+        withs && (X.s[idx] = m.s)
+    end
+    _tan_setnz_from!(X)
+    withs ? _tan_setsnz_from!(X) : _tan_setsnz!(X, false)
+    return X
+end
+
+"""
+The jets `out` from `X`'s values, its `nl` tangents as their first parts
+`lane0 + 1` on and its second parts: the first chunk of a jet sweep's
+directions sets them, a later one adds its lanes and its second parts, which
+sum over the directions.
+"""
+function _tan_into_jets!(out::AbstractArray{CTSEMTraceJet{JW}},
+    X::Union{TanMat{W},TanVec{W}}, lane0::Int, nl::Int, first::Bool) where {W,JW}
+    son = _tan_snz(X)
+    @inbounds for idx in eachindex(X.v)
+        o = W * (idx - 1)
+        prev = out[idx]
+        d = ntuple(j -> lane0 < j <= lane0 + nl ? X.d[o + j - lane0] :
+            (first ? 0.0 : prev.d[j]), Val(JW))
+        s = (son ? X.s[idx] : 0.0) + (first ? 0.0 : prev.s)
+        out[idx] = CTSEMTraceJet{JW}(X.v[idx], d, s)
+    end
+    return out
+end
+
 """`X` as duals of type `DW`: its values, its tangents their partials."""
 function _tan_duals(X::Union{TanMat{W},TanVec{W}}, ::Type{DW}) where {W,DW}
     out = similar(X.v, DW)
@@ -366,6 +407,9 @@ dual reads its value alone."""
 _tan_same(a::AbstractArray, b::AbstractArray) = size(a) == size(b) &&
     all(i -> ForwardDiff.value(a[i]) == ForwardDiff.value(b[i]) &&
         ForwardDiff.partials(a[i]) == ForwardDiff.partials(b[i]), eachindex(a))
+# A jet's `==` reads every part.
+_tan_same(a::AbstractArray{<:CTSEMTraceJet}, b::AbstractArray{<:CTSEMTraceJet}) =
+    size(a) == size(b) && all(i -> a[i] == b[i], eachindex(a))
 
 """
 The matrices of the layer into `mod`, values and tangents, for the subject

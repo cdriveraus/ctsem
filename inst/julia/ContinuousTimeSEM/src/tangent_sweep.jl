@@ -20,6 +20,7 @@ function _tan_exp!(f::TanFrechet{W}, A::TanMat{W}) where {W}
         fill!(Y.v, NaN)
         fill!(Y.d, NaN)
         Y.nz[] = true
+        Y.jet && (fill!(Y.s, NaN); Y.snz[] = true)
         return Y
     end
     theta = 5.371920351148152
@@ -478,6 +479,7 @@ function _tan_update!(x::TanVec{W}, P::TanMat{W}, rec::TanUpdRec{W}, fw::TanForw
             ll[1 + w] += -0.5 * (dld + dq)
         end
     end
+    e.jet && _tan_ll_s!(ll, e, Ui, mo)
     # x <- x + PHt S^-1 yt, S^-1 yt = Ui e.
     _tan_mulvec!(a, Ui, e, true, false, Val(:Aupper))
     _tan_mulvec!(x, rs.PHt, a, true, true)
@@ -494,6 +496,31 @@ function _tan_update!(x::TanVec{W}, P::TanMat{W}, rec::TanUpdRec{W}, fw::TanForw
     _tan_lower_to_upper!(P)
     mod.nh > 0 && _tan_hybrid_update!(hs, rs.hr, mod.hyb, o, H, Ui, e, rs.K)
     return true
+end
+
+"""
+A row's log likelihood's second parts into `ll[2 + W]`, a jet's: of `-1/2
+(e'e - 2 sum_i log Ui_ii)`, `s(e'e) = 2 sum_i (e_i s(e_i) + sum_w de_iw^2)` and
+`s(log Ui_ii) = s(Ui_ii) / Ui_ii - sum_w (dUi_iiw / Ui_ii)^2`.
+"""
+function _tan_ll_s!(ll::Vector{Float64}, e::TanVec{W}, Ui::TanMat{W}, mo::Int) where {W}
+    se, su, de, du = _tan_snz(e), _tan_snz(Ui), _tan_nz(e), _tan_nz(Ui)
+    (se || su || de || du) || return nothing
+    sq = 0.0
+    sl = 0.0
+    @inbounds for i in 1:mo
+        se && (sq += 2 * e.v[i] * e.s[i])
+        de && (sq += 2 * _tan_dot(e.d, W * (i - 1), e.d, W * (i - 1), Val(W)))
+        u = Ui.v[i, i]
+        su && (sl += Ui.s[i, i] / u)
+        if du
+            o = _tan_off(Ui.d, Val(W), i, i)
+            sl -= _tan_dot(Ui.d, o, Ui.d, o, Val(W)) / (u * u)
+        end
+    end
+    # ll = -1/2 (logdet S + q), logdet S = -2 sum log Ui_ii.
+    ll[2 + W] += -0.5 * (-2 * sl + sq)
+    return nothing
 end
 
 """
@@ -518,6 +545,7 @@ TanAcc(n::Int, m::Int, ntd::Int, nh::Int, W::Int) = TanAcc{W}(TanMat{W}(n, n),
 function _tan_zero!(X)
     fill!(X.v, 0.0)
     _tan_setnz!(X, false)
+    _tan_setsnz!(X, false)
     return X
 end
 
@@ -759,7 +787,7 @@ struct TanSweep{W}
     upds::Vector{TanUpdRec{W}}
     x::TanVec{W}; P::TanMat{W}; xbar::TanVec{W}; Pbar::TanMat{W}
     sT::TanMat{W}               # dt JAx', the flush's argument
-    ll::Vector{Float64}         # the log likelihood and its W tangents
+    ll::Vector{Float64}         # the log likelihood, its W tangents, a jet's second part
     first::Vector{Int}          # each row's first prediction record
     nh::Int
     hs::TanHybState{W}
@@ -776,9 +804,9 @@ end
 TanSweep(n::Int, m::Int, ntd::Int, nh::Int, W::Int, na::Int=n, k::Int=n) = TanSweep{W}(n, m,
     TanForward(n, m, nh, W, na, k), TanPredRev(n, W),
     TanPredRec{W}[], TanUpdRec{W}[],
-    TanVec{W}(n), TanMat{W}(n, n), TanVec{W}(n), TanMat{W}(n, n), TanMat{W}(n, n), zeros(1 + W),
+    TanVec{W}(n), TanMat{W}(n, n), TanVec{W}(n), TanMat{W}(n, n), TanMat{W}(n, n), zeros(2 + W),
     Int[], nh, TanHybState(n, nh, W), TanMat{W}[], TanVec{W}(ntd), TanMat{W}(n, n),
-    TanMat{W}(n, n), TanVec{W}(n), zeros(n, n), Float64[], zeros(1 + W))
+    TanMat{W}(n, n), TanVec{W}(n), zeros(n, n), Float64[], zeros(2 + W))
 
 """Row `t`'s log likelihood and its tangents, what the total gained since the
 last row, kept in `sw.llrow`."""

@@ -199,6 +199,7 @@ function _tan_exp_frechet!(f::TanFrechet{W}, A::TanMat{W}, E::TanMat{W}) where {
             fill!(X.v, NaN)
             fill!(X.d, NaN)
             X.nz[] = true
+            X.jet && (fill!(X.s, NaN); X.snz[] = true)
         end
         return f
     end
@@ -306,10 +307,16 @@ tangents from `A`'s and `Q`'s. `Q` symmetric, as the engine's solve requires.
 function _tan_lyap!(X::TanMat{W}, A::TanMat{W}, Q::TanMat{W}, h::TanLyap{W}, transposed::Bool) where {W}
     n, buf = h.n, h.buf
     _lyap_solve!(X.v, A.v, Q.v, buf, transposed)
-    (_tan_nz(A) || _tan_nz(Q)) || return _tan_setnz!(X, false)
+    _tan_jet_check(X, _tan_snz(A) || _tan_snz(Q))
     if !buf.converged
         fill!(X.d, NaN)
         X.nz[] = true
+        X.jet && (fill!(X.s, NaN); X.snz[] = true)
+        return X
+    end
+    if !(_tan_nz(A) || _tan_nz(Q))
+        _tan_setnz!(X, false)
+        X.jet && _tan_lyap_s!(X, A, Q, h, transposed)
         return X
     end
     Ut, Xv, R, tmp, C, Y = h.Ut, h.Xv, h.R, h.tmp, h.C, h.Y
@@ -332,6 +339,55 @@ function _tan_lyap!(X::TanMat{W}, A::TanMat{W}, Q::TanMat{W}, h::TanLyap{W}, tra
         _tan_put!(X, j, i, t)
     end
     X.nz[] = true
+    X.jet && _tan_lyap_s!(X, A, Q, h, transposed)
+    return X
+end
+
+"""
+`_tan_lyap!`'s second parts, after its tangents: `A X + X A' + Q = 0` twice
+differentiated, `A s(X) + s(X) A' + R = 0` with `R = s(A) X + X s(A)' +
+2 sum_w (dA_w dX_w + dX_w dA_w') + s(Q)` (transposed: `s(A)' X + X s(A) +
+2 sum_w (dA_w' dX_w + dX_w dA_w) + s(Q)`), solved on the same Schur factors
+as a width-one direction. The scratch's second parts hold its matrices.
+"""
+function _tan_lyap_s!(X::TanMat{W}, A::TanMat{W}, Q::TanMat{W}, h::TanLyap{W},
+    transposed::Bool) where {W}
+    sa, sq, c = _tan_snz(A), _tan_snz(Q), _tan_nz(A) && _tan_nz(X)
+    (sa || sq || c) || return _tan_setsnz!(X, false)
+    n, buf = h.n, h.buf
+    U, Xv, dA, dX = buf.U, X.v, A.d, X.d
+    R, tmp, C, Y = h.R.s, h.tmp.s, h.C.s, h.Y.s
+    V = Val(W)
+    @inbounds for j in 1:n, i in 1:n
+        acc = sq ? Q.s[i, j] : 0.0
+        for q in 1:n
+            if sa
+                As = A.s
+                acc += transposed ? As[q, i] * Xv[q, j] + Xv[i, q] * As[q, j] :
+                    As[i, q] * Xv[q, j] + Xv[i, q] * As[j, q]
+            end
+            if c
+                ai = transposed ? _tan_off(dA, V, q, i) : _tan_off(dA, V, i, q)
+                aj = transposed ? _tan_off(dA, V, q, j) : _tan_off(dA, V, j, q)
+                acc += 2 * (_tan_dot(dA, ai, dX, _tan_off(dX, V, q, j), V) +
+                    _tan_dot(dX, _tan_off(dX, V, i, q), dA, aj, V))
+            end
+        end
+        R[i, j] = acc
+    end
+    # C = -U' R U; the quasi-triangular solve; s(X) = U C U', symmetrised.
+    _ctsem_mulTN!(tmp, U, R)
+    _ctsem_mul!(C, tmp, U, -1.0)
+    _tan_quasitri_lyap!(C, buf.S, n, h.M, transposed, Val(1))
+    _ctsem_mul!(tmp, U, C)
+    _ctsem_mulNT!(Y, tmp, U)
+    Xs = X.s
+    @inbounds for j in 1:n, i in 1:j
+        t = (Y[i, j] + Y[j, i]) / 2
+        Xs[i, j] = t
+        Xs[j, i] = t
+    end
+    X.snz[] = true
     return X
 end
 
@@ -355,11 +411,12 @@ end
 
 """
 `_ctsem_quasitri_lyap!` on every direction's right-hand side at once: `d` is
-the `W x n x n` tangent array of `C`, overwritten with the solutions. Each
-block's right-hand side is written in place over its own entries, which no
-other entry of the block reads.
+the `W x n x n` tangent array of `C` (or at `W` one an `n x n` matrix, a jet's
+second parts), overwritten with the solutions. Each block's right-hand side is
+written in place over its own entries, which no other entry of the block
+reads.
 """
-function _tan_quasitri_lyap!(d::Array{Float64,3}, S::Matrix{Float64}, n::Int,
+function _tan_quasitri_lyap!(d::Array{Float64}, S::Matrix{Float64}, n::Int,
     M::Matrix{Float64}, transposed::Bool, V::Val{W}) where {W}
     if !transposed
         je = n
@@ -422,7 +479,7 @@ end
 place in `d`: the Kronecker system is built and eliminated once, and its row
 operations applied to the W-tuples.
 """
-function _tan_small_sylvester!(d::Array{Float64,3}, S::Matrix{Float64}, is::Int, ie::Int,
+function _tan_small_sylvester!(d::Array{Float64}, S::Matrix{Float64}, is::Int, ie::Int,
     js::Int, je::Int, M::Matrix{Float64}, transposed::Bool, V::Val{W}) where {W}
     p = ie - is + 1
     q = je - js + 1
