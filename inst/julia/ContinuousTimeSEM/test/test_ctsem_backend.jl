@@ -2046,6 +2046,9 @@ ContinuousTimeSEM._ctsem_local_columns(o::_LocalQuadratic, x::AbstractVector,
     schur(M) = M[G, G] .- M[G, C] * (M[C, C] \ M[C, G])
     @test schur(P) ≈ schur(B)
     @test Pinv * P ≈ Matrix(I, n, n)
+    # The finish's Krylov model takes it as its preconditioner as it takes
+    # the scores' (`_ctsem_newton_finish`'s `krylov_base`).
+    @test C3._ctsem_krylov_model(B).M ≈ C3._ctsem_krylov_model(S, precision).M
     # Far from an optimum the local block can have negative curvature: taken
     # at its size, as the finish takes it.
     Hn = copy(H)

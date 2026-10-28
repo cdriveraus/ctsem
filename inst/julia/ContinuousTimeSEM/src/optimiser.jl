@@ -2404,6 +2404,20 @@ function _ctsem_krylov_model(S::AbstractMatrix, precision::AbstractVector)
     n = size(S, 2)
     B = _ctsem_score_information!(Matrix{Float64}(undef, n, n), S, precision)
     all(isfinite, B) || return nothing
+    return _ctsem_krylov_model(B)
+end
+
+"""
+    _ctsem_krylov_model(B)
+
+The model with no products yet from a curvature already in hand as its
+preconditioner: the scores' (above), or the local curvature's
+(`CTSEMLocalCurvature`), which is exact where parameters are read by few
+units. Its eigenvalues floored at 1e-6 of the largest; `nothing` where it has
+no positive scale or does not factor.
+"""
+function _ctsem_krylov_model(B::AbstractMatrix)
+    n = size(B, 1)
     E = eigen(Symmetric((B .+ transpose(B)) ./ 2))
     top = maximum(E.values; init=0.0)
     (isfinite(top) && top > 0) || return nothing
@@ -2817,7 +2831,9 @@ What the steps are taken against is `curvature`:
   (at least `subset_min`), scaled up to the data, with the prior's curvature
   kept whole -- a chord Hessian at a fraction of the cost;
 - `:krylov` the scores' curvature corrected by Hessian-vector products
-  (`CTSEMKrylov`), extended at every step from that step's gradient and
+  (`CTSEMKrylov`) -- or `krylov_base`'s, the local curvature L-BFGS built
+  (`CTSEMLocalCurvature`), where there is one -- extended at every step from
+  that step's gradient and
   keeping the products before, where the objective has such products
   (`_ctsem_hvp_setup`) and its exact Hessian costs at least `krylov_min_cost`
   gradients (`_ctsem_krylov_cost`); the chord otherwise. Its walk ends where the
@@ -2923,7 +2939,8 @@ function _ctsem_newton_finish(objective, x0, f0, G0, fg!; tol::Real=1e-8,
         flat_allowed=(from, to) -> true,
         reporter=nothing, hessian0=nothing, hessian0_at=nothing,
         krylov_min_cost::Real=_CTSEM_KRYLOV_MIN_COST, final::Symbol=:exact,
-        jump::Union{Nothing,CTSEMJump}=nothing)
+        jump::Union{Nothing,CTSEMJump}=nothing,
+        krylov_base::Union{Nothing,Matrix{Float64}}=nothing)
     final in (:exact, :walked) || throw(ArgumentError(
         "newton final must be exact or walked, got $(final)"))
     curvature in (:exact, :chord, :subset, :krylov) || throw(ArgumentError(
@@ -3018,8 +3035,14 @@ function _ctsem_newton_finish(objective, x0, f0, G0, fg!; tol::Real=1e-8,
                 kable[] = false
                 return nothing
             end
-            km = _ctsem_krylov_model(S, _ctsem_prior_precision(
-                _ctsem_prior_objective(objective), length(y)))
+            # On the conjugate gradients of the affect pilot's joint fit, the
+            # local curvature's exact columns took the products to a
+            # hundredth of a Newton step's gain from 58 to 15
+            # (`_CTSEM_LOCAL_COLUMN_COST`).
+            km = krylov_base === nothing ?
+                _ctsem_krylov_model(S, _ctsem_prior_precision(
+                    _ctsem_prior_objective(objective), length(y))) :
+                _ctsem_krylov_model(krylov_base)
             km === nothing && (kable[] = false; return nothing)
             kmodel[] = km
         end

@@ -3333,7 +3333,11 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
             hessian0=handed_back ? nothing : newton_hessian,
             hessian0_at=handed_back ? nothing : newton_hessian_at,
             krylov_min_cost=krylov_min_cost, final=Symbol(newton_final),
-            jump=watch_jump ? jump : nothing)
+            jump=watch_jump ? jump : nothing,
+            # The local curvature's last build, as the Krylov model's
+            # preconditioner: exact where it was cheap.
+            krylov_base=(local_curvature === nothing ||
+                isempty(local_curvature.P)) ? nothing : local_curvature.P)
         minimizer = collect(finish.x)
         # A jump the finish's steps confirmed and the route named: the run
         # ends there as it does on L-BFGS's ("jump", above), with no Hessian.
