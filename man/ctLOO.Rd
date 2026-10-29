@@ -213,8 +213,8 @@ Draws whose inner mode solve fails are dropped and counted. A Pareto k above
 better tool for it.
 
 \strong{Both methods cross-validate the Laplace objective.} A Laplace fit's
-estimate can be corrected by quadrature (\code{optimcontrol$laplace_correct
-= TRUE}, see \code{\link{ctOptimControl}}). The folds are
+estimate can be refitted with its units integrated (\code{optimcontrol$laplace_refit
+= TRUE}, \code{\link{ctLaplaceRefit}}). The folds are
 refits of the Laplace objective, scored by it, and are not corrected -- each
 would need its own Hessian and quadrature gradient -- so the in-sample side,
 the folds' starting point and the PSIS proposal all use the Laplace optimum,

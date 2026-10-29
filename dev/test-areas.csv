@@ -45,7 +45,6 @@
 "test-poprank.R","laplace","core"
 "test-intoverpop-revariance-warning.R","laplace","extended"
 "test-julia-effect-information.R","laplace","extended"
-"test-julia-laplace-autocorrect.R","laplace","extended"
 "test-julia-laplace.R","laplace","extended"
 "test-julia-loo-laplace.R","laplace","extended"
 "test-julia-multivariate-mixed.R","laplace","extended"

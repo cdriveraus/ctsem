@@ -141,7 +141,7 @@
 # step's offset and noise, and it is the one serious check of convergence.
 # What it costs: where the Laplace mode and the exact one differ, the finish
 # returns to the Laplace mode. The quadrature correction after it
-# (`laplace_correct`) continues the fit with quadrature in place of Laplace
+# (`laplace_refit`) continues the fit with quadrature in place of Laplace
 # for each unit of at most five effects whose values differ; a wider unit -- a
 # nested study with its people -- keeps the Laplace term, and there SAEM's own
 # estimate, better on the exact likelihood than the Laplace optimum on the

@@ -6238,7 +6238,7 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
   }
   # A run still ended on a jump stops there, at no maximum of anything
   # continuous, so it is not certified; the fit warns and leaves integrating
-  # the named units to the user (`laplace_correct = TRUE`, whose rounds take
+  # the named units to the user (`laplace_refit = TRUE` or `ctLaplaceRefit()`, whose rounds take
   # them on draws with the points the watch saw: `.ctLaplaceContinue()`,
   # through `fit$laplace$jump`), as it leaves a flagged check: the rounds can
   # take hours. `jumprecord`, since `$jump` on an engine result would match
@@ -6455,7 +6455,7 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
   # process, and nothing prepared here may be alive across that.
   .ctBackendResolveThreads(cores, report = isTRUE(fit))
   # Resolved, and refused by name where it cannot apply, before anything is
-  # prepared or fitted. See `.ctLaplaceAutoCorrect()`.
+  # prepared or fitted (`.ctLaplaceCorrectResolve()`).
   correctlaplace <- .ctLaplaceCorrectResolve(optimcontrol, intoverpop = intoverpop,
     optimize = optimize, intoverstates = intoverstates)
   .ctJuliaSaemIterations(optimcontrol, intoverpop = intoverpop,
@@ -6923,7 +6923,7 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
   # states flatten, so there is nothing to certify against -- the same reason
   # that route reports no standard errors.
   # Nor a run that ended on a jump: its point is on no continuous objective
-  # (`laplace_correct = TRUE` certifies where its rounds end).
+  # (an integrated refit certifies where its rounds end).
   correction <- NULL
   certifying <- isTRUE(intoverstates) && !isTRUE(optimcontrol$estonly) &&
     !identical(optimcontrol$certify, FALSE) && is.null(result[["jumprecord"]])
@@ -7556,7 +7556,7 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
   # A run that ended on a jump has no Laplace answer: the objective is not
   # continuous there, so it has no maximum. Its uncertainty is the curvature's
   # at that point all the same, and the stage below warns whatever
-  # `laplace_correct` says; only `laplace_correct = TRUE` integrates the units
+  # `laplace_check` says; only the integrated refit integrates the units
   # it named, from there. That was once forced on every such fit, and on the
   # affect pilot it gained 29 nats in nine hours.
   jumped <- !is.null(out$laplace$jump)
@@ -7587,14 +7587,13 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
     } else out <- holdrepair(measure(out, uncertainty))
   }
 
-  # The quadrature correction, after the certification has converged the
-  # Laplace objective and the uncertainty stage has built the Hessian it steps
-  # against, which it reuses rather than computing another. Before the
-  # constrained draws below, so that they are built once. See
-  # `.ctLaplaceContinue()` for `laplace_correct = 'quadrature'`, which
-  # replaces the covariance and draws with its own when it reaches its fixed
-  # point, and for `'check'`, the default, which only checks and warns, and
-  # `.ctLaplaceAutoCorrect()` for `'step'`.
+  # The Laplace check, or the integrated refit, after the certification has
+  # converged the Laplace objective and the uncertainty stage has built the
+  # Hessian it steps against, which it reuses rather than computing another.
+  # Before the constrained draws below, so that they are built once. See
+  # `.ctLaplaceContinue()`: the refit (`laplace_refit`) replaces the
+  # covariance and draws with its own when it reaches its fixed point; the
+  # check, the default, only checks and warns.
   if (!is.null(out$laplace) && isTRUE(intoverstates)) {
     if (continuing) {
       out <- holdrepair(.ctLaplaceContinue(out, cores = cores, verbose = verbose,
@@ -7602,11 +7601,9 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
     } else if (jumped || identical(correctlaplace, "check")) {
       out <- holdrepair(.ctLaplaceContinue(out, cores = cores, verbose = verbose,
         correct = FALSE))
-    } else if (identical(correctlaplace, "step")) {
-      out <- holdrepair(.ctLaplaceAutoCorrect(out, cores = cores, verbose = verbose))
     } else {
       out$laplace$correction <- list(status = if (isTRUE(optimcontrol$estonly) &&
-        !isFALSE(optimcontrol$laplace_correct)) "estonly" else "off",
+        !isFALSE(optimcontrol$laplace_check)) "estonly" else "off",
         applied = FALSE)
     }
   }
@@ -7750,8 +7747,8 @@ print.ctJuliaFit <- function(x, ...) {
   # Everything below reads the optimum and its curvature, which on a sampled fit
   # are the placement's: its intervals come from the draws.
   if (sampled) return(invisible(x))
-  # The quadrature correction, only when it moved the estimate by a tenth of a
-  # standard error or more.
+  # The integrated refit, only when it moved the estimate by a tenth of a
+  # standard error or more; the Laplace check's warning otherwise.
   corr <- x$laplace$correction
   if (isTRUE(corr$applied) && isTRUE(corr$material)) {
     cat("  Laplace estimate ", if (identical(corr$method, "quadrature"))
@@ -7759,13 +7756,13 @@ print.ctJuliaFit <- function(x, ...) {
           if (identical(corr$continuation, "resolution"))
             ", to within its draws' error of its fixed point" else
           if (!identical(corr$continuation, "converged")) ", short of its fixed point")
-      else "corrected by quadrature",
+      else "refitted by quadrature",
       ": up to ", format(max(abs(corr$delta_se), na.rm = TRUE), digits = 2),
       " standard errors, log likelihood ", format(corr$loglik_laplace, digits = 8),
       " -> ", format(corr$loglik_quadrature, digits = 8),
       ". See fit$laplace$correction.\n", sep = "")
   } else if (identical(corr$status, "skipped")) {
-    cat("  Laplace estimate kept: the quadrature correction predicted a gain of ",
+    cat("  Laplace estimate kept: the integrated refit predicted a gain of ",
       format(corr$predicted_gain, digits = 2), " nats, under ", corr$skip_gain,
       "; the log likelihood is the quadrature one. See fit$laplace$correction.\n",
       sep = "")

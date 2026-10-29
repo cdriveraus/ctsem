@@ -1300,7 +1300,7 @@ test_that("gradient = 'forward' still gives a Laplace fit's certification its cu
   fit <- suppressWarnings(suppressMessages(ctFit(.laplace_test_data(),
     .laplace_test_model(), backend = "julia", intoverpop = "laplace",
     inits = rep(0, npar), optimcontrol = list(gradient = "forward",
-      maxiter = 3L, laplace_correct = FALSE, finishsamples = 50))))
+      maxiter = 3L, laplace_check = FALSE, finishsamples = 50))))
   expect_gte(fit$optim$hessian_evaluations, 1L)
 })
 
@@ -1313,7 +1313,7 @@ test_that("a Laplace fit ends on one Hessian, the one the optimiser's finish too
   # reported none.
   fit <- suppressWarnings(suppressMessages(ctFit(.laplace_test_data(),
     .laplace_test_model(), backend = "julia", intoverpop = "laplace",
-    optimcontrol = list(laplace_correct = FALSE, finishsamples = 50))))
+    optimcontrol = list(laplace_check = FALSE, finishsamples = 50))))
   expect_equal(fit$optim$newton_hessians, 1L)
   expect_equal(fit$optim$hessian_evaluations, 1L)
   expect_length(fit$optim$corrections, 0L)

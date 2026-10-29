@@ -190,7 +190,8 @@ the same meaning: stopping rules (\code{tol}, \code{g_tol},
 \code{maxiter}), the start (\code{initsd}, \code{carefulfit}), the
 uncertainty computed at the end (\code{uncertainty}, \code{estonly}), and
 optional phases such as \code{stochastic} and, under
-\code{intoverpop='laplace'}, \code{saem} and \code{laplace_correct}.
+\code{intoverpop='laplace'}, \code{saem}, \code{laplace_check} and
+\code{laplace_refit}.
 \code{\link{ctOptimControl}} lists every name with its backend and default.
 A misspelled name, or one the chosen backend cannot honour, is an error.}
 

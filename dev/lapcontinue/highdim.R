@@ -9,7 +9,7 @@
 # latent (k = 4) or both (k = 5). The data are simulated here, by
 # Euler-Maruyama on a fine grid, not by ctGenerate.
 #
-# Per k: one Laplace fit (laplace_correct = FALSE); the step correction and the
+# Per k: one Laplace fit (laplace_check = FALSE); the step correction and the
 # quadrature correction applied to it post hoc, timed; the engine's own counts
 # for the quadrature correction; the time of one 5-node quadrature value at the
 # Laplace optimum, which is the unit of the step correction's work; and the
@@ -96,7 +96,7 @@ for (k in KS) {
   t0 <- now(); set.seed(1)
   off <- suppressWarnings(suppressMessages(ctFit(d, m, backend = "julia",
     intoverpop = "laplace", cores = CORES,
-    optimcontrol = list(laplace_correct = FALSE, finishsamples = 100))))
+    optimcontrol = list(laplace_check = FALSE, finishsamples = 100))))
   rec$fit_seconds <- now() - t0
   rec$npar <- length(off$estimate$raw)
   rec$certification <- off$uncertainty$certification[c("status", "gap")]

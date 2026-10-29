@@ -306,12 +306,17 @@
     msg = paste0("runs the julia engine's SAEM phase, which samples the random ",
       "effects julia's Laplace route integrates; stan augments them as latent ",
       "states instead. Drop it")),
-  # The quadrature correction every julia Laplace fit gets. FALSE describes
-  # what stan does, so it is accepted there, as `stochastic=FALSE` is on julia.
-  laplace_correct = list(only = 'julia',
+  # The Laplace check every julia Laplace fit gets, and the integrated refit
+  # asked for. FALSE describes what stan does, so it is accepted there, as
+  # `stochastic=FALSE` is on julia.
+  laplace_check = list(only = 'julia',
     inert = function(v) isFALSE(v),
-    msg = paste0("corrects a julia Laplace fit by quadrature over its random ",
-      "effects, and stan has no Laplace term to correct. Drop it"))
+    msg = paste0("checks a julia Laplace fit's error by integrating over its ",
+      "random effects, and stan has no Laplace term to check. Drop it")),
+  laplace_refit = list(only = 'julia',
+    inert = function(v) isFALSE(v),
+    msg = paste0("refits a julia Laplace fit with its random effects integrated, ",
+      "and stan has no Laplace term to refit. Drop it"))
 )
 
 # Refuse a control-list name the chosen backend cannot honour, before any data
@@ -798,7 +803,8 @@ T0VARredundancies <- function(ctm) {
 #' \code{maxiter}), the start (\code{initsd}, \code{carefulfit}), the
 #' uncertainty computed at the end (\code{uncertainty}, \code{estonly}), and
 #' optional phases such as \code{stochastic} and, under
-#' \code{intoverpop='laplace'}, \code{saem} and \code{laplace_correct}.
+#' \code{intoverpop='laplace'}, \code{saem}, \code{laplace_check} and
+#' \code{laplace_refit}.
 #' \code{\link{ctOptimControl}} lists every name with its backend and default.
 #' A misspelled name, or one the chosen backend cannot honour, is an error.
 #' @param nopriors deprecated, use priors argument. logical. If TRUE, any priors are disabled -- sometimes desirable for optimization.

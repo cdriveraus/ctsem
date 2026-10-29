@@ -3617,18 +3617,19 @@ ctOptimFitLpgFunc <- function(fit, cores=1){
 #'
 #' \code{control$likelihood} (julia only) chooses a more exact density to
 #' draw against, with \code{'is'} or \code{'checked'}. \code{'quadrature'},
-#' for a Laplace fit, is the quadrature hybrid the fit's own correction
-#' climbs (\code{optimcontrol$laplace_correct}): the units the screen flags,
+#' for a Laplace fit, is the quadrature hybrid the integrated refit climbs
+#' (\code{optimcontrol$laplace_refit}, \code{\link{ctLaplaceRefit}}): the
+#' units the screen flags,
 #' and those the fit's check named, integrated by quadrature rules
 #' (\code{control$nodes} per effect, 5 by default) or draws, the rest by
 #' their Laplace terms, with the error of that density reported in
 #' \code{fit$laplace$correction$error} and in \code{summary()}. A fit made
-#' without the correction -- the default, which only checks and warns -- is
-#' climbed to that density's optimum first; one corrected when it was fitted
+#' without the refit -- the default, which only checks and warns -- is
+#' climbed to that density's optimum first; one refitted when it was fitted
 #' stays where it is, as does any fit under \code{correctEstimate = FALSE}.
 #' With \code{'quadrature'}, \code{'hessian'} is taken too: the hybrid's
 #' curvature where the climb ends, which is what
-#' \code{laplace_correct = TRUE} gives at fit time. \code{'particle'},
+#' \code{laplace_refit = TRUE} gives at fit time. \code{'particle'},
 #' for a fit on the filter's route and with \code{'is'}, replaces the
 #' filter's Gaussian likelihood by a particle filter's (\code{control$particles},
 #' 1000; \code{substeps}, 10; \code{transition}, \code{'exponential'} or
@@ -3704,7 +3705,7 @@ ctOptimFitLpgFunc <- function(fit, cores=1){
 #' sample size where SAEM's kernel often ran out of draws, and was usually the
 #' faster; SAEM's kernel was the more reliable and the faster than
 #' \code{'nuts'}, which mixes poorly on the joint vector. A marginal target is sampled by tempered
-#' sequential Monte Carlo where the normal check of \code{'checked'} named
+#' sequential Monte Carlo where the normality check of \code{'checked'} named
 #' directions in which the posterior departs from the fit's Hessian, and by
 #' NUTS where it named none, or where the call sets a control only NUTS reads
 #' (\code{chains}, \code{warmup}, \code{stepsize}, \code{adapt_metric},
