@@ -704,8 +704,9 @@
 
 # What a fit the check flagged and nothing corrected says, in its warning and
 # in print(): the move, Laplace's error in the log likelihood (`gap`, where it
-# is resolved past twice `gap_se`), that the estimates, intervals and log
-# likelihood are all Laplace's, and the calls that remove the error -- the
+# is resolved past twice `gap_se`), that the estimates and intervals are
+# Laplace's while the log likelihood the fit reports is the integrated one
+# (`.ctLaplaceCheckedLoglik()`), and the calls that remove the error -- the
 # rounds after the fit, and sampling the joint posterior, which has no
 # Laplace error -- and, where `drawn` units would go on draws, that both may
 # take hours.
