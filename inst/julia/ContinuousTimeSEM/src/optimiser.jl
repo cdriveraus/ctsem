@@ -2648,10 +2648,20 @@ Where no column is cheap -- every unit reads every parameter, or the route
 cannot difference a column over its units alone (`_ctsem_local_capable`) --
 it is never built, and L-BFGS runs as without it.
 
+A unit reads a parameter where its score in it is nonzero at some point the
+run has seen (`_ctsem_local_read!`), and nothing is chosen or built before
+there are two. A unit's score in a parameter it never reads is exactly zero,
+but so, at a point of symmetry, is a reader's -- an item observed at exactly
+the intercept it predicts -- and a reader read from one point alone was left
+out of its column, its change landing in a colour-mate's
+(`_laplace_hessian_readers` is the Hessian's form of this, at a point moved
+for it; a run moves anyway).
+
 `P` and `inverse` are the last build's; `columns` the cheap parameters and
 `cost` a build's gradients (one over each column's units,
 `_ctsem_local_columns`); `spent` the gradients every build took, `since` the
-run's gradients since the last, `builds` how many.
+run's gradients since the last, `builds` how many; `readers` the units by
+parameters read so far, `at` the last point read and `seen` how many.
 """
 mutable struct CTSEMLocalCurvature{O}
     objective::O
@@ -2666,11 +2676,15 @@ mutable struct CTSEMLocalCurvature{O}
     since::Int
     builds::Int
     done::Bool
+    readers::BitMatrix
+    at::Vector{Float64}
+    seen::Int
 end
 CTSEMLocalCurvature(objective, store::CTSEMScoreStore, precision::AbstractVector;
         progress=nothing) =
     CTSEMLocalCurvature(objective, store, collect(Float64, precision), progress,
-        zeros(0, 0), zeros(0, 0), Int[], 0.0, 0.0, 0, 0, false)
+        zeros(0, 0), zeros(0, 0), Int[], 0.0, 0.0, 0, 0, false,
+        falses(size(store.S)), Float64[], 0)
 
 """Whether a route can difference a Hessian column over only the units that
 read its parameter, which is what makes a local column cheap: the Laplace
@@ -2680,13 +2694,15 @@ _ctsem_local_capable(o::CTSEMLaplaceObjective) = !_laplace_filter_only(o)
 _ctsem_local_capable(o) = false
 
 """
-    _ctsem_local_columns(o, x, cols, S; progress, step)
+    _ctsem_local_columns(o, x, cols, S; progress, step, readers)
 
 The minimised objective's Hessian columns `cols` at `x`, `n` by
 `length(cols)`, NaN where a column's point did not solve. Each is a forward
 difference of the units' scores, from `S`, the units' scores at `x` the
 optimiser already holds (`CTSEMScoreStore`), over the units that read its
-parameter, plus the prior's column, differenced alone. Parameters whose
+parameter -- the nonzero entries of `readers`, by default of `S`, which
+misses a reader whose score is zero at `x` (`CTSEMLocalCurvature`) -- plus
+the prior's column, differenced alone. Parameters whose
 readers do not overlap are moved together, one point for each such group
 (`_ctsem_local_colours`), evaluated over the union of their units as a coreset
 of the objective (`CTSEMCoreset`): a unit's change in score is then the one
@@ -2700,10 +2716,10 @@ put back after.
 """
 function _ctsem_local_columns(o::CTSEMLaplaceObjective, x::AbstractVector,
         cols::AbstractVector{Int}, S::AbstractMatrix; progress=nothing,
-        step::Real=1e-4)
+        step::Real=1e-4, readers::AbstractMatrix=S)
     n = length(x)
     NU = size(S, 1)
-    reads = [findall(!iszero, view(S, :, j)) for j in cols]
+    reads = [findall(!iszero, view(readers, :, j)) for j in cols]
     colours = _ctsem_local_colours(reads, NU)
     H = fill(NaN, n, length(cols))
     xv = collect(Float64, x)
@@ -2784,11 +2800,12 @@ function _ctsem_local_colours(reads::AbstractVector, nunits::Integer)
 end
 
 """
-    _ctsem_local_select(S)
+    _ctsem_local_select(R)
 
-The parameters whose Hessian columns are cheap, from which units' scores `S`
-read each (a unit's score in a parameter it never reads is exactly zero), and
-what a build costs in gradients. A parameter no unit reads has only the prior's
+The parameters whose Hessian columns are cheap, from which units read each --
+the nonzero entries of `R`, the readers (`CTSEMLocalCurvature`) or a matrix of
+scores, in which a unit's score in a parameter it never reads is exactly zero
+-- and what a build costs in gradients. A parameter no unit reads has only the prior's
 curvature, which the score information holds exactly.
 """
 function _ctsem_local_select(S::AbstractMatrix)
@@ -2806,7 +2823,8 @@ end
     _ctsem_local_due(lc, x)
 
 Whether to build the local curvature at `x`, where L-BFGS is: never where no
-column is cheap; only where the store's scores describe `x`; first once the
+column is cheap; only where the store's scores describe `x`, and once they
+have described two points (`CTSEMLocalCurvature`'s readers); first once the
 run has spent what a build costs, then once it has spent `2^builds` times that
 since the last.
 """
@@ -2814,13 +2832,37 @@ function _ctsem_local_due(lc::CTSEMLocalCurvature, x::AbstractVector)
     lc.done && return false
     st = lc.store
     (st.valid && st.x == x) || return false
-    # Chosen once a run; a run that carries an earlier run's builds
-    # (`local_builds_carried`) chooses them too.
-    if isempty(lc.columns)
-        lc.columns, lc.cost = _ctsem_local_select(st.S)
+    grew = _ctsem_local_read!(lc, st)
+    lc.seen >= 2 || return false
+    # Chosen again whenever the readers grow; a run that carries an earlier
+    # run's builds (`local_builds_carried`) chooses them as any run does.
+    if grew || isempty(lc.columns)
+        lc.columns, lc.cost = _ctsem_local_select(lc.readers)
         isempty(lc.columns) && (lc.done = true; return false)
     end
     return lc.since >= 2.0^lc.builds * lc.cost
+end
+
+"""
+    _ctsem_local_read!(lc, store)
+
+Adds the units with a nonzero score in the store to the readers of each
+parameter (`CTSEMLocalCurvature`), once a point; whether any was new.
+"""
+function _ctsem_local_read!(lc::CTSEMLocalCurvature, st::CTSEMScoreStore)
+    lc.at == st.x && return false
+    S = st.S
+    R = lc.readers
+    grew = false
+    @inbounds for j in axes(S, 2), U in axes(S, 1)
+        if !iszero(S[U, j]) && !R[U, j]
+            R[U, j] = true
+            grew = true
+        end
+    end
+    lc.at = copy(st.x)
+    lc.seen += 1
+    return grew
 end
 
 """
@@ -2832,7 +2874,7 @@ usable; the gradients are counted either way.
 """
 function _ctsem_local_build!(lc::CTSEMLocalCurvature, x::AbstractVector)
     Hc = _ctsem_local_columns(lc.objective, x, lc.columns, lc.store.S;
-        progress=lc.progress)
+        progress=lc.progress, readers=lc.readers)
     lc.spent += lc.cost
     lc.since = 0
     lc.builds += 1

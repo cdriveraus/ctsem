@@ -2038,7 +2038,7 @@ struct _LocalQuadratic
     H::Matrix{Float64}
 end
 ContinuousTimeSEM._ctsem_local_columns(o::_LocalQuadratic, x::AbstractVector,
-    cols::AbstractVector{Int}, S::AbstractMatrix; progress=nothing) = o.H[:, cols]
+    cols::AbstractVector{Int}, S::AbstractMatrix; kw...) = o.H[:, cols]
 
 @testset "the local curvature is exact where it is cheap and the scores' elsewhere" begin
     # `CTSEMLocalCurvature`: three parameters read by 3 of 40 units take their
@@ -2084,16 +2084,28 @@ ContinuousTimeSEM._ctsem_local_columns(o::_LocalQuadratic, x::AbstractVector,
     Pn, _ = C3._ctsem_local_assemble(Hn[:, C], collect(C), B)
     @test Pn[C, C] ≈ H[C, C]
 
-    # Built once the run has spent what it costs, and only where the scores
-    # describe the point; never where no column is cheap.
+    # Built once the run has spent what it costs, only where the scores
+    # describe the point, and once they have described two: unit 1 reads
+    # parameter 1 with a zero score at the first, which alone would leave it
+    # out. Never where no column is cheap.
     store = C3.CTSEMScoreStore(N, n)
     lc = C3.CTSEMLocalCurvature(_LocalQuadratic(H), store, precision)
+    at!(st, y, Sy) = (copyto!(st.S, Sy); copyto!(st.x, y); st.valid = true)
+    x0 = fill(0.1, n)
     x = zeros(n)
-    @test !C3._ctsem_local_due(lc, x)
-    copyto!(store.S, S); copyto!(store.x, x); store.valid = true
-    @test !C3._ctsem_local_due(lc, x)
+    @test !C3._ctsem_local_due(lc, x0)
+    S0 = copy(S)
+    S0[1, 1] = 0.0
+    at!(store, x0, S0)
     lc.since = 1
+    @test !C3._ctsem_local_due(lc, x0)
+    @test !lc.readers[1, 1] && lc.seen == 1
+    @test !C3._ctsem_local_due(lc, x0)
+    @test lc.seen == 1
+    at!(store, x, S)
     @test C3._ctsem_local_due(lc, x)
+    @test lc.readers == (S .!= 0)
+    @test lc.columns == collect(C)
     @test C3._ctsem_local_build!(lc, x) ≈ Pinv
     @test (lc.builds, lc.since, lc.spent) == (1, 0, cost)
     # Each rebuild waits twice as long as the last: at a cost of one
@@ -2114,15 +2126,19 @@ ContinuousTimeSEM._ctsem_local_columns(o::_LocalQuadratic, x::AbstractVector,
     carried.builds = 2
     carried.since = 0
     @test !C3._ctsem_local_due(carried, x)
-    @test !isempty(carried.columns)
+    at!(store, x0, S)
+    @test !C3._ctsem_local_due(carried, x0)
+    @test carried.columns == collect(C)
     carried.since = ceil(Int, 4 * carried.cost)
-    @test C3._ctsem_local_due(carried, x)
+    @test C3._ctsem_local_due(carried, x0)
     shared = C3.CTSEMLocalCurvature(_LocalQuadratic(H), C3.CTSEMScoreStore(N, n),
         precision)
-    copyto!(shared.store.S, randn(rng, N, n)); shared.store.x .= x
-    shared.store.valid = true
     shared.since = 100
+    at!(shared.store, x, randn(rng, N, n))
     @test !C3._ctsem_local_due(shared, x)
+    @test !shared.done
+    at!(shared.store, x0, randn(rng, N, n))
+    @test !C3._ctsem_local_due(shared, x0)
     @test shared.done
 
     # L-BFGS on the quadratic: with the local curvature it reaches the minimum
