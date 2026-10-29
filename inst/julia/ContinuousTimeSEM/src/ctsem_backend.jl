@@ -2075,9 +2075,10 @@ _ctsem_optimise_label(p::CTSEMPinnedObjective) =
 _ctsem_optimise_setup!(p::CTSEMPinnedObjective) = _ctsem_optimise_setup!(p.objective)
 _ctsem_pinned_point(p::CTSEMPinnedObjective, x) =
     (y = collect(Float64, x); y[p.index] .= p.value; y)
-_ctsem_anchor_start!(p::CTSEMPinnedObjective, x) =
-    _ctsem_anchor_start!(p.objective, _ctsem_pinned_point(p, x))
+_ctsem_anchor_start!(p::CTSEMPinnedObjective, x; kwargs...) =
+    _ctsem_anchor_start!(p.objective, _ctsem_pinned_point(p, x); kwargs...)
 _ctsem_anchor_here!(p::CTSEMPinnedObjective) = _ctsem_anchor_here!(p.objective)
+_ctsem_anchor_modes(p::CTSEMPinnedObjective) = _ctsem_anchor_modes(p.objective)
 _ctsem_anchor_finish!(p::CTSEMPinnedObjective, x) =
     _ctsem_anchor_finish!(p.objective, _ctsem_pinned_point(p, x))
 _ctsem_optimise_log(p::CTSEMPinnedObjective, verbose::Bool) =
@@ -2773,6 +2774,7 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
     saem_proposal::AbstractString="rw",
     progress_overwrite::Bool=true, progress_sink=nothing,
     progress_callback=nothing, callback_every::Real=0.4, stop=nothing,
+    checkpoint_every::Real=0.0, resume_units=nothing, resume_values=nothing,
     progress::Bool=verbose, progress_label::AbstractString="optimise",
     progress_budget::Bool=false, progress_every::Real=0.0,
     gap_tol::Real=0.0, converge_tol::Real=1e-6,
@@ -2815,8 +2817,10 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
     label = _ctsem_optimise_label(objective)
     _ctsem_optimise_setup!(objective)
     # Each unit's inner solve anchored at its mode at the last accepted point,
-    # from a search here; see `_ctsem_anchor_start!`.
-    _ctsem_anchor_start!(objective, start_values)
+    # from a search here, which also starts from a checkpoint's modes where a
+    # resume brings them; see `_ctsem_anchor_start!`.
+    _ctsem_anchor_start!(objective, start_values; resume_units=resume_units,
+        resume_values=resume_values)
     # The route's own call accounting, or `nothing` where it keeps none. Passed
     # to every trial so the counting happens where the validity is decided.
     call_log = _ctsem_optimise_log(objective, verbose)
@@ -2969,6 +2973,10 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
     # `callback_every` is its cadence in seconds; a test sets 0 to hear every
     # iteration.
     watcher = CTSEMCallback(progress_callback; every=callback_every)
+    # A checkpoint every `checkpoint_every` seconds (0: none): the callback is
+    # then forced, and handed the anchored modes beside the point
+    # (`_ctsem_checkpoint_modes`).
+    checkpoint_last = Ref(time())
     # How far this run has come toward the nearest of its stopping rules; see
     # `CTSEMConvergence`. Fed every iteration rather than every printed line,
     # because the scales it interpolates on are the worst gradient and the
@@ -3050,8 +3058,11 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
         # interrupted, because nothing is written until the fit returns --
         # which has cost a run here. `current_x` is the last accepted trial,
         # the same point the reported objective and gradient describe.
+        ck_modes = _ctsem_checkpoint_modes(watcher, objective, checkpoint_last,
+            checkpoint_every)
         _invoke_callback(watcher, latest.iteration, Int(maxiter),
-            -latest.value, latest.g_norm, current_x)
+            -latest.value, latest.g_norm, current_x,
+            _ctsem_checkpoint_args(ck_modes)...; force=ck_modes !== nothing)
         in_sgd[] && return false
         if stop !== nothing && stop(latest) === true
             stopped_by_stop[] = true
@@ -3295,8 +3306,11 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
         # And the caller's callback, with the finish's own iterate: without
         # this a checkpointing callback stopped at the stall that started the
         # finish, and on the SNSF pilot the finish was the next five hours.
+        ck_modes = _ctsem_checkpoint_modes(watcher, objective, checkpoint_last,
+            checkpoint_every)
         _invoke_callback(watcher, state.iteration, Int(maxiter), -state.value,
-            state.g_norm, state.x === nothing ? current_x : state.x)
+            state.g_norm, state.x === nothing ? current_x : state.x,
+            _ctsem_checkpoint_args(ck_modes)...; force=ck_modes !== nothing)
         return false
     end
     while finishing && stop_reason in ("gap", "linesearch", "gradient", "progress")
@@ -3461,7 +3475,9 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
     # finishes inside one interval would otherwise never fire at all, and the
     # final state is the one a live plot most needs.
     _invoke_callback(watcher, iterations, Int(maxiter),
-        final.value, gradient_norm, minimizer; force=true)
+        final.value, gradient_norm, minimizer,
+        _ctsem_checkpoint_args(_ctsem_checkpoint_modes(watcher, objective,
+            checkpoint_last, checkpoint_every; force=true))...; force=true)
     # A saturated transform reports a zero gradient, and a zero gradient is
     # indistinguishable from an optimum.
     #

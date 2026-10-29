@@ -616,3 +616,43 @@ test_that("anchored solves reach the searched modes, and a fit leaves none", {
   expect_equal(anchored$estimate$raw[1], searched$estimate$raw[1], tolerance = 1e-4)
   expect_equal(held(ctsem:::.ctJuliaObjective(anchored, hybrid = TRUE)), 0)
 })
+
+test_that("a checkpoint keeps the point and the anchored modes, and a fit resumes from it", {
+  skip_without_julia()
+  path <- tempfile(fileext = ".rds")
+  on.exit(unlink(path), add = TRUE)
+  data <- .modes_sign_data()
+  fitto <- function(model, maxiter) {
+    set.seed(5)
+    suppressWarnings(ctFit(data, model, backend = "julia", intoverpop = "laplace",
+      cores = 1L, optimcontrol = list(laplace_correct = FALSE, estonly = TRUE,
+        maxiter = maxiter, checkpoint = path)))
+  }
+  first <- suppressMessages(fitto(.modes_sign_model(), 4L))
+  expect_true(file.exists(path))
+  saved <- readRDS(path)
+  expect_identical(saved$format, "ctsem checkpoint")
+  expect_equal(saved$raw, as.numeric(first$estimate$raw))
+  # Every unit's anchored mode, each a loading effect, and the mirror maxima
+  # the sum over a unit's maxima follows beside them.
+  expect_setequal(unique(saved$modes$units), seq_len(length(unique(data$id))))
+  expect_true(all(is.finite(saved$modes$values[1, ])))
+
+  # The same call again starts where the first stopped, its search starting
+  # from the saved modes too, which it keeps no further.
+  expect_message(second <- fitto(.modes_sign_model(), 40L),
+    "Resuming from the checkpoint")
+  expect_gte(second$estimate$loglik, first$estimate$loglik - 1e-8)
+  known <- second$model_spec$laplace$known
+  expect_true(is.null(known) || length(known$units) < length(saved$modes$units))
+
+  # Written for another model, the file is not overwritten.
+  other <- suppressWarnings(suppressMessages(ctModel(type = "ct", id = "id",
+    manifestNames = "Y1", latentNames = "eta1", LAMBDA = matrix("lambda"),
+    DRIFT = matrix("drift"), DIFFUSION = matrix(0.8), MANIFESTVAR = matrix(0.3),
+    MANIFESTMEANS = matrix(0), T0MEANS = matrix(0), T0VAR = matrix(1),
+    CINT = matrix(0))))
+  other$pars$indvarying <- other$pars$param %in% "lambda"
+  expect_error(suppressMessages(fitto(other, 4L)), "written for another model")
+  expect_identical(readRDS(path)$npar, saved$npar)
+})

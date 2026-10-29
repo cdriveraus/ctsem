@@ -5532,6 +5532,73 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
     length(model_spec$manifest_data) >= .ctCoresetAutoCells
 }
 
+# A fit's checkpoint (`optimcontrol$checkpoint`, a file path): what
+# `.ctJuliaOptimise()` writes there and the start a fit takes from it. NULL
+# where none is asked for. Where the file exists it is read: written for the
+# same parameters (count and names) it gives the start (`start`, the raw point)
+# and the anchored modes (`resume`); written for another model, the fit stops
+# rather than overwrite it. `every` is the seconds between writes
+# (`optimcontrol$checkpoint_every`, default 60). Not on the state-explicit
+# target, whose point includes the states.
+.ctJuliaCheckpoint <- function(optimcontrol, model_spec, npar, intoverstates = TRUE) {
+  path <- optimcontrol$checkpoint
+  if (is.null(path)) return(NULL)
+  if (!is.character(path) || length(path) != 1L || !nzchar(path)) {
+    stop("optimcontrol$checkpoint must be a file path.", call. = FALSE)
+  }
+  if (!isTRUE(intoverstates)) {
+    stop("optimcontrol$checkpoint is not available with intoverstates = FALSE.",
+      call. = FALSE)
+  }
+  every <- as.numeric(.ctJuliaOr(optimcontrol$checkpoint_every, 60))[1L]
+  names <- .ctBackendRawParameterNames(list(model_spec = model_spec), npar)
+  out <- list(path = path.expand(path), every = every, npar = npar, names = names)
+  if (!file.exists(out$path)) return(out)
+  saved <- tryCatch(readRDS(out$path), error = function(e) NULL)
+  if (!is.list(saved) || !identical(saved$format, "ctsem checkpoint")) {
+    stop(out$path, " is not a ctsem checkpoint; remove it or name another file.",
+      call. = FALSE)
+  }
+  if (!identical(as.integer(saved$npar), as.integer(npar)) ||
+      !identical(as.character(saved$names), names) ||
+      length(saved$raw) != npar || !all(is.finite(saved$raw))) {
+    stop("The checkpoint at ", out$path, " was written for another model; ",
+      "remove it or name another file.", call. = FALSE)
+  }
+  out$start <- as.numeric(saved$raw)
+  units <- as.integer(saved$modes$units)
+  if (length(units) && any(units > 0L)) out$resume <- saved$modes
+  message("Resuming from the checkpoint at ", out$path, ": iteration ",
+    saved$iteration, ", log posterior ", format(saved$objective, digits = 10), ".")
+  out
+}
+
+# Writes a checkpoint (`.ctJuliaCheckpoint()`): the raw point the engine's
+# callback reported, its log posterior and iteration, and the anchored modes
+# (`mode_units`, NaN-padded `mode_values`; unit 0 where the route anchors
+# none). To a temporary file moved into place, so an interrupted write leaves
+# the last checkpoint whole.
+.ctJuliaCheckpointWrite <- function(checkpoint, iteration, objective, parameters,
+  mode_units, mode_values) {
+  raw <- as.numeric(parameters)
+  if (length(raw) != checkpoint$npar || !all(is.finite(raw))) return(invisible(FALSE))
+  record <- list(format = "ctsem checkpoint", version = 1L,
+    ctsem = as.character(utils::packageVersion("ctsem")),
+    npar = checkpoint$npar, names = checkpoint$names,
+    iteration = as.integer(iteration), objective = as.numeric(objective), raw = raw,
+    modes = list(units = as.integer(mode_units), values = as.matrix(mode_values)),
+    written = Sys.time())
+  dir <- dirname(checkpoint$path)
+  if (!dir.exists(dir)) dir.create(dir, recursive = TRUE)
+  temp <- tempfile(paste0(basename(checkpoint$path), "."), tmpdir = dir)
+  saveRDS(record, temp)
+  if (!file.rename(temp, checkpoint$path)) {
+    unlink(temp)
+    stop("could not move the new checkpoint into place")
+  }
+  invisible(TRUE)
+}
+
 # How many times a run resumes with modes kept as starts (`.ctJuliaOptimise()`)
 # -- a jump's, or better ones its closing search found -- before it is left.
 .ctJuliaKnownRounds <- 4L
@@ -5606,7 +5673,7 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
   gradient = "adjoint", cores = 1L, verbose = 0L, maxiter = NULL,
   callback = NULL, objective = NULL, progress_label = NULL,
   progress_budget = FALSE, pin = NULL, carried = NULL, inverse = NULL,
-  hessian = NULL, hessian_at = NULL, walked = FALSE) {
+  hessian = NULL, hessian_at = NULL, walked = FALSE, checkpoint = NULL) {
   spec <- structure(model_spec, class = c("ctJuliaModel", "ctFitModel"))
   # A caller may hand in the objective to maximise. `intoverstates=FALSE` does,
   # passing the joint one over `[theta; z]`; everything below is unchanged by
@@ -5806,6 +5873,22 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
   # JuliaConnectoR a callback costs 0.5 ms, which is nothing occasionally and
   # 17% of a three-second fit at every iteration.
   failure <- NULL
+  # A checkpoint (`optimcontrol$checkpoint`, read by `.ctJuliaCheckpoint()`):
+  # the engine forces the callback every `every` seconds and at a run's end,
+  # handing it the anchored modes beside the point, and the file is written
+  # then. The modes a resume brings (`resume`) are further starts for each
+  # run's opening search (`_ctsem_anchor_start!`).
+  if (!is.null(checkpoint)) {
+    common$checkpoint_every <- as.numeric(checkpoint$every)
+    if (!is.null(checkpoint$resume)) {
+      values <- as.matrix(checkpoint$resume$values)
+      storage.mode(values) <- "double"
+      common$resume_units <- .ctJuliaVector(as.integer(checkpoint$resume$units))
+      common$resume_values <- values
+    }
+    if (is.null(callback)) callback <- function(iteration, total, objective,
+      gradient_norm) NULL
+  }
   if (!is.null(callback)) {
     if (!is.function(callback)) {
       stop("optimcontrol$callback must be a function of (iteration, total, ",
@@ -5829,7 +5912,7 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
     fmls <- names(formals(callback))
     wants_pars <- length(fmls) >= 5L || "..." %in% fmls
     common$progress_callback <- function(iteration, total, objective,
-      gradient_norm, parameters) {
+      gradient_norm, parameters, mode_units = NULL, mode_values = NULL) {
       if (alive) {
         tryCatch(if (wants_pars)
             callback(iteration, total, objective, gradient_norm, parameters)
@@ -5838,6 +5921,18 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
             alive <<- FALSE
             failure <<- conditionMessage(e)
           })
+      }
+      # Not swallowed with the callback's errors: a checkpoint that cannot be
+      # written says so once, and the fit goes on.
+      if (!is.null(checkpoint) && !is.null(mode_units)) {
+        written <- tryCatch(.ctJuliaCheckpointWrite(checkpoint, iteration,
+          objective, parameters, mode_units, mode_values), error = function(e)
+          conditionMessage(e))
+        if (is.character(written) && is.null(checkpoint$failed)) {
+          checkpoint$failed <<- written
+          warning("The checkpoint could not be written to ", checkpoint$path,
+            ": ", written, call. = FALSE)
+        }
       }
       NULL
     }
@@ -6484,6 +6579,10 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
       "Free a parameter, or use fit = FALSE to prepare the model without ",
       "fitting it.", call. = FALSE)
   }
+  # A checkpoint from an earlier run of this fit is its start, and its modes
+  # the opening search's further starts (`.ctJuliaCheckpoint()`).
+  checkpoint <- .ctJuliaCheckpoint(optimcontrol, model_spec, npar, intoverstates)
+  if (!is.null(checkpoint$start)) inits <- checkpoint$start
   start <- .ctJuliaInitialValues(npar, inits,
     initsd = .ctJuliaOr(optimcontrol$initsd, .01), spec = model_spec)
   # Starting values read off the data, for the diagonals whose defaults are
@@ -6759,8 +6858,11 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
   result <- keepknown(.ctJuliaOptimise(model_spec, start,
     optimcontrol = startcontrol, gradient = gradient, cores = cores,
     verbose = verbose, callback = optimcontrol$callback,
-    objective = jointobjective))
+    objective = jointobjective, checkpoint = checkpoint))
   optimum <- as.numeric(result$minimizer)[seq_len(npar)]
+  # Its modes were the first run's further starts; later runs start from
+  # their own (`laplace_known`).
+  if (!is.null(checkpoint)) checkpoint$resume <- NULL
   moved <- FALSE
   if (!is.null(substeps) && isTRUE(substeps$finite)) {
     before <- model_spec$max_timestep
@@ -6786,7 +6888,7 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
         list(saem = FALSE, stochastic = FALSE, batch = FALSE)), gradient = gradient,
       cores = cores,
       verbose = verbose, callback = optimcontrol$callback,
-      objective = jointobjective), first))
+      objective = jointobjective, checkpoint = checkpoint), first))
   }
   if (!is.null(substeps)) message(.ctJuliaSubstepMessage(substeps))
   # What the curvature says about the point the optimiser stopped at, and a
@@ -6913,7 +7015,8 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
       certified_stage <- function(from) {
         stage <- keepknown(.ctJuliaOptimise(model_spec, from,
           optimcontrol = stagecontrol, gradient = gradient, cores = cores,
-          verbose = verbose, callback = optimcontrol$callback))
+          verbose = verbose, callback = optimcontrol$callback,
+          checkpoint = checkpoint))
         correct(.ctJuliaAddRunCounts(stage, result))
       }
       curvature <- correction$hessian
