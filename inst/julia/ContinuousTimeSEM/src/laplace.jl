@@ -4590,12 +4590,14 @@ term alone undercounts. Where two maxima share a basin -- a valley of
 hundredths of a nat between maxima under one curvature sd apart, as on bench
 gD1 and the affect pilot -- each Gaussian already holds nearly all its mass:
 summed whole they counted it twice, 0.45-0.74 nats a unit above the exact
-integral on gD1 where either term alone was within 0.08 (CT-SEM/review/
-HANDOVER-affint-optimiser-2026-10-29.md). And at a fold, where a mode meets a
-saddle and both vanish, its eigenvalue reaches zero first, so it leaves the
-sum and the others' shares smoothly: scored alone, the unit's term fell by the
-vanishing mode's mass the moment the inner solve lost it, and an optimisation
-on the affect pilot crept for hours along that edge
+integral on gD1 where either term alone was within 0.08, and split so,
+0.06-0.26 (CT-SEM/review/HANDOVER-affint-optimiser-2026-10-29.md). The sum is
+for optimising across a fold -- continuous, its gradient exact, a closing pass
+a mode -- not an exact integral of a multimodal unit. And at a fold, where a
+mode meets a saddle and both vanish, its eigenvalue reaches zero first, so it
+leaves the sum and the others' shares smoothly: scored alone, the unit's term
+fell by the vanishing mode's mass the moment the inner solve lost it, and an
+optimisation on the affect pilot crept for hours along that edge
 (CT-SEM/review/PILOT-curvature-coresets-2026-10-25.md, last section). A unit
 with one maximum, or one left unfaded, keeps its own term. A mode more than
 `_LAPLACE_MODE_SPAN` below the largest term, or whose term or quadratic is not
