@@ -978,7 +978,10 @@ function _ctsem_subset_objective(L::CTSEMLaplaceObjective, keep::AbstractVector{
         # Part of the objective, not state: the subset's units keep theirs.
         :known => L.known[keep],
         # The run's, for the units the subset holds.
-        :anchors => isempty(L.anchors) ? Vector{Float64}[] : L.anchors[keep])
+        :anchors => isempty(L.anchors) ? Vector{Float64}[] : L.anchors[keep],
+        :alt_modes => [Vector{Float64}[] for _ in 1:n],
+        :alt_anchors => isempty(L.alt_anchors) ? Vector{Vector{Float64}}[] :
+            L.alt_anchors[keep])
     args = map(fieldnames(typeof(L))) do name
         haskey(fresh, name) && return fresh[name]
         v = getfield(L, name)
@@ -2707,7 +2710,7 @@ function _ctsem_local_columns(o::CTSEMLaplaceObjective, x::AbstractVector,
     xe = _laplace_extend(o, xv)
     gp0 = zeros(length(xe))
     _ctsem_log_prior_gradient!(gp0, o.objective, xe)
-    base = deepcopy(o.modes)
+    base = _laplace_mode_snapshot(o)
     Sc = zeros(NU, n)
     done = 0
     previous = ctsem_set_warm_start!(true)

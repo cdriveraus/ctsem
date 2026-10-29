@@ -710,6 +710,15 @@ mutable struct CTSEMLaplaceObjective{O} <: CTSEMOptimisable
     # every evaluation's solve then starts from instead of searching
     # (`_laplace_solve_unit_mode!`, `_ctsem_anchor_start!`); empty outside one.
     anchors::Vector{Vector{Float64}}
+    # Per unit, its other maxima at the last evaluation, beside `modes`, which
+    # holds the one of largest term; empty for a unit with one. A unit with
+    # more is scored by the sum over them (`_laplace_mode_sum`). Rebound per
+    # unit, never written in place.
+    alt_modes::Vector{Vector{Vector{Float64}}}
+    # Within an optimisation, each unit's other maxima at the last accepted
+    # point, each followed from there as `anchors` follows its mode
+    # (`_laplace_follow_modes`); empty outside one.
+    alt_anchors::Vector{Vector{Vector{Float64}}}
 end
 
 # `gate_lo = 0.2` and `gate_hi = 0.7` are measured, not derived: see the
@@ -734,7 +743,8 @@ function CTSEMLaplaceObjective(objective::CTSEMObjective, spec::CTSEMLaplaceSpec
         Float64(gate_hi), 0, quadratic, affine,
         inert === nothing ? Vector{Vector{Int}}[] : inert,
         isempty(known) ? [Vector{Float64}[] for _ in 1:nunits] : known,
-        Vector{Float64}[])
+        Vector{Float64}[], [Vector{Float64}[] for _ in 1:nunits],
+        Vector{Vector{Float64}}[])
 end
 
 """
@@ -3606,8 +3616,25 @@ function _laplace_solve_unit_mode!(laplace::CTSEMLaplaceObjective, U::Integer,
     if !retain && !isempty(laplace.anchors) && length(laplace.anchors[U]) == d
         held = _laplace_newton_unit_mode(laplace, U, values, Ls, aws,
             laplace.anchors[U])
-        if held.converged && isfinite(held.value)
+        # A unit with other maxima follows each from its own anchor
+        # (`_laplace_follow_modes`); the sum over them decides its term
+        # (`_laplace_mode_sum`), and the first kept stands as its mode till then.
+        if _LAPLACE_MODE_SUM[] && !isempty(laplace.alt_anchors) &&
+                !isempty(laplace.alt_anchors[U])
+            kept = _laplace_follow_modes(laplace, U, values, Ls, aws, held)
+            if !isempty(kept)
+                lead = kept[1]
+                laplace.modes[U] = lead.u
+                laplace.alt_modes[U] = Vector{Float64}[m.u for m in kept[2:end]]
+                laplace.inner_iterations[U] = sum(m.iterations for m in kept)
+                laplace.inner_gradient[U] = maximum(m.gradmax for m in kept)
+                laplace.inner_converged[U] = true
+                laplace.hessian_repaired[U] = any(m.repaired for m in kept)
+                return (u=lead.u, value=lead.value, converged=true, final=lead.final)
+            end
+        elseif held.converged && isfinite(held.value)
             laplace.modes[U] = held.u
+            isempty(laplace.alt_modes[U]) || (laplace.alt_modes[U] = Vector{Float64}[])
             laplace.inner_iterations[U] = held.iterations
             laplace.inner_gradient[U] = held.gradmax
             laplace.inner_converged[U] = true
@@ -3615,6 +3642,9 @@ function _laplace_solve_unit_mode!(laplace::CTSEMLaplaceObjective, U::Integer,
             return (u=held.u, value=held.value, converged=true, final=held.final)
         end
     end
+    # The unit's other maxima as they stood, which a warm solve (`retain`)
+    # follows below.
+    previous_alts = laplace.alt_modes[U]
     # Newton copies its start, so neither needs a vector of its own.
     origin = _laplace_scratch_vector!(laplace, Float64, d, :mode_origin)
     retained = retain ? laplace.modes[U] : fill!(origin, 0.0)
@@ -3669,14 +3699,30 @@ function _laplace_solve_unit_mode!(laplace::CTSEMLaplaceObjective, U::Integer,
     # second maximum to find, and screening for one cost 25-50% of an
     # evaluation on random-intercept models, values unchanged
     # (scripts/gsm-uncertainty-2026-10/warm_reference.R).
+    # Every maximum the search reaches, for the sum over them
+    # (`_laplace_mode_sum`); the choice of one below is the probes' as before.
+    set = (_LAPLACE_MODE_SUM[] && best.converged) ? Any[best] : nothing
+    # A warm solve follows the unit's other maxima from where they stood, as
+    # an anchored one does: a Hessian's differencing points all start from the
+    # same modes (`_laplace_mode_snapshot`), every one of them.
+    if set !== nothing && retain
+        for a in previous_alts
+            length(a) == d || continue
+            r = _laplace_newton_unit_mode(laplace, U, values, Ls, aws, a)
+            (r.converged && isfinite(r.value)) || continue
+            _laplace_mode_join!(set, laplace, U, values, Ls, aws, r)
+        end
+    end
     if _LAPLACE_MODE_PROBES[] && !laplace.quadratic && best.converged && 0 < d &&
             !(fromwarm && _LAPLACE_WARM_START[])
-        best = _laplace_probe_modes(laplace, U, values, Ls, aws, best)
+        best = _laplace_probe_modes(laplace, U, values, Ls, aws, best; set=set)
     end
     # And from the modes the fit saw where this unit's term jumped.
     (best.converged && !isempty(laplace.known[U])) &&
-        (best = _laplace_known_modes(laplace, U, values, Ls, aws, best))
+        (best = _laplace_known_modes(laplace, U, values, Ls, aws, best; set=set))
     laplace.modes[U] = best.u
+    laplace.alt_modes[U] = set === nothing ? Vector{Float64}[] :
+        Vector{Float64}[m.u for m in set if _laplace_maxabsdiff(m.u, best.u) >= 1e-4]
     laplace.inner_iterations[U] = best.iterations
     laplace.inner_gradient[U] = best.gradmax
     laplace.inner_converged[U] = best.converged
@@ -3689,6 +3735,7 @@ end
 found at once."""
 function _laplace_record_empty_mode!(laplace::CTSEMLaplaceObjective, U::Integer)
     isempty(laplace.modes[U]) || (laplace.modes[U] = Float64[])
+    isempty(laplace.alt_modes[U]) || (laplace.alt_modes[U] = Vector{Float64}[])
     laplace.inner_iterations[U] = 0
     laplace.inner_gradient[U] = 0.0
     laplace.inner_converged[U] = true
@@ -4113,7 +4160,8 @@ with two modes of comparable mass is one no single-mode term approximates, and
 the quadrature correction is the remedy there (`ctLaplaceCheck`).
 """
 function _laplace_probe_modes(laplace::CTSEMLaplaceObjective, U::Integer,
-    values::AbstractVector{Float64}, Ls::Vector{Matrix{Float64}}, aws, found)
+    values::AbstractVector{Float64}, Ls::Vector{Matrix{Float64}}, aws, found;
+    set=nothing)
     d = length(found.u)
     M = found.curvature === nothing ?
         _laplace_block_dense(_laplace_unit_curvature(laplace, U, values, Ls,
@@ -4304,6 +4352,7 @@ function _laplace_probe_modes(laplace::CTSEMLaplaceObjective, U::Integer,
         (r.converged && isfinite(r.value)) || continue
         any(m -> _laplace_maxabsdiff(m, r.u) < 1e-4, seen) && continue
         push!(seen, r.u)
+        set === nothing || _laplace_mode_join!(set, laplace, U, values, Ls, aws, r)
         best, bestterm, better = _laplace_prefer_mode(laplace, U, values, Ls, aws,
             best, bestterm, r, found)
         better && (_CTSEM_OPCOUNT.probe_better[] += 1)
@@ -4360,7 +4409,8 @@ the modes alone the solve missed what the probes found, by up to 3.2 nats at
 a step of 0.3.
 """
 function _laplace_known_modes(laplace::CTSEMLaplaceObjective, U::Integer,
-    values::AbstractVector{Float64}, Ls::Vector{Matrix{Float64}}, aws, found)
+    values::AbstractVector{Float64}, Ls::Vector{Matrix{Float64}}, aws, found;
+    set=nothing)
     best = found
     bestterm = NaN
     d = length(found.u)
@@ -4370,6 +4420,7 @@ function _laplace_known_modes(laplace::CTSEMLaplaceObjective, U::Integer,
         _laplace_maxabsdiff(start, best.u) < 1e-4 && continue
         r = _laplace_newton_unit_mode(laplace, U, values, Ls, aws, start)
         (r.converged && isfinite(r.value)) || continue
+        set === nothing || _laplace_mode_join!(set, laplace, U, values, Ls, aws, r)
         _laplace_maxabsdiff(r.u, best.u) < 1e-4 && continue
         best, bestterm, _ = _laplace_prefer_mode(laplace, U, values, Ls, aws,
             best, bestterm, r, found)
@@ -4394,6 +4445,244 @@ function ctsem_set_mode_anchors!(on::Bool)
     previous = _LAPLACE_ANCHORS[]
     _LAPLACE_ANCHORS[] = on
     return previous
+end
+
+"""
+Whether a unit with more than one maximum is scored by the weighted sum of
+their Laplace masses (`_laplace_mode_sum`), or by the one of largest term, as
+before it. On by default; `ctsem_set_mode_sum!(false)` is the oracle.
+"""
+const _LAPLACE_MODE_SUM = Ref(true)
+
+"""
+    ctsem_set_mode_sum!(on)
+
+Turn the sum over a unit's maxima (`_laplace_mode_sum`) on or off. Returns the
+previous setting.
+"""
+function ctsem_set_mode_sum!(on::Bool)
+    previous = _LAPLACE_MODE_SUM[]
+    _LAPLACE_MODE_SUM[] = on
+    return previous
+end
+
+"""
+The smallest eigenvalue of a mode's curvature, in prior units, below which its
+mass fades out of its unit's sum (`_laplace_mode_sum`): at a fold the mode
+meets a saddle, and its smallest eigenvalue, and with it the weight, reach
+zero there.
+"""
+const _LAPLACE_MODE_FADE = 0.1
+
+"""
+How far below a unit's largest term, in nats, another maximum's may lie and
+still be kept in its sum (`_laplace_mode_sum`): past it the mode's mass is
+under 1e-11 of the largest's, and following it would cost a solve at every
+evaluation.
+"""
+const _LAPLACE_MODE_SPAN = 25.0
+
+# A mode's weight in its unit's sum as a function of its smallest eigenvalue
+# over `_LAPLACE_MODE_FADE`, and its derivative: the quintic smoothstep, zero
+# at and below 0, one at and above 1, its first and second derivatives zero at
+# both ends, so the sum's gradient is continuous where a mode starts to fade.
+@inline function _laplace_fade_weight(x::Float64)
+    x <= 0 && return 0.0
+    x >= 1 && return 1.0
+    return x^3 * (10 - 15 * x + 6 * x^2)
+end
+@inline function _laplace_fade_slope(x::Float64)
+    (x <= 0 || x >= 1) && return 0.0
+    return 30 * x^2 * (1 - x)^2
+end
+
+"""
+    _laplace_mode_join!(set, laplace, U, values, Ls, aws, r)
+
+Newton's end point `r` into `set`, unit `U`'s maxima so far (Newton results):
+one on another's slope -- no dip between them (`_laplace_modes_separated`) --
+is that one, kept where it is higher; one a valley parts from every other
+joins. The search chooses between them as before (`_laplace_prefer_mode`);
+this keeps them all, for the sum over them (`_laplace_mode_sum`).
+"""
+function _laplace_mode_join!(set::Vector{Any}, laplace::CTSEMLaplaceObjective,
+    U::Integer, values::AbstractVector{Float64}, Ls::Vector{Matrix{Float64}}, aws, r)
+    for k in eachindex(set)
+        m = set[k]
+        _laplace_maxabsdiff(m.u, r.u) < 1e-4 && return set
+        if !_laplace_modes_separated(laplace, U, values, Ls, aws, m, r)
+            r.value > m.value && (set[k] = r)
+            return set
+        end
+    end
+    push!(set, r)
+    return set
+end
+
+"""
+    _laplace_left_basin(laplace, U, values, Ls, aws, anchor, r)
+
+Whether Newton from `anchor` ended at `r` in another basin than the one it
+started in: `g_U` dips between them (`_laplace_modes_separated`).
+"""
+function _laplace_left_basin(laplace::CTSEMLaplaceObjective, U::Integer,
+    values::AbstractVector{Float64}, Ls::Vector{Matrix{Float64}}, aws,
+    anchor::Vector{Float64}, r)
+    _laplace_maxabsdiff(anchor, r.u) < 1e-4 && return false
+    grad = _laplace_scratch_vector!(laplace, Float64, length(anchor), :basin_grad)
+    ga = _laplace_unit_objective_gradient(laplace, U, values, Ls, anchor, aws,
+        grad).value
+    isfinite(ga) || return true
+    return _laplace_modes_separated(laplace, U, values, Ls, aws,
+        (u=anchor, value=ga), r)
+end
+
+"""
+    _laplace_follow_modes(laplace, U, values, Ls, aws, held)
+
+Within an optimisation, unit `U`'s maxima followed from the run's anchors:
+`held`, Newton's end from the unit's anchor, and Newton from each of its other
+anchors (`alt_anchors`), as Newton results, the first one the unit's mode. One
+that converged onto another's mode, or left its anchor's basin
+(`_laplace_left_basin`), has gone -- past a fold, where its weight in the sum
+had already faded to nothing -- and is dropped. No mode joins that the run's
+anchors do not hold, so the sum changes only as its modes fade. Empty where
+none converged; the solve then searches.
+"""
+function _laplace_follow_modes(laplace::CTSEMLaplaceObjective, U::Integer,
+    values::AbstractVector{Float64}, Ls::Vector{Matrix{Float64}}, aws, held)
+    kept = Any[]
+    if held.converged && isfinite(held.value) &&
+            !_laplace_left_basin(laplace, U, values, Ls, aws, laplace.anchors[U], held)
+        push!(kept, held)
+    end
+    d = laplace.units.dims[U]
+    for a in laplace.alt_anchors[U]
+        length(a) == d || continue
+        r = _laplace_newton_unit_mode(laplace, U, values, Ls, aws, a)
+        (r.converged && isfinite(r.value)) || continue
+        any(m -> _laplace_maxabsdiff(m.u, r.u) < 1e-4, kept) && continue
+        _laplace_left_basin(laplace, U, values, Ls, aws, a, r) && continue
+        push!(kept, r)
+    end
+    return kept
+end
+
+"""
+    _laplace_mode_sum(laplace, U, theta, Ls, aws, primal)
+
+Unit `U`'s term where its inner problem has more than one maximum (`modes[U]`
+and `alt_modes[U]`, `primal` the first's `_laplace_unit_primal`): the log of
+the sum of their Laplace masses, each weighted to fade at a fold,
+
+    T = log sum_k w_k exp(t_k) - log max_k w_k,   w_k = s(lambda_k / fade),
+
+`t_k` the mode's term, `lambda_k` its curvature's smallest eigenvalue
+(`_laplace_mode_fade`), `s` the smoothstep `_laplace_fade_weight` and `fade`
+`_LAPLACE_MODE_FADE`. Between maxima a valley parts, the masses add, which
+either's term alone undercounts. And at a fold, where a mode meets a saddle and
+both vanish, its eigenvalue reaches zero first, so it leaves the sum smoothly:
+scored alone, the unit's term fell by the vanishing mode's mass the moment the
+inner solve lost it, and an optimisation on the affect pilot crept for hours
+along that edge (CT-SEM/review/PILOT-curvature-coresets-2026-10-25.md, last
+section). The price is that a mode near its fold is undercounted, where no
+Gaussian at either maximum counts its mass rightly anyway. The `max w` keeps a
+unit with one maximum at its own term. A mode more than `_LAPLACE_MODE_SPAN`
+below the largest term, or whose term is not finite, is dropped.
+
+Writes `modes[U]` (the mode of largest term, which every other reader of the
+objective takes as the unit's) and `alt_modes[U]` (the rest kept). Returns the
+modes, their primals, the term, each mode's share `pi` of its own gradient and
+`coef` of its eigenvalue's in the term's (`_laplace_mode_sum_gradient!`), and
+the index of the largest term, `dominant`.
+"""
+function _laplace_mode_sum(laplace::CTSEMLaplaceObjective, U::Integer,
+    theta::Vector{Float64}, Ls, aws, primal)
+    all_modes = vcat([laplace.modes[U]], laplace.alt_modes[U])
+    all_prims = Any[primal]
+    for k in 2:length(all_modes)
+        push!(all_prims, _laplace_unit_primal(laplace, U, theta, Ls, all_modes[k], aws))
+    end
+    all_terms = Float64[p.term for p in all_prims]
+    finite = findall(isfinite, all_terms)
+    isempty(finite) &&
+        return _laplace_one_mode(all_terms[1], all_modes[1], all_prims[1])
+    top = maximum(view(all_terms, finite))
+    keep = Int[k for k in finite if all_terms[k] >= top - _LAPLACE_MODE_SPAN]
+    modes = all_modes[keep]
+    prims = all_prims[keep]
+    terms = all_terms[keep]
+    K = length(keep)
+    dominant = argmax(terms)
+    laplace.modes[U] = modes[dominant]
+    laplace.alt_modes[U] = Vector{Float64}[modes[k] for k in 1:K if k != dominant]
+    K == 1 && return _laplace_one_mode(terms[1], modes[1], prims[1])
+    fade = _LAPLACE_MODE_FADE
+    lam = Float64[]
+    for k in 1:K
+        f = _laplace_mode_fade(laplace, U, theta, modes[k])
+        # One whose eigenvalue cannot be had counts whole, with no slope.
+        push!(lam, f === nothing ? Inf : f.lam)
+    end
+    w = Float64[_laplace_fade_weight(l / fade) for l in lam]
+    wmax, kw = findmax(w)
+    wmax > 0 || return _laplace_one_mode(terms[dominant], modes[dominant],
+        prims[dominant])
+    ex = Float64[exp(t - top) for t in terms]
+    Z = sum(w[k] * ex[k] for k in 1:K)
+    value = top + log(Z) - log(wmax)
+    pi = Float64[w[k] * ex[k] / Z for k in 1:K]
+    coef = Float64[(ex[k] / Z - (k == kw ? 1 / wmax : 0.0)) *
+        _laplace_fade_slope(lam[k] / fade) / fade for k in 1:K]
+    return (value=value, modes=modes, prims=prims, pi=pi, coef=coef,
+        dominant=dominant)
+end
+
+# `_laplace_mode_sum`'s result for a unit scored by one mode alone.
+_laplace_one_mode(term, mode, prim) = (value=term, modes=[mode], prims=Any[prim],
+    pi=[1.0], coef=[0.0], dominant=1)
+
+"""
+    _laplace_mode_sum_gradient!(row, laplace, U, theta, Ls, dLlevels, dLsolved, s)
+
+Unit `U`'s gradient where its term is a sum over its maxima
+(`_laplace_mode_sum`'s `s`), into `row`: each mode's own gradient by its own
+route (`_laplace_unit_gradient_route!`, the unit's records set to that mode's
+for the call) times its share `pi`, and each mode's eigenvalue's gradient
+(`_laplace_mode_fade`) times `coef`. `false` where a route or a pass fails.
+"""
+function _laplace_mode_sum_gradient!(row::Vector{Float64},
+    laplace::CTSEMLaplaceObjective, U::Integer, theta::Vector{Float64}, Ls, dLlevels,
+    dLsolved, s)
+    fill!(row, 0.0)
+    part = zeros(Float64, length(theta))
+    saved_mode = laplace.modes[U]
+    saved_floored = laplace.logdet_floored[U]
+    saved_repaired = laplace.mode_repaired[U]
+    try
+        for k in eachindex(s.modes)
+            p = s.prims[k]
+            laplace.modes[U] = s.modes[k]
+            laplace.logdet_floored[U] = p.floored
+            laplace.mode_repaired[U] = p.fac.repaired
+            if s.pi[k] > 0
+                good, _ = _laplace_unit_gradient_route!(part, laplace, U, theta, Ls,
+                    dLlevels, dLsolved, p.gated, p.M, (p.fac.factors, p.fac.coupling))
+                good || return false
+                row .+= s.pi[k] .* part
+            end
+            if s.coef[k] != 0
+                f = _laplace_mode_fade(laplace, U, theta, s.modes[k]; gradient=true)
+                (f === nothing || f.grad === nothing) && return false
+                row .+= s.coef[k] .* f.grad
+            end
+        end
+    finally
+        laplace.modes[U] = saved_mode
+        laplace.logdet_floored[U] = saved_floored
+        laplace.mode_repaired[U] = saved_repaired
+    end
+    return all(isfinite, row)
 end
 
 """
@@ -4429,9 +4718,11 @@ _ctsem_anchor_start!(::CTSEMOptimisable, x) = nothing
 function _ctsem_anchor_start!(laplace::CTSEMLaplaceObjective, x::AbstractVector)
     laplace.anchors = Vector{Float64}[]
     _LAPLACE_ANCHORS[] || return nothing
+    laplace.alt_anchors = Vector{Vector{Float64}}[]
     r = ctsem_laplace_evaluate(laplace, collect(Float64, x); gradient=false)
     isfinite(r.value) || return nothing
     laplace.anchors = [copy(m) for m in laplace.modes]
+    laplace.alt_anchors = [Vector{Float64}[copy(m) for m in a] for a in laplace.alt_modes]
     return nothing
 end
 
@@ -4446,6 +4737,7 @@ _ctsem_anchor_here!(::CTSEMOptimisable) = nothing
 function _ctsem_anchor_here!(laplace::CTSEMLaplaceObjective)
     isempty(laplace.anchors) && return nothing
     laplace.anchors = [copy(m) for m in laplace.modes]
+    laplace.alt_anchors = [Vector{Float64}[copy(m) for m in a] for a in laplace.alt_modes]
     return nothing
 end
 
@@ -4471,11 +4763,14 @@ function _ctsem_anchor_finish!(laplace::CTSEMLaplaceObjective, x::AbstractVector
     catch err
         _ctsem_must_propagate(err) && rethrow()
         laplace.anchors = Vector{Float64}[]
+        laplace.alt_anchors = Vector{Vector{Float64}}[]
         return nothing
     end
     hu = collect(Float64, held.unit_loglik)
     hm = [copy(m) for m in laplace.modes]
+    ha = [Vector{Float64}[copy(m) for m in a] for a in laplace.alt_modes]
     laplace.anchors = Vector{Float64}[]
+    laplace.alt_anchors = Vector{Vector{Float64}}[]
     searched = try
         ctsem_laplace_evaluate(laplace, xv; gradient=false)
     catch err
@@ -4484,6 +4779,44 @@ function _ctsem_anchor_finish!(laplace::CTSEMLaplaceObjective, x::AbstractVector
     end
     su = collect(Float64, searched.unit_loglik)
     sm = [copy(m) for m in laplace.modes]
+    sa = [Vector{Float64}[copy(m) for m in a] for a in laplace.alt_modes]
+    # Under the sum over a unit's maxima (`_laplace_mode_sum`), its two sets of
+    # maxima: those only the anchored run held are kept, those only the search
+    # found were missed, and the gain is what the search's sum adds where it
+    # found more.
+    if _LAPLACE_MODE_SUM[]
+        keptu = Int[]; keptm = Vector{Float64}[]
+        missu = Int[]; missm = Vector{Float64}[]
+        setgain = 0.0
+        for U in eachindex(hu)
+            (isfinite(hu[U]) && isfinite(su[U])) || continue
+            isempty(hm[U]) && continue
+            hs = vcat([hm[U]], ha[U])
+            ss = vcat([sm[U]], sa[U])
+            held_only = [m for m in hs if !any(x -> _laplace_maxabsdiff(x, m) < 1e-4, ss)]
+            found_only = [m for m in ss if !any(x -> _laplace_maxabsdiff(x, m) < 1e-4, hs)]
+            for m in held_only
+                push!(keptu, U); push!(keptm, m)
+            end
+            for m in found_only
+                push!(missu, U); push!(missm, m)
+            end
+            isempty(found_only) || (setgain += max(su[U] - hu[U], 0.0))
+        end
+        packed(units, modes) = begin
+            isempty(units) && return ([0], zeros(1, 1))
+            width = maximum(length, modes; init=1)
+            m = fill(NaN, width, length(units))
+            for j in eachindex(units)
+                m[1:length(modes[j]), j] = modes[j]
+            end
+            (units, m)
+        end
+        ku, kv = packed(keptu, keptm)
+        mu, mv = packed(missu, missm)
+        return (kept_units=ku, kept_values=kv, missed_units=mu, missed_values=mv,
+            missed_gain=setgain)
+    end
     # Where the two ended at different points, which one the search's own rule
     # prefers (`_laplace_prefer_mode`): by the larger term only between
     # separate maxima. Compared by term alone, a stationary point beside a
@@ -4531,9 +4864,10 @@ run an interrupt ended before `_ctsem_anchor_finish!` could.
 """
 ctsem_laplace_clear_anchors!(::Any) = nothing
 ctsem_laplace_clear_anchors!(laplace::CTSEMLaplaceObjective) =
-    (laplace.anchors = Vector{Float64}[]; nothing)
+    (laplace.anchors = Vector{Float64}[];
+     laplace.alt_anchors = Vector{Vector{Float64}}[]; nothing)
 
-export ctsem_set_mode_anchors!, ctsem_laplace_clear_anchors!
+export ctsem_set_mode_anchors!, ctsem_laplace_clear_anchors!, ctsem_set_mode_sum!
 
 """
     _laplace_probe_span(laplace, U, Ls, d)
@@ -5434,7 +5768,8 @@ solve's and the primal's results each came back boxed through one.
 """
 function _laplace_store_unit_primal!(laplace::CTSEMLaplaceObjective, U::Integer,
     theta::Vector{Float64}, Ls, aws, primal_curvature, primal_matrices,
-    primal_gated, unit_loglik, chunk_ok, chunk_bad; retain::Bool=_LAPLACE_WARM_START[])
+    primal_gated, unit_loglik, chunk_ok, chunk_bad; retain::Bool=_LAPLACE_WARM_START[],
+    combo=nothing)
     b0 = _laplace_mark()
     # A unit with no coordinate has no mode to solve: the primal is its value.
     given = if laplace.units.dims[U] == 0
@@ -5452,6 +5787,20 @@ function _laplace_store_unit_primal!(laplace::CTSEMLaplaceObjective, U::Integer,
     laplace.logdet_floored[U] = primal.floored
     primal_gated[U] = primal.gated
     term = primal.term
+    # A unit with other maxima (`alt_modes`) is scored by the sum over them
+    # (`_laplace_mode_sum`); its records are the largest term's, and `combo`
+    # keeps what the gradient needs where more than one mode is summed.
+    if combo !== nothing && isfinite(term) && !isempty(laplace.alt_modes[U])
+        s = _laplace_mode_sum(laplace, U, theta, Ls, aws, primal)
+        p = s.prims[s.dominant]
+        laplace.mode_repaired[U] = p.fac.repaired
+        primal_curvature[U] = (p.fac.factors, p.fac.coupling)
+        primal_matrices[U] = p.M
+        laplace.logdet_floored[U] = p.floored
+        primal_gated[U] = p.gated
+        term = s.value
+        length(s.modes) > 1 && (combo[U] = s)
+    end
     if !isfinite(term)
         chunk_ok[_laplace_slot()] = false
         chunk_bad[_laplace_slot()] = term
@@ -6902,11 +7251,15 @@ function _laplace_evaluate(laplace::CTSEMLaplaceObjective, theta::Vector{Float64
     nslot = _laplace_pool_width()
     chunk_ok = fill(true, nslot)
     chunk_bad = fill(NaN, nslot)
+    # Per unit, what the gradient needs where its term is a sum over its
+    # maxima (`_laplace_mode_sum`); `nothing` for the rest.
+    combo = _LAPLACE_MODE_SUM[] ? Vector{Any}(nothing, nunits) : nothing
     run_primal = function (c)
         aws = _laplace_workspace!(laplace, Float64, length(theta))
         @inbounds for U in ranges[c]
             _laplace_store_unit_primal!(laplace, U, theta, Ls, aws, primal_curvature,
-                primal_matrices, primal_gated, unit_loglik, chunk_ok, chunk_bad) ||
+                primal_matrices, primal_gated, unit_loglik, chunk_ok, chunk_bad;
+                combo=combo) ||
                 return nothing
             term = unit_loglik[U]
             # A unit's term is the marginal likelihood of all its subjects
@@ -6988,9 +7341,15 @@ function _laplace_evaluate(laplace::CTSEMLaplaceObjective, theta::Vector{Float64
                 # assigns would be one boxed variable shared by every task.
                 local row, good, fell, w
                 row = rows[_laplace_slot()]
-                good, fell = _laplace_unit_gradient_route!(row, laplace, U, theta, Ls,
-                    dLlevels, dLsolved, primal_gated[U], primal_matrices[U],
-                    primal_curvature[U])
+                if combo !== nothing && combo[U] !== nothing
+                    good = _laplace_mode_sum_gradient!(row, laplace, U, theta, Ls,
+                        dLlevels, dLsolved, combo[U])
+                    fell = false
+                else
+                    good, fell = _laplace_unit_gradient_route!(row, laplace, U, theta,
+                        Ls, dLlevels, dLsolved, primal_gated[U], primal_matrices[U],
+                        primal_curvature[U])
+                end
                 fell && (fallbacks[_laplace_slot()] += 1)
                 if !good
                     chunk_ok[_laplace_slot()] = false
@@ -8263,8 +8622,12 @@ function _ctsem_optimise_setup!(o::CTSEMLaplaceObjective)
         fill!(mode, 0.0)
     end
     # An interrupted run's anchors, which `_ctsem_anchor_finish!` would have
-    # cleared.
+    # cleared, and the last fit's other maxima.
     o.anchors = Vector{Float64}[]
+    o.alt_anchors = Vector{Vector{Float64}}[]
+    for U in eachindex(o.alt_modes)
+        isempty(o.alt_modes[U]) || (o.alt_modes[U] = Vector{Float64}[])
+    end
     # The diagnostics describe the run that is about to happen, and
     # `_ctsem_optimise_verbose_shape` reads `inner_converged` before the first
     # evaluation of it -- so leaving the previous fit's values here reports one
@@ -8686,7 +9049,7 @@ function _laplace_hessian_columns(laplace::CTSEMLaplaceObjective,
             ctsem_set_warm_start!(previous)
         end
     end
-    base = warm ? deepcopy(laplace.modes) : nothing
+    base = warm ? _laplace_mode_snapshot(laplace) : nothing
     # Coefficient columns taken from their targets' score differences
     # (`_laplace_ti_derivable`): `derived[c]` is the TI effect entry of
     # column `c`, and the targets are differenced with their units' scores
@@ -8733,7 +9096,7 @@ function _laplace_hessian_columns(laplace::CTSEMLaplaceObjective,
             isempty(cs) && continue
             obj = isempty(reads) ? laplace : _ctsem_subset_objective(laplace, reads)
             from = base === nothing ? nothing :
-                isempty(reads) ? base : [base[U] for U in reads]
+                isempty(reads) ? base : base[reads]
             for c in cs
                 j = work[c]
                 h = step * max(1.0, abs(x[j]))
@@ -8875,12 +9238,36 @@ end
 
 Put `laplace`'s inner modes back to `modes` (one vector per unit, copied), the
 start every differencing point is solved from; nothing when `modes` is
-`nothing`.
+`nothing`. A `_LaplaceModeSnapshot` puts back each unit's other maxima too.
 """
 function _laplace_restore_modes!(laplace::CTSEMLaplaceObjective, modes)
     modes === nothing && return nothing
     for U in eachindex(modes)
         laplace.modes[U] = copy(modes[U])
+    end
+    return nothing
+end
+
+"""
+Each unit's mode and its other maxima (`modes`, `alt_modes`), copied
+(`_laplace_mode_snapshot`): the start every differencing point is solved from
+(`_laplace_restore_modes!`), with the other maxima too, so that a warm solve
+follows each of them (`_laplace_solve_unit_mode!`) and the differenced
+objective is the summed one (`_laplace_mode_sum`). Indexed by a vector of
+units, the snapshot of those, for an objective over them alone.
+"""
+struct _LaplaceModeSnapshot
+    modes::Vector{Vector{Float64}}
+    alt::Vector{Vector{Vector{Float64}}}
+end
+_laplace_mode_snapshot(laplace::CTSEMLaplaceObjective) =
+    _LaplaceModeSnapshot(deepcopy(laplace.modes), deepcopy(laplace.alt_modes))
+Base.getindex(s::_LaplaceModeSnapshot, units::AbstractVector{<:Integer}) =
+    _LaplaceModeSnapshot(s.modes[units], s.alt[units])
+function _laplace_restore_modes!(laplace::CTSEMLaplaceObjective, s::_LaplaceModeSnapshot)
+    for U in eachindex(s.modes)
+        laplace.modes[U] = copy(s.modes[U])
+        laplace.alt_modes[U] = Vector{Float64}[copy(m) for m in s.alt[U]]
     end
     return nothing
 end
@@ -8949,7 +9336,7 @@ mutable struct CTSEMLaplaceHVP
     laplace::CTSEMLaplaceObjective
     x::Vector{Float64}
     g0::Vector{Float64}
-    base::Vector{Vector{Float64}}
+    base::_LaplaceModeSnapshot
     budget::Int
     retries::Int
     step::Float64
@@ -8989,7 +9376,7 @@ function _ctsem_hvp_setup(laplace::CTSEMLaplaceObjective, x::AbstractVector;
     (out.converged && all(isfinite, out.gradient)) || return nothing
     (S === nothing || all(isfinite, S)) || (S = nothing)
     ctx = CTSEMLaplaceHVP(laplace, xv, collect(Float64, out.gradient),
-        deepcopy(laplace.modes), budget, Int(retries), Float64(step), 0)
+        _laplace_mode_snapshot(laplace), budget, Int(retries), Float64(step), 0)
     return (context=ctx, gradient=ctx.g0, scores=S)
 end
 

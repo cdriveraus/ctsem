@@ -48,6 +48,12 @@ test_that("the inner solve ends at a maximum, scored as the evaluation scores it
   probes <- function(on) invisible(ctsem:::.ctJuliaCall(
     "ContinuousTimeSEM.ctsem_set_mode_probes!", on))
   on.exit(probes(TRUE), add = TRUE)
+  # Which maximum a unit ends at, scored alone: the sum over a unit's maxima
+  # (`_laplace_mode_sum`) is the next test's.
+  set_sum <- function(on) invisible(ctsem:::.ctJuliaCall(
+    "ContinuousTimeSEM.ctsem_set_mode_sum!", on))
+  set_sum(FALSE)
+  on.exit(set_sum(TRUE), add = TRUE)
   evaluate <- function(x) ctJuliaEvaluate(handle, x, gradient = TRUE,
     contributions = TRUE, cores = 1L)
   # Each unit's term at the modes the last evaluation left, by the function the
@@ -92,7 +98,9 @@ test_that("the inner solve ends at a maximum, scored as the evaluation scores it
   expect_gte(counts$probe_starts, counts$probe_newtons)
 
   # Away from zero the origin lies in a basin, and the probes' choice is a
-  # smooth function there: the gradient is the value's.
+  # smooth function there, as is the sum over each unit's maxima: the gradient
+  # is the value's.
+  set_sum(TRUE)
   x <- c(0.3, 0.5)
   r <- evaluate(x)
   set.seed(1)
@@ -101,6 +109,51 @@ test_that("the inner solve ends at a maximum, scored as the evaluation scores it
   h <- 1e-5
   fd <- (evaluate(x + h * v)$value - evaluate(x - h * v)$value) / (2 * h)
   expect_equal(fd, sum(as.numeric(r$gradient) * v), tolerance = 1e-5)
+})
+
+# A unit with maxima a valley parts is scored by the sum of their Laplace
+# masses (`_laplace_mode_sum`): at a population mean of zero each person's two
+# maxima on the sign fixture are mirror images, so the sum is either's term
+# plus log 2. A mode's smallest eigenvalue, which fades it out of the sum at a
+# fold, has the gradient its differences give with the mode solved again
+# (`_laplace_mode_fade`); the summed objective's own gradient against its
+# differences is the test above.
+test_that("a unit with two maxima is scored by the sum of their masses", {
+  skip_without_julia()
+  spec <- suppressMessages(ctFit(.modes_sign_data(), .modes_sign_model(),
+    backend = "julia", intoverpop = "laplace", fit = FALSE))
+  handle <- structure(spec, class = c("ctJuliaModel", "ctFitModel"))
+  objective <- ctsem:::.ctJuliaObjective(handle, hybrid = TRUE)
+  set_sum <- function(on) invisible(ctsem:::.ctJuliaCall(
+    "ContinuousTimeSEM.ctsem_set_mode_sum!", on))
+  on.exit(set_sum(TRUE), add = TRUE)
+  evaluate <- function(x) as.numeric(ctJuliaEvaluate(handle, x, gradient = FALSE,
+    contributions = TRUE, cores = 1L)$subject_loglik)
+  x <- c(0, 0.5)
+  set_sum(FALSE)
+  one <- evaluate(x)
+  set_sum(TRUE)
+  both <- evaluate(x)
+  expect_equal(both, one + log(2), tolerance = 1e-8)
+  ctsem:::.ctJuliaEval(paste(
+    "function _ctsem_test_fade(o, theta)",
+    "  C = ContinuousTimeSEM",
+    "  C.ctsem_laplace_evaluate(o, theta; gradient = false)",
+    "  U = 1",
+    "  u = copy(o.modes[U])",
+    "  f = C._laplace_mode_fade(o, U, theta, u; gradient = true)",
+    "  aws = C._laplace_workspace!(o, Float64, length(theta))",
+    "  lam(x) = C._laplace_mode_fade(o, U, x, copy(C._laplace_newton_unit_mode(o, U, x,",
+    "    C._laplace_popchols(x, o.spec), aws, u).u)).lam",
+    "  h = 1e-5",
+    "  e(j) = [k == j ? h : 0.0 for k in eachindex(theta)]",
+    "  fd = [(lam(theta .+ e(j)) - lam(theta .- e(j))) / (2h) for j in eachindex(theta)]",
+    "  vcat(f.lam, f.grad, fd)",
+    "end", sep = "\n"))
+  g <- as.numeric(ctsem:::.ctJuliaCall("Main._ctsem_test_fade", objective,
+    ctsem:::.ctJuliaNumericVector(c(0.3, 0.5))))
+  expect_gt(g[1], 0)
+  expect_equal(g[2:3], g[4:5], tolerance = 1e-5)
 })
 
 # The sign fixture made wide: six loadings, each random by person, so each unit
@@ -180,8 +233,12 @@ test_that("a better mode past the origin is found where the found one is pinned"
   handle <- structure(spec, class = c("ctJuliaModel", "ctFitModel"))
   objective <- ctsem:::.ctJuliaObjective(handle, hybrid = TRUE)
   x <- c(0.5, 0.5)
-  r <- ctJuliaEvaluate(handle, x, gradient = FALSE, contributions = TRUE,
-    cores = 1L)
+  # Scored alone, which maximum the search reached (the sum over them is
+  # `_laplace_mode_sum`'s, tested below).
+  invisible(ctsem:::.ctJuliaCall("ContinuousTimeSEM.ctsem_set_mode_sum!", FALSE))
+  r <- tryCatch(ctJuliaEvaluate(handle, x, gradient = FALSE, contributions = TRUE,
+    cores = 1L), finally = invisible(ctsem:::.ctJuliaCall(
+      "ContinuousTimeSEM.ctsem_set_mode_sum!", TRUE)))
   # Every maximum of each person's g_U, from a grid refined by Newton, and the
   # largest of their terms; Newton from the origin, and the precision there.
   ctsem:::.ctJuliaEval(paste(
@@ -360,6 +417,11 @@ test_that("a unit's solve also starts from its known modes", {
   probes <- function(on) invisible(ctsem:::.ctJuliaCall(
     "ContinuousTimeSEM.ctsem_set_mode_probes!", on))
   on.exit(probes(TRUE), add = TRUE)
+  # Which maximum a known start reaches, scored alone: given one of a
+  # person's two, the sum (`_laplace_mode_sum`) would have only that one.
+  invisible(ctsem:::.ctJuliaCall("ContinuousTimeSEM.ctsem_set_mode_sum!", FALSE))
+  on.exit(invisible(ctsem:::.ctJuliaCall("ContinuousTimeSEM.ctsem_set_mode_sum!",
+    TRUE)), add = TRUE)
   evaluate <- function(h, x) ctJuliaEvaluate(h, x, gradient = TRUE,
     contributions = TRUE, cores = 1L)
   modes <- ctsem:::.ctJuliaEval("o -> reduce(hcat, o.modes)")

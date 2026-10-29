@@ -2670,8 +2670,8 @@ function _continuation_difference_hessian(o::CTSEMLaplaceContinuation,
     finally
         ctsem_set_warm_start!(previous)
     end
-    base = deepcopy(o.rest.modes)
-    restore!() = (for U in eachindex(base); o.rest.modes[U] = copy(base[U]); end)
+    base = _laplace_mode_snapshot(o.rest)
+    restore!() = _laplace_restore_modes!(o.rest, base)
     previous = ctsem_set_warm_start!(true)
     try
         # The gradient at `values` itself, which the forward scheme differences
@@ -2725,7 +2725,7 @@ mutable struct CTSEMContinuationHVP
     x::Vector{Float64}
     nin::Int
     g0::Vector{Float64}
-    base::Vector{Vector{Float64}}
+    base::_LaplaceModeSnapshot
     step::Float64
     products::Int
 end
@@ -2745,7 +2745,7 @@ function _ctsem_hvp_setup(o::CTSEMLaplaceContinuation, values::AbstractVector;
         ctsem_set_warm_start!(previous)
     end
     rest.converged || return nothing
-    base = deepcopy(o.rest.modes)
+    base = _laplace_mode_snapshot(o.rest)
     previous = ctsem_set_warm_start!(true)
     g0 = try
         _laplace_restore_modes!(o.rest, base)
