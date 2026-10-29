@@ -48,8 +48,8 @@ test_that("the inner solve ends at a maximum, scored as the evaluation scores it
   probes <- function(on) invisible(ctsem:::.ctJuliaCall(
     "ContinuousTimeSEM.ctsem_set_mode_probes!", on))
   on.exit(probes(TRUE), add = TRUE)
-  # Which maximum a unit ends at, scored alone: the sum over a unit's maxima
-  # (`_laplace_mode_sum`) is the next test's.
+  # Which maximum a unit ends at, scored alone: the combination of a unit's
+  # maxima (`_laplace_mode_sum`) is the next test's.
   set_sum <- function(on) invisible(ctsem:::.ctJuliaCall(
     "ContinuousTimeSEM.ctsem_set_mode_sum!", on))
   set_sum(FALSE)
@@ -98,7 +98,7 @@ test_that("the inner solve ends at a maximum, scored as the evaluation scores it
   expect_gte(counts$probe_starts, counts$probe_newtons)
 
   # Away from zero the origin lies in a basin, and the probes' choice is a
-  # smooth function there, as is the sum over each unit's maxima: the gradient
+  # smooth function there, as is the combination of each unit's maxima: the gradient
   # is the value's.
   set_sum(TRUE)
   x <- c(0.3, 0.5)
@@ -111,14 +111,14 @@ test_that("the inner solve ends at a maximum, scored as the evaluation scores it
   expect_equal(fd, sum(as.numeric(r$gradient) * v), tolerance = 1e-5)
 })
 
-# A unit with maxima a valley parts is scored by the sum of their Laplace
-# masses (`_laplace_mode_sum`): at a population mean of zero each person's two
-# maxima on the sign fixture are mirror images, so the sum is either's term
-# plus log 2. A mode's smallest eigenvalue, which fades it out of the sum at a
-# fold, has the gradient its differences give with the mode solved again
-# (`_laplace_mode_fade`); the summed objective's own gradient against its
-# differences is the test above.
-test_that("a unit with two maxima is scored by the sum of their masses", {
+# A unit with maxima a valley parts is scored by their terms averaged by their
+# masses (`_laplace_mode_sum`), which adds nothing a single maximum would not:
+# at a population mean of zero each person's two maxima on the sign fixture
+# are mirror images, and the average is either's term. A mode's smallest
+# eigenvalue, which fades it out at a fold, has the gradient its differences
+# give with the mode solved again (`_laplace_mode_fade`); the combined
+# objective's own gradient against its differences is the test above.
+test_that("a unit with two maxima is scored by the average of their terms", {
   skip_without_julia()
   spec <- suppressMessages(ctFit(.modes_sign_data(), .modes_sign_model(),
     backend = "julia", intoverpop = "laplace", fit = FALSE))
@@ -134,7 +134,7 @@ test_that("a unit with two maxima is scored by the sum of their masses", {
   one <- evaluate(x)
   set_sum(TRUE)
   both <- evaluate(x)
-  expect_equal(both, one + log(2), tolerance = 1e-8)
+  expect_equal(both, one, tolerance = 1e-8)
   ctsem:::.ctJuliaEval(paste(
     "function _ctsem_test_fade(o, theta)",
     "  C = ContinuousTimeSEM",
@@ -159,11 +159,13 @@ test_that("a unit with two maxima is scored by the sum of their masses", {
 # Three binary items on one latent, a random intercept and a random auto-effect
 # under -log1p_exp: the bench's gD1 (dev/optimbench/cells.R), 60 people at 8
 # occasions. At the estimate below 11 people have two maxima under one
-# curvature sd apart, with a valley of hundredths of a nat between them: one
-# basin. Summed whole, their masses added 0.42-0.49 nats to each one's single
-# term, about twice the basin's mass; split by their shares, 0.03-0.21. The sum
-# is for optimising across a fold, smooth and cheap, not an exact integral, so
-# the test bounds the double count rather than the error.
+# curvature sd apart, with a valley of hundredths of a nat between them, where
+# the valley's fade is part way. Summed as masses, those maxima added up to
+# 0.5 nats to each one's term, and a fit grew more of them by widening the
+# random drift's sd, 3.5 exact nats down. The combination is for optimising,
+# not an exact integral: the test is that it never scores a unit above its
+# best single term, and that its gradient, with the valleys' fades moving, is
+# its value's.
 .modes_binary_data <- function() {
   set.seed(1)
   rows <- lapply(seq_len(60), function(i) {
@@ -191,7 +193,7 @@ test_that("a unit with two maxima is scored by the sum of their masses", {
   m
 }
 
-test_that("maxima that share a basin are not counted twice", {
+test_that("maxima that share a basin add nothing to a unit's term", {
   skip_without_julia()
   spec <- suppressMessages(ctFit(.modes_binary_data(), .modes_binary_model(),
     backend = "julia", intoverpop = "laplace", fit = FALSE))
@@ -199,7 +201,7 @@ test_that("maxima that share a basin are not counted twice", {
   set_sum <- function(on) invisible(ctsem:::.ctJuliaCall(
     "ContinuousTimeSEM.ctsem_set_mode_sum!", on))
   on.exit(set_sum(TRUE), add = TRUE)
-  # gD1's s6 fit's estimate on the bench, the sum off (localcurv-e0aae396).
+  # gD1's s6 fit's estimate on the bench, the combination off (localcurv-e0aae396).
   x <- c(0.0301148912, 4.5210688928, -1.1069526929, 0.0234851509, -0.0632376482,
     -0.0056830083, 2.0234889501, -1.0443493528, -0.0565364719)
   evaluate <- function(x, gradient = FALSE) ctJuliaEvaluate(handle, x,
@@ -211,9 +213,10 @@ test_that("maxima that share a basin are not counted twice", {
   both <- as.numeric(r$subject_loglik)
   changed <- which(abs(both - one) > 1e-6)
   expect_gte(length(changed), 3)
-  expect_lt(max(abs(both[changed] - one[changed])), 0.3)
-  # The shares, the fade and the quadratics' positions all enter the gradient
-  # here, where each share is well inside (0, 1).
+  # Without the combination a unit scores its larger term.
+  expect_true(all(both <= one + 1e-10))
+  # The shares and the valleys' fades all enter the gradient here, where each
+  # share is inside (0, 1).
   set.seed(2)
   v <- rnorm(length(x))
   h <- 1e-5
@@ -298,8 +301,8 @@ test_that("a better mode past the origin is found where the found one is pinned"
   handle <- structure(spec, class = c("ctJuliaModel", "ctFitModel"))
   objective <- ctsem:::.ctJuliaObjective(handle, hybrid = TRUE)
   x <- c(0.5, 0.5)
-  # Scored alone, which maximum the search reached (the sum over them is
-  # `_laplace_mode_sum`'s, tested below).
+  # Scored alone, which maximum the search reached (the combination of them
+  # is `_laplace_mode_sum`'s, tested below).
   invisible(ctsem:::.ctJuliaCall("ContinuousTimeSEM.ctsem_set_mode_sum!", FALSE))
   r <- tryCatch(ctJuliaEvaluate(handle, x, gradient = FALSE, contributions = TRUE,
     cores = 1L), finally = invisible(ctsem:::.ctJuliaCall(
@@ -483,7 +486,7 @@ test_that("a unit's solve also starts from its known modes", {
     "ContinuousTimeSEM.ctsem_set_mode_probes!", on))
   on.exit(probes(TRUE), add = TRUE)
   # Which maximum a known start reaches, scored alone: given one of a
-  # person's two, the sum (`_laplace_mode_sum`) would have only that one.
+  # person's two, the combination (`_laplace_mode_sum`) would have only that one.
   invisible(ctsem:::.ctJuliaCall("ContinuousTimeSEM.ctsem_set_mode_sum!", FALSE))
   on.exit(invisible(ctsem:::.ctJuliaCall("ContinuousTimeSEM.ctsem_set_mode_sum!",
     TRUE)), add = TRUE)

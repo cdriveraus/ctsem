@@ -4448,9 +4448,9 @@ function ctsem_set_mode_anchors!(on::Bool)
 end
 
 """
-Whether a unit with more than one maximum is scored by the weighted sum of
-their Laplace masses (`_laplace_mode_sum`), or by the one of largest term, as
-before it. On by default; `ctsem_set_mode_sum!(false)` is the oracle.
+Whether a unit with more than one maximum is scored by the combination of
+their terms (`_laplace_mode_sum`), or by the one of largest term, as before
+it. On by default; `ctsem_set_mode_sum!(false)` is the oracle.
 """
 const _LAPLACE_MODE_SUM = Ref(true)
 
@@ -4467,12 +4467,20 @@ function ctsem_set_mode_sum!(on::Bool)
 end
 
 """
-The smallest eigenvalue of a mode's curvature, in prior units, below which its
-mass fades out of its unit's sum (`_laplace_mode_sum`): at a fold the mode
+The smallest eigenvalue of a mode's curvature, in prior units, below which it
+fades out of its unit's combination (`_laplace_mode_sum`): at a fold the mode
 meets a saddle, and its smallest eigenvalue, and with it the weight, reach
 zero there.
 """
 const _LAPLACE_MODE_FADE = 0.1
+
+"""
+The depth, in nats, of the valley towards a mode's nearest other maximum below
+which it fades out of its unit's combination (`_laplace_mode_sum`): the inner
+solve loses a maximum over a shallow valley well before its curvature
+vanishes, at 0.006 nats on the affect pilot.
+"""
+const _LAPLACE_MODE_DEPTH = 0.1
 
 """
 How far below a unit's largest term, in nats, another maximum's may lie and
@@ -4482,10 +4490,11 @@ evaluation.
 """
 const _LAPLACE_MODE_SPAN = 25.0
 
-# A mode's weight in its unit's sum as a function of its smallest eigenvalue
-# over `_LAPLACE_MODE_FADE`, and its derivative: the quintic smoothstep, zero
-# at and below 0, one at and above 1, its first and second derivatives zero at
-# both ends, so the sum's gradient is continuous where a mode starts to fade.
+# A mode's fade in its unit's combination as a function of its smallest
+# eigenvalue over `_LAPLACE_MODE_FADE`, or its valley's depth over
+# `_LAPLACE_MODE_DEPTH`, and its derivative: the quintic smoothstep, zero at
+# and below 0, one at and above 1, its first and second derivatives zero at
+# both ends, so the gradient is continuous where a mode starts to fade.
 @inline function _laplace_fade_weight(x::Float64)
     x <= 0 && return 0.0
     x >= 1 && return 1.0
@@ -4572,44 +4581,47 @@ end
     _laplace_mode_sum(laplace, U, theta, Ls, aws, primal)
 
 Unit `U`'s term where its inner problem has more than one maximum (`modes[U]`
-and `alt_modes[U]`, `primal` the first's `_laplace_unit_primal`): the log of
-the sum of their Laplace masses, each counted within its own basin and faded
-out at a fold. With `q_j(u) = g_j - (u - z_j)' M_j (u - z_j) / 2` mode `j`'s
-quadratic (`_laplace_mode_geometry`: its point, height and curvature in the
-gated rule's coordinates) and `f_j = s(lambda_j / fade)` its fade,
+and `alt_modes[U]`, `primal` the first's `_laplace_unit_primal`): their terms
+averaged by their masses, each faded out before the inner solve can lose it,
 
-    w_k(u) = f_k exp(q_k(u)) / sum_j f_j exp(q_j(u)),
-    T = log sum_k exp(t_k) w_k(z_k),
+    T = sum_k pi_k t_k,   pi_k proportional to f_k exp(t_k),
+    f_k = s(lambda_k / _LAPLACE_MODE_FADE) s(depth_k / _LAPLACE_MODE_DEPTH),
 
-`t_k` the mode's term, `lambda_k` its curvature's smallest eigenvalue, `s` the
-smoothstep `_laplace_fade_weight` and `fade` `_LAPLACE_MODE_FADE`. The `w_k`
-share every point between the modes, so `T` is the integral of `exp(g)` split
-by them, each share taken by Laplace at its own mode to first order. Where
-the basins lie apart each `w_k(z_k)` is one and the masses add, which either
-term alone undercounts. Where two maxima share a basin -- a valley of
-hundredths of a nat between maxima under one curvature sd apart, as on bench
-gD1 and the affect pilot -- each Gaussian already holds nearly all its mass:
-summed whole they counted it twice, 0.45-0.74 nats a unit above the exact
-integral on gD1 where either term alone was within 0.08, and split so,
-0.06-0.26 (CT-SEM/review/HANDOVER-affint-optimiser-2026-10-29.md). The sum is
-for optimising across a fold -- continuous, its gradient exact, a closing pass
-a mode -- not an exact integral of a multimodal unit. And at a fold, where a
-mode meets a saddle and both vanish, its eigenvalue reaches zero first, so it
-leaves the sum and the others' shares smoothly: scored alone, the unit's term
-fell by the vanishing mode's mass the moment the inner solve lost it, and an
-optimisation on the affect pilot crept for hours along that edge
-(CT-SEM/review/PILOT-curvature-coresets-2026-10-25.md, last section). A unit
-with one maximum, or one left unfaded, keeps its own term. A mode more than
+`t_k` the mode's term, `lambda_k` its curvature's smallest eigenvalue,
+`depth_k` how far the valley towards its nearest other maximum lies below it
+(`_laplace_modes_geometry`: the seven points `_laplace_modes_separated` reads,
+in the gated rule's coordinates), and `s` the smoothstep
+`_laplace_fade_weight`.
+
+It is for optimising, not an exact integral of a multimodal unit (Charles,
+2026-10-29): continuous in the parameters, cheap, and giving the optimiser no
+reason to go anywhere. Scored by one maximum, a unit's term fell by the
+vanishing mode's mass the moment the inner solve lost it, and an optimisation
+on the affect pilot crept for hours along that edge
+(CT-SEM/review/PILOT-curvature-coresets-2026-10-25.md, last section). Summed
+as masses, even split by their basins, every maximum a unit grew was worth up
+to its mass: on bench gD1 a fit widened a random drift's sd to grow them, 3.1
+Laplace nats up and 3.5 exact nats down
+(CT-SEM/review/HANDOVER-affint-optimiser-2026-10-29.md). The average adds
+nothing a single maximum would not: `T` is at most the largest term, and a
+unit with one maximum keeps its own. The fade follows how a maximum is lost.
+The run follows each from its anchor and drops one that Newton carries over a
+valley into another's basin (`_laplace_follow_modes`); on the pilot that
+befell a maximum whose valley was 0.006 nats and whose smallest eigenvalue was
+0.097, its eigenvalue's fade barely begun. At a fold the valley closes as the
+eigenvalue reaches zero. Either way the weight is near nothing by then. The
+price is that a maximum a shallow valley parts from another, a shoulder,
+counts for little until the valley deepens. A mode more than
 `_LAPLACE_MODE_SPAN` below the largest term, or whose term or quadratic is not
 finite, is dropped.
 
-Writes `modes[U]` (the unfaded mode of largest term, which every other reader
-of the objective takes as the unit's) and `alt_modes[U]` (the rest kept).
-Returns the summed modes, their primals, the term, each mode's share `pi` of
-its own gradient, what each mode's closing pass is seeded with for the rest
-(`gbar`, `Mbar`, `zbar`; `_laplace_mode_sum_gradient!`) with the curvature's
-eigendecomposition `E` it reads, and the index of the records' mode,
-`dominant`.
+Writes `modes[U]` (the mode of largest weight, which every other reader of
+the objective takes as the unit's) and `alt_modes[U]` (the rest kept).
+Returns the modes, their primals, the term, each mode's share `pi` and the
+weight `route` of its own gradient, what the closing passes are seeded with
+(`gbar`, `Mbar` and the valley points `pts`; `_laplace_mode_sum_gradient!`)
+with each curvature's eigendecomposition `E`, and the index of the records'
+mode, `dominant`.
 """
 function _laplace_mode_sum(laplace::CTSEMLaplaceObjective, U::Integer,
     theta::Vector{Float64}, Ls, aws, primal)
@@ -4634,111 +4646,123 @@ function _laplace_mode_sum(laplace::CTSEMLaplaceObjective, U::Integer,
         records!(1)
         return _laplace_one_mode(terms[1], modes[1], prims[1])
     end
-    fade = _LAPLACE_MODE_FADE
-    geos = Any[_laplace_mode_geometry(laplace, U, theta, modes[k]) for k in 1:K]
-    x = Float64[geos[k] === nothing ? 0.0 : geos[k].E.values[1] / fade for k in 1:K]
-    f = Float64[_laplace_fade_weight(xk) for xk in x]
+    geo = _laplace_modes_geometry(laplace, U, theta, modes)
+    if geo === nothing
+        dominant = argmax(terms)
+        records!(dominant)
+        return _laplace_one_mode(terms[dominant], modes[dominant], prims[dominant])
+    end
+    fade, dscale = _LAPLACE_MODE_FADE, _LAPLACE_MODE_DEPTH
+    x = Float64[geo.geos[k].E.values[1] / fade for k in 1:K]
+    # Each mode's valley towards its nearest other maximum, below its height.
+    depth_to(k, j) = j == k ? Inf : geo.geos[k].g - geo.valley[k, j]
+    toward = Int[argmin([depth_to(k, j) for j in 1:K]) for k in 1:K]
+    y = Float64[max(depth_to(k, toward[k]), 0.0) / dscale for k in 1:K]
+    f = Float64[_laplace_fade_weight(x[k]) * _laplace_fade_weight(y[k]) for k in 1:K]
     live = findall(>(0), f)
     if isempty(live)
         dominant = argmax(terms)
         records!(dominant)
         return _laplace_one_mode(terms[dominant], modes[dominant], prims[dominant])
     end
-    lead = live[argmax(view(terms, live))]
+    logw = fill(-Inf, K)
+    for k in live
+        logw[k] = log(f[k]) + terms[k]
+    end
+    top_w = maximum(logw)
+    pi = Float64[exp(w - top_w) for w in logw]
+    pi ./= sum(pi)
+    value = sum(pi[k] * terms[k] for k in live)
+    lead = argmax(pi)
     records!(lead)
     length(live) == 1 && return _laplace_one_mode(terms[lead], modes[lead], prims[lead])
-    n = length(live)
-    z = [geos[k].z0 for k in live]
-    g = Float64[geos[k].g for k in live]
-    M = [geos[k].M for k in live]
-    logf = Float64[log(f[k]) for k in live]
-    # B[j, k]: log f_j + q_j(z_k), mode j's faded quadratic at mode k; its own
-    # height on the diagonal.
-    B = Matrix{Float64}(undef, n, n)
-    for k in 1:n, j in 1:n
-        B[j, k] = logf[j] + (j == k ? g[k] :
-            g[j] - dot(z[k] .- z[j], _gated_mulvec(M[j], z[k] .- z[j])) / 2)
-    end
-    lse(v) = (m = maximum(v); m + log(sum(exp(a - m) for a in v)))
-    den = Float64[lse(view(B, :, k)) for k in 1:n]
-    A = Float64[terms[live[k]] + logf[k] + g[k] - den[k] for k in 1:n]
-    value = lse(A)
-    pi = Float64[exp(a - value) for a in A]
-    rho = Float64[exp(B[j, k] - den[k]) for j in 1:n, k in 1:n]
-    # The derivative of T beyond each mode's own term, by mode j: `gbar[j]` on
-    # its height g_j and on log f_j alike, `pi_j - sum_k pi_k rho_jk`; the
-    # quadratics q_j(z_k) add (pi_k rho_jk / 2) d(delta' M_j delta), delta =
-    # z_k - z_j, to the curvature's seed and to both modes' points; the fade's
-    # `d log f_j` is `s'/(s fade)` times v' dM_j v, v the smallest eigenvector.
-    D = length(z[1])
-    gbar = Float64[pi[j] - sum(pi[k] * rho[j, k] for k in 1:n) for j in 1:n]
-    Mbar = [zeros(Float64, D, D) for _ in 1:n]
-    zbar = [zeros(Float64, D) for _ in 1:n]
-    for j in 1:n
-        lamcoef = gbar[j] * _laplace_fade_slope(x[live[j]]) / (f[live[j]] * fade)
-        if lamcoef != 0
-            v = geos[live[j]].E.vectors[:, 1]
-            Mbar[j] .+= lamcoef .* (v .* transpose(v))
+    # dT = sum_k pi_k (1 + t_k - T) dt_k + sum_k pi_k (t_k - T) d log f_k, and
+    # d log f_k takes the eigenvalue's v' dM_k v and the valley's d depth_k =
+    # dg_k - d g(p), p the valley's point between mode k and mode j.
+    route = Float64[pi[k] * (1 + terms[k] - value) for k in 1:K]
+    gbar = zeros(Float64, K)
+    Mbar = Any[nothing for _ in 1:K]
+    pts = Any[]
+    for k in live
+        c = pi[k] * (terms[k] - value)
+        c == 0 && continue
+        sx = _laplace_fade_slope(x[k])
+        if sx != 0
+            v = geo.geos[k].E.vectors[:, 1]
+            Mbar[k] = (c * sx / (_laplace_fade_weight(x[k]) * fade)) .* (v .* transpose(v))
         end
-        for k in 1:n
-            k == j && continue
-            a = pi[k] * rho[j, k]
-            a == 0 && continue
-            d = z[k] .- z[j]
-            Mbar[j] .+= (a / 2) .* (d .* transpose(d))
-            Md = _gated_mulvec(M[j], d)
-            zbar[k] .+= a .* Md
-            zbar[j] .-= a .* Md
+        sy = _laplace_fade_slope(y[k])
+        if sy != 0
+            e = c * sy / (_laplace_fade_weight(y[k]) * dscale)
+            j = toward[k]
+            t = geo.vt[k, j]
+            gbar[k] += e
+            push!(pts, (e=e, k=k, j=j, t=t,
+                p=geo.geos[k].z0 .+ t .* (geo.geos[j].z0 .- geo.geos[k].z0)))
         end
     end
-    return (value=value, modes=modes[live], prims=prims[live], pi=pi,
-        E=Any[geos[k].E for k in live], gbar=gbar, Mbar=Mbar, zbar=zbar,
-        dominant=findfirst(==(lead), live))
+    return (value=value, modes=modes, prims=prims, pi=pi, route=route,
+        E=Any[g.E for g in geo.geos], gbar=gbar, Mbar=Mbar, pts=pts, dominant=lead)
 end
 
 # `_laplace_mode_sum`'s result for a unit scored by one mode alone.
 _laplace_one_mode(term, mode, prim) = (value=term, modes=[mode], prims=Any[prim],
-    pi=[1.0], E=Any[nothing], gbar=[0.0], Mbar=Any[nothing], zbar=Any[nothing],
+    pi=[1.0], route=[1.0], E=Any[nothing], gbar=[0.0], Mbar=Any[nothing], pts=Any[],
     dominant=1)
 
 """
     _laplace_mode_sum_gradient!(row, laplace, U, theta, Ls, dLlevels, dLsolved, s)
 
-Unit `U`'s gradient where its term is a sum over its maxima
-(`_laplace_mode_sum`'s `s`), into `row`: each mode's own gradient by its own
-route (`_laplace_unit_gradient_route!`, the unit's records set to that mode's
-for the call) times its share `pi`, and each mode's share, its fade and its
-quadratics' positions by the gated rule's closing pass seeded with `gbar`,
-`Mbar` and `zbar` (`_laplace_mode_close`). `false` where a route or a pass
-fails.
+Unit `U`'s gradient where its term combines its maxima (`_laplace_mode_sum`'s
+`s`), into `row`: each mode's own gradient by its own route
+(`_laplace_unit_gradient_route!`, the unit's records set to that mode's for
+the call) times its weight `route`; each fading valley's point, through the
+objective's gradient there (`_laplace_mode_point_gradient`), into the raw
+vector and both ends; and each mode's height, eigenvalue and position by the
+gated rule's closing pass (`_laplace_mode_close`). `false` where a route or a
+pass fails.
 """
 function _laplace_mode_sum_gradient!(row::Vector{Float64},
     laplace::CTSEMLaplaceObjective, U::Integer, theta::Vector{Float64}, Ls, dLlevels,
     dLsolved, s)
     fill!(row, 0.0)
     part = zeros(Float64, length(theta))
+    K = length(s.modes)
+    zbar = [zeros(Float64, length(s.E[k].values)) for k in 1:K]
     saved_mode = laplace.modes[U]
     saved_floored = laplace.logdet_floored[U]
     saved_repaired = laplace.mode_repaired[U]
+    records!(k) = (laplace.modes[U] = s.modes[k];
+        laplace.logdet_floored[U] = s.prims[k].floored;
+        laplace.mode_repaired[U] = s.prims[k].fac.repaired)
     try
-        for k in eachindex(s.modes)
+        for k in 1:K
+            s.pi[k] > 0 || continue
+            records!(k)
             p = s.prims[k]
-            laplace.modes[U] = s.modes[k]
-            laplace.logdet_floored[U] = p.floored
-            laplace.mode_repaired[U] = p.fac.repaired
-            if s.pi[k] > 0
-                good, _ = _laplace_unit_gradient_route!(part, laplace, U, theta, Ls,
-                    dLlevels, dLsolved, p.gated, p.M, (p.fac.factors, p.fac.coupling))
-                good || return false
-                row .+= s.pi[k] .* part
-            end
-            Mb, zb = s.Mbar[k], s.zbar[k]
-            if s.gbar[k] != 0 || (Mb !== nothing && (any(!iszero, Mb) || any(!iszero, zb)))
-                gr = _laplace_mode_close(laplace, U, theta, s.modes[k], s.E[k], s.gbar[k],
-                    Mb, zb)
-                gr === nothing && return false
-                row .+= gr
-            end
+            good, _ = _laplace_unit_gradient_route!(part, laplace, U, theta, Ls,
+                dLlevels, dLsolved, p.gated, p.M, (p.fac.factors, p.fac.coupling))
+            good || return false
+            row .+= s.route[k] .* part
+        end
+        # A valley's depth below mode k is g there less g at its point p, which
+        # moves with p and with both ends of its segment.
+        for q in s.pts
+            r = _laplace_mode_point_gradient(laplace, U, theta, s.modes[q.k], q.p)
+            r === nothing && return false
+            row .-= q.e .* r.theta
+            zbar[q.k] .-= (q.e * (1 - q.t)) .* r.z
+            zbar[q.j] .-= (q.e * q.t) .* r.z
+        end
+        for k in 1:K
+            Mb = s.Mbar[k]
+            (s.gbar[k] != 0 || Mb !== nothing || any(!iszero, zbar[k])) || continue
+            records!(k)
+            D = length(zbar[k])
+            gr = _laplace_mode_close(laplace, U, theta, s.modes[k], s.E[k], s.gbar[k],
+                Mb === nothing ? zeros(Float64, D, D) : Mb, zbar[k])
+            gr === nothing && return false
+            row .+= gr
         end
     finally
         laplace.modes[U] = saved_mode
