@@ -47,6 +47,31 @@ test_that("the newest Julia is chosen by version, not by name", {
   expect_null(ctsem:::.ctJuliaNewestDir(character()))
 })
 
+test_that("a Julia older than the engine's standard library bounds is not usable", {
+  # The engine's Project.toml bounds its standard libraries at 1.11, so no
+  # resolve on 1.10 can satisfy it.
+  expect_false(ctsem:::.ctJuliaVersionOk("1.10.12"))
+  expect_true(ctsem:::.ctJuliaVersionOk("1.11.0"))
+  expect_true(ctsem:::.ctJuliaVersionOk(ctsem:::.ct_julia_version))
+})
+
+test_that("a manifest resolved under another minor version of Julia is told apart", {
+  # Where it is, a load failure resolves the engine again for the running
+  # Julia: the 1.13.3 manifest instantiates on 1.11 and does not load there.
+  dir <- tempfile("engine")
+  dir.create(dir)
+  on.exit(unlink(dir, recursive = TRUE), add = TRUE)
+  expect_false(ctsem:::.ctJuliaManifestOtherJulia(dir))
+  writeLines(c("# This file is machine-generated - editing it directly is not advised",
+    "", 'julia_version = "1.13.3"', 'manifest_format = "2.1"'),
+    file.path(dir, "Manifest.toml"))
+  running <- "1.11.9"
+  testthat::local_mocked_bindings(.ctJuliaEval = function(code, ...) running)
+  expect_true(ctsem:::.ctJuliaManifestOtherJulia(dir))
+  running <- "1.13.0"
+  expect_false(ctsem:::.ctJuliaManifestOtherJulia(dir))
+})
+
 test_that("a JuliaConnectoR older than the backend runs on is not usable", {
   # 1.1.5 hangs translating a named tuple holding an empty vector, which every
   # sampled fit without an effective-size target returned.

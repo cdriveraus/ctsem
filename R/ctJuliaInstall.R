@@ -73,8 +73,10 @@
 
 # The oldest Julia the engine is known to work on. A Julia found on the user's
 # machine that is older than this is treated as absent rather than used and
-# failed on later, deep inside Pkg.
-.ct_julia_minimum <- "1.10"
+# failed on later, deep inside Pkg. The engine's Project.toml bounds every
+# standard library at 1.11: on 1.10, which this said, no resolve could satisfy
+# it ("Unsatisfiable requirements detected for package Statistics").
+.ct_julia_minimum <- "1.11"
 
 .ctJuliaExeName <- function() if (.Platform$OS.type == "windows") "julia.exe" else "julia"
 

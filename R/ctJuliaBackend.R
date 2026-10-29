@@ -389,6 +389,22 @@
     "failed to find source of parent package", sep = "|"), msg)
 }
 
+# Whether the environment's manifest was resolved under another minor version
+# of Julia than the running session's (its `julia_version`), where a package
+# it pins may be one this Julia cannot load. FALSE where either is unknown.
+.ctJuliaManifestOtherJulia <- function(env_dir) {
+  path <- file.path(env_dir, "Manifest.toml")
+  if (!file.exists(path)) return(FALSE)
+  line <- grep("^julia_version\\s*=", readLines(path, n = 20L, warn = FALSE),
+    value = TRUE)[1L]
+  running <- tryCatch(as.character(.ctJuliaEval("string(VERSION)")),
+    error = function(e) NA_character_)
+  if (is.na(line) || is.na(running)) return(FALSE)
+  minor <- function(v) sub("^(\\d+\\.\\d+).*$", "\\1", v)
+  resolved <- sub('^julia_version\\s*=\\s*"([^"]+)".*$', "\\1", line)
+  !identical(minor(resolved), minor(running))
+}
+
 # Is there a Julia that a session could be started with? Without starting one:
 # `JuliaConnectoR::juliaSetupOk()`, which this used to ask, answers by starting
 # a session through JuliaConnectoR itself, bypassing the start in
@@ -621,7 +637,12 @@ ctJuliaSetup <- function(project = NULL, julia_bin = NULL,
     # instantiating can fix, and its absence identifies the case it cannot; see
     # .ctJuliaLoadFailIsMissing.
     missing <- !is.null(loadfail) && .ctJuliaLoadFailIsMissing(loadfail)
-    if (!is.null(loadfail) && !missing) {
+    # Unless the manifest was resolved under another Julia: there a package it
+    # pins can be one that Julia cannot precompile, which only a resolve for
+    # this Julia fixes (below). Only for ctsem's own copy of the engine, whose
+    # manifest it may delete; a developer's checkout keeps its own.
+    other <- is.null(project) && .ctJuliaManifestOtherJulia(env_dir)
+    if (!is.null(loadfail) && !missing && !other) {
       stop("The julia engine failed to load. This is not a missing ",
         "dependency -- installing packages will not help.\n",
         "  environment: ", env_dir, "\n",
@@ -629,7 +650,8 @@ ctJuliaSetup <- function(project = NULL, julia_bin = NULL,
     }
     agreed <- .ctJuliaAgreed(agree, paste0(
       "The julia backend needs to install the vendored engine's Julia package ",
-      "dependencies, which are not yet present.\n",
+      if (missing || is.null(loadfail)) "dependencies, which are not yet present.\n"
+      else "dependencies again, resolved for this Julia.\n",
       "  environment: ", env_dir, "\n",
       "  This downloads packages from the Julia package registry."))
     if (!agreed) {
@@ -648,20 +670,30 @@ ctJuliaSetup <- function(project = NULL, julia_bin = NULL,
     # leaving the session's Pkg quietly reconfigured.
     quiet_instantiate <- paste0('withenv("JULIA_PKG_PRECOMPILE_AUTO" => "0") do; ',
       'Pkg.instantiate(io=devnull); end')
-    instantiated <- tryCatch({
-      .ctJuliaEval(silently(paste0(activate, "; ", quiet_instantiate)))
-      TRUE
-    }, error = function(e) FALSE)
-    if (!instantiated) {
-      # The vendored manifest pins the versions this ctsem release was tested
-      # against, but it can be unsatisfiable on a different Julia version. Falling
-      # back to a fresh resolve is better than refusing to run; the compat bounds
-      # in Project.toml still apply.
+    # The vendored manifest pins the versions this ctsem release was tested
+    # against, but on a different Julia version it can be unsatisfiable, or
+    # satisfiable and not loadable: resolved under 1.13.3, it instantiates on
+    # 1.11 and its PrecompileTools does not precompile there (`Base.StaticData`
+    # is 1.12's), so a first install on 1.11 stopped at load. Falling back to
+    # a fresh resolve is better than refusing to run; the compat bounds in
+    # Project.toml still apply.
+    reresolve <- function() {
       unlink(file.path(env_dir, "Manifest.toml"))
       .ctJuliaEval(silently(paste0(activate,
         "; Pkg.resolve(io=devnull); ", quiet_instantiate)))
     }
-    .ctJuliaEval("using ContinuousTimeSEM")
+    instantiated <- (missing || is.null(loadfail)) && tryCatch({
+      .ctJuliaEval(silently(paste0(activate, "; ", quiet_instantiate)))
+      TRUE
+    }, error = function(e) FALSE)
+    if (!instantiated) reresolve()
+    loaded <- tryCatch({ .ctJuliaEval("using ContinuousTimeSEM"); TRUE },
+      error = function(e) e)
+    if (!isTRUE(loaded)) {
+      if (!instantiated || !other) stop(loaded)
+      reresolve()
+      .ctJuliaEval("using ContinuousTimeSEM")
+    }
   }
   .ctJuliaTuneBridge()
   # Where Escape asks a running call to stop, and which R process the engine
