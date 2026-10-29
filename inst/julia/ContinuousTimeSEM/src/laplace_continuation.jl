@@ -3435,11 +3435,15 @@ The units whose terms jumped along the step the line search saw jump
 (`CTSEMJump`), with their changes and where each one's inner solve stopped
 either side, as `(units, changes, point_units, point_values)`; `nothing` on a
 route with no units to name. On the Laplace route each unit's term is taken at
-`x`, `x + alpha_lo s` and `x + alpha_hi s`: a unit whose change over the short
-step keeps a quarter of its change over the long one, sixteen or a hundred
-times longer, and carries a tenth of the jump, moved with where its inner
-solve stopped rather than with the parameters
-(`CT-SEM/review/LAPLACE-shoulders-frozen-draws-2026-10-21.md`).
+`x`, `x + alpha_lo s` and `x + alpha_hi s`, and its score at `x`: a unit whose
+excess over its own linear change does not shrink with the square of the step
+between the two (`_ctsem_jump_excess`), and carries a tenth of the jump, moved
+with where its inner solve stopped rather than with the parameters
+(`CT-SEM/review/LAPLACE-shoulders-frozen-draws-2026-10-21.md`). Compared
+whole, as they were while the two steps stood a hundredfold apart, a unit's
+changes at steps four times apart keep a quarter of each other wherever its
+term is linear in the step. `changes` are each named unit's excess at
+`alpha_lo`.
 Its modes at the three points are what a frozen importance rule for it starts
 from (`ctsem_laplace_continuation`'s `point_units`): at one point the solve
 returns one of them, and the rule needs both sides.
@@ -3459,27 +3463,31 @@ _ctsem_jump_units(o::CTSEMLaplaceContinuation, jump::CTSEMJump) =
 
 function _laplace_jump_units(laplace::CTSEMLaplaceObjective, numbering::Vector{Int},
     jump::CTSEMJump)
-    thetas = [jump.x, jump.x .+ jump.alpha_lo .* jump.s,
-        jump.x .+ jump.alpha_hi .* jump.s]
-    terms = Vector{Vector{Float64}}()
-    modes = Vector{Vector{Vector{Float64}}}()
-    for th in thetas
+    nunits = length(numbering)
+    # Each unit's score at `x`, weighted as its term is below, for its linear
+    # change along `s`.
+    S = zeros(nunits, length(jump.x))
+    r0 = ctsem_laplace_evaluate(laplace, jump.x; gradient=true, scores=S)
+    slope = all(isfinite, S) ? S * jump.s : fill(NaN, nunits)
+    terms = Vector{Vector{Float64}}([copy(r0.unit_loglik)])
+    modes = Vector{Vector{Vector{Float64}}}([[copy(m) for m in laplace.modes]])
+    for th in (jump.x .+ jump.alpha_lo .* jump.s, jump.x .+ jump.alpha_hi .* jump.s)
         r = ctsem_laplace_evaluate(laplace, th; gradient=false)
         push!(terms, copy(r.unit_loglik))
         push!(modes, [copy(m) for m in laplace.modes])
     end
-    nunits = length(numbering)
     units = Int[]
     changes = Float64[]
     point_units = Int[]
     columns = Vector{Vector{Float64}}()
     for p in 1:nunits
         w = _laplace_unit_weight(laplace, p)
-        lo = w * (terms[2][p] - terms[1][p])
-        hi = w * (terms[3][p] - terms[1][p])
+        lo = w * (terms[2][p] - terms[1][p]) - jump.alpha_lo * slope[p]
+        hi = w * (terms[3][p] - terms[1][p]) - jump.alpha_hi * slope[p]
         (isfinite(lo) && isfinite(hi)) || continue
         abs(lo) >= jump.excess / 10 || continue
-        abs(lo) >= abs(hi) / 4 || continue
+        _ctsem_jump_excess(jump.alpha_lo, abs(lo), jump.alpha_hi, abs(hi)) ||
+            continue
         push!(units, numbering[p])
         push!(changes, lo)
         for k in 1:3

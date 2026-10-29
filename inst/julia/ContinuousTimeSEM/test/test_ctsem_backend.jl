@@ -686,8 +686,8 @@ end
     r = C._ctsem_lbfgs(jumpy!, x0; maxiter=50, jump=jump)
     @test r.linesearch_failed
     @test jump.seen
-    @test jump.alpha_hi >= 100 * jump.alpha_lo
-    @test isapprox(jump.excess, 0.3; atol=0.01)
+    @test jump.alpha_hi >= 4 * jump.alpha_lo
+    @test isapprox(jump.excess, 0.3; atol=0.02)
     @test (r.iterations, r.minimizer) == (0, x0)
     # Unwatched, it backtracks to the end and still takes no step: one below
     # the point's resolution passed the Armijo test, and is not a step.
@@ -703,6 +703,27 @@ end
     s = C._ctsem_lbfgs(smooth!, x0; maxiter=50, g_tol=1e-10, jump=quiet)
     @test s.g_converged
     @test !quiet.seen
+    # A jump under a curvature that dwarfs it at the search's longer trials, as
+    # on the affect pilot: from the origin the first trial's step is 0.1, where
+    # a quadratic's excess is 12.5 against the jump's 0.5 a thousandth of the
+    # way along, and nothing past the jump gains as much as it costs, so the
+    # optimum is its edge. Read against the square of the step, the jump is
+    # named within two iterations; read at a hundredth of the length, the
+    # curvature hid it until the run had crept to the edge, thirteen.
+    steep! = function (F, G, x)
+        G === nothing || (G .= 2.5e5 .* (x .- 1e-3))
+        F === nothing && return nothing
+        return 1.25e5 * (x[1] - 1e-3)^2 + (x[1] > 1e-4 ? 0.5 : 0.0)
+    end
+    hidden = C.CTSEMJump()
+    h = C._ctsem_lbfgs(steep!, [0.0]; maxiter=50, jump=hidden)
+    @test hidden.seen
+    @test h.iterations <= 3
+    @test isapprox(hidden.excess, 0.5; rtol=0.2)
+    @test h.minimizer[1] <= 1e-4
+    @test C._ctsem_jump_excess(1e-3, 1.18, 1e-2, 1.65)
+    @test !C._ctsem_jump_excess(1e-3, 1.0 * 1e-6, 1e-2, 1.0 * 1e-4)
+    @test !C._ctsem_jump_excess(4e-3, 1.0, 1e-2, 1.0)
 end
 
 @testset "the diagonal L-BFGS scaling learns each coordinate's curvature" begin

@@ -46,12 +46,12 @@ CTSEMIterate(iteration, value, g_norm, gain=NaN) =
 
 """
 A jump a search saw (`_ctsem_lbfgs`'s line search, or the Newton finish's
-along one line): from `x` along `s`, a trial at `alpha_lo` kept at least a
-quarter of the excess over the search's model, `excess`, that a trial at
-`alpha_hi` had, a hundred times longer or more in L-BFGS and sixteen times in
-the finish (`_CTSEM_FINISH_JUMP_RATIO`). A smooth objective's excess shrinks at
-least with the square of the step, so that is a jump of about `excess` between
-the two, not curvature:
+along one line): from `x` along `s`, a trial at `alpha_lo` kept an excess over
+the search's model, `excess`, that did not shrink with the square of the step
+from the one a trial at `alpha_hi` had -- four times longer or more in L-BFGS
+(`_ctsem_jump_excess`), sixteen times in the finish
+(`_CTSEM_FINISH_JUMP_RATIO`). A smooth objective's excess shrinks at least so,
+so that is a jump of about `excess` between the two, not curvature:
 on the Laplace route, a unit whose term moved with where its inner solve
 stopped (`_ctsem_jump_units`). `seen` is false until one is.
 """
@@ -64,6 +64,22 @@ mutable struct CTSEMJump
     excess::Float64
 end
 CTSEMJump() = CTSEMJump(false, Float64[], Float64[], NaN, NaN, NaN)
+
+"""
+    _ctsem_jump_excess(alpha, excess, a, e)
+
+Whether the excess over a search's linear model at step `alpha`, `excess`,
+reads as a jump beside `e`, the excess at a step `a` at least four times as
+long: more than four times what shrinking with the square of the step would
+leave of it. Curvature's excess shrinks so, and a jump's not at all. The bar
+was a quarter of the excess kept at a hundredth of the length, which the long
+trial's curvature hides: on the affect pilot a unit's term fell 1.13 nats
+between three ten-thousandths and a thousandth of a step whose full length
+had an excess of 3600 from curvature, and the run crept along that edge for
+hours with |g| near 30 (`scripts/pilot-curvature-2026-10/jump_probe.R`).
+"""
+_ctsem_jump_excess(alpha::Real, excess::Real, a::Real, e::Real) =
+    a >= 4 * alpha && excess >= 4 * (alpha / a)^2 * e
 
 function _ctsem_jump_record!(jump::CTSEMJump, x, s, alpha_hi, alpha_lo, excess)
     jump.seen = true
@@ -311,8 +327,9 @@ step predicts it gains is nearly what is left, which is what the gap rule reads
 hundredth of what was left on a 433-parameter model.
 
 `jump`, a `CTSEMJump`, asks the line search to watch for a jump. A trial
-whose excess over the linear model `alpha g's` does not shrink as the step does
--- a quarter of it left at a hundredth of an earlier trial's length -- may be a
+whose excess over the linear model `alpha g's` does not shrink with the square
+of the step -- more than four times what that leaves of an earlier trial's at
+a quarter of its length or less (`_ctsem_jump_excess`) -- may be a
 discontinuity, where backtracking only reaches a step too short to leave the
 point: a Laplace fit whose person's term jumped by 0.33 nats as its inner solve
 changed where it stopped accepted steps below the resolution of the parameters
@@ -499,7 +516,7 @@ function _ctsem_lbfgs(fg!, x0::AbstractVector; memory::Integer=20,
                 excess = fn - f - alpha * dphi
                 if excess > 1e-8 * (1 + abs(f))
                     for (a, e) in zip(trial_alpha, trial_excess)
-                        if a >= 100 * alpha && excess >= e / 4
+                        if _ctsem_jump_excess(alpha, excess, a, e)
                             found = true
                             found_hi = a; found_lo = alpha; found_excess = excess
                             break
