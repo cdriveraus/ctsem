@@ -2108,6 +2108,15 @@ ContinuousTimeSEM._ctsem_local_columns(o::_LocalQuadratic, x::AbstractVector,
     @test !C3._ctsem_local_due(lc, x)
     lc.since = 4
     @test C3._ctsem_local_due(lc, x)
+    # A run resuming another (`local_builds_carried`) chooses its columns as a
+    # first run does and waits as that run's next build would.
+    carried = C3.CTSEMLocalCurvature(_LocalQuadratic(H), store, precision)
+    carried.builds = 2
+    carried.since = 0
+    @test !C3._ctsem_local_due(carried, x)
+    @test !isempty(carried.columns)
+    carried.since = ceil(Int, 4 * carried.cost)
+    @test C3._ctsem_local_due(carried, x)
     shared = C3.CTSEMLocalCurvature(_LocalQuadratic(H), C3.CTSEMScoreStore(N, n),
         precision)
     copyto!(shared.store.S, randn(rng, N, n)); shared.store.x .= x

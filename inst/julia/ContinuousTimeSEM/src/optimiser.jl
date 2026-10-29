@@ -2814,7 +2814,9 @@ function _ctsem_local_due(lc::CTSEMLocalCurvature, x::AbstractVector)
     lc.done && return false
     st = lc.store
     (st.valid && st.x == x) || return false
-    if lc.builds == 0 && isempty(lc.columns)
+    # Chosen once a run; a run that carries an earlier run's builds
+    # (`local_builds_carried`) chooses them too.
+    if isempty(lc.columns)
         lc.columns, lc.cost = _ctsem_local_select(st.S)
         isempty(lc.columns) && (lc.done = true; return false)
     end
