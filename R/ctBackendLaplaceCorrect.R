@@ -1058,6 +1058,24 @@
   # search saw as components of their proposals; the rounds then climb from
   # the jump point, which is the fit's estimate.
   jump <- fit$laplace$jump
+  # Asked only to check, at a jump: no optimum to take the check's step from,
+  # and the jump says what the check would, that a unit's term is not one
+  # Gaussian basin's. Said, with the call that integrates the units named.
+  if (!correct && !is.null(jump)) {
+    named <- as.integer(jump$units)
+    msg <- sprintf(paste0("The fit stopped where the Laplace term of %s %s ",
+      "jumps, at no maximum, so its estimate and standard errors are ",
+      "approximate. laplace_correct = TRUE integrates %s by draws and refits; ",
+      "ctFitUncertainty(fit, 'sample', control = list(intoverpop = 'none')) ",
+      "samples the joint posterior."), if (length(named) == 1L) "unit" else "units",
+      paste(named, collapse = ", "), if (length(named) == 1L) "it" else "them")
+    warning(msg, call. = FALSE)
+    fit$laplace$correction <- list(method = "quadrature", status = "jump",
+      applied = FALSE, units = named, message = msg, laplace_estimate = est,
+      loglik_laplace = as.numeric(fit$estimate$loglik),
+      seconds = c(total = seconds()))
+    return(fit)
+  }
   # Where every unit's integrand is Gaussian in its effects
   # (`laplace$quadratic`), each Laplace term is that unit's exact integral, at
   # any width: nothing to score and nothing to move. The screen's product

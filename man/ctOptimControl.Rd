@@ -238,8 +238,9 @@ default.
  and where the units nest it can cost about as much as sampling.
  \code{'step'} takes up to three Newton steps toward the quadrature
  optimum, and leaves a unit with more than five effects on the Laplace
- term. A fit whose optimiser stopped where a unit's Laplace term jumps is
- finished by the quadrature correction whatever this says. Refused with
+ term. A fit whose optimiser stopped where a unit's Laplace term jumps
+ warns, and \code{'quadrature'} integrates the units named from there.
+ Refused with
  \code{estonly}. \code{fit$laplace$correction} records what was done, and
  \code{print(fit)} says when the estimate moved or the check found it
  should.}

@@ -6078,14 +6078,12 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
   #   every objective built for the fit afterwards reaches them; and better
   #   ones it found that the run missed, which resume the run where they are
   #   worth `.ctJuliaKnownResumeGain`.
-  # Up to `.ctJuliaKnownRounds` resumes; a jump past them, or one whose modes
-  # are known already, is handed on as before. So is a jump on units a jump in
-  # an earlier round named already: their modes were kept and the run met them
-  # again, as at a fold, where the mode the solve leaves stops existing past
-  # the edge and no start brings it back (unit 894 of the affect pilot, one
-  # resume to the next at the same point).
+  # Up to `.ctJuliaKnownRounds` resumes, a unit named again included: its
+  # maxima are combined (`_laplace_mode_sum`), each fading out before the
+  # solve can lose it, so a fold that once jumped the same unit from one resume
+  # to the next (unit 894 of the affect pilot) is smooth now, and the modes a
+  # repeated jump saw are further starts like any other.
   rounds <- 0L
-  jumped_before <- integer()
   while (!state_explicit && !is.null(model_spec$laplace)) {
     known <- model_spec$laplace$known
     jumpknown <- .ctJuliaKnownModes(known, result)
@@ -6104,10 +6102,7 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
       spec <- structure(model_spec, class = c("ctJuliaModel", "ctFitModel"))
       objective <- .ctJuliaObjective(spec, hybrid = TRUE)
     }
-    named_now <- if (.ctJuliaJumped(result)) .ctJuliaJumpNamed(result) else integer()
-    again <- length(named_now) > 0L && all(named_now %in% jumped_before)
-    if (!resume || again || rounds >= .ctJuliaKnownRounds) break
-    jumped_before <- union(jumped_before, named_now)
+    if (!resume || rounds >= .ctJuliaKnownRounds) break
     if (!is.null(jumpknown)) {
       named <- .ctJuliaJumpNamed(result)
       message(sprintf(paste0("Laplace: the objective jumped at %s %s (its term ",
@@ -6124,11 +6119,13 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
     result <- .ctJuliaAddRunCounts(optimise_once(as.numeric(result$minimizer),
       carried = 0), result)
   }
-  # A run still ended on a jump is certified by nothing here. The quadrature
-  # correction integrates the units named by draws from this point and
-  # climbs on (`.ctLaplaceContinue()`, through `fit$laplace$jump`); without
-  # it the fit stops here. `jumprecord`, since `$jump` on an engine result
-  # would match its `jump_units`.
+  # A run still ended on a jump stops there, at no maximum of anything
+  # continuous, so it is not certified; the fit warns and leaves integrating
+  # the named units to the user (`laplace_correct = TRUE`, whose rounds take
+  # them on draws with the points the watch saw: `.ctLaplaceContinue()`,
+  # through `fit$laplace$jump`), as it leaves a flagged check: the rounds can
+  # take hours. `jumprecord`, since `$jump` on an engine result would match
+  # its `jump_units`.
   if (.ctJuliaJumped(result)) {
     named <- .ctJuliaJumpNamed(result)
     result$jumprecord <- list(units = named,
@@ -6136,9 +6133,9 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
         values = result$jump_point_values),
       iterations = as.integer(.ctJuliaOr(result$iterations, NA_integer_))[1L])
     message(sprintf(paste0("Laplace: the objective jumped at %s %s (its term moved ",
-      "with where the inner solve stopped); the quadrature correction integrates ",
-      "%s by draws from here."), if (length(named) == 1L) "unit" else "units",
-      paste(named, collapse = ", "), if (length(named) == 1L) "it" else "them"))
+      "with where the inner solve stopped) after %d %s with modes kept; the fit ",
+      "stops there."), if (length(named) == 1L) "unit" else "units",
+      paste(named, collapse = ", "), rounds, if (rounds == 1L) "resume" else "resumes"))
   }
   # A fit that stopped short is tried again under one budget
   # (`.ctBackendCorrectResult()`, `optimcontrol$stallretries`): from the
@@ -6186,8 +6183,8 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
     optimise_once(from, carried = carried, endgame = endgame)
   }
   # Not for a run that ended on a jump: its point is on no continuous
-  # objective, and the quadrature correction climbs on from it
-  # (`.ctLaplaceContinue()`, `fit$laplace$jump`).
+  # objective, so a certification there has nothing to judge, and a resume
+  # from it meets the same jump.
   if (is.null(result[["jumprecord"]])) {
     retried <- .ctBackendCorrectResult(result, model_spec,
       npar = length(as.numeric(start)),
@@ -6801,8 +6798,8 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
   # Not on the state-explicit route: its curvature is the profile's, which the
   # states flatten, so there is nothing to certify against -- the same reason
   # that route reports no standard errors.
-  # Nor a run that ended on a jump: its point is on no continuous objective,
-  # and the quadrature correction certifies where it ends (`.ctLaplaceContinue()`).
+  # Nor a run that ended on a jump: its point is on no continuous objective
+  # (`laplace_correct = TRUE` certifies where its rounds end).
   correction <- NULL
   certifying <- isTRUE(intoverstates) && !isTRUE(optimcontrol$estonly) &&
     !identical(optimcontrol$certify, FALSE) && is.null(result[["jumprecord"]])
@@ -7241,8 +7238,7 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
   # its convergence flags say -- and Optim's own verdict is a disjunction that a
   # failed first line search satisfies trivially. Saying so here is what stops a
   # simulation study from averaging over starting values it never left.
-  # Not for a run that stopped on a jump at its start: the quadrature
-  # correction climbs on from there (`fit$laplace$jump`).
+  # Not for a run that stopped on a jump at its start, which says so itself.
   if (isTRUE(result$stalled) && is.null(result[["jumprecord"]])) {
     warning("The optimizer made no progress from its starting values, and the ",
       "gradient there is not zero. Treat this fit as failed: check the starting ",
@@ -7433,13 +7429,14 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
     finishsamples = .ctJuliaOr(optimcontrol$finishsamples, 1000L),
     cores = cores, control = control, verbose = verbose)
   # A run that ended on a jump has no Laplace answer: the objective is not
-  # continuous there, so it has no maximum and no curvature at that point, and
-  # the quadrature continuation is what finishes it, whatever
-  # `laplace_correct` says. Turned off, the fit came back with no uncertainty
-  # and a warning that blamed `estonly` (anomS1 on the race fixtures).
+  # continuous there, so it has no maximum. Its uncertainty is the curvature's
+  # at that point all the same, and the stage below warns whatever
+  # `laplace_correct` says; only `laplace_correct = TRUE` integrates the units
+  # it named, from there. That was once forced on every such fit, and on the
+  # affect pilot it gained 29 nats in nine hours.
   jumped <- !is.null(out$laplace$jump)
   continuing <- uncertain && !is.null(out$laplace) &&
-    (identical(correctlaplace, "quadrature") || jumped)
+    identical(correctlaplace, "quadrature")
   # Where the continuation runs it draws the uncertainty itself, by the method
   # asked for, on the hybrid it ends on (`.ctLaplaceContinue()`), so the pass
   # before it computes only what it starts from: the curvature's normal and
@@ -7456,7 +7453,7 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
   # final record however the continuation ends (`precheck`).
   plaincontrol <- uncertaintycontrol[setdiff(names(uncertaintycontrol), "check")]
   precheck <- NULL
-  if (uncertain && !jumped) {
+  if (uncertain && !(jumped && continuing)) {
     if (continuing) {
       restore <- .ctStreamKeep()
       out <- holdrepair(measure(out, "hessian"))
@@ -7475,15 +7472,9 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
   # `.ctLaplaceAutoCorrect()` for `'step'`.
   if (!is.null(out$laplace) && isTRUE(intoverstates)) {
     if (continuing) {
-      if (!identical(correctlaplace, "quadrature")) {
-        message("The Laplace term jumped where the optimiser stopped, so the ",
-          "fit was finished by the quadrature correction",
-          if (!is.null(optimcontrol$laplace_correct))
-            " despite optimcontrol$laplace_correct", ".")
-      }
       out <- holdrepair(.ctLaplaceContinue(out, cores = cores, verbose = verbose,
         method = uncertainty, uncertaintycontrol = plaincontrol))
-    } else if (identical(correctlaplace, "check")) {
+    } else if (jumped || identical(correctlaplace, "check")) {
       out <- holdrepair(.ctLaplaceContinue(out, cores = cores, verbose = verbose,
         correct = FALSE))
     } else if (identical(correctlaplace, "step")) {
@@ -7659,8 +7650,8 @@ print.ctJuliaFit <- function(x, ...) {
       " the quadrature value by ", format(abs(corr$gap_reported), digits = 3),
       " here and no quadrature step improved on it; the log likelihood ",
       "reported is the quadrature one. See fit$laplace$correction.\n", sep = "")
-  } else if (identical(corr$status, "flagged")) {
-    # What the fit's warning said (`.ctLaplaceShiftMessage()`).
+  } else if (identical(corr$status, "flagged") || identical(corr$status, "jump")) {
+    # What the fit's warning said (`.ctLaplaceShiftMessage()`, or the jump's).
     cat("  ", corr$message, "\n", sep = "")
   } else if (identical(corr$status, "too_wide")) {
     cat("  Laplace estimate not corrected: every subject or group has more than ",
