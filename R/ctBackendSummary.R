@@ -1881,12 +1881,14 @@ ctBackendParMatrices <- function(fit, raw = NULL, tipreds = NULL, state = NULL,
 # of the intervals that are off (review/REVIEW-fit-uncertainty-2026-10-25.md,
 # section 5). A fit that ended on a jump makes no check -- the Laplace
 # objective jumps where the check would look -- and the jump says what one
-# would: some unit's posterior is not one Gaussian basin.
+# would: some unit's posterior is not one Gaussian basin. Where
+# `laplace_correct = TRUE` refitted it, the curvature is the rounds'.
 .ctUncertaintyCheckNote <- function(fit) {
   u <- fit$uncertainty
   if (!identical(u$settings$method, "hessian")) return(NULL)
   if (!is.null(fit$laplace$jump)) return(paste0("Intervals are from the ",
-    "corrected curvature at the estimate, where the Laplace term jumped: ",
+    if (isTRUE(fit$laplace$correction$applied)) "corrected curvature at the estimate, " else
+      "curvature at a point ", "where the Laplace term jumped: ",
     "ctFitUncertainty(fit, 'sample') samples the posterior for intervals to report."))
   check <- u$details$normalcheck
   if (is.null(check)) return(NULL)
