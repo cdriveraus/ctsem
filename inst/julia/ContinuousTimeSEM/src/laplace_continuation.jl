@@ -1660,7 +1660,8 @@ term; the units in `force` are flagged whatever their gap. A unit wider than
 rule, per block of its tree, when `draws > 0`, and is not scored at all
 otherwise, keeping its Laplace term. `point_units` and `point_values` are
 points the caller knows for some units, column `j` of `point_values` for unit
-`point_units[j]` (its first `dims` entries), each a component of that unit's
+`point_units[j]` (its entries before the first NaN, `_laplace_known_column`,
+where that is the unit's length here), each a component of that unit's
 importance proposal. `screen = false` scores only the units `force` names, the
 rest keeping their Laplace terms unscored: what a fit climbing the hybrid
 needs. `draws_scope = :forced` gives draws only to the units `force` names,
@@ -1726,9 +1727,8 @@ function _continuation_add_points!(o::CTSEMLaplaceContinuation, point_units,
         "point_values needs one column per entry of point_units"))
     for (j, U) in enumerate(units)
         1 <= U <= length(o.laplace.units.members) || continue
-        d = o.laplace.units.dims[U]
-        d <= size(V, 1) || continue
-        x = V[1:d, j]
+        x = _laplace_known_column(V, j)
+        length(x) == o.laplace.units.dims[U] || continue
         all(isfinite, x) || continue
         push!(get!(o.points, U, Vector{Vector{Float64}}()), x)
     end
@@ -3499,7 +3499,7 @@ function _laplace_jump_units(laplace::CTSEMLaplaceObjective, numbering::Vector{I
         end
     end
     width = maximum(length, columns; init=1)
-    values = zeros(width, max(length(columns), 1))
+    values = fill(NaN, width, max(length(columns), 1))
     for (j, c) in enumerate(columns)
         values[1:length(c), j] = c
     end

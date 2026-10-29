@@ -5537,8 +5537,10 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
 
 # The known modes with column `j` of `values`, a mode of unit `units[j]`,
 # added where it is not one already held, or NULL where none is added; rows
-# zero-padded to the longer of the two matrices (the engine reads a unit's
-# first `dims` entries). A unit of 0 is the engine's "none".
+# padded with NaN to the longer of the two matrices. A column's mode is its
+# entries before the first NaN (`_laplace_known_column`), and its length says
+# which objective's layout it is in: the engine passes over one whose length
+# is not the unit's there. A unit of 0 is the engine's "none".
 .ctJuliaKnownAdd <- function(known, units, values) {
   units <- as.integer(units)
   values <- as.matrix(values)
@@ -5550,13 +5552,18 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
   old_units <- if (is.null(known)) integer() else as.integer(known$units)
   old_values <- if (is.null(known)) matrix(0, nrow(values), 0) else as.matrix(known$values)
   rows <- max(nrow(values), nrow(old_values))
-  pad <- function(m) rbind(m, matrix(0, rows - nrow(m), ncol(m)))
+  pad <- function(m) rbind(m, matrix(NaN, rows - nrow(m), ncol(m)))
   values <- pad(values)
   old_values <- pad(old_values)
+  column <- function(v) v[seq_len(match(TRUE, is.nan(c(v, NaN))) - 1L)]
+  held <- function(a, b) {
+    a <- column(a)
+    b <- column(b)
+    length(a) == length(b) && isTRUE(max(abs(a - b), 0) < 1e-8)
+  }
   fresh <- vapply(seq_along(units), function(j) {
     same <- which(old_units == units[j])
-    !any(vapply(same, function(k) max(abs(old_values[, k] - values[, j])) < 1e-8,
-      logical(1)))
+    !any(vapply(same, function(k) held(old_values[, k], values[, j]), logical(1)))
   }, logical(1))
   if (!any(fresh)) return(NULL)
   list(units = c(old_units, units[fresh]),

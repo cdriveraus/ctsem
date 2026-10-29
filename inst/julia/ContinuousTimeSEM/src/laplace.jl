@@ -794,7 +794,9 @@ every subject's filter shares.
 so the mode probes are skipped (`CTSEMLaplaceObjective`'s field of that name).
 `known_unit` and `known_values`, when sent, are the modes units' solves also
 start from (the field `known`): column `j` of `known_values` is a mode of unit
-`known_unit[j]`, its first `dims` entries, the rest padding.
+`known_unit[j]`, its entries before the first NaN, the rest padding
+(`_laplace_known_column`); one whose length is not the unit's on this
+objective is another objective's and is passed over.
 `affine_level` and `affine_effect`, when sent, are parallel: each pair names an
 effect (an index into that level's effects) that enters as that test's mean
 effects do where it holds for some effects and not all (the field `affine`).
@@ -958,8 +960,9 @@ end
 """
     _laplace_add_known!(laplace, units, values)
 
-Adds column `j` of `values`, its first `dims` entries, to unit `units[j]`'s
-known modes (the field `known`), leaving out any within 1e-8 of one it has.
+Adds column `j` of `values` (`_laplace_known_column`) to unit `units[j]`'s
+known modes (the field `known`) where its length is the unit's here, leaving
+out any within 1e-8 of one it has.
 """
 function _laplace_add_known!(laplace::CTSEMLaplaceObjective, units::Vector{Int},
     values::Matrix{Float64})
@@ -968,15 +971,34 @@ function _laplace_add_known!(laplace::CTSEMLaplaceObjective, units::Vector{Int},
     for (j, U) in enumerate(units)
         1 <= U <= length(laplace.known) || throw(ArgumentError(
             "known mode for unit $U, outside the objective's units"))
-        d = laplace.units.dims[U]
-        size(values, 1) >= d || throw(DimensionMismatch(
-            "a known mode of unit $U needs $d entries"))
-        u = values[1:d, j]
+        # A mode of the objective whose unit is laid out otherwise -- the
+        # hybrid's on the layer, where the effects the filter integrates are
+        # coordinates too, or the layer's on the hybrid -- has another length
+        # and is no point here. Read as this unit's first entries, a hybrid's
+        # mode padded with zeros stopped a layer build of the rescue grid's
+        # gC8, or set its other coordinates to zero.
+        u = _laplace_known_column(values, j)
+        length(u) == laplace.units.dims[U] || continue
         all(isfinite, u) || continue
         any(k -> _laplace_maxabsdiff(k, u) < 1e-8, laplace.known[U]) && continue
         push!(laplace.known[U], u)
     end
     return laplace
+end
+
+"""
+    _laplace_known_column(values, j)
+
+Column `j` of a matrix of units' modes (`known_values`, a jump's or an
+anchored run's `point_values`, the correction's points): its entries before
+the first NaN. Modes of different units have different lengths, so such a
+matrix pads each column with NaN to the longest, and a column's length says
+which objective's layout it is in.
+"""
+function _laplace_known_column(values::AbstractMatrix, j::Integer)
+    k = findfirst(isnan, view(values, :, j))
+    n = k === nothing ? size(values, 1) : k - 1
+    return collect(Float64, view(values, 1:n, j))
 end
 
 """Positional convenience form, for single-level calls written in Julia."""
@@ -4437,7 +4459,7 @@ the anchored mode, the anchor reached a mode a search from the origin misses,
 and it is returned (`kept`) for the caller to add to the known modes, so every
 later objective built for the fit reaches it too; where it prefers the
 search's, the run missed a better mode (`missed`, with `gain`, the change it
-makes to the objective at `x`), and the caller resumes from `x` with it known. Both as units and a zero-padded matrix of modes, `[0]`
+makes to the objective at `x`), and the caller resumes from `x` with it known. Both as units and a NaN-padded matrix of modes, `[0]`
 and `zeros(1, 1)` where none. The anchors are left cleared.
 """
 _ctsem_anchor_finish!(::CTSEMOptimisable, x) = nothing
@@ -4489,7 +4511,7 @@ function _ctsem_anchor_finish!(laplace::CTSEMLaplaceObjective, x::AbstractVector
     columns(units, modes) = begin
         isempty(units) && return ([0], zeros(1, 1))
         width = maximum(U -> length(modes[U]), units; init=1)
-        m = zeros(width, length(units))
+        m = fill(NaN, width, length(units))
         for (j, U) in enumerate(units)
             m[1:length(modes[U]), j] = modes[U]
         end

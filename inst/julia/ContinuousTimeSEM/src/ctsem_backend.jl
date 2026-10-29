@@ -3699,8 +3699,9 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
         # A jump the route named (`stop_reason == "jump"`): the units whose
         # terms jumped, their changes along the step, and where each one's
         # inner solve stopped at the points either side, column `j` of
-        # `jump_point_values` for unit `jump_point_units[j]` (zero-padded to
-        # the widest). `[0]`, `[0.0]` and a 1x1 zero when there was none.
+        # `jump_point_values` for unit `jump_point_units[j]` (NaN-padded to
+        # the widest, `_laplace_known_column`). `[0]`, `[0.0]` and a 1x1
+        # matrix when there was none.
         jump_units=jumped_units[] === nothing ? [0] : jumped_units[].units,
         jump_changes=jumped_units[] === nothing ? [0.0] : jumped_units[].changes,
         jump_point_units=jumped_units[] === nothing ? [0] :
