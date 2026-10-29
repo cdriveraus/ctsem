@@ -663,15 +663,42 @@
 }
 
 # What a fit the check flagged and nothing corrected says, in its warning and
-# in print(): the move, and the calls that remove it -- the rounds after the
-# fit, and sampling the joint posterior, which has no Laplace error -- and,
-# where `drawn` units would go on draws, that both may take hours.
-.ctLaplaceShiftMessage <- function(shift, worst, carrying, units, drawn = 0L) {
+# in print(): the move, Laplace's error in the log likelihood (`gap`, where it
+# is resolved past twice `gap_se`), that the estimates, intervals and log
+# likelihood are all Laplace's, and the calls that remove the error -- the
+# rounds after the fit, and sampling the joint posterior, which has no
+# Laplace error -- and, where `drawn` units would go on draws, that both may
+# take hours.
+#
+# The step is the check's linearisation, right in size to about one standard
+# error and no guide past it, in either direction: on the bench it read the
+# rounds' moves of 3.5 and 10 se as 1.1 and 1.0 (gD3, anomS1), and one of 1.6
+# as 2.9-3.8 (k5; review/PROPOSAL-laplace-check-every-unit-2026-10-27.md). So
+# past one standard error the message gives a range, not a size. Quoted as
+# "up to" its value, anomS1's warning said 1 standard error where the
+# posterior mean was 1.9 posterior sds away and Laplace's interval held 1 per
+# cent of the mass (review/REVIEW-fit-uncertainty-2026-10-29.md, section 3).
+# The gap is not the trigger -- its level does not predict a move -- but a
+# large one says Laplace is off throughout, and the log likelihood a model
+# comparison reads is off by it.
+.ctLaplaceShiftMessage <- function(shift, worst, carrying, units, drawn = 0L,
+  gap = NA_real_, gap_se = NA_real_) {
   sample <- "ctFitUncertainty(fit, 'sample', control = list(intoverpop = 'none'))"
-  paste0("Laplace's error moves the estimates by up to ", format(shift, digits = 2),
-    " standard errors here (", worst, "), carried by ", carrying, " of ", units,
-    " units, and is not corrected. ctFitUncertainty(fit, 'hessian', control = ",
-    "list(likelihood = 'quadrature')) corrects it by quadrature, and ", sample,
+  move <- if (shift < 1) {
+    paste0("by about ", format(shift, digits = 2), " standard errors here (", worst, ")")
+  } else {
+    paste0("by a standard error or more here (", worst, ": ", format(shift, digits = 2),
+      " by the check's linear step, which is no guide to the size past one)")
+  }
+  resolved <- is.finite(gap) && abs(gap) >= 0.05 &&
+    (!is.finite(gap_se) || abs(gap) > 2 * gap_se)
+  paste0("Laplace's error moves the estimates ", move, ", carried by ", carrying,
+    " of ", units, " units",
+    if (resolved) paste0(", and puts the log likelihood ", format(abs(gap), digits = 2),
+      " nats ", if (gap < 0) "above" else "below", " the integrated one"),
+    ". The estimates, their intervals and the log likelihood are Laplace's, ",
+    "uncorrected. ctFitUncertainty(fit, 'hessian', control = ",
+    "list(likelihood = 'quadrature')) corrects them by quadrature, and ", sample,
     " samples the joint posterior.",
     if (drawn > 0L) paste0(" Both may take hours here, where ", drawn,
       " of those units are too wide for a product rule."),
@@ -1172,7 +1199,8 @@
     if (!is.null(sink)) sink("", "break")
     said <- .ctLaplaceShiftMessage(check$max_shift, checkrecord$worst,
       length(check$carrying), check$units,
-      drawn = if (checkrecord$wide > 0.25 * check$units) checkrecord$wide else 0L)
+      drawn = if (checkrecord$wide > 0.25 * check$units) checkrecord$wide else 0L,
+      gap = check$gap, gap_se = check$gap_se)
     warning(said, call. = FALSE)
     fit$laplace$correction <- list(method = "quadrature", status = "flagged",
       applied = FALSE, message = said, laplace_estimate = est,

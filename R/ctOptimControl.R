@@ -224,8 +224,12 @@
 #'  last, after the certification and the standard errors. \code{'check'}
 #'  scores every unit, whatever its number of effects, at draws of its
 #'  posterior, and warns where taking the integrals exactly would move an
-#'  estimate by 0.1 standard errors or more, naming the calls that correct
-#'  it: \code{ctFitUncertainty(fit, 'hessian', control = list(likelihood =
+#'  estimate by 0.1 standard errors or more. The warning gives the move's
+#'  size below one standard error (past that the check's linear step is no
+#'  guide to it), and how far Laplace's log likelihood is from the
+#'  integrated one; the estimates, intervals and log likelihood stay
+#'  Laplace's. It names the calls that correct
+#'  them: \code{ctFitUncertainty(fit, 'hessian', control = list(likelihood =
 #'  'quadrature'))}, which does what \code{'quadrature'} does at fit time,
 #'  and sampling the joint posterior. Every model whose effects enter
 #'  linearly passes. \code{'quadrature'} makes the same check and then
