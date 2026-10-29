@@ -839,11 +839,16 @@ end
     # stable update reverse (`_reverse_update!`) it is accurate here -- more so
     # than Float64 forward mode, which is off by about 1e-4 -- where the previous
     # derivation was off by 1e-1 and more. Against BigFloat for that reason.
+    # What is left is roundoff, which moves with the point's last bits: 1.5e-6
+    # to 1.7e-5 over 30 points perturbed by 1e-12, and at this one 2.6e-6
+    # under Julia 1.12.7 and 2.8e-5 under 1.13.3 (dev3, 2026-10-29). A bar
+    # inside that spread passes by luck, so it sits between it and forward
+    # mode's 1.2e-4.
     @test CT._CTSEM_ADJOINT_GROWTH[] == Inf
     setprecision(BigFloat, 256) do
         exact = Float64.(ForwardDiff.gradient(objective, big.(values)))
         relx(g) = maximum(abs.(g .- exact) ./ max.(1.0, abs.(exact)))
-        @test relx(CT.ctsem_adjoint_gradient(objective, values).gradient) < 1e-5
+        @test relx(CT.ctsem_adjoint_gradient(objective, values).gradient) < 5e-5
     end
     old = CT._CTSEM_ADJOINT_GROWTH[]
     try
