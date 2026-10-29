@@ -293,12 +293,15 @@ test_that('ASYMPTOTES is a matrix of its own, one row per binary indicator', {
     fixed = TRUE)
   # `pars` and `manifesttype` can be edited after ctModel, so the fit checks
   # again: a fixed value out of range, and rows no longer matching the items.
+  # The checks are the model setup's, which `fit = FALSE` runs without Julia;
+  # a fitting call asks for Julia first.
   m2 <- m
   m2$pars$value[m2$pars$matrix %in% 'ASYMPTOTES' & m2$pars$col == 2][1] <- 1.2
-  expect_error(ctFit(dat, m2, backend = 'julia'), 'between 0 and 1')
+  expect_error(ctFit(dat, m2, backend = 'julia', fit = FALSE),
+    'between 0 and 1')
   m3 <- m
   m3$manifesttype <- c(0, 1, 0)
-  expect_error(ctFit(dat, m3, backend = 'julia'),
+  expect_error(ctFit(dat, m3, backend = 'julia', fit = FALSE),
     'ASYMPTOTES has 2 rows but the model has 1 binary')
 })
 
