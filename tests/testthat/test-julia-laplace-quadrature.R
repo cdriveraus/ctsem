@@ -791,10 +791,28 @@ test_that("draws' defaults reach the engine, and a flag names both corrections",
   for (said in c(plain, wide)) {
     expect_match(said, "likelihood = 'quadrature'", fixed = TRUE)
     expect_match(said, "intoverpop = 'none'", fixed = TRUE)
+    expect_match(said, "their intervals", fixed = TRUE)
   }
   expect_no_match(plain, "hours", fixed = TRUE)
   expect_match(wide, "Both may take hours here, where 97 of those units",
     fixed = TRUE)
+  # The step is a linearisation: a size below one standard error, a range
+  # past it, where it has read moves of 10 se as 1 and of 1.6 as 3.8.
+  expect_match(plain, "by about 0.63 standard errors here (popsd_drift)", fixed = TRUE)
+  expect_match(wide, "by a standard error or more here (popsd_mm_Y5: 2.3 by",
+    fixed = TRUE)
+  expect_no_match(plain, "or more", fixed = TRUE)
+  # The log likelihood's error where the check resolves it, with its sign;
+  # nothing where it is within its noise.
+  expect_no_match(plain, "nats", fixed = TRUE)
+  above <- .ctLaplaceShiftMessage(1.01, "diff_anom", 661L, 800L, gap = -30.3,
+    gap_se = 0.2)
+  expect_match(above, "puts the log likelihood 30 nats above the integrated one",
+    fixed = TRUE)
+  below <- .ctLaplaceShiftMessage(0.4, "drift", 43L, 60L, gap = 1.2, gap_se = 0.1)
+  expect_match(below, "1.2 nats below", fixed = TRUE)
+  noisy <- .ctLaplaceShiftMessage(0.4, "drift", 43L, 60L, gap = 0.3, gap_se = 0.2)
+  expect_no_match(noisy, "nats", fixed = TRUE)
 })
 
 # The gated-gaps A14 config (review/LAPLACE-gated-gaps-2026-09-24.md): 40
