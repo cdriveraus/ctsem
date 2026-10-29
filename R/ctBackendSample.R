@@ -1035,7 +1035,7 @@
       uncertainty = "checked", finishsamples = 2L, cores = cores, matsetup = NA,
       verbose = verbose, hessian = u$hessian),
       error = function(e) {
-        warning("The normal check for the sampler's metric failed (",
+        warning("The normality check for the sampler's metric failed (",
           conditionMessage(e), "); sampling from the Hessian's.", call. = FALSE)
         NULL
       })
@@ -2059,7 +2059,7 @@ print.ctSampleDiagnostics <- function(x, ...) {
 # Hessian is the endgame's own -- reused via `.ctBackendStoredHessian()`
 # inside `ctOptimUncertainty()` rather than recomputed here -- so the common
 # case costs one Hessian for the whole call, not one for the fit and a second
-# for the sampler. `laplace_correct` is forced off for the placement: the
+# for the sampler. `laplace_check` is forced off for the placement: the
 # Laplace fit only places the chains, from its own optimum and curvature, and
 # the quadrature-corrected point answers a question the placement does not
 # ask.
@@ -2206,7 +2206,7 @@ print.ctSampleDiagnostics <- function(x, ...) {
   # forced TRUE here regardless of what was asked: optimising the joint
   # density of the parameters and the latent states is a category error, not
   # a lesser estimate (`state-explicit-generation.md`) -- the joint mode is
-  # degenerate and not a place to start a sampler from. `laplace_correct` is
+  # degenerate and not a place to start a sampler from. `laplace_check` is
   # forced off and `uncertainty` forced to `'hessian'`: under
   # `intoverpop='laplace'` the fit only places the chains, from its optimum
   # and curvature -- not the quadrature-corrected point, which answers a
@@ -2217,7 +2217,7 @@ print.ctSampleDiagnostics <- function(x, ...) {
   # point only for `.ctBackendSampleAssemble()` to overwrite them with the
   # real ones below.
   placementcontrol <- utils::modifyList(optimcontrol,
-    list(laplace_correct = FALSE, uncertainty = "hessian", estonly = FALSE,
+    list(laplace_check = FALSE, uncertainty = "hessian", estonly = FALSE,
       finishsamples = 2L))
   # When SAEM places the chains (`control$placement = 'saem'`, the default on
   # the joint target for its kernel), it runs from this fit's point, so this

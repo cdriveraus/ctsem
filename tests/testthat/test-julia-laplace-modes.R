@@ -605,7 +605,7 @@ test_that("anchored solves reach the searched modes, and a fit leaves none", {
     set.seed(5)
     suppressWarnings(suppressMessages(ctFit(data, m, backend = "julia",
       intoverpop = "laplace", cores = 1L,
-      optimcontrol = list(laplace_correct = FALSE))))
+      optimcontrol = list(laplace_check = FALSE))))
   }
   anchored <- fitwith(TRUE)
   searched <- fitwith(FALSE)
@@ -625,7 +625,7 @@ test_that("a checkpoint keeps the point and the anchored modes, and a fit resume
   fitto <- function(model, maxiter) {
     set.seed(5)
     suppressWarnings(ctFit(data, model, backend = "julia", intoverpop = "laplace",
-      cores = 1L, optimcontrol = list(laplace_correct = FALSE, estonly = TRUE,
+      cores = 1L, optimcontrol = list(laplace_check = FALSE, estonly = TRUE,
         maxiter = maxiter, checkpoint = path)))
   }
   first <- suppressMessages(fitto(.modes_sign_model(), 4L))

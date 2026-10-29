@@ -58,7 +58,6 @@
 "test-julia-install.R",1.01828980445862,49,0,0
 "test-julia-interrupt.R",105.463032007217,47,0,0
 "test-julia-intoverstates.R",311.097549915314,64,0,0
-"test-julia-laplace-autocorrect.R",204.065158128738,85,0,0
 "test-julia-laplace-check.R",160.746229887009,42,0,0
 "test-julia-laplace-correct.R",5.36959886550903,23,0,0
 "test-julia-laplace-invariance.R",132.221087694168,27,0,0

@@ -110,15 +110,14 @@ transform (`DRIFT`, `DIFFUSION`, and any state-dependent parameter), and the
 approximation is better the more informative each subject's data is about its
 own effects.
 
-`ctFit()` measures that error itself by default
-(`optimcontrol$laplace_correct`): it checks each unit's integral at draws
+`ctFit()` measures that error itself by default, with the Laplace check
+(`optimcontrol$laplace_check`): it checks each unit's integral at draws
 from that unit's posterior, and warns where taking the integrals exactly
 would move an estimate by a tenth of a standard error or more.
-`ctFitUncertainty(fit, 'hessian', control = list(likelihood = 'quadrature'))`
-then continues the fit on the quadrature objective for the units that carry
-the move, reporting the quadrature log likelihood, and `laplace_correct =
-TRUE` does the same at fit time; `print(fit)` says when the estimate moved,
-or should have. `ctLaplaceCheck()` reports the same
+`ctLaplaceRefit(fit)` then refits on the quadrature objective for the units
+that carry the move, reporting the quadrature log likelihood, and
+`optimcontrol$laplace_refit = TRUE` does the same at fit time; `print(fit)`
+says when the estimate moved, or should have. `ctLaplaceCheck()` reports the same
 measurement on any Laplace fit, as how far the estimate would move if the
 integral were taken exactly. Read `delta_se`: well below one says the
 approximation is not what limits the answer, and near or above one says it

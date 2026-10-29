@@ -984,7 +984,7 @@
     stop("This fit was already corrected by quadrature when it was fitted ",
       "(fit$laplace$correction), so moving the estimate again would correct ",
       "it twice. Drop correctEstimate to redraw around the corrected ",
-      "estimate, or refit with optimcontrol$laplace_correct = FALSE.",
+      "estimate, or fit again without optimcontrol$laplace_refit.",
       call. = FALSE)
   }
   stay <- already || identical(control$correctEstimate, FALSE)
