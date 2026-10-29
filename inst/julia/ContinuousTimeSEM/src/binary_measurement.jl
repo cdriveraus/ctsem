@@ -289,19 +289,21 @@ taken of their difference, which tends to `log(-z)`.
 """
     _logistic(x)
 
-`1 / (1 + e^-x)`, as `inv(1 + exp(-x))` wherever that exponential is finite,
-which is the expression the score and the information have always used, so
-their numbers there are unchanged. Past `x = -700` it is `e^x / (1 + e^x)`.
+`1 / (1 + e^-x)`, as `inv(1 + exp(-x))` for `x >= 0` and `e^x / (1 + e^x)`
+below, so that the exponential taken is never above one.
 
-The difference is not in the value, which is zero or subnormal either way, but
-in a dual: `exp(-x)` overflows to `Inf`, and the partials of `inv(Inf)` are
-`Inf / Inf`, NaN. A linear predictor out at -700 is not a fitted value, but
-the Laplace optimiser's trial points and the inner curvature reach it (bench
-gD3 on dev1: over a thousand categorical evaluations at predicted means of
--700 to -1000 in one fit), and a NaN partial there poisons the whole
-gradient where a zero was the answer.
+The difference is not in the value but in its derivatives. Past `x = -709.78`
+`exp(-x)` overflows, and a dual's partials of `inv(Inf)` are `Inf / Inf`, NaN.
+A second part -- a trace jet's, a nested dual's -- divides by the cube of
+`1 + e^-x`, which overflows from about `x = -236`. A linear predictor that far
+out is not a fitted value, but the Laplace optimiser's trial points and the
+inner curvature reach it (bench gD3 on dev1: over a thousand categorical
+evaluations at predicted means of -700 to -1000 in one fit), and the blend
+between the binary rules takes the logistic of hundreds near the ends of its
+band (`_binary_vweight`): switched at -700, a jet's second part was NaN there
+at s = 3.498 on bench gD1, and the gated rule's gradient with it.
 """
-@inline _logistic(x::Real) = x < -700 ? (E = exp(x); E / (one(E) + E)) :
+@inline _logistic(x::Real) = x < 0 ? (E = exp(x); E / (one(E) + E)) :
     inv(one(x) + exp(-x))
 
 """
