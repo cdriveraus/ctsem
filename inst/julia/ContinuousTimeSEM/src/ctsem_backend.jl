@@ -1905,16 +1905,7 @@ row."""
 function _ctsem_structured_B!(m::CTSEMStructured, x::AbstractVector)
     st = m.store
     (st.valid && st.x == x) || return false
-    S = st.S
-    N = size(S, 1)
-    mul!(m.B, transpose(S), S)
-    g = vec(sum(S; dims=1))
-    @inbounds for j in axes(m.B, 2), i in axes(m.B, 1)
-        m.B[i, j] -= g[i] * g[j] / N
-    end
-    @inbounds for i in eachindex(m.precision)
-        m.B[i, i] += m.precision[i]
-    end
+    _ctsem_score_information!(m.B, st.S, m.precision)
     copyto!(m.Bx, x)
     m.haveB = true
     return true
@@ -2786,7 +2777,7 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
     progress_budget::Bool=false, progress_every::Real=0.0,
     gap_tol::Real=0.0, converge_tol::Real=1e-6,
     precondition=nothing, lbfgs_inverse=nothing, lbfgs_scores::Bool=false,
-    lbfgs_pairs=nothing, initial_alpha::Real=0.1,
+    lbfgs_local::Bool=false, lbfgs_pairs=nothing, initial_alpha::Real=0.1,
     overshoot_probe=_CTSEM_OVERSHOOT_PROBE[],
     stall_window::Integer=80, stall_fraction::Real=1e-2,
     stall_cooldown::Integer=30, stall_tighten::Real=0.1,
@@ -2845,7 +2836,10 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
     # from every full-data trial with a gradient. Made before the closure that
     # writes it.
     # And for coreset stages (`coreset`), whose training points they are.
-    score_store = (lbfgs_scores || (coreset && !progress_budget)) &&
+    # And for the local curvature (`lbfgs_local`), which reads which units
+    # read each parameter from them.
+    score_store = (lbfgs_scores || (lbfgs_local && !progress_budget) ||
+            (coreset && !progress_budget)) &&
         _ctsem_scores_supported(objective) ?
         CTSEMScoreStore(_ctsem_nunits(objective), length(start_values)) : nothing
     # Gradients of the whole objective the trials took, which is what a batch
@@ -2951,6 +2945,15 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
     # what lets progress be the default without making the default noisy.
     reporter = _ctsem_progress_reporter(progress, progress_label,
         progress_overwrite, progress_sink, progress_every)
+    # L-BFGS's initial inverse Hessian, exact where parameters are read by few
+    # units (`CTSEMLocalCurvature`), on a route that can difference a column
+    # over its units alone; not on a budget stage (the prior warm-up), whose
+    # few iterations could not pay for it.
+    local_curvature = (lbfgs_local && !progress_budget && score_store !== nothing &&
+            _ctsem_local_capable(objective)) ?
+        CTSEMLocalCurvature(objective, score_store, _ctsem_prior_precision(
+            _ctsem_prior_objective(objective), length(start_values));
+            progress=_ctsem_local_progress(reporter)) : nothing
     # Explosive filter passes (`_CTSEM_EXPLOSIVE_GROWTH`) and forward-mode
     # subject gradients (`_CTSEM_ADJOINT_GROWTH`) this run takes, counted from
     # here so a stage reports its own.
@@ -3176,7 +3179,8 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
         maxiter=max(0, Int(maxiter) - sgd_iterations),
         g_tol=g_tol, f_tol=f_tol, x_tol=x_tol, callback=watch,
         directional=directional, batch=batcher, iteration0=sgd_iterations,
-        coreset=coreseter, jump=watch_jump ? jump : nothing)
+        coreset=coreseter, jump=watch_jump ? jump : nothing,
+        local_curvature=local_curvature)
     if sgd_result !== nothing
         result = CTSEMLBFGSResult(result.minimizer, result.minimum,
             result.gradient, sgd_iterations + result.iterations,
@@ -3329,7 +3333,11 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
             hessian0=handed_back ? nothing : newton_hessian,
             hessian0_at=handed_back ? nothing : newton_hessian_at,
             krylov_min_cost=krylov_min_cost, final=Symbol(newton_final),
-            jump=watch_jump ? jump : nothing)
+            jump=watch_jump ? jump : nothing,
+            # The local curvature's last build, as the Krylov model's
+            # preconditioner: exact where it was cheap.
+            krylov_base=(local_curvature === nothing ||
+                isempty(local_curvature.P)) ? nothing : local_curvature.P)
         minimizer = collect(finish.x)
         # A jump the finish's steps confirmed and the route named: the run
         # ends there as it does on L-BFGS's ("jump", above), with no Hessian.
@@ -3380,7 +3388,7 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
             maxiter=max(0, Int(maxiter) - result.iterations - spent.steps[]),
             g_tol=g_tol, f_tol=f_tol, x_tol=x_tol, callback=watch,
             directional=directional, iteration0=result.iterations + spent.steps[],
-            jump=watch_jump ? jump : nothing)
+            jump=watch_jump ? jump : nothing, local_curvature=local_curvature)
         result = CTSEMLBFGSResult(resumed.minimizer, resumed.minimum,
             resumed.gradient, result.iterations + resumed.iterations,
             result.f_calls + resumed.f_calls, result.g_calls + resumed.g_calls,
@@ -3596,6 +3604,12 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
         newton_steps=newton_steps,
         # L-BFGS steps taken on the structured model (`lbfgs_scores`).
         structured_steps=structured === nothing ? 0 : structured.steps,
+        # The local curvature (`lbfgs_local`): how often it was built, the
+        # gradients that cost, and how many parameters it took exactly.
+        local_builds=local_curvature === nothing ? 0 : local_curvature.builds,
+        local_gradients=local_curvature === nothing ? 0.0 : local_curvature.spent,
+        local_columns=local_curvature === nothing ? 0 :
+            length(local_curvature.columns),
         # The coreset stages (`coreset`): each stage's units, share of a full
         # evaluation's work, iterations, and what the full objective gained
         # over what the coreset predicted; the iteration each run of stages
@@ -3685,8 +3699,9 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
         # A jump the route named (`stop_reason == "jump"`): the units whose
         # terms jumped, their changes along the step, and where each one's
         # inner solve stopped at the points either side, column `j` of
-        # `jump_point_values` for unit `jump_point_units[j]` (zero-padded to
-        # the widest). `[0]`, `[0.0]` and a 1x1 zero when there was none.
+        # `jump_point_values` for unit `jump_point_units[j]` (NaN-padded to
+        # the widest, `_laplace_known_column`). `[0]`, `[0.0]` and a 1x1
+        # matrix when there was none.
         jump_units=jumped_units[] === nothing ? [0] : jumped_units[].units,
         jump_changes=jumped_units[] === nothing ? [0.0] : jumped_units[].changes,
         jump_point_units=jumped_units[] === nothing ? [0] :

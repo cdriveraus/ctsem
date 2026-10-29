@@ -60,6 +60,11 @@ BENCH_VARIANTS <- list(
   # build's default: paired on one build, what they save and that the
   # optimum is the same.
   coreset = list(optimcontrol = list(coreset = TRUE)),
+  # The local curvature off (`lbfgs_local`, juliaFit localcurv): L-BFGS starts
+  # from its learned diagonal, as before it. Paired with `default`, what the
+  # exact columns of parameters few units read buy; where no parameter is
+  # read by a tenth of the units or fewer, the two run the same code.
+  nolocal = list(optimcontrol = list(lbfgs_local = FALSE)),
   nocoreset = list(optimcontrol = list(coreset = FALSE)),
 
   # The finish's steps on one curvature whatever the route would choose

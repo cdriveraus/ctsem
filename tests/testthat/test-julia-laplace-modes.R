@@ -393,7 +393,7 @@ test_that("a unit's solve also starts from its known modes", {
 })
 
 # What a jump adds to the known modes (`.ctJuliaKnownModes()`): the columns of
-# the units it named, padded to the longer matrix, none already held.
+# the units it named, padded with NaN to the longer matrix, none already held.
 test_that("a jump's modes join the known ones once each", {
   result <- list(stop_reason = "jump", jump_units = c(3L, 5L),
     jump_point_units = c(3L, 3L, 4L, 5L),
@@ -408,9 +408,29 @@ test_that("a jump's modes join the known ones once each", {
     jump_point_values = matrix(c(9, 9, 9), 3))
   both <- ctsem:::.ctJuliaKnownModes(first, wider)
   expect_equal(both$units, c(3L, 3L, 5L, 7L))
-  expect_equal(both$values, cbind(rbind(first$values, 0), c(9, 9, 9)))
+  expect_equal(both$values, cbind(rbind(first$values, NaN), c(9, 9, 9)))
+  # A mode is its entries before the padding: the same entries padded are the
+  # same mode, and a shorter one with the same start is another.
+  expect_null(ctsem:::.ctJuliaKnownAdd(both, 3L, matrix(c(1, 2, NaN))))
+  expect_equal(ctsem:::.ctJuliaKnownAdd(both, 7L, matrix(c(9, 9, NaN)))$units,
+    c(3L, 3L, 5L, 7L, 7L))
   expect_null(ctsem:::.ctJuliaKnownModes(first, list(stop_reason = "jump",
     jump_units = 0L, jump_point_units = 0L, jump_point_values = matrix(0))))
+})
+
+# A known mode is used only where its length is the unit's on the objective
+# being built: a hybrid's mode, shorter, is passed over by the layer, where
+# read as the unit's first entries it once stopped the build.
+test_that("a known mode of another length is passed over", {
+  skip_without_julia()
+  spec <- suppressMessages(ctFit(.modes_sign_data(), .modes_sign_model(),
+    backend = "julia", intoverpop = "laplace", fit = FALSE))
+  spec$laplace$known <- list(units = c(1L, 1L, 2L),
+    values = matrix(c(0.5, NaN, 0.5, 0.7, 0.9, NaN), 2))
+  handle <- structure(spec, class = c("ctJuliaModel", "ctFitModel"))
+  objective <- ctsem:::.ctJuliaObjective(handle, hybrid = TRUE)
+  held <- ctsem:::.ctJuliaEval("o -> Int[length(k) for k in o.known]")
+  expect_equal(as.integer(held(objective))[1:3], c(1L, 1L, 0L))
 })
 
 # Anchors (`_ctsem_anchor_start!`): within an optimisation each unit's solve

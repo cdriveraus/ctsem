@@ -35,6 +35,11 @@
 #'  scores plus the prior's precision and a learned correction, and takes each
 #'  step on whichever model predicted the last step's gain better; while a
 #'  fit is batched, only on the whole data.}
+#'  \item{\code{lbfgs_local}}{Julia. Default TRUE. On the Laplace route,
+#'  where some parameters are read by few units (a study's, a group's, an item
+#'  few answered), starts L-BFGS's inverse Hessian from their exact Hessian
+#'  columns, differenced over those units alone, and the score model of the
+#'  rest; built once the optimisation has spent what it costs.}
 #'  \item{\code{lbfgs_memory}}{Both. How many curvature pairs L-BFGS keeps.
 #'  Default on julia one per free parameter, at least 20 and at most 1000;
 #'  mize's on stan.}

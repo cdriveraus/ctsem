@@ -686,8 +686,8 @@ end
     r = C._ctsem_lbfgs(jumpy!, x0; maxiter=50, jump=jump)
     @test r.linesearch_failed
     @test jump.seen
-    @test jump.alpha_hi >= 100 * jump.alpha_lo
-    @test isapprox(jump.excess, 0.3; atol=0.01)
+    @test jump.alpha_hi >= 4 * jump.alpha_lo
+    @test isapprox(jump.excess, 0.3; atol=0.02)
     @test (r.iterations, r.minimizer) == (0, x0)
     # Unwatched, it backtracks to the end and still takes no step: one below
     # the point's resolution passed the Armijo test, and is not a step.
@@ -703,6 +703,27 @@ end
     s = C._ctsem_lbfgs(smooth!, x0; maxiter=50, g_tol=1e-10, jump=quiet)
     @test s.g_converged
     @test !quiet.seen
+    # A jump under a curvature that dwarfs it at the search's longer trials, as
+    # on the affect pilot: from the origin the first trial's step is 0.1, where
+    # a quadratic's excess is 12.5 against the jump's 0.5 a thousandth of the
+    # way along, and nothing past the jump gains as much as it costs, so the
+    # optimum is its edge. Read against the square of the step, the jump is
+    # named within two iterations; read at a hundredth of the length, the
+    # curvature hid it until the run had crept to the edge, thirteen.
+    steep! = function (F, G, x)
+        G === nothing || (G .= 2.5e5 .* (x .- 1e-3))
+        F === nothing && return nothing
+        return 1.25e5 * (x[1] - 1e-3)^2 + (x[1] > 1e-4 ? 0.5 : 0.0)
+    end
+    hidden = C.CTSEMJump()
+    h = C._ctsem_lbfgs(steep!, [0.0]; maxiter=50, jump=hidden)
+    @test hidden.seen
+    @test h.iterations <= 3
+    @test isapprox(hidden.excess, 0.5; rtol=0.2)
+    @test h.minimizer[1] <= 1e-4
+    @test C._ctsem_jump_excess(1e-3, 1.18, 1e-2, 1.65)
+    @test !C._ctsem_jump_excess(1e-3, 1.0 * 1e-6, 1e-2, 1.0 * 1e-4)
+    @test !C._ctsem_jump_excess(4e-3, 1.0, 1e-2, 1.0)
 end
 
 @testset "the diagonal L-BFGS scaling learns each coordinate's curvature" begin
@@ -2009,6 +2030,113 @@ end
     # Scores the store holds for another point build nothing.
     store.valid = false
     @test !ContinuousTimeSEM._ctsem_structured_B!(m, x2)
+end
+
+# A stand-in route for the local curvature: its Hessian columns are a fixed
+# matrix's (`_ctsem_local_columns`).
+struct _LocalQuadratic
+    H::Matrix{Float64}
+end
+ContinuousTimeSEM._ctsem_local_columns(o::_LocalQuadratic, x::AbstractVector,
+    cols::AbstractVector{Int}, S::AbstractMatrix; progress=nothing) = o.H[:, cols]
+
+@testset "the local curvature is exact where it is cheap and the scores' elsewhere" begin
+    # `CTSEMLocalCurvature`: three parameters read by 3 of 40 units take their
+    # Hessian columns exactly; the other five, read by every unit, keep the
+    # score information's model of their curvature given the three.
+    C3 = ContinuousTimeSEM
+    rng = Random.MersenneTwister(7)
+    n = 8; N = 40; C = 1:3; G = 4:8
+    S = randn(rng, N, n)
+    S[4:N, C] .= 0
+    cols, cost = C3._ctsem_local_select(S)
+    @test cols == collect(C)
+    @test cost ≈ 9 / N
+    # Columns no unit reads twice share a point: here the three local ones are
+    # read by the same three units, so each needs its own; with readers apart,
+    # one point serves two.
+    @test length(C3._ctsem_local_colours([[1, 2], [1, 3], [2]], 3)) == 2
+    @test sort(length.(C3._ctsem_local_colours([[1, 2], [3], [4, 5]], 5))) == [3]
+    precision = fill(0.5, n)
+    B = C3._ctsem_score_information!(zeros(n, n), S, precision)
+    Sc = S .- sum(S; dims=1) ./ N
+    @test B ≈ transpose(Sc) * Sc .+ Diagonal(precision)
+    # A Hessian whose local block is far stiffer and more ill-conditioned than
+    # the three units' scores say.
+    U = qr(randn(rng, 3, 3)).Q * Diagonal([1e4, 30.0, 0.05])
+    H = copy(B)
+    H[C, C] .+= U * transpose(U)
+    P, Pinv = C3._ctsem_local_assemble(H[:, C], collect(C), B)
+    @test P[C, :] ≈ H[C, :]
+    @test P[:, C] ≈ H[:, C]
+    schur(M) = M[G, G] .- M[G, C] * (M[C, C] \ M[C, G])
+    @test schur(P) ≈ schur(B)
+    @test Pinv * P ≈ Matrix(I, n, n)
+    # The finish's Krylov model takes it as its preconditioner as it takes
+    # the scores' (`_ctsem_newton_finish`'s `krylov_base`).
+    @test C3._ctsem_krylov_model(B).M ≈ C3._ctsem_krylov_model(S, precision).M
+    # Far from an optimum the local block can have negative curvature: taken
+    # at its size, as the finish takes it.
+    Hn = copy(H)
+    E = eigen(Symmetric(Hn[C, C]))
+    Hn[C, C] .= E.vectors * Diagonal([-E.values[1]; E.values[2:end]]) *
+        transpose(E.vectors)
+    Pn, _ = C3._ctsem_local_assemble(Hn[:, C], collect(C), B)
+    @test Pn[C, C] ≈ H[C, C]
+
+    # Built once the run has spent what it costs, and only where the scores
+    # describe the point; never where no column is cheap.
+    store = C3.CTSEMScoreStore(N, n)
+    lc = C3.CTSEMLocalCurvature(_LocalQuadratic(H), store, precision)
+    x = zeros(n)
+    @test !C3._ctsem_local_due(lc, x)
+    copyto!(store.S, S); copyto!(store.x, x); store.valid = true
+    @test !C3._ctsem_local_due(lc, x)
+    lc.since = 1
+    @test C3._ctsem_local_due(lc, x)
+    @test C3._ctsem_local_build!(lc, x) ≈ Pinv
+    @test (lc.builds, lc.since, lc.spent) == (1, 0, cost)
+    # Each rebuild waits twice as long as the last: at a cost of one
+    # gradient, two after the first build, four after the second.
+    lc.cost = 1.0
+    lc.since = 1
+    @test !C3._ctsem_local_due(lc, x)
+    lc.since = 2
+    @test C3._ctsem_local_due(lc, x)
+    C3._ctsem_local_build!(lc, x)
+    lc.since = 3
+    @test !C3._ctsem_local_due(lc, x)
+    lc.since = 4
+    @test C3._ctsem_local_due(lc, x)
+    shared = C3.CTSEMLocalCurvature(_LocalQuadratic(H), C3.CTSEMScoreStore(N, n),
+        precision)
+    copyto!(shared.store.S, randn(rng, N, n)); shared.store.x .= x
+    shared.store.valid = true
+    shared.since = 100
+    @test !C3._ctsem_local_due(shared, x)
+    @test shared.done
+
+    # L-BFGS on the quadratic: with the local curvature it reaches the minimum
+    # in fewer iterations than with the learned diagonal alone.
+    g0 = randn(rng, n)
+    fg! = function (F, Gout, y)
+        if Gout !== nothing
+            Gout .= g0 .+ H * y
+            copyto!(store.S, S); copyto!(store.x, y); store.valid = true
+        end
+        F === nothing ? nothing : dot(g0, y) + dot(y, H * y) / 2
+    end
+    store.valid = false
+    plain = C3._ctsem_lbfgs(fg!, zeros(n); diagonal=true, maxiter=2000,
+        g_tol=1e-6)
+    lc = C3.CTSEMLocalCurvature(_LocalQuadratic(H), store, precision)
+    store.valid = false
+    withlocal = C3._ctsem_lbfgs(fg!, zeros(n); diagonal=true, maxiter=2000,
+        g_tol=1e-6, local_curvature=lc)
+    @test lc.builds >= 1
+    @test withlocal.minimizer ≈ -(H \ g0) rtol = 1e-5
+    @test plain.minimizer ≈ -(H \ g0) rtol = 1e-5
+    @test withlocal.iterations < plain.iterations
 end
 
 @testset "a fit with the structured model ends where L-BFGS alone does" begin

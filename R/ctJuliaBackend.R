@@ -5537,8 +5537,10 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
 
 # The known modes with column `j` of `values`, a mode of unit `units[j]`,
 # added where it is not one already held, or NULL where none is added; rows
-# zero-padded to the longer of the two matrices (the engine reads a unit's
-# first `dims` entries). A unit of 0 is the engine's "none".
+# padded with NaN to the longer of the two matrices. A column's mode is its
+# entries before the first NaN (`_laplace_known_column`), and its length says
+# which objective's layout it is in: the engine passes over one whose length
+# is not the unit's there. A unit of 0 is the engine's "none".
 .ctJuliaKnownAdd <- function(known, units, values) {
   units <- as.integer(units)
   values <- as.matrix(values)
@@ -5550,13 +5552,18 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
   old_units <- if (is.null(known)) integer() else as.integer(known$units)
   old_values <- if (is.null(known)) matrix(0, nrow(values), 0) else as.matrix(known$values)
   rows <- max(nrow(values), nrow(old_values))
-  pad <- function(m) rbind(m, matrix(0, rows - nrow(m), ncol(m)))
+  pad <- function(m) rbind(m, matrix(NaN, rows - nrow(m), ncol(m)))
   values <- pad(values)
   old_values <- pad(old_values)
+  column <- function(v) v[seq_len(match(TRUE, is.nan(c(v, NaN))) - 1L)]
+  held <- function(a, b) {
+    a <- column(a)
+    b <- column(b)
+    length(a) == length(b) && isTRUE(max(abs(a - b), 0) < 1e-8)
+  }
   fresh <- vapply(seq_along(units), function(j) {
     same <- which(old_units == units[j])
-    !any(vapply(same, function(k) max(abs(old_values[, k] - values[, j])) < 1e-8,
-      logical(1)))
+    !any(vapply(same, function(k) held(old_values[, k], values[, j]), logical(1)))
   }, logical(1))
   if (!any(fresh)) return(NULL)
   list(units = c(old_units, units[fresh]),
@@ -5812,6 +5819,9 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
   # A second model of the curvature beside L-BFGS's, from the per-unit score
   # outer products (`CTSEMStructured`); on unless asked not to.
   if (!isFALSE(optimcontrol$lbfgs_scores)) common$lbfgs_scores <- TRUE
+  # L-BFGS's initial curvature exact where parameters are read by few units
+  # (`CTSEMLocalCurvature`); on unless asked not to.
+  if (!isFALSE(optimcontrol$lbfgs_local)) common$lbfgs_local <- TRUE
   # L-BFGS's initial inverse Hessian per coordinate, and a non-monotone line
   # search (see `_ctsem_lbfgs` in optimiser.jl).
   if (!is.null(optimcontrol$lbfgs_diagonal)) {
@@ -7069,6 +7079,14 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
     # L-BFGS steps taken on the score outer product's model (lbfgs_scores).
     structured_steps = if (is.null(result$structured_steps)) 0L else
       as.integer(result$structured_steps),
+    # The local curvature (lbfgs_local): builds, the gradients they cost, and
+    # the parameters taken exactly; 0 where none was built.
+    local_builds = if (is.null(result$local_builds)) 0L else
+      as.integer(result$local_builds),
+    local_gradients = if (is.null(result$local_gradients)) 0 else
+      as.numeric(result$local_gradients),
+    local_columns = if (is.null(result$local_columns)) 0L else
+      as.integer(result$local_columns),
     # The L-BFGS stage's coreset stages (`optimcontrol$coreset`, Laplace
     # route): each stage's units, the iterations run on a coreset, and the full
     # gradients that checked them; 0 when none ran. `full_gradients` counts

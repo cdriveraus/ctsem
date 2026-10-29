@@ -46,12 +46,12 @@ CTSEMIterate(iteration, value, g_norm, gain=NaN) =
 
 """
 A jump a search saw (`_ctsem_lbfgs`'s line search, or the Newton finish's
-along one line): from `x` along `s`, a trial at `alpha_lo` kept at least a
-quarter of the excess over the search's model, `excess`, that a trial at
-`alpha_hi` had, a hundred times longer or more in L-BFGS and sixteen times in
-the finish (`_CTSEM_FINISH_JUMP_RATIO`). A smooth objective's excess shrinks at
-least with the square of the step, so that is a jump of about `excess` between
-the two, not curvature:
+along one line): from `x` along `s`, a trial at `alpha_lo` kept an excess over
+the search's model, `excess`, that did not shrink with the square of the step
+from the one a trial at `alpha_hi` had -- four times longer or more in L-BFGS
+(`_ctsem_jump_excess`), sixteen times in the finish
+(`_CTSEM_FINISH_JUMP_RATIO`). A smooth objective's excess shrinks at least so,
+so that is a jump of about `excess` between the two, not curvature:
 on the Laplace route, a unit whose term moved with where its inner solve
 stopped (`_ctsem_jump_units`). `seen` is false until one is.
 """
@@ -64,6 +64,22 @@ mutable struct CTSEMJump
     excess::Float64
 end
 CTSEMJump() = CTSEMJump(false, Float64[], Float64[], NaN, NaN, NaN)
+
+"""
+    _ctsem_jump_excess(alpha, excess, a, e)
+
+Whether the excess over a search's linear model at step `alpha`, `excess`,
+reads as a jump beside `e`, the excess at a step `a` at least four times as
+long: more than four times what shrinking with the square of the step would
+leave of it. Curvature's excess shrinks so, and a jump's not at all. The bar
+was a quarter of the excess kept at a hundredth of the length, which the long
+trial's curvature hides: on the affect pilot a unit's term fell 1.13 nats
+between three ten-thousandths and a thousandth of a step whose full length
+had an excess of 3600 from curvature, and the run crept along that edge for
+hours with |g| near 30 (`scripts/pilot-curvature-2026-10/jump_probe.R`).
+"""
+_ctsem_jump_excess(alpha::Real, excess::Real, a::Real, e::Real) =
+    a >= 4 * alpha && excess >= 4 * (alpha / a)^2 * e
 
 function _ctsem_jump_record!(jump::CTSEMJump, x, s, alpha_hi, alpha_lo, excess)
     jump.seen = true
@@ -311,8 +327,9 @@ step predicts it gains is nearly what is left, which is what the gap rule reads
 hundredth of what was left on a 433-parameter model.
 
 `jump`, a `CTSEMJump`, asks the line search to watch for a jump. A trial
-whose excess over the linear model `alpha g's` does not shrink as the step does
--- a quarter of it left at a hundredth of an earlier trial's length -- may be a
+whose excess over the linear model `alpha g's` does not shrink with the square
+of the step -- more than four times what that leaves of an earlier trial's at
+a quarter of its length or less (`_ctsem_jump_excess`) -- may be a
 discontinuity, where backtracking only reaches a step too short to leave the
 point: a Laplace fit whose person's term jumped by 0.33 nats as its inner solve
 changed where it stopped accepted steps below the resolution of the parameters
@@ -325,6 +342,11 @@ below the jump's scale three searches running. Then the run stops, the line
 search failed and the jump recorded in `jump`.
 An accepted step that leaves the point where it was fails the line search
 too: it is no step.
+
+`local_curvature`, a `CTSEMLocalCurvature`, is built once the run has spent
+what it costs (`_ctsem_local_due`) and is from then on the initial inverse
+Hessian, as `inverse` would be: exact where parameters are read by few units,
+the scores' elsewhere.
 
 `pairs`, a `CTSEMLBFGSMemory`, is the curvature to start from: what an earlier
 run on the same coordinates ended with (`CTSEMLBFGSResult`'s `memory`), as a
@@ -341,7 +363,7 @@ function _ctsem_lbfgs(fg!, x0::AbstractVector; memory::Integer=20,
         diagonal::Bool=false, nonmonotone::Real=0.0, gll::Integer=0,
         inverse::Union{Nothing,Matrix{Float64}}=nothing, scaled::Bool=false,
         structured=nothing, coreset=nothing,
-        jump::Union{Nothing,CTSEMJump}=nothing)
+        jump::Union{Nothing,CTSEMJump}=nothing, local_curvature=nothing)
     n = length(x0)
     x = collect(Float64, x0)
     dinv = metric === nothing ? ones(n) : begin
@@ -407,7 +429,22 @@ function _ctsem_lbfgs(fg!, x0::AbstractVector; memory::Integer=20,
     # bits, newest lowest: the first trial carries the gradient while at least
     # two did (below).
     whole = 0b111
+    # Gradients the local curvature has been told of.
+    gseen = 0
     while !stopped && !gconv && iteration < maxiter
+        # The local curvature (`CTSEMLocalCurvature`), once the run has spent
+        # what it costs: from then on the initial inverse Hessian, in place of
+        # the learned diagonal; the pairs are kept and correct it.
+        if local_curvature !== nothing
+            local_curvature.since += gcalls - gseen
+            gseen = gcalls
+            if _ctsem_local_due(local_curvature, x)
+                Pinv = _ctsem_local_build!(local_curvature, x)
+                if Pinv !== nothing
+                    inverse = Pinv; Dinv = Pinv; learn = false; B = nothing
+                end
+            end
+        end
         # `structured` (R's `lbfgs_scores`): a second model of the curvature,
         # whose step is taken while it predicts better than this one
         # (`CTSEMStructured`).
@@ -479,7 +516,7 @@ function _ctsem_lbfgs(fg!, x0::AbstractVector; memory::Integer=20,
                 excess = fn - f - alpha * dphi
                 if excess > 1e-8 * (1 + abs(f))
                     for (a, e) in zip(trial_alpha, trial_excess)
-                        if a >= 100 * alpha && excess >= e / 4
+                        if _ctsem_jump_excess(alpha, excess, a, e)
                             found = true
                             found_hi = a; found_lo = alpha; found_excess = excess
                             break
@@ -2382,17 +2419,22 @@ units' scores `S` (units by parameters) and the prior's `precision`, or
 """
 function _ctsem_krylov_model(S::AbstractMatrix, precision::AbstractVector)
     n = size(S, 2)
-    B = Matrix{Float64}(undef, n, n)
-    mul!(B, transpose(S), S)
-    g = vec(sum(S; dims=1))
-    N = size(S, 1)
-    @inbounds for j in 1:n, i in 1:n
-        B[i, j] -= g[i] * g[j] / N
-    end
-    @inbounds for i in 1:n
-        B[i, i] += precision[i]
-    end
+    B = _ctsem_score_information!(Matrix{Float64}(undef, n, n), S, precision)
     all(isfinite, B) || return nothing
+    return _ctsem_krylov_model(B)
+end
+
+"""
+    _ctsem_krylov_model(B)
+
+The model with no products yet from a curvature already in hand as its
+preconditioner: the scores' (above), or the local curvature's
+(`CTSEMLocalCurvature`), which is exact where parameters are read by few
+units. Its eigenvalues floored at 1e-6 of the largest; `nothing` where it has
+no positive scale or does not factor.
+"""
+function _ctsem_krylov_model(B::AbstractMatrix)
+    n = size(B, 1)
     E = eigen(Symmetric((B .+ transpose(B)) ./ 2))
     top = maximum(E.values; init=0.0)
     (isfinite(top) && top > 0) || return nothing
@@ -2518,6 +2560,328 @@ Hessian's own gradients.
 """
 const _CTSEM_KRYLOV_MIN_COST = 200
 
+# ----------------------------------------------------- the local curvature
+#
+# Where parameters are read by few units -- a study's, a group's, an item few
+# answered -- the scores' outer product is a poor model of their curvature (a
+# few units' outer product, of low rank) and the exact one is cheap (a column
+# differenced over the few units that read it). The local curvature takes the
+# exact columns of those parameters and the scores' model of the rest, and
+# L-BFGS starts its inverse Hessian from it.
+
+"""
+    _ctsem_score_information!(B, S, precision)
+
+The units' centred score outer product plus the prior's precision, into `B`:
+`S' S` (units by parameters) less the mean's own `g g' / units`, which
+dominates far from the optimum, plus `precision` on the diagonal. Near the
+optimum it is the information. What the structured model (`CTSEMStructured`),
+the Krylov preconditioner (`CTSEMKrylov`) and the local curvature
+(`CTSEMLocalCurvature`) start from.
+"""
+function _ctsem_score_information!(B::AbstractMatrix, S::AbstractMatrix,
+        precision::AbstractVector)
+    mul!(B, transpose(S), S)
+    g = vec(sum(S; dims=1))
+    N = size(S, 1)
+    @inbounds for j in axes(B, 2), i in axes(B, 1)
+        B[i, j] -= g[i] * g[j] / N
+    end
+    @inbounds for i in eachindex(precision)
+        B[i, i] += precision[i]
+    end
+    return B
+end
+
+"""
+The most a Hessian column may cost, in gradients, for the local curvature
+(`CTSEMLocalCurvature`) to take it exactly: one gradient over a tenth of the
+units, a parameter read by at most a tenth of them. So the exact columns cost
+at most a twentieth of a dense Hessian, and usually far less.
+
+On the affect pilot's joint fit (697 parameters, 4031 units; its Hessian and
+scores at the estimate, `scripts/pilot-curvature-2026-10/block_local.R`) the
+condition number left after preconditioning, and conjugate gradient's products
+to leave a hundredth of a Newton step's gain, were:
+
+| curvature | cost (gradients) | condition | products |
+|---|---|---|---|
+| per-coordinate diagonal of `H` | -- | 6.1e6 | 754 |
+| the scores alone | 0 | 3.7e6 | 58 |
+| exact, read by <= 5% of units (134 columns) | 2.6 | 1.3e6 | 37 |
+| exact, read by <= 10% (330) | 15 | 1100 | 15 |
+| exact, read by <= 25% (551) | 50 | 260 | 5 |
+
+The scores' worst directions lay 0.89 (median) on parameters read by a tenth
+of the units or fewer. The scores' model of the shared parameters is needed
+whole: its diagonal in its place left 630 products.
+"""
+const _CTSEM_LOCAL_COLUMN_COST = 0.1
+
+"""
+    CTSEMLocalCurvature(objective, store, precision; progress)
+
+L-BFGS's initial inverse Hessian where some parameters are read by few units
+(`_ctsem_lbfgs`'s `local_curvature`). The parameters whose Hessian columns are
+cheap (`_CTSEM_LOCAL_COLUMN_COST`), `C`, take their columns exactly, so their
+block and their coupling to the rest, `G`, are exact; the rest takes the
+scores' model of its curvature given them, the Schur complement of the score
+information `B` (`_ctsem_score_information!`) on `G`:
+
+    P = [H_CC  H_CG; H_GC  H_GC H_CC^-1 H_CG + (B_GG - B_GC B_CC^-1 B_CG)]
+
+whose inverse needs only `H_CC`'s and `B`'s, since the inverse of `B`'s Schur
+complement on `G` is `B^-1`'s `G` block. A direction of negative curvature in
+`H_CC` (far from the optimum) is taken at its size, as the finish takes one.
+
+Built once the run has spent what it costs, and again once it has spent
+twice that since, four times before the third build, and so on
+(`_ctsem_local_due`): a run spends at most half its gradients on it, a long
+run a shrinking share, and a short run -- a resumed stage, a refit near its
+optimum -- none. The pairs carry what changes between builds; a build each
+time the run had spent twice its cost rebuilt a seven-parameter model's five
+times in thirty iterations for nothing.
+Where no column is cheap -- every unit reads every parameter, or the route
+cannot difference a column over its units alone (`_ctsem_local_capable`) --
+it is never built, and L-BFGS runs as without it.
+
+`P` and `inverse` are the last build's; `columns` the cheap parameters and
+`cost` a build's gradients (one over each column's units,
+`_ctsem_local_columns`); `spent` the gradients every build took, `since` the
+run's gradients since the last, `builds` how many.
+"""
+mutable struct CTSEMLocalCurvature{O}
+    objective::O
+    store::CTSEMScoreStore
+    precision::Vector{Float64}
+    progress::Any
+    P::Matrix{Float64}
+    inverse::Matrix{Float64}
+    columns::Vector{Int}
+    cost::Float64
+    spent::Float64
+    since::Int
+    builds::Int
+    done::Bool
+end
+CTSEMLocalCurvature(objective, store::CTSEMScoreStore, precision::AbstractVector;
+        progress=nothing) =
+    CTSEMLocalCurvature(objective, store, collect(Float64, precision), progress,
+        zeros(0, 0), zeros(0, 0), Int[], 0.0, 0.0, 0, 0, false)
+
+"""Whether a route can difference a Hessian column over only the units that
+read its parameter, which is what makes a local column cheap: the Laplace
+route with coordinates (`_laplace_hessian_columns`'s `localised`). Elsewhere a
+column costs what every unit costs, and there is no local curvature."""
+_ctsem_local_capable(o::CTSEMLaplaceObjective) = !_laplace_filter_only(o)
+_ctsem_local_capable(o) = false
+
+"""
+    _ctsem_local_columns(o, x, cols, S; progress, step)
+
+The minimised objective's Hessian columns `cols` at `x`, `n` by
+`length(cols)`, NaN where a column's point did not solve. Each is a forward
+difference of the units' scores, from `S`, the units' scores at `x` the
+optimiser already holds (`CTSEMScoreStore`), over the units that read its
+parameter, plus the prior's column, differenced alone. Parameters whose
+readers do not overlap are moved together, one point for each such group
+(`_ctsem_local_colours`), evaluated over the union of their units as a coreset
+of the objective (`CTSEMCoreset`): a unit's change in score is then the one
+parameter's it reads. So a build costs one gradient over each column's units
+and no evaluation at `x`. Each column taken alone, centrally, over its own
+units, cost the affect pilot twice that in unit evaluations, and twice that
+again in time: a few dozen units leave most of 24 threads idle, behind the
+slowest. Units start from their modes at `x` -- the run's anchors in an
+optimisation, `o.modes` otherwise -- so each stays in its basin; the modes are
+put back after.
+"""
+function _ctsem_local_columns(o::CTSEMLaplaceObjective, x::AbstractVector,
+        cols::AbstractVector{Int}, S::AbstractMatrix; progress=nothing,
+        step::Real=1e-4)
+    n = length(x)
+    NU = size(S, 1)
+    reads = [findall(!iszero, view(S, :, j)) for j in cols]
+    colours = _ctsem_local_colours(reads, NU)
+    H = fill(NaN, n, length(cols))
+    xv = collect(Float64, x)
+    xe = _laplace_extend(o, xv)
+    gp0 = zeros(length(xe))
+    _ctsem_log_prior_gradient!(gp0, o.objective, xe)
+    base = deepcopy(o.modes)
+    Sc = zeros(NU, n)
+    done = 0
+    previous = ctsem_set_warm_start!(true)
+    try
+        for colour in colours
+            units = sort!(reduce(vcat, (reads[k] for k in colour); init=Int[]))
+            y = copy(xv)
+            for k in colour
+                j = cols[k]
+                y[j] += step * max(1.0, abs(xv[j]))
+            end
+            fill!(Sc, 0.0)
+            _laplace_restore_modes!(o, base)
+            core = _laplace_coreset(o, units,
+                [_laplace_unit_weight(o, U) for U in units])
+            out = _ctsem_try_evaluate(() -> ctsem_laplace_evaluate(o, y;
+                gradient=true, scores=Sc, coreset=core))
+            solved = out !== nothing && out.converged &&
+                all(isfinite, view(Sc, units, :))
+            for k in colour
+                j = cols[k]
+                h = y[j] - xv[j]
+                if solved
+                    col = zeros(n)
+                    for U in reads[k]
+                        col .+= view(Sc, U, :) .- view(S, U, :)
+                    end
+                    ye = copy(xe)
+                    ye[j] += h
+                    gp = zeros(length(xe))
+                    _ctsem_log_prior_gradient!(gp, o.objective, ye)
+                    col .+= view(gp, 1:n) .- view(gp0, 1:n)
+                    H[:, k] .= -col ./ h
+                end
+            end
+            done += length(colour)
+            progress === nothing || progress(done, length(cols))
+        end
+    finally
+        ctsem_set_warm_start!(previous)
+        _laplace_restore_modes!(o, base)
+    end
+    return H
+end
+
+"""
+    _ctsem_local_colours(reads, nunits)
+
+The columns grouped so that no two in a group are read by one unit -- which
+may then be moved together and told apart by their units' scores
+(`_ctsem_local_columns`) -- greedily, the most widely read first, each into the
+first group whose units it does not share. `reads[k]` holds the units reading
+column `k`; returns the groups as positions in `reads`.
+"""
+function _ctsem_local_colours(reads::AbstractVector, nunits::Integer)
+    colours = Vector{Int}[]
+    taken = BitVector[]
+    for k in sortperm(length.(reads); rev=true)
+        c = findfirst(t -> !any(U -> t[U], reads[k]), taken)
+        if c === nothing
+            push!(colours, [k])
+            t = falses(nunits)
+            t[reads[k]] .= true
+            push!(taken, t)
+        else
+            push!(colours[c], k)
+            taken[c][reads[k]] .= true
+        end
+    end
+    return colours
+end
+
+"""
+    _ctsem_local_select(S)
+
+The parameters whose Hessian columns are cheap, from which units' scores `S`
+read each (a unit's score in a parameter it never reads is exactly zero), and
+what a build costs in gradients. A parameter no unit reads has only the prior's
+curvature, which the score information holds exactly.
+"""
+function _ctsem_local_select(S::AbstractMatrix)
+    N, n = size(S)
+    reads = zeros(Int, n)
+    @inbounds for j in 1:n, U in 1:N
+        iszero(S[U, j]) || (reads[j] += 1)
+    end
+    cols = findall(r -> r > 0 && r <= _CTSEM_LOCAL_COLUMN_COST * N, reads)
+    cost = sum(view(reads, cols); init=0) / max(N, 1)
+    return cols, cost
+end
+
+"""
+    _ctsem_local_due(lc, x)
+
+Whether to build the local curvature at `x`, where L-BFGS is: never where no
+column is cheap; only where the store's scores describe `x`; first once the
+run has spent what a build costs, then once it has spent `2^builds` times that
+since the last.
+"""
+function _ctsem_local_due(lc::CTSEMLocalCurvature, x::AbstractVector)
+    lc.done && return false
+    st = lc.store
+    (st.valid && st.x == x) || return false
+    if lc.builds == 0 && isempty(lc.columns)
+        lc.columns, lc.cost = _ctsem_local_select(st.S)
+        isempty(lc.columns) && (lc.done = true; return false)
+    end
+    return lc.since >= 2.0^lc.builds * lc.cost
+end
+
+"""
+    _ctsem_local_build!(lc, x)
+
+The local curvature at `x` (`CTSEMLocalCurvature`), its inverse returned, or
+`nothing` where no cheap column could be differenced or the matrices are not
+usable; the gradients are counted either way.
+"""
+function _ctsem_local_build!(lc::CTSEMLocalCurvature, x::AbstractVector)
+    Hc = _ctsem_local_columns(lc.objective, x, lc.columns, lc.store.S;
+        progress=lc.progress)
+    lc.spent += lc.cost
+    lc.since = 0
+    lc.builds += 1
+    keep = [all(isfinite, view(Hc, :, c)) for c in axes(Hc, 2)]
+    any(keep) || return nothing
+    n = length(x)
+    B = _ctsem_score_information!(Matrix{Float64}(undef, n, n), lc.store.S,
+        lc.precision)
+    all(isfinite, B) || return nothing
+    m = _ctsem_local_assemble(Hc[:, keep], lc.columns[keep], B)
+    m === nothing && return nothing
+    lc.P, lc.inverse = m
+    return lc.inverse
+end
+
+"""
+    _ctsem_local_assemble(Hc, C, B)
+
+`(P, P^-1)` from the exact columns `Hc` of the parameters `C` and the score
+information `B` (`CTSEMLocalCurvature`), or `nothing` where either has no
+positive scale or the result does not factor. `H_CC`'s eigenvalues are taken
+at their size and `B`'s floored, each at 1e-8 of its largest.
+"""
+function _ctsem_local_assemble(Hc::AbstractMatrix, C::AbstractVector{Int},
+        B::AbstractMatrix)
+    n = size(B, 1)
+    G = setdiff(1:n, C)
+    Hcc = Hc[C, :]
+    E = eigen(Symmetric((Hcc .+ transpose(Hcc)) ./ 2))
+    top = maximum(abs, E.values; init=0.0)
+    (isfinite(top) && top > 0) || return nothing
+    Hinv = E.vectors * Diagonal(1 ./ max.(abs.(E.values), 1e-8 * top)) *
+        transpose(E.vectors)
+    EB = eigen(Symmetric((B .+ transpose(B)) ./ 2))
+    topB = maximum(EB.values; init=0.0)
+    (isfinite(topB) && topB > 0) || return nothing
+    Binv = EB.vectors * Diagonal(1 ./ max.(EB.values, 1e-8 * topB)) *
+        transpose(EB.vectors)
+    # The inverse of B's Schur complement on G, and H_CC^-1 H_CG.
+    Sinv = Binv[G, G]
+    W = Hinv * transpose(Hc[G, :])
+    WS = W * Sinv
+    Pinv = zeros(n, n)
+    Pinv[C, C] = Hinv .+ WS * transpose(W)
+    Pinv[C, G] = -WS
+    Pinv[G, C] = -transpose(WS)
+    Pinv[G, G] = Sinv
+    Pinv = (Pinv .+ transpose(Pinv)) ./ 2
+    F = cholesky(Symmetric(Pinv); check=false)
+    issuccess(F) || return nothing
+    P = inv(F)
+    return ((P .+ transpose(P)) ./ 2, Pinv)
+end
+
 """
     ctsem_krylov_hessian(objective, values; products, rtol)
 
@@ -2581,7 +2945,9 @@ What the steps are taken against is `curvature`:
   (at least `subset_min`), scaled up to the data, with the prior's curvature
   kept whole -- a chord Hessian at a fraction of the cost;
 - `:krylov` the scores' curvature corrected by Hessian-vector products
-  (`CTSEMKrylov`), extended at every step from that step's gradient and
+  (`CTSEMKrylov`) -- or `krylov_base`'s, the local curvature L-BFGS built
+  (`CTSEMLocalCurvature`), where there is one -- extended at every step from
+  that step's gradient and
   keeping the products before, where the objective has such products
   (`_ctsem_hvp_setup`) and its exact Hessian costs at least `krylov_min_cost`
   gradients (`_ctsem_krylov_cost`); the chord otherwise. Its walk ends where the
@@ -2687,7 +3053,8 @@ function _ctsem_newton_finish(objective, x0, f0, G0, fg!; tol::Real=1e-8,
         flat_allowed=(from, to) -> true,
         reporter=nothing, hessian0=nothing, hessian0_at=nothing,
         krylov_min_cost::Real=_CTSEM_KRYLOV_MIN_COST, final::Symbol=:exact,
-        jump::Union{Nothing,CTSEMJump}=nothing)
+        jump::Union{Nothing,CTSEMJump}=nothing,
+        krylov_base::Union{Nothing,Matrix{Float64}}=nothing)
     final in (:exact, :walked) || throw(ArgumentError(
         "newton final must be exact or walked, got $(final)"))
     curvature in (:exact, :chord, :subset, :krylov) || throw(ArgumentError(
@@ -2782,8 +3149,14 @@ function _ctsem_newton_finish(objective, x0, f0, G0, fg!; tol::Real=1e-8,
                 kable[] = false
                 return nothing
             end
-            km = _ctsem_krylov_model(S, _ctsem_prior_precision(
-                _ctsem_prior_objective(objective), length(y)))
+            # On the conjugate gradients of the affect pilot's joint fit, the
+            # local curvature's exact columns took the products to a
+            # hundredth of a Newton step's gain from 58 to 15
+            # (`_CTSEM_LOCAL_COLUMN_COST`).
+            km = krylov_base === nothing ?
+                _ctsem_krylov_model(S, _ctsem_prior_precision(
+                    _ctsem_prior_objective(objective), length(y))) :
+                _ctsem_krylov_model(krylov_base)
             km === nothing && (kable[] = false; return nothing)
             kmodel[] = km
         end
