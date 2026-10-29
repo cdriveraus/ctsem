@@ -47,6 +47,16 @@ end
     # Too few rows to hold any out: no choice, and why.
     few = CIS._is_coreset_choose(_cis_rows(X[1:8, :], y[1:8]), rd, Int[])
     @test !few.chosen && few.why === :held
+    # Checks of earlier coresets: failures at its size or larger count against
+    # a size, passes at its size or smaller for it; so a record of small
+    # coresets failing prices a larger one.
+    @test CIS._is_record_counts(([3, 8, 20], [false, false, true]), 5) == (1, 0)
+    @test CIS._is_record_counts(([3, 8, 20], [false, false, true]), 20) == (0, 1)
+    failed = (collect(1:10), fill(false, 10))
+    larger = CIS._is_coreset_choose(_cis_rows(X[1:200, :], y[1:200]), rd, Int[];
+        record=failed)
+    @test !larger.chosen || count(>(0), larger.w) > 10 ||
+        larger.fail > cf.fail
 end
 
 @testset "a size is held to the full sum's gradient at held-out scored draws" begin

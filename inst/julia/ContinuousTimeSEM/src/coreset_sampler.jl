@@ -295,6 +295,10 @@ mutable struct CTSEMISCoreset
     tolscale::Float64
     forcetol::Float64
     checkall::Bool
+    # Every check of a coreset in force: its size, and whether it passed
+    # (`_is_record_counts`).
+    checked_sizes::Vector{Int}
+    checked_passed::Vector{Bool}
 end
 
 """
@@ -320,7 +324,7 @@ function ctsem_is_coreset(laplace::_CoresetObjective; top::Symbol=:run)
         0, NaN, 0, false, NaN, NaN, 0.0, 0, 0, 0, 0, 0, 0, 0, false, true, 0, 0, 0,
         secs, draws, why, Dict{Vector{Float64},Float64}(), NTuple{8,Float64}[],
         Dict{Vector{Float64},Int}(), Float64[], Float64[], zeros(N, 0), 0, 1.0,
-        _IS_CORESET_TOL.force, false)
+        _IS_CORESET_TOL.force, false, Int[], Bool[])
 end
 
 """Whether a coreset can stand in for `objective` (`ctsem_is_coreset`): the
@@ -561,6 +565,33 @@ function _is_force_error(score, tr::_ISRows, zheld, units::AbstractVector{Int},
 end
 
 """
+    _is_record_counts(record, M)
+
+What the checks of the coresets in force so far say about a coreset of `M`
+units, as failures and passes to add to a size's held-out evidence
+(`_is_coreset_choose`): a coreset that failed with `M` units or more counts
+against `M`, since fewer units follow the draws no better, and one that passed
+with `M` or fewer counts for it. `record` is `(sizes, passed)`, a check each.
+Held-out rows alone priced the first choices at 1,000 units on about two
+draws' evidence, so every size cost alike and the smallest won and failed:
+13 failures in 14 choices on the strong shell, most of DAIS's cost there
+(SAMPLING-smc-2026-10-23.md, "A refined").
+"""
+function _is_record_counts(record, M::Integer)
+    sizes, passed = record
+    f = 0
+    p = 0
+    for i in eachindex(sizes)
+        if passed[i]
+            sizes[i] <= M && (p += 1)
+        else
+            sizes[i] >= M && (f += 1)
+        end
+    end
+    return f, p
+end
+
+"""
     _is_coreset_choose(cs, rd, start)
 
 The coreset whose expected round cost (`_is_round_cost`) is least, refitted on
@@ -592,7 +623,8 @@ either way; a bar on that count kept the first coreset back for two to three
 rounds of 100, a third of a run's full evaluations, where pricing an uncertain
 rate lets the checks decide.
 """
-function _is_coreset_choose(tr::_ISRows, rd::_ISRound, start::Vector{Int})
+function _is_coreset_choose(tr::_ISRows, rd::_ISRound, start::Vector{Int};
+    record=(Int[], Bool[]))
     nrows = tr.nrows
     rows = collect(1:nrows)
     focus = intersect(tr.focus, rows)
@@ -618,7 +650,8 @@ function _is_coreset_choose(tr::_ISRows, rd::_ISRound, start::Vector{Int})
     failrate(S, w, c, idx, m) = begin
         isempty(idx) && return NaN
         pred = [c + sum(w[i] * tr.L[S[i], j] for i in eachindex(S); init=0.0) for j in idx]
-        (m * _is_fail_rate(pred .- tr.y[idx], rel[idx], pred, rd) + 1) / (m + 2)
+        f, p = _is_record_counts(record, count(>(0), w))
+        (m * _is_fail_rate(pred .- tr.y[idx], rel[idx], pred, rd) + f + 1) / (m + f + p + 2)
     end
     nextsize(M) = M + max(1, M ÷ 10)
     sizes = Int[]
@@ -686,7 +719,8 @@ choice does not depend on the machine's load. `true` where one was chosen."""
 function _is_choose!(cs::CTSEMISCoreset, start::Vector{Int})
     cs.has_cf && cs.rows.nrows - cs.rows_at_choose < _is_active_n(cs) && return false
     t = time()
-    r = _is_coreset_choose(cs.rows, _is_round(cs), start)
+    r = _is_coreset_choose(cs.rows, _is_round(cs), start;
+        record=(cs.checked_sizes, cs.checked_passed))
     _is_tally!(cs, :choose, time() - t)
     cs.nchoose += 1
     cs.rows_at_choose = cs.rows.nrows
@@ -719,6 +753,7 @@ end
 """A failed check: the coreset is chosen again from what the sampler has
 taught it, and if none pays, full rounds until one does."""
 function _is_failed!(cs::CTSEMISCoreset)
+    push!(cs.checked_sizes, _is_active_n(cs)); push!(cs.checked_passed, false)
     cs.fails += 1
     cs.fails_total += 1
     cs.trusted = false
@@ -730,6 +765,7 @@ end
 """A passed check: the weights refitted on every row; chosen again if they
 all come out zero, and back to full rounds if its record makes it dearer."""
 function _is_passed!(cs::CTSEMISCoreset)
+    push!(cs.checked_sizes, _is_active_n(cs)); push!(cs.checked_passed, true)
     cs.trusted || (cs.proved += 1)
     cs.trusted = true
     cs.last_passed = true
