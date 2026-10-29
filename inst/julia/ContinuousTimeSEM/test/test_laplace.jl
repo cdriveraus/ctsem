@@ -1076,6 +1076,17 @@ end
     # And without the warm start, which leaves the base modes unstored.
     cold = ctsem_laplace_hessian(laplace, values; warm=false)
     @test cold ≈ full rtol = 1e-6
+    # The local curvature's columns (`_ctsem_local_columns`), forward
+    # differences of the minimised objective's, from the scores at `values`,
+    # to a forward difference's accuracy (0.002 in 2.5 at its step): read off
+    # those scores alone, subject 1's share of 8 is lost.
+    S = zeros(6, 12)
+    ctsem_laplace_evaluate(laplace, values; gradient=true, scores=S)
+    near = ContinuousTimeSEM._ctsem_local_columns(laplace, values, [6, 8], S;
+        readers=readers)
+    @test all(isapprox.(near, -full[:, [6, 8]]; rtol=1e-2, atol=1e-6))
+    blind = ContinuousTimeSEM._ctsem_local_columns(laplace, values, [6, 8], S)
+    @test !isapprox(blind[8, 2], -full[8, 8]; rtol=0.05)
 end
 
 @testset "an unusable inner curvature is reported, not hidden" begin
