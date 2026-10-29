@@ -576,25 +576,59 @@ set up or a pass fails.
 """
 function _laplace_mode_fade(laplace::CTSEMLaplaceObjective, U::Integer,
     theta::Vector{Float64}, uhat::Vector{Float64}; gradient::Bool=false)
-    st = _laplace_gated_setup(laplace, U, theta, uhat)
-    st === nothing && return nothing
-    D = length(st.z0)
-    M0 = _gated_sym(Matrix{Float64}(st.curvf(st.z0)))
-    all(isfinite, M0) || return nothing
-    E = _ctsem_symeig(M0)
+    geo = _laplace_mode_geometry(laplace, U, theta, uhat)
+    geo === nothing && return nothing
+    E = geo.E
     lam = E.values[1]
     gradient || return (lam=lam, grad=nothing)
     npar = length(theta)
     lam > 0 || return (lam=lam, grad=zeros(Float64, npar))
     v1 = E.vectors[:, 1]
-    Mbar = zeros(Float64, D, D)
-    @inbounds for j in 1:D, i in 1:D
-        Mbar[i, j] = v1[i] * v1[j]
-    end
-    M0inv = _gated_spectral(E.vectors, [1 / l for l in E.values])
-    grad = _laplace_gated_close!(zeros(Float64, npar), st.G, st.z0, 0.0, Mbar,
-        zeros(Float64, D), M0inv)
+    grad = _laplace_mode_close(laplace, U, theta, uhat, E, 0.0, v1 .* transpose(v1),
+        zeros(Float64, length(v1)))
     grad === nothing && return nothing
-    all(isfinite, grad) || return nothing
     return (lam=lam, grad=grad)
+end
+
+"""
+    _laplace_mode_geometry(laplace, U, theta, uhat)
+
+Unit `U`'s quadratic at its mode `uhat`, in the coordinates the gated rule
+decides on (`_laplace_gated_setup`): the point `z0`, the unit objective `g`
+there, and its curvature `M` with that matrix's eigendecomposition `E`. What a
+mode's share of its unit's sum is built from (`_laplace_mode_sum`): where the
+mode sits, how high and how wide. Numbers only, since the setup's closures hold
+the calling task's workspace. `nothing` where the unit cannot be set up or is
+not finite there.
+"""
+function _laplace_mode_geometry(laplace::CTSEMLaplaceObjective, U::Integer,
+    theta::Vector{Float64}, uhat::Vector{Float64})
+    st = _laplace_gated_setup(laplace, U, theta, uhat)
+    st === nothing && return nothing
+    g = Float64(st.objf(st.z0).value)
+    M0 = _gated_sym(Matrix{Float64}(st.curvf(st.z0)))
+    (isfinite(g) && all(isfinite, M0)) || return nothing
+    return (z0=copy(st.z0), g=g, M=M0, E=_ctsem_symeig(M0))
+end
+
+"""
+    _laplace_mode_close(laplace, U, theta, uhat, E, gbar, Mbar, zbar)
+
+The derivative with respect to the raw vector of `gbar g + tr(Mbar M) +
+zbar' z0` at unit `U`'s mode `uhat`, in the gated rule's coordinates
+(`_laplace_gated_setup`), the mode's own movement included: the gated rule's
+closing pass (`_laplace_gated_close!`), `E` the curvature's eigendecomposition
+there (`_laplace_mode_geometry`). `nothing` where a pass fails or the result is
+not finite.
+"""
+function _laplace_mode_close(laplace::CTSEMLaplaceObjective, U::Integer,
+    theta::Vector{Float64}, uhat::Vector{Float64}, E, gbar::Float64,
+    Mbar::AbstractMatrix{Float64}, zbar::AbstractVector{Float64})
+    st = _laplace_gated_setup(laplace, U, theta, uhat)
+    st === nothing && return nothing
+    M0inv = _gated_spectral(E.vectors, [1 / l for l in E.values])
+    grad = _laplace_gated_close!(zeros(Float64, length(theta)), st.G, st.z0, gbar,
+        Matrix{Float64}(Mbar), collect(Float64, zbar), M0inv)
+    (grad === nothing || !all(isfinite, grad)) && return nothing
+    return grad
 end

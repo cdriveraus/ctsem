@@ -156,6 +156,93 @@ test_that("a unit with two maxima is scored by the sum of their masses", {
   expect_equal(g[2:3], g[4:5], tolerance = 1e-5)
 })
 
+# Three binary items on one latent, a random intercept and a random auto-effect
+# under -log1p_exp: the bench's gD1 (dev/optimbench/cells.R), 60 people at 8
+# occasions. At the estimate below some people have two maxima under one
+# curvature sd apart, with a valley of hundredths of a nat between them: one
+# basin. Their masses summed whole were 0.45-0.74 nats above each person's
+# exact integral, where either term alone was within 0.08.
+.modes_binary_data <- function() {
+  set.seed(1)
+  rows <- lapply(seq_len(60), function(i) {
+    raw <- stats::rnorm(1, 1, 1.5); a <- -log1p(exp(-raw)); decay <- exp(a)
+    baseline <- stats::rnorm(1, 0, 1)
+    intercept <- (baseline / a) * (decay - 1)
+    innovation <- sqrt((exp(2 * a) - 1) / (2 * a))
+    latent <- numeric(8); latent[1] <- stats::rnorm(1, 0, 0.7)
+    for (t in 1:7) latent[t + 1L] <- decay * latent[t] + intercept +
+      stats::rnorm(1, 0, innovation)
+    Y <- sapply(c(0, 0.5, -0.5), function(m) stats::rbinom(8, 1, stats::plogis(latent + m)))
+    data.frame(id = i, time = 0:7, B1 = Y[, 1], B2 = Y[, 2], B3 = Y[, 3])
+  })
+  do.call(rbind, rows)
+}
+
+.modes_binary_model <- function() {
+  m <- suppressWarnings(suppressMessages(ctModel(type = "ct",
+    manifestNames = c("B1", "B2", "B3"), latentNames = "eta1",
+    LAMBDA = matrix(1, 3, 1), manifesttype = c(1, 1, 1),
+    MANIFESTMEANS = matrix(c(0, "thr2", "thr3"), 3, 1), MANIFESTVAR = matrix(0, 3, 3),
+    CINT = matrix("cint||TRUE"), DRIFT = matrix("drift|-log1p_exp(-param)|TRUE"),
+    T0VAR = matrix(0.5), silent = TRUE)))
+  m$pars$indvarying <- m$pars$param %in% c("drift", "cint")
+  m
+}
+
+test_that("maxima that share a basin are not counted twice", {
+  skip_without_julia()
+  spec <- suppressMessages(ctFit(.modes_binary_data(), .modes_binary_model(),
+    backend = "julia", intoverpop = "laplace", fit = FALSE))
+  handle <- structure(spec, class = c("ctJuliaModel", "ctFitModel"))
+  objective <- ctsem:::.ctJuliaObjective(handle, hybrid = TRUE)
+  set_sum <- function(on) invisible(ctsem:::.ctJuliaCall(
+    "ContinuousTimeSEM.ctsem_set_mode_sum!", on))
+  on.exit(set_sum(TRUE), add = TRUE)
+  # gD1's s6 fit's estimate on the bench, the sum off (localcurv-e0aae396).
+  x <- c(0.0301148912, 4.5210688928, -1.1069526929, 0.0234851509, -0.0632376482,
+    -0.0056830083, 2.0234889501, -1.0443493528, -0.0565364719)
+  evaluate <- function(x, gradient = FALSE) ctJuliaEvaluate(handle, x,
+    gradient = gradient, contributions = TRUE, cores = 1L)
+  set_sum(FALSE)
+  one <- as.numeric(evaluate(x)$subject_loglik)
+  set_sum(TRUE)
+  r <- evaluate(x, gradient = TRUE)
+  both <- as.numeric(r$subject_loglik)
+  changed <- which(abs(both - one) > 1e-6)
+  expect_gte(length(changed), 3)
+  # Each changed person's exact integral, log of the mean likelihood under
+  # the effects' prior: a trapezoid over [-8, 8]^2, where the binary
+  # likelihood (at most one) leaves the prior's tail below e^-32.
+  ctsem:::.ctJuliaEval(paste(
+    "function _ctsem_test_grid(o, theta, units)",
+    "  C = ContinuousTimeSEM",
+    "  C.ctsem_laplace_evaluate(o, theta; gradient = false)",
+    "  Ls = C._laplace_popchols(theta, o.spec)",
+    "  aws = C._laplace_workspace!(o, Float64, length(theta))",
+    "  h = 0.1",
+    "  grid = -8.0:h:8.0",
+    "  map(Int.(units)) do U",
+    "    length(o.modes[U]) == 2 || return NaN",
+    "    gs = [C._laplace_unit_objective_gradient(o, U, theta, Ls, [a, b], aws).value",
+    "      for a in grid, b in grid]",
+    "    m = maximum(gs)",
+    "    m + log(sum(exp.(gs .- m)) * h^2) - log(2pi)",
+    "  end",
+    "end", sep = "\n"))
+  units <- head(changed, 3)
+  exact <- as.numeric(ctsem:::.ctJuliaCall("Main._ctsem_test_grid", objective,
+    ctsem:::.ctJuliaNumericVector(x), ctsem:::.ctJuliaNumericVector(units)))
+  expect_true(all(is.finite(exact)))
+  expect_lt(max(abs(both[units] - exact)), 0.15)
+  # The shares, the fade and the quadratics' positions all enter the gradient
+  # here, where each share is well inside (0, 1).
+  set.seed(2)
+  v <- rnorm(length(x))
+  h <- 1e-5
+  fd <- (evaluate(x + h * v)$value - evaluate(x - h * v)$value) / (2 * h)
+  expect_equal(fd, sum(as.numeric(r$gradient) * v), tolerance = 1e-5)
+})
+
 # The sign fixture made wide: six loadings, each random by person, so each unit
 # has six effects, and its likelihood is symmetric under flipping them all. At
 # loading means of zero -- the default start's -- the origin is the stationary
