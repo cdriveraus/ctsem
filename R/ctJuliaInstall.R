@@ -25,7 +25,7 @@
 # the version the vendored Manifest.toml was resolved under, so the engine's
 # dependencies instantiate exactly as they were tested rather than being
 # re-resolved on first use.
-.ct_julia_version <- "1.12.7"
+.ct_julia_version <- "1.13.3"
 
 # The oldest JuliaConnectoR the julia backend runs on. 1.1.5 hangs translating a
 # named tuple that holds an empty vector -- on Linux the Julia process exits
@@ -60,16 +60,16 @@
 # platform. A user-supplied version is downloaded unverified -- with a message
 # saying so -- since these are the only hashes we know.
 .ct_julia_archives <- list(
-  `windows-x86_64` = list(dir = "winnt/x64", suffix = "win64", ext = "zip", mb = 267,
-    sha256 = "ff5c7eb354c2fcb48401114a5fbcfe8e60181f95d9af42b266f975265a5bad47"),
-  `linux-x86_64` = list(dir = "linux/x64", suffix = "linux-x86_64", ext = "tar.gz", mb = 277,
-    sha256 = "4e7e9e776634d24835250de67cde39b0d4af15bc432eb20697e6be6c28ea69e8"),
-  `linux-aarch64` = list(dir = "linux/aarch64", suffix = "linux-aarch64", ext = "tar.gz", mb = 293,
-    sha256 = "9243c0b524c7f300883240a1ee5ea3916a30e070bff718acf8ccaee31a731ef2"),
-  `macos-x86_64` = list(dir = "mac/x64", suffix = "mac64", ext = "tar.gz", mb = 259,
-    sha256 = "a21a15c7b7d294a03482a3598b18cde48d37be86ac7a408e495e51fb3afe0157"),
-  `macos-aarch64` = list(dir = "mac/aarch64", suffix = "macaarch64", ext = "tar.gz", mb = 220,
-    sha256 = "af8fcedfb25b6b9c8c13d99695c38faa2d59bf0162b3f458c8b8b56f14c96919"))
+  `windows-x86_64` = list(dir = "winnt/x64", suffix = "win64", ext = "zip", mb = 281,
+    sha256 = "1fae8fc95e6199b3d8f6d7a3791810e45e1b3c480eb4b9f5bb211789badfc729"),
+  `linux-x86_64` = list(dir = "linux/x64", suffix = "linux-x86_64", ext = "tar.gz", mb = 289,
+    sha256 = "5c61cb4b40332cb5a3504e7779e2f5dac093caa4a1116ded19f01413f85c63e4"),
+  `linux-aarch64` = list(dir = "linux/aarch64", suffix = "linux-aarch64", ext = "tar.gz", mb = 303,
+    sha256 = "9ceb053bee6dfb8189bd40afd6925de3a9b7ff8fac8d01a5fcdd84af171ddf03"),
+  `macos-x86_64` = list(dir = "mac/x64", suffix = "mac64", ext = "tar.gz", mb = 262,
+    sha256 = "8b3fd34d6bdb5a6ddca4e30a2640cfef96a4ab194651ed9bd849c98fafc5840e"),
+  `macos-aarch64` = list(dir = "mac/aarch64", suffix = "macaarch64", ext = "tar.gz", mb = 214,
+    sha256 = "b9f0e8450fbcb392aa3e8b43fa1fc09993665a31bf705d7ef8084f0ac4ad3765"))
 
 # The oldest Julia the engine is known to work on. A Julia found on the user's
 # machine that is older than this is treated as absent rather than used and

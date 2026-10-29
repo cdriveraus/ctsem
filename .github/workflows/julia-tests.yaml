@@ -70,7 +70,7 @@ jobs:
       - uses: julia-actions/setup-julia@v2
         with:
           # In step with the pin in R/ctJuliaInstall.R and julia-engine.yaml.
-          version: '1.12.7'
+          version: '1.13.3'
 
       - uses: julia-actions/cache@v2
 
