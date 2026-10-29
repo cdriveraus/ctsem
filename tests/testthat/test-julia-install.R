@@ -6,14 +6,14 @@
 
 test_that("the download URL is built correctly for every supported platform", {
   expected <- c(
-    `windows-x86_64` = "winnt/x64/1.12/julia-1.12.7-win64.zip",
-    `linux-x86_64` = "linux/x64/1.12/julia-1.12.7-linux-x86_64.tar.gz",
-    `linux-aarch64` = "linux/aarch64/1.12/julia-1.12.7-linux-aarch64.tar.gz",
-    `macos-x86_64` = "mac/x64/1.12/julia-1.12.7-mac64.tar.gz",
-    `macos-aarch64` = "mac/aarch64/1.12/julia-1.12.7-macaarch64.tar.gz")
+    `windows-x86_64` = "winnt/x64/1.13/julia-1.13.3-win64.zip",
+    `linux-x86_64` = "linux/x64/1.13/julia-1.13.3-linux-x86_64.tar.gz",
+    `linux-aarch64` = "linux/aarch64/1.13/julia-1.13.3-linux-aarch64.tar.gz",
+    `macos-x86_64` = "mac/x64/1.13/julia-1.13.3-mac64.tar.gz",
+    `macos-aarch64` = "mac/aarch64/1.13/julia-1.13.3-macaarch64.tar.gz")
   # Pinned to the version .ct_julia_archives records hashes for; if the pin
   # moves, these move with it and the hashes have to be refreshed too.
-  skip_if_not(identical(ctsem:::.ct_julia_version, "1.12.7"))
+  skip_if_not(identical(ctsem:::.ct_julia_version, "1.13.3"))
   for (platform in names(expected)) {
     archive <- ctsem:::.ctJuliaArchive(ctsem:::.ct_julia_version, platform)
     expect_identical(archive$url,
