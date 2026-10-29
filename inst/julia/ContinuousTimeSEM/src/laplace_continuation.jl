@@ -1832,7 +1832,14 @@ function _continuation_place!(o::CTSEMLaplaceContinuation, theta::Vector{Float64
     o.unit_nodes = kept
     o.flagged = flagged
     o.rules = CTSEMFixedUnitRule[placed.rules[U] for U in flagged]
-    o.rest_units = setdiff(1:nunits, flagged)
+    # Not `setdiff(1:nunits, flagged)`: Base infers its working set only as
+    # an `AbstractSet`, and Tables.jl, which the bridge's server loads, adds a
+    # method that invalidates that instance and with it this function, the
+    # coreset densities and DAIS above it -- 5 s of compile in a session's
+    # first `ctFitUncertainty(fit, 'sample')` after a Laplace fit.
+    isflagged = falses(nunits)
+    isflagged[flagged] .= true
+    o.rest_units = Int[U for U in 1:nunits if !isflagged[U]]
     o.rest = length(o.rest_units) == nunits ? laplace :
         _ctsem_subset_objective(laplace, o.rest_units)
     o.centre = copy(theta)
