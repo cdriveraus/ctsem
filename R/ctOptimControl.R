@@ -282,11 +282,17 @@
 #'  \code{(iteration, total, objective, gradient_norm, parameters)}, where
 #'  \code{parameters} is the raw vector the objective and gradient describe; one
 #'  declaring only the first four is called with four. It is called on a time
-#'  cadence and once more at the end. For live progress in a front end, or for
-#'  checkpointing: \code{parameters} written from it and passed back as
-#'  \code{inits} resume a fit, though the quasi-Newton history restarts. An
-#'  error inside it disables it with a warning. \code{fit$optim$trace} holds
+#'  cadence and once more at the end, for live progress in a front end;
+#'  \code{checkpoint} below writes a resumable checkpoint itself. An error
+#'  inside it disables it with a warning. \code{fit$optim$trace} holds
 #'  every iteration after the fit, and \code{\link{ctTracePlot}} draws it.}
+#'  \item{\code{checkpoint}}{A file path. While the fit optimises, its point is
+#'  written there every \code{checkpoint_every} seconds (default 60) and at the
+#'  end of each run, with each subject's random-effect modes on the Laplace
+#'  route. Where the file already exists, the fit starts from it: the same call
+#'  again resumes an interrupted fit, its modes included, which starting from
+#'  \code{inits} alone does not keep. A file written for a different model stops
+#'  the fit rather than being overwritten.}
 #'  \item{\code{progress}}{Force the progress line on or off.}
 #'  \item{\code{tipredMissing}}{How missing TI predictor values are handled.
 #'  Each gets a normal distribution from a regression on the other variables;

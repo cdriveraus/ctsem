@@ -742,6 +742,31 @@ function _callback_due(cb::CTSEMCallback, force::Bool=false)
     return true
 end
 
+"""
+    _ctsem_checkpoint_modes(cb, objective, last, every; force=false)
+
+Whether a checkpoint is due -- `every` seconds since the last, or `force` at a
+run's end, where `every > 0` and the callback is alive -- and if so what it
+keeps beside the point: the anchored run's modes (`_ctsem_anchor_modes`), or
+`(units=[0], values=zeros(1, 1))` where the route anchors none, so the caller
+still writes the point. `nothing` where none is due: the modes are 80,000
+numbers on the affect pilot, too many to hand over at the callback's cadence.
+"""
+function _ctsem_checkpoint_modes(cb::CTSEMCallback, objective, last::Ref{Float64},
+    every::Real; force::Bool=false)
+    (every > 0 && cb.alive) || return nothing
+    now = time()
+    (force || now - last[] >= every) || return nothing
+    last[] = now
+    m = _ctsem_anchor_modes(objective)
+    return m === nothing ? (units=[0], values=zeros(1, 1)) : m
+end
+
+"""The callback's checkpoint arguments: none where no checkpoint is due, so a
+callback that takes the point alone is called as before."""
+_ctsem_checkpoint_args(::Nothing) = ()
+_ctsem_checkpoint_args(m) = (m.units, m.values)
+
 function _invoke_callback(cb::CTSEMCallback, values...; force::Bool=false)
     _callback_due(cb, force) || return nothing
     try

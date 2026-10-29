@@ -4838,17 +4838,74 @@ end's search says what it missed, and the caller resumes from there with those
 modes known (`.ctJuliaOptimise()` in R). An anchor from an earlier fit would
 make one fit's objective depend on another's path, so a run starts with a
 search and leaves none behind.
+
+`resume_units` and `resume_values` (a NaN-padded matrix, `_laplace_known_column`)
+are modes a checkpoint of an earlier run of the same fit held
+(`_ctsem_anchor_modes`), which this search also starts from, as known modes,
+and keeps no further: the search's own rule chooses among them as among its
+other starts, and what the run then reaches that a search misses goes to the
+known modes at its end (`_ctsem_anchor_finish!`), as an anchored run's does.
+Without them a resume from a checkpoint, which held the parameters alone,
+searched afresh and scored the affect pilot's point 2-5 nats below the run's
+own modes.
 """
-_ctsem_anchor_start!(::CTSEMOptimisable, x) = nothing
-function _ctsem_anchor_start!(laplace::CTSEMLaplaceObjective, x::AbstractVector)
+_ctsem_anchor_start!(::CTSEMOptimisable, x; resume_units=nothing,
+    resume_values=nothing) = nothing
+function _ctsem_anchor_start!(laplace::CTSEMLaplaceObjective, x::AbstractVector;
+    resume_units=nothing, resume_values=nothing)
     laplace.anchors = Vector{Float64}[]
     _LAPLACE_ANCHORS[] || return nothing
     laplace.alt_anchors = Vector{Vector{Float64}}[]
-    r = ctsem_laplace_evaluate(laplace, collect(Float64, x); gradient=false)
+    known = laplace.known
+    resuming = resume_units !== nothing && resume_values !== nothing &&
+        !isempty(resume_units) && any(>(0), resume_units)
+    if resuming
+        laplace.known = [copy(k) for k in known]
+        units = Int[Int(U) for U in resume_units]
+        values = Matrix{Float64}(reshape(resume_values, size(resume_values, 1), :))
+        keep = [1 <= U <= length(laplace.known) for U in units]
+        _laplace_add_known!(laplace, units[keep], values[:, keep])
+    end
+    r = try
+        ctsem_laplace_evaluate(laplace, collect(Float64, x); gradient=false)
+    finally
+        laplace.known = known
+    end
     isfinite(r.value) || return nothing
     laplace.anchors = [copy(m) for m in laplace.modes]
     laplace.alt_anchors = [Vector{Float64}[copy(m) for m in a] for a in laplace.alt_modes]
     return nothing
+end
+
+"""
+    _ctsem_anchor_modes(objective)
+
+An anchored run's modes at its last accepted point, each unit's and the other
+maxima it follows (`alt_anchors`), as `(units, values)`: column `j` of the
+NaN-padded `values` a mode of unit `units[j]`. `nothing` outside an anchored
+run. What a checkpoint keeps beside the parameters, for a resume to start its
+search from (`_ctsem_anchor_start!`'s `resume_units`).
+"""
+_ctsem_anchor_modes(::Any) = nothing
+function _ctsem_anchor_modes(laplace::CTSEMLaplaceObjective)
+    isempty(laplace.anchors) && return nothing
+    units = Int[]
+    modes = Vector{Float64}[]
+    for U in eachindex(laplace.anchors)
+        isempty(laplace.anchors[U]) && continue
+        push!(units, U); push!(modes, laplace.anchors[U])
+        if U <= length(laplace.alt_anchors)
+            for m in laplace.alt_anchors[U]
+                push!(units, U); push!(modes, m)
+            end
+        end
+    end
+    isempty(units) && return nothing
+    values = fill(NaN, maximum(length, modes), length(units))
+    for j in eachindex(modes)
+        values[1:length(modes[j]), j] .= modes[j]
+    end
+    return (units=units, values=values)
 end
 
 """
