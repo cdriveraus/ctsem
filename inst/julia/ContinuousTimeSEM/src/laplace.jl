@@ -5655,19 +5655,30 @@ under that block and no others, and once summed they cannot be separated again.
 
 `d0` is the ordinary gradient and `d1c` its derivative along `d1`. Second
 directional derivatives are the jets' (`_laplace_unit_jet_gradient`).
+
+Given a matrix `D`, the derivatives along each of its first `nd` columns
+(at most `_laplace_seeded_lanes`) from the same sweep, a lane each: `d1c` is
+then `npar x (nm nd)`, direction `w`'s an `npar x nm` block from column
+`(w - 1) nm + 1`. Directions that do not depend on each other's results are
+swept together: a sweep's cost is mostly its values, not its lanes.
 """
+_laplace_unit_seeded_gradient(laplace::CTSEMLaplaceObjective, U::Integer,
+    values::Vector{Float64}, Ls::Vector{Matrix{Float64}}, u::Vector{Float64},
+    members, d1::Vector{Float64}) =
+    _laplace_unit_seeded_gradient(laplace, U, values, Ls, u, members, reshape(d1, :, 1), 1)
+
 function _laplace_unit_seeded_gradient(laplace::CTSEMLaplaceObjective, U::Integer,
     values::Vector{Float64}, Ls::Vector{Matrix{Float64}}, u::Vector{Float64},
-    members, d1::Vector{Float64})
+    members, D::AbstractMatrix{Float64}, nd::Int)
     # The switch folds to a constant, so with counting off this is a plain call
     # and the try/finally below is not compiled at all. It is a sweep: the
     # assembly runs thousands per gradient.
     _LAPLACE_COUNT_BYTES || return _laplace_unit_seeded_gradient_(laplace, U,
-        values, Ls, u, members, d1)
+        values, Ls, u, members, D, nd)
     bs = _laplace_mark()
     try
         return _laplace_unit_seeded_gradient_(laplace, U, values, Ls, u,
-            members, d1)
+            members, D, nd)
     finally
         _laplace_charge!(_LAPLACE_BYTES_SWEEP, bs)
     end
@@ -5675,11 +5686,15 @@ end
 
 function _laplace_unit_seeded_gradient_(laplace::CTSEMLaplaceObjective, U::Integer,
     values::Vector{Float64}, Ls::Vector{Matrix{Float64}}, u::Vector{Float64},
-    members, d1::Vector{Float64})
+    members, D::AbstractMatrix{Float64}, nd::Int)
 
     # By the hand-coded second order (`_tan_laplace_seeded`).
-    return _tan_laplace_seeded(laplace, U, values, Ls, u, members, d1)
+    return _tan_laplace_seeded(laplace, U, values, Ls, u, members, D, nd)
 end
+
+"""How many directions one seeded sweep carries: the curvature context's lanes."""
+_laplace_seeded_lanes(laplace::CTSEMLaplaceObjective) =
+    ForwardDiff.npartials(_laplace_curvature_dual(laplace))
 
 """
     _laplace_cross_jets!(Pm, laplace, U, values, Ls, u, members, P, Q, w, npairs)
@@ -6266,7 +6281,12 @@ function _laplace_seeded_unit_gradient!(out::Vector{Float64},
     # matrix that does not depend on which parameter it is. `H_{b,x} L_x` is a
     # directional second derivative along a *parameter*-space direction, which
     # is what one order-1 sweep along a column of `L_x` returns -- so this costs
-    # one sweep per level dimension rather than one per level parameter.
+    # one direction per level dimension rather than one per level parameter.
+    # The directions depend on nothing the sweeps return, so a sweep carries
+    # as many as it has lanes (`_laplace_seeded_lanes`): a sweep's cost is
+    # mostly its values, not its lanes. One a sweep, as the dual took them, the
+    # affect pilot's units, 58 dimensions wide with their own variances, ran 58
+    # sweeps each here against 15 for their jets.
     #
     # `H_{b,x}` runs over the members depending on both blocks, which under
     # strict nesting is the members of whichever is inner.
@@ -6275,42 +6295,54 @@ function _laplace_seeded_unit_gradient!(out::Vector{Float64},
     levelsweeps = needV ? Vector{Vector{Matrix{Float64}}}(undef, nlev) :
         _LAPLACE_NO_LEVELSWEEPS
     if needV
+        lanes = _laplace_seeded_lanes(laplace)
+        dirsV = _laplace_scratch_matrix!(laplace, Float64, npar, lanes, :sg_dirsV)
+        dirV = _laplace_scratch_vector!(laplace, Float64, npar, :sg_dirV)
         for l in 1:nlev
             rl = nlatent(spec.levels[l])
             levelsweeps[l] = Vector{Matrix{Float64}}(undef, rl)
-            for q in 1:rl
-                # Only the members for whom column `q` is active: for the
-                # others the direction moves nothing they can see, and their
-                # columns are zero.
-                if act === nothing
-                    pass = sweep(1:nmem, scatter!(
-                        _laplace_scratch_vector!(laplace, Float64, npar, :sg_dirV),
-                        l, view(Ls[l], :, q)))
-                    pass.ok || return false
-                    all(isfinite, pass.d1c) || return false
-                    # A copy, because the sweep's output buffer is reused by
-                    # the next `q` and these are read after the loop.
-                    levelsweeps[l][q] = copy(pass.d1c)
-                    continue
+            for q0 in 0:lanes:(rl - 1)
+                nd = min(lanes, rl - q0)
+                for j in 1:nd
+                    scatter!(dirV, l, view(Ls[l], :, q0 + j))
+                    @inbounds for t in 1:npar
+                        dirsV[t, j] = dirV[t]
+                    end
                 end
-                seeing = Int[m for m in 1:nmem if isactive[units.offsets[U][m][l] + q]]
+                # Only the members for whom a column is active: for the others
+                # its direction moves nothing they can see, and their columns
+                # are zero. A sweep takes the members that see any of its
+                # columns, and a column a member cannot see is left zero there.
+                seeing = Int[]
+                for m in 1:nmem
+                    sees = false
+                    for j in 1:nd
+                        sees |= isactive[units.offsets[U][m][l] + q0 + j]
+                    end
+                    sees && push!(seeing, m)
+                end
                 if isempty(seeing)
-                    levelsweeps[l][q] = zeros(Float64, npar, nmem)
+                    for j in 1:nd
+                        levelsweeps[l][q0 + j] = zeros(Float64, npar, nmem)
+                    end
                     continue
                 end
-                pass = sweep(seeing, scatter!(
-                    _laplace_scratch_vector!(laplace, Float64, npar, :sg_dirV),
-                    l, view(Ls[l], :, q)))
+                pass = _laplace_unit_seeded_gradient(laplace, U, values, Ls, uhat,
+                    seeing, dirsV, nd)
                 pass.ok || return false
                 all(isfinite, pass.d1c) || return false
-                if length(seeing) == nmem
-                    levelsweeps[l][q] = copy(pass.d1c)
-                else
+                ns = length(seeing)
+                # Copies, because the sweep's output buffer is reused by the
+                # next sweep and these are read after the loop.
+                for j in 1:nd
                     swept = zeros(Float64, npar, nmem)
-                    @inbounds for (c, m) in enumerate(seeing), t in 1:npar
-                        swept[t, m] = pass.d1c[t, c]
+                    @inbounds for (c, m) in enumerate(seeing)
+                        isactive[units.offsets[U][m][l] + q0 + j] || continue
+                        for t in 1:npar
+                            swept[t, m] = pass.d1c[t, (j - 1) * ns + c]
+                        end
                     end
-                    levelsweeps[l][q] = swept
+                    levelsweeps[l][q0 + j] = swept
                 end
             end
         end

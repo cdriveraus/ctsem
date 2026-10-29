@@ -808,24 +808,26 @@ end
 
 """
 `_laplace_unit_seeded_gradient`'s sweeps by the hand-coded second order: each
-member's gradient in its shifted values (`d0`) and its derivative along the
-raw direction `d1` (`d1c`), one lane of the curvature's context; the members
-on the pool.
+member's gradient in its shifted values (`d0`) and its derivatives along the
+first `nd` raw directions of `D` (`d1c`), a lane of the curvature's context
+each -- direction `w`'s for the `c`th member in column `(w - 1) nm + c`, so one
+direction's are an `npar x nm` block; the members on the pool.
 """
 function _tan_laplace_seeded(laplace::CTSEMLaplaceObjective, U::Integer,
     values::Vector{Float64}, Ls::Vector{Matrix{Float64}}, u::Vector{Float64}, members,
-    d1::Vector{Float64})
-    _tan_moves_factor(laplace.objective.params.hybrid, d1, 1) &&
+    D::AbstractMatrix{Float64}, nd::Int)
+    _tan_moves_factor(laplace.objective.params.hybrid, D, nd) &&
         throw(ArgumentError(_TAN_MOVES_FACTOR))
     ctx = _tan_laplace_context(laplace, values, _HYBRID_PROFILE)
-    r = _tan_laplace_seeded!(ctx, laplace, Int(U), values, Ls, u, members, d1)
+    r = _tan_laplace_seeded!(ctx, laplace, Int(U), values, Ls, u, members, D, nd)
     r === nothing && throw(ArgumentError(_TAN_NOT_JACOBIAN))
     return r
 end
 
 function _tan_laplace_seeded!(ctx::TanLaplaceContext{W,DC}, laplace::CTSEMLaplaceObjective,
     U::Int, values::Vector{Float64}, Ls::Vector{Matrix{Float64}}, u::Vector{Float64},
-    members, d1::Vector{Float64}) where {W,DC}
+    members, D::AbstractMatrix{Float64}, nd::Int) where {W,DC}
+    1 <= nd <= W || throw(ArgumentError("$(nd) directions for a sweep of $(W) lanes"))
     spec, units = laplace.spec, laplace.units
     objective = laplace.objective
     unitmembers = units.members[U]
@@ -839,10 +841,10 @@ function _tan_laplace_seeded!(ctx::TanLaplaceContext{W,DC}, laplace::CTSEMLaplac
     hyb && h.block && dG === nothing &&
         return (ok=false, d0=_LAPLACE_NO_MATRIX, d1c=_LAPLACE_NO_MATRIX)
     d0 = _laplace_scratch_matrix!(laplace, Float64, npar, nm, :sweep_d0)
-    d1c = _laplace_scratch_matrix!(laplace, Float64, npar, nm, :sweep_d1c)
+    d1c = _laplace_scratch_matrix!(laplace, Float64, npar, nm * nd, :sweep_d1c)
     refused = Ref(false)
     one_member! = function (c::Int, m)
-        local cx, shifted, xw, st, g0, g1
+        local cx, shifted, xw, st, g0, Hb
         cx = _tan_laplace_context(laplace, values, _HYBRID_PROFILE)::typeof(ctx)
         _tan_laplace_hybrid!(cx, values) || return false
         shifted = _laplace_member_values!(
@@ -850,18 +852,18 @@ function _tan_laplace_seeded!(ctx::TanLaplaceContext{W,DC}, laplace::CTSEMLaplac
             values, spec, Ls, u, units.offsets[U][m])
         xw = cx.xw
         @inbounds for t in 1:npar
-            xw[t] = DC(shifted[t], ForwardDiff.Partials(ntuple(w -> w == 1 ? d1[t] : 0.0,
+            xw[t] = DC(shifted[t], ForwardDiff.Partials(ntuple(w -> w <= nd ? D[t, w] : 0.0,
                 Val(W))))
         end
         g0 = view(d0, :, c)
-        st = _tan_laplace_member!(cx, objective, unitmembers[m], xw, 1; g0=g0)
+        st = _tan_laplace_member!(cx, objective, unitmembers[m], xw, nd; g0=g0)
         st == _TAN_REFUSED && (refused[] = true; return false)
         st == _TAN_OK || return false
-        g1 = view(d1c, :, c:c)
-        @inbounds for t in 1:npar
-            g1[t, 1] = cx.Hb[t, 1]
+        Hb = cx.Hb
+        hyb && _tan_laplace_gbar!(g0, view(Hb, :, 1:nd), cx.acc.Gbar, h, values, dG, nd)
+        @inbounds for w in 1:nd, t in 1:npar
+            d1c[t, (w - 1) * nm + c] = Hb[t, w]
         end
-        hyb && _tan_laplace_gbar!(g0, g1, cx.acc.Gbar, h, values, dG, 1)
         return true
     end
     ok = _laplace_run_members(one_member!, laplace, members)

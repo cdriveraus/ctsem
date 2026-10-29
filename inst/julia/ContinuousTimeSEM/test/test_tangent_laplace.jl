@@ -179,6 +179,25 @@ end
                     @test maximum(abs, h0 .- dual.d0) <= 1e-9 * max(1.0, maximum(abs, dual.d0))
                     @test maximum(abs, h1 .- dual.d1c) <= 1e-9 * max(1.0, maximum(abs, dual.d1c))
                 end
+                # Directions a lane each, the sweep's full width and fewer:
+                # each lane's block is that direction's own derivative.
+                lanes = C._laplace_seeded_lanes(laplace)
+                for nd in (lanes, lanes - 1)
+                    D = randn(rng, length(values), lanes)
+                    hand = C._laplace_unit_seeded_gradient(laplace, U, values, Ls, u,
+                        1:nm, D, nd)
+                    h0, h1 = copy(hand.d0), copy(hand.d1c)
+                    @test hand.ok
+                    @test size(h1) == (length(values), nm * nd)
+                    for j in 1:nd
+                        dual = _oracle_seeded_gradient(laplace, U, values, Ls, u, 1:nm,
+                            D[:, j])
+                        @test maximum(abs, h0 .- dual.d0) <=
+                            1e-9 * max(1.0, maximum(abs, dual.d0))
+                        @test maximum(abs, h1[:, ((j - 1) * nm + 1):(j * nm)] .- dual.d1c) <=
+                            1e-9 * max(1.0, maximum(abs, dual.d1c))
+                    end
+                end
             end
         end
     end
