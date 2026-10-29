@@ -7703,7 +7703,10 @@ print.ctJuliaFit <- function(x, ...) {
   # Its own record stays on `$optim`, and its warnings in
   # `$optim$placement_warnings`.
   sampled <- !is.null(x$sample)
-  if (!sampled) cat("  log likelihood:", format(x$estimate$loglik), "\n")
+  if (!sampled) cat("  log likelihood:", format(x$estimate$loglik),
+    if (identical(x$estimate$loglik_method, "checked")) paste0("(Laplace's error ",
+      "integrated by its check, se ", format(x$estimate$loglik_se, digits = 2),
+      "; Laplace ", format(x$estimate$loglik_laplace), ")"), "\n")
   if (!is.null(x$estimate$loglik_weighted)) cat("  weighted log likelihood:",
     format(x$estimate$loglik_weighted), "(sampling weights)\n")
   if (!sampled) cat("  converged:", x$optim$converged, " iterations:",

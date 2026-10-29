@@ -185,9 +185,11 @@ test_that("a covariate the model lacks is added, an unrelated one is not, and th
   expect_gt(imp$fit$estimate$loglik, x$fit$estimate$loglik)
   expect_identical(imp$stopped, 'adequate')
   expect_output(print(imp), 'stopped because adequate')
-  # A refit that ends below the model it extends is no evidence either way.
+  # A refit that ends below the model it extends is no evidence either way:
+  # judged on the values the optimisers maximised.
   short <- imp$fit
-  short$estimate$loglik <- x$fit$estimate$loglik - 5
+  short$estimate$loglik <- ctsem:::.ctFitOptimisedLoglik(x$fit) - 5
+  short$estimate$loglik_method <- NULL
   verdict <- ctsem:::.ctImproveCompare(x$fit, short, 'LR', 0.05)
   expect_false(verdict$accept)
   expect_match(verdict$note, 'below the model it extends')

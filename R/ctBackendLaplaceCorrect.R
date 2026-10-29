@@ -638,9 +638,11 @@
   laplace_units <- as.numeric(r$laplace_unit)
   checked <- matrix(as.numeric(r$check_unit), nrow = length(laplace_units))
   gaps <- colSums(checked[, scored, drop = FALSE]) - sum(laplace_units)
+  unit_gap <- rowMeans(checked[, scored, drop = FALSE]) - laplace_units
   list(status = status, shift = shift, noise = noise, bar = bar,
     max_shift = max(abs(shift)), worst = which.max(abs(shift)),
     carrying = carrying, gap = mean(gaps), gap_se = stats::sd(gaps) / sqrt(length(gaps)),
+    unit_gap = unit_gap,
     units = length(laplace_units), draws = as.integer(draws), seeds = sum(scored),
     width = as.integer(r$unit_width),
     seconds = proc.time()[["elapsed"]] - started)
@@ -662,6 +664,44 @@
     draws = check$draws, seeds = check$seeds, seconds = check$seconds)
 }
 
+# The fit's log likelihood where the Laplace check integrated every unit and
+# left the estimate alone: Laplace's plus the check's gap, the summed
+# difference between each unit's integral on its draws and its Laplace term
+# (its seeds' mean, `loglik_se` their standard error), and each subject's
+# term likewise where units are subjects. Laplace's value, the one the
+# optimiser maximised, is kept as `loglik_laplace`, as the rounds keep it
+# (`loglik_method` says which a fit reports): a model's log likelihood is for
+# comparing models, and Laplace's error differs between them -- 30 nats on
+# anomS1, 0.2 on cf_binary. Comparisons of where optimisations ended read the
+# maximised value (`.ctFitOptimisedLoglik()`).
+.ctLaplaceCheckedLoglik <- function(fit, check) {
+  gap <- as.numeric(check$gap)
+  if (length(gap) != 1L || !is.finite(gap) || gap == 0) return(fit)
+  fit$estimate$loglik_laplace <- as.numeric(fit$estimate$loglik)
+  fit$estimate$loglik <- fit$estimate$loglik_laplace + gap
+  if (!is.null(fit$estimate$logposterior)) {
+    fit$estimate$logposterior <- as.numeric(fit$estimate$logposterior) + gap
+  }
+  fit$estimate$loglik_se <- as.numeric(check$gap_se)
+  units <- as.numeric(check$unit_gap)
+  if (length(units) && length(units) == length(fit$estimate$subject_loglik) &&
+      all(is.finite(units))) {
+    fit$estimate$subject_loglik <- fit$estimate$subject_loglik + units
+  }
+  fit$estimate$loglik_method <- "checked"
+  fit
+}
+
+# The log likelihood the optimiser maximised: Laplace's on a fit that reports
+# the check's integral (`.ctLaplaceCheckedLoglik()`), else the one reported.
+.ctFitOptimisedLoglik <- function(fit) {
+  if (identical(fit$estimate$loglik_method, "checked") &&
+      !is.null(fit$estimate$loglik_laplace)) {
+    return(as.numeric(fit$estimate$loglik_laplace))
+  }
+  as.numeric(fit$estimate$loglik)
+}
+
 # What a fit the check flagged and nothing corrected says, in its warning and
 # in print(): the move, Laplace's error in the log likelihood (`gap`, where it
 # is resolved past twice `gap_se`), that the estimates, intervals and log
@@ -679,8 +719,8 @@
 # posterior mean was 1.9 posterior sds away and Laplace's interval held 1 per
 # cent of the mass (review/REVIEW-fit-uncertainty-2026-10-29.md, section 3).
 # The gap is not the trigger -- its level does not predict a move -- but a
-# large one says Laplace is off throughout, and the log likelihood a model
-# comparison reads is off by it.
+# large one says Laplace is off throughout, which is why the fit reports the
+# integrated log likelihood (`.ctLaplaceCheckedLoglik()`).
 .ctLaplaceShiftMessage <- function(shift, worst, carrying, units, drawn = 0L,
   gap = NA_real_, gap_se = NA_real_) {
   sample <- "ctFitUncertainty(fit, 'sample', control = list(intoverpop = 'none'))"
@@ -694,9 +734,10 @@
     (!is.finite(gap_se) || abs(gap) > 2 * gap_se)
   paste0("Laplace's error moves the estimates ", move, ", carried by ", carrying,
     " of ", units, " units",
-    if (resolved) paste0(", and puts the log likelihood ", format(abs(gap), digits = 2),
-      " nats ", if (gap < 0) "above" else "below", " the integrated one"),
-    ". The estimates, their intervals and the log likelihood are Laplace's, ",
+    if (resolved) paste0(", and puts Laplace's log likelihood ", format(abs(gap), digits = 2),
+      " nats ", if (gap < 0) "above" else "below", " the integrated one, which the fit ",
+      "reports"),
+    ". The estimates and their intervals are Laplace's, ",
     "uncorrected. ctFitUncertainty(fit, 'hessian', control = ",
     "list(likelihood = 'quadrature')) corrects them by quadrature, and ", sample,
     " samples the joint posterior.",
@@ -1180,7 +1221,7 @@
       residual = 0, units = NULL, unscored = 0L)
     record$seconds <- c(check = seconds(), total = seconds())
     fit$laplace$correction <- record
-    return(fit)
+    return(.ctLaplaceCheckedLoglik(fit, check))
   }
   # A move found and asked only to check: said once, with the calls that
   # correct it, and kept in the record for print(). The carrying units too
@@ -1207,7 +1248,7 @@
       loglik_laplace = as.numeric(fit$estimate$loglik),
       units = as.integer(check$units), check = checkrecord,
       seconds = c(check = seconds(), total = seconds()))
-    return(fit)
+    return(.ctLaplaceCheckedLoglik(fit, check))
   }
   cont <- try(do.call(module$ctsem_laplace_continuation,
     c(list(.ctJuliaObjective(fit, hybrid = TRUE), .ctJuliaNumericVector(est)),

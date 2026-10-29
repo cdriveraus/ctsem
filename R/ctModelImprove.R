@@ -1486,7 +1486,7 @@ print.ctModelProposals <- function(x, digits = 3, ...) {
   lapply(seq_len(n), function(b) {
     own <- refits[which == b]
     ll <- vapply(own, function(f) if (inherits(f, 'try-error') ||
-      !is.finite(f$estimate$loglik)) -Inf else f$estimate$loglik, 0)
+      !is.finite(.ctFitOptimisedLoglik(f))) -Inf else .ctFitOptimisedLoglik(f), 0)
     if (all(!is.finite(ll))) own[[1]] else own[[which.max(ll)]]
   })
 }
@@ -1629,7 +1629,10 @@ print.ctModelProposals <- function(x, digits = 3, ...) {
     value = NA_real_, score = -Inf, note = note)
   if (inherits(refit, 'try-error')) return(bad(paste('failed:',
     trimws(conditionMessage(attr(refit, 'condition'))))))
-  ll0 <- current$estimate$loglik; ll1 <- refit$estimate$loglik
+  # The maximised values: a model that contains another cannot end below it on
+  # those, which the check's integrals, each a draw from its own error, need
+  # not keep (`.ctFitOptimisedLoglik()`).
+  ll0 <- .ctFitOptimisedLoglik(current); ll1 <- .ctFitOptimisedLoglik(refit)
   k0 <- length(.ctFitRawEstimate(current)); k1 <- length(.ctFitRawEstimate(refit))
   dll <- ll1 - ll0; dk <- k1 - k0
   if (!is.finite(dll)) return(bad('log likelihood not finite'))

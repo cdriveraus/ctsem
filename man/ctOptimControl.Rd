@@ -227,8 +227,11 @@ default.
  estimate by 0.1 standard errors or more. The warning gives the move's
  size below one standard error (past that the check's linear step is no
  guide to it), and how far Laplace's log likelihood is from the
- integrated one; the estimates, intervals and log likelihood stay
- Laplace's. It names the calls that correct
+ integrated one; the estimates and intervals stay Laplace's. Wherever the
+ check runs, \code{fit$estimate$loglik} is Laplace's plus the check's
+ integral of every unit's error (\code{loglik_se} its standard error,
+ \code{loglik_laplace} the value the optimiser maximised,
+ \code{loglik_method} \code{'checked'}). It names the calls that correct
  them: \code{ctFitUncertainty(fit, 'hessian', control = list(likelihood =
  'quadrature'))}, which does what \code{'quadrature'} does at fit time,
  and sampling the joint posterior. Every model whose effects enter
