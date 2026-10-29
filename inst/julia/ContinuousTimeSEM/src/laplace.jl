@@ -3720,6 +3720,9 @@ function _laplace_solve_unit_mode!(laplace::CTSEMLaplaceObjective, U::Integer,
     # And from the modes the fit saw where this unit's term jumped.
     (best.converged && !isempty(laplace.known[U])) &&
         (best = _laplace_known_modes(laplace, U, values, Ls, aws, best; set=set))
+    # And past a maximum near its fold, the one it hands over to.
+    (set === nothing || !best.converged) ||
+        _laplace_partner_modes!(set, laplace, U, values, Ls, aws)
     laplace.modes[U] = best.u
     laplace.alt_modes[U] = set === nothing ? Vector{Float64}[] :
         Vector{Float64}[m.u for m in set if _laplace_maxabsdiff(m.u, best.u) >= 1e-4]
@@ -3729,6 +3732,41 @@ function _laplace_solve_unit_mode!(laplace::CTSEMLaplaceObjective, U::Integer,
     laplace.hessian_repaired[U] = best.repaired
     return (u=best.u, value=best.value, converged=best.converged,
         final=best.final)
+end
+
+"""
+    _laplace_partner_modes!(set, laplace, U, values, Ls, aws)
+
+For each maximum in `set` near its fold -- its curvature's smallest eigenvalue
+under `_LAPLACE_MODE_FADE`, where its weight in the unit's combination fades
+(`_laplace_mode_sum`) -- Newton from points 0.25 to 2 prior units either way
+along that eigenvector, and the maxima it reaches joined to `set`
+(`_laplace_mode_join!`). Past the fold the inner solve falls into one of them,
+and the combination hands the fading maximum's weight over to it only if it
+holds it. The probes do not reach it: their reach along a direction scales as
+one over the square root of its precision, far past a neighbour that close
+(the affect pilot's unit 894, at its fold an eigenvalue of 3e-4 and another
+maximum 0.54 away, which the search never found; the run jumped there).
+"""
+function _laplace_partner_modes!(set, laplace::CTSEMLaplaceObjective, U::Integer,
+    values::AbstractVector{Float64}, Ls::Vector{Matrix{Float64}}, aws)
+    d = laplace.units.dims[U]
+    d == 0 && return set
+    for i in 1:length(set)
+        u = copy(set[i].u)
+        M = _laplace_block_dense(_laplace_unit_curvature(laplace, U, values, Ls, u),
+            laplace.units.blocks[U], d)
+        all(isfinite, M) || continue
+        E = _ctsem_symeig(_gated_sym(Matrix{Float64}(M)))
+        E.values[1] < _LAPLACE_MODE_FADE || continue
+        v = E.vectors[:, 1]
+        for s in (0.25, 0.5, 1.0, 2.0), sgn in (1.0, -1.0)
+            r = _laplace_newton_unit_mode(laplace, U, values, Ls, aws, u .+ (sgn * s) .* v)
+            (r.converged && isfinite(r.value)) || continue
+            _laplace_mode_join!(set, laplace, U, values, Ls, aws, r)
+        end
+    end
+    return set
 end
 
 """What the mode solve records for a unit with no coordinate: an empty mode,
