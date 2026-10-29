@@ -330,8 +330,12 @@ end
     end
     # At a trace jet, as the hand second order's jet sweeps run it: the
     # moments' first parts are their directional derivatives and the second
-    # part the second, which nested forward mode through the values gives.
-    for (a0, b0, y) in ((-0.6, 3.1^2, 1.0), (2.0, 15.0^2, 0.0))
+    # part the second, which nested forward mode through the values gives; the
+    # moments' Jacobian likewise. The third case sits just inside the band's
+    # top, where the blend's weight takes the logistic of about -500: there a
+    # jet's second part of the Jacobian's b column was NaN (bench gD1), until
+    # `_logistic` stopped exponentiating positive arguments.
+    for (a0, b0, y) in ((-0.6, 3.1^2, 1.0), (2.0, 15.0^2, 0.0), (4.2175, 3.498^2, 1.0))
         da, db = 0.7, -0.4 * b0
         jet(x, d) = CT.CTSEMTraceJet{1}(x, (d,), 0.0)
         Jm = zeros(CT.CTSEMTraceJet{1}, 3, 2)
@@ -345,6 +349,30 @@ end
             @test x.d[1] ≈ ForwardDiff.derivative(g, 0.0) rtol = 1e-7 atol = 1e-9
             @test x.s ≈ ForwardDiff.derivative(t -> ForwardDiff.derivative(g, t), 0.0) rtol = 1e-6 atol = 1e-8
         end
+        jac(t) = CT._binary_moment_jacobian(a0 + t * da, b0 + t * db, y, nodes, weights,
+            typeof(t)[], _BINARY)[4]
+        dJ = ForwardDiff.derivative(jac, 0.0)
+        d2J = ForwardDiff.derivative(t -> ForwardDiff.derivative(jac, t), 0.0)
+        @test all(x -> isfinite(x.v) && isfinite(x.d[1]) && isfinite(x.s), Jm)
+        @test [x.d[1] for x in Jm] ≈ dJ rtol = 1e-6 atol = 1e-8
+        @test [x.s for x in Jm] ≈ d2J rtol = 1e-5 atol = 1e-7
+    end
+end
+
+# `_logistic` at second order, out to where `exp` overflows: a trace jet's
+# parts are the logistic's first and second derivatives, `p(1 - p)` and
+# `p(1 - p)(1 - 2p)`, finite at every argument. Switched to `e^x / (1 + e^x)`
+# only below -700, the second part was `Inf / Inf` from about -236.
+@testset "_logistic's jet parts are finite at any argument" begin
+    CT = ContinuousTimeSEM
+    for x in (-800.0, -500.0, -300.0, -30.0, -0.5, 0.0, 0.5, 30.0, 300.0, 800.0)
+        p = x < 0 ? exp(x) / (1 + exp(x)) : 1 / (1 + exp(-x))
+        q = x < 0 ? 1 / (1 + exp(x)) : exp(-x) / (1 + exp(-x))
+        r = CT._logistic(CT.CTSEMTraceJet{1}(x, (1.0,), 0.0))
+        @test r.v ≈ p rtol = 1e-14
+        @test r.d[1] ≈ p * q rtol = 1e-12
+        @test r.s ≈ p * q * (q - p) rtol = 1e-10 atol = 1e-300
+        @test isfinite(r.d[1]) && isfinite(r.s)
     end
 end
 
