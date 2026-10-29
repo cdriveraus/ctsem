@@ -119,7 +119,12 @@ How much more variance in its error's difference chain `d`'s coreset showed
 than its fit expected: the spread an acceptance `a` implies, `-2
 Phi^-1(a / 2)`, squared, over twice its held-out spread squared. One where
 fewer than `_SURROGATE_MIN_PROPOSED` endpoints were tested, or every one was
-accepted.
+accepted, and never less than one: it corrects the held-out spread for the
+chain going further than its training states, and a coreset that served
+better than its fit expected says nothing about a smaller one's spread.
+Read as less -- an acceptance near one, where `erfcinv` is steep, gave 0.04
+-- it shrank the second fit's errors, and half the seeds of test_smc.jl's
+fixture took a one- or two-unit coreset accepting 0.26-0.8.
 """
 function _surrogate_inflation(d)
     (d.coreset === nothing || d.proposed < _SURROGATE_MIN_PROPOSED ||
@@ -127,7 +132,7 @@ function _surrogate_inflation(d)
     a = d.accepted / d.proposed
     0 < a < 1 || return a <= 0 ? 100.0 : 1.0
     implied = 2 * sqrt(2.0) * erfcinv(a)
-    return implied^2 / (2 * d.error^2)
+    return max(implied^2 / (2 * d.error^2), 1.0)
 end
 
 """

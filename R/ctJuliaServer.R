@@ -62,7 +62,8 @@
 # which compiles its image. A directory without `ready` is a build in progress
 # elsewhere or one that failed (`failed`, with Julia's output): either way this
 # session starts the old way, and a failed build is not retried until its key
-# changes or a week has passed.
+# changes or a week has passed. A depot that cannot build it yet
+# (`.ctJuliaServerBuildable()`) is not a failure, and leaves nothing.
 .ctJuliaServerReady <- function(internals, bin) {
   dir <- .ctJuliaServerDir(internals, bin)
   if (is.null(dir)) return(NULL)
@@ -74,6 +75,7 @@
     if (building || (file.exists(failed) && isTRUE(age < 7))) return(NULL)
     unlink(dir, recursive = TRUE)
   }
+  if (!.ctJuliaServerBuildable(internals, bin)) return(NULL)
   staging <- paste0(dir, "-partial-", Sys.getpid())
   unlink(staging, recursive = TRUE)
   laid <- tryCatch(.ctJuliaServerLayout(staging, internals), error = function(e) FALSE)
@@ -115,6 +117,27 @@
   }
   writeLines(out, file.path(dir, "failed"))
   NULL
+}
+
+# Whether this Julia's depots hold what the offline build resolves from: a
+# registry and Tables, which JuliaConnectoR installs on its first connection.
+# In a depot it has never connected from, the build could only fail ("Tables
+# has no known versions"), and recorded as failed it kept every session of a
+# first install on the old start for a week. Not yet buildable, a session
+# starts the old way, which installs Tables, and the next one builds.
+.ctJuliaServerBuildable <- function(internals, bin) {
+  script <- tempfile("rserver-buildable", fileext = ".jl")
+  on.exit(unlink(script), add = TRUE)
+  writeLines(c(
+    "has(d, sub) = isdir(joinpath(d, sub)) && !isempty(readdir(joinpath(d, sub)))",
+    "any(d -> has(d, \"registries\"), DEPOT_PATH) &&",
+    "  any(d -> has(d, joinpath(\"packages\", \"Tables\")), DEPOT_PATH) &&",
+    "  print(\"CTSEM-RSERVER-BUILDABLE\")"), script)
+  out <- tryCatch(suppressWarnings(system2(file.path(bin, .ctJuliaExeName()),
+    c("--startup-file=no", "--history-file=no", shQuote(script)),
+    stdout = TRUE, stderr = TRUE, timeout = 120, env = internals$env())),
+    error = function(e) conditionMessage(e))
+  any(grepl("CTSEM-RSERVER-BUILDABLE", out, fixed = TRUE))
 }
 
 # What the server's source needs to be a package, each as `(file, from, to)`

@@ -33,6 +33,28 @@ test_that("without JuliaConnectoR's internals a session starts the old way", {
   expect_true(isTRUE(cache$rserver_off))
 })
 
+test_that("a depot JuliaConnectoR has not connected from builds nothing and records nothing", {
+  skip_on_cran()
+  skip_without_julia()
+  internals <- ctsem:::.ctJuliaServerInternals()
+  skip_if(is.null(internals))
+  bin <- ctsem:::.ctJuliaBin()
+  # This session's depots: JuliaConnectoR has connected from them.
+  expect_true(ctsem:::.ctJuliaServerBuildable(internals, bin))
+  # A first install's: no registry, no Tables. The offline build could only
+  # fail there, and a recorded failure held the next week's sessions to the
+  # old start, though the first one installs Tables.
+  empty <- tempfile("depot")
+  cache <- tempfile("cache")
+  dir.create(empty)
+  on.exit(unlink(c(empty, cache), recursive = TRUE), add = TRUE)
+  withr::local_envvar(JULIA_DEPOT_PATH = empty, R_USER_CACHE_DIR = cache)
+  expect_false(ctsem:::.ctJuliaServerBuildable(internals, bin))
+  expect_null(ctsem:::.ctJuliaServerReady(internals, bin))
+  expect_length(list.files(cache, pattern = "^rserver-", recursive = TRUE,
+    include.dirs = TRUE), 0L)
+})
+
 test_that("a fresh session runs the precompiled server, with the real Tables", {
   skip_on_cran()
   skip_without_julia()

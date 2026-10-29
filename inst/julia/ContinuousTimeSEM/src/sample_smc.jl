@@ -447,7 +447,13 @@ end
 How much more variance the stage's correction `owed` showed, over the
 particles that moved, than its coreset's fit expected, `beta^2` times twice
 its held-out spread `error` squared: what the next stage's coreset is priced
-with. `previous` where too few moved to say.
+with. `previous` where too few moved to say, and never less than one, as
+coreset NUTS reads its own (`_surrogate_inflation`): a coreset that served
+better than its fit expected says nothing about a smaller one's spread. Read
+as less, on test_smc.jl's poor-coreset fixture a ratio of 0.0-0.17 had the
+next stage take one unit, whose correction then showed 7000-53000 times its
+expected variance: effective sizes of 0.02-0.09, and at one seed in ten
+posterior sds 0.68-0.86 of the closed form's.
 """
 function _smc_inflation(owed::AbstractVector{Float64}, X::AbstractMatrix{Float64},
     Xpre::AbstractMatrix{Float64}, beta::Real, error::Real, previous::Real)
@@ -456,7 +462,7 @@ function _smc_inflation(owed::AbstractVector{Float64}, X::AbstractMatrix{Float64
     expected = 2 * (beta * error)^2
     (length(v) >= 20 && expected > 0 && isfinite(expected)) || return Float64(previous)
     mu = _smc_mean(v)
-    return sum(abs2, v .- mu) / (length(v) - 1) / expected
+    return max(sum(abs2, v .- mu) / (length(v) - 1) / expected, 1.0)
 end
 
 """

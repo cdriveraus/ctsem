@@ -326,12 +326,17 @@ end
     @test P._surrogate_inflation(d) ≈ 1 rtol = 0.02
     d.accepted = round(Int, 2 * P._ctsem_normal_cdf(-sqrt(2) * 0.8 / 2) * d.proposed)
     @test P._surrogate_inflation(d) ≈ 4 rtol = 0.02
+    # Accepted more often than its fit predicted: no evidence about the next
+    # coreset's spread, so it is priced as fitted.
+    d.accepted = round(Int, 2 * P._ctsem_normal_cdf(-sqrt(2) * 0.1 / 2) * d.proposed)
+    @test P._surrogate_inflation(d) == 1
     # SMC: the variance of the correction over what its fit expected, over
     # the particles that moved.
     rng = Random.Xoshiro(4)
     X = randn(rng, 2, 400); Xpre = copy(X); Xpre[:, 1:300] .+= 1.0
     owed = 0.5 .* sqrt(2 * 3.0) * 0.2 .* randn(rng, 400)
     @test P._smc_inflation(owed, X, Xpre, 0.5, 0.2, 1.0) ≈ 3 rtol = 0.25
+    @test P._smc_inflation(owed ./ 10, X, Xpre, 0.5, 0.2, 1.0) == 1
     # Too few moved: the previous inflation stands.
     @test P._smc_inflation(owed, X, X, 0.5, 0.2, 1.7) == 1.7
 end

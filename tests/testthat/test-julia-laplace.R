@@ -1221,8 +1221,10 @@ test_that("the hessian raises the inner budget rather than returning NaN", {
     intoverpop = "laplace", optimcontrol = list(estonly = TRUE))))
   skip_if_not(isTRUE(fit$laplace$inner_converged),
     "fixture did not solve its modes")
-  # The fixture earns its place only if the inner solve needs iterating.
-  expect_gt(max(fit$laplace$inner_iterations), 2L)
+  # The fixture earns its place only if the inner solve needs iterating, which
+  # the cold budget of one below measures. The fit's own count does not: an
+  # optimisation starts each unit from its mode at the last accepted point,
+  # one Newton iteration at the optimum.
 
   module <- .ctJuliaModule(fit$model_spec$project)
   objective <- .ctJuliaObjective(fit)

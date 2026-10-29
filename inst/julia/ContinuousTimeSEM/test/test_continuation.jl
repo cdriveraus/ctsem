@@ -482,20 +482,27 @@ end
     laplace, values = _fresh_linear()
     theta = collect(Float64, values)
     lap = ctsem_laplace_evaluate(laplace, theta; gradient=false)
-    # On t components (the default) and on Gaussian ones alike.
+    # On t components (the default) and on Gaussian ones alike. Laplace is
+    # exact here, so every gap is the draws' error. That error's standard
+    # error is the spread of eight replicate lattices, so a gap over it is a
+    # t on 7 degrees of freedom: over 40 seeds of six units the mean squared
+    # ratio was 1.3-1.9 (t7's 1.4), and over 60 the largest 4.8-6.2, under
+    # Julia 1.12.7 and 1.13.3 alike (dev3, 2026-10-29). The bars sit past
+    # t7's 1e-4 tail for each unit and five combined errors for their signed
+    # sum, whose largest over 240 runs was 3.7. A bar of four for each unit
+    # fails about one run in sixteen by t7, and failed 1.13.3's streams; the
+    # screen at tolerance 0, which flags any unit past two errors, flagged in
+    # 15-21 runs of 40. Its rules are tested exactly below.
     for df in (4, Inf)
         o = ctsem_laplace_continuation(laplace, theta; tolerance=0.0, maxdim=1,
             draws=256, draws_df=df)
         info = ctsem_laplace_continuation_info(o)
         @test info.nimportance == info.nunits
+        gap = info.quadrature_units .- lap.unit_loglik
         for U in 1:info.nunits
-            @test abs(info.quadrature_units[U] - lap.unit_loglik[U]) <
-                4 * info.centre_se[U] + 1e-8
+            @test abs(gap[U]) < 8 * info.centre_se[U] + 1e-8
         end
-        # Laplace is exact here, so every gap is within the draws' error and the
-        # screen, which reads only what it can resolve, flags nothing.
-        @test (df, info.nflagged) == (df, 0)
-        @test info.screen == 0
+        @test abs(sum(gap)) < 5 * sqrt(sum(abs2, info.centre_se)) + 1e-8
     end
 end
 
