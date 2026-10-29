@@ -6047,8 +6047,13 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
   #   ones it found that the run missed, which resume the run where they are
   #   worth `.ctJuliaKnownResumeGain`.
   # Up to `.ctJuliaKnownRounds` resumes; a jump past them, or one whose modes
-  # are known already, is handed on as before.
+  # are known already, is handed on as before. So is a jump on units a jump in
+  # an earlier round named already: their modes were kept and the run met them
+  # again, as at a fold, where the mode the solve leaves stops existing past
+  # the edge and no start brings it back (unit 894 of the affect pilot, one
+  # resume to the next at the same point).
   rounds <- 0L
+  jumped_before <- integer()
   while (!state_explicit && !is.null(model_spec$laplace)) {
     known <- model_spec$laplace$known
     jumpknown <- .ctJuliaKnownModes(known, result)
@@ -6067,7 +6072,10 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
       spec <- structure(model_spec, class = c("ctJuliaModel", "ctFitModel"))
       objective <- .ctJuliaObjective(spec, hybrid = TRUE)
     }
-    if (!resume || rounds >= .ctJuliaKnownRounds) break
+    named_now <- if (.ctJuliaJumped(result)) .ctJuliaJumpNamed(result) else integer()
+    again <- length(named_now) > 0L && all(named_now %in% jumped_before)
+    if (!resume || again || rounds >= .ctJuliaKnownRounds) break
+    jumped_before <- union(jumped_before, named_now)
     if (!is.null(jumpknown)) {
       named <- .ctJuliaJumpNamed(result)
       message(sprintf(paste0("Laplace: the objective jumped at %s %s (its term ",

@@ -503,9 +503,28 @@ where the reverse pass does not apply.
 """
 function _laplace_gated_unit_adjoint(laplace::CTSEMLaplaceObjective, U::Integer,
     theta::Vector{Float64})
+    st = _laplace_gated_setup(laplace, U, theta, laplace.modes[U])
+    st === nothing && return nothing
+    return _laplace_gated_reverse(laplace, st.z0, st.objf, st.curvf, st.G, st.dcheck,
+        length(theta))
+end
+
+"""
+    _laplace_gated_setup(laplace, U, theta, uhat)
+
+What the gated rule's reverse pass reads at unit `U`'s mode `uhat`: the
+coordinates `z0` -- the unit's own, or for an objective whose filter integrates
+deviations the joint ones, the deviations at their modes -- the unit objective
+`objf` and its curvature `curvf` there, the passes' `G` (`_GatedThetaGradient`)
+and the dimension `dcheck` the eigenvalue cap compares; `nothing` where the
+unit has no coordinate or a member cannot be evaluated. Shared by the gated
+term's gradient (`_laplace_gated_unit_adjoint`) and a mode's fade in its
+unit's sum (`_laplace_mode_fade`).
+"""
+function _laplace_gated_setup(laplace::CTSEMLaplaceObjective, U::Integer,
+    theta::Vector{Float64}, uhat::Vector{Float64})
     spec = laplace.spec
     npar = length(theta)
-    uhat = laplace.modes[U]
     isempty(uhat) && return nothing
     members = laplace.units.members[U]
     Ls = _laplace_popchols(theta, spec)
@@ -541,5 +560,120 @@ function _laplace_gated_unit_adjoint(laplace::CTSEMLaplaceObjective, U::Integer,
         dcheck = length(uhat)
     end
     G = _GatedThetaGradient(laplace, Int(U), theta, Ls, dL, positions, layout)
-    return _laplace_gated_reverse(laplace, z0, objf, curvf, G, dcheck, npar)
+    return (z0=z0, objf=objf, curvf=curvf, G=G, dcheck=dcheck)
+end
+
+"""
+    _laplace_mode_fade(laplace, U, theta, uhat; gradient=false)
+
+The smallest eigenvalue `lam` of unit `U`'s curvature at its mode `uhat`, in
+the coordinates the gated rule decides on (`_laplace_gated_setup`), and with
+`gradient` its derivative with respect to the raw vector, the mode's own
+movement included: `v' dM v` along its eigenvector, the gated rule's closing
+pass seeded with `v v'` (`_laplace_gated_close!`). What fades a mode out of its
+unit's sum at a fold (`_laplace_mode_sum`). `nothing` where the unit cannot be
+set up or a pass fails.
+"""
+function _laplace_mode_fade(laplace::CTSEMLaplaceObjective, U::Integer,
+    theta::Vector{Float64}, uhat::Vector{Float64}; gradient::Bool=false)
+    geo = _laplace_modes_geometry(laplace, U, theta, [uhat])
+    geo === nothing && return nothing
+    E = geo.geos[1].E
+    lam = E.values[1]
+    gradient || return (lam=lam, grad=nothing)
+    npar = length(theta)
+    lam > 0 || return (lam=lam, grad=zeros(Float64, npar))
+    v1 = E.vectors[:, 1]
+    grad = _laplace_mode_close(laplace, U, theta, uhat, E, 0.0, v1 .* transpose(v1),
+        zeros(Float64, length(v1)))
+    grad === nothing && return nothing
+    return (lam=lam, grad=grad)
+end
+
+"""
+    _laplace_modes_geometry(laplace, U, theta, modes)
+
+Unit `U`'s maxima `modes` as their combination reads them
+(`_laplace_mode_sum`), in the gated rule's coordinates
+(`_laplace_gated_setup`): for each, its point `z0`, the unit objective `g`
+there and its curvature's eigendecomposition `E` (`geos`); for each pair, the
+valley between them, the lowest `g` at the seven interior points
+`_laplace_modes_separated` reads (`valley[k, j]`), and where on the segment it
+lies, as the fraction of the way from `k` (`vt[k, j]`). Numbers only, since the
+setup's closures hold the calling task's workspace. `nothing` where a mode's
+quadratic cannot be had.
+"""
+function _laplace_modes_geometry(laplace::CTSEMLaplaceObjective, U::Integer,
+    theta::Vector{Float64}, modes::AbstractVector)
+    K = length(modes)
+    geos = Vector{Any}(undef, K)
+    objf = nothing
+    for k in 1:K
+        st = _laplace_gated_setup(laplace, U, theta, modes[k])
+        st === nothing && return nothing
+        k == 1 && (objf = st.objf)
+        g = Float64(st.objf(st.z0).value)
+        M0 = _gated_sym(Matrix{Float64}(st.curvf(st.z0)))
+        (isfinite(g) && all(isfinite, M0)) || return nothing
+        geos[k] = (z0=copy(st.z0), g=g, E=_ctsem_symeig(M0))
+    end
+    valley = fill(Inf, K, K)
+    vt = zeros(Float64, K, K)
+    for k in 1:K, j in (k + 1):K
+        zk, zj = geos[k].z0, geos[j].z0
+        lo, at = Inf, 0.5
+        for i in 1:7
+            t = i / 8
+            v = Float64(objf(zk .+ t .* (zj .- zk)).value)
+            # Not finite on the way: separate, as `_laplace_modes_separated` reads it.
+            isfinite(v) || (v = -Inf)
+            if v < lo
+                lo, at = v, t
+            end
+        end
+        valley[k, j] = valley[j, k] = lo
+        vt[k, j] = at
+        vt[j, k] = 1 - at
+    end
+    return (geos=geos, valley=valley, vt=vt)
+end
+
+"""
+    _laplace_mode_point_gradient(laplace, U, theta, uhat, z)
+
+Unit `U`'s objective's gradient with respect to the raw vector and to the
+coordinates at the point `z` of the gated rule's coordinates, set up at its
+maximum `uhat` (`_laplace_gated_setup`): `(theta, z)`, or `nothing` where it
+cannot be had. What a valley between two maxima moves by (`_laplace_mode_sum`).
+"""
+function _laplace_mode_point_gradient(laplace::CTSEMLaplaceObjective, U::Integer,
+    theta::Vector{Float64}, uhat::Vector{Float64}, z::Vector{Float64})
+    st = _laplace_gated_setup(laplace, U, theta, uhat)
+    st === nothing && return nothing
+    r = st.G(z)
+    (r === nothing || !all(isfinite, r.theta) || !all(isfinite, r.z)) && return nothing
+    return r
+end
+
+"""
+    _laplace_mode_close(laplace, U, theta, uhat, E, gbar, Mbar, zbar)
+
+The derivative with respect to the raw vector of `gbar g + tr(Mbar M) +
+zbar' z0` at unit `U`'s mode `uhat`, in the gated rule's coordinates
+(`_laplace_gated_setup`), the mode's own movement included: the gated rule's
+closing pass (`_laplace_gated_close!`), `E` the curvature's eigendecomposition
+there (`_laplace_modes_geometry`). `nothing` where the curvature is not
+positive definite, a pass fails or the result is not finite.
+"""
+function _laplace_mode_close(laplace::CTSEMLaplaceObjective, U::Integer,
+    theta::Vector{Float64}, uhat::Vector{Float64}, E, gbar::Float64,
+    Mbar::AbstractMatrix{Float64}, zbar::AbstractVector{Float64})
+    all(>(0), E.values) || return nothing
+    st = _laplace_gated_setup(laplace, U, theta, uhat)
+    st === nothing && return nothing
+    M0inv = _gated_spectral(E.vectors, [1 / l for l in E.values])
+    grad = _laplace_gated_close!(zeros(Float64, length(theta)), st.G, st.z0, gbar,
+        Matrix{Float64}(Mbar), collect(Float64, zbar), M0inv)
+    (grad === nothing || !all(isfinite, grad)) && return nothing
+    return grad
 end
