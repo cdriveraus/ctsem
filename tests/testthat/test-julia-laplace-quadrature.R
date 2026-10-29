@@ -171,7 +171,8 @@ test_that("the default checks and warns, and the correction it names is the fit-
   corr <- default$laplace$correction
   # Correcting Laplace moves the population sd here, resolved past the
   # check's noise, so the default says so, names the corrections, and leaves
-  # the estimate, its log likelihood and its draws as the uncorrected fit's.
+  # the estimate and its draws as the uncorrected fit's. Its log likelihood is
+  # Laplace's plus the check's integral of every unit's error.
   expect_identical(corr$method, "quadrature")
   expect_identical(corr$status, "flagged")
   expect_false(corr$applied)
@@ -181,9 +182,14 @@ test_that("the default checks and warns, and the correction it names is the fit-
   expect_gt(corr$check$carrying, 0L)
   expect_length(corr$check$carriers, corr$check$carrying)
   expect_identical(default$estimate$raw, fits$off$estimate$raw)
-  expect_identical(default$estimate$loglik, fits$off$estimate$loglik)
+  expect_identical(default$estimate$loglik_laplace, fits$off$estimate$loglik)
+  expect_identical(default$estimate$loglik_method, "checked")
+  expect_equal(default$estimate$loglik, fits$off$estimate$loglik + corr$check$gap)
+  expect_gt(default$estimate$loglik_se, 0)
+  expect_equal(sum(default$estimate$subject_loglik), default$estimate$loglik,
+    tolerance = 1e-8)
+  expect_identical(ctsem:::.ctFitOptimisedLoglik(default), fits$off$estimate$loglik)
   expect_identical(default$estimate$rawposterior, fits$off$estimate$rawposterior)
-  expect_null(default$estimate$loglik_method)
   warned <- attr(default, "warned")
   expect_true(any(grepl("likelihood = 'quadrature'", warned, fixed = TRUE)))
   expect_true(any(grepl("intoverpop = 'none'", warned, fixed = TRUE)))
@@ -807,7 +813,7 @@ test_that("draws' defaults reach the engine, and a flag names both corrections",
   expect_no_match(plain, "nats", fixed = TRUE)
   above <- .ctLaplaceShiftMessage(1.01, "diff_anom", 661L, 800L, gap = -30.3,
     gap_se = 0.2)
-  expect_match(above, "puts the log likelihood 30 nats above the integrated one",
+  expect_match(above, "puts Laplace's log likelihood 30 nats above the integrated one",
     fixed = TRUE)
   below <- .ctLaplaceShiftMessage(0.4, "drift", 43L, 60L, gap = 1.2, gap_se = 0.1)
   expect_match(below, "1.2 nats below", fixed = TRUE)
