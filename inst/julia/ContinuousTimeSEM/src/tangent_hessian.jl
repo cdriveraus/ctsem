@@ -477,13 +477,19 @@ function _tan_duals(X::Union{TanMat{W},TanVec{W}}, ::Type{DW}) where {W,DW}
 end
 
 """Whether the duals `a` and `b` are the same, partials included: `==` on a
-dual reads its value alone."""
+dual reads its value alone. A NaN in the same place in both is the same: a
+NaN seeded into a sweep is an invalid point, which its results show, not a
+matrix that differs from its Jacobian. Compared by `==`, the gated rule's
+closing pass seeded with NaN threw `_TAN_NOT_JACOBIAN` on a model whose
+drift is its own Jacobian (bench gD1)."""
 _tan_same(a::AbstractArray, b::AbstractArray) = size(a) == size(b) &&
-    all(i -> ForwardDiff.value(a[i]) == ForwardDiff.value(b[i]) &&
-        ForwardDiff.partials(a[i]) == ForwardDiff.partials(b[i]), eachindex(a))
-# A jet's `==` reads every part.
+    all(i -> _tan_eq(ForwardDiff.value(a[i]), ForwardDiff.value(b[i])) &&
+        _tan_eq(ForwardDiff.partials(a[i]), ForwardDiff.partials(b[i])), eachindex(a))
 _tan_same(a::AbstractArray{<:CTSEMTraceJet}, b::AbstractArray{<:CTSEMTraceJet}) =
-    size(a) == size(b) && all(i -> a[i] == b[i], eachindex(a))
+    size(a) == size(b) && all(i -> _tan_eq(a[i].v, b[i].v) && _tan_eq(a[i].d, b[i].d) &&
+        _tan_eq(a[i].s, b[i].s), eachindex(a))
+_tan_eq(x::Real, y::Real) = x == y || (isnan(x) && isnan(y))
+_tan_eq(x, y) = length(x) == length(y) && all(k -> _tan_eq(x[k], y[k]), 1:length(x))
 
 """
 The matrices of the layer into `mod`, values and tangents, for the subject
