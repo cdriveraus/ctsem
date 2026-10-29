@@ -1011,14 +1011,22 @@ end
 end
 
 @testset "the outer Hessian is differenced over the units that read each parameter" begin
-    # Two indicators, the second never observed for the odd subjects: their
-    # units do not read its intercept (6) or its error (7), so those columns
-    # are differenced over the even subjects' units alone, and nothing else
+    # Three indicators, the second never observed for the odd subjects and the
+    # third never for the even ones: the odd subjects' units do not read the
+    # second's intercept (6) or error (7), the even ones' not the third's (8,
+    # 9), so those columns are differenced over half the units each, and a
+    # column of the second's shares its points with one of the third's
+    # (`_ctsem_local_colours`). The third loads no state, and subject 1
+    # observes it at exactly its intercept: at `values` that unit's score in 8
+    # is zero though it reads it, with curvature there, which only the moved
+    # point of `_laplace_hessian_readers` shows. A prior and unequal subject
+    # weights make the columns from scores add what the gradient adds. Nothing
     # about the matrix may change.
     df = _laplace_test_dataframe(
         drift=[-0.5;;], jax=[-0.5;;], cint=[0.0;;], diffusion=[0.2;;],
-        lambda=[1.0; 0.8;;], jy=[1.0; 0.8;;], manifestmeans=[0.0; 0.0;;],
-        manifestvar=[0.3 0.0; 0.0 0.3], t0var=[0.4;;], t0means=[0.0;;],
+        lambda=[1.0; 0.8; 0.0;;], jy=[1.0; 0.8; 0.0;;],
+        manifestmeans=[0.0; 0.0; 0.0;;], manifestvar=[0.3 0.0 0.0; 0.0 0.3 0.0;
+            0.0 0.0 0.3], t0var=[0.4;;], t0means=[0.0;;],
         free=Dict(
             (:T0MEANS, 1, 1) => (1, "param[1]"),
             (:CINT, 1, 1) => (2, "param[2]"),
@@ -1028,30 +1036,43 @@ end
             (:MANIFESTMEANS, 1, 1) => (5, "param[5]"),
             (:MANIFESTMEANS, 2, 1) => (6, "param[6]"),
             (:MANIFESTVAR, 2, 2) => (7, "log1p_exp(param[7])"),
+            (:MANIFESTMEANS, 3, 1) => (8, "param[8]"),
+            (:MANIFESTVAR, 3, 3) => (9, "log1p_exp(param[9])"),
         ))
     sp = ekf_from_data_frame(df)
-    starts, times, data = _laplace_test_data(6, 2)
+    starts, times, data = _laplace_test_data(6, 3)
     stops = vcat(starts[2:end] .- 1, size(data, 2))
-    for s in 1:2:6
-        data[2, starts[s]:stops[s]] .= NaN
+    for s in 1:6
+        data[isodd(s) ? 2 : 3, starts[s]:stops[s]] .= NaN
     end
-    objective = ctsem_objective(sp, starts, times, data)
-    laplace = ctsem_laplace_objective(objective, [1, 2], [8, 9], [10], [1.0, 1.0])
-    values = [0.2, -0.1, 0.3, -0.2, 0.05, -0.05, 0.1, -0.3, -0.15, 0.4]
+    data[3, starts[1]:stops[1]] .= 0.0
+    objective = ctsem_objective(sp, starts, times, data, zeros(0, size(data, 2));
+        prior_index=collect(1:12), prior_scale=fill(2.0, 12),
+        subject_weights=[1.0, 2.0, 0.5, 1.0, 1.5, 1.0])
+    laplace = ctsem_laplace_objective(objective, [1, 2], [10, 11], [12], [1.0, 1.0])
+    values = [0.2, -0.1, 0.3, -0.2, 0.05, -0.05, 0.1, 0.0, 0.2, -0.3, -0.15, 0.4]
     scores = ContinuousTimeSEM.ctsem_subject_gradients(laplace, values;
         prior=false).scores
     # What the localised columns rely on: exactly zero where a unit does not
-    # read the parameter, and not elsewhere.
+    # read the parameter, and not elsewhere -- but for subject 1's symmetry.
     @test count(iszero, scores[:, 6]) == 3
     @test count(iszero, scores[:, 7]) == 3
+    @test count(iszero, scores[:, 9]) == 3
     @test count(iszero, scores[:, 5]) == 0
+    @test iszero(scores[1, 8]) && count(iszero, scores[:, 8]) == 4
+    readers = ContinuousTimeSEM._laplace_hessian_readers(laplace, values, scores,
+        collect(1:12), laplace.inner_maxiter, 2, nothing, 1e-4)
+    @test readers == (scores .!= 0) .| [U == 1 && j == 8 for U in 1:6, j in 1:12]
     localised = ctsem_laplace_hessian(laplace, values)
     full = ctsem_laplace_hessian(laplace, values; localised=false)
     @test all(isfinite, localised)
     @test localised ≈ full rtol = 1e-8
-    # Columns asked for alone take the same route.
-    some = ctsem_hessian_columns(laplace, values, [6, 7])
-    @test all(isapprox.(some, full[:, [6, 7]]; rtol=1e-5, atol=1e-8))
+    # Columns asked for alone take the same route; 6 and 8 share their points.
+    some = ctsem_hessian_columns(laplace, values, [6, 7, 8])
+    @test all(isapprox.(some, full[:, [6, 7, 8]]; rtol=1e-5, atol=1e-8))
+    @test ContinuousTimeSEM._laplace_hessian_columns(laplace, values, [6, 8]) ≈
+        ContinuousTimeSEM._laplace_hessian_columns(laplace, values, [6, 8];
+            localised=false) rtol = 1e-8
     # And without the warm start, which leaves the base modes unstored.
     cold = ctsem_laplace_hessian(laplace, values; warm=false)
     @test cold ≈ full rtol = 1e-6
