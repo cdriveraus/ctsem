@@ -2779,7 +2779,8 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
     progress_budget::Bool=false, progress_every::Real=0.0,
     gap_tol::Real=0.0, converge_tol::Real=1e-6,
     precondition=nothing, lbfgs_inverse=nothing, lbfgs_scores::Bool=false,
-    lbfgs_local::Bool=false, lbfgs_pairs=nothing, initial_alpha::Real=0.1,
+    lbfgs_local::Bool=false, local_builds_carried::Integer=0,
+    lbfgs_pairs=nothing, initial_alpha::Real=0.1,
     overshoot_probe=_CTSEM_OVERSHOOT_PROBE[],
     stall_window::Integer=80, stall_fraction::Real=1e-2,
     stall_cooldown::Integer=30, stall_tighten::Real=0.1,
@@ -2958,6 +2959,11 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
         CTSEMLocalCurvature(objective, score_store, _ctsem_prior_precision(
             _ctsem_prior_objective(objective), length(start_values));
             progress=_ctsem_local_progress(reporter)) : nothing
+    # A run that resumes another of the same fit -- a jump's, with its modes
+    # known -- starts from that run's local curvature as `lbfgs_inverse`, and
+    # its schedule counts that run's builds: built again from scratch, it cost
+    # the affect pilot 26-44 minutes at every resume.
+    local_curvature === nothing || (local_curvature.builds = Int(local_builds_carried))
     # Explosive filter passes (`_CTSEM_EXPLOSIVE_GROWTH`) and forward-mode
     # subject gradients (`_CTSEM_ADJOINT_GROWTH`) this run takes, counted from
     # here so a stage reports its own.
@@ -3622,10 +3628,15 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
         structured_steps=structured === nothing ? 0 : structured.steps,
         # The local curvature (`lbfgs_local`): how often it was built, the
         # gradients that cost, and how many parameters it took exactly.
-        local_builds=local_curvature === nothing ? 0 : local_curvature.builds,
+        local_builds=local_curvature === nothing ? 0 :
+            local_curvature.builds - Int(local_builds_carried),
         local_gradients=local_curvature === nothing ? 0.0 : local_curvature.spent,
         local_columns=local_curvature === nothing ? 0 :
             length(local_curvature.columns),
+        # Its inverse, for a resume to start from (a 1x1 zero where none was
+        # built: an empty matrix would hang the bridge).
+        local_inverse=(local_curvature === nothing || isempty(local_curvature.inverse)) ?
+            zeros(1, 1) : local_curvature.inverse,
         # The coreset stages (`coreset`): each stage's units, share of a full
         # evaluation's work, iterations, and what the full objective gained
         # over what the coreset predicted; the iteration each run of stages

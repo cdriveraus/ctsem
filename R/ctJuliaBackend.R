@@ -6059,9 +6059,20 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
   # certified: the exact Hessian and the certification are for the stage
   # after the changes settle. Sent only when asked, for the reason above.
   if (isTRUE(walked)) common$newton_final <- "walked"
+  # The last run's local curvature (`lbfgs_local`): its inverse, kept here
+  # rather than on the result, where a fit would carry its n x n matrix, and
+  # its builds, for a resume to start from (`local`).
+  local_inverse <- NULL
   optimise_once <- function(from, damp = integer(), pin = default_pin,
-      carried = NULL, endgame = NULL) {
+      carried = NULL, endgame = NULL, local = NULL) {
     args <- common
+    if (!is.null(local)) {
+      if (is.matrix(local$inverse) && nrow(local$inverse) == length(from) &&
+          is.null(args$lbfgs_inverse)) {
+        args$lbfgs_inverse <- local$inverse
+      }
+      args$local_builds_carried <- as.integer(local$builds)
+    }
     # A resumed stage (`.ctBackendCorrectResult()`): on the full data -- it
     # starts where the full objective already brought the fit, so a first
     # batch of a few units only walks it away again (on the SNSF pilot, 493
@@ -6136,6 +6147,12 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
       values[keep[inside]] <- as.numeric(pin$value)[inside]
       out$minimizer <- values
     }
+    inverse <- out[["local_inverse"]]
+    out[["local_inverse"]] <- NULL
+    if (is.matrix(inverse) && nrow(inverse) == length(from)) {
+      storage.mode(inverse) <- "double"
+      local_inverse <<- inverse
+    }
     out
   }
   result <- optimise_once(start)
@@ -6179,6 +6196,7 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
   # to the next (unit 894 of the affect pilot) is smooth now, and the modes a
   # repeated jump saw are further starts like any other.
   rounds <- 0L
+  local_builds <- 0L
   while (!state_explicit && !is.null(model_spec$laplace)) {
     known <- model_spec$laplace$known
     jumpknown <- .ctJuliaKnownModes(known, result)
@@ -6211,8 +6229,12 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
         if (n == 1L) "unit" else "units", gain))
     }
     rounds <- rounds + 1L
+    # From the run's local curvature, not built again (`local_builds_carried`):
+    # each run reports its own builds.
+    local_builds <- local_builds + as.integer(.ctJuliaOr(result$local_builds, 0L))[1L]
+    local <- list(inverse = local_inverse, builds = local_builds)
     result <- .ctJuliaAddRunCounts(optimise_once(as.numeric(result$minimizer),
-      carried = 0), result)
+      carried = 0, local = local), result)
   }
   # A run still ended on a jump stops there, at no maximum of anything
   # continuous, so it is not certified; the fit warns and leaves integrating
