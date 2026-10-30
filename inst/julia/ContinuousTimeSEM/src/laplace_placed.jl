@@ -292,6 +292,10 @@ function _placed_scale_factor(F::CTSEMCholesky, k::Int)
         values=collect(E.values), ok=true, D=D)
 end
 
+"""The largest gradient a leaf's centre may keep (`_quadrature_leaf_rule!`'s
+`gradmax`) for the placement to be differentiated there."""
+const _PLACED_STATIONARY = 1e-6
+
 """
     _placed_leaf!(row, wv, P, U, b, u, start, theta, Ls, dL, positions, want_gradient)
 
@@ -324,7 +328,9 @@ function _placed_leaf!(row::Vector{Float64}, wv::Vector{Float64}, P::CTSEMLaplac
     failure = (ok=false, value=NaN)
     aws = _laplace_workspace!(laplace, Float64, npar)
     lr = _quadrature_leaf_rule!(laplace, U, theta, Ls, b, u, aws; start=start)
-    lr.ok || return failure
+    # The implicit function theorem is the centre's derivative only at a
+    # stationary point; a solve stopped short of one has none to give.
+    (lr.ok && lr.gradmax <= _PLACED_STATIONARY) || return failure
     c = lr.centre
     M = Matrix{Float64}(lr.precision)
     sc = _placed_scale(M, k)
