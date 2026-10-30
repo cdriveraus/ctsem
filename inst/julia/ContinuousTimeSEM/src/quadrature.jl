@@ -101,7 +101,8 @@ eigenvalues: the two agree only where nothing is clipped.
 
 using LinearAlgebra
 
-export ctsem_laplace_quadrature, ctsem_laplace_correction, ctsem_laplace_refine
+export ctsem_laplace_quadrature, ctsem_laplace_correction, ctsem_laplace_refine,
+    ctsem_laplace_expansion
 
 """
     _gauss_hermite(m)
@@ -1043,3 +1044,204 @@ function _laplace_gated_unit_reference(laplace::CTSEMLaplaceObjective,
         flagged=true)
 end
 
+################################################################################
+# Laplace's O(1/n) correction, per unit
+################################################################################
+
+"""
+    ctsem_laplace_expansion(laplace, values; h=0.01, gate=1.0)
+
+Each unit's integral by Laplace's expansion to O(1/n), and a bound on its
+error: the deterministic counterpart of the product rules above, at about
+`2q + 1` unit curvatures a unit of `q` effects
+(review/LAPLACE-correction-measure-2026-10-30.md).
+
+A unit's log integrand is `f(u) = g(u) - u'u/2`, `g` its members' log
+likelihood with any deviations the filter integrates integrated exactly
+(`_HYBRID_FULL`), as the product rules integrate it. At `f`'s own mode, with
+`M = -f''` and `u = mode + A z`, `A A' = M^-1`,
+
+    log int exp(g) phi = f(mode) - logdet(M)/2 + c + O(n^-2),
+    c = c4 + c3,  c4 = sum_ij b_iijj / 8,
+    c3 = sum_ijk a_ijk^2 / 12 + sum_k v_k^2 / 8,  v_k = sum_i a_iik,
+
+`a` and `b` the third and fourth derivatives of `f` in `z`. In whitened
+coordinates `W(z) = A' f''(mode + A z) A` is `-I` at `z = 0`; `a_..k` is its
+central difference along `e_k`, at `h`, and `sum_ij b_iijj` the second
+difference of its trace, so `2q + 1` exact curvatures give all of it (checked
+on Stirling's series and a non-separable 2-D integral,
+scripts/laplace-correction-2026-10/check_1d.R).
+
+Returned per unit: `term`, Laplace's term for `f` (`T`, which on the hybrid
+need not be the objective's, a joint approximation over effects and
+deviations); `correction`, `c`; `bound`, `|c4| + c3`; and `mineig`, the
+smallest eigenvalue of `M`, the prior's being 1. On 17 fixtures (2,486 units)
+every unit with `mineig >= 1` had `T + c` within `bound` of a converged
+product rule; below 1 the expansion failed on AnomAuth's units with three to
+five waves, where it can be several nats wrong, so a caller gates on it
+(`.ctLaplaceExpansionGate`). A unit below `gate` returns its term and
+eigenvalue without the `2q` curvatures of the correction, which grow as `q^2`
+sweeps and would be thrown away. A unit with no effect coordinates is its
+exact term, with no correction and no bound; one whose curvature at `f`'s mode
+does not factor, or that fails to evaluate, is NaN.
+"""
+function ctsem_laplace_expansion(laplace::CTSEMLaplaceObjective, values::AbstractVector;
+    h::Real=0.01, gate::Real=1.0)
+    theta = _laplace_extend(laplace, collect(Float64, values))
+    _laplace_check_indices(laplace, length(theta))
+    nunits = length(laplace.units.members)
+    term = fill(NaN, nunits)
+    correction = fill(NaN, nunits)
+    bound = fill(NaN, nunits)
+    mineig = fill(NaN, nunits)
+    Ls = _laplace_popchols(theta, laplace.spec)
+    nchunks = _ctsem_nchunks(nunits)
+    _laplace_ensure_pool!(laplace)
+    ranges = _ctsem_chunk_assignment(_laplace_unit_weights(laplace), nchunks)
+    _laplace_parallel(laplace, 1:nchunks) do c
+        _expansion_chunk!(laplace, theta, Ls, ranges[c], term, correction, bound,
+            mineig, Float64(h), Float64(gate))
+        return true
+    end
+    return (term=term, correction=correction, bound=bound, mineig=mineig)
+end
+
+"""One chunk of `ctsem_laplace_expansion`'s unit loop. A unit that cannot be
+expanded is left NaN, and the others go on: a numerical failure of one unit is
+a reason to integrate it some other way, not to lose the rest."""
+function _expansion_chunk!(laplace::CTSEMLaplaceObjective, theta::Vector{Float64},
+    Ls::Vector{Matrix{Float64}}, units, term::Vector{Float64},
+    correction::Vector{Float64}, bound::Vector{Float64}, mineig::Vector{Float64},
+    h::Float64, gate::Float64)
+    aws = _laplace_workspace!(laplace, Float64, length(theta))
+    for U in units
+        try
+            if isempty(laplace.units.blocks[U])
+                # No effect coordinates: the term is the members' exact integral
+                # over the deviations the filter integrates, as the product
+                # rules take it.
+                term[U] = Float64(_laplace_unit_term(laplace, U, theta, Ls, Float64[], aws))
+                correction[U] = 0.0
+                bound[U] = 0.0
+                mineig[U] = Inf
+                continue
+            end
+            r = _laplace_unit_expansion(laplace, U, theta, Ls, aws, h, gate)
+            term[U] = r.term
+            correction[U] = r.correction
+            bound[U] = r.bound
+            mineig[U] = r.mineig
+        catch err
+            _ctsem_must_propagate(err) && rethrow()
+        end
+    end
+    return nothing
+end
+
+"""`f` and its gradient at `u`: the members' log likelihood with the deviations
+the filter integrates integrated exactly, less `u'u/2`."""
+function _expansion_value_gradient(laplace::CTSEMLaplaceObjective, U::Integer,
+    theta::Vector{Float64}, Ls::Vector{Matrix{Float64}}, u::Vector{Float64}, aws)
+    r = _laplace_unit_loglik_gradient(laplace, U, theta, Ls, u, aws,
+        1:length(laplace.units.members[U]), nothing, _HYBRID_FULL)
+    return (value=Float64(r.value) - dot(u, u) / 2,
+        gradient=collect(Float64, r.gradient) .- u)
+end
+
+"""`M(u) = -f''(u)`, dense and symmetric, from the exact unit curvature."""
+function _expansion_curvature(laplace::CTSEMLaplaceObjective, U::Integer,
+    theta::Vector{Float64}, Ls::Vector{Matrix{Float64}}, u::Vector{Float64})
+    q = length(u)
+    M = _laplace_unit_curvature(laplace, U, theta, Ls, copy(u); mode=_HYBRID_FULL)
+    D = _laplace_block_dense(M, laplace.units.blocks[U], q)
+    return (D .+ transpose(D)) ./ 2
+end
+
+"""`A' M A`, by loops: `q` is one unit's effects."""
+function _expansion_whiten(A::Matrix{Float64}, M::Matrix{Float64})
+    q = size(A, 1)
+    B = zeros(q, q)
+    @inbounds for j in 1:q, p in 1:q
+        s = 0.0
+        for i in 1:q
+            s += M[p, i] * A[i, j]
+        end
+        B[p, j] = s
+    end
+    W = zeros(q, q)
+    @inbounds for j in 1:q, i in 1:q
+        s = 0.0
+        for p in 1:q
+            s += A[p, i] * B[p, j]
+        end
+        W[i, j] = s
+    end
+    return W
+end
+
+"""One unit's expansion (`ctsem_laplace_expansion`): `f`'s mode by Newton from
+the objective's, which on the hybrid is the joint mode over effects and
+deviations and so not `f`'s, then the correction from `2q + 1` curvatures."""
+function _laplace_unit_expansion(laplace::CTSEMLaplaceObjective, U::Integer,
+    theta::Vector{Float64}, Ls::Vector{Matrix{Float64}}, aws, h::Float64,
+    gate::Float64=1.0)
+    nan = (term=NaN, correction=NaN, bound=NaN, mineig=NaN)
+    _laplace_solve_unit_mode!(laplace, U, theta, Ls, aws)
+    u = collect(Float64, laplace.modes[U])
+    q = length(u)
+    cur = _expansion_value_gradient(laplace, U, theta, Ls, u, aws)
+    isfinite(cur.value) || return nan
+    M = _expansion_curvature(laplace, U, theta, Ls, u)
+    for _ in 1:max(laplace.inner_maxiter, 50)
+        F = _ctsem_cholesky(copy(M), q)
+        issuccess(F) || break
+        step = F \ cur.gradient
+        maximum(abs, step) < 1e-10 && break
+        scale = 1.0
+        accepted = false
+        for _ in 1:40
+            trial_u = u .+ scale .* step
+            trial = _expansion_value_gradient(laplace, U, theta, Ls, trial_u, aws)
+            if isfinite(trial.value) && trial.value >= cur.value - 1e-12
+                u = trial_u
+                cur = trial
+                accepted = true
+                break
+            end
+            scale /= 2
+        end
+        accepted || break
+        M = _expansion_curvature(laplace, U, theta, Ls, u)
+    end
+    lowest = minimum(_ctsem_symeig(M).values)
+    F = _ctsem_cholesky(copy(M), q)
+    issuccess(F) || return (term=NaN, correction=NaN, bound=NaN, mineig=lowest)
+    T = cur.value - logdet(F) / 2
+    lowest < gate && return (term=T, correction=NaN, bound=NaN, mineig=lowest)
+    A = _ctsem_cholesky_uinv(F)
+    a = zeros(q, q, q)
+    S4 = 0.0
+    for k in 1:q
+        dk = h .* A[:, k]
+        Wp = _expansion_whiten(A, _expansion_curvature(laplace, U, theta, Ls, u .+ dk))
+        Wm = _expansion_whiten(A, _expansion_curvature(laplace, U, theta, Ls, u .- dk))
+        # `W(z) = -A' M A`: the curvatures above are `M`, so the signs flip.
+        @inbounds for j in 1:q, i in 1:q
+            a[i, j, k] = -(Wp[i, j] - Wm[i, j]) / (2h)
+        end
+        S4 += -(tr(Wp) - 2q + tr(Wm)) / h^2
+    end
+    # A difference along `k` is symmetric in `i, j` only: average over the
+    # index permutations.
+    c3a = 0.0
+    v = zeros(q)
+    @inbounds for k in 1:q, j in 1:q, i in 1:q
+        s = (a[i, j, k] + a[i, k, j] + a[j, i, k] + a[j, k, i] + a[k, i, j] +
+            a[k, j, i]) / 6
+        c3a += s * s
+        i == j && (v[k] += s)
+    end
+    c4 = S4 / 8
+    c3 = c3a / 12 + sum(abs2, v) / 8
+    return (term=T, correction=c4 + c3, bound=abs(c4) + c3, mineig=lowest)
+end
