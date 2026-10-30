@@ -58,6 +58,9 @@
   record$flagged_units <- as.integer(after$flagged)[seq_len(after$nflagged)]
   record$bar <- as.numeric(after$bar)
   record$residual <- as.numeric(after$residual)
+  # Units on importance draws, frozen for the run, and their draws.
+  record$importance <- c(units = as.integer(after$nimportance),
+    draws = as.integer(after$importance_draws))
   accounted <- function(record) {
     record$error <- .ctLaplaceIntegrationError(after, unscored = record$wide)
     info <- get(module$ctsem_laplace_placed_info(placed))
