@@ -306,8 +306,12 @@ clip `_quadrature_clipped_scale` applies, which needs a factor to start from.
 Where every Newton step's precision factorizes and the full step raises the
 integrand, the path and the scale are what they were, bit for bit.
 
-Returns `(ok, centre, scale, logdetscale)` with `scale * scale' = M~^-1`, the
-curvature clipped at the prior's; see `_quadrature_clipped_scale`.
+Returns `(ok, centre, scale, logdetscale, precision, gradmax)` with `scale *
+scale' = M~^-1`, the curvature clipped at the prior's
+(`_quadrature_clipped_scale`), `precision` the unclipped `M` at the centre,
+which a rule placed at every evaluation differentiates through
+(`laplace_placed.jl`), and `gradmax` the integrand's largest gradient left
+there.
 """
 function _quadrature_leaf_rule!(laplace::CTSEMLaplaceObjective, U::Integer,
     theta::Vector{Float64}, Ls::Vector{Matrix{Float64}}, b::Integer,
@@ -316,7 +320,8 @@ function _quadrature_leaf_rule!(laplace::CTSEMLaplaceObjective, U::Integer,
     k = block.size
     columns = (block.offset + 1):(block.offset + k)
     members = block.members
-    failure = (ok=false, centre=Float64[], scale=zeros(Float64, 0, 0), logdetscale=0.0)
+    failure = (ok=false, centre=Float64[], scale=zeros(Float64, 0, 0), logdetscale=0.0,
+        precision=zeros(Float64, 0, 0), gradmax=NaN)
 
     # The block's own log integrand -- its members' log likelihood less
     # `z'z/2` -- and its gradient, as a function of this block alone.
@@ -344,10 +349,17 @@ function _quadrature_leaf_rule!(laplace::CTSEMLaplaceObjective, U::Integer,
         step = if issuccess(factorization)
             factorization \ current.gradient
         else
+            # Each eigenvalue by its magnitude: an ascent direction scaled by
+            # the curvature along it. Floored at the eigenvalue alone, as it
+            # was, a negative one became 1e-8 of the largest, the step along
+            # it 1e8 times too long for twenty halvings to bring back, and
+            # the solve stopped there: on AnomAuth (race fixture anomS1) two
+            # units 0.3 se from the estimate stopped with a gradient of 0.1,
+            # their precision indefinite, the rule placed at no mode.
             E = _ctsem_symeig(M)
             lowest = 1e-8 * max(maximum(abs, E.values), 1.0)
             E.vectors * ((transpose(E.vectors) * current.gradient) ./
-                max.(E.values, lowest))
+                max.(abs.(E.values), lowest))
         end
         # A step at roundoff is a mode however large the gradient's roundoff
         # is; see `_laplace_newton_unit_mode`.
@@ -372,7 +384,8 @@ function _quadrature_leaf_rule!(laplace::CTSEMLaplaceObjective, U::Integer,
     factorization = _ctsem_cholesky(copy(M), k)
     if issuccess(factorization)
         rule = _quadrature_clipped_scale(factorization, k)
-        return (ok=true, centre=z, scale=rule.scale, logdetscale=rule.logdetscale)
+        return (ok=true, centre=z, scale=rule.scale, logdetscale=rule.logdetscale,
+            precision=M, gradmax=maximum(abs, current.gradient))
     end
     E = _ctsem_symeig(M)
     all(isfinite, E.values) || return failure
@@ -380,7 +393,7 @@ function _quadrature_leaf_rule!(laplace::CTSEMLaplaceObjective, U::Integer,
     G = _ctsem_cholesky(Matrix(_laplace_symmetrise(clipped)), k)
     issuccess(G) || return failure
     return (ok=true, centre=z, scale=_ctsem_cholesky_uinv(G),
-        logdetscale=-logdet(G) / 2)
+        logdetscale=-logdet(G) / 2, precision=M, gradmax=maximum(abs, current.gradient))
 end
 
 """

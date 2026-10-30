@@ -6422,18 +6422,22 @@ _laplace_unit_seeded_gradient(laplace::CTSEMLaplaceObjective, U::Integer,
     members, d1::Vector{Float64}) =
     _laplace_unit_seeded_gradient(laplace, U, values, Ls, u, members, reshape(d1, :, 1), 1)
 
+# `mode`: what each member's filter returns for the deviations it integrates
+# (`CTSEMHybridBuffers`), their profile by default, as the Laplace gradient
+# takes them; a rule placed at every evaluation differentiates their exact
+# integral (`_HYBRID_FULL`, `laplace_placed.jl`).
 function _laplace_unit_seeded_gradient(laplace::CTSEMLaplaceObjective, U::Integer,
     values::Vector{Float64}, Ls::Vector{Matrix{Float64}}, u::Vector{Float64},
-    members, D::AbstractMatrix{Float64}, nd::Int)
+    members, D::AbstractMatrix{Float64}, nd::Int; mode::Int=_HYBRID_PROFILE)
     # The switch folds to a constant, so with counting off this is a plain call
     # and the try/finally below is not compiled at all. It is a sweep: the
     # assembly runs thousands per gradient.
     _LAPLACE_COUNT_BYTES || return _laplace_unit_seeded_gradient_(laplace, U,
-        values, Ls, u, members, D, nd)
+        values, Ls, u, members, D, nd, mode)
     bs = _laplace_mark()
     try
         return _laplace_unit_seeded_gradient_(laplace, U, values, Ls, u,
-            members, D, nd)
+            members, D, nd, mode)
     finally
         _laplace_charge!(_LAPLACE_BYTES_SWEEP, bs)
     end
@@ -6441,10 +6445,10 @@ end
 
 function _laplace_unit_seeded_gradient_(laplace::CTSEMLaplaceObjective, U::Integer,
     values::Vector{Float64}, Ls::Vector{Matrix{Float64}}, u::Vector{Float64},
-    members, D::AbstractMatrix{Float64}, nd::Int)
+    members, D::AbstractMatrix{Float64}, nd::Int, mode::Int=_HYBRID_PROFILE)
 
     # By the hand-coded second order (`_tan_laplace_seeded`).
-    return _tan_laplace_seeded(laplace, U, values, Ls, u, members, D, nd)
+    return _tan_laplace_seeded(laplace, U, values, Ls, u, members, D, nd; mode=mode)
 end
 
 """How many directions one seeded sweep carries: the curvature context's lanes."""
@@ -6504,20 +6508,22 @@ directions of its second directional derivatives (`dS`), in one pass.
 """
 _laplace_unit_jet_gradient(laplace::CTSEMLaplaceObjective, U::Integer,
     values::Vector{Float64}, Ls::Vector{Matrix{Float64}}, u::Vector{Float64},
-    members, D::Matrix{Float64}, ndirs::Int) =
+    members, D::Matrix{Float64}, ndirs::Int; mode::Int=_HYBRID_PROFILE) =
     _ctsem_jet_width(ndirs) == _CTSEM_JET_NARROW ?
         _laplace_unit_jet_gradient(laplace, U, values, Ls, u, members, D, ndirs,
-            Val(_CTSEM_JET_NARROW)) :
+            Val(_CTSEM_JET_NARROW), mode) :
         _laplace_unit_jet_gradient(laplace, U, values, Ls, u, members, D, ndirs,
-            Val(_CTSEM_JET_WIDTH))
+            Val(_CTSEM_JET_WIDTH), mode)
 
+# `mode` as for `_laplace_unit_seeded_gradient`.
 function _laplace_unit_jet_gradient(laplace::CTSEMLaplaceObjective, U::Integer,
     values::Vector{Float64}, Ls::Vector{Matrix{Float64}}, u::Vector{Float64},
-    members, D::Matrix{Float64}, ndirs::Int, ::Val{W}) where {W}
+    members, D::Matrix{Float64}, ndirs::Int, ::Val{W},
+    mode::Int=_HYBRID_PROFILE) where {W}
     ndirs <= W || throw(ArgumentError("$(ndirs) directions for a jet of width $(W)"))
     # By the hand-coded sweeps with second parts (`_tan_laplace_jet`).
     return _tan_laplace_jet(laplace, U, values, Ls, u, members, D, ndirs,
-        CTSEMTraceJet{W})
+        CTSEMTraceJet{W}; mode=mode)
 end
 
 # Whether one member's pass came out finite, deep. The sweeps' workspace is a

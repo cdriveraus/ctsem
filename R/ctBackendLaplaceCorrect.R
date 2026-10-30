@@ -284,7 +284,8 @@
   material = 0.1, guard = 50, guard_per_subject = 0.5, rtol = 1e-8,
   value_tol = 1e-3, maxdim = 5L, stop_gain = 0, skip_gain = 5e-3,
   draws = 256L, draws_se = 0.05, draws_max = 16384L, draws_df = 4,
-  draws_scope = "forced", check = TRUE, check_draws = 128L, check_seeds = 4L)
+  draws_scope = "forced", check = TRUE, check_draws = 128L, check_seeds = 4L,
+  placed = TRUE)
 
 # How far the hybrid's objective is from the exact marginal, from the engine's
 # info at a placement (`ctsem_laplace_continuation_info`): `nats`, the frozen
@@ -801,12 +802,15 @@
 # placed there (`ctsem_continuation_density`): read where they were placed at
 # the estimate, the rules said less the further a draw moved, and gD1's draws
 # put a population sd 2.9 posterior sds high.
-.ctLaplaceContinueLpg <- function(module, cont) {
+# `objective`, where given, is the density instead: the placed objective
+# (`.ctLaplacePlacedRefine()`), whose evaluation places the rules itself;
+# `unitsum = FALSE` keeps a coreset from standing in for its units.
+.ctLaplaceContinueLpg <- function(module, cont, objective = NULL, unitsum = TRUE) {
   engine <- local({
     built <- NULL
     function() {
       if (is.null(built)) built <<- list(module = module,
-        objective = module$ctsem_continuation_density(cont))
+        objective = .ctJuliaOr(objective, module$ctsem_continuation_density(cont)))
       built
     }
   })
@@ -833,7 +837,7 @@
     # on the density's own terms: every draw a placement of every flagged
     # unit's rule was most of 'checked''s time here (anomS1: 804 s against
     # 224 with the rules read where they were placed).
-    attr(fn, "unitsum") <- TRUE
+    attr(fn, "unitsum") <- isTRUE(unitsum)
     attr(fn, "engine") <- engine
     attr(fn, "batch") <- batches$batch
     attr(fn, "gradbatch") <- batches$gradbatch
@@ -1139,6 +1143,17 @@
   # one a caller wants left where it is) the continuation needs neither, and
   # its own Hessian at the end is the one the uncertainty is drawn on.
   stay <- as.integer(.ctJuliaOr(control$rounds, 0L)) == 0L
+  # The rules placed at every evaluation (`.ctLaplacePlacedRefine()`), where
+  # `control$placed` asks for it, as it does by default: one objective climbed
+  # from the estimate, so neither the fit's curvature nor the rounds' basis
+  # below.
+  if (isTRUE(control$placed)) {
+    return(.ctLaplacePlacedRefine(fit, module, cont, est, record, control,
+      tol = .ctBackendGapTolerance(fit), stay = stay, chunks = chunks,
+      verbose = verbose, sink = sink, method = method,
+      uncertaintycontrol = uncertaintycontrol, report = report_quadrature,
+      timed = timed))
+  }
   hessian <- .ctBackendStoredHessian(fit, est)
   flat <- fit$uncertainty$details$flatdirections$vectors
   # A fit that ended on a jump was not certified and has no Hessian: the

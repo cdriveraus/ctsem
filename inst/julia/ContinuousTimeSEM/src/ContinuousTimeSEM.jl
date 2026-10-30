@@ -131,6 +131,9 @@ include("quadrature.jl")
 # rule and the Gauss-Hermite grids defined there, and drives them with
 # `ctsem_optimize` from ctsem_backend.jl and optimiser.jl.
 include("laplace_continuation.jl")
+# After laplace_continuation.jl: the placed objective is built from a
+# continuation and keeps its frozen rules.
+include("laplace_placed.jl")
 # After quadrature.jl: the binary measurement update integrates the
 # observation with the Gauss-Hermite rule defined there.
 include("binary_measurement.jl")
