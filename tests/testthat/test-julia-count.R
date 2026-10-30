@@ -230,8 +230,11 @@ test_that("the two routes agree on a count model", {
   # reaching a maximum by different paths have no reason to agree to the last
   # bit, and it is still four orders of magnitude below the gap this is here to
   # catch.
-  expect_equal(as.numeric(laplace$estimate$loglik),
-    as.numeric(augmented$estimate$loglik), tolerance = 1e-6)
+  # Where each optimisation ended (`.ctFitOptimisedLoglik()`): a Laplace fit
+  # reports Laplace's log likelihood plus the random-effects check's estimate
+  # of its error, 0.018 nats here, which is not where it stopped.
+  expect_equal(ctsem:::.ctFitOptimisedLoglik(laplace),
+    ctsem:::.ctFitOptimisedLoglik(augmented), tolerance = 1e-6)
   # No ordering is asserted. It used to be -- laplace the better fit, as the
   # methodology predicts for an integrated random effect against a linearised
   # one -- and with the mode solved the two agree to 1.8e-08, which is optimiser
@@ -256,7 +259,7 @@ test_that("a Laplace fit leaves a flat direction that takes a scale away from ze
     intoverpop = "laplace", inits = stuck, cores = 1)))
   expect_gte(fit$optim$newton_escapes, 1L)
   expect_identical(fit$uncertainty$certification$status, "certified")
-  expect_equal(as.numeric(fit$estimate$loglik), -1466.970967, tolerance = 1e-8)
+  expect_equal(ctsem:::.ctFitOptimisedLoglik(fit), -1466.970967, tolerance = 1e-8)
 })
 
 test_that("ctGenerate draws counts rather than continuous values", {
