@@ -73,11 +73,15 @@ would move an estimate, naming \code{intoverpop = 'quadrature'}; a fit
 that has one on record is not checked again. The interval check (julia,
 with \code{method = 'hessian'}) makes \code{'checked'}'s check of the
 curvature's normal against the posterior's gradients, on the density the
-intervals come from (with \code{intoverpop = 'quadrature'}, the refit's,
-at its estimate), records it in
+intervals come from, records it in
 \code{$uncertainty$details$normalcheck}, and says in a message, and in
 \code{summary()}, when the posterior departs from that normal, naming
-\code{method = 'sample'}.}
+\code{method = 'sample'}. With \code{intoverpop = 'quadrature'} that
+density is the refit's, on which each of the check's draws integrates the
+flagged units again: seconds on one level, but half an hour on a nested
+model whose refit took minutes, longer than sampling. So there \code{TRUE}
+leaves it out, and the intervals are said to be unchecked; naming
+\code{'intervals'} makes it.}
 
 \item{finishsamples}{Number of approximate raw-parameter samples. If
 \code{NULL}, the existing number of rows in the fit's raw posterior
@@ -316,9 +320,9 @@ without the refit -- the default, which only checks and warns -- is
 climbed to that density's optimum first; one refitted when it was fitted
 stays where it is, as does any fit under \code{correctEstimate = FALSE}.
 With \code{'quadrature'}, \code{'hessian'} is taken too: the hybrid's
-curvature where the climb ends, with the interval check made on the
-hybrid there, which is what \code{ctFit(intoverpop = 'quadrature')} gives
-at fit time.
+curvature where the climb ends, which is what
+\code{ctFit(intoverpop = 'quadrature')} gives at fit time; the interval
+check is made on the hybrid there where \code{checks} names it.
 Where the climb stops short of its optimum, the intervals are the Laplace
 objective's at its optimum, moved with the estimate, as at fit time.
 \code{filter = 'particle'}, for a fit on the filter's route and with

@@ -820,7 +820,7 @@ test_that("marking a row blanks its width and keeps its estimate", {
   expect_equal(ctsem:::.ctBackendMarkNoWidth(table, c(FALSE, FALSE)), table)
 })
 
-test_that("a default fit's note says where the check found the normal wrong, or the fit jumped", {
+test_that("a fit's note says where the check found the normal wrong, the fit jumped, or a refit left the check out", {
   note <- ctsem:::.ctUncertaintyCheckNote
   fit <- list(uncertainty = list(settings = list(method = "hessian"),
     details = list(normalcheck = list(directions = matrix(0, 3, 0)))))
@@ -837,6 +837,11 @@ test_that("a default fit's note says where the check found the normal wrong, or 
   expect_match(note(fit), "departs from that normal in 2 directions", fixed = TRUE)
   fit$laplace$correction$draws <- "recentred"
   expect_match(note(fit), "Laplace term jumped", fixed = TRUE)
+  # A refit that left the check out says so.
+  fit$laplace$correction$draws <- "redrawn"
+  fit$uncertainty$details$laplace_correction <- list(unchecked = TRUE)
+  expect_match(note(fit), "refit's curvature at its estimate, unchecked", fixed = TRUE)
+  fit$uncertainty$details$laplace_correction <- NULL
   fit$uncertainty$details$normalcheck <- NULL
   # Only the curvature's normal gets the note: 'checked' samples what it finds.
   fit$uncertainty$settings$method <- "checked"

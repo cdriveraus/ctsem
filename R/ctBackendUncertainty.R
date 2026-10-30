@@ -914,16 +914,18 @@
 
 .ctBackendUncertaintyLikelihood <- function(fit, uncertainty, likelihood,
   finishsamples, cores, control, verbose) {
-  own <- switch(likelihood, quadrature = c("nodes", "check"),
+  own <- switch(likelihood, quadrature = c("nodes", "check", "checkhybrid"),
     particle = c("particles", "substeps", "transition", "seed"))
   shared <- c(isESS = "target_ess", isitersize = "nbatch",
     imisMaxIter = "maxiter", imisScaleInit = "scale",
     correctEstimate = "correct_estimate")
   unknown <- setdiff(names(control), c(own, names(shared)))
   if (length(unknown)) {
+    # `check` and `checkhybrid` come from the argument `checks`.
     stop("control$", unknown[1L], " is not used with ",
       .ctLikelihoodWords(likelihood), ". Its settings are ",
-      paste(c(own, names(shared)), collapse = ", "), ".", call. = FALSE)
+      paste(setdiff(c(own, names(shared)), c("check", "checkhybrid")),
+        collapse = ", "), ".", call. = FALSE)
   }
   switch(likelihood,
     quadrature = .ctBackendUncertaintyQuadrature(fit, uncertainty,
@@ -974,7 +976,8 @@
 # own objective too, at its optimum where the climb moved the estimate
 # (`.ctLaplaceUncertaintyAtOptimum()`, as ctFit draws them), and a message
 # says so. The interval check (`control$check`, from `checks`) is made with
-# whichever draws are taken, on their density.
+# whichever draws are taken, on their density, and on the hybrid only where
+# `checks` names it (`control$checkhybrid`).
 .ctBackendUncertaintyQuadrature <- function(fit, uncertainty, finishsamples,
   cores, control, verbose, shared) {
   if (is.null(fit$model_spec$laplace)) {
@@ -1018,7 +1021,9 @@
     finishsamples = finishsamples, cores = cores, control = iscontrol)
   corrected <- fit$laplace$correction
   fit <- .ctLaplaceContinue(fit, cores = cores, verbose = verbose,
-    control = settings, method = uncertainty, force = corrected$check$carriers)
+    control = settings, method = uncertainty, force = corrected$check$carriers,
+    uncertaintycontrol = c(iscontrol,
+      list(checkhybrid = isTRUE(control$checkhybrid))))
   # A corrected fit stays corrected: its record is what says where the
   # Laplace optimum was (`.ctLaplaceOptimum()`, which cross-validation scores
   # at), and the run that only placed rules there for these draws would
@@ -1038,7 +1043,8 @@
         finishsamples = finishsamples, cores = cores, control = iscontrol,
         verbose = verbose))
   }
-  fit$uncertainty$settings$control <- c(list(likelihood = "quadrature"), control)
+  fit$uncertainty$settings$control <- c(list(likelihood = "quadrature"),
+    control[setdiff(names(control), "checkhybrid")])
   fit
 }
 

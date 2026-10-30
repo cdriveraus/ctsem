@@ -251,9 +251,12 @@ default.
  \code{fit$laplace$correction} records it. The interval check, with
  \code{uncertainty = 'hessian'}: \code{'checked'}'s check of the
  curvature's normal against the posterior's gradients, on the density the
- intervals come from (under \code{intoverpop = 'quadrature'}, the refit's
- at its estimate), said in a message and in \code{summary()} where the
- posterior departs from that normal.
+ intervals come from, said in a message and in \code{summary()} where the
+ posterior departs from that normal. Under
+ \code{intoverpop = 'quadrature'} that density is the refit's, where the
+ check costs far more (see \code{\link{ctFitUncertainty}}'s
+ \code{checks}), so \code{TRUE} leaves it out there and naming
+ \code{'intervals'} makes it.
  Neither runs with \code{estonly}.}
  \item{\code{uncertaintyDraws}, \code{finishsamples},
  \code{uncertaintyControl}}{Both. \code{ctOptimUncertainty}'s \code{draws}
