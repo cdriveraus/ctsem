@@ -5541,7 +5541,8 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
 # (`optimcontrol$checkpoint_every`, default 60). Not on the state-explicit
 # target, whose point includes the states.
 .ctJuliaCheckpoint <- function(optimcontrol, model_spec, npar, intoverstates = TRUE) {
-  path <- optimcontrol$checkpoint
+  # `[[`: `$checkpoint` would read `checkpoint_every` where only it is set.
+  path <- optimcontrol[["checkpoint"]]
   if (is.null(path)) return(NULL)
   if (!is.character(path) || length(path) != 1L || !nzchar(path)) {
     stop("optimcontrol$checkpoint must be a file path.", call. = FALSE)
