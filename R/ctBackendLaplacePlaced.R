@@ -68,6 +68,9 @@
   }
   x <- est
   hc <- NULL
+  # Where the Hessian was formed: the finish's own point, within the reuse
+  # distance of the estimate, or the estimate.
+  hessian_at <- est
   if (!stay) {
     res <- .ctLaplacePlacedClimb(module, placed, est, tol, control, verbose, sink)
     stages["climb"] <- since(started)
@@ -76,6 +79,7 @@
     hc <- as.numeric(res$hessian)
     hc <- if (length(hc) == npar^2 && all(is.finite(hc)) &&
         isTRUE(as.numeric(res$hessian_distance) <= reuse)) matrix(hc, npar, npar)
+    hessian_at <- if (is.null(hc)) x else as.numeric(res$hessian_evaluated_at)
     record$optimiser <- list(iterations = as.integer(res$iterations),
       f_calls = as.integer(res$f_calls), g_calls = as.integer(res$g_calls),
       converged = isTRUE(res$converged), hessians = as.integer(res$newton_hessians),
@@ -172,7 +176,7 @@
     settings <- fit$uncertainty$settings
     finishsamples <- .ctJuliaOr(settings$finishsamples,
       if (!is.null(fit$estimate$rawposterior)) nrow(fit$estimate$rawposterior) else 1000L)
-    fit$uncertainty <- list(hessian = hc, evaluated_at = x,
+    fit$uncertainty <- list(hessian = hc, evaluated_at = hessian_at,
       certification = certification)
     fit <- .ctBackendUncertainty(fit, uncertainty = method,
       draws = .ctResolveDraws(method, "auto"),

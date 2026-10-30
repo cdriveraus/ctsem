@@ -268,7 +268,7 @@ ctLaplaceCheck <- function(fit, nodes = 5L, correction = TRUE, step = 1e-3,
       # (`.ctLaplacePlacedClimb()`).
       placed <- module$ctsem_laplace_placed(cont)
       res <- .ctLaplacePlacedClimb(module, placed, est, .ctBackendGapTolerance(fit),
-        control, verbose = verbose, certify = FALSE)
+        control, verbose = verbose)
       out$refined <- as.numeric(res$minimizer)
       out$refined_converged <- isTRUE(res$converged)
       out$refined_status <- if (out$refined_converged) "converged" else "stopped"
