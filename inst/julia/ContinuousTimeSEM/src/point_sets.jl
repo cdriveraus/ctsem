@@ -46,8 +46,10 @@ smoothly at every face and the rule converges as about `1/n`: on w4's units
 (`scripts/anywidth-2026-10/proto.jl`). With the integrand vanishing at the
 faces it is periodic already, so no tent transform: one halved the
 resolution for nothing. Gaussian marginals in place of t are lighter-tailed
-than a unit's posterior, and their stated error was half the true one; on t
-the shifts' spread was within 10 per cent of it.
+than a unit's posterior: the rms of their true error over their stated one
+was 1.5-2.5 on w4, against 0.7-1.5 on t. At ten effects (k5's units, against
+the same rule at 16,384 points) a lattice of 512 points was within 0.015
+nats, where the 3-node product rule needs 59,049 for the same.
 
 The error is the spread over the shifts: `R` independent estimates of the same
 integral, so `sd(I_r) / (sqrt(R) mean(I_r))` on the log scale.
@@ -75,8 +77,8 @@ struct CTSEMPointSet
 end
 
 """How many shifts a lattice rule takes. Its error is their spread, which over
-eight has about a quarter's relative error itself: on w4 the rms of the true
-error over the stated one was 0.85-1.07 at every size."""
+eight has about a quarter's relative error itself: on w4's twelve units the
+rms of the true error over the stated one was 0.7-1.5 at every size."""
 const _LATTICE_SHIFTS = 8
 
 """Degrees of freedom of the lattice rule's t marginals: tails heavier than a
@@ -85,7 +87,7 @@ const _LATTICE_DF = 4.0
 
 """Lattice points a shift a rule starts at, 128 points in all: on w4 that met
 the 0.05-nat target on every unit, at a fifth of the 5-node product rule's
-625."""
+625; at ten effects (k5) the target took 256 to 512."""
 const _LATTICE_START = 16
 
 """The most lattice points a shift a rule is refined to, 16,384 points in all,
