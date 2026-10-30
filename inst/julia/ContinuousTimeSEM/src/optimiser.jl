@@ -142,6 +142,22 @@ struct CTSEMLBFGSResult
     memory::CTSEMLBFGSMemory
 end
 
+# L-BFGS on from `x` after `result`, from the curvature pairs it ended with,
+# its iterations counted on from `iteration0` and its calls added to
+# `result`'s: where a finish handed the point back, or where the run took modes
+# its objective had not held (`ctsem_optimize`). `kwargs` are `_ctsem_lbfgs`'s.
+function _ctsem_lbfgs_on(fg!, x::Vector{Float64}, result::CTSEMLBFGSResult,
+    iteration0::Integer, maxiter::Integer; kwargs...)
+    resumed = _ctsem_lbfgs(fg!, x; pairs=result.memory, maxiter=max(0, Int(maxiter)),
+        iteration0=Int(iteration0), kwargs...)
+    return CTSEMLBFGSResult(resumed.minimizer, resumed.minimum,
+        resumed.gradient, result.iterations + resumed.iterations,
+        result.f_calls + resumed.f_calls, result.g_calls + resumed.g_calls,
+        resumed.g_converged, resumed.f_converged, resumed.x_converged,
+        resumed.linesearch_failed, resumed.stopped_by_callback,
+        result.batch_sizes, result.batch_iterations, resumed.memory)
+end
+
 """
     _ctsem_lbfgs_carry(pairs, m, n)
 
