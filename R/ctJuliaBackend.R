@@ -7600,10 +7600,8 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
   # check, the default, only checks and warns.
   if (!is.null(out$laplace) && isTRUE(intoverstates)) {
     if (continuing) {
-      # The interval check on the hybrid only where `checks` names it.
       out <- holdrepair(.ctLaplaceContinue(out, cores = cores, verbose = verbose,
-        method = uncertainty, uncertaintycontrol = c(uncertaintycontrol,
-          list(checkhybrid = !isTRUE(.ctJuliaOr(optimcontrol$checks, TRUE))))))
+        method = uncertainty, uncertaintycontrol = uncertaintycontrol))
     } else if (jumped || identical(correctlaplace, "check")) {
       out <- holdrepair(.ctLaplaceContinue(out, cores = cores, verbose = verbose,
         correct = FALSE))

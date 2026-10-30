@@ -231,7 +231,7 @@ default.
  intervals to report, sample with \code{ctFitUncertainty(fit, 'sample')}.
  \code{'sample'} is refused here: use \code{optimize = FALSE}, or
  \code{ctFitUncertainty(fit, 'sample')} on the fit.}
- \item{\code{checks}}{Julia. Default \code{TRUE}: the two cheap checks
+ \item{\code{checks}}{Julia. Default \code{TRUE}: the two checks
  a fit makes last, of the approximations its numbers rest on, as
  \code{\link{ctFitUncertainty}}'s \code{checks} makes them; \code{FALSE}
  for neither, or one of \code{'randomeffects'} and \code{'intervals'}.
@@ -254,9 +254,8 @@ default.
  intervals come from, said in a message and in \code{summary()} where the
  posterior departs from that normal. Under
  \code{intoverpop = 'quadrature'} that density is the refit's, where the
- check costs far more (see \code{\link{ctFitUncertainty}}'s
- \code{checks}), so \code{TRUE} leaves it out there and naming
- \code{'intervals'} makes it.
+ check can cost more than the refit (see \code{\link{ctFitUncertainty}}'s
+ \code{checks}); \code{checks = 'randomeffects'} leaves it out.
  Neither runs with \code{estonly}.}
  \item{\code{uncertaintyDraws}, \code{finishsamples},
  \code{uncertaintyControl}}{Both. \code{ctOptimUncertainty}'s \code{draws}

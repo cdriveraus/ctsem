@@ -1434,22 +1434,18 @@
       if (!is.null(fit$estimate$rawposterior)) nrow(fit$estimate$rawposterior) else 1000L)
     fit$uncertainty <- list(hessian = hc, evaluated_at = hessian_at,
       certification = certification)
-    # The interval check beside 'hessian' reads the hybrid's gradient at each
-    # of its draws, and each places the flagged units' rules again: on 4
-    # cores 14 s on gD1, where the refit took 2, and 32 minutes on gN3's
-    # nested units, where the refit took 2.5 and sampling the joint 4
-    # (scripts/fit-review-2026-10/refit_check_cost.R). So where any unit is
-    # integrated it is made only where `checks` names it (`checkhybrid`), as
-    # the refit is the user's to ask for; the default's record says it was
-    # not made (`unchecked`), and so does its note.
-    ucontrol <- .ctJuliaOr(uncertaintycontrol, .ctJuliaOr(settings$control, list()))
-    unchecked <- identical(method, "hessian") && isTRUE(ucontrol$check) &&
-      record$flagged > 0L && !isTRUE(ucontrol$checkhybrid)
-    if (unchecked) ucontrol$check <- FALSE
-    ucontrol$checkhybrid <- NULL
+    # The interval check beside 'hessian' (`control$check`) is made here, on
+    # the hybrid the intervals come from. Each of its draws places the
+    # flagged units' rules again: on 4 cores 14 s on gD1, where the refit
+    # took 2, and 32 minutes on gN3's nested units, where the refit took 2.5
+    # and sampling the joint 4 (scripts/fit-review-2026-10/refit_check_cost.R).
+    # That is the user's to spend, as the refit is: `checks =
+    # 'randomeffects'` leaves it out. A default that left it out made
+    # `checks = TRUE` mean something else on a refit.
     fit <- .ctBackendUncertainty(fit, uncertainty = method,
       draws = .ctResolveDraws(method, "auto"),
-      finishsamples = finishsamples, cores = chunks, control = ucontrol,
+      finishsamples = finishsamples, cores = chunks,
+      control = .ctJuliaOr(uncertaintycontrol, .ctJuliaOr(settings$control, list())),
       verbose = verbose, lpg = .ctLaplaceContinueLpg(module, cont))
     record$draws <- "redrawn"
     fit$uncertainty$details$laplace_correction <- list(
@@ -1457,7 +1453,7 @@
         method, "' on its quadrature objective there"),
       nodes = record$nodes,
       # What the density the draws came from is known to, in nats.
-      error = record$error, unchecked = unchecked)
+      error = record$error)
     stages["uncertainty"] <- since(uncertainty_started)
   } else {
     # Recentred when the continuation stopped
