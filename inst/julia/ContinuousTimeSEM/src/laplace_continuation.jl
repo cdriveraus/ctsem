@@ -3458,7 +3458,7 @@ end
 
 """
     ctsem_laplace_check(laplace, values; draws=128, seeds=1:4, draws_df=4,
-        unit_scores=true)
+        unit_scores=true, expansion=true, expansion_gate=1.0)
 
 The Laplace term checked at `values` on every unit, whatever its width
 (review/PROPOSAL-laplace-check-every-unit-2026-10-27.md): at each seed every
@@ -3475,10 +3475,16 @@ with `unit_scores`, `unit_gradient` (units x free parameters) each unit's
 corrected minus Laplace score, averaged over the seeds that scored; and
 `unit_width`, each unit's widest path of effects, which decides whether the
 refined fit would score it by a product rule or by draws. A seed whose rules could
-not score every unit leaves its columns NaN.
+not score every unit leaves its columns NaN. With `expansion`, each unit's
+Laplace term with its O(1/n) correction, a bound on that one's error and the
+curvature's smallest eigenvalue (`ctsem_laplace_expansion`; `expansion_term`,
+`expansion_correction`, `expansion_bound`, `expansion_mineig`; the
+correction only where the eigenvalue reaches `expansion_gate`), from which the
+caller takes the gap of every unit that passes its gate.
 """
 function ctsem_laplace_check(laplace::CTSEMLaplaceObjective, values::AbstractVector;
-    draws::Integer=128, seeds=1:4, draws_df::Real=4, unit_scores::Bool=true)
+    draws::Integer=128, seeds=1:4, draws_df::Real=4, unit_scores::Bool=true,
+    expansion::Bool=true, expansion_gate::Real=1.0)
     draws >= 1 || throw(ArgumentError("draws must be at least one"))
     started = time_ns()
     n = length(values)
@@ -3509,9 +3515,13 @@ function ctsem_laplace_check(laplace::CTSEMLaplaceObjective, values::AbstractVec
         scored += 1
     end
     unit_scores && scored > 0 && (unit_gradient ./= scored)
+    ex = expansion ? ctsem_laplace_expansion(laplace, x; gate=expansion_gate) :
+        (term=Float64[], correction=Float64[], bound=Float64[], mineig=Float64[])
     return (laplace_unit=collect(Float64, lap.unit_loglik), laplace_value=Float64(lap.value),
         check_unit=check_unit, check_se=check_se, gradient=gradient,
         unit_gradient=unit_gradient, scored=scored,
         unit_width=[_continuation_unit_width(laplace, U) for U in 1:nunits],
+        expansion_term=ex.term, expansion_correction=ex.correction,
+        expansion_bound=ex.bound, expansion_mineig=ex.mineig,
         seconds=(time_ns() - started) / 1e9)
 end

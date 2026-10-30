@@ -572,6 +572,7 @@ summaryCtStanFitLabel <- function(x){
     popNote = 'Note',
     units = 'Units',
     loglik = 'Log likelihood',
+    loglikNote = 'Note',
     weights = 'Sampling weights',
     loglik_weighted = 'Weighted log likelihood (maximised)',
     npars = 'Number of parameters',
