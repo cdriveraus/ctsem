@@ -1,8 +1,9 @@
 using ForwardDiff, LinearAlgebra, Statistics
 
 # The placed objective (`laplace_placed.jl`): the hybrid with each flagged
-# unit's product rule placed at its mode and curvature at every evaluation, and
-# its exact gradient through the placement.
+# unit's rule -- product Gauss-Hermite or lattice-t (`point_sets.jl`) -- placed
+# at its mode and curvature at every evaluation, and its exact gradient
+# through the placement.
 #
 # What has to hold, each checked on its own:
 #
@@ -11,7 +12,8 @@ using ForwardDiff, LinearAlgebra, Statistics
 #  2. The gradient is the derivative of the value: central differences of the
 #     placed value, at the centre and away from it, on a nonlinear one-level
 #     fixture, a nonlinear two-level one (a leaf's conditional mode chained
-#     through the root's nodes) and a linear two-level one.
+#     through the root's nodes), a linear two-level one, and on lattice
+#     rules: four effects a subject, and a four-effect study over subjects.
 #  3. On a Gaussian integrand the rule is exact wherever it sits, so the
 #     placement terms vanish and the gradient is the frozen rule's.
 #  4. The Hessian, localised to each column's readers, is the plain central
@@ -29,17 +31,39 @@ _fresh_placed_nested() = (ctsem_laplace_objective(_LAPLACE_NONLINEAR_OBJECTIVE;
     level_nre=[1, 1], group=vcat(1:5, [1, 1, 2, 2, 2]), level_ngroups=[5, 2]),
     [0.1, 0.4, -0.2, 0.05, -0.25, -0.1])
 
-# Every unit flagged (a negative tolerance), every rule a product rule.
+# Four effects a subject on the nonlinear objective: T0MEANS, the
+# state-dependent drift, DIFFUSION and MANIFESTMEANS. Raw layout: 1-4 the model
+# parameters, 5-8 the scales, 9-14 the correlations.
+_fresh_placed_wide() = (ctsem_laplace_objective(_LAPLACE_NONLINEAR_OBJECTIVE;
+    re_index=[1, 2, 3, 4], sd_index=[5, 6, 7, 8], cor_index=collect(9:14),
+    sd_scale=[1.0, 1.0, 1.0, 1.0]),
+    [0.1, 0.4, -0.2, 0.05, -0.25, -0.6, -0.6, -0.4, 0.1, 0.0, -0.1, 0.05, 0.0, 0.1])
+
+# Every subject's T0MEANS under a study's four effects: each study a root of
+# four effects, on the lattice, over leaves of one, on product rules. Raw
+# layout: 1-4 the model parameters, 5 the subject scale, 6-9 the study scales,
+# 10-15 their correlations.
+_fresh_placed_wide_nested() = (ctsem_laplace_objective(_LAPLACE_NONLINEAR_OBJECTIVE;
+    re_index=[1, 1, 2, 3, 4], sd_index=[5, 6, 7, 8, 9], cor_index=collect(10:15),
+    sd_scale=[1.0, 1.0, 1.0, 1.0, 1.0], level_nre=[1, 4],
+    group=vcat(1:5, [1, 1, 2, 2, 2]), level_ngroups=[5, 2]),
+    [0.1, 0.4, -0.2, 0.05, -0.25, -0.5, -0.6, -0.6, -0.4, 0.1, 0.0, -0.1, 0.05,
+     0.0, 0.1])
+
+# Every unit flagged (a negative tolerance), each on its screened rule
+# (`draws_se` out of reach, so the refine keeps it).
 _placed_from(laplace, theta) = ctsem_laplace_placed(ctsem_laplace_continuation(
-    laplace, theta; tolerance=-1.0, product_maxdim=5))
+    laplace, theta; tolerance=-1.0, draws_se=1e9))
 
 @testset "the placed value is the continuation's placed value at its centre" begin
     for (label, fresh) in (("one level", _fresh_nonlinear),
                            ("nested", _fresh_placed_nested),
-                           ("two levels, linear", _fresh_twolevel))
+                           ("two levels, linear", _fresh_twolevel),
+                           ("lattice", _fresh_placed_wide),
+                           ("lattice root", _fresh_placed_wide_nested))
         laplace, values = fresh()
         theta = collect(Float64, values)
-        o = ctsem_laplace_continuation(laplace, theta; tolerance=-1.0, product_maxdim=5)
+        o = ctsem_laplace_continuation(laplace, theta; tolerance=-1.0, draws_se=1e9)
         P = ctsem_laplace_placed(o)
         @test (label, length(P.placed)) == (label, length(o.flagged))
         r = ctsem_laplace_placed_evaluate(P, theta; gradient=false)
@@ -52,10 +76,15 @@ end
 @testset "the placed gradient is the derivative of the placed value" begin
     for (label, fresh) in (("one level", _fresh_nonlinear),
                            ("nested", _fresh_placed_nested),
-                           ("two levels, linear", _fresh_twolevel))
+                           ("two levels, linear", _fresh_twolevel),
+                           ("lattice", _fresh_placed_wide),
+                           ("lattice root", _fresh_placed_wide_nested))
         laplace, values = fresh()
         theta = collect(Float64, values)
         P = _placed_from(laplace, theta)
+        lattice = label in ("lattice", "lattice root")
+        @test (label, lattice == any(U -> any(ps -> ps.family === :lattice,
+            P.sets[U]), P.placed)) == (label, true)
         n = length(theta)
         for shift in (zeros(n), fill(0.05, n), [0.1 * (-1)^j for j in 1:n])
             r = ctsem_laplace_placed_check(P, theta .+ shift; step=1e-6)
@@ -69,7 +98,7 @@ end
 @testset "on a Gaussian integrand the placement terms vanish" begin
     laplace, values = _fresh_twolevel()
     theta = collect(Float64, values)
-    o = ctsem_laplace_continuation(laplace, theta; tolerance=-1.0, product_maxdim=5)
+    o = ctsem_laplace_continuation(laplace, theta; tolerance=-1.0)
     P = ctsem_laplace_placed(o)
     placed = ctsem_laplace_placed_evaluate(P, theta; gradient=true).gradient
     frozen = ctsem_laplace_continuation_evaluate(o, theta; gradient=true).gradient

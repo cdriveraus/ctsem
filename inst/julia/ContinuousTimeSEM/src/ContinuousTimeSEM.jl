@@ -127,6 +127,7 @@ include("coreset_select.jl")
 # After laplace.jl: the batch subsets both the marginal and the laplace objective.
 include("optimiser.jl")
 include("quadrature.jl")
+include("point_sets.jl")
 # After quadrature.jl: the continuation places its fixed rules with the leaf
 # rule and the Gauss-Hermite grids defined there, and drives them with
 # `ctsem_optimize` from ctsem_backend.jl and optimiser.jl.

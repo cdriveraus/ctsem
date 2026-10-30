@@ -6245,10 +6245,10 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
   }
   # A run still ended on a jump stops there, at no maximum of anything
   # continuous, so it is not certified; the fit warns and leaves integrating
-  # the named units to the user (`intoverpop = 'quadrature'`, whose rounds take
-  # them on draws with the points the watch saw: `.ctLaplaceContinue()`,
-  # through `fit$laplace$jump`), as it leaves a flagged check: the rounds can
-  # take hours. `jumprecord`, since `$jump` on an engine result would match
+  # the named units to the user (`intoverpop = 'quadrature'`, which integrates
+  # them with the points the watch saw for their proposals:
+  # `.ctLaplaceContinue()`, through `fit$laplace$jump`), as it leaves a
+  # flagged check. `jumprecord`, since `$jump` on an engine result would match
   # its `jump_units`.
   if (.ctJuliaJumped(result)) {
     named <- .ctJuliaJumpNamed(result)
@@ -7775,9 +7775,6 @@ print.ctJuliaFit <- function(x, ...) {
   } else if (identical(corr$status, "flagged") || identical(corr$status, "jump")) {
     # What the fit's warning said (`.ctLaplaceShiftMessage()`, or the jump's).
     cat("  ", corr$message, "\n", sep = "")
-  } else if (identical(corr$status, "too_wide")) {
-    cat("  Laplace estimate not corrected: every subject or group has more than ",
-      corr$maxdim, " random effects. See fit$laplace$correction.\n", sep = "")
   }
   # What the objective is known to, where the correction scored it and found
   # anything to say: the rules' errors and what the screen left on Laplace.
@@ -7786,8 +7783,6 @@ print.ctJuliaFit <- function(x, ...) {
     cat("  Marginal likelihood integrated to within ", format(err$nats, digits = 2),
       " nats; the estimate within ", format(err$se, digits = 2),
       " standard errors of the exact-marginal optimum",
-      if (isTRUE(err$unscored > 0)) paste0(" (", err$unscored,
-        " unit(s) too wide to score)") else "",
       ". See fit$laplace$correction$error.\n", sep = "")
   }
   # One line, only when there is something to say. A reported interval much

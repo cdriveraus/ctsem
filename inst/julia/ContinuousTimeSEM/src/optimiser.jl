@@ -1991,8 +1991,8 @@ Whether the finish may take the flat ladder's point `to` from `from`: on the
 Laplace objective, when the corrected objective gains more than `tol` there --
 the continuation's value with its rules placed at each point
 (`ctsem_laplace_continuation`, `centre_value`: quadrature for the units whose
-Laplace term it finds off, the Laplace term for the rest and for units wider
-than its `maxdim`). A point either value cannot be had at is refused.
+Laplace term it finds off, the Laplace term for the rest). A point either
+value cannot be had at is refused.
 Everywhere else, always.
 """
 _ctsem_flat_allowed(::Any, from, to, tol) = true

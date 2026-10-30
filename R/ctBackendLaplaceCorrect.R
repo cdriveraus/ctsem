@@ -141,30 +141,22 @@
 # absolutely over units): the screen's pass mark, in objective units; the
 # linear fixture screens at 3e-14, so any model with a nonlinear effect clears
 # it by orders of magnitude. `material` (0.1 se): when print() says the
-# estimate moved. `product_maxdim` (2),
-# `soft_tau` (3.5) and `soft_maxdirs` (2) are the engine's, explained in
-# laplace_continuation.jl: the screen's rules; the climb places a product rule
-# on every flagged unit (`laplace_placed.jl`). `maxiter` (1000) caps the
-# climb's L-BFGS, as a fit's own does.
+# estimate moved. Which rule each unit takes, product Gauss-Hermite or
+# lattice-t, and at how many points, is the engine's choice by counted cost
+# for the accuracy, at any width (`_continuation_refine!`, point_sets.jl); the
+# climb places it at every evaluation (`laplace_placed.jl`). `maxiter` (1000)
+# caps the climb's L-BFGS, as a fit's own does.
 # `guard` and `guard_per_subject` are bigIRT's max(50, N/2).
 # `value_tol` (1e-3 nats): a change in the objective below it is not one to
 # act on either way.
 # `rtol` (1e-8) is the identifiability report's: a direction the Laplace
 # curvature does not identify is held where the fit left it, in the shift
-# check's step. `maxdim` (5) is
-# the widest product rule the correction places, explained with the engine's
-# default; a unit wider than that can be scored by frozen draws instead, per
-# block of its tree when it nests, `draws` (256) the first batch, doubling to
-# a standard error of `draws_se` (0.05 nats) or `draws_max` (16384) draws,
-# the blocks beneath another each to its share of that, also explained there.
-# `draws_scope` says which: "forced", the default, only the units the climb
-# named at a jump (`fit$laplace$jump`), every other wide unit
-# keeping its Laplace term as before; "all" every one. Not "all"
-# by default: a flagged unit's gradient is a reverse sweep per draw, and on the
-# round-9 fit (40 people of eight effects) scoring every unit so made the
-# correction far dearer than the fit
-# (review/LAPLACE-shoulders-frozen-draws-2026-10-21.md, section 9).
-# `draws_df` (4) is the degrees of freedom of the proposal's components, a
+# check's step. `draws_se` (0.05 nats) is the error every flagged unit's
+# rule is refined to. A unit no rule reaches it on is scored by frozen draws
+# instead, per block of its tree when it nests, `draws` (256) the first batch,
+# doubling to that standard error or `draws_max` (16384) draws, the blocks
+# beneath another each to its share of that, explained in
+# laplace_continuation.jl. `draws_df` (4) is the degrees of freedom of the proposal's components, a
 # Student t whose tails cover what a Gaussian's at the mode missed (0.6 to 1.0
 # nats over gA1's 40 units with the replicates' spread saying 0.1), `Inf` for
 # Gaussian; only a unit's top block takes it.
@@ -172,8 +164,8 @@
 # unit, whatever its width, on `check_draws` (128) frozen draws at each of
 # `check_seeds` (4) seeds. Where the step correcting Laplace would take is
 # resolved under `material` the climb does not run; otherwise the units
-# carrying it are forced into the climb, on product rules up to `maxdim`
-# effects and on draws beyond -- or, under `.ctLaplaceContinue(correct =
+# carrying it are forced into the climb, each on the rule its cost chooses --
+# or, under `.ctLaplaceContinue(correct =
 # FALSE)`, the default fit's, named in a warning with the calls that correct
 # them, and kept in the record (`check$carriers`) for the post-hoc
 # correction to force. 128 draws resolved the step to 0.05 se
@@ -182,12 +174,10 @@
 # a weakly identified covariance was larger than the step itself
 # (scripts/lapcheck-2026-10/highdim_check.R).
 .ctLaplaceContinueDefaults <- list(nodes = 5L, tolerance = 0.01,
-  product_maxdim = 2L, soft_tau = 3.5, soft_maxdirs = 2L, maxiter = 1000L,
-  material = 0.1, guard = 50, guard_per_subject = 0.5, rtol = 1e-8,
-  value_tol = 1e-3, maxdim = 5L,
+  maxiter = 1000L, material = 0.1, guard = 50, guard_per_subject = 0.5,
+  rtol = 1e-8, value_tol = 1e-3,
   draws = 256L, draws_se = 0.05, draws_max = 16384L, draws_df = 4,
-  draws_scope = "forced", check = TRUE, check_draws = 128L, check_seeds = 4L,
-  stay = FALSE)
+  check = TRUE, check_draws = 128L, check_seeds = 4L, stay = FALSE)
 
 # How far the hybrid's objective is from the exact marginal, from the engine's
 # info at a placement (`ctsem_laplace_continuation_info`): `nats`, the frozen
@@ -195,10 +185,9 @@
 # plus what the screen leaves on Laplace; `se`, how far the estimate can be
 # from the exact-marginal optimum in standard errors, by the certification's
 # own arithmetic (a displacement costing `e` nats on the quadratic is at most
-# `sqrt(2 e)` long); the three parts; each unit's own error (`NaN` where its
-# term is Laplace's); and `unscored`, units too wide to be scored at all,
-# which the number does not cover.
-.ctLaplaceIntegrationError <- function(info, unscored = 0L) {
+# `sqrt(2 e)` long); the three parts; and each unit's own error (`NaN` where
+# its term is Laplace's).
+.ctLaplaceIntegrationError <- function(info) {
   nats <- as.numeric(info$error)[1L]
   # Rounding is not an error: on a linear Gaussian fit the screen's gaps are
   # 1e-14 nats of arithmetic, and reported as such they read as a finding.
@@ -208,14 +197,13 @@
     draws = as.numeric(info$error_draws)[1L],
     nodes = as.numeric(info$error_nodes)[1L],
     residual = as.numeric(info$error_residual)[1L],
-    units = as.numeric(info$centre_error),
-    unscored = as.integer(.ctJuliaOr(unscored, 0L))[1L])
+    units = as.numeric(info$centre_error))
 }
 
-# The engine arguments of a continuation built under `control`: the product
-# rules' constants, the frozen importance rule's for units too wide for one
-# (`draws`, `draws_se`, `draws_max`; laplace_continuation.jl's module
-# docstring), the units the caller names to flag whatever their gap (`force`),
+# The engine arguments of a continuation built under `control`: the screen's
+# node count and tolerance, the frozen importance rule's for units no rule
+# converges on (`draws`, `draws_se`, `draws_max`; laplace_continuation.jl's
+# module docstring), the units the caller names to flag whatever their gap (`force`),
 # points it knows for them (`points`, a list of `units` and a `values` matrix
 # with a column each), and whether every unit is scored (`screen`). Optional
 # entries are left out rather than sent empty, which would hang the bridge.
@@ -223,15 +211,10 @@
   screen = TRUE) {
   args <- list(nodes = as.integer(control$nodes),
     tolerance = as.numeric(control$tolerance),
-    product_maxdim = as.integer(control$product_maxdim),
-    soft_tau = as.numeric(control$soft_tau),
-    soft_maxdirs = as.integer(control$soft_maxdirs),
-    maxdim = as.integer(control$maxdim),
     draws = as.integer(.ctJuliaOr(control$draws, 0L)),
     draws_se = as.numeric(.ctJuliaOr(control$draws_se, 0.05)),
     draws_max = as.integer(.ctJuliaOr(control$draws_max, 16384L)),
     draws_df = as.numeric(.ctJuliaOr(control$draws_df, 4)),
-    draws_scope = as.character(.ctJuliaOr(control[["draws_scope"]], "forced")),
     screen = isTRUE(screen))
   force <- suppressWarnings(as.integer(force))
   force <- force[!is.na(force) & force > 0L]
@@ -362,9 +345,7 @@
     gap_se = stats::sd(gaps) / sqrt(length(gaps)),
     gap_bound = sum(as.numeric(r$expansion_bound)[expanded]),
     expanded = sum(expanded), expanded_units = which(expanded), unit_gap = unit_gap,
-    units = length(laplace_units), draws = as.integer(draws), seeds = sum(scored),
-    width = as.integer(r$unit_width),
-    seconds = proc.time()[["elapsed"]] - started)
+    units = length(laplace_units), draws = as.integer(draws), seconds = proc.time()[["elapsed"]] - started)
 }
 
 # The smallest eigenvalue of a unit's curvature in its effects, relative to the
@@ -480,8 +461,7 @@
 # Laplace's while the log likelihood the fit reports is the integrated one
 # (`.ctLaplaceCheckedLoglik()`), and the calls that remove the error -- the
 # refined fit after the fit, and sampling the joint posterior, which has no
-# Laplace error -- and, where `drawn` units would go on draws, that both may
-# take hours.
+# Laplace error.
 #
 # The step is the check's linearisation, right in size to about one standard
 # error and no guide past it, in either direction: on the bench it read the
@@ -494,7 +474,7 @@
 # The gap is not the trigger -- its level does not predict a move -- but a
 # large one says Laplace is off throughout, which is why the fit reports the
 # integrated log likelihood (`.ctLaplaceCheckedLoglik()`).
-.ctLaplaceShiftMessage <- function(shift, worst, carrying, units, drawn = 0L,
+.ctLaplaceShiftMessage <- function(shift, worst, carrying, units,
   gap = NA_real_, gap_se = NA_real_) {
   sample <- "ctFitUncertainty(fit, 'sample', intoverpop = 'none')"
   move <- if (shift < 1) {
@@ -515,15 +495,12 @@
     "fit with those units integrated by quadrature, and ",
     sample,
     " samples the joint posterior.",
-    if (drawn > 0L) paste0(" Both may take hours here, where ", drawn,
-      " of those units are too wide for a product rule."),
     " See fit$laplace$correction$check.")
 }
 
 # The log posterior the quadrature correction would report at `values`, from
-# its own screen (`ctsem_laplace_continuation`): quadrature for every unit no
-# wider than `maxdim` random effects, the Laplace term for the rest, plus the
-# prior. `NA` when the quadrature cannot be evaluated. Used to compare two
+# its own screen (`ctsem_laplace_continuation`): quadrature for every unit,
+# plus the prior. `NA` when the quadrature cannot be evaluated. Used to compare two
 # maxima of one Laplace objective on the objective the fit reports
 # (`.ctJuliaOptimiseFit()`'s guard on `saem = TRUE`).
 #' @keywords internal
@@ -535,11 +512,10 @@
     c(list(.ctJuliaObjective(spec, hybrid = TRUE), .ctJuliaNumericVector(values)),
       .ctLaplaceContinuationArgs(control))), silent = TRUE)
   if (inherits(cont, "try-error")) return(c(corrected = NA_real_,
-    laplace = NA_real_, wide = NA_real_, units = NA_real_))
+    laplace = NA_real_, units = NA_real_))
   info <- .ctJuliaGet(module$ctsem_laplace_continuation_info(cont))
   c(corrected = as.numeric(info$quadrature)[1L],
-    laplace = as.numeric(info$laplace)[1L],
-    wide = as.numeric(info$nwide)[1L], units = as.numeric(info$nunits)[1L])
+    laplace = as.numeric(info$laplace)[1L], units = as.numeric(info$nunits)[1L])
 }
 
 # A try-error's message in a phrase: its first line, without the Julia
@@ -608,9 +584,9 @@
       control$nodes, .ctDuration(seconds())), "update")
   }
   # Units whose Laplace terms jumped in the fit (`fit$laplace$jump`) are
-  # flagged whatever the screen finds, on draws, with the points the line
-  # search saw as components of their proposals; the climb then starts from
-  # the jump point, which is the fit's estimate.
+  # flagged whatever the screen finds, with the points the line search saw as
+  # components of their proposals should they take draws; the climb then
+  # starts from the jump point, which is the fit's estimate.
   jump <- fit$laplace$jump
   # Asked only to check, at a jump: no optimum to take the check's step from,
   # and the jump says what the check would, that a unit's term is not one
@@ -620,7 +596,7 @@
     msg <- sprintf(paste0("The fit stopped where the Laplace term of %s %s ",
       "jumps, at no maximum, so its estimate and standard errors are ",
       "approximate. ctFitUncertainty(fit, intoverpop = 'quadrature') refines ",
-      "the fit with %s integrated by draws; ctFitUncertainty(fit, 'sample', ",
+      "the fit with %s integrated by quadrature; ctFitUncertainty(fit, 'sample', ",
       "intoverpop = 'none') ",
       "samples the joint posterior."), if (length(named) == 1L) "unit" else "units",
       paste(named, collapse = ", "), if (length(named) == 1L) "it" else "them")
@@ -634,24 +610,23 @@
   # Where every unit's integrand is Gaussian in its effects
   # (`laplace$quadratic`), each Laplace term is that unit's exact integral, at
   # any width: nothing to score and nothing to move. The screen's product
-  # rules used to run here for nothing, and a unit wider than `maxdim` was
-  # reported as left uncorrected.
+  # rules used to run here for nothing.
   if (is.null(jump) && isTRUE(fit$model_spec$laplace$quadratic)) {
     fit$laplace$correction <- list(method = "quadrature", status = "exact",
       applied = FALSE, nodes = as.integer(control$nodes),
       tolerance = as.numeric(control$tolerance), screen = 0, gap = 0,
       laplace_estimate = est, loglik_laplace = as.numeric(fit$estimate$loglik),
-      flagged = 0L, wide = 0L, maxdim = as.integer(control$maxdim),
+      flagged = 0L,
       error = list(nats = 0, se = 0, draws = 0, nodes = 0, residual = 0,
-        units = NULL, unscored = 0L),
+        units = NULL),
       seconds = c(total = seconds()))
     return(fit)
   }
   # The shift check first, on every unit whatever its width: where correcting
   # Laplace would move no estimate by `material` standard errors, resolved
   # past the check's own noise, the fit is left alone; otherwise the units
-  # carrying the move are flagged on draws as jump units are, and the refined
-  # fit climbs. Not at a jump, whose units are named already and whose
+  # carrying the move are flagged as jump units are, and the refined fit
+  # climbs. Not at a jump, whose units are named already and whose
   # point is no optimum to take a step from.
   checkfailed <- NULL
   check <- if (is.null(jump) && (!correct || !isFALSE(control$check))) {
@@ -691,7 +666,7 @@
     # Left alone to the bit, as a passed screen leaves it: "exact" where the
     # corrected terms equal Laplace's to the screen's tolerance, "checked"
     # where they differ without moving the estimate. Every unit was looked
-    # at, so none is unscored, and the estimate's distance from the
+    # at, and the estimate's distance from the
     # exact-marginal optimum is the check's resolved step, not the bound a
     # value gap of that size would give.
     gap <- abs(check$gap)
@@ -701,34 +676,20 @@
       applied = FALSE, nodes = as.integer(control$nodes),
       tolerance = as.numeric(control$tolerance), screen = gap, gap = check$gap,
       laplace_estimate = est, loglik_laplace = as.numeric(fit$estimate$loglik),
-      flagged = 0L, units = as.integer(check$units), wide = 0L,
-      maxdim = as.integer(control$maxdim), check = checkrecord)
+      flagged = 0L, units = as.integer(check$units), check = checkrecord)
     bound <- if (gap > 0) max(abs(check$shift) + 2 * check$noise) else 0
     record$error <- list(nats = gap, se = bound, draws = check$gap_se, nodes = 0,
-      residual = 0, units = NULL, unscored = 0L)
+      residual = 0, units = NULL)
     record$seconds <- c(check = seconds(), total = seconds())
     fit$laplace$correction <- record
     return(.ctLaplaceCheckedLoglik(fit, check))
   }
   # A move found and asked only to check: said once, with the calls that
-  # correct it, and kept in the record for print(). The carrying units too
-  # wide for a product rule go on draws, each about a dozen Laplace units a
-  # gradient (2048 draws of one member against 40 units' inner solves on the
-  # round-9 fit, local); past a quarter of all units a correction's gradient
-  # is several times a Laplace one's, and the check spreads the step over
-  # most units of a wide model (97 to 99 of 100 at twenty effects a unit), so
-  # the warning says it may take hours. So may sampling, which is no cheaper
-  # there: on 100 units of five effects, all on draws, the refined fit's
-  # rounds of the time took 2.8 hours at 8 cores and sampling the joint
-  # posterior had not finished in 13 (`scripts/lapcheck-2026-10/`). Asked to
-  # correct, the refined fit runs however many units are on draws.
+  # correct it, and kept in the record for print().
   if (!correct) {
-    checkrecord$wide <- sum(check$width[check$carrying] > as.integer(control$maxdim))
     if (!is.null(sink)) sink("", "break")
     said <- .ctLaplaceShiftMessage(check$max_shift, checkrecord$worst,
-      length(check$carrying), check$units,
-      drawn = if (checkrecord$wide > 0.25 * check$units) checkrecord$wide else 0L,
-      gap = check$gap, gap_se = check$gap_se)
+      length(check$carrying), check$units, gap = check$gap, gap_se = check$gap_se)
     warning(said, call. = FALSE)
     fit$laplace$correction <- list(method = "quadrature", status = "flagged",
       applied = FALSE, message = said, laplace_estimate = est,
@@ -756,34 +717,17 @@
     laplace_estimate = est, loglik_laplace = sum(as.numeric(start$laplace_units)),
     flagged = as.integer(start$nflagged), units = as.integer(start$nunits),
     rule_failures = as.integer(start$rule_failures),
-    wide = as.integer(start$nwide), maxdim = as.integer(start$maxdim))
+    lattice = as.integer(start$nlattice))
   record$check <- checkrecord
   # What the objective is known to at the screen; the paths that place again
   # replace it with the final placement's.
-  record$error <- .ctLaplaceIntegrationError(start, unscored = record$wide)
+  record$error <- .ctLaplaceIntegrationError(start)
   # Wall seconds by stage as each is passed -- the screen, the climb, its
   # Hessian, the certification, the uncertainty redrawn from it -- and `total`
   # when the record is written (`.ctLaplacePlacedRefine()` adds its stages).
   stages <- c(screen = seconds())
   timed <- function() c(stages, total = seconds())
   since <- function(from) proc.time()[["elapsed"]] - from
-  # Units wider than `maxdim` are not scored and keep the Laplace term (see
-  # laplace_continuation.jl for the measured cost). Said in one line, since
-  # the correction then covers less than the fit, or none of it -- unless the
-  # shift check ran, which looked at them all.
-  if (record$wide > 0L && is.null(check)) {
-    if (!is.null(sink)) sink("", "break")
-    message(sprintf(paste0("Quadrature correction: %d of %d %s kept the ",
-      "Laplace term, having more than %d random effects."), record$wide,
-      record$units, if (record$units == nsubjects) "subjects" else "groups",
-      record$maxdim))
-  }
-  if (record$wide == record$units) {
-    record$status <- "too_wide"
-    record$seconds <- timed()
-    fit$laplace$correction <- record
-    return(fit)
-  }
   if (!is.finite(record$screen)) {
     return(failed("the quadrature was not finite at the estimate"))
   }

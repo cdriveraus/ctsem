@@ -3053,8 +3053,9 @@ const _LAPLACE_INNER_SR1 = Ref(true)
 
 """
 Precision below which a direction of a mode's curvature is probed: the
-continuation's `soft_tau`, the precision below which a direction can be
-non-Gaussian enough to matter.
+softcut the gated-gaps job's exact reference settled on
+(`CT-SEM/review/LAPLACE-gated-gaps-2026-09-24.md` 1d), the precision below
+which a direction can be non-Gaussian enough to matter.
 """
 const _LAPLACE_PROBE_SOFT = 3.5
 
@@ -3473,8 +3474,8 @@ end
 Block `b`'s precision `I - d2 ll / du_b du_b`, with its own coordinates at `z`
 and the rest of the unit's effects where `u` has them: what the adaptive
 quadrature scales a leaf's nodes by (`_quadrature_leaf_rule!`) and the
-continuation a soft rule's stiff complement by (`_continuation_block_functions`),
-at points other than the mode. `mode` is what each member's filter returns for
+continuation's importance components by (`_continuation_block_functions`), at
+points other than the mode. `mode` is what each member's filter returns for
 the deviations it integrates (`CTSEMHybridBuffers`); the quadrature asks for
 their exact integral, `_HYBRID_FULL`, the integrand it integrates.
 

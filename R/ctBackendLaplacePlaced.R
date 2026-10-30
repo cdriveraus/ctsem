@@ -62,7 +62,7 @@
   record$importance <- c(units = as.integer(after$nimportance),
     draws = as.integer(after$importance_draws))
   accounted <- function(record) {
-    record$error <- .ctLaplaceIntegrationError(after, unscored = record$wide)
+    record$error <- .ctLaplaceIntegrationError(after)
     info <- get(module$ctsem_laplace_placed_info(placed))
     record$placed <- info
     record$evaluations <- c(values = as.integer(info$value_calls),
@@ -199,7 +199,7 @@
         "' on its objective with the rules placed at each point"),
       nodes = record$nodes,
       # What the density the draws came from is known to, in nats.
-      error = .ctLaplaceIntegrationError(after, unscored = record$wide))
+      error = .ctLaplaceIntegrationError(after))
     stages["uncertainty"] <- since(uncertainty_started)
   } else {
     post <- fit$estimate$rawposterior
