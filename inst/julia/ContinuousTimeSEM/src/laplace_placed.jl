@@ -69,6 +69,15 @@ this differentiates. A unit on importance draws keeps its frozen draws, as do
 nested units for now: their rules are the continuation's as placed, with its
 Fisher gradient. The other units keep their Laplace terms (`o.rest`), and the
 prior is theirs.
+
+# Deviations the filter integrates
+
+Where each subject's filter integrates deviations of its own (`CTSEMHybrid`),
+the integrand at a node is the members' log likelihood with them integrated
+exactly (`_HYBRID_FULL`), as the continuation's is, and the leaf's mode and
+precision are that integrand's. So are the sweeps at the mode: seeded and jet
+sweeps take that mode (`_tan_laplace_context`, `_tan_jet_context`), the closing
+term's log determinant weighted one.
 """
 
 using LinearAlgebra
@@ -129,9 +138,6 @@ function ctsem_laplace_placed(o::CTSEMLaplaceContinuation)
             push!(frozen, f)
         end
     end
-    _hybrid_on(laplace.objective.params.hybrid) && !isempty(placed) &&
-        throw(ArgumentError("placed rules do not yet take deviations the " *
-            "filter integrates"))
     theta = copy(o.centre)
     Ls = _laplace_popchols(theta, laplace.spec)
     anchors = [Float64[] for _ in 1:nunits]
@@ -364,6 +370,9 @@ function _placed_unit!(row::Vector{Float64}, P::CTSEMLaplacePlaced, U::Int,
     members = 1:nm
     offsets = units.offsets[U][1]
     dir = zeros(npar)
+    # The integrand's own derivatives: with deviations the filter integrates,
+    # their exact integral's, as at the nodes (`_continuation_member!`).
+    mode = _hybrid_on(laplace.objective.params.hybrid) ? _HYBRID_FULL : _HYBRID_PROFILE
 
     # <Mbar, L'HL> by its eigendirections, a jet pass a sign.
     E = _ctsem_symeig(Mbar)
@@ -382,7 +391,7 @@ function _placed_unit!(row::Vector{Float64}, P::CTSEMLaplacePlaced, U::Int,
                 D[:, col] .= dir
             end
             pass = _laplace_unit_jet_gradient(laplace, U, theta, Ls, uc, members, D,
-                length(chunk))
+                length(chunk); mode=mode)
             pass.ok || return failure
             (all(isfinite, pass.dS) && all(isfinite, pass.d0)) || return failure
             @inbounds for m in 1:nm, t in 1:npar
@@ -423,7 +432,7 @@ function _placed_unit!(row::Vector{Float64}, P::CTSEMLaplacePlaced, U::Int,
         stop = min(start + lanes - 1, ndir)
         nd = stop - start + 1
         pass = _laplace_unit_seeded_gradient(laplace, U, theta, Ls, uc, members,
-            Matrix{Float64}(Dm[:, start:stop]), nd)
+            Matrix{Float64}(Dm[:, start:stop]), nd; mode=mode)
         pass.ok || return failure
         all(isfinite, pass.d1c) || return failure
         @inbounds for w in 1:nd, m in 1:nm, t in 1:npar

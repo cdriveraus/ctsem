@@ -811,22 +811,24 @@ end
 member's gradient in its shifted values (`d0`) and its derivatives along the
 first `nd` raw directions of `D` (`d1c`), a lane of the curvature's context
 each -- direction `w`'s for the `c`th member in column `(w - 1) nm + c`, so one
-direction's are an `npar x nm` block; the members on the pool.
+direction's are an `npar x nm` block; the members on the pool. `mode` says what
+the filter returns for the deviations it integrates: their profile, or their
+exact integral (`_HYBRID_FULL`, the curvature context's `wlog`).
 """
 function _tan_laplace_seeded(laplace::CTSEMLaplaceObjective, U::Integer,
     values::Vector{Float64}, Ls::Vector{Matrix{Float64}}, u::Vector{Float64}, members,
-    D::AbstractMatrix{Float64}, nd::Int)
+    D::AbstractMatrix{Float64}, nd::Int; mode::Int=_HYBRID_PROFILE)
     _tan_moves_factor(laplace.objective.params.hybrid, D, nd) &&
         throw(ArgumentError(_TAN_MOVES_FACTOR))
-    ctx = _tan_laplace_context(laplace, values, _HYBRID_PROFILE)
-    r = _tan_laplace_seeded!(ctx, laplace, Int(U), values, Ls, u, members, D, nd)
+    ctx = _tan_laplace_context(laplace, values, mode)
+    r = _tan_laplace_seeded!(ctx, laplace, Int(U), values, Ls, u, members, D, nd, mode)
     r === nothing && throw(ArgumentError(_TAN_NOT_JACOBIAN))
     return r
 end
 
 function _tan_laplace_seeded!(ctx::TanLaplaceContext{W,DC}, laplace::CTSEMLaplaceObjective,
     U::Int, values::Vector{Float64}, Ls::Vector{Matrix{Float64}}, u::Vector{Float64},
-    members, D::AbstractMatrix{Float64}, nd::Int) where {W,DC}
+    members, D::AbstractMatrix{Float64}, nd::Int, mode::Int=_HYBRID_PROFILE) where {W,DC}
     1 <= nd <= W || throw(ArgumentError("$(nd) directions for a sweep of $(W) lanes"))
     spec, units = laplace.spec, laplace.units
     objective = laplace.objective
@@ -845,7 +847,7 @@ function _tan_laplace_seeded!(ctx::TanLaplaceContext{W,DC}, laplace::CTSEMLaplac
     refused = Ref(false)
     one_member! = function (c::Int, m)
         local cx, shifted, xw, st, g0, Hb
-        cx = _tan_laplace_context(laplace, values, _HYBRID_PROFILE)::typeof(ctx)
+        cx = _tan_laplace_context(laplace, values, mode)::typeof(ctx)
         _tan_laplace_hybrid!(cx, values) || return false
         shifted = _laplace_member_values!(
             _laplace_scratch_vector!(laplace, Float64, npar, :sweep_shift),
@@ -1207,8 +1209,9 @@ end
 """
 The slot's hand-coded jet sweeps at jet type `J`, built at first use from
 `values` (under `_TAN_JETS`, so its quantities carry second parts), with the
-deviations the filter integrates at their profile, or (`_HYBRID_FIXED`) at
-fixed values; an error for what they do not take (`_tan_check`).
+deviations the filter integrates at their profile, at fixed values
+(`_HYBRID_FIXED`), or integrated exactly (`_HYBRID_FULL`); an error for what
+they do not take (`_tan_check`).
 """
 function _tan_jet_context(laplace::CTSEMLaplaceObjective, values::AbstractVector,
     ::Type{J}, mode::Int=_HYBRID_PROFILE, slot::Int=_laplace_slot()) where {J}
@@ -1216,7 +1219,7 @@ function _tan_jet_context(laplace::CTSEMLaplaceObjective, values::AbstractVector
     key = (:tan_jet, length(values), J, mode)
     haskey(store, key) && return store[key]
     objective = laplace.objective
-    _tan_check(objective, _HYBRID_PROFILE)
+    _tan_check(objective, mode == _HYBRID_FULL ? _HYBRID_FULL : _HYBRID_PROFILE)
     ctx = Base.ScopedValues.with(() -> _tan_jet_build(objective, values, J, mode,
         Val(last(_CTSEM_CURVATURE_WIDTHS[]))), _TAN_JETS => true)
     store[key] = ctx
@@ -1236,10 +1239,11 @@ function _tan_jet_build(objective::CTSEMObjective, values::AbstractVector, ::Typ
     nh = _hybrid_on(h) ? _hybrid_items(h) : 0
     rows = _tan_rows_model(sp)
     gmask, cat = _tan_cat_masks(sp, m)
-    # The deviations at their profile (the closing term's logdet weight 0), or
-    # held at fixed values.
+    # The deviations at their profile (the closing term's logdet weight 0),
+    # integrated exactly (weight 1), or held at fixed values.
     mod = TanModel(n, m, W; ct=sp.continuous_time, stat=sp.stationary, rows=rows,
-        gmask=gmask, na=na, dyn=dyn, ntd=ntd, hyb=h, nh=nh, wlog=0.0,
+        gmask=gmask, na=na, dyn=dyn, ntd=ntd, hyb=h, nh=nh,
+        wlog=mode == _HYBRID_FULL ? 1.0 : 0.0,
         fixed=mode == _HYBRID_FIXED && nh > 0, cat=cat)
     awsJ = CTSEMAdjointWorkspace(J, sp, nv, ntd)
     return TanJetContext(awsJ, mod, TanAcc(n, m, ntd, nh, W, cat.nxc),
@@ -1257,15 +1261,16 @@ _tan_jet_width(::Type{CTSEMTraceJet{JW}}) where {JW} = JW
 `_laplace_unit_jet_gradient`'s sweeps by hand: each member's gradient at its
 shifted values (`d0`) and the sum over the first `ndirs` columns of `D` (raw
 directions) of that gradient's second directional derivatives (`dS`), the
-members on the pool.
+members on the pool, with the deviations the filter integrates as `mode` says
+(`_tan_jet_context`).
 """
 function _tan_laplace_jet(laplace::CTSEMLaplaceObjective, U::Integer,
     values::Vector{Float64}, Ls::Vector{Matrix{Float64}}, u::Vector{Float64}, members,
-    D::Matrix{Float64}, ndirs::Int, ::Type{J}) where {J}
+    D::Matrix{Float64}, ndirs::Int, ::Type{J}; mode::Int=_HYBRID_PROFILE) where {J}
     _tan_moves_factor(laplace.objective.params.hybrid, D, ndirs) &&
         throw(ArgumentError(_TAN_MOVES_FACTOR))
-    ctx = _tan_jet_context(laplace, values, J)
-    r = _tan_laplace_jet!(ctx, laplace, Int(U), values, Ls, u, members, D, ndirs)
+    ctx = _tan_jet_context(laplace, values, J, mode)
+    r = _tan_laplace_jet!(ctx, laplace, Int(U), values, Ls, u, members, D, ndirs, mode)
     r === nothing && throw(ArgumentError(_TAN_NOT_JACOBIAN))
     return r
 end
@@ -1273,7 +1278,7 @@ end
 function _tan_laplace_jet!(ctx::TanJetContext{W,CTSEMTraceJet{JW}},
     laplace::CTSEMLaplaceObjective, U::Int, values::Vector{Float64},
     Ls::Vector{Matrix{Float64}}, u::Vector{Float64}, members, D::Matrix{Float64},
-    ndirs::Int) where {W,JW}
+    ndirs::Int, mode::Int=_HYBRID_PROFILE) where {W,JW}
     J = CTSEMTraceJet{JW}
     spec, units = laplace.spec, laplace.units
     objective = laplace.objective
@@ -1293,7 +1298,7 @@ function _tan_laplace_jet!(ctx::TanJetContext{W,CTSEMTraceJet{JW}},
         return (ok=false, d0=_LAPLACE_NO_MATRIX, dS=_LAPLACE_NO_MATRIX)
     one_member! = function (c::Int, m)
         local cx, shifted, xj, st
-        cx = _tan_jet_context(laplace, values, J)::typeof(ctx)
+        cx = _tan_jet_context(laplace, values, J, mode)::typeof(ctx)
         _tan_laplace_hybrid!(cx, values) || return false
         shifted = _laplace_member_values!(
             _laplace_scratch_vector!(laplace, Float64, npar, :jet_shift),
