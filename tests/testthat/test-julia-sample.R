@@ -727,6 +727,13 @@ test_that("intoverpop alone says what is sampled", {
   expect_identical(route("none", requested = FALSE), "none")
   # A backend caller passing only the route has named it.
   expect_identical(route("laplace"), "laplace")
+  # Sampling the Laplace marginal suggests the joint, except where Laplace is
+  # exact and the marginal is the posterior's.
+  note <- ctsem:::.ctBackendSampleRouteNote
+  expect_match(note("laplace"), "intoverpop = 'none'", fixed = TRUE)
+  expect_null(note("laplace", exact = TRUE))
+  expect_null(note("none"))
+  expect_null(note("augmented"))
   # ctFitUncertainty's intoverpop overrides, in the same words, within
   # what the fit's specification can carry.
   expect_identical(route("laplace", requested = "laplace", override = "none"), "none")

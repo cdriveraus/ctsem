@@ -234,6 +234,18 @@
     laplace = if (named || isTRUE(exact)) "laplace" else "none", "none")
 }
 
+# What a sample of the Laplace marginal says, where Laplace is not exact: the
+# marginal carries Laplace's error, and on the race fixtures it was off by
+# 0.25-1.97 posterior sds wherever the random-effects check would correct the
+# fit, while the joint was right and no slower per effective draw there
+# (review/SAMPLING-marginal-default-2026-10-25.md). Only a message: the user
+# named the route, and where the check passes the marginal can be faster.
+.ctBackendSampleRouteNote <- function(sampled, exact = FALSE) {
+  if (!identical(sampled, "laplace") || isTRUE(exact)) return(NULL)
+  paste0("Sampling the Laplace marginal. intoverpop = 'none' samples the ",
+    "random effects too, which is more accurate here and may be faster.")
+}
+
 # Sample a fit's posterior by MCMC: `uncertainty = 'sample'`
 # on `ctFitUncertainty()`, and what `ctFit(backend = 'julia', optimize =
 # FALSE)` calls once its placement optimisation
@@ -276,9 +288,12 @@
   tisampled <- .ctJuliaTIMissingSamples(fit$model_spec, control[["tipredMissing"]]) &&
     NROW(fit$model_spec$ti_imputed) > 0L
   if (tisampled) fit <- .ctJuliaTIMissingSampleFit(fit)
+  exact <- isTRUE(.ctBackendSpec(fit)$laplace$quadratic)
   sampled <- .ctBackendSampleRoute(.ctBackendIntOverPop(fit$model_spec),
     requested = fit$args$input[["intoverpop"]], override = control$intoverpop,
-    exact = isTRUE(.ctBackendSpec(fit)$laplace$quadratic))
+    exact = exact)
+  note <- .ctBackendSampleRouteNote(sampled, exact)
+  if (!is.null(note)) message(note)
   marginal <- !identical(sampled, "none")
   # The check the marginal metric is built from, where the fit lacks one. Not
   # with sampled TI values, whose coordinates the fit's objective does not
