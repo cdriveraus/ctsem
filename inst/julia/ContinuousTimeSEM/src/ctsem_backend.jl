@@ -2083,6 +2083,8 @@ _ctsem_anchor_finish!(p::CTSEMPinnedObjective, x) =
     _ctsem_anchor_finish!(p.objective, _ctsem_pinned_point(p, x))
 _ctsem_take_search_modes!(p::CTSEMPinnedObjective, x, found) =
     _ctsem_take_search_modes!(p.objective, _ctsem_pinned_point(p, x), found)
+ctsem_laplace_clear_anchors!(p::CTSEMPinnedObjective) =
+    ctsem_laplace_clear_anchors!(p.objective)
 _ctsem_optimise_log(p::CTSEMPinnedObjective, verbose::Bool) =
     _ctsem_optimise_log(p.objective, verbose)
 _ctsem_optimise_trace_keys(p::CTSEMPinnedObjective) =
@@ -3359,6 +3361,9 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
     held_hessian_at = newton_hessian_at
     may_finish = finishing
     finished = false
+    # Where the last search found nothing to go on with: the closing search
+    # below does not search there again.
+    searched_at = Float64[]
     while true
         took = false
         if mode_rounds < _CTSEM_MODE_ROUNDS
@@ -3371,6 +3376,7 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
             elseif stop_reason in ("gap", "linesearch", "gradient", "progress")
                 taken = _ctsem_take_search_modes!(objective, minimizer, found)
                 took = isfinite(taken.change) && abs(taken.change) > _CTSEM_MODE_RESUME_TOL
+                took || (searched_at = copy(minimizer))
                 took && progress && _ctsem_mode_note(reporter, label, @sprintf(
                     "a search where the run stopped found other maxima for %d unit(s), moving the objective by %+.3g; they are kept and the run goes on",
                     taken.units, taken.change))
@@ -3660,8 +3666,15 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
     saturated = verdict.saturated
     stalled = verdict.stalled
     # The run's anchored modes against a search at the estimate, and the
-    # anchors cleared (`_ctsem_anchor_finish!`).
-    anchored = _ctsem_anchor_finish!(objective, minimizer)
+    # anchors cleared (`_ctsem_anchor_finish!`): where the run's own last
+    # search was at the estimate and found nothing to go on with, only the
+    # clearing, its findings being in `found` already.
+    anchored = if searched_at == minimizer
+        ctsem_laplace_clear_anchors!(objective)
+        nothing
+    else
+        _ctsem_anchor_finish!(objective, minimizer)
+    end
     finite_gradient = verdict.finite_gradient
     converged_enough = verdict.converged_enough
     overshoot = verdict.overshoot
