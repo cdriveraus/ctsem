@@ -10,19 +10,27 @@
 
 # The climb alone, shared by the fit and `ctLaplaceCheck(refine = TRUE)`: the
 # placed objective `placed` from `est`, to the fit's certification tolerance
-# `tol`. Returns the engine's result (`ctsem_optimize`'s, with `replacements`).
+# `tol`. `hessian`, the fit's curvature at `est` where it has one, lets the
+# engine size each lattice rule for the estimate before it climbs
+# (`ctsem_laplace_placed_optimize`'s slope check). Returns the engine's result
+# (`ctsem_optimize`'s, with `replacements`).
 .ctLaplacePlacedClimb <- function(module, placed, est, tol, control, verbose = 0L,
-  sink = NULL, certify = TRUE) {
+  sink = NULL, certify = TRUE, hessian = NULL) {
   climb_sink <- if (is.null(sink)) NULL else function(text, kind = "update")
     sink(text, if (identical(kind, "done")) "update" else kind)
-  .ctJuliaGet(module$ctsem_laplace_placed_optimize(placed,
-    .ctJuliaNumericVector(est),
+  args <- list(placed, .ctJuliaNumericVector(est),
     maxiter = as.integer(.ctJuliaOr(control$maxiter, 1000L)),
     gap_tol = as.numeric(tol), converge_tol = as.numeric(tol), newton = TRUE,
     certify = isTRUE(certify), lbfgs_pairs = "objective",
     progress = !is.null(climb_sink), progress_sink = climb_sink,
     progress_overwrite = .ctProgressOverwrite(verbose),
-    progress_label = "Refined fit, rules placed"))
+    progress_label = "Refined fit, rules placed")
+  # Sent only where there is one: an optional argument is left out rather
+  # than sent empty.
+  if (is.matrix(hessian) && length(hessian) == length(est)^2 && all(is.finite(hessian))) {
+    args$hessian <- hessian
+  }
+  .ctJuliaGet(do.call(module$ctsem_laplace_placed_optimize, args))
 }
 
 # Called by `.ctLaplaceContinue()` once the continuation `cont` is placed at the
@@ -87,7 +95,8 @@
   # distance of the estimate, or the estimate.
   hessian_at <- est
   if (!stay) {
-    res <- .ctLaplacePlacedClimb(module, placed, est, tol, control, verbose, sink)
+    res <- .ctLaplacePlacedClimb(module, placed, est, tol, control, verbose, sink,
+      hessian = .ctBackendStoredHessian(fit, est))
     stages["climb"] <- since(started)
     x <- as.numeric(res$minimizer)
     reuse <- .ctBackendHessianReuse(.ctBackendFitOptimcontrol(fit))
@@ -99,7 +108,8 @@
       f_calls = as.integer(res$f_calls), g_calls = as.integer(res$g_calls),
       converged = isTRUE(res$converged), hessians = as.integer(res$newton_hessians),
       replacements = as.integer(res$replacements),
-      raised = as.integer(.ctJuliaOr(res$raised, 0L)))
+      raised = as.integer(.ctJuliaOr(res$raised, 0L)),
+      slope_sd = as.numeric(.ctJuliaOr(res$slope_sd, NA_real_)))
     record$continuation <- if (isTRUE(res$converged)) "converged" else "stopped"
   }
   final <- get(module$ctsem_laplace_placed_evaluate(placed, num(x), gradient = TRUE))

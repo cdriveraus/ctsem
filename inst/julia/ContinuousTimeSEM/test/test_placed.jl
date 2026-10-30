@@ -132,6 +132,22 @@ end
     @test isapprox(e.error_draws, sqrt(sum(abs2, P.se[lat])); rtol=1e-12)
     @test e.centre_error[lat] == P.se[lat]
     @test isapprox(e.error, e.error_draws + e.error_nodes + e.error_residual; rtol=1e-12)
+    # The slope check: the lattice units' gradients on two independent sets
+    # of shifts, through the curvature, in standard errors. Every unit a
+    # bar of zero leaves carrying something, none under an infinite one, and
+    # the other sets are lent and taken back.
+    H = ctsem_laplace_placed_hessian(P, theta)
+    sets = copy(P.sets)
+    loose = C._placed_slope_check(P, theta, H; bar=Inf)
+    @test isfinite(loose.sd) && loose.sd > 0
+    @test isempty(loose.units)
+    tight = C._placed_slope_check(P, theta, H; bar=0.0)
+    @test tight.sd == loose.sd
+    @test !isempty(tight.units) && issubset(tight.units, lat)
+    @test loose.doublings == 0 && 1 <= tight.doublings <= 5
+    @test all(V -> P.sets[V] === sets[V], P.placed)
+    # Without a curvature there is nothing to carry the error through.
+    @test isempty(C._placed_slope_check(P, theta, zeros(1, 1)).units)
 end
 
 @testset "the localised Hessian is the difference of the exact gradient" begin

@@ -316,7 +316,8 @@ const _PLACED_STATIONARY = 1e-6
 
 Leaf block `b` of unit `U`'s placed term, its ancestors held where `u` has
 them: the conditional mode by Newton from `start` (`_quadrature_leaf_rule!`),
-its precision, the block's point set (`P.sets[U][b]`) placed there; see the
+its precision, the block's point set (`sets[b]`, the unit's own by default)
+placed there; see the
 module docstring. With
 `want_gradient`, its gradient in `theta` at those ancestors into `row`, and
 into `wv` the raw-space vector whose loadings give its derivative in an
@@ -330,7 +331,8 @@ the conditional mode. Returns `(ok, value, se)`, `se` the rule's error there
 """
 function _placed_leaf!(row::Vector{Float64}, wv::Vector{Float64}, P::CTSEMLaplacePlaced,
     U::Int, b::Int, u::Vector{Float64}, start::Vector{Float64},
-    theta::Vector{Float64}, Ls, dL, positions, want_gradient::Bool)
+    theta::Vector{Float64}, Ls, dL, positions, want_gradient::Bool;
+    sets::Vector{CTSEMPointSet}=P.sets[U])
     laplace = P.cont.laplace
     spec = laplace.spec
     units = laplace.units
@@ -352,7 +354,7 @@ function _placed_leaf!(row::Vector{Float64}, wv::Vector{Float64}, P::CTSEMLaplac
     M = Matrix{Float64}(lr.precision)
     sc = _placed_scale(M, k)
     sc.ok || return failure
-    ps = P.sets[U][b]
+    ps = sets[b]
     Y = ps.points
     lw = ps.logweights
     scratch = _continuation_scratch(laplace, npar)
@@ -572,15 +574,18 @@ anchor, a unit of a root over leaves an outer rule over them
 error and `anchor` the unit's effects at the mode it found.
 """
 function _placed_unit!(row::Vector{Float64}, P::CTSEMLaplacePlaced, U::Int,
-    theta::Vector{Float64}, Ls, dL, positions, want_gradient::Bool)
+    theta::Vector{Float64}, Ls, dL, positions, want_gradient::Bool;
+    sets::Vector{CTSEMPointSet}=P.sets[U])
     laplace = P.cont.laplace
     length(laplace.units.blocks[U]) == 1 ||
-        return _placed_nested_unit!(row, P, U, theta, Ls, dL, positions, want_gradient)
+        return _placed_nested_unit!(row, P, U, theta, Ls, dL, positions, want_gradient;
+            sets=sets)
     block = laplace.units.blocks[U][1]
     columns = (block.offset + 1):(block.offset + block.size)
     u = copy(P.anchors[U])
     r = _placed_leaf!(row, zeros(length(theta)), P, U, 1, u,
-        Float64[u[c] for c in columns], theta, Ls, dL, positions, want_gradient)
+        Float64[u[c] for c in columns], theta, Ls, dL, positions, want_gradient;
+        sets=sets)
     return (ok=r.ok, value=r.value, se=r.se, anchor=r.ok ? u : P.anchors[U])
 end
 
@@ -619,7 +624,8 @@ a leaf's set is the same at every root node, so its errors there are not
 independent and do not average out.
 """
 function _placed_nested_unit!(row::Vector{Float64}, P::CTSEMLaplacePlaced, U::Int,
-    theta::Vector{Float64}, Ls, dL, positions, want_gradient::Bool)
+    theta::Vector{Float64}, Ls, dL, positions, want_gradient::Bool;
+    sets::Vector{CTSEMPointSet}=P.sets[U])
     laplace = P.cont.laplace
     spec = laplace.spec
     units = laplace.units
@@ -643,7 +649,7 @@ function _placed_nested_unit!(row::Vector{Float64}, P::CTSEMLaplacePlaced, U::In
     (fz.ok && !fz.repaired) || return failure
     sc = _placed_scale_factor(fz.factors[r0], k0)
     sc.ok || return failure
-    ps = P.sets[U][r0]
+    ps = sets[r0]
     Y = ps.points
     lw = ps.logweights
     peak = -Inf
@@ -678,7 +684,7 @@ function _placed_nested_unit!(row::Vector{Float64}, P::CTSEMLaplacePlaced, U::In
         for cb in kids
             ccols = (blocks[cb].offset + 1):(blocks[cb].offset + blocks[cb].size)
             leaf = _placed_leaf!(rowc, wvc, P, U, cb, u, Float64[cj[c] for c in ccols],
-                theta, Ls, dL, positions, want_gradient)
+                theta, Ls, dL, positions, want_gradient; sets=sets)
             if !leaf.ok
                 ok = false
                 break
@@ -1227,14 +1233,112 @@ end
 
 """
 How far past its target a placed rule's error may grow before the run raises
-its count (`_placed_rough`): twice `draws_se`. A rule's count is chosen where
-the continuation was placed (`_continuation_refine!`), and a climb can walk to
-where it serves worse. On w6 the 128-point lattices chosen at the Laplace
+its count (`_placed_rough`): four times `draws_se`, a rule the climb has
+taken somewhere it plainly does not serve. A rule's count is chosen where the
+continuation was placed (`_continuation_refine!`), and a climb can walk to
+where it serves worse: on w6 the 128-point lattices chosen at the Laplace
 estimate, 0.18 nats in all there, stood at 1.16 at the estimate the climb
-reached, one unit's at 0.85, which moved the estimate 2 se further than the
-current build's.
+reached, one unit's at 0.85. What decides whether a rule serves is the slope
+check at the climb's end (`_placed_slope_check`); raised at twice the target,
+w6 restarted its climb eight times and ended unconverged.
 """
-const _PLACED_ROUGH = 2.0
+const _PLACED_ROUGH = 4.0
+
+"""
+The standard deviation, in an estimate's standard errors, that the placed
+rules' error may move any estimate by (`_placed_slope_check`): the shift
+check's `material` bar.
+"""
+const _PLACED_SLOPE_BAR = 0.1
+
+"""
+    _placed_slope_check(P, values, H; bar=_PLACED_SLOPE_BAR)
+
+How far the placed lattice rules' error can move the estimate at `values`, in
+its standard errors, and the units that carry it. What moves an estimate is a
+rule's error's slope, not its level, and a lattice rule's value error is
+smooth in the parameters but its slope need not be small: with each unit's
+128-point lattice within 0.05 nats at the Laplace estimate, the climb on w4s
+and w6 walked 1.4 and 1.9 se from a reference fit's estimate, to where the
+rules together over-credited the integral by 1.4 and 3.4 nats.
+
+Each lattice unit's gradient on its own points and on an independent set of
+shifts at the same count (`_rule_sets`'s `alt`) differ by two independent
+errors, so their difference over `sqrt(2)` has the variance of either's.
+Carried through the inverse curvature `-H` on its directions with curvature,
+as the standard errors are, and divided by them, it is that unit's
+contribution to the estimate's error in standard errors; the units'
+contributions are independent, so their root sum of squares per coordinate is
+the sd of the estimate's error from the rules. Returns `(sd, units,
+doublings)`: the largest sd; the units taken largest contribution first until
+what is left is under `bar`; and how many times their points are to double for
+the whole to come under `bar`, were their errors to fall as `n^-0.7`, the
+slowest rate the lattice showed (at ten effects; `point_sets.jl`) -- one to
+five, and checked again after.
+"""
+function _placed_slope_check(P::CTSEMLaplacePlaced, values::AbstractVector,
+    H::AbstractMatrix; bar::Real=_PLACED_SLOPE_BAR)
+    o = P.cont
+    laplace = o.laplace
+    spec = laplace.spec
+    x = collect(Float64, values)
+    n = length(x)
+    units = Int[U for U in P.placed if any(ps -> ps.family === :lattice, P.sets[U])]
+    (isempty(units) || size(H) != (n, n) || !all(isfinite, H)) &&
+        return (sd=0.0, units=Int[], doublings=0)
+    info = -(Matrix{Float64}(H) .+ transpose(Matrix{Float64}(H))) ./ 2
+    E = eigen(Symmetric(info))
+    top = maximum(E.values)
+    top > 0 || return (sd=0.0, units=Int[], doublings=0)
+    keep = E.values .> 1e-8 * top
+    V = E.vectors[:, keep]
+    Cinv = V * Diagonal(1 ./ E.values[keep]) * transpose(V)
+    se = sqrt.(max.(diag(Cinv), 0.0))
+    se[se .<= 0] .= Inf
+    theta = _laplace_extend(laplace, x)
+    npar = length(theta)
+    Ls = _laplace_popchols(theta, spec)
+    dL = _laplace_level_chol_derivatives(theta, spec)
+    positions = [_laplace_level_positions(spec, l) for l in eachindex(spec.levels)]
+    nu = length(units)
+    own = [zeros(npar) for _ in 1:nu]
+    other = [zeros(npar) for _ in 1:nu]
+    alt = [_rule_sets(laplace, U, o.unit_rules[U]; alt=1) for U in units]
+    ok = _laplace_parallel(laplace, 1:nu) do i
+        local U
+        U = units[i]
+        return _placed_unit!(own[i], P, U, theta, Ls, dL, positions, true).ok &&
+            _placed_unit!(other[i], P, U, theta, Ls, dL, positions, true;
+                sets=alt[i]).ok
+    end
+    ok || return (sd=NaN, units=Int[], doublings=0)
+    contribution = zeros(nu, n)
+    for i in 1:nu
+        w = _laplace_unit_weight(laplace, units[i])
+        d = (w / sqrt(2)) .* (own[i][1:n] .- other[i][1:n])
+        contribution[i, :] .= (Cinv * d) ./ se
+    end
+    total = vec(sum(abs2, contribution; dims=1))
+    sd = sqrt(maximum(total))
+    order = sortperm([maximum(abs, contribution[i, :]) for i in 1:nu]; rev=true)
+    carrying = Int[]
+    left = copy(total)
+    for i in order
+        sqrt(maximum(left)) <= bar && break
+        push!(carrying, units[i])
+        left .-= contribution[i, :] .^ 2
+    end
+    carried = total .- left
+    need = 1.0
+    for k in 1:n
+        carried[k] + left[k] > bar^2 || continue
+        room = bar^2 - max(left[k], 0.0)
+        room > 0 || continue
+        need = max(need, log2(carried[k] / room) / 1.4)
+    end
+    return (sd=sd, units=carrying, doublings=isempty(carrying) ? 0 :
+        clamp(ceil(Int, need), 1, 5))
+end
 
 """
     _placed_rough(P, factor)
@@ -1252,11 +1356,12 @@ _placed_rough(P::CTSEMLaplacePlaced, factor::Real) = Int[U for U in P.placed if
 
 Each of `units`' lattice points doubled, at `values`, until its error there is
 within the target or its points are the most a lattice takes
-(`_LATTICE_MAX`); the continuation keeps the new rule (`o.unit_rules`), so
-counts only rise and a unit never switches back. Returns how many were raised.
+(`_LATTICE_MAX`), or with `times` doubled that many times (to the most); the
+continuation keeps the new rule (`o.unit_rules`), so counts only rise and a
+unit never switches back. Returns how many were raised.
 """
 function _placed_raise!(P::CTSEMLaplacePlaced, values::AbstractVector,
-    units::Vector{Int})
+    units::Vector{Int}; times::Integer=0)
     o = P.cont
     laplace = o.laplace
     theta = _laplace_extend(laplace, collect(Float64, values))
@@ -1267,13 +1372,21 @@ function _placed_raise!(P::CTSEMLaplacePlaced, values::AbstractVector,
     row = zeros(length(theta))
     for U in units
         choice = rules[U]
-        while choice.points < _LATTICE_MAX
-            choice = CTSEMRuleChoice(choice.family, choice.nodes, 2 * choice.points)
+        if times > 0
+            points = min(choice.points * 2^Int(times), _LATTICE_MAX)
+            choice = CTSEMRuleChoice(choice.family, choice.nodes, points)
             P.sets[U] = _rule_sets(laplace, U, choice)
             r = _placed_unit!(row, P, U, theta, Ls, nothing, positions, false)
-            r.ok || continue
-            P.se[U] = r.se
-            r.se <= o.draws_se && break
+            r.ok && (P.se[U] = r.se)
+        else
+            while choice.points < _LATTICE_MAX
+                choice = CTSEMRuleChoice(choice.family, choice.nodes, 2 * choice.points)
+                P.sets[U] = _rule_sets(laplace, U, choice)
+                r = _placed_unit!(row, P, U, theta, Ls, nothing, positions, false)
+                r.ok || continue
+                P.se[U] = r.se
+                r.se <= o.draws_se && break
+            end
         end
         rules[U] = choice
     end
@@ -1292,33 +1405,68 @@ rule's error has grown past `_PLACED_ROUGH` times its target (`_placed_rough`),
 and again where it ends with either, since its Newton finish does not consult
 the stop; the drifted rules are placed again there (`_placed_replace!`), the
 rough ones raised (`_placed_raise!`), and the run goes on from there with its
-L-BFGS memory dropped, the objective having changed; at most `replacements`
-times. The result is the last run's, with `replacements` the count and
-`raised` the units raised.
+L-BFGS memory dropped, the objective having changed. Where it ends on a
+Hessian, the slope check (`_placed_slope_check`) reads how far the lattice
+rules' error can move the estimate; the units carrying more than
+`_PLACED_SLOPE_BAR` standard errors have their points raised as many
+doublings as it says, and the run goes on with its memory, the objective
+having moved by less than the rules' error. At most `replacements` times in
+all, the last of them run to its end with no stop. With `hessian`, a curvature
+at `start` (the Laplace fit's), the check runs there first, up to three times,
+so that most units start at the count the estimate needs: checked only where
+each climb ended, w4s and w6 restarted eight times. The result is the last
+run's, with `replacements` the count, `raised` the units raised, and
+`slope_sd` the slope check's last sd (`NaN` where none ran).
 """
 function ctsem_laplace_placed_optimize(P::CTSEMLaplacePlaced, start::AbstractVector;
-    drift::Real=0.5, replacements::Integer=8, kwargs...)
+    drift::Real=0.5, replacements::Integer=8, hessian=nothing, kwargs...)
     x = collect(Float64, start)
     count = 0
     raised = 0
     pairs = get(kwargs, :lbfgs_pairs, nothing)
     rest = Dict{Symbol,Any}(k => v for (k, v) in kwargs if k !== :lbfgs_pairs)
     ratio = Float64(drift)
+    slope = NaN
+    if hessian !== nothing
+        H0 = Matrix{Float64}(hessian)
+        for _ in 1:3
+            ctsem_laplace_placed_evaluate(P, x; gradient=false)
+            check = _placed_slope_check(P, x, H0)
+            slope = check.sd
+            steep = Int[U for U in check.units if
+                any(ps -> ps.family === :lattice && ps.count < _LATTICE_MAX, P.sets[U])]
+            isempty(steep) && break
+            raised += _placed_raise!(P, x, steep; times=check.doublings)
+        end
+    end
     while true
+        last = count >= replacements
         res = ctsem_optimize(P, x; rest..., lbfgs_pairs=pairs,
-            stop=_PlacedStop(P, ratio))
+            stop=last ? nothing : _PlacedStop(P, ratio))
         x = collect(Float64, res.minimizer)
         # The last evaluation need not have been at the point returned.
         ctsem_laplace_placed_evaluate(P, x; gradient=false)
         drifted = !isempty(P.frozen) && ratio > 0 && _placed_drifted(P, ratio)
         rough = _placed_rough(P, _PLACED_ROUGH)
-        if !((drifted || !isempty(rough)) && count < replacements)
-            return merge(res, (replacements=count, raised=raised))
+        steep = Int[]
+        doublings = 0
+        if !drifted && isempty(rough)
+            check = _placed_slope_check(P, x, res.hessian)
+            slope = check.sd
+            doublings = check.doublings
+            steep = Int[U for U in check.units if
+                any(ps -> ps.family === :lattice && ps.count < _LATTICE_MAX, P.sets[U])]
+        end
+        if last || !(drifted || !isempty(rough) || !isempty(steep))
+            return merge(res, (replacements=count, raised=raised, slope_sd=slope))
         end
         drifted && _placed_replace!(P, x, ratio)
         isempty(rough) || (raised += _placed_raise!(P, x, rough))
+        isempty(steep) || (raised += _placed_raise!(P, x, steep; times=doublings))
         count += 1
-        pairs = nothing
+        # Frozen draws placed again change the objective by their draws'
+        # error; a raised rule only by its own, which the pairs outlive.
+        drifted && (pairs = nothing)
     end
 end
 

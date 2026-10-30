@@ -248,8 +248,12 @@ end
 unit's rule, at the screen and in the climb, reads the same points."""
 const _LATTICE_SEED = 20261030
 
-"""The key a lattice rule for block `b` of unit `U` seeds its shifts by."""
-_lattice_key(U::Integer, b::Integer) = (_LATTICE_SEED, Int(U), Int(b))
+"""The key a lattice rule for block `b` of unit `U` seeds its shifts by;
+`alt` names an independent set of shifts for the same rule, which the
+refined fit's slope check reads its gradient's error from
+(`_placed_slope_check`)."""
+_lattice_key(U::Integer, b::Integer, alt::Integer=0) =
+    (_LATTICE_SEED + Int(alt), Int(U), Int(b))
 
 """
     _point_set_error(repsums, nrep)
@@ -311,16 +315,17 @@ end
     _rule_sets(laplace, U, choice)
 
 Unit `U`'s point set per block under `choice`, a lattice block's seeded by
-`_lattice_key(U, b)`.
+`_lattice_key(U, b, alt)`.
 """
-function _rule_sets(laplace::CTSEMLaplaceObjective, U::Integer, choice::CTSEMRuleChoice)
+function _rule_sets(laplace::CTSEMLaplaceObjective, U::Integer, choice::CTSEMRuleChoice;
+    alt::Integer=0)
     blocks = laplace.units.blocks[U]
     sets = Vector{CTSEMPointSet}(undef, length(blocks))
     for (b, block) in enumerate(blocks)
         k = block.size
         sets[b] = _rule_block_product(choice, k) ?
             _point_set_product(k, choice.nodes) :
-            _point_set_lattice(k, choice.points, _lattice_key(U, b))
+            _point_set_lattice(k, choice.points, _lattice_key(U, b, alt))
     end
     return sets
 end
