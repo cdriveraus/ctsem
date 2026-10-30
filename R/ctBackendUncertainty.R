@@ -115,7 +115,7 @@
 
 # The `'batch'` and `'gradbatch'` attributes of a density the engine
 # evaluates, on `engine()$objective`: the fit's own (`.ctBackendLpgFunc()`) or
-# the quadrature hybrid's (`.ctLaplaceContinueLpg()`).
+# the refined fit's placed objective (`.ctLaplacePlacedLpg()`).
 .ctBackendEngineBatches <- function(engine) {
   batch <- function(draws) {
     draws <- as.matrix(draws)

@@ -231,34 +231,3 @@ function _oracle_trace!(trace, laplace, i, x)
         trace, nothing, nothing, so.relin)
     return _DO._laplace_finite(ll)
 end
-
-"""The continuation's member Hessian: subject `i`'s log likelihood at
-`shifted`, its gradient and that gradient's derivatives along the positions
-`active`, a chunk of `N` a pass at the seed's dual."""
-function _oracle_member_hessian(laplace, i, shifted, active, N)
-    npar = length(shifted)
-    S = ForwardDiff.Dual{_DO._LaplaceSeedInner,Float64,N}
-    subject = laplace.objective.subject_objectives[i]
-    aws = _DO._laplace_workspace!(laplace, S, npar)
-    na = length(active)
-    Hs = zeros(na, na)
-    g = zeros(npar)
-    loglik = NaN
-    gd = zeros(S, npar)
-    for lo in 0:N:(na - 1)
-        ncol = min(N, na - lo)
-        x = S[S(shifted[t], zero(ForwardDiff.Partials{N,Float64})) for t in 1:npar]
-        for c in 1:ncol
-            t = active[lo + c]
-            x[t] = S(shifted[t], ForwardDiff.Partials{N,Float64}(
-                ntuple(q -> q == c ? 1.0 : 0.0, Val(N))))
-        end
-        ll = ForwardDiff.value(_DO._laplace_subject_value_gradient!(gd, subject, aws, x,
-            nothing, _DO._HYBRID_FULL))
-        lo == 0 && (loglik = ll; g .= ForwardDiff.value.(gd))
-        for c in 1:ncol, r in 1:na
-            Hs[r, lo + c] = ForwardDiff.partials(gd[active[r]], c)
-        end
-    end
-    return (loglik=loglik, g=g, Hs=Hs)
-end

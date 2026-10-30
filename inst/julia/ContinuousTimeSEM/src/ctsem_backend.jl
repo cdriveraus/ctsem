@@ -1495,12 +1495,12 @@ end
 
 What a probe's trial values are compared against: the objective's value at
 `minimizer`, which for most objectives is the `value` the optimiser ended
-with. A route whose probe values are not the optimiser's objective -- the
-Laplace continuation, whose probes read the hybrid with its rules placed at
-the probed point where the optimiser climbed the frozen rules -- gives the
-same reading at the estimate, or a gain of the placement difference is
-reported as an overshoot (0.0245 nats on the bench's anomS2, and a fit
-cycling through escapes at one point).
+with. A route whose probe values are not the optimiser's objective gives the
+same reading at the estimate, or the difference between the two is reported
+as an overshoot: the rounds' continuation, removed 2026-10-30, read its
+probes with its rules placed at the probed point where the optimiser climbed
+the frozen rules, and reported 0.0245 nats on the bench's anomS2 and a fit
+cycling through escapes at one point.
 """
 _ctsem_probe_baseline(objective, minimizer, value) = value
 
@@ -1675,9 +1675,8 @@ the optimiser became ctsem's own (optimiser.jl) nothing called the wrapped
 search, and it carried an unused `BackTracking` until 2026-09-25.
 
 `NaN`, no prediction, after a step taken on no curvature at all: the first of
-a run with no inverse to start from and coordinates not scaled by the
-curvature (`lbfgs_scaled`, which the continuation sets, its basis being
-whitened): its `g'p` is the gradient's, which says nothing of what is left.
+a run with no pairs or inverse to start from: its `g'p` is the gradient's,
+which says nothing of what is left.
 Read as the gain left, such a first step backed off to almost nothing along a
 stiff direction ended the affect pilot's 697-parameter fit after one
 iteration as converged, at |g| 0.47 (predicted gain 1e-17). Stricter rules --
@@ -2789,7 +2788,6 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
     x_tol::Real=0.0, verbose::Bool=false, gradient_method=:adjoint,
     lbfgs_memory::Union{Nothing,Integer}=nothing,
     lbfgs_diagonal::Bool=true, lbfgs_nonmonotone::Real=0.0,
-    lbfgs_scaled::Bool=false,
     lbfgs_gll::Integer=0, sgd::Bool=false, sgd_maxiter::Integer=2000, sgd_progress::Real=1e-3,
     saem::Bool=false, saem_maxiter::Integer=10000, saem_seed::Integer=1,
     saem_proposal::AbstractString="rw",
@@ -3210,7 +3208,6 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
     inverse = _ctsem_lbfgs_inverse(lbfgs_inverse, length(start_values))
     result = _ctsem_lbfgs(fg!, lbfgs_start; memory=lbfgs_m, pairs=pairs0,
         diagonal=lbfgs_diagonal, nonmonotone=lbfgs_nonmonotone, gll=Int(lbfgs_gll),
-        scaled=lbfgs_scaled,
         metric=_ctsem_metric(precondition, length(start_values)),
         inverse=inverse, structured=structured,
         initial_alpha=Float64(initial_alpha),
@@ -3411,7 +3408,7 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
                 result.iterations + spent.steps[],
                 Int(maxiter) - result.iterations - spent.steps[];
                 memory=lbfgs_m, diagonal=lbfgs_diagonal,
-                nonmonotone=lbfgs_nonmonotone, gll=Int(lbfgs_gll), scaled=lbfgs_scaled,
+                nonmonotone=lbfgs_nonmonotone, gll=Int(lbfgs_gll),
                 metric=_ctsem_metric(precondition, length(start_values)),
                 inverse=inverse, structured=structured,
                 initial_alpha=Float64(initial_alpha), g_tol=g_tol, f_tol=f_tol,
@@ -3520,7 +3517,7 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
             result.iterations + spent.steps[],
             Int(maxiter) - result.iterations - spent.steps[];
             memory=lbfgs_m, diagonal=lbfgs_diagonal,
-            nonmonotone=lbfgs_nonmonotone, gll=Int(lbfgs_gll), scaled=lbfgs_scaled,
+            nonmonotone=lbfgs_nonmonotone, gll=Int(lbfgs_gll),
             metric=_ctsem_metric(precondition, length(start_values)),
             inverse=inverse, structured=structured,
             initial_alpha=Float64(initial_alpha), g_tol=g_tol, f_tol=f_tol,

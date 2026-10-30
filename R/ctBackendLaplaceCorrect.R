@@ -520,57 +520,6 @@
     " See fit$laplace$correction$check.")
 }
 
-# A log-posterior function on the continuation's hybrid, in the `lpgFunc`
-# contract `.ctBackendUncertainty()` takes, with the engine, batch and
-# gradient-batch attributes `.ctBackendLpgFunc()`'s density carries, so that
-# 'checked' runs DAIS and its Stein check here too and draws cross the bridge
-# a batch at a time. Every point is evaluated with the flagged units' rules
-# placed there (`ctsem_continuation_density`): read where they were placed at
-# the estimate, the rules said less the further a draw moved, and gD1's draws
-# put a population sd 2.9 posterior sds high.
-# `objective`, where given, is the density instead: the placed objective
-# (`.ctLaplacePlacedRefine()`), whose evaluation places the rules itself;
-# `unitsum = FALSE` keeps a coreset from standing in for its units.
-.ctLaplaceContinueLpg <- function(module, cont, objective = NULL, unitsum = TRUE) {
-  engine <- local({
-    built <- NULL
-    function() {
-      if (is.null(built)) built <<- list(module = module,
-        objective = .ctJuliaOr(objective, module$ctsem_continuation_density(cont)))
-      built
-    }
-  })
-  batches <- .ctBackendEngineBatches(engine)
-  function(fit, gradient = TRUE) {
-    wantgrad <- isTRUE(gradient)
-    fn <- function(parm) {
-      at <- matrix(as.numeric(parm), nrow = 1L)
-      if (!wantgrad) return(batches$batch(at))
-      result <- batches$gradbatch(at)
-      value <- result$value[1L]
-      grad <- as.numeric(result$gradient)
-      # `.ctBackendLpgFunc()`'s guard: a point the hybrid cannot use is a large
-      # finite penalty with no gradient.
-      if (!is.finite(value) || value <= -1e100 || any(!is.finite(grad))) {
-        value <- -1e100
-        grad <- rep(0, length(parm))
-      }
-      attributes(value) <- list(gradient = grad)
-      value
-    }
-    # A sum over the units too -- the flagged units' rules, the rest's Laplace
-    # terms -- which a coreset of them may stand in for (`.ctCoresetLpg()`),
-    # on the density's own terms: every draw a placement of every flagged
-    # unit's rule was most of 'checked''s time here (anomS1: 804 s against
-    # 224 with the rules read where they were placed).
-    attr(fn, "unitsum") <- isTRUE(unitsum)
-    attr(fn, "engine") <- engine
-    attr(fn, "batch") <- batches$batch
-    attr(fn, "gradbatch") <- batches$gradbatch
-    fn
-  }
-}
-
 # The log posterior the quadrature correction would report at `values`, from
 # its own screen (`ctsem_laplace_continuation`): quadrature for every unit no
 # wider than `maxdim` random effects, the Laplace term for the rest, plus the

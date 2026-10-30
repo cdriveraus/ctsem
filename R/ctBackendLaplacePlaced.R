@@ -192,7 +192,7 @@
       finishsamples = finishsamples, cores = chunks,
       control = .ctJuliaOr(uncertaintycontrol, .ctJuliaOr(settings$control, list())),
       verbose = verbose,
-      lpg = .ctLaplaceContinueLpg(module, cont, objective = placed, unitsum = FALSE))
+      lpg = .ctLaplacePlacedLpg(module, placed))
     record$draws <- "redrawn"
     fit$uncertainty$details$laplace_correction <- list(
       draws = paste0("draws about the refined estimate, by '", method,
@@ -210,4 +210,41 @@
   }
   fit$laplace$correction <- accounted(record)
   fit
+}
+
+# A log-posterior function on the placed objective `placed`, in the `lpgFunc`
+# contract `.ctBackendUncertainty()` takes, with the engine, batch and
+# gradient-batch attributes `.ctBackendLpgFunc()`'s density carries, so that
+# 'checked' runs DAIS and its Stein check here too and draws cross the bridge
+# a batch at a time. Every point is evaluated with the flagged units' rules
+# placed there: read where they were placed at the estimate, the rules said
+# less the further a draw moved, and gD1's draws put a population sd 2.9
+# posterior sds high. It carries no 'unitsum' mark, so no coreset stands in
+# for its units (`.ctCoresetLpg()`): the engine's coresets are the Laplace
+# objective's.
+.ctLaplacePlacedLpg <- function(module, placed) {
+  engine <- function() list(module = module, objective = placed)
+  batches <- .ctBackendEngineBatches(engine)
+  function(fit, gradient = TRUE) {
+    wantgrad <- isTRUE(gradient)
+    fn <- function(parm) {
+      at <- matrix(as.numeric(parm), nrow = 1L)
+      if (!wantgrad) return(batches$batch(at))
+      result <- batches$gradbatch(at)
+      value <- result$value[1L]
+      grad <- as.numeric(result$gradient)
+      # `.ctBackendLpgFunc()`'s guard: a point the objective cannot use is a
+      # large finite penalty with no gradient.
+      if (!is.finite(value) || value <= -1e100 || any(!is.finite(grad))) {
+        value <- -1e100
+        grad <- rep(0, length(parm))
+      }
+      attributes(value) <- list(gradient = grad)
+      value
+    }
+    attr(fn, "engine") <- engine
+    attr(fn, "batch") <- batches$batch
+    attr(fn, "gradbatch") <- batches$gradbatch
+    fn
+  }
 }

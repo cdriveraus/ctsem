@@ -3575,7 +3575,7 @@ loading means of zero, at each person's stationary origin between two maxima
 
 A solve that `ctsem_set_warm_start!` started from a retained mode is not
 probed. Those warm starts are the differencing schemes' (the Hessian's
-columns, the continuation's Hessian): their base point was solved from the
+columns): their base point was solved from the
 origin and probed, and every differenced point belongs in the basin the base
 chose, since the derivative there is that mode's. A probe can only cost time
 or, switching basin between a column's two points, difference across the
@@ -6346,13 +6346,9 @@ end
 # price is that `L`'s own derivative reappears as an explicit set of trace
 # terms, handled at the end of the assembly.
 
-# Distinct tags, so the two seeds are independent nilpotents rather than one
-# nested perturbation: `eps1 * eps2` is then the mixed derivative and each
-# `eps^2` still vanishes. The inner seed is the first-order sweeps'; the pair
-# serves `_continuation_level_chol_second_derivatives`, which never runs a
-# filter pass.
+# The seed's tag: the tests' dual oracles seed the first-order sweeps with it
+# (test/dual_oracles.jl), where production takes them by hand.
 struct _LaplaceSeedInner end
-struct _LaplaceSeedOuter end
 
 # Their order among other tags, which ForwardDiff asks whenever duals of two
 # tags meet (`a ≺ b`: `Dual{b}` goes outside `Dual{a}`). A bare tag type has
@@ -6361,26 +6357,14 @@ struct _LaplaceSeedOuter end
 # in the sweep that gives a Laplace fit's per-unit scores, and the seeds
 # inside the forward Jacobian that is that sweep's fallback. The seeds go
 # outside an ordinary tag (they perturb a point that tag's differentiation is
-# at), inside the nested one (which differentiates within whatever reaches it),
-# and the outer seed outside the inner, as `_laplace_seed_pair` builds them.
-const _LaplaceSeedTag = Union{Type{_LaplaceSeedInner},Type{_LaplaceSeedOuter}}
-ForwardDiff.:≺(::Type{_LaplaceSeedInner}, ::Type{_LaplaceSeedOuter}) = true
-ForwardDiff.:≺(::Type{_LaplaceSeedOuter}, ::Type{_LaplaceSeedInner}) = false
+# at), inside the nested one (which differentiates within whatever reaches it).
+const _LaplaceSeedTag = Type{_LaplaceSeedInner}
 ForwardDiff.:≺(::Type{<:ForwardDiff.Tag}, ::_LaplaceSeedTag) = true
 ForwardDiff.:≺(::_LaplaceSeedTag, ::Type{<:ForwardDiff.Tag}) = false
 ForwardDiff.:≺(::Type{ForwardDiff.Tag{CTSEMNestedTag,V}}, ::_LaplaceSeedTag) where {V} =
     false
 ForwardDiff.:≺(::_LaplaceSeedTag, ::Type{ForwardDiff.Tag{CTSEMNestedTag,V}}) where {V} =
     true
-
-"""The two seeds `(eps1, eps2)`, one per tag: `x + d1 * eps1 + d2 * eps2`
-carries the mixed second derivative along `d1` and `d2` as the coefficient of
-`eps1 * eps2`."""
-@inline _laplace_seed_pair() = (
-    ForwardDiff.Dual{_LaplaceSeedOuter}(ForwardDiff.Dual{_LaplaceSeedInner}(0.0, 1.0),
-        ForwardDiff.Dual{_LaplaceSeedInner}(0.0, 0.0)),
-    ForwardDiff.Dual{_LaplaceSeedOuter}(ForwardDiff.Dual{_LaplaceSeedInner}(0.0, 0.0),
-        ForwardDiff.Dual{_LaplaceSeedInner}(1.0, 0.0)))
 
 """
     _laplace_run_members(body, laplace, members)
@@ -7379,8 +7363,8 @@ population parameters through `L(theta) u` at fixed `u`: for each level and
 each of its parameters (`positions`, `dL` in that order),
 `sum_p grad[re_index[p]] (dL u)_p`, `grad` being the member's gradient in its
 shifted parameters and `offsets` its places in `u`. The one statement of that
-chain rule: at the mode (`_laplace_floored_unit_gradient!`), at a quadrature
-node (`_continuation_member!`) and in the continuation's exact Hessian.
+chain rule: at the mode (`_laplace_floored_unit_gradient!`) and at a
+quadrature node (`_continuation_member!`).
 """
 function _laplace_chol_chain!(out::AbstractVector, grad::AbstractVector,
     spec::CTSEMLaplaceSpec, dL, positions, u::AbstractVector, offsets)

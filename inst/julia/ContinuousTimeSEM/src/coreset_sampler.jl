@@ -244,7 +244,7 @@ The importance sampler's density with a coreset behind it: the training rows
 (`ctsem_is_coreset`).
 """
 mutable struct CTSEMISCoreset
-    laplace::_CoresetObjective
+    laplace::CTSEMLaplaceObjective
     N::Int
     rows::_ISRows
     # The coreset in force: units, weights, intercept, and the expected round
@@ -304,8 +304,8 @@ end
 """
     ctsem_is_coreset(laplace; top=:run)
 
-A coreset density over the Laplace objective `laplace`, or the quadrature
-hybrid's density (`ctsem_continuation_density`), for an importance sampler: `ctsem_is_coreset_batch!` and `ctsem_is_coreset_gradbatch!` are its
+A coreset density over the Laplace objective `laplace`, for an importance
+sampler: `ctsem_is_coreset_batch!` and `ctsem_is_coreset_gradbatch!` are its
 value and gradient batches, `ctsem_is_coreset_fullgrad!` the full density's
 gradient, `ctsem_is_coreset_finalize!` the end check, and
 `ctsem_is_coreset_record` what it did. `top` says how the caller's weights are
@@ -313,7 +313,7 @@ normalised, which is what a draw's relevance is measured against
 (`_is_top`): over the whole run (`:run`, the importance sampler) or within
 each batch (`:batch`, DAIS).
 """
-function ctsem_is_coreset(laplace::_CoresetObjective; top::Symbol=:run)
+function ctsem_is_coreset(laplace::CTSEMLaplaceObjective; top::Symbol=:run)
     top in (:run, :batch) || throw(ArgumentError("top must be :run or :batch, not :$top"))
     N = _coreset_units(laplace)
     secs = Dict(k => 0.0 for k in (:full, :coreset, :gradient_full, :gradient_coreset, :choose))
@@ -328,10 +328,8 @@ function ctsem_is_coreset(laplace::_CoresetObjective; top::Symbol=:run)
 end
 
 """Whether a coreset can stand in for `objective` (`ctsem_is_coreset`): the
-samplers' Laplace objectives (`_smc_coreset_capable`), and the hybrid's
-density, each of two units or more."""
+samplers' Laplace objectives of two units or more (`_smc_coreset_capable`)."""
 _is_coreset_capable(objective) = _smc_coreset_capable(objective)
-_is_coreset_capable(d::CTSEMContinuationDensity) = _coreset_units(d) >= 2
 
 """The coresets chosen, of the choices tried (`cs.nchoose`, a row each of the
 trace; code 1 is a choice made)."""

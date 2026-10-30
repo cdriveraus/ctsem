@@ -377,7 +377,7 @@ function _ctsem_lbfgs(fg!, x0::AbstractVector; memory::Integer=20,
         callback=nothing, directional=nothing, batch=nothing,
         c1::Real=1e-4, maxbacktrack::Integer=40, iteration0::Integer=0,
         diagonal::Bool=false, nonmonotone::Real=0.0, gll::Integer=0,
-        inverse::Union{Nothing,Matrix{Float64}}=nothing, scaled::Bool=false,
+        inverse::Union{Nothing,Matrix{Float64}}=nothing,
         structured=nothing, coreset=nothing,
         jump::Union{Nothing,CTSEMJump}=nothing, local_curvature=nothing)
     n = length(x0)
@@ -469,10 +469,10 @@ function _ctsem_lbfgs(fg!, x0::AbstractVector; memory::Integer=20,
         took_structured = sdir !== nothing
         s = took_structured ? sdir : -_ctsem_lbfgs_hmul(M, G, h0, dinv, Dinv)
         # Whether `s` comes from a model of the curvature -- the structured
-        # model, pairs, an inverse the caller holds, or coordinates the caller
-        # has scaled by it (`scaled`) -- rather than the gradient alone. Only
-        # such a step predicts anything of what is left to gain.
-        informed = took_structured || scaled || !isempty(M.S) || Dinv !== nothing
+        # model, pairs, or an inverse the caller holds -- rather than the
+        # gradient alone. Only such a step predicts anything of what is left to
+        # gain.
+        informed = took_structured || !isempty(M.S) || Dinv !== nothing
         # With no curvature pairs the step is the metric's alone, and at a start
         # where the transforms are flat the metric says a raw unit is worth
         # almost nothing -- so 0.1 in model units is an enormous raw step. One
@@ -2951,12 +2951,11 @@ end
 The Krylov model of the Hessian at `values` (`CTSEMKrylov`), of the MAXIMISED
 objective, from one preconditioned Lanczos run started at the gradient there:
 up to `products` Hessian-vector products, by default a sixth of what the
-exact Hessian would cost (`_ctsem_krylov_cost`) and at least ten. For a caller
-that needs a curvature to whiten or bound its steps by rather than the exact
-Hessian, as the quadratic correction's rounds do at a jump
-(`.ctLaplaceContinue()`), where the Laplace objective has no Hessian and the
-continuation's costs `2 npar` gradients. A 1x1 zero where the objective has no
-products or scores there (`_ctsem_hvp_setup`).
+exact Hessian would cost (`_ctsem_krylov_cost`) and at least ten: the Krylov
+finish's model at one point, for a caller that needs a curvature to whiten or
+bound its steps by where the exact Hessian is dear, and for the tests of that
+model. A 1x1 zero where the objective has no products or scores there
+(`_ctsem_hvp_setup`).
 """
 function ctsem_krylov_hessian(objective, values::AbstractVector;
         products::Integer=0, rtol::Real=0.01)

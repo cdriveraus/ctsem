@@ -595,12 +595,9 @@ function _tan_block!(acc::TanAcc{W}, Hb::Matrix{Float64}, sw::TanSweep{W},
     return _TAN_OK
 end
 
-# `subjects`, where given: those subjects' log likelihood alone, each at weight
-# one and without the prior -- a Laplace member's at its shifted values, for
-# the continuation (`_tan_laplace_member_hessian!`).
 function _tan_hessian_columns!(H::Matrix{Float64}, objective::CTSEMObjective,
     x::Vector{Float64}, cols::Vector{Int}, progress, hybrid_mode::Int,
-    ::Val{W}; subjects::Union{Nothing,Vector{Int}}=nothing)::Bool where {W}
+    ::Val{W})::Bool where {W}
     sp = objective.params
     npar = length(x)
     # The layer at the Hessian's own dual, its lanes the chunk's columns; a
@@ -608,20 +605,18 @@ function _tan_hessian_columns!(H::Matrix{Float64}, objective::CTSEMObjective,
     DW = _ctsem_hessian_dual(objective)
     ForwardDiff.npartials(DW) == W || return false
     D1 = ForwardDiff.Dual{_tan_tag(DW),Float64,1}
-    restrict = subjects
     subjects = objective.subject_objectives
     # No subjects, no likelihood: the prior's columns.
-    restrict === nothing && isempty(subjects) &&
-        return _tan_prior_columns!(H, objective, x, cols, DW)
+    isempty(subjects) && return _tan_prior_columns!(H, objective, x, cols, DW)
     # Without TI predictors every subject's layer is the same, and any
     # subject's predictor row gives it; with them each subject has its own,
     # and where cells change by row each subject's cells are its own too.
     rows = _tan_rows_model(sp)
     shared = !rows && isempty(sp.ti_parameter_indices) && isempty(sp.ti_tail)
     nsub = length(subjects)
-    nworkers = restrict === nothing ? _ctsem_nchunks(nsub) : 1
-    nblocks = restrict === nothing ? _ctsem_nblocks(nsub, nworkers) : 1
-    ranges = restrict === nothing ? _ctsem_chunk_ranges(nsub, nblocks) : [restrict]
+    nworkers = _ctsem_nchunks(nsub)
+    nblocks = _ctsem_nblocks(nsub, nworkers)
+    ranges = _ctsem_chunk_ranges(nsub, nblocks)
     aws0 = CTSEMAdjointWorkspace(Float64, sp, npar, 0)
     awsW = CTSEMAdjointWorkspace(DW, sp, npar, 0)
     m0 = _tan_layer_mats(aws0, sp, x, subjects[first(ranges[1])].tipreds)
@@ -700,7 +695,7 @@ function _tan_hessian_columns!(H::Matrix{Float64}, objective::CTSEMObjective,
             sw = _tan_sweep_scratch(n, m, ntd, nh, Val(W), na, length(dyn))
             status[b] = _tan_block!(accs[b], Hbs[b], sw, mod,
                 layers === nothing ? nothing : layers[wk], objective, ranges[b], xw, nl,
-                restrict === nothing)
+                true)
             return nothing
         end
         any(==(_TAN_REFUSED), status) && return false
@@ -725,12 +720,10 @@ function _tan_hessian_columns!(H::Matrix{Float64}, objective::CTSEMObjective,
                 Hc .+= view(Hbs[b], :, 1:nl)
             end
         end
-        if restrict === nothing
-            gp = zeros(DW, npar)
-            _ctsem_log_prior_gradient!(gp, objective, xw)
-            @inbounds for w in 1:nl, i in 1:npar
-                Hc[i, w] += ForwardDiff.partials(gp[i], w)
-            end
+        gp = zeros(DW, npar)
+        _ctsem_log_prior_gradient!(gp, objective, xw)
+        @inbounds for w in 1:nl, i in 1:npar
+            Hc[i, w] += ForwardDiff.partials(gp[i], w)
         end
         for (w, p) in enumerate(chunk)
             # The hybrid's factor's cotangent, straight onto its raw positions

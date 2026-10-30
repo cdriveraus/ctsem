@@ -43,27 +43,6 @@ test_that("the Krylov model is the Hessian once its space is the whole space", {
   expect_equal(Hk, matrix(as.numeric(exact), npar, npar), tolerance = 1e-3)
 })
 
-test_that("at a jump, the continuation's Krylov model is its Hessian on the whole space", {
-  skip_without_julia()
-  fit <- .krylov_fit()
-  est <- as.numeric(fit$estimate$raw)
-  npar <- length(est)
-  module <- ctsem:::.ctJuliaModule(fit$model_spec$project)
-  # A unit put on draws as one whose term jumped would be
-  # (`.ctLaplaceContinue()`), so the products go through both parts.
-  cont <- do.call(module$ctsem_laplace_continuation,
-    c(list(ctsem:::.ctJuliaObjective(fit, hybrid = TRUE),
-      ctsem:::.ctJuliaNumericVector(est)),
-      ctsem:::.ctLaplaceContinuationArgs(ctsem:::.ctLaplaceContinueDefaults,
-        force = 1L)))
-  model <- ctsem:::.ctJuliaCall("ContinuousTimeSEM.ctsem_krylov_hessian", cont,
-    est, products = npar, rtol = -Inf)
-  exact <- ctsem:::.ctJuliaCall(
-    "ContinuousTimeSEM.ctsem_laplace_continuation_hessian", cont, est)
-  expect_equal(matrix(as.numeric(model), npar, npar),
-    matrix(as.numeric(exact), npar, npar), tolerance = 1e-3)
-})
-
 test_that("the finish on the Krylov model reaches the chord's maximum for fewer Hessians", {
   skip_without_julia()
   fit <- .krylov_fit()

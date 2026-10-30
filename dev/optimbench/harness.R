@@ -28,10 +28,8 @@
 #      and the post-fit stages recorded by thin wrappers in the namespace;
 #   5. the end point re-scored on a freshly built objective (cold inner modes);
 #      for Laplace cells the 5-node quadrature there (ctLaplaceCheck) and the
-#      exact reference where the cell's units allow one (BENCH_REF); where
-#      the quadrature continuation reported its own Hessian, that Hessian
-#      against cheaper ones (5b); and one overshoot probe at the end point,
-#      timed (5c);
+#      exact reference where the cell's units allow one (BENCH_REF); and one
+#      overshoot probe at the end point, timed (5c);
 #   6. one .rds per cell in <outdir>, with a one-row data frame `row` of
 #      scalars for summarise.R and the full record beside it.
 #
@@ -248,7 +246,7 @@ if (isTRUE(V$control_only)) {
 # stage that did not run.
 REC <- new.env()
 REC$stages <- list(); REC$runs <- list(); REC$hessians <- list(); REC$post <- list()
-REC$cont <- NULL; REC$continue <- NULL
+REC$continue <- NULL
 REC$current <- 0L
 wrap <- function(name, factory) {
   if (!exists(name, envir = ns, inherits = FALSE)) return(FALSE)
@@ -276,7 +274,7 @@ RESULT_KEYS <- c("iterations", "f_calls", "g_calls", "maximum_loglik", "converge
   "newton_subset_hessians", "batch_sizes", "batch_iterations", "stall_escapes",
   "stall_triggers", "gap_tol", "linesearch", "chunks", "overshoot_gain",
   "stopped_by_stall", "stall_gain", "stop_reason", "jump_units",
-  "continuation_flagged")
+  "placed_units", "frozen_units")
 rec$instrumented <- c(
   .ctJuliaOptimise = wrap(".ctJuliaOptimise", function(orig) function(...) {
     a <- list(...)
@@ -363,12 +361,11 @@ rec$instrumented <- c(
     REC$post$certification <- (REC$post$certification %||% 0) + .now() - t0
     r
   }),
-  # The quadrature continuation replaces the fit's uncertainty with the Hessian
-  # of its own objective. What it replaced is kept here -- the Laplace Hessian
-  # at the Laplace optimum and the standard errors from it -- so section 5b can
-  # say whether the replacement changed the standard errors.
-  # Timed too: it is the default correction since juliaFit 55caeeb7, and the
-  # fit calls it directly rather than through .ctLaplaceAutoCorrect.
+  # The random-effects check, or the refined fit (`intoverpop =
+  # 'quadrature'`), which replaces the fit's uncertainty with the Hessian of
+  # its own objective. What it replaced is kept in the record
+  # (`continue_before`) -- the Laplace Hessian at the Laplace optimum and the
+  # standard errors from it. Timed too.
   .ctLaplaceContinue = wrap(".ctLaplaceContinue", function(orig) function(fit, ...) {
     REC$continue <- list(hessian = fit$uncertainty$hessian,
       evaluated_at = as.numeric(fit$uncertainty$evaluated_at %||% NA_real_),
@@ -376,13 +373,6 @@ rec$instrumented <- c(
     t0 <- .now(); r <- orig(fit, ...)
     REC$post$laplace_correct <- (REC$post$laplace_correct %||% 0) + .now() - t0
     r
-  }),
-  # Called only when the continuation's own Hessian becomes the fit's; its
-  # `cont` is the continuation, placed at the final estimate, which 5b uses to
-  # time that Hessian and its cheaper alternatives.
-  .ctLaplaceContinueLpg = wrap(".ctLaplaceContinueLpg", function(orig) function(module, cont) {
-    REC$cont <- cont
-    orig(module, cont)
   })
 )
 
@@ -411,7 +401,7 @@ if (WARM && isTRUE(V$fit)) {
   }, error = function(e) { setTimeLimit(); list(result = conditionMessage(e)) })
   rec$warm <- c(list(secs = .now() - t0), w)
   REC$stages <- list(); REC$runs <- list(); REC$hessians <- list(); REC$post <- list()
-  REC$cont <- NULL; REC$continue <- NULL
+  REC$continue <- NULL
   .stamp(sprintf("WARM %.1fs %s", rec$warm$secs, substr(w$result, 1, 120)))
   # A warm-up that ran out of time says the fit will too, and its Julia may
   # still be computing with nobody to answer: stop it, as a timed-out fit is.
@@ -615,93 +605,6 @@ if (DOREF && !is.null(est) && length(est) == npar && all(is.finite(est))) {
 }
 rec$refs <- refs
 
-# ---- 5b. the continuation's Hessian, by each scheme --------------------------------
-# Only where the quadrature continuation reached its fixed point and its own
-# Hessian became the fit's. The continuation's Hessian at the estimate by each
-# scheme the build has -- `exact` (the flagged units by the Louis identity,
-# the default since the quadhess job; NA on a build without it), `forward`
-# (npar + 1 hybrid gradients) and `central` (2 npar) -- then the Laplace
-# Hessian at the continuation's estimate (2 npar Laplace gradients) and the
-# one the fit already held at the Laplace optimum (free). Standard errors from
-# each by one rule -- the inverse on the directions whose curvature is above
-# 1e-8 of the largest -- and each one's largest relative difference from the
-# central scheme's; `reported` checks the fit's standard errors against its
-# own Hessian. Timed here, outside the fit, one after another, cheapest
-# first, each on its own so that one running out of time keeps the others.
-bench_se <- function(H) {
-  if (!is.matrix(H) || any(!is.finite(H))) return(NULL)
-  I <- -(H + t(H)) / 2
-  e <- eigen(I, symmetric = TRUE)
-  keep <- e$values > 1e-8 * max(e$values)
-  if (!any(keep)) return(NULL)
-  V <- e$vectors[, keep, drop = FALSE]
-  list(se = sqrt(pmax(0, rowSums(sweep(V^2, 2, e$values[keep], "/")))),
-    negative = sum(e$values < -1e-8 * max(abs(e$values))), kept = sum(keep))
-}
-se_rel <- function(a, b) {
-  if (is.null(a) || is.null(b) || length(a$se) != length(b$se)) return(NA_real_)
-  ok <- b$se > 0 & is.finite(a$se) & is.finite(b$se)
-  if (!any(ok)) NA_real_ else max(abs(a$se[ok] / b$se[ok] - 1))
-}
-cse <- list()
-Hq <- if (!is.null(fit)) fit$laplace$correction$hessian else NULL
-if (!is.null(REC$cont) && is.matrix(Hq) && !is.null(REC$continue)) {
-  cse <- tryCatch({
-    setTimeLimit(elapsed = REFCAP, transient = TRUE)
-    x <- as.numeric(fit$estimate$raw)
-    # Not `errors`: `cse$error` below would partial-match it.
-    out <- list(delta_se = suppressWarnings(as.numeric(fit$laplace$correction$delta_se)),
-      scheme_failures = list())
-    scheme <- function(name) {
-      t0 <- .now()
-      H <- tryCatch(matrix(as.numeric(jget(jcall("ctsem_laplace_continuation_hessian",
-        REC$cont, jvec(x), scheme = name))), npar, npar),
-        error = function(e) { out$scheme_failures[[name]] <<- conditionMessage(e); NULL })
-      # A build without `scheme = "forward"` has the bench's own copy of it.
-      if (is.null(H) && name == "forward") H <- tryCatch(matrix(as.numeric(jget(jcall(
-        "bench_continuation_hessian_forward", REC$cont, jvec(x)))), npar, npar),
-        error = function(e) NULL)
-      out[[paste0("secs_", name)]] <<- if (is.null(H)) NA_real_ else .now() - t0
-      H
-    }
-    He <- scheme("exact")
-    out$exact_repro <- if (is.matrix(He)) max(abs(He - Hq)) else NA_real_
-    Hf <- scheme("forward")
-    Hc <- scheme("central")
-    t0 <- .now()
-    Hlx <- tryCatch(ctsem:::.ctBackendHessianAt(fit$model_spec, x), error = function(e) NULL)
-    out$secs_laplace_x <- .now() - t0
-    Hl0 <- REC$continue$hessian
-    sc <- bench_se(Hc)
-    sq <- bench_se(Hq)
-    out$se <- list(central = sc$se, exact = bench_se(He)$se, forward = bench_se(Hf)$se,
-      quadrature = sq$se, laplace_x = bench_se(Hlx)$se, laplace_est = bench_se(Hl0)$se,
-      reported = as.numeric(fit$estimate$se %||% NA_real_),
-      reported_before = REC$continue$se)
-    out$negative <- c(central = sc$negative %||% NA, exact = bench_se(He)$negative %||% NA,
-      forward = bench_se(Hf)$negative %||% NA, quadrature = sq$negative %||% NA,
-      laplace_x = bench_se(Hlx)$negative %||% NA, laplace_est = bench_se(Hl0)$negative %||% NA)
-    out$rel <- c(exact = se_rel(bench_se(He), sc), forward = se_rel(bench_se(Hf), sc),
-      laplace_x = se_rel(bench_se(Hlx), sc), laplace_est = se_rel(bench_se(Hl0), sc),
-      reported = se_rel(list(se = out$se$reported), sq))
-    out$hessians <- list(quadrature = Hq, exact = He, forward = Hf, central = Hc,
-      laplace_x = Hlx, laplace_est = Hl0)
-    out
-  }, error = function(e) list(error = conditionMessage(e)))
-  setTimeLimit()
-  .stamp(sprintf(paste0("CONTINUATION HESSIAN exact %.1fs forward %.1fs central %.1fs ",
-    "laplace-at-x %.1fs; max rel se diff from central: exact %s forward %s laplace_x %s ",
-    "laplace_est %s %s"),
-    cse$secs_exact %||% NA, cse$secs_forward %||% NA, cse$secs_central %||% NA,
-    cse$secs_laplace_x %||% NA,
-    format(signif(cse$rel[["exact"]] %||% NA, 3)), format(signif(cse$rel[["forward"]] %||% NA, 3)),
-    format(signif(cse$rel[["laplace_x"]] %||% NA, 3)),
-    format(signif(cse$rel[["laplace_est"]] %||% NA, 3)),
-    if (!is.null(cse$error)) paste("ERROR", cse$error) else ""))
-}
-rec$continuation_se <- cse
-REC$cont <- NULL
-
 # ---- 5c. the overshoot probe's cost at the end point ------------------------------
 # What one run's verdict probe costs here: `ctsem_pullback` runs the same probe
 # (`_ctsem_overshot`, the default mode) at the estimate, plus one evaluation
@@ -818,13 +721,6 @@ rec$row <- data.frame(
   lapcorr_continuation = .chr1(corr$continuation),
   lapcorr_secs = .num1(corr$seconds["total"]), lapcorr_gradients = .num1(corr$evaluations["gradients"]),
   cont_hessian = is.matrix(corr$hessian),
-  cont_delta_se_max = .fin(suppressWarnings(max(abs(as.numeric(cse$delta_se)), na.rm = TRUE))),
-  hess_secs_central = .num1(cse$secs_central %||% NA), hess_secs_forward = .num1(cse$secs_forward %||% NA),
-  hess_secs_exact = .num1(cse$secs_exact %||% NA),
-  hess_secs_laplace_x = .num1(cse$secs_laplace_x %||% NA),
-  se_rel_exact = .num1(cse$rel["exact"]),
-  se_rel_forward = .num1(cse$rel["forward"]), se_rel_laplace_x = .num1(cse$rel["laplace_x"]),
-  se_rel_laplace_est = .num1(cse$rel["laplace_est"]), se_rel_reported = .num1(cse$rel["reported"]),
   stringsAsFactors = FALSE)
 save_rec()
 .stamp("DONE", CELL$id, rec$status)

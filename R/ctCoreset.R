@@ -32,8 +32,7 @@
 # or a density that is not a sum over the fit's units (its 'unitsum' mark).
 # The coreset is built on the density's own engine object (its 'engine'), which
 # says what a unit's term is: the fit's Laplace terms (`.ctBackendLpgFunc()`),
-# or the quadrature hybrid's, its flagged units' rules placed at each draw
-# (`.ctLaplaceContinueLpg()`).
+# the one density that carries the mark.
 .ctCoresetLpg <- function(fit, lpg, control = list()) {
   if (isFALSE(control$coreset) || !.ctBackendIsLaplace(fit) ||
     !isTRUE(attr(lpg, 'unitsum')) || !is.function(attr(lpg, 'batch')) ||
