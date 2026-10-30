@@ -1,6 +1,7 @@
 # The bound on random-effect correlations (R/ctCorBound.R, the engine's
 # `_ctsem_corbound`): each effect's multiple correlation with the others at its
-# level at most 0.99, held by a wall in the objective on every julia route.
+# level at most the engine's bound (`_CTSEM_CORBOUND`, 0.999), held by a wall in
+# the objective on every julia route.
 #
 # The independent answer is the wall computed here, in R, from the population
 # correlation matrix `.ctCovForward` builds: the objective minus the subjects'
@@ -20,7 +21,7 @@
   fit = FALSE))), class = c("ctJuliaModel", "ctFitModel"))
 
 # The wall, from the correlation matrix the block's coordinates build.
-.cb_wall <- function(block, raw, bound = 0.99, steepness = 100) {
+.cb_wall <- function(block, raw, bound = ctsem:::.ctCorBoundValue(), steepness = 100) {
   cells <- diag(block$k)
   low <- which(lower.tri(cells), arr.ind = TRUE)
   low <- low[order(low[, 2L], low[, 1L]), , drop = FALSE]
@@ -42,14 +43,18 @@ test_that("the bound is the same wall on both routes, and its gradient is right"
     list(model_spec = s), ctsem:::.ctBackendNpar(s))))
   set.seed(4)
   base <- stats::setNames(stats::rnorm(length(names$laplace), 0, .2), names$laplace)
-  # Inside the bound, and past it as far as an optimiser goes: 1.2 times the
-  # coordinates a bounded fit of these data ends at, where every multiple
-  # correlation is about 0.995. Much further out the correlation matrix is
-  # near enough to singular that the two routes' likelihoods agree only to
-  # about 1e-7.
+  # Inside the bound, and past it: along the coordinates a bounded fit of
+  # these data ends at, the first multiple of them whose wall is below -1, a
+  # little past the bound as an optimiser goes. Much further out the
+  # correlation matrix is near enough to singular that the two routes'
+  # likelihoods agree only to about 1e-7.
   inside <- base
   past <- base
-  past[block$index] <- 1.2 * c(0.65, 0.927, 2.13, -2.02, 1.5, -0.178)
+  direction <- c(0.65, 0.927, 2.13, -2.02, 1.5, -0.178)
+  for (scale in seq(1.2, 4, by = 0.1)) {
+    past[block$index] <- scale * direction
+    if (.cb_wall(block, unname(past[names$laplace])) < -1) break
+  }
   value <- function(s, x, route) ctJuliaEvaluate(s, unname(x[names[[route]]]),
     gradient = FALSE, cores = 1)$value
   for (x in list(inside, past)) {
