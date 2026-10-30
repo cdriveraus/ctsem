@@ -56,7 +56,7 @@ test_that("vcov returns the raw covariance, labelled as coef is, on both backend
   expect_error(vcov(.generics_julia_fit()), "ctFitUncertainty")
   # Eight subjects of six rows leave directions flat, which warns; not the point.
   withse <- suppressWarnings(ctFitUncertainty(.generics_julia_fit(),
-    uncertainty = 'hessian'))
+    method = 'hessian'))
   juliav <- vcov(withse)
   expect_equal(rownames(juliav), names(coef(withse)))
   expect_equal(unname(sqrt(diag(juliav))), unname(withse$estimate$se))

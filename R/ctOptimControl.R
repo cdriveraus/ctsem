@@ -218,33 +218,6 @@
 #'  rebuilds the objective; \code{fit$laplace$conditioning} counts such units.
 #'  It applies too when sampling with \code{intoverpop = FALSE} and
 #'  \code{sampleControl$placement = 'fit'}.}
-#'  \item{\code{laplace_check}}{Default TRUE. The Laplace check, last, after
-#'  the certification and the standard errors: every unit, whatever its
-#'  number of effects, scored at draws of its posterior, and a warning where
-#'  integrating its random effects exactly would move an estimate by 0.1
-#'  standard errors or more. The warning gives the move's size below one
-#'  standard error (past that the check's linear step is no guide to it), and
-#'  how far Laplace's log likelihood is from the integrated one; the estimates
-#'  and intervals stay Laplace's. Wherever the check runs,
-#'  \code{fit$estimate$loglik} is Laplace's plus the check's integral of every
-#'  unit's error (\code{loglik_se} its standard error, \code{loglik_laplace}
-#'  the value the optimiser maximised, \code{loglik_method} \code{'checked'}).
-#'  The warning names the integrated refit (\code{\link{ctLaplaceRefit}}) and
-#'  sampling the joint posterior, which has no Laplace error. Every model
-#'  whose effects enter linearly passes at once. A fit whose optimiser stopped
-#'  where a unit's Laplace term jumps warns instead, naming the units.}
-#'  \item{\code{laplace_refit}}{Default FALSE. TRUE runs the integrated refit
-#'  at fit time, as \code{\link{ctLaplaceRefit}} does after it: the check, and
-#'  then the fit continued on the quadrature objective for the units that
-#'  carry the move (or that a jump named), by adaptive Gauss-Hermite rules (5
-#'  nodes per random effect) for units with up to five effects and by draws
-#'  beyond; \code{fit$estimate$loglik} is that objective's log likelihood
-#'  (Laplace's kept in \code{loglik_laplace}). Where many units need draws it
-#'  can take hours, and where the units nest it can cost about as much as
-#'  sampling. Both are refused with \code{estonly} and off the Laplace route.
-#'  \code{fit$laplace$correction} records what was done, and
-#'  \code{print(fit)} says when the estimate moved or the check found it
-#'  should.}
 #' }
 #'
 #' @section Uncertainty:
@@ -252,12 +225,32 @@
 #'  \item{\code{uncertainty}}{Both. Default \code{'hessian'}
 #'  (\code{'sandwich'} with subject weights on julia). The method computed
 #'  when the optimiser ends, as in \code{\link{ctFitUncertainty}}. The
-#'  default is for building a model: on julia it also makes \code{'checked'}'s
-#'  normality check at draws of the curvature's normal, and says in a message
-#'  when the posterior departs from that normal; for intervals to report,
-#'  sample with \code{ctFitUncertainty(fit, 'sample')}.
+#'  default is for building a model, with the checks below beside it; for
+#'  intervals to report, sample with \code{ctFitUncertainty(fit, 'sample')}.
 #'  \code{'sample'} is refused here: use \code{optimize = FALSE}, or
 #'  \code{ctFitUncertainty(fit, 'sample')} on the fit.}
+#'  \item{\code{checks}}{Julia. Default \code{TRUE}: the two cheap checks
+#'  a fit makes last, of the approximations its numbers rest on, as
+#'  \code{\link{ctFitUncertainty}}'s \code{checks} makes them; \code{FALSE}
+#'  for neither, or one of \code{'randomeffects'} and \code{'intervals'}.
+#'  The random-effects check, on \code{intoverpop = 'laplace'}: every unit,
+#'  whatever its number of effects, scored at draws of its random effects,
+#'  and a warning where integrating them exactly would move an estimate by
+#'  0.1 standard errors or more, giving the move's size below one standard
+#'  error (past that the check's linear step is no guide to it) and how far
+#'  Laplace's log likelihood is from the integrated one, and naming
+#'  \code{ctFitUncertainty(fit, intoverpop = 'quadrature')} and joint
+#'  sampling. Wherever it runs, \code{fit$estimate$loglik} is Laplace's plus
+#'  the check's integral of every unit's error (\code{loglik_se} its standard
+#'  error, \code{loglik_laplace} the value the optimiser maximised,
+#'  \code{loglik_method} \code{'checked'}). Every model whose effects enter
+#'  linearly passes at once, and a fit whose optimiser stopped where a unit's
+#'  Laplace term jumps warns instead, naming the units;
+#'  \code{fit$laplace$correction} records it. The interval check, with
+#'  \code{uncertainty = 'hessian'}: \code{'checked'}'s check of the
+#'  curvature's normal against the posterior's gradients, said in a message
+#'  and in \code{summary()} where the posterior departs from that normal.
+#'  Neither runs with \code{estonly}.}
 #'  \item{\code{uncertaintyDraws}, \code{finishsamples},
 #'  \code{uncertaintyControl}}{Both. \code{ctFitUncertainty}'s \code{draws}
 #'  (default \code{'auto'}), \code{finishsamples} (1000) and \code{control}.}

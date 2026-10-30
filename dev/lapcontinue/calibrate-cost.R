@@ -5,7 +5,7 @@
 #
 #   Rscript dev/lapcontinue/calibrate-cost.R <tree> <outdir> [case ...]
 #
-# Per case: one Laplace fit (laplace_check = FALSE, cores = 1, the bench's
+# Per case: one Laplace fit (checks = FALSE, cores = 1, the bench's
 # start); the penalised exact log posterior at its optimum (the bench's
 # reference: a trapezoid over the soft directions for units of dimension <= 3,
 # importance sampling for the nested ones); then the correction applied post
@@ -90,7 +90,7 @@ for (case in which) {
       t0 <- now(); set.seed(st$seed)
       off <- suppressWarnings(suppressMessages(ctFit(d, m, backend = "julia",
         intoverpop = "laplace", cores = 1, inits = st$inits,
-        optimcontrol = list(laplace_check = FALSE, finishsamples = 100))))
+        optimcontrol = list(checks = FALSE, finishsamples = 100))))
       fit_secs <- now() - t0
       if (nzchar(saved)) saveRDS(list(fit = off, secs = fit_secs), saved)
     }

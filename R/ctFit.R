@@ -306,17 +306,13 @@
     msg = paste0("runs the julia engine's SAEM phase, which samples the random ",
       "effects julia's Laplace route integrates; stan augments them as latent ",
       "states instead. Drop it")),
-  # The Laplace check every julia Laplace fit gets, and the integrated refit
-  # asked for. FALSE describes what stan does, so it is accepted there, as
+  # The random-effects check and the interval check every julia fit gets.
+  # FALSE describes what stan does, so it is accepted there, as
   # `stochastic=FALSE` is on julia.
-  laplace_check = list(only = 'julia',
+  checks = list(only = 'julia',
     inert = function(v) isFALSE(v),
-    msg = paste0("checks a julia Laplace fit's error by integrating over its ",
-      "random effects, and stan has no Laplace term to check. Drop it")),
-  laplace_refit = list(only = 'julia',
-    inert = function(v) isFALSE(v),
-    msg = paste0("refits a julia Laplace fit with its random effects integrated, ",
-      "and stan has no Laplace term to refit. Drop it"))
+    msg = paste0("checks a julia fit's integral over its random effects and ",
+      "its intervals, which the stan path does not. Drop it"))
 )
 
 # Refuse a control-list name the chosen backend cannot honour, before any data
@@ -770,7 +766,19 @@ T0VARredundancies <- function(ctm) {
 #' exact for effects that shift a mean with Gaussian indicators, a
 #' linearisation elsewhere that shrinks random effects on the dynamics, and
 #' variation on a DIFFUSION or MANIFESTVAR parameter is then only partly
-#' identified, which ctFit warns of. \code{FALSE}, or \code{'none'}, samples them, so it needs
+#' identified, which ctFit warns of.
+#'
+#' \code{'quadrature'} (\code{backend='julia'}, optimizing) fits by
+#' \code{'laplace'} and then refits with the units the random-effects check
+#' names (\code{optimcontrol$checks}) integrated numerically -- by adaptive
+#' Gauss-Hermite rules (5 nodes per effect) for units with up to five effects,
+#' by draws beyond -- reporting that objective's estimate, standard errors and
+#' log likelihood (Laplace's kept in \code{loglik_laplace}). Seconds on one
+#' level, it can take hours where many units need draws or the units nest;
+#' \code{ctFitUncertainty(fit, intoverpop = 'quadrature')} does the same after
+#' a fit.
+#'
+#' \code{FALSE}, or \code{'none'}, samples them, so it needs
 #' \code{optimize=FALSE}: maximising over every subject's effects would drive
 #' the population variance to zero. With \code{optimize=FALSE} on julia,
 #' \code{'none'} (and so \code{'auto'}, but for the exception above) samples the
@@ -803,8 +811,7 @@ T0VARredundancies <- function(ctm) {
 #' \code{maxiter}), the start (\code{initsd}, \code{carefulfit}), the
 #' uncertainty computed at the end (\code{uncertainty}, \code{estonly}), and
 #' optional phases such as \code{stochastic} and, under
-#' \code{intoverpop='laplace'}, \code{saem}, \code{laplace_check} and
-#' \code{laplace_refit}.
+#' \code{intoverpop='laplace'}, \code{saem} and \code{checks}.
 #' \code{\link{ctOptimControl}} lists every name with its backend and default.
 #' A misspelled name, or one the chosen backend cannot honour, is an error.
 #' @param nopriors deprecated, use priors argument. logical. If TRUE, any priors are disabled -- sometimes desirable for optimization.
@@ -1332,6 +1339,19 @@ ctFit<-function(datalong, model, stanmodeltext=NA, iter=1000, intoverstates=TRUE
   # Before any data preparation and before the Julia install prompt: a control
   # name the chosen backend cannot honour is a mistake to report immediately,
   # not after a wait.
+  # What ctsem 4.0.0's development called the random-effects check and the
+  # integrated refit, refused with what they are now.
+  renamed <- c(laplace_correct = "optimcontrol$checks and intoverpop = 'quadrature'",
+    laplace_check = "optimcontrol$checks",
+    laplace_refit = "intoverpop = 'quadrature'")
+  for(name in intersect(names(optimcontrol), names(renamed))) stop(
+    "optimcontrol$", name, " is now ", renamed[[name]], ".", call.=FALSE)
+  moved <- c(check = "optimcontrol$checks",
+    likelihood = "intoverpop = 'quadrature'", intoverpop = "intoverpop")
+  for(name in intersect(names(optimcontrol$uncertaintyControl), names(moved))) stop(
+    "optimcontrol$uncertaintyControl$", name, " is now ", moved[[name]], ".",
+    call.=FALSE)
+  if(!is.null(optimcontrol$checks)) .ctUncertaintyChecks(optimcontrol$checks)
   .ctFitCheckControls(optimcontrol, backend)
   # Both are coerced further down without a check: cores = 0 ran a fit and
   # recorded 0 as what it used, and verbose = 'yes' became NA with only a
@@ -1474,6 +1494,17 @@ ctFit<-function(datalong, model, stanmodeltext=NA, iter=1000, intoverstates=TRUE
   args$datalong <- NULL
   args$model <- NULL
   args$ctstanmodel <- NULL
+  # 'quadrature' is the Laplace route, refitted at the end with the units
+  # its random-effects check names integrated (`.ctLaplaceContinue()`): set
+  # up and fitted as 'laplace', the refit asked of the correction stage, and
+  # recorded as asked in `args`, so a replay asks again.
+  quadrature <- identical(intoverpop, 'quadrature')
+  if(quadrature) {
+    if(!identical(backend, 'julia')) stop("intoverpop = 'quadrature' needs ",
+      "backend = 'julia', whose Laplace route it refits.", call.=FALSE)
+    intoverpop <- 'laplace'
+    optimcontrol$.refit <- TRUE
+  }
 
   setup <- .ctFitModelSetup(ctstanmodel, backend = backend,
     intoverpop = intoverpop, intoverstates = intoverstates, optimize = optimize,
@@ -1584,7 +1615,7 @@ ctFit<-function(datalong, model, stanmodeltext=NA, iter=1000, intoverstates=TRUE
   argsresolved <- args
   argsresolved$backend <- backend
   argsresolved$cores <- cores
-  argsresolved$intoverpop <- intoverpopmethod
+  argsresolved$intoverpop <- if(quadrature) 'quadrature' else intoverpopmethod
   argsresolved$intoverpopreason <- intoverpopreason
   # The rank actually used, not the argument: 'auto' resolves to a number, and a
   # model the restriction did not apply to reports NA whatever was asked for.

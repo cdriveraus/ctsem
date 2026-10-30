@@ -21,7 +21,7 @@
 # (`spec$laplace$quadratic`), the Laplace marginal is the exact marginal, and
 # that is sampled. `ctFit(optimize=FALSE)` reads its
 # own `intoverpop`; `ctFitUncertainty(fit, 'sample')` reads the fit's, and
-# `control$intoverpop` overrides it there. A separate `control$target`
+# its `intoverpop` overrides it there. A separate `control$target`
 # ('joint'/'marginal') said the same thing a second way until 2026-10-07, and
 # could contradict `intoverpop`; it is refused by name now.
 #
@@ -192,7 +192,7 @@
 # (review/POSTERIOR-race-2026-10-02.md). A backend caller passing only a
 # route has named it.
 #
-# `override`, `ctFitUncertainty()`'s `control$intoverpop`, picks another
+# `override`, `ctFitUncertainty()`'s `intoverpop`, picks another
 # route the fit's specification can carry: 'none' and 'laplace' share one
 # (the Laplace structure says which parameters vary, integrated or not), the
 # augmented one is a different model.
@@ -204,7 +204,7 @@
     override <- as.character(override)
     if (length(override) != 1L ||
         !override %in% c("auto", "none", "laplace", "augmented")) {
-      stop("control$intoverpop must be 'auto', 'none', 'laplace' or ",
+      stop("intoverpop must be 'auto', 'none', 'laplace' or ",
         "'augmented', not '", paste(override, collapse = " "), "'.",
         call. = FALSE)
     }
@@ -224,7 +224,12 @@
       return(override)
     }
   }
-  named <- !is.null(requested) && !identical(as.character(requested)[1L], "auto")
+  # A fit made with intoverpop = 'quadrature' named the Laplace route only
+  # to refit it: its Laplace marginal is what the refit found wanting, so
+  # sampling takes the joint, as for 'auto'.
+  requested <- as.character(requested)[1L]
+  named <- length(requested) && !is.na(requested) &&
+    !requested %in% c("auto", "quadrature")
   switch(route, augmented = "augmented",
     laplace = if (named || isTRUE(exact)) "laplace" else "none", "none")
 }
@@ -239,7 +244,7 @@
 # later.
 #
 # What is sampled is `.ctBackendSampleRoute()`'s, from the fit's route, the
-# `intoverpop` its caller wrote, and `control$intoverpop`.
+# `intoverpop` its caller wrote, and `ctFitUncertainty()`'s `intoverpop`.
 #
 # `state_explicit` is not a `control` entry -- a caller of
 # `ctFitUncertainty()` never sets it, because a fit whose states are not
@@ -1035,7 +1040,7 @@
       uncertainty = "checked", finishsamples = 2L, cores = cores, matsetup = NA,
       verbose = verbose, hessian = u$hessian),
       error = function(e) {
-        warning("The normality check for the sampler's metric failed (",
+        warning("The interval check for the sampler's metric failed (",
           conditionMessage(e), "); sampling from the Hessian's.", call. = FALSE)
         NULL
       })
@@ -2059,7 +2064,7 @@ print.ctSampleDiagnostics <- function(x, ...) {
 # Hessian is the endgame's own -- reused via `.ctBackendStoredHessian()`
 # inside `ctOptimUncertainty()` rather than recomputed here -- so the common
 # case costs one Hessian for the whole call, not one for the fit and a second
-# for the sampler. `laplace_check` is forced off for the placement: the
+# for the sampler. The checks are off for the placement: the
 # Laplace fit only places the chains, from its own optimum and curvature, and
 # the quadrature-corrected point answers a question the placement does not
 # ask.
@@ -2206,8 +2211,8 @@ print.ctSampleDiagnostics <- function(x, ...) {
   # forced TRUE here regardless of what was asked: optimising the joint
   # density of the parameters and the latent states is a category error, not
   # a lesser estimate (`state-explicit-generation.md`) -- the joint mode is
-  # degenerate and not a place to start a sampler from. `laplace_check` is
-  # forced off and `uncertainty` forced to `'hessian'`: under
+  # degenerate and not a place to start a sampler from. The checks are
+  # off and `uncertainty` forced to `'hessian'`: under
   # `intoverpop='laplace'` the fit only places the chains, from its optimum
   # and curvature -- not the quadrature-corrected point, which answers a
   # question the placement is not asking -- so only the Hessian is needed
@@ -2217,7 +2222,7 @@ print.ctSampleDiagnostics <- function(x, ...) {
   # point only for `.ctBackendSampleAssemble()` to overwrite them with the
   # real ones below.
   placementcontrol <- utils::modifyList(optimcontrol,
-    list(laplace_check = FALSE, uncertainty = "hessian", estonly = FALSE,
+    list(checks = FALSE, uncertainty = "hessian", estonly = FALSE,
       finishsamples = 2L))
   # When SAEM places the chains (`control$placement = 'saem'`, the default on
   # the joint target for its kernel), it runs from this fit's point, so this

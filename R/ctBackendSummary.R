@@ -1875,7 +1875,7 @@ ctBackendParMatrices <- function(fit, raw = NULL, tipreds = NULL, state = NULL,
   note
 }
 
-# What the normality check beside a curvature-only uncertainty found (`'hessian'`
+# What the interval check beside a curvature-only uncertainty found (`'hessian'`
 # with `control$check`, a fit's default), in one sentence; NULL where it named
 # no direction or did not run. Fit-level only: per parameter it names a third
 # of the intervals that are off (review/REVIEW-fit-uncertainty-2026-10-25.md,
@@ -1895,7 +1895,7 @@ ctBackendParMatrices <- function(fit, raw = NULL, tipreds = NULL, state = NULL,
   named <- if (is.matrix(check$directions)) ncol(check$directions) else 0L
   if (!named) return(NULL)
   sprintf(paste0("Intervals are from the curvature at the estimate, and the ",
-    "posterior departs from that normal in %d direction%s (the normality ",
+    "posterior departs from that normal in %d direction%s (the interval ",
     "check, fit$uncertainty$details$normalcheck): ctFitUncertainty(fit, 'sample') ",
     "samples it for intervals to report."), named, if (named > 1L) "s" else "")
 }
@@ -2251,9 +2251,9 @@ ctBackendParMatrices <- function(fit, raw = NULL, tipreds = NULL, state = NULL,
     # (`fit$laplace$correction$error`, piece B of the fitting consolidation).
     error <- if (!is.null(object$uncertainty$details$laplace_correction$error))
       object$laplace$correction$error else NULL
-    paste0("Julia backend; intervals from ctFitUncertainty(uncertainty='",
+    paste0("Julia backend; intervals from ctFitUncertainty(method = '",
       object$uncertainty$settings$method, "'", if (length(likelihood))
-        paste0(", likelihood='", likelihood, "'"),
+        paste0(", ", .ctLikelihoodWords(likelihood)),
       ") draws pushed through the transforms.",
       if (!is.null(error) && isTRUE(is.finite(error$nats))) paste0(
         " The density drawn from is the quadrature hybrid, known to within ",

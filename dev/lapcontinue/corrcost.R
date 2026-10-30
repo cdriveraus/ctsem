@@ -5,7 +5,7 @@
 #
 # The build: CC_LIB, an installed library (dev1: ship.sh's
 # ~/dev/ctsemlib-bench-<label>), or CC_TREE, a source tree to load_all. Per
-# case: one Laplace fit (laplace_check = FALSE, cores = 1, the bench's
+# case: one Laplace fit (checks = FALSE, cores = 1, the bench's
 # start), saved to and on a rerun read from CC_FITS, so that two builds
 # correct the same fit; then the default correction applied to it CC_REPS
 # times (default 2), the first untimed so that nothing timed compiles. Writes
@@ -77,7 +77,7 @@ for (spec_arg in cases) {
       t0 <- now(); set.seed(st$seed)
       off <- suppressWarnings(suppressMessages(ctFit(d, m, backend = "julia",
         intoverpop = "laplace", cores = 1, inits = st$inits,
-        optimcontrol = list(laplace_check = FALSE))))
+        optimcontrol = list(checks = FALSE))))
       saveRDS(list(fit = off, secs = now() - t0, data_md5 = D$md5), saved)
       stamp(sprintf("  fit %.1fs", now() - t0))
     }

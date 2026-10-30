@@ -193,16 +193,16 @@ place.
 ## The bits in between
 
 An optimized fit does not have to settle for a normal approximation at the
-optimum. `uncertainty` in `optimcontrol` (at fit time) or in
+optimum. `uncertainty` in `optimcontrol` (at fit time) or `method` in
 `ctFitUncertainty()` (after the fact, reusing the existing optimum; previously
 `ctOptimUncertainty()`, still available) selects among several:
 
 - `hessian`: finite-difference (stan) or exact forward-mode (julia) curvature
-  at the optimum, with normal draws. The cheapest, and the default when
-  fitting: on julia the fit also checks the normal against the log
-  posterior's gradients, as `checked` does, and says when the posterior
-  departs from it -- a fit for building a model, whose intervals to report
-  come from sampling it.
+  at the optimum, with normal draws. The cheapest, and the default: on
+  julia the interval check compares the normal against the log posterior's
+  gradients, as `checked` does, and says when the posterior departs from
+  it -- for building a model, whose intervals to report come from sampling
+  it.
 - `checked`: the `hessian` normal, checked against the log posterior's
   gradients at 16 to 256 draws from it, and importance sampled in the
   directions where its intervals would be wrong -- a skew, a variance that
@@ -211,7 +211,7 @@ optimum. `uncertainty` in `optimcontrol` (at fit time) or in
   a warning names the parameters. With nothing found, exactly the `hessian`
   normal. It samples those directions with the others held near the centre,
   so where a population sd widens the effects it scales, its intervals can
-  remain too narrow. The default for `ctFitUncertainty()`.
+  remain too narrow.
 - `opg`: an information estimate from the variability of per-subject score
   contributions, with no Hessian involved. Included as a diagnostic; it tends
   to disagree with the others most exactly where the Hessian's curvature
@@ -242,7 +242,7 @@ methods <- c("hessian", "checked", "opg", "sandwich", "bootstrap", "is")
 
 gallery <- function(base_fit, backend_label) {
   do.call(rbind, lapply(methods, function(m) {
-    updated <- ctFitUncertainty(base_fit, uncertainty = m, finishsamples = 200, cores = 1)
+    updated <- ctFitUncertainty(base_fit, method = m, finishsamples = 200, cores = 1)
     data.frame(backend = backend_label, method = m, t(drift_interval(updated)))
   }))
 }
@@ -268,7 +268,7 @@ stan-only and slower even at a small resample count:
 
 ```{r fullbootstrap}
 stan_fullboot <- ctFitUncertainty(
-  stan_map, uncertainty = "fullbootstrap", finishsamples = 8, cores = 1,
+  stan_map, method = "fullbootstrap", finishsamples = 8, cores = 1,
   control = list(bootstrapTol = 1e-3)
 )
 drift_interval(stan_fullboot)

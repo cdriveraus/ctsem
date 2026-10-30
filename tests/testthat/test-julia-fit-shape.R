@@ -285,11 +285,11 @@ test_that("the laplace block is the same shape whichever route built it", {
     expect_false(is.null(fits[[route]]$laplace), info = route)
   }
   # `boundary` (a correlation capped at the optimum) and `correction` (the
-  # Laplace check's record, or its "off" status -- see
+  # random-effects check's record, or its "off" status -- see
   # `.ctLaplaceContinue()`) both used to be optimised-only, because the
   # sampled route called `.ctJuliaFitLaplaceBlock()` directly and never added
   # what came after it. The placement now runs the same pipeline that does add
-  # them -- `laplace_check` forced off, so `correction$status` is `"off"`
+  # them -- `checks` forced off, so `correction$status` is `"off"`
   # rather than absent -- so the two are identical in shape.
   expect_equal(sort(names(fits$optimised$laplace)),
     sort(names(fits$sampled$laplace)))

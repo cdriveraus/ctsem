@@ -1,5 +1,5 @@
-# `ctFitUncertainty(fit, 'is' | 'checked', control = list(likelihood =
-# 'quadrature'))`: the draws behind the intervals taken on the quadrature
+# `ctFitUncertainty(fit, 'is' | 'checked', intoverpop = 'quadrature')`: the
+# draws behind the intervals taken on the quadrature
 # hybrid the continuation climbs (`.ctLaplaceContinue()`), by the method asked
 # for.
 #
@@ -55,8 +55,8 @@
 # A short run: one round of 40 draws is enough to show the machinery working
 # end to end, and not to pin a posterior.
 .quadrature_is <- function(fit, method = "is", ...) {
-  suppressWarnings(ctFitUncertainty(fit, uncertainty = method, finishsamples = 60,
-    control = list(likelihood = "quadrature", nodes = 5, isitersize = 40,
+  suppressWarnings(ctFitUncertainty(fit, method = method, intoverpop = "quadrature", finishsamples = 60,
+    control = list(nodes = 5, isitersize = 40,
       imisMaxIter = 1L, isESS = 20, ...)))
 }
 
@@ -86,7 +86,7 @@ test_that("a fit where Laplace is exact keeps its estimate, and records what was
   expect_identical(settings$control$likelihood, "quadrature")
   expect_identical(corrected$uncertainty$draws, "imis")
   expect_match(suppressMessages(summary(corrected))$uncertaintyNote,
-    "likelihood='quadrature'", fixed = TRUE)
+    "method = 'is', intoverpop = 'quadrature'", fixed = TRUE)
 
   # And by 'checked', on the same density.
   set.seed(9)
@@ -111,29 +111,31 @@ test_that("correctEstimate = FALSE leaves the point where it was", {
 test_that("requests it cannot serve are refused by name", {
   skip_without_julia()
   fit <- .correct_fit()
-  # Only the methods that draw take a likelihood, and 'hessian' the
-  # quadrature hybrid's, whose maximum the continuation certifies.
-  expect_error(ctFitUncertainty(fit, "sandwich",
-    control = list(likelihood = "quadrature")),
-    "applies to uncertainty = 'hessian', 'is' or 'checked'", fixed = TRUE)
-  # Each likelihood takes its own settings and the shared ones, nothing else.
-  expect_error(ctFitUncertainty(fit, "is",
-    control = list(likelihood = "quadrature", particles = 100)),
-    "control$particles is not used with likelihood = 'quadrature'", fixed = TRUE)
-  expect_error(ctFitUncertainty(fit, "is", control = list(likelihood = "exact")),
-    "should be one of")
+  # Only the methods that draw take the quadrature, and 'hessian' its
+  # curvature, whose maximum the continuation certifies.
+  expect_error(ctFitUncertainty(fit, "sandwich", intoverpop = "quadrature"),
+    "applies to method = 'hessian', 'is' or 'checked'", fixed = TRUE)
+  # Each density takes its own settings and the shared ones, nothing else.
+  expect_error(ctFitUncertainty(fit, "is", intoverpop = "quadrature",
+    control = list(particles = 100)),
+    "control$particles is not used with intoverpop = 'quadrature'", fixed = TRUE)
+  expect_error(ctFitUncertainty(fit, "is", intoverpop = "exact"),
+    "intoverpop must be")
+  # The names this took inside control before 4.0.0, refused with the
+  # arguments that replace them.
+  expect_error(ctFitUncertainty(fit, "is", control = list(likelihood = "quadrature")),
+    "is now the argument intoverpop = 'quadrature' or filter = 'particle'", fixed = TRUE)
+  expect_error(ctFitUncertainty(fit, uncertainty = "is"), "is now method")
+  expect_error(ctFitUncertainty(fit, "is", draws = "normal"), "ctOptimUncertainty")
   # The quadrature and particle filter are the julia engine's.
-  expect_error(ctFitUncertainty(ctstantestfit, "is",
-    control = list(likelihood = "quadrature")), "only available for backend='julia'")
+  expect_error(ctFitUncertainty(ctstantestfit, "is", intoverpop = "quadrature"), "only available for backend='julia'")
   # The particle filter is sampled by 'is' alone.
-  expect_error(ctFitUncertainty(fit, "checked",
-    control = list(likelihood = "particle")), "sampled by uncertainty = 'is'")
+  expect_error(ctFitUncertainty(fit, "checked", filter = "particle"), "sampled by method = 'is'")
 
   augmented <- suppressMessages(ctFit(.correct_test_data(),
     .correct_test_model(), backend = "julia", intoverpop = "augmented",
     optimcontrol = list(estonly = TRUE)))
-  expect_error(ctFitUncertainty(augmented, "is",
-    control = list(likelihood = "quadrature")), "intoverpop = 'laplace'",
+  expect_error(ctFitUncertainty(augmented, "is", intoverpop = "quadrature"), "intoverpop = 'laplace'",
     fixed = TRUE)
 
   # Without uncertainty there is no curvature for the continuation's metric
@@ -142,6 +144,5 @@ test_that("requests it cannot serve are refused by name", {
   estonly <- suppressMessages(ctFit(.correct_test_data(),
     .correct_test_model(), backend = "julia", intoverpop = "laplace",
     optimcontrol = list(estonly = TRUE)))
-  expect_error(ctFitUncertainty(estonly, "is",
-    control = list(likelihood = "quadrature")), "covariance")
+  expect_error(ctFitUncertainty(estonly, "is", intoverpop = "quadrature"), "covariance")
 })

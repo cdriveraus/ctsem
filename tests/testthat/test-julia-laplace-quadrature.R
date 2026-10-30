@@ -1,6 +1,7 @@
-# The integrated refit, `optimcontrol$laplace_refit = TRUE` or
-# `ctLaplaceRefit()`, and the default's Laplace check (`.ctLaplaceContinue()`
-# in R/ctBackendLaplaceCorrect.R, laplace_continuation.jl in the engine).
+# The integrated refit, `ctFit(intoverpop = 'quadrature')` or
+# `ctFitUncertainty(fit, intoverpop = 'quadrature')`, and the default's
+# random-effects check (`.ctLaplaceContinue()` in
+# R/ctBackendLaplaceCorrect.R, laplace_continuation.jl in the engine).
 #
 # What is pinned here: that a model on which Laplace is exact is left alone to
 # the bit; that on a nonlinear one the continuation lands at the optimum of the
@@ -85,10 +86,10 @@
       set.seed(11)
       warned <- character()
       fit <- withCallingHandlers(suppressMessages(ctFit(data, model,
-        backend = "julia", intoverpop = "laplace", cores = 1,
+        backend = "julia", cores = 1,
+        intoverpop = if (identical(correct, "refit")) "quadrature" else "laplace",
         optimcontrol = c(list(finishsamples = 100, uncertainty = uncertainty),
-          switch(correct, off = list(laplace_check = FALSE),
-            refit = list(laplace_refit = TRUE), default = list())))),
+          if (identical(correct, "off")) list(checks = FALSE)))),
         warning = function(w) {
           warned <<- c(warned, conditionMessage(w))
           invokeRestart("muffleWarning")
@@ -188,12 +189,14 @@ test_that("the default checks and warns, and the correction it names is the fit-
   expect_identical(ctsem:::.ctFitOptimisedLoglik(default), fits$off$estimate$loglik)
   expect_identical(default$estimate$rawposterior, fits$off$estimate$rawposterior)
   warned <- attr(default, "warned")
-  expect_true(any(grepl("ctLaplaceRefit(fit)", warned, fixed = TRUE)))
+  expect_true(any(grepl("ctFitUncertainty(fit, intoverpop = 'quadrature')",
+    warned, fixed = TRUE)))
   expect_true(any(grepl("intoverpop = 'none'", warned, fixed = TRUE)))
   expect_true(any(grepl(corr$message, capture.output(print(default)), fixed = TRUE)))
   # The correction it names is the fit-time one: the rounds on the units its
   # check named, from the same estimate, then the hybrid's own curvature.
-  corrected <- suppressMessages(ctLaplaceRefit(default, cores = 1))
+  corrected <- suppressMessages(ctFitUncertainty(default,
+    intoverpop = "quadrature", cores = 1))
   expect_identical(corrected$laplace$correction$status, "continued")
   expect_equal(corrected$estimate$raw, fits$quadrature$estimate$raw, tolerance = 1e-6)
   expect_equal(corrected$estimate$loglik, fits$quadrature$estimate$loglik,
@@ -208,8 +211,7 @@ test_that("the default checks and warns, and the correction it names is the fit-
   expect_identical(posthoc$estimate$raw, fits$quadrature$estimate$raw)
   expect_identical(posthoc$estimate$loglik, fits$quadrature$estimate$loglik)
   # And sampling against the quadrature will not apply it a second time.
-  expect_error(ctFitUncertainty(fits$quadrature, "is", control = list(
-    likelihood = "quadrature", correctEstimate = TRUE)), "already corrected")
+  expect_error(ctFitUncertainty(fits$quadrature, "is", intoverpop = "quadrature", control = list(correctEstimate = TRUE)), "already corrected")
 })
 
 test_that("the continuation lands at the exact marginal's optimum", {
@@ -409,8 +411,8 @@ test_that("drawing a corrected fit on its hybrid leaves it corrected", {
   skip_if_not_installed('mvtnorm'); skip_if_not_installed('diagis')
   fit <- .lc_fits("nonlinear")$quadrature
   set.seed(2)
-  redrawn <- suppressWarnings(ctFitUncertainty(fit, "is", finishsamples = 20,
-    control = list(likelihood = "quadrature", isitersize = 20, imisMaxIter = 1L,
+  redrawn <- suppressWarnings(ctFitUncertainty(fit, "is", intoverpop = "quadrature", finishsamples = 20,
+    control = list(isitersize = 20, imisMaxIter = 1L,
       isESS = 10)))
   # Drawn on the hybrid, placed where the fit stands: before, the run that
   # moved nothing returned before drawing, and its record replaced the fit's.
@@ -712,47 +714,58 @@ test_that("requests that cannot apply are refused by name", {
   resolve <- function(oc, intoverpop = "laplace", optimize = TRUE,
     intoverstates = TRUE) .ctLaplaceCorrectResolve(oc, intoverpop, optimize,
       intoverstates)
-  # The default checks; a refit asked for checks first, whatever
-  # laplace_check says; FALSE turns the check off.
+  # The default checks; a refit (`.refit`, which ctFit sets for
+  # intoverpop = 'quadrature') checks first, whatever `checks` says; FALSE,
+  # or the interval check alone, leaves the random effects unchecked.
   expect_identical(resolve(list()), "check")
-  expect_identical(resolve(list(laplace_check = TRUE)), "check")
-  expect_identical(resolve(list(laplace_refit = TRUE)), "quadrature")
-  expect_identical(resolve(list(laplace_refit = TRUE, laplace_check = FALSE)),
-    "quadrature")
-  expect_false(resolve(list(laplace_check = FALSE)))
-  expect_false(resolve(list(laplace_check = FALSE, laplace_refit = FALSE)))
-  expect_error(resolve(list(laplace_check = "yes")), "must be TRUE or FALSE")
-  expect_error(resolve(list(laplace_refit = NA)), "must be TRUE or FALSE")
-  expect_error(resolve(list(laplace_refit = c(TRUE, FALSE))), "must be TRUE or FALSE")
-  # The name before release is refused with the new ones.
-  expect_error(resolve(list(laplace_correct = TRUE)), "laplace_refit")
-  # Defaulted, it simply does not apply; asked for, it is refused by name.
+  expect_identical(resolve(list(checks = TRUE)), "check")
+  expect_identical(resolve(list(checks = "randomeffects")), "check")
+  expect_false(resolve(list(checks = "intervals")))
+  expect_false(resolve(list(checks = FALSE)))
+  expect_identical(resolve(list(.refit = TRUE)), "quadrature")
+  expect_identical(resolve(list(.refit = TRUE, checks = FALSE)), "quadrature")
+  expect_error(resolve(list(checks = "yes")), "checks must be")
+  expect_error(resolve(list(checks = NA)), "checks must be")
+  # Where there is no Laplace estimate the check does not apply; a refit
+  # asked for is refused, naming what was asked.
   expect_false(resolve(list(), intoverpop = "augmented"))
-  expect_error(resolve(list(laplace_refit = TRUE), intoverpop = "augmented"),
-    "intoverpop='laplace' only")
+  expect_error(resolve(list(.refit = TRUE), intoverpop = "augmented"),
+    "intoverpop = 'quadrature' applies to intoverpop='laplace' only", fixed = TRUE)
   expect_false(resolve(list(), optimize = FALSE))
-  expect_error(resolve(list(laplace_refit = TRUE), optimize = FALSE), "sampled fit")
-  expect_error(resolve(list(laplace_check = TRUE), intoverstates = FALSE),
+  expect_error(resolve(list(.refit = TRUE), optimize = FALSE), "sampled fit")
+  expect_false(resolve(list(), intoverstates = FALSE))
+  expect_error(resolve(list(.refit = TRUE), intoverstates = FALSE),
     "intoverstates=FALSE")
   expect_false(resolve(list(estonly = TRUE)))
-  expect_error(resolve(list(laplace_refit = TRUE, estonly = TRUE)), "estonly")
-  expect_false(resolve(list(laplace_check = FALSE, estonly = TRUE)))
-  expect_error(.ctFitCheckControls(list(laplace_refit = TRUE), "stan"),
-    "laplace_refit")
-  expect_error(.ctFitCheckControls(list(laplace_check = FALSE), "stan"), NA)
-  expect_error(.ctFitCheckControls(list(laplace_check = TRUE), "julia"), NA)
+  expect_error(resolve(list(.refit = TRUE, estonly = TRUE)), "estonly")
+  expect_error(.ctFitCheckControls(list(checks = TRUE), "stan"), "checks")
+  expect_error(.ctFitCheckControls(list(checks = FALSE), "stan"), NA)
+  expect_error(.ctFitCheckControls(list(checks = "intervals"), "julia"), NA)
 })
 
 test_that("refused at ctFit by name, before anything is fitted", {
   skip_without_julia()
-  expect_error(ctFit(.lc_linear_data(), .lc_linear_model(), backend = "julia",
-    intoverpop = "augmented", optimcontrol = list(laplace_refit = TRUE)),
-    "laplace_refit applies to intoverpop='laplace' only")
-  estonly <- suppressMessages(ctFit(.lc_linear_data(), .lc_linear_model(),
+  data <- .lc_linear_data(); model <- .lc_linear_model()
+  expect_error(ctFit(data, model, backend = "stan", intoverpop = "quadrature"),
+    "needs backend = 'julia'")
+  expect_error(ctFit(data, model, backend = "julia", intoverpop = "quadrature",
+    optimize = FALSE), "sampled fit")
+  expect_error(ctFit(data, model, backend = "julia", intoverpop = "quadrature",
+    optimcontrol = list(estonly = TRUE)), "estonly")
+  # The names of 4.0.0's development, refused with what they are now.
+  expect_error(ctFit(data, model, backend = "julia",
+    optimcontrol = list(laplace_refit = TRUE)),
+    "optimcontrol$laplace_refit is now intoverpop = 'quadrature'", fixed = TRUE)
+  expect_error(ctFit(data, model, backend = "julia",
+    optimcontrol = list(laplace_check = FALSE)),
+    "optimcontrol$laplace_check is now optimcontrol$checks", fixed = TRUE)
+  expect_error(ctFit(data, model, backend = "julia",
+    optimcontrol = list(uncertaintyControl = list(check = FALSE))),
+    "is now optimcontrol$checks", fixed = TRUE)
+  estonly <- suppressMessages(ctFit(data, model,
     backend = "julia", intoverpop = "laplace", optimcontrol = list(estonly = TRUE)))
   expect_identical(estonly$laplace$correction$status, "estonly")
   expect_false(estonly$laplace$correction$applied)
-  expect_error(ctLaplaceRefit(list()), "intoverpop = 'laplace'")
 })
 
 test_that("a fit without the record reads as uncorrected", {
@@ -829,7 +842,7 @@ test_that("draws' defaults reach the engine, and a flag names both corrections",
   plain <- .ctLaplaceShiftMessage(0.63, "popsd_drift", 27L, 40L)
   wide <- .ctLaplaceShiftMessage(2.3, "popsd_mm_Y5", 97L, 100L, drawn = 97L)
   for (said in c(plain, wide)) {
-    expect_match(said, "ctLaplaceRefit(fit)", fixed = TRUE)
+    expect_match(said, "ctFitUncertainty(fit, intoverpop = 'quadrature')", fixed = TRUE)
     expect_match(said, "intoverpop = 'none'", fixed = TRUE)
     expect_match(said, "their intervals", fixed = TRUE)
   }

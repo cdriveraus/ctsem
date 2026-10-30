@@ -1,4 +1,4 @@
-# `ctFitUncertainty(fit, 'is', control = list(likelihood = 'particle'))`:
+# `ctFitUncertainty(fit, 'is', filter = 'particle')`:
 # applying the correction ctParticleLik() measures.
 #
 # The filter's posterior draws -- however they were produced -- approximate the
@@ -43,9 +43,9 @@
   transition <- match.arg(transition)
   spec <- .ctBackendSpec(fit)
   if (!is.null(spec$laplace)) {
-    stop("likelihood = 'particle' is not available for intoverpop = 'laplace' or ",
+    stop("filter = 'particle' is not available for intoverpop = 'laplace' or ",
       "'none' fits: the particles carry random effects only as augmented states. ",
-      "likelihood = 'quadrature' is the Laplace route's exact reference.",
+      "intoverpop = 'quadrature' is the Laplace route's exact reference.",
       call. = FALSE)
   }
   particles <- as.integer(particles)[1L]
@@ -56,7 +56,7 @@
   hasdraws <- !is.null(posterior) && length(dim(posterior)) == 2L && nrow(posterior) >= 2L
   covariance <- fit$estimate$cov
   if (is.null(covariance)) {
-    stop("likelihood = 'particle' needs the fit's covariance as its first ",
+    stop("filter = 'particle' needs the fit's covariance as its first ",
       "proposal. Run ctFitUncertainty(fit) first.", call. = FALSE)
   }
   est <- as.numeric(fit$estimate$raw)

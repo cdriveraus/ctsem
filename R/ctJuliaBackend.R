@@ -6238,7 +6238,7 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
   }
   # A run still ended on a jump stops there, at no maximum of anything
   # continuous, so it is not certified; the fit warns and leaves integrating
-  # the named units to the user (`laplace_refit = TRUE` or `ctLaplaceRefit()`, whose rounds take
+  # the named units to the user (`intoverpop = 'quadrature'`, whose rounds take
   # them on draws with the points the watch saw: `.ctLaplaceContinue()`,
   # through `fit$laplace$jump`), as it leaves a flagged check: the rounds can
   # take hours. `jumprecord`, since `$jump` on an engine result would match
@@ -7531,8 +7531,9 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
   uncertainty <- .ctJuliaOr(optimcontrol[["uncertainty"]],
     if (weighted) "sandwich" else "hessian")
   uncertaintycontrol <- .ctJuliaOr(optimcontrol$uncertaintyControl, list())
-  if (is.null(optimcontrol[["uncertainty"]]) && !weighted &&
-      is.null(uncertaintycontrol$check)) uncertaintycontrol$check <- TRUE
+  # The interval check beside 'hessian' (`optimcontrol$checks`).
+  uncertaintycontrol$check <- identical(uncertainty, "hessian") &&
+    "intervals" %in% .ctUncertaintyChecks(.ctJuliaOr(optimcontrol$checks, TRUE))
   uncertain <- isTRUE(intoverstates) && !isTRUE(optimcontrol$estonly)
   # One way to sample: `ctFit(optimize = FALSE)`, which places the sampler
   # through this same pipeline before ever reaching this stage (see
@@ -7548,7 +7549,7 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
       "ctFitUncertainty(fit, 'sample') on this fit once it is made.",
       call. = FALSE)
   }
-  measure <- function(fit, method, control = uncertaintycontrol) ctFitUncertainty(
+  measure <- function(fit, method, control = uncertaintycontrol) .ctFitUncertaintyImpl(
     fit = fit, uncertainty = method,
     draws = .ctJuliaOr(optimcontrol$uncertaintyDraws, "auto"),
     finishsamples = .ctJuliaOr(optimcontrol$finishsamples, 1000L),
@@ -7556,7 +7557,7 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
   # A run that ended on a jump has no Laplace answer: the objective is not
   # continuous there, so it has no maximum. Its uncertainty is the curvature's
   # at that point all the same, and the stage below warns whatever
-  # `laplace_check` says; only the integrated refit integrates the units
+  # `checks` says; only the integrated refit integrates the units
   # it named, from there. That was once forced on every such fit, and on the
   # affect pilot it gained 29 nats in nine hours.
   jumped <- !is.null(out$laplace$jump)
@@ -7587,11 +7588,11 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
     } else out <- holdrepair(measure(out, uncertainty))
   }
 
-  # The Laplace check, or the integrated refit, after the certification has
+  # The random-effects check, or the integrated refit, after the certification has
   # converged the Laplace objective and the uncertainty stage has built the
   # Hessian it steps against, which it reuses rather than computing another.
   # Before the constrained draws below, so that they are built once. See
-  # `.ctLaplaceContinue()`: the refit (`laplace_refit`) replaces the
+  # `.ctLaplaceContinue()`: the refit (`intoverpop = 'quadrature'`) replaces the
   # covariance and draws with its own when it reaches its fixed point; the
   # check, the default, only checks and warns.
   if (!is.null(out$laplace) && isTRUE(intoverstates)) {
@@ -7603,7 +7604,8 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
         correct = FALSE))
     } else {
       out$laplace$correction <- list(status = if (isTRUE(optimcontrol$estonly) &&
-        !isFALSE(optimcontrol$laplace_check)) "estonly" else "off",
+        "randomeffects" %in% .ctUncertaintyChecks(.ctJuliaOr(optimcontrol$checks,
+          TRUE))) "estonly" else "off",
         applied = FALSE)
     }
   }
@@ -7748,7 +7750,7 @@ print.ctJuliaFit <- function(x, ...) {
   # are the placement's: its intervals come from the draws.
   if (sampled) return(invisible(x))
   # The integrated refit, only when it moved the estimate by a tenth of a
-  # standard error or more; the Laplace check's warning otherwise.
+  # standard error or more; the random-effects check's warning otherwise.
   corr <- x$laplace$correction
   if (isTRUE(corr$applied) && isTRUE(corr$material)) {
     cat("  Laplace estimate ", if (identical(corr$method, "quadrature"))

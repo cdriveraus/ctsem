@@ -1,10 +1,11 @@
-# The Laplace check and the integrated refit, both `.ctLaplaceContinue()`:
-# the check scores every unit's Laplace error at the estimate (the default,
-# `optimcontrol$laplace_check`); the refit (`optimcontrol$laplace_refit`, or
-# `ctLaplaceRefit()` after the fit) climbs the quadrature hybrid from the
-# estimate with the units the check names integrated, and draws the fit's
-# uncertainty on that density. A request to sample against the quadrature -- `ctFitUncertainty(fit, 'is' or
-# 'checked', control = list(likelihood = 'quadrature'))`,
+# The random-effects check and the integrated refit, both
+# `.ctLaplaceContinue()`: the check scores every unit's Laplace error at the
+# estimate (the default, `optimcontrol$checks`); the refit
+# (`ctFit(intoverpop = 'quadrature')`, or `ctFitUncertainty(fit, intoverpop =
+# 'quadrature')` after the fit) climbs the quadrature hybrid from the estimate
+# with the units the check names integrated, and draws the fit's uncertainty
+# on that density. A request to sample against the quadrature --
+# `ctFitUncertainty(fit, 'is' or 'checked', intoverpop = 'quadrature')`,
 # `.ctBackendUncertaintyQuadrature()` -- is the continuation with the method
 # asked for. The separate importance sampler against the adaptive
 # Gauss-Hermite posterior at every unit (`.ctLaplaceCorrect()`, to
@@ -13,41 +14,25 @@
 # Newton step where the continuation climbs, and reported no error for the
 # density it sampled.
 
-# What a fit does about Laplace's error -- FALSE, "check" or "quadrature" (the
-# integrated refit) -- from `optimcontrol$laplace_check` (default TRUE) and
-# `laplace_refit` (default FALSE), refusing by name a request that cannot
-# apply. FALSE is accepted anywhere, since it describes what every other route
-# does. The default is the check alone, which warns where Laplace's error
-# moves an estimate and names the refit, rather than running it (Charles,
-# 2026-10-27): the refit adds seconds to hours to a fit. Wherever both were
+# What a fit does about Laplace's error -- FALSE, "check" (the random-effects
+# check) or "quadrature" (the integrated refit) -- from `optimcontrol$checks`
+# and `ctFit(intoverpop = 'quadrature')` (`optimcontrol$.refit`, set by
+# ctFit), refusing a refit that cannot apply. The default is the check
+# alone, which warns where Laplace's error moves an estimate and names the
+# refit, rather than running it (Charles, 2026-10-27): the refit adds seconds
+# to hours to a fit. Wherever both were
 # measured it cost no more than sampling the joint posterior -- 1/25 to 1/200
 # of it on one level, as much on nested units (gN3: 244 s against 242 s),
 # under a quarter on wide units by draws (k5: 2.8 h against over 13;
 # scripts/lapcheck-2026-10/rounds_cost.R, sample_cost.R) -- but whether to
-# pay for either is the user's call. A refit asked for runs the check first,
-# whatever `laplace_check` says. `laplace_correct` was these two's name before
-# 4.0.0 was released, and is refused with the new names.
+# pay for either is the user's call. A refit runs the check first, whatever
+# `checks` says.
 .ctLaplaceCorrectResolve <- function(optimcontrol, intoverpop, optimize,
   intoverstates) {
-  if (!is.null(optimcontrol$laplace_correct)) {
-    stop("optimcontrol$laplace_correct is now optimcontrol$laplace_check ",
-      "(TRUE or FALSE: the default check of Laplace's error) and ",
-      "optimcontrol$laplace_refit (TRUE or FALSE: refit with the units it ",
-      "names integrated).", call. = FALSE)
-  }
-  flag <- function(name) {
-    value <- optimcontrol[[name]]
-    if (!is.null(value) && !(is.logical(value) && length(value) == 1L &&
-        !is.na(value))) {
-      stop("optimcontrol$", name, " must be TRUE or FALSE.", call. = FALSE)
-    }
-    value
-  }
-  check <- flag("laplace_check")
-  refit <- flag("laplace_refit")
-  if (!isTRUE(refit) && isFALSE(check)) return(FALSE)
-  method <- if (isTRUE(refit)) "quadrature" else "check"
-  explicit <- isTRUE(refit) || isTRUE(check)
+  refit <- isTRUE(optimcontrol$.refit)
+  check <- "randomeffects" %in% .ctUncertaintyChecks(.ctJuliaOr(optimcontrol$checks, TRUE))
+  if (!refit && !check) return(FALSE)
+  method <- if (refit) "quadrature" else "check"
   why <- if (!identical(as.character(intoverpop)[1L], "laplace")) {
     paste0("applies to intoverpop='laplace' only; with intoverpop='",
       intoverpop, "' there is no Laplace term")
@@ -61,10 +46,7 @@
     "steps against the fit's Hessian, which optimcontrol$estonly skips"
   } else NULL
   if (is.null(why)) return(method)
-  if (explicit) {
-    stop("optimcontrol$", if (isTRUE(refit)) "laplace_refit" else "laplace_check",
-      " ", why, ". Drop it.", call. = FALSE)
-  }
+  if (refit) stop("intoverpop = 'quadrature' ", why, ".", call. = FALSE)
   FALSE
 }
 
@@ -108,8 +90,8 @@
   fit
 }
 
-# The integrated refit (`optimcontrol$laplace_refit`, `ctLaplaceRefit()`)
-# climbs the quadrature objective: from the Laplace optimum, with the
+# The integrated refit (`intoverpop = 'quadrature'`) climbs the quadrature
+# objective: from the Laplace optimum, with the
 # engine's own optimiser, on an objective whose nodes are held fixed so that
 # its gradient is exact (the Fisher identity; see laplace_continuation.jl), in
 # rounds between which the nodes are re-placed. bigIRT's `laplaceRefine` is the
@@ -487,7 +469,7 @@
     draws = check$draws, seeds = check$seeds, seconds = check$seconds)
 }
 
-# The fit's log likelihood where the Laplace check integrated every unit and
+# The fit's log likelihood where the random-effects check integrated every unit and
 # left the estimate alone: Laplace's plus the check's gap, the summed
 # difference between each unit's integral on its draws and its Laplace term
 # (its seeds' mean, `loglik_se` their standard error), and each subject's
@@ -525,37 +507,6 @@
   as.numeric(fit$estimate$loglik)
 }
 
-#' Refit a Laplace fit with the units its check names integrated
-#'
-#' The integrated refit after the fit: what \code{optimcontrol$laplace_refit =
-#' TRUE} does when fitting. A fit on \code{intoverpop = 'laplace'} runs the
-#' Laplace check by default, which scores every unit's Laplace error at the
-#' estimate and warns where integrating would move an estimate. This refits
-#' from the estimate with those units' random effects integrated numerically
-#' -- by adaptive Gauss-Hermite rules for units with up to five effects, by
-#' frozen draws beyond -- and reports the estimate, standard errors and log
-#' likelihood of that objective. It can take seconds on one-level models and
-#' hours on wide or nested units; sampling the joint posterior,
-#' \code{ctFitUncertainty(fit, 'sample', control = list(intoverpop =
-#' 'none'))}, has no Laplace error either.
-#'
-#' @param fit A \code{ctJuliaFit} on \code{intoverpop = 'laplace'}.
-#' @param cores Total CPU cores to use.
-#' @param verbose Progress output: 0 none, 1 or more for progress lines.
-#' @return The refitted fit; \code{fit$laplace$correction} records what was
-#'   done.
-#' @seealso \code{\link{ctOptimControl}} (\code{laplace_check},
-#'   \code{laplace_refit}), \code{\link{ctFitUncertainty}}.
-#' @export
-ctLaplaceRefit <- function(fit, cores = 2L, verbose = 0) {
-  if (!.ctFitIsJulia(fit) || is.null(fit$laplace)) {
-    stop("ctLaplaceRefit() needs a julia fit made with intoverpop = 'laplace'.",
-      call. = FALSE)
-  }
-  ctFitUncertainty(fit, "hessian", cores = cores, verbose = verbose,
-    control = list(likelihood = "quadrature"))
-}
-
 # What a fit the check flagged and nothing corrected says, in its warning and
 # in print(): the move, Laplace's error in the log likelihood (`gap`, where it
 # is resolved past twice `gap_se`), that the estimates and intervals are
@@ -578,7 +529,7 @@ ctLaplaceRefit <- function(fit, cores = 2L, verbose = 0) {
 # integrated log likelihood (`.ctLaplaceCheckedLoglik()`).
 .ctLaplaceShiftMessage <- function(shift, worst, carrying, units, drawn = 0L,
   gap = NA_real_, gap_se = NA_real_) {
-  sample <- "ctFitUncertainty(fit, 'sample', control = list(intoverpop = 'none'))"
+  sample <- "ctFitUncertainty(fit, 'sample', intoverpop = 'none')"
   move <- if (shift < 1) {
     paste0("by about ", format(shift, digits = 2), " standard errors here (", worst, ")")
   } else {
@@ -593,7 +544,8 @@ ctLaplaceRefit <- function(fit, cores = 2L, verbose = 0) {
       " nats ", if (gap < 0) "above" else "below", " the integrated one, which the fit ",
       "reports"),
     ". The estimates and their intervals are Laplace's, ",
-    "uncorrected. ctLaplaceRefit(fit) refits with those units integrated, and ",
+    "uncorrected. ctFitUncertainty(fit, intoverpop = 'quadrature') refits with ",
+    "those units integrated, and ",
     sample,
     " samples the joint posterior.",
     if (drawn > 0L) paste0(" Both may take hours here, where ", drawn,
@@ -928,7 +880,7 @@ ctLaplaceRefit <- function(fit, cores = 2L, verbose = 0) {
   reason
 }
 
-# `correct = FALSE` is the default fit's (`laplace_check`): the
+# `correct = FALSE` is the default fit's (the random-effects check): the
 # shift check alone, and where it finds Laplace's error moving an estimate, a
 # warning naming the corrections and the estimate left where it is. `force`
 # adds units to those the rounds integrate whatever the screen says: a
@@ -988,8 +940,9 @@ ctLaplaceRefit <- function(fit, cores = 2L, verbose = 0) {
     named <- as.integer(jump$units)
     msg <- sprintf(paste0("The fit stopped where the Laplace term of %s %s ",
       "jumps, at no maximum, so its estimate and standard errors are ",
-      "approximate. ctLaplaceRefit(fit) refits with %s integrated by draws; ",
-      "ctFitUncertainty(fit, 'sample', control = list(intoverpop = 'none')) ",
+      "approximate. ctFitUncertainty(fit, intoverpop = 'quadrature') refits ",
+      "with %s integrated by draws; ctFitUncertainty(fit, 'sample', ",
+      "intoverpop = 'none') ",
       "samples the joint posterior."), if (length(named) == 1L) "unit" else "units",
       paste(named, collapse = ", "), if (length(named) == 1L) "it" else "them")
     warning(msg, call. = FALSE)
@@ -1023,7 +976,7 @@ ctLaplaceRefit <- function(fit, cores = 2L, verbose = 0) {
   # point is no optimum to take a step from.
   checkfailed <- NULL
   check <- if (is.null(jump) && (!correct || !isFALSE(control$check))) {
-    if (!is.null(sink)) sink(sprintf("Laplace check, every unit on %d draws | %8s",
+    if (!is.null(sink)) sink(sprintf("Random-effects check, every unit on %d draws | %8s",
       as.integer(.ctJuliaOr(control$check_draws, 128L)), .ctDuration(seconds())), "update")
     tryCatch(.ctLaplaceShiftCheck(fit,
       draws = as.integer(.ctJuliaOr(control$check_draws, 128L)),

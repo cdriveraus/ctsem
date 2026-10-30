@@ -30,8 +30,8 @@ is skipped when uncertainty was not computed.}
 \item{step}{Finite-difference step for the gap gradient, on the raw scale.}
 
 \item{refine}{Continue the fit on the quadrature objective rather than
-correcting linearly: the integrated refit \code{optimcontrol$laplace_refit =
-TRUE} runs at fit time (see \code{\link{ctFit}}), from this fit's
+correcting linearly: the integrated refit \code{intoverpop =
+'quadrature'} runs at fit time (see \code{\link{ctFit}}), from this fit's
 estimate, with its Hessian as the starting metric. Its gradient is exact,
 so it costs a few quadrature gradients per round rather than the
 \code{2 * npar} quadrature evaluations per gradient the finite-difference
@@ -95,9 +95,10 @@ point estimate is approximation-limited and the interval will not cover
 whatever width it has.
 
 A fit can be refitted with its units integrated when it is fitted
-(\code{optimcontrol$laplace_refit = TRUE}, see \code{\link{ctOptimControl}})
-or after (\code{\link{ctLaplaceRefit}}); by default it only runs the Laplace
-check, which warns where integrating would move an estimate. On a corrected fit this check is made at the corrected estimate,
+(\code{ctFit(intoverpop = 'quadrature')}) or after
+(\code{ctFitUncertainty(fit, intoverpop = 'quadrature')}); by default it
+only runs the random-effects check, which warns where integrating would
+move an estimate. On a corrected fit this check is made at the corrected estimate,
 which is not a Laplace optimum: the correction reported is then the
 \emph{further} Newton step on the quadrature objective from there, with the
 Laplace gradient included, and \code{at} on the result is
@@ -124,8 +125,8 @@ check$parameters          # the full per-parameter table
 }
 }
 \seealso{
-\code{\link{ctFitUncertainty}} with \code{uncertainty = 'sample'}
-  and \code{control = list(intoverpop = 'none')} removes the approximation
+\code{\link{ctFitUncertainty}} with \code{method = 'sample'}
+  and \code{intoverpop = 'none'} removes the approximation
   instead of measuring it, by sampling the joint posterior; much slower,
   and the right answer when \code{delta_se} says a linear correction is not
   credible.

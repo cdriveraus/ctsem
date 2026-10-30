@@ -262,7 +262,7 @@ test_that("sampling uses the fitted mesh, on both targets and from ctFitUncertai
 
   # Sampling a fit already made samples its own mesh.
   sampled <- list()
-  suppressWarnings(suppressMessages(ctFitUncertainty(optimised, uncertainty = "sample",
+  suppressWarnings(suppressMessages(ctFitUncertainty(optimised, method = "sample",
     control = list(chains = 1, warmup = 10, draws = 10))))
   expect_gt(length(sampled), 0L)
   for (s in sampled) expect_identical(s$fit$model_spec$max_timestep, mesh)

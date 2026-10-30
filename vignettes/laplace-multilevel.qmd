@@ -110,13 +110,14 @@ transform (`DRIFT`, `DIFFUSION`, and any state-dependent parameter), and the
 approximation is better the more informative each subject's data is about its
 own effects.
 
-`ctFit()` measures that error itself by default, with the Laplace check
-(`optimcontrol$laplace_check`): it checks each unit's integral at draws
+`ctFit()` measures that error itself by default, with the random-effects
+check (`optimcontrol$checks`): it checks each unit's integral at draws
 from that unit's posterior, and warns where taking the integrals exactly
 would move an estimate by a tenth of a standard error or more.
-`ctLaplaceRefit(fit)` then refits on the quadrature objective for the units
-that carry the move, reporting the quadrature log likelihood, and
-`optimcontrol$laplace_refit = TRUE` does the same at fit time; `print(fit)`
+`ctFitUncertainty(fit, intoverpop = 'quadrature')` then refits on the
+quadrature objective for the units that carry the move, reporting the
+quadrature log likelihood, and `ctFit(intoverpop = 'quadrature')` does the
+same at fit time; `print(fit)`
 says when the estimate moved, or should have. `ctLaplaceCheck()` reports the same
 measurement on any Laplace fit, as how far the estimate would move if the
 integral were taken exactly. Read `delta_se`: well below one says the
@@ -125,14 +126,14 @@ is. Read `dropped_directions` alongside it rather than on its own — a
 direction the data does not identify well enough to correct along is also
 reported as a zero correction, and the two look the same in `delta_se` even
 though one means "fine" and the other means "not estimable here".
-`ctFitUncertainty(fit, 'is', control = list(likelihood = 'quadrature'))`
+`ctFitUncertainty(fit, 'is', intoverpop = 'quadrature')`
 importance samples against the quadrature posterior, correcting the shape of
 the intervals as well as their centre.
 
 The correction moves the estimate and its curvature; the intervals are still
 a normal approximation at a mode, which understates the skew a population
 standard deviation estimated from few groups has. For the exact posterior,
-`ctFitUncertainty(fit, 'sample', control = list(intoverpop = 'none'))`
+`ctFitUncertainty(fit, 'sample', intoverpop = 'none')`
 samples the parameters and every unit's random effects jointly, with the
 Laplace fit only as a starting point; on a fit made with `intoverpop =
 'laplace'`, as here, the plain call samples the Laplace marginal instead,

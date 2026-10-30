@@ -1,4 +1,4 @@
-# `ctFitUncertainty(fit, 'is', control = list(likelihood = 'particle'))`:
+# `ctFitUncertainty(fit, 'is', filter = 'particle')`:
 # importance sampling a fit's posterior against the particle-filter likelihood.
 #
 # The engine's suite proves the particle filter; test-julia-particle.R proves
@@ -41,9 +41,9 @@ skip_on_cran()
 }
 
 .particle_is <- function(fit, ..., finishsamples = 60) {
-  suppressWarnings(ctFitUncertainty(fit, uncertainty = "is",
+  suppressWarnings(ctFitUncertainty(fit, method = "is", filter = "particle",
     finishsamples = finishsamples, cores = 1,
-    control = list(likelihood = "particle", substeps = 1, seed = 3, ...)))
+    control = list(substeps = 1, seed = 3, ...)))
 }
 
 test_that("sampling against the particle filter records everything it did", {
@@ -94,7 +94,7 @@ test_that("sampling against the particle filter records everything it did", {
   expect_output(print(pc), "Particle-filter correction applied")
   expect_output(print(pc), "effective sample size")
   expect_match(suppressMessages(summary(out))$uncertaintyNote,
-    "likelihood='particle'", fixed = TRUE)
+    "method = 'is', filter = 'particle'", fixed = TRUE)
   expect_match(suppressMessages(summary(fit))$uncertaintyNote, "ctFitUncertainty")
 })
 
@@ -113,16 +113,15 @@ test_that("correctEstimate = FALSE leaves the point where it was", {
 test_that("unsupported requests are refused by name", {
   fit <- .pc_fit()
   expect_error(.particle_is(fit, particles = 1), "at least 2")
-  expect_error(ctFitUncertainty(fit, "is",
-    control = list(likelihood = "particle", substeps = 0)), "at least 1")
-  expect_error(ctFitUncertainty(fit, "is",
-    control = list(likelihood = "particle", nodes = 5)),
-    "control$nodes is not used with likelihood = 'particle'", fixed = TRUE)
-  expect_error(ctFitUncertainty(fit, "hessian",
-    control = list(likelihood = "particle")), "applies to uncertainty = 'is'")
+  expect_error(ctFitUncertainty(fit, "is", filter = "particle",
+    control = list(substeps = 0)), "at least 1")
+  expect_error(ctFitUncertainty(fit, "is", filter = "particle",
+    control = list(nodes = 5)),
+    "control$nodes is not used with filter = 'particle'", fixed = TRUE)
+  expect_error(ctFitUncertainty(fit, "hessian", filter = "particle"), "applies to method = 'is'")
   bare <- fit
   bare$estimate$cov <- NULL
-  expect_error(ctFitUncertainty(bare, "is", control = list(likelihood = "particle")),
+  expect_error(ctFitUncertainty(bare, "is", filter = "particle"),
     "covariance")
   # ctParticleLik's cores argument does not change the answer.
   a <- ctParticleLik(fit, particles = 200, substeps = 1, seed = 5)
@@ -139,7 +138,7 @@ test_that("where the filter is exact, sampling against the particle filter targe
   fit <- .pc_fit()
   set.seed(6)
   reference <- suppressWarnings(suppressMessages(ctFitUncertainty(fit,
-    uncertainty = "is", finishsamples = 400, verbose = 0,
+    method = "is", finishsamples = 400, verbose = 0,
     control = list(isitersize = 300, isESS = 60))))
   # uncertainty = 'is' on the julia route records the tail of its weights; on
   # a linear model the posterior has the proposal's shape and the tail is light.
