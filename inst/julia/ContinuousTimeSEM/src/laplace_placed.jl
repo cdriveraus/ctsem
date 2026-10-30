@@ -1,0 +1,713 @@
+"""
+The refined fit's rules placed at every evaluation, and its gradient taken
+through the placement.
+
+# Why this exists
+
+The continuation (`laplace_continuation.jl`) holds each flagged unit's rule
+fixed in the standardised effects where it was placed, climbs that frozen
+objective, and places the rules again between rounds. Its gradient is the
+Fisher identity at fixed nodes, which leaves out how the rule's own error
+moves with its placement. So the rounds' fixed point is not the maximum of the
+objective with the rules placed at the point, the keep rule reads that error
+moving as gain or loss, and the density the uncertainty draws on returns a
+value placed at the point with a gradient that is not that value's
+(`review/SURVEY-quadrature-2026-10-30.md`, sections 4 and 6B).
+
+Here a flagged unit's product rule is placed at its mode and curvature at
+every evaluation, as SAS NLMIXED and lme4's `nAGQ` place theirs, and the
+gradient is the derivative of that value. One function, smooth wherever the
+unit's posterior is one basin, that L-BFGS and the Newton finish climb as they
+climb the Laplace objective, and that a sampler reads with a gradient that is
+its value's.
+
+# The gradient
+
+A unit's term, its block's effects `u` (`k` of them), its log integrand
+`f(u) = sum_m ll_m(theta + L u) - u'u/2` and its mode `c(theta)` with
+precision `M = -d2f/du2` there, is
+
+    Q = log sum_j exp(lw_j + f(c + sqrt(2) S x_j)) + log|S| + k (log 2 - log 2 pi) / 2
+
+with `x_j` the Gauss-Hermite grid, `lw_j` its log weights with `x_j'x_j`
+folded in, and `S = U^-1` for `M~ = U'U`, `M~` the precision with its
+eigenvalues clipped at the prior's (`_quadrature_clipped_scale`). With `pi_j`
+the normalised node weights,
+
+    dQ/dtheta = sum_j pi_j df/dtheta(z_j)        Fisher, the frozen rule's
+              + a' dc/dtheta                     the centre moving
+              + <Mbar, dM/dtheta>                the scale and log|S| moving
+
+where `a = sum_j pi_j grad_u f(z_j)` and `Mbar` is what `tr(dS B) - logdet(M~)/2`
+asks of `dM~` (`B = sqrt(2) sum_j pi_j x_j grad_u f(z_j)'`), carried back
+through the Cholesky factor and the clip (`_placed_mbar`). `dM/dtheta` is
+total: `M` moves at a fixed centre and with it, so its centre part joins
+`a`, `b_i = <Mbar, dM/du_i>`, and by the implicit function theorem
+`dc/dtheta = M^-1 d(grad_u f)/dtheta`. With `v = M^-1 (a + b)`:
+
+  - `v' d(grad_u f)/dtheta`: one seeded sweep at the mode along `L v`, the
+    derivative of the gradient along it, and the chain through `L(theta)`.
+  - `<Mbar, dM/dtheta>` at a fixed centre, `M = I - L'HL`: the sum over
+    `Mbar`'s eigendirections of the third derivative along each, which is the
+    trace-jet sweep the Laplace log determinant's gradient runs
+    (`_laplace_unit_jet_gradient`), a pass per sign, with `Mbar` in place of
+    `M^-1`; and `2 <dL/dtheta, H L Mbar>`, `L`'s own derivative, from the
+    seeded sweep's further lanes along `L Mbar`.
+
+For a Gaussian integrand the three placement terms cancel, as they must: the
+rule is then exact wherever it sits.
+
+# What is placed, and what is not
+
+A flagged unit of one block on a product rule, at the node count the
+continuation keeps for it (`o.unit_nodes`), placed as `_continuation_unit_rule`
+places it: the leaf's mode by Newton (`_quadrature_leaf_rule!`), from the mode
+it had at the last evaluation (`anchors`), where the continuation searches
+from the Laplace mode. A unit that the continuation gave a soft rule (more
+than `product_maxdim` effects) gets the product rule here, whose placement
+this differentiates. A unit on importance draws keeps its frozen draws, as do
+nested units for now: their rules are the continuation's as placed, with its
+Fisher gradient. The other units keep their Laplace terms (`o.rest`), and the
+prior is theirs.
+"""
+
+using LinearAlgebra
+
+export ctsem_laplace_placed, ctsem_laplace_placed_evaluate, ctsem_laplace_placed_check,
+    ctsem_laplace_placed_hessian, ctsem_laplace_placed_info
+
+"""
+    CTSEMLaplacePlaced
+
+The hybrid with its flagged units' product rules placed at every evaluation;
+see the module docstring. `cont` is the continuation it was built from, which
+supplies the flagged set, the Laplace part (`cont.rest`), the frozen rules and
+the node counts. `placed` are the units placed at every evaluation, `frozen`
+positions in `cont.rules` of the units kept on their frozen rules, `nodes`
+each unit's node count (zero for a unit not placed), and `anchors` each placed
+unit's effects at its mode at the last evaluation, where the next one's
+Newton starts.
+"""
+mutable struct CTSEMLaplacePlaced{C} <: CTSEMOptimisable
+    cont::C
+    placed::Vector{Int}
+    frozen::Vector{Int}
+    nodes::Vector{Int}
+    anchors::Vector{Vector{Float64}}
+    cache::Any
+    value_cache::Any
+    value_calls::Int
+    gradient_calls::Int
+    seconds_values::Float64
+    seconds_gradients::Float64
+    seconds_hessian::Float64
+    lbfgs::Union{Nothing,CTSEMLBFGSMemory}
+end
+
+"""
+    ctsem_laplace_placed(o)
+
+The placed objective from the continuation `o`, its flagged set and node counts
+as `o` holds them: every flagged unit of one block whose rule is not draws is
+placed at every evaluation; the rest of the flagged units keep `o`'s frozen
+rules. Each placed unit's anchor starts at its mode at `o`'s centre, from
+`o`'s own search (`_laplace_solve_unit_mode!`), so at the centre the value is
+`o`'s placed value wherever `o`'s rules are product rules.
+"""
+function ctsem_laplace_placed(o::CTSEMLaplaceContinuation)
+    laplace = o.laplace
+    nunits = length(laplace.units.members)
+    placed = Int[]
+    frozen = Int[]
+    nodes = zeros(Int, nunits)
+    for (f, U) in enumerate(o.flagged)
+        if length(laplace.units.blocks[U]) == 1 && !o.importance[U] &&
+                laplace.units.blocks[U][1].size >= 1
+            push!(placed, U)
+            nodes[U] = max(o.nodes, o.unit_nodes[U])
+        else
+            push!(frozen, f)
+        end
+    end
+    _hybrid_on(laplace.objective.params.hybrid) && !isempty(placed) &&
+        throw(ArgumentError("placed rules do not yet take deviations the " *
+            "filter integrates"))
+    theta = copy(o.centre)
+    Ls = _laplace_popchols(theta, laplace.spec)
+    anchors = [Float64[] for _ in 1:nunits]
+    _laplace_parallel(laplace, eachindex(placed)) do i
+        local U
+        U = placed[i]
+        _laplace_solve_unit_mode!(laplace, U, theta, Ls)
+        anchors[U] = copy(laplace.modes[U])
+        return true
+    end
+    return CTSEMLaplacePlaced{typeof(o)}(o, placed, frozen, nodes, anchors, nothing,
+        nothing, 0, 0, 0.0, 0.0, 0.0, nothing)
+end
+
+"""
+    _placed_scale(M, k)
+
+The rule's scale at precision `M` exactly as the leaf rule takes it
+(`_quadrature_leaf_rule!`, `_quadrature_clipped_scale`), with what its
+derivative needs: `S = U^-1` for `M~ = U'U`, the log scale `-logdet(M~)/2`,
+whether the eigenvalues were clipped at one, and if so the eigenvectors and
+eigenvalues of the matrix that was clipped.
+"""
+function _placed_scale(M::Matrix{Float64}, k::Int)
+    F = _ctsem_cholesky(copy(M), k)
+    D = M
+    if issuccess(F)
+        Lf = Matrix(F.L)
+        D = Lf * transpose(Lf)
+        if issuccess(_ctsem_cholesky(D - Matrix{Float64}(LinearAlgebra.I, k, k), k))
+            return (S=_ctsem_cholesky_uinv(F), U=Matrix(UpperTriangular(F.U[1:k, 1:k])),
+                logdetscale=-logdet(F) / 2, clipped=false, vectors=zeros(0, 0),
+                values=Float64[], ok=true)
+        end
+    end
+    E = _ctsem_symeig(D)
+    all(isfinite, E.values) || return (S=zeros(0, 0), U=zeros(0, 0), logdetscale=NaN,
+        clipped=true, vectors=zeros(0, 0), values=Float64[], ok=false)
+    clipped = E.vectors * Diagonal(max.(E.values, 1.0)) * transpose(E.vectors)
+    G = _ctsem_cholesky(Matrix(_laplace_symmetrise(clipped)), k)
+    issuccess(G) || return (S=zeros(0, 0), U=zeros(0, 0), logdetscale=NaN,
+        clipped=true, vectors=zeros(0, 0), values=Float64[], ok=false)
+    return (S=_ctsem_cholesky_uinv(G), U=Matrix(UpperTriangular(G.U[1:k, 1:k])),
+        logdetscale=-logdet(G) / 2, clipped=true, vectors=Matrix(E.vectors),
+        values=collect(E.values), ok=true)
+end
+
+"""
+    _placed_mbar(sc, B, k)
+
+`Mbar`, the symmetric `k x k` matrix with `<Mbar, dM>` the change in
+`tr(dS B) + logdet(S)` for a change `dM` of the unclipped precision, `S = U^-1`
+and `M~ = U'U` (`_placed_scale`). Through the factor: `dS = -S dU S`, so
+`tr(dS B) = <Ubar, dU>` with `Ubar = -triu((S B S)')`, and the upper Cholesky's
+reverse, `Mbar = sym(S Phi(Ubar U') S')` with `Phi` the upper triangle and half
+the diagonal; `logdet(S) = -logdet(M~)/2` adds `-S S'/2`. Through the clip,
+`M~ = V max(Lambda, 1) V'`, by the divided differences of `max(., 1)` on the
+eigenvalues (Daleckii-Krein).
+"""
+function _placed_mbar(sc, B::Matrix{Float64}, k::Int)
+    S = sc.S
+    U = sc.U
+    SBS = _placed_mm(_placed_mm(S, B), S)
+    Ubar = zeros(k, k)
+    @inbounds for j in 1:k, i in 1:j
+        Ubar[i, j] = -SBS[j, i]
+    end
+    X = zeros(k, k)
+    _ctsem_mulNT!(X, Ubar, U)
+    Phi = zeros(k, k)
+    @inbounds for j in 1:k, i in 1:j
+        Phi[i, j] = i == j ? X[i, i] / 2 : X[i, j]
+    end
+    W = zeros(k, k)
+    _ctsem_mulNT!(W, _placed_mm(S, Phi), S)
+    SS = zeros(k, k)
+    _ctsem_mulNT!(SS, S, S)
+    Mbar = (W .+ transpose(W)) ./ 2 .- SS ./ 2
+    sc.clipped || return Mbar
+    V = sc.vectors
+    lam = sc.values
+    G = zeros(k, k)
+    _ctsem_mulTN!(G, V, _placed_mm(Mbar, V))
+    @inbounds for j in 1:k, i in 1:k
+        li, lj = lam[i], lam[j]
+        K = if abs(li - lj) > 1e-12 * max(abs(li), abs(lj), 1.0)
+            (max(li, 1.0) - max(lj, 1.0)) / (li - lj)
+        else
+            (li + lj) / 2 > 1.0 ? 1.0 : 0.0
+        end
+        G[i, j] *= K
+    end
+    out = zeros(k, k)
+    _ctsem_mulNT!(out, _placed_mm(V, G), V)
+    return (out .+ transpose(out)) ./ 2
+end
+
+"""`A * B` for the rule's small matrices, by the engine's kernel rather than a
+BLAS product, which takes OpenBLAS's process-wide lock (`small_linalg.jl`)."""
+function _placed_mm(A::AbstractMatrix{Float64}, B::AbstractMatrix{Float64})
+    C = zeros(size(A, 1), size(B, 2))
+    _ctsem_mul!(C, A, B)
+    return C
+end
+
+"""`A * x`, by the engine's kernel."""
+function _placed_mv(A::AbstractMatrix{Float64}, x::AbstractVector{Float64})
+    y = zeros(size(A, 1))
+    _ctsem_mulvec!(y, A, x)
+    return y
+end
+
+"""Scatter a level-space vector `w` (one entry per effect of level `l`) onto
+the raw parameters, into `dir`."""
+function _placed_scatter!(dir::AbstractVector{Float64}, spec, l::Int, w::AbstractVector)
+    fill!(dir, 0.0)
+    rho = spec.levels[l].re_index
+    @inbounds for p in eachindex(rho)
+        dir[rho[p]] = w[p]
+    end
+    return dir
+end
+
+"""
+    _placed_unit!(row, P, U, theta, Ls, dL, positions, want_gradient)
+
+Unit `U`'s placed term at `theta`, and with `want_gradient` its gradient into
+`row` (unweighted); see the module docstring. Returns `(ok, value, anchor)`,
+`anchor` the unit's effects at the mode it found.
+"""
+function _placed_unit!(row::Vector{Float64}, P::CTSEMLaplacePlaced, U::Int,
+    theta::Vector{Float64}, Ls, dL, positions, want_gradient::Bool)
+    laplace = P.cont.laplace
+    spec = laplace.spec
+    units = laplace.units
+    block = units.blocks[U][1]
+    k = block.size
+    l = block.level
+    columns = (block.offset + 1):(block.offset + k)
+    nm = length(units.members[U])
+    npar = length(theta)
+    d = units.dims[U]
+    failure = (ok=false, value=NaN, anchor=P.anchors[U])
+    aws = _laplace_workspace!(laplace, Float64, npar)
+    anchor = P.anchors[U]
+    u = copy(anchor)
+    lr = _quadrature_leaf_rule!(laplace, U, theta, Ls, 1, u, aws;
+        start=Float64[anchor[c] for c in columns])
+    lr.ok || return failure
+    c = lr.centre
+    M = Matrix{Float64}(lr.precision)
+    sc = _placed_scale(M, k)
+    sc.ok || return failure
+    grid, lw = _gh_grid(k, P.nodes[U])
+    scratch = _continuation_scratch(laplace, npar)
+    peak = -Inf
+    acc = 0.0
+    gacc = want_gradient ? zeros(npar) : Float64[]
+    aacc = zeros(k)
+    Bacc = zeros(k, k)
+    gh = zeros(npar)
+    gu = zeros(d)
+    z = zeros(k)
+    sx = zeros(k)
+    for j in eachindex(grid)
+        x = grid[j]
+        _ctsem_mulvec!(sx, sc.S, x)
+        @inbounds for t in 1:k
+            z[t] = c[t] + sqrt(2) * sx[t]
+            u[columns[t]] = z[t]
+        end
+        if want_gradient
+            fill!(gh, 0.0)
+            fill!(gu, 0.0)
+        end
+        h = 0.0
+        ok = true
+        for m in 1:nm
+            ll = _continuation_member!(gh, laplace, U, m, theta, Ls, dL, positions, u,
+                aws, scratch, want_gradient)
+            if !isfinite(ll)
+                ok = false
+                break
+            end
+            h += ll
+            want_gradient && _laplace_loading_chain!(gu, scratch.grad, spec, Ls,
+                units.offsets[U][m])
+        end
+        ok || continue
+        t = lw[j] - dot(z, z) / 2 + h
+        if t > peak
+            if isfinite(peak)
+                s = exp(peak - t)
+                acc *= s
+                if want_gradient
+                    gacc .*= s
+                    aacc .*= s
+                    Bacc .*= s
+                end
+            end
+            peak = t
+        end
+        w = exp(t - peak)
+        acc += w
+        if want_gradient
+            gacc .+= w .* gh
+            @inbounds for i in 1:k
+                fz = gu[columns[i]] - z[i]
+                aacc[i] += w * fz
+                for r in 1:k
+                    Bacc[r, i] += w * x[r] * fz
+                end
+            end
+        end
+    end
+    isfinite(peak) || return failure
+    value = peak + log(acc) + sc.logdetscale + k * (log(2) - log(2 * pi)) / 2
+    uc = copy(anchor)
+    @inbounds for (t, col) in enumerate(columns)
+        uc[col] = c[t]
+    end
+    want_gradient || return (ok=true, value=value, anchor=uc)
+
+    fisher = gacc ./ acc
+    a = aacc ./ acc
+    B = (sqrt(2) / acc) .* Bacc
+    Mbar = _placed_mbar(sc, B, k)
+    all(isfinite, Mbar) || return failure
+    L = Ls[l]
+    members = 1:nm
+    offsets = units.offsets[U][1]
+    dir = zeros(npar)
+
+    # <Mbar, L'HL> by its eigendirections, a jet pass a sign.
+    E = _ctsem_symeig(Mbar)
+    g = zeros(npar)
+    dSnet = zeros(npar)
+    have_g = false
+    for sgn in (1.0, -1.0)
+        picked = [r for r in 1:k if sgn * E.values[r] > 0]
+        isempty(picked) && continue
+        for start in 1:_CTSEM_JET_WIDTH:length(picked)
+            chunk = picked[start:min(start + _CTSEM_JET_WIDTH - 1, length(picked))]
+            D = zeros(npar, length(chunk))
+            for (col, r) in enumerate(chunk)
+                _placed_scatter!(dir, spec, l, _placed_mv(L,
+                    sqrt(abs(E.values[r])) .* E.vectors[:, r]))
+                D[:, col] .= dir
+            end
+            pass = _laplace_unit_jet_gradient(laplace, U, theta, Ls, uc, members, D,
+                length(chunk))
+            pass.ok || return failure
+            (all(isfinite, pass.dS) && all(isfinite, pass.d0)) || return failure
+            @inbounds for m in 1:nm, t in 1:npar
+                dSnet[t] += sgn * pass.dS[t, m]
+                have_g || (g[t] += pass.d0[t, m])
+            end
+            have_g = true
+        end
+    end
+
+    # b = <Mbar, dM/du> and the mode's direction v = M^-1 (a + b).
+    bfull = zeros(d)
+    _laplace_loading_chain!(bfull, dSnet, spec, Ls, offsets)
+    rhs = Float64[a[i] - bfull[columns[i]] for i in 1:k]
+    FM = _ctsem_cholesky(copy(M), k)
+    v = if issuccess(FM)
+        FM \ rhs
+    else
+        EM = _ctsem_symeig(M)
+        all(x -> abs(x) > 1e-12, EM.values) || return failure
+        _placed_mv(EM.vectors, _placed_mv(Matrix(transpose(EM.vectors)), rhs) ./
+            EM.values)
+    end
+    all(isfinite, v) || return failure
+
+    # H along L v and along L Mbar's columns, from seeded sweeps at the mode.
+    ndir = 1 + k
+    Dm = zeros(npar, ndir)
+    _placed_scatter!(dir, spec, l, _placed_mv(L, v))
+    Dm[:, 1] .= dir
+    for q in 1:k
+        _placed_scatter!(dir, spec, l, _placed_mv(L, Mbar[:, q]))
+        Dm[:, 1 + q] .= dir
+    end
+    lanes = _laplace_seeded_lanes(laplace)
+    HD = zeros(npar, ndir)
+    for start in 1:lanes:ndir
+        stop = min(start + lanes - 1, ndir)
+        nd = stop - start + 1
+        pass = _laplace_unit_seeded_gradient(laplace, U, theta, Ls, uc, members,
+            Matrix{Float64}(Dm[:, start:stop]), nd)
+        pass.ok || return failure
+        all(isfinite, pass.d1c) || return failure
+        @inbounds for w in 1:nd, m in 1:nm, t in 1:npar
+            HD[t, start + w - 1] += pass.d1c[t, (w - 1) * nm + m]
+        end
+        if !have_g
+            @inbounds for m in 1:nm, t in 1:npar
+                g[t] += pass.d0[t, m]
+            end
+            have_g = true
+        end
+    end
+
+    # The assembly: Fisher, the centre moving, the scale moving.
+    vfull = zeros(d)
+    @inbounds for (t, col) in enumerate(columns)
+        vfull[col] = v[t]
+    end
+    @inbounds for t in 1:npar
+        row[t] = fisher[t] + HD[t, 1] - dSnet[t]
+    end
+    Hd = HD[:, 1]
+    _laplace_chol_chain!(row, Hd, spec, dL, positions, uc, offsets)
+    _laplace_chol_chain!(row, g, spec, dL, positions, vfull, offsets)
+    _laplace_chol_chain!(row, .-dSnet, spec, dL, positions, uc, offsets)
+    eq = zeros(d)
+    for q in 1:k
+        fill!(eq, 0.0)
+        eq[columns[q]] = 1.0
+        _laplace_chol_chain!(row, -2 .* HD[:, 1 + q], spec, dL, positions, eq, offsets)
+    end
+    all(isfinite, row) || return failure
+    return (ok=true, value=value, anchor=uc)
+end
+
+"""
+    _placed_frozen(P, theta, Ls, dL, positions, want_gradient)
+
+The frozen rules' terms (`P.frozen`) at `theta`, and their weighted gradient:
+the continuation's rules as placed, by the Fisher identity
+(`_continuation_rule_value`), a unit a task.
+"""
+function _placed_frozen(P::CTSEMLaplacePlaced, theta::Vector{Float64}, Ls, dL,
+    positions, want_gradient::Bool)
+    o = P.cont
+    laplace = o.laplace
+    npar = length(theta)
+    nf = length(P.frozen)
+    values = fill(NaN, nf)
+    rows = [want_gradient ? zeros(npar) : Float64[] for _ in 1:nf]
+    nf == 0 && return (values=values, rows=rows, ok=true)
+    ok = _laplace_parallel(laplace, 1:nf) do i
+        local rule, U, aws, scratch, u, total, r
+        rule = o.rules[P.frozen[i]]
+        U = rule.unit
+        aws = _laplace_workspace!(laplace, Float64, npar)
+        scratch = _continuation_scratch(laplace, npar)
+        u = zeros(laplace.units.dims[U])
+        total = 0.0
+        for root in rule.roots
+            r = _continuation_rule_value(o, U, theta, Ls, dL, positions, root, u, aws,
+                scratch, want_gradient)
+            isfinite(r.value) || return false
+            total += r.value
+            want_gradient && (rows[i] .+= r.gradient)
+        end
+        values[i] = total
+        return true
+    end
+    return (values=values, rows=rows, ok=ok)
+end
+
+"""
+    ctsem_laplace_placed_evaluate(P, values; gradient=true)
+
+The placed objective at `values`: the Laplace terms of the units left to it
+and the prior (`P.cont.rest`), every placed unit's rule placed there, and the
+frozen rules' terms. `converged` is false where the Laplace part's inner solve
+did not converge or a flagged unit could not be scored, as on the continuation.
+"""
+function ctsem_laplace_placed_evaluate(P::CTSEMLaplacePlaced, values::AbstractVector;
+    gradient::Bool=true)
+    o = P.cont
+    n = length(values)
+    theta = _laplace_extend(o.laplace, collect(Float64, values))
+    for hit in (P.cache, P.value_cache)
+        if hit !== nothing && hit.theta == theta &&
+                (!gradient || hit.result.gradient !== nothing)
+            return _laplace_free_result(_continuation_copy(hit.result), n)
+        end
+    end
+    result = _placed_evaluate(P, theta, gradient)
+    entry = (theta=theta, result=_continuation_copy(result))
+    gradient ? (P.cache = entry) : (P.value_cache = entry)
+    return _laplace_free_result(result, n)
+end
+
+function _placed_evaluate(P::CTSEMLaplacePlaced, theta::Vector{Float64}, gradient::Bool)
+    started = time_ns()
+    o = P.cont
+    laplace = o.laplace
+    spec = laplace.spec
+    npar = length(theta)
+    rest = ctsem_laplace_evaluate(o.rest, theta; gradient=gradient)
+    Ls = _laplace_popchols(theta, spec)
+    dL = gradient ? _laplace_level_chol_derivatives(theta, spec) : nothing
+    positions = [_laplace_level_positions(spec, l) for l in eachindex(spec.levels)]
+    _laplace_ensure_pool!(laplace)
+    sizes = unique(laplace.units.blocks[U][1].size for U in P.placed)
+    for m in unique(P.nodes[P.placed])
+        _quadrature_warm_caches(laplace, m, sizes)
+    end
+    np = length(P.placed)
+    pvalues = fill(NaN, np)
+    prows = [gradient ? zeros(npar) : Float64[] for _ in 1:np]
+    anchors = Vector{Vector{Float64}}(undef, np)
+    placed_ok = _laplace_parallel(laplace, 1:np) do i
+        local U, r
+        U = P.placed[i]
+        r = try
+            _placed_unit!(prows[i], P, U, theta, Ls, dL, positions, gradient)
+        catch err
+            _ctsem_must_propagate(err) && rethrow()
+            (ok=false, value=NaN, anchor=P.anchors[U])
+        end
+        pvalues[i] = r.value
+        anchors[i] = r.anchor
+        return r.ok
+    end
+    if placed_ok
+        for (i, U) in enumerate(P.placed)
+            P.anchors[U] = anchors[i]
+        end
+    end
+    frozen = _placed_frozen(P, theta, Ls, dL, positions, gradient)
+    ok = placed_ok && frozen.ok
+    nunits = length(laplace.units.members)
+    unit_loglik = zeros(nunits)
+    for (position, U) in enumerate(o.rest_units)
+        unit_loglik[U] = rest.unit_loglik[position]
+    end
+    total = rest.value
+    grad = gradient ? copy(rest.gradient) : nothing
+    for (i, U) in enumerate(P.placed)
+        w = _laplace_unit_weight(laplace, U)
+        unit_loglik[U] = pvalues[i]
+        total += w * pvalues[i]
+        gradient && (grad .+= w .* prows[i])
+    end
+    for (i, f) in enumerate(P.frozen)
+        U = o.rules[f].unit
+        w = _laplace_unit_weight(laplace, U)
+        unit_loglik[U] = frozen.values[i]
+        total += w * frozen.values[i]
+        gradient && (grad .+= w .* frozen.rows[i])
+    end
+    value = ok ? total : NaN
+    gradient && !ok && (grad = fill(NaN, npar))
+    subject_loglik = copy(rest.subject_loglik)
+    for U in Iterators.flatten((P.placed, (o.rules[f].unit for f in P.frozen)))
+        members = laplace.units.members[U]
+        for i in members
+            subject_loglik[i] = unit_loglik[U] / length(members)
+        end
+    end
+    elapsed = (time_ns() - started) / 1e9
+    if gradient
+        P.gradient_calls += 1
+        P.seconds_gradients += elapsed
+    else
+        P.value_calls += 1
+        P.seconds_values += elapsed
+    end
+    return (value=value, gradient=grad, unit_loglik=unit_loglik,
+        subject_loglik=subject_loglik, converged=rest.converged && ok)
+end
+
+"""
+    ctsem_laplace_placed_check(P, values; step=1e-5, index=nothing)
+
+The placed objective's gradient at `values` against central differences of its
+value, per parameter (`index`, every one by default): the oracle the gradient
+is tested against. Each difference starts every unit's Newton from its mode at
+`values`, so the two values differ by the placement and not by where a solve
+stopped.
+"""
+function ctsem_laplace_placed_check(P::CTSEMLaplacePlaced, values::AbstractVector;
+    step::Real=1e-5, index=nothing)
+    x = collect(Float64, values)
+    r = ctsem_laplace_placed_evaluate(P, x; gradient=true)
+    home = deepcopy(P.anchors)
+    idx = index === nothing ? collect(eachindex(x)) : collect(Int, index)
+    fd = fill(NaN, length(idx))
+    for (j, t) in enumerate(idx)
+        h = step * max(1.0, abs(x[t]))
+        xp = copy(x); xp[t] += h
+        xm = copy(x); xm[t] -= h
+        P.anchors = deepcopy(home)
+        P.cache = nothing; P.value_cache = nothing
+        vp = _placed_evaluate(P, _laplace_extend(P.cont.laplace, xp), false).value
+        P.anchors = deepcopy(home)
+        vm = _placed_evaluate(P, _laplace_extend(P.cont.laplace, xm), false).value
+        fd[j] = (vp - vm) / (2 * h)
+    end
+    P.anchors = home
+    P.cache = nothing; P.value_cache = nothing
+    return (value=r.value, gradient=r.gradient[idx], differences=fd, index=idx)
+end
+
+"""
+    ctsem_laplace_placed_hessian(P, values; step=1e-4)
+
+The placed objective's Hessian at `values` by central differences of its exact
+gradient, two gradients a column, every unit's Newton starting from its mode at
+`values`.
+"""
+function ctsem_laplace_placed_hessian(P::CTSEMLaplacePlaced, values::AbstractVector;
+    step::Real=1e-4)
+    started = time_ns()
+    x = collect(Float64, values)
+    n = length(x)
+    ctsem_laplace_placed_evaluate(P, x; gradient=false)
+    home = deepcopy(P.anchors)
+    H = fill(NaN, n, n)
+    for t in 1:n
+        h = step * max(1.0, abs(x[t]))
+        xp = copy(x); xp[t] += h
+        xm = copy(x); xm[t] -= h
+        P.anchors = deepcopy(home)
+        gp = _placed_evaluate(P, _laplace_extend(P.cont.laplace, xp), true)
+        P.anchors = deepcopy(home)
+        gm = _placed_evaluate(P, _laplace_extend(P.cont.laplace, xm), true)
+        (gp.converged && gm.converged) || continue
+        H[:, t] .= (gp.gradient[1:n] .- gm.gradient[1:n]) ./ (2 * h)
+    end
+    P.anchors = home
+    P.cache = nothing
+    P.value_cache = nothing
+    H = (H .+ transpose(H)) ./ 2
+    P.seconds_hessian += (time_ns() - started) / 1e9
+    return H
+end
+
+"""
+    ctsem_laplace_placed_info(P)
+
+The placed objective's accounting: units placed and frozen, calls, seconds.
+"""
+ctsem_laplace_placed_info(P::CTSEMLaplacePlaced) = (placed=copy(P.placed),
+    frozen=[P.cont.rules[f].unit for f in P.frozen], nodes=P.nodes[P.placed],
+    value_calls=P.value_calls, gradient_calls=P.gradient_calls,
+    seconds_values=P.seconds_values, seconds_gradients=P.seconds_gradients,
+    seconds_hessian=P.seconds_hessian)
+
+# The optimisable protocol (see ctsem_backend.jl), as the continuation takes it.
+
+function ctsem_evaluate(P::CTSEMLaplacePlaced, values::AbstractVector;
+    gradient::Bool=true, contributions::Bool=false, gradient_method=:adjoint)
+    r = ctsem_laplace_placed_evaluate(P, values; gradient=gradient)
+    value = r.converged ? r.value : NaN
+    contributions || return (value=value, gradient=r.gradient)
+    return (value=value, gradient=r.gradient, subject_loglik=r.subject_loglik)
+end
+
+_ctsem_optimise_label(::CTSEMLaplacePlaced) = "refined fit, rules placed"
+_ctsem_finish_curvature(::CTSEMLaplacePlaced) = :chord
+_ctsem_hessian_cost(::CTSEMLaplacePlaced, npar::Integer) = 2 * Int(npar)
+_ctsem_lbfgs_held(P::CTSEMLaplacePlaced) =
+    P.lbfgs === nothing ? _ctsem_lbfgs_held(P.cont) : P.lbfgs
+_ctsem_lbfgs_hold!(P::CTSEMLaplacePlaced, memory::CTSEMLBFGSMemory) =
+    (P.lbfgs = memory; nothing)
+ctsem_hessian(P::CTSEMLaplacePlaced, values::AbstractVector; chunk::Integer=0,
+    progress=nothing) = ctsem_laplace_placed_hessian(P, values)
+_ctsem_params(P::CTSEMLaplacePlaced) = _ctsem_params(P.cont.laplace)
+_ctsem_saturated_for(P::CTSEMLaplacePlaced, minimizer) =
+    _laplace_saturated_parameters(P.cont.laplace, minimizer)
+_ctsem_optimise_result_extra(P::CTSEMLaplacePlaced, final, log) =
+    (placed_units=length(P.placed), frozen_units=length(P.frozen))
+
+function _ctsem_optimise_trial(P::CTSEMLaplacePlaced, x, want_gradient::Bool,
+    gradient_method, limit::Real, log)
+    evaluated = _ctsem_try_evaluate(() ->
+        ctsem_laplace_placed_evaluate(P, x; gradient=want_gradient))
+    valid = evaluated !== nothing && isfinite(evaluated.value) && evaluated.converged &&
+        (!want_gradient || _ctsem_gradient_usable(evaluated.gradient, limit))
+    return (evaluated=evaluated, valid=valid)
+end

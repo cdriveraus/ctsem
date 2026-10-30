@@ -306,8 +306,10 @@ clip `_quadrature_clipped_scale` applies, which needs a factor to start from.
 Where every Newton step's precision factorizes and the full step raises the
 integrand, the path and the scale are what they were, bit for bit.
 
-Returns `(ok, centre, scale, logdetscale)` with `scale * scale' = M~^-1`, the
-curvature clipped at the prior's; see `_quadrature_clipped_scale`.
+Returns `(ok, centre, scale, logdetscale, precision)` with `scale * scale' =
+M~^-1`, the curvature clipped at the prior's (`_quadrature_clipped_scale`), and
+`precision` the unclipped `M` at the centre, which a rule placed at every
+evaluation differentiates through (`laplace_placed.jl`).
 """
 function _quadrature_leaf_rule!(laplace::CTSEMLaplaceObjective, U::Integer,
     theta::Vector{Float64}, Ls::Vector{Matrix{Float64}}, b::Integer,
@@ -316,7 +318,8 @@ function _quadrature_leaf_rule!(laplace::CTSEMLaplaceObjective, U::Integer,
     k = block.size
     columns = (block.offset + 1):(block.offset + k)
     members = block.members
-    failure = (ok=false, centre=Float64[], scale=zeros(Float64, 0, 0), logdetscale=0.0)
+    failure = (ok=false, centre=Float64[], scale=zeros(Float64, 0, 0), logdetscale=0.0,
+        precision=zeros(Float64, 0, 0))
 
     # The block's own log integrand -- its members' log likelihood less
     # `z'z/2` -- and its gradient, as a function of this block alone.
@@ -372,7 +375,8 @@ function _quadrature_leaf_rule!(laplace::CTSEMLaplaceObjective, U::Integer,
     factorization = _ctsem_cholesky(copy(M), k)
     if issuccess(factorization)
         rule = _quadrature_clipped_scale(factorization, k)
-        return (ok=true, centre=z, scale=rule.scale, logdetscale=rule.logdetscale)
+        return (ok=true, centre=z, scale=rule.scale, logdetscale=rule.logdetscale,
+            precision=M)
     end
     E = _ctsem_symeig(M)
     all(isfinite, E.values) || return failure
@@ -380,7 +384,7 @@ function _quadrature_leaf_rule!(laplace::CTSEMLaplaceObjective, U::Integer,
     G = _ctsem_cholesky(Matrix(_laplace_symmetrise(clipped)), k)
     issuccess(G) || return failure
     return (ok=true, centre=z, scale=_ctsem_cholesky_uinv(G),
-        logdetscale=-logdet(G) / 2)
+        logdetscale=-logdet(G) / 2, precision=M)
 end
 
 """
