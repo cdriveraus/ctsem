@@ -1265,7 +1265,7 @@ _ctsem_optimise_label(::CTSEMLaplacePlaced) = "refined fit, rules placed"
 _ctsem_finish_curvature(::CTSEMLaplacePlaced) = :chord
 _ctsem_hessian_cost(::CTSEMLaplacePlaced, npar::Integer) = 2 * Int(npar)
 _ctsem_lbfgs_held(P::CTSEMLaplacePlaced) =
-    P.lbfgs === nothing ? _ctsem_lbfgs_held(P.cont) : P.lbfgs
+    P.lbfgs === nothing ? _ctsem_lbfgs_held(P.cont.laplace) : P.lbfgs
 _ctsem_lbfgs_hold!(P::CTSEMLaplacePlaced, memory::CTSEMLBFGSMemory) =
     (P.lbfgs = memory; nothing)
 ctsem_hessian(P::CTSEMLaplacePlaced, values::AbstractVector; chunk::Integer=0,

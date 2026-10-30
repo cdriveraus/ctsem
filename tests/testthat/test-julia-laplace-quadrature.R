@@ -426,7 +426,7 @@ test_that("a default fit keeps the Laplace curvature's normal, beside both check
     named > 0L)
 })
 
-test_that("the hybrid's density places the flagged units' rules at each point", {
+test_that("the refined fit's density places the flagged units' rules at each point", {
   skip_without_julia()
   fit <- .lc_fits("nonlinear")$quadrature
   module <- .ctJuliaModule(fit$model_spec$project)
@@ -437,20 +437,22 @@ test_that("the hybrid's density places the flagged units' rules at each point", 
   info <- .ctJuliaGet(module$ctsem_laplace_continuation_info(cont))
   flagged <- as.integer(info$flagged)[seq_len(info$nflagged)]
   expect_gt(length(flagged), 0L)
+  # Every flagged unit on a product rule, which the placed objective places
+  # at each point; a unit on draws would keep them where they were placed.
+  expect_identical(as.integer(info$nimportance), 0L)
   frozen <- function(z) .ctJuliaGet(module$ctsem_laplace_continuation_evaluate(cont,
     .ctJuliaNumericVector(z), gradient = TRUE))$value
   before <- frozen(x)
-  lpg <- .ctLaplaceContinueLpg(module, cont)(fit)
+  lpg <- .ctLaplacePlacedLpg(module, module$ctsem_laplace_placed(cont))(fit)
   away <- x + 2 * as.numeric(fit$estimate$se) * rep_len(c(1, -1), length(x))
   value <- lpg(away)
   # The same as a continuation placed there from nothing, with the same units
-  # flagged and no screen: the hybrid's value less its frozen draws' error.
+  # flagged and no screen.
   there <- .ctJuliaGet(module$ctsem_laplace_continuation_info(do.call(
     module$ctsem_laplace_continuation, c(list(.ctJuliaObjective(fit, hybrid = TRUE),
       .ctJuliaNumericVector(away)), .ctLaplaceContinuationArgs(
         .ctLaplaceContinueDefaults, force = flagged, screen = FALSE)))))
-  expect_equal(as.numeric(value), as.numeric(there$value) - as.numeric(there$error_draws),
-    tolerance = 1e-6)
+  expect_equal(as.numeric(value), as.numeric(there$value), tolerance = 1e-6)
   expect_length(attr(value, "gradient"), length(x))
   expect_true(all(is.finite(attr(value, "gradient"))))
   # A batch is the points one at a time, values with or without gradients.

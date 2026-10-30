@@ -115,47 +115,6 @@
     ctsem:::.ctJuliaNumericVector(as.numeric(fit$estimate$raw)))
 }
 
-# The continuation's member Hessian (`_tan_laplace_member_hessian!`) against
-# the filter at the dual (`_oracle_member_hessian`), for each member at its
-# unit's mode: along the active parameters, which hold the integrated
-# deviations' own sds or block (`_hybrid_filtered`), so the factor moves with
-# them. The largest differences in the Hessian and the gradient, relative to
-# their largest entries, and how many members the exact route took.
-.th_member <- function(fit) {
-  .th_oracles()
-  f <- ctsem:::.ctJuliaEval(paste(
-    "function (lap, x)",
-    "  M = ContinuousTimeSEM",
-    "  xe = M._laplace_extend(lap, collect(Float64, x))",
-    "  M.ctsem_laplace_evaluate(lap, xe; gradient = false)",
-    "  spec = lap.spec",
-    "  Ls = M._laplace_popchols(xe, spec)",
-    "  dL = M._laplace_level_chol_derivatives(xe, spec)",
-    "  positions = Vector{Int}[M._laplace_level_positions(spec, l) for l in eachindex(spec.levels)]",
-    "  layout = M._continuation_hessian_layout(spec, length(xe), positions, dL,",
-    "    M._hybrid_filtered(lap.objective.params.hybrid))",
-    "  errH = 0.0; errg = 0.0; taken = 0",
-    "  rel(a, b) = maximum(abs.(a .- b)) / max(1.0, maximum(abs.(b)))",
-    "  for U in eachindex(lap.units.members), m in eachindex(lap.units.members[U])",
-    "    i = lap.units.members[U][m]",
-    "    shifted = M._laplace_member_values!(zeros(length(xe)), xe, spec, Ls, lap.modes[U],",
-    "      lap.units.offsets[U][m])",
-    "    na = length(layout.active)",
-    "    Hs = zeros(na, na); g = zeros(length(xe))",
-    "    ll, status = M._tan_laplace_member_hessian!(Hs, g, lap, i, xe, shifted,",
-    "      layout.active, layout.pop)",
-    "    status == 0 || continue",
-    "    taken += 1",
-    "    o = _oracle_member_hessian(lap, i, shifted, layout.active, 4)",
-    "    errH = max(errH, rel(Hs, o.Hs))",
-    "    errg = max(errg, rel(g, o.g), abs(ll - o.loglik) / max(1.0, abs(o.loglik)))",
-    "  end",
-    "  (errH = errH, errg = errg, taken = taken)",
-    "end", sep = "\n"))
-  f(ctsem:::.ctJuliaObjective(fit, hybrid = TRUE),
-    ctsem:::.ctJuliaNumericVector(as.numeric(fit$estimate$raw)))
-}
-
 test_that("the hand-coded unit curvature is the dual's, cross terms included", {
   skip_without_julia()
   d <- .th_data()
@@ -175,10 +134,6 @@ test_that("the hand-coded unit curvature is the dual's, cross terms included", {
     expect_lt(r$errM, 1e-10)
     expect_lt(r$errH, 1e-10)
     expect_lt(r$errJ, 1e-10)
-    mh <- .th_member(fit)
-    expect_gt(mh$taken, 0)
-    expect_lt(mh$errH, 1e-10)
-    expect_lt(mh$errg, 1e-12)
   }
 })
 

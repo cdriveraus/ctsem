@@ -96,13 +96,8 @@ for (k in intersect(c("exact", "rescored", "logposterior", "loglik", "secs_fit",
   "main_iterations", "resume_iterations", "load1_fit_start", "load1_fit_end",
   "is_check_maxdiff", "unit_lambda_min", "warm_dx", "warm_dll", "runs_overshot",
   "overshot_maxabs_min", "runs_maxabs_lt2", "maxabs_raw_max", "probe_secs",
-  "engine_runs", "probe_runs", "lapcorr_secs", "lapcorr_gradients", "cont_delta_se_max",
-  "hess_secs_central", "hess_secs_forward", "hess_secs_laplace_x", "se_rel_forward",
-  "hess_secs_exact", "se_rel_exact",
-  "se_rel_laplace_x", "se_rel_laplace_est", "se_rel_reported", "npar",
+  "engine_runs", "probe_runs", "lapcorr_secs", "lapcorr_gradients", "npar",
   "secs_lapcorrect"), names(d))) d[[k]] <- num(d[[k]])
-# Written only by the harness since the quadhess job; absent from older results.
-for (k in c("hess_secs_exact", "se_rel_exact")) if (is.null(d[[k]])) d[[k]] <- NA_real_
 done <- d$status %in% c("ok", "evalonly")
 
 # ---- scores ----------------------------------------------------------------------
@@ -292,20 +287,10 @@ if ("runs_overshot" %in% names(d)) {
 }
 
 if ("cont_hessian" %in% names(d)) {
-  add("## The quadrature continuation's Hessian\n")
-  add("Laplace fits whose quadrature continuation reached its fixed point and reported ",
-    "the Hessian of its own objective. Against that Hessian by central differences of ",
-    "the hybrid gradient (2 npar gradients), the largest relative difference in any ",
-    "standard error from: `exact` the same Hessian by the exact scheme (on a build ",
-    "that has it); `fwd` by forward differences (npar + 1 gradients); ",
-    "`lap_x` the Laplace Hessian at the continuation's estimate; `lap_est` the Laplace ",
-    "Hessian the fit already held, at the Laplace optimum. `rep` checks the rule: the ",
-    "fit's reported standard errors against the Hessian it reported. `moved` is the ",
-    "continuation's largest move in Laplace standard errors; seconds are dev1's, ",
-    "taken after the fit, one after another; `corr_s` is the whole correction in the fit. ",
-    "Before the quadhess harness the reference was the Hessian the fit reported, ",
-    "whichever scheme its build took it by.\n")
-  ch <- d[d$status %in% "ok" & d$cont_hessian %in% TRUE, ]
+  add("## The refined fit\n")
+  add("Laplace fits that ran the random-effects check or the refined fit ",
+    "(`intoverpop = 'quadrature'`): what it did, whether its climb converged, and ",
+    "whether its own Hessian became the fit's.\n")
   cs <- d[d$status %in% "ok" & !is.na(d$lapcorr_status), ]
   if (nrow(cs)) {
     st <- as.data.frame(table(status = cs$lapcorr_status,
@@ -313,14 +298,6 @@ if ("cont_hessian" %in% names(d)) {
       hessian = cs$cont_hessian), stringsAsFactors = FALSE)
     tab(st[st$Freq > 0, ])
   }
-  if (nrow(ch)) tab(data.frame(label = ch$label, id = ch$id, npar = f0(ch$npar),
-    moved = f2(ch$cont_delta_se_max, 2), exact = fmt(ch$se_rel_exact, 2),
-    fwd = fmt(ch$se_rel_forward, 2),
-    lap_x = fmt(ch$se_rel_laplace_x, 2), lap_est = fmt(ch$se_rel_laplace_est, 2),
-    rep = fmt(ch$se_rel_reported, 2), exact_s = f2(ch$hess_secs_exact, 1),
-    central_s = f2(ch$hess_secs_central, 1),
-    fwd_s = f2(ch$hess_secs_forward, 1), lap_x_s = f2(ch$hess_secs_laplace_x, 1),
-    corr_s = f2(ch$lapcorr_secs, 1), s = f2(ch$secs_fit, 1), stringsAsFactors = FALSE))
 }
 
 add("## Reference checks\n")

@@ -141,14 +141,14 @@ end
     @test isapprox(r.g, r.fd; atol=1e-6, rtol=1e-5)
 end
 
-@testset "at its centre the soft rule's gradient and curvature are the marginal's" begin
+@testset "at its centre the soft rule's gradient is the marginal's" begin
     # With one soft direction, the two-effect subject blocks keep a stiff
     # complement of one. Its value at the centre is exact on a Gaussian
     # integrand whatever rule it gets; its derivatives are not. Held at a
     # single node, the complement's log determinant drops out of the gradient
     # and its covariance out of the curvature -- on the gated-gaps A14 config
     # that gave the continuation standard errors 0.07 to 0.45 of Laplace's.
-    # Laplace is exact here, so its gradient and Hessian are the reference.
+    # Laplace is exact here, so its gradient is the reference.
     for (label, fresh) in (("one level", _fresh_linear),
                            ("two levels", _fresh_twolevel))
         laplace, values = fresh()
@@ -166,32 +166,6 @@ end
             @test (label, j, isapprox(hyb.gradient[j], lap.gradient[j];
                 rtol=1e-6, atol=1e-8)) == (label, j, true)
         end
-        # Central differences, as the Laplace Hessian is taken, match it to the
-        # finite-difference error. The exact scheme, the default, matches those
-        # entry by entry to their own error. The forward scheme matches them to
-        # its truncation, which is O(step) in absolute terms -- the third
-        # derivative times the step, whatever the size of the entry -- so it is
-        # held to a share of the matrix's scale rather than of each entry's:
-        # a small cross term can differ by more than 0.5% of itself, as one
-        # here does, where nothing a covariance reads moves.
-        H = ctsem_laplace_continuation_hessian(o, theta; scheme=:central)
-        Hl = ctsem_laplace_hessian(laplace, theta)
-        for i in eachindex(theta), j in eachindex(theta)
-            @test (label, i, j, isapprox(H[i, j], Hl[i, j]; rtol=1e-4, atol=1e-6)) ==
-                (label, i, j, true)
-        end
-        He = ctsem_laplace_continuation_hessian(o, theta)
-        scale = maximum(abs, H)
-        for i in eachindex(theta), j in eachindex(theta)
-            @test (label, i, j, isapprox(He[i, j], H[i, j]; rtol=1e-6,
-                atol=1e-7 * scale)) == (label, i, j, true)
-        end
-        Hf = ctsem_laplace_continuation_hessian(o, theta; scheme=:forward)
-        for i in eachindex(theta), j in eachindex(theta)
-            @test isapprox(Hf[i, j], H[i, j]; atol=1e-3 * scale)
-        end
-        @test_throws ArgumentError ctsem_laplace_continuation_hessian(o, theta;
-            scheme=:backward)
     end
 end
 
@@ -282,97 +256,6 @@ end
 _fresh_2d3() = (ctsem_laplace_objective(_CONTINUATION_2D_OBJECTIVE, [1, 3, 5],
     [7, 8, 9], [10, 11, 12], [1.0, 1.0, 1.0]),
     [0.3, 0.2, 0.1, -0.5, 0.2, -0.1, 0.4, 0.3, 0.5, 0.2, -0.1, 0.15])
-# Two (DRIFT[1,1], T0MEANS[2]), on the product rule: scales 7-8, correlation 9.
-_fresh_2d2() = (ctsem_laplace_objective(_CONTINUATION_2D_OBJECTIVE, [1, 5],
-    [7, 8], [9], [1.0, 1.0]), [0.3, 0.2, 0.1, -0.5, 0.2, -0.1, 0.4, 0.5, 0.2])
-
-@testset "a member's exact Hessian at a node is forward mode's, cross terms included" begin
-    # The assembly `J' Hs J` plus the second derivative of `L u`, against
-    # forward-over-forward through the primal filter and the Cholesky factor,
-    # which shares none of that code. Every entry: the blocks between the
-    # population parameters and the rest are where an assembly error would
-    # sit, and they are not small here.
-    CT = ContinuousTimeSEM
-    laplace, values = _fresh_2d3()
-    theta = collect(Float64, values)
-    npar = length(theta)
-    spec = laplace.spec
-    Ls = CT._laplace_popchols(theta, spec)
-    dL = CT._laplace_level_chol_derivatives(theta, spec)
-    positions = Vector{Int}[CT._laplace_level_positions(spec, l) for l in eachindex(spec.levels)]
-    layout = CT._continuation_hessian_layout(spec, npar, positions, dL)
-    d2L = CT._continuation_level_chol_second_derivatives(theta, spec, positions)
-    @test layout.active == collect(1:6)
-    @test layout.pop == collect(7:12)
-    CT._laplace_ensure_pool!(laplace)
-    U, m = 2, 1
-    u = [0.7, -1.1, 0.4]
-    offsets = laplace.units.offsets[U][m]
-    subject = laplace.objective.subject_objectives[laplace.units.members[U][m]]
-    f = y -> subject(CT._laplace_member_values(y, spec, CT._laplace_popchols(y, spec),
-        u, offsets))
-    reference = ForwardDiff.hessian(f, theta,
-        ForwardDiff.HessianConfig(f, theta, ForwardDiff.Chunk{4}()))
-    gradient = ForwardDiff.gradient(f, theta)
-    scale = maximum(abs, reference)
-    pop, act = layout.pop, layout.active
-    @test maximum(abs, reference[pop, act]) > 1e-2 * scale
-    @test maximum(abs, reference[pop, pop]) > 1e-2 * scale
-    sc = CT._continuation_hessian_scratch(laplace, npar, layout, 1)
-    g = zeros(npar)
-    H = zeros(npar, npar)
-    ll, status = CT._continuation_member_hessian!(g, H, laplace, U, m, theta, Ls,
-        dL, d2L, layout, u, sc)
-    @test status == 0
-    @test isapprox(ll, f(theta); rtol=1e-12)
-    for i in 1:npar
-        @test (i, isapprox(g[i], gradient[i]; rtol=1e-10,
-            atol=1e-12 * maximum(abs, gradient))) == (i, true)
-    end
-    for i in 1:npar, j in 1:npar
-        @test (i, j, isapprox(H[i, j], reference[i, j]; rtol=1e-9,
-            atol=1e-11 * scale)) == (i, j, true)
-    end
-end
-
-@testset "the exact Hessian is the derivative of the hybrid's gradient" begin
-    # Two states, on the soft and the product rule; and units that nest, where
-    # an outer block's node carries its children's rules and the identity is
-    # applied at each level of the tree.
-    for (label, fresh) in (("three effects, soft rule", _fresh_2d3),
-                           ("two effects, product rule", _fresh_2d2),
-                           ("two levels", _fresh_twolevel),
-                           ("three levels", _fresh_threelevel))
-        laplace, values = fresh()
-        theta = collect(Float64, values)
-        # A negative tolerance: every unit on its rule, a zero gap included --
-        # these fixtures are linear Gaussian, so the gaps are rounding and some
-        # come out exactly zero.
-        o = ctsem_laplace_continuation(laplace, theta; tolerance=-1.0)
-        info = ctsem_laplace_continuation_info(o)
-        # Every unit on its rule, so what is differenced is the prior alone and
-        # the reference below measures the exact part.
-        @test (label, info.nflagged) == (label, info.nunits)
-        x = theta .+ [0.02 * (-1)^j for j in eachindex(theta)]
-        He = ctsem_laplace_continuation_hessian(o, x)
-        @test (label, all(isfinite, He)) == (label, true)
-        # Its byproducts are the gradient path's.
-        flagged = ContinuousTimeSEM._continuation_flagged_hessian(o, x)
-        plain = ContinuousTimeSEM._continuation_flagged(o, x, true)
-        @test (label, isapprox(flagged.values, plain.values; rtol=1e-12)) == (label, true)
-        @test (label, isapprox(flagged.gradient, plain.gradient; rtol=1e-11)) ==
-            (label, true)
-        # Central differences at two steps, extrapolated: O(step^4).
-        Hc = ctsem_laplace_continuation_hessian(o, x; scheme=:central, step=1e-4)
-        Hr = (4 .* Hc .- ctsem_laplace_continuation_hessian(o, x; scheme=:central,
-            step=2e-4)) ./ 3
-        scale = maximum(abs, He)
-        for i in eachindex(x), j in eachindex(x)
-            @test (label, i, j, isapprox(He[i, j], Hr[i, j]; rtol=1e-7,
-                atol=1e-9 * scale)) == (label, i, j, true)
-        end
-    end
-end
 
 @testset "the continuation builds no grid wider than its rules use" begin
     # A block wider than `product_maxdim` takes the soft rule, whose stiff
@@ -581,8 +464,8 @@ end
 end
 
 # `_fresh_2d3` with a standard normal prior on every raw parameter. Without
-# one the scales run to zero, past raw 1e7, where Laplace is exact and no
-# placement moves the optimum.
+# one the scales run to zero, past raw 1e7, where Laplace is exact and every
+# rule agrees, so a run has nothing to converge on.
 function _fresh_2d3_prior()
     starts, times, data = _laplace_test_data(6, 2; seed=7)
     prior = ctsem_objective(_CONTINUATION_2D_OBJECTIVE.params, starts, times, data;
@@ -591,35 +474,34 @@ function _fresh_2d3_prior()
         [1.0, 1.0, 1.0]), last(_fresh_2d3()))
 end
 
-@testset "a stage after a placement starts from the pairs the last one ended with" begin
-    # Stages on the hybrid after a placement: one run on the
-    # hybrid, the draws placed again where it ended, and the next run from the
-    # curvature the first left on the objective (`lbfgs_pairs = :objective`).
-    # It reaches the cold run's point in fewer iterations (5 against 12 when
-    # written).
+@testset "a run on the placed objective starts from the pairs the last one ended with" begin
+    # A run asked to (`lbfgs_pairs = :objective`, as the refined fit's climb
+    # asks, `.ctLaplacePlacedClimb()`) leaves its curvature on the objective,
+    # and the next run that asks starts from it. From a point off the first
+    # run's optimum the warm run needs fewer iterations than a cold one.
     C = ContinuousTimeSEM
     laplace, values = _fresh_2d3_prior()
     theta = collect(Float64, values)
     n = length(theta)
-    o = ctsem_laplace_continuation(laplace, theta; maxdim=2, draws=256,
-        draws_scope=:forced, force=[1, 2], screen=false)
-    stage(from; kw...) = C.ctsem_optimize(o, from; maxiter=500, g_tol=1e-6,
+    P = ctsem_laplace_placed(ctsem_laplace_continuation(laplace, theta;
+        product_maxdim=3, force=[1, 2], screen=false))
+    @test length(P.placed) == 2
+    stage(from; kw...) = C.ctsem_optimize(P, from; maxiter=500, g_tol=1e-6,
         newton=false, certify=false, progress=false, verbose=false,
         overshoot_probe=:off, kw...)
-    @test o.lbfgs === nothing
+    @test P.lbfgs === nothing
     before = stage(theta; lbfgs_pairs=:objective)
-    held = o.lbfgs
+    held = P.lbfgs
     @test held isa C.CTSEMLBFGSMemory
     @test !isempty(held.S) && all(v -> length(v) == n, held.S)
     x1 = collect(Float64, before.minimizer)
     @test maximum(abs, x1) < 10
-    C._continuation_place!(o, C._laplace_extend(laplace, x1))
-    cold = stage(x1)
+    x2 = x1 .+ 0.1
+    cold = stage(x2)
     # A run that does not ask leaves the held pairs alone.
-    @test o.lbfgs === held
-    warm = stage(x1; lbfgs_pairs="objective")
-    @test o.lbfgs !== held
-    # The placement moved the optimum, so there was something to converge on.
+    @test P.lbfgs === held
+    warm = stage(x2; lbfgs_pairs="objective")
+    @test P.lbfgs !== held
     @test cold.iterations > 2
     @test warm.iterations < cold.iterations
     @test isapprox(warm.maximum_loglik, cold.maximum_loglik; atol=1e-8)
@@ -628,7 +510,7 @@ end
     bad = C.CTSEMLBFGSMemory(5)
     @test C._ctsem_lbfgs_push!(bad, ones(n + 1), fill(2.0, n + 1))
     @test_throws DimensionMismatch stage(x1; lbfgs_pairs=bad)
-    o.lbfgs = bad
+    P.lbfgs = bad
     @test_throws DimensionMismatch stage(x1; lbfgs_pairs=:objective)
     @test_throws ArgumentError stage(x1; lbfgs_pairs=:elsewhere)
     # And an objective that keeps none starts cold.
@@ -641,10 +523,8 @@ end
 # block's conditional on a draw of the blocks above
 # (`_continuation_importance_rule`). What has to hold, as for one block: its
 # value is the unit's integral to within its own error, at two levels and at
-# three; its gradient is the derivative of its value; its standard error read
-# again at the centre is the one it was placed to; and its exact Hessian,
-# summed over the root's draws in parts on several threads, is the Hessian
-# taken whole and the derivative of its gradient.
+# three; its gradient is the derivative of its value; and its standard error
+# read again at the centre is the one it was placed to.
 
 # Two levels on a nonlinear integrand: five subjects in two studies, each
 # subject's DRIFT (through `-log1p_exp`) and T0MEANS varying, each study's
@@ -786,89 +666,6 @@ end
     end
 end
 
-@testset "a probe on the hybrid reads the rules placed at the probed point, and leaves the placement" begin
-    C = ContinuousTimeSEM
-    laplace, values = _fresh_nonlinear()
-    theta = collect(Float64, values)
-    other = theta .+ 0.4
-    o = ctsem_laplace_continuation(laplace, theta; tolerance=-1.0)
-    fresh = ctsem_laplace_continuation(laplace, other; tolerance=-1.0)
-    rules = o.rules
-    value = o.centre_value
-    # The probe's reading is a continuation placed there, net of what that
-    # placement's rules cannot vouch for (`_continuation_error`), and differs
-    # from the frozen rules' reading far from their placement.
-    v = C._ctsem_probe_value(o, other)
-    @test isapprox(v, fresh.centre_value - C._continuation_error(fresh).total; rtol=1e-8)
-    frozen = ctsem_laplace_continuation_evaluate(o, other; gradient=false).value
-    @test abs(frozen - v) > 0
-    # And at the centre it is the centre's value read the same way, the
-    # baseline a probe's gain is measured from.
-    net = value - C._continuation_error(o).total
-    @test isapprox(C._ctsem_probe_value(o, theta), net; rtol=1e-10)
-    @test isapprox(C._ctsem_probe_baseline(o, theta, -123.0), net; rtol=1e-10)
-    # Nothing of the placement is changed by a probe.
-    @test o.centre == theta
-    @test o.centre_value == value
-    @test o.rules === rules
-    @test o.recentres == 1
-end
-
-@testset "a coreset of the hybrid's density over every unit is the density" begin
-    # What `ctsem_is_coreset` reads of the hybrid (`_coreset_column`,
-    # `_continuation_coreset`): every unit's term, the gradient and each unit's
-    # score at a draw, and a weighted subset's value and gradient. Over every
-    # unit at its weight the subset is the density, less only the frozen
-    # draws' error a coreset's intercept carries; and the scores sum to the
-    # gradient. Once on rules (soft, three effects a unit), once on draws.
-    C = ContinuousTimeSEM
-    laplace, values = _fresh_2d3()
-    theta = collect(Float64, values)
-    N = length(laplace.units.members)
-    X = hcat(theta, theta .+ 0.05, theta .- 0.08)
-    for o in (ctsem_laplace_continuation(laplace, theta; force=[1, 3], screen=false),
-              ctsem_laplace_continuation(laplace, theta; maxdim=2, draws=256,
-                  force=[1, 3], screen=false))
-        @test o.flagged == [1, 3]
-        d = ctsem_continuation_density(o)
-        rules = o.rules
-        t = C.ctsem_coreset_terms_gradient(d, X, size(X, 2))
-        v = C.ctsem_coreset_terms(d, X)
-        all_units = C.ctsem_coreset_batch_gradient(d, X, collect(1:N), ones(N))
-        sub = C.ctsem_coreset_batch_gradient(d, X, [1, 2], [2.0, 0.5])
-        @test isapprox(C.ctsem_coreset_batch(d, X, [1, 2], [2.0, 0.5]), sub[1, :];
-            rtol=1e-10)
-        for j in 1:size(X, 2)
-            x = X[:, j]
-            e = C.ctsem_evaluate(d, x; gradient=true)
-            prior = C._ctsem_log_prior(laplace.objective, x)
-            pg = zeros(length(x))
-            C._ctsem_log_prior_gradient!(pg, laplace.objective, x)
-            @test isapprox(t.value[j], e.value; rtol=1e-10)
-            @test isapprox(v.value[j], e.value; rtol=1e-10)
-            @test isapprox(t.gradient[:, j], e.gradient; rtol=1e-8, atol=1e-10)
-            @test isapprox(t.total[j], e.value - prior; rtol=1e-10)
-            @test isapprox(v.unit_loglik[:, j], t.unit_loglik[:, j]; rtol=1e-10)
-            a = findfirst(==(j), t.scored)
-            @test isapprox(vec(sum(t.scores[:, :, a]; dims=1)), e.gradient .- pg;
-                rtol=1e-8, atol=1e-10)
-            # Every unit at weight one: the density plus its draws' error.
-            err = C._continuation_at(() -> C._continuation_error(o).draws, o,
-                C._laplace_extend(laplace, x); screen=false, refine=false)
-            @test isapprox(all_units[1, j], e.value + err; rtol=1e-10)
-            @test isapprox(all_units[2:end, j], e.gradient; rtol=1e-8, atol=1e-10)
-            # Two units, one on a rule and one on Laplace, at their weights.
-            @test isapprox(sub[1, j], prior + 2.0 * t.unit_loglik[1, j] +
-                0.5 * t.unit_loglik[2, j]; rtol=1e-10)
-            @test isapprox(sub[2:end, j], pg .+ 2.0 .* t.scores[1, :, a] .+
-                0.5 .* t.scores[2, :, a]; rtol=1e-8, atol=1e-10)
-        end
-        # The draws leave the placement as it was.
-        @test o.centre == theta
-        @test o.rules === rules
-    end
-end
-
 @testset "a nested unit wider than maxdim gets frozen draws per block" begin
     # At the default `draws_df`: a t at the top block and Gaussians beneath.
     # A t beneath read 0.03-0.12 nats high here (`_continuation_importance_rule`).
@@ -925,30 +722,4 @@ end
     end
     r = _continuation_fd_check(o, theta .+ 0.05)
     @test isapprox(r.g, r.fd; atol=1e-6, rtol=1e-5)
-end
-
-@testset "a nested unit's exact Hessian in parts is the Hessian whole" begin
-    laplace, values = _fresh_twolevel()
-    theta = collect(Float64, values)
-    o = ctsem_laplace_continuation(laplace, theta; tolerance=0.0, maxdim=1, draws=64,
-        force=1:length(laplace.units.members))
-    x = theta .+ [0.02 * (-1)^j for j in eachindex(theta)]
-    # One worker takes every unit whole; the pool, wider than the three units,
-    # splits each one's root over its draws (`_continuation_tasks`) and merges
-    # the parts' moments. With one thread both are whole.
-    previous = ctsem_max_chunks().max_chunks
-    Hs, Hw = try
-        ctsem_set_max_chunks!(1)
-        whole = ctsem_laplace_continuation_hessian(o, x)
-        ctsem_set_max_chunks!(max(Threads.nthreads(), 1))
-        (ctsem_laplace_continuation_hessian(o, x), whole)
-    finally
-        ctsem_set_max_chunks!(previous)
-    end
-    scale = maximum(abs, Hw)
-    @test maximum(abs, Hs .- Hw) <= 1e-11 * scale
-    Hc = ctsem_laplace_continuation_hessian(o, x; scheme=:central, step=1e-4)
-    Hr = (4 .* Hc .- ctsem_laplace_continuation_hessian(o, x; scheme=:central,
-        step=2e-4)) ./ 3
-    @test isapprox(Hs, Hr; rtol=1e-7, atol=1e-9 * scale)
 end

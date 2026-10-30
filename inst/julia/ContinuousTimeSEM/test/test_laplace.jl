@@ -559,25 +559,25 @@ end
     end
 end
 
-@testset "the seeds order against the tags they meet" begin
+@testset "the seed orders against the tags it meets" begin
     # A nested differentiation (a categorical row's moment Jacobian) reading
-    # a value the seeds perturb: d/dz (z^2 x) at z = x is 2 x^2, whose
-    # derivative along the first seed is 4 x. Without an order between the
-    # tags this threw DualMismatchError.
-    e1, e2 = ContinuousTimeSEM._laplace_seed_pair()
-    x = 0.3 + e1
+    # a value the seed perturbs: d/dz (z^2 x) at z = x is 2 x^2, whose
+    # derivative along the seed is 4 x. Without an order between the tags
+    # this threw DualMismatchError.
+    e = ForwardDiff.Dual{ContinuousTimeSEM._LaplaceSeedInner}(0.0, 1.0)
+    x = 0.3 + e
     f = z -> z[1]^2 * x
     g = ForwardDiff.gradient(f, [x], ForwardDiff.GradientConfig(f, [x],
         ForwardDiff.Chunk(1), ContinuousTimeSEM._ctsem_nested_tag([x])), Val{false}())
     @test typeof(g[1]) == typeof(x)
-    @test ForwardDiff.value(ForwardDiff.value(g[1])) ≈ 2 * 0.3^2
-    @test ForwardDiff.partials(ForwardDiff.value(g[1]))[1] ≈ 4 * 0.3
-    # An ordinary tag goes inside the seeds: the seeds perturb a point that is
+    @test ForwardDiff.value(g[1]) ≈ 2 * 0.3^2
+    @test ForwardDiff.partials(g[1])[1] ≈ 4 * 0.3
+    # An ordinary tag goes inside the seed: the seed perturbs a point that is
     # itself being differentiated.
     y = ForwardDiff.Dual{ForwardDiff.Tag{typeof(sin),Float64}}(0.3, 1.0)
-    p = y * (0.3 + e2)
-    @test p isa ForwardDiff.Dual{ContinuousTimeSEM._LaplaceSeedOuter}
-    @test ForwardDiff.partials(ForwardDiff.value(ForwardDiff.value(p)))[1] ≈ 0.3
+    p = y * (0.3 + e)
+    @test p isa ForwardDiff.Dual{ContinuousTimeSEM._LaplaceSeedInner}
+    @test ForwardDiff.partials(ForwardDiff.value(p))[1] ≈ 0.3
 end
 
 @testset "the inner solve ends at the mode, whichever curvature it walks on" begin

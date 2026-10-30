@@ -892,9 +892,10 @@ test_that("quadrature integrates the filter's deviations at every node, and span
   # own deviations integrated exactly (the profile less logdet M / 2), so the
   # rule spans the one shared effect; on the layer it spans the effect and all
   # three deviations. Both converge on the same integral. The continuation on
-  # the hybrid is that quadrature at its centre, its gradient is its value's,
-  # and its Hessian is exact -- the own variances, which the filter reads,
-  # seeded with the parameters it reads -- as central differences confirm.
+  # the hybrid is that quadrature at its centre, and its gradient is its
+  # value's, frozen and placed alike -- the own variances, which the filter
+  # reads, seeded with the parameters it reads -- as central differences
+  # confirm.
   m <- .pu_dyn_model()
   d <- .pu_dyn_data()
   old <- options(ctsem.laplace.hybrid = TRUE)
@@ -934,12 +935,18 @@ test_that("quadrature integrates the filter's deviations at every node, and span
   h <- 1e-4
   expect_equal((value(x + h * v) - value(x - h * v)) / (2 * h), sum(g * v),
     tolerance = 1e-6)
-  flagged <- ctsem:::.ctJuliaCall("ContinuousTimeSEM._continuation_flagged_hessian",
-    cont, xx)
-  expect_false(is.null(flagged))
-  hess <- function(scheme) as.matrix(ctsem:::.ctBackendJuliaValue(
-    module$ctsem_laplace_continuation_hessian(cont, xx, scheme = scheme)))
-  expect_equal(hess("exact"), hess("central"), tolerance = 1e-5)
+  # The refined fit's objective on the same hybrid, each unit's rule placed at
+  # every point: its value at the centre is the placement's, and its gradient,
+  # through the placement, is its value's.
+  placed <- module$ctsem_laplace_placed(cont)
+  pvalue <- function(z) as.numeric(ctsem:::.ctJuliaGet(
+    module$ctsem_laplace_placed_evaluate(placed, ctsem:::.ctJuliaNumericVector(z),
+      gradient = FALSE))$value)
+  pg <- as.numeric(ctsem:::.ctJuliaGet(module$ctsem_laplace_placed_evaluate(
+    placed, xx))$gradient)
+  expect_equal(pvalue(x), as.numeric(info$value), tolerance = 1e-10)
+  expect_equal((pvalue(x + h * v) - pvalue(x - h * v)) / (2 * h), sum(pg * v),
+    tolerance = 1e-6)
 })
 
 test_that("leave-one-out and linearised draws through the hybrid are the layer's", {
