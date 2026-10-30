@@ -190,8 +190,9 @@ test_that("the Laplace correction handles more than one random effect", {
   # The default fit from the same start, whose shift check is what a user
   # gets: every unit scored at draws of its posterior. Correcting Laplace
   # moves no estimate by a resolved tenth of a standard error here, so
-  # nothing is said and the estimate and its log likelihood are Laplace's.
-  # That agrees
+  # nothing is said and the estimate is Laplace's; its log likelihood is
+  # Laplace's plus the check's integral of every unit's error, as on every
+  # checked fit (`.ctLaplaceCheckedLoglik()`). That agrees
   # with the check above, whose own first-order step, computed independently
   # by finite differences of the gap, is under a tenth of a standard error
   # (measured 0.019).
@@ -209,6 +210,12 @@ test_that("the Laplace correction handles more than one random effect", {
   expect_false(corr$applied)
   expect_false(any(grepl("Laplace's error", warned, fixed = TRUE)))
   expect_true(corr$check$status %in% c("passed", "unresolved"))
-  expect_null(default$estimate$loglik_method)
+  if (identical(corr$status, "exact")) {
+    expect_null(default$estimate$loglik_method)
+  } else {
+    expect_identical(default$estimate$loglik_method, "checked")
+    expect_equal(default$estimate$loglik,
+      default$estimate$loglik_laplace + corr$check$gap)
+  }
   expect_lt(max(abs(delta), na.rm = TRUE), 0.1)
 })

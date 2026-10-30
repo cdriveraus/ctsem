@@ -293,9 +293,9 @@ test_that("NUTS samples the joint posterior through the same runner", {
 }
 
 .map_checked <- function(fit, against, draws = 300L) {
-  ask <- function(...) suppressWarnings(suppressMessages(ctFitUncertainty(fit,
-    method = "sample", cores = 1, control = list(chains = 2, draws = draws,
-      processes = FALSE, ...))))
+  ask <- function(intoverpop = NULL, ...) suppressWarnings(suppressMessages(
+    ctFitUncertainty(fit, method = "sample", intoverpop = intoverpop, cores = 1,
+      control = list(chains = 2, draws = draws, processes = FALSE, ...))))
   map <- ask(intoverpop = "none", sampler = "map", saveEffects = TRUE)
   ref <- do.call(ask, against)
   saem <- ask(intoverpop = "none")
@@ -727,7 +727,7 @@ test_that("intoverpop alone says what is sampled", {
   expect_identical(route("none", requested = FALSE), "none")
   # A backend caller passing only the route has named it.
   expect_identical(route("laplace"), "laplace")
-  # ctFitUncertainty's control$intoverpop overrides, in the same words, within
+  # ctFitUncertainty's intoverpop overrides, in the same words, within
   # what the fit's specification can carry.
   expect_identical(route("laplace", requested = "laplace", override = "none"), "none")
   expect_identical(route("laplace", requested = "auto", override = "laplace"), "laplace")

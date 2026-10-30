@@ -481,8 +481,15 @@ test_that("optimized uncertainty API uses explicit method and draw names", {
   expect_true('opg' %in% eval(formals(ctOptimUncertainty)$uncertainty))
   expect_true('fullbootstrap' %in% eval(formals(ctOptimUncertainty)$uncertainty))
   expect_false('score' %in% eval(formals(ctOptimUncertainty)$uncertainty))
-  expect_identical(eval(formals(ctFitUncertainty)$uncertainty)[1], 'checked')
-  expect_false('surrogate' %in% eval(formals(ctFitUncertainty)$uncertainty))
+  # ctFitUncertainty names the method `method`, takes what is done about the
+  # random effects and the states in ctFit's words, and has no `draws`: the
+  # kind of draws follows from the method. Its default is the fit's.
+  fitunc_args <- names(formals(ctFitUncertainty))
+  expect_true(all(c('method', 'intoverpop', 'filter', 'checks') %in% fitunc_args))
+  expect_false(any(c('uncertainty', 'draws') %in% fitunc_args))
+  expect_identical(eval(formals(ctFitUncertainty)$method)[1], 'hessian')
+  expect_identical(eval(formals(ctOptimUncertainty)$uncertainty)[1], 'hessian')
+  expect_false('surrogate' %in% eval(formals(ctFitUncertainty)$method))
 })
 
 test_that("full bootstrap standata resamples and reindexes subjects", {

@@ -4071,8 +4071,11 @@ ctFitUncertainty <- function(fit,
       "effects; one fit takes one or the other.", call.=FALSE)
     control$likelihood <- 'particle'
   }
-  # The interval check beside 'hessian' (`control$check` internally).
-  if(julia && identical(method, 'hessian')) {
+  # The interval check beside 'hessian' (`control$check` internally), on the
+  # fit's own density: the quadrature hybrid's curvature is the refit's
+  # certified one, and the check's draws would each place its rules again.
+  if(julia && identical(method, 'hessian') &&
+      !identical(control$likelihood, 'quadrature')) {
     control$check <- 'intervals' %in% checks
   }
   out <- .ctFitUncertaintyImpl(fit, uncertainty=method, draws='auto',
