@@ -171,6 +171,54 @@ end
     end
 end
 
+# --- two states, for the exact Hessian ------------------------------------------
+#
+# The exact Hessian differentiates the reverse pass, and one latent hides whole
+# classes of reverse-pass error: a covariance cotangent that is a scalar is
+# symmetric whatever the code assumes. So two latents with coupled dynamics, a
+# random effect on a transformed DRIFT -- the integrand is not Gaussian, so
+# every unit carries a gap and is flagged -- and random CINT and T0MEANS on
+# different latents.
+#
+# Raw layout: 1-6 the model parameters, then the population scales, then the
+# correlations.
+if !isdefined(@__MODULE__, :_CONTINUATION_2D_OBJECTIVE)
+const _CONTINUATION_2D_OBJECTIVE = let
+    df = _laplace_test_dataframe(
+        drift=[-0.5 0.3; 0.1 -0.3], jax=[-0.5 0.3; 0.1 -0.3],
+        cint=[0.0; 0.0;;], diffusion=[0.3 0.0; 0.05 0.25],
+        lambda=[1.0 0.0; 0.0 1.0], jy=[1.0 0.0; 0.0 1.0],
+        manifestmeans=[0.0; 0.0;;], manifestvar=[0.2 0.0; 0.0 0.2],
+        t0var=[1.0 0.0; 0.0 1.0], t0means=[0.0; 0.0;;],
+        free=Dict(
+            (:DRIFT, 1, 1) => (1, "-log1p_exp(param[1])"),
+            (:JAx, 1, 1) => (1, "-log1p_exp(param[1])"),
+            (:DRIFT, 1, 2) => (2, "param[2]"),
+            (:JAx, 1, 2) => (2, "param[2]"),
+            (:CINT, 1, 1) => (3, "param[3]"),
+            (:DIFFUSION, 1, 1) => (4, "log1p_exp(param[4])"),
+            (:T0MEANS, 2, 1) => (5, "param[5]"),
+            (:MANIFESTMEANS, 2, 1) => (6, "param[6]"),
+        ),
+    )
+    starts, times, data = _laplace_test_data(6, 2; seed=7)
+    ctsem_objective(ekf_from_data_frame(df), starts, times, data)
+end
+end
+
+# Three effects a subject (DRIFT[1,1], CINT[1], T0MEANS[2]): scales 7-9,
+# correlations 10-12.
+_fresh_2d3() = (ctsem_laplace_objective(_CONTINUATION_2D_OBJECTIVE, [1, 3, 5],
+    [7, 8, 9], [10, 11, 12], [1.0, 1.0, 1.0]),
+    [0.3, 0.2, 0.1, -0.5, 0.2, -0.1, 0.4, 0.3, 0.5, 0.2, -0.1, 0.15])
+
+# Four (DRIFT[1,1], DRIFT[1,2], CINT[1], T0MEANS[2]): scales 7-10, correlations
+# 11-16. Past three effects the lattice is the cheaper first rule.
+_fresh_2d4() = (ctsem_laplace_objective(_CONTINUATION_2D_OBJECTIVE, [1, 2, 3, 5],
+    [7, 8, 9, 10], collect(11:16), [1.0, 1.0, 1.0, 1.0]),
+    [0.3, 0.2, 0.1, -0.5, 0.2, -0.1, 0.4, 0.2, 0.3, 0.5, 0.2, -0.1, 0.15, 0.0,
+     0.1, -0.05])
+
 @testset "a lattice rule placed at a unit integrates it within its error" begin
     C = ContinuousTimeSEM
     # Laplace is exact on the linear fixture, and the product rule at 9 nodes
@@ -226,54 +274,6 @@ end
     @test [c.nodes for c in families[1]] == [3, 5, 7, 9]
     @test [c.points for c in families[2]] == [16 * 2^i for i in 0:7]
 end
-
-# --- two states, for the exact Hessian ------------------------------------------
-#
-# The exact Hessian differentiates the reverse pass, and one latent hides whole
-# classes of reverse-pass error: a covariance cotangent that is a scalar is
-# symmetric whatever the code assumes. So two latents with coupled dynamics, a
-# random effect on a transformed DRIFT -- the integrand is not Gaussian, so
-# every unit carries a gap and is flagged -- and random CINT and T0MEANS on
-# different latents.
-#
-# Raw layout: 1-6 the model parameters, then the population scales, then the
-# correlations.
-if !isdefined(@__MODULE__, :_CONTINUATION_2D_OBJECTIVE)
-const _CONTINUATION_2D_OBJECTIVE = let
-    df = _laplace_test_dataframe(
-        drift=[-0.5 0.3; 0.1 -0.3], jax=[-0.5 0.3; 0.1 -0.3],
-        cint=[0.0; 0.0;;], diffusion=[0.3 0.0; 0.05 0.25],
-        lambda=[1.0 0.0; 0.0 1.0], jy=[1.0 0.0; 0.0 1.0],
-        manifestmeans=[0.0; 0.0;;], manifestvar=[0.2 0.0; 0.0 0.2],
-        t0var=[1.0 0.0; 0.0 1.0], t0means=[0.0; 0.0;;],
-        free=Dict(
-            (:DRIFT, 1, 1) => (1, "-log1p_exp(param[1])"),
-            (:JAx, 1, 1) => (1, "-log1p_exp(param[1])"),
-            (:DRIFT, 1, 2) => (2, "param[2]"),
-            (:JAx, 1, 2) => (2, "param[2]"),
-            (:CINT, 1, 1) => (3, "param[3]"),
-            (:DIFFUSION, 1, 1) => (4, "log1p_exp(param[4])"),
-            (:T0MEANS, 2, 1) => (5, "param[5]"),
-            (:MANIFESTMEANS, 2, 1) => (6, "param[6]"),
-        ),
-    )
-    starts, times, data = _laplace_test_data(6, 2; seed=7)
-    ctsem_objective(ekf_from_data_frame(df), starts, times, data)
-end
-end
-
-# Three effects a subject (DRIFT[1,1], CINT[1], T0MEANS[2]): scales 7-9,
-# correlations 10-12.
-_fresh_2d3() = (ctsem_laplace_objective(_CONTINUATION_2D_OBJECTIVE, [1, 3, 5],
-    [7, 8, 9], [10, 11, 12], [1.0, 1.0, 1.0]),
-    [0.3, 0.2, 0.1, -0.5, 0.2, -0.1, 0.4, 0.3, 0.5, 0.2, -0.1, 0.15])
-
-# Four (DRIFT[1,1], DRIFT[1,2], CINT[1], T0MEANS[2]): scales 7-10, correlations
-# 11-16. Past three effects the lattice is the cheaper first rule.
-_fresh_2d4() = (ctsem_laplace_objective(_CONTINUATION_2D_OBJECTIVE, [1, 2, 3, 5],
-    [7, 8, 9, 10], collect(11:16), [1.0, 1.0, 1.0, 1.0]),
-    [0.3, 0.2, 0.1, -0.5, 0.2, -0.1, 0.4, 0.2, 0.3, 0.5, 0.2, -0.1, 0.15, 0.0,
-     0.1, -0.05])
 
 # --- frozen importance draws -------------------------------------------------
 #
@@ -627,24 +627,26 @@ end
     laplace, values = _fresh_2d3()
     theta = collect(Float64, values)
     tiny = 1e-12
-    at(m) = ctsem_laplace_continuation_info(ctsem_laplace_continuation(laplace,
-        theta; tolerance=-1.0, nodes=m, draws_se=1e9))
-    i5, i7, i9 = at(5), at(7), at(C._CONTINUATION_NODES_MAX)
-    function tail(U)
-        d9 = abs(i9.quadrature_units[U] - i7.quadrature_units[U])
-        d7 = abs(i7.quadrature_units[U] - i5.quadrature_units[U])
-        converging = d7 > 0 && d9 < d7
-        r = converging ? d9 / d7 : NaN
-        return (d9=d9, converging=converging,
-            error=converging ? d9 * max(1.0, r / (1 - r)) : d9)
-    end
-    # The lattice's finest rule, and its spread, for the comparison.
+    # Each unit's product rule at `m` nodes, placed at the centre.
     full = C._laplace_extend(laplace, theta)
     Ls = C._laplace_popchols(full, laplace.spec)
     ws = C._laplace_workspace!(laplace, Float64, length(full))
-    finest(U, o) = C._continuation_unit_rule(laplace, U, full, Ls, ws,
-        merge(C._continuation_opts(o),
-            (choice=C.CTSEMRuleChoice(:lattice, 5, C._LATTICE_MAX),)))
+    opts0 = C._continuation_opts(ctsem_laplace_continuation(laplace, theta;
+        tolerance=1e6))
+    rule(U, choice) = C._continuation_unit_rule(laplace, U, full, Ls, ws,
+        merge(opts0, (choice=choice,)))
+    product(U, m) = rule(U, C.CTSEMRuleChoice(:product, m, 0)).value
+    function tail(U)
+        q5, q7, q9 = product(U, 5), product(U, 7), product(U, C._CONTINUATION_NODES_MAX)
+        d9 = abs(q9 - q7)
+        d7 = abs(q7 - q5)
+        converging = d7 > 0 && d9 < d7
+        r = converging ? d9 / d7 : NaN
+        return (d9=d9, converging=converging, q9=q9,
+            error=converging ? d9 * max(1.0, r / (1 - r)) : d9)
+    end
+    # The lattice's finest rule, and its spread, for the comparison.
+    finest(U, o) = rule(U, C.CTSEMRuleChoice(:lattice, 5, C._LATTICE_MAX))
     drawn = ctsem_laplace_continuation(laplace, theta; tolerance=-1.0, draws=256,
         draws_se=tiny)
     d = ctsem_laplace_continuation_info(drawn)
@@ -662,7 +664,7 @@ end
                 @test drawn.unit_rules[U] == C.CTSEMRuleChoice(:lattice, 5, C._LATTICE_MAX)
                 @test isapprox(d.centre_error[U], f.se; rtol=1e-8)
             else
-                @test isapprox(d.quadrature_units[U], i9.quadrature_units[U]; rtol=1e-10)
+                @test isapprox(d.quadrature_units[U], t.q9; rtol=1e-10)
                 @test isapprox(d.centre_error[U], t.error; rtol=1e-8)
                 @test d.centre_error[U] >= t.d9
             end

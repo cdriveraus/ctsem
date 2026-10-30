@@ -144,6 +144,15 @@ function _lattice_cbc(d::Integer, n::Integer)
     p = ones(n)
     z = Vector{Int}(undef, Int(d))
     for s in 1:Int(d)
+        # Every odd number scores the same as the first component, a
+        # permutation of the points; one, rather than a tie broken by rounding.
+        if s == 1
+            z[1] = 1
+            @inbounds for i in 0:(n - 1)
+                p[i + 1] *= 1 + gamma * omega[i + 1]
+            end
+            continue
+        end
         best = Inf
         bz = 1
         for c in 1:2:(n - 1)
