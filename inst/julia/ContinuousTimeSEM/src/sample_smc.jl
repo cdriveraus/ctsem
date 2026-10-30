@@ -1031,7 +1031,7 @@ function ctsem_sample_smc(objective, values::AbstractVector;
     end
 
     draws, accept, divergent = pooled.draws, pooled.accept, pooled.divergent
-    depth, energy = pooled.depth, pooled.energy
+    bound, depth, energy = pooled.bound, pooled.depth, pooled.energy
     # The chains' own diagnostics, before any correction; no R-hat (see the
     # file comment).
     diagnostics = ctsem_sample_diagnostics(draws, nch)
@@ -1045,13 +1045,14 @@ function ctsem_sample_smc(objective, values::AbstractVector;
             draws = draws[:, idx]
             accept = accept[idx]
             divergent = divergent[idx]
+            bound = bound[idx]
             depth = depth[idx]
             energy = energy[idx]
         end
         final_correction < 0.5 * expected_kept && @warn "the final chains' coreset kept $(round(100 * final_correction; digits=0))% of the draws' effective size after the correction to the full density, against $(round(100 * expected_kept; digits=0))% expected; coreset = false would give more"
     end
-    corrected_pool = (draws=draws, accept=accept, divergent=divergent, depth=depth,
-        energy=energy)
+    corrected_pool = (draws=draws, accept=accept, divergent=divergent, bound=bound,
+        depth=depth, energy=energy)
     return merge(_sample_result(corrected_pool; nchains=nch, ndraws=nper, npar=npar,
         ndim=npar, maxdepth=mdepth, stepsize=fill(step, nch),
         warmup_divergent=zeros(Int, nch), trace=trace, diagnostics=diagnostics), (

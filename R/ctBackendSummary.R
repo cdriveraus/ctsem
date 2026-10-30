@@ -1852,16 +1852,20 @@ ctBackendParMatrices <- function(fit, raw = NULL, tipreds = NULL, state = NULL,
     note <- paste0(note, if (is.finite(fewest))
       paste0(", smallest n_eff ", round(fewest), " (", fewestname, ").") else ".")
   }
-  divergent <- suppressWarnings(as.integer(fit$sample$divergent)[1L])
-  if (!is.na(divergent) && divergent > 0L) {
+  divergent <- .ctSampleDivergent(fit$sample)
+  if (divergent > 0L) {
     note <- paste0(note, " ", divergent, " divergent transition",
       if (divergent > 1L) "s" else "", ".")
+  }
+  bound <- .ctSampleDivergentBound(fit$sample)
+  if (bound > 0L) {
+    note <- paste0(note, " ", bound, " transition", if (bound > 1L) "s" else "",
+      " stopped at the random-effect correlation bound.")
   }
   # The thresholds are the ones `.ctSampleWarn()` warns at, so the summary and
   # the fit-time warning cannot disagree about whether a run failed.
   rhatmax <- .ctSampleRhatCeiling(fit$sample)
-  bad <- (is.finite(worst) && worst > rhatmax) ||
-    (!is.na(divergent) && divergent > 0L)
+  bad <- (is.finite(worst) && worst > rhatmax) || divergent > 0L
   if (bad) {
     # Not "these are not posterior summaries": a run can mix perfectly in the
     # population parameters and not at all in the random-effects scales, and it

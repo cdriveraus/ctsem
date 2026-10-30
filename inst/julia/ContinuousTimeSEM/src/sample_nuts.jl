@@ -586,6 +586,10 @@ struct _NUTSWorkspace
     # and it does not shrink with more draws.
     xnear::Vector{Vector{Float64}}
     pnear::Vector{Vector{Float64}}
+    # Whether the transition's divergence, if it had one, came past the
+    # random-effect correlation bound (`_divergence_at_bound`). A transition
+    # diverges at one leapfrog step at most: the first ends its tree.
+    at_bound::Base.RefValue{Bool}
 end
 
 function _NUTSWorkspace(ndim::Int, maxdepth::Int)
@@ -594,8 +598,22 @@ function _NUTSWorkspace(ndim::Int, maxdepth::Int)
         _nuts_point(ndim), _nuts_point(ndim),
         [_nuts_point(ndim) for _ in 0:maxdepth],
         [zeros(ndim) for _ in 0:(maxdepth + 1)],
-        [zeros(ndim) for _ in 0:(maxdepth + 1)])
+        [zeros(ndim) for _ in 0:(maxdepth + 1)], Ref(false))
 end
+
+"""
+    _divergence_at_bound(logdensity!, x)
+
+Whether the leapfrog step that diverged at `x` lies past the random-effect
+correlation bound (`_CTSEM_CORBOUND`), the parameter space's own edge. A
+trajectory that crosses it meets a cubic wall that steepens without limit, and
+its energy error then grows past any threshold; past the wall there is no
+mass, so such a divergence hides none (`.ctSampleDiagnosis()` reads it so). The
+joint map's density says where its points are (`sample_map.jl`); any other
+density, whose points this cannot place, answers `false`, and its divergences
+keep their ordinary meaning.
+"""
+_divergence_at_bound(logdensity!, x::AbstractVector) = false
 
 """
     _build_tree!(...)
@@ -616,10 +634,12 @@ function _build_tree!(ws::_NUTSWorkspace, logdensity!, metric::CTSEMMetric,
         kinetic = _leapfrog!(tip, logdensity!, direction * eps, metric,
             ws.velocity, ws.scratch)
         if !isfinite(kinetic) || !isfinite(tip.logp)
+            ws.at_bound[] = _divergence_at_bound(logdensity!, tip.x)
             return (false, -Inf, 1, 0.0, true)
         end
         h = -tip.logp + kinetic
         divergent = !isfinite(h) || (h - h0) > maxdelta
+        divergent && (ws.at_bound[] = _divergence_at_bound(logdensity!, tip.x))
         _nuts_copy!(out, tip)
         # A single-state subtree: it is its own near end.
         copyto!(ws.xnear[1], tip.x)
@@ -686,6 +706,7 @@ function _nuts_transition!(ws::_NUTSWorkspace, logdensity!, metric::CTSEMMetric,
 
     kinetic = _metric_velocity!(ws.velocity, metric, ws.minus.p, ws.scratch)
     h0 = -logp + kinetic
+    ws.at_bound[] = false
     logweight = 0.0            # log of exp(h0 - h0)
     nleapfrog = 0
     sumaccept = 0.0
@@ -722,5 +743,6 @@ function _nuts_transition!(ws::_NUTSWorkspace, logdensity!, metric::CTSEMMetric,
     energy = -ws.proposal.logp +
         _metric_velocity!(ws.velocity, metric, ws.proposal.p, ws.scratch)
     return (logp=ws.proposal.logp, accept=nleapfrog == 0 ? 0.0 : sumaccept / nleapfrog,
-        divergent=divergent, depth=depth, nleapfrog=nleapfrog, energy=energy)
+        divergent=divergent, bound=divergent && ws.at_bound[], depth=depth,
+        nleapfrog=nleapfrog, energy=energy)
 end

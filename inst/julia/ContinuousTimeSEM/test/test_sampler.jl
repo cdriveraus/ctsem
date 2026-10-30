@@ -396,6 +396,51 @@ end
     @test quantile(x, 0.975) ≈ 1.96 atol = 0.05
 end
 
+# A transition says whether its divergence lay past a bound the density can
+# place (`_divergence_at_bound`), and only then: a standard normal with a
+# cubic wall past 1, stepped far too coarsely, diverges at the wall alone. The
+# same density as a plain function places nothing.
+struct _BoundWallTarget end
+function (t::_BoundWallTarget)(g, x)
+    over = max(x[1] - 1, 0.0)
+    g[1] = -x[1] - 3000 * over^2
+    return -x[1]^2 / 2 - 1000 * over^3
+end
+ContinuousTimeSEM._divergence_at_bound(::_BoundWallTarget, x::AbstractVector) = x[1] > 1
+
+function _bound_wall_steps(logdensity!; n=2000, eps=0.9, seed=11)
+    rng = Random.Xoshiro(seed)
+    ws = ContinuousTimeSEM._NUTSWorkspace(1, 6)
+    metric = ContinuousTimeSEM.ctsem_identity_metric(1)
+    x = [0.5]; g = zeros(1)
+    logp = logdensity!(g, x)
+    divergent = 0; bound = 0; bound_alone = 0
+    for _ in 1:n
+        step = ContinuousTimeSEM._nuts_transition!(ws, logdensity!, metric, rng,
+            x, g, logp, eps, 6, 1000.0)
+        logp = step.logp
+        divergent += step.divergent
+        bound += step.bound
+        bound_alone += step.bound && !step.divergent
+    end
+    return (divergent=divergent, bound=bound, bound_alone=bound_alone)
+end
+
+@testset "a divergence past a bound the density places is said to be there" begin
+    wall = _BoundWallTarget()
+    placed = _bound_wall_steps(wall)
+    # Coarse steps on a normal are stable; only the wall makes them diverge,
+    # and each time it does the transition says it was past the bound.
+    @test placed.divergent > 0
+    @test placed.bound == placed.divergent
+    @test placed.bound_alone == 0
+    # The same density as a plain function places nothing: every divergence
+    # keeps its ordinary meaning.
+    plain = _bound_wall_steps((g, x) -> wall(g, x))
+    @test plain.divergent > 0
+    @test plain.bound == 0
+end
+
 @testset "an isotropic normal is sampled with the right scale in four dimensions" begin
     # Four dimensions specifically: the subtree U-turn bug was worst here,
     # giving sd 0.974 where one dimension gave 0.999 and sixteen gave 1.000.

@@ -224,6 +224,8 @@ struct _ChainResult
     draws::Matrix{Float64}      # ndim x ndraws
     accept::Vector{Float64}
     divergent::Vector{Bool}
+    # Of those, the ones past the correlation bound (`_divergence_at_bound`).
+    bound::Vector{Bool}
     depth::Vector{Int}
     energy::Vector{Float64}
     stepsize::Float64
@@ -273,6 +275,7 @@ function _sample_draws!(logdensity!, ws::_NUTSWorkspace, rng::AbstractRNG,
     draws = Matrix{Float64}(undef, ndim, ndraws)
     accept = Vector{Float64}(undef, ndraws)
     divergent = Vector{Bool}(undef, ndraws)
+    bound = Vector{Bool}(undef, ndraws)
     depth = Vector{Int}(undef, ndraws)
     energy = Vector{Float64}(undef, ndraws)
     for iteration in 1:ndraws
@@ -287,6 +290,7 @@ function _sample_draws!(logdensity!, ws::_NUTSWorkspace, rng::AbstractRNG,
         end
         accept[iteration] = step.accept
         divergent[iteration] = step.divergent
+        bound[iteration] = step.bound
         depth[iteration] = step.depth
         energy[iteration] = step.energy
         if _due(progress)
@@ -303,7 +307,7 @@ function _sample_draws!(logdensity!, ws::_NUTSWorkspace, rng::AbstractRNG,
     _invoke_callback(callback, "sampling", ndraws, ndraws, logp,
         count(divergent); force=true)
     logp = _surrogate_batch!(logdensity!, x, g, logp)
-    return (draws=draws, accept=accept, divergent=divergent, depth=depth,
+    return (draws=draws, accept=accept, divergent=divergent, bound=bound, depth=depth,
         energy=energy, logp=logp)
 end
 
@@ -527,7 +531,7 @@ function _run_chain(logdensity!, centre::Vector{Float64},
     sampled = _sample_draws!(logdensity!, ws, rng, x, g, logp, eps, current,
         ndraws, maxdepth, maxdelta, progress, callback)
     return _ChainResult(sampled.draws, sampled.accept, sampled.divergent,
-        sampled.depth, sampled.energy, eps,
+        sampled.bound, sampled.depth, sampled.energy, eps,
         warmup_divergent, warmup_used, copy(x), current)
 end
 
@@ -550,7 +554,7 @@ function _continue_chain(logdensity!, ws::_NUTSWorkspace, rng::AbstractRNG,
     sampled = _sample_draws!(logdensity!, ws, rng, x, g, logp, eps, metric,
         ndraws, maxdepth, maxdelta, progress, callback)
     return _ChainResult(sampled.draws, sampled.accept, sampled.divergent,
-        sampled.depth, sampled.energy, eps, 0, 0, copy(x), metric)
+        sampled.bound, sampled.depth, sampled.energy, eps, 0, 0, copy(x), metric)
 end
 
 """
@@ -771,6 +775,7 @@ function _sample_pool(results, nchains::Int, ndraws::Int, nkeep::Int; rows::Int=
     draws = Matrix{Float64}(undef, rows, total)
     accept = Vector{Float64}(undef, total)
     divergent = Vector{Bool}(undef, total)
+    bound = Vector{Bool}(undef, total)
     depth = Vector{Int}(undef, total)
     energy = Vector{Float64}(undef, total)
     for c in 1:nchains
@@ -782,11 +787,13 @@ function _sample_pool(results, nchains::Int, ndraws::Int, nkeep::Int; rows::Int=
             end
             accept[column] = r.accept[t]
             divergent[column] = r.divergent[t]
+            bound[column] = r.bound[t]
             depth[column] = r.depth[t]
             energy[column] = r.energy[t]
         end
     end
-    return (draws=draws, accept=accept, divergent=divergent, depth=depth, energy=energy)
+    return (draws=draws, accept=accept, divergent=divergent, bound=bound, depth=depth,
+        energy=energy)
 end
 
 """The effect summary of a run with no effects, as the marginal routes report it."""
@@ -831,7 +838,10 @@ function _sample_result(pooled; nchains::Int, ndraws::Int, npar::Int, ndim::Int,
         ess_tail=diagnostics.ess_tail, accept=pooled.accept,
         divergent=pooled.divergent, depth=pooled.depth, energy=pooled.energy,
         stepsize=stepsize, warmup_divergent=warmup_divergent,
-        ndivergent=count(pooled.divergent), max_depth=maxdepth,
+        ndivergent=count(pooled.divergent),
+        # The divergences past the correlation bound (`_divergence_at_bound`),
+        # which the verdict reads as the posterior reaching the bound.
+        ndivergent_bound=count(pooled.bound), max_depth=maxdepth,
         nsaturated=count(==(maxdepth), pooled.depth), ebfmi=ebfmi,
         # `init=NaN` would be wrong rather than defensive: Julia's `min` and
         # `max` propagate NaN, so it poisons every result instead of only the
@@ -953,6 +963,7 @@ end
 function _merge_chains(a::Vector{_ChainResult}, b::Vector{_ChainResult})
     return [_ChainResult(hcat(a[c].draws, b[c].draws),
         vcat(a[c].accept, b[c].accept), vcat(a[c].divergent, b[c].divergent),
+        vcat(a[c].bound, b[c].bound),
         vcat(a[c].depth, b[c].depth), vcat(a[c].energy, b[c].energy),
         b[c].stepsize, a[c].warmup_divergent, a[c].warmup_used,
         b[c].x, b[c].metric) for c in eachindex(a)]
