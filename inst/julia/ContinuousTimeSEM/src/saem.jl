@@ -2232,6 +2232,8 @@ function _ctsem_saem_sample(laplace::CTSEMLaplaceObjective, values::AbstractVect
         init=zeros(_effect_cross_length(blocks)))
     pooled = (draws=draws, accept=reduce(vcat, [ch.accept for ch in chains]),
         divergent=reduce(vcat, [ch.divergent for ch in chains]),
+        # SAEM's kernel does not place its divergences (`_divergence_at_bound`).
+        bound=falses(sum(length(ch.divergent) for ch in chains)),
         depth=reduce(vcat, [ch.depth for ch in chains]),
         energy=reduce(vcat, [ch.energy for ch in chains]))
     # E-BFMI is not computed: an energy taken at different effects every

@@ -346,6 +346,10 @@ test_that("the map sampler draws the joint posterior with the filter's effects i
   expect_identical(d$sampler, "map")
   expect_identical(d$target, "joint")
   expect_identical(d$placement$method, "fit")
+  # The divergences the map sampler placed past the correlation bound, a part
+  # of them; this fixture has no correlation to bound.
+  expect_type(d$divergent_bound, "integer")
+  expect_lte(d$divergent_bound, d$divergent)
   expect_equal(dim(r$map$estimate$rawposterior), c(2L * d$draws, npar))
   expect_true(all(is.finite(r$map$estimate$rawposterior)))
   expect_length(d$effect_mean, neffects)

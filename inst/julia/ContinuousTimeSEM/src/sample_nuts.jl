@@ -586,6 +586,12 @@ struct _NUTSWorkspace
     # and it does not shrink with more draws.
     xnear::Vector{Vector{Float64}}
     pnear::Vector{Vector{Float64}}
+    # Whether the end of the trajectory being extended has gone past the
+    # random-effect correlation bound since the transition began
+    # (`_divergence_at_bound`), so that a divergence there can be read as the
+    # bound's. A transition diverges at one leapfrog step at most: the first
+    # ends its tree.
+    at_bound::Base.RefValue{Bool}
 end
 
 function _NUTSWorkspace(ndim::Int, maxdepth::Int)
@@ -594,8 +600,26 @@ function _NUTSWorkspace(ndim::Int, maxdepth::Int)
         _nuts_point(ndim), _nuts_point(ndim),
         [_nuts_point(ndim) for _ in 0:maxdepth],
         [zeros(ndim) for _ in 0:(maxdepth + 1)],
-        [zeros(ndim) for _ in 0:(maxdepth + 1)])
+        [zeros(ndim) for _ in 0:(maxdepth + 1)], Ref(false))
 end
+
+"""
+    _divergence_at_bound(logdensity!, x)
+
+Whether the point `x` lies past the random-effect correlation bound
+(`_CTSEM_CORBOUND`), the parameter space's own edge. A trajectory that crosses
+it meets a cubic wall that steepens without limit, its energy error then grows
+past any threshold, and past the wall there is no mass, so a divergence on a
+stretch of trajectory that crossed it hides none (`.ctSampleDiagnosis()` reads
+it so). The divergent step itself need not lie past the bound: the wall's
+gradient can throw the next step far back inside, where the energy error is
+first read. So every leapfrog step asks, and each end of the trajectory keeps
+whether it has crossed (`_nuts_transition!`). The joint map's density says
+where its points are (`sample_map.jl`); any other density, whose points this
+cannot place, answers `false`, and its divergences keep their ordinary
+meaning.
+"""
+_divergence_at_bound(logdensity!, x::AbstractVector) = false
 
 """
     _build_tree!(...)
@@ -615,6 +639,7 @@ function _build_tree!(ws::_NUTSWorkspace, logdensity!, metric::CTSEMMetric,
     if depth == 0
         kinetic = _leapfrog!(tip, logdensity!, direction * eps, metric,
             ws.velocity, ws.scratch)
+        ws.at_bound[] |= _divergence_at_bound(logdensity!, tip.x)
         if !isfinite(kinetic) || !isfinite(tip.logp)
             return (false, -Inf, 1, 0.0, true)
         end
@@ -691,13 +716,20 @@ function _nuts_transition!(ws::_NUTSWorkspace, logdensity!, metric::CTSEMMetric,
     sumaccept = 0.0
     divergent = false
     depth = 0
+    # Whether each end of the trajectory has gone past the correlation bound
+    # (`_divergence_at_bound`); `ws.at_bound` carries the extended end's
+    # through its doubling.
+    crossed_plus = false
+    crossed_minus = false
 
     while depth < maxdepth
         direction = rand(rng, Bool) ? 1 : -1
         tip = direction > 0 ? ws.plus : ws.minus
         _nuts_copy!(ws.working, tip)
+        ws.at_bound[] = direction > 0 ? crossed_plus : crossed_minus
         result = _build_tree!(ws, logdensity!, metric, rng, depth, eps, direction,
             h0, maxdelta, ws.working, ws.subproposal)
+        direction > 0 ? (crossed_plus = ws.at_bound[]) : (crossed_minus = ws.at_bound[])
         _nuts_copy!(tip, ws.working)
         nleapfrog += result[3]
         sumaccept += result[4]
@@ -722,5 +754,6 @@ function _nuts_transition!(ws::_NUTSWorkspace, logdensity!, metric::CTSEMMetric,
     energy = -ws.proposal.logp +
         _metric_velocity!(ws.velocity, metric, ws.proposal.p, ws.scratch)
     return (logp=ws.proposal.logp, accept=nleapfrog == 0 ? 0.0 : sumaccept / nleapfrog,
-        divergent=divergent, depth=depth, nleapfrog=nleapfrog, energy=energy)
+        divergent=divergent, bound=divergent && ws.at_bound[], depth=depth,
+        nleapfrog=nleapfrog, energy=energy)
 end

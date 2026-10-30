@@ -104,3 +104,36 @@ test_that("importance sampling that ends short of its target says so, not only b
   expect_warning(ctsem:::.ctOptimEffectiveSampleWarn(40, floor = 50,
     remedy = "R", ndraws = 400), "40 from 400 draws\\. The intervals")
 })
+
+test_that("divergences at the correlation bound are reported and leave the verdict to the rest", {
+  # The engine places a divergence on a trajectory that crossed the
+  # random-effect correlation bound (`_divergence_at_bound`): the parameter
+  # space's own edge, past which there is no mass. On the race's joint samples
+  # nine divergent steps in ten were past it, and every one of five such fits
+  # read converged = FALSE with its targets met.
+  diag <- function(divergent, bound) list(chains = 4L, warmup = 200L, draws = 100L,
+    divergent = divergent, divergent_bound = bound, rhat = c(a = 1.001, b = 1.002),
+    ess = c(a = 900, b = 900), saturated = 0L, max_depth = 10L,
+    unidentified = character(0), ess_target = 200, rhat_target = 1.01)
+  verdict <- ctsem:::.ctSampleDiagnosis
+  # All at the bound: converged, said once as a fact, a message and no warning.
+  v <- verdict(diag(5L, 5L))
+  expect_true(v$converged)
+  expect_length(v$problems, 1L)
+  expect_match(v$problems, "5 of 400 transitions stopped at the random-effect correlation bound")
+  expect_message(expect_no_warning(ctsem:::.ctSampleWarn(diag(5L, 5L))),
+    "correlation bound: the posterior reaches it")
+  # Any other divergence fails it as before, and is the one warned about.
+  v <- verdict(diag(5L, 3L))
+  expect_false(v$converged)
+  expect_match(v$problems[1L], "^2 of 400 transitions diverged$")
+  expect_warning(suppressMessages(ctsem:::.ctSampleWarn(diag(5L, 3L))),
+    "^2 of 400 transitions diverged")
+  # A fit sampled before the bound was recorded, or by a sampler that does not
+  # place its divergences, counts every one against the verdict.
+  old <- diag(5L, 0L)
+  old$divergent_bound <- NULL
+  expect_false(verdict(old)$converged)
+  expect_identical(ctsem:::.ctSampleDivergent(old), 5L)
+  expect_identical(ctsem:::.ctSampleDivergentBound(old), 0L)
+})

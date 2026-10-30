@@ -1611,6 +1611,11 @@
     ess_tail = if (is.null(result$ess_tail)) NULL else
       stats::setNames(as.numeric(result$ess_tail)[seq_len(npar)], colnames(posterior)),
     divergent = as.integer(result$ndivergent),
+    # Of those, the ones on a stretch of trajectory that had crossed the
+    # random-effect correlation bound (the engine's `_divergence_at_bound`):
+    # the parameter space's own edge, past which there is no mass. Only the
+    # joint map's sampler places them; any other counts none here.
+    divergent_bound = as.integer(.ctJuliaOr(result$ndivergent_bound, 0L))[1L],
     warmup_divergent = as.integer(result$warmup_divergent),
     # Subject filter passes over the run, warmup included, whose predictions
     # grew more than 100-fold between observations, and the gradients taken by
@@ -1777,18 +1782,35 @@
 # agreed at all.
 #
 # `converged` is about whether the draws are a posterior, not about how precise
-# one they are: a bad R-hat or a divergent transition means the chains did not
-# describe the same distribution, while a small effective sample size or a
-# saturated tree depth means they did and did so inefficiently. Only the first
-# two set it to FALSE.
+# one they are: a bad R-hat means the chains did not describe the same
+# distribution, and a divergent transition that the sampler could not follow
+# means the draws may under-represent where it happened. A small effective
+# sample size or a saturated tree depth means they did describe one, and did
+# so inefficiently. Only the first two set it to FALSE.
+#
+# A divergence on a trajectory that crossed the random-effect correlation bound
+# is not of that kind. The bound is a cubic wall in the objective, part of the
+# parameter space, and past it there is no mass; a trajectory that crosses it
+# meets a wall that steepens without limit, so its energy error grows past any
+# threshold. On the race's joint samples nine divergent steps in ten were
+# themselves past the bound, from trajectories that started near a correlation
+# the posterior reaches or anywhere at all, and the draws' share near the
+# bound matched the long references'
+# (review/SAMPLING-verdict-divergences-2026-10-30.md). So it is reported, as the
+# posterior reaching the bound, and does not set `converged`.
 #' @keywords internal
 .ctSampleDiagnosis <- function(diagnostics) {
   total <- sum(.ctSampleChainDraws(diagnostics))
   problems <- character(0)
-  divergent <- suppressWarnings(as.integer(diagnostics$divergent)[1L])
-  if (!is.na(divergent) && divergent > 0L) {
+  divergent <- .ctSampleDivergent(diagnostics)
+  if (divergent > 0L) {
     problems <- c(problems,
       paste0(divergent, " of ", total, " transitions diverged"))
+  }
+  bound <- .ctSampleDivergentBound(diagnostics)
+  if (bound > 0L) {
+    problems <- c(problems, paste0(bound, " of ", total, " transitions stopped ",
+      "at the random-effect correlation bound"))
   }
   flat <- if (is.null(diagnostics$unidentified)) character(0) else
     diagnostics$unidentified
@@ -1821,8 +1843,25 @@
   converged <- if (!is.finite(worst)) {
     problems <- c(problems, "R-hat could not be computed for any parameter")
     NA
-  } else !(worst > rhatmax || (!is.na(divergent) && divergent > 0L))
+  } else !(worst > rhatmax || divergent > 0L)
   list(converged = converged, problems = problems)
+}
+
+# The divergent transitions away from the correlation bound, and those at it
+# (`$divergent_bound`; zero for a fit sampled before it was recorded, or by a
+# sampler that does not place its divergences). One reading for the verdict,
+# the warning, the print method and the summary's note.
+#' @keywords internal
+.ctSampleDivergent <- function(diagnostics) {
+  all <- suppressWarnings(as.integer(diagnostics$divergent)[1L])
+  if (!length(all) || is.na(all)) return(0L)
+  max(all - .ctSampleDivergentBound(diagnostics), 0L)
+}
+
+#' @keywords internal
+.ctSampleDivergentBound <- function(diagnostics) {
+  bound <- suppressWarnings(as.integer(diagnostics$divergent_bound)[1L])
+  if (!length(bound) || is.na(bound)) 0L else bound
 }
 
 # Past |raw| ~ 20 every ctsem transform is flat to machine precision. A sampled
@@ -1880,12 +1919,18 @@
 # not reach is wrong in a way no amount of averaging fixes.
 .ctSampleWarn <- function(diagnostics) {
   total <- sum(.ctSampleChainDraws(diagnostics))
-  if (diagnostics$divergent > 0L) {
-    warning(diagnostics$divergent, " of ", total, " transitions diverged. The ",
+  divergent <- .ctSampleDivergent(diagnostics)
+  if (divergent > 0L) {
+    warning(divergent, " of ", total, " transitions diverged. The ",
       "sampler could not follow the posterior's geometry there, so these draws ",
       "under-represent whatever it could not reach -- most often a population ",
       "standard deviation near zero. Raising control$target_accept towards ",
       "0.95 shortens the steps and often clears it.", call. = FALSE)
+  }
+  bound <- .ctSampleDivergentBound(diagnostics)
+  if (bound > 0L) {
+    message(bound, " of ", total, " transitions stopped at the random-effect ",
+      "correlation bound: the posterior reaches it.")
   }
   # Checked before R-hat, because it changes what a bad R-hat means.
   #
@@ -1966,7 +2011,7 @@
       "before it finished exploring. That costs efficiency rather than ",
       "correctness. It usually reflects difficult posterior geometry rather ",
       "than a cap set too low",
-      if (diagnostics$divergent > 0L)
+      if (divergent > 0L)
         " -- the divergences above point the same way" else "",
       "; check the divergence count and any near-zero population standard ",
       "deviation before raising control$maxdepth.")
@@ -2008,7 +2053,9 @@ print.ctSampleDiagnostics <- function(x, ...) {
       round(100 * x$final_correction_ess), "% of their effective size\n",
       sep = "")
   }
+  bound <- .ctSampleDivergentBound(x)
   cat("  divergent: ", x$divergent, " of ", total,
+    if (bound > 0L) paste0(" (", bound, " at the correlation bound)") else "",
     "   max tree depth reached: ", x$saturated, "\n", sep = "")
   cat("  step size: ", paste(signif(x$stepsize, 3), collapse = ", "),
     "\n", sep = "")

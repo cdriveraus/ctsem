@@ -700,6 +700,7 @@
     npar = as.integer(result$npar), ndim = as.integer(result$ndim),
     ndraws = ndraws, nchains = nchains,
     ndivergent = as.integer(result$ndivergent),
+    ndivergent_bound = as.integer(.ctJuliaOr(result$ndivergent_bound, 0L))[1L],
     forward_gradients = as.integer(.ctJuliaOr(result$forward_gradients, 0L))[1L],
     explosive_passes = as.integer(.ctJuliaOr(result$explosive_passes, 0L))[1L],
     warmup_divergent = as.integer(result$warmup_divergent),
@@ -828,6 +829,8 @@
     # Summed across chains, because they count events; the step size and E-BFMI
     # are per chain and stay per chain.
     ndivergent = sum(vapply(drawn, function(d) as.integer(d$ndivergent), integer(1))),
+    ndivergent_bound = sum(vapply(drawn,
+      function(d) as.integer(.ctJuliaOr(d$ndivergent_bound, 0L))[1L], integer(1))),
     forward_gradients = sum(vapply(drawn,
       function(d) as.integer(.ctJuliaOr(d$forward_gradients, 0L))[1L], integer(1))),
     explosive_passes = sum(vapply(drawn,
