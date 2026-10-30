@@ -7003,8 +7003,7 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
       saemguard <- list(chosen = chosen,
         logpost_saem = withsaem[["corrected"]],
         logpost_without = without[["corrected"]],
-        laplace_saem = withsaem[["laplace"]], laplace_without = without[["laplace"]],
-        units_kept_laplace = withsaem[["wide"]])
+        laplace_saem = withsaem[["laplace"]], laplace_without = without[["laplace"]])
       if (identical(chosen, "without")) {
         # The kept run is the plain one, but the SAEM phase that ran stays
         # recorded, beside the comparison that set it aside.
