@@ -742,7 +742,7 @@ _fresh_nested_nonlinear() = (ctsem_laplace_objective(_LAPLACE_NONLINEAR_OBJECTIV
     @test drawn.error_nodes == 0
 end
 
-@testset "a rule whose nodes have not converged is refined, and takes draws past nine" begin
+@testset "a rule whose nodes have not converged is refined, and takes draws past nine only where its rules do not converge" begin
     # On the nonlinear fixture, at a point where some unit's 5-node rule
     # differs from its 3-node rule by more than the draws' target: with the
     # target out of reach the errors are those differences; at the target
@@ -782,47 +782,55 @@ end
     @test refined >= 1
     @test f.error <= c.error + 1e-12
     # A target only an exact rule reaches, on the three-effect nonlinear
-    # fixture, whose product rules differ at every node count: with draws
-    # on, every unit whose rule is not exact is on draws; with them off, such
-    # a unit carries the finest rule and its error against the rule below
-    # it. (The one-effect fixture above reads its 7-node rule within 1e-12 of
-    # its 5-node rule, so nothing there escalates.)
+    # fixture, whose product rules differ at every node count. Past nine
+    # nodes a unit keeps its finest rule wherever its rules converge -- the
+    # last node-step difference below the one before -- and reports the
+    # geometric tail as its error, never less than that difference; it takes
+    # draws only where they do not converge. With draws off it keeps the
+    # finest rule either way. (The one-effect fixture above reads its 7-node
+    # rule within 1e-12 of its 5-node rule, so nothing there escalates.) See
+    # `_continuation_refine!`.
     laplace, values = _fresh_2d3()
     theta = collect(Float64, values)
     tiny = 1e-12
+    at(m) = ctsem_laplace_continuation_info(ctsem_laplace_continuation(laplace,
+        theta; tolerance=-1.0, nodes=m, draws_se=1e9))
+    i5, i7, i9 = at(5), at(7), at(C._CONTINUATION_NODES_MAX)
+    function tail(U)
+        d9 = abs(i9.quadrature_units[U] - i7.quadrature_units[U])
+        d7 = abs(i7.quadrature_units[U] - i5.quadrature_units[U])
+        converging = d7 > 0 && d9 < d7
+        r = converging ? d9 / d7 : NaN
+        return (d9=d9, converging=converging,
+            error=converging ? d9 * max(1.0, r / (1 - r)) : d9)
+    end
     drawn = ctsem_laplace_continuation(laplace, theta; tolerance=-1.0, draws=256,
         draws_se=tiny)
     d = ctsem_laplace_continuation_info(drawn)
-    @test any(drawn.importance[U] for U in drawn.flagged)
+    checked = 0
     for U in drawn.flagged
-        @test drawn.importance[U] || d.centre_error[U] <= tiny
-        drawn.importance[U] && @test d.centre_error[U] == d.centre_se[U]
+        t = tail(U)
+        t.d9 <= tiny && continue
+        checked += 1
+        @test drawn.importance[U] == !t.converging
+        if drawn.importance[U]
+            @test d.centre_error[U] == d.centre_se[U]
+        else
+            @test isapprox(d.quadrature_units[U], i9.quadrature_units[U]; rtol=1e-10)
+            @test isapprox(d.centre_error[U], t.error; rtol=1e-8)
+            @test d.centre_error[U] >= t.d9
+        end
     end
+    @test checked >= 1
     nodrawn = ctsem_laplace_continuation(laplace, theta; tolerance=-1.0, draws=0,
         draws_se=tiny)
     n = ctsem_laplace_continuation_info(nodrawn)
     @test !any(nodrawn.importance)
-    # The finest rule is the 9-node continuation's rule for that unit, with
-    # its value, and its error is that value against the 7-node rule's.
-    nine = ctsem_laplace_continuation(laplace, theta; tolerance=-1.0,
-        nodes=C._CONTINUATION_NODES_MAX, draws_se=1e9)
-    seven = ctsem_laplace_continuation(laplace, theta; tolerance=-1.0,
-        nodes=C._CONTINUATION_NODES_MAX - 2, draws_se=1e9)
-    i9 = ctsem_laplace_continuation_info(nine)
-    i7 = ctsem_laplace_continuation_info(seven)
-    @test nine.flagged == nodrawn.flagged
-    finest = [size(nodrawn.rules[k].roots[1].points, 2) ==
-        size(nine.rules[k].roots[1].points, 2) for k in eachindex(nodrawn.flagged)]
-    @test any(finest)
-    for (k, U) in enumerate(nodrawn.flagged)
-        if finest[k]
-            @test isapprox(n.quadrature_units[U], i9.quadrature_units[U]; rtol=1e-10)
-            @test isapprox(n.centre_error[U],
-                abs(i9.quadrature_units[U] - i7.quadrature_units[U]); atol=1e-10)
-            @test n.centre_error[U] > tiny
-        else
-            @test n.centre_error[U] <= tiny
-        end
+    for U in nodrawn.flagged
+        t = tail(U)
+        t.d9 <= tiny && continue
+        @test isapprox(n.quadrature_units[U], i9.quadrature_units[U]; rtol=1e-10)
+        @test isapprox(n.centre_error[U], t.error; rtol=1e-8)
     end
 end
 
