@@ -572,7 +572,7 @@ ctLaplaceRefit <- function(fit, cores = 2L, verbose = 0) {
 # past one standard error the message gives a range, not a size. Quoted as
 # "up to" its value, anomS1's warning said 1 standard error where the
 # posterior mean was 1.9 posterior sds away and Laplace's interval held 1 per
-# cent of the mass (review/REVIEW-fit-uncertainty-2026-10-29.md, section 3).
+# cent of the mass (review/REVIEW-fit-uncertainty-2026-10-29.md, section 6).
 # The gap is not the trigger -- its level does not predict a move -- but a
 # large one says Laplace is off throughout, which is why the fit reports the
 # integrated log likelihood (`.ctLaplaceCheckedLoglik()`).
