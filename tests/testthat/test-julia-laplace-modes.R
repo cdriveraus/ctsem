@@ -224,6 +224,56 @@ test_that("maxima that share a basin add nothing to a unit's term", {
   expect_equal(fd, sum(as.numeric(r$gradient) * v), tolerance = 1e-5)
 })
 
+# An anchored run follows the maxima it started with, so one born on its way
+# is the next search's to find; a run takes it where it stops and goes on,
+# rather than a new run starting (`ctsem_optimize`).
+test_that("a search where an anchored run stops joins the maxima it missed", {
+  skip_without_julia()
+  spec <- suppressMessages(ctFit(.modes_binary_data(), .modes_binary_model(),
+    backend = "julia", intoverpop = "laplace", fit = FALSE))
+  handle <- structure(spec, class = c("ctJuliaModel", "ctFitModel"))
+  objective <- ctsem:::.ctJuliaObjective(handle, hybrid = TRUE)
+  x <- c(0.0301148912, 4.5210688928, -1.1069526929, 0.0234851509, -0.0632376482,
+    -0.0056830083, 2.0234889501, -1.0443493528, -0.0565364719)
+  ctsem:::.ctJuliaEval(paste(
+    "function _ctsem_test_take(o, x)",
+    "  C = ContinuousTimeSEM",
+    "  value(o) = C.ctsem_laplace_evaluate(o, x; gradient = false).value",
+    "  C._ctsem_anchor_start!(o, x)",
+    "  full = value(o)",
+    "  several = count(!isempty, o.alt_anchors)",
+    "  known0 = sum(length, o.known)",
+    "  o.alt_anchors = [Vector{Float64}[] for _ in o.alt_anchors]",
+    "  held = value(o)",
+    "  found = C.CTSEMFoundModes()",
+    "  t = C._ctsem_take_search_modes!(o, x, found)",
+    "  after = value(o)",
+    "  again = C._ctsem_take_search_modes!(o, x, found)",
+    "  jumped = C._ctsem_take_jump_modes!(o, x, (units = found.units[1:1],",
+    "    point_units = found.units[1:1], point_values = reshape(found.modes[1], :, 1)), found)",
+    "  C.ctsem_laplace_clear_anchors!(o)",
+    "  [full, held, t.change, t.units, after, again.units, several,",
+    "    length(found.units), sum(length, o.known) - known0, jumped]",
+    "end", sep = "\n"))
+  r <- as.numeric(ctsem:::.ctJuliaCall("Main._ctsem_test_take", objective,
+    ctsem:::.ctJuliaNumericVector(x)))
+  names(r) <- c("full", "held", "change", "units", "after", "again", "several",
+    "found", "known", "jumped")
+  # Held to one maximum each, the units with several score their larger term.
+  expect_gte(r[["several"]], 3)
+  expect_gt(r[["held"]], r[["full"]])
+  # The search gives each its maxima back, and says what that moved.
+  expect_equal(r[["units"]], r[["several"]])
+  expect_equal(r[["change"]], r[["full"]] - r[["held"]], tolerance = 1e-8)
+  expect_equal(r[["after"]], r[["full"]], tolerance = 1e-8)
+  # What it joined is known from then on, once; a second search adds nothing.
+  expect_gte(r[["found"]], r[["several"]])
+  expect_equal(r[["known"]], r[["found"]])
+  expect_equal(r[["again"]], 0)
+  # A jump's mode already known adds nothing for the run to go on with.
+  expect_equal(r[["jumped"]], 0)
+})
+
 # The sign fixture made wide: six loadings, each random by person, so each unit
 # has six effects, and its likelihood is symmetric under flipping them all. At
 # loading means of zero -- the default start's -- the origin is the stationary

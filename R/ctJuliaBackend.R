@@ -6174,31 +6174,37 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
     message("SAEM had not settled after ", saem_record$saem_iterations,
       " iterations; a larger optimcontrol$saem may help.")
   }
-  # Modes a run's end puts in the objective (`spec$laplace$known`, the inner
-  # solve's further starts: `_laplace_known_modes` in the engine), and the
-  # run resumed from where it ended on them:
-  # - where it ended on a jump (`stop_reason == "jump"`: a unit's term moved
-  #   with where its inner solve stopped, at no optimum of anything
-  #   continuous), the modes the watch saw. Where the solve reached a unit's
-  #   better mode only at isolated points, that mode kept as a start makes its
-  #   term continuous there: on the affect pilot (v3_sub40ns, step 11 of its
-  #   finish) the objective then moved as its gradient said, where every step
-  #   had lost a person's 3.85 nats (`scripts/pilot-curvature-2026-10/
-  #   known_modes.R`);
-  # - from the engine's closing search (`_ctsem_anchor_finish!`): modes the
-  #   anchored run reached that a search from the origin misses, kept so
-  #   every objective built for the fit afterwards reaches them; and better
-  #   ones it found that the run missed, which resume the run where they are
-  #   worth `.ctJuliaKnownResumeGain`.
+  # Modes a run puts in the objective (`spec$laplace$known`, the inner solve's
+  # further starts: `_laplace_known_modes` in the engine), so every objective
+  # built for the fit afterwards reaches them. The engine takes most of them
+  # within the run and carries on (`found_mode_*`; `ctsem_optimize`): a
+  # jump's, and a search's where L-BFGS stopped and where the finish ended.
+  # The run is resumed from where it ended here only on what it could not
+  # take itself:
+  # - where it still ended on a jump (`stop_reason == "jump"`: a unit's term
+  #   moved with where its inner solve stopped, at no optimum of anything
+  #   continuous), the modes the watch saw, where they are new. Where the
+  #   solve reached a unit's better mode only at isolated points, that mode
+  #   kept as a start makes its term continuous there: on the affect pilot
+  #   (v3_sub40ns, step 11 of its finish) the objective then moved as its
+  #   gradient said, where every step had lost a person's 3.85 nats
+  #   (`scripts/pilot-curvature-2026-10/known_modes.R`);
+  # - from the engine's closing search, after the probe
+  #   (`_ctsem_anchor_finish!`): modes the anchored run reached that a search
+  #   from the origin misses, kept; and maxima it found that the run missed,
+  #   which resume the run where they move the objective by
+  #   `.ctJuliaKnownResumeGain`.
   # Up to `.ctJuliaKnownRounds` resumes, a unit named again included: its
   # maxima are combined (`_laplace_mode_sum`), each fading out before the
-  # solve can lose it, so a fold that once jumped the same unit from one resume
-  # to the next (unit 894 of the affect pilot) is smooth now, and the modes a
-  # repeated jump saw are further starts like any other.
+  # solve can lose it, and the modes a repeated jump saw are further starts
+  # like any other.
   rounds <- 0L
   local_builds <- 0L
   while (!state_explicit && !is.null(model_spec$laplace)) {
     known <- model_spec$laplace$known
+    found <- .ctJuliaKnownAdd(known, result[["found_mode_units"]],
+      result[["found_mode_values"]])
+    if (!is.null(found)) known <- found
     jumpknown <- .ctJuliaKnownModes(known, result)
     if (!is.null(jumpknown)) known <- jumpknown
     kept <- .ctJuliaKnownAdd(known, result$anchor_kept_units,
@@ -6223,10 +6229,10 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
         "starts and the fit goes on."), if (length(named) == 1L) "unit" else "units",
         paste(named, collapse = ", ")))
     } else {
-      n <- sum(as.integer(result$anchor_missed_units) > 0L)
-      message(sprintf(paste0("Laplace: a search at the end found better modes for ",
-        "%d %s, worth %.3g; they are kept as starts and the fit goes on."), n,
-        if (n == 1L) "unit" else "units", gain))
+      n <- length(unique(as.integer(result$anchor_missed_units)))
+      message(sprintf(paste0("Laplace: a search at the end found other maxima for ",
+        "%d %s, moving the objective by %+.3g; they are kept as starts and the ",
+        "fit goes on."), n, if (n == 1L) "unit" else "units", gain))
     }
     rounds <- rounds + 1L
     # From the run's local curvature, not built again (`local_builds_carried`):
