@@ -65,10 +65,13 @@ places it: the leaf's mode by Newton (`_quadrature_leaf_rule!`), from the mode
 it had at the last evaluation (`anchors`), where the continuation searches
 from the Laplace mode. A unit that the continuation gave a soft rule (more
 than `product_maxdim` effects) gets the product rule here, whose placement
-this differentiates. A unit on importance draws keeps its frozen draws, as do
-nested units for now: their rules are the continuation's as placed, with its
-Fisher gradient. The other units keep their Laplace terms (`o.rest`), and the
-prior is theirs.
+this differentiates. A unit of one root block over leaves is placed as the
+continuation places it, the root at the joint mode and eliminated precision and
+each leaf at its conditional mode at every root node (`_placed_nested_unit!`),
+which chains a second implicit derivative. A unit on importance draws keeps its
+frozen draws, as does a deeper tree for now: their rules are the
+continuation's as placed, with its Fisher gradient. The other units keep their
+Laplace terms (`o.rest`), and the prior is theirs.
 
 # Deviations the filter integrates
 
@@ -117,9 +120,9 @@ end
     ctsem_laplace_placed(o)
 
 The placed objective from the continuation `o`, its flagged set and node counts
-as `o` holds them: every flagged unit of one block whose rule is not draws is
-placed at every evaluation; the rest of the flagged units keep `o`'s frozen
-rules. Each placed unit's anchor starts at its mode at `o`'s centre, from
+as `o` holds them: every flagged unit of one block, or of one root block over
+leaves (`_placed_two_level`), whose rule is not draws is placed at every
+evaluation; the rest of the flagged units keep `o`'s frozen rules. Each placed unit's anchor starts at its mode at `o`'s centre, from
 `o`'s own search (`_laplace_solve_unit_mode!`), so at the centre the value is
 `o`'s placed value wherever `o`'s rules are product rules.
 """
@@ -130,8 +133,9 @@ function ctsem_laplace_placed(o::CTSEMLaplaceContinuation)
     frozen = Int[]
     nodes = zeros(Int, nunits)
     for (f, U) in enumerate(o.flagged)
-        if length(laplace.units.blocks[U]) == 1 && !o.importance[U] &&
-                laplace.units.blocks[U][1].size >= 1
+        blocks = laplace.units.blocks[U]
+        if !o.importance[U] && ((length(blocks) == 1 && blocks[1].size >= 1) ||
+                _placed_two_level(laplace, U))
             push!(placed, U)
             nodes[U] = max(o.nodes, o.unit_nodes[U])
         else
@@ -251,41 +255,75 @@ function _placed_mv(A::AbstractMatrix{Float64}, x::AbstractVector{Float64})
 end
 
 """Scatter a level-space vector `w` (one entry per effect of level `l`) onto
-the raw parameters, into `dir`."""
-function _placed_scatter!(dir::AbstractVector{Float64}, spec, l::Int, w::AbstractVector)
-    fill!(dir, 0.0)
+the raw parameters, into `dir`; `add = true` adds it to what `dir` holds, as a
+direction moving effects at two levels that share a raw parameter needs."""
+function _placed_scatter!(dir::AbstractVector{Float64}, spec, l::Int, w::AbstractVector;
+    add::Bool=false)
+    add || fill!(dir, 0.0)
     rho = spec.levels[l].re_index
     @inbounds for p in eachindex(rho)
-        dir[rho[p]] = w[p]
+        dir[rho[p]] += w[p]
     end
     return dir
 end
 
 """
-    _placed_unit!(row, P, U, theta, Ls, dL, positions, want_gradient)
+    _placed_scale_factor(F, k)
 
-Unit `U`'s placed term at `theta`, and with `want_gradient` its gradient into
-`row` (unweighted); see the module docstring. Returns `(ok, value, anchor)`,
-`anchor` the unit's effects at the mode it found.
+`_placed_scale` from a factor already formed, exactly as
+`_quadrature_clipped_scale` takes it: an outer block's eliminated precision
+(`_laplace_factor_repaired!`'s `factors`).
 """
-function _placed_unit!(row::Vector{Float64}, P::CTSEMLaplacePlaced, U::Int,
+function _placed_scale_factor(F::CTSEMCholesky, k::Int)
+    Lf = Matrix(F.L)
+    D = Lf * transpose(Lf)
+    if issuccess(_ctsem_cholesky(D - Matrix{Float64}(LinearAlgebra.I, k, k), k))
+        return (S=_ctsem_cholesky_uinv(F), U=Matrix(UpperTriangular(F.U[1:k, 1:k])),
+            logdetscale=-logdet(F) / 2, clipped=false, vectors=zeros(0, 0),
+            values=Float64[], ok=true, D=D)
+    end
+    E = _ctsem_symeig(D)
+    clipped = E.vectors * Diagonal(max.(E.values, 1.0)) * transpose(E.vectors)
+    G = _ctsem_cholesky(Matrix(_laplace_symmetrise(clipped)), k)
+    issuccess(G) || return (S=zeros(0, 0), U=zeros(0, 0), logdetscale=NaN,
+        clipped=true, vectors=zeros(0, 0), values=Float64[], ok=false, D=D)
+    return (S=_ctsem_cholesky_uinv(G), U=Matrix(UpperTriangular(G.U[1:k, 1:k])),
+        logdetscale=-logdet(G) / 2, clipped=true, vectors=Matrix(E.vectors),
+        values=collect(E.values), ok=true, D=D)
+end
+
+"""
+    _placed_leaf!(row, wv, P, U, b, u, start, theta, Ls, dL, positions, want_gradient)
+
+Leaf block `b` of unit `U`'s placed term, its ancestors held where `u` has
+them: the conditional mode by Newton from `start` (`_quadrature_leaf_rule!`),
+its precision, the product rule there; see the module docstring. With
+`want_gradient`, its gradient in `theta` at those ancestors into `row`, and
+into `wv` the raw-space vector whose loadings give its derivative in an
+ancestor's effects (`L_a' wv[rho_a]`): the node-weighted mean of the members'
+raw gradients, plus the gradient's derivative along the mode's direction `L v`,
+less the jets' `grad <Mbar, L'HL>` -- the same three terms as the `theta`
+gradient, without the chain through `L(theta)`, since an ancestor's effects
+reach the members only through their raw values. `u`'s leaf columns are left at
+the conditional mode. Returns `(ok, value)`.
+"""
+function _placed_leaf!(row::Vector{Float64}, wv::Vector{Float64}, P::CTSEMLaplacePlaced,
+    U::Int, b::Int, u::Vector{Float64}, start::Vector{Float64},
     theta::Vector{Float64}, Ls, dL, positions, want_gradient::Bool)
     laplace = P.cont.laplace
     spec = laplace.spec
     units = laplace.units
-    block = units.blocks[U][1]
+    block = units.blocks[U][b]
     k = block.size
     l = block.level
     columns = (block.offset + 1):(block.offset + k)
-    nm = length(units.members[U])
+    members = block.members
+    nm = length(members)
     npar = length(theta)
     d = units.dims[U]
-    failure = (ok=false, value=NaN, anchor=P.anchors[U])
+    failure = (ok=false, value=NaN)
     aws = _laplace_workspace!(laplace, Float64, npar)
-    anchor = P.anchors[U]
-    u = copy(anchor)
-    lr = _quadrature_leaf_rule!(laplace, U, theta, Ls, 1, u, aws;
-        start=Float64[anchor[c] for c in columns])
+    lr = _quadrature_leaf_rule!(laplace, U, theta, Ls, b, u, aws; start=start)
     lr.ok || return failure
     c = lr.centre
     M = Matrix{Float64}(lr.precision)
@@ -296,9 +334,11 @@ function _placed_unit!(row::Vector{Float64}, P::CTSEMLaplacePlaced, U::Int,
     peak = -Inf
     acc = 0.0
     gacc = want_gradient ? zeros(npar) : Float64[]
+    vacc = want_gradient ? zeros(npar) : Float64[]
     aacc = zeros(k)
     Bacc = zeros(k, k)
     gh = zeros(npar)
+    gv = zeros(npar)
     gu = zeros(d)
     z = zeros(k)
     sx = zeros(k)
@@ -311,11 +351,12 @@ function _placed_unit!(row::Vector{Float64}, P::CTSEMLaplacePlaced, U::Int,
         end
         if want_gradient
             fill!(gh, 0.0)
+            fill!(gv, 0.0)
             fill!(gu, 0.0)
         end
         h = 0.0
         ok = true
-        for m in 1:nm
+        for m in members
             ll = _continuation_member!(gh, laplace, U, m, theta, Ls, dL, positions, u,
                 aws, scratch, want_gradient)
             if !isfinite(ll)
@@ -323,8 +364,10 @@ function _placed_unit!(row::Vector{Float64}, P::CTSEMLaplacePlaced, U::Int,
                 break
             end
             h += ll
-            want_gradient && _laplace_loading_chain!(gu, scratch.grad, spec, Ls,
-                units.offsets[U][m])
+            if want_gradient
+                gv .+= scratch.grad
+                _laplace_loading_chain!(gu, scratch.grad, spec, Ls, units.offsets[U][m])
+            end
         end
         ok || continue
         t = lw[j] - dot(z, z) / 2 + h
@@ -334,6 +377,7 @@ function _placed_unit!(row::Vector{Float64}, P::CTSEMLaplacePlaced, U::Int,
                 acc *= s
                 if want_gradient
                     gacc .*= s
+                    vacc .*= s
                     aacc .*= s
                     Bacc .*= s
                 end
@@ -344,6 +388,7 @@ function _placed_unit!(row::Vector{Float64}, P::CTSEMLaplacePlaced, U::Int,
         acc += w
         if want_gradient
             gacc .+= w .* gh
+            vacc .+= w .* gv
             @inbounds for i in 1:k
                 fz = gu[columns[i]] - z[i]
                 aacc[i] += w * fz
@@ -355,11 +400,10 @@ function _placed_unit!(row::Vector{Float64}, P::CTSEMLaplacePlaced, U::Int,
     end
     isfinite(peak) || return failure
     value = peak + log(acc) + sc.logdetscale + k * (log(2) - log(2 * pi)) / 2
-    uc = copy(anchor)
     @inbounds for (t, col) in enumerate(columns)
-        uc[col] = c[t]
+        u[col] = c[t]
     end
-    want_gradient || return (ok=true, value=value, anchor=uc)
+    want_gradient || return (ok=true, value=value)
 
     fisher = gacc ./ acc
     a = aacc ./ acc
@@ -367,8 +411,7 @@ function _placed_unit!(row::Vector{Float64}, P::CTSEMLaplacePlaced, U::Int,
     Mbar = _placed_mbar(sc, B, k)
     all(isfinite, Mbar) || return failure
     L = Ls[l]
-    members = 1:nm
-    offsets = units.offsets[U][1]
+    offsets = units.offsets[U][first(members)]
     dir = zeros(npar)
     # The integrand's own derivatives: with deviations the filter integrates,
     # their exact integral's, as at the nodes (`_continuation_member!`).
@@ -382,15 +425,15 @@ function _placed_unit!(row::Vector{Float64}, P::CTSEMLaplacePlaced, U::Int,
     for sgn in (1.0, -1.0)
         picked = [r for r in 1:k if sgn * E.values[r] > 0]
         isempty(picked) && continue
-        for start in 1:_CTSEM_JET_WIDTH:length(picked)
-            chunk = picked[start:min(start + _CTSEM_JET_WIDTH - 1, length(picked))]
+        for first_ in 1:_CTSEM_JET_WIDTH:length(picked)
+            chunk = picked[first_:min(first_ + _CTSEM_JET_WIDTH - 1, length(picked))]
             D = zeros(npar, length(chunk))
             for (col, r) in enumerate(chunk)
                 _placed_scatter!(dir, spec, l, _placed_mv(L,
                     sqrt(abs(E.values[r])) .* E.vectors[:, r]))
                 D[:, col] .= dir
             end
-            pass = _laplace_unit_jet_gradient(laplace, U, theta, Ls, uc, members, D,
+            pass = _laplace_unit_jet_gradient(laplace, U, theta, Ls, u, members, D,
                 length(chunk); mode=mode)
             pass.ok || return failure
             (all(isfinite, pass.dS) && all(isfinite, pass.d0)) || return failure
@@ -426,25 +469,8 @@ function _placed_unit!(row::Vector{Float64}, P::CTSEMLaplacePlaced, U::Int,
         _placed_scatter!(dir, spec, l, _placed_mv(L, Mbar[:, q]))
         Dm[:, 1 + q] .= dir
     end
-    lanes = _laplace_seeded_lanes(laplace)
-    HD = zeros(npar, ndir)
-    for start in 1:lanes:ndir
-        stop = min(start + lanes - 1, ndir)
-        nd = stop - start + 1
-        pass = _laplace_unit_seeded_gradient(laplace, U, theta, Ls, uc, members,
-            Matrix{Float64}(Dm[:, start:stop]), nd; mode=mode)
-        pass.ok || return failure
-        all(isfinite, pass.d1c) || return failure
-        @inbounds for w in 1:nd, m in 1:nm, t in 1:npar
-            HD[t, start + w - 1] += pass.d1c[t, (w - 1) * nm + m]
-        end
-        if !have_g
-            @inbounds for m in 1:nm, t in 1:npar
-                g[t] += pass.d0[t, m]
-            end
-            have_g = true
-        end
-    end
+    HD = _placed_sweep!(g, have_g, laplace, U, theta, Ls, u, members, Dm, mode)
+    HD === nothing && return failure
 
     # The assembly: Fisher, the centre moving, the scale moving.
     vfull = zeros(d)
@@ -453,19 +479,313 @@ function _placed_unit!(row::Vector{Float64}, P::CTSEMLaplacePlaced, U::Int,
     end
     @inbounds for t in 1:npar
         row[t] = fisher[t] + HD[t, 1] - dSnet[t]
+        wv[t] = vacc[t] / acc + HD[t, 1] - dSnet[t]
     end
     Hd = HD[:, 1]
-    _laplace_chol_chain!(row, Hd, spec, dL, positions, uc, offsets)
+    _laplace_chol_chain!(row, Hd, spec, dL, positions, u, offsets)
     _laplace_chol_chain!(row, g, spec, dL, positions, vfull, offsets)
-    _laplace_chol_chain!(row, .-dSnet, spec, dL, positions, uc, offsets)
+    _laplace_chol_chain!(row, .-dSnet, spec, dL, positions, u, offsets)
     eq = zeros(d)
     for q in 1:k
         fill!(eq, 0.0)
         eq[columns[q]] = 1.0
         _laplace_chol_chain!(row, -2 .* HD[:, 1 + q], spec, dL, positions, eq, offsets)
     end
+    (all(isfinite, row) && all(isfinite, wv)) || return failure
+    return (ok=true, value=value)
+end
+
+"""
+    _placed_sweep!(g, have_g, laplace, U, theta, Ls, u, members, D, mode)
+
+The members' gradients' derivatives along `D`'s columns at `u`, summed over
+the members (`npar x size(D, 2)`), by seeded sweeps as wide as the curvature's
+lanes; the members' summed gradient into `g` where `have_g` is false.
+`nothing` where a sweep fails.
+"""
+function _placed_sweep!(g::Vector{Float64}, have_g::Bool, laplace, U::Int,
+    theta::Vector{Float64}, Ls, u::Vector{Float64}, members, D::Matrix{Float64},
+    mode::Int)
+    npar, ndir = size(D)
+    nm = length(members)
+    lanes = _laplace_seeded_lanes(laplace)
+    HD = zeros(npar, ndir)
+    for first_ in 1:lanes:ndir
+        stop = min(first_ + lanes - 1, ndir)
+        nd = stop - first_ + 1
+        pass = _laplace_unit_seeded_gradient(laplace, U, theta, Ls, u, members,
+            Matrix{Float64}(D[:, first_:stop]), nd; mode=mode)
+        pass.ok || return nothing
+        all(isfinite, pass.d1c) || return nothing
+        @inbounds for w in 1:nd, m in 1:nm, t in 1:npar
+            HD[t, first_ + w - 1] += pass.d1c[t, (w - 1) * nm + m]
+        end
+        if !have_g
+            @inbounds for m in 1:nm, t in 1:npar
+                g[t] += pass.d0[t, m]
+            end
+            have_g = true
+        end
+    end
+    return HD
+end
+
+"""
+    _placed_unit!(row, P, U, theta, Ls, dL, positions, want_gradient)
+
+Unit `U`'s placed term at `theta`, and with `want_gradient` its gradient into
+`row` (unweighted): a unit of one block is one leaf (`_placed_leaf!`) from its
+anchor, a unit of a root over leaves an outer rule over them
+(`_placed_nested_unit!`). Returns `(ok, value, anchor)`, `anchor` the unit's
+effects at the mode it found.
+"""
+function _placed_unit!(row::Vector{Float64}, P::CTSEMLaplacePlaced, U::Int,
+    theta::Vector{Float64}, Ls, dL, positions, want_gradient::Bool)
+    laplace = P.cont.laplace
+    length(laplace.units.blocks[U]) == 1 ||
+        return _placed_nested_unit!(row, P, U, theta, Ls, dL, positions, want_gradient)
+    block = laplace.units.blocks[U][1]
+    columns = (block.offset + 1):(block.offset + block.size)
+    u = copy(P.anchors[U])
+    r = _placed_leaf!(row, zeros(length(theta)), P, U, 1, u,
+        Float64[u[c] for c in columns], theta, Ls, dL, positions, want_gradient)
+    return (ok=r.ok, value=r.value, anchor=r.ok ? u : P.anchors[U])
+end
+
+"""Whether unit `U`'s block tree is one root over leaves, the shape
+`_placed_nested_unit!` places."""
+function _placed_two_level(laplace::CTSEMLaplaceObjective, U::Integer)
+    blocks = laplace.units.blocks[U]
+    length(blocks) > 1 || return false
+    tree = _quadrature_children(blocks)
+    length(tree.roots) == 1 || return false
+    root = tree.roots[1]
+    blocks[root].size >= 1 || return false
+    return all(c -> isempty(tree.children[c]) && blocks[c].size >= 1 &&
+        blocks[c].ancestors == [root], tree.children[root]) &&
+        length(tree.children[root]) == length(blocks) - 1
+end
+
+"""
+    _placed_nested_unit!(row, P, U, theta, Ls, dL, positions, want_gradient)
+
+A unit of one root block over leaves, placed as the continuation places it
+(`_continuation_block_rule`): the root's rule at the unit's joint mode, scaled
+by the root's eliminated precision `D0 = M00 - sum_c M0c Mcc^-1 Mc0`, and at
+each of its nodes each leaf's rule at its conditional mode
+(`_placed_leaf!`). The root's term is the single-block one with the leaves'
+summed placed terms for its members' log likelihood, so its gradient is the
+same three parts: the node-weighted mean of the leaves' gradients at fixed
+root effects (Fisher), the joint mode moving, and `D0` moving. The joint mode
+moves by `M^-1 dgrad/dtheta` over the whole unit; `<Mbar0, dD0> = <W, dM>` with
+`W = E Mbar0 E'`, `E = [I; -Mcc^-1 Mc0]`, so its jets run along `E`'s columns
+-- for a leaf's members, the root's effects and that leaf's together -- and
+`v = M^-1 (a0 + b_W)` is one block solve. A leaf's derivative in the root's
+effects is `L0' wv[rho0]` (`_placed_leaf!`).
+"""
+function _placed_nested_unit!(row::Vector{Float64}, P::CTSEMLaplacePlaced, U::Int,
+    theta::Vector{Float64}, Ls, dL, positions, want_gradient::Bool)
+    laplace = P.cont.laplace
+    spec = laplace.spec
+    units = laplace.units
+    blocks = units.blocks[U]
+    tree = _quadrature_children(blocks)
+    r0 = tree.roots[1]
+    kids = tree.children[r0]
+    root = blocks[r0]
+    k0 = root.size
+    l0 = root.level
+    cols0 = (root.offset + 1):(root.offset + k0)
+    npar = length(theta)
+    d = units.dims[U]
+    failure = (ok=false, value=NaN, anchor=P.anchors[U])
+    aws = _laplace_workspace!(laplace, Float64, npar)
+    jm = _laplace_newton_unit_mode(laplace, U, theta, Ls, aws, copy(P.anchors[U]))
+    (jm.converged && isfinite(jm.value)) || return failure
+    cj = collect(Float64, jm.u)
+    M = _laplace_copy_blockmatrix(_laplace_unit_curvature(laplace, U, theta, Ls, cj))
+    fz = _laplace_factor_repaired!(_laplace_copy_blockmatrix(M), blocks)
+    (fz.ok && !fz.repaired) || return failure
+    sc = _placed_scale_factor(fz.factors[r0], k0)
+    sc.ok || return failure
+    grid, lw = _gh_grid(k0, P.nodes[U])
+    peak = -Inf
+    acc = 0.0
+    gacc = want_gradient ? zeros(npar) : Float64[]
+    aacc = zeros(k0)
+    Bacc = zeros(k0, k0)
+    rowc = zeros(npar)
+    wvc = zeros(npar)
+    G = zeros(k0)
+    gd = zeros(d)
+    z = zeros(k0)
+    sx = zeros(k0)
+    rowsum = zeros(npar)
+    for j in eachindex(grid)
+        x = grid[j]
+        _ctsem_mulvec!(sx, sc.S, x)
+        u = copy(cj)
+        @inbounds for t in 1:k0
+            z[t] = cj[cols0[t]] + sqrt(2) * sx[t]
+            u[cols0[t]] = z[t]
+        end
+        want_gradient && (fill!(rowsum, 0.0); fill!(G, 0.0))
+        h = 0.0
+        ok = true
+        for cb in kids
+            ccols = (blocks[cb].offset + 1):(blocks[cb].offset + blocks[cb].size)
+            leaf = _placed_leaf!(rowc, wvc, P, U, cb, u, Float64[cj[c] for c in ccols],
+                theta, Ls, dL, positions, want_gradient)
+            if !leaf.ok
+                ok = false
+                break
+            end
+            h += leaf.value
+            if want_gradient
+                rowsum .+= rowc
+                fill!(gd, 0.0)
+                _laplace_loading_chain!(gd, wvc, spec, Ls,
+                    units.offsets[U][first(blocks[cb].members)])
+                @inbounds for t in 1:k0
+                    G[t] += gd[cols0[t]]
+                end
+            end
+        end
+        # A leaf that could not be scored fails the rule, as in
+        # `_continuation_node_sum`, rather than dropping its node.
+        ok || return failure
+        t = lw[j] - dot(z, z) / 2 + h
+        if t > peak
+            if isfinite(peak)
+                s = exp(peak - t)
+                acc *= s
+                if want_gradient
+                    gacc .*= s
+                    aacc .*= s
+                    Bacc .*= s
+                end
+            end
+            peak = t
+        end
+        w = exp(t - peak)
+        acc += w
+        if want_gradient
+            gacc .+= w .* rowsum
+            @inbounds for i in 1:k0
+                fz0 = G[i] - z[i]
+                aacc[i] += w * fz0
+                for r in 1:k0
+                    Bacc[r, i] += w * x[r] * fz0
+                end
+            end
+        end
+    end
+    isfinite(peak) || return failure
+    value = peak + log(acc) + sc.logdetscale + k0 * (log(2) - log(2 * pi)) / 2
+    want_gradient || return (ok=true, value=value, anchor=cj)
+
+    fisher = gacc ./ acc
+    a0 = aacc ./ acc
+    B0 = (sqrt(2) / acc) .* Bacc
+    Mbar0 = _placed_mbar(sc, B0, k0)
+    all(isfinite, Mbar0) || return failure
+    mode = _hybrid_on(laplace.objective.params.hybrid) ? _HYBRID_FULL : _HYBRID_PROFILE
+    E = _ctsem_symeig(Mbar0)
+    # E's leaf blocks, -Mcc^-1 Mc0, one a leaf.
+    Ec = Dict{Int,Matrix{Float64}}()
+    for cb in kids
+        Fc = _ctsem_cholesky(copy(M.diag[cb]), blocks[cb].size)
+        issuccess(Fc) || return failure
+        Ec[cb] = .-(Fc \ M.coupling[cb][1])
+    end
+    dir = zeros(npar)
+    leafdir! = function (dirv, cb, y)
+        _placed_scatter!(dirv, spec, l0, _placed_mv(Ls[l0], y))
+        _placed_scatter!(dirv, spec, blocks[cb].level,
+            _placed_mv(Ls[blocks[cb].level], _placed_mv(Ec[cb], y)); add=true)
+        return dirv
+    end
+    # Per leaf: the jets along E q_r for its members, at the joint mode.
+    dS = Dict{Int,Vector{Float64}}()
+    gl = Dict{Int,Vector{Float64}}()
+    bfull = zeros(d)
+    for cb in kids
+        members = blocks[cb].members
+        nm = length(members)
+        dSnet = zeros(npar)
+        g = zeros(npar)
+        have_g = false
+        for sgn in (1.0, -1.0)
+            picked = [r for r in 1:k0 if sgn * E.values[r] > 0]
+            isempty(picked) && continue
+            for first_ in 1:_CTSEM_JET_WIDTH:length(picked)
+                chunk = picked[first_:min(first_ + _CTSEM_JET_WIDTH - 1, length(picked))]
+                D = zeros(npar, length(chunk))
+                for (col, r) in enumerate(chunk)
+                    D[:, col] .= leafdir!(dir, cb, sqrt(abs(E.values[r])) .* E.vectors[:, r])
+                end
+                pass = _laplace_unit_jet_gradient(laplace, U, theta, Ls, cj, members, D,
+                    length(chunk); mode=mode)
+                pass.ok || return failure
+                (all(isfinite, pass.dS) && all(isfinite, pass.d0)) || return failure
+                @inbounds for m in 1:nm, t in 1:npar
+                    dSnet[t] += sgn * pass.dS[t, m]
+                    have_g || (g[t] += pass.d0[t, m])
+                end
+                have_g = true
+            end
+        end
+        _laplace_loading_chain!(bfull, dSnet, spec, Ls, units.offsets[U][first(members)])
+        dS[cb] = dSnet
+        gl[cb] = have_g ? g : fill(NaN, npar)
+    end
+    rhs = .-bfull
+    @inbounds for t in 1:k0
+        rhs[cols0[t]] += a0[t]
+    end
+    v = _laplace_block_solve!(zeros(d), fz.factors, fz.coupling, blocks, rhs)
+    all(isfinite, v) || return failure
+
+    row .= fisher
+    eq = zeros(d)
+    for cb in kids
+        members = blocks[cb].members
+        ccols = (blocks[cb].offset + 1):(blocks[cb].offset + blocks[cb].size)
+        kc = length(ccols)
+        offsets = units.offsets[U][first(members)]
+        # Along J v, and along J W e_q for the root's and this leaf's columns.
+        qcols = vcat(collect(cols0), collect(ccols))
+        Dm = zeros(npar, 1 + length(qcols))
+        _placed_scatter!(dir, spec, l0, _placed_mv(Ls[l0], v[cols0]))
+        _placed_scatter!(dir, spec, blocks[cb].level,
+            _placed_mv(Ls[blocks[cb].level], v[ccols]); add=true)
+        Dm[:, 1] .= dir
+        for (i, q) in enumerate(qcols)
+            # E' e_q: the root's own coordinate, or this leaf's row of Ec.
+            e = i <= k0 ? Float64[t == i ? 1.0 : 0.0 for t in 1:k0] :
+                Ec[cb][i - k0, :]
+            Dm[:, 1 + i] .= leafdir!(dir, cb, _placed_mv(Mbar0, e))
+        end
+        g = gl[cb]
+        have_g = all(isfinite, g)
+        have_g || fill!(g, 0.0)
+        HD = _placed_sweep!(g, have_g, laplace, U, theta, Ls, cj, members, Dm, mode)
+        HD === nothing && return failure
+        dSnet = dS[cb]
+        @inbounds for t in 1:npar
+            row[t] += HD[t, 1] - dSnet[t]
+        end
+        _laplace_chol_chain!(row, HD[:, 1], spec, dL, positions, cj, offsets)
+        _laplace_chol_chain!(row, g, spec, dL, positions, v, offsets)
+        _laplace_chol_chain!(row, .-dSnet, spec, dL, positions, cj, offsets)
+        for (i, q) in enumerate(qcols)
+            fill!(eq, 0.0)
+            eq[q] = 1.0
+            _laplace_chol_chain!(row, -2 .* HD[:, 1 + i], spec, dL, positions, eq, offsets)
+        end
+    end
     all(isfinite, row) || return failure
-    return (ok=true, value=value, anchor=uc)
+    return (ok=true, value=value, anchor=cj)
 end
 
 """
@@ -541,7 +861,7 @@ function _placed_evaluate(P::CTSEMLaplacePlaced, theta::Vector{Float64}, gradien
     dL = gradient ? _laplace_level_chol_derivatives(theta, spec) : nothing
     positions = [_laplace_level_positions(spec, l) for l in eachindex(spec.levels)]
     _laplace_ensure_pool!(laplace)
-    sizes = unique(laplace.units.blocks[U][1].size for U in P.placed)
+    sizes = unique(b.size for U in P.placed for b in laplace.units.blocks[U])
     for m in unique(P.nodes[P.placed])
         _quadrature_warm_caches(laplace, m, sizes)
     end
@@ -686,8 +1006,8 @@ the rounds give a soft rule and this a product rule. A list with no unit is
 """
 function ctsem_laplace_placed_info(P::CTSEMLaplacePlaced)
     nonempty(v) = isempty(v) ? [0] : v
-    soft = [U for U in P.placed if
-        P.cont.laplace.units.blocks[U][1].size > P.cont.product_maxdim]
+    soft = [U for U in P.placed if any(b -> b.size > P.cont.product_maxdim,
+        P.cont.laplace.units.blocks[U])]
     return (placed=nonempty(copy(P.placed)),
         frozen=nonempty([P.cont.rules[f].unit for f in P.frozen]),
         nodes=nonempty(P.nodes[P.placed]), soft=nonempty(soft),
