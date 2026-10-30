@@ -7,32 +7,69 @@
 # weights' effective size has collapsed, the run's L-BFGS memory dropped. Option
 # B of review/SURVEY-quadrature-2026-10-30.md; `.ctLaplaceContinueDefaults$
 # placed = FALSE` sends a fit to the rounds instead.
-#
+
+# The climb alone, shared by the fit and `ctLaplaceCheck(refine = TRUE)`: the
+# placed objective `placed` from `est`, to the fit's certification tolerance
+# `tol`. Returns the engine's result (`ctsem_optimize`'s, with `replacements`).
+.ctLaplacePlacedClimb <- function(module, placed, est, tol, control, verbose = 0L,
+  sink = NULL, certify = TRUE) {
+  climb_sink <- if (is.null(sink)) NULL else function(text, kind = "update")
+    sink(text, if (identical(kind, "done")) "update" else kind)
+  .ctJuliaGet(module$ctsem_laplace_placed_optimize(placed,
+    .ctJuliaNumericVector(est),
+    maxiter = as.integer(.ctJuliaOr(control$placed_maxiter, 1000L)),
+    gap_tol = as.numeric(tol), converge_tol = as.numeric(tol), newton = TRUE,
+    certify = isTRUE(certify), lbfgs_pairs = "objective",
+    progress = !is.null(climb_sink), progress_sink = climb_sink,
+    progress_overwrite = .ctProgressOverwrite(verbose),
+    progress_label = "Refined fit, rules placed"))
+}
+
 # Called by `.ctLaplaceContinue()` once the continuation `cont` is placed at the
 # estimate `est` and `record` describes that placement; `report` writes the
 # quadrature log likelihood into the fit and `timed` the wall seconds by stage.
 # `stay` moves nothing: the rules placed at the estimate, its Hessian and the
-# uncertainty drawn there. Returns the fit.
+# uncertainty drawn there. The guard reads the one objective at the start and
+# the end, as the rounds' did across placements: a change past `guard` nats,
+# or `guard_per_subject` a subject, reverts the run, and an end lower than the
+# start by `value_tol` keeps the Laplace optimum. Returns the fit.
 .ctLaplacePlacedRefine <- function(fit, module, cont, est, record, control, tol,
   stay, chunks, verbose, sink, method, uncertaintycontrol, report, timed) {
   get <- .ctJuliaGet
   num <- .ctJuliaNumericVector
   npar <- length(est)
+  nsubjects <- length(fit$model_spec$subject_starts)
   started <- proc.time()[["elapsed"]]
   since <- function(from) proc.time()[["elapsed"]] - from
   stages <- c()
   placed <- module$ctsem_laplace_placed(cont)
-  climb_sink <- if (is.null(sink)) NULL else function(text, kind = "update")
-    sink(text, if (identical(kind, "done")) "update" else kind)
+  start <- get(module$ctsem_laplace_placed_evaluate(placed, num(est), gradient = FALSE))
+  quadrature_of <- function(e) list(quadrature_units = as.numeric(e$unit_loglik),
+    quadrature = as.numeric(e$value), quadrature_subjects = as.numeric(e$subject_loglik))
+  # What the screen left on Laplace and what it flagged, from the placement.
+  after <- get(module$ctsem_laplace_continuation_info(cont))
+  record$route <- "placed"
+  record$flagged_units <- as.integer(after$flagged)[seq_len(after$nflagged)]
+  record$bar <- as.numeric(after$bar)
+  record$residual <- as.numeric(after$residual)
+  accounted <- function(record) {
+    record$error <- .ctLaplaceIntegrationError(after, unscored = record$wide)
+    info <- get(module$ctsem_laplace_placed_info(placed))
+    record$placed <- info
+    record$evaluations <- c(values = as.integer(info$value_calls),
+      gradients = as.integer(info$gradient_calls),
+      placements = as.integer(after$recentres))
+    record$engine_seconds <- c(values = as.numeric(info$seconds_values),
+      gradients = as.numeric(info$seconds_gradients),
+      placements = as.numeric(after$seconds_placements),
+      hessian = as.numeric(info$seconds_hessian))
+    record$seconds <- c(timed(), stages)
+    record
+  }
   x <- est
   hc <- NULL
   if (!stay) {
-    res <- get(module$ctsem_laplace_placed_optimize(placed, num(est),
-      maxiter = as.integer(.ctJuliaOr(control$placed_maxiter, 1000L)),
-      gap_tol = as.numeric(tol), converge_tol = as.numeric(tol), newton = TRUE,
-      certify = TRUE, lbfgs_pairs = "objective", progress = !is.null(climb_sink),
-      progress_sink = climb_sink, progress_overwrite = .ctProgressOverwrite(verbose),
-      progress_label = "Refined fit, rules placed"))
+    res <- .ctLaplacePlacedClimb(module, placed, est, tol, control, verbose, sink)
     stages["climb"] <- since(started)
     x <- as.numeric(res$minimizer)
     reuse <- .ctBackendHessianReuse(.ctBackendFitOptimcontrol(fit))
@@ -45,17 +82,42 @@
       replacements = as.integer(res$replacements))
     record$continuation <- if (isTRUE(res$converged)) "converged" else "stopped"
   }
+  final <- get(module$ctsem_laplace_placed_evaluate(placed, num(x), gradient = TRUE))
+  change <- as.numeric(final$value) - as.numeric(start$value)
+  limit <- max(control$guard, control$guard_per_subject * nsubjects)
+  record$guard <- list(limit = limit, change = change,
+    fired = !stay && (!is.finite(change) || abs(change) > limit))
+  worse <- !stay && is.finite(change) && change < -as.numeric(control$value_tol)
+  record$ended_lower <- worse
+  if (isTRUE(record$guard$fired) || worse) {
+    if (isTRUE(record$guard$fired)) {
+      if (!is.null(sink)) sink("", "break")
+      warning(sprintf(paste0("The refined fit moved the quadrature objective by ",
+        "%.3g nats, which no approximation error of this size explains; the fit ",
+        "keeps the Laplace optimum, and the rejected point is ",
+        "fit$laplace$correction$rejected_estimate."), change), call. = FALSE)
+      record$rejected_estimate <- x
+      record$status <- "reverted"
+    } else {
+      record$status <- "no_gain"
+    }
+    record$applied <- FALSE
+    q <- quadrature_of(start)
+    record$loglik_quadrature <- sum(q$quadrature_units)
+    record$logposterior_quadrature <- q$quadrature
+    record$gap_reported <- q$quadrature - as.numeric(after$laplace)
+    fit <- report(fit, q)
+    fit$laplace$correction <- accounted(record)
+    return(fit)
+  }
   if (is.null(hc)) {
-    if (!is.null(sink)) sink(sprintf("Refined fit, rules placed: hessian"), "update")
+    if (!is.null(sink)) sink("Refined fit, rules placed: hessian", "update")
     hessian_started <- proc.time()[["elapsed"]]
     hc <- try(matrix(as.numeric(.ctBackendJuliaValue(
       module$ctsem_laplace_placed_hessian(placed, num(x)))), npar, npar), silent = TRUE)
     if (inherits(hc, "try-error")) hc <- NULL
     stages["hessian"] <- since(hessian_started)
   }
-  final <- get(module$ctsem_laplace_placed_evaluate(placed, num(x), gradient = TRUE))
-  units <- as.numeric(final$unit_loglik)
-  record$route <- "placed"
   # A run asked to stay placed its rules at the estimate and moved nothing.
   record$status <- if (stay) "placed" else "continued"
   record$applied <- !stay
@@ -68,12 +130,13 @@
   record$delta_se <- delta_se
   record$material <- any(is.finite(delta_se)) &&
     isTRUE(max(abs(delta_se), na.rm = TRUE) >= control$material)
-  record$loglik_quadrature <- sum(units)
-  record$logposterior_quadrature <- as.numeric(final$value)
+  q <- quadrature_of(final)
+  record$loglik_quadrature <- sum(q$quadrature_units)
+  record$logposterior_quadrature <- q$quadrature
+  record$gap_reported <- q$quadrature - as.numeric(after$laplace)
   record$objective <- as.numeric(final$value)
   fit$estimate$raw <- x
-  fit <- report(fit, list(quadrature_units = units, quadrature = final$value,
-    quadrature_subjects = as.numeric(final$subject_loglik)))
+  fit <- report(fit, q)
   usable <- is.matrix(hc) && all(is.finite(hc))
   record["hessian"] <- list(NULL)
   certification <- NULL
@@ -121,7 +184,9 @@
     fit$uncertainty$details$laplace_correction <- list(
       draws = paste0("draws about the refined estimate, by '", method,
         "' on its objective with the rules placed at each point"),
-      nodes = record$nodes)
+      nodes = record$nodes,
+      # What the density the draws came from is known to, in nats.
+      error = .ctLaplaceIntegrationError(after, unscored = record$wide))
     stages["uncertainty"] <- since(uncertainty_started)
   } else {
     post <- fit$estimate$rawposterior
@@ -130,21 +195,6 @@
     }
     record$draws <- "recentred"
   }
-  # What the run cost: the placed objective's calls and seconds, and the
-  # continuation's (the screen's placement), with the hybrid's own error at
-  # the screen.
-  after <- get(module$ctsem_laplace_continuation_info(cont))
-  record$error <- .ctLaplaceIntegrationError(after, unscored = record$wide)
-  info <- get(module$ctsem_laplace_placed_info(placed))
-  record$placed <- info
-  record$evaluations <- c(values = as.integer(info$value_calls),
-    gradients = as.integer(info$gradient_calls),
-    placements = as.integer(after$recentres))
-  record$engine_seconds <- c(values = as.numeric(info$seconds_values),
-    gradients = as.numeric(info$seconds_gradients),
-    placements = as.numeric(after$seconds_placements),
-    hessian = as.numeric(info$seconds_hessian))
-  record$seconds <- c(timed(), stages)
-  fit$laplace$correction <- record
+  fit$laplace$correction <- accounted(record)
   fit
 }

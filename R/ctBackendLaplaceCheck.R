@@ -263,17 +263,31 @@ ctLaplaceCheck <- function(fit, nodes = 5L, correction = TRUE, step = 1e-3,
       c(list(objective, .ctJuliaNumericVector(est)),
         .ctLaplaceContinuationArgs(control, force = fit$laplace$jump$units,
           points = fit$laplace$jump$points)))
-    basis <- .ctLaplaceContinueBasis(hessian,
-      fit$uncertainty$details$flatdirections$vectors, rtol = control$rtol)
-    run <- if (is.null(basis) || basis$kept < 1L) NULL else
-      .ctLaplaceContinueRun(module, cont, est, basis$basis,
-        .ctBackendGapTolerance(fit), control = control, verbose = verbose)
-    out$refined <- if (is.null(run)) est else run$x
-    out$refined_converged <- !is.null(run) &&
-      run$status %in% c("converged", "resolution")
-    out$refined_status <- if (is.null(run)) "no_directions" else run$status
-    out$refined_loglik <- if (is.null(run)) NA_real_ else
-      sum(as.numeric(run$info$quadrature_units))
+    if (isTRUE(control$placed)) {
+      # The refined fit's own climb, its rules placed at every evaluation
+      # (`.ctLaplacePlacedClimb()`).
+      placed <- module$ctsem_laplace_placed(cont)
+      res <- .ctLaplacePlacedClimb(module, placed, est, .ctBackendGapTolerance(fit),
+        control, verbose = verbose, certify = FALSE)
+      out$refined <- as.numeric(res$minimizer)
+      out$refined_converged <- isTRUE(res$converged)
+      out$refined_status <- if (out$refined_converged) "converged" else "stopped"
+      out$refined_loglik <- sum(as.numeric(.ctJuliaGet(
+        module$ctsem_laplace_placed_evaluate(placed,
+          .ctJuliaNumericVector(out$refined), gradient = FALSE))$unit_loglik))
+    } else {
+      basis <- .ctLaplaceContinueBasis(hessian,
+        fit$uncertainty$details$flatdirections$vectors, rtol = control$rtol)
+      run <- if (is.null(basis) || basis$kept < 1L) NULL else
+        .ctLaplaceContinueRun(module, cont, est, basis$basis,
+          .ctBackendGapTolerance(fit), control = control, verbose = verbose)
+      out$refined <- if (is.null(run)) est else run$x
+      out$refined_converged <- !is.null(run) &&
+        run$status %in% c("converged", "resolution")
+      out$refined_status <- if (is.null(run)) "no_directions" else run$status
+      out$refined_loglik <- if (is.null(run)) NA_real_ else
+        sum(as.numeric(run$info$quadrature_units))
+    }
     out$parameters$refined <- out$refined
   }
   out
