@@ -393,9 +393,11 @@
 # (its size plus twice its noise), "flagged" where one is resolved over it,
 # and "unresolved" where the noise decides neither. `carrying` are the units
 # whose own steps account for the step, largest first, until what is left is
-# under `bar`. `gap` is the corrected minus the Laplace log likelihood, with
-# its standard error. NULL where the fit has no curvature to step on or fewer
-# than two seeds scored.
+# under `bar`. `gap` is the corrected minus the Laplace log likelihood: on
+# each unit that passes `.ctLaplaceExpansionGate`, Laplace's term with its
+# O(1/n) correction (`ctsem_laplace_expansion`), whose error `gap_bound` sums
+# the bounds of; on the rest, the draws, whose seeds give `gap_se`. NULL where
+# the fit has no curvature to step on or fewer than two seeds scored.
 .ctLaplaceShiftCheck <- function(fit, draws = 128L, seeds = 1:4, bar = 0.1,
   control = .ctLaplaceContinueDefaults) {
   est <- as.numeric(fit$estimate$raw)
@@ -417,7 +419,8 @@
   started <- proc.time()[["elapsed"]]
   r <- .ctJuliaGet(module$ctsem_laplace_check(.ctJuliaObjective(fit, hybrid = TRUE),
     .ctJuliaNumericVector(est), draws = as.integer(draws),
-    seeds = .ctJuliaVector(as.integer(seeds)), draws_df = as.numeric(control$draws_df)))
+    seeds = .ctJuliaVector(as.integer(seeds)), draws_df = as.numeric(control$draws_df),
+    expansion_gate = .ctLaplaceExpansionGate))
   G <- matrix(as.numeric(r$gradient), nrow = length(est))
   scored <- apply(G, 2L, function(g) all(is.finite(g)))
   if (sum(scored) < 2L) return(NULL)
@@ -442,15 +445,46 @@
   }
   laplace_units <- as.numeric(r$laplace_unit)
   checked <- matrix(as.numeric(r$check_unit), nrow = length(laplace_units))
-  gaps <- colSums(checked[, scored, drop = FALSE]) - sum(laplace_units)
+  expanded <- .ctLaplaceExpanded(r, length(laplace_units))
+  expansion <- as.numeric(r$expansion_term) + as.numeric(r$expansion_correction) -
+    laplace_units
+  gaps <- colSums(checked[!expanded, scored, drop = FALSE]) -
+    sum(laplace_units[!expanded])
   unit_gap <- rowMeans(checked[, scored, drop = FALSE]) - laplace_units
+  unit_gap[expanded] <- expansion[expanded]
   list(status = status, shift = shift, noise = noise, bar = bar,
     max_shift = max(abs(shift)), worst = which.max(abs(shift)),
-    carrying = carrying, gap = mean(gaps), gap_se = stats::sd(gaps) / sqrt(length(gaps)),
-    unit_gap = unit_gap,
+    carrying = carrying, gap = sum(expansion[expanded]) + mean(gaps),
+    gap_se = stats::sd(gaps) / sqrt(length(gaps)),
+    gap_bound = sum(as.numeric(r$expansion_bound)[expanded]),
+    expanded = sum(expanded), unit_gap = unit_gap,
     units = length(laplace_units), draws = as.integer(draws), seeds = sum(scored),
     width = as.integer(r$unit_width),
     seconds = proc.time()[["elapsed"]] - started)
+}
+
+# The smallest eigenvalue of a unit's curvature in its effects, relative to the
+# prior's 1, at which Laplace's O(1/n) correction (`ctsem_laplace_expansion`)
+# integrates the unit for the reported log likelihood. At 1 the likelihood is
+# concave in every direction at the mode. On 17 fixtures, 2,486 units
+# (review/LAPLACE-correction-measure-2026-10-30.md, section 8), every unit at or
+# above it was within its bound, `|c4| + c3`, of a converged product rule.
+# Below it the evidence is AnomAuth's alone, the only fixture whose units went
+# below 0.906: its units with three to five waves exceeded the bound from 0.95
+# down, and below about 0.8 the correction made them worse, by up to 8 nats.
+.ctLaplaceExpansionGate <- 1
+
+# Which units the expansion integrates: those that pass the gate and whose
+# expansion evaluated; none where the engine returned none.
+.ctLaplaceExpanded <- function(r, nunits) {
+  term <- as.numeric(r$expansion_term)
+  corr <- as.numeric(r$expansion_correction)
+  bound <- as.numeric(r$expansion_bound)
+  lowest <- as.numeric(r$expansion_mineig)
+  if (length(term) != nunits || length(corr) != nunits || length(bound) != nunits ||
+      length(lowest) != nunits) return(logical(nunits))
+  is.finite(term) & is.finite(corr) & is.finite(bound) & !is.na(lowest) &
+    lowest >= .ctLaplaceExpansionGate
 }
 
 # What a fit keeps of the shift check (`fit$laplace$correction$check`): the
@@ -464,16 +498,18 @@
     worst = names[check$worst], noise = check$noise[check$worst],
     shift = stats::setNames(check$shift, names),
     shift_noise = stats::setNames(check$noise, names), bar = check$bar,
-    gap = check$gap, gap_se = check$gap_se, carrying = length(check$carrying),
+    gap = check$gap, gap_se = check$gap_se, gap_bound = check$gap_bound,
+    expanded = check$expanded, carrying = length(check$carrying),
     carriers = as.integer(check$carrying),
     draws = check$draws, seeds = check$seeds, seconds = check$seconds)
 }
 
 # The fit's log likelihood where the random-effects check integrated every unit and
 # left the estimate alone: Laplace's plus the check's gap, the summed
-# difference between each unit's integral on its draws and its Laplace term
-# (its seeds' mean, `loglik_se` their standard error), and each subject's
-# term likewise where units are subjects. Laplace's value, the one the
+# difference between each unit's integral and its Laplace term -- by Laplace's
+# O(1/n) correction on the units that pass its gate, within `loglik_bound`, and
+# on its draws elsewhere (their seeds' mean, `loglik_se` their standard error)
+# -- and each subject's term likewise where units are subjects. Laplace's value, the one the
 # optimiser maximised, is kept as `loglik_laplace`, as the rounds keep it
 # (`loglik_method` says which a fit reports): a model's log likelihood is for
 # comparing models, and Laplace's error differs between them -- 30 nats on
@@ -488,6 +524,7 @@
     fit$estimate$logposterior <- as.numeric(fit$estimate$logposterior) + gap
   }
   fit$estimate$loglik_se <- as.numeric(check$gap_se)
+  fit$estimate$loglik_bound <- as.numeric(.ctJuliaOr(check$gap_bound, 0))
   units <- as.numeric(check$unit_gap)
   if (length(units) && length(units) == length(fit$estimate$subject_loglik) &&
       all(is.finite(units))) {
@@ -495,6 +532,20 @@
   }
   fit$estimate$loglik_method <- "checked"
   fit
+}
+
+# How far a checked log likelihood can be off, in words: the bound on the units
+# the expansion integrated and the draws' standard error on the rest, each
+# where it applies. A fit checked before the expansion has only the second.
+.ctLoglikCheckedError <- function(estimate) {
+  bound <- as.numeric(.ctJuliaOr(estimate$loglik_bound, 0))
+  se <- as.numeric(.ctJuliaOr(estimate$loglik_se, NA_real_))
+  parts <- c(if (length(bound) && is.finite(bound) && bound > 0)
+      paste0("within ", format(bound, digits = 2), " by the expansion"),
+    if (length(se) && is.finite(se) && se > 0) paste0("se ", format(se, digits = 2),
+      " by draws"))
+  if (!length(parts)) return("exact on every unit")
+  paste(parts, collapse = ", ")
 }
 
 # The log likelihood the optimiser maximised: Laplace's on a fit that reports
