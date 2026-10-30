@@ -87,7 +87,7 @@ using LinearAlgebra
 
 export ctsem_laplace_placed, ctsem_laplace_placed_evaluate, ctsem_laplace_placed_check,
     ctsem_laplace_placed_hessian, ctsem_laplace_placed_info,
-    ctsem_laplace_placed_optimize
+    ctsem_laplace_placed_optimize, ctsem_laplace_placed_quadrature
 
 """
     CTSEMLaplacePlaced
@@ -945,6 +945,55 @@ function _placed_evaluate(P::CTSEMLaplacePlaced, theta::Vector{Float64}, gradien
     end
     return (value=value, gradient=grad, unit_loglik=unit_loglik,
         subject_loglik=subject_loglik, converged=rest.converged && ok)
+end
+
+"""
+    ctsem_laplace_placed_quadrature(P, values)
+
+What a refined fit reports at `values`: every unit's quadrature, the flagged
+units' by their rules placed there (as `ctsem_laplace_placed_evaluate` scores
+them) and every other unit's by the rule the screen would place for it there
+(`_continuation_unit_rule`), a unit too wide for one keeping its Laplace term;
+the prior; and each unit's term spread over its members. The objective the
+estimate maximises holds the unflagged units' Laplace terms instead, which the
+screen found within its tolerance of these.
+"""
+function ctsem_laplace_placed_quadrature(P::CTSEMLaplacePlaced, values::AbstractVector)
+    o = P.cont
+    laplace = o.laplace
+    theta = _laplace_extend(laplace, collect(Float64, values))
+    r = _placed_evaluate(P, theta, false)
+    units = copy(r.unit_loglik)
+    Ls = _laplace_popchols(theta, laplace.spec)
+    opts = _continuation_opts(o)
+    for m in unique(_continuation_unit_opts(opts, U).nodes for U in o.rest_units)
+        _continuation_warm_caches(laplace, m, o.soft_maxdirs, o.product_maxdim)
+    end
+    _laplace_parallel(laplace, eachindex(o.rest_units)) do i
+        local U, placed
+        U = o.rest_units[i]
+        (isempty(laplace.units.blocks[U]) ||
+            _continuation_unit_width(laplace, U) > o.maxdim) && return true
+        placed = try
+            _continuation_unit_rule(laplace, U, theta, Ls,
+                _laplace_workspace!(laplace, Float64, length(theta)),
+                _continuation_unit_opts(opts, U))
+        catch err
+            _ctsem_must_propagate(err) && rethrow()
+            nothing
+        end
+        placed === nothing || (units[U] = placed.value)
+        return true
+    end
+    value = _laplace_weighted_total(laplace, units) +
+        _ctsem_log_prior(laplace.objective, theta)
+    members = laplace.units.members
+    subjects = zeros(length(laplace.objective.subject_objectives))
+    for U in eachindex(members), i in members[U]
+        subjects[i] = units[U] / length(members[U])
+    end
+    return (value=value, unit_loglik=units, subject_loglik=subjects,
+        converged=r.converged)
 end
 
 """

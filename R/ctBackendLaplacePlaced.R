@@ -44,8 +44,14 @@
   stages <- c()
   placed <- module$ctsem_laplace_placed(cont)
   start <- get(module$ctsem_laplace_placed_evaluate(placed, num(est), gradient = FALSE))
-  quadrature_of <- function(e) list(quadrature_units = as.numeric(e$unit_loglik),
-    quadrature = as.numeric(e$value), quadrature_subjects = as.numeric(e$subject_loglik))
+  # What a fit reports at a point: every unit by quadrature, the flagged units
+  # by their rules and the rest by the rule the screen would place for each
+  # (`ctsem_laplace_placed_quadrature`), as the rounds reported theirs.
+  quadrature_at <- function(at) {
+    e <- get(module$ctsem_laplace_placed_quadrature(placed, num(at)))
+    list(quadrature_units = as.numeric(e$unit_loglik), quadrature = as.numeric(e$value),
+      quadrature_subjects = as.numeric(e$subject_loglik))
+  }
   # What the screen left on Laplace and what it flagged, from the placement.
   after <- get(module$ctsem_laplace_continuation_info(cont))
   record$route <- "placed"
@@ -106,7 +112,7 @@
       record$status <- "no_gain"
     }
     record$applied <- FALSE
-    q <- quadrature_of(start)
+    q <- quadrature_at(est)
     record$loglik_quadrature <- sum(q$quadrature_units)
     record$logposterior_quadrature <- q$quadrature
     record$gap_reported <- q$quadrature - as.numeric(after$laplace)
@@ -134,7 +140,7 @@
   record$delta_se <- delta_se
   record$material <- any(is.finite(delta_se)) &&
     isTRUE(max(abs(delta_se), na.rm = TRUE) >= control$material)
-  q <- quadrature_of(final)
+  q <- quadrature_at(x)
   record$loglik_quadrature <- sum(q$quadrature_units)
   record$logposterior_quadrature <- q$quadrature
   record$gap_reported <- q$quadrature - as.numeric(after$laplace)
