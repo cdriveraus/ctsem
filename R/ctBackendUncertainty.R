@@ -964,7 +964,7 @@
 # the uncertainty by `uncertainty` on the hybrid it ends on, whose error the
 # record reports (`fit$laplace$correction$error`). A fit the fit-time
 # correction already moved is placed where it stands and not moved again
-# (`rounds = 0`), as is any fit under `correctEstimate = FALSE`; one made
+# (`stay = TRUE`), as is any fit under `correctEstimate = FALSE`; one made
 # without the correction is climbed first, with the units its shift check
 # named (`check$carriers`, the default fit's warning) integrated whatever the
 # screen says, as the fit-time correction integrates them. `'hessian'` takes
@@ -1009,7 +1009,7 @@
   # shift check would have said about the estimate.
   settings$check <- FALSE
   if (!is.null(control$nodes)) settings$nodes <- as.integer(control$nodes)
-  if (stay) settings$rounds <- 0L
+  if (stay) settings$stay <- TRUE
   if (is.null(finishsamples)) {
     finishsamples <- if (!is.null(fit$estimate$rawposterior))
       nrow(fit$estimate$rawposterior) else 1000L

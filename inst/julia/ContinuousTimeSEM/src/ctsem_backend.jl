@@ -3021,9 +3021,9 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
     seen_iterations = Ref(0)
     stopped_by_gap = Ref(false)
     stopped_by_stall = Ref(false)
-    # The route's own stop (`stop`, a predicate of the iterate): a round on
-    # frozen rules ends where they have drifted
-    # (`ctsem_laplace_continuation_optimize`).
+    # The route's own stop (`stop`, a predicate of the iterate): the refined
+    # fit's run ends where its frozen draws have drifted
+    # (`ctsem_laplace_placed_optimize`).
     stopped_by_stop = Ref(false)
     stopped_by_progress = Ref(false)
     # The window is not scaled to L-BFGS's memory: on a large model that made

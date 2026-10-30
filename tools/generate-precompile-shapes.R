@@ -130,23 +130,26 @@ sampled_fit <- list(sampled = function(fit, dat, model) ctFit(dat, model,
   sampleControl = list(iter = 10L, chains = 1L, warmup = 5L, maxdepth = 3L,
     processes = FALSE)),
   map = function(fit, dat, model) ctFitUncertainty(fit, "sample",
-    control = list(chains = 1L, warmup = 5L, draws = 5L, maxdepth = 3L,
-      processes = FALSE, intoverpop = "none"), cores = 1L),
+    intoverpop = "none", control = list(chains = 1L, warmup = 5L, draws = 5L,
+      maxdepth = 3L, processes = FALSE), cores = 1L),
   saem = function(fit, dat, model) ctFitUncertainty(fit, "sample",
-    control = list(chains = 1L, warmup = 5L, draws = 5L, maxdepth = 3L,
-      processes = FALSE, intoverpop = "none", sampler = "saem"), cores = 1L),
+    intoverpop = "none", control = list(chains = 1L, warmup = 5L, draws = 5L,
+      maxdepth = 3L, processes = FALSE, sampler = "saem"), cores = 1L),
   checked = function(fit, dat, model) ctFitUncertainty(fit, "checked", cores = 1L))
 
-# What the quadrature correction runs once its shift check flags units: the
-# continuation, its screen, its rounds and the continuation's Hessian. A
-# shape whose own fit's check left it alone records them all the same, by
-# running the continuation again without the check, whose screen then sets
-# the rounds off as it did before the check came first. Where the fit's
-# correction moved the estimate, the fit has recorded them already.
-correction_rounds <- function(fit, dat, model) {
+# What the refined fit runs once the shift check flags units: the
+# continuation and its screen, the placed objective's climb and its Hessian
+# (`.ctLaplacePlacedRefine()`). A shape whose own fit's check left it alone
+# records them all the same, by running the correction again without the
+# check and with a screen that flags every unit (a negative `tolerance`):
+# under the default tolerance the block shape's screen passed once the
+# correlation bound moved its estimate (0.999, 2026-10-30), and the climb
+# went unrecorded. Where the fit's correction moved the estimate, the fit has
+# recorded them already.
+correction_refined <- function(fit, dat, model) {
   if (isTRUE(fit$laplace$correction$applied)) return(invisible(NULL))
   ns$.ctLaplaceContinue(fit, control = utils::modifyList(
-    ns$.ctLaplaceContinueDefaults, list(check = FALSE)))
+    ns$.ctLaplaceContinueDefaults, list(check = FALSE, tolerance = -1)))
 }
 
 shapes <- list(
@@ -176,14 +179,14 @@ shapes <- list(
   # coordinate, by the cost rule): the inner solve, its probes and the
   # logdet's derivatives
   # at the Gaussian workspace type, which every Gaussian Laplace fit with a
-  # nonlinear effect runs, and the quadrature correction's rounds, which the
-  # drift effect sets off on these ten subjects. Its fit stops at the Hessian's
-  # normal, without importance sampling. The correction was off here while
-  # every call was recorded (2,100 of 2,500 were the continuation's
-  # evaluations); at two calls a signature it is about 40, and without it a
-  # session's first such fit compiled the rounds. The shift check comes first
-  # in the correction, and the rounds follow it whatever it finds
-  # (`correction_rounds`).
+  # nonlinear effect runs, and the refined fit, which the drift effect sets
+  # off on these ten subjects. Its fit stops at the Hessian's normal, without
+  # importance sampling. The correction was off here while every call was
+  # recorded (2,100 of 2,500 were the continuation's evaluations); at two
+  # calls a signature it is about 40, and without it a session's first such
+  # fit compiled the correction. The shift check comes first in the
+  # correction, and the refined fit follows it whatever it finds
+  # (`correction_refined`).
   gaussian_laplace_block = list(route = "laplace", model = function() {
       mvar <- diag(0, 2)
       diag(mvar) <- "mvar"
@@ -197,7 +200,7 @@ shapes <- list(
     },
     data = function() indicators(sim_latent(10, 6), c("y1", "y2")),
     optimcontrol = list(uncertainty = "hessian"),
-    followups = list(rounds = correction_rounds)),
+    followups = list(refined = correction_refined)),
   # A model with a categorical indicator is a different filter workspace type
   # -- the categorical update is gated on it, so Gaussian fits do not carry
   # that code -- so each route needs one. Binary and ordinal share it.
@@ -208,8 +211,8 @@ shapes <- list(
     model = function() categorical_model(c("o1", "o2"), 2L),
     data = function() categorical(sim_latent(10, 6), c("o1", "o2"), 2L)),
   # A guessing asymptote on one binary item, on enough subjects that the
-  # quadrature correction runs its rounds and forms the continuation's Hessian
-  # at the categorical workspace type, which without it a session's first such
+  # refined fit climbs and forms its Hessian at the categorical workspace
+  # type, which without it a session's first such
   # fit compiled; and the asymptote's own mixture moments
   # (`_asymptote_partials!`), which the binary and ordinal shapes do not reach.
   # Recorded while a failed unit sweep still fell back to forward mode over
@@ -220,7 +223,7 @@ shapes <- list(
       asymptotes = c("guess", NA)),
     data = function() categorical(sim_latent(40, 12, cints = stats::rnorm(40, 0, 1)),
       c("b1", "b2"), 1L),
-    followups = list(rounds = correction_rounds))
+    followups = list(refined = correction_refined))
 )
 only <- Sys.getenv("CTSEM_PRECOMPILE_SHAPES", "")
 if (nzchar(only)) shapes <- shapes[strsplit(only, ",", fixed = TRUE)[[1]]]

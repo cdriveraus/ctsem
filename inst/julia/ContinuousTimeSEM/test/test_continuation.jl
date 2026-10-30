@@ -141,55 +141,6 @@ end
     @test isapprox(r.g, r.fd; atol=1e-6, rtol=1e-5)
 end
 
-@testset "re-placing the nodes and putting them back restores the objective" begin
-    laplace, values = _fresh_threelevel()
-    theta = collect(Float64, values)
-    o = ctsem_laplace_continuation(laplace, theta; tolerance=0.0)
-    x = theta .+ 0.03
-    before = ctsem_laplace_continuation_evaluate(o, x; gradient=true)
-    moved = ctsem_laplace_continuation_recentre!(o, x)
-    @test moved.centre == x
-    after = ctsem_laplace_continuation_evaluate(o, x; gradient=false)
-    # The nodes moved, so the value at `x` is now the adaptive rule's there.
-    @test isapprox(after.value, ctsem_laplace_quadrature(laplace, x; nodes=5).value;
-        rtol=1e-12)
-    back = ctsem_laplace_continuation_revert!(o)
-    @test back.centre == theta
-    again = ctsem_laplace_continuation_evaluate(o, x; gradient=true)
-    @test again.value == before.value
-    @test isapprox(again.gradient, before.gradient; rtol=1e-12, atol=1e-14)
-end
-
-@testset "a round stays inside its trust region and does not lose objective" begin
-    laplace, values = _fresh_nonlinear()
-    theta = collect(Float64, values)
-    fit = ctsem_laplace_optimize(laplace, theta; maxiter=200)
-    est = fit.minimizer
-    H = ctsem_laplace_hessian(laplace, est)
-    E = eigen(Symmetric(-(H .+ transpose(H)) ./ 2))
-    keep = abs.(E.values) .> 1e-8 * maximum(abs, E.values)
-    B = E.vectors[:, keep] * Diagonal(1 ./ sqrt.(abs.(E.values[keep])))
-    o = ctsem_laplace_continuation(laplace, est; tolerance=0.0)
-    start = ctsem_laplace_continuation_evaluate(o, est; gradient=false).value
-    for radius in (0.05, 0.5)
-        r = ctsem_laplace_continuation_optimize(o, est, B, radius; maxiter=50)
-        if r.stationary
-            @test r.minimizer == est
-            continue
-        end
-        y = B \ (r.minimizer .- est)
-        @test norm(y) <= radius * (1 + 1e-9)
-        @test r.value >= start - 1e-10
-        @test r.value == ctsem_laplace_continuation_evaluate(o, r.minimizer;
-            gradient=false).value
-    end
-    # `stationary_only` evaluates and reports, and moves nothing.
-    s = ctsem_laplace_continuation_optimize(o, est, B, 0.5; stationary_only=true)
-    @test s.minimizer == est
-    @test s.iterations == 0
-    @test isfinite(s.start_gain)
-end
-
 @testset "at its centre the soft rule's gradient and curvature are the marginal's" begin
     # With one soft direction, the two-effect subject blocks keep a stiff
     # complement of one. Its value at the centre is exact on a Gaussian
@@ -558,9 +509,10 @@ end
     @test isapprox(hyb.value, lap.value - lap.unit_loglik[2] +
         info.quadrature_units[2]; rtol=1e-12)
     # A placement again keeps it, and a point given for it joins its proposal.
+    C = ContinuousTimeSEM
     d = laplace.units.dims[2]
-    ctsem_laplace_continuation_recentre!(o, theta .+ 0.01; point_units=[2],
-        point_values=reshape(fill(0.3, d), d, 1))
+    C._continuation_add_points!(o, [2], reshape(fill(0.3, d), d, 1))
+    C._continuation_place!(o, C._laplace_extend(laplace, theta .+ 0.01))
     @test ctsem_laplace_continuation_info(o).flagged == [2]
     @test length(o.points[2]) == 1
     @test_throws ArgumentError ctsem_laplace_continuation(laplace, theta;
@@ -661,7 +613,7 @@ end
     @test !isempty(held.S) && all(v -> length(v) == n, held.S)
     x1 = collect(Float64, before.minimizer)
     @test maximum(abs, x1) < 10
-    ctsem_laplace_continuation_recentre!(o, x1)
+    C._continuation_place!(o, C._laplace_extend(laplace, x1))
     cold = stage(x1)
     # A run that does not ask leaves the held pairs alone.
     @test o.lbfgs === held
@@ -859,19 +811,7 @@ end
     @test o.centre == theta
     @test o.centre_value == value
     @test o.rules === rules
-    @test o.previous === nothing
     @test o.recentres == 1
-    # Inside a round -- a placement saved for `revert!` -- a probe leaves
-    # that saved placement, so the round can still be put back.
-    ctsem_laplace_continuation_recentre!(o, other)
-    saved = o.previous
-    @test saved !== nothing
-    C._ctsem_probe_value(o, theta .+ 0.2)
-    @test o.previous === saved
-    @test o.centre == other
-    ctsem_laplace_continuation_revert!(o)
-    @test o.centre == theta
-    @test o.centre_value == value
 end
 
 @testset "a coreset of the hybrid's density over every unit is the density" begin

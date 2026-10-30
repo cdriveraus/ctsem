@@ -254,21 +254,24 @@ function _tan_bar_of!(tb::AbstractVector{S}, aws, sp, C, rawD, rawR, cells,
     XCbar = C.XC
     on(_TAN_M_XC) && _tan_cat_each((k, cell, i) -> (@inbounds tb[cell] += XCbar[k]), sp)
     on(_TAN_M_T0V) || return tb
-    T0Vbar = C.T0V
+    # The comprehension below reads `T0V`, assigned once: reading `T0Vbar`,
+    # which the masking assigns again, it captured a `Core.Box`.
+    T0V = C.T0V
+    T0Vbar = T0V
     pidx = sp.population_indices
-    if !isempty(pidx) && any(!iszero, T0Vbar)
+    if !isempty(pidx) && any(!iszero, T0V)
         # The population block's cotangent, scaled as it was placed, through its
         # own construction (`_pullback_population!`); then its rows and columns
         # masked out of T0VAR's, as the adjoint does.
         k = length(pidx)
         sc = sp.population_scale
-        popsym = [(sc[a] * sc[b] * T0Vbar[pidx[a], pidx[b]] +
-            sc[b] * sc[a] * T0Vbar[pidx[b], pidx[a]]) / 2 for a in 1:k, b in 1:k]
+        popsym = [(sc[a] * sc[b] * T0V[pidx[a], pidx[b]] +
+            sc[b] * sc[a] * T0V[pidx[b], pidx[a]]) / 2 for a in 1:k, b in 1:k]
         popbar = zeros(S, k, k)
         _sdcovsqrt2cov_pullback!(popbar, reshape(view(cells, sp.population_range), k, k),
             popsym, k; scratch=aws.covsqrt_scratch, covmatcode=sp.population_covmatcode)
         reshape(view(tb, sp.population_range), k, k) .+= popbar
-        T0Vbar = copy(T0Vbar)
+        T0Vbar = copy(T0V)
         T0Vbar[pidx, :] .= zero(S)
         T0Vbar[:, pidx] .= zero(S)
     end

@@ -834,7 +834,7 @@ function _placed_frozen(P::CTSEMLaplacePlaced, theta::Vector{Float64}, Ls, dL,
             want_gradient && (rows[i] .+= r.gradient)
         end
         values[i] = total
-        # Each task its own entries, as `_continuation_record_ess!` keeps them.
+        # Each task its own entries.
         P.ess[i] = ess
         isnan(P.ess_placed[i]) && isfinite(ess) && (P.ess_placed[i] = ess)
         return true
@@ -1155,9 +1155,8 @@ end
     _placed_drifted(P, ratio)
 
 Whether any frozen rule's effective number of nodes or draws has fallen under
-`ratio` of what it was at its placement (`_placed_frozen` records both), as
-the continuation reads its own (`_continuation_drifted`): a property of the
-draws, not of a value compared across placements.
+`ratio` of what it was at its placement (`_placed_frozen` records both): a
+property of the draws, not of a value compared across placements.
 """
 _placed_drifted(P::CTSEMLaplacePlaced, ratio::Real) =
     any(i -> isfinite(P.ess[i]) && isfinite(P.ess_placed[i]) &&

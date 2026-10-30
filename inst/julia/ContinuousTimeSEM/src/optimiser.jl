@@ -3322,6 +3322,25 @@ function _ctsem_newton_finish(objective, x0, f0, G0, fg!; tol::Real=1e-8,
             length=norm(d), whole=mu == 0,
             fraction=mu == 0 ? 1.0 : norm(d) / norm(c ./ lam))
     end
+    # What the model of `newton` (the step's own) predicts a step `v` gains:
+    # `predicted` for one of its steps, any other `v` on the same curvatures.
+    # It and `line_jump` come before `trust`, which calls `line_jump`: a local
+    # function a closure captures before its definition is a `Core.Box`, and
+    # every call through it a dynamic dispatch.
+    function model_gain(Hm, G, v)
+        local M = model(Hm)
+        local z = -(transpose(M.vectors) * v)
+        local c = transpose(M.vectors) * G
+        return dot(c, z) - 0.5 * sum(M.curvature .* abs2.(z); init=0.0)
+    end
+    function line_jump(Hm, x, f, G, s, short)
+        local v = _CTSEM_FINISH_JUMP_RATIO .* s
+        local fn = fg!(0.0, nothing, x .+ v)
+        fcalls[] += 1
+        (isfinite(fn) && fn < _CTSEM_REFUSED) || return false
+        local e = fn - f + model_gain(Hm, G, v)
+        return e > 0 && short >= e / 4
+    end
     # A step on `Hm` from the current point, starting from `nt` (its step at
     # `radius`): accepted when the objective falls by at least 1e-4 of what the
     # model predicted -- the Armijo constant of every line search here -- and
@@ -3388,22 +3407,6 @@ function _ctsem_newton_finish(objective, x0, f0, G0, fg!; tol::Real=1e-8,
             r = at.length / 4
             at = newton(Hm, G, r)
         end
-    end
-    # What the model of `newton` (the step's own) predicts a step `v` gains:
-    # `predicted` for one of its steps, any other `v` on the same curvatures.
-    function model_gain(Hm, G, v)
-        local M = model(Hm)
-        local z = -(transpose(M.vectors) * v)
-        local c = transpose(M.vectors) * G
-        return dot(c, z) - 0.5 * sum(M.curvature .* abs2.(z); init=0.0)
-    end
-    function line_jump(Hm, x, f, G, s, short)
-        local v = _CTSEM_FINISH_JUMP_RATIO .* s
-        local fn = fg!(0.0, nothing, x .+ v)
-        fcalls[] += 1
-        (isfinite(fn) && fn < _CTSEM_REFUSED) || return false
-        local e = fn - f + model_gain(Hm, G, v)
-        return e > 0 && short >= e / 4
     end
     # The watch's verdict on a search (`trust`), from what it held before:
     # what it holds now -- the jump first seen and where the steps stood, held
