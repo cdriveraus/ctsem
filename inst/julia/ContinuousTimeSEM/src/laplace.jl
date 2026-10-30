@@ -5058,7 +5058,7 @@ end
 Modes an optimisation put in its objective's known modes as it found them
 (`_ctsem_take_jump_modes!`, `_ctsem_take_search_modes!`), mode `modes[j]` of
 unit `units[j]`, for the caller to keep with the fit's specification (R's
-`spec$laplace$known`), so every objective built for the fit reaches them.
+`spec\$laplace\$known`), so every objective built for the fit reaches them.
 """
 struct CTSEMFoundModes
     units::Vector{Int}
