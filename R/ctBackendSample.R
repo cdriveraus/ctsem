@@ -1740,6 +1740,14 @@
   # Computed here because the warner sees only the diagnostics, and the draws
   # and the parameter names both live at this level.
   out$sample$unidentified <- .ctBackendFlatParameters(out, npar)
+  # Where transitions stopped at the random-effect correlation bound, the rank
+  # the population covariance points to across the draws, so the message that
+  # says so can suggest the `poprank` an estimate on the bound gets
+  # (`.ctCorBoundDrawRank()`, `.ctSampleBoundRankNote()`).
+  if (.ctSampleDivergentBound(out$sample) > 0L) {
+    out$sample$corbound_rank <- tryCatch(.ctCorBoundDrawRank(out),
+      error = function(e) NULL)
+  }
   # The effective size the run aimed for, so the verdict, the warning and the
   # summary judge it against that rather than against a number of their own.
   out$sample$ess_target <- as.numeric(ess_target)[1L]
@@ -1930,7 +1938,8 @@
   bound <- .ctSampleDivergentBound(diagnostics)
   if (bound > 0L) {
     message(bound, " of ", total, " transitions stopped at the random-effect ",
-      "correlation bound: the posterior reaches it.")
+      "correlation bound: the posterior reaches it.",
+      .ctSampleBoundRankNote(diagnostics))
   }
   # Checked before R-hat, because it changes what a bad R-hat means.
   #

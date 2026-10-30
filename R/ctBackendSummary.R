@@ -1860,7 +1860,8 @@ ctBackendParMatrices <- function(fit, raw = NULL, tipreds = NULL, state = NULL,
   bound <- .ctSampleDivergentBound(fit$sample)
   if (bound > 0L) {
     note <- paste0(note, " ", bound, " transition", if (bound > 1L) "s" else "",
-      " stopped at the random-effect correlation bound.")
+      " stopped at the random-effect correlation bound.",
+      .ctSampleBoundRankNote(fit$sample))
   }
   # The thresholds are the ones `.ctSampleWarn()` warns at, so the summary and
   # the fit-time warning cannot disagree about whether a run failed.

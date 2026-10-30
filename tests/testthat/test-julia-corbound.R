@@ -92,6 +92,14 @@ test_that("a fit whose covariance the data put on the singular boundary ends on 
   expect_true(any(fit$corbound$at_bound))
   expect_equal(fit$corbound$rank[1], 2)
   raw <- fit$estimate$raw
+  # A sample's draws at the estimate point to the rank the fit's warning
+  # states there, which is what sampling's message suggests as poprank.
+  drawn <- fit
+  drawn$estimate$rawposterior <- matrix(as.numeric(raw), 3L, length(raw), byrow = TRUE)
+  ranks <- ctsem:::.ctCorBoundDrawRank(drawn)
+  expect_equal(ranks$rank[1], fit$corbound$rank[1])
+  expect_equal(ranks$k[1], fit$corbound$k[1])
+  expect_null(ctsem:::.ctCorBoundDrawRank(fit[setdiff(names(fit), "estimate")]))
   block <- ctsem:::.ctCorBoundSpec(fit$model_spec)[[1]]
   expect_lt(max(abs(raw[block$index])), 4)
   s <- summary(fit)

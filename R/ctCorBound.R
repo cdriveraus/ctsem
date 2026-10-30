@@ -85,6 +85,17 @@
   if (inherits(value, "try-error") || !length(value)) 0.999 else as.numeric(value)[1L]
 }
 
+# A bounded block's correlation matrix at raw parameters `raw`, as the engine
+# builds it: its cells below the diagonal in column-major order, each the raw
+# coordinate its index reads or the value it is fixed at.
+.ctCorBoundMatrix <- function(b, raw) {
+  cells <- diag(b$k)
+  low <- which(lower.tri(cells), arr.ind = TRUE)
+  low <- low[order(low[, 2L], low[, 1L]), , drop = FALSE]
+  cells[low] <- ifelse(b$index > 0L, raw[pmax(b$index, 1L)], b$fixed)
+  .ctCovForward(cells, if (b$code == 2L) "z" else "rawcorr")
+}
+
 # Each bounded effect's multiple correlation with the others at the fit's
 # estimate, whether it is on the bound, and the rank the block's correlation
 # matrix points to (`.ctImproveRankFromCov`); NULL when nothing is bounded.
@@ -94,11 +105,7 @@
   if (inherits(blocks, "try-error") || !length(blocks) || !length(raw)) return(NULL)
   bound <- .ctCorBoundValue()
   rows <- lapply(blocks, function(b) {
-    cells <- diag(b$k)
-    low <- which(lower.tri(cells), arr.ind = TRUE)
-    low <- low[order(low[, 2L], low[, 1L]), , drop = FALSE]
-    cells[low] <- ifelse(b$index > 0L, raw[pmax(b$index, 1L)], b$fixed)
-    R <- .ctCovForward(cells, if (b$code == 2L) "z" else "rawcorr")
+    R <- .ctCorBoundMatrix(b, raw)
     inverse <- try(solve(R), silent = TRUE)
     mc <- if (inherits(inverse, "try-error")) rep(1, b$k) else
       sqrt(pmax(0, 1 - 1 / (diag(R) * diag(inverse))))
@@ -111,6 +118,50 @@
   out <- do.call(rbind, rows)
   attr(out, "bound") <- bound
   out
+}
+
+# The rank each bounded block's correlation matrix points to across a
+# sample's draws, as `.ctCorBoundReport()` reads it at an estimate: the median
+# over up to `maxdraws` draws, evenly spaced, of `.ctImproveRankFromCov()`,
+# rounded up so as not to suggest less than the draws show. Draw by draw
+# rather than at the draws' mean, since near-singular draws turned different
+# ways average to a matrix of higher rank. NULL when nothing is bounded or
+# there are no draws.
+.ctCorBoundDrawRank <- function(fit, maxdraws = 400L) {
+  blocks <- try(.ctCorBoundSpec(fit$model_spec), silent = TRUE)
+  draws <- fit$estimate$rawposterior
+  if (inherits(blocks, "try-error") || !length(blocks) || is.null(draws) ||
+      !NROW(draws)) return(NULL)
+  draws <- as.matrix(draws)
+  use <- unique(round(seq(1, nrow(draws), length.out = min(maxdraws, nrow(draws)))))
+  rows <- lapply(blocks, function(b) {
+    ranks <- vapply(use, function(i) {
+      r <- .ctImproveRankFromCov(.ctCorBoundMatrix(b, draws[i, ]))
+      if (length(r) && is.finite(r)) as.numeric(r) else NA_real_
+    }, numeric(1))
+    if (all(is.na(ranks))) return(NULL)
+    data.frame(level = b$level, k = b$k,
+      rank = as.integer(ceiling(stats::median(ranks, na.rm = TRUE))),
+      stringsAsFactors = FALSE)
+  })
+  do.call(rbind, rows)
+}
+
+# What a sample whose transitions stopped at the bound says about its
+# covariance's rank (`$corbound_rank`, `.ctCorBoundDrawRank()`): for each level
+# whose median draw points below its number of effects, that rank and the
+# `poprank` that would fit it, as the fit's warning suggests at an estimate.
+# Empty where there is none.
+.ctSampleBoundRankNote <- function(diagnostics) {
+  r <- diagnostics$corbound_rank
+  if (is.null(r) || !NROW(r)) return("")
+  r <- r[is.finite(r$rank) & r$rank < r$k, , drop = FALSE]
+  if (!NROW(r)) return("")
+  levels <- length(unique(diagnostics$corbound_rank$level)) > 1L
+  paste0(" The population covariance is about rank ", r$rank, " of ", r$k,
+    if (levels) paste0(" at level ", r$level) else "",
+    " in the median draw: consider poprank = ", r$rank,
+    " or fewer varying parameters.", collapse = "")
 }
 
 # One warning per level with an effect on the bound.
