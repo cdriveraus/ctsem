@@ -9,7 +9,7 @@
 # boundary as non-identification. A correlation matrix can go singular without
 # any one correlation nearing one -- that model's maximum-likelihood covariance
 # had rank 2 of 4 and no correlation above 0.96 -- so the bound is on each
-# effect's multiple correlation with the others at its level: at most 0.99,
+# effect's multiple correlation with the others at its level: at most 0.999,
 # which for two effects is the correlation itself. The engine holds it with a
 # wall in the objective (`_ctsem_corbound`, ctsem_backend.jl), on every julia
 # route; review/PRIORS-default-boundary-2026-10-19.md has the evidence.
@@ -82,7 +82,7 @@
 # The bound, read from the engine rather than duplicated.
 .ctCorBoundValue <- function() {
   value <- try(.ctJuliaEval("ContinuousTimeSEM._CTSEM_CORBOUND"), silent = TRUE)
-  if (inherits(value, "try-error") || !length(value)) 0.99 else as.numeric(value)[1L]
+  if (inherits(value, "try-error") || !length(value)) 0.999 else as.numeric(value)[1L]
 }
 
 # Each bounded effect's multiple correlation with the others at the fit's

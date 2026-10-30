@@ -399,7 +399,7 @@ prior: `prior_weight` does not scale it, it is in the objective whatever
 `priors` says, and every route reads it here. It has no curvature inside the
 bound, so `_ctsem_prior_precision` leaves it out.
 """
-const _CTSEM_CORBOUND = 0.99
+const _CTSEM_CORBOUND = 0.999
 const _CTSEM_CORBOUND_STEEPNESS = 100.0
 
 """A block's raw lower triangle with unit scales, and the correlation matrix
