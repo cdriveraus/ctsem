@@ -345,7 +345,8 @@
     gap_se = stats::sd(gaps) / sqrt(length(gaps)),
     gap_bound = sum(as.numeric(r$expansion_bound)[expanded]),
     expanded = sum(expanded), expanded_units = which(expanded), unit_gap = unit_gap,
-    units = length(laplace_units), draws = as.integer(draws), seconds = proc.time()[["elapsed"]] - started)
+    units = length(laplace_units), draws = as.integer(draws), seeds = sum(scored),
+    seconds = proc.time()[["elapsed"]] - started)
 }
 
 # The smallest eigenvalue of a unit's curvature in its effects, relative to the
