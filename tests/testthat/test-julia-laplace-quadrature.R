@@ -159,6 +159,27 @@
     .ctJuliaNumericVector(as.numeric(x)), as.numeric(umax), as.integer(npoints)))
 }
 
+test_that("the expansion's gate and the checked log likelihood's error read the engine's record", {
+  expanded <- ctsem:::.ctLaplaceExpanded
+  r <- list(expansion_term = c(-5, -6, -7, NaN, -8), expansion_correction = c(0.1, 0.2, NaN, 0.1, 0.1),
+    expansion_bound = c(0.2, 0.3, NaN, 0.1, 0.5), expansion_mineig = c(1.5, 0.95, 0.4, 2, 1.2),
+    check_se = matrix(0.4, 5, 4))
+  # Passing needs the gate, a correction that evaluated, and a bound under
+  # twice the draws' standard error over the seeds (0.4 / 2 here).
+  expect_identical(expanded(r, 5L), c(TRUE, FALSE, FALSE, FALSE, FALSE))
+  r$check_se[1L, ] <- 0.1
+  expect_identical(expanded(r, 5L)[1L], FALSE)
+  # A check from before the expansion, or the wrong length, integrates none.
+  expect_identical(expanded(list(), 4L), logical(4L))
+  expect_identical(expanded(r, 3L), logical(3L))
+  words <- ctsem:::.ctLoglikCheckedError
+  expect_identical(words(list(loglik_bound = 0.123, loglik_se = 0.0456)),
+    "within 0.12 by the expansion, se 0.046 by draws")
+  expect_identical(words(list(loglik_bound = 0.123, loglik_se = 0)), "within 0.12 by the expansion")
+  expect_identical(words(list(loglik_se = 0.0456)), "se 0.046 by draws")
+  expect_identical(words(list(loglik_bound = 0, loglik_se = 0)), "exact on every unit")
+})
+
 test_that("a model on which Laplace is exact is screened and left alone", {
   skip_without_julia()
   fits <- .lc_fits("linear")
@@ -231,6 +252,41 @@ test_that("the default checks and warns, and the correction it names is the fit-
   expect_identical(posthoc$estimate$loglik, fits$quadrature$estimate$loglik)
   # And sampling against the quadrature will not apply it a second time.
   expect_error(ctFitUncertainty(fits$quadrature, "is", intoverpop = "quadrature", control = list(correctEstimate = TRUE)), "already corrected")
+})
+
+test_that("the check integrates the units its gate passes by Laplace's expansion, within its bound", {
+  skip_without_julia()
+  fits <- .lc_fits("nonlinear")
+  fit <- fits$off
+  module <- ctsem:::.ctJuliaModule(fit$model_spec$project)
+  lap <- ctsem:::.ctJuliaObjective(fit, hybrid = TRUE)
+  x <- ctsem:::.ctJuliaNumericVector(as.numeric(fit$estimate$raw))
+  ex <- ctsem:::.ctJuliaGet(module$ctsem_laplace_expansion(lap, x))
+  rule <- function(nodes) as.numeric(ctsem:::.ctJuliaGet(
+    module$ctsem_laplace_quadrature(lap, x, nodes = nodes, contributions = TRUE))$subject_loglik)
+  gated <- ex$mineig >= ctsem:::.ctLaplaceExpansionGate
+  expect_gt(sum(gated), 20L)
+  # Laplace's term for the unit's integrand is the one-node rule's wherever
+  # its curvature is at least the prior's; a 15-node rule is the integral.
+  expect_equal(ex$term[gated], rule(1L)[gated], tolerance = 1e-6)
+  exact <- rule(15L)
+  laplace_error <- abs(exact - ex$term)[gated]
+  corrected_error <- abs(exact - ex$term - ex$correction)[gated]
+  expect_true(all(corrected_error <= ex$bound[gated] + 1e-8))
+  expect_lt(sum(corrected_error), sum(laplace_error) / 3)
+  # Below the gate the term comes back without the correction, which the
+  # check would throw away.
+  expect_true(all(is.na(ex$correction[!gated])))
+  # The default fit's check takes from it the gap of the gated units whose
+  # bound is the tighter error, and says how far its log likelihood can be
+  # off.
+  check <- fits$default$laplace$correction$check
+  expect_identical(check$expanded, length(check$expanded_units))
+  expect_true(all(gated[check$expanded_units]))
+  est <- fits$default$estimate
+  expect_equal(est$loglik_bound, sum(ex$bound[check$expanded_units]), tolerance = 1e-6)
+  expect_match(summary(fits$default)$loglikNote,
+    paste0("within ", format(est$loglik_bound, digits = 2), " by the expansion"), fixed = TRUE)
 })
 
 test_that("the continuation lands at the exact marginal's optimum", {

@@ -7727,7 +7727,7 @@ print.ctJuliaFit <- function(x, ...) {
   sampled <- !is.null(x$sample)
   if (!sampled) cat("  log likelihood:", format(x$estimate$loglik),
     if (identical(x$estimate$loglik_method, "checked")) paste0("(Laplace's error ",
-      "integrated by its check, se ", format(x$estimate$loglik_se, digits = 2),
+      "integrated by its check, ", .ctLoglikCheckedError(x$estimate),
       "; Laplace ", format(x$estimate$loglik_laplace), ")"), "\n")
   if (!is.null(x$estimate$loglik_weighted)) cat("  weighted log likelihood:",
     format(x$estimate$loglik_weighted), "(sampling weights)\n")

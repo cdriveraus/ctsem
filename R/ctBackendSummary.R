@@ -2197,6 +2197,12 @@ ctBackendParMatrices <- function(fit, raw = NULL, tipreds = NULL, state = NULL,
   # summaryCtStanFitLoglikDuplicatesPosterior() in R/summary.ctStanFit.R.
   # The likelihood is always returned, priors or not.
   if (!sampled) out$loglik <- object$estimate$loglik
+  if (!sampled && identical(object$estimate$loglik_method, "checked")) {
+    out$loglikNote <- paste0("The log likelihood is Laplace's (",
+      format(object$estimate$loglik_laplace, digits = 8), ") plus its error, ",
+      "integrated by the random-effects check: ",
+      .ctLoglikCheckedError(object$estimate), ".")
+  }
   if (weighted) {
     w <- .ctBackendSpec(object)$subject_weights
     out$weights <- sprintf("%d subjects, relative weights %s to %s (mean 1)",
