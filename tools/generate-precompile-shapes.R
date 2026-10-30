@@ -130,23 +130,26 @@ sampled_fit <- list(sampled = function(fit, dat, model) ctFit(dat, model,
   sampleControl = list(iter = 10L, chains = 1L, warmup = 5L, maxdepth = 3L,
     processes = FALSE)),
   map = function(fit, dat, model) ctFitUncertainty(fit, "sample",
-    control = list(chains = 1L, warmup = 5L, draws = 5L, maxdepth = 3L,
-      processes = FALSE, intoverpop = "none"), cores = 1L),
+    intoverpop = "none", control = list(chains = 1L, warmup = 5L, draws = 5L,
+      maxdepth = 3L, processes = FALSE), cores = 1L),
   saem = function(fit, dat, model) ctFitUncertainty(fit, "sample",
-    control = list(chains = 1L, warmup = 5L, draws = 5L, maxdepth = 3L,
-      processes = FALSE, intoverpop = "none", sampler = "saem"), cores = 1L),
+    intoverpop = "none", control = list(chains = 1L, warmup = 5L, draws = 5L,
+      maxdepth = 3L, processes = FALSE, sampler = "saem"), cores = 1L),
   checked = function(fit, dat, model) ctFitUncertainty(fit, "checked", cores = 1L))
 
 # What the refined fit runs once the shift check flags units: the
 # continuation and its screen, the placed objective's climb and its Hessian
 # (`.ctLaplacePlacedRefine()`). A shape whose own fit's check left it alone
 # records them all the same, by running the correction again without the
-# check, whose screen then flags the units. Where the fit's correction moved
-# the estimate, the fit has recorded them already.
+# check and with a screen that flags every unit (a negative `tolerance`):
+# under the default tolerance the block shape's screen passed once the
+# correlation bound moved its estimate (0.999, 2026-10-30), and the climb
+# went unrecorded. Where the fit's correction moved the estimate, the fit has
+# recorded them already.
 correction_refined <- function(fit, dat, model) {
   if (isTRUE(fit$laplace$correction$applied)) return(invisible(NULL))
   ns$.ctLaplaceContinue(fit, control = utils::modifyList(
-    ns$.ctLaplaceContinueDefaults, list(check = FALSE)))
+    ns$.ctLaplaceContinueDefaults, list(check = FALSE, tolerance = -1)))
 }
 
 shapes <- list(
