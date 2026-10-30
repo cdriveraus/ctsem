@@ -831,7 +831,7 @@ test_that("a fit's note says where the check found the normal wrong, or the fit 
   # says what a check there would.
   fit$laplace$jump <- list(units = 1L)
   expect_match(note(fit), "Laplace term jumped", fixed = TRUE)
-  # Refitted, the intervals and their check are the hybrid's, which does not
+  # Refined, the intervals and their check are the hybrid's, which does not
   # jump there.
   fit$laplace$correction <- list(applied = TRUE, draws = "redrawn")
   expect_match(note(fit), "departs from that normal in 2 directions", fixed = TRUE)

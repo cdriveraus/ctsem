@@ -769,7 +769,7 @@ T0VARredundancies <- function(ctm) {
 #' identified, which ctFit warns of.
 #'
 #' \code{'quadrature'} (\code{backend='julia'}, optimizing) fits by
-#' \code{'laplace'} and then refits with the units the random-effects check
+#' \code{'laplace'} and then refines the fit with the units the random-effects check
 #' names (\code{optimcontrol$checks}) integrated numerically -- by adaptive
 #' Gauss-Hermite rules (5 nodes per effect) for units with up to five effects,
 #' by draws beyond -- reporting that objective's estimate, standard errors and
@@ -1340,7 +1340,7 @@ ctFit<-function(datalong, model, stanmodeltext=NA, iter=1000, intoverstates=TRUE
   # name the chosen backend cannot honour is a mistake to report immediately,
   # not after a wait.
   # What ctsem 4.0.0's development called the random-effects check and the
-  # integrated refit, refused with what they are now.
+  # refined fit, refused with what they are now.
   renamed <- c(laplace_correct = "optimcontrol$checks and intoverpop = 'quadrature'",
     laplace_check = "optimcontrol$checks",
     laplace_refit = "intoverpop = 'quadrature'")
@@ -1494,14 +1494,14 @@ ctFit<-function(datalong, model, stanmodeltext=NA, iter=1000, intoverstates=TRUE
   args$datalong <- NULL
   args$model <- NULL
   args$ctstanmodel <- NULL
-  # 'quadrature' is the Laplace route, refitted at the end with the units
+  # 'quadrature' is the Laplace route, refined at the end with the units
   # its random-effects check names integrated (`.ctLaplaceContinue()`): set
-  # up and fitted as 'laplace', the refit asked of the correction stage, and
+  # up and fitted as 'laplace', the refinement asked of the correction stage, and
   # recorded as asked in `args`, so a replay asks again.
   quadrature <- identical(intoverpop, 'quadrature')
   if(quadrature) {
     if(!identical(backend, 'julia')) stop("intoverpop = 'quadrature' needs ",
-      "backend = 'julia', whose Laplace route it refits.", call.=FALSE)
+      "backend = 'julia', whose Laplace route it refines.", call.=FALSE)
     intoverpop <- 'laplace'
     optimcontrol$.refit <- TRUE
   }

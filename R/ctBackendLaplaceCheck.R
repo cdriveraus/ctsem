@@ -51,7 +51,8 @@
 #' point estimate is approximation-limited and the interval will not cover
 #' whatever width it has.
 #'
-#' A fit can be refitted with its units integrated when it is fitted
+#' A fit can be refined, with its units' random effects integrated by
+#' quadrature, when it is fitted
 #' (\code{ctFit(intoverpop = 'quadrature')}) or after
 #' (\code{ctFitUncertainty(fit, intoverpop = 'quadrature')}); by default it
 #' only runs the random-effects check, which warns where integrating would
@@ -78,7 +79,7 @@
 #'   is skipped when uncertainty was not computed.
 #' @param step Finite-difference step for the gap gradient, on the raw scale.
 #' @param refine Continue the fit on the quadrature objective rather than
-#'   correcting linearly: the integrated refit \code{intoverpop =
+#'   correcting linearly: the refined fit \code{intoverpop =
 #'   'quadrature'} runs at fit time (see \code{\link{ctFit}}), from this fit's
 #'   estimate, with its Hessian as the starting metric. Its gradient is exact,
 #'   so it costs a few quadrature gradients per round rather than the
@@ -225,7 +226,7 @@ ctLaplaceCheck <- function(fit, nodes = 5L, correction = TRUE, step = 1e-3,
   verdict <- .ctFitGap("quadrature", gap = gap, nsubjects = nsubjects,
     remedy = paste0("A gap that matters means the Laplace approximation is ",
       "limiting the fit rather than the data; ctFitUncertainty(fit, intoverpop = ",
-      "'quadrature') refits with the units integrated, and ",
+      "'quadrature') refines the fit with the units integrated by quadrature, and ",
       "ctFitUncertainty(fit, 'sample', intoverpop = 'none') avoids the ",
       "approximation entirely."))
   out <- list(verdict = verdict,

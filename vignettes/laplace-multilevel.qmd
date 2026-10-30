@@ -114,8 +114,8 @@ own effects.
 check (`optimcontrol$checks`): it checks each unit's integral at draws
 from that unit's posterior, and warns where taking the integrals exactly
 would move an estimate by a tenth of a standard error or more.
-`ctFitUncertainty(fit, intoverpop = 'quadrature')` then refits on the
-quadrature objective for the units that carry the move, reporting the
+`ctFitUncertainty(fit, intoverpop = 'quadrature')` then refines the fit on
+the quadrature objective for the units that carry the move, reporting the
 quadrature log likelihood, and `ctFit(intoverpop = 'quadrature')` does the
 same at fit time; `print(fit)`
 says when the estimate moved, or should have. `ctLaplaceCheck()` reports the same

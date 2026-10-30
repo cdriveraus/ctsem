@@ -46,8 +46,9 @@ draws from a curvature, importance-weighted ones for \code{'checked'} and
 \item{intoverpop}{How the random effects are integrated, in
 \code{\link{ctFit}}'s words; \code{NULL} (the default) keeps the fit's own
 (\code{'laplace'} or \code{'augmented'}, as \code{fit$args$resolved}
-records). \code{'quadrature'}, for a Laplace fit, refits from the estimate
-with the units the random-effects check names integrated numerically -- by
+records). \code{'quadrature'}, for a Laplace fit, refines the fit from its
+estimate, with the units the random-effects check names integrated
+numerically -- by
 adaptive Gauss-Hermite rules for units with up to five effects, by draws
 beyond -- and describes the posterior there, as
 \code{ctFit(intoverpop = 'quadrature')} does when fitting; with
@@ -78,9 +79,9 @@ intervals come from, records it in
 \code{summary()}, when the posterior departs from that normal, naming
 \code{method = 'sample'}. Both checks take seconds on the fit's own
 objective. With \code{intoverpop = 'quadrature'} the interval check is
-made on the refit's objective, where each of its draws integrates the
-flagged units again: seconds on one level, but half an hour on a nested
-model whose refit took minutes, longer than sampling; \code{checks =
+made on the refined fit's objective, where each of its draws integrates
+the flagged units again: seconds on one level, but half an hour on a
+nested model whose refinement took minutes, longer than sampling; \code{checks =
 'randomeffects'} leaves it out.}
 
 \item{finishsamples}{Number of approximate raw-parameter samples. If
@@ -315,9 +316,9 @@ hybrid, which has the units the screen flags,
 and those the fit's check named, integrated by quadrature rules
 (\code{control$nodes} per effect, 5 by default) or draws, the rest by
 their Laplace terms, with the error of that density reported in
-\code{fit$laplace$correction$error} and in \code{summary()}. A fit made
-without the refit -- the default, which only checks and warns -- is
-climbed to that density's optimum first; one refitted when it was fitted
+\code{fit$laplace$correction$error} and in \code{summary()}. A fit not
+refined when it was fitted -- the default, which only checks and warns --
+is climbed to that density's optimum first; one refined when it was fitted
 stays where it is, as does any fit under \code{correctEstimate = FALSE}.
 With \code{'quadrature'}, \code{'hessian'} is taken too: the hybrid's
 curvature where the climb ends, which is what

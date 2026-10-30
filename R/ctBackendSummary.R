@@ -1879,9 +1879,10 @@ ctBackendParMatrices <- function(fit, raw = NULL, tipreds = NULL, state = NULL,
 # with `control$check`, a fit's default), in one sentence; NULL where it named
 # no direction or did not run. Fit-level only: per parameter it names a third
 # of the intervals that are off (review/REVIEW-fit-uncertainty-2026-10-25.md,
-# section 5). The check is made where the intervals are drawn, so on a refit
-# (`intoverpop = 'quadrature'`) it is the refit's. A fit that ended on a jump
-# and was not refitted has its intervals from the Laplace objective where it
+# section 5). The check is made where the intervals are drawn, so on a
+# refined fit (`intoverpop = 'quadrature'`) it is the refined fit's. A fit
+# that ended on a jump and was not refined has its intervals from the Laplace
+# objective where it
 # jumps: a check made there reads the jump, and the jump says what one would,
 # that some unit's posterior is not one Gaussian basin.
 .ctUncertaintyCheckNote <- function(fit) {

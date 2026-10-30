@@ -104,7 +104,7 @@ variation on a DIFFUSION or MANIFESTVAR parameter is then only partly
 identified, which ctFit warns of.
 
 \code{'quadrature'} (\code{backend='julia'}, optimizing) fits by
-\code{'laplace'} and then refits with the units the random-effects check
+\code{'laplace'} and then refines the fit with the units the random-effects check
 names (\code{optimcontrol$checks}) integrated numerically -- by adaptive
 Gauss-Hermite rules (5 nodes per effect) for units with up to five effects,
 by draws beyond -- reporting that objective's estimate, standard errors and
