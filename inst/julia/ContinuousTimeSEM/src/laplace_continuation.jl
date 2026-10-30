@@ -1496,10 +1496,28 @@ nodes fewer -- is within `opts.draws_se` keeps its rule and that error. One
 beyond it is checked against the rule two nodes more: the finer rule's
 difference from it is the rule's error, and where that too is beyond
 `draws_se` the finer rule is taken and checked the same way, up to
-`_CONTINUATION_NODES_MAX` nodes; a unit no rule up to there resolves takes
-draws, which stop at `draws_se` on their own standard error
+`_CONTINUATION_NODES_MAX` nodes. A unit still beyond `draws_se` there keeps
+its finest rule wherever the rules are converging -- the last difference
+`d` smaller than the one before, `d_prev` -- and reports as its error the
+geometric tail that ratio implies, `d r / (1 - r)` with `r = d / d_prev`,
+and never less than `d`, since one ratio is a noisy estimate of the next.
+Only a unit whose rules are not converging, whose error no node count
+bounds, takes draws, which stop at `draws_se` on their own standard error
 (`_continuation_importance_rule`), or keeps the finest rule with its error
-where draws are off. `placed`'s arrays are updated in place. Each unit starts
+where draws are off. `placed`'s arrays are updated in place.
+
+Why the error and not draws: a unit whose rules converge has a known error,
+which the fit reports (`error_nodes`), and draws cost far more than the rule
+-- a nested unit's are conditional per block, so a member pays the product
+of the draws along its path. On gN3 at its refined estimate the 9-node rule
+of unit 3 differed from the 7-node by 0.059 nats against a target of 0.05
+(0.246 before it, so converging), and the draws it took instead were
+353,781: 364,440 member evaluations a value against 12,630 for the other
+seven units, 2,301 s for the refined fit and its interval check against
+68 s without them, at the same estimate to 0.000 standard errors
+(scripts/fit-review-2026-10/race_roundstops.R, refined_rules.R). Its 11- and
+13-node rules differ by 0.035 and 0.019, so the reported 0.059 is the
+right size (node_sequences.R). Each unit starts
 from its own count (`placed.nodes`), which the continuation keeps once the
 refine has raised it (`o.unit_nodes`), and draws once it has taken them
 (`o.drawn`): a choice made afresh at every placement switched wherever a
@@ -1524,16 +1542,27 @@ function _continuation_refine!(laplace::CTSEMLaplaceObjective, theta::Vector{Flo
     Ls = _laplace_popchols(theta, laplace.spec)
     # Every node count the loop below may ask for, warmed here: the grid
     # caches are pure reads inside the threads (`_quadrature_warm_caches`).
-    for m in (Int(opts.nodes) + 2):2:_CONTINUATION_NODES_MAX
+    # From 3, for the convergence check on a unit that starts at the most.
+    for m in 3:2:_CONTINUATION_NODES_MAX
         _continuation_warm_caches(laplace, m, opts.soft_maxdirs, opts.product_maxdim)
     end
     _laplace_parallel(laplace, 1:length(coarse)) do i
-        local U, n, finer, err, r, ws
+        local U, n, finer, err, prev, r, ws, rule_value, ratio, converging
         U = coarse[i]
         ws = _laplace_workspace!(laplace, Float64, length(theta))
+        rule_value(m) = try
+            v = _continuation_unit_rule(laplace, U, theta, Ls, ws,
+                merge(opts, (nodes=m,)))
+            v === nothing ? NaN : v.value
+        catch e
+            _ctsem_must_propagate(e) && rethrow()
+            NaN
+        end
         n = placed.nodes[U]
         finer = false
         err = errors[U]
+        # The difference before `err`, for the convergence check below.
+        prev = NaN
         while n + 2 <= _CONTINUATION_NODES_MAX
             r = try
                 _continuation_unit_rule(laplace, U, theta, Ls, ws,
@@ -1553,14 +1582,28 @@ function _continuation_refine!(laplace::CTSEMLaplaceObjective, theta::Vector{Flo
             placed.rules[U] = r.rule
             placed.quadrature[U] = r.value
             placed.nodes[U] = n + 2
+            prev = errors[U]
             errors[U] = err
             finer = true
             n += 2
         end
-        # A unit kept at the most nodes has no finer rule to try, and takes
-        # draws where that rule is still short, as it did when it got there.
+        # A unit at the most nodes and still short keeps its rule where the
+        # rules converge, with their tail as its error; otherwise it takes
+        # draws (see the docstring). One that started at the most nodes has a
+        # single difference, so the one before it is computed here.
+        converging = false
+        if (finer || n + 2 > _CONTINUATION_NODES_MAX) && errors[U] > target
+            if !isfinite(prev) && n >= 5
+                prev = abs(rule_value(n - 2) - rule_value(n - 4))
+            end
+            if isfinite(prev) && prev > 0 && errors[U] < prev
+                ratio = errors[U] / prev
+                errors[U] *= max(1.0, ratio / (1 - ratio))
+                converging = true
+            end
+        end
         if (finer || n + 2 > _CONTINUATION_NODES_MAX) && errors[U] > target &&
-                opts.draws > 0
+                !converging && opts.draws > 0
             r = try
                 _continuation_unit_rule(laplace, U, theta, Ls, ws,
                     merge(opts, (draw_units=(U,),)))
