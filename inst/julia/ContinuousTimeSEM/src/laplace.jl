@@ -3726,9 +3726,12 @@ function _laplace_solve_unit_mode!(laplace::CTSEMLaplaceObjective, U::Integer,
     # And past a maximum near its fold, the one it hands over to.
     (set === nothing || !best.converged) ||
         _laplace_partner_modes!(set, laplace, U, values, Ls, aws)
-    laplace.modes[U] = best.u
+    # Bound once for the comprehension, which captures what it reads: `best`,
+    # assigned above more than once, would be a `Core.Box`.
+    chosen = best.u
+    laplace.modes[U] = chosen
     laplace.alt_modes[U] = set === nothing ? Vector{Float64}[] :
-        Vector{Float64}[m.u for m in set if _laplace_maxabsdiff(m.u, best.u) >= 1e-4]
+        Vector{Float64}[m.u for m in set if _laplace_maxabsdiff(m.u, chosen) >= 1e-4]
     laplace.inner_iterations[U] = best.iterations
     laplace.inner_gradient[U] = best.gradmax
     laplace.inner_converged[U] = best.converged

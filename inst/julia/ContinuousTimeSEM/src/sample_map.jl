@@ -1188,13 +1188,16 @@ function ctsem_sample_map(laplace::CTSEMLaplaceObjective, values::AbstractVector
     # hands in (the fit's, rescaled by its check where it has one), its flat
     # directions bounded by the prior; the conditional block where none is given.
     prec = _ctsem_prior_precision(laplace.objective, npar)
+    # Names of their own here: `th` and `Ls` again would make the draw loop's
+    # below, which a closure there captures, function locals assigned twice,
+    # each a `Core.Box`.
     cov = if hessian === nothing
-        th = _laplace_extend(laplace, theta0)
-        Ls = _laplace_popchols(th, laplace.spec)
+        th0 = _laplace_extend(laplace, theta0)
+        Ls0 = _laplace_popchols(th0, laplace.spec)
         for U in 1:sampler.nunits
-            _laplace_solve_unit_mode!(laplace, U, th, Ls)
+            _laplace_solve_unit_mode!(laplace, U, th0, Ls0)
         end
-        _conditional_population_covariance(sampler, th, Ls, nothing)
+        _conditional_population_covariance(sampler, th0, Ls0, nothing)
     else
         H = Matrix{Float64}(hessian)[1:npar, 1:npar]
         _prior_bounded_covariance(Symmetric(-(H .+ transpose(H)) ./ 2), prec)
