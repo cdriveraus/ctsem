@@ -548,10 +548,11 @@ end
 CTSEMJointMapDensity(m::CTSEMJointMap, count::Threads.Atomic{Int}) =
     CTSEMJointMapDensity(m, zeros(m.sampler.ndim), zeros(m.sampler.ndim), count)
 
-# Whether a leapfrog step that diverged at latent `xt` had taken theta past the
-# random-effect correlation bound (sample_nuts.jl): there the wall
-# (`_ctsem_corbound`) is negative. On the race's fixtures nine in ten of the
-# divergent steps were, deep past it, where trajectories that started near a
+# Whether latent `xt` maps theta past the random-effect correlation bound
+# (sample_nuts.jl): there the wall (`_ctsem_corbound`) is negative. Asked at
+# every leapfrog step, so it is a few small factorizations beside the density's
+# subject passes. On the race's fixtures nine in ten of the divergent steps
+# were past it themselves, deep past, where trajectories that started near a
 # correlation the posterior reaches, or anywhere, had crossed it.
 function _divergence_at_bound(d::CTSEMJointMapDensity, xt::AbstractVector)
     m = d.map

@@ -1611,10 +1611,10 @@
     ess_tail = if (is.null(result$ess_tail)) NULL else
       stats::setNames(as.numeric(result$ess_tail)[seq_len(npar)], colnames(posterior)),
     divergent = as.integer(result$ndivergent),
-    # Of those, the ones whose divergent step lay past the random-effect
-    # correlation bound (the engine's `_divergence_at_bound`): trajectories
-    # crossing the parameter space's own edge, past which there is no mass.
-    # Only the joint map's sampler places them; any other counts none here.
+    # Of those, the ones on a stretch of trajectory that had crossed the
+    # random-effect correlation bound (the engine's `_divergence_at_bound`):
+    # the parameter space's own edge, past which there is no mass. Only the
+    # joint map's sampler places them; any other counts none here.
     divergent_bound = as.integer(.ctJuliaOr(result$ndivergent_bound, 0L))[1L],
     warmup_divergent = as.integer(result$warmup_divergent),
     # Subject filter passes over the run, warmup included, whose predictions
@@ -1788,13 +1788,14 @@
 # sample size or a saturated tree depth means they did describe one, and did
 # so inefficiently. Only the first two set it to FALSE.
 #
-# A divergence past the random-effect correlation bound is not of that kind.
-# The bound is a cubic wall in the objective, part of the parameter space, and
-# past it there is no mass; a trajectory that crosses it meets a wall that
-# steepens without limit, so its energy error grows past any threshold. On the
-# race's joint samples that was nine divergent steps in ten, from trajectories
-# that started near a correlation the posterior reaches or anywhere at all, and
-# the draws' share near the bound matched the long references'
+# A divergence on a trajectory that crossed the random-effect correlation bound
+# is not of that kind. The bound is a cubic wall in the objective, part of the
+# parameter space, and past it there is no mass; a trajectory that crosses it
+# meets a wall that steepens without limit, so its energy error grows past any
+# threshold. On the race's joint samples nine divergent steps in ten were
+# themselves past the bound, from trajectories that started near a correlation
+# the posterior reaches or anywhere at all, and the draws' share near the
+# bound matched the long references'
 # (review/SAMPLING-verdict-divergences-2026-10-30.md). So it is reported, as the
 # posterior reaching the bound, and does not set `converged`.
 #' @keywords internal

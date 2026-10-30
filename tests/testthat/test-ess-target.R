@@ -106,11 +106,11 @@ test_that("importance sampling that ends short of its target says so, not only b
 })
 
 test_that("divergences at the correlation bound are reported and leave the verdict to the rest", {
-  # The engine places a divergence past the random-effect correlation bound
-  # (`_divergence_at_bound`): a trajectory crossing the parameter space's own
-  # edge, past which there is no mass. On the race's joint samples nine
-  # divergent steps in ten were that, and every one of five such fits read
-  # converged = FALSE with its targets met.
+  # The engine places a divergence on a trajectory that crossed the
+  # random-effect correlation bound (`_divergence_at_bound`): the parameter
+  # space's own edge, past which there is no mass. On the race's joint samples
+  # nine divergent steps in ten were past it, and every one of five such fits
+  # read converged = FALSE with its targets met.
   diag <- function(divergent, bound) list(chains = 4L, warmup = 200L, draws = 100L,
     divergent = divergent, divergent_bound = bound, rhat = c(a = 1.001, b = 1.002),
     ess = c(a = 900, b = 900), saturated = 0L, max_depth = 10L,
