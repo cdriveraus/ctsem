@@ -285,7 +285,7 @@
   value_tol = 1e-3, maxdim = 5L, stop_gain = 0, skip_gain = 5e-3,
   draws = 256L, draws_se = 0.05, draws_max = 16384L, draws_df = 4,
   draws_scope = "forced", check = TRUE, check_draws = 128L, check_seeds = 4L,
-  placed = FALSE)
+  placed = TRUE)
 
 # How far the hybrid's objective is from the exact marginal, from the engine's
 # info at a placement (`ctsem_laplace_continuation_info`): `nats`, the frozen
@@ -1143,6 +1143,17 @@
   # one a caller wants left where it is) the continuation needs neither, and
   # its own Hessian at the end is the one the uncertainty is drawn on.
   stay <- as.integer(.ctJuliaOr(control$rounds, 0L)) == 0L
+  # The rules placed at every evaluation (`.ctLaplacePlacedRefine()`), where
+  # `control$placed` asks for it, as it does by default: one objective climbed
+  # from the estimate, so neither the fit's curvature nor the rounds' basis
+  # below.
+  if (isTRUE(control$placed)) {
+    return(.ctLaplacePlacedRefine(fit, module, cont, est, record, control,
+      tol = .ctBackendGapTolerance(fit), stay = stay, chunks = chunks,
+      verbose = verbose, sink = sink, method = method,
+      uncertaintycontrol = uncertaintycontrol, report = report_quadrature,
+      timed = timed))
+  }
   hessian <- .ctBackendStoredHessian(fit, est)
   flat <- fit$uncertainty$details$flatdirections$vectors
   # A fit that ended on a jump was not certified and has no Hessian: the
@@ -1214,14 +1225,6 @@
       hessian = as.numeric(after$seconds_hessian))
     record$seconds <- timed()
     record
-  }
-  # The rules placed at every evaluation instead of the rounds
-  # (`.ctLaplacePlacedRefine()`), where `control$placed` asks for it.
-  if (isTRUE(control$placed)) {
-    return(.ctLaplacePlacedRefine(fit, module, cont, est, record, control, tol,
-      chunks = chunks, verbose = verbose, sink = sink, method = method,
-      uncertaintycontrol = uncertaintycontrol, report = report_quadrature,
-      account = account))
   }
   rounds_started <- proc.time()[["elapsed"]]
   run <- try(.ctLaplaceContinueRun(module, cont, est, basis$basis, tol,

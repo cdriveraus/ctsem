@@ -86,7 +86,8 @@ term's log determinant weighted one.
 using LinearAlgebra
 
 export ctsem_laplace_placed, ctsem_laplace_placed_evaluate, ctsem_laplace_placed_check,
-    ctsem_laplace_placed_hessian, ctsem_laplace_placed_info
+    ctsem_laplace_placed_hessian, ctsem_laplace_placed_info,
+    ctsem_laplace_placed_optimize
 
 """
     CTSEMLaplacePlaced
@@ -114,6 +115,10 @@ mutable struct CTSEMLaplacePlaced{C} <: CTSEMOptimisable
     seconds_gradients::Float64
     seconds_hessian::Float64
     lbfgs::Union{Nothing,CTSEMLBFGSMemory}
+    # Per frozen rule, its effective number of nodes or draws at the last
+    # evaluation and at the first after its placement (`_placed_drifted`).
+    ess::Vector{Float64}
+    ess_placed::Vector{Float64}
 end
 
 """
@@ -153,7 +158,8 @@ function ctsem_laplace_placed(o::CTSEMLaplaceContinuation)
         return true
     end
     return CTSEMLaplacePlaced{typeof(o)}(o, placed, frozen, nodes, anchors, nothing,
-        nothing, 0, 0, 0.0, 0.0, 0.0, nothing)
+        nothing, 0, 0, 0.0, 0.0, 0.0, nothing, fill(NaN, length(frozen)),
+        fill(NaN, length(frozen)))
 end
 
 """
@@ -811,21 +817,26 @@ function _placed_frozen(P::CTSEMLaplacePlaced, theta::Vector{Float64}, Ls, dL,
     rows = [want_gradient ? zeros(npar) : Float64[] for _ in 1:nf]
     nf == 0 && return (values=values, rows=rows, ok=true)
     ok = _laplace_parallel(laplace, 1:nf) do i
-        local rule, U, aws, scratch, u, total, r
+        local rule, U, aws, scratch, u, total, r, ess
         rule = o.rules[P.frozen[i]]
         U = rule.unit
         aws = _laplace_workspace!(laplace, Float64, npar)
         scratch = _continuation_scratch(laplace, npar)
         u = zeros(laplace.units.dims[U])
         total = 0.0
+        ess = Inf
         for root in rule.roots
             r = _continuation_rule_value(o, U, theta, Ls, dL, positions, root, u, aws,
                 scratch, want_gradient)
             isfinite(r.value) || return false
             total += r.value
+            ess = min(ess, r.ess)
             want_gradient && (rows[i] .+= r.gradient)
         end
         values[i] = total
+        # Each task its own entries, as `_continuation_record_ess!` keeps them.
+        P.ess[i] = ess
+        isnan(P.ess_placed[i]) && isfinite(ess) && (P.ess_placed[i] = ess)
         return true
     end
     return (values=values, rows=rows, ok=ok)
@@ -969,37 +980,207 @@ function ctsem_laplace_placed_check(P::CTSEMLaplacePlaced, values::AbstractVecto
 end
 
 """
+    _placed_term!(row, P, i, theta, Ls, dL, positions)
+
+Flagged term `i`'s value and unweighted gradient at `theta` into `row`: the
+`i`-th placed unit (`_placed_unit!`) from its anchor, or past them the
+corresponding frozen rule (`_continuation_rule_value`). What a Hessian column
+differences, a term at a time.
+"""
+function _placed_term!(row::Vector{Float64}, P::CTSEMLaplacePlaced, i::Int,
+    theta::Vector{Float64}, Ls, dL, positions)
+    np = length(P.placed)
+    i <= np && return _placed_unit!(row, P, P.placed[i], theta, Ls, dL, positions,
+        true).ok
+    o = P.cont
+    laplace = o.laplace
+    rule = o.rules[P.frozen[i - np]]
+    U = rule.unit
+    npar = length(theta)
+    fill!(row, 0.0)
+    aws = _laplace_workspace!(laplace, Float64, npar)
+    scratch = _continuation_scratch(laplace, npar)
+    u = zeros(laplace.units.dims[U])
+    for root in rule.roots
+        r = _continuation_rule_value(o, U, theta, Ls, dL, positions, root, u, aws,
+            scratch, true)
+        isfinite(r.value) || return false
+        row .+= r.gradient
+    end
+    return true
+end
+
+"""The flagged terms' units, placed then frozen, as `_placed_term!` numbers them."""
+_placed_term_units(P::CTSEMLaplacePlaced) =
+    vcat(P.placed, Int[P.cont.rules[f].unit for f in P.frozen])
+
+"""
     ctsem_laplace_placed_hessian(P, values; step=1e-4)
 
-The placed objective's Hessian at `values` by central differences of its exact
-gradient, two gradients a column, every unit's Newton starting from its mode at
-`values`.
+The placed objective's Hessian at `values`: the Laplace part's and the prior's
+(`ctsem_laplace_hessian` on `P.cont.rest`, localised to the units that read
+each parameter), and the flagged terms' by central differences of their exact
+gradients, each column over the terms that read it -- a nonzero gradient at
+`values` or at a point moved in every coordinate, since a reader's gradient can
+be exactly zero at a point of symmetry (`_laplace_hessian_readers`) -- and
+columns whose readers do not overlap moved together
+(`_ctsem_local_colours`). Every unit's Newton starts from its mode at `values`.
 """
 function ctsem_laplace_placed_hessian(P::CTSEMLaplacePlaced, values::AbstractVector;
     step::Real=1e-4)
     started = time_ns()
+    o = P.cont
+    laplace = o.laplace
+    spec = laplace.spec
     x = collect(Float64, values)
     n = length(x)
     ctsem_laplace_placed_evaluate(P, x; gradient=false)
-    home = deepcopy(P.anchors)
-    H = fill(NaN, n, n)
-    for t in 1:n
-        h = step * max(1.0, abs(x[t]))
-        xp = copy(x); xp[t] += h
-        xm = copy(x); xm[t] -= h
-        P.anchors = deepcopy(home)
-        gp = _placed_evaluate(P, _laplace_extend(P.cont.laplace, xp), true)
-        P.anchors = deepcopy(home)
-        gm = _placed_evaluate(P, _laplace_extend(P.cont.laplace, xm), true)
-        (gp.converged && gm.converged) || continue
-        H[:, t] .= (gp.gradient[1:n] .- gm.gradient[1:n]) ./ (2 * h)
+    H = Matrix{Float64}(ctsem_laplace_hessian(o.rest, x; step=step))
+    theta = _laplace_extend(laplace, x)
+    npar = length(theta)
+    positions = [_laplace_level_positions(spec, l) for l in eachindex(spec.levels)]
+    units = _placed_term_units(P)
+    nt = length(units)
+    weights = [_laplace_unit_weight(laplace, U) for U in units]
+    rows_at = function (th)
+        local Ls, dL, rows, ok
+        Ls = _laplace_popchols(th, spec)
+        dL = _laplace_level_chol_derivatives(th, spec)
+        rows = [zeros(npar) for _ in 1:nt]
+        ok = _laplace_parallel(laplace, 1:nt) do i
+            _placed_term!(rows[i], P, i, th, Ls, dL, positions)
+        end
+        return ok ? rows : nothing
     end
-    P.anchors = home
+    base = rows_at(theta)
+    base === nothing && return fill(NaN, n, n)
+    moved = copy(theta)
+    for j in 1:n
+        h = step * max(1.0, abs(x[j])) * (1 + mod(j * 0.6180339887498949, 1.0))
+        moved[j] += isodd(j) ? h : -h
+    end
+    shifted = rows_at(moved)
+    reads = [Int[i for i in 1:nt if base[i][t] != 0 ||
+        (shifted !== nothing && shifted[i][t] != 0)] for t in 1:n]
+    for colour in _ctsem_local_colours(reads, nt)
+        hs = [step * max(1.0, abs(x[t])) for t in colour]
+        plus = copy(theta)
+        minus = copy(theta)
+        for (c, t) in enumerate(colour)
+            plus[t] += hs[c]
+            minus[t] -= hs[c]
+        end
+        terms = sort!(unique(reduce(vcat, (reads[t] for t in colour); init=Int[])))
+        isempty(terms) && continue
+        rp = [zeros(npar) for _ in terms]
+        rm = [zeros(npar) for _ in terms]
+        Lp = _laplace_popchols(plus, spec)
+        Lm = _laplace_popchols(minus, spec)
+        dLp = _laplace_level_chol_derivatives(plus, spec)
+        dLm = _laplace_level_chol_derivatives(minus, spec)
+        ok = _laplace_parallel(laplace, 1:(2 * length(terms))) do q
+            local a, side
+            a = (q + 1) >> 1
+            side = isodd(q)
+            side ? _placed_term!(rp[a], P, terms[a], plus, Lp, dLp, positions) :
+                _placed_term!(rm[a], P, terms[a], minus, Lm, dLm, positions)
+        end
+        for (c, t) in enumerate(colour)
+            if !ok
+                H[:, t] .= NaN
+                continue
+            end
+            for (a, i) in enumerate(terms)
+                i in reads[t] || continue
+                @inbounds for s in 1:n
+                    H[s, t] += weights[i] * (rp[a][s] - rm[a][s]) / (2 * hs[c])
+                end
+            end
+        end
+    end
+    P.seconds_hessian += (time_ns() - started) / 1e9
+    return (H .+ transpose(H)) ./ 2
+end
+
+"""
+    _placed_drifted(P, ratio)
+
+Whether any frozen rule's effective number of nodes or draws has fallen under
+`ratio` of what it was at its placement (`_placed_frozen` records both), as
+the continuation reads its own (`_continuation_drifted`): a property of the
+draws, not of a value compared across placements.
+"""
+_placed_drifted(P::CTSEMLaplacePlaced, ratio::Real) =
+    any(i -> isfinite(P.ess[i]) && isfinite(P.ess_placed[i]) &&
+        P.ess[i] < ratio * P.ess_placed[i], eachindex(P.frozen))
+
+"""
+    _placed_replace!(P, values, ratio)
+
+Place again, at `values`, the frozen rules that have drifted
+(`_placed_drifted`), each as its unit keeps it -- its node count, or draws
+(`_continuation_unit_rule`). Returns how many were placed.
+"""
+function _placed_replace!(P::CTSEMLaplacePlaced, values::AbstractVector, ratio::Real)
+    o = P.cont
+    laplace = o.laplace
+    theta = _laplace_extend(laplace, collect(Float64, values))
+    Ls = _laplace_popchols(theta, laplace.spec)
+    opts = _continuation_opts(o)
+    which = [i for i in eachindex(P.frozen) if isfinite(P.ess[i]) &&
+        isfinite(P.ess_placed[i]) && P.ess[i] < ratio * P.ess_placed[i]]
+    for m in unique(_continuation_unit_opts(opts, o.rules[P.frozen[i]].unit).nodes
+            for i in which)
+        _continuation_warm_caches(laplace, m, o.soft_maxdirs, o.product_maxdim)
+    end
+    placed = 0
+    for i in which
+        f = P.frozen[i]
+        U = o.rules[f].unit
+        uopts = _continuation_unit_opts(opts, U)
+        o.importance[U] && (uopts = merge(uopts, (draw_units=(U,),)))
+        r = _continuation_unit_rule(laplace, U, theta, Ls,
+            _laplace_workspace!(laplace, Float64, length(theta)), uopts)
+        r === nothing && continue
+        o.rules[f] = r.rule
+        P.ess_placed[i] = NaN
+        placed += 1
+    end
     P.cache = nothing
     P.value_cache = nothing
-    H = (H .+ transpose(H)) ./ 2
-    P.seconds_hessian += (time_ns() - started) / 1e9
-    return H
+    return placed
+end
+
+"""
+    ctsem_laplace_placed_optimize(P, start; drift=0.5, replacements=8, kwargs...)
+
+`ctsem_optimize` on the placed objective from `start`, its keywords passed on.
+Where frozen rules are held (`P.frozen`), the run stops when one has drifted
+(`_placed_drifted`), the drifted rules are placed again where it stopped, and
+the run goes on from there with its L-BFGS memory dropped, the objective having
+changed; at most `replacements` times. The result is the last run's, with
+`replacements` the count.
+"""
+function ctsem_laplace_placed_optimize(P::CTSEMLaplacePlaced, start::AbstractVector;
+    drift::Real=0.5, replacements::Integer=8, kwargs...)
+    x = collect(Float64, start)
+    count = 0
+    pairs = get(kwargs, :lbfgs_pairs, nothing)
+    rest = Dict{Symbol,Any}(k => v for (k, v) in kwargs if k !== :lbfgs_pairs)
+    while true
+        drifted = Ref(false)
+        ratio = Float64(drift)
+        stop = (isempty(P.frozen) || ratio <= 0) ? nothing :
+            (st -> _placed_drifted(P, ratio) ? (drifted[] = true; true) : false)
+        res = ctsem_optimize(P, x; rest..., lbfgs_pairs=pairs, stop=stop)
+        if !(drifted[] && count < replacements)
+            return merge(res, (replacements=count,))
+        end
+        x = collect(Float64, res.minimizer)
+        _placed_replace!(P, x, ratio)
+        count += 1
+        pairs = nothing
+    end
 end
 
 """
