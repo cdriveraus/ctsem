@@ -394,10 +394,11 @@
 # and "unresolved" where the noise decides neither. `carrying` are the units
 # whose own steps account for the step, largest first, until what is left is
 # under `bar`. `gap` is the corrected minus the Laplace log likelihood: on
-# each unit that passes `.ctLaplaceExpansionGate`, Laplace's term with its
-# O(1/n) correction (`ctsem_laplace_expansion`), whose error `gap_bound` sums
-# the bounds of; on the rest, the draws, whose seeds give `gap_se`. NULL where
-# the fit has no curvature to step on or fewer than two seeds scored.
+# each unit where Laplace's term with its O(1/n) correction
+# (`ctsem_laplace_expansion`) has the tighter error (`.ctLaplaceExpanded()`),
+# that, whose bounds `gap_bound` sums; on the rest, the draws, whose seeds give
+# `gap_se`. NULL where the fit has no curvature to step on or fewer than two
+# seeds scored.
 .ctLaplaceShiftCheck <- function(fit, draws = 128L, seeds = 1:4, bar = 0.1,
   control = .ctLaplaceContinueDefaults) {
   est <- as.numeric(fit$estimate$raw)
@@ -445,7 +446,7 @@
   }
   laplace_units <- as.numeric(r$laplace_unit)
   checked <- matrix(as.numeric(r$check_unit), nrow = length(laplace_units))
-  expanded <- .ctLaplaceExpanded(r, length(laplace_units))
+  expanded <- .ctLaplaceExpanded(r, length(laplace_units), scored)
   expansion <- as.numeric(r$expansion_term) + as.numeric(r$expansion_correction) -
     laplace_units
   gaps <- colSums(checked[!expanded, scored, drop = FALSE]) -
@@ -457,16 +458,16 @@
     carrying = carrying, gap = sum(expansion[expanded]) + mean(gaps),
     gap_se = stats::sd(gaps) / sqrt(length(gaps)),
     gap_bound = sum(as.numeric(r$expansion_bound)[expanded]),
-    expanded = sum(expanded), unit_gap = unit_gap,
+    expanded = sum(expanded), expanded_units = which(expanded), unit_gap = unit_gap,
     units = length(laplace_units), draws = as.integer(draws), seeds = sum(scored),
     width = as.integer(r$unit_width),
     seconds = proc.time()[["elapsed"]] - started)
 }
 
 # The smallest eigenvalue of a unit's curvature in its effects, relative to the
-# prior's 1, at which Laplace's O(1/n) correction (`ctsem_laplace_expansion`)
-# integrates the unit for the reported log likelihood. At 1 the likelihood is
-# concave in every direction at the mode. On 17 fixtures, 2,486 units
+# prior's 1, from which Laplace's O(1/n) correction (`ctsem_laplace_expansion`)
+# may integrate the unit for the reported log likelihood. At 1 the likelihood
+# is concave in every direction at the mode. On 17 fixtures, 2,486 units
 # (review/LAPLACE-correction-measure-2026-10-30.md, section 8), every unit at or
 # above it was within its bound, `|c4| + c3`, of a converged product rule.
 # Below it the evidence is AnomAuth's alone, the only fixture whose units went
@@ -474,17 +475,28 @@
 # down, and below about 0.8 the correction made them worse, by up to 8 nats.
 .ctLaplaceExpansionGate <- 1
 
-# Which units the expansion integrates: those that pass the gate and whose
-# expansion evaluated; none where the engine returned none.
-.ctLaplaceExpanded <- function(r, nunits) {
+# Which units the expansion integrates: those past the gate whose bound is
+# under twice the draws' standard error there -- of the unit's two error
+# statements the tighter -- and whose expansion evaluated; none where the
+# engine returned none. Past the gate alone was worse: the correction errs
+# with one sign, by 1.01-1.5 times Laplace's error, so over many units its
+# errors add while the draws' average out, and on 17 fixtures the summed gap
+# was 8.5 nats off against the draws' 2.3. With the choice it was 1.6, and no
+# fixture's was further off than the draws'.
+.ctLaplaceExpanded <- function(r, nunits, scored = NULL) {
   term <- as.numeric(r$expansion_term)
   corr <- as.numeric(r$expansion_correction)
   bound <- as.numeric(r$expansion_bound)
   lowest <- as.numeric(r$expansion_mineig)
   if (length(term) != nunits || length(corr) != nunits || length(bound) != nunits ||
       length(lowest) != nunits) return(logical(nunits))
+  se <- matrix(as.numeric(r$check_se), nrow = nunits)
+  if (is.null(scored)) scored <- apply(se, 2L, function(v) all(is.finite(v)))
+  if (!any(scored)) return(logical(nunits))
+  # The draws' standard error for their mean over the seeds that scored.
+  drawn_se <- rowMeans(se[, scored, drop = FALSE]) / sqrt(sum(scored))
   is.finite(term) & is.finite(corr) & is.finite(bound) & !is.na(lowest) &
-    lowest >= .ctLaplaceExpansionGate
+    lowest >= .ctLaplaceExpansionGate & bound < 2 * drawn_se
 }
 
 # What a fit keeps of the shift check (`fit$laplace$correction$check`): the
@@ -499,7 +511,8 @@
     shift = stats::setNames(check$shift, names),
     shift_noise = stats::setNames(check$noise, names), bar = check$bar,
     gap = check$gap, gap_se = check$gap_se, gap_bound = check$gap_bound,
-    expanded = check$expanded, carrying = length(check$carrying),
+    expanded = check$expanded, expanded_units = as.integer(check$expanded_units),
+    carrying = length(check$carrying),
     carriers = as.integer(check$carrying),
     draws = check$draws, seeds = check$seeds, seconds = check$seconds)
 }
@@ -507,9 +520,9 @@
 # The fit's log likelihood where the random-effects check integrated every unit and
 # left the estimate alone: Laplace's plus the check's gap, the summed
 # difference between each unit's integral and its Laplace term -- by Laplace's
-# O(1/n) correction on the units that pass its gate, within `loglik_bound`, and
-# on its draws elsewhere (their seeds' mean, `loglik_se` their standard error)
-# -- and each subject's term likewise where units are subjects. Laplace's value, the one the
+# O(1/n) correction where that has the tighter error, within `loglik_bound`,
+# and on its draws elsewhere (their seeds' mean, `loglik_se` their standard
+# error) -- and each subject's term likewise where units are subjects. Laplace's value, the one the
 # optimiser maximised, is kept as `loglik_laplace`, as the rounds keep it
 # (`loglik_method` says which a fit reports): a model's log likelihood is for
 # comparing models, and Laplace's error differs between them -- 30 nats on

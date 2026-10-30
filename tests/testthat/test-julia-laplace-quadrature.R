@@ -147,10 +147,14 @@
 
 test_that("the expansion's gate and the checked log likelihood's error read the engine's record", {
   expanded <- ctsem:::.ctLaplaceExpanded
-  r <- list(expansion_term = c(-5, -6, -7, NaN), expansion_correction = c(0.1, 0.2, NaN, 0.1),
-    expansion_bound = c(0.2, 0.3, NaN, 0.1), expansion_mineig = c(1.5, 0.95, 0.4, 2))
-  # Passing needs the gate and a correction that evaluated.
-  expect_identical(expanded(r, 4L), c(TRUE, FALSE, FALSE, FALSE))
+  r <- list(expansion_term = c(-5, -6, -7, NaN, -8), expansion_correction = c(0.1, 0.2, NaN, 0.1, 0.1),
+    expansion_bound = c(0.2, 0.3, NaN, 0.1, 0.5), expansion_mineig = c(1.5, 0.95, 0.4, 2, 1.2),
+    check_se = matrix(0.4, 5, 4))
+  # Passing needs the gate, a correction that evaluated, and a bound under
+  # twice the draws' standard error over the seeds (0.4 / 2 here).
+  expect_identical(expanded(r, 5L), c(TRUE, FALSE, FALSE, FALSE, FALSE))
+  r$check_se[1L, ] <- 0.1
+  expect_identical(expanded(r, 5L)[1L], FALSE)
   # A check from before the expansion, or the wrong length, integrates none.
   expect_identical(expanded(list(), 4L), logical(4L))
   expect_identical(expanded(r, 3L), logical(3L))
@@ -259,12 +263,14 @@ test_that("the check integrates the units its gate passes by Laplace's expansion
   # Below the gate the term comes back without the correction, which the
   # check would throw away.
   expect_true(all(is.na(ex$correction[!gated])))
-  # The default fit's check takes the gap of exactly those units from it,
-  # and says how far its log likelihood can be off.
+  # The default fit's check takes from it the gap of the gated units whose
+  # bound is the tighter error, and says how far its log likelihood can be
+  # off.
   check <- fits$default$laplace$correction$check
-  expect_identical(check$expanded, sum(gated))
+  expect_identical(check$expanded, length(check$expanded_units))
+  expect_true(all(gated[check$expanded_units]))
   est <- fits$default$estimate
-  expect_equal(est$loglik_bound, sum(ex$bound[gated]), tolerance = 1e-6)
+  expect_equal(est$loglik_bound, sum(ex$bound[check$expanded_units]), tolerance = 1e-6)
   expect_match(summary(fits$default)$loglikNote,
     paste0("within ", format(est$loglik_bound, digits = 2), " by the expansion"), fixed = TRUE)
 })
