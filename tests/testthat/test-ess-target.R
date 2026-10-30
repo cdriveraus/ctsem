@@ -136,4 +136,20 @@ test_that("divergences at the correlation bound are reported and leave the verdi
   expect_false(verdict(old)$converged)
   expect_identical(ctsem:::.ctSampleDivergent(old), 5L)
   expect_identical(ctsem:::.ctSampleDivergentBound(old), 0L)
+  # Where the draws' covariance points below its number of effects, the
+  # message suggests the poprank that would fit it, as a fit on the bound's
+  # warning does; at full rank it says nothing more, and with several levels
+  # it names each.
+  ranked <- diag(5L, 5L)
+  ranked$corbound_rank <- data.frame(level = "id", k = 4L, rank = 2L)
+  expect_message(ctsem:::.ctSampleWarn(ranked),
+    "about rank 2 of 4 in the median draw: consider poprank = 2")
+  ranked$corbound_rank$rank <- 4L
+  expect_identical(ctsem:::.ctSampleBoundRankNote(ranked), "")
+  ranked$corbound_rank <- data.frame(level = c("person", "couple"), k = c(4L, 3L),
+    rank = c(2L, 3L))
+  note <- ctsem:::.ctSampleBoundRankNote(ranked)
+  expect_match(note, "rank 2 of 4 at level person", fixed = TRUE)
+  expect_false(grepl("couple", note, fixed = TRUE))
+  expect_identical(ctsem:::.ctSampleBoundRankNote(diag(5L, 5L)), "")
 })
