@@ -248,12 +248,18 @@
 #'  Laplace term jumps warns instead, naming the units;
 #'  \code{fit$laplace$correction} records it. The interval check, with
 #'  \code{uncertainty = 'hessian'}: \code{'checked'}'s check of the
-#'  curvature's normal against the posterior's gradients, said in a message
-#'  and in \code{summary()} where the posterior departs from that normal.
+#'  curvature's normal against the posterior's gradients, on the density the
+#'  intervals come from, said in a message and in \code{summary()} where the
+#'  posterior departs from that normal. Under
+#'  \code{intoverpop = 'quadrature'} that density is the refit's, where the
+#'  check costs far more (see \code{\link{ctFitUncertainty}}'s
+#'  \code{checks}), so \code{TRUE} leaves it out there and naming
+#'  \code{'intervals'} makes it.
 #'  Neither runs with \code{estonly}.}
 #'  \item{\code{uncertaintyDraws}, \code{finishsamples},
-#'  \code{uncertaintyControl}}{Both. \code{ctFitUncertainty}'s \code{draws}
-#'  (default \code{'auto'}), \code{finishsamples} (1000) and \code{control}.}
+#'  \code{uncertaintyControl}}{Both. \code{ctOptimUncertainty}'s \code{draws}
+#'  (default \code{'auto'}), and \code{ctFitUncertainty}'s
+#'  \code{finishsamples} (1000) and \code{control}.}
 #'  \item{\code{accuracy}, \code{sampleControl}}{Julia. An accuracy in
 #'  posterior standard deviations, off by default: once \code{uncertainty}'s
 #'  method has run, its own account of its error is read against it, and

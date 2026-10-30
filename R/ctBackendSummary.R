@@ -1879,17 +1879,24 @@ ctBackendParMatrices <- function(fit, raw = NULL, tipreds = NULL, state = NULL,
 # with `control$check`, a fit's default), in one sentence; NULL where it named
 # no direction or did not run. Fit-level only: per parameter it names a third
 # of the intervals that are off (review/REVIEW-fit-uncertainty-2026-10-25.md,
-# section 5). A fit that ended on a jump makes no check -- the Laplace
-# objective jumps where the check would look -- and the jump says what one
-# would: some unit's posterior is not one Gaussian basin. Where
-# an integrated refit refitted it, the curvature is the rounds'.
+# section 5). The check is made where the intervals are drawn, so on a refit
+# (`intoverpop = 'quadrature'`) it is the refit's. A fit that ended on a jump
+# and was not refitted has its intervals from the Laplace objective where it
+# jumps: a check made there reads the jump, and the jump says what one would,
+# that some unit's posterior is not one Gaussian basin. A refit makes the
+# check on its hybrid only where `checks` names it, and says when it did not.
 .ctUncertaintyCheckNote <- function(fit) {
   u <- fit$uncertainty
   if (!identical(u$settings$method, "hessian")) return(NULL)
-  if (!is.null(fit$laplace$jump)) return(paste0("Intervals are from the ",
-    if (isTRUE(fit$laplace$correction$applied)) "corrected curvature at the estimate, " else
-      "curvature at a point ", "where the Laplace term jumped: ",
-    "ctFitUncertainty(fit, 'sample') samples the posterior for intervals to report."))
+  if (!is.null(fit$laplace$jump) &&
+      !identical(fit$laplace$correction$draws, "redrawn")) return(paste0(
+    "Intervals are from the curvature at a point where the Laplace term ",
+    "jumped: ctFitUncertainty(fit, 'sample') samples the posterior for ",
+    "intervals to report."))
+  if (isTRUE(u$details$laplace_correction$unchecked)) return(paste0(
+    "Intervals are the refit's curvature at its estimate, unchecked: ",
+    "ctFitUncertainty(fit, 'sample', intoverpop = 'none') samples the ",
+    "posterior for intervals to report."))
   check <- u$details$normalcheck
   if (is.null(check)) return(NULL)
   named <- if (is.matrix(check$directions)) ncol(check$directions) else 0L

@@ -203,6 +203,20 @@ test_that("the default checks and warns, and the correction it names is the fit-
     tolerance = 1e-6)
   expect_identical(corrected$uncertainty$settings$method, "hessian")
   expect_identical(corrected$uncertainty$settings$draws, "normal")
+  # The intervals are the hybrid's curvature at the refit's estimate. The
+  # interval check there integrates the flagged units again at each draw,
+  # so the default leaves it out and says so...
+  expect_false(is.null(corrected$uncertainty$details$laplace_correction$error))
+  expect_identical(corrected$uncertainty$hessian, corrected$laplace$correction$hessian)
+  expect_null(corrected$uncertainty$details$normalcheck)
+  expect_true(corrected$uncertainty$details$laplace_correction$unchecked)
+  expect_match(ctsem:::.ctUncertaintyCheckNote(corrected), "unchecked", fixed = TRUE)
+  # ...and makes it, on the hybrid, where `checks` names it.
+  checked <- suppressMessages(ctFitUncertainty(fits$quadrature,
+    intoverpop = "quadrature", checks = "intervals", cores = 1))
+  expect_identical(checked$uncertainty$hessian, checked$laplace$correction$hessian)
+  expect_false(is.null(checked$uncertainty$details$normalcheck))
+  expect_false(checked$uncertainty$details$laplace_correction$unchecked)
   # The Laplace run converged (no unit's term jumped, `fit$laplace$jump`), so
   # what the fit did is `.ctLaplaceContinue()` applied to the uncorrected fit,
   # exactly.

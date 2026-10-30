@@ -3629,7 +3629,10 @@ ctOptimFitLpgFunc <- function(fit, cores=1){
 #' stays where it is, as does any fit under \code{correctEstimate = FALSE}.
 #' With \code{'quadrature'}, \code{'hessian'} is taken too: the hybrid's
 #' curvature where the climb ends, which is what
-#' \code{ctFit(intoverpop = 'quadrature')} gives at fit time.
+#' \code{ctFit(intoverpop = 'quadrature')} gives at fit time; the interval
+#' check is made on the hybrid there where \code{checks} names it.
+#' Where the climb stops short of its optimum, the intervals are the Laplace
+#' objective's at its optimum, moved with the estimate, as at fit time.
 #' \code{filter = 'particle'}, for a fit on the filter's route and with
 #' \code{'is'}, replaces the
 #' filter's Gaussian likelihood by a particle filter's (\code{control$particles},
@@ -3862,10 +3865,16 @@ ctOptimFitLpgFunc <- function(fit, cores=1){
 #' would move an estimate, naming \code{intoverpop = 'quadrature'}; a fit
 #' that has one on record is not checked again. The interval check (julia,
 #' with \code{method = 'hessian'}) makes \code{'checked'}'s check of the
-#' curvature's normal against the posterior's gradients, records it in
+#' curvature's normal against the posterior's gradients, on the density the
+#' intervals come from, records it in
 #' \code{$uncertainty$details$normalcheck}, and says in a message, and in
 #' \code{summary()}, when the posterior departs from that normal, naming
-#' \code{method = 'sample'}.
+#' \code{method = 'sample'}. With \code{intoverpop = 'quadrature'} that
+#' density is the refit's, on which each of the check's draws integrates the
+#' flagged units again: seconds on one level, but half an hour on a nested
+#' model whose refit took minutes, longer than sampling. So there \code{TRUE}
+#' leaves it out, and the intervals are said to be unchecked; naming
+#' \code{'intervals'} makes it.
 #' @param uncertainty,draws \code{ctOptimUncertainty()} only, the names of
 #' ctsem 3.11.1: \code{uncertainty} is \code{method}; \code{draws}
 #' (\code{'auto'}, \code{'normal'}, \code{'empirical'} or \code{'imis'})
@@ -4035,6 +4044,7 @@ ctFitUncertainty <- function(fit,
   .ctUncertaintyRemoved(method)
   method <- match.arg(method)
   filter <- match.arg(filter)
+  checksnamed <- !isTRUE(checks)
   checks <- .ctUncertaintyChecks(checks)
   julia <- .ctFitIsJulia(fit)
   laplace <- julia && !is.null(fit$model_spec$laplace)
@@ -4071,12 +4081,15 @@ ctFitUncertainty <- function(fit,
       "effects; one fit takes one or the other.", call.=FALSE)
     control$likelihood <- 'particle'
   }
-  # The interval check beside 'hessian' (`control$check` internally), on the
-  # fit's own density: the quadrature hybrid's curvature is the refit's
-  # certified one, and the check's draws would each place its rules again.
-  if(julia && identical(method, 'hessian') &&
-      !identical(control$likelihood, 'quadrature')) {
+  # The interval check beside 'hessian' (`control$check` internally), made
+  # where the intervals are drawn: on a refit, the quadrature hybrid at the
+  # refit's estimate, and there only where `checks` names it
+  # (`.ctLaplaceContinue()`).
+  if(julia && identical(method, 'hessian')) {
     control$check <- 'intervals' %in% checks
+    if(identical(control$likelihood, 'quadrature')) {
+      control$checkhybrid <- checksnamed && control$check
+    }
   }
   out <- .ctFitUncertaintyImpl(fit, uncertainty=method, draws='auto',
     finishsamples=finishsamples, cores=cores, control=control,
