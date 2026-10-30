@@ -105,6 +105,35 @@ end
     @test all(isapprox.(placed, frozen; rtol=1e-7, atol=1e-8))
 end
 
+@testset "a lattice rule past its target is raised, and the error is read where it sits" begin
+    C = ContinuousTimeSEM
+    laplace, values = _fresh_placed_wide()
+    theta = collect(Float64, values)
+    P = _placed_from(laplace, theta)
+    ctsem_laplace_placed_evaluate(P, theta; gradient=false)
+    U = P.placed[1]
+    @test P.sets[U][1].family === :lattice && P.sets[U][1].count == C._LATTICE_START
+    before = P.se[U]
+    @test isfinite(before) && before > 0
+    # Under a target the start's spread exceeds, the unit is rough and its
+    # points double until the spread is within it, or the lattice's most.
+    P.cont.draws_se = before / 3
+    @test U in C._placed_rough(P, 1.0)
+    @test C._placed_raise!(P, theta, [U]) == 1
+    @test P.sets[U][1].count > C._LATTICE_START
+    @test P.cont.unit_rules[U].points == P.sets[U][1].count
+    @test P.se[U] < before
+    @test P.se[U] <= P.cont.draws_se || P.sets[U][1].count == C._LATTICE_MAX
+    # The error at the last evaluation: the lattice units' spread there in
+    # quadrature.
+    ctsem_laplace_placed_evaluate(P, theta .+ 0.05; gradient=false)
+    e = ctsem_laplace_placed_error(P)
+    lat = [V for V in P.placed if P.sets[V][1].family === :lattice]
+    @test isapprox(e.error_draws, sqrt(sum(abs2, P.se[lat])); rtol=1e-12)
+    @test e.centre_error[lat] == P.se[lat]
+    @test isapprox(e.error, e.error_draws + e.error_nodes + e.error_residual; rtol=1e-12)
+end
+
 @testset "the localised Hessian is the difference of the exact gradient" begin
     laplace, values = _fresh_placed_nested()
     theta = collect(Float64, values)

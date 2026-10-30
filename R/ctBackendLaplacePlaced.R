@@ -61,8 +61,14 @@
   # Units on importance draws, frozen for the run, and their draws.
   record$importance <- c(units = as.integer(after$nimportance),
     draws = as.integer(after$importance_draws))
+  # The objective's error where the fit reports, read from the placed rules
+  # as they were there (`ctsem_laplace_placed_error`), set where the
+  # quadrature is reported: a lattice rule's error moves with where it sits,
+  # and the placement's was the Laplace estimate's.
+  errorat <- after
+  errorhere <- function() get(module$ctsem_laplace_placed_error(placed))
   accounted <- function(record) {
-    record$error <- .ctLaplaceIntegrationError(after)
+    record$error <- .ctLaplaceIntegrationError(errorat)
     info <- get(module$ctsem_laplace_placed_info(placed))
     record$placed <- info
     record$evaluations <- c(values = as.integer(info$value_calls),
@@ -92,7 +98,8 @@
     record$optimiser <- list(iterations = as.integer(res$iterations),
       f_calls = as.integer(res$f_calls), g_calls = as.integer(res$g_calls),
       converged = isTRUE(res$converged), hessians = as.integer(res$newton_hessians),
-      replacements = as.integer(res$replacements))
+      replacements = as.integer(res$replacements),
+      raised = as.integer(.ctJuliaOr(res$raised, 0L)))
     record$continuation <- if (isTRUE(res$converged)) "converged" else "stopped"
   }
   final <- get(module$ctsem_laplace_placed_evaluate(placed, num(x), gradient = TRUE))
@@ -116,6 +123,7 @@
     }
     record$applied <- FALSE
     q <- quadrature_at(est)
+    errorat <- errorhere()
     record$loglik_quadrature <- sum(q$quadrature_units)
     record$logposterior_quadrature <- q$quadrature
     record$gap_reported <- q$quadrature - as.numeric(after$laplace)
@@ -144,6 +152,7 @@
   record$material <- any(is.finite(delta_se)) &&
     isTRUE(max(abs(delta_se), na.rm = TRUE) >= control$material)
   q <- quadrature_at(x)
+  errorat <- errorhere()
   record$loglik_quadrature <- sum(q$quadrature_units)
   record$logposterior_quadrature <- q$quadrature
   record$gap_reported <- q$quadrature - as.numeric(after$laplace)
@@ -199,7 +208,7 @@
         "' on its objective with the rules placed at each point"),
       nodes = record$nodes,
       # What the density the draws came from is known to, in nats.
-      error = .ctLaplaceIntegrationError(after))
+      error = .ctLaplaceIntegrationError(errorat))
     stages["uncertainty"] <- since(uncertainty_started)
   } else {
     post <- fit$estimate$rawposterior

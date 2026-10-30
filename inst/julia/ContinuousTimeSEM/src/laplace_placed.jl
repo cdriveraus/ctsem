@@ -90,7 +90,8 @@ using LinearAlgebra
 
 export ctsem_laplace_placed, ctsem_laplace_placed_evaluate, ctsem_laplace_placed_check,
     ctsem_laplace_placed_hessian, ctsem_laplace_placed_info,
-    ctsem_laplace_placed_optimize, ctsem_laplace_placed_quadrature
+    ctsem_laplace_placed_optimize, ctsem_laplace_placed_quadrature,
+    ctsem_laplace_placed_error
 
 """
     CTSEMLaplacePlaced
@@ -1225,35 +1226,145 @@ function _placed_replace!(P::CTSEMLaplacePlaced, values::AbstractVector, ratio::
 end
 
 """
+How far past its target a placed rule's error may grow before the run raises
+its count (`_placed_rough`): twice `draws_se`. A rule's count is chosen where
+the continuation was placed (`_continuation_refine!`), and a climb can walk to
+where it serves worse. On w6 the 128-point lattices chosen at the Laplace
+estimate, 0.18 nats in all there, stood at 1.16 at the estimate the climb
+reached, one unit's at 0.85, which moved the estimate 2 se further than the
+current build's.
+"""
+const _PLACED_ROUGH = 2.0
+
+"""
+    _placed_rough(P, factor)
+
+The placed units whose rule's error at the last evaluation (`P.se`, a lattice
+rule's shifts' spread, free at every evaluation) is past `factor` times the
+target and whose points can still be doubled.
+"""
+_placed_rough(P::CTSEMLaplacePlaced, factor::Real) = Int[U for U in P.placed if
+    isfinite(P.se[U]) && P.se[U] > factor * P.cont.draws_se &&
+    any(ps -> ps.family === :lattice && ps.count < _LATTICE_MAX, P.sets[U])]
+
+"""
+    _placed_raise!(P, values, units)
+
+Each of `units`' lattice points doubled, at `values`, until its error there is
+within the target or its points are the most a lattice takes
+(`_LATTICE_MAX`); the continuation keeps the new rule (`o.unit_rules`), so
+counts only rise and a unit never switches back. Returns how many were raised.
+"""
+function _placed_raise!(P::CTSEMLaplacePlaced, values::AbstractVector,
+    units::Vector{Int})
+    o = P.cont
+    laplace = o.laplace
+    theta = _laplace_extend(laplace, collect(Float64, values))
+    Ls = _laplace_popchols(theta, laplace.spec)
+    positions = [_laplace_level_positions(laplace.spec, l)
+        for l in eachindex(laplace.spec.levels)]
+    rules = copy(o.unit_rules)
+    row = zeros(length(theta))
+    for U in units
+        choice = rules[U]
+        while choice.points < _LATTICE_MAX
+            choice = CTSEMRuleChoice(choice.family, choice.nodes, 2 * choice.points)
+            P.sets[U] = _rule_sets(laplace, U, choice)
+            r = _placed_unit!(row, P, U, theta, Ls, nothing, positions, false)
+            r.ok || continue
+            P.se[U] = r.se
+            r.se <= o.draws_se && break
+        end
+        rules[U] = choice
+    end
+    o.unit_rules = rules
+    P.cache = nothing
+    P.value_cache = nothing
+    return length(units)
+end
+
+"""
     ctsem_laplace_placed_optimize(P, start; drift=0.5, replacements=8, kwargs...)
 
 `ctsem_optimize` on the placed objective from `start`, its keywords passed on.
-Where frozen rules are held (`P.frozen`), the run stops when one has drifted
-(`_placed_drifted`), the drifted rules are placed again where it stopped, and
-the run goes on from there with its L-BFGS memory dropped, the objective having
-changed; at most `replacements` times. The result is the last run's, with
-`replacements` the count.
+The run stops where a frozen rule has drifted (`_placed_drifted`) or a placed
+rule's error has grown past `_PLACED_ROUGH` times its target (`_placed_rough`),
+and again where it ends with either, since its Newton finish does not consult
+the stop; the drifted rules are placed again there (`_placed_replace!`), the
+rough ones raised (`_placed_raise!`), and the run goes on from there with its
+L-BFGS memory dropped, the objective having changed; at most `replacements`
+times. The result is the last run's, with `replacements` the count and
+`raised` the units raised.
 """
 function ctsem_laplace_placed_optimize(P::CTSEMLaplacePlaced, start::AbstractVector;
     drift::Real=0.5, replacements::Integer=8, kwargs...)
     x = collect(Float64, start)
     count = 0
+    raised = 0
     pairs = get(kwargs, :lbfgs_pairs, nothing)
     rest = Dict{Symbol,Any}(k => v for (k, v) in kwargs if k !== :lbfgs_pairs)
+    ratio = Float64(drift)
     while true
-        drifted = Ref(false)
-        ratio = Float64(drift)
-        stop = (isempty(P.frozen) || ratio <= 0) ? nothing :
-            (st -> _placed_drifted(P, ratio) ? (drifted[] = true; true) : false)
-        res = ctsem_optimize(P, x; rest..., lbfgs_pairs=pairs, stop=stop)
-        if !(drifted[] && count < replacements)
-            return merge(res, (replacements=count,))
-        end
+        res = ctsem_optimize(P, x; rest..., lbfgs_pairs=pairs,
+            stop=_PlacedStop(P, ratio))
         x = collect(Float64, res.minimizer)
-        _placed_replace!(P, x, ratio)
+        # The last evaluation need not have been at the point returned.
+        ctsem_laplace_placed_evaluate(P, x; gradient=false)
+        drifted = !isempty(P.frozen) && ratio > 0 && _placed_drifted(P, ratio)
+        rough = _placed_rough(P, _PLACED_ROUGH)
+        if !((drifted || !isempty(rough)) && count < replacements)
+            return merge(res, (replacements=count, raised=raised))
+        end
+        drifted && _placed_replace!(P, x, ratio)
+        isempty(rough) || (raised += _placed_raise!(P, x, rough))
         count += 1
         pairs = nothing
     end
+end
+
+"""The stop `ctsem_laplace_placed_optimize` hands its run: a frozen rule
+drifted or a placed rule's error past `_PLACED_ROUGH` times its target. A
+callable rather than a closure, so that nothing it reads is a captured local."""
+struct _PlacedStop{P}
+    placed::P
+    ratio::Float64
+end
+(s::_PlacedStop)(st) = (!isempty(s.placed.frozen) && s.ratio > 0 &&
+    _placed_drifted(s.placed, s.ratio)) ||
+    !isempty(_placed_rough(s.placed, _PLACED_ROUGH))
+
+"""
+    ctsem_laplace_placed_error(P)
+
+The refined objective's error against the exact marginal at its last
+evaluation, in `ctsem_laplace_continuation_info`'s fields (`error`,
+`error_draws`, `error_nodes`, `error_residual`, `centre_error`): each placed
+lattice or mixed unit's spread there (`P.se`) in quadrature with the frozen
+draws' errors, the product rules' node errors and what the screen left on
+Laplace as at the placement. A lattice rule's error is free at every
+evaluation and moves with where the rule sits; read at the placement alone it
+said 0.18 nats on w6 where the estimate the climb reached carried 1.16.
+"""
+function ctsem_laplace_placed_error(P::CTSEMLaplacePlaced)
+    o = P.cont
+    err = _continuation_error(o)
+    units = copy(o.centre_error)
+    random = 0.0
+    for U in P.placed
+        any(ps -> ps.family === :lattice, P.sets[U]) || continue
+        isfinite(P.se[U]) || continue
+        units[U] = P.se[U]
+        random += P.se[U]^2
+    end
+    nodes = 0.0
+    for U in o.flagged
+        o.importance[U] && (random += o.centre_se[U]^2; continue)
+        U in P.placed && any(ps -> ps.family === :lattice, P.sets[U]) && continue
+        isfinite(o.centre_error[U]) && (nodes += o.centre_error[U])
+    end
+    draws = sqrt(random)
+    return (error=draws + nodes + err.residual, error_draws=draws, error_nodes=nodes,
+        error_residual=err.residual, centre_error=units)
 end
 
 """
