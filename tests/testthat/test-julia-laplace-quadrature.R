@@ -1,4 +1,4 @@
-# The integrated refit, `ctFit(intoverpop = 'quadrature')` or
+# The refined fit, `ctFit(intoverpop = 'quadrature')` or
 # `ctFitUncertainty(fit, intoverpop = 'quadrature')`, and the default's
 # random-effects check (`.ctLaplaceContinue()` in
 # R/ctBackendLaplaceCorrect.R, laplace_continuation.jl in the engine).
@@ -203,8 +203,8 @@ test_that("the default checks and warns, and the correction it names is the fit-
     tolerance = 1e-6)
   expect_identical(corrected$uncertainty$settings$method, "hessian")
   expect_identical(corrected$uncertainty$settings$draws, "normal")
-  # The intervals are the hybrid's curvature at the refit's estimate, and the
-  # interval check is made there, with the refit's draws.
+  # The intervals are the hybrid's curvature at the refined fit's estimate,
+  # and the interval check is made there, with its draws.
   expect_false(is.null(corrected$uncertainty$details$laplace_correction$error))
   expect_identical(corrected$uncertainty$hessian, corrected$laplace$correction$hessian)
   expect_false(is.null(corrected$uncertainty$details$normalcheck))
@@ -660,7 +660,7 @@ test_that("a correction predicted to gain less than skip_gain is skipped, and sa
   expect_identical(out$estimate$cov, fits$off$estimate$cov)
   expect_identical(out$estimate$loglik_method, "quadrature")
   expect_equal(out$estimate$loglik, corr$loglik_quadrature)
-  expect_true(any(grepl("the integrated refit predicted a gain",
+  expect_true(any(grepl("the refined fit predicted a gain",
     capture.output(print(out)))))
 })
 

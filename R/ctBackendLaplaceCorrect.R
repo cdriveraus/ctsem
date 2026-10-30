@@ -1,7 +1,7 @@
-# The random-effects check and the integrated refit, both
-# `.ctLaplaceContinue()`: the check scores every unit's Laplace error at the
-# estimate (the default, `optimcontrol$checks`); the refit
-# (`ctFit(intoverpop = 'quadrature')`, or `ctFitUncertainty(fit, intoverpop =
+# The random-effects check and the refined fit (random effects by
+# quadrature), both `.ctLaplaceContinue()`: the check scores every unit's
+# Laplace error at the estimate (the default, `optimcontrol$checks`); the
+# refined fit (`ctFit(intoverpop = 'quadrature')`, or `ctFitUncertainty(fit, intoverpop =
 # 'quadrature')` after the fit) climbs the quadrature hybrid from the estimate
 # with the units the check names integrated, and draws the fit's uncertainty
 # on that density. A request to sample against the quadrature --
@@ -15,17 +15,17 @@
 # density it sampled.
 
 # What a fit does about Laplace's error -- FALSE, "check" (the random-effects
-# check) or "quadrature" (the integrated refit) -- from `optimcontrol$checks`
+# check) or "quadrature" (the refined fit) -- from `optimcontrol$checks`
 # and `ctFit(intoverpop = 'quadrature')` (`optimcontrol$.refit`, set by
-# ctFit), refusing a refit that cannot apply. The default is the check
+# ctFit), refusing a refinement that cannot apply. The default is the check
 # alone, which warns where Laplace's error moves an estimate and names the
-# refit, rather than running it (Charles, 2026-10-27): the refit adds seconds
+# refined fit, rather than running it (Charles, 2026-10-27): it adds seconds
 # to hours to a fit. Wherever both were
 # measured it cost no more than sampling the joint posterior -- 1/25 to 1/200
 # of it on one level, as much on nested units (gN3: 244 s against 242 s),
 # under a quarter on wide units by draws (k5: 2.8 h against over 13;
 # scripts/lapcheck-2026-10/rounds_cost.R, sample_cost.R) -- but whether to
-# pay for either is the user's call. A refit runs the check first, whatever
+# pay for either is the user's call. A refined fit runs the check first, whatever
 # `checks` says.
 .ctLaplaceCorrectResolve <- function(optimcontrol, intoverpop, optimize,
   intoverstates) {
@@ -90,7 +90,7 @@
   fit
 }
 
-# The integrated refit (`intoverpop = 'quadrature'`) climbs the quadrature
+# The refined fit (`intoverpop = 'quadrature'`) climbs the quadrature
 # objective: from the Laplace optimum, with the
 # engine's own optimiser, on an objective whose nodes are held fixed so that
 # its gradient is exact (the Fisher identity; see laplace_continuation.jl), in
@@ -544,8 +544,8 @@
       " nats ", if (gap < 0) "above" else "below", " the integrated one, which the fit ",
       "reports"),
     ". The estimates and their intervals are Laplace's, ",
-    "uncorrected. ctFitUncertainty(fit, intoverpop = 'quadrature') refits with ",
-    "those units integrated, and ",
+    "uncorrected. ctFitUncertainty(fit, intoverpop = 'quadrature') refines the ",
+    "fit with those units integrated by quadrature, and ",
     sample,
     " samples the joint posterior.",
     if (drawn > 0L) paste0(" Both may take hours here, where ", drawn,
@@ -940,8 +940,8 @@
     named <- as.integer(jump$units)
     msg <- sprintf(paste0("The fit stopped where the Laplace term of %s %s ",
       "jumps, at no maximum, so its estimate and standard errors are ",
-      "approximate. ctFitUncertainty(fit, intoverpop = 'quadrature') refits ",
-      "with %s integrated by draws; ctFitUncertainty(fit, 'sample', ",
+      "approximate. ctFitUncertainty(fit, intoverpop = 'quadrature') refines ",
+      "the fit with %s integrated by draws; ctFitUncertainty(fit, 'sample', ",
       "intoverpop = 'none') ",
       "samples the joint posterior."), if (length(named) == 1L) "unit" else "units",
       paste(named, collapse = ", "), if (length(named) == 1L) "it" else "them")
@@ -1436,12 +1436,12 @@
       certification = certification)
     # The interval check beside 'hessian' (`control$check`) is made here, on
     # the hybrid the intervals come from. Each of its draws places the
-    # flagged units' rules again: on 4 cores 14 s on gD1, where the refit
-    # took 2, and 32 minutes on gN3's nested units, where the refit took 2.5
-    # and sampling the joint 4 (scripts/fit-review-2026-10/refit_check_cost.R).
-    # That is the user's to spend, as the refit is: `checks =
+    # flagged units' rules again: on 4 cores 14 s on gD1, where the
+    # refinement took 2, and 32 minutes on gN3's nested units, where it took
+    # 2.5 and sampling the joint 4 (scripts/fit-review-2026-10/refit_check_cost.R).
+    # That is the user's to spend, as the refinement is: `checks =
     # 'randomeffects'` leaves it out. A default that left it out made
-    # `checks = TRUE` mean something else on a refit.
+    # `checks = TRUE` mean something else on a refined fit.
     fit <- .ctBackendUncertainty(fit, uncertainty = method,
       draws = .ctResolveDraws(method, "auto"),
       finishsamples = finishsamples, cores = chunks,

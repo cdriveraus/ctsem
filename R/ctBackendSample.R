@@ -225,7 +225,7 @@
     }
   }
   # A fit made with intoverpop = 'quadrature' named the Laplace route only
-  # to refit it: its Laplace marginal is what the refit found wanting, so
+  # to refine it: its Laplace marginal is what the refinement found wanting, so
   # sampling takes the joint, as for 'auto'.
   requested <- as.character(requested)[1L]
   named <- length(requested) && !is.na(requested) &&

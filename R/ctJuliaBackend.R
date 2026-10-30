@@ -6929,7 +6929,7 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
   # states flatten, so there is nothing to certify against -- the same reason
   # that route reports no standard errors.
   # Nor a run that ended on a jump: its point is on no continuous objective
-  # (an integrated refit certifies where its rounds end).
+  # (a refined fit certifies where its rounds end).
   correction <- NULL
   certifying <- isTRUE(intoverstates) && !isTRUE(optimcontrol$estonly) &&
     !identical(optimcontrol$certify, FALSE) && is.null(result[["jumprecord"]])
@@ -7563,7 +7563,7 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
   # A run that ended on a jump has no Laplace answer: the objective is not
   # continuous there, so it has no maximum. Its uncertainty is the curvature's
   # at that point all the same, and the stage below warns whatever
-  # `checks` says; only the integrated refit integrates the units
+  # `checks` says; only the refined fit integrates the units
   # it named, from there. That was once forced on every such fit, and on the
   # affect pilot it gained 29 nats in nine hours.
   jumped <- !is.null(out$laplace$jump)
@@ -7580,7 +7580,7 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
   # always replaced, so it leaves R's random stream where it found it: where
   # the continuation leaves the fit alone, the method asked for then draws
   # exactly what it draws on the uncorrected fit. A check made here, on the
-  # Laplace objective at its optimum, was once kept for a refitted fit, whose
+  # Laplace objective at its optimum, was once kept for a refined fit, whose
   # intervals it did not describe.
   plaincontrol <- uncertaintycontrol[setdiff(names(uncertaintycontrol), "check")]
   if (uncertain && !(jumped && continuing)) {
@@ -7591,11 +7591,11 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
     } else out <- holdrepair(measure(out, uncertainty))
   }
 
-  # The random-effects check, or the integrated refit, after the certification has
+  # The random-effects check, or the refined fit, after the certification has
   # converged the Laplace objective and the uncertainty stage has built the
   # Hessian it steps against, which it reuses rather than computing another.
   # Before the constrained draws below, so that they are built once. See
-  # `.ctLaplaceContinue()`: the refit (`intoverpop = 'quadrature'`) replaces the
+  # `.ctLaplaceContinue()`: the refined fit (`intoverpop = 'quadrature'`) replaces the
   # covariance and draws with its own when it reaches its fixed point; the
   # check, the default, only checks and warns.
   if (!is.null(out$laplace) && isTRUE(intoverstates)) {
@@ -7750,7 +7750,7 @@ print.ctJuliaFit <- function(x, ...) {
   # Everything below reads the optimum and its curvature, which on a sampled fit
   # are the placement's: its intervals come from the draws.
   if (sampled) return(invisible(x))
-  # The integrated refit, only when it moved the estimate by a tenth of a
+  # The refined fit, only when it moved the estimate by a tenth of a
   # standard error or more; the random-effects check's warning otherwise.
   corr <- x$laplace$correction
   if (isTRUE(corr$applied) && isTRUE(corr$material)) {
@@ -7759,13 +7759,13 @@ print.ctJuliaFit <- function(x, ...) {
           if (identical(corr$continuation, "resolution"))
             ", to within its draws' error of its fixed point" else
           if (!identical(corr$continuation, "converged")) ", short of its fixed point")
-      else "refitted by quadrature",
+      else "refined by quadrature",
       ": up to ", format(max(abs(corr$delta_se), na.rm = TRUE), digits = 2),
       " standard errors, log likelihood ", format(corr$loglik_laplace, digits = 8),
       " -> ", format(corr$loglik_quadrature, digits = 8),
       ". See fit$laplace$correction.\n", sep = "")
   } else if (identical(corr$status, "skipped")) {
-    cat("  Laplace estimate kept: the integrated refit predicted a gain of ",
+    cat("  Laplace estimate kept: the refined fit predicted a gain of ",
       format(corr$predicted_gain, digits = 2), " nats, under ", corr$skip_gain,
       "; the log likelihood is the quadrature one. See fit$laplace$correction.\n",
       sep = "")

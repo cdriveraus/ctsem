@@ -130,7 +130,7 @@ default.
  the data, can decide which one is reached. So the fit also finishes from
  its own start without SAEM, one more optimisation, and keeps whichever
  maximum has the higher log posterior on the quadrature-corrected objective
- (quadrature for each unit narrow enough, as the integrated refit
+ (quadrature for each unit narrow enough, as the refined fit
  screens), where a maximum the Laplace approximation over-credits loses;
  \code{fit$optim$saem_guard} records both. Not a better
  approximate estimate on its own -- for that, sample with
@@ -253,8 +253,8 @@ default.
  curvature's normal against the posterior's gradients, on the density the
  intervals come from, said in a message and in \code{summary()} where the
  posterior departs from that normal. Under
- \code{intoverpop = 'quadrature'} that density is the refit's, where the
- check can cost more than the refit (see \code{\link{ctFitUncertainty}}'s
+ \code{intoverpop = 'quadrature'} that density is the refined fit's, where
+ the check can cost more than the refinement (see \code{\link{ctFitUncertainty}}'s
  \code{checks}); \code{checks = 'randomeffects'} leaves it out.
  Neither runs with \code{estonly}.}
  \item{\code{uncertaintyDraws}, \code{finishsamples},
