@@ -32,13 +32,13 @@ is skipped when uncertainty was not computed.}
 \item{refine}{Continue the fit on the quadrature objective rather than
 correcting linearly: the refined fit \code{intoverpop =
 'quadrature'} runs at fit time (see \code{\link{ctFit}}), from this fit's
-estimate, with its Hessian as the starting metric. Its gradient is exact,
-so it costs a few quadrature gradients per round rather than the
+estimate, with the quadrature rules placed at every point. Its gradient
+is exact, so it costs a quadrature gradient per step rather than the
 \code{2 * npar} quadrature evaluations per gradient the finite-difference
 refinement this replaced cost, and it reports the point it reaches in
 \code{refined}.}
 
-\item{maxiter}{Iteration cap for each round of \code{refine}.}
+\item{maxiter}{Iteration cap for the climb of \code{refine}.}
 
 \item{cores}{Engine threads for the quadrature.}
 

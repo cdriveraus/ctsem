@@ -1,12 +1,12 @@
 # The refined fit with its flagged units' rules placed at every evaluation
-# (`laplace_placed.jl`), in place of the rounds (`.ctLaplaceContinueRun()`):
-# `ctsem_laplace_placed_optimize` climbs the placed objective from the Laplace
-# estimate, L-BFGS and then the Newton finish on a Hessian of differenced exact
-# gradients, and the uncertainty is drawn on that same objective, whose gradient
-# is its value's. Units on frozen draws are placed again only where their
-# weights' effective size has collapsed, the run's L-BFGS memory dropped. Option
-# B of review/SURVEY-quadrature-2026-10-30.md; `.ctLaplaceContinueDefaults$
-# placed = FALSE` sends a fit to the rounds instead.
+# (`laplace_placed.jl`): `ctsem_laplace_placed_optimize` climbs the placed
+# objective from the Laplace estimate, L-BFGS and then the Newton finish on a
+# Hessian of differenced exact gradients, and the uncertainty is drawn on that
+# same objective, whose gradient is its value's. Units on frozen draws are
+# placed again only where their weights' effective size has collapsed, the
+# run's L-BFGS memory dropped. Option B of
+# review/SURVEY-quadrature-2026-10-30.md, which replaced the rounds
+# (review/PLACED-rules-race-2026-10-30.md).
 
 # The climb alone, shared by the fit and `ctLaplaceCheck(refine = TRUE)`: the
 # placed objective `placed` from `est`, to the fit's certification tolerance
@@ -17,7 +17,7 @@
     sink(text, if (identical(kind, "done")) "update" else kind)
   .ctJuliaGet(module$ctsem_laplace_placed_optimize(placed,
     .ctJuliaNumericVector(est),
-    maxiter = as.integer(.ctJuliaOr(control$placed_maxiter, 1000L)),
+    maxiter = as.integer(.ctJuliaOr(control$maxiter, 1000L)),
     gap_tol = as.numeric(tol), converge_tol = as.numeric(tol), newton = TRUE,
     certify = isTRUE(certify), lbfgs_pairs = "objective",
     progress = !is.null(climb_sink), progress_sink = climb_sink,
@@ -30,7 +30,7 @@
 # quadrature log likelihood into the fit and `timed` the wall seconds by stage.
 # `stay` moves nothing: the rules placed at the estimate, its Hessian and the
 # uncertainty drawn there. The guard reads the one objective at the start and
-# the end, as the rounds' did across placements: a change past `guard` nats,
+# the end: a change past `guard` nats,
 # or `guard_per_subject` a subject, reverts the run, and an end lower than the
 # start by `value_tol` keeps the Laplace optimum. Returns the fit.
 .ctLaplacePlacedRefine <- function(fit, module, cont, est, record, control, tol,

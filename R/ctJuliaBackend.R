@@ -7596,8 +7596,8 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
   # Hessian it steps against, which it reuses rather than computing another.
   # Before the constrained draws below, so that they are built once. See
   # `.ctLaplaceContinue()`: the refined fit (`intoverpop = 'quadrature'`) replaces the
-  # covariance and draws with its own when it reaches its fixed point; the
-  # check, the default, only checks and warns.
+  # covariance and draws with its own wherever its Hessian serves; the check,
+  # the default, only checks and warns.
   if (!is.null(out$laplace) && isTRUE(intoverstates)) {
     if (continuing) {
       out <- holdrepair(.ctLaplaceContinue(out, cores = cores, verbose = verbose,
@@ -7612,12 +7612,12 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
         applied = FALSE)
     }
   }
-  # The method asked for where the continuation did not draw it: on the
-  # Laplace objective, which the fit's estimate maximises unless the
-  # continuation stopped short of its fixed point, when the draws are taken
-  # at the Laplace optimum and moved with the estimate, as the continuation
-  # moves the normal's (`.ctLaplaceUncertaintyAtOptimum()`), and the interval
-  # check with them.
+  # The method asked for where the refined fit did not draw it: on the
+  # Laplace objective, which the fit's estimate maximises unless the refined
+  # fit moved it with no Hessian of its own to draw on, when the draws are
+  # taken at the Laplace optimum and moved with the estimate, as the refined
+  # fit moves the normal's (`.ctLaplaceUncertaintyAtOptimum()`), and the
+  # interval check with them.
   if (continuing && !jumped && !identical(out$laplace$correction$draws, "redrawn")) {
     out <- holdrepair(.ctLaplaceUncertaintyAtOptimum(out,
       function(fit) measure(fit, uncertainty)))
@@ -7756,19 +7756,12 @@ print.ctJuliaFit <- function(x, ...) {
   if (isTRUE(corr$applied) && isTRUE(corr$material)) {
     cat("  Laplace estimate ", if (identical(corr$method, "quadrature"))
         paste0("continued on the quadrature objective",
-          if (identical(corr$continuation, "resolution"))
-            ", to within its draws' error of its fixed point" else
-          if (!identical(corr$continuation, "converged")) ", short of its fixed point")
+          if (!identical(corr$continuation, "converged")) ", short of its optimum")
       else "refined by quadrature",
       ": up to ", format(max(abs(corr$delta_se), na.rm = TRUE), digits = 2),
       " standard errors, log likelihood ", format(corr$loglik_laplace, digits = 8),
       " -> ", format(corr$loglik_quadrature, digits = 8),
       ". See fit$laplace$correction.\n", sep = "")
-  } else if (identical(corr$status, "skipped")) {
-    cat("  Laplace estimate kept: the refined fit predicted a gain of ",
-      format(corr$predicted_gain, digits = 2), " nats, under ", corr$skip_gain,
-      "; the log likelihood is the quadrature one. See fit$laplace$correction.\n",
-      sep = "")
   } else if (!isTRUE(corr$applied) &&
       isTRUE(abs(as.numeric(.ctJuliaOr(corr$gap_reported, 0))[1L]) >= 1)) {
     # Not moved, and the approximation is still off by a nat or more here: the
