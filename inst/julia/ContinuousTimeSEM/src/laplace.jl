@@ -4884,10 +4884,13 @@ end
     _ctsem_anchor_modes(objective)
 
 An anchored run's modes at its last accepted point, each unit's and the other
-maxima it follows (`alt_anchors`), as `(units, values)`: column `j` of the
-NaN-padded `values` a mode of unit `units[j]`. `nothing` outside an anchored
-run. What a checkpoint keeps beside the parameters, for a resume to start its
-search from (`_ctsem_anchor_start!`'s `resume_units`).
+maxima it follows (`alt_anchors`), and then its known modes (`known`: the
+caller's, and those the run found on its way and no longer follows), as
+`(units, values)`: column `j` of the NaN-padded `values` a mode of unit
+`units[j]`. `nothing` outside an anchored run. What a checkpoint keeps beside
+the parameters, for a resume to start its search from
+(`_ctsem_anchor_start!`'s `resume_units`): a new process builds its objective
+from the model, with no known modes of its own.
 """
 _ctsem_anchor_modes(::Any) = nothing
 function _ctsem_anchor_modes(laplace::CTSEMLaplaceObjective)
@@ -4896,11 +4899,18 @@ function _ctsem_anchor_modes(laplace::CTSEMLaplaceObjective)
     modes = Vector{Float64}[]
     for U in eachindex(laplace.anchors)
         isempty(laplace.anchors[U]) && continue
+        j0 = length(modes) + 1
         push!(units, U); push!(modes, laplace.anchors[U])
         if U <= length(laplace.alt_anchors)
             for m in laplace.alt_anchors[U]
                 push!(units, U); push!(modes, m)
             end
+        end
+        U <= length(laplace.known) || continue
+        for k in laplace.known[U]
+            any(j -> _laplace_maxabsdiff(modes[j], k) < 1e-8, j0:length(modes)) &&
+                continue
+            push!(units, U); push!(modes, k)
         end
     end
     isempty(units) && return nothing
