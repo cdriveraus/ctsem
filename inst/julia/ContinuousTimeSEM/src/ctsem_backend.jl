@@ -2081,6 +2081,10 @@ _ctsem_anchor_here!(p::CTSEMPinnedObjective) = _ctsem_anchor_here!(p.objective)
 _ctsem_anchor_modes(p::CTSEMPinnedObjective) = _ctsem_anchor_modes(p.objective)
 _ctsem_anchor_finish!(p::CTSEMPinnedObjective, x) =
     _ctsem_anchor_finish!(p.objective, _ctsem_pinned_point(p, x))
+_ctsem_take_search_modes!(p::CTSEMPinnedObjective, x, found) =
+    _ctsem_take_search_modes!(p.objective, _ctsem_pinned_point(p, x), found)
+ctsem_laplace_clear_anchors!(p::CTSEMPinnedObjective) =
+    ctsem_laplace_clear_anchors!(p.objective)
 _ctsem_optimise_log(p::CTSEMPinnedObjective, verbose::Bool) =
     _ctsem_optimise_log(p.objective, verbose)
 _ctsem_optimise_trace_keys(p::CTSEMPinnedObjective) =
@@ -2715,6 +2719,23 @@ function _ctsem_optimise_verdict(objective, minimizer, start_values, value,
 end
 
 """
+How many times one optimisation takes modes it finds and carries on
+(`ctsem_optimize`: `_ctsem_take_jump_modes!`, `_ctsem_take_search_modes!`).
+Each round adds a mode the objective did not know or moves the objective by
+more than `_CTSEM_MODE_RESUME_TOL`, so this bounds a run whose units keep
+growing maxima; past it, a jump ends the run as it did before.
+"""
+const _CTSEM_MODE_ROUNDS = 8
+
+# One line on the progress stream, for modes a run took on its way.
+function _ctsem_mode_note(reporter, label::AbstractString, text::AbstractString)
+    _progress_break(reporter)
+    println(_console(), label, ": ", text, ".")
+    flush(_console())
+    return nothing
+end
+
+"""
     ctsem_optimize(objective, start; ...)
 
 Optimize a prepared likelihood entirely within Julia: L-BFGS, then, where the
@@ -3235,11 +3256,11 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
     minimizer = collect(result.minimizer)
     # A jump the line search saw, named by the route: the units whose terms
     # jumped and where their inner solves stopped either side
-    # (`_ctsem_jump_units`). A run whose jump the route names stops there
-    # ("jump"), with no finish: Newton steps across a discontinuity are no
-    # better than L-BFGS's, and the caller has what it needs to make the
-    # objective smooth there. A jump the route cannot name is a failed line
-    # search, as it always was.
+    # (`_ctsem_jump_units`). A run whose jump the route names takes those
+    # modes and goes on (below); where they add none it stops there ("jump"),
+    # with no finish: Newton steps across a discontinuity are no better than
+    # L-BFGS's. A jump the route cannot name is a failed line search, as it
+    # always was.
     jumped_units = Ref{Any}(nothing)
     if result.linesearch_failed && jump.seen
         named = try
@@ -3319,7 +3340,99 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
             _ctsem_checkpoint_args(ck_modes)...; force=ck_modes !== nothing)
         return false
     end
-    while finishing && stop_reason in ("gap", "linesearch", "gradient", "progress")
+    # Modes the run finds go into its objective as it finds them, and L-BFGS
+    # carries on from where it stopped with its curvature pairs: a jump's, at
+    # its named units (`_ctsem_take_jump_modes!`), and a search's where L-BFGS
+    # stopped by its own rule and again where the finish ends, before the probe
+    # and the certification read the point (`_ctsem_take_search_modes!`), up
+    # to `_CTSEM_MODE_ROUNDS` times; reported for the caller to keep with the
+    # specification (`CTSEMFoundModes`). Until 2026-10-30 a jump ended the run
+    # and the search came after the finish, the probe and the certification's
+    # Hessian, either one sending the caller to start a new run (R's
+    # `.ctJuliaOptimise()`): on the affect pilot a search that found six
+    # units' better modes threw away nine hours of finishing.
+    found = CTSEMFoundModes()
+    mode_rounds = 0
+    # A finish's Hessian, walked by the next finish where a search sent the run
+    # back to L-BFGS from its point (`hessian0`): the objective has changed
+    # only in the units whose maxima did. The caller's for the first finish,
+    # and none after a hand-back, which moved the point on.
+    held_hessian = newton_hessian
+    held_hessian_at = newton_hessian_at
+    may_finish = finishing
+    finished = false
+    # Where the last search found nothing to go on with: the closing search
+    # below does not search there again.
+    searched_at = Float64[]
+    while true
+        took = false
+        if mode_rounds < _CTSEM_MODE_ROUNDS
+            if stop_reason == "jump"
+                took = _ctsem_take_jump_modes!(objective, minimizer, jumped_units[], found)
+                took && progress && _ctsem_mode_note(reporter, label, string(
+                    "the objective jumped at unit(s) ", join(jumped_units[].units, ", "),
+                    " (a term moved with where its inner solve stopped); their modes ",
+                    "there are kept as starts and the run goes on"))
+            elseif stop_reason in ("gap", "linesearch", "gradient", "progress")
+                taken = _ctsem_take_search_modes!(objective, minimizer, found)
+                took = isfinite(taken.change) && abs(taken.change) > _CTSEM_MODE_RESUME_TOL
+                took || (searched_at = copy(minimizer))
+                took && progress && _ctsem_mode_note(reporter, label, @sprintf(
+                    "a search where the run stopped found other maxima for %d unit(s), moving the objective by %+.3g; they are kept and the run goes on",
+                    taken.units, taken.change))
+            end
+        end
+        if took
+            mode_rounds += 1
+            if finish !== nothing
+                spent.steps[] += finish.steps
+                spent.fcalls[] += finish.fcalls
+                spent.gcalls[] += finish.gcalls
+                spent.hessians[] += finish.full_hessians
+                spent.subset[] += finish.subset_hessians
+                spent.krylov_models[] += finish.krylov_models
+                spent.krylov_products[] += finish.krylov_products
+                append!(spent.history.kind, finish.history.kind)
+                append!(spent.history.gain, finish.history.gain)
+                append!(spent.history.alpha, finish.history.alpha)
+                append!(spent.history.value, finish.history.value)
+                if finish.hessian !== nothing
+                    held_hessian = finish.hessian
+                    held_hessian_at = finish.hessian_at
+                end
+                finish = nothing
+            end
+            finished = false
+            jump.seen = false
+            jumped_units[] = nothing
+            stopped_by_gap[] = false
+            stopped_by_progress[] = false
+            result = _ctsem_lbfgs_on(fg!, minimizer, result,
+                result.iterations + spent.steps[],
+                Int(maxiter) - result.iterations - spent.steps[];
+                memory=lbfgs_m, diagonal=lbfgs_diagonal,
+                nonmonotone=lbfgs_nonmonotone, gll=Int(lbfgs_gll), scaled=lbfgs_scaled,
+                metric=_ctsem_metric(precondition, length(start_values)),
+                inverse=inverse, structured=structured,
+                initial_alpha=Float64(initial_alpha), g_tol=g_tol, f_tol=f_tol,
+                x_tol=x_tol, callback=watch, directional=directional,
+                jump=watch_jump ? jump : nothing, local_curvature=local_curvature)
+            minimizer = collect(result.minimizer)
+            if result.linesearch_failed && jump.seen
+                named = try
+                    _ctsem_jump_units(objective, jump)
+                catch err
+                    _ctsem_must_propagate(err) && rethrow()
+                    nothing
+                end
+                (named !== nothing && !isempty(named.units)) && (jumped_units[] = named)
+            end
+            stop_reason = reason_for(result)
+            continue
+        end
+        finished && break
+        (may_finish && stop_reason in ("gap", "linesearch", "gradient", "progress")) ||
+            break
         # From the full objective. A batch still short of the data when L-BFGS
         # stopped -- a line search can fail inside one -- left its own value
         # and gradient in the result.
@@ -3348,10 +3461,7 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
             flat_allowed=(from, to) -> _ctsem_flat_allowed(objective, from, to,
                 Float64(converge_tol)),
             reporter=reporter,
-            # The caller's Hessian, for the stage's first finish only: after a
-            # hand-back L-BFGS has moved the point on.
-            hessian0=handed_back ? nothing : newton_hessian,
-            hessian0_at=handed_back ? nothing : newton_hessian_at,
+            hessian0=held_hessian, hessian0_at=held_hessian_at,
             krylov_min_cost=krylov_min_cost, final=Symbol(newton_final),
             jump=watch_jump ? jump : nothing,
             # The local curvature's last build, as the Krylov model's
@@ -3359,22 +3469,27 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
             krylov_base=(local_curvature === nothing ||
                 isempty(local_curvature.P)) ? nothing : local_curvature.P)
         minimizer = collect(finish.x)
-        # A jump the finish's steps confirmed and the route named: the run
-        # ends there as it does on L-BFGS's ("jump", above), with no Hessian.
+        # A jump the finish's steps confirmed and the route named: its modes
+        # in and L-BFGS on from the finish's point, as on L-BFGS's (above), or
+        # where they add nothing the run ends there, with no Hessian.
         if finish.jumped !== nothing
             jumped_units[] = finish.jumped
             stop_reason = "jump"
             verbose && println(_console(), label, ": the objective jumped by ",
                 jump.excess, " along the finish's step; unit(s) ",
                 finish.jumped.units, " moved with where their inner solve stopped")
-            break
+            continue
         end
         # The finish's own gain replaces L-BFGS's metric proxy: it is the exact
         # decrement, which is what the verdict below should be judging. A
         # finish with no Hessian has none (`Inf`), and the proxy stays: put
         # there, it made the report read "stopped with Inf still available".
         isfinite(finish.gain) && (directional.dphi0 = -2 * finish.gain)
-        (early && (finish.handback || finish.hessian === nothing)) || break
+        # Ended: a search at its point (above) before the run does.
+        if !(early && (finish.handback || finish.hessian === nothing))
+            finished = true
+            continue
+        end
         # L-BFGS carries on from where the finish left the point, to the
         # ordinary stopping rule, rather than the fit ending short: either the
         # hand-over was early (`handback`), or there is no usable Hessian --
@@ -3396,25 +3511,21 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
         finish = nothing
         handover[] = Float64(gap_tol)
         stopped_by_gap[] = false
+        held_hessian = nothing
+        held_hessian_at = nothing
         # From the pairs the stage ended with: the objective is the same, the
         # point a step or so on, and a cold memory spent its first iterations
         # learning again what they hold.
-        resumed = _ctsem_lbfgs(fg!, minimizer; memory=lbfgs_m, pairs=result.memory,
-            diagonal=lbfgs_diagonal, nonmonotone=lbfgs_nonmonotone, gll=Int(lbfgs_gll),
-        scaled=lbfgs_scaled,
+        result = _ctsem_lbfgs_on(fg!, minimizer, result,
+            result.iterations + spent.steps[],
+            Int(maxiter) - result.iterations - spent.steps[];
+            memory=lbfgs_m, diagonal=lbfgs_diagonal,
+            nonmonotone=lbfgs_nonmonotone, gll=Int(lbfgs_gll), scaled=lbfgs_scaled,
             metric=_ctsem_metric(precondition, length(start_values)),
             inverse=inverse, structured=structured,
-            initial_alpha=Float64(initial_alpha),
-            maxiter=max(0, Int(maxiter) - result.iterations - spent.steps[]),
-            g_tol=g_tol, f_tol=f_tol, x_tol=x_tol, callback=watch,
-            directional=directional, iteration0=result.iterations + spent.steps[],
+            initial_alpha=Float64(initial_alpha), g_tol=g_tol, f_tol=f_tol,
+            x_tol=x_tol, callback=watch, directional=directional,
             jump=watch_jump ? jump : nothing, local_curvature=local_curvature)
-        result = CTSEMLBFGSResult(resumed.minimizer, resumed.minimum,
-            resumed.gradient, result.iterations + resumed.iterations,
-            result.f_calls + resumed.f_calls, result.g_calls + resumed.g_calls,
-            resumed.g_converged, resumed.f_converged, resumed.x_converged,
-            resumed.linesearch_failed, resumed.stopped_by_callback,
-            result.batch_sizes, result.batch_iterations, resumed.memory)
         minimizer = collect(result.minimizer)
         if result.linesearch_failed && jump.seen && jumped_units[] === nothing
             named = try
@@ -3426,7 +3537,8 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
             (named !== nothing && !isempty(named.units)) && (jumped_units[] = named)
         end
         stop_reason = reason_for(result)
-        again || break
+        # With no usable Hessian, no finish after either.
+        again || (may_finish = false)
     end
     carry === :objective && _ctsem_lbfgs_hold!(objective, result.memory)
     # The finish's totals, a finish that handed back included.
@@ -3554,8 +3666,15 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
     saturated = verdict.saturated
     stalled = verdict.stalled
     # The run's anchored modes against a search at the estimate, and the
-    # anchors cleared (`_ctsem_anchor_finish!`).
-    anchored = _ctsem_anchor_finish!(objective, minimizer)
+    # anchors cleared (`_ctsem_anchor_finish!`): where the run's own last
+    # search was at the estimate and found nothing to go on with, only the
+    # clearing, its findings being in `found` already.
+    anchored = if searched_at == minimizer
+        ctsem_laplace_clear_anchors!(objective)
+        nothing
+    else
+        _ctsem_anchor_finish!(objective, minimizer)
+    end
     finite_gradient = verdict.finite_gradient
     converged_enough = verdict.converged_enough
     overshoot = verdict.overshoot
@@ -3596,6 +3715,12 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
         anchor_missed_values=anchored === nothing ? zeros(1, 1) :
             anchored.missed_values,
         anchor_missed_gain=anchored === nothing ? 0.0 : anchored.missed_gain,
+        # Modes the run put in its objective's known modes on its way, and how
+        # many times it took some and carried on (`CTSEMFoundModes`), for the
+        # caller's known modes; `[0]` where none.
+        found_mode_units=_ctsem_found_columns(found)[1],
+        found_mode_values=_ctsem_found_columns(found)[2],
+        found_mode_rounds=mode_rounds,
         gradient=collect(final.gradient),
         subject_loglik=collect(final.subject_loglik),
         result_extra...,

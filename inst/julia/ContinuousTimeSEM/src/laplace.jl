@@ -703,8 +703,11 @@ mutable struct CTSEMLaplaceObjective{O} <: CTSEMOptimisable
     # Per unit, modes its inner solve also starts Newton from
     # (`_laplace_known_modes`): those a fit's line search or finish saw where
     # the unit's term jumped, kept so the solve reaches the better mode at
-    # every point rather than only where a probe happens to. Fixed for the
-    # objective's life, so its value is still a function of theta alone.
+    # every point rather than only where a probe happens to. Fixed outside an
+    # optimisation, so its value is a function of theta alone there; within
+    # one, a mode the run finds joins (`_ctsem_take_jump_modes!`,
+    # `_ctsem_take_search_modes!`), and the run reports it for the caller to
+    # keep with the specification (`CTSEMFoundModes`).
     known::Vector{Vector{Vector{Float64}}}
     # Within an optimisation, each unit's mode at the last accepted point, which
     # every evaluation's solve then starts from instead of searching
@@ -4881,10 +4884,13 @@ end
     _ctsem_anchor_modes(objective)
 
 An anchored run's modes at its last accepted point, each unit's and the other
-maxima it follows (`alt_anchors`), as `(units, values)`: column `j` of the
-NaN-padded `values` a mode of unit `units[j]`. `nothing` outside an anchored
-run. What a checkpoint keeps beside the parameters, for a resume to start its
-search from (`_ctsem_anchor_start!`'s `resume_units`).
+maxima it follows (`alt_anchors`), and then its known modes (`known`: the
+caller's, and those the run found on its way and no longer follows), as
+`(units, values)`: column `j` of the NaN-padded `values` a mode of unit
+`units[j]`. `nothing` outside an anchored run. What a checkpoint keeps beside
+the parameters, for a resume to start its search from
+(`_ctsem_anchor_start!`'s `resume_units`): a new process builds its objective
+from the model, with no known modes of its own.
 """
 _ctsem_anchor_modes(::Any) = nothing
 function _ctsem_anchor_modes(laplace::CTSEMLaplaceObjective)
@@ -4893,11 +4899,18 @@ function _ctsem_anchor_modes(laplace::CTSEMLaplaceObjective)
     modes = Vector{Float64}[]
     for U in eachindex(laplace.anchors)
         isempty(laplace.anchors[U]) && continue
+        j0 = length(modes) + 1
         push!(units, U); push!(modes, laplace.anchors[U])
         if U <= length(laplace.alt_anchors)
             for m in laplace.alt_anchors[U]
                 push!(units, U); push!(modes, m)
             end
+        end
+        U <= length(laplace.known) || continue
+        for k in laplace.known[U]
+            any(j -> _laplace_maxabsdiff(modes[j], k) < 1e-8, j0:length(modes)) &&
+                continue
+            push!(units, U); push!(modes, k)
         end
     end
     isempty(units) && return nothing
@@ -4940,32 +4953,14 @@ _ctsem_anchor_finish!(::CTSEMOptimisable, x) = nothing
 function _ctsem_anchor_finish!(laplace::CTSEMLaplaceObjective, x::AbstractVector)
     isempty(laplace.anchors) && return nothing
     xv = collect(Float64, x)
-    held = try
-        ctsem_laplace_evaluate(laplace, xv; gradient=false)
-    catch err
-        _ctsem_must_propagate(err) && rethrow()
-        laplace.anchors = Vector{Float64}[]
-        laplace.alt_anchors = Vector{Vector{Float64}}[]
-        return nothing
-    end
-    hu = collect(Float64, held.unit_loglik)
-    hm = [copy(m) for m in laplace.modes]
-    ha = [Vector{Float64}[copy(m) for m in a] for a in laplace.alt_modes]
-    laplace.anchors = Vector{Float64}[]
-    laplace.alt_anchors = Vector{Vector{Float64}}[]
-    searched = try
-        ctsem_laplace_evaluate(laplace, xv; gradient=false)
-    catch err
-        _ctsem_must_propagate(err) && rethrow()
-        return nothing
-    end
-    su = collect(Float64, searched.unit_loglik)
-    sm = [copy(m) for m in laplace.modes]
-    sa = [Vector{Float64}[copy(m) for m in a] for a in laplace.alt_modes]
+    c = _ctsem_anchor_compare(laplace, xv)
+    c === nothing && return nothing
+    hu, hm, ha, su, sm, sa = c.hu, c.hm, c.ha, c.su, c.sm, c.sa
     # Under the sum over a unit's maxima (`_laplace_mode_sum`), its two sets of
     # maxima: those only the anchored run held are kept, those only the search
-    # found were missed, and the gain is what the search's sum adds where it
-    # found more.
+    # found were missed, and the gain is what the search's sum changes where
+    # it found more -- less, where what it found are lower maxima, which the
+    # average weighs.
     if _LAPLACE_MODE_SUM[]
         keptu = Int[]; keptm = Vector{Float64}[]
         missu = Int[]; missm = Vector{Float64}[]
@@ -4983,7 +4978,7 @@ function _ctsem_anchor_finish!(laplace::CTSEMLaplaceObjective, x::AbstractVector
             for m in found_only
                 push!(missu, U); push!(missm, m)
             end
-            isempty(found_only) || (setgain += max(su[U] - hu[U], 0.0))
+            isempty(found_only) || (setgain += su[U] - hu[U])
         end
         packed(units, modes) = begin
             isempty(units) && return ([0], zeros(1, 1))
@@ -5036,6 +5031,213 @@ function _ctsem_anchor_finish!(laplace::CTSEMLaplaceObjective, x::AbstractVector
     missed_units, missed_values = columns(missed, sm)
     return (kept_units=kept_units, kept_values=kept_values,
         missed_units=missed_units, missed_values=missed_values, missed_gain=gain)
+end
+
+"""
+    _ctsem_anchor_compare(laplace, x)
+
+An anchored run's evaluation at `x` beside a search there, the anchors
+cleared between them: the anchored value (`held`) and each unit's term
+(`hu`), mode (`hm`) and other maxima (`ha`), and the search's (`su`, `sm`,
+`sa`). `nothing` where either evaluation fails, the anchors left cleared.
+"""
+function _ctsem_anchor_compare(laplace::CTSEMLaplaceObjective, xv::Vector{Float64})
+    held = try
+        ctsem_laplace_evaluate(laplace, xv; gradient=false)
+    catch err
+        _ctsem_must_propagate(err) && rethrow()
+        ctsem_laplace_clear_anchors!(laplace)
+        return nothing
+    end
+    hu = collect(Float64, held.unit_loglik)
+    hm = [copy(m) for m in laplace.modes]
+    ha = [Vector{Float64}[copy(m) for m in a] for a in laplace.alt_modes]
+    ctsem_laplace_clear_anchors!(laplace)
+    searched = try
+        ctsem_laplace_evaluate(laplace, xv; gradient=false)
+    catch err
+        _ctsem_must_propagate(err) && rethrow()
+        return nothing
+    end
+    return (held=Float64(held.value), hu=hu, hm=hm, ha=ha,
+        su=collect(Float64, searched.unit_loglik), sm=[copy(m) for m in laplace.modes],
+        sa=[Vector{Float64}[copy(m) for m in a] for a in laplace.alt_modes])
+end
+
+"""
+Modes an optimisation put in its objective's known modes as it found them
+(`_ctsem_take_jump_modes!`, `_ctsem_take_search_modes!`), mode `modes[j]` of
+unit `units[j]`, for the caller to keep with the fit's specification (R's
+`spec\$laplace\$known`), so every objective built for the fit reaches them.
+"""
+struct CTSEMFoundModes
+    units::Vector{Int}
+    modes::Vector{Vector{Float64}}
+end
+CTSEMFoundModes() = CTSEMFoundModes(Int[], Vector{Float64}[])
+
+# Mode `u` into unit `U`'s known modes and `found`, where it is of the unit's
+# length and not one the unit has (`_laplace_add_known!`'s rule); whether it
+# went in.
+function _ctsem_known_add!(laplace::CTSEMLaplaceObjective, U::Int,
+    u::Vector{Float64}, found::CTSEMFoundModes)
+    (isempty(u) || !(1 <= U <= length(laplace.known))) && return false
+    n = length(laplace.known[U])
+    _laplace_add_known!(laplace, [U], reshape(copy(u), :, 1))
+    length(laplace.known[U]) > n || return false
+    push!(found.units, U)
+    push!(found.modes, copy(u))
+    return true
+end
+
+# `found` as a result's units and NaN-padded matrix of modes
+# (`_laplace_known_column`), `[0]` and `zeros(1, 1)` where none.
+function _ctsem_found_columns(found::CTSEMFoundModes)
+    isempty(found.units) && return ([0], zeros(1, 1))
+    m = fill(NaN, maximum(length, found.modes), length(found.units))
+    for j in eachindex(found.modes)
+        m[1:length(found.modes[j]), j] = found.modes[j]
+    end
+    return (copy(found.units), m)
+end
+
+"""
+    _ctsem_merge_modes!(laplace, x, found)
+
+Within an optimisation, a search at `x` beside the run's anchored evaluation
+(`_ctsem_anchor_compare`), and the two joined: each unit anchored on every
+maximum either found (the set `_laplace_mode_sum` combines; under its oracle,
+`ctsem_set_mode_sum!(false)`, the one mode the search's rule prefers,
+`_laplace_prefer_mode`), and each maximum one of them missed put in the known
+modes (`_ctsem_known_add!`), so later searches reach it too. Returns the
+change this makes to the objective at `x` and the units whose maxima changed;
+`NaN` and 0, the anchors as they were, where the two agree or an evaluation
+fails.
+"""
+function _ctsem_merge_modes!(laplace::CTSEMLaplaceObjective, xv::Vector{Float64},
+    found::CTSEMFoundModes)
+    saved = laplace.anchors
+    saved_alt = laplace.alt_anchors
+    c = _ctsem_anchor_compare(laplace, xv)
+    if c === nothing
+        laplace.anchors = saved; laplace.alt_anchors = saved_alt
+        return (change=NaN, units=0)
+    end
+    n = length(c.hu)
+    anchors = Vector{Vector{Float64}}(undef, n)
+    alts = Vector{Vector{Vector{Float64}}}(undef, n)
+    theta = _laplace_extend(laplace, xv)
+    Ls = _laplace_popchols(theta, laplace.spec)
+    aws = _laplace_workspace!(laplace, Float64, length(theta))
+    changed = 0
+    for U in 1:n
+        hs = isempty(c.hm[U]) ? Vector{Float64}[] : vcat([c.hm[U]], c.ha[U])
+        ss = isempty(c.sm[U]) ? Vector{Float64}[] : vcat([c.sm[U]], c.sa[U])
+        held_only = Vector{Float64}[m for m in hs
+            if !any(s -> _laplace_maxabsdiff(s, m) < 1e-4, ss)]
+        found_only = Vector{Float64}[m for m in ss
+            if !any(h -> _laplace_maxabsdiff(h, m) < 1e-4, hs)]
+        if isempty(hs) || (isempty(held_only) && isempty(found_only)) ||
+                !(isfinite(c.hu[U]) && isfinite(c.su[U]))
+            anchors[U] = isempty(hs) ? c.sm[U] : c.hm[U]
+            alts[U] = isempty(hs) ? c.sa[U] : c.ha[U]
+            continue
+        end
+        changed += 1
+        if _LAPLACE_MODE_SUM[]
+            set = c.su[U] < c.hu[U] ? vcat(hs, found_only) : vcat(ss, held_only)
+            anchors[U] = set[1]
+            alts[U] = set[2:end]
+            for m in held_only
+                _ctsem_known_add!(laplace, U, m, found)
+            end
+            for m in found_only
+                _ctsem_known_add!(laplace, U, m, found)
+            end
+        else
+            s = _laplace_newton_unit_mode(laplace, U, theta, Ls, aws, c.sm[U])
+            a = _laplace_newton_unit_mode(laplace, U, theta, Ls, aws, c.hm[U])
+            held_better = s.converged && a.converged && isfinite(s.value) &&
+                isfinite(a.value) &&
+                _laplace_prefer_mode(laplace, U, theta, Ls, aws, s, NaN, a, s)[3]
+            anchors[U] = held_better ? c.hm[U] : c.sm[U]
+            alts[U] = Vector{Float64}[]
+            _ctsem_known_add!(laplace, U, anchors[U], found)
+        end
+    end
+    if changed == 0
+        laplace.anchors = saved; laplace.alt_anchors = saved_alt
+        return (change=NaN, units=0)
+    end
+    laplace.anchors = anchors
+    laplace.alt_anchors = alts
+    merged = try
+        ctsem_laplace_evaluate(laplace, xv; gradient=false)
+    catch err
+        _ctsem_must_propagate(err) && rethrow()
+        nothing
+    end
+    if merged === nothing || !isfinite(merged.value)
+        laplace.anchors = saved; laplace.alt_anchors = saved_alt
+        return (change=NaN, units=0)
+    end
+    _ctsem_anchor_here!(laplace)
+    return (change=Float64(merged.value) - c.held, units=changed)
+end
+
+"""
+How far, in nats, the maxima a search joins to an anchored run's must move the
+objective where the run stopped for the run to carry on from there
+(`_ctsem_take_search_modes!`): under it the run finishes on the joined set.
+"""
+const _CTSEM_MODE_RESUME_TOL = 1e-3
+
+"""
+    _ctsem_take_search_modes!(objective, x, found)
+
+Where an anchored optimisation stopped by its own rule at `x`: a search there
+joined to the run's maxima (`_ctsem_merge_modes!`): the change that made to
+the objective there and the units whose maxima changed, for the run to carry
+on from `x` where it moved by more than `_CTSEM_MODE_RESUME_TOL` rather than
+finish on what it held. A run follows the maxima it started with and cannot
+see one born on its way, or a better one past a valley, so the search is
+where it learns of them; at the end of the run, after the finish's Hessian,
+it cost the affect pilot nine hours a time. `NaN` and 0 on a route without
+anchors.
+"""
+_ctsem_take_search_modes!(::Any, x, found) = (change=NaN, units=0)
+function _ctsem_take_search_modes!(laplace::CTSEMLaplaceObjective, x::AbstractVector,
+    found::CTSEMFoundModes)
+    isempty(laplace.anchors) && return (change=NaN, units=0)
+    return _ctsem_merge_modes!(laplace, collect(Float64, x), found)
+end
+
+"""
+    _ctsem_take_jump_modes!(objective, x, named, found)
+
+A jump the route named at `x` (`_ctsem_jump_units`): the modes its units'
+solves stopped at, on either side, put in the known modes, and the run's
+anchors joined with a search at `x` that starts from them too
+(`_ctsem_merge_modes!`), so the run carries on from `x` with those units'
+terms continuous there: where the solve reached a unit's better mode only at
+isolated points, a start there makes its term continuous (R's
+`.ctJuliaOptimise()` once did this by a new run). `false` where the jump
+added no mode, which another run could not change either, or on a route
+without known modes.
+"""
+_ctsem_take_jump_modes!(::Any, x, named, found) = false
+function _ctsem_take_jump_modes!(laplace::CTSEMLaplaceObjective, x::AbstractVector,
+    named, found::CTSEMFoundModes)
+    named === nothing && return false
+    n0 = length(found.units)
+    for j in eachindex(named.point_units)
+        U = Int(named.point_units[j])
+        U in named.units || continue
+        _ctsem_known_add!(laplace, U, _laplace_known_column(named.point_values, j), found)
+    end
+    length(found.units) > n0 || return false
+    isempty(laplace.anchors) || _ctsem_merge_modes!(laplace, collect(Float64, x), found)
+    return true
 end
 
 """
