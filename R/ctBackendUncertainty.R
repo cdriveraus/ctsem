@@ -914,7 +914,7 @@
 
 .ctBackendUncertaintyLikelihood <- function(fit, uncertainty, likelihood,
   finishsamples, cores, control, verbose) {
-  own <- switch(likelihood, quadrature = "nodes",
+  own <- switch(likelihood, quadrature = c("nodes", "check"),
     particle = c("particles", "substeps", "transition", "seed"))
   shared <- c(isESS = "target_ess", isitersize = "nbatch",
     imisMaxIter = "maxiter", imisScaleInit = "scale",
@@ -971,7 +971,10 @@
 # exact at the estimate the hybrid is the fit's own objective there, and the
 # draws are taken on it; where the continuation could not draw (no Hessian
 # to certify its end, every unit too wide) the draws are taken on the fit's
-# own objective too, and a message says so.
+# own objective too, at its optimum where the climb moved the estimate
+# (`.ctLaplaceUncertaintyAtOptimum()`, as ctFit draws them), and a message
+# says so. The interval check (`control$check`, from `checks`) is made with
+# whichever draws are taken, on their density.
 .ctBackendUncertaintyQuadrature <- function(fit, uncertainty, finishsamples,
   cores, control, verbose, shared) {
   if (is.null(fit$model_spec$laplace)) {
@@ -1009,7 +1012,7 @@
     finishsamples <- if (!is.null(fit$estimate$rawposterior))
       nrow(fit$estimate$rawposterior) else 1000L
   }
-  iscontrol <- control[intersect(names(control), shared)]
+  iscontrol <- control[intersect(names(control), c(shared, "check"))]
   draws <- .ctResolveDraws(uncertainty, "auto")
   fit$uncertainty$settings <- list(method = uncertainty, draws = draws,
     finishsamples = finishsamples, cores = cores, control = iscontrol)
@@ -1030,9 +1033,10 @@
       message("The quadrature hybrid could not be drawn on (", status,
         "); the draws are against the fit's own objective.")
     }
-    fit <- .ctBackendUncertainty(fit, uncertainty = uncertainty, draws = draws,
-      finishsamples = finishsamples, cores = cores, control = iscontrol,
-      verbose = verbose)
+    fit <- .ctLaplaceUncertaintyAtOptimum(fit, function(fit)
+      .ctBackendUncertainty(fit, uncertainty = uncertainty, draws = draws,
+        finishsamples = finishsamples, cores = cores, control = iscontrol,
+        verbose = verbose))
   }
   fit$uncertainty$settings$control <- c(list(likelihood = "quadrature"), control)
   fit

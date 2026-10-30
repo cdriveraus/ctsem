@@ -827,10 +827,17 @@ test_that("a default fit's note says where the check found the normal wrong, or 
   expect_null(note(fit))
   fit$uncertainty$details$normalcheck$directions <- matrix(1, 3, 2)
   expect_match(note(fit), "departs from that normal in 2 directions", fixed = TRUE)
-  # A jump makes no check, and says what one would.
-  fit$uncertainty$details$normalcheck <- NULL
+  # A jump's intervals are the Laplace curvature where it jumps, and the jump
+  # says what a check there would.
   fit$laplace$jump <- list(units = 1L)
   expect_match(note(fit), "Laplace term jumped", fixed = TRUE)
+  # Refitted, the intervals and their check are the hybrid's, which does not
+  # jump there.
+  fit$laplace$correction <- list(applied = TRUE, draws = "redrawn")
+  expect_match(note(fit), "departs from that normal in 2 directions", fixed = TRUE)
+  fit$laplace$correction$draws <- "recentred"
+  expect_match(note(fit), "Laplace term jumped", fixed = TRUE)
+  fit$uncertainty$details$normalcheck <- NULL
   # Only the curvature's normal gets the note: 'checked' samples what it finds.
   fit$uncertainty$settings$method <- "checked"
   expect_null(note(fit))

@@ -3628,8 +3628,11 @@ ctOptimFitLpgFunc <- function(fit, cores=1){
 #' climbed to that density's optimum first; one refitted when it was fitted
 #' stays where it is, as does any fit under \code{correctEstimate = FALSE}.
 #' With \code{'quadrature'}, \code{'hessian'} is taken too: the hybrid's
-#' curvature where the climb ends, which is what
-#' \code{ctFit(intoverpop = 'quadrature')} gives at fit time.
+#' curvature where the climb ends, with the interval check made on the
+#' hybrid there, which is what \code{ctFit(intoverpop = 'quadrature')} gives
+#' at fit time.
+#' Where the climb stops short of its optimum, the intervals are the Laplace
+#' objective's at its optimum, moved with the estimate, as at fit time.
 #' \code{filter = 'particle'}, for a fit on the filter's route and with
 #' \code{'is'}, replaces the
 #' filter's Gaussian likelihood by a particle filter's (\code{control$particles},
@@ -3862,7 +3865,9 @@ ctOptimFitLpgFunc <- function(fit, cores=1){
 #' would move an estimate, naming \code{intoverpop = 'quadrature'}; a fit
 #' that has one on record is not checked again. The interval check (julia,
 #' with \code{method = 'hessian'}) makes \code{'checked'}'s check of the
-#' curvature's normal against the posterior's gradients, records it in
+#' curvature's normal against the posterior's gradients, on the density the
+#' intervals come from (with \code{intoverpop = 'quadrature'}, the refit's,
+#' at its estimate), records it in
 #' \code{$uncertainty$details$normalcheck}, and says in a message, and in
 #' \code{summary()}, when the posterior departs from that normal, naming
 #' \code{method = 'sample'}.
@@ -4071,11 +4076,10 @@ ctFitUncertainty <- function(fit,
       "effects; one fit takes one or the other.", call.=FALSE)
     control$likelihood <- 'particle'
   }
-  # The interval check beside 'hessian' (`control$check` internally), on the
-  # fit's own density: the quadrature hybrid's curvature is the refit's
-  # certified one, and the check's draws would each place its rules again.
-  if(julia && identical(method, 'hessian') &&
-      !identical(control$likelihood, 'quadrature')) {
+  # The interval check beside 'hessian' (`control$check` internally), made
+  # where the intervals are drawn: on a refit, the quadrature hybrid at the
+  # refit's estimate (`.ctLaplaceContinue()`).
+  if(julia && identical(method, 'hessian')) {
     control$check <- 'intervals' %in% checks
   }
   out <- .ctFitUncertaintyImpl(fit, uncertainty=method, draws='auto',

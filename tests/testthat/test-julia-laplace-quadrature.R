@@ -203,6 +203,11 @@ test_that("the default checks and warns, and the correction it names is the fit-
     tolerance = 1e-6)
   expect_identical(corrected$uncertainty$settings$method, "hessian")
   expect_identical(corrected$uncertainty$settings$draws, "normal")
+  # The interval check is the refit's: made with its draws, on the hybrid's
+  # curvature at its estimate, as the intervals are.
+  expect_false(is.null(corrected$uncertainty$details$laplace_correction$error))
+  expect_identical(corrected$uncertainty$hessian, corrected$laplace$correction$hessian)
+  expect_false(is.null(corrected$uncertainty$details$normalcheck))
   # The Laplace run converged (no unit's term jumped, `fit$laplace$jump`), so
   # what the fit did is `.ctLaplaceContinue()` applied to the uncorrected fit,
   # exactly.
