@@ -679,13 +679,22 @@ end
 """
     ctsem_laplace_placed_info(P)
 
-The placed objective's accounting: units placed and frozen, calls, seconds.
+The placed objective's accounting: units placed and frozen, calls, seconds;
+`soft` the placed units wider than the continuation's `product_maxdim`, which
+the rounds give a soft rule and this a product rule. A list with no unit is
+`[0]`, for the bridge (an empty vector hangs it).
 """
-ctsem_laplace_placed_info(P::CTSEMLaplacePlaced) = (placed=copy(P.placed),
-    frozen=[P.cont.rules[f].unit for f in P.frozen], nodes=P.nodes[P.placed],
-    value_calls=P.value_calls, gradient_calls=P.gradient_calls,
-    seconds_values=P.seconds_values, seconds_gradients=P.seconds_gradients,
-    seconds_hessian=P.seconds_hessian)
+function ctsem_laplace_placed_info(P::CTSEMLaplacePlaced)
+    nonempty(v) = isempty(v) ? [0] : v
+    soft = [U for U in P.placed if
+        P.cont.laplace.units.blocks[U][1].size > P.cont.product_maxdim]
+    return (placed=nonempty(copy(P.placed)),
+        frozen=nonempty([P.cont.rules[f].unit for f in P.frozen]),
+        nodes=nonempty(P.nodes[P.placed]), soft=nonempty(soft),
+        value_calls=P.value_calls, gradient_calls=P.gradient_calls,
+        seconds_values=P.seconds_values, seconds_gradients=P.seconds_gradients,
+        seconds_hessian=P.seconds_hessian)
+end
 
 # The optimisable protocol (see ctsem_backend.jl), as the continuation takes it.
 
