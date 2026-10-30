@@ -140,12 +140,12 @@
 # floor is the one every model has; from SAEM's point the finish removes the
 # step's offset and noise, and it is the one serious check of convergence.
 # What it costs: where the Laplace mode and the exact one differ, the finish
-# returns to the Laplace mode. The quadrature correction after it
-# (`laplace_refit`) continues the fit with quadrature in place of Laplace
-# for each unit of at most five effects whose values differ; a wider unit -- a
-# nested study with its people -- keeps the Laplace term, and there SAEM's own
-# estimate, better on the exact likelihood than the Laplace optimum on the
-# bench's gN1 and gN3, is given back (review/SAEM-aecm-2026-10-02.md). So in
+# returns to the Laplace mode, and on the bench's gN1 and gN3 SAEM's own
+# estimate was better on the exact likelihood than the Laplace optimum
+# (review/SAEM-aecm-2026-10-02.md). The integrated refit
+# (`ctFit(intoverpop = 'quadrature')`) takes the fit on from there with the
+# units whose values differ integrated, by product rules up to five effects
+# and by draws beyond. So in
 # the optimiser SAEM chooses which maximum the finish climbs, and ctFit checks
 # that choice against a finish from the fit's own start, on the
 # quadrature-corrected objective. An estimate free of the Laplace error is the

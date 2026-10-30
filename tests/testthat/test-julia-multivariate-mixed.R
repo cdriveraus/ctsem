@@ -129,7 +129,7 @@ test_that("the Laplace correction handles more than one random effect", {
   # on the Windows machine. This test is about the correction, not the basin,
   # so it takes the first of three seeded starts that converges.
   #
-  # Fitted with laplace_check = FALSE because the first half tests the
+  # Fitted with checks = FALSE because the first half tests the
   # check's own first step, which on a fit the default correction already
   # moved is the further step from there; the indicators are ordinal and
   # binary, so here it does. The default fit, from the same start, is the
@@ -139,7 +139,7 @@ test_that("the Laplace correction handles more than one random effect", {
     set.seed(seed)
     fit <- suppressWarnings(suppressMessages(ctFit(d, m, backend = "julia",
       intoverpop = "laplace", optimcontrol = list(finishsamples = 100,
-        laplace_check = FALSE))))
+        checks = FALSE))))
     if (isTRUE(fit$optim$converged)) break
   }
   skip_if_not(isTRUE(fit$optim$converged), "no start converged")

@@ -903,7 +903,8 @@
   hessian
 }
 
-# `ctFitUncertainty(fit, 'is' | 'checked', control = list(likelihood = ...))`:
+# `ctFitUncertainty(fit, 'is' | 'checked', intoverpop = 'quadrature')` and
+# `filter = 'particle'`, internally `control$likelihood`:
 # the draws behind a fit's intervals against a density the fit did not
 # maximise -- the quadrature hybrid the continuation climbs, or the particle
 # filter for a filter fit. The two targets own their densities and their
@@ -920,8 +921,8 @@
     correctEstimate = "correct_estimate")
   unknown <- setdiff(names(control), c(own, names(shared)))
   if (length(unknown)) {
-    stop("control$", unknown[1L], " is not used with likelihood = '",
-      likelihood, "'. Its settings are ",
+    stop("control$", unknown[1L], " is not used with ",
+      .ctLikelihoodWords(likelihood), ". Its settings are ",
       paste(c(own, names(shared)), collapse = ", "), ".", call. = FALSE)
   }
   switch(likelihood,
@@ -939,8 +940,8 @@
 .ctBackendUncertaintyParticle <- function(fit, uncertainty, finishsamples,
   cores, control, verbose, own, shared) {
   if (!identical(uncertainty, "is")) {
-    stop("likelihood = 'particle' is sampled by uncertainty = 'is'; ",
-      "uncertainty = '", uncertainty, "' has no sampler against it.",
+    stop("filter = 'particle' is sampled by method = 'is'; ",
+      "method = '", uncertainty, "' has no sampler against it.",
       call. = FALSE)
   }
   args <- c(list(fit = fit, finishsamples = finishsamples, cores = cores,
@@ -974,17 +975,17 @@
 .ctBackendUncertaintyQuadrature <- function(fit, uncertainty, finishsamples,
   cores, control, verbose, shared) {
   if (is.null(fit$model_spec$laplace)) {
-    stop("likelihood = 'quadrature' applies to fits made with ",
+    stop("intoverpop = 'quadrature' applies to fits made with ",
       "intoverpop = 'laplace'. The augmented route carries the random effects ",
       "in the state and has no separate integral to take by quadrature; ",
-      "likelihood = 'particle' is its exact reference.", call. = FALSE)
+      "filter = 'particle' is its exact reference.", call. = FALSE)
   }
   already <- .ctLaplaceIsCorrected(fit)
   if (already && isTRUE(control$correctEstimate)) {
     stop("This fit was already corrected by quadrature when it was fitted ",
       "(fit$laplace$correction), so moving the estimate again would correct ",
       "it twice. Drop correctEstimate to redraw around the corrected ",
-      "estimate, or fit again without optimcontrol$laplace_refit.",
+      "estimate, or fit again without intoverpop = 'quadrature'.",
       call. = FALSE)
   }
   stay <- already || identical(control$correctEstimate, FALSE)
@@ -993,7 +994,7 @@
   # estimate; a fit left where it is needs none (`.ctLaplaceContinue()`
   # forms the hybrid's own at the end).
   if (!stay && is.null(.ctBackendStoredHessian(fit, est))) {
-    stop("likelihood = 'quadrature' needs the fit's curvature at its ",
+    stop("intoverpop = 'quadrature' needs the fit's curvature at its ",
       "estimate (its parameter covariance): the continuation's first metric, ",
       "and the certification of where it ends. Run ctFitUncertainty(fit) ",
       "first, or refit without optimcontrol$estonly.", call. = FALSE)

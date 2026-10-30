@@ -7,9 +7,11 @@
 \usage{
 ctFitUncertainty(
   fit,
-  uncertainty = c("checked", "hessian", "is", "bootstrap", "fullbootstrap", "sandwich",
-    "opg", "stored", "sample"),
-  draws = c("auto", "normal", "empirical", "imis"),
+  method = c("hessian", "checked", "is", "sample", "sandwich", "opg", "bootstrap",
+    "fullbootstrap", "stored"),
+  intoverpop = NULL,
+  filter = c("kalman", "particle"),
+  checks = TRUE,
   finishsamples = NULL,
   cores = getOption("mc.cores", 2L),
   control = list(),
@@ -31,22 +33,49 @@ ctOptimUncertainty(
 }
 \arguments{
 \item{fit}{Optimized \code{ctStanFit} or \code{ctJuliaFit} object, or for
-\code{uncertainty = 'sample'} a julia fit that is already sampled.}
+\code{method = 'sample'} a julia fit that is already sampled.}
 
-\item{uncertainty}{Which method: \code{'checked'} (the default),
-\code{'hessian'}, \code{'is'}, \code{'bootstrap'},
-\code{'fullbootstrap'}, \code{'sandwich'}, \code{'opg'}, \code{'stored'},
-or \code{'sample'}. See the Methods section, and Sampling for
-\code{'sample'}.}
+\item{method}{How the parameters' posterior is described:
+\code{'hessian'} (the default), \code{'checked'}, \code{'is'},
+\code{'sample'}, \code{'sandwich'}, \code{'opg'}, \code{'bootstrap'},
+\code{'fullbootstrap'} or \code{'stored'}. See the Methods section, and
+Sampling for \code{'sample'}. The kind of draws follows from it: normal
+draws from a curvature, importance-weighted ones for \code{'checked'} and
+\code{'is'}, the bootstrap's own, MCMC for \code{'sample'}.}
 
-\item{draws}{Approximate raw-parameter draw method. \code{'auto'} uses
-empirical draws for \code{uncertainty='bootstrap'} and
-\code{uncertainty='fullbootstrap'} and normal draws otherwise.
-\code{'normal'} draws from a multivariate normal using the selected
-covariance, \code{'empirical'} uses empirical draws when available, and
-\code{'imis'} runs the importance sampler using the selected covariance as
-proposal. For \code{uncertainty='is'}, \code{draws} is set to \code{'imis'}.
-Not used by \code{'sample'}.}
+\item{intoverpop}{How the random effects are integrated, in
+\code{\link{ctFit}}'s words; \code{NULL} (the default) keeps the fit's own
+(\code{'laplace'} or \code{'augmented'}, as \code{fit$args$resolved}
+records). \code{'quadrature'}, for a Laplace fit, refits from the estimate
+with the units the random-effects check names integrated numerically -- by
+adaptive Gauss-Hermite rules for units with up to five effects, by draws
+beyond -- and describes the posterior there, as
+\code{ctFit(intoverpop = 'quadrature')} does when fitting; with
+\code{'hessian'}, \code{'checked'} or \code{'is'}. With
+\code{method = 'sample'}, \code{'none'} samples the random effects
+jointly with the parameters, which takes no approximation of their
+integral, and \code{'laplace'} the Laplace marginal (see Sampling).}
+
+\item{filter}{How the latent states are integrated: \code{'kalman'} (the
+default), the fit's Kalman filter (extended where the model is nonlinear),
+or \code{'particle'}, a particle filter, the likelihood
+\code{\link{ctParticleLik}} measures the Kalman filter against; with
+\code{method = 'is'}, on a fit whose random effects are not integrated by
+Laplace (see Methods).}
+
+\item{checks}{Which approximations to check, cheaply, where the method
+itself leaves them in place: \code{TRUE} (the default) for both,
+\code{FALSE} for neither, or one of \code{'randomeffects'} and
+\code{'intervals'}. The random-effects check (a julia fit on
+\code{intoverpop = 'laplace'}) scores every unit's Laplace integral at
+draws of its random effects, and warns where integrating them exactly
+would move an estimate, naming \code{intoverpop = 'quadrature'}; a fit
+that has one on record is not checked again. The interval check (julia,
+with \code{method = 'hessian'}) makes \code{'checked'}'s check of the
+curvature's normal against the posterior's gradients, records it in
+\code{$uncertainty$details$normalcheck}, and says in a message, and in
+\code{summary()}, when the posterior departs from that normal, naming
+\code{method = 'sample'}.}
 
 \item{finishsamples}{Number of approximate raw-parameter samples. If
 \code{NULL}, the existing number of rows in the fit's raw posterior
@@ -78,10 +107,10 @@ methods), the fit is sampled to that accuracy (\code{'sample'} with
 \code{minESS} and \code{rhatTarget} set from it: 0.5 is a tail
 effective size of about 125 and R-hat 1.07, 0.3 about 350 and 1.025).
 The method reached is the one reported, and \code{$uncertainty$escalation}
-records what was read and done. For \code{uncertainty =
+records what was read and done. For \code{method = 
 'sample'} the entries are the sampler settings described in the Sampling section
 (\code{chains}, \code{warmup}, \code{draws}, \code{seed},
-\code{saveEffects}, \code{processes}, \code{intoverpop},
+\code{saveEffects}, \code{processes},
 \code{tipredMissing}, \code{sampler}, \code{particles}, \code{coreset},
 \code{placement},
 \code{minESS}, \code{meanESS}, \code{rhatTarget}, \code{maxDraws}, \code{settleTol},
@@ -120,11 +149,10 @@ Hessian instead of the engine's exact one. \code{flat = 'natural'}
 a prior flat on their natural scale rather than their raw one in the
 density sampled: the standard deviation itself rather than its log, say,
 so that a likelihood that levels off as an sd goes to zero still has a
-proper posterior. The estimate is unchanged. \code{likelihood} (\code{'fit'},
-\code{'quadrature'} or \code{'particle'}, julia only) is the density
-\code{'is'} samples against, with \code{nodes}, \code{particles},
-\code{substeps}, \code{transition}, \code{seed} and
-\code{correctEstimate} as described under Methods. A Hessian covariance that needs
+proper posterior. The estimate is unchanged. With
+\code{intoverpop = 'quadrature'} or \code{filter = 'particle'},
+\code{nodes}, \code{particles}, \code{substeps}, \code{transition},
+\code{seed} and \code{correctEstimate} are as described under Methods. A Hessian covariance that needs
 numerical repair -- positive-definite projection, ridge flooring, or
 \code{MASS::ginv} -- warns, with diagnostics in
 \code{$uncertainty$details$covariance}.}
@@ -133,6 +161,11 @@ numerical repair -- positive-definite projection, ridge flooring, or
 
 \item{...}{Not used. Anything passed here is an error rather than ignored:
 a method's settings are entries of \code{control}.}
+
+\item{uncertainty, draws}{\code{ctOptimUncertainty()} only, the names of
+ctsem 3.11.1: \code{uncertainty} is \code{method}; \code{draws}
+(\code{'auto'}, \code{'normal'}, \code{'empirical'} or \code{'imis'})
+overrides the kind of draws the method makes.}
 }
 \value{
 The fit, of the class it came in as. For every method except
@@ -141,7 +174,7 @@ and non-internal controls are recorded in
 \code{fit$stanfit$uncertainty$settings} for a \code{ctStanFit} and in
 \code{fit$uncertainty$settings} for a \code{ctJuliaFit}; see Backend
 differences for the other slots each writes. For
-\code{uncertainty = 'sample'}: a \code{ctJuliaFit} with
+\code{method = 'sample'}: a \code{ctJuliaFit} with
 \code{estimate$rawposterior} holding the draws and \code{$sample} holding
 the chain diagnostics (split R-hat and effective sample size per
 parameter, divergences, tree depths, step sizes, E-BFMI (NUTS only),
@@ -155,8 +188,7 @@ Recomputes the approximate raw-parameter uncertainty for an optimized
 samples, or samples the posterior by Markov chain Monte Carlo. This is the
 entry point for both backends; \code{ctFit} itself calls it to finish an
 optimized fit. \code{\link{ctOptimUncertainty}} is the previous name, kept
-for code written against ctsem 3.11.1; the two are otherwise identical
-except that only this one offers \code{uncertainty = 'sample'}.
+for code written against ctsem 3.11.1, with that release's arguments.
 }
 \details{
 Every method except \code{'sample'} writes \emph{pseudo-posterior} draws to
@@ -164,8 +196,9 @@ Every method except \code{'sample'} writes \emph{pseudo-posterior} draws to
 log-posterior surface around the optimum, not a sample from the posterior
 itself, and the point estimate stays at the optimum -- unless the method
 is taken against a more exact likelihood than the fit's
-(\code{control$likelihood}), when it moves to the corrected point.
-\code{uncertainty = 'sample'} is the other thing, genuine posterior draws
+(\code{intoverpop = 'quadrature'}, \code{filter = 'particle'}), when it
+moves to the corrected point.
+\code{method = 'sample'} is the other thing, genuine posterior draws
 by Markov chain Monte Carlo, and it moves the point estimate too:
 \code{$estimate$raw} becomes the posterior mean, the way
 \code{ctFit(optimize = FALSE)} reports a sampled fit. Everything downstream
@@ -177,22 +210,23 @@ posterior rather than replacing its draws with an approximation;
 \code{'sample'} may be run again on a sampled fit, to draw more, or
 differently, from where it stands.
 
-To change only the number of draws, use \code{uncertainty = 'stored'}, which
+To change only the number of draws, use \code{method = 'stored'}, which
 redraws from the covariance the fit already carries and evaluates no model.
 }
 \section{Functions}{
 \itemize{
 \item \code{ctOptimUncertainty()}: The name this function shipped under in ctsem
 3.11.1, kept so that a call written against that release keeps meaning
-exactly what it did. Identical to \code{ctFitUncertainty} in every other
-respect; new code should prefer \code{ctFitUncertainty}, which is also
-where \code{uncertainty = 'sample'} is documented.
+exactly what it did. The same as \code{ctFitUncertainty} in every
+respect but its argument names (\code{uncertainty}, \code{draws}) and
+that it has neither \code{intoverpop}, \code{filter}, \code{checks} nor
+\code{'sample'}; new code should prefer \code{ctFitUncertainty}.
 
 }}
 \section{Methods}{
 
 \describe{
-\item{\code{'checked'}}{The default: the Hessian's normal, checked, and
+\item{\code{'checked'}}{The Hessian's normal, checked, and
 corrected by importance sampling in the directions where it is wrong. The
 log posterior's gradient at draws from the normal says in which directions
 the posterior departs from it, in batches of 8 until the directions named
@@ -229,14 +263,11 @@ whose spread it puts under half or over twice the posterior's. A fit with nothin
 gets the Hessian's covariance, so corrected. The check is recorded
 in \code{$uncertainty$details$normalcheck}, and the sampling, when there was
 any, in \code{$uncertainty$details$importance_sampling}.}
-\item{\code{'hessian'}}{A normal approximation from the Hessian at the
-estimate -- exact on julia, which differentiates its own
-gradient, and by finite differences of the gradient on stan. With
-\code{control = list(check = TRUE)}, a julia fit's default, the normal
-check of \code{'checked'} is made and recorded in
-\code{$uncertainty$details$normalcheck}, and \code{summary()} says when it
-found the posterior departing from the normal; the normal is reported as
-it is.}
+\item{\code{'hessian'}}{The default, as \code{\link{ctFit}}'s: a normal
+approximation from the Hessian at the estimate -- exact on julia, which differentiates its own
+gradient, and by finite differences of the gradient on stan. On julia
+the interval check (\code{checks}) is made beside it, and the normal is
+reported as it is.}
 \item{\code{'bootstrap'}, \code{'sandwich'}, \code{'opg'}}{Built from
 per-subject score contributions: one-step score bootstrap draws with
 Hessian bread, Hessian bread with score covariance meat, and the outer
@@ -272,11 +303,9 @@ Laplace approximation is biased -- random effects on variances, in
 nonlinear dynamics, or with non-Gaussian indicators -- \code{'is'}
 reproduces the bias. Expect it to cost several times the fit.
 
-\code{control$likelihood} (julia only) chooses a more exact density to
-draw against, with \code{'is'} or \code{'checked'}. \code{'quadrature'},
-for a Laplace fit, is the quadrature hybrid the integrated refit climbs
-(\code{optimcontrol$laplace_refit}, \code{\link{ctLaplaceRefit}}): the
-units the screen flags,
+\code{intoverpop = 'quadrature'} (julia, a Laplace fit) draws against a
+more exact density, with \code{'is'} or \code{'checked'}: the quadrature
+hybrid, which has the units the screen flags,
 and those the fit's check named, integrated by quadrature rules
 (\code{control$nodes} per effect, 5 by default) or draws, the rest by
 their Laplace terms, with the error of that density reported in
@@ -286,8 +315,9 @@ climbed to that density's optimum first; one refitted when it was fitted
 stays where it is, as does any fit under \code{correctEstimate = FALSE}.
 With \code{'quadrature'}, \code{'hessian'} is taken too: the hybrid's
 curvature where the climb ends, which is what
-\code{laplace_refit = TRUE} gives at fit time. \code{'particle'},
-for a fit on the filter's route and with \code{'is'}, replaces the
+\code{ctFit(intoverpop = 'quadrature')} gives at fit time.
+\code{filter = 'particle'}, for a fit on the filter's route and with
+\code{'is'}, replaces the
 filter's Gaussian likelihood by a particle filter's (\code{control$particles},
 1000; \code{substeps}, 10; \code{transition}, \code{'exponential'} or
 \code{'euler'}; \code{seed}, 1, with draw \code{i} using \code{seed + i -
@@ -300,8 +330,7 @@ moves to the weighted posterior mean unless \code{correctEstimate = FALSE}.
 What was done is recorded in \code{fit$laplace$correction} or, printing,
 \code{fit$particle_correction}. Where too few effective draws survive the
 approximation is too far from the target to repair by reweighting, and
-\code{'sample'} with \code{control = list(intoverpop = 'none')} is the
-answer instead.}
+\code{'sample'} with \code{intoverpop = 'none'} is the answer instead.}
 \item{\code{'stored'}}{Computes nothing: redraws \code{finishsamples} normal
 draws from the covariance already on the fit, leaving the covariance, the
 Hessian and the recorded \code{method} untouched, and marks
@@ -318,7 +347,7 @@ parameter, since the 2.5\% and 97.5\% quantiles need it for each) and
 ends short of its target.
 }
 
-\section{Sampling (\code{uncertainty = 'sample'})}{
+\section{Sampling (\code{method = 'sample'})}{
 
 Draws from the posterior by Markov chain Monte Carlo, through the same
 runner \code{ctFit(backend = 'julia', optimize = FALSE)} uses, and with the
@@ -338,7 +367,7 @@ subject or group, in \code{fit$sample$effects}, \code{effect_mean} and
 with the number of subjects), and the joint posterior over population
 parameters \emph{and} every subject's random effects for \code{'none'} or
 for a Laplace route that \code{intoverpop = 'auto'} chose, where the
-Laplace fit only places the chains. \code{control$intoverpop} overrides it
+Laplace fit only places the chains. The argument \code{intoverpop} overrides it
 in the same words: \code{'none'} for the joint posterior or
 \code{'laplace'} for the Laplace marginal on a Laplace fit;
 \code{'augmented'} needs a fit made that way, and an augmented fit takes
@@ -364,7 +393,7 @@ categorical and nonlinear models the map reached the default effective
 sample size where SAEM's kernel often ran out of draws, and was usually the
 faster; SAEM's kernel was the more reliable and the faster than
 \code{'nuts'}, which mixes poorly on the joint vector. A marginal target is sampled by tempered
-sequential Monte Carlo where the normality check of \code{'checked'} named
+sequential Monte Carlo where the interval check of \code{'checked'} named
 directions in which the posterior departs from the fit's Hessian, and by
 NUTS where it named none, or where the call sets a control only NUTS reads
 (\code{chains}, \code{warmup}, \code{stepsize}, \code{adapt_metric},
@@ -474,10 +503,10 @@ the inversion, and \code{$unidentified} names those with enough of it that
 their true asymptotic variance is infinite; \code{summary()} reports their
 sd, interval and z as \code{NA} rather than as precisely estimated.
 
-\emph{Backend-specific arguments.} \code{uncertainty = 'fullbootstrap'} and
+\emph{Backend-specific arguments.} \code{method = 'fullbootstrap'} and
 its \code{control$bootstrapFitCores} / \code{control$bootstrapTol}, and
 \code{control$parsteps}, are stan-only and are refused by name on a
-\code{ctJuliaFit}; \code{uncertainty = 'sample'} and
+\code{ctJuliaFit}; \code{method = 'sample'} and
 \code{control$analyticHessian} are julia-only. \code{cores} means R worker
 processes on stan and engine threads on julia. The IMIS proposal defaults
 also differ: \code{imisScaleInit = 1.1} and \code{imisTailScale = 1.1} on
@@ -490,13 +519,13 @@ and draws are complete on both.
 
 \examples{
 # Redraw from the covariance already on the fit, evaluating no model:
-fit <- ctFitUncertainty(ctstantestfit, uncertainty = 'stored',
+fit <- ctFitUncertainty(ctstantestfit, method = 'stored',
   finishsamples = 200)
 fit$stanfit$uncertainty$settings$redrawn
 
 \donttest{
 # The Hessian's normal, checked, and importance sampled where it is wrong
-fit <- ctFitUncertainty(ctstantestfit, uncertainty = 'checked')
+fit <- ctFitUncertainty(ctstantestfit, method = 'checked')
 summary(fit)$popmeans
 
 # Needs a working julia backend, so the example is inert where Julia is
@@ -508,7 +537,7 @@ if (isTRUE(ctJuliaStatus()$available)) {
   jfit <- ctFit(ctstantestdat, model, backend = 'julia', cores = 1,
     priors = TRUE)
   # Posterior draws by MCMC, with lower targets for a quick look
-  jfit <- ctFitUncertainty(jfit, uncertainty = 'sample', cores = 1,
+  jfit <- ctFitUncertainty(jfit, method = 'sample', cores = 1,
     control = list(chains = 2, minESS = 50, rhatTarget = 1.05))
   jfit$sample
   # Julia keeps running between calls, holding what it has compiled;
@@ -519,10 +548,10 @@ if (isTRUE(ctJuliaStatus()$available)) {
 }
 \seealso{
 \code{\link{ctFitAddSamples}} is the deprecated stan-only
-predecessor of \code{uncertainty='stored'}. \code{\link{ctFit}} for
-\code{optimize = FALSE}, which reaches \code{uncertainty = 'sample'}
+predecessor of \code{method = 'stored'}. \code{\link{ctFit}} for
+\code{optimize = FALSE}, which reaches \code{method = 'sample'}
 through the same pipeline that placed the fit being sampled.
 \code{\link{ctLaplaceCheck}} and \code{\link{ctParticleLik}} measure the
 approximations a julia fit's likelihood makes, which
-\code{control$likelihood} corrects.
+\code{intoverpop = 'quadrature'} and \code{filter = 'particle'} correct.
 }

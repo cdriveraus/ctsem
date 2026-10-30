@@ -101,7 +101,19 @@ reports. \code{'augmented'} makes each random effect a state of the filter:
 exact for effects that shift a mean with Gaussian indicators, a
 linearisation elsewhere that shrinks random effects on the dynamics, and
 variation on a DIFFUSION or MANIFESTVAR parameter is then only partly
-identified, which ctFit warns of. \code{FALSE}, or \code{'none'}, samples them, so it needs
+identified, which ctFit warns of.
+
+\code{'quadrature'} (\code{backend='julia'}, optimizing) fits by
+\code{'laplace'} and then refits with the units the random-effects check
+names (\code{optimcontrol$checks}) integrated numerically -- by adaptive
+Gauss-Hermite rules (5 nodes per effect) for units with up to five effects,
+by draws beyond -- reporting that objective's estimate, standard errors and
+log likelihood (Laplace's kept in \code{loglik_laplace}). Seconds on one
+level, it can take hours where many units need draws or the units nest;
+\code{ctFitUncertainty(fit, intoverpop = 'quadrature')} does the same after
+a fit.
+
+\code{FALSE}, or \code{'none'}, samples them, so it needs
 \code{optimize=FALSE}: maximising over every subject's effects would drive
 the population variance to zero. With \code{optimize=FALSE} on julia,
 \code{'none'} (and so \code{'auto'}, but for the exception above) samples the
@@ -190,8 +202,7 @@ the same meaning: stopping rules (\code{tol}, \code{g_tol},
 \code{maxiter}), the start (\code{initsd}, \code{carefulfit}), the
 uncertainty computed at the end (\code{uncertainty}, \code{estonly}), and
 optional phases such as \code{stochastic} and, under
-\code{intoverpop='laplace'}, \code{saem}, \code{laplace_check} and
-\code{laplace_refit}.
+\code{intoverpop='laplace'}, \code{saem} and \code{checks}.
 \code{\link{ctOptimControl}} lists every name with its backend and default.
 A misspelled name, or one the chosen backend cannot honour, is an error.}
 

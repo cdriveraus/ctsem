@@ -2,7 +2,7 @@
 #
 #   Rscript dev/lapcontinue/verify-cases.R <tree> <outdir> [case ...]
 #
-# For each case one uncorrected Laplace fit (laplace_check = FALSE, cores 1)
+# For each case one uncorrected Laplace fit (checks = FALSE, cores 1)
 # from the case's start; the step correction and the continuation are then
 # applied to that same fit post hoc, so all three share the Laplace optimum,
 # its Hessian and its draws. At each estimate: the reported log likelihood,
@@ -201,7 +201,7 @@ for (case in which) {
       if (!is.null(seed)) set.seed(seed)
       off <- suppressWarnings(suppressMessages(ctFit(d, m, backend = "julia",
         intoverpop = "laplace", cores = 1, inits = inits,
-        optimcontrol = list(laplace_check = FALSE, finishsamples = 100))))
+        optimcontrol = list(checks = FALSE, finishsamples = 100))))
       rec$fit_seconds <- now() - t0
       if (nzchar(saved)) {
         saveRDS(list(fit = off, seconds = rec$fit_seconds), paste0(saved, ".tmp"))
