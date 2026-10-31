@@ -301,7 +301,7 @@ inner curvature reach it (bench gD3 on dev1: over a thousand categorical
 evaluations at predicted means of -700 to -1000 in one fit), and the blend
 between the binary rules takes the logistic of hundreds near the ends of its
 band (`_binary_vweight`): switched at -700, a jet's second part was NaN there
-at s = 3.498 on bench gD1, and the gated rule's gradient with it.
+at s = 3.498 on bench gD1, and the soft-direction quadrature's gradient with it.
 """
 @inline _logistic(x::Real) = x < 0 ? (E = exp(x); E / (one(E) + E)) :
     inv(one(x) + exp(-x))

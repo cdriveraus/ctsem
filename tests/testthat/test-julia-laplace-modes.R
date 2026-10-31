@@ -11,7 +11,7 @@
 # with eta centred, so a person's likelihood depends on lambda^2 and has a
 # maximum either side of zero. At a population mean of zero the origin is the
 # stationary point between them -- a minimum along the loading -- which Newton
-# accepts at once and the evaluation scores by the gated rule's soft direction.
+# accepts at once and the evaluation scores by the soft-direction quadrature.
 
 .modes_sign_data <- function() {
   set.seed(3)
@@ -57,7 +57,7 @@ test_that("the inner solve ends at a maximum, scored as the evaluation scores it
   evaluate <- function(x) ctJuliaEvaluate(handle, x, gradient = TRUE,
     contributions = TRUE, cores = 1L)
   # Each unit's term at the modes the last evaluation left, by the function the
-  # probes compare with -- it must be the evaluation's own, the gated rule at a
+  # probes compare with -- it must be the evaluation's own, the soft-direction quadrature at a
   # curvature that does not factor included -- and its inner objective there
   # and at the origin.
   ctsem:::.ctJuliaEval(paste(
@@ -557,7 +557,7 @@ test_that("a unit's solve also starts from its known modes", {
   probes(FALSE)
   plain <- evaluate(handle, x)
   withknown <- evaluate(kept, x)
-  # Without the probes every solve stops at the origin, scored by the gated
+  # Without the probes every solve stops at the origin, scored by the soft-direction
   # rule (the first test above), and lands elsewhere than the probes' maxima.
   expect_gt(max(abs(probed$subject_loglik - plain$subject_loglik)), 0.1)
   expect_equal(as.numeric(withknown$subject_loglik),

@@ -104,7 +104,7 @@ function _laplace_row_scores_unit!(out, laplace::CTSEMLaplaceObjective, U::Integ
     T = size(full.data, 2)
     K = size(directions, 2)
     npar = length(theta)
-    curvatures, matrices, gated, terms, chunk_ok, chunk_bad = records
+    curvatures, matrices, soft_quadrature, terms, chunk_ok, chunk_bad = records
     aws = _laplace_workspace!(laplace, Float64, npar)
     row = zeros(Float64, npar)
     previous = zeros(Float64, K)
@@ -114,9 +114,9 @@ function _laplace_row_scores_unit!(out, laplace::CTSEMLaplaceObjective, U::Integ
             _laplace_truncate!(so, full, t)
             # From the previous row's mode, as the sequential pass solves.
             ok = _laplace_store_unit_primal!(laplace, U, theta, Ls, aws, curvatures,
-                matrices, gated, terms, chunk_ok, chunk_bad; retain=t > 1) &&
+                matrices, soft_quadrature, terms, chunk_ok, chunk_bad; retain=t > 1) &&
                 first(_laplace_unit_gradient_route!(row, laplace, U, theta, Ls,
-                    dLlevels, dLsolved, gated[U], matrices[U], curvatures[U]))
+                    dLlevels, dLsolved, soft_quadrature[U], matrices[U], curvatures[U]))
             if ok
                 @inbounds for col in 1:K
                     s = 0.0

@@ -5,7 +5,7 @@
 # chunk a lane, where the other route runs the member's adjoint gradient at
 # that dual. A coordinate moves only the cells its effects reach, so a random
 # intercept's sweep carries tangents on the mean alone, which the dual carries
-# as zeros through every covariance. The gated floor's cross curvature with the
+# as zeros through every covariance. The soft-direction quadrature's cross curvature with the
 # deviations the filter integrates (`CTSEMHybridCross`) is read off the same
 # sweeps, at their profile or at the fixed values of its joint coordinates
 # (`_HybridFixedCross`). The member gradient's Jacobian at the curvature's dual
@@ -916,7 +916,7 @@ end
 `_laplace_unit_theta_gradient` at `z` and its derivatives along the first `nl`
 columns of `B` (directions in `z`), by the hand-coded sweeps, into `Gt`
 (`npar x (1 + nl)`) and `Gz` (`length(z) x (1 + nl)`), the value first: what
-the gated rule's first-order pass and the mode's cross derivatives seeded a
+the soft-direction quadrature's first-order pass and the mode's cross derivatives seeded a
 dual in `z` for. In joint coordinates (`layout`) each member's filter is at the
 deviations `z` fixes, their directions among the lanes. `false` where a
 member cannot be evaluated.
@@ -1490,8 +1490,8 @@ end
 """
 `_laplace_unit_theta_gradient`'s second parts along the first `nd` columns of
 `B` (directions in the unit's coordinates `z`) by the hand-coded jet sweeps,
-into `Gts` (`npar`) and `Gzs` (`length(z)`): what the gated rule's trace pass
-reads off jets in `z` (`_laplace_gated_jet_pass!`). Each member's gradient
+into `Gts` (`npar`) and `Gzs` (`length(z)`): what the soft-direction quadrature's trace pass
+reads off jets in `z` (`_laplace_soft_quadrature_jet_pass!`). Each member's gradient
 `g` enters the raw gradient as itself, through `L(theta) u` bilinearly with
 `u = z` (`_laplace_chol_chain!`), whose second parts are `s(g)`'s and
 `2 sum_a` of `dg_a` against the direction `B_a`, and through the loadings

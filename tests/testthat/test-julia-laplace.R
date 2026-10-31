@@ -1385,35 +1385,43 @@ test_that("near-singular random-effect curvature is reported, and changes nothin
   expect_false(any(grepl("near-singular", capture.output(print(fit)))))
 })
 
-test_that("laplace_floor is validated, refused by name where it cannot apply", {
+test_that("laplace_soft_directions is validated, refused by name where it cannot apply", {
   # No julia needed: control vocabulary and validation.
-  expect_error(.ctFitCheckControls(list(laplace_floor = "gated"), "julia"), NA)
-  # Neither value describes a stan fit now that 'total' is not the default.
-  expect_error(.ctFitCheckControls(list(laplace_floor = "total"), "stan"),
+  expect_error(.ctFitCheckControls(list(laplace_soft_directions = "quadrature"), "julia"), NA)
+  # Neither value describes a stan fit, which has no Laplace term.
+  expect_error(.ctFitCheckControls(list(laplace_soft_directions = "logdet_floor"), "stan"),
     "no Laplace term")
-  expect_error(.ctFitCheckControls(list(laplace_floor = "gated"), "stan"),
+  expect_error(.ctFitCheckControls(list(laplace_soft_directions = "quadrature"), "stan"),
     "no Laplace term")
   # Recorded whenever given, default included: an absent floor is reserved for
-  # the historical 'total' of a specification that predates the field.
-  expect_equal(.ctJuliaLaplaceInner(list(floor = "gated")), list(floor = "gated"))
-  expect_equal(.ctJuliaLaplaceInner(list(floor = "total")), list(floor = "total"))
+  # the historical 'logdet_floor' of a specification that predates the field.
+  expect_equal(.ctJuliaLaplaceInner(list(soft_directions = "quadrature")),
+    list(soft_directions = "quadrature"))
+  expect_equal(.ctJuliaLaplaceInner(list(soft_directions = "logdet_floor")),
+    list(soft_directions = "logdet_floor"))
+  # A specification saved before the rename records `floor` instead.
+  expect_equal(.ctJuliaLaplaceInner(list(floor = "gated")),
+    list(soft_directions = "quadrature"))
+  expect_equal(.ctJuliaLaplaceInner(list(floor = "total")),
+    list(soft_directions = "logdet_floor"))
   expect_equal(.ctJuliaLaplaceInner(list()), list())
-  expect_error(.ctJuliaLaplaceInner(list(floor = "eigen")), "'total' or 'gated'")
+  expect_error(.ctJuliaLaplaceInner(list(soft_directions = "eigen")),
+    "'quadrature' or 'logdet_floor'")
   expect_error(.ctJuliaPrepare(.laplace_test_data(nsubjects = 4, nobs = 3),
     .laplace_test_model(), intoverpop = "augmented",
-    laplacecontrol = list(floor = "gated")), "no Laplace term to floor")
+    laplacecontrol = list(soft_directions = "quadrature")), "no Laplace term")
   expect_error(.ctJuliaPrepare(.laplace_test_data(nsubjects = 4, nobs = 3),
     .laplace_test_model(), intoverpop = "augmented",
-    laplacecontrol = list(floor = "total")), "no Laplace term to floor")
+    laplacecontrol = list(soft_directions = "logdet_floor")), "no Laplace term")
 })
 
 # The objective's own floor, read from the engine.
-.laplace_objective_floor <- function(objective) {
+.laplace_objective_rule <- function(objective) {
   JuliaConnectoR::juliaCall("String", JuliaConnectoR::juliaCall("getfield",
-    objective, as.symbol("floor")))
+    objective, as.symbol("soft_directions")))
 }
 
-test_that("a gated fit carries its floor to post-fit routes, and leaves the session alone", {
+test_that("a fit under the soft-direction quadrature carries its rule to post-fit routes, and leaves the session alone", {
   skip_without_julia()
   model <- suppressMessages(ctModel(silent = TRUE, type = "ct", CINT = "cint",
     MANIFESTMEANS = 0, LAMBDA = matrix(1),
@@ -1428,23 +1436,25 @@ test_that("a gated fit carries its floor to post-fit routes, and leaves the sess
   fitwith <- function(...) suppressWarnings(suppressMessages(ctFit(dat, model,
     backend = "julia", intoverpop = "laplace", inits = inits,
     optimcontrol = list(estonly = TRUE, maxiter = 5L, ...))))
-  # 'total' pinned on the fits either side of the default one: what is tested
-  # is that a gated objective leaves a later 'total' fit alone.
-  before <- fitwith(laplace_floor = "total")
-  gated <- fitwith()
-  after <- fitwith(laplace_floor = "total")
+  # 'logdet_floor' pinned on the fits either side of the default one: what is
+  # tested is that an objective under the quadrature leaves a later
+  # 'logdet_floor' fit alone.
+  before <- fitwith(laplace_soft_directions = "logdet_floor")
+  quad <- fitwith()
+  after <- fitwith(laplace_soft_directions = "logdet_floor")
 
-  expect_equal(before$laplace$floor, "total")
-  expect_equal(gated$laplace$floor, "gated")
-  expect_equal(gated$model_spec$laplace$inner$floor, "gated")
-  expect_true(is.integer(gated$laplace$gated_units))
-  expect_equal(.laplace_objective_floor(.ctJuliaObjective(gated)), "gated")
+  expect_equal(before$laplace$soft_directions, "logdet_floor")
+  expect_equal(quad$laplace$soft_directions, "quadrature")
+  expect_equal(quad$model_spec$laplace$inner$soft_directions, "quadrature")
+  expect_true(is.integer(quad$laplace$soft_quadrature_units))
+  expect_equal(.laplace_objective_rule(.ctJuliaObjective(quad)), "quadrature")
 
-  # A 'total' fit after a gated one in the same session is still 'total': the
+  # A 'logdet_floor' fit after one under the quadrature in the same session is
+  # still 'logdet_floor': the
   # same estimate and log likelihood as the one before it, and its objective
   # is on :total.
-  expect_equal(after$laplace$floor, "total")
-  expect_equal(.laplace_objective_floor(.ctJuliaObjective(after)), "total")
+  expect_equal(after$laplace$soft_directions, "logdet_floor")
+  expect_equal(.laplace_objective_rule(.ctJuliaObjective(after)), "logdet_floor")
   # Equal rather than identical: with more than one thread the units are summed
   # per worker slot, assigned at run time, so the last bit moves between runs.
   expect_equal(after$estimate$loglik, before$estimate$loglik, tolerance = 1e-10)
@@ -1452,40 +1462,46 @@ test_that("a gated fit carries its floor to post-fit routes, and leaves the sess
     tolerance = 1e-8)
 
   # The two floors really are different objectives. At the starting point one
-  # subject is near-singular, and the gated objective scores it by its rule;
+  # subject is near-singular, and the quadrature's objective scores it by its rule;
   # the fit then moves, and at its estimate the two may agree.
-  module <- .ctJuliaModule(gated$model_spec$project)
+  module <- .ctJuliaModule(quad$model_spec$project)
   under <- function(fit, at) .ctBackendJuliaValue(module$ctsem_laplace_evaluate(
     .ctJuliaObjective(fit), .ctJuliaVector(as.numeric(at)), gradient = FALSE)$value)
-  expect_gt(under(after, inits) - under(gated, inits), 1)
+  expect_gt(under(after, inits) - under(quad, inits), 1)
   expect_gte(as.integer(JuliaConnectoR::juliaCall("getfield",
-    .ctJuliaObjective(gated), as.symbol("gated_units"))), 1L)
+    .ctJuliaObjective(quad), as.symbol("soft_quadrature_units"))), 1L)
 
-  # ctLaplaceCheck evaluates the fit's own term, which is the gated one.
-  check <- suppressWarnings(ctLaplaceCheck(gated, nodes = 3L, correction = FALSE))
-  expect_equal(check$laplace, under(gated, gated$estimate$raw), tolerance = 1e-10)
+  # ctLaplaceCheck evaluates the fit's own term, which is the quadrature's.
+  check <- suppressWarnings(ctLaplaceCheck(quad, nodes = 3L, correction = FALSE))
+  expect_equal(check$laplace, under(quad, quad$estimate$raw), tolerance = 1e-10)
 
   # ctKalman re-prepares the specification, and the floor goes with it.
-  kspec <- ctsem:::.ctBackendKalmanSpec(gated)
-  expect_equal(kspec$laplace$inner$floor, "gated")
-  expect_equal(.laplace_objective_floor(.ctJuliaObjective(kspec)), "gated")
-  k <- suppressWarnings(suppressMessages(ctKalman(gated, subjects = 1:2)))
+  kspec <- ctsem:::.ctBackendKalmanSpec(quad)
+  expect_equal(kspec$laplace$inner$soft_directions, "quadrature")
+  expect_equal(.laplace_objective_rule(.ctJuliaObjective(kspec)), "quadrature")
+  k <- suppressWarnings(suppressMessages(ctKalman(quad, subjects = 1:2)))
   expect_false(is.null(k))
 
   # A fit saved before the floor was recorded carries none, and was fitted
-  # under 'total'. Absent means that historical meaning on every route that
+  # under 'logdet_floor'. Absent means that historical meaning on every route that
   # rebuilds the objective, not the new default.
-  legacy <- gated
-  legacy$model_spec$laplace$inner$floor <- NULL
-  expect_equal(.laplace_objective_floor(.ctJuliaObjective(legacy)), "total")
+  legacy <- quad
+  legacy$model_spec$laplace$inner$soft_directions <- NULL
+  expect_equal(.laplace_objective_rule(.ctJuliaObjective(legacy)), "logdet_floor")
   lspec <- ctsem:::.ctBackendKalmanSpec(legacy)
-  expect_null(lspec$laplace$inner$floor)
-  expect_equal(.laplace_objective_floor(.ctJuliaObjective(lspec)), "total")
+  expect_null(lspec$laplace$inner$soft_directions)
+  expect_equal(.laplace_objective_rule(.ctJuliaObjective(lspec)), "logdet_floor")
   lcheck <- suppressWarnings(ctLaplaceCheck(legacy, nodes = 3L, correction = FALSE))
   expect_equal(lcheck$laplace, under(before, legacy$estimate$raw), tolerance = 1e-10)
+  # One saved before the rename records `floor = 'gated'`, which is the
+  # quadrature.
+  renamed <- quad
+  renamed$model_spec$laplace$inner$soft_directions <- NULL
+  renamed$model_spec$laplace$inner$floor <- "gated"
+  expect_equal(.laplace_objective_rule(.ctJuliaObjective(renamed)), "quadrature")
 })
 
-test_that("the default floor and an explicit 'gated' build and cache the same objective", {
+test_that("the default rule and an explicit 'quadrature' build and cache the same objective", {
   skip_without_julia()
   model <- suppressMessages(ctModel(silent = TRUE, type = "ct", CINT = "cint",
     MANIFESTMEANS = 0, LAMBDA = matrix(1),
@@ -1495,36 +1511,37 @@ test_that("the default floor and an explicit 'gated' build and cache the same ob
     backend = "julia", intoverpop = "laplace", fit = FALSE,
     optimcontrol = list(...))))
   default <- specwith()
-  gated <- specwith(laplace_floor = "gated")
-  total <- specwith(laplace_floor = "total")
-  expect_equal(default$laplace$inner$floor, "gated")
+  quad <- specwith(laplace_soft_directions = "quadrature")
+  total <- specwith(laplace_soft_directions = "logdet_floor")
+  expect_equal(default$laplace$inner$soft_directions, "quadrature")
   # The key hashes what the builder sends, and the builder always sends the
   # floor, so the default and the explicit value share one cached objective.
-  expect_equal(.ctJuliaObjectiveInputs(default)$laplace$floor, "gated")
-  expect_identical(.ctJuliaObjectiveKey(default), .ctJuliaObjectiveKey(gated))
+  expect_equal(.ctJuliaObjectiveInputs(default)$laplace$soft_directions, "quadrature")
+  expect_identical(.ctJuliaObjectiveKey(default), .ctJuliaObjectiveKey(quad))
   expect_false(identical(.ctJuliaObjectiveKey(default), .ctJuliaObjectiveKey(total)))
-  # And a specification with no floor is keyed, and built, as 'total'.
+  # And a specification with no rule recorded is keyed, and built, as
+  # 'logdet_floor'.
   legacy <- default
-  legacy$laplace$inner$floor <- NULL
-  expect_equal(.ctJuliaObjectiveInputs(legacy)$laplace$floor, "total")
+  legacy$laplace$inner$soft_directions <- NULL
+  expect_equal(.ctJuliaObjectiveInputs(legacy)$laplace$soft_directions, "logdet_floor")
   expect_identical(.ctJuliaObjectiveKey(legacy), .ctJuliaObjectiveKey(total))
   # Sampling the effects (intoverpop = FALSE, which the backend prepares as
   # 'none') still has a Laplace term: the sampler is placed, and its metric
   # built, by optimising the Laplace objective of this same specification. So
   # it gets the same default. It used to record none, which that objective is
-  # built as -- 'total'.
+  # built as -- 'logdet_floor'.
   samplewith <- function(...) suppressWarnings(suppressMessages(ctFit(dat,
     model, backend = "julia", intoverpop = FALSE, optimize = FALSE, fit = FALSE,
     optimcontrol = list(...))))
   none <- samplewith()
-  expect_equal(none$laplace$inner$floor, "gated")
-  expect_equal(.ctJuliaObjectiveInputs(none)$laplace$floor, "gated")
+  expect_equal(none$laplace$inner$soft_directions, "quadrature")
+  expect_equal(.ctJuliaObjectiveInputs(none)$laplace$soft_directions, "quadrature")
   # And a floor asked for there is honoured, not refused.
-  expect_equal(samplewith(laplace_floor = "total")$laplace$inner$floor, "total")
+  expect_equal(samplewith(laplace_soft_directions = "logdet_floor")$laplace$inner$soft_directions, "logdet_floor")
   # Rebuilding the specification -- ctKalman over some subjects, prediction on
   # other data -- passes the recorded floor back in with the recorded route, so
   # 'none' has to accept it there too.
   rebuilt <- .ctJuliaPrepare(dat, model, intoverpop = "none",
     laplacecontrol = none$laplace$inner)
-  expect_equal(rebuilt$laplace$inner$floor, "gated")
+  expect_equal(rebuilt$laplace$inner$soft_directions, "quadrature")
 })

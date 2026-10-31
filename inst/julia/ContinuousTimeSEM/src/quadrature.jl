@@ -919,10 +919,10 @@ function ctsem_laplace_refine(laplace::CTSEMLaplaceObjective,
 end
 
 ################################################################################
-# Reference implementation of the gated floor's value
+# Reference implementation of the soft-direction quadrature's value
 ################################################################################
 #
-# The `:gated` floor (`_laplace_gated_term` in laplace.jl) is generic in its
+# The `:quadrature` floor (`_laplace_soft_quadrature_term` in laplace.jl) is generic in its
 # element type because its gradient differentiates it. These two functions
 # compute the same rule in plain Float64, written separately and first, and
 # `test_laplace.jl` holds the floor's value to them. They are not on any
@@ -934,7 +934,7 @@ end
 
 One unit's log marginal likelihood by a Gauss-Hermite rule along the unit's
 softest directions and Laplace in the rest. Value only: the reference the
-gated floor is tested against; see
+soft-direction quadrature is tested against; see
 `CT-SEM/review/LAPLACE-eigenwise-floor-2026-09-23.md`, second and third
 addenda. Reads the modes of the last `ctsem_laplace_evaluate` at `values`.
 
@@ -1051,14 +1051,14 @@ function _laplace_soft_weight(lambda::Real, lo::Real, hi::Real)
 end
 
 """
-    _laplace_gated_unit_reference(laplace, values, U; lo=0.2, hi=0.7, nodes=3,
+    _laplace_soft_quadrature_unit_reference(laplace, values, U; lo=0.2, hi=0.7, nodes=3,
                                   newton_steps=1, solves=5)
 
 `T = T_lap + w(lambda_min) (T_soft - T_lap)` for one unit, value only, at the
 modes of the last `ctsem_laplace_evaluate` at `values` under the total floor.
 `T_lap` is the unfloored Laplace term: a unit with an eigenvalue to go on needs
-no floor, see `_laplace_gated_term`.
-The Float64 reference for `_laplace_gated_term`; see the section comment.
+no floor, see `_laplace_soft_quadrature_term`.
+The Float64 reference for `_laplace_soft_quadrature_term`; see the section comment.
 
 The gate is exact and costs no likelihood sweep: `M - hi I` is block-factored
 (the same elimination as `M`'s own, no fill-in), and a unit it accepts returns
@@ -1070,7 +1070,7 @@ soft rule.
 
 Returns `(value, weight, lambda_min, flagged)`.
 """
-function _laplace_gated_unit_reference(laplace::CTSEMLaplaceObjective,
+function _laplace_soft_quadrature_unit_reference(laplace::CTSEMLaplaceObjective,
     values::AbstractVector, U::Integer; lo::Real=0.2, hi::Real=0.7,
     nodes::Integer=3, newton_steps::Integer=1, solves::Integer=5)
     theta = collect(Float64, values)

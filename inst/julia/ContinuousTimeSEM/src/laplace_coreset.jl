@@ -250,7 +250,7 @@ function _laplace_draw_copy(laplace::CTSEMLaplaceObjective, coreset::CTSEMCorese
     draw.mode_repaired = copy(laplace.mode_repaired)
     draw.logdet_floored = copy(laplace.logdet_floored)
     draw.last_values = Float64[]
-    draw.gated_units = 0
+    draw.soft_quadrature_units = 0
     return draw
 end
 

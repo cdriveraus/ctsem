@@ -482,7 +482,7 @@ end
 """Whether the duals `a` and `b` are the same, partials included: `==` on a
 dual reads its value alone. A NaN in the same place in both is the same: a
 NaN seeded into a sweep is an invalid point, which its results show, not a
-matrix that differs from its Jacobian. Compared by `==`, the gated rule's
+matrix that differs from its Jacobian. Compared by `==`, the soft-direction quadrature's
 closing pass seeded with NaN threw `_TAN_NOT_JACOBIAN` on a model whose
 drift is its own Jacobian (bench gD1)."""
 _tan_same(a::AbstractArray, b::AbstractArray) = size(a) == size(b) &&

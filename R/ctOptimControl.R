@@ -6,7 +6,7 @@
 # Why each default is what it is lives beside the code that reads it: the
 # carefulfit studies at `.ctJuliaOptimiseFit()`, the datastart measurements in
 # R/ctDataStart.R, the Laplace correction at
-# `.ctLaplaceContinue()`, the floor at `.ctJuliaLaplaceFloorDefault`, SAEM in
+# `.ctLaplaceContinue()`, the soft-direction rule at `.ctJuliaSoftDirectionsDefault`, SAEM in
 # `saem.jl` and review/SAEM-*.md. The vocabulary itself -- which names are
 # shared and which belong to one backend -- is `.ctOptimcontrolShared` and
 # `.ctOptimcontrolSplit()` in ctFit.R, which this page must agree with.
@@ -209,13 +209,16 @@
 #'  Raise the first when the fit reports modes that did not converge; the
 #'  tolerance bounds the inner gradient, floored at
 #'  \code{1e-10 * (1 + abs(value))}.}
-#'  \item{\code{laplace_floor}}{\code{'gated'} (the default) or \code{'total'}:
-#'  how a unit whose likelihood is convex in its random effects is scored.
-#'  \code{'gated'} scores a unit whose curvature has an eigenvalue below 0.7 by
-#'  a three-point quadrature along that direction, handing over to
-#'  \code{'total'}, which floors the log determinant at zero, between 0.2 and
-#'  0.7. Recorded in \code{fit$laplace$floor}, and used by every function that
-#'  rebuilds the objective; \code{fit$laplace$conditioning} counts such units.
+#'  \item{\code{laplace_soft_directions}}{\code{'quadrature'} (the default) or
+#'  \code{'logdet_floor'}: how a unit is scored whose likelihood is convex in
+#'  some direction of its random effects, where plain Laplace would credit that
+#'  direction more width than the integrand has. \code{'quadrature'} integrates
+#'  the softest direction by a three-point quadrature where the unit's
+#'  curvature has an eigenvalue below 0.7, blending into plain Laplace between
+#'  0.2 and 0.7; \code{'logdet_floor'} floors the log determinant at zero.
+#'  Recorded in \code{fit$laplace$soft_directions}, and used by every function
+#'  that rebuilds the objective; \code{fit$laplace$conditioning} counts such
+#'  units.
 #'  It applies too when sampling with \code{intoverpop = FALSE} and
 #'  \code{sampleControl$placement = 'fit'}.}
 #' }

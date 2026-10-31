@@ -486,8 +486,8 @@ if (!is.null(fit)) {
     "residual_gain", "tolerance", "certified"))] else NULL
   rec$laplace_block <- if (!is.null(fit$laplace)) list(
     correction = corr[setdiff(names(corr), c("draws"))],
-    conditioning = fit$laplace$conditioning, floor = fit$laplace$floor,
-    gated_units = fit$laplace$gated_units,
+    conditioning = fit$laplace$conditioning, soft_directions = fit$laplace$soft_directions,
+    soft_quadrature_units = fit$laplace$soft_quadrature_units,
     # The units whose Laplace terms jumped (`fit$laplace$jump`), NULL where
     # none did or on a build without it.
     jump = fit$laplace$jump) else NULL

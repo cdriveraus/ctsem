@@ -268,7 +268,7 @@ end
     end
 end
 
-@testset "hand-coded mode cross derivatives and gated passes against the dual" begin
+@testset "hand-coded mode cross derivatives and soft-quadrature passes against the dual" begin
     C = ContinuousTimeSEM
     cases = [
         ("means", () -> _fresh_linear()),
@@ -300,11 +300,11 @@ end
                 Hd = _oracle_mode_cross(laplace, U, theta, Ls, dL, positions, z, nothing)
                 @test all(isfinite, H)
                 @test rel(H, Hd) <= 1e-9
-                # The gated rule's first-order pass and trace jet pass.
-                G = C._GatedThetaGradient(laplace, U, theta, Ls, dL, positions, nothing)
+                # The soft-direction quadrature's first-order pass and trace jet pass.
+                G = C._SoftQuadratureThetaGradient(laplace, U, theta, Ls, dL, positions, nothing)
                 beta = randn(rng, length(z))
-                r = C._gated_directional(G, z, beta)
-                rd = _oracle_gated_directional(G, z, beta)
+                r = C._soft_quadrature_directional(G, z, beta)
+                rd = _oracle_soft_quadrature_directional(G, z, beta)
                 @test rel(r.theta, rd.theta) <= 1e-8
                 @test rel(r.z, rd.z) <= 1e-8
                 A = randn(rng, length(z), length(z))
@@ -312,14 +312,14 @@ end
                 for chunk in ([1], collect(1:length(z)))
                     W = C._ctsem_jet_width(length(chunk))
                     tb, zb = zeros(length(theta)), zeros(length(z))
-                    @test C._laplace_gated_jet_pass!(tb, zb, G, z, E, chunk, 1.0, Val(W))
-                    jd = _oracle_gated_jet(G, z, E, chunk, W)
+                    @test C._laplace_soft_quadrature_jet_pass!(tb, zb, G, z, E, chunk, 1.0, Val(W))
+                    jd = _oracle_soft_quadrature_jet(G, z, E, chunk, W)
                     @test rel(-tb, jd.theta) <= 1e-8
                     @test rel(-zb, jd.z) <= 1e-8
                 end
             end
-            # The gated adjoint runs whole on those passes.
-            @test any(!isnothing, [C._laplace_gated_unit_adjoint(laplace, U, values)
+            # The soft-quadrature adjoint runs whole on those passes.
+            @test any(!isnothing, [C._laplace_soft_quadrature_unit_adjoint(laplace, U, values)
                 for U in eachindex(laplace.modes)])
         end
     end
