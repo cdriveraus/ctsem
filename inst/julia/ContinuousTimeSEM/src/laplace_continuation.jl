@@ -1314,11 +1314,10 @@ number a fit reports for how far its objective is from the exact marginal.
 Each family of rule (`_continuation_steps`) is a sequence of counts. A
 lattice step's error is the larger of its shifts' spread and its count step,
 the difference between its value and the half count's
-(`_continuation_count_step`); a product step's is the geometric tail its last
-two node steps imply (`_continuation_product_error`), held to `opts.draws_se`
-over the root of the flagged units, since product rules' errors share a sign
-and add; a mixed step's is the difference between its value and the step
-before's. Where the step after is within its target of a step, that step
+(`_continuation_count_step`); a product or mixed step's is the geometric tail
+its last two steps imply (`_continuation_product_error`), held to
+`opts.draws_se` over the root of the flagged units, since product rules'
+errors share a sign and add. Where the step after is within its target of a step, that step
 stands with the finer rule's measure of it as its error. The refine evaluates,
 at each turn, the family whose next step costs the fewest member evaluations
 (`_rule_cost`), and stops at the first step whose error is within
@@ -1444,22 +1443,17 @@ function _continuation_refine_unit!(errors::Vector{Float64},
             e = max(ses[f][s], _continuation_count_step(values[f], s))
             return e <= target ? (s, e) : (0, NaN)
         end
-        if steps[s].family === :product
-            # The tail two node steps imply, against the units' share of the
-            # target: a product rule's error has one sign at every unit, so
-            # the units' errors add (`_continuation_product_error`).
-            e = _continuation_product_error(values[f], s)
-            e === nothing && return (0, NaN)
-            s - 1 >= 2 && e.coarse <= systematic && return (s - 1, e.coarse)
-            return e.fine <= systematic ? (s, e.fine) : (0, NaN)
-        end
-        # A mixed rule's difference needs two steps; the first is only a check.
-        s >= 2 || return (0, NaN)
-        d = abs(values[f][s] - values[f][s - 1])
-        d <= target || return (0, NaN)
-        # The coarser rule stands, with the finer one's measure of it, unless
-        # the coarser is only the check.
-        return (s - 1 >= 2 ? s - 1 : s, d)
+        # A product or mixed rule: the tail two steps imply, against the
+        # units' share of the target, since a product rule's error has one
+        # sign at every unit and the units' errors add
+        # (`_continuation_product_error`). A mixed rule's product blocks carry
+        # that error and its lattice ones a smaller one: read on one step
+        # against the whole target, as they were, the nested fixtures' units
+        # stated a third to a half of their gap (gN1, gN3).
+        e = _continuation_product_error(values[f], s)
+        e === nothing && return (0, NaN)
+        s - 1 >= 2 && e.coarse <= systematic && return (s - 1, e.coarse)
+        return e.fine <= systematic ? (s, e.fine) : (0, NaN)
     end
     cost(f, s) = _rule_cost(laplace, U, families[f][s])
     # Start every family where the screen left it: the steps already
