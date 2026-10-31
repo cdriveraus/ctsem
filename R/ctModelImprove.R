@@ -1469,6 +1469,8 @@ print.ctModelProposals <- function(x, digits = 3, ...) {
   handles <- .ctBackendWarmWorkers(current, workers, values = .ctFitRawEstimate(current),
     threads = threads)
   if (.ctBackendWarmWait(handles) < 1L) return(inhere())
+  # Side by side, the refits' wall time is the batch's.
+  started <- proc.time()[['elapsed']]
   futures <- lapply(seq_along(edits), function(i) if (!i %in% ok) NULL else
     tryCatch(future::future(utils::getFromNamespace('.ctImproveRefit', 'ctsem')(current,
       edits[[i]]$model, edits[[i]]$data, threads, starts[[i]], edits[[i]]$args),
@@ -1479,7 +1481,7 @@ print.ctModelProposals <- function(x, digits = 3, ...) {
     tryCatch(future::value(futures[[i]]), error = function(e)
       structure(conditionMessage(e), class = 'try-error', condition = e))
   })
-  structure(out, seconds = seconds)
+  structure(out, seconds = max(seconds, proc.time()[['elapsed']] - started))
 }
 
 # The best of each proposal's refits by log likelihood (`which` gives the
