@@ -110,10 +110,11 @@
   batches <- .ctBackendEngineBatches(engine)
   attr(fn, "batch") <- batches$batch
   attr(fn, "gradbatch") <- batches$gradbatch
+  attr(fn, "gradvalues") <- batches$gradvalues
   fn
 }
 
-# The `'batch'` and `'gradbatch'` attributes of a density the engine
+# The `'batch'`, `'gradbatch'` and `'gradvalues'` attributes of a density the engine
 # evaluates, on `engine()$objective`: the fit's own (`.ctBackendLpgFunc()`) or
 # the refined fit's placed objective (`.ctLaplacePlacedLpg()`).
 .ctBackendEngineBatches <- function(engine) {
@@ -154,7 +155,26 @@
     value[!is.finite(value)] <- -1e100
     list(value = value, gradient = t(out[-1L, , drop = FALSE]))
   }
-  list(batch = batch, gradbatch = gradbatch)
+  # What a gradient costs in values of the objective (`ctsem_gradient_values`,
+  # the engine's one cost model), asked once: the unit `imis_is()` and the
+  # volume tilt count gradients in (`.ctDensityGradientValues()`).
+  gradvalues <- local({
+    price <- NULL
+    function() {
+      if (is.null(price)) price <<- as.numeric(.ctBackendJuliaValue(
+        engine()$module$ctsem_gradient_values(engine()$objective)))[1L]
+      price
+    }
+  })
+  list(batch = batch, gradbatch = gradbatch, gradvalues = gradvalues)
+}
+
+# What a gradient of the density `lpg` costs in its values: the engine's price
+# (`'gradvalues'`, `.ctBackendEngineBatches()`) for a julia density, two for a
+# stan density, which carries none.
+.ctDensityGradientValues <- function(lpg) {
+  price <- attr(lpg, "gradvalues")
+  if (is.function(price)) as.numeric(price())[1L] else 2
 }
 
 # The two counts `ctOptimCheckUncertaintyData` needs. The Julia spec has no

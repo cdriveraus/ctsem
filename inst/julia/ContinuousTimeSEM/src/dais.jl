@@ -190,7 +190,8 @@ end
 
 Each column of `X`'s log density and gradient into `vals` and the columns of
 `grads`, `-Inf` and zeros where a draw cannot be used, and the full
-evaluations spent, a gradient as two. Through DAIS's coreset where there is
+evaluations spent, a gradient at its price (`_ctsem_gradient_values`). Through
+DAIS's coreset where there is
 one: its gradient batch, checked at a few draws in full every time (`check`),
 since DAIS has no value batches to check it with; and where that ran in full,
 a value batch at the same draws, which reads the batch's unit terms for
@@ -209,7 +210,7 @@ function _dais_evaluate!(vals::Vector{Float64}, grads::Matrix{Float64}, objectiv
         end
         return nothing
     end
-    return 2.0 * size(X, 2)
+    return _ctsem_gradient_values(objective) * size(X, 2)
 end
 
 function _dais_evaluate!(vals::Vector{Float64}, grads::Matrix{Float64}, objective,
@@ -243,7 +244,7 @@ of the dimension) and `maxiter` (150) bound the run. Returns `used`, the
 settled normal (`mean`, `cov`), and the record: iterations, how many were
 averaged, whether it settled, the last damping and effective sample, the
 unusable draws, the draws an iteration, the gradients asked for, the full
-evaluations they cost (`cost`, a gradient as two), whether a coreset served
+evaluations they cost (`cost`, a gradient at its price), whether a coreset served
 them, with the coreset's last size, how many it chose and how many of its
 checks failed, how the draws were evaluated (`parallel`: `_points_mode`'s
 serial, pool or copies, or `coreset`), and the trace, one row an iteration
