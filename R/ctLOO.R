@@ -924,10 +924,13 @@ ctLOO <- function(fit, folds = 10, cores = getOption("mc.cores", 2L), parallelFo
       # The engine's `converged` judges against the fit's own tolerance, which
       # a fold is not asked to meet; a fold has converged when it stopped by
       # its own rule, judged as the engine judges the fit's: not stalled, not
-      # overshot, and a predicted or last gain within `gap_tol`.
+      # overshot, and a predicted or last gain within the rule's tolerance,
+      # `gap_tol` or what the objective resolves where that is more
+      # (`gap_floor`).
       gain <- as.numeric(.ctJuliaOr(result$predicted_gain, NA))[1L]
       last <- as.numeric(.ctJuliaOr(result$last_gain, NA))[1L]
-      bar <- as.numeric(.ctJuliaOr(result$gap_tol, .ctLOOFoldGain))[1L]
+      bar <- as.numeric(.ctJuliaOr(result$gap_floor,
+        .ctJuliaOr(result$gap_tol, .ctLOOFoldGain)))[1L]
       optim$converged <- isTRUE(result$converged) ||
         (!isTRUE(result$stalled) && !isTRUE(result$overshot) &&
           isTRUE(is.finite(as.numeric(result$gradient_norm)[1L])) &&

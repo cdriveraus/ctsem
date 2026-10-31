@@ -7291,6 +7291,10 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
     # `.ctJuliaOptimise()`.
     gap_tol = if (is.null(result$gap_tol)) NA_real_ else
       as.numeric(result$gap_tol)[1L],
+    # The tolerance the gap rule last applied: `gap_tol`, or what the
+    # objective resolved where that was more.
+    gap_floor = if (is.null(result$gap_floor)) NA_real_ else
+      as.numeric(result$gap_floor)[1L],
     # Which coordinates had gone flat when it stopped, named rather than
     # numbered, and how many times the progress half fired. More than one
     # trigger means the fit stalled, was found to be merely slow, and was
