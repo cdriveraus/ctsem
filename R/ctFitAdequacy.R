@@ -88,7 +88,15 @@
 #'     standardised. The estimate is the regression of the standardised error
 #'     on the covariate. The previous row's value is a test of prediction
 #'     (Granger's sense); the same row's is an association, which a covariate
-#'     the outcome itself moves would show as well.}
+#'     the outcome itself moves would show as well. Its null is larger than
+#'     the other families': the errors have mean zero given what the model
+#'     conditions on, the outcomes' own past, and need not be uncorrelated
+#'     with anything else. A correct model of the outcomes fails it when a
+#'     covariate is another measure of the same states, since that measure's
+#'     previous value sharpens the estimate of the state and so predicts the
+#'     next error. So it says whether a model using these variables would
+#'     predict better, not that the model of the outcomes is wrong, and it is
+#'     not counted in \code{adequate}.}
 #'   \item{scores}{Not run unless asked for. White's (1987) dynamic information
 #'     matrix test: each data row's score, the derivative of its one-step
 #'     log likelihood, for the dynamic and measurement parameters
@@ -131,7 +139,10 @@
 #' model (Chen & Qin, 2010), and otherwise by the bootstrap; the two are
 #' combined, with any exact p-values the family has, by the Cauchy
 #' combination; families are combined by Holm. \code{adequate} is \code{TRUE}
-#' when no family's adjusted p-value is below \code{alpha}.
+#' when no family's adjusted p-value is below \code{alpha}. The
+#' \code{tvcovariates} family tests a larger information set than the model's
+#' and is held out of both: its p-value is its own, and \code{informative}
+#' reports it.
 #'
 #' On a Laplace fit (\code{intoverpop = 'laplace'}) whose random effects reach
 #' the dynamics or the variances, the errors come from the model's own
@@ -243,7 +254,9 @@
 #'   values; \code{'update'}, each latent's standardised update;
 #'   \code{'etaprior'}, its predicted mean -- \code{Row}, the variable, and
 #'   \code{value}; NULL when no such family ran), \code{adequate},
-#'   \code{close_fit}, \code{projection} (the method used), and \code{fit}
+#'   \code{close_fit}, \code{informative} (with \code{tvcovariates}, whether
+#'   they predict the errors at \code{alpha}; NA without), \code{projection}
+#'   (the method used), and \code{fit}
 #'   (with any generated data, for reuse). \code{plot()} draws the families,
 #'   or one family's statistics.
 #' @references Newey, W. K. (1985). Maximum likelihood specification testing
@@ -392,12 +405,18 @@ ctFitAdequacy <- function(fit, covariates = NULL,
   statistics <- do.call(rbind, statistics)
   families_out <- do.call(rbind, fams)
   rownames(statistics) <- rownames(families_out) <- NULL
-  families_out$p_adj <- stats::p.adjust(families_out$p, 'holm')
-  failing <- families_out$family[families_out$p_adj < alpha]
+  # The tvcovariates family tests the errors against an information set larger
+  # than the model's, which a correct model of the outcomes can fail (see
+  # Details), so it stays out of Holm's set and of the verdict.
+  own <- families_out$family != 'tvcovariates'
+  families_out$p_adj <- families_out$p
+  families_out$p_adj[own] <- stats::p.adjust(families_out$p[own], 'holm')
+  failing <- families_out$family[own & families_out$p_adj < alpha]
   sized <- if (is.null(size)) character() else
     size$family[!is.na(size$p_close) & size$p_close < alpha & size$overall]
   structure(list(families = families_out, statistics = statistics, size = size,
     errors = errors, adequate = !length(failing), close_fit = all(failing %in% sized),
+    informative = if (any(!own)) any(families_out$p[!own] < alpha) else NA,
     alpha = alpha, close = close, projection = used,
     nsamples = if (length(generated)) nsamples else NA_integer_, fit = fit),
     class = 'ctFitAdequacy')
@@ -1618,7 +1637,8 @@ plot.ctFitAdequacy <- function(x, family = NULL, ...) {
   flag <- scale_colour_manual(values = c(`FALSE` = 'grey35', `TRUE` = 'red3'), guide = 'none')
   if (is.null(family)) {
     f <- x$families
-    f$label <- factor(f$family, levels = rev(f$family))
+    label <- ifelse(f$family == 'tvcovariates', 'tvcovariates (not in verdict)', f$family)
+    f$label <- factor(label, levels = rev(label))
     f$flagged <- f$p_adj < x$alpha
     return(ggplot(f, aes(x = pmax(.data$p_adj, 1e-12), y = .data$label)) +
       geom_vline(xintercept = x$alpha, linetype = 2, colour = 'grey50') +
@@ -1679,15 +1699,21 @@ plot.ctFitAdequacy <- function(x, family = NULL, ...) {
 
 #' @export
 print.ctFitAdequacy <- function(x, digits = 3, ...) {
-  failing <- x$families$family[x$families$p_adj < x$alpha]
+  own <- x$families$family != 'tvcovariates'
+  failing <- x$families$family[own & x$families$p_adj < x$alpha]
   cat("Adequacy: ", if (x$adequate) "no family detects misfit" else paste0("misfit ",
-    "detected by ", length(failing), " of ", nrow(x$families), " families"), " at alpha = ",
+    "detected by ", length(failing), " of ", sum(own), " families"), " at alpha = ",
     x$alpha, if (!x$adequate && isTRUE(x$close_fit)) paste0(
       ", each shown within the close-fit bound (remaining correlations below ", x$close,
       ")"), "\n", sep = "")
   notes <- c(if (!is.na(x$projection)) paste0("estimation removed by: ", x$projection),
     if (!is.na(x$nsamples)) paste0(x$nsamples, " generated datasets"))
   if (length(notes)) cat("(", paste(notes, collapse = "; "), ")\n", sep = "")
+  # A fit stored before the field existed has none: NULL, read as absent.
+  if (isTRUE(x$informative) || isFALSE(x$informative))
+    cat("The time varying covariates ", if (x$informative) "predict" else
+      "do not detectably predict", " the errors (tvcovariates; not counted above, ",
+      "as it tests information beyond the model's)\n", sep = "")
   cat("\n")
   f <- x$families
   f[c('worst_z', 'p', 'p_adj')] <- lapply(f[c('worst_z', 'p', 'p_adj')], signif, digits)

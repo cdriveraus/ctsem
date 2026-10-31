@@ -99,7 +99,9 @@ An object of class \code{ctFitAdequacy}: \code{families} (one row
   values; \code{'update'}, each latent's standardised update;
   \code{'etaprior'}, its predicted mean -- \code{Row}, the variable, and
   \code{value}; NULL when no such family ran), \code{adequate},
-  \code{close_fit}, \code{projection} (the method used), and \code{fit}
+  \code{close_fit}, \code{informative} (with \code{tvcovariates}, whether
+  they predict the errors at \code{alpha}; NA without), \code{projection}
+  (the method used), and \code{fit}
   (with any generated data, for reuse). \code{plot()} draws the families,
   or one family's statistics.
 }
@@ -161,7 +163,15 @@ a variable.
     standardised. The estimate is the regression of the standardised error
     on the covariate. The previous row's value is a test of prediction
     (Granger's sense); the same row's is an association, which a covariate
-    the outcome itself moves would show as well.}
+    the outcome itself moves would show as well. Its null is larger than
+    the other families': the errors have mean zero given what the model
+    conditions on, the outcomes' own past, and need not be uncorrelated
+    with anything else. A correct model of the outcomes fails it when a
+    covariate is another measure of the same states, since that measure's
+    previous value sharpens the estimate of the state and so predicts the
+    next error. So it says whether a model using these variables would
+    predict better, not that the model of the outcomes is wrong, and it is
+    not counted in \code{adequate}.}
   \item{scores}{Not run unless asked for. White's (1987) dynamic information
     matrix test: each data row's score, the derivative of its one-step
     log likelihood, for the dynamic and measurement parameters
@@ -204,7 +214,10 @@ are the model's, by its terms between units, whose mean is zero under the
 model (Chen & Qin, 2010), and otherwise by the bootstrap; the two are
 combined, with any exact p-values the family has, by the Cauchy
 combination; families are combined by Holm. \code{adequate} is \code{TRUE}
-when no family's adjusted p-value is below \code{alpha}.
+when no family's adjusted p-value is below \code{alpha}. The
+\code{tvcovariates} family tests a larger information set than the model's
+and is held out of both: its p-value is its own, and \code{informative}
+reports it.
 
 On a Laplace fit (\code{intoverpop = 'laplace'}) whose random effects reach
 the dynamics or the variances, the errors come from the model's own

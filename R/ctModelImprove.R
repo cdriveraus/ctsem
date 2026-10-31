@@ -377,6 +377,8 @@ ctModelImprove <- function(fit, covariates = NULL,
           change = batch[[1]]$label,
           file = if (!is.null(checkpoint)) paste0(checkpoint, '.refit.rds')))
       refits <- .ctImproveBestOf(ran, vapply(runs, `[[`, 0L, 'b'), length(batch))
+      # The best of several starts keeps their wall time, for the report.
+      attr(refits, 'seconds') <- attr(ran, 'seconds')
       slowest <- max(slowest, attr(ran, 'seconds'))
       say("Round ", step, ": refit took ", .ctImproveRefitReport(refits))
       for (b in seq_along(batch)) {
