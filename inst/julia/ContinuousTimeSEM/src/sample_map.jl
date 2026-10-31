@@ -114,9 +114,6 @@ _jmap_tri_sat(u) = _JMAP_TRI_SAT * tanh(u / _JMAP_TRI_SAT)
 component's fit has `3k + 1` coefficients and a Newton step over them."""
 const _JMAP_TRI_MAXPAR = 30
 
-# `diag`: no couplings, each coordinate its own location, scale and
-# sinh-arcsinh marginal (`f1`, `f2`, `a1` zero), so the map's Jacobian is
-# diagonal and its pullback in closed form.
 struct _JMapTri
     n::Int
     f0::Vector{Float64}
@@ -126,7 +123,6 @@ struct _JMapTri
     a1::Matrix{Float64}
     eps::Vector{Float64}
     ld::Vector{Float64}
-    diag::Bool
 end
 
 """The whitened coordinates at latent `w` and the log Jacobian of that map."""
@@ -138,7 +134,7 @@ function _jmap_tri_forward(tri::_JMapTri, w::AbstractVector{T}) where {T<:Real}
     @inbounds for k in 1:n
         f = T(tri.f0[k])
         a = T(tri.a0[k])
-        for j in 1:(tri.diag ? 0 : k - 1)
+        for j in 1:(k - 1)
             s = _jmap_tri_sat(u[j])
             f += tri.f1[k, j] * s + tri.f2[k, j] * s^2
             a += tri.a1[k, j] * s
@@ -160,7 +156,7 @@ function _jmap_tri_inverse(tri::_JMapTri, u::AbstractVector)
     @inbounds for k in 1:n
         f = tri.f0[k]
         a = tri.a0[k]
-        for j in 1:(tri.diag ? 0 : k - 1)
+        for j in 1:(k - 1)
             s = _jmap_tri_sat(u[j])
             f += tri.f1[k, j] * s + tri.f2[k, j] * s^2
             a += tri.a1[k, j] * s
@@ -184,24 +180,8 @@ end
 gradient included."""
 function _jmap_tri_pullback(tri::_JMapTri, w::AbstractVector, gu::AbstractVector)
     n = tri.n
-    tri.diag && return _jmap_diag_pullback(tri, w, gu)
     J = ForwardDiff.jacobian(_JMapTriForward(tri), collect(Float64, w))
     return transpose(view(J, 1:n, :)) * gu .+ view(J, n + 1, :)
-end
-
-# The diagonal map's: `du_k/dw_k = exp(a_k) cosh(r_k) / (delta_k sqrt(1 + w_k^2))`
-# and its log Jacobian's own derivative, each coordinate alone.
-function _jmap_diag_pullback(tri::_JMapTri, w::AbstractVector, gu::AbstractVector)
-    A = _JMAP_TRI_CAP
-    g = zeros(tri.n)
-    @inbounds for k in 1:tri.n
-        a = A * tanh(tri.a0[k] / A)
-        delta = exp(tri.ld[k])
-        r = (asinh(w[k]) + tri.eps[k]) / delta
-        q = 1 / (delta * sqrt(1 + w[k]^2))
-        g[k] = gu[k] * exp(a) * cosh(r) * q + tanh(r) * q - w[k] / (1 + w[k]^2)
-    end
-    return g
 end
 
 # A component's negative log likelihood over whitened draws `U` (a column each),
@@ -269,37 +249,34 @@ function _jmap_tri_newton(F::_JMapTriNLL, p::Vector{Float64}, iters::Int)
 end
 
 """
-    _jmap_tri_fit(U; iters, diagonal)
+    _jmap_tri_fit(U; iters)
 
 The triangular map fitted to whitened draws `U` (a column each) by maximum
 likelihood, a component at a time, by damped Newton from the identity; a
 component whose tails come out lighter than the normal's is fitted again with
-its tail weight held at the normal's. `diagonal`: each component on its own
-coordinate alone, four coefficients, no couplings.
+its tail weight held at the normal's.
 """
-function _jmap_tri_fit(U::AbstractMatrix; iters::Int=60, diagonal::Bool=false)
+function _jmap_tri_fit(U::AbstractMatrix; iters::Int=60)
     n = size(U, 1)
     f0 = zeros(n); f1 = zeros(n, n); f2 = zeros(n, n)
     a0 = zeros(n); a1 = zeros(n, n); epsv = zeros(n); ld = zeros(n)
     X = Matrix{Float64}(U)
     for k in 1:n
-        # A diagonal component is the first component of its own row.
-        Xk, kk = diagonal ? (X[k:k, :], 1) : (X, k)
-        p = _jmap_tri_newton(_JMapTriNLL(Xk, kk, false), zeros(3kk + 1), iters)
-        if p[3kk + 1] > 0
-            p = vcat(_jmap_tri_newton(_JMapTriNLL(Xk, kk, true), p[1:(3kk)], iters), 0.0)
+        p = _jmap_tri_newton(_JMapTriNLL(X, k, false), zeros(3k + 1), iters)
+        if p[3k + 1] > 0
+            p = vcat(_jmap_tri_newton(_JMapTriNLL(X, k, true), p[1:(3k)], iters), 0.0)
         end
         f0[k] = p[1]
-        for j in 1:(kk - 1)
+        for j in 1:(k - 1)
             f1[k, j] = p[1 + j]
-            f2[k, j] = p[kk + j]
-            a1[k, j] = p[2kk + j]
+            f2[k, j] = p[k + j]
+            a1[k, j] = p[2k + j]
         end
-        a0[k] = p[2kk]
-        epsv[k] = p[3kk]
-        ld[k] = p[3kk + 1]
+        a0[k] = p[2k]
+        epsv[k] = p[3k]
+        ld[k] = p[3k + 1]
     end
-    return _JMapTri(n, f0, f1, f2, a0, a1, epsv, ld, diagonal)
+    return _JMapTri(n, f0, f1, f2, a0, a1, epsv, ld)
 end
 
 """
@@ -333,21 +310,20 @@ _jmap_with(m::CTSEMJointMap; Lam=m.Lam, h=m.h, G=m.G, theta0=m.theta0, Ct=m.Ct,
         m.thref, theta0, Ct, tri)
 
 """
-    _jmap_learn_tri(m, pooled; diagonal)
+    _jmap_learn_tri(m, pooled)
 
 The map with theta's triangular map fitted from `pooled`, theta's draws over
 every learning window so far, whitened by `m`'s own centre and factor; `m` as
 it is while there are fewer than ten draws a coefficient of the largest
-component. At most 4000 draws are read, spread through the pool. `diagonal`
-fits the map without couplings (`_jmap_tri_fit`).
+component. At most 4000 draws are read, spread through the pool.
 """
-function _jmap_learn_tri(m::CTSEMJointMap, pooled::AbstractMatrix; diagonal::Bool=false)
+function _jmap_learn_tri(m::CTSEMJointMap, pooled::AbstractMatrix)
     n = m.npar
     N = size(pooled, 2)
-    N >= 10 * (diagonal ? 4 : 3n + 1) || return m
+    N >= 10 * (3n + 1) || return m
     pick = N > 4000 ? round.(Int, range(1, N; length=4000)) : collect(1:N)
     U = LowerTriangular(m.Ct) \ (pooled[:, pick] .- m.theta0)
-    return _jmap_with(m; tri=_jmap_tri_fit(U; diagonal=diagonal))
+    return _jmap_with(m; tri=_jmap_tri_fit(U))
 end
 
 """Theta at latent `w`, and the log Jacobian of theta's triangular map (zero
@@ -1196,8 +1172,7 @@ function ctsem_sample_map(laplace::CTSEMLaplaceObjective, values::AbstractVector
     progress_sink=nothing, stepsize::Real=0.0, coordinate=nothing,
     windows::Union{Nothing,AbstractVector{<:Integer}}=nothing, nsettle::Integer=25,
     ncheck::Integer=25, maxrows::Integer=400, cross::Bool=true,
-    report::Union{Nothing,CTSEMLaplaceObjective}=nothing,
-    theta_map::Union{Bool,Symbol,AbstractString}=true)
+    report::Union{Nothing,CTSEMLaplaceObjective}=nothing, theta_map::Bool=true)
 
     t0 = time()
     nchains = Int(nchains); nwarmup = Int(nwarmup); ndraws = Int(ndraws)
@@ -1251,8 +1226,7 @@ function ctsem_sample_map(laplace::CTSEMLaplaceObjective, values::AbstractVector
     windowlog = NamedTuple[]
     # Theta's triangular map is learnt from the windows' pooled draws, over a
     # third window, up to `_JMAP_TRI_MAXPAR` parameters.
-    kind = _jmap_theta_kind(theta_map, npar)
-    learn = kind !== :none
+    learn = theta_map && npar <= _JMAP_TRI_MAXPAR
     windows = windows === nothing ? (learn ? [40, 80, 160] : [40, 80]) : windows
     pooled = zeros(npar, 0)
     for (w, nw) in enumerate(windows)
@@ -1266,7 +1240,7 @@ function ctsem_sample_map(laplace::CTSEMLaplaceObjective, values::AbstractVector
         m2, refit, lambda, rows = _jmap_refit(m, Wl, rng; maxrows=Int(maxrows))
         if learn
             pooled = hcat(pooled, _jmap_thetas(m, Wl[1:npar, :]))
-            m2 = _jmap_learn_tri(m2, pooled; diagonal=kind === :diagonal)
+            m2 = _jmap_learn_tri(m2, pooled)
         end
         extra += rows
         starts = _jmap_restarts(m, m2, results, moved, Wl, rng)
@@ -1373,21 +1347,8 @@ function ctsem_sample_map(laplace::CTSEMLaplaceObjective, values::AbstractVector
         (sampler="map", placement=_saem_placement_summary(nothing),
          map=(gradients=counter[] + extra + (hybrid ? total : 0),
               learn_gradients=learn_gradients, learn_secs=learned,
-              theta_map=String(mf.tri === nothing ? :none :
-                  mf.tri.diag ? :diagonal : :triangular),
               windows=windowlog, coordinates=D - npar, latent_mean=lmean,
               latent_sd=lsd, integrated=hybrid, coupled=length(mf.R))))
-end
-
-"""What theta's map is learnt as: `theta_map` `true` chooses by the parameter
-count, `false` none; `:triangular`, `:diagonal` and `:none` name one."""
-function _jmap_theta_kind(theta_map::Union{Bool,Symbol,AbstractString}, npar::Integer)
-    theta_map isa AbstractString && (theta_map = Symbol(theta_map))
-    theta_map === false && return :none
-    theta_map === true && return npar <= _JMAP_TRI_MAXPAR ? :triangular : :none
-    theta_map in (:triangular, :diagonal, :none) ||
-        throw(ArgumentError("theta_map must be true, false, :triangular, :diagonal or :none"))
-    return theta_map
 end
 
 """
@@ -1402,7 +1363,7 @@ entry. Both near zero say the change of variables is exact; for tests.
 """
 function ctsem_sample_map_check(laplace::CTSEMLaplaceObjective, values::AbstractVector;
     hessian::Union{Nothing,AbstractMatrix}=nothing, cross::Bool=true, seed::Integer=1,
-    nu::Integer=6, h::Real=1e-5, tri::Union{Bool,Symbol,AbstractString}=false)
+    nu::Integer=6, h::Real=1e-5, tri::Bool=false)
     sampler = ctsem_sampler(laplace, length(values))
     npar = sampler.npar
     theta0 = collect(Float64, values)[1:npar]
@@ -1416,15 +1377,11 @@ function ctsem_sample_map_check(laplace::CTSEMLaplaceObjective, values::Abstract
     m, _ = _jmap_build(sampler, theta0, cov; cross=cross)
     D = sampler.ndim
     rng = Random.Xoshiro(UInt64(seed))
-    # `tri` true: a random triangular map on theta; `:diagonal`, one without
-    # couplings, whose pullback is the closed form.
-    if tri !== false
+    if tri
         n = npar
-        diagonal = tri in (:diagonal, "diagonal")
-        lower(sc) = [j < k && !diagonal ? sc * randn(rng) : 0.0 for k in 1:n, j in 1:n]
+        lower(sc) = [j < k ? sc * randn(rng) : 0.0 for k in 1:n, j in 1:n]
         m = _jmap_with(m; tri=_JMapTri(n, 0.1 .* randn(rng, n), lower(0.2), lower(0.1),
-            0.1 .* randn(rng, n), lower(0.2), 0.2 .* randn(rng, n), 0.2 .* randn(rng, n),
-            diagonal))
+            0.1 .* randn(rng, n), lower(0.2), 0.2 .* randn(rng, n), 0.2 .* randn(rng, n)))
     end
     xt = 0.3 .* randn(rng, D)
     d = CTSEMJointMapDensity(m, Threads.Atomic{Int}(0))
