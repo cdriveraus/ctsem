@@ -427,7 +427,11 @@ function _laplace_soft_quadrature_reverse(laplace::CTSEMLaplaceObjective, z0::Ve
         elseif node.kind === :centre
             gbar0 += hbar
             C = node.C
-            Bbar = _dense_spectral(C.Q, [(-hbar / 2) * (m > 1.0 ? 1 / m : 0.0) for m in C.mu])
+            # -sum log f(mu) / 2 is a spectral function of B: its gradient is
+            # Q diag(-f'(mu) / (2 f(mu))) Q', f the node floor.
+            Bbar = _dense_spectral(C.Q, [(-hbar / 2) *
+                _laplace_soft_node_curvature_floor_slope(C.mu[i]) / C.f[i]
+                for i in eachindex(C.mu)])
             Mbar0 .+= _dense_mul(Vh, _dense_mul(Bbar, _dense_t(Vh)))
             Vhbar .+= 2 .* _dense_mul(M0, _dense_mul(Vh, Bbar))
         elseif node.kind === :node1
