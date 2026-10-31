@@ -122,23 +122,23 @@ reference <- function(fit, x) {
 }
 
 # The Laplace objective along a direction through `x`: its value, its
-# directional derivative from the gradient, and how many units the gated rule
-# scored, at each step -- what a line search that finds no decrease meets.
-JuliaConnectoR::juliaEval("lc_gated_units(o) = o.gated_units")
-line_probe <- function(fit, x, direction, ts, floor = NULL) {
+# directional derivative from the gradient, and how many units the
+# soft-direction quadrature scored, at each step -- what a line search that finds no decrease meets.
+JuliaConnectoR::juliaEval("lc_soft_units(o) = o.soft_quadrature_units")
+line_probe <- function(fit, x, direction, ts, rule = NULL) {
   obj <- .ctJuliaObjective(fit)
-  if (!is.null(floor)) {
-    own <- as.character(.ctJuliaOr(fit$model_spec$laplace$inner$floor, "total"))
-    jc("ctsem_set_laplace_floor!", obj, floor)
-    on.exit(jc("ctsem_set_laplace_floor!", obj, own), add = TRUE)
+  if (!is.null(rule)) {
+    own <- .ctJuliaSoftDirections(fit$model_spec$laplace$inner)
+    jc("ctsem_set_soft_directions!", obj, rule)
+    on.exit(jc("ctsem_set_soft_directions!", obj, own), add = TRUE)
   }
   do.call(rbind, lapply(ts, function(t) {
     y <- x + t * direction
     ev <- jg(jc("ctsem_laplace_evaluate", obj, jv(y), gradient = TRUE))
-    gated <- as.integer(JuliaConnectoR::juliaCall("lc_gated_units", obj))
+    scored <- as.integer(JuliaConnectoR::juliaCall("lc_soft_units", obj))
     data.frame(t = t, value = as.numeric(ev$value),
       slope = sum(as.numeric(ev$gradient) * direction),
-      converged = isTRUE(ev$converged), gated = gated)
+      converged = isTRUE(ev$converged), soft_quadrature = scored)
   }))
 }
 
@@ -279,14 +279,16 @@ for (case in which) {
         nm, r$exact, r$quad5, line$reported, line$dist_best_se))
     }
     # gB8: why a resume stops. Along the Newton step the certification
-    # predicts, the gated objective and the total-floor one side by side.
+    # predicts, the objective under the soft-direction quadrature and under
+    # the log-determinant floor, side by side.
     if (!SKIP_PROBE && grepl("^gB8", case) &&
         !is.null(off$uncertainty$certification$step)) {
       direction <- as.numeric(off$uncertainty$certification$step)
       if (length(direction) == length(points$laplace) && any(direction != 0)) {
         ts <- seq(-1, 1, length.out = 41)
-        rec$line_gated <- line_probe(off, points$laplace, direction, ts)
-        rec$line_total <- line_probe(off, points$laplace, direction, ts, floor = "total")
+        rec$line_quadrature <- line_probe(off, points$laplace, direction, ts)
+        rec$line_logdet_floor <- line_probe(off, points$laplace, direction, ts,
+          rule = "logdet_floor")
         stamp("  line probe done")
       }
     }
