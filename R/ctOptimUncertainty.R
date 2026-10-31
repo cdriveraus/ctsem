@@ -198,32 +198,37 @@ bootstrapHessian <- function(standata, sm, est, finishsamples, cores, scores=NUL
 # the shape a later edit to one number and not the other drifts through
 # unnoticed.
 #
-# The two backend values are both deliberate and both measured, on different
-# regimes: 1.1 on a 400-subject fit's identified subspace beats 1.5 at every
-# evaluation count (2,000 evaluations to reach ESS 149.6 against 4,000 to reach
-# 112.9, `IS-importance-sampling-2026-09-06.md` s5), which is why stan, whose
-# models in the pass-3 benchmark are of that shape, uses it. 1.5/1.2 was raised
-# for a 40-subject model with a nonlinear or variance parameter, where the
-# posterior is genuinely wider than the Hessian curvature and a narrower
-# proposal cannot see the extra width at all (`.ctBackendUncertainty()`'s own
-# comment has the fuller account); whitening the null directions out does not
-# change that argument; it only stops a different, unrelated failure
-# (`.ctImisSubspace()`) from also being blamed on the scale. One number still
-# cannot serve both sample sizes, so this stays two named constants rather than
-# collapsing to one -- the point of naming them once is that this file is the
-# only place a change to either has to be made.
+# How much wider than its start the proposal is drawn depends on whether that
+# start's widths were measured. 1.5/1.2 was raised for a 40-subject model with
+# a variance parameter, whose posterior is wider than the Hessian curvature
+# says, so that a proposal built on the curvature alone could reach the extra
+# width; 1.1 was measured best on a 400-subject fit
+# (`IS-importance-sampling-2026-09-06.md` s5), and stan keeps it. `'checked'`
+# starts its proposal at the widths its normal check measured along each
+# direction it samples (`$details$normalcheck$widths`, `.ctImisRun()`), which
+# is what the wider scale stood in for; `'is'` starts at the curvature's
+# normal. Measured on julia on both cases (pass 3's 400 x 8 linear panel and
+# 40 subjects with random drift, diffusion and manifest mean, three seeds
+# each, against a sampled reference; scripts/uncert-items-2026-10/is_scale.R,
+# dev4): `'checked'` at 1.1/1.1 cost 0.91 of the evaluations at 1.5/1.2 on
+# both, every sd and mean as close to the reference; `'is'` at 1.1 cost 1.37
+# times as many on the 40 subjects, and one seed's sd came out 1.38 times the
+# reference's, while on the 400 the two were level. So the scale follows the
+# start, `measured`, and on julia the backend no longer stands in for the
+# regime.
 #
 # A bare call to `imis_is()` (a dev script, or the reproduction in the IS note
-# itself) has no backend to ask, so its own formal defaults use the julia
-# value: the wider, more conservative proposal, on the reasoning that costs
-# more evaluations rather than the one that can quietly under-cover.
+# itself) has no widths and no backend to ask, so its own formal defaults use
+# the unmeasured julia value: the wider, more conservative proposal, on the
+# reasoning that costs more evaluations rather than the one that can quietly
+# under-cover.
 #
 # `df`, the components' t degrees of freedom, is one value for both: the
 # heavier tail is what lets a proposal built on the curvature reach draws its
 # normal would not, and it does not depend on which engine evaluates them.
-.ctImisProposalDefaults <- function(backend = c('julia', 'stan')) {
+.ctImisProposalDefaults <- function(backend = c('julia', 'stan'), measured = FALSE) {
   backend <- match.arg(backend)
-  if (backend == 'stan') list(scaleInit = 1.1, tailScale = 1.1, df = 5) else
+  if (backend == 'stan' || isTRUE(measured)) list(scaleInit = 1.1, tailScale = 1.1, df = 5) else
     list(scaleInit = 1.5, tailScale = 1.2, df = 5)
 }
 
@@ -2966,11 +2971,10 @@ ctOptimFitLpgFunc <- function(fit, cores=1){
 # constants, so that the divergence is visible in one place instead of being
 # two similar-looking blocks:
 #
-#   `scaleInit`/`tailScale` -- stan uses 1.1/1.1, julia 1.5/1.2. Deliberate on
-#   both sides and measured: a proposal narrower than its target cannot correct
-#   it, which argues for the wider default, but a 400-subject model measures
-#   better at 1.1 where a 40-subject one measures better at 1.5. One constant
-#   does not serve both sample sizes; see the note in `.ctBackendUncertainty()`.
+#   `backend` -- the proposal's scale (`.ctImisProposalDefaults()`): stan's
+#   1.1/1.1, julia's 1.5/1.2 where the proposal starts at the curvature's
+#   normal ('is') and 1.1/1.1 where it starts at the widths the check measured
+#   ('checked').
 #
 #   `lpg` -- where the log density comes from. Value-only on julia, because
 #   `imis_is` reads the log probability and nothing else, so a `lpgFunc` that
@@ -2988,10 +2992,9 @@ ctOptimFitLpgFunc <- function(fit, cores=1){
 # the directions it finds improper at the curvature's width.
 .ctOptimDrawSamples <- function(uncertaintyfit, draws, control, est,
   finishsamples, lpg, verbose = 0, parnames = NULL, proper = TRUE,
-  scaleInit = .ctImisProposalDefaults()$scaleInit,
-  tailScale = .ctImisProposalDefaults()$tailScale,
-  df = .ctImisProposalDefaults()$df,
+  backend = c('julia', 'stan'),
   tailremedy = 'Sample the posterior rather than reweighting an approximation to it.') {
+  backend <- match.arg(backend)
 
   if (draws == 'empirical' && !is.null(uncertaintyfit$draws)) {
     return(list(samples = uncertaintyfit$draws, uncertaintyfit = uncertaintyfit,
@@ -3015,10 +3018,12 @@ ctOptimFitLpgFunc <- function(fit, cores=1){
   checked <- !is.null(place$directions)
   if (draws != 'imis' || (checked && !ncol(place$directions))) return(normal(place))
 
-  if (is.null(control$imisScaleInit)) control$imisScaleInit <- scaleInit
-  if (is.null(control$imisTailScale)) control$imisTailScale <- tailScale
+  # 'checked' starts at the widths its check measured, 'is' at the curvature.
+  proposal <- .ctImisProposalDefaults(backend, measured = checked)
+  if (is.null(control$imisScaleInit)) control$imisScaleInit <- proposal$scaleInit
+  if (is.null(control$imisTailScale)) control$imisTailScale <- proposal$tailScale
   # t with 5 degrees of freedom, not normal: see `.ctImisProposalDefaults()`.
-  if (is.null(control$imisDf)) control$imisDf <- df
+  if (is.null(control$imisDf)) control$imisDf <- proposal$df
   # `.ctEssTarget`, the one default every draw-producing route shares.
   if (is.null(control$isESS)) control$isESS <- .ctEssTarget
   named <- if (length(parnames) == length(est)) parnames else paste0('par', seq_along(est))
@@ -3823,9 +3828,11 @@ ctOptimFitLpgFunc <- function(fit, cores=1){
 #' \code{control$analyticHessian} are julia-only. \code{cores} means R worker
 #' processes on stan and engine threads on julia. The IMIS proposal defaults
 #' also differ: \code{imisScaleInit = 1.1} and \code{imisTailScale = 1.1} on
-#' stan against \code{1.5} and \code{1.2} on julia, the wider pair being what
-#' a small-sample posterior wider than the Hessian curvature needs to be seen
-#' at all. Set them explicitly to compare the two. Transformed-parameter
+#' stan; on julia the same for \code{'checked'}, whose proposal starts at the
+#' widths its check measured, and \code{1.5} and \code{1.2} for \code{'is'},
+#' whose proposal starts at the Hessian curvature, the wider pair being what a
+#' small-sample posterior wider than that curvature needs to be seen at all.
+#' Set them explicitly to compare the two. Transformed-parameter
 #' summaries are refreshed on stan and not on julia; the raw-scale covariance
 #' and draws are complete on both.
 #'
@@ -3924,7 +3931,7 @@ ctOptimFitLpgFunc <- function(fit, cores=1){
 #' \code{ridge = 1e-8}, \code{hessianStep = 1e-3},
 #' \code{bootstrapFitCores = 1}, \code{bootstrapTol = 1e-5},
 #' \code{imisMaxIter = 50} (100 for \code{'checked'}), \code{imisScaleInit = 1.1},
-#' \code{imisTailScale = 1.1} (1.5 and 1.2 on julia), \code{imisDf = 5} (the
+#' \code{imisTailScale = 1.1} (1.5 and 1.2 for \code{'is'} on julia), \code{imisDf = 5} (the
 #' proposal components' t degrees of freedom; \code{Inf} for normal),
 #' \code{isESS = 200}, and \code{isitersize = 1000} (100 for
 #' \code{'checked'}). \code{imisBudget} caps the log density evaluations
@@ -4365,15 +4372,12 @@ ctFitUncertainty <- function(fit,
     }
   }
   
-  # `scaleInit`/`tailScale` at stan's own value rather than julia's -- see
-  # `.ctImisProposalDefaults()` for why one constant does not serve both.
-  stanImis <- .ctImisProposalDefaults('stan')
+  # The proposal at stan's own scale (`.ctImisProposalDefaults()`).
   drawn <- .ctOptimDrawSamples(uncertaintyfit, draws = draws, control = control,
     est = fit$stanfit$rawest, finishsamples = finishsamples,
     parnames = tryCatch(.ctFitRawParNames(fit), error = function(e) NULL),
     proper = identical(.ctFitPriorScope(fit), 'all'),
-    lpg = .ctImisPointGradbatch(lpgsetup$lpg), verbose = verbose,
-    scaleInit = stanImis$scaleInit, tailScale = stanImis$tailScale,
+    lpg = .ctImisPointGradbatch(lpgsetup$lpg), verbose = verbose, backend = 'stan',
     tailremedy = paste0("ctFit(..., optimize = FALSE) samples the posterior ",
       "itself, as does ctFitUncertainty(fit, 'sample') on a backend = 'julia' fit."))
   samples <- drawn$samples

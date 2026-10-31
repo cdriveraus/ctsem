@@ -130,7 +130,7 @@ and \code{isitersize}. Omitted entries use
 \code{ridge = 1e-8}, \code{hessianStep = 1e-3},
 \code{bootstrapFitCores = 1}, \code{bootstrapTol = 1e-5},
 \code{imisMaxIter = 50} (100 for \code{'checked'}), \code{imisScaleInit = 1.1},
-\code{imisTailScale = 1.1} (1.5 and 1.2 on julia), \code{imisDf = 5} (the
+\code{imisTailScale = 1.1} (1.5 and 1.2 for \code{'is'} on julia), \code{imisDf = 5} (the
 proposal components' t degrees of freedom; \code{Inf} for normal),
 \code{isESS = 200}, and \code{isitersize = 1000} (100 for
 \code{'checked'}). \code{imisBudget} caps the log density evaluations
@@ -520,9 +520,11 @@ its \code{control$bootstrapFitCores} / \code{control$bootstrapTol}, and
 \code{control$analyticHessian} are julia-only. \code{cores} means R worker
 processes on stan and engine threads on julia. The IMIS proposal defaults
 also differ: \code{imisScaleInit = 1.1} and \code{imisTailScale = 1.1} on
-stan against \code{1.5} and \code{1.2} on julia, the wider pair being what
-a small-sample posterior wider than the Hessian curvature needs to be seen
-at all. Set them explicitly to compare the two. Transformed-parameter
+stan; on julia the same for \code{'checked'}, whose proposal starts at the
+widths its check measured, and \code{1.5} and \code{1.2} for \code{'is'},
+whose proposal starts at the Hessian curvature, the wider pair being what a
+small-sample posterior wider than that curvature needs to be seen at all.
+Set them explicitly to compare the two. Transformed-parameter
 summaries are refreshed on stan and not on julia; the raw-scale covariance
 and draws are complete on both.
 }

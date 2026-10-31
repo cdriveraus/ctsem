@@ -1347,9 +1347,9 @@ test_that("importance sampling records the Pareto k of its weights and warns whe
   light <- function(x) sum(stats::dnorm(x, 0, 0.8, log = TRUE))
   draw <- function(lpg) withr::with_seed(3, ctsem:::.ctOptimDrawSamples(
     list(cov = diag(2), details = list()), draws = 'imis',
-    control = list(imisMaxIter = 0, isitersize = 2000, isESS = 1, imisDf = Inf),
-    est = c(0, 0), finishsamples = 50, lpg = lpg, scaleInit = 1, tailScale = 1,
-    tailremedy = 'Sample it instead.'))
+    control = list(imisMaxIter = 0, isitersize = 2000, isESS = 1, imisDf = Inf,
+      imisScaleInit = 1, imisTailScale = 1),
+    est = c(0, 0), finishsamples = 50, lpg = lpg, tailremedy = 'Sample it instead.'))
 
   expect_warning(bad <- draw(heavy), 'Pareto k .*Sample it instead')
   kbad <- bad$uncertaintyfit$details$importance_sampling$pareto_k
@@ -1365,6 +1365,22 @@ test_that("importance sampling records the Pareto k of its weights and warns whe
     nbatch = 2000, target_ess = 1, maxiter = 0, scaleInit = 1, tailScale = 1,
     diagPlots = FALSE)), 'Pareto k .*Caller remedy')
   expect_equal(drawn$k, kbad)
+
+  # The proposal's scale follows its start: 'checked', drawn about the widths
+  # its check measured, at 1.1/1.1 on either backend; 'is', about the
+  # curvature's normal, at julia's 1.5/1.2 (`.ctImisProposalDefaults()`).
+  scale <- function(fit, backend) withr::with_seed(3, ctsem:::.ctOptimDrawSamples(fit,
+    draws = 'imis', control = list(imisMaxIter = 0, isitersize = 200, isESS = 1),
+    est = c(0, 0), finishsamples = 50, lpg = light, backend = backend))$control
+  checkedfit <- list(method = 'checked', cov = diag(2), details = list(normalcheck =
+    list(directions = matrix(c(1, 0), 2, 1), widths = 0.64, centre = c(0, 0))))
+  isfit <- list(cov = diag(2), details = list())
+  expect_equal(scale(checkedfit, 'julia')[c('imisScaleInit', 'imisTailScale')],
+    list(imisScaleInit = 1.1, imisTailScale = 1.1))
+  expect_equal(scale(isfit, 'julia')[c('imisScaleInit', 'imisTailScale')],
+    list(imisScaleInit = 1.5, imisTailScale = 1.2))
+  expect_equal(scale(isfit, 'stan')[c('imisScaleInit', 'imisTailScale')],
+    list(imisScaleInit = 1.1, imisTailScale = 1.1))
 })
 
 # A variance-like tail along a curved ridge, with exact moments: x1 = -1.1 -

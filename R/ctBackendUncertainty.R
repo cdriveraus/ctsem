@@ -337,9 +337,8 @@
   #
   # Two arguments carry what is genuinely this backend's:
   #
-  #   `scaleInit`/`tailScale` at julia's own value rather than stan's -- see
-  #   `.ctImisProposalDefaults()` for the measurements behind the two numbers
-  #   and why one constant does not serve both.
+  #   `backend`, the proposal's scale: julia's by whether its start's widths
+  #   were measured (`.ctImisProposalDefaults()`).
   #
   #   `lpg` value-only, not `lpgFunc`: `imis_is` reads the log probability and
   #   nothing else, so the reverse pass `lpgFunc` computes per draw was being
@@ -348,13 +347,12 @@
   #   `uncertainty = 'is'` evaluates a whole proposal batch in one bridge call
   #   rather than one per draw. `.ctCoresetLpg()` puts a coreset of the
   #   units behind it.
-  juliaImis <- .ctImisProposalDefaults('julia')
   drawn <- .ctOptimDrawSamples(uncertaintyfit, draws = draws, control = control,
     est = est, finishsamples = finishsamples,
     parnames = tryCatch(.ctFitRawParNames(fit), error = function(e) NULL),
     proper = identical(.ctFitPriorScope(fit), 'all'),
     lpg = .ctCoresetLpg(target, lpg(target, gradient = FALSE), control), verbose = verbose,
-    scaleInit = juliaImis$scaleInit, tailScale = juliaImis$tailScale,
+    backend = 'julia',
     tailremedy = "ctFitUncertainty(fit, 'sample') samples the posterior itself.")
   samples <- drawn$samples
   uncertaintyfit <- drawn$uncertaintyfit
