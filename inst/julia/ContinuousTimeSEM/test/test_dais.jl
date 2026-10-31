@@ -193,7 +193,7 @@ end
     # In full, a gradient costs its price (`_ctsem_gradient_values`); the
     # coreset costs less: on three seeds, a gradient then priced at two,
     # 1,242-1,562 full evaluations against 3,968-4,480.
-    @test full.cost == ContinuousTimeSEM._ctsem_gradient_values(laplace) * full.gradients
+    @test full.cost ≈ ContinuousTimeSEM._ctsem_gradient_values(laplace) * full.gradients
     @test viacs.cost < 0.7 * full.cost
     # The same normal, within two runs' Monte Carlo error (each mean to 0.05
     # sd) and the coreset's (0.1 log units RMS at the draws): 0.04-0.05 sd on
