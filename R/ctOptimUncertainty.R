@@ -321,9 +321,10 @@ bootstrapHessian <- function(standata, sm, est, finishsamples, cores, scores=NUL
       r
     }
   }
-  # A coreset's (`.ctCoresetLpg()`) cost carries through as it is, and its end
-  # check sees the draws on the raw parameters.
+  # A coreset's (`.ctCoresetLpg()`) cost carries through as it is, as does a
+  # gradient's price, and its end check sees the draws on the raw parameters.
   if (!is.null(attr(lpg, 'cost'))) attr(wrapped, 'cost') <- attr(lpg, 'cost')
+  attr(wrapped, 'gradvalues') <- attr(lpg, 'gradvalues')
   finalbase <- attr(lpg, 'finalize')
   if (!is.null(finalbase)) {
     attr(wrapped, 'finalize') <- function(Z, logp, logw)
@@ -389,6 +390,7 @@ bootstrapHessian <- function(standata, sm, est, finishsamples, cores, scores=NUL
     }
   }
   if (!is.null(attr(lpg, 'cost'))) attr(density, 'cost') <- attr(lpg, 'cost')
+  attr(density, 'gradvalues') <- attr(lpg, 'gradvalues')
   finalbase <- attr(lpg, 'finalize')
   if (!is.null(finalbase)) {
     attr(density, 'finalize') <- function(Z, logp, logw) {
@@ -472,6 +474,7 @@ bootstrapHessian <- function(standata, sm, est, finishsamples, cores, scores=NUL
     }
   }
   if (!is.null(attr(wrapped, 'cost'))) attr(density, 'cost') <- attr(wrapped, 'cost')
+  attr(density, 'gradvalues') <- attr(wrapped, 'gradvalues')
   finalbase <- attr(wrapped, 'finalize')
   if (!is.null(finalbase)) {
     attr(density, 'finalize') <- function(Z, logp, logw)
@@ -569,7 +572,8 @@ bootstrapHessian <- function(standata, sm, est, finishsamples, cores, scores=NUL
   if (!is.null(volume)) {
     result$tilt <- volume[c('size', 'noise', 'gradients')]
     # A density that counts its own cost (a coreset) counted these already.
-    if (!is.function(attr(lpg, 'cost'))) result$cost <- result$cost + 2 * volume$gradients
+    if (!is.function(attr(lpg, 'cost'))) result$cost <- result$cost +
+      .ctDensityGradientValues(lpg) * volume$gradients
   }
   if (!is.null(directions)) {
     result$theta <- result$theta + ctOptimNormalDraws(rep(0, length(centre)), rest,
@@ -3130,7 +3134,8 @@ ctOptimFitLpgFunc <- function(fit, cores=1){
   # ESS 209 at k 0.59 a round or two later (scripts/gsm-uncertainty-2026-10/
   # e2e_scale_checked.R, seed 2).
   if (is.null(control$imisMaxIter)) control$imisMaxIter <- if (checked) 100 else 50
-  # A budget in log density evaluations, a gradient counted as two, when the
+  # A budget in log density evaluations, a gradient at its price
+  # (`.ctDensityGradientValues()`), when the
   # caller sets one (`control$imisBudget`): rounds stop there, and the report
   # says the target was not reached.
   budget <- .ctJuliaOr(control$imisBudget, Inf)
@@ -3252,7 +3257,7 @@ ctOptimFitLpgFunc <- function(fit, cores=1){
     # subspace directions) whose paths had a tail to follow; see `imis_is()`.
     evaluations = is_res$evaluations, rounds = nrow(is_res$rounds),
     paths = is_res$paths,
-    # In full evaluations, a gradient as two: below `evaluations` where a
+    # In full evaluations, a gradient at its price: below `evaluations` where a
     # coreset (`.ctCoresetLpg()`) stood in for the full sum, whose record
     # follows.
     cost = is_res$cost,

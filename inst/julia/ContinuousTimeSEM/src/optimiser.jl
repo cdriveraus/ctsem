@@ -1415,8 +1415,7 @@ function _ctsem_coreset_plan(objective, fg!, store)
     L === nothing && return nothing
     N, p = size(store.S)
     N >= 2 || return nothing
-    w = _laplace_unit_weights(L)
-    cost = w ./ sum(w)
+    cost = _ctsem_unit_shares(L)
     keep = clamp(floor(Int, 2.5e7 / (N * p)), 3, 30)
     sampling = Float64[_laplace_unit_weight(L, U) for U in 1:N]
     return CTSEMCoresetPlan(objective, L, fg!, store, sampling, cost, keep, 0.0,
@@ -1435,8 +1434,7 @@ iterations can spend on each: with its check and the full iteration after it,
 _ctsem_coreset_budget(n::Integer) = 1 - 2 / n
 
 """What a coreset costs, as a share of a full evaluation's work."""
-_ctsem_coreset_share(c::CTSEMCoresetPlan, units) =
-    sum(c.cost[U] for U in units; init=0.0)
+_ctsem_coreset_share(c::CTSEMCoresetPlan, units) = _ctsem_coreset_share(c.cost, units)
 
 """Keep the full gradient at `x` (`G` minimised) and its units' scores, which
 the trial just left in the store, as a training point."""
@@ -2018,21 +2016,6 @@ function _ctsem_flat_allowed(laplace::CTSEMLaplaceObjective, from::AbstractVecto
     b = corrected(to)
     return isfinite(b) && b - a > tol
 end
-
-"""
-    _ctsem_hessian_cost(objective, npar)
-
-What one Hessian costs, in gradients: `2 npar` on the Laplace route (central
-differences of the gradient), and about `npar` on the marginal route, whose
-forward-over-reverse sweeps carry one lane per parameter at about a gradient
-each (measured: 750 gradients' time for 715 parameters), as on a Laplace
-objective with no coordinate, whose Hessian is that route's
-(`_laplace_filter_hessian`). The unit the finish weighs a Hessian against its
-steps in, each of which costs a gradient.
-"""
-_ctsem_hessian_cost(laplace::CTSEMLaplaceObjective, npar::Integer) =
-    _laplace_filter_only(laplace) ? Int(npar) : 2 * Int(npar)
-_ctsem_hessian_cost(::Any, npar::Integer) = Int(npar)
 
 """
     _ctsem_finish_curvature(objective)

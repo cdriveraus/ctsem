@@ -234,10 +234,6 @@ end
 is chosen (`_smc_coreset_fit`)."""
 const _SMC_CORESET_FOLDS = 4
 
-"""A gradient's cost in full values, as the engine counts evaluations: on the
-Laplace route both are mostly the units' inner solves."""
-const _SMC_GRADIENT_VALUES = 2.0
-
 """
     _smc_leapfrogs(depths)
 
@@ -386,11 +382,8 @@ function _smc_coreset_capable(objective)
     return L !== nothing && length(L.units.members) >= 2
 end
 
-"""Each unit's share of a full evaluation."""
-function _smc_unit_cost(objective)
-    w = _laplace_unit_weights(_ctsem_units_of(objective))
-    return w ./ sum(w)
-end
+"""Each unit's share of a full evaluation (`_ctsem_unit_shares`)."""
+_smc_unit_cost(objective) = _ctsem_unit_shares(_ctsem_units_of(objective))
 
 """Every column of `X` in full: the log density (`value`, `-Inf` where the
 point cannot be used), each unit's term (`terms`, `nunits x n`), and their
@@ -686,6 +679,8 @@ function ctsem_sample_smc(objective, values::AbstractVector;
     # least two (`_smc_coreset_capable`): either route's.
     capable = _smc_coreset_capable(objective)
     unit_cost = capable ? _smc_unit_cost(objective) : Float64[]
+    # A leapfrog's gradient, in full values (`_ctsem_gradient_values`).
+    gvalues = _ctsem_gradient_values(objective)
     nunits = capable ? length(unit_cost) : 1
     use_coreset = coreset && capable
     # The log-weight variance a stage's effective size allows, and how much
@@ -797,7 +792,7 @@ function ctsem_sample_smc(objective, values::AbstractVector;
         # new); none where no size is cheaper than moving in full.
         fit = nothing
         if use_coreset && full.terms !== nothing
-            price = _SMCPrice(nmv * leap * _SMC_GRADIENT_VALUES, beta, vbudget, inflate, false)
+            price = _SMCPrice(nmv * leap * gvalues, beta, vbudget, inflate, false)
             fit = _smc_coreset_fit(full.terms, full.total, unit_cost, price,
                 _smc_full_price(price), fit_rng)
         end
@@ -916,7 +911,7 @@ function ctsem_sample_smc(objective, values::AbstractVector;
     order = _smc_spread_order(np)
     final_fit = nothing
     if use_coreset && full.terms !== nothing
-        price = _SMCPrice(leap * _SMC_GRADIENT_VALUES, 1.0, vbudget, inflate, true)
+        price = _SMCPrice(leap * gvalues, 1.0, vbudget, inflate, true)
         final_fit = _smc_coreset_fit(full.terms, full.total, unit_cost, price,
             _smc_full_price(price), fit_rng)
     end

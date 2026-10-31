@@ -25,7 +25,7 @@
 # The sampler's density with a coreset behind it: `lpg` (`.ctBackendLpgFunc()`)
 # with 'batch', 'gradbatch', 'fullgradbatch' (the full density's gradient, for
 # a check of the answer, `.ctSteinCheck()`, that a coreset's error must not
-# reach), 'cost' (full evaluations spent, a gradient as two), 'finalize' (the
+# reach), 'cost' (full evaluations spent, a gradient at its price), 'finalize' (the
 # end check, which corrects the weights to the full density where the coreset
 # strayed; see `imis_is()`) and 'coreset' (the record
 # `$details$importance_sampling$coreset` reports). `lpg` itself comes back

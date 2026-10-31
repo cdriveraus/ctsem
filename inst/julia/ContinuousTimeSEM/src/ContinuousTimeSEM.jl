@@ -124,6 +124,8 @@ include("laplace_sequential.jl")
 include("effect_information.jl")
 # The coreset selection the optimiser, SMC and the importance sampler share.
 include("coreset_select.jl")
+# What an evaluation costs, as every pricer reads it.
+include("cost_model.jl")
 # After laplace.jl: the batch subsets both the marginal and the laplace objective.
 include("optimiser.jl")
 include("quadrature.jl")
