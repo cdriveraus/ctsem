@@ -1609,17 +1609,20 @@ const _PLACED_SLOPE_BAR = 0.1
 """
     _placed_slope_check(P, values, H; bar=_PLACED_SLOPE_BAR)
 
-How far the placed lattice rules' error can move the estimate at `values`, in
-its standard errors, and the units that carry it. What moves an estimate is a
+How far the placed rules' error can move the estimate at `values`, in its
+standard errors, and the units that carry it. What moves an estimate is a
 rule's error's slope, not its level, and a lattice rule's value error is
 smooth in the parameters but its slope need not be small: with each unit's
 128-point lattice within 0.05 nats at the Laplace estimate, the climb on w4s
 and w6 walked 1.4 and 1.9 se from a reference fit's estimate, to where the
-rules together over-credited the integral by 1.4 and 3.4 nats.
+rules together over-credited the integral by 1.4 and 3.4 nats. Product rules
+are read too: on gA14 thirty-nine one-effect units at five nodes, each within
+its target, together left the estimate 0.64 se from a reference fit's.
 
 Each lattice unit's gradient on its own points against its gradient on twice
-as many, the count step, as a product rule's error is read by its node step:
-the difference sees the rule's systematic error as well as its noise. Two
+as many, the count step, and each product unit's against the rule two nodes
+finer, its node step (`_placed_finer`): the difference sees the rule's
+systematic error as well as its noise. Two
 independent sets of shifts at the same count (`_rule_sets`'s `alt`), whose
 difference over `sqrt(2)` has the variance of either's error, see the noise
 alone: read so, w4s's estimate stood 0.63 se from a reference fit where the
@@ -1631,10 +1634,10 @@ contribution to the estimate's error in standard errors; the units'
 contributions are independent, so their root sum of squares per coordinate is
 the sd of the estimate's error from the rules. Returns `(sd, units,
 doublings)`: the largest sd; the units taken largest contribution first until
-what is left is under `bar`; and how many times their points are to double for
-the whole to come under `bar`, were their errors to fall as `n^-0.7`, the
-slowest rate the lattice showed (at ten effects; `point_sets.jl`) -- one to
-five, and checked again after.
+what is left is under `bar`; and how many times their points are to double
+(or a product rule's nodes to step by two) for the whole to come under `bar`,
+were their errors to fall as `n^-0.7`, the slowest rate the lattice showed (at
+ten effects; `point_sets.jl`) -- one to five, and checked again after.
 """
 function _placed_slope_check(P::CTSEMLaplacePlaced, values::AbstractVector,
     H::AbstractMatrix; bar::Real=_PLACED_SLOPE_BAR)
@@ -1643,7 +1646,8 @@ function _placed_slope_check(P::CTSEMLaplacePlaced, values::AbstractVector,
     spec = laplace.spec
     x = collect(Float64, values)
     n = length(x)
-    units = Int[U for U in P.placed if any(ps -> ps.family === :lattice, P.sets[U])]
+    units = Int[U for U in P.placed if any(ps -> ps.family === :lattice, P.sets[U]) ||
+        _placed_finer(o.unit_rules[U]) !== nothing]
     metric = isempty(units) ? nothing : _placed_metric(H, n)
     metric === nothing && return (sd=0.0, units=Int[], doublings=0)
     Cinv, se = metric.Cinv, metric.se
@@ -1695,11 +1699,15 @@ function _placed_slope_check(P::CTSEMLaplacePlaced, values::AbstractVector,
         clamp(ceil(Int, need), 1, 5))
 end
 
-"""A lattice or mixed rule with its lattice points doubled, the rule its count
-step is read against (`_placed_slope_check`); `nothing` at the most points
-or for a product rule."""
+"""The rule a placed unit's error is read against (`_placed_slope_check`) and
+the one it is raised to (`_placed_raise!`): a lattice or mixed rule with its
+lattice points doubled, its count step; a product rule two nodes finer, its
+node step. `nothing` at the most points or nodes."""
 function _placed_finer(c::CTSEMRuleChoice)
-    c.family === :product && return nothing
+    if c.family === :product
+        c.nodes + 2 <= _CONTINUATION_NODES_MAX || return nothing
+        return CTSEMRuleChoice(:product, c.nodes + 2, 0)
+    end
     c.points < _LATTICE_MAX || return nothing
     return CTSEMRuleChoice(c.family, c.nodes, 2 * c.points)
 end
@@ -1856,9 +1864,11 @@ _placed_rough(P::CTSEMLaplacePlaced, factor::Real) = Int[U for U in P.placed if
 
 Each of `units`' lattice points doubled, at `values`, until its error there is
 within the target or its points are the most a lattice takes
-(`_LATTICE_MAX`), or with `times` doubled that many times (to the most); the
-continuation keeps the new rule (`o.unit_rules`), so counts only rise and a
-unit never switches back. Returns how many were raised.
+(`_LATTICE_MAX`), or with `times` doubled that many times (to the most); a
+product rule's nodes are stepped by two `times` times, once at least, to
+`_CONTINUATION_NODES_MAX`. The continuation keeps the new rule
+(`o.unit_rules`), so counts only rise and a unit never switches back. Returns
+how many were raised.
 """
 function _placed_raise!(P::CTSEMLaplacePlaced, values::AbstractVector,
     units::Vector{Int}; times::Integer=0)
@@ -1872,7 +1882,22 @@ function _placed_raise!(P::CTSEMLaplacePlaced, values::AbstractVector,
     row = zeros(length(theta))
     for U in units
         choice = rules[U]
-        if times > 0
+        if choice.family === :product
+            # The step's change in the unit's value is the coarser rule's node
+            # error, which stands as the finer one's
+            # (`ctsem_laplace_placed_error`).
+            before = _placed_unit!(row, P, U, theta, Ls, nothing, positions, false)
+            for _ in 1:max(Int(times), 1)
+                finer = _placed_finer(choice)
+                finer === nothing && break
+                choice = finer
+            end
+            P.sets[U] = _rule_sets(laplace, U, choice)
+            after = _placed_unit!(row, P, U, theta, Ls, nothing, positions, false)
+            (before.ok && after.ok) &&
+                (o.centre_error[U] = abs(after.value - before.value))
+            P.unit_ess_placed[U] = NaN
+        elseif times > 0
             points = min(choice.points * 2^Int(times), _LATTICE_MAX)
             choice = CTSEMRuleChoice(choice.family, choice.nodes, points)
             P.sets[U] = _rule_sets(laplace, U, choice)
@@ -1948,7 +1973,7 @@ function ctsem_laplace_placed_optimize(P::CTSEMLaplacePlaced, start::AbstractVec
         check = _placed_slope_check(P, x, H0)
         slope = check.sd
         steep = Int[U for U in check.units if
-            any(ps -> ps.family === :lattice && ps.count < _LATTICE_MAX, P.sets[U])]
+            _placed_finer(P.cont.unit_rules[U]) !== nothing]
         isempty(steep) || (raised += _placed_raise!(P, x, steep; times=check.doublings))
     end
     try
@@ -1971,7 +1996,7 @@ function ctsem_laplace_placed_optimize(P::CTSEMLaplacePlaced, start::AbstractVec
                 slope = check.sd
                 doublings = check.doublings
                 steep = Int[U for U in check.units if
-                    any(ps -> ps.family === :lattice && ps.count < _LATTICE_MAX, P.sets[U])]
+                    _placed_finer(P.cont.unit_rules[U]) !== nothing]
             end
             if last || !(drifted || !isempty(rough) || !isempty(steep) || stopped)
                 return merge(res, (replacements=count, raised=raised,

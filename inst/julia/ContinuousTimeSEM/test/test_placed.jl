@@ -148,6 +148,20 @@ end
     @test all(V -> P.sets[V] === sets[V], P.placed)
     # Without a curvature there is nothing to carry the error through.
     @test isempty(C._placed_slope_check(P, theta, zeros(1, 1)).units)
+    # Product units are read by their node step and raised by it, the step's
+    # change standing as the unit's node error.
+    laplace1, values1 = _fresh_nonlinear()
+    theta1 = collect(Float64, values1)
+    R = _placed_from(laplace1, theta1)
+    @test all(V -> R.cont.unit_rules[V].family === :product, R.placed)
+    t1 = C._placed_slope_check(R, theta1, ctsem_laplace_placed_hessian(R, theta1); bar=0.0)
+    @test !isempty(t1.units) && issubset(t1.units, R.placed)
+    V = t1.units[1]
+    n0 = R.cont.unit_rules[V].nodes
+    @test C._placed_raise!(R, theta1, [V]; times=1) == 1
+    @test R.cont.unit_rules[V].nodes == n0 + 2
+    @test R.sets[V][1].count == n0 + 2
+    @test isfinite(R.cont.centre_error[V])
     # The choice by the estimate's error: under no bar each unit keeps the
     # cheapest rule it is measured on, the first lattice; under any bar every
     # unit's rule is one of its families' and its sets are that rule's.
