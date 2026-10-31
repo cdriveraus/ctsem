@@ -62,8 +62,9 @@ test_that("a density without an engine has no DAIS stage", {
 test_that("the sampler's metric is the DAIS normal's precision where there is one", {
   set.seed(17)
   C <- crossprod(matrix(rnorm(25), 5)) + diag(5)
-  fit <- list(uncertainty = list(hessian = -diag(5), details = list(dais = list(cov = C),
-    normalcheck = list(directions = matrix(1, 5, 1), widths = 4))))
+  fit <- list(estimate = list(raw = rep(0, 5)), uncertainty = list(hessian = -diag(5),
+    details = list(dais = list(cov = C),
+      normalcheck = list(directions = matrix(1, 5, 1), widths = 4))))
   expect_identical(ctsem:::.ctBackendMetricSource(fit), "dais")
   expect_equal(-ctsem:::.ctBackendSampleMetric(fit), solve(C), tolerance = 1e-8)
   # The importance draws' covariance comes first where they were used,
@@ -78,7 +79,7 @@ test_that("the sampler's metric is the DAIS normal's precision where there is on
   expect_identical(ctsem:::.ctBackendMetricSource(fit), "dais")
   fit$uncertainty$details$importance_sampling <- list(used = FALSE, weighted = TRUE, ess = 50)
   expect_identical(ctsem:::.ctBackendMetricSource(fit), "dais")
-  fit$estimate <- NULL
+  fit$estimate$cov <- NULL
   # A direction the covariance does not hold gets no precision, so the engine
   # floors it wide, as it does for the Hessian's unidentified directions.
   v <- c(1, 0, 0, 0, 0)

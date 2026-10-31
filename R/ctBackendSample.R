@@ -961,15 +961,19 @@
 # fewer effective draws than twice the dimension make a covariance noisier in
 # its small directions than the damped one, which is where the bar sits.
 #' @keywords internal
+#
+# A covariance serves only the coordinates it was made on. Where missing TI
+# predictor values are sampled they join the parameters
+# (`.ctJuliaTIMissingSampleFit()`), and the importance draws' and DAIS's
+# covariances, made on the parameters alone, do not cover them.
 .ctBackendMetricSource <- function(fit) {
   d <- fit$uncertainty$details
   npar <- length(fit$estimate$raw)
+  covers <- function(C) is.matrix(C) && nrow(C) == npar && all(is.finite(C))
   is <- d$importance_sampling
-  C <- fit$estimate$cov
   if (isTRUE(is$used) && isTRUE(is$weighted) && is.numeric(is$ess) &&
-      isTRUE(is$ess >= 2 * npar) && is.matrix(C) && nrow(C) == npar &&
-      all(is.finite(C))) return("is")
-  if (!is.null(d$dais$cov) && all(is.finite(d$dais$cov))) return("dais")
+      isTRUE(is$ess >= 2 * npar) && covers(fit$estimate$cov)) return("is")
+  if (covers(d$dais$cov)) return("dais")
   if (!is.null(fit$uncertainty$hessian) && length(d$normalcheck$widths)) return("check")
   "hessian"
 }
@@ -1005,7 +1009,13 @@
     H <- fit$uncertainty$hessian
     check <- fit$uncertainty$details$normalcheck
     information <- -(H + t(H)) / 2
-    PW <- information %*% check$directions
+    # The check's directions are units of the parameters' normal. Where sampled
+    # TI values extend the Hessian, the parameters' information is its leading
+    # block, so the directions padded with zeros there rescale the extended
+    # normal along the same directions by the same widths.
+    D <- check$directions
+    D <- rbind(D, matrix(0, nrow(information) - nrow(D), ncol(D)))
+    PW <- information %*% D
     rescaled <- information + PW %*% diag(1 / check$widths - 1, length(check$widths)) %*% t(PW)
     metric <- -(rescaled + t(rescaled)) / 2
   } else metric <- NULL

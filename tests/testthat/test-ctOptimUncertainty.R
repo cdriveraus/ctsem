@@ -457,6 +457,20 @@ test_that("the sampler's metric is the Hessian rescaled to the widths the check 
   # 1 / width along each direction the check named.
   expect_equal(t(A) %*% rescaled %*% A, diag(5) + v %*% diag(1 / widths - 1) %*% t(v))
   expect_identical(rescaled, t(rescaled))
+  # Sampled TI predictor values extend the Hessian past the parameters the
+  # check was made on (`.ctJuliaTIMissingSampleFit()`), its leading block the
+  # parameters' own: the extended normal is rescaled along the same directions
+  # by the same widths, and a DAIS covariance of the parameters alone is not
+  # the metric. It once stopped every such sample ("non-conformable").
+  B <- matrix(rnorm(10), 5, 2)
+  Pext <- rbind(cbind(P, B), cbind(t(B), crossprod(matrix(rnorm(4), 2)) + 3 * diag(2)))
+  Dext <- rbind(A %*% v, matrix(0, 2, 2))
+  ext <- list(estimate = list(raw = rep(0, 7)), uncertainty = list(hessian = -Pext,
+    details = list(normalcheck = fit$uncertainty$details$normalcheck,
+      dais = list(cov = solve(P)))))
+  expect_identical(ctsem:::.ctBackendMetricSource(ext), "check")
+  expect_equal(solve(-ctsem:::.ctBackendSampleMetric(ext)),
+    solve(Pext) + Dext %*% diag(widths - 1) %*% t(Dext))
   # Nothing named, nothing rescaled: the engine reads the fit's own Hessian.
   fit$uncertainty$details$normalcheck$widths <- numeric()
   expect_null(ctsem:::.ctBackendSampleMetric(fit))
