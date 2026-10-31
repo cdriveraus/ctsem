@@ -461,9 +461,11 @@
 # in print(): the move, Laplace's error in the log likelihood (`gap`, where it
 # is resolved past twice `gap_se`), that the estimates and intervals are
 # Laplace's while the log likelihood the fit reports is the integrated one
-# (`.ctLaplaceCheckedLoglik()`), and the calls that remove the error -- the
-# refined fit after the fit, and sampling the joint posterior, which has no
-# Laplace error.
+# (`.ctLaplaceCheckedLoglik()`), and the calls that remove the error. They
+# answer different questions, so the message says which is which rather than
+# ranking them: the refined fit is the estimate with those units integrated,
+# and its curvature, for building a model on; sampling the joint posterior,
+# which has no Laplace error, gives the intervals to report.
 #
 # The step is the check's linearisation, right in size to about one standard
 # error and no guide past it, in either direction: on the bench it read the
@@ -494,9 +496,9 @@
       "reports"),
     ". The estimates and their intervals are Laplace's, ",
     "uncorrected. ctFitUncertainty(fit, intoverpop = 'quadrature') refines the ",
-    "fit with those units integrated by quadrature, and ",
+    "estimates with those units integrated by quadrature; ",
     sample,
-    " samples the joint posterior.",
+    " samples the joint posterior, which has no Laplace error, for intervals to report.",
     " See fit$laplace$correction$check.")
 }
 
@@ -599,9 +601,9 @@
     msg <- sprintf(paste0("The fit stopped where the Laplace term of %s %s ",
       "jumps, at no maximum, so its estimate and standard errors are ",
       "approximate. ctFitUncertainty(fit, intoverpop = 'quadrature') refines ",
-      "the fit with %s integrated by quadrature; ctFitUncertainty(fit, 'sample', ",
+      "the estimate with %s integrated by quadrature; ctFitUncertainty(fit, 'sample', ",
       "intoverpop = 'none') ",
-      "samples the joint posterior."), if (length(named) == 1L) "unit" else "units",
+      "samples the joint posterior, for intervals to report."), if (length(named) == 1L) "unit" else "units",
       paste(named, collapse = ", "), if (length(named) == 1L) "it" else "them")
     warning(msg, call. = FALSE)
     fit$laplace$correction <- list(method = "quadrature", status = "jump",

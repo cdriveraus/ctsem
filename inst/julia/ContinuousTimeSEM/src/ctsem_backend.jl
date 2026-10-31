@@ -3723,13 +3723,18 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
         # Modes the anchored run reached that a search at the estimate does not
         # (`anchor_kept_*`), and better ones the search found that the run
         # missed (`anchor_missed_*`, worth `anchor_missed_gain`), for the
-        # caller's known modes; `[0]` where none or not anchored.
+        # caller's known modes; `[0]` where none or not anchored. Whether that
+        # gain is worth resuming the run for (`anchor_missed_resume`) is the
+        # bar the run's own rounds use, `_CTSEM_MODE_RESUME_TOL`, so the caller
+        # holds no second one.
         anchor_kept_units=anchored === nothing ? [0] : anchored.kept_units,
         anchor_kept_values=anchored === nothing ? zeros(1, 1) : anchored.kept_values,
         anchor_missed_units=anchored === nothing ? [0] : anchored.missed_units,
         anchor_missed_values=anchored === nothing ? zeros(1, 1) :
             anchored.missed_values,
         anchor_missed_gain=anchored === nothing ? 0.0 : anchored.missed_gain,
+        anchor_missed_resume=anchored !== nothing && isfinite(anchored.missed_gain) &&
+            abs(anchored.missed_gain) > _CTSEM_MODE_RESUME_TOL,
         # Modes the run put in its objective's known modes on its way, and how
         # many times it took some and carried on (`CTSEMFoundModes`), for the
         # caller's known modes; `[0]` where none.

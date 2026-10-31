@@ -5627,12 +5627,9 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
 
 # How many times a run resumes with modes kept as starts (`.ctJuliaOptimise()`)
 # -- a jump's, or better ones its closing search found -- before it is left.
+# Whether the closing search's are worth a resume is the engine's call
+# (`anchor_missed_resume`), by the bar its own rounds use.
 .ctJuliaKnownRounds <- 4L
-
-# How far, in nats, the modes a run's closing search preferred must move the
-# objective at its end before the run resumes with them (`.ctJuliaOptimise()`):
-# under it they are kept as starts and the run is left where it ended.
-.ctJuliaKnownResumeGain <- 1e-3
 
 # Whether an engine optimisation ended on a jump the route named.
 .ctJuliaJumped <- function(result) {
@@ -6218,8 +6215,8 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
   # - from the engine's closing search, after the probe
   #   (`_ctsem_anchor_finish!`): modes the anchored run reached that a search
   #   from the origin misses, kept; and maxima it found that the run missed,
-  #   which resume the run where they move the objective by
-  #   `.ctJuliaKnownResumeGain`.
+  #   which resume the run where the engine says they move the objective
+  #   enough (`anchor_missed_resume`, its `_CTSEM_MODE_RESUME_TOL`).
   # Up to `.ctJuliaKnownRounds` resumes, a unit named again included: its
   # maxima are combined (`_laplace_mode_sum`), each fading out before the
   # solve can lose it, and the modes a repeated jump saw are further starts
@@ -6241,7 +6238,7 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
     if (!is.null(missed)) known <- missed
     gain <- as.numeric(.ctJuliaOr(result$anchor_missed_gain, 0))[1L]
     resume <- !is.null(jumpknown) ||
-      (!is.null(missed) && isTRUE(abs(gain) > .ctJuliaKnownResumeGain))
+      (!is.null(missed) && isTRUE(result$anchor_missed_resume))
     if (!identical(known, model_spec$laplace$known)) {
       model_spec$laplace$known <- known
       spec <- structure(model_spec, class = c("ctJuliaModel", "ctFitModel"))

@@ -694,7 +694,7 @@ function ctsem_sample_smc(objective, values::AbstractVector;
     inflate = 1.0
     leap = _smc_leapfrogs(Int[])
     corrections = 0
-    mode = _points_mode(objective, parallel)
+    mode = _points_mode(objective, parallel; gradient_method=gradient_method)
     # Each worker's NUTS workspace and gradient buffer (`_each_point!`).
     nuts_scratch = () -> (ws=_NUTSWorkspace(ndim, mdepth), g=zeros(ndim))
     fit_rng = Random.Xoshiro(hash((UInt64(seed), :coreset)))
