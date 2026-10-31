@@ -20,12 +20,11 @@
 # ctFit), refusing a refinement that cannot apply. The default is the check
 # alone, which warns where Laplace's error moves an estimate and names the
 # refined fit, rather than running it (Charles, 2026-10-27): it adds seconds
-# to hours to a fit. Wherever both were
-# measured it cost no more than sampling the joint posterior -- 1/25 to 1/200
-# of it on one level, as much on nested units (gN3: 244 s against 242 s),
-# under a quarter on wide units by draws (k5: 2.8 h against over 13;
-# scripts/lapcheck-2026-10/rounds_cost.R, sample_cost.R) -- but whether to
-# pay for either is the user's call. A refined fit runs the check first, whatever
+# to hours to a fit. With rules placed at any width it took a tenth to a
+# seventh of joint sampling's time on the race and #87, but 3-5 times it on
+# wide non-Gaussian units (w4s, w6;
+# CT-SEM/review/PLACED-anywidth-results-2026-10-31.md), so whether to pay
+# for either, and which, is the user's call. A refined fit runs the check first, whatever
 # `checks` says.
 .ctLaplaceCorrectResolve <- function(optimcontrol, intoverpop, optimize,
   intoverstates) {
