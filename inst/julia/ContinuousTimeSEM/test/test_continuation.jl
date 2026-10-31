@@ -406,10 +406,15 @@ end
     hyb = ctsem_laplace_continuation_evaluate(o, theta; gradient=false)
     @test isapprox(hyb.value, lap.value - lap.unit_loglik[2] +
         info.quadrature_units[2]; rtol=1e-12)
-    # A placement again keeps it, and a point given for it joins its proposal.
+    # A placement again keeps it, and a mode the objective knows for it (a
+    # jump's, kept on the fit's specification) joins its proposal
+    # (`_continuation_known_points!`).
     C = ContinuousTimeSEM
     d = laplace.units.dims[2]
-    C._continuation_add_points!(o, [2], reshape(fill(0.3, d), d, 1))
+    @test !haskey(o.points, 2)
+    push!(laplace.known[2], fill(0.3, d))
+    o = ctsem_laplace_continuation(laplace, theta; draws_all=true, draws=256,
+        force=[2], screen=false)
     C._continuation_place!(o, C._laplace_extend(laplace, theta .+ 0.01))
     @test ctsem_laplace_continuation_info(o).flagged == [2]
     @test length(o.points[2]) == 1

@@ -1630,14 +1630,19 @@ check said 0.16, the ratio's small-sample bias shared by both sets. A unit
 already at the most points is read on independent shifts.
 Carried through the inverse curvature `-H` on its directions with curvature,
 as the standard errors are, and divided by them, it is that unit's
-contribution to the estimate's error in standard errors; the units'
-contributions are independent, so their root sum of squares per coordinate is
-the sd of the estimate's error from the rules. Returns `(sd, units,
-doublings)`: the largest sd; the units taken largest contribution first until
-what is left is under `bar`; and how many times their points are to double
-(or a product rule's nodes to step by two) for the whole to come under `bar`,
-were their errors to fall as `n^-0.7`, the slowest rate the lattice showed (at
-ten effects; `point_sets.jl`) -- one to five, and checked again after.
+contribution to the estimate's error in standard errors. A product rule's
+error has one sign at every unit, so the product units' contributions add as
+vectors, signed; the lattice units' are independent and add in quadrature; per
+coordinate the estimate's error from the rules is the first's magnitude plus
+the second's root, as the value's error adds them
+(`ctsem_laplace_placed_error`). Returns `(sd, units, doublings)`: the largest
+coordinate's; the units taken largest contribution first until what is left is
+under `bar`; and how many times their points are to double (or a product
+rule's nodes to step by two) for the whole to come under `bar`, were their
+errors to fall as `n^-0.7`, the slowest rate the lattice showed (at ten
+effects; `point_sets.jl`) -- one to five, and checked again after -- and
+whether it read every flagged unit (`complete`: none on frozen draws or at a
+product rule's most nodes).
 """
 function _placed_slope_check(P::CTSEMLaplacePlaced, values::AbstractVector,
     H::AbstractMatrix; bar::Real=_PLACED_SLOPE_BAR)
@@ -1648,8 +1653,12 @@ function _placed_slope_check(P::CTSEMLaplacePlaced, values::AbstractVector,
     n = length(x)
     units = Int[U for U in P.placed if any(ps -> ps.family === :lattice, P.sets[U]) ||
         _placed_finer(o.unit_rules[U]) !== nothing]
+    # Whether every flagged unit's error is read here: not a frozen rule's, nor
+    # a product rule's at the most nodes, which has no finer rule to read
+    # against.
+    complete = isempty(P.frozen) && length(units) == length(P.placed)
     metric = isempty(units) ? nothing : _placed_metric(H, n)
-    metric === nothing && return (sd=0.0, units=Int[], doublings=0)
+    metric === nothing && return (sd=0.0, units=Int[], doublings=0, complete=false)
     Cinv, se = metric.Cinv, metric.se
     theta = _laplace_extend(laplace, x)
     npar = length(theta)
@@ -1669,7 +1678,7 @@ function _placed_slope_check(P::CTSEMLaplacePlaced, values::AbstractVector,
             _placed_unit!(other[i], P, U, theta, Ls, dL, positions, true;
                 sets=alt[i]).ok
     end
-    ok || return (sd=NaN, units=Int[], doublings=0)
+    ok || return (sd=NaN, units=Int[], doublings=0, complete=false)
     contribution = zeros(nu, n)
     for i in 1:nu
         w = _laplace_unit_weight(laplace, units[i])
@@ -1677,26 +1686,52 @@ function _placed_slope_check(P::CTSEMLaplacePlaced, values::AbstractVector,
             (own[i][1:n] .- other[i][1:n])
         contribution[i, :] .= (Cinv * d) ./ se
     end
-    total = vec(sum(abs2, contribution; dims=1))
-    sd = sqrt(maximum(total))
+    signed = Bool[o.unit_rules[U].family === :product for U in units]
+    total = _placed_slope_measure(contribution, signed, trues(nu))
+    sd = maximum(total)
     order = sortperm([maximum(abs, contribution[i, :]) for i in 1:nu]; rev=true)
     carrying = Int[]
+    kept = trues(nu)
     left = copy(total)
     for i in order
-        sqrt(maximum(left)) <= bar && break
+        maximum(left) <= bar && break
         push!(carrying, units[i])
-        left .-= contribution[i, :] .^ 2
+        kept[i] = false
+        left = _placed_slope_measure(contribution, signed, kept)
     end
-    carried = total .- left
     need = 1.0
     for k in 1:n
-        carried[k] + left[k] > bar^2 || continue
-        room = bar^2 - max(left[k], 0.0)
-        room > 0 || continue
-        need = max(need, log2(carried[k] / room) / 1.4)
+        total[k] > bar || continue
+        room = bar - left[k]
+        share = total[k] - left[k]
+        (room > 0 && share > 0) || continue
+        need = max(need, log2(share / room) / 0.7)
     end
     return (sd=sd, units=carrying, doublings=isempty(carrying) ? 0 :
-        clamp(ceil(Int, need), 1, 5))
+        clamp(ceil(Int, need), 1, 5), complete=complete)
+end
+
+"""Per coordinate, the estimate's error from the units `kept` of `contribution`'s
+rows (`_placed_slope_check`): the `signed` units' rows summed, its magnitude,
+plus the root of the others' squares."""
+function _placed_slope_measure(contribution::Matrix{Float64}, signed::Vector{Bool},
+    kept::AbstractVector{Bool})
+    n = size(contribution, 2)
+    s = zeros(n)
+    r = zeros(n)
+    for i in axes(contribution, 1)
+        kept[i] || continue
+        if signed[i]
+            @inbounds for k in 1:n
+                s[k] += contribution[i, k]
+            end
+        else
+            @inbounds for k in 1:n
+                r[k] += contribution[i, k]^2
+            end
+        end
+    end
+    return abs.(s) .+ sqrt.(r)
 end
 
 """The rule a placed unit's error is read against (`_placed_slope_check`) and
@@ -1742,7 +1777,12 @@ estimate's error is under `bar / sqrt(units)`, at `values` on the curvature
 rule by rule. A product rule's share is its gradient against the rule two
 nodes finer, the finer one's measure of it; a lattice rule's, its gradient
 against the lattice of twice its points, likewise (at the most points,
-against independent shifts, over `sqrt(2)`). Rules are
+against independent shifts, over `sqrt(2)`). A rule must also meet the
+value's targets the refine holds it to (`_continuation_refine!`): a product
+rule its two node steps' tail within the flagged units' share, a lattice its
+spread and count step within `draws_se`; read on one node step alone, the
+gradient's share put gA14's heavy-tailed one-effect units back on five nodes
+the refine had rejected, two nats off. Rules are
 tried in the order of what a pair of them costs (`_rule_cost`), so a unit
 takes the product rule wherever its exactness on a near-Gaussian integrand
 makes it the cheaper at the accuracy an estimate needs. The continuation
@@ -1799,26 +1839,31 @@ function _placed_choose_unit(P::CTSEMLaplacePlaced, U::Int, theta::Vector{Float6
     w = _laplace_unit_weight(laplace, U)
     families = _continuation_steps(laplace, U, _continuation_opts(o))
     # Each candidate: the rule, the rule that measures it (itself on other
-    # shifts for a lattice), and the pair's cost; their sets built in turn.
-    cands = Tuple{CTSEMRuleChoice,CTSEMRuleChoice,Float64}[]
+    # shifts for a lattice), a product rule's coarser step (`steps[j - 1]`,
+    # for its value's tail), and the pair's cost; their sets built in turn.
+    cands = Tuple{CTSEMRuleChoice,CTSEMRuleChoice,CTSEMRuleChoice,Float64}[]
     for steps in families
         for (j, c) in enumerate(steps)
             if c.family === :lattice
                 f = _placed_finer(c)
-                push!(cands, (c, f === nothing ? c : f,
+                push!(cands, (c, f === nothing ? c : f, c,
                     _rule_cost(laplace, U, c) + _rule_cost(laplace, U, f === nothing ? c : f)))
             elseif j >= 2 && j < length(steps)
-                push!(cands, (c, steps[j + 1],
+                push!(cands, (c, steps[j + 1], steps[j - 1],
                     _rule_cost(laplace, U, c) + _rule_cost(laplace, U, steps[j + 1])))
             end
         end
     end
     sort!(cands; by=last)
+    # The value's targets the refine holds a rule to (`_continuation_refine!`):
+    # a rule that misses them is no choice, whatever its gradient's share.
+    systematic = o.draws_se / sqrt(max(length(o.flagged), 1))
     best = o.unit_rules[U]
     bestshare = Inf
     a = zeros(npar)
     b = zeros(npar)
-    for (c, m, _) in cands
+    scratch = zeros(npar)
+    for (c, m, prev, _) in cands
         lattice = c.family === :lattice
         sa = _rule_sets(laplace, U, c)
         same = lattice && m == c
@@ -1826,9 +1871,18 @@ function _placed_choose_unit(P::CTSEMLaplacePlaced, U::Int, theta::Vector{Float6
         scale = same ? 1 / sqrt(2) : 1.0
         fill!(a, 0.0)
         fill!(b, 0.0)
-        (_placed_unit!(a, P, U, theta, Ls, dL, positions, true; sets=sa).ok &&
-            _placed_unit!(b, P, U, theta, Ls, dL, positions, true; sets=sb).ok) ||
-            continue
+        ra = _placed_unit!(a, P, U, theta, Ls, dL, positions, true; sets=sa)
+        rb = _placed_unit!(b, P, U, theta, Ls, dL, positions, true; sets=sb)
+        (ra.ok && rb.ok) || continue
+        if c.family === :product
+            rp = _placed_unit!(scratch, P, U, theta, Ls, dL, positions, false;
+                sets=_rule_sets(laplace, U, prev))
+            rp.ok || continue
+            e = _continuation_product_error([rp.value, ra.value, rb.value], 3)
+            (e !== nothing && e.coarse <= systematic) || continue
+        elseif lattice
+            max(ra.se, same ? 0.0 : abs(ra.value - rb.value)) <= o.draws_se || continue
+        end
         d = (w * scale) .* (a[1:n] .- b[1:n])
         share = maximum(abs, (metric.Cinv * d) ./ metric.se)
         if share < bestshare
@@ -1948,7 +2002,7 @@ with the rules the estimate needs: checked only where each climb ended, w4s
 and w6 restarted eight times. The result is the last run's, with
 `replacements` the count, `raised` the units raised, `multimodal` the units
 whose term averaged more than one maximum at the end, and `slope_sd` the slope
-check's last sd (`NaN` where none ran).
+check's last sd (`NaN` where none ran or it did not read every flagged unit).
 """
 function ctsem_laplace_placed_optimize(P::CTSEMLaplacePlaced, start::AbstractVector;
     drift::Real=0.5, replacements::Integer=8, hessian=nothing, kwargs...)
@@ -1966,7 +2020,7 @@ function ctsem_laplace_placed_optimize(P::CTSEMLaplacePlaced, start::AbstractVec
         raised += _placed_choose!(P, x, H0)
         ctsem_laplace_placed_evaluate(P, x; gradient=false)
         check = _placed_slope_check(P, x, H0)
-        slope = check.sd
+        slope = check.complete ? check.sd : NaN
         steep = Int[U for U in check.units if
             _placed_finer(P.cont.unit_rules[U]) !== nothing]
         isempty(steep) || (raised += _placed_raise!(P, x, steep; times=check.doublings))
@@ -1988,7 +2042,7 @@ function ctsem_laplace_placed_optimize(P::CTSEMLaplacePlaced, start::AbstractVec
             doublings = 0
             if !drifted && isempty(rough) && !stopped
                 check = _placed_slope_check(P, x, res.hessian)
-                slope = check.sd
+                slope = check.complete ? check.sd : NaN
                 doublings = check.doublings
                 steep = Int[U for U in check.units if
                     _placed_finer(P.cont.unit_rules[U]) !== nothing]

@@ -1654,7 +1654,7 @@ end
     ctsem_laplace_continuation(laplace, values; nodes=5, tolerance=0.01,
         draws=0, draws_se=0.05, draws_max=16384, draws_floor=0.25,
         draws_prior=0.2, draws_df=4, draws_seed=20261021, force=nothing,
-        point_units=nothing, point_values=nothing, screen=true, draws_all=false)
+        screen=true, draws_all=false)
 
 The hybrid objective with its nodes placed at `values`. Every unit is scored by
 the rule there against its Laplace term, the units that differ beyond the
@@ -1664,11 +1664,10 @@ term; the units in `force` are flagged whatever their gap. Every unit is
 scored, on the rule its cost for the accuracy chooses (`_rule_default`,
 `_continuation_refine!`); a flagged unit no rule converges on gets a frozen
 importance rule, per block of its tree, when `draws > 0`, and with
-`draws_all` every unit does. `point_units` and `point_values` are
-points the caller knows for some units, column `j` of `point_values` for unit
-`point_units[j]` (its entries before the first NaN, `_laplace_known_column`,
-where that is the unit's length here), each a component of that unit's
-importance proposal. `screen = false` scores only the units `force` names, the
+`draws_all` every unit does. Each unit's known modes (`laplace.known`: the
+modes a fit's jumps and searches saw, which R keeps on the fit's
+specification) are components of its importance proposal
+(`_continuation_known_points!`). `screen = false` scores only the units `force` names, the
 rest keeping their Laplace terms unscored: what a fit climbing the hybrid
 needs. See the module docstring for the rules and the constants.
 """
@@ -1677,8 +1676,7 @@ function ctsem_laplace_continuation(laplace::CTSEMLaplaceObjective,
     draws::Integer=0, draws_se::Real=0.05,
     draws_max::Integer=16384, draws_floor::Real=0.25, draws_prior::Real=0.2,
     draws_df::Real=4, draws_seed::Integer=20261021, force=nothing,
-    point_units=nothing, point_values=nothing, screen::Bool=true,
-    draws_all::Bool=false)
+    screen::Bool=true, draws_all::Bool=false)
     nodes >= 3 || throw(ArgumentError("need at least three quadrature nodes"))
     draws_df > 0 || throw(ArgumentError("draws_df must be positive (Inf for Gaussian)"))
     draws_all && draws < 1 && throw(ArgumentError("draws_all needs draws"))
@@ -1698,7 +1696,7 @@ function ctsem_laplace_continuation(laplace::CTSEMLaplaceObjective,
         fill(NaN, nunits), fill(NaN, nunits), fill(false, nunits), NaN,
         0, 0, 0, 0, 0, 0.0, 0.0, 0.0,
         false, Int[], CTSEMRuleChoice[_rule_default(laplace, U, nodes) for U in 1:nunits])
-    _continuation_add_points!(o, point_units, point_values)
+    _continuation_known_points!(o)
     _continuation_force!(o, force)
     _continuation_place!(o, theta)
     return o
@@ -1717,21 +1715,19 @@ function _continuation_force!(o::CTSEMLaplaceContinuation, force)
     return o
 end
 
-"""Points the caller knows for some units (`point_units[j]`, `point_values[:,
-j]`), added to `o.points` as components for their importance proposals."""
-function _continuation_add_points!(o::CTSEMLaplaceContinuation, point_units,
-    point_values)
-    (point_units === nothing || point_values === nothing) && return o
-    V = Matrix{Float64}(point_values)
-    units = Int[Int(U) for U in point_units]
-    size(V, 2) == length(units) || throw(DimensionMismatch(
-        "point_values needs one column per entry of point_units"))
-    for (j, U) in enumerate(units)
-        1 <= U <= length(o.laplace.units.members) || continue
-        x = _laplace_known_column(V, j)
-        length(x) == o.laplace.units.dims[U] || continue
-        all(isfinite, x) || continue
-        push!(get!(o.points, U, Vector{Vector{Float64}}()), x)
+"""Each unit's known modes (`laplace.known`, those of the unit's length on this
+objective) added to `o.points` as components for its importance proposal: the
+modes a fit's jumps saw either side of where a unit's term jumped, which R
+keeps on the fit's specification (`.ctJuliaKnownModes()`), as the placed
+units' searches also start from them (`_placed_search!`). R once sent the
+jump's points again beside them."""
+function _continuation_known_points!(o::CTSEMLaplaceContinuation)
+    laplace = o.laplace
+    for U in eachindex(laplace.known)
+        for x in laplace.known[U]
+            (length(x) == laplace.units.dims[U] && all(isfinite, x)) || continue
+            push!(get!(o.points, U, Vector{Vector{Float64}}()), copy(x))
+        end
     end
     return o
 end

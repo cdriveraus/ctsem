@@ -6245,16 +6245,14 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
   }
   # A run still ended on a jump stops there, at no maximum of anything
   # continuous, so it is not certified; the fit warns and leaves integrating
-  # the named units to the user (`intoverpop = 'quadrature'`, which integrates
-  # them with the points the watch saw for their proposals:
-  # `.ctLaplaceContinue()`, through `fit$laplace$jump`), as it leaves a
-  # flagged check. `jumprecord`, since `$jump` on an engine result would match
+  # the named units to the user (`intoverpop = 'quadrature'`, which flags
+  # them through `fit$laplace$jump` and starts from the modes the watch saw,
+  # kept as the specification's known modes: `.ctLaplaceContinue()`), as it
+  # leaves a flagged check. `jumprecord`, since `$jump` on an engine result would match
   # its `jump_units`.
   if (.ctJuliaJumped(result)) {
     named <- .ctJuliaJumpNamed(result)
     result$jumprecord <- list(units = named,
-      points = if (length(named)) list(units = as.integer(result$jump_point_units),
-        values = result$jump_point_values),
       iterations = as.integer(.ctJuliaOr(result$iterations, NA_integer_))[1L])
     message(sprintf(paste0("Laplace: the objective jumped at %s %s (its term moved ",
       "with where the inner solve stopped) after %d %s with modes kept; the fit ",

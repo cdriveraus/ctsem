@@ -151,9 +151,16 @@ end
     @test tight.sd == loose.sd
     @test !isempty(tight.units) && issubset(tight.units, lat)
     @test loose.doublings == 0 && 1 <= tight.doublings <= 5
+    @test loose.complete
     @test all(V -> P.sets[V] === sets[V], P.placed)
     # Without a curvature there is nothing to carry the error through.
     @test isempty(C._placed_slope_check(P, theta, zeros(1, 1)).units)
+    # Product units' contributions share a sign and add as vectors; lattice
+    # units' add in quadrature.
+    @test C._placed_slope_measure([1.0 -2.0; 0.5 1.0; 3.0 4.0], [true, true, false],
+        trues(3)) ≈ [1.5 + 3.0, 1.0 + 4.0]
+    @test C._placed_slope_measure([1.0 -2.0; 0.5 1.0; 3.0 4.0], [true, true, false],
+        [true, false, false]) ≈ [1.0, 2.0]
     # Product units are read by their node step and raised by it, the step's
     # change standing as the unit's node error.
     laplace1, values1 = _fresh_nonlinear()
@@ -161,7 +168,7 @@ end
     R = _placed_from(laplace1, theta1)
     @test all(V -> R.cont.unit_rules[V].family === :product, R.placed)
     t1 = C._placed_slope_check(R, theta1, ctsem_laplace_placed_hessian(R, theta1); bar=0.0)
-    @test !isempty(t1.units) && issubset(t1.units, R.placed)
+    @test !isempty(t1.units) && issubset(t1.units, R.placed) && t1.complete
     V = t1.units[1]
     n0 = R.cont.unit_rules[V].nodes
     @test C._placed_raise!(R, theta1, [V]; times=1) == 1

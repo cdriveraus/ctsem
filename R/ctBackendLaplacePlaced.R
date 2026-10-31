@@ -76,7 +76,7 @@
   errorat <- after
   errorhere <- function() get(module$ctsem_laplace_placed_error(placed))
   accounted <- function(record) {
-    record$error <- .ctLaplaceIntegrationError(errorat)
+    record$error <- .ctLaplaceIntegrationError(errorat, record$optimiser$slope_sd)
     info <- get(module$ctsem_laplace_placed_info(placed))
     record$placed <- info
     record$evaluations <- c(values = as.integer(info$value_calls),
@@ -112,6 +112,14 @@
       multimodal = as.integer(.ctJuliaOr(res$multimodal, 0L)),
       slope_sd = as.numeric(.ctJuliaOr(res$slope_sd, NA_real_)))
     record$continuation <- if (isTRUE(res$converged)) "converged" else "stopped"
+  }
+  # The start read again on the rules the climb ended with: its choice at the
+  # start and its raises change them, by up to two nats on gA14, and the start
+  # read on the rules it began with then made a climb that gained read as one
+  # that ended lower.
+  if (!stay) {
+    start <- get(module$ctsem_laplace_placed_evaluate(placed, num(est),
+      gradient = FALSE))
   }
   final <- get(module$ctsem_laplace_placed_evaluate(placed, num(x), gradient = TRUE))
   change <- as.numeric(final$value) - as.numeric(start$value)
@@ -219,7 +227,7 @@
         "' on its objective with the rules placed at each point"),
       nodes = record$nodes,
       # What the density the draws came from is known to, in nats.
-      error = .ctLaplaceIntegrationError(errorat))
+      error = .ctLaplaceIntegrationError(errorat, record$optimiser$slope_sd))
     stages["uncertainty"] <- since(uncertainty_started)
   } else {
     post <- fit$estimate$rawposterior

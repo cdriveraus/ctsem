@@ -261,8 +261,7 @@ ctLaplaceCheck <- function(fit, nodes = 5L, correction = TRUE, step = 1e-3,
     control$maxiter <- as.integer(maxiter)
     cont <- do.call(module$ctsem_laplace_continuation,
       c(list(objective, .ctJuliaNumericVector(est)),
-        .ctLaplaceContinuationArgs(control, force = fit$laplace$jump$units,
-          points = fit$laplace$jump$points)))
+        .ctLaplaceContinuationArgs(control, force = fit$laplace$jump$units)))
     # The refined fit's own climb, its rules placed at every evaluation
     # (`.ctLaplacePlacedClimb()`), and its log likelihood as the fit reports
     # it, every unit by quadrature.

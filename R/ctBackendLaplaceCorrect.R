@@ -181,19 +181,31 @@
 
 # How far the hybrid's objective is from the exact marginal, from the engine's
 # info at a placement (`ctsem_laplace_continuation_info`): `nats`, the frozen
-# rules' standard errors in quadrature plus the product rules' node errors
-# plus what the screen leaves on Laplace; `se`, how far the estimate can be
-# from the exact-marginal optimum in standard errors, by the certification's
-# own arithmetic (a displacement costing `e` nats on the quadratic is at most
-# `sqrt(2 e)` long); the three parts; and each unit's own error (`NaN` where
-# its term is Laplace's).
-.ctLaplaceIntegrationError <- function(info) {
+# draws' and lattices' spreads in quadrature plus the systematic errors
+# (product rules' node errors, lattices' count steps) plus what the screen
+# leaves on Laplace; `se`, how far the estimate can be from the exact-marginal
+# optimum in standard errors -- the refined fit's slope check where it ran
+# (`slope`, `se_from = "slope"`), otherwise the certification's arithmetic on
+# the level (a displacement costing `e` nats on the quadratic is at most
+# `sqrt(2 e)` long; `se_from = "level"`); the three parts; and each unit's own
+# error (`NaN` where its term is Laplace's).
+.ctLaplaceIntegrationError <- function(info, slope = NULL) {
   nats <- as.numeric(info$error)[1L]
   # Rounding is not an error: on a linear Gaussian fit the screen's gaps are
   # 1e-14 nats of arithmetic, and reported as such they read as a finding.
   if (is.finite(nats) && nats < 1e-8) nats <- 0
+  # How far the error can move the estimate, in its standard errors: what a
+  # refined fit's slope check measured (`slope`, `_placed_slope_check`: each
+  # unit's gradient error through the inverse curvature), where it ran. What
+  # moves an estimate is the error's slope, and a level read as a distance,
+  # `sqrt(2 nats)`, reported a constant offset as a move; that stays only where
+  # no curvature measured the slope.
+  slope <- suppressWarnings(as.numeric(slope)[1L])
+  fromslope <- length(slope) && is.finite(slope)
   list(nats = nats,
-    se = if (is.finite(nats) && nats >= 0) sqrt(2 * nats) else NA_real_,
+    se = if (fromslope) slope else if (is.finite(nats) && nats >= 0) sqrt(2 * nats) else
+      NA_real_,
+    se_from = if (fromslope) "slope" else "level",
     draws = as.numeric(info$error_draws)[1L],
     nodes = as.numeric(info$error_nodes)[1L],
     residual = as.numeric(info$error_residual)[1L],
@@ -203,12 +215,12 @@
 # The engine arguments of a continuation built under `control`: the screen's
 # node count and tolerance, the frozen importance rule's for units no rule
 # converges on (`draws`, `draws_se`, `draws_max`; laplace_continuation.jl's
-# module docstring), the units the caller names to flag whatever their gap (`force`),
-# points it knows for them (`points`, a list of `units` and a `values` matrix
-# with a column each), and whether every unit is scored (`screen`). Optional
-# entries are left out rather than sent empty, which would hang the bridge.
-.ctLaplaceContinuationArgs <- function(control, force = NULL, points = NULL,
-  screen = TRUE) {
+# module docstring), the units the caller names to flag whatever their gap
+# (`force`), and whether every unit is scored (`screen`). The modes a jump saw
+# reach the engine as the objective's known modes, from the fit's
+# specification. Optional entries are left out rather than sent empty, which
+# would hang the bridge.
+.ctLaplaceContinuationArgs <- function(control, force = NULL, screen = TRUE) {
   args <- list(nodes = as.integer(control$nodes),
     tolerance = as.numeric(control$tolerance),
     draws = as.integer(.ctJuliaOr(control$draws, 0L)),
@@ -219,16 +231,6 @@
   force <- suppressWarnings(as.integer(force))
   force <- force[!is.na(force) & force > 0L]
   if (length(force)) args$force <- .ctJuliaVector(force)
-  if (!is.null(points)) {
-    units <- as.integer(points$units)
-    keep <- !is.na(units) & units > 0L
-    if (any(keep)) {
-      values <- as.matrix(points$values)[, keep, drop = FALSE]
-      storage.mode(values) <- "double"
-      args$point_units <- .ctJuliaVector(units[keep])
-      args$point_values <- values
-    }
-  }
   args
 }
 
@@ -585,9 +587,10 @@
       control$nodes, .ctDuration(seconds())), "update")
   }
   # Units whose Laplace terms jumped in the fit (`fit$laplace$jump`) are
-  # flagged whatever the screen finds, with the points the line search saw as
-  # components of their proposals should they take draws; the climb then
-  # starts from the jump point, which is the fit's estimate.
+  # flagged whatever the screen finds; the modes the line search saw either
+  # side are the objective's known modes (the fit's specification), which their
+  # searches and any draws' proposals start from. The climb then starts from
+  # the jump point, which is the fit's estimate.
   jump <- fit$laplace$jump
   # Asked only to check, at a jump: no optimum to take the check's step from,
   # and the jump says what the check would, that a unit's term is not one
@@ -702,8 +705,7 @@
   cont <- try(do.call(module$ctsem_laplace_continuation,
     c(list(.ctJuliaObjective(fit, hybrid = TRUE), .ctJuliaNumericVector(est)),
       .ctLaplaceContinuationArgs(control,
-        force = union(union(jump$units, check$carrying), as.integer(force)),
-        points = jump$points))),
+        force = union(union(jump$units, check$carrying), as.integer(force))))),
     silent = TRUE)
   # The engine's reason, which is what tells an allocation it refused from a
   # point the model cannot evaluate.
