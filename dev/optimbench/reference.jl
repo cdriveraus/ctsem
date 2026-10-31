@@ -212,6 +212,15 @@ function bench_time_gradient(objective, x::Vector{Float64}; target::Real=0.25,
     return (seconds=out, batch=k, first=t1)
 end
 
+# Seconds a call of `f` takes, over `k` calls.
+function _bench_per(f, k::Integer)
+    t = time_ns()
+    for _ in 1:k
+        f()
+    end
+    return (time_ns() - t) / 1e9 / k
+end
+
 # What the pricers' unit of cost is worth on this objective at `x`: seconds a
 # value and a gradient take, in batches of about `target` seconds interleaved
 # so the machine's load moves both alike -- searched, as a sampler evaluates
@@ -231,8 +240,8 @@ function bench_time_costs(objective, x::Vector{Float64}; target::Real=0.25,
     k = clamp(ceil(Int, target / max(t1, 1e-6)), 1, 2000)
     tv = zeros(reps); tg = zeros(reps)
     for r in 1:reps
-        tv[r] = (@elapsed for _ in 1:k; ev(false); end) / k
-        tg[r] = (@elapsed for _ in 1:k; ev(true); end) / k
+        tv[r] = _bench_per(() -> ev(false), k)
+        tg[r] = _bench_per(() -> ev(true), k)
     end
     ctsem_reset_opcounts!(); ev(false); ov = collect(values(ctsem_opcounts()))
     ctsem_reset_opcounts!(); ev(true); og = collect(values(ctsem_opcounts()))
@@ -246,12 +255,12 @@ function bench_time_costs(objective, x::Vector{Float64}; target::Real=0.25,
             d = [sin(1.618 * i) for i in eachindex(x)]
             d .*= 0.05 / max(sqrt(sum(abs2, d)), eps())
             pts = (x .+ d, x .- d)
-            j = 0
-            step!(g) = (j += 1; ev(g, pts[mod1(j, 2)]); _ctsem_anchor_here!(objective))
+            j = Ref(0)
+            step!(g) = (j[] += 1; ev(g, pts[mod1(j[], 2)]); _ctsem_anchor_here!(objective))
             step!(false); step!(true)
             for r in 1:reps
-                av[r] = (@elapsed for _ in 1:k; step!(false); end) / k
-                ag[r] = (@elapsed for _ in 1:k; step!(true); end) / k
+                av[r] = _bench_per(() -> step!(false), k)
+                ag[r] = _bench_per(() -> step!(true), k)
             end
         finally
             ctsem_laplace_clear_anchors!(objective)
@@ -282,10 +291,8 @@ function bench_time_costs(objective, x::Vector{Float64}; target::Real=0.25,
                 ctsem_coreset_batch_gradient(L, X, [U], [1.0])
                 t = @elapsed ctsem_coreset_batch(L, X, [U], [1.0])
                 ku = clamp(ceil(Int, 0.02 / max(t, 1e-7)), 1, 500)
-                push!(uv, (@elapsed for _ in 1:ku; ctsem_coreset_batch(L, X, [U], [1.0]); end) / ku)
-                push!(ug, (@elapsed for _ in 1:ku
-                    ctsem_coreset_batch_gradient(L, X, [U], [1.0])
-                end) / ku)
+                push!(uv, _bench_per(() -> ctsem_coreset_batch(L, X, [U], [1.0]), ku))
+                push!(ug, _bench_per(() -> ctsem_coreset_batch_gradient(L, X, [U], [1.0]), ku))
                 push!(uw, w[U])
             end
         end
