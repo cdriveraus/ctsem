@@ -2342,8 +2342,10 @@ flat-transform fixtures the watch was built for (fcae6459, 2026-09-14): a drift
 started inside `-log1p_exp`'s flat region, now the slow tier of
 `test-julia-convergence.R`, and `test_state_sampling.jl`'s count model for the
 case the conjunction must leave alone. No sweep over any of them is on record,
-and none has been checked on categorical or multilevel models (the
-consolidation plan's Appendix B).
+and the bench cannot give one: over 2,659 bench fits recorded from 2026-10-24
+to 10-31, categorical and multilevel among them, the watch fired twice and
+stopped none (`review/bench/2026-10-31-defaults-jf-f979c331.md`). Its numbers matter only on fits long
+enough to creep for a window.
 """
 mutable struct CTSEMStallWatch
     window::Int
