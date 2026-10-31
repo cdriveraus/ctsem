@@ -84,6 +84,11 @@ BENCH_VARIANTS <- list(
   careful5 = list(optimcontrol = list(carefulfit = 5L)),
   careful20 = list(optimcontrol = list(carefulfit = 20L)),
 
+  # An estimate, then what a value, a gradient and a Hessian cost there, and
+  # single units against their weights (harness section 6): the measurements
+  # one cost model for the pricers is set from. No references.
+  costs = list(optimcontrol = list(estonly = TRUE), costs = TRUE),
+
   # The finish's steps on one curvature whatever the route would choose
   # (`_ctsem_finish_curvature`): a fresh exact Hessian whenever a step is slow,
   # or one Hessian walked with SR1 updates and refreshed when its walk stops

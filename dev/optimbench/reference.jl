@@ -212,6 +212,92 @@ function bench_time_gradient(objective, x::Vector{Float64}; target::Real=0.25,
     return (seconds=out, batch=k, first=t1)
 end
 
+# What the pricers' unit of cost is worth on this objective at `x`: seconds a
+# value and a gradient take, in batches of about `target` seconds interleaved
+# so the machine's load moves both alike -- searched, as a sampler evaluates
+# outside an optimisation, and anchored, as an optimisation evaluates, at
+# points a short step either side of the last, the anchors moved after each as
+# an accepted step moves them; the operation counts of one of each; one
+# Hessian's seconds where it is expected to take under `hessian_cap`; and on a
+# sum over units, single-unit coreset evaluations of `nunits` units spread
+# over the unit weights the pricers read (`_laplace_unit_weights`), for how
+# well rows times members predicts a unit's share.
+function bench_time_costs(objective, x::Vector{Float64}; target::Real=0.25,
+        reps::Integer=3, nunits::Integer=40, hessian_cap::Real=120.0)
+    x = copy(x)
+    ev(g, at=x) = ctsem_evaluate(objective, at; gradient=g)
+    ev(false); ev(true)
+    t1 = @elapsed ev(true)
+    k = clamp(ceil(Int, target / max(t1, 1e-6)), 1, 2000)
+    tv = zeros(reps); tg = zeros(reps)
+    for r in 1:reps
+        tv[r] = (@elapsed for _ in 1:k; ev(false); end) / k
+        tg[r] = (@elapsed for _ in 1:k; ev(true); end) / k
+    end
+    ctsem_reset_opcounts!(); ev(false); ov = collect(values(ctsem_opcounts()))
+    ctsem_reset_opcounts!(); ev(true); og = collect(values(ctsem_opcounts()))
+    opnames = string.(collect(keys(ctsem_opcounts())))
+    # Anchored: a fixed direction of length 0.05 in raw units, alternated.
+    av = fill(NaN, reps); ag = fill(NaN, reps)
+    _ctsem_anchor_start!(objective, x)
+    anchored = objective isa CTSEMLaplaceObjective && !isempty(objective.anchors)
+    if anchored
+        try
+            d = [sin(1.618 * i) for i in eachindex(x)]
+            d .*= 0.05 / max(sqrt(sum(abs2, d)), eps())
+            pts = (x .+ d, x .- d)
+            j = 0
+            step!(g) = (j += 1; ev(g, pts[mod1(j, 2)]); _ctsem_anchor_here!(objective))
+            step!(false); step!(true)
+            for r in 1:reps
+                av[r] = (@elapsed for _ in 1:k; step!(false); end) / k
+                ag[r] = (@elapsed for _ in 1:k; step!(true); end) / k
+            end
+        finally
+            ctsem_laplace_clear_anchors!(objective)
+        end
+    end
+    # One Hessian, the finish's unit of cost in gradients.
+    th = NaN
+    if 2 * length(x) * median(tg) < hessian_cap
+        th = try
+            ctsem_hessian(objective, x)
+            @elapsed ctsem_hessian(objective, x)
+        catch
+            NaN
+        end
+    end
+    # Units: a coreset of one, value and gradient.
+    L = _ctsem_unit_sum(objective)
+    uw = Float64[]; usel = Int[]; uv = Float64[]; ug = Float64[]; nU = 0
+    if L !== nothing
+        w = _laplace_unit_weights(L)
+        nU = length(w)
+        if nU >= 2
+            order = sortperm(w)
+            usel = unique(order[round.(Int, range(1, nU; length=min(nunits, nU)))])
+            X = reshape(copy(x), :, 1)
+            for U in usel
+                ctsem_coreset_batch(L, X, [U], [1.0])
+                ctsem_coreset_batch_gradient(L, X, [U], [1.0])
+                t = @elapsed ctsem_coreset_batch(L, X, [U], [1.0])
+                ku = clamp(ceil(Int, 0.02 / max(t, 1e-7)), 1, 500)
+                push!(uv, (@elapsed for _ in 1:ku; ctsem_coreset_batch(L, X, [U], [1.0]); end) / ku)
+                push!(ug, (@elapsed for _ in 1:ku
+                    ctsem_coreset_batch_gradient(L, X, [U], [1.0])
+                end) / ku)
+                push!(uw, w[U])
+            end
+        end
+    end
+    return (value=tv, gradient=tg, batch=k, anchored=anchored,
+        value_anchored=av, gradient_anchored=ag, hessian=th, npar=length(x),
+        opnames=opnames, ops_value=Float64.(ov), ops_gradient=Float64.(og),
+        nunits=nU, unit_index=isempty(usel) ? [0] : usel,
+        unit_weight=isempty(uw) ? [NaN] : uw, unit_value=isempty(uv) ? [NaN] : uv,
+        unit_gradient=isempty(ug) ? [NaN] : ug)
+end
+
 # log Gamma at positive integers and half-integers, by recursion.
 function _bench_lgamma(x::Real)
     r = 0.0
