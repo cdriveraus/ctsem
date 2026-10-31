@@ -3723,13 +3723,13 @@ ctOptimFitLpgFunc <- function(fit, cores=1){
 #' of NUTS moves, then runs as many of them on as chains as the effective
 #' sample size target needs. It is for posteriors NUTS does not
 #' converge on from the normal -- a mass far from the mode, a loading shell --
-#' and costs about what NUTS does in gradients. On the Laplace route its
+#' and costs about what NUTS does in gradients. Its
 #' particles move on a coreset of the units (\code{coreset}, \code{TRUE}): the
 #' full density, evaluated once a particle a stage, corrects the moves
 #' exactly, so a fit with many units pays a fraction of a gradient a move and
 #' \code{coreset = FALSE} is the oracle. Its chains are short and start
 #' from particles already drawn from the posterior, so it reports no
-#' R-hat; the effective sample size is its stop. On the Laplace route NUTS
+#' R-hat; the effective sample size is its stop. NUTS
 #' too runs its trajectories on a coreset, fitted before warm-up and again
 #' during it, each draw's end accepted or refused by the full density, which
 #' keeps the draws exact whatever the coreset. \code{adapt_metric}, \code{adapt_effects} and
@@ -3932,7 +3932,7 @@ ctOptimFitLpgFunc <- function(fit, cores=1){
 #' (\code{'checked'}) weighs the sampled directions with the others integrated
 #' over, rather than held at the centre with the volume their spread adds to
 #' first order: exact where the others' spread moves with them, as a large
-#' covariance's scale does, at up to seven times the evaluations. On a Laplace fit (julia),
+#' covariance's scale does, at up to seven times the evaluations. On a julia fit,
 #' importance sampling
 #' evaluates a weighted subset of the units chosen and checked as it runs, and
 #' corrects its weights where that subset strays; \code{coreset = FALSE}

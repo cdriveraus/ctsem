@@ -1,7 +1,8 @@
 # NUTS on a coreset, each draw's endpoint checked against the full density.
 #
-# On the Laplace route a gradient costs every unit's inner solve, and a NUTS
-# transition takes a gradient at every leapfrog step. Where a few units with
+# A gradient costs every unit -- an inner solve each on the Laplace route, a
+# filter pass on the marginal route -- and a NUTS transition takes a gradient
+# at every leapfrog step. Where a few units with
 # weights follow the sum of all of them over the posterior -- the coreset SMC
 # moves its particles on (`_smc_coreset_fit`) -- the trajectory can run on
 # that instead, and the full density is needed only where the trajectory

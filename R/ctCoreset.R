@@ -1,7 +1,8 @@
-# A coreset for importance sampling on the Laplace route.
+# A coreset for importance sampling.
 #
-# A Laplace fit's log density is a sum of per-unit terms, each an inner mode
-# solve, and an importance sampler pays for every unit at every draw. Over the
+# A julia fit's log density is a sum of per-unit terms -- an inner mode solve
+# each on the Laplace route, a filter pass on the marginal route -- and an
+# importance sampler pays for every unit at every draw. Over the
 # region the sampler visits, the units' terms vary in about as many dimensions
 # as the sampler moves -- to first order a unit's term is its score times the
 # displacement -- however many units there are. So M of the N units with
@@ -28,13 +29,13 @@
 # end check, which corrects the weights to the full density where the coreset
 # strayed; see `imis_is()`) and 'coreset' (the record
 # `$details$importance_sampling$coreset` reports). `lpg` itself comes back
-# where a coreset cannot apply: off the Laplace route, `control$coreset` FALSE,
+# where a coreset cannot apply: `control$coreset` FALSE, fewer than two units,
 # or a density that is not a sum over the fit's units (its 'unitsum' mark).
 # The coreset is built on the density's own engine object (its 'engine'), which
-# says what a unit's term is: the fit's Laplace terms (`.ctBackendLpgFunc()`),
-# the one density that carries the mark.
+# says what a unit's term is: the fit's own (`.ctBackendLpgFunc()`), the one
+# density that carries the mark, on either route.
 .ctCoresetLpg <- function(fit, lpg, control = list()) {
-  if (isFALSE(control$coreset) || !.ctBackendIsLaplace(fit) ||
+  if (isFALSE(control$coreset) || .ctJuliaUnits(.ctBackendSpec(fit)) < 2L ||
     !isTRUE(attr(lpg, 'unitsum')) || !is.function(attr(lpg, 'batch')) ||
     !is.function(attr(lpg, 'gradbatch')) || !is.function(attr(lpg, 'engine'))) {
     return(lpg)

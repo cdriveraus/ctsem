@@ -502,7 +502,7 @@
   # How many particles tempered SMC (`sampler = 'smc'`) carries, 200 by
   # default; read by `.ctBackendSampleControl()`.
   "particles",
-  # Whether tempered SMC's particles move on a coreset of the Laplace units
+  # Whether tempered SMC's particles move on a coreset of the units
   # (sample_smc.jl), TRUE by default; FALSE is the oracle, as for 'checked''s
   # importance sampler.
   "coreset",
@@ -834,13 +834,13 @@
     adapt_effects = isTRUE(.ctJuliaOr(control$adapt_effects, FALSE)),
     sampler = .ctBackendSamplerName(control$sampler),
     particles = max(2L, as.integer(.ctJuliaOr(control$particles, 200L))[1L]),
-    # Tempered SMC's particles move on a coreset of the Laplace units: the
+    # Tempered SMC's particles move on a coreset of the units: the
     # full density, evaluated once a particle a stage for the weights anyway,
     # corrects the moves exactly (sample_smc.jl). NUTS on a marginal target
     # runs its trajectories on one after warm-up and tests each draw's end
     # against the full density (sample_surrogate.jl). Either way this costs
     # accuracy nothing and `FALSE` is the oracle, as for the importance
-    # sampler's coreset (`.ctCoresetLpg()`). Inert off the Laplace route.
+    # sampler's coreset (`.ctCoresetLpg()`). Inert with fewer than two units.
     coreset = !isFALSE(control$coreset))
 
   # The SAEM kernel draws the effects by SAEM's own sweeps and keeps the
@@ -1658,8 +1658,8 @@
     # stage's moves, which set how many of them the final phase ran as chains.
     nparticles = if (is.null(result$nparticles)) NULL else as.integer(result$nparticles),
     final_tau = if (is.null(result$final_tau)) NULL else as.numeric(result$final_tau),
-    # The coreset tempered SMC's particles moved on, where the route is
-    # Laplace: how many of the units each stage's coreset held (0 where a
+    # The coreset tempered SMC's particles moved on: how many of the units
+    # each stage's coreset held (0 where a
     # stage ran on the full objective), the units, the correction's effective
     # size a stage as a fraction, the final chains' coreset and the fraction
     # of the draws' effective size their correction to the full density kept;

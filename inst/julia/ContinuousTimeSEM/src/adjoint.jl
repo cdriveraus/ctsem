@@ -588,10 +588,11 @@ and its imputation density's term is added to the same row
 `prior = false` leaves the prior out of the rows -- each is then subject `i`'s
 log likelihood gradient alone, which is what removing subject `i` removes
 (`ctLOO(casewiseApproximation = TRUE)`); a refit keeps the whole prior. The
-value is the objective either way.
+value is the objective either way. `sink`, a vector, gets each subject's own
+log likelihood, unweighted, where its weight is not zero.
 """
 function ctsem_subject_gradients(objective::CTSEMObjective, values::AbstractVector{T};
-    prior::Bool=true) where {T}
+    prior::Bool=true, sink::Union{Nothing,AbstractVector}=nothing) where {T}
     subjects = objective.subject_objectives
     nsubjects = length(subjects)
     npars = length(values)
@@ -606,7 +607,7 @@ function ctsem_subject_gradients(objective::CTSEMObjective, values::AbstractVect
 
     _ctsem_pull_blocks(nblocks, nchunks) do b, w
         _ctsem_subject_gradient_chunk!(scores, totals, valid, badvalue, b,
-            ranges[b], subjects, workspaces[w], values, objective.subject_weights)
+            ranges[b], subjects, workspaces[w], values, objective.subject_weights, sink)
     end
 
     @inbounds for c in 1:nblocks
@@ -617,11 +618,12 @@ function ctsem_subject_gradients(objective::CTSEMObjective, values::AbstractVect
     return (value=sum(totals) + _ctsem_log_prior(objective, values), scores=scores)
 end
 
-"""Per-subject gradients for one contiguous chunk, written into `scores`."""
+"""Per-subject gradients for one contiguous chunk, written into `scores`, and
+each subject's log likelihood into `sink` where one is given."""
 function _ctsem_subject_gradient_chunk!(scores::Matrix{T}, totals::Vector{T},
     valid::Vector{Bool}, badvalue::Vector{T}, c::Int, range::UnitRange{Int},
     subjects, aws, values::AbstractVector{T},
-    weights::Vector{Float64}=Float64[]) where {T}
+    weights::Vector{Float64}=Float64[], sink=nothing) where {T}
 
     deferred = aws.defer_frechet
     aws.defer_frechet = false
@@ -657,6 +659,7 @@ function _ctsem_subject_gradient_chunk!(scores::Matrix{T}, totals::Vector{T},
                 return nothing
             end
             total += w * loglik
+            sink === nothing || (sink[i] = loglik)
 
             if _growth_unstable(ws)
                 _ctsem_forward_subject_gradient!(view(scores, i, :), subject_objective, values)

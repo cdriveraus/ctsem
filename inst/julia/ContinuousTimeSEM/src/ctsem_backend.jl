@@ -108,7 +108,21 @@ mutable struct CTSEMObjective{P,O} <: CTSEMOptimisable
     jacobian_index::Vector{Int}
     jacobian_value::Vector{CTSEMExpr}
     jacobian_slope::Vector{CTSEMExpr}
+    # This objective as a sum over its subjects (`_ctsem_unit_sum`), for
+    # whatever lets a weighted few of them stand in for all; built when first
+    # asked for, `nothing` until then.
+    unit_sum::Any
 end
+
+# Without its unit-sum view, which is built when first asked for.
+CTSEMObjective(params, subject_objectives, adjoint_ws, prior_index, prior_scale,
+    prior_weight, ti_missing_parameter, ti_missing_mu, ti_missing_sigma,
+    ti_missing_subject, subject_weights, corbound::Vector{CTSEMCorBound},
+    penalty_index, penalty_precision, jacobian_index, jacobian_value, jacobian_slope) =
+    CTSEMObjective(params, subject_objectives, adjoint_ws, prior_index, prior_scale,
+        prior_weight, ti_missing_parameter, ti_missing_mu, ti_missing_sigma,
+        ti_missing_subject, subject_weights, corbound, penalty_index,
+        penalty_precision, jacobian_index, jacobian_value, jacobian_slope, nothing)
 
 CTSEMObjective(params, subject_objectives) =
     CTSEMObjective(params, subject_objectives, nothing, Int[], Float64[], 1.0,
@@ -1787,8 +1801,8 @@ end
 The per-unit scores at the last point an optimiser evaluated with a gradient,
 for R's `lbfgs_scores` control and the coreset stages: `x` the point, `S` its
 units' scores without the prior (units by parameters), `u` each unit's term
-there on the Laplace route (unweighted, NaN on the marginal route), `valid`
-whether they describe `x`.
+there (unweighted, NaN for a unit of weight zero on the marginal route),
+`valid` whether they describe `x`.
 """
 mutable struct CTSEMScoreStore
     x::Vector{Float64}
@@ -1816,7 +1830,11 @@ function _ctsem_optimise_trial_scores(o::CTSEMObjective, x, gradient_method,
         limit::Real, log, store::CTSEMScoreStore)
     store.valid = false
     xv = collect(Float64, x)
-    r = _ctsem_try_evaluate(() -> ctsem_subject_gradients(o, xv; prior=false))
+    # Each subject's term too, which a coreset stage reads its value from
+    # (`_ctsem_coreset_anchor!`); NaN for a subject of weight zero.
+    fill!(store.u, NaN)
+    r = _ctsem_try_evaluate(() -> ctsem_subject_gradients(o, xv; prior=false,
+        sink=store.u))
     (r === nothing || !isfinite(r.value) || !all(isfinite, r.scores)) &&
         return (evaluated=nothing, valid=false)
     g = vec(sum(r.scores; dims=1))
@@ -2753,7 +2771,7 @@ variant's step budget; `newton_reuse` and
 `flat_rtol`
 are the finish's rules, passed from R so one number serves both sides.
 `coreset` runs stretches of the L-BFGS stage on a weighted few of the units
-where the route has units (`_ctsem_coreset_plan`, the Laplace route) and a
+where the objective is a sum over units (`_ctsem_coreset_plan`) and a
 coreset is expected to save, each stretch checked by a full gradient. Off here;
 R's default for it, `'auto'`, sends it for large data (`.ctJuliaCoresetOn()`).
 Neither the finish nor a budget stage sees one.
@@ -2923,9 +2941,9 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
     # sent back reads as no progress near the optimum: that ended fits as
     # stalled and ran the stall escape's refits there, on the full sum.
     coreset_last = Ref(typemin(Int) >> 1)
-    # Coreset stages on the Laplace route (`_ctsem_coreset_plan`): stretches of
-    # the L-BFGS stage on a weighted few of the units, each checked by a full
-    # gradient. `nothing` on any other route, with too few units, off, or on a
+    # Coreset stages (`_ctsem_coreset_plan`): stretches of the L-BFGS stage on
+    # a weighted few of the units, each checked by a full gradient. `nothing`
+    # on an objective that is no sum over units, with too few units, off, or on a
     # budget stage (the prior warm-up), whose few iterations are its plan and
     # leave no stage room to pay.
     coreseter = coreset && !progress_budget ?

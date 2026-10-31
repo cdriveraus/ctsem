@@ -179,3 +179,41 @@ end
     @test CIS._is_round_cost(196, 200, checked, 0.1) > CIS._is_full_round(checked)
     @test CIS._is_round_cost(30, 200, checked, 0.1) < CIS._is_full_round(checked)
 end
+
+isdefined(@__MODULE__, :_LAPLACE_LINEAR_OBJECTIVE) ||
+    include(joinpath(@__DIR__, "laplace_fixtures.jl"))
+
+@testset "the marginal route's objective is a sum over its subjects, and a coreset of them" begin
+    # A coreset is one thing on both routes: the marginal objective's view as a
+    # sum over units (`_ctsem_unit_sum`) is a Laplace objective with no level,
+    # a unit a subject, built once.
+    o = _LAPLACE_LINEAR_OBJECTIVE
+    N = length(o.subject_objectives)
+    U = CIS._ctsem_unit_sum(o)
+    @test U isa CIS.CTSEMLaplaceObjective
+    @test U === CIS._ctsem_unit_sum(o)
+    @test length(U.units.members) == N
+    @test CIS._smc_coreset_capable(o)
+    x = _LAPLACE_LINEAR_VALUES[1:5]
+    X = hcat(x, x .+ 0.02, x .- 0.03)
+    terms = ctsem_coreset_terms(o, X)
+    @test terms.value ≈ ctsem_evaluate_batch(o, X) rtol = 1e-10
+    @test vec(sum(terms.unit_loglik; dims=1)) ≈ terms.total rtol = 1e-10
+    # Each subject's term from the scored gradient the optimiser's stages read.
+    sink = fill(NaN, N)
+    sg = ctsem_subject_gradients(o, x; prior=false, sink=sink)
+    @test sink ≈ terms.unit_loglik[:, 1] rtol = 1e-10
+    # A subset: the prior plus its weighted terms, and its weighted scores
+    # plus the prior's gradient.
+    S = [2, 5]
+    w = [1.5, 3.0]
+    r = ctsem_coreset_batch_gradient(o, X[:, 1:1], S, w)
+    prior = terms.value[1] - terms.total[1]
+    @test r[1, 1] ≈ prior + sum(w .* terms.unit_loglik[S, 1]) rtol = 1e-10
+    g = ctsem_evaluate(o, x; gradient=true).gradient
+    @test r[2:end, 1] ≈ g .- vec(sum(sg.scores; dims=1)) .+
+        vec(sum(w .* sg.scores[S, :]; dims=1)) rtol = 1e-8
+    # An objective that is no sum over units has no view.
+    @test CIS._ctsem_unit_sum(nothing) === nothing
+    @test !CIS._smc_coreset_capable(nothing)
+end

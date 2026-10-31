@@ -5524,9 +5524,10 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
 }
 
 # Whether the L-BFGS stage runs coreset stages (`optimcontrol$coreset`):
-# TRUE and FALSE as given, and 'auto', the default, on the Laplace route for
-# data of at least `.ctCoresetAutoUnits` top-level units and
-# `.ctCoresetAutoCells` data cells (rows times manifest variables). Below that
+# TRUE and FALSE as given, and 'auto', the default, for data of at least
+# `.ctCoresetAutoUnits` units (`.ctJuliaUnits()`) and `.ctCoresetAutoCells`
+# data cells (rows times manifest variables). The bars were measured on
+# Laplace fits. Below that
 # a full gradient is cheap: on the optimiser bench (25-100 units, at most
 # about 3000 cells) the stages saved no optimiser time, and on its models with
 # several maxima they changed which one a fit reached, twice ending
@@ -5541,12 +5542,19 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
 .ctJuliaCoresetOn <- function(optimcontrol, model_spec) {
   v <- optimcontrol[["coreset"]]
   if (!is.null(v) && !identical(v, "auto")) return(isTRUE(v))
-  levels <- model_spec$laplace$levels
-  if (!length(levels)) return(FALSE)
-  # The outermost level's groups are the Laplace route's units.
-  units <- as.integer(.ctJuliaOr(levels[[length(levels)]]$ngroups, 0L))[1L]
-  units >= .ctCoresetAutoUnits &&
+  .ctJuliaUnits(model_spec) >= .ctCoresetAutoUnits &&
     length(model_spec$manifest_data) >= .ctCoresetAutoCells
+}
+
+# How many units a prepared specification's objective sums, which is what a
+# coreset (the optimiser's stages, `.ctCoresetLpg()`) picks a few of: the
+# outermost level's groups on the Laplace route, the subjects otherwise.
+.ctJuliaUnits <- function(model_spec) {
+  levels <- model_spec$laplace$levels
+  if (length(levels)) {
+    return(as.integer(.ctJuliaOr(levels[[length(levels)]]$ngroups, 0L))[1L])
+  }
+  length(model_spec$subject_starts)
 }
 
 # A fit's checkpoint (`optimcontrol$checkpoint`, a file path): what
@@ -5980,8 +5988,8 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
     common$lbfgs_gll <- as.integer(optimcontrol$lbfgs_gll)[1L]
   }
   # `coreset`: stretches of the L-BFGS stage on a weighted few of the units,
-  # each checked by a full gradient (`_ctsem_coreset_plan` in the engine), on
-  # the Laplace route, where `.ctJuliaCoresetOn()` says. Sent only when on, so
+  # each checked by a full gradient (`_ctsem_coreset_plan` in the engine),
+  # where `.ctJuliaCoresetOn()` says. Sent only when on, so
   # that a small fit's call keeps the shape the package image recorded.
   if (.ctJuliaCoresetOn(optimcontrol, model_spec)) common$coreset <- TRUE
   # `stochastic`, as on stan: TRUE runs the sgd phase (`_ctsem_sgd`) before

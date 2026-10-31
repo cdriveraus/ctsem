@@ -88,8 +88,9 @@
 #'  needs more data; needs at least 80 subjects or top-level groups. A
 #'  supplied start is not batched from, since the subsets' gradients walk off a
 #'  point already chosen; \code{TRUE} asks for it anyway.}
-#'  \item{\code{coreset}}{Julia. Default \code{'auto'}. On the Laplace route,
-#'  run stretches of L-BFGS on a weighted few of the units, chosen so that
+#'  \item{\code{coreset}}{Julia. Default \code{'auto'}. Run stretches of
+#'  L-BFGS on a weighted few of the units (subjects, or top-level groups where
+#'  random effects are integrated by Laplace), chosen so that
 #'  their changes in gradient and their spread reproduce all the units', each
 #'  stretch checked by a full gradient; the full objective finishes, so the
 #'  estimate and its standard errors are those of every unit. \code{'auto'}

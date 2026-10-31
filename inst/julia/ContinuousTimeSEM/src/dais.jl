@@ -95,7 +95,7 @@ density cannot use carries no weight and no gradient (zero weight times an
 infinite gradient was NaN, and stopped a fit); a batch with fewer than two
 usable draws ends the run the same way.
 
-Where `'checked'` uses a coreset (`coreset = true`, on a Laplace objective),
+Where `'checked'` uses a coreset (`coreset = true`, on a sum over units),
 DAIS's draws go through one of its own (`CTSEMISCoreset`,
 coreset_sampler.jl): its gradient batch runs on the coreset where that is
 expected to cost less, checked at a few draws in full every batch, and an
@@ -254,7 +254,7 @@ function ctsem_dais(objective, centre::AbstractVector, cov::AbstractMatrix;
     coreset::Bool=false, kwargs...)
     # DAIS normalises its weights within each iteration's batch, so a draw's
     # relevance is measured from the batch's best (`_is_top`).
-    cs = coreset && _is_coreset_capable(objective) ?
+    cs = coreset && _smc_coreset_capable(objective) ?
         ctsem_is_coreset(objective; top=:batch) : nothing
     return _dais(objective, cs, centre, cov; kwargs...)
 end

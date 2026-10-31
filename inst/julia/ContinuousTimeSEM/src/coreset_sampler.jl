@@ -1,7 +1,8 @@
 # The importance sampler's coreset -------------------------------------------
 #
-# A Laplace fit's log density is a sum of per-unit terms, each an inner mode
-# solve, and an importance sampler pays for every unit at every draw. Over the
+# A fit's log density is a sum of per-unit terms -- an inner mode solve each
+# on the Laplace route, a filter pass on the marginal route -- and an
+# importance sampler pays for every unit at every draw. Over the
 # region the sampler visits the units' terms vary in about as many dimensions
 # as it moves, so M of the N units with non-negative weights and a free
 # intercept, fitted by least squares to the full sum, follow it, at M/N of a
@@ -302,10 +303,10 @@ mutable struct CTSEMISCoreset
 end
 
 """
-    ctsem_is_coreset(laplace; top=:run)
+    ctsem_is_coreset(objective; top=:run)
 
-A coreset density over the Laplace objective `laplace`, for an importance
-sampler: `ctsem_is_coreset_batch!` and `ctsem_is_coreset_gradbatch!` are its
+A coreset density over `objective`, either route's, as a sum over units
+(`_ctsem_unit_sum`), for an importance sampler: `ctsem_is_coreset_batch!` and `ctsem_is_coreset_gradbatch!` are its
 value and gradient batches, `ctsem_is_coreset_fullgrad!` the full density's
 gradient, `ctsem_is_coreset_finalize!` the end check, and
 `ctsem_is_coreset_record` what it did. `top` says how the caller's weights are
@@ -326,10 +327,8 @@ function ctsem_is_coreset(laplace::CTSEMLaplaceObjective; top::Symbol=:run)
         Dict{Vector{Float64},Int}(), Float64[], Float64[], zeros(N, 0), 0, 1.0,
         _IS_CORESET_TOL.force, false, Int[], Bool[])
 end
-
-"""Whether a coreset can stand in for `objective` (`ctsem_is_coreset`): the
-samplers' Laplace objectives of two units or more (`_smc_coreset_capable`)."""
-_is_coreset_capable(objective) = _smc_coreset_capable(objective)
+ctsem_is_coreset(objective; top::Symbol=:run) =
+    ctsem_is_coreset(_ctsem_units_of(objective); top=top)
 
 """The coresets chosen, of the choices tried (`cs.nchoose`, a row each of the
 trace; code 1 is a choice made)."""

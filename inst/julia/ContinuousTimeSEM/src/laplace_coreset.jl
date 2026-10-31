@@ -1,12 +1,15 @@
-# Coreset evaluation for importance sampling ----------------------------------
+# Coreset evaluation -----------------------------------------------------------
 #
-# A Laplace log density is a sum of per-unit terms, each an inner mode solve.
-# Over the region an importance sampler visits those terms vary in about as many
-# dimensions as the sampler moves, however many units there are, so a few of
-# them with fitted weights (`CTSEMCoreset`) follow the sum. These entry points
-# give R's `.ctCoresetLpg()` what it needs: every unit's term at a set of draws,
-# to fit and check the weights, and the coreset's value and gradient at many
-# draws, solving only its units, on the pool a full evaluation uses.
+# A log density that is a sum of per-unit terms -- the Laplace route's units,
+# each an inner mode solve, or the marginal route's subjects, each a filter
+# pass -- varies over the region a sampler or an optimiser's stage visits in
+# about as many dimensions as it moves, however many units there are, so a few
+# of them with fitted weights (`CTSEMCoreset`) follow the sum. These entry
+# points give R's `.ctCoresetLpg()` and the engine's samplers what they need:
+# every unit's term at a set of draws, to fit and check the weights, and the
+# coreset's value and gradient at many draws, evaluating only its units, on the
+# pool a full evaluation uses. Each takes either route's objective, through its
+# view as a sum over units (`_ctsem_unit_sum`).
 #
 # Each refuses a draw the way `ctsem_evaluate_batch` does (`_ctsem_probe_value`):
 # a point the model cannot evaluate, or whose inner solve did not converge,
@@ -27,6 +30,56 @@ const _LAPLACE_CORESET_DRAWS = Ref(true)
 ctsem_set_coreset_draw_parallel!(on::Bool) = (_LAPLACE_CORESET_DRAWS[] = on)
 
 _coreset_units(laplace::CTSEMLaplaceObjective) = length(laplace.units.members)
+
+"""
+    _ctsem_unit_sum(objective)
+
+`objective` as a sum over units, which is what every coreset stands in for --
+the optimiser's coreset stages, the importance sampler's, DAIS's, tempered
+SMC's and NUTS's endpoint test alike -- or `nothing` for an objective that is
+no such sum. A Laplace objective is its own. The marginal route's objective is
+a sum over its subjects, and a Laplace objective with no level over it is that
+sum: a unit a subject, nothing to solve (`_laplace_filter_only`), the subjects
+summed through the marginal route's own adjoint chunk with their sampling
+weights or a coreset's. So a coreset is one thing on both routes, and the
+marginal route has no coreset code of its own. The view is built when first
+asked for and kept on the objective (`unit_sum`); it reads the objective's
+prior, weights and subjects as they are at each evaluation.
+"""
+_ctsem_unit_sum(objective) = nothing
+_ctsem_unit_sum(laplace::CTSEMLaplaceObjective) = laplace
+function _ctsem_unit_sum(objective::CTSEMObjective)
+    built = objective.unit_sum
+    built === nothing || return built::CTSEMLaplaceObjective
+    # Under a lock: a sampler's chains or particles can ask at once.
+    return lock(_CTSEM_UNIT_SUM_LOCK) do
+        objective.unit_sum === nothing && (objective.unit_sum =
+            CTSEMLaplaceObjective(objective, CTSEMLaplaceSpec(CTSEMLaplaceLevel[])))
+        objective.unit_sum::CTSEMLaplaceObjective
+    end
+end
+const _CTSEM_UNIT_SUM_LOCK = ReentrantLock()
+
+"""`_ctsem_unit_sum(objective)`, refusing an objective that is no sum over units."""
+function _ctsem_units_of(objective)
+    L = _ctsem_unit_sum(objective)
+    L === nothing && throw(ArgumentError(string("a coreset needs an objective ",
+        "that is a sum over units, not a ", nameof(typeof(objective)))))
+    return L
+end
+
+# The entry points on any objective that is a sum over units.
+ctsem_coreset_terms(objective, values::AbstractMatrix) =
+    ctsem_coreset_terms(_ctsem_units_of(objective), values)
+ctsem_coreset_terms_gradient(objective, values::AbstractMatrix,
+    scored::Union{Integer,AbstractVector}) =
+    ctsem_coreset_terms_gradient(_ctsem_units_of(objective), values, scored)
+ctsem_coreset_batch(objective, values::AbstractMatrix, units::AbstractVector,
+    weights::AbstractVector) =
+    ctsem_coreset_batch(_ctsem_units_of(objective), values, units, weights)
+ctsem_coreset_batch_gradient(objective, values::AbstractMatrix, units::AbstractVector,
+    weights::AbstractVector) =
+    ctsem_coreset_batch_gradient(_ctsem_units_of(objective), values, units, weights)
 
 """
     ctsem_coreset_terms(laplace, values)
