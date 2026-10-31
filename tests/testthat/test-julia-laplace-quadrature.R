@@ -444,13 +444,27 @@ test_that("the refined fit's density places the flagged units' rules at each poi
   lpg <- .ctLaplacePlacedLpg(module, module$ctsem_laplace_placed(cont))(fit)
   away <- x + 2 * as.numeric(fit$estimate$se) * rep_len(c(1, -1), length(x))
   value <- lpg(away)
-  # The same as a continuation placed there from nothing, with the same units
-  # flagged and no screen.
-  there <- .ctJuliaGet(module$ctsem_laplace_continuation_info(do.call(
-    module$ctsem_laplace_continuation, c(list(.ctJuliaObjective(fit, hybrid = TRUE),
-      .ctJuliaNumericVector(away)), .ctLaplaceContinuationArgs(
-        .ctLaplaceContinueDefaults, force = flagged, screen = FALSE)))))
-  expect_equal(as.numeric(value), as.numeric(there$value), tolerance = 1e-6)
+  # The same as the continuation's own placement there (`_continuation_unit_rule`)
+  # on each flagged unit's rule, beside the rest's Laplace terms and the prior.
+  # The placed objective keeps the rules chosen at the estimate, as a climb's
+  # must; a continuation placed there from nothing chooses its own (nine nodes
+  # or a lattice where five served at the estimate, 0.5 nats apart in all).
+  .ctJuliaEval(paste(
+    "function _lc_test_there(o, x)",
+    "  C = ContinuousTimeSEM",
+    "  laplace = o.laplace",
+    "  theta = C._laplace_extend(laplace, collect(Float64, x))",
+    "  Ls = C._laplace_popchols(theta, laplace.spec)",
+    "  opts = C._continuation_opts(o)",
+    "  ws = C._laplace_workspace!(laplace, Float64, length(theta))",
+    "  rules = sum(C._laplace_unit_weight(laplace, U) * C._continuation_unit_rule(laplace,",
+    "    U, theta, Ls, ws, merge(opts, (choice=o.unit_rules[U],))).value for U in o.flagged)",
+    "  return rules + C.ctsem_laplace_evaluate(o.rest, collect(Float64, x);",
+    "    gradient=false).value",
+    "end", sep = "\n"))
+  there <- as.numeric(.ctJuliaCall("Main._lc_test_there", cont,
+    .ctJuliaNumericVector(away)))
+  expect_equal(as.numeric(value), there, tolerance = 1e-6)
   expect_length(attr(value, "gradient"), length(x))
   expect_true(all(is.finite(attr(value, "gradient"))))
   # A batch is the points one at a time, values with or without gradients.
