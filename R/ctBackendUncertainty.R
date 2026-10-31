@@ -346,8 +346,8 @@
   #   discarded by the `vapply` that collects it. Value-only is also what
   #   carries the `'batch'` attribute (see `.ctBackendLpgFunc()`), so
   #   `uncertainty = 'is'` evaluates a whole proposal batch in one bridge call
-  #   rather than one per draw. On the Laplace route `.ctCoresetLpg()` puts a
-  #   coreset of the units behind it.
+  #   rather than one per draw. `.ctCoresetLpg()` puts a coreset of the
+  #   units behind it.
   juliaImis <- .ctImisProposalDefaults('julia')
   drawn <- .ctOptimDrawSamples(uncertaintyfit, draws = draws, control = control,
     est = est, finishsamples = finishsamples,

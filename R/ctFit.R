@@ -120,7 +120,7 @@
   coreset = list(only = 'julia',
     inert = function(v) isFALSE(v) || identical(v, 'auto'),
     msg = paste0("runs the julia optimiser's coreset stages, stretches of ",
-      "L-BFGS on a weighted few of the units on the Laplace route. The stan ",
+      "L-BFGS on a weighted few of the units. The stan ",
       "path has no equivalent")),
   newton = list(only = 'julia',
     inert = function(v) isFALSE(v),
