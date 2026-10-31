@@ -491,13 +491,13 @@ end
     dA = [0.2 -0.1 0.3; -0.1 0.4 0.05; 0.3 0.05 -0.2]
     lam(t) = C._laplace_eig_first_order(A0 .+ t .* dA).values[1]
     vec1(t) = C._laplace_eig_first_order(A0 .+ t .* dA).vectors[:, 1]
-    clipped(t) = C._laplace_clip_first_order(A0 .+ t .* dA)
+    floored(t) = C._laplace_soft_node_floored_curvature(A0 .+ t .* dA)
     h = 1e-6
     sgn(v) = v .* sign(v[1])
     @test ForwardDiff.derivative(lam, 0.0) ≈ (lam(h) - lam(-h)) / (2h) rtol = 1e-6
     @test ForwardDiff.derivative(t -> sgn(vec1(t)), 0.0) ≈
         (sgn(vec1(h)) - sgn(vec1(-h))) ./ (2h) rtol = 1e-5
-    @test ForwardDiff.derivative(clipped, 0.0) ≈ (clipped(h) - clipped(-h)) ./ (2h) rtol = 1e-5
+    @test ForwardDiff.derivative(floored, 0.0) ≈ (floored(h) - floored(-h)) ./ (2h) rtol = 1e-5
 end
 
 @testset "the inner mode is a mode" begin

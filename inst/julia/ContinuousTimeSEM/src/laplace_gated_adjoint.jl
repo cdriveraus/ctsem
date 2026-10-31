@@ -16,7 +16,8 @@
 #   * the rule's own small dense algebra, reversed in Float64: the softmax over
 #     the nodes, the smoothstep weight, the smallest eigenpair (first-order
 #     perturbation, as the forward dual code takes it), the complement basis
-#     (which moves only with `v1`), the clip (Daleckii-Krein), the Newton solve
+#     (which moves only with `v1`), each node's curvature floor
+#     (Daleckii-Krein), the Newton solve
 #     and the logdets. That leaves adjoints `(alpha, beta, Gamma)` of
 #     `alpha g + beta' grad g + tr(Gamma M)` at each point, and the adjoint of
 #     each point's position;
@@ -263,23 +264,25 @@ function _gated_tmulvec(A::AbstractMatrix, x::AbstractVector)
 end
 _gated_sym(A) = (A .+ transpose(A)) ./ 2
 
-"""`Q f(mu) Q'` and the clip's pieces, `f` the floor `_laplace_clip_value` as
-`_laplace_clip_first_order` takes it."""
-function _gated_clip(B::Matrix{Float64})
+"""A soft-direction node's curvature `B` with each eigenvalue floored, `Q f(mu)
+Q'`, as its pieces: `f` the floor `_laplace_soft_node_curvature_floor`, as the
+forward rule takes it (`_laplace_soft_node_floored_curvature`)."""
+function _gated_soft_node_floored_curvature(B::Matrix{Float64})
     E = _ctsem_symeig(B)
     Q, mu = E.vectors, E.values
-    f = [_laplace_clip_value(x) for x in mu]
+    f = [_laplace_soft_node_curvature_floor(x) for x in mu]
     return (Q=Q, mu=mu, f=f)
 end
 
-"""Adjoint of `clip(B)` given `Cbar`, by Daleckii-Krein with the forward's
-coincidence rule."""
-function _gated_clip_adjoint(Q::Matrix{Float64}, mu::Vector{Float64},
-    Cbar::Matrix{Float64})
+"""The adjoint of a soft-direction node's floored curvature
+(`_gated_soft_node_floored_curvature`) given `Cbar`, by Daleckii-Krein with the
+forward's coincidence rule."""
+function _gated_soft_node_floored_curvature_adjoint(Q::Matrix{Float64},
+    mu::Vector{Float64}, Cbar::Matrix{Float64})
     n = length(mu)
     Ct = _gated_mul(_gated_t(Q), _gated_mul(Cbar, Q))
-    f = _laplace_clip_value
-    fp = _laplace_clip_slope
+    f = _laplace_soft_node_curvature_floor
+    fp = _laplace_soft_node_curvature_floor_slope
     @inbounds for j in 1:n, i in 1:n
         coef = (i == j || abs(mu[i] - mu[j]) <= 1e-12 * max(1.0, abs(mu[i]))) ?
             fp(mu[i]) : (f(mu[i]) - f(mu[j])) / (mu[i] - mu[j])
@@ -377,7 +380,7 @@ function _laplace_gated_reverse(laplace::CTSEMLaplaceObjective, z0::Vector{Float
                 end
             else
                 B0 = _gated_mul(_gated_t(Vh), _gated_mul(M0, Vh))
-                C0 = _gated_clip(_gated_sym(B0))
+                C0 = _gated_soft_node_floored_curvature(_gated_sym(B0))
                 h = g0 - sum(log, C0.f) / 2
                 nodes[j] = (kind=:centre, C=C0)
             end
@@ -388,7 +391,7 @@ function _laplace_gated_reverse(laplace::CTSEMLaplaceObjective, z0::Vector{Float
             rgrad = Vector{Float64}(rb.gradient)
             Mb = _gated_sym(Matrix{Float64}(curvf(ub)))
             B = _gated_sym(_gated_mul(_gated_t(Vh), _gated_mul(Mb, Vh)))
-            C = _gated_clip(B)
+            C = _gated_soft_node_floored_curvature(B)
             Bcinv = _gated_spectral(C.Q, [1 / f for f in C.f])
             y = _gated_tmulvec(Vh, rgrad)
             zeta = _gated_mulvec(Bcinv, y)
@@ -448,7 +451,7 @@ function _laplace_gated_reverse(laplace::CTSEMLaplaceObjective, z0::Vector{Float
             @inbounds for jj in 1:(D - 1), ii in 1:(D - 1)
                 Bcbar[ii, jj] -= (ybar[ii] * zeta[jj] + zeta[ii] * ybar[jj]) / 2
             end
-            Bbar = _gated_sym(_gated_clip_adjoint(C.Q, C.mu, _gated_sym(Bcbar)))
+            Bbar = _gated_sym(_gated_soft_node_floored_curvature_adjoint(C.Q, C.mu, _gated_sym(Bcbar)))
             Mbbar = _gated_mul(Vh, _gated_mul(Bbar, _gated_t(Vh)))
             Vhbar .+= 2 .* _gated_mul(node.Mb, _gated_mul(Vh, Bbar))
             rbar = _gated_mulvec(Vh, ybar)
