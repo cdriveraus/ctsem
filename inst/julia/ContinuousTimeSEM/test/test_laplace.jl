@@ -463,7 +463,7 @@ end
     @test norm(seeded.gradient - reference) / norm(reference) < 1e-5
 end
 
-@testset "the floor belongs to the objective, not the session" begin
+@testset "the soft-direction rule belongs to the objective, not the session" begin
     # Two objectives over the same model: setting one to :quadrature leaves the
     # other at :logdet_floor, value and gradient, and a fresh objective starts at
     # :logdet_floor whatever was done before it.
@@ -471,7 +471,7 @@ end
     plain, _ = _fresh_nonlinear_two()
     before = ctsem_laplace_evaluate(plain, values; gradient=true)
     previous = ctsem_set_soft_directions!(soft, :quadrature; lo=0.8, hi=1.1)
-    @test previous == (floor=:logdet_floor, lo=0.2, hi=0.7)
+    @test previous == (soft_directions=:logdet_floor, lo=0.2, hi=0.7)
     g = ctsem_laplace_evaluate(soft, values; gradient=true)
     after = ctsem_laplace_evaluate(plain, values; gradient=true)
     @test g.value != before.value

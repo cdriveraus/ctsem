@@ -877,10 +877,11 @@ In the eigenbasis `M = V Lambda V'` at the mode:
     `M^(-1/2)` scaling gets wrong at a near-singular unit;
   * at each such node the remaining coordinates are moved to their conditional
     mode (`recenter`, Newton) and integrated by Laplace with their conditional
-    curvature, clipped the same way. Without the recentring the rule misses the
-    ridge a nonlinear effect bends the integrand along, and does worse than one
-    node; without the clip, a conditional curvature that collapses at a far node
-    produces a spike of several nats.
+    curvature, its eigenvalues floored as the soft-direction quadrature's nodes
+    floor them (`_laplace_soft_node_curvature_floor`). Without the recentring
+    the rule misses the ridge a nonlinear effect bends the integrand along, and
+    does worse than one node; without the floor, a conditional curvature that
+    collapses at a far node produces a spike of several nats.
 
 `newton_steps = k > 0` replaces the converged recentring by `k` Newton steps,
 each with the node's own conditional curvature, and takes the conditional
@@ -888,7 +889,8 @@ logdet from the last curvature evaluated: `k` gradients, `k` curvatures and one
 value per node. `k = 1` at 3 nodes is the cheap rule of the third addendum.
 The middle node of an odd rule sits at the mode and costs nothing.
 
-`nodes = 1`, `ndirs = 0`, `tau = 1` is `g(uhat) - sum log max(lambda, 1) / 2`.
+`nodes = 1`, `ndirs = 0`, `tau = 1` is `g(uhat) - sum log max(lambda, 1) / 2`:
+every direction below one is then soft, and the floor is the identity above it.
 Uses `_ctsem_symeig` and `_ctsem_cholesky` throughout (no LAPACK); a rule of
 `n` nodes costs about `n` conditional Newton solves of a few steps, each a
 curvature of the unit, so `n` times the primal work of one unit.
@@ -917,19 +919,20 @@ function _laplace_soft_rule_unit(laplace::CTSEMLaplaceObjective,
     xs, ws = _gauss_hermite(nodes)
 
     # log int exp(g(ubase + Vh z)) dz by Laplace at the conditional mode, with
-    # the conditional curvature clipped at the prior's.
+    # the conditional curvature floored as the production nodes' is.
+    nodefloor = _laplace_soft_node_curvature_floor
     stiff_part = function (ubase::Vector{Float64})
         local z, r, gz, Mz, F, ez, lam, uu
         nh == 0 && return gof(ubase).value
         z = zeros(nh)
         if recenter && newton_steps > 0
-            lam = max.(E.values[stiff], 1.0)
+            lam = nodefloor.(E.values[stiff])
             maximum(abs, ubase .- uhat) < 1e-12 &&
                 return gof(uhat).value - sum(log, lam; init=0.0) / 2
             for _ in 1:Int(newton_steps)
                 r = gof(ubase .+ Vh * z)
                 ez = _ctsem_symeig(transpose(Vh) * Mof(ubase .+ Vh * z) * Vh)
-                lam = max.(ez.values, 1.0)
+                lam = nodefloor.(ez.values)
                 z .+= ez.vectors * ((transpose(ez.vectors) *
                     (transpose(Vh) * r.gradient)) ./ lam)
             end
@@ -951,7 +954,7 @@ function _laplace_soft_rule_unit(laplace::CTSEMLaplaceObjective,
         end
         uu = ubase .+ Vh * z
         ez = _ctsem_symeig(transpose(Vh) * Mof(uu) * Vh)
-        lam = recenter ? max.(ez.values, 1.0) : E.values[stiff]
+        lam = recenter ? nodefloor.(ez.values) : E.values[stiff]
         return gof(uu).value - sum(log, lam; init=0.0) / 2
     end
     terms = Float64[]
