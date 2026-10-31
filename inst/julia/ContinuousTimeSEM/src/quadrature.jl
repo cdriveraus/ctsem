@@ -1055,7 +1055,7 @@ end
 
 """
     _laplace_soft_quadrature_unit_reference(laplace, values, U; lo=0.2, hi=0.7, nodes=3,
-                                  newton_steps=1, solves=5)
+                                  newton_steps=1)
 
 `T = T_lap + w(lambda_min) (T_soft - T_lap)` for one unit, value only, at the
 modes of the last `ctsem_laplace_evaluate` at `values` under the total floor.
@@ -1065,17 +1065,15 @@ The Float64 reference for `_laplace_soft_quadrature_term`; see the section comme
 
 The gate is exact and costs no likelihood sweep: `M - hi I` is block-factored
 (the same elimination as `M`'s own, no fill-in), and a unit it accepts returns
-`T_lap` untouched. Only a flagged unit places `lambda_min`: by the engine's
-own symmetric eigensolver for a unit up to `_LAPLACE_EIGEN_MAXDIM`, else by
-`solves` steps of inverse iteration on the factor of `M` from a fixed start,
-which converges at the eigengap's rate. Only a unit with `w > 0` evaluates the
-soft rule.
+`T_lap` untouched. Only a flagged unit places `lambda_min`, by the engine's
+own symmetric eigensolver at any width: a reference, so dense whatever it
+costs. Only a unit with `w > 0` evaluates the soft rule.
 
 Returns `(value, weight, lambda_min, flagged)`.
 """
 function _laplace_soft_quadrature_unit_reference(laplace::CTSEMLaplaceObjective,
     values::AbstractVector, U::Integer; lo::Real=0.2, hi::Real=0.7,
-    nodes::Integer=3, newton_steps::Integer=1, solves::Integer=5)
+    nodes::Integer=3, newton_steps::Integer=1)
     theta = collect(Float64, values)
     _laplace_ensure_pool!(laplace)
     Ls = _laplace_popchols(theta, laplace.spec)
@@ -1091,23 +1089,7 @@ function _laplace_soft_quadrature_unit_reference(laplace::CTSEMLaplaceObjective,
     _laplace_exceeds_identity(M, blocks, hi) &&
         return (value=lap, weight=0.0, lambda_min=Inf, flagged=false)
     d = length(u)
-    dense = _laplace_block_dense(M, blocks, d)
-    lambda = if d <= _LAPLACE_EIGEN_MAXDIM[]
-        # A small unit is decomposed outright: no likelihood sweep either way,
-        # and inverse iteration converges only as fast as the eigengap allows
-        # -- five solves placed every unit of the weak-data fixture, where the
-        # eigenvalue ratio is under 0.4, and were 4% off on a unit whose two
-        # eigenvalues are 0.956 and 1.175.
-        _ctsem_symeig(dense).values[1]
-    else
-        F = _ctsem_cholesky(copy(dense), d)
-        x = fill(1 / sqrt(d), d)
-        for _ in 1:Int(solves)
-            y = F \ x
-            x = y ./ sqrt(sum(abs2, y))
-        end
-        sum(x .* (dense * x))
-    end
+    lambda = _ctsem_symeig(_laplace_block_dense(M, blocks, d)).values[1]
     w = _laplace_soft_weight(lambda, lo, hi)
     w == 0 && return (value=lap, weight=0.0, lambda_min=lambda, flagged=true)
     soft = _laplace_soft_rule_unit(laplace, theta, U; nodes=nodes,

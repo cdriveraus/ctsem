@@ -1488,29 +1488,37 @@ function _tan_jet_gbar!(g0, gS, Hb, ctx::TanJetContext, h::CTSEMHybrid,
 end
 
 """
-`_laplace_unit_theta_gradient`'s second parts along the first `nd` columns of
-`B` (directions in the unit's coordinates `z`) by the hand-coded jet sweeps,
-into `Gts` (`npar`) and `Gzs` (`length(z)`): what the soft-direction quadrature's trace pass
-reads off jets in `z` (`_laplace_soft_quadrature_jet_pass!`). Each member's gradient
-`g` enters the raw gradient as itself, through `L(theta) u` bilinearly with
-`u = z` (`_laplace_chol_chain!`), whose second parts are `s(g)`'s and
-`2 sum_a` of `dg_a` against the direction `B_a`, and through the loadings
-linearly; the prior `-z` has none. In joint coordinates (`layout`) each
-member's filter holds its deviations at `z`'s, which the directions move too
-(`_tan_jet_dfix!`), and their gradient's second parts join `Gzs`
-(`_tan_jet_fixed_s!`). `false` where a member cannot be evaluated.
+`_laplace_unit_theta_gradient`'s second parts by the hand-coded jet sweeps,
+each member along directions of its own, into `Gts` (`npar`) and `Gzs`
+(`length(z)`): what the soft-direction quadrature's trace terms read off jets
+in `z` (`_laplace_soft_quadrature_vjp!`). Member `m` is swept along the first
+`nds[m]` columns of `dirs[m]`, whose rows are the coordinates `coords[m]` it
+reads; a member with none is skipped. A member's curvature depends on those
+coordinates alone, so a trace `tr(Gamma M)` is the sum of each member's
+against `Gamma`'s block on its own coordinates, and one sweep carries every
+member's: along `Gamma`'s own eigendirections, each spread over every member,
+a nested unit of `n` members took `d / 8` sweeps of all of them.
+
+Each member's gradient `g` enters the raw gradient as itself, through
+`L(theta) u` bilinearly with `u = z` (`_laplace_chol_chain!`), whose second
+parts are `s(g)`'s and `2 sum_a` of `dg_a` against the direction `B_a`, and
+through the loadings linearly; the prior `-z` has none. In joint coordinates
+(`layout`) each member's filter holds its deviations at `z`'s, which the
+directions move too (`_tan_jet_dfix!`), and their gradient's second parts join
+`Gzs` (`_tan_jet_fixed_s!`). `false` where a member cannot be evaluated.
 """
 function _tan_laplace_theta_jet!(Gts::Vector{Float64}, Gzs::Vector{Float64},
     laplace::CTSEMLaplaceObjective, U::Integer, theta::Vector{Float64},
     Ls::Vector{Matrix{Float64}}, dL, positions, z::Vector{Float64},
-    B::AbstractMatrix{Float64}, nd::Int, layout, ::Type{J}) where {J}
+    coords::Vector{Vector{Int}}, dirs::Vector{Matrix{Float64}}, nds::Vector{Int},
+    layout, ::Type{J}) where {J}
     mode = layout === nothing ? _HYBRID_PROFILE : _HYBRID_FIXED
     ctx = _tan_jet_context(laplace, theta, J, mode)
     # Integrated deviations take joint coordinates, and nothing else does.
     (ctx.mod.nh > 0) == (layout !== nothing) || throw(ArgumentError(
         "integrated deviations take joint coordinates, and nothing else does"))
     st = _tan_laplace_theta_jet_!(Gts, Gzs, ctx, laplace, Int(U), theta, Ls, dL,
-        positions, z, B, nd, layout)::Int
+        positions, z, coords, dirs, nds, layout)::Int
     st == _TAN_REFUSED && throw(ArgumentError(_TAN_NOT_JACOBIAN))
     return st == _TAN_OK
 end
@@ -1518,13 +1526,15 @@ end
 function _tan_laplace_theta_jet_!(Gts::Vector{Float64}, Gzs::Vector{Float64},
     ctx::TanJetContext{W,CTSEMTraceJet{JW}}, laplace::CTSEMLaplaceObjective, U::Int,
     theta::Vector{Float64}, Ls::Vector{Matrix{Float64}}, dL, positions,
-    z::Vector{Float64}, B::AbstractMatrix{Float64}, nd::Int, layout) where {W,JW}
+    z::Vector{Float64}, coords::Vector{Vector{Int}}, dirs::Vector{Matrix{Float64}},
+    nds::Vector{Int}, layout) where {W,JW}
     J = CTSEMTraceJet{JW}
     spec, units = laplace.spec, laplace.units
     objective = laplace.objective
     members = units.members[U]
     npar = length(theta)
-    d = layout === nothing ? length(z) : layout.d
+    D = length(z)
+    d = layout === nothing ? D : layout.d
     fill!(Gts, 0.0)
     fill!(Gzs, 0.0)
     _tan_laplace_hybrid!(ctx, theta) || return _TAN_INVALID
@@ -1532,11 +1542,26 @@ function _tan_laplace_theta_jet_!(Gts::Vector{Float64}, Gzs::Vector{Float64},
     dG = ctx.mod.nh > 0 && h.block ? _tan_block_dG_cached(laplace, h, theta,
         ForwardDiff.Dual{_tan_tag(_ctsem_hessian_dual(objective)),Float64,1}) : nothing
     ctx.mod.nh > 0 && h.block && dG === nothing && return _TAN_INVALID
-    uj = J[J(z[a], ntuple(j -> j <= nd ? B[a, j] : 0.0, Val(JW)), 0.0) for a in 1:d]
+    still = ntuple(_ -> 0.0, Val(JW))
+    uj = J[J(z[a], still, 0.0) for a in 1:d]
+    # The directions as a whole `z`, nonzero only on the member being swept:
+    # what the chain through `L` and the fixed deviations read rows of.
+    B = zeros(Float64, D, JW)
     u = view(z, 1:d)
     g0, gS, h2 = zeros(npar), zeros(npar), zeros(npar)
     Hb = zeros(npar, JW)
     for m in eachindex(members)
+        nd = nds[m]
+        nd == 0 && continue
+        S = coords[m]
+        Bm = dirs[m]
+        @inbounds for (i, a) in enumerate(S)
+            for j in 1:nd
+                B[a, j] = Bm[i, j]
+            end
+            a <= d && (uj[a] = J(z[a], ntuple(j -> j <= nd ? Bm[i, j] : 0.0, Val(JW)),
+                0.0))
+        end
         offsets = units.offsets[U][m]
         xj = _laplace_member_values!(ctx.xj, theta, spec, Ls, uj, offsets)
         fixed = layout === nothing ? nothing :
@@ -1555,6 +1580,12 @@ function _tan_laplace_theta_jet_!(Gts::Vector{Float64}, Gzs::Vector{Float64},
             _laplace_chol_chain!(Gts, h2, spec, dL, positions, view(B, 1:d, a), offsets)
         end
         _laplace_loading_chain!(Gzs, gS, spec, Ls, offsets)
+        @inbounds for a in S
+            for j in 1:JW
+                B[a, j] = 0.0
+            end
+            a <= d && (uj[a] = J(z[a], still, 0.0))
+        end
     end
     return _TAN_OK
 end

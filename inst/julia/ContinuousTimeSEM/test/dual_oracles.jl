@@ -206,8 +206,10 @@ function _oracle_soft_quadrature_directional(G, z, beta)
         z=[ForwardDiff.partials(x)[1] for x in r.z])
 end
 
-"""`_laplace_soft_quadrature_jet_pass!`'s second parts along `chunk`'s eigendirections of
-`E`, at a trace jet of width `W`: `(theta, z)`, before its sign."""
+"""The second parts of `G`'s gradients along `chunk`'s eigendirections of `E`,
+each spread over every member, at a trace jet of width `W`: `(theta, z)`, before
+the sign `_soft_quadrature_trace!` gives them, which takes them member by
+member."""
 function _oracle_soft_quadrature_jet(G, z, E, chunk, W)
     D = length(z)
     zz = [_DO.CTSEMTraceJet{W}(z[a], ntuple(j -> j <= length(chunk) ?

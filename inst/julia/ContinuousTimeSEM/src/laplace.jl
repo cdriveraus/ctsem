@@ -5524,11 +5524,13 @@ is the calibration this avoids.
 end
 
 """
-Largest unit dimension decomposed densely: by the soft-direction quadrature to find its soft
-direction, and by `_laplace_min_eigenvalue` for the reports. A wider unit keeps
-the total floor under `:quadrature` -- a dense eigendecomposition of a block-sparse
-unit curvature is `O(d^3)` and fills in what the block elimination keeps sparse
--- and its smallest eigenvalue is found by bisection on the inertia instead.
+Largest unit dimension `_laplace_min_eigenvalue` decomposes densely for the
+reports; a wider unit's smallest eigenvalue is found by bisection on the
+inertia instead, since a dense eigendecomposition of a block-sparse curvature
+is `O(d^3)` and fills in what the block elimination keeps sparse. The same
+number either way, to the bisection's tolerance. The soft-direction quadrature
+reads no cap: it takes block factorizations at any width
+(`_laplace_soft_quadrature_factored`).
 """
 const _LAPLACE_EIGEN_MAXDIM = Ref(64)
 
@@ -5726,20 +5728,22 @@ end
 # by +2.7 on near-singular units; see
 # `CT-SEM/review/LAPLACE-eigenwise-floor-2026-09-23.md`, third to fifth addenda.
 #
-# The gradient of a flagged unit is ForwardDiff over that unit's term alone,
-# with the inner mode's first derivative from `_laplace_dual_unit_mode` (the
-# implicit function theorem, exactly as the nested oracle has it) and the
+# The gradient of a flagged unit is a reverse pass by hand
+# (soft_quadrature_adjoint.jl). Its oracle is ForwardDiff over that unit's term
+# alone, with the inner mode's first derivative from `_laplace_dual_unit_mode`
+# (the implicit function theorem, exactly as the nested oracle has it) and the
 # eigen-quantities differentiated to first order from the primal decomposition:
 # eigenvalues as `v' dM v`, the soft eigenvector by the standard perturbation
 # sum, and each node's floored curvature by the Daleckii-Krein divided
-# differences, which stay finite across a near-degenerate pair. The cost is confined to flagged units: every other unit goes
-# through the seeded assembly unchanged, and above the gate the gradient is the
-# unfloored Laplace one, which is `:logdet_floor`'s wherever `logdet(M) >= 0`.
+# differences, which stay finite across a near-degenerate pair. The cost is
+# confined to flagged units: every other unit goes through the seeded assembly
+# unchanged, and above the gate the gradient is the unfloored Laplace one,
+# which is `:logdet_floor`'s wherever `logdet(M) >= 0`.
 #
-# Scope. Dense, so units wider than `_LAPLACE_EIGEN_MAXDIM` keep `T_total`.
-# Multilevel units no wider than
-# that are handled whole. A unit whose two smallest eigenvalues are within a
-# relative 1e-3 of each other also keeps `T_total`: the soft direction is not
+# Scope. Every width, multilevel units whole: by block factorizations where the
+# nodes' floor is the identity, densely where it binds (see "by block
+# factorizations" below). A unit whose two smallest eigenvalues are within a
+# relative 1e-3 of each other keeps `T_total`: the soft direction is not
 # defined there, and a rule that chose one would be discontinuous in theta. On
 # the weak-data study the smallest gap was 0.24.
 #
@@ -5754,7 +5758,7 @@ end
 # `LAPLACE-gated-gaps-2026-09-24.md` section 1). Categorical indicators
 # (family D) and nested units (family N) were only checked afterwards, and
 # the constants were not refitted there. The `1e-3` degenerate-pair gap is a
-# numerical guard, and `_LAPLACE_EIGEN_MAXDIM` a cost bound.
+# numerical guard.
 
 
 """
@@ -5873,15 +5877,19 @@ caller already has them at `u`.
 
 `objective`, `curvature` and `blocks` evaluate the unit somewhere else than its
 own coordinates -- `(value, gradient, hlogdet)` and the curvature at a point of
-that space, and its block layout -- and `dcheck` is the dimension the
-eigenvalue cap compares. With none given, an objective whose filter integrates
-deviations (`CTSEMHybrid`) is scored by `_hybrid_soft_quadrature_term`, which decides on
-the joint curvature and comes back here in joint coordinates; `cross` is the
-`CTSEMHybridCross` a caller read with `M`.
+that space, and its block layout. With none given, an objective whose filter
+integrates deviations (`CTSEMHybrid`) is scored by `_hybrid_soft_quadrature_term`, which
+decides on the joint curvature and comes back here in joint coordinates;
+`cross` is the `CTSEMHybridCross` a caller read with `M`.
+
+At Float64 the rule is taken from block factorizations wherever the nodes'
+floor is the identity (`_laplace_soft_quadrature_factored`), at a nested unit's
+cost of its members rather than `d^3`, and densely below otherwise: the same
+function either way, at any width.
 
 `floor` says whether the unit still needs the total floor. Only the explicit
-fallbacks do -- a unit wider than `_LAPLACE_EIGEN_MAXDIM` or with a degenerate
-soft pair, where no eigenvalue is known. Everywhere else the eigenvalue is, and
+fallback does -- a unit with a degenerate soft pair, where no soft direction is
+defined. Everywhere else the eigenvalue is known, and
 it makes the floor unnecessary: above the band (`lambda_min >= hi`) the plain
 Laplace term is bounded by `-d log(hi) / 2` and accurate there (+0.015 nats on
 units with eigenvalues in 0.7 to 1, against the exact reference), and inside
@@ -5897,7 +5905,7 @@ hour at zero gain.
 function _laplace_soft_quadrature_term(laplace::CTSEMLaplaceObjective, U::Integer,
     values::AbstractVector{T}, Ls::Vector{<:AbstractMatrix}, u::AbstractVector{T},
     aws; M=nothing, logdetM=nothing, inner=nothing, cross=nothing, objective=nothing,
-    curvature=nothing, blocks=nothing, dcheck=nothing, flagged::Bool=false) where {T}
+    curvature=nothing, blocks=nothing, flagged::Bool=false) where {T}
     objective === nothing && _hybrid_on(laplace.objective.params.hybrid) &&
         return _hybrid_soft_quadrature_term(laplace, U, values, Ls, u, aws; M=M,
             logdetM=logdetM, inner=inner, cross=cross, flagged=flagged)
@@ -5934,8 +5942,11 @@ function _laplace_soft_quadrature_term(laplace::CTSEMLaplaceObjective, U::Intege
         store=_laplace_factor_store!(laplace, T, U, blocks)) &&
         return (value=lap, flagged=false, logdet_floor=false)
     d = length(u)
-    (dcheck === nothing ? d : dcheck) > _LAPLACE_EIGEN_MAXDIM[] &&
-        return (value=total, flagged=false, logdet_floor=true)
+    if T === Float64 && !indefinite && _LAPLACE_SOFT_QUADRATURE_FACTORED[]
+        factored = _laplace_soft_quadrature_factored(laplace, M, blocks, logdetM, g, u,
+            objf, curvf)
+        factored === nothing || return factored
+    end
     dense = _laplace_block_dense(M, blocks, d)
     E = _laplace_eig_first_order(dense)
     lam = E.primal.values
@@ -5990,6 +6001,278 @@ function _laplace_soft_quadrature_term(laplace::CTSEMLaplaceObjective, U::Intege
     isfinite(peak) || return (value=T(NaN), flagged=true, logdet_floor=false)
     soft = peak + log(sum(exp.(terms .- peak))) - log(lam1c) / 2 - log(pi) / 2
     indefinite && return (value=soft, flagged=true, logdet_floor=false)
+    return (value=lap + w * (soft - lap), flagged=true, logdet_floor=false)
+end
+
+################################################################################
+# The soft-direction quadrature by block factorizations
+################################################################################
+#
+# What the rule needs of a unit's curvature is its smallest eigenpair at the
+# mode and, at each node off the mode, the logdet of the node's curvature on
+# that eigenvector's complement and the Newton step there. Where the nodes'
+# floor is the identity none of it needs a dense decomposition:
+#
+#   * `lambda1` is bracketed by bisection on whether `M - s I` factors, and
+#     `v1` taken by inverse iteration on the factor of `M - sigma I` just below
+#     it;
+#   * at the mode the complement's eigenvalues are `M`'s others, so its logdet
+#     is `logdet M - log lambda1`;
+#   * at a node with curvature `Mb`, for `q = Mb^-1 v1` and `beta = v1' q`,
+#     `logdet(V' Mb V) = logdet Mb + log beta`, and the step on the complement
+#     is `Mb^-1 g - q (q' g) / beta`, the bordered solve for `V z`.
+#
+# Each is a block factorization of the unit's own sparsity, no fill-in, so a
+# nested unit costs what its members do rather than `d^3`, and a unit of one
+# block a Cholesky where the dense rule took three Jacobi decompositions. The
+# floor is the identity at the mode where `lambda2` is at least its top
+# (`_laplace_soft_node_curvature_floor_top`), and at a node whose curvature is
+# (by interlacing the complement's eigenvalues are no smaller than `Mb`'s).
+# Elsewhere, and where `M` does not factor at the mode, the unit takes the
+# dense rule, which computes the same function, at any width: until
+# 2026-10-31 a unit wider than 64 took the total floor instead, so the
+# objective changed at the 65th effect, and a study of 30 people in the SNSF
+# pilot over-credited its term by up to 4.6 nats
+# (`CT-SEM/review/LAPLACE-nested-spike-2026-10-02.md`).
+# `ctsem_set_soft_quadrature_factored!(false)` takes the dense rule
+# everywhere: the oracle.
+
+"""
+Whether the soft-direction quadrature takes block factorizations where they
+serve (`_laplace_soft_quadrature_factored`,
+`_laplace_soft_quadrature_reverse_factored`), or the dense rule everywhere.
+"""
+const _LAPLACE_SOFT_QUADRATURE_FACTORED = Ref(true)
+
+"""
+    ctsem_set_soft_quadrature_factored!(on)
+
+Take the soft-direction quadrature from block factorizations where the nodes'
+floor is the identity (`true`, the default), or densely everywhere, the same
+function at `d^3` (`false`, the oracle). Returns the previous setting.
+"""
+function ctsem_set_soft_quadrature_factored!(on::Bool)
+    previous = _LAPLACE_SOFT_QUADRATURE_FACTORED[]
+    _LAPLACE_SOFT_QUADRATURE_FACTORED[] = on
+    return previous
+end
+export ctsem_set_soft_quadrature_factored!
+
+"""The least eigenvalue `_laplace_soft_node_curvature_floor` leaves unchanged:
+the top of its blend."""
+_laplace_soft_node_curvature_floor_top() =
+    _LAPLACE_SOFT_NODE_CURVATURE_FLOOR * (1 + _LAPLACE_SOFT_NODE_CURVATURE_BLEND)
+
+"""
+    _soft_shifted_factor(M, blocks, shift)
+
+The block factorization of `M - shift I` (`_laplace_block_factor`), as
+`(logdet, factors, coupling)`, or `nothing` where it is not positive definite
+-- including numerically singular, as that factorization refuses.
+"""
+function _soft_shifted_factor(M::CTSEMBlockMatrix{Float64},
+    blocks::Vector{CTSEMLaplaceBlock}, shift::Real)
+    A = CTSEMBlockMatrix{Float64}([copy(d) for d in M.diag],
+        [[copy(c) for c in row] for row in M.coupling])
+    if !iszero(shift)
+        for d in A.diag
+            for i in axes(d, 1)
+                d[i, i] -= shift
+            end
+        end
+    end
+    ok, logdetA, factors, coupling = _laplace_block_factor(A, blocks)
+    ok || return nothing
+    return (logdet=logdetA, factors=factors, coupling=coupling)
+end
+
+"""`F \\ rhs` for a `_soft_shifted_factor`."""
+_soft_solve(F, blocks::Vector{CTSEMLaplaceBlock}, rhs::AbstractVector{Float64}) =
+    _laplace_block_solve(F.factors, F.coupling, blocks, collect(Float64, rhs))
+
+"""`M x` for a unit's block curvature, by its blocks and couplings."""
+function _soft_block_mulvec(M::CTSEMBlockMatrix{Float64},
+    blocks::Vector{CTSEMLaplaceBlock}, x::AbstractVector{Float64})
+    y = zeros(Float64, length(x))
+    @inbounds for (b, block) in enumerate(blocks)
+        ob, kb = block.offset, block.size
+        Db = M.diag[b]
+        for j in 1:kb, i in 1:kb
+            y[ob + i] += Db[i, j] * x[ob + j]
+        end
+        for (t, a) in enumerate(block.ancestors)
+            oa = blocks[a].offset
+            Cb = M.coupling[b][t]
+            for j in axes(Cb, 2), i in axes(Cb, 1)
+                c = Cb[i, j]
+                y[ob + i] += c * x[oa + j]
+                y[oa + j] += c * x[ob + i]
+            end
+        end
+    end
+    return y
+end
+
+"""How many inverse-iteration steps `_soft_smallest_eigenpair` and
+`_soft_deflated_solve` take before declining."""
+const _SOFT_INVERSE_ITERATIONS = 500
+
+"""
+    _soft_smallest_eigenpair(M, blocks, F0)
+
+The smallest eigenvalue of a unit's positive definite curvature `M` and a unit
+eigenvector, as `(lambda, v, sigma, F)`, from block factorizations alone; `F0`
+is `M`'s own (`_soft_shifted_factor`). Three steps of inverse iteration on `F0`
+give a Rayleigh quotient that bounds `lambda` above; bisection on whether `M -
+s I` factors brackets it to a relative 1e-3; inverse iteration on the factor
+`F` of `M - sigma I`, `sigma` the bracket's lower end, then converges at the
+rate `(lambda - sigma) / (lambda2 - sigma)`, and `lambda` is the Rayleigh
+quotient of its limit. The start is fixed, so the result is a function of `M`.
+`nothing` where the iteration has not converged in `_SOFT_INVERSE_ITERATIONS`
+steps.
+"""
+function _soft_smallest_eigenpair(M::CTSEMBlockMatrix{Float64},
+    blocks::Vector{CTSEMLaplaceBlock}, F0)
+    d = sum(b.size for b in blocks; init=0)
+    x = [1 + 0.5 * sin(1.7 * i) for i in 1:d]
+    x ./= sqrt(sum(abs2, x))
+    for _ in 1:3
+        x = _soft_solve(F0, blocks, x)
+        x ./= sqrt(sum(abs2, x))
+    end
+    up = dot(x, _soft_block_mulvec(M, blocks, x))
+    lo, F = 0.0, F0
+    while up - lo > 1e-3 * up
+        mid = iszero(lo) ? up / 2 : sqrt(lo * up)
+        Fm = _soft_shifted_factor(M, blocks, mid)
+        if Fm === nothing
+            up = mid
+        else
+            lo, F = mid, Fm
+        end
+    end
+    for _ in 1:_SOFT_INVERSE_ITERATIONS
+        y = _soft_solve(F, blocks, x)
+        y ./= sqrt(sum(abs2, y))
+        dot(y, x) < 0 && (y .= .-y)
+        change = maximum(abs.(y .- x))
+        x = y
+        change <= 1e-13 && return (lambda=dot(x, _soft_block_mulvec(M, blocks, x)), v=x,
+            sigma=lo, F=F)
+    end
+    return nothing
+end
+
+"""
+    _soft_second_above(M, blocks, v, lambda, s)
+
+Whether `M`'s second smallest eigenvalue exceeds `s`, given its smallest
+eigenpair `(lambda, v)`: for a unit of one block, whether `M - s I + (s -
+lambda + 1) v v'` is positive definite; otherwise from the inertia of `M - s
+I` (`_laplace_count_below`), whose block elimination costs what the
+factorization does.
+"""
+function _soft_second_above(M::CTSEMBlockMatrix{Float64},
+    blocks::Vector{CTSEMLaplaceBlock}, v::Vector{Float64}, lambda::Float64, s::Real)
+    s <= lambda && return true
+    if length(blocks) == 1 && isempty(blocks[1].ancestors)
+        A = Matrix{Float64}(M.diag[1])
+        c = s - lambda + 1
+        n = size(A, 1)
+        @inbounds for j in 1:n, i in 1:n
+            A[i, j] += c * v[i] * v[j]
+        end
+        @inbounds for i in 1:n
+            A[i, i] -= s
+        end
+        return issuccess(_ctsem_cholesky(_laplace_symmetrise!(A), n))
+    end
+    count = _laplace_count_below(M, blocks, s)
+    return count !== nothing && count <= 1
+end
+
+"""The second eigenvalue at or below which the dense rule calls `lambda1`'s pair
+degenerate, `lambda1 + 1e-3 max(|lambda2|, 1)`, solved for its own `lambda2`."""
+_soft_degenerate_bar(lambda1::Float64) = lambda1 + 1e-3 <= 1 ? lambda1 + 1e-3 :
+    lambda1 / (1 - 1e-3)
+
+"""
+    _soft_deflated_solve(eig, blocks, b)
+
+`(M - lambda1 I)^+ b` for `b` orthogonal to `v1`, `eig` a
+`_soft_smallest_eigenpair`: the fixed point of `x = P (M - sigma I)^-1 (b +
+(lambda1 - sigma) x)`, `P` the projection off `v1`, which contracts at
+`(lambda1 - sigma) / (lambda2 - sigma)`. `nothing` where it has not settled in
+`_SOFT_INVERSE_ITERATIONS` steps.
+"""
+function _soft_deflated_solve(eig, blocks::Vector{CTSEMLaplaceBlock},
+    b::Vector{Float64})
+    v, F = eig.v, eig.F
+    shift = eig.lambda - eig.sigma
+    x = zeros(Float64, length(b))
+    for _ in 1:_SOFT_INVERSE_ITERATIONS
+        y = _soft_solve(F, blocks, b .+ shift .* x)
+        y .-= v .* dot(v, y)
+        change = maximum(abs.(y .- x))
+        x = y
+        change <= 1e-13 * max(maximum(abs, x), floatmin(Float64)) && return x
+    end
+    return nothing
+end
+
+"""
+    _laplace_soft_quadrature_factored(laplace, M, blocks, logdetM, g, u, objf, curvf)
+
+`_laplace_soft_quadrature_term`'s Float64 value, past its gate, by block
+factorizations (see the section comment), returned as the term returns it; or
+`nothing` where the unit takes the dense rule: `M` not factoring at the mode,
+one coordinate, the floor binding at the mode or at a node, or an iteration
+not settling. `objf(z)` and `curvf(z)` are the unit objective and its block
+curvature, `logdetM` the term's joint logdet and `g` the objective at `u`.
+"""
+function _laplace_soft_quadrature_factored(laplace::CTSEMLaplaceObjective,
+    M::CTSEMBlockMatrix{Float64}, blocks::Vector{CTSEMLaplaceBlock}, logdetM::Float64,
+    g::Float64, u::AbstractVector{Float64}, objf, curvf)
+    d = length(u)
+    d >= 2 || return nothing
+    lo, hi = laplace.soft_blend_lo, laplace.soft_blend_hi
+    F0 = _soft_shifted_factor(M, blocks, 0.0)
+    F0 === nothing && return nothing
+    eig = _soft_smallest_eigenpair(M, blocks, F0)
+    eig === nothing && return nothing
+    lam1, v1 = eig.lambda, eig.v
+    _soft_second_above(M, blocks, v1, lam1, _soft_degenerate_bar(lam1)) ||
+        return (value=g - max(logdetM, 0.0) / 2, flagged=false, logdet_floor=true)
+    lap = g - logdetM / 2
+    w = _laplace_smoothstep_weight(lam1, lo, hi)
+    iszero(w) && return (value=lap, flagged=true, logdet_floor=false)
+    top = _laplace_soft_node_curvature_floor_top()
+    _soft_second_above(M, blocks, v1, lam1, top) || return nothing
+    lam1c = max(lam1, 1.0)
+    xs, ws = _gauss_hermite(3)
+    terms = zeros(Float64, length(xs))
+    for j in eachindex(xs)
+        x = xs[j]
+        h = if abs(x) < 1e-12
+            g - (F0.logdet - log(lam1)) / 2
+        else
+            ub = u .+ (sqrt(2) * x / sqrt(lam1c)) .* v1
+            r = objf(ub)
+            Mb = curvf(ub)
+            _soft_shifted_factor(Mb, blocks, top) === nothing && return nothing
+            Fb = _soft_shifted_factor(Mb, blocks, 0.0)
+            Fb === nothing && return nothing
+            q = _soft_solve(Fb, blocks, v1)
+            beta = dot(v1, q)
+            y = _soft_solve(Fb, blocks, r.gradient)
+            zz = ub .+ y .- q .* (dot(v1, y) / beta)
+            Float64(objf(zz).value) - (Fb.logdet + log(beta)) / 2
+        end
+        terms[j] = h + log(ws[j]) + x^2
+    end
+    peak = maximum(terms)
+    isfinite(peak) || return (value=NaN, flagged=true, logdet_floor=false)
+    soft = peak + log(sum(exp.(terms .- peak))) - log(lam1c) / 2 - log(pi) / 2
     return (value=lap + w * (soft - lap), flagged=true, logdet_floor=false)
 end
 

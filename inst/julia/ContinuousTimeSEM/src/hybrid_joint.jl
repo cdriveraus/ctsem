@@ -403,12 +403,9 @@ function _hybrid_joint_soft_quadrature(laplace::CTSEMLaplaceObjective, U::Intege
         aws, layout)
     curvature = zz -> _hybrid_joint_curvature(laplace, U, values, Ls, zz, layout)
     jblocks = [CTSEMLaplaceBlock(0, layout.n, collect(eachindex(members)), 1, Int[])]
-    # The layer's unit has a coordinate for every own variance of every member,
-    # observed or not, and its eigenvalue cap counts them all.
-    dlayer = length(u) + length(members) * _hybrid_items(laplace.objective.params.hybrid)
     return _laplace_soft_quadrature_term(laplace, U, values, Ls, z, aws; M=curvature(z),
         inner=objective(z), objective=objective, curvature=curvature,
-        blocks=jblocks, dcheck=dlayer)
+        blocks=jblocks)
 end
 
 ################################################################################

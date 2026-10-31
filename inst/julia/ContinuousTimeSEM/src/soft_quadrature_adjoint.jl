@@ -121,8 +121,9 @@ end
 """
 The soft-direction quadrature's unit, its point's parameters and layout, which its passes
 hand the hand-coded sweeps (`_tan_laplace_theta_gradient!`,
-`_tan_laplace_theta_jet!`). Called, `_laplace_unit_theta_gradient` at `zz`:
-what the tests' oracle differentiates (test/dual_oracles.jl).
+`_tan_laplace_theta_jet!`), and the coordinates each member reads
+(`_soft_quadrature_member_coordinates`). Called, `_laplace_unit_theta_gradient`
+at `zz`: what the tests' oracle differentiates (test/dual_oracles.jl).
 """
 struct _SoftQuadratureThetaGradient{L,DL,P,Y}
     laplace::L
@@ -132,9 +133,37 @@ struct _SoftQuadratureThetaGradient{L,DL,P,Y}
     dL::DL
     positions::P
     layout::Y
+    coords::Vector{Vector{Int}}
 end
+_SoftQuadratureThetaGradient(laplace, U, theta, Ls, dL, positions, layout) =
+    _SoftQuadratureThetaGradient(laplace, Int(U), theta, Ls, dL, positions, layout,
+        _soft_quadrature_member_coordinates(laplace, U, layout))
 (g::_SoftQuadratureThetaGradient)(zz) = _laplace_unit_theta_gradient(g.laplace, g.U, g.theta,
     g.Ls, g.dL, g.positions, zz, g.layout)
+
+"""
+    _soft_quadrature_member_coordinates(laplace, U, layout)
+
+The coordinates of the unit's `z` each member's filter reads: those of every
+block holding it -- its own and its ancestors' -- and in joint coordinates
+(`layout`) its own fixed deviations. A member's curvature is zero outside
+them, which is what lets a trace term be taken member by member
+(`_soft_quadrature_trace!`).
+"""
+function _soft_quadrature_member_coordinates(laplace::CTSEMLaplaceObjective, U::Integer,
+    layout)
+    nm = length(laplace.units.members[U])
+    coords = [Int[] for _ in 1:nm]
+    for block in laplace.units.blocks[U], m in block.members
+        append!(coords[m], (block.offset + 1):(block.offset + block.size))
+    end
+    if layout !== nothing
+        for m in 1:nm
+            append!(coords[m], layout.offs[m] .+ (1:layout.q[m]))
+        end
+    end
+    return coords
+end
 
 """
 `G`'s gradients and their derivatives along `beta`, `(theta, z)` as
@@ -157,11 +186,8 @@ end
 Add `d/dtheta [alpha g + beta' grad g + tr(Gamma M)]` at fixed `z` to
 `thetabar` and return its `z`-gradient, or `nothing` if a pass fails. `G` is
 `_laplace_unit_theta_gradient` at the unit's coordinates; `beta` and `Gamma`
-may be `nothing`. `M = -hess g`, so `tr(Gamma M) = -sum_i sigma_i gamma_i' hess
-g gamma_i` over `Gamma`'s eigenpairs: a sum of second directional derivatives,
-along `sqrt(|sigma_i|) gamma_i`, which a jet (`CTSEMTraceJet`) carries
-`_CTSEM_JET_WIDTH` directions at a time (at `_ctsem_jet_width` of a pass's
-count), the positive and the negative `sigma_i` in passes of their own.
+may be `nothing`. `Gamma` is a dense matrix or a `_SoftGamma`; its trace term
+is `_soft_quadrature_trace!`'s.
 """
 function _laplace_soft_quadrature_vjp!(thetabar::Vector{Float64}, G, z::Vector{Float64},
     alpha::Float64, beta, Gamma)
@@ -189,43 +215,148 @@ function _laplace_soft_quadrature_vjp!(thetabar::Vector{Float64}, G, z::Vector{F
         end
     end
     if Gamma !== nothing
-        E = _ctsem_symeig(Gamma)
-        for sgn in (1.0, -1.0)
-            dirs = [i for i in 1:D if sign(E.values[i]) == sgn]
-            for first in 1:_CTSEM_JET_WIDTH:length(dirs)
-                chunk = dirs[first:min(first + _CTSEM_JET_WIDTH - 1, length(dirs))]
-                ok = _ctsem_jet_width(length(chunk)) == _CTSEM_JET_NARROW ?
-                    _laplace_soft_quadrature_jet_pass!(thetabar, zbar, G, z, E, chunk, sgn,
-                        Val(_CTSEM_JET_NARROW)) :
-                    _laplace_soft_quadrature_jet_pass!(thetabar, zbar, G, z, E, chunk, sgn,
-                        Val(_CTSEM_JET_WIDTH))
-                ok || return nothing
-            end
-        end
+        _soft_quadrature_trace!(thetabar, zbar, G, z, Gamma) || return nothing
     end
     return zbar
 end
 
-# One jet pass of `_laplace_soft_quadrature_vjp!`'s trace term along `chunk`'s
-# eigendirections, at width `W`: `false` where the pass fails.
-function _laplace_soft_quadrature_jet_pass!(thetabar, zbar, G::_SoftQuadratureThetaGradient, z, E, chunk,
-    sgn::Float64, ::Val{W}) where {W}
-    D = length(z)
-    # By the hand-coded jet sweeps (`_tan_laplace_theta_jet!`).
-    B = zeros(D, length(chunk))
-    @inbounds for (j, c) in enumerate(chunk), a in 1:D
-        B[a, j] = sqrt(abs(E.values[c])) * E.vectors[a, c]
+"""
+    _soft_quadrature_trace!(thetabar, zbar, G, z, Gamma)
+
+Add the derivatives of `tr(Gamma M)` at fixed `z`, with respect to the raw
+vector and to `z`, to `thetabar` and `zbar`; `false` if a pass fails. `M = I -
+sum_m hess g_m`, member `m`'s Hessian zero outside the coordinates it reads
+(`G.coords[m]`), so the trace is the members' `-tr(Gamma_m hess g_m)`,
+`Gamma_m` `Gamma`'s block on those coordinates (`_soft_member_gamma`): over
+`Gamma_m`'s eigenpairs a sum of second directional derivatives along
+`sqrt(|sigma_i|) gamma_i`, which a jet (`CTSEMTraceJet`) carries
+`_CTSEM_JET_WIDTH` at a time (at `_ctsem_jet_width` of the widest member's
+count), each member along its own, the positive and the negative `sigma_i` in
+passes of their own. A nested unit then costs two sweeps of its members where
+`Gamma`'s own eigendirections, each reaching every member, cost about `d / 8`.
+"""
+function _soft_quadrature_trace!(thetabar::Vector{Float64}, zbar::Vector{Float64},
+    G::_SoftQuadratureThetaGradient, z::Vector{Float64}, Gamma)
+    coords = G.coords
+    nm = length(coords)
+    pos = Vector{Matrix{Float64}}(undef, nm)
+    neg = Vector{Matrix{Float64}}(undef, nm)
+    for m in 1:nm
+        Gm = _soft_member_gamma(Gamma, G, m)
+        n = size(Gm, 1)
+        if n == 0
+            pos[m] = neg[m] = zeros(Float64, 0, 0)
+            continue
+        end
+        E = _ctsem_symeig(Gm)
+        ip = findall(>(0), E.values)
+        ineg = findall(<(0), E.values)
+        pos[m] = [sqrt(E.values[c]) * E.vectors[i, c] for i in 1:n, c in ip]
+        neg[m] = [sqrt(-E.values[c]) * E.vectors[i, c] for i in 1:n, c in ineg]
     end
-    Gts, Gzs = zeros(length(thetabar)), zeros(D)
-    _tan_laplace_theta_jet!(Gts, Gzs, G.laplace, G.U, G.theta, G.Ls, G.dL,
-        G.positions, z, B, length(chunk), G.layout, CTSEMTraceJet{W}) || return false
-    @inbounds for t in eachindex(thetabar)
-        thetabar[t] -= sgn * Gts[t]
-    end
-    @inbounds for a in 1:D
-        zbar[a] -= sgn * Gzs[a]
+    W = _CTSEM_JET_WIDTH
+    Gts, Gzs = zeros(length(thetabar)), zeros(length(z))
+    for (dirs, sgn) in ((pos, 1.0), (neg, -1.0))
+        most = maximum(d -> size(d, 2), dirs; init=0)
+        for first in 1:W:most
+            nds = [clamp(size(dirs[m], 2) - first + 1, 0, W) for m in 1:nm]
+            chunk = [dirs[m][:, first:(first + nds[m] - 1)] for m in 1:nm]
+            ok = _ctsem_jet_width(maximum(nds)) == _CTSEM_JET_NARROW ?
+                _tan_laplace_theta_jet!(Gts, Gzs, G.laplace, G.U, G.theta, G.Ls, G.dL,
+                    G.positions, z, coords, chunk, nds, G.layout,
+                    CTSEMTraceJet{_CTSEM_JET_NARROW}) :
+                _tan_laplace_theta_jet!(Gts, Gzs, G.laplace, G.U, G.theta, G.Ls, G.dL,
+                    G.positions, z, coords, chunk, nds, G.layout,
+                    CTSEMTraceJet{_CTSEM_JET_WIDTH})
+            ok || return false
+            @inbounds for t in eachindex(thetabar)
+                thetabar[t] -= sgn * Gts[t]
+            end
+            @inbounds for a in eachindex(zbar)
+                zbar[a] -= sgn * Gzs[a]
+            end
+        end
     end
     return true
+end
+
+"""`Gamma`'s block on member `m`'s coordinates (`G.coords[m]`), symmetrised."""
+function _soft_member_gamma(Gamma::AbstractMatrix, G::_SoftQuadratureThetaGradient,
+    m::Integer)
+    S = G.coords[m]
+    return [(Gamma[S[i], S[j]] + Gamma[S[j], S[i]]) / 2 for i in eachindex(S),
+        j in eachindex(S)]
+end
+
+"""
+A trace term's adjoint as the soft-direction quadrature's factorized reverse
+forms it (`_laplace_soft_quadrature_reverse_factored`): `c M^-1 + sum_k w_k
+sym(a_k b_k')`, `M` a block curvature held as the entries of its inverse in its
+own sparsity pattern (`_laplace_selected_inverse`) -- all a member's block of
+it needs, since a member's blocks form a chain. Nothing `d x d` is formed.
+"""
+struct _SoftGamma
+    c::Float64
+    Cdiag::Vector{Matrix{Float64}}
+    Ccoup::Vector{Vector{Matrix{Float64}}}
+    blocks::Vector{CTSEMLaplaceBlock}
+    # Each coordinate's block and its place there.
+    block_of::Vector{Int}
+    place::Vector{Int}
+    w::Vector{Float64}
+    a::Vector{Vector{Float64}}
+    b::Vector{Vector{Float64}}
+end
+
+"""`_SoftGamma` from `c`, the factorization `F` of `M` (`_soft_shifted_factor`)
+and its blocks, and the low-rank terms."""
+function _SoftGamma(c::Float64, F, blocks::Vector{CTSEMLaplaceBlock},
+    w::Vector{Float64}=Float64[], a::Vector{Vector{Float64}}=Vector{Float64}[],
+    b::Vector{Vector{Float64}}=Vector{Float64}[])
+    Cdiag, Ccoup = iszero(c) ?
+        ([zeros(Float64, k.size, k.size) for k in blocks],
+            [[zeros(Float64, k.size, blocks[s].size) for s in k.ancestors] for k in blocks]) :
+        _laplace_selected_inverse(F.factors, F.coupling, blocks)
+    D = sum(k.size for k in blocks; init=0)
+    block_of, place = zeros(Int, D), zeros(Int, D)
+    for (bi, k) in enumerate(blocks), i in 1:k.size
+        block_of[k.offset + i] = bi
+        place[k.offset + i] = i
+    end
+    return _SoftGamma(c, Cdiag, Ccoup, blocks, block_of, place, w, a, b)
+end
+
+function _soft_member_gamma(Gamma::_SoftGamma, G::_SoftQuadratureThetaGradient,
+    m::Integer)
+    S = G.coords[m]
+    n = length(S)
+    out = zeros(Float64, n, n)
+    if !iszero(Gamma.c)
+        for j in 1:n, i in 1:n
+            out[i, j] = Gamma.c * _soft_inverse_entry(Gamma, S[i], S[j])
+        end
+    end
+    for k in eachindex(Gamma.w)
+        wk, ak, bk = Gamma.w[k], Gamma.a[k], Gamma.b[k]
+        iszero(wk) && continue
+        @inbounds for j in 1:n, i in 1:n
+            out[i, j] += wk * (ak[S[i]] * bk[S[j]] + bk[S[i]] * ak[S[j]]) / 2
+        end
+    end
+    return out
+end
+
+# `M^-1[p, q]` for two coordinates whose blocks are the same or one an
+# ancestor of the other, as every pair of one member's are.
+function _soft_inverse_entry(Gamma::_SoftGamma, p::Int, q::Int)
+    bp, bq = Gamma.block_of[p], Gamma.block_of[q]
+    ip, iq = Gamma.place[p], Gamma.place[q]
+    bp == bq && return Gamma.Cdiag[bp][ip, iq]
+    t = findfirst(==(bq), Gamma.blocks[bp].ancestors)
+    t === nothing || return Gamma.Ccoup[bp][t][ip, iq]
+    t = findfirst(==(bp), Gamma.blocks[bq].ancestors)
+    t === nothing || return Gamma.Ccoup[bq][t][iq, ip]
+    error("coordinates ", p, " and ", q, " are in blocks with no ancestor relation")
 end
 
 # Dense helpers for the rule's own algebra: loops, never BLAS (no lock).
@@ -306,20 +437,21 @@ function _dense_spectral(Q::Matrix{Float64}, v::Vector{Float64})
 end
 
 """
-    _laplace_soft_quadrature_reverse(laplace, z0, objf, curvf, G, dcheck, npar)
+    _laplace_soft_quadrature_reverse(laplace, z0, objf, curvf, G, npar)
 
 The soft-quadrature term's gradient at the unit's mode `z0`, by the reverse pass at the
-top of this file, or `nothing` where the forward rule would not take its
-eigenvalue path (the caller then differentiates it the other way). `objf(z)`
-is the unit objective's `(value, gradient)`, `curvf(z)` its curvature as a
-dense matrix, `G` `_laplace_unit_theta_gradient` in the same coordinates, and
-`dcheck` the dimension the eigenvalue cap compares, as the forward rule's.
+top of this file in dense algebra, or `nothing` where the forward rule would
+not take its eigenvalue path (the caller then differentiates it the other
+way). `objf(z)` is the unit objective's `(value, gradient)`, `curvf(z)` its
+curvature as a dense matrix, `G` `_laplace_unit_theta_gradient` in the same
+coordinates. Where the floor at the nodes is the identity
+`_laplace_soft_quadrature_reverse_factored` takes the same gradient from block
+factorizations, and this is its oracle.
 """
 function _laplace_soft_quadrature_reverse(laplace::CTSEMLaplaceObjective, z0::Vector{Float64},
-    objf, curvf, G, dcheck::Integer, npar::Integer)
+    objf, curvf, G, npar::Integer)
     D = length(z0)
     lo, hi = laplace.soft_blend_lo, laplace.soft_blend_hi
-    dcheck > _LAPLACE_EIGEN_MAXDIM[] && return nothing
     r0 = objf(z0)
     g0 = Float64(r0.value)
     isfinite(g0) || return nothing
@@ -504,6 +636,151 @@ function _laplace_soft_quadrature_close!(thetabar, G, z0, gbar0, Mbar0, zbar0, M
 end
 
 """
+    _laplace_soft_quadrature_reverse_factored(laplace, z0, objf, curvb, blocks, G, npar)
+
+`_laplace_soft_quadrature_reverse` by block factorizations, where the forward
+rule takes them (`_laplace_soft_quadrature_factored`): `nothing` wherever that
+declines, and the caller then takes the dense reverse. `curvb(z)` is the
+unit's curvature as a block matrix on `blocks`.
+
+The same reverse in the forward's terms. With `q = Mb^-1 v1`, `beta = v1' q`
+and `P = Mb^-1 - q q' / beta`, a node's complement logdet is `logdet Mb + log
+beta` and its step `s = P grad`; `P` is `V (V' Mb V)^-1 V'`, so `dP = -P dMb
+P`. Each point's trace adjoint is then a multiple of its curvature's inverse
+plus outer products (`_SoftGamma`), and the eigenvector's own derivative,
+`-(M0 - lambda1)^+ dM0 v1`, is a solve in `v1`'s complement
+(`_soft_deflated_solve`).
+"""
+function _laplace_soft_quadrature_reverse_factored(laplace::CTSEMLaplaceObjective,
+    z0::Vector{Float64}, objf, curvb, blocks::Vector{CTSEMLaplaceBlock}, G,
+    npar::Integer)
+    D = length(z0)
+    D >= 2 || return nothing
+    lo, hi = laplace.soft_blend_lo, laplace.soft_blend_hi
+    r0 = objf(z0)
+    g0 = Float64(r0.value)
+    isfinite(g0) || return nothing
+    M0 = curvb(z0)
+    F0 = _soft_shifted_factor(M0, blocks, 0.0)
+    F0 === nothing && return nothing
+    thetabar = zeros(Float64, npar)
+    plain() = _soft_factored_close!(thetabar, G, z0, 1.0, _SoftGamma(-0.5, F0, blocks),
+        zeros(Float64, D), F0, blocks)
+    # Above the gate the forward rule returns the plain term.
+    _soft_shifted_factor(M0, blocks, hi) === nothing || return plain()
+    eig = _soft_smallest_eigenpair(M0, blocks, F0)
+    eig === nothing && return nothing
+    lam1, v1 = eig.lambda, eig.v
+    _soft_second_above(M0, blocks, v1, lam1, _soft_degenerate_bar(lam1)) ||
+        return nothing
+    w, wp = if lam1 <= lo
+        (1.0, 0.0)
+    elseif lam1 >= hi
+        (0.0, 0.0)
+    else
+        s = (lam1 - lo) / (hi - lo)
+        (1 - (3 * s^2 - 2 * s^3), -(6 * s - 6 * s^2) / (hi - lo))
+    end
+    iszero(w) && return plain()
+    top = _laplace_soft_node_curvature_floor_top()
+    _soft_second_above(M0, blocks, v1, lam1, top) || return nothing
+    lap = g0 - F0.logdet / 2
+    lam1c = max(lam1, 1.0)
+    xs, ws = _gauss_hermite(3)
+    nn = length(xs)
+    terms = zeros(Float64, nn)
+    nodes = Vector{Any}(undef, nn)
+    for j in 1:nn
+        x = xs[j]
+        if abs(x) < 1e-12
+            h = g0 - (F0.logdet - log(lam1)) / 2
+            nodes[j] = (kind=:centre,)
+        else
+            a = sqrt(2) * x / sqrt(lam1c)
+            ub = z0 .+ a .* v1
+            rgrad = Vector{Float64}(objf(ub).gradient)
+            Mb = curvb(ub)
+            _soft_shifted_factor(Mb, blocks, top) === nothing && return nothing
+            Fb = _soft_shifted_factor(Mb, blocks, 0.0)
+            Fb === nothing && return nothing
+            q = _soft_solve(Fb, blocks, v1)
+            beta = dot(v1, q)
+            y = _soft_solve(Fb, blocks, rgrad)
+            s = y .- q .* (dot(v1, y) / beta)
+            zz = ub .+ s
+            rz = objf(zz)
+            isfinite(rz.value) || return nothing
+            h = Float64(rz.value) - (Fb.logdet + log(beta)) / 2
+            nodes[j] = (kind=:node, a=a, ub=ub, Fb=Fb, q=q, beta=beta, y=y, s=s, zz=zz)
+        end
+        terms[j] = h + log(ws[j]) + x^2
+    end
+    peak = maximum(terms)
+    isfinite(peak) || return nothing
+    ex = [exp(t - peak) for t in terms]
+    total = sum(ex)
+    soft = peak + log(total) - log(lam1c) / 2 - log(pi) / 2
+    # Reverse.
+    lapbar, softbar, wbar = 1 - w, w, soft - lap
+    lam1bar = wbar * wp
+    lam1 > 1.0 && (lam1bar -= softbar / (2 * lam1c))
+    gbar0, c0 = 0.0, 0.0
+    v1bar = zeros(Float64, D)
+    zbar0 = zeros(Float64, D)
+    for j in 1:nn
+        hbar = softbar * ex[j] / total
+        node = nodes[j]
+        if node.kind === :centre
+            # -(logdet M0 - log lambda1) / 2.
+            gbar0 += hbar
+            c0 -= hbar / 2
+            lam1bar += hbar / (2 * lam1)
+            continue
+        end
+        zzbar = _laplace_soft_quadrature_vjp!(thetabar, G, node.zz, hbar, nothing, nothing)
+        zzbar === nothing && return nothing
+        q, beta, y, s = node.q, node.beta, node.y, node.s
+        ys = _soft_solve(node.Fb, blocks, zzbar)
+        t = ys .- q .* (dot(v1, ys) / beta)
+        # -(hbar / 2) P from the logdet, -sym(s t') from the step.
+        Gb = _SoftGamma(-hbar / 2, node.Fb, blocks, [hbar / (2 * beta), -1.0], [q, s],
+            [q, t])
+        ub2 = _laplace_soft_quadrature_vjp!(thetabar, G, node.ub, 0.0, t, Gb)
+        ub2 === nothing && return nothing
+        ubbar = zzbar .+ ub2
+        # v1 through `log beta` and through P.
+        v1y, v1ys = dot(v1, y), dot(v1, ys)
+        @inbounds for i in 1:D
+            v1bar[i] += -hbar * q[i] / beta - (v1y * ys[i] + v1ys * y[i]) / beta +
+                2 * v1ys * v1y * q[i] / beta^2 + node.a * ubbar[i]
+            zbar0[i] += ubbar[i]
+        end
+        lam1 > 1.0 && (lam1bar += dot(v1, ubbar) * (-node.a / (2 * lam1c)))
+    end
+    # The eigenvector's derivative, -(M0 - lambda1)^+ dM0 v1.
+    vperp = v1bar .- v1 .* dot(v1, v1bar)
+    y1 = _soft_deflated_solve(eig, blocks, vperp)
+    y1 === nothing && return nothing
+    gbar0 += lapbar
+    c0 -= lapbar / 2
+    G0 = _SoftGamma(c0, F0, blocks, [lam1bar, -1.0], [v1, y1], [v1, v1])
+    return _soft_factored_close!(thetabar, G, z0, gbar0, G0, zbar0, F0, blocks)
+end
+
+"""`_laplace_soft_quadrature_close!` on a factorization: the mode's own terms,
+then `dz0 = M0^-1 d(grad g)/dtheta` by a block solve."""
+function _soft_factored_close!(thetabar, G, z0, gbar0, Gamma0::_SoftGamma, zbar0, F0,
+    blocks)
+    zb = _laplace_soft_quadrature_vjp!(thetabar, G, z0, gbar0, nothing, Gamma0)
+    zb === nothing && return nothing
+    zbar0 .+= zb
+    beta = _soft_solve(F0, blocks, zbar0)
+    _laplace_soft_quadrature_vjp!(thetabar, G, z0, 0.0, beta, nothing) === nothing &&
+        return nothing
+    return thetabar
+end
+
+"""
     _laplace_soft_quadrature_unit_adjoint(laplace, U, theta)
 
 Unit `U`'s soft-quadrature term's gradient by `_laplace_soft_quadrature_reverse`, in the unit's own
@@ -514,7 +791,12 @@ function _laplace_soft_quadrature_unit_adjoint(laplace::CTSEMLaplaceObjective, U
     theta::Vector{Float64})
     st = _laplace_soft_quadrature_setup(laplace, U, theta, laplace.modes[U])
     st === nothing && return nothing
-    return _laplace_soft_quadrature_reverse(laplace, st.z0, st.objf, st.curvf, st.G, st.dcheck,
+    if _LAPLACE_SOFT_QUADRATURE_FACTORED[]
+        g = _laplace_soft_quadrature_reverse_factored(laplace, st.z0, st.objf, st.curvb,
+            st.blocks, st.G, length(theta))
+        g === nothing || return g
+    end
+    return _laplace_soft_quadrature_reverse(laplace, st.z0, st.objf, st.curvf, st.G,
         length(theta))
 end
 
@@ -524,11 +806,12 @@ end
 What the soft-direction quadrature's reverse pass reads at unit `U`'s mode `uhat`: the
 coordinates `z0` -- the unit's own, or for an objective whose filter integrates
 deviations the joint ones, the deviations at their modes -- the unit objective
-`objf` and its curvature `curvf` there, the passes' `G` (`_SoftQuadratureThetaGradient`)
-and the dimension `dcheck` the eigenvalue cap compares; `nothing` where the
-unit has no coordinate or a member cannot be evaluated. Shared by the soft-quadrature
-term's gradient (`_laplace_soft_quadrature_unit_adjoint`) and a mode's fade in its
-unit's sum (`_laplace_mode_fade`).
+`objf` and its curvature there, as a dense matrix (`curvf`) and as a block
+matrix (`curvb`) on `blocks`, and the passes' `G` (`_SoftQuadratureThetaGradient`);
+`nothing` where the unit has no coordinate or a member cannot be evaluated.
+Shared by the soft-quadrature term's gradient
+(`_laplace_soft_quadrature_unit_adjoint`) and a mode's fade in its unit's sum
+(`_laplace_mode_fade`).
 """
 function _laplace_soft_quadrature_setup(laplace::CTSEMLaplaceObjective, U::Integer,
     theta::Vector{Float64}, uhat::Vector{Float64})
@@ -554,22 +837,27 @@ function _laplace_soft_quadrature_setup(laplace::CTSEMLaplaceObjective, U::Integ
         objf = let layout = layout
             zz -> _hybrid_joint_objective_gradient(laplace, U, theta, Ls, zz, aws, layout)
         end
-        curvf = let layout = layout
-            zz -> _hybrid_joint_curvature(laplace, U, theta, Ls, zz, layout).diag[1]
+        # `let` wherever a closure captures a name both branches assign, or the
+        # name is boxed.
+        curvb = let layout = layout
+            zz -> _hybrid_joint_curvature(laplace, U, theta, Ls, zz, layout)
         end
-        dcheck = length(uhat) + length(members) *
-            _hybrid_items(laplace.objective.params.hybrid)
+        curvf = let curvb = curvb
+            zz -> curvb(zz).diag[1]
+        end
+        blocks = [CTSEMLaplaceBlock(0, layout.n, collect(eachindex(members)), 1, Int[])]
     else
         layout = nothing
         z0 = copy(uhat)
         blocks = laplace.units.blocks[U]
         objf = zz -> _laplace_unit_objective_gradient(laplace, U, theta, Ls, zz, aws)
-        curvf = zz -> _laplace_block_dense(_laplace_unit_curvature(laplace, U, theta,
-            Ls, zz), blocks, length(zz))
-        dcheck = length(uhat)
+        curvb = zz -> _laplace_unit_curvature(laplace, U, theta, Ls, zz)
+        curvf = let curvb = curvb, blocks = blocks
+            zz -> _laplace_block_dense(curvb(zz), blocks, length(zz))
+        end
     end
     G = _SoftQuadratureThetaGradient(laplace, Int(U), theta, Ls, dL, positions, layout)
-    return (z0=z0, objf=objf, curvf=curvf, G=G, dcheck=dcheck)
+    return (z0=z0, objf=objf, curvf=curvf, curvb=curvb, blocks=blocks, G=G)
 end
 
 """
