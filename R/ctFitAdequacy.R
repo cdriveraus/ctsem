@@ -150,7 +150,9 @@
 #' with the random effects integrated against their posterior given those rows
 #' by importance sampling (\code{getOption('ctsem.sequential.particles', 512)}
 #' quasi-random draws a subject), the own variances integrated in the filter
-#' exactly. The approximation the fit itself uses there -- the posterior's
+#' exactly. The draws are fixed by \code{getOption('ctsem.sequential.seed')},
+#' so a call repeats; another seed, or more draws, shows how much of a result
+#' is the sampling's. The approximation the fit itself uses there -- the posterior's
 #' mode on each truncated record, its uncertainty added by the delta method --
 #' is exact only for effects that enter linearly; elsewhere it put a 1.5 per
 #' cent bias into the predictive variance, and correct models were rejected
