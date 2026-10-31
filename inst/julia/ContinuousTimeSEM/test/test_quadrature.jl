@@ -322,24 +322,71 @@ end
     Q = [cos(0.4) -sin(0.4); sin(0.4) cos(0.4)]
     concave = Q * Diagonal([6.0, 1.5]) * transpose(Q)
     F = C._ctsem_cholesky(copy(concave), 2)
-    rule = C._quadrature_clipped_scale(F, 2)
+    rule = C._quadrature_scale(F, 2)
     @test !rule.clipped
-    @test rule.scale == C._ctsem_cholesky_uinv(F)
+    @test rule.S == C._ctsem_cholesky_uinv(F)
     @test rule.logdetscale == -logdet(F) / 2
+    # From the precision itself, the same scale as from its factor.
+    @test C._quadrature_scale(concave, 2) == rule
     # One eigenvalue at 1e-3: scaled as if it were one, never wider than the prior.
     convex = Q * Diagonal([6.0, 1e-3]) * transpose(Q)
     G = C._ctsem_cholesky(copy(convex), 2)
-    clipped = C._quadrature_clipped_scale(G, 2)
+    clipped = C._quadrature_scale(G, 2)
     @test clipped.clipped
     target = Q * Diagonal([6.0, 1.0]) * transpose(Q)
-    @test clipped.scale * transpose(clipped.scale) ≈ inv(target) rtol = 1e-10
+    @test clipped.S * transpose(clipped.S) ≈ inv(target) rtol = 1e-10
+    @test transpose(clipped.U) * clipped.U ≈ target rtol = 1e-10
     @test clipped.logdetscale ≈ -log(6.0) / 2 rtol = 1e-10
+    # An indefinite precision, which has no factor: clipped the same way, and
+    # its eigenvalues kept for the derivative through the clip.
+    saddle = Q * Diagonal([6.0, -2.0]) * transpose(Q)
+    indefinite = C._quadrature_scale(saddle, 2)
+    @test indefinite.ok && indefinite.clipped
+    @test indefinite.values ≈ [-2.0, 6.0] rtol = 1e-10
+    @test indefinite.S * transpose(indefinite.S) ≈ inv(target) rtol = 1e-10
+    @test !C._quadrature_scale(fill(NaN, 2, 2), 2).ok
     # Continuous across the switch: just below one, the clipped scale is the
     # unclipped one to the size of the gap.
     near = Q * Diagonal([6.0, 1 - 1e-9]) * transpose(Q)
     Hn = C._ctsem_cholesky(copy(near), 2)
-    @test isapprox(C._quadrature_clipped_scale(Hn, 2).scale, C._ctsem_cholesky_uinv(Hn);
+    @test isapprox(C._quadrature_scale(Hn, 2).S, C._ctsem_cholesky_uinv(Hn);
         atol=1e-8)
+end
+
+@testset "a leaf's solve leaves a saddle for a maximum" begin
+    C = ContinuousTimeSEM
+    laplace, _ = _fresh_linear()
+    # f(Q w) = -w1^2 + w2^2/2 - w2^4/8: a saddle at the origin, maxima at
+    # w2 = +-sqrt(2) with value 1/2 and precision 2I, turned off the axes.
+    Q = [cos(0.4) -sin(0.4); sin(0.4) cos(0.4)]
+    inner = function (z)
+        w = transpose(Q) * z
+        (value=-w[1]^2 + w[2]^2 / 2 - w[2]^4 / 8,
+         gradient=Q * [-2 * w[1], w[2] - w[2]^3 / 2])
+    end
+    precision_at = z -> (w = transpose(Q) * z;
+        Q * Diagonal([2.0, 1.5 * w[2]^2 - 1]) * transpose(Q))
+    # From a point with no gradient along the saddle's negative direction,
+    # Newton ends on the saddle; the solve leaves it.
+    z0 = Q * [0.3, 0.0]
+    zn, cn = C._quadrature_leaf_newton(inner, precision_at, z0, inner(z0), laplace, 2)
+    @test maximum(abs, zn) < 1e-6
+    r = C._quadrature_leaf_solve(inner, precision_at, z0, inner(z0), laplace, 2)
+    w = transpose(Q) * r.z
+    @test abs(w[1]) < 1e-6
+    @test abs(abs(w[2]) - sqrt(2)) < 1e-6
+    @test r.current.value ≈ 0.5 rtol = 1e-10
+    @test !r.sc.clipped
+    @test r.M ≈ 2 * Matrix(I, 2, 2) rtol = 1e-8
+    # The two maxima are equal; the signed direction picks the same one
+    # whichever sign the eigensolver returns: the one whose largest entry is
+    # positive along the negative direction, Q's second column.
+    @test w[2] > 0
+    # From an indefinite point off the saddle's line, the step on the clipped
+    # precision climbs straight to the maximum on its side.
+    z1 = Q * [0.3, -0.5]
+    r1 = C._quadrature_leaf_solve(inner, precision_at, z1, inner(z1), laplace, 2)
+    @test (transpose(Q) * r1.z)[2] ≈ -sqrt(2) rtol = 1e-6
 end
 
 @testset "the soft-direction reference rule is exact for a Gaussian, and one node is the clipped Laplace" begin

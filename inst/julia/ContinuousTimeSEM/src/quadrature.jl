@@ -33,7 +33,7 @@ approximation rather than the estimand or the data.
     Gauss-Hermite quadrature, using the mode and curvature the Laplace fit has
     already computed as the rule's location and scale -- the curvature
     clipped from below at the prior's, `M~ = V max(Lambda, 1) V'`, see
-    `_quadrature_clipped_scale`. `nodes = 1` reproduces the Laplace value
+    `_quadrature_scale`. `nodes = 1` reproduces the Laplace value
     exactly wherever `M >= I`, which is what `test_quadrature.jl` asserts; on a
     unit with an eigenvalue below one it gives `g(uhat) - sum log max(lambda, 1)
     / 2` instead, the eigenwise-floored term, because that is the one-point rule
@@ -238,11 +238,19 @@ function _quadrature_children(blocks::Vector{CTSEMLaplaceBlock})
 end
 
 """
-    _quadrature_clipped_scale(F, k)
+    _quadrature_scale(M, k)
+    _quadrature_scale(F, k)
 
-The rule's scale and log scale from a block's precision `D = F.L F.L'`, with
-`D`'s eigenvalues clipped from below at one: `S S' = inv(D~)`,
-`D~ = V max(Lambda, 1) V'`.
+A rule's scale from a block's precision `M`, or from a factor `F` of it
+already formed (an outer block's eliminated precision, `_laplace_factor_repaired!`'s
+`factors`), with the eigenvalues clipped from below at one, the prior's:
+`S = U^-1` for `M~ = U'U`, `M~ = V max(Lambda, 1) V'`, so `S S' = inv(M~)`;
+the log scale `-logdet(M~) / 2`; and, for the derivative through the clip
+(`_placed_mbar`), whether anything was clipped and the eigenvalues and vectors
+of the matrix that was. Every rule's scale comes from here: the product and
+lattice rules of the quadrature, the continuation and the placed objective,
+and SAEM's leaf proposals. `ok` is false where the clipped precision does not
+factor, which only a precision that is not finite gives.
 
 The precision is the Gaussian the rule is centred on, and scaling the nodes by
 `D^(-1/2)` places them where that Gaussian puts its mass. Where the log
@@ -256,91 +264,63 @@ The clip never makes a node wider than the prior's own spread, and the rule is
 a change of variables whatever `S` is, so it stays a quadrature of the same
 integral; only where its nodes go changes.
 
-`D - I` positive definite -- every eigenvalue above one -- returns the Cholesky
-scale exactly as before, bit for bit. Otherwise `D~` is built by the engine's
+`M - I` positive definite -- every eigenvalue above one -- returns the Cholesky
+scale exactly as before, bit for bit. Otherwise `M~` is built by the engine's
 own symmetric eigensolver and factored the same way, so the scale is continuous
-in `D` across the switch (`D~ -> D` as its smallest eigenvalue rises to one).
+in `M` across the switch (`M~ -> M` as its smallest eigenvalue rises to one).
+A precision that factors is read through its factor, `D = F.L F.L'`, as an
+outer block's is.
 """
-function _quadrature_clipped_scale(F::CTSEMCholesky, k::Integer)
+function _quadrature_scale(M::Matrix{Float64}, k::Integer)
+    F = _ctsem_cholesky(copy(M), k)
+    issuccess(F) && return _quadrature_scale(F, k)
+    return _quadrature_clip_scale(M, k)
+end
+
+function _quadrature_scale(F::CTSEMCholesky, k::Integer)
     Lf = Matrix(F.L)
     D = Lf * transpose(Lf)
-    shifted = D - Matrix{Float64}(LinearAlgebra.I, k, k)
-    issuccess(_ctsem_cholesky(shifted, k)) &&
-        return (scale=_ctsem_cholesky_uinv(F), logdetscale=-logdet(F) / 2,
-            clipped=false)
+    issuccess(_ctsem_cholesky(D - Matrix{Float64}(LinearAlgebra.I, k, k), k)) &&
+        return (S=_ctsem_cholesky_uinv(F), U=Matrix(UpperTriangular(F.U[1:k, 1:k])),
+            logdetscale=-logdet(F) / 2, clipped=false, vectors=zeros(0, 0),
+            values=Float64[], ok=true)
+    return _quadrature_clip_scale(D, k)
+end
+
+"""The scale `_quadrature_scale` returns where none can be built (`ok` false),
+of the same type."""
+_quadrature_scale_failed() = (S=zeros(0, 0), U=zeros(0, 0), logdetscale=NaN,
+    clipped=true, vectors=zeros(0, 0), values=Float64[], ok=false)
+
+function _quadrature_clip_scale(D::Matrix{Float64}, k::Integer)
     E = _ctsem_symeig(D)
+    all(isfinite, E.values) || return _quadrature_scale_failed()
     clipped = E.vectors * Diagonal(max.(E.values, 1.0)) * transpose(E.vectors)
     G = _ctsem_cholesky(Matrix(_laplace_symmetrise(clipped)), k)
-    return (scale=_ctsem_cholesky_uinv(G), logdetscale=-logdet(G) / 2,
-        clipped=true)
+    issuccess(G) || return _quadrature_scale_failed()
+    return (S=_ctsem_cholesky_uinv(G), U=Matrix(UpperTriangular(G.U[1:k, 1:k])),
+        logdetscale=-logdet(G) / 2, clipped=true, vectors=Matrix(E.vectors),
+        values=collect(E.values), ok=true)
 end
 
 """
-    _quadrature_leaf_rule!(laplace, U, theta, Ls, b, u, aws; start=nothing)
+    _quadrature_leaf_newton(inner, precision_at, z, current, laplace, k)
 
-The conditional mode and scale for a leaf block, with its ancestors held at
-whatever `u` currently says.
-
-The leaf mode is where the accuracy is. It moves a long way with the effect
-above it -- a subject whose study effect has been pushed two standard deviations
-has a different best guess about its own -- so re-solving it at every outer node
-is the point of the recursion rather than an optimisation within it.
-
-Newton on this block's coordinates only, from `start` (the unit's joint mode,
-from `_quadrature_block`; the block's current entries of `u` otherwise). The
-ancestors are data here, and a member outside this block contributes nothing to
-its curvature, so the problem is `k x k` however large the unit is.
-
-Away from the joint mode a leaf need not be concave. A subject whose study
-effect sits at an outer node can put its own drift where `-log1p_exp` bends,
-and the leaf's precision then has an eigenvalue at or below zero on the way to
-its conditional mode. This used to return a failure there, the node scored
-`NaN`, and a unit of a nested model whose study rule reached two prior standard
-deviations out lost the whole quadrature: on the gated-gaps job's N1 fixture
-(8 studies of 5, a random drift and intercept per subject, a random study
-intercept) five of eight studies failed at the Laplace optimum and the
-five-node check reported `NaN`. Now such a step is taken along the precision
-with its eigenvalues floored, an ascent direction that a line search on the
-block's own log integrand then sizes, and a conditional mode whose precision
-does not factorize is scaled by its eigenvalues clipped at the prior's -- the
-clip `_quadrature_clipped_scale` applies, which needs a factor to start from.
-Where every Newton step's precision factorizes and the full step raises the
-integrand, the path and the scale are what they were, bit for bit.
-
-Returns `(ok, centre, scale, logdetscale, precision, gradmax)` with `scale *
-scale' = M~^-1`, the curvature clipped at the prior's
-(`_quadrature_clipped_scale`), `precision` the unclipped `M` at the centre,
-which a rule placed at every evaluation differentiates through
-(`laplace_placed.jl`), and `gradmax` the integrand's largest gradient left
-there.
+Newton on a leaf's log integrand `inner` from `z`, where it is `current`. Each
+step is `M \\ g` on the block's precision `precision_at(z)`, or, where that does
+not factor (away from a maximum), on the precision clipped at the prior's,
+`V max(Lambda, 1) V'`, the matrix the rule's scale is built from
+(`_quadrature_scale`). That is an ascent direction whatever the curvature, and
+no longer along a direction of curvature under the prior's than the gradient
+there; a line search on the integrand sizes it. Floored at 1e-8 of the largest
+eigenvalue instead, an eigenvalue at or below zero made the step about 1e8
+times too long for twenty halvings to bring back: on AnomAuth (race fixture
+anomS1) two units 0.3 se from the estimate stopped with a gradient of 0.1,
+their precision indefinite, the rule placed at no mode. Returns `(z, current)`
+where the solve stopped.
 """
-function _quadrature_leaf_rule!(laplace::CTSEMLaplaceObjective, U::Integer,
-    theta::Vector{Float64}, Ls::Vector{Matrix{Float64}}, b::Integer,
-    u::Vector{Float64}, aws; start=nothing)
-    block = laplace.units.blocks[U][b]
-    k = block.size
-    columns = (block.offset + 1):(block.offset + k)
-    members = block.members
-    failure = (ok=false, centre=Float64[], scale=zeros(Float64, 0, 0), logdetscale=0.0,
-        precision=zeros(Float64, 0, 0), gradmax=NaN)
-
-    # The block's own log integrand -- its members' log likelihood less
-    # `z'z/2` -- and its gradient, as a function of this block alone.
-    inner = function (z)
-        work = copy(u)
-        @inbounds for (t, c) in enumerate(columns); work[c] = z[t]; end
-        result = _laplace_unit_loglik_gradient(laplace, U, theta, Ls, work, aws,
-            members, nothing, _HYBRID_FULL)
-        isfinite(result.value) || return (value=-Inf, gradient=fill(NaN, k))
-        return (value=result.value - dot(z, z) / 2,
-            gradient=[result.gradient[c] for c in columns] .- z)
-    end
-    precision_at = z -> _laplace_block_precision(laplace, U, theta, Ls, u, b, z;
-        mode=_HYBRID_FULL)
-
-    z = start === nothing ? Float64[u[c] for c in columns] : collect(Float64, start)
-    current = inner(z)
-    all(isfinite, current.gradient) || return failure
+function _quadrature_leaf_newton(inner, precision_at, z::Vector{Float64}, current,
+    laplace::CTSEMLaplaceObjective, k::Integer)
     for _ in 1:laplace.inner_maxiter
         maximum(abs, current.gradient) < laplace.inner_tol && break
         M = precision_at(z)
@@ -350,17 +330,9 @@ function _quadrature_leaf_rule!(laplace::CTSEMLaplaceObjective, U::Integer,
         step = if issuccess(factorization)
             factorization \ current.gradient
         else
-            # Each eigenvalue by its magnitude: an ascent direction scaled by
-            # the curvature along it. Floored at the eigenvalue alone, as it
-            # was, a negative one became 1e-8 of the largest, the step along
-            # it 1e8 times too long for twenty halvings to bring back, and
-            # the solve stopped there: on AnomAuth (race fixture anomS1) two
-            # units 0.3 se from the estimate stopped with a gradient of 0.1,
-            # their precision indefinite, the rule placed at no mode.
             E = _ctsem_symeig(M)
-            lowest = 1e-8 * max(maximum(abs, E.values), 1.0)
             E.vectors * ((transpose(E.vectors) * current.gradient) ./
-                max.(abs.(E.values), lowest))
+                max.(E.values, 1.0))
         end
         # A step at roundoff is a mode however large the gradient's roundoff
         # is; see `_laplace_newton_unit_mode`.
@@ -381,20 +353,118 @@ function _quadrature_leaf_rule!(laplace::CTSEMLaplaceObjective, U::Integer,
         end
         accepted || break
     end
+    return z, current
+end
+
+"""
+    _quadrature_leaf_solve(inner, precision_at, z, current, laplace, k)
+
+A leaf's centre from `z`: Newton (`_quadrature_leaf_newton`), and where that
+ends at a precision with a negative eigenvalue, which is no maximum's -- a
+saddle, or a solve stopped on the way to one -- Newton again from a prior sd
+either way along the most negative direction. Newton does not leave a saddle
+along a direction the gradient has no part in; these starts are the inner
+solve's probes' along a soft direction (`_laplace_probe_modes`), and the
+centre moves only where one gains beyond the value's roundoff
+(`_laplace_inner_tolerance`). The direction is signed
+(`_ctsem_signed_columns!`), so which of two equal maxima is taken does not
+depend on the eigensolver. Returns `(z, current, M, sc)`: the centre, the
+integrand there, its precision and the clipped scale (`_quadrature_scale`).
+"""
+function _quadrature_leaf_solve(inner, precision_at, z::Vector{Float64}, current,
+    laplace::CTSEMLaplaceObjective, k::Integer)
+    z, current = _quadrature_leaf_newton(inner, precision_at, z, current, laplace, k)
     M = precision_at(z)
-    factorization = _ctsem_cholesky(copy(M), k)
-    if issuccess(factorization)
-        rule = _quadrature_clipped_scale(factorization, k)
-        return (ok=true, centre=z, scale=rule.scale, logdetscale=rule.logdetscale,
-            precision=M, gradmax=maximum(abs, current.gradient))
+    sc = _quadrature_scale(M, k)
+    if sc.ok && sc.clipped && sc.values[1] < 0
+        v = sc.vectors[:, 1:1]
+        _ctsem_signed_columns!(v)
+        bar = current.value + _laplace_inner_tolerance(laplace, current.value)
+        moved = false
+        for s in (1.0, -1.0)
+            zs = z .+ s .* v[:, 1]
+            cs = inner(zs)
+            all(isfinite, cs.gradient) || continue
+            zs, cs = _quadrature_leaf_newton(inner, precision_at, zs, cs, laplace, k)
+            cs.value > bar || continue
+            z, current, moved = zs, cs, true
+            bar = cs.value + _laplace_inner_tolerance(laplace, cs.value)
+        end
+        if moved
+            M = precision_at(z)
+            sc = _quadrature_scale(M, k)
+        end
     end
-    E = _ctsem_symeig(M)
-    all(isfinite, E.values) || return failure
-    clipped = E.vectors * Diagonal(max.(E.values, 1.0)) * transpose(E.vectors)
-    G = _ctsem_cholesky(Matrix(_laplace_symmetrise(clipped)), k)
-    issuccess(G) || return failure
-    return (ok=true, centre=z, scale=_ctsem_cholesky_uinv(G),
-        logdetscale=-logdet(G) / 2, precision=M, gradmax=maximum(abs, current.gradient))
+    return (z=z, current=current, M=M, sc=sc)
+end
+
+"""
+    _quadrature_leaf_rule!(laplace, U, theta, Ls, b, u, aws; start=nothing)
+
+The conditional mode and scale for a leaf block, with its ancestors held at
+whatever `u` currently says.
+
+The leaf mode is where the accuracy is. It moves a long way with the effect
+above it -- a subject whose study effect has been pushed two standard deviations
+has a different best guess about its own -- so re-solving it at every outer node
+is the point of the recursion rather than an optimisation within it.
+
+Newton on this block's coordinates only (`_quadrature_leaf_solve`), from
+`start` (the unit's joint mode, from `_quadrature_block`; the block's current
+entries of `u` otherwise). The ancestors are data here, and a member outside
+this block contributes nothing to its curvature, so the problem is `k x k`
+however large the unit is.
+
+Away from the joint mode a leaf need not be concave. A subject whose study
+effect sits at an outer node can put its own drift where `-log1p_exp` bends,
+and the leaf's precision then has an eigenvalue at or below zero on the way to
+its conditional mode. This used to return a failure there, the node scored
+`NaN`, and a unit of a nested model whose study rule reached two prior standard
+deviations out lost the whole quadrature: on the gated-gaps job's N1 fixture
+(8 studies of 5, a random drift and intercept per subject, a random study
+intercept) five of eight studies failed at the Laplace optimum and the
+five-node check reported `NaN`. Such a step is taken on the precision clipped
+at the prior's, and a centre whose precision has a negative eigenvalue, which
+is no maximum, is left along it. Where every Newton step's precision
+factorizes and the full step raises the integrand, the path and the scale are
+what they were, bit for bit.
+
+Returns `(ok, centre, sc, precision, gradmax)`: `sc` the clipped scale at the
+centre (`_quadrature_scale`), `precision` the unclipped `M` there, which a rule
+placed at every evaluation differentiates through (`laplace_placed.jl`), and
+`gradmax` the integrand's largest gradient left there.
+"""
+function _quadrature_leaf_rule!(laplace::CTSEMLaplaceObjective, U::Integer,
+    theta::Vector{Float64}, Ls::Vector{Matrix{Float64}}, b::Integer,
+    u::Vector{Float64}, aws; start=nothing)
+    block = laplace.units.blocks[U][b]
+    k = block.size
+    columns = (block.offset + 1):(block.offset + k)
+    members = block.members
+    failure = (ok=false, centre=Float64[], sc=_quadrature_scale_failed(),
+        precision=zeros(Float64, 0, 0), gradmax=NaN)
+
+    # The block's own log integrand -- its members' log likelihood less
+    # `z'z/2` -- and its gradient, as a function of this block alone.
+    inner = function (z)
+        work = copy(u)
+        @inbounds for (t, c) in enumerate(columns); work[c] = z[t]; end
+        result = _laplace_unit_loglik_gradient(laplace, U, theta, Ls, work, aws,
+            members, nothing, _HYBRID_FULL)
+        isfinite(result.value) || return (value=-Inf, gradient=fill(NaN, k))
+        return (value=result.value - dot(z, z) / 2,
+            gradient=[result.gradient[c] for c in columns] .- z)
+    end
+    precision_at = z -> _laplace_block_precision(laplace, U, theta, Ls, u, b, z;
+        mode=_HYBRID_FULL)
+
+    z0 = start === nothing ? Float64[u[c] for c in columns] : collect(Float64, start)
+    here = inner(z0)
+    all(isfinite, here.gradient) || return failure
+    r = _quadrature_leaf_solve(inner, precision_at, z0, here, laplace, k)
+    r.sc.ok || return failure
+    return (ok=true, centre=r.z, sc=r.sc, precision=r.M,
+        gradmax=maximum(abs, r.current.gradient))
 end
 
 """
@@ -443,16 +513,15 @@ function _quadrature_block(laplace::CTSEMLaplaceObjective, U::Integer,
         # Clipped the same way as a leaf's; the eliminated diagonal of an
         # `M >= I` is itself at least `I` (its inverse is a diagonal block of
         # `inv(M) <= I`), so this changes nothing where the unit is concave.
-        clippedrule = _quadrature_clipped_scale(context.factors[b], k)
-        (ok=true, centre=Float64[context.mode[c] for c in columns],
-         scale=clippedrule.scale, logdetscale=clippedrule.logdetscale)
+        sc = _quadrature_scale(context.factors[b], k)
+        (ok=sc.ok, centre=Float64[context.mode[c] for c in columns], sc=sc)
     end
     rule.ok || return NaN
 
     points, logweights = _gh_grid(k, context.nodes)
     terms = Vector{Float64}(undef, length(points))
     @inbounds for j in eachindex(points)
-        z = rule.centre .+ sqrt(2) .* (rule.scale * points[j])
+        z = rule.centre .+ sqrt(2) .* (rule.sc.S * points[j])
         for (t, c) in enumerate(columns); u[c] = z[t]; end
         inner = 0.0
         if leaf
@@ -485,7 +554,7 @@ function _quadrature_block(laplace::CTSEMLaplaceObjective, U::Integer,
     # change of variable `z = centre + sqrt(2) * scale * x`. The Laplace value's
     # own constants cancel against each other instead -- see `_laplace_unit_term`
     # -- so they are written out here rather than shared.
-    return peak + log(accumulated) + rule.logdetscale + k * (log(2) - log(2 * pi)) / 2
+    return peak + log(accumulated) + rule.sc.logdetscale + k * (log(2) - log(2 * pi)) / 2
 end
 
 """
@@ -499,7 +568,7 @@ The rule is *adaptive* in the standard sense: centred at an inner mode and
 scaled by the inverse of the curvature there, both of which the Laplace
 machinery already produces -- with the curvature's eigenvalues clipped from
 below at one, the prior's own, so that no node is placed wider than the prior
-spreads (`_quadrature_clipped_scale`). Where every eigenvalue is at least one
+spreads (`_quadrature_scale`). Where every eigenvalue is at least one
 that is the unclipped curvature, bit for bit, and with `nodes = 1` the rule has
 a single point at the mode and the result is the Laplace value to machine
 precision, the cheapest available check that the two agree about what they are

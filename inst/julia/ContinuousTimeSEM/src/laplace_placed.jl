@@ -31,7 +31,7 @@ precision `M = -d2f/du2` there, is
 
 with `y_j` and `lw_j` the unit's fixed point set (`point_sets.jl`: product
 Gauss-Hermite or lattice-t), and `S = U^-1` for `M~ = U'U`, `M~` the precision
-with its eigenvalues clipped at the prior's (`_quadrature_clipped_scale`). With
+with its eigenvalues clipped at the prior's (`_quadrature_scale`). With
 `pi_j` the normalised node weights,
 
     dQ/dtheta = sum_j pi_j df/dtheta(z_j)        Fisher, the frozen rule's
@@ -64,10 +64,11 @@ every placement, so it does not move with the parameters.
 
 A flagged unit of one block, on the rule the continuation chose for it
 (`o.unit_rules`: product or lattice, and its count, by cost for the accuracy,
-`_continuation_refine!`), placed as `_continuation_unit_rule` places it: the
-leaf's mode by Newton (`_quadrature_leaf_rule!`), from its maximum at the last
-accepted point of an optimisation, or outside one at the last evaluation
-(`anchors`), where the continuation searches from the Laplace mode. Within an
+`_continuation_refine!`), placed as `_continuation_unit_rule` places it: at the
+leaf's mode by Newton (`_quadrature_leaf_rule!`) from the Laplace mode, which
+the inner solve's Newton follows from the unit's maximum at the last accepted
+point of an optimisation, or outside one at the last evaluation (`anchors`,
+`_placed_unit!`). Within an
 optimisation the units are anchored as the Laplace route's are: searched at a
 run's start and where L-BFGS stops, followed between, so a trial's value does
 not depend on the trials before it. A unit whose search found more than one
@@ -264,45 +265,12 @@ function _placed_search!(P::CTSEMLaplacePlaced, theta::Vector{Float64}; join::Bo
 end
 
 """
-    _placed_scale(M, k)
-
-The rule's scale at precision `M` exactly as the leaf rule takes it
-(`_quadrature_leaf_rule!`, `_quadrature_clipped_scale`), with what its
-derivative needs: `S = U^-1` for `M~ = U'U`, the log scale `-logdet(M~)/2`,
-whether the eigenvalues were clipped at one, and if so the eigenvectors and
-eigenvalues of the matrix that was clipped.
-"""
-function _placed_scale(M::Matrix{Float64}, k::Int)
-    F = _ctsem_cholesky(copy(M), k)
-    D = M
-    if issuccess(F)
-        Lf = Matrix(F.L)
-        D = Lf * transpose(Lf)
-        if issuccess(_ctsem_cholesky(D - Matrix{Float64}(LinearAlgebra.I, k, k), k))
-            return (S=_ctsem_cholesky_uinv(F), U=Matrix(UpperTriangular(F.U[1:k, 1:k])),
-                logdetscale=-logdet(F) / 2, clipped=false, vectors=zeros(0, 0),
-                values=Float64[], ok=true)
-        end
-    end
-    E = _ctsem_symeig(D)
-    all(isfinite, E.values) || return (S=zeros(0, 0), U=zeros(0, 0), logdetscale=NaN,
-        clipped=true, vectors=zeros(0, 0), values=Float64[], ok=false)
-    clipped = E.vectors * Diagonal(max.(E.values, 1.0)) * transpose(E.vectors)
-    G = _ctsem_cholesky(Matrix(_laplace_symmetrise(clipped)), k)
-    issuccess(G) || return (S=zeros(0, 0), U=zeros(0, 0), logdetscale=NaN,
-        clipped=true, vectors=zeros(0, 0), values=Float64[], ok=false)
-    return (S=_ctsem_cholesky_uinv(G), U=Matrix(UpperTriangular(G.U[1:k, 1:k])),
-        logdetscale=-logdet(G) / 2, clipped=true, vectors=Matrix(E.vectors),
-        values=collect(E.values), ok=true)
-end
-
-"""
     _placed_mbar(sc, B, k)
 
 `Mbar`, the symmetric `k x k` matrix with `<Mbar, dM>` the change in
 `tr(dS B) + logdet logdet(S)` for a change `dM` of the unclipped precision
 (`logdet` one but under a defensive component, `_placed_leaf!`), `S = U^-1`
-and `M~ = U'U` (`_placed_scale`). Through the factor: `dS = -S dU S`, so
+and `M~ = U'U` (`_quadrature_scale`). Through the factor: `dS = -S dU S`, so
 `tr(dS B) = <Ubar, dU>` with `Ubar = -triu((S B S)')`, and the upper Cholesky's
 reverse, `Mbar = sym(S Phi(Ubar U') S')` with `Phi` the upper triangle and half
 the diagonal; `logdet(S) = -logdet(M~)/2` adds `-S S'/2`. Through the clip,
@@ -375,31 +343,6 @@ function _placed_scatter!(dir::AbstractVector{Float64}, spec, l::Int, w::Abstrac
     return dir
 end
 
-"""
-    _placed_scale_factor(F, k)
-
-`_placed_scale` from a factor already formed, exactly as
-`_quadrature_clipped_scale` takes it: an outer block's eliminated precision
-(`_laplace_factor_repaired!`'s `factors`).
-"""
-function _placed_scale_factor(F::CTSEMCholesky, k::Int)
-    Lf = Matrix(F.L)
-    D = Lf * transpose(Lf)
-    if issuccess(_ctsem_cholesky(D - Matrix{Float64}(LinearAlgebra.I, k, k), k))
-        return (S=_ctsem_cholesky_uinv(F), U=Matrix(UpperTriangular(F.U[1:k, 1:k])),
-            logdetscale=-logdet(F) / 2, clipped=false, vectors=zeros(0, 0),
-            values=Float64[], ok=true, D=D)
-    end
-    E = _ctsem_symeig(D)
-    clipped = E.vectors * Diagonal(max.(E.values, 1.0)) * transpose(E.vectors)
-    G = _ctsem_cholesky(Matrix(_laplace_symmetrise(clipped)), k)
-    issuccess(G) || return (S=zeros(0, 0), U=zeros(0, 0), logdetscale=NaN,
-        clipped=true, vectors=zeros(0, 0), values=Float64[], ok=false, D=D)
-    return (S=_ctsem_cholesky_uinv(G), U=Matrix(UpperTriangular(G.U[1:k, 1:k])),
-        logdetscale=-logdet(G) / 2, clipped=true, vectors=Matrix(E.vectors),
-        values=collect(E.values), ok=true, D=D)
-end
-
 """The largest gradient a leaf's centre may keep (`_quadrature_leaf_rule!`'s
 `gradmax`) for the placement to be differentiated there."""
 const _PLACED_STATIONARY = 1e-6
@@ -445,8 +388,7 @@ function _placed_leaf!(row::Vector{Float64}, wv::Vector{Float64}, P::CTSEMLaplac
     (lr.ok && lr.gradmax <= _PLACED_STATIONARY) || return failure
     c = lr.centre
     M = Matrix{Float64}(lr.precision)
-    sc = _placed_scale(M, k)
-    sc.ok || return failure
+    sc = lr.sc
     ps = sets[b]
     pl = _point_set_place(ps, c, sc.S, sc.U, sc.logdetscale)
     Z = pl.Z
@@ -722,28 +664,40 @@ end
     _placed_unit!(row, P, U, theta, Ls, dL, positions, want_gradient)
 
 Unit `U`'s placed term at `theta`, and with `want_gradient` its gradient into
-`row` (unweighted). A unit with one maximum is its rule placed there
-(`_placed_one!`), from its anchor; one whose anchors hold more
-(`P.alt_anchors`) follows each from its own and averages their rules
-(`_placed_mode_sum!`), until all but one have gone past a fold. Returns `(ok,
-value, se, ess, modes, live)`: `se` the rule's error, `ess` its effective
-points, `modes` the maxima to follow from here (the one of largest weight
-first) and `live` how many carried weight.
+`row` (unweighted). Its maxima are followed from its anchors as the Laplace
+route follows an anchored unit's (`_laplace_solve_unit_mode!`): the inner
+solve's Newton from the anchor (`_laplace_newton_unit_mode`), and from each of
+the others where its anchors hold more (`P.alt_anchors`,
+`_laplace_follow_modes`). One maximum is its rule placed there
+(`_placed_one!`); more are averaged (`_placed_mode_sum!`), until all but one
+have gone past a fold. So one solver decides where every unit is, whatever
+its count of maxima, the one the search and the Laplace route use; the leaf's
+own Newton (`_quadrature_leaf_rule!`) only takes the centre from there to the
+integrand's mode where the filter's deviations make it differ, and to a
+conditional mode at a nested unit's root nodes. Followed by the leaf's Newton
+instead, a unit of one maximum was followed by another solver than one of two,
+each repairing an indefinite curvature its own way, and the search's Newton
+from the same anchor could reach another basin. Returns `(ok, value, se, ess,
+modes, live)`: `se` the rule's error, `ess` its effective points, `modes` the
+maxima to follow from here (the one of largest weight first) and `live` how
+many carried weight.
 """
 function _placed_unit!(row::Vector{Float64}, P::CTSEMLaplacePlaced, U::Int,
     theta::Vector{Float64}, Ls, dL, positions, want_gradient::Bool;
     sets::Vector{CTSEMPointSet}=P.sets[U])
+    laplace = P.cont.laplace
+    aws = _laplace_workspace!(laplace, Float64, length(theta))
     start = P.anchors[U]
+    held = _laplace_newton_unit_mode(laplace, U, theta, Ls, aws, start)
     if _LAPLACE_MODE_SUM[] && !isempty(P.alt_anchors[U])
-        laplace = P.cont.laplace
-        aws = _laplace_workspace!(laplace, Float64, length(theta))
-        held = _laplace_newton_unit_mode(laplace, U, theta, Ls, aws, start)
         kept = _laplace_follow_modes(laplace, U, theta, Ls, aws, held, start,
             P.alt_anchors[U])
         length(kept) >= 2 && return _placed_mode_sum!(row, P, U, theta, Ls, dL,
             positions, want_gradient, sets, kept, aws)
         # One maximum left, or none: that one, or the anchor's, on its own.
         isempty(kept) || (start = collect(Float64, kept[1].u))
+    elseif held.converged && isfinite(held.value)
+        start = collect(Float64, held.u)
     end
     r = _placed_one!(row, P, U, start, theta, Ls, dL, positions, want_gradient, sets)
     return (ok=r.ok, value=r.value, se=r.se, ess=r.ess,
@@ -753,10 +707,10 @@ end
 """
     _placed_one!(row, P, U, start, theta, Ls, dL, positions, want_gradient, sets)
 
-Unit `U`'s rule placed at the maximum Newton reaches from `start`: a unit of
-one block is one leaf (`_placed_leaf!`), a unit of a root over leaves an outer
-rule over them (`_placed_nested_unit!`). Returns `(ok, value, se, ess,
-anchor)`, `anchor` the unit's effects at that maximum.
+Unit `U`'s rule placed at the maximum `start`, the inner solve's
+(`_placed_unit!`): a unit of one block is one leaf (`_placed_leaf!`), a unit of
+a root over leaves an outer rule over them (`_placed_nested_unit!`). Returns
+`(ok, value, se, ess, anchor)`, `anchor` the unit's effects at that maximum.
 """
 function _placed_one!(row::Vector{Float64}, P::CTSEMLaplacePlaced, U::Int,
     start::Vector{Float64}, theta::Vector{Float64}, Ls, dL, positions,
@@ -915,7 +869,7 @@ function _placed_nested_unit!(row::Vector{Float64}, P::CTSEMLaplacePlaced, U::In
     M = _laplace_copy_blockmatrix(_laplace_unit_curvature(laplace, U, theta, Ls, cj))
     fz = _laplace_factor_repaired!(_laplace_copy_blockmatrix(M), blocks)
     (fz.ok && !fz.repaired) || return failure
-    sc = _placed_scale_factor(fz.factors[r0], k0)
+    sc = _quadrature_scale(fz.factors[r0], k0)
     sc.ok || return failure
     ps = sets[r0]
     pl = _point_set_place(ps, Float64[cj[c] for c in cols0], sc.S, sc.U, sc.logdetscale)

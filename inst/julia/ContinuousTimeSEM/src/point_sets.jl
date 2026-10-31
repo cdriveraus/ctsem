@@ -6,7 +6,7 @@ and the refined fit's rules placed at every evaluation (`laplace_placed.jl`).
 # The form
 
 A block's integral over its standardised effects is taken at its mode `c` and
-clipped scale `S` (`_quadrature_leaf_rule!`, `_quadrature_clipped_scale`) as
+clipped scale `S` (`_quadrature_leaf_rule!`, `_quadrature_scale`) as
 
     log sum_j exp(lw_j + f(c + S y_j)) + log|S| - k log(2 pi) / 2
 
