@@ -207,7 +207,12 @@ function _placed_search!(P::CTSEMLaplacePlaced, theta::Vector{Float64}; join::Bo
     np = length(P.placed)
     sets = Vector{Vector{Vector{Float64}}}(undef, np)
     missed = [Vector{Float64}[] for _ in 1:np]
-    changed = falses(np)
+    # A Vector{Bool}, not a BitVector: the units' tasks write their own
+    # entries at once, and a BitVector's neighbouring entries share a word, so
+    # one task's write can undo another's. A unit whose write was lost kept no
+    # anchor, and its first evaluation stopped on a BoundsError (gD1, all
+    # units forced).
+    changed = fill(false, np)
     _laplace_parallel(laplace, 1:np) do i
         local U, aws, held, searched, d
         U = P.placed[i]
