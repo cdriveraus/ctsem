@@ -2190,7 +2190,11 @@ their sum (`total`). What `ctsem_laplace_continuation_info` reports.
 function _continuation_error(o::CTSEMLaplaceContinuation)
     gaps = o.centre_quadrature .- o.centre_laplace
     residual = _continuation_screen(gaps[o.rest_units], o.centre_se[o.rest_units])
-    random(U) = o.importance[U] || o.unit_rules[U].family === :lattice
+    # Draws' and lattices' spreads are random and add in quadrature; product
+    # rules' node errors, and a lattice's count step where it exceeds its
+    # spread (`_continuation_count_step`), share a sign and add.
+    random(U) = o.importance[U] || (o.unit_rules[U].family === :lattice &&
+        !(o.centre_error[U] > o.centre_se[U]))
     draws = sqrt(sum(abs2(o.importance[U] ? o.centre_se[U] : o.centre_error[U])
         for U in o.flagged if random(U) && isfinite(o.centre_error[U]); init=0.0))
     nodes = sum(o.centre_error[U] for U in o.flagged
