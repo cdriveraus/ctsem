@@ -596,13 +596,25 @@ ctFitAdequacy <- function(fit, covariates = NULL,
   # what was observed -- far less at a floor than above it -- so dividing by it
   # gives the update a mean the past predicts, which the latent family found as
   # a correlation over long gaps (z 4.3 on a correctly specified censored
-  # model). There the update is divided by the prior sd instead, which the past
-  # fixes: still mean zero and uncorrelated across rows, its variance below one.
+  # model). So it does on every row of the mixture predictive, whose updated
+  # covariance is the draws' weighted spread given the row: on fits with random
+  # dynamics, to data generated from them, the lag-one statistics' z averaged
+  # 1.7 at 120 people and the family rejected 17 per cent at .05. There the
+  # update is divided by the prior variance instead, which the past fixes,
+  # times one factor per latent that matches the variance removed on average
+  # over those rows: mean zero and uncorrelated across rows, its variance one on
+  # average (z mean 0.05, sd 0.94 on the same fits).
   covdiff <- matrix(covdiff, nrows)
   scale <- covdiff
-  if (categorical) {
-    nongauss <- rowSums(!is.na(Y[, !gauss, drop = FALSE])) > 0
-    scale[nongauss, ] <- matrix(priorvar, nrows)[nongauss, ]
+  moved <- if (mixture) rep(TRUE, nrows) else if (categorical)
+    rowSums(!is.na(Y[, !gauss, drop = FALSE])) > 0 else rep(FALSE, nrows)
+  if (any(moved)) {
+    pv <- matrix(priorvar, nrows)
+    for (j in seq_len(ncol(pv))) {
+      ok <- moved & is.finite(pv[, j]) & is.finite(covdiff[, j]) & covdiff[, j] > 0
+      f <- if (any(ok)) sum(covdiff[ok, j]) / sum(pv[ok, j]) else 1
+      scale[moved, j] <- pv[moved, j] * f
+    }
   }
   Z <- (etaupd - eta) / sqrt(pmax(scale, 0))
   Z[!is.finite(Z) | covdiff <= 1e-12 * pmax(1, abs(covdiff))] <- NA
