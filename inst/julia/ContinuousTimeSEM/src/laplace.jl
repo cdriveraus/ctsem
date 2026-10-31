@@ -5700,9 +5700,8 @@ end
 # implicit function theorem, exactly as the nested oracle has it) and the
 # eigen-quantities differentiated to first order from the primal decomposition:
 # eigenvalues as `v' dM v`, the soft eigenvector by the standard perturbation
-# sum, and the clipped conditional curvatures by the Daleckii-Krein divided
-# differences, which stay finite across a near-degenerate pair on the same side
-# of the clip. The cost is confined to flagged units: every other unit goes
+# sum, and each node's floored curvature by the Daleckii-Krein divided
+# differences, which stay finite across a near-degenerate pair. The cost is confined to flagged units: every other unit goes
 # through the seeded assembly unchanged, and above the gate the gradient is the
 # unfloored Laplace one, which is `:total`'s wherever `logdet(M) >= 0`.
 #
