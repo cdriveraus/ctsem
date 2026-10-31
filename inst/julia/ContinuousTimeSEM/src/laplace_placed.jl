@@ -1882,27 +1882,20 @@ function _placed_raise!(P::CTSEMLaplacePlaced, values::AbstractVector,
     row = zeros(length(theta))
     for U in units
         choice = rules[U]
-        if choice.family === :product
-            # The step's change in the unit's value is the coarser rule's node
-            # error, which stands as the finer one's
-            # (`ctsem_laplace_placed_error`).
-            before = _placed_unit!(row, P, U, theta, Ls, nothing, positions, false)
+        # Each step's change in the unit's value, the coarser rule's node or
+        # count step, stands as the new rule's systematic error
+        # (`o.centre_error`, `ctsem_laplace_placed_error`).
+        previous = _placed_unit!(row, P, U, theta, Ls, nothing, positions, false)
+        if choice.family === :product || times > 0
             for _ in 1:max(Int(times), 1)
                 finer = _placed_finer(choice)
                 finer === nothing && break
                 choice = finer
             end
             P.sets[U] = _rule_sets(laplace, U, choice)
-            after = _placed_unit!(row, P, U, theta, Ls, nothing, positions, false)
-            (before.ok && after.ok) &&
-                (o.centre_error[U] = abs(after.value - before.value))
-            P.unit_ess_placed[U] = NaN
-        elseif times > 0
-            points = min(choice.points * 2^Int(times), _LATTICE_MAX)
-            choice = CTSEMRuleChoice(choice.family, choice.nodes, points)
-            P.sets[U] = _rule_sets(laplace, U, choice)
             r = _placed_unit!(row, P, U, theta, Ls, nothing, positions, false)
-            r.ok && (P.se[U] = r.se)
+            (previous.ok && r.ok) && (o.centre_error[U] = abs(r.value - previous.value))
+            r.ok && choice.family !== :product && (P.se[U] = r.se)
             P.unit_ess_placed[U] = NaN
         else
             while choice.points < _LATTICE_MAX
@@ -1911,8 +1904,10 @@ function _placed_raise!(P::CTSEMLaplacePlaced, values::AbstractVector,
                 P.unit_ess_placed[U] = NaN
                 r = _placed_unit!(row, P, U, theta, Ls, nothing, positions, false)
                 r.ok || continue
+                previous.ok && (o.centre_error[U] = abs(r.value - previous.value))
                 P.se[U] = r.se
-                r.se <= o.draws_se && break
+                max(r.se, previous.ok ? o.centre_error[U] : Inf) <= o.draws_se && break
+                previous = r
             end
         end
         rules[U] = choice
@@ -2033,10 +2028,12 @@ The refined objective's error against the exact marginal at its last
 evaluation, in `ctsem_laplace_continuation_info`'s fields (`error`,
 `error_draws`, `error_nodes`, `error_residual`, `centre_error`): each placed
 lattice or mixed unit's spread there (`P.se`) in quadrature with the frozen
-draws' errors, the product rules' node errors and what the screen left on
-Laplace as at the placement. A lattice rule's error is free at every
-evaluation and moves with where the rule sits; read at the placement alone it
-said 0.18 nats on w6 where the estimate the climb reached carried 1.16.
+draws' errors, and summed with them the product rules' node errors, a
+lattice unit's count step where it exceeds its spread (`o.centre_error`, from
+where its count was set) and what the screen left on Laplace as at the
+placement. A lattice rule's spread is free at every evaluation and moves with
+where the rule sits; read at the placement alone it said 0.18 nats on w6 where
+the estimate the climb reached carried 1.16.
 """
 function ctsem_laplace_placed_error(P::CTSEMLaplacePlaced)
     o = P.cont
@@ -2047,8 +2044,12 @@ function ctsem_laplace_placed_error(P::CTSEMLaplacePlaced)
     for U in P.placed
         isfinite(P.se[U]) || continue
         if any(ps -> ps.family === :lattice, P.sets[U])
-            units[U] = P.se[U]
-            random += P.se[U]^2
+            # Its spread where it sits, or its count step where larger: the
+            # systematic error the spread cannot see, from where its count was
+            # set (`_continuation_count_step`, `_placed_raise!`).
+            cs = isfinite(o.centre_error[U]) ? o.centre_error[U] : 0.0
+            units[U] = max(P.se[U], cs)
+            cs > P.se[U] ? (nodes += cs) : (random += P.se[U]^2)
         elseif P.live[U] > 1
             # A product rule's node error beside its maxima's disagreement
             # (`_placed_mode_sum!`), the larger.

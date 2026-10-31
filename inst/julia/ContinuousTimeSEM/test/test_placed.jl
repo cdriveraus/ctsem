@@ -127,13 +127,16 @@ end
     @test P.cont.unit_rules[U].points == P.sets[U][1].count
     @test P.se[U] < before
     @test P.se[U] <= P.cont.draws_se || P.sets[U][1].count == C._LATTICE_MAX
-    # The error at the last evaluation: the lattice units' spread there in
-    # quadrature.
+    # The error at the last evaluation: each lattice unit's spread there, or
+    # its count step where that is larger, the spreads in quadrature and the
+    # count steps summed with the systematic errors.
     ctsem_laplace_placed_evaluate(P, theta .+ 0.05; gradient=false)
     e = ctsem_laplace_placed_error(P)
     lat = [V for V in P.placed if P.sets[V][1].family === :lattice]
-    @test isapprox(e.error_draws, sqrt(sum(abs2, P.se[lat])); rtol=1e-12)
-    @test e.centre_error[lat] == P.se[lat]
+    cs = [isfinite(P.cont.centre_error[V]) ? P.cont.centre_error[V] : 0.0 for V in lat]
+    spread = cs .<= P.se[lat]
+    @test e.centre_error[lat] == max.(P.se[lat], cs)
+    @test isapprox(e.error_draws, sqrt(sum(abs2, P.se[lat][spread]; init=0.0)); rtol=1e-12)
     @test isapprox(e.error, e.error_draws + e.error_nodes + e.error_residual; rtol=1e-12)
     # The slope check: the lattice units' gradients on two independent sets
     # of shifts, through the curvature, in standard errors. Every unit a
