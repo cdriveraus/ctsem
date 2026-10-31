@@ -5688,8 +5688,8 @@ end
 # with `w` a C1 smoothstep from one below `lo` to zero at `hi`, and `T_soft` a
 # 3-point Gauss-Hermite rule along the smallest eigenvector `v_1` at the
 # prior's scale, the other coordinates moved at each node by one Newton step
-# with that node's own conditional curvature (clipped at one) and integrated by
-# Laplace there. Measured against an exact reference on 16 weak-data configs:
+# with that node's own conditional curvature (floored at 0.25, smoothly:
+# `_laplace_clip_value`) and integrated by Laplace there. Measured against an exact reference on 16 weak-data configs:
 # mean |error| 0.03 to 0.06 per eigenvalue class, where the total floor is off
 # by +2.7 on near-singular units; see
 # `CT-SEM/review/LAPLACE-eigenwise-floor-2026-09-23.md`, third to fifth addenda.
@@ -5756,12 +5756,48 @@ function _laplace_eig_first_order(A::AbstractMatrix{T}) where {T}
 end
 
 """
+The eigenvalue at which the soft rule floors each node's conditional
+curvature (`_laplace_clip_value`), and the half-width of its blend as a share
+of it. At 1, the prior's curvature, as it was to juliaFit b10b33d0, the floor
+sat where a weakly identified direction's eigenvalues gather, so the term had
+a concave corner wherever one crossed it: on the affect pilot (v3_sub40ns,
+iteration 1357) one unit's slopes either side of the point were 3.86 and 4.95,
+and L-BFGS crept there six hours. At 0.25 no direction claims more than 0.69
+nats beyond the prior's, which still bounds the far nodes whose curvature
+collapsed (+10 nats unclipped on four of 1280 weak-data units in September),
+and on 640 such units rebuilt it moved no eigenvalue class's mean error by
+0.001
+(`CT-SEM/review/LAPLACE-gated-corner-2026-10-31.md`).
+"""
+const _LAPLACE_CLIP_FLOOR = 0.25
+const _LAPLACE_CLIP_WIDTH = 0.2
+
+# The floor on one eigenvalue, `max(x, c)` made C2 across [c (1 - w), c (1 + w)]:
+# its slope a cubic smoothstep there, its value at most 0.19 c w above the
+# corner's.
+@inline function _laplace_clip_value(x::Float64)
+    c, w = _LAPLACE_CLIP_FLOOR, _LAPLACE_CLIP_WIDTH
+    x <= c * (1 - w) && return c
+    x >= c * (1 + w) && return x
+    s = (x - c * (1 - w)) / (2 * c * w)
+    return c * (1 + 2 * w * (s^3 - s^4 / 2))
+end
+@inline function _laplace_clip_slope(x::Float64)
+    c, w = _LAPLACE_CLIP_FLOOR, _LAPLACE_CLIP_WIDTH
+    x <= c * (1 - w) && return 0.0
+    x >= c * (1 + w) && return 1.0
+    s = (x - c * (1 - w)) / (2 * c * w)
+    return s^2 * (3 - 2s)
+end
+
+"""
     _laplace_clip_first_order(B)
 
-`V max(Lambda, 1) V'` for symmetric `B`, exact to first order in its dual
-parts by Daleckii-Krein: in the primal eigenbasis the derivative's `(i, j)`
-entry is `(f(l_i) - f(l_j)) / (l_i - l_j)` times `(V' dB V)_ij`, with `f'` on
-the diagonal and wherever the pair coincides. No division by a small gap.
+`V f(Lambda) V'` for symmetric `B`, `f` the floor `_laplace_clip_value`, exact
+to first order in its dual parts by Daleckii-Krein: in the primal eigenbasis
+the derivative's `(i, j)` entry is `(f(l_i) - f(l_j)) / (l_i - l_j)` times
+`(V' dB V)_ij`, with `f'` on the diagonal and wherever the pair coincides. No
+division by a small gap.
 """
 function _laplace_clip_first_order(B::AbstractMatrix{T}) where {T}
     n = size(B, 1)
@@ -5769,8 +5805,8 @@ function _laplace_clip_first_order(B::AbstractMatrix{T}) where {T}
     E = _ctsem_symeig(B0)
     V = E.vectors
     l = E.values
-    f(x) = max(x, 1.0)
-    fp(x) = x > 1.0 ? 1.0 : 0.0
+    f = _laplace_clip_value
+    fp = _laplace_clip_slope
     Dt = transpose(V) * (B .- B0) * V
     C = Matrix{T}(undef, n, n)
     @inbounds for j in 1:n, i in 1:n

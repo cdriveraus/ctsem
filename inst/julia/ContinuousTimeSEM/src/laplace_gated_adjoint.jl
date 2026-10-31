@@ -263,11 +263,12 @@ function _gated_tmulvec(A::AbstractMatrix, x::AbstractVector)
 end
 _gated_sym(A) = (A .+ transpose(A)) ./ 2
 
-"""`Q f(mu) Q'` and the clip's pieces, `f = max(., 1)` as `_laplace_clip_first_order`."""
+"""`Q f(mu) Q'` and the clip's pieces, `f` the floor `_laplace_clip_value` as
+`_laplace_clip_first_order` takes it."""
 function _gated_clip(B::Matrix{Float64})
     E = _ctsem_symeig(B)
     Q, mu = E.vectors, E.values
-    f = [max(x, 1.0) for x in mu]
+    f = [_laplace_clip_value(x) for x in mu]
     return (Q=Q, mu=mu, f=f)
 end
 
@@ -277,10 +278,11 @@ function _gated_clip_adjoint(Q::Matrix{Float64}, mu::Vector{Float64},
     Cbar::Matrix{Float64})
     n = length(mu)
     Ct = _gated_mul(_gated_t(Q), _gated_mul(Cbar, Q))
-    fp(x) = x > 1.0 ? 1.0 : 0.0
+    f = _laplace_clip_value
+    fp = _laplace_clip_slope
     @inbounds for j in 1:n, i in 1:n
         coef = (i == j || abs(mu[i] - mu[j]) <= 1e-12 * max(1.0, abs(mu[i]))) ?
-            fp(mu[i]) : (max(mu[i], 1.0) - max(mu[j], 1.0)) / (mu[i] - mu[j])
+            fp(mu[i]) : (f(mu[i]) - f(mu[j])) / (mu[i] - mu[j])
         Ct[i, j] *= coef
     end
     return _gated_mul(Q, _gated_mul(Ct, _gated_t(Q)))
