@@ -1260,6 +1260,34 @@ function _continuation_steps(laplace::CTSEMLaplaceObjective, U::Integer, opts)
 end
 
 """
+    _continuation_product_error(values, s)
+
+Product step `s`'s error and the step before's, from the geometric tail its
+last two node steps imply: with `d` the last step's change and `dp` the one
+before, `r = d / dp`, the finer rule's error is `d max(1, r / (1 - r))` --
+never less than `d`, one ratio being a noisy estimate of the next -- and the
+coarser's `d` more. `nothing` before three steps or where the steps do not
+shrink, unless both are within 1e-9 nats (an integrand the rules hold
+exactly). One step read alone understated a slowly converging rule about
+threefold: on gA14's one-effect units, whose integrands have heavy tails, 5
+nodes stood 0.045 nats from the integral where their step to 7 said 0.017,
+and the forty units' errors, all of one sign, summed to 2.2 nats
+(`CT-SEM/scripts/unit-sampling-2026-10/unit_smc.R`).
+"""
+function _continuation_product_error(values::Vector{Float64}, s::Int)
+    s >= 3 || return nothing
+    (isfinite(values[s]) && isfinite(values[s - 1]) && isfinite(values[s - 2])) ||
+        return nothing
+    d = abs(values[s] - values[s - 1])
+    dp = abs(values[s - 1] - values[s - 2])
+    max(d, dp) <= 1e-9 && return (fine=d, coarse=d + dp)
+    d < dp || return nothing
+    r = d / dp
+    fine = d * max(1.0, r / (1 - r))
+    return (fine=fine, coarse=d + fine)
+end
+
+"""
     _continuation_count_step(values, s)
 
 How far lattice step `s`'s value lies from the step before's, at half the
@@ -1286,10 +1314,12 @@ number a fit reports for how far its objective is from the exact marginal.
 Each family of rule (`_continuation_steps`) is a sequence of counts. A
 lattice step's error is the larger of its shifts' spread and its count step,
 the difference between its value and the half count's
-(`_continuation_count_step`); a product or mixed step's is the difference
-between its value and the step before's, and where the step after
-is within `opts.draws_se` of a step, that step stands with the difference as
-its error -- the finer rule's measure of the coarser. The refine evaluates,
+(`_continuation_count_step`); a product step's is the geometric tail its last
+two node steps imply (`_continuation_product_error`), held to `opts.draws_se`
+over the root of the flagged units, since product rules' errors share a sign
+and add; a mixed step's is the difference between its value and the step
+before's. Where the step after is within its target of a step, that step
+stands with the finer rule's measure of it as its error. The refine evaluates,
 at each turn, the family whose next step costs the fewest member evaluations
 (`_rule_cost`), and stops at the first step whose error is within
 `opts.draws_se`: the cheapest rule that reaches the target, at no more than a
@@ -1347,9 +1377,13 @@ function _continuation_refine!(laplace::CTSEMLaplaceObjective, theta::Vector{Flo
             push!(todo, U)
         end
     end
+    # A product rule's error has one sign at every unit, so the units' errors
+    # add rather than average: each is held to the target over the root of
+    # the units, for their sum to stand where independent errors would.
+    systematic = target / sqrt(length(flagged))
     _laplace_parallel(laplace, 1:length(todo)) do i
         _continuation_refine_unit!(errors, laplace, todo[i], theta, Ls, opts, placed,
-            target)
+            target, systematic)
         return true
     end
     return errors
@@ -1360,7 +1394,7 @@ task's locals are its own (a closure assigning a name its enclosing function
 uses rebinds that function's)."""
 function _continuation_refine_unit!(errors::Vector{Float64},
     laplace::CTSEMLaplaceObjective, U::Int, theta::Vector{Float64}, Ls, opts, placed,
-    target::Float64)
+    target::Float64, systematic::Float64=target)
     ws = _laplace_workspace!(laplace, Float64, length(theta))
     families = _continuation_steps(laplace, U, opts)
     nf = length(families)
@@ -1399,23 +1433,33 @@ function _continuation_refine_unit!(errors::Vector{Float64},
         rules[f][s] = r.rule
         return true
     end
-    # Whether family `f` has a step under the target as it stands, and which.
+    # Whether family `f` has a step under its target as it stands: the step
+    # and its error, `(0, NaN)` where none.
     accepted = function (f)
-        local steps, s, d
+        local steps, s, d, e
         steps = families[f]
         s = next[f] - 1
-        s >= 1 || return 0
+        s >= 1 || return (0, NaN)
         if steps[s].family === :lattice
-            return ses[f][s] <= target && _continuation_count_step(values[f], s) <= target ?
-                s : 0
+            e = max(ses[f][s], _continuation_count_step(values[f], s))
+            return e <= target ? (s, e) : (0, NaN)
         end
-        # A difference needs two steps; the first is only a check.
-        s >= 2 || return 0
+        if steps[s].family === :product
+            # The tail two node steps imply, against the units' share of the
+            # target: a product rule's error has one sign at every unit, so
+            # the units' errors add (`_continuation_product_error`).
+            e = _continuation_product_error(values[f], s)
+            e === nothing && return (0, NaN)
+            s - 1 >= 2 && e.coarse <= systematic && return (s - 1, e.coarse)
+            return e.fine <= systematic ? (s, e.fine) : (0, NaN)
+        end
+        # A mixed rule's difference needs two steps; the first is only a check.
+        s >= 2 || return (0, NaN)
         d = abs(values[f][s] - values[f][s - 1])
-        d <= target || return 0
+        d <= target || return (0, NaN)
         # The coarser rule stands, with the finer one's measure of it, unless
         # the coarser is only the check.
-        return s - 1 >= 2 ? -(s - 1) : -s
+        return (s - 1 >= 2 ? s - 1 : s, d)
     end
     cost(f, s) = _rule_cost(laplace, U, families[f][s])
     # Start every family where the screen left it: the steps already
@@ -1432,12 +1476,8 @@ function _continuation_refine_unit!(errors::Vector{Float64},
         for f in 1:nf
             done[f] && continue
             a = accepted(f)
-            if a != 0
-                s = abs(a)
-                err = families[f][s].family === :lattice ?
-                    max(ses[f][s], _continuation_count_step(values[f], s)) :
-                    abs(values[f][next[f] - 1] - values[f][next[f] - 2])
-                chosen = (f=f, s=s, err=err)
+            if a[1] != 0
+                chosen = (f=f, s=a[1], err=a[2])
                 break
             end
         end
