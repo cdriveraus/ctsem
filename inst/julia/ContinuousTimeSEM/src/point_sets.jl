@@ -53,6 +53,17 @@ nats, where the 3-node product rule needs 59,049 for the same.
 
 The error is the spread over the shifts: `R` independent estimates of the same
 integral, so `sd(I_r) / (sqrt(R) mean(I_r))` on the log scale.
+
+# A defensive prior component
+
+A t at the mode and the clipped curvature misses whatever mass sits where it
+puts little: a shoulder beside a stiff mode, and every shift misses it alike,
+so their spread does not show it. So a lattice rule also takes
+`_LATTICE_PRIOR_SHARE` of its points from the prior, `N(0, I)` in the unit's
+standardised effects, held fixed there (`prior`), and every point is weighted
+by the balance heuristic, `1 / (N (b1 rho_placed(z) + b0 phi(z)))`
+(`_point_set_place`). That weight moves with the placement, so the placed
+gradient reads it (`_placed_leaf!`).
 """
 
 using LinearAlgebra
@@ -65,7 +76,11 @@ A fixed rule over a block's `k` standardised coordinates: `points[:, j] = y_j`,
 placed as `z = c + S y_j`, with `integral g(y) dy ~ sum_j exp(logweights[j])
 g(y_j)`. `family` is `:product` or `:lattice`, `count` the nodes per
 coordinate or the lattice points per shift; `replicate[j]` is the shift point
-`j` belongs to (empty for a product rule) and `nrep` their number.
+`j` belongs to (empty for a product rule) and `nrep` their number. A lattice
+rule's defensive component (see the module docstring): `prior`, its points in
+the standardised effects themselves, held there, `prior_replicate` the shift
+each belongs to, and `logrho` each placed point's log t density; empty for a
+product rule. `_point_set_place` places either kind.
 """
 struct CTSEMPointSet
     family::Symbol
@@ -74,6 +89,9 @@ struct CTSEMPointSet
     logweights::Vector{Float64}
     replicate::Vector{Int}
     nrep::Int
+    prior::Matrix{Float64}
+    prior_replicate::Vector{Int}
+    logrho::Vector{Float64}
 end
 
 """How many shifts a lattice rule takes. Its error is their spread, which over
@@ -85,6 +103,16 @@ const _LATTICE_SHIFTS = 8
 unit's posterior's. As the importance draws' `draws_df`."""
 const _LATTICE_DF = 4.0
 
+"""The share of a lattice rule's points from its defensive prior component.
+On anomS2's six shoulder units at its spurious start, the lattice-t alone at
+1,024 points read them 0.09 low in sum, its worst unit 0.055 low at a stated
+0.031; with a quarter of the points at the prior, 0.017 high and 0.013 at
+worst, but the summed absolute error over all 800 units rose from 0.48 to
+0.95, the quarter spent on easy units
+(`review/MIXTURE-multibasin-measure-2026-10-30.md`). A tenth, as phase B
+suggests for wide units."""
+const _LATTICE_PRIOR_SHARE = 0.1
+
 """Lattice points a shift a rule starts at, 128 points in all: on w4 that met
 the 0.05-nat target on every unit, at a fifth of the 5-node product rule's
 625; at ten effects (k5) the target took 256 to 512."""
@@ -94,8 +122,8 @@ const _LATTICE_START = 16
 the importance draws' `draws_max`."""
 const _LATTICE_MAX = 2048
 
-"""Points in the set."""
-_point_set_size(ps::CTSEMPointSet) = size(ps.points, 2)
+"""Points in the set, its prior's included."""
+_point_set_size(ps::CTSEMPointSet) = size(ps.points, 2) + size(ps.prior, 2)
 
 """
     _point_set_product(k, nodes)
@@ -122,7 +150,7 @@ function _point_set_product(k::Integer, nodes::Integer)
         end
         lw[col] = s
     end
-    return CTSEMPointSet(:product, m, Y, lw, Int[], 1)
+    return CTSEMPointSet(:product, m, Y, lw, Int[], 1, zeros(Int(k), 0), Int[], Float64[])
 end
 
 """
@@ -214,34 +242,131 @@ _t4_logdensity(y::Float64) = log(3 / 8) - 2.5 * log1p(y * y / 4)
 
 The lattice-t set over `k` coordinates, `n` points a shift and
 `_LATTICE_SHIFTS` shifts (see the module docstring); `key` seeds the shifts,
-each from `hash((key, r))`. `_LATTICE_DF` is four, the closed form's.
+each from `hash((key, r))`. `_LATTICE_DF` is four, the closed form's. Each
+shift also takes `ceil(n s / (1 - s))` points of the prior, `s` the
+`_LATTICE_PRIOR_SHARE` (`prior`), from a shifted Kronecker lattice through
+the normal quantile (`_continuation_lattice_normals`) seeded by `key` and the
+shift; `logweights` are then the t's alone, as `share = 0` would have them,
+and `_point_set_place` weighs every point by the balance heuristic.
 """
-function _point_set_lattice(k::Integer, n::Integer, key)
+function _point_set_lattice(k::Integer, n::Integer, key; share::Real=_LATTICE_PRIOR_SHARE)
     z = _lattice_vector(k, n)
     R = _LATTICE_SHIFTS
     N = Int(n) * R
+    n0 = share > 0 ? ceil(Int, n * share / (1 - share)) : 0
     Y = Matrix{Float64}(undef, Int(k), N)
     lw = Vector{Float64}(undef, N)
+    lrho = Vector{Float64}(undef, N)
     rep = Vector{Int}(undef, N)
     base = -log(Float64(N))
     shift = Vector{Float64}(undef, Int(k))
+    P0 = Matrix{Float64}(undef, Int(k), n0 * R)
+    rep0 = Vector{Int}(undef, n0 * R)
     col = 0
     for r in 1:R
         rand!(Random.Xoshiro(hash((key, r))), shift)
         for i in 0:(Int(n) - 1)
             col += 1
-            s = base
+            s = 0.0
             @inbounds for a in 1:Int(k)
                 x = clamp(mod(i * z[a] / n + shift[a], 1.0), 1e-15, 1 - 1e-15)
                 y = _t4_quantile(x)
                 Y[a, col] = y
-                s -= _t4_logdensity(y)
+                s += _t4_logdensity(y)
             end
-            lw[col] = s
+            lrho[col] = s
+            lw[col] = base - s
             rep[col] = r
         end
+        if n0 > 0
+            cols = ((r - 1) * n0 + 1):(r * n0)
+            P0[:, cols] = _continuation_lattice_normals(Int(k), n0,
+                Random.Xoshiro(hash((key, :prior, r))))
+            rep0[cols] .= r
+        end
     end
-    return CTSEMPointSet(:lattice, Int(n), Y, lw, rep, R)
+    return CTSEMPointSet(:lattice, Int(n), Y, lw, rep, R, P0, rep0, lrho)
+end
+
+"""
+    _point_set_place(ps, c, S, U, logdetS)
+
+The set `ps` placed at centre `c` and scale `S = U^-1` (`log|S| = logdetS`):
+each point's position `Z[:, j]` in the standardised effects, its coordinates
+`Y[:, j] = U (z - c)` in the scale's, its log weight `logw[j]` as a rule for
+`integral g(z) dz`, its responsibility `r[j]` under the placed component, and
+whether it is one of the prior's (`prior[j]`) and which shift it belongs to
+(`rep`). A product rule's, or a lattice's with no prior points, weighs a point
+`lw_j + log|S|`, `r = 1`; with prior points every point is weighed
+`-log N - log(b1 rho(y) / |S| + b0 phi(z))` (the balance heuristic, `b1`,
+`b0` the shares of points), and `r` is the placed component's share of that
+mixture density there.
+"""
+function _point_set_place(ps::CTSEMPointSet, c::AbstractVector{Float64},
+    S::AbstractMatrix{Float64}, U::AbstractMatrix{Float64}, logdetS::Float64)
+    k = length(c)
+    n1 = size(ps.points, 2)
+    n0 = size(ps.prior, 2)
+    N = n1 + n0
+    Z = Matrix{Float64}(undef, k, N)
+    Y = Matrix{Float64}(undef, k, N)
+    logw = Vector{Float64}(undef, N)
+    r = ones(N)
+    prior = fill(false, N)
+    rep = ones(Int, N)
+    y = zeros(k)
+    sy = zeros(k)
+    zc = zeros(k)
+    mix = n0 > 0
+    lb1 = mix ? log(n1 / N) : 0.0
+    lb0 = mix ? log(n0 / N) : -Inf
+    lN = log(Float64(N))
+    lphi0 = -k * log(2 * pi) / 2
+    for j in 1:n1
+        @inbounds for t in 1:k
+            y[t] = ps.points[t, j]
+        end
+        _ctsem_mulvec!(sy, S, y)
+        q = 0.0
+        @inbounds for t in 1:k
+            Z[t, j] = c[t] + sy[t]
+            Y[t, j] = y[t]
+            q += Z[t, j]^2
+        end
+        if mix
+            lt = lb1 + ps.logrho[j] - logdetS
+            lp = lb0 + lphi0 - q / 2
+            lq = max(lt, lp) + log1p(exp(-abs(lt - lp)))
+            logw[j] = -lN - lq
+            r[j] = exp(lt - lq)
+        else
+            logw[j] = ps.logweights[j] + logdetS
+        end
+        isempty(ps.replicate) || (rep[j] = ps.replicate[j])
+    end
+    for i in 1:n0
+        col = n1 + i
+        q = 0.0
+        @inbounds for t in 1:k
+            Z[t, col] = ps.prior[t, i]
+            zc[t] = ps.prior[t, i] - c[t]
+            q += ps.prior[t, i]^2
+        end
+        _ctsem_mulvec!(y, U, zc)
+        lrho = 0.0
+        @inbounds for t in 1:k
+            Y[t, col] = y[t]
+            lrho += _t4_logdensity(y[t])
+        end
+        lt = lb1 + lrho - logdetS
+        lp = lb0 + lphi0 - q / 2
+        lq = max(lt, lp) + log1p(exp(-abs(lt - lp)))
+        logw[col] = -lN - lq
+        r[col] = exp(lt - lq)
+        prior[col] = true
+        rep[col] = ps.prior_replicate[i]
+    end
+    return (Z=Z, Y=Y, logw=logw, r=r, prior=prior, rep=rep)
 end
 
 """The seed of a lattice rule's shifts: fixed, so that every placement of every
@@ -342,7 +467,8 @@ function _rule_cost(laplace::CTSEMLaplaceObjective, U::Integer, choice::CTSEMRul
     blocks = laplace.units.blocks[U]
     isempty(blocks) && return 0.0
     npts = Float64[_rule_block_product(choice, b.size) ?
-        Float64(choice.nodes)^b.size : Float64(_LATTICE_SHIFTS * choice.points)
+        Float64(choice.nodes)^b.size : Float64(_LATTICE_SHIFTS * (choice.points +
+            ceil(Int, choice.points * _LATTICE_PRIOR_SHARE / (1 - _LATTICE_PRIOR_SHARE))))
         for b in blocks]
     tree = _quadrature_children(blocks)
     total = 0.0

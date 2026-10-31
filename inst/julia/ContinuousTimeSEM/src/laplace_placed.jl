@@ -126,6 +126,10 @@ mutable struct CTSEMLaplacePlaced{C} <: CTSEMOptimisable
     # evaluation and at the first after its placement (`_placed_drifted`).
     ess::Vector{Float64}
     ess_placed::Vector{Float64}
+    # Per placed unit, its rule's effective points at the last evaluation and
+    # at the first after its sets were made (`_placed_rough`).
+    unit_ess::Vector{Float64}
+    unit_ess_placed::Vector{Float64}
 end
 
 """
@@ -168,7 +172,8 @@ function ctsem_laplace_placed(o::CTSEMLaplaceContinuation)
     end
     return CTSEMLaplacePlaced{typeof(o)}(o, placed, frozen, sets, fill(NaN, nunits),
         anchors, nothing, nothing, 0, 0, 0.0, 0.0, 0.0, nothing,
-        fill(NaN, length(frozen)), fill(NaN, length(frozen)))
+        fill(NaN, length(frozen)), fill(NaN, length(frozen)), fill(NaN, nunits),
+        fill(NaN, nunits))
 end
 
 """
@@ -208,7 +213,8 @@ end
     _placed_mbar(sc, B, k)
 
 `Mbar`, the symmetric `k x k` matrix with `<Mbar, dM>` the change in
-`tr(dS B) + logdet(S)` for a change `dM` of the unclipped precision, `S = U^-1`
+`tr(dS B) + logdet logdet(S)` for a change `dM` of the unclipped precision
+(`logdet` one but under a defensive component, `_placed_leaf!`), `S = U^-1`
 and `M~ = U'U` (`_placed_scale`). Through the factor: `dS = -S dU S`, so
 `tr(dS B) = <Ubar, dU>` with `Ubar = -triu((S B S)')`, and the upper Cholesky's
 reverse, `Mbar = sym(S Phi(Ubar U') S')` with `Phi` the upper triangle and half
@@ -216,7 +222,7 @@ the diagonal; `logdet(S) = -logdet(M~)/2` adds `-S S'/2`. Through the clip,
 `M~ = V max(Lambda, 1) V'`, by the divided differences of `max(., 1)` on the
 eigenvalues (Daleckii-Krein).
 """
-function _placed_mbar(sc, B::Matrix{Float64}, k::Int)
+function _placed_mbar(sc, B::Matrix{Float64}, k::Int; logdet::Real=1.0)
     S = sc.S
     U = sc.U
     SBS = _placed_mm(_placed_mm(S, B), S)
@@ -234,7 +240,7 @@ function _placed_mbar(sc, B::Matrix{Float64}, k::Int)
     _ctsem_mulNT!(W, _placed_mm(S, Phi), S)
     SS = zeros(k, k)
     _ctsem_mulNT!(SS, S, S)
-    Mbar = (W .+ transpose(W)) ./ 2 .- SS ./ 2
+    Mbar = (W .+ transpose(W)) ./ 2 .- (logdet / 2) .* SS
     sc.clipped || return Mbar
     V = sc.vectors
     lam = sc.values
@@ -344,7 +350,7 @@ function _placed_leaf!(row::Vector{Float64}, wv::Vector{Float64}, P::CTSEMLaplac
     nm = length(members)
     npar = length(theta)
     d = units.dims[U]
-    failure = (ok=false, value=NaN, se=NaN)
+    failure = (ok=false, value=NaN, se=NaN, ess=NaN)
     aws = _laplace_workspace!(laplace, Float64, npar)
     lr = _quadrature_leaf_rule!(laplace, U, theta, Ls, b, u, aws; start=start)
     # The implicit function theorem is the centre's derivative only at a
@@ -355,11 +361,15 @@ function _placed_leaf!(row::Vector{Float64}, wv::Vector{Float64}, P::CTSEMLaplac
     sc = _placed_scale(M, k)
     sc.ok || return failure
     ps = sets[b]
-    Y = ps.points
-    lw = ps.logweights
+    pl = _point_set_place(ps, c, sc.S, sc.U, sc.logdetscale)
+    Z = pl.Z
+    Yp = pl.Y
+    lw = pl.logw
     scratch = _continuation_scratch(laplace, npar)
     peak = -Inf
     acc = 0.0
+    acc2 = 0.0
+    racc = 0.0
     repacc = zeros(ps.nrep)
     gacc = want_gradient ? zeros(npar) : Float64[]
     vacc = want_gradient ? zeros(npar) : Float64[]
@@ -369,15 +379,11 @@ function _placed_leaf!(row::Vector{Float64}, wv::Vector{Float64}, P::CTSEMLaplac
     gv = zeros(npar)
     gu = zeros(d)
     z = zeros(k)
-    sx = zeros(k)
-    x = zeros(k)
-    for j in 1:size(Y, 2)
+    ey = zeros(k)
+    gy = zeros(k)
+    for j in 1:size(Z, 2)
         @inbounds for t in 1:k
-            x[t] = Y[t, j]
-        end
-        _ctsem_mulvec!(sx, sc.S, x)
-        @inbounds for t in 1:k
-            z[t] = c[t] + sx[t]
+            z[t] = Z[t, j]
             u[columns[t]] = z[t]
         end
         if want_gradient
@@ -406,6 +412,8 @@ function _placed_leaf!(row::Vector{Float64}, wv::Vector{Float64}, P::CTSEMLaplac
             if isfinite(peak)
                 s = exp(peak - t)
                 acc *= s
+                acc2 *= s * s
+                racc *= s
                 repacc .*= s
                 if want_gradient
                     gacc .*= s
@@ -418,31 +426,48 @@ function _placed_leaf!(row::Vector{Float64}, wv::Vector{Float64}, P::CTSEMLaplac
         end
         w = exp(t - peak)
         acc += w
-        ps.nrep > 1 && (repacc[ps.replicate[j]] += w)
+        acc2 += w * w
+        racc += w * pl.r[j]
+        ps.nrep > 1 && (repacc[pl.rep[j]] += w)
         if want_gradient
             gacc .+= w .* gh
             vacc .+= w .* gv
+            # What the point's term asks of the centre and the scale: a placed
+            # point moves with them, `grad f + (1 - r) z`; a prior point is
+            # held, and only its weight moves, `r U' grad log rho(y)`.
+            if pl.prior[j]
+                @inbounds for t in 1:k
+                    yv = Yp[t, j]
+                    gy[t] = -1.25 * yv / (1 + yv * yv / 4)
+                end
+                _ctsem_mulTvec!(ey, sc.U, gy)
+                ey .*= pl.r[j]
+            else
+                @inbounds for i in 1:k
+                    ey[i] = gu[columns[i]] - pl.r[j] * z[i]
+                end
+            end
             @inbounds for i in 1:k
-                fz = gu[columns[i]] - z[i]
-                aacc[i] += w * fz
+                aacc[i] += w * ey[i]
                 for r in 1:k
-                    Bacc[r, i] += w * x[r] * fz
+                    Bacc[r, i] += w * Yp[r, j] * ey[i]
                 end
             end
         end
     end
     isfinite(peak) || return failure
-    value = peak + log(acc) + sc.logdetscale - k * log(2 * pi) / 2
+    value = peak + log(acc) - k * log(2 * pi) / 2
     se = _point_set_error(repacc, ps.nrep)
+    ess = acc^2 / acc2
     @inbounds for (t, col) in enumerate(columns)
         u[col] = c[t]
     end
-    want_gradient || return (ok=true, value=value, se=se)
+    want_gradient || return (ok=true, value=value, se=se, ess=ess)
 
     fisher = gacc ./ acc
     a = aacc ./ acc
     B = Bacc ./ acc
-    Mbar = _placed_mbar(sc, B, k)
+    Mbar = _placed_mbar(sc, B, k; logdet=racc / acc)
     all(isfinite, Mbar) || return failure
     L = Ls[l]
     offsets = units.offsets[U][first(members)]
@@ -526,7 +551,7 @@ function _placed_leaf!(row::Vector{Float64}, wv::Vector{Float64}, P::CTSEMLaplac
         _laplace_chol_chain!(row, -2 .* HD[:, 1 + q], spec, dL, positions, eq, offsets)
     end
     (all(isfinite, row) && all(isfinite, wv)) || return failure
-    return (ok=true, value=value, se=se)
+    return (ok=true, value=value, se=se, ess=ess)
 end
 
 """
@@ -586,7 +611,7 @@ function _placed_unit!(row::Vector{Float64}, P::CTSEMLaplacePlaced, U::Int,
     r = _placed_leaf!(row, zeros(length(theta)), P, U, 1, u,
         Float64[u[c] for c in columns], theta, Ls, dL, positions, want_gradient;
         sets=sets)
-    return (ok=r.ok, value=r.value, se=r.se, anchor=r.ok ? u : P.anchors[U])
+    return (ok=r.ok, value=r.value, se=r.se, ess=r.ess, anchor=r.ok ? u : P.anchors[U])
 end
 
 """Whether unit `U`'s block tree is one root over leaves, the shape
@@ -639,7 +664,7 @@ function _placed_nested_unit!(row::Vector{Float64}, P::CTSEMLaplacePlaced, U::In
     cols0 = (root.offset + 1):(root.offset + k0)
     npar = length(theta)
     d = units.dims[U]
-    failure = (ok=false, value=NaN, se=NaN, anchor=P.anchors[U])
+    failure = (ok=false, value=NaN, se=NaN, ess=NaN, anchor=P.anchors[U])
     aws = _laplace_workspace!(laplace, Float64, npar)
     jm = _laplace_newton_unit_mode(laplace, U, theta, Ls, aws, copy(P.anchors[U]))
     (jm.converged && isfinite(jm.value)) || return failure
@@ -650,10 +675,14 @@ function _placed_nested_unit!(row::Vector{Float64}, P::CTSEMLaplacePlaced, U::In
     sc = _placed_scale_factor(fz.factors[r0], k0)
     sc.ok || return failure
     ps = sets[r0]
-    Y = ps.points
-    lw = ps.logweights
+    pl = _point_set_place(ps, Float64[cj[c] for c in cols0], sc.S, sc.U, sc.logdetscale)
+    Z = pl.Z
+    Yp = pl.Y
+    lw = pl.logw
     peak = -Inf
     acc = 0.0
+    acc2 = 0.0
+    racc = 0.0
     repacc = zeros(ps.nrep)
     leafse = 0.0
     gacc = want_gradient ? zeros(npar) : Float64[]
@@ -664,17 +693,13 @@ function _placed_nested_unit!(row::Vector{Float64}, P::CTSEMLaplacePlaced, U::In
     G = zeros(k0)
     gd = zeros(d)
     z = zeros(k0)
-    sx = zeros(k0)
-    x = zeros(k0)
+    ey = zeros(k0)
+    gy = zeros(k0)
     rowsum = zeros(npar)
-    for j in 1:size(Y, 2)
-        @inbounds for t in 1:k0
-            x[t] = Y[t, j]
-        end
-        _ctsem_mulvec!(sx, sc.S, x)
+    for j in 1:size(Z, 2)
         u = copy(cj)
         @inbounds for t in 1:k0
-            z[t] = cj[cols0[t]] + sx[t]
+            z[t] = Z[t, j]
             u[cols0[t]] = z[t]
         end
         want_gradient && (fill!(rowsum, 0.0); fill!(G, 0.0))
@@ -709,6 +734,8 @@ function _placed_nested_unit!(row::Vector{Float64}, P::CTSEMLaplacePlaced, U::In
             if isfinite(peak)
                 s = exp(peak - t)
                 acc *= s
+                acc2 *= s * s
+                racc *= s
                 repacc .*= s
                 leafse *= s
                 if want_gradient
@@ -721,28 +748,44 @@ function _placed_nested_unit!(row::Vector{Float64}, P::CTSEMLaplacePlaced, U::In
         end
         w = exp(t - peak)
         acc += w
+        acc2 += w * w
+        racc += w * pl.r[j]
         leafse += w * sqrt(hse)
-        ps.nrep > 1 && (repacc[ps.replicate[j]] += w)
+        ps.nrep > 1 && (repacc[pl.rep[j]] += w)
         if want_gradient
             gacc .+= w .* rowsum
+            # As at a leaf (`_placed_leaf!`), with the leaves' gradient in the
+            # root's effects for the members'.
+            if pl.prior[j]
+                @inbounds for t in 1:k0
+                    yv = Yp[t, j]
+                    gy[t] = -1.25 * yv / (1 + yv * yv / 4)
+                end
+                _ctsem_mulTvec!(ey, sc.U, gy)
+                ey .*= pl.r[j]
+            else
+                @inbounds for i in 1:k0
+                    ey[i] = G[i] - pl.r[j] * z[i]
+                end
+            end
             @inbounds for i in 1:k0
-                fz0 = G[i] - z[i]
-                aacc[i] += w * fz0
+                aacc[i] += w * ey[i]
                 for r in 1:k0
-                    Bacc[r, i] += w * x[r] * fz0
+                    Bacc[r, i] += w * Yp[r, j] * ey[i]
                 end
             end
         end
     end
     isfinite(peak) || return failure
-    value = peak + log(acc) + sc.logdetscale - k0 * log(2 * pi) / 2
+    value = peak + log(acc) - k0 * log(2 * pi) / 2
     se = sqrt(_point_set_error(repacc, ps.nrep)^2 + (leafse / acc)^2)
-    want_gradient || return (ok=true, value=value, se=se, anchor=cj)
+    ess = acc^2 / acc2
+    want_gradient || return (ok=true, value=value, se=se, ess=ess, anchor=cj)
 
     fisher = gacc ./ acc
     a0 = aacc ./ acc
     B0 = Bacc ./ acc
-    Mbar0 = _placed_mbar(sc, B0, k0)
+    Mbar0 = _placed_mbar(sc, B0, k0; logdet=racc / acc)
     all(isfinite, Mbar0) || return failure
     mode = _hybrid_on(laplace.objective.params.hybrid) ? _HYBRID_FULL : _HYBRID_PROFILE
     E = _ctsem_symeig(Mbar0)
@@ -840,7 +883,7 @@ function _placed_nested_unit!(row::Vector{Float64}, P::CTSEMLaplacePlaced, U::In
         end
     end
     all(isfinite, row) || return failure
-    return (ok=true, value=value, se=se, anchor=cj)
+    return (ok=true, value=value, se=se, ess=ess, anchor=cj)
 end
 
 """
@@ -924,6 +967,7 @@ function _placed_evaluate(P::CTSEMLaplacePlaced, theta::Vector{Float64}, gradien
     np = length(P.placed)
     pvalues = fill(NaN, np)
     pse = fill(NaN, np)
+    pess = fill(NaN, np)
     prows = [gradient ? zeros(npar) : Float64[] for _ in 1:np]
     anchors = Vector{Vector{Float64}}(undef, np)
     placed_ok = _laplace_parallel(laplace, 1:np) do i
@@ -933,10 +977,11 @@ function _placed_evaluate(P::CTSEMLaplacePlaced, theta::Vector{Float64}, gradien
             _placed_unit!(prows[i], P, U, theta, Ls, dL, positions, gradient)
         catch err
             _ctsem_must_propagate(err) && rethrow()
-            (ok=false, value=NaN, se=NaN, anchor=P.anchors[U])
+            (ok=false, value=NaN, se=NaN, ess=NaN, anchor=P.anchors[U])
         end
         pvalues[i] = r.value
         pse[i] = r.se
+        pess[i] = r.ess
         anchors[i] = r.anchor
         return r.ok
     end
@@ -944,6 +989,8 @@ function _placed_evaluate(P::CTSEMLaplacePlaced, theta::Vector{Float64}, gradien
         for (i, U) in enumerate(P.placed)
             P.anchors[U] = anchors[i]
             P.se[U] = pse[i]
+            P.unit_ess[U] = pess[i]
+            isnan(P.unit_ess_placed[U]) && (P.unit_ess_placed[U] = pess[i])
         end
     end
     frozen = _placed_frozen(P, theta, Ls, dL, positions, gradient)
@@ -1284,17 +1331,9 @@ function _placed_slope_check(P::CTSEMLaplacePlaced, values::AbstractVector,
     x = collect(Float64, values)
     n = length(x)
     units = Int[U for U in P.placed if any(ps -> ps.family === :lattice, P.sets[U])]
-    (isempty(units) || size(H) != (n, n) || !all(isfinite, H)) &&
-        return (sd=0.0, units=Int[], doublings=0)
-    info = -(Matrix{Float64}(H) .+ transpose(Matrix{Float64}(H))) ./ 2
-    E = eigen(Symmetric(info))
-    top = maximum(E.values)
-    top > 0 || return (sd=0.0, units=Int[], doublings=0)
-    keep = E.values .> 1e-8 * top
-    V = E.vectors[:, keep]
-    Cinv = V * Diagonal(1 ./ E.values[keep]) * transpose(V)
-    se = sqrt.(max.(diag(Cinv), 0.0))
-    se[se .<= 0] .= Inf
+    metric = isempty(units) ? nothing : _placed_metric(H, n)
+    metric === nothing && return (sd=0.0, units=Int[], doublings=0)
+    Cinv, se = metric.Cinv, metric.se
     theta = _laplace_extend(laplace, x)
     npar = length(theta)
     Ls = _laplace_popchols(theta, spec)
@@ -1341,15 +1380,147 @@ function _placed_slope_check(P::CTSEMLaplacePlaced, values::AbstractVector,
 end
 
 """
+    _placed_metric(H, n)
+
+The inverse curvature `-H^-1` on the directions with curvature, as the
+standard errors are taken, and those standard errors; `nothing` where `H` is
+not an `n x n` matrix with curvature.
+"""
+function _placed_metric(H::AbstractMatrix, n::Integer)
+    (size(H) == (n, n) && all(isfinite, H)) || return nothing
+    info = -(Matrix{Float64}(H) .+ transpose(Matrix{Float64}(H))) ./ 2
+    E = eigen(Symmetric(info))
+    top = maximum(E.values)
+    top > 0 || return nothing
+    keep = E.values .> 1e-8 * top
+    V = E.vectors[:, keep]
+    Cinv = V * Diagonal(1 ./ E.values[keep]) * transpose(V)
+    se = sqrt.(max.(diag(Cinv), 0.0))
+    se[se .<= 0] .= Inf
+    return (Cinv=Cinv, se=se)
+end
+
+"""
+    _placed_choose!(P, values, H; bar=_PLACED_SLOPE_BAR)
+
+Each placed unit of one block put on the cheapest rule whose own share of the
+estimate's error is under `bar / sqrt(units)`, at `values` on the curvature
+`H`: the slope check's measure (`_placed_slope_check`) taken unit by unit and
+rule by rule. A product rule's share is its gradient against the rule two
+nodes finer, the finer one's measure of it; a lattice rule's, its gradient
+against an independent set of shifts at its count, over `sqrt(2)`. Rules are
+tried in the order of what a pair of them costs (`_rule_cost`), so a unit
+takes the product rule wherever its exactness on a near-Gaussian integrand
+makes it the cheaper at the accuracy an estimate needs. The continuation
+chose by the value's error (`_continuation_refine!`), which the lattice
+meets far sooner than its gradient: on w4s every unit took a 128-point
+lattice there, and the estimate needed about 2,000 points a unit, where the
+625 of the 5-node product rule did as well. A unit no rule takes there keeps
+the one with the smallest share. Returns how many units changed rule.
+"""
+function _placed_choose!(P::CTSEMLaplacePlaced, values::AbstractVector,
+    H::AbstractMatrix; bar::Real=_PLACED_SLOPE_BAR)
+    o = P.cont
+    laplace = o.laplace
+    spec = laplace.spec
+    x = collect(Float64, values)
+    n = length(x)
+    units = Int[U for U in P.placed if length(laplace.units.blocks[U]) == 1]
+    metric = isempty(units) ? nothing : _placed_metric(H, n)
+    metric === nothing && return 0
+    budget = Float64(bar) / sqrt(length(units))
+    theta = _laplace_extend(laplace, x)
+    Ls = _laplace_popchols(theta, spec)
+    dL = _laplace_level_chol_derivatives(theta, spec)
+    positions = [_laplace_level_positions(spec, l) for l in eachindex(spec.levels)]
+    chosen = Vector{CTSEMRuleChoice}(undef, length(units))
+    _laplace_parallel(laplace, eachindex(units)) do i
+        chosen[i] = _placed_choose_unit(P, units[i], theta, Ls, dL, positions,
+            metric, n, budget)
+        return true
+    end
+    rules = copy(o.unit_rules)
+    changed = 0
+    for (i, U) in enumerate(units)
+        chosen[i] == rules[U] && continue
+        rules[U] = chosen[i]
+        P.sets[U] = _rule_sets(laplace, U, chosen[i])
+        P.unit_ess_placed[U] = NaN
+        changed += 1
+    end
+    o.unit_rules = rules
+    P.cache = nothing
+    P.value_cache = nothing
+    return changed
+end
+
+"""One unit of `_placed_choose!`: the cheapest rule of its families
+(`_continuation_steps`) whose share is within `budget`, by the cost of the
+pair of rules that measures it."""
+function _placed_choose_unit(P::CTSEMLaplacePlaced, U::Int, theta::Vector{Float64},
+    Ls, dL, positions, metric, n::Int, budget::Float64)
+    o = P.cont
+    laplace = o.laplace
+    npar = length(theta)
+    w = _laplace_unit_weight(laplace, U)
+    families = _continuation_steps(laplace, U, _continuation_opts(o))
+    # Each candidate: the rule, the rule that measures it (itself on other
+    # shifts for a lattice), and the pair's cost; their sets built in turn.
+    cands = Tuple{CTSEMRuleChoice,CTSEMRuleChoice,Float64}[]
+    for steps in families
+        for (j, c) in enumerate(steps)
+            if c.family === :lattice
+                push!(cands, (c, c, 2 * _rule_cost(laplace, U, c)))
+            elseif j >= 2 && j < length(steps)
+                push!(cands, (c, steps[j + 1],
+                    _rule_cost(laplace, U, c) + _rule_cost(laplace, U, steps[j + 1])))
+            end
+        end
+    end
+    sort!(cands; by=last)
+    best = o.unit_rules[U]
+    bestshare = Inf
+    a = zeros(npar)
+    b = zeros(npar)
+    for (c, m, _) in cands
+        lattice = c.family === :lattice
+        sa = _rule_sets(laplace, U, c)
+        sb = lattice ? _rule_sets(laplace, U, m; alt=1) : _rule_sets(laplace, U, m)
+        scale = lattice ? 1 / sqrt(2) : 1.0
+        fill!(a, 0.0)
+        fill!(b, 0.0)
+        (_placed_unit!(a, P, U, theta, Ls, dL, positions, true; sets=sa).ok &&
+            _placed_unit!(b, P, U, theta, Ls, dL, positions, true; sets=sb).ok) ||
+            continue
+        d = (w * scale) .* (a[1:n] .- b[1:n])
+        share = maximum(abs, (metric.Cinv * d) ./ metric.se)
+        if share < bestshare
+            best = c
+            bestshare = share
+        end
+        share <= budget && return c
+    end
+    return best
+end
+
+"""
     _placed_rough(P, factor)
 
-The placed units whose rule's error at the last evaluation (`P.se`, a lattice
-rule's shifts' spread, free at every evaluation) is past `factor` times the
-target and whose points can still be doubled.
+The placed lattice units whose points can still be doubled and whose rule, at
+the last evaluation, has an error (`P.se`, the shifts' spread) past `factor`
+times the target, or effective points under half what they were where its
+sets were made, as a frozen rule's drift is read (`_placed_drifted`). The
+spread is the late signal: on unit 30 of the round-9 stall a placed t
+component at the mode was climbed where it was weakest, its effective points
+falling from 87 to 1.5 of 1,280 while its spread moved from 0.100 to 0.112
+by the time the effective size had halved, and ended at 0.82 against a true
+error of 1.53 (`review/MIXTURE-multibasin-measure-2026-10-30.md`, section 3).
 """
 _placed_rough(P::CTSEMLaplacePlaced, factor::Real) = Int[U for U in P.placed if
-    isfinite(P.se[U]) && P.se[U] > factor * P.cont.draws_se &&
-    any(ps -> ps.family === :lattice && ps.count < _LATTICE_MAX, P.sets[U])]
+    any(ps -> ps.family === :lattice && ps.count < _LATTICE_MAX, P.sets[U]) &&
+    ((isfinite(P.se[U]) && P.se[U] > factor * P.cont.draws_se) ||
+     (isfinite(P.unit_ess[U]) && isfinite(P.unit_ess_placed[U]) &&
+      P.unit_ess[U] < P.unit_ess_placed[U] / 2))]
 
 """
     _placed_raise!(P, values, units)
@@ -1378,10 +1549,12 @@ function _placed_raise!(P::CTSEMLaplacePlaced, values::AbstractVector,
             P.sets[U] = _rule_sets(laplace, U, choice)
             r = _placed_unit!(row, P, U, theta, Ls, nothing, positions, false)
             r.ok && (P.se[U] = r.se)
+            P.unit_ess_placed[U] = NaN
         else
             while choice.points < _LATTICE_MAX
                 choice = CTSEMRuleChoice(choice.family, choice.nodes, 2 * choice.points)
                 P.sets[U] = _rule_sets(laplace, U, choice)
+                P.unit_ess_placed[U] = NaN
                 r = _placed_unit!(row, P, U, theta, Ls, nothing, positions, false)
                 r.ok || continue
                 P.se[U] = r.se
@@ -1412,9 +1585,11 @@ rules' error can move the estimate; the units carrying more than
 doublings as it says, and the run goes on with its memory, the objective
 having moved by less than the rules' error. At most `replacements` times in
 all, the last of them run to its end with no stop. With `hessian`, a curvature
-at `start` (the Laplace fit's), the check runs there first, up to three times,
-so that most units start at the count the estimate needs: checked only where
-each climb ended, w4s and w6 restarted eight times. The result is the last
+at `start` (the Laplace fit's), each unit of one block is first put on the
+cheapest rule whose share of the estimate's error is within the bar
+(`_placed_choose!`) and the whole is checked there, so that the run starts
+with the rules the estimate needs: checked only where each climb ended, w4s
+and w6 restarted eight times. The result is the last
 run's, with `replacements` the count, `raised` the units raised, and
 `slope_sd` the slope check's last sd (`NaN` where none ran).
 """
@@ -1428,16 +1603,16 @@ function ctsem_laplace_placed_optimize(P::CTSEMLaplacePlaced, start::AbstractVec
     ratio = Float64(drift)
     slope = NaN
     if hessian !== nothing
+        # Each unit on the cheapest rule its share of the estimate's error
+        # allows, then the whole checked as it will be at the end.
         H0 = Matrix{Float64}(hessian)
-        for _ in 1:3
-            ctsem_laplace_placed_evaluate(P, x; gradient=false)
-            check = _placed_slope_check(P, x, H0)
-            slope = check.sd
-            steep = Int[U for U in check.units if
-                any(ps -> ps.family === :lattice && ps.count < _LATTICE_MAX, P.sets[U])]
-            isempty(steep) && break
-            raised += _placed_raise!(P, x, steep; times=check.doublings)
-        end
+        raised += _placed_choose!(P, x, H0)
+        ctsem_laplace_placed_evaluate(P, x; gradient=false)
+        check = _placed_slope_check(P, x, H0)
+        slope = check.sd
+        steep = Int[U for U in check.units if
+            any(ps -> ps.family === :lattice && ps.count < _LATTICE_MAX, P.sets[U])]
+        isempty(steep) || (raised += _placed_raise!(P, x, steep; times=check.doublings))
     end
     while true
         last = count >= replacements

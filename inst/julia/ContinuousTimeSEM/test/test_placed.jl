@@ -148,6 +148,21 @@ end
     @test all(V -> P.sets[V] === sets[V], P.placed)
     # Without a curvature there is nothing to carry the error through.
     @test isempty(C._placed_slope_check(P, theta, zeros(1, 1)).units)
+    # The choice by the estimate's error: under no bar each unit keeps the
+    # cheapest rule it is measured on, the first lattice; under any bar every
+    # unit's rule is one of its families' and its sets are that rule's.
+    Q = _placed_from(laplace, theta)
+    @test C._placed_choose!(Q, theta, H; bar=Inf) == 0
+    @test all(V -> Q.cont.unit_rules[V] == C.CTSEMRuleChoice(:lattice, 5, C._LATTICE_START),
+        Q.placed)
+    C._placed_choose!(Q, theta, H; bar=1e-3)
+    for V in Q.placed
+        c = Q.cont.unit_rules[V]
+        @test c.family in (:product, :lattice)
+        @test Q.sets[V][1].family === c.family
+        @test Q.sets[V][1].count == (c.family === :product ? c.nodes : c.points)
+    end
+    @test C._placed_choose!(Q, theta, zeros(1, 1)) == 0
 end
 
 @testset "the localised Hessian is the difference of the exact gradient" begin

@@ -993,24 +993,16 @@ function _continuation_block_rule(laplace::CTSEMLaplaceObjective, U::Integer,
     end
     rule.ok || return nothing
     ps = context.sets[b]
-    n = _point_set_size(ps)
-    points = Matrix{Float64}(undef, k, n)
+    S = Matrix{Float64}(rule.scale)
+    pl = _point_set_place(ps, rule.centre, S, Matrix(inv(UpperTriangular(S))),
+        Float64(rule.logdetscale))
+    points = pl.Z
+    n = size(points, 2)
     logweights = Vector{Float64}(undef, n)
-    y = zeros(k)
-    sy = zeros(k)
     for j in 1:n
-        @inbounds for t in 1:k
-            y[t] = ps.points[t, j]
-        end
-        _ctsem_mulvec!(sy, rule.scale, y)
-        q = 0.0
-        @inbounds for t in 1:k
-            points[t, j] = rule.centre[t] + sy[t]
-            q += points[t, j]^2
-        end
-        logweights[j] = ps.logweights[j] - q / 2
+        logweights[j] = pl.logw[j] - sum(abs2, view(points, :, j)) / 2
     end
-    constant = rule.logdetscale - k * log(2 * pi) / 2
+    constant = -k * log(2 * pi) / 2
     # In parallel over the nodes, each on its own copy of `u`, as an importance
     # rule's draws are (`_continuation_draw!`): a nested unit whose outer block
     # holds 125 nodes, each placing every member's rule beneath it, was placed
@@ -1061,11 +1053,11 @@ function _continuation_block_rule(laplace::CTSEMLaplaceObjective, U::Integer,
         w = exp(terms[j] - peak)
         acc += w
         weighted += w * childse[j]
-        ps.nrep > 1 && (repsums[ps.replicate[j]] += w)
+        ps.nrep > 1 && (repsums[pl.rep[j]] += w)
     end
     value = peak + log(acc) + constant
     se = sqrt(_point_set_error(repsums, ps.nrep)^2 + (weighted / acc)^2)
-    replicate = ps.nrep > 1 ? copy(ps.replicate) : Int[]
+    replicate = ps.nrep > 1 ? copy(pl.rep) : Int[]
     replw = ps.nrep > 1 ? logweights .+ log(ps.nrep) : Float64[]
     return (rule=CTSEMFixedRule(b, points, logweights, constant, children, replicate,
         replw), value=value, se=se)
