@@ -633,7 +633,7 @@ end
     # nodes a unit whose product rules converge -- the last node-step
     # difference below the one before -- keeps its finest product rule with
     # the geometric tail as its error, never less than that difference, or
-    # the lattice's finest where that one's spread is smaller; it takes draws
+    # the lattice's finest where that one's error is smaller; it takes draws
     # only where they do not converge. With draws off it keeps the rule with
     # the smallest error either way. (The one-effect fixture above reads its
     # 7-node rule within 1e-12 of its 5-node rule, so nothing there
@@ -659,8 +659,13 @@ end
         return (d9=d9, converging=converging, q9=q9,
             error=converging ? d9 * max(1.0, r / (1 - r)) : d9)
     end
-    # The lattice's finest rule, and its spread, for the comparison.
-    finest(U, o) = rule(U, C.CTSEMRuleChoice(:lattice, 5, C._LATTICE_MAX))
+    # The lattice's finest rule and its error, the larger of its spread and
+    # its count step (`_continuation_count_step`), for the comparison.
+    function finest(U, o)
+        f = rule(U, C.CTSEMRuleChoice(:lattice, 5, C._LATTICE_MAX))
+        h = rule(U, C.CTSEMRuleChoice(:lattice, 5, C._LATTICE_MAX ÷ 2))
+        return (se=max(f.se, abs(f.value - h.value)),)
+    end
     drawn = ctsem_laplace_continuation(laplace, theta; tolerance=-1.0, draws=256,
         draws_se=tiny)
     d = ctsem_laplace_continuation_info(drawn)

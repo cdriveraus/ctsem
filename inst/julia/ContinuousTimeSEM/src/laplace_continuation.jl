@@ -1260,6 +1260,22 @@ function _continuation_steps(laplace::CTSEMLaplaceObjective, U::Integer, opts)
 end
 
 """
+    _continuation_count_step(values, s)
+
+How far lattice step `s`'s value lies from the step before's, at half the
+count: `Inf` where that step was not evaluated or failed. A lattice's shifts'
+spread cannot see a tail every shift misses, and the count step does: on the
+round-9 stall's unit 30 (eight effects, a shoulder beside a stiff mode) the
+256-point lattice read 0.21 nats low with a spread of 0.013, and 512 points
+read 0.2 higher, where a point reached the shoulder
+(`CT-SEM/scripts/placed-mixture-2026-10/r9_placed.R`).
+"""
+function _continuation_count_step(values::Vector{Float64}, s::Int)
+    (s >= 2 && isfinite(values[s - 1]) && isfinite(values[s])) || return Inf
+    return abs(values[s] - values[s - 1])
+end
+
+"""
     _continuation_refine!(laplace, theta, opts, placed, flagged)
 
 Each flagged unit's rule, chosen by counted cost for the accuracy, and every
@@ -1268,8 +1284,10 @@ flagged unit's rule error at the centre, in nats. What
 number a fit reports for how far its objective is from the exact marginal.
 
 Each family of rule (`_continuation_steps`) is a sequence of counts. A
-lattice step's error is its shifts' spread; a product or mixed step's is the
-difference between its value and the step before's, and where the step after
+lattice step's error is the larger of its shifts' spread and its count step,
+the difference between its value and the half count's
+(`_continuation_count_step`); a product or mixed step's is the difference
+between its value and the step before's, and where the step after
 is within `opts.draws_se` of a step, that step stands with the difference as
 its error -- the finer rule's measure of the coarser. The refine evaluates,
 at each turn, the family whose next step costs the fewest member evaluations
@@ -1286,7 +1304,7 @@ difference `d` is smaller than the one before, `d_prev`, is closing on one
 basin: it keeps its finest rule and reports as its error the geometric tail
 that ratio implies, `d r / (1 - r)` with `r = d / d_prev`, and never less than
 `d`, since one ratio is a noisy estimate of the next -- or the lattice's
-finest stands, with its spread, where that is smaller. A unit whose product
+finest stands, with its error, where that is smaller. A unit whose product
 rules do not converge and whose lattice does not reach the target at its most
 points is not one basin a placed rule can follow: it takes draws, which stop
 at `draws_se` on their own standard error (`_continuation_importance_rule`),
@@ -1388,7 +1406,8 @@ function _continuation_refine_unit!(errors::Vector{Float64},
         s = next[f] - 1
         s >= 1 || return 0
         if steps[s].family === :lattice
-            return ses[f][s] <= target ? s : 0
+            return ses[f][s] <= target && _continuation_count_step(values[f], s) <= target ?
+                s : 0
         end
         # A difference needs two steps; the first is only a check.
         s >= 2 || return 0
@@ -1415,7 +1434,8 @@ function _continuation_refine_unit!(errors::Vector{Float64},
             a = accepted(f)
             if a != 0
                 s = abs(a)
-                err = families[f][s].family === :lattice ? ses[f][s] :
+                err = families[f][s].family === :lattice ?
+                    max(ses[f][s], _continuation_count_step(values[f], s)) :
                     abs(values[f][next[f] - 1] - values[f][next[f] - 2])
                 chosen = (f=f, s=s, err=err)
                 break
@@ -1462,7 +1482,9 @@ function _continuation_refine_unit!(errors::Vector{Float64},
         last = next[f] - 1
         (last >= 1 && isfinite(values[f][last])) || continue
         if families[f][last].family === :lattice
-            finest[f] = (s=last, err=ses[f][last], converging=false)
+            cs = _continuation_count_step(values[f], last)
+            finest[f] = (s=last, err=isfinite(cs) ? max(ses[f][last], cs) :
+                ses[f][last], converging=false)
         elseif last >= 2 && isfinite(values[f][last - 1])
             dl = abs(values[f][last] - values[f][last - 1])
             dp = last >= 3 ? abs(values[f][last - 1] - values[f][last - 2]) : NaN

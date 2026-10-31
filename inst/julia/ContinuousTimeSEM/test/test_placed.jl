@@ -112,7 +112,10 @@ end
     P = _placed_from(laplace, theta)
     ctsem_laplace_placed_evaluate(P, theta; gradient=false)
     U = P.placed[1]
-    @test P.sets[U][1].family === :lattice && P.sets[U][1].count == C._LATTICE_START
+    # The refine reads a lattice by its count step as well as its spread, so
+    # the first count, with no half count to compare, does not stand alone.
+    start = 2 * C._LATTICE_START
+    @test P.sets[U][1].family === :lattice && P.sets[U][1].count == start
     before = P.se[U]
     @test isfinite(before) && before > 0
     # Under a target the start's spread exceeds, the unit is rough and its
@@ -120,7 +123,7 @@ end
     P.cont.draws_se = before / 3
     @test U in C._placed_rough(P, 1.0)
     @test C._placed_raise!(P, theta, [U]) == 1
-    @test P.sets[U][1].count > C._LATTICE_START
+    @test P.sets[U][1].count > start
     @test P.cont.unit_rules[U].points == P.sets[U][1].count
     @test P.se[U] < before
     @test P.se[U] <= P.cont.draws_se || P.sets[U][1].count == C._LATTICE_MAX
@@ -162,11 +165,12 @@ end
     @test R.cont.unit_rules[V].nodes == n0 + 2
     @test R.sets[V][1].count == n0 + 2
     @test isfinite(R.cont.centre_error[V])
-    # The choice by the estimate's error: under no bar each unit keeps the
-    # cheapest rule it is measured on, the first lattice; under any bar every
+    # The choice by the estimate's error: under no bar each unit moves to the
+    # cheapest rule it is measured on, the first lattice (the refine left it
+    # on the second); under any bar every
     # unit's rule is one of its families' and its sets are that rule's.
     Q = _placed_from(laplace, theta)
-    @test C._placed_choose!(Q, theta, H; bar=Inf) == 0
+    @test C._placed_choose!(Q, theta, H; bar=Inf) == length(Q.placed)
     @test all(V -> Q.cont.unit_rules[V] == C.CTSEMRuleChoice(:lattice, 5, C._LATTICE_START),
         Q.placed)
     C._placed_choose!(Q, theta, H; bar=1e-3)
