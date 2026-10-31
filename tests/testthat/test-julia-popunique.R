@@ -923,7 +923,6 @@ test_that("quadrature integrates the filter's deviations at every node, and span
   cont <- module$ctsem_laplace_continuation(oh, xx, nodes = 5L, tolerance = -1)
   info <- ctsem:::.ctJuliaGet(module$ctsem_laplace_continuation_info(cont))
   expect_equal(as.integer(info$nflagged), 24L)
-  expect_equal(as.integer(info$nwide), 0L)
   expect_equal(as.numeric(info$value), quad(oh, 5)$value, tolerance = 1e-10)
   value <- function(z) as.numeric(ctsem:::.ctJuliaGet(
     module$ctsem_laplace_continuation_evaluate(cont,

@@ -146,3 +146,18 @@ test_that("requests it cannot serve are refused by name", {
     optimcontrol = list(estonly = TRUE)))
   expect_error(ctFitUncertainty(estonly, "is", intoverpop = "quadrature"), "covariance")
 })
+
+# How far the integration error can move the estimate: the refined fit's slope
+# check where it read every flagged unit, the level read as a distance where it
+# did not (`.ctLaplaceIntegrationError()`).
+test_that("the integration error's se is the slope check's where one ran", {
+  info <- list(error = 0.5, error_draws = 0.1, error_nodes = 0.3,
+    error_residual = 0.1, centre_error = c(NaN, 0.2))
+  slope <- ctsem:::.ctLaplaceIntegrationError(info, slope = 0.07)
+  expect_equal(slope$se, 0.07)
+  expect_identical(slope$se_from, "slope")
+  level <- ctsem:::.ctLaplaceIntegrationError(info, slope = NA_real_)
+  expect_equal(level$se, 1)
+  expect_identical(level$se_from, "level")
+  expect_identical(ctsem:::.ctLaplaceIntegrationError(info)$se_from, "level")
+})

@@ -6245,16 +6245,14 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
   }
   # A run still ended on a jump stops there, at no maximum of anything
   # continuous, so it is not certified; the fit warns and leaves integrating
-  # the named units to the user (`intoverpop = 'quadrature'`, whose rounds take
-  # them on draws with the points the watch saw: `.ctLaplaceContinue()`,
-  # through `fit$laplace$jump`), as it leaves a flagged check: the rounds can
-  # take hours. `jumprecord`, since `$jump` on an engine result would match
+  # the named units to the user (`intoverpop = 'quadrature'`, which flags
+  # them through `fit$laplace$jump` and starts from the modes the watch saw,
+  # kept as the specification's known modes: `.ctLaplaceContinue()`), as it
+  # leaves a flagged check. `jumprecord`, since `$jump` on an engine result would match
   # its `jump_units`.
   if (.ctJuliaJumped(result)) {
     named <- .ctJuliaJumpNamed(result)
     result$jumprecord <- list(units = named,
-      points = if (length(named)) list(units = as.integer(result$jump_point_units),
-        values = result$jump_point_values),
       iterations = as.integer(.ctJuliaOr(result$iterations, NA_integer_))[1L])
     message(sprintf(paste0("Laplace: the objective jumped at %s %s (its term moved ",
       "with where the inner solve stopped) after %d %s with modes kept; the fit ",
@@ -7003,8 +7001,7 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
       saemguard <- list(chosen = chosen,
         logpost_saem = withsaem[["corrected"]],
         logpost_without = without[["corrected"]],
-        laplace_saem = withsaem[["laplace"]], laplace_without = without[["laplace"]],
-        units_kept_laplace = withsaem[["wide"]])
+        laplace_saem = withsaem[["laplace"]], laplace_without = without[["laplace"]])
       if (identical(chosen, "without")) {
         # The kept run is the plain one, but the SAEM phase that ran stays
         # recorded, beside the comparison that set it aside.
@@ -7775,9 +7772,6 @@ print.ctJuliaFit <- function(x, ...) {
   } else if (identical(corr$status, "flagged") || identical(corr$status, "jump")) {
     # What the fit's warning said (`.ctLaplaceShiftMessage()`, or the jump's).
     cat("  ", corr$message, "\n", sep = "")
-  } else if (identical(corr$status, "too_wide")) {
-    cat("  Laplace estimate not corrected: every subject or group has more than ",
-      corr$maxdim, " random effects. See fit$laplace$correction.\n", sep = "")
   }
   # What the objective is known to, where the correction scored it and found
   # anything to say: the rules' errors and what the screen left on Laplace.
@@ -7786,8 +7780,6 @@ print.ctJuliaFit <- function(x, ...) {
     cat("  Marginal likelihood integrated to within ", format(err$nats, digits = 2),
       " nats; the estimate within ", format(err$se, digits = 2),
       " standard errors of the exact-marginal optimum",
-      if (isTRUE(err$unscored > 0)) paste0(" (", err$unscored,
-        " unit(s) too wide to score)") else "",
       ". See fit$laplace$correction$error.\n", sep = "")
   }
   # One line, only when there is something to say. A reported interval much

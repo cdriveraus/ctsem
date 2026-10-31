@@ -196,8 +196,6 @@ test_that("the default checks and warns, and the correction it names is the fit-
   expect_identical(corr$status, "flagged")
   expect_false(corr$applied)
   expect_identical(corr$check$status, "flagged")
-  expect_identical(corr$check$wide, 0L)
-  expect_false(grepl("hours", corr$message, fixed = TRUE))
   expect_gt(corr$check$carrying, 0L)
   expect_length(corr$check$carriers, corr$check$carrying)
   expect_identical(default$estimate$raw, fits$off$estimate$raw)
@@ -446,13 +444,27 @@ test_that("the refined fit's density places the flagged units' rules at each poi
   lpg <- .ctLaplacePlacedLpg(module, module$ctsem_laplace_placed(cont))(fit)
   away <- x + 2 * as.numeric(fit$estimate$se) * rep_len(c(1, -1), length(x))
   value <- lpg(away)
-  # The same as a continuation placed there from nothing, with the same units
-  # flagged and no screen.
-  there <- .ctJuliaGet(module$ctsem_laplace_continuation_info(do.call(
-    module$ctsem_laplace_continuation, c(list(.ctJuliaObjective(fit, hybrid = TRUE),
-      .ctJuliaNumericVector(away)), .ctLaplaceContinuationArgs(
-        .ctLaplaceContinueDefaults, force = flagged, screen = FALSE)))))
-  expect_equal(as.numeric(value), as.numeric(there$value), tolerance = 1e-6)
+  # The same as the continuation's own placement there (`_continuation_unit_rule`)
+  # on each flagged unit's rule, beside the rest's Laplace terms and the prior.
+  # The placed objective keeps the rules chosen at the estimate, as a climb's
+  # must; a continuation placed there from nothing chooses its own (nine nodes
+  # or a lattice where five served at the estimate, 0.5 nats apart in all).
+  .ctJuliaEval(paste(
+    "function _lc_test_there(o, x)",
+    "  C = ContinuousTimeSEM",
+    "  laplace = o.laplace",
+    "  theta = C._laplace_extend(laplace, collect(Float64, x))",
+    "  Ls = C._laplace_popchols(theta, laplace.spec)",
+    "  opts = C._continuation_opts(o)",
+    "  ws = C._laplace_workspace!(laplace, Float64, length(theta))",
+    "  rules = sum(C._laplace_unit_weight(laplace, U) * C._continuation_unit_rule(laplace,",
+    "    U, theta, Ls, ws, merge(opts, (choice=o.unit_rules[U],))).value for U in o.flagged)",
+    "  return rules + C.ctsem_laplace_evaluate(o.rest, collect(Float64, x);",
+    "    gradient=false).value",
+    "end", sep = "\n"))
+  there <- as.numeric(.ctJuliaCall("Main._lc_test_there", cont,
+    .ctJuliaNumericVector(away)))
+  expect_equal(as.numeric(value), there, tolerance = 1e-6)
   expect_length(attr(value, "gradient"), length(x))
   expect_true(all(is.finite(attr(value, "gradient"))))
   # A batch is the points one at a time, values with or without gradients.
@@ -640,52 +652,27 @@ test_that("the guard reverts a continuation that moves the objective too far", {
   expect_identical(out$estimate$loglik_method, "quadrature")
 })
 
-test_that("a unit wider than the cap keeps its Laplace term, and the fit says so", {
+test_that("every unit is scored whatever its width, and Laplace is exact on a Gaussian integrand", {
   skip_without_julia()
-  # One effect a subject on a nonlinear drift; a cap of none leaves every
-  # subject unscored by the screen, with draws off or kept, by default, to the
-  # units a rescue or the shift check named. With them for every unit, a unit
-  # of one block past the cap is scored by frozen draws instead.
+  # No width past which a unit keeps its Laplace term unscored: the refined
+  # fit scores every subject, each on the rule its cost chooses, here the
+  # product rule at one effect a subject.
   fits <- .lc_fits("nonlinear")
-  off <- fits$off
-  narrow <- utils::modifyList(.ctLaplaceContinueDefaults, list(maxdim = 0L,
-    draws = 0L, check = FALSE))
-  expect_message(out <- .ctLaplaceContinue(off, control = narrow),
-    "kept the Laplace term, having more than 0 random effects")
-  corr <- out$laplace$correction
-  expect_identical(corr$status, "too_wide")
-  expect_false(corr$applied)
-  expect_identical(corr$wide, corr$units)
-  expect_identical(out$estimate$raw, off$estimate$raw)
-  expect_identical(out$estimate$loglik, off$estimate$loglik)
-  expect_true(any(grepl("not corrected: every subject or group has more than 0",
-    capture.output(print(out)))))
-  # Under the default cap nothing here is wide.
-  expect_identical(fits$quadrature$laplace$correction$wide, 0L)
-  # Nor past it, with draws: each subject is one block, scored by them. Read
-  # with the rules placed at the estimate and nothing moved (`stay`).
-  drawn <- suppressMessages(.ctLaplaceContinue(off, control = utils::modifyList(
-    narrow, list(draws = 256L, draws_scope = "all", stay = TRUE))))
-  expect_identical(drawn$laplace$correction$wide, 0L)
-  expect_true(drawn$laplace$correction$status %in% c("placed", "exact"))
-  expect_identical(drawn$estimate$raw, off$estimate$raw)
-  # The shift check takes no notice of the cap: it scores every unit on the
-  # same frozen draws, and reads the same step as the default fit's did.
-  checked <- suppressWarnings(suppressMessages(.ctLaplaceContinue(off,
-    correct = FALSE, control = utils::modifyList(.ctLaplaceContinueDefaults,
-      list(maxdim = 0L)))))
-  expect_equal(checked$laplace$correction$check$shift,
-    fits$quadrature$laplace$correction$check$shift)
+  corr <- fits$quadrature$laplace$correction
+  expect_identical(corr$rule_failures, 0L)
+  expect_identical(corr$lattice, 0L)
+  expect_null(corr$wide)
+  expect_null(corr$maxdim)
   # On a Gaussian integrand Laplace is exact at any width: no check, no
   # screen, and nothing reported as left on Laplace -- with the effect a
   # coordinate as much as with the subject filter integrating it.
+  control <- utils::modifyList(.ctLaplaceContinueDefaults, list(check = FALSE))
   linear <- .lc_fits("linear")$off
   layer <- linear
   layer$model_spec$laplace$hybrid <- NULL
   for (f in list(linear, layer)) {
-    expect_no_message(exact <- .ctLaplaceContinue(f, control = narrow))
+    expect_no_message(exact <- .ctLaplaceContinue(f, control = control))
     expect_identical(exact$laplace$correction$status, "exact")
-    expect_identical(exact$laplace$correction$wide, 0L)
     expect_null(exact$laplace$correction$check)
     expect_identical(exact$estimate$raw, f$estimate$raw)
   }
@@ -799,16 +786,14 @@ test_that("a corrected fit reports how far its objective is from the exact margi
   expect_true(is.list(err))
   expect_identical(err$nats, 0)
   expect_identical(err$se, 0)
-  expect_identical(err$unscored, 0L)
   expect_false(any(grepl("integrated to within", capture.output(print(fits$quadrature)))))
   # The summary is a sum of its parts, and se is the certification's arithmetic.
   info <- list(error = 0.03, error_draws = 0.01, error_nodes = 0.005,
     error_residual = 0.015, centre_error = c(NaN, 0.01, 0.005))
-  e <- .ctLaplaceIntegrationError(info, unscored = 2L)
+  e <- .ctLaplaceIntegrationError(info)
   expect_equal(e$nats, 0.03)
   expect_equal(e$se, sqrt(0.06))
   expect_equal(e$draws + e$nodes + e$residual, e$nats)
-  expect_identical(e$unscored, 2L)
   expect_true(is.na(.ctLaplaceIntegrationError(list(error = NA_real_))$se))
 })
 
@@ -819,18 +804,14 @@ test_that("draws' defaults reach the engine, and a flag names both corrections",
   expect_identical(control$draws_max, 16384L)
   expect_identical(control$draws_df, 4)
   expect_identical(.ctLaplaceContinuationArgs(control)$draws_df, 4)
-  # Units on draws make both routes slow, and the message says so without
-  # dropping either.
+  # Both corrections are named, whatever the move.
   plain <- .ctLaplaceShiftMessage(0.63, "popsd_drift", 27L, 40L)
-  wide <- .ctLaplaceShiftMessage(2.3, "popsd_mm_Y5", 97L, 100L, drawn = 97L)
+  wide <- .ctLaplaceShiftMessage(2.3, "popsd_mm_Y5", 97L, 100L)
   for (said in c(plain, wide)) {
     expect_match(said, "ctFitUncertainty(fit, intoverpop = 'quadrature')", fixed = TRUE)
     expect_match(said, "intoverpop = 'none'", fixed = TRUE)
     expect_match(said, "their intervals", fixed = TRUE)
   }
-  expect_no_match(plain, "hours", fixed = TRUE)
-  expect_match(wide, "Both may take hours here, where 97 of those units",
-    fixed = TRUE)
   # The step is a linearisation: a size below one standard error, a range
   # past it, where it has read moves of 10 se as 1 and of 1.6 as 3.8.
   expect_match(plain, "by about 0.63 standard errors here (popsd_drift)", fixed = TRUE)

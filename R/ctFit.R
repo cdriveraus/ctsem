@@ -770,11 +770,11 @@ T0VARredundancies <- function(ctm) {
 #'
 #' \code{'quadrature'} (\code{backend='julia'}, optimizing) fits by
 #' \code{'laplace'} and then refines the fit with the units the random-effects check
-#' names (\code{optimcontrol$checks}) integrated numerically -- by adaptive
-#' Gauss-Hermite rules (5 nodes per effect) for units with up to five effects,
-#' by draws beyond -- reporting that objective's estimate, standard errors and
-#' log likelihood (Laplace's kept in \code{loglik_laplace}). Seconds on one
-#' level, it can take hours where many units need draws or the units nest;
+#' names (\code{optimcontrol$checks}) integrated numerically -- each unit by
+#' adaptive Gauss-Hermite or lattice rules, whichever reaches the accuracy at
+#' the lower cost, at any number of effects -- reporting that objective's
+#' estimate, standard errors and log likelihood (Laplace's kept in
+#' \code{loglik_laplace}). Seconds to minutes; longer where the units nest;
 #' \code{ctFitUncertainty(fit, intoverpop = 'quadrature')} does the same after
 #' a fit.
 #'

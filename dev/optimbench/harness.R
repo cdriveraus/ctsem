@@ -717,7 +717,7 @@ rec$row <- data.frame(
   jump_units = paste(unique(unlist(lapply(runs, function(r)
     if (identical(r$stop_reason, "jump")) r$jump_units))), collapse = ","),
   jump_fit = length(rec$laplace_block$jump$units),
-  lapcorr_wide = .int1(corr$wide %||% NA), lapcorr_flagged = .int1(corr$flagged %||% NA),
+  lapcorr_lattice = .int1(corr$lattice %||% NA), lapcorr_flagged = .int1(corr$flagged %||% NA),
   lapcorr_continuation = .chr1(corr$continuation),
   lapcorr_secs = .num1(corr$seconds["total"]), lapcorr_gradients = .num1(corr$evaluations["gradients"]),
   cont_hessian = is.matrix(corr$hessian),

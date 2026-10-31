@@ -49,8 +49,8 @@ draws from a curvature, importance-weighted ones for \code{'checked'} and
 records). \code{'quadrature'}, for a Laplace fit, refines the fit from its
 estimate, with the units the random-effects check names integrated
 numerically -- by
-adaptive Gauss-Hermite rules for units with up to five effects, by draws
-beyond -- and describes the posterior there, as
+adaptive Gauss-Hermite or lattice rules, whichever reaches the accuracy at
+the lower cost -- and describes the posterior there, as
 \code{ctFit(intoverpop = 'quadrature')} does when fitting; with
 \code{'hessian'}, \code{'checked'} or \code{'is'}. With
 \code{method = 'sample'}, \code{'none'} samples the random effects

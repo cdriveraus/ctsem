@@ -12,17 +12,13 @@ using ForwardDiff, LinearAlgebra, Statistics
 #  2. At its centre the fixed rule IS the adaptive quadrature: the same nodes,
 #     so the same value as `ctsem_laplace_quadrature`, unit by unit.
 #  3. Where nothing is flagged the hybrid IS the Laplace objective, value and
-#     gradient, bit for bit; and on a Gaussian integrand the soft-direction
-#     rule is exact, as every rule of this family must be.
-#  4. Re-placing the nodes and putting them back restores the objective.
-#  5. A round never leaves its trust region.
-#  6. At its centre, on a Gaussian integrand, the soft rule's fixed-node
-#     gradient and Hessian are the marginal's -- which a stiff complement
-#     taken at one node gets wrong, although its value is exact.
-#  7. The stiff complement's rule has a standard normal's moments through
-#     degree four, cross moments included.
-#  8. A unit wider than `maxdim` is left on Laplace, unscored, without draws;
-#     with them, one block or nested, it is integrated by frozen draws.
+#     gradient, bit for bit.
+#  4. The point sets: the product rule integrates a normal's moments exactly,
+#     the lattice-t rule integrates one within its stated error, and a
+#     lattice rule placed at a unit integrates it within that error.
+#  5. Every unit is scored, whatever its width, on the rule its cost chooses.
+#  6. Under `draws_all`, one block or nested, a unit is integrated by frozen
+#     draws.
 
 isdefined(@__MODULE__, :_LAPLACE_LINEAR_OBJECTIVE) ||
     include(joinpath(@__DIR__, "laplace_fixtures.jl"))
@@ -113,107 +109,66 @@ end
     @test isapprox(hyb.gradient, lap.gradient; rtol=1e-12, atol=1e-14)
 end
 
-@testset "the soft-direction rule is exact on a Gaussian integrand" begin
-    # `product_maxdim = 0` puts every block on the soft rule, including the
-    # outer ones of the nested fixture; each integrates a Gaussian exactly, so
-    # the rule's value is the Laplace value, which is exact there.
-    for (label, fresh) in (("one level", _fresh_linear),
-                           ("two levels", _fresh_twolevel))
-        laplace, values = fresh()
-        theta = collect(Float64, values)
-        reference = ctsem_laplace_evaluate(laplace, theta; gradient=false)
-        for maxdirs in (1, 2)
-            o = ctsem_laplace_continuation(laplace, theta; tolerance=0.0,
-                product_maxdim=0, soft_maxdirs=maxdirs)
-            info = ctsem_laplace_continuation_info(o)
-            @test (label, maxdirs, info.soft_blocks > 0 || info.nflagged == 0) ==
-                (label, maxdirs, true)
-            @test (label, maxdirs, isapprox(info.quadrature, reference.value;
-                atol=1e-7)) == (label, maxdirs, true)
-        end
-    end
-    # On the nonlinear fixture the soft rule is a genuine approximation, and
-    # its gradient must still be the derivative of its value.
-    laplace, values = _fresh_nonlinear()
-    theta = collect(Float64, values)
-    o = ctsem_laplace_continuation(laplace, theta; tolerance=0.0, product_maxdim=0)
-    r = _continuation_fd_check(o, theta .+ 0.05)
-    @test isapprox(r.g, r.fd; atol=1e-6, rtol=1e-5)
-end
-
-@testset "at its centre the soft rule's gradient is the marginal's" begin
-    # With one soft direction, the two-effect subject blocks keep a stiff
-    # complement of one. Its value at the centre is exact on a Gaussian
-    # integrand whatever rule it gets; its derivatives are not. Held at a
-    # single node, the complement's log determinant drops out of the gradient
-    # and its covariance out of the curvature -- on the gated-gaps A14 config
-    # that gave the continuation standard errors 0.07 to 0.45 of Laplace's.
-    # Laplace is exact here, so its gradient is the reference.
-    for (label, fresh) in (("one level", _fresh_linear),
-                           ("two levels", _fresh_twolevel))
-        laplace, values = fresh()
-        theta = collect(Float64, values)
-        o = ctsem_laplace_continuation(laplace, theta; tolerance=0.0,
-            product_maxdim=0, soft_maxdirs=1)
-        # A unit whose rule matches Laplace to the last bit has no gap and is
-        # not flagged; the rest carry the rule.
-        info = ctsem_laplace_continuation_info(o)
-        @test (label, info.nflagged > 0, info.soft_blocks > 0) == (label, true, true)
-        lap = ctsem_laplace_evaluate(laplace, theta; gradient=true)
-        hyb = ctsem_laplace_continuation_evaluate(o, theta; gradient=true)
-        @test (label, isapprox(hyb.value, lap.value; atol=1e-7)) == (label, true)
-        for j in eachindex(theta)
-            @test (label, j, isapprox(hyb.gradient[j], lap.gradient[j];
-                rtol=1e-6, atol=1e-8)) == (label, j, true)
-        end
-    end
-end
-
-@testset "the stiff complement's rule integrates the moments a derivative needs" begin
-    # The unscented transform's points are exact to degree three, which is
-    # every Gaussian integrand, but not for the cross moments of a
-    # two-dimensional complement; on the gated-gaps A14 config that left the
-    # fixed-node derivative 100 times the re-placed rule's. The product rule
-    # that replaced it: weights summing to one, and the moments through degree
-    # four of a standard normal, cross ones included.
-    rule = ContinuousTimeSEM._continuation_stiff_rule
-    @test rule(0, 5).logweights == [0.0]
-    for nh in (1, 2, 3)
-        r = rule(nh, 5)
-        w = exp.(r.logweights)
-        X = r.points
-        @test (nh, size(X)) == (nh, (nh, 5^nh))
-        @test (nh, isapprox(sum(w), 1.0; atol=1e-12)) == (nh, true)
+@testset "the point sets integrate a normal as their family should" begin
+    C = ContinuousTimeSEM
+    # The product rule: exact through degree four, cross moments included.
+    for k in (1, 2, 3)
+        ps = C._point_set_product(k, 5)
+        w = exp.(ps.logweights) .* exp.(-vec(sum(abs2, ps.points; dims=1)) ./ 2) ./
+            (2 * pi)^(k / 2)
+        X = ps.points
         moment(f) = sum(w[c] * f(X[:, c]) for c in eachindex(w))
-        for i in 1:nh
-            @test (nh, i, isapprox(moment(x -> x[i]), 0.0; atol=1e-12)) == (nh, i, true)
-            @test (nh, i, isapprox(moment(x -> x[i]^2), 1.0; atol=1e-12)) == (nh, i, true)
-            @test (nh, i, isapprox(moment(x -> x[i]^4), 3.0; atol=1e-10)) == (nh, i, true)
-            for j in (i + 1):nh
-                @test (nh, i, j, isapprox(moment(x -> x[i] * x[j]), 0.0; atol=1e-12)) ==
-                    (nh, i, j, true)
-                @test (nh, i, j, isapprox(moment(x -> x[i]^2 * x[j]^2), 1.0;
-                    atol=1e-10)) == (nh, i, j, true)
+        @test (k, isapprox(sum(w), 1.0; atol=1e-12)) == (k, true)
+        for i in 1:k
+            @test (k, i, isapprox(moment(x -> x[i]^2), 1.0; atol=1e-12)) == (k, i, true)
+            @test (k, i, isapprox(moment(x -> x[i]^4), 3.0; atol=1e-10)) == (k, i, true)
+            for j in (i + 1):k
+                @test (k, i, j, isapprox(moment(x -> x[i]^2 * x[j]^2), 1.0;
+                    atol=1e-10)) == (k, i, j, true)
             end
         end
     end
-end
-
-@testset "a unit wider than maxdim is not scored and keeps its Laplace term" begin
-    laplace, values = _fresh_twolevel()
-    theta = collect(Float64, values)
-    # Each unit is a study (one effect) over two subjects (two effects each):
-    # three effects on every root-to-leaf path of its block tree.
-    @test ContinuousTimeSEM._continuation_unit_width(laplace, 1) == 3
-    o = ctsem_laplace_continuation(laplace, theta; tolerance=0.0, maxdim=2)
-    info = ctsem_laplace_continuation_info(o)
-    @test (info.nwide, info.nflagged, info.rule_failures) == (info.nunits, 0, 0)
-    lap = ctsem_laplace_evaluate(laplace, theta; gradient=true)
-    hyb = ctsem_laplace_continuation_evaluate(o, theta; gradient=true)
-    @test hyb.value == lap.value
-    @test isapprox(hyb.gradient, lap.gradient; rtol=1e-12, atol=1e-14)
-    @test ctsem_laplace_continuation_info(ctsem_laplace_continuation(laplace, theta;
-        tolerance=0.0, maxdim=3)).nwide == 0
+    # One too large to evaluate is refused, not built.
+    @test_throws ArgumentError C._point_set_product(13, 5)
+    # The t quantile in closed form is the general one, and its density
+    # normalises.
+    for p in (1e-9, 0.01, 0.3, 0.5, 0.77, 1 - 1e-6)
+        x = ContinuousTimeSEM.SpecialFunctions.beta_inc_inv(2.0, 0.5,
+            2 * min(p, 1 - p))[1]
+        t = sqrt(4 * (1 - x) / x) * (p < 0.5 ? -1 : 1)
+        @test (p, isapprox(C._t4_quantile(p), t; rtol=1e-8, atol=1e-12)) == (p, true)
+    end
+    @test isapprox(sum(exp(C._t4_logdensity(y)) for y in -400:0.01:400) * 0.01, 1.0;
+        atol=1e-4)
+    # The generating vector: odd, and the same each time it is built.
+    z = C._lattice_cbc(5, 64)
+    @test all(isodd, z) && z[1] == 1 && z == C._lattice_cbc(5, 64)
+    # The lattice-t rule: the integral of a standard normal within a few of
+    # its stated errors, at every size, the error falling with the points;
+    # and a key fixes the points.
+    for k in (2, 5, 9)
+        last = Inf
+        for n in (16, 128, 1024)
+            ps = C._point_set_lattice(k, n, (1, k))
+            @test size(ps.points) == (k, n * C._LATTICE_SHIFTS)
+            t = ps.logweights .- vec(sum(abs2, ps.points; dims=1)) ./ 2 .-
+                k * log(2 * pi) / 2
+            peak = maximum(t)
+            sums = zeros(ps.nrep)
+            for j in eachindex(t)
+                sums[ps.replicate[j]] += exp(t[j] - peak)
+            end
+            value = peak + log(sum(sums))
+            se = C._point_set_error(sums, ps.nrep)
+            @test (k, n, abs(value) < 5 * se + 1e-12) == (k, n, true)
+            @test (k, n, se < last) == (k, n, true)
+            last = se
+        end
+        @test C._point_set_lattice(k, 16, (1, k)).points ==
+            C._point_set_lattice(k, 16, (1, k)).points
+        @test C._point_set_lattice(k, 16, (1, k)).points !=
+            C._point_set_lattice(k, 16, (2, k)).points
+    end
 end
 
 # --- two states, for the exact Hessian ------------------------------------------
@@ -251,48 +206,109 @@ const _CONTINUATION_2D_OBJECTIVE = let
 end
 end
 
-# Three effects a subject (DRIFT[1,1], CINT[1], T0MEANS[2]), so wider than the
-# product rule: scales 7-9, correlations 10-12.
+# Three effects a subject (DRIFT[1,1], CINT[1], T0MEANS[2]): scales 7-9,
+# correlations 10-12.
 _fresh_2d3() = (ctsem_laplace_objective(_CONTINUATION_2D_OBJECTIVE, [1, 3, 5],
     [7, 8, 9], [10, 11, 12], [1.0, 1.0, 1.0]),
     [0.3, 0.2, 0.1, -0.5, 0.2, -0.1, 0.4, 0.3, 0.5, 0.2, -0.1, 0.15])
 
-@testset "the continuation builds no grid wider than its rules use" begin
-    # A block wider than `product_maxdim` takes the soft rule, whose stiff
-    # complement is built where it is placed; warming a grid per block size
-    # built 5^13 points (over 100 GB) for units of thirteen effects.
-    laplace, values = _fresh_2d3()
-    theta = collect(Float64, values)
-    empty!(ContinuousTimeSEM._GH_GRID_CACHE)
-    o = ctsem_laplace_continuation(laplace, theta; tolerance=0.0, product_maxdim=2,
-        soft_maxdirs=2)
-    @test ctsem_laplace_continuation_info(o).nflagged > 0
-    @test maximum(first, keys(ContinuousTimeSEM._GH_GRID_CACHE)) <= 2
-    # And a grid too large to evaluate is refused, not built.
-    @test_throws ArgumentError ContinuousTimeSEM._gh_grid(13, 5)
-    @test !haskey(ContinuousTimeSEM._GH_GRID_CACHE, (13, 5))
+# Four (DRIFT[1,1], DRIFT[1,2], CINT[1], T0MEANS[2]): scales 7-10, correlations
+# 11-16. Past three effects the lattice is the cheaper first rule.
+_fresh_2d4() = (ctsem_laplace_objective(_CONTINUATION_2D_OBJECTIVE, [1, 2, 3, 5],
+    [7, 8, 9, 10], collect(11:16), [1.0, 1.0, 1.0, 1.0]),
+    [0.3, 0.2, 0.1, -0.5, 0.2, -0.1, 0.4, 0.2, 0.3, 0.5, 0.2, -0.1, 0.15, 0.0,
+     0.1, -0.05])
+
+@testset "a lattice rule placed at a unit integrates it within its error" begin
+    C = ContinuousTimeSEM
+    # Laplace is exact on the linear fixture, and the product rule at 9 nodes
+    # is on the nonlinear three-effect one. On the linear one each unit's
+    # integrand is its placed Gaussian, so the lattice's ratio against it
+    # (`_point_set_gaussian`) is exact, its spread nothing.
+    laplace, values = _fresh_linear()
+    theta = C._laplace_extend(laplace, collect(Float64, values))
+    Ls = C._laplace_popchols(theta, laplace.spec)
+    opts = C._continuation_opts(ctsem_laplace_continuation(laplace, theta; tolerance=1e6))
+    ws = C._laplace_workspace!(laplace, Float64, length(theta))
+    exact = ctsem_laplace_evaluate(laplace, theta; gradient=false).unit_loglik
+    for U in 1:length(laplace.units.members)
+        r = C._continuation_unit_rule(laplace, U, theta, Ls, ws,
+            merge(opts, (choice=C.CTSEMRuleChoice(:lattice, 5, 16),)))
+        @test (U, isapprox(r.value, exact[U]; atol=1e-9), r.se < 1e-9) == (U, true, true)
+    end
+    for (label, fresh, nodes) in (("2d3", _fresh_2d3, 9),)
+        laplace, values = fresh()
+        theta = C._laplace_extend(laplace, collect(Float64, values))
+        Ls = C._laplace_popchols(theta, laplace.spec)
+        o = ctsem_laplace_continuation(laplace, theta; tolerance=1e6)
+        opts = C._continuation_opts(o)
+        ws = C._laplace_workspace!(laplace, Float64, length(theta))
+        reference = nodes == 0 ?
+            ctsem_laplace_evaluate(laplace, theta; gradient=false).unit_loglik :
+            ctsem_laplace_quadrature(laplace, theta; nodes=nodes,
+                contributions=true).subject_loglik
+        for U in 1:length(laplace.units.members), n in (16, 256)
+            r = C._continuation_unit_rule(laplace, U, theta, Ls, ws,
+                merge(opts, (choice=C.CTSEMRuleChoice(:lattice, 5, n),)))
+            @test (label, U, n, r.se > 0 && abs(r.value - reference[U]) <
+                5 * r.se + 1e-9) == (label, U, n, true)
+        end
+    end
 end
 
-# --- frozen importance draws, for units too wide for a product rule ------------
+@testset "every unit is scored, whatever its width, on the rule its cost chooses" begin
+    C = ContinuousTimeSEM
+    # Each unit is a study (one effect) over two subjects (two effects each):
+    # three effects on every root-to-leaf path, each block on a product rule.
+    laplace, values = _fresh_twolevel()
+    theta = collect(Float64, values)
+    o = ctsem_laplace_continuation(laplace, theta; tolerance=0.0)
+    info = ctsem_laplace_continuation_info(o)
+    @test info.rule_failures == 0
+    @test all(isfinite, info.quadrature_units)
+    @test all(U -> o.unit_rules[U].family === :mixed, 1:info.nunits)
+    @test all(b -> C._rule_block_product(o.unit_rules[1], b.size),
+        laplace.units.blocks[1])
+    # Four effects a subject: screened on the lattice, whose 128 points are
+    # fewer than the product rule's 625, and each refined to the cheapest
+    # rule that reaches the target.
+    laplace, values = _fresh_2d4()
+    theta = collect(Float64, values)
+    @test C._rule_default(laplace, 1, 5) == C.CTSEMRuleChoice(:lattice, 5, 16)
+    # Eight shifts of 16 lattice points and 2 of the prior's.
+    @test C._rule_cost(laplace, 1, C._rule_default(laplace, 1, 5)) == 144
+    o = ctsem_laplace_continuation(laplace, theta; tolerance=-1.0)
+    info = ctsem_laplace_continuation_info(o)
+    @test (info.rule_failures, info.nflagged) == (0, info.nunits)
+    for U in o.flagged
+        @test (U, o.importance[U] || info.centre_error[U] <= o.draws_se) == (U, true)
+    end
+    families = C._continuation_steps(laplace, 1, C._continuation_opts(o))
+    @test [f[1].family for f in families] == [:product, :lattice]
+    @test [c.nodes for c in families[1]] == [3, 5, 7, 9]
+    @test [c.points for c in families[2]] == [16 * 2^i for i in 0:7]
+end
+
+# --- frozen importance draws -------------------------------------------------
 #
-# A unit of one block wider than `maxdim` gets draws held fixed in its
-# standardised effects in place of nodes (`_continuation_importance_rule`).
+# Under `draws_all` (the random-effects check), and where no rule converges, a
+# unit gets draws held fixed in its standardised effects in place of nodes
+# (`_continuation_importance_rule`).
 # What has to hold: its value is the unit's integral to within its own error,
 # its gradient is the derivative of its value, a gap within that error flags
 # nothing, a unit the caller names is flagged whatever its gap, and with
 # `screen = false` only that unit is scored.
 
-@testset "a wide unit of one block gets frozen draws, valued as quadrature values it" begin
+@testset "a unit on frozen draws is valued as quadrature values it" begin
     laplace, values = _fresh_2d3()
     theta = collect(Float64, values)
     # Three effects a subject: the product rule's 125 nodes are the reference.
     reference = ctsem_laplace_quadrature(laplace, theta; nodes=5,
         contributions=true)
-    o = ctsem_laplace_continuation(laplace, theta; tolerance=0.0, maxdim=2,
+    o = ctsem_laplace_continuation(laplace, theta; tolerance=0.0, draws_all=true,
         draws=256, draws_se=0.02, force=1:length(laplace.units.members))
     info = ctsem_laplace_continuation_info(o)
-    @test (info.nwide, info.nimportance, info.nflagged) ==
-        (0, info.nunits, info.nunits)
+    @test (info.nimportance, info.nflagged) == (info.nunits, info.nunits)
     @test all(se -> 0 < se <= 0.02, info.centre_se)
     for U in 1:info.nunits
         @test abs(info.quadrature_units[U] - reference.subject_loglik[U]) <
@@ -302,14 +318,13 @@ end
     # derivative of the value they give.
     r = _continuation_fd_check(o, theta .+ 0.05)
     @test isapprox(r.g, r.fd; atol=1e-6, rtol=1e-5)
-    # With draws off, as before: too wide, so not scored.
+    # Without `draws_all` a unit takes draws only where no rule converges:
+    # here none.
     off = ctsem_laplace_continuation_info(ctsem_laplace_continuation(laplace,
-        theta; tolerance=0.0, maxdim=2))
-    @test (off.nwide, off.nimportance, off.nflagged) == (off.nunits, 0, 0)
-    # Draws for the units named only: the rest too wide and unscored.
-    some = ctsem_laplace_continuation_info(ctsem_laplace_continuation(laplace,
-        theta; tolerance=0.0, maxdim=2, draws=256, draws_scope=:forced, force=[1]))
-    @test (some.nwide, some.nimportance, some.flagged) == (some.nunits - 1, 1, [1])
+        theta; tolerance=0.0, draws=256))
+    @test (off.nimportance, off.rule_failures) == (0, 0)
+    @test_throws ArgumentError ctsem_laplace_continuation(laplace, theta;
+        draws_all=true)
 end
 
 @testset "an importance rule on a Gaussian integrand is the Laplace value" begin
@@ -328,7 +343,7 @@ end
     # screen at tolerance 0, which flags any unit past two errors, flagged in
     # 15-21 runs of 40. Its rules are tested exactly below.
     for df in (4, Inf)
-        o = ctsem_laplace_continuation(laplace, theta; tolerance=0.0, maxdim=1,
+        o = ctsem_laplace_continuation(laplace, theta; tolerance=0.0, draws_all=true,
             draws=256, draws_df=df)
         info = ctsem_laplace_continuation_info(o)
         @test info.nimportance == info.nunits
@@ -365,7 +380,7 @@ end
     reference = ctsem_laplace_quadrature(laplace, theta; nodes=5,
         contributions=true)
     for df in (4, Inf)
-        o = ctsem_laplace_continuation(laplace, theta; tolerance=0.0, maxdim=2,
+        o = ctsem_laplace_continuation(laplace, theta; tolerance=0.0, draws_all=true,
             draws=256, draws_se=0.02, draws_df=df,
             force=1:length(laplace.units.members))
         info = ctsem_laplace_continuation_info(o)
@@ -375,14 +390,14 @@ end
         end
     end
     @test_throws ArgumentError ctsem_laplace_continuation(laplace, theta;
-        maxdim=2, draws=256, draws_df=0)
+        draws_all=true, draws=256, draws_df=0)
 end
 
 @testset "a unit named is flagged whatever its gap, and screen = false scores it alone" begin
     laplace, values = _fresh_2d3()
     theta = collect(Float64, values)
     lap = ctsem_laplace_evaluate(laplace, theta; gradient=false)
-    o = ctsem_laplace_continuation(laplace, theta; maxdim=2, draws=256,
+    o = ctsem_laplace_continuation(laplace, theta; draws_all=true, draws=256,
         force=[2], screen=false)
     info = ctsem_laplace_continuation_info(o)
     @test (info.nflagged, info.flagged) == (1, [2])
@@ -391,15 +406,20 @@ end
     hyb = ctsem_laplace_continuation_evaluate(o, theta; gradient=false)
     @test isapprox(hyb.value, lap.value - lap.unit_loglik[2] +
         info.quadrature_units[2]; rtol=1e-12)
-    # A placement again keeps it, and a point given for it joins its proposal.
+    # A placement again keeps it, and a mode the objective knows for it (a
+    # jump's, kept on the fit's specification) joins its proposal
+    # (`_continuation_known_points!`).
     C = ContinuousTimeSEM
     d = laplace.units.dims[2]
-    C._continuation_add_points!(o, [2], reshape(fill(0.3, d), d, 1))
+    @test !haskey(o.points, 2)
+    push!(laplace.known[2], fill(0.3, d))
+    o = ctsem_laplace_continuation(laplace, theta; draws_all=true, draws=256,
+        force=[2], screen=false)
     C._continuation_place!(o, C._laplace_extend(laplace, theta .+ 0.01))
     @test ctsem_laplace_continuation_info(o).flagged == [2]
     @test length(o.points[2]) == 1
     @test_throws ArgumentError ctsem_laplace_continuation(laplace, theta;
-        maxdim=2, draws=256, force=[info.nunits + 1])
+        draws=256, force=[info.nunits + 1])
 end
 
 @testset "the screen sums small gaps of one sign, and each unit's own against its error" begin
@@ -438,7 +458,7 @@ end
     nunits = length(laplace.units.members)
     V = zeros(nunits, length(seeds)); S = zeros(nunits, length(seeds))
     for (i, seed) in enumerate(seeds)
-        o = ctsem_laplace_continuation(laplace, theta; tolerance=0.0, maxdim=2,
+        o = ctsem_laplace_continuation(laplace, theta; tolerance=0.0, draws_all=true,
             draws=256, draws_max=256, draws_seed=seed,
             force=1:nunits)
         info = ctsem_laplace_continuation_info(o)
@@ -484,7 +504,7 @@ end
     theta = collect(Float64, values)
     n = length(theta)
     P = ctsem_laplace_placed(ctsem_laplace_continuation(laplace, theta;
-        product_maxdim=3, force=[1, 2], screen=false))
+        force=[1, 2], screen=false))
     @test length(P.placed) == 2
     stage(from; kw...) = C.ctsem_optimize(P, from; maxiter=500, g_tol=1e-6,
         newton=false, certify=false, progress=false, verbose=false,
@@ -519,7 +539,7 @@ end
 
 # --- nested units by frozen draws ---------------------------------------------
 #
-# A unit wider than `maxdim` whose block tree nests gets draws per block, each
+# Under `draws_all` a unit whose block tree nests gets draws per block, each
 # block's conditional on a draw of the blocks above
 # (`_continuation_importance_rule`). What has to hold, as for one block: its
 # value is the unit's integral to within its own error, at two levels and at
@@ -568,13 +588,13 @@ _fresh_nested_nonlinear() = (ctsem_laplace_objective(_LAPLACE_NONLINEAR_OBJECTIV
     theta = collect(Float64, values)
     nunits = length(laplace.units.members)
     drawn = ctsem_laplace_continuation_info(ctsem_laplace_continuation(laplace, theta;
-        tolerance=0.0, maxdim=2, draws=256, force=1:nunits))
+        tolerance=0.0, draws_all=true, draws=256, force=1:nunits))
     @test all(drawn.centre_error[U] == drawn.centre_se[U] for U in drawn.flagged)
     @test drawn.error_draws ≈ sqrt(sum(abs2, drawn.centre_se[drawn.flagged]))
     @test drawn.error_nodes == 0
 end
 
-@testset "a rule whose nodes have not converged is refined, and takes draws past nine only where its rules do not converge" begin
+@testset "a rule that has not converged is refined, and takes draws only where no family converges" begin
     # On the nonlinear fixture, at a point where some unit's 5-node rule
     # differs from its 3-node rule by more than the draws' target: with the
     # target out of reach the errors are those differences; at the target
@@ -615,26 +635,41 @@ end
     @test f.error <= c.error + 1e-12
     # A target only an exact rule reaches, on the three-effect nonlinear
     # fixture, whose product rules differ at every node count. Past nine
-    # nodes a unit keeps its finest rule wherever its rules converge -- the
-    # last node-step difference below the one before -- and reports the
-    # geometric tail as its error, never less than that difference; it takes
-    # draws only where they do not converge. With draws off it keeps the
-    # finest rule either way. (The one-effect fixture above reads its 7-node
-    # rule within 1e-12 of its 5-node rule, so nothing there escalates.) See
-    # `_continuation_refine!`.
+    # nodes a unit whose product rules converge -- the last node-step
+    # difference below the one before -- keeps its finest product rule with
+    # the geometric tail as its error, never less than that difference, or
+    # the lattice's finest where that one's error is smaller; it takes draws
+    # only where they do not converge. With draws off it keeps the rule with
+    # the smallest error either way. (The one-effect fixture above reads its
+    # 7-node rule within 1e-12 of its 5-node rule, so nothing there
+    # escalates.) See `_continuation_refine!`.
     laplace, values = _fresh_2d3()
     theta = collect(Float64, values)
     tiny = 1e-12
-    at(m) = ctsem_laplace_continuation_info(ctsem_laplace_continuation(laplace,
-        theta; tolerance=-1.0, nodes=m, draws_se=1e9))
-    i5, i7, i9 = at(5), at(7), at(C._CONTINUATION_NODES_MAX)
+    # Each unit's product rule at `m` nodes, placed at the centre.
+    full = C._laplace_extend(laplace, theta)
+    Ls = C._laplace_popchols(full, laplace.spec)
+    ws = C._laplace_workspace!(laplace, Float64, length(full))
+    opts0 = C._continuation_opts(ctsem_laplace_continuation(laplace, theta;
+        tolerance=1e6))
+    rule(U, choice) = C._continuation_unit_rule(laplace, U, full, Ls, ws,
+        merge(opts0, (choice=choice,)))
+    product(U, m) = rule(U, C.CTSEMRuleChoice(:product, m, 0)).value
     function tail(U)
-        d9 = abs(i9.quadrature_units[U] - i7.quadrature_units[U])
-        d7 = abs(i7.quadrature_units[U] - i5.quadrature_units[U])
+        q5, q7, q9 = product(U, 5), product(U, 7), product(U, C._CONTINUATION_NODES_MAX)
+        d9 = abs(q9 - q7)
+        d7 = abs(q7 - q5)
         converging = d7 > 0 && d9 < d7
         r = converging ? d9 / d7 : NaN
-        return (d9=d9, converging=converging,
+        return (d9=d9, converging=converging, q9=q9,
             error=converging ? d9 * max(1.0, r / (1 - r)) : d9)
+    end
+    # The lattice's finest rule and its error, the larger of its spread and
+    # its count step (`_continuation_count_step`), for the comparison.
+    function finest(U, o)
+        f = rule(U, C.CTSEMRuleChoice(:lattice, 5, C._LATTICE_MAX))
+        h = rule(U, C.CTSEMRuleChoice(:lattice, 5, C._LATTICE_MAX ÷ 2))
+        return (se=max(f.se, abs(f.value - h.value)),)
     end
     drawn = ctsem_laplace_continuation(laplace, theta; tolerance=-1.0, draws=256,
         draws_se=tiny)
@@ -648,9 +683,15 @@ end
         if drawn.importance[U]
             @test d.centre_error[U] == d.centre_se[U]
         else
-            @test isapprox(d.quadrature_units[U], i9.quadrature_units[U]; rtol=1e-10)
-            @test isapprox(d.centre_error[U], t.error; rtol=1e-8)
-            @test d.centre_error[U] >= t.d9
+            f = finest(U, drawn)
+            if f.se < t.error
+                @test drawn.unit_rules[U] == C.CTSEMRuleChoice(:lattice, 5, C._LATTICE_MAX)
+                @test isapprox(d.centre_error[U], f.se; rtol=1e-8)
+            else
+                @test isapprox(d.quadrature_units[U], t.q9; rtol=1e-10)
+                @test isapprox(d.centre_error[U], t.error; rtol=1e-8)
+                @test d.centre_error[U] >= t.d9
+            end
         end
     end
     @test checked >= 1
@@ -661,12 +702,12 @@ end
     for U in nodrawn.flagged
         t = tail(U)
         t.d9 <= tiny && continue
-        @test isapprox(n.quadrature_units[U], i9.quadrature_units[U]; rtol=1e-10)
-        @test isapprox(n.centre_error[U], t.error; rtol=1e-8)
+        f = finest(U, nodrawn)
+        @test isapprox(n.centre_error[U], min(t.error, f.se); rtol=1e-8)
     end
 end
 
-@testset "a nested unit wider than maxdim gets frozen draws per block" begin
+@testset "a nested unit under draws_all gets frozen draws per block" begin
     # At the default `draws_df`: a t at the top block and Gaussians beneath.
     # A t beneath read 0.03-0.12 nats high here (`_continuation_importance_rule`).
     for (label, fresh, draws, draws_max) in (
@@ -677,11 +718,11 @@ end
         theta = collect(Float64, values)
         # Linear Gaussian, so Laplace is the integral.
         lap = ctsem_laplace_evaluate(laplace, theta; gradient=false)
-        o = ctsem_laplace_continuation(laplace, theta; tolerance=0.0, maxdim=1,
+        o = ctsem_laplace_continuation(laplace, theta; tolerance=0.0, draws_all=true,
             draws=draws, draws_max=draws_max, force=1:length(laplace.units.members))
         info = ctsem_laplace_continuation_info(o)
-        @test (label, info.nwide, info.nimportance, info.nflagged) ==
-            (label, 0, info.nunits, info.nunits)
+        @test (label, info.nimportance, info.nflagged) ==
+            (label, info.nunits, info.nunits)
         # Each draw of a root carries one rule per block beneath it.
         root = o.rules[1].roots[1]
         @test (label, !isempty(root.children) && length(root.children) ==
@@ -705,12 +746,11 @@ end
 @testset "nested draws on a nonlinear integrand integrate as the product rule does" begin
     laplace, values = _fresh_nested_nonlinear()
     theta = collect(Float64, values)
-    @test ContinuousTimeSEM._continuation_unit_width(laplace, 1) == 3
     # Seven nodes on each of a path's three effects: the reference.
     reference = ctsem_laplace_continuation_info(ctsem_laplace_continuation(laplace,
-        theta; nodes=7, tolerance=-1.0, maxdim=3)).quadrature_units
+        theta; nodes=7, tolerance=-1.0, draws_se=1e9)).quadrature_units
     lap = ctsem_laplace_evaluate(laplace, theta; gradient=false).unit_loglik
-    o = ctsem_laplace_continuation(laplace, theta; tolerance=0.0, maxdim=2,
+    o = ctsem_laplace_continuation(laplace, theta; tolerance=0.0, draws_all=true,
         draws=128, draws_se=0.02, force=1:length(laplace.units.members))
     info = ctsem_laplace_continuation_info(o)
     @test info.nimportance == info.nunits
