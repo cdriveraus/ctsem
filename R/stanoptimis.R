@@ -1057,8 +1057,9 @@ imis_is <- function(parlp,
   # `.ctCoresetLpg()` -- says what it has spent, in full evaluations, and the
   # budget and the record read that instead.
   costfun <- attr(parlp, 'cost')
+  gradprice <- .ctDensityGradientValues(parlp)
   spent <- if (is.function(costfun)) function() costfun() else
-    function() nevals + 2 * ngrad
+    function() nevals + gradprice * ngrad
   pathinfo <- NULL
   if (!is.null(gradfun) && isTRUE(paths)) {
     pathinfo <- .ctImisPaths(gradfun, evaluate, mu_hat, Sigma_hat)
@@ -1253,8 +1254,9 @@ imis_is <- function(parlp,
     df_used      = df,
     evaluations  = nevals,
     gradients    = ngrad,
-    # In full evaluations, a gradient as two: `evaluations + 2 * gradients`
-    # unless the density says it costs less (see `spent` above).
+    # In full evaluations, `evaluations` plus `gradients` at the density's
+    # price (`.ctDensityGradientValues()`), unless the density says it costs
+    # less (see `spent` above).
     cost         = spent(),
     rounds       = trace,
     paths        = if (is.null(pathinfo)) NULL else pathinfo[c("followed",

@@ -18,9 +18,11 @@ test_that("'checked' runs DAIS in the engine on a julia fit, and not where asked
   expect_gt(dais$iterations, 0L)
   expect_equal(dais$gradients, dais$draws * dais$iterations)
   # A Laplace fit's 'checked' has a coreset, and DAIS's draws go through one
-  # of its own: never dearer than the gradients in full, a gradient as two.
+  # of its own: never dearer than the gradients in full, each at the engine's
+  # price (`ctsem_gradient_values`).
   expect_true(isTRUE(dais$coreset$used))
-  expect_lte(dais$cost, 2 * dais$gradients)
+  price <- attr(ctsem:::.ctBackendLpgFunc(fit), "gradvalues")()
+  expect_lte(dais$cost, price * dais$gradients)
   expect_gte(dais$coreset$chosen, 0L)
   # Its record is the importance sampler's coreset's, choices and all.
   expect_equal(dais$coreset$record$chosen, dais$coreset$chosen)

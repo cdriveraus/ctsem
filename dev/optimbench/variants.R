@@ -66,6 +66,28 @@ BENCH_VARIANTS <- list(
   # read by a tenth of the units or fewer, the two run the same code.
   nolocal = list(optimcontrol = list(lbfgs_local = FALSE)),
   nocoreset = list(optimcontrol = list(coreset = FALSE)),
+  # The score outer product's model off (`lbfgs_scores`), the default since
+  # it was measured to help resumes and refits: whether it still pays once the
+  # anchored inner solve made Laplace iterations cheap.
+  noscores = list(optimcontrol = list(lbfgs_scores = FALSE)),
+
+  # The first L-BFGS step's length in the metric's norm (`initial_alpha`,
+  # default 0.1, set on flat-transform starts): a third of it, three times it,
+  # and the full unit step it replaced.
+  alpha003 = list(optimcontrol = list(initial_alpha = 0.03)),
+  alpha03 = list(optimcontrol = list(initial_alpha = 0.3)),
+  alpha1 = list(optimcontrol = list(initial_alpha = 1)),
+
+  # The prior warm-up forced on (the default only where an indicator is not
+  # Gaussian), and its cap of 10 iterations at half and twice that.
+  careful = list(optimcontrol = list(carefulfit = TRUE)),
+  careful5 = list(optimcontrol = list(carefulfit = 5L)),
+  careful20 = list(optimcontrol = list(carefulfit = 20L)),
+
+  # An estimate, then what a value, a gradient and a Hessian cost there, and
+  # single units against their weights (harness section 6): the measurements
+  # one cost model for the pricers is set from. No references.
+  costs = list(optimcontrol = list(estonly = TRUE), costs = TRUE),
 
   # The finish's steps on one curvature whatever the route would choose
   # (`_ctsem_finish_curvature`): a fresh exact Hessian whenever a step is slow,

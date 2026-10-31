@@ -463,6 +463,145 @@ end
     @test norm(seeded.gradient - reference) / norm(reference) < 1e-5
 end
 
+# The fixtures of the two testsets above, the rule set to flag units.
+function _soft_factored_cases()
+    one_block = function ()
+        laplace, values = _fresh_nonlinear_two()
+        ctsem_set_soft_directions!(laplace, :quadrature; lo=1.0, hi=1.2)
+        return laplace, values
+    end
+    two_levels = function ()
+        laplace = ctsem_laplace_objective(_LAPLACE_NONLINEAR_OBJECTIVE;
+            re_index=[1, 2, 4], sd_index=[5, 6, 8], cor_index=[7],
+            sd_scale=[1.0, 1.0, 1.0], level_nre=[2, 1],
+            group=vcat(1:5, [1, 1, 2, 2, 3]), level_ngroups=[5, 3])
+        ctsem_set_soft_directions!(laplace, :quadrature; lo=0.3, hi=1.1)
+        return laplace, [0.1, -2.0, -0.2, 0.05, -0.25, 1.0, 0.0, 0.5]
+    end
+    return (("one block", one_block), ("two levels", two_levels))
+end
+
+@testset "the soft-direction quadrature by block factorizations against the dense rule" begin
+    C = ContinuousTimeSEM
+    for (label, make) in _soft_factored_cases()
+        laplace, values = make()
+        factored = ctsem_laplace_evaluate(laplace, values; gradient=true)
+        @test laplace.soft_quadrature_units >= 1
+        theta = C._laplace_extend(laplace, collect(Float64, values))
+        Ls = C._laplace_popchols(theta, laplace.spec)
+        aws = C._laplace_workspace!(laplace, Float64, length(theta))
+        served = 0
+        for U in eachindex(laplace.modes)
+            u = laplace.modes[U]
+            isempty(u) && continue
+            blocks = laplace.units.blocks[U]
+            M = C._laplace_unit_curvature(laplace, U, theta, Ls, u)
+            inner = C._laplace_unit_objective_gradient(laplace, U, theta, Ls, u, aws)
+            ok, logdetM, _, _ = C._laplace_block_factor(M, blocks)
+            ok || continue
+            objf = z -> C._laplace_unit_objective_gradient(laplace, U, theta, Ls, z, aws)
+            curvf = z -> C._laplace_unit_curvature(laplace, U, theta, Ls, z)
+            # Each unit's value by factorizations against the dense rule's.
+            fv = C._laplace_soft_quadrature_factored(laplace, M, blocks, logdetM,
+                inner.value, u, objf, curvf)
+            previous = ctsem_set_soft_quadrature_factored!(false)
+            dv = try
+                C._laplace_soft_quadrature_term(laplace, U, theta, Ls, u, aws; M=M,
+                    logdetM=logdetM, inner=inner)
+            finally
+                ctsem_set_soft_quadrature_factored!(previous)
+            end
+            if fv !== nothing
+                served += 1
+                @test (label, U, fv.flagged, fv.logdet_floor) ==
+                    (label, U, dv.flagged, dv.logdet_floor)
+                @test (label, U, isapprox(fv.value, dv.value; rtol=1e-11)) ==
+                    (label, U, true)
+            end
+            # And its gradient.
+            st = C._laplace_soft_quadrature_setup(laplace, U, theta, u)
+            gf = C._laplace_soft_quadrature_reverse_factored(laplace, st.z0, st.objf,
+                st.curvb, st.blocks, st.G, length(theta))
+            gd = C._laplace_soft_quadrature_reverse(laplace, st.z0, st.objf, st.curvf,
+                st.G, length(theta))
+            gf === nothing || @test (label, U, isapprox(gf, gd; rtol=1e-8, atol=1e-10)) ==
+                (label, U, true)
+        end
+        @test (label, served > 0) == (label, true)
+        # The whole objective, and its gradient, under the dense rule everywhere.
+        previous = ctsem_set_soft_quadrature_factored!(false)
+        dense = try
+            ctsem_laplace_evaluate(laplace, values; gradient=true)
+        finally
+            ctsem_set_soft_quadrature_factored!(previous)
+        end
+        @test isapprox(factored.value, dense.value; rtol=1e-11)
+        @test isapprox(factored.gradient, dense.gradient; rtol=1e-8, atol=1e-10)
+    end
+end
+
+@testset "the factorized soft-direction quadrature's linear algebra" begin
+    C = ContinuousTimeSEM
+    rng = Random.MersenneTwister(31)
+    for (label, make) in _soft_factored_cases()
+        laplace, values = make()
+        ctsem_laplace_evaluate(laplace, values; gradient=false)
+        theta = C._laplace_extend(laplace, collect(Float64, values))
+        spec = laplace.spec
+        Ls = C._laplace_popchols(theta, spec)
+        dL = C._laplace_level_chol_derivatives(theta, spec)
+        positions = Vector{Int}[C._laplace_level_positions(spec, l)
+            for l in eachindex(spec.levels)]
+        for U in eachindex(laplace.modes)
+            u = laplace.modes[U]
+            d = length(u)
+            d >= 2 || continue
+            blocks = laplace.units.blocks[U]
+            M = C._laplace_unit_curvature(laplace, U, theta, Ls, u)
+            Md = C._laplace_block_dense(M, blocks, d)
+            E = eigen(Symmetric(Md))
+            F = C._soft_shifted_factor(M, blocks, 0.0)
+            F === nothing && continue
+            # The members' coordinates are the ones their values read.
+            G = C._SoftQuadratureThetaGradient(laplace, U, theta, Ls, dL, positions, nothing)
+            for m in eachindex(laplace.units.members[U])
+                offsets = laplace.units.offsets[U][m]
+                read = Int[]
+                for (l, level) in enumerate(spec.levels)
+                    r = C.nlatent(level)
+                    (C.nrandomeffects(level) == 0 || r == 0) && continue
+                    append!(read, offsets[l] .+ (1:r))
+                end
+                @test (label, U, m, sort(G.coords[m])) == (label, U, m, sort(read))
+            end
+            # A trace adjoint held as a selected inverse, read on each member.
+            a, b = randn(rng, d), randn(rng, d)
+            Gs = C._SoftGamma(0.7, F, blocks, [1.3, -0.4], [a, b], [b, a])
+            Gd = 0.7 .* inv(Md) .+ 1.3 .* (a * b' .+ b * a') ./ 2 .-
+                0.4 .* (b * a' .+ a * b') ./ 2
+            for m in eachindex(G.coords)
+                @test C._soft_member_gamma(Gs, G, m) ≈ C._soft_member_gamma(Gd, G, m) rtol=1e-10
+            end
+            @test C._soft_block_mulvec(M, blocks, a) ≈ Md * a rtol=1e-12
+            # The smallest eigenpair, the deflated solve and the second eigenvalue.
+            (E.values[2] - E.values[1]) > 1e-3 || continue
+            eig = C._soft_smallest_eigenpair(M, blocks, F)
+            @test eig !== nothing
+            @test isapprox(eig.lambda, E.values[1]; rtol=1e-12)
+            @test isapprox(abs(dot(eig.v, E.vectors[:, 1])), 1.0; atol=1e-10)
+            rhs = randn(rng, d)
+            rhs .-= eig.v .* dot(eig.v, rhs)
+            x = C._soft_deflated_solve(eig, blocks, rhs)
+            xr = sum(E.vectors[:, k] .* (dot(E.vectors[:, k], rhs) / (E.values[k] - E.values[1]))
+                for k in 2:d)
+            @test isapprox(x, xr; rtol=1e-8)
+            for s in (E.values[2] - 1e-3, E.values[2] + 1e-3)
+                @test C._soft_second_above(M, blocks, eig.v, eig.lambda, s) == (E.values[2] > s)
+            end
+        end
+    end
+end
+
 @testset "the soft-direction rule belongs to the objective, not the session" begin
     # Two objectives over the same model: setting one to :quadrature leaves the
     # other at :logdet_floor, value and gradient, and a fresh objective starts at

@@ -5843,8 +5843,11 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
     # to its plateau. One of the seven constants that move where a fit ends
     # (`review/OPTIM-consolidation-plan-2026-09-25.md` Appendix B), measured on
     # flat-transform starts and recorded in
-    # `review/LAPLACE-optimise-heuristics-survey-2026-09-25.md` section 3; not
-    # yet measured on categorical or multilevel models.
+    # `review/LAPLACE-optimise-heuristics-survey-2026-09-25.md` section 3. On
+    # the bench's 70 default cells, categorical and nested among them, 0.03, 0.3
+    # and 1 each moved fits between basins both ways and none was better across
+    # them; a unit step lost 6.8 nats on both AnomAuth fits
+    # (`review/bench/2026-10-31-defaults-jf-f979c331.md`).
     initial_alpha = if (is.null(optimcontrol$initial_alpha)) .1 else
       as.numeric(optimcontrol$initial_alpha)[1L],
     verbose = verbose > 0L,
@@ -5970,10 +5973,13 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
     common$lbfgs_memory <- as.integer(optimcontrol$lbfgs_memory)[1L]
   }
   # A second model of the curvature beside L-BFGS's, from the per-unit score
-  # outer products (`CTSEMStructured`); on unless asked not to.
+  # outer products (`CTSEMStructured`); on unless asked not to. Off, the
+  # bench's 70 default cells ended the same but one, 8.2 nats lower.
   if (!isFALSE(optimcontrol$lbfgs_scores)) common$lbfgs_scores <- TRUE
   # L-BFGS's initial curvature exact where parameters are read by few units
-  # (`CTSEMLocalCurvature`); on unless asked not to.
+  # (`CTSEMLocalCurvature`); on unless asked not to. It never builds on the
+  # bench's cells, whose runs are short and parameters widely read; the case
+  # for it is the affect pilot's (CLAUDE.md).
   if (!isFALSE(optimcontrol$lbfgs_local)) common$lbfgs_local <- TRUE
   # L-BFGS's initial inverse Hessian per coordinate, and a non-monotone line
   # search (see `_ctsem_lbfgs` in optimiser.jl).
@@ -6760,9 +6766,12 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
   # 10 occasions, Gaussian, binary, ordinal and mixed indicators, on both the
   # augmented and the laplace route, fitted with `priors = FALSE`
   # (dev/simstudies/simstudy-individual-differences.R and
-  # simstudy-carefulfit.R). Nothing with more than one random effect, an
-  # effect on DRIFT or a variance, or an outer level. A change to the cap is a
-  # bench run, not an edit.
+  # simstudy-carefulfit.R). On the bench's 70 default cells (2026-10-31: more
+  # than one random effect, effects on DRIFT, nested levels), off or at a cap
+  # of 5 or 20 on the 24 non-Gaussian cells differed from 10 by at most 0.52
+  # nats, both ways, and on the Gaussian ones it found better basins on gA14
+  # and gB8 and lost AnomAuth's 6.8 (`review/bench/2026-10-31-defaults-jf-f979c331.md`). A change to the cap
+  # is a bench run, not an edit.
   #
   # On by default only when some indicator is not Gaussian (binary, ordinal,
   # count or censored), Charles's decision of 2026-09-27. The benefits measured

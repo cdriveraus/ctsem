@@ -57,6 +57,15 @@ end
         record=failed)
     @test !larger.chosen || count(>(0), larger.w) > 10 ||
         larger.fail > cf.fail
+    # A size is priced by its units' shares of a full evaluation, not their
+    # count: where the units that carry the sum cost nine tenths of it, no
+    # coreset of them is as cheap.
+    k = count(>(0), cf.w)
+    skew = fill(0.1 / (60 - k), 60)
+    skew[cf.S[cf.w .> 0]] .= 0.9 / k
+    dear = CIS._is_coreset_choose(_cis_rows(X[1:200, :], y[1:200]), rd, Int[];
+        shares=skew)
+    @test !dear.chosen || dear.cost > cf.cost
 end
 
 @testset "a size is held to the full sum's gradient at held-out scored draws" begin
@@ -173,11 +182,11 @@ end
 @testset "a round's price counts the checks of a caller that checks every gradient batch" begin
     # DAIS: a batch of 64 draws, all of them gradients, each batch checked at 8.
     # A coreset of 196 of 200 units saves less than its checks cost.
-    plain = CIS._ISRound(64, 64, 8)
-    checked = CIS._ISRound(64, 64, 8, 1.0, 8.0, 1.0)
-    @test CIS._is_round_cost(196, 200, plain, 0.1) < CIS._is_full_round(plain)
-    @test CIS._is_round_cost(196, 200, checked, 0.1) > CIS._is_full_round(checked)
-    @test CIS._is_round_cost(30, 200, checked, 0.1) < CIS._is_full_round(checked)
+    plain = CIS._ISRound(64, 64, 8; gradvalues=2.0)
+    checked = CIS._ISRound(64, 64, 8, 1.0, 8.0, 1.0, 2.0)
+    @test CIS._is_round_cost(196 / 200, plain, 0.1) < CIS._is_full_round(plain)
+    @test CIS._is_round_cost(196 / 200, checked, 0.1) > CIS._is_full_round(checked)
+    @test CIS._is_round_cost(30 / 200, checked, 0.1) < CIS._is_full_round(checked)
 end
 
 isdefined(@__MODULE__, :_LAPLACE_LINEAR_OBJECTIVE) ||
@@ -194,6 +203,23 @@ isdefined(@__MODULE__, :_LAPLACE_LINEAR_OBJECTIVE) ||
     @test U === CIS._ctsem_unit_sum(o)
     @test length(U.units.members) == N
     @test CIS._smc_coreset_capable(o)
+    # Every pricer reads one cost model (cost_model.jl): a gradient's price by
+    # route, the marginal adjoint's on its view too, less on a Laplace
+    # objective with coordinates, whose value is mostly the inner solves the
+    # gradient pays as well; and each unit's share of a value, rows times
+    # members, in the importance sampler as in SMC.
+    @test CIS._ctsem_gradient_values(o) == CIS._CTSEM_GRADIENT_VALUES_FILTER
+    @test CIS._ctsem_gradient_values(U) == CIS._CTSEM_GRADIENT_VALUES_FILTER
+    @test CIS._ctsem_gradient_values(first(_fresh_nonlinear())) ==
+        CIS._CTSEM_GRADIENT_VALUES_LAPLACE
+    @test 1 < CIS._CTSEM_GRADIENT_VALUES_LAPLACE < CIS._CTSEM_GRADIENT_VALUES_FILTER
+    shares = CIS._ctsem_unit_shares(U)
+    w = CIS._laplace_unit_weights(U)
+    @test shares ≈ w ./ sum(w)
+    @test CIS._smc_unit_cost(o) == shares
+    cs = ctsem_is_coreset(o)
+    @test cs.shares == shares
+    @test cs.gradvalues == CIS._ctsem_gradient_values(U)
     x = _LAPLACE_LINEAR_VALUES[1:5]
     X = hcat(x, x .+ 0.02, x .- 0.03)
     terms = ctsem_coreset_terms(o, X)

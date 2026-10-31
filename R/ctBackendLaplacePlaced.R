@@ -273,6 +273,7 @@
     attr(fn, "engine") <- engine
     attr(fn, "batch") <- batches$batch
     attr(fn, "gradbatch") <- batches$gradbatch
+    attr(fn, "gradvalues") <- batches$gradvalues
     fn
   }
 }

@@ -307,16 +307,26 @@ end
                 rd = _oracle_soft_quadrature_directional(G, z, beta)
                 @test rel(r.theta, rd.theta) <= 1e-8
                 @test rel(r.z, rd.z) <= 1e-8
+                # The trace term, member by member along each member's own
+                # directions, against the jet along the matrix's eigendirections.
                 A = randn(rng, length(z), length(z))
-                E = C._ctsem_symeig(A .+ A')
-                for chunk in ([1], collect(1:length(z)))
-                    W = C._ctsem_jet_width(length(chunk))
-                    tb, zb = zeros(length(theta)), zeros(length(z))
-                    @test C._laplace_soft_quadrature_jet_pass!(tb, zb, G, z, E, chunk, 1.0, Val(W))
-                    jd = _oracle_soft_quadrature_jet(G, z, E, chunk, W)
-                    @test rel(-tb, jd.theta) <= 1e-8
-                    @test rel(-zb, jd.z) <= 1e-8
+                Gam = A .+ A'
+                E = C._ctsem_symeig(Gam)
+                tb, zb = zeros(length(theta)), zeros(length(z))
+                @test C._soft_quadrature_trace!(tb, zb, G, z, Gam)
+                jt, jz = zeros(length(theta)), zeros(length(z))
+                W = C._CTSEM_JET_WIDTH
+                for (sgn, dirs) in ((1.0, findall(>(0), E.values)),
+                                    (-1.0, findall(<(0), E.values)))
+                    for first in 1:W:length(dirs)
+                        jd = _oracle_soft_quadrature_jet(G, z, E,
+                            dirs[first:min(first + W - 1, length(dirs))], W)
+                        jt .-= sgn .* jd.theta
+                        jz .-= sgn .* jd.z
+                    end
                 end
+                @test rel(tb, jt) <= 1e-8
+                @test rel(zb, jz) <= 1e-8
             end
             # The soft-quadrature adjoint runs whole on those passes.
             @test any(!isnothing, [C._laplace_soft_quadrature_unit_adjoint(laplace, U, values)
