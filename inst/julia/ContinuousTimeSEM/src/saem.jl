@@ -136,8 +136,8 @@
 # marginal posterior deterministically for every model -- estimating it is
 # SAEM's job -- and the optimiser's finish (Newton on the exact Hessian), its
 # certification and the Hessian's standard errors each need an objective that
-# is deterministic and differentiable. The Laplace objective with its gated
-# floor is the one every model has; from SAEM's point the finish removes the
+# is deterministic and differentiable. The Laplace objective with its soft-direction
+# quadrature is the one every model has; from SAEM's point the finish removes the
 # step's offset and noise, and it is the one serious check of convergence.
 # What it costs: where the Laplace mode and the exact one differ, the finish
 # returns to the Laplace mode, and on the bench's gN1 and gN3 SAEM's own

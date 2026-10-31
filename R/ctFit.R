@@ -285,12 +285,11 @@
     msg = paste0("is the gradient at which a unit's random-effect mode counts ",
       "as found, and stan has no such inner solve -- it augments the latent ",
       "state instead. Drop it")),
-  # The Laplace term's prior floor, julia only: intoverpop='laplace', and
-  # sampling with intoverpop=FALSE, whose sampler is placed on the Laplace fit.
-  # 'total' used to be accepted anywhere because it was what every fit did;
-  # since the default became 'gated' neither value describes a stan fit, so
-  # both are refused there.
-  laplace_floor = list(only = 'julia',
+  # How the Laplace term scores soft directions, julia only:
+  # intoverpop='laplace', and sampling with intoverpop=FALSE, whose sampler is
+  # placed on the Laplace fit. Neither value describes a stan fit, which has no
+  # Laplace term, so both are refused there.
+  laplace_soft_directions = list(only = 'julia',
     inert = function(v) FALSE,
     msg = paste0("chooses how julia's Laplace term treats a unit whose ",
       "likelihood is convex in its random effects, and stan has no Laplace ",

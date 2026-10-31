@@ -4057,28 +4057,45 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
     }
     out$inner_tol <- tol
   }
-  # Recorded whenever it is given, default included. An absent floor is the
-  # historical meaning, 'total': a specification written before the default
-  # became 'gated' carries none, and every route that rebuilds an objective
-  # from it must keep scoring it the way it was fitted. So the default is
-  # resolved at the fit's entry point (`.ctFitJuliaBackendImpl`), never here --
-  # the rebuild sites pass `spec$laplace$inner` back through this function, and
-  # a default filled in here would silently move a stored fit to 'gated'.
-  floor <- laplacecontrol$floor
-  if (!is.null(floor)) {
-    floor <- as.character(floor)[1L]
-    if (is.na(floor) || !floor %in% c("total", "gated")) {
-      stop("optimcontrol$laplace_floor must be 'total' or 'gated'.",
-        call. = FALSE)
+  # How soft directions are scored, recorded whenever it is given, default
+  # included. An absent rule is the historical meaning, 'logdet_floor': a
+  # specification written before the default became the quadrature carries
+  # none, and every route that rebuilds an objective from it must keep scoring
+  # it the way it was fitted. So the default is resolved at the fit's entry
+  # point (`.ctFitJuliaBackendImpl`), never here -- the rebuild sites pass
+  # `spec$laplace$inner` back through this function, and a default filled in
+  # here would silently move a stored fit to the quadrature.
+  if (!is.null(laplacecontrol[["soft_directions"]]) ||
+      !is.null(laplacecontrol[["floor"]])) {
+    rule <- .ctJuliaSoftDirections(laplacecontrol)
+    if (is.na(rule) || !rule %in% c("quadrature", "logdet_floor")) {
+      stop("optimcontrol$laplace_soft_directions must be 'quadrature' or ",
+        "'logdet_floor'.", call. = FALSE)
     }
-    out$floor <- floor
+    out$soft_directions <- rule
   }
   out
 }
 
-# The floor a new intoverpop='laplace' or 'none' fit uses when none is asked
+# How a unit whose curvature has a direction softer than the prior's is
+# scored, as a specification's `laplace$inner` records it: 'quadrature' (the
+# soft-direction quadrature) or 'logdet_floor'. A specification written before
+# the rename (juliaFit, 2026-10-31) records `floor` = 'gated' or 'total'
+# instead, and one written before either was recorded carries neither, which
+# is the 'logdet_floor' it was fitted under.
+.ctJuliaSoftDirections <- function(inner) {
+  rule <- inner[["soft_directions"]]
+  if (!is.null(rule)) return(as.character(rule)[1L])
+  old <- inner[["floor"]]
+  if (is.null(old)) return("logdet_floor")
+  old <- as.character(old)[1L]
+  if (identical(old, "gated")) "quadrature" else if (identical(old, "total"))
+    "logdet_floor" else old
+}
+
+# The rule a new intoverpop='laplace' or 'none' fit uses when none is asked
 # for.
-.ctJuliaLaplaceFloorDefault <- "gated"
+.ctJuliaSoftDirectionsDefault <- "quadrature"
 
 # `optimcontrol$saem`: how many SAEM iterations the first optimisation stage
 # may run before L-BFGS (`ctsem_saem` in the engine), 0 for none. TRUE is the
@@ -4143,12 +4160,12 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
   # 'total' is no longer what every fit does, so it is not inert elsewhere.
   # 'none' has a Laplace term even though it samples the effects: its sampler
   # is placed, and its metric built, by optimising the Laplace objective.
-  if (!is.null(laplacecontrol$floor) &&
+  if (!is.null(laplacecontrol[["soft_directions"]]) &&
       !intoverpop %in% c("laplace", "none")) {
-    stop("optimcontrol$laplace_floor applies to intoverpop='laplace', and to ",
-      "sampling with intoverpop=FALSE, which places its sampler on the Laplace ",
-      "fit; with intoverpop='", intoverpop, "' there is no Laplace term to ",
-      "floor. Drop it.", call. = FALSE)
+    stop("optimcontrol$laplace_soft_directions applies to intoverpop='laplace', ",
+      "and to sampling with intoverpop=FALSE, which places its sampler on the ",
+      "Laplace fit; with intoverpop='", intoverpop, "' there is no Laplace term ",
+      "to score them in. Drop it.", call. = FALSE)
   }
   dat <- data.frame(datalong)
   dat <- dat[order(dat[[model$subjectIDname]], dat[[model$timeName]]), , drop = FALSE]
@@ -4871,14 +4888,14 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
     if (!is.null(spec$laplace$inner$inner_tol)) {
       laplace_args$inner_tol <- as.numeric(spec$laplace$inner$inner_tol)
     }
-    # The floor goes on the objective, not the session, so a gated fit leaves
-    # every other objective -- and every later fit -- as it was. Always sent,
-    # so the cache key (a hash of these inputs) sees the floor the objective is
-    # actually built with: a default 'gated' and an explicit one hash alike, and
-    # an absent floor -- a specification from before 'gated' was the default --
-    # is built, and keyed, as the 'total' it was fitted under.
-    laplace_args$floor <- as.character(.ctJuliaOr(spec$laplace$inner$floor,
-      "total"))[1L]
+    # The soft-direction rule goes on the objective, not the session, so a fit
+    # under the quadrature leaves every other objective -- and every later fit
+    # -- as it was. Always sent, so the cache key (a hash of these inputs) sees
+    # the rule the objective is actually built with: the default and the same
+    # rule named hash alike, and an absent rule -- a specification from before
+    # the quadrature was the default -- is built, and keyed, as the
+    # 'logdet_floor' it was fitted under.
+    laplace_args$soft_directions <- .ctJuliaSoftDirections(spec$laplace$inner)
     if (length(levels) > 1L) {
       # Concatenated innermost level first, split on the far side by the
       # per-level counts. Flat vectors because the bridge marshals those and
@@ -6372,15 +6389,15 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
     # and the engine default has changed once already.
     inner_maxiter = .ctJuliaOr(model_spec$laplace$inner$inner_maxiter, 200L),
     inner_tol = .ctJuliaOr(model_spec$laplace$inner$inner_tol, 1e-10),
-    # The floor the objective was built with; post-fit routes rebuild the
-    # objective from the same specification, so they use it too.
-    floor = as.character(.ctJuliaOr(model_spec$laplace$inner$floor, "total")),
+    # The soft-direction rule the objective was built with; post-fit routes
+    # rebuild the objective from the same specification, so they use it too.
+    soft_directions = .ctJuliaSoftDirections(model_spec$laplace$inner),
     # The units whose Laplace terms jumped, with the points the line search
     # saw, where the run ended on a jump; NULL otherwise. `[[`: the engine's
     # `jump_units` is a prefix `$jump` would match.
     jump = result[["jumprecord"]],
-    gated_units = if (is.null(result$gated_units)) NA_integer_ else
-      as.integer(result$gated_units),
+    soft_quadrature_units = if (is.null(result$soft_quadrature_units)) NA_integer_
+      else as.integer(result$soft_quadrature_units),
     inner_converged = isTRUE(result$inner_converged),
     gradient_fallbacks = if (is.null(result$gradient_fallbacks)) NA_integer_ else
       as.integer(result$gradient_fallbacks)[1L],
@@ -6505,9 +6522,9 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
       # is one of them: it samples the random effects, but places the sampler
       # and builds its metric by optimising the Laplace objective of this same
       # specification.
-      floor = if (as.character(intoverpop)[1L] %in% c("laplace", "none"))
-        .ctJuliaOr(optimcontrol$laplace_floor, .ctJuliaLaplaceFloorDefault)
-        else optimcontrol$laplace_floor))
+      soft_directions = if (as.character(intoverpop)[1L] %in% c("laplace", "none"))
+        .ctJuliaOr(optimcontrol$laplace_soft_directions, .ctJuliaSoftDirectionsDefault)
+        else optimcontrol$laplace_soft_directions))
   model_spec$tipredMissing <- tipredMissing
   # 'auto' samples the random effects under optimize = FALSE ('none'), but
   # where the Laplace term is exact -- every unit's integrand Gaussian in its

@@ -408,28 +408,28 @@ end
     @test isapprox(again.gradient, first.gradient; rtol=1e-13)
 end
 
-@testset "the gated rule: value, and its gradient against nested and differences" begin
+@testset "the soft-direction quadrature: value, and its gradient against nested and differences" begin
     C = ContinuousTimeSEM
     # Units 1, 2, 4, 5 have smallest eigenvalues 1.16 to 1.17 at this point and
     # unit 3 has 0.956, so the three bands below put nothing, one unit, and one
     # unit fully soft plus four inside the ramp (with lambda above one, so the
     # node scale moves with lambda too).
     laplace, values = _fresh_nonlinear_two()
-    @test laplace.floor === :total
+    @test laplace.soft_directions === :logdet_floor
     total = ctsem_laplace_evaluate(laplace, values; gradient=true)
     for (label, lo, hi, nflag) in (("above the band", 0.2, 0.7, 0),
                                    ("inside the ramp", 0.8, 1.1, 1),
                                    ("below the ramp", 1.0, 1.2, 5))
-        gated, _ = _fresh_nonlinear_two()
-        ctsem_set_laplace_floor!(gated, :gated; lo=lo, hi=hi)
-        seeded = ctsem_laplace_evaluate(gated, values; gradient=true)
-        @test (label, gated.gated_units) == (label, nflag)
-        nested = ctsem_laplace_evaluate(gated, values; gradient=true,
+        soft, _ = _fresh_nonlinear_two()
+        ctsem_set_soft_directions!(soft, :quadrature; lo=lo, hi=hi)
+        seeded = ctsem_laplace_evaluate(soft, values; gradient=true)
+        @test (label, soft.soft_quadrature_units) == (label, nflag)
+        nested = ctsem_laplace_evaluate(soft, values; gradient=true,
             nested_gradient=true)
-        reference = _value_finite_difference(gated, values)
+        reference = _value_finite_difference(soft, values)
         # The Float64 reference computes the same rule by a separate route.
         ctsem_laplace_evaluate(laplace, values; gradient=false)
-        prototype = sum(C._laplace_gated_unit_reference(laplace, values, U; lo=lo,
+        prototype = sum(C._laplace_soft_quadrature_unit_reference(laplace, values, U; lo=lo,
             hi=hi, nodes=3, newton_steps=1).value
             for U in eachindex(laplace.units.members))
         @test (label, isapprox(seeded.value, prototype; rtol=1e-10)) == (label, true)
@@ -446,16 +446,16 @@ end
     end
 end
 
-@testset "the gated rule on a two-level unit" begin
+@testset "the soft-direction quadrature on a two-level unit" begin
     C = ContinuousTimeSEM
     laplace = ctsem_laplace_objective(_LAPLACE_NONLINEAR_OBJECTIVE;
         re_index=[1, 2, 4], sd_index=[5, 6, 8], cor_index=[7],
         sd_scale=[1.0, 1.0, 1.0], level_nre=[2, 1],
         group=vcat(1:5, [1, 1, 2, 2, 3]), level_ngroups=[5, 3])
     values = [0.1, -2.0, -0.2, 0.05, -0.25, 1.0, 0.0, 0.5]
-    ctsem_set_laplace_floor!(laplace, :gated; lo=0.3, hi=1.1)
+    ctsem_set_soft_directions!(laplace, :quadrature; lo=0.3, hi=1.1)
     seeded = ctsem_laplace_evaluate(laplace, values; gradient=true)
-    @test laplace.gated_units >= 1
+    @test laplace.soft_quadrature_units >= 1
     nested = ctsem_laplace_evaluate(laplace, values; gradient=true,
         nested_gradient=true)
     reference = _value_finite_difference(laplace, values)
@@ -464,25 +464,25 @@ end
 end
 
 @testset "the floor belongs to the objective, not the session" begin
-    # Two objectives over the same model: setting one to :gated leaves the
-    # other at :total, value and gradient, and a fresh objective starts at
-    # :total whatever was done before it.
-    gated, values = _fresh_nonlinear_two()
+    # Two objectives over the same model: setting one to :quadrature leaves the
+    # other at :logdet_floor, value and gradient, and a fresh objective starts at
+    # :logdet_floor whatever was done before it.
+    soft, values = _fresh_nonlinear_two()
     plain, _ = _fresh_nonlinear_two()
     before = ctsem_laplace_evaluate(plain, values; gradient=true)
-    previous = ctsem_set_laplace_floor!(gated, :gated; lo=0.8, hi=1.1)
-    @test previous == (floor=:total, lo=0.2, hi=0.7)
-    g = ctsem_laplace_evaluate(gated, values; gradient=true)
+    previous = ctsem_set_soft_directions!(soft, :quadrature; lo=0.8, hi=1.1)
+    @test previous == (floor=:logdet_floor, lo=0.2, hi=0.7)
+    g = ctsem_laplace_evaluate(soft, values; gradient=true)
     after = ctsem_laplace_evaluate(plain, values; gradient=true)
     @test g.value != before.value
     @test after.value == before.value
     @test isapprox(after.gradient, before.gradient; rtol=1e-13)
     fresh, _ = _fresh_nonlinear_two()
-    @test fresh.floor === :total
+    @test fresh.soft_directions === :logdet_floor
     @test ctsem_laplace_evaluate(fresh, values; gradient=false).value == before.value
-    @test_throws ArgumentError ctsem_set_laplace_floor!(plain, :eigen)
-    @test_throws ArgumentError ctsem_set_laplace_floor!(plain, :gated; lo=0.7, hi=0.2)
-    @test ctsem_laplace_diagnostics(gated).floor === :gated
+    @test_throws ArgumentError ctsem_set_soft_directions!(plain, :eigen)
+    @test_throws ArgumentError ctsem_set_soft_directions!(plain, :quadrature; lo=0.7, hi=0.2)
+    @test ctsem_laplace_diagnostics(soft).soft_directions === :quadrature
 end
 
 @testset "first-order eigen-quantities are the derivatives they claim" begin

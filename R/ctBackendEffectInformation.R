@@ -441,7 +441,7 @@
 # is flagged: each subject's data determine 1.6% of its own drift even at the
 # starting spread, and its sd collapses. gB8 is not: its diffusion sd rests on
 # half its 40 subjects, and what goes wrong there (two of three seeds end
-# short) is the gated floor's basin switch, not the information. gC8 is not
+# short) is the soft-direction quadrature's basin switch, not the information. gC8 is not
 # either, and it is the case the share alone gets wrong: the typical subject
 # determines 6-10% of its own measurement error, below the 0.1 of the rule
 # this replaces, which flagged two of its three seeds, while the 40 together

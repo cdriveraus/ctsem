@@ -83,7 +83,7 @@ end
 """The unit curvature `I - (J + J') / 2`, dense, `J` the members' gradient's
 Jacobian in the unit's coordinates at the curvature's dual
 (`_LaplaceColumnsGradient`), whose passes read and fill `hook` (a
-`CTSEMHybridCross`, the gated floor's cross curvature): the route the hand-coded
+`CTSEMHybridCross`, the soft-direction quadrature's cross curvature): the route the hand-coded
 sweeps replaced."""
 function _oracle_unit_curvature(laplace, U, values, Ls, u; hook=nothing,
     mode=_DO._HYBRID_PROFILE)
@@ -195,9 +195,9 @@ function _oracle_mode_cross(laplace, U, theta, Ls, dL, positions, z, layout)
     return H
 end
 
-"""`_gated_directional`: the gated rule's gradients and their derivatives along
+"""`_soft_quadrature_directional`: the soft-direction quadrature's gradients and their derivatives along
 `beta`, at a width-one dual."""
-function _oracle_gated_directional(G, z, beta)
+function _oracle_soft_quadrature_directional(G, z, beta)
     seed = ForwardDiff.Dual{_DO._LaplaceSeedInner}(0.0, 1.0)
     zz = [z[a] + seed * beta[a] for a in eachindex(z)]
     r = G(zz)
@@ -206,9 +206,9 @@ function _oracle_gated_directional(G, z, beta)
         z=[ForwardDiff.partials(x)[1] for x in r.z])
 end
 
-"""`_laplace_gated_jet_pass!`'s second parts along `chunk`'s eigendirections of
+"""`_laplace_soft_quadrature_jet_pass!`'s second parts along `chunk`'s eigendirections of
 `E`, at a trace jet of width `W`: `(theta, z)`, before its sign."""
-function _oracle_gated_jet(G, z, E, chunk, W)
+function _oracle_soft_quadrature_jet(G, z, E, chunk, W)
     D = length(z)
     zz = [_DO.CTSEMTraceJet{W}(z[a], ntuple(j -> j <= length(chunk) ?
         sqrt(abs(E.values[chunk[j]])) * E.vectors[a, chunk[j]] : 0.0, Val(W)), 0.0)

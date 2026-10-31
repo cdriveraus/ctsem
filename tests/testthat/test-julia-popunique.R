@@ -804,52 +804,52 @@ test_that("a measurement error written in a time dependent predictor keeps the d
     backend = "stan"))), "the stan backend does not", fixed = TRUE)
 })
 
-test_that("the gated floor on integrated deviations is the layer's, unit for unit", {
+test_that("the soft-direction quadrature on integrated deviations is the layer's, unit for unit", {
   skip_without_julia()
   # The gate reads the joint curvature's smallest eigenvalue, which the
   # profile's can exceed, and a unit it flags is scored in joint coordinates
   # with the filter at fixed deviations. The band is widened (hi 0.95) so that
   # units are flagged on this fixture at all, and the count is asserted so the
-  # comparison cannot pass without the gated path running.
+  # comparison cannot pass without the quadrature running.
   m <- .pu_dyn_model()
   d <- .pu_dyn_data()
   old <- options(ctsem.laplace.hybrid = TRUE)
   on.exit(options(old), add = TRUE)
   spec <- .pu_spec(d, m, poprank = 1, popunique = "MANIFESTMEANS",
-    optimcontrol = list(laplace_floor = "gated"))
+    optimcontrol = list(laplace_soft_directions = "quadrature"))
   options(ctsem.laplace.hybrid = FALSE)
   layer <- .pu_spec(d, m, poprank = 1, popunique = "MANIFESTMEANS",
-    optimcontrol = list(laplace_floor = "gated"))
+    optimcontrol = list(laplace_soft_directions = "quadrature"))
   handle <- function(s) structure(s, class = c("ctJuliaModel", "ctFitModel"))
   objectives <- list(ctsem:::.ctJuliaObjective(handle(spec), hybrid = TRUE),
     ctsem:::.ctJuliaObjective(handle(layer), hybrid = TRUE))
-  on.exit(ctsem:::.ctJuliaCall("ContinuousTimeSEM.ctsem_set_gated_adjoint!", TRUE),
+  on.exit(ctsem:::.ctJuliaCall("ContinuousTimeSEM.ctsem_set_soft_quadrature_adjoint!", TRUE),
     add = TRUE)
   previous <- lapply(objectives, function(o) ctsem:::.ctJuliaCall(
-    "ContinuousTimeSEM.ctsem_set_laplace_floor!", o, "gated", hi = 0.95))
+    "ContinuousTimeSEM.ctsem_set_soft_directions!", o, "quadrature", hi = 0.95))
   on.exit(for (i in seq_along(objectives)) ctsem:::.ctJuliaCall(
-    "ContinuousTimeSEM.ctsem_set_laplace_floor!", objectives[[i]], "gated",
+    "ContinuousTimeSEM.ctsem_set_soft_directions!", objectives[[i]], "quadrature",
     hi = previous[[i]]$hi), add = TRUE)
   # The count the last evaluation left, read as the field it is.
-  gated <- function(o) as.integer(ctsem:::.ctJuliaCall("getfield", o,
-    ctsem:::.ctJuliaEval(":gated_units")))
+  scored <- function(o) as.integer(ctsem:::.ctJuliaCall("getfield", o,
+    ctsem:::.ctJuliaEval(":soft_quadrature_units")))
   # 10 and 18 units flagged at these two draws.
   for (seed in c(2, 4)) {
     set.seed(seed)
     x <- rnorm(length(.pu_names(spec)), 0, 1)
     full <- .pu_eval(layer, x)
-    expect_gt(gated(objectives[[2]]), 0L)
+    expect_gt(scored(objectives[[2]]), 0L)
     hybrid <- .pu_eval(spec, x)
-    expect_equal(gated(objectives[[1]]), gated(objectives[[2]]))
+    expect_equal(scored(objectives[[1]]), scored(objectives[[2]]))
     expect_equal(hybrid$value, full$value, tolerance = 1e-9)
     expect_equal(as.numeric(hybrid$gradient), as.numeric(full$gradient),
       tolerance = 1e-7)
-    # The gated units' gradient by the reverse pass (the default) against
+    # The quadrature's units' gradient by the reverse pass (the default) against
     # forward mode over the parameters, for the layer and the hybrid.
     for (s in list(layer, spec)) {
-      ctsem:::.ctJuliaCall("ContinuousTimeSEM.ctsem_set_gated_adjoint!", FALSE)
+      ctsem:::.ctJuliaCall("ContinuousTimeSEM.ctsem_set_soft_quadrature_adjoint!", FALSE)
       forward <- .pu_eval(s, x)
-      ctsem:::.ctJuliaCall("ContinuousTimeSEM.ctsem_set_gated_adjoint!", TRUE)
+      ctsem:::.ctJuliaCall("ContinuousTimeSEM.ctsem_set_soft_quadrature_adjoint!", TRUE)
       reverse <- .pu_eval(s, x)
       expect_equal(reverse$value, forward$value, tolerance = 1e-12)
       expect_equal(as.numeric(reverse$gradient), as.numeric(forward$gradient),
@@ -863,23 +863,23 @@ test_that("the gated floor on integrated deviations is the layer's, unit for uni
   # layer's -- a mode search over two coordinates instead of five, not the
   # gate (review/FITTING-filter-effects-2026-10-24.md).
   options(ctsem.laplace.hybrid = TRUE)
-  fspec <- .pu_spec(d, m, optimcontrol = list(laplace_floor = "gated"))
+  fspec <- .pu_spec(d, m, optimcontrol = list(laplace_soft_directions = "quadrature"))
   options(ctsem.laplace.hybrid = FALSE)
-  flayer <- .pu_spec(d, m, optimcontrol = list(laplace_floor = "gated"))
+  flayer <- .pu_spec(d, m, optimcontrol = list(laplace_soft_directions = "quadrature"))
   expect_true(isTRUE(fspec$laplace$hybrid$block))
   fobj <- list(ctsem:::.ctJuliaObjective(handle(fspec), hybrid = TRUE),
     ctsem:::.ctJuliaObjective(handle(flayer), hybrid = TRUE))
   fprev <- lapply(fobj, function(o) ctsem:::.ctJuliaCall(
-    "ContinuousTimeSEM.ctsem_set_laplace_floor!", o, "gated", hi = 0.95))
+    "ContinuousTimeSEM.ctsem_set_soft_directions!", o, "quadrature", hi = 0.95))
   on.exit(for (i in seq_along(fobj)) ctsem:::.ctJuliaCall(
-    "ContinuousTimeSEM.ctsem_set_laplace_floor!", fobj[[i]], "gated",
+    "ContinuousTimeSEM.ctsem_set_soft_directions!", fobj[[i]], "quadrature",
     hi = fprev[[i]]$hi), add = TRUE)
   for (seed in c(3, 4)) {
     set.seed(seed)
     x <- rnorm(length(.pu_names(fspec)), 0, 1)
     full <- .pu_eval(flayer, x)
     hybrid <- .pu_eval(fspec, x)
-    expect_equal(gated(fobj[[1]]), gated(fobj[[2]]))
+    expect_equal(scored(fobj[[1]]), scored(fobj[[2]]))
     expect_equal(hybrid$value, full$value, tolerance = 1e-9)
     expect_equal(as.numeric(hybrid$gradient), as.numeric(full$gradient),
       tolerance = 1e-7)
