@@ -1427,9 +1427,14 @@ smooth in the parameters but its slope need not be small: with each unit's
 and w6 walked 1.4 and 1.9 se from a reference fit's estimate, to where the
 rules together over-credited the integral by 1.4 and 3.4 nats.
 
-Each lattice unit's gradient on its own points and on an independent set of
-shifts at the same count (`_rule_sets`'s `alt`) differ by two independent
-errors, so their difference over `sqrt(2)` has the variance of either's.
+Each lattice unit's gradient on its own points against its gradient on twice
+as many, the count step, as a product rule's error is read by its node step:
+the difference sees the rule's systematic error as well as its noise. Two
+independent sets of shifts at the same count (`_rule_sets`'s `alt`), whose
+difference over `sqrt(2)` has the variance of either's error, see the noise
+alone: read so, w4s's estimate stood 0.63 se from a reference fit where the
+check said 0.16, the ratio's small-sample bias shared by both sets. A unit
+already at the most points is read on independent shifts.
 Carried through the inverse curvature `-H` on its directions with curvature,
 as the standard errors are, and divided by them, it is that unit's
 contribution to the estimate's error in standard errors; the units'
@@ -1460,7 +1465,9 @@ function _placed_slope_check(P::CTSEMLaplacePlaced, values::AbstractVector,
     nu = length(units)
     own = [zeros(npar) for _ in 1:nu]
     other = [zeros(npar) for _ in 1:nu]
-    alt = [_rule_sets(laplace, U, o.unit_rules[U]; alt=1) for U in units]
+    finer = [_placed_finer(o.unit_rules[U]) for U in units]
+    alt = [f === nothing ? _rule_sets(laplace, U, o.unit_rules[U]; alt=1) :
+        _rule_sets(laplace, U, f) for (U, f) in zip(units, finer)]
     ok = _laplace_parallel(laplace, 1:nu) do i
         local U
         U = units[i]
@@ -1472,7 +1479,8 @@ function _placed_slope_check(P::CTSEMLaplacePlaced, values::AbstractVector,
     contribution = zeros(nu, n)
     for i in 1:nu
         w = _laplace_unit_weight(laplace, units[i])
-        d = (w / sqrt(2)) .* (own[i][1:n] .- other[i][1:n])
+        d = ((finer[i] === nothing ? 1 / sqrt(2) : 1.0) * w) .*
+            (own[i][1:n] .- other[i][1:n])
         contribution[i, :] .= (Cinv * d) ./ se
     end
     total = vec(sum(abs2, contribution; dims=1))
@@ -1495,6 +1503,15 @@ function _placed_slope_check(P::CTSEMLaplacePlaced, values::AbstractVector,
     end
     return (sd=sd, units=carrying, doublings=isempty(carrying) ? 0 :
         clamp(ceil(Int, need), 1, 5))
+end
+
+"""A lattice or mixed rule with its lattice points doubled, the rule its count
+step is read against (`_placed_slope_check`); `nothing` at the most points
+or for a product rule."""
+function _placed_finer(c::CTSEMRuleChoice)
+    c.family === :product && return nothing
+    c.points < _LATTICE_MAX || return nothing
+    return CTSEMRuleChoice(c.family, c.nodes, 2 * c.points)
 end
 
 """
@@ -1526,7 +1543,8 @@ estimate's error is under `bar / sqrt(units)`, at `values` on the curvature
 `H`: the slope check's measure (`_placed_slope_check`) taken unit by unit and
 rule by rule. A product rule's share is its gradient against the rule two
 nodes finer, the finer one's measure of it; a lattice rule's, its gradient
-against an independent set of shifts at its count, over `sqrt(2)`. Rules are
+against the lattice of twice its points, likewise (at the most points,
+against independent shifts, over `sqrt(2)`). Rules are
 tried in the order of what a pair of them costs (`_rule_cost`), so a unit
 takes the product rule wherever its exactness on a near-Gaussian integrand
 makes it the cheaper at the accuracy an estimate needs. The continuation
@@ -1588,7 +1606,9 @@ function _placed_choose_unit(P::CTSEMLaplacePlaced, U::Int, theta::Vector{Float6
     for steps in families
         for (j, c) in enumerate(steps)
             if c.family === :lattice
-                push!(cands, (c, c, 2 * _rule_cost(laplace, U, c)))
+                f = _placed_finer(c)
+                push!(cands, (c, f === nothing ? c : f,
+                    _rule_cost(laplace, U, c) + _rule_cost(laplace, U, f === nothing ? c : f)))
             elseif j >= 2 && j < length(steps)
                 push!(cands, (c, steps[j + 1],
                     _rule_cost(laplace, U, c) + _rule_cost(laplace, U, steps[j + 1])))
@@ -1603,8 +1623,9 @@ function _placed_choose_unit(P::CTSEMLaplacePlaced, U::Int, theta::Vector{Float6
     for (c, m, _) in cands
         lattice = c.family === :lattice
         sa = _rule_sets(laplace, U, c)
-        sb = lattice ? _rule_sets(laplace, U, m; alt=1) : _rule_sets(laplace, U, m)
-        scale = lattice ? 1 / sqrt(2) : 1.0
+        same = lattice && m == c
+        sb = same ? _rule_sets(laplace, U, m; alt=1) : _rule_sets(laplace, U, m)
+        scale = same ? 1 / sqrt(2) : 1.0
         fill!(a, 0.0)
         fill!(b, 0.0)
         (_placed_unit!(a, P, U, theta, Ls, dL, positions, true; sets=sa).ok &&
