@@ -1003,7 +1003,7 @@ end
     _laplace_known_column(values, j)
 
 Column `j` of a matrix of units' modes (`known_values`, a jump's or an
-anchored run's `point_values`, the correction's points): its entries before
+anchored run's `point_values`): its entries before
 the first NaN. Modes of different units have different lengths, so such a
 matrix pads each column with NaN to the longest, and a column's length says
 which objective's layout it is in.

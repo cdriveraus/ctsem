@@ -2277,9 +2277,10 @@ whole, as they were while the two steps stood a hundredfold apart, a unit's
 changes at steps four times apart keep a quarter of each other wherever its
 term is linear in the step. `changes` are each named unit's excess at
 `alpha_lo`.
-Its modes at the three points are what a frozen importance rule for it starts
-from (`ctsem_laplace_continuation`'s `point_units`): at one point the solve
-returns one of them, and the rule needs both sides.
+Its modes at the three points become the unit's known modes, which its
+searches and a frozen importance rule for it start from
+(`_continuation_known_points!`): at one point the solve returns one of them,
+and the rule needs both sides.
 """
 _ctsem_jump_units(::Any, jump) = nothing
 _ctsem_jump_capable(::CTSEMLaplaceObjective) = true
