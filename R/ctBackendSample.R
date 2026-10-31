@@ -338,8 +338,7 @@
     joint = !marginal && !isTRUE(state_explicit),
     named = if (marginal && !isTRUE(state_explicit) && !tisampled &&
       !is.null(directions)) NCOL(directions) else 0L,
-    nutsonly = .ctBackendNutsAsked(control, nutsgiven),
-    tisampled = tisampled)
+    nutsonly = .ctBackendNutsAsked(control, nutsgiven))
   # After the sampler: the map's default placement is the fit's estimate.
   placement <- .ctBackendPlacementFor(control, marginal || isTRUE(state_explicit))
   # The map sampler's warm-up is its learning schedule's (`ctsem_sample_map`'s
@@ -657,15 +656,22 @@
 # likelihoods, learnt from their scores in warm-up windows. It starts from the
 # fit's estimate, not SAEM's placement.
 #
-# On the joint target the default is 'map', and 'saem' with sampled TI
-# predictor values, whose objective the map has not been checked on. Through
+# On the joint target the default is 'map'. Through
 # `ctFitUncertainty()` on the posterior race's 20 fixtures, two seeds each, at
 # the default target (dev2, review/SAMPLING-general-joint-map-2026-10-25.md),
 # the map reached the target in 39 runs of 40 and SAEM's kernel in 23, and
 # the map took 2.3 times less time an effective draw: 1.4 times on the twelve
 # where the filter integrates nothing, though slower on three of them (5.5
 # times on a binary item). Before the map was triangular (in the engine) SAEM
-# was the faster on eight of those twelve, and the default there.
+# was the faster on eight of those twelve, and the default there. With
+# missing TI predictor values sampled, SAEM's kernel stayed the default until
+# the map was checked there: on 60 subjects with a random drift, intercept and
+# initial mean and 8 subjects' predictor missing, the map reached the target
+# at all three seeds, at 1.9-4.3 effective draws a second, and SAEM's kernel
+# at none, running out of draws at min ESS 88-134 (0.25-0.32 a second); its
+# draws agreed with a long run of the map within 2.6 standard errors over the
+# 24 coordinates, the sampled values' sds 0.96-1.02 of the map's (dev3, 6
+# cores; scripts/uncert-items-2026-10/map_ti.R).
 #
 # 'saem' had been the joint default because it is more reliable than NUTS on
 # the joint vector, not only faster: through `ctFitUncertainty()` on 13
@@ -676,10 +682,9 @@
 # state-explicit target has no effects for its sweeps, so NUTS or SMC is the
 # sampler there; the state-explicit one has no check, so NUTS.
 #' @keywords internal
-.ctBackendSamplerName <- function(sampler, joint = TRUE, named = 0L, nutsonly = FALSE,
-  tisampled = FALSE) {
+.ctBackendSamplerName <- function(sampler, joint = TRUE, named = 0L, nutsonly = FALSE) {
   if (is.null(sampler)) {
-    if (isTRUE(joint)) return(if (isTRUE(tisampled)) "saem" else "map")
+    if (isTRUE(joint)) return("map")
     return(if (!isTRUE(nutsonly) && isTRUE(named > 0L)) "smc" else "nuts")
   }
   if (!is.character(sampler) || length(sampler) != 1L ||
@@ -2321,8 +2326,7 @@ print.ctSampleDiagnostics <- function(x, ...) {
   # The joint target's default sampler, settled before the placement: the map
   # starts from an optimised fit and its Hessian, SAEM from the start alone.
   if (jointtarget && is.null(control$sampler)) {
-    control$sampler <- .ctBackendSamplerName(NULL, tisampled =
-      NROW(spec0$ti_imputed) > 0L && .ctJuliaTIMissingSamples(spec0))
+    control$sampler <- .ctBackendSamplerName(NULL)
   }
   if (jointtarget && identical(.ctBackendPlacementFor(control, FALSE), "saem")) {
     placementcontrol <- utils::modifyList(placementcontrol,

@@ -296,6 +296,43 @@ test_that("the imputation fallback rule warns naming the fallback taken, and onl
     prepped$ti_imputed[, c("subject", "predictor")])
 })
 
+test_that("the joint posterior with missing TI predictor values sampled is drawn by the map", {
+  skip_without_julia()
+  # A random drift keeps the Laplace term inexact, so the sample is of the
+  # joint posterior over parameters and random effects; the predictor
+  # reaches the drift and the initial mean, which rides at the end of the
+  # subject's parameter vector. Simulated by hand: a per-subject AR(1) whose
+  # coefficient and start move with the predictor.
+  model <- suppressWarnings(suppressMessages(ctModel(type = "ct", n.latent = 1,
+    n.manifest = 1, LAMBDA = diag(1), DRIFT = matrix("drift"), CINT = matrix(0),
+    T0MEANS = matrix("t0m"), DIFFUSION = matrix("diff"), MANIFESTVAR = matrix("mvar"),
+    MANIFESTMEANS = matrix(0), n.TIpred = 1, TIpredNames = "x")))
+  model$pars$indvarying[model$pars$param %in% c("drift", "t0m")] <- TRUE
+  set.seed(4)
+  nsub <- 16
+  x <- stats::rnorm(nsub)
+  dat <- do.call(rbind, lapply(seq_len(nsub), function(i) {
+    a <- exp(-exp(log(0.5) + 0.3 * x[i] + 0.2 * stats::rnorm(1)))
+    eta <- numeric(8)
+    eta[1] <- 0.5 * x[i] + stats::rnorm(1)
+    for (t in 2:8) eta[t] <- a * eta[t - 1] + stats::rnorm(1, 0, 0.6)
+    data.frame(id = i, time = 0:7, Y1 = eta + stats::rnorm(8, 0, 0.5), x = x[i])
+  }))
+  dat$x[dat$id %in% c(2, 9, 15)] <- NA
+  fit <- suppressWarnings(suppressMessages(ctFit(dat, model, backend = "julia",
+    priors = TRUE, cores = 2)))
+  npar <- length(fit$estimate$raw)
+  u <- suppressWarnings(suppressMessages(ctFitUncertainty(fit, "sample",
+    intoverpop = "none", cores = 2,
+    control = list(chains = 2, draws = 150, minESS = 0, seed = 1L))))
+  expect_identical(u$sample$sampler, "map")
+  draws <- u$estimate$rawposterior
+  expect_equal(ncol(draws), npar + 3L)
+  ti <- draws[, npar + seq_len(3), drop = FALSE]
+  expect_true(all(is.finite(ti)))
+  expect_true(all(apply(ti, 2, stats::sd) > 0))
+})
+
 # The small sampled fit the three tests below ask things of: that it samples
 # the missing cell at all, and that two consumers handle it. It was
 # fitted three times, identically -- same seed, data and settings -- and is
