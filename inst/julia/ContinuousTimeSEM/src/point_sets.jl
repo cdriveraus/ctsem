@@ -64,6 +64,19 @@ standardised effects, held fixed there (`prior`), and every point is weighted
 by the balance heuristic, `1 / (N (b1 rho_placed(z) + b0 phi(z)))`
 (`_point_set_place`). That weight moves with the placement, so the placed
 gradient reads it (`_placed_leaf!`).
+
+# A ratio against the placed Gaussian
+
+A lattice rule's value is read as a ratio, `Laplace + log sum_j w_j e^f(z_j) -
+log sum_j w_j e^g(z_j)`, `g(z) = f(c) - (z - c)'M~(z - c)/2` the Gaussian it is
+placed at, whose integral, Laplace's term at the clipped curvature, is known
+(`_point_set_gaussian`). On a Gaussian unit the two sums move together, so the
+rule is exact there in value and gradient whatever its points, the prior's
+included: the error left is the unit's departure from its Gaussian, which is
+what moves an estimate. Without the prior the ratio differs from the plain
+estimate by a constant of the points, so its gradient is the same. The shifts'
+spread is read of the ratio too, and no longer counts the rule's error on a
+Gaussian's integral, which moves no estimate.
 """
 
 using LinearAlgebra
@@ -367,6 +380,58 @@ function _point_set_place(ps::CTSEMPointSet, c::AbstractVector{Float64},
         rep[col] = ps.prior_replicate[i]
     end
     return (Z=Z, Y=Y, logw=logw, r=r, prior=prior, rep=rep)
+end
+
+"""
+    _point_set_gaussian(pl, U, nrep)
+
+The placed set `pl` (`_point_set_place`) read on its Gaussian: each point's
+term `logw_j - |y_j|^2 / 2`, whose sum over the points is the rule's estimate
+of `integral exp(-|U (z - c)|^2 / 2) dz = (2 pi)^(k/2) |S|`, and with it what
+the ratio's gradient asks of the centre and the scale (`_placed_leaf!`): a
+placed point moves with them and its term only by its weight, `(1 - r) z`; a
+prior point is held, `U' y + r U' grad log rho(y)`. Returns `(t, peak, sum,
+repsums, e)`, `e` a `k x N` matrix of those, `repsums` the sums by shift on
+`peak`.
+"""
+function _point_set_gaussian(pl, U::AbstractMatrix{Float64}, nrep::Integer)
+    k, N = size(pl.Z)
+    t = Vector{Float64}(undef, N)
+    e = Matrix{Float64}(undef, k, N)
+    gy = zeros(k)
+    ey = zeros(k)
+    ty = zeros(k)
+    peak = -Inf
+    for j in 1:N
+        q = 0.0
+        @inbounds for a in 1:k
+            q += pl.Y[a, j]^2
+        end
+        t[j] = pl.logw[j] - q / 2
+        peak = max(peak, t[j])
+        if pl.prior[j]
+            @inbounds for a in 1:k
+                yv = pl.Y[a, j]
+                gy[a] = pl.r[j] * (-1.25 * yv / (1 + yv * yv / 4)) + yv
+            end
+            _ctsem_mulTvec!(ey, U, gy)
+            @inbounds for a in 1:k
+                e[a, j] = ey[a]
+            end
+        else
+            @inbounds for a in 1:k
+                e[a, j] = (1 - pl.r[j]) * pl.Z[a, j]
+            end
+        end
+    end
+    total = 0.0
+    repsums = zeros(Int(nrep))
+    for j in 1:N
+        w = exp(t[j] - peak)
+        total += w
+        nrep > 1 && (repsums[pl.rep[j]] += w)
+    end
+    return (t=t, peak=peak, sum=total, repsums=repsums, e=e)
 end
 
 """The seed of a lattice rule's shifts: fixed, so that every placement of every

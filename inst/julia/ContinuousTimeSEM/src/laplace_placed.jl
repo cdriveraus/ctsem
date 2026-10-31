@@ -456,8 +456,14 @@ function _placed_leaf!(row::Vector{Float64}, wv::Vector{Float64}, P::CTSEMLaplac
         end
     end
     isfinite(peak) || return failure
-    value = peak + log(acc) - k * log(2 * pi) / 2
-    se = _point_set_error(repacc, ps.nrep)
+    # A lattice rule is read as a ratio against its Gaussian
+    # (`_point_set_gaussian`); a product rule integrates that exactly.
+    ratio = ps.family === :lattice
+    gs = ratio ? _point_set_gaussian(pl, sc.U, ps.nrep) : nothing
+    value = ratio ? peak + log(acc) - gs.peak - log(gs.sum) + sc.logdetscale :
+        peak + log(acc) - k * log(2 * pi) / 2
+    se = ratio ? _point_set_error(repacc ./ gs.repsums, ps.nrep) :
+        _point_set_error(repacc, ps.nrep)
     ess = acc^2 / acc2
     @inbounds for (t, col) in enumerate(columns)
         u[col] = c[t]
@@ -467,7 +473,15 @@ function _placed_leaf!(row::Vector{Float64}, wv::Vector{Float64}, P::CTSEMLaplac
     fisher = gacc ./ acc
     a = aacc ./ acc
     B = Bacc ./ acc
-    Mbar = _placed_mbar(sc, B, k; logdet=racc / acc)
+    gamma = racc / acc
+    if ratio
+        # Less the Gaussian's sum's own moves, and Laplace's log|S| beside it.
+        aD, BD, gD = _placed_gaussian_moments(gs, pl, k)
+        a .-= aD
+        B .-= BD
+        gamma += 1 - gD
+    end
+    Mbar = _placed_mbar(sc, B, k; logdet=gamma)
     all(isfinite, Mbar) || return failure
     L = Ls[l]
     offsets = units.offsets[U][first(members)]
@@ -552,6 +566,34 @@ function _placed_leaf!(row::Vector{Float64}, wv::Vector{Float64}, P::CTSEMLaplac
     end
     (all(isfinite, row) && all(isfinite, wv)) || return failure
     return (ok=true, value=value, se=se, ess=ess)
+end
+
+"""
+    _placed_gaussian_moments(gs, pl, k)
+
+What the Gaussian's sum (`_point_set_gaussian`) asks of the centre, the scale
+and `log|S|`, normalised over its own weights: `sum pi_j e_j`, `sum pi_j y_j
+e_j'` and `sum pi_j r_j`, as the integrand's sum's `a`, `B` and `gamma` are
+taken in `_placed_leaf!`.
+"""
+function _placed_gaussian_moments(gs, pl, k::Int)
+    N = length(gs.t)
+    a = zeros(k)
+    B = zeros(k, k)
+    g = 0.0
+    for j in 1:N
+        w = exp(gs.t[j] - gs.peak) / gs.sum
+        w == 0 && continue
+        g += w * pl.r[j]
+        @inbounds for i in 1:k
+            ei = w * gs.e[i, j]
+            a[i] += ei
+            for r in 1:k
+                B[r, i] += pl.Y[r, j] * ei
+            end
+        end
+    end
+    return a, B, g
 end
 
 """
@@ -777,15 +819,26 @@ function _placed_nested_unit!(row::Vector{Float64}, P::CTSEMLaplacePlaced, U::In
         end
     end
     isfinite(peak) || return failure
-    value = peak + log(acc) - k0 * log(2 * pi) / 2
-    se = sqrt(_point_set_error(repacc, ps.nrep)^2 + (leafse / acc)^2)
+    ratio = ps.family === :lattice
+    gs = ratio ? _point_set_gaussian(pl, sc.U, ps.nrep) : nothing
+    value = ratio ? peak + log(acc) - gs.peak - log(gs.sum) + sc.logdetscale :
+        peak + log(acc) - k0 * log(2 * pi) / 2
+    se = sqrt((ratio ? _point_set_error(repacc ./ gs.repsums, ps.nrep) :
+        _point_set_error(repacc, ps.nrep))^2 + (leafse / acc)^2)
     ess = acc^2 / acc2
     want_gradient || return (ok=true, value=value, se=se, ess=ess, anchor=cj)
 
     fisher = gacc ./ acc
     a0 = aacc ./ acc
     B0 = Bacc ./ acc
-    Mbar0 = _placed_mbar(sc, B0, k0; logdet=racc / acc)
+    gamma0 = racc / acc
+    if ratio
+        aD, BD, gD = _placed_gaussian_moments(gs, pl, k0)
+        a0 .-= aD
+        B0 .-= BD
+        gamma0 += 1 - gD
+    end
+    Mbar0 = _placed_mbar(sc, B0, k0; logdet=gamma0)
     all(isfinite, Mbar0) || return failure
     mode = _hybrid_on(laplace.objective.params.hybrid) ? _HYBRID_FULL : _HYBRID_PROFILE
     E = _ctsem_symeig(Mbar0)

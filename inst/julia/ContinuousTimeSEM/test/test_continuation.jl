@@ -222,8 +222,21 @@ _fresh_2d4() = (ctsem_laplace_objective(_CONTINUATION_2D_OBJECTIVE, [1, 2, 3, 5]
 @testset "a lattice rule placed at a unit integrates it within its error" begin
     C = ContinuousTimeSEM
     # Laplace is exact on the linear fixture, and the product rule at 9 nodes
-    # is on the nonlinear three-effect one.
-    for (label, fresh, nodes) in (("linear", _fresh_linear, 0), ("2d3", _fresh_2d3, 9))
+    # is on the nonlinear three-effect one. On the linear one each unit's
+    # integrand is its placed Gaussian, so the lattice's ratio against it
+    # (`_point_set_gaussian`) is exact, its spread nothing.
+    laplace, values = _fresh_linear()
+    theta = C._laplace_extend(laplace, collect(Float64, values))
+    Ls = C._laplace_popchols(theta, laplace.spec)
+    opts = C._continuation_opts(ctsem_laplace_continuation(laplace, theta; tolerance=1e6))
+    ws = C._laplace_workspace!(laplace, Float64, length(theta))
+    exact = ctsem_laplace_evaluate(laplace, theta; gradient=false).unit_loglik
+    for U in 1:length(laplace.units.members)
+        r = C._continuation_unit_rule(laplace, U, theta, Ls, ws,
+            merge(opts, (choice=C.CTSEMRuleChoice(:lattice, 5, 16),)))
+        @test (U, isapprox(r.value, exact[U]; atol=1e-9), r.se < 1e-9) == (U, true, true)
+    end
+    for (label, fresh, nodes) in (("2d3", _fresh_2d3, 9),)
         laplace, values = fresh()
         theta = C._laplace_extend(laplace, collect(Float64, values))
         Ls = C._laplace_popchols(theta, laplace.spec)
@@ -262,7 +275,8 @@ end
     laplace, values = _fresh_2d4()
     theta = collect(Float64, values)
     @test C._rule_default(laplace, 1, 5) == C.CTSEMRuleChoice(:lattice, 5, 16)
-    @test C._rule_cost(laplace, 1, C._rule_default(laplace, 1, 5)) == 128
+    # Eight shifts of 16 lattice points and 2 of the prior's.
+    @test C._rule_cost(laplace, 1, C._rule_default(laplace, 1, 5)) == 144
     o = ctsem_laplace_continuation(laplace, theta; tolerance=-1.0)
     info = ctsem_laplace_continuation_info(o)
     @test (info.rule_failures, info.nflagged) == (0, info.nunits)

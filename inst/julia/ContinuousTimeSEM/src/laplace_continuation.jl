@@ -1002,7 +1002,13 @@ function _continuation_block_rule(laplace::CTSEMLaplaceObjective, U::Integer,
     for j in 1:n
         logweights[j] = pl.logw[j] - sum(abs2, view(points, :, j)) / 2
     end
-    constant = -k * log(2 * pi) / 2
+    # A lattice rule's value is its ratio against its Gaussian
+    # (`_point_set_gaussian`), whose sum is a constant of the points once
+    # placed, as the placed objective reads it.
+    gs = ps.family === :lattice ? _point_set_gaussian(pl,
+        Matrix(inv(UpperTriangular(S))), ps.nrep) : nothing
+    constant = gs === nothing ? -k * log(2 * pi) / 2 :
+        Float64(rule.logdetscale) - gs.peak - log(gs.sum)
     # In parallel over the nodes, each on its own copy of `u`, as an importance
     # rule's draws are (`_continuation_draw!`): a nested unit whose outer block
     # holds 125 nodes, each placing every member's rule beneath it, was placed
@@ -1056,7 +1062,8 @@ function _continuation_block_rule(laplace::CTSEMLaplaceObjective, U::Integer,
         ps.nrep > 1 && (repsums[pl.rep[j]] += w)
     end
     value = peak + log(acc) + constant
-    se = sqrt(_point_set_error(repsums, ps.nrep)^2 + (weighted / acc)^2)
+    se = sqrt(_point_set_error(gs === nothing ? repsums : repsums ./ gs.repsums,
+        ps.nrep)^2 + (weighted / acc)^2)
     replicate = ps.nrep > 1 ? copy(pl.rep) : Int[]
     replw = ps.nrep > 1 ? logweights .+ log(ps.nrep) : Float64[]
     return (rule=CTSEMFixedRule(b, points, logweights, constant, children, replicate,
