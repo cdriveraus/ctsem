@@ -4601,17 +4601,24 @@ that converged onto another's mode, or left its anchor's basin
 (`_laplace_left_basin`), has gone -- past a fold, where its weight in the sum
 had already faded to nothing -- and is dropped. No mode joins that the run's
 anchors do not hold, so the sum changes only as its modes fade. Empty where
-none converged; the solve then searches.
+none converged; the solve then searches. `anchor` and `alts` are the run's
+anchors by default; the refined fit's placed units bring their own
+(`_placed_mode_sum!`).
 """
+_laplace_follow_modes(laplace::CTSEMLaplaceObjective, U::Integer,
+    values::AbstractVector{Float64}, Ls::Vector{Matrix{Float64}}, aws, held) =
+    _laplace_follow_modes(laplace, U, values, Ls, aws, held, laplace.anchors[U],
+        laplace.alt_anchors[U])
 function _laplace_follow_modes(laplace::CTSEMLaplaceObjective, U::Integer,
-    values::AbstractVector{Float64}, Ls::Vector{Matrix{Float64}}, aws, held)
+    values::AbstractVector{Float64}, Ls::Vector{Matrix{Float64}}, aws, held,
+    anchor::Vector{Float64}, alts::Vector{Vector{Float64}})
     kept = Any[]
     if held.converged && isfinite(held.value) &&
-            !_laplace_left_basin(laplace, U, values, Ls, aws, laplace.anchors[U], held)
+            !_laplace_left_basin(laplace, U, values, Ls, aws, anchor, held)
         push!(kept, held)
     end
     d = laplace.units.dims[U]
-    for a in laplace.alt_anchors[U]
+    for a in alts
         length(a) == d || continue
         r = _laplace_newton_unit_mode(laplace, U, values, Ls, aws, a)
         (r.converged && isfinite(r.value)) || continue
@@ -4725,20 +4732,41 @@ function _laplace_mode_sum(laplace::CTSEMLaplaceObjective, U::Integer,
     # d log f_k takes the eigenvalue's v' dM_k v and the valley's d depth_k =
     # dg_k - d g(p), p the valley's point between mode k and mode j.
     route = Float64[pi[k] * (1 + terms[k] - value) for k in 1:K]
+    fades = (geo=geo, x=x, y=y, toward=toward, live=live)
+    seeds = _laplace_mode_seeds(fades, Float64[pi[k] * (terms[k] - value) for k in 1:K])
+    return (value=value, modes=modes, prims=prims, pi=pi, route=route,
+        E=Any[g.E for g in geo.geos], gbar=seeds.gbar, Mbar=seeds.Mbar, pts=seeds.pts,
+        dominant=lead, terms=terms, fades=fades)
+end
+
+"""
+    _laplace_mode_seeds(fades, c)
+
+What `_laplace_mode_sum_gradient!`'s closing passes are seeded with for
+`sum_k c_k d log f_k`, the maxima's fades (`_laplace_mode_sum`'s `fades`)
+weighted by `c`: each eigenvalue's `Mbar`, and each valley's point with the
+weight its depth's derivative takes (`gbar`, `pts`). The mode sum weights
+them by `pi_k (t_k - T)`; the refined fit's average of placed rules, by
+`pi_k (Q_k - Q)` (`_placed_mode_sum!`).
+"""
+function _laplace_mode_seeds(fades, c::Vector{Float64})
+    geo, x, y, toward = fades.geo, fades.x, fades.y, fades.toward
+    K = length(x)
+    fade, dscale = _LAPLACE_MODE_FADE, _LAPLACE_MODE_DEPTH
     gbar = zeros(Float64, K)
     Mbar = Any[nothing for _ in 1:K]
     pts = Any[]
-    for k in live
-        c = pi[k] * (terms[k] - value)
-        c == 0 && continue
+    for k in fades.live
+        ck = c[k]
+        ck == 0 && continue
         sx = _laplace_fade_slope(x[k])
         if sx != 0
             v = geo.geos[k].E.vectors[:, 1]
-            Mbar[k] = (c * sx / (_laplace_fade_weight(x[k]) * fade)) .* (v .* transpose(v))
+            Mbar[k] = (ck * sx / (_laplace_fade_weight(x[k]) * fade)) .* (v .* transpose(v))
         end
         sy = _laplace_fade_slope(y[k])
         if sy != 0
-            e = c * sy / (_laplace_fade_weight(y[k]) * dscale)
+            e = ck * sy / (_laplace_fade_weight(y[k]) * dscale)
             j = toward[k]
             t = geo.vt[k, j]
             gbar[k] += e
@@ -4746,14 +4774,13 @@ function _laplace_mode_sum(laplace::CTSEMLaplaceObjective, U::Integer,
                 p=geo.geos[k].z0 .+ t .* (geo.geos[j].z0 .- geo.geos[k].z0)))
         end
     end
-    return (value=value, modes=modes, prims=prims, pi=pi, route=route,
-        E=Any[g.E for g in geo.geos], gbar=gbar, Mbar=Mbar, pts=pts, dominant=lead)
+    return (gbar=gbar, Mbar=Mbar, pts=pts)
 end
 
 # `_laplace_mode_sum`'s result for a unit scored by one mode alone.
 _laplace_one_mode(term, mode, prim) = (value=term, modes=[mode], prims=Any[prim],
     pi=[1.0], route=[1.0], E=Any[nothing], gbar=[0.0], Mbar=Any[nothing], pts=Any[],
-    dominant=1)
+    dominant=1, terms=[term], fades=nothing)
 
 """
     _laplace_mode_sum_gradient!(row, laplace, U, theta, Ls, dLlevels, dLsolved, s)

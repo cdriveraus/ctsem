@@ -188,3 +188,100 @@ end
     D = (D .+ transpose(D)) ./ 2
     @test all(isapprox.(H, D; rtol=1e-6, atol=1e-8))
 end
+
+@testset "within an optimisation the anchors move only at accepted points" begin
+    C = ContinuousTimeSEM
+    laplace, values = _fresh_nonlinear()
+    theta = collect(Float64, values)
+    P = _placed_from(laplace, theta)
+    C._ctsem_anchor_start!(P, theta)
+    @test P.running
+    v0 = ctsem_laplace_placed_evaluate(P, theta; gradient=false).value
+    home = deepcopy(P.anchors)
+    far = theta .+ 0.5
+    # A trial moves no anchor, so the value at the accepted point does not
+    # depend on what was tried after it.
+    ctsem_laplace_placed_evaluate(P, far; gradient=false)
+    @test P.anchors == home
+    P.cache = nothing; P.value_cache = nothing
+    @test ctsem_laplace_placed_evaluate(P, theta; gradient=false).value ≈ v0 atol=1e-12
+    # An accepted step does.
+    ctsem_laplace_placed_evaluate(P, far; gradient=false)
+    C._ctsem_anchor_here!(P)
+    @test P.anchors != home
+    C.ctsem_laplace_clear_anchors!(P)
+    @test !P.running
+    # Outside a run every evaluation moves them.
+    ctsem_laplace_placed_evaluate(P, theta; gradient=false)
+    @test maximum(maximum(abs, P.anchors[U] .- home[U]) for U in P.placed) < 1e-8
+end
+
+# A loading whose sign the data cannot fix (test-julia-laplace-modes.R's
+# fixture): y = lambda eta with eta centred, so each subject's likelihood
+# depends on lambda^2 and its integrand in the loading's effect has a maximum
+# either side of minus the population mean over its sd. Raw layout: 1 the
+# loading's mean, 2 its population scale.
+function _build_placed_sign_objective(; nsubjects=6)
+    df = _laplace_test_dataframe(
+        drift=[-0.5;;], jax=[-0.5;;], cint=[0.0;;], diffusion=[0.8;;],
+        lambda=[0.0;;], jy=[0.0;;], manifestmeans=[0.0;;], manifestvar=[0.3;;],
+        t0var=[1.0;;], t0means=[0.0;;],
+        free=Dict((:LAMBDA, 1, 1) => (1, "param[1]"), (:Jy, 1, 1) => (1, "param[1]")))
+    sp = ekf_from_data_frame(df)
+    subject_starts, times, data = _laplace_test_data(nsubjects, 1; seed=7)
+    return ctsem_objective(sp, subject_starts, times, 4 .* data)
+end
+const _PLACED_SIGN_OBJECTIVE = _build_placed_sign_objective()
+_fresh_placed_sign() = ctsem_laplace_objective(_PLACED_SIGN_OBJECTIVE, [1], [2], Int[],
+    [1.0])
+
+@testset "a unit with two maxima averages its rules placed at each" begin
+    C = ContinuousTimeSEM
+    # Mirror images at a population mean of zero: the two rules are one rule
+    # reflected, and the average is either.
+    theta = [0.0, 0.3]
+    P = _placed_from(_fresh_placed_sign(), theta)
+    @test all(U -> length(P.alt_anchors[U]) == 1, P.placed)
+    both = ctsem_laplace_placed_evaluate(P, theta; gradient=false)
+    @test all(U -> P.live[U] == 2, P.placed)
+    previous = C.ctsem_set_mode_sum!(false)
+    one = try
+        ctsem_laplace_placed_evaluate(_placed_from(_fresh_placed_sign(), theta);
+            gradient=false)
+    finally
+        C.ctsem_set_mode_sum!(previous)
+    end
+    @test both.unit_loglik[P.placed] ≈ one.unit_loglik[P.placed] atol=1e-8
+    # Away from it the two rules differ and the weights move with the
+    # parameters; the gradient is still the value's.
+    for theta in ([0.4, 0.3], [0.8, -0.2])
+        P = _placed_from(_fresh_placed_sign(), theta)
+        r = ctsem_laplace_placed_check(P, theta; step=1e-6)
+        @test any(U -> P.live[U] == 2, P.placed)
+        @test all(isfinite, r.gradient)
+        @test r.gradient ≈ r.differences rtol=1e-5 atol=1e-6
+    end
+    # Along the mean the maximum on the far side falls away, its weight gone
+    # before it is dropped (here past `_LAPLACE_MODE_SPAN` below the near one):
+    # the term has no step where it goes, and the gradient is the value's on
+    # both sides. Followed from one point to the next, as an optimisation's
+    # accepted points follow them.
+    P = _placed_from(_fresh_placed_sign(), [0.0, 0.3])
+    grid = collect(range(0.0, 3.0; length=301))
+    h = step(range(0.0, 3.0; length=301))
+    value = Float64[]
+    live = Int[]
+    for m in grid
+        push!(value, ctsem_laplace_placed_evaluate(P, [m, 0.3]; gradient=false).value)
+        push!(live, sum(P.live[P.placed]))
+    end
+    @test live[1] == 2 * length(P.placed)
+    @test live[end] < live[1]
+    d2 = abs.(diff(diff(value)))
+    @test maximum(d2) < 50 * h^2 * (1 + maximum(abs, diff(value)) / h)
+    for m in (grid[findfirst(<(live[1]), live)] - h, grid[findfirst(<(live[1]), live)])
+        Q = _placed_from(_fresh_placed_sign(), [m, 0.3])
+        r = ctsem_laplace_placed_check(Q, [m, 0.3]; step=1e-7)
+        @test r.gradient ≈ r.differences rtol=1e-4 atol=1e-5
+    end
+end

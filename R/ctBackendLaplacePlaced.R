@@ -109,7 +109,7 @@
       converged = isTRUE(res$converged), hessians = as.integer(res$newton_hessians),
       replacements = as.integer(res$replacements),
       raised = as.integer(.ctJuliaOr(res$raised, 0L)),
-      switched = as.integer(.ctJuliaOr(res$switched, 0L)),
+      multimodal = as.integer(.ctJuliaOr(res$multimodal, 0L)),
       slope_sd = as.numeric(.ctJuliaOr(res$slope_sd, NA_real_)))
     record$continuation <- if (isTRUE(res$converged)) "converged" else "stopped"
   }
