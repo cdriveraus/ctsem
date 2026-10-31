@@ -175,6 +175,12 @@ end
     @test R.cont.unit_rules[V].nodes == n0 + 2
     @test R.sets[V][1].count == n0 + 2
     @test isfinite(R.cont.centre_error[V])
+    # A mixed rule's finer one steps its nodes as well as its points, along
+    # the refine's mixed sequence; at the most of both there is none.
+    @test C._placed_finer(C.CTSEMRuleChoice(:mixed, 5, 16)) ==
+        C.CTSEMRuleChoice(:mixed, 7, 32)
+    @test C._placed_finer(C.CTSEMRuleChoice(:mixed, C._CONTINUATION_NODES_MAX,
+        C._LATTICE_MAX)) === nothing
     # The choice by the estimate's error: under no bar each unit moves to the
     # cheapest rule it is measured on, the first lattice (the refine left it
     # on the second); under any bar every

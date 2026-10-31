@@ -1631,8 +1631,9 @@ already at the most points is read on independent shifts.
 Carried through the inverse curvature `-H` on its directions with curvature,
 as the standard errors are, and divided by them, it is that unit's
 contribution to the estimate's error in standard errors. A product rule's
-error has one sign at every unit, so the product units' contributions add as
-vectors, signed; the lattice units' are independent and add in quadrature; per
+error has one sign at every unit, so the product and mixed units'
+contributions add as vectors, signed; the lattice units' are independent and
+add in quadrature; per
 coordinate the estimate's error from the rules is the first's magnitude plus
 the second's root, as the value's error adds them
 (`ctsem_laplace_placed_error`). Returns `(sd, units, doublings)`: the largest
@@ -1686,7 +1687,7 @@ function _placed_slope_check(P::CTSEMLaplacePlaced, values::AbstractVector,
             (own[i][1:n] .- other[i][1:n])
         contribution[i, :] .= (Cinv * d) ./ se
     end
-    signed = Bool[o.unit_rules[U].family === :product for U in units]
+    signed = Bool[o.unit_rules[U].family !== :lattice for U in units]
     total = _placed_slope_measure(contribution, signed, trues(nu))
     sd = maximum(total)
     order = sortperm([maximum(abs, contribution[i, :]) for i in 1:nu]; rev=true)
@@ -1735,13 +1736,23 @@ function _placed_slope_measure(contribution::Matrix{Float64}, signed::Vector{Boo
 end
 
 """The rule a placed unit's error is read against (`_placed_slope_check`) and
-the one it is raised to (`_placed_raise!`): a lattice or mixed rule with its
-lattice points doubled, its count step; a product rule two nodes finer, its
-node step. `nothing` at the most points or nodes."""
+the one it is raised to (`_placed_raise!`): a lattice rule with its points
+doubled, its count step; a product rule two nodes finer, its node step; a
+mixed rule a step along the refine's mixed sequence (`_continuation_steps`),
+two nodes finer and its points doubled, each to its most. `nothing` where
+nothing can grow. Doubling a mixed rule's points alone left a nested unit
+whose blocks all take product rules on the same rule, and the slope check read
+its error as zero (gN1, gN3)."""
 function _placed_finer(c::CTSEMRuleChoice)
     if c.family === :product
         c.nodes + 2 <= _CONTINUATION_NODES_MAX || return nothing
         return CTSEMRuleChoice(:product, c.nodes + 2, 0)
+    end
+    if c.family === :mixed
+        nodes = min(c.nodes + 2, _CONTINUATION_NODES_MAX)
+        points = min(2 * c.points, _LATTICE_MAX)
+        (nodes, points) == (c.nodes, c.points) && return nothing
+        return CTSEMRuleChoice(:mixed, nodes, points)
     end
     c.points < _LATTICE_MAX || return nothing
     return CTSEMRuleChoice(c.family, c.nodes, 2 * c.points)
