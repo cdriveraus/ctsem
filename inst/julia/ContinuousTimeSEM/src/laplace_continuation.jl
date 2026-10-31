@@ -650,7 +650,7 @@ mode on the block's precision once every block beneath
 it is eliminated, its eigenvalues floored at `floor`. The elimination is the
 block factorization's (`_laplace_block_factor`, innermost first), each block
 eliminated with its precision's eigenvalues clipped at the prior's, as the
-quadrature clips a rule's scale (`_quadrature_clipped_scale`): a block's
+quadrature clips a rule's scale (`_quadrature_scale`): a block's
 posterior covariance is no wider than its prior's where its likelihood is
 log-concave, while a soft curvature's inverse can be any width. Unclipped, the
 eliminated precision -- what a product rule scales an outer block by -- is
@@ -965,7 +965,7 @@ Block `b`'s fixed rule at `theta`, its ancestors held where `u` has them, and
 its log integral there: the block's point set (`context.sets[b]`,
 `point_sets.jl`) placed at a leaf's conditional mode and clipped scale
 (`_quadrature_leaf_rule!`), or at an outer block at the unit's joint mode and
-the eliminated precision's clipped scale (`_quadrature_clipped_scale`), as the
+the eliminated precision's clipped scale (`_quadrature_scale`), as the
 placed objective places them (`laplace_placed.jl`), so that at the centre the
 two agree. A node's value is its members' log likelihood at a leaf, and the
 sum of its children's rules placed with this block at the node at an outer
@@ -987,15 +987,12 @@ function _continuation_block_rule(laplace::CTSEMLaplaceObjective, U::Integer,
         _quadrature_leaf_rule!(laplace, U, theta, Ls, b, u, aws;
             start=Float64[context.mode[c] for c in columns])
     else
-        clipped = _quadrature_clipped_scale(context.factors[b], k)
-        (ok=true, centre=Float64[context.mode[c] for c in columns],
-         scale=clipped.scale, logdetscale=clipped.logdetscale)
+        sc = _quadrature_scale(context.factors[b], k)
+        (ok=sc.ok, centre=Float64[context.mode[c] for c in columns], sc=sc)
     end
     rule.ok || return nothing
     ps = context.sets[b]
-    S = Matrix{Float64}(rule.scale)
-    pl = _point_set_place(ps, rule.centre, S, Matrix(inv(UpperTriangular(S))),
-        Float64(rule.logdetscale))
+    pl = _point_set_place(ps, rule.centre, rule.sc.S, rule.sc.U, rule.sc.logdetscale)
     points = pl.Z
     n = size(points, 2)
     logweights = Vector{Float64}(undef, n)
@@ -1005,10 +1002,9 @@ function _continuation_block_rule(laplace::CTSEMLaplaceObjective, U::Integer,
     # A lattice rule's value is its ratio against its Gaussian
     # (`_point_set_gaussian`), whose sum is a constant of the points once
     # placed, as the placed objective reads it.
-    gs = ps.family === :lattice ? _point_set_gaussian(pl,
-        Matrix(inv(UpperTriangular(S))), ps.nrep) : nothing
+    gs = ps.family === :lattice ? _point_set_gaussian(pl, rule.sc.U, ps.nrep) : nothing
     constant = gs === nothing ? -k * log(2 * pi) / 2 :
-        Float64(rule.logdetscale) - gs.peak - log(gs.sum)
+        rule.sc.logdetscale - gs.peak - log(gs.sum)
     # In parallel over the nodes, each on its own copy of `u`, as an importance
     # rule's draws are (`_continuation_draw!`): a nested unit whose outer block
     # holds 125 nodes, each placing every member's rule beneath it, was placed

@@ -242,12 +242,12 @@ function _laplace_posterior_nodes_normal!(points, weights, logmarginal,
     laplace::CTSEMLaplaceObjective, U::Integer, theta::Vector{Float64},
     Ls::Vector{Matrix{Float64}}, mode::Vector{Float64}, factorization, nodes::Int, aws)
     k = length(mode)
-    rule = _quadrature_clipped_scale(factorization.factors[1], k)
+    rule = _quadrature_scale(factorization.factors[1], k)
     grid, logweights = _gh_grid(k, nodes)
     mass = 0.0
     @inbounds for j in eachindex(grid)
         x = grid[j]
-        z = mode .+ sqrt(2) .* (rule.scale * x)
+        z = mode .+ sqrt(2) .* (rule.S * x)
         for c in 1:k
             points[U, j, c] = z[c]
         end

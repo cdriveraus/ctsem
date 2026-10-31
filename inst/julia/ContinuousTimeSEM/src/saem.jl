@@ -331,11 +331,11 @@ function _saem_independence_move!(st::CTSEMSAEMState, laplace::CTSEMLaplaceObjec
     aws = _laplace_workspace!(laplace, Float64, length(theta))
     rule = _quadrature_leaf_rule!(laplace, U, theta, Ls, b, u, aws; start=u[cols])
     rule.ok || return false
-    R = UpperTriangular(rule.scale)
+    R = UpperTriangular(rule.sc.S)
     logq(x) = -sum(abs2, R \ (x .- rule.centre)) / 2
     rng = _saem_rng(st, U, c, b, 0, 3)
     old = u[cols]
-    z = rule.centre .+ rule.scale * randn(rng, blk.size)
+    z = rule.centre .+ rule.sc.S * randn(rng, blk.size)
     u[cols] .= z
     newll = [_saem_member_ll(laplace, U, m, theta, Ls, u) for m in blk.members]
     logr = sum(newll) - sum(@view ll[blk.members]) -
