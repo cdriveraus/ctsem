@@ -226,9 +226,9 @@ ctLaplaceCheck <- function(fit, nodes = 5L, correction = TRUE, step = 1e-3,
   verdict <- .ctFitGap("quadrature", gap = gap, nsubjects = nsubjects,
     remedy = paste0("A gap that matters means the Laplace approximation is ",
       "limiting the fit rather than the data; ctFitUncertainty(fit, intoverpop = ",
-      "'quadrature') refines the fit with the units integrated by quadrature, and ",
-      "ctFitUncertainty(fit, 'sample', intoverpop = 'none') avoids the ",
-      "approximation entirely."))
+      "'quadrature') refines the estimates with the units integrated by quadrature, ",
+      "and ctFitUncertainty(fit, 'sample', intoverpop = 'none') samples the ",
+      "posterior without the approximation, for intervals to report."))
   out <- list(verdict = verdict,
     gap = gap, quadrature = quadrature, laplace = laplacevalue,
     gap_per_subject = gap / max(1L, nsubjects),

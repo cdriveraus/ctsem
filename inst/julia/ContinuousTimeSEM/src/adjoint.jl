@@ -154,7 +154,7 @@ mutable struct CTSEMAdjointWorkspace{T,SP,LB,FB,WS,DC}
     # Whether the Frechet batch spans subjects at all: not where a transform
     # group writes a JAx cell, whose reverse would consume a pending
     # direction, nor in the walks that want each subject's own gradient
-    # (`_ctsem_subject_gradient_chunk!`, the Laplace unit loop).
+    # (the Laplace unit loop).
     defer_frechet::Bool
     # Whether any state-dependent transform group writes a JAx cell. Such a
     # group's reverse *zeroes* that cell's cotangent, so it is the one thing
@@ -562,131 +562,32 @@ gradient contribution.
 
 This is the score matrix the R side's `scorecalc()` produces for the Stan
 backend, and it is what the OPG, sandwich and score-bootstrap uncertainty
-methods consume. The adjoint already computes exactly this and then adds it up,
-so producing it costs one ordinary gradient evaluation rather than the
-per-subject model re-initialisation the Stan path needs.
+methods consume. It costs about one ordinary gradient evaluation rather than
+the per-subject model re-initialisation the Stan path needs.
 
-Two shortcuts of the summed gradient have to be switched off for the rows to be
-individually correct, and both are per-subject flags rather than changes to the
-reverse pass:
-
-  * the shared parameter layer, which unwinds the transform layer once for a
-    whole chunk of subjects, is unwound per subject instead;
-  * the deferred matrix-exponential Frechet contribution, which is normally
-    batched across subjects, is flushed within each subject.
-
-`sum(scores, dims=1)` therefore equals `ctsem_adjoint_gradient`'s gradient, and
-`test_subject_gradients.jl` asserts that -- which is the natural check, since
-the two routes share every primitive but differ in where they accumulate.
+The rows are the objective's view as a sum over its subjects
+(`_ctsem_unit_sum`) evaluated with each unit's scores, as the Laplace route's
+are (`ctsem_subject_gradients(laplace, ...)`): a unit a subject, each its own
+piece of the summed adjoint chunk, so the two shortcuts that make the summed
+gradient fast -- the shared parameter layer and the cross-subject Frechet
+batch -- span one subject each, which is what makes a row that subject's own.
+The marginal route kept a loop of its own for this before the view existed.
+`sum(scores, dims=1)` equals `ctsem_adjoint_gradient`'s gradient, and
+`test_subject_gradients.jl` asserts that.
 
 A sampled (missing) TI predictor value is its subject's: the TI-effect term
-of its cotangent lands on that row through the per-subject
-`_ctsem_parameter_layer!`, a cell reading it through `_ctsem_tipred_scatter!`,
-and its imputation density's term is added to the same row
-(`_ctsem_prior_scores!`).
+of its cotangent lands on that row, and its imputation density's term is added
+to the same row (`_ctsem_prior_scores!`).
 
 `prior = false` leaves the prior out of the rows -- each is then subject `i`'s
 log likelihood gradient alone, which is what removing subject `i` removes
 (`ctLOO(casewiseApproximation = TRUE)`); a refit keeps the whole prior. The
 value is the objective either way. `sink`, a vector, gets each subject's own
-log likelihood, unweighted, where its weight is not zero.
+log likelihood, unweighted, NaN where its weight is zero.
 """
-function ctsem_subject_gradients(objective::CTSEMObjective, values::AbstractVector{T};
-    prior::Bool=true, sink::Union{Nothing,AbstractVector}=nothing) where {T}
-    subjects = objective.subject_objectives
-    nsubjects = length(subjects)
-    npars = length(values)
-    scores = zeros(T, nsubjects, npars)
-    nchunks = _ctsem_nchunks(nsubjects)
-    workspaces = _get_or_init_adjoint_workspaces!(objective, T, npars, nchunks)
-    nblocks = _ctsem_nblocks(nsubjects, nchunks)
-    ranges = _ctsem_chunk_ranges(nsubjects, nblocks)
-    totals = zeros(T, nblocks)
-    valid = fill(true, nblocks)
-    badvalue = fill(_ctsem_nan(T), nblocks)
-
-    _ctsem_pull_blocks(nblocks, nchunks) do b, w
-        _ctsem_subject_gradient_chunk!(scores, totals, valid, badvalue, b,
-            ranges[b], subjects, workspaces[w], values, objective.subject_weights, sink)
-    end
-
-    @inbounds for c in 1:nblocks
-        valid[c] || return (value=badvalue[c], scores=fill(_ctsem_nan(T), nsubjects, npars))
-    end
-
-    prior && _ctsem_prior_scores!(scores, objective, values)
-    return (value=sum(totals) + _ctsem_log_prior(objective, values), scores=scores)
-end
-
-"""Per-subject gradients for one contiguous chunk, written into `scores`, and
-each subject's log likelihood into `sink` where one is given."""
-function _ctsem_subject_gradient_chunk!(scores::Matrix{T}, totals::Vector{T},
-    valid::Vector{Bool}, badvalue::Vector{T}, c::Int, range::UnitRange{Int},
-    subjects, aws, values::AbstractVector{T},
-    weights::Vector{Float64}=Float64[], sink=nothing) where {T}
-
-    deferred = aws.defer_frechet
-    aws.defer_frechet = false
-    total = zero(T)
-    try
-        @inbounds for i in range
-            subject_objective = subjects[i]
-            # A weighted subject's score is its weight times its gradient: the
-            # derivative of its term in the objective.
-            w = isempty(weights) ? 1.0 : weights[i]
-            w == 0 && continue
-            # The task's filter workspace, as in `_ctsem_adjoint_chunk!`.
-            ws = aws.ekf_ws
-            # One exponential table for the chunk: a linear model's
-            # `exp(JAx * dt)` is the same for every subject at the same interval.
-            ws.discretization_cache.exp_table = aws.exp_table
-            tape = _tape_reset!(aws.tape)
-            # The concrete numeric row this evaluation reads: identity for a
-            # plain `Vector{Float64}` (see `_ctsem_tipred_vector`), or the
-            # sampled predictor's raw parameter value substituted in for a
-            # `TIMissingRecipe` subject. The forward pass and the group replay
-            # inside the reverse pass (`aws.tipreds`, read via `ctx.tipreds`)
-            # must see the same row `values` produced, not the recipe itself.
-            tipred_vec = _ctsem_tipred_fill!(aws.tipreds, subject_objective.tipreds, values)
-            aws.frechet_count = 0
-
-            loglik = _ekf_run(ws, subject_objective, values, tipred_vec, tape)
-            # _finite_deep, not isfinite: under ctsem_hessian this runs at Dual
-            # and isfinite tests the value alone, so a NaN partial would pass.
-            if !_finite_deep(loglik)
-                valid[c] = false
-                badvalue[c] = loglik
-                return nothing
-            end
-            total += w * loglik
-            sink === nothing || (sink[i] = loglik)
-
-            if _growth_unstable(ws)
-                _ctsem_forward_subject_gradient!(view(scores, i, :), subject_objective, values)
-                w == 1 || (view(scores, i, :) .*= w)
-                continue
-            end
-
-            fill!(aws.theta_bar, zero(T))
-            _ctsem_tipred_bar_reset!(aws, subject_objective.tipreds, length(tipred_vec))
-            _ctsem_reverse_tape!(tape, subject_objective.params, aws, aws.n, aws.m)
-            # The original `tipreds` (recipe or plain vector), not
-            # `tipred_vec`: `_ctsem_parameter_layer!` dispatches on its type to
-            # decide whether a second product-rule term is needed.
-            _ctsem_parameter_layer!(view(scores, i, :), aws.theta_bar,
-                tape.subject_values, subject_objective.params, aws,
-                subject_objective.tipreds, values)
-            _ekf_gaussian_call(aws.ekf_ws, _hybrid_scatter!, _ctsem_noop, view(scores, i, :),
-                tape.hyb, subject_objective.params.hybrid)
-            _ctsem_tipred_scatter!(view(scores, i, :), aws, subject_objective.tipreds)
-            w == 1 || (view(scores, i, :) .*= w)
-        end
-    finally
-        aws.defer_frechet = deferred
-    end
-    totals[c] = total
-    return nothing
-end
+ctsem_subject_gradients(objective::CTSEMObjective, values::AbstractVector;
+    prior::Bool=true, sink::Union{Nothing,AbstractVector}=nothing) =
+    ctsem_subject_gradients(_ctsem_units_of(objective), values; prior=prior, sink=sink)
 
 """
     _ctsem_adjoint_chunk!(gradient, totals, valid, badvalue, c, ranges, subjects,
@@ -770,9 +671,12 @@ function _ctsem_adjoint_chunk_body!(gradient::Vector{T}, totals::Vector{T},
         # One exponential table for the chunk: a linear model's `exp(JAx * dt)`
         # is the same for every subject at the same interval.
         ws.discretization_cache.exp_table = aws.exp_table
-        # See the matching comment in `_ctsem_subject_gradient_chunk!`: the
-        # forward pass and the group replay need the concrete numeric row, not
-        # the (possibly `TIMissingRecipe`) stored one.
+        # The concrete numeric row this evaluation reads: identity for a plain
+        # `Vector{Float64}` (see `_ctsem_tipred_vector`), or the sampled
+        # predictor's raw parameter value substituted in for a
+        # `TIMissingRecipe` subject. The forward pass and the group replay
+        # inside the reverse pass (`aws.tipreds`, read via `ctx.tipreds`) must
+        # see the same row `values` produced, not the recipe itself.
         tipred_vec = _ctsem_tipred_fill!(aws.tipreds, subject_objective.tipreds, values)
         if !want_gradient
             loglik = _ekf_run(ws, subject_objective, values, tipred_vec, nothing)

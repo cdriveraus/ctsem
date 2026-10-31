@@ -2107,13 +2107,12 @@ end
 Subject `i`'s log likelihood at `values`, and its gradient with respect to
 `values`, written into `gradient`.
 
-This is one iteration of `_ctsem_subject_gradient_chunk!`'s loop, lifted out
-because the Laplace layer needs each subject evaluated at a *different*
-parameter vector -- which is exactly what the summed adjoint is built never to
-have to do. The two shortcuts that make the summed gradient fast, the shared
-parameter layer and the cross-subject Frechet batch, are per-subject-incorrect
-for the same reason they are in `ctsem_subject_gradients`, so the Frechet batch
-is flushed within the subject here too.
+This is one subject of the summed adjoint chunk's loop, lifted out because
+the Laplace layer needs each subject evaluated at a *different* parameter
+vector -- which is exactly what the summed adjoint is built never to have to
+do. The two shortcuts that make the summed gradient fast, the shared parameter
+layer and the cross-subject Frechet batch, are per-subject-incorrect here, so
+the Frechet batch is flushed within the subject.
 """
 function _laplace_subject_value_gradient!(gradient::AbstractVector{T},
     subject_objective, aws, values::AbstractVector{T},
@@ -10469,10 +10468,11 @@ pilot (310 parameters, 493 single-member units) its first iterations then took
 5-20 minutes each at one core, against seconds once the batch was full.
 
 `prior = false` leaves each unit's share of the prior out, as for the plain
-objective.
+objective. `sink`, a vector, gets each unit's term.
 """
 function ctsem_subject_gradients(laplace::CTSEMLaplaceObjective,
-    values::AbstractVector; prior::Bool=true)
+    values::AbstractVector; prior::Bool=true,
+    sink::Union{Nothing,AbstractVector}=nothing)
     # Over the extended vector (`_laplace_extend`), and returned with the
     # caller's columns.
     n = length(values)
@@ -10480,6 +10480,7 @@ function ctsem_subject_gradients(laplace::CTSEMLaplaceObjective,
     nunits = length(laplace.units.members)
     S = zeros(Float64, nunits, length(theta))
     r = ctsem_laplace_evaluate(laplace, theta; gradient=true, scores=S)
+    sink === nothing || copyto!(sink, r.unit_loglik)
     isfinite(r.value) || return (value=r.value, scores=fill(NaN, nunits, n))
     # Each unit carries its share of the prior, as the forward route's rows do.
     prior && _ctsem_prior_scores!(S, laplace.objective, theta,

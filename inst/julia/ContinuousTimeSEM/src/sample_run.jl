@@ -1342,11 +1342,24 @@ function ctsem_sample_marginal(objective, values::AbstractVector;
     ndim = length(centre)
     npar = ndim
     logdensity! = (g, x) -> _marginal_density!(objective, gradient_method, g, x)
+    # The chains run at once where the objective can be split between them
+    # (`_points_mode`): on the pool, a copy per worker of the objective as a
+    # sum over units (the marginal route's view, a unit a subject); on a filter
+    # objective with fewer subjects than the pool, deep copies. One after
+    # another otherwise, and wherever a resume, another process's coordination
+    # or the settling rule asks for `_sample_to_target`'s own loop.
+    mode = (nchains > 1 && resume === nothing && coordinate === nothing &&
+        settle_tol <= 0) ? _points_mode(objective, true; gradient_method=gradient_method) :
+        :serial
     # Where the objective is a sum of units' terms, each chain samples on a
     # coreset of them after its warm-up, its draws' endpoints tested against
     # the full density (sample_surrogate.jl); `coreset = false` is the oracle.
+    # Built on what the chains will run on, the view on the pool, since a
+    # chain's density is pointed at its worker's copy of that
+    # (`_marginal_chain_density`) and holds it by type.
+    on = mode == :pool ? _ctsem_units_of(objective) : objective
     densities = coreset && _smc_coreset_capable(objective) ?
-        [_SurrogateDensity(objective, gradient_method, ndim,
+        [_SurrogateDensity(on, gradient_method, ndim,
             hash((UInt64(seed), c, :surrogate)); floor=target_accept)
             for c in 1:nchains] : nothing
     density_for = densities === nothing ? (_ -> logdensity!) : (c -> densities[c])
@@ -1397,14 +1410,7 @@ function ctsem_sample_marginal(objective, values::AbstractVector;
         _metric_from_covariances([1:ndim], [_bounded_inverse(information)])
     end
 
-    # The chains run at once where the objective can be split between them
-    # (`_points_mode`): on the Laplace pool, a copy per worker; on a filter
-    # objective with fewer subjects than the pool, deep copies. One after
-    # another otherwise, and wherever a resume, another process's coordination
-    # or the settling rule asks for `_sample_to_target`'s own loop.
     chainstarts = _sample_joint_starts(starts, centre, size(something(starts, centre), 1))
-    mode = (nchains > 1 && resume === nothing && coordinate === nothing &&
-        settle_tol <= 0) ? _points_mode(objective, true) : :serial
     verbose && println(_console(), "Sampling: ", nchains, " chain(s), ", npar,
         " dimensions (effects integrated out), chains ",
         mode == :serial ? "sequential" : "concurrent", ", metric in 1 block")

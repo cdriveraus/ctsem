@@ -44,11 +44,15 @@ summed through the marginal route's own adjoint chunk with their sampling
 weights or a coreset's. So a coreset is one thing on both routes, and the
 marginal route has no coreset code of its own. The view is built when first
 asked for and kept on the objective (`unit_sum`); it reads the objective's
-prior, weights and subjects as they are at each evaluation.
+prior, weights and subjects as they are at each evaluation. None for a
+CTSEMObjective whose filter integrates deviations (`params.hybrid`): that is
+the inner objective of a Laplace one, whose own evaluation profiles them,
+where the view would take their integral, another function.
 """
 _ctsem_unit_sum(objective) = nothing
 _ctsem_unit_sum(laplace::CTSEMLaplaceObjective) = laplace
 function _ctsem_unit_sum(objective::CTSEMObjective)
+    _hybrid_on(objective.params.hybrid) && return nothing
     built = objective.unit_sum
     built === nothing || return built::CTSEMLaplaceObjective
     # Under a lock: a sampler's chains or particles can ask at once.
