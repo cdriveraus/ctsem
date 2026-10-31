@@ -246,18 +246,22 @@ _fresh_placed_sign() = ctsem_laplace_objective(_PLACED_SIGN_OBJECTIVE, [1], [2],
     @test all(U -> P.live[U] == 2, P.placed)
     previous = C.ctsem_set_mode_sum!(false)
     one = try
-        ctsem_laplace_placed_evaluate(_placed_from(_fresh_placed_sign(), theta);
+        ctsem_laplace_placed_evaluate(_placed_from(_fresh_placed_sign(), theta), theta;
             gradient=false)
     finally
         C.ctsem_set_mode_sum!(previous)
     end
     @test both.unit_loglik[P.placed] ≈ one.unit_loglik[P.placed] atol=1e-8
     # Away from it the two rules differ and the weights move with the
-    # parameters; the gradient is still the value's.
-    for theta in ([0.4, 0.3], [0.8, -0.2])
-        P = _placed_from(_fresh_placed_sign(), theta)
-        r = ctsem_laplace_placed_check(P, theta; step=1e-6)
-        @test any(U -> P.live[U] == 2, P.placed)
+    # parameters; the gradient is still the value's. The far maximum is
+    # followed from there, as an optimisation follows it: a search started
+    # out here does not reach it.
+    P = _placed_from(_fresh_placed_sign(), [0.0, 0.3])
+    for (i, m) in enumerate(range(0.1, 1.2; length=12))
+        ctsem_laplace_placed_evaluate(P, [m, 0.3]; gradient=false)
+        i in (4, 12) || continue
+        @test all(U -> P.live[U] == 2, P.placed)
+        r = ctsem_laplace_placed_check(P, [m, 0.3]; step=1e-6)
         @test all(isfinite, r.gradient)
         @test r.gradient ≈ r.differences rtol=1e-5 atol=1e-6
     end

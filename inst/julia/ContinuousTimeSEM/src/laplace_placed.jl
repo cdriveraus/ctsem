@@ -1297,16 +1297,24 @@ function _placed_evaluate(P::CTSEMLaplacePlaced, theta::Vector{Float64}, gradien
         subject_loglik=subject_loglik, converged=rest.converged && ok)
 end
 
-"""The maxima the last evaluation reached, the placed units' and the Laplace
-part's (`_laplace_mode_snapshot`), copied; `_placed_restore_modes!` puts
-them back."""
+"""What the last evaluation left besides its value: the maxima it reached, the
+placed units' and the Laplace part's (`_laplace_mode_snapshot`), and the
+rules' errors and effective sizes, which a run's stop and its end read
+(`_placed_rough`, `_placed_drifted`); copied, and put back by
+`_placed_restore_modes!` where a cached evaluation is returned. Without them
+a run's end read a later trial's effective sizes at the point it returned to,
+found nothing to raise there, and handed back a run its stop had ended."""
 _placed_mode_snapshot(P::CTSEMLaplacePlaced) = (modes=deepcopy(P.modes),
-    alt=deepcopy(P.alt_modes), live=copy(P.live),
+    alt=deepcopy(P.alt_modes), live=copy(P.live), se=copy(P.se),
+    unit_ess=copy(P.unit_ess), ess=copy(P.ess),
     rest=_laplace_mode_snapshot(P.cont.rest))
 function _placed_restore_modes!(P::CTSEMLaplacePlaced, s)
     P.modes = deepcopy(s.modes)
     P.alt_modes = deepcopy(s.alt)
     P.live = copy(s.live)
+    P.se = copy(s.se)
+    P.unit_ess = copy(s.unit_ess)
+    length(s.ess) == length(P.ess) && (P.ess = copy(s.ess))
     _laplace_restore_modes!(P.cont.rest, s.rest)
     P.running || _placed_anchor_here!(P)
     return nothing
@@ -1905,7 +1913,8 @@ rule's error has grown past `_PLACED_ROUGH` times its target (`_placed_rough`),
 and again where it ends with either, since its Newton finish does not consult
 the stop; the drifted rules are placed again there (`_placed_replace!`), the
 rough ones raised (`_placed_raise!`), and the run goes on from there, with
-its L-BFGS memory dropped where frozen rules were placed again. Where it ends
+its L-BFGS memory dropped where frozen rules were placed again; a run its
+stop ended goes on even where its end finds nothing to do. Where it ends
 on a Hessian, the slope check (`_placed_slope_check`) reads how far the
 lattice rules' error can move the estimate; the units carrying more than
 `_PLACED_SLOPE_BAR` standard errors have their points raised as many
@@ -1952,16 +1961,19 @@ function ctsem_laplace_placed_optimize(P::CTSEMLaplacePlaced, start::AbstractVec
             ctsem_laplace_placed_evaluate(P, x; gradient=false)
             drifted = !isempty(P.frozen) && ratio > 0 && _placed_drifted(P, ratio)
             rough = _placed_rough(P, _PLACED_ROUGH)
+            # A run its stop ended has not converged, whatever its end finds
+            # to do: its end can have moved off the point the stop read.
+            stopped = string(get(res, :stop_reason, "")) == "stopped"
             steep = Int[]
             doublings = 0
-            if !drifted && isempty(rough)
+            if !drifted && isempty(rough) && !stopped
                 check = _placed_slope_check(P, x, res.hessian)
                 slope = check.sd
                 doublings = check.doublings
                 steep = Int[U for U in check.units if
                     any(ps -> ps.family === :lattice && ps.count < _LATTICE_MAX, P.sets[U])]
             end
-            if last || !(drifted || !isempty(rough) || !isempty(steep))
+            if last || !(drifted || !isempty(rough) || !isempty(steep) || stopped)
                 return merge(res, (replacements=count, raised=raised,
                     multimodal=Base.count(U -> P.live[U] > 1, P.placed), slope_sd=slope))
             end
