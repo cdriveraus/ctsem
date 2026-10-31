@@ -29,7 +29,7 @@ const _CTSEM_GRADIENT_VALUES_FILTER = 3.0
 evaluated as a sampler evaluates it, outside an optimisation: the value is
 mostly the units' inner solves, which the gradient pays too, and the gradient
 adds the seeded sweeps of the trace terms and the reverse pass. Measured
-1.21-1.49 on the bench's twenty Laplace models with coordinates. Within an
+1.21-1.49 on the bench's nineteen Laplace models with coordinates. Within an
 optimisation, the solves anchored at the last accepted point's modes, a value
 is 1.3-2.5 times cheaper and a gradient 1.4-2.0 values, but no pricer reads
 the price there: the optimiser's coreset stages weigh gradients against
@@ -58,10 +58,10 @@ export ctsem_gradient_values
 Each unit's share of a full evaluation of `laplace`, a sum over units
 (`_ctsem_unit_sum`), summing to one: its rows times its members
 (`_laplace_unit_weights`), which is what a coreset of those units costs
-against all of them. Exact where the units are alike in that and in their
-data; on the bench, where they are, a unit's time still varied by a few per
-cent to twofold with the work its inner solve took, which no count before the
-solve can see.
+against all of them. On AnomAuth, whose units' rows vary by a fifth, it
+explained 37-80 per cent of the variance in a unit's time; where units are
+alike in it, their times still varied by a few per cent to twofold with the
+work each inner solve took, which no count before the solve can see.
 """
 function _ctsem_unit_shares(laplace::CTSEMLaplaceObjective)
     w = _laplace_unit_weights(laplace)
