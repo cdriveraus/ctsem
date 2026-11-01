@@ -104,25 +104,67 @@ export ctsem_sample_map
 # misses the tails, a fit from it makes them light, and the latent target is
 # then heavy-tailed, where NUTS mixes slowly
 # (`scripts/marginal-default-2026-10/tri_saturate.R`).
+#
+# A component conditions on every earlier coordinate up to `_JMAP_TRI_FULL`
+# parameters, and above it on the `_JMAP_TRI_PARENTS` its draws depend on most
+# (`_jmap_tri_parents`), so its coefficients grow with the parameters rather
+# than with their square and the pooled draws learn it at any size. Above the
+# bound there was no map before. On a 50-parameter fixture (w8) four parents
+# gave 0.21-0.45 effective draws per 1,000 gradients over six seeds, the
+# whitening alone 0.03-0.05, short of the target at both of its seeds; on w6
+# (33) they gave 1.2 times the whitening's mean rate and 8 times its worst
+# seed's, the full map 1.0 and 6 times, two parents about as much as four and
+# eight less. Below the bound the full map stays: four parents trailed it on
+# four race fixtures of thirteen at 5-11 parameters, and at 21 (mvmix) one seed
+# of three ended at a min ESS of 17 with a mean 0.65 sd off
+# (`review/SAMPLING-sparse-map-2026-11-01.md`).
 
 const _JMAP_TRI_CAP = 3.0
 """Beyond about this many whitened sd an earlier coordinate stops bending a
 later one's location and scale."""
 const _JMAP_TRI_SAT = 5.0
 _jmap_tri_sat(u) = _JMAP_TRI_SAT * tanh(u / _JMAP_TRI_SAT)
-"""Theta's triangular map is learnt for up to this many free parameters; a
-component's fit has `3k + 1` coefficients and a Newton step over them."""
-const _JMAP_TRI_MAXPAR = 30
+_jmap_tri_dsat(u) = 1 - tanh(u / _JMAP_TRI_SAT)^2
+"""Up to this many free parameters each of theta's components conditions on
+every earlier coordinate."""
+const _JMAP_TRI_FULL = 30
+"""Above `_JMAP_TRI_FULL` free parameters, how many earlier coordinates each of
+theta's components conditions on: those its draws depend on most."""
+const _JMAP_TRI_PARENTS = 4
+_jmap_tri_parent_count(n::Int) = n <= _JMAP_TRI_FULL ? n - 1 : _JMAP_TRI_PARENTS
 
+"""
+Theta's triangular map. Component `k` conditions on the earlier coordinates
+`parents[k]`; `f1[k]`, `f2[k]` and `a1[k]` are its location's linear and
+quadratic coefficients and its log scale's linear ones, one for each parent.
+"""
 struct _JMapTri
     n::Int
+    parents::Vector{Vector{Int}}
     f0::Vector{Float64}
-    f1::Matrix{Float64}
-    f2::Matrix{Float64}
+    f1::Vector{Vector{Float64}}
+    f2::Vector{Vector{Float64}}
     a0::Vector{Float64}
-    a1::Matrix{Float64}
+    a1::Vector{Vector{Float64}}
     eps::Vector{Float64}
     ld::Vector{Float64}
+end
+
+# Component `k`'s location and raw log scale at whitened `u`, of which it reads
+# only its parents.
+@inline function _jmap_tri_terms(tri::_JMapTri, k::Int, u::AbstractVector{T}) where {T}
+    f = T(tri.f0[k])
+    b = T(tri.a0[k])
+    P = tri.parents[k]
+    f1 = tri.f1[k]
+    f2 = tri.f2[k]
+    a1 = tri.a1[k]
+    @inbounds for q in eachindex(P)
+        s = _jmap_tri_sat(u[P[q]])
+        f += f1[q] * s + f2[q] * s^2
+        b += a1[q] * s
+    end
+    return f, b
 end
 
 """The whitened coordinates at latent `w` and the log Jacobian of that map."""
@@ -132,14 +174,8 @@ function _jmap_tri_forward(tri::_JMapTri, w::AbstractVector{T}) where {T<:Real}
     u = Vector{T}(undef, n)
     lj = zero(T)
     @inbounds for k in 1:n
-        f = T(tri.f0[k])
-        a = T(tri.a0[k])
-        for j in 1:(k - 1)
-            s = _jmap_tri_sat(u[j])
-            f += tri.f1[k, j] * s + tri.f2[k, j] * s^2
-            a += tri.a1[k, j] * s
-        end
-        a = A * tanh(a / A)
+        f, b = _jmap_tri_terms(tri, k, u)
+        a = A * tanh(b / A)
         delta = exp(tri.ld[k])
         r = (asinh(w[k]) + tri.eps[k]) / delta
         u[k] = f + exp(a) * sinh(r)
@@ -154,87 +190,202 @@ function _jmap_tri_inverse(tri::_JMapTri, u::AbstractVector)
     A = _JMAP_TRI_CAP
     w = zeros(n)
     @inbounds for k in 1:n
-        f = tri.f0[k]
-        a = tri.a0[k]
-        for j in 1:(k - 1)
-            s = _jmap_tri_sat(u[j])
-            f += tri.f1[k, j] * s + tri.f2[k, j] * s^2
-            a += tri.a1[k, j] * s
-        end
-        a = A * tanh(a / A)
+        f, b = _jmap_tri_terms(tri, k, u)
+        a = A * tanh(b / A)
         v = (u[k] - f) * exp(-a)
         w[k] = sinh(exp(tri.ld[k]) * asinh(v) - tri.eps[k])
     end
     return w
 end
 
-struct _JMapTriForward
-    tri::_JMapTri
-end
-function (F::_JMapTriForward)(w::AbstractVector{T}) where {T}
-    u, lj = _jmap_tri_forward(F.tri, w)
-    return vcat(u, lj)
-end
-
 """The latent gradient from the whitened one, `gu`, the log Jacobian's own
-gradient included."""
+gradient included: the forward pass, then a reverse pass from the last
+component, each handing its location's and scale's adjoints to its parents."""
 function _jmap_tri_pullback(tri::_JMapTri, w::AbstractVector, gu::AbstractVector)
     n = tri.n
-    J = ForwardDiff.jacobian(_JMapTriForward(tri), collect(Float64, w))
-    return transpose(view(J, 1:n, :)) * gu .+ view(J, n + 1, :)
+    A = _JMAP_TRI_CAP
+    u = zeros(n)
+    a = zeros(n)
+    da = zeros(n)
+    r = zeros(n)
+    @inbounds for k in 1:n
+        f, b = _jmap_tri_terms(tri, k, u)
+        t = tanh(b / A)
+        a[k] = A * t
+        da[k] = 1 - t^2
+        r[k] = (asinh(w[k]) + tri.eps[k]) / exp(tri.ld[k])
+        u[k] = f + exp(a[k]) * sinh(r[k])
+    end
+    ub = collect(Float64, gu)
+    gw = zeros(n)
+    @inbounds for k in n:-1:1
+        e = exp(a[k])
+        abar = ub[k] * e * sinh(r[k]) + 1
+        rbar = ub[k] * e * cosh(r[k]) + tanh(r[k])
+        wk = w[k]
+        gw[k] = rbar / (exp(tri.ld[k]) * sqrt(1 + wk^2)) - wk / (1 + wk^2)
+        fbar = ub[k]
+        bbar = abar * da[k]
+        P = tri.parents[k]
+        f1 = tri.f1[k]
+        f2 = tri.f2[k]
+        a1 = tri.a1[k]
+        for q in eachindex(P)
+            j = P[q]
+            s = _jmap_tri_sat(u[j])
+            ub[j] += (fbar * (f1[q] + 2 * f2[q] * s) + bbar * a1[q]) * _jmap_tri_dsat(u[j])
+        end
+    end
+    return gw
 end
 
-# A component's negative log likelihood over whitened draws `U` (a column each),
-# coefficients `p` = f0, f1[1:k-1], f2[1:k-1], a0, a1[1:k-1], eps, log delta,
-# with a unit ridge on all but the level and the scale. `pinned`: `p` stops at
-# eps and log delta is 0.
-struct _JMapTriNLL{M}
-    U::M
-    k::Int
+# A component's negative log likelihood over the whitened draws, in its
+# coefficients `p` = f0, f1, f2, a0, a1 (over its parents), eps, log delta, with
+# a unit ridge on all but the level and the scale. The coefficients enter the
+# location and the raw log scale linearly, through the designs `Phi` = [1 s s^2]
+# and `Psi` = [1 s] (a row a draw, `s` the parents' saturated values), so the
+# gradient and Hessian are those designs weighted by each draw's first and
+# second derivatives in the location, the raw log scale, eps and log delta.
+# `pinned`: `p` stops at eps and log delta is 0.
+struct _JMapTriComponent
+    x::Vector{Float64}
+    Phi::Matrix{Float64}
+    Psi::Matrix{Float64}
     pinned::Bool
 end
-function (F::_JMapTriNLL)(p::AbstractVector{T}) where {T}
-    U = F.U
-    k = F.k
+
+function _jmap_tri_component_value(C::_JMapTriComponent, p::AbstractVector{T}) where {T}
+    nf = size(C.Phi, 2)
+    nb = size(C.Psi, 2)
+    f = C.Phi * p[1:nf]
+    b = C.Psi * p[(nf + 1):(nf + nb)]
+    epsk = p[nf + nb + 1]
+    lam = C.pinned ? zero(T) : p[nf + nb + 2]
+    delta = exp(lam)
     A = _JMAP_TRI_CAP
-    delta = F.pinned ? one(T) : exp(p[3k + 1])
-    epsk = p[3k]
     s = zero(T)
-    @inbounds for i in axes(U, 2)
-        f = p[1]
-        a = p[2k]
-        for j in 1:(k - 1)
-            sj = _jmap_tri_sat(U[j, i])
-            f += p[1 + j] * sj + p[k + j] * sj^2
-            a += p[2k + j] * sj
-        end
-        a = A * tanh(a / A)
-        v = (U[k, i] - f) * exp(-a)
+    @inbounds for i in eachindex(C.x)
+        a = A * tanh(b[i] / A)
+        v = (C.x[i] - f[i]) * exp(-a)
         r = delta * asinh(v) - epsk
-        s += sinh(r)^2 / 2 - (log(delta) + log(cosh(r)) - log1p(v^2) / 2) + a
+        s += sinh(r)^2 / 2 - (lam + log(cosh(r)) - log1p(v^2) / 2) + a
     end
     reg = zero(T)
     for j in 2:length(p)
-        j == 2k && continue
+        j == nf + 1 && continue
         reg += p[j]^2
     end
     return s + reg / 2
 end
 
-# Damped Newton on `F` from `p`, on the Hessian's eigenvalues floored.
-function _jmap_tri_newton(F::_JMapTriNLL, p::Vector{Float64}, iters::Int)
-    val = F(p)
+function _jmap_tri_component_derivatives(C::_JMapTriComponent, p::Vector{Float64})
+    Phi = C.Phi
+    Psi = C.Psi
+    N = length(C.x)
+    nf = size(Phi, 2)
+    nb = size(Psi, 2)
+    ie = nf + nb + 1
+    il = ie + 1
+    np = length(p)
+    f = Phi * p[1:nf]
+    b = Psi * p[(nf + 1):(nf + nb)]
+    epsk = p[ie]
+    delta = C.pinned ? 1.0 : exp(p[il])
+    A = _JMAP_TRI_CAP
+    Lf = zeros(N); Lb = zeros(N); Lff = zeros(N); Lfb = zeros(N); Lbb = zeros(N)
+    Lfe = zeros(N); Lfl = zeros(N); Lbe = zeros(N); Lbl = zeros(N)
+    ge = 0.0; gl = 0.0; Hee = 0.0; Hel = 0.0; Hll = 0.0
+    @inbounds for i in 1:N
+        t = tanh(b[i] / A)
+        a = A * t
+        ab = 1 - t^2
+        abb = -2 * t * ab / A
+        ea = exp(-a)
+        v = (C.x[i] - f[i]) * ea
+        q = asinh(v)
+        sq = sqrt(1 + v^2)
+        q1 = 1 / sq
+        q2 = -v / sq^3
+        r = delta * q - epsk
+        sr = sinh(r)
+        cr = cosh(r)
+        g1 = sr * cr - sr / cr
+        g2 = cr^2 + sr^2 - 1 / cr^2
+        h1 = v / (1 + v^2)
+        h2 = (1 - v^2) / (1 + v^2)^2
+        dq = delta * q
+        dq1 = delta * q1
+        # In the standardised value v, eps and log delta.
+        lv = g1 * dq1 + h1
+        lvv = g2 * dq1^2 + g1 * delta * q2 + h2
+        lve = -g2 * dq1
+        lvl = g2 * dq * dq1 + g1 * dq1
+        ge -= g1
+        gl += g1 * dq - 1
+        Hee += g2
+        Hel -= g2 * dq
+        Hll += g2 * dq^2 + g1 * dq
+        # In the location and the capped log scale, v = (x - f) exp(-a), and
+        # the log Jacobian's own `+ a`.
+        La = -lv * v + 1
+        Laa = lvv * v^2 + lv * v
+        Lfa = lvv * ea * v + lv * ea
+        # The capped log scale through the raw one.
+        Lf[i] = -lv * ea
+        Lff[i] = lvv * ea^2
+        Lb[i] = La * ab
+        Lbb[i] = Laa * ab^2 + La * abb
+        Lfb[i] = Lfa * ab
+        Lfe[i] = -lve * ea
+        Lfl[i] = -lvl * ea
+        Lbe[i] = -lve * v * ab
+        Lbl[i] = -lvl * v * ab
+    end
+    g = zeros(np)
+    H = zeros(np, np)
+    fi = 1:nf
+    bi = (nf + 1):(nf + nb)
+    g[fi] .= transpose(Phi) * Lf
+    g[bi] .= transpose(Psi) * Lb
+    g[ie] = ge
+    H[fi, fi] .= transpose(Phi) * (Lff .* Phi)
+    H[fi, bi] .= transpose(Phi) * (Lfb .* Psi)
+    H[bi, bi] .= transpose(Psi) * (Lbb .* Psi)
+    H[fi, ie] .= transpose(Phi) * Lfe
+    H[bi, ie] .= transpose(Psi) * Lbe
+    H[ie, ie] = Hee
+    if !C.pinned
+        g[il] = gl
+        H[fi, il] .= transpose(Phi) * Lfl
+        H[bi, il] .= transpose(Psi) * Lbl
+        H[ie, il] = Hel
+        H[il, il] = Hll
+    end
+    for j in 1:np, i in (j + 1):np
+        H[i, j] = H[j, i]
+    end
+    for j in 2:np
+        j == nf + 1 && continue
+        g[j] += p[j]
+        H[j, j] += 1
+    end
+    return g, H
+end
+
+# Damped Newton on the component from `p`, on the Hessian's eigenvalues floored.
+function _jmap_tri_newton(C::_JMapTriComponent, p::Vector{Float64}, iters::Int)
+    val = _jmap_tri_component_value(C, p)
     for _ in 1:iters
-        g = ForwardDiff.gradient(F, p)
-        H = ForwardDiff.hessian(F, p)
-        ev = eigen(Symmetric((H .+ transpose(H)) ./ 2))
+        g, H = _jmap_tri_component_derivatives(C, p)
+        (all(isfinite, g) && all(isfinite, H)) || break
+        ev = eigen(Symmetric(H))
         lam = max.(ev.values, 1e-6 * maximum(abs, ev.values) + 1e-8)
         step = -(ev.vectors * ((transpose(ev.vectors) * g) ./ lam))
         t = 1.0
         improved = false
         for _ in 1:30
             pn = p .+ t .* step
-            vn = F(pn)
+            vn = _jmap_tri_component_value(C, pn)
             if isfinite(vn) && vn < val - 1e-10 * abs(val)
                 improved = abs(val - vn) > 1e-9 * max(1.0, abs(val))
                 p = pn
@@ -248,35 +399,80 @@ function _jmap_tri_newton(F::_JMapTriNLL, p::Vector{Float64}, iters::Int)
     return p
 end
 
+# The squared correlation of `x` and `y` over the draws.
+function _jmap_cor2(x::AbstractVector, y::AbstractVector)
+    mx = sum(x) / length(x)
+    my = sum(y) / length(y)
+    sxy = 0.0; sxx = 0.0; syy = 0.0
+    @inbounds for i in eachindex(x, y)
+        dx = x[i] - mx
+        dy = y[i] - my
+        sxy += dx * dy
+        sxx += dx^2
+        syy += dy^2
+    end
+    return sxx > 0 && syy > 0 ? sxy^2 / (sxx * syy) : 0.0
+end
+
+# The earlier coordinates component `k` conditions on: every one where there are
+# at most `m`, otherwise the `m` the component's draws depend on most -- its
+# location linearly or bending, or its spread -- by the squared correlations of
+# `u_k` with `s_j` and with `s_j^2`, and of `(u_k - mean)^2` with `s_j`, summed;
+# `S` holds the draws' saturated values.
+function _jmap_tri_parents(X::AbstractMatrix, S::AbstractMatrix, k::Int, m::Int)
+    k - 1 <= m && return collect(1:(k - 1))
+    m <= 0 && return Int[]
+    x = X[k, :]
+    xc = x .- sum(x) / length(x)
+    x2 = xc .^ 2
+    score = zeros(k - 1)
+    for j in 1:(k - 1)
+        s = S[j, :]
+        score[j] = _jmap_cor2(xc, s) + _jmap_cor2(xc, s .^ 2) + _jmap_cor2(x2, s)
+    end
+    return sort(partialsortperm(score, 1:m; rev=true))
+end
+
 """
-    _jmap_tri_fit(U; iters)
+    _jmap_tri_fit(U; iters, parents)
 
 The triangular map fitted to whitened draws `U` (a column each) by maximum
-likelihood, a component at a time, by damped Newton from the identity; a
+likelihood, a component at a time, by damped Newton from the identity, each
+component on at most `parents` earlier coordinates (`_jmap_tri_parents`); a
 component whose tails come out lighter than the normal's is fitted again with
 its tail weight held at the normal's.
 """
-function _jmap_tri_fit(U::AbstractMatrix; iters::Int=60)
-    n = size(U, 1)
-    f0 = zeros(n); f1 = zeros(n, n); f2 = zeros(n, n)
-    a0 = zeros(n); a1 = zeros(n, n); epsv = zeros(n); ld = zeros(n)
+function _jmap_tri_fit(U::AbstractMatrix; iters::Int=60, parents::Int=size(U, 1) - 1)
+    n, N = size(U)
     X = Matrix{Float64}(U)
+    S = _jmap_tri_sat.(X)
+    par = Vector{Vector{Int}}(undef, n)
+    f1 = Vector{Vector{Float64}}(undef, n)
+    f2 = Vector{Vector{Float64}}(undef, n)
+    a1 = Vector{Vector{Float64}}(undef, n)
+    f0 = zeros(n); a0 = zeros(n); epsv = zeros(n); ld = zeros(n)
     for k in 1:n
-        p = _jmap_tri_newton(_JMapTriNLL(X, k, false), zeros(3k + 1), iters)
-        if p[3k + 1] > 0
-            p = vcat(_jmap_tri_newton(_JMapTriNLL(X, k, true), p[1:(3k)], iters), 0.0)
+        P = _jmap_tri_parents(X, S, k, parents)
+        m = length(P)
+        Sp = Matrix{Float64}(transpose(S[P, :]))
+        Phi = hcat(ones(N), Sp, Sp .^ 2)
+        Psi = hcat(ones(N), Sp)
+        x = X[k, :]
+        p = _jmap_tri_newton(_JMapTriComponent(x, Phi, Psi, false), zeros(3m + 4), iters)
+        if p[3m + 4] > 0
+            p = vcat(_jmap_tri_newton(_JMapTriComponent(x, Phi, Psi, true), p[1:(3m + 3)],
+                iters), 0.0)
         end
+        par[k] = P
         f0[k] = p[1]
-        for j in 1:(k - 1)
-            f1[k, j] = p[1 + j]
-            f2[k, j] = p[k + j]
-            a1[k, j] = p[2k + j]
-        end
-        a0[k] = p[2k]
-        epsv[k] = p[3k]
-        ld[k] = p[3k + 1]
+        f1[k] = p[2:(m + 1)]
+        f2[k] = p[(m + 2):(2m + 1)]
+        a0[k] = p[2m + 2]
+        a1[k] = p[(2m + 3):(3m + 2)]
+        epsv[k] = p[3m + 3]
+        ld[k] = p[3m + 4]
     end
-    return _JMapTri(n, f0, f1, f2, a0, a1, epsv, ld)
+    return _JMapTri(n, par, f0, f1, f2, a0, a1, epsv, ld)
 end
 
 """
@@ -317,13 +513,15 @@ every learning window so far, whitened by `m`'s own centre and factor; `m` as
 it is while there are fewer than ten draws a coefficient of the largest
 component. At most 4000 draws are read, spread through the pool.
 """
-function _jmap_learn_tri(m::CTSEMJointMap, pooled::AbstractMatrix)
+function _jmap_learn_tri(m::CTSEMJointMap, pooled::AbstractMatrix;
+    parents::Int=m.npar - 1)
     n = m.npar
     N = size(pooled, 2)
-    N >= 10 * (3n + 1) || return m
+    k = min(n - 1, parents)
+    N >= 10 * (3k + 4) || return m
     pick = N > 4000 ? round.(Int, range(1, N; length=4000)) : collect(1:N)
     U = LowerTriangular(m.Ct) \ (pooled[:, pick] .- m.theta0)
-    return _jmap_with(m; tri=_jmap_tri_fit(U))
+    return _jmap_with(m; tri=_jmap_tri_fit(U; parents=k))
 end
 
 """Theta at latent `w`, and the log Jacobian of theta's triangular map (zero
@@ -1151,15 +1349,19 @@ layer otherwise; the keywords are `ctsem_sample`'s, plus the map's: `windows`
 the map from the fit), `nsettle` (the re-tuning warm-up after each refit and
 before the kept draws), `ncheck` (a check window under the final map),
 `maxrows` (the most draws a refit reads), `cross` (each member's summary
-coupled to the free parameters outside its effects) and `report` (the layer's
+coupled to the free parameters outside its effects), `report` (the layer's
 objective, whose layout the effects are reported in: a unit whose effects are
-all integrated has no block on the hybrid objective).
+all integrated has no block on the hybrid objective), `theta_map` (theta's
+triangular map learnt; false keeps its whitening alone) and `theta_parents`
+(how many earlier coordinates each of its components conditions on; negative,
+`_jmap_tri_parent_count`'s rule).
 
 Returns `ctsem_sample`'s record, with the draws of theta and, with
 `save_effects`, of the natural deviations, plus the map's: `gradients` (every
 density evaluation and score pass, in gradients), the learning windows, and
 the kept draws' latent mean and sd per coordinate (`latent_mean`,
-`latent_sd`, theta's first).
+`latent_sd`, theta's first) and the most parents a component of theta's map
+conditions on (`theta_parents`, -1 without a map).
 """
 function ctsem_sample_map(laplace::CTSEMLaplaceObjective, values::AbstractVector;
     npar::Integer=length(values), nchains::Integer=4, nwarmup::Integer=75,
@@ -1172,7 +1374,8 @@ function ctsem_sample_map(laplace::CTSEMLaplaceObjective, values::AbstractVector
     progress_sink=nothing, stepsize::Real=0.0, coordinate=nothing,
     windows::Union{Nothing,AbstractVector{<:Integer}}=nothing, nsettle::Integer=25,
     ncheck::Integer=25, maxrows::Integer=400, cross::Bool=true,
-    report::Union{Nothing,CTSEMLaplaceObjective}=nothing, theta_map::Bool=true)
+    report::Union{Nothing,CTSEMLaplaceObjective}=nothing, theta_map::Bool=true,
+    theta_parents::Integer=-1)
 
     t0 = time()
     nchains = Int(nchains); nwarmup = Int(nwarmup); ndraws = Int(ndraws)
@@ -1225,8 +1428,9 @@ function ctsem_sample_map(laplace::CTSEMLaplaceObjective, values::AbstractVector
     eps = Float64(stepsize)
     windowlog = NamedTuple[]
     # Theta's triangular map is learnt from the windows' pooled draws, over a
-    # third window, up to `_JMAP_TRI_MAXPAR` parameters.
-    learn = theta_map && npar <= _JMAP_TRI_MAXPAR
+    # third window.
+    learn = theta_map
+    tparents = theta_parents < 0 ? _jmap_tri_parent_count(npar) : Int(theta_parents)
     windows = windows === nothing ? (learn ? [40, 80, 160] : [40, 80]) : windows
     pooled = zeros(npar, 0)
     for (w, nw) in enumerate(windows)
@@ -1240,7 +1444,7 @@ function ctsem_sample_map(laplace::CTSEMLaplaceObjective, values::AbstractVector
         m2, refit, lambda, rows = _jmap_refit(m, Wl, rng; maxrows=Int(maxrows))
         if learn
             pooled = hcat(pooled, _jmap_thetas(m, Wl[1:npar, :]))
-            m2 = _jmap_learn_tri(m2, pooled)
+            m2 = _jmap_learn_tri(m2, pooled; parents=tparents)
         end
         extra += rows
         starts = _jmap_restarts(m, m2, results, moved, Wl, rng)
@@ -1348,7 +1552,9 @@ function ctsem_sample_map(laplace::CTSEMLaplaceObjective, values::AbstractVector
          map=(gradients=counter[] + extra + (hybrid ? total : 0),
               learn_gradients=learn_gradients, learn_secs=learned,
               windows=windowlog, coordinates=D - npar, latent_mean=lmean,
-              latent_sd=lsd, integrated=hybrid, coupled=length(mf.R))))
+              latent_sd=lsd, integrated=hybrid, coupled=length(mf.R),
+              theta_parents=mf.tri === nothing ? -1 :
+                maximum(length, mf.tri.parents; init=0))))
 end
 
 """
@@ -1379,9 +1585,10 @@ function ctsem_sample_map_check(laplace::CTSEMLaplaceObjective, values::Abstract
     rng = Random.Xoshiro(UInt64(seed))
     if tri
         n = npar
-        lower(sc) = [j < k ? sc * randn(rng) : 0.0 for k in 1:n, j in 1:n]
-        m = _jmap_with(m; tri=_JMapTri(n, 0.1 .* randn(rng, n), lower(0.2), lower(0.1),
-            0.1 .* randn(rng, n), lower(0.2), 0.2 .* randn(rng, n), 0.2 .* randn(rng, n)))
+        par = [[j for j in 1:(k - 1) if rand(rng) < 0.6] for k in 1:n]
+        coef(sc) = [sc .* randn(rng, length(par[k])) for k in 1:n]
+        m = _jmap_with(m; tri=_JMapTri(n, par, 0.1 .* randn(rng, n), coef(0.2), coef(0.1),
+            0.1 .* randn(rng, n), coef(0.2), 0.2 .* randn(rng, n), 0.2 .* randn(rng, n)))
     end
     xt = 0.3 .* randn(rng, D)
     d = CTSEMJointMapDensity(m, Threads.Atomic{Int}(0))
