@@ -133,7 +133,7 @@ ctModelHigherOrder <- function(ctm, indices,diffusion=TRUE, crosseffects=FALSE,c
 # the refits ctModelImprove() made from a first order fit followed them for
 # hours (raw -17000 on one simulated search) without stopping. A person-varying
 # autoregression copied onto the damping also made the noise vary with the
-# rate, so that limit was not the first order model either: 46 log likelihood
+# rate, so that limit was not the first order model either: 44 log likelihood
 # units below it there. New free cells take ctsem's own defaults
 # (`.ctModelDefaultFreePar`) and do not vary over subjects.
 .ctHigherOrderPars <- function(ctm, indices, diffusion = TRUE, crosseffects = FALSE,
