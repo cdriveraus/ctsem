@@ -394,42 +394,52 @@
 
 # The bar a fit has to clear, in objective units.
 #
-# Two candidate principles, and the binding one is not the obvious one.
+# `lambda = sqrt(2 * gap)` is the displacement from the maximum in the
+# information metric -- standard errors -- whatever the amount of data, so the
+# bar is stated there: 0.01 se (`.ctBackendGapSe`), a gap of 5e-5. What it is
+# for is that the point certified has the Hessian of the maximum, for its
+# standard errors and for the reports read off that curvature: a Hessian
+# formed within `hessianreuse` (0.1 se) of the estimate is taken as the
+# estimate's, so a point certified a tenth of that from the maximum has a
+# tenfold margin, and L-BFGS aims a tenth again closer before it hands over
+# (`.ctBackendInnerGapTol()`).
 #
-# For the *estimate*, `lambda = sqrt(2 * gap)` is the displacement in the
-# information metric -- standard errors -- so numerical error is negligible
-# against statistical error once `lambda` is around 0.1: a tenth of a standard
-# error is about one percent of the variance and moves no inference. That would
-# put the bar at 0.005.
-#
-# For the *curvature-based reports* it is nowhere near enough. Identifiability
-# and the interval check classify eigenvalues against a relative threshold, and
-# an eigenvalue near that threshold is exquisitely sensitive to where the
-# estimate sits: on a deliberately degenerate fixture -- six subjects, four
-# waves, ten population correlations -- the flat direction and the five
-# correlations it names go unreported at a gap of 3e-04 and are found at 4e-07.
-# A ridge that goes unreported is the expensive kind of wrong answer here,
-# because the fit looks fine and the numbers look plausible.
-#
-# So the diagnostics set the bar, at 1e-06, and the estimate gets far better
-# precision than it needs as a side effect. `lambda` goes out beside the gap so
-# a reader can have either reading.
+# Until 2026-11-01 the bar was 1e-6 (0.0014 se), set by the curvature-based
+# reports: on a degenerate fixture (six subjects, four waves, ten population
+# correlations) identifiability missed the flat direction at a gap of 3e-4
+# and found it at 4e-7, before it named coordinates by their share of a
+# direction and the profile walk followed a curved ridge back. At 0.01 se, on
+# the bench's 70 default cells and 48 refined fits, estimates moved 0.0001 se
+# in the median fit and 0.006 at the 90th percentile and no end value fell by
+# more than 0.006 nats (CT-SEM review/bench/2026-11-01-sebar.md). On that
+# kind of fixture rebuilt (six subjects, four waves, five random effects;
+# CT-SEM scripts/sebar-2026-11/degenerate_ridge.R, three data sets)
+# identifiability named the same weak directions and parameters at 5e-5 as
+# at 1e-6, and at 3e-4 one fewer direction on one of them: the reports' need
+# lies between, and 0.01 se is on its safe side. A fit that wants more
+# precision for them asks for `gaptol = 1e-6`.
 #
 # The controls are read from wherever the fit keeps them
 # (`.ctBackendFitOptimcontrol()`).
 #' @keywords internal
-.ctBackendGapTolerance <- function(fit, default = 1e-6) {
+.ctBackendGapTolerance <- function(fit, default = .ctBackendDefaultGapTol()) {
   .ctBackendConvergeTol(.ctBackendFitOptimcontrol(fit), default = default)
 }
+
+# The bar's distance from the maximum, in standard errors, and the gap it is.
+.ctBackendGapSe <- 0.01
+#' @keywords internal
+.ctBackendDefaultGapTol <- function() .ctBackendGapSe^2 / 2
 
 # The bar itself, from the controls rather than from a fit.
 #
 # `.ctBackendGapTolerance()` needs a fit and the optimiser needs the same number
 # before there is one, so the reading lives here and both ask it. One default in
-# one place: a second copy of `1e-6` is how a tolerance gets changed in one
-# reader and not the other.
+# one place (`.ctBackendDefaultGapTol()`): a second copy of the number is how a
+# tolerance gets changed in one reader and not the other.
 #' @keywords internal
-.ctBackendConvergeTol <- function(optimcontrol = list(), default = 1e-6) {
+.ctBackendConvergeTol <- function(optimcontrol = list(),
+    default = .ctBackendDefaultGapTol()) {
   value <- if (is.null(optimcontrol)) NULL else optimcontrol$gaptol
   if (is.null(value)) return(default)
   value <- suppressWarnings(as.numeric(value)[1L])
