@@ -347,7 +347,7 @@ ctLOO <- function(fit, folds = 10, cores = getOption("mc.cores", 2L), parallelFo
           # delta_params <- -fisher_info_inv %*% score_sum
 
           delta_params <- -fit$stanfit$cov %*% score_sum
-          init=init + delta_params
+          init=init + as.numeric(delta_params)
           if(casewiseApproximation) e <- list(rawest= init)
         }
         if(!casewiseApproximation) {
