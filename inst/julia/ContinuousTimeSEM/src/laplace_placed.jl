@@ -147,6 +147,11 @@ mutable struct CTSEMLaplacePlaced{C} <: CTSEMOptimisable
     # at the first after its sets were made (`_placed_rough`).
     unit_ess::Vector{Float64}
     unit_ess_placed::Vector{Float64}
+    # The parameters (extended) `modes` were reached at and `anchors` were,
+    # from which a maximum a long step loses is followed again
+    # (`_laplace_follow_one`).
+    mode_values::Vector{Float64}
+    anchor_values::Vector{Float64}
 end
 
 """
@@ -182,7 +187,7 @@ function ctsem_laplace_placed(o::CTSEMLaplaceContinuation)
         [Float64[] for _ in 1:nunits], none(), [Float64[] for _ in 1:nunits], none(),
         zeros(Int, nunits), false, nothing, nothing, 0, 0, 0.0, 0.0, 0.0, nothing,
         fill(NaN, length(frozen)), fill(NaN, length(frozen)), fill(NaN, nunits),
-        fill(NaN, nunits))
+        fill(NaN, nunits), Float64[], Float64[])
     _placed_search!(P, copy(o.centre); join=false)
     return P
 end
@@ -257,6 +262,8 @@ function _placed_search!(P::CTSEMLaplacePlaced, theta::Vector{Float64}; join::Bo
     end
     P.modes = deepcopy(P.anchors)
     P.alt_modes = deepcopy(P.alt_anchors)
+    P.mode_values = copy(theta)
+    P.anchor_values = copy(theta)
     if n > 0
         P.cache = nothing
         P.value_cache = nothing
@@ -691,7 +698,7 @@ function _placed_unit!(row::Vector{Float64}, P::CTSEMLaplacePlaced, U::Int,
     held = _laplace_newton_unit_mode(laplace, U, theta, Ls, aws, start)
     if _LAPLACE_MODE_SUM[] && !isempty(P.alt_anchors[U])
         kept = _laplace_follow_modes(laplace, U, theta, Ls, aws, held, start,
-            P.alt_anchors[U])
+            P.alt_anchors[U]; from=isempty(P.anchor_values) ? nothing : P.anchor_values)
         length(kept) >= 2 && return _placed_mode_sum!(row, P, U, theta, Ls, dL,
             positions, want_gradient, sets, kept, aws)
         # One maximum left, or none: that one, or the anchor's, on its own.
@@ -1218,6 +1225,7 @@ function _placed_evaluate(P::CTSEMLaplacePlaced, theta::Vector{Float64}, gradien
             P.unit_ess[U] = pess[i]
             isnan(P.unit_ess_placed[U]) && (P.unit_ess_placed[U] = pess[i])
         end
+        P.mode_values = copy(theta)
         # Outside an optimisation every evaluation moves the anchors; within
         # one only an accepted step does (`_ctsem_anchor_here!`), so that a
         # trial's value does not depend on the trials before it.
@@ -1275,11 +1283,12 @@ a run's end read a later trial's effective sizes at the point it returned to,
 found nothing to raise there, and handed back a run its stop had ended."""
 _placed_mode_snapshot(P::CTSEMLaplacePlaced) = (modes=deepcopy(P.modes),
     alt=deepcopy(P.alt_modes), live=copy(P.live), se=copy(P.se),
-    unit_ess=copy(P.unit_ess), ess=copy(P.ess),
+    unit_ess=copy(P.unit_ess), ess=copy(P.ess), values=copy(P.mode_values),
     rest=_laplace_mode_snapshot(P.cont.rest))
 function _placed_restore_modes!(P::CTSEMLaplacePlaced, s)
     P.modes = deepcopy(s.modes)
     P.alt_modes = deepcopy(s.alt)
+    P.mode_values = copy(s.values)
     P.live = copy(s.live)
     P.se = copy(s.se)
     P.unit_ess = copy(s.unit_ess)
@@ -1293,6 +1302,7 @@ end
 function _placed_anchor_here!(P::CTSEMLaplacePlaced)
     P.anchors = deepcopy(P.modes)
     P.alt_anchors = deepcopy(P.alt_modes)
+    P.anchor_values = copy(P.mode_values)
     return nothing
 end
 
@@ -1353,8 +1363,9 @@ function ctsem_laplace_placed_check(P::CTSEMLaplacePlaced, values::AbstractVecto
     step::Real=1e-5, index=nothing)
     x = collect(Float64, values)
     r = ctsem_laplace_placed_evaluate(P, x; gradient=true)
-    home = (deepcopy(P.anchors), deepcopy(P.alt_anchors))
-    homed!() = (P.anchors = deepcopy(home[1]); P.alt_anchors = deepcopy(home[2]))
+    home = (deepcopy(P.anchors), deepcopy(P.alt_anchors), copy(P.anchor_values))
+    homed!() = (P.anchors = deepcopy(home[1]); P.alt_anchors = deepcopy(home[2]);
+        P.anchor_values = copy(home[3]))
     idx = index === nothing ? collect(eachindex(x)) : collect(Int, index)
     fd = fill(NaN, length(idx))
     for (j, t) in enumerate(idx)
@@ -2212,7 +2223,7 @@ function _ctsem_take_search_modes!(P::CTSEMLaplacePlaced, x::AbstractVector,
         push!(found.units, o.rest === o.laplace ? U : o.rest_units[U])
         push!(found.modes, m)
     end
-    held = (deepcopy(P.anchors), deepcopy(P.alt_anchors))
+    held = (deepcopy(P.anchors), deepcopy(P.alt_anchors), copy(P.anchor_values))
     n = _placed_search!(P, _laplace_extend(o.laplace, xv); found=found)
     units = n + (isfinite(r.change) ? r.units : 0)
     units == 0 && return (change=NaN, units=0)
@@ -2220,8 +2231,9 @@ function _ctsem_take_search_modes!(P::CTSEMLaplacePlaced, x::AbstractVector,
     P.value_cache = nothing
     after = ctsem_laplace_placed_evaluate(P, xv; gradient=false)
     if !isfinite(after.value)
-        P.anchors, P.alt_anchors = held
+        P.anchors, P.alt_anchors, P.anchor_values = held
         P.modes, P.alt_modes = deepcopy(held[1]), deepcopy(held[2])
+        P.mode_values = copy(held[3])
         P.cache = nothing
         P.value_cache = nothing
         return (change=NaN, units=0)

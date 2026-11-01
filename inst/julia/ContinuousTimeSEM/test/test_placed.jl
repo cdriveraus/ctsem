@@ -269,15 +269,50 @@ const _PLACED_SIGN_OBJECTIVE = _build_placed_sign_objective()
 _fresh_placed_sign() = ctsem_laplace_objective(_PLACED_SIGN_OBJECTIVE, [1], [2], Int[],
     [1.0])
 
-@testset "a unit with two maxima averages its rules placed at each" begin
+@testset "a unit's maxima share its term by rank" begin
+    C = ContinuousTimeSEM
+    # The best at full weight takes the whole term, whatever lies below it.
+    s = C._laplace_mode_shares([1.0, 1.0, 0.4], [0.0, -1.17, -3.0])
+    @test s.pi == [1.0, 0.0, 0.0]
+    # A faded one hands the rest down the ranking, and where the values ranked
+    # are the values combined, a tie in the ranking moves nothing.
+    combine(f, t, a) = sum(C._laplace_mode_shares(f, t).pi .* a)
+    f = [0.3, 0.6, 0.8]
+    up = [1.0 + 1e-9, 1.0, -2.0]
+    down = [1.0 - 1e-9, 1.0, -2.0]
+    @test combine(f, up, up) ≈ combine(f, down, down) atol=1e-8
+    # The fades' coefficients are `f_k dA/df_k`, the combination's derivative
+    # in each fade on its own scale.
+    rng = Random.Xoshiro(3)
+    worst = 0.0
+    for trial in 1:200
+        K = rand(rng, 2:5)
+        t = randn(rng, K)
+        a = randn(rng, K)
+        f = rand(rng, K)
+        rand(rng) < 0.3 && (f[rand(rng, 1:K)] = 1.0)
+        A = combine(f, t, a)
+        c = C._laplace_mode_fade_coefficients(C._laplace_mode_shares(f, t), f, a, A)
+        for k in 1:K
+            0 < f[k] < 1 || continue
+            fp = copy(f); fp[k] += 1e-6
+            fm = copy(f); fm[k] -= 1e-6
+            d = (combine(fp, t, a) - combine(fm, t, a)) / 2e-6
+            worst = max(worst, abs(f[k] * d - c[k]))
+        end
+    end
+    @test worst < 1e-8
+end
+
+@testset "a unit with two maxima is scored by the better one's rule" begin
     C = ContinuousTimeSEM
     # Mirror images at a population mean of zero: the two rules are one rule
-    # reflected, and the average is either.
+    # reflected, and either is the term. Both are placed, for the ranking.
     theta = [0.0, 0.3]
     P = _placed_from(_fresh_placed_sign(), theta)
     @test all(U -> length(P.alt_anchors[U]) == 1, P.placed)
     both = ctsem_laplace_placed_evaluate(P, theta; gradient=false)
-    @test all(U -> P.live[U] == 2, P.placed)
+    @test all(U -> length(P.alt_modes[U]) == 1 && P.live[U] == 1, P.placed)
     previous = C.ctsem_set_mode_sum!(false)
     one = try
         ctsem_laplace_placed_evaluate(_placed_from(_fresh_placed_sign(), theta), theta;
@@ -286,24 +321,23 @@ _fresh_placed_sign() = ctsem_laplace_objective(_PLACED_SIGN_OBJECTIVE, [1], [2],
         C.ctsem_set_mode_sum!(previous)
     end
     @test both.unit_loglik[P.placed] ≈ one.unit_loglik[P.placed] atol=1e-8
-    # Away from it the two rules differ and the weights move with the
-    # parameters; the gradient is still the value's. The far maximum is
-    # followed from there, as an optimisation follows it: a search started
-    # out here does not reach it.
+    # Away from it the two rules differ, and the better one's is the term;
+    # the gradient is the value's. The far maximum is followed from there, as
+    # an optimisation follows it: a search started out here does not reach it.
     P = _placed_from(_fresh_placed_sign(), [0.0, 0.3])
     for (i, m) in enumerate(range(0.1, 1.2; length=12))
         ctsem_laplace_placed_evaluate(P, [m, 0.3]; gradient=false)
         i in (4, 12) || continue
-        @test all(U -> P.live[U] == 2, P.placed)
+        @test all(U -> length(P.alt_modes[U]) == 1, P.placed)
         r = ctsem_laplace_placed_check(P, [m, 0.3]; step=1e-6)
         @test all(isfinite, r.gradient)
         @test r.gradient ≈ r.differences rtol=1e-5 atol=1e-6
     end
-    # Along the mean the maximum on the far side falls away, its weight gone
-    # before it is dropped (here past `_LAPLACE_MODE_SPAN` below the near one):
-    # the term has no step where it goes, and the gradient is the value's on
-    # both sides. Followed from one point to the next, as an optimisation's
-    # accepted points follow them.
+    # Along the mean the maximum on the far side falls away and is dropped
+    # (here past `_LAPLACE_MODE_SPAN` below the near one): the term has no
+    # step where it goes, and the gradient is the value's on both sides.
+    # Followed from one point to the next, as an optimisation's accepted
+    # points follow them.
     P = _placed_from(_fresh_placed_sign(), [0.0, 0.3])
     grid = collect(range(0.0, 3.0; length=301))
     h = step(range(0.0, 3.0; length=301))
@@ -311,7 +345,7 @@ _fresh_placed_sign() = ctsem_laplace_objective(_PLACED_SIGN_OBJECTIVE, [1], [2],
     live = Int[]
     for m in grid
         push!(value, ctsem_laplace_placed_evaluate(P, [m, 0.3]; gradient=false).value)
-        push!(live, sum(P.live[P.placed]))
+        push!(live, sum(U -> 1 + length(P.alt_modes[U]), P.placed))
     end
     @test live[1] == 2 * length(P.placed)
     @test live[end] < live[1]
