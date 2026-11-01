@@ -3068,11 +3068,11 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
     coreseter === nothing || (coreseter.gap_tol = Float64(gap_tol))
     # The endgame (`_ctsem_newton_finish`), on a route that has one. Where a
     # Hessian costs a few gradients it runs whenever there is a stopping rule
-    # for it to finish, and L-BFGS hands over as soon as its predicted gain is
-    # below `newton_switch`. Where it costs `2 npar` gradients (Laplace) it
-    # runs only when a certification will read it, and L-BFGS runs to its own
-    # rule first: the finish's Hessian is then the one the certification would
-    # have formed anyway, rather than an extra one.
+    # for it to finish. Where it costs `2 npar` gradients (Laplace) it runs
+    # only when a certification will read it, so the finish's Hessian is the
+    # one the certification would have formed anyway. Either way L-BFGS hands
+    # over once its predicted gain is below `newton_switch` and the stage has
+    # spent a Hessian's cost (`handover`, below).
     cheap = _ctsem_cheap_hessian(objective)
     route_curvature = _ctsem_finish_curvature(objective)
     hessian_cost = _ctsem_hessian_cost(objective, length(start_values))
@@ -3084,12 +3084,16 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
     # is taken only once the stage has spent at least what a Hessian costs
     # (the callback below): forming one then, and throwing it away if its
     # first step shows the hand-over was early, at most doubles the fit. A
-    # Hessian dearer than that is formed where L-BFGS stops by its own rule,
-    # as on the Laplace route. Judged by a size until 2026-10-17 -- within
-    # `newton_maxit` parameters, and before that on the marginal route at
-    # any size -- a 529-parameter fit (ECLS-K, dev2) handed over with 140 nats
-    # still to climb while L-BFGS was gaining 2.5 nats a minute.
-    handover = Ref(finishing && cheap ?
+    # Hessian dearer than that is formed where L-BFGS stops by its own rule.
+    # Judged by a size until 2026-10-17 -- within `newton_maxit` parameters,
+    # and before that on the marginal route at any size -- a 529-parameter
+    # fit (ECLS-K, dev2) handed over with 140 nats still to climb while
+    # L-BFGS was gaining 2.5 nats a minute. On the Laplace route too: a stage
+    # creeping at 0.01 nats an iteration predicts gains far above any gap
+    # tolerance the objective can resolve, and runs on until its own rule
+    # stops it; the affect pilot's ran about 175 iterations from its first
+    # stop to that hand-over, about two minutes each (dev2, 2026-11-01).
+    handover = Ref(finishing ?
         max(Float64(gap_tol), Float64(newton_switch)) : Float64(gap_tol))
     # A callback rather than Optim's `show_trace`, which prints one dense line
     # per iteration whatever the model costs -- thousands on a fast one, and on
