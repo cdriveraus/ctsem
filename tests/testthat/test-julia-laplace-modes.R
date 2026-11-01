@@ -111,14 +111,18 @@ test_that("the inner solve ends at a maximum, scored as the evaluation scores it
   expect_equal(fd, sum(as.numeric(r$gradient) * v), tolerance = 1e-5)
 })
 
-# A unit with maxima a valley parts is scored by their terms averaged by their
-# masses (`_laplace_mode_sum`), which adds nothing a single maximum would not:
-# at a population mean of zero each person's two maxima on the sign fixture
-# are mirror images, and the average is either's term. A mode's smallest
-# eigenvalue, which fades it out at a fold, has the gradient its differences
-# give with the mode solved again (`_laplace_mode_fade`); the combined
-# objective's own gradient against its differences is the test above.
-test_that("a unit with two maxima is scored by the average of their terms", {
+# A unit with maxima a valley parts is scored by the best one's term, handed to
+# the next as it fades (`_laplace_mode_sum`, `_laplace_mode_shares`), which
+# adds nothing a single maximum would not: at a population mean of zero each
+# person's two maxima on the sign fixture are mirror images, and the
+# combination is either's term. Away from zero one is the better, and where it
+# is at full weight its term is the unit's whatever the search found beside it:
+# averaged by their masses, a lower maximum took a share, and the term moved
+# wherever a search found or missed one. A mode's smallest eigenvalue, which
+# fades it out at a fold, has the gradient its differences give with the mode
+# solved again (`_laplace_mode_fade`); the combined objective's own gradient
+# against its differences is the test above.
+test_that("a unit with two maxima is scored by the better one's term", {
   skip_without_julia()
   spec <- suppressMessages(ctFit(.modes_sign_data(), .modes_sign_model(),
     backend = "julia", intoverpop = "laplace", fit = FALSE))
@@ -135,6 +139,16 @@ test_that("a unit with two maxima is scored by the average of their terms", {
   set_sum(TRUE)
   both <- evaluate(x)
   expect_equal(both, one, tolerance = 1e-8)
+  x <- c(0.3, 0.5)
+  set_sum(FALSE)
+  one <- evaluate(x)
+  set_sum(TRUE)
+  both <- evaluate(x)
+  ctsem:::.ctJuliaEval(
+    "_ctsem_test_others(o) = Float64[length(a) for a in o.alt_modes]")
+  others <- as.numeric(ctsem:::.ctJuliaCall("Main._ctsem_test_others", objective))
+  expect_gte(sum(others > 0), 3)
+  expect_equal(both, one, tolerance = 1e-10)
   ctsem:::.ctJuliaEval(paste(
     "function _ctsem_test_fade(o, theta)",
     "  C = ContinuousTimeSEM",
@@ -162,7 +176,8 @@ test_that("a unit with two maxima is scored by the average of their terms", {
 # curvature sd apart, with a valley of hundredths of a nat between them, where
 # the valley's fade is part way. Summed as masses, those maxima added up to
 # 0.5 nats to each one's term, and a fit grew more of them by widening the
-# random drift's sd, 3.5 exact nats down. The combination is for optimising,
+# random drift's sd, 3.5 exact nats down. Where the best maximum's fade is part
+# way the next takes the rest of its share. The combination is for optimising,
 # not an exact integral: the test is that it never scores a unit above its
 # best single term, and that its gradient, with the valleys' fades moving, is
 # its value's.

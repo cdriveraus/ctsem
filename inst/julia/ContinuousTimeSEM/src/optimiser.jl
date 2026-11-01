@@ -1002,7 +1002,10 @@ function _ctsem_subset_objective(L::CTSEMLaplaceObjective, keep::AbstractVector{
         :anchors => isempty(L.anchors) ? Vector{Float64}[] : L.anchors[keep],
         :alt_modes => [Vector{Float64}[] for _ in 1:n],
         :alt_anchors => isempty(L.alt_anchors) ? Vector{Vector{Float64}}[] :
-            L.alt_anchors[keep])
+            L.alt_anchors[keep],
+        :mode_values => [Float64[] for _ in 1:n],
+        :anchor_values => isempty(L.anchor_values) ? Vector{Float64}[] :
+            L.anchor_values[keep])
     args = map(fieldnames(typeof(L))) do name
         haskey(fresh, name) && return fresh[name]
         v = getfield(L, name)

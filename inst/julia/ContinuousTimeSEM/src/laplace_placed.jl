@@ -72,9 +72,9 @@ point of an optimisation, or outside one at the last evaluation (`anchors`,
 optimisation the units are anchored as the Laplace route's are: searched at a
 run's start and where L-BFGS stops, followed between, so a trial's value does
 not depend on the trials before it. A unit whose search found more than one
-maximum follows each and averages its rule placed at each, weighted as the
-Laplace route's mode sum weights its terms (`_placed_mode_sum!`), so its term
-stays continuous through a fold. A unit of one root block over leaves is placed as the continuation
+maximum follows each and combines its rule placed at each as the Laplace
+route's mode sum combines its terms (`_placed_mode_sum!`), so its term stays
+continuous through a fold. A unit of one root block over leaves is placed as the continuation
 places it, the root at the joint mode and eliminated precision and each leaf
 at its conditional mode at every root node (`_placed_nested_unit!`), which
 chains a second implicit derivative; each block on its own set, the same set
@@ -147,6 +147,11 @@ mutable struct CTSEMLaplacePlaced{C} <: CTSEMOptimisable
     # at the first after its sets were made (`_placed_rough`).
     unit_ess::Vector{Float64}
     unit_ess_placed::Vector{Float64}
+    # The parameters (extended) `modes` were reached at and `anchors` were,
+    # from which a maximum a long step loses is followed again
+    # (`_laplace_follow_one`).
+    mode_values::Vector{Float64}
+    anchor_values::Vector{Float64}
 end
 
 """
@@ -182,7 +187,7 @@ function ctsem_laplace_placed(o::CTSEMLaplaceContinuation)
         [Float64[] for _ in 1:nunits], none(), [Float64[] for _ in 1:nunits], none(),
         zeros(Int, nunits), false, nothing, nothing, 0, 0, 0.0, 0.0, 0.0, nothing,
         fill(NaN, length(frozen)), fill(NaN, length(frozen)), fill(NaN, nunits),
-        fill(NaN, nunits))
+        fill(NaN, nunits), Float64[], Float64[])
     _placed_search!(P, copy(o.centre); join=false)
     return P
 end
@@ -257,6 +262,8 @@ function _placed_search!(P::CTSEMLaplacePlaced, theta::Vector{Float64}; join::Bo
     end
     P.modes = deepcopy(P.anchors)
     P.alt_modes = deepcopy(P.alt_anchors)
+    P.mode_values = copy(theta)
+    P.anchor_values = copy(theta)
     if n > 0
         P.cache = nothing
         P.value_cache = nothing
@@ -778,7 +785,7 @@ route follows an anchored unit's (`_laplace_solve_unit_mode!`): the inner
 solve's Newton from the anchor (`_laplace_newton_unit_mode`), and from each of
 the others where its anchors hold more (`P.alt_anchors`,
 `_laplace_follow_modes`). One maximum is its rule placed there
-(`_placed_one!`); more are averaged (`_placed_mode_sum!`), until all but one
+(`_placed_one!`); more are combined (`_placed_mode_sum!`), until all but one
 have gone past a fold. So one solver decides where every unit is, whatever
 its count of maxima, the one the search and the Laplace route use; the leaf's
 own Newton (`_quadrature_leaf_rule!`) only takes the centre from there to the
@@ -800,7 +807,7 @@ function _placed_unit!(row::Vector{Float64}, P::CTSEMLaplacePlaced, U::Int,
     held = _laplace_newton_unit_mode(laplace, U, theta, Ls, aws, start)
     if _LAPLACE_MODE_SUM[] && !isempty(P.alt_anchors[U])
         kept = _laplace_follow_modes(laplace, U, theta, Ls, aws, held, start,
-            P.alt_anchors[U])
+            P.alt_anchors[U]; from=isempty(P.anchor_values) ? nothing : P.anchor_values)
         length(kept) >= 2 && return _placed_mode_sum!(row, P, U, theta, Ls, dL,
             positions, want_gradient, sets, kept, aws)
         # One maximum left, or none: that one, or the anchor's, on its own.
@@ -840,28 +847,30 @@ end
         kept, aws)
 
 Unit `U`'s term where it follows more than one maximum (`kept`, Newton results
-from its anchors, `_laplace_follow_modes`): its rule placed at each, averaged
-by the weights the Laplace route's mode sum gives their Laplace terms
-(`_laplace_mode_sum`),
+from its anchors, `_laplace_follow_modes`): its rule placed at each maximum
+the Laplace route's mode sum fades in (`_laplace_mode_sum`), combined as that
+sum combines their Laplace terms but ranked by the rules' own integrals,
 
-    Q = sum_k pi_k Q_k,   pi_k proportional to f_k exp(t_k),
+    Q = sum_k pi_k Q_k,   pi the shares `_laplace_mode_shares(f, Q)`,
 
 `Q_k` the unit's rule placed at maximum `k` (`_placed_one!`: its own centre,
-clipped curvature, set and guards), `t_k` its Laplace term and `f_k` its fades
-in the curvature's smallest eigenvalue and in the valley's depth. Each `Q_k`
-estimates the unit's whole integral, so their average estimates it too, and
-no worse than the worst of them; no masses are summed, so a fit has no reason
-to grow maxima, the reason sums of masses failed (gD1 s7). A maximum's weight
-fades to zero before its fold, so the term is continuous wherever the mode
-sum is. Only the maxima carrying weight are placed. The gradient is
+clipped curvature, set and guards) and `f_k` its fades in the curvature's
+smallest eigenvalue and in the valley's depth. Each `Q_k` estimates the unit's
+whole integral, so their combination estimates it too, and no worse than the
+worst of them; no masses are summed, so a fit has no reason to grow maxima,
+the reason sums of masses failed (gD1 s7). A maximum's weight fades to zero
+before its fold, so the term is continuous wherever the mode sum is; ranked
+by the Laplace terms instead, it would jump by the rules' difference wherever
+two terms tie. Every maximum with a fade above zero is placed, for that
+ranking. The gradient is
 
-    sum_k pi_k grad Q_k + sum_k (Q_k - Q) grad pi_k,
+    sum_k pi_k grad Q_k + sum_k Q_k grad pi_k,
 
-the second the mode sum's own gradient through its terms and fades
-(`_laplace_mode_sum_gradient!`) with `pi_k (Q_k - Q)` where it takes
-`pi_k (t_k - T)` (`_laplace_mode_seeds`): small, the rules' disagreement, but
-what keeps the gradient the value's. The error is the larger of the weighted
-rules' errors and the rules' weighted spread about `Q`.
+the second through the fades alone (`_laplace_mode_fade_coefficients` of the
+`Q_k`, seeding `_laplace_mode_sum_gradient!` with no route of its own): small,
+the rules' disagreement, but what keeps the gradient the value's. The error is
+the larger of the weighted rules' errors and the rules' weighted spread about
+`Q`.
 """
 function _placed_mode_sum!(row::Vector{Float64}, P::CTSEMLaplacePlaced, U::Int,
     theta::Vector{Float64}, Ls, dL, positions, want_gradient::Bool,
@@ -879,7 +888,7 @@ function _placed_mode_sum!(row::Vector{Float64}, P::CTSEMLaplacePlaced, U::Int,
     # largest weight, then the rest within its span.
     modes = vcat(Vector{Float64}[copy(laplace.modes[U])],
         Vector{Float64}[copy(m) for m in laplace.alt_modes[U]])
-    live = Int[k for k in eachindex(s.pi) if s.pi[k] > 0]
+    live = s.fades === nothing ? [1] : findall(>(0), s.fades.f)
     K = length(live)
     rows = [want_gradient ? zeros(npar) : Float64[] for _ in 1:K]
     Q = zeros(K)
@@ -893,7 +902,14 @@ function _placed_mode_sum!(row::Vector{Float64}, P::CTSEMLaplacePlaced, U::Int,
         se[i] = isfinite(r.se) ? r.se : 0.0
         ess[i] = r.ess
     end
-    p = s.pi[live]
+    shares = nothing
+    p = ones(1)
+    if K > 1
+        rank = fill(-Inf, length(s.fades.f))
+        rank[live] .= Q
+        shares = _laplace_mode_shares(s.fades.f, rank)
+        p = shares.pi[live]
+    end
     value = sum(p .* Q)
     err = max(sum(p .* se), sqrt(sum(p .* (Q .- value) .^ 2)))
     lead = argmax(p)
@@ -903,12 +919,12 @@ function _placed_mode_sum!(row::Vector{Float64}, P::CTSEMLaplacePlaced, U::Int,
             row .+= p[i] .* rows[i]
         end
         if K > 1
-            c = zeros(length(s.pi))
-            for (i, k) in enumerate(live)
-                c[k] = p[i] * (Q[i] - value)
-            end
+            a = fill(value, length(s.fades.f))
+            a[live] .= Q
+            c = _laplace_mode_fade_coefficients(shares, s.fades.f, a, value)
             seeds = _laplace_mode_seeds(s.fades, c)
-            weighs = merge(s, (route=c, gbar=seeds.gbar, Mbar=seeds.Mbar, pts=seeds.pts))
+            weighs = merge(s, (route=zeros(length(c)), gbar=seeds.gbar, Mbar=seeds.Mbar,
+                pts=seeds.pts))
             part = zeros(npar)
             _laplace_mode_sum_gradient!(part, laplace, U, theta, Ls, dL,
                 _laplace_level_chol_solves(laplace.spec, Ls, dL), weighs) || return failure
@@ -916,7 +932,8 @@ function _placed_mode_sum!(row::Vector{Float64}, P::CTSEMLaplacePlaced, U::Int,
         end
         all(isfinite, row) || return failure
     end
-    return (ok=true, value=value, se=err, ess=ess[lead], modes=modes, live=K)
+    return (ok=true, value=value, se=err, ess=ess[lead], modes=modes,
+        live=count(>(0), p))
 end
 
 """
@@ -1410,6 +1427,7 @@ function _placed_evaluate(P::CTSEMLaplacePlaced, theta::Vector{Float64}, gradien
             P.unit_ess[U] = pess[i]
             isnan(P.unit_ess_placed[U]) && (P.unit_ess_placed[U] = pess[i])
         end
+        P.mode_values = copy(theta)
         # Outside an optimisation every evaluation moves the anchors; within
         # one only an accepted step does (`_ctsem_anchor_here!`), so that a
         # trial's value does not depend on the trials before it.
@@ -1467,11 +1485,12 @@ a run's end read a later trial's effective sizes at the point it returned to,
 found nothing to raise there, and handed back a run its stop had ended."""
 _placed_mode_snapshot(P::CTSEMLaplacePlaced) = (modes=deepcopy(P.modes),
     alt=deepcopy(P.alt_modes), live=copy(P.live), se=copy(P.se),
-    unit_ess=copy(P.unit_ess), ess=copy(P.ess),
+    unit_ess=copy(P.unit_ess), ess=copy(P.ess), values=copy(P.mode_values),
     rest=_laplace_mode_snapshot(P.cont.rest))
 function _placed_restore_modes!(P::CTSEMLaplacePlaced, s)
     P.modes = deepcopy(s.modes)
     P.alt_modes = deepcopy(s.alt)
+    P.mode_values = copy(s.values)
     P.live = copy(s.live)
     P.se = copy(s.se)
     P.unit_ess = copy(s.unit_ess)
@@ -1485,6 +1504,7 @@ end
 function _placed_anchor_here!(P::CTSEMLaplacePlaced)
     P.anchors = deepcopy(P.modes)
     P.alt_anchors = deepcopy(P.alt_modes)
+    P.anchor_values = copy(P.mode_values)
     return nothing
 end
 
@@ -1545,8 +1565,9 @@ function ctsem_laplace_placed_check(P::CTSEMLaplacePlaced, values::AbstractVecto
     step::Real=1e-5, index=nothing)
     x = collect(Float64, values)
     r = ctsem_laplace_placed_evaluate(P, x; gradient=true)
-    home = (deepcopy(P.anchors), deepcopy(P.alt_anchors))
-    homed!() = (P.anchors = deepcopy(home[1]); P.alt_anchors = deepcopy(home[2]))
+    home = (deepcopy(P.anchors), deepcopy(P.alt_anchors), copy(P.anchor_values))
+    homed!() = (P.anchors = deepcopy(home[1]); P.alt_anchors = deepcopy(home[2]);
+        P.anchor_values = copy(home[3]))
     idx = index === nothing ? collect(eachindex(x)) : collect(Int, index)
     fd = fill(NaN, length(idx))
     for (j, t) in enumerate(idx)
@@ -2140,7 +2161,7 @@ Its units are anchored as the Laplace route's are: a search at each run's
 start (`_ctsem_anchor_start!`), each unit's Newton from its maxima at the last
 accepted point, and a search where L-BFGS stops by its own rule, whose new
 maxima join the ones followed (`_ctsem_take_search_modes!`), the Laplace
-part's units with them. A unit with more than one maximum averages their
+part's units with them. A unit with more than one maximum combines their
 rules (`_placed_mode_sum!`).
 The run stops where a frozen rule has drifted (`_placed_drifted`) or a placed
 rule's error has grown past `_PLACED_ROUGH` times its target (`_placed_rough`),
@@ -2161,7 +2182,7 @@ cheapest rule whose share of the estimate's error is within the bar
 with the rules the estimate needs: checked only where each climb ended, w4s
 and w6 restarted eight times. The result is the last run's, with
 `replacements` the count, `raised` the units raised, `multimodal` the units
-whose term averaged more than one maximum at the end, and `slope_sd` the slope
+whose term took more than one maximum's share at the end, and `slope_sd` the slope
 check's last sd (`NaN` where none ran or it did not read every flagged unit).
 """
 function ctsem_laplace_placed_optimize(P::CTSEMLaplacePlaced, start::AbstractVector;
@@ -2290,7 +2311,7 @@ per placed unit its rule's family of the root block (`lattice` 1 where it is
 lattice-t, 0 product), its count (`count`: nodes a coordinate, or lattice
 points a shift), its points (`points`, member evaluations a value,
 `_rule_cost`), its error at the last evaluation (`se`) and how many maxima
-its term averaged there (`live`, `_placed_mode_sum!`). A list with no unit
+its term took a share of there (`live`, `_placed_mode_sum!`). A list with no unit
 is `[0]`, for the bridge (an empty vector hangs it).
 """
 function ctsem_laplace_placed_info(P::CTSEMLaplacePlaced)
@@ -2374,7 +2395,7 @@ Where an anchored run on the placed objective stopped by its own rule at `x`:
 the Laplace part's units joined with a search there as on the Laplace route
 (`_ctsem_take_search_modes!`), and each placed unit's maxima with its own
 (`_placed_search!`), so that a maximum born on the run's way, or one past a
-fold, joins the ones the unit averages (`_placed_mode_sum!`). Returns the
+fold, joins the ones the unit combines (`_placed_mode_sum!`). Returns the
 change this makes to the objective at `x` and how many units' maxima changed,
 `NaN` and 0 where none did or the joined objective cannot be evaluated there;
 the run carries on from `x` where the change passes `_CTSEM_MODE_RESUME_TOL`.
@@ -2392,7 +2413,7 @@ function _ctsem_take_search_modes!(P::CTSEMLaplacePlaced, x::AbstractVector,
         push!(found.units, o.rest === o.laplace ? U : o.rest_units[U])
         push!(found.modes, m)
     end
-    held = (deepcopy(P.anchors), deepcopy(P.alt_anchors))
+    held = (deepcopy(P.anchors), deepcopy(P.alt_anchors), copy(P.anchor_values))
     n = _placed_search!(P, _laplace_extend(o.laplace, xv); found=found)
     units = n + (isfinite(r.change) ? r.units : 0)
     units == 0 && return (change=NaN, units=0)
@@ -2400,8 +2421,9 @@ function _ctsem_take_search_modes!(P::CTSEMLaplacePlaced, x::AbstractVector,
     P.value_cache = nothing
     after = ctsem_laplace_placed_evaluate(P, xv; gradient=false)
     if !isfinite(after.value)
-        P.anchors, P.alt_anchors = held
+        P.anchors, P.alt_anchors, P.anchor_values = held
         P.modes, P.alt_modes = deepcopy(held[1]), deepcopy(held[2])
+        P.mode_values = copy(held[3])
         P.cache = nothing
         P.value_cache = nothing
         return (change=NaN, units=0)

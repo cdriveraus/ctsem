@@ -722,6 +722,13 @@ mutable struct CTSEMLaplaceObjective{O} <: CTSEMOptimisable
     # point, each followed from there as `anchors` follows its mode
     # (`_laplace_follow_modes`); empty outside one.
     alt_anchors::Vector{Vector{Vector{Float64}}}
+    # Per unit, the parameters (extended) its `modes` were solved at, and
+    # within an optimisation those its anchors were, from which a maximum
+    # Newton loses over a long step is followed again (`_laplace_follow_one`).
+    # Shared by the units solved at one point; `anchor_values` is empty
+    # outside an optimisation.
+    mode_values::Vector{Vector{Float64}}
+    anchor_values::Vector{Vector{Float64}}
 end
 
 # `soft_blend_lo = 0.2` and `soft_blend_hi = 0.7` are measured, not derived: see the
@@ -747,7 +754,7 @@ function CTSEMLaplaceObjective(objective::CTSEMObjective, spec::CTSEMLaplaceSpec
         inert === nothing ? Vector{Vector{Int}}[] : inert,
         isempty(known) ? [Vector{Float64}[] for _ in 1:nunits] : known,
         Vector{Float64}[], [Vector{Float64}[] for _ in 1:nunits],
-        Vector{Vector{Float64}}[])
+        Vector{Vector{Float64}}[], [Float64[] for _ in 1:nunits], Vector{Float64}[])
 end
 
 """
@@ -4636,55 +4643,116 @@ end
     _laplace_follow_modes(laplace, U, values, Ls, aws, held)
 
 Within an optimisation, unit `U`'s maxima followed from the run's anchors:
-`held`, Newton's end from the unit's anchor, and Newton from each of its other
-anchors (`alt_anchors`), as Newton results, the first one the unit's mode. One
-that converged onto another's mode, or left its anchor's basin
-(`_laplace_left_basin`), has gone -- past a fold, where its weight in the sum
-had already faded to nothing -- and is dropped. No mode joins that the run's
-anchors do not hold, so the sum changes only as its modes fade. Empty where
-none converged; the solve then searches. `anchor` and `alts` are the run's
-anchors by default; the refined fit's placed units bring their own
-(`_placed_mode_sum!`).
+`held`, Newton's end from the unit's anchor, and each of its other anchors
+(`alt_anchors`), each followed by `_laplace_follow_one`, as Newton results,
+the first one the unit's mode. One lost even along the step in halves, or
+that converged onto another's mode, has gone -- past a fold, where its weight
+in the sum had already faded to nothing -- and is dropped. No mode joins that
+the run's anchors do not hold, so the sum changes only as its modes fade.
+Empty where none converged; the solve then searches. `anchor`, `alts` and
+`from`, the parameters they were found at, are the run's by default; the
+refined fit's placed units bring their own (`_placed_mode_sum!`).
 """
 _laplace_follow_modes(laplace::CTSEMLaplaceObjective, U::Integer,
     values::AbstractVector{Float64}, Ls::Vector{Matrix{Float64}}, aws, held) =
     _laplace_follow_modes(laplace, U, values, Ls, aws, held, laplace.anchors[U],
-        laplace.alt_anchors[U])
+        laplace.alt_anchors[U];
+        from=U <= length(laplace.anchor_values) ? laplace.anchor_values[U] : nothing)
 function _laplace_follow_modes(laplace::CTSEMLaplaceObjective, U::Integer,
     values::AbstractVector{Float64}, Ls::Vector{Matrix{Float64}}, aws, held,
-    anchor::Vector{Float64}, alts::Vector{Vector{Float64}})
+    anchor::Vector{Float64}, alts::Vector{Vector{Float64}}; from=nothing)
     kept = Any[]
-    if held.converged && isfinite(held.value) &&
-            !_laplace_left_basin(laplace, U, values, Ls, aws, anchor, held)
-        push!(kept, held)
-    end
+    r = _laplace_follow_one(laplace, U, values, Ls, aws, anchor, held, from)
+    r === nothing || push!(kept, r)
     d = laplace.units.dims[U]
     for a in alts
         length(a) == d || continue
-        r = _laplace_newton_unit_mode(laplace, U, values, Ls, aws, a)
-        (r.converged && isfinite(r.value)) || continue
+        r = _laplace_follow_one(laplace, U, values, Ls, aws, a, nothing, from)
+        r === nothing && continue
         any(m -> _laplace_maxabsdiff(m.u, r.u) < 1e-4, kept) && continue
-        _laplace_left_basin(laplace, U, values, Ls, aws, a, r) && continue
         push!(kept, r)
     end
     return kept
 end
 
 """
+    _laplace_follow_one(laplace, U, values, Ls, aws, anchor, r, from)
+
+The maximum at `anchor`, found at the parameters `from`, followed to `values`
+(`Ls` their roots): Newton from the anchor (`r`, where the caller has run it
+already), kept where it converged in the anchor's basin
+(`_laplace_left_basin`). Where it did not and `from` is known, the maximum is
+followed along the step in halves, each half's Newton starting from the mode
+the one before reached, at most `_LAPLACE_FOLLOW_HALVINGS` times; `nothing`
+where it is lost even so. A long step loses a maximum a short one keeps: on
+the reflect fixture an L-BFGS step moved a person's maximum from -2.87 to
+-1.12, Newton from the old point crossed to the person's other maximum, and
+the run, scored without the better one, went on to a local optimum 9 to 12
+nats below the one a search reached, at four seeds of eight
+(test-julia-laplace-modes.R). Followed in halves, all three maxima the step
+had lost were the search's.
+"""
+function _laplace_follow_one(laplace::CTSEMLaplaceObjective, U::Integer,
+    values::AbstractVector{Float64}, Ls::Vector{Matrix{Float64}}, aws,
+    anchor::Vector{Float64}, r, from)
+    r === nothing && (r = _laplace_newton_unit_mode(laplace, U, values, Ls, aws, anchor))
+    _laplace_followed(laplace, U, values, Ls, aws, anchor, r) && return r
+    (from === nothing || length(from) != length(values) || from == values) &&
+        return nothing
+    to = collect(Float64, values)
+    mid = (from .+ to) ./ 2
+    depth = _LAPLACE_FOLLOW_HALVINGS - 1
+    h = _laplace_follow_halves(laplace, U, from, mid, aws, anchor, depth)
+    h === nothing && return nothing
+    return _laplace_follow_halves(laplace, U, mid, to, aws, collect(Float64, h.u), depth;
+        Ls=Ls)
+end
+
+"""How many times `_laplace_follow_one` halves a step before taking a maximum
+for gone: a sixteenth of it."""
+const _LAPLACE_FOLLOW_HALVINGS = 4
+
+# Whether Newton from `anchor` ended at a maximum `r` in the anchor's basin.
+_laplace_followed(laplace::CTSEMLaplaceObjective, U::Integer,
+    values::AbstractVector{Float64}, Ls::Vector{Matrix{Float64}}, aws,
+    anchor::Vector{Float64}, r) =
+    r.converged && isfinite(r.value) &&
+    !_laplace_left_basin(laplace, U, values, Ls, aws, anchor, r)
+
+# The maximum at `anchor`, a mode at `from`, followed to `to` by Newton, and
+# where that fails along each half of the step in turn, `depth` more times at
+# most (`_laplace_follow_one`).
+function _laplace_follow_halves(laplace::CTSEMLaplaceObjective, U::Integer,
+    from::Vector{Float64}, to::Vector{Float64}, aws, anchor::Vector{Float64},
+    depth::Int; Ls::Vector{Matrix{Float64}}=_laplace_popchols(to, laplace.spec))
+    r = _laplace_newton_unit_mode(laplace, U, to, Ls, aws, anchor)
+    _laplace_followed(laplace, U, to, Ls, aws, anchor, r) && return r
+    depth == 0 && return nothing
+    mid = (from .+ to) ./ 2
+    h = _laplace_follow_halves(laplace, U, from, mid, aws, anchor, depth - 1)
+    h === nothing && return nothing
+    return _laplace_follow_halves(laplace, U, mid, to, aws, collect(Float64, h.u),
+        depth - 1; Ls=Ls)
+end
+
+"""
     _laplace_mode_sum(laplace, U, theta, Ls, aws, primal)
 
 Unit `U`'s term where its inner problem has more than one maximum (`modes[U]`
-and `alt_modes[U]`, `primal` the first's `_laplace_unit_primal`): their terms
-averaged by their masses, each faded out before the inner solve can lose it,
+and `alt_modes[U]`, `primal` the first's `_laplace_unit_primal`): the best
+maximum's term, handed over to the next best as it fades out before the inner
+solve can lose it,
 
-    T = sum_k pi_k t_k,   pi_k proportional to f_k exp(t_k),
+    T = sum_k pi_k t_k,   pi the shares `_laplace_mode_shares(f, t)`,
     f_k = s(lambda_k / _LAPLACE_MODE_FADE) s(depth_k / _LAPLACE_MODE_DEPTH),
 
 `t_k` the mode's term, `lambda_k` its curvature's smallest eigenvalue,
 `depth_k` how far the valley towards its nearest other maximum lies below it
 (`_laplace_modes_geometry`: the seven points `_laplace_modes_separated` reads,
 in the soft-direction quadrature's coordinates), and `s` the smoothstep
-`_laplace_fade_weight`.
+`_laplace_fade_weight`. Ranked by term, each maximum takes its fade of what the
+ones above it left: a best maximum at full weight is the term, whatever lies
+below it.
 
 It is for optimising, not an exact integral of a multimodal unit (Charles,
 2026-10-29): continuous in the parameters, cheap, and giving the optimiser no
@@ -4695,7 +4763,15 @@ on the affect pilot crept for hours along that edge
 as masses, even split by their basins, every maximum a unit grew was worth up
 to its mass: on bench gD1 a fit widened a random drift's sd to grow them, 3.1
 Laplace nats up and 3.5 exact nats down
-(CT-SEM/review/HANDOVER-affint-optimiser-2026-10-29.md). The average adds
+(CT-SEM/review/HANDOVER-affint-optimiser-2026-10-29.md). Averaged by their
+masses (`pi_k` proportional to `f_k exp(t_k)`, to juliaFit 5d06816d), a lower
+maximum at full weight took a share of the term, so the term moved wherever a
+search found or missed one: on the adequacy tutorial's Fisher fit (round 10)
+one person's second maximum, 1.26 away and 1.17 nats below, healthy at both
+fades, was found by the search only from 5e-6 along a drift, took 0.24 of the
+average, and the person's term fell 0.28 nats there; the fit had stopped
+where the search stopped finding it, and refits from it crept. A run
+following both was paid for losing the lower one. The combination adds
 nothing a single maximum would not: `T` is at most the largest term, and a
 unit with one maximum keeps its own. The fade follows how a maximum is lost.
 The run follows each from its anchor and drops one that Newton carries over a
@@ -4713,8 +4789,11 @@ the objective takes as the unit's) and `alt_modes[U]` (the rest kept).
 Returns the modes, their primals, the term, each mode's share `pi` and the
 weight `route` of its own gradient, what the closing passes are seeded with
 (`gbar`, `Mbar` and the valley points `pts`; `_laplace_mode_sum_gradient!`)
-with each curvature's eigendecomposition `E`, and the index of the records'
-mode, `dominant`.
+with each curvature's eigendecomposition `E`, the index of the records'
+mode, `dominant`, and the fades (`fades`, with each mode's `f`), which the
+refined fit ranks its own rules by (`_placed_mode_sum!`). Where one share
+takes the whole term, every mode is returned all the same, for that ranking;
+the unit's gradient is then the one mode's.
 """
 function _laplace_mode_sum(laplace::CTSEMLaplaceObjective, U::Integer,
     theta::Vector{Float64}, Ls, aws, primal)
@@ -4758,26 +4837,89 @@ function _laplace_mode_sum(laplace::CTSEMLaplaceObjective, U::Integer,
         records!(dominant)
         return _laplace_one_mode(terms[dominant], modes[dominant], prims[dominant])
     end
-    logw = fill(-Inf, K)
-    for k in live
-        logw[k] = log(f[k]) + terms[k]
-    end
-    top_w = maximum(logw)
-    pi = Float64[exp(w - top_w) for w in logw]
-    pi ./= sum(pi)
-    value = sum(pi[k] * terms[k] for k in live)
+    shares = _laplace_mode_shares(f, terms)
+    pi = shares.pi
+    value = sum(pi[k] * terms[k] for k in 1:K if pi[k] > 0)
     lead = argmax(pi)
     records!(lead)
-    length(live) == 1 && return _laplace_one_mode(terms[lead], modes[lead], prims[lead])
-    # dT = sum_k pi_k (1 + t_k - T) dt_k + sum_k pi_k (t_k - T) d log f_k, and
-    # d log f_k takes the eigenvalue's v' dM_k v and the valley's d depth_k =
-    # dg_k - d g(p), p the valley's point between mode k and mode j.
-    route = Float64[pi[k] * (1 + terms[k] - value) for k in 1:K]
-    fades = (geo=geo, x=x, y=y, toward=toward, live=live)
-    seeds = _laplace_mode_seeds(fades, Float64[pi[k] * (terms[k] - value) for k in 1:K])
+    # dT = sum_k pi_k dt_k + sum_k c_k d log f_k: the shares depend on the
+    # terms only through their ranking, which holds between ties, where the
+    # combination is continuous, so c_k = f_k dT/df_k
+    # (`_laplace_mode_fade_coefficients`); d log f_k takes the eigenvalue's
+    # v' dM_k v and the valley's d depth_k = dg_k - d g(p), p the valley's
+    # point between mode k and mode j.
+    route = copy(pi)
+    fades = (geo=geo, x=x, y=y, toward=toward, live=live, f=f)
+    seeds = _laplace_mode_seeds(fades,
+        _laplace_mode_fade_coefficients(shares, f, terms, value))
     return (value=value, modes=modes, prims=prims, pi=pi, route=route,
         E=Any[g.E for g in geo.geos], gbar=seeds.gbar, Mbar=seeds.Mbar, pts=seeds.pts,
         dominant=lead, terms=terms, fades=fades)
+end
+
+"""
+    _laplace_mode_shares(f, rank)
+
+The shares in which a unit's maxima make its term (`_laplace_mode_sum`), from
+their fades `f` and the values that rank them, `rank` (the best first): each
+takes its fade of what the ones above it left,
+
+    w_(1) = f_(1),   w_(i) = f_(i) prod_{j < i} (1 - f_(j)),   pi = w / W,
+
+`W = sum_i w_(i) = 1 - prod_i (1 - f_(i))`. A best maximum at full weight
+takes the whole term, and one that fades hands what it loses to the next. The
+combination `sum_k pi_k a_k` is continuous where two ranks swap only if their
+`a` are equal there, so the values combined are the values ranked: the
+Laplace terms in the mode sum, the placed rules' integrals in the refined fit
+(`_placed_mode_sum!`). Returns `pi`, the ranking `order` and `W`; `pi` is all
+zeros where every fade is.
+"""
+function _laplace_mode_shares(f::Vector{Float64}, rank::Vector{Float64})
+    order = sortperm(rank; rev=true)
+    w = zeros(Float64, length(f))
+    left = 1.0
+    for k in order
+        w[k] = f[k] * left
+        left *= 1 - f[k]
+    end
+    W = 1 - left
+    W > 0 && (w ./= W)
+    return (pi=w, order=order, W=W)
+end
+
+"""
+    _laplace_mode_fade_coefficients(shares, f, a, A)
+
+`f_k dA/df_k` for `A = sum_k pi_k a_k` and the shares `_laplace_mode_shares`
+gives: what `_laplace_mode_seeds` weights each mode's `d log f_k` by. With
+`P_i = prod_{j < i} (1 - f_(j))`, what the maxima ranked above `i` leave, and
+the rest's own combination about `A` from the bottom up,
+`R_i = f_(i) (a_(i) - A) + (1 - f_(i)) R_(i+1)`,
+
+    dA/df_(i) = P_i ((a_(i) - A) - R_(i+1)) / W.
+
+Every `a` must be finite: a mode carrying no share may take any value, `A`
+say, since its coefficient, and every one its value reaches, is zero there or
+multiplies a fade's zero slope.
+"""
+function _laplace_mode_fade_coefficients(shares, f::Vector{Float64},
+    a::Vector{Float64}, A::Float64)
+    K = length(f)
+    c = zeros(Float64, K)
+    shares.W > 0 || return c
+    order = shares.order
+    R = zeros(Float64, K + 1)
+    for i in K:-1:1
+        k = order[i]
+        R[i] = f[k] * (a[k] - A) + (1 - f[k]) * R[i + 1]
+    end
+    P = 1.0
+    for i in 1:K
+        k = order[i]
+        c[k] = f[k] * P * ((a[k] - A) - R[i + 1]) / shares.W
+        P *= 1 - f[k]
+    end
+    return c
 end
 
 """
@@ -4787,8 +4929,8 @@ What `_laplace_mode_sum_gradient!`'s closing passes are seeded with for
 `sum_k c_k d log f_k`, the maxima's fades (`_laplace_mode_sum`'s `fades`)
 weighted by `c`: each eigenvalue's `Mbar`, and each valley's point with the
 weight its depth's derivative takes (`gbar`, `pts`). The mode sum weights
-them by `pi_k (t_k - T)`; the refined fit's average of placed rules, by
-`pi_k (Q_k - Q)` (`_placed_mode_sum!`).
+them by `f_k dT/df_k` of its terms, the refined fit's combination of placed
+rules by the same of their integrals (`_laplace_mode_fade_coefficients`).
 """
 function _laplace_mode_seeds(fades, c::Vector{Float64})
     geo, x, y, toward = fades.geo, fades.x, fades.y, fades.toward
@@ -4850,7 +4992,7 @@ function _laplace_mode_sum_gradient!(row::Vector{Float64},
         laplace.mode_repaired[U] = s.prims[k].fac.repaired)
     try
         for k in 1:K
-            s.pi[k] > 0 || continue
+            s.route[k] == 0 && continue
             records!(k)
             p = s.prims[k]
             good, _ = _laplace_unit_gradient_route!(part, laplace, U, theta, Ls,
@@ -4929,6 +5071,7 @@ _ctsem_anchor_start!(::CTSEMOptimisable, x; resume_units=nothing,
 function _ctsem_anchor_start!(laplace::CTSEMLaplaceObjective, x::AbstractVector;
     resume_units=nothing, resume_values=nothing)
     laplace.anchors = Vector{Float64}[]
+    laplace.anchor_values = Vector{Float64}[]
     _LAPLACE_ANCHORS[] || return nothing
     laplace.alt_anchors = Vector{Vector{Float64}}[]
     known = laplace.known
@@ -4949,7 +5092,14 @@ function _ctsem_anchor_start!(laplace::CTSEMLaplaceObjective, x::AbstractVector;
     isfinite(r.value) || return nothing
     laplace.anchors = [copy(m) for m in laplace.modes]
     laplace.alt_anchors = [Vector{Float64}[copy(m) for m in a] for a in laplace.alt_modes]
+    laplace.anchor_values = _laplace_values_copy(laplace.mode_values)
     return nothing
+end
+
+# Each unit's parameters copied, those the units share copied once.
+function _laplace_values_copy(vs::Vector{Vector{Float64}})
+    seen = IdDict{Vector{Float64},Vector{Float64}}()
+    return Vector{Float64}[get!(() -> copy(v), seen, v) for v in vs]
 end
 
 """
@@ -4998,13 +5148,15 @@ end
 
 Moves the anchors to the modes the last evaluation left: called after an
 accepted step, whose point that evaluation was. A coreset stage's evaluation
-leaves the other units' modes where they were, which is where they stay.
+leaves the other units' modes where they were, which is where they stay, and
+each unit's anchors keep the parameters they were found at (`anchor_values`).
 """
 _ctsem_anchor_here!(::CTSEMOptimisable) = nothing
 function _ctsem_anchor_here!(laplace::CTSEMLaplaceObjective)
     isempty(laplace.anchors) && return nothing
     laplace.anchors = [copy(m) for m in laplace.modes]
     laplace.alt_anchors = [Vector{Float64}[copy(m) for m in a] for a in laplace.alt_modes]
+    laplace.anchor_values = _laplace_values_copy(laplace.mode_values)
     return nothing
 end
 
@@ -5031,8 +5183,8 @@ function _ctsem_anchor_finish!(laplace::CTSEMLaplaceObjective, x::AbstractVector
     # Under the sum over a unit's maxima (`_laplace_mode_sum`), its two sets of
     # maxima: those only the anchored run held are kept, those only the search
     # found were missed, and the gain is what the search's sum changes where
-    # it found more -- less, where what it found are lower maxima, which the
-    # average weighs.
+    # it found more -- nothing, where what it found lies below a best maximum
+    # at full weight, which takes the whole term.
     if _LAPLACE_MODE_SUM[]
         keptu = Int[]; keptm = Vector{Float64}[]
         missu = Int[]; missm = Vector{Float64}[]
@@ -5190,9 +5342,11 @@ function _ctsem_merge_modes!(laplace::CTSEMLaplaceObjective, xv::Vector{Float64}
     found::CTSEMFoundModes)
     saved = laplace.anchors
     saved_alt = laplace.alt_anchors
+    saved_values = laplace.anchor_values
     c = _ctsem_anchor_compare(laplace, xv)
     if c === nothing
         laplace.anchors = saved; laplace.alt_anchors = saved_alt
+        laplace.anchor_values = saved_values
         return (change=NaN, units=0)
     end
     n = length(c.hu)
@@ -5239,10 +5393,12 @@ function _ctsem_merge_modes!(laplace::CTSEMLaplaceObjective, xv::Vector{Float64}
     end
     if changed == 0
         laplace.anchors = saved; laplace.alt_anchors = saved_alt
+        laplace.anchor_values = saved_values
         return (change=NaN, units=0)
     end
     laplace.anchors = anchors
     laplace.alt_anchors = alts
+    laplace.anchor_values = fill(theta, n)
     merged = try
         ctsem_laplace_evaluate(laplace, xv; gradient=false)
     catch err
@@ -5251,6 +5407,7 @@ function _ctsem_merge_modes!(laplace::CTSEMLaplaceObjective, xv::Vector{Float64}
     end
     if merged === nothing || !isfinite(merged.value)
         laplace.anchors = saved; laplace.alt_anchors = saved_alt
+        laplace.anchor_values = saved_values
         return (change=NaN, units=0)
     end
     _ctsem_anchor_here!(laplace)
@@ -5321,7 +5478,8 @@ run an interrupt ended before `_ctsem_anchor_finish!` could.
 ctsem_laplace_clear_anchors!(::Any) = nothing
 ctsem_laplace_clear_anchors!(laplace::CTSEMLaplaceObjective) =
     (laplace.anchors = Vector{Float64}[];
-     laplace.alt_anchors = Vector{Vector{Float64}}[]; nothing)
+     laplace.alt_anchors = Vector{Vector{Float64}}[];
+     laplace.anchor_values = Vector{Float64}[]; nothing)
 
 export ctsem_set_mode_anchors!, ctsem_laplace_clear_anchors!, ctsem_set_mode_sum!
 
@@ -6565,6 +6723,7 @@ function _laplace_store_unit_primal!(laplace::CTSEMLaplaceObjective, U::Integer,
         _laplace_solve_unit_mode!(laplace, U, theta, Ls, aws; retain=retain).final
     end
     _laplace_charge!(_LAPLACE_BYTES_MODE, b0)
+    U <= length(laplace.mode_values) && (laplace.mode_values[U] = theta)
     primal = _laplace_unit_primal(laplace, U, theta, Ls, laplace.modes[U], aws;
         given=given)
     laplace.mode_repaired[U] = primal.fac.repaired
@@ -6585,7 +6744,9 @@ function _laplace_store_unit_primal!(laplace::CTSEMLaplaceObjective, U::Integer,
         laplace.logdet_floored[U] = p.floored
         primal_soft_quadrature[U] = p.soft_quadrature
         term = s.value
-        length(s.modes) > 1 && (combo[U] = s)
+        # Where one share takes the whole term its gradient is that mode's,
+        # by the unit's own route.
+        count(>(0), s.pi) > 1 && (combo[U] = s)
     end
     if !isfinite(term)
         chunk_ok[_laplace_slot()] = false
@@ -9401,6 +9562,7 @@ function _ctsem_optimise_setup!(o::CTSEMLaplaceObjective)
     # cleared, and the last fit's other maxima.
     o.anchors = Vector{Float64}[]
     o.alt_anchors = Vector{Vector{Float64}}[]
+    o.anchor_values = Vector{Float64}[]
     for U in eachindex(o.alt_modes)
         isempty(o.alt_modes[U]) || (o.alt_modes[U] = Vector{Float64}[])
     end
@@ -10163,20 +10325,24 @@ Each unit's mode and its other maxima (`modes`, `alt_modes`), copied
 (`_laplace_restore_modes!`), with the other maxima too, so that a warm solve
 follows each of them (`_laplace_solve_unit_mode!`) and the differenced
 objective is the summed one (`_laplace_mode_sum`). Indexed by a vector of
-units, the snapshot of those, for an objective over them alone.
+units, the snapshot of those, for an objective over them alone. `values` are
+the parameters each was solved at (`mode_values`).
 """
 struct _LaplaceModeSnapshot
     modes::Vector{Vector{Float64}}
     alt::Vector{Vector{Vector{Float64}}}
+    values::Vector{Vector{Float64}}
 end
 _laplace_mode_snapshot(laplace::CTSEMLaplaceObjective) =
-    _LaplaceModeSnapshot(deepcopy(laplace.modes), deepcopy(laplace.alt_modes))
+    _LaplaceModeSnapshot(deepcopy(laplace.modes), deepcopy(laplace.alt_modes),
+        copy(laplace.mode_values))
 Base.getindex(s::_LaplaceModeSnapshot, units::AbstractVector{<:Integer}) =
-    _LaplaceModeSnapshot(s.modes[units], s.alt[units])
+    _LaplaceModeSnapshot(s.modes[units], s.alt[units], s.values[units])
 function _laplace_restore_modes!(laplace::CTSEMLaplaceObjective, s::_LaplaceModeSnapshot)
     for U in eachindex(s.modes)
         laplace.modes[U] = copy(s.modes[U])
         laplace.alt_modes[U] = Vector{Float64}[copy(m) for m in s.alt[U]]
+        laplace.mode_values[U] = s.values[U]
     end
     return nothing
 end
