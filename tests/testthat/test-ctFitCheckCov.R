@@ -48,3 +48,60 @@ test_that("ctFitCheckCov(plot=TRUE) gives one ggplot per row variable (stan)", {
   expect_setequal(names(gg), c("Y1", "Y2"))
   expect_true(all(vapply(gg, inherits, logical(1), "ggplot")))
 })
+
+# The default view averages over observation indices, which hides misfit that
+# differs by wave; x = 'obs' or a data column shows each wave or bin. Checked
+# against cov() over each wave's subjects, computed here independently.
+test_that("ctFitCheckCov(x = 'obs') is each wave's covariance, and 'lag' their mean (stan)", {
+  skip_on_cran()
+  withr::local_pdf(NULL)
+
+  d <- data.table::as.data.table(ctsem:::.ctFitLongData(ctstantestfit))
+  data.table::setorderv(d, c("id", "time"))
+  d[, k := seq_len(.N), by = id]
+  lag0 <- d[, .(direct = stats::cov(Y1, Y2, use = "complete.obs")), by = k]
+  lag1 <- merge(d[, .(id, k, Y1)], d[, .(id, k = k + 1L, Y2)], by = c("id", "k"))[,
+    .(direct = stats::cov(Y1, Y2, use = "complete.obs")), by = k]
+
+  o <- suppressMessages(ctFitCheckCov(ctstantestfit, cor = FALSE, x = "obs",
+    minpairn = 2, nsamples = 5, plot = FALSE))
+  expect_setequal(unique(o$lag), 0:1)
+  expect_identical(attr(o, "ctFitCovCheck_x"), "Observation")
+  for (l in 0:1) {
+    cmp <- merge(o[lag == l & rowvar == "Y1" & colvar == "Y2", .(k = x, empirical)],
+      if (l == 0) lag0 else lag1, by = "k")
+    expect_equal(nrow(cmp), if (l == 0) 10L else 9L)
+    expect_equal(cmp$empirical, cmp$direct)
+  }
+
+  l <- suppressMessages(ctFitCheckCov(ctstantestfit, cor = FALSE, lags = 0:1,
+    minpairn = 2, nsamples = 5, plot = FALSE))
+  expect_false("x" %in% names(l))
+  avg <- o[, .(mean = mean(empirical)), by = .(rowvar, colvar, lag)]
+  m <- merge(l[, .(rowvar, colvar, lag, empirical)], avg,
+    by = c("rowvar", "colvar", "lag"))
+  expect_equal(m$empirical, m$mean)
+
+  gg <- ctFitCovCheckPlot(o, cor = FALSE)
+  expect_s3_class(gg$Y1$facet, "FacetGrid")
+  expect_identical(gg$Y1$labels$x, "Observation")
+})
+
+test_that("ctFitCheckCov(x = <column>) bins a numeric column and keeps a factor's order (stan)", {
+  skip_on_cran()
+
+  tb <- suppressMessages(ctFitCheckCov(ctstantestfit, x = "time", xbins = 4,
+    nsamples = 5, plot = FALSE))
+  expect_lte(length(unique(tb$x)), 4L)
+  expect_identical(attr(tb, "ctFitCovCheck_x"), "time (bin mean)")
+
+  d <- data.table::as.data.table(ctsem:::.ctFitLongData(ctstantestfit))
+  d[, phase := factor(ifelse(time < 3, "late", "early"), levels = c("late", "early"))]
+  ph <- suppressMessages(ctFitCheckCov(ctstantestfit, data = d, x = "phase",
+    nsamples = 5, plot = FALSE))
+  expect_identical(levels(ph$x), c("late", "early"))
+  expect_identical(attr(ph, "ctFitCovCheck_x"), "phase")
+
+  expect_error(suppressMessages(ctFitCheckCov(ctstantestfit, x = "nosuch",
+    nsamples = 5, plot = FALSE)), "column of the data")
+})

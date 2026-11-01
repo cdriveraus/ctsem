@@ -43,7 +43,7 @@ utils::globalVariables(c("invDRIFT","II","DRIFTexp","vec2diag","diag2vec",
 utils::globalVariables(c(".ObsCol", ".ObsRow", ".splitgroup",
   ".splitscore", "Sig", "colvar", "empirical", "n", "n_empirical",
   "ntime", "q025", "q50", "q975", "rowvar", ".order", "dx", "dy", "dxx",
-  "dxy", "dyy", "sxx", "sxy", "syy", "x", "y"))
+  "dxy", "dyy", "sxx", "sxy", "syy", "x", "y", ".xgroup", ".xvalue", ".xpos"))
 
 if(1==99){
   `:=` = NULL
