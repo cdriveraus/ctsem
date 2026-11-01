@@ -129,6 +129,11 @@ BENCH_VARIANTS <- list(
     estonly = TRUE, overshoot = "off"), args = list(priors = TRUE),
     objective = "allprior"),
 
+  # The refined fit: the Laplace fit, then the climb on the placed objective
+  # with the check's flagged units on their rules (`intoverpop =
+  # 'quadrature'`). Its climb is recorded in the lapcorr_* columns.
+  refined = list(args = list(intoverpop = "quadrature"), objective = "quadrature"),
+
   # No fit: evaluate the objective and the references at the start. Used with
   # a stored best-known point to check that a reference still reproduces.
   evalonly = list(fit = FALSE),

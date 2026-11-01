@@ -1,0 +1,54 @@
+# gapfloor-refined grid: the gapfloor cells as refined fits (`intoverpop =
+# 'quadrature'`), whose placed objective resolves less than Laplace's, for the
+# gap rule's floor against juliaFit at the same merge.
+#
+cf_gaussian.lap.d1.s1.refined            cf_gaussian  1    laplace    default:1                refined
+cf_gaussian.lap.d1.s2.refined            cf_gaussian  1    laplace    default:2                refined
+cf_binary.lap.d1.s1.refined              cf_binary    1    laplace    default:1                refined
+cf_binary.lap.d1.s2.refined              cf_binary    1    laplace    default:2                refined
+cf_ordinal.lap.d1.s1.refined             cf_ordinal   1    laplace    default:1                refined
+cf_ordinal.lap.d1.s2.refined             cf_ordinal   1    laplace    default:2                refined
+cf_mixed.lap.d1.s1.refined               cf_mixed     1    laplace    default:1                refined
+cf_mixed.lap.d1.s2.refined               cf_mixed     1    laplace    default:2                refined
+gA1.lap.cfg.s1.refined                   gA1          cfg  laplace    default:1                refined
+gA1.lap.cfg.s2.refined                   gA1          cfg  laplace    default:2                refined
+gA1.lap.cfg.s3.refined                   gA1          cfg  laplace    default:3                refined
+gA14.lap.cfg.s1.refined                  gA14         cfg  laplace    default:1                refined
+gA14.lap.cfg.s2.refined                  gA14         cfg  laplace    default:2                refined
+gA14.lap.cfg.s3.refined                  gA14         cfg  laplace    default:3                refined
+gB2.lap.cfg.s1.refined                   gB2          cfg  laplace    default:1                refined
+gB2.lap.cfg.s2.refined                   gB2          cfg  laplace    default:2                refined
+gB2.lap.cfg.s3.refined                   gB2          cfg  laplace    default:3                refined
+gB8.lap.cfg.s1.refined                   gB8          cfg  laplace    default:1                refined
+gB8.lap.cfg.s2.refined                   gB8          cfg  laplace    default:2                refined
+gB8.lap.cfg.s3.refined                   gB8          cfg  laplace    default:3                refined
+gC2.lap.cfg.s1.refined                   gC2          cfg  laplace    default:1                refined
+gC2.lap.cfg.s2.refined                   gC2          cfg  laplace    default:2                refined
+gC2.lap.cfg.s3.refined                   gC2          cfg  laplace    default:3                refined
+gC8.lap.cfg.s1.refined                   gC8          cfg  laplace    default:1                refined
+gC8.lap.cfg.s2.refined                   gC8          cfg  laplace    default:2                refined
+gC8.lap.cfg.s3.refined                   gC8          cfg  laplace    default:3                refined
+gD1.lap.cfg.s1.refined                   gD1          cfg  laplace    default:1                refined
+gD1.lap.cfg.s2.refined                   gD1          cfg  laplace    default:2                refined
+gD1.lap.cfg.s3.refined                   gD1          cfg  laplace    default:3                refined
+gD3.lap.cfg.s1.refined                   gD3          cfg  laplace    default:1                refined
+gD3.lap.cfg.s2.refined                   gD3          cfg  laplace    default:2                refined
+gD3.lap.cfg.s3.refined                   gD3          cfg  laplace    default:3                refined
+acnonlin.lap.cfg.s1.refined              acnonlin     cfg  laplace    default:1                refined
+acnonlin.lap.cfg.s2.refined              acnonlin     cfg  laplace    default:2                refined
+mvmix.lap.cfg.s1.refined                 mvmix        cfg  laplace    default:1                refined
+mvmix.lap.cfg.s2.refined                 mvmix        cfg  laplace    default:2                refined
+jflat.lap.cfg.flatdrift8.refined         jflat        cfg  laplace    stored:flatdrift8        refined
+jflat.lap.cfg.s1.refined                 jflat        cfg  laplace    default:1                refined
+gN1.lap.cfg.s1.refined                   gN1          cfg  laplace    default:1                refined
+gN1.lap.cfg.s2.refined                   gN1          cfg  laplace    default:2                refined
+gN1.lap.cfg.s3.refined                   gN1          cfg  laplace    default:3                refined
+gN3.lap.cfg.s1.refined                   gN3          cfg  laplace    default:1                refined
+gN3.lap.cfg.s2.refined                   gN3          cfg  laplace    default:2                refined
+gN3.lap.cfg.s3.refined                   gN3          cfg  laplace    default:3                refined
+ordinal.lap.d1.s1.refined                ordinal      1    laplace    default:1                refined
+ordinal.lap.d1.s2.refined                ordinal      1    laplace    default:2                refined
+anomS1.lap.cfg.s1.refined                anomS1       cfg  laplace    default:1                refined
+anomS2.lap.cfg.s1.refined                anomS2       cfg  laplace    default:1                refined
+anomS1.lap.cfg.anomS1_spurious.refined   anomS1       cfg  laplace    stored:anomS1_spurious   refined
+anomS2.lap.cfg.anomS2_spurious.refined   anomS2       cfg  laplace    stored:anomS2_spurious   refined

@@ -35,7 +35,7 @@ test_that("the trace is recorded even with reporting off", {
   expect_s3_class(trace, "data.frame")
   expect_gt(nrow(trace), 1L)
   expect_named(trace, c("iteration", "objective", "gradient_norm",
-    "predicted_gain"))
+    "predicted_gain", "discrepancy"))
   # `predicted_gain` is `1/2 g'Bg` off the line search, per iteration. It is
   # here because a fit that has stopped converging says so in this column long
   # before it says so anywhere else -- and because reading it afterwards is the
@@ -43,6 +43,12 @@ test_that("the trace is recorded even with reporting off", {
   # oscillating just above it. `Inf` until a line search has run.
   expect_true(all(trace$predicted_gain >= 0))
   expect_true(any(is.finite(trace$predicted_gain)))
+  # `discrepancy`, what each L-BFGS step's value change missed the trapezoid
+  # of its end gradients by: what the gap rule's tolerance rises to where the
+  # objective resolves less than it asks. NaN on the finish's steps.
+  d <- trace$discrepancy[is.finite(trace$discrepancy)]
+  expect_gt(length(d), 0L)
+  expect_true(all(d >= 0))
   # `verbose = 0` above: the fit whose trace turns out to be worth reading is
   # the one nobody thought to turn reporting on for.
   expect_true(all(diff(trace$iteration) > 0))

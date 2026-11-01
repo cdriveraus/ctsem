@@ -95,6 +95,43 @@ end
     end
 end
 
+@testset "a placed rule's points summed over the pool's slots are the serial sum" begin
+    # A unit's points, a nested root's nodes and a frozen unit's draws are
+    # summed in ranges on the pool's free slots (`_placed_ranges`) and merged
+    # in order; at a pool of one they are one range. The two must agree to
+    # rounding, value and gradient, and the split must happen.
+    if Threads.nthreads() > 1
+        held = ContinuousTimeSEM._CTSEM_MAX_CHUNKS[]
+        try
+            for (label, fresh, drawn) in (("lattice", _fresh_placed_wide, false),
+                                          ("lattice root", _fresh_placed_wide_nested, false),
+                                          ("frozen draws", _fresh_nonlinear, true))
+                laplace, values = fresh()
+                theta = collect(Float64, values)
+                P = drawn ? ctsem_laplace_placed(ctsem_laplace_continuation(laplace,
+                    theta; tolerance=-1.0, draws_all=true, draws=256)) :
+                    _placed_from(laplace, theta)
+                drawn && @test (label, !isempty(P.frozen)) == (label, true)
+                at = theta .+ [0.03 * (-1)^j for j in eachindex(theta)]
+                # Once first, so both reads start each unit's solve from its
+                # mode there (an evaluation moves the anchors).
+                ContinuousTimeSEM._CTSEM_MAX_CHUNKS[] = 1
+                ctsem_laplace_placed_evaluate(P, at; gradient=false)
+                one = ctsem_laplace_placed_evaluate(P, at; gradient=true)
+                ContinuousTimeSEM._CTSEM_MAX_CHUNKS[] = min(4, Threads.nthreads())
+                @test (label, length(ContinuousTimeSEM._placed_ranges(256, 256)) > 1) ==
+                    (label, true)
+                many = ctsem_laplace_placed_evaluate(P, at; gradient=true)
+                @test (label, isapprox(many.value, one.value; rtol=1e-12)) == (label, true)
+                @test (label, all(isapprox.(many.gradient, one.gradient; rtol=1e-9,
+                    atol=1e-10))) == (label, true)
+            end
+        finally
+            ContinuousTimeSEM._CTSEM_MAX_CHUNKS[] = held
+        end
+    end
+end
+
 @testset "on a Gaussian integrand the placement terms vanish" begin
     laplace, values = _fresh_twolevel()
     theta = collect(Float64, values)

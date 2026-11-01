@@ -1751,6 +1751,54 @@ end
     @test r.iterations > 1
 end
 
+@testset "the gap rule's tolerance rises to what the objective resolves" begin
+    C = ContinuousTimeSEM
+    # The window: nothing before five steps on the full objective, then the
+    # least of the last five; a coreset or batch step is no measurement.
+    ls = C.CTSEMDirectional()
+    for e in (5.0, 4.0, 3.0, 2.0)
+        C._ctsem_resolution_step!(ls, e, true)
+    end
+    @test C._ctsem_resolution(ls) == 0
+    C._ctsem_resolution_step!(ls, 1.0, false)
+    @test isnan(ls.discrepancy) && C._ctsem_resolution(ls) == 0
+    C._ctsem_resolution_step!(ls, 6.0, true)
+    @test C._ctsem_resolution(ls) == 2.0
+    C._ctsem_resolution_step!(ls, 7.0, true); C._ctsem_resolution_step!(ls, 8.0, true)
+    @test C._ctsem_resolution(ls) == 2.0
+    C._ctsem_resolution_step!(ls, 9.0, true); C._ctsem_resolution_step!(ls, 10.0, true)
+    @test C._ctsem_resolution(ls) == 6.0
+    @test C._ctsem_gap_floor(1e-8, ls, 0.1) == 0.1
+    @test C._ctsem_gap_floor(1e-8, ls, 0.0) == 1e-8
+    # An ill-conditioned quadratic whose gradient carries noise of 1e-3, as a
+    # gradient through inner solves stopped at their tolerance does: its
+    # steps disagree with their gradients by about 1e-5, far above a gap
+    # tolerance of 1e-10. Held at it (`newton_switch = 0` caps the floor),
+    # L-BFGS goes on to whatever ends it; with the floor it stops where the
+    # steps stop being resolved -- the same path, so never later.
+    D = collect(range(1.0, 1e3; length = 8))
+    c = collect(range(-1.0, 1.0; length = 8))
+    smooth = p -> -0.5 * sum(D .* (p .- c) .^ 2)
+    noise = p -> [hash((p, k)) / typemax(UInt) - 0.5 for k in 1:8]
+    m = _endgame_mock(smooth; g = p -> -(D .* (p .- c)) .+ 1e-3 .* noise(p))
+    kw = (maxiter=400, gap_tol=1e-10, newton=false, certify=false,
+        progress=false, verbose=false, overshoot_probe=:off)
+    held = C.ctsem_optimize(m, c .+ 1.0; kw..., newton_switch=0.0)
+    r = C.ctsem_optimize(m, c .+ 1.0; kw...)
+    @test held.gap_floor == 1e-10
+    @test 1e-9 < r.gap_floor < 1e-4
+    @test r.iterations <= held.iterations
+    @test smooth(c) - smooth(r.minimizer) < 1e-5
+    d = filter(isfinite, r.trace[:discrepancy])
+    @test length(d) == r.iterations && all(>=(0), d)
+    # A smooth objective resolves far below the tolerance, which stands, and
+    # the run is the one the rule held at it takes.
+    s = C.ctsem_optimize(_endgame_mock(smooth), c .+ 1.0; kw...)
+    s0 = C.ctsem_optimize(_endgame_mock(smooth), c .+ 1.0; kw..., newton_switch=0.0)
+    @test s.gap_floor == 1e-10
+    @test s.iterations == s0.iterations && s.minimizer == s0.minimizer
+end
+
 @testset "ctsem_optimize hands the endgame's numbers back" begin
     # From beside the saddle above: L-BFGS converges into it (the gradient in y
     # is exactly zero along y = 0) and hands over, and the finish escapes.
@@ -2197,8 +2245,13 @@ ContinuousTimeSEM._ctsem_local_columns(o::_LocalQuadratic, x::AbstractVector,
     withlocal = C3._ctsem_lbfgs(fg!, zeros(n); diagonal=true, maxiter=2000,
         g_tol=1e-6, local_curvature=lc)
     @test lc.builds >= 1
-    @test withlocal.minimizer ≈ -(H \ g0) rtol = 1e-5
-    @test plain.minimizer ≈ -(H \ g0) rtol = 1e-5
+    # Each stops where its largest gradient is under `g_tol`, which places it
+    # within `|H^-1| sqrt(n) g_tol` of the minimum and no closer: a relative
+    # bar of 1e-5 sat at that distance, and a runner's last bits failed it
+    # (juliaFit 241deaa7, by 3 per cent).
+    reach = opnorm(inv(H)) * sqrt(n) * 1e-6
+    @test norm(withlocal.minimizer .+ H \ g0) <= reach
+    @test norm(plain.minimizer .+ H \ g0) <= reach
     @test withlocal.iterations < plain.iterations
 end
 

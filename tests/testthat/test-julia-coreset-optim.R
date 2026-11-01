@@ -43,7 +43,17 @@ test_that("coreset stages reach the full objective's optimum in fewer full gradi
   se <- sqrt(diag(solve(-H)))
   expect_equal(as.numeric(on$estimate$raw) / se, as.numeric(off$estimate$raw) / se,
     tolerance = 1e-3)
-  expect_equal(on$uncertainty$hessian, H, tolerance = 1e-5)
+  # Each fit's Hessian is the full objective's at the point it describes. Not
+  # the other fit's: each stops within its gap rule of the maximum, about
+  # 1e-4 se for a gain of 1e-8, and over that the curvature moved by 1e-5 once
+  # an early hand-over put the last Hessian at the finish's end.
+  for (f in list(on, off)) {
+    at <- as.numeric(f$uncertainty$evaluated_at)
+    full <- ctsem:::.ctJuliaCall("ContinuousTimeSEM.ctsem_laplace_hessian",
+      ctsem:::.ctJuliaObjective(f, hybrid = TRUE), at)
+    expect_equal(f$uncertainty$hessian, matrix(as.numeric(full), length(at)),
+      tolerance = 1e-8)
+  }
   # And the point of it.
   expect_lt(on$optim$full_gradients, off$optim$full_gradients)
 })
