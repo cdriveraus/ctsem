@@ -776,9 +776,12 @@ end
     # anchors' own point than beside it (the affect pilot's unit 201, by
     # 2.4e-7). Started from each unit's mode moved along its softest direction
     # to half the bound, the solve must end with the Newton step left on the
-    # exact curvature under `inner_tol`.
+    # exact curvature under `inner_tol`. The fixture's units are small: under
+    # their bound a start lies within about the default `inner_tol` of its
+    # mode, which either rule accepts, so `inner_tol` is set lower here.
     C = ContinuousTimeSEM
     laplace, values = _fresh_nonlinear()
+    laplace.inner_tol = 1e-12
     ctsem_laplace_evaluate(laplace, values)
     theta = C._laplace_extend(laplace, collect(Float64, values))
     Ls = C._laplace_popchols(theta, laplace.spec)
