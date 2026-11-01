@@ -3855,6 +3855,35 @@ finite, so an unusable number can never certify a mode.
 end
 
 """
+    _laplace_floor_step(laplace, gradient, step, value)
+
+Whether a Newton step's predicted gain (`_laplace_stationary_gain`) is below
+what the value resolves (`_laplace_inner_tolerance`), so that no line search
+can rank its trials. There a step on an exact, unrepaired curvature is taken
+where it at least halves the gradient (`_laplace_floor_step_taken`, SR1's test
+of whether its matrix still describes the unit), and otherwise the solve is at
+its floor. The unit mode solve, a placed rule's leaf and Laplace's expansion
+read it alike; the categorical mode solve's `_newton_gain` against
+`_mode_tolerance` is the same test.
+
+Measured on the adequacy tutorial's second-order candidate (Fisher data, 40
+units, one thread, dev3) as its inertia time went from 1 h to 1e-6 h: the
+units' values carried 5e-14 of roundoff at their modes, then 1e-12 at 1e-4 h
+and 5e-11 at 1e-6 h. Every step below that spent the twenty halvings of a line
+search that could not rank it, a step taken whenever the gradient fell at all
+walked four units to the 200-iteration cap on the gradient's noise, and a value
+took 402 s against 15.
+"""
+@inline _laplace_floor_step(laplace::CTSEMLaplaceObjective, gradient::AbstractVector,
+    step::AbstractVector, value::Real) =
+    _laplace_stationary_gain(gradient, step) <= _laplace_inner_tolerance(laplace, value)
+
+"""Whether a step taken at the floor (`_laplace_floor_step`) found anything: its
+gradient at most half the one it left."""
+@inline _laplace_floor_step_taken(before::AbstractVector, after::AbstractVector) =
+    maximum(abs, after; init=0.0) <= maximum(abs, before; init=0.0) / 2
+
+"""
     _laplace_newton_unit_mode(laplace, U, values, Ls, aws, start)
 
 Newton on `g_U` from one given starting point, reporting what happened rather
@@ -4005,6 +4034,40 @@ function _laplace_newton_unit_mode(laplace::CTSEMLaplaceObjective, U::Integer,
             exact = true
             continue
         end
+        # Where the step's predicted gain is below what the value resolves, no
+        # line search can rank its trials (`_laplace_floor_step`). An updated
+        # curvature's prediction is no guide there, so the exact one is formed
+        # first. On it the step is reliable whatever the value can see, and
+        # the gradient ranks it: taken where it halves the gradient, and
+        # otherwise this is the mode in floating point. On the affect pilot,
+        # well-conditioned units (curvature 1.3 to 134) sat here one step
+        # short -- |g| 25-100 times the bound, the step 1e3-1e4 times
+        # `inner_tol`, 1e-13 left to gain against a value of -1000 -- and
+        # stopping them there made the objective differ by 1.1e-6 between
+        # Intel and AMD nodes, through the log-determinant at those modes.
+        if !fac.repaired && _laplace_floor_step(laplace, current.gradient, step,
+                current.value)
+            if !exact
+                exact = true
+                continue
+            end
+            utry .= u .+ step
+            trial = _laplace_unit_objective_gradient(laplace, U, values, Ls,
+                utry, aws, gtry)
+            if isfinite(trial.value)
+                if _laplace_floor_step_taken(current.gradient, gtry)
+                    u, utry = utry, u
+                    gcur, gtry = gtry, gcur
+                    current = trial
+                    stepped_exact = true
+                    continue
+                end
+                converged = true
+                final = _laplace_copy_blockmatrix(M)
+                break
+            end
+            # Not evaluable at its full length: the line search halves it.
+        end
         accepted = false
         # Whether any trial could be evaluated at all, which is what separates
         # "there is nothing left to gain here" from "the step went somewhere
@@ -4094,33 +4157,12 @@ function _laplace_newton_unit_mode(laplace::CTSEMLaplaceObjective, U::Integer,
             # stopped four orders above the tolerance is visible in the
             # diagnostics rather than silently equated with one that did not.
             #
-            # But a value that cannot rank the trials does not mean the mode is
-            # found: on an exact, unrepaired curvature the Newton step is
-            # reliable whatever the value can see, and the gradient still ranks
-            # it. On the affect pilot, well-conditioned units (curvature 1.3 to
-            # 134) stopped here one step short -- |g| 25-100 times the bound,
-            # the step 1e3-1e4 times `inner_tol`, 1e-13 left to gain against a
-            # value of -1000 -- and which units did depended on the CPU's last
-            # bits: the objective differed by 1.1e-6 between Intel and AMD
-            # nodes, through the log-determinant at those modes. So that step
-            # is taken if it makes the gradient smaller, and only otherwise is
-            # this the floor.
+            # On an exact, unrepaired curvature a step this small was ranked by
+            # its gradient before the search (`_laplace_floor_step`); what
+            # reaches here is a repaired curvature, or a step the model had no
+            # value for at its full length.
             stationary = evaluable &&
-                _laplace_stationary_gain(current.gradient, step) <=
-                    _laplace_inner_tolerance(laplace, current.value)
-            if stationary && exact && !fac.repaired
-                utry .= u .+ step
-                trial = _laplace_unit_objective_gradient(laplace, U, values, Ls,
-                    utry, aws, gtry)
-                if isfinite(trial.value) &&
-                        maximum(abs, gtry) < maximum(abs, current.gradient)
-                    u, utry = utry, u
-                    gcur, gtry = gtry, gcur
-                    current = trial
-                    stepped_exact = true
-                    continue
-                end
-            end
+                _laplace_floor_step(laplace, current.gradient, step, current.value)
             converged = stationary
             stationary && exact && !fac.repaired &&
                 (final = _laplace_copy_blockmatrix(M))
