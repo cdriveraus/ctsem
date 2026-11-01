@@ -361,6 +361,15 @@ test_that("a component with a time scale starts at each end of the design's rang
   expect_identical(vapply(own, `[[`, '', 'key')[1], 'unique:u_Y1_2')
   expect_match(own[[1]]$label, 'another process')
   expect_true(length(own[[1]]$starts) >= 1L)
+  # A second order starts with its inertia time a tenth of the short end,
+  # where it is nearly the first order process fitted, and at 1 / (2|a|),
+  # where it oscillates.
+  ord <- ctsem:::.ctImproveStructural(model, 'order', NULL, ad, x$fit, 0.05)
+  expect_identical(vapply(ord, `[[`, '', 'key'), 'order:eta1')
+  tau <- vapply(ord[[1]]$starts, function(s) log1p(exp(2 * s[['inertia_eta1']])), 0)
+  a <- ctsem:::.ctImproveOwnDrift(model, x$fit, 1L)
+  expect_lt(a, 0)
+  expect_equal(tau, c(sc[['short']] / 10, 1 / (2 * -a)), tolerance = 1e-8)
   # Of a proposal's refits, the best by log likelihood is its refit; a failed
   # one counts for nothing unless all failed.
   fake <- function(ll) list(estimate = list(loglik = ll))

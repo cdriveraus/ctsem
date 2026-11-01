@@ -18,31 +18,50 @@ ctModelHigherOrder(
 
 \item{indices}{Vector of integers, which latents to raise the order of.}
 
-\item{diffusion}{Shift the diffusion parameters / values to the higher order?}
+\item{diffusion}{Move the process noise from the level to its derivative?}
 
-\item{crosseffects}{Shift cross coupling parameters of the DRIFT matrix to the higher order?}
+\item{crosseffects}{Move the effects of the other processes on this one to
+its derivative (divided by \eqn{\tau}, for a \code{type = 'ct'} model)?
+For a \code{type = 'omx'} model, its effects on them move as well.}
 
-\item{cint}{shift continuous intercepts to higher order?}
+\item{cint}{Move the continuous intercept to the derivative (divided by
+\eqn{\tau}, for a \code{type = 'ct'} model)?}
 
-\item{explosive}{Allow explosive (non equilibrium returning) processes?}
+\item{explosive}{For a \code{type = 'omx'} model, allow explosive (non
+equilibrium returning) processes. A \code{type = 'ct'} model's level keeps
+its own drift's transform, which decides that.}
 }
 \value{
 extended ctModel
 }
 \description{
 Each latent in \code{indices} gains a derivative latent (named \code{d}
-and the latent's name): the level is driven by its derivative with a fixed
-unit coefficient, the derivative is pulled back by the level through an
-estimated coefficient (negative unless \code{explosive}), and the level's
-own autoregression becomes the derivative's damping. That makes each a
-damped oscillator: a second order process, whose autocorrelation can dip
-below zero and rise again, which no first order process can.
+and the latent's name), which drives the level with a fixed unit
+coefficient. That makes each a damped oscillator: a second order process,
+whose autocorrelation can dip below zero and rise again, which no first
+order process can.
 }
 \details{
-Works on a model from \code{ctModel(type = 'ct')}, rewriting its parameter
-table cell by cell so every other setting of each cell -- transform,
-individual variation, predictor effects -- is kept, and on the older
-matrix-list form from \code{ctModel(type = 'omx')}.
+A model from \code{ctModel(type = 'ct')} is rewritten cell by cell on its
+parameter table, with a new inertia time \eqn{\tau > 0} for each latent
+(\code{inertia_} and the latent's name, in \code{PARS}):
+\deqn{\tau \ddot{x} + \dot{x} = a x + q \, dW,}
+where \eqn{a} is the level's own drift and \eqn{q} its diffusion, both
+keeping their names and every setting -- transform, individual variation,
+predictor effects. The derivative's row of \code{DRIFT} reads \eqn{a/\tau}
+and \eqn{-1/\tau}, and its diffusion \eqn{q/\tau}. As \eqn{\tau} goes to
+zero the derivative follows the level at once and the process is the
+first order one it was, so the new model contains the old one with every
+old parameter at its value; from \eqn{\tau = 1/(4|a|)} on, the process
+oscillates. The derivative's initial state covaries with its level's and
+with whatever the level's covaries with.
+
+A model in the older matrix-list form from \code{ctModel(type = 'omx')} is
+written instead as the derivative pulled back by the level through an
+estimated coefficient (negative unless \code{explosive}), with the level's
+own autoregression as the derivative's damping. That is the same family of
+processes, but its first order member is reached only as the damping, the
+coefficient and the diffusion all grow without bound.
 }
 \examples{
 om <- ctModel(LAMBDA=diag(1,2),DRIFT=0, 
