@@ -120,8 +120,10 @@ source(file.path(HERE, "variants.R"))
 
 jbin <- Sys.getenv("BENCH_JULIA_BIN")
 if (!nzchar(jbin)) {
-  cand <- c(Sys.glob(file.path(Sys.getenv("HOME"), ".julia", "juliaup", "julia-1.12*", "bin")),
-    Sys.glob(file.path(Sys.getenv("USERPROFILE"), ".julia", "juliaup", "julia-1.12*", "bin")))
+  # The build's own pin, which the boxes' juliaup holds beside older ones.
+  pin <- paste0("julia-", get0(".ct_julia_version", envir = ns, ifnotfound = "1.12"), "*")
+  cand <- c(Sys.glob(file.path(Sys.getenv("HOME"), ".julia", "juliaup", pin, "bin")),
+    Sys.glob(file.path(Sys.getenv("USERPROFILE"), ".julia", "juliaup", pin, "bin")))
   cand <- cand[file.exists(cand)]
   jbin <- if (length(cand)) sort(cand, decreasing = TRUE)[1L] else ""
 }
