@@ -337,6 +337,19 @@ function _quadrature_leaf_newton(inner, precision_at, z::Vector{Float64}, curren
         # A step at roundoff is a mode however large the gradient's roundoff
         # is; see `_laplace_newton_unit_mode`.
         issuccess(factorization) && maximum(abs, step) < laplace.inner_tol && break
+        # Below what the value resolves the gradient ranks the step, as in
+        # `_laplace_newton_unit_mode` (`_laplace_floor_step`).
+        if issuccess(factorization) &&
+                _laplace_floor_step(laplace, current.gradient, step, current.value)
+            candidate = z .+ step
+            trial = inner(candidate)
+            if isfinite(trial.value) && all(isfinite, trial.gradient)
+                _laplace_floor_step_taken(current.gradient, trial.gradient) || break
+                z = candidate
+                current = trial
+                continue
+            end
+        end
         accepted = false
         scale = 1.0
         for _ in 1:20
@@ -1251,6 +1264,19 @@ function _laplace_unit_expansion(laplace::CTSEMLaplaceObjective, U::Integer,
         issuccess(F) || break
         step = F \ cur.gradient
         maximum(abs, step) < 1e-10 && break
+        # Below what the value resolves the gradient ranks the step, as in
+        # `_laplace_newton_unit_mode` (`_laplace_floor_step`).
+        if _laplace_floor_step(laplace, cur.gradient, step, cur.value)
+            trial_u = u .+ step
+            trial = _expansion_value_gradient(laplace, U, theta, Ls, trial_u, aws)
+            if isfinite(trial.value)
+                _laplace_floor_step_taken(cur.gradient, trial.gradient) || break
+                u = trial_u
+                cur = trial
+                M = _expansion_curvature(laplace, U, theta, Ls, u)
+                continue
+            end
+        end
         scale = 1.0
         accepted = false
         for _ in 1:40
