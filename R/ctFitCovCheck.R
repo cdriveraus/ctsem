@@ -48,7 +48,11 @@
 #'   generated data are reused when present; otherwise `ctGenerateFromFit` is
 #'   called.
 #' @param minpairn Minimum number of complete paired observations required for
-#'   an empirical or generated lagged covariance/correlation.
+#'   an empirical or generated lagged covariance/correlation: for each
+#'   observation-index pair averaged under `x = "lag"`, and for each point
+#'   otherwise. A point with fewer is left out of the plot and of the share
+#'   outside the model's interval; raise it to drop bins that hold only a few
+#'   off-schedule observations.
 #' @param cores Cores for generating the data when \code{fit} carries none:
 #'   engine threads for a julia fit, and for a stan fit worker processes, which
 #'   start only for a job large enough to repay them. The summary of the
