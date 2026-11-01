@@ -1,24 +1,43 @@
 #' Raise the order of a ctsem model's latent processes.
 #'
 #' Each latent in \code{indices} gains a derivative latent (named \code{d}
-#' and the latent's name): the level is driven by its derivative with a fixed
-#' unit coefficient, the derivative is pulled back by the level through an
-#' estimated coefficient (negative unless \code{explosive}), and the level's
-#' own autoregression becomes the derivative's damping. That makes each a
-#' damped oscillator: a second order process, whose autocorrelation can dip
-#' below zero and rise again, which no first order process can.
+#' and the latent's name), which drives the level with a fixed unit
+#' coefficient. That makes each a damped oscillator: a second order process,
+#' whose autocorrelation can dip below zero and rise again, which no first
+#' order process can.
 #'
-#' Works on a model from \code{ctModel(type = 'ct')}, rewriting its parameter
-#' table cell by cell so every other setting of each cell -- transform,
-#' individual variation, predictor effects -- is kept, and on the older
-#' matrix-list form from \code{ctModel(type = 'omx')}.
+#' A model from \code{ctModel(type = 'ct')} is rewritten cell by cell on its
+#' parameter table, with a new inertia time \eqn{\tau > 0} for each latent
+#' (\code{inertia_} and the latent's name, in \code{PARS}):
+#' \deqn{\tau \ddot{x} + \dot{x} = a x + q \, dW,}
+#' where \eqn{a} is the level's own drift and \eqn{q} its diffusion, both
+#' keeping their names and every setting -- transform, individual variation,
+#' predictor effects. The derivative's row of \code{DRIFT} reads \eqn{a/\tau}
+#' and \eqn{-1/\tau}, and its diffusion \eqn{q/\tau}. As \eqn{\tau} goes to
+#' zero the derivative follows the level at once and the process is the
+#' first order one it was, so the new model contains the old one with every
+#' old parameter at its value; from \eqn{\tau = 1/(4|a|)} on, the process
+#' oscillates. The derivative's initial state covaries with its level's and
+#' with whatever the level's covaries with.
+#'
+#' A model in the older matrix-list form from \code{ctModel(type = 'omx')} is
+#' written instead as the derivative pulled back by the level through an
+#' estimated coefficient (negative unless \code{explosive}), with the level's
+#' own autoregression as the derivative's damping. That is the same family of
+#' processes, but its first order member is reached only as the damping, the
+#' coefficient and the diffusion all grow without bound.
 #'
 #' @param ctm ctModel, \code{type = 'ct'} or \code{type = 'omx'}.
 #' @param indices Vector of integers, which latents to raise the order of.
-#' @param diffusion Shift the diffusion parameters / values to the higher order?
-#' @param crosseffects Shift cross coupling parameters of the DRIFT matrix to the higher order?
-#' @param cint shift continuous intercepts to higher order?
-#' @param explosive Allow explosive (non equilibrium returning) processes?
+#' @param diffusion Move the process noise from the level to its derivative?
+#' @param crosseffects Move the effects of the other processes on this one to
+#'   its derivative (divided by \eqn{\tau}, for a \code{type = 'ct'} model)?
+#'   For a \code{type = 'omx'} model, its effects on them move as well.
+#' @param cint Move the continuous intercept to the derivative (divided by
+#'   \eqn{\tau}, for a \code{type = 'ct'} model)?
+#' @param explosive For a \code{type = 'omx'} model, allow explosive (non
+#'   equilibrium returning) processes. A \code{type = 'ct'} model's level keeps
+#'   its own drift's transform, which decides that.
 #'
 #' @return extended ctModel
 #' @export
@@ -102,14 +121,28 @@ ctModelHigherOrder <- function(ctm, indices,diffusion=TRUE, crosseffects=FALSE,c
 }
 
 
-# The `type = 'ct'` form: the same surgery on the parameter table, a cell at a
-# time, so a moved cell takes its transform, individual variation, sdscale and
-# predictor effects with it. New free cells take ctsem's own defaults
+# The `type = 'ct'` form, `tau x'' + x' = a x + q dW`, written on the parameter
+# table a cell at a time, so the level's drift and diffusion keep their names
+# and every setting -- transform, individual variation, sdscale, predictor
+# effects -- moved into PARS, where the derivative's row reads them divided by
+# the inertia time. It is the damped oscillator the matrix-list form writes,
+# reparameterised so that the first order model lies at tau -> 0 along one
+# coordinate with every other parameter where it was: written as the
+# derivative's damping and a restoring coefficient, the first order model is
+# reached only as both run off to infinity, together with the diffusion, and
+# the refits ctModelImprove() made from a first order fit followed them for
+# hours (raw -17000 on one simulated search) without stopping. A person-varying
+# autoregression copied onto the damping also made the noise vary with the
+# rate, so that limit was not the first order model either: 46 log likelihood
+# units below it there. New free cells take ctsem's own defaults
 # (`.ctModelDefaultFreePar`) and do not vary over subjects.
 .ctHigherOrderPars <- function(ctm, indices, diffusion = TRUE, crosseffects = FALSE,
   cint = FALSE, explosive = FALSE) {
   if (!isTRUE(ctm$continuoustime)) stop("Raising the order is for continuous ",
     "time models.", call. = FALSE)
+  if (isTRUE(explosive)) stop("explosive is for a model from ctModel(type = 'omx'). ",
+    "In a type = 'ct' model the level's own drift keeps its transform, which decides ",
+    "whether the process may be explosive.", call. = FALSE)
   nl <- ctm$n.latent
   indices <- as.integer(indices)
   if (anyDuplicated(indices) || any(indices < 1L | indices > nl)) stop(
@@ -120,32 +153,70 @@ ctModelHigherOrder <- function(ctm, indices,diffusion=TRUE, crosseffects=FALSE,c
   # The lower-triangle cell between latents a and b, where a covariance's
   # parameter lives.
   low <- function(a, b) c(max(a, b), min(a, b))
+  # A cell's term divided by the inertia time, or zero where the cell is.
+  over <- function(m, r, c, tr, tc, tau) {
+    term <- .ctHigherOrderTerm(ed, m, r, c)
+    if (is.null(term)) ed$fixed(m, tr, tc, 0) else
+      ed$expression(m, tr, tc, sprintf('%s / %s', term, tau))
+  }
+  covaries <- function(a, b) {
+    rec <- ed$cell('T0VAR', low(a, b)[1], low(a, b)[2])
+    !is.null(rec) && (!is.na(rec$param) || isTRUE(suppressWarnings(as.numeric(rec$value)) != 0))
+  }
   for (k in seq_along(indices)) {
     i <- indices[k]; n <- nl + k
-    if (crosseffects) {
-      for (j in seq_len(nl)) if (j != i) {
-        ed$copy('DRIFT', i, j, n, j); ed$copy('DRIFT', j, i, j, n)
-        ed$fixed('DRIFT', i, j, 0); ed$fixed('DRIFT', j, i, 0)
-      }
-    }
-    ed$copy('DRIFT', i, i, n, n)
+    tau <- paste0('inertia_', names0[i])
+    ed$free('PARS', ed$npars() + 1L, 1L, tau, transform = 'log1p_exp(2 * param)',
+      tipred = FALSE)
+    over('DRIFT', i, i, n, i, tau)
+    ed$expression('DRIFT', n, n, sprintf('-1 / %s', tau))
     ed$fixed('DRIFT', i, i, 0)
     ed$fixed('DRIFT', i, n, 1)
-    ed$free('DRIFT', n, i, paste0('drift_', allnames[n], '_', names0[i]),
-      transform = if (explosive) 'param * 2 - 1' else '-log1p_exp(-param * 2) - 1e-6')
+    # The other processes' effects on this one, through its derivative; its
+    # effects on them stay on the level, where the first order model has them.
+    if (crosseffects) for (j in seq_len(nl)) if (j != i) {
+      over('DRIFT', i, j, n, j, tau)
+      ed$fixed('DRIFT', i, j, 0)
+    }
     if (diffusion) {
-      for (j in seq_len(nl)) {
+      over('DIFFUSION', i, i, n, n, tau)
+      # The correlations of the noise with the other processes' move with it.
+      for (j in seq_len(nl)) if (j != i) {
         src <- low(i, j)
-        if (j == i) ed$copy('DIFFUSION', i, i, n, n) else ed$copy('DIFFUSION', src[1], src[2], n, j)
+        ed$copy('DIFFUSION', src[1], src[2], n, j)
       }
       for (j in seq_len(nl)) { ed$fixed('DIFFUSION', i, j, 0); ed$fixed('DIFFUSION', j, i, 0) }
     }
-    if (cint) { ed$copy('CINT', i, 1, n, 1); ed$fixed('CINT', i, 1, 0) }
+    if (cint) { over('CINT', i, 1, n, 1, tau); ed$fixed('CINT', i, 1, 0) }
     ed$free('T0MEANS', n, 1, paste0('T0mean_', allnames[n]))
-    for (j in seq_len(n)) ed$free('T0VAR', n, j, if (j == n) paste0('T0var_', allnames[n]) else
-      paste0('T0var_', allnames[n], '_', allnames[j]))
+    # The derivative starts out covarying with its level, the derivatives
+    # raised beside it, and whatever the level covaries with: free with
+    # anything else -- a cycle's clock -- the Fisher search's PA derivative
+    # ran its covariance with the clock's sine out to a raw 8.
+    lev <- c(seq_len(nl), indices)
+    for (j in seq_len(n)) if (j == n || j == i || covaries(i, lev[j])) ed$free('T0VAR', n, j,
+      if (j == n) paste0('T0var_', allnames[n]) else paste0('T0var_', allnames[n], '_',
+        allnames[j]))
   }
   ed$finish()
+}
+
+# What a cell contributes to an expression: its parameter's name, declared in
+# PARS so expressions can read it (the cell is then the caller's to rewrite);
+# its value or expression, bracketed; NULL where it is zero.
+.ctHigherOrderTerm <- function(ed, m, r, c) {
+  rec <- ed$cell(m, r, c)
+  if (is.null(rec)) return(NULL)
+  if (is.na(rec$param) || !nzchar(rec$param)) {
+    v <- suppressWarnings(as.numeric(rec$value))
+    if (is.na(v) || v == 0) return(NULL)
+    return(sprintf('(%s)', format(v, digits = 17)))
+  }
+  if (grepl('^[A-Za-z][A-Za-z0-9_.]*$', rec$param) && rec$param != 'stationary') {
+    ed$declare(m, r, c)
+    return(rec$param)
+  }
+  sprintf('(%s)', rec$param)
 }
 
 # A model's parameter table opened to new latents (`newnames`, appended after
@@ -237,13 +308,16 @@ ctModelHigherOrder <- function(ctm, indices,diffusion=TRUE, crosseffects=FALSE,c
   # The parameter of a free cell, declared in PARS with all its settings --
   # transform, individual variation, predictor effects -- so an expression
   # elsewhere can read it; the cell itself then refers to that declaration.
-  # Nothing if PARS declares it already.
+  # Nothing if PARS declares it already. Where the caller then rewrites the
+  # cell, the declaration keeps that cell's place (`origin`).
+  origin <- list()
   declare <- function(m, r, c) {
     rec <- cell(m, r, c)
     if (is.null(rec) || is.na(rec$param)) return(invisible(FALSE))
     if (!any(pars$matrix == 'PARS' & pars$param %in% rec$param)) {
       put('PARS', sum(pars$matrix == 'PARS') + 1L, 1L, rec)
       declared <<- c(declared, rec$param)
+      origin[[rec$param]] <<- list(m = m, r = r, c = c)
     }
     invisible(TRUE)
   }
@@ -273,6 +347,9 @@ ctModelHigherOrder <- function(ctm, indices,diffusion=TRUE, crosseffects=FALSE,c
     moved <- which(pars$matrix %in% 'PARS' & pars$param %in% c(attached, declared))
     for (k in moved) {
       at <- which(!pars$matrix %in% 'PARS' & plain(pars$param) & pars$param == pars$param[k])
+      o <- origin[[pars$param[k]]]
+      if (!length(at) && !is.null(o)) at <- which(pars$matrix == o$m & pars$row == o$r &
+        pars$col == o$c)
       if (length(at)) rank[k] <- min(rank[at]) + 0.5
     }
     out <- pars[order(rank), ]
