@@ -6338,7 +6338,7 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
   if (is.null(result[["jumprecord"]])) {
     retried <- .ctBackendCorrectResult(result, model_spec,
       npar = length(as.numeric(start)),
-      tolerance = .ctJuliaOr(optimcontrol$gaptol, 1e-6),
+      tolerance = .ctBackendConvergeTol(optimcontrol),
       maxtries = .ctJuliaOr(optimcontrol$stallretries, 2L), gradient = gradient,
       optimise = stage,
       escape = function(r) .ctBackendStallEscape(r, optimcontrol, model_spec,
@@ -7332,6 +7332,11 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
     # objective resolved where that was more.
     gap_floor = if (is.null(result$gap_floor)) NA_real_ else
       as.numeric(result$gap_floor)[1L],
+    # What the run found its objective resolves (`_ctsem_resolution`), and
+    # the convergence bar that set: `convergence_tolerance`, or that where it
+    # is more, which the certification held the fit to as well.
+    resolution = .ctJuliaOr(result[["resolution"]], NA_real_)[1L],
+    convergence_floor = .ctJuliaOr(result[["converge_floor"]], NA_real_)[1L],
     # Which coordinates had gone flat when it stopped, named rather than
     # numbered, and how many times the progress half fired. More than one
     # trigger means the fit stalled, was found to be merely slow, and was

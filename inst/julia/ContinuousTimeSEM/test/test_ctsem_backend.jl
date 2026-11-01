@@ -1751,31 +1751,41 @@ end
     @test r.iterations > 1
 end
 
-@testset "the gap rule's tolerance rises to what the objective resolves" begin
+@testset "every bar on a gain rises to what the objective resolves" begin
     C = ContinuousTimeSEM
     # The window: nothing before five steps on the full objective, then the
-    # least of the last five; a coreset or batch step is no measurement.
+    # least of the last five; a coreset or batch step is no measurement, and a
+    # step the objective resolved -- its trapezoid within a quarter of its
+    # change -- enters as 0.
     ls = C.CTSEMDirectional()
     for e in (5.0, 4.0, 3.0, 2.0)
-        C._ctsem_resolution_step!(ls, e, true)
+        C._ctsem_resolution_step!(ls, e, 0.0, true)
     end
     @test C._ctsem_resolution(ls) == 0
-    C._ctsem_resolution_step!(ls, 1.0, false)
+    C._ctsem_resolution_step!(ls, 1.0, 0.0, false)
     @test isnan(ls.discrepancy) && C._ctsem_resolution(ls) == 0
-    C._ctsem_resolution_step!(ls, 6.0, true)
+    C._ctsem_resolution_step!(ls, 6.0, -20.0, true)
     @test C._ctsem_resolution(ls) == 2.0
-    C._ctsem_resolution_step!(ls, 7.0, true); C._ctsem_resolution_step!(ls, 8.0, true)
-    @test C._ctsem_resolution(ls) == 2.0
-    C._ctsem_resolution_step!(ls, 9.0, true); C._ctsem_resolution_step!(ls, 10.0, true)
-    @test C._ctsem_resolution(ls) == 6.0
-    @test C._ctsem_gap_floor(1e-8, ls, 0.1) == 0.1
-    @test C._ctsem_gap_floor(1e-8, ls, 0.0) == 1e-8
+    # A long step's third-order terms: missed by a tenth of its change.
+    C._ctsem_resolution_step!(ls, 1.0, -10.0, true)
+    @test ls.discrepancy == 1.0 && C._ctsem_resolution(ls) == 0
+    # A step the trust search refused on an exact Hessian sets the floor
+    # whatever the window holds, and every bar reads it, up to the cap; a bar
+    # turned off stays off.
+    C._ctsem_refused!(ls, 3e-5)
+    @test C._ctsem_resolution(ls) == 3e-5
+    @test C._ctsem_tolerance(1e-8, ls) == 3e-5 && C._ctsem_tolerance(1e-6, ls) == 3e-5
+    @test C._ctsem_tolerance(1e-3, ls) == 1e-3 && C._ctsem_tolerance(0.0, ls) == 0
+    @test C._ctsem_tolerance(1e-6, nothing) == 1e-6
+    C._ctsem_refused!(ls, 1e-6)
+    @test ls.refused == 3e-5
+    C._ctsem_refused!(ls, 2.0)
+    @test C._ctsem_tolerance(1e-6, ls) == C._CTSEM_RESOLUTION_CAP
     # An ill-conditioned quadratic whose gradient carries noise of 1e-3, as a
     # gradient through inner solves stopped at their tolerance does: its
     # steps disagree with their gradients by about 1e-5, far above a gap
-    # tolerance of 1e-10. Held at it (`newton_switch = 0` caps the floor),
-    # L-BFGS goes on to whatever ends it; with the floor it stops where the
-    # steps stop being resolved -- the same path, so never later.
+    # tolerance of 1e-10, and the gap rule stops where they stop being
+    # resolved rather than running to the iteration cap.
     D = collect(range(1.0, 1e3; length = 8))
     c = collect(range(-1.0, 1.0; length = 8))
     smooth = p -> -0.5 * sum(D .* (p .- c) .^ 2)
@@ -1783,20 +1793,51 @@ end
     m = _endgame_mock(smooth; g = p -> -(D .* (p .- c)) .+ 1e-3 .* noise(p))
     kw = (maxiter=400, gap_tol=1e-10, newton=false, certify=false,
         progress=false, verbose=false, overshoot_probe=:off)
-    held = C.ctsem_optimize(m, c .+ 1.0; kw..., newton_switch=0.0)
     r = C.ctsem_optimize(m, c .+ 1.0; kw...)
-    @test held.gap_floor == 1e-10
     @test 1e-9 < r.gap_floor < 1e-4
-    @test r.iterations <= held.iterations
+    @test r.gap_floor == r.resolution
+    @test r.iterations < 400
     @test smooth(c) - smooth(r.minimizer) < 1e-5
     d = filter(isfinite, r.trace[:discrepancy])
     @test length(d) == r.iterations && all(>=(0), d)
-    # A smooth objective resolves far below the tolerance, which stands, and
-    # the run is the one the rule held at it takes.
+    # A smooth objective resolves every step, and its bars stand.
     s = C.ctsem_optimize(_endgame_mock(smooth), c .+ 1.0; kw...)
-    s0 = C.ctsem_optimize(_endgame_mock(smooth), c .+ 1.0; kw..., newton_switch=0.0)
-    @test s.gap_floor == 1e-10
-    @test s.iterations == s0.iterations && s.minimizer == s0.minimizer
+    @test s.resolution < 1e-10 && s.gap_floor == 1e-10 && s.converge_floor == 1e-6
+end
+
+@testset "a maximum at a kink is certified at what the objective resolves" begin
+    C = ContinuousTimeSEM
+    # The affect pilot's certification (2026-11-01), in miniature: at a kink in
+    # one term the gradient is not the slope, so the exact Hessian's Newton
+    # step promises a gain that no step finds. Here the maximum is the kink at
+    # p1 = 0, where the gradient reads the right-hand slope, 0.005 - 0.01, and
+    # the step it promises, 1.25e-5 nats, goes left, where the objective falls.
+    # Held to 1e-6, that point was unconverged, and R sent the pilot back to
+    # L-BFGS and a second five-hour Hessian.
+    f = p -> -0.5 * ((p[1] - 0.005)^2 + 4 * (p[2] + 0.2)^2) - 0.01 * abs(p[1])
+    promised = 0.005^2 / 2
+    ls = C.CTSEMDirectional()
+    out = _endgame_run(_endgame_mock(f), [0.0, -0.2]; tol=1e-8, certify_tol=1e-6,
+        resolution=ls)
+    @test out.steps == 0
+    @test ls.refused ≈ promised && out.gain ≈ promised
+    @test out.gain <= C._ctsem_tolerance(1e-6, ls)
+    # And through the whole run, from a start the steps cross the kink from:
+    # converged, the verdict's bar the resolution, at the kink.
+    r = C.ctsem_optimize(_endgame_mock(f), [0.5, 0.3]; maxiter=200,
+        gap_tol=1e-8, converge_tol=1e-6, newton=true, certify=true,
+        progress=false, verbose=false, overshoot_probe=:off)
+    @test r.converged
+    @test r.resolution > 1e-6 && r.converge_floor == r.resolution
+    @test r.predicted_gain <= r.converge_floor
+    @test abs(r.minimizer[1]) < 1e-3 && abs(r.minimizer[2] + 0.2) < 1e-3
+    # The same quadratic without the kink resolves everything and certifies
+    # at the bar.
+    q = C.ctsem_optimize(_endgame_mock(p -> -0.5 * ((p[1] - 0.005)^2 +
+            4 * (p[2] + 0.2)^2)), [0.5, 0.3]; maxiter=200,
+        gap_tol=1e-8, converge_tol=1e-6, newton=true, certify=true,
+        progress=false, verbose=false, overshoot_probe=:off)
+    @test q.converged && q.resolution < 1e-10 && q.converge_floor == 1e-6
 end
 
 @testset "ctsem_optimize hands the endgame's numbers back" begin
