@@ -134,6 +134,17 @@ BENCH_VARIANTS <- list(
   # 'quadrature'`). Its climb is recorded in the lapcorr_* columns.
   refined = list(args = list(intoverpop = "quadrature"), objective = "quadrature"),
 
+  # The certification's bar stated in standard errors: the gap is half the
+  # squared distance from the maximum in them, so 0.01 se is 5e-5 nats and
+  # 0.02 se 2e-4, against the default 1e-6 (0.0014 se). L-BFGS's own rule
+  # follows at a hundredth of the bar (`.ctBackendInnerGapTol()`).
+  gap5e5 = list(optimcontrol = list(gaptol = 5e-5)),
+  gap2e4 = list(optimcontrol = list(gaptol = 2e-4)),
+  refined_gap5e5 = list(args = list(intoverpop = "quadrature"),
+    optimcontrol = list(gaptol = 5e-5), objective = "quadrature"),
+  refined_gap2e4 = list(args = list(intoverpop = "quadrature"),
+    optimcontrol = list(gaptol = 2e-4), objective = "quadrature"),
+
   # No fit: evaluate the objective and the references at the start. Used with
   # a stored best-known point to check that a reference still reproduces.
   evalonly = list(fit = FALSE),
