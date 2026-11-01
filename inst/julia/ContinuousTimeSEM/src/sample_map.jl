@@ -104,6 +104,20 @@ export ctsem_sample_map
 # misses the tails, a fit from it makes them light, and the latent target is
 # then heavy-tailed, where NUTS mixes slowly
 # (`scripts/marginal-default-2026-10/tri_saturate.R`).
+#
+# A component conditions on every earlier coordinate up to `_JMAP_TRI_FULL`
+# parameters, and above it on the `_JMAP_TRI_PARENTS` its draws depend on most
+# (`_jmap_tri_parents`), so its coefficients grow with the parameters rather
+# than with their square and the pooled draws learn it at any size. Above the
+# bound there was no map before. On a 50-parameter fixture (w8) four parents
+# gave 0.21-0.45 effective draws per 1,000 gradients over six seeds, the
+# whitening alone 0.03-0.05, short of the target at both of its seeds; on w6
+# (33) they gave 1.2 times the whitening's mean rate and 8 times its worst
+# seed's, the full map 1.0 and 6 times, two parents about as much as four and
+# eight less. Below the bound the full map stays: four parents trailed it on
+# four race fixtures of thirteen at 5-11 parameters, and at 21 (mvmix) one seed
+# of three ended at a min ESS of 17 with a mean 0.65 sd off
+# (`review/SAMPLING-sparse-map-2026-11-01.md`).
 
 const _JMAP_TRI_CAP = 3.0
 """Beyond about this many whitened sd an earlier coordinate stops bending a
@@ -111,8 +125,13 @@ later one's location and scale."""
 const _JMAP_TRI_SAT = 5.0
 _jmap_tri_sat(u) = _JMAP_TRI_SAT * tanh(u / _JMAP_TRI_SAT)
 _jmap_tri_dsat(u) = 1 - tanh(u / _JMAP_TRI_SAT)^2
-"""Theta's triangular map is learnt for up to this many free parameters."""
-const _JMAP_TRI_MAXPAR = 30
+"""Up to this many free parameters each of theta's components conditions on
+every earlier coordinate."""
+const _JMAP_TRI_FULL = 30
+"""Above `_JMAP_TRI_FULL` free parameters, how many earlier coordinates each of
+theta's components conditions on: those its draws depend on most."""
+const _JMAP_TRI_PARENTS = 4
+_jmap_tri_parent_count(n::Int) = n <= _JMAP_TRI_FULL ? n - 1 : _JMAP_TRI_PARENTS
 
 """
 Theta's triangular map. Component `k` conditions on the earlier coordinates
@@ -1330,15 +1349,19 @@ layer otherwise; the keywords are `ctsem_sample`'s, plus the map's: `windows`
 the map from the fit), `nsettle` (the re-tuning warm-up after each refit and
 before the kept draws), `ncheck` (a check window under the final map),
 `maxrows` (the most draws a refit reads), `cross` (each member's summary
-coupled to the free parameters outside its effects) and `report` (the layer's
+coupled to the free parameters outside its effects), `report` (the layer's
 objective, whose layout the effects are reported in: a unit whose effects are
-all integrated has no block on the hybrid objective).
+all integrated has no block on the hybrid objective), `theta_map` (theta's
+triangular map learnt; false keeps its whitening alone) and `theta_parents`
+(how many earlier coordinates each of its components conditions on; negative,
+`_jmap_tri_parent_count`'s rule).
 
 Returns `ctsem_sample`'s record, with the draws of theta and, with
 `save_effects`, of the natural deviations, plus the map's: `gradients` (every
 density evaluation and score pass, in gradients), the learning windows, and
 the kept draws' latent mean and sd per coordinate (`latent_mean`,
-`latent_sd`, theta's first).
+`latent_sd`, theta's first) and the most parents a component of theta's map
+conditions on (`theta_parents`, -1 without a map).
 """
 function ctsem_sample_map(laplace::CTSEMLaplaceObjective, values::AbstractVector;
     npar::Integer=length(values), nchains::Integer=4, nwarmup::Integer=75,
@@ -1352,7 +1375,7 @@ function ctsem_sample_map(laplace::CTSEMLaplaceObjective, values::AbstractVector
     windows::Union{Nothing,AbstractVector{<:Integer}}=nothing, nsettle::Integer=25,
     ncheck::Integer=25, maxrows::Integer=400, cross::Bool=true,
     report::Union{Nothing,CTSEMLaplaceObjective}=nothing, theta_map::Bool=true,
-    theta_parents::Integer=-1, theta_maxpar::Integer=_JMAP_TRI_MAXPAR)
+    theta_parents::Integer=-1)
 
     t0 = time()
     nchains = Int(nchains); nwarmup = Int(nwarmup); ndraws = Int(ndraws)
@@ -1405,9 +1428,9 @@ function ctsem_sample_map(laplace::CTSEMLaplaceObjective, values::AbstractVector
     eps = Float64(stepsize)
     windowlog = NamedTuple[]
     # Theta's triangular map is learnt from the windows' pooled draws, over a
-    # third window, up to `_JMAP_TRI_MAXPAR` parameters.
-    learn = theta_map && npar <= theta_maxpar
-    tparents = theta_parents < 0 ? npar - 1 : Int(theta_parents)
+    # third window.
+    learn = theta_map
+    tparents = theta_parents < 0 ? _jmap_tri_parent_count(npar) : Int(theta_parents)
     windows = windows === nothing ? (learn ? [40, 80, 160] : [40, 80]) : windows
     pooled = zeros(npar, 0)
     for (w, nw) in enumerate(windows)
