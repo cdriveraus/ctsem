@@ -274,7 +274,7 @@ RESULT_KEYS <- c("iterations", "f_calls", "g_calls", "maximum_loglik", "converge
   "stopped_by_gap", "stopped_by_stall", "stalled", "overshot", "saturated",
   "predicted_gain", "last_gain", "gradient_norm", "newton_steps", "newton_hessians",
   "newton_subset_hessians", "batch_sizes", "batch_iterations", "stall_escapes",
-  "stall_triggers", "gap_tol", "linesearch", "chunks", "overshoot_gain",
+  "stall_triggers", "gap_tol", "gap_floor", "linesearch", "chunks", "overshoot_gain",
   "stopped_by_stall", "stall_gain", "stop_reason", "jump_units",
   "placed_units", "frozen_units")
 rec$instrumented <- c(
