@@ -1048,7 +1048,13 @@
 # fit with the default 'hessian' does not -- 'checked''s DAIS stage is run
 # here too (`.ctPlaceDais()`), on the Laplace objective, and its normal is the
 # metric (`.ctBackendMetricSource()`, 'dais') and SMC's start. The fit's own
-# record is what the sampled fit replaces, so nothing else is kept.
+# record is what the sampled fit replaces, so nothing else is kept. A default
+# fit's sample call with and without it (2026-11-01,
+# review/SAMPLING-dais-in-sample-2026-11-01.md): on the 75-parameter time
+# series, 67 directions named, its 28 s took SMC from 22-23 stages to 8-10
+# and the call from 559-742 s to 326-358, at the same accuracy; on five small
+# models, 2-9 named, DAIS took 1-9 s and the calls were level within their
+# seeds' spread.
 #
 # `seed` draws both from a stream of their own, the caller's left as it was:
 # seeded from R's stream, two sample calls one after the other, the same
