@@ -3966,10 +3966,18 @@ function _laplace_newton_unit_mode(laplace::CTSEMLaplaceObjective, U::Integer,
     sstep = _laplace_scratch_vector!(laplace, Float64, d, :newton_sr1_s)
     rvec = _laplace_scratch_vector!(laplace, Float64, d, :newton_sr1_r)
     exact = true
-    # Whether the step that reached `u` was taken on an exact curvature: the
-    # origin counts as one, as it always did. And whether `fstore` holds an
-    # exact, unrepaired factorization, whose solve measures the distance left.
-    stepped_exact = true
+    # Whether the step that reached `u` was taken on an exact curvature, and
+    # whether `fstore` holds an exact, unrepaired factorization, whose solve
+    # measures the distance left. A start was reached by no step: from any
+    # start the first iterate's exact curvature measures the distance before
+    # the solve ends, and costs nothing where it ends there, since the term
+    # reads it (`final`). Counted as a step, as the origin once was, a start
+    # under the gradient bound ended the solve where it began: an anchor from
+    # the last accepted point, or a known mode, was then the unit's mode up to
+    # the bound over the curvature short of it, while a start a little further
+    # out went on to the mode, and the affect pilot's unit 201 read 2.4e-7
+    # lower at its anchors' own point than beside it.
+    stepped_exact = false
     factored_exact = false
     # The exact curvature at the point the solve ends on, formed there for the
     # last decision, which the term then reads instead of forming it again
@@ -3986,9 +3994,9 @@ function _laplace_newton_unit_mode(laplace::CTSEMLaplaceObjective, U::Integer,
         iterations = iteration
         small = d == 0 || maximum(abs, current.gradient) <
             _laplace_inner_tolerance(laplace, current.value)
-        # Nothing exact to measure the distance with -- the origin, or a
-        # curvature the factorization repaired: the bound is all there is.
-        if small && stepped_exact && !factored_exact
+        # Nothing exact to measure the distance with -- a step on a curvature
+        # the factorization repaired: the bound is all there is.
+        if small && (d == 0 || (stepped_exact && !factored_exact))
             converged = true
             break
         end
@@ -4560,16 +4568,15 @@ function ctsem_set_mode_sum!(on::Bool)
 end
 
 """
-The smallest eigenvalue of a mode's curvature, in prior units, below which it
-fades out of its unit's combination (`_laplace_mode_sum`): at a fold the mode
-meets a saddle, and its smallest eigenvalue, and with it the weight, reach
-zero there.
+The eigenvalue of a mode's curvature, in prior units, below which it fades out
+of its unit's combination (`_laplace_mode_sum`): at a fold the mode meets a
+saddle, and its smallest eigenvalue, and with it the weight, reach zero there.
 """
 const _LAPLACE_MODE_FADE = 0.1
 
 """
-The depth, in nats, of the valley towards a mode's nearest other maximum below
-which it fades out of its unit's combination (`_laplace_mode_sum`): the inner
+The depth, in nats, of a valley towards another maximum below which a mode
+fades out of its unit's combination (`_laplace_mode_sum`): the inner
 solve loses a maximum over a shallow valley well before its curvature
 vanishes, at 0.006 nats on the affect pilot.
 """
@@ -4744,15 +4751,17 @@ maximum's term, handed over to the next best as it fades out before the inner
 solve can lose it,
 
     T = sum_k pi_k t_k,   pi the shares `_laplace_mode_shares(f, t)`,
-    f_k = s(lambda_k / _LAPLACE_MODE_FADE) s(depth_k / _LAPLACE_MODE_DEPTH),
+    f_k = prod_i s(lambda_ki / _LAPLACE_MODE_FADE) prod_j s(depth_kj / _LAPLACE_MODE_DEPTH),
 
-`t_k` the mode's term, `lambda_k` its curvature's smallest eigenvalue,
-`depth_k` how far the valley towards its nearest other maximum lies below it
-(`_laplace_modes_geometry`: the seven points `_laplace_modes_separated` reads,
-in the soft-direction quadrature's coordinates), and `s` the smoothstep
-`_laplace_fade_weight`. Ranked by term, each maximum takes its fade of what the
-ones above it left: a best maximum at full weight is the term, whatever lies
-below it.
+`t_k` the mode's term, `lambda_ki` its curvature's eigenvalues, `depth_kj` how
+far the valley towards maximum `j` lies below it (`_laplace_modes_geometry`, in
+the soft-direction quadrature's coordinates), and `s` the smoothstep
+`_laplace_fade_weight`, one at and above one. Ranked by term, each maximum
+takes its fade of what the ones above it left: a best maximum at full weight
+is the term, whatever lies below it. Products, not the smallest eigenvalue and
+the nearest valley: a fade read off whichever of two is the smaller bends where
+they cross, as the valley did when it was read off the lowest of seven points
+(`_laplace_modes_geometry`).
 
 It is for optimising, not an exact integral of a multimodal unit (Charles,
 2026-10-29): continuous in the parameters, cheap, and giving the optimiser no
@@ -4825,12 +4834,13 @@ function _laplace_mode_sum(laplace::CTSEMLaplaceObjective, U::Integer,
         return _laplace_one_mode(terms[dominant], modes[dominant], prims[dominant])
     end
     fade, dscale = _LAPLACE_MODE_FADE, _LAPLACE_MODE_DEPTH
-    x = Float64[geo.geos[k].E.values[1] / fade for k in 1:K]
-    # Each mode's valley towards its nearest other maximum, below its height.
-    depth_to(k, j) = j == k ? Inf : geo.geos[k].g - geo.valley[k, j]
-    toward = Int[argmin([depth_to(k, j) for j in 1:K]) for k in 1:K]
-    y = Float64[max(depth_to(k, toward[k]), 0.0) / dscale for k in 1:K]
-    f = Float64[_laplace_fade_weight(x[k]) * _laplace_fade_weight(y[k]) for k in 1:K]
+    # Each mode's curvature eigenvalues, and its valleys towards the others
+    # below its height, each over its scale.
+    x = Vector{Float64}[geo.geos[k].E.values ./ fade for k in 1:K]
+    y = Vector{Float64}[Float64[j == k ? Inf :
+        max(geo.geos[k].g - geo.valley[k, j], 0.0) / dscale for j in 1:K] for k in 1:K]
+    f = Float64[prod(_laplace_fade_weight, x[k]) * prod(_laplace_fade_weight, y[k])
+        for k in 1:K]
     live = findall(>(0), f)
     if isempty(live)
         dominant = argmax(terms)
@@ -4845,11 +4855,11 @@ function _laplace_mode_sum(laplace::CTSEMLaplaceObjective, U::Integer,
     # dT = sum_k pi_k dt_k + sum_k c_k d log f_k: the shares depend on the
     # terms only through their ranking, which holds between ties, where the
     # combination is continuous, so c_k = f_k dT/df_k
-    # (`_laplace_mode_fade_coefficients`); d log f_k takes the eigenvalue's
-    # v' dM_k v and the valley's d depth_k = dg_k - d g(p), p the valley's
-    # point between mode k and mode j.
+    # (`_laplace_mode_fade_coefficients`); d log f_k takes each fading
+    # eigenvalue's v' dM_k v and each fading valley's d depth = dg_k - d g(p),
+    # p the valley's point between mode k and mode j.
     route = copy(pi)
-    fades = (geo=geo, x=x, y=y, toward=toward, live=live, f=f)
+    fades = (geo=geo, x=x, y=y, live=live, f=f)
     seeds = _laplace_mode_seeds(fades,
         _laplace_mode_fade_coefficients(shares, f, terms, value))
     return (value=value, modes=modes, prims=prims, pi=pi, route=route,
@@ -4933,7 +4943,7 @@ them by `f_k dT/df_k` of its terms, the refined fit's combination of placed
 rules by the same of their integrals (`_laplace_mode_fade_coefficients`).
 """
 function _laplace_mode_seeds(fades, c::Vector{Float64})
-    geo, x, y, toward = fades.geo, fades.x, fades.y, fades.toward
+    geo, x, y = fades.geo, fades.x, fades.y
     K = length(x)
     fade, dscale = _LAPLACE_MODE_FADE, _LAPLACE_MODE_DEPTH
     gbar = zeros(Float64, K)
@@ -4942,15 +4952,19 @@ function _laplace_mode_seeds(fades, c::Vector{Float64})
     for k in fades.live
         ck = c[k]
         ck == 0 && continue
-        sx = _laplace_fade_slope(x[k])
-        if sx != 0
-            v = geo.geos[k].E.vectors[:, 1]
-            Mbar[k] = (ck * sx / (_laplace_fade_weight(x[k]) * fade)) .* (v .* transpose(v))
+        E = geo.geos[k].E
+        for i in eachindex(x[k])
+            sx = _laplace_fade_slope(x[k][i])
+            sx == 0 && continue
+            v = E.vectors[:, i]
+            Mbar[k] === nothing && (Mbar[k] = zeros(Float64, length(v), length(v)))
+            Mbar[k] .+= (ck * sx / (_laplace_fade_weight(x[k][i]) * fade)) .*
+                (v .* transpose(v))
         end
-        sy = _laplace_fade_slope(y[k])
-        if sy != 0
-            e = ck * sy / (_laplace_fade_weight(y[k]) * dscale)
-            j = toward[k]
+        for j in 1:K
+            sy = _laplace_fade_slope(y[k][j])
+            sy == 0 && continue
+            e = ck * sy / (_laplace_fade_weight(y[k][j]) * dscale)
             t = geo.vt[k, j]
             gbar[k] += e
             push!(pts, (e=e, k=k, j=j, t=t,

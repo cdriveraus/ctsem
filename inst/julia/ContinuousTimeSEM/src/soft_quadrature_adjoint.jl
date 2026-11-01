@@ -894,11 +894,21 @@ Unit `U`'s maxima `modes` as their combination reads them
 (`_laplace_mode_sum`), in the soft-direction quadrature's coordinates
 (`_laplace_soft_quadrature_setup`): for each, its point `z0`, the unit objective `g`
 there and its curvature's eigendecomposition `E` (`geos`); for each pair, the
-valley between them, the lowest `g` at the seven interior points
-`_laplace_modes_separated` reads (`valley[k, j]`), and where on the segment it
-lies, as the fraction of the way from `k` (`vt[k, j]`). Numbers only, since the
-setup's closures hold the calling task's workspace. `nothing` where a mode's
-quadratic cannot be had.
+valley between them, the lowest `g` on the segment between them
+(`valley[k, j]`), and where on the segment it lies, as the fraction of the way
+from `k` (`vt[k, j]`). Numbers only, since the setup's closures hold the
+calling task's workspace. `nothing` where a mode's quadratic cannot be had.
+
+The valley is found at the seven interior points `_laplace_modes_separated`
+reads and, where it may fade either maximum (less than `_LAPLACE_MODE_DEPTH`
+below the lower), refined to the segment's minimum between the lowest one's
+neighbours (`_laplace_segment_min`). The lowest of seven points is a minimum of
+seven smooth functions of the parameters, kinked wherever two of them cross:
+on the affect pilot a unit's valley moved from the point at 3/4 to the one at
+7/8 just where a run's certification stalled, its lower maximum's fade and
+share bent there, and the Newton step was refused at every radius. The segment's
+minimum moves smoothly, and at it the valley's derivative is the one its point
+gives with the point held, which is what `_laplace_mode_sum_gradient!` reads.
 """
 function _laplace_modes_geometry(laplace::CTSEMLaplaceObjective, U::Integer,
     theta::Vector{Float64}, modes::AbstractVector)
@@ -917,22 +927,88 @@ function _laplace_modes_geometry(laplace::CTSEMLaplaceObjective, U::Integer,
     valley = fill(Inf, K, K)
     vt = zeros(Float64, K, K)
     for k in 1:K, j in (k + 1):K
-        zk, zj = geos[k].z0, geos[j].z0
-        lo, at = Inf, 0.5
+        h = let objf = objf, zk = geos[k].z0, zj = geos[j].z0
+            t -> _laplace_segment_value(objf, zk, zj, t)
+        end
+        lo, i0 = Inf, 4
         for i in 1:7
-            t = i / 8
-            v = Float64(objf(zk .+ t .* (zj .- zk)).value)
-            # Not finite on the way: separate, as `_laplace_modes_separated` reads it.
-            isfinite(v) || (v = -Inf)
-            if v < lo
-                lo, at = v, t
+            hi = h(i / 8)
+            if hi < lo
+                lo, i0 = hi, i
             end
+        end
+        at = i0 / 8
+        if isfinite(lo) && min(geos[k].g, geos[j].g) - lo < _LAPLACE_MODE_DEPTH
+            m = _laplace_segment_min(h, (i0 - 1) / 8, at, (i0 + 1) / 8, lo)
+            lo, at = m.value, m.t
         end
         valley[k, j] = valley[j, k] = lo
         vt[k, j] = at
         vt[j, k] = 1 - at
     end
     return (geos=geos, valley=valley, vt=vt)
+end
+
+# `g` at the fraction `t` of the way from `zk` to `zj`, `-Inf` where it is not
+# finite: separate, as `_laplace_modes_separated` reads it.
+function _laplace_segment_value(objf, zk::Vector{Float64}, zj::Vector{Float64}, t::Float64)
+    v = Float64(objf(zk .+ t .* (zj .- zk)).value)
+    return isfinite(v) ? v : -Inf
+end
+
+"""
+    _laplace_segment_min(h, a, x, b, hx)
+
+The minimum of `h` on `[a, b]` from `x` inside it, `h(x) = hx` no higher than
+at either end: Brent's method, golden sections and parabolic steps, to
+`sqrt(eps)` in `t`, the closest a minimum's place can be read from its values.
+`(t, value)`; `value` is `-Inf` where `h` was not finite at a trial.
+"""
+function _laplace_segment_min(h, a::Float64, x::Float64, b::Float64, hx::Float64)
+    golden = 0.3819660112501051
+    tol = sqrt(eps(Float64))
+    w = v = x
+    hw = hv = hx
+    d = e = 0.0
+    for _ in 1:100
+        mid = (a + b) / 2
+        tol1 = tol * abs(x) + 1e-12
+        abs(x - mid) <= 2 * tol1 - (b - a) / 2 && break
+        parabolic = false
+        if abs(e) > tol1
+            r = (x - w) * (hx - hv)
+            q = (x - v) * (hx - hw)
+            p = (x - v) * q - (x - w) * r
+            q = 2 * (q - r)
+            q > 0 && (p = -p)
+            q = abs(q)
+            if abs(p) < abs(q * e / 2) && p > q * (a - x) && p < q * (b - x)
+                e, d = d, p / q
+                (x + d - a < 2 * tol1 || b - x - d < 2 * tol1) &&
+                    (d = copysign(tol1, mid - x))
+                parabolic = true
+            end
+        end
+        if !parabolic
+            e = x >= mid ? a - x : b - x
+            d = golden * e
+        end
+        u = abs(d) >= tol1 ? x + d : x + copysign(tol1, d)
+        hu = h(u)
+        isfinite(hu) || return (t=u, value=-Inf)
+        if hu <= hx
+            u >= x ? (a = x) : (b = x)
+            v, hv, w, hw, x, hx = w, hw, x, hx, u, hu
+        else
+            u < x ? (a = u) : (b = u)
+            if hu <= hw || w == x
+                v, hv, w, hw = w, hw, u, hu
+            elseif hu <= hv || v == x || v == w
+                v, hv = u, hu
+            end
+        end
+    end
+    return (t=x, value=hx)
 end
 
 """

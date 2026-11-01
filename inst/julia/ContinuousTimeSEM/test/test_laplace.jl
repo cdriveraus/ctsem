@@ -767,6 +767,51 @@ end
     end
 end
 
+@testset "from any start the inner solve measures its distance before it ends" begin
+    # The gradient bound once ended a solve at its first iterate from any
+    # start, as from the origin: a start under the bound -- an anchor from the
+    # last accepted point, a known mode -- was taken for the mode, up to the
+    # bound over the curvature short of it, where a start a little further out
+    # went on to the mode. An anchored unit's term then read lower at the
+    # anchors' own point than beside it (the affect pilot's unit 201, by
+    # 2.4e-7). Started from each unit's mode moved along its softest direction
+    # to half the bound, the solve must end with the Newton step left on the
+    # exact curvature under `inner_tol`.
+    C = ContinuousTimeSEM
+    laplace, values = _fresh_nonlinear()
+    ctsem_laplace_evaluate(laplace, values)
+    theta = C._laplace_extend(laplace, collect(Float64, values))
+    Ls = C._laplace_popchols(theta, laplace.spec)
+    aws = C._laplace_workspace!(laplace, Float64, length(theta))
+    function left(U, u)
+        r = C._laplace_unit_objective_gradient(laplace, U, theta, Ls, u, aws,
+            zeros(length(u)))
+        M = C._laplace_block_dense!(zeros(length(u), length(u)),
+            C._laplace_unit_curvature(laplace, U, theta, Ls, u),
+            laplace.units.blocks[U])
+        return (step=maximum(abs, M \ collect(r.gradient)),
+            gradient=maximum(abs, r.gradient), value=r.value, M=M)
+    end
+    tested = 0
+    for U in eachindex(laplace.modes)
+        u = copy(laplace.modes[U])
+        isempty(u) && continue
+        at = left(U, u)
+        E = eigen(Symmetric(at.M))
+        v = E.vectors[:, 1]
+        bound = C._laplace_inner_tolerance(laplace, at.value)
+        start = u .+ (bound / (2 * E.values[1] * maximum(abs, v))) .* v
+        from = left(U, start)
+        # A start the bound alone would have ended on, short of the mode.
+        (from.gradient < bound && from.step > 10 * laplace.inner_tol) || continue
+        tested += 1
+        r = C._laplace_newton_unit_mode(laplace, U, theta, Ls, aws, start)
+        @test r.converged
+        @test left(U, r.u).step < 2 * laplace.inner_tol
+    end
+    @test tested > 0
+end
+
 @testset "the seeded gradient is exercised away from the optimum" begin
     # A single test point can hide a term that happens to vanish there. These
     # perturb the population scales and correlations, which are the parameters
