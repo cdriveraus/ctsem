@@ -244,8 +244,12 @@ test_that("a julia refit starts from the estimate and keeps the estimator", {
   # The prior the fit was estimated under, not one on every coordinate.
   expect_identical(refitted$args$input$priorscope, "randomCorr")
   expect_equal(refitted$model_spec$priors, fit$model_spec$priors)
-  # Same data, same objective, started at its optimum.
-  expect_equal(refitted$estimate$raw, fit$estimate$raw, tolerance = 1e-6)
+  # Same data, same objective, started at its optimum: each certified within
+  # the bar's standard errors of the maximum (`.ctBackendGapSe`), so the two
+  # within twice that of each other. A raw tolerance of 1e-6 held only while
+  # the bar was a gap of 1e-6; at 0.01 se the refit moved 2e-5.
+  expect_lt(ctsem:::.ctBackendHessianDistance(fit$uncertainty$hessian,
+    fit$estimate$raw, refitted$estimate$raw), 2 * ctsem:::.ctBackendGapSe)
 })
 
 test_that("a sampled julia fit is updated rather than refitted", {
