@@ -356,6 +356,15 @@ end
         @test abs(r.t - m) < 1e-7
         @test r.value ≈ -1 atol=1e-13
     end
+    # Two dips, the shallower on a point and the deeper midway between two:
+    # the lowest point is in the shallower, and refined there alone the
+    # valley would jump to the deeper's minimum once one of its points went
+    # lower. Every dip is refined, and the valley is the deeper's minimum.
+    dips = t -> -0.05 * exp(-(t - 0.3125)^2 / 0.0072) - 0.035 * exp(-(t - 0.75)^2 / 0.0072)
+    @test argmin([dips(i / 8) for i in 1:7]) == 6
+    v = C._laplace_segment_valley(dips, dips(0.0), dips(1.0))
+    @test v.value ≈ -0.05 atol=1e-9
+    @test abs(v.t - 0.3125) < 1e-3
 end
 
 @testset "a unit with two maxima is scored by the better one's rule" begin
