@@ -105,18 +105,19 @@ export ctsem_sample_map
 # then heavy-tailed, where NUTS mixes slowly
 # (`scripts/marginal-default-2026-10/tri_saturate.R`).
 #
-# A component conditions on every earlier coordinate up to `_JMAP_TRI_FULL`
-# parameters, and above it on the `_JMAP_TRI_PARENTS` its draws depend on most
-# (`_jmap_tri_parents`), so its coefficients grow with the parameters rather
-# than with their square and the pooled draws learn it at any size. Above the
-# bound there was no map before. On a 50-parameter fixture (w8) four parents
-# gave 0.21-0.45 effective draws per 1,000 gradients over six seeds, the
-# whitening alone 0.03-0.05, short of the target at both of its seeds; on w6
-# (33) they gave 1.2 times the whitening's mean rate and 8 times its worst
-# seed's, the full map 1.0 and 6 times, two parents about as much as four and
-# eight less. Below the bound the full map stays: four parents trailed it on
-# four race fixtures of thirteen at 5-11 parameters, and at 21 (mvmix) one seed
-# of three ended at a min ESS of 17 with a mean 0.65 sd off
+# A component conditions on at most `_JMAP_TRI_PARENTS` earlier coordinates,
+# those its draws depend on most (`_jmap_tri_parents`), so its coefficients do
+# not grow with the parameters and the pooled draws learn it at any size. Until
+# 2026-11-01 a component read every earlier coordinate, and above 30 parameters,
+# where the draws could not fit that, there was no map. On a 50-parameter
+# fixture (w8) four parents gave 0.21-0.45 effective draws per 1,000 gradients
+# over six seeds, the whitening alone 0.03-0.05, short of the target at both of
+# its seeds; on w6 (33) they gave 1.2 times the whitening's mean rate and 8
+# times its worst seed's, every earlier coordinate 1.0 and 6 times, two parents
+# about as much as four and eight less. Below 30 four parents and every earlier
+# coordinate were level: over fifteen race fixtures of 5-22 parameters the
+# ratio of their median rates had a geometric mean of 0.99, five a fifth or
+# more lower and four higher, so the one rule is kept
 # (`review/SAMPLING-sparse-map-2026-11-01.md`).
 
 const _JMAP_TRI_CAP = 3.0
@@ -125,13 +126,9 @@ later one's location and scale."""
 const _JMAP_TRI_SAT = 5.0
 _jmap_tri_sat(u) = _JMAP_TRI_SAT * tanh(u / _JMAP_TRI_SAT)
 _jmap_tri_dsat(u) = 1 - tanh(u / _JMAP_TRI_SAT)^2
-"""Up to this many free parameters each of theta's components conditions on
-every earlier coordinate."""
-const _JMAP_TRI_FULL = 30
-"""Above `_JMAP_TRI_FULL` free parameters, how many earlier coordinates each of
-theta's components conditions on: those its draws depend on most."""
+"""The most earlier coordinates each of theta's components conditions on: those
+its draws depend on most."""
 const _JMAP_TRI_PARENTS = 4
-_jmap_tri_parent_count(n::Int) = n <= _JMAP_TRI_FULL ? n - 1 : _JMAP_TRI_PARENTS
 
 """
 Theta's triangular map. Component `k` conditions on the earlier coordinates
@@ -442,7 +439,7 @@ component on at most `parents` earlier coordinates (`_jmap_tri_parents`); a
 component whose tails come out lighter than the normal's is fitted again with
 its tail weight held at the normal's.
 """
-function _jmap_tri_fit(U::AbstractMatrix; iters::Int=60, parents::Int=size(U, 1) - 1)
+function _jmap_tri_fit(U::AbstractMatrix; iters::Int=60, parents::Int=_JMAP_TRI_PARENTS)
     n, N = size(U)
     X = Matrix{Float64}(U)
     S = _jmap_tri_sat.(X)
@@ -514,7 +511,7 @@ it is while there are fewer than ten draws a coefficient of the largest
 component. At most 4000 draws are read, spread through the pool.
 """
 function _jmap_learn_tri(m::CTSEMJointMap, pooled::AbstractMatrix;
-    parents::Int=m.npar - 1)
+    parents::Int=_JMAP_TRI_PARENTS)
     n = m.npar
     N = size(pooled, 2)
     k = min(n - 1, parents)
@@ -1353,8 +1350,7 @@ coupled to the free parameters outside its effects), `report` (the layer's
 objective, whose layout the effects are reported in: a unit whose effects are
 all integrated has no block on the hybrid objective), `theta_map` (theta's
 triangular map learnt; false keeps its whitening alone) and `theta_parents`
-(how many earlier coordinates each of its components conditions on; negative,
-`_jmap_tri_parent_count`'s rule).
+(the most earlier coordinates each of its components conditions on).
 
 Returns `ctsem_sample`'s record, with the draws of theta and, with
 `save_effects`, of the natural deviations, plus the map's: `gradients` (every
@@ -1375,7 +1371,7 @@ function ctsem_sample_map(laplace::CTSEMLaplaceObjective, values::AbstractVector
     windows::Union{Nothing,AbstractVector{<:Integer}}=nothing, nsettle::Integer=25,
     ncheck::Integer=25, maxrows::Integer=400, cross::Bool=true,
     report::Union{Nothing,CTSEMLaplaceObjective}=nothing, theta_map::Bool=true,
-    theta_parents::Integer=-1)
+    theta_parents::Integer=_JMAP_TRI_PARENTS)
 
     t0 = time()
     nchains = Int(nchains); nwarmup = Int(nwarmup); ndraws = Int(ndraws)
@@ -1430,7 +1426,7 @@ function ctsem_sample_map(laplace::CTSEMLaplaceObjective, values::AbstractVector
     # Theta's triangular map is learnt from the windows' pooled draws, over a
     # third window.
     learn = theta_map
-    tparents = theta_parents < 0 ? _jmap_tri_parent_count(npar) : Int(theta_parents)
+    tparents = Int(theta_parents)
     windows = windows === nothing ? (learn ? [40, 80, 160] : [40, 80]) : windows
     pooled = zeros(npar, 0)
     for (w, nw) in enumerate(windows)
