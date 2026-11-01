@@ -348,24 +348,6 @@ end
 const _PLACED_STATIONARY = 1e-6
 
 """
-    _placed_leaf!(row, wv, P, U, b, u, start, theta, Ls, dL, positions, want_gradient)
-
-Leaf block `b` of unit `U`'s placed term, its ancestors held where `u` has
-them: the conditional mode by Newton from `start` (`_quadrature_leaf_rule!`),
-its precision, the block's point set (`sets[b]`, the unit's own by default)
-placed there; see the
-module docstring. With
-`want_gradient`, its gradient in `theta` at those ancestors into `row`, and
-into `wv` the raw-space vector whose loadings give its derivative in an
-ancestor's effects (`L_a' wv[rho_a]`): the node-weighted mean of the members'
-raw gradients, plus the gradient's derivative along the mode's direction `L v`,
-less the jets' `grad <Mbar, L'HL>` -- the same three terms as the `theta`
-gradient, without the chain through `L(theta)`, since an ancestor's effects
-reach the members only through their raw values. `u`'s leaf columns are left at
-the conditional mode. Returns `(ok, value, se)`, `se` the rule's error there
-(`_point_set_error`).
-"""
-"""
 A placed rule's points summed in one pass with a running maximum: `peak` the
 largest log term so far, `acc` the sum of `exp(t - peak)`, `acc2` of its
 squares, `racc` of the weights times each point's `r`, `repacc` by shift,
@@ -544,6 +526,24 @@ function _placed_leaf_points!(s::_PlacedSum, laplace::CTSEMLaplaceObjective, U::
     return true
 end
 
+"""
+    _placed_leaf!(row, wv, P, U, b, u, start, theta, Ls, dL, positions, want_gradient)
+
+Leaf block `b` of unit `U`'s placed term, its ancestors held where `u` has
+them: the conditional mode by Newton from `start` (`_quadrature_leaf_rule!`),
+its precision, the block's point set (`sets[b]`, the unit's own by default)
+placed there; see the
+module docstring. With
+`want_gradient`, its gradient in `theta` at those ancestors into `row`, and
+into `wv` the raw-space vector whose loadings give its derivative in an
+ancestor's effects (`L_a' wv[rho_a]`): the node-weighted mean of the members'
+raw gradients, plus the gradient's derivative along the mode's direction `L v`,
+less the jets' `grad <Mbar, L'HL>` -- the same three terms as the `theta`
+gradient, without the chain through `L(theta)`, since an ancestor's effects
+reach the members only through their raw values. `u`'s leaf columns are left at
+the conditional mode. Returns `(ok, value, se)`, `se` the rule's error there
+(`_point_set_error`).
+"""
 function _placed_leaf!(row::Vector{Float64}, wv::Vector{Float64}, P::CTSEMLaplacePlaced,
     U::Int, b::Int, u::Vector{Float64}, start::Vector{Float64},
     theta::Vector{Float64}, Ls, dL, positions, want_gradient::Bool;
