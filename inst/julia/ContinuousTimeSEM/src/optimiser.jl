@@ -1919,8 +1919,13 @@ _ctsem_lbfgs_scale(::Nothing, dinv) = dinv
 #   step budget, `maxit`, which made 30 parameters a boundary where the
 #   hand-over changed for no change in cost;
 # * the Laplace route's is central differences of the gradient, `2 npar`
-#   gradients, and early hand-overs there made fits slower (0.6x with them,
-#   1.3 to 1.9x without, dev1). So L-BFGS runs to its own stopping rule there.
+#   gradients. L-BFGS hands over early there too, by the same rule. Early
+#   hand-overs made Laplace fits slower (0.6x with them, 1.3 to 1.9x
+#   without, dev1) while the finish formed a fresh Hessian at every slow
+#   step; walking one (below), they cost the bench's 50 Laplace cells the
+#   same time and their refined fits 5 per cent less, for 26 more Hessians
+#   and no end value lower by more than 0.011 (CT-SEM
+#   review/bench/2026-11-01-gapfloor.md).
 #
 # On either route the finish takes one Hessian where L-BFGS stopped and walks
 # it (the chord), updated by SR1 after each step, and buys a fresh one only

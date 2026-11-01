@@ -3068,11 +3068,11 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
     coreseter === nothing || (coreseter.gap_tol = Float64(gap_tol))
     # The endgame (`_ctsem_newton_finish`), on a route that has one. Where a
     # Hessian costs a few gradients it runs whenever there is a stopping rule
-    # for it to finish, and L-BFGS hands over as soon as its predicted gain is
-    # below `newton_switch`. Where it costs `2 npar` gradients (Laplace) it
-    # runs only when a certification will read it, and L-BFGS runs to its own
-    # rule first: the finish's Hessian is then the one the certification would
-    # have formed anyway, rather than an extra one.
+    # for it to finish. Where it costs `2 npar` gradients (Laplace) it runs
+    # only when a certification will read it, so the finish's Hessian is the
+    # one the certification would have formed anyway. Either way L-BFGS hands
+    # over once its predicted gain is below `newton_switch` and the stage has
+    # spent a Hessian's cost (`handover`, below).
     cheap = _ctsem_cheap_hessian(objective)
     route_curvature = _ctsem_finish_curvature(objective)
     hessian_cost = _ctsem_hessian_cost(objective, length(start_values))
