@@ -1304,18 +1304,22 @@ test_that("gradient = 'forward' still gives a Laplace fit's certification its cu
   expect_gte(fit$optim$hessian_evaluations, 1L)
 })
 
-test_that("a Laplace fit ends on one Hessian, the one the optimiser's finish took", {
+test_that("a Laplace fit's certification reads the finish's Hessian and forms none of its own", {
   skip_without_julia()
   # A Laplace Hessian is 2 npar gradients. The finish takes one where L-BFGS
-  # stops, keeps it for its steps, and hands it to the certification and the
-  # standard errors, which form no other. Before 2026-09-25 no finish ran on
-  # this route and R formed the certification's Hessian itself, so the engine
-  # reported none.
+  # hands over -- early, on its predicted gain once the stage has spent a
+  # Hessian's cost, or where it stops -- walks on it, and forms another only
+  # where the walk ends past `hessianreuse` from it; the certification and
+  # the standard errors read the last, and form no other. Before 2026-09-25
+  # no finish ran on this route and R formed the certification's Hessian
+  # itself, so the engine reported none. One at the hand-over and one where
+  # the walk ends is the most a fit this small should take.
   fit <- suppressWarnings(suppressMessages(ctFit(.laplace_test_data(),
     .laplace_test_model(), backend = "julia", intoverpop = "laplace",
     optimcontrol = list(checks = FALSE, finishsamples = 50))))
-  expect_equal(fit$optim$newton_hessians, 1L)
-  expect_equal(fit$optim$hessian_evaluations, 1L)
+  expect_gte(fit$optim$newton_hessians, 1L)
+  expect_lte(fit$optim$newton_hessians, 2L)
+  expect_equal(fit$optim$hessian_evaluations, fit$optim$newton_hessians)
   expect_length(fit$optim$corrections, 0L)
   expect_equal(fit$uncertainty$certification$status, "certified")
   # Where it was taken, and that it describes the estimate the fit reports.
