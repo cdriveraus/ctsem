@@ -377,6 +377,8 @@ ctModelImprove <- function(fit, covariates = NULL,
           change = batch[[1]]$label,
           file = if (!is.null(checkpoint)) paste0(checkpoint, '.refit.rds')))
       refits <- .ctImproveBestOf(ran, vapply(runs, `[[`, 0L, 'b'), length(batch))
+      # The best of several starts keeps their wall time, for the report.
+      attr(refits, 'seconds') <- attr(ran, 'seconds')
       slowest <- max(slowest, attr(ran, 'seconds'))
       say("Round ", step, ": refit took ", .ctImproveRefitReport(refits))
       for (b in seq_along(batch)) {
@@ -1491,6 +1493,8 @@ print.ctModelProposals <- function(x, digits = 3, ...) {
   handles <- .ctBackendWarmWorkers(current, workers, values = .ctFitRawEstimate(current),
     threads = threads)
   if (.ctBackendWarmWait(handles) < 1L) return(inhere())
+  # Side by side, the refits' wall time is the batch's.
+  started <- proc.time()[['elapsed']]
   futures <- lapply(seq_along(edits), function(i) if (!i %in% ok) NULL else
     tryCatch(future::future(utils::getFromNamespace('.ctImproveRefit', 'ctsem')(current,
       edits[[i]]$model, edits[[i]]$data, threads, starts[[i]], edits[[i]]$args),
@@ -1501,7 +1505,7 @@ print.ctModelProposals <- function(x, digits = 3, ...) {
     tryCatch(future::value(futures[[i]]), error = function(e)
       structure(conditionMessage(e), class = 'try-error', condition = e))
   })
-  structure(out, seconds = seconds)
+  structure(out, seconds = max(seconds, proc.time()[['elapsed']] - started))
 }
 
 # The best of each proposal's refits by log likelihood (`which` gives the

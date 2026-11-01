@@ -206,6 +206,7 @@
       module$ctsem_laplace_sequential_mixture(.ctJuliaObjective(fit, hybrid = TRUE),
         .ctJuliaNumericVector(raw),
         particles = as.integer(getOption('ctsem.sequential.particles', 512L)),
+        seed = as.integer(getOption('ctsem.sequential.seed', 20261011L)),
         compact = isTRUE(compact)) else
       module$ctsem_laplace_sequential(arguments[[1L]], .ctJuliaNumericVector(raw),
         compact = isTRUE(compact)))
