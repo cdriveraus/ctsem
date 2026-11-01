@@ -1,6 +1,6 @@
 # gapfloor grid: the baseline's Laplace default cells, for the gap rule's floor
-# (`_ctsem_gap_floor`) against juliaFit at the same merge: two builds, the
-# cells paired by id.
+# (`_ctsem_gap_floor`, now `_ctsem_tolerance`) against juliaFit at the same
+# merge: two builds, the cells paired by id.
 #
 cf_gaussian.lap.d1.s1.default           cf_gaussian  1    laplace    default:1                default
 cf_gaussian.lap.d1.s2.default           cf_gaussian  1    laplace    default:2                default

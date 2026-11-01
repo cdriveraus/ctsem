@@ -437,6 +437,23 @@
   value
 }
 
+# The bar a certification holds one engine result to: `tolerance`, or where the
+# run found its objective resolves nothing finer, what the run's own verdict
+# held it to (`converge_floor`, the engine's `_ctsem_tolerance`), so that the
+# engine and this read one number. A run on a fit whose objective is not
+# smooth at its maximum -- a unit's term at a kink, a rule's nodes -- has a
+# finish whose Newton step no trust radius finds any of, and held to the bar
+# alone it was resumed for more of what it had just shown it could not find:
+# the affect pilot (2026-11-01) for a second five-hour Hessian, on 6.1e-5 nats.
+# A little room over the floor, because this gap is from R's decomposition of
+# the Hessian the engine decomposed, which agrees with it to its last bits.
+#' @keywords internal
+.ctBackendResolvedTolerance <- function(result, tolerance) {
+  floor <- suppressWarnings(as.numeric(result[["converge_floor"]])[1L])
+  if (!length(floor) || !is.finite(floor) || floor <= tolerance) return(tolerance)
+  floor * (1 + 1e-6)
+}
+
 # Which directions the post-fit overshoot probe pulls back, from the controls.
 #
 # `"magnitude"` (the default) pulls back prefixes of the coordinates ordered by
@@ -1181,11 +1198,13 @@
     }
     if (is.null(endgame)) return(NULL)
     gap <- .ctBackendOptimGap(endgame$hessian, as.numeric(r$gradient)[seq_len(npar)])
-    list(endgame = endgame, gap = gap,
-      certification = .ctBackendCertificationRecord(gap, endgame$probe,
-        tolerance = tolerance, saturated = isTRUE(r$saturated),
-        overshot = isTRUE(r$overshot), parnames = parnames,
-        saddle = endgame$saddle))
+    bar <- .ctBackendResolvedTolerance(r, tolerance)
+    certification <- .ctBackendCertificationRecord(gap, endgame$probe,
+      tolerance = bar, saturated = isTRUE(r$saturated),
+      overshot = isTRUE(r$overshot), parnames = parnames,
+      saddle = endgame$saddle)
+    certification$resolution <- .ctJuliaOr(r[["resolution"]], NA_real_)
+    list(endgame = endgame, gap = gap, bar = bar, certification = certification)
   }
   # A run that walked off to a limit (the stall watch's "diverged") has no
   # maximum at finite values to certify or to resume towards: a Hessian there
@@ -1231,7 +1250,7 @@
       if (!status %in% c("suboptimal", "notmaximum")) break
       if (identical(status, "notmaximum") && !isTRUE(result$overshot) &&
           isTRUE(result$newton_ladder_tried) &&
-          isTRUE(is.finite(gap$gap) && gap$gap <= tolerance)) {
+          isTRUE(is.finite(gap$gap) && gap$gap <= checked$bar)) {
         break
       }
       if (spent) break
@@ -1280,6 +1299,11 @@
       endgame <- checked$endgame
       certification <- checked$certification
     }
+  }
+  if (verbose > 0 && isTRUE(certification$certified) &&
+      isTRUE(certification$tolerance > tolerance)) {
+    message("Certified to what the objective resolves, ",
+      signif(certification$tolerance, 2), " (bar ", signif(tolerance, 2), ")")
   }
   list(result = result, certification = certification,
     hessian = if (is.null(endgame)) NULL else endgame$hessian,

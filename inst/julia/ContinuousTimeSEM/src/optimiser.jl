@@ -3060,7 +3060,13 @@ it is below it, and an escape has to gain more. `tol`, the fit's inner
 tolerance (a hundredth of the other by default), is for what is not: a gain
 predicted by a matrix taken elsewhere, the chord's, or a refreshed one's
 first step, has to fall below it, as L-BFGS's own prediction does, since such
-a prediction can be optimistic.
+a prediction can be optimistic. Both are read through the run's resolution,
+`resolution` (the run's `CTSEMDirectional`, or `nothing`): each is
+`_ctsem_tolerance` of its base there, so they rise with the run's other bars.
+A step the trust search refuses at every radius on the exact Hessian at the
+point is recorded there (`_ctsem_refused!`): the objective does not resolve
+the gain that Hessian promised, and where that raises the certification's bar
+past the gain, the point is converged.
 
 `hessian0`, the Hessian of the MAXIMISED objective at `hessian0_at`, is one the
 caller holds -- the certification's, for a stage it resumed -- and is walked on
@@ -3120,9 +3126,13 @@ function _ctsem_newton_finish(objective, x0, f0, G0, fg!; tol::Real=1e-8,
         reporter=nothing, hessian0=nothing, hessian0_at=nothing,
         krylov_min_cost::Real=_CTSEM_KRYLOV_MIN_COST, final::Symbol=:exact,
         jump::Union{Nothing,CTSEMJump}=nothing,
-        krylov_base::Union{Nothing,Matrix{Float64}}=nothing)
+        krylov_base::Union{Nothing,Matrix{Float64}}=nothing,
+        resolution::Union{Nothing,CTSEMDirectional}=nothing)
     final in (:exact, :walked) || throw(ArgumentError(
         "newton final must be exact or walked, got $(final)"))
+    # The two bars as the run's resolution has them now (`_ctsem_tolerance`).
+    tol_now() = _ctsem_tolerance(tol, resolution)
+    certify_now() = _ctsem_tolerance(certify_tol, resolution)
     curvature in (:exact, :chord, :subset, :krylov) || throw(ArgumentError(
         "newton curvature must be exact, chord, subset or krylov, got $(curvature)"))
     valueof = value_at === nothing ? (y -> _ctsem_probe_value(objective, y)) :
@@ -3579,11 +3589,11 @@ function _ctsem_newton_finish(objective, x0, f0, G0, fg!; tol::Real=1e-8,
             # tolerance of 2) the finish re-formed its Hessian after 5 steps,
             # then 1, then 1, each time to close part of what was already
             # within the tolerance.
-            if at_x && gain < certify_tol
+            if at_x && gain < certify_now()
                 converged = true
                 break
             end
-            if gain < tol
+            if gain < tol_now()
                 # On the exact variant a gap is closed when the Hessian here
                 # says so. One from an earlier point can call it closed on a
                 # plateau that is still rising, and the steps then stopped:
@@ -3669,8 +3679,13 @@ function _ctsem_newton_finish(objective, x0, f0, G0, fg!; tol::Real=1e-8,
             if !trial.ok
                 # The model promises nothing the objective can represent at
                 # any radius: a stale matrix is replaced, and on the exact
-                # one here the steps are over.
-                at_x && break
+                # one here the steps are over, the gain it promised being
+                # what the objective does not resolve (`_ctsem_refused!`).
+                if at_x
+                    _ctsem_refused!(resolution, gain)
+                    converged = gain <= certify_now()
+                    break
+                end
                 H = hess(x); Hs = H; hat = copy(x); exact = true; at_x = true
                 krylov = false
                 H === nothing && break
@@ -3844,7 +3859,7 @@ function _ctsem_newton_finish(objective, x0, f0, G0, fg!; tol::Real=1e-8,
                     take_steps || break
                     nt = newton(H, G, radius)
                     gain = nt === nothing ? Inf : nt.gain
-                    (nt === nothing || gain < tol || steps >= maxit + 5) && break
+                    (nt === nothing || gain < tol_now() || steps >= maxit + 5) && break
                     trial = trust(H, nt, radius, x, f, G, watching && seen === nothing)
                     if watching
                         verdict = watch_verdict(trial, x, seen, crept)
@@ -3856,7 +3871,8 @@ function _ctsem_newton_finish(objective, x0, f0, G0, fg!; tol::Real=1e-8,
                             watching = false; seen = nothing; crept = 0
                         end
                     end
-                    trial.ok || break
+                    # On the exact Hessian at the point, as in the walk.
+                    trial.ok || (_ctsem_refused!(resolution, gain); break)
                     Gn = similar(G)
                     fg!(nothing, Gn, trial.x); gcalls += 1
                     all(isfinite, Gn) || break
@@ -3903,7 +3919,7 @@ function _ctsem_newton_finish(objective, x0, f0, G0, fg!; tol::Real=1e-8,
             escapes >= max_escapes && break
             ladder_tried = true
             tried = _ctsem_saddle_ladder(valueof, x, -f, split, -G; ladder=ladder,
-                enough=certify_tol)
+                enough=certify_now())
             fcalls[] += tried.evaluations
             saddle_walked = tried.walked
             saddle_gain = tried.best === nothing ? 0.0 : tried.best.value + f
@@ -3913,7 +3929,7 @@ function _ctsem_newton_finish(objective, x0, f0, G0, fg!; tol::Real=1e-8,
                 # The point the ladder measured, through the optimiser's own
                 # trial path: a point the route refuses a gradient at is not one
                 # to continue from.
-                if isfinite(fn) && f - fn > certify_tol
+                if isfinite(fn) && f - fn > certify_now()
                     ladder_gain += f - fn
                     x = collect(Float64, tried.best.point); f = fn; G = Gn
                     steps += 1; escapes += 1
@@ -3944,7 +3960,7 @@ function _ctsem_newton_finish(objective, x0, f0, G0, fg!; tol::Real=1e-8,
         (flat_escape && escapes < max_escapes) || break
         walked = _ctsem_flat_ladder(fg!, x, f, G, split; lengths=probe_lengths)
         fcalls[] += walked.fcalls; gcalls += walked.gcalls
-        (walked.best !== nothing && f - walked.best.f > certify_tol &&
+        (walked.best !== nothing && f - walked.best.f > certify_now() &&
             flat_allowed(x, walked.best.point)) || break
         x = collect(Float64, walked.best.point); f = walked.best.f
         G = walked.best.G

@@ -445,8 +445,12 @@
       length(stored$certification$status)) {
     stored$certification
   } else {
+    # At the bar the run that reached the estimate found its objective
+    # resolves (`.ctBackendResolvedTolerance()`).
     .ctBackendCertification(fit, uncertaintyfit$hessian,
-      tolerance = .ctBackendGapTolerance(fit))
+      tolerance = .ctBackendResolvedTolerance(
+        list(converge_floor = fit$optim$convergence_floor),
+        .ctBackendGapTolerance(fit)))
   }
   # And the identifiability report, for the same reason: it is a statement
   # about the curvature this call just used. A fit made with `estonly = TRUE`

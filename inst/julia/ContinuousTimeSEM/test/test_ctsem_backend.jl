@@ -1751,52 +1751,107 @@ end
     @test r.iterations > 1
 end
 
-@testset "the gap rule's tolerance rises to what the objective resolves" begin
+@testset "every bar on a gain rises to what the objective cannot resolve" begin
     C = ContinuousTimeSEM
-    # The window: nothing before five steps on the full objective, then the
-    # least of the last five; a coreset or batch step is no measurement.
+    # The steps' window: nothing before five steps on the full objective, then
+    # the least of the last five; a coreset or batch step is no measurement.
+    # It raises L-BFGS's gap rule alone.
     ls = C.CTSEMDirectional()
     for e in (5.0, 4.0, 3.0, 2.0)
         C._ctsem_resolution_step!(ls, e, true)
     end
-    @test C._ctsem_resolution(ls) == 0
+    @test C._ctsem_step_resolution(ls) == 0
     C._ctsem_resolution_step!(ls, 1.0, false)
-    @test isnan(ls.discrepancy) && C._ctsem_resolution(ls) == 0
+    @test isnan(ls.discrepancy) && C._ctsem_step_resolution(ls) == 0
     C._ctsem_resolution_step!(ls, 6.0, true)
-    @test C._ctsem_resolution(ls) == 2.0
+    @test C._ctsem_step_resolution(ls) == 2.0
     C._ctsem_resolution_step!(ls, 7.0, true); C._ctsem_resolution_step!(ls, 8.0, true)
-    @test C._ctsem_resolution(ls) == 2.0
+    @test C._ctsem_step_resolution(ls) == 2.0
     C._ctsem_resolution_step!(ls, 9.0, true); C._ctsem_resolution_step!(ls, 10.0, true)
-    @test C._ctsem_resolution(ls) == 6.0
-    @test C._ctsem_gap_floor(1e-8, ls, 0.1) == 0.1
-    @test C._ctsem_gap_floor(1e-8, ls, 0.0) == 1e-8
-    # An ill-conditioned quadratic whose gradient carries noise of 1e-3, as a
-    # gradient through inner solves stopped at their tolerance does: its
-    # steps disagree with their gradients by about 1e-5, far above a gap
-    # tolerance of 1e-10. Held at it (`newton_switch = 0` caps the floor),
-    # L-BFGS goes on to whatever ends it; with the floor it stops where the
-    # steps stop being resolved -- the same path, so never later.
+    @test C._ctsem_step_resolution(ls) == 6.0
+    @test C._ctsem_gap_floor(1e-8, ls) == C._CTSEM_RESOLUTION_CAP
+    @test C._ctsem_gap_floor(0.0, ls) == 0
+    @test C._ctsem_resolution(ls) == 0 && C._ctsem_tolerance(1e-6, ls) == 1e-6
+    # A step the finish's trust search refused at every radius on an exact
+    # Hessian raises every bar, the gap rule's with them, up to the cap; a bar
+    # turned off stays off.
+    lr = C.CTSEMDirectional()
+    C._ctsem_refused!(lr, 3e-5)
+    @test C._ctsem_resolution(lr) == 3e-5
+    @test C._ctsem_tolerance(1e-8, lr) == 3e-5 && C._ctsem_tolerance(1e-6, lr) == 3e-5
+    @test C._ctsem_gap_floor(1e-8, lr) == 3e-5
+    @test C._ctsem_tolerance(1e-3, lr) == 1e-3 && C._ctsem_tolerance(0.0, lr) == 0
+    @test C._ctsem_tolerance(1e-6, nothing) == 1e-6
+    C._ctsem_refused!(lr, 1e-6)
+    @test lr.refused == 3e-5
+    C._ctsem_refused!(lr, 2.0)
+    @test C._ctsem_tolerance(1e-6, lr) == C._CTSEM_RESOLUTION_CAP
+    # An ill-conditioned quadratic whose value carries noise of 1e-6, as a
+    # value through inner solves stopped at their tolerance does: its steps
+    # disagree with their gradients by about that, far above a gap tolerance
+    # of 1e-10, and the gap rule stops where they stop being resolved rather
+    # than running to the iteration cap. Nothing was refused, so the other
+    # bars stand. Noise in the gradient alone, as this test had until
+    # 2026-11-01, is no such objective: the line search accepts steps on the
+    # value, and on Julia 1.13 L-BFGS reached the maximum to 1e-10 regardless
+    # (its noise was a `hash`, whose values 1.13 changed; `Xoshiro`'s it
+    # did not).
     D = collect(range(1.0, 1e3; length = 8))
     c = collect(range(-1.0, 1.0; length = 8))
     smooth = p -> -0.5 * sum(D .* (p .- c) .^ 2)
-    noise = p -> [hash((p, k)) / typemax(UInt) - 0.5 for k in 1:8]
-    m = _endgame_mock(smooth; g = p -> -(D .* (p .- c)) .+ 1e-3 .* noise(p))
+    noisy = p -> smooth(p) + 1e-6 * (rand(Random.Xoshiro(reinterpret(UInt64, sum(p)))) - 0.5)
+    m = _endgame_mock(noisy; g = p -> -(D .* (p .- c)), h = p -> -Matrix(Diagonal(D)))
     kw = (maxiter=400, gap_tol=1e-10, newton=false, certify=false,
         progress=false, verbose=false, overshoot_probe=:off)
-    held = C.ctsem_optimize(m, c .+ 1.0; kw..., newton_switch=0.0)
     r = C.ctsem_optimize(m, c .+ 1.0; kw...)
-    @test held.gap_floor == 1e-10
     @test 1e-9 < r.gap_floor < 1e-4
-    @test r.iterations <= held.iterations
+    @test r.resolution == 0 && r.converge_floor == 1e-6
+    @test r.iterations < 400
     @test smooth(c) - smooth(r.minimizer) < 1e-5
     d = filter(isfinite, r.trace[:discrepancy])
     @test length(d) == r.iterations && all(>=(0), d)
-    # A smooth objective resolves far below the tolerance, which stands, and
-    # the run is the one the rule held at it takes.
+    # A smooth objective resolves far below the tolerance, which stands.
     s = C.ctsem_optimize(_endgame_mock(smooth), c .+ 1.0; kw...)
-    s0 = C.ctsem_optimize(_endgame_mock(smooth), c .+ 1.0; kw..., newton_switch=0.0)
-    @test s.gap_floor == 1e-10
-    @test s.iterations == s0.iterations && s.minimizer == s0.minimizer
+    @test s.gap_floor == 1e-10 && s.resolution == 0 && s.converge_floor == 1e-6
+end
+
+@testset "a point whose gradient is not its slope is certified at what it resolves" begin
+    C = ContinuousTimeSEM
+    # The affect pilot's certification (2026-11-01), in miniature: where the
+    # gradient is not the slope, the exact Hessian's Newton step promises a
+    # gain that no step finds. Here the maximum is a kink at p1 = 0, where the
+    # gradient reads the right-hand slope, 0.005 - 0.01, and the step it
+    # promises, 1.25e-5 nats, goes left, where the objective falls. Held to
+    # 1e-6, such a point was unconverged, and R sent the pilot back to L-BFGS
+    # and a second five-hour Hessian.
+    f = p -> -0.5 * ((p[1] - 0.005)^2 + 4 * (p[2] + 0.2)^2) - 0.01 * abs(p[1])
+    promised = 0.005^2 / 2
+    ls = C.CTSEMDirectional()
+    out = _endgame_run(_endgame_mock(f), [0.0, -0.2]; tol=1e-8, certify_tol=1e-6,
+        resolution=ls)
+    @test out.steps == 0
+    @test ls.refused ≈ promised && out.gain ≈ promised
+    @test out.gain <= C._ctsem_tolerance(1e-6, ls)
+    # And through the whole run: a quadratic whose gradient, within 1e-3 of
+    # its maximum, carries a bias that no point there cancels -- what a value
+    # and a gradient that disagree near the optimum look like. L-BFGS stops
+    # on a line search it cannot pass, the finish's exact step is refused,
+    # and the run is converged at the bar that set, near the maximum.
+    q = p -> -0.5 * ((p[1] - 0.3)^2 + 4 * (p[2] + 0.2)^2)
+    bias = [0.004, 0.0]
+    near = p -> sqrt((p[1] - 0.3)^2 + (p[2] + 0.2)^2) < 1e-3
+    m = _endgame_mock(q; g = p -> ForwardDiff.gradient(q, p) .+ (near(p) ? bias : 0 .* bias))
+    kw = (maxiter=200, gap_tol=1e-8, converge_tol=1e-6, newton=true, certify=true,
+        progress=false, verbose=false, overshoot_probe=:off)
+    r = C.ctsem_optimize(m, [0.5, 0.3]; kw...)
+    @test r.converged
+    @test 1e-6 < r.resolution <= bias[1]^2 / 2 && r.converge_floor == r.resolution
+    @test r.predicted_gain <= r.converge_floor
+    @test q([0.3, -0.2]) - q(r.minimizer) < 1e-6
+    # The same quadratic with its own gradient refuses nothing and certifies
+    # at the bar.
+    s = C.ctsem_optimize(_endgame_mock(q), [0.5, 0.3]; kw...)
+    @test s.converged && s.resolution == 0 && s.converge_floor == 1e-6
 end
 
 @testset "ctsem_optimize hands the endgame's numbers back" begin
@@ -2245,13 +2300,19 @@ ContinuousTimeSEM._ctsem_local_columns(o::_LocalQuadratic, x::AbstractVector,
     withlocal = C3._ctsem_lbfgs(fg!, zeros(n); diagonal=true, maxiter=2000,
         g_tol=1e-6, local_curvature=lc)
     @test lc.builds >= 1
-    # Each stops where its largest gradient is under `g_tol`, which places it
-    # within `|H^-1| sqrt(n) g_tol` of the minimum and no closer: a relative
-    # bar of 1e-5 sat at that distance, and a runner's last bits failed it
-    # (juliaFit 241deaa7, by 3 per cent).
+    # A run that stops where its largest gradient is under `g_tol` is within
+    # `|H^-1| sqrt(n) g_tol` of the minimum and no closer: a relative bar of
+    # 1e-5 sat at that distance, and a runner's last bits failed it (juliaFit
+    # 241deaa7, by 3 per cent). The plain run can stop on its line search
+    # instead, on this curvature of 1e8 against 4: on dev1 (2026-11-01) it did
+    # after 98 iterations, at max|g| 4.3e-4 and 8.0e-7 from the minimum
+    # against that bar's 7.4e-7, with 1.3e-11 left to gain. Either stop is the
+    # minimum for any purpose; what is asserted is the one it reports.
     reach = opnorm(inv(H)) * sqrt(n) * 1e-6
-    @test norm(withlocal.minimizer .+ H \ g0) <= reach
-    @test norm(plain.minimizer .+ H \ g0) <= reach
+    @test withlocal.g_converged && norm(withlocal.minimizer .+ H \ g0) <= reach
+    gp = g0 .+ H * plain.minimizer
+    @test plain.g_converged ? norm(plain.minimizer .+ H \ g0) <= reach :
+        (plain.linesearch_failed && dot(gp, H \ gp) / 2 < 1e-9)
     @test withlocal.iterations < plain.iterations
 end
 

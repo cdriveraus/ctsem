@@ -1706,15 +1706,18 @@ trapezoid of its end gradients by, `|f1 - f0 - (g0 + g1)'s / 2|`, exact for a
 quadratic, so on a smooth objective it shrinks as the cube of the step while
 the gain shrinks as the square; NaN where the step was on a coreset or batch.
 `recent` holds the last `_CTSEM_RESOLUTION_STEPS` of them from steps on the
-full objective, which `_ctsem_resolution` reads.
+full objective, which `_ctsem_step_resolution` reads. `refused` is the largest
+gain an exact Hessian at its own point promised and the finish's trust search
+could not find at any radius (`_ctsem_refused!`), 0 until one is refused.
 """
 mutable struct CTSEMDirectional
     dphi0::Float64
     discrepancy::Float64
     recent::Vector{Float64}
+    refused::Float64
 end
 
-CTSEMDirectional() = CTSEMDirectional(NaN, NaN, Float64[])
+CTSEMDirectional() = CTSEMDirectional(NaN, NaN, Float64[], 0.0)
 
 """The improvement the last accepted step was predicted to make, or `Inf`."""
 function _ctsem_predicted_gain(ls::CTSEMDirectional)
@@ -1727,7 +1730,7 @@ const _CTSEM_RESOLUTION_STEPS = 5
     _ctsem_resolution_step!(ls, discrepancy, full)
 
 Records an accepted step's discrepancy (`CTSEMDirectional`), into the window
-`_ctsem_resolution` reads where the step was on the full objective.
+`_ctsem_step_resolution` reads where the step was on the full objective.
 """
 function _ctsem_resolution_step!(ls::CTSEMDirectional, discrepancy::Real, full::Bool)
     ls.discrepancy = full ? Float64(discrepancy) : NaN
@@ -1738,40 +1741,102 @@ function _ctsem_resolution_step!(ls::CTSEMDirectional, discrepancy::Real, full::
 end
 
 """
-    _ctsem_resolution(ls)
+    _ctsem_step_resolution(ls)
 
-The smallest gain the objective has resolved lately: the least discrepancy
-over the last `_CTSEM_RESOLUTION_STEPS` steps on the full objective, 0 before
-there are that many. A gap rule asks L-BFGS's predicted gain to fall below
-`gap_tol`, and that is a smooth objective's to meet. An objective whose value
-moves with where its inner solves stop, or with a rule's nodes, disagrees with
-its own gradients by more than that, and below its disagreement the line
-search accepts and refuses steps on that alone: L-BFGS then walks at about
-the size of it, never under `gap_tol` and never failing a search, to the
-iteration cap. The affect pilot's Laplace objective resolves about 1e-7
-against the Laplace route's 1e-8. So the gap rule's tolerance is raised to
-this (`_ctsem_gap_floor`), and the finish, whose steps are on an exact
-Hessian, takes over where five steps in a row resolved no less than the gain
-L-BFGS still predicts. The least of five, so that a single step whose
-third-order terms were large does not raise it: those shrink as the steps
-do, faster than the gain.
+The smallest gain L-BFGS's steps suggest the objective resolves: the least
+discrepancy over the last `_CTSEM_RESOLUTION_STEPS` steps on the full
+objective, 0 before there are that many. A gap rule asks L-BFGS's predicted
+gain to fall below `gap_tol`, and that is a smooth objective's to meet. An
+objective whose value moves with where its inner solves stop, or with a rule's
+nodes, disagrees with its own gradients by more than that, and below its
+disagreement the line search accepts and refuses steps on that alone: L-BFGS
+then walks at about the size of it, never under `gap_tol` and never failing a
+search, to the iteration cap. The affect pilot's Laplace objective resolves
+about 1e-7 against the Laplace route's 1e-8. The least of five, so that a
+single step whose third-order terms were large does not raise it.
+
+It raises the gap rule alone (`_ctsem_gap_floor`), whose own prediction is of
+the same kind. Five long steps' third-order terms read as it too: the bench's
+ten-iteration prior warm-ups read 1e-3 to 3.3e-2 here
+(`review/bench/2026-11-01-gapfloor.md`), harmless against predictions of 0.3
+to 12 nats there, and no measure of what an exact model's gain can be
+certified to. No rule on the steps alone separates the two: one that counted
+only steps whose trapezoid missed their change by a quarter, entering others
+as 0, lost noise as large as the gains, which half the steps then meet.
 """
-function _ctsem_resolution(ls::CTSEMDirectional)
+function _ctsem_step_resolution(ls::CTSEMDirectional)
     length(ls.recent) < _CTSEM_RESOLUTION_STEPS && return 0.0
     return minimum(ls.recent)
 end
 
 """
-    _ctsem_gap_floor(gap_tol, ls, cap)
+    _ctsem_resolution(ls)
 
-The gap rule's tolerance: `gap_tol`, or what the objective resolves where that
-is more (`_ctsem_resolution`), up to `cap`, the cheap route's hand-over
-(`newton_switch`). A model predicting more than that is not yet in the
-quadratic region, where a long step's own third-order terms could disagree
-with its gradients.
+The smallest gain the run has shown the objective cannot resolve, 0 until it
+has (`refused`): an exact Hessian at its own point whose step the finish's
+trust search refused at every radius, down to where the model promised less
+than the value's roundoff. A smooth objective whose gradient is its slope
+cannot do that, whether the cause is noise as large as the gain, a term that
+is not smooth there, or a gradient that is not the value's. Every bar on a
+gain of the objective reads it (`_ctsem_tolerance`), so they rise together.
+
+On the affect pilot (2026-11-01) the certification's Hessian promised 6.1e-5
+nats and no step found any of it; held to 1e-6, the certification sent the run
+back to L-BFGS, whose line search then failed twice, and to a second
+five-hour Hessian. Kept for the run: what an objective cannot resolve at one
+point it does not resolve beside it, and the bars it raises are capped
+(`_CTSEM_RESOLUTION_CAP`).
 """
-_ctsem_gap_floor(gap_tol::Real, ls::CTSEMDirectional, cap::Real) =
-    max(Float64(gap_tol), min(_ctsem_resolution(ls), Float64(cap)))
+_ctsem_resolution(ls::CTSEMDirectional) = ls.refused
+
+"""
+    _ctsem_refused!(ls, gain)
+
+Records that the finish's trust search found none of `gain`, the gain an exact
+Hessian at its own point promised (`_ctsem_resolution`).
+"""
+function _ctsem_refused!(ls::CTSEMDirectional, gain::Real)
+    (isfinite(gain) && gain > ls.refused) && (ls.refused = Float64(gain))
+    return ls
+end
+_ctsem_refused!(::Nothing, gain::Real) = nothing
+
+"""
+    _ctsem_tolerance(base, ls)
+
+A bar on a gain of the objective: `base`, or what the run has shown the
+objective cannot resolve where that is more (`_ctsem_resolution`), up to
+`_CTSEM_RESOLUTION_CAP`. Every such bar in a run is this with its own base --
+the gap rule's `gap_tol` (through `_ctsem_gap_floor`), the certification's
+`converge_tol`, the finish's step bar, the escapes', the stall and overshoot
+probes', the mode rounds' -- so they rise together, to the same number, and
+R's certification reads the same (`converge_floor` in the result). A base of
+0, a bar turned off, stays off.
+"""
+_ctsem_tolerance(base::Real, ls::CTSEMDirectional) = base > 0 ?
+    max(Float64(base), min(_ctsem_resolution(ls), _CTSEM_RESOLUTION_CAP)) : Float64(base)
+_ctsem_tolerance(base::Real, ::Nothing) = Float64(base)
+
+"""
+    _ctsem_gap_floor(gap_tol, ls)
+
+The gap rule's tolerance, L-BFGS's and the coreset stages': every bar's
+(`_ctsem_tolerance`), or what L-BFGS's own steps suggest the objective
+resolves where that is more (`_ctsem_step_resolution`), up to the same cap.
+"""
+_ctsem_gap_floor(gap_tol::Real, ls::CTSEMDirectional) = gap_tol > 0 ?
+    max(_ctsem_tolerance(gap_tol, ls),
+        min(_ctsem_step_resolution(ls), _CTSEM_RESOLUTION_CAP)) : Float64(gap_tol)
+
+"""
+The most any bar rises to (`_ctsem_tolerance`, `_ctsem_gap_floor`): 0.005
+nats, a tenth of a standard error from the maximum (`sqrt(2 * 0.005)`), where
+an estimate's error stops being negligible against its uncertainty. An
+objective that resolves nothing finer is not certified by raising its bars
+further. The gap rule's floor was capped at `newton_switch`, 0.1 nats, until
+2026-11-01, when it was that rule's alone.
+"""
+const _CTSEM_RESOLUTION_CAP = 0.005
 
 """
 The per-objective pieces of the shared optimiser.
@@ -3243,6 +3308,8 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
         # own scaling, so this is not the invariant decrement. The exact check
         # after the fit is what certifies, and what resumes with a tightened
         # rule when this stopped too early.
+        # The coreset stages' gap rule is L-BFGS's (`_ctsem_gap_floor`).
+        coreseter === nothing || (coreseter.gap_tol = _ctsem_gap_floor(gap_tol, directional))
         # Neither rule while a batch is still growing: its objective is not the
         # fit's, and a batch that has gone quiet is a batch about to grow.
         batching() && return false
@@ -3253,7 +3320,7 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
         end
         if handover[] > 0
             predicted = _ctsem_predicted_gain(directional)
-            if predicted < _ctsem_gap_floor(gap_tol, directional, newton_switch) ||
+            if predicted < _ctsem_gap_floor(gap_tol, directional) ||
                     (predicted < handover[] && latest.iteration >= hessian_cost)
                 stopped_by_gap[] = true
                 return true
@@ -3268,8 +3335,8 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
                 _ctsem_stall_verdict!(stall, trace, latest.iteration, objective,
                 _ctsem_params(objective), current_x,
                 _ctsem_saturation_range(objective, current_x), stall_ratio;
-                tolerance=converge_tol, progress=_ctsem_probe_progress(reporter),
-                report=stall_report)
+                tolerance=_ctsem_tolerance(converge_tol, directional),
+                progress=_ctsem_probe_progress(reporter), report=stall_report)
             # Stuck on progress alone (a resumed stage), walking off to a
             # limit, or stalled and flat with somewhere better to go: different
             # findings, and only the last hands back a point to resume from.
@@ -3515,7 +3582,8 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
                     "there are kept as starts and the run goes on"))
             elseif stop_reason in ("gap", "linesearch", "gradient", "progress")
                 taken = _ctsem_take_search_modes!(objective, minimizer, found)
-                took = isfinite(taken.change) && abs(taken.change) > _CTSEM_MODE_RESUME_TOL
+                took = isfinite(taken.change) &&
+                    abs(taken.change) > _ctsem_tolerance(_CTSEM_MODE_RESUME_TOL, directional)
                 took || (searched_at = copy(minimizer))
                 took && progress && _ctsem_mode_note(reporter, label, @sprintf(
                     "a search where the run stopped found other maxima for %d unit(s), moving the objective by %+.3g; they are kept and the run goes on",
@@ -3599,7 +3667,10 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
             flat_rtol=flat_rtol, handback=early && affordable,
             certify_tol=Float64(converge_tol), flat_escape=_ctsem_flat_escape(objective),
             flat_allowed=(from, to) -> _ctsem_flat_allowed(objective, from, to,
-                Float64(converge_tol)),
+                _ctsem_tolerance(converge_tol, directional)),
+            # Its bars rise with the run's (`_ctsem_tolerance`), and a step it
+            # cannot find on an exact Hessian raises them (`_ctsem_refused!`).
+            resolution=directional,
             reporter=reporter,
             hessian0=held_hessian, hessian0_at=held_hessian_at,
             krylov_min_cost=krylov_min_cost, final=Symbol(newton_final),
@@ -3784,10 +3855,12 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
     # than the estimate.
     result_extra = _ctsem_optimise_result_extra(objective, final, call_log)
     # And the verdict itself, which every route reaches the same way and in one
-    # place: see `_ctsem_optimise_verdict`.
+    # place: see `_ctsem_optimise_verdict`. Against the bar the run's
+    # resolution set (`_ctsem_tolerance`), as R's certification reads it.
+    converge_floor = _ctsem_tolerance(converge_tol, directional)
     verdict = _ctsem_optimise_verdict(objective, minimizer, start_values,
         final.value, gradient_norm, _ctsem_predicted_gain(directional),
-        _ctsem_last_gain(trace), saturated_parameters, g_tol, converge_tol;
+        _ctsem_last_gain(trace), saturated_parameters, g_tol, converge_floor;
         # A stage asked for no iterations has not stalled.
         # Not after a jump the route named: the run is handed on from there,
         # and the probe's pullbacks cost minutes on the fit this was built for.
@@ -3848,7 +3921,7 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
             _ctsem_predicted_gain(directional), " log likelihood still ",
             "available and ", _ctsem_last_gain(trace),
             " gained on its last iteration, against a tolerance of ",
-            converge_tol, " (largest gradient ", gradient_norm,
+            converge_floor, " (largest gradient ", gradient_norm,
             "); reporting this as not converged")
     return (
         minimizer=minimizer,
@@ -3867,7 +3940,7 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
             anchored.missed_values,
         anchor_missed_gain=anchored === nothing ? 0.0 : anchored.missed_gain,
         anchor_missed_resume=anchored !== nothing && isfinite(anchored.missed_gain) &&
-            abs(anchored.missed_gain) > _CTSEM_MODE_RESUME_TOL,
+            abs(anchored.missed_gain) > _ctsem_tolerance(_CTSEM_MODE_RESUME_TOL, directional),
         # Modes the run put in its objective's known modes on its way, and how
         # many times it took some and carried on (`CTSEMFoundModes`), for the
         # caller's known modes; `[0]` where none.
@@ -4054,14 +4127,17 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
         chunks=ctsem_max_chunks().max_chunks,
         gradient_norm=gradient_norm,
         converge_tol=Float64(converge_tol),
+        # What the objective resolved (`_ctsem_resolution`) and the bar the
+        # verdict read for it, which R's certification reads too.
+        resolution=_ctsem_resolution(directional),
+        converge_floor=converge_floor,
         last_gain=_ctsem_last_gain(trace),
         # What the last step was predicted to gain, and the rule it was judged
         # against. `Inf` when no line search ran, and `0` when the rule was off;
         # `gap_floor` is the tolerance it last applied (`_ctsem_gap_floor`).
         predicted_gain=_ctsem_predicted_gain(directional),
         gap_tol=Float64(gap_tol),
-        gap_floor=gap_tol > 0 ? _ctsem_gap_floor(gap_tol, directional, newton_switch) :
-            Float64(gap_tol),
+        gap_floor=_ctsem_gap_floor(gap_tol, directional),
         linesearch=linesearch,
         # See `ctsem_laplace_optimize`: a disjunction of the L-BFGS's flags
         # includes the x and f criteria, which a line search that stops making
