@@ -899,16 +899,9 @@ valley between them, the lowest `g` on the segment between them
 from `k` (`vt[k, j]`). Numbers only, since the setup's closures hold the
 calling task's workspace. `nothing` where a mode's quadratic cannot be had.
 
-The valley is found at the seven interior points `_laplace_modes_separated`
-reads and, where it may fade either maximum (less than `_LAPLACE_MODE_DEPTH`
-below the lower), refined to the segment's minimum between the lowest one's
-neighbours (`_laplace_segment_min`). The lowest of seven points is a minimum of
-seven smooth functions of the parameters, kinked wherever two of them cross:
-on the affect pilot a unit's valley moved from the point at 3/4 to the one at
-7/8 just where a run's certification stalled, its lower maximum's fade and
-share bent there, and the Newton step was refused at every radius. The segment's
-minimum moves smoothly, and at it the valley's derivative is the one its point
-gives with the point held, which is what `_laplace_mode_sum_gradient!` reads.
+The valley is the segment's minimum (`_laplace_segment_valley`), and at it the
+valley's derivative is the one its point gives with the point held, which is
+what `_laplace_mode_sum_gradient!` reads.
 """
 function _laplace_modes_geometry(laplace::CTSEMLaplaceObjective, U::Integer,
     theta::Vector{Float64}, modes::AbstractVector)
@@ -930,23 +923,57 @@ function _laplace_modes_geometry(laplace::CTSEMLaplaceObjective, U::Integer,
         h = let objf = objf, zk = geos[k].z0, zj = geos[j].z0
             t -> _laplace_segment_value(objf, zk, zj, t)
         end
-        lo, i0 = Inf, 4
-        for i in 1:7
-            hi = h(i / 8)
-            if hi < lo
-                lo, i0 = hi, i
-            end
-        end
-        at = i0 / 8
-        if isfinite(lo) && min(geos[k].g, geos[j].g) - lo < _LAPLACE_MODE_DEPTH
-            m = _laplace_segment_min(h, (i0 - 1) / 8, at, (i0 + 1) / 8, lo)
-            lo, at = m.value, m.t
-        end
-        valley[k, j] = valley[j, k] = lo
-        vt[k, j] = at
-        vt[j, k] = 1 - at
+        v = _laplace_segment_valley(h, geos[k].g, geos[j].g)
+        valley[k, j] = valley[j, k] = v.value
+        vt[k, j] = v.t
+        vt[j, k] = 1 - v.t
     end
     return (geos=geos, valley=valley, vt=vt)
+end
+
+"""
+    _laplace_segment_valley(h, gk, gj)
+
+The valley between two maxima of heights `gk` and `gj` at the ends of a
+segment, `h(t)` the objective at the fraction `t` of the way from the first:
+the lowest of the seven interior points `_laplace_modes_separated` reads, and
+where it may fade either maximum (less than `_LAPLACE_MODE_DEPTH` below the
+lower), the lowest of the segment's minima at every dip those points show,
+each refined between its point's neighbours (`_laplace_segment_min`).
+`(value, t)`.
+
+Not the lowest point alone: seven points are a minimum of seven smooth
+functions of the parameters, kinked wherever two of them cross. On the affect
+pilot a unit's valley moved from the point at 3/4 to the one at 7/8 just where
+a run's certification stalled; its lower maximum's fade and share bent there,
+and the Newton step was refused at every radius. Nor the dip of the lowest
+point alone, refined: where two dips lie on the segment the lowest point can
+pass from one to the other while the deeper stays deeper, and the valley would
+jump between their minima. Refined at every dip it moves smoothly, except
+where two dips' own minima cross, a bend of the minimum's kind. A dip narrower
+than the points' spacing can lie between two of them, unseen until it
+reaches one; every dip an eighth of the segment wide is seen.
+"""
+function _laplace_segment_valley(h, gk::Float64, gj::Float64)
+    hs = Float64[h(i / 8) for i in 1:7]
+    lo, i0 = findmin(hs)
+    at = i0 / 8
+    isfinite(lo) || return (value=lo, t=at)
+    # A dip deeper than this fades neither maximum, and refining it only
+    # deepens it; where the lowest point is one, so is the valley.
+    reach = min(gk, gj) - _LAPLACE_MODE_DEPTH
+    lo > reach || return (value=lo, t=at)
+    for i in 1:7
+        hs[i] > reach || continue
+        left = i == 1 ? gk : hs[i - 1]
+        right = i == 7 ? gj : hs[i + 1]
+        (hs[i] <= left && hs[i] <= right) || continue
+        m = _laplace_segment_min(h, (i - 1) / 8, i / 8, (i + 1) / 8, hs[i])
+        if m.value <= lo
+            lo, at = m.value, m.t
+        end
+    end
+    return (value=lo, t=at)
 end
 
 # `g` at the fraction `t` of the way from `zk` to `zj`, `-Inf` where it is not
