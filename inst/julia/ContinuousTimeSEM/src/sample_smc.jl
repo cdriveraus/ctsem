@@ -91,8 +91,11 @@ the chains are counted for it before any is lengthened;
 the same reversal makes draw `k` of a chain that started at `x0` carry
 `(pi / c)(x_k) / (pi / c)(x0)`, times whatever the last stage's moves left
 owing at `x0`, and the draws are resampled by those weights
-(`final_correction_ess` is the fraction kept); the chain diagnostics are the
-chains' own, before the resampling. A coreset that follows the cloud poorly
+(`final_correction_ess` is the fraction kept). The effective sizes returned
+are the chains' own times that fraction, which is what the corrected draws
+carry and what the targets above count; reported as the chains' own, a run
+on lin_re_aug whose correction kept 0.49 read 283 against a target of 200
+where its draws carried 138. A coreset that follows the cloud poorly
 makes the run slower, not its posterior different, which is what makes it
 safe to run by default: `coreset = false` is the oracle.
 
@@ -109,7 +112,14 @@ particle. It starts as many as the last stage's moves suggest
 where its moves began and where they ended is its autocorrelation at that
 lag, extended to one draw as an AR(1) decay (`_smc_move_tau`). Where their
 effective size falls short it starts more, from the particles not yet used,
-and only once every particle runs does it extend the chains. An unused
+and only once every particle runs does it extend the chains. A few chains of
+20 draws read their worst effective size over the coordinates, bulk and
+tail, low -- 55 at 42 chains on nonlin_re where its 200 chains read 656, two
+fifths of the proportional 138 -- so a step grown by that shortfall can start
+every particle. Growing at most twofold a check was measured and did not pay:
+3 per cent fewer chains over four small models at three seeds, as many
+draws on the time series, where chains short of every particle take the
+confirming batch (review/SAMPLING-dais-in-sample-2026-11-01.md). An unused
 particle is an independent start, worth many draws of a chain that mixes
 slowly, and the moves' short lag does not see a slow tail: on the time
 series, where long NUTS chains take about 44 draws an effective draw, the
@@ -1030,10 +1040,13 @@ function ctsem_sample_smc(objective, values::AbstractVector;
 
     draws, accept, divergent = pooled.draws, pooled.accept, pooled.divergent
     bound, depth, energy = pooled.bound, pooled.depth, pooled.energy
-    # The chains' own diagnostics, before any correction; no R-hat (see the
-    # file comment).
+    # The chains' effective sizes times the share the correction keeps, which
+    # is what the corrected draws carry and what the targets counted; no
+    # R-hat (see the file comment).
     diagnostics = ctsem_sample_diagnostics(draws, nch)
-    diagnostics = merge(diagnostics, (rhat=fill(NaN, length(diagnostics.rhat)),))
+    diagnostics = merge(diagnostics, (rhat=fill(NaN, length(diagnostics.rhat)),
+        ess=diagnostics.ess .* final_correction,
+        ess_tail=diagnostics.ess_tail .* final_correction))
     if reweigh
         nfin = count(isfinite, lw)
         if nfin > 0

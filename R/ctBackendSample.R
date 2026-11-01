@@ -2080,8 +2080,8 @@ print.ctSampleDiagnostics <- function(x, ...) {
     if (length(sizes)) cat("  particles moved on a coreset of ",
       paste(unique(range(sizes)), collapse = "-"), " of ", x$nunits,
       " units; the final chains' correction to the full density kept ",
-      round(100 * x$final_correction_ess), "% of their effective size\n",
-      sep = "")
+      round(100 * x$final_correction_ess), "% of their effective size, ",
+      "and the sizes reported are after it\n", sep = "")
   }
   bound <- .ctSampleDivergentBound(x)
   cat("  divergent: ", x$divergent, " of ", total,
