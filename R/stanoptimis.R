@@ -1462,7 +1462,11 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,
     warning('Initialisation vector contains NAs, replacing with zeros')
     optimArgs$init[is.na(optimArgs$init)] <- 0
   }
-  
+  # A plain vector, whatever shape the caller built it in: mize 0.3.0 refuses a
+  # one-column matrix ("par must be a non-empty numeric vector"), which 0.2.5
+  # took, and every one of ctLOO's subject-wise refits failed on it.
+  optimArgs$init <- as.numeric(optimArgs$init)
+
   # initialise cluster ------------------------------------------------------
   if(cores > 1){
     if(standata$recompile > 0){
