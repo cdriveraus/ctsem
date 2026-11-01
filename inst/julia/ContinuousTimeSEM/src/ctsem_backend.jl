@@ -3084,12 +3084,15 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
     # is taken only once the stage has spent at least what a Hessian costs
     # (the callback below): forming one then, and throwing it away if its
     # first step shows the hand-over was early, at most doubles the fit. A
-    # Hessian dearer than that is formed where L-BFGS stops by its own rule,
-    # as on the Laplace route. Judged by a size until 2026-10-17 -- within
-    # `newton_maxit` parameters, and before that on the marginal route at
-    # any size -- a 529-parameter fit (ECLS-K, dev2) handed over with 140 nats
-    # still to climb while L-BFGS was gaining 2.5 nats a minute.
-    handover = Ref(finishing && cheap ?
+    # Hessian dearer than that is formed where L-BFGS stops by its own rule.
+    # Judged by a size until 2026-10-17 -- within `newton_maxit` parameters,
+    # and before that on the marginal route at any size -- a 529-parameter
+    # fit (ECLS-K, dev2) handed over with 140 nats still to climb while
+    # L-BFGS was gaining 2.5 nats a minute. On the Laplace route too: a stage
+    # creeping at 0.01 nats an iteration, as the affect pilot's did for days,
+    # otherwise has no hand-over before the cap, its gains far above any gap
+    # tolerance the objective can resolve.
+    handover = Ref(finishing ?
         max(Float64(gap_tol), Float64(newton_switch)) : Float64(gap_tol))
     # A callback rather than Optim's `show_trace`, which prints one dense line
     # per iteration whatever the model costs -- thousands on a fast one, and on
