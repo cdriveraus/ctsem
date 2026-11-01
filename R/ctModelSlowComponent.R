@@ -84,6 +84,26 @@ ctModelSlowComponent <- function(ctm, indices = seq_len(ctm$n.latent)) {
   ed$finish()
 }
 
+# Latent i driven by slow process s, which the model has for another latent:
+# the effect and the two's initial covariance freed, as ctModelSlowComponent()
+# writes them for the latent it adds a slow process for.
+.ctSlowShare <- function(ctm, i, s) {
+  nm <- ctm$latentNames
+  hi <- max(i, s); lo <- min(i, s)
+  ed <- .ctParsLatentEditor(ctm, character())
+  ed$free('DRIFT', i, s, paste0('drift_', nm[i], '_', nm[s]), tipred = FALSE)
+  ed$free('T0VAR', hi, lo, paste0('T0var_', nm[hi], '_', nm[lo]), tipred = FALSE)
+  ed$finish()
+}
+
+# Whether slow process s does not drive latent i yet: its effect fixed at zero.
+.ctSlowShareFree <- function(ctm, i, s) {
+  p <- ctm$pars
+  k <- which(p$matrix == 'DRIFT' & p$row == i & p$col == s)
+  length(k) == 1L && (is.na(p$param[k]) || !nzchar(p$param[k])) &&
+    isTRUE(suppressWarnings(as.numeric(p$value[k])) == 0)
+}
+
 # The slow process's drift as a fraction of latent i's: DRIFT[n, n] =
 # <latent i's drift> * inv_logit(<name>), `name` a PARS parameter on the raw
 # scale. A free drift of latent i is declared in PARS under its own name so

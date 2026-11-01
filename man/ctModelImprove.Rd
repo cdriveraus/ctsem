@@ -161,7 +161,9 @@ The relaxations, in the language of the model:
     random effect correlated with the intercepts (\code{\link{ctScoreTest}}'s
     level terms).}
   \item{slow}{a slow process driving a latent through its drift, its effect
-    started at one and its persistence at a tenth of the latent's.}
+    started at one and its persistence at a tenth of the latent's; where
+    the model has a slow process for another latent, that process driving
+    this one too is tried first.}
   \item{periodic}{a cycle of the period the adequacy check points to,
     driving every latent with innovations of its own, each subject's
     phase set from the clock at its first row and free to deviate; the

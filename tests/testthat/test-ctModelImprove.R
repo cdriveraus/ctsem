@@ -311,6 +311,48 @@ test_that("a process driven by a slow one gets a slow process, and the search st
   expect_identical(imp$stopped, 'adequate')
 })
 
+test_that("a second process the slow one drives follows it rather than getting its own", {
+  # Both processes are pulled towards one slow process, in opposite directions,
+  # and the model has it for eta1 only: eta2 should follow it (two parameters)
+  # rather than gain a slow process of its own whose innovations then
+  # correlate with it at one (four).
+  set.seed(22)
+  d <- do.call(rbind, lapply(1:60, function(i) {
+    nobs <- 40; times <- cumsum(c(0, stats::rexp(nobs - 1, 1)))
+    x <- stats::rnorm(2, 0, 0.7); s <- stats::rnorm(1); xs <- matrix(0, nobs, 2); xs[1, ] <- x
+    for (t in 2:nobs) {
+      n <- max(1, ceiling((times[t] - times[t - 1]) / 0.02)); h <- (times[t] - times[t - 1]) / n
+      for (k in 1:n) {
+        x <- x + (-x + c(0.5, -0.5) * s) * h + 0.8 * sqrt(h) * stats::rnorm(2)
+        s <- s - 0.05 * s * h + sqrt(2 * 0.05 * h) * stats::rnorm(1)
+      }
+      xs[t, ] <- x
+    }
+    data.frame(id = i, time = times, Y1 = xs[, 1] + stats::rnorm(nobs, 0, 0.4),
+      Y2 = xs[, 2] + stats::rnorm(nobs, 0, 0.4))
+  }))
+  fit <- fit_cached('improve slow shared', {
+    m <- suppressMessages(ctModel(type = 'ct', manifestNames = c('Y1', 'Y2'),
+      latentNames = c('eta1', 'eta2'), LAMBDA = diag(2), MANIFESTMEANS = matrix(0, 2),
+      CINT = matrix(0, 2)))
+    m$pars$indvarying <- FALSE
+    m <- ctModelSlowComponent(m, 1)
+    suppressMessages(ctFit(d, m, backend = 'julia', cores = 1, verbose = 0))
+  })
+  model <- ctsem:::.ctFitBaseModel(fit)
+  expect_true(ctsem:::.ctSlowShareFree(model, 2L, 3L))
+  shared <- ctsem:::.ctSlowShare(model, 2L, 3L)
+  expect_false(ctsem:::.ctSlowShareFree(shared, 2L, 3L))
+  p <- shared$pars
+  expect_identical(p$param[p$matrix == 'DRIFT' & p$row == 2 & p$col == 3], 'drift_eta2_slow_eta1')
+  expect_identical(p$param[p$matrix == 'T0VAR' & p$row == 3 & p$col == 2], 'T0var_slow_eta1_eta2')
+  imp <- suppressMessages(ctModelImprove(fit, relax = 'slow', nsamples = 40, cores = 1,
+    verbose = FALSE))
+  kept <- imp$history$change[imp$history$kept]
+  expect_identical(kept[1], 'eta2 driven by the slow process of eta1')
+  expect_false('slow_eta2' %in% ctsem:::.ctFitBaseModel(imp$fit)$latentNames)
+})
+
 test_that("an item's own process starts persistent, at a quarter of its error variance", {
   # At raw zero the default drift transform forgets within the hour, which on
   # prompts hours apart is measurement error: a flat likelihood, from which a

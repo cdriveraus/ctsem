@@ -52,7 +52,9 @@
 #'     random effect correlated with the intercepts (\code{\link{ctScoreTest}}'s
 #'     level terms).}
 #'   \item{slow}{a slow process driving a latent through its drift, its effect
-#'     started at one and its persistence at a tenth of the latent's.}
+#'     started at one and its persistence at a tenth of the latent's; where
+#'     the model has a slow process for another latent, that process driving
+#'     this one too is tried first.}
 #'   \item{periodic}{a cycle of the period the adequacy check points to,
 #'     driving every latent with innovations of its own, each subject's
 #'     phase set from the clock at its first row and free to deviate; the
@@ -1042,8 +1044,9 @@ print.ctModelProposals <- function(x, digits = 3, ...) {
 }
 
 # Changes the score tests cannot reach, for when the screen is clean and the
-# checks fail: a slow process driving each latent, each latent made second
-# order, and the user's own candidates. A slow process is ranked by the
+# checks fail: a slow process driving each latent (one the model has, then
+# one of its own), each latent made second order, and the user's own
+# candidates. A slow process is ranked by the
 # adequacy check's evidence for it, the latent's own standardised updates
 # still positively correlated over some time gap (the smallest such p), and
 # goes first where there is any; the rest rank alike.
@@ -1142,9 +1145,25 @@ print.ctModelProposals <- function(x, digits = 3, ...) {
   noisy <- noisy[!added[noisy]]
   if ('slow' %in% relax && isTRUE(model$continuoustime)) {
     lat <- model$latentNames
+    slows <- grep('^slow_', lat)
     for (i in seq_along(lat)) {
       if (!i %in% noisy || paste0('slow_', lat[i]) %in% lat) next
       evidence <- .ctImproveSlowEvidence(ad, lat[i])
+      # A slow process the model has driving this latent too, tried before
+      # one of its own: the Fisher search gave PA a slow process beside
+      # NegA's, their innovations correlated at 1.000 on the boundary, and PA
+      # driven by NegA's fitted within 3 log likelihood units of that for two
+      # parameters fewer. The score screen's fixed cells hold the effect, but
+      # it scored LM 1 there against a gain of 44.
+      for (s in slows) {
+        if (!.ctSlowShareFree(model, i, s)) next
+        out[[length(out) + 1L]] <- list(key = paste0('slowshare:', lat[i], ':', lat[s]),
+          family = 'slow', label = paste0(lat[i], ' driven by the slow process of ',
+            sub('^slow_', '', lat[s])), p = evidence,
+          rank = if (is.finite(evidence)) evidence else 1,
+          edit = local({ i <- i; s <- s; function(model, data, covs, args = list())
+            list(model = .ctSlowShare(model, i, s), data = data) }))
+      }
       out[[length(out) + 1L]] <- list(key = paste0('slow:', lat[i]), family = 'slow',
         label = paste0(lat[i], ' driven by a slow process'), p = evidence,
         rank = if (is.finite(evidence)) evidence else 1,
