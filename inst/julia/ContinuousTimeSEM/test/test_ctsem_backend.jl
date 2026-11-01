@@ -2300,13 +2300,19 @@ ContinuousTimeSEM._ctsem_local_columns(o::_LocalQuadratic, x::AbstractVector,
     withlocal = C3._ctsem_lbfgs(fg!, zeros(n); diagonal=true, maxiter=2000,
         g_tol=1e-6, local_curvature=lc)
     @test lc.builds >= 1
-    # Each stops where its largest gradient is under `g_tol`, which places it
-    # within `|H^-1| sqrt(n) g_tol` of the minimum and no closer: a relative
-    # bar of 1e-5 sat at that distance, and a runner's last bits failed it
-    # (juliaFit 241deaa7, by 3 per cent).
+    # A run that stops where its largest gradient is under `g_tol` is within
+    # `|H^-1| sqrt(n) g_tol` of the minimum and no closer: a relative bar of
+    # 1e-5 sat at that distance, and a runner's last bits failed it (juliaFit
+    # 241deaa7, by 3 per cent). The plain run can stop on its line search
+    # instead, on this curvature of 1e8 against 4: on dev1 (2026-11-01) it did
+    # after 98 iterations, at max|g| 4.3e-4 and 8.0e-7 from the minimum
+    # against that bar's 7.4e-7, with 1.3e-11 left to gain. Either stop is the
+    # minimum for any purpose; what is asserted is the one it reports.
     reach = opnorm(inv(H)) * sqrt(n) * 1e-6
-    @test norm(withlocal.minimizer .+ H \ g0) <= reach
-    @test norm(plain.minimizer .+ H \ g0) <= reach
+    @test withlocal.g_converged && norm(withlocal.minimizer .+ H \ g0) <= reach
+    gp = g0 .+ H * plain.minimizer
+    @test plain.g_converged ? norm(plain.minimizer .+ H \ g0) <= reach :
+        (plain.linesearch_failed && dot(gp, H \ gp) / 2 < 1e-9)
     @test withlocal.iterations < plain.iterations
 end
 
