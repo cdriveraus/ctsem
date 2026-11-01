@@ -21,7 +21,8 @@ ctFitCheckCov(
   cores = getOption("mc.cores", 2L),
   keep = c("summary", "samples"),
   x = "lag",
-  xbins = 10
+  xbins = 10,
+  lagrows = c("all", "observed")
 )
 }
 \arguments{
@@ -87,6 +88,14 @@ observations is placed by its later observation, as a row-level split is.}
 \item{xbins}{Number of quantile bins for a numeric `x` column with more
 distinct values than this; a column with no more is used as it is. The
 x axis shows each bin's mean.}
+
+\item{lagrows}{Which rows a lag counts. `"all"` (default): lag k pairs a
+row with the subject's k-th earlier row. `"observed"`: with the k-th
+earlier row at which the column variable was observed, so a variable
+measured at only some waves is paired with its own previous measurement
+rather than with rows that hold only other variables. The gap in time
+between the two then varies more, and the model's data, which share the
+observed data's missingness, are paired the same way.}
 }
 \value{
 Either a plot/list of plots (default, given by `ctFitCovCheckPlot`) or
@@ -116,6 +125,10 @@ ctFitCheckCov(ctstantestfit, cor = FALSE, variables = "Y1", lags = 0:5,
 # averaged over waves, and the same by bins of time.
 ctFitCheckCov(ctstantestfit, cor = FALSE, x = "obs")
 ctFitCheckCov(ctstantestfit, cor = FALSE, x = "time", xbins = 5)
+
+# Lag each variable by its own previous observation, for variables
+# measured at only some waves.
+ctFitCheckCov(ctstantestfit, x = "obs", lagrows = "observed")
 
 # Split the diagnostic by a time independent predictor in the fitted data.
 gg <- ctFitCheckCov(ctstantestfit, cor = TRUE, splitby = "TI1", lags = 0:3)

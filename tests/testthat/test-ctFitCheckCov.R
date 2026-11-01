@@ -105,3 +105,33 @@ test_that("ctFitCheckCov(x = <column>) bins a numeric column and keeps a factor'
   expect_error(suppressMessages(ctFitCheckCov(ctstantestfit, x = "nosuch",
     nsamples = 5, plot = FALSE)), "column of the data")
 })
+
+test_that("ctFitCheckCov(lagrows = 'observed') lags a variable by its own observations (stan)", {
+  skip_on_cran()
+
+  # Y1 at every other row only, in the data and the generated sets alike.
+  fit <- ctstantestfit
+  d <- data.table::as.data.table(ctsem:::.ctFitLongData(fit))
+  d[, k := seq_len(.N), by = id]
+  even <- which(d$k %% 2 == 0)
+  d[even, Y1 := NA]
+  fit$generated$Y[, even, "Y1"] <- NA
+
+  rowlag <- suppressMessages(ctFitCheckCov(fit, data = d, cor = FALSE,
+    x = "obs", minpairn = 2, nsamples = 5, plot = FALSE))
+  o <- suppressMessages(ctFitCheckCov(fit, data = d, cor = FALSE, x = "obs",
+    minpairn = 2, nsamples = 5, plot = FALSE, lagrows = "observed"))
+  expect_true(all(is.na(rowlag[lag == 1 & rowvar == "Y1" & colvar == "Y1", empirical])))
+
+  y1 <- d[!is.na(Y1), .(id, k, Y1)]
+  y1[, prev := data.table::shift(Y1), by = id]
+  direct <- y1[!is.na(prev), .(direct = stats::cov(Y1, prev), n = .N), by = k]
+  cmp <- merge(o[lag == 1 & rowvar == "Y1" & colvar == "Y1",
+    .(k = x, empirical, n_empirical, q50)], direct, by = "k")
+  expect_equal(nrow(cmp), 4L)
+  expect_equal(cmp$empirical, cmp$direct)
+  expect_equal(cmp$n_empirical, cmp$n)
+  expect_true(all(is.finite(cmp$q50)))
+  # Y2 is complete, so its lags are the rows' own.
+  expect_equal(o[colvar == "Y2", empirical], rowlag[colvar == "Y2", empirical])
+})

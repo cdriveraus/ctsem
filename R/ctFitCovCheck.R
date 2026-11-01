@@ -32,6 +32,13 @@
 #' @param lags Non-negative integer vector giving observation lags to compare.
 #'   If `NULL`, `0:10` for `x = "lag"` and `0:1` (variances or covariances,
 #'   and lag-1 relations) otherwise.
+#' @param lagrows Which rows a lag counts. `"all"` (default): lag k pairs a
+#'   row with the subject's k-th earlier row. `"observed"`: with the k-th
+#'   earlier row at which the column variable was observed, so a variable
+#'   measured at only some waves is paired with its own previous measurement
+#'   rather than with rows that hold only other variables. The gap in time
+#'   between the two then varies more, and the model's data, which share the
+#'   observed data's missingness, are paired the same way.
 #' @param xbins Number of quantile bins for a numeric `x` column with more
 #'   distinct values than this; a column with no more is used as it is. The
 #'   x axis shows each bin's mean.
@@ -79,6 +86,10 @@
 #' ctFitCheckCov(ctstantestfit, cor = FALSE, x = "obs")
 #' ctFitCheckCov(ctstantestfit, cor = FALSE, x = "time", xbins = 5)
 #'
+#' # Lag each variable by its own previous observation, for variables
+#' # measured at only some waves.
+#' ctFitCheckCov(ctstantestfit, x = "obs", lagrows = "observed")
+#'
 #' # Split the diagnostic by a time independent predictor in the fitted data.
 #' gg <- ctFitCheckCov(ctstantestfit, cor = TRUE, splitby = "TI1", lags = 0:3)
 #' print(gg[[1]])
@@ -99,11 +110,13 @@
 ctFitCheckCov <- function(fit, cor = TRUE, plot = TRUE, splitby = NULL,
   data = NULL, lags = NULL, variables = NULL, splitdata = data, split = NULL,
   breaks = 2, nsamples = NULL, minpairn = 10, cores = getOption("mc.cores", 2L),
-  keep = c("summary", "samples"), x = "lag", xbins = 10) {
+  keep = c("summary", "samples"), x = "lag", xbins = 10,
+  lagrows = c("all", "observed")) {
 
   if(!inherits(fit,c('ctStanFit','ctJuliaFit'))) stop('Not a ctsem fit object')
   ctmb <- .ctFitModelObject(fit)
   keep <- match.arg(keep)
+  lagrows <- match.arg(lagrows)
   if(is.null(split)) split <- if(is.null(splitby)) "none" else NA_character_
   if(!is.na(split)) split <- match.arg(split,
     c("none", "median", "mean", "quantile", "factor"))
@@ -170,6 +183,23 @@ ctFitCheckCov <- function(fit, cor = TRUE, plot = TRUE, splitby = NULL,
     d
   }
   .x_binned <- function(v) is.numeric(v) && length(unique(v[!is.na(v)])) > xbins
+
+  # A variable's value at each row's k-th earlier row, of the same subject in
+  # the same dataset, at which it was observed: NA where there are fewer.
+  # `ord` orders the rows by dataset, subject and observation, and `unit`
+  # numbers each dataset's subjects in that order.
+  .observed_lag <- function(y, ord, unit, k){
+    if(k == 0L) return(y)
+    yo <- y[ord]
+    seen <- !is.na(yo)
+    before <- cumsum(seen) - seen
+    j <- before - k + 1L
+    ok <- j > before[!duplicated(unit)][unit]
+    out <- y
+    out[] <- NA
+    out[ord[ok]] <- yo[which(seen)[j[ok]]]
+    out
+  }
 
   .split_groups <- function(d, sd){
     subjects <- unique(d[, .(id = get(idname))])
@@ -248,22 +278,34 @@ ctFitCheckCov <- function(fit, cor = TRUE, plot = TRUE, splitby = NULL,
   # sample and split with no pairs at all gives NaN, n 0, as before. Pairs are
   # pooled within each `.xgroup` of their later observation; under 'lag' that
   # is the observation index, averaged over, and otherwise each group is a
-  # point of its own, absent where it has no pairs.
+  # point of its own, absent where it has no pairs. Under lagrows 'observed'
+  # each row's lagged values are taken from each variable's own earlier
+  # observed rows (`.observed_lag`) rather than from one earlier row.
   .lag_summary <- function(d){
     keys <- c('sample', idname, 'WhichObs')
     samplelevels <- unique(d$sample)
     splitlevels <- unique(d$.splitgroup)
     nx <- if(perx) max(c(0L, d$.xgroup), na.rm = TRUE) + 1L else 1L
     grid <- CJ(sample = samplelevels, split = splitlevels, sorted = FALSE)
+    if(lagrows == 'observed') {
+      ord <- order(d$sample, d[[idname]], d$WhichObs)
+      unit <- rleidv(d[ord, c('sample', idname), with = FALSE])
+    }
     out <- list()
     for(li in seq_along(lags)){
       lagi <- lags[li]
       cur <- d[, c(keys, '.splitgroup', '.xgroup', variables), with = FALSE]
-      lagd <- d[, c(keys, variables), with = FALSE]
-      lagd[, WhichObs := WhichObs + lagi]
-      setnames(lagd, variables, paste0('.lag_', variables))
-      paird <- merge(cur, lagd, by = keys, all = FALSE, sort = FALSE,
-        allow.cartesian = FALSE)
+      if(lagrows == 'observed') {
+        paird <- cur
+        for(v in variables) set(paird, j = paste0('.lag_', v),
+          value = .observed_lag(d[[v]], ord, unit, lagi))
+      } else {
+        lagd <- d[, c(keys, variables), with = FALSE]
+        lagd[, WhichObs := WhichObs + lagi]
+        setnames(lagd, variables, paste0('.lag_', variables))
+        paird <- merge(cur, lagd, by = keys, all = FALSE, sort = FALSE,
+          allow.cartesian = FALSE)
+      }
       for(ri in seq_along(variables)) for(ci in seq_along(variables)){
         p <- paird[, .(sample, split = .splitgroup, .xgroup,
           x = get(variables[ri]), y = get(paste0('.lag_', variables[ci])))]
