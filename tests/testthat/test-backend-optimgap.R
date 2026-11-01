@@ -667,15 +667,13 @@ test_that("lambda is a displacement in standard errors, which is what sets the s
   expect_equal(out$gap, 0.005)
 })
 
-test_that("the bar is set by the diagnostics, not by what an inference needs", {
-  # An inference needs `lambda` around 0.1, which would be a gap of 0.005. The
-  # curvature-based reports need far more: identifiability classifies
-  # eigenvalues against a relative threshold, and one near it moves with the
-  # estimate -- measured on a degenerate fixture, the flat direction is missed
-  # at a gap of 3e-04 and found at 4e-07. So the bar is the tighter of the two
-  # requirements, and this asserts which one won.
-  expect_equal(ctsem:::.ctBackendGapTolerance(list()), 1e-6)
-  expect_lt(ctsem:::.ctBackendGapTolerance(list()), 0.005)
+test_that("the bar is a distance from the maximum in standard errors", {
+  # 0.01 se, a tenth of the distance over which a Hessian is taken as the
+  # estimate's (`hessianreuse`): the certified point has the maximum's
+  # Hessian with a tenfold margin.
+  bar <- ctsem:::.ctBackendGapTolerance(list())
+  expect_equal(bar, 5e-5)
+  expect_equal(sqrt(2 * bar), ctsem:::.ctBackendHessianReuse() / 10)
 })
 
 test_that("the bar is read from wherever the fit keeps its controls", {
@@ -689,7 +687,7 @@ test_that("the bar is read from wherever the fit keeps its controls", {
   expect_equal(tolerance(list(input = asked(1e-4))), 1e-4)
   expect_equal(tolerance(asked(1e-5)), 1e-5)
   expect_equal(tolerance(list(input = list(optimcontrol = list()),
-    resolved = list(optimcontrol = list()))), 1e-6)
+    resolved = list(optimcontrol = list()))), ctsem:::.ctBackendDefaultGapTol())
 })
 
 test_that("the optimiser aims inside the bar, so a correction stays exceptional", {

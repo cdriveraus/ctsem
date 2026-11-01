@@ -173,8 +173,12 @@
 #'  took.}
 #'  \item{\code{certify}}{Default TRUE. The curvature check that certifies a
 #'  fit has converged. \code{estonly} skips it too.}
-#'  \item{\code{gaptol}}{Default \code{1e-6}. How much objective the curvature
-#'  may still predict at the estimate before the fit is continued.}
+#'  \item{\code{gaptol}}{Default \code{5e-5}. How much objective the curvature
+#'  may still predict at the estimate before the fit is continued. The gap is
+#'  half the squared distance from the maximum in standard errors, so the
+#'  default is 0.01 standard errors, a tenth of \code{hessianreuse}: close
+#'  enough that the estimate's Hessian is the maximum's. A smaller value, such
+#'  as \code{1e-6}, holds the estimate closer still.}
 #'  \item{\code{hessianreuse}}{Default 0.1. How far, in standard errors, the
 #'  estimate may move from where a Hessian was formed for that Hessian still to
 #'  give the standard errors. A Wald standard error assumes the curvature is
