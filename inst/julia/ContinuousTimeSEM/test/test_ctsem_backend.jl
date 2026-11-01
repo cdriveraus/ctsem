@@ -481,7 +481,9 @@ end
 # A walk off to a limit at infinity: stalled with nothing flat while a
 # coordinate far past its prior keeps doubling between triggers, as the
 # adequacy tutorial's second-order refits did for hours (`CTSEMStallWatch`,
-# "Walking off to a limit"). Coordinate 2 is the identity's, never flat.
+# "Walking off to a limit"). The fixture's diffusion is softplus, linear on
+# its positive arm, so it walks there with nothing flat; on its negative arm,
+# which is flat, the overshoot detector stops a fit first.
 @testset "a walk off to a limit is stopped and named" begin
     sp = _backend_saturating_parameters()
     trace = ContinuousTimeSEM.CTSEMTrace(:objective, :gradient_norm)
@@ -489,26 +491,27 @@ end
     for (i, v) in enumerate(vcat(climb, fill(-1.0, 200)))
         ContinuousTimeSEM._record!(trace, i, v, 1.0)
     end
-    watch() = ContinuousTimeSEM.CTSEMStallWatch(window=80, fraction=1e-2,
-        cooldown=30, tighten=0.1, tightenings=2)
+    watch(; alone = false) = ContinuousTimeSEM.CTSEMStallWatch(window=80,
+        fraction=1e-2, cooldown=30, tighten=0.1, tightenings=2, alone=alone)
     # The first trigger has nothing to compare with: the slow case.
     w = watch()
     @test !ContinuousTimeSEM._ctsem_stall_verdict!(w, trace, 221, _AtPeakMock(),
-        sp, [0.5, -15.0], 1:2, 1e-3)
+        sp, [0.0, 15.0], 1:2, 1e-3)
     @test !w.diverged
     # Doubled, ten prior sds out, the same sign: stopped, the coordinate named.
     @test ContinuousTimeSEM._ctsem_stall_verdict!(w, trace, 251, _AtPeakMock(),
-        sp, [0.5, -31.0], 1:2, 1e-3)
+        sp, [0.0, 31.0], 1:2, 1e-3)
     @test w.diverged
     @test w.flat == [2]
-    # Not inside ten, nor across a sign change, nor short of doubling.
-    for (a, b) in (([0.5, -4.0], [0.5, -9.0]), ([0.5, -15.0], [0.5, 31.0]),
-            ([0.5, -15.0], [0.5, -25.0]))
-        v = watch()
-        ContinuousTimeSEM._ctsem_stall_verdict!(v, trace, 221, _AtPeakMock(), sp, a,
-            1:2, 1e-3)
-        @test !ContinuousTimeSEM._ctsem_stall_verdict!(v, trace, 251, _AtPeakMock(),
-            sp, b, 1:2, 1e-3)
+    # Not inside ten, nor across a sign change, nor short of doubling: the rule
+    # alone, with no transforms to call either point flat.
+    for (a, b) in (([0.0, 4.0], [0.0, 9.0]), ([0.0, 15.0], [0.0, -31.0]),
+            ([0.0, 15.0], [0.0, 25.0]))
+        v = watch(alone = true)
+        @test !ContinuousTimeSEM._ctsem_stall_verdict!(v, trace, 221,
+            _AtPeakMock(), nothing, a, 1:2, 1e-3)
+        @test !ContinuousTimeSEM._ctsem_stall_verdict!(v, trace, 251,
+            _AtPeakMock(), nothing, b, 1:2, 1e-3)
         @test !v.diverged
     end
 end
