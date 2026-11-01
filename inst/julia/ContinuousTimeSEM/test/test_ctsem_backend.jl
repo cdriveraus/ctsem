@@ -1786,17 +1786,21 @@ end
     @test lr.refused == 3e-5
     C._ctsem_refused!(lr, 2.0)
     @test C._ctsem_tolerance(1e-6, lr) == C._CTSEM_RESOLUTION_CAP
-    # An ill-conditioned quadratic whose gradient carries noise of 1e-3, as a
-    # gradient through inner solves stopped at their tolerance does: its
-    # steps disagree with their gradients by about 1e-5, far above a gap
-    # tolerance of 1e-10, and the gap rule stops where they stop being
-    # resolved rather than running to the iteration cap. Nothing was refused,
-    # so the other bars stand.
+    # An ill-conditioned quadratic whose value carries noise of 1e-6, as a
+    # value through inner solves stopped at their tolerance does: its steps
+    # disagree with their gradients by about that, far above a gap tolerance
+    # of 1e-10, and the gap rule stops where they stop being resolved rather
+    # than running to the iteration cap. Nothing was refused, so the other
+    # bars stand. Noise in the gradient alone, as this test had until
+    # 2026-11-01, is no such objective: the line search accepts steps on the
+    # value, and on Julia 1.13 L-BFGS reached the maximum to 1e-10 regardless
+    # (its noise was a `hash`, whose values 1.13 changed; `Xoshiro`'s it
+    # did not).
     D = collect(range(1.0, 1e3; length = 8))
     c = collect(range(-1.0, 1.0; length = 8))
     smooth = p -> -0.5 * sum(D .* (p .- c) .^ 2)
-    noise = p -> [hash((p, k)) / typemax(UInt) - 0.5 for k in 1:8]
-    m = _endgame_mock(smooth; g = p -> -(D .* (p .- c)) .+ 1e-3 .* noise(p))
+    noisy = p -> smooth(p) + 1e-6 * (rand(Random.Xoshiro(reinterpret(UInt64, sum(p)))) - 0.5)
+    m = _endgame_mock(noisy; g = p -> -(D .* (p .- c)), h = p -> -Matrix(Diagonal(D)))
     kw = (maxiter=400, gap_tol=1e-10, newton=false, certify=false,
         progress=false, verbose=false, overshoot_probe=:off)
     r = C.ctsem_optimize(m, c .+ 1.0; kw...)
