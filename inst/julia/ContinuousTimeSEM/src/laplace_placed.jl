@@ -365,6 +365,185 @@ reach the members only through their raw values. `u`'s leaf columns are left at
 the conditional mode. Returns `(ok, value, se)`, `se` the rule's error there
 (`_point_set_error`).
 """
+"""
+A placed rule's points summed in one pass with a running maximum: `peak` the
+largest log term so far, `acc` the sum of `exp(t - peak)`, `acc2` of its
+squares, `racc` of the weights times each point's `r`, `repacc` by shift,
+`leafse` a nested unit's leaves' errors weighted; with the gradient, the
+weighted sums of the points' scores (`gacc`; at a leaf the members' scores in
+their own parameters too, `vacc`) and of what each point asks of the centre
+and the scale (`aacc`, `Bacc`). Ranges of a rule's points are summed apart and
+merged in order (`_placed_sum_merge`), so a unit's rule is not left to one
+thread while the pool waits: with one flagged unit, a climb on the round-9
+fit ran thirteen hours, all of it on the main thread (dev3, 2026-11-01).
+"""
+mutable struct _PlacedSum
+    peak::Float64
+    acc::Float64
+    acc2::Float64
+    racc::Float64
+    leafse::Float64
+    repacc::Vector{Float64}
+    gacc::Vector{Float64}
+    vacc::Vector{Float64}
+    aacc::Vector{Float64}
+    Bacc::Matrix{Float64}
+end
+
+_PlacedSum(k::Int, npar::Int, nrep::Int, want_gradient::Bool, leaf::Bool) =
+    _PlacedSum(-Inf, 0.0, 0.0, 0.0, 0.0, zeros(nrep),
+        want_gradient ? zeros(npar) : Float64[],
+        want_gradient && leaf ? zeros(npar) : Float64[], zeros(k), zeros(k, k))
+
+"""Makes `t` the sum's peak where it is above it, rescaling what `s` holds,
+and returns the point's weight `exp(t - peak)`."""
+function _placed_sum_weight!(s::_PlacedSum, t::Float64)
+    if t > s.peak
+        if isfinite(s.peak)
+            f = exp(s.peak - t)
+            s.acc *= f
+            s.acc2 *= f * f
+            s.racc *= f
+            s.leafse *= f
+            s.repacc .*= f
+            s.gacc .*= f
+            s.vacc .*= f
+            s.aacc .*= f
+            s.Bacc .*= f
+        end
+        s.peak = t
+    end
+    return exp(t - s.peak)
+end
+
+"""The parts of a rule's points (`_PlacedSum`), summed apart, as one sum, each
+rescaled to the largest peak, in order: so the result depends on the ranges,
+which depend only on the pool's width, and not on which slot summed which."""
+function _placed_sum_merge(parts::Vector{_PlacedSum})
+    length(parts) == 1 && return parts[1]
+    first_ = parts[1]
+    out = _PlacedSum(-Inf, 0.0, 0.0, 0.0, 0.0, zero(first_.repacc), zero(first_.gacc),
+        zero(first_.vacc), zero(first_.aacc), zero(first_.Bacc))
+    out.peak = maximum(q.peak for q in parts)
+    isfinite(out.peak) || return out
+    for q in parts
+        isfinite(q.peak) || continue
+        f = exp(q.peak - out.peak)
+        out.acc += f * q.acc
+        out.acc2 += f * f * q.acc2
+        out.racc += f * q.racc
+        out.leafse += f * q.leafse
+        out.repacc .+= f .* q.repacc
+        out.gacc .+= f .* q.gacc
+        out.vacc .+= f .* q.vacc
+        out.aacc .+= f .* q.aacc
+        out.Bacc .+= f .* q.Bacc
+    end
+    return out
+end
+
+"""The ranges a placed rule's `n` points are summed in, `evaluations` member
+evaluations in all: as the frozen rules split theirs (`_continuation_ranges`),
+one range for a small rule or a pool of one, else up to a slot each. An inner
+region takes only the slots idle when it starts (`_laplace_parallel`), so
+where every slot is busy with other units the ranges run in order on the one."""
+_placed_ranges(n::Integer, evaluations::Integer) =
+    _continuation_ranges(n, evaluations, _laplace_pool_width())
+
+"""How many points a placed rule on `ps` evaluates (`_point_set_place`)."""
+_placed_npoints(ps::CTSEMPointSet) = size(ps.points, 2) + size(ps.prior, 2)
+
+"""
+    _placed_leaf_points!(s, laplace, U, members, columns, theta, Ls, dL,
+        positions, u, pl, scU, want_gradient, range)
+
+The leaf's placed points `range` (`_placed_leaf!`) summed into `s`: at each,
+its members' log likelihood with the block's effects `columns` of `u` at the
+point, and their scores where asked. A point whose members cannot be scored
+carries no weight. Runs on whichever slot takes the range, with that slot's
+workspace; `u` is its own.
+"""
+function _placed_leaf_points!(s::_PlacedSum, laplace::CTSEMLaplaceObjective, U::Int,
+    members, columns::UnitRange{Int}, theta::Vector{Float64}, Ls, dL, positions,
+    u::Vector{Float64}, pl, scU::AbstractMatrix{Float64}, want_gradient::Bool,
+    range::UnitRange{Int})
+    spec = laplace.spec
+    units = laplace.units
+    npar = length(theta)
+    k = length(columns)
+    d = length(u)
+    nrep = length(s.repacc)
+    aws = _laplace_workspace!(laplace, Float64, npar)
+    scratch = _continuation_scratch(laplace, npar)
+    Z = pl.Z
+    Yp = pl.Y
+    lw = pl.logw
+    gh = zeros(npar)
+    gv = zeros(npar)
+    gu = zeros(d)
+    z = zeros(k)
+    ey = zeros(k)
+    gy = zeros(k)
+    for j in range
+        @inbounds for t in 1:k
+            z[t] = Z[t, j]
+            u[columns[t]] = z[t]
+        end
+        if want_gradient
+            fill!(gh, 0.0)
+            fill!(gv, 0.0)
+            fill!(gu, 0.0)
+        end
+        h = 0.0
+        ok = true
+        for m in members
+            ll = _continuation_member!(gh, laplace, U, m, theta, Ls, dL, positions, u,
+                aws, scratch, want_gradient)
+            if !isfinite(ll)
+                ok = false
+                break
+            end
+            h += ll
+            if want_gradient
+                gv .+= scratch.grad
+                _laplace_loading_chain!(gu, scratch.grad, spec, Ls, units.offsets[U][m])
+            end
+        end
+        ok || continue
+        w = _placed_sum_weight!(s, lw[j] - dot(z, z) / 2 + h)
+        s.acc += w
+        s.acc2 += w * w
+        s.racc += w * pl.r[j]
+        nrep > 1 && (s.repacc[pl.rep[j]] += w)
+        if want_gradient
+            s.gacc .+= w .* gh
+            s.vacc .+= w .* gv
+            # What the point's term asks of the centre and the scale: a placed
+            # point moves with them, `grad f + (1 - r) z`; a prior point is
+            # held, and only its weight moves, `r U' grad log rho(y)`.
+            if pl.prior[j]
+                @inbounds for t in 1:k
+                    yv = Yp[t, j]
+                    gy[t] = -1.25 * yv / (1 + yv * yv / 4)
+                end
+                _ctsem_mulTvec!(ey, scU, gy)
+                ey .*= pl.r[j]
+            else
+                @inbounds for i in 1:k
+                    ey[i] = gu[columns[i]] - pl.r[j] * z[i]
+                end
+            end
+            @inbounds for i in 1:k
+                s.aacc[i] += w * ey[i]
+                for r in 1:k
+                    s.Bacc[r, i] += w * Yp[r, j] * ey[i]
+                end
+            end
+        end
+    end
+    return true
+end
+
 function _placed_leaf!(row::Vector{Float64}, wv::Vector{Float64}, P::CTSEMLaplacePlaced,
     U::Int, b::Int, u::Vector{Float64}, start::Vector{Float64},
     theta::Vector{Float64}, Ls, dL, positions, want_gradient::Bool;
@@ -391,99 +570,29 @@ function _placed_leaf!(row::Vector{Float64}, wv::Vector{Float64}, P::CTSEMLaplac
     sc = lr.sc
     ps = sets[b]
     pl = _point_set_place(ps, c, sc.S, sc.U, sc.logdetscale)
-    Z = pl.Z
-    Yp = pl.Y
-    lw = pl.logw
-    scratch = _continuation_scratch(laplace, npar)
-    peak = -Inf
-    acc = 0.0
-    acc2 = 0.0
-    racc = 0.0
-    repacc = zeros(ps.nrep)
-    gacc = want_gradient ? zeros(npar) : Float64[]
-    vacc = want_gradient ? zeros(npar) : Float64[]
-    aacc = zeros(k)
-    Bacc = zeros(k, k)
-    gh = zeros(npar)
-    gv = zeros(npar)
-    gu = zeros(d)
-    z = zeros(k)
-    ey = zeros(k)
-    gy = zeros(k)
-    for j in 1:size(Z, 2)
-        @inbounds for t in 1:k
-            z[t] = Z[t, j]
-            u[columns[t]] = z[t]
-        end
-        if want_gradient
-            fill!(gh, 0.0)
-            fill!(gv, 0.0)
-            fill!(gu, 0.0)
-        end
-        h = 0.0
-        ok = true
-        for m in members
-            ll = _continuation_member!(gh, laplace, U, m, theta, Ls, dL, positions, u,
-                aws, scratch, want_gradient)
-            if !isfinite(ll)
-                ok = false
-                break
-            end
-            h += ll
-            if want_gradient
-                gv .+= scratch.grad
-                _laplace_loading_chain!(gu, scratch.grad, spec, Ls, units.offsets[U][m])
-            end
-        end
-        ok || continue
-        t = lw[j] - dot(z, z) / 2 + h
-        if t > peak
-            if isfinite(peak)
-                s = exp(peak - t)
-                acc *= s
-                acc2 *= s * s
-                racc *= s
-                repacc .*= s
-                if want_gradient
-                    gacc .*= s
-                    vacc .*= s
-                    aacc .*= s
-                    Bacc .*= s
-                end
-            end
-            peak = t
-        end
-        w = exp(t - peak)
-        acc += w
-        acc2 += w * w
-        racc += w * pl.r[j]
-        ps.nrep > 1 && (repacc[pl.rep[j]] += w)
-        if want_gradient
-            gacc .+= w .* gh
-            vacc .+= w .* gv
-            # What the point's term asks of the centre and the scale: a placed
-            # point moves with them, `grad f + (1 - r) z`; a prior point is
-            # held, and only its weight moves, `r U' grad log rho(y)`.
-            if pl.prior[j]
-                @inbounds for t in 1:k
-                    yv = Yp[t, j]
-                    gy[t] = -1.25 * yv / (1 + yv * yv / 4)
-                end
-                _ctsem_mulTvec!(ey, sc.U, gy)
-                ey .*= pl.r[j]
-            else
-                @inbounds for i in 1:k
-                    ey[i] = gu[columns[i]] - pl.r[j] * z[i]
-                end
-            end
-            @inbounds for i in 1:k
-                aacc[i] += w * ey[i]
-                for r in 1:k
-                    Bacc[r, i] += w * Yp[r, j] * ey[i]
-                end
-            end
+    # The points in ranges, each on a slot the pool has free
+    # (`_placed_leaf_points!`), merged in order.
+    ranges = _placed_ranges(size(pl.Z, 2), size(pl.Z, 2) * nm)
+    parts = [_PlacedSum(k, npar, ps.nrep, want_gradient, true) for _ in ranges]
+    if length(ranges) == 1
+        _placed_leaf_points!(parts[1], laplace, U, members, columns, theta, Ls, dL,
+            positions, u, pl, sc.U, want_gradient, ranges[1])
+    else
+        _laplace_parallel(laplace, eachindex(ranges)) do q
+            _placed_leaf_points!(parts[q], laplace, U, members, columns, theta, Ls, dL,
+                positions, copy(u), pl, sc.U, want_gradient, ranges[q])
         end
     end
+    sum_ = _placed_sum_merge(parts)
+    peak = sum_.peak
+    acc = sum_.acc
+    acc2 = sum_.acc2
+    racc = sum_.racc
+    repacc = sum_.repacc
+    gacc = sum_.gacc
+    vacc = sum_.vacc
+    aacc = sum_.aacc
+    Bacc = sum_.Bacc
     isfinite(peak) || return failure
     # A lattice rule is read as a ratio against its Gaussian
     # (`_point_set_gaussian`); a product rule integrates that exactly.
@@ -810,6 +919,99 @@ function _placed_mode_sum!(row::Vector{Float64}, P::CTSEMLaplacePlaced, U::Int,
     return (ok=true, value=value, se=err, ess=ess[lead], modes=modes, live=K)
 end
 
+"""
+    _placed_root_points!(s, P, U, kids, cj, cols0, theta, Ls, dL, positions, pl,
+        scU, want_gradient, sets, range)
+
+A nested unit's root nodes `range` (`_placed_nested_unit!`) summed into `s`:
+at each, every leaf in `kids` placed at its conditional mode given the root's
+effects there (`_placed_leaf!`), the leaves' terms its log likelihood, and
+with the gradient their scores and their gradient in the root's effects.
+`false` where a leaf could not be scored, which fails the rule, as in
+`_continuation_node_sum`, rather than dropping its node.
+"""
+function _placed_root_points!(s::_PlacedSum, P::CTSEMLaplacePlaced, U::Int, kids,
+    cj::Vector{Float64}, cols0::UnitRange{Int}, theta::Vector{Float64}, Ls, dL,
+    positions, pl, scU::AbstractMatrix{Float64}, want_gradient::Bool,
+    sets::Vector{CTSEMPointSet}, range::UnitRange{Int})
+    laplace = P.cont.laplace
+    spec = laplace.spec
+    units = laplace.units
+    blocks = units.blocks[U]
+    npar = length(theta)
+    k0 = length(cols0)
+    d = length(cj)
+    nrep = length(s.repacc)
+    Z = pl.Z
+    Yp = pl.Y
+    lw = pl.logw
+    rowc = zeros(npar)
+    wvc = zeros(npar)
+    G = zeros(k0)
+    gd = zeros(d)
+    z = zeros(k0)
+    ey = zeros(k0)
+    gy = zeros(k0)
+    rowsum = zeros(npar)
+    for j in range
+        u = copy(cj)
+        @inbounds for t in 1:k0
+            z[t] = Z[t, j]
+            u[cols0[t]] = z[t]
+        end
+        want_gradient && (fill!(rowsum, 0.0); fill!(G, 0.0))
+        h = 0.0
+        hse = 0.0
+        for cb in kids
+            ccols = (blocks[cb].offset + 1):(blocks[cb].offset + blocks[cb].size)
+            leaf = _placed_leaf!(rowc, wvc, P, U, cb, u, Float64[cj[c] for c in ccols],
+                theta, Ls, dL, positions, want_gradient; sets=sets)
+            leaf.ok || return false
+            h += leaf.value
+            hse += leaf.se^2
+            if want_gradient
+                rowsum .+= rowc
+                fill!(gd, 0.0)
+                _laplace_loading_chain!(gd, wvc, spec, Ls,
+                    units.offsets[U][first(blocks[cb].members)])
+                @inbounds for t in 1:k0
+                    G[t] += gd[cols0[t]]
+                end
+            end
+        end
+        w = _placed_sum_weight!(s, lw[j] - dot(z, z) / 2 + h)
+        s.acc += w
+        s.acc2 += w * w
+        s.racc += w * pl.r[j]
+        s.leafse += w * sqrt(hse)
+        nrep > 1 && (s.repacc[pl.rep[j]] += w)
+        if want_gradient
+            s.gacc .+= w .* rowsum
+            # As at a leaf (`_placed_leaf_points!`), with the leaves' gradient
+            # in the root's effects for the members'.
+            if pl.prior[j]
+                @inbounds for t in 1:k0
+                    yv = Yp[t, j]
+                    gy[t] = -1.25 * yv / (1 + yv * yv / 4)
+                end
+                _ctsem_mulTvec!(ey, scU, gy)
+                ey .*= pl.r[j]
+            else
+                @inbounds for i in 1:k0
+                    ey[i] = G[i] - pl.r[j] * z[i]
+                end
+            end
+            @inbounds for i in 1:k0
+                s.aacc[i] += w * ey[i]
+                for r in 1:k0
+                    s.Bacc[r, i] += w * Yp[r, j] * ey[i]
+                end
+            end
+        end
+    end
+    return true
+end
+
 """Whether unit `U`'s block tree is one root over leaves, the shape
 `_placed_nested_unit!` places."""
 function _placed_two_level(laplace::CTSEMLaplaceObjective, U::Integer)
@@ -873,106 +1075,33 @@ function _placed_nested_unit!(row::Vector{Float64}, P::CTSEMLaplacePlaced, U::In
     sc.ok || return failure
     ps = sets[r0]
     pl = _point_set_place(ps, Float64[cj[c] for c in cols0], sc.S, sc.U, sc.logdetscale)
-    Z = pl.Z
-    Yp = pl.Y
-    lw = pl.logw
-    peak = -Inf
-    acc = 0.0
-    acc2 = 0.0
-    racc = 0.0
-    repacc = zeros(ps.nrep)
-    leafse = 0.0
-    gacc = want_gradient ? zeros(npar) : Float64[]
-    aacc = zeros(k0)
-    Bacc = zeros(k0, k0)
-    rowc = zeros(npar)
-    wvc = zeros(npar)
-    G = zeros(k0)
-    gd = zeros(d)
-    z = zeros(k0)
-    ey = zeros(k0)
-    gy = zeros(k0)
-    rowsum = zeros(npar)
-    for j in 1:size(Z, 2)
-        u = copy(cj)
-        @inbounds for t in 1:k0
-            z[t] = Z[t, j]
-            u[cols0[t]] = z[t]
-        end
-        want_gradient && (fill!(rowsum, 0.0); fill!(G, 0.0))
-        h = 0.0
-        hse = 0.0
-        ok = true
-        for cb in kids
-            ccols = (blocks[cb].offset + 1):(blocks[cb].offset + blocks[cb].size)
-            leaf = _placed_leaf!(rowc, wvc, P, U, cb, u, Float64[cj[c] for c in ccols],
-                theta, Ls, dL, positions, want_gradient; sets=sets)
-            if !leaf.ok
-                ok = false
-                break
-            end
-            h += leaf.value
-            hse += leaf.se^2
-            if want_gradient
-                rowsum .+= rowc
-                fill!(gd, 0.0)
-                _laplace_loading_chain!(gd, wvc, spec, Ls,
-                    units.offsets[U][first(blocks[cb].members)])
-                @inbounds for t in 1:k0
-                    G[t] += gd[cols0[t]]
-                end
-            end
-        end
-        # A leaf that could not be scored fails the rule, as in
-        # `_continuation_node_sum`, rather than dropping its node.
-        ok || return failure
-        t = lw[j] - dot(z, z) / 2 + h
-        if t > peak
-            if isfinite(peak)
-                s = exp(peak - t)
-                acc *= s
-                acc2 *= s * s
-                racc *= s
-                repacc .*= s
-                leafse *= s
-                if want_gradient
-                    gacc .*= s
-                    aacc .*= s
-                    Bacc .*= s
-                end
-            end
-            peak = t
-        end
-        w = exp(t - peak)
-        acc += w
-        acc2 += w * w
-        racc += w * pl.r[j]
-        leafse += w * sqrt(hse)
-        ps.nrep > 1 && (repacc[pl.rep[j]] += w)
-        if want_gradient
-            gacc .+= w .* rowsum
-            # As at a leaf (`_placed_leaf!`), with the leaves' gradient in the
-            # root's effects for the members'.
-            if pl.prior[j]
-                @inbounds for t in 1:k0
-                    yv = Yp[t, j]
-                    gy[t] = -1.25 * yv / (1 + yv * yv / 4)
-                end
-                _ctsem_mulTvec!(ey, sc.U, gy)
-                ey .*= pl.r[j]
-            else
-                @inbounds for i in 1:k0
-                    ey[i] = G[i] - pl.r[j] * z[i]
-                end
-            end
-            @inbounds for i in 1:k0
-                aacc[i] += w * ey[i]
-                for r in 1:k0
-                    Bacc[r, i] += w * Yp[r, j] * ey[i]
-                end
-            end
+    # The root's nodes in ranges, each on a slot the pool has free
+    # (`_placed_root_points!`), merged in order; a node's evaluations are its
+    # leaves' points times their members.
+    pernode = sum(_placed_npoints(sets[cb]) * length(blocks[cb].members) for cb in kids;
+        init=0)
+    ranges = _placed_ranges(size(pl.Z, 2), size(pl.Z, 2) * pernode)
+    parts = [_PlacedSum(k0, npar, ps.nrep, want_gradient, false) for _ in ranges]
+    ok = if length(ranges) == 1
+        _placed_root_points!(parts[1], P, U, kids, cj, cols0, theta, Ls, dL, positions,
+            pl, sc.U, want_gradient, sets, ranges[1])
+    else
+        _laplace_parallel(laplace, eachindex(ranges)) do q
+            _placed_root_points!(parts[q], P, U, kids, cj, cols0, theta, Ls, dL,
+                positions, pl, sc.U, want_gradient, sets, ranges[q])
         end
     end
+    ok || return failure
+    sum_ = _placed_sum_merge(parts)
+    peak = sum_.peak
+    acc = sum_.acc
+    acc2 = sum_.acc2
+    racc = sum_.racc
+    repacc = sum_.repacc
+    leafse = sum_.leafse
+    gacc = sum_.gacc
+    aacc = sum_.aacc
+    Bacc = sum_.Bacc
     isfinite(peak) || return failure
     ratio = ps.family === :lattice
     gs = ratio ? _point_set_gaussian(pl, sc.U, ps.nrep) : nothing
@@ -1099,7 +1228,8 @@ end
 
 The frozen rules' terms (`P.frozen`) at `theta`, and their weighted gradient:
 the continuation's rules as placed, by the Fisher identity
-(`_continuation_rule_value`), a unit a task.
+(`_continuation_rule_value`), a unit a task and a wide unit's draws split
+over the slots left free (`_placed_frozen_term`).
 """
 function _placed_frozen(P::CTSEMLaplacePlaced, theta::Vector{Float64}, Ls, dL,
     positions, want_gradient::Bool)
@@ -1111,29 +1241,101 @@ function _placed_frozen(P::CTSEMLaplacePlaced, theta::Vector{Float64}, Ls, dL,
     rows = [want_gradient ? zeros(npar) : Float64[] for _ in 1:nf]
     nf == 0 && return (values=values, rows=rows, ok=true)
     ok = _laplace_parallel(laplace, 1:nf) do i
-        local rule, U, aws, scratch, u, total, r, ess
-        rule = o.rules[P.frozen[i]]
-        U = rule.unit
-        aws = _laplace_workspace!(laplace, Float64, npar)
-        scratch = _continuation_scratch(laplace, npar)
-        u = zeros(laplace.units.dims[U])
-        total = 0.0
-        ess = Inf
-        for root in rule.roots
-            r = _continuation_rule_value(o, U, theta, Ls, dL, positions, root, u, aws,
-                scratch, want_gradient)
-            isfinite(r.value) || return false
-            total += r.value
-            ess = min(ess, r.ess)
-            want_gradient && (rows[i] .+= r.gradient)
-        end
-        values[i] = total
+        local r
+        r = _placed_frozen_term(o, P.frozen[i], theta, Ls, dL, positions, want_gradient)
+        r.ok || return false
+        values[i] = r.value
+        want_gradient && (rows[i] .= r.gradient)
         # Each task its own entries.
-        P.ess[i] = ess
-        isnan(P.ess_placed[i]) && isfinite(ess) && (P.ess_placed[i] = ess)
+        P.ess[i] = r.ess
+        isnan(P.ess_placed[i]) && isfinite(r.ess) && (P.ess_placed[i] = r.ess)
         return true
     end
     return (values=values, rows=rows, ok=ok)
+end
+
+"""
+    _placed_frozen_term(o, f, theta, Ls, dL, positions, want_gradient)
+
+Frozen rule `f`'s term at `theta`, its gradient (unweighted) and its draws'
+effective number (the least over its roots): each root by
+`_continuation_rule_value`, or where the rule has one root of many evaluations,
+its nodes in ranges on the slots the pool has free (`_placed_ranges`,
+`_continuation_node_sum`), merged in order, as `_continuation_flagged` splits
+a wide unit's. A unit on 4096 draws was one thread's work at every evaluation
+of a refined fit.
+"""
+function _placed_frozen_term(o::CTSEMLaplaceContinuation, f::Int,
+    theta::Vector{Float64}, Ls, dL, positions, want_gradient::Bool)
+    laplace = o.laplace
+    rule = o.rules[f]
+    U = rule.unit
+    npar = length(theta)
+    d = laplace.units.dims[U]
+    failure = (ok=false, value=NaN, gradient=Float64[], ess=NaN)
+    ranges = length(rule.roots) == 1 ?
+        _placed_ranges(size(rule.roots[1].points, 2), rule.evaluations) : UnitRange{Int}[]
+    if length(ranges) > 1
+        root = rule.roots[1]
+        peaks = fill(-Inf, length(ranges))
+        accs = zeros(length(ranges))
+        acc2s = zeros(length(ranges))
+        grads = [want_gradient ? zeros(npar) : Float64[] for _ in ranges]
+        ok = _laplace_parallel(laplace, eachindex(ranges)) do q
+            _placed_frozen_range!(peaks, accs, acc2s, grads, q, o, U, root, theta, Ls,
+                dL, positions, d, want_gradient, ranges[q])
+        end
+        ok || return failure
+        top = maximum(peaks)
+        isfinite(top) || return failure
+        A = 0.0
+        A2 = 0.0
+        g = want_gradient ? zeros(npar) : Float64[]
+        for q in eachindex(ranges)
+            e = exp(peaks[q] - top)
+            A += accs[q] * e
+            A2 += acc2s[q] * e * e
+            want_gradient && (g .+= e .* grads[q])
+        end
+        want_gradient && (g ./= A)
+        return (ok=true, value=top + log(A) + root.constant, gradient=g,
+            ess=A^2 / max(A2, eps()))
+    end
+    aws = _laplace_workspace!(laplace, Float64, npar)
+    scratch = _continuation_scratch(laplace, npar)
+    u = zeros(d)
+    total = 0.0
+    ess = Inf
+    g = want_gradient ? zeros(npar) : Float64[]
+    for root in rule.roots
+        r = _continuation_rule_value(o, U, theta, Ls, dL, positions, root, u, aws,
+            scratch, want_gradient)
+        isfinite(r.value) || return failure
+        total += r.value
+        ess = min(ess, r.ess)
+        want_gradient && (g .+= r.gradient)
+    end
+    return (ok=true, value=total, gradient=g, ess=ess)
+end
+
+"""One range of a frozen root's nodes (`_placed_frozen_term`) summed by
+`_continuation_node_sum` into its entries of `peaks`, `accs`, `acc2s` and
+`grads`, on the slot that runs it, with its own `u`."""
+function _placed_frozen_range!(peaks, accs, acc2s, grads, q::Int,
+    o::CTSEMLaplaceContinuation, U::Int, root, theta::Vector{Float64}, Ls, dL,
+    positions, d::Int, want_gradient::Bool, range::UnitRange{Int})
+    laplace = o.laplace
+    npar = length(theta)
+    aws = _laplace_workspace!(laplace, Float64, npar)
+    scratch = _continuation_scratch(laplace, npar)
+    a = _continuation_node_sum(o, U, theta, Ls, dL, positions, root, zeros(d), aws,
+        scratch, want_gradient, range)
+    a.failed && return false
+    peaks[q] = a.peak
+    accs[q] = a.acc
+    acc2s[q] = a.acc2
+    want_gradient && (grads[q] .= a.gacc)
+    return true
 end
 
 """
@@ -1376,21 +1578,9 @@ function _placed_term!(row::Vector{Float64}, P::CTSEMLaplacePlaced, i::Int,
     np = length(P.placed)
     i <= np && return _placed_unit!(row, P, P.placed[i], theta, Ls, dL, positions,
         true).ok
-    o = P.cont
-    laplace = o.laplace
-    rule = o.rules[P.frozen[i - np]]
-    U = rule.unit
-    npar = length(theta)
-    fill!(row, 0.0)
-    aws = _laplace_workspace!(laplace, Float64, npar)
-    scratch = _continuation_scratch(laplace, npar)
-    u = zeros(laplace.units.dims[U])
-    for root in rule.roots
-        r = _continuation_rule_value(o, U, theta, Ls, dL, positions, root, u, aws,
-            scratch, true)
-        isfinite(r.value) || return false
-        row .+= r.gradient
-    end
+    r = _placed_frozen_term(P.cont, P.frozen[i - np], theta, Ls, dL, positions, true)
+    r.ok || return false
+    row .= r.gradient
     return true
 end
 
