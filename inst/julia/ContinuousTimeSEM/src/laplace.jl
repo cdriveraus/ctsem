@@ -4674,17 +4674,20 @@ end
     _laplace_mode_sum(laplace, U, theta, Ls, aws, primal)
 
 Unit `U`'s term where its inner problem has more than one maximum (`modes[U]`
-and `alt_modes[U]`, `primal` the first's `_laplace_unit_primal`): their terms
-averaged by their masses, each faded out before the inner solve can lose it,
+and `alt_modes[U]`, `primal` the first's `_laplace_unit_primal`): the best
+maximum's term, handed over to the next best as it fades out before the inner
+solve can lose it,
 
-    T = sum_k pi_k t_k,   pi_k proportional to f_k exp(t_k),
+    T = sum_k pi_k t_k,   pi the shares `_laplace_mode_shares(f, t)`,
     f_k = s(lambda_k / _LAPLACE_MODE_FADE) s(depth_k / _LAPLACE_MODE_DEPTH),
 
 `t_k` the mode's term, `lambda_k` its curvature's smallest eigenvalue,
 `depth_k` how far the valley towards its nearest other maximum lies below it
 (`_laplace_modes_geometry`: the seven points `_laplace_modes_separated` reads,
 in the soft-direction quadrature's coordinates), and `s` the smoothstep
-`_laplace_fade_weight`.
+`_laplace_fade_weight`. Ranked by term, each maximum takes its fade of what the
+ones above it left: a best maximum at full weight is the term, whatever lies
+below it.
 
 It is for optimising, not an exact integral of a multimodal unit (Charles,
 2026-10-29): continuous in the parameters, cheap, and giving the optimiser no
@@ -4695,7 +4698,15 @@ on the affect pilot crept for hours along that edge
 as masses, even split by their basins, every maximum a unit grew was worth up
 to its mass: on bench gD1 a fit widened a random drift's sd to grow them, 3.1
 Laplace nats up and 3.5 exact nats down
-(CT-SEM/review/HANDOVER-affint-optimiser-2026-10-29.md). The average adds
+(CT-SEM/review/HANDOVER-affint-optimiser-2026-10-29.md). Averaged by their
+masses (`pi_k` proportional to `f_k exp(t_k)`, to juliaFit 5d06816d), a lower
+maximum at full weight took a share of the term, so the term moved wherever a
+search found or missed one: on the adequacy tutorial's Fisher fit (round 10)
+one person's second maximum, 1.26 away and 1.17 nats below, healthy at both
+fades, was found by the search only from 5e-6 along a drift, took 0.24 of the
+average, and the person's term fell 0.28 nats there; the fit had stopped
+where the search stopped finding it, and refits from it crept. A run
+following both was paid for losing the lower one. The combination adds
 nothing a single maximum would not: `T` is at most the largest term, and a
 unit with one maximum keeps its own. The fade follows how a maximum is lost.
 The run follows each from its anchor and drops one that Newton carries over a
@@ -4713,8 +4724,11 @@ the objective takes as the unit's) and `alt_modes[U]` (the rest kept).
 Returns the modes, their primals, the term, each mode's share `pi` and the
 weight `route` of its own gradient, what the closing passes are seeded with
 (`gbar`, `Mbar` and the valley points `pts`; `_laplace_mode_sum_gradient!`)
-with each curvature's eigendecomposition `E`, and the index of the records'
-mode, `dominant`.
+with each curvature's eigendecomposition `E`, the index of the records'
+mode, `dominant`, and the fades (`fades`, with each mode's `f`), which the
+refined fit ranks its own rules by (`_placed_mode_sum!`). Where one share
+takes the whole term, every mode is returned all the same, for that ranking;
+the unit's gradient is then the one mode's.
 """
 function _laplace_mode_sum(laplace::CTSEMLaplaceObjective, U::Integer,
     theta::Vector{Float64}, Ls, aws, primal)
@@ -4758,26 +4772,89 @@ function _laplace_mode_sum(laplace::CTSEMLaplaceObjective, U::Integer,
         records!(dominant)
         return _laplace_one_mode(terms[dominant], modes[dominant], prims[dominant])
     end
-    logw = fill(-Inf, K)
-    for k in live
-        logw[k] = log(f[k]) + terms[k]
-    end
-    top_w = maximum(logw)
-    pi = Float64[exp(w - top_w) for w in logw]
-    pi ./= sum(pi)
-    value = sum(pi[k] * terms[k] for k in live)
+    shares = _laplace_mode_shares(f, terms)
+    pi = shares.pi
+    value = sum(pi[k] * terms[k] for k in 1:K if pi[k] > 0)
     lead = argmax(pi)
     records!(lead)
-    length(live) == 1 && return _laplace_one_mode(terms[lead], modes[lead], prims[lead])
-    # dT = sum_k pi_k (1 + t_k - T) dt_k + sum_k pi_k (t_k - T) d log f_k, and
-    # d log f_k takes the eigenvalue's v' dM_k v and the valley's d depth_k =
-    # dg_k - d g(p), p the valley's point between mode k and mode j.
-    route = Float64[pi[k] * (1 + terms[k] - value) for k in 1:K]
-    fades = (geo=geo, x=x, y=y, toward=toward, live=live)
-    seeds = _laplace_mode_seeds(fades, Float64[pi[k] * (terms[k] - value) for k in 1:K])
+    # dT = sum_k pi_k dt_k + sum_k c_k d log f_k: the shares depend on the
+    # terms only through their ranking, which holds between ties, where the
+    # combination is continuous, so c_k = f_k dT/df_k
+    # (`_laplace_mode_fade_coefficients`); d log f_k takes the eigenvalue's
+    # v' dM_k v and the valley's d depth_k = dg_k - d g(p), p the valley's
+    # point between mode k and mode j.
+    route = copy(pi)
+    fades = (geo=geo, x=x, y=y, toward=toward, live=live, f=f)
+    seeds = _laplace_mode_seeds(fades,
+        _laplace_mode_fade_coefficients(shares, f, terms, value))
     return (value=value, modes=modes, prims=prims, pi=pi, route=route,
         E=Any[g.E for g in geo.geos], gbar=seeds.gbar, Mbar=seeds.Mbar, pts=seeds.pts,
         dominant=lead, terms=terms, fades=fades)
+end
+
+"""
+    _laplace_mode_shares(f, rank)
+
+The shares in which a unit's maxima make its term (`_laplace_mode_sum`), from
+their fades `f` and the values that rank them, `rank` (the best first): each
+takes its fade of what the ones above it left,
+
+    w_(1) = f_(1),   w_(i) = f_(i) prod_{j < i} (1 - f_(j)),   pi = w / W,
+
+`W = sum_i w_(i) = 1 - prod_i (1 - f_(i))`. A best maximum at full weight
+takes the whole term, and one that fades hands what it loses to the next. The
+combination `sum_k pi_k a_k` is continuous where two ranks swap only if their
+`a` are equal there, so the values combined are the values ranked: the
+Laplace terms in the mode sum, the placed rules' integrals in the refined fit
+(`_placed_mode_sum!`). Returns `pi`, the ranking `order` and `W`; `pi` is all
+zeros where every fade is.
+"""
+function _laplace_mode_shares(f::Vector{Float64}, rank::Vector{Float64})
+    order = sortperm(rank; rev=true)
+    w = zeros(Float64, length(f))
+    left = 1.0
+    for k in order
+        w[k] = f[k] * left
+        left *= 1 - f[k]
+    end
+    W = 1 - left
+    W > 0 && (w ./= W)
+    return (pi=w, order=order, W=W)
+end
+
+"""
+    _laplace_mode_fade_coefficients(shares, f, a, A)
+
+`f_k dA/df_k` for `A = sum_k pi_k a_k` and the shares `_laplace_mode_shares`
+gives: what `_laplace_mode_seeds` weights each mode's `d log f_k` by. With
+`P_i = prod_{j < i} (1 - f_(j))`, what the maxima ranked above `i` leave, and
+the rest's own combination about `A` from the bottom up,
+`R_i = f_(i) (a_(i) - A) + (1 - f_(i)) R_(i+1)`,
+
+    dA/df_(i) = P_i ((a_(i) - A) - R_(i+1)) / W.
+
+Every `a` must be finite: a mode carrying no share may take any value, `A`
+say, since its coefficient, and every one its value reaches, is zero there or
+multiplies a fade's zero slope.
+"""
+function _laplace_mode_fade_coefficients(shares, f::Vector{Float64},
+    a::Vector{Float64}, A::Float64)
+    K = length(f)
+    c = zeros(Float64, K)
+    shares.W > 0 || return c
+    order = shares.order
+    R = zeros(Float64, K + 1)
+    for i in K:-1:1
+        k = order[i]
+        R[i] = f[k] * (a[k] - A) + (1 - f[k]) * R[i + 1]
+    end
+    P = 1.0
+    for i in 1:K
+        k = order[i]
+        c[k] = f[k] * P * ((a[k] - A) - R[i + 1]) / shares.W
+        P *= 1 - f[k]
+    end
+    return c
 end
 
 """
@@ -4787,8 +4864,8 @@ What `_laplace_mode_sum_gradient!`'s closing passes are seeded with for
 `sum_k c_k d log f_k`, the maxima's fades (`_laplace_mode_sum`'s `fades`)
 weighted by `c`: each eigenvalue's `Mbar`, and each valley's point with the
 weight its depth's derivative takes (`gbar`, `pts`). The mode sum weights
-them by `pi_k (t_k - T)`; the refined fit's average of placed rules, by
-`pi_k (Q_k - Q)` (`_placed_mode_sum!`).
+them by `f_k dT/df_k` of its terms, the refined fit's combination of placed
+rules by the same of their integrals (`_laplace_mode_fade_coefficients`).
 """
 function _laplace_mode_seeds(fades, c::Vector{Float64})
     geo, x, y, toward = fades.geo, fades.x, fades.y, fades.toward
@@ -4850,7 +4927,7 @@ function _laplace_mode_sum_gradient!(row::Vector{Float64},
         laplace.mode_repaired[U] = s.prims[k].fac.repaired)
     try
         for k in 1:K
-            s.pi[k] > 0 || continue
+            s.route[k] == 0 && continue
             records!(k)
             p = s.prims[k]
             good, _ = _laplace_unit_gradient_route!(part, laplace, U, theta, Ls,
@@ -6585,7 +6662,9 @@ function _laplace_store_unit_primal!(laplace::CTSEMLaplaceObjective, U::Integer,
         laplace.logdet_floored[U] = p.floored
         primal_soft_quadrature[U] = p.soft_quadrature
         term = s.value
-        length(s.modes) > 1 && (combo[U] = s)
+        # Where one share takes the whole term its gradient is that mode's,
+        # by the unit's own route.
+        count(>(0), s.pi) > 1 && (combo[U] = s)
     end
     if !isfinite(term)
         chunk_ok[_laplace_slot()] = false
