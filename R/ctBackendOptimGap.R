@@ -1187,6 +1187,26 @@
         overshot = isTRUE(r$overshot), parnames = parnames,
         saddle = endgame$saddle))
   }
+  # A run that walked off to a limit (the stall watch's "diverged") has no
+  # maximum at finite values to certify or to resume towards: a Hessian there
+  # is taken at raw values in the hundreds or thousands, where an iteration
+  # costs minutes, and a resume walks on. On the adequacy tutorial's
+  # second-order refits that was hours a refit.
+  if (identical(as.character(.ctJuliaOr(result$stop_reason, ""))[1L], "diverged")) {
+    which <- as.integer(result$diverging_parameters)
+    which <- which[!is.na(which) & which >= 1L & which <= npar]
+    names <- parnames[which]
+    certification <- list(status = "notmaximum", certified = FALSE,
+      reason = paste0("the likelihood rises towards a limit as ",
+        if (length(names)) paste(names, collapse = ", ") else "some parameters",
+        " grow without bound, so it has no maximum at finite values; ",
+        "often the model reducing to a simpler one there"),
+      tolerance = tolerance, diverging = names)
+    return(list(result = result, certification = certification, hessian = NULL,
+      evaluated_at = NULL, distance = NA_real_, corrections = history,
+      totals = totals, hessians = as.integer(totals[["newton_hessians"]]),
+      escapes = 0L))
+  }
   budget <- max(0L, as.integer(maxtries))
   attempt <- 0L
   escapes <- 0L

@@ -2333,6 +2333,28 @@ resumed stage a progress to take a share of. This is the one no-progress rule
 for a resume; it replaced switching the predicted-gain stop off and
 quadrupling the cap, which is how a resume on AnomAuth came to run for hours.
 
+## Walking off to a limit
+
+A fit can stall with nothing flat for a reason the slow case does not cover:
+its supremum lies at a limit the parameters reach only at infinity, so every
+step gains a little less while some coordinates keep growing. A second-order
+process the data do not need does this -- it approaches the first-order model
+only as its damping and restoring coefficient go to minus infinity -- and the
+transform there, `-log1p_exp(-2 param)`, is linear, not flat, so the
+conjunction above never completes. On the adequacy tutorial's randomdrift
+search the refit gained a nat over its iterations 30-180 while its largest
+coordinate went from 1.8 to 17, then 0.01 over 180-330 while it went to 17,146,
+geometrically; each iteration slowed from half a second to minutes as the
+dynamics stiffened, and the runs hit their 8-hour limits. So at a trigger
+that finds nothing flat, coordinates beyond `_CTSEM_DIVERGE_RAW` that have at
+least doubled since the previous trigger, with the same sign, are diverging:
+the watch stops the run (`diverged`, `stop_reason` "diverged") and names them.
+A slow fit converges, so its coordinates settle between triggers 30 iterations
+apart rather than double ten prior sds out. Replayed on that walk's record
+(the watch's triggers at iterations 99, 129 and 178), the run stops at
+iteration 208, its largest coordinate -43.8 against -15.6 at the trigger
+before, 0.005 nats short of where the walk ended.
+
 ## Provenance
 
 The window of 80 iterations, the share of 1e-2, the cooldown of 30, the
@@ -2361,6 +2383,10 @@ mutable struct CTSEMStallWatch
     carried::Float64
     alone::Bool
     exhausted::Bool
+    # The point at the last trigger that found nothing, and whether the run is
+    # walking off to a limit (see "Walking off to a limit" above).
+    previous::Vector{Float64}
+    diverged::Bool
 end
 
 CTSEMStallWatch(; window::Integer=80, fraction::Real=1e-2, cooldown::Integer=30,
@@ -2368,7 +2394,25 @@ CTSEMStallWatch(; window::Integer=80, fraction::Real=1e-2, cooldown::Integer=30,
     alone::Bool=false) =
     CTSEMStallWatch(Int(window), Float64(fraction), Int(cooldown),
         Float64(tighten), Int(tightenings), 0, 0, Int[], Float64[], 0.0,
-        Float64(carried), alone, false)
+        Float64(carried), alone, false, Float64[], false)
+
+"""
+How far past its N(0, 1) prior, in raw units, a coordinate must be for the
+stall watch to read its doubling between triggers as a walk to infinity
+(`_ctsem_diverging`): ten prior sds, past where any default transform is
+anywhere but asymptotic, and past where a slow fit's coordinates are still
+moving. On the walk that set it the largest coordinate passed 10 at iteration
+121 and went from -15.6 to -43.8 between the triggers at 178 and 208.
+"""
+const _CTSEM_DIVERGE_RAW = 10.0
+
+"""The coordinates of `x` beyond `_CTSEM_DIVERGE_RAW` that have at least
+doubled, sign kept, since `previous`; none where there is no previous point."""
+function _ctsem_diverging(previous::AbstractVector, x::AbstractVector)
+    length(previous) == length(x) || return Int[]
+    return [j for j in eachindex(x) if abs(x[j]) >= _CTSEM_DIVERGE_RAW &&
+        sign(x[j]) == sign(previous[j]) && abs(x[j]) >= 2 * abs(previous[j])]
+end
 
 """
     _ctsem_stall_verdict!(watch, trace, iteration, params, values, range, ratio)
@@ -2449,6 +2493,15 @@ function _ctsem_stall_verdict!(watch::CTSEMStallWatch, trace::CTSEMTrace,
             end
         end
     end
+    # Coordinates walking off to a limit: no maximum to converge to, so no
+    # amount of rope helps. See "Walking off to a limit" above.
+    diverging = _ctsem_diverging(watch.previous, values)
+    if !isempty(diverging)
+        watch.flat = diverging
+        watch.diverged = true
+        return true
+    end
+    watch.previous = collect(Float64, values)
     # On a resumed stage, stalled at the tightest bar the hysteresis allows:
     # stuck, not slow. See `CTSEMStallWatch`.
     if watch.alone && watch.tightenings_left == 0
@@ -3044,6 +3097,8 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
     # (`ctsem_laplace_placed_optimize`).
     stopped_by_stop = Ref(false)
     stopped_by_progress = Ref(false)
+    # Walking off to a limit (`CTSEMStallWatch`): no finish, no resume.
+    stopped_by_divergence = Ref(false)
     # The window is not scaled to L-BFGS's memory: on a large model that made
     # the watch, the one thing that ends a creeping stage, answer up to twelve
     # times later, and progress does not wait for the memory to turn over.
@@ -3149,10 +3204,11 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
                 _ctsem_saturation_range(objective, current_x), stall_ratio;
                 tolerance=converge_tol, progress=_ctsem_probe_progress(reporter),
                 report=stall_report)
-            # Stuck on progress alone (a resumed stage) or stalled and flat
-            # with somewhere better to go: different findings, and only the
-            # second hands back a point to resume from.
+            # Stuck on progress alone (a resumed stage), walking off to a
+            # limit, or stalled and flat with somewhere better to go: different
+            # findings, and only the last hands back a point to resume from.
             stall.exhausted ? (stopped_by_progress[] = true) :
+                stall.diverged ? (stopped_by_divergence[] = true) :
                 (stopped_by_stall[] = true)
             return true
         end
@@ -3297,7 +3353,8 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
     # Why L-BFGS stopped, in one word, since the finish depends on it and the
     # certification reads it.
     reason_for(r) = stopped_by_stop[] ? "stopped" :
-        stopped_by_gap[] ? "gap" : stopped_by_stall[] ? "stall" :
+        stopped_by_gap[] ? "gap" : stopped_by_divergence[] ? "diverged" :
+        stopped_by_stall[] ? "stall" :
         stopped_by_progress[] ? "progress" :
         (r.linesearch_failed && jumped_units[] !== nothing) ? "jump" :
         r.linesearch_failed ? "linesearch" :
@@ -3668,8 +3725,11 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
         # A stage asked for no iterations has not stalled.
         # Not after a jump the route named: the run is handed on from there,
         # and the probe's pullbacks cost minutes on the fit this was built for.
+        # Nor after a walk off to a limit, which the watch measured climbing
+        # outward: pulling back cannot gain, and cost the second-order refit
+        # 75 s of its 3 minutes.
         label=label, verbose=verbose && maxiter > 0,
-        overshoot_probe=stop_reason == "jump" ? :off : overshoot_probe,
+        overshoot_probe=stop_reason in ("jump", "diverged") ? :off : overshoot_probe,
         progress=_ctsem_probe_progress(reporter),
         # What the probe pulls back, read off the finish's Hessian where
         # there is one, and only the flat transforms after the iteration cap
@@ -3705,6 +3765,11 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
         stall.gain, " -- so the fit has stopped getting anywhere, this is why, ",
         "and there is somewhere better to go. Stopping here rather than ",
         "running to the iteration cap")
+    verbose && stopped_by_divergence[] && println(_console(), label, ": the last ",
+        stall.window, " iterations gained ", _ctsem_window_gain(trace, stall.window),
+        " while raw parameter(s) ", stall.flat, " at least doubled, past ",
+        _CTSEM_DIVERGE_RAW, ", since the check before -- walking off to a limit ",
+        "with no maximum to reach; stopping rather than running to the iteration cap")
     verbose && stopped_by_progress[] && println(_console(), label, ": the last ",
         stall.window, " iterations gained ", _ctsem_window_gain(trace, stall.window),
         ", under ", stall.fraction, " of the ", _ctsem_trace_progress(trace) +
@@ -3889,6 +3954,10 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
         # Whether the run ended because it stopped making progress rather than
         # because it arrived.
         stopped_by_stall=stopped_by_stall[],
+        # Walking off to a limit, and the coordinates that were (`0` for none).
+        stopped_by_divergence=stopped_by_divergence[],
+        diverging_parameters=stopped_by_divergence[] && !isempty(stall.flat) ?
+            stall.flat : [0],
         stall_window=Int(stall.window),
         # Which coordinates were flat when it stopped, and how many times the
         # progress test fired without finding one. `0` for none, for the reason
@@ -3936,7 +4005,8 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
         # and `saturated_parameters`. Keying convergence on saturation made the
         # flag false on two thirds of good fits; see `_ctsem_overshot`.
         converged=!stalled && !overshot && finite_gradient &&
-            stop_reason != "jump" && (result.g_converged || converged_enough),
+            stop_reason != "jump" && stop_reason != "diverged" &&
+            (result.g_converged || converged_enough),
         saturated=saturated,
         # The pullback verdict and its margin. `overshot` is the half of
         # saturation that is a convergence failure; `overshoot_gain` is how

@@ -7258,6 +7258,12 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
     # because they mean opposite things: the gap rule stops a fit that has
     # arrived, this one stops a fit that is not going to.
     stopped_by_stall = isTRUE(result$stopped_by_stall),
+    # Or because it was walking off to a limit, with no maximum at finite
+    # values: the parameters that were growing without bound (the engine's
+    # `CTSEMStallWatch`, "Walking off to a limit").
+    stopped_by_divergence = isTRUE(result$stopped_by_divergence),
+    diverging_parameters = .ctJuliaSaturatedNames(result, model_spec, npar,
+      "diverging_parameters"),
     # The batch sizes the run grew through, and the iteration each began at;
     # 0 when it did not batch (too few subjects or groups, a sampled TI
     # predictor, or a route with no subset). A prior does not prevent it: the

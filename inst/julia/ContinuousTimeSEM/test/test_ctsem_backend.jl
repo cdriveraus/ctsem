@@ -478,6 +478,41 @@ ContinuousTimeSEM.ctsem_evaluate(::_AtPeakMock, x::AbstractVector;
         _OvershotMock(1.0), nothing, [-12.0, 0.0], 1:2, 1e-3)
 end
 
+# A walk off to a limit at infinity: stalled with nothing flat while a
+# coordinate far past its prior keeps doubling between triggers, as the
+# adequacy tutorial's second-order refits did for hours (`CTSEMStallWatch`,
+# "Walking off to a limit"). Coordinate 2 is the identity's, never flat.
+@testset "a walk off to a limit is stopped and named" begin
+    sp = _backend_saturating_parameters()
+    trace = ContinuousTimeSEM.CTSEMTrace(:objective, :gradient_norm)
+    climb = collect(range(-1000.0, -1.0; length = 121))
+    for (i, v) in enumerate(vcat(climb, fill(-1.0, 200)))
+        ContinuousTimeSEM._record!(trace, i, v, 1.0)
+    end
+    watch() = ContinuousTimeSEM.CTSEMStallWatch(window=80, fraction=1e-2,
+        cooldown=30, tighten=0.1, tightenings=2)
+    # The first trigger has nothing to compare with: the slow case.
+    w = watch()
+    @test !ContinuousTimeSEM._ctsem_stall_verdict!(w, trace, 221, _AtPeakMock(),
+        sp, [0.5, -15.0], 1:2, 1e-3)
+    @test !w.diverged
+    # Doubled, ten prior sds out, the same sign: stopped, the coordinate named.
+    @test ContinuousTimeSEM._ctsem_stall_verdict!(w, trace, 251, _AtPeakMock(),
+        sp, [0.5, -31.0], 1:2, 1e-3)
+    @test w.diverged
+    @test w.flat == [2]
+    # Not inside ten, nor across a sign change, nor short of doubling.
+    for (a, b) in (([0.5, -4.0], [0.5, -9.0]), ([0.5, -15.0], [0.5, 31.0]),
+            ([0.5, -15.0], [0.5, -25.0]))
+        v = watch()
+        ContinuousTimeSEM._ctsem_stall_verdict!(v, trace, 221, _AtPeakMock(), sp, a,
+            1:2, 1e-3)
+        @test !ContinuousTimeSEM._ctsem_stall_verdict!(v, trace, 251, _AtPeakMock(),
+            sp, b, 1:2, 1e-3)
+        @test !v.diverged
+    end
+end
+
 # `ctsem_pullback` is what a caller acts on. The mock's maximum is at the
 # origin and the estimate is out at [10, 10], where no single coordinate
 # improves and both together do -- the degenerate-corner shape.
