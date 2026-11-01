@@ -8,7 +8,9 @@ ctFitCovCheckPlot(x, maxlag = 10, vars = NA, splitvar = NA, cor = FALSE, ...)
 }
 \arguments{
 \item{x}{Data output from `ctFitCheckCov(..., plot = FALSE)`. If a ggplot
-object or list of ggplot objects is supplied, it is returned unchanged.}
+object or list of ggplot objects is supplied, it is returned unchanged.
+Data with an `x` column (from `ctFitCheckCov(x = )` other than `"lag"`)
+are drawn against it, a panel per lag and variable.}
 
 \item{maxlag}{Maximum lag to plot.}
 
