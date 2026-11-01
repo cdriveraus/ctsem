@@ -3089,9 +3089,10 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
     # and before that on the marginal route at any size -- a 529-parameter
     # fit (ECLS-K, dev2) handed over with 140 nats still to climb while
     # L-BFGS was gaining 2.5 nats a minute. On the Laplace route too: a stage
-    # creeping at 0.01 nats an iteration, as the affect pilot's did for days,
-    # otherwise has no hand-over before the cap, its gains far above any gap
-    # tolerance the objective can resolve.
+    # creeping at 0.01 nats an iteration predicts gains far above any gap
+    # tolerance the objective can resolve, and runs on until its own rule
+    # stops it; the affect pilot's ran about 175 iterations from its first
+    # stop to that hand-over, about two minutes each (dev2, 2026-11-01).
     handover = Ref(finishing ?
         max(Float64(gap_tol), Float64(newton_switch)) : Float64(gap_tol))
     # A callback rather than Optim's `show_trace`, which prints one dense line
