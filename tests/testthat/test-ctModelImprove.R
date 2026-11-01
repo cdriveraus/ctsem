@@ -178,6 +178,17 @@ test_that("a covariate the model lacks is added, an unrelated one is not, and th
   point <- readRDS(pointfile)
   expect_equal(point$parameters, c(0.1, -2))
   expect_identical(point$change, 'eta1 made second order')
+  # Side by side, a worker's stderr goes nowhere: each start's callback writes
+  # a file of its own, and this session prints the line while it waits and
+  # keeps the latest point, with its start.
+  relayed <- tempfile(fileext = '.rds')
+  on.exit(unlink(relayed), add = TRUE)
+  wait <- ctsem:::.ctImproveRelay(c(tempfile(), pointfile),
+    list(label = 'Round 2: ', file = relayed))
+  line <- capture.output(wait(future::future(NULL, lazy = FALSE)), type = 'message')
+  expect_match(line, 'Round 2: start 2 of 2: refit at 0 min: iteration 3')
+  expect_identical(readRDS(relayed)$start, 2L)
+  expect_equal(readRDS(relayed)$parameters, c(0.1, -2))
   kept <- imp$history$change[imp$history$kept]
   expect_true(any(grepl('^z as a predictor of', kept)))
   expect_false(any(grepl('^w ', imp$history$change)))

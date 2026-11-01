@@ -198,7 +198,8 @@
 #'   different search is refused. A long search on a cluster otherwise keeps
 #'   nothing until it ends. With \code{verbose}, the refit running is also
 #'   saved every ten minutes beside it (\code{<checkpoint>.refit.rds}): the
-#'   round, the change, the iteration and the raw parameters it had reached.
+#'   round, the change, the iteration and the raw parameters it had reached,
+#'   and, where a change's starts are refitted side by side, the start.
 #' @param verbose Report progress: each round's steps, each refit's time, and
 #'   while a refit runs, its iteration, objective and gradient every ten
 #'   minutes.
@@ -1495,13 +1496,23 @@ print.ctModelProposals <- function(x, digits = 3, ...) {
   if (.ctBackendWarmWait(handles) < 1L) return(inhere())
   # Side by side, the refits' wall time is the batch's.
   started <- proc.time()[['elapsed']]
-  futures <- lapply(seq_along(edits), function(i) if (!i %in% ok) NULL else
+  # A worker's stderr goes nowhere, so each refit's progress goes to a file of
+  # its own and this session prints it while it waits (`.ctImproveRelay`).
+  files <- if (!is.null(progress)) vapply(seq_along(edits), function(i)
+    tempfile('ctimprove', fileext = '.rds'), '') else character()
+  on.exit(unlink(files), add = TRUE)
+  wait <- if (length(files)) .ctImproveRelay(files, progress)
+  futures <- lapply(seq_along(edits), function(i) if (!i %in% ok) NULL else {
+    point <- if (length(files)) list(label = progress$label, file = files[i],
+      change = progress$change)
     tryCatch(future::future(utils::getFromNamespace('.ctImproveRefit', 'ctsem')(current,
-      edits[[i]]$model, edits[[i]]$data, threads, starts[[i]], edits[[i]]$args),
-      seed = TRUE), error = function(e) NULL))
+      edits[[i]]$model, edits[[i]]$data, threads, starts[[i]], edits[[i]]$args,
+      progress = point), seed = TRUE), error = function(e) NULL)
+  })
   out <- lapply(seq_along(edits), function(i) {
     if (!i %in% ok) return(edits[[i]])
     if (is.null(futures[[i]])) return(here(i))
+    if (!is.null(wait)) wait(futures[[i]])
     tryCatch(future::value(futures[[i]]), error = function(e)
       structure(conditionMessage(e), class = 'try-error', condition = e))
   })
@@ -1583,15 +1594,43 @@ print.ctModelProposals <- function(x, digits = 3, ...) {
     now <- proc.time()[['elapsed']]
     if (now - last < every) return(invisible(NULL))
     last <<- now
-    cat(format(Sys.time(), '%H:%M:%S'), ' ', label,
-      sprintf("refit at %.0f min: iteration %d, objective %.2f, |g| %.3g",
-        (now - start) / 60, as.integer(iteration), objective, gradient_norm), '\n',
-      sep = '', file = stderr())
-    if (!is.null(file)) .ctImproveCheckpointSave(file, list(round = label, change = change,
-      minutes = (now - start) / 60, iteration = as.integer(iteration),
-      objective = objective, gradient_norm = gradient_norm,
-      parameters = as.numeric(parameters)))
+    point <- list(round = label, change = change, minutes = (now - start) / 60,
+      iteration = as.integer(iteration), objective = objective,
+      gradient_norm = gradient_norm, parameters = as.numeric(parameters))
+    cat(.ctImproveProgressLine(label, point), file = stderr())
+    if (!is.null(file)) .ctImproveCheckpointSave(file, point)
     invisible(NULL)
+  }
+}
+
+.ctImproveProgressLine <- function(label, point) paste0(format(Sys.time(), '%H:%M:%S'),
+  ' ', label, sprintf("refit at %.0f min: iteration %d, objective %.2f, |g| %.3g\n",
+    point$minutes, point$iteration, point$objective, point$gradient_norm))
+
+# For refits side by side: a function that waits for one future, printing the
+# line for every point a refit's callback has written to its file (`files`, in
+# the order of the refits) since the last, and saving it to `progress$file`
+# with the start it came from. A two-start refit of the Fisher search said
+# nothing for over an hour without it.
+.ctImproveRelay <- function(files, progress, every = 5) {
+  seen <- rep(-Inf, length(files))
+  relay <- function() for (i in seq_along(files)) {
+    t <- suppressWarnings(as.numeric(file.mtime(files[i])))
+    if (!isTRUE(t > seen[i])) next
+    point <- tryCatch(readRDS(files[i]), error = function(e) NULL)
+    if (is.null(point)) next
+    seen[i] <<- t
+    cat(.ctImproveProgressLine(paste0(progress$label, 'start ', i, ' of ', length(files),
+      ': '), point), file = stderr())
+    if (!is.null(progress$file)) .ctImproveCheckpointSave(progress$file,
+      c(point, list(start = i)))
+  }
+  function(f) {
+    while (!future::resolved(f)) {
+      relay()
+      Sys.sleep(every)
+    }
+    relay()
   }
 }
 
