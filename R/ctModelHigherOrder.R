@@ -17,8 +17,11 @@
 #' zero the derivative follows the level at once and the process is the
 #' first order one it was, so the new model contains the old one with every
 #' old parameter at its value; from \eqn{\tau = 1/(4|a|)} on, the process
-#' oscillates. The derivative's initial state covaries with its level's and
-#' with whatever the level's covaries with.
+#' oscillates. The derivative starts where the process alone holds it at
+#' equilibrium: mean zero, uncorrelated with every state, and variance
+#' \eqn{q^2/(2\tau)}, so the inertia time is the one new parameter. With the
+#' noise left on the level (\code{diffusion = FALSE}), or none, its initial
+#' mean, variance and covariances are free.
 #'
 #' A model in the older matrix-list form from \code{ctModel(type = 'omx')} is
 #' written instead as the derivative pulled back by the level through an
@@ -178,6 +181,7 @@ ctModelHigherOrder <- function(ctm, indices,diffusion=TRUE, crosseffects=FALSE,c
       over('DRIFT', i, j, n, j, tau)
       ed$fixed('DRIFT', i, j, 0)
     }
+    q <- if (diffusion) .ctHigherOrderTerm(ed, 'DIFFUSION', i, i)
     if (diffusion) {
       over('DIFFUSION', i, i, n, n, tau)
       # The correlations of the noise with the other processes' move with it.
@@ -188,15 +192,30 @@ ctModelHigherOrder <- function(ctm, indices,diffusion=TRUE, crosseffects=FALSE,c
       for (j in seq_len(nl)) { ed$fixed('DIFFUSION', i, j, 0); ed$fixed('DIFFUSION', j, i, 0) }
     }
     if (cint) { over('CINT', i, 1, n, 1, tau); ed$fixed('CINT', i, 1, 0) }
-    ed$free('T0MEANS', n, 1, paste0('T0mean_', allnames[n]))
-    # The derivative starts out covarying with its level, the derivatives
-    # raised beside it, and whatever the level covaries with: free with
-    # anything else -- a cycle's clock -- the Fisher search's PA derivative
-    # ran its covariance with the clock's sine out to a raw 8.
-    lev <- c(seq_len(nl), indices)
-    for (j in seq_len(n)) if (j == n || j == i || covaries(i, lev[j])) ed$free('T0VAR', n, j,
-      if (j == n) paste0('T0var_', allnames[n]) else paste0('T0var_', allnames[n], '_',
-        allnames[j]))
+    # The derivative starts where the process alone holds it at equilibrium:
+    # mean zero, uncorrelated with every state (a stationary process is with
+    # its own derivative), and the variance q^2 / (2 tau) that its noise
+    # q / tau builds up at rate 1 / tau. Free, its initial mean, variance and
+    # covariances fitted starting values rather than dynamics -- 1.7 log
+    # likelihood units on simulated first order data, for four parameters --
+    # and lost their influence as tau -> 0, four flat directions beside the
+    # inertia's at the first order model. Not 'stationary', which solves for
+    # the moments of everything driving the level: a daily cycle never
+    # settles, so has none, and the Fisher search's PA came out NaN.
+    if (!is.null(q)) {
+      ed$fixed('T0MEANS', n, 1, 0)
+      ed$expression('T0VAR', n, n, sprintf('%s / sqrt(2 * %s)', q, tau))
+    } else {
+      # Free, covarying with its level, the derivatives raised beside it, and
+      # whatever the level covaries with; free with anything else -- a
+      # cycle's clock -- the Fisher search's PA derivative ran its covariance
+      # with the clock's sine out to a raw 8.
+      ed$free('T0MEANS', n, 1, paste0('T0mean_', allnames[n]))
+      lev <- c(seq_len(nl), indices)
+      for (j in seq_len(n)) if (j == n || j == i || covaries(i, lev[j])) ed$free('T0VAR', n,
+        j, if (j == n) paste0('T0var_', allnames[n]) else paste0('T0var_', allnames[n], '_',
+          allnames[j]))
+    }
   }
   ed$finish()
 }

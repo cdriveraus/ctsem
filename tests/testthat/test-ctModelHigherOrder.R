@@ -122,16 +122,30 @@ test_that("a ct model is raised cell by cell, the level keeping its drift and di
   expect_equal(unname(mats$DIFFUSION[2, ]), c('0', '0', '0'))
   expect_equal(unname(mats$DIFFUSION[3, 3]), 'diff_eta2 / inertia_eta2')
   expect_equal(unname(mats$DIFFUSION[3, 1]), 'diff_eta2_eta1')
-  # New latent: no indicator, its own initial mean, and covariances with what
-  # its level covaries with.
+  # New latent: no indicator, and it starts at the process's own equilibrium,
+  # so the inertia time is the one new parameter.
   expect_equal(as.numeric(mats$LAMBDA[, 3]), c(0, 0))
-  expect_equal(unname(mats$T0MEANS[3, 1]), 'T0mean_deta2')
-  expect_equal(unname(mats$T0VAR[3, ]), c('T0var_deta2_eta1', 'T0var_deta2_eta2', 'T0var_deta2'))
+  expect_equal(unname(mats$T0MEANS[3, 1]), '0')
+  expect_equal(unname(mats$T0VAR[3, ]), c('0', '0', 'diff_eta2 / sqrt(2 * inertia_eta2)'))
+  expect_identical(setdiff(ho$pars$param[!is.na(ho$pars$param) & ho$pars$matrix %in% 'PARS'],
+    m$pars$param), 'inertia_eta2')
+  # That is the stationary covariance of tau x'' + x' = a x + q dW, for any a, q
+  # and tau: the derivative's variance q^2 / (2 tau), uncorrelated with the level.
+  a <- -0.3; q <- 0.7; tau <- 2
+  A <- rbind(c(0, 1), c(a / tau, -1 / tau)); Q <- diag(c(0, (q / tau)^2))
+  P <- matrix(-solve(kronecker(diag(2), A) + kronecker(A, diag(2)), c(Q)), 2)
+  expect_equal(P[2, ], c(0, q^2 / (2 * tau)))
+  # Left on the level, the noise gives the derivative no equilibrium of its
+  # own to start from: its initial state is free, covarying with what its
+  # level covaries with.
+  free <- function(m) unname(ctModelMatrices(ctModelHigherOrder(m, 2, diffusion = FALSE))$T0VAR[3, ])
+  expect_equal(unname(ctModelMatrices(ctModelHigherOrder(m, 2, diffusion = FALSE))$T0MEANS[3, 1]),
+    'T0mean_deta2')
+  expect_equal(free(m), c('T0var_deta2_eta1', 'T0var_deta2_eta2', 'T0var_deta2'))
   m0 <- m
   m0$pars$param[m0$pars$param %in% 'T0var_eta2_eta1'] <- NA
   m0$pars$value[m0$pars$matrix == 'T0VAR' & m0$pars$row == 2 & m0$pars$col == 1] <- 0
-  expect_equal(unname(ctModelMatrices(ctModelHigherOrder(m0, 2))$T0VAR[3, ]),
-    c('0', 'T0var_deta2_eta2', 'T0var_deta2'))
+  expect_equal(free(m0), c('0', 'T0var_deta2_eta2', 'T0var_deta2'))
   expect_error(ctModelHigherOrder(m, 2, explosive = TRUE), "type = 'omx'")
 })
 
@@ -565,7 +579,9 @@ test_that("cells a change adds take effects of the user's predictors, not a cloc
   # A cycle's phase predictors set its initial means and nothing else.
   cm <- ctModelPeriodicComponent(.ho_ct(), 24, indices = 1:2, individual = FALSE)
   expect_true(length(cm$statedTIpreds) == 2L)
-  m2 <- ctModelHigherOrder(cm, 1L)
+  # With the noise left on the level the derivative's initial state is free
+  # cells, which is what this asks about.
+  m2 <- ctModelHigherOrder(cm, 1L, diffusion = FALSE)
   added <- !is.na(m2$pars$param) & grepl('deta1', m2$pars$param)
   expect_gt(sum(added), 3L)
   for (p in cm$statedTIpreds)
@@ -573,8 +589,9 @@ test_that("cells a change adds take effects of the user's predictors, not a cloc
   # A predictor of the user's own still follows tipredDefault.
   u <- suppressMessages(ctModel(type = 'ct', silent = TRUE, manifestNames = c('Y1', 'Y2'),
     latentNames = c('eta1', 'eta2'), LAMBDA = diag(2), n.TIpred = 1, TIpredNames = 'g'))
-  u2 <- ctModelHigherOrder(u, 1L)
+  u2 <- ctModelHigherOrder(u, 1L, diffusion = FALSE)
   added <- !is.na(u2$pars$param) & grepl('deta1', u2$pars$param)
+  expect_gt(sum(added), 0L)
   expect_true(all(u2$pars$g_effect[added] %in% 'TRUE'))
 })
 

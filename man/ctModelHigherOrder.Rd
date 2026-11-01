@@ -53,8 +53,11 @@ and \eqn{-1/\tau}, and its diffusion \eqn{q/\tau}. As \eqn{\tau} goes to
 zero the derivative follows the level at once and the process is the
 first order one it was, so the new model contains the old one with every
 old parameter at its value; from \eqn{\tau = 1/(4|a|)} on, the process
-oscillates. The derivative's initial state covaries with its level's and
-with whatever the level's covaries with.
+oscillates. The derivative starts where the process alone holds it at
+equilibrium: mean zero, uncorrelated with every state, and variance
+\eqn{q^2/(2\tau)}, so the inertia time is the one new parameter. With the
+noise left on the level (\code{diffusion = FALSE}), or none, its initial
+mean, variance and covariances are free.
 
 A model in the older matrix-list form from \code{ctModel(type = 'omx')} is
 written instead as the derivative pulled back by the level through an
