@@ -646,7 +646,7 @@ function _ctsem_lbfgs(fg!, x0::AbstractVector; memory::Integer=20,
         # What the objective resolves along the step (`_ctsem_resolution`):
         # its value change against the trapezoid of its end gradients.
         directional === nothing || _ctsem_resolution_step!(directional,
-            abs(fn - f - (dot(G, step) + dot(Gn, step)) / 2), fn - f,
+            abs(fn - f - (dot(G, step) + dot(Gn, step)) / 2),
             batch === nothing && !_ctsem_coreset_live(coreset))
         iteration += 1
         fconv = abs(fn - f) <= f_tol * abs(fn)
