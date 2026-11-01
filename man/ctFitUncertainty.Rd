@@ -130,7 +130,7 @@ and \code{isitersize}. Omitted entries use
 \code{ridge = 1e-8}, \code{hessianStep = 1e-3},
 \code{bootstrapFitCores = 1}, \code{bootstrapTol = 1e-5},
 \code{imisMaxIter = 50} (100 for \code{'checked'}), \code{imisScaleInit = 1.1},
-\code{imisTailScale = 1.1} (1.5 and 1.2 on julia), \code{imisDf = 5} (the
+\code{imisTailScale = 1.1} (1.5 and 1.2 for \code{'is'} on julia), \code{imisDf = 5} (the
 proposal components' t degrees of freedom; \code{Inf} for normal),
 \code{isESS = 200}, and \code{isitersize = 1000} (100 for
 \code{'checked'}). \code{imisBudget} caps the log density evaluations
@@ -138,7 +138,7 @@ importance sampling spends (no cap by default). \code{imisComplement = TRUE}
 (\code{'checked'}) weighs the sampled directions with the others integrated
 over, rather than held at the centre with the volume their spread adds to
 first order: exact where the others' spread moves with them, as a large
-covariance's scale does, at up to seven times the evaluations. On a Laplace fit (julia),
+covariance's scale does, at up to seven times the evaluations. On a julia fit,
 importance sampling
 evaluates a weighted subset of the units chosen and checked as it runs, and
 corrects its weights where that subset strays; \code{coreset = FALSE}
@@ -386,8 +386,7 @@ too, unless the fit's \code{optimcontrol$tipredMissing} or
 \code{control$tipredMissing} is \code{'impute'}.
 
 \emph{The kernel.} \code{control$sampler} chooses it for the joint
-posterior. By default it is \code{'map'}, and \code{'saem'} where missing
-TI predictor values are sampled. \code{'saem'} draws the random effects by
+posterior. By default it is \code{'map'}. \code{'saem'} draws the random effects by
 SAEM's Metropolis-within-Gibbs sweeps and the parameters given them by NUTS,
 with moves that re-express the effects for each level's means and scales;
 \code{'nuts'} runs NUTS on the parameters and every random effect at once;
@@ -418,13 +417,13 @@ posterior's moments, to that normal's covariance. Tempered SMC carries
 of NUTS moves, then runs as many of them on as chains as the effective
 sample size target needs. It is for posteriors NUTS does not
 converge on from the normal -- a mass far from the mode, a loading shell --
-and costs about what NUTS does in gradients. On the Laplace route its
+and costs about what NUTS does in gradients. Its
 particles move on a coreset of the units (\code{coreset}, \code{TRUE}): the
 full density, evaluated once a particle a stage, corrects the moves
 exactly, so a fit with many units pays a fraction of a gradient a move and
 \code{coreset = FALSE} is the oracle. Its chains are short and start
 from particles already drawn from the posterior, so it reports no
-R-hat; the effective sample size is its stop. On the Laplace route NUTS
+R-hat; the effective sample size is its stop. NUTS
 too runs its trajectories on a coreset, fitted before warm-up and again
 during it, each draw's end accepted or refused by the full density, which
 keeps the draws exact whatever the coreset. \code{adapt_metric}, \code{adapt_effects} and
@@ -520,9 +519,11 @@ its \code{control$bootstrapFitCores} / \code{control$bootstrapTol}, and
 \code{control$analyticHessian} are julia-only. \code{cores} means R worker
 processes on stan and engine threads on julia. The IMIS proposal defaults
 also differ: \code{imisScaleInit = 1.1} and \code{imisTailScale = 1.1} on
-stan against \code{1.5} and \code{1.2} on julia, the wider pair being what
-a small-sample posterior wider than the Hessian curvature needs to be seen
-at all. Set them explicitly to compare the two. Transformed-parameter
+stan; on julia the same for \code{'checked'}, whose proposal starts at the
+widths its check measured, and \code{1.5} and \code{1.2} for \code{'is'},
+whose proposal starts at the Hessian curvature, the wider pair being what a
+small-sample posterior wider than that curvature needs to be seen at all.
+Set them explicitly to compare the two. Transformed-parameter
 summaries are refreshed on stan and not on julia; the raw-scale covariance
 and draws are complete on both.
 }

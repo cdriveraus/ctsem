@@ -676,15 +676,15 @@ mutable struct CTSEMLaplaceObjective{O} <: CTSEMOptimisable
     # modes and flags above do. A copy the evaluation already made; nothing is
     # computed from it per evaluation.
     last_values::Vector{Float64}
-    # The prior floor this objective evaluates under, `:total` or `:gated`,
-    # and the gated rule's hand-off band; see `ctsem_set_laplace_floor!`. On
+    # The prior floor this objective evaluates under, `:logdet_floor` or `:quadrature`,
+    # and the soft-direction quadrature's hand-off band; see `ctsem_set_soft_directions!`. On
     # the objective rather than the session, so that no fit changes how
     # another evaluates.
-    floor::Symbol
-    gate_lo::Float64
-    gate_hi::Float64
-    # Units the gated rule flagged at the last evaluation.
-    gated_units::Int
+    soft_directions::Symbol
+    soft_blend_lo::Float64
+    soft_blend_hi::Float64
+    # Units the soft-direction quadrature flagged at the last evaluation.
+    soft_quadrature_units::Int
     # Whether every unit's inner problem is a concave quadratic: Gaussian
     # indicators, a linear model, and every effect entering a mean vector
     # through the affine transform (R's `.ctJuliaLaplaceQuadratic()`). Then it
@@ -724,17 +724,17 @@ mutable struct CTSEMLaplaceObjective{O} <: CTSEMOptimisable
     alt_anchors::Vector{Vector{Vector{Float64}}}
 end
 
-# `gate_lo = 0.2` and `gate_hi = 0.7` are measured, not derived: see the
-# provenance paragraph at the gated rule's section further down.
+# `soft_blend_lo = 0.2` and `soft_blend_hi = 0.7` are measured, not derived: see the
+# provenance paragraph at the soft-direction quadrature's section further down.
 function CTSEMLaplaceObjective(objective::CTSEMObjective, spec::CTSEMLaplaceSpec;
     inner_maxiter::Integer=_LAPLACE_INNER_MAXITER[], inner_tol::Real=1e-10,
-    floor=:total, gate_lo::Real=0.2, gate_hi::Real=0.7,
+    soft_directions=:logdet_floor, soft_blend_lo::Real=0.2, soft_blend_hi::Real=0.7,
     inert::Union{Nothing,Vector{Vector{Vector{Int}}}}=nothing, quadratic::Bool=false,
     affine::Vector{Vector{Bool}}=Vector{Bool}[],
     known::Vector{Vector{Vector{Float64}}}=Vector{Vector{Float64}}[])
-    Symbol(floor) in (:total, :gated) ||
-        throw(ArgumentError("the Laplace floor must be :total or :gated"))
-    0 < gate_lo < gate_hi || throw(ArgumentError("the gate needs 0 < lo < hi"))
+    Symbol(soft_directions) in (:logdet_floor, :quadrature) ||
+        throw(ArgumentError("soft_directions must be :quadrature or :logdet_floor"))
+    0 < soft_blend_lo < soft_blend_hi || throw(ArgumentError("the gate needs 0 < lo < hi"))
     nsubjects = length(objective.subject_objectives)
     units = _laplace_build_units(spec, nsubjects; inert=inert)
     nunits = length(units.members)
@@ -742,8 +742,8 @@ function CTSEMLaplaceObjective(objective::CTSEMObjective, spec::CTSEMLaplaceSpec
         [zeros(Float64, units.dims[U]) for U in 1:nunits],
         Int(inner_maxiter), Float64(inner_tol), [Dict{Any,Any}()],
         zeros(Int, nunits), zeros(Float64, nunits), falses(nunits), falses(nunits),
-        falses(nunits), falses(nunits), Float64[], Symbol(floor), Float64(gate_lo),
-        Float64(gate_hi), 0, quadratic, affine,
+        falses(nunits), falses(nunits), Float64[], Symbol(soft_directions), Float64(soft_blend_lo),
+        Float64(soft_blend_hi), 0, quadratic, affine,
         inert === nothing ? Vector{Vector{Int}}[] : inert,
         isempty(known) ? [Vector{Float64}[] for _ in 1:nunits] : known,
         Vector{Float64}[], [Vector{Float64}[] for _ in 1:nunits],
@@ -822,7 +822,7 @@ function ctsem_laplace_objective(objective::CTSEMObjective; re_index=Int[],
     hybrid_effect=Int[], hybrid_kind=Int[], hybrid_target=Int[], hybrid_slope=Float64[],
     hybrid_pred=Int[], level_nload=Int[], load_row=Int[], load_col=Int[],
     inner_maxiter::Integer=_LAPLACE_INNER_MAXITER[], inner_tol::Real=1e-10,
-    floor="total", gate_lo::Real=0.2, gate_hi::Real=0.7, quadratic::Bool=false,
+    soft_directions="logdet_floor", soft_blend_lo::Real=0.2, soft_blend_hi::Real=0.7, quadratic::Bool=false,
     affine_level=Int[], affine_effect=Int[], known_unit=Int[],
     known_values=Matrix{Float64}(undef, 0, 0))
     nsubjects = length(objective.subject_objectives)
@@ -960,8 +960,8 @@ function ctsem_laplace_objective(objective::CTSEMObjective; re_index=Int[],
         end
     end
     laplace = CTSEMLaplaceObjective(objective, CTSEMLaplaceSpec(levels);
-        inner_maxiter=inner_maxiter, inner_tol=inner_tol, floor=Symbol(floor),
-        gate_lo=gate_lo, gate_hi=gate_hi, inert=inert, quadratic=quadratic,
+        inner_maxiter=inner_maxiter, inner_tol=inner_tol, soft_directions=Symbol(soft_directions),
+        soft_blend_lo=soft_blend_lo, soft_blend_hi=soft_blend_hi, inert=inert, quadratic=quadratic,
         affine=affine)
     # A one-entry matrix may cross the bridge as a number.
     isempty(known_unit) || _laplace_add_known!(laplace, Int.(collect(known_unit)),
@@ -2107,13 +2107,12 @@ end
 Subject `i`'s log likelihood at `values`, and its gradient with respect to
 `values`, written into `gradient`.
 
-This is one iteration of `_ctsem_subject_gradient_chunk!`'s loop, lifted out
-because the Laplace layer needs each subject evaluated at a *different*
-parameter vector -- which is exactly what the summed adjoint is built never to
-have to do. The two shortcuts that make the summed gradient fast, the shared
-parameter layer and the cross-subject Frechet batch, are per-subject-incorrect
-for the same reason they are in `ctsem_subject_gradients`, so the Frechet batch
-is flushed within the subject here too.
+This is one subject of the summed adjoint chunk's loop, lifted out because
+the Laplace layer needs each subject evaluated at a *different* parameter
+vector -- which is exactly what the summed adjoint is built never to have to
+do. The two shortcuts that make the summed gradient fast, the shared parameter
+layer and the cross-subject Frechet batch, are per-subject-incorrect here, so
+the Frechet batch is flushed within the subject.
 """
 function _laplace_subject_value_gradient!(gradient::AbstractVector{T},
     subject_objective, aws, values::AbstractVector{T},
@@ -2282,7 +2281,7 @@ function _laplace_scratch_blockmatrix!(laplace::CTSEMLaplaceObjective, ::Type{T}
     cached = get(store, key, nothing)
     if cached !== nothing
         c = cached::CTSEMBlockMatrix{T}
-        # A layout other than the unit's own (the gated term's joint
+        # A layout other than the unit's own (the soft-quadrature term's joint
         # coordinates) can share a key with it; what does not fit is replaced.
         _laplace_blocks_fit(c.diag, c.coupling, blocks) && return c
     end
@@ -2396,8 +2395,8 @@ end
 
 """
 The calling slot's `_LaplaceFactorStore` for `blocks` -- unit `U`'s own unless
-the caller factors another layout of it, as the gated term does in joint
-coordinates (`_hybrid_joint_gated`), whose one block also spans the deviations
+the caller factors another layout of it, as the soft-quadrature term does in joint
+coordinates (`_hybrid_joint_soft_quadrature`), whose one block also spans the deviations
 the filter integrates. A cached store that does not fit `blocks` is replaced.
 """
 function _laplace_factor_store!(laplace::CTSEMLaplaceObjective, ::Type{T},
@@ -3412,7 +3411,7 @@ function _laplace_columns_jacobian(laplace::CTSEMLaplaceObjective, U::Integer,
     d = length(base)
     width = _ctsem_dual_width(n, _CTSEM_CURVATURE_WIDTHS[])
     nx = max(n, width)
-    # By the hand-coded second order (`tangent_laplace.jl`), the gated floor's
+    # By the hand-coded second order (`tangent_laplace.jl`), the soft-direction quadrature's
     # cross curvature read off the same sweeps; at another element type -- the
     # nested-gradient oracle's -- forward mode over the members' gradient.
     if T === Float64 && eltype(values) === Float64
@@ -3764,7 +3763,7 @@ function _laplace_partner_modes!(set, laplace::CTSEMLaplaceObjective, U::Integer
         M = _laplace_block_dense(_laplace_unit_curvature(laplace, U, values, Ls, u),
             laplace.units.blocks[U], d)
         all(isfinite, M) || continue
-        E = _ctsem_symeig(_gated_sym(Matrix{Float64}(M)))
+        E = _ctsem_symeig(_dense_sym(Matrix{Float64}(M)))
         E.values[1] < _LAPLACE_MODE_FADE || continue
         v = E.vectors[:, 1]
         for s in (0.25, 0.5, 1.0, 2.0), sgn in (1.0, -1.0)
@@ -3854,6 +3853,35 @@ finite, so an unusable number can never certify a mode.
     gain = dot(gradient, step) / 2
     isfinite(gain) ? abs(gain) : Inf
 end
+
+"""
+    _laplace_floor_step(laplace, gradient, step, value)
+
+Whether a Newton step's predicted gain (`_laplace_stationary_gain`) is below
+what the value resolves (`_laplace_inner_tolerance`), so that no line search
+can rank its trials. There a step on an exact, unrepaired curvature is taken
+where it at least halves the gradient (`_laplace_floor_step_taken`, SR1's test
+of whether its matrix still describes the unit), and otherwise the solve is at
+its floor. The unit mode solve, a placed rule's leaf and Laplace's expansion
+read it alike; the categorical mode solve's `_newton_gain` against
+`_mode_tolerance` is the same test.
+
+Measured on the adequacy tutorial's second-order candidate (Fisher data, 40
+units, one thread, dev3) as its inertia time went from 1 h to 1e-6 h: the
+units' values carried 5e-14 of roundoff at their modes, then 1e-12 at 1e-4 h
+and 5e-11 at 1e-6 h. Every step below that spent the twenty halvings of a line
+search that could not rank it, a step taken whenever the gradient fell at all
+walked four units to the 200-iteration cap on the gradient's noise, and a value
+took 402 s against 15.
+"""
+@inline _laplace_floor_step(laplace::CTSEMLaplaceObjective, gradient::AbstractVector,
+    step::AbstractVector, value::Real) =
+    _laplace_stationary_gain(gradient, step) <= _laplace_inner_tolerance(laplace, value)
+
+"""Whether a step taken at the floor (`_laplace_floor_step`) found anything: its
+gradient at most half the one it left."""
+@inline _laplace_floor_step_taken(before::AbstractVector, after::AbstractVector) =
+    maximum(abs, after; init=0.0) <= maximum(abs, before; init=0.0) / 2
 
 """
     _laplace_newton_unit_mode(laplace, U, values, Ls, aws, start)
@@ -4006,6 +4034,40 @@ function _laplace_newton_unit_mode(laplace::CTSEMLaplaceObjective, U::Integer,
             exact = true
             continue
         end
+        # Where the step's predicted gain is below what the value resolves, no
+        # line search can rank its trials (`_laplace_floor_step`). An updated
+        # curvature's prediction is no guide there, so the exact one is formed
+        # first. On it the step is reliable whatever the value can see, and
+        # the gradient ranks it: taken where it halves the gradient, and
+        # otherwise this is the mode in floating point. On the affect pilot,
+        # well-conditioned units (curvature 1.3 to 134) sat here one step
+        # short -- |g| 25-100 times the bound, the step 1e3-1e4 times
+        # `inner_tol`, 1e-13 left to gain against a value of -1000 -- and
+        # stopping them there made the objective differ by 1.1e-6 between
+        # Intel and AMD nodes, through the log-determinant at those modes.
+        if !fac.repaired && _laplace_floor_step(laplace, current.gradient, step,
+                current.value)
+            if !exact
+                exact = true
+                continue
+            end
+            utry .= u .+ step
+            trial = _laplace_unit_objective_gradient(laplace, U, values, Ls,
+                utry, aws, gtry)
+            if isfinite(trial.value)
+                if _laplace_floor_step_taken(current.gradient, gtry)
+                    u, utry = utry, u
+                    gcur, gtry = gtry, gcur
+                    current = trial
+                    stepped_exact = true
+                    continue
+                end
+                converged = true
+                final = _laplace_copy_blockmatrix(M)
+                break
+            end
+            # Not evaluable at its full length: the line search halves it.
+        end
         accepted = false
         # Whether any trial could be evaluated at all, which is what separates
         # "there is nothing left to gain here" from "the step went somewhere
@@ -4095,33 +4157,12 @@ function _laplace_newton_unit_mode(laplace::CTSEMLaplaceObjective, U::Integer,
             # stopped four orders above the tolerance is visible in the
             # diagnostics rather than silently equated with one that did not.
             #
-            # But a value that cannot rank the trials does not mean the mode is
-            # found: on an exact, unrepaired curvature the Newton step is
-            # reliable whatever the value can see, and the gradient still ranks
-            # it. On the affect pilot, well-conditioned units (curvature 1.3 to
-            # 134) stopped here one step short -- |g| 25-100 times the bound,
-            # the step 1e3-1e4 times `inner_tol`, 1e-13 left to gain against a
-            # value of -1000 -- and which units did depended on the CPU's last
-            # bits: the objective differed by 1.1e-6 between Intel and AMD
-            # nodes, through the log-determinant at those modes. So that step
-            # is taken if it makes the gradient smaller, and only otherwise is
-            # this the floor.
+            # On an exact, unrepaired curvature a step this small was ranked by
+            # its gradient before the search (`_laplace_floor_step`); what
+            # reaches here is a repaired curvature, or a step the model had no
+            # value for at its full length.
             stationary = evaluable &&
-                _laplace_stationary_gain(current.gradient, step) <=
-                    _laplace_inner_tolerance(laplace, current.value)
-            if stationary && exact && !fac.repaired
-                utry .= u .+ step
-                trial = _laplace_unit_objective_gradient(laplace, U, values, Ls,
-                    utry, aws, gtry)
-                if isfinite(trial.value) &&
-                        maximum(abs, gtry) < maximum(abs, current.gradient)
-                    u, utry = utry, u
-                    gcur, gtry = gtry, gcur
-                    current = trial
-                    stepped_exact = true
-                    continue
-                end
-            end
+                _laplace_floor_step(laplace, current.gradient, step, current.value)
             converged = stationary
             stationary && exact && !fac.repaired &&
                 (final = _laplace_copy_blockmatrix(M))
@@ -4195,7 +4236,7 @@ does not. But only between maxima (`_laplace_modes_separated`): where `g_U`
 climbs from one point to the other without a dip, the lower is a point on the
 higher's slope, where Newton stopped on a nearly flat stretch, and the higher is
 the mode. Comparing terms there kept the stopping point whenever its curvature
-was soft enough for the gated rule to score it above plain Laplace at the mode
+was soft enough for the soft-direction quadrature to score it above plain Laplace at the mode
 -- on the pilot, a person 0.18 below their mode in `g_U` and 0.51 above it in
 term -- so the unit's term depended on where Newton stopped.
 
@@ -4642,7 +4683,7 @@ averaged by their masses, each faded out before the inner solve can lose it,
 `t_k` the mode's term, `lambda_k` its curvature's smallest eigenvalue,
 `depth_k` how far the valley towards its nearest other maximum lies below it
 (`_laplace_modes_geometry`: the seven points `_laplace_modes_separated` reads,
-in the gated rule's coordinates), and `s` the smoothstep
+in the soft-direction quadrature's coordinates), and `s` the smoothstep
 `_laplace_fade_weight`.
 
 It is for optimising, not an exact integral of a multimodal unit (Charles,
@@ -4791,7 +4832,7 @@ Unit `U`'s gradient where its term combines its maxima (`_laplace_mode_sum`'s
 the call) times its weight `route`; each fading valley's point, through the
 objective's gradient there (`_laplace_mode_point_gradient`), into the raw
 vector and both ends; and each mode's height, eigenvalue and position by the
-gated rule's closing pass (`_laplace_mode_close`). `false` where a route or a
+soft-direction quadrature's closing pass (`_laplace_mode_close`). `false` where a route or a
 pass fails.
 """
 function _laplace_mode_sum_gradient!(row::Vector{Float64},
@@ -4813,7 +4854,7 @@ function _laplace_mode_sum_gradient!(row::Vector{Float64},
             records!(k)
             p = s.prims[k]
             good, _ = _laplace_unit_gradient_route!(part, laplace, U, theta, Ls,
-                dLlevels, dLsolved, p.gated, p.M, (p.fac.factors, p.fac.coupling))
+                dLlevels, dLsolved, p.soft_quadrature, p.M, (p.fac.factors, p.fac.coupling))
             good || return false
             row .+= s.route[k] .* part
         end
@@ -5028,7 +5069,7 @@ function _ctsem_anchor_finish!(laplace::CTSEMLaplaceObjective, x::AbstractVector
     # Where the two ended at different points, which one the search's own rule
     # prefers (`_laplace_prefer_mode`): by the larger term only between
     # separate maxima. Compared by term alone, a stationary point beside a
-    # maximum, which the gated rule can score above it, would be kept.
+    # maximum, which the soft-direction quadrature can score above it, would be kept.
     theta = _laplace_extend(laplace, xv)
     Ls = _laplace_popchols(theta, laplace.spec)
     aws = _laplace_workspace!(laplace, Float64, length(theta))
@@ -5496,7 +5537,7 @@ letting one direction go convex. And an optimiser can climb to the edge of the
 floor: on the same model with six observations per subject, converged fits
 leave units at eigenvalues like (8.5e-4, 14.9, 79.0), `logdet = -2.5e-10`, each
 2.2 to 3.1 nats above its exact integral. `ctsem_laplace_conditioning` reports
-such units, and the `:gated` floor (`ctsem_set_laplace_floor!`) scores them by
+such units, and the `:quadrature` floor (`ctsem_set_soft_directions!`) scores them by
 quadrature along the soft direction instead. See
 `CT-SEM/review/LAPLACE-eigenwise-floor-2026-09-23.md`.
 
@@ -5524,44 +5565,49 @@ is the calibration this avoids.
 end
 
 """
-Largest unit dimension decomposed densely: by the gated floor to find its soft
-direction, and by `_laplace_min_eigenvalue` for the reports. A wider unit keeps
-the total floor under `:gated` -- a dense eigendecomposition of a block-sparse
-unit curvature is `O(d^3)` and fills in what the block elimination keeps sparse
--- and its smallest eigenvalue is found by bisection on the inertia instead.
+Largest unit dimension `_laplace_min_eigenvalue` decomposes densely for the
+reports; a wider unit's smallest eigenvalue is found by bisection on the
+inertia instead, since a dense eigendecomposition of a block-sparse curvature
+is `O(d^3)` and fills in what the block elimination keeps sparse. The same
+number either way, to the bisection's tolerance. The soft-direction quadrature
+reads no cap: it takes block factorizations at any width
+(`_laplace_soft_quadrature_factored`).
 """
 const _LAPLACE_EIGEN_MAXDIM = Ref(64)
 
 """
-    ctsem_set_laplace_floor!(laplace, floor; lo, hi)
+    ctsem_set_soft_directions!(laplace, rule; lo, hi)
 
-The prior floor this objective evaluates under. `:total`, the default, floors
-each unit's `logdet(M)` at zero (`_laplace_prior_floor_logdet`). `:gated`
-scores a unit whose inner curvature has an eigenvalue below `hi` by the gated
-soft-direction rule, handing off to `:total` between `lo` and `hi` (defaults
-0.2 and 0.7; see `_laplace_gated_term`).
+How this objective scores a unit whose curvature has a direction softer than
+the prior's, where plain Laplace would credit it more width than the
+integrand has. `:logdet_floor`, the engine's default, floors each unit's
+`logdet(M)` at zero (`_laplace_prior_floor_logdet`). `:quadrature`, R's
+default, scores a unit whose inner curvature has an eigenvalue below `hi` by
+the soft-direction quadrature, blending into plain Laplace between `lo` and
+`hi` (defaults 0.2 and 0.7; see `_laplace_soft_quadrature_term`).
 
-The floor belongs to the objective, not to the session, so fitting one model
-under `:gated` changes nothing about how any other objective evaluates. From R
-it is set when the objective is built, from the `laplace_floor` entry of
-`optimcontrol`, and
-travels on the fit's specification, so every post-fit route that rebuilds the
-objective evaluates under the floor the fit used. Returns the previous setting
-as `(floor, lo, hi)`.
+The rule belongs to the objective, not to the session, so fitting one model
+under `:quadrature` changes nothing about how any other objective evaluates.
+From R it is set when the objective is built, from the
+`laplace_soft_directions` entry of `optimcontrol`, and travels on the fit's
+specification, so every post-fit route that rebuilds the objective evaluates
+under the rule the fit used. Returns the previous setting as
+`(soft_directions, lo, hi)`.
 """
-function ctsem_set_laplace_floor!(laplace::CTSEMLaplaceObjective, floor;
-    lo::Real=laplace.gate_lo, hi::Real=laplace.gate_hi)
-    f = Symbol(floor)
-    f in (:total, :gated) ||
-        throw(ArgumentError("the Laplace floor must be :total or :gated"))
+function ctsem_set_soft_directions!(laplace::CTSEMLaplaceObjective, rule;
+    lo::Real=laplace.soft_blend_lo, hi::Real=laplace.soft_blend_hi)
+    f = Symbol(rule)
+    f in (:logdet_floor, :quadrature) ||
+        throw(ArgumentError("soft_directions must be :quadrature or :logdet_floor"))
     0 < lo < hi || throw(ArgumentError("the gate needs 0 < lo < hi"))
-    previous = (floor=laplace.floor, lo=laplace.gate_lo, hi=laplace.gate_hi)
-    laplace.floor = f
-    laplace.gate_lo = Float64(lo)
-    laplace.gate_hi = Float64(hi)
+    previous = (soft_directions=laplace.soft_directions, lo=laplace.soft_blend_lo,
+        hi=laplace.soft_blend_hi)
+    laplace.soft_directions = f
+    laplace.soft_blend_lo = Float64(lo)
+    laplace.soft_blend_hi = Float64(hi)
     return previous
 end
-export ctsem_set_laplace_floor!
+export ctsem_set_soft_directions!
 
 @inline _laplace_deepvalue(x::Real) = x
 @inline _laplace_deepvalue(x::ForwardDiff.Dual) =
@@ -5575,7 +5621,7 @@ exceeds `shift`; at one, the log likelihood is strictly concave in `u` at the
 mode. One more block elimination with `M`'s own sparsity, so it costs what the
 factorization already did and fills in nothing. A `false` is conservative --
 the factorization also refuses a nearly singular `M - shift I` -- and the
-callers (the gated floor's gate, `ctsem_laplace_conditioning`) then decompose
+callers (the soft-direction quadrature's eigenvalue test, `ctsem_laplace_conditioning`) then decompose
 the unit, which gives the exact answer there.
 """
 function _laplace_exceeds_identity(M::CTSEMBlockMatrix{T},
@@ -5583,7 +5629,7 @@ function _laplace_exceeds_identity(M::CTSEMBlockMatrix{T},
     shifted::Union{Nothing,CTSEMBlockMatrix{T}}=nothing,
     store::Union{Nothing,_LaplaceFactorStore{T}}=nothing) where {T}
     # `shifted` and `store`: a caller's storage for the shifted copy and its
-    # factorization, neither of which outlives this call -- the gated floor's
+    # factorization, neither of which outlives this call -- the soft-direction quadrature's
     # gate passes the slot's, once per unit per evaluation.
     if shifted === nothing
         shifted = CTSEMBlockMatrix{T}([copy(d) for d in M.diag],
@@ -5701,42 +5747,44 @@ function _laplace_min_eigenvalue(M::CTSEMBlockMatrix{Float64},
 end
 
 ################################################################################
-# The gated soft-direction rule, as a floor mode with an exact gradient
+# The soft-direction quadrature, with an exact gradient
 ################################################################################
 #
-# `floor = :gated` on the objective (`ctsem_set_laplace_floor!`, or from R
-# `optimcontrol$laplace_floor = 'gated'`). A unit whose inner curvature `M` has
+# `soft_directions = :quadrature` on the objective (`ctsem_set_soft_directions!`,
+# or from R `optimcontrol$laplace_soft_directions = 'quadrature'`). A unit whose inner curvature `M` has
 # every eigenvalue above `hi` keeps the plain Laplace term, unfloored, and pays
 # one extra block elimination (`M - hi I`) to be told so -- its eigenvalues
 # bound the term, and flooring it put a corner at logdet 0 that fits climbed to
-# and stalled on (see `_laplace_gated_term`). A unit below it gets
+# and stalled on (see `_laplace_soft_quadrature_term`). A unit below it gets
 #
 #     T = T_lap + w(lambda_1) (T_soft - T_lap)
 #
 # with `w` a C1 smoothstep from one below `lo` to zero at `hi`, and `T_soft` a
 # 3-point Gauss-Hermite rule along the smallest eigenvector `v_1` at the
 # prior's scale, the other coordinates moved at each node by one Newton step
-# with that node's own conditional curvature (clipped at one) and integrated by
-# Laplace there. Measured against an exact reference on 16 weak-data configs:
+# with that node's own conditional curvature (each eigenvalue floored at 0.25,
+# `_laplace_soft_node_curvature_floor`) and integrated by Laplace there.
+# Measured against an exact reference on 16 weak-data configs:
 # mean |error| 0.03 to 0.06 per eigenvalue class, where the total floor is off
 # by +2.7 on near-singular units; see
 # `CT-SEM/review/LAPLACE-eigenwise-floor-2026-09-23.md`, third to fifth addenda.
 #
-# The gradient of a flagged unit is ForwardDiff over that unit's term alone,
-# with the inner mode's first derivative from `_laplace_dual_unit_mode` (the
-# implicit function theorem, exactly as the nested oracle has it) and the
+# The gradient of a flagged unit is a reverse pass by hand
+# (soft_quadrature_adjoint.jl). Its oracle is ForwardDiff over that unit's term
+# alone, with the inner mode's first derivative from `_laplace_dual_unit_mode`
+# (the implicit function theorem, exactly as the nested oracle has it) and the
 # eigen-quantities differentiated to first order from the primal decomposition:
 # eigenvalues as `v' dM v`, the soft eigenvector by the standard perturbation
-# sum, and the clipped conditional curvatures by the Daleckii-Krein divided
-# differences, which stay finite across a near-degenerate pair on the same side
-# of the clip. The cost is confined to flagged units: every other unit goes
-# through the seeded assembly unchanged, and above the gate the gradient is the
-# unfloored Laplace one, which is `:total`'s wherever `logdet(M) >= 0`.
+# sum, and each node's floored curvature by the Daleckii-Krein divided
+# differences, which stay finite across a near-degenerate pair. The cost is
+# confined to flagged units: every other unit goes through the seeded assembly
+# unchanged, and above the gate the gradient is the unfloored Laplace one,
+# which is `:logdet_floor`'s wherever `logdet(M) >= 0`.
 #
-# Scope. Dense, so units wider than `_LAPLACE_EIGEN_MAXDIM` keep `T_total`.
-# Multilevel units no wider than
-# that are handled whole. A unit whose two smallest eigenvalues are within a
-# relative 1e-3 of each other also keeps `T_total`: the soft direction is not
+# Scope. Every width, multilevel units whole: by block factorizations where the
+# nodes' floor is the identity, densely where it binds (see "by block
+# factorizations" below). A unit whose two smallest eigenvalues are within a
+# relative 1e-3 of each other keeps `T_total`: the soft direction is not
 # defined there, and a rule that chose one would be discontinuous in theta. On
 # the weak-data study the smallest gap was 0.24.
 #
@@ -5751,7 +5799,7 @@ end
 # `LAPLACE-gated-gaps-2026-09-24.md` section 1). Categorical indicators
 # (family D) and nested units (family N) were only checked afterwards, and
 # the constants were not refitted there. The `1e-3` degenerate-pair gap is a
-# numerical guard, and `_LAPLACE_EIGEN_MAXDIM` a cost bound.
+# numerical guard.
 
 
 """
@@ -5784,21 +5832,65 @@ function _laplace_eig_first_order(A::AbstractMatrix{T}) where {T}
 end
 
 """
-    _laplace_clip_first_order(B)
+The curvature floor at the soft-direction nodes. Where a unit's curvature has
+a soft direction, the soft-direction quadrature integrates along it at three nodes and treats
+the other directions at each node by Laplace, from their curvature there
+(`_laplace_soft_quadrature_term`). Away from the mode that curvature can turn
+indefinite, so each of its eigenvalues is held at this floor or above: the
+Newton step and log determinant at the node stay defined, and no direction
+claims more than 0.69 nats of width beyond the prior's. Unfloored, four of
+1280 September weak-data units read +10 nats.
 
-`V max(Lambda, 1) V'` for symmetric `B`, exact to first order in its dual
-parts by Daleckii-Krein: in the primal eigenbasis the derivative's `(i, j)`
-entry is `(f(l_i) - f(l_j)) / (l_i - l_j)` times `(V' dB V)_ij`, with `f'` on
-the diagonal and wherever the pair coincides. No division by a small gap.
+Floored at 1, the prior's curvature, as it was to juliaFit b10b33d0, it sat
+where a weakly identified direction's eigenvalues gather, so the term had a
+concave corner wherever one crossed it: on the affect pilot (v3_sub40ns,
+iteration 1357) one unit's slopes either side of the point were 3.86 and
+4.95, and L-BFGS crept there six hours. At 0.25 it binds rarely, and on 640
+rebuilt weak-data units moved no eigenvalue class's mean error by 0.001
+(`CT-SEM/review/LAPLACE-gated-corner-2026-10-31.md`).
 """
-function _laplace_clip_first_order(B::AbstractMatrix{T}) where {T}
+const _LAPLACE_SOFT_NODE_CURVATURE_FLOOR = 0.25
+
+"""The half-width of the soft-direction nodes' curvature floor's blend, as a
+share of the floor: `max(x, c)` made C2 across [c (1 - w), c (1 + w)]."""
+const _LAPLACE_SOFT_NODE_CURVATURE_BLEND = 0.2
+
+# One eigenvalue of a soft-direction node's curvature, floored: `max(x, c)`,
+# `c` the floor, made C2 across the blend, its slope a cubic smoothstep there
+# and its value at most 0.19 c w above the corner's.
+@inline function _laplace_soft_node_curvature_floor(x::Float64)
+    c, w = _LAPLACE_SOFT_NODE_CURVATURE_FLOOR, _LAPLACE_SOFT_NODE_CURVATURE_BLEND
+    x <= c * (1 - w) && return c
+    x >= c * (1 + w) && return x
+    s = (x - c * (1 - w)) / (2 * c * w)
+    return c * (1 + 2 * w * (s^3 - s^4 / 2))
+end
+@inline function _laplace_soft_node_curvature_floor_slope(x::Float64)
+    c, w = _LAPLACE_SOFT_NODE_CURVATURE_FLOOR, _LAPLACE_SOFT_NODE_CURVATURE_BLEND
+    x <= c * (1 - w) && return 0.0
+    x >= c * (1 + w) && return 1.0
+    s = (x - c * (1 - w)) / (2 * c * w)
+    return s^2 * (3 - 2s)
+end
+
+"""
+    _laplace_soft_node_floored_curvature(B)
+
+A soft-direction node's curvature `B` with each eigenvalue floored
+(`_laplace_soft_node_curvature_floor`): `V f(Lambda) V'`, exact to first order
+in its dual parts by Daleckii-Krein. In the primal eigenbasis the
+derivative's `(i, j)` entry is `(f(l_i) - f(l_j)) / (l_i - l_j)` times
+`(V' dB V)_ij`, with `f'` on the diagonal and wherever the pair coincides. No
+division by a small gap.
+"""
+function _laplace_soft_node_floored_curvature(B::AbstractMatrix{T}) where {T}
     n = size(B, 1)
     B0 = [Float64(_laplace_deepvalue(B[i, j])) for i in 1:n, j in 1:n]
     E = _ctsem_symeig(B0)
     V = E.vectors
     l = E.values
-    f(x) = max(x, 1.0)
-    fp(x) = x > 1.0 ? 1.0 : 0.0
+    f = _laplace_soft_node_curvature_floor
+    fp = _laplace_soft_node_curvature_floor_slope
     Dt = transpose(V) * (B .- B0) * V
     C = Matrix{T}(undef, n, n)
     @inbounds for j in 1:n, i in 1:n
@@ -5818,23 +5910,27 @@ end
 end
 
 """
-    _laplace_gated_term(laplace, U, values, Ls, u, aws; M, logdetM, inner)
+    _laplace_soft_quadrature_term(laplace, U, values, Ls, u, aws; M, logdetM, inner)
 
-Unit `U`'s term under the gated rule, generic in the element type: returns
+Unit `U`'s term under the soft-direction quadrature, generic in the element type: returns
 `(value, flagged, floor)`. `M`, `logdetM` and `inner` may be passed when the
 caller already has them at `u`.
 
 `objective`, `curvature` and `blocks` evaluate the unit somewhere else than its
 own coordinates -- `(value, gradient, hlogdet)` and the curvature at a point of
-that space, and its block layout -- and `dcheck` is the dimension the
-eigenvalue cap compares. With none given, an objective whose filter integrates
-deviations (`CTSEMHybrid`) is scored by `_hybrid_gated_term`, which decides on
-the joint curvature and comes back here in joint coordinates; `cross` is the
-`CTSEMHybridCross` a caller read with `M`.
+that space, and its block layout. With none given, an objective whose filter
+integrates deviations (`CTSEMHybrid`) is scored by `_hybrid_soft_quadrature_term`, which
+decides on the joint curvature and comes back here in joint coordinates;
+`cross` is the `CTSEMHybridCross` a caller read with `M`.
+
+At Float64 the rule is taken from block factorizations wherever the nodes'
+floor is the identity (`_laplace_soft_quadrature_factored`), at a nested unit's
+cost of its members rather than `d^3`, and densely below otherwise: the same
+function either way, at any width.
 
 `floor` says whether the unit still needs the total floor. Only the explicit
-fallbacks do -- a unit wider than `_LAPLACE_EIGEN_MAXDIM` or with a degenerate
-soft pair, where no eigenvalue is known. Everywhere else the eigenvalue is, and
+fallback does -- a unit with a degenerate soft pair, where no soft direction is
+defined. Everywhere else the eigenvalue is known, and
 it makes the floor unnecessary: above the band (`lambda_min >= hi`) the plain
 Laplace term is bounded by `-d log(hi) / 2` and accurate there (+0.015 nats on
 units with eigenvalues in 0.7 to 1, against the exact reference), and inside
@@ -5847,12 +5943,12 @@ from its spurious Laplace maximum, 69 to 77 units sat on it at once and L-BFGS
 stopped with |g| = 144 and no ascent step, the continuation then spending an
 hour at zero gain.
 """
-function _laplace_gated_term(laplace::CTSEMLaplaceObjective, U::Integer,
+function _laplace_soft_quadrature_term(laplace::CTSEMLaplaceObjective, U::Integer,
     values::AbstractVector{T}, Ls::Vector{<:AbstractMatrix}, u::AbstractVector{T},
     aws; M=nothing, logdetM=nothing, inner=nothing, cross=nothing, objective=nothing,
-    curvature=nothing, blocks=nothing, dcheck=nothing, flagged::Bool=false) where {T}
+    curvature=nothing, blocks=nothing, flagged::Bool=false) where {T}
     objective === nothing && _hybrid_on(laplace.objective.params.hybrid) &&
-        return _hybrid_gated_term(laplace, U, values, Ls, u, aws; M=M,
+        return _hybrid_soft_quadrature_term(laplace, U, values, Ls, u, aws; M=M,
             logdetM=logdetM, inner=inner, cross=cross, flagged=flagged)
     objf = objective === nothing ?
         (z -> _laplace_unit_objective_gradient(laplace, U, values, Ls, z, aws)) :
@@ -5862,7 +5958,7 @@ function _laplace_gated_term(laplace::CTSEMLaplaceObjective, U::Integer,
     blocks === nothing && (blocks = laplace.units.blocks[U])
     inner === nothing && (inner = objf(u))
     g = inner.value
-    (isfinite(g) && !isempty(u)) || return (value=g, flagged=false, floor=true)
+    (isfinite(g) && !isempty(u)) || return (value=g, flagged=false, logdet_floor=true)
     M === nothing && (M = curvf(u))
     # A curvature that does not factor at the mode -- the inner solve stopped
     # at a point that is not a strict maximum, the primal repaired it, and the
@@ -5881,23 +5977,26 @@ function _laplace_gated_term(laplace::CTSEMLaplaceObjective, U::Integer,
     # `lap`, unfloored, wherever there is one. See the docstring.
     total = indefinite ? T(NaN) : g - max(logdetM, zero(logdetM)) / 2
     lap = indefinite ? T(NaN) : g - logdetM / 2
-    lo, hi = laplace.gate_lo, laplace.gate_hi
+    lo, hi = laplace.soft_blend_lo, laplace.soft_blend_hi
     _laplace_exceeds_identity(M, blocks, hi;
         shifted=_laplace_scratch_blockmatrix!(laplace, T, U, blocks, :gate_shifted),
         store=_laplace_factor_store!(laplace, T, U, blocks)) &&
-        return (value=lap, flagged=false, floor=false)
+        return (value=lap, flagged=false, logdet_floor=false)
     d = length(u)
-    (dcheck === nothing ? d : dcheck) > _LAPLACE_EIGEN_MAXDIM[] &&
-        return (value=total, flagged=false, floor=true)
+    if T === Float64 && !indefinite && _LAPLACE_SOFT_QUADRATURE_FACTORED[]
+        factored = _laplace_soft_quadrature_factored(laplace, M, blocks, logdetM, g, u,
+            objf, curvf)
+        factored === nothing || return factored
+    end
     dense = _laplace_block_dense(M, blocks, d)
     E = _laplace_eig_first_order(dense)
     lam = E.primal.values
     if d > 1 && (lam[2] - lam[1]) <= 1e-3 * max(abs(lam[2]), 1.0)
-        return (value=total, flagged=false, floor=true)
+        return (value=total, flagged=false, logdet_floor=true)
     end
     lam1 = E.values[1]
     w = _laplace_smoothstep_weight(lam1, lo, hi)
-    iszero(_laplace_deepvalue(w)) && return (value=lap, flagged=true, floor=false)
+    iszero(_laplace_deepvalue(w)) && return (value=lap, flagged=true, logdet_floor=false)
     v1 = E.vectors[:, 1]
     # The other directions as an orthonormal basis of v1's complement, by
     # Gram-Schmidt from the primal eigenvectors. Everything below depends on
@@ -5923,7 +6022,7 @@ function _laplace_gated_term(laplace::CTSEMLaplaceObjective, U::Integer,
                 ub = u .+ (sqrt(2) * x / sqrt(lam1c)) .* v1
                 h = abs(x) < 1e-12 ? g : objf(ub).value
             else
-                Bc = _laplace_clip_first_order(transpose(Vh) * dense * Vh)
+                Bc = _laplace_soft_node_floored_curvature(transpose(Vh) * dense * Vh)
                 F = _ctsem_cholesky(Matrix(_laplace_symmetrise(Bc)), d - 1)
                 h = g - logdet(F) / 2
             end
@@ -5931,19 +6030,291 @@ function _laplace_gated_term(laplace::CTSEMLaplaceObjective, U::Integer,
             ub = u .+ (sqrt(2) * x / sqrt(lam1c)) .* v1
             r = objf(ub)
             Mb = _laplace_block_dense(curvf(ub), blocks, d)
-            Bc = _laplace_clip_first_order(transpose(Vh) * Mb * Vh)
+            Bc = _laplace_soft_node_floored_curvature(transpose(Vh) * Mb * Vh)
             F = _ctsem_cholesky(Matrix(_laplace_symmetrise(Bc)), d - 1)
-            issuccess(F) || return (value=T(NaN), flagged=true, floor=false)
+            issuccess(F) || return (value=T(NaN), flagged=true, logdet_floor=false)
             z = F \ (transpose(Vh) * r.gradient)
             h = objf(ub .+ Vh * z).value - logdet(F) / 2
         end
         terms[j] = h + log(ws[j]) + x^2
     end
     peak = maximum(t -> Float64(_laplace_deepvalue(t)), terms)
-    isfinite(peak) || return (value=T(NaN), flagged=true, floor=false)
+    isfinite(peak) || return (value=T(NaN), flagged=true, logdet_floor=false)
     soft = peak + log(sum(exp.(terms .- peak))) - log(lam1c) / 2 - log(pi) / 2
-    indefinite && return (value=soft, flagged=true, floor=false)
-    return (value=lap + w * (soft - lap), flagged=true, floor=false)
+    indefinite && return (value=soft, flagged=true, logdet_floor=false)
+    return (value=lap + w * (soft - lap), flagged=true, logdet_floor=false)
+end
+
+################################################################################
+# The soft-direction quadrature by block factorizations
+################################################################################
+#
+# What the rule needs of a unit's curvature is its smallest eigenpair at the
+# mode and, at each node off the mode, the logdet of the node's curvature on
+# that eigenvector's complement and the Newton step there. Where the nodes'
+# floor is the identity none of it needs a dense decomposition:
+#
+#   * `lambda1` is bracketed by bisection on whether `M - s I` factors, and
+#     `v1` taken by inverse iteration on the factor of `M - sigma I` just below
+#     it;
+#   * at the mode the complement's eigenvalues are `M`'s others, so its logdet
+#     is `logdet M - log lambda1`;
+#   * at a node with curvature `Mb`, for `q = Mb^-1 v1` and `beta = v1' q`,
+#     `logdet(V' Mb V) = logdet Mb + log beta`, and the step on the complement
+#     is `Mb^-1 g - q (q' g) / beta`, the bordered solve for `V z`.
+#
+# Each is a block factorization of the unit's own sparsity, no fill-in, so a
+# nested unit costs what its members do rather than `d^3`, and a unit of one
+# block a Cholesky where the dense rule took three Jacobi decompositions. The
+# floor is the identity at the mode where `lambda2` is at least its top
+# (`_laplace_soft_node_curvature_floor_top`), and at a node whose curvature is
+# (by interlacing the complement's eigenvalues are no smaller than `Mb`'s).
+# Elsewhere, and where `M` does not factor at the mode, the unit takes the
+# dense rule, which computes the same function, at any width: until
+# 2026-10-31 a unit wider than 64 took the total floor instead, so the
+# objective changed at the 65th effect, and a study of 30 people in the SNSF
+# pilot over-credited its term by up to 4.6 nats
+# (`CT-SEM/review/LAPLACE-nested-spike-2026-10-02.md`).
+# `ctsem_set_soft_quadrature_factored!(false)` takes the dense rule
+# everywhere: the oracle.
+
+"""
+Whether the soft-direction quadrature takes block factorizations where they
+serve (`_laplace_soft_quadrature_factored`,
+`_laplace_soft_quadrature_reverse_factored`), or the dense rule everywhere.
+"""
+const _LAPLACE_SOFT_QUADRATURE_FACTORED = Ref(true)
+
+"""
+    ctsem_set_soft_quadrature_factored!(on)
+
+Take the soft-direction quadrature from block factorizations where the nodes'
+floor is the identity (`true`, the default), or densely everywhere, the same
+function at `d^3` (`false`, the oracle). Returns the previous setting.
+"""
+function ctsem_set_soft_quadrature_factored!(on::Bool)
+    previous = _LAPLACE_SOFT_QUADRATURE_FACTORED[]
+    _LAPLACE_SOFT_QUADRATURE_FACTORED[] = on
+    return previous
+end
+export ctsem_set_soft_quadrature_factored!
+
+"""The least eigenvalue `_laplace_soft_node_curvature_floor` leaves unchanged:
+the top of its blend."""
+_laplace_soft_node_curvature_floor_top() =
+    _LAPLACE_SOFT_NODE_CURVATURE_FLOOR * (1 + _LAPLACE_SOFT_NODE_CURVATURE_BLEND)
+
+"""
+    _soft_shifted_factor(M, blocks, shift)
+
+The block factorization of `M - shift I` (`_laplace_block_factor`), as
+`(logdet, factors, coupling)`, or `nothing` where it is not positive definite
+-- including numerically singular, as that factorization refuses.
+"""
+function _soft_shifted_factor(M::CTSEMBlockMatrix{Float64},
+    blocks::Vector{CTSEMLaplaceBlock}, shift::Real)
+    A = CTSEMBlockMatrix{Float64}([copy(d) for d in M.diag],
+        [[copy(c) for c in row] for row in M.coupling])
+    if !iszero(shift)
+        for d in A.diag
+            for i in axes(d, 1)
+                d[i, i] -= shift
+            end
+        end
+    end
+    ok, logdetA, factors, coupling = _laplace_block_factor(A, blocks)
+    ok || return nothing
+    return (logdet=logdetA, factors=factors, coupling=coupling)
+end
+
+"""`F \\ rhs` for a `_soft_shifted_factor`."""
+_soft_solve(F, blocks::Vector{CTSEMLaplaceBlock}, rhs::AbstractVector{Float64}) =
+    _laplace_block_solve(F.factors, F.coupling, blocks, collect(Float64, rhs))
+
+"""`M x` for a unit's block curvature, by its blocks and couplings."""
+function _soft_block_mulvec(M::CTSEMBlockMatrix{Float64},
+    blocks::Vector{CTSEMLaplaceBlock}, x::AbstractVector{Float64})
+    y = zeros(Float64, length(x))
+    @inbounds for (b, block) in enumerate(blocks)
+        ob, kb = block.offset, block.size
+        Db = M.diag[b]
+        for j in 1:kb, i in 1:kb
+            y[ob + i] += Db[i, j] * x[ob + j]
+        end
+        for (t, a) in enumerate(block.ancestors)
+            oa = blocks[a].offset
+            Cb = M.coupling[b][t]
+            for j in axes(Cb, 2), i in axes(Cb, 1)
+                c = Cb[i, j]
+                y[ob + i] += c * x[oa + j]
+                y[oa + j] += c * x[ob + i]
+            end
+        end
+    end
+    return y
+end
+
+"""How many inverse-iteration steps `_soft_smallest_eigenpair` and
+`_soft_deflated_solve` take before declining."""
+const _SOFT_INVERSE_ITERATIONS = 500
+
+"""
+    _soft_smallest_eigenpair(M, blocks, F0)
+
+The smallest eigenvalue of a unit's positive definite curvature `M` and a unit
+eigenvector, as `(lambda, v, sigma, F)`, from block factorizations alone; `F0`
+is `M`'s own (`_soft_shifted_factor`). Three steps of inverse iteration on `F0`
+give a Rayleigh quotient that bounds `lambda` above; bisection on whether `M -
+s I` factors brackets it to a relative 1e-3; inverse iteration on the factor
+`F` of `M - sigma I`, `sigma` the bracket's lower end, then converges at the
+rate `(lambda - sigma) / (lambda2 - sigma)`, and `lambda` is the Rayleigh
+quotient of its limit. The start is fixed, so the result is a function of `M`.
+`nothing` where the iteration has not converged in `_SOFT_INVERSE_ITERATIONS`
+steps.
+"""
+function _soft_smallest_eigenpair(M::CTSEMBlockMatrix{Float64},
+    blocks::Vector{CTSEMLaplaceBlock}, F0)
+    d = sum(b.size for b in blocks; init=0)
+    x = [1 + 0.5 * sin(1.7 * i) for i in 1:d]
+    x ./= sqrt(sum(abs2, x))
+    for _ in 1:3
+        x = _soft_solve(F0, blocks, x)
+        x ./= sqrt(sum(abs2, x))
+    end
+    up = dot(x, _soft_block_mulvec(M, blocks, x))
+    lo, F = 0.0, F0
+    while up - lo > 1e-3 * up
+        mid = iszero(lo) ? up / 2 : sqrt(lo * up)
+        Fm = _soft_shifted_factor(M, blocks, mid)
+        if Fm === nothing
+            up = mid
+        else
+            lo, F = mid, Fm
+        end
+    end
+    for _ in 1:_SOFT_INVERSE_ITERATIONS
+        y = _soft_solve(F, blocks, x)
+        y ./= sqrt(sum(abs2, y))
+        dot(y, x) < 0 && (y .= .-y)
+        change = maximum(abs.(y .- x))
+        x = y
+        change <= 1e-13 && return (lambda=dot(x, _soft_block_mulvec(M, blocks, x)), v=x,
+            sigma=lo, F=F)
+    end
+    return nothing
+end
+
+"""
+    _soft_second_above(M, blocks, v, lambda, s)
+
+Whether `M`'s second smallest eigenvalue exceeds `s`, given its smallest
+eigenpair `(lambda, v)`: for a unit of one block, whether `M - s I + (s -
+lambda + 1) v v'` is positive definite; otherwise from the inertia of `M - s
+I` (`_laplace_count_below`), whose block elimination costs what the
+factorization does.
+"""
+function _soft_second_above(M::CTSEMBlockMatrix{Float64},
+    blocks::Vector{CTSEMLaplaceBlock}, v::Vector{Float64}, lambda::Float64, s::Real)
+    s <= lambda && return true
+    if length(blocks) == 1 && isempty(blocks[1].ancestors)
+        A = Matrix{Float64}(M.diag[1])
+        c = s - lambda + 1
+        n = size(A, 1)
+        @inbounds for j in 1:n, i in 1:n
+            A[i, j] += c * v[i] * v[j]
+        end
+        @inbounds for i in 1:n
+            A[i, i] -= s
+        end
+        return issuccess(_ctsem_cholesky(_laplace_symmetrise!(A), n))
+    end
+    count = _laplace_count_below(M, blocks, s)
+    return count !== nothing && count <= 1
+end
+
+"""The second eigenvalue at or below which the dense rule calls `lambda1`'s pair
+degenerate, `lambda1 + 1e-3 max(|lambda2|, 1)`, solved for its own `lambda2`."""
+_soft_degenerate_bar(lambda1::Float64) = lambda1 + 1e-3 <= 1 ? lambda1 + 1e-3 :
+    lambda1 / (1 - 1e-3)
+
+"""
+    _soft_deflated_solve(eig, blocks, b)
+
+`(M - lambda1 I)^+ b` for `b` orthogonal to `v1`, `eig` a
+`_soft_smallest_eigenpair`: the fixed point of `x = P (M - sigma I)^-1 (b +
+(lambda1 - sigma) x)`, `P` the projection off `v1`, which contracts at
+`(lambda1 - sigma) / (lambda2 - sigma)`. `nothing` where it has not settled in
+`_SOFT_INVERSE_ITERATIONS` steps.
+"""
+function _soft_deflated_solve(eig, blocks::Vector{CTSEMLaplaceBlock},
+    b::Vector{Float64})
+    v, F = eig.v, eig.F
+    shift = eig.lambda - eig.sigma
+    x = zeros(Float64, length(b))
+    for _ in 1:_SOFT_INVERSE_ITERATIONS
+        y = _soft_solve(F, blocks, b .+ shift .* x)
+        y .-= v .* dot(v, y)
+        change = maximum(abs.(y .- x))
+        x = y
+        change <= 1e-13 * max(maximum(abs, x), floatmin(Float64)) && return x
+    end
+    return nothing
+end
+
+"""
+    _laplace_soft_quadrature_factored(laplace, M, blocks, logdetM, g, u, objf, curvf)
+
+`_laplace_soft_quadrature_term`'s Float64 value, past its gate, by block
+factorizations (see the section comment), returned as the term returns it; or
+`nothing` where the unit takes the dense rule: `M` not factoring at the mode,
+one coordinate, the floor binding at the mode or at a node, or an iteration
+not settling. `objf(z)` and `curvf(z)` are the unit objective and its block
+curvature, `logdetM` the term's joint logdet and `g` the objective at `u`.
+"""
+function _laplace_soft_quadrature_factored(laplace::CTSEMLaplaceObjective,
+    M::CTSEMBlockMatrix{Float64}, blocks::Vector{CTSEMLaplaceBlock}, logdetM::Float64,
+    g::Float64, u::AbstractVector{Float64}, objf, curvf)
+    d = length(u)
+    d >= 2 || return nothing
+    lo, hi = laplace.soft_blend_lo, laplace.soft_blend_hi
+    F0 = _soft_shifted_factor(M, blocks, 0.0)
+    F0 === nothing && return nothing
+    eig = _soft_smallest_eigenpair(M, blocks, F0)
+    eig === nothing && return nothing
+    lam1, v1 = eig.lambda, eig.v
+    _soft_second_above(M, blocks, v1, lam1, _soft_degenerate_bar(lam1)) ||
+        return (value=g - max(logdetM, 0.0) / 2, flagged=false, logdet_floor=true)
+    lap = g - logdetM / 2
+    w = _laplace_smoothstep_weight(lam1, lo, hi)
+    iszero(w) && return (value=lap, flagged=true, logdet_floor=false)
+    top = _laplace_soft_node_curvature_floor_top()
+    _soft_second_above(M, blocks, v1, lam1, top) || return nothing
+    lam1c = max(lam1, 1.0)
+    xs, ws = _gauss_hermite(3)
+    terms = zeros(Float64, length(xs))
+    for j in eachindex(xs)
+        x = xs[j]
+        h = if abs(x) < 1e-12
+            g - (F0.logdet - log(lam1)) / 2
+        else
+            ub = u .+ (sqrt(2) * x / sqrt(lam1c)) .* v1
+            r = objf(ub)
+            Mb = curvf(ub)
+            _soft_shifted_factor(Mb, blocks, top) === nothing && return nothing
+            Fb = _soft_shifted_factor(Mb, blocks, 0.0)
+            Fb === nothing && return nothing
+            q = _soft_solve(Fb, blocks, v1)
+            beta = dot(v1, q)
+            y = _soft_solve(Fb, blocks, r.gradient)
+            zz = ub .+ y .- q .* (dot(v1, y) / beta)
+            Float64(objf(zz).value) - (Fb.logdet + log(beta)) / 2
+        end
+        terms[j] = h + log(ws[j]) + x^2
+    end
+    peak = maximum(terms)
+    isfinite(peak) || return (value=NaN, flagged=true, logdet_floor=false)
+    soft = peak + log(sum(exp.(terms .- peak))) - log(lam1c) / 2 - log(pi) / 2
+    return (value=lap + w * (soft - lap), flagged=true, logdet_floor=false)
 end
 
 """
@@ -5985,25 +6356,25 @@ function _laplace_unit_reach(laplace::CTSEMLaplaceObjective, U::Integer,
 end
 
 """
-    _laplace_gated_unit_gradient(laplace, U, theta, curvature)
+    _laplace_soft_quadrature_unit_gradient(laplace, U, theta, curvature)
 
-The gradient of a flagged unit's gated term: by its reverse pass
-(laplace_gated_adjoint.jl), at a cost that does not grow with the parameter
+The gradient of a flagged unit's soft-quadrature term: by its reverse pass
+(soft_quadrature_adjoint.jl), at a cost that does not grow with the parameter
 count, and where that declines -- a value it reads is not finite -- by central
 differences of the unit's term (`_laplace_unit_term_difference!`), at Float64.
 
 What follows them is the oracle both are tested against
-(`ctsem_set_gated_adjoint!(false)`): ForwardDiff over the term, the inner
+(`ctsem_set_soft_quadrature_adjoint!(false)`): ForwardDiff over the term, the inner
 mode's first derivative from `_laplace_dual_unit_mode`, along the positions the
 unit can depend on (`_laplace_unit_reach`) alone. It runs the whole rule under
 a dual type of its own, a compile of the filter and its reverse pass at every
 dual width the rule nests, so a fit never takes it (see
 `_laplace_unit_gradient_fallback!`).
 """
-function _laplace_gated_unit_gradient(laplace::CTSEMLaplaceObjective, U::Integer,
+function _laplace_soft_quadrature_unit_gradient(laplace::CTSEMLaplaceObjective, U::Integer,
     theta::Vector{Float64}, curvature)
-    if _LAPLACE_GATED_ADJOINT[]
-        adjoint = _laplace_gated_unit_adjoint(laplace, U, theta)
+    if _LAPLACE_SOFT_QUADRATURE_ADJOINT[]
+        adjoint = _laplace_soft_quadrature_unit_adjoint(laplace, U, theta)
         adjoint === nothing || return adjoint
         gradient = zeros(Float64, length(theta))
         _laplace_unit_term_difference!(gradient, laplace, U, theta)
@@ -6035,9 +6406,9 @@ function _laplace_gated_unit_gradient(laplace::CTSEMLaplaceObjective, U::Integer
             u0 .+ dense_inverse * _laplace_unit_objective_gradient(laplace, U, x,
                 Lsd, u0, wsd).gradient
         end
-        # `flagged`: the primal already scored this unit by the gated rule,
+        # `flagged`: the primal already scored this unit by the soft-direction quadrature,
         # so a filter-integrating objective need not decide the gate again.
-        return _laplace_gated_term(laplace, U, x, Lsd, ud, wsd; flagged=true).value
+        return _laplace_soft_quadrature_term(laplace, U, x, Lsd, ud, wsd; flagged=true).value
     end
     reach = _laplace_unit_reach(laplace, U, theta, _laplace_popchols(theta, laplace.spec))
     reach === nothing && return _ctsem_gradient(term_of, theta)
@@ -6068,8 +6439,8 @@ Unit `U`'s gradient where its own route failed -- a factorization the seeded
 sweeps need, a sweep that came back non-finite, or the floored term's pass --
 written into `row`, which it zeroes; `true` if it is finite.
 
-Where the gated floor is on and the unit's term is not the floor's bound, by
-the gated term's reverse pass (`_laplace_gated_unit_adjoint`): for a unit the
+Where the soft-direction quadrature is on and the unit's term is not the floor's bound, by
+the soft-quadrature term's reverse pass (`_laplace_soft_quadrature_unit_adjoint`): for a unit the
 rule did not flag, its curvature is above the gate and the pass returns the
 plain Laplace term's gradient. It shares only the primal with the seeded
 sweeps -- a dense eigendecomposition where they factor blocks -- so it is a
@@ -6087,8 +6458,8 @@ off once) it took the image's build from 11.8 to 17.0 GB on dev2.
 function _laplace_unit_gradient_fallback!(row::Vector{Float64},
     laplace::CTSEMLaplaceObjective, U::Integer, theta::Vector{Float64})
     fill!(row, 0.0)
-    if _LAPLACE_PRIOR_FLOOR[] && laplace.floor === :gated && !laplace.logdet_floored[U]
-        g = _laplace_gated_unit_adjoint(laplace, U, theta)
+    if _LAPLACE_PRIOR_FLOOR[] && laplace.soft_directions === :quadrature && !laplace.logdet_floored[U]
+        g = _laplace_soft_quadrature_unit_adjoint(laplace, U, theta)
         if g !== nothing && all(isfinite, g)
             row .= g
             return true
@@ -6183,7 +6554,7 @@ solve's and the primal's results each came back boxed through one.
 """
 function _laplace_store_unit_primal!(laplace::CTSEMLaplaceObjective, U::Integer,
     theta::Vector{Float64}, Ls, aws, primal_curvature, primal_matrices,
-    primal_gated, unit_loglik, chunk_ok, chunk_bad; retain::Bool=_LAPLACE_WARM_START[],
+    primal_soft_quadrature, unit_loglik, chunk_ok, chunk_bad; retain::Bool=_LAPLACE_WARM_START[],
     combo=nothing)
     b0 = _laplace_mark()
     # A unit with no coordinate has no mode to solve: the primal is its value.
@@ -6200,7 +6571,7 @@ function _laplace_store_unit_primal!(laplace::CTSEMLaplaceObjective, U::Integer,
     primal_curvature[U] = (primal.fac.factors, primal.fac.coupling)
     primal_matrices[U] = primal.M
     laplace.logdet_floored[U] = primal.floored
-    primal_gated[U] = primal.gated
+    primal_soft_quadrature[U] = primal.soft_quadrature
     term = primal.term
     # A unit with other maxima (`alt_modes`) is scored by the sum over them
     # (`_laplace_mode_sum`); its records are the largest term's, and `combo`
@@ -6212,7 +6583,7 @@ function _laplace_store_unit_primal!(laplace::CTSEMLaplaceObjective, U::Integer,
         primal_curvature[U] = (p.fac.factors, p.fac.coupling)
         primal_matrices[U] = p.M
         laplace.logdet_floored[U] = p.floored
-        primal_gated[U] = p.gated
+        primal_soft_quadrature[U] = p.soft_quadrature
         term = s.value
         length(s.modes) > 1 && (combo[U] = s)
     end
@@ -6229,16 +6600,16 @@ end
     _laplace_unit_primal(laplace, U, values, Ls, u, aws)
 
 Unit `U`'s term at `u` as the objective scores it, and what the gradient reads
-from the way there: `(term, M, fac, gated, floored)`, the curvature `M` (shifted
-in place where `fac` repaired it), its factorization, whether the gated rule
+from the way there: `(term, M, fac, soft_quadrature, floored)`, the curvature `M` (shifted
+in place where `fac` repaired it), its factorization, whether the soft-direction quadrature
 scored the unit, and whether the term is the prior floor's bound. The one
 definition: the evaluation's primal, `_laplace_unit_term`, and the inner
 solve's choice between modes (`_laplace_probe_modes`) all take it from here, so
 a unit cannot be scored one way when its mode is chosen and another when it is
 summed. They were three before, and the third returned `NaN` for a curvature
-the primal repairs and scores by the gated rule's soft directions.
+the primal repairs and scores by the soft-direction quadrature's soft directions.
 
-Under the gated floor, deviations the filter integrates (`CTSEMHybrid`) need the
+Under the soft-direction quadrature, deviations the filter integrates (`CTSEMHybrid`) need the
 joint curvature's gate, whose cross terms the same curvature pass gives
 (`CTSEMHybridCross`).
 """
@@ -6246,15 +6617,15 @@ function _laplace_unit_primal(laplace::CTSEMLaplaceObjective, U::Integer,
     values::AbstractVector{T}, Ls::Vector{<:AbstractMatrix}, u::AbstractVector{T},
     aws; given=nothing) where {T}
     blocks = laplace.units.blocks[U]
-    gated_floor = _LAPLACE_PRIOR_FLOOR[] && laplace.floor === :gated
+    soft_quadrature_on = _LAPLACE_PRIOR_FLOOR[] && laplace.soft_directions === :quadrature
     b0 = _laplace_mark()
-    cross = (gated_floor && !isempty(u) &&
+    cross = (soft_quadrature_on && !isempty(u) &&
              _hybrid_on(laplace.objective.params.hybrid)) ?
         _hybrid_cross!(laplace, T, length(u), length(laplace.units.members[U])) :
         nothing
     # Asserted, as in `_laplace_newton_unit_mode`.
     # `given`: the exact curvature the inner solve formed at `u` to end on
-    # (`_laplace_newton_unit_mode`), not when the gated hybrid needs its cross
+    # (`_laplace_newton_unit_mode`), not when the hybrid's soft-direction quadrature needs its cross
     # terms from the same pass.
     M = isempty(u) ? CTSEMBlockMatrix(T, blocks) :
         (T === Float64 && given !== nothing && cross === nothing) ?
@@ -6265,7 +6636,7 @@ function _laplace_unit_primal(laplace::CTSEMLaplaceObjective, U::Integer,
     fac = _laplace_factor_repaired!(M, blocks)
     ok, logdetM = fac.ok, fac.logdet
     b0 = _laplace_mark()
-    # The gradient into the slot's: only this call and the gated term below
+    # The gradient into the slot's: only this call and the soft-quadrature term below
     # read it, and neither keeps it.
     inner = isempty(u) ?
         _laplace_unit_loglik_value(laplace, U, values, Ls, u, aws,
@@ -6277,7 +6648,7 @@ function _laplace_unit_primal(laplace::CTSEMLaplaceObjective, U::Integer,
     # deviations' (`CTSEMHybrid`), before the floor or the gate reads it.
     ok && (logdetM += 2 * inner.hlogdet)
     floored = ok && _LAPLACE_PRIOR_FLOOR[] && logdetM < 0
-    gated = false
+    soft_quadrature = false
     term = if !isfinite(inner.value)
         inner.value
     elseif isempty(u)
@@ -6287,28 +6658,28 @@ function _laplace_unit_primal(laplace::CTSEMLaplaceObjective, U::Integer,
     else
         T(NaN)
     end
-    if gated_floor && ok && !isempty(u) && isfinite(inner.value)
-        # The factorization shifted a repaired `M` in place, so the gated term
+    if soft_quadrature_on && ok && !isempty(u) && isfinite(inner.value)
+        # The factorization shifted a repaired `M` in place, so the soft-quadrature term
         # gets the curvature afresh and factors it itself.
         g = fac.repaired ?
-            _laplace_gated_term(laplace, U, values, Ls, u, aws;
+            _laplace_soft_quadrature_term(laplace, U, values, Ls, u, aws;
                 M=_laplace_unit_curvature(laplace, U, values, Ls, u), inner=inner) :
-            _laplace_gated_term(laplace, U, values, Ls, u, aws; M=M,
+            _laplace_soft_quadrature_term(laplace, U, values, Ls, u, aws; M=M,
                 logdetM=logdetM, inner=inner, cross=cross)
         if g.flagged
             term = g.value
-            gated = true
-            # Scored by the gated rule, not floored: the diagnostics count
+            soft_quadrature = true
+            # Scored by the soft-direction quadrature, not floored: the diagnostics count
             # `logdet_floored` as "the term is a bound".
             floored = false
-        elseif !g.floor && !fac.repaired
+        elseif !g.logdet_floor && !fac.repaired
             # Cleared by the gate: plain Laplace, no floor, and so the ordinary
             # seeded gradient rather than the floored one.
             term = inner.value - logdetM / 2
             floored = false
         end
     end
-    return (term=term, M=M, fac=fac, gated=gated, floored=floored)
+    return (term=term, M=M, fac=fac, soft_quadrature=soft_quadrature, floored=floored)
 end
 
 ################################################################################
@@ -7426,7 +7797,7 @@ level, `L' g` over its effects, `g` the member's gradient in its shifted
 parameters (`grad[re_index[p]]`) and `offsets` its places in `u`. The `u` half
 of the chain rule through `L u`, of which `_laplace_chol_chain!` is the
 `theta` half: the unit's log-likelihood gradient
-(`_laplace_unit_loglik_gradient`) and the gated adjoint's
+(`_laplace_unit_loglik_gradient`) and the soft-quadrature adjoint's
 (`_laplace_unit_theta_gradient`) read it.
 """
 function _laplace_loading_chain!(acc::AbstractVector, grad::AbstractVector,
@@ -7611,9 +7982,9 @@ function _laplace_evaluate(laplace::CTSEMLaplaceObjective, theta::Vector{Float64
     # the factors would cost more than keeping them. Block form, so this is
     # kilobytes per unit rather than the megabytes a dense one would be.
     primal_matrices = Vector{CTSEMBlockMatrix{Float64}}(undef, nunits)
-    # The gated floor's per-unit record: which units its rule scored.
-    gated_floor = _LAPLACE_PRIOR_FLOOR[] && laplace.floor === :gated
-    primal_gated = fill(false, nunits)
+    # The soft-direction quadrature's per-unit record: which units its rule scored.
+    soft_quadrature_on = _LAPLACE_PRIOR_FLOOR[] && laplace.soft_directions === :quadrature
+    primal_soft_quadrature = fill(false, nunits)
     unit_loglik = zeros(Float64, nunits)
     subject_loglik = zeros(Float64, nsubjects)
     value = 0.0
@@ -7663,7 +8034,7 @@ function _laplace_evaluate(laplace::CTSEMLaplaceObjective, theta::Vector{Float64
         aws = _laplace_workspace!(laplace, Float64, length(theta))
         @inbounds for U in ranges[c]
             _laplace_store_unit_primal!(laplace, U, theta, Ls, aws, primal_curvature,
-                primal_matrices, primal_gated, unit_loglik, chunk_ok, chunk_bad;
+                primal_matrices, primal_soft_quadrature, unit_loglik, chunk_ok, chunk_bad;
                 combo=combo) ||
                 return nothing
             term = unit_loglik[U]
@@ -7695,7 +8066,7 @@ function _laplace_evaluate(laplace::CTSEMLaplaceObjective, theta::Vector{Float64
         _ctsem_log_prior(laplace.objective, theta)
     coreset === nothing || _laplace_coreset_mask!(unit_loglik, subject_loglik,
         laplace, coreset)
-    laplace.gated_units = count(primal_gated)
+    laplace.soft_quadrature_units = count(primal_soft_quadrature)
 
     gradient || return (value=value, gradient=nothing,
         subject_loglik=subject_loglik, unit_loglik=unit_loglik,
@@ -7752,7 +8123,7 @@ function _laplace_evaluate(laplace::CTSEMLaplaceObjective, theta::Vector{Float64
                     fell = false
                 else
                     good, fell = _laplace_unit_gradient_route!(row, laplace, U, theta,
-                        Ls, dLlevels, dLsolved, primal_gated[U], primal_matrices[U],
+                        Ls, dLlevels, dLsolved, primal_soft_quadrature[U], primal_matrices[U],
                         primal_curvature[U])
                 end
                 fell && (fallbacks[_laplace_slot()] += 1)
@@ -7798,19 +8169,19 @@ end
 
 """
 Unit `U`'s gradient into `row`, unweighted, by the route its primal
-(`_laplace_store_unit_primal!`) set: the gated rule's, the floor's, or the
+(`_laplace_store_unit_primal!`) set: the soft-direction quadrature's, the floor's, or the
 seeded sweeps', and the fallback where a sweep fails
 (`_laplace_unit_gradient_fallback!`). Returns `(good, fell)`: a finite row, and
 whether the fallback made it.
 """
 function _laplace_unit_gradient_route!(row::Vector{Float64}, laplace::CTSEMLaplaceObjective,
-    U::Integer, theta::Vector{Float64}, Ls, dLlevels, dLsolved, gated::Bool, M,
+    U::Integer, theta::Vector{Float64}, Ls, dLlevels, dLsolved, soft_quadrature::Bool, M,
     curvature)
     fill!(row, 0.0)
-    if gated
-        # A unit the gated floor scored is differentiated through its own term,
-        # its own fallback included; see `_laplace_gated_unit_gradient`.
-        gg = _laplace_gated_unit_gradient(laplace, U, theta, curvature)
+    if soft_quadrature
+        # A unit the soft-direction quadrature scored is differentiated through its own term,
+        # its own fallback included; see `_laplace_soft_quadrature_unit_gradient`.
+        gg = _laplace_soft_quadrature_unit_gradient(laplace, U, theta, curvature)
         row .= gg
         return (all(isfinite, gg), false)
     end
@@ -7860,8 +8231,8 @@ transform layer unwound once a chunk and the exponential's derivative batched
 across its subjects where the model allows (`CTSEMAdjointWorkspace`'s
 `parameter_layer_shareable` and `defer_frechet`). The unit loop ran a forward
 pass for the value and a forward and reverse pass for the gradient, each with
-the layer and the derivative per subject, and the mode solve's and the gated
-floor's machinery around a unit with nothing to solve.
+the layer and the derivative per subject, and the mode solve's and the soft-direction
+quadrature's machinery around a unit with nothing to solve.
 
 In the Laplace pool, each piece on its slot's own workspace
 (`_laplace_workspace!`), so a draw's copy (`_laplace_draw_copy`) and a region
@@ -7893,7 +8264,7 @@ function _laplace_filter_evaluate(laplace::CTSEMLaplaceObjective, theta::Vector{
         laplace.mode_repaired[U] = false
         laplace.logdet_floored[U] = false
     end
-    laplace.gated_units = 0
+    laplace.soft_quadrature_units = 0
     _laplace_ensure_pool!(laplace)
     nslot = _laplace_pool_width()
     rowwise = gradient && scores !== nothing
@@ -8614,7 +8985,7 @@ export ctsem_laplace_mode_jacobian
 `d2g/dz dtheta` at `z`, `size(z) x npar`, or `nothing` if a member cannot be
 evaluated: row `a` the derivative along `z_a` of the unit objective's gradient
 with respect to `theta` (`_laplace_unit_theta_gradient`), one pass seeded in
-`z`, at the seed type the gated rule's passes and the seeded sweeps use.
+`z`, at the seed type the soft-direction quadrature's passes and the seeded sweeps use.
 `layout` as there: `nothing` for the unit's own coordinates, the joint layout
 for `z = (u, d_1, ...)`.
 """
@@ -9000,8 +9371,8 @@ function ctsem_laplace_diagnostics(laplace::CTSEMLaplaceObjective)
         min_eigenvalue=conditioning.min_eigenvalue,
         below_one=conditioning.below_one,
         near_singular=conditioning.near_singular,
-        floor=laplace.floor,
-        gated_units=laplace.gated_units,
+        soft_directions=laplace.soft_directions,
+        soft_quadrature_units=laplace.soft_quadrature_units,
     )
 end
 
@@ -9211,8 +9582,8 @@ _ctsem_optimise_result_extra(o::CTSEMLaplaceObjective, final, log) = (
     # At the final evaluation, which is the one just made at the minimizer;
     # flat rather than nested so it crosses the bridge as plain fields.
     unit_min_eigenvalue=ctsem_laplace_conditioning(o).min_eigenvalue,
-    laplace_floor=String(o.floor),
-    gated_units=o.gated_units,
+    soft_directions=String(o.soft_directions),
+    soft_quadrature_units=o.soft_quadrature_units,
     # How many units' gradients the seeded route failed on, which the
     # fallback then took (`_laplace_unit_gradient_fallback!`): correct and
     # slower, and invisible, because the answer is right either way. A
@@ -9285,9 +9656,9 @@ function _ctsem_optimise_verbose_report(o::CTSEMLaplaceObjective,
             isempty(finite) ? "" : string(" (smallest eigenvalue ",
                 round(minimum(finite); sigdigits=3), ")"))
     end
-    o.floor === :gated && println(_console(), "Laplace: gated floor, ",
-        o.gated_units, " unit(s) scored by its soft-direction rule at the last ",
-        "evaluation")
+    o.soft_directions === :quadrature && println(_console(),
+        "Laplace: soft-direction quadrature, ", o.soft_quadrature_units,
+        " unit(s) scored by it at the last evaluation")
     return nothing
 end
 
@@ -10139,10 +10510,11 @@ pilot (310 parameters, 493 single-member units) its first iterations then took
 5-20 minutes each at one core, against seconds once the batch was full.
 
 `prior = false` leaves each unit's share of the prior out, as for the plain
-objective.
+objective. `sink`, a vector, gets each unit's term.
 """
 function ctsem_subject_gradients(laplace::CTSEMLaplaceObjective,
-    values::AbstractVector; prior::Bool=true)
+    values::AbstractVector; prior::Bool=true,
+    sink::Union{Nothing,AbstractVector}=nothing)
     # Over the extended vector (`_laplace_extend`), and returned with the
     # caller's columns.
     n = length(values)
@@ -10150,6 +10522,7 @@ function ctsem_subject_gradients(laplace::CTSEMLaplaceObjective,
     nunits = length(laplace.units.members)
     S = zeros(Float64, nunits, length(theta))
     r = ctsem_laplace_evaluate(laplace, theta; gradient=true, scores=S)
+    sink === nothing || copyto!(sink, r.unit_loglik)
     isfinite(r.value) || return (value=r.value, scores=fill(NaN, nunits, n))
     # Each unit carries its share of the prior, as the forward route's rows do.
     prior && _ctsem_prior_scores!(S, laplace.objective, theta,

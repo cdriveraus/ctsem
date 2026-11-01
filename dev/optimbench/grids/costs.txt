@@ -1,0 +1,37 @@
+# costs grid: one cell per model and route of the baseline, an estonly fit
+# and then what a value, a gradient and a Hessian cost at its estimate,
+# searched and anchored, and single units against their weights
+# (bench_time_costs): the measurements the pricers' one cost model is set
+# from (REVIEW-optim-uncertainty-map-2026-10-31.md sections 5.2 and 6.9).
+#
+# id                                   model        data route      start                    variant
+cf_gaussian.aug.d1.s1.costs            cf_gaussian  1    augmented  default:1                costs
+cf_gaussian.lap.d1.s1.costs            cf_gaussian  1    laplace    default:1                costs
+cf_binary.aug.d1.s1.costs              cf_binary    1    augmented  default:1                costs
+cf_binary.lap.d1.s1.costs              cf_binary    1    laplace    default:1                costs
+cf_ordinal.aug.d1.s1.costs             cf_ordinal   1    augmented  default:1                costs
+cf_ordinal.lap.d1.s1.costs             cf_ordinal   1    laplace    default:1                costs
+cf_mixed.aug.d1.s1.costs               cf_mixed     1    augmented  default:1                costs
+cf_mixed.lap.d1.s1.costs               cf_mixed     1    laplace    default:1                costs
+gA1.lap.cfg.s1.costs                   gA1          cfg  laplace    default:1                costs
+gA14.lap.cfg.s1.costs                  gA14         cfg  laplace    default:1                costs
+gB2.lap.cfg.s1.costs                   gB2          cfg  laplace    default:1                costs
+gB8.lap.cfg.s1.costs                   gB8          cfg  laplace    default:1                costs
+gC2.lap.cfg.s1.costs                   gC2          cfg  laplace    default:1                costs
+gC8.lap.cfg.s1.costs                   gC8          cfg  laplace    default:1                costs
+gD1.lap.cfg.s1.costs                   gD1          cfg  laplace    default:1                costs
+gD3.lap.cfg.s1.costs                   gD3          cfg  laplace    default:1                costs
+acnonlin.lap.cfg.s1.costs              acnonlin     cfg  laplace    default:1                costs
+mvmix.lap.cfg.s1.costs                 mvmix        cfg  laplace    default:1                costs
+mvmix.aug.cfg.s1.costs                 mvmix        cfg  augmented  default:1                costs
+jflat.lap.cfg.s1.costs                 jflat        cfg  laplace    default:1                costs
+gN1.lap.cfg.s1.costs                   gN1          cfg  laplace    default:1                costs
+gN3.lap.cfg.s1.costs                   gN3          cfg  laplace    default:1                costs
+small.aug.d1.s1.costs                  small        1    augmented  default:1                costs
+nonlin.aug.d1.s1.costs                 nonlin       1    augmented  default:1                costs
+long.aug.d1.s1.costs                   long         1    augmented  default:1                costs
+bigp.aug.d1.s1.costs                   bigp         1    augmented  default:1                costs
+panel.aug.d1.s1.costs                  panel        1    augmented  default:1                costs
+ordinal.lap.d1.s1.costs                ordinal      1    laplace    default:1                costs
+anomS1.lap.cfg.s1.costs                anomS1       cfg  laplace    default:1                costs
+anomS2.lap.cfg.s1.costs                anomS2       cfg  laplace    default:1                costs

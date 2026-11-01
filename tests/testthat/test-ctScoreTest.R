@@ -264,6 +264,29 @@ test_that("a threshold covariate finds the step and reports where", {
     verbose = FALSE), 'not numeric')
 })
 
+test_that("time varying covariates are tested beside the verdict, not in it", {
+  # A noisy copy of the outcome at each row: the correct model's errors move
+  # with it, so the family rejects, and says nothing against the model.
+  x <- .score_fit('null')
+  set.seed(1)
+  tv <- data.frame(id = x$data$id, time = x$data$time,
+    copy = x$data$Y1 + stats::rnorm(nrow(x$data), 0, 0.3))
+  ad <- suppressMessages(ctFitAdequacy(x$fit, families = c('residuals', 'latent',
+    'tvcovariates'), tvcovariates = tv, cores = 1, nboot = 199))
+  f <- ad$families
+  own <- f$family != 'tvcovariates'
+  expect_equal(sum(!own), 1L)
+  expect_lt(f$p[!own], 1e-6)
+  expect_true(ad$informative)
+  expect_equal(f$p_adj[!own], f$p[!own])
+  expect_equal(f$p_adj[own], stats::p.adjust(f$p[own], 'holm'))
+  expect_identical(ad$adequate, !any(f$p_adj[own] < ad$alpha))
+  expect_output(print(ad), 'not counted above')
+  without <- suppressMessages(ctFitAdequacy(x$fit, families = 'residuals', cores = 1,
+    nboot = 199))
+  expect_true(is.na(without$informative))
+})
+
 test_that("a family that fails is reported and the others stand", {
   x <- .score_fit('het')
   local_mocked_bindings(.ctScoreExtended = function(...) stop('cannot extend this model'))

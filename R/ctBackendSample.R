@@ -338,8 +338,7 @@
     joint = !marginal && !isTRUE(state_explicit),
     named = if (marginal && !isTRUE(state_explicit) && !tisampled &&
       !is.null(directions)) NCOL(directions) else 0L,
-    nutsonly = .ctBackendNutsAsked(control, nutsgiven),
-    tisampled = tisampled)
+    nutsonly = .ctBackendNutsAsked(control, nutsgiven))
   # After the sampler: the map's default placement is the fit's estimate.
   placement <- .ctBackendPlacementFor(control, marginal || isTRUE(state_explicit))
   # The map sampler's warm-up is its learning schedule's (`ctsem_sample_map`'s
@@ -502,7 +501,7 @@
   # How many particles tempered SMC (`sampler = 'smc'`) carries, 200 by
   # default; read by `.ctBackendSampleControl()`.
   "particles",
-  # Whether tempered SMC's particles move on a coreset of the Laplace units
+  # Whether tempered SMC's particles move on a coreset of the units
   # (sample_smc.jl), TRUE by default; FALSE is the oracle, as for 'checked''s
   # importance sampler.
   "coreset",
@@ -657,15 +656,22 @@
 # likelihoods, learnt from their scores in warm-up windows. It starts from the
 # fit's estimate, not SAEM's placement.
 #
-# On the joint target the default is 'map', and 'saem' with sampled TI
-# predictor values, whose objective the map has not been checked on. Through
+# On the joint target the default is 'map'. Through
 # `ctFitUncertainty()` on the posterior race's 20 fixtures, two seeds each, at
 # the default target (dev2, review/SAMPLING-general-joint-map-2026-10-25.md),
 # the map reached the target in 39 runs of 40 and SAEM's kernel in 23, and
 # the map took 2.3 times less time an effective draw: 1.4 times on the twelve
 # where the filter integrates nothing, though slower on three of them (5.5
 # times on a binary item). Before the map was triangular (in the engine) SAEM
-# was the faster on eight of those twelve, and the default there.
+# was the faster on eight of those twelve, and the default there. With
+# missing TI predictor values sampled, SAEM's kernel stayed the default until
+# the map was checked there: on 60 subjects with a random drift, intercept and
+# initial mean and 8 subjects' predictor missing, the map reached the target
+# at all three seeds, at 1.9-4.3 effective draws a second, and SAEM's kernel
+# at none, running out of draws at min ESS 88-134 (0.25-0.32 a second); its
+# draws agreed with a long run of the map within 2.6 standard errors over the
+# 24 coordinates, the sampled values' sds 0.96-1.02 of the map's (dev3, 6
+# cores; scripts/uncert-items-2026-10/map_ti.R).
 #
 # 'saem' had been the joint default because it is more reliable than NUTS on
 # the joint vector, not only faster: through `ctFitUncertainty()` on 13
@@ -676,10 +682,9 @@
 # state-explicit target has no effects for its sweeps, so NUTS or SMC is the
 # sampler there; the state-explicit one has no check, so NUTS.
 #' @keywords internal
-.ctBackendSamplerName <- function(sampler, joint = TRUE, named = 0L, nutsonly = FALSE,
-  tisampled = FALSE) {
+.ctBackendSamplerName <- function(sampler, joint = TRUE, named = 0L, nutsonly = FALSE) {
   if (is.null(sampler)) {
-    if (isTRUE(joint)) return(if (isTRUE(tisampled)) "saem" else "map")
+    if (isTRUE(joint)) return("map")
     return(if (!isTRUE(nutsonly) && isTRUE(named > 0L)) "smc" else "nuts")
   }
   if (!is.character(sampler) || length(sampler) != 1L ||
@@ -834,13 +839,13 @@
     adapt_effects = isTRUE(.ctJuliaOr(control$adapt_effects, FALSE)),
     sampler = .ctBackendSamplerName(control$sampler),
     particles = max(2L, as.integer(.ctJuliaOr(control$particles, 200L))[1L]),
-    # Tempered SMC's particles move on a coreset of the Laplace units: the
+    # Tempered SMC's particles move on a coreset of the units: the
     # full density, evaluated once a particle a stage for the weights anyway,
     # corrects the moves exactly (sample_smc.jl). NUTS on a marginal target
     # runs its trajectories on one after warm-up and tests each draw's end
     # against the full density (sample_surrogate.jl). Either way this costs
     # accuracy nothing and `FALSE` is the oracle, as for the importance
-    # sampler's coreset (`.ctCoresetLpg()`). Inert off the Laplace route.
+    # sampler's coreset (`.ctCoresetLpg()`). Inert with fewer than two units.
     coreset = !isFALSE(control$coreset))
 
   # The SAEM kernel draws the effects by SAEM's own sweeps and keeps the
@@ -961,15 +966,19 @@
 # fewer effective draws than twice the dimension make a covariance noisier in
 # its small directions than the damped one, which is where the bar sits.
 #' @keywords internal
+#
+# A covariance serves only the coordinates it was made on. Where missing TI
+# predictor values are sampled they join the parameters
+# (`.ctJuliaTIMissingSampleFit()`), and the importance draws' and DAIS's
+# covariances, made on the parameters alone, do not cover them.
 .ctBackendMetricSource <- function(fit) {
   d <- fit$uncertainty$details
   npar <- length(fit$estimate$raw)
+  covers <- function(C) is.matrix(C) && nrow(C) == npar && all(is.finite(C))
   is <- d$importance_sampling
-  C <- fit$estimate$cov
   if (isTRUE(is$used) && isTRUE(is$weighted) && is.numeric(is$ess) &&
-      isTRUE(is$ess >= 2 * npar) && is.matrix(C) && nrow(C) == npar &&
-      all(is.finite(C))) return("is")
-  if (!is.null(d$dais$cov) && all(is.finite(d$dais$cov))) return("dais")
+      isTRUE(is$ess >= 2 * npar) && covers(fit$estimate$cov)) return("is")
+  if (covers(d$dais$cov)) return("dais")
   if (!is.null(fit$uncertainty$hessian) && length(d$normalcheck$widths)) return("check")
   "hessian"
 }
@@ -1005,7 +1014,13 @@
     H <- fit$uncertainty$hessian
     check <- fit$uncertainty$details$normalcheck
     information <- -(H + t(H)) / 2
-    PW <- information %*% check$directions
+    # The check's directions are units of the parameters' normal. Where sampled
+    # TI values extend the Hessian, the parameters' information is its leading
+    # block, so the directions padded with zeros there rescale the extended
+    # normal along the same directions by the same widths.
+    D <- check$directions
+    D <- rbind(D, matrix(0, nrow(information) - nrow(D), ncol(D)))
+    PW <- information %*% D
     rescaled <- information + PW %*% diag(1 / check$widths - 1, length(check$widths)) %*% t(PW)
     metric <- -(rescaled + t(rescaled)) / 2
   } else metric <- NULL
@@ -1658,8 +1673,8 @@
     # stage's moves, which set how many of them the final phase ran as chains.
     nparticles = if (is.null(result$nparticles)) NULL else as.integer(result$nparticles),
     final_tau = if (is.null(result$final_tau)) NULL else as.numeric(result$final_tau),
-    # The coreset tempered SMC's particles moved on, where the route is
-    # Laplace: how many of the units each stage's coreset held (0 where a
+    # The coreset tempered SMC's particles moved on: how many of the units
+    # each stage's coreset held (0 where a
     # stage ran on the full objective), the units, the correction's effective
     # size a stage as a fraction, the final chains' coreset and the fraction
     # of the draws' effective size their correction to the full density kept;
@@ -2311,8 +2326,7 @@ print.ctSampleDiagnostics <- function(x, ...) {
   # The joint target's default sampler, settled before the placement: the map
   # starts from an optimised fit and its Hessian, SAEM from the start alone.
   if (jointtarget && is.null(control$sampler)) {
-    control$sampler <- .ctBackendSamplerName(NULL, tisampled =
-      NROW(spec0$ti_imputed) > 0L && .ctJuliaTIMissingSamples(spec0))
+    control$sampler <- .ctBackendSamplerName(NULL)
   }
   if (jointtarget && identical(.ctBackendPlacementFor(control, FALSE), "saem")) {
     placementcontrol <- utils::modifyList(placementcontrol,

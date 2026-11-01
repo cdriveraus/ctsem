@@ -108,7 +108,21 @@ mutable struct CTSEMObjective{P,O} <: CTSEMOptimisable
     jacobian_index::Vector{Int}
     jacobian_value::Vector{CTSEMExpr}
     jacobian_slope::Vector{CTSEMExpr}
+    # This objective as a sum over its subjects (`_ctsem_unit_sum`), for
+    # whatever lets a weighted few of them stand in for all; built when first
+    # asked for, `nothing` until then.
+    unit_sum::Any
 end
+
+# Without its unit-sum view, which is built when first asked for.
+CTSEMObjective(params, subject_objectives, adjoint_ws, prior_index, prior_scale,
+    prior_weight, ti_missing_parameter, ti_missing_mu, ti_missing_sigma,
+    ti_missing_subject, subject_weights, corbound::Vector{CTSEMCorBound},
+    penalty_index, penalty_precision, jacobian_index, jacobian_value, jacobian_slope) =
+    CTSEMObjective(params, subject_objectives, adjoint_ws, prior_index, prior_scale,
+        prior_weight, ti_missing_parameter, ti_missing_mu, ti_missing_sigma,
+        ti_missing_subject, subject_weights, corbound, penalty_index,
+        penalty_precision, jacobian_index, jacobian_value, jacobian_slope, nothing)
 
 CTSEMObjective(params, subject_objectives) =
     CTSEMObjective(params, subject_objectives, nothing, Int[], Float64[], 1.0,
@@ -1848,8 +1862,8 @@ end
 The per-unit scores at the last point an optimiser evaluated with a gradient,
 for R's `lbfgs_scores` control and the coreset stages: `x` the point, `S` its
 units' scores without the prior (units by parameters), `u` each unit's term
-there on the Laplace route (unweighted, NaN on the marginal route), `valid`
-whether they describe `x`.
+there (unweighted, NaN for a unit of weight zero on the marginal route),
+`valid` whether they describe `x`.
 """
 mutable struct CTSEMScoreStore
     x::Vector{Float64}
@@ -1877,7 +1891,11 @@ function _ctsem_optimise_trial_scores(o::CTSEMObjective, x, gradient_method,
         limit::Real, log, store::CTSEMScoreStore)
     store.valid = false
     xv = collect(Float64, x)
-    r = _ctsem_try_evaluate(() -> ctsem_subject_gradients(o, xv; prior=false))
+    # Each subject's term too, which a coreset stage reads its value from
+    # (`_ctsem_coreset_anchor!`); NaN for a subject of weight zero.
+    fill!(store.u, NaN)
+    r = _ctsem_try_evaluate(() -> ctsem_subject_gradients(o, xv; prior=false,
+        sink=store.u))
     (r === nothing || !isfinite(r.value) || !all(isfinite, r.scores)) &&
         return (evaluated=nothing, valid=false)
     g = vec(sum(r.scores; dims=1))
@@ -2376,6 +2394,28 @@ resumed stage a progress to take a share of. This is the one no-progress rule
 for a resume; it replaced switching the predicted-gain stop off and
 quadrupling the cap, which is how a resume on AnomAuth came to run for hours.
 
+## Walking off to a limit
+
+A fit can stall with nothing flat for a reason the slow case does not cover:
+its supremum lies at a limit the parameters reach only at infinity, so every
+step gains a little less while some coordinates keep growing. A second-order
+process the data do not need does this -- it approaches the first-order model
+only as its damping and restoring coefficient go to minus infinity -- and the
+transform there, `-log1p_exp(-2 param)`, is linear, not flat, so the
+conjunction above never completes. On the adequacy tutorial's randomdrift
+search the refit gained a nat over its iterations 30-180 while its largest
+coordinate went from 1.8 to 17, then 0.01 over 180-330 while it went to 17,146,
+geometrically; each iteration slowed from half a second to minutes as the
+dynamics stiffened, and the runs hit their 8-hour limits. So at a trigger
+that finds nothing flat, coordinates beyond `_CTSEM_DIVERGE_RAW` that have at
+least doubled since the previous trigger, with the same sign, are diverging:
+the watch stops the run (`diverged`, `stop_reason` "diverged") and names them.
+A slow fit converges, so its coordinates settle between triggers 30 iterations
+apart rather than double ten prior sds out. Replayed on that walk's record
+(the watch's triggers at iterations 99, 129 and 178), the run stops at
+iteration 208, its largest coordinate -43.8 against -15.6 at the trigger
+before, 0.005 nats short of where the walk ended.
+
 ## Provenance
 
 The window of 80 iterations, the share of 1e-2, the cooldown of 30, the
@@ -2385,8 +2425,10 @@ flat-transform fixtures the watch was built for (fcae6459, 2026-09-14): a drift
 started inside `-log1p_exp`'s flat region, now the slow tier of
 `test-julia-convergence.R`, and `test_state_sampling.jl`'s count model for the
 case the conjunction must leave alone. No sweep over any of them is on record,
-and none has been checked on categorical or multilevel models (the
-consolidation plan's Appendix B).
+and the bench cannot give one: over 2,659 bench fits recorded from 2026-10-24
+to 10-31, categorical and multilevel among them, the watch fired twice and
+stopped none (`review/bench/2026-10-31-defaults-jf-f979c331.md`). Its numbers matter only on fits long
+enough to creep for a window.
 """
 mutable struct CTSEMStallWatch
     window::Int
@@ -2402,6 +2444,10 @@ mutable struct CTSEMStallWatch
     carried::Float64
     alone::Bool
     exhausted::Bool
+    # The point at the last trigger that found nothing, and whether the run is
+    # walking off to a limit (see "Walking off to a limit" above).
+    previous::Vector{Float64}
+    diverged::Bool
 end
 
 CTSEMStallWatch(; window::Integer=80, fraction::Real=1e-2, cooldown::Integer=30,
@@ -2409,7 +2455,25 @@ CTSEMStallWatch(; window::Integer=80, fraction::Real=1e-2, cooldown::Integer=30,
     alone::Bool=false) =
     CTSEMStallWatch(Int(window), Float64(fraction), Int(cooldown),
         Float64(tighten), Int(tightenings), 0, 0, Int[], Float64[], 0.0,
-        Float64(carried), alone, false)
+        Float64(carried), alone, false, Float64[], false)
+
+"""
+How far past its N(0, 1) prior, in raw units, a coordinate must be for the
+stall watch to read its doubling between triggers as a walk to infinity
+(`_ctsem_diverging`): ten prior sds, past where any default transform is
+anywhere but asymptotic, and past where a slow fit's coordinates are still
+moving. On the walk that set it the largest coordinate passed 10 at iteration
+121 and went from -15.6 to -43.8 between the triggers at 178 and 208.
+"""
+const _CTSEM_DIVERGE_RAW = 10.0
+
+"""The coordinates of `x` beyond `_CTSEM_DIVERGE_RAW` that have at least
+doubled, sign kept, since `previous`; none where there is no previous point."""
+function _ctsem_diverging(previous::AbstractVector, x::AbstractVector)
+    length(previous) == length(x) || return Int[]
+    return [j for j in eachindex(x) if abs(x[j]) >= _CTSEM_DIVERGE_RAW &&
+        sign(x[j]) == sign(previous[j]) && abs(x[j]) >= 2 * abs(previous[j])]
+end
 
 """
     _ctsem_stall_verdict!(watch, trace, iteration, params, values, range, ratio)
@@ -2490,6 +2554,15 @@ function _ctsem_stall_verdict!(watch::CTSEMStallWatch, trace::CTSEMTrace,
             end
         end
     end
+    # Coordinates walking off to a limit: no maximum to converge to, so no
+    # amount of rope helps. See "Walking off to a limit" above.
+    diverging = _ctsem_diverging(watch.previous, values)
+    if !isempty(diverging)
+        watch.flat = diverging
+        watch.diverged = true
+        return true
+    end
+    watch.previous = collect(Float64, values)
     # On a resumed stage, stalled at the tightest bar the hysteresis allows:
     # stuck, not slow. See `CTSEMStallWatch`.
     if watch.alone && watch.tightenings_left == 0
@@ -2814,7 +2887,7 @@ variant's step budget; `newton_reuse` and
 `flat_rtol`
 are the finish's rules, passed from R so one number serves both sides.
 `coreset` runs stretches of the L-BFGS stage on a weighted few of the units
-where the route has units (`_ctsem_coreset_plan`, the Laplace route) and a
+where the objective is a sum over units (`_ctsem_coreset_plan`) and a
 coreset is expected to save, each stretch checked by a full gradient. Off here;
 R's default for it, `'auto'`, sends it for large data (`.ctJuliaCoresetOn()`).
 Neither the finish nor a budget stage sees one.
@@ -2984,9 +3057,9 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
     # sent back reads as no progress near the optimum: that ended fits as
     # stalled and ran the stall escape's refits there, on the full sum.
     coreset_last = Ref(typemin(Int) >> 1)
-    # Coreset stages on the Laplace route (`_ctsem_coreset_plan`): stretches of
-    # the L-BFGS stage on a weighted few of the units, each checked by a full
-    # gradient. `nothing` on any other route, with too few units, off, or on a
+    # Coreset stages (`_ctsem_coreset_plan`): stretches of the L-BFGS stage on
+    # a weighted few of the units, each checked by a full gradient. `nothing`
+    # on an objective that is no sum over units, with too few units, off, or on a
     # budget stage (the prior warm-up), whose few iterations are its plan and
     # leave no stage room to pay.
     coreseter = coreset && !progress_budget ?
@@ -3086,6 +3159,8 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
     # (`ctsem_laplace_placed_optimize`).
     stopped_by_stop = Ref(false)
     stopped_by_progress = Ref(false)
+    # Walking off to a limit (`CTSEMStallWatch`): no finish, no resume.
+    stopped_by_divergence = Ref(false)
     # The window is not scaled to L-BFGS's memory: on a large model that made
     # the watch, the one thing that ends a creeping stage, answer up to twelve
     # times later, and progress does not wait for the memory to turn over.
@@ -3191,10 +3266,11 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
                 _ctsem_saturation_range(objective, current_x), stall_ratio;
                 tolerance=converge_tol, progress=_ctsem_probe_progress(reporter),
                 report=stall_report)
-            # Stuck on progress alone (a resumed stage) or stalled and flat
-            # with somewhere better to go: different findings, and only the
-            # second hands back a point to resume from.
+            # Stuck on progress alone (a resumed stage), walking off to a
+            # limit, or stalled and flat with somewhere better to go: different
+            # findings, and only the last hands back a point to resume from.
             stall.exhausted ? (stopped_by_progress[] = true) :
+                stall.diverged ? (stopped_by_divergence[] = true) :
                 (stopped_by_stall[] = true)
             return true
         end
@@ -3339,7 +3415,8 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
     # Why L-BFGS stopped, in one word, since the finish depends on it and the
     # certification reads it.
     reason_for(r) = stopped_by_stop[] ? "stopped" :
-        stopped_by_gap[] ? "gap" : stopped_by_stall[] ? "stall" :
+        stopped_by_gap[] ? "gap" : stopped_by_divergence[] ? "diverged" :
+        stopped_by_stall[] ? "stall" :
         stopped_by_progress[] ? "progress" :
         (r.linesearch_failed && jumped_units[] !== nothing) ? "jump" :
         r.linesearch_failed ? "linesearch" :
@@ -3710,8 +3787,11 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
         # A stage asked for no iterations has not stalled.
         # Not after a jump the route named: the run is handed on from there,
         # and the probe's pullbacks cost minutes on the fit this was built for.
+        # Nor after a walk off to a limit, which the watch measured climbing
+        # outward: pulling back cannot gain, and cost the second-order refit
+        # 75 s of its 3 minutes.
         label=label, verbose=verbose && maxiter > 0,
-        overshoot_probe=stop_reason == "jump" ? :off : overshoot_probe,
+        overshoot_probe=stop_reason in ("jump", "diverged") ? :off : overshoot_probe,
         progress=_ctsem_probe_progress(reporter),
         # What the probe pulls back, read off the finish's Hessian where
         # there is one, and only the flat transforms after the iteration cap
@@ -3747,6 +3827,11 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
         stall.gain, " -- so the fit has stopped getting anywhere, this is why, ",
         "and there is somewhere better to go. Stopping here rather than ",
         "running to the iteration cap")
+    verbose && stopped_by_divergence[] && println(_console(), label, ": the last ",
+        stall.window, " iterations gained ", _ctsem_window_gain(trace, stall.window),
+        " while raw parameter(s) ", stall.flat, " at least doubled, past ",
+        _CTSEM_DIVERGE_RAW, ", since the check before -- walking off to a limit ",
+        "with no maximum to reach; stopping rather than running to the iteration cap")
     verbose && stopped_by_progress[] && println(_console(), label, ": the last ",
         stall.window, " iterations gained ", _ctsem_window_gain(trace, stall.window),
         ", under ", stall.fraction, " of the ", _ctsem_trace_progress(trace) +
@@ -3767,13 +3852,18 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
         # Modes the anchored run reached that a search at the estimate does not
         # (`anchor_kept_*`), and better ones the search found that the run
         # missed (`anchor_missed_*`, worth `anchor_missed_gain`), for the
-        # caller's known modes; `[0]` where none or not anchored.
+        # caller's known modes; `[0]` where none or not anchored. Whether that
+        # gain is worth resuming the run for (`anchor_missed_resume`) is the
+        # bar the run's own rounds use, `_CTSEM_MODE_RESUME_TOL`, so the caller
+        # holds no second one.
         anchor_kept_units=anchored === nothing ? [0] : anchored.kept_units,
         anchor_kept_values=anchored === nothing ? zeros(1, 1) : anchored.kept_values,
         anchor_missed_units=anchored === nothing ? [0] : anchored.missed_units,
         anchor_missed_values=anchored === nothing ? zeros(1, 1) :
             anchored.missed_values,
         anchor_missed_gain=anchored === nothing ? 0.0 : anchored.missed_gain,
+        anchor_missed_resume=anchored !== nothing && isfinite(anchored.missed_gain) &&
+            abs(anchored.missed_gain) > _CTSEM_MODE_RESUME_TOL,
         # Modes the run put in its objective's known modes on its way, and how
         # many times it took some and carried on (`CTSEMFoundModes`), for the
         # caller's known modes; `[0]` where none.
@@ -3926,6 +4016,10 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
         # Whether the run ended because it stopped making progress rather than
         # because it arrived.
         stopped_by_stall=stopped_by_stall[],
+        # Walking off to a limit, and the coordinates that were (`0` for none).
+        stopped_by_divergence=stopped_by_divergence[],
+        diverging_parameters=stopped_by_divergence[] && !isempty(stall.flat) ?
+            stall.flat : [0],
         stall_window=Int(stall.window),
         # Which coordinates were flat when it stopped, and how many times the
         # progress test fired without finding one. `0` for none, for the reason
@@ -3976,7 +4070,8 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
         # and `saturated_parameters`. Keying convergence on saturation made the
         # flag false on two thirds of good fits; see `_ctsem_overshot`.
         converged=!stalled && !overshot && finite_gradient &&
-            stop_reason != "jump" && (result.g_converged || converged_enough),
+            stop_reason != "jump" && stop_reason != "diverged" &&
+            (result.g_converged || converged_enough),
         saturated=saturated,
         # The pullback verdict and its margin. `overshot` is the half of
         # saturation that is a convergence failure; `overshoot_gain` is how

@@ -110,10 +110,11 @@
   batches <- .ctBackendEngineBatches(engine)
   attr(fn, "batch") <- batches$batch
   attr(fn, "gradbatch") <- batches$gradbatch
+  attr(fn, "gradvalues") <- batches$gradvalues
   fn
 }
 
-# The `'batch'` and `'gradbatch'` attributes of a density the engine
+# The `'batch'`, `'gradbatch'` and `'gradvalues'` attributes of a density the engine
 # evaluates, on `engine()$objective`: the fit's own (`.ctBackendLpgFunc()`) or
 # the refined fit's placed objective (`.ctLaplacePlacedLpg()`).
 .ctBackendEngineBatches <- function(engine) {
@@ -154,7 +155,26 @@
     value[!is.finite(value)] <- -1e100
     list(value = value, gradient = t(out[-1L, , drop = FALSE]))
   }
-  list(batch = batch, gradbatch = gradbatch)
+  # What a gradient costs in values of the objective (`ctsem_gradient_values`,
+  # the engine's one cost model), asked once: the unit `imis_is()` and the
+  # volume tilt count gradients in (`.ctDensityGradientValues()`).
+  gradvalues <- local({
+    price <- NULL
+    function() {
+      if (is.null(price)) price <<- as.numeric(.ctBackendJuliaValue(
+        engine()$module$ctsem_gradient_values(engine()$objective)))[1L]
+      price
+    }
+  })
+  list(batch = batch, gradbatch = gradbatch, gradvalues = gradvalues)
+}
+
+# What a gradient of the density `lpg` costs in its values: the engine's price
+# (`'gradvalues'`, `.ctBackendEngineBatches()`) for a julia density, two for a
+# stan density, which carries none.
+.ctDensityGradientValues <- function(lpg) {
+  price <- attr(lpg, "gradvalues")
+  if (is.function(price)) as.numeric(price())[1L] else 2
 }
 
 # The two counts `ctOptimCheckUncertaintyData` needs. The Julia spec has no
@@ -337,24 +357,22 @@
   #
   # Two arguments carry what is genuinely this backend's:
   #
-  #   `scaleInit`/`tailScale` at julia's own value rather than stan's -- see
-  #   `.ctImisProposalDefaults()` for the measurements behind the two numbers
-  #   and why one constant does not serve both.
+  #   `backend`, the proposal's scale: julia's by whether its start's widths
+  #   were measured (`.ctImisProposalDefaults()`).
   #
   #   `lpg` value-only, not `lpgFunc`: `imis_is` reads the log probability and
   #   nothing else, so the reverse pass `lpgFunc` computes per draw was being
   #   discarded by the `vapply` that collects it. Value-only is also what
   #   carries the `'batch'` attribute (see `.ctBackendLpgFunc()`), so
   #   `uncertainty = 'is'` evaluates a whole proposal batch in one bridge call
-  #   rather than one per draw. On the Laplace route `.ctCoresetLpg()` puts a
-  #   coreset of the units behind it.
-  juliaImis <- .ctImisProposalDefaults('julia')
+  #   rather than one per draw. `.ctCoresetLpg()` puts a coreset of the
+  #   units behind it.
   drawn <- .ctOptimDrawSamples(uncertaintyfit, draws = draws, control = control,
     est = est, finishsamples = finishsamples,
     parnames = tryCatch(.ctFitRawParNames(fit), error = function(e) NULL),
     proper = identical(.ctFitPriorScope(fit), 'all'),
     lpg = .ctCoresetLpg(target, lpg(target, gradient = FALSE), control), verbose = verbose,
-    scaleInit = juliaImis$scaleInit, tailScale = juliaImis$tailScale,
+    backend = 'julia',
     tailremedy = "ctFitUncertainty(fit, 'sample') samples the posterior itself.")
   samples <- drawn$samples
   uncertaintyfit <- drawn$uncertaintyfit

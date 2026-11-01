@@ -995,7 +995,7 @@ function _ctsem_subset_objective(L::CTSEMLaplaceObjective, keep::AbstractVector{
         :inner_converged => falses(n), :hessian_repaired => falses(n),
         :mode_repaired => falses(n), :logdet_floored => falses(n),
         # per-run: where the objective was last evaluated, and a counter
-        :last_values => Float64[], :gated_units => 0,
+        :last_values => Float64[], :soft_quadrature_units => 0,
         # Part of the objective, not state: the subset's units keep theirs.
         :known => L.known[keep],
         # The run's, for the units the subset holds.
@@ -1283,8 +1283,10 @@ end
 
 What a coreset stage optimises: `laplace`'s log prior plus the coreset's
 weighted unit terms, through the Laplace route's own trial
-(`_ctsem_optimise_trial`, with its validity rule), solving only the coreset's
-units on the pool a full evaluation uses; plus `correction' (x - anchor)`,
+(`_ctsem_optimise_trial`, with its validity rule), evaluating only the
+coreset's units on the pool a full evaluation uses -- `laplace` the run's
+objective as a sum over units (`_ctsem_unit_sum`), on the marginal route its
+subjects; plus `correction' (x - anchor)`,
 where `correction` is the full gradient less the coreset's at `anchor`
 (maximised), so that the stage's gradient there is the full one.
 `_ctsem_coreset_switch!` sets `correction` once it has read the coreset's
@@ -1299,8 +1301,10 @@ end
 
 function _ctsem_optimise_trial(t::CTSEMCoresetTarget, x, want_gradient::Bool,
         gradient_method, limit::Real, log)
+    # The marginal route keeps no call log; its view's trial counts into one
+    # of its own.
     trial = _ctsem_optimise_trial(t.laplace, x, want_gradient, gradient_method,
-        limit, log; coreset=t.coreset)
+        limit, something(log, _ctsem_optimise_log(t.laplace, false)); coreset=t.coreset)
     trial.valid || return trial
     e = trial.evaluated
     shift = 0.0
@@ -1334,7 +1338,9 @@ const _CTSEM_CORESET_FOLDS = 4
     CTSEMCoresetPlan
 
 The state of the coreset stages in one L-BFGS run (`_ctsem_lbfgs`'s
-`coreset`): the full objective and the caller's trial (`fg!(target, F, G, x)`),
+`coreset`): the full objective, it as a sum over units (`units`,
+`_ctsem_unit_sum`: itself on the Laplace route) and the caller's trial
+(`fg!(target, F, G, x)`),
 the store the full trials leave their units' scores and terms in, each unit's sampling
 weight (which its scores carry) and share of a full evaluation's work, the
 training points (each point, its units' scores without the prior, and the full
@@ -1357,7 +1363,8 @@ full objective's value at the last full point (`f_last`, minimised), from
 which a full iteration's gain is measured.
 """
 mutable struct CTSEMCoresetPlan
-    full::CTSEMLaplaceObjective
+    full::CTSEMOptimisable
+    units::CTSEMLaplaceObjective
     fg!::Any
     store::CTSEMScoreStore
     sampling::Vector{Float64}
@@ -1403,20 +1410,20 @@ end
     _ctsem_coreset_plan(objective, fg!, store)
 
 Coreset stages for `objective`'s L-BFGS run, or `nothing` where they cannot
-apply: a route other than Laplace, units whose scores the trial does not keep,
-or a single unit. The training set holds the last 30 full gradients, fewer
+apply: an objective that is no sum over units (`_ctsem_unit_sum`), units whose
+scores the trial does not keep, or a single unit. The training set holds the last 30 full gradients, fewer
 where their scores would pass 2.5e7 numbers.
 """
-_ctsem_coreset_plan(objective, fg!, store) = nothing
-function _ctsem_coreset_plan(L::CTSEMLaplaceObjective, fg!, store)
+function _ctsem_coreset_plan(objective, fg!, store)
     store === nothing && return nothing
+    L = _ctsem_unit_sum(objective)
+    L === nothing && return nothing
     N, p = size(store.S)
     N >= 2 || return nothing
-    w = _laplace_unit_weights(L)
-    cost = w ./ sum(w)
+    cost = _ctsem_unit_shares(L)
     keep = clamp(floor(Int, 2.5e7 / (N * p)), 3, 30)
     sampling = Float64[_laplace_unit_weight(L, U) for U in 1:N]
-    return CTSEMCoresetPlan(L, fg!, store, sampling, cost, keep, 0.0,
+    return CTSEMCoresetPlan(objective, L, fg!, store, sampling, cost, keep, 0.0,
         Vector{Float64}[], Matrix{Float64}[], Vector{Float64}[], false, nothing,
         Float64[], NaN, Float64[], 0.0, 0, _CTSEM_CORESET_FIRST_STAGE, 0.0, 0,
         0, Int[], Float64[], Int[], Int[], Float64[], 0, 0, 0, 0, 0.0, 0,
@@ -1432,8 +1439,7 @@ iterations can spend on each: with its check and the full iteration after it,
 _ctsem_coreset_budget(n::Integer) = 1 - 2 / n
 
 """What a coreset costs, as a share of a full evaluation's work."""
-_ctsem_coreset_share(c::CTSEMCoresetPlan, units) =
-    sum(c.cost[U] for U in units; init=0.0)
+_ctsem_coreset_share(c::CTSEMCoresetPlan, units) = _ctsem_coreset_share(c.cost, units)
 
 """Keep the full gradient at `x` (`G` minimised) and its units' scores, which
 the trial just left in the store, as a training point."""
@@ -1736,7 +1742,7 @@ L-BFGS's model (`hmul`) says is left to gain at `x`."""
 function _ctsem_coreset_begin!(c::CTSEMCoresetPlan, cs::CTSEMCoreset, x, f, G,
         scale, hmul)
     c.live = true
-    c.target = CTSEMCoresetTarget(c.full, cs, collect(Float64, x), zeros(length(x)))
+    c.target = CTSEMCoresetTarget(c.units, cs, collect(Float64, x), zeros(length(x)))
     c.error = c.rel * dot(G, hmul(G)) / 2
     c.x0 = collect(Float64, x); c.f0 = f; c.G0 = collect(Float64, G)
     c.iterations = 0
@@ -1822,7 +1828,7 @@ function _ctsem_coreset_anchor!(c::CTSEMCoresetPlan, x, f)
     st = c.store
     (st.valid && st.x == x) || return nothing
     cs = c.target.coreset
-    total = _laplace_weighted_total(c.full, st.u)
+    total = _laplace_weighted_total(c.units, st.u)
     inside = 0.0
     for (k, U) in enumerate(cs.units)
         inside += cs.weights[k] * st.u[U]
@@ -2015,21 +2021,6 @@ function _ctsem_flat_allowed(laplace::CTSEMLaplaceObjective, from::AbstractVecto
     b = corrected(to)
     return isfinite(b) && b - a > tol
 end
-
-"""
-    _ctsem_hessian_cost(objective, npar)
-
-What one Hessian costs, in gradients: `2 npar` on the Laplace route (central
-differences of the gradient), and about `npar` on the marginal route, whose
-forward-over-reverse sweeps carry one lane per parameter at about a gradient
-each (measured: 750 gradients' time for 715 parameters), as on a Laplace
-objective with no coordinate, whose Hessian is that route's
-(`_laplace_filter_hessian`). The unit the finish weighs a Hessian against its
-steps in, each of which costs a gradient.
-"""
-_ctsem_hessian_cost(laplace::CTSEMLaplaceObjective, npar::Integer) =
-    _laplace_filter_only(laplace) ? Int(npar) : 2 * Int(npar)
-_ctsem_hessian_cost(::Any, npar::Integer) = Int(npar)
 
 """
     _ctsem_finish_curvature(objective)

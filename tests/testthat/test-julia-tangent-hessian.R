@@ -64,7 +64,7 @@
 }
 
 # The unit curvature by the hand-coded sweeps (`tangent_laplace.jl`) against the
-# dual's, with the gated floor's cross curvature read off the same sweeps
+# dual's, with the soft-direction quadrature's cross curvature read off the same sweeps
 # (`CTSEMHybridCross`), at each unit's mode: the largest differences in the
 # curvature, and in the cross terms, mode and `M`, relative to their largest
 # entries, the members with a cross term, and whether the hand route served.

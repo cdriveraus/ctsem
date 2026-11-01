@@ -18,9 +18,11 @@ test_that("'checked' runs DAIS in the engine on a julia fit, and not where asked
   expect_gt(dais$iterations, 0L)
   expect_equal(dais$gradients, dais$draws * dais$iterations)
   # A Laplace fit's 'checked' has a coreset, and DAIS's draws go through one
-  # of its own: never dearer than the gradients in full, a gradient as two.
+  # of its own: never dearer than the gradients in full, each at the engine's
+  # price (`ctsem_gradient_values`).
   expect_true(isTRUE(dais$coreset$used))
-  expect_lte(dais$cost, 2 * dais$gradients)
+  price <- attr(ctsem:::.ctBackendLpgFunc(fit), "gradvalues")()
+  expect_lte(dais$cost, price * dais$gradients)
   expect_gte(dais$coreset$chosen, 0L)
   # Its record is the importance sampler's coreset's, choices and all.
   expect_equal(dais$coreset$record$chosen, dais$coreset$chosen)
@@ -62,8 +64,9 @@ test_that("a density without an engine has no DAIS stage", {
 test_that("the sampler's metric is the DAIS normal's precision where there is one", {
   set.seed(17)
   C <- crossprod(matrix(rnorm(25), 5)) + diag(5)
-  fit <- list(uncertainty = list(hessian = -diag(5), details = list(dais = list(cov = C),
-    normalcheck = list(directions = matrix(1, 5, 1), widths = 4))))
+  fit <- list(estimate = list(raw = rep(0, 5)), uncertainty = list(hessian = -diag(5),
+    details = list(dais = list(cov = C),
+      normalcheck = list(directions = matrix(1, 5, 1), widths = 4))))
   expect_identical(ctsem:::.ctBackendMetricSource(fit), "dais")
   expect_equal(-ctsem:::.ctBackendSampleMetric(fit), solve(C), tolerance = 1e-8)
   # The importance draws' covariance comes first where they were used,
@@ -78,7 +81,7 @@ test_that("the sampler's metric is the DAIS normal's precision where there is on
   expect_identical(ctsem:::.ctBackendMetricSource(fit), "dais")
   fit$uncertainty$details$importance_sampling <- list(used = FALSE, weighted = TRUE, ess = 50)
   expect_identical(ctsem:::.ctBackendMetricSource(fit), "dais")
-  fit$estimate <- NULL
+  fit$estimate$cov <- NULL
   # A direction the covariance does not hold gets no precision, so the engine
   # floors it wide, as it does for the Hessian's unidentified directions.
   v <- c(1, 0, 0, 0, 0)

@@ -4057,28 +4057,45 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
     }
     out$inner_tol <- tol
   }
-  # Recorded whenever it is given, default included. An absent floor is the
-  # historical meaning, 'total': a specification written before the default
-  # became 'gated' carries none, and every route that rebuilds an objective
-  # from it must keep scoring it the way it was fitted. So the default is
-  # resolved at the fit's entry point (`.ctFitJuliaBackendImpl`), never here --
-  # the rebuild sites pass `spec$laplace$inner` back through this function, and
-  # a default filled in here would silently move a stored fit to 'gated'.
-  floor <- laplacecontrol$floor
-  if (!is.null(floor)) {
-    floor <- as.character(floor)[1L]
-    if (is.na(floor) || !floor %in% c("total", "gated")) {
-      stop("optimcontrol$laplace_floor must be 'total' or 'gated'.",
-        call. = FALSE)
+  # How soft directions are scored, recorded whenever it is given, default
+  # included. An absent rule is the historical meaning, 'logdet_floor': a
+  # specification written before the default became the quadrature carries
+  # none, and every route that rebuilds an objective from it must keep scoring
+  # it the way it was fitted. So the default is resolved at the fit's entry
+  # point (`.ctFitJuliaBackendImpl`), never here -- the rebuild sites pass
+  # `spec$laplace$inner` back through this function, and a default filled in
+  # here would silently move a stored fit to the quadrature.
+  if (!is.null(laplacecontrol[["soft_directions"]]) ||
+      !is.null(laplacecontrol[["floor"]])) {
+    rule <- .ctJuliaSoftDirections(laplacecontrol)
+    if (is.na(rule) || !rule %in% c("quadrature", "logdet_floor")) {
+      stop("optimcontrol$laplace_soft_directions must be 'quadrature' or ",
+        "'logdet_floor'.", call. = FALSE)
     }
-    out$floor <- floor
+    out$soft_directions <- rule
   }
   out
 }
 
-# The floor a new intoverpop='laplace' or 'none' fit uses when none is asked
+# How a unit whose curvature has a direction softer than the prior's is
+# scored, as a specification's `laplace$inner` records it: 'quadrature' (the
+# soft-direction quadrature) or 'logdet_floor'. A specification written before
+# the rename (juliaFit, 2026-10-31) records `floor` = 'gated' or 'total'
+# instead, and one written before either was recorded carries neither, which
+# is the 'logdet_floor' it was fitted under.
+.ctJuliaSoftDirections <- function(inner) {
+  rule <- inner[["soft_directions"]]
+  if (!is.null(rule)) return(as.character(rule)[1L])
+  old <- inner[["floor"]]
+  if (is.null(old)) return("logdet_floor")
+  old <- as.character(old)[1L]
+  if (identical(old, "gated")) "quadrature" else if (identical(old, "total"))
+    "logdet_floor" else old
+}
+
+# The rule a new intoverpop='laplace' or 'none' fit uses when none is asked
 # for.
-.ctJuliaLaplaceFloorDefault <- "gated"
+.ctJuliaSoftDirectionsDefault <- "quadrature"
 
 # `optimcontrol$saem`: how many SAEM iterations the first optimisation stage
 # may run before L-BFGS (`ctsem_saem` in the engine), 0 for none. TRUE is the
@@ -4143,12 +4160,12 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
   # 'total' is no longer what every fit does, so it is not inert elsewhere.
   # 'none' has a Laplace term even though it samples the effects: its sampler
   # is placed, and its metric built, by optimising the Laplace objective.
-  if (!is.null(laplacecontrol$floor) &&
+  if (!is.null(laplacecontrol[["soft_directions"]]) &&
       !intoverpop %in% c("laplace", "none")) {
-    stop("optimcontrol$laplace_floor applies to intoverpop='laplace', and to ",
-      "sampling with intoverpop=FALSE, which places its sampler on the Laplace ",
-      "fit; with intoverpop='", intoverpop, "' there is no Laplace term to ",
-      "floor. Drop it.", call. = FALSE)
+    stop("optimcontrol$laplace_soft_directions applies to intoverpop='laplace', ",
+      "and to sampling with intoverpop=FALSE, which places its sampler on the ",
+      "Laplace fit; with intoverpop='", intoverpop, "' there is no Laplace term ",
+      "to score them in. Drop it.", call. = FALSE)
   }
   dat <- data.frame(datalong)
   dat <- dat[order(dat[[model$subjectIDname]], dat[[model$timeName]]), , drop = FALSE]
@@ -4871,14 +4888,14 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
     if (!is.null(spec$laplace$inner$inner_tol)) {
       laplace_args$inner_tol <- as.numeric(spec$laplace$inner$inner_tol)
     }
-    # The floor goes on the objective, not the session, so a gated fit leaves
-    # every other objective -- and every later fit -- as it was. Always sent,
-    # so the cache key (a hash of these inputs) sees the floor the objective is
-    # actually built with: a default 'gated' and an explicit one hash alike, and
-    # an absent floor -- a specification from before 'gated' was the default --
-    # is built, and keyed, as the 'total' it was fitted under.
-    laplace_args$floor <- as.character(.ctJuliaOr(spec$laplace$inner$floor,
-      "total"))[1L]
+    # The soft-direction rule goes on the objective, not the session, so a fit
+    # under the quadrature leaves every other objective -- and every later fit
+    # -- as it was. Always sent, so the cache key (a hash of these inputs) sees
+    # the rule the objective is actually built with: the default and the same
+    # rule named hash alike, and an absent rule -- a specification from before
+    # the quadrature was the default -- is built, and keyed, as the
+    # 'logdet_floor' it was fitted under.
+    laplace_args$soft_directions <- .ctJuliaSoftDirections(spec$laplace$inner)
     if (length(levels) > 1L) {
       # Concatenated innermost level first, split on the far side by the
       # per-level counts. Flat vectors because the bridge marshals those and
@@ -5507,9 +5524,10 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
 }
 
 # Whether the L-BFGS stage runs coreset stages (`optimcontrol$coreset`):
-# TRUE and FALSE as given, and 'auto', the default, on the Laplace route for
-# data of at least `.ctCoresetAutoUnits` top-level units and
-# `.ctCoresetAutoCells` data cells (rows times manifest variables). Below that
+# TRUE and FALSE as given, and 'auto', the default, for data of at least
+# `.ctCoresetAutoUnits` units (`.ctJuliaUnits()`) and `.ctCoresetAutoCells`
+# data cells (rows times manifest variables). The bars were measured on
+# Laplace fits. Below that
 # a full gradient is cheap: on the optimiser bench (25-100 units, at most
 # about 3000 cells) the stages saved no optimiser time, and on its models with
 # several maxima they changed which one a fit reached, twice ending
@@ -5524,12 +5542,19 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
 .ctJuliaCoresetOn <- function(optimcontrol, model_spec) {
   v <- optimcontrol[["coreset"]]
   if (!is.null(v) && !identical(v, "auto")) return(isTRUE(v))
-  levels <- model_spec$laplace$levels
-  if (!length(levels)) return(FALSE)
-  # The outermost level's groups are the Laplace route's units.
-  units <- as.integer(.ctJuliaOr(levels[[length(levels)]]$ngroups, 0L))[1L]
-  units >= .ctCoresetAutoUnits &&
+  .ctJuliaUnits(model_spec) >= .ctCoresetAutoUnits &&
     length(model_spec$manifest_data) >= .ctCoresetAutoCells
+}
+
+# How many units a prepared specification's objective sums, which is what a
+# coreset (the optimiser's stages, `.ctCoresetLpg()`) picks a few of: the
+# outermost level's groups on the Laplace route, the subjects otherwise.
+.ctJuliaUnits <- function(model_spec) {
+  levels <- model_spec$laplace$levels
+  if (length(levels)) {
+    return(as.integer(.ctJuliaOr(levels[[length(levels)]]$ngroups, 0L))[1L])
+  }
+  length(model_spec$subject_starts)
 }
 
 # A fit's checkpoint (`optimcontrol$checkpoint`, a file path): what
@@ -5602,12 +5627,9 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
 
 # How many times a run resumes with modes kept as starts (`.ctJuliaOptimise()`)
 # -- a jump's, or better ones its closing search found -- before it is left.
+# Whether the closing search's are worth a resume is the engine's call
+# (`anchor_missed_resume`), by the bar its own rounds use.
 .ctJuliaKnownRounds <- 4L
-
-# How far, in nats, the modes a run's closing search preferred must move the
-# objective at its end before the run resumes with them (`.ctJuliaOptimise()`):
-# under it they are kept as starts and the run is left where it ended.
-.ctJuliaKnownResumeGain <- 1e-3
 
 # Whether an engine optimisation ended on a jump the route named.
 .ctJuliaJumped <- function(result) {
@@ -5818,8 +5840,11 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
     # to its plateau. One of the seven constants that move where a fit ends
     # (`review/OPTIM-consolidation-plan-2026-09-25.md` Appendix B), measured on
     # flat-transform starts and recorded in
-    # `review/LAPLACE-optimise-heuristics-survey-2026-09-25.md` section 3; not
-    # yet measured on categorical or multilevel models.
+    # `review/LAPLACE-optimise-heuristics-survey-2026-09-25.md` section 3. On
+    # the bench's 70 default cells, categorical and nested among them, 0.03, 0.3
+    # and 1 each moved fits between basins both ways and none was better across
+    # them; a unit step lost 6.8 nats on both AnomAuth fits
+    # (`review/bench/2026-10-31-defaults-jf-f979c331.md`).
     initial_alpha = if (is.null(optimcontrol$initial_alpha)) .1 else
       as.numeric(optimcontrol$initial_alpha)[1L],
     verbose = verbose > 0L,
@@ -5945,10 +5970,13 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
     common$lbfgs_memory <- as.integer(optimcontrol$lbfgs_memory)[1L]
   }
   # A second model of the curvature beside L-BFGS's, from the per-unit score
-  # outer products (`CTSEMStructured`); on unless asked not to.
+  # outer products (`CTSEMStructured`); on unless asked not to. Off, the
+  # bench's 70 default cells ended the same but one, 8.2 nats lower.
   if (!isFALSE(optimcontrol$lbfgs_scores)) common$lbfgs_scores <- TRUE
   # L-BFGS's initial curvature exact where parameters are read by few units
-  # (`CTSEMLocalCurvature`); on unless asked not to.
+  # (`CTSEMLocalCurvature`); on unless asked not to. It never builds on the
+  # bench's cells, whose runs are short and parameters widely read; the case
+  # for it is the affect pilot's (CLAUDE.md).
   if (!isFALSE(optimcontrol$lbfgs_local)) common$lbfgs_local <- TRUE
   # L-BFGS's initial inverse Hessian per coordinate, and a non-monotone line
   # search (see `_ctsem_lbfgs` in optimiser.jl).
@@ -5963,8 +5991,8 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
     common$lbfgs_gll <- as.integer(optimcontrol$lbfgs_gll)[1L]
   }
   # `coreset`: stretches of the L-BFGS stage on a weighted few of the units,
-  # each checked by a full gradient (`_ctsem_coreset_plan` in the engine), on
-  # the Laplace route, where `.ctJuliaCoresetOn()` says. Sent only when on, so
+  # each checked by a full gradient (`_ctsem_coreset_plan` in the engine),
+  # where `.ctJuliaCoresetOn()` says. Sent only when on, so
   # that a small fit's call keeps the shape the package image recorded.
   if (.ctJuliaCoresetOn(optimcontrol, model_spec)) common$coreset <- TRUE
   # `stochastic`, as on stan: TRUE runs the sgd phase (`_ctsem_sgd`) before
@@ -6193,8 +6221,8 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
   # - from the engine's closing search, after the probe
   #   (`_ctsem_anchor_finish!`): modes the anchored run reached that a search
   #   from the origin misses, kept; and maxima it found that the run missed,
-  #   which resume the run where they move the objective by
-  #   `.ctJuliaKnownResumeGain`.
+  #   which resume the run where the engine says they move the objective
+  #   enough (`anchor_missed_resume`, its `_CTSEM_MODE_RESUME_TOL`).
   # Up to `.ctJuliaKnownRounds` resumes, a unit named again included: its
   # maxima are combined (`_laplace_mode_sum`), each fading out before the
   # solve can lose it, and the modes a repeated jump saw are further starts
@@ -6216,7 +6244,7 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
     if (!is.null(missed)) known <- missed
     gain <- as.numeric(.ctJuliaOr(result$anchor_missed_gain, 0))[1L]
     resume <- !is.null(jumpknown) ||
-      (!is.null(missed) && isTRUE(abs(gain) > .ctJuliaKnownResumeGain))
+      (!is.null(missed) && isTRUE(result$anchor_missed_resume))
     if (!identical(known, model_spec$laplace$known)) {
       model_spec$laplace$known <- known
       spec <- structure(model_spec, class = c("ctJuliaModel", "ctFitModel"))
@@ -6370,15 +6398,15 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
     # and the engine default has changed once already.
     inner_maxiter = .ctJuliaOr(model_spec$laplace$inner$inner_maxiter, 200L),
     inner_tol = .ctJuliaOr(model_spec$laplace$inner$inner_tol, 1e-10),
-    # The floor the objective was built with; post-fit routes rebuild the
-    # objective from the same specification, so they use it too.
-    floor = as.character(.ctJuliaOr(model_spec$laplace$inner$floor, "total")),
+    # The soft-direction rule the objective was built with; post-fit routes
+    # rebuild the objective from the same specification, so they use it too.
+    soft_directions = .ctJuliaSoftDirections(model_spec$laplace$inner),
     # The units whose Laplace terms jumped, with the points the line search
     # saw, where the run ended on a jump; NULL otherwise. `[[`: the engine's
     # `jump_units` is a prefix `$jump` would match.
     jump = result[["jumprecord"]],
-    gated_units = if (is.null(result$gated_units)) NA_integer_ else
-      as.integer(result$gated_units),
+    soft_quadrature_units = if (is.null(result$soft_quadrature_units)) NA_integer_
+      else as.integer(result$soft_quadrature_units),
     inner_converged = isTRUE(result$inner_converged),
     gradient_fallbacks = if (is.null(result$gradient_fallbacks)) NA_integer_ else
       as.integer(result$gradient_fallbacks)[1L],
@@ -6503,9 +6531,9 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
       # is one of them: it samples the random effects, but places the sampler
       # and builds its metric by optimising the Laplace objective of this same
       # specification.
-      floor = if (as.character(intoverpop)[1L] %in% c("laplace", "none"))
-        .ctJuliaOr(optimcontrol$laplace_floor, .ctJuliaLaplaceFloorDefault)
-        else optimcontrol$laplace_floor))
+      soft_directions = if (as.character(intoverpop)[1L] %in% c("laplace", "none"))
+        .ctJuliaOr(optimcontrol$laplace_soft_directions, .ctJuliaSoftDirectionsDefault)
+        else optimcontrol$laplace_soft_directions))
   model_spec$tipredMissing <- tipredMissing
   # 'auto' samples the random effects under optimize = FALSE ('none'), but
   # where the Laplace term is exact -- every unit's integrand Gaussian in its
@@ -6735,9 +6763,12 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
   # 10 occasions, Gaussian, binary, ordinal and mixed indicators, on both the
   # augmented and the laplace route, fitted with `priors = FALSE`
   # (dev/simstudies/simstudy-individual-differences.R and
-  # simstudy-carefulfit.R). Nothing with more than one random effect, an
-  # effect on DRIFT or a variance, or an outer level. A change to the cap is a
-  # bench run, not an edit.
+  # simstudy-carefulfit.R). On the bench's 70 default cells (2026-10-31: more
+  # than one random effect, effects on DRIFT, nested levels), off or at a cap
+  # of 5 or 20 on the 24 non-Gaussian cells differed from 10 by at most 0.52
+  # nats, both ways, and on the Gaussian ones it found better basins on gA14
+  # and gB8 and lost AnomAuth's 6.8 (`review/bench/2026-10-31-defaults-jf-f979c331.md`). A change to the cap
+  # is a bench run, not an edit.
   #
   # On by default only when some indicator is not Gaussian (binary, ordinal,
   # count or censored), Charles's decision of 2026-09-27. The benefits measured
@@ -7227,6 +7258,12 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
     # because they mean opposite things: the gap rule stops a fit that has
     # arrived, this one stops a fit that is not going to.
     stopped_by_stall = isTRUE(result$stopped_by_stall),
+    # Or because it was walking off to a limit, with no maximum at finite
+    # values: the parameters that were growing without bound (the engine's
+    # `CTSEMStallWatch`, "Walking off to a limit").
+    stopped_by_divergence = isTRUE(result$stopped_by_divergence),
+    diverging_parameters = .ctJuliaSaturatedNames(result, model_spec, npar,
+      "diverging_parameters"),
     # The batch sizes the run grew through, and the iteration each began at;
     # 0 when it did not batch (too few subjects or groups, a sampled TI
     # predictor, or a route with no subset). A prior does not prevent it: the

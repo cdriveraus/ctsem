@@ -433,11 +433,10 @@ test_that("the SAEM kernel is refused by name where it cannot apply", {
   expect_error(ctFitUncertainty(fit, method = "sample", intoverpop = "none",
     control = list(settleTol = 0.1)),
     "sampler = 'nuts'", fixed = TRUE)
-  # The default follows the target: the map on the joint one, SAEM's kernel
-  # there where TI predictor values are sampled, and neither on the marginal
+  # The default follows the target: the map on the joint one, sampled TI
+  # predictor values or not, and neither it nor SAEM's kernel on the marginal
   # one, which has no effects.
   expect_identical(.ctBackendSamplerName(NULL, joint = TRUE), "map")
-  expect_identical(.ctBackendSamplerName(NULL, joint = TRUE, tisampled = TRUE), "saem")
   expect_identical(.ctBackendSamplerName(NULL, joint = FALSE), "nuts")
   expect_identical(.ctBackendSamplerName("nuts", joint = TRUE), "nuts")
   expect_error(ctFitUncertainty(fit, method = "sample",

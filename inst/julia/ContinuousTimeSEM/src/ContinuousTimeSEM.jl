@@ -117,13 +117,15 @@ include("laplace.jl")
 include("hybrid_joint.jl")
 # After hybrid_joint.jl, whose cross curvature it fills.
 include("tangent_laplace.jl")
-include("laplace_gated_adjoint.jl")
+include("soft_quadrature_adjoint.jl")
 include("laplace_sequential.jl")
 # After kalman_trace.jl and laplace.jl: it reads the filter trace on one route
 # and the unit curvature on the other.
 include("effect_information.jl")
 # The coreset selection the optimiser, SMC and the importance sampler share.
 include("coreset_select.jl")
+# What an evaluation costs, as every pricer reads it.
+include("cost_model.jl")
 # After laplace.jl: the batch subsets both the marginal and the laplace objective.
 include("optimiser.jl")
 include("quadrature.jl")

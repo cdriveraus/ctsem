@@ -1,22 +1,22 @@
-# The gated floor for deviations the subject filter integrates (`CTSEMHybrid`,
+# The soft-direction quadrature for deviations the subject filter integrates (`CTSEMHybrid`,
 # hybrid_filter.jl): after laplace.jl, whose types it reads.
 
 ################################################################################
-# Joint coordinates for the gated floor
+# Joint coordinates for the soft-direction quadrature
 ################################################################################
 #
 # The profile reproduces Laplace over the random effects and the deviations
 # jointly (see hybrid_filter.jl) wherever the plain Laplace term applies.
-# The gated floor also asks for the joint curvature's smallest eigenvalue, and
-# the profile's can be larger: it is the Schur complement's. So a unit is
-# gated on the joint curvature, assembled from the profile curvature `S`, each
+# The soft-direction quadrature also asks for the joint curvature's smallest
+# eigenvalue, and the profile's can be larger: it is the Schur complement's. So
+# whether a unit takes the quadrature is decided on the joint curvature, assembled from the profile curvature `S`, each
 # member's `M` and the cross curvature `H = -d(b - M dhat)/du` this file's
 # buffers leave on the profile pass:
 #
 #     joint - c I  is positive definite  iff
 #     S - c I - sum_m H_m' [(M_m - c I)^-1 - M_m^-1] H_m  is,
 #
-# and a unit it flags is scored by the gated rule itself in joint
+# and a unit it flags is scored by the soft-direction quadrature itself in joint
 # coordinates `z = (u, d_1, ..., d_n)`, `d_m` member `m`'s observed columns,
 # with the filter at fixed deviations (`_HYBRID_FIXED`). That is the layer's
 # own computation, so the result is the layer's.
@@ -284,7 +284,7 @@ curvature pass over the unit's own `d` coordinates alone. The deviations enter
 the log likelihood exactly quadratically for given `u`, so their block is `M`
 and their cross block `-d(b - M d)/du`, both read from that same pass with the
 filter at the fixed deviations: one sweep of the unit's width rather than one
-of the joint width, which is most of the gated rule's cost here.
+of the joint width, which is most of the soft-direction quadrature's cost here.
 """
 function _hybrid_joint_curvature(laplace::CTSEMLaplaceObjective, U::Integer,
     values::AbstractVector{T}, Ls::Vector{<:AbstractMatrix}, z::AbstractVector{T},
@@ -335,18 +335,18 @@ function _hybrid_joint_curvature(laplace::CTSEMLaplaceObjective, U::Integer,
 end
 
 """
-    _hybrid_gated_term(laplace, U, values, Ls, u, aws; M, logdetM, inner, cross,
+    _hybrid_soft_quadrature_term(laplace, U, values, Ls, u, aws; M, logdetM, inner, cross,
                        flagged)
 
-`_laplace_gated_term` for an objective whose filter integrates deviations: the
+`_laplace_soft_quadrature_term` for an objective whose filter integrates deviations: the
 plain term with the joint logdet where the joint curvature clears the gate,
-and the gated rule in joint coordinates where it does not -- what the layer
+and the soft-direction quadrature in joint coordinates where it does not -- what the layer
 holding the deviations as coordinates computes, unit for unit. `flagged` says
-the unit is already known to be gated (the gated gradient, differentiating a
+the unit is already known to take the quadrature (the soft-quadrature gradient, differentiating a
 unit its primal flagged), which needs the conditional modes and not the
 curvature the decision reads.
 """
-function _hybrid_gated_term(laplace::CTSEMLaplaceObjective, U::Integer,
+function _hybrid_soft_quadrature_term(laplace::CTSEMLaplaceObjective, U::Integer,
     values::AbstractVector{T}, Ls::Vector{<:AbstractMatrix}, u::AbstractVector{T},
     aws; M=nothing, logdetM=nothing, inner=nothing, cross=nothing,
     flagged::Bool=false) where {T}
@@ -356,14 +356,14 @@ function _hybrid_gated_term(laplace::CTSEMLaplaceObjective, U::Integer,
         modes = _HybridModeHook{T}(length(members))
         r = _laplace_unit_loglik_gradient(laplace, U, values, Ls, u, aws,
             eachindex(members), nothing, _HYBRID_PROFILE, modes)
-        isfinite(r.value) || return (value=r.value, flagged=true, floor=false)
-        return _hybrid_joint_gated(laplace, U, values, Ls, u, aws, length(u),
+        isfinite(r.value) || return (value=r.value, flagged=true, logdet_floor=false)
+        return _hybrid_joint_soft_quadrature(laplace, U, values, Ls, u, aws, length(u),
             modes.q, modes.dhat)
     end
     inner === nothing &&
         (inner = _laplace_unit_objective_gradient(laplace, U, values, Ls, u, aws))
     g = inner.value
-    (isfinite(g) && !isempty(u)) || return (value=g, flagged=false, floor=true)
+    (isfinite(g) && !isempty(u)) || return (value=g, flagged=false, logdet_floor=true)
     if M === nothing || cross === nothing
         cross = _hybrid_cross!(laplace, T, length(u), length(members))
         M = _laplace_unit_curvature(laplace, U, values, Ls, u; hook=cross)
@@ -374,20 +374,20 @@ function _hybrid_gated_term(laplace::CTSEMLaplaceObjective, U::Integer,
         ok, logdetM, _, _ = _laplace_block_factor(M, blocks)
         logdetM += 2 * inner.hlogdet
     end
-    hi = laplace.gate_hi
+    hi = laplace.soft_blend_hi
     ok && _hybrid_joint_exceeds(laplace, M, blocks, cross, hi) &&
-        return (value=g - logdetM / 2, flagged=false, floor=false)
-    return _hybrid_joint_gated(laplace, U, values, Ls, u, aws, cross.d, cross.q,
+        return (value=g - logdetM / 2, flagged=false, logdet_floor=false)
+    return _hybrid_joint_soft_quadrature(laplace, U, values, Ls, u, aws, cross.d, cross.q,
         cross.dhat)
 end
 
 """
-    _hybrid_joint_gated(laplace, U, values, Ls, u, aws, d, q, dhat)
+    _hybrid_joint_soft_quadrature(laplace, U, values, Ls, u, aws, d, q, dhat)
 
-The gated rule in joint coordinates at the joint mode `(u, dhat_1, ...)`, `q`
+The soft-direction quadrature in joint coordinates at the joint mode `(u, dhat_1, ...)`, `q`
 each member's observed columns.
 """
-function _hybrid_joint_gated(laplace::CTSEMLaplaceObjective, U::Integer,
+function _hybrid_joint_soft_quadrature(laplace::CTSEMLaplaceObjective, U::Integer,
     values::AbstractVector{T}, Ls::Vector{<:AbstractMatrix}, u::AbstractVector{T},
     aws, d::Int, q::Vector{Int}, dhat) where {T}
     members = laplace.units.members[U]
@@ -403,12 +403,9 @@ function _hybrid_joint_gated(laplace::CTSEMLaplaceObjective, U::Integer,
         aws, layout)
     curvature = zz -> _hybrid_joint_curvature(laplace, U, values, Ls, zz, layout)
     jblocks = [CTSEMLaplaceBlock(0, layout.n, collect(eachindex(members)), 1, Int[])]
-    # The layer's unit has a coordinate for every own variance of every member,
-    # observed or not, and its eigenvalue cap counts them all.
-    dlayer = length(u) + length(members) * _hybrid_items(laplace.objective.params.hybrid)
-    return _laplace_gated_term(laplace, U, values, Ls, z, aws; M=curvature(z),
+    return _laplace_soft_quadrature_term(laplace, U, values, Ls, z, aws; M=curvature(z),
         inner=objective(z), objective=objective, curvature=curvature,
-        blocks=jblocks, dcheck=dlayer)
+        blocks=jblocks)
 end
 
 ################################################################################

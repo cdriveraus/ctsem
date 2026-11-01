@@ -486,8 +486,8 @@ if (!is.null(fit)) {
     "residual_gain", "tolerance", "certified"))] else NULL
   rec$laplace_block <- if (!is.null(fit$laplace)) list(
     correction = corr[setdiff(names(corr), c("draws"))],
-    conditioning = fit$laplace$conditioning, floor = fit$laplace$floor,
-    gated_units = fit$laplace$gated_units,
+    conditioning = fit$laplace$conditioning, soft_directions = fit$laplace$soft_directions,
+    soft_quadrature_units = fit$laplace$soft_quadrature_units,
     # The units whose Laplace terms jumped (`fit$laplace$jump`), NULL where
     # none did or on a build without it.
     jump = fit$laplace$jump) else NULL
@@ -497,7 +497,8 @@ if (!is.null(fit)) {
 
 # ---- 5. re-score and references ----------------------------------------------------
 refs <- list()
-if (DOREF && !is.null(est) && length(est) == npar && all(is.finite(est))) {
+if (DOREF && !isTRUE(V$costs) && !is.null(est) && length(est) == npar &&
+    all(is.finite(est))) {
   t0 <- .now()
   refs <- tryCatch({
     setTimeLimit(elapsed = REFCAP, transient = TRUE)
@@ -626,6 +627,31 @@ if (!is.null(fit) && length(est) == npar && all(is.finite(est))) {
     format(probe$found %||% NA)))
 }
 rec$probe <- probe
+
+# ---- 6. what an evaluation costs (the `costs` variant) -----------------------------
+# A value, a gradient and a Hessian of the objective the fit climbs (the hybrid
+# where the filter integrates effects), at the estimate, searched and
+# anchored, and single units against their weights (bench_time_costs in
+# reference.jl): what the pricers' gradient-in-values and unit shares are worth.
+costs <- list()
+if (isTRUE(V$costs) && !is.null(fit) && length(est) == npar && all(is.finite(est))) {
+  costs <- tryCatch({
+    setTimeLimit(elapsed = REFCAP, transient = TRUE)
+    if (!isTRUE(REFJL)) stop("reference.jl did not load: ", REFJL_ERR)
+    ensure_refjl()
+    fresh_objectives()
+    obj <- ctsem:::.ctJuliaObjective(fit, hybrid = TRUE)
+    jget(jcall("bench_time_costs", obj, jvec(est)))
+  }, error = function(e) list(error = conditionMessage(e)))
+  setTimeLimit()
+  .stamp(sprintf("COSTS value %s gradient %s anchored %s / %s hessian %s units %s",
+    format(signif(min(costs$value %||% NA), 3)), format(signif(min(costs$gradient %||% NA), 3)),
+    format(signif(min(costs$value_anchored %||% NA), 3)),
+    format(signif(min(costs$gradient_anchored %||% NA), 3)),
+    format(signif(costs$hessian %||% NA, 3)), format(costs$nunits %||% NA)),
+    if (!is.null(costs$error)) paste("ERROR", costs$error) else "")
+}
+rec$costs <- costs
 
 # ---- the row ---------------------------------------------------------------------------
 st <- rec$stages %||% list()

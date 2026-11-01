@@ -377,6 +377,8 @@ ctModelImprove <- function(fit, covariates = NULL,
           change = batch[[1]]$label,
           file = if (!is.null(checkpoint)) paste0(checkpoint, '.refit.rds')))
       refits <- .ctImproveBestOf(ran, vapply(runs, `[[`, 0L, 'b'), length(batch))
+      # The best of several starts keeps their wall time, for the report.
+      attr(refits, 'seconds') <- attr(ran, 'seconds')
       slowest <- max(slowest, attr(ran, 'seconds'))
       say("Round ", step, ": refit took ", .ctImproveRefitReport(refits))
       for (b in seq_along(batch)) {
@@ -1157,7 +1159,9 @@ print.ctModelProposals <- function(x, digits = 3, ...) {
       if (!i %in% noisy || paste0('d', model$latentNames[i]) %in% model$latentNames) next
       out[[length(out) + 1L]] <- list(key = paste0('order:', model$latentNames[i]),
         family = 'order', label = paste0(model$latentNames[i], ' made second order'),
-        p = NA_real_, rank = 1, edit = local({ i <- i; function(model, data, covs,
+        p = NA_real_, rank = 1,
+        starts = .ctImproveOrderStarts(model, current, i, scales[['short']]),
+        edit = local({ i <- i; function(model, data, covs,
           args = list()) list(model = ctModelHigherOrder(model, i), data = data) }))
     }
   }
@@ -1331,6 +1335,38 @@ print.ctModelProposals <- function(x, digits = 3, ...) {
   if (length(out)) out else NULL
 }
 
+# Latent `i`'s own drift at the current fit: its fixed value, or its
+# parameter through its transform; NA where it is neither.
+.ctImproveOwnDrift <- function(model, current, i) {
+  cell <- model$pars[model$pars$matrix == 'DRIFT' & model$pars$row == i &
+    model$pars$col == i, , drop = FALSE]
+  if (nrow(cell) != 1L) return(NA_real_)
+  if (is.na(cell$param)) return(suppressWarnings(as.numeric(cell$value)))
+  if (is.null(current)) return(NA_real_)
+  est <- setNames(.ctFitRawEstimate(current), .ctFitRawParNames(current))
+  raw <- est[cell$param]
+  tryCatch(as.numeric(eval(parse(text = cell$transform),
+    list(param = raw, log1p_exp = log1p_exp))), error = function(e) NA_real_)
+}
+
+# Raw starts for latent `i` made second order (ctModelHigherOrder()), whose
+# level keeps its drift `a` and diffusion at the current fit's values: the
+# inertia time, through the inverse of its transform, log1p_exp(2 raw). A
+# tenth of the median interval between a subject's rows (`short`, from
+# `.ctImproveTimescales`), where the process is nearly the first order one
+# fitted; and 1 / (2|a|), where it oscillates with a period of 2 pi / |a|
+# and decays at |a|. Refitted from each and the better kept, as a component
+# with a time scale is: the likelihood can hold a maximum near either. One
+# start where the other cannot be worked out, NULL where neither can.
+.ctImproveOrderStarts <- function(model, current, i, short) {
+  a <- .ctImproveOwnDrift(model, current, i)
+  tau <- c(if (is.finite(short) && short > 0) short / 10,
+    if (is.finite(a) && a < 0) 1 / (2 * -a))
+  if (!length(tau)) return(NULL)
+  name <- paste0('inertia_', model$latentNames[i])
+  lapply(tau, function(t) setNames(log(expm1(t)) / 2, name))
+}
+
 # Raw starts for a slow process added to latent `i`: its effect at one (zero
 # is a stationary point of both it and the slow process), its persistence a
 # tenth of the latent's own. Where ctModelSlowComponent() orders the two, the
@@ -1345,17 +1381,7 @@ print.ctModelProposals <- function(x, digits = 3, ...) {
 .ctImproveSlowStart <- function(model, current, i, halflife = NULL) {
   name <- model$latentNames[i]
   slow <- paste0('slow_', name)
-  cell <- model$pars[model$pars$matrix == 'DRIFT' & model$pars$row == i &
-    model$pars$col == i, , drop = FALSE]
-  fast <- NA_real_
-  if (nrow(cell) == 1L) {
-    if (is.na(cell$param)) fast <- as.numeric(cell$value) else if (!is.null(current)) {
-      est <- setNames(.ctFitRawEstimate(current), .ctFitRawParNames(current))
-      raw <- est[cell$param]
-      fast <- tryCatch(as.numeric(eval(parse(text = cell$transform),
-        list(param = raw, log1p_exp = log1p_exp))), error = function(e) NA_real_)
-    }
-  }
+  fast <- .ctImproveOwnDrift(model, current, i)
   fraction <- 0.1
   if (!is.null(halflife)) {
     if (!is.finite(fast) || fast >= 0) return(NULL)
@@ -1467,6 +1493,8 @@ print.ctModelProposals <- function(x, digits = 3, ...) {
   handles <- .ctBackendWarmWorkers(current, workers, values = .ctFitRawEstimate(current),
     threads = threads)
   if (.ctBackendWarmWait(handles) < 1L) return(inhere())
+  # Side by side, the refits' wall time is the batch's.
+  started <- proc.time()[['elapsed']]
   futures <- lapply(seq_along(edits), function(i) if (!i %in% ok) NULL else
     tryCatch(future::future(utils::getFromNamespace('.ctImproveRefit', 'ctsem')(current,
       edits[[i]]$model, edits[[i]]$data, threads, starts[[i]], edits[[i]]$args),
@@ -1477,7 +1505,7 @@ print.ctModelProposals <- function(x, digits = 3, ...) {
     tryCatch(future::value(futures[[i]]), error = function(e)
       structure(conditionMessage(e), class = 'try-error', condition = e))
   })
-  structure(out, seconds = seconds)
+  structure(out, seconds = max(seconds, proc.time()[['elapsed']] - started))
 }
 
 # The best of each proposal's refits by log likelihood (`which` gives the

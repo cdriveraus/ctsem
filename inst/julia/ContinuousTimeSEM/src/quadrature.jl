@@ -337,6 +337,19 @@ function _quadrature_leaf_newton(inner, precision_at, z::Vector{Float64}, curren
         # A step at roundoff is a mode however large the gradient's roundoff
         # is; see `_laplace_newton_unit_mode`.
         issuccess(factorization) && maximum(abs, step) < laplace.inner_tol && break
+        # Below what the value resolves the gradient ranks the step, as in
+        # `_laplace_newton_unit_mode` (`_laplace_floor_step`).
+        if issuccess(factorization) &&
+                _laplace_floor_step(laplace, current.gradient, step, current.value)
+            candidate = z .+ step
+            trial = inner(candidate)
+            if isfinite(trial.value) && all(isfinite, trial.gradient)
+                _laplace_floor_step_taken(current.gradient, trial.gradient) || break
+                z = candidate
+                current = trial
+                continue
+            end
+        end
         accepted = false
         scale = 1.0
         for _ in 1:20
@@ -919,10 +932,10 @@ function ctsem_laplace_refine(laplace::CTSEMLaplaceObjective,
 end
 
 ################################################################################
-# Reference implementation of the gated floor's value
+# Reference implementation of the soft-direction quadrature's value
 ################################################################################
 #
-# The `:gated` floor (`_laplace_gated_term` in laplace.jl) is generic in its
+# The `:quadrature` floor (`_laplace_soft_quadrature_term` in laplace.jl) is generic in its
 # element type because its gradient differentiates it. These two functions
 # compute the same rule in plain Float64, written separately and first, and
 # `test_laplace.jl` holds the floor's value to them. They are not on any
@@ -934,7 +947,7 @@ end
 
 One unit's log marginal likelihood by a Gauss-Hermite rule along the unit's
 softest directions and Laplace in the rest. Value only: the reference the
-gated floor is tested against; see
+soft-direction quadrature is tested against; see
 `CT-SEM/review/LAPLACE-eigenwise-floor-2026-09-23.md`, second and third
 addenda. Reads the modes of the last `ctsem_laplace_evaluate` at `values`.
 
@@ -946,10 +959,11 @@ In the eigenbasis `M = V Lambda V'` at the mode:
     `M^(-1/2)` scaling gets wrong at a near-singular unit;
   * at each such node the remaining coordinates are moved to their conditional
     mode (`recenter`, Newton) and integrated by Laplace with their conditional
-    curvature, clipped the same way. Without the recentring the rule misses the
-    ridge a nonlinear effect bends the integrand along, and does worse than one
-    node; without the clip, a conditional curvature that collapses at a far node
-    produces a spike of several nats.
+    curvature, its eigenvalues floored as the soft-direction quadrature's nodes
+    floor them (`_laplace_soft_node_curvature_floor`). Without the recentring
+    the rule misses the ridge a nonlinear effect bends the integrand along, and
+    does worse than one node; without the floor, a conditional curvature that
+    collapses at a far node produces a spike of several nats.
 
 `newton_steps = k > 0` replaces the converged recentring by `k` Newton steps,
 each with the node's own conditional curvature, and takes the conditional
@@ -957,7 +971,8 @@ logdet from the last curvature evaluated: `k` gradients, `k` curvatures and one
 value per node. `k = 1` at 3 nodes is the cheap rule of the third addendum.
 The middle node of an odd rule sits at the mode and costs nothing.
 
-`nodes = 1`, `ndirs = 0`, `tau = 1` is `g(uhat) - sum log max(lambda, 1) / 2`.
+`nodes = 1`, `ndirs = 0`, `tau = 1` is `g(uhat) - sum log max(lambda, 1) / 2`:
+every direction below one is then soft, and the floor is the identity above it.
 Uses `_ctsem_symeig` and `_ctsem_cholesky` throughout (no LAPACK); a rule of
 `n` nodes costs about `n` conditional Newton solves of a few steps, each a
 curvature of the unit, so `n` times the primal work of one unit.
@@ -986,19 +1001,20 @@ function _laplace_soft_rule_unit(laplace::CTSEMLaplaceObjective,
     xs, ws = _gauss_hermite(nodes)
 
     # log int exp(g(ubase + Vh z)) dz by Laplace at the conditional mode, with
-    # the conditional curvature clipped at the prior's.
+    # the conditional curvature floored as the production nodes' is.
+    nodefloor = _laplace_soft_node_curvature_floor
     stiff_part = function (ubase::Vector{Float64})
         local z, r, gz, Mz, F, ez, lam, uu
         nh == 0 && return gof(ubase).value
         z = zeros(nh)
         if recenter && newton_steps > 0
-            lam = max.(E.values[stiff], 1.0)
+            lam = nodefloor.(E.values[stiff])
             maximum(abs, ubase .- uhat) < 1e-12 &&
                 return gof(uhat).value - sum(log, lam; init=0.0) / 2
             for _ in 1:Int(newton_steps)
                 r = gof(ubase .+ Vh * z)
                 ez = _ctsem_symeig(transpose(Vh) * Mof(ubase .+ Vh * z) * Vh)
-                lam = max.(ez.values, 1.0)
+                lam = nodefloor.(ez.values)
                 z .+= ez.vectors * ((transpose(ez.vectors) *
                     (transpose(Vh) * r.gradient)) ./ lam)
             end
@@ -1020,7 +1036,7 @@ function _laplace_soft_rule_unit(laplace::CTSEMLaplaceObjective,
         end
         uu = ubase .+ Vh * z
         ez = _ctsem_symeig(transpose(Vh) * Mof(uu) * Vh)
-        lam = recenter ? max.(ez.values, 1.0) : E.values[stiff]
+        lam = recenter ? nodefloor.(ez.values) : E.values[stiff]
         return gof(uu).value - sum(log, lam; init=0.0) / 2
     end
     terms = Float64[]
@@ -1051,28 +1067,26 @@ function _laplace_soft_weight(lambda::Real, lo::Real, hi::Real)
 end
 
 """
-    _laplace_gated_unit_reference(laplace, values, U; lo=0.2, hi=0.7, nodes=3,
-                                  newton_steps=1, solves=5)
+    _laplace_soft_quadrature_unit_reference(laplace, values, U; lo=0.2, hi=0.7, nodes=3,
+                                  newton_steps=1)
 
 `T = T_lap + w(lambda_min) (T_soft - T_lap)` for one unit, value only, at the
 modes of the last `ctsem_laplace_evaluate` at `values` under the total floor.
 `T_lap` is the unfloored Laplace term: a unit with an eigenvalue to go on needs
-no floor, see `_laplace_gated_term`.
-The Float64 reference for `_laplace_gated_term`; see the section comment.
+no floor, see `_laplace_soft_quadrature_term`.
+The Float64 reference for `_laplace_soft_quadrature_term`; see the section comment.
 
 The gate is exact and costs no likelihood sweep: `M - hi I` is block-factored
 (the same elimination as `M`'s own, no fill-in), and a unit it accepts returns
-`T_lap` untouched. Only a flagged unit places `lambda_min`: by the engine's
-own symmetric eigensolver for a unit up to `_LAPLACE_EIGEN_MAXDIM`, else by
-`solves` steps of inverse iteration on the factor of `M` from a fixed start,
-which converges at the eigengap's rate. Only a unit with `w > 0` evaluates the
-soft rule.
+`T_lap` untouched. Only a flagged unit places `lambda_min`, by the engine's
+own symmetric eigensolver at any width: a reference, so dense whatever it
+costs. Only a unit with `w > 0` evaluates the soft rule.
 
 Returns `(value, weight, lambda_min, flagged)`.
 """
-function _laplace_gated_unit_reference(laplace::CTSEMLaplaceObjective,
+function _laplace_soft_quadrature_unit_reference(laplace::CTSEMLaplaceObjective,
     values::AbstractVector, U::Integer; lo::Real=0.2, hi::Real=0.7,
-    nodes::Integer=3, newton_steps::Integer=1, solves::Integer=5)
+    nodes::Integer=3, newton_steps::Integer=1)
     theta = collect(Float64, values)
     _laplace_ensure_pool!(laplace)
     Ls = _laplace_popchols(theta, laplace.spec)
@@ -1088,23 +1102,7 @@ function _laplace_gated_unit_reference(laplace::CTSEMLaplaceObjective,
     _laplace_exceeds_identity(M, blocks, hi) &&
         return (value=lap, weight=0.0, lambda_min=Inf, flagged=false)
     d = length(u)
-    dense = _laplace_block_dense(M, blocks, d)
-    lambda = if d <= _LAPLACE_EIGEN_MAXDIM[]
-        # A small unit is decomposed outright: no likelihood sweep either way,
-        # and inverse iteration converges only as fast as the eigengap allows
-        # -- five solves placed every unit of the weak-data fixture, where the
-        # eigenvalue ratio is under 0.4, and were 4% off on a unit whose two
-        # eigenvalues are 0.956 and 1.175.
-        _ctsem_symeig(dense).values[1]
-    else
-        F = _ctsem_cholesky(copy(dense), d)
-        x = fill(1 / sqrt(d), d)
-        for _ in 1:Int(solves)
-            y = F \ x
-            x = y ./ sqrt(sum(abs2, y))
-        end
-        sum(x .* (dense * x))
-    end
+    lambda = _ctsem_symeig(_laplace_block_dense(M, blocks, d)).values[1]
     w = _laplace_soft_weight(lambda, lo, hi)
     w == 0 && return (value=lap, weight=0.0, lambda_min=lambda, flagged=true)
     soft = _laplace_soft_rule_unit(laplace, theta, U; nodes=nodes,
@@ -1266,6 +1264,19 @@ function _laplace_unit_expansion(laplace::CTSEMLaplaceObjective, U::Integer,
         issuccess(F) || break
         step = F \ cur.gradient
         maximum(abs, step) < 1e-10 && break
+        # Below what the value resolves the gradient ranks the step, as in
+        # `_laplace_newton_unit_mode` (`_laplace_floor_step`).
+        if _laplace_floor_step(laplace, cur.gradient, step, cur.value)
+            trial_u = u .+ step
+            trial = _expansion_value_gradient(laplace, U, theta, Ls, trial_u, aws)
+            if isfinite(trial.value)
+                _laplace_floor_step_taken(cur.gradient, trial.gradient) || break
+                u = trial_u
+                cur = trial
+                M = _expansion_curvature(laplace, U, theta, Ls, u)
+                continue
+            end
+        end
         scale = 1.0
         accepted = false
         for _ in 1:40

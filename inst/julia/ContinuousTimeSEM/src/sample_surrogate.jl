@@ -1,7 +1,8 @@
 # NUTS on a coreset, each draw's endpoint checked against the full density.
 #
-# On the Laplace route a gradient costs every unit's inner solve, and a NUTS
-# transition takes a gradient at every leapfrog step. Where a few units with
+# A gradient costs every unit -- an inner solve each on the Laplace route, a
+# filter pass on the marginal route -- and a NUTS transition takes a gradient
+# at every leapfrog step. Where a few units with
 # weights follow the sum of all of them over the posterior -- the coreset SMC
 # moves its particles on (`_smc_coreset_fit`) -- the trajectory can run on
 # that instead, and the full density is needed only where the trajectory
@@ -104,12 +105,12 @@ end
     _surrogate_work(d)
 
 The leapfrog steps a transition of chain `d` takes on its coreset, each a
-gradient in full values (`_SMC_GRADIENT_VALUES`), on average over the
+gradient in full values (`_ctsem_gradient_values`), on average over the
 transitions so far; before any, a tree of depth three's.
 """
 function _surrogate_work(d)
     leap = d.transitions >= 10 ? d.leapfrogs / d.transitions : _smc_leapfrogs(Int[])
-    return _SMC_GRADIENT_VALUES * leap
+    return _ctsem_gradient_values(d.objective) * leap
 end
 
 """

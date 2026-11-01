@@ -2136,6 +2136,8 @@ end
 _ctsem_optimise_label(::CTSEMLaplacePlaced) = "refined fit, rules placed"
 _ctsem_finish_curvature(::CTSEMLaplacePlaced) = :chord
 _ctsem_hessian_cost(::CTSEMLaplacePlaced, npar::Integer) = 2 * Int(npar)
+# The Laplace objective's price: the units outside the rules are its terms.
+_ctsem_gradient_values(P::CTSEMLaplacePlaced) = _ctsem_gradient_values(P.cont.laplace)
 _ctsem_lbfgs_held(P::CTSEMLaplacePlaced) =
     P.lbfgs === nothing ? _ctsem_lbfgs_held(P.cont.laplace) : P.lbfgs
 _ctsem_lbfgs_hold!(P::CTSEMLaplacePlaced, memory::CTSEMLBFGSMemory) =

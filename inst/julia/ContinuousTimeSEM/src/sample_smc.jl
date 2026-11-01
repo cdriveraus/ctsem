@@ -22,9 +22,10 @@ What it reuses, which is the point: the transition (`_nuts_transition!`
 through `_continue_chain`), the pilot that sets a step size (`_run_chain`
 with dual averaging), the metric (`_metric_from_covariances`), the chain
 record (`_ChainResult`), the diagnostics (`ctsem_sample_diagnostics`) and the
-stopping rule; on the Laplace route the coreset (`CTSEMCoreset`, its
-non-negative weights by `_ctsem_nnls`, its evaluation on copies by
-`_laplace_coreset_each`'s pattern) and the pool (`_laplace_parallel`). It adds
+stopping rule; where the objective is a sum over units, the coreset
+(`CTSEMCoreset`, its non-negative weights by `_ctsem_nnls`, its evaluation on
+copies by `_laplace_coreset_each`'s pattern) and the pool
+(`_laplace_parallel`). It adds
 the tempering, the particles and the rules below, each of which cost a run to
 learn (review/SAMPLING-smc-2026-10-23.md):
 
@@ -51,10 +52,11 @@ Moving a stage's particles until the cloud stopped drifting was measured and
 does not pay once the metric is right (two blocks added in 24 stages on the
 time series, for nothing), so a stage is one block of `nmoves`.
 
-**On the Laplace route the particles move on a coreset** (`coreset = true`,
-the default): a few units with non-negative weights whose weighted terms
-follow the full sum over the current cloud (`_smc_coreset_fit`, fitted from
-every unit's term at every particle, which the stage's weights need anyway).
+**Where the objective is a sum over units the particles move on a coreset**
+(`coreset = true`, the default): a few units with non-negative weights whose
+weighted terms follow the full sum over the current cloud (`_smc_coreset_fit`,
+fitted from every unit's term at every particle, which the stage's weights
+need anyway).
 A move on the coreset density costs the coreset's share of a gradient. The
 moves are invariant for the tempered coreset density `q_t = q0^(1 - beta)
 c^beta`, not for the stage's `pi_t = q0^(1 - beta) pi^beta`, and the
@@ -232,10 +234,6 @@ end
 is chosen (`_smc_coreset_fit`)."""
 const _SMC_CORESET_FOLDS = 4
 
-"""A gradient's cost in full values, as the engine counts evaluations: on the
-Laplace route both are mostly the units' inner solves."""
-const _SMC_GRADIENT_VALUES = 2.0
-
 """
     _smc_leapfrogs(depths)
 
@@ -372,42 +370,40 @@ function _smc_coreset_fit(terms::AbstractMatrix{Float64}, total::AbstractVector{
 end
 
 # What the sampler asks of an objective whose log density is a sum of units'
-# terms, so that its particles can move on a coreset of them. The Laplace
-# route answers; any other objective is moved in full. A test can answer for
-# a closed-form target of its own.
+# terms, so that its particles can move on a coreset of them: either route's
+# objective answers through its view as that sum (`_ctsem_unit_sum`); any other
+# objective is moved in full. A test can answer for a closed-form target of
+# its own. The importance sampler, DAIS and NUTS's endpoint test ask the same.
 
 """Whether `objective` is a sum of at least two units' terms a coreset can
 stand in for."""
-_smc_coreset_capable(objective) = false
-_smc_coreset_capable(laplace::CTSEMLaplaceObjective) = length(laplace.units.members) >= 2
-
-"""Each unit's share of a full evaluation."""
-function _smc_unit_cost(laplace::CTSEMLaplaceObjective)
-    w = _laplace_unit_weights(laplace)
-    return w ./ sum(w)
+function _smc_coreset_capable(objective)
+    L = _ctsem_unit_sum(objective)
+    return L !== nothing && length(L.units.members) >= 2
 end
+
+"""Each unit's share of a full evaluation (`_ctsem_unit_shares`)."""
+_smc_unit_cost(objective) = _ctsem_unit_shares(_ctsem_units_of(objective))
 
 """Every column of `X` in full: the log density (`value`, `-Inf` where the
 point cannot be used), each unit's term (`terms`, `nunits x n`), and their
 weighted sum without the prior (`total`)."""
-function _smc_unit_terms(laplace::CTSEMLaplaceObjective, X::AbstractMatrix{Float64})
-    r = ctsem_coreset_terms(laplace, X)
+function _smc_unit_terms(objective, X::AbstractMatrix{Float64})
+    r = ctsem_coreset_terms(_ctsem_units_of(objective), X)
     return (value=r.value, total=r.total, terms=r.unit_loglik)
 end
 
 """The coreset's log density (prior included) at every column of `X`, `-Inf`
 where unusable; the draws several at once on copies."""
-function _smc_coreset_values(laplace::CTSEMLaplaceObjective, X::AbstractMatrix{Float64},
-    coreset::CTSEMCoreset)
-    results = _laplace_coreset_each(laplace, X, coreset, false)
+function _smc_coreset_values(objective, X::AbstractMatrix{Float64}, coreset)
+    results = _laplace_coreset_each(_ctsem_units_of(objective), X, coreset, false)
     return Float64[r === nothing ? -Inf : r.value for r in results]
 end
 
 """The coreset's log density and gradient at `x`, or `nothing` where the
 point cannot be used."""
-function _smc_coreset_eval(laplace::CTSEMLaplaceObjective, coreset::CTSEMCoreset,
-    x::AbstractVector)
-    r = _laplace_coreset_try(laplace, Vector{Float64}(x), true, coreset)
+function _smc_coreset_eval(objective, coreset, x::AbstractVector)
+    r = _laplace_coreset_try(_ctsem_units_of(objective), Vector{Float64}(x), true, coreset)
     return r === nothing ? nothing : (value=r.value, gradient=r.gradient)
 end
 
@@ -679,10 +675,12 @@ function ctsem_sample_smc(objective, values::AbstractVector;
     tacc = Float64(target_accept)
     callback = CTSEMCallback(progress_callback)
 
-    # The coreset applies where the objective is a sum of units' terms: the
-    # Laplace route with at least two units (`_smc_coreset_capable`).
+    # The coreset applies where the objective is a sum of units' terms, at
+    # least two (`_smc_coreset_capable`): either route's.
     capable = _smc_coreset_capable(objective)
     unit_cost = capable ? _smc_unit_cost(objective) : Float64[]
+    # A leapfrog's gradient, in full values (`_ctsem_gradient_values`).
+    gvalues = _ctsem_gradient_values(objective)
     nunits = capable ? length(unit_cost) : 1
     use_coreset = coreset && capable
     # The log-weight variance a stage's effective size allows, and how much
@@ -691,7 +689,7 @@ function ctsem_sample_smc(objective, values::AbstractVector;
     inflate = 1.0
     leap = _smc_leapfrogs(Int[])
     corrections = 0
-    mode = _points_mode(objective, parallel)
+    mode = _points_mode(objective, parallel; gradient_method=gradient_method)
     # Each worker's NUTS workspace and gradient buffer (`_each_point!`).
     nuts_scratch = () -> (ws=_NUTSWorkspace(ndim, mdepth), g=zeros(ndim))
     fit_rng = Random.Xoshiro(hash((UInt64(seed), :coreset)))
@@ -794,7 +792,7 @@ function ctsem_sample_smc(objective, values::AbstractVector;
         # new); none where no size is cheaper than moving in full.
         fit = nothing
         if use_coreset && full.terms !== nothing
-            price = _SMCPrice(nmv * leap * _SMC_GRADIENT_VALUES, beta, vbudget, inflate, false)
+            price = _SMCPrice(nmv * leap * gvalues, beta, vbudget, inflate, false)
             fit = _smc_coreset_fit(full.terms, full.total, unit_cost, price,
                 _smc_full_price(price), fit_rng)
         end
@@ -913,7 +911,7 @@ function ctsem_sample_smc(objective, values::AbstractVector;
     order = _smc_spread_order(np)
     final_fit = nothing
     if use_coreset && full.terms !== nothing
-        price = _SMCPrice(leap * _SMC_GRADIENT_VALUES, 1.0, vbudget, inflate, true)
+        price = _SMCPrice(leap * gvalues, 1.0, vbudget, inflate, true)
         final_fit = _smc_coreset_fit(full.terms, full.total, unit_cost, price,
             _smc_full_price(price), fit_rng)
     end

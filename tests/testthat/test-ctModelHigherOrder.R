@@ -78,18 +78,19 @@ test_that("the raised model is still a model ctsem will take", {
     'T0mean_d_eta1', 'T0var_deta2_deta2') %in% pars))
 })
 
-# The type = 'ct' form: the same surgery on the parameter table, which is where
-# a ct model keeps everything about a cell. A moved cell keeps its transform
-# and its individual variation; a matrix rebuilt from labels would lose both.
+# The type = 'ct' form, tau x'' + x' = a x + q dW, on the parameter table,
+# which is where a ct model keeps everything about a cell. The level's drift
+# and diffusion keep their transforms and individual variation, moved into
+# PARS; a matrix rebuilt from labels would lose both.
 .ho_ct <- function() {
   m <- suppressMessages(ctModel(type = 'ct', silent = TRUE,
     manifestNames = c('Y1', 'Y2'), latentNames = c('eta1', 'eta2'),
     LAMBDA = diag(2)))
-  m$pars$indvarying[m$pars$param %in% 'drift_eta2'] <- TRUE
+  m$pars$indvarying[m$pars$param %in% c('drift_eta2', 'mm_Y1')] <- TRUE
   m
 }
 
-test_that("a ct model is raised cell by cell, keeping each moved cell's settings", {
+test_that("a ct model is raised cell by cell, the level keeping its drift and diffusion", {
   m <- .ho_ct()
   ho <- ctModelHigherOrder(m, 2)
   expect_s3_class(ho, 'ctStanModel')
@@ -98,39 +99,94 @@ test_that("a ct model is raised cell by cell, keeping each moved cell's settings
   mats <- ctModelMatrices(ho)
   expect_equal(dim(mats$DRIFT), c(3L, 3L))
   expect_equal(dim(mats$LAMBDA), c(2L, 3L))
-  # The level is driven by its derivative, the derivative pulled back by the
-  # level, and the level's own autoregression is now the derivative's damping.
+  # The level is driven by its derivative, which follows the level's own drift
+  # over the inertia time.
   expect_equal(unname(mats$DRIFT[2, 2]), '0')
   expect_equal(unname(mats$DRIFT[2, 3]), '1')
-  expect_equal(unname(mats$DRIFT[3, 2]), 'drift_deta2_eta2')
-  expect_equal(unname(mats$DRIFT[3, 3]), 'drift_eta2')
-  moved <- ho$pars[ho$pars$matrix == 'DRIFT' & ho$pars$row == 3 & ho$pars$col == 3, ]
-  orig <- m$pars[m$pars$param %in% 'drift_eta2', ]
-  expect_identical(moved$transform, orig$transform)
-  expect_true(moved$indvarying)
+  expect_equal(unname(mats$DRIFT[3, 2]), 'drift_eta2 / inertia_eta2')
+  expect_equal(unname(mats$DRIFT[3, 3]), '-1 / inertia_eta2')
+  pars <- function(p) ho$pars[ho$pars$matrix == 'PARS' & ho$pars$param %in% p, ]
+  orig <- m$pars[m$pars$param %in% c('drift_eta2', 'diff_eta2'), ]
+  expect_identical(pars('drift_eta2')$transform, orig$transform[orig$param == 'drift_eta2'])
+  expect_true(pars('drift_eta2')$indvarying)
+  expect_identical(pars('diff_eta2')$transform, orig$transform[orig$param == 'diff_eta2'])
+  expect_false(pars('inertia_eta2')$indvarying)
+  # Its random effect keeps its place among the others, so a fit's population
+  # loadings start where they were.
+  expect_identical(ho$pars$param[ho$pars$indvarying], m$pars$param[m$pars$indvarying])
   # Cross effects stay on the levels unless asked for.
   expect_equal(unname(mats$DRIFT[1, 2]), 'drift_eta1_eta2')
   expect_equal(unname(mats$DRIFT[2, 1]), 'drift_eta2_eta1')
-  # Process noise, and its covariance with eta1, move to the derivative.
+  # Process noise moves to the derivative over the inertia time, its
+  # correlation with eta1's with it.
   expect_equal(unname(mats$DIFFUSION[2, ]), c('0', '0', '0'))
-  expect_equal(unname(mats$DIFFUSION[3, 3]), 'diff_eta2')
+  expect_equal(unname(mats$DIFFUSION[3, 3]), 'diff_eta2 / inertia_eta2')
   expect_equal(unname(mats$DIFFUSION[3, 1]), 'diff_eta2_eta1')
-  # New latent: no indicator, its own initial mean and covariances.
+  # New latent: no indicator, its own initial mean, and covariances with what
+  # its level covaries with.
   expect_equal(as.numeric(mats$LAMBDA[, 3]), c(0, 0))
   expect_equal(unname(mats$T0MEANS[3, 1]), 'T0mean_deta2')
   expect_equal(unname(mats$T0VAR[3, ]), c('T0var_deta2_eta1', 'T0var_deta2_eta2', 'T0var_deta2'))
+  m0 <- m
+  m0$pars$param[m0$pars$param %in% 'T0var_eta2_eta1'] <- NA
+  m0$pars$value[m0$pars$matrix == 'T0VAR' & m0$pars$row == 2 & m0$pars$col == 1] <- 0
+  expect_equal(unname(ctModelMatrices(ctModelHigherOrder(m0, 2))$T0VAR[3, ]),
+    c('0', 'T0var_deta2_eta2', 'T0var_deta2'))
+  expect_error(ctModelHigherOrder(m, 2, explosive = TRUE), "type = 'omx'")
 })
 
 test_that("a ct model raised at a latent that is not the first puts each cell on the new row", {
   m <- .ho_ct()
   k <- which(m$pars$matrix == 'CINT' & m$pars$row == 2)
   m$pars$param[k] <- 'cint2'; m$pars$value[k] <- NA; m$pars$transform[k] <- 'param'
-  ho <- ctModelHigherOrder(m, 2, cint = TRUE, diffusion = FALSE)
+  ho <- ctModelHigherOrder(m, 2, cint = TRUE, crosseffects = TRUE, diffusion = FALSE)
   mats <- ctModelMatrices(ho)
-  expect_equal(unname(mats$CINT[, 1]), c('0', '0', 'cint2'))
+  expect_equal(unname(mats$CINT[, 1]), c('0', '0', 'cint2 / inertia_eta2'))
+  # The effect of eta1 on eta2 acts through the derivative; eta2's on eta1
+  # stays on the level.
+  expect_equal(unname(mats$DRIFT[2, 1]), '0')
+  expect_equal(unname(mats$DRIFT[3, 1]), 'drift_eta2_eta1 / inertia_eta2')
+  expect_equal(unname(mats$DRIFT[1, 2]), 'drift_eta1_eta2')
   expect_equal(unname(mats$DIFFUSION[2, 2]), 'diff_eta2')
   expect_equal(unname(mats$DIFFUSION[3, 3]), '0')
   expect_error(ctModelHigherOrder(.ho_ct(), 3), 'indices')
+})
+
+test_that("random effects moved to the derivative keep their place among the others", {
+  # Raising eta1 moves its innovation correlation with eta2 from DIFFUSION's
+  # first column to the second, past eta2's own diffusion; laid out by column,
+  # the reduced-rank loadings of a fit would then mean something else.
+  m <- .ho_ct()
+  m$pars$indvarying[m$pars$param %in% c('drift_eta1', 'diff_eta2_eta1', 'diff_eta2')] <- TRUE
+  ho <- ctModelHigherOrder(m, 1)
+  expect_equal(unname(ctModelMatrices(ho)$DIFFUSION[3, 2]), 'diff_eta2_eta1')
+  expect_identical(ho$pars$param[ho$pars$indvarying], m$pars$param[m$pars$indvarying])
+})
+
+test_that("a ct model raised with a short inertia time is the first order model", {
+  skip_without_julia()
+  m <- suppressMessages(ctModel(type = 'ct', silent = TRUE, manifestNames = 'Y1',
+    latentNames = 'eta1', LAMBDA = matrix(1)))
+  m$pars$indvarying <- FALSE
+  data <- as.data.frame(ctstantestdat)
+  data <- data[data$id %in% 1:4, c('id', 'time', 'Y1')]
+  first <- suppressMessages(ctFit(data, m, backend = 'julia', fit = FALSE))
+  second <- suppressMessages(ctFit(data, ctModelHigherOrder(m, 1), backend = 'julia',
+    fit = FALSE))
+  names1 <- ctsem:::.ctBackendRawParameterNames(list(model_spec = first),
+    ctsem:::.ctBackendNpar(first))
+  names2 <- ctsem:::.ctBackendRawParameterNames(list(model_spec = second),
+    ctsem:::.ctBackendNpar(second))
+  set.seed(3)
+  raw1 <- setNames(stats::rnorm(length(names1), 0, 0.3), names1)
+  raw2 <- setNames(numeric(length(names2)), names2)
+  raw2[names1] <- raw1
+  # An inertia time of 1e-6 against intervals near one: the derivative follows
+  # the level within the step.
+  raw2[['inertia_eta1']] <- log(expm1(1e-6)) / 2
+  ll1 <- ctJuliaEvaluate(first, unname(raw1), gradient = FALSE, cores = 1)$value
+  ll2 <- ctJuliaEvaluate(second, unname(raw2), gradient = FALSE, cores = 1)$value
+  expect_equal(as.numeric(ll2), as.numeric(ll1), tolerance = 1e-4)
 })
 
 # ctModelSlowComponent: the same kind of surgery, adding a slow process that

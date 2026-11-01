@@ -57,6 +57,15 @@ end
         record=failed)
     @test !larger.chosen || count(>(0), larger.w) > 10 ||
         larger.fail > cf.fail
+    # A size is priced by its units' shares of a full evaluation, not their
+    # count: where the units that carry the sum cost nine tenths of it, no
+    # coreset of them is as cheap.
+    k = count(>(0), cf.w)
+    skew = fill(0.1 / (60 - k), 60)
+    skew[cf.S[cf.w .> 0]] .= 0.9 / k
+    dear = CIS._is_coreset_choose(_cis_rows(X[1:200, :], y[1:200]), rd, Int[];
+        shares=skew)
+    @test !dear.chosen || dear.cost > cf.cost
 end
 
 @testset "a size is held to the full sum's gradient at held-out scored draws" begin
@@ -173,9 +182,64 @@ end
 @testset "a round's price counts the checks of a caller that checks every gradient batch" begin
     # DAIS: a batch of 64 draws, all of them gradients, each batch checked at 8.
     # A coreset of 196 of 200 units saves less than its checks cost.
-    plain = CIS._ISRound(64, 64, 8)
-    checked = CIS._ISRound(64, 64, 8, 1.0, 8.0, 1.0)
-    @test CIS._is_round_cost(196, 200, plain, 0.1) < CIS._is_full_round(plain)
-    @test CIS._is_round_cost(196, 200, checked, 0.1) > CIS._is_full_round(checked)
-    @test CIS._is_round_cost(30, 200, checked, 0.1) < CIS._is_full_round(checked)
+    plain = CIS._ISRound(64, 64, 8; gradvalues=2.0)
+    checked = CIS._ISRound(64, 64, 8, 1.0, 8.0, 1.0, 2.0)
+    @test CIS._is_round_cost(196 / 200, plain, 0.1) < CIS._is_full_round(plain)
+    @test CIS._is_round_cost(196 / 200, checked, 0.1) > CIS._is_full_round(checked)
+    @test CIS._is_round_cost(30 / 200, checked, 0.1) < CIS._is_full_round(checked)
+end
+
+isdefined(@__MODULE__, :_LAPLACE_LINEAR_OBJECTIVE) ||
+    include(joinpath(@__DIR__, "laplace_fixtures.jl"))
+
+@testset "the marginal route's objective is a sum over its subjects, and a coreset of them" begin
+    # A coreset is one thing on both routes: the marginal objective's view as a
+    # sum over units (`_ctsem_unit_sum`) is a Laplace objective with no level,
+    # a unit a subject, built once.
+    o = _LAPLACE_LINEAR_OBJECTIVE
+    N = length(o.subject_objectives)
+    U = CIS._ctsem_unit_sum(o)
+    @test U isa CIS.CTSEMLaplaceObjective
+    @test U === CIS._ctsem_unit_sum(o)
+    @test length(U.units.members) == N
+    @test CIS._smc_coreset_capable(o)
+    # Every pricer reads one cost model (cost_model.jl): a gradient's price by
+    # route, the marginal adjoint's on its view too, less on a Laplace
+    # objective with coordinates, whose value is mostly the inner solves the
+    # gradient pays as well; and each unit's share of a value, rows times
+    # members, in the importance sampler as in SMC.
+    @test CIS._ctsem_gradient_values(o) == CIS._CTSEM_GRADIENT_VALUES_FILTER
+    @test CIS._ctsem_gradient_values(U) == CIS._CTSEM_GRADIENT_VALUES_FILTER
+    @test CIS._ctsem_gradient_values(first(_fresh_nonlinear())) ==
+        CIS._CTSEM_GRADIENT_VALUES_LAPLACE
+    @test 1 < CIS._CTSEM_GRADIENT_VALUES_LAPLACE < CIS._CTSEM_GRADIENT_VALUES_FILTER
+    shares = CIS._ctsem_unit_shares(U)
+    w = CIS._laplace_unit_weights(U)
+    @test shares ≈ w ./ sum(w)
+    @test CIS._smc_unit_cost(o) == shares
+    cs = ctsem_is_coreset(o)
+    @test cs.shares == shares
+    @test cs.gradvalues == CIS._ctsem_gradient_values(U)
+    x = _LAPLACE_LINEAR_VALUES[1:5]
+    X = hcat(x, x .+ 0.02, x .- 0.03)
+    terms = ctsem_coreset_terms(o, X)
+    @test terms.value ≈ ctsem_evaluate_batch(o, X) rtol = 1e-10
+    @test vec(sum(terms.unit_loglik; dims=1)) ≈ terms.total rtol = 1e-10
+    # Each subject's term from the scored gradient the optimiser's stages read.
+    sink = fill(NaN, N)
+    sg = ctsem_subject_gradients(o, x; prior=false, sink=sink)
+    @test sink ≈ terms.unit_loglik[:, 1] rtol = 1e-10
+    # A subset: the prior plus its weighted terms, and its weighted scores
+    # plus the prior's gradient.
+    S = [2, 5]
+    w = [1.5, 3.0]
+    r = ctsem_coreset_batch_gradient(o, X[:, 1:1], S, w)
+    prior = terms.value[1] - terms.total[1]
+    @test r[1, 1] ≈ prior + sum(w .* terms.unit_loglik[S, 1]) rtol = 1e-10
+    g = ctsem_evaluate(o, x; gradient=true).gradient
+    @test r[2:end, 1] ≈ g .- vec(sum(sg.scores; dims=1)) .+
+        vec(sum(w .* sg.scores[S, :]; dims=1)) rtol = 1e-8
+    # An objective that is no sum over units has no view.
+    @test CIS._ctsem_unit_sum(nothing) === nothing
+    @test !CIS._smc_coreset_capable(nothing)
 end

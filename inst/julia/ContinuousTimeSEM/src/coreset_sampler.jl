@@ -1,7 +1,8 @@
 # The importance sampler's coreset -------------------------------------------
 #
-# A Laplace fit's log density is a sum of per-unit terms, each an inner mode
-# solve, and an importance sampler pays for every unit at every draw. Over the
+# A fit's log density is a sum of per-unit terms -- an inner mode solve each
+# on the Laplace route, a filter pass on the marginal route -- and an
+# importance sampler pays for every unit at every draw. Over the
 # region the sampler visits the units' terms vary in about as many dimensions
 # as it moves, so M of the N units with non-negative weights and a free
 # intercept, fitted by least squares to the full sum, follow it, at M/N of a
@@ -34,7 +35,8 @@ export ctsem_is_coreset, ctsem_is_coreset_batch!, ctsem_is_coreset_gradbatch!,
     ctsem_is_coreset_fullgrad!, ctsem_is_coreset_finalize!, ctsem_is_coreset_record,
     ctsem_is_coreset_cost
 
-"""Full evaluations the coreset density has spent, a gradient as two."""
+"""Full evaluations the coreset density has spent, a gradient at its price
+(`_ctsem_gradient_values`)."""
 ctsem_is_coreset_cost(cs) = cs.cost
 
 """
@@ -93,11 +95,11 @@ function _is_passes(err::AbstractVector, rel::AbstractVector, mult::Real=1.0)
 end
 
 """What a sampler round is: its batch of draws, the gradients asked for before
-the next (each as two values), the checks a batch on a coreset takes, how many
-times the tolerances its caller's use allows (`_is_coreset_tolerance!`), the
-values a round spends checking its gradient batch, for a caller that checks
-every one (DAIS), and how far a size's gradient may be off at held-out draws
-(`_is_force_error`)."""
+the next, the checks a batch on a coreset takes, how many times the tolerances
+its caller's use allows (`_is_coreset_tolerance!`), the values a round spends
+checking its gradient batch, for a caller that checks every one (DAIS), how
+far a size's gradient may be off at held-out draws (`_is_force_error`), and
+what a gradient costs in values (`_ctsem_gradient_values`)."""
 struct _ISRound
     values::Float64
     grads::Float64
@@ -105,38 +107,46 @@ struct _ISRound
     tol::Float64
     gradchecks::Float64
     force::Float64
+    gradvalues::Float64
 end
 
-_ISRound(values::Real, grads::Real, checks::Integer) =
-    _ISRound(values, grads, checks, 1.0, 0.0, _IS_CORESET_TOL.force)
+_ISRound(values::Real, grads::Real, checks::Integer;
+    gradvalues::Real=_CTSEM_GRADIENT_VALUES_FILTER) =
+    _ISRound(values, grads, checks, 1.0, 0.0, _IS_CORESET_TOL.force, gradvalues)
 
-"""What a batch of `rd.values` draws is expected to cost on a coreset of `M`
-of `N` units, and in full, in full evaluations: on the coreset its share
-`M / N`, the checks evaluated in full, and with probability `fail` the rest in
-full after a failed check. Measured on dev3, a coreset's draw took M/N of a
-full one's time to within 5% at 100, 250 and 1,000 units."""
-function _is_batch_cost(M::Real, N::Real, rd::_ISRound, fail::Real)
+"""What a batch of `rd.values` draws is expected to cost on a coreset whose
+units cost `share` of a full evaluation (`_ctsem_coreset_share`), and in full,
+in full evaluations: on the coreset its share, the checks evaluated in full,
+and with probability `fail` the rest in full after a failed check. Measured on
+dev3, a coreset's draw of `M` of `N` like units took M/N of a full one's time
+to within 5% at 100, 250 and 1,000 units."""
+function _is_batch_cost(share::Real, rd::_ISRound, fail::Real)
     n = rd.values
     k = min(rd.checks, n)
-    return (coreset=M / N * n + k + fail * (n - k), full=n)
+    return (coreset=share * n + k + fail * (n - k), full=n)
 end
 
-"""A sampler round's expected cost with a coreset of `M` of `N` units: the
-batch whichever way is cheaper, the gradients at its share where it passed
-its last check and in full where it failed it, since a coreset serves
-gradients only where it has just passed one, and the checks of the gradient
-batch where its caller checks every one. Without those, a coreset of 196 of
-200 units priced cheaper than none on a 266-parameter fit, and failed its
-checks 20 times in 21."""
-function _is_round_cost(M::Real, N::Real, rd::_ISRound, fail::Real)
-    share = M / N
-    bc = _is_batch_cost(M, N, rd, fail)
-    return 2 * rd.grads * (share + fail * (1 - share)) + rd.gradchecks +
+"""A sampler round's expected cost with a coreset whose units cost `share` of a
+full evaluation: the batch whichever way is cheaper, the gradients at its
+share where it passed its last check and in full where it failed it, since a
+coreset serves gradients only where it has just passed one, and the checks of
+the gradient batch where its caller checks every one. Without those, a
+coreset of 196 of 200 units priced cheaper than none on a 266-parameter fit,
+and failed its checks 20 times in 21."""
+function _is_round_cost(share::Real, rd::_ISRound, fail::Real)
+    bc = _is_batch_cost(share, rd, fail)
+    return rd.gradvalues * rd.grads * (share + fail * (1 - share)) + rd.gradchecks +
         min(bc.coreset, bc.full)
 end
 
 """A round in full."""
-_is_full_round(rd::_ISRound) = rd.values + 2 * rd.grads
+_is_full_round(rd::_ISRound) = rd.values + rd.gradvalues * rd.grads
+
+"""The least share any `M` units of `shares` cost: its `M` smallest summed, from
+their sums in ascending order (`floor`), what a size is priced at before its
+units are chosen."""
+_is_share_floor(floor::AbstractVector{Float64}, M::Integer) =
+    M <= 0 ? 0.0 : floor[min(M, length(floor))]
 
 """
 How often a round's check would fail, from a coreset's errors `err` and
@@ -299,13 +309,17 @@ mutable struct CTSEMISCoreset
     # (`_is_record_counts`).
     checked_sizes::Vector{Int}
     checked_passed::Vector{Bool}
+    # Each unit's share of a full evaluation and a gradient's cost in values,
+    # the one cost model's (`_ctsem_unit_shares`, `_ctsem_gradient_values`).
+    shares::Vector{Float64}
+    gradvalues::Float64
 end
 
 """
-    ctsem_is_coreset(laplace; top=:run)
+    ctsem_is_coreset(objective; top=:run)
 
-A coreset density over the Laplace objective `laplace`, for an importance
-sampler: `ctsem_is_coreset_batch!` and `ctsem_is_coreset_gradbatch!` are its
+A coreset density over `objective`, either route's, as a sum over units
+(`_ctsem_unit_sum`), for an importance sampler: `ctsem_is_coreset_batch!` and `ctsem_is_coreset_gradbatch!` are its
 value and gradient batches, `ctsem_is_coreset_fullgrad!` the full density's
 gradient, `ctsem_is_coreset_finalize!` the end check, and
 `ctsem_is_coreset_record` what it did. `top` says how the caller's weights are
@@ -324,12 +338,11 @@ function ctsem_is_coreset(laplace::CTSEMLaplaceObjective; top::Symbol=:run)
         0, NaN, 0, false, NaN, NaN, 0.0, 0, 0, 0, 0, 0, 0, 0, false, true, 0, 0, 0,
         secs, draws, why, Dict{Vector{Float64},Float64}(), NTuple{8,Float64}[],
         Dict{Vector{Float64},Int}(), Float64[], Float64[], zeros(N, 0), 0, 1.0,
-        _IS_CORESET_TOL.force, false, Int[], Bool[])
+        _IS_CORESET_TOL.force, false, Int[], Bool[], _ctsem_unit_shares(laplace),
+        _ctsem_gradient_values(laplace))
 end
-
-"""Whether a coreset can stand in for `objective` (`ctsem_is_coreset`): the
-samplers' Laplace objectives of two units or more (`_smc_coreset_capable`)."""
-_is_coreset_capable(objective) = _smc_coreset_capable(objective)
+ctsem_is_coreset(objective; top::Symbol=:run) =
+    ctsem_is_coreset(_ctsem_units_of(objective); top=top)
 
 """The coresets chosen, of the choices tried (`cs.nchoose`, a row each of the
 trace; code 1 is a choice made)."""
@@ -338,7 +351,7 @@ _is_chosen(cs::CTSEMISCoreset) = count(t -> t[3] == 1.0, cs.trace)
 _is_smooth(old, new) = isnan(old) ? Float64(new) : 0.7 * old + 0.3 * new
 _is_round(cs::CTSEMISCoreset) = _ISRound(cs.values,
     isnan(cs.grads) ? 0.3 * cs.values : cs.grads, 8, cs.tolscale, cs.checkall ? 8.0 : 0.0,
-    cs.forcetol)
+    cs.forcetol, cs.gradvalues)
 
 """
     _is_coreset_tolerance!(cs, scale, step=0.0)
@@ -373,6 +386,8 @@ function _is_coreset_tolerance!(cs::CTSEMISCoreset, scale::Real, step::Real=0.0)
     return nothing
 end
 _is_active_n(cs::CTSEMISCoreset) = count(>(0), cs.w)
+"""The coreset in force's share of a full evaluation."""
+_is_active_share(cs::CTSEMISCoreset) = _ctsem_coreset_share(cs.shares, cs.S[cs.w .> 0])
 _is_failnow(cs::CTSEMISCoreset) = (cs.fails + 2 * cs.cf_fail) / (cs.runs + 2)
 _is_predict(cs::CTSEMISCoreset, L::AbstractMatrix) =
     [cs.c + sum(cs.w[i] * L[cs.S[i], j] for i in eachindex(cs.S); init=0.0)
@@ -455,7 +470,7 @@ function _is_coreset_value!(cs::CTSEMISCoreset, X::AbstractMatrix)
     t = time()
     v = ctsem_coreset_batch(cs.laplace, X, units, weights)
     _is_tally!(cs, :coreset, time() - t, size(X, 2))
-    cs.cost += size(X, 2) * length(units) / cs.N
+    cs.cost += size(X, 2) * _ctsem_coreset_share(cs.shares, units)
     return v .+ cs.c
 end
 
@@ -622,7 +637,7 @@ rounds of 100, a third of a run's full evaluations, where pricing an uncertain
 rate lets the checks decide.
 """
 function _is_coreset_choose(tr::_ISRows, rd::_ISRound, start::Vector{Int};
-    record=(Int[], Bool[]))
+    record=(Int[], Bool[]), shares::AbstractVector{Float64}=fill(1 / tr.N, tr.N))
     nrows = tr.nrows
     rows = collect(1:nrows)
     focus = intersect(tr.focus, rows)
@@ -652,9 +667,10 @@ function _is_coreset_choose(tr::_ISRows, rd::_ISRound, start::Vector{Int};
         (m * _is_fail_rate(pred .- tr.y[idx], rel[idx], pred, rd) + f + 1) / (m + f + p + 2)
     end
     nextsize(M) = M + max(1, M ÷ 10)
+    cheapest = cumsum(sort(collect(Float64, shares)))
     sizes = Int[]
     M = max(1, length(start))
-    while M <= N && _is_round_cost(M, N, rd, 0.0) < fullround
+    while M <= N && _is_round_cost(_is_share_floor(cheapest, M), rd, 0.0) < fullround
         push!(sizes, M)
         M = nextsize(M)
     end
@@ -663,7 +679,7 @@ function _is_coreset_choose(tr::_ISRows, rd::_ISRound, start::Vector{Int};
     priced = Ref((M=0, cost=Inf, fail=NaN))
     value = (units, w) -> begin
         Mu = length(units)
-        bound = fullround - _is_round_cost(nextsize(Mu), N, rd, 0.0)
+        bound = fullround - _is_round_cost(_is_share_floor(cheapest, nextsize(Mu)), rd, 0.0)
         # Weights that all come out zero leave a constant and no unit to
         # evaluate, which costs nothing by the formula: priced, such a
         # coreset was chosen, and the engine was then handed an empty unit
@@ -684,7 +700,7 @@ function _is_coreset_choose(tr::_ISRows, rd::_ISRound, start::Vector{Int};
         level = my - sum(mx[units] .* w)
         fail = maximum(filter(!isnan, [failrate(units, w, level, held, mheld),
             failrate(units, w, level, newest, mnewest)]); init=-Inf)
-        cost = _is_round_cost(count(>(0), w), N, rd, fail)
+        cost = _is_round_cost(_ctsem_coreset_share(shares, units[w .> 0]), rd, fail)
         cost < priced[].cost && (priced[] = (M=Mu, cost=cost, fail=fail))
         (fullround - cost, bound, (M=Mu, cost=cost, fail=fail))
     end
@@ -718,7 +734,7 @@ function _is_choose!(cs::CTSEMISCoreset, start::Vector{Int})
     cs.has_cf && cs.rows.nrows - cs.rows_at_choose < _is_active_n(cs) && return false
     t = time()
     r = _is_coreset_choose(cs.rows, _is_round(cs), start;
-        record=(cs.checked_sizes, cs.checked_passed))
+        record=(cs.checked_sizes, cs.checked_passed), shares=cs.shares)
     _is_tally!(cs, :choose, time() - t)
     cs.nchoose += 1
     cs.rows_at_choose = cs.rows.nrows
@@ -745,7 +761,7 @@ end
 """Whether the coreset in force is expected to cost more than full rounds."""
 function _is_dearer(cs::CTSEMISCoreset)
     r = _is_round(cs)
-    return _is_round_cost(_is_active_n(cs), cs.N, r, _is_failnow(cs)) >= _is_full_round(r)
+    return _is_round_cost(_is_active_share(cs), r, _is_failnow(cs)) >= _is_full_round(r)
 end
 
 """A failed check: the coreset is chosen again from what the sampler has
@@ -799,9 +815,10 @@ function _is_inparts!(cs::CTSEMISCoreset, X::AbstractMatrix, why::Symbol)
         left = n - done
         half = left ÷ 2
         r0 = _is_round(cs)
-        r = _ISRound(half, r0.grads, r0.checks, r0.tol, r0.gradchecks, r0.force)
-        bc = cs.rows.nrows == 0 ? _is_batch_cost(0, 1, r, 0.0) :
-            _is_batch_cost(cs.has_cf ? _is_active_n(cs) : 0, cs.N, r, 0.0)
+        r = _ISRound(half, r0.grads, r0.checks, r0.tol, r0.gradchecks, r0.force,
+            r0.gradvalues)
+        bc = _is_batch_cost(cs.rows.nrows > 0 && cs.has_cf ? _is_active_share(cs) : 0.0,
+            r, 0.0)
         # Values a gradient batch already gave cost nothing in full.
         take = !allcached && half > 0 && bc.coreset < bc.full ? left - half : left
         idx = done .+ (1:take)
@@ -826,8 +843,9 @@ end
 size, else in full."""
 function _is_withcoreset!(cs::CTSEMISCoreset, X::AbstractMatrix)
     r0 = _is_round(cs)
-    r = _ISRound(size(X, 2), r0.grads, r0.checks, r0.tol, r0.gradchecks, r0.force)
-    bc = _is_batch_cost(_is_active_n(cs), cs.N, r, _is_failnow(cs))
+    r = _ISRound(size(X, 2), r0.grads, r0.checks, r0.tol, r0.gradchecks, r0.force,
+        r0.gradvalues)
+    bc = _is_batch_cost(_is_active_share(cs), r, _is_failnow(cs))
     bc.coreset < bc.full && return _is_oncoreset!(cs, X)
     return _is_freecheck!(cs, X, :small)
 end
@@ -933,7 +951,7 @@ function ctsem_is_coreset_fullgrad!(cs::CTSEMISCoreset, X::AbstractMatrix)
     X = Matrix{Float64}(X)
     t = time()
     n = size(X, 2)
-    cs.cost += 2 * n
+    cs.cost += cs.gradvalues * n
     res = ctsem_coreset_terms_gradient(cs.laplace, X, _IS_SCORE_DRAWS.per)
     pick = res.scored
     cs.lastgrad = Dict(_is_key(view(X, :, j)) => j for j in 1:n)
@@ -1002,15 +1020,16 @@ function ctsem_is_coreset_gradbatch!(cs::CTSEMISCoreset, X::AbstractMatrix;
     cs.phase != :coreset && return ctsem_is_coreset_fullgrad!(cs, X)
     units = cs.S[cs.w .> 0]
     weights = cs.w[cs.w .> 0]
-    share = length(units) / cs.N
+    share = _ctsem_coreset_share(cs.shares, units)
+    g = cs.gradvalues
     k = min(8, n)
     checking = check || !cs.trusted
-    checking && 2 * share * n + k + _is_failnow(cs) * 2 * n >= 2 * n &&
+    checking && g * share * n + k + _is_failnow(cs) * g * n >= g * n &&
         return ctsem_is_coreset_fullgrad!(cs, X)
     t = time()
     out = ctsem_coreset_batch_gradient(cs.laplace, X, units, weights)
     _is_tally!(cs, :gradient_coreset, time() - t, n)
-    cs.cost += 2 * n * share
+    cs.cost += g * n * share
     value = out[1, :] .+ cs.c
     if checking
         pick = _is_checkpick([isfinite(x) ? x : -Inf for x in value])

@@ -1,4 +1,4 @@
-# The coreset importance sampling evaluates on the Laplace route (R/ctCoreset.R,
+# The coreset importance sampling evaluates on either route (R/ctCoreset.R,
 # laplace_coreset.jl, coreset_sampler.jl): the engine's subset evaluation
 # against the full one, and the sampler's density with a coreset behind it
 # against the full density. The choice on sums it can compress is the
@@ -78,6 +78,51 @@ test_that("the engine's coreset evaluation is the weighted sum of the units it n
   expect_equal(sctop, scevery[, , best], tolerance = 1e-10)
 })
 
+# The marginal route's objective is a sum over its subjects, and the engine
+# takes a coreset of them through the same entry points (`_ctsem_unit_sum`).
+.coreset_marginal_fixture <- function() fit_cached("coreset marginal 60", {
+  model <- laplace_fixture_model()
+  model$pars$indvarying <- FALSE
+  suppressWarnings(suppressMessages(ctsem::ctFit(laplace_fixture_data(60L, 6L, 31L),
+    model, backend = "julia", cores = 1, priors = TRUE)))
+})
+
+test_that("on the marginal route a coreset is the weighted sum of the subjects it names", {
+  skip_on_cran()
+  skip_if_not(isTRUE(ctsem::ctJuliaStatus()$available))
+  fit <- .coreset_marginal_fixture()
+  expect_false(ctsem:::.ctBackendIsLaplace(fit))
+  expect_equal(ctsem:::.ctJuliaUnits(fit$model_spec), 60L)
+  module <- ctsem:::.ctJuliaModule(fit$model_spec$project)
+  obj <- ctsem:::.ctJuliaObjective(fit, hybrid = TRUE)
+  value <- ctsem:::.ctBackendJuliaValue
+  est <- as.numeric(fit$estimate$raw)
+  set.seed(3)
+  X <- sweep(matrix(rnorm(2 * length(est), 0, 0.05), 2), 2, est, "+")
+  terms <- value(module$ctsem_coreset_terms(obj, t(X)))
+  L <- matrix(as.numeric(terms$unit_loglik), ncol = 2)
+  expect_equal(nrow(L), 60L)
+  expect_equal(as.numeric(terms$value),
+    as.numeric(value(module$ctsem_evaluate_batch(obj, t(X)))), tolerance = 1e-10)
+  S <- c(4L, 17L, 40L)
+  w <- c(2, 0.5, 6)
+  units <- ctsem:::.ctJuliaVector(S)
+  weights <- ctsem:::.ctJuliaVector(w)
+  prior <- as.numeric(terms$value) - as.numeric(terms$total)
+  g <- matrix(as.numeric(value(module$ctsem_coreset_batch_gradient(obj, t(X), units,
+    weights))), ncol = 2)
+  expect_equal(g[1, ], prior + colSums(L[S, ] * w), tolerance = 1e-10)
+  gfull <- matrix(as.numeric(value(module$ctsem_evaluate_batch_gradient(obj, t(X)))),
+    ncol = 2)
+  scores <- as.matrix(ctsem:::.ctJuliaGet(module$ctsem_subject_gradients(obj,
+    ctsem:::.ctJuliaVector(X[1, ]), prior = FALSE))$scores)
+  expect_equal(g[-1, 1], gfull[-1, 1] - colSums(scores) + colSums(scores[S, ] * w),
+    tolerance = 1e-8)
+  # The importance sampler's density takes a coreset of the subjects.
+  full <- ctsem:::.ctBackendLpgFunc(fit, gradient = FALSE)
+  expect_false(identical(ctsem:::.ctCoresetLpg(fit, full), full))
+})
+
 test_that("the sampler's density with a coreset behind it follows the full density", {
   skip_on_cran()
   skip_if_not(isTRUE(ctsem::ctJuliaStatus()$available))
@@ -104,9 +149,13 @@ test_that("the sampler's density with a coreset behind it follows the full densi
   gt <- attr(full, "gradbatch")(xg)
   expect_equal(gg$value, gt$value, tolerance = 1e-10)
   expect_equal(gg$gradient, gt$gradient, tolerance = 1e-9)
-  expect_equal(attr(taught, "cost")(), 16)
+  # Eight gradients at the engine's price of one (`ctsem_gradient_values`),
+  # which the density carries for imis_is()'s own count.
+  price <- attr(full, "gradvalues")()
+  expect_gt(price, 1)
+  expect_equal(attr(taught, "cost")(), 8 * price)
   expect_equal(attr(taught, "batch")(xg), attr(full, "batch")(xg), tolerance = 1e-10)
-  expect_equal(attr(taught, "cost")(), 16)
+  expect_equal(attr(taught, "cost")(), 8 * price)
   rec0 <- attr(taught, "coreset")()
   expect_equal(rec0$score_draws, 4L)
   expect_equal(rec0$reused_values, 8L)
@@ -131,7 +180,7 @@ test_that("the sampler's density with a coreset behind it follows the full densi
   rec <- attr(lpg, "coreset")()
   expect_true(rec$used)
   expect_equal(rec$units, 100L)
-  expect_lt(rec$expected_round_cost, 100 + 2 * 30)
+  expect_lt(rec$expected_round_cost, 100 + price * 30)
   expect_lte(attr(lpg, "cost")(), nrow(first))
   spent <- attr(lpg, "cost")()
   # Rounds on the coreset. A round whose check fails costs a full one (one
