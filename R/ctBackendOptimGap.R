@@ -411,10 +411,13 @@
 # direction and the profile walk followed a curved ridge back. At 0.01 se, on
 # the bench's 70 default cells and 48 refined fits, estimates moved 0.0001 se
 # in the median fit and 0.006 at the 90th percentile and no end value fell by
-# more than 0.006 nats (CT-SEM review/bench/2026-11-01-sebar.md), and the
-# identifiability tests and that kind of fixture found what they found at
-# 1e-6 (the same note). A fit that wants the reports' old precision asks for
-# `gaptol = 1e-6`.
+# more than 0.006 nats (CT-SEM review/bench/2026-11-01-sebar.md). On that
+# kind of fixture rebuilt (six subjects, four waves, five random effects;
+# CT-SEM scripts/sebar-2026-11/degenerate_ridge.R, three data sets)
+# identifiability named the same weak directions and parameters at 5e-5 as
+# at 1e-6, and at 3e-4 one fewer direction on one of them: the reports' need
+# lies between, and 0.01 se is on its safe side. A fit that wants more
+# precision for them asks for `gaptol = 1e-6`.
 #
 # The controls are read from wherever the fit keeps them
 # (`.ctBackendFitOptimcontrol()`).

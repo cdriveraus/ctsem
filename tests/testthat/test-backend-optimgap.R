@@ -699,7 +699,8 @@ test_that("the optimiser aims inside the bar, so a correction stays exceptional"
   # inner target sits two orders inside.
   expect_lt(ctsem:::.ctBackendInnerGapTol(list()),
     ctsem:::.ctBackendGapTolerance(list()))
-  expect_equal(ctsem:::.ctBackendInnerGapTol(list()), 1e-8)
+  expect_equal(ctsem:::.ctBackendInnerGapTol(list()),
+    ctsem:::.ctBackendGapTolerance(list()) / 100)
   # And it follows the bar when the bar moves, rather than being a second
   # number to keep in step by hand.
   expect_equal(ctsem:::.ctBackendInnerGapTol(list(gaptol = 1e-4)), 1e-6)
@@ -711,7 +712,8 @@ test_that("a loose stop is only used where something will check it", {
   # with no certification running there is nothing to catch a stop that was too
   # early. Off in each of the two cases where the check does not run, and the
   # certification's own tolerance otherwise -- not a second number.
-  expect_equal(ctsem:::.ctBackendInnerGapTol(list()), 1e-8)
+  default <- ctsem:::.ctBackendGapTolerance(list()) / 100
+  expect_equal(ctsem:::.ctBackendInnerGapTol(list()), default)
   expect_equal(ctsem:::.ctBackendInnerGapTol(list(certify = FALSE)), 0)
   expect_equal(ctsem:::.ctBackendInnerGapTol(list(), intoverstates = FALSE), 0)
   # `estonly` is not one of them, and this asserts that rather than assuming
@@ -720,7 +722,7 @@ test_that("a loose stop is only used where something will check it", {
   # while it was in the list the same model fitted with and without it ran
   # different stopping rules and could stop in different places. Every other
   # reading of `estonly` in the package skips a post-fit step.
-  expect_equal(ctsem:::.ctBackendInnerGapTol(list(estonly = TRUE)), 1e-8)
+  expect_equal(ctsem:::.ctBackendInnerGapTol(list(estonly = TRUE)), default)
   # An explicit value wins, including zero and including where the default
   # would be off: the licence is a rule about what to do unasked, and a caller
   # who names the argument has asked. Accepting it and ignoring it would be the
@@ -729,9 +731,12 @@ test_that("a loose stop is only used where something will check it", {
   expect_equal(ctsem:::.ctBackendInnerGapTol(list(innergaptol = 0)), 0)
   expect_equal(ctsem:::.ctBackendInnerGapTol(
     list(innergaptol = 0.5, certify = FALSE)), 0.5)
-  # And a nonsense value is off rather than an error: this decides how hard an
-  # optimiser works, and refusing to fit over it would be the wrong trade.
-  expect_equal(ctsem:::.ctBackendInnerGapTol(list(gaptol = -1)), 0)
+  # A nonsense bar is the default bar (`.ctBackendConvergeTol()`), which the
+  # rule follows; this read 0 only while the default's hundredth, 1e-8, sat
+  # inside expect_equal's tolerance. A nonsense rule is off rather than an
+  # error: this decides how hard an optimiser works, and refusing to fit over
+  # it would be the wrong trade.
+  expect_equal(ctsem:::.ctBackendInnerGapTol(list(gaptol = -1)), default)
   expect_equal(ctsem:::.ctBackendInnerGapTol(list(innergaptol = NA)), 0)
 })
 
