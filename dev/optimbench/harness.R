@@ -748,6 +748,9 @@ rec$row <- data.frame(
   lapcorr_lattice = .int1(corr$lattice %||% NA), lapcorr_flagged = .int1(corr$flagged %||% NA),
   lapcorr_continuation = .chr1(corr$continuation),
   lapcorr_secs = .num1(corr$seconds["total"]), lapcorr_gradients = .num1(corr$evaluations["gradients"]),
+  lapcorr_iterations = .int1(corr$optimiser$iterations %||% NA),
+  lapcorr_hessians = .int1(corr$optimiser$hessians %||% NA),
+  lapcorr_converged = .lgl1(corr$optimiser$converged %||% NA),
   cont_hessian = is.matrix(corr$hessian),
   stringsAsFactors = FALSE)
 save_rec()
