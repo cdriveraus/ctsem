@@ -152,6 +152,17 @@ test_that("a ct model raised at a latent that is not the first puts each cell on
   expect_error(ctModelHigherOrder(.ho_ct(), 3), 'indices')
 })
 
+test_that("random effects moved to the derivative keep their place among the others", {
+  # Raising eta1 moves its innovation correlation with eta2 from DIFFUSION's
+  # first column to the second, past eta2's own diffusion; laid out by column,
+  # the reduced-rank loadings of a fit would then mean something else.
+  m <- .ho_ct()
+  m$pars$indvarying[m$pars$param %in% c('drift_eta1', 'diff_eta2_eta1', 'diff_eta2')] <- TRUE
+  ho <- ctModelHigherOrder(m, 1)
+  expect_equal(unname(ctModelMatrices(ho)$DIFFUSION[3, 2]), 'diff_eta2_eta1')
+  expect_identical(ho$pars$param[ho$pars$indvarying], m$pars$param[m$pars$indvarying])
+})
+
 test_that("a ct model raised with a short inertia time is the first order model", {
   skip_without_julia()
   m <- suppressMessages(ctModel(type = 'ct', silent = TRUE, manifestNames = 'Y1',

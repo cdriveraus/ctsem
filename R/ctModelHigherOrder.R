@@ -286,9 +286,20 @@ ctModelHigherOrder <- function(ctm, indices,diffusion=TRUE, crosseffects=FALSE,c
     for (l in levelflags) rec[[l]] <- FALSE
     put(m, r, c, rec)
   }
+  # A cell's settings put in another cell. Its parameter keeps the source's
+  # place in the table (`copied`), so a random effect moved to another cell
+  # keeps its place among the others and a fit's population loadings mean
+  # what they did: moved by column, the Fisher search's derivative took
+  # PA's innovation correlation past four effects, and its refit started on
+  # a fifth loading dimension the current fit had not got.
+  copied <- list()
   copy <- function(m, fr, fc, tr, tc) {
     k <- at(m, fr, fc)
-    if (length(k)) put(m, tr, tc, pars[k, , drop = FALSE]) else fixed(m, tr, tc, 0)
+    if (!length(k)) return(fixed(m, tr, tc, 0))
+    rec <- pars[k, , drop = FALSE]
+    if (plain(rec$param) && is.null(copied[[rec$param]]))
+      copied[[rec$param]] <<- list(m = m, r = fr, c = fc)
+    put(m, tr, tc, rec)
   }
   # A cell computed from the names it reads, which ctModel takes as
   # references: states, predictors, PARS parameters.
@@ -344,12 +355,17 @@ ctModelHigherOrder <- function(ctm, indices,diffusion=TRUE, crosseffects=FALSE,c
     mo <- match(pars$matrix, unique(c(ctm$pars$matrix, 'PARS')))
     rank <- numeric(nrow(pars))
     rank[order(mo, pars$col, pars$row)] <- seq_len(nrow(pars))
+    cellat <- function(o) which(pars$matrix == o$m & pars$row == o$r & pars$col == o$c)
+    for (k in which(!pars$matrix %in% 'PARS' & plain(pars$param) &
+      pars$param %in% names(copied))) {
+      at <- cellat(copied[[pars$param[k]]])
+      if (length(at) && !identical(pars$param[at], pars$param[k])) rank[k] <- rank[at] + 0.5
+    }
     moved <- which(pars$matrix %in% 'PARS' & pars$param %in% c(attached, declared))
     for (k in moved) {
       at <- which(!pars$matrix %in% 'PARS' & plain(pars$param) & pars$param == pars$param[k])
       o <- origin[[pars$param[k]]]
-      if (!length(at) && !is.null(o)) at <- which(pars$matrix == o$m & pars$row == o$r &
-        pars$col == o$c)
+      if (!length(at) && !is.null(o)) at <- cellat(o)
       if (length(at)) rank[k] <- min(rank[at]) + 0.5
     }
     out <- pars[order(rank), ]
