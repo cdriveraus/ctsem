@@ -162,8 +162,9 @@ DIFFUSION that are fixed within each subject: no cell may depend on the
 latent states or on time dependent predictors. Individual differences in
 those matrices are allowed with \code{intoverpop='laplace'}, which
 \code{intoverpop='auto'} then chooses; each subject starts from its own
-stationary distribution. A latent process whose DRIFT row is fixed at zero
-never settles, and is refused.
+stationary distribution. A latent process whose DRIFT is fixed so that it
+never settles -- a row fixed at zero, or a fixed oscillation such as
+\code{\link{ctModelPeriodicComponent}}'s clock -- is refused.
 
 To start only some initial conditions there, name those cells
 \code{'stationary'} in the model (\code{backend='julia'}); every other

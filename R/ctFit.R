@@ -610,20 +610,16 @@ T0VARredundancies <- function(ctm) {
   return(ctm)
 }
 
-# A latent whose DRIFT row is fixed at zero never settles anywhere -- a trait
-# held constant, or a random walk -- so stationary = TRUE has nothing to start
-# it from. Refused by name here, because the engine would otherwise meet a
-# singular DRIFT at every trial point and the fit would fail at its starting
-# values with nothing said about why.
+# A latent whose DRIFT is fixed so that it never settles anywhere -- a trait
+# held constant, a random walk, a clock (`.ctNeverSettles`) -- leaves
+# stationary = TRUE nothing to start it from. Refused by name here, because the
+# engine would otherwise meet a singular solve at every trial point and the fit
+# would fail at its starting values with nothing said about why.
 .ctStationaryCheckDrift <- function(ctm) {
-  drift <- ctm$pars[ctm$pars$matrix %in% 'DRIFT', , drop = FALSE]
-  fixedzero <- is.na(drift$param) & !is.na(drift$value) & drift$value == 0
-  static <- vapply(seq_len(ctm$n.latent), function(i)
-    any(drift$row == i) && all(fixedzero[drift$row == i]), logical(1))
-  if(any(static)) stop('stationary = TRUE needs every latent process to ',
-    'settle somewhere, and DRIFT is fixed at zero for ',
-    paste(ctm$latentNames[static], collapse = ', '),
-    '. Estimate T0MEANS and T0VAR instead.', call. = FALSE)
+  static <- .ctNeverSettles(ctm)
+  if(length(static)) stop('stationary = TRUE needs every latent process to ',
+    'settle somewhere, and DRIFT, as fixed, leaves ', paste(static, collapse = ', '),
+    ' without a stationary state. Estimate T0MEANS and T0VAR instead.', call. = FALSE)
   invisible(TRUE)
 }
 
@@ -922,8 +918,9 @@ T0VARredundancies <- function(ctm) {
 #' latent states or on time dependent predictors. Individual differences in
 #' those matrices are allowed with \code{intoverpop='laplace'}, which
 #' \code{intoverpop='auto'} then chooses; each subject starts from its own
-#' stationary distribution. A latent process whose DRIFT row is fixed at zero
-#' never settles, and is refused.
+#' stationary distribution. A latent process whose DRIFT is fixed so that it
+#' never settles -- a row fixed at zero, or a fixed oscillation such as
+#' \code{\link{ctModelPeriodicComponent}}'s clock -- is refused.
 #'
 #' To start only some initial conditions there, name those cells
 #' \code{'stationary'} in the model (\code{backend='julia'}); every other

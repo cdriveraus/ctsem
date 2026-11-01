@@ -74,16 +74,11 @@
 
   # The closure: the marked latents and whatever drives them.
   closure <- .ctStationaryClosure(ctm, means | variance)
-  drift <- p[p$matrix %in% 'DRIFT' & p$row <= nl & p$col <= nl, , drop = FALSE]
-  value <- suppressWarnings(as.numeric(drift$value))
-  static <- vapply(which(closure), function(i) {
-    own <- drift$row == i
-    all(is.na(drift$param[own]) & !is.na(value[own]) & value[own] == 0)
-  }, logical(1))
-  if (any(static)) stop("A 'stationary' initial condition needs the latents it depends on ",
-    "to settle somewhere, and DRIFT is fixed at zero for ",
-    paste(names[which(closure)[static]], collapse = ', '), ". Estimate T0MEANS and T0VAR ",
-    "for the latents it drives instead.", call. = FALSE)
+  static <- .ctNeverSettles(ctm, which(closure))
+  if (length(static)) stop("A 'stationary' initial condition needs the latents it depends on ",
+    "to settle somewhere, and DRIFT, as fixed, leaves ", paste(static, collapse = ', '),
+    " without a stationary state. Estimate T0MEANS and T0VAR for the latents they ",
+    "drive instead.", call. = FALSE)
   # No noise reaching a block leaves it no stationary variance.
   diffusion <- p[p$matrix %in% 'DIFFUSION' & p$row <= nl & p$col <= nl, , drop = FALSE]
   dvalue <- suppressWarnings(as.numeric(diffusion$value))
@@ -112,6 +107,46 @@
   ctm$t0stationary <- list(means = means, block = as.integer(block),
     closure = closure)
   ctm
+}
+
+# The names of the latents among `which` that DRIFT's fixed cells keep from
+# ever settling: a block of them whose DRIFT rows are fixed and read only each
+# other, with an eigenvalue whose real part is not negative -- a trait held
+# constant, a random walk, or a clock such as ctModelPeriodicComponent()'s,
+# which has no stationary moments for anything it drives either, so the
+# engine's solve for them came out NaN with nothing said. A free cell in a
+# row could move the block, so only wholly fixed rows are judged.
+.ctNeverSettles <- function(ctm, which = seq_len(ctm$n.latent)) {
+  nl <- ctm$n.latent
+  p <- ctm$pars
+  drift <- p[p$matrix %in% 'DRIFT' & p$row <= nl & p$col <= nl, , drop = FALSE]
+  value <- suppressWarnings(as.numeric(drift$value))
+  fixed <- is.na(drift$param) & !is.na(value)
+  A <- matrix(0, nl, nl)
+  A[cbind(drift$row[fixed], drift$col[fixed])] <- value[fixed]
+  rowfixed <- vapply(seq_len(nl), function(i) any(drift$row == i) &&
+    all(fixed[drift$row == i]), logical(1))
+  block <- intersect(which, which(rowfixed))
+  repeat {
+    inside <- vapply(block, function(i) all(A[i, setdiff(seq_len(nl), block)] == 0), logical(1))
+    if (all(inside)) break
+    block <- block[inside]
+  }
+  out <- character()
+  while (length(block)) {
+    # One connected part of the block at a time.
+    part <- block[1L]
+    repeat {
+      grown <- block[colSums(A[part, block, drop = FALSE] != 0) > 0 |
+        rowSums(A[block, part, drop = FALSE] != 0) > 0 | block %in% part]
+      if (setequal(grown, part)) break
+      part <- grown
+    }
+    ev <- eigen(A[part, part, drop = FALSE], only.values = TRUE)$values
+    if (any(Re(ev) >= -1e-12)) out <- c(out, ctm$latentNames[sort(part)])
+    block <- setdiff(block, part)
+  }
+  out
 }
 
 # The latents whose stationary moments a model's 'stationary' cells need, one

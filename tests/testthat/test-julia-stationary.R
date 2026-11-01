@@ -135,7 +135,10 @@ test_that("stationary = TRUE is refused where there is no one distribution to st
   rows <- static$pars$matrix %in% "DRIFT" & static$pars$row == 2
   static$pars$param[rows] <- NA
   static$pars$value[rows] <- 0
-  expect_error(prep(static), "DRIFT is fixed at zero for b")
+  expect_error(prep(static), "leaves b without a stationary state")
+  # Nor does a clock, a fixed oscillation, which used to evaluate to NaN.
+  expect_error(prep(.stat_model(DRIFT = matrix(c(0, 1, -1, 0), 2, 2))),
+    "leaves a, b without a stationary state")
 
   # A single stationary element in a latent that depends on one that never
   # settles: a is driven by b, a random walk.
@@ -145,7 +148,7 @@ test_that("stationary = TRUE is refused where there is no one distribution to st
   walk$pars$value[rows] <- 0
   walk$pars$param[walk$pars$matrix %in% "T0MEANS" & walk$pars$row == 1] <- "stationary"
   expect_error(suppressMessages(ctFit(dat, walk, backend = "julia", fit = FALSE)),
-    "DRIFT is fixed at zero for b")
+    "leaves b without a stationary state")
 })
 
 # Single elements: T0MEANS and T0VAR cells named 'stationary', on the model
@@ -271,7 +274,7 @@ test_that("a 'stationary' element needs only its own latents to settle", {
   expect_equal(k$eta[1, 1, 1], -cint[1] / A[1, 1], tolerance = 1e-8)
   expect_equal(k$etacov[1, 1, 1, 1], Q[1, 1] / (-2 * A[1, 1]), tolerance = 1e-8)
   expect_error(suppressMessages(ctFit(dat, .stat_model(DRIFT = matrix(c("d11", 0, 0, 0),
-    2, 2)), backend = "julia", fit = FALSE, stationary = TRUE)), "DRIFT is fixed at zero")
+    2, 2)), backend = "julia", fit = FALSE, stationary = TRUE)), "without a stationary state")
 })
 
 test_that("'stationary' elements are refused where they name no stationary value", {
