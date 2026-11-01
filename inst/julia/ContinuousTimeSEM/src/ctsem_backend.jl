@@ -1700,17 +1700,78 @@ correction stage took 7 times as long on the bench, and a flat ridge 1300
 iterations (dev1, 2026-10-18). A later step on a model too stiff along it
 still predicts too little; the finish and the certification are what catch
 that, from an exact Hessian.
+
+`discrepancy` is what the last accepted step's value change missed the
+trapezoid of its end gradients by, `|f1 - f0 - (g0 + g1)'s / 2|`, exact for a
+quadratic, so on a smooth objective it shrinks as the cube of the step while
+the gain shrinks as the square; NaN where the step was on a coreset or batch.
+`recent` holds the last `_CTSEM_RESOLUTION_STEPS` of them from steps on the
+full objective, which `_ctsem_resolution` reads.
 """
 mutable struct CTSEMDirectional
     dphi0::Float64
+    discrepancy::Float64
+    recent::Vector{Float64}
 end
 
-CTSEMDirectional() = CTSEMDirectional(NaN)
+CTSEMDirectional() = CTSEMDirectional(NaN, NaN, Float64[])
 
 """The improvement the last accepted step was predicted to make, or `Inf`."""
 function _ctsem_predicted_gain(ls::CTSEMDirectional)
     isfinite(ls.dphi0) ? abs(ls.dphi0) / 2 : Inf
 end
+
+const _CTSEM_RESOLUTION_STEPS = 5
+
+"""
+    _ctsem_resolution_step!(ls, discrepancy, full)
+
+Records an accepted step's discrepancy (`CTSEMDirectional`), into the window
+`_ctsem_resolution` reads where the step was on the full objective.
+"""
+function _ctsem_resolution_step!(ls::CTSEMDirectional, discrepancy::Real, full::Bool)
+    ls.discrepancy = full ? Float64(discrepancy) : NaN
+    (full && isfinite(discrepancy)) || return ls
+    push!(ls.recent, Float64(discrepancy))
+    length(ls.recent) > _CTSEM_RESOLUTION_STEPS && popfirst!(ls.recent)
+    return ls
+end
+
+"""
+    _ctsem_resolution(ls)
+
+The smallest gain the objective has resolved lately: the least discrepancy
+over the last `_CTSEM_RESOLUTION_STEPS` steps on the full objective, 0 before
+there are that many. A gap rule asks L-BFGS's predicted gain to fall below
+`gap_tol`, and that is a smooth objective's to meet. An objective whose value
+moves with where its inner solves stop, or with a rule's nodes, disagrees with
+its own gradients by more than that, and below its disagreement the line
+search accepts and refuses steps on that alone: L-BFGS then walks at about
+the size of it, never under `gap_tol` and never failing a search, to the
+iteration cap. The affect pilot's Laplace objective resolves about 1e-7
+against the Laplace route's 1e-8. So the gap rule's tolerance is raised to
+this (`_ctsem_gap_floor`), and the finish, whose steps are on an exact
+Hessian, takes over where five steps in a row resolved no less than the gain
+L-BFGS still predicts. The least of five, so that a single step whose
+third-order terms were large does not raise it: those shrink as the steps
+do, faster than the gain.
+"""
+function _ctsem_resolution(ls::CTSEMDirectional)
+    length(ls.recent) < _CTSEM_RESOLUTION_STEPS && return 0.0
+    return minimum(ls.recent)
+end
+
+"""
+    _ctsem_gap_floor(gap_tol, ls, cap)
+
+The gap rule's tolerance: `gap_tol`, or what the objective resolves where that
+is more (`_ctsem_resolution`), up to `cap`, the cheap route's hand-over
+(`newton_switch`). A model predicting more than that is not yet in the
+quadratic region, where a long step's own third-order terms could disagree
+with its gradients.
+"""
+_ctsem_gap_floor(gap_tol::Real, ls::CTSEMDirectional, cap::Real) =
+    max(Float64(gap_tol), min(_ctsem_resolution(ls), Float64(cap)))
 
 """
 The per-objective pieces of the shared optimiser.
@@ -3064,9 +3125,10 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
     # The trace records every iteration whatever `verbose` says: it costs a
     # push onto a vector, and a fit that turns out to have gone somewhere odd
     # is exactly the one nobody thought to turn reporting on for.
-    # `predicted_gain` sits between the two fixed columns and the route's own,
+    # `predicted_gain` and `discrepancy` (`CTSEMDirectional`, NaN on the
+    # finish's steps) sit between the two fixed columns and the route's own,
     # so `_ctsem_optimise_trace_keys` keeps naming only what a route adds.
-    trace = CTSEMTrace(:objective, :gradient_norm, :predicted_gain,
+    trace = CTSEMTrace(:objective, :gradient_norm, :predicted_gain, :discrepancy,
         _ctsem_optimise_trace_keys(objective)[3:end]...)
     # `callback_every` is its cadence in seconds; a test sets 0 to hear every
     # iteration.
@@ -3126,7 +3188,7 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
         # After an accepted step, whose point the last evaluation was.
         _ctsem_anchor_here!(objective)
         _record!(trace, latest.iteration, -latest.value, latest.g_norm,
-            _ctsem_predicted_gain(directional),
+            _ctsem_predicted_gain(directional), directional.discrepancy,
             _ctsem_optimise_trace_values(objective)...)
         seen_iterations[] = max(seen_iterations[], Int(latest.iteration))
         percent = _convergence_percent!(convergence, latest.g_norm,
@@ -3187,7 +3249,7 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
         end
         if handover[] > 0
             predicted = _ctsem_predicted_gain(directional)
-            if predicted < gap_tol ||
+            if predicted < _ctsem_gap_floor(gap_tol, directional, newton_switch) ||
                     (predicted < handover[] && latest.iteration >= hessian_cost)
                 stopped_by_gap[] = true
                 return true
@@ -3392,7 +3454,7 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
     record = function (state)
         _ctsem_anchor_here!(objective)
         _record!(trace, state.iteration, -state.value, state.g_norm,
-            state.gain, _ctsem_optimise_trace_values(objective)...)
+            state.gain, NaN, _ctsem_optimise_trace_values(objective)...)
         seen_iterations[] = max(seen_iterations[], Int(state.iteration))
         percent = _convergence_percent!(convergence, state.g_norm, state.value,
             Int(state.iteration))
@@ -3990,9 +4052,12 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
         converge_tol=Float64(converge_tol),
         last_gain=_ctsem_last_gain(trace),
         # What the last step was predicted to gain, and the rule it was judged
-        # against. `Inf` when no line search ran, and `0` when the rule was off.
+        # against. `Inf` when no line search ran, and `0` when the rule was off;
+        # `gap_floor` is the tolerance it last applied (`_ctsem_gap_floor`).
         predicted_gain=_ctsem_predicted_gain(directional),
         gap_tol=Float64(gap_tol),
+        gap_floor=gap_tol > 0 ? _ctsem_gap_floor(gap_tol, directional, newton_switch) :
+            Float64(gap_tol),
         linesearch=linesearch,
         # See `ctsem_laplace_optimize`: a disjunction of the L-BFGS's flags
         # includes the x and f criteria, which a line search that stops making
