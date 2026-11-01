@@ -341,6 +341,23 @@ _fresh_placed_sign() = ctsem_laplace_objective(_PLACED_SIGN_OBJECTIVE, [1], [2],
     @test worst < 1e-8
 end
 
+@testset "a valley between two maxima is the segment's minimum" begin
+    C = ContinuousTimeSEM
+    # Read off the lowest of seven points, the valley was a minimum of seven
+    # smooth functions and bent where two crossed: as the minimum moves from
+    # 3/4 towards 7/8 the lowest point switches at 13/16, and a maximum's fade
+    # and share bent there (the affect pilot's certification stalled on one).
+    # Refined between the lowest point's neighbours, it is the segment's
+    # minimum wherever that lies.
+    for m in (0.70, 0.8124, 0.8126, 0.86)
+        h = t -> -1 + 3 * (t - m)^2 - (t - m)^3
+        lo, i0 = findmin([h(i / 8) for i in 1:7])
+        r = C._laplace_segment_min(h, (i0 - 1) / 8, i0 / 8, (i0 + 1) / 8, lo)
+        @test abs(r.t - m) < 1e-7
+        @test r.value ≈ -1 atol=1e-13
+    end
+end
+
 @testset "a unit with two maxima is scored by the better one's rule" begin
     C = ContinuousTimeSEM
     # Mirror images at a population mean of zero: the two rules are one rule

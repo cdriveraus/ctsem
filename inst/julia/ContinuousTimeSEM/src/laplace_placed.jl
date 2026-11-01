@@ -854,8 +854,8 @@ sum combines their Laplace terms but ranked by the rules' own integrals,
     Q = sum_k pi_k Q_k,   pi the shares `_laplace_mode_shares(f, Q)`,
 
 `Q_k` the unit's rule placed at maximum `k` (`_placed_one!`: its own centre,
-clipped curvature, set and guards) and `f_k` its fades in the curvature's
-smallest eigenvalue and in the valley's depth. Each `Q_k` estimates the unit's
+clipped curvature, set and guards) and `f_k` its fade in the curvature's
+eigenvalues and the valleys' depths. Each `Q_k` estimates the unit's
 whole integral, so their combination estimates it too, and no worse than the
 worst of them; no masses are summed, so a fit has no reason to grow maxima,
 the reason sums of masses failed (gD1 s7). A maximum's weight fades to zero
