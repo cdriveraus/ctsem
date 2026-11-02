@@ -50,6 +50,14 @@
 # numerically so nothing here needs to know the transform's shape. Everything
 # is clamped, and any cell that cannot be solved keeps the old default rather
 # than getting an invented value.
+#
+# And the start as a whole is kept only where the optimiser can start from it
+# (`.ctDataStartUsable()`). A start at the data's scale can be one the objective
+# cannot evaluate where the default start can: on GitHub #87's EMA model (33
+# people, 11 random effects) slower dynamics left some units' Laplace curvature
+# softer than the prior, the soft-direction quadrature's Newton step at one
+# node ran 18 prior sds out on an indefinite complement, and the objective was
+# NaN there. From the default start no unit took the quadrature.
 
 # Where an unsolvable or absurd answer gets cut off. The raw bound is well
 # inside the region where the standard transforms are well conditioned; the
@@ -155,6 +163,19 @@
     silent = TRUE)
   if (inherits(root, "try-error")) return(NA_real_)
   max(-bound, min(bound, root$root))
+}
+
+#' Whether the optimiser would take `start`: the engine's own rule for its
+#' first trial (`ctsem_start_usable`), on the objective it climbs. A check that
+#' cannot run says no, and the default start is used.
+#' @keywords internal
+.ctDataStartUsable <- function(model_spec, start, gradient, cores) {
+  spec <- structure(model_spec, class = c("ctJuliaModel", "ctFitModel"))
+  module <- .ctJuliaModule(model_spec$project)
+  ok <- try(.ctBackendWithMaxChunks(cores, module$ctsem_start_usable(
+    .ctJuliaObjective(spec, hybrid = TRUE), .ctJuliaNumericVector(start),
+    gradient_method = gradient)), silent = TRUE)
+  isTRUE(ok)
 }
 
 #' Starting values derived from the data, on the raw scale.

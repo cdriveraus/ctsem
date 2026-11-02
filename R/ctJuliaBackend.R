@@ -6661,9 +6661,21 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
       use <- is.finite(derived)
       # Exactly, not jittered: where the data decided the value, two runs of
       # the same fit should start in the same place.
-      start[use] <- derived[use]
-      if (verbose > 0) message("Starting values derived from the data for ",
-        sum(use), " of ", npar, " parameters.")
+      candidate <- start
+      candidate[use] <- derived[use]
+      # And only where the optimiser can start from it, which the default
+      # start may allow where a derived one does not (`.ctDataStartUsable()`).
+      # On the state-explicit target the objective is another, built below,
+      # and the start is taken as derived.
+      if (!isTRUE(intoverstates) ||
+          .ctDataStartUsable(model_spec, candidate, gradient, cores)) {
+        start <- candidate
+        if (verbose > 0) message("Starting values derived from the data for ",
+          sum(use), " of ", npar, " parameters.")
+      } else {
+        message("The objective cannot be evaluated at the starting values ",
+          "derived from the data; starting from the default values.")
+      }
     }
   }
   # The state-explicit target, when asked for: the same optimiser over a longer

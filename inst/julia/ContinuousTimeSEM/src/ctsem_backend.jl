@@ -1922,6 +1922,26 @@ function _ctsem_optimise_trial(o::CTSEMOptimisable, x, want_gradient::Bool,
 end
 
 """
+    ctsem_start_usable(objective, start; gradient_method=:adjoint)
+
+Whether `ctsem_optimize` would take `start`: its first trial, by the route's own
+rule (`_ctsem_optimise_trial`, with the gradient), from the state a run begins
+in (`_ctsem_optimise_setup!`). For a caller with a start of its own to try
+before a fallback: R's data-derived starting values are kept only where this
+holds.
+"""
+function ctsem_start_usable(objective::CTSEMOptimisable, start::AbstractVector;
+        gradient_method=:adjoint)
+    x = collect(Float64, start)
+    _ctsem_optimise_setup!(objective)
+    trial = _ctsem_optimise_trial(objective, x, true, Symbol(gradient_method),
+        sqrt(floatmax(Float64)), _ctsem_optimise_log(objective, false))
+    return trial.valid
+end
+
+export ctsem_start_usable
+
+"""
     CTSEMScoreStore(nunits, npar)
 
 The per-unit scores at the last point an optimiser evaluated with a gradient,
