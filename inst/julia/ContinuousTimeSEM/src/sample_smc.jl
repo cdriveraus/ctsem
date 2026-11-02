@@ -97,7 +97,16 @@ carry and what the targets above count; reported as the chains' own, a run
 on lin_re_aug whose correction kept 0.49 read 283 against a target of 200
 where its draws carried 138. A coreset that follows the cloud poorly
 makes the run slower, not its posterior different, which is what makes it
-safe to run by default: `coreset = false` is the oracle.
+safe to run by default: `coreset = false` is the oracle. Such a run can end
+at its draw budget short of the target, and says so. Counting the budget by
+what the draws carry, so that it carries on, was measured and did not pay
+(branch `smcbudget`, review/SAMPLING-dais-in-sample-2026-11-01.md):
+- bin_re's run whose correction kept 0.32 reached the target in 547 s, where
+  sampling without the coreset took 468;
+- lin_re_aug's run, every particle already a chain, doubled its chains'
+  length for a fifth more effective size;
+- runs that had met the target took the confirming batch the budget had
+  saved them.
 
 **Particles run in parallel** (`parallel = true`), laid out as any set of
 independent points is (`_each_point!`, parallel_points.jl): on the Laplace
