@@ -1705,6 +1705,9 @@
       as.numeric(result$final_kept_expected),
     final_correction_ess = if (is.null(result$final_correction_ess)) NULL else
       as.numeric(result$final_correction_ess),
+    # How often the final chains' coreset was chosen again from where they went.
+    final_rechosen = if (is.null(result$final_rechosen)) NULL else
+      as.integer(result$final_rechosen),
     particles_parallel = if (is.null(result$parallel)) NULL else as.character(result$parallel),
     # NUTS's chains on a coreset, per chain: its units (0 where the chain
     # sampled in full), the moved endpoints the full density tested and the
@@ -2080,8 +2083,10 @@ print.ctSampleDiagnostics <- function(x, ...) {
     if (length(sizes)) cat("  particles moved on a coreset of ",
       paste(unique(range(sizes)), collapse = "-"), " of ", x$nunits,
       " units; the final chains' correction to the full density kept ",
-      round(100 * x$final_correction_ess), "% of their effective size, ",
-      "and the sizes reported are after it\n", sep = "")
+      round(100 * x$final_correction_ess), "% of their effective size",
+      if (isTRUE(x$final_rechosen > 0)) paste0(" (its coreset chosen again ",
+        x$final_rechosen, " time(s))") else "",
+      ", and the sizes reported are after it\n", sep = "")
   }
   bound <- .ctSampleDivergentBound(x)
   cat("  divergent: ", x$divergent, " of ", total,

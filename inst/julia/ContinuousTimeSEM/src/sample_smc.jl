@@ -583,17 +583,22 @@ end
 
 """
 The final chains' log weights to the full density, a vector a chain
-(`lw`), each chain's base beside them (`base`); brought up to date by
-`_smc_final_weights!`."""
+(`lw`), each chain's base beside them (`base`); and, where they are kept for
+choosing the coreset again (`_smc_final_rechoice`), the units' terms at each
+chain's draws (`terms`, `nunits x` its draws so far) and their weighted total
+(`total`). Brought up to date by `_smc_final_weights!`."""
 struct _SMCFinalWeights
     base::Vector{Float64}
     lw::Vector{Vector{Float64}}
+    terms::Vector{Matrix{Float64}}
+    total::Vector{Vector{Float64}}
 end
 
-_SMCFinalWeights() = _SMCFinalWeights(Float64[], Vector{Float64}[])
+_SMCFinalWeights() = _SMCFinalWeights(Float64[], Vector{Float64}[], Matrix{Float64}[],
+    Vector{Float64}[])
 
 """
-    _smc_final_weights!(fw, objective, cs, owed, lp, Xf, start, chains)
+    _smc_final_weights!(fw, objective, cs, owed, lp, Xf, start, chains; terms=false)
 
 Bring `fw` up to date with every draw the final `chains` hold. Each chain's
 base is what the last stage's moves left owing at its start (`owed`, by
@@ -602,12 +607,14 @@ chain on the coreset reads its error at both ends; each draw adds the error
 where it sits. Draws already weighed are not evaluated again, so the share
 read on the first draws to size the chains costs nothing at the end. Without
 a final coreset, the base alone. A systematic resample by these weights
-returns the draws unweighted. Returns `fw`.
+returns the draws unweighted. With `terms`, the full density is evaluated
+through its units, which costs the same, and their terms are kept. Returns
+`fw`.
 """
 function _smc_final_weights!(fw::_SMCFinalWeights, objective, cs,
     owed::AbstractVector{Float64}, lp::AbstractVector{Float64},
     Xf::AbstractMatrix{Float64}, start::AbstractVector{Int},
-    chains::Vector{_ChainResult})
+    chains::Vector{_ChainResult}; terms::Bool=false)
     nold = length(fw.base)
     if length(chains) > nold
         idx = start[(nold + 1):length(chains)]
@@ -615,6 +622,8 @@ function _smc_final_weights!(fw::_SMCFinalWeights, objective, cs,
         for (i, k) in enumerate(idx)
             push!(fw.base, cs === nothing ? owed[k] : owed[k] - (lp[k] - lc0[i]))
             push!(fw.lw, Float64[])
+            push!(fw.terms, Matrix{Float64}(undef, 0, 0))
+            push!(fw.total, Float64[])
         end
     end
     pick = Tuple{Int,Int}[]
@@ -632,13 +641,96 @@ function _smc_final_weights!(fw::_SMCFinalWeights, objective, cs,
     for (j, (c, t)) in enumerate(pick)
         D[:, j] .= view(chains[c].draws, :, t)
     end
-    lpf = ctsem_evaluate_batch(objective, D)
+    unit = terms ? _smc_unit_terms(objective, D) : nothing
+    lpf = unit === nothing ? ctsem_evaluate_batch(objective, D) : unit.value
     lpk = _smc_coreset_values(objective, D, cs)
     for (j, (c, _)) in enumerate(pick)
         v = fw.base[c] + (lpf[j] - lpk[j])
         push!(fw.lw[c], isfinite(v) ? v : -Inf)
     end
+    if unit !== nothing
+        # A chain's draws are side by side in `pick`.
+        j = 1
+        while j <= length(pick)
+            c = pick[j][1]
+            e = j
+            while e < length(pick) && pick[e + 1][1] == c
+                e += 1
+            end
+            M = unit.terms[:, j:e]
+            fw.terms[c] = isempty(fw.terms[c]) ? M : hcat(fw.terms[c], M)
+            append!(fw.total[c], view(unit.total, j:e))
+            j = e + 1
+        end
+    end
     return fw
+end
+
+"""Times the final phase may choose its coreset again (`_smc_final_rechoice`)."""
+const _SMC_FINAL_RECHOICES = 2
+
+"""
+    _smc_final_rechoice(fw, cloud, owed, start, fit, inflate, progress, work, budget,
+        tau, cost, rng)
+
+Whether the final chains start again on another coreset, or on none. Their
+coreset was fitted to the posterior's cloud and priced with the inflation
+`inflate` the last stage's correction showed; the chains on it go where its
+error can be larger, and their weights show by how much: the share of
+effective size the draws' weights keep, net of what the last stage's moves
+left owing at each chain's start (`owed`). Where that is less than the price
+expected, the inflation it shows prices a choice by the same rule
+(`_smc_coreset_fit`) on the cloud's terms (`cloud`) and on the chains' draws,
+one every `tau` draws back from each chain's last, so that the choice is made
+where the chains went: another coreset, or none where none is cheaper. The
+chains start again from the particles where that is expected to cost less to
+the targets, of which the chains so far have reached `progress`:
+`p_new < (1 - progress) p_now`, each an effective draw's price
+(`_smc_draw_price`), `p_now` at the share their weights kept. `work` is a
+transition's gradients in full values.
+
+Returns `(restart, fit, expected, inflate, kept, record)`: the choice where
+the chains start again (`nothing` for the full density), the share its price
+expects them to keep and the inflation it was priced with; `record` what was
+compared, for the result.
+"""
+function _smc_final_rechoice(fw::_SMCFinalWeights, cloud, owed::AbstractVector{Float64},
+    start::AbstractVector{Int}, fit, inflate::Real, progress::Real, work::Real,
+    budget::Real, tau::Real, cost::AbstractVector{Float64}, rng::AbstractRNG)
+    none = (restart=false, fit=fit, expected=NaN, inflate=Float64(inflate), kept=NaN,
+        record=nothing)
+    lw = Float64[]
+    for c in eachindex(fw.lw)
+        append!(lw, fw.lw[c] .- owed[start[c]])
+    end
+    kept = _smc_kept(lw)
+    s2 = -log(max(kept, 1e-300))
+    priced = 2 * Float64(inflate) * fit.error^2
+    s2 > priced || return merge(none, (kept=kept,))
+    shown = clamp(s2 / max(2 * fit.error^2, eps()), 1.0, 1e12)
+    h = max(1, ceil(Int, tau))
+    T = Matrix{Float64}[cloud.terms]
+    b = Vector{Float64}[cloud.total]
+    for c in eachindex(fw.terms)
+        n = size(fw.terms[c], 2)
+        n > 0 || continue
+        cols = n:-h:1
+        push!(T, fw.terms[c][:, cols])
+        push!(b, fw.total[c][cols])
+    end
+    price = _SMCPrice(Float64(work), 1.0, Float64(budget), shown, true)
+    refit = _smc_coreset_fit(reduce(hcat, T), reduce(vcat, b), cost, price,
+        _smc_full_price(price), rng)
+    p_now = _smc_draw_price(fit.share, sqrt(s2), work)
+    p_new = refit === nothing ? _smc_full_price(price) : refit.price
+    same = refit !== nothing && sort(refit.units) == sort(fit.units)
+    restart = !same && p_new < (1 - clamp(progress, 0.0, 1.0)) * p_now
+    record = (chains=length(fw.lw), kept=kept, kept_expected=exp(-priced), inflate=shown,
+        progress=Float64(progress), price_now=p_now, price_new=p_new,
+        units_new=refit === nothing ? 0 : length(refit.units), restart=restart)
+    restart || return merge(none, (kept=kept, record=record))
+    return (restart=true, fit=refit, expected=refit === nothing ? 1.0 :
+        exp(-2 * shown * refit.error^2), inflate=shown, kept=kept, record=record)
 end
 
 """The share of the draws' effective size that log weights `lw` keep."""
@@ -934,7 +1026,12 @@ function ctsem_sample_smc(objective, values::AbstractVector;
         final_fit = _smc_coreset_fit(full.terms, full.total, unit_cost, price,
             _smc_full_price(price), fit_rng)
     end
-    cs_final = final_fit === nothing ? nothing : CTSEMCoreset(final_fit.units, final_fit.weights)
+    # The chains' coreset, held in a Ref because it can be chosen again
+    # (`_smc_final_rechoice`) and the chains' closures read it.
+    csref = Ref{Union{Nothing,CTSEMCoreset}}(final_fit === nothing ? nothing :
+        CTSEMCoreset(final_fit.units, final_fit.weights))
+    rechoices = Ref(0)
+    final_inflate = inflate
     # The share of the chains' effective size the correction to the full
     # density is expected to keep, which the targets are divided by until the
     # first chains' draws show it: the chains' diagnostics are their own,
@@ -955,9 +1052,11 @@ function ctsem_sample_smc(objective, values::AbstractVector;
         off = length(start)
         res = Vector{_ChainResult}(undef, length(ks))
         from = copy(ks)
-        _each_point!(objective, length(ks), mode; coreset=cs_final,
+        cs = csref[]
+        again = rechoices[]
+        _each_point!(objective, length(ks), mode; coreset=cs,
             scratch=nuts_scratch) do i, obj, s
-            ld = _smc_logdensity(obj, cs_final, gradient_method)
+            ld = _smc_logdensity(obj, cs, gradient_method)
             k = ks[i]
             logp = ld(s.g, Xf[:, k])
             if !isfinite(logp)
@@ -967,8 +1066,10 @@ function ctsem_sample_smc(objective, values::AbstractVector;
                 logp = ld(s.g, Xf[:, k])
             end
             from[i] = k
-            res[i] = _continue_chain(ld, s.ws,
-                Random.Xoshiro(hash((UInt64(seed), 0, off + i))), Xf[:, k], s.g, logp,
+            # Chains started again on another coreset draw streams of their own.
+            stream = again == 0 ? hash((UInt64(seed), 0, off + i)) :
+                hash((UInt64(seed), 0, again, off + i))
+            res[i] = _continue_chain(ld, s.ws, Random.Xoshiro(stream), Xf[:, k], s.g, logp,
                 final_step, final_metric, nfirst, mdepth, mdelta)
             return nothing
         end
@@ -980,14 +1081,19 @@ function ctsem_sample_smc(objective, values::AbstractVector;
     # coreset, the share of effective size they keep is read off the chains so
     # far and replaces the price's expectation in the targets, so that the
     # chains are counted for it before any is lengthened: more chains from
-    # unused particles buy more effective draws than longer ones do.
+    # unused particles buy more effective draws than longer ones do. Where
+    # they keep less than the coreset's price expected, the coreset may be
+    # chosen again from where the chains went, and the chains start again on
+    # it or on the full density (`_smc_final_rechoice`).
     fw = _SMCFinalWeights()
     planned = expected_kept
     start_chains!(order[1:_smc_final_chains(tau, target_ess, nfirst, np)])
-    while target_ess > 0 && length(start) < np
+    while target_ess > 0
         n = length(start)
-        if cs_final !== nothing
-            _smc_final_weights!(fw, objective, cs_final, owed_f, lp_f, Xf, start, held[])
+        cs = csref[]
+        if cs !== nothing
+            _smc_final_weights!(fw, objective, cs, owed_f, lp_f, Xf, start, held[];
+                terms=rechoices[] < _SMC_FINAL_RECHOICES)
             planned = max(_smc_kept(reduce(vcat, fw.lw)), 0.01)
             fmin_ess = Float64(min_ess) / planned
             fmean_ess = Float64(mean_ess) / planned
@@ -995,17 +1101,55 @@ function ctsem_sample_smc(objective, values::AbstractVector;
         v = _sample_verdict(_pool_draws(held[], npar), fill(nfirst, n), nfirst, nfirst,
             fmin_ess, fmean_ess, nfirst, Float64(rhat_target), false)
         v.met && break
+        if cs !== nothing && rechoices[] < _SMC_FINAL_RECHOICES
+            progress = min(fmin_ess > 0 ? v.worst / fmin_ess : 1.0,
+                fmean_ess > 0 ? v.average / fmean_ess : 1.0)
+            re = _smc_final_rechoice(fw, full, owed_f, start, final_fit, final_inflate,
+                progress, leap * gvalues, vbudget, tau, unit_cost, fit_rng)
+            if re.record !== nothing
+                r = re.record
+                verbose && println(_console(), "  ", r.chains, " chains: their coreset kept ",
+                    round(Int, 100 * r.kept), "% of their effective size against ",
+                    round(Int, 100 * r.kept_expected), "% expected; chosen again, ",
+                    r.units_new == 0 ? "none" : "$(r.units_new) units", ", at ",
+                    @sprintf("%.3g", r.price_new), " full values an effective draw against ",
+                    @sprintf("%.3g", r.price_now), " with ", round(Int, 100 * r.progress),
+                    "% of the target reached: ",
+                    r.restart ? "the chains start again" : "they carry on")
+            end
+            if re.restart
+                rechoices[] += 1
+                final_fit = re.fit
+                final_inflate = re.inflate
+                csref[] = re.fit === nothing ? nothing :
+                    CTSEMCoreset(re.fit.units, re.fit.weights)
+                expected_kept = re.expected
+                planned = expected_kept
+                fmin_ess = Float64(min_ess) / expected_kept
+                fmean_ess = Float64(mean_ess) / expected_kept
+                shortfall = max(fmin_ess / max(v.worst, 1.0), fmean_ess / max(v.average, 1.0))
+                empty!(start)
+                held[] = _ChainResult[]
+                fw = _SMCFinalWeights()
+                start_chains!(order[1:clamp(ceil(Int, 1.25 * shortfall * n),
+                    min(np, _SMC_FINAL_MIN_CHAINS), np)])
+                continue
+            end
+        end
+        n >= np && break
         shortfall = max(fmin_ess / max(v.worst, 1.0), fmean_ess / max(v.average, 1.0))
         start_chains!(order[(n + 1):min(np, max(n + 1, ceil(Int, 1.25 * shortfall * n)))])
     end
+    cs_final = csref[]
     nch = length(start)
     max_final = cld(max(Int(max_draws), nfirst) * np, nch)
     extend! = function (wanted, attempt)
         previous = held[]
         more = Vector{_ChainResult}(undef, length(previous))
-        _each_point!(objective, length(previous), mode; coreset=cs_final,
+        cs = csref[]
+        _each_point!(objective, length(previous), mode; coreset=cs,
             scratch=nuts_scratch) do i, obj, s
-            ld = _smc_logdensity(obj, cs_final, gradient_method)
+            ld = _smc_logdensity(obj, cs, gradient_method)
             more[i] = _run_chain(ld, previous[i].x, previous[i].metric,
                 Random.Xoshiro(UInt64(seed + 1000 * attempt) + UInt64(i)),
                 0, wanted, mdepth, 0.8, mdelta, 0.0, false, nothing;
@@ -1069,7 +1213,7 @@ function ctsem_sample_smc(objective, values::AbstractVector;
             depth = depth[idx]
             energy = energy[idx]
         end
-        final_correction < 0.5 * expected_kept && @warn "the final chains' coreset kept $(round(100 * final_correction; digits=0))% of the draws' effective size after the correction to the full density, against $(round(100 * expected_kept; digits=0))% expected; coreset = false would give more"
+        cs_final !== nothing && final_correction < 0.5 * expected_kept && @warn "the final chains' coreset kept $(round(100 * final_correction; digits=0))% of the draws' effective size after the correction to the full density, against $(round(100 * expected_kept; digits=0))% expected; coreset = false would give more"
     end
     corrected_pool = (draws=draws, accept=accept, divergent=divergent, bound=bound,
         depth=depth, energy=energy)
@@ -1098,6 +1242,7 @@ function ctsem_sample_smc(objective, values::AbstractVector;
         final_coreset_error=final_fit === nothing ? NaN : final_fit.error,
         final_kept_expected=expected_kept,
         final_correction_ess=final_correction,
+        final_rechosen=rechoices[],
         parallel=String(mode),
     ))
 end
