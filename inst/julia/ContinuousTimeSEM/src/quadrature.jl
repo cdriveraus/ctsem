@@ -969,6 +969,8 @@ In the eigenbasis `M = V Lambda V'` at the mode:
 each with the node's own conditional curvature, and takes the conditional
 logdet from the last curvature evaluated: `k` gradients, `k` curvatures and one
 value per node. `k = 1` at 3 nodes is the cheap rule of the third addendum.
+Steps that end below the node's own value are taken back as the production
+nodes take them back (`_laplace_soft_node_stepped`).
 The middle node of an odd rule sits at the mode and costs nothing.
 
 `nodes = 1`, `ndirs = 0`, `tau = 1` is `g(uhat) - sum log max(lambda, 1) / 2`:
@@ -1011,14 +1013,19 @@ function _laplace_soft_rule_unit(laplace::CTSEMLaplaceObjective,
             lam = nodefloor.(E.values[stiff])
             maximum(abs, ubase .- uhat) < 1e-12 &&
                 return gof(uhat).value - sum(log, lam; init=0.0) / 2
-            for _ in 1:Int(newton_steps)
+            h0 = NaN
+            for k in 1:Int(newton_steps)
                 r = gof(ubase .+ Vh * z)
+                k == 1 && (h0 = r.value)
                 ez = _ctsem_symeig(transpose(Vh) * Mof(ubase .+ Vh * z) * Vh)
                 lam = nodefloor.(ez.values)
                 z .+= ez.vectors * ((transpose(ez.vectors) *
                     (transpose(Vh) * r.gradient)) ./ lam)
             end
-            return gof(ubase .+ Vh * z).value - sum(log, lam; init=0.0) / 2
+            # Steps that lose, against the node's own value, are taken back as
+            # the production nodes take them back.
+            return _laplace_soft_node_stepped(h0, gof(ubase .+ Vh * z).value) -
+                sum(log, lam; init=0.0) / 2
         end
         if recenter
             for _ in 1:50

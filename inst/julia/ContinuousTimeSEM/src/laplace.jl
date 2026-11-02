@@ -6073,6 +6073,56 @@ function _laplace_soft_node_floored_curvature(B::AbstractMatrix{T}) where {T}
     return V * C * transpose(V)
 end
 
+"""
+The most a soft-direction node's Newton step is allowed to lose, in nats.
+At a node off the mode the rule takes one Newton step on the complement's
+floored curvature towards its conditional mode
+(`_laplace_soft_quadrature_term`). Where that curvature is indefinite, the floor
+makes the step long, and it can land far below the node or where the filter
+cannot be evaluated. The conditional maximum is at least the node's own value,
+so a step that loses is taken back: the node's value after it is
+`_laplace_soft_node_stepped`.
+
+At GitHub #87's data start the complement of one unit's node had eigenvalues
+-5.91 and -1.06. Its step was 17.9 prior sds long and reached effects 14.6
+prior sds out, where the filter was NaN, so the objective could not be
+evaluated there. Every shorter step lost too: 33 nats at length one. Other
+units' steps, 35 to 529 sds long, lost hundreds of nats to millions
+(`CT-SEM/scripts/gh87/soft_node_probe.jl`).
+"""
+const _LAPLACE_SOFT_NODE_STEP_LOSS = 0.5
+
+"""
+    _laplace_soft_node_stepped(h0, hs)
+
+A soft-direction node's value after its Newton step: `hs`, the value at the
+stepped point, where the step gains or loses nothing; `h0 - c`, the node's own
+value `h0` less the step's allowed loss `c` (`_LAPLACE_SOFT_NODE_STEP_LOSS`),
+where it loses `2c` or more, or where `hs` is not finite; C2 between. Written as
+`hs - c t^3 (2 + t)`, with `t` the loss over `2c`, so a step that does not lose
+returns `hs` itself. That keeps every unit whose steps do not lose on the rule
+it was on, to the last bit.
+"""
+@inline function _laplace_soft_node_stepped(h0, hs)
+    c = _LAPLACE_SOFT_NODE_STEP_LOSS
+    isfinite(_laplace_deepvalue(hs)) || return h0 - c
+    t = (hs - h0) / (2 * c)
+    tv = _laplace_deepvalue(t)
+    tv >= 0 && return hs
+    tv <= -1 && return h0 - c
+    return hs - c * t^3 * (2 + t)
+end
+
+"""`_laplace_soft_node_stepped`'s slope in `hs`: the share of the stepped
+point's derivative in the node's value. The node's own point takes the rest."""
+@inline function _laplace_soft_node_stepped_slope(h0::Float64, hs::Float64)
+    isfinite(hs) || return 0.0
+    t = (hs - h0) / (2 * _LAPLACE_SOFT_NODE_STEP_LOSS)
+    t >= 0 && return 1.0
+    t <= -1 && return 0.0
+    return 1 - t^2 * (3 + 2 * t)
+end
+
 @inline function _laplace_smoothstep_weight(lambda, lo::Real, hi::Real)
     lp = _laplace_deepvalue(lambda)
     lp <= lo && return one(lambda)
@@ -6206,7 +6256,8 @@ function _laplace_soft_quadrature_term(laplace::CTSEMLaplaceObjective, U::Intege
             F = _ctsem_cholesky(Matrix(_laplace_symmetrise(Bc)), d - 1)
             issuccess(F) || return (value=T(NaN), flagged=true, logdet_floor=false)
             z = F \ (transpose(Vh) * r.gradient)
-            h = objf(ub .+ Vh * z).value - logdet(F) / 2
+            h = _laplace_soft_node_stepped(r.value, objf(ub .+ Vh * z).value) -
+                logdet(F) / 2
         end
         terms[j] = h + log(ws[j]) + x^2
     end
@@ -6479,7 +6530,8 @@ function _laplace_soft_quadrature_factored(laplace::CTSEMLaplaceObjective,
             beta = dot(v1, q)
             y = _soft_solve(Fb, blocks, r.gradient)
             zz = ub .+ y .- q .* (dot(v1, y) / beta)
-            Float64(objf(zz).value) - (Fb.logdet + log(beta)) / 2
+            _laplace_soft_node_stepped(Float64(r.value), Float64(objf(zz).value)) -
+                (Fb.logdet + log(beta)) / 2
         end
         terms[j] = h + log(ws[j]) + x^2
     end

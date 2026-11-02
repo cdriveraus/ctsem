@@ -463,6 +463,134 @@ end
     @test norm(seeded.gradient - reference) / norm(reference) < 1e-5
 end
 
+@testset "a soft-direction node's Newton step that loses is taken back" begin
+    C = ContinuousTimeSEM
+    stepped, slope = C._laplace_soft_node_stepped, C._laplace_soft_node_stepped_slope
+    c = C._LAPLACE_SOFT_NODE_STEP_LOSS
+    h0 = -213.25
+    # A step that gains or loses nothing is the stepped value itself, bit for bit.
+    for hs in (h0, h0 + 1e-14, h0 + 3.0)
+        @test stepped(h0, hs) === hs
+        @test slope(h0, hs) == 1.0
+    end
+    # One that loses 2c or more, or lands where nothing can be evaluated, is the
+    # node's own value less c, and reads nothing at the stepped point.
+    for hs in (h0 - 2c, h0 - 40.0, NaN, -Inf)
+        @test stepped(h0, hs) == h0 - c
+        @test slope(h0, hs) == 0.0
+    end
+    # Between, monotone in the stepped value, never below either end, C2 at both
+    # joins, and its slope is its derivative.
+    grid = range(h0 - 2c, h0; length=201)
+    vals = [stepped(h0, hs) for hs in grid]
+    @test all(diff(vals) .>= 0)
+    @test all(v -> h0 - c <= v <= h0, vals)
+    for hs in grid[2:end-1]
+        @test isapprox(ForwardDiff.derivative(x -> stepped(h0, x), hs), slope(h0, hs);
+            rtol=1e-12, atol=1e-14)
+    end
+    e = 1e-6
+    for join in (h0 - 2c, h0)
+        @test isapprox(stepped(h0, join - e), stepped(h0, join + e) - (slope(h0, join) * 2e);
+            atol=1e-10)
+        @test isapprox(slope(h0, join - e), slope(h0, join + e); atol=1e-10)
+        second = x -> ForwardDiff.derivative(
+            y -> ForwardDiff.derivative(z -> stepped(h0, z), y), x)
+        @test abs(second(join - e)) < 1e-4 && abs(second(join + e)) < 1e-4
+    end
+end
+
+@testset "a unit whose node's step loses: value, gradient, and a step that cannot be evaluated" begin
+    C = ContinuousTimeSEM
+    # On the nonlinear fixture at this point unit 2's node at +1.732 steps 2.4
+    # prior sds and loses 0.42 nats, inside the guard's blend, where both the
+    # stepped point and the node's own point carry the node's value. Each unit
+    # takes its best maximum alone: at points like this the mode sum's shares
+    # between maxima carry most of the gradient, and they are tested elsewhere.
+    lo, hi = 1.0, 1.2
+    point = [1.0, -3.0, -1.0, 0.05, -0.5, 2.0, 0.0]
+    make = function ()
+        laplace, _ = _fresh_nonlinear_two()
+        ctsem_set_soft_directions!(laplace, :quadrature; lo=lo, hi=hi)
+        return laplace
+    end
+    modesum = ctsem_set_mode_sum!(false)
+    try
+    laplace = make()
+    seeded = ctsem_laplace_evaluate(laplace, point; gradient=true)
+    theta = C._laplace_extend(laplace, copy(point))
+    # Each node's loss over 2c, its step taken as the dense rule takes it.
+    losses = Tuple{Int,Float64}[]
+    for U in eachindex(laplace.modes)
+        st = C._laplace_soft_quadrature_setup(laplace, U, theta, laplace.modes[U])
+        st === nothing && continue
+        E = eigen(Symmetric(st.curvf(st.z0)))
+        E.values[1] < hi || continue
+        v1, Vh = E.vectors[:, 1], E.vectors[:, 2:end]
+        for x in (-sqrt(1.5), sqrt(1.5))
+            ub = st.z0 .+ (sqrt(2) * x / sqrt(max(E.values[1], 1.0))) .* v1
+            r = st.objf(ub)
+            Bc = C._laplace_soft_node_floored_curvature(transpose(Vh) * st.curvf(ub) * Vh)
+            step = Matrix(C._laplace_symmetrise(Bc)) \ (transpose(Vh) * r.gradient)
+            push!(losses, (U, (st.objf(ub .+ Vh * step).value - r.value) /
+                (2 * C._LAPLACE_SOFT_NODE_STEP_LOSS)))
+        end
+    end
+    blended = [U for (U, t) in losses if -1 < t < -0.05]
+    @test !isempty(blended)
+    # The value against the Float64 reference at the same modes, which takes its
+    # steps back alike.
+    prototype = sum(C._laplace_soft_quadrature_unit_reference(laplace, point, U; lo=lo,
+        hi=hi, nodes=3, newton_steps=1).value for U in eachindex(laplace.units.members))
+    @test isapprox(seeded.value, prototype; rtol=1e-10)
+    # The gradient against forward mode over the rule and against differences.
+    nested = ctsem_laplace_evaluate(make(), point; gradient=true, nested_gradient=true)
+    @test isapprox(seeded.gradient, nested.gradient; rtol=1e-8, atol=1e-10)
+    reference = _value_finite_difference(make(), point; step=1e-6)
+    @test norm(seeded.gradient - reference) / norm(reference) < 1e-6
+    # The dense rule everywhere gives the same value and gradient.
+    previous = ctsem_set_soft_quadrature_factored!(false)
+    dense = try
+        ctsem_laplace_evaluate(make(), point; gradient=true)
+    finally
+        ctsem_set_soft_quadrature_factored!(previous)
+    end
+    @test isapprox(seeded.value, dense.value; rtol=1e-11)
+    @test isapprox(seeded.gradient, dense.gradient; rtol=1e-8, atol=1e-10)
+    # A stepped point that cannot be evaluated is a step that lost everything:
+    # the term and its gradient are those of a step that lost a million nats,
+    # and the reverse pass reads no stepped point.
+    U = first(blended)
+    Ls = C._laplace_popchols(theta, laplace.spec)
+    aws = C._laplace_workspace!(laplace, Float64, length(theta))
+    st = C._laplace_soft_quadrature_setup(laplace, U, theta, laplace.modes[U])
+    far = 1.01 * sqrt(3) / sqrt(max(eigmin(Symmetric(st.curvf(st.z0))), 1.0))
+    beyond = (shift) -> (z -> begin
+        r = st.objf(z)
+        norm(z .- st.z0) > far ? merge(r, (value=shift(r.value),)) : r
+    end)
+    unevaluable, lost = beyond(v -> NaN), beyond(v -> v - 1e6)
+    term = f -> C._laplace_soft_quadrature_term(laplace, U, theta, Ls, st.z0, aws;
+        objective=f, curvature=st.curvb, blocks=st.blocks).value
+    @test isfinite(term(unevaluable))
+    @test term(unevaluable) == term(lost)
+    @test term(unevaluable) != term(st.objf)
+    reverse = f -> C._laplace_soft_quadrature_reverse(laplace, st.z0, f, st.curvf, st.G,
+        length(theta))
+    @test reverse(unevaluable) !== nothing
+    @test reverse(unevaluable) == reverse(lost)
+    # By factorizations too, where the nodes' floor lets it serve.
+    factored = f -> C._laplace_soft_quadrature_reverse_factored(laplace, st.z0, f,
+        st.curvb, st.blocks, st.G, length(theta))
+    if factored(lost) !== nothing
+        @test factored(unevaluable) == factored(lost)
+        @test isapprox(factored(lost), reverse(lost); rtol=1e-8, atol=1e-10)
+    end
+    finally
+        ctsem_set_mode_sum!(modesum)
+    end
+end
+
 # The fixtures of the two testsets above, the rule set to flag units.
 function _soft_factored_cases()
     one_block = function ()
