@@ -1296,6 +1296,25 @@ test_that("checked's pairs measure the widths it does not sample", {
   expect_equal(out$cov[, ], truth, tolerance = 1e-6)
 })
 
+test_that("a parameter whose pairs underflow changes no width", {
+  # Pairs that move two parameters, and a gradient that underflows along a
+  # third at one draw: the even parts' rows then lie in the span before them
+  # but for a subnormal, which stopped a fit inside the QR here.
+  set.seed(3)
+  k <- 8; n <- 16
+  Z <- matrix(rnorm(n * k), n)
+  odd <- Z %*% diag(c(0.3, 0.2, numeric(k - 2)))
+  even <- matrix(0, n, k)
+  even[, 1:2] <- rnorm(2 * n) * 0.1
+  plain <- ctsem:::.ctNormalSpread(Z, odd + even, -odd + even)
+  tiny <- matrix(0, n, k)
+  tiny[1, 5] <- 1e-315
+  under <- ctsem:::.ctNormalSpread(Z, odd + even + tiny, -odd + even + tiny)
+  expect_equal(length(plain$widths), 2L)
+  expect_equal(under$widths, plain$widths, tolerance = 1e-10)
+  expect_equal(abs(crossprod(under$directions, plain$directions)), diag(2), tolerance = 1e-8)
+})
+
 test_that("importance sampling goes on where its caller's check asks it to", {
   skip_if_not_installed('mvtnorm'); skip_if_not_installed('diagis')
   skip_if_not_installed('gridExtra'); skip_if_not_installed('ggplot2')

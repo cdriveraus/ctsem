@@ -2465,8 +2465,14 @@ ctOptimFullBootstrapDraws <- function(est, standata, sm, n=1000, cores=1,
   Er <- E[sqrt(rowSums(E^2)) > 1e-8 * scale, , drop = FALSE]
   basis <- cbind(V, t(Er))
   if (!ncol(basis)) return(NULL)
-  qb <- qr(basis)
-  U <- qr.Q(qb)[, seq_len(qb$rank), drop = FALSE]
+  # An orthonormal basis of their span, by SVD with each column at a largest
+  # entry of one, so no column's scale decides the rank. Not by qr(): a
+  # column in the span of those before it but for a subnormal entry -- a
+  # gradient underflowing at a draw far out along a flat direction -- leaves
+  # LINPACK's QR an infinite column past its rank, which qr.Q() refuses, and
+  # that stopped a fit after its optimisation.
+  sb <- svd(sweep(basis, 2, apply(abs(basis), 2, max), "/"), nv = 0L)
+  U <- sb$u[, sb$d > 1e-7 * sb$d[1L], drop = FALSE]
   # (I - B)^-1 - I along V, and 2 C, in the basis U.
   VU <- crossprod(U, V)
   M <- VU %*% (t(VU) * (1 / (1 - slope) - 1)) +
