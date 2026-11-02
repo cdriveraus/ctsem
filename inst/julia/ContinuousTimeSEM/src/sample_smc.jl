@@ -83,11 +83,14 @@ is the check: the error a stage's correction shows, against what its fit
 expected, sizes the next coreset (`inflate`); a coreset whose error alone
 drops it under the stage's target costs a stage that moves `beta` by nothing
 and only corrects; two such stages in a row and the run goes on without a
-coreset. The final phase's chains run on a coreset fitted to the posterior's
+coreset. The stage at `beta = 1` is followed by one too where its own moves'
+correction spends its effective size, since the final chains would carry it.
+The final phase's chains run on a coreset fitted to the posterior's
 cloud, priced per effective draw (`_smc_draw_price`), and run until the
 targets divided by the share of effective size the correction keeps -- the
-price's expectation for the first chains, then what their draws show, so that
-the chains are counted for it before any is lengthened;
+price's expectation and what the last moves left owing for the first chains,
+then what their draws show, so that the chains are counted for it before any
+is lengthened;
 the same reversal makes draw `k` of a chain that started at `x0` carry
 `(pi / c)(x_k) / (pi / c)(x0)`, times whatever the last stage's moves left
 owing at `x0`, and the draws are resampled by those weights
@@ -98,15 +101,15 @@ on lin_re_aug whose correction kept 0.49 read 283 against a target of 200
 where its draws carried 138. A coreset that follows the cloud poorly
 makes the run slower, not its posterior different, which is what makes it
 safe to run by default: `coreset = false` is the oracle. Such a run can end
-at its draw budget short of the target, and says so. Counting the budget by
-what the draws carry, so that it carries on, was measured and did not pay
-(branch `smcbudget`, review/SAMPLING-dais-in-sample-2026-11-01.md):
-- bin_re's run whose correction kept 0.32 reached the target in 547 s, where
-  sampling without the coreset took 468;
-- lin_re_aug's run, every particle already a chain, doubled its chains'
-  length for a fifth more effective size;
-- runs that had met the target took the confirming batch the budget had
-  saved them.
+at its draw budget short of the target, and says so. The short runs measured
+(review/SAMPLING-dais-in-sample-2026-11-01.md) were not that: their final
+coreset kept 0.98-1.00 of the draws, and the weights the last stage's moves
+left kept 0.36 and 0.49, which the correction stage above now takes. Two
+remedies aimed at the coreset were measured on them first and did not pay:
+counting the budget by what the draws carry, so that the run carries on
+(branch `smcbudget`: bin_re's run reached the target in 547 s where sampling
+without the coreset took 468), and choosing the coreset again from the
+chains' draws (juliaFit 4cf8d509, reverted: it never had cause to).
 
 **Particles run in parallel** (`parallel = true`), laid out as any set of
 independent points is (`_each_point!`, parallel_points.jl): on the Laplace
@@ -913,7 +916,13 @@ function ctsem_sample_smc(objective, values::AbstractVector;
             _smc_mean(filter(isfinite, lp)), sum(ndiv); force=beta >= 1.0)
         # The next stage's step, and the final phase's after the last.
         step = _smc_next_step(step, sum(acc) / nok, tacc)
-        beta >= 1.0 && break
+        # At the posterior the particles become the final chains' starts, and
+        # every draw of a chain carries what these moves left owing at its
+        # start. Where that alone spends the stage's effective size, a
+        # correction stage comes first, as it would before any other stage:
+        # left to the final phase, it kept 0.36 of bin_re's draws and 0.49 of
+        # lin_re_aug's at a seed each, which ended short of the target.
+        beta >= 1.0 && _importance_ess(owed) >= target && break
     end
     _progress_done(reporter, "$(length(stages)) stages")
     beta >= 1.0 || @warn "tempered SMC did not reach the posterior in $(maxstages) stages; the draws are from beta = $(beta)"
@@ -938,8 +947,10 @@ function ctsem_sample_smc(objective, values::AbstractVector;
     # The share of the chains' effective size the correction to the full
     # density is expected to keep, which the targets are divided by until the
     # first chains' draws show it: the chains' diagnostics are their own,
-    # before it.
-    expected_kept = final_fit === nothing ? 1.0 : exp(-2 * inflate * final_fit.error^2)
+    # before it. What the last moves left owing is known already, and the
+    # coreset's error is the price's expectation.
+    expected_kept = max(_smc_kept(owed), 0.01) *
+        (final_fit === nothing ? 1.0 : exp(-2 * inflate * final_fit.error^2))
     fmin_ess = Float64(min_ess) / expected_kept
     fmean_ess = Float64(mean_ess) / expected_kept
     target_ess = max(fmin_ess, fmean_ess)
