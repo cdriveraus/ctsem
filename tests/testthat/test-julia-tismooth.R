@@ -93,6 +93,17 @@ test_that("the Fellner-Schall update reaches the REML smoothing parameter", {
   info2[cbind(pen, pen)] <- info2[cbind(pen, pen)] + gfs$lambda
   expect_equal(gfs$point, as.numeric(solve(info2, crossprod(C, y))),
     tolerance = 1e-8)
+  # With a parameter the data say nothing about, the information is singular,
+  # as a large fit's is along its flat directions: the update reads the
+  # directions with curvature and reaches the same smoothing parameter, and the
+  # point stays put along the one without. `solve()` stopped the affect
+  # pilot's fit there after an 11-hour optimisation.
+  flat <- matrix(0, ncol(C) + 1, ncol(C) + 1)
+  flat[seq_len(ncol(C)), seq_len(ncol(C))] <- info
+  again <- ctsem:::.ctTIsmoothLambda(penalty, -flat, c(theta, 0.3), c(gradient, 0))
+  expect_equal(again$lambda, gfs$lambda, tolerance = 1e-8)
+  expect_equal(again$edf, gfs$edf, tolerance = 1e-8)
+  expect_equal(again$point, c(gfs$point, 0.3), tolerance = 1e-8)
 })
 
 test_that("smooths are refused where they cannot be estimated", {

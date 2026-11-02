@@ -344,7 +344,7 @@
     information[cbind(at, at)] <- information[cbind(at, at)] + precision
     pengradient <- datagradient
     pengradient[at] <- pengradient[at] - precision * theta[at]
-    V <- tryCatch(solve(information), error = function(e) NULL)
+    V <- .ctTIsmoothInverse(information)
     if (is.null(V)) break
     step <- as.numeric(V %*% pengradient)
     point <- theta + step
@@ -365,12 +365,32 @@
   information[cbind(at, at)] <- information[cbind(at, at)] + precision
   pengradient <- datagradient
   pengradient[at] <- pengradient[at] - precision * theta[at]
-  V <- solve(information)
+  V <- .ctTIsmoothInverse(information)
+  # No direction with curvature at all: the smoothing parameters stay, and so
+  # does the point.
+  if (is.null(V)) return(list(lambda = penalty$lambda,
+    edf = rep(NA_real_, length(penalty$lambda)), point = theta,
+    hessian = -information, iterations = 0L))
   point <- theta + as.numeric(V %*% pengradient)
   edf <- vapply(seq_along(lambda), function(g)
     length(index[[g]]) - lambda[g] * sum(diag(V)[index[[g]]]), numeric(1))
   list(lambda = lambda, edf = edf, point = point,
     hessian = -information, iterations = iter)
+}
+
+# The inverse of a penalised information over the directions the data give it
+# curvature in, by the rule the certification and the intervals read
+# (`.ctBackendInformationSplit()`); NULL where there are none. A large fit's
+# information has directions without curvature: `solve()` refused the affect
+# pilot's 903 parameters (reciprocal condition 1.5e-16, 2026-11-02) after an
+# 11-hour optimisation, and the fit was lost. Those directions move neither
+# the quadratic model's optimum nor its variances, as the certification's gap
+# leaves them out.
+.ctTIsmoothInverse <- function(information) {
+  split <- .ctBackendInformationSplit(-information)
+  if (is.null(split) || !any(split$trusted)) return(NULL)
+  Q <- split$vectors[, split$trusted, drop = FALSE]
+  Q %*% (t(Q) / split$values[split$trusted])
 }
 
 # The smooths with each target's smoothing parameter from `penalty`, by
