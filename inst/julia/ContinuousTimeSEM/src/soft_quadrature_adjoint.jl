@@ -528,11 +528,10 @@ function _laplace_soft_quadrature_reverse(laplace::CTSEMLaplaceObjective, z0::Ve
             y = _dense_tmulvec(Vh, rgrad)
             zeta = _dense_mulvec(Bcinv, y)
             zz = ub .+ _dense_mulvec(Vh, zeta)
-            rz = objf(zz)
-            isfinite(rz.value) || return nothing
-            h = Float64(rz.value) - sum(log, C.f) / 2
+            hb, hs = Float64(rb.value), Float64(objf(zz).value)
+            h = _laplace_soft_node_stepped(hb, hs) - sum(log, C.f) / 2
             nodes[j] = (kind=:node, a=a, ub=ub, rgrad=rgrad, Mb=Mb, C=C, Bcinv=Bcinv,
-                y=y, zeta=zeta, zz=zz)
+                y=y, zeta=zeta, zz=zz, ps=_laplace_soft_node_stepped_slope(hb, hs))
         end
         terms[j] = h + log(ws[j]) + x^2
     end
@@ -573,7 +572,12 @@ function _laplace_soft_quadrature_reverse(laplace::CTSEMLaplaceObjective, z0::Ve
             v1bar .+= node.a .* ubbar
             lam1 > 1.0 && (lam1bar += dot(v1, ubbar) * (-node.a / (2 * lam1c)))
         else
-            zzbar = _laplace_soft_quadrature_vjp!(thetabar, G, node.zz, hbar, nothing, nothing)
+            # The stepped point's share of the node's value and the node's own
+            # point the rest (`_laplace_soft_node_stepped`): a step taken back
+            # entirely is not read at all.
+            hz = hbar * node.ps
+            zzbar = iszero(hz) ? zeros(Float64, D) :
+                _laplace_soft_quadrature_vjp!(thetabar, G, node.zz, hz, nothing, nothing)
             zzbar === nothing && return nothing
             C = node.C
             Bcbar = .-(hbar / 2) .* node.Bcinv
@@ -594,7 +598,8 @@ function _laplace_soft_quadrature_reverse(laplace::CTSEMLaplaceObjective, z0::Ve
             @inbounds for k in 1:(D - 1), i in 1:D
                 Vhbar[i, k] += node.rgrad[i] * ybar[k]
             end
-            ub2 = _laplace_soft_quadrature_vjp!(thetabar, G, node.ub, 0.0, rbar, _dense_sym(Mbbar))
+            ub2 = _laplace_soft_quadrature_vjp!(thetabar, G, node.ub, hbar - hz, rbar,
+                _dense_sym(Mbbar))
             ub2 === nothing && return nothing
             ubbar .+= ub2
             zbar0 .+= ubbar
@@ -698,7 +703,8 @@ function _laplace_soft_quadrature_reverse_factored(laplace::CTSEMLaplaceObjectiv
         else
             a = sqrt(2) * x / sqrt(lam1c)
             ub = z0 .+ a .* v1
-            rgrad = Vector{Float64}(objf(ub).gradient)
+            rb = objf(ub)
+            rgrad = Vector{Float64}(rb.gradient)
             Mb = curvb(ub)
             _soft_shifted_factor(Mb, blocks, top) === nothing && return nothing
             Fb = _soft_shifted_factor(Mb, blocks, 0.0)
@@ -708,10 +714,10 @@ function _laplace_soft_quadrature_reverse_factored(laplace::CTSEMLaplaceObjectiv
             y = _soft_solve(Fb, blocks, rgrad)
             s = y .- q .* (dot(v1, y) / beta)
             zz = ub .+ s
-            rz = objf(zz)
-            isfinite(rz.value) || return nothing
-            h = Float64(rz.value) - (Fb.logdet + log(beta)) / 2
-            nodes[j] = (kind=:node, a=a, ub=ub, Fb=Fb, q=q, beta=beta, y=y, s=s, zz=zz)
+            hb, hs = Float64(rb.value), Float64(objf(zz).value)
+            h = _laplace_soft_node_stepped(hb, hs) - (Fb.logdet + log(beta)) / 2
+            nodes[j] = (kind=:node, a=a, ub=ub, Fb=Fb, q=q, beta=beta, y=y, s=s, zz=zz,
+                ps=_laplace_soft_node_stepped_slope(hb, hs))
         end
         terms[j] = h + log(ws[j]) + x^2
     end
@@ -737,7 +743,10 @@ function _laplace_soft_quadrature_reverse_factored(laplace::CTSEMLaplaceObjectiv
             lam1bar += hbar / (2 * lam1)
             continue
         end
-        zzbar = _laplace_soft_quadrature_vjp!(thetabar, G, node.zz, hbar, nothing, nothing)
+        # The stepped point's share, as in the dense reverse.
+        hz = hbar * node.ps
+        zzbar = iszero(hz) ? zeros(Float64, D) :
+            _laplace_soft_quadrature_vjp!(thetabar, G, node.zz, hz, nothing, nothing)
         zzbar === nothing && return nothing
         q, beta, y, s = node.q, node.beta, node.y, node.s
         ys = _soft_solve(node.Fb, blocks, zzbar)
@@ -745,7 +754,7 @@ function _laplace_soft_quadrature_reverse_factored(laplace::CTSEMLaplaceObjectiv
         # -(hbar / 2) P from the logdet, -sym(s t') from the step.
         Gb = _SoftGamma(-hbar / 2, node.Fb, blocks, [hbar / (2 * beta), -1.0], [q, s],
             [q, t])
-        ub2 = _laplace_soft_quadrature_vjp!(thetabar, G, node.ub, 0.0, t, Gb)
+        ub2 = _laplace_soft_quadrature_vjp!(thetabar, G, node.ub, hbar - hz, t, Gb)
         ub2 === nothing && return nothing
         ubbar = zzbar .+ ub2
         # v1 through `log beta` and through P.
