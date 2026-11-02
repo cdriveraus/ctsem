@@ -168,3 +168,47 @@ test_that("the derived start rescues a badly scaled fit", {
   expect_gt(as.numeric(on_$estimate$loglik), as.numeric(off$estimate$loglik) - 1)
   expect_lt(max(abs(on_$estimate$raw)), 10)
 })
+
+test_that("a derived start the optimiser cannot take gives way to the default", {
+  skip_without_julia()
+  # GitHub #87: an EMA model's data start was a point the objective could not
+  # evaluate, where the default start fitted. The rule is the engine's own for
+  # the optimiser's first trial (`ctsem_start_usable`).
+  d <- .datastart_gen(1)
+  m <- .datastart_model()
+  spec <- suppressMessages(ctFit(d, m, backend = "julia", fit = FALSE))
+  npar <- ctsem:::.ctBackendNpar(spec)
+  expect_true(ctsem:::.ctDataStartUsable(spec, rep(0, npar), "adjoint", 1L))
+  expect_false(ctsem:::.ctDataStartUsable(spec, rep(NaN, npar), "adjoint", 1L))
+  # What the fit hands the optimiser, which is mocked: the derived start where
+  # the check passes, and otherwise the default start, said in a message.
+  run <- function(usable) {
+    seen <- NULL
+    said <- character()
+    set.seed(9)
+    with_mocked_bindings(code = withCallingHandlers(
+      expect_error(ctFit(d, m, backend = "julia", cores = 1), "start captured"),
+      message = function(e) {
+        said <<- c(said, conditionMessage(e))
+        invokeRestart("muffleMessage")
+      }),
+      .ctDataStartUsable = function(...) usable,
+      .ctJuliaOptimise = function(model_spec, start, ...) {
+        seen <<- start
+        stop("start captured")
+      })
+    list(start = seen, said = said)
+  }
+  kept <- run(TRUE)
+  fallen <- run(FALSE)
+  expect_length(fallen$start, npar)
+  # The default start is the jitter around raw zero (sd 0.01); the derived
+  # cells are well away from it.
+  expect_lt(max(abs(fallen$start)), 0.1)
+  derived <- abs(kept$start - fallen$start) > 1e-12
+  expect_true(any(derived))
+  expect_gt(min(abs(kept$start[derived])), 0.1)
+  expect_true(any(grepl("cannot be evaluated at the starting values derived",
+    fallen$said)))
+  expect_false(any(grepl("cannot be evaluated", kept$said)))
+})

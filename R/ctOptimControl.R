@@ -60,8 +60,9 @@
 #'  diagonals of DRIFT, DIFFUSION, T0VAR and MANIFESTVAR are read off the
 #'  data's scale -- through the link, so a count is read through \code{log1p}
 #'  and a binary or ordinal indicator contributes none -- rather than from one
-#'  fixed point whatever the units. Supplied \code{inits} are never
-#'  overridden.}
+#'  fixed point whatever the units. They are kept only where the objective can
+#'  be evaluated there; otherwise the fit starts from the default and says so.
+#'  Supplied \code{inits} are never overridden.}
 #'  \item{\code{carefulfit}}{Both. A rough first pass with ctsem's
 #'  \code{normal(0,1)} raw priors on every coordinate, for starting values; the
 #'  fit's own objective is then maximised from there. Skipped with
