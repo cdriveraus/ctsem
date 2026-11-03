@@ -660,7 +660,10 @@
 # filter integrates exactly are integrated, and each unit's remaining effects
 # are partially non-centred from Gaussian summaries of its members'
 # likelihoods, learnt from their scores in warm-up windows. It starts from the
-# fit's estimate, not SAEM's placement.
+# fit's estimate, not SAEM's placement. A marginal target is the joint's with
+# no effect left to draw wherever the Laplace term is exact or absent, and the
+# map samples it too, by name, from where SMC would start (DAIS's normal where
+# the call made one); a Laplace marginal that is not exact is refused.
 #
 # On the joint target the default is 'map'. Through
 # `ctFitUncertainty()` on the posterior race's 20 fixtures, two seeds each, at
