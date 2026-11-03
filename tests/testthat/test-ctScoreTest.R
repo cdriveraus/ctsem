@@ -78,8 +78,12 @@ test_that("the per-subject pieces reproduce the engine's derivatives", {
   pieces <- ctsem:::.ctScorePieces(fit, est, rows = model, second = integer(), cores = 1)
   # Each subject's Hessian row is differenced along the tested parameter alone
   # (its symmetry gives the row), so summed over subjects the rows must be the
-  # fit's exact Hessian's.
-  exact <- ctsem:::.ctBackendHessian(fit, est)
+  # exact Hessian's at the estimate. Not the fit's own: the finish may keep one
+  # formed within `hessianreuse` se of the estimate, and where this fit's did,
+  # 0.006 raw away, an element differed by 1.4 per cent.
+  atest <- fit
+  atest$uncertainty$hessian <- NULL
+  exact <- suppressMessages(ctsem:::.ctBackendHessian(atest, est))
   for (a in seq_along(model)) expect_equal(colSums(pieces$H[, a, ]),
     as.numeric(exact[model[a], ]), tolerance = 1e-5)
   # A covariate's score is the gradient, at zero, in the TI effect it would add:
