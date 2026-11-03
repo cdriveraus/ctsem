@@ -292,17 +292,13 @@ test_that("NUTS samples the joint posterior through the same runner", {
     ridge_sum = X[, pair[1]] + X[, pair[2]])
 }
 
-.map_checked <- function(fit, against, draws = 300L) {
-  ask <- function(intoverpop = NULL, ...) suppressWarnings(suppressMessages(
-    ctFitUncertainty(fit, method = "sample", intoverpop = intoverpop, cores = 1,
-      control = list(chains = 2, draws = draws, processes = FALSE, ...))))
-  map <- ask(intoverpop = "none", sampler = "map", saveEffects = TRUE)
-  ref <- do.call(ask, against)
-  saem <- ask(intoverpop = "none")
-  a <- .map_ridge(map$estimate$rawposterior)
+# The largest difference between two samples' parameter means, in Monte Carlo
+# errors of the difference: the reference's sd over both samples' effective
+# sizes, the ridge pair's the smaller of its two.
+.map_z <- function(x, ref) {
+  a <- .map_ridge(x$estimate$rawposterior)
   b <- .map_ridge(ref$estimate$rawposterior)
   sb <- apply(b, 2, stats::sd)
-  # The pair's own effective sizes, the smaller, for their sum.
   ess <- function(r) {
     e <- pmax(as.numeric(r$sample$ess), 1)
     names(e) <- colnames(r$estimate$rawposterior)
@@ -310,6 +306,16 @@ test_that("NUTS samples the joint posterior through the same runner", {
     if (length(keep) == length(e)) e else
       c(keep, ridge_sum = min(e[c("T0m_eta1", "mm_Y1")]))
   }
+  max(abs(colMeans(a) - colMeans(b)) / (sb * sqrt(1 / ess(x) + 1 / ess(ref))))
+}
+
+.map_checked <- function(fit, against, draws = 300L) {
+  ask <- function(intoverpop = NULL, ...) suppressWarnings(suppressMessages(
+    ctFitUncertainty(fit, method = "sample", intoverpop = intoverpop, cores = 1,
+      control = list(chains = 2, draws = draws, processes = FALSE, ...))))
+  map <- ask(intoverpop = "none", sampler = "map", saveEffects = TRUE)
+  ref <- do.call(ask, against)
+  saem <- ask(intoverpop = "none")
   # And with a random triangular map on theta (`_JMapTri`), whose log
   # Jacobian and pullback the learnt one uses.
   checks <- lapply(c(FALSE, TRUE), function(tri)
@@ -320,8 +326,7 @@ test_that("NUTS samples the joint posterior through the same runner", {
   check <- checks[[1]]
   check$gradient <- max(checks[[1]]$gradient, checks[[2]]$gradient)
   check$jacobian <- max(checks[[1]]$jacobian, checks[[2]]$jacobian)
-  list(map = map, saem = saem, check = check,
-    z = max(abs(colMeans(a) - colMeans(b)) / (sb * sqrt(1 / ess(map) + 1 / ess(ref)))),
+  list(map = map, ref = ref, saem = saem, check = check, z = .map_z(map, ref),
     effects = max(abs(map$sample$effect_mean - saem$sample$effect_mean) /
       saem$sample$effect_sd))
 }
@@ -363,10 +368,17 @@ test_that("the map sampler draws the joint posterior with the filter's effects i
   expect_lt(r$effects, 0.5)
   expect_match(summary(r$map)$uncertaintyNote, "NUTS through a learnt map", fixed = TRUE)
 
+  # The exact Laplace marginal is the joint's with nothing left to draw, so the
+  # map samples it too: the parameters alone, against the same reference.
+  marg <- suppressWarnings(suppressMessages(ctFitUncertainty(fit, method = "sample",
+    intoverpop = "laplace", cores = 1,
+    control = list(chains = 2, draws = 300L, processes = FALSE, sampler = "map"))))
+  expect_identical(marg$sample$sampler, "map")
+  expect_identical(marg$sample$target, "marginal")
+  expect_null(marg$sample$effects)
+  expect_lt(.map_z(marg, r$ref), 4)
+
   # Refused where it cannot apply, by name.
-  expect_error(ctFitUncertainty(fit, method = "sample", intoverpop = "laplace",
-    control = list(sampler = "map")),
-    "control$sampler = 'map'", fixed = TRUE)
   expect_error(ctFitUncertainty(fit, method = "sample", intoverpop = "none",
     control = list(sampler = "map", placement = "saem")),
     "does not apply to control$sampler = 'map'", fixed = TRUE)
@@ -398,6 +410,34 @@ test_that("the map sampler maps the effects the filter cannot integrate", {
   expect_length(r$map$sample$effect_mean, length(r$saem$sample$effect_mean))
   expect_lt(r$z, 4)
   expect_lt(r$effects, 0.5)
+  # Its Laplace marginal is not exact, so the map, which would sample the
+  # joint in its place, is refused there by name.
+  expect_error(ctFitUncertainty(fit, method = "sample", intoverpop = "laplace",
+    control = list(sampler = "map")),
+    "the Laplace marginal, which is not exact here", fixed = TRUE)
+})
+
+test_that("the map sampler draws a fit without random effects", {
+  skip_without_julia()
+  # No random effects: the marginal posterior is the joint's with no effect
+  # to draw, and the map takes the filter objective through its Laplace view
+  # of none. Read against NUTS on the same target.
+  fit <- fit_cached("map fixture: no random effects", {
+    model <- laplace_fixture_model()
+    model$pars$indvarying <- FALSE
+    suppressWarnings(suppressMessages(ctsem::ctFit(laplace_fixture_data(), model,
+      backend = "julia", cores = 1, priors = TRUE,
+      optimcontrol = list(finishsamples = 20))))
+  })
+  ask <- function(sampler) suppressWarnings(suppressMessages(ctFitUncertainty(fit,
+    method = "sample", cores = 1,
+    control = list(chains = 2, draws = 300L, processes = FALSE, sampler = sampler))))
+  map <- ask("map")
+  ref <- ask("nuts")
+  expect_identical(map$sample$sampler, "map")
+  expect_identical(map$sample$target, "marginal")
+  expect_equal(ncol(map$estimate$rawposterior), length(fit$estimate$raw))
+  expect_lt(.map_z(map, ref), 4)
 })
 
 test_that("placement = 'fit' starts the chains around the fit's own estimate", {
