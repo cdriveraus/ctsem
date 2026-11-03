@@ -503,6 +503,25 @@ _jmap_with(m::CTSEMJointMap; Lam=m.Lam, h=m.h, G=m.G, theta0=m.theta0, Ct=m.Ct,
         m.thref, theta0, Ct, tri)
 
 """
+    _JMapTheta
+
+Theta's part of the map alone, `theta = theta0 + Ct T(w)`, for a sampler that
+moves theta and nothing else through it: tempered SMC's moves and final
+chains (`_smc_geometry`, sample_smc.jl), refitted from the cloud at every
+stage. The functions of theta's part below take either.
+"""
+struct _JMapTheta
+    npar::Int
+    theta0::Vector{Float64}
+    Ct::Matrix{Float64}
+    tri::Union{Nothing,_JMapTri}
+end
+
+_jmap_with(m::_JMapTheta; tri=m.tri) = _JMapTheta(m.npar, m.theta0, m.Ct, tri)
+
+const _JMapThetaLike = Union{CTSEMJointMap,_JMapTheta}
+
+"""
     _jmap_learn_tri(m, pooled)
 
 The map with theta's triangular map fitted from `pooled`, theta's draws over
@@ -510,7 +529,7 @@ every learning window so far, whitened by `m`'s own centre and factor; `m` as
 it is while there are fewer than ten draws a coefficient of the largest
 component. At most 4000 draws are read, spread through the pool.
 """
-function _jmap_learn_tri(m::CTSEMJointMap, pooled::AbstractMatrix;
+function _jmap_learn_tri(m::_JMapThetaLike, pooled::AbstractMatrix;
     parents::Int=_JMAP_TRI_PARENTS)
     n = m.npar
     N = size(pooled, 2)
@@ -523,14 +542,14 @@ end
 
 """Theta at latent `w`, and the log Jacobian of theta's triangular map (zero
 without one; the whitening's, `log det Ct`, is a constant and left out)."""
-function _jmap_theta(m::CTSEMJointMap, w::AbstractVector{<:Real})
+function _jmap_theta(m::_JMapThetaLike, w::AbstractVector{<:Real})
     m.tri === nothing && return m.theta0 .+ m.Ct * w, 0.0
     u, lj = _jmap_tri_forward(m.tri, w)
     return m.theta0 .+ m.Ct * u, lj
 end
 
 """Theta at each column of latent `W`."""
-function _jmap_thetas(m::CTSEMJointMap, W::AbstractMatrix)
+function _jmap_thetas(m::_JMapThetaLike, W::AbstractMatrix)
     m.tri === nothing && return m.theta0 .+ m.Ct * W
     out = zeros(m.npar, size(W, 2))
     for t in axes(W, 2)
@@ -540,7 +559,7 @@ function _jmap_thetas(m::CTSEMJointMap, W::AbstractMatrix)
 end
 
 """Theta's latent coordinates."""
-function _jmap_theta_inverse(m::CTSEMJointMap, theta::AbstractVector)
+function _jmap_theta_inverse(m::_JMapThetaLike, theta::AbstractVector)
     u = LowerTriangular(m.Ct) \ (theta .- m.theta0)
     m.tri === nothing && return u
     return _jmap_tri_inverse(m.tri, u)
@@ -549,7 +568,8 @@ end
 """The latent gradient in theta's coordinates from the joint's gradient in
 theta, `gtheta`, through the whitening and the triangular map, its log
 Jacobian's gradient included."""
-function _jmap_theta_pullback(m::CTSEMJointMap, w::AbstractVector, gtheta::AbstractVector)
+function _jmap_theta_pullback(m::_JMapThetaLike, w::AbstractVector,
+    gtheta::AbstractVector)
     gu = transpose(m.Ct) * gtheta
     m.tri === nothing && return gu
     return _jmap_tri_pullback(m.tri, w, gu)

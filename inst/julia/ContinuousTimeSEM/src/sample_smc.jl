@@ -38,6 +38,18 @@ learn (review/SAMPLING-smc-2026-10-23.md):
     series). Whitened by the previous metric and shrunk toward the identity
     there by the Schaefer-Strimmer intensity, it keeps what was learned and
     costs what the first version cost.
+  * **The moves run through a map learnt from each stage's cloud**
+    (`transform`, `_smc_geometry`): the map sampler's theta part
+    (`_JMapTheta`, sample_map.jl), whitened by that covariance, with its
+    triangular map refitted by the map sampler's own fit to the cloud the
+    last moves left, so that NUTS's metric is the identity there. A Gaussian
+    metric stops fitting as `beta` nears 1 and the posterior's shape shows:
+    under the whitening alone the step fell from 0.43 to 0.10 on the time
+    series and from 0.32 to 0.12 on a 474-parameter model, from the reference
+    posterior's own normal as from DAIS's. The particles stay in theta, and a
+    move through a bijection with its log Jacobian leaves each stage's density
+    as it was. `transform = false` is the whitening alone, the metric in
+    theta as it was.
   * **The step size is carried across stages**, set by a pilot of
     `2 pilot` dual-averaging iterations on one particle at the first stage
     and by every particle's moves after it (`_smc_next_step`): the moves'
@@ -651,13 +663,62 @@ function _smc_kept(lw::AbstractVector{Float64})
 end
 
 """
+    _smc_geometry(X, w, cov, learn; parents)
+
+A stage's latent coordinates (`_JMapTheta`): centred at the weighted cloud's
+mean, whitened by `cov`, the shrunk weighted covariance the moves' metric
+used to be, and where `learn`, theta's triangular map fitted to the cloud `X`
+the last stage's moves left (`_jmap_learn_tri`, the map sampler's own fit).
+Without the map, NUTS in these coordinates under the identity is NUTS in
+theta under `cov`.
+"""
+function _smc_geometry(X::AbstractMatrix{Float64}, w::AbstractVector{Float64},
+    cov::AbstractMatrix{Float64}, learn::Bool; parents::Int=_JMAP_TRI_PARENTS)
+    n = size(X, 1)
+    theta0 = vec(X * (w ./ sum(w)))
+    S = (Matrix(cov) .+ transpose(Matrix(cov))) ./ 2
+    Ct = Matrix(cholesky(Symmetric(S + 1e-12 * max(tr(S), 1.0) / n * I)).L)
+    geo = _JMapTheta(n, theta0, Ct, nothing)
+    return learn ? _jmap_learn_tri(geo, X; parents=parents) : geo
+end
+
+"""
+    _smc_through(ld, geo)
+
+The density `ld(g, theta)` in the latent coordinates of `geo`, its log
+Jacobian added and its gradient carried back, so that a NUTS transition there
+leaves `ld`'s density in theta as it is.
+"""
+function _smc_through(ld, geo)
+    gtheta = zeros(geo.npar)
+    return function (g, w)
+        theta, lj = _jmap_theta(geo, w)
+        v = ld(gtheta, theta)
+        if !isfinite(v)
+            fill!(g, 0.0)
+            return -Inf
+        end
+        g .= _jmap_theta_pullback(geo, w, gtheta)
+        return v + lj
+    end
+end
+
+"""The chains' draws and states in theta, from the latent coordinates of
+`geo` they ran in."""
+_smc_theta_chains(geo, chains::Vector{_ChainResult}) = [_ChainResult(
+    _jmap_thetas(geo, r.draws), r.accept, r.divergent, r.bound, r.depth, r.energy,
+    r.stepsize, r.warmup_divergent, r.warmup_used, _jmap_theta(geo, r.x)[1], r.metric)
+    for r in chains]
+
+"""
     ctsem_sample_smc(objective, values; kwargs...)
 
 Sample the marginal posterior of `objective` by tempered SMC from the normal
 `N(values, widen^2 S0)`, `S0` the bounded inverse of `-hessian` (the metric
 the marginal sampler would use; the exact Hessian at `values` when none is
-given). See the file comment for the method, the coreset (`coreset`) and the
-particles' parallelism (`parallel`). Returns what
+given). See the file comment for the method, the coreset (`coreset`), the
+moves' learnt coordinates (`transform`) and the particles' parallelism
+(`parallel`). Returns what
 `ctsem_sample_marginal` returns, the final phase's chains of `ndraws`
 (extended to the targets) as the draws, with `sampler = "smc"`, the stage
 record, the coreset record and the tempering's seconds beside. The final
@@ -672,7 +733,7 @@ function ctsem_sample_smc(objective, values::AbstractVector;
     ndraws::Integer=20, min_ess::Real=0.0, mean_ess::Real=0.0, max_draws::Integer=0,
     rhat_target::Real=Inf, ess_frac::Real=0.5, maxstages::Integer=500,
     pilot::Integer=30, gradient_method=:adjoint, coreset::Bool=true,
-    parallel::Bool=true, verbose::Bool=false,
+    transform::Bool=true, parallel::Bool=true, verbose::Bool=false,
     progress_overwrite::Bool=true, progress_callback=nothing, progress_sink=nothing)
 
     t0 = time()
@@ -751,7 +812,7 @@ function ctsem_sample_smc(objective, values::AbstractVector;
     if _due(reporter, true)
         _emit(reporter, string("  tempered SMC: ", np, " particles, ", npar,
             " dimensions, ", nmv, " NUTS moves a stage, from the metric's normal at ",
-            widen, "x",
+            widen, "x", transform ? ", moves through a map learnt from each stage's cloud" : "",
             use_coreset ? ", moves on a coreset of the $nunits units where one is cheaper" : "",
             mode == :serial ? "" : ", particles in parallel on copies"))
     end
@@ -764,7 +825,10 @@ function ctsem_sample_smc(objective, values::AbstractVector;
     beta = 0.0
     step = 0.0
     Cprev = copy(S0)
-    metric = _metric_from_covariances([1:ndim], [copy(S0)])
+    # The moves run in latent coordinates (`_smc_geometry`), whose metric is
+    # the identity; the start normal's are its own whitening.
+    geo = _JMapTheta(ndim, m0, Matrix(F0.L), nothing)
+    metric = _metric_from_covariances([1:ndim], [Matrix{Float64}(I, ndim, ndim)])
     stages = NamedTuple[]
     # What the last moves left owing, a log weight per particle
     # (`_smc_move_correction`): zero after moves on the full objective.
@@ -809,7 +873,13 @@ function ctsem_sample_smc(objective, values::AbstractVector;
         beta = min(1.0, beta + delta)
         shrunk = _smc_shrunk_cov(X, w, Cprev)
         Cprev = shrunk.cov
-        metric = _metric_from_covariances([1:ndim], [shrunk.cov])
+        # The moves' coordinates: the shrunk covariance's whitening, which as a
+        # metric in theta it used to be, and theta's triangular map learnt from
+        # the cloud the last moves left -- after the first stage, whose cloud is
+        # the start normal's own draws. The posterior's shape shows as `beta`
+        # nears 1, where under the whitening alone the steps shrank (0.43 to
+        # 0.10 on the time series, 0.32 to 0.12 on a 474-parameter model).
+        geo = _smc_geometry(X, w, shrunk.cov, transform && stage > 1)
         # The coreset for this stage's moves, from every unit's term at the
         # cloud before it is resampled (the duplicates after it say nothing
         # new); none where no size is cheaper than moving in full.
@@ -828,7 +898,7 @@ function ctsem_sample_smc(objective, values::AbstractVector;
         # coreset's value there: the backward kernel's weight reads the
         # coreset's error at both ends of the move.
         lc_pre = cs_stage === nothing ? lp_pre : _smc_coreset_values(objective, Xpre, cs_stage)
-        td! = tempered_for(objective, cs_stage, beta)
+        td! = _smc_through(tempered_for(objective, cs_stage, beta), geo)
         # The step: on the first stage, which has none, one particle's dual
         # averaging; after it, what the last stage's moves set
         # (`_smc_next_step`). A failed pilot starts from 0.1.
@@ -836,7 +906,7 @@ function ctsem_sample_smc(objective, values::AbstractVector;
         tpilot = time()
         if step <= 0
             piloted = try
-                _run_chain(td!, Xpre[:, 1], metric,
+                _run_chain(td!, _jmap_theta_inverse(geo, Xpre[:, 1]), metric,
                     Random.Xoshiro(hash((UInt64(seed), stage, 0))), 2 * Int(pilot), 1,
                     mdepth, tacc, mdelta, 0.0, false, nothing; init_eps=step)
             catch err
@@ -844,7 +914,7 @@ function ctsem_sample_smc(objective, values::AbstractVector;
                 nothing
             end
             if piloted !== nothing && isfinite(piloted.stepsize) && piloted.stepsize > 0
-                Xstart[:, 1] .= piloted.x
+                Xstart[:, 1] .= _jmap_theta(geo, piloted.x)[1]
                 step = piloted.stepsize
             else
                 step = 0.1
@@ -863,20 +933,24 @@ function ctsem_sample_smc(objective, values::AbstractVector;
         stage_beta = beta
         stage_step = step
         stage_metric = metric
+        stage_geo = geo
         _each_point!(objective, np, mode; coreset=cs_stage, scratch=nuts_scratch) do i, obj, s
-            tdi! = tempered_for(obj, cs_stage, stage_beta)
+            tdi! = _smc_through(tempered_for(obj, cs_stage, stage_beta), stage_geo)
             # The chain advances its start in place; the start is kept apart.
+            # A particle that did not move keeps its theta to the last bit.
             xi = Xstart[:, i]
-            logp = tdi!(s.g, xi)
+            wi = _jmap_theta_inverse(stage_geo, xi)
+            logp = tdi!(s.g, wi)
             isfinite(logp) || return nothing
             r = _continue_chain(tdi!, s.ws, Random.Xoshiro(hash((UInt64(seed), stage, i))),
-                copy(xi), s.g, logp, stage_step, stage_metric, nmv, mdepth, mdelta)
-            Xnew[:, i] .= r.x
+                copy(wi), s.g, logp, stage_step, stage_metric, nmv, mdepth, mdelta)
+            moved = r.x != wi
+            moved && (Xnew[:, i] .= _jmap_theta(stage_geo, r.x)[1])
             acc[i] = _smc_mean(r.accept)
             dep[i] = _smc_mean(r.depth)
             lf[i] = _smc_leapfrogs(r.depth)
             ndiv[i] = count(r.divergent)
-            mv[i] = r.x != xi ? 1 : 0
+            mv[i] = moved ? 1 : 0
             okp[i] = true
             return nothing
         end
@@ -899,6 +973,7 @@ function ctsem_sample_smc(objective, values::AbstractVector;
         lq = _smc_columns(logq, X)
         push!(stages, (beta=beta, step=step, accept=sum(acc) / nok, depth=sum(dep) / nok,
             moved=sum(mv) / np, divergent=sum(ndiv), shrink=shrunk.lambda, logz=inc,
+            mapped=stage_geo.tri !== nothing,
             coreset_size=cs_stage === nothing ? 0 : length(cs_stage.units),
             coreset_share=fit === nothing ? 1.0 : fit.share,
             coreset_error=fit === nothing ? NaN : fit.error,
@@ -964,24 +1039,29 @@ function ctsem_sample_smc(objective, values::AbstractVector;
     held = Ref(_ChainResult[])
     final_step = step
     final_metric = metric
+    # The final chains run in the last stage's coordinates; every reader of
+    # their draws reads them in theta (`_smc_theta_chains`).
+    final_geo = geo
     start_chains! = function (ks)
         off = length(start)
         res = Vector{_ChainResult}(undef, length(ks))
         from = copy(ks)
         _each_point!(objective, length(ks), mode; coreset=cs_final,
             scratch=nuts_scratch) do i, obj, s
-            ld = _smc_logdensity(obj, cs_final, gradient_method)
+            ld = _smc_through(_smc_logdensity(obj, cs_final, gradient_method), final_geo)
             k = ks[i]
-            logp = ld(s.g, Xf[:, k])
+            wk = _jmap_theta_inverse(final_geo, Xf[:, k])
+            logp = ld(s.g, wk)
             if !isfinite(logp)
                 # A particle whose density is not finite here cannot have moved
                 # to it; its chain starts from the next particle instead.
                 k = mod1(k + 1, np)
-                logp = ld(s.g, Xf[:, k])
+                wk = _jmap_theta_inverse(final_geo, Xf[:, k])
+                logp = ld(s.g, wk)
             end
             from[i] = k
             res[i] = _continue_chain(ld, s.ws,
-                Random.Xoshiro(hash((UInt64(seed), 0, off + i))), Xf[:, k], s.g, logp,
+                Random.Xoshiro(hash((UInt64(seed), 0, off + i))), wk, s.g, logp,
                 final_step, final_metric, nfirst, mdepth, mdelta)
             return nothing
         end
@@ -1000,12 +1080,14 @@ function ctsem_sample_smc(objective, values::AbstractVector;
     while target_ess > 0 && length(start) < np
         n = length(start)
         if cs_final !== nothing
-            _smc_final_weights!(fw, objective, cs_final, owed_f, lp_f, Xf, start, held[])
+            _smc_final_weights!(fw, objective, cs_final, owed_f, lp_f, Xf, start,
+                _smc_theta_chains(final_geo, held[]))
             planned = max(_smc_kept(reduce(vcat, fw.lw)), 0.01)
             fmin_ess = Float64(min_ess) / planned
             fmean_ess = Float64(mean_ess) / planned
         end
-        v = _sample_verdict(_pool_draws(held[], npar), fill(nfirst, n), nfirst, nfirst,
+        v = _sample_verdict(_jmap_thetas(final_geo, _pool_draws(held[], npar)),
+            fill(nfirst, n), nfirst, nfirst,
             fmin_ess, fmean_ess, nfirst, Float64(rhat_target), false)
         v.met && break
         shortfall = max(fmin_ess / max(v.worst, 1.0), fmean_ess / max(v.average, 1.0))
@@ -1018,7 +1100,7 @@ function ctsem_sample_smc(objective, values::AbstractVector;
         more = Vector{_ChainResult}(undef, length(previous))
         _each_point!(objective, length(previous), mode; coreset=cs_final,
             scratch=nuts_scratch) do i, obj, s
-            ld = _smc_logdensity(obj, cs_final, gradient_method)
+            ld = _smc_through(_smc_logdensity(obj, cs_final, gradient_method), final_geo)
             more[i] = _run_chain(ld, previous[i].x, previous[i].metric,
                 Random.Xoshiro(UInt64(seed + 1000 * attempt) + UInt64(i)),
                 0, wanted, mdepth, 0.8, mdelta, 0.0, false, nothing;
@@ -1028,13 +1110,15 @@ function ctsem_sample_smc(objective, values::AbstractVector;
         held[] = _merge_chains(previous, more)
         return nothing
     end
-    run = _sample_until_target(() -> _pool_draws(held[], npar), extend!, nch, nfirst,
+    run = _sample_until_target(() -> _jmap_thetas(final_geo, _pool_draws(held[], npar)),
+        extend!, nch, nfirst,
         fmin_ess, fmean_ess, max_final, Float64(rhat_target), verbose; t0=t0)
     nper = run.total
     trace = run.trace
     reweigh = cs_final !== nothing || any(!iszero, owed_f)
-    pooled = _sample_pool(held[], nch, nper, npar)
-    reweigh && _smc_final_weights!(fw, objective, cs_final, owed_f, lp_f, Xf, start, held[])
+    pooled = _sample_pool(_smc_theta_chains(final_geo, held[]), nch, nper, npar)
+    reweigh && _smc_final_weights!(fw, objective, cs_final, owed_f, lp_f, Xf, start,
+        _smc_theta_chains(final_geo, held[]))
     lw = reweigh ? reduce(vcat, fw.lw) : Float64[]
     final_correction = reweigh ? _smc_kept(lw) : 1.0
     # The draws the correction keeps are what the targets ask for. Where the
@@ -1045,7 +1129,8 @@ function ctsem_sample_smc(objective, values::AbstractVector;
         trace.ess[end] * final_correction < max(Float64(min_ess), Float64(mean_ess)) &&
         final_correction < planned && nper < max_final
         keep_share = max(final_correction, 0.01)
-        extra = _sample_until_target(() -> _pool_draws(held[], npar), extend!, nch, nper,
+        extra = _sample_until_target(() -> _jmap_thetas(final_geo, _pool_draws(held[], npar)),
+            extend!, nch, nper,
             Float64(min_ess) / keep_share, Float64(mean_ess) / keep_share, max_final,
             Float64(rhat_target), verbose; t0=t0)
         if extra.total > nper
@@ -1053,8 +1138,9 @@ function ctsem_sample_smc(objective, values::AbstractVector;
             trace = (draws=vcat(trace.draws, extra.trace.draws),
                 secs=vcat(trace.secs, extra.trace.secs), ess=vcat(trace.ess, extra.trace.ess),
                 rhat=vcat(trace.rhat, extra.trace.rhat))
-            pooled = _sample_pool(held[], nch, nper, npar)
-            _smc_final_weights!(fw, objective, cs_final, owed_f, lp_f, Xf, start, held[])
+            pooled = _sample_pool(_smc_theta_chains(final_geo, held[]), nch, nper, npar)
+            _smc_final_weights!(fw, objective, cs_final, owed_f, lp_f, Xf, start,
+                _smc_theta_chains(final_geo, held[]))
             lw = reduce(vcat, fw.lw)
             final_correction = _smc_kept(lw)
         end
@@ -1092,6 +1178,7 @@ function ctsem_sample_smc(objective, values::AbstractVector;
         forward_gradients=ctsem_forward_gradients() - forward0,
         explosive_passes=ctsem_explosive_passes() - explosive0,
         sampler="smc", nparticles=np, nmoves=nmv, widen=Float64(widen),
+        transform=transform, stage_mapped=[s.mapped for s in stages],
         nstages=length(stages),
         stage_beta=[s.beta for s in stages], stage_step=[s.step for s in stages],
         stage_accept=[s.accept for s in stages], stage_depth=[s.depth for s in stages],
