@@ -704,6 +704,48 @@ function _smc_through(ld, geo)
     end
 end
 
+"""
+    _smc_move(td!, geo, x, s, rng, step, metric, nmoves, maxdepth, maxdelta)
+
+A particle at theta `x` moved by `nmoves` NUTS transitions of `td!` in the
+latent coordinates of `geo`, on scratch `s`: the chain, and theta where it
+ended (`x` itself, to the last bit, where it did not move); `nothing` where
+the density is not finite at `x`. The particles' tasks run this, a function of
+its own so that they share no local: a name assigned inline in a task's body
+is the enclosing function's wherever that function uses it too (CLAUDE.md,
+"Julia threads"), and the final chains' start, so written, was one variable
+across the tasks, its draws differing from the serial run's by 2.5.
+"""
+function _smc_move(td!, geo, x, s, rng, step, metric, nmoves, maxdepth, maxdelta)
+    w = _jmap_theta_inverse(geo, x)
+    logp = td!(s.g, w)
+    isfinite(logp) || return nothing
+    r = _continue_chain(td!, s.ws, rng, copy(w), s.g, logp, step, metric, nmoves,
+        maxdepth, maxdelta)
+    return (chain=r, theta=r.x == w ? x : _jmap_theta(geo, r.x)[1], moved=r.x != w)
+end
+
+"""
+    _smc_final_chain(ld, geo, Xf, k, np, s, rng, step, metric, ndraws, maxdepth, maxdelta)
+
+A final chain of `ndraws` draws of `ld` in the latent coordinates of `geo` from
+particle `k` of the cloud `Xf`, or from the next particle where its density is
+not finite there (a particle cannot have moved to such a point): the particle
+it started from, and the chain. A function of its own, as `_smc_move` is.
+"""
+function _smc_final_chain(ld, geo, Xf, k, np, s, rng, step, metric, ndraws, maxdepth,
+    maxdelta)
+    w = _jmap_theta_inverse(geo, Xf[:, k])
+    logp = ld(s.g, w)
+    if !isfinite(logp)
+        k = mod1(k + 1, np)
+        w = _jmap_theta_inverse(geo, Xf[:, k])
+        logp = ld(s.g, w)
+    end
+    return k, _continue_chain(ld, s.ws, rng, w, s.g, logp, step, metric, ndraws,
+        maxdepth, maxdelta)
+end
+
 """The chains' draws and states in theta, from the latent coordinates of
 `geo` they ran in."""
 _smc_theta_chains(geo, chains::Vector{_ChainResult}) = [_ChainResult(
@@ -936,22 +978,16 @@ function ctsem_sample_smc(objective, values::AbstractVector;
         stage_metric = metric
         stage_geo = geo
         _each_point!(objective, np, mode; coreset=cs_stage, scratch=nuts_scratch) do i, obj, s
-            tdi! = _smc_through(tempered_for(obj, cs_stage, stage_beta), stage_geo)
-            # The chain advances its start in place; the start is kept apart.
-            # A particle that did not move keeps its theta to the last bit.
-            xi = Xstart[:, i]
-            wi = _jmap_theta_inverse(stage_geo, xi)
-            logp = tdi!(s.g, wi)
-            isfinite(logp) || return nothing
-            r = _continue_chain(tdi!, s.ws, Random.Xoshiro(hash((UInt64(seed), stage, i))),
-                copy(wi), s.g, logp, stage_step, stage_metric, nmv, mdepth, mdelta)
-            moved = r.x != wi
-            moved && (Xnew[:, i] .= _jmap_theta(stage_geo, r.x)[1])
-            acc[i] = _smc_mean(r.accept)
-            dep[i] = _smc_mean(r.depth)
-            lf[i] = _smc_leapfrogs(r.depth)
-            ndiv[i] = count(r.divergent)
-            mv[i] = moved ? 1 : 0
+            out = _smc_move(_smc_through(tempered_for(obj, cs_stage, stage_beta), stage_geo),
+                stage_geo, Xstart[:, i], s, Random.Xoshiro(hash((UInt64(seed), stage, i))),
+                stage_step, stage_metric, nmv, mdepth, mdelta)
+            out === nothing && return nothing
+            Xnew[:, i] .= out.theta
+            acc[i] = _smc_mean(out.chain.accept)
+            dep[i] = _smc_mean(out.chain.depth)
+            lf[i] = _smc_leapfrogs(out.chain.depth)
+            ndiv[i] = count(out.chain.divergent)
+            mv[i] = out.moved ? 1 : 0
             okp[i] = true
             return nothing
         end
@@ -1049,20 +1085,9 @@ function ctsem_sample_smc(objective, values::AbstractVector;
         from = copy(ks)
         _each_point!(objective, length(ks), mode; coreset=cs_final,
             scratch=nuts_scratch) do i, obj, s
-            ld = _smc_through(_smc_logdensity(obj, cs_final, gradient_method), final_geo)
-            k = ks[i]
-            wk = _jmap_theta_inverse(final_geo, Xf[:, k])
-            logp = ld(s.g, wk)
-            if !isfinite(logp)
-                # A particle whose density is not finite here cannot have moved
-                # to it; its chain starts from the next particle instead.
-                k = mod1(k + 1, np)
-                wk = _jmap_theta_inverse(final_geo, Xf[:, k])
-                logp = ld(s.g, wk)
-            end
-            from[i] = k
-            res[i] = _continue_chain(ld, s.ws,
-                Random.Xoshiro(hash((UInt64(seed), 0, off + i))), wk, s.g, logp,
+            from[i], res[i] = _smc_final_chain(
+                _smc_through(_smc_logdensity(obj, cs_final, gradient_method), final_geo),
+                final_geo, Xf, ks[i], np, s, Random.Xoshiro(hash((UInt64(seed), 0, off + i))),
                 final_step, final_metric, nfirst, mdepth, mdelta)
             return nothing
         end
@@ -1101,8 +1126,9 @@ function ctsem_sample_smc(objective, values::AbstractVector;
         more = Vector{_ChainResult}(undef, length(previous))
         _each_point!(objective, length(previous), mode; coreset=cs_final,
             scratch=nuts_scratch) do i, obj, s
-            ld = _smc_through(_smc_logdensity(obj, cs_final, gradient_method), final_geo)
-            more[i] = _run_chain(ld, previous[i].x, previous[i].metric,
+            more[i] = _run_chain(
+                _smc_through(_smc_logdensity(obj, cs_final, gradient_method), final_geo),
+                previous[i].x, previous[i].metric,
                 Random.Xoshiro(UInt64(seed + 1000 * attempt) + UInt64(i)),
                 0, wanted, mdepth, 0.8, mdelta, 0.0, false, nothing;
                 resume=previous[i])
