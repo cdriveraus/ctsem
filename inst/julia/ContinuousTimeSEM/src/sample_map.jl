@@ -486,15 +486,47 @@ function _jmap_tri_designs(S::AbstractMatrix, P::Vector{Int})
     return Phi, Psi
 end
 
-# A component fitted by damped Newton from the identity; one whose tails come
-# out lighter than the normal's is fitted again with its tail weight held at
-# the normal's. Its coefficients, log delta last, and whether it was held.
-function _jmap_tri_component_fit(x, Phi, Psi, w, iters)
+# A component fitted by damped Newton from `start` (the identity where none is
+# given); one whose tails come out lighter than the normal's is fitted again
+# with its tail weight held at the normal's. Its coefficients, log delta last,
+# and whether it was held.
+function _jmap_tri_component_fit(x, Phi, Psi, w, iters; start=nothing)
     np = size(Phi, 2) + size(Psi, 2) + 2
-    p = _jmap_tri_newton(_JMapTriComponent(x, Phi, Psi, false, w), zeros(np), iters)
+    p = _jmap_tri_newton(_JMapTriComponent(x, Phi, Psi, false, w),
+        start === nothing ? zeros(np) : start, iters)
     p[end] > 0 || return p, false
     return vcat(_jmap_tri_newton(_JMapTriComponent(x, Phi, Psi, true, w), p[1:(end - 1)],
         iters), 0.0), true
+end
+
+# A component's coefficients `p` on parents `P`, laid out for parents `Q` that
+# hold them (both in order): each parent's and each pair's where it now sits,
+# zero for the new; `nothing` where `Q` does not hold `P`. A larger size starts
+# from the smaller one's fit, the same model with the new terms at zero.
+function _jmap_tri_embed(p::Vector{Float64}, P::Vector{Int}, Q::Vector{Int})
+    pos = [findfirst(==(j), Q) for j in P]
+    any(isnothing, pos) && return nothing
+    m = length(P)
+    M = length(Q)
+    nf = 1 + 2m + m * (m - 1) ÷ 2
+    nF = 1 + 2M + M * (M - 1) ÷ 2
+    out = zeros(nF + 1 + M + 2)
+    out[1] = p[1]
+    for q in 1:m
+        out[1 + pos[q]] = p[1 + q]
+        out[1 + M + pos[q]] = p[1 + m + q]
+        out[nF + 1 + pos[q]] = p[nf + 1 + q]
+    end
+    j = 0
+    for q in 1:m, r in (q + 1):m
+        j += 1
+        lo, hi = pos[q], pos[r]
+        out[1 + 2M + (lo - 1) * M - (lo - 1) * lo ÷ 2 + (hi - lo)] = p[1 + 2m + j]
+    end
+    out[nF + 1] = p[nf + 1]
+    out[end - 1] = p[end - 1]
+    out[end] = p[end]
+    return out
 end
 
 """
@@ -507,8 +539,10 @@ parents (`_jmap_tri_parents`, at most every earlier coordinate) on the first
 three quarters of the draws and scored on the last quarter, the best size kept
 and the ladder left after two sizes that do not improve on it, or where a size
 has more coefficients than the draws it is fitted on carry (their effective
-size, where they are weighted); then refitted on every
-draw. `nothing` where too few draws fit even the marginal.
+size, where they are weighted); then refitted on every draw. Each size's
+Newton starts from the last size's fit, and the refit from the size kept: the
+same fits, in fewer iterations. `nothing` where too few draws fit even the
+marginal.
 """
 function _jmap_tri_fit(U::AbstractMatrix; weights::Union{Nothing,AbstractVector}=nothing,
     iters::Int=60)
@@ -535,18 +569,21 @@ function _jmap_tri_fit(U::AbstractMatrix; weights::Union{Nothing,AbstractVector}
     a1 = Vector{Vector{Float64}}(undef, n)
     f0 = zeros(n); a0 = zeros(n); epsv = zeros(n); ld = zeros(n)
     for k in 1:n
-        best = (nll=Inf, P=Int[])
+        best = (nll=Inf, P=Int[], p=Float64[])
+        prev = nothing
         worse = 0
         m = 0
         while true
             P = _jmap_tri_parents(Xt, St, k, m)
             Phi, Psi = _jmap_tri_designs(St, P)
             size(Phi, 2) + size(Psi, 2) + 2 <= neff || break
-            p, held = _jmap_tri_component_fit(Xt[k, :], Phi, Psi, wt, iters)
+            p0 = prev === nothing ? nothing : _jmap_tri_embed(prev.p, prev.P, P)
+            p, held = _jmap_tri_component_fit(Xt[k, :], Phi, Psi, wt, iters; start=p0)
+            prev = (P=P, p=p)
             Phv, Psv = _jmap_tri_designs(S[:, va], P)
             nll = _jmap_tri_component_nll(_JMapTriComponent(X[k, va], Phv, Psv, held, wv), p)
             if nll < best.nll
-                best = (nll=nll, P=P)
+                best = (nll=nll, P=P, p=p)
                 worse = 0
             else
                 worse += 1
@@ -557,7 +594,8 @@ function _jmap_tri_fit(U::AbstractMatrix; weights::Union{Nothing,AbstractVector}
         P = best.P
         mm = length(P)
         Phi, Psi = _jmap_tri_designs(S, P)
-        p, _ = _jmap_tri_component_fit(X[k, :], Phi, Psi, w ./ (sum(w) / N), iters)
+        p, _ = _jmap_tri_component_fit(X[k, :], Phi, Psi, w ./ (sum(w) / N), iters;
+            start=isempty(best.p) ? nothing : best.p)
         nf = size(Phi, 2)
         par[k] = P
         f0[k] = p[1]

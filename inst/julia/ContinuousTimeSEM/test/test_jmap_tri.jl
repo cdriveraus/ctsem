@@ -112,3 +112,19 @@ end
     @test gw ≈ gr
     @test Hw ≈ Hr
 end
+
+@testset "a size's fit laid out for more parents is the same component" begin
+    rng = Xoshiro(4)
+    N = 60
+    S = randn(rng, 6, N)
+    x = randn(rng, N)
+    P, Q = [2, 5], [1, 2, 4, 5]
+    Phi, Psi = _CT_TRI._jmap_tri_designs(S, P)
+    PhiQ, PsiQ = _CT_TRI._jmap_tri_designs(S, Q)
+    p = 0.3 .* randn(rng, size(Phi, 2) + size(Psi, 2) + 2)
+    q = _CT_TRI._jmap_tri_embed(p, P, Q)
+    @test length(q) == size(PhiQ, 2) + size(PsiQ, 2) + 2
+    @test _CT_TRI._jmap_tri_component_nll(_CT_TRI._JMapTriComponent(x, PhiQ, PsiQ, false), q) ≈
+        _CT_TRI._jmap_tri_component_nll(_CT_TRI._JMapTriComponent(x, Phi, Psi, false), p)
+    @test _CT_TRI._jmap_tri_embed(p, P, [1, 2, 4]) === nothing
+end
