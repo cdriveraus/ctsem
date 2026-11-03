@@ -506,7 +506,8 @@ component's size is its held-out likelihood's: fitted at 0, 1, 2, 4, 8, ...
 parents (`_jmap_tri_parents`, at most every earlier coordinate) on the first
 three quarters of the draws and scored on the last quarter, the best size kept
 and the ladder left after two sizes that do not improve on it, or where a size
-has more coefficients than the draws it is fitted on; then refitted on every
+has more coefficients than the draws it is fitted on carry (their effective
+size, where they are weighted); then refitted on every
 draw. `nothing` where too few draws fit even the marginal.
 """
 function _jmap_tri_fit(U::AbstractMatrix; weights::Union{Nothing,AbstractVector}=nothing,
@@ -520,6 +521,9 @@ function _jmap_tri_fit(U::AbstractMatrix; weights::Union{Nothing,AbstractVector}
     w = weights === nothing ? ones(N) : collect(Float64, weights)
     wt = w[1:nt] ./ (sum(w[1:nt]) / nt)
     wv = w[(nt + 1):N] ./ (sum(w[(nt + 1):N]) / nv)
+    # What the training draws carry: their effective size, which weighted
+    # draws (a tempering stage's pooled clouds) hold fewer of than their count.
+    neff = sum(wt)^2 / sum(abs2, wt)
     tr = 1:nt
     va = (nt + 1):N
     Xt = X[:, tr]
@@ -537,7 +541,7 @@ function _jmap_tri_fit(U::AbstractMatrix; weights::Union{Nothing,AbstractVector}
         while true
             P = _jmap_tri_parents(Xt, St, k, m)
             Phi, Psi = _jmap_tri_designs(St, P)
-            size(Phi, 2) + size(Psi, 2) + 2 <= nt || break
+            size(Phi, 2) + size(Psi, 2) + 2 <= neff || break
             p, held = _jmap_tri_component_fit(Xt[k, :], Phi, Psi, wt, iters)
             Phv, Psv = _jmap_tri_designs(S[:, va], P)
             nll = _jmap_tri_component_nll(_JMapTriComponent(X[k, va], Phv, Psv, held, wv), p)
@@ -683,6 +687,88 @@ function _jmap_theta_pullback(m::_JMapThetaLike, w::AbstractVector,
     gu = _ctsem_mulTvec!(zeros(m.npar), m.Ct, gtheta)
     m.tri === nothing && return gu
     return _jmap_tri_pullback(m.tri, w, gu)
+end
+
+"""
+    _jmap_tri_score(tri, u)
+
+The gradient in whitened `u` of the log density the triangular map gives
+there, `log phi(w(u)) + log |dw/du|`: each component's own term
+`l_k(u_k; u_parents)` differentiated in `u_k` and, through its location and
+scale, in its parents.
+"""
+function _jmap_tri_score(tri::_JMapTri, u::AbstractVector)
+    n = tri.n
+    A = _JMAP_TRI_CAP
+    g = zeros(n)
+    @inbounds for k in 1:n
+        f, b = _jmap_tri_terms(tri, k, u)
+        th = tanh(b / A)
+        ea = exp(-A * th)
+        v = (u[k] - f) * ea
+        delta = exp(tri.ld[k])
+        t = delta * asinh(v) - tri.eps[k]
+        sv = sqrt(1 + v^2)
+        # The component's log density in its standardised value v.
+        l1 = delta / sv * (tanh(t) - sinh(t) * cosh(t)) - v / (1 + v^2)
+        g[k] += l1 * ea
+        P = tri.parents[k]
+        isempty(P) && continue
+        f1 = tri.f1[k]
+        f2 = tri.f2[k]
+        f3 = tri.f3[k]
+        a1 = tri.a1[k]
+        # In the location and the capped log scale, through each parent's
+        # saturated value: v = (u_k - f) exp(-a), and the density's own -a.
+        lf = -l1 * ea
+        la = (-l1 * v - 1) * (1 - th^2)
+        m = length(P)
+        for q in 1:m
+            slope = f1[q] + 2 * f2[q] * _jmap_tri_sat(u[P[q]])
+            for r in 1:m
+                r == q && continue
+                # The product of the pair (q, r), in the order q < r.
+                lo, hi = minmax(q, r)
+                slope += f3[(lo - 1) * m - (lo - 1) * lo ÷ 2 + (hi - lo)] *
+                    _jmap_tri_sat(u[P[r]])
+            end
+            g[P[q]] += (lf * slope + la * a1[q]) * _jmap_tri_dsat(u[P[q]])
+        end
+    end
+    return g
+end
+
+"""
+    _jmap_density(m, theta)
+
+The log density in theta of the map's pushforward of a standard normal, and
+its gradient: `log phi(w) - log |det dtheta/dw|` at `w = m^-1(theta)`.
+"""
+function _jmap_density(m::_JMapTheta, theta::AbstractVector)
+    n = m.npar
+    u = _jmap_theta_inverse(_JMapTheta(n, m.theta0, m.Ct, nothing), theta)
+    ldc = 0.0
+    @inbounds for i in 1:n
+        ldc += log(m.Ct[i, i])
+    end
+    if m.tri === nothing
+        g = -u
+        v = -0.5 * dot(u, u)
+    else
+        w = _jmap_tri_inverse(m.tri, u)
+        g = _jmap_tri_score(m.tri, u)
+        v = -0.5 * dot(w, w) - _jmap_tri_forward(m.tri, w)[2]
+    end
+    # Theta's gradient through the whitening, Ct^-T g, by back substitution.
+    L = m.Ct
+    @inbounds for i in n:-1:1
+        acc = g[i]
+        for k in (i + 1):n
+            acc -= L[k, i] * g[k]
+        end
+        g[i] = acc / L[i, i]
+    end
+    return v - ldc - 0.5 * n * log(2pi), g
 end
 
 
