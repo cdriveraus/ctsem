@@ -183,7 +183,14 @@ end
     ratio = vec(std(X; dims=2)) ./ sd_true
     @test maximum(err) < 0.25
     @test all(0.8 .< ratio .< 1.2)
-    @test r.ndivergent == 0
+    # Rare, not none. A log-gamma's right tail is lighter than a normal's, and
+    # the stage maps' tails are held no lighter (sample_map.jl), which leaves
+    # the latent density a wall there that a transition now and then diverges
+    # on: over 30 seeds of this target, 3-4 seeds had divergent final
+    # transitions through the maps, at most 1% of a run's, and none under
+    # whitening alone, the draws as accurate either way
+    # (scripts/dais-sample-2026-11/skew_divergence.jl).
+    @test r.ndivergent <= 0.01 * length(r.divergent)
 end
 
 @testset "tempered SMC refuses what it cannot run" begin
