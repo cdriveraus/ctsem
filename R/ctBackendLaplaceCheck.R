@@ -388,10 +388,11 @@ print.ctLaplaceCheck <- function(x, ...) {
   spec <- fit$model_spec
   table <- spec$parameter_table
   if (!is.null(table) && nrow(table)) {
-    free <- !is.na(table$parnumber) & table$parnumber > 0
-    number <- as.integer(table$parnumber[free])
-    label <- .ctBackendParamLabel(table$param[free], number)
-    keep <- !duplicated(number) & number <= npar
+    table <- as.data.frame(table, stringsAsFactors = FALSE)
+    own <- .ctBackendOwnRows(table[!is.na(table$parnumber) & table$parnumber > 0, , drop = FALSE])
+    number <- as.integer(own$parnumber)
+    label <- .ctBackendParamLabel(own$param, number)
+    keep <- number <= npar
     names[number[keep]] <- label[keep]
   }
 

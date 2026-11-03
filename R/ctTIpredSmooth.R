@@ -283,8 +283,7 @@
   smooths <- model$TIsmooths
   if (!length(smooths) || is.null(ti_effects) || !nrow(ti_effects)) return(NULL)
   predictor <- model$TIpredNames[as.integer(ti_effects$predictor)]
-  cells <- table[!is.na(table$parnumber), , drop = FALSE]
-  cells <- cells[!duplicated(cells$parnumber), , drop = FALSE]
+  cells <- .ctBackendOwnRows(table[!is.na(table$parnumber), , drop = FALSE])
   parname <- stats::setNames(as.character(cells$param), cells$parnumber)
   rows <- list()
   for (s in smooths) {

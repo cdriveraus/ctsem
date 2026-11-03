@@ -711,8 +711,7 @@ ctBackendParMatrices <- function(fit, raw = NULL, tipreds = NULL, state = NULL,
 .ctBackendFreeParameterCells <- function(fit) {
   spec <- .ctBackendSpec(fit)
   table <- as.data.frame(spec$parameter_table, stringsAsFactors = FALSE)
-  free <- table[!is.na(table$parnumber), , drop = FALSE]
-  free <- free[!duplicated(free$parnumber), , drop = FALSE]
+  free <- .ctBackendOwnRows(table[!is.na(table$parnumber), , drop = FALSE])
   free <- free[order(free$parnumber), , drop = FALSE]
 
   nlatent <- spec$nlatent
@@ -746,6 +745,17 @@ ctBackendParMatrices <- function(fit, raw = NULL, tipreds = NULL, state = NULL,
   effects <- spec$random_effects
   if (is.null(effects) || !length(effects) || !nrow(effects)) return(integer())
   as.integer(effects$parameter)
+}
+
+# One row per parameter number of a parameter table: the cell that names the
+# parameter, else the first that reads it. A cell written as an expression of
+# a later matrix's cell -- a LAMBDA reading `DRIFT[1,1]` -- is composed into a
+# transform of that cell's parameter, unnamed, and sits before the cell itself:
+# taken first, it labelled the drift `param2` and reported the loading's value
+# as the drift's.
+.ctBackendOwnRows <- function(table) {
+  table <- table[order(is.na(table$param)), , drop = FALSE]
+  table[!duplicated(table$parnumber), , drop = FALSE]
 }
 
 # A parameter's own name, or `paramN` when the model gave the cell none.
