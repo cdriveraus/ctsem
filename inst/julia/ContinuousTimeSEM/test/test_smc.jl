@@ -186,40 +186,6 @@ end
     @test r.ndivergent == 0
 end
 
-@testset "tempered SMC from a map recovers the skewed target and pools its stages' clouds" begin
-    d, a = 12, [0.5, 1.0, 2.0]
-    k = length(a)
-    rng = Random.Xoshiro(201)
-    Q = Matrix(qr(randn(rng, d, d)).Q)
-    target = _SMCSkew(Q, a)
-    dig = [-1.9635100260214235, -0.5772156649015329, 0.42278433509846713]
-    trig = [4.934802200544679, 1.6449340668482264, 0.6449340668482264]
-    m_true = Q * vcat(dig, zeros(d - k))
-    sd_true = sqrt.(diag(Q * Diagonal(vcat(trig, ones(d - k))) * transpose(Q)))
-    # A start map learnt from draws of a wider normal around the mode: the
-    # particles come from its pushforward and the tempering leaves its density.
-    mode = Q * vcat(log.(a), zeros(d - k))
-    Y = mode .+ 1.5 .* randn(rng, d, 600)
-    S = cov(Y; dims=2)
-    geo = ContinuousTimeSEM._JMapTheta(d, vec(mean(Y; dims=2)),
-        Matrix(cholesky(Symmetric(S)).L), nothing)
-    geo = ContinuousTimeSEM._jmap_learn_tri(geo, Y)
-    r = ContinuousTimeSEM.ctsem_sample_smc(target, mode; start_map=geo, nparticles=200,
-        nmoves=3, maxdepth=6, seed=12, ndraws=10, min_ess=200.0, max_draws=40)
-    X = r.draws
-    @test maximum(abs.(vec(mean(X; dims=2)) .- m_true) ./ sd_true) < 0.25
-    @test all(0.8 .< vec(std(X; dims=2)) ./ sd_true .< 1.2)
-    # Every stage's cloud, weighted to a later stage, carries some evidence
-    # there, and none counts for more than its particles.
-    pool = ContinuousTimeSEM._SMCPool()
-    for b in [0.0, 0.3, 0.6]
-        ContinuousTimeSEM._smc_pool!(pool, randn(rng, d, 50), randn(rng, 50), zeros(50), b)
-    end
-    Xp, wp = ContinuousTimeSEM._smc_pool_weights(pool, 0.7)
-    @test size(Xp, 2) == length(wp) <= 150
-    @test 1 <= sum(wp) <= 150
-end
-
 @testset "tempered SMC refuses what it cannot run" begin
     g = _smc_gauss(4, 3)
     target = _SMCGauss(g.m, Matrix(g.P))

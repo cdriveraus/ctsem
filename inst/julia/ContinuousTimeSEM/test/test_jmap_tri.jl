@@ -36,30 +36,6 @@ end
     @test abs(logabsdet(J)[1] - lj) < 1e-6
 end
 
-@testset "a map's density in theta is its pushforward's, and its gradient that density's" begin
-    rng = Xoshiro(8)
-    n = 6
-    tri = _random_tri(n, rng)
-    A = randn(rng, n, n)
-    Ct = Matrix(cholesky(Symmetric(A * transpose(A) ./ n + I)).L)
-    m = _CT_TRI._JMapTheta(n, randn(rng, n), Ct, tri)
-    # The density by the change of variables, at theta(w).
-    w = randn(rng, n)
-    theta, lj = _CT_TRI._jmap_theta(m, w)
-    v, g = _CT_TRI._jmap_density(m, theta)
-    @test v ≈ -dot(w, w) / 2 - n * log(2pi) / 2 - lj - sum(log, diag(Ct)) atol = 1e-10
-    f(x) = _CT_TRI._jmap_density(m, x)[1]
-    fd = [(f(theta .+ 1e-6 .* (1:n .== j)) - f(theta .- 1e-6 .* (1:n .== j))) / 2e-6 for j in 1:n]
-    @test maximum(abs, g .- fd) < 1e-6 * max(1.0, maximum(abs, fd))
-    # Without a triangular map it is the normal N(theta0, Ct Ct').
-    m0 = _CT_TRI._JMapTheta(n, m.theta0, Ct, nothing)
-    S = Ct * transpose(Ct)
-    v0, g0 = _CT_TRI._jmap_density(m0, theta)
-    r = theta .- m.theta0
-    @test v0 ≈ -dot(r, S \ r) / 2 - logdet(S) / 2 - n * log(2pi) / 2
-    @test g0 ≈ -(S \ r)
-end
-
 @testset "the fit reads the parents a shape needs, as many as the draws support" begin
     rng = Xoshiro(11)
     N = 4000
