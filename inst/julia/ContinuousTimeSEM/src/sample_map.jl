@@ -540,17 +540,23 @@ function _jmap_learn_tri(m::_JMapThetaLike, pooled::AbstractMatrix;
     return _jmap_with(m; tri=_jmap_tri_fit(U; parents=k))
 end
 
+# Theta's whitening and its inverse go through the engine's own products
+# (small_linalg.jl), never BLAS: tempered SMC moves its particles through them
+# on tasks, and its draws are the same whether the particles run one after
+# another or on copies (test_smc.jl) only where every product's sums are
+# taken in one order.
+
 """Theta at latent `w`, and the log Jacobian of theta's triangular map (zero
 without one; the whitening's, `log det Ct`, is a constant and left out)."""
 function _jmap_theta(m::_JMapThetaLike, w::AbstractVector{<:Real})
-    m.tri === nothing && return m.theta0 .+ m.Ct * w, 0.0
-    u, lj = _jmap_tri_forward(m.tri, w)
-    return m.theta0 .+ m.Ct * u, lj
+    u, lj = m.tri === nothing ? (w, 0.0) : _jmap_tri_forward(m.tri, w)
+    theta = Vector{promote_type(eltype(u), Float64)}(m.theta0)
+    _ctsem_mulvec!(theta, m.Ct, u, true, true)
+    return theta, lj
 end
 
 """Theta at each column of latent `W`."""
 function _jmap_thetas(m::_JMapThetaLike, W::AbstractMatrix)
-    m.tri === nothing && return m.theta0 .+ m.Ct * W
     out = zeros(m.npar, size(W, 2))
     for t in axes(W, 2)
         out[:, t] .= _jmap_theta(m, view(W, :, t))[1]
@@ -560,7 +566,15 @@ end
 
 """Theta's latent coordinates."""
 function _jmap_theta_inverse(m::_JMapThetaLike, theta::AbstractVector)
-    u = LowerTriangular(m.Ct) \ (theta .- m.theta0)
+    L = m.Ct
+    u = collect(Float64, theta) .- m.theta0
+    @inbounds for i in eachindex(u)
+        acc = u[i]
+        for k in 1:(i - 1)
+            acc -= L[i, k] * u[k]
+        end
+        u[i] = acc / L[i, i]
+    end
     m.tri === nothing && return u
     return _jmap_tri_inverse(m.tri, u)
 end
@@ -570,7 +584,7 @@ theta, `gtheta`, through the whitening and the triangular map, its log
 Jacobian's gradient included."""
 function _jmap_theta_pullback(m::_JMapThetaLike, w::AbstractVector,
     gtheta::AbstractVector)
-    gu = transpose(m.Ct) * gtheta
+    gu = _ctsem_mulTvec!(zeros(m.npar), m.Ct, gtheta)
     m.tri === nothing && return gu
     return _jmap_tri_pullback(m.tri, w, gu)
 end
