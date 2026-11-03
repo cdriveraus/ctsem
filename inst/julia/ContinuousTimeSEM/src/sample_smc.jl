@@ -797,9 +797,10 @@ function ctsem_sample_smc(objective, values::AbstractVector;
     nfirst = Int(ndraws)
     np >= 2 || throw(ArgumentError("nparticles must be at least 2"))
     nmv >= 1 || throw(ArgumentError("nmoves must be positive"))
-    # A stage's chains, and the states each leaves in the next cloud.
+    # A stage runs a chain a particle and keeps every state of every chain:
+    # the cloud is `span` states a particle.
     span = nmv + 1
-    nchains = max(2, np ÷ span)
+    nchains = np
     ncloud = nchains * span
     _check_sample_arguments(np, nfirst, target_accept)
     0 < ess_frac < 1 || throw(ArgumentError("ess_frac must be in (0, 1)"))
@@ -873,7 +874,7 @@ function ctsem_sample_smc(objective, values::AbstractVector;
     end
 
     rng = Random.Xoshiro(UInt64(seed))
-    X = m0 .+ F0.L * randn(rng, ndim, np)
+    X = m0 .+ F0.L * randn(rng, ndim, ncloud)
     full = _smc_terms(objective, X, use_coreset)
     lp = full.value
     lq = _smc_columns(logq, X)
@@ -887,7 +888,7 @@ function ctsem_sample_smc(objective, values::AbstractVector;
     stages = NamedTuple[]
     # What the last moves left owing, a log weight per particle
     # (`_smc_move_correction`): zero after moves on the full objective.
-    owed = zeros(np)
+    owed = zeros(ncloud)
     # Where the last stage's chains began and ended, which the final phase
     # reads its chain count from (`_smc_move_tau`).
     Xfrom = X
@@ -1073,9 +1074,13 @@ function ctsem_sample_smc(objective, values::AbstractVector;
     # chains before longer ones (see the file comment), sharing the particles'
     # draw budget.
     tau = _smc_move_tau(Xfrom, Xto, nmv)
-    # The cloud's states, which the final chains start from.
-    nfinal = size(X, 2)
-    order = _smc_spread_order(nfinal)
+    # The final chains start from the last stage's chain ends, one a chain:
+    # a chain's states share where it went along its slow directions (a
+    # mixture's mode), so final chains from all of them read four times the
+    # effective size their draws carry there.
+    pool = collect(span:span:size(X, 2))
+    nfinal = length(pool)
+    order = pool[_smc_spread_order(nfinal)]
     final_fit = nothing
     if use_coreset && full.terms !== nothing
         price = _SMCPrice(leap * gvalues, 1.0, vbudget, inflate, true)
@@ -1112,7 +1117,8 @@ function ctsem_sample_smc(objective, values::AbstractVector;
             scratch=nuts_scratch) do i, obj, s
             from[i], res[i] = _smc_final_chain(
                 _smc_through(_smc_logdensity(obj, cs_final, gradient_method), final_geo),
-                final_geo, Xf, ks[i], nfinal, s, Random.Xoshiro(hash((UInt64(seed), 0, off + i))),
+                final_geo, Xf, ks[i], size(Xf, 2), s,
+                Random.Xoshiro(hash((UInt64(seed), 0, off + i))),
                 final_step, final_metric, nfirst, mdepth, mdelta)
             return nothing
         end
