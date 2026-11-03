@@ -2087,10 +2087,20 @@ ctOptimFullBootstrapDraws <- function(est, standata, sm, n=1000, cores=1,
 # The same draws say where the posterior's mean is (`centre`), which is not
 # the mode wherever the posterior is skewed, however well the normal's widths
 # fit; see `.ctNormalCentre()`. The normal's draws are placed there.
+#
+# `progress` is a sink (`.ctBackendProgressSink()`): each batch is a gradient a
+# draw, and on a large Laplace fit, where no run anchors the units' modes, the
+# check took hours with nothing on the line (the affect pilot, 2026-11-03).
 .ctOptimNormalCheck <- function(gradients, est, cov, batch = 8L,
-  maxdraws = NULL, coverage = c(0.90, 0.99), centrepairs = 32L) {
+  maxdraws = NULL, coverage = c(0.90, 0.99), centrepairs = 32L,
+  progress = NULL) {
   A <- .ctCovRoot(cov)
   if (is.null(maxdraws)) maxdraws <- as.integer(min(256, max(64, 2 * ncol(A))))
+  started <- proc.time()[["elapsed"]]
+  say <- function(what) if (!is.null(progress)) progress(sprintf(
+    "Interval check, %s | %8s", what,
+    .ctDuration(proc.time()[["elapsed"]] - started)), "update")
+  if (!is.null(progress)) on.exit(progress("", "break"), add = TRUE)
   bars <- .ctNormalResidualBars(coverage)
   Z <- R <- matrix(0, 0L, ncol(A))
   drawn <- unusable <- 0L
@@ -2100,6 +2110,7 @@ ctOptimFullBootstrapDraws <- function(est, standata, sm, n=1000, cores=1,
     Rb <- as.matrix(out$gradient) %*% A + Zb
     usable <- is.finite(out$value) & out$value > -1e99 & rowSums(!is.finite(Rb)) == 0
     drawn <- drawn + batch
+    say(sprintf("%d of up to %d draws", drawn, maxdraws))
     unusable <- unusable + sum(!usable)
     Z <- rbind(Z, Zb[usable, , drop = FALSE])
     R <- rbind(R, Rb[usable, , drop = FALSE])
@@ -2132,6 +2143,7 @@ ctOptimFullBootstrapDraws <- function(est, standata, sm, n=1000, cores=1,
   Zf <- matrix(stats::rnorm(fresh * ncol(A)), fresh, ncol(A))
   Zp <- rbind(Z, Zf)
   side <- rbind(Zf, -Zp)
+  say(sprintf("%d draws, %d more for the centre", drawn, nrow(side)))
   out <- gradients(sweep(side %*% t(A), 2, est, "+"))
   Rs <- as.matrix(out$gradient) %*% A + side
   ok <- is.finite(out$value) & out$value > -1e99 & rowSums(!is.finite(Rs)) == 0
@@ -2642,7 +2654,7 @@ ctOptimComputeUncertainty <- function(est, standata, sm, lpgFunc,
         (uncertainty == 'hessian' && isTRUE(control$check))) {
       method_details$normalcheck <- .ctOptimNormalCheck(.ctJuliaOr(
         .ctImisGradient(lpgFunc, est), attr(.ctImisPointGradbatch(lpgFunc), 'gradbatch')),
-        est, cov)
+        est, cov, progress = .ctBackendProgressSink(verbose))
       # The widths its pairs measured where it samples nothing
       # (`.ctNormalSpread()`).
       if(uncertainty == 'checked' && !is.null(method_details$normalcheck$spread))
@@ -3100,7 +3112,8 @@ ctOptimFitLpgFunc <- function(fit, cores=1){
     place$uncertaintyfit$details$dais <- dais
     return(place)
   }
-  recheck <- .ctOptimNormalCheck(.ctImisGradient(lpg, place$centre), dais$mean, dais$cov)
+  recheck <- .ctOptimNormalCheck(.ctImisGradient(lpg, place$centre), dais$mean, dais$cov,
+    progress = .ctBackendProgressSink(verbose))
   cov2 <- ctOptimSafeCov(if (!is.null(recheck$spread)) recheck$spread$cov else dais$cov)
   dais$check <- c(recheck[c('draws', 'unusable', 'slope', 'shape', 'widths',
     'parameters', 'centrescale', 'centredraws')],

@@ -199,9 +199,16 @@ test_that("checked centres its normal on the mean, not the mode", {
   prec <- exp(stats::runif(k, -1, 1))
   gb <- function(X) list(value = -0.5 * colSums(prec * (t(X) - m)^2),
     gradient = -t(prec * (t(X) - m)))
+  said <- character(0)
+  sink <- function(text, mode) said <<- c(said, paste(mode, text))
   check <- ctsem:::.ctOptimNormalCheck(gb, m,
-    diag(exp(stats::runif(k, log(0.6), log(1.6))) / prec))
+    diag(exp(stats::runif(k, log(0.6), log(1.6))) / prec), progress = sink)
   expect_equal(check$centre, m, tolerance = 1e-10)
+  # Each batch on the progress line, and the line ended once.
+  expect_true(any(grepl("^update Interval check, 8 of up to 120 draws", said)))
+  expect_true(any(grepl("more for the centre", said)))
+  expect_identical(said[length(said)], "break ")
+  expect_equal(sum(startsWith(said, "break")), 1L)
 
   # Six log-gamma coordinates, p(x) proportional to exp(a x - e^x): skewed, mode
   # log(a), mean digamma(a), 0.18 posterior sds apart at a = 8 -- too little
