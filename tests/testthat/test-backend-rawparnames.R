@@ -159,3 +159,24 @@ test_that("random effects take the order their parameters are declared in, PARS 
   expect_identical(popsd("laplace"), declared)
   expect_identical(popsd("augmented"), declared)
 })
+
+test_that("a cell composed from a later matrix's cell leaves that parameter its own name and cell", {
+  # LAMBDA comes before DRIFT in the parameter table, so the loading composed
+  # from DRIFT[1,1] is the first row carrying the drift's number. Taken first,
+  # it named the drift `param2` and summary() reported the loading's value as
+  # the drift's.
+  model <- suppressWarnings(suppressMessages(ctModel(type = "ct",
+    manifestNames = c("Y1", "Y2"), latentNames = "eta1",
+    LAMBDA = matrix(c("1", "(1 - exp(DRIFT[1,1] * 4)) / (-DRIFT[1,1] * 4)"), 2, 1),
+    DRIFT = "drift_eta1", MANIFESTMEANS = matrix(c("m1", "m2"), 2), CINT = 0,
+    T0MEANS = "t0m", silent = TRUE)))
+  model$pars$indvarying <- FALSE
+  data <- .rawnames_data()
+  data$Y2 <- stats::rnorm(nrow(data))
+  spec <- .rawnames_prepare(data[, c("id", "time", "Y1", "Y2")], model,
+    intoverpop = "augmented")
+  expect_true("drift_eta1" %in% .rawnames_of(spec))
+  cells <- ctsem:::.ctBackendFreeParameterCells(list(model_spec = spec))
+  expect_identical(cells$matrix[cells$param %in% "drift_eta1"], "DRIFT")
+  expect_false(any(is.na(cells$param)))
+})
