@@ -84,8 +84,8 @@ export ctsem_sample_map
 #
 #     v_k = (u_k - f_k(u_<k)) exp(-a_k(u_<k)),   w_k = sinh(delta_k asinh(v_k) - eps_k)
 #
-# `f_k` quadratic in each earlier coordinate, `a_k` linear in them and capped by
-# tanh, and a sinh-arcsinh marginal (Jones & Pewsey 2009; skew `eps`, tail
+# `f_k` quadratic in each earlier coordinate and in the products of pairs of
+# them, `a_k` linear in them and capped by tanh, and a sinh-arcsinh marginal (Jones & Pewsey 2009; skew `eps`, tail
 # weight `delta`). Both directions are in closed form and each component is
 # increasing in its own coordinate, so it is a bijection everywhere and the
 # sampler exact whatever was learnt
@@ -105,20 +105,21 @@ export ctsem_sample_map
 # then heavy-tailed, where NUTS mixes slowly
 # (`scripts/marginal-default-2026-10/tri_saturate.R`).
 #
-# A component conditions on at most `_JMAP_TRI_PARENTS` earlier coordinates,
-# those its draws depend on most (`_jmap_tri_parents`), so its coefficients do
-# not grow with the parameters and the pooled draws learn it at any size. Until
-# 2026-11-01 a component read every earlier coordinate, and above 30 parameters,
-# where the draws could not fit that, there was no map. On a 50-parameter
-# fixture (w8) four parents gave 0.21-0.45 effective draws per 1,000 gradients
-# over six seeds, the whitening alone 0.03-0.05, short of the target at both of
-# its seeds; on w6 (33) they gave 1.2 times the whitening's mean rate and 8
-# times its worst seed's, every earlier coordinate 1.0 and 6 times, two parents
-# about as much as four and eight less. Below 30 four parents and every earlier
-# coordinate were level: over fifteen race fixtures of 5-22 parameters the
-# ratio of their median rates had a geometric mean of 0.99, five a fifth or
-# more lower and four higher, so the one rule is kept
-# (`review/SAMPLING-sparse-map-2026-11-01.md`).
+# A component conditions on the earlier coordinates its draws depend on most
+# (`_jmap_tri_parents`), as many as its held-out likelihood says the draws
+# support (`_jmap_tri_fit`): fitted at 0, 1, 2, 4, 8, ... parents on three
+# quarters of the draws and scored on the last quarter, which for pooled chains
+# is mostly the last chain's, it keeps the best size and stops climbing after
+# two sizes that do not improve on it (adaptive transport maps: Baptista,
+# Bigoni and Marzouk 2023). So the map is as large as its draws can learn,
+# whether they are a stage's 200 particles or thousands of warm-up draws, and
+# its coefficients do not grow with the parameters unless the draws carry
+# them. On the time series' reference draws the held-out log density of a map
+# so chosen was 1.2 nats above four parents without products and 0.3 above the
+# best single size with them (`scripts/dais-sample-2026-11/map_ml.R`). Until
+# 2026-11-03 every component read four parents; until 2026-11-01 every earlier
+# coordinate, and above 30 parameters, where the draws could not fit that,
+# there was no map (`review/SAMPLING-sparse-map-2026-11-01.md`).
 
 const _JMAP_TRI_CAP = 3.0
 """Beyond about this many whitened sd an earlier coordinate stops bending a
@@ -126,14 +127,13 @@ later one's location and scale."""
 const _JMAP_TRI_SAT = 5.0
 _jmap_tri_sat(u) = _JMAP_TRI_SAT * tanh(u / _JMAP_TRI_SAT)
 _jmap_tri_dsat(u) = 1 - tanh(u / _JMAP_TRI_SAT)^2
-"""The most earlier coordinates each of theta's components conditions on: those
-its draws depend on most."""
-const _JMAP_TRI_PARENTS = 4
 
 """
 Theta's triangular map. Component `k` conditions on the earlier coordinates
 `parents[k]`; `f1[k]`, `f2[k]` and `a1[k]` are its location's linear and
-quadratic coefficients and its log scale's linear ones, one for each parent.
+quadratic coefficients and its log scale's linear ones, one for each parent,
+and `f3[k]` its location's coefficients on the products of pairs of parents,
+`(q, r)` for `q < r` in order.
 """
 struct _JMapTri
     n::Int
@@ -141,6 +141,7 @@ struct _JMapTri
     f0::Vector{Float64}
     f1::Vector{Vector{Float64}}
     f2::Vector{Vector{Float64}}
+    f3::Vector{Vector{Float64}}
     a0::Vector{Float64}
     a1::Vector{Vector{Float64}}
     eps::Vector{Float64}
@@ -155,11 +156,17 @@ end
     P = tri.parents[k]
     f1 = tri.f1[k]
     f2 = tri.f2[k]
+    f3 = tri.f3[k]
     a1 = tri.a1[k]
     @inbounds for q in eachindex(P)
         s = _jmap_tri_sat(u[P[q]])
         f += f1[q] * s + f2[q] * s^2
         b += a1[q] * s
+    end
+    j = 0
+    @inbounds for q in eachindex(P), r in (q + 1):length(P)
+        j += 1
+        f += f3[j] * _jmap_tri_sat(u[P[q]]) * _jmap_tri_sat(u[P[r]])
     end
     return f, b
 end
@@ -226,32 +233,57 @@ function _jmap_tri_pullback(tri::_JMapTri, w::AbstractVector, gu::AbstractVector
         P = tri.parents[k]
         f1 = tri.f1[k]
         f2 = tri.f2[k]
+        f3 = tri.f3[k]
         a1 = tri.a1[k]
+        # The location's slope in each parent's saturated value: its own terms
+        # and, through each product, the other parent's value.
+        slope = [f1[q] + 2 * f2[q] * _jmap_tri_sat(u[P[q]]) for q in eachindex(P)]
+        jj = 0
+        for q in eachindex(P), r in (q + 1):length(P)
+            jj += 1
+            slope[q] += f3[jj] * _jmap_tri_sat(u[P[r]])
+            slope[r] += f3[jj] * _jmap_tri_sat(u[P[q]])
+        end
         for q in eachindex(P)
             j = P[q]
-            s = _jmap_tri_sat(u[j])
-            ub[j] += (fbar * (f1[q] + 2 * f2[q] * s) + bbar * a1[q]) * _jmap_tri_dsat(u[j])
+            ub[j] += (fbar * slope[q] + bbar * a1[q]) * _jmap_tri_dsat(u[j])
         end
     end
     return gw
 end
 
-# A component's negative log likelihood over the whitened draws, in its
-# coefficients `p` = f0, f1, f2, a0, a1 (over its parents), eps, log delta, with
-# a unit ridge on all but the level and the scale. The coefficients enter the
-# location and the raw log scale linearly, through the designs `Phi` = [1 s s^2]
-# and `Psi` = [1 s] (a row a draw, `s` the parents' saturated values), so the
-# gradient and Hessian are those designs weighted by each draw's first and
-# second derivatives in the location, the raw log scale, eps and log delta.
-# `pinned`: `p` stops at eps and log delta is 0.
+# A component's negative log likelihood over the whitened draws, each weighted
+# by `w` (mean one), in its coefficients `p` = f0, f1, f2, f3, a0, a1 (over its
+# parents and their pairs), eps, log delta, with a unit ridge on all but the
+# level and the scale. The coefficients enter the location and the raw log
+# scale linearly, through the designs `Phi` = [1 s s^2 s_q s_r] and `Psi` =
+# [1 s] (a row a draw, `s` the parents' saturated values,
+# `_jmap_tri_designs`), so the gradient and Hessian are those designs weighted
+# by each draw's first and second derivatives in the location, the raw log
+# scale, eps and log delta. `pinned`: `p` stops at eps and log delta is 0.
 struct _JMapTriComponent
     x::Vector{Float64}
     Phi::Matrix{Float64}
     Psi::Matrix{Float64}
     pinned::Bool
+    w::Vector{Float64}
+end
+_JMapTriComponent(x, Phi, Psi, pinned) = _JMapTriComponent(x, Phi, Psi, pinned, ones(length(x)))
+
+_jmap_tri_component_value(C::_JMapTriComponent, p::AbstractVector) =
+    _jmap_tri_component_nll(C, p) + _jmap_tri_component_ridge(C, p)
+
+function _jmap_tri_component_ridge(C::_JMapTriComponent, p::AbstractVector{T}) where {T}
+    nf = size(C.Phi, 2)
+    reg = zero(T)
+    for j in 2:length(p)
+        j == nf + 1 && continue
+        reg += p[j]^2
+    end
+    return reg / 2
 end
 
-function _jmap_tri_component_value(C::_JMapTriComponent, p::AbstractVector{T}) where {T}
+function _jmap_tri_component_nll(C::_JMapTriComponent, p::AbstractVector{T}) where {T}
     nf = size(C.Phi, 2)
     nb = size(C.Psi, 2)
     f = C.Phi * p[1:nf]
@@ -265,14 +297,9 @@ function _jmap_tri_component_value(C::_JMapTriComponent, p::AbstractVector{T}) w
         a = A * tanh(b[i] / A)
         v = (C.x[i] - f[i]) * exp(-a)
         r = delta * asinh(v) - epsk
-        s += sinh(r)^2 / 2 - (lam + log(cosh(r)) - log1p(v^2) / 2) + a
+        s += C.w[i] * (sinh(r)^2 / 2 - (lam + log(cosh(r)) - log1p(v^2) / 2) + a)
     end
-    reg = zero(T)
-    for j in 2:length(p)
-        j == nf + 1 && continue
-        reg += p[j]^2
-    end
-    return s + reg / 2
+    return s
 end
 
 function _jmap_tri_component_derivatives(C::_JMapTriComponent, p::Vector{Float64})
@@ -317,26 +344,27 @@ function _jmap_tri_component_derivatives(C::_JMapTriComponent, p::Vector{Float64
         lvv = g2 * dq1^2 + g1 * delta * q2 + h2
         lve = -g2 * dq1
         lvl = g2 * dq * dq1 + g1 * dq1
-        ge -= g1
-        gl += g1 * dq - 1
-        Hee += g2
-        Hel -= g2 * dq
-        Hll += g2 * dq^2 + g1 * dq
+        wi = C.w[i]
+        ge -= wi * g1
+        gl += wi * (g1 * dq - 1)
+        Hee += wi * g2
+        Hel -= wi * g2 * dq
+        Hll += wi * (g2 * dq^2 + g1 * dq)
         # In the location and the capped log scale, v = (x - f) exp(-a), and
         # the log Jacobian's own `+ a`.
         La = -lv * v + 1
         Laa = lvv * v^2 + lv * v
         Lfa = lvv * ea * v + lv * ea
         # The capped log scale through the raw one.
-        Lf[i] = -lv * ea
-        Lff[i] = lvv * ea^2
-        Lb[i] = La * ab
-        Lbb[i] = Laa * ab^2 + La * abb
-        Lfb[i] = Lfa * ab
-        Lfe[i] = -lve * ea
-        Lfl[i] = -lvl * ea
-        Lbe[i] = -lve * v * ab
-        Lbl[i] = -lvl * v * ab
+        Lf[i] = -wi * lv * ea
+        Lff[i] = wi * lvv * ea^2
+        Lb[i] = wi * La * ab
+        Lbb[i] = wi * (Laa * ab^2 + La * abb)
+        Lfb[i] = wi * Lfa * ab
+        Lfe[i] = -wi * lve * ea
+        Lfl[i] = -wi * lvl * ea
+        Lbe[i] = -wi * lve * v * ab
+        Lbl[i] = -wi * lvl * v * ab
     end
     g = zeros(np)
     H = zeros(np, np)
@@ -431,45 +459,113 @@ function _jmap_tri_parents(X::AbstractMatrix, S::AbstractMatrix, k::Int, m::Int)
 end
 
 """
-    _jmap_tri_fit(U; iters, parents)
-
-The triangular map fitted to whitened draws `U` (a column each) by maximum
-likelihood, a component at a time, by damped Newton from the identity, each
-component on at most `parents` earlier coordinates (`_jmap_tri_parents`); a
-component whose tails come out lighter than the normal's is fitted again with
-its tail weight held at the normal's.
+A component's designs over parents `P` at draws `S` (saturated values, a column
+a draw): the location's [1, s, s^2, s_q s_r for q < r] and the raw log scale's
+[1, s], a row a draw.
 """
-function _jmap_tri_fit(U::AbstractMatrix; iters::Int=60, parents::Int=_JMAP_TRI_PARENTS)
+function _jmap_tri_designs(S::AbstractMatrix, P::Vector{Int})
+    N = size(S, 2)
+    m = length(P)
+    Phi = Matrix{Float64}(undef, N, 1 + 2m + m * (m - 1) ÷ 2)
+    Psi = Matrix{Float64}(undef, N, 1 + m)
+    @inbounds for i in 1:N
+        Phi[i, 1] = 1.0
+        Psi[i, 1] = 1.0
+        for q in 1:m
+            s = S[P[q], i]
+            Phi[i, 1 + q] = s
+            Phi[i, 1 + m + q] = s^2
+            Psi[i, 1 + q] = s
+        end
+        j = 1 + 2m
+        for q in 1:m, r in (q + 1):m
+            j += 1
+            Phi[i, j] = S[P[q], i] * S[P[r], i]
+        end
+    end
+    return Phi, Psi
+end
+
+# A component fitted by damped Newton from the identity; one whose tails come
+# out lighter than the normal's is fitted again with its tail weight held at
+# the normal's. Its coefficients, log delta last, and whether it was held.
+function _jmap_tri_component_fit(x, Phi, Psi, w, iters)
+    np = size(Phi, 2) + size(Psi, 2) + 2
+    p = _jmap_tri_newton(_JMapTriComponent(x, Phi, Psi, false, w), zeros(np), iters)
+    p[end] > 0 || return p, false
+    return vcat(_jmap_tri_newton(_JMapTriComponent(x, Phi, Psi, true, w), p[1:(end - 1)],
+        iters), 0.0), true
+end
+
+"""
+    _jmap_tri_fit(U; weights, iters)
+
+The triangular map fitted to whitened draws `U` (a column each, weighted by
+`weights` where given) by maximum likelihood, a component at a time. Each
+component's size is its held-out likelihood's: fitted at 0, 1, 2, 4, 8, ...
+parents (`_jmap_tri_parents`, at most every earlier coordinate) on the first
+three quarters of the draws and scored on the last quarter, the best size kept
+and the ladder left after two sizes that do not improve on it, or where a size
+has more coefficients than the draws it is fitted on; then refitted on every
+draw. `nothing` where too few draws fit even the marginal.
+"""
+function _jmap_tri_fit(U::AbstractMatrix; weights::Union{Nothing,AbstractVector}=nothing,
+    iters::Int=60)
     n, N = size(U)
+    nv = cld(N, 4)
+    nt = N - nv
+    nt > 4 || return nothing
     X = Matrix{Float64}(U)
     S = _jmap_tri_sat.(X)
+    w = weights === nothing ? ones(N) : collect(Float64, weights)
+    wt = w[1:nt] ./ (sum(w[1:nt]) / nt)
+    wv = w[(nt + 1):N] ./ (sum(w[(nt + 1):N]) / nv)
+    tr = 1:nt
+    va = (nt + 1):N
+    Xt = X[:, tr]
+    St = S[:, tr]
     par = Vector{Vector{Int}}(undef, n)
     f1 = Vector{Vector{Float64}}(undef, n)
     f2 = Vector{Vector{Float64}}(undef, n)
+    f3 = Vector{Vector{Float64}}(undef, n)
     a1 = Vector{Vector{Float64}}(undef, n)
     f0 = zeros(n); a0 = zeros(n); epsv = zeros(n); ld = zeros(n)
     for k in 1:n
-        P = _jmap_tri_parents(X, S, k, parents)
-        m = length(P)
-        Sp = Matrix{Float64}(transpose(S[P, :]))
-        Phi = hcat(ones(N), Sp, Sp .^ 2)
-        Psi = hcat(ones(N), Sp)
-        x = X[k, :]
-        p = _jmap_tri_newton(_JMapTriComponent(x, Phi, Psi, false), zeros(3m + 4), iters)
-        if p[3m + 4] > 0
-            p = vcat(_jmap_tri_newton(_JMapTriComponent(x, Phi, Psi, true), p[1:(3m + 3)],
-                iters), 0.0)
+        best = (nll=Inf, P=Int[])
+        worse = 0
+        m = 0
+        while true
+            P = _jmap_tri_parents(Xt, St, k, m)
+            Phi, Psi = _jmap_tri_designs(St, P)
+            size(Phi, 2) + size(Psi, 2) + 2 <= nt || break
+            p, held = _jmap_tri_component_fit(Xt[k, :], Phi, Psi, wt, iters)
+            Phv, Psv = _jmap_tri_designs(S[:, va], P)
+            nll = _jmap_tri_component_nll(_JMapTriComponent(X[k, va], Phv, Psv, held, wv), p)
+            if nll < best.nll
+                best = (nll=nll, P=P)
+                worse = 0
+            else
+                worse += 1
+            end
+            (worse >= 2 || length(P) >= k - 1) && break
+            m = m == 0 ? 1 : 2m
         end
+        P = best.P
+        mm = length(P)
+        Phi, Psi = _jmap_tri_designs(S, P)
+        p, _ = _jmap_tri_component_fit(X[k, :], Phi, Psi, w ./ (sum(w) / N), iters)
+        nf = size(Phi, 2)
         par[k] = P
         f0[k] = p[1]
-        f1[k] = p[2:(m + 1)]
-        f2[k] = p[(m + 2):(2m + 1)]
-        a0[k] = p[2m + 2]
-        a1[k] = p[(2m + 3):(3m + 2)]
-        epsv[k] = p[3m + 3]
-        ld[k] = p[3m + 4]
+        f1[k] = p[2:(mm + 1)]
+        f2[k] = p[(mm + 2):(2mm + 1)]
+        f3[k] = p[(2mm + 2):nf]
+        a0[k] = p[nf + 1]
+        a1[k] = p[(nf + 2):(nf + mm + 1)]
+        epsv[k] = p[nf + mm + 2]
+        ld[k] = p[nf + mm + 3]
     end
-    return _JMapTri(n, par, f0, f1, f2, a0, a1, epsv, ld)
+    return _JMapTri(n, par, f0, f1, f2, f3, a0, a1, epsv, ld)
 end
 
 """
@@ -522,22 +618,22 @@ _jmap_with(m::_JMapTheta; tri=m.tri) = _JMapTheta(m.npar, m.theta0, m.Ct, tri)
 const _JMapThetaLike = Union{CTSEMJointMap,_JMapTheta}
 
 """
-    _jmap_learn_tri(m, pooled)
+    _jmap_learn_tri(m, pooled; weights)
 
-The map with theta's triangular map fitted from `pooled`, theta's draws over
-every learning window so far, whitened by `m`'s own centre and factor; `m` as
-it is while there are fewer than ten draws a coefficient of the largest
-component. At most 4000 draws are read, spread through the pool.
+The map with theta's triangular map fitted from `pooled` (draws of theta, a
+column each, weighted where `weights` are given: a tempering stage's cloud),
+whitened by `m`'s own centre and factor, each component as large as the draws
+support (`_jmap_tri_fit`); `m` as it is where they support none. At most 4000
+draws are read, spread through the pool in its order, so the held-out quarter
+stays the pool's last.
 """
 function _jmap_learn_tri(m::_JMapThetaLike, pooled::AbstractMatrix;
-    parents::Int=_JMAP_TRI_PARENTS)
-    n = m.npar
+    weights::Union{Nothing,AbstractVector}=nothing)
     N = size(pooled, 2)
-    k = min(n - 1, parents)
-    N >= 10 * (3k + 4) || return m
     pick = N > 4000 ? round.(Int, range(1, N; length=4000)) : collect(1:N)
     U = LowerTriangular(m.Ct) \ (pooled[:, pick] .- m.theta0)
-    return _jmap_with(m; tri=_jmap_tri_fit(U; parents=k))
+    tri = _jmap_tri_fit(U; weights=weights === nothing ? nothing : weights[pick])
+    return tri === nothing ? m : _jmap_with(m; tri=tri)
 end
 
 # Theta's whitening and its inverse go through the engine's own products
@@ -1383,8 +1479,7 @@ before the kept draws), `ncheck` (a check window under the final map),
 coupled to the free parameters outside its effects), `report` (the layer's
 objective, whose layout the effects are reported in: a unit whose effects are
 all integrated has no block on the hybrid objective), `theta_map` (theta's
-triangular map learnt; false keeps its whitening alone) and `theta_parents`
-(the most earlier coordinates each of its components conditions on).
+triangular map learnt; false keeps its whitening alone).
 
 Returns `ctsem_sample`'s record, with the draws of theta and, with
 `save_effects`, of the natural deviations, plus the map's: `gradients` (every
@@ -1404,8 +1499,7 @@ function ctsem_sample_map(laplace::CTSEMLaplaceObjective, values::AbstractVector
     progress_sink=nothing, stepsize::Real=0.0, coordinate=nothing,
     windows::Union{Nothing,AbstractVector{<:Integer}}=nothing, nsettle::Integer=25,
     ncheck::Integer=25, maxrows::Integer=400, cross::Bool=true,
-    report::Union{Nothing,CTSEMLaplaceObjective}=nothing, theta_map::Bool=true,
-    theta_parents::Integer=_JMAP_TRI_PARENTS)
+    report::Union{Nothing,CTSEMLaplaceObjective}=nothing, theta_map::Bool=true)
 
     t0 = time()
     nchains = Int(nchains); nwarmup = Int(nwarmup); ndraws = Int(ndraws)
@@ -1460,7 +1554,6 @@ function ctsem_sample_map(laplace::CTSEMLaplaceObjective, values::AbstractVector
     # Theta's triangular map is learnt from the windows' pooled draws, over a
     # third window.
     learn = theta_map
-    tparents = Int(theta_parents)
     windows = windows === nothing ? (learn ? [40, 80, 160] : [40, 80]) : windows
     pooled = zeros(npar, 0)
     for (w, nw) in enumerate(windows)
@@ -1474,7 +1567,7 @@ function ctsem_sample_map(laplace::CTSEMLaplaceObjective, values::AbstractVector
         m2, refit, lambda, rows = _jmap_refit(m, Wl, rng; maxrows=Int(maxrows))
         if learn
             pooled = hcat(pooled, _jmap_thetas(m, Wl[1:npar, :]))
-            m2 = _jmap_learn_tri(m2, pooled; parents=tparents)
+            m2 = _jmap_learn_tri(m2, pooled)
         end
         extra += rows
         starts = _jmap_restarts(m, m2, results, moved, Wl, rng)
@@ -1629,8 +1722,10 @@ function ctsem_sample_map_check(laplace::CTSEMLaplaceObjective, values::Abstract
         n = npar
         par = [[j for j in 1:(k - 1) if rand(rng) < 0.6] for k in 1:n]
         coef(sc) = [sc .* randn(rng, length(par[k])) for k in 1:n]
+        pairs(sc) = [sc .* randn(rng, length(par[k]) * (length(par[k]) - 1) ÷ 2) for k in 1:n]
         m = _jmap_with(m; tri=_JMapTri(n, par, 0.1 .* randn(rng, n), coef(0.2), coef(0.1),
-            0.1 .* randn(rng, n), coef(0.2), 0.2 .* randn(rng, n), 0.2 .* randn(rng, n)))
+            pairs(0.1), 0.1 .* randn(rng, n), coef(0.2), 0.2 .* randn(rng, n),
+            0.2 .* randn(rng, n)))
     end
     xt = 0.3 .* randn(rng, D)
     d = CTSEMJointMapDensity(m, Threads.Atomic{Int}(0))

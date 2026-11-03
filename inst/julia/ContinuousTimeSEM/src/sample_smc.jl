@@ -663,23 +663,24 @@ function _smc_kept(lw::AbstractVector{Float64})
 end
 
 """
-    _smc_geometry(X, w, cov, learn; parents)
+    _smc_geometry(X, w, cov, learn)
 
 A stage's latent coordinates (`_JMapTheta`): centred at the weighted cloud's
 mean, whitened by `cov`, the shrunk weighted covariance the moves' metric
 used to be, and where `learn`, theta's triangular map fitted to the cloud `X`
-the last stage's moves left (`_jmap_learn_tri`, the map sampler's own fit).
+the last stage's moves left, weighted by `w` to the stage's density
+(`_jmap_learn_tri`, the map sampler's own fit, as large as the cloud supports).
 Without the map, NUTS in these coordinates under the identity is NUTS in
 theta under `cov`.
 """
 function _smc_geometry(X::AbstractMatrix{Float64}, w::AbstractVector{Float64},
-    cov::AbstractMatrix{Float64}, learn::Bool; parents::Int=_JMAP_TRI_PARENTS)
+    cov::AbstractMatrix{Float64}, learn::Bool)
     n = size(X, 1)
     theta0 = vec(X * (w ./ sum(w)))
     S = (Matrix(cov) .+ transpose(Matrix(cov))) ./ 2
     Ct = Matrix(cholesky(Symmetric(S + 1e-12 * max(tr(S), 1.0) / n * I)).L)
     geo = _JMapTheta(n, theta0, Ct, nothing)
-    return learn ? _jmap_learn_tri(geo, X; parents=parents) : geo
+    return learn ? _jmap_learn_tri(geo, X; weights=w) : geo
 end
 
 """
@@ -875,11 +876,11 @@ function ctsem_sample_smc(objective, values::AbstractVector;
         Cprev = shrunk.cov
         # The moves' coordinates: the shrunk covariance's whitening, which as a
         # metric in theta it used to be, and theta's triangular map learnt from
-        # the cloud the last moves left -- after the first stage, whose cloud is
-        # the start normal's own draws. The posterior's shape shows as `beta`
-        # nears 1, where under the whitening alone the steps shrank (0.43 to
-        # 0.10 on the time series, 0.32 to 0.12 on a 474-parameter model).
-        geo = _smc_geometry(X, w, shrunk.cov, transform && stage > 1)
+        # the cloud the last moves left, weighted to this stage's density. The
+        # posterior's shape shows as `beta` nears 1, where under the whitening
+        # alone the steps shrank (0.43 to 0.10 on the time series, 0.32 to 0.12
+        # on a 474-parameter model).
+        geo = _smc_geometry(X, w, shrunk.cov, transform)
         # The coreset for this stage's moves, from every unit's term at the
         # cloud before it is resampled (the duplicates after it say nothing
         # new); none where no size is cheaper than moving in full.
