@@ -179,15 +179,15 @@ _smc_mean(v) = sum(v) / length(v)
 
 export ctsem_sample_smc
 
-"""Systematic resampling: indices drawn with probabilities `w`."""
-function _smc_systematic(w::Vector{Float64}, rng::AbstractRNG)
-    n = length(w)
+"""Systematic resampling: `n` indices drawn with probabilities `w`."""
+function _smc_systematic(w::Vector{Float64}, rng::AbstractRNG, n::Int=length(w))
+    m = length(w)
     c = cumsum(w ./ sum(w))
     u = (rand(rng) .+ (0:(n - 1))) ./ n
     idx = Vector{Int}(undef, n)
     j = 1
     @inbounds for i in 1:n
-        while j < n && c[j] < u[i]
+        while j < m && c[j] < u[i]
             j += 1
         end
         idx[i] = j
@@ -707,12 +707,13 @@ end
 """
     _smc_move(td!, geo, x, s, rng, step, metric, nmoves, maxdepth, maxdelta)
 
-A particle at theta `x` moved by `nmoves` NUTS transitions of `td!` in the
-latent coordinates of `geo`, on scratch `s`: the chain, and theta where it
-ended (`x` itself, to the last bit, where it did not move); `nothing` where
-the density is not finite at `x`. The particles' tasks run this, a function of
-its own so that they share no local: a name assigned inline in a task's body
-is the enclosing function's wherever that function uses it too (CLAUDE.md,
+A chain from theta `x` of `nmoves` NUTS transitions of `td!` in the latent
+coordinates of `geo`, on scratch `s`: the chain, and every state it visited
+in theta, `x` first (`states`, `npar x (nmoves + 1)`; `x` itself, to the last
+bit, wherever a transition left the chain at its start); `nothing` where the
+density is not finite at `x`. The chains' tasks run this, a function of its
+own so that they share no local: a name assigned inline in a task's body is
+the enclosing function's wherever that function uses it too (CLAUDE.md,
 "Julia threads"), and the final chains' start, so written, was one variable
 across the tasks, its draws differing from the serial run's by 2.5.
 """
@@ -722,7 +723,13 @@ function _smc_move(td!, geo, x, s, rng, step, metric, nmoves, maxdepth, maxdelta
     isfinite(logp) || return nothing
     r = _continue_chain(td!, s.ws, rng, copy(w), s.g, logp, step, metric, nmoves,
         maxdepth, maxdelta)
-    return (chain=r, theta=r.x == w ? x : _jmap_theta(geo, r.x)[1], moved=r.x != w)
+    states = Matrix{Float64}(undef, length(x), nmoves + 1)
+    states[:, 1] .= x
+    for k in 1:nmoves
+        d = view(r.draws, :, k)
+        states[:, k + 1] .= d == w ? x : _jmap_theta(geo, d)[1]
+    end
+    return (chain=r, states=states)
 end
 
 """
@@ -790,6 +797,10 @@ function ctsem_sample_smc(objective, values::AbstractVector;
     nfirst = Int(ndraws)
     np >= 2 || throw(ArgumentError("nparticles must be at least 2"))
     nmv >= 1 || throw(ArgumentError("nmoves must be positive"))
+    # A stage's chains, and the states each leaves in the next cloud.
+    span = nmv + 1
+    nchains = max(2, np ÷ span)
+    ncloud = nchains * span
     _check_sample_arguments(np, nfirst, target_accept)
     0 < ess_frac < 1 || throw(ArgumentError("ess_frac must be in (0, 1)"))
     widen > 0 || throw(ArgumentError("widen must be positive"))
@@ -854,7 +865,8 @@ function ctsem_sample_smc(objective, values::AbstractVector;
         sink=progress_sink)
     if _due(reporter, true)
         _emit(reporter, string("  tempered SMC: ", np, " particles, ", npar,
-            " dimensions, ", nmv, " NUTS moves a stage, from the metric's normal at ",
+            " dimensions, ", nchains, " chains of ", nmv,
+            " NUTS moves a stage, every state kept, from the metric's normal at ",
             widen, "x", transform ? ", moves through a map learnt from each stage's cloud" : "",
             use_coreset ? ", moves on a coreset of the $nunits units where one is cheaper" : "",
             mode == :serial ? "" : ", particles in parallel on copies"))
@@ -876,15 +888,17 @@ function ctsem_sample_smc(objective, values::AbstractVector;
     # What the last moves left owing, a log weight per particle
     # (`_smc_move_correction`): zero after moves on the full objective.
     owed = zeros(np)
-    # Where the last stage's moves began, which the final phase reads its
-    # chain count from (`_smc_move_tau`).
+    # Where the last stage's chains began and ended, which the final phase
+    # reads its chain count from (`_smc_move_tau`).
     Xfrom = X
+    Xto = X
     for stage in 1:Int(maxstages)
         _ctsem_interrupt_check()
         u = lp .- lq
         u[.!isfinite.(u)] .= -Inf
-        target = Float64(ess_frac) * np
-        corr_ess = all(iszero, owed) ? Float64(np) : _importance_ess(owed)
+        ncl = size(X, 2)
+        target = Float64(ess_frac) * ncl
+        corr_ess = all(iszero, owed) ? Float64(ncl) : _importance_ess(owed)
         delta = 1.0 - beta
         corrected = false
         if corr_ess < target
@@ -928,18 +942,20 @@ function ctsem_sample_smc(objective, values::AbstractVector;
         # new); none where no size is cheaper than moving in full.
         fit = nothing
         if use_coreset && full.terms !== nothing
-            price = _SMCPrice(nmv * leap * gvalues, beta, vbudget, inflate, false)
+            # A cloud state's share of the moves: a chain's, over its states.
+            price = _SMCPrice(nmv * leap * gvalues / span, beta, vbudget, inflate, false)
             fit = _smc_coreset_fit(full.terms, full.total, unit_cost, price,
                 _smc_full_price(price), fit_rng)
         end
         cs_stage = fit === nothing ? nothing : CTSEMCoreset(fit.units, fit.weights)
-        idx = _smc_systematic(w, rng)
+        # Waste-free: `nchains` starts resampled from the cloud, each a chain
+        # of `nmv` moves, and every state of every chain the next cloud.
+        idx = _smc_systematic(w, rng, nchains)
         Xpre = X[:, idx]
         lp_pre = lp[idx]
-        lq = lq[idx]
-        # Where each particle begins its moves, pilot included, and the
-        # coreset's value there: the backward kernel's weight reads the
-        # coreset's error at both ends of the move.
+        # Where each chain begins, pilot included, and the coreset's value
+        # there: the backward kernel's weight reads the coreset's error at a
+        # state and at its chain's start.
         lc_pre = cs_stage === nothing ? lp_pre : _smc_coreset_values(objective, Xpre, cs_stage)
         td! = _smc_through(tempered_for(objective, cs_stage, beta), geo)
         # The step: on the first stage, which has none, one particle's dual
@@ -964,44 +980,50 @@ function ctsem_sample_smc(objective, values::AbstractVector;
             end
         end
         pilot_secs = time() - tpilot
-        Xnew = copy(Xstart)
-        acc = zeros(np)
-        dep = zeros(np)
-        lf = zeros(np)
-        ndiv = zeros(Int, np)
-        mv = zeros(Int, np)
-        # A Vector{Bool}, not a BitVector: particles on other tasks write their
+        # Chain `i`'s states are columns `(i - 1) span + 1` to `i span`, its
+        # start first; a chain whose start the density refuses stays there.
+        Xnew = Xstart[:, repeat(1:nchains; inner=span)]
+        acc = zeros(nchains)
+        dep = zeros(nchains)
+        lf = zeros(nchains)
+        ndiv = zeros(Int, nchains)
+        mv = zeros(Int, nchains)
+        # A Vector{Bool}, not a BitVector: chains on other tasks write their
         # own entries at once, and a BitVector's entries share words.
-        okp = zeros(Bool, np)
+        okp = zeros(Bool, nchains)
         stage_beta = beta
         stage_step = step
         stage_metric = metric
         stage_geo = geo
-        _each_point!(objective, np, mode; coreset=cs_stage, scratch=nuts_scratch) do i, obj, s
+        _each_point!(objective, nchains, mode; coreset=cs_stage, scratch=nuts_scratch) do i, obj, s
             out = _smc_move(_smc_through(tempered_for(obj, cs_stage, stage_beta), stage_geo),
                 stage_geo, Xstart[:, i], s, Random.Xoshiro(hash((UInt64(seed), stage, i))),
                 stage_step, stage_metric, nmv, mdepth, mdelta)
             out === nothing && return nothing
-            Xnew[:, i] .= out.theta
+            Xnew[:, ((i - 1) * span + 1):(i * span)] .= out.states
             acc[i] = _smc_mean(out.chain.accept)
             dep[i] = _smc_mean(out.chain.depth)
             lf[i] = _smc_leapfrogs(out.chain.depth)
             ndiv[i] = count(out.chain.divergent)
-            mv[i] = out.moved ? 1 : 0
+            mv[i] = view(out.states, :, span) != view(out.states, :, 1) ? 1 : 0
             okp[i] = true
             return nothing
         end
         X = Xnew
         Xfrom = Xstart
+        Xto = X[:, span:span:end]
+        # Each state's chain start, against which its correction is read.
+        Xpre = Xpre[:, repeat(1:nchains; inner=span)]
+        lp_pre = lp_pre[repeat(1:nchains; inner=span)]
+        lc_pre = lc_pre[repeat(1:nchains; inner=span)]
         nok = max(1, count(okp))
         count(okp) > 0 && (leap = sum(lf) / nok)
         full = _smc_terms(objective, X, use_coreset)
         lp = full.value
-        if cs_stage === nothing
-            fill!(owed, 0.0)
-        else
+        owed = zeros(ncloud)
+        if cs_stage !== nothing
             lc = _smc_coreset_values(objective, X, cs_stage)
-            @inbounds for i in 1:np
+            @inbounds for i in 1:ncloud
                 owed[i] = _smc_move_correction(beta, lp[i], lc[i], lp_pre[i], lc_pre[i],
                     view(X, :, i) != view(Xpre, :, i))
             end
@@ -1009,13 +1031,13 @@ function ctsem_sample_smc(objective, values::AbstractVector;
         end
         lq = _smc_columns(logq, X)
         push!(stages, (beta=beta, step=step, accept=sum(acc) / nok, depth=sum(dep) / nok,
-            moved=sum(mv) / np, divergent=sum(ndiv), shrink=shrunk.lambda, logz=inc,
+            moved=sum(mv) / nchains, divergent=sum(ndiv), shrink=shrunk.lambda, logz=inc,
             mapped=stage_geo.tri !== nothing,
             map_parents=stage_geo.tri === nothing ? 0 : maximum(length.(stage_geo.tri.parents)),
             coreset_size=cs_stage === nothing ? 0 : length(cs_stage.units),
             coreset_share=fit === nothing ? 1.0 : fit.share,
             coreset_error=fit === nothing ? NaN : fit.error,
-            correction_ess=corr_ess / np, corrected=corrected,
+            correction_ess=corr_ess / ncl, corrected=corrected,
             pilot_secs=pilot_secs, secs=time() - t0))
         if _due(reporter, true)
             _emit(reporter, join(filter(!isempty, [
@@ -1050,8 +1072,10 @@ function ctsem_sample_smc(objective, values::AbstractVector;
     # stage's moves left owing. As many chains as the target needs, more
     # chains before longer ones (see the file comment), sharing the particles'
     # draw budget.
-    tau = _smc_move_tau(Xfrom, X, nmv)
-    order = _smc_spread_order(np)
+    tau = _smc_move_tau(Xfrom, Xto, nmv)
+    # The cloud's states, which the final chains start from.
+    nfinal = size(X, 2)
+    order = _smc_spread_order(nfinal)
     final_fit = nothing
     if use_coreset && full.terms !== nothing
         price = _SMCPrice(leap * gvalues, 1.0, vbudget, inflate, true)
@@ -1088,7 +1112,7 @@ function ctsem_sample_smc(objective, values::AbstractVector;
             scratch=nuts_scratch) do i, obj, s
             from[i], res[i] = _smc_final_chain(
                 _smc_through(_smc_logdensity(obj, cs_final, gradient_method), final_geo),
-                final_geo, Xf, ks[i], np, s, Random.Xoshiro(hash((UInt64(seed), 0, off + i))),
+                final_geo, Xf, ks[i], nfinal, s, Random.Xoshiro(hash((UInt64(seed), 0, off + i))),
                 final_step, final_metric, nfirst, mdepth, mdelta)
             return nothing
         end
@@ -1103,8 +1127,8 @@ function ctsem_sample_smc(objective, values::AbstractVector;
     # unused particles buy more effective draws than longer ones do.
     fw = _SMCFinalWeights()
     planned = expected_kept
-    start_chains!(order[1:_smc_final_chains(tau, target_ess, nfirst, np)])
-    while target_ess > 0 && length(start) < np
+    start_chains!(order[1:_smc_final_chains(tau, target_ess, nfirst, nfinal)])
+    while target_ess > 0 && length(start) < nfinal
         n = length(start)
         if cs_final !== nothing
             _smc_final_weights!(fw, objective, cs_final, owed_f, lp_f, Xf, start,
@@ -1118,7 +1142,7 @@ function ctsem_sample_smc(objective, values::AbstractVector;
             fmin_ess, fmean_ess, nfirst, Float64(rhat_target), false)
         v.met && break
         shortfall = max(fmin_ess / max(v.worst, 1.0), fmean_ess / max(v.average, 1.0))
-        start_chains!(order[(n + 1):min(np, max(n + 1, ceil(Int, 1.25 * shortfall * n)))])
+        start_chains!(order[(n + 1):min(nfinal, max(n + 1, ceil(Int, 1.25 * shortfall * n)))])
     end
     nch = length(start)
     max_final = cld(max(Int(max_draws), nfirst) * np, nch)
