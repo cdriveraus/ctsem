@@ -751,7 +751,8 @@ function ctsem_sample_smc(objective, values::AbstractVector;
     if _due(reporter, true)
         _emit(reporter, string("  tempered SMC: ", np, " particles, ", npar,
             " dimensions, ", nmv, " NUTS moves a stage, from the metric's normal at ",
-            widen, "x", use_coreset ? ", moves on a coreset of the $nunits units" : "",
+            widen, "x",
+            use_coreset ? ", moves on a coreset of the $nunits units where one is cheaper" : "",
             mode == :serial ? "" : ", particles in parallel on copies"))
     end
 
@@ -908,7 +909,8 @@ function ctsem_sample_smc(objective, values::AbstractVector;
                 @sprintf("  tempering stage %d", stage),
                 @sprintf("beta %.4g", beta), @sprintf("step %.3g", step),
                 @sprintf("accept %.2f", sum(acc) / nok), @sprintf("depth %.1f", sum(dep) / nok),
-                cs_stage === nothing ? "" : "coreset $(length(cs_stage.units)) of $nunits units",
+                cs_stage !== nothing ? "coreset $(length(cs_stage.units)) of $nunits units" :
+                    use_coreset ? "no coreset cheaper" : "",
                 corrected ? "correction only" : "",
                 _duration(time() - t0)]), " | "))
         end

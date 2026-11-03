@@ -295,6 +295,20 @@
   note <- .ctBackendSampleRouteNote(sampled, exact)
   if (!is.null(note)) message(note)
   marginal <- !identical(sampled, "none")
+  # The map samples the joint posterior with the effects the filter integrates
+  # integrated exactly, so a marginal target is its own wherever nothing is
+  # left to draw but by Laplace's approximation: a model without random
+  # effects, effects the filter carries as states ('augmented'), or a Laplace
+  # term that is exact. A Laplace marginal named where it is not exact is
+  # another density, and the map would sample the joint in its place.
+  if (identical(control$sampler, "map") && (isTRUE(state_explicit) ||
+      (identical(sampled, "laplace") && !exact))) {
+    stop("control$sampler = 'map' samples the joint posterior, and this run asks for ",
+      if (isTRUE(state_explicit)) "the joint posterior over the latent states. "
+      else "the Laplace marginal, which is not exact here. ",
+      "Use the default sampler, or sample with intoverpop = 'none'.",
+      call. = FALSE)
+  }
   # The check the marginal metric is built from, where the fit lacks one. Not
   # with sampled TI values, whose coordinates the fit's objective does not
   # have, nor on the state-explicit target, whose metric covers the states too.
@@ -304,14 +318,6 @@
   if (marginal && !isTRUE(state_explicit) && !tisampled)
     fit <- .ctBackendSampleCheck(fit, cores = checkcores, verbose = verbose,
       seed = as.integer(.ctJuliaOr(control$seed, 20260828L)))
-  if (identical(control$sampler, "map") && (marginal || isTRUE(state_explicit))) {
-    stop("control$sampler = 'map' samples the joint posterior over population ",
-      "parameters and random effects, and this run asks for ",
-      if (isTRUE(state_explicit)) "the joint posterior over the latent states. "
-      else "the marginal posterior. ",
-      "Use the default sampler, or sample with intoverpop = 'none'.",
-      call. = FALSE)
-  }
   if (identical(control$sampler, "saem") && (marginal || isTRUE(state_explicit))) {
     stop("control$sampler = 'saem' samples the joint posterior over population ",
       "parameters and random effects, and this run asks for ",
@@ -1268,12 +1274,13 @@
   draws <- budget$first
   settings$max_draws <- budget$max_draws
   module <- .ctJuliaModule(fit$model_spec$project)
-  mapped <- identical(settings$sampler, "map") && !isTRUE(target$marginal)
+  mapped <- identical(settings$sampler, "map")
   objective <- .ctBackendSampleObjective(fit, target, hybrid = mapped)
   # The map sampler reports the effects in the layer's layout, which labels
   # them (`.ctBackendEffectIndex()`): on the hybrid objective a unit whose
-  # effects are all integrated keeps no block.
-  report <- if (mapped) .ctBackendSampleObjective(fit, target) else NULL
+  # effects are all integrated keeps no block. A marginal sample reports none.
+  report <- if (mapped && !isTRUE(target$marginal))
+    .ctBackendSampleObjective(fit, target) else NULL
 
   # Chains are the parallel axis, and in one session they can only be concurrent
   # if it was started with threads for them. Said once, here, because the
@@ -1291,7 +1298,11 @@
   }
 
   saem <- identical(settings$sampler, "saem")
-  arguments <- list(objective, .ctJuliaNumericVector(target$estimate),
+  # On a marginal target the map starts where tempered SMC's particles would
+  # (`.ctBackendSmcStart()`), the DAIS normal's centre where the call made one,
+  # with its covariance as the whitening (`target$metric`).
+  start <- if (mapped && isTRUE(target$marginal)) target$smcstart else target$estimate
+  arguments <- list(objective, .ctJuliaNumericVector(start),
     nchains = as.integer(chains), nwarmup = as.integer(warmup),
     ndraws = as.integer(draws), seed = as.integer(seed)[1L],
     maxdepth = settings$maxdepth, target_accept = settings$target_accept,
@@ -1345,12 +1356,12 @@
   # `npar`, `save_effects` and `adapt_effects` all describe an effect block the
   # marginal entry does not have, which is the whole structural difference
   # between the two calls.
-  if (!isTRUE(target$marginal)) {
+  if (!isTRUE(target$marginal) || mapped) {
     arguments$npar <- as.integer(target$npar)
-    arguments$save_effects <- isTRUE(saveEffects)
+    arguments$save_effects <- isTRUE(saveEffects) && !isTRUE(target$marginal)
     if (!saem && !mapped) arguments$adapt_effects <- settings$adapt_effects
     if (identical(target$placement, "saem") && !mapped) arguments$saem <- TRUE
-    if (mapped) arguments$report <- report
+    if (mapped && !is.null(report)) arguments$report <- report
     if (mapped && is.null(control$warmup)) arguments$nwarmup <- NULL
   } else if (!identical(target$gradient, "adjoint")) {
     # `ctsem_sample_marginal`'s own default is `:adjoint`; only said
@@ -1359,7 +1370,7 @@
     # at all, so this is deliberately only reachable on the marginal path.
     arguments$gradient_method <- target$gradient
   }
-  if (isTRUE(target$marginal)) arguments$coreset <- isTRUE(settings$coreset)
+  if (isTRUE(target$marginal) && !mapped) arguments$coreset <- isTRUE(settings$coreset)
   metric <- .ctJuliaOr(target$metric, target$hessian)
   if (!is.null(metric)) arguments$hessian <- .ctJuliaPut(as.matrix(metric))
   # How many of the sampled coordinates are model parameters. Only differs
@@ -1371,9 +1382,9 @@
   if (isTRUE(target$marginal) && isTRUE(target$state_explicit)) {
     arguments$nparameters <- as.integer(target$npar)
   }
-  entry <- if (isTRUE(target$marginal)) module$ctsem_sample_marginal else
-    if (saem) module$ctsem_saem_sample else
-    if (mapped) module$ctsem_sample_map else module$ctsem_sample
+  entry <- if (mapped) module$ctsem_sample_map else
+    if (isTRUE(target$marginal)) module$ctsem_sample_marginal else
+    if (saem) module$ctsem_saem_sample else module$ctsem_sample
   # Tempered SMC takes the start, the metric, the particle count and the final
   # phase's targets; none of NUTS's warmup settings, and no R-hat target -- its
   # final phase is many short chains, whose split R-hat reads their

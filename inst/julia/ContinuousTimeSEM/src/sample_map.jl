@@ -1554,6 +1554,18 @@ function ctsem_sample_map(laplace::CTSEMLaplaceObjective, values::AbstractVector
 end
 
 """
+    ctsem_sample_map(objective::CTSEMObjective, values; kwargs...)
+
+The map on a filter objective: a model without random effects, or one whose
+effects the filter carries as states (`intoverpop = 'augmented'`). Its
+Laplace view has no effects (`ctsem_laplace_objective` with none: each subject
+a unit of none), so the joint posterior is the marginal one and the map is
+theta's alone, through the same code as every other target.
+"""
+ctsem_sample_map(objective::CTSEMObjective, values::AbstractVector; kwargs...) =
+    ctsem_sample_map(ctsem_laplace_objective(objective), values; kwargs...)
+
+"""
     ctsem_sample_map_check(laplace, values; hessian, cross, seed, nu, h)
 
 The map's exactness at a random latent point, with the map built as
