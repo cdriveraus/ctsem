@@ -5542,8 +5542,11 @@ export ctsem_set_mode_anchors!, ctsem_laplace_clear_anchors!, ctsem_set_mode_sum
 # differed by 5 to 25 nats, each finding maxima the other missed. So a hold
 # for the stages whose points reach far (`search = true`: the interval check,
 # the flat-direction screen, the samplers) also searches, and the unit's term
-# combines the maxima of both (`_laplace_mode_sum`): never below either, and
-# at the estimate the run's.
+# combines the maxima of both (`_laplace_mode_sum`): the term over every
+# maximum either finds, and at the estimate the run's. Not always above both:
+# a maximum one set adds beside the other's best, across a shallow valley,
+# fades the best's weight (at the pilot's draws, 2.55 and 1.13 nats below the
+# followed value at two, 11.3 above both at the third).
 
 """
     _ctsem_fit_modes(held, anchored)

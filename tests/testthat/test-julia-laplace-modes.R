@@ -772,8 +772,8 @@ test_that("a fit keeps the modes its run ended with", {
 # Held, the objective is a function of the parameters given the modes: every
 # evaluation starts each unit from them and follows each maximum from where
 # they were found, whatever was evaluated before. With a search beside them,
-# each unit's term combines the maxima of both, so it is never below either,
-# and where the held modes miss a maximum the search finds it. At a population
+# each unit's term combines the maxima of both, and where the held modes miss a
+# maximum the search finds it. At a population
 # mean of 0.3 each person on the sign fixture has two maxima.
 test_that("held modes give one function of the parameters, and a search beside them adds what they miss", {
   skip_without_julia()
@@ -829,7 +829,6 @@ test_that("held modes give one function of the parameters, and a search beside t
   both <- held(some, search = TRUE)
   expect_true(all(short < searched - 1))
   expect_equal(both, searched, tolerance = 1e-8)
-  expect_true(all(both >= short))
   # And with every maximum held, the search beside them adds nothing.
   expect_equal(held(modes, search = TRUE), full, tolerance = 1e-8)
   # A hold inside another is released alone: the one under it holds again,
