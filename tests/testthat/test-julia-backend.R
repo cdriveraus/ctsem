@@ -788,11 +788,18 @@ test_that("a call into a Julia process that has died errors by name, and the nex
   withr::defer(if (identical(bridge$con, dead)) {
     suppressWarnings(try(JuliaConnectoR::stopJulia(), silent = TRUE))
   })
-  tools::pskill(as.integer(JuliaConnectoR::juliaEval("getpid()")))
-  # Up to a minute, ending as soon as the socket reads. Ten seconds was not
-  # enough on a loaded machine: Julia handles SIGTERM before it exits, and on
-  # dev2 with every core busy the socket was still quiet when the check ran,
-  # failing both expectations below.
+  # SIGKILL, as the test below sends, except on Windows, where pskill refuses
+  # it and its default terminates the process. Not SIGTERM: Julia runs its own
+  # exit on that, and on GitHub's runners it now and then had not ended a
+  # minute later (2 runs of 18, each at the full minute of the wait below,
+  # against 4-5 s otherwise), so the socket never read and the check rightly
+  # found a live session. What a SIGTERM leaves on the socket is tested below,
+  # on a socket pair.
+  pid <- as.integer(JuliaConnectoR::juliaEval("getpid()"))
+  tools::pskill(pid,
+    if (.Platform$OS.type == "windows") tools::SIGTERM else tools::SIGKILL)
+  # Up to a minute, ending as soon as the socket reads: on a machine with every
+  # core busy the process can take a while to end and its socket to close.
   for (i in seq_len(600)) {
     if (isTRUE(socketSelect(list(dead), timeout = 0.1))) break
   }
