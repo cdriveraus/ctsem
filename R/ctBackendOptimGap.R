@@ -1203,6 +1203,9 @@
     est <- as.numeric(r$minimizer)[seq_len(npar)]
     endgame <- .ctBackendEndgameOf(r, npar)
     if (is.null(endgame)) {
+      # On the objective the stage ended on: its modes held, as its run had
+      # them (R/ctJuliaFitModes.R).
+      .ctJuliaHoldModes(spec, .ctJuliaResultModes(r))
       endgame <- .ctBackendEndgameAt(spec, est, gradient = gradient, verbose = verbose)
       if (!is.null(endgame)) formed <<- formed + as.integer(endgame$hessians)
     }

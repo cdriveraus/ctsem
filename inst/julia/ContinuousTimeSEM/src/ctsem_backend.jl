@@ -2241,7 +2241,8 @@ _ctsem_pinned_point(p::CTSEMPinnedObjective, x) =
 _ctsem_anchor_start!(p::CTSEMPinnedObjective, x; kwargs...) =
     _ctsem_anchor_start!(p.objective, _ctsem_pinned_point(p, x); kwargs...)
 _ctsem_anchor_here!(p::CTSEMPinnedObjective) = _ctsem_anchor_here!(p.objective)
-_ctsem_anchor_modes(p::CTSEMPinnedObjective) = _ctsem_anchor_modes(p.objective)
+_ctsem_anchor_modes(p::CTSEMPinnedObjective; kwargs...) =
+    _ctsem_anchor_modes(p.objective; kwargs...)
 _ctsem_anchor_finish!(p::CTSEMPinnedObjective, x) =
     _ctsem_anchor_finish!(p.objective, _ctsem_pinned_point(p, x))
 _ctsem_take_search_modes!(p::CTSEMPinnedObjective, x, found) =
@@ -3914,6 +3915,10 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
         widen=stop_reason != "cap")
     saturated = verdict.saturated
     stalled = verdict.stalled
+    # The modes the run ends with, for the fit (`_ctsem_fit_modes`): its
+    # anchored maxima, before the clearing below, and what the closing search
+    # adds.
+    held_modes = _ctsem_anchor_modes(objective; known=false)
     # The run's anchored modes against a search at the estimate, and the
     # anchors cleared (`_ctsem_anchor_finish!`): where the run's own last
     # search was at the estimate and found nothing to go on with, only the
@@ -3924,6 +3929,7 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
     else
         _ctsem_anchor_finish!(objective, minimizer)
     end
+    fit_modes = _ctsem_fit_modes(held_modes, anchored)
     finite_gradient = verdict.finite_gradient
     converged_enough = verdict.converged_enough
     overshoot = verdict.overshoot
@@ -3980,6 +3986,12 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
         found_mode_units=_ctsem_found_columns(found)[1],
         found_mode_values=_ctsem_found_columns(found)[2],
         found_mode_rounds=mode_rounds,
+        # Every unit's maxima at the estimate, the run's anchored ones and any
+        # better the closing search found (`_ctsem_fit_modes`), for the fit to
+        # hold wherever it is read afterwards (`ctsem_laplace_hold_modes!`);
+        # `[0]` where the run anchored none.
+        fit_mode_units=fit_modes.units,
+        fit_mode_values=fit_modes.values,
         gradient=collect(final.gradient),
         subject_loglik=collect(final.subject_loglik),
         result_extra...,

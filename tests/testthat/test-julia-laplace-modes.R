@@ -754,3 +754,81 @@ test_that("a checkpoint keeps the exact Hessian, and a resume does not form it a
   # Still named by the checkpoint the resume wrote, for a resume after it.
   expect_identical(readRDS(path)$hessian_id, kept$id)
 })
+
+# After the fit, what reads it holds the modes its run ended with
+# (R/ctJuliaFitModes.R): the fit keeps them, and the uncertainty stage holds
+# them and checks the draws its intervals reach against a search.
+test_that("a fit keeps its modes, and its uncertainty reads and checks them", {
+  skip_without_julia()
+  set.seed(5)
+  fit <- suppressWarnings(suppressMessages(ctFit(.modes_sign_data(),
+    .modes_sign_model(), backend = "julia", intoverpop = "laplace", cores = 1L,
+    optimcontrol = list(checks = FALSE))))
+  modes <- fit$laplace$modes
+  expect_setequal(unique(modes$units), seq_len(length(unique(.modes_sign_data()$id))))
+  expect_equal(ncol(modes$values), length(modes$units))
+  expect_equal(modes$at, as.numeric(fit$estimate$raw))
+  check <- fit$uncertainty$modecheck
+  expect_equal(check$checked, 16L)
+  expect_equal(check$evaluated, 16L)
+  expect_equal(check$missed, 0L)
+})
+
+# Held, the objective is a function of the parameters given the modes: every
+# evaluation starts each unit from them and follows each maximum from where
+# they were found, whatever was evaluated before. A search from the origin can
+# only add maxima, and the check says where it does. At a population mean of
+# 0.3 each person on the sign fixture has two maxima.
+test_that("held modes give one function of the parameters, and the check finds what they miss", {
+  skip_without_julia()
+  spec <- suppressMessages(ctFit(.modes_sign_data(), .modes_sign_model(),
+    backend = "julia", intoverpop = "laplace", fit = FALSE))
+  handle <- structure(spec, class = c("ctJuliaModel", "ctFitModel"))
+  objective <- ctsem:::.ctJuliaObjective(handle, hybrid = TRUE)
+  module <- ctsem:::.ctJuliaModule(spec$project)
+  value <- function(x) as.numeric(ctsem:::.ctJuliaGet(module$ctsem_laplace_evaluate(
+    objective, ctsem:::.ctJuliaNumericVector(x), gradient = FALSE))$value)
+  ctsem:::.ctJuliaEval(paste(
+    "function _ctsem_test_held_modes(o, x)",
+    "  C = ContinuousTimeSEM",
+    "  C.ctsem_laplace_clear_anchors!(o)",
+    "  C.ctsem_laplace_evaluate(o, x; gradient = false)",
+    "  units = Int[]; cols = Vector{Float64}[]",
+    "  for U in eachindex(o.modes)",
+    "    push!(units, U); push!(cols, copy(o.modes[U]))",
+    "    for m in o.alt_modes[U]; push!(units, U); push!(cols, copy(m)); end",
+    "  end",
+    "  V = fill(NaN, maximum(length, cols), length(cols))",
+    "  for j in eachindex(cols); V[1:length(cols[j]), j] .= cols[j]; end",
+    "  (units = units, values = V)",
+    "end", sep = "\n"))
+  x0 <- c(0.3, 0.5)
+  r <- ctsem:::.ctJuliaGet(ctsem:::.ctJuliaCall("Main._ctsem_test_held_modes",
+    objective, ctsem:::.ctJuliaNumericVector(x0)))
+  modes <- list(units = as.integer(r$units), values = as.matrix(r$values), at = x0)
+  expect_gt(length(modes$units), length(unique(modes$units)))
+  x1 <- x0 + c(0.2, 0.1)
+  x2 <- x0 - c(0.2, 0.1)
+  searched <- c(value(x0), value(x1))
+  held <- local({
+    expect_equal(ctsem:::.ctJuliaHoldModes(spec, modes), 12L)
+    c(value(x0), value(x1), value(x2), value(x1))
+  })
+  expect_equal(held[1:2], searched, tolerance = 1e-8)
+  expect_identical(held[4], held[2])
+  # Released, the search again.
+  expect_identical(value(x1), searched[2])
+  points <- rbind(x0, x1, x2)
+  full <- ctsem:::.ctJuliaModesCheck(spec, modes, points)
+  expect_equal(full$checked, 3L)
+  expect_equal(full$missed, 0L)
+  # Each unit held at its lower maximum alone: the search finds the higher.
+  lower <- !duplicated(modes$units, fromLast = TRUE)
+  some <- list(units = modes$units[lower],
+    values = modes$values[, lower, drop = FALSE], at = x0)
+  short <- ctsem:::.ctJuliaModesCheck(spec, some, points)
+  expect_gt(short$missed, 0L)
+  expect_gt(length(short$units), 0L)
+  expect_true(all(short$unit_gain > short$tol))
+  expect_true(all(short$found$units %in% short$units))
+})
