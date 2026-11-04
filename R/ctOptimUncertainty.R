@@ -3747,9 +3747,10 @@ ctOptimFitLpgFunc <- function(fit, cores=1){
 #' gradients. NUTS starts from a metric set to the widths the check measured
 #' along those directions, or, where \code{'checked'} moved the normal to the
 #' posterior's moments, to that normal's covariance. Tempered SMC carries
-#' \code{particles} (200) draws from that normal to the posterior by stages
-#' of NUTS moves, then runs as many of them on as chains as the effective
-#' sample size target needs. It is for posteriors NUTS does not
+#' draws from that normal to the posterior by stages of NUTS moves,
+#' \code{particles} (200) chains a stage, keeping every state they visit,
+#' then runs as many chains on as the effective sample size target needs.
+#' It is for posteriors NUTS does not
 #' converge on from the normal -- a mass far from the mode, a loading shell --
 #' and costs about what NUTS does in gradients. Its
 #' particles move on a coreset of the units (\code{coreset}, \code{TRUE}): the
