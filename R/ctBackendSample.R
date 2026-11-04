@@ -417,18 +417,6 @@
     progress = .ctBackendReporting(verbose),
     processes = processes, handles = handles)
 
-  # The fit's modes against a search at thinned draws of a marginal sample:
-  # where the chains went, whether a unit had maxima the fit's modes miss
-  # (R/ctJuliaFitModes.R).
-  if (isTRUE(marginal) && is.null(jointobjective) &&
-      !is.null(.ctJuliaFitModes(fit))) {
-    posterior <- out$estimate$rawposterior
-    rows <- unique(round(seq(1, nrow(posterior), length.out = min(16L, nrow(posterior)))))
-    out$sample$modecheck <- .ctBackendWithMaxChunks(cores, .ctJuliaModesCheck(
-      fit$model_spec, .ctJuliaFitModes(fit), posterior[rows, , drop = FALSE]))
-    .ctJuliaModesCheckWarn(out$sample$modecheck, "the sample")
-  }
-
   # Explosive dynamics in the posterior, looked for only when the run had an
   # explosive filter pass -- none means there is nothing to find. Not on the
   # state-explicit route, which has no filter.
@@ -1292,11 +1280,11 @@
   module <- .ctJuliaModule(fit$model_spec$project)
   mapped <- identical(settings$sampler, "map")
   objective <- .ctBackendSampleObjective(fit, target, hybrid = mapped)
-  # A marginal target is the fit's objective, read at the fit's modes held:
-  # a function of the parameters given the fit, which a chain's own history
-  # would not give (R/ctJuliaFitModes.R).
+  # A marginal target is the fit's objective, read at the fit's modes held
+  # and a search beside them: a function of the parameters given the fit,
+  # which a chain's own history would not give (R/ctJuliaFitModes.R).
   if (isTRUE(target$marginal) && !isTRUE(target$state_explicit)) {
-    .ctJuliaHoldModes(fit$model_spec, .ctJuliaFitModes(fit))
+    .ctJuliaHoldModes(fit$model_spec, .ctJuliaFitModes(fit), search = TRUE)
   }
   # The map sampler reports the effects in the layer's layout, which labels
   # them (`.ctBackendEffectIndex()`): on the hybrid objective a unit whose
