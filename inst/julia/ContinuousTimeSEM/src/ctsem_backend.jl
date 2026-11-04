@@ -3893,8 +3893,15 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
         # Nor after a walk off to a limit, which the watch measured climbing
         # outward: pulling back cannot gain, and cost the second-order refit
         # 75 s of its 3 minutes.
+        # Nor where the finish ended on its walk (`newton_final`), as the
+        # finish's own probe does not: the stage is not certified, its
+        # objective is about to change, and the certified stage after it
+        # probes on its exact Hessian. Without one the probe searches every
+        # coordinate: 22 sets, 1.5 hours, after the affect pilot's smoothing
+        # pass.
         label=label, verbose=verbose && maxiter > 0,
-        overshoot_probe=stop_reason in ("jump", "diverged") ? :off : overshoot_probe,
+        overshoot_probe=(stop_reason in ("jump", "diverged") ||
+            (finish !== nothing && finish.walked !== nothing)) ? :off : overshoot_probe,
         progress=_ctsem_probe_progress(reporter),
         # What the probe pulls back, read off the finish's Hessian where
         # there is one, and only the flat transforms after the iteration cap
