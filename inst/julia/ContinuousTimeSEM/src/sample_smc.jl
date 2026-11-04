@@ -8,15 +8,25 @@ whose drift and diffusion parameters lie along curved ridges, with 41 of 75
 directions three times wider than the Hessian says and its mass 95 normal sds
 from the mode -- the chains take their whole budget to reach it and end at
 R-hat 1.07-1.10; on a loading shell they end at 1.27. This samples the same
-posterior by tempering instead: `nparticles` draws from the start normal
-`q0 = N(values, widen^2 S0)` are carried to the posterior along
-`(1 - beta) log q0 + beta log pi`, each stage's `beta` set so the incremental
-weights keep an effective sample of `ess_frac` of the particles, then
-systematic resampling, then `nmoves` NUTS transitions of every particle at the
-stage's density. At `beta = 1` every particle is a chain at the posterior, and
-the final phase runs as many of them as its effective-size target needs,
-draws `ndraws` from each and extends them under the one stopping rule every
-sampler here stops by (`_sample_until_target`).
+posterior by tempering instead, waste-free (Dau and Chopin 2022): a cloud of
+draws from the start normal `q0 = N(values, widen^2 S0)` is carried to the
+posterior along `(1 - beta) log q0 + beta log pi`, each stage's `beta` set so
+the incremental weights keep an effective sample of `ess_frac` of the cloud;
+then `nparticles` chain starts are drawn from it by systematic resampling,
+each runs `nmoves` NUTS transitions at the stage's density, and every state of
+every chain, its start included, is the next cloud: `nparticles (nmoves + 1)`
+states. Each state a chain visits is a draw from the stage's density as much
+as its last one is. Kept only the last, three quarters of them were thrown
+away; kept, they are what the weights, the metric and the map are fitted on,
+and per density evaluation the ESS target came 1.2-2 times sooner on four of
+five closed-form targets, level on a mixture, and 1.03-2.1 times on the
+race's models (review/SAMPLING-dais-in-sample-2026-11-01.md). As many chains
+as particles: 50 chains of three moves, a cloud of 200, collapsed NUTS's step
+on a 100-dimensional normal, whose covariance 50 starts cannot carry. At
+`beta = 1` the final phase runs chains from the last stage's chain ends, as
+many as its effective-size target needs, draws `ndraws` from each and extends
+them under the one stopping rule every sampler here stops by
+(`_sample_until_target`).
 
 What it reuses, which is the point: the transition (`_nuts_transition!`
 through `_continue_chain`), the pilot that sets a step size (`_run_chain`
@@ -78,7 +88,9 @@ Moral, Doucet and Jasra 2006) taken as the moves' own reversal under `q_t`:
 a particle moved from `x` to `y` carries `r(y) / r(x)`, `r = (pi / c)^beta`,
 whose log is `beta ((lp(y) - lc(y)) - (lp(x) - lc(x)))` -- the coreset's
 error where the particle ended less where it began; one for a particle that
-did not move (`_smc_move_correction`). The full values at `y` are the next
+did not move (`_smc_move_correction`). The reversal holds after any number of
+transitions, so every state a chain keeps carries it against the chain's
+start, `y` the state. The full values at `y` are the next
 stage's weights' anyway, and the coreset's at `x` are one coreset batch
 before the moves. Its expectation is one under the stage's density, so the
 stages' log mean weights still sum to the log constant with a coreset as
@@ -131,7 +143,10 @@ that a model with nothing to parallelise over inside a gradient gets the
 whole ceiling across particles; one after another otherwise.
 
 **The final phase runs as many chains as its target needs**, at most one a
-particle. It starts as many as the last stage's moves suggest
+particle, from the last stage's chain ends: a chain's states share where it
+went along its slow directions (a mixture's mode), and final chains from all
+of them read four times the effective size their draws carry there. Here a
+particle is a chain end. It starts as many as the last stage's moves suggest
 (`_smc_final_chains`): across the cloud, each parameter's correlation between
 where its moves began and where they ended is its autocorrelation at that
 lag, extended to one draw as an AR(1) decay (`_smc_move_tau`). Where their
@@ -1074,10 +1089,7 @@ function ctsem_sample_smc(objective, values::AbstractVector;
     # chains before longer ones (see the file comment), sharing the particles'
     # draw budget.
     tau = _smc_move_tau(Xfrom, Xto, nmv)
-    # The final chains start from the last stage's chain ends, one a chain:
-    # a chain's states share where it went along its slow directions (a
-    # mixture's mode), so final chains from all of them read four times the
-    # effective size their draws carry there.
+    # The final chains start from the last stage's chain ends (file comment).
     pool = collect(span:span:size(X, 2))
     nfinal = length(pool)
     order = pool[_smc_spread_order(nfinal)]

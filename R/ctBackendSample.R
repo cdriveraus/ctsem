@@ -504,8 +504,9 @@
   # affine effects integrated exactly); resolved against the target by
   # `.ctBackendUncertaintySample()` and read by `.ctBackendSampleControl()`.
   "sampler",
-  # How many particles tempered SMC (`sampler = 'smc'`) carries, 200 by
-  # default; read by `.ctBackendSampleControl()`.
+  # How many chains a stage of tempered SMC (`sampler = 'smc'`) runs, 200 by
+  # default, its cloud every state they visit; read by
+  # `.ctBackendSampleControl()`.
   "particles",
   # Whether tempered SMC's particles move on a coreset of the units
   # (sample_smc.jl), TRUE by default; FALSE is the oracle, as for 'checked''s
