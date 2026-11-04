@@ -7892,8 +7892,11 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
   # are. Outside it, a `cores = 1` fit spread its check over every thread the
   # session had, and left the worker pool at full width behind it.
   # The fit's modes held on the layer the passes evaluate, for the units
-  # whose layout is the hybrid's (R/ctJuliaFitModes.R).
-  .ctJuliaHoldModes(out$model_spec, out$laplace[["modes"]], hybrid = FALSE)
+  # whose layout is the hybrid's, with a search beside them: each effect's
+  # pass sets the other effects' loadings to zero, far from the estimate
+  # (R/ctJuliaFitModes.R).
+  .ctJuliaHoldModes(out$model_spec, out$laplace[["modes"]], hybrid = FALSE,
+    search = TRUE)
   effectcheck <- if (isTRUE(intoverstates)) .ctBackendWithMaxChunks(cores,
     .ctEffectInformation(out$model_spec, out$estimate$raw,
       point = "at the estimate", alone = !isTRUE(optimcontrol$estonly),
