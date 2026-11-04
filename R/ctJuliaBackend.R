@@ -5594,35 +5594,101 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
   out$start <- as.numeric(saved$raw)
   units <- as.integer(saved$modes$units)
   if (length(units) && any(units > 0L)) out$resume <- saved$modes
+  # What the point was optimised on (`.ctJuliaCheckpointState()`), and the
+  # exact Hessian the run kept there, beside the checkpoint
+  # (`.ctJuliaCheckpointHessian()`); version 1 records have neither.
+  out$state <- saved$state
+  kept <- .ctJuliaCheckpointHessianRead(out$path, saved, npar)
+  if (!is.null(kept)) {
+    out$hessian <- kept$hessian
+    out$hessian_at <- kept$at
+    out$hessian_id <- saved$hessian_id
+  }
   message("Resuming from the checkpoint at ", out$path, ": iteration ",
-    saved$iteration, ", log posterior ", format(saved$objective, digits = 10), ".")
+    saved$iteration, ", log posterior ", format(saved$objective, digits = 10),
+    if (!is.null(kept)) ", with the exact Hessian it kept", ".")
   out
 }
 
+# What a checkpoint's point was optimised on, beyond the parameters: the
+# smoothing parameters (R/ctTIpredSmooth.R), which a fit estimates between
+# stages and a resume goes on from, and the substep mesh and relinearisation
+# plan, which a fit learns at its start and again at its optimum. A Hessian the
+# checkpoint kept is the objective's at these, so a resume uses it only where
+# its own are the same.
+.ctJuliaCheckpointState <- function(model_spec) {
+  list(lambda = if (!is.null(model_spec$penalty))
+      as.numeric(model_spec$penalty$lambda),
+    max_timestep = model_spec$max_timestep, relinsteps = model_spec$relinsteps)
+}
+
+# The file a checkpoint keeps its exact Hessian in, beside it: written once a
+# Hessian, where the checkpoint itself is written every minute and on the
+# affect pilot a 903 x 903 Hessian is 6.5 MB.
+.ctJuliaCheckpointHessianPath <- function(path) paste0(path, ".hessian")
+
+# The Hessian a checkpoint record names (`hessian_id`), from the file beside
+# it: NULL where it names none, or the file holds another, or the matrix is not
+# the parameters'.
+.ctJuliaCheckpointHessianRead <- function(path, saved, npar) {
+  if (is.null(saved$hessian_id)) return(NULL)
+  side <- .ctJuliaCheckpointHessianPath(path)
+  if (!file.exists(side)) return(NULL)
+  kept <- tryCatch(readRDS(side), error = function(e) NULL)
+  if (!is.list(kept) || !identical(kept$id, saved$hessian_id)) return(NULL)
+  if (!is.matrix(kept$hessian) || nrow(kept$hessian) != npar ||
+      ncol(kept$hessian) != npar || !all(is.finite(kept$hessian)) ||
+      length(kept$at) != npar || !all(is.finite(kept$at))) return(NULL)
+  list(hessian = kept$hessian, at = as.numeric(kept$at))
+}
+
+# Saves `object` to `path` through a temporary file moved into place, so an
+# interrupted write leaves the last copy whole.
+.ctJuliaSaveAtomic <- function(object, path, what = "checkpoint") {
+  dir <- dirname(path)
+  if (!dir.exists(dir)) dir.create(dir, recursive = TRUE)
+  temp <- tempfile(paste0(basename(path), "."), tmpdir = dir)
+  saveRDS(object, temp)
+  if (!file.rename(temp, path)) {
+    unlink(temp)
+    stop("could not move the new ", what, " into place")
+  }
+  invisible(TRUE)
+}
+
 # Writes a checkpoint (`.ctJuliaCheckpoint()`): the raw point the engine's
-# callback reported, its log posterior and iteration, and the anchored modes
+# callback reported, its log posterior and iteration, the anchored modes
 # (`mode_units`, NaN-padded `mode_values`; unit 0 where the route anchors
-# none). To a temporary file moved into place, so an interrupted write leaves
-# the last checkpoint whole.
+# none), what the point was optimised on (`checkpoint$state`), and the id of
+# the exact Hessian kept beside it (`.ctJuliaCheckpointHessian()`), if any.
 .ctJuliaCheckpointWrite <- function(checkpoint, iteration, objective, parameters,
-  mode_units, mode_values) {
+  mode_units, mode_values, hessian_id = NULL) {
   raw <- as.numeric(parameters)
   if (length(raw) != checkpoint$npar || !all(is.finite(raw))) return(invisible(FALSE))
-  record <- list(format = "ctsem checkpoint", version = 1L,
+  record <- list(format = "ctsem checkpoint", version = 2L,
     ctsem = as.character(utils::packageVersion("ctsem")),
     npar = checkpoint$npar, names = checkpoint$names,
     iteration = as.integer(iteration), objective = as.numeric(objective), raw = raw,
     modes = list(units = as.integer(mode_units), values = as.matrix(mode_values)),
-    written = Sys.time())
-  dir <- dirname(checkpoint$path)
-  if (!dir.exists(dir)) dir.create(dir, recursive = TRUE)
-  temp <- tempfile(paste0(basename(checkpoint$path), "."), tmpdir = dir)
-  saveRDS(record, temp)
-  if (!file.rename(temp, checkpoint$path)) {
-    unlink(temp)
-    stop("could not move the new checkpoint into place")
-  }
-  invisible(TRUE)
+    state = checkpoint$state, hessian_id = hessian_id, written = Sys.time())
+  .ctJuliaSaveAtomic(record, checkpoint$path)
+}
+
+# Keeps an exact Hessian of the maximised objective, formed at `at`, beside the
+# checkpoint, and returns the id the checkpoint names it by. The run started on
+# 2026-11-01 on the affect pilot was lost after forming its certification's
+# Hessian, and its resume formed it again at the same point: 8 hours.
+.ctJuliaCheckpointHessian <- function(checkpoint, hessian, at) {
+  hessian <- as.matrix(hessian)
+  at <- as.numeric(at)
+  if (nrow(hessian) != checkpoint$npar || ncol(hessian) != checkpoint$npar ||
+      length(at) != checkpoint$npar || !all(is.finite(hessian)) ||
+      !all(is.finite(at))) return(NULL)
+  id <- paste0(format(Sys.time(), "%Y%m%d%H%M%OS6"), "-", Sys.getpid())
+  .ctJuliaSaveAtomic(list(id = id, hessian = hessian, at = at,
+    state = checkpoint$state), .ctJuliaCheckpointHessianPath(checkpoint$path),
+    what = "kept Hessian")
+  id
 }
 
 # How many times a run resumes with modes kept as starts (`.ctJuliaOptimise()`)
@@ -5904,13 +5970,45 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
   # handing it the anchored modes beside the point, and the file is written
   # then. The modes a resume brings (`resume`) are further starts for each
   # run's opening search (`_ctsem_anchor_start!`).
+  #
+  # Each exact Hessian the finish forms is kept beside the checkpoint as it
+  # comes (`hessian_callback`, `.ctJuliaCheckpointHessian()`), and the
+  # checkpoint names the latest; one a resume brought (`checkpoint$hessian_id`,
+  # the caller's `hessian`) stays named until another replaces it. A resume
+  # walks on it where its objective is the one the Hessian was formed on
+  # (`.ctJuliaCheckpointState()`), and keeps it where the walk ends within
+  # `hessianreuse` standard errors of where it was formed.
+  hessian_id <- NULL
+  last_write <- NULL
   if (!is.null(checkpoint)) {
     common$checkpoint_every <- as.numeric(checkpoint$every)
+    checkpoint$state <- .ctJuliaCheckpointState(model_spec)
+    hessian_id <- checkpoint$hessian_id
     if (!is.null(checkpoint$resume)) {
       values <- as.matrix(checkpoint$resume$values)
       storage.mode(values) <- "double"
       common$resume_units <- .ctJuliaVector(as.integer(checkpoint$resume$units))
       common$resume_values <- values
+    }
+    common$hessian_callback <- function(at, hessian) {
+      kept <- tryCatch(list(id = .ctJuliaCheckpointHessian(checkpoint, hessian, at)),
+        error = function(e) list(failed = conditionMessage(e)))
+      if (!is.null(kept$failed)) {
+        if (is.null(checkpoint$failed)) {
+          checkpoint$failed <<- kept$failed
+          warning("The Hessian could not be kept beside the checkpoint at ",
+            checkpoint$path, ": ", kept$failed, call. = FALSE)
+        }
+      } else if (!is.null(kept$id)) {
+        hessian_id <<- kept$id
+        # The checkpoint names it at once: the finish's probe can run for
+        # hours after its Hessian, and a write on the callback's cadence
+        # waits for the probe's end.
+        if (!is.null(last_write)) try(do.call(.ctJuliaCheckpointWrite,
+          c(list(checkpoint), last_write, list(hessian_id = hessian_id))),
+          silent = TRUE)
+      }
+      NULL
     }
     if (is.null(callback)) callback <- function(iteration, total, objective,
       gradient_norm) NULL
@@ -5951,9 +6049,13 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
       # Not swallowed with the callback's errors: a checkpoint that cannot be
       # written says so once, and the fit goes on.
       if (!is.null(checkpoint) && !is.null(mode_units)) {
-        written <- tryCatch(.ctJuliaCheckpointWrite(checkpoint, iteration,
-          objective, parameters, mode_units, mode_values), error = function(e)
+        point <- list(iteration = iteration, objective = objective,
+          parameters = parameters, mode_units = mode_units,
+          mode_values = mode_values)
+        written <- tryCatch(do.call(.ctJuliaCheckpointWrite, c(list(checkpoint),
+          point, list(hessian_id = hessian_id))), error = function(e)
           conditionMessage(e))
+        if (isTRUE(written)) last_write <<- point
         if (is.character(written) && is.null(checkpoint$failed)) {
           checkpoint$failed <<- written
           warning("The checkpoint could not be written to ", checkpoint$path,
@@ -6638,6 +6740,20 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
   # the opening search's further starts (`.ctJuliaCheckpoint()`).
   checkpoint <- .ctJuliaCheckpoint(optimcontrol, model_spec, npar, intoverstates)
   if (!is.null(checkpoint$start)) inits <- checkpoint$start
+  # The smoothing parameters the checkpoint's point was optimised at, which the
+  # fit goes on from rather than estimating them again from their start, and
+  # the exact Hessian it kept, for the first stage's finish to walk on where
+  # the objective is the one it was formed on.
+  lambda <- as.numeric(checkpoint$state$lambda)
+  if (!is.null(model_spec$penalty) && length(lambda) &&
+      length(lambda) == nrow(model_spec$penalty) && all(is.finite(lambda)) &&
+      all(lambda > 0)) {
+    model_spec$penalty$lambda <- lambda
+  }
+  if (!is.null(checkpoint$hessian) &&
+      !identical(.ctJuliaCheckpointState(model_spec), checkpoint$state)) {
+    checkpoint$hessian <- checkpoint$hessian_at <- checkpoint$hessian_id <- NULL
+  }
   start <- .ctJuliaInitialValues(npar, inits,
     initsd = .ctJuliaOr(optimcontrol$initsd, .01), spec = model_spec)
   # Starting values read off the data, for the diagonals whose defaults are
@@ -6928,11 +7044,15 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
   result <- keepknown(.ctJuliaOptimise(model_spec, start,
     optimcontrol = startcontrol, gradient = gradient, cores = cores,
     verbose = verbose, callback = optimcontrol$callback,
-    objective = jointobjective, checkpoint = checkpoint))
+    objective = jointobjective, checkpoint = checkpoint,
+    hessian = checkpoint$hessian, hessian_at = checkpoint$hessian_at))
   optimum <- as.numeric(result$minimizer)[seq_len(npar)]
-  # Its modes were the first run's further starts; later runs start from
-  # their own (`laplace_known`).
-  if (!is.null(checkpoint)) checkpoint$resume <- NULL
+  # Its modes and Hessian were the first run's; later runs start from their
+  # own (`laplace_known`), and form their own.
+  if (!is.null(checkpoint)) {
+    checkpoint$resume <- NULL
+    checkpoint$hessian <- checkpoint$hessian_at <- checkpoint$hessian_id <- NULL
+  }
   moved <- FALSE
   if (!is.null(substeps) && isTRUE(substeps$finite)) {
     before <- model_spec$max_timestep

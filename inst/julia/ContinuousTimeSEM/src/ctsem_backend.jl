@@ -2997,6 +2997,11 @@ these two, are set only on a stage resumed after a certification (see
 on (`newton_walked`) instead of forming the exact Hessian where it ends, for a
 stage whose objective the caller is about to change again (`_ctsem_newton_finish`'s
 `final`).
+`hessian_callback(at, hessian)` is handed each exact Hessian of the maximised
+objective the finish forms, at the point it was formed at (`_ctsem_newton_finish`'s
+`on_hessian`): R's checkpoint keeps it, for a resume to pass back as
+`newton_hessian`. On the affect pilot a run lost after forming its
+certification's Hessian formed it again on resuming, 8 hours at the same point.
 
 Provenance of the defaults: the stall watch's constants are documented at
 `CTSEMStallWatch`, the batching's at `_ctsem_batch_plan`, and the finish's
@@ -3030,7 +3035,7 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
     newton_curvature=:auto, certify::Bool=false,
     newton_reuse::Real=_CTSEM_HESSIAN_REUSE_SE,
     flat_rtol::Real=_CTSEM_FLAT_RTOL, newton_hessian=nothing,
-    newton_hessian_at=nothing, newton_final=:exact)
+    newton_hessian_at=nothing, newton_final=:exact, hessian_callback=nothing)
     start_values = collect(start)
     # What the line search saw of a jump, for the route to name its cause
     # (`_ctsem_jump_units`), on a route that can.
@@ -3698,7 +3703,8 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
             # The local curvature's last build, as the Krylov model's
             # preconditioner: exact where it was cheap.
             krylov_base=(local_curvature === nothing ||
-                isempty(local_curvature.P)) ? nothing : local_curvature.P)
+                isempty(local_curvature.P)) ? nothing : local_curvature.P,
+            on_hessian=hessian_callback)
         minimizer = collect(finish.x)
         # A jump the finish's steps confirmed and the route named: its modes
         # in and L-BFGS on from the finish's point, as on L-BFGS's (above), or

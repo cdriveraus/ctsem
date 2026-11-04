@@ -778,3 +778,24 @@ function _invoke_callback(cb::CTSEMCallback, values...; force::Bool=false)
     end
     return nothing
 end
+
+"""
+    _ctsem_call_hook(f, args...)
+
+Calls a caller's hook, `f(args...)`, where there is one (`nothing`, none): a
+stage's progress (`ctsem_laplace_check`'s `progress`) or a Hessian to keep
+(`_ctsem_newton_finish`'s `on_hessian`). Its failure is reported and ignored,
+as a callback's is: the hook is a convenience, and the work it reports on goes
+on.
+"""
+_ctsem_call_hook(::Nothing, args...) = nothing
+function _ctsem_call_hook(f, args...)
+    try
+        f(args...)
+    catch err
+        _ctsem_must_propagate(err) && rethrow()
+        println(_console(), "  a caller's hook failed: ", err)
+        flush(_console())
+    end
+    return nothing
+end

@@ -722,3 +722,35 @@ test_that("a checkpoint keeps the point and the anchored modes, and a fit resume
   expect_error(suppressMessages(fitto(other, 4L)), "written for another model")
   expect_identical(readRDS(path)$npar, saved$npar)
 })
+
+# The exact Hessian a finish forms is kept beside the checkpoint, and a resume
+# at the same point walks on it rather than forming it again: on the affect
+# pilot a run lost after forming its certification's Hessian formed it again
+# on resuming, 8 hours at the same point.
+test_that("a checkpoint keeps the exact Hessian, and a resume does not form it again", {
+  skip_without_julia()
+  path <- tempfile(fileext = ".rds")
+  on.exit(unlink(c(path, paste0(path, ".hessian"))), add = TRUE)
+  data <- .modes_sign_data()
+  fitto <- function() {
+    set.seed(5)
+    suppressWarnings(ctFit(data, .modes_sign_model(), backend = "julia",
+      intoverpop = "laplace", cores = 1L,
+      optimcontrol = list(checks = FALSE, checkpoint = path)))
+  }
+  first <- suppressMessages(fitto())
+  expect_gte(first$optim$newton_hessians, 1L)
+  saved <- readRDS(path)
+  kept <- readRDS(paste0(path, ".hessian"))
+  expect_identical(kept$id, saved$hessian_id)
+  npar <- length(first$estimate$raw)
+  expect_equal(dim(kept$hessian), c(npar, npar))
+  expect_identical(kept$state, saved$state)
+
+  expect_message(second <- fitto(), "with the exact Hessian it kept")
+  expect_equal(second$optim$newton_hessians, 0L)
+  expect_equal(second$estimate$loglik, first$estimate$loglik, tolerance = 1e-6)
+  expect_true(isTRUE(second$optim$converged))
+  # Still named by the checkpoint the resume wrote, for a resume after it.
+  expect_identical(readRDS(path)$hessian_id, kept$id)
+})

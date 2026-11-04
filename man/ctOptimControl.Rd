@@ -297,10 +297,12 @@ default.
  \item{\code{checkpoint}}{A file path. While the fit optimises, its point is
  written there every \code{checkpoint_every} seconds (default 60) and at the
  end of each run, with each subject's random-effect modes on the Laplace
- route. Where the file already exists, the fit starts from it: the same call
- again resumes an interrupted fit, its modes included, which starting from
- \code{inits} alone does not keep. A file written for a different model stops
- the fit rather than being overwritten.}
+ route and the smoothing parameters of any smooth terms; each exact Hessian
+ the fit forms is kept beside it (\code{<checkpoint>.hessian}). Where the
+ file already exists, the fit starts from it: the same call again resumes an
+ interrupted fit, its modes, smoothing parameters and Hessian included,
+ which starting from \code{inits} alone does not keep. A file written for a
+ different model stops the fit rather than being overwritten.}
  \item{\code{progress}}{Force the progress line on or off.}
  \item{\code{tipredMissing}}{How missing TI predictor values are handled.
  Each gets a normal distribution from a regression on the other variables;
