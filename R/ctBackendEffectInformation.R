@@ -97,9 +97,18 @@
 # `alone = FALSE` leaves out the pass per effect of a reduced-rank level
 # (`.ctEffectAlone()`), and the record says so (`alone`). A caller that wants
 # only the groups' posteriors reads `.ctEffectEvaluate()`'s single pass.
+# `progress` is a sink (`.ctBackendProgressSink()`), told each pass: on the
+# affect pilot (106 effects, 1324 units) they took 29 minutes with nothing on
+# the line.
 #' @keywords internal
-.ctEffectInformation <- function(spec, values, point, alone = TRUE) {
+.ctEffectInformation <- function(spec, values, point, alone = TRUE,
+  progress = NULL) {
   started <- proc.time()[["elapsed"]]
+  if (!is.null(progress)) {
+    on.exit(progress("", "break"), add = TRUE)
+    progress(sprintf("Random-effect information, at the estimate | %8s",
+      .ctDuration(0)), "update")
+  }
   values <- as.numeric(values)
   at <- .ctEffectEvaluate(spec, values)
   if (is.null(at)) return(NULL)
@@ -112,7 +121,10 @@
   # shares are then the dimensions' rather than each effect's own. On the
   # affect pilot (106 effects at rank 11, 1324 units) the passes ran for
   # hours after a one-iteration start fit.
-  if (alone) table <- .ctEffectAlone(spec, values, table)
+  if (alone) table <- .ctEffectAlone(spec, values, table, progress = if
+    (!is.null(progress)) function(done, total) progress(sprintf(
+      "Random-effect information, effect %d of %d alone | %8s", done, total,
+      .ctDuration(proc.time()[["elapsed"]] - started)), "update"))
   # Effects whose population sd is below the starting spread, whose sd is a
   # coordinate with the standard transform (raw zero is that spread there),
   # and whose information at the estimate would flag them.
@@ -265,20 +277,28 @@
 # the first dimension -- the full-rank rule's second point, a loading's raw
 # value being an sd in sdscale units. The dimension's own share is kept as
 # `dimension`. One engine pass per effect, and one more per raise, on
-# reduced-rank levels only.
+# reduced-rank levels only. `progress(done, total)`, where given, is told
+# each effect as its pass starts.
 #' @keywords internal
-.ctEffectAlone <- function(spec, values, table) {
+.ctEffectAlone <- function(spec, values, table, progress = NULL) {
   levels <- spec$laplace$levels
   if (!length(levels)) return(table)
+  # A rank-0 level (own variances only) has independent effects already, and
+  # needs no isolating; nor does a full-rank level without blocks.
+  isolated <- function(lv) {
+    k <- as.integer(lv$nrandom)
+    length(lv$load_index) > 0L && k > 0L &&
+      (as.integer(.ctJuliaOr(lv$rank, k)) < k || length(lv$load_row) > 0L)
+  }
+  total <- sum(vapply(levels, function(lv) if (isolated(lv))
+    as.integer(lv$nrandom) else 0L, integer(1)))
+  done <- 0L
   bar <- .ctEffectThresholds()$information
   spread <- log1p(exp(-1))
   for (lv in levels) {
     index <- as.integer(lv$load_index)
     k <- as.integer(lv$nrandom)
-    r <- as.integer(.ctJuliaOr(lv$rank, k))
-    # A rank-0 level (own variances only) has independent effects already, and
-    # needs no isolating.
-    if (!length(index) || !k || (r >= k && !length(lv$load_row))) next
+    if (!isolated(lv)) next
     # Own variances (`popunique`): raw -20 is a spread of about 1e-17 sdscale,
     # the nearest the sd transform comes to switching one off.
     ownindex <- as.integer(lv$unique_index)
@@ -292,6 +312,8 @@
       rows[[p]] <- c(rows[[p]], index[slot])
     }
     for (j in seq_len(k)) {
+      done <- done + 1L
+      if (!is.null(progress)) progress(done, total)
       i <- which(table$level == as.character(lv$name) &
         table$effect == as.character(lv$param[j]))
       if (length(i) != 1L) next

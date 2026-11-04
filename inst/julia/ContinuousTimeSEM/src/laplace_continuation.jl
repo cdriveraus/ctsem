@@ -2473,7 +2473,7 @@ end
 
 """
     ctsem_laplace_check(laplace, values; draws=128, seeds=1:4, draws_df=4,
-        unit_scores=true, expansion=true, expansion_gate=1.0)
+        unit_scores=true, expansion=true, expansion_gate=1.0, progress=nothing)
 
 The Laplace term checked at `values` on every unit, whatever its width
 (review/PROPOSAL-laplace-check-every-unit-2026-10-27.md): at each seed every
@@ -2494,10 +2494,14 @@ curvature's smallest eigenvalue (`ctsem_laplace_expansion`; `expansion_term`,
 `expansion_correction`, `expansion_bound`, `expansion_mineig`; the
 correction only where the eigenvalue reaches `expansion_gate`), from which the
 caller takes the gap of every unit that passes its gate.
+
+`progress(done, total)`, where given, is told each seed as it starts and the
+expansion after them (`total` the seeds and one): on the affect pilot a seed
+took about five minutes.
 """
 function ctsem_laplace_check(laplace::CTSEMLaplaceObjective, values::AbstractVector;
     draws::Integer=128, seeds=1:4, draws_df::Real=4, unit_scores::Bool=true,
-    expansion::Bool=true, expansion_gate::Real=1.0)
+    expansion::Bool=true, expansion_gate::Real=1.0, progress=nothing)
     draws >= 1 || throw(ArgumentError("draws must be at least one"))
     started = time_ns()
     n = length(values)
@@ -2515,6 +2519,7 @@ function ctsem_laplace_check(laplace::CTSEMLaplaceObjective, values::AbstractVec
     cscores = unit_scores ? zeros(nunits, length(theta)) : nothing
     scored = 0
     for (j, seed) in enumerate(seeds)
+        _ctsem_call_hook(progress, j, ns + 1)
         o = ctsem_laplace_continuation(laplace, x; draws=draws, draws_max=draws,
             draws_se=1.0, draws_all=true, tolerance=-1.0, draws_seed=seed,
             draws_df=draws_df)
@@ -2528,6 +2533,7 @@ function ctsem_laplace_check(laplace::CTSEMLaplaceObjective, values::AbstractVec
         scored += 1
     end
     unit_scores && scored > 0 && (unit_gradient ./= scored)
+    _ctsem_call_hook(progress, ns + 1, ns + 1)
     ex = expansion ? ctsem_laplace_expansion(laplace, x; gate=expansion_gate) :
         (term=Float64[], correction=Float64[], bound=Float64[], mineig=Float64[])
     return (laplace_unit=collect(Float64, lap.unit_loglik), laplace_value=Float64(lap.value),

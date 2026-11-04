@@ -858,7 +858,13 @@ test_that("a curved ridge is followed, and confirmed flat along it", {
   info <- diag(c(0, 2))
   bar <- stats::qchisq(0.95, 1) / 2
   expect_gt(-as.numeric(.parabolic_ridge(c(4, 0))), bar)
-  found <- ctsem:::.ctOptimFlatDirectionScreen(info, .parabolic_ridge, c(0, 0))
+  said <- character(0)
+  sink <- function(text, mode) said <<- c(said, paste(mode, text))
+  found <- ctsem:::.ctOptimFlatDirectionScreen(info, .parabolic_ridge, c(0, 0),
+    progress = sink)
+  # Each direction on the progress line, and the line ended once.
+  expect_true(any(grepl("^update Flat-direction screen, direction 1 of 1", said)))
+  expect_identical(said[length(said)], "break ")
   flat <- which(found$flat)
   expect_length(flat, 1L)
   # The flat direction is the x axis.

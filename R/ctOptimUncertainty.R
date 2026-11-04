@@ -1131,9 +1131,13 @@ ctOptimSafeCov <- function(cov, ridge=1e-8){
 # finished with -- and on a far-out flat ray the smallest eigenvalue goes
 # negative from rounding, so those arrive here as candidates and must not be
 # confirmed.
+#
+# `progress` is a sink (`.ctBackendProgressSink()`), told each direction as it
+# is walked: on the affect pilot 214 evaluations, each a Laplace value with a
+# mode search per unit, ran with nothing on the line.
 .ctOptimFlatDirectionScreen <- function(info, lpgFunc, est,
   rtol=1e-7, bar=stats::qchisq(0.95, 1) / 2, lengths=c(0.25, 1, 4),
-  maxdirections=20L, tolerance=1e-6, corrections=2L){
+  maxdirections=20L, tolerance=1e-6, corrections=2L, progress=NULL){
   if(is.null(info) || is.null(lpgFunc) || is.null(est)) return(NULL)
   if(!is.function(lpgFunc)) return(NULL)
   info <- as.matrix(info)
@@ -1219,7 +1223,13 @@ ctOptimSafeCov <- function(cov, ridge=1e-8){
       gaindirection <<- k
     }
   }
+  started <- proc.time()[["elapsed"]]
+  if(!is.null(progress)) on.exit(progress("", "break"), add=TRUE)
   for(k in candidates){
+    if(!is.null(progress)) progress(sprintf(
+      "Flat-direction screen, direction %d of %d, %d evaluations | %8s",
+      match(k, candidates), length(candidates), evaluations,
+      .ctDuration(proc.time()[["elapsed"]] - started)), "update")
     v <- eig$vectors[, k]
     sides <- c(NA_real_, NA_real_)
     for(side in 1:2){
@@ -2610,7 +2620,8 @@ ctOptimComputeUncertainty <- function(est, standata, sm, lpgFunc,
     # asked for it, and accepting the argument and ignoring it would be worse
     # than either answer.
     screen <- if(identical(control$flatScreen, FALSE)) NULL else
-      .ctOptimFlatDirectionScreen(-(hess + t(hess)) / 2, lpgFunc, est)
+      .ctOptimFlatDirectionScreen(-(hess + t(hess)) / 2, lpgFunc, est,
+        progress = .ctBackendProgressSink(verbose))
     # The routes that draw from this covariance give the directions it holds at
     # no width one measured along the likelihood, leaving those the screen
     # found flat held; the others report the projection. See

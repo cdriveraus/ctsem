@@ -287,7 +287,7 @@
 # `gap_se`. NULL where the fit has no curvature to step on or fewer than two
 # seeds scored.
 .ctLaplaceShiftCheck <- function(fit, draws = 128L, seeds = 1:4, bar = 0.1,
-  control = .ctLaplaceContinueDefaults) {
+  control = .ctLaplaceContinueDefaults, progress = NULL) {
   est <- as.numeric(fit$estimate$raw)
   hessian <- .ctBackendStoredHessian(fit, est)
   if (is.null(hessian) || !all(is.finite(hessian))) return(NULL)
@@ -305,10 +305,15 @@
   se[held] <- 1
   module <- .ctJuliaModule(fit$model_spec$project)
   started <- proc.time()[["elapsed"]]
-  r <- .ctJuliaGet(module$ctsem_laplace_check(.ctJuliaObjective(fit, hybrid = TRUE),
-    .ctJuliaNumericVector(est), draws = as.integer(draws),
-    seeds = .ctJuliaVector(as.integer(seeds)), draws_df = as.numeric(control$draws_df),
-    expansion_gate = .ctLaplaceExpansionGate))
+  # Each seed on the progress line (`progress(done, total)`, the seeds and
+  # then the expansion): on the affect pilot the check ran 19 minutes after a
+  # line at 0 s. Sent only where there is one, as the optimiser's hooks are.
+  hook <- if (!is.null(progress)) list(progress = progress)
+  r <- .ctJuliaGet(do.call(module$ctsem_laplace_check, c(list(
+    .ctJuliaObjective(fit, hybrid = TRUE), .ctJuliaNumericVector(est),
+    draws = as.integer(draws), seeds = .ctJuliaVector(as.integer(seeds)),
+    draws_df = as.numeric(control$draws_df),
+    expansion_gate = .ctLaplaceExpansionGate), hook)))
   G <- matrix(as.numeric(r$gradient), nrow = length(est))
   scored <- apply(G, 2L, function(g) all(is.finite(g)))
   if (sum(scored) < 2L) return(NULL)
@@ -635,12 +640,16 @@
   # point is no optimum to take a step from.
   checkfailed <- NULL
   check <- if (is.null(jump) && (!correct || !isFALSE(control$check))) {
+    checkdraws <- as.integer(.ctJuliaOr(control$check_draws, 128L))
     if (!is.null(sink)) sink(sprintf("Random-effects check, every unit on %d draws | %8s",
-      as.integer(.ctJuliaOr(control$check_draws, 128L)), .ctDuration(seconds())), "update")
-    tryCatch(.ctLaplaceShiftCheck(fit,
-      draws = as.integer(.ctJuliaOr(control$check_draws, 128L)),
+      checkdraws, .ctDuration(seconds())), "update")
+    tryCatch(.ctLaplaceShiftCheck(fit, draws = checkdraws,
       seeds = seq_len(as.integer(.ctJuliaOr(control$check_seeds, 4L))),
-      bar = as.numeric(control$material), control = control),
+      bar = as.numeric(control$material), control = control,
+      progress = if (!is.null(sink)) function(done, total) sink(sprintf(
+        "Random-effects check, every unit on %d draws, %s | %8s", checkdraws,
+        if (done < total) sprintf("seed %d of %d", done, total - 1L) else
+          "Laplace's expansion", .ctDuration(seconds())), "update")),
       error = function(e) {
         checkfailed <<- .ctLaplaceTryReason(structure("", condition = e))
         NULL

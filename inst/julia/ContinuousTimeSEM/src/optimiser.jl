@@ -3077,7 +3077,11 @@ forms its own, as it is cheap.
 stepped on (`walked`, of the maximised objective) and no exact Hessian formed
 for the point, escape or probe: for a stage on an objective its caller is
 about to change, which certifies once those changes settle (the smoothing
-passes in `.ctJuliaOptimiseFit()`).
+passes in `.ctJuliaOptimiseFit()`). `final = :dear` does so only where the walk
+was on the Krylov model, the exact Hessian being dear, and finishes as
+`:exact` elsewhere: where the walk began on an exact Hessian, the one the
+certification needs is already formed or cheap (the first stage of a fit
+with smoothing parameters to estimate).
 
 `take_steps = false` gives the certification's numbers alone: the Hessian at `x`,
 the ladder's measurement along any negative curvature there and the probe, with
@@ -3101,6 +3105,10 @@ nothing for ends the watch, and the steps go on.
 `value_at(y)`, the maximised objective or `-Inf` for the ladder and the probe,
 defaults to the route's own predicate (`_ctsem_probe_value`); `fg!` is the
 optimiser's trial path, for the steps.
+
+`on_hessian(y, H)` is handed each exact Hessian of the maximised objective as
+it is formed, at the point `y` it was formed at (`_ctsem_call_hook`): a
+checkpoint keeps it, so a resume walks on it rather than forming it again.
 
 Returns the point and its value and gradient (minimised); the Hessian of the
 MAXIMISED objective, or `nothing`, with `hessian_at` and `distance`; the steps
@@ -3127,9 +3135,9 @@ function _ctsem_newton_finish(objective, x0, f0, G0, fg!; tol::Real=1e-8,
         krylov_min_cost::Real=_CTSEM_KRYLOV_MIN_COST, final::Symbol=:exact,
         jump::Union{Nothing,CTSEMJump}=nothing,
         krylov_base::Union{Nothing,Matrix{Float64}}=nothing,
-        resolution::Union{Nothing,CTSEMDirectional}=nothing)
-    final in (:exact, :walked) || throw(ArgumentError(
-        "newton final must be exact or walked, got $(final)"))
+        resolution::Union{Nothing,CTSEMDirectional}=nothing, on_hessian=nothing)
+    final in (:exact, :walked, :dear) || throw(ArgumentError(
+        "newton final must be exact, walked or dear, got $(final)"))
     # The two bars as the run's resolution has them now (`_ctsem_tolerance`).
     tol_now() = _ctsem_tolerance(tol, resolution)
     certify_now() = _ctsem_tolerance(certify_tol, resolution)
@@ -3170,10 +3178,11 @@ function _ctsem_newton_finish(objective, x0, f0, G0, fg!; tol::Real=1e-8,
         _ctsem_must_propagate(err) && rethrow()
         nothing
     end
-    # Of the minimised objective, as every step below expects.
+    # Of the minimised objective, as every step below expects. Each exact one
+    # goes to `on_hessian` as it is formed, of the maximised objective.
     # `local`: an assignment to `H` in a closure would rebind the H below.
     hess(y) = (full_hessians[] += 1; local Hx = hessof(objective, y);
-        Hx === nothing ? nothing : -Hx)
+        Hx === nothing ? nothing : (_ctsem_call_hook(on_hessian, collect(Float64, y), Hx); -Hx))
     NU = _ctsem_nunits(objective)
     m = min(NU, max(Int(subset_min), ceil(Int, subset * NU)))
     sub = (curvature === :subset && 2m <= NU) ?
@@ -3783,7 +3792,7 @@ function _ctsem_newton_finish(objective, x0, f0, G0, fg!; tol::Real=1e-8,
         # here on an objective it is about to change (the smoothing passes,
         # `.ctJuliaOptimiseFit()`), which certifies once the changes settle.
         # No escape and no probe either: both read an exact Hessian.
-        if final === :walked
+        if final === :walked || (final === :dear && krylov)
             return (x=x, f=f, G=G, hessian=at_x ? -H : nothing, hessian_at=hat,
                 distance=at_x ? 0.0 : NaN, steps=steps, gain=gain,
                 full_hessians=full_hessians[], subset_hessians=subset_hessians[],

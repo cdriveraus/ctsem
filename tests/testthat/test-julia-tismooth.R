@@ -274,6 +274,35 @@ test_that("a curve in age is recovered, with its smoothness estimated", {
   expect_equal(fit$modelbase$TIsmooths$age$lambda$cint, penalty$lambda)
 })
 
+# Where the finish walks the Krylov model, the exact Hessian being dear, the
+# first stage ends on its walk as the smoothing passes do, and the one exact
+# Hessian is the certified stage's once the smoothing parameter settles:
+# certified after the first stage too, the affect pilot formed an 8-hour
+# Hessian for a smoothing parameter its first pass then moved. A random drift
+# keeps a Laplace coordinate, which the finish's Krylov model needs.
+test_that("a smooth fit on the Krylov finish forms no exact Hessian before its smoothing settles", {
+  skip_without_julia()
+  dat <- .tismooth_data()$data
+  m <- ctModel(type = "ct", n.latent = 1, n.manifest = 1, LAMBDA = diag(1),
+    DRIFT = matrix("drift"), DIFFUSION = matrix("diff"),
+    MANIFESTVAR = matrix("mvar"), CINT = matrix("cint||||age"),
+    T0MEANS = matrix("t0m||||"), T0VAR = matrix("t0v"),
+    MANIFESTMEANS = matrix(0), TIpredNames = ~ s(age, k = 8), silent = TRUE)
+  m$pars$indvarying <- m$pars$param %in% "drift"
+  set.seed(1)
+  fit <- suppressWarnings(suppressMessages(ctFit(dat, m, backend = "julia",
+    intoverpop = "laplace", cores = 1,
+    optimcontrol = list(checks = FALSE, newton = "krylov"))))
+  expect_true(fit$optim$converged)
+  expect_gt(fit$optim$newton_krylov_models, 0L)
+  penalty <- fit$model_spec$penalty
+  # Each exact Hessian is a certified stage's, and each follows a pass.
+  expect_lte(fit$optim$newton_hessians, max(1L, penalty$passes))
+  again <- ctsem:::.ctTIsmoothLambda(penalty, fit$uncertainty$hessian,
+    as.numeric(fit$estimate$raw), as.numeric(fit$optim$gradient))
+  expect_equal(again$lambda, penalty$lambda, tolerance = 0.02)
+})
+
 test_that("summary() and ctTIpredEffects() report a smooth whole", {
   skip_without_julia()
   fit <- .tismooth_fit()
