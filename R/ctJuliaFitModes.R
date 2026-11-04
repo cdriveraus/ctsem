@@ -23,7 +23,14 @@
 # modes and a search from the origin differed by 10.0, -8.5 and 4.7 nats, and a
 # search found maxima the modes missed worth up to 25 nats at each draw. So the
 # stages whose points reach far hold with `search = TRUE`, and each unit's term
-# combines the maxima of both, never below either: the uncertainty stage after
+# is the combination over the maxima of both (`_laplace_mode_sum`), the term as
+# the objective defines it over every maximum either finds. That is not always
+# above both: a maximum the other set adds beside the best, across a shallow
+# valley, fades the best's weight, and at those three draws the combination
+# came out 2.55 below the followed value, 11.3 above both, and 1.13 below the
+# followed value. The search-and-follow gradient there took 161-175 s against
+# 117-129 s searched and 81-85 s followed (16 threads). The stages: the
+# uncertainty stage after
 # its Hessian (the flat-direction screen, the interval check, importance
 # sampling and DAIS), the effect information, whose passes set the other
 # effects' loadings to zero, and the marginal samplers. Those that stay at the
