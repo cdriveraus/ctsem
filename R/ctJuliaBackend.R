@@ -7247,10 +7247,14 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
         if (!settled) {
           model_spec$penalty$lambda <- gfs$lambda
           smoothpasses <- pass
+          # Checkpointed as every stage is: the record carries the smoothing
+          # parameters (`.ctJuliaCheckpointState()`), so a resume goes on from
+          # this pass rather than from the first stage's.
           walk <- keepknown(.ctJuliaAddRunCounts(.ctJuliaOptimise(model_spec,
             gfs$point, optimcontrol = stagecontrol, gradient = gradient,
             cores = cores, verbose = verbose, callback = optimcontrol$callback,
-            hessian = gfs$hessian, hessian_at = theta, walked = TRUE), result))
+            hessian = gfs$hessian, hessian_at = theta, walked = TRUE,
+            checkpoint = checkpoint), result))
           walked <- .ctJuliaWalkedHessian(walk)
           result <- walk
           if (!is.null(walked)) {
