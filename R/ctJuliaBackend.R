@@ -6512,6 +6512,9 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
     # saw, where the run ended on a jump; NULL otherwise. `[[`: the engine's
     # `jump_units` is a prefix `$jump` would match.
     jump = result[["jumprecord"]],
+    # The modes the run ended with, which every later reader of the fit holds
+    # (R/ctJuliaFitModes.R).
+    modes = .ctJuliaResultModes(result),
     soft_quadrature_units = if (is.null(result$soft_quadrature_units)) NA_integer_
       else as.integer(result$soft_quadrature_units),
     inner_converged = isTRUE(result$inner_converged),
@@ -7888,6 +7891,9 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
   # Under the fit's `cores` ceiling, as the optimiser and the uncertainty phase
   # are. Outside it, a `cores = 1` fit spread its check over every thread the
   # session had, and left the worker pool at full width behind it.
+  # The fit's modes held on the layer the passes evaluate, for the units
+  # whose layout is the hybrid's (R/ctJuliaFitModes.R).
+  .ctJuliaHoldModes(out$model_spec, out$laplace[["modes"]], hybrid = FALSE)
   effectcheck <- if (isTRUE(intoverstates)) .ctBackendWithMaxChunks(cores,
     .ctEffectInformation(out$model_spec, out$estimate$raw,
       point = "at the estimate", alone = !isTRUE(optimcontrol$estonly),

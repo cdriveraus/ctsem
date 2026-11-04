@@ -5128,8 +5128,8 @@ the parameters, for a resume to start its search from
 (`_ctsem_anchor_start!`'s `resume_units`): a new process builds its objective
 from the model, with no known modes of its own.
 """
-_ctsem_anchor_modes(::Any) = nothing
-function _ctsem_anchor_modes(laplace::CTSEMLaplaceObjective)
+_ctsem_anchor_modes(::Any; known::Bool=true) = nothing
+function _ctsem_anchor_modes(laplace::CTSEMLaplaceObjective; known::Bool=true)
     isempty(laplace.anchors) && return nothing
     units = Int[]
     modes = Vector{Float64}[]
@@ -5142,7 +5142,7 @@ function _ctsem_anchor_modes(laplace::CTSEMLaplaceObjective)
                 push!(units, U); push!(modes, m)
             end
         end
-        U <= length(laplace.known) || continue
+        (known && U <= length(laplace.known)) || continue
         for k in laplace.known[U]
             any(j -> _laplace_maxabsdiff(modes[j], k) < 1e-8, j0:length(modes)) &&
                 continue
@@ -5496,6 +5496,205 @@ ctsem_laplace_clear_anchors!(laplace::CTSEMLaplaceObjective) =
      laplace.anchor_values = Vector{Float64}[]; nothing)
 
 export ctsem_set_mode_anchors!, ctsem_laplace_clear_anchors!, ctsem_set_mode_sum!
+
+# ------------------------------------------------------------- a fit's modes
+#
+# A run's value is the anchored objective: each unit's maxima followed from
+# its modes at the last accepted point, searched again where the run stops
+# and ends (`_ctsem_anchor_start!`), and the certification's Hessian is that
+# function's. What reads the fit afterwards -- its uncertainty and interval
+# check, the random-effects check, the effect information, the certification
+# of a stage that ended without a finish, the marginal samplers -- reads the
+# same function: each unit's Newton starts from the fit's modes, found at the
+# estimate, and each maximum is followed from there to the point
+# (`_laplace_follow_modes`), the anchors held and never moved, so the value is
+# a function of the parameters given the fit. That makes it a density a
+# sampler can target, which anchors moved by a chain's own history would not
+# be wherever a unit has two maxima. A search from the origin, which reads
+# the specification alone, is then the check rather than the reference
+# (`ctsem_laplace_modes_check`): it can only add maxima. On the affect pilot
+# a gradient held so took 56 s, searched 115.
+
+"""
+    _ctsem_fit_modes(held, anchored)
+
+A run's modes at its end, for the caller to keep with the fit: each unit's
+anchored maxima there (`_ctsem_anchor_modes(...; known = false)`, taken before
+the anchors are cleared) and any better ones the closing search found that the
+run missed (`_ctsem_anchor_finish!`'s `missed_*`), as units and a NaN-padded
+matrix of modes; `[0]` and `zeros(1, 1)` where the run anchored none.
+"""
+function _ctsem_fit_modes(held, anchored)
+    units = Int[]
+    cols = Vector{Float64}[]
+    if held !== nothing
+        for j in eachindex(held.units)
+            push!(units, held.units[j])
+            push!(cols, _laplace_known_column(held.values, j))
+        end
+    end
+    if anchored !== nothing
+        for (j, U) in enumerate(anchored.missed_units)
+            U >= 1 || continue
+            m = _laplace_known_column(anchored.missed_values, j)
+            any(k -> units[k] == U && length(cols[k]) == length(m) &&
+                _laplace_maxabsdiff(cols[k], m) < 1e-8, eachindex(units)) && continue
+            push!(units, U)
+            push!(cols, m)
+        end
+    end
+    isempty(units) && return (units=[0], values=zeros(1, 1))
+    values = fill(NaN, maximum(length, cols), length(units))
+    for j in eachindex(cols)
+        values[1:length(cols[j]), j] .= cols[j]
+    end
+    return (units=units, values=values)
+end
+
+# How many callers hold a fit's modes on each objective
+# (`ctsem_laplace_hold_modes!`), so a stage inside another releases only its
+# own hold.
+const _LAPLACE_HOLDS = IdDict{Any,Int}()
+const _LAPLACE_HOLDS_LOCK = ReentrantLock()
+
+"""
+    ctsem_laplace_hold_modes!(objective, values, units, modes)
+
+Holds a fit's modes on `objective` until `ctsem_laplace_release_modes!`: each
+unit's first mode (column `j` of the NaN-padded `modes` a mode of unit
+`units[j]`) its anchor and the rest the other maxima it follows, all found at
+the free parameters `values`, the fit's estimate. Every evaluation then starts
+the unit's Newton from them and follows each maximum from `values` to the
+point (`_laplace_follow_modes`), and nothing moves them but a run, which sets
+its own and clears them at its end. A mode whose length is not the unit's on
+this objective -- the hybrid's and the layer's units differ -- is left out,
+and a unit with none searches. Holds nest: each is set again, and the anchors
+are cleared when the last is released. Not where anchoring is off
+(`ctsem_set_mode_anchors!(false)`, the oracle). Returns the units held.
+"""
+ctsem_laplace_hold_modes!(::Any, values, units, modes) = 0
+function ctsem_laplace_hold_modes!(laplace::CTSEMLaplaceObjective,
+    values::AbstractVector, units::AbstractVector, modes::AbstractMatrix)
+    _LAPLACE_ANCHORS[] || return 0
+    n = length(laplace.units.members)
+    at = _laplace_extend(laplace, collect(Float64, values))
+    M = Matrix{Float64}(modes)
+    anchors = [Float64[] for _ in 1:n]
+    alts = [Vector{Float64}[] for _ in 1:n]
+    for (j, U) in enumerate(units)
+        (1 <= U <= n && j <= size(M, 2)) || continue
+        m = _laplace_known_column(M, j)
+        (length(m) == laplace.units.dims[U] && all(isfinite, m)) || continue
+        isempty(anchors[U]) ? (anchors[U] = m) : push!(alts[U], m)
+    end
+    held = count(!isempty, anchors)
+    held == 0 && return 0
+    lock(_LAPLACE_HOLDS_LOCK) do
+        _LAPLACE_HOLDS[laplace] = get(_LAPLACE_HOLDS, laplace, 0) + 1
+    end
+    laplace.anchors = anchors
+    laplace.alt_anchors = alts
+    laplace.anchor_values = [at for _ in 1:n]
+    return held
+end
+
+"""
+    ctsem_laplace_release_modes!(objective)
+
+Releases a hold `ctsem_laplace_hold_modes!` made, clearing the anchors once no
+hold is left. Returns the holds left.
+"""
+ctsem_laplace_release_modes!(::Any) = 0
+function ctsem_laplace_release_modes!(laplace::CTSEMLaplaceObjective)
+    left = lock(_LAPLACE_HOLDS_LOCK) do
+        k = get(_LAPLACE_HOLDS, laplace, 0) - 1
+        k <= 0 ? delete!(_LAPLACE_HOLDS, laplace) : (_LAPLACE_HOLDS[laplace] = k)
+        max(k, 0)
+    end
+    left == 0 && ctsem_laplace_clear_anchors!(laplace)
+    return left
+end
+
+"""
+What a unit's term may gain where a search finds a maximum the held modes miss
+before `ctsem_laplace_modes_check` names the unit, in nats: the probes'
+screening bar (`_LAPLACE_PROBE_VALUE_TOL`), about what moves Newton a posterior
+sd.
+"""
+const _LAPLACE_MODES_CHECK_TOL = 0.1
+
+"""
+    ctsem_laplace_modes_check(objective, points; tol=_LAPLACE_MODES_CHECK_TOL)
+
+Each column of `points` (free parameters) evaluated with the modes held on
+`objective` (`ctsem_laplace_hold_modes!`) and again by a search from the
+origin, the held modes put back after each. A search only ever adds a
+maximum the held set lacks, so each unit's term over both sets is at least the
+larger of the two, and what the held density misses at a point is about
+`gain`, the sum over units of what the search's term exceeds the held one by.
+Returns per point the held and searched values and `gain` (`NaN` where either
+could not be evaluated); the units whose search exceeded the held term by more
+than `tol` somewhere (`units`, `[0]` for none) with the most each gained
+(`unit_gain`); and the searched modes of those units at the point where each
+gained most, as units and a NaN-padded matrix (`found_units`, `found_values`),
+for a caller to keep as known modes.
+"""
+function ctsem_laplace_modes_check(laplace::CTSEMLaplaceObjective,
+    points::AbstractMatrix; tol::Real=_LAPLACE_MODES_CHECK_TOL)
+    isempty(laplace.anchors) && throw(ArgumentError(
+        "no modes are held on this objective (ctsem_laplace_hold_modes!)"))
+    P = Matrix{Float64}(points)
+    np = size(P, 2)
+    nunits = length(laplace.units.members)
+    held = fill(NaN, np)
+    searched = fill(NaN, np)
+    gain = fill(NaN, np)
+    unit_gain = zeros(nunits)
+    found = Dict{Int,Vector{Vector{Float64}}}()
+    anchors, alts, at = laplace.anchors, laplace.alt_anchors, laplace.anchor_values
+    try
+        for k in 1:np
+            _ctsem_interrupt_check()
+            x = P[:, k]
+            laplace.anchors, laplace.alt_anchors, laplace.anchor_values = anchors, alts, at
+            h = _laplace_coreset_try(laplace, x, false, nothing)
+            ctsem_laplace_clear_anchors!(laplace)
+            s = _laplace_coreset_try(laplace, x, false, nothing)
+            (h === nothing || s === nothing) && continue
+            held[k] = h.value
+            searched[k] = s.value
+            d = collect(Float64, s.unit_loglik) .- collect(Float64, h.unit_loglik)
+            gain[k] = sum(v -> isfinite(v) ? max(v, 0.0) : 0.0, d)
+            for U in eachindex(d)
+                (isfinite(d[U]) && d[U] > tol && d[U] > unit_gain[U]) || continue
+                unit_gain[U] = d[U]
+                found[U] = vcat([copy(laplace.modes[U])],
+                    [copy(m) for m in laplace.alt_modes[U]])
+            end
+        end
+    finally
+        laplace.anchors, laplace.alt_anchors, laplace.anchor_values = anchors, alts, at
+    end
+    flagged = findall(>(tol), unit_gain)
+    fu = Int[]
+    cols = Vector{Float64}[]
+    for U in flagged, m in found[U]
+        isempty(m) && continue
+        push!(fu, U)
+        push!(cols, m)
+    end
+    fv = isempty(cols) ? zeros(1, 1) : fill(NaN, maximum(length, cols), length(cols))
+    for j in eachindex(cols)
+        fv[1:length(cols[j]), j] .= cols[j]
+    end
+    return (held=held, searched=searched, gain=gain,
+        units=isempty(flagged) ? [0] : flagged,
+        unit_gain=isempty(flagged) ? [0.0] : unit_gain[flagged],
+        found_units=isempty(fu) ? [0] : fu, found_values=fv)
+end
+
+export ctsem_laplace_hold_modes!, ctsem_laplace_release_modes!,
+    ctsem_laplace_modes_check
 
 """
     _laplace_probe_span(laplace, U, Ls, d)

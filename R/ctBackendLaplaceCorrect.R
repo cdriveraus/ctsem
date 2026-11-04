@@ -559,6 +559,8 @@
   nsubjects <- length(fit$model_spec$subject_starts)
   module <- .ctJuliaModule(fit$model_spec$project)
   get <- .ctJuliaGet
+  # The fit's modes held for the check and the placement (R/ctJuliaFitModes.R).
+  .ctJuliaHoldModes(fit$model_spec, .ctJuliaFitModes(fit))
   # The whole correction's progress line: the screen, the climb and its
   # Hessian all report through this one sink, at the same default verbosity as
   # the optimiser's own line, rather than only when `verbose > 0` -- which is

@@ -256,6 +256,11 @@
     if (nrow(natural)) target$model_spec$naturalprior <- natural
   }
   lpgFunc <- lpg(target)
+  # The fit's modes held while this stage evaluates its objective
+  # (R/ctJuliaFitModes.R): the curvature, the screen, the interval check and
+  # any draws read the function the estimate and its Hessian were reached on.
+  modes <- .ctJuliaFitModes(fit)
+  .ctJuliaHoldModes(target$model_spec, modes)
 
   # `cores` here means engine threads, not R processes: the Julia engine splits
   # its own subject loop, so each log-probability evaluation is parallel and
@@ -431,6 +436,15 @@
       as.numeric(stored$evaluated_at) else as.numeric(est)
   }
   fit$uncertainty <- uncertaintyfit
+  # And where the intervals reach, the fit's modes against a search: draws
+  # from the normal the intervals describe, as the interval check takes them.
+  # Not for the scores' methods, which evaluate nothing away from the estimate.
+  if (!is.null(modes) && !uncertainty %in% c("opg", "sandwich", "bootstrap") &&
+      !is.null(uncertaintyfit$cov)) {
+    fit$uncertainty$modecheck <- .ctJuliaModesCheck(target$model_spec, modes,
+      .ctJuliaModesCheckPoints(est, uncertaintyfit$cov))
+    .ctJuliaModesCheckWarn(fit$uncertainty$modecheck, "the intervals")
+  }
   # What the curvature says about convergence, which a gradient cannot: the
   # objective still available under the local quadratic approximation, over the
   # subspace whose curvature the data supports, plus a measurement of what the
