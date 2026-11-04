@@ -6188,8 +6188,12 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
   # smoothing passes in `.ctJuliaOptimiseFit()`) ends where its finish's walk
   # ends, with the matrix the walk stepped on as `newton_walked`, and is not
   # certified: the exact Hessian and the certification are for the stage
-  # after the changes settle. Sent only when asked, for the reason above.
+  # after the changes settle. `walked = 'dear'` does so only where the walk
+  # was on the Krylov model, the exact Hessian being dear, and certifies
+  # elsewhere (the first stage of a fit with smoothing parameters to
+  # estimate). Sent only when asked, for the reason above.
   if (isTRUE(walked)) common$newton_final <- "walked"
+  if (identical(walked, "dear")) common$newton_final <- "dear"
   # The last run's local curvature (`lbfgs_local`): its inverse, kept here
   # rather than on the result, where a fit would carry its n x n matrix, and
   # its builds, for a resume to start from (`local`).
@@ -6445,7 +6449,8 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
       optimise = stage,
       escape = function(r) .ctBackendStallEscape(r, optimcontrol, model_spec,
         verbose, escapes = !state_explicit),
-      certify = isTRUE(common$certify) && !isTRUE(walked), verbose = verbose)
+      certify = isTRUE(common$certify) && !isTRUE(walked) &&
+        is.null(.ctJuliaWalkedHessian(result)), verbose = verbose)
     result <- retried$result
     result$stall_escapes <- retried$escapes
     # The work of every stage the loop did not keep, added to the kept stage's
@@ -7041,11 +7046,22 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
     if (!is.null(r$laplace_known)) model_spec$laplace$known <<- r$laplace_known
     invisible(r)
   }
+  # Where smoothing parameters are to be estimated, the first stage ends on its
+  # walk too, as the smoothing passes do (below), where that walk is on the
+  # Krylov model (`walked = 'dear'`): its exact Hessian would be formed for
+  # the starting smoothing parameters, which the first pass usually moves, and
+  # on the affect pilot that Hessian was 8.2 hours. Where the walk starts on an
+  # exact Hessian it certifies as before. Nor where a checkpoint brings the
+  # exact Hessian at this point, which certifies there at no cost.
+  walkfirst <- isTRUE(intoverstates) && !isTRUE(optimcontrol$estonly) &&
+    !identical(optimcontrol$certify, FALSE) && !is.null(model_spec$penalty) &&
+    NROW(model_spec$penalty) > 0L && is.null(checkpoint$hessian)
   result <- keepknown(.ctJuliaOptimise(model_spec, start,
     optimcontrol = startcontrol, gradient = gradient, cores = cores,
     verbose = verbose, callback = optimcontrol$callback,
     objective = jointobjective, checkpoint = checkpoint,
-    hessian = checkpoint$hessian, hessian_at = checkpoint$hessian_at))
+    hessian = checkpoint$hessian, hessian_at = checkpoint$hessian_at,
+    walked = if (walkfirst) "dear" else FALSE))
   optimum <- as.numeric(result$minimizer)[seq_len(npar)]
   # Its modes and Hessian were the first run's; later runs start from their
   # own (`laplace_known`), and form their own.
@@ -7078,7 +7094,8 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
         list(saem = FALSE, stochastic = FALSE, batch = FALSE)), gradient = gradient,
       cores = cores,
       verbose = verbose, callback = optimcontrol$callback,
-      objective = jointobjective, checkpoint = checkpoint), first))
+      objective = jointobjective, checkpoint = checkpoint,
+      walked = if (walkfirst) "dear" else FALSE), first))
   }
   if (!is.null(substeps)) message(.ctJuliaSubstepMessage(substeps))
   # What the curvature says about the point the optimiser stopped at, and a
@@ -7181,35 +7198,44 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
     }
   }
   # Smoothing parameters (R/ctTIpredSmooth.R): the generalised Fellner-Schall
-  # fixed point on the quadratic model the certified Hessian gives, and the
-  # fit re-optimised at it, until the parameters stop moving by more than a
-  # per cent. A pass starts where that quadratic model puts the optimum, with
-  # its Hessian, so it is mostly a finish. Without a certified Hessian
-  # (`estonly`) the smoothing parameters stay where they started.
+  # fixed point on the quadratic model the curvature gives, and the fit
+  # re-optimised at it, until the parameters stop moving by more than a per
+  # cent. A pass starts where that quadratic model puts the optimum, with its
+  # Hessian, so it is mostly a finish. Without a certification (`estonly`) the
+  # smoothing parameters stay where they started.
   #
-  # Each pass changes the objective, so the passes between the first
-  # certification and the last are not certified: a pass ends where its
-  # finish's walk ends, and the next reads the matrix that walk stepped on
-  # (`walked`, `.ctJuliaWalkedHessian()`) rather than an exact Hessian formed
-  # for a point the next pass leaves. Once the parameters settle on that
+  # Each pass changes the objective, so the stages before the parameters
+  # settle are not certified: the first (`walkfirst`) and each pass end where
+  # their finish's walk ends, and the next pass reads the matrix that walk
+  # stepped on (`walked`, `.ctJuliaWalkedHessian()`) rather than an exact
+  # Hessian formed for a point it leaves. Once the parameters settle on that
   # curvature, one certified stage forms the exact Hessian, and the fixed
   # point is checked on it. Certified after every pass, each formed its own:
   # on a large Laplace model 11-16 hours a pass (the affect pilot,
-  # review/PILOT-curvature-coresets-2026-10-25.md).
+  # review/PILOT-curvature-coresets-2026-10-25.md); certified after the first
+  # stage alone, the pilot formed one there for starting parameters its first
+  # pass moved (8.2 hours, review/HANDOFF-pilot-fit-2026-11-04.md).
   if (!is.null(model_spec$penalty) && nrow(model_spec$penalty)) {
     smoothpasses <- 0L
-    if (certifying && !is.null(correction$hessian)) {
-      stagecontrol <- utils::modifyList(optimcontrol, list(batch = FALSE,
-        saem = FALSE, stochastic = FALSE))
-      certified_stage <- function(from) {
-        stage <- keepknown(.ctJuliaOptimise(model_spec, from,
-          optimcontrol = stagecontrol, gradient = gradient, cores = cores,
-          verbose = verbose, callback = optimcontrol$callback,
-          checkpoint = checkpoint))
-        correct(.ctJuliaAddRunCounts(stage, result))
-      }
-      curvature <- correction$hessian
-      certified <- TRUE
+    stagecontrol <- utils::modifyList(optimcontrol, list(batch = FALSE,
+      saem = FALSE, stochastic = FALSE))
+    certified_stage <- function(from) {
+      stage <- keepknown(.ctJuliaOptimise(model_spec, from,
+        optimcontrol = stagecontrol, gradient = gradient, cores = cores,
+        verbose = verbose, callback = optimcontrol$callback,
+        checkpoint = checkpoint))
+      correct(.ctJuliaAddRunCounts(stage, result))
+    }
+    curvature <- NULL
+    certified <- TRUE
+    if (certifying) {
+      # The first stage's walk where it ended on one (`walkfirst`), else its
+      # certification's Hessian.
+      curvature <- if (walkfirst) .ctJuliaWalkedHessian(result)
+      certified <- is.null(curvature)
+      if (certified) curvature <- correction$hessian
+    }
+    if (!is.null(curvature)) {
       for (pass in seq_len(10L)) {
         theta <- as.numeric(result$minimizer)
         gfs <- .ctTIsmoothLambda(model_spec$penalty, curvature, theta,

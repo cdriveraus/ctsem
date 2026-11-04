@@ -2996,7 +2996,7 @@ these two, are set only on a stage resumed after a certification (see
 `newton_final = :walked` has the finish return the matrix its last walk stepped
 on (`newton_walked`) instead of forming the exact Hessian where it ends, for a
 stage whose objective the caller is about to change again (`_ctsem_newton_finish`'s
-`final`).
+`final`); `:dear` does so only where the walk was on the Krylov model.
 `hessian_callback(at, hessian)` is handed each exact Hessian of the maximised
 objective the finish forms, at the point it was formed at (`_ctsem_newton_finish`'s
 `on_hessian`): R's checkpoint keeps it, for a resume to pass back as

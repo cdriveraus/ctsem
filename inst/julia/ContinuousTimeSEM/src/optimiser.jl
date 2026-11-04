@@ -3077,7 +3077,11 @@ forms its own, as it is cheap.
 stepped on (`walked`, of the maximised objective) and no exact Hessian formed
 for the point, escape or probe: for a stage on an objective its caller is
 about to change, which certifies once those changes settle (the smoothing
-passes in `.ctJuliaOptimiseFit()`).
+passes in `.ctJuliaOptimiseFit()`). `final = :dear` does so only where the walk
+was on the Krylov model, the exact Hessian being dear, and finishes as
+`:exact` elsewhere: where the walk began on an exact Hessian, the one the
+certification needs is already formed or cheap (the first stage of a fit
+with smoothing parameters to estimate).
 
 `take_steps = false` gives the certification's numbers alone: the Hessian at `x`,
 the ladder's measurement along any negative curvature there and the probe, with
@@ -3132,8 +3136,8 @@ function _ctsem_newton_finish(objective, x0, f0, G0, fg!; tol::Real=1e-8,
         jump::Union{Nothing,CTSEMJump}=nothing,
         krylov_base::Union{Nothing,Matrix{Float64}}=nothing,
         resolution::Union{Nothing,CTSEMDirectional}=nothing, on_hessian=nothing)
-    final in (:exact, :walked) || throw(ArgumentError(
-        "newton final must be exact or walked, got $(final)"))
+    final in (:exact, :walked, :dear) || throw(ArgumentError(
+        "newton final must be exact, walked or dear, got $(final)"))
     # The two bars as the run's resolution has them now (`_ctsem_tolerance`).
     tol_now() = _ctsem_tolerance(tol, resolution)
     certify_now() = _ctsem_tolerance(certify_tol, resolution)
@@ -3788,7 +3792,7 @@ function _ctsem_newton_finish(objective, x0, f0, G0, fg!; tol::Real=1e-8,
         # here on an objective it is about to change (the smoothing passes,
         # `.ctJuliaOptimiseFit()`), which certifies once the changes settle.
         # No escape and no probe either: both read an exact Hessian.
-        if final === :walked
+        if final === :walked || (final === :dear && krylov)
             return (x=x, f=f, G=G, hessian=at_x ? -H : nothing, hessian_at=hat,
                 distance=at_x ? 0.0 : NaN, steps=steps, gain=gain,
                 full_hessians=full_hessians[], subset_hessians=subset_hessians[],
