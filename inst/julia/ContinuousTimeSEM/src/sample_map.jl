@@ -616,14 +616,13 @@ end
 The map: theta's centre and whitening factor, and per member of each unit its
 Gaussian summary in its raw effects (`Lam`, `h`) and coupling `G` to
 `theta[R]`. `P` are the raw positions varying at some level, `row` a raw
-position's row of `P`, `dep` the free positions the effects' map reads.
+position's row of `P`.
 """
 struct CTSEMJointMap{S}
     sampler::S
     npar::Int
     P::Vector{Int}
     row::Vector{Int}
-    dep::Vector{Int}
     R::Vector{Int}
     members::Vector{Vector{Int}}
     Lam::Vector{Matrix{Float64}}
@@ -637,7 +636,7 @@ end
 
 _jmap_with(m::CTSEMJointMap; Lam=m.Lam, h=m.h, G=m.G, theta0=m.theta0, Ct=m.Ct,
     tri=m.tri) =
-    CTSEMJointMap(m.sampler, m.npar, m.P, m.row, m.dep, m.R, m.members, Lam, h, G,
+    CTSEMJointMap(m.sampler, m.npar, m.P, m.row, m.R, m.members, Lam, h, G,
         m.thref, theta0, Ct, tri)
 
 """
@@ -738,18 +737,12 @@ function _jmap_layout(sampler::CTSEMSampler, cross::Bool)
     for (j, p) in enumerate(P)
         row[p] = j
     end
-    positions = reduce(vcat, sampler.positions; init=Int[])
     R = cross ? setdiff(1:sampler.npar, P) : Int[]
-    # The duals take the map's dependence on the effects' positions and the
-    # level scales; the coupling's on theta[R] is linear and taken in closed
-    # form (`_jmap_coupling_gradient!`), so `dep` holds no more of a large
-    # model's parameters than its random effects reach.
-    dep = sort(unique(filter(i -> 1 <= i <= sampler.npar, vcat(P, positions))))
     members = [Int[] for _ in 1:sampler.nunits]
     for s in eachindex(sampler.flat_unit)
         sampler.udims[sampler.flat_unit[s]] > 0 && push!(members[sampler.flat_unit[s]], s)
     end
-    return P, row, dep, R, members
+    return P, row, R, members
 end
 
 # Member s's J_s, |P| by its unit's dimension, from the levels' roots `Ls`.
@@ -863,38 +856,57 @@ function _jmap_umul(F::CTSEMCholesky, b::AbstractVector)
 end
 
 """
-    _jmap_effects(m, theta, xt; thR)
+    _jmap_effects(m, theta, xt)
 
 Every unit's effects at theta for latent `xt`, the map's log Jacobian in the
-units, and each unit's factor, for any number type (the seeded duals take the
-map's dependence on theta through it). `thR` holds the coupling's theta[R] at
-given values -- the duals' pass hands them in plain, since that dependence is
-taken in closed form.
+units, and each unit's factor. Units are independent, so they run on the pool
+(`_laplace_partition`), each writing its own entries; the log Jacobian is
+summed over units in their order after the join, so it does not depend on how
+the units were split. A unit whose conditional precision does not factor is a
+`DomainError`, as it was before the split.
 """
-function _jmap_effects(m::CTSEMJointMap, theta::AbstractVector{T}, xt::AbstractVector;
-    thR::Union{Nothing,AbstractVector}=nothing) where {T}
+function _jmap_effects(m::CTSEMJointMap, theta::AbstractVector{T},
+    xt::AbstractVector) where {T}
     sampler = m.sampler
     laplace = sampler.laplace
     th = _laplace_extend(laplace, theta)
     Ls = _laplace_popchols(th, laplace.spec)
     mu = th[m.P]
-    thR = thR === nothing ? th[m.R] : thR
-    us = Vector{Vector{T}}(undef, sampler.nunits)
-    Fs = Vector{CTSEMCholesky{T,Matrix{T}}}(undef, sampler.nunits)
+    thR = th[m.R]
+    nunits = sampler.nunits
+    us = Vector{Vector{T}}(undef, nunits)
+    Fs = Vector{CTSEMCholesky{T,Matrix{T}}}(undef, nunits)
+    ljs = zeros(T, nunits)
+    ok = _laplace_partition(laplace, nunits) do mine, _w
+        for U in mine
+            d = sampler.udims[U]
+            if d == 0
+                us[U] = T[]
+                Fs[U] = CTSEMCholesky(zeros(T, 0, 0), 0, true)
+                continue
+            end
+            unit = try
+                _jmap_unit(m, Ls, mu, thR, U)
+            catch err
+                _ctsem_must_propagate(err) && rethrow()
+                nothing
+            end
+            unit === nothing && return false
+            F, mean = unit
+            us[U] = mean .+ _jmap_usolve(F, view(xt, _sample_urange(sampler, U)))
+            Fs[U] = F
+            acc = zero(T)
+            @inbounds for i in 1:d
+                acc -= log(F.U[i, i])
+            end
+            ljs[U] = acc
+        end
+        return true
+    end
+    ok || throw(DomainError(theta, "a unit's conditional precision did not factor"))
     logjac = zero(T)
-    for U in 1:sampler.nunits
-        d = sampler.udims[U]
-        if d == 0
-            us[U] = T[]
-            Fs[U] = CTSEMCholesky(zeros(T, 0, 0), 0, true)
-            continue
-        end
-        F, mean = _jmap_unit(m, Ls, mu, thR, U)
-        us[U] = mean .+ _jmap_usolve(F, view(xt, _sample_urange(sampler, U)))
-        Fs[U] = F
-        @inbounds for i in 1:d
-            logjac -= log(F.U[i, i])
-        end
+    for k in 1:nunits
+        logjac += ljs[k]
     end
     return us, logjac, Fs
 end
@@ -966,8 +978,7 @@ function (d::CTSEMJointMapDensity)(g::AbstractVector{Float64}, xt::AbstractVecto
     gj = d.gj
     gus = [gj[_sample_urange(sampler, U)] for U in 1:sampler.nunits]
     gtheta = gj[1:npar]
-    _jmap_theta_gradient!(gtheta, m, theta, xt, gus)
-    isempty(m.R) || _jmap_coupling_gradient!(gtheta, m, theta, gus, Fs)
+    _jmap_theta_adjoint!(gtheta, m, theta, xt, gus, us, Fs)
     fill!(g, 0.0)
     g[1:npar] .= _jmap_theta_pullback(m, view(xt, 1:npar), gtheta)
     for U in 1:sampler.nunits
@@ -977,90 +988,233 @@ function (d::CTSEMJointMapDensity)(g::AbstractVector{Float64}, xt::AbstractVecto
     return v + logjac + ltheta
 end
 
-# The effects' and the Jacobian's dependence on theta at fixed latent z,
-# contracted with the joint's gradient in the effects, added into `gtheta`:
-# as many positions of `dep` a pass as the Hessian's sweeps carry, seeded as
-# duals of the Hessian's type (`_ctsem_hessian_dual`), which the package image
-# holds the population covariance and the solves at, rather than a type of the
-# map's own. The type is a run-time value, so the passes are a call of their own.
-function _jmap_theta_gradient!(gtheta::Vector{Float64}, m::CTSEMJointMap,
-    theta::Vector{Float64}, xt::AbstractVector, gus::Vector{Vector{Float64}})
-    isempty(m.dep) && return gtheta
-    return _jmap_theta_gradient!(gtheta, m, theta, xt, gus,
-        _ctsem_hessian_dual(m.sampler.laplace.objective))
-end
-
-function _jmap_theta_gradient!(gtheta::Vector{Float64}, m::CTSEMJointMap,
+# The effects' and the log Jacobian's dependence on theta at fixed latent z,
+# contracted with the joint's gradient in the effects `gus`, added into
+# `gtheta`: one reverse pass through each unit's factor (`_jmap_unit_adjoint!`),
+# the units on the pool, each worker accumulating the cotangents of the levels'
+# roots, the effects' means `theta[P]` and the coupling's `theta[R]`, which are
+# then carried to theta once: the roots through `_laplace_level_chol_derivatives`
+# (the joint density's own derivatives of them), the rest directly. This was 37
+# forward-mode passes of every unit on the affect pilot (435 positions a dual of
+# 12 lanes), 172 s a gradient against the joint density's 1.1 s
+# (`review/PILOT-sampling-and-updating-2026-11-06.md`).
+function _jmap_theta_adjoint!(gtheta::Vector{Float64}, m::CTSEMJointMap,
     theta::Vector{Float64}, xt::AbstractVector, gus::Vector{Vector{Float64}},
-    ::Type{S}) where {S}
-    dep = m.dep
-    nd = length(dep)
-    W = ForwardDiff.npartials(S)
-    th = Vector{S}(undef, length(theta))
-    for start in 1:W:nd
-        @inbounds for j in eachindex(theta)
-            th[j] = S(theta[j])
+    us::Vector{Vector{Float64}}, Fs)
+    sampler = m.sampler
+    laplace = sampler.laplace
+    spec = laplace.spec
+    npar = m.npar
+    th = _laplace_extend(laplace, theta)
+    Ls = _laplace_popchols(th, spec)
+    mu = th[m.P]
+    shift = isempty(m.R) ? Float64[] : th[m.R] .- m.thref
+    nP = length(m.P)
+    nR = length(m.R)
+    dmax = maximum(sampler.udims; init=0)
+    dmax == 0 && return gtheta
+    Lbar = [zeros(size(L)) for L in Ls]
+    mubar = zeros(nP)
+    Rbar = zeros(nR)
+    reduction = ReentrantLock()
+    _laplace_partition(laplace, sampler.nunits) do mine, _w
+        work = _JMapAdjointWork(nP, nR, dmax, Ls)
+        for U in mine
+            sampler.udims[U] == 0 && continue
+            _jmap_unit_adjoint!(work, m, Ls, mu, shift, U, Fs[U], us[U], gus[U],
+                view(xt, _sample_urange(sampler, U)))
         end
-        stop = min(start + W - 1, nd)
-        @inbounds for a in start:stop
-            th[dep[a]] = S(theta[dep[a]],
-                ForwardDiff.Partials(ntuple(b -> b == a - start + 1 ? 1.0 : 0.0, Val(W))))
-        end
-        uu, lj, _ = _jmap_effects(m, th, xt; thR=theta[m.R])
-        acc = lj
-        for U in eachindex(uu)
-            u = uu[U]
-            g = gus[U]
-            @inbounds for q in eachindex(u)
-                acc += g[q] * u[q]
+        Base.@lock reduction begin
+            for l in eachindex(Lbar)
+                Lbar[l] .+= work.Lbar[l]
             end
+            mubar .+= work.mubar
+            Rbar .+= work.Rbar
         end
-        p = ForwardDiff.partials(acc)
-        @inbounds for a in start:stop
-            gtheta[dep[a]] += p[a - start + 1]
+        return true
+    end
+    @inbounds for a in 1:nP
+        p = m.P[a]
+        p <= npar && (gtheta[p] += mubar[a])
+    end
+    @inbounds for b in 1:nR
+        gtheta[m.R[b]] += Rbar[b]
+    end
+    dL = _laplace_level_chol_derivatives(th, spec)
+    @inbounds for l in eachindex(spec.levels)
+        level = spec.levels[l]
+        k = nrandomeffects(level)
+        r = nlatent(level)
+        (k == 0 || r == 0) && continue
+        Lb = Lbar[l]
+        for (t, j) in enumerate(sampler.positions[l])
+            j <= npar || continue
+            D = dL[l][t]
+            acc = 0.0
+            for q in 1:r, p in 1:k
+                acc += D[p, q] * Lb[p, q]
+            end
+            gtheta[j] += acc
         end
     end
     return gtheta
 end
 
-# The coupling's share of theta's gradient: each unit's mean moves with
-# theta[R] by `-Q_U^-1 sum_s J_s' G_s`, and the Jacobian not at all, so the
-# contraction with the effects' gradient `g_U` is `-sum_s G_s' J_s Q_U^-1 g_U`,
-# a solve a unit.
-function _jmap_coupling_gradient!(gtheta::Vector{Float64}, m::CTSEMJointMap,
-    theta::Vector{Float64}, gus::Vector{Vector{Float64}}, Fs)
+# A worker's scratch for `_jmap_unit_adjoint!`, sized for the largest unit, and
+# its accumulators.
+struct _JMapAdjointWork
+    X::Matrix{Float64}
+    S::Matrix{Float64}
+    XP::Matrix{Float64}
+    J::Matrix{Float64}
+    LJ::Matrix{Float64}
+    Jb::Matrix{Float64}
+    y::Vector{Float64}
+    w::Vector{Float64}
+    v::Vector{Float64}
+    mean::Vector{Float64}
+    lin::Vector{Float64}
+    linb::Vector{Float64}
+    Lbar::Vector{Matrix{Float64}}
+    mubar::Vector{Float64}
+    Rbar::Vector{Float64}
+end
+_JMapAdjointWork(nP::Int, nR::Int, d::Int, Ls) = _JMapAdjointWork(zeros(d, d), zeros(d, d),
+    zeros(d, d), zeros(nP, d), zeros(nP, d), zeros(nP, d), zeros(d), zeros(d), zeros(d),
+    zeros(d), zeros(nP), zeros(nP), [zeros(size(L)) for L in Ls], zeros(nP), zeros(nR))
+
+# Unit U's reverse pass. Forward (`_jmap_unit`, `_jmap_effects`):
+#
+#     Q = I + sum_s J_s' Lam_s J_s,   c = sum_s J_s' lin_s,
+#     lin_s = h_s - Lam_s mu - G_s shift,   Q = U'U,
+#     u = Q^-1 c + U^-1 z,   logjac = -sum_i log U_ii.
+#
+# With g the joint's gradient in u, `y = U^-1 z`, `w = U^-T g`, `v = Q^-1 g`,
+# `mean = u - y`, and `X = U^-1`, the symmetric gradient in Q is
+#
+#     S = X P X' - (v mean' + mean v') / 2,
+#     P_ij = -(z_max(i,j) w_min(i,j)) / 2 off the diagonal, -(z_i w_i + 1) / 2 on it,
+#
+# the first term the Cholesky factor's adjoint (Murray 2016) for `g'y` and the
+# log Jacobian -- with `L = U'` and `Lbar` lower, `L'Lbar` restricted to its
+# lower triangle is `-z w'` there less the identity, since `U y = z` -- and the
+# second `g'Q^-1 c`'s. The gradient in c is v. Then per member
+# `Jbar_s = 2 Lam_s J_s S + lin_s v'`, `linbar_s = J_s v`, so
+# `mubar -= Lam_s linbar_s`, `shiftbar -= G_s' linbar_s`, and the levels' roots
+# take `Jbar_s` back at the positions `_jmap_jacobian!` put them.
+function _jmap_unit_adjoint!(work::_JMapAdjointWork, m::CTSEMJointMap, Ls, mu, shift,
+    U::Int, F, u::Vector{Float64}, g::Vector{Float64}, z::AbstractVector)
     sampler = m.sampler
     laplace = sampler.laplace
-    th = _laplace_extend(laplace, theta)
-    Ls = _laplace_popchols(th, laplace.spec)
+    spec = laplace.spec
+    d = sampler.udims[U]
     nP = length(m.P)
     nR = length(m.R)
-    for U in 1:sampler.nunits
-        d = sampler.udims[U]
-        d == 0 && continue
-        v = Fs[U] \ gus[U]
-        J = zeros(nP, d)
-        w = zeros(nP)
-        for s in m.members[U]
-            _jmap_jacobian!(J, m, Ls, s)
-            @inbounds for a in 1:nP
-                acc = 0.0
-                for q in 1:d
-                    acc += J[a, q] * v[q]
-                end
-                w[a] = acc
+    coupled = nR > 0
+    X = view(work.X, 1:d, 1:d)
+    S = view(work.S, 1:d, 1:d)
+    XP = view(work.XP, 1:d, 1:d)
+    J = view(work.J, :, 1:d)
+    LJ = view(work.LJ, :, 1:d)
+    Jb = view(work.Jb, :, 1:d)
+    y = view(work.y, 1:d)
+    w = view(work.w, 1:d)
+    v = view(work.v, 1:d)
+    mean = view(work.mean, 1:d)
+    lin = work.lin
+    linb = work.linb
+    _ctsem_cholesky_uinv!(X, F)
+    @inbounds for i in 1:d
+        a = 0.0
+        b = 0.0
+        for k in i:d
+            a += X[i, k] * z[k]
+        end
+        for k in 1:i
+            b += X[k, i] * g[k]
+        end
+        y[i] = a
+        w[i] = b
+    end
+    @inbounds for i in 1:d
+        a = 0.0
+        for k in i:d
+            a += X[i, k] * w[k]
+        end
+        v[i] = a
+        mean[i] = u[i] - y[i]
+    end
+    # P into S, then XP = X P, then S = XP X' less the mean's term.
+    @inbounds for j in 1:d, i in 1:d
+        S[i, j] = i == j ? -(z[i] * w[i] + 1) / 2 :
+            (i > j ? -z[i] * w[j] / 2 : -z[j] * w[i] / 2)
+    end
+    _ctsem_mul!(XP, X, S)
+    _ctsem_mulNT!(S, XP, X)
+    @inbounds for j in 1:d, i in 1:d
+        S[i, j] -= (v[i] * mean[j] + mean[i] * v[j]) / 2
+    end
+    for s in m.members[U]
+        _jmap_jacobian!(J, m, Ls, s)
+        Lam = m.Lam[s]
+        _ctsem_mul!(LJ, Lam, J)
+        @inbounds for a in 1:nP
+            acc = m.h[s][a]
+            for b in 1:nP
+                acc -= Lam[a, b] * mu[b]
             end
+            if coupled
+                G = m.G[s]
+                for b in 1:nR
+                    acc -= G[a, b] * shift[b]
+                end
+            end
+            lin[a] = acc
+            t = 0.0
+            for q in 1:d
+                t += J[a, q] * v[q]
+            end
+            linb[a] = t
+        end
+        _ctsem_mul!(Jb, LJ, S, 2.0, false)
+        @inbounds for q in 1:d, a in 1:nP
+            Jb[a, q] += lin[a] * v[q]
+        end
+        @inbounds for a in 1:nP
+            acc = 0.0
+            for b in 1:nP
+                acc += Lam[a, b] * linb[b]
+            end
+            work.mubar[a] -= acc
+        end
+        if coupled
             G = m.G[s]
             @inbounds for b in 1:nR
                 acc = 0.0
                 for a in 1:nP
-                    acc += G[a, b] * w[a]
+                    acc += G[a, b] * linb[a]
                 end
-                gtheta[m.R[b]] -= acc
+                work.Rbar[b] -= acc
+            end
+        end
+        # The roots' cotangents, where `_jmap_jacobian!` placed each entry.
+        offsets = laplace.units.offsets[U][sampler.flat_member[s]]
+        @inbounds for l in eachindex(spec.levels)
+            level = spec.levels[l]
+            k = nrandomeffects(level)
+            r = nlatent(level)
+            (k == 0 || r == 0) && continue
+            base = offsets[l]
+            Lb = work.Lbar[l]
+            for p in 1:k
+                i = m.row[level.re_index[p]]
+                for q in 1:r
+                    Lb[p, q] += Jb[i, base + q]
+                end
             end
         end
     end
-    return gtheta
+    return work
 end
 
 """Latent coordinates of `(theta, effects x)` under `m`: the map's inverse."""
@@ -1269,16 +1423,19 @@ function _jmap_build(sampler::CTSEMSampler, theta0::Vector{Float64},
     laplace = sampler.laplace
     npar = sampler.npar
     _laplace_ensure_pool!(laplace)
-    P, row, dep, R, members = _jmap_layout(sampler, cross)
+    P, row, R, members = _jmap_layout(sampler, cross)
     nP = length(P)
     nR = length(R)
     th = _laplace_extend(laplace, theta0)
     Ls = _laplace_popchols(th, laplace.spec)
     modes = [zeros(d) for d in sampler.udims]
-    for U in 1:sampler.nunits
-        sampler.udims[U] == 0 && continue
+    # Units on the pool, as the Laplace evaluation solves them: one thread took
+    # 123 s of the affect pilot's 1,324 units from their held modes.
+    _laplace_parallel(laplace, 1:sampler.nunits) do U
+        sampler.udims[U] == 0 && return true
         _laplace_solve_unit_mode!(laplace, U, th, Ls)
         modes[U] = copy(laplace.modes[U])
+        return true
     end
     nflat = length(sampler.flat_unit)
     Lam = [zeros(nP, nP) for _ in 1:nflat]
@@ -1289,7 +1446,7 @@ function _jmap_build(sampler::CTSEMSampler, theta0::Vector{Float64},
         th, Ls, modes, mine), laplace, length(flat))
     S = Symmetric((Matrix{Float64}(cov) .+ transpose(Matrix{Float64}(cov))) ./ 2)
     Ct = Matrix(cholesky(Symmetric(Matrix(S) + 1e-12 * max(tr(S), 1.0) / npar * I)).L)
-    m = CTSEMJointMap(sampler, npar, P, row, dep, R, members, Lam, h, G, th[R],
+    m = CTSEMJointMap(sampler, npar, P, row, R, members, Lam, h, G, th[R],
         copy(theta0), Ct, nothing)
     # The differences' passes, and about five for the units' mode solves.
     return m, isempty(flat) ? 0 : 2 * nP + 6
@@ -1563,8 +1720,9 @@ function ctsem_sample_map(laplace::CTSEMLaplaceObjective, values::AbstractVector
     cov = if hessian === nothing
         th0 = _laplace_extend(laplace, theta0)
         Ls0 = _laplace_popchols(th0, laplace.spec)
-        for U in 1:sampler.nunits
+        _laplace_parallel(laplace, 1:sampler.nunits) do U
             _laplace_solve_unit_mode!(laplace, U, th0, Ls0)
+            return true
         end
         _conditional_population_covariance(sampler, th0, Ls0, nothing)
     else
