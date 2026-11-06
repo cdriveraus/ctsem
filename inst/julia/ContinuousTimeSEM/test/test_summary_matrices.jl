@@ -230,3 +230,43 @@ end
     singular = ctsem_parameter_matrices(objective, [0.1, 0.0, -0.2, 0.05])
     @test isnan(singular[layout.offset[k]+1, 1])
 end
+
+@testset "asymptotics only for the latents that settle" begin
+    # X and Y a stable pair, W stable and driving X, a trend with an auto
+    # effect of 0, and Z stable but driven by the trend. X, Y and W settle
+    # whatever the trend does; the trend and Z have no equilibrium.
+    A = [-0.4  0.15 0.0 0.0  0.2;
+          0.28 -0.28 0.0 0.0  0.0;
+          0.0  0.0  0.0 0.0  0.0;
+          0.0  0.0  0.3 -0.5 0.0;
+          0.0  0.0  0.0 0.0 -0.6]
+    Q = [1.0 0.2 0.0 0.0 0.0;
+         0.2 0.8 0.0 0.0 0.0;
+         0.0 0.0 0.0 0.0 0.0;
+         0.0 0.0 0.0 0.5 0.0;
+         0.0 0.0 0.0 0.0 0.3]
+    c = reshape([0.1, -0.2, 0.26, 0.4, 0.5], 5, 1)
+    settles = ContinuousTimeSEM._ctsem_settling_states(A, true)
+    @test settles == [true, true, false, false, true]
+    D, m = ContinuousTimeSEM._ctsem_asymptotics(A, Q, c, collect(1:5), 5, true, 5)
+    K = [1, 2, 5]
+    @test A[K, K] * m[K, 1] ≈ -c[K, 1] rtol = 1e-12
+    @test all(isnan, m[3:4, 1])
+    @test maximum(abs, A[K, K] * D[K, K] + D[K, K] * A[K, K]' + Q[K, K]) < 1e-12
+    @test all(isnan, D[3:4, :]) && all(isnan, D[:, 3:4])
+    # Outside the diffusion states no noise arrives: zero, not NaN.
+    D2, _ = ContinuousTimeSEM._ctsem_asymptotics(A, Q, c, [1, 2, 5], 5, true, 5)
+    @test all(iszero, D2[3:4, :]) && all(iszero, D2[:, 3:4])
+    # The book's quadratic trend: a level driven by a slope of auto effect 0.
+    B = [-0.5 0.0 0.0; 0.0 0.0 1.0; 0.0 0.0 0.0]
+    @test ContinuousTimeSEM._ctsem_settling_states(B, true) == [true, false, false]
+    # Discrete time: an autoregression of 1 does not settle.
+    Ad = [0.6 0.1 0.0; 0.0 0.5 0.0; 0.0 0.0 1.0]
+    @test ContinuousTimeSEM._ctsem_settling_states(Ad, false) == [true, true, false]
+    Dd, md = ContinuousTimeSEM._ctsem_asymptotics(Ad, Matrix(1.0I, 3, 3),
+        reshape([0.2, 0.1, 0.3], 3, 1), [1, 2, 3], 3, false, 3)
+    @test (I - Ad[1:2, 1:2]) * md[1:2, 1] ≈ [0.2, 0.1] rtol = 1e-12
+    @test isnan(md[3, 1])
+    @test Dd[1:2, 1:2] ≈ Ad[1:2, 1:2] * Dd[1:2, 1:2] * Ad[1:2, 1:2]' + I rtol = 1e-10
+    @test all(isnan, Dd[3, :])
+end

@@ -47,6 +47,7 @@ A major release: ctsem gains a second estimation engine, written in Julia, which
 - Fixed: `ctDiscretePars()` given subjects out of ascending order labelled each subject's results with another's id.
 - Fixed: data values that do not read as numbers were treated as missing; `ctFit()` now stops and names them.
 - Fixed: in a nonlinear model, a cell using `min()` or `max()` of a state was linearised as if it did not depend on that state.
+- Fixed: `ctGenerate()` stopped with an error for a model with a DRIFT diagonal of 0, such as a linear trend.
 
 ## 29/6/2026
 ### 3.11.0
