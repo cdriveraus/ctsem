@@ -771,11 +771,10 @@ test_that("a fit keeps the modes its run ended with", {
 
 # Held, the objective is a function of the parameters given the modes: every
 # evaluation starts each unit from them and follows each maximum from where
-# they were found, whatever was evaluated before. With a search beside them,
-# each unit's term combines the maxima of both, and where the held modes miss a
-# maximum the search finds it. At a population
-# mean of 0.3 each person on the sign fixture has two maxima.
-test_that("held modes give one function of the parameters, and a search beside them adds what they miss", {
+# they were found, whatever was evaluated before, and no search from the origin
+# adds a maximum they lack. At a population mean of 0.3 each person on the sign
+# fixture has two maxima.
+test_that("held modes give one function of the parameters, and holds nest", {
   skip_without_julia()
   spec <- suppressMessages(ctFit(.modes_sign_data(), .modes_sign_model(),
     backend = "julia", intoverpop = "laplace", fit = FALSE))
@@ -805,8 +804,8 @@ test_that("held modes give one function of the parameters, and a search beside t
   expect_gt(length(modes$units), length(unique(modes$units)))
   points <- list(x0, x0 + c(0.2, 0.1), x0 - c(0.2, 0.1))
   # Each point's value under a hold, released when this returns.
-  held <- function(modes, search = FALSE) {
-    expect_equal(ctsem:::.ctJuliaHoldModes(spec, modes, search = search), 12L)
+  held <- function(modes) {
+    expect_equal(ctsem:::.ctJuliaHoldModes(spec, modes), 12L)
     vapply(points, value, numeric(1))
   }
   searched <- vapply(points, value, numeric(1))
@@ -820,26 +819,22 @@ test_that("held modes give one function of the parameters, and a search beside t
   expect_identical(again[2], full[2])
   # Released, the search again.
   expect_identical(value(points[[2]]), searched[2])
-  # Each unit held at its lower maximum alone: the search finds the higher,
-  # and beside the held modes each unit's term takes it.
+  # Each unit held at its lower maximum alone: the hold is what it holds, and
+  # nothing searches for the higher.
   lower <- !duplicated(modes$units, fromLast = TRUE)
   some <- list(units = modes$units[lower],
     values = modes$values[, lower, drop = FALSE], at = x0)
   short <- held(some)
-  both <- held(some, search = TRUE)
   expect_true(all(short < searched - 1))
-  expect_equal(both, searched, tolerance = 1e-8)
-  # And with every maximum held, the search beside them adds nothing.
-  expect_equal(held(modes, search = TRUE), full, tolerance = 1e-8)
-  # A hold inside another is released alone: the one under it holds again,
-  # searching or not.
+  # A hold inside another is released alone, and the one under it holds again
+  # with its own modes.
   nested <- local({
-    ctsem:::.ctJuliaHoldModes(spec, some)
+    ctsem:::.ctJuliaHoldModes(spec, modes)
     inner <- local({
-      ctsem:::.ctJuliaHoldModes(spec, some, search = TRUE)
+      ctsem:::.ctJuliaHoldModes(spec, some)
       value(points[[1]])
     })
     c(inner, value(points[[1]]))
   })
-  expect_equal(nested, c(both[1], short[1]), tolerance = 1e-8)
+  expect_equal(nested, c(short[1], full[1]), tolerance = 1e-8)
 })
