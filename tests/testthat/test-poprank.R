@@ -37,7 +37,6 @@ if (identical(Sys.getenv('NOT_CRAN'), 'true')) {
   }
 
   prepared_pars <- function(m) {
-    m <- ctsem:::ctModel0DRIFT(m, m$continuoustime)
     ctsem:::ctModelStatesAndPARS(m$pars, statenames = m$latentNames,
       tdprednames = m$TDpredNames)
   }
@@ -392,7 +391,7 @@ if (identical(Sys.getenv('NOT_CRAN'), 'true')) {
     }
     withcell <- function(row, col, value) {
       m <- mk()
-      p <- ctsem:::ctModelStatesAndPARS(ctsem:::ctModel0DRIFT(m, TRUE)$pars,
+      p <- ctsem:::ctModelStatesAndPARS(m$pars,
         statenames = 'eta', tdprednames = NULL)
       m$pars <- p
       m[['RAWPOPVAR']] <- ctsem:::.ctModelRawPopVar(p)

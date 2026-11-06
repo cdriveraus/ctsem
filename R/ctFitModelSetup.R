@@ -448,7 +448,13 @@
     partialvar <- unique(ctm$pars$param[revarpars])
   }
 
-  ctm <- ctModel0DRIFT(ctm, ctm$continuoustime) #offset 0 drift
+  # A fixed auto effect of exactly 0 (1 in discrete time) is a process with no
+  # equilibrium: a trend, a trait, an integrator. Stan's filter divides by the
+  # drift for the discrete intercept (`mdivide_left(JAx, ...)`) and solves a
+  # Lyapunov equation for the discrete noise, so it gets -1e-6 instead. The
+  # julia engine takes those integrals by series where the drift is singular
+  # (series_discretization.jl), so it fits the model as written.
+  if(!backend %in% 'julia') ctm <- ctModel0DRIFT(ctm, ctm$continuoustime)
   ctm$pars <- ctModelStatesAndPARS(ctm$pars,statenames = ctm$latentNames,tdprednames=ctm$TDpredNames,tiprednames=ctm$TIpredNames) #replace latent states and PARS with state and PAR[] refs, need this early because we rely on [] detection
   if(any(grepl('tipreds[', ctm$pars$param, fixed=TRUE)) && !backend %in% 'julia') stop(
     'A cell reads a time independent predictor (',

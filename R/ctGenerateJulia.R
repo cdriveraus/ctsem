@@ -36,9 +36,10 @@
 
 # The values generation supplies when a matrix is free, for the R generator
 # (`ctModeltoNumeric()`), which integrates a linear system at fixed values and
-# has no prior to centre on. Three diagonals cannot take a literal zero because
-# zero is singular there: DRIFT (`fQinf()` cannot solve for the asymptotic
-# covariance), DIFFUSION and T0VAR (a covariance that cannot be factorised).
+# has no prior to centre on. DIFFUSION and T0VAR diagonals get a small variance
+# rather than none. DRIFT diagonals get a slow decay rather than none: the
+# generator once needed an invertible drift, and integrates a zero one now,
+# but changing the value would move every dataset generated from a free drift.
 #' @keywords internal
 .ctGenerateDefaults <- function(continuoustime = TRUE) {
   driftdiagonal <- if(isTRUE(continuoustime)) -1e-6 else 1 - 1e-6

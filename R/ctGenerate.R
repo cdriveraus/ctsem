@@ -3,17 +3,13 @@ ctModeltoNumeric <- function(ctmodelobj){
   #set any matrices to numeric elements
   #
   # Free parameters need *a* value before anything can be simulated. Zero,
-  # matching ctsem's behaviour before commit 437bfbc0 so existing scripts keep
-  # producing the data they always have -- except DRIFT, which cannot be a
-  # literal zero: a zero DRIFT is singular, so `fQinf()` cannot solve for the
-  # asymptotic covariance and generation fails outright. DRIFT diagonals use
-  # the same near-zero convention `ctModel0DRIFT()` applies to a fixed DRIFT
-  # diagonal of exactly zero.
+  # matching ctsem's behaviour before commit 437bfbc0, except for the
+  # diagonals `.ctGenerateDefaults()` names there.
   #
-  # `.ctGenerateDefaults()` holds the per-matrix choices, shared with the julia
-  # generation path so both produce the same kind of data from an underspecified
-  # model. They are defaults for *simulation*, not estimates: the point is that
-  # generation does not error, and anything a user cares about they should set.
+  # `.ctGenerateDefaults()` holds the per-matrix choices. They are defaults for
+  # *simulation*, not estimates: the point is that generation does not error,
+  # and anything a user cares about they should set. The julia generator does
+  # not use them; it puts free parameters at their prior centre.
   defaults <- .ctGenerateDefaults(continuoustime =
     if(!is.null(ctmodelobj$continuoustime)) ctmodelobj$continuoustime else TRUE)
   filled <- character()
@@ -825,21 +821,21 @@ ctGenerate<-function(ctmodelobj,n=100,burnin=0,dtmean=1,logdtsd=0,dtmat=NA,
 
     
     latents[1,] <- sm$T0MEANS+m$T0VAR %*% rnorm(m$n.latent)
-    Qinf <- fQinf(sm$DRIFT,sm$DIFFUSION)
-    
+    nl <- m$n.latent
+    Q <- sm$DIFFUSION %*% t(sm$DIFFUSION)
+
     for(i in 2:nrow(latents)){
-      dtA=expm::expm(sm$DRIFT * (sdat$time[i]-sdat$time[i-1]))
-      # message('dtA')
-      # print(dtA)
-      # message('dtCINT')
-      # print(solve(sm$DRIFT,(dtA - diag(m$n.latent))) %*% sm$CINT)
-      # message('dtG')
-      # print(t(chol(fdtQ(Qinf,dtA))))
-      latents[i,] <- dtA %*% latents[i-1,] +
-        solve(sm$DRIFT,(dtA - diag(m$n.latent))) %*% sm$CINT + 
-        t(chol(fdtQ(Qinf,dtA))) %*% rnorm(m$n.latent)
-      # browser()
-      if(m$n.TDpred > 0) latents[i,] <- latents[i,] + sm$TDPREDEFFECT %*% 
+      # The interval's intercept and noise as block exponentials, which divide
+      # by nothing: a drift with an auto effect of 0 -- a trend, a trait, an
+      # integrator -- has no inverse and no asymptotic covariance, and is
+      # generated as it is written.
+      dt <- sdat$time[i]-sdat$time[i-1]
+      dtA <- expm::expm(sm$DRIFT * dt)
+      dtCINT <- as.matrix(expm::expm(rbind(cbind(sm$DRIFT, sm$CINT), 0) * dt))[
+        1:nl, nl + 1, drop = FALSE]
+      latents[i,] <- dtA %*% latents[i-1,] + dtCINT +
+        .ctGenerateRoot(.ctNetworkInnovation(sm$DRIFT, Q, dt)) %*% rnorm(nl)
+      if(m$n.TDpred > 0) latents[i,] <- latents[i,] + sm$TDPREDEFFECT %*%
         t(as.matrix(sdat[i,m$TDpredNames,drop=FALSE]))
     }
     

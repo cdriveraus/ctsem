@@ -150,59 +150,118 @@ function ctsem_state_dependent_cells(objective::CTSEMObjective)
 end
 
 """
-    _ctsem_asymptotics(DRIFT, DIFFUSIONcov, CINT, dyn)
+    _ctsem_settling_states(A, continuous_time)
 
-Asymptotic diffusion covariance and asymptotic intercept over the states in
-`dyn`, zero elsewhere.
+Which states of the drift `A` settle to an equilibrium whatever they start
+from: those whose closure under driving -- the state and every state that
+drives it, directly or through others (`A[i, j] != 0`) -- has a stable drift.
+The closure is an autonomous system of its own, block triangular once ordered,
+so its eigenvalues are those of the blocks it depends on, and a state settles
+exactly when each of them does. A state with an auto effect of zero and nothing
+pulling it back -- a trend, a trait, an integrator -- does not settle, and
+neither does any state it drives; a stable process beside it, or driving it,
+still does. The same closure the stationary T0MEANS and T0VAR cells are solved
+over (`_ctsem_closure_drift`), here from the values rather than the model.
+"""
+function _ctsem_settling_states(A::AbstractMatrix, continuous_time::Bool)
+    k = size(A, 1)
+    settles = fill(false, k)
+    reach = fill(false, k)
+    stack = Int[]
+    for i in 1:k
+        fill!(reach, false)
+        reach[i] = true
+        push!(stack, i)
+        while !isempty(stack)
+            r = pop!(stack)
+            for j in 1:k
+                if !reach[j] && A[r, j] != 0
+                    reach[j] = true
+                    push!(stack, j)
+                end
+            end
+        end
+        closure = findall(reach)
+        block = A[closure, closure]
+        all(isfinite, block) || continue
+        ev = try
+            eigvals(block)
+        catch
+            continue
+        end
+        settles[i] = continuous_time ? all(e -> real(e) < 0, ev) :
+            all(e -> abs(e) < 1, ev)
+    end
+    return settles
+end
 
-A non-stationary or singular drift has no asymptotic form. That is a property of
-the parameter value, not an error in the caller, so it comes back as `NaN`
-rather than thrown: one non-stationary posterior sample should not abort the
-summary of the other 199.
+"""
+    _ctsem_asymptotics(DRIFT, DIFFUSIONcov, CINT, dyn, nlatent, continuous_time, naff)
+
+Asymptotic diffusion covariance and asymptotic intercept: the mean and the
+diffusion's covariance each latent settles to whatever its start.
+
+The intercept is solved over the latents of genuine dynamics (`1:naff`; the
+carrier states of augmented random effects past them stay zero), the covariance
+over the diffusion states `dyn`, zero for any other latent, which no noise
+reaches. Each only over the states that settle (`_ctsem_settling_states`), and
+`NaN` for the rest of its span: a latent with a fixed auto effect of zero, or
+an unstable drift, has no equilibrium, and solving with it anyway gives a
+number -- a singular solve's error, or `CINT / 1e-6` once that zero is moved
+off -- where there is none. That is a property of the parameter value, not an
+error in the caller, so it comes back as `NaN` rather than thrown: one
+non-stationary posterior sample should not abort the summary of the other 199.
+A settling state's closure is closed under driving and within `dyn` where the
+state is, so the solves over the settling states are the stable subsystems'
+own.
 """
 function _ctsem_asymptotics(DRIFT, DIFFUSIONcov, CINT, dyn, nlatent,
-    continuous_time::Bool=true)
+    continuous_time::Bool=true, naff::Int=nlatent)
     asym_diffusion = zeros(Float64, nlatent, nlatent)
     asym_cint = zeros(Float64, nlatent, 1)
-    isempty(dyn) && return (asym_diffusion, asym_cint)
+    naff >= 1 || return (asym_diffusion, asym_cint)
 
-    A = Matrix{Float64}(DRIFT[dyn, dyn])
-    Q = Matrix{Float64}(DIFFUSIONcov[dyn, dyn])
-    k = length(dyn)
+    A = Matrix{Float64}(DRIFT[1:naff, 1:naff])
+    settles = _ctsem_settling_states(A, continuous_time)
+    settled = findall(settles)
+
+    asym_cint[1:naff, 1] .= NaN
+    if !isempty(settled)
+        intercept = try
+            # Continuous: -A x = c. Discrete: (I - A) x = c.
+            As = A[settled, settled]
+            system = continuous_time ? -As : (I - As)
+            value = system \ Vector{Float64}(CINT[settled, 1])
+            all(isfinite, value) ? value : nothing
+        catch
+            nothing
+        end
+        intercept === nothing || (asym_cint[settled, 1] .= intercept)
+    end
+
+    isempty(dyn) && return (asym_diffusion, asym_cint)
+    asym_diffusion[dyn, dyn] .= NaN
+    K = [i for i in dyn if i <= naff && settles[i]]
+    isempty(K) && return (asym_diffusion, asym_cint)
+    AK = Matrix{Float64}(DRIFT[K, K])
+    Q = Matrix{Float64}(DIFFUSIONcov[K, K])
+    k = length(K)
     solved = try
         if continuous_time
             X = zeros(Float64, k, k)
             # The filter's own solve, built per call.
-            my_lyap!(X, A, Q, LyapBuffer(Float64, k))
+            my_lyap!(X, AK, Q, LyapBuffer(Float64, k))
             all(isfinite, X) ? X : nothing
         else
             # Discrete time solves X = A X A' + Q, i.e.
             # (I - A kron A) vec(X) = vec(Q).
-            X = reshape((I - kron(A, A)) \ vec(Q), k, k)
+            X = reshape((I - kron(AK, AK)) \ vec(Q), k, k)
             all(isfinite, X) ? X : nothing
         end
     catch
         nothing
     end
-    if solved === nothing
-        fill!(asym_diffusion, NaN)
-    else
-        asym_diffusion[dyn, dyn] .= solved
-    end
-
-    intercept = try
-        # Continuous: -A x = c. Discrete: (I - A) x = c.
-        system = continuous_time ? -A : (I - A)
-        value = system \ Vector{Float64}(CINT[dyn, 1])
-        all(isfinite, value) ? value : nothing
-    catch
-        nothing
-    end
-    if intercept === nothing
-        fill!(asym_cint, NaN)
-    else
-        asym_cint[dyn, 1] .= intercept
-    end
+    solved === nothing || (asym_diffusion[K, K] .= solved)
     return (asym_diffusion, asym_cint)
 end
 
@@ -394,7 +453,8 @@ function _ctsem_pack_matrices!(column, pars, sp::EKFParameters, layout,
         rawpopcov = Matrix{Float64}(buffer.out[1:k, 1:k])
     end
     asym_diffusion, asym_cint = _ctsem_asymptotics(pars.DRIFT, diffusioncov,
-        pars.CINT, dyn, nlatent, sp.continuous_time)
+        pars.CINT, dyn, nlatent, sp.continuous_time,
+        _ctsem_affine_dim(sp, dyn, nlatent))
     # The block `_ctsem_stationary!` places in the filter: the asymptotic
     # covariance over the diffusion states and zero across the rest of the
     # latent processes' rows and columns. NaN where there is none, as it is in
