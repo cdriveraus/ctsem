@@ -1280,11 +1280,11 @@
   module <- .ctJuliaModule(fit$model_spec$project)
   mapped <- identical(settings$sampler, "map")
   objective <- .ctBackendSampleObjective(fit, target, hybrid = mapped)
-  # A marginal target is the fit's objective, read at the fit's modes held
-  # and a search beside them: a function of the parameters given the fit,
-  # which a chain's own history would not give (R/ctJuliaFitModes.R).
+  # A marginal target is the fit's objective, read at the fit's modes held:
+  # a function of the parameters given the fit, which a chain's own history
+  # would not give (R/ctJuliaFitModes.R).
   if (isTRUE(target$marginal) && !isTRUE(target$state_explicit)) {
-    .ctJuliaHoldModes(fit$model_spec, .ctJuliaFitModes(fit), search = TRUE)
+    .ctJuliaHoldModes(fit$model_spec, .ctJuliaFitModes(fit))
   }
   # The map sampler reports the effects in the layer's layout, which labels
   # them (`.ctBackendEffectIndex()`): on the hybrid objective a unit whose

@@ -729,11 +729,6 @@ mutable struct CTSEMLaplaceObjective{O} <: CTSEMOptimisable
     # outside an optimisation.
     mode_values::Vector{Vector{Float64}}
     anchor_values::Vector{Vector{Float64}}
-    # Whether a solve from held anchors (`ctsem_laplace_hold_modes!`) also
-    # searches from the origin, its maxima joined to those followed from the
-    # anchors: for the stages after a fit whose points reach far from the
-    # estimate. False within a run, which only follows.
-    anchor_search::Bool
 end
 
 # `soft_blend_lo = 0.2` and `soft_blend_hi = 0.7` are measured, not derived: see the
@@ -759,8 +754,7 @@ function CTSEMLaplaceObjective(objective::CTSEMObjective, spec::CTSEMLaplaceSpec
         inert === nothing ? Vector{Vector{Int}}[] : inert,
         isempty(known) ? [Vector{Float64}[] for _ in 1:nunits] : known,
         Vector{Float64}[], [Vector{Float64}[] for _ in 1:nunits],
-        Vector{Vector{Float64}}[], [Float64[] for _ in 1:nunits], Vector{Float64}[],
-        false)
+        Vector{Vector{Float64}}[], [Float64[] for _ in 1:nunits], Vector{Float64}[])
 end
 
 """
@@ -3629,19 +3623,14 @@ function _laplace_solve_unit_mode!(laplace::CTSEMLaplaceObjective, U::Integer,
     end
     # Within an optimisation, from the unit's mode at the last accepted point
     # and nothing else (`_ctsem_anchor_start!`): see there for why. After a
-    # fit, from its modes held (`ctsem_laplace_hold_modes!`), and where the
-    # hold also searches (`anchor_search`), the maxima followed from them are
-    # joined to the search's below.
-    followed = nothing
+    # fit, from its modes held (`ctsem_laplace_hold_modes!`), the same way.
     if !retain && !isempty(laplace.anchors) && length(laplace.anchors[U]) == d
         held = _laplace_newton_unit_mode(laplace, U, values, Ls, aws,
             laplace.anchors[U])
         # A unit with other maxima follows each from its own anchor
         # (`_laplace_follow_modes`); the sum over them decides its term
         # (`_laplace_mode_sum`), and the first kept stands as its mode till then.
-        if laplace.anchor_search
-            followed = _laplace_follow_modes(laplace, U, values, Ls, aws, held)
-        elseif _LAPLACE_MODE_SUM[] && !isempty(laplace.alt_anchors) &&
+        if _LAPLACE_MODE_SUM[] && !isempty(laplace.alt_anchors) &&
                 !isempty(laplace.alt_anchors[U])
             kept = _laplace_follow_modes(laplace, U, values, Ls, aws, held)
             if !isempty(kept)
@@ -3717,12 +3706,6 @@ function _laplace_solve_unit_mode!(laplace::CTSEMLaplaceObjective, U::Integer,
             fromwarm = false
         end
     end
-    # A search that does not converge where a held maximum followed: the
-    # followed one is the unit's mode, as it would be without the search.
-    if !best.converged && followed !== nothing && !isempty(followed)
-        best = followed[1]
-        fromwarm = false
-    end
     # Not where every unit's inner problem is a concave quadratic: there is no
     # second maximum to find, and screening for one cost 25-50% of an
     # evaluation on random-intercept models, values unchanged
@@ -3730,14 +3713,6 @@ function _laplace_solve_unit_mode!(laplace::CTSEMLaplaceObjective, U::Integer,
     # Every maximum the search reaches, for the sum over them
     # (`_laplace_mode_sum`); the choice of one below is the probes' as before.
     set = (_LAPLACE_MODE_SUM[] && best.converged) ? Any[best] : nothing
-    # The maxima followed from held anchors, in the set beside the search's:
-    # each finds what the other misses away from the estimate (on the affect
-    # pilot, 5 to 25 nats at draws from the fit's normal, either way).
-    if set !== nothing && followed !== nothing
-        for r in followed
-            _laplace_mode_join!(set, laplace, U, values, Ls, aws, r)
-        end
-    end
     # A warm solve follows the unit's other maxima from where they stood, as
     # an anchored one does: a Hessian's differencing points all start from the
     # same modes (`_laplace_mode_snapshot`), every one of them.
@@ -5112,7 +5087,6 @@ function _ctsem_anchor_start!(laplace::CTSEMLaplaceObjective, x::AbstractVector;
     resume_units=nothing, resume_values=nothing)
     laplace.anchors = Vector{Float64}[]
     laplace.anchor_values = Vector{Float64}[]
-    laplace.anchor_search = false
     _LAPLACE_ANCHORS[] || return nothing
     laplace.alt_anchors = Vector{Vector{Float64}}[]
     known = laplace.known
@@ -5520,8 +5494,7 @@ ctsem_laplace_clear_anchors!(::Any) = nothing
 ctsem_laplace_clear_anchors!(laplace::CTSEMLaplaceObjective) =
     (laplace.anchors = Vector{Float64}[];
      laplace.alt_anchors = Vector{Vector{Float64}}[];
-     laplace.anchor_values = Vector{Float64}[];
-     laplace.anchor_search = false; nothing)
+     laplace.anchor_values = Vector{Float64}[]; nothing)
 
 export ctsem_set_mode_anchors!, ctsem_laplace_clear_anchors!, ctsem_set_mode_sum!
 
@@ -5530,23 +5503,22 @@ export ctsem_set_mode_anchors!, ctsem_laplace_clear_anchors!, ctsem_set_mode_sum
 # A run's value is the anchored objective: each unit's maxima followed from
 # its modes at the last accepted point, searched again where the run stops
 # and ends (`_ctsem_anchor_start!`), and the certification's Hessian is that
-# function's. What reads the fit afterwards reads it at the fit's modes: each
-# unit's Newton starts from the modes the run ended with, found at the
-# estimate, and each maximum is followed from there to the point
-# (`_laplace_follow_modes`), the anchors held and never moved, so the value is
-# a function of the parameters given the fit, a density a sampler can target,
-# which anchors moved by a chain's own history would not be wherever a unit
-# has two maxima. Near the estimate that is the run's function, at about half
-# a search's cost. Further out neither finds every maximum: at draws from the
-# affect pilot's normal the followed modes and a search from the origin
-# differed by 5 to 25 nats, each finding maxima the other missed. So a hold
-# for the stages whose points reach far (`search = true`: the interval check,
-# the flat-direction screen, the samplers) also searches, and the unit's term
-# combines the maxima of both (`_laplace_mode_sum`): the term over every
-# maximum either finds, and at the estimate the run's. Not always above both:
-# a maximum one set adds beside the other's best, across a shallow valley,
-# fades the best's weight (at the pilot's draws, 2.55 and 1.13 nats below the
-# followed value at two, 11.3 above both at the third).
+# function's. What reads the fit afterwards reads that function: each unit's
+# Newton starts from the modes the run ended with, found at the estimate, and
+# each maximum is followed from there to the point (`_laplace_follow_modes`),
+# the anchors held and never moved. So the value is a function of the
+# parameters given the fit: its Hessian's differencing points cannot land a
+# unit on different maxima, and it is a density a sampler can target, which
+# anchors moved by a chain's own history would not be wherever a unit has two
+# maxima. It is also the cheapest: a gradient on the affect pilot, at draws a
+# standard error from the estimate, 81-85 s held against 117-129 s searched
+# from the origin (16 threads). Further out a search finds maxima the held
+# modes miss and misses some they keep (5 to 25 nats either way at those
+# draws). Neither is the integral, and combining them was dropped
+# (2026-11-06): a maximum added beside the best, across a shallow valley,
+# fades the best's weight in the mode sum, so the combination fell below the
+# held value, at twice its cost. Where a unit's term depends on which maxima
+# are found, Laplace is poor for it, and sampling the joint is the answer.
 
 """
     _ctsem_fit_modes(held, anchored)
@@ -5584,14 +5556,14 @@ function _ctsem_fit_modes(held, anchored)
     return (units=units, values=values)
 end
 
-# The holds on each objective (`ctsem_laplace_hold_modes!`), innermost last,
-# each whether it searches: a stage inside another releases only its own, and
-# the one under it holds again as it was.
-const _LAPLACE_HOLDS = IdDict{Any,Vector{Bool}}()
+# The anchors each hold on an objective replaced (`ctsem_laplace_hold_modes!`),
+# innermost last: a release puts them back, so a stage inside another releases
+# only its own hold.
+const _LAPLACE_HOLDS = IdDict{Any,Vector{Any}}()
 const _LAPLACE_HOLDS_LOCK = ReentrantLock()
 
 """
-    ctsem_laplace_hold_modes!(objective, values, units, modes; search=false)
+    ctsem_laplace_hold_modes!(objective, values, units, modes)
 
 Holds a fit's modes on `objective` until `ctsem_laplace_release_modes!`: each
 unit's first mode (column `j` of the NaN-padded `modes` a mode of unit
@@ -5599,17 +5571,14 @@ unit's first mode (column `j` of the NaN-padded `modes` a mode of unit
 the free parameters `values`, the fit's estimate. Every evaluation then starts
 the unit's Newton from them and follows each maximum from `values` to the
 point (`_laplace_follow_modes`), and nothing moves them but a run, which sets
-its own and clears them at its end. With `search`, each unit also searches
-from the origin and its term combines the maxima of both. A mode whose length
-is not the unit's on this objective -- the hybrid's and the layer's units
-differ -- is left out, and a unit with none searches. Holds nest. Not where
-anchoring is off (`ctsem_set_mode_anchors!(false)`, the oracle). Returns the
-units held.
+its own and clears them at its end. A mode whose length is not the unit's on
+this objective -- the hybrid's and the layer's units differ -- is left out,
+and a unit with none searches. Holds nest. Not where anchoring is off
+(`ctsem_set_mode_anchors!(false)`, the oracle). Returns the units held.
 """
-ctsem_laplace_hold_modes!(::Any, values, units, modes; search::Bool=false) = 0
+ctsem_laplace_hold_modes!(::Any, values, units, modes) = 0
 function ctsem_laplace_hold_modes!(laplace::CTSEMLaplaceObjective,
-    values::AbstractVector, units::AbstractVector, modes::AbstractMatrix;
-    search::Bool=false)
+    values::AbstractVector, units::AbstractVector, modes::AbstractMatrix)
     _LAPLACE_ANCHORS[] || return 0
     n = length(laplace.units.members)
     at = _laplace_extend(laplace, collect(Float64, values))
@@ -5625,33 +5594,35 @@ function ctsem_laplace_hold_modes!(laplace::CTSEMLaplaceObjective,
     held = count(!isempty, anchors)
     held == 0 && return 0
     lock(_LAPLACE_HOLDS_LOCK) do
-        push!(get!(() -> Bool[], _LAPLACE_HOLDS, laplace), search)
+        push!(get!(() -> Any[], _LAPLACE_HOLDS, laplace),
+            (laplace.anchors, laplace.alt_anchors, laplace.anchor_values))
     end
     laplace.anchors = anchors
     laplace.alt_anchors = alts
     laplace.anchor_values = [at for _ in 1:n]
-    laplace.anchor_search = search
     return held
 end
 
 """
     ctsem_laplace_release_modes!(objective)
 
-Releases the last hold `ctsem_laplace_hold_modes!` made: the one under it
-holds again as it was, searching or not, and the anchors are cleared once no
-hold is left. Returns the holds left.
+Releases the last hold `ctsem_laplace_hold_modes!` made, putting back the
+anchors it replaced: the hold under it, or none. Returns the holds left.
 """
 ctsem_laplace_release_modes!(::Any) = 0
 function ctsem_laplace_release_modes!(laplace::CTSEMLaplaceObjective)
-    under = lock(_LAPLACE_HOLDS_LOCK) do
-        stack = get(_LAPLACE_HOLDS, laplace, Bool[])
-        isempty(stack) || pop!(stack)
+    left, under = lock(_LAPLACE_HOLDS_LOCK) do
+        stack = get(_LAPLACE_HOLDS, laplace, Any[])
+        under = isempty(stack) ? nothing : pop!(stack)
         isempty(stack) && delete!(_LAPLACE_HOLDS, laplace)
-        isempty(stack) ? nothing : (left=length(stack), search=stack[end])
+        (length(stack), under)
     end
-    under === nothing && (ctsem_laplace_clear_anchors!(laplace); return 0)
-    isempty(laplace.anchors) || (laplace.anchor_search = under.search)
-    return under.left
+    if under === nothing
+        ctsem_laplace_clear_anchors!(laplace)
+    else
+        laplace.anchors, laplace.alt_anchors, laplace.anchor_values = under
+    end
+    return left
 end
 
 export ctsem_laplace_hold_modes!, ctsem_laplace_release_modes!

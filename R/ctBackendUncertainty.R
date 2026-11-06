@@ -257,11 +257,9 @@
   }
   lpgFunc <- lpg(target)
   # The fit's modes held while this stage evaluates its objective
-  # (R/ctJuliaFitModes.R): followed alone for a Hessian formed again at the
-  # estimate, and with a search beside them once the stage's points reach
-  # further (below).
-  modes <- .ctJuliaFitModes(fit)
-  .ctJuliaHoldModes(target$model_spec, modes)
+  # (R/ctJuliaFitModes.R): the curvature, the screen, the interval check and
+  # any draws read the function the estimate and its Hessian were reached on.
+  .ctJuliaHoldModes(target$model_spec, .ctJuliaFitModes(fit))
 
   # `cores` here means engine threads, not R processes: the Julia engine splits
   # its own subject loop, so each log-probability evaluation is parallel and
@@ -334,10 +332,6 @@
     .ctBackendHessian(fit, est, verbose = verbose)
   } else NULL
   control$analyticHessian <- NULL
-  # From here the screen, the interval check and any draws reach away from the
-  # estimate, where the followed modes and a search each find maxima the other
-  # misses: both, combined.
-  .ctJuliaHoldModes(target$model_spec, modes, search = TRUE)
   # The natural-scale prior's curvature, which is separable: its diagonal. For
   # this call's check and sampling only: the fit keeps its objective's own
   # curvature (below), which its certification, the continuation, adequacy and
