@@ -157,8 +157,9 @@ from: those whose closure under driving -- the state and every state that
 drives it, directly or through others (`A[i, j] != 0`) -- has a stable drift.
 The closure is an autonomous system of its own, block triangular once ordered,
 so its eigenvalues are those of the blocks it depends on, and a state settles
-exactly when each of them does. A state with an auto effect of zero and nothing
-pulling it back -- a trend, a trait, an integrator -- does not settle, and
+exactly when each of them does. A state with an auto effect of zero (one in
+discrete time) and nothing pulling it back -- a trend, a trait, an integrator
+-- does not settle, and
 neither does any state it drives; a stable process beside it, or driving it,
 still does. The same closure the stationary T0MEANS and T0VAR cells are solved
 over (`_ctsem_closure_drift`), here from the values rather than the model.

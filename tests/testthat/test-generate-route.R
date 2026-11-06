@@ -170,3 +170,36 @@ test_that("the subject parameters and states that generated the data are returne
   expect_null(attr(suppressMessages(ctGenerate(m, n = 3, Tpoints = 3,
     backend = "julia", intoverstates = TRUE)), "states"))
 })
+
+# A fixed auto effect of 0 is a trend: no equilibrium, and no inverse. The R
+# generator integrated each interval through the asymptotic covariance and
+# the drift's inverse, and stopped with a singular system; the julia setup
+# moved the 0 to -1e-6, which is stan's need, not julia's. Noise-free, both
+# generators must draw the line exactly.
+.trend_model <- function() {
+  suppressMessages(suppressWarnings(ctModel(type = "ct", Tpoints = 5,
+    manifestNames = "Y1", latentNames = "trend", LAMBDA = matrix(1),
+    T0MEANS = matrix(1), CINT = matrix(0.3), DRIFT = matrix(0),
+    DIFFUSION = matrix(0), MANIFESTVAR = matrix(0), T0VAR = matrix(0),
+    MANIFESTMEANS = matrix(0))))
+}
+
+test_that("a fixed auto effect of 0 stays 0 for julia and is moved off it for stan", {
+  m <- .trend_model()
+  drift <- function(ctm) ctm$pars$value[ctm$pars$matrix %in% "DRIFT"]
+  expect_identical(drift(ctsem:::.ctFitModelSetup(m, backend = "julia",
+    checks = FALSE)$ctm), 0)
+  expect_message(stan <- ctsem:::.ctFitModelSetup(m, backend = "stan",
+    checks = FALSE), "Setting DRIFT diagonals")
+  expect_identical(drift(stan$ctm), -1e-6)
+})
+
+test_that("a trend with an auto effect of 0 generates its line", {
+  m <- .trend_model()
+  d <- ctGenerate(m, n = 2, Tpoints = 5, dtmean = 0.7, logdtsd = 0.4, backend = "r")
+  expect_equal(unname(d[, "Y1"]), 1 + 0.3 * unname(d[, "time"]), tolerance = 1e-12)
+  skip_without_julia()
+  dj <- suppressMessages(ctGenerate(m, n = 2, Tpoints = 5, dtmean = 0.7,
+    logdtsd = 0.4, backend = "julia"))
+  expect_equal(unname(dj[, "Y1"]), 1 + 0.3 * unname(dj[, "time"]), tolerance = 1e-10)
+})
