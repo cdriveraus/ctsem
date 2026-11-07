@@ -594,7 +594,10 @@ test_that("summary reports fixed effects and system matrices, with intervals onl
   # point-estimate summary of the same fit reports as its value.
   expect_equal(interval$popmeans[, "mode"], point$popmeans[, "mean"])
   expect_true(grepl("mode is the fit's estimate", interval$popNote))
-  expect_true(all(c("Mean", "sd", "2.5%", "50%", "97.5%") %in% colnames(interval$parmatrices)))
+  expect_true(all(c("Mean", "sd", "2.5%", "50%", "97.5%", "mode") %in%
+      colnames(interval$parmatrices)))
+  # The system matrices' mode is the estimate's matrices too.
+  expect_equal(interval$parmatrices$mode, point$parmatrices$Mean)
   # `ndraws`, not `nsamples`: an optimised fit never sampled, and reporting a
   # sample count for uncertainty draws read as MCMC output.
   expect_equal(interval$ndraws, 100)
