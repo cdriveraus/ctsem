@@ -37,7 +37,9 @@
 #'
 #' The relaxations, in the language of the model:
 #' \describe{
-#'   \item{heterogeneity}{\code{indvarying = TRUE} for a parameter.}
+#'   \item{heterogeneity}{\code{indvarying = TRUE} for a parameter, and for a
+#'     \code{CINT} parameter the \code{T0MEANS} parameters its test moved with
+#'     it (\code{with} in \code{\link{ctScoreTest}}).}
 #'   \item{covariates}{a covariate added as a time independent predictor, with
 #'     effects on the parameters its tests single out.}
 #'   \item{statedependence}{a term \code{d * eta_k * eta_m} in a latent's
@@ -907,15 +909,23 @@ print.ctModelProposals <- function(x, digits = 3, ...) {
   # a reduced-rank level rather than the model.
   replay <- if (is.null(current)) list() else .ctFitReplayArgs(current)
   h <- st$heterogeneity
+  # A CINT test made with the initial means following the intercept names
+  # them in `with`: they vary with it, or the refit is the model whose
+  # subjects drift apart from a shared start, which the test did not ask
+  # about (.ctScoreHetDirections).
+  withpars <- function(pars) if (is.null(h) || is.null(h$with)) character() else
+    unique(unlist(strsplit(stats::na.omit(h$with[h$parameter %in% pars]), ', ', fixed = TRUE)))
   if (!is.null(h)) for (r in which(h$p_adj < alpha)) {
     par <- h$parameter[r]
     varying <- par %in% model$pars$param[as.logical(model$pars$indvarying) %in% TRUE]
+    with <- withpars(par)
     out[[length(out) + 1L]] <- if (!varying) list(key = paste0('het:', par),
-      family = 'heterogeneity', label = paste0(par, ' individually varying'), p = h$p[r],
+      family = 'heterogeneity', label = paste0(par, ' individually varying',
+        if (length(with)) paste0(' with ', paste(with, collapse = ', '))), p = h$p[r],
       rank = stats::pnorm(h$z[r], lower.tail = FALSE), class = h$class[r],
       start = .ctImprovePopsdStart(model, par, h$sd[r]),
-      edit = local({ par <- par; function(model, data, covs, args = list()) {
-        model$pars$indvarying[model$pars$param %in% par] <- TRUE
+      edit = local({ pars <- c(par, with); function(model, data, covs, args = list()) {
+        model$pars$indvarying[model$pars$param %in% pars] <- TRUE
         list(model = model, data = data)
       } })) else list(key = paste0('own:', par), family = 'heterogeneity',
       label = paste0(par, ' given a variance of its own'), p = h$p[r],
@@ -951,6 +961,7 @@ print.ctModelProposals <- function(x, digits = 3, ...) {
   if (!is.null(d) && isTRUE(d$p < alpha)) {
     pars <- names(d$direction)[abs(d$direction) >= 0.5]
     pars <- setdiff(pars, model$pars$param[as.logical(model$pars$indvarying) %in% TRUE])
+    if (length(pars) > 1L) pars <- c(pars, setdiff(withpars(pars), pars))
     if (length(pars) > 1L) out[[length(out) + 1L]] <- list(
       key = paste0('dim:', paste(sort(pars), collapse = ',')), family = 'dimension',
       label = paste0(paste(pars, collapse = ', '), ' individually varying together'),

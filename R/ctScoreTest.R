@@ -83,15 +83,16 @@
 #'   intercept with the initial means shared would instead make subjects drift
 #'   apart from a common start, which data with stable differences from the
 #'   first occasion reject. \code{initial} says which was tested:
-#'   \code{'equilibrium'}, or \code{'shared'} where an initial mean the shift
-#'   needs is fixed (or not a parameter of its own) and so cannot follow. What
-#'   an intercept moves that the drift cannot balance -- a trend through a
-#'   drift fixed at zero -- has no equilibrium, and moves alone. The shift is
-#'   taken at the estimate's drift (where the drift depends on the state, as
-#'   the fit reports it). To act on an \code{'equilibrium'} result, let the
-#'   \code{CINT} and \code{T0MEANS} parameters vary, so their random effects
-#'   are estimated with their correlation. A level carried in fixed
-#'   \code{MANIFESTMEANS} is not tested.
+#'   \code{'equilibrium'} (\code{with} naming the \code{T0MEANS} parameters
+#'   that move), or \code{'shared'} where an initial mean the shift needs is
+#'   fixed (or not a parameter of its own) and so cannot follow. What an
+#'   intercept moves that the drift cannot balance -- a trend through a drift
+#'   fixed at zero -- has no equilibrium, and moves alone. The shift is taken
+#'   at the estimate's drift (where the drift depends on the state, as the fit
+#'   reports it). To act on an \code{'equilibrium'} result, let the
+#'   \code{CINT} parameter and those in \code{with} vary, so their random
+#'   effects are estimated with their correlation; \code{\link{ctModelImprove}}
+#'   does that.
 #'
 #'   On a reduced-rank level (\code{poprank}), a parameter that varies
 #'   only through the shared dimensions, without a variance of its own, is
@@ -471,7 +472,7 @@ ctScoreTest <- function(fit, covariates = NULL,
     if (length(het)) attempt('heterogeneity', {
       items <- .ctScoreHetItems(pieces, het, hd$U)
       out$heterogeneity <- .ctScoreHeterogeneity(pieces, ptab, items, hd$initial,
-        variance, nboot)
+        hd$with, variance, nboot)
       # Not on a reduced-rank level: there it found a missing dimension 10 per
       # cent of the time where the per-parameter test of variation outside the
       # shared dimensions found it 58 (simulation, rank 1 fitted to rank 2).
@@ -647,13 +648,14 @@ ctScoreTest <- function(fit, covariates = NULL,
 # follow, and CINT[k] is tested alone ('shared'); a 'stationary' T0MEANS
 # follows by itself. The direction is held at the estimate's drift, which
 # leaves the test's size alone: along any fixed direction its statistic has
-# mean zero under the model. `initial` says which for each CINT row.
+# mean zero under the model. `initial` says which for each CINT row, and
+# `with` names the T0MEANS parameters that move with it.
 .ctScoreHetDirections <- function(fit, est, ptab, het) {
   U <- matrix(0, length(est), length(het), dimnames = list(NULL, ptab$name[het]))
   U[cbind(het, seq_along(het))] <- 1
-  initial <- rep(NA_character_, length(het))
+  initial <- with <- rep(NA_character_, length(het))
   cint <- which(ptab$matrix[het] %in% 'CINT')
-  if (!length(cint)) return(list(U = U, initial = initial))
+  if (!length(cint)) return(list(U = U, initial = initial, with = with))
   initial[cint] <- 'shared'
   model <- .ctFitBaseModel(fit)
   if (is.null(model)) model <- .ctFitModelObject(fit)
@@ -687,8 +689,9 @@ ctScoreTest <- function(fit, covariates = NULL,
     free <- need[!is.na(t0[need])]
     U[t0[free], a] <- shift[free] / ptab$slope[t0[free]]
     initial[a] <- 'equilibrium'
+    if (length(free)) with[a] <- paste(ptab$name[t0[free]], collapse = ', ')
   }
-  list(U = U, initial = initial)
+  list(U = U, initial = initial, with = with)
 }
 
 # Each heterogeneity test's direction with its pieces: the score along it,
@@ -811,11 +814,12 @@ ctScoreTest <- function(fit, covariates = NULL,
 # less D' I^-1 D: exact for a Gaussian score, as a parameter of a linear
 # Gaussian model's mean has, and the information for the variance in either
 # case, which sets the one-step estimate of the standard deviation.
-.ctScoreHeterogeneity <- function(pieces, ptab, items, initial = NULL,
+.ctScoreHeterogeneity <- function(pieces, ptab, items, initial = NULL, with = NULL,
   variance = 'robust', nboot = 1999L) {
   S <- pieces$S
   Iinv <- .ctScorePinv(-pieces$Hsum)$inv
   if (is.null(initial)) initial <- rep(NA_character_, length(items))
+  if (is.null(with)) with <- rep(NA_character_, length(items))
   rows <- lapply(seq_along(items), function(a) {
     it <- items[[a]]
     j <- it$j
@@ -846,7 +850,7 @@ ctScoreTest <- function(fit, covariates = NULL,
     sdraw <- if (information > 0) sqrt(max(0, stat / information)) else NA_real_
     row <- data.frame(parameter = ptab$name[j], matrix = ptab$matrix[j],
       row = ptab$row[j], col = ptab$col[j], z = z, p = p, sd = sdraw,
-      sd_natural = abs(ptab$slope[j]) * sdraw, initial = initial[a],
+      sd_natural = abs(ptab$slope[j]) * sdraw, initial = initial[a], with = with[a],
       stringsAsFactors = FALSE)
     attr(row, 'contribution') <- contribution
     row
