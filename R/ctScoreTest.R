@@ -497,7 +497,8 @@ ctScoreTest <- function(fit, covariates = NULL,
           warning("heterogeneity, fixed MANIFESTMEANS: ", conditionMessage(e), call. = FALSE)
           NULL
         }))
-      out$heterogeneity <- .ctScoreHeterogeneity(pieces, ptab, items, variance, nboot)
+      P <- tryCatch(.ctScoreExistingCov(fit, est, ptab, R), error = function(e) NULL)
+      out$heterogeneity <- .ctScoreHeterogeneity(pieces, ptab, items, variance, nboot, P)
       # Not on a reduced-rank level: there it found a missing dimension 10 per
       # cent of the time where the per-parameter test of variation outside the
       # shared dimensions found it 58 (simulation, rank 1 fitted to rank 2).
@@ -671,6 +672,28 @@ ctScoreTest <- function(fit, covariates = NULL,
   ptab$index[ptab$kind == 'model' & (ptab$matrix %in% 'T0MEANS' | ptab$indvarying)]
 }
 
+# The covariance, on the raw scale, of the effects in R at the estimate: the
+# population covariance where they vary, and for an initial mean that does
+# not, the initial state's (T0cov, divided by the transforms' slopes). Rows
+# and columns are named by raw position. It sizes a test's one-step estimate.
+.ctScoreExistingCov <- function(fit, est, ptab, R) {
+  q <- length(R)
+  P <- matrix(0, q, q, dimnames = list(R, R))
+  if (!q) return(P)
+  for (pop in .ctBackendPopulations(fit, samples = matrix(est, nrow = 1L))) {
+    at <- match(R, pop$parnumber)
+    ok <- which(!is.na(at))
+    if (length(ok)) P[ok, ok] <- pop$covariance[1L, at[ok], at[ok]]
+  }
+  t0 <- which(ptab$matrix[R] %in% 'T0MEANS' & !ptab$indvarying[R])
+  if (length(t0)) {
+    T0cov <- as.matrix(suppressMessages(ctBackendParMatrices(fit, raw = est))$T0cov)
+    m <- ptab$row[R[t0]]
+    P[t0, t0] <- T0cov[m, m, drop = FALSE] / outer(ptab$slope[R[t0]], ptab$slope[R[t0]])
+  }
+  P
+}
+
 # A tested coordinate's pieces, from the fit's own passes: its score, its
 # Hessian row, its own second derivative, the summed third derivative its
 # variance's projection needs, and for each effect in R the mixed one its
@@ -822,7 +845,7 @@ ctScoreTest <- function(fit, covariates = NULL,
 # tested as one, with the variance one-sided given it, and nothing is assumed
 # about either: not stationarity, not a common start.
 .ctScoreHeterogeneity <- function(pieces, ptab, items, variance = 'robust',
-  nboot = 1999L) {
+  nboot = 1999L, P = NULL) {
   S <- pieces$S
   n <- nrow(S)
   Iinv <- .ctScorePinv(-pieces$Hsum)$inv
@@ -869,11 +892,19 @@ ctScoreTest <- function(fit, covariates = NULL,
           .ctScoreMixture(colSums(Y), .ctScoreSpread(Y))$LM)
     } else if (q == 0L) stats::pnorm(mix$z, lower.tail = FALSE) else
       .ctScoreMixtureP(mix$LM, mix$q)
-    # The one-step variance, the covariances estimated beside it. Where the
-    # projection leaves the information indefinite (its third derivatives are
-    # differenced twice and can overshoot), the variance's own, unprojected.
+    # The one-step variance, the covariances estimated beside it, and at
+    # least what those covariances imply, k' P^-1 k with P the effects'
+    # covariance: where a varying CINT is all covariance with the initial
+    # state, its own variance reads zero. Where the projection leaves the
+    # information indefinite (its third derivatives are differenced twice and
+    # can overshoot), the variance's own, unprojected.
     ev <- eigen(info, symmetric = TRUE, only.values = TRUE)$values
-    tau <- if (all(ev > 0)) solve(info, U)[1] else {
+    tau <- if (all(ev > 0)) {
+      th <- solve(info, U)
+      at <- match(R, as.integer(rownames(P)))
+      if (length(R) && !anyNA(at)) max(th[1], as.numeric(t(th[-1]) %*%
+        .ctScorePinv(P[at, at, drop = FALSE])$inv %*% th[-1])) else th[1]
+    } else {
       i1 <- sum(0.5 * it$hjj^2)
       if (i1 > 0) U[1] / i1 else NA_real_
     }
