@@ -73,8 +73,13 @@
 #'   intercept. The covariances are tested as ordinary score tests and the
 #'   variance, given them, one sided (Stram & Lee, 1994): \code{LM} is
 #'   referred to an equal mixture of chi-square on \code{df - 1} and
-#'   \code{df}, and \code{z} is the variance's own one-sided statistic given
-#'   the covariances. Nothing is assumed about how the initial states relate
+#'   \code{df}. Where the new effect is independent of what varies, those
+#'   covariances only cost power, so \code{p} is the stronger of that test
+#'   and of the variance alone (\code{z}, one sided, its covariances held at
+#'   zero), by their smaller p-value, calibrated by resampling subjects. A
+#'   negative \code{z} beside a large \code{LM} says the parameter varies only
+#'   together with what already varies, as an intercept does with where each
+#'   subject starts. Nothing is assumed about how the initial states relate
 #'   to the dynamics: neither that subjects start at their own equilibrium
 #'   nor that they share a start. The statistic is the information matrix
 #'   test in those coordinates, which is the score test for neglected
@@ -865,12 +870,26 @@ ctScoreTest <- function(fit, covariates = NULL,
     V <- if (variance == 'robust') .ctScoreSpread(X) else info
     mix <- .ctScoreMixture(U, V)
     q <- ncol(X) - 1L
-    p <- if (determined) NA_real_ else if (variance == 'robust') {
-      if (q == 0L) .ctScoreBoot(X, nboot, onesided = TRUE) else
-        .ctScoreBoot(X, nboot, statistic = function(Y)
-          .ctScoreMixture(colSums(Y), .ctScoreSpread(Y))$LM)
-    } else if (q == 0L) stats::pnorm(mix$z, lower.tail = FALSE) else
-      .ctScoreMixtureP(mix$LM, mix$q)
+    # Where the new effect is independent of what varies, the covariances only
+    # widen the test's reference: on the drift fixture of test-ctScoreTest.R,
+    # p .043 against the variance alone's under .01, and a default model's
+    # rows carry four. So the test is the stronger of the variance alone
+    # (its covariances held at zero, z) and the joint test (LM), by their
+    # smaller p, calibrated by resampling subjects as both are recomputed --
+    # with the model variance, twice the smaller p.
+    zalone <- function(U, V) if (V[1, 1] > 0) U[1] / sqrt(V[1, 1]) else NA_real_
+    evidence <- function(U, V) {
+      m <- .ctScoreMixture(U, V)
+      max(-stats::pnorm(zalone(U, V), lower.tail = FALSE, log.p = TRUE),
+        -log(.ctScoreMixtureP(m$LM, m$q)), na.rm = TRUE)
+    }
+    z <- zalone(U, V)
+    p <- if (determined) NA_real_ else if (q == 0L) {
+      if (variance == 'robust') .ctScoreBoot(X, nboot, onesided = TRUE) else
+        stats::pnorm(z, lower.tail = FALSE)
+    } else if (variance == 'robust') .ctScoreBoot(X, nboot, statistic = function(Y)
+      evidence(colSums(Y), .ctScoreSpread(Y))) else
+      min(1, 2 * min(stats::pnorm(z, lower.tail = FALSE), .ctScoreMixtureP(mix$LM, mix$q)))
     # The one-step variance, the covariances estimated beside it. Where the
     # projection leaves the information indefinite (its third derivatives are
     # differenced twice and can overshoot), the variance's own, unprojected.
@@ -885,9 +904,9 @@ ctScoreTest <- function(fit, covariates = NULL,
     }
     sdraw <- if (!is.finite(tau)) NA_real_ else if (tau > 0) sqrt(tau) else
       if (q > 0L) NA_real_ else 0
-    if (determined) mix$LM <- mix$z <- NA_real_
+    if (determined) mix$LM <- z <- NA_real_
     row <- data.frame(parameter = it$name, matrix = it$matrix, row = it$row,
-      col = it$col, LM = mix$LM, df = q + 1L, p = p, z = mix$z, sd = sdraw,
+      col = it$col, LM = mix$LM, df = q + 1L, z = z, p = p, sd = sdraw,
       sd_natural = abs(it$slope) * sdraw,
       with = if (length(R)) paste(ptab$name[R], collapse = ', ') else NA_character_,
       stringsAsFactors = FALSE)
@@ -2041,10 +2060,10 @@ print.ctScoreTest <- function(x, digits = 3, top = 10, ...) {
   withclass <- function(d, cols) if (any(!is.na(d$class))) c(cols, 'class') else cols
   if (!is.null(x$heterogeneity)) {
     h <- x$heterogeneity
-    cat("\nUnmodelled heterogeneity (variance with its covariances; LM against an equal\n",
-      "mixture of chi-square on df - 1 and df; sd is the one-step estimate, raw scale):\n",
-      sep = "")
-    fmt(h[, withclass(h, c('parameter', 'LM', 'df', 'p', 'p_adj', 'sd', 'sd_natural'))])
+    cat("\nUnmodelled heterogeneity (LM: the variance with its covariances, against an\n",
+      "equal mixture of chi-square on df - 1 and df; z: the variance alone, one sided;\n",
+      "p: the stronger of the two; sd: the one-step estimate, raw scale):\n", sep = "")
+    fmt(h[, withclass(h, c('parameter', 'LM', 'df', 'z', 'p', 'p_adj', 'sd', 'sd_natural'))])
     w <- unique(unlist(strsplit(stats::na.omit(h$with), ', ', fixed = TRUE)))
     if (length(w)) cat("Covariances with: ", paste(w, collapse = ', '), "\n", sep = "")
   }

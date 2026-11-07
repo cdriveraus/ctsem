@@ -116,8 +116,13 @@ before interpreting their sizes.
   intercept. The covariances are tested as ordinary score tests and the
   variance, given them, one sided (Stram & Lee, 1994): \code{LM} is
   referred to an equal mixture of chi-square on \code{df - 1} and
-  \code{df}, and \code{z} is the variance's own one-sided statistic given
-  the covariances. Nothing is assumed about how the initial states relate
+  \code{df}. Where the new effect is independent of what varies, those
+  covariances only cost power, so \code{p} is the stronger of that test
+  and of the variance alone (\code{z}, one sided, its covariances held at
+  zero), by their smaller p-value, calibrated by resampling subjects. A
+  negative \code{z} beside a large \code{LM} says the parameter varies only
+  together with what already varies, as an intercept does with where each
+  subject starts. Nothing is assumed about how the initial states relate
   to the dynamics: neither that subjects start at their own equilibrium
   nor that they share a start. The statistic is the information matrix
   test in those coordinates, which is the score test for neglected
