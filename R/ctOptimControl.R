@@ -122,8 +122,10 @@
 #'  and Hager).}
 #'  \item{\code{initial_alpha}}{Julia. Default 0.1. The length of the first
 #'  trial step, in raw units.}
-#'  \item{\code{precondition}}{Julia. Default TRUE. FALSE drops the diagonal
-#'  metric taken from the model's transforms.}
+#'  \item{\code{precondition}}{Julia. Default FALSE. TRUE starts L-BFGS's
+#'  per-parameter scaling from the model's transforms rather than learning it
+#'  from the curvature alone. It made fits whose intercepts start far from the
+#'  data settle in worse optima.}
 #'  \item{\code{saem}}{Julia, \code{intoverpop = 'laplace'}. Default FALSE.
 #'  Start with SAEM: the random effects are sampled from their conditional
 #'  distribution rather than integrated by the Laplace approximation, heading

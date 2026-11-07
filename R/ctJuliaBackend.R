@@ -1337,9 +1337,10 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
 # How much a raw unit is worth, per parameter.
 #
 # `|d value / d raw|` from each parameter's own transform, evaluated at the
-# starting point. The optimiser uses it as a diagonal metric so that a step of
-# one unit means the same amount of *model* in every coordinate -- see
-# `ctsem_optimize`'s `precondition`.
+# starting point. With `optimcontrol$precondition = TRUE` the optimiser uses it
+# as a diagonal metric so that a step of one unit means the same amount of
+# *model* in every coordinate -- see `ctsem_optimize`'s `precondition`. Off by
+# default since L-BFGS learns a scale per coordinate; the call site says why.
 #
 # Read from the parameter table, which is where the transform text lives;
 # `model$pars$transform` holds the numeric transform code and would silently
@@ -5847,11 +5848,6 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
     # it counts as the reason a fit stopped. Relative, because an absolute
     # derivative floor means a different thing for every transform.
     stall_ratio = as.numeric(.ctJuliaOr(optimcontrol$stallratio, 1e-3)),
-    # How much a raw unit is worth in each coordinate, so a step means the same
-    # amount of model everywhere. L-BFGS has only a scalar metric until secant
-    # pairs accumulate, and a model whose transforms differ by a factor of ten
-    # hands it a problem conditioned ten times worse than it needs to be. See
-    # `.ctJuliaParameterScale()` and `_ctsem_metric` in the engine.
     # Start on a subset of the subjects and grow it as the optimiser needs
     # more data, and finish with the endgame: Newton steps, the final Hessian,
     # an escape from a saddle and the flat-direction probe, all in the engine
@@ -5896,7 +5892,21 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
     # curvature below which a direction is flat (`.ctFlatDirectionRtol()`).
     newton_reuse = .ctBackendHessianReuse(optimcontrol),
     flat_rtol = .ctFlatDirectionRtol(),
-    precondition = if (identical(optimcontrol$precondition, FALSE)) NULL else
+    # The transform metric (`.ctJuliaParameterScale()`, `_ctsem_metric` in the
+    # engine), off unless asked for: L-BFGS's initial inverse Hessian is learnt
+    # per coordinate from the curvature pairs (`lbfgs_diagonal`), and the
+    # first step is short, which together do what the metric was added for
+    # (2026-09-12, when L-BFGS had one scalar scale): a count model with
+    # `meanscale = 10` reached its optimum 10/10 on both routes without it.
+    # On the default, a `10 * param` intercept's metric made it the slow
+    # coordinate early on, so variances, correlations and drift adapted to
+    # intercepts still far from the data and settled in a worse basin: on the
+    # ctsem book's measurement models the RI-CLPM's Laplace route ended 660
+    # -2LL short from every start and the FE-DPM reached its maximum from 1
+    # start in 6; without the metric 3/3 and 6/6, and the trends chapter's RC
+    # linear model its best maximum 3/3 where the metric's fits stopped 9-14
+    # short. Without it they need no data-based start either.
+    precondition = if (!isTRUE(optimcontrol$precondition)) NULL else
       .ctJuliaVector(.ctJuliaParameterScale(model_spec,
         at = as.numeric(start), npar = length(as.numeric(start)))),
     # The line search's first step, in the metric's own norm (see
@@ -6139,14 +6149,6 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
   # `cores` is the ceiling the subject loop runs at, and the fit records it.
   # Restored afterwards so the session does not carry this fit's ceiling into
   # the next thing that runs.
-  # `damp` names coordinates whose first steps should be short. The metric is
-  # `Diagonal(scale^2)` standing in for the curvature, and a step is `P^-1 g`,
-  # so multiplying a coordinate's `scale` by 10 divides its step by 100. Used
-  # when refitting after an escape: the coordinate that was on a boundary is
-  # the one most likely to run straight back to it, and holding it still for a
-  # few iterations lets the rest of the model settle first. It is only the
-  # *initial* inverse Hessian, so L-BFGS overrides it as soon as it has secant
-  # pairs -- the damping costs nothing once there is curvature to learn.
   # `pin` holds coordinates still while the rest of the model re-optimises
   # around them -- `list(index = , value = )`, or NULL for an ordinary stage.
   # See `ctsem_pin` in the engine for why that is not the same as resuming from
@@ -6198,7 +6200,7 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
   # rather than on the result, where a fit would carry its n x n matrix, and
   # its builds, for a resume to start from (`local`).
   local_inverse <- NULL
-  optimise_once <- function(from, damp = integer(), pin = default_pin,
+  optimise_once <- function(from, pin = default_pin,
       carried = NULL, endgame = NULL, local = NULL) {
     args <- common
     if (!is.null(local)) {
@@ -6242,14 +6244,6 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
       target <- module$ctsem_pin(objective,
         .ctJuliaVector(as.integer(pin$index)),
         .ctJuliaNumericVector(as.numeric(pin$value)))
-    }
-    if (length(damp) && !is.null(args$precondition)) {
-      scale <- as.numeric(args$precondition)
-      damp <- damp[damp >= 1L & damp <= length(scale)]
-      if (length(damp)) {
-        scale[damp] <- scale[damp] * 10
-        args$precondition <- .ctJuliaVector(scale)
-      }
     }
     out <- .ctBackendWithMaxChunks(cores, {
       # A pinned objective is a wrapper and not a `CTSEMLaplaceObjective`, so
