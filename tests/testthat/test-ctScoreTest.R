@@ -131,7 +131,11 @@ test_that("a parameter that varies over subjects is found", {
     verbose = FALSE))
   h <- st$heterogeneity
   expect_setequal(h$parameter, c('drift_eta1', 'diff_eta1', 'mvarY1'))
-  expect_lt(h$p[h$parameter == 'drift_eta1'], 0.01)
+  # The drift varies independently of the initial state and the intercept, so
+  # the variance alone carries it; p, the stronger of that and the test with
+  # the covariances, pays for taking the two (.0115 here).
+  expect_gt(h$z[h$parameter == 'drift_eta1'], stats::qnorm(0.99))
+  expect_lt(h$p[h$parameter == 'drift_eta1'], 0.05)
   expect_gt(h$sd_natural[h$parameter == 'drift_eta1'], 0)
 })
 
