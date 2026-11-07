@@ -40,8 +40,10 @@ whose matrices are the same everywhere.}
 A named list of matrices, each summarised over the posterior (or
 approximate posterior) draws by \code{calcfunc}: the model's own
 (\code{DRIFT}, \code{DIFFUSION}, \code{LAMBDA}, ...), the covariances
-built from them (\code{DIFFUSIONcov}, \code{MANIFESTcov}, \code{T0cov}),
-the asymptotic \code{asymCINT} and \code{asymDIFFUSIONcov}, and
+built from them (\code{DIFFUSIONcov}, \code{MANIFESTcov}, and \code{T0cov},
+the initial latent covariance over subjects: \code{T0VAR} plus the
+population covariance of any individually varying \code{T0MEANS}), the
+asymptotic \code{asymCINT} and \code{asymDIFFUSIONcov}, and
 \code{dtDRIFT} at \code{timeinterval}.
 }
 \description{

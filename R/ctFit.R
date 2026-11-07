@@ -568,12 +568,13 @@ ctStanFitUpdate <- ctFitUpdate
 # level" would delete a parameter the data can identify, quietly. There is a
 # test for the three cases in test-t0var-redundancies.R.
 #
-# The composition a reader might expect -- T0VAR plus the subject effects plus
-# the study effects -- is the *marginal* initial covariance over all
-# individuals, and it is not what T0cov holds. T0cov is conditional on the
-# levels above it: T0VAR plus the subject level population covariance. The
-# study level reaches an individual by moving that individual's parameter
-# values, so adding a study covariance into T0cov as well would count it twice.
+# The filter's T0cov is conditional on the levels above it: T0VAR plus the
+# subject level population covariance on the augmented route, T0VAR alone
+# where the effects are coordinates. The study level reaches an individual by
+# moving that individual's parameter values, so adding a study covariance into
+# the filter's T0cov as well would count it twice. The population summaries'
+# T0cov is the marginal -- T0VAR plus every level's T0MEANS covariance -- and
+# is added for them alone (`.ctBackendT0MeansPopulation()`).
 #
 # They are still *fixed* rather than left free, because taking them out of the
 # parameter vector is the whole job of this function, and every route reads

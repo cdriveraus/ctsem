@@ -448,12 +448,21 @@ ctBackendParMatrices <- function(fit, raw = NULL, tipreds = NULL, state = NULL,
 # five different ways, and materializing them is the expensive half: ~2 s per
 # thousand draws, against ~0.1 s for a collapse. `summary()` therefore calls the
 # engine once and reshapes five times.
-.ctBackendPopArraysFromFlat <- function(flat, layout, spec) {
+#
+# `t0population` is the initial covariance the random T0MEANS carry, draws x
+# nlatent x nlatent (`.ctBackendT0MeansPopulation()`), added to `pop_T0cov`
+# so that it reports all of the initial variation in the latent states.
+.ctBackendPopArraysFromFlat <- function(flat, layout, spec, t0population = NULL) {
   out <- lapply(seq_along(layout$matrix), function(index) {
     .ctBackendTrimAugmented(.ctBackendReshape(flat, layout, index), layout$matrix[index],
       spec, margin = c(2L, 3L))
   })
   names(out) <- paste0("pop_", layout$matrix)
+  if (!is.null(t0population) && !is.null(out$pop_T0cov)) {
+    latent <- seq_len(dim(t0population)[2L])
+    out$pop_T0cov[, latent, latent] <- out$pop_T0cov[, latent, latent, drop = FALSE] +
+      t0population
+  }
   out
 }
 
@@ -465,13 +474,95 @@ ctBackendParMatrices <- function(fit, raw = NULL, tipreds = NULL, state = NULL,
   if (is.null(tipreds) && is.null(state) && identical(time, 0) && identical(dt, 0)) {
     constrained <- .ctBackendConstrained(fit, samples)
     return(.ctBackendPopArraysFromFlat(constrained$flat, constrained$layout,
-      .ctBackendSpec(fit)))
+      .ctBackendSpec(fit), .ctBackendT0MeansCached(fit, constrained)))
   }
   layout <- .ctBackendSummaryLayout(fit)
   if (is.null(samples)) samples <- .ctBackendRawSamples(fit)
   flat <- .ctBackendParMatricesFlat(fit, t(samples), tipreds = tipreds, state = state,
     time = time, dt = dt)
-  .ctBackendPopArraysFromFlat(flat, layout, .ctBackendSpec(fit))
+  # The population covariance is the same at any predictor value or state, and
+  # the random T0MEANS are read at predictors of zero, as every summary is.
+  .ctBackendPopArraysFromFlat(flat, layout, .ctBackendSpec(fit),
+    .ctBackendT0MeansPopulation(fit, .ctBackendRawFull(fit, samples), layout, flat))
+}
+
+# The initial latent covariance that individually varying T0MEANS carry, per
+# draw: draws x nlatent x nlatent, or NULL where `pop_T0cov` holds it already
+# or there is none.
+#
+# A population summary's T0cov is all of the initial variation in the latent
+# states: T0VAR plus the population covariance of any random T0MEANS (Charles,
+# 2026-11-07). Stan's T0cov and julia's augmented route hold that, because
+# their filter starts from the population (the block is placed into T0cov,
+# `_place_population_block!`). On the Laplace route the effects are
+# coordinates and the filter starts each subject from its own T0MEANS, so the
+# engine's T0cov is T0VAR alone -- the floor `T0VARredundancies()` leaves -- and
+# the population block is added here, for summaries only: a subject's matrices
+# and the filter keep the residual, or the block is counted twice.
+#
+# Every level's covariance is summed (nested ids), over the effects that are a
+# latent T0MEANS cell's own parameter. Its state scale comes through the cells'
+# own transforms by third-degree cubature, `mu +- sqrt(m) R e_j` for the
+# symmetric root `R` of the effects' raw covariance: exact for the affine
+# transforms T0MEANS takes, and the transform's spread otherwise. TI
+# predictors are at zero.
+.ctBackendT0MeansPopulation <- function(fit, full, layout, flat) {
+  spec <- .ctBackendSpec(fit)
+  if (is.null(spec$laplace)) return(NULL)
+  nlatent <- spec$nlatent
+  levels <- .ctBackendPopulationLevels(spec)
+  table <- as.data.frame(spec$parameter_table, stringsAsFactors = FALSE)
+  own <- table$matrix %in% "T0MEANS" & table$row <= nlatent & !is.na(table$parnumber)
+  effects <- sort(intersect(unique(as.integer(table$parnumber[own])),
+    unlist(lapply(levels, `[[`, "parnumber"))))
+  if (!length(effects)) return(NULL)
+
+  full <- if (is.matrix(full)) full else matrix(full, nrow = 1L)
+  ndraws <- nrow(full)
+  m <- length(effects)
+  covariance <- array(0, c(ndraws, m, m))
+  for (level in levels) {
+    at <- match(effects, level$parnumber)
+    present <- which(!is.na(at))
+    if (!length(present)) next
+    levelcov <- .ctBackendRawPopCovMatrix(layout, flat, level$matrix)
+    covariance[, present, present] <- covariance[, present, present, drop = FALSE] +
+      levelcov[, at[present], at[present], drop = FALSE]
+  }
+  roots <- array(0, c(ndraws, m, m))
+  for (draw in seq_len(ndraws)) {
+    roots[draw, , ] <- .ctSymRoot(matrix(covariance[draw, , ], m, m))
+  }
+  stacked <- do.call(rbind, unlist(lapply(seq_len(m), function(j) {
+    lapply(c(-1, 1), function(sign) {
+      point <- full
+      point[, effects] <- point[, effects, drop = FALSE] +
+        sign * sqrt(m) * matrix(roots[, , j], nrow = ndraws, ncol = m)
+      point
+    })
+  }), recursive = FALSE))
+  cells <- data.frame(matrix = "T0MEANS", row = seq_len(nlatent), col = 1L)
+  values <- .ctBackendParMatricesFlat(fit, t(stacked),
+    rows = .ctBackendCellPositions(cells, layout))
+  # [draw, point, latent]: the points' rows are draw-fastest within each point.
+  values <- array(t(values), c(ndraws, 2L * m, nlatent))
+  deviation <- lapply(seq_len(nlatent), function(i) {
+    latent <- matrix(values[, , i], ndraws, 2L * m)
+    latent - rowMeans(latent)
+  })
+  out <- array(0, c(ndraws, nlatent, nlatent))
+  for (i in seq_len(nlatent)) for (k in seq_len(i)) {
+    out[, i, k] <- out[, k, i] <- rowMeans(deviation[[i]] * deviation[[k]])
+  }
+  out
+}
+
+# The fit's own block from its constrain cache, computed where a cache made
+# before the cache kept it lacks it.
+.ctBackendT0MeansCached <- function(fit, constrained) {
+  if ("t0population" %in% names(constrained)) return(constrained$t0population)
+  .ctBackendT0MeansPopulation(fit, .ctBackendRawFull(fit, constrained$samples),
+    constrained$layout, constrained$flat)
 }
 
 # Each subject's raw vector before TI-predictor effects at every draw, for a
@@ -1779,10 +1870,13 @@ ctBackendParMatrices <- function(fit, raw = NULL, tipreds = NULL, state = NULL,
 #   popsd       the population sd of each varying parameter, per draw
 #   rawpopcorr  the raw population correlations, per draw
 #   tipreds     the linearised TI predictor effects, per draw
+#   t0population the initial covariance random T0MEANS carry, per draw, where
+#               the engine's T0cov leaves it out (`.ctBackendT0MeansPopulation()`)
 #
-# The last two are here rather than derived on demand because they are read at
-# *displaced* parameter values -- the quadrature nodes and the linearisation
-# steps -- so they cannot be recovered from `flat` afterwards. Stan computes its
+# The random-effect and TI quantities are here rather than derived on demand
+# because they are read at *displaced* parameter values -- the quadrature nodes,
+# cubature points and linearisation steps -- so they cannot be recovered from
+# `flat` afterwards. Stan computes its
 # equivalents (`popsd`, `linearTIPREDEFFECT`) in generated quantities at the
 # same moment, for the same reason.
 #
@@ -1801,12 +1895,15 @@ ctBackendParMatrices <- function(fit, raw = NULL, tipreds = NULL, state = NULL,
   flat <- .ctBackendParMatricesFlat(fit, t(full))
   randomeffects <- .ctBackendRandomEffectDraws(fit, samples = full, cells = cells,
     layout = layout, flat = flat)
-  list(samples = samples, layout = layout, cells = cells, flat = flat,
+  out <- list(samples = samples, layout = layout, cells = cells, flat = flat,
     popsd = randomeffects$popsd, rawpopcorr = randomeffects$rawpopcorr,
     randomeffectlevels = randomeffects$levels,
     populations = randomeffects$populations,
     tipreds = .ctBackendTipredDraws(fit, samples = full, cells = cells,
       layout = layout))
+  # Kept when NULL too, so the cache says it was computed.
+  out["t0population"] <- list(.ctBackendT0MeansPopulation(fit, full, layout, flat))
+  out
 }
 
 # The cached constrain step if it describes these draws, otherwise a fresh one.
@@ -2063,9 +2160,10 @@ ctBackendParMatrices <- function(fit, raw = NULL, tipreds = NULL, state = NULL,
     # .ctBackendSummaryMatrices(), each of which would ask the engine for the
     # same arrays again.
     model <- .ctBackendModel(object)
-    arrays <- .ctBackendPopArraysFromFlat(flat, layout, .ctBackendSpec(object))
-    collapse <- function(calcfunc, calcfuncargs) {
-      .ctSummaryMatricesFromArrays(arrays, continuoustime = model$continuoustime,
+    arrays <- .ctBackendPopArraysFromFlat(flat, layout, .ctBackendSpec(object),
+      .ctBackendT0MeansCached(object, constrained))
+    collapse <- function(calcfunc, calcfuncargs, from = arrays) {
+      .ctSummaryMatricesFromArrays(from, continuoustime = model$continuoustime,
         latentNames = model$latentNames, manifestNames = model$manifestNames,
         TDpredNames = model$TDpredNames, calcfunc = calcfunc,
         calcfuncargs = calcfuncargs, timeinterval = timeinterval)
@@ -2078,6 +2176,13 @@ ctBackendParMatrices <- function(fit, raw = NULL, tipreds = NULL, state = NULL,
           collapse(stats::quantile, list(probs = probability))
       }
       names(collapsed) <- c("Mean", "sd", "2.5%", "50%", "97.5%")
+    }
+    # The matrices at the estimate, as the other tables' `mode` columns. A
+    # covariance built from the population tables' modes is this table's mode;
+    # built from their means it is no column here, nor any summary of the draws.
+    if (!is.null(atmode)) {
+      collapsed$mode <- collapse(mean, list(), from = .ctBackendPopArraysFromFlat(
+        atmode$flat, layout, .ctBackendSpec(object), atmode$t0population))
     }
     d <- data.frame(ctModelUnlist(collapsed$Mean, matnames = names(collapsed$Mean)))
     colnames(d)[colnames(d) %in% "value"] <- "Mean"
@@ -2093,7 +2198,7 @@ ctBackendParMatrices <- function(fit, raw = NULL, tipreds = NULL, state = NULL,
     parsrows <- d$matrix %in% "PARS"
     if (any(parsrows)) {
       values <- as.matrix(d[parsrows, intersect(names(d),
-        c("Mean", "sd", "2.5%", "50%", "97.5%")), drop = FALSE])
+        c("Mean", "sd", "2.5%", "50%", "97.5%", "mode")), drop = FALSE])
       if (all(!is.finite(values) | values == 0)) d <- d[!parsrows, , drop = FALSE]
     }
     out$parmatrices <- d

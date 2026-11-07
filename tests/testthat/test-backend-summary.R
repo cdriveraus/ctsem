@@ -594,7 +594,10 @@ test_that("summary reports fixed effects and system matrices, with intervals onl
   # point-estimate summary of the same fit reports as its value.
   expect_equal(interval$popmeans[, "mode"], point$popmeans[, "mean"])
   expect_true(grepl("mode is the fit's estimate", interval$popNote))
-  expect_true(all(c("Mean", "sd", "2.5%", "50%", "97.5%") %in% colnames(interval$parmatrices)))
+  expect_true(all(c("Mean", "sd", "2.5%", "50%", "97.5%", "mode") %in%
+      colnames(interval$parmatrices)))
+  # The system matrices' mode is the estimate's matrices too.
+  expect_equal(interval$parmatrices$mode, point$parmatrices$Mean)
   # `ndraws`, not `nsamples`: an optimised fit never sampled, and reporting a
   # sample count for uncertainty draws read as MCMC output.
   expect_equal(interval$ndraws, 100)
@@ -912,4 +915,128 @@ test_that("a fit's note says where the check found the normal wrong, or the fit 
   # Only the curvature's normal gets the note: 'checked' samples what it finds.
   fit$uncertainty$settings$method <- "checked"
   expect_null(note(fit))
+})
+
+# A population summary's T0cov is all of the initial variation in the latent
+# states: T0VAR plus the population covariance of the random T0MEANS (Charles,
+# 2026-11-07). The augmented route's engine places that block in T0cov; on the
+# Laplace route the engine's T0cov is T0VAR alone, the floor
+# T0VARredundancies() leaves, and the summaries add the block
+# (.ctBackendT0MeansPopulation()). The engine's own T0cov -- a subject's, the
+# filter's -- stays the residual.
+
+.t0cov_model <- function(...) {
+  suppressMessages(ctModel(type = "ct", manifestNames = c("Y1", "Y2"),
+    latentNames = c("eta1", "eta2"), LAMBDA = diag(2), MANIFESTVAR = diag(.2, 2),
+    CINT = matrix(0, 2, 1), ...))
+}
+
+# Engine-side ingredients for an independent statement of the block: each
+# level's raw covariance from `ctsem_laplace_popcov`, and the T0MEANS cells'
+# slopes in their raw parameters by central differences (exact for their
+# affine transforms).
+.t0cov_expected <- function(fit, raw) {
+  spec <- fit$model_spec
+  module <- ctsem:::.ctJuliaModule(spec$project)
+  objective <- ctsem:::.ctJuliaObjective(fit)
+  tab <- spec$parameter_table
+  t0 <- tab$parnumber[tab$matrix == "T0MEANS" & tab$row <= 2 & !is.na(tab$parnumber)]
+  slope <- matrix(0, 2, length(t0))
+  for (j in seq_along(t0)) {
+    step <- replace(numeric(length(raw)), t0[j], 1e-3)
+    slope[, j] <- (ctBackendParMatrices(fit, raw = raw + step)$T0MEANS -
+      ctBackendParMatrices(fit, raw = raw - step)$T0MEANS) / 2e-3
+  }
+  block <- matrix(0, 2, 2)
+  for (l in seq_along(spec$laplace$levels)) {
+    level <- spec$laplace$levels[[l]]
+    cov <- as.matrix(ctsem:::.ctBackendJuliaValue(module$ctsem_laplace_popcov(
+      objective, ctsem:::.ctJuliaNumericVector(raw), as.integer(l))))
+    at <- match(t0, level$re_index)
+    present <- which(!is.na(at))
+    block <- block + slope[, present, drop = FALSE] %*%
+      cov[at[present], at[present], drop = FALSE] %*% t(slope[, present, drop = FALSE])
+  }
+  block
+}
+
+test_that("T0cov adds every level's random T0MEANS covariance on the Laplace route", {
+  skip_without_julia()
+  model <- .t0cov_model(id = c("id", "study"))
+  set.seed(4)
+  data <- data.frame(id = rep(1:8, each = 4), study = rep(1:2, each = 16),
+    time = rep(0:3, 8), Y1 = stats::rnorm(32), Y2 = stats::rnorm(32))
+  spec <- suppressMessages(ctFit(data, model, backend = "julia",
+    intoverpop = "laplace", fit = FALSE))
+  expect_length(spec$laplace$levels, 2L)
+  raw <- stats::rnorm(ctsem:::.ctBackendNpar(spec), 0, .4)
+  fit <- .summary_pointfit(spec, model, raw, "julia")
+
+  engine <- unname(ctBackendParMatrices(fit)$T0cov)
+  # The engine's is the residual: the floor on the T0VAR cells the random
+  # T0MEANS make redundant.
+  expect_equal(engine, diag(1e-6, 2), tolerance = 1e-8)
+  reported <- unname(ctSummaryMatrices(fit)$T0cov)
+  expect_equal(reported, engine + .t0cov_expected(fit, raw), tolerance = 1e-6)
+  # summary() collapses the same arrays.
+  pm <- summary(fit)$parmatrices
+  rows <- pm[pm$matrix == "T0cov", ]
+  expect_equal(rows$Mean[rows$row == 1 & rows$col == 2], reported[1, 2],
+    tolerance = 1e-3)
+  # And a subject's T0cov is still the residual, or a filter would count the
+  # block twice.
+  sm <- ctExtract(fit, subjectMatrices = TRUE)$subj_T0cov
+  expect_equal(unname(sm[1, 1, , ]), engine, tolerance = 1e-8)
+})
+
+test_that("T0cov is unchanged without random T0MEANS, and on the augmented route", {
+  skip_without_julia()
+  set.seed(5)
+  data <- data.frame(id = rep(1:10, each = 4), time = rep(0:3, 10),
+    Y1 = stats::rnorm(40), Y2 = stats::rnorm(40))
+  same <- function(model, route) {
+    spec <- suppressMessages(ctFit(data, model, backend = "julia",
+      intoverpop = route, fit = FALSE))
+    fit <- .summary_pointfit(spec, model,
+      stats::rnorm(ctsem:::.ctBackendNpar(spec), 0, .4), "julia")
+    expect_null(ctsem:::.ctBackendConstrained(fit)$t0population)
+    reported <- unname(ctSummaryMatrices(fit)$T0cov)
+    # The augmented engine's T0cov has the carriers' rows too.
+    expect_equal(reported, unname(ctBackendParMatrices(fit)$T0cov[1:2, 1:2]),
+      tolerance = 1e-10)
+    reported
+  }
+  # Random intercepts on the manifests only: T0VAR is free and is all of it.
+  same(.t0cov_model(T0MEANS = c("t0a||FALSE", "t0b||FALSE")), "laplace")
+  # The augmented engine's T0cov holds the block already, above the floor.
+  expect_true(all(diag(same(.t0cov_model(), "augmented")) > 1e-3))
+})
+
+test_that("an RI-CLPM reports the same T0cov on the Laplace and augmented routes", {
+  skip_without_julia()
+  set.seed(11)
+  times <- 0:7
+  discrete <- expm::expm(matrix(c(-.5, .2, .1, -.4), 2, 2))
+  data <- do.call(rbind, lapply(seq_len(80), function(i) {
+    intercept <- stats::rnorm(2, 0, c(1, .7))
+    state <- stats::rnorm(2, 0, c(.8, .6))
+    y <- matrix(NA, length(times), 2)
+    for (t in seq_along(times)) {
+      if (t > 1) state <- discrete %*% state + stats::rnorm(2, 0, sqrt(.3))
+      y[t, ] <- intercept + state + stats::rnorm(2, 0, sqrt(.2))
+    }
+    data.frame(id = i, time = times, Y1 = y[, 1], Y2 = y[, 2])
+  }))
+  model <- .t0cov_model()
+  t0cov <- lapply(c(laplace = "laplace", augmented = "augmented"), function(route) {
+    fit <- suppressWarnings(suppressMessages(ctFit(data, model, backend = "julia",
+      intoverpop = route, verbose = 0, cores = 2)))
+    # At the estimate, so the comparison is of the two optima.
+    fit$estimate$rawposterior <- NULL
+    fit$transformedpars <- NULL
+    list(loglik = fit$estimate$loglik, T0cov = ctSummaryMatrices(fit)$T0cov)
+  })
+  expect_equal(t0cov$laplace$loglik, t0cov$augmented$loglik, tolerance = 1e-5)
+  expect_true(all(diag(t0cov$laplace$T0cov) > .1))
+  expect_equal(t0cov$laplace$T0cov, t0cov$augmented$T0cov, tolerance = 1e-3)
 })

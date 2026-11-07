@@ -102,8 +102,10 @@ ctStanRawSamples<-function(fit){
 #'@return A named list of matrices, each summarised over the posterior (or
 #'approximate posterior) draws by \code{calcfunc}: the model's own
 #'(\code{DRIFT}, \code{DIFFUSION}, \code{LAMBDA}, ...), the covariances
-#'built from them (\code{DIFFUSIONcov}, \code{MANIFESTcov}, \code{T0cov}),
-#'the asymptotic \code{asymCINT} and \code{asymDIFFUSIONcov}, and
+#'built from them (\code{DIFFUSIONcov}, \code{MANIFESTcov}, and \code{T0cov},
+#'the initial latent covariance over subjects: \code{T0VAR} plus the
+#'population covariance of any individually varying \code{T0MEANS}), the
+#'asymptotic \code{asymCINT} and \code{asymDIFFUSIONcov}, and
 #'\code{dtDRIFT} at \code{timeinterval}.
 #'@aliases ctStanContinuousPars
 #'@export
@@ -348,9 +350,9 @@ getparnames <- function(fit,reonly=FALSE, subjvariationonly=FALSE, popstatesonly
 #' @param ... Additional arguments to pass to \code{priorcheckreport}, such as \code{meanlim}, or \code{sdlim}.
 #' @return List containing summary items, with a \code{print} method for readable console and knitr output.
 #'   On an optimised \code{backend = 'julia'} fit with uncertainty draws, the
-#'   parameter tables carry a \code{mode} column beside the draws' mean, sd and
-#'   quantiles: the fit's estimate on the same scale, the point a likelihood
-#'   ratio or an information criterion refers to.
+#'   parameter tables and \code{parmatrices} carry a \code{mode} column beside
+#'   the draws' mean, sd and quantiles: the fit's estimate on the same scale,
+#'   the point a likelihood ratio or an information criterion refers to.
 #' @examples
 #' summary(ctstantestfit)
 #' @method summary ctStanFit
