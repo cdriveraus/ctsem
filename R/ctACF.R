@@ -1,33 +1,38 @@
 #' Continuous Time Autocorrelation Function (ctACF)
 #'
-#' This function computes an approximate continuous time autocorrelation function (ACF) for data
-#' containing multiple subjects and/or variables.
+#' Computes autocorrelations and cross correlations by time lag, pooled over subjects, for data
+#' observed at irregular times.
 #'
-#' @param dat The input data in data frame or data table format.
-#' @param varnames Character vector of variable names in the data to compute the ACF for. 'auto' uses all columns that are not time / id. 
-#' @param ccfnames Character vector of variable names in the data to compute cross correlation for. 'all' uses all variables in varnames, NA uses none.  
+#' @param dat The input data in data frame or data table format, in long format.
+#' @param varnames Character vector of variable names in the data to compute the ACF for. 'auto' uses all columns that are not time / id.
+#' @param ccfnames Character vector of variable names in the data to compute cross correlation for. 'all' uses all variables in varnames, NA uses none.
 #' @param idcol The name of the column containing subject IDs (default is 'id').
 #' @param timecol The name of the column containing time values (default is 'time').
 #' @param plot A logical value indicating whether to create a plot (default is TRUE).
-#' @param timestep The time step for discretizing data. 'auto' to automatically determine
-#'        the timestep based on data distribution (default is 'auto'). 
-#'        In this case the timestep is computed as half of the median for time intervals in the data.
-#' @param time.max The maximum time lag to compute the ACF (default is 10). If 'auto', is set to 10 times the 90th percentile interval in the data.
-#' @param nboot The number of bootstrap samples for confidence interva1l estimation (default is 100).
-#' @param scale if TRUE, scale variables based on within-subject standard deviation.
-#' @param center if TRUE, center variables based on within-subject mean.
-#' @param ... additional arguments (such as demean=FALSE) to pass to the \code{stats::acf} function.
+#' @param timestep The width of the time lag bins. 'auto' (default) uses half the median
+#'        time interval between consecutive rows of a subject.
+#' @param time.max The largest time lag to compute. 'auto' (default) uses two thirds of the
+#'        mean, over rows, of the time span of the row's subject.
+#' @param nboot The number of bootstrap samples, each resampling subjects with replacement (default is 100).
+#' @param scale if TRUE, divide each variable by its within-subject standard deviation.
+#' @param center if TRUE, subtract each variable's within-subject mean.
 #'
 #' @return If 'plot' is TRUE, the function returns a ggplot object of the ACF plot. If 'plot' is
-#'         FALSE, it returns a data table with ACF estimates and confidence intervals.
+#'         FALSE, it returns a data table with a row for each sample, variable and time lag:
+#'         \code{Sample} (0 for the data, then the bootstrap samples), \code{ACF},
+#'         \code{TimeInterval}, \code{Variable}, \code{SignificanceLevel} (the 95\% bound of a
+#'         correlation of zero computed from that many independent pairs), and \code{Pairs}, the
+#'         number of pairs the correlation is computed from.
 #'
-#' @details This function computes the continuous time ACF by discretizing the data and then
-#' performing bootstrapped ACF calculations to estimate the confidence intervals. It can create
-#' ACF plots with confidence intervals if 'plot' is set to TRUE. Autocorrelations are returned
-#' from the first non-zero lag, as the lag 0 autocorrelation is always 1. Cross correlations
-#' include lag 0, the contemporaneous correlation.
-#'
-#' @seealso \code{\link{ctDiscretiseData}}
+#' @details Within each subject, every pair of observations is put in the time lag bin nearest
+#' to the time between them, at multiples of \code{timestep} up to \code{time.max}. The value at a
+#' lag is the correlation of the pairs in its bin, pooled over subjects: of a variable at time
+#' t + lag with the same variable at time t for an autocorrelation, and for the cross correlation
+#' \code{'x_y'} of x at time t + lag with y at time t, so that at a positive lag y is the earlier.
+#' Lags with fewer than three pairs are left out. Autocorrelations are returned from the first
+#' non-zero lag, as the lag 0 autocorrelation is always 1. Cross correlations include lag 0, the
+#' contemporaneous correlation. Bootstrap samples resample whole subjects, and the plot shows a
+#' spline through the estimates with a band from their bootstrap spread (see \code{\link{plotctACF}}).
 #'
 #' @examples
 #' data.table::setDTthreads(1) #ignore this line
@@ -37,139 +42,144 @@
 #'
 #' @export
 ctACF <- function(dat, varnames='auto',ccfnames='all',idcol='id', timecol='time',
-  plot=TRUE,timestep='auto',time.max='auto',nboot=100,scale=FALSE, center=FALSE,...){
-  
-  if(requireNamespace('collapse')){
-  } else stop('collapse package needed for ACF!')
-  
-  if(F) .timediff = ACFhigh= ACFlow= Element= Estimate= SignificanceLevel=  TimeInterval= Variable= boot= ci=NULL
-  dat=copy(data.table(dat))
-  
-  if(length(varnames)==1 && varnames[1] == 'auto') varnames <- colnames(dat)[!colnames(dat) %in% c(idcol,timecol,'.timediff')]
+  plot=TRUE,timestep='auto',time.max='auto',nboot=100,scale=FALSE, center=FALSE){
+
+  if(F) Sample = ACF = TimeInterval = Variable = SignificanceLevel = Pairs = NULL
+  dat <- as.data.table(dat)
+
+  if(length(varnames)==1 && varnames[1] == 'auto') varnames <- colnames(dat)[!colnames(dat) %in% c(idcol,timecol)]
   if(length(ccfnames )==1 && ccfnames %in% 'all') ccfnames=varnames
   if(length(ccfnames)==1 && is.na(ccfnames)) ccfnames=NULL
   acfnames <- varnames
   varnames <- unique(c(acfnames,ccfnames))
-  
-  if(timestep == 'auto'){
-    timestep = 0.5 * quantile(dat[,.timediff:= c(NA,diff(get(timecol))),by=idcol][['.timediff']],
-      probs=.5,na.rm=TRUE)
-    # if(timestep < min(na.omit(dat[['.timediff']]))) timestep = min(na.omit(dat[['.timediff']]))
+  absent <- setdiff(c(idcol,timecol,varnames), colnames(dat))
+  if(length(absent)) stop('Not found in the data: ', paste(absent, collapse=', '))
+  if(anyNA(dat[[timecol]])) stop('Cannot compute the ACF with missing time data!')
+  if(anyNA(dat[[idcol]])) stop('Cannot compute the ACF with missing id data!')
+
+  dat <- copy(dat[, c(idcol,timecol,varnames), with=FALSE])
+  for(v in varnames) set(dat, j = v, value = as.numeric(dat[[v]])) #ensure cols are numeric!
+  setorderv(dat, c(idcol,timecol))
+
+  # Lags are measured within subjects, from a subject's consecutive rows
+  subject <- match(as.character(dat[[idcol]]), unique(as.character(dat[[idcol]])))
+  time <- as.numeric(dat[[timecol]])
+  within <- subject[-1] == subject[-length(subject)]
+  if(identical(timestep, 'auto')){
+    timestep = 0.5 * stats::median(diff(time)[within])
     message('Timestep used: ',timestep)
   }
-  if(time.max == 'auto')time.max = 2/3*mean(dat[,.timerange:= diff(range(get(timecol))),by=idcol][['.timerange']])
-  
-  
-  # Function to remove rows with missing values before and after non-missing values
-  # remove_rows_with_missing <- function(dt, col_name) {
-  #   dt[, {
-  #     if (all(is.na(.SD[[col_name]]))) {
-  #       .SD[.N]  # Return a single row with NA values if all values are missing
-  #     } else {
-  #       first_non_missing <- min(which(!is.na(.SD[[col_name]])))
-  #       last_non_missing <- max(which(!is.na(.SD[[col_name]])))
-  #       .SD[first_non_missing:last_non_missing, ]
-  #     }
-  #   }, by = idcol]
-  # }
-  
-  # remove_rows_with_missing <- function(dt, col_names) {
-  #   dt[, {
-  #     row_has_data <- rowSums(!is.na(.SD[, col_names,with=FALSE])) > 0
-  #     first_non_missing <- min(which(row_has_data))
-  #     last_non_missing <- max(which(row_has_data))
-  #     if (is.na(first_non_missing) || is.na(last_non_missing)) {
-  #       .SD[1:.N]
-  #     } else {
-  #       .SD[first_non_missing:last_non_missing, ]
-  #     }
-  #   }, by = idcol]
-  # }
-  
-  if(scale || center){
-    dat[[idcol]] <- factor(dat[[idcol]])
-    for(vi in varnames){ #scale each subject (skip demeaning so we can see trait variance)
-      model <- lme4::lmer(formula=paste0(vi,' ~ 0+(1 | ',idcol,')'), data = dat)
-      randomint=as.data.table(lme4::ranef(model))
-      setnames(randomint,old = 'grp',new=idcol)
-      dat <- merge(dat,randomint[,c('id','condval'),with=FALSE],by = idcol)
-      dat[, (vi) := (get(vi) - condval) / sd(get(vi),na.rm=TRUE)+condval/sd(get(vi),na.rm=TRUE),by=idcol]
-      dat[['condval']] <- NULL
-    }
-    dat[[idcol]] <- as.character(dat[[idcol]])
+  if(!is.numeric(timestep) || length(timestep) != 1 || !isTRUE(timestep > 0) || !is.finite(timestep))
+    stop('timestep must be a single positive number, or auto from subjects with at least two distinct times')
+  if(identical(time.max, 'auto')){
+    span <- tapply(time, subject, function(x) diff(range(x)))
+    time.max = 2/3 * mean(span[subject])
   }
-  
-  counter <- 0
+  nlag <- ceiling(time.max/timestep)
+  if(!isTRUE(nlag >= 0)) stop('time.max must be a positive number')
+
+  if(scale || center){ #within each subject
+    for(v in varnames) set(dat, j = v, value = dat[, {
+      x <- get(v)
+      m <- if(center) mean(x, na.rm = TRUE) else 0
+      s <- if(scale) stats::sd(x, na.rm = TRUE) else 1
+      (x - m) / s
+    }, by = idcol]$V1) #dat is sorted by id, so the groups come back in row order
+  }
+
+  # Rows with no value cannot pair; drop them before pairing
+  hasdata <- rowSums(!is.na(as.matrix(dat[, varnames, with = FALSE]))) > 0
+  dat <- dat[hasdata,]
+  time <- time[hasdata]
+  subject <- match(subject[hasdata], unique(subject[hasdata]))
+  nsubj <- max(c(0L, subject))
+
+  pairs <- .ctACFPairs(subject = subject, time = time, timestep = timestep, nlag = nlag)
+
+  # Bootstrap samples as counts of each subject drawn; sample 0 is the data
+  W <- matrix(1, 1, nsubj)
+  if(nboot > 0) W <- rbind(W, t(matrix(vapply(seq_len(nboot), function(b)
+    tabulate(sample.int(nsubj, nsubj, replace = TRUE), nsubj), numeric(nsubj)), nrow = nsubj)))
+
+  # Values centred on their overall means: the correlations do not change, and the
+  # sums of squares below lose nothing to a large mean
+  vals <- lapply(stats::setNames(varnames, varnames), function(v) dat[[v]] - mean(dat[[v]], na.rm = TRUE))
+
+  fullACF <- list()
   for(vari in acfnames){
     for(varj in unique(c(vari,ccfnames))){
-      counter <- counter + 1
-      varji <- unique(c(vari,varj))
-      
-      vdat <- dat[,c(idcol,timecol,varji),with=FALSE]
-      vdat <- vdat[apply(vdat[,(varji),with=F],1,function(x) !all(is.na(x))),] #remove rows with total missingness first
-      for(col in varji) set(vdat, j = col, value = as.numeric(vdat[[col]])) #ensure cols are numeric!
-      # vdat[apply(.SD,1,function(x) !(all(is.na(x)))), ,.SDcols=varji]
-      # vdat<-remove_rows_with_missing(vdat,varji)
-      # for(varjik in varji) vdat[,(varjik):=scale(get(varjik)),by=idcol]
-      vdat = data.table(ctDiscretiseData(vdat,timecol = timecol,idcol = idcol,timestep=timestep)) #collapse to specified time step
-      
-      # datt=vdat[,tail(.SD,1),by=idcol] #adding distant time point (outside acf range) to ensure sufficient padding with NA's for stacking (avoiding attenuation of low lag corr)
-      # datt=datt[,list(.newtime=seq(get(timecol),get(timecol)+time.max+timestep,timestep)),by=idcol]
-      # setnames(datt,old = '.newtime',timecol)
-      # vdat=merge(vdat,datt,by = c(idcol,timecol),all=TRUE)
-      # 
-      # acf=vdat[,{
-      #   acftemp=acf(get(varji),na.action = na.pass,plot=FALSE)$acf[,1,1];
-      #   data.table(TimeInterval=seq(0,length.out=length(acftemp),by=timestep),ACF=acftemp)
-      # }, by=idcol]
-      
-      # psacf(vdat[[vari]][rows], g=vdat[[idcol]][rows],lag.max=ceiling(time.max/timestep), 
-      # plot=F, na.action=na.pass,...)
-      # browser()
-      ACF=lapply(0:nboot,function(x) {
-        message(sprintf(paste0("\r ",paste(varji,collapse=' ')," %3d%%"), as.integer(x/nboot*100)),appendLF = FALSE)
-        
-        if(x==0){
-          subjects <- vdat[[idcol]]
-          rows <- 1:nrow(vdat)
-        } else{
-          subjects <- sample(unique(vdat[[idcol]]),replace=TRUE)
-          rows <- unlist(lapply(subjects,function(si) which(vdat[[idcol]] %in% si)))
-          subjects <- unlist(lapply(subjects,function(si){
-            r=which(vdat[[idcol]] %in% si)
-            paste0('s',round(rnorm(1),5),vdat[[idcol]][r])
-          }))
-        }
-        if(vari==varj) acfout <- collapse::psacf(vdat[[vari]][rows], 
-          g=subjects,gscale=FALSE,lag.max=ceiling(time.max/timestep), 
-          plot=F,...)$acf[,1,1] #
-        if(vari!=varj) acfout <- collapse::psccf(x = vdat[[vari]][rows],y = vdat[[varj]][rows],
-          g=subjects,gscale=FALSE,
-          lag.max =ceiling(time.max/timestep),plot=FALSE,...)$acf[,1,1]
-        
-        out <- data.table(ACF=acfout)
-        out[,TimeInterval:=seq(0,length.out=.N,by=timestep)]
-        if(vari!=varj) out[,TimeInterval:=TimeInterval-median(TimeInterval)]
-        return(out)
-      })
-      message('')
-      ACF=rbindlist(ACF,idcol = 'Sample')
-      ACF[,Sample:=Sample-1]
-      if(vari==varj) ACF=ACF[TimeInterval!=0,] #lag 0 autocorrelation is trivially 1, but lag 0 cross correlation is the contemporaneous correlation
-      ACF[,Variable:=ifelse(vari==varj,vari,paste0(vari,'_',varj))]
-      ACF[,SignificanceLevel:= ifelse(vari==varj,
-        qnorm((1 + 0.95)/2)/sqrt(sum(!is.na(dat[[vari]]))),
-        NA)]
-      # if(nboot >0)  ACF <- ctACFquantiles(ACF,c(.025,.975)) else ACF[,Sample:=NULL]
-      
-      if(counter>1) fullACF <- rbind(fullACF,ACF) else fullACF <- ACF
+      if(vari == varj){ #each pair once, earlier and later
+        sel <- pairs$k >= 1
+        x <- vals[[vari]][pairs$j[sel]]; y <- vals[[vari]][pairs$i[sel]]
+        bin <- pairs$k[sel]; s <- subject[pairs$i[sel]]
+        bins <- seq_len(nlag)
+      } else { #vari later at positive lags, earlier at negative ones; a row with itself once, at lag 0
+        d <- pairs$i != pairs$j
+        x <- c(vals[[vari]][pairs$j], vals[[vari]][pairs$i[d]])
+        y <- c(vals[[varj]][pairs$i], vals[[varj]][pairs$j[d]])
+        bin <- c(pairs$k, -pairs$k[d])
+        s <- subject[c(pairs$i, pairs$i[d])]
+        bins <- -nlag:nlag
+      }
+      r <- .ctACFPooledCor(x = x, y = y, subject = s, bin = bin, bins = bins, W = W)
+      out <- data.table(Sample = rep(0:nboot, times = length(bins)), ACF = as.vector(r$cor),
+        TimeInterval = rep(bins * timestep, each = nboot + 1),
+        Variable = ifelse(vari==varj, vari, paste0(vari,'_',varj)),
+        Pairs = as.vector(r$n))
+      out[, SignificanceLevel := stats::qnorm((1 + 0.95)/2)/sqrt(Pairs)]
+      setcolorder(out, c('Sample','ACF','TimeInterval','Variable','SignificanceLevel','Pairs'))
+      setorderv(out, c('Sample','TimeInterval'))
+      fullACF[[length(fullACF) + 1]] <- out[!is.na(ACF),]
     }
   }
-  
-  
+  fullACF <- rbindlist(fullACF)
+
   if(plot){
     return(plotctACF(fullACF))
   } else return(fullACF)
+}
+
+# Every pair of rows of one subject whose time difference rounds to at most nlag
+# steps: row indices i (earlier, or the same row) and j, and k, the difference in
+# steps rounded to the nearest. Rows are sorted by subject and time, so pairs are
+# gathered by row offset, and an offset at which no pair qualifies ends the search.
+.ctACFPairs <- function(subject, time, timestep, nlag){
+  n <- length(time)
+  out <- list()
+  for(m in seq_len(n) - 1L){
+    i <- seq_len(n - m)
+    j <- i + m
+    k <- floor((time[j] - time[i]) / timestep + 0.5)
+    keep <- subject[i] == subject[j] & k <= nlag
+    if(!any(keep)) break
+    out[[m + 1L]] <- list(i = i[keep], j = j[keep], k = as.integer(k[keep]))
+  }
+  if(!length(out)) return(data.table(i = integer(0), j = integer(0), k = integer(0)))
+  rbindlist(out)
+}
+
+# Pearson correlation of the pairs (x, y) in each bin, pooled over subjects, for
+# each row of W, which weights the subjects (the data, then bootstrap draws).
+# Returns matrices with a row for each row of W and a column for each bin: the
+# correlation, NA from fewer than three pairs or without variation, and the
+# number of pairs.
+.ctACFPooledCor <- function(x, y, subject, bin, bins, W){
+  ok <- !is.na(x) & !is.na(y) & bin %in% bins
+  d <- data.table(s = subject[ok], b = match(bin[ok], bins), x = x[ok], y = y[ok])
+  d <- d[, list(n = .N, sx = sum(x), sy = sum(y), sxx = sum(x*x), syy = sum(y*y), sxy = sum(x*y)),
+    by = c('s','b')]
+  tot <- lapply(c(n='n', sx='sx', sy='sy', sxx='sxx', syy='syy', sxy='sxy'), function(st){
+    M <- matrix(0, ncol(W), length(bins))
+    M[cbind(d$s, d$b)] <- d[[st]]
+    W %*% M
+  })
+  n <- tot$n
+  vx <- tot$sxx - tot$sx^2 / n
+  vy <- tot$syy - tot$sy^2 / n
+  cv <- tot$sxy - tot$sx * tot$sy / n
+  r <- cv / sqrt(vx * vy)
+  r[n < 3 | !(vx > 0) | !(vy > 0)] <- NA
+  list(cor = r, n = n)
 }
 
 ctACFquantiles<-function(ctacfobj,quantiles=c(.025,.5,.975),separateLearnRates=FALSE,df='auto'){
