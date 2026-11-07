@@ -1,28 +1,36 @@
 ctModelUnlist<-function(ctmodelobj,
   matnames=c('T0MEANS','LAMBDA','DRIFT','DIFFUSION','MANIFESTVAR','MANIFESTMEANS', 'CINT', 'TDPREDEFFECT', 'T0VAR','PARS','THRESHOLDS','ASYMPTOTES','RESPONSE')){
-  out<-data.frame(matrix=as.character(NA), row=as.integer(NA), col=as.integer(NA), param=as.character(NA), value=as.numeric(NA),
-    stringsAsFactors =FALSE) 
-  out[1:sum(sapply(ctmodelobj[names(ctmodelobj) %in% matnames],length)),]=out
-
   # Each matrix's cells by row, gathered and written a column at a time:
   # written a row at a time, a 20-latent model's took a quarter of a second.
+  #
+  # Every cell of every matrix is listed, NA ones included: an NA is a value
+  # there (an asymptote a latent without an equilibrium does not have). A
+  # matrix was once skipped when its first cell was NA, after rows had been
+  # set aside for it, so a summary gained rows with no matrix, row or col --
+  # and, its columns filled by one call each, a column whose matrix was not
+  # skipped put every later value on the wrong cell.
   cells <- list()
   for(obji in matnames){
     x <- ctmodelobj[[obji]]
-    if(!is.null(dim(x)) && !is.na(x[1])){
-      x <- as.vector(t(x))
-      value <- suppressWarnings(as.numeric(x))
-      cells[[length(cells) + 1]] <- list(matrix = rep(obji, length(x)),
-        row = rep(seq_len(nrow(ctmodelobj[[obji]])), each = ncol(ctmodelobj[[obji]])),
-        col = rep(seq_len(ncol(ctmodelobj[[obji]])), times = nrow(ctmodelobj[[obji]])),
-        param = as.character(ifelse(is.na(value), x, NA)), #a character string
-        value = value) #a number
-    }
+    if(is.null(dim(x)) || !length(x)) next
+    nr <- nrow(x)
+    nc <- ncol(x)
+    x <- as.vector(t(x))
+    value <- suppressWarnings(as.numeric(x))
+    cells[[length(cells) + 1]] <- list(matrix = rep(obji, length(x)),
+      row = rep(seq_len(nr), each = nc),
+      col = rep(seq_len(nc), times = nr),
+      # The cell's text where it is not a number; a numeric NA names nothing.
+      param = if(is.character(x)) ifelse(is.na(value), x, NA_character_) else
+        rep(NA_character_, length(x)),
+      value = value)
   }
-  rows <- seq_len(sum(vapply(cells, function(x) length(x$value), integer(1))))
-  if(length(rows) > nrow(out)) out[(nrow(out) + 1):length(rows),] <- NA
-  if(length(rows)) for(column in names(out)) out[[column]][rows] <- unlist(lapply(cells, `[[`, column))
-  return(out)
+  gather <- function(column, empty) if(length(cells))
+    unlist(lapply(cells, `[[`, column), use.names = FALSE) else empty
+  data.frame(matrix = gather('matrix', character()),
+    row = gather('row', integer()), col = gather('col', integer()),
+    param = gather('param', character()), value = gather('value', numeric()),
+    stringsAsFactors = FALSE)
 }
 
 .ctModelDefaultFreePar <- function(matrix, row, col, continuoustime){
