@@ -478,13 +478,12 @@ ctFitProfile <- function(fit, parameters = NULL, points = 8L, step = NULL,
 # Routed through `.ctJuliaOptimise()` with the fit's own resolved
 # `optimcontrol`, rather than a bare `module$ctsem_optimize()` call on engine
 # defaults: a profile point used to be optimised with none of the fit's
-# controls -- no transform-scale metric, no batching, no Newton finish, the
-# gap rule off -- so a point could land somewhere, and take however long
-# getting there, that the fit itself never would. The pin is
-# `.ctJuliaOptimise()`'s own pin path (`optimise_once(from, damp, pin)`),
-# exposed as its `pin` argument, which keeps the metric, the batching and the
-# stall escapes in play around the fixed coordinate exactly as they are for
-# the fit. Profile points are never certified afterwards (`ctFitProfile()`
+# controls -- no batching, no Newton finish, the gap rule off -- so a point
+# could land somewhere, and take however long getting there, that the fit
+# itself never would. The pin is `.ctJuliaOptimise()`'s own pin path
+# (`optimise_once(from, pin = )`), exposed as its `pin` argument, which keeps
+# the fit's controls, the batching and the stall escapes in play around the
+# fixed coordinate exactly as they are for the fit. Profile points are never certified afterwards (`ctFitProfile()`
 # sets `optimcontrol$certify = FALSE`), and `$better` is what stands in for
 # certification here: a constrained point that beats the unconstrained
 # estimate is the one failure a profile can still catch.
