@@ -1488,6 +1488,7 @@ ctFit<-function(datalong, model, stanmodeltext=NA, iter=1000, intoverstates=TRUE
   }
 
   datalong <- datalong[order(datalong[[ctstanmodel$subjectIDname]],datalong[[ctstanmodel$timeName]]),] #sort by subject, time.
+  if(isTRUE(sameInitialTimes)) datalong <- .ctSameInitialTimes(datalong, ctstanmodel)
 
   if(!'ctStanModel' %in% class(ctstanmodel)) stop('not a ctStanModel object')
 
@@ -1580,7 +1581,7 @@ ctFit<-function(datalong, model, stanmodeltext=NA, iter=1000, intoverstates=TRUE
   ctm$recompile <- recompile
 
 
-  standata <- .ctPrepareData(ctm,datalong,optimize=optimize, sameInitialTimes=sameInitialTimes, #bit slow
+  standata <- .ctPrepareData(ctm,datalong,optimize=optimize, #bit slow
     tipredMissing = if (identical(backend, 'julia')) 'leave' else if (optimize) 'impute' else 'sample')
   standata$verbose=as.integer(verbose)
   standata$savesubjectmatrices=as.integer(savesubjectmatrices)
