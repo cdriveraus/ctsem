@@ -73,7 +73,27 @@
 #'   one-step estimate of the subjects' standard deviation on the raw scale,
 #'   and \code{sd_natural} approximately on the parameter's own. To act on a
 #'   result, set \code{indvarying = TRUE} for the parameter, refit, and test
-#'   again. On a reduced-rank level (\code{poprank}), a parameter that varies
+#'   again.
+#'
+#'   An intercept in \code{CINT} is tested with each subject's initial means
+#'   following it: a subject whose intercept is higher by \code{d} starts
+#'   \code{-DRIFT^-1 d} higher, at their own equilibrium, so their whole
+#'   latent trajectory is shifted -- a random intercept (with \code{LAMBDA =
+#'   I}, the same model as a random manifest intercept). A subject-specific
+#'   intercept with the initial means shared would instead make subjects drift
+#'   apart from a common start, which data with stable differences from the
+#'   first occasion reject. \code{initial} says which was tested:
+#'   \code{'equilibrium'}, or \code{'shared'} where an initial mean the shift
+#'   needs is fixed (or not a parameter of its own) and so cannot follow. What
+#'   an intercept moves that the drift cannot balance -- a trend through a
+#'   drift fixed at zero -- has no equilibrium, and moves alone. The shift is
+#'   taken at the estimate's drift (where the drift depends on the state, as
+#'   the fit reports it). To act on an \code{'equilibrium'} result, let the
+#'   \code{CINT} and \code{T0MEANS} parameters vary, so their random effects
+#'   are estimated with their correlation. A level carried in fixed
+#'   \code{MANIFESTMEANS} is not tested.
+#'
+#'   On a reduced-rank level (\code{poprank}), a parameter that varies
 #'   only through the shared dimensions, without a variance of its own, is
 #'   tested too: for variation outside those dimensions. A parameter whose
 #'   test the fitted model already determines -- under one per cent of its
@@ -82,7 +102,8 @@
 #'   \code{dimension}.
 #'
 #'   \code{dimension} tests every direction at once: whether subjects vary
-#'   along some combination of the tested parameters, a new dimension of
+#'   along some combination of the tested parameters (each \code{CINT}
+#'   parameter along the same shift as its own row), a new dimension of
 #'   person variation. It is not computed on a reduced-rank level, where in
 #'   simulation it found a dimension the rank lacked 10 per cent of the time
 #'   and the per-parameter tests of variation outside the shared dimensions 58
@@ -432,21 +453,30 @@ ctScoreTest <- function(fit, covariates = NULL,
       }, values, forms, names(values))
     }
     dirs <- if (reduced && length(cov)) .ctScoreScaleDirections(est, ptab, parameters) else NULL
-    say("Score contributions: ", 2L * (length(union(het, cov)) + NCOL(dirs)) + 1L,
+    # A CINT parameter's heterogeneity is tested with the initial means
+    # following it (.ctScoreHetDirections); its own axis is still differenced
+    # where a covariate acts on it.
+    hd <- if (length(het)) .ctScoreHetDirections(fit, est, ptab, het) else NULL
+    multi <- if (length(het)) colSums(hd$U != 0) > 1L else logical()
+    hetdirs <- if (any(multi)) hd$U[, multi, drop = FALSE] else NULL
+    rows <- union(het[!multi], cov)
+    say("Score contributions: ", 2L * (length(rows) + NCOL(dirs) + NCOL(hetdirs)) + 1L,
       " per-subject gradient passes")
-    pieces <- .ctScorePieces(fit, est, rows = union(het, cov), second = het,
-      dirs = dirs, cores = cores)
+    pieces <- .ctScorePieces(fit, est, rows = rows, second = het[!multi],
+      dirs = dirs, hetdirs = hetdirs, cores = cores)
     if (nrow(pieces$S) != .ctFitNsubjects(fit)) stop("This model has a level ",
       "above the subject, so its independent units are not subjects. ",
       "Heterogeneity and covariate tests need subjects; use ",
       "tests = 'statedependence'.", call. = FALSE)
     if (length(het)) attempt('heterogeneity', {
-      out$heterogeneity <- .ctScoreHeterogeneity(pieces, ptab, het, variance, nboot)
+      items <- .ctScoreHetItems(pieces, het, hd$U)
+      out$heterogeneity <- .ctScoreHeterogeneity(pieces, ptab, items, hd$initial,
+        variance, nboot)
       # Not on a reduced-rank level: there it found a missing dimension 10 per
       # cent of the time where the per-parameter test of variation outside the
       # shared dimensions found it 58 (simulation, rank 1 fitted to rank 2).
       if (length(het) > 1L && !reduced) out$dimension <- .ctScoreDimension(pieces, ptab,
-        het, nboot)
+        items, nboot)
     })
     if (length(cov)) attempt('covariates', {
       items <- .ctScoreItems(pieces, ptab, cov)
@@ -546,11 +576,15 @@ ctScoreTest <- function(fit, covariates = NULL,
 # difference (eps / h^2). The full information is the fit's own Hessian, which
 # the optimiser's finish formed already; differencing along every parameter
 # for it cost 2p + 1 passes, 705 on a 352-parameter fit.
-.ctScorePieces <- function(fit, est, rows, second, dirs = NULL, step = 1e-3,
-  cores = 2L) {
+#
+# `dirs` are directions a covariate acts along (H_i w only); `hetdirs` are
+# heterogeneity directions that are not one parameter's (H_i w, and the second
+# difference of every score along w, as `second` has for a parameter).
+.ctScorePieces <- function(fit, est, rows, second, dirs = NULL, hetdirs = NULL,
+  step = 1e-3, cores = 2L) {
   p <- length(est)
-  if (!length(rows)) stop("No parameters to test.", call. = FALSE)
-  Hdir <- NULL
+  if (!length(rows) && is.null(hetdirs)) stop("No parameters to test.", call. = FALSE)
+  Hdir <- Hhet <- D2het <- NULL
   .ctBackendWithMaxChunks(cores, {
     S <- .ctBackendScoreMatrix(fit, est)
     n <- nrow(S)
@@ -567,22 +601,116 @@ ctScoreTest <- function(fit, covariates = NULL,
       j <- match(k, second)
       if (!is.na(j)) D2[, , j] <- (plus - 2 * S + minus) / h^2
     }
-    # Along each direction, the same difference gives H_i w.
+    # Along a direction the same differences give H_i w and w' (d2 s_i) w, the
+    # step scaled so the largest raw move is what a parameter's would be.
+    along <- function(w) {
+      h <- step * max(1, max(abs(est[w != 0]))) / max(abs(w))
+      plus <- .ctBackendScoreMatrix(fit, est + h * w)
+      minus <- .ctBackendScoreMatrix(fit, est - h * w)
+      list(H = (plus - minus) / (2 * h), D2 = (plus - 2 * S + minus) / h^2)
+    }
     if (!is.null(dirs)) {
       Hdir <- array(0, c(n, ncol(dirs), p))
-      for (d in seq_len(ncol(dirs))) {
-        w <- dirs[, d]
-        h <- step * max(1, max(abs(est[w != 0]))) / max(abs(w))
-        plus <- .ctBackendScoreMatrix(fit, est + h * w)
-        minus <- .ctBackendScoreMatrix(fit, est - h * w)
-        Hdir[, d, ] <- (plus - minus) / (2 * h)
+      for (d in seq_len(ncol(dirs))) Hdir[, d, ] <- along(dirs[, d])$H
+    }
+    if (!is.null(hetdirs)) {
+      Hhet <- array(0, c(n, ncol(hetdirs), p))
+      D2het <- array(0, c(n, p, ncol(hetdirs)))
+      for (d in seq_len(ncol(hetdirs))) {
+        r <- along(hetdirs[, d])
+        Hhet[, d, ] <- r$H
+        D2het[, , d] <- r$D2
       }
     }
     Hsum <- .ctBackendHessian(fit, est)
   })
   Hsum <- (Hsum + t(Hsum)) / 2
   list(S = S, H = H, rows = rows, D2 = D2, second = second, Hsum = Hsum,
-    dirs = dirs, Hdir = Hdir)
+    dirs = dirs, Hdir = Hdir, hetdirs = hetdirs, Hhet = Hhet, D2het = D2het)
+}
+
+# The direction each heterogeneity test adds variance along, in raw
+# coordinates: one parameter's own, except for an intercept in CINT. Moved
+# alone, a subject-specific CINT[k] with every subject's initial mean shared
+# makes subjects drift apart from a common start, and data whose subjects
+# differ stably from the first occasion reject that: z of -5 on the book's
+# FI-CLPM, which a random intercept model fitted 92 -2LL units better. So
+# CINT[k] is tested along the shift that keeps each subject at their own
+# equilibrium: CINT moves by delta and T0MEANS by -A^-1 delta, A the drift
+# (A - I in discrete time), which shifts the subject's whole latent trajectory
+# by -A^-1 delta. That is exact for any invertible drift, stable or not; with
+# LAMBDA = I it is a random manifest intercept; and it is a direction of the
+# model ctsem fits when CINT and T0MEANS both vary with correlated effects.
+# What CINT[k] moves outside the drift's range (a trend through a fixed zero
+# drift) has no equilibrium and moves alone (the pseudo-inverse). Where an
+# initial mean the shift needs is not a free parameter of its own it cannot
+# follow, and CINT[k] is tested alone ('shared'); a 'stationary' T0MEANS
+# follows by itself. The direction is held at the estimate's drift, which
+# leaves the test's size alone: along any fixed direction its statistic has
+# mean zero under the model. `initial` says which for each CINT row.
+.ctScoreHetDirections <- function(fit, est, ptab, het) {
+  U <- matrix(0, length(est), length(het), dimnames = list(NULL, ptab$name[het]))
+  U[cbind(het, seq_along(het))] <- 1
+  initial <- rep(NA_character_, length(het))
+  cint <- which(ptab$matrix[het] %in% 'CINT')
+  if (!length(cint)) return(list(U = U, initial = initial))
+  initial[cint] <- 'shared'
+  model <- .ctFitBaseModel(fit)
+  if (is.null(model)) model <- .ctFitModelObject(fit)
+  pars <- model$pars
+  A <- as.matrix(suppressMessages(ctBackendParMatrices(fit, raw = est))$DRIFT)
+  if (!isTRUE(model$continuoustime)) A <- A - diag(nrow(A))
+  sv <- svd(A)
+  keep <- sv$d > 1e-10 * max(sv$d, .Machine$double.eps)
+  Ainv <- sv$v[, keep, drop = FALSE] %*% (t(sv$u[, keep, drop = FALSE]) / sv$d[keep])
+  cells <- function(param) which(pars$param %in% param)
+  # Each latent's initial mean: a free parameter filling that one cell, or
+  # 'stationary'.
+  t0 <- vapply(seq_len(nrow(A)), function(m) {
+    j <- which(ptab$kind == 'model' & ptab$matrix %in% 'T0MEANS' & ptab$row %in% m)
+    if (length(j) != 1L || length(cells(ptab$name[j])) != 1L ||
+      !is.finite(ptab$slope[j]) || ptab$slope[j] == 0) return(NA_integer_)
+    as.integer(j)
+  }, integer(1))
+  stationary <- vapply(seq_len(nrow(A)), function(m)
+    any(pars$matrix %in% 'T0MEANS' & pars$row %in% m & pars$param %in% 'stationary'),
+    logical(1))
+  for (a in cint) {
+    j <- het[a]
+    at <- cells(ptab$name[j])
+    rows <- pars$row[at][pars$matrix[at] %in% 'CINT']
+    if (!length(rows) || !is.finite(ptab$slope[j])) next
+    # The initial means' natural change per raw unit of the intercept.
+    shift <- -as.numeric(Ainv[, rows, drop = FALSE] %*% rep(ptab$slope[j], length(rows)))
+    need <- which(abs(shift) > 1e-10 * max(abs(shift), .Machine$double.eps))
+    if (!length(need) || !all(!is.na(t0[need]) | stationary[need])) next
+    free <- need[!is.na(t0[need])]
+    U[t0[free], a] <- shift[free] / ptab$slope[t0[free]]
+    initial[a] <- 'equilibrium'
+  }
+  list(U = U, initial = initial)
+}
+
+# Each heterogeneity test's direction with its pieces: the score along it,
+# H_i u and u' H_i u, and the second difference of every score along it.
+.ctScoreHetItems <- function(pieces, het, U) {
+  n <- nrow(pieces$S)
+  lapply(seq_along(het), function(a) {
+    j <- het[a]
+    u <- U[, a]
+    d <- match(colnames(U)[a], colnames(pieces$hetdirs))
+    if (!is.na(d)) {
+      Hu <- pieces$Hhet[, d, , drop = TRUE]
+      D2u <- pieces$D2het[, , d, drop = TRUE]
+    } else {
+      Hu <- .ctScoreHrow(pieces, j)
+      D2u <- pieces$D2[, , match(j, pieces$second), drop = TRUE]
+    }
+    if (is.null(dim(Hu))) Hu <- matrix(Hu, nrow = n)
+    if (is.null(dim(D2u))) D2u <- matrix(D2u, nrow = n)
+    list(j = j, u = u, s = as.numeric(pieces$S %*% u), Hu = Hu,
+      uHu = as.numeric(Hu %*% u), D2u = D2u)
+  })
 }
 
 # The raw-coordinate direction that scales one varying parameter's spread on a
@@ -672,40 +800,40 @@ ctScoreTest <- function(fit, covariates = NULL,
   out
 }
 
-# The variance score for each parameter j, (s_ij^2 + H_i,jj) / 2 summed over
-# subjects, projected on the fitted parameters (C(alpha)): each subject's
-# contribution plus D' I^-1 s_i, with D the derivative of the statistic in
-# theta. Its variance, `robust`, is the spread of those contributions, which
-# stays right when the model is wrong in some other way -- the case a screen
-# meets most -- where the information equality the model-based variance
-# leans on fails. `model` is sum_i H_i,jj^2 / 2 less D' I^-1 D: exact for a
-# Gaussian score, as a parameter of a linear Gaussian model's mean has, and
-# the information for the variance in either case, which sets the one-step
-# estimate of the standard deviation.
-.ctScoreHeterogeneity <- function(pieces, ptab, het, variance = 'robust',
-  nboot = 1999L) {
+# The variance score along each test's raw direction u (a parameter's own
+# axis, or for CINT the shift of .ctScoreHetDirections), ((u's_i)^2 +
+# u'H_i u) / 2 summed over subjects, projected on the fitted parameters
+# (C(alpha)): each subject's contribution plus D' I^-1 s_i, with D the
+# derivative of the statistic in theta. Its variance, `robust`, is the spread
+# of those contributions, which stays right when the model is wrong in some
+# other way -- the case a screen meets most -- where the information equality
+# the model-based variance leans on fails. `model` is sum_i (u'H_i u)^2 / 2
+# less D' I^-1 D: exact for a Gaussian score, as a parameter of a linear
+# Gaussian model's mean has, and the information for the variance in either
+# case, which sets the one-step estimate of the standard deviation.
+.ctScoreHeterogeneity <- function(pieces, ptab, items, initial = NULL,
+  variance = 'robust', nboot = 1999L) {
   S <- pieces$S
   Iinv <- .ctScorePinv(-pieces$Hsum)$inv
-  Stot <- colSums(S)
-  rows <- lapply(seq_along(het), function(a) {
-    j <- het[a]
-    s <- S[, j]
-    Hj <- .ctScoreHrow(pieces, j)
-    hjj <- Hj[, j]
-    # D = dT/dtheta: d(s_ij^2/2)/dtheta = s_ij H_i[j, ] and
-    # d(H_i,jj/2)/dtheta_k = d^2 s_ik / dtheta_j^2 / 2.
-    D <- colSums(s * Hj) + 0.5 * colSums(pieces$D2[, , a, drop = TRUE])
+  if (is.null(initial)) initial <- rep(NA_character_, length(items))
+  rows <- lapply(seq_along(items), function(a) {
+    it <- items[[a]]
+    j <- it$j
+    s <- it$s
+    # D = dT/dtheta: d((u's_i)^2/2)/dtheta = (u's_i) H_i u and
+    # d(u'H_i u/2)/dtheta_k = u' (d^2 s_ik) u / 2.
+    D <- colSums(s * it$Hu) + 0.5 * colSums(it$D2u)
     w <- as.numeric(Iinv %*% D)
     # T(theta) + D' I^-1 S(theta) is T at the true theta to first order,
     # wherever it is evaluated. Plus: D is a derivative and I the negative
     # Hessian; the covariate test's `- Idt I^-1 S` is the same with
     # Idt = -dU/dtheta.
-    contribution <- 0.5 * (s^2 + hjj) + as.numeric(S %*% w)
+    contribution <- 0.5 * (s^2 + it$uHu) + as.numeric(S %*% w)
     stat <- sum(contribution)
-    information <- sum(0.5 * hjj^2) - sum(D * w)
+    information <- sum(0.5 * it$uHu^2) - sum(D * w)
     V <- if (variance == 'robust') .ctScoreSpread(matrix(contribution))[1, 1] else
       information
-    determined <- .ctScoreDetermined(contribution, 0.5 * (s^2 + hjj))
+    determined <- .ctScoreDetermined(contribution, 0.5 * (s^2 + it$uHu))
     z <- if (V > 0 && !determined) stat / sqrt(V) else NA_real_
     p <- if (determined) NA_real_ else if (variance == 'robust')
       .ctScoreBoot(matrix(contribution), nboot, onesided = TRUE) else
@@ -714,11 +842,12 @@ ctScoreTest <- function(fit, covariates = NULL,
     # estimating the other parameters takes, when that leaves it positive;
     # the third derivatives that projection needs are differenced twice and
     # can overshoot, and the plain sum is the size to first order anyway.
-    if (information <= 0) information <- sum(0.5 * hjj^2)
+    if (information <= 0) information <- sum(0.5 * it$uHu^2)
     sdraw <- if (information > 0) sqrt(max(0, stat / information)) else NA_real_
     row <- data.frame(parameter = ptab$name[j], matrix = ptab$matrix[j],
       row = ptab$row[j], col = ptab$col[j], z = z, p = p, sd = sdraw,
-      sd_natural = abs(ptab$slope[j]) * sdraw, stringsAsFactors = FALSE)
+      sd_natural = abs(ptab$slope[j]) * sdraw, initial = initial[a],
+      stringsAsFactors = FALSE)
     attr(row, 'contribution') <- contribution
     row
   })
@@ -732,41 +861,39 @@ ctScoreTest <- function(fit, covariates = NULL,
 # Whether the subjects vary along a direction no single parameter's test
 # isolates -- a new dimension of person variation over several parameters, or
 # on a reduced-rank level one more than its rank. Adding variance tau^2 along
-# a raw direction u changes subject i's log likelihood, at tau^2 = 0, by
-# (u' s_i)^2 / 2 + u' H_i u / 2: the expectation over the subject's posterior
+# a raw direction v changes subject i's log likelihood, at tau^2 = 0, by
+# (v' s_i)^2 / 2 + v' H_i v / 2: the expectation over the subject's posterior
 # of the conditional score's square and Hessian is the marginal's square plus
-# its Hessian. So T = sum_i (s_i s_i' + H_i) / 2 over the tested parameters is
-# the score matrix of every such direction; its diagonal is the
-# per-parameter test. The off-diagonal projections omit the third
-# derivatives the diagonal has, which can only widen the spread and so keeps
-# the test conservative. The statistic is the largest eigenvalue of T scaled
-# by each diagonal's spread (invariant to each parameter's units), against a
-# multiplier bootstrap over subjects; its eigenvector is the direction, read
-# as loadings (Hall & Praestgaard, 2001; Zhu & Zhang, 2006).
-.ctScoreDimension <- function(pieces, ptab, het, nboot = 1999L) {
+# its Hessian. So with the tests' directions as the columns of U, T = U' sum_i
+# (s_i s_i' + H_i) U / 2 is the score matrix of every direction they span; its
+# diagonal is the per-parameter tests. The span holds each CINT test's shift
+# with the initial means, as its row does, and not CINT alone. The
+# off-diagonal projections omit the third derivatives the diagonal has, which
+# can only widen the spread and so keeps the test conservative. The statistic
+# is the largest eigenvalue of T scaled by each diagonal's spread (invariant
+# to each parameter's units), against a multiplier bootstrap over subjects;
+# its eigenvector is the direction, read as loadings on the tests (Hall &
+# Praestgaard, 2001; Zhu & Zhang, 2006).
+.ctScoreDimension <- function(pieces, ptab, items, nboot = 1999L) {
   S <- pieces$S
   n <- nrow(S)
   Iinv <- .ctScorePinv(-pieces$Hsum)$inv
-  Hr <- lapply(het, function(j) .ctScoreHrow(pieces, j))
   # Candidates whose own contributions the fit determines say nothing here
   # (.ctScoreDetermined), and their near-zero spread would scale the rest.
-  live <- vapply(seq_along(het), function(a) {
-    ja <- het[a]
-    raw <- 0.5 * (S[, ja]^2 + Hr[[a]][, ja])
-    D <- colSums(S[, ja] * Hr[[a]]) +
-      0.5 * colSums(pieces$D2[, , match(ja, pieces$second), drop = TRUE])
+  live <- vapply(items, function(it) {
+    raw <- 0.5 * (it$s^2 + it$uHu)
+    D <- colSums(it$s * it$Hu) + 0.5 * colSums(it$D2u)
     !.ctScoreDetermined(raw + as.numeric(S %*% (Iinv %*% D)), raw)
   }, logical(1))
-  het <- het[live]; Hr <- Hr[live]
-  K <- length(het)
+  items <- items[live]
+  K <- length(items)
   if (K < 2L) return(NULL)
   C <- array(0, c(n, K, K))
   for (a in seq_len(K)) for (b in a:K) {
-    ja <- het[a]; jb <- het[b]
-    base <- 0.5 * (S[, ja] * S[, jb] + Hr[[a]][, jb])
-    D <- 0.5 * (colSums(S[, ja] * Hr[[b]]) + colSums(S[, jb] * Hr[[a]]))
-    if (a == b) D <- colSums(S[, ja] * Hr[[a]]) +
-      0.5 * colSums(pieces$D2[, , match(ja, pieces$second), drop = TRUE])
+    ia <- items[[a]]; ib <- items[[b]]
+    base <- 0.5 * (ia$s * ib$s + as.numeric(ia$Hu %*% ib$u))
+    D <- 0.5 * (colSums(ia$s * ib$Hu) + colSums(ib$s * ia$Hu))
+    if (a == b) D <- colSums(ia$s * ia$Hu) + 0.5 * colSums(ia$D2u)
     C[, a, b] <- C[, b, a] <- base + as.numeric(S %*% (Iinv %*% D))
   }
   T <- apply(C, c(2, 3), sum)
@@ -786,7 +913,7 @@ ctScoreTest <- function(fit, covariates = NULL,
   u <- e$vectors[, 1] / sqrt(dsd)
   u <- u / u[which.max(abs(u))]
   list(lambda = lambda, p = .ctScoreBoot(matrix(C, n, K * K), nboot, statistic = largest),
-    direction = stats::setNames(u, ptab$name[het])[order(-abs(u))])
+    direction = stats::setNames(u, ptab$name[vapply(items, function(it) as.integer(it$j), 0L)])[order(-abs(u))])
 }
 
 # Whether a projected contribution is one the fitted scores already determine:
@@ -1776,9 +1903,15 @@ print.ctScoreTest <- function(x, digits = 3, top = 10, ...) {
   for (e in names(x$info$errors)) cat("Not tested, ", e, ": ", x$info$errors[[e]], "\n", sep = "")
   withclass <- function(d, cols) if (any(!is.na(d$class))) c(cols, 'class') else cols
   if (!is.null(x$heterogeneity)) {
+    h <- x$heterogeneity
     cat("\nUnmodelled heterogeneity (one-sided; sd is the one-step estimate, raw scale):\n")
-    fmt(x$heterogeneity[, withclass(x$heterogeneity, c('parameter', 'z', 'p', 'p_adj',
-      'sd', 'sd_natural'))])
+    initial <- 'initial' %in% names(h) && any(!is.na(h$initial))
+    fmt(h[, withclass(h, c('parameter', 'z', 'p', 'p_adj', 'sd', 'sd_natural',
+      if (initial) 'initial'))])
+    if (initial && any(h$initial %in% 'equilibrium')) cat("A CINT row with initial ",
+      "'equilibrium' moves each subject's initial means with their intercept, so\n",
+      "each starts at their own equilibrium: a random intercept. To act, let the ",
+      "CINT and T0MEANS parameters vary.\n", sep = "")
   }
   if (!is.null(x$dimension)) {
     d <- x$dimension
