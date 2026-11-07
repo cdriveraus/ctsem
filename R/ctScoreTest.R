@@ -225,7 +225,8 @@
 #'
 #' @section Fixed cells: For each cell the model fixes at zero that could
 #'   sensibly be freed -- a \code{DRIFT} cross effect, a \code{DIFFUSION} or
-#'   \code{MANIFESTVAR} covariance, a \code{LAMBDA} cross loading, a
+#'   \code{MANIFESTVAR} covariance between two that have a variance, a
+#'   \code{LAMBDA} cross loading, a
 #'   \code{TDPREDEFFECT} -- the score test of freeing it: the modification
 #'   index (Sorbom, 1989), with \code{estimate} the expected parameter change.
 #'   \code{CINT} and \code{MANIFESTMEANS} are not offered, since with the
@@ -1583,6 +1584,12 @@ ctScoreTest <- function(fit, covariates = NULL,
   # would make a clock wander, and a covariance with nothing has no meaning.
   quiet <- pars$row[pars$matrix %in% 'DIFFUSION' & pars$row == pars$col & free &
     !is.na(value) & value == 0]
+  # Likewise an indicator measured without error: a covariance between errors
+  # with no variance is sd times sd times a correlation, zero along every
+  # direction, and printed as an empty row (the book's FI-CLPM, MANIFESTVAR
+  # fixed at 0).
+  exact <- pars$row[pars$matrix %in% 'MANIFESTVAR' & pars$row == pars$col & free &
+    !is.na(value) & value == 0]
   # Nor a drift into a latent a 'stationary' initial condition needs: it would
   # make the driving latent one too, and its dynamics, which the other
   # families extend, fixed (`.ctScoreStateModel`).
@@ -1591,7 +1598,8 @@ ctScoreTest <- function(fit, covariates = NULL,
     (pars$matrix %in% 'DRIFT' & pars$row != pars$col & !pars$row %in% c(quiet, closed)) |
       (pars$matrix %in% 'DIFFUSION' & pars$row > pars$col & !pars$row %in% quiet &
         !pars$col %in% quiet) |
-      (pars$matrix %in% 'MANIFESTVAR' & pars$row > pars$col) |
+      (pars$matrix %in% 'MANIFESTVAR' & pars$row > pars$col & !pars$row %in% exact &
+        !pars$col %in% exact) |
       (pars$matrix %in% 'TDPREDEFFECT' & !pars$row %in% quiet) |
       pars$matrix %in% 'LAMBDA'))
   ns <- asNamespace('ctsem')

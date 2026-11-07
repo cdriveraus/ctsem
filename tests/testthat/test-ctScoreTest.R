@@ -213,6 +213,20 @@ test_that("a varying intercept is tested with its covariance with the initial st
   expect_equal(ss$heterogeneity$df[ss$heterogeneity$parameter == 'cint'], 1L)
 })
 
+test_that("a measurement error covariance is offered only between errors with a variance", {
+  # With the error variances fixed at zero (the book's FI-CLPM) a covariance
+  # between the errors has no direction, and printed as an empty row.
+  m <- function(MANIFESTVAR) suppressMessages(ctModel(type = 'ct',
+    manifestNames = c('Y1', 'Y2'), latentNames = c('eta1', 'eta2'),
+    LAMBDA = diag(2), MANIFESTVAR = MANIFESTVAR))
+  cells <- function(model) ctsem:::.ctScoreFixedModel(model)$terms$cell
+  expect_false(any(grepl('^MANIFESTVAR', cells(m(matrix(0, 2, 2))))))
+  expect_true('MANIFESTVAR[Y2,Y1]' %in%
+    cells(m(matrix(c('mvar1', 0, 0, 'mvar2'), 2, 2, byrow = TRUE))))
+  expect_false('MANIFESTVAR[Y2,Y1]' %in%
+    cells(m(matrix(c('mvar1', 0, 0, 0), 2, 2, byrow = TRUE))))
+})
+
 test_that("a drift that depends on the state is found by the extended model", {
   # A strong dependence (the drift moves by 0.4 across the state's range). On
   # such data the fitted model's curvature at the null can be indefinite in the

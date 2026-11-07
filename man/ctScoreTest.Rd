@@ -278,7 +278,8 @@ before interpreting their sizes.
 \section{Fixed cells}{
  For each cell the model fixes at zero that could
   sensibly be freed -- a \code{DRIFT} cross effect, a \code{DIFFUSION} or
-  \code{MANIFESTVAR} covariance, a \code{LAMBDA} cross loading, a
+  \code{MANIFESTVAR} covariance between two that have a variance, a
+  \code{LAMBDA} cross loading, a
   \code{TDPREDEFFECT} -- the score test of freeing it: the modification
   index (Sorbom, 1989), with \code{estimate} the expected parameter change.
   \code{CINT} and \code{MANIFESTMEANS} are not offered, since with the
