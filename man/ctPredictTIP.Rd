@@ -35,7 +35,7 @@ Can be problematic for systems with many dimensions.}
 
 \item{plot}{A logical value indicating whether to ggplot the results instead of returning a data.frame of predictions. Default is TRUE.}
 
-\item{quantiles}{A numeric vector specifying the quantiles of the time independent predictors to plot. Default is 1SD either side and the median, c(.32,.5,.68).}
+\item{quantiles}{A numeric vector specifying the quantiles of the time independent predictors to plot. Default is c(.16,.5,.84): the median, and one standard deviation either side for a normally distributed predictor.}
 
 \item{discreteTimeQuantiles}{a numeric vector of length 3 specifying the quantiles of the discrete time points to plot, when 
 showUncertainty is TRUE.}
@@ -45,7 +45,7 @@ showUncertainty is TRUE.}
 when \code{doDynamics=TRUE}. Arguments matching
 \code{ctDiscreteParsPlot} are automatically routed to the plot call.
 Internally controlled arguments \code{fit}, \code{ctstanfitobj}, \code{plot},
-\code{subjects}, \code{impulseType} (and its deprecated spelling
+\code{subjects}, \code{realid}, \code{impulseType} (and its deprecated spelling
 \code{observational}), \code{x}, \code{quantiles}, and
 \code{splitSubjects} are ignored if supplied.}
 

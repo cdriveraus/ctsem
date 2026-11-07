@@ -590,6 +590,54 @@ test_that("ctPredictTIP builds its covariate grid on a backend fit", {
   expect_error(ctPredictTIP(plain, plot = FALSE), "no time independent predictors")
 })
 
+test_that("ctPredictTIP labels each dynamics curve by its own predictor value", {
+  skip_without_julia()
+  # ctsem numbers the pseudo-subjects by their ids as strings, so "z = -0.2"
+  # comes before "z = -1.5", and every "a = ..." before every "z = ...". The
+  # dynamics panels once took the subjects and their labels by position, which
+  # swapped the two negative values' curves and gave z's panel a's subjects.
+  # Here z slows the decay and a does nothing, so z's curves must be ordered by
+  # their labels and a's must coincide.
+  set.seed(11)
+  data <- do.call(rbind, lapply(1:30, function(i) {
+    z <- stats::rnorm(1)
+    drift <- -exp(-1 + 1.2 * z)
+    time <- cumsum(c(0, stats::runif(11, .5, 1.5)))
+    x <- stats::rnorm(1, 0, sqrt(1 / (2 * -drift)))
+    for (t in 2:12) {
+      a <- exp(drift * (time[t] - time[t - 1]))
+      x[t] <- a * x[t - 1] + stats::rnorm(1, 0, sqrt((1 - a^2) / (2 * -drift)))
+    }
+    data.frame(id = i, time = time, Y1 = x + stats::rnorm(12, 0, .3), z = z,
+      a = stats::rnorm(1))
+  }))
+  model <- suppressWarnings(ctModel(type = "ct", n.latent = 1, n.manifest = 1,
+    LAMBDA = matrix(1), MANIFESTVAR = matrix(.3), MANIFESTMEANS = matrix(0),
+    T0MEANS = matrix(0), CINT = matrix(0), DRIFT = matrix("drift"),
+    DIFFUSION = matrix("diff"), n.TIpred = 2, TIpredNames = c("z", "a"),
+    tipredDefault = FALSE))
+  model$pars$z_effect[model$pars$param == "drift"] <- TRUE
+  fit <- suppressMessages(ctFit(data, model, verbose = 0))
+
+  values <- cbind(z = c(-1.5, -.2, 1), a = c(-1, -.5, .5))
+  plots <- suppressWarnings(suppressMessages(ctPredictTIP(fit, TIPvalues = values,
+    dynamicsControl = list(times = c(0, 1, 2)), showUncertainty = FALSE,
+    timestep = .5)))
+  at1 <- function(panel) {
+    d <- as.data.frame(panel$data)
+    d <- d[d$`Time interval` == 1, ]
+    tapply(d$value, as.numeric(as.character(d$CovariateValue)), stats::median)
+  }
+  for (type in c("Independent", "Correlated")) {
+    z <- at1(plots$Dynamics[[type]]$z)
+    expect_equal(as.numeric(names(z)), values[, "z"])
+    expect_true(all(diff(z) < 0), info = paste(type, paste(signif(z, 3), collapse = " ")))
+    a <- at1(plots$Dynamics[[type]]$a)
+    expect_equal(as.numeric(names(a)), values[, "a"])
+    expect_lt(diff(range(a)), 1e-8)
+  }
+})
+
 # That prediction warns for an intoverstates=FALSE julia fit, as Stan's does,
 # is asserted in test-julia-intoverstates.R, on the joint-density fit that file
 # already makes; it was fitted a second time here, identically, to ask it.

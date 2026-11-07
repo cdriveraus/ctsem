@@ -305,7 +305,7 @@ ctStanKalman <- ctKalmanArray
 #' Can be problematic for systems with many dimensions.
 #' @param timestep A numeric value specifying the time step for predictions. Default is 'auto', which tries to automatically determine an appropriate time step.
 #' @param plot A logical value indicating whether to ggplot the results instead of returning a data.frame of predictions. Default is TRUE.
-#' @param quantiles A numeric vector specifying the quantiles of the time independent predictors to plot. Default is 1SD either side and the median, c(.32,.5,.68).
+#' @param quantiles A numeric vector specifying the quantiles of the time independent predictors to plot. Default is c(.16,.5,.84): the median, and one standard deviation either side for a normally distributed predictor.
 #' @param discreteTimeQuantiles a numeric vector of length 3 specifying the quantiles of the discrete time points to plot, when 
 #' showUncertainty is TRUE.
 #' @param dynamicsControl A named list of additional arguments to pass to
@@ -313,7 +313,7 @@ ctStanKalman <- ctKalmanArray
 #' when \code{doDynamics=TRUE}. Arguments matching
 #' \code{ctDiscreteParsPlot} are automatically routed to the plot call.
 #' Internally controlled arguments \code{fit}, \code{ctstanfitobj}, \code{plot},
-#' \code{subjects}, \code{impulseType} (and its deprecated spelling
+#' \code{subjects}, \code{realid}, \code{impulseType} (and its deprecated spelling
 #' \code{observational}), \code{x}, \code{quantiles}, and
 #' \code{splitSubjects} are ignored if supplied.
 #' @param showUncertainty A logical value indicating whether to plot the uncertainty of the predictions. Default is TRUE.
@@ -339,7 +339,7 @@ ctPredictTIP <- function(sf,tipreds='all',subject=NULL,timestep='auto',doDynamic
   if(length(dynamicsControl) > 0 && (is.null(names(dynamicsControl)) || any(names(dynamicsControl) == ''))){
     stop('dynamicsControl must be a named list')
   }
-  dynamicsControl[names(dynamicsControl) %in% c('fit','ctstanfitobj','plot','subjects','observational','impulseType','x',
+  dynamicsControl[names(dynamicsControl) %in% c('fit','ctstanfitobj','plot','subjects','realid','observational','impulseType','x',
     'quantiles','splitSubjects')] <- NULL
   dynamicsPlotControl <- dynamicsControl[names(dynamicsControl) %in% names(formals(ctDiscreteParsPlot))]
   dynamicsControl <- dynamicsControl[!names(dynamicsControl) %in% names(dynamicsPlotControl)]
@@ -373,14 +373,27 @@ ctPredictTIP <- function(sf,tipreds='all',subject=NULL,timestep='auto',doDynamic
   dat[,ctmb$manifestNames] <- NA #set all manifest obs to missing
   
   TIPvalues <- matrix(apply(TIPvalues,2,function(x) sort(x)),ncol=ncol(TIPvalues)) #sort ascending to get plot colours correct
-  
+
+  # One pseudo-subject per predictor value, its id naming both. ctsem numbers
+  # subjects in the order of their ids as strings, so "TI2 = -0.03" comes
+  # before "TI2 = -1.02", and a predictor's ids need not follow the order of
+  # `tipreds` either: everything below finds a pseudo-subject by its id, never
+  # by its position. Values are rounded to as few places (two at least) as keep
+  # them apart, since two values sharing an id would be one subject.
+  tipids <- matrix(NA_character_, nrow(TIPvalues), length(tipreds))
+  for(tipi in seq_along(tipreds)){
+    digits <- 2
+    while(anyDuplicated(round(TIPvalues[,tipi],digits)) && digits < 15) digits <- digits + 1
+    tipids[,tipi] <- paste0(tipreds[tipi],' = ',round(TIPvalues[,tipi],digits))
+  }
+
   fulldat <- dat[c(),]
   for(tipi in 1:length(tipreds)){ #for each tipred
     for(vali in 1:nrow(TIPvalues)){ #for each tipred value
       tdat <- dat #copy the data
       tdat[,ctmb$TIpredNames] <- 0 #set all covariates to zero
       tipvali <- TIPvalues[vali,tipi] #get the tipred value
-      tdat[[ctmb$subjectIDname]] <- paste0(tipreds[tipi],' = ',round(tipvali,2)) #modify the subject ID
+      tdat[[ctmb$subjectIDname]] <- tipids[vali,tipi] #modify the subject ID
       tdat[,tipreds[tipi]] <- tipvali #set the tipred value to the quantile or value specified
       if(nrow(fulldat)==0){
         fulldat <- tdat #output to full dataset
@@ -398,7 +411,7 @@ ctPredictTIP <- function(sf,tipreds='all',subject=NULL,timestep='auto',doDynamic
     Sample <- Col <- CovariateValue <- Effect <- Subject<- NULL #local variables for ggplot
     gglist <- list(Process=list(Observed=list(),Latent=list()),Dynamics=list(Independent=list(),Correlated=list())) #empty list
     for(tipi in 1:length(tipreds)){ #for each tipred
-      ks <- k[grepl(paste0('^',tipreds[tipi],' = '),k$Subject),] #subset to tipred
+      ks <- k[as.character(k$Subject) %in% tipids[,tipi],] #subset to tipred
       ks$Subject <- factor(as.numeric(gsub('^.* = ','',ks$Subject))) #extract the subject value
 
       
@@ -449,14 +462,20 @@ ctPredictTIP <- function(sf,tipreds='all',subject=NULL,timestep='auto',doDynamic
           discreteParsArgs <- c(dynamicsControl, list(
             fit=sf,
             plot=FALSE,
-            subjects=(tipi-1)*nrow(TIPvalues) + 1:nrow(TIPvalues),
+            subjects=tipids[,tipi], realid=TRUE,
             impulseType = if(typei %in% 'Independent') 'unit' else 'observed'))
           ctd=do.call(ctDiscretePars, discreteParsArgs)
+          # Labelled by id, in ctsem's order; relabel each by its row of
+          # TIPvalues, as the context dependent panel labels them.
+          dimnames(ctd)$Subject <- match(dimnames(ctd)$Subject, tipids[,tipi])
           }
           if(showUncertainty) ctdQuantiles <- discreteTimeQuantiles else ctdQuantiles <- c(.5,.5,.5)
           ctdp=do.call(ctDiscreteParsPlot, c(dynamicsPlotControl,
             list(x=ctd,quantiles=ctdQuantiles,splitSubjects = TRUE)))
-          ctdp$data$CovariateValue <- factor(round(TIPvalues[ctdp$data$Subject,tipi],3))
+          # Subject is a factor: index by the row it names, not by its codes,
+          # which order "10" before "2".
+          ctdp$data$CovariateValue <- factor(round(
+            TIPvalues[as.integer(as.character(ctdp$data$Subject)),tipi],3))
           
           ctdp=ctdp+aes(colour=CovariateValue,fill=CovariateValue)+
             facet_wrap(vars(Effect))+theme(legend.position = 'bottom')+
