@@ -109,4 +109,14 @@ test_that("the plot's data are the quantiles of the draws at each lag", {
     splitSubjects = FALSE)$data)
   z <- c(x[, , 3, 2, 1])
   expect_equal(pooled$value[pooled$`Time interval` == times[3]], stats::median(z))
+  # Two limits zoom the plot, and the band keeps every interval: `ylim()`
+  # dropped those reaching past the limits, and the scalar test of `ylim`
+  # stopped every call that gave two.
+  zoomed <- ctDiscreteParsPlot(x, indices = rbind(c(2, 1)), ylim = c(-.5, .5))
+  expect_equal(zoomed$coordinates$limits$y, c(-.5, .5))
+  built <- ggplot2::ggplot_build(zoomed)
+  expect_equal(nrow(built$data[[1]]), nrow(d))
+  expect_true(all(is.finite(built$data[[1]]$ymin)))
+  expect_s3_class(ctDiscreteParsPlot(x, indices = rbind(c(2, 1)),
+    facets = c('Subject', 'Effect')), 'ggplot')
 })
