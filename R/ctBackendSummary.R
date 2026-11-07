@@ -529,8 +529,19 @@ ctBackendParMatrices <- function(fit, raw = NULL, tipreds = NULL, state = NULL,
     covariance[, present, present] <- covariance[, present, present, drop = FALSE] +
       levelcov[, at[present], at[present], drop = FALSE]
   }
+  # A draw whose covariance or raw values are not finite gets NA, as the
+  # summaries' other non-finite draws do (their quantiles drop them); its
+  # cubature points stay at the others' first draw so the engine sees finite
+  # values. A draw along an unidentified correlation reaches coordinates of
+  # several hundred, past where the 'z' construction's exponential overflows,
+  # and one such draw of 1000 made eigen() stop the whole fit (the book's
+  # quadratic trend model, seeds 5 and 6).
+  usable <- apply(is.finite(covariance), 1L, all) & apply(is.finite(full), 1L, all)
+  if (!any(usable)) return(array(NA_real_, c(ndraws, nlatent, nlatent)))
+  full[!usable, ] <- matrix(full[which(usable)[1L], ], sum(!usable), ncol(full),
+    byrow = TRUE)
   roots <- array(0, c(ndraws, m, m))
-  for (draw in seq_len(ndraws)) {
+  for (draw in which(usable)) {
     roots[draw, , ] <- .ctSymRoot(matrix(covariance[draw, , ], m, m))
   }
   stacked <- do.call(rbind, unlist(lapply(seq_len(m), function(j) {
@@ -554,6 +565,7 @@ ctBackendParMatrices <- function(fit, raw = NULL, tipreds = NULL, state = NULL,
   for (i in seq_len(nlatent)) for (k in seq_len(i)) {
     out[, i, k] <- out[, k, i] <- rowMeans(deviation[[i]] * deviation[[k]])
   }
+  out[!usable, , ] <- NA_real_
   out
 }
 

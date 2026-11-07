@@ -547,8 +547,8 @@ test_that("summary reports fixed effects and system matrices, with intervals onl
   # its path: the default fit reached -205.827 before the endgame moved into
   # the engine and has reached -207.019 since, converged and certified both
   # times. What a flat ray looks like in the report is a question at any
-  # maximum, so it is asked at the one a default fit certifies;
-  # `test-ctFitProfile.R` is where the higher is found.
+  # maximum, so it is asked at -207.019; `test-ctFitProfile.R` is where the
+  # higher is found.
   #
   # One diffusion correlation is on a flat ray at both: its raw coordinate sits
   # far out on its transform (past -15 at the higher, -7.4 at the lower), and
@@ -561,8 +561,16 @@ test_that("summary reports fixed effects and system matrices, with intervals onl
   # candidates and the likelihood decide, against the likelihood-ratio bound.
   # It warns twice, about the flat ray by name -- the Hessian repair and the
   # identifiability report -- which is the finding checked field by field below.
+  #
+  # Started at the -207.019 maximum, since which maximum a start reaches is
+  # the optimiser's business and this is about the report: from the default
+  # start, without the transform metric (juliaFit 8279cf4b), 2 starts of 5
+  # end at -210.133 instead, the drift diagonals far out at the white-noise
+  # limit, where four directions are flat.
   fitted <- suppressWarnings(suppressMessages(ctFit(data, model,
-    backend = "julia", verbose = 0)))
+    backend = "julia", verbose = 0,
+    inits = c(-1.09, 8.17, -4.34, 0.34, -0.91, -7.08, -1.44, -1.07, -0.09, -1.22))))
+  expect_equal(fitted$estimate$loglik, -207.019, tolerance = 1e-3)
   expect_identical(fitted$uncertainty$certification$status, "certified")
   # estonly: ctFit() finishes with ctOptimUncertainty() as the Stan path does,
   # and the first assertions are about the point-estimate-only fit -- the one
@@ -987,6 +995,27 @@ test_that("T0cov adds every level's random T0MEANS covariance on the Laplace rou
   # block twice.
   sm <- ctExtract(fit, subjectMatrices = TRUE)$subj_T0cov
   expect_equal(unname(sm[1, 1, , ]), engine, tolerance = 1e-8)
+
+  # A draw whose population covariance is not finite -- one far along an
+  # unidentified correlation, past where the 'z' construction's exponential
+  # overflows -- reports NA there and leaves the others alone. It made eigen()
+  # stop the whole fit.
+  level <- spec$laplace$levels[[1]]
+  far <- raw
+  far[level$cor_index] <- rep_len(c(1000, -1000, 1000, 1000, -1000, 1000),
+    length(level$cor_index))
+  draws <- rbind(raw, far, raw)
+  layout <- ctsem:::.ctBackendSummaryLayout(fit)
+  flat <- ctsem:::.ctBackendParMatricesFlat(fit, t(draws))
+  popcov <- ctsem:::.ctBackendRawPopCovMatrix(layout, flat,
+    ctsem:::.ctBackendPopulationLevels(spec)[[1]]$matrix)
+  expect_false(all(is.finite(popcov[2, , ])))
+  block <- ctsem:::.ctBackendT0MeansPopulation(fit,
+    ctsem:::.ctBackendRawFull(fit, draws), layout, flat)
+  expect_true(all(is.na(block[2, , ])))
+  expect_true(all(is.finite(block[c(1, 3), , ])))
+  expect_equal(block[1, , ], block[3, , ])
+  expect_equal(block[1, , ], .t0cov_expected(fit, raw), tolerance = 1e-6)
 })
 
 test_that("T0cov is unchanged without random T0MEANS, and on the augmented route", {
