@@ -118,17 +118,24 @@ be negative, so that part is one sided; `LM` is referred to an equal mixture of
 chi-squares on `df - 1` and `df`. The covariances matter most for an intercept:
 one that varies independently of where each subject starts makes subjects
 drift apart from a common start, whereas the same intercept correlated with the
-initial state is a random intercept. The drift of `eta1` is flagged, and so is its diffusion. That is expected rather than a second
-finding: a subject whose process regulates more slowly also varies more, so
-the subjects disagree about the diffusion too. The test says that the subjects
-differ, and roughly where; it cannot always say which of two related
-parameters is the source. The way to find out is to relax the strongest
-candidate and test again.
+initial state is a random intercept. `z` is the variance alone, and `p` the
+stronger of the two tests.
+
+The drift of `eta1` is flagged, on its variance alone (`z`). Other rows answer
+too, mostly through their covariances (`LM` large where `z` is small): the
+cross effect of `eta2` on `eta1`, and the diffusion of `eta2`. That is expected
+rather than further findings. A drift that varies between subjects, left out of
+the model, changes how each subject's data relate to their starting point and
+to their intercepts, and the other parameters' scores carry some of that. The
+test says that the subjects differ, and roughly where; it cannot always say
+which of several related parameters is the source. The way to find out is to
+relax the strongest candidate and test again.
 
 The line under the table tests every direction at once: whether the subjects
 vary along some combination of these parameters, which no single row would
-isolate when the variation is spread over several of them. Here one parameter
-carries the variation, and its own row is the sharper test. On a model whose
+isolate when the variation is spread over several of them, its covariances
+with what already varies held at zero. Here one parameter carries the
+variation, and its own row is the sharper test. On a model whose
 population covariance has reduced rank (`poprank`) the rows test variation
 outside the shared dimensions, and the line is not given: in simulation the
 rows found a missing dimension far more often.
@@ -141,8 +148,9 @@ c(loglik_without = fit1$estimate$loglik, loglik_with = fit1b$estimate$loglik)
 ctScoreTest(fit1b, tests = "heterogeneity")
 ```
 
-With the drift free to vary the log likelihood rises by about 12, and
-nothing else stands out: the diffusion's signal was the drift's. (A drift that
+With the drift free to vary the log likelihood rises by about 11, and
+nothing else stands out once the tests are adjusted for their number
+(`p_adj`): the other rows' signals were the drift's. (A drift that
 varies between subjects enters the filter nonlinearly, so `ctFit()` chose the
 Laplace route for the refit; the tests work on either.)
 
