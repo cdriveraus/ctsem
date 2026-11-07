@@ -22,7 +22,6 @@ qcolnames <- function(quantiles = c(.025, .5, .975)) paste0("Q", quantiles * 100
 test_that("quantile bands are estimated when every variable can be tuned", {
   skip_on_cran()
   skip_if_not_installed("qgam")
-  skip_if_not_installed("collapse")
 
   q <- suppressWarnings(suppressMessages(ctsem:::ctACFquantiles(acfsamples(8))))
 
@@ -35,7 +34,6 @@ test_that("quantile bands are estimated when every variable can be tuned", {
 test_that("a panel too short to tune skips the band rather than erroring", {
   skip_on_cran()
   skip_if_not_installed("qgam")
-  skip_if_not_installed("collapse")
 
   ac <- acfsamples(4)
   expect_lt(length(unique(ac$TimeInterval)), 4) # short enough that tuning fails
@@ -66,7 +64,6 @@ test_that("a panel too short to tune skips the band rather than erroring", {
 test_that("a variable that cannot be tuned leaves its own band NA and keeps the rest", {
   skip_on_cran()
   skip_if_not_installed("qgam")
-  skip_if_not_installed("collapse")
 
   long <- acfsamples(8)
   # 'short' carries only two distinct time intervals, so its spline cannot be
@@ -88,7 +85,6 @@ test_that("a variable that cannot be tuned leaves its own band NA and keeps the 
 })
 
 test_that("cross correlations keep lag 0, autocorrelations drop it", {
-  skip_if_not_installed("collapse")
 
   # Y2 shares Y1's value at the same occasion only, so the cross correlation is
   # large at lag 0 and near zero elsewhere. Lag 0 used to be dropped for cross
@@ -179,4 +175,148 @@ test_that("plotctACF draws the weighted spline by default, the quantile spline o
   gq <- suppressWarnings(suppressMessages(plotctACF(ac, reducedXlim = 0, method = "quantile")))
   expect_s3_class(gq, "ggplot")
   expect_error(plotctACF(ac, method = "nonsense"))
+})
+
+# The lag correlations, computed directly: every ordered pair of rows (a, b) of a
+# subject, a's time minus b's rounded to the nearest whole timestep, and the
+# correlation of x at a with y at b over the pairs at each lag, pooled over
+# subjects. ctACF() once took the lags from a grid of doubles that drifted off the
+# observed times, so most pairs fell at the wrong lag: on whole days in weeks, the
+# lag of one day rested on 25 of 464 pairs and read 0.44 for white noise.
+directlagcor <- function(d, x, y, timestep, nlag) {
+  out <- list()
+  for (s in unique(d$id)) {
+    ds <- d[d$id == s, ]
+    ab <- expand.grid(a = seq_len(nrow(ds)), b = seq_len(nrow(ds)))
+    u <- ds$time[ab$a] - ds$time[ab$b]
+    out[[length(out) + 1]] <- data.frame(lag = sign(u) * floor(abs(u) / timestep + 0.5),
+      x = ds[[x]][ab$a], y = ds[[y]][ab$b])
+  }
+  p <- do.call(rbind, out)
+  p <- p[!is.na(p$x) & !is.na(p$y) & abs(p$lag) <= nlag, ]
+  if (x == y) p <- p[p$lag >= 1, ]
+  res <- do.call(rbind, lapply(split(p, p$lag), function(q)
+    data.frame(lag = q$lag[1], Pairs = nrow(q), ACF = stats::cor(q$x, q$y))))
+  res[res$Pairs >= 3, ]
+}
+
+# Two gappy variables, x autocorrelated and y driven by it, at the given times.
+gappypanel <- function(times, seed) {
+  set.seed(seed)
+  d <- do.call(rbind, lapply(seq_along(times), function(i) {
+    t <- times[[i]]
+    x <- numeric(length(t))
+    x[1] <- stats::rnorm(1)
+    for (r in seq_along(t)[-1]) x[r] <- exp(-(t[r] - t[r - 1]) / 2) * x[r - 1] + stats::rnorm(1, 0, .6)
+    data.frame(id = i, time = t, x = x + stats::rnorm(1), y = .6 * x + stats::rnorm(length(t)))
+  }))
+  d$x[stats::runif(nrow(d)) < .2] <- NA
+  d$y[stats::runif(nrow(d)) < .2] <- NA
+  d[sample(nrow(d)), ] # unsorted, as data may come
+}
+
+expect_matches_direct <- function(d, timestep, time.max) {
+  ac <- suppressMessages(ctACF(d, varnames = c("x", "y"), timestep = timestep,
+    time.max = time.max, nboot = 0, plot = FALSE))
+  if (identical(timestep, "auto")) {
+    d <- d[order(d$id, d$time), ]
+    timestep <- 0.5 * stats::median(unlist(lapply(split(d$time, d$id), diff)))
+  }
+  nlag <- ceiling(time.max / timestep)
+  for (v in list(c("x", "x"), c("y", "y"), c("x", "y"), c("y", "x"))) {
+    name <- if (v[1] == v[2]) v[1] else paste0(v[1], "_", v[2])
+    direct <- directlagcor(d, v[1], v[2], timestep, nlag)
+    got <- ac[Variable == name]
+    expect_equal(got$TimeInterval, direct$lag * timestep, tolerance = 1e-12)
+    expect_equal(got$Pairs, direct$Pairs)
+    expect_equal(got$ACF, direct$ACF, tolerance = 1e-10)
+  }
+  invisible(ac)
+}
+
+test_that("ctACF gives the pooled correlation of the pairs at each lag, on irregular gappy data", {
+  # continuous, irregular times
+  set.seed(3)
+  times <- lapply(1:25, function(i) cumsum(stats::rexp(sample(8:20, 1), 1)))
+  ac <- expect_matches_direct(gappypanel(times, 4), timestep = .5, time.max = 4)
+  expect_gt(ac[Variable == "x" & TimeInterval == .5]$ACF, .4) # x is autocorrelated...
+  expect_gt(ac[Variable == "x_y" & TimeInterval == 0]$ACF, .3) # ...and y moves with it
+
+  # whole days in weeks, as the book's data: the timestep from the data is a
+  # rounding error away from 1/7, and the lag of one day takes every pair a day apart
+  set.seed(5)
+  times <- lapply(1:25, function(i) sort(sample(0:60, sample(10:25, 1))) / 7)
+  ac <- expect_matches_direct(gappypanel(times, 6), timestep = "auto", time.max = 2)
+})
+
+test_that("on white noise at whole days in weeks the lag one day correlation is near zero", {
+  set.seed(7)
+  # intervals of 1-3 days with a median of 2, so the timestep from the data is a day
+  d <- do.call(rbind, lapply(1:150, function(i) {
+    t <- cumsum(c(0, sample(c(1, 2, 2, 3), sample(5:30, 1), replace = TRUE))) / 7
+    data.frame(id = i, time = t, X = stats::rnorm(length(t)))
+  }))
+  ac <- suppressMessages(ctACF(d, varnames = "X", nboot = 0, plot = FALSE))
+  oneday <- ac[abs(TimeInterval - 1/7) < 1e-9]
+  dd <- data.table::as.data.table(d)[order(id, time)]
+  dd[, `:=`(dt = time - data.table::shift(time), Xl = data.table::shift(X)), by = id]
+  expect_equal(oneday$Pairs, dd[abs(dt * 7 - 1) < 1e-9, .N])
+  expect_lt(abs(oneday$ACF), 3 / sqrt(oneday$Pairs))
+})
+
+test_that("bootstrap samples resample subjects around the data's estimate", {
+  set.seed(8)
+  d <- data.frame(id = rep(1:60, each = 20), time = rep(1:20, 60), X = stats::rnorm(1200))
+  ac <- suppressMessages(ctACF(d, varnames = "X", timestep = 1, time.max = 5, nboot = 200, plot = FALSE))
+  expect_setequal(unique(ac$Sample), 0:200)
+  boot <- ac[Sample > 0, list(m = mean(ACF), s = stats::sd(ACF)), by = TimeInterval]
+  full <- ac[Sample == 0]
+  # white noise: the spread over resampled subjects is the sampling error of a
+  # correlation from that many pairs, and centres on the data's estimate
+  expect_true(all(boot$s / (1 / sqrt(full$Pairs)) > .7 & boot$s / (1 / sqrt(full$Pairs)) < 1.4))
+  expect_true(all(abs(boot$m - full$ACF) < 3 * boot$s / sqrt(200)))
+})
+
+test_that("center and scale act within subjects, whatever the id column is called", {
+  set.seed(9)
+  d <- data.frame(Subject = rep(1:30, each = 15), Time = rep(1:15, 30))
+  d$X <- rep(stats::rnorm(30, 0, 2), each = 15) + stats::rnorm(450) * rep(stats::runif(30, .5, 2), each = 15)
+  manual <- d
+  manual$X <- stats::ave(d$X, d$Subject, FUN = function(x) (x - mean(x)) / stats::sd(x))
+  args <- list(varnames = "X", idcol = "Subject", timecol = "Time", timestep = 1, time.max = 4,
+    nboot = 0, plot = FALSE)
+  both <- suppressMessages(do.call(ctACF, c(list(d, center = TRUE, scale = TRUE), args)))
+  expect_equal(both, suppressMessages(do.call(ctACF, c(list(manual), args))))
+  # person means, removed, take the stable differences out of every lag
+  raw <- suppressMessages(do.call(ctACF, c(list(d), args)))
+  centred <- suppressMessages(do.call(ctACF, c(list(d, center = TRUE), args)))
+  expect_true(all(raw$ACF > .3))
+  expect_true(all(abs(centred$ACF) < .2))
+})
+
+test_that("ctDiscretiseData puts every time on a grid of equal steps", {
+  # whole days in weeks, with a timestep a rounding error away from a day, used
+  # to leave observations beside grid rows at nearly the same time
+  d <- data.frame(id = rep(1:2, c(4, 3)), time = c(1, 2, 4, 7, 3, 4, 9) / 7, X = 1:7)
+  step <- 1/7 + 4e-16 # as half the median interval of the book's data came out
+  g <- ctDiscretiseData(d, timestep = step)
+  expect_equal(nrow(g), 7 + 7) # days 1-7 and 3-9
+  for (i in 1:2) {
+    gi <- g[g$id == i, ]
+    expect_equal(diff(gi$time), rep(step, nrow(gi) - 1), tolerance = 1e-12)
+    expect_equal(gi$time[1], min(d$time[d$id == i])) # each subject's grid starts at its first time
+  }
+  expect_equal(g$X[!is.na(g$X)], d$X)
+  expect_equal(g$time[!is.na(g$X)], d$time, tolerance = 1e-12)
+
+  # values that land on one grid point are averaged, and said so
+  d2 <- data.frame(id = 1, time = c(0, .9, 1.1, 2.6), X = c(1, 2, 4, 8))
+  expect_warning(g2 <- ctDiscretiseData(d2, timestep = 1), "1 cells of data removed")
+  expect_equal(g2$time, 0:3)
+  expect_equal(g2$X, c(1, 3, NA, 8))
+
+  # a variable absent at an occupied time is missing, not the mean of nothing
+  d3 <- data.frame(id = 1, time = 0:1, X = c(1, NA), Y = c(1, 2))
+  g3 <- ctDiscretiseData(d3, timestep = 1)
+  expect_identical(g3$X, c(1, NA))
 })

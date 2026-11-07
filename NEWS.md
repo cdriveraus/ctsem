@@ -44,6 +44,7 @@ A major release: ctsem gains a second estimation engine, written in Julia, which
 - Fixed: `backend='stan'` with `optimcontrol$estonly=TRUE` failed for models with time independent predictors, which also stopped `ctLOO()`.
 - Fixed: a time independent predictor effect fixed to a value, such as `age=0.5`, was ignored by `backend='stan'`; it is now refused there, and fitted by `backend='julia'`.
 - Fixed: `ctACF()` and `ctACFresiduals()` dropped lag 0 from cross correlations.
+- Fixed: `ctACF()` and `ctACFresiduals()` counted pairs of observations at the wrong time lags unless every time fell on the time step's grid, which could show large spurious correlations; `ctDiscretiseData()` left such times off its grid, and shifted every time by an offset.
 - Fixed: `ctDiscretePars()` given subjects out of ascending order labelled each subject's results with another's id.
 - Fixed: data values that do not read as numbers were treated as missing; `ctFit()` now stops and names them.
 - Fixed: in a nonlinear model, a cell using `min()` or `max()` of a state was linearised as if it did not depend on that state.
