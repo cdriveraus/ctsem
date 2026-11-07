@@ -53,7 +53,8 @@ The default plots 95\% credible intervals and the posterior median at 50\%.}
 \item{polygonalpha}{Numeric between 0 and 1 to multiply the alpha of
 the fill.}
 
-\item{ggcode}{if TRUE, returns a list containing the data.table to plot, and a character string that can be
+\item{ggcode}{if TRUE, returns a list containing the data.table to plot (for each curve and time interval,
+the three \code{quantiles} of the draws, as \code{ymin}, \code{value} and \code{ymax}), and a character string that can be
 evaluated (with the necessary arguments such as ylab etc filled in). For modifying plots.}
 }
 \value{

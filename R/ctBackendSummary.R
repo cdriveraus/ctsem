@@ -512,6 +512,26 @@ ctBackendParMatrices <- function(fit, raw = NULL, tipreds = NULL, state = NULL,
   raw
 }
 
+# Every draw's subject matrices from one engine call,
+# `ctsem_kalman_subject_matrices`: each row of `samples` filtered as
+# `.ctBackendKalmanRaw()` filters one, on the Laplace route at that draw's
+# plausible values. NULL on a Laplace specification without plausible values,
+# whose subject values the per-draw call takes from the fitted source.
+.ctBackendSubjectMatricesAll <- function(spec, samples, plausible) {
+  laplace <- !is.null(spec$laplace)
+  if (laplace && is.null(plausible)) return(NULL)
+  storage.mode(samples) <- "double"
+  module <- .ctJuliaModule(spec$project)
+  arguments <- list(.ctJuliaObjective(spec, hybrid = .ctBackendHybridReports(spec)),
+    .ctJuliaPut(as.matrix(samples)))
+  if (laplace) {
+    arguments$from_level <- 1L
+    storage.mode(plausible) <- "double"
+    arguments$subject_values <- .ctJuliaPut(plausible)
+  }
+  .ctBackendJuliaValue(do.call(module$ctsem_kalman_subject_matrices, arguments))
+}
+
 .ctBackendExtract <- function(object, subjectMatrices = FALSE, nsamples = "all",
   subjects = "all", ...) {
   samples <- .ctBackendRawSamples(object)
@@ -539,35 +559,41 @@ ctBackendParMatrices <- function(fit, raw = NULL, tipreds = NULL, state = NULL,
     # subject's own uncertainty, as ctSubjectPars() reports. At the modes alone
     # a subject with little data would look as certain as the population.
     plausible <- .ctBackendPlausibleValues(object, spec, samples, rows)
-    computed <- lapply(seq_len(nrow(samples)), function(iteration) {
-      # Only `subject_matrices` is read below, which `fields` does not gate --
-      # it is assembled separately from the filter trace regardless of which
-      # named arrays are requested. The bridge cannot marshal a zero-length
-      # vector, so `fields` still needs one name; `subject_loglik` is the
-      # smallest of the eight.
-      scores <- try(.ctBackendKalmanRaw(spec, samples[iteration, ],
-        subjectmatrices = TRUE, fields = "subject_loglik",
-        subjectvalues = if (!is.null(plausible))
-          matrix(plausible[iteration, , ], ncol = dim(plausible)[3L])),
-        silent = TRUE)
-      if (inherits(scores, "try-error")) scores else scores$subject_matrices
-    })
-    failed <- vapply(computed, inherits, logical(1L), "try-error")
+    # Every draw in one engine call where it applies; a call a draw cost a
+    # bridge round trip each, most of the time for 10,000 draws.
+    batch <- .ctBackendSubjectMatricesAll(spec, samples, plausible)
+    if (!is.null(batch)) {
+      failed <- as.logical(batch$failed)
+      firsterror <- batch$first_error
+      flat <- batch$subject_matrices
+    } else {
+      computed <- lapply(seq_len(nrow(samples)), function(iteration) {
+        # Only `subject_matrices` is read below, which `fields` does not gate --
+        # it is assembled separately from the filter trace regardless of which
+        # named arrays are requested. The bridge cannot marshal a zero-length
+        # vector, so `fields` still needs one name; `subject_loglik` is the
+        # smallest of the eight.
+        scores <- try(.ctBackendKalmanRaw(spec, samples[iteration, ],
+          subjectmatrices = TRUE, fields = "subject_loglik"), silent = TRUE)
+        if (inherits(scores, "try-error")) scores else scores$subject_matrices
+      })
+      failed <- vapply(computed, inherits, logical(1L), "try-error")
+      firsterror <- if (all(failed)) conditionMessage(attr(computed[[1L]], "condition"))
+      if (!all(failed)) {
+        flat <- array(NaN, dim = c(length(computed), dim(computed[[which(!failed)[1L]]])))
+        for (iteration in which(!failed)) flat[iteration, , ] <- computed[[iteration]]
+      }
+    }
     # When no draw survives the cause is rarely the draws -- Julia missing, or
     # the engine failing -- so the first draw's own error says what it is.
     # "No admissable samples!?" sent a user without Julia looking at the fit.
-    if (all(failed)) stop("None of the ", length(computed), " draws could be ",
-      "evaluated. The first failed with: ",
-      conditionMessage(attr(computed[[1L]], "condition")), call. = FALSE)
-    computed[failed] <- list(NULL)
-    admissable <- !failed
-    if (any(!admissable)) {
-      message(round(mean(!admissable) * 100, 1), "% of samples inadmissable")
-      samples <- samples[admissable, , drop = FALSE]
-      computed <- computed[admissable]
+    if (all(failed)) stop("None of the ", length(failed), " draws could be ",
+      "evaluated. The first failed with: ", firsterror, call. = FALSE)
+    if (any(failed)) {
+      message(round(mean(failed) * 100, 1), "% of samples inadmissable")
+      samples <- samples[!failed, , drop = FALSE]
+      flat <- flat[!failed, , , drop = FALSE]
     }
-    flat <- array(0, dim = c(length(computed), dim(computed[[1L]])))
-    for (iteration in seq_along(computed)) flat[iteration, , ] <- computed[[iteration]]
     subject <- .ctBackendSubjectMatrices(spec, flat)
   }
 
