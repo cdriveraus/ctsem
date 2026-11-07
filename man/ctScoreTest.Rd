@@ -115,7 +115,28 @@ before interpreting their sizes.
   one-step estimate of the subjects' standard deviation on the raw scale,
   and \code{sd_natural} approximately on the parameter's own. To act on a
   result, set \code{indvarying = TRUE} for the parameter, refit, and test
-  again. On a reduced-rank level (\code{poprank}), a parameter that varies
+  again.
+
+  An intercept in \code{CINT} is tested with each subject's initial means
+  following it: a subject whose intercept is higher by \code{d} starts
+  \code{-DRIFT^-1 d} higher, at their own equilibrium, so their whole
+  latent trajectory is shifted -- a random intercept (with \code{LAMBDA =
+  I}, the same model as a random manifest intercept). A subject-specific
+  intercept with the initial means shared would instead make subjects drift
+  apart from a common start, which data with stable differences from the
+  first occasion reject. \code{initial} says which was tested:
+  \code{'equilibrium'} (\code{with} naming the \code{T0MEANS} parameters
+  that move), or \code{'shared'} where an initial mean the shift needs is
+  fixed (or not a parameter of its own) and so cannot follow. What an
+  intercept moves that the drift cannot balance -- a trend through a drift
+  fixed at zero -- has no equilibrium, and moves alone. The shift is taken
+  at the estimate's drift (where the drift depends on the state, as the fit
+  reports it). To act on an \code{'equilibrium'} result, let the
+  \code{CINT} parameter and those in \code{with} vary, so their random
+  effects are estimated with their correlation; \code{\link{ctModelImprove}}
+  does that.
+
+  On a reduced-rank level (\code{poprank}), a parameter that varies
   only through the shared dimensions, without a variance of its own, is
   tested too: for variation outside those dimensions. A parameter whose
   test the fitted model already determines -- under one per cent of its
@@ -124,7 +145,8 @@ before interpreting their sizes.
   \code{dimension}.
 
   \code{dimension} tests every direction at once: whether subjects vary
-  along some combination of the tested parameters, a new dimension of
+  along some combination of the tested parameters (each \code{CINT}
+  parameter along the same shift as its own row), a new dimension of
   person variation. It is not computed on a reduced-rank level, where in
   simulation it found a dimension the rank lacked 10 per cent of the time
   and the per-parameter tests of variation outside the shared dimensions 58

@@ -146,7 +146,9 @@ whose errors stay correlated with its own (the \code{residuals} family).
 \details{
 The relaxations, in the language of the model:
 \describe{
-  \item{heterogeneity}{\code{indvarying = TRUE} for a parameter.}
+  \item{heterogeneity}{\code{indvarying = TRUE} for a parameter, and for a
+    \code{CINT} parameter the \code{T0MEANS} parameters its test moved with
+    it (\code{with} in \code{\link{ctScoreTest}}).}
   \item{covariates}{a covariate added as a time independent predictor, with
     effects on the parameters its tests single out.}
   \item{statedependence}{a term \code{d * eta_k * eta_m} in a latent's

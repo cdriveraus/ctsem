@@ -135,6 +135,79 @@ test_that("a parameter that varies over subjects is found", {
   expect_gt(h$sd_natural[h$parameter == 'drift_eta1'], 0)
 })
 
+test_that("an intercept in CINT is tested as a random intercept, the initial mean following", {
+  # 'null' data have a random manifest mean (sd 1). Fitted with the level in
+  # CINT and no random effects, a subject-specific CINT from a shared initial
+  # mean would drift subjects apart; the test moves T0MEANS to each subject's
+  # equilibrium, which shifts the whole trajectory: with LAMBDA = 1 the
+  # direction of a random manifest mean in the same model written with the
+  # level there.
+  x <- .score_fit('null')
+  model <- function(...) suppressMessages(ctModel(type = 'ct', manifestNames = 'Y1',
+    latentNames = 'eta1', LAMBDA = matrix(1), ...))
+  fit <- function(m) suppressMessages(ctFit(x$data[, c('id', 'time', 'Y1')], m,
+    backend = 'julia', cores = 1, verbose = 0))
+  fc <- fit_cached('scoretest null cint level', fit(model(MANIFESTMEANS = matrix(0),
+    CINT = matrix('cint||FALSE'), T0MEANS = matrix('t0m||FALSE'))))
+  sc <- suppressMessages(ctScoreTest(fc, tests = 'heterogeneity', cores = 1,
+    verbose = FALSE, nboot = 199))
+  hc <- sc$heterogeneity[sc$heterogeneity$parameter == 'cint', ]
+  expect_identical(hc$initial, 'equilibrium')
+  expect_identical(hc$with, 't0m')
+  expect_gt(hc$z, 3)
+  expect_output(print(sc), "initial 'equilibrium'")
+  # The direction: T0MEANS moves by -DRIFT^-1 times the intercept's move.
+  est <- fc$estimate$raw
+  ptab <- ctsem:::.ctScoreParameterTable(fc)
+  het <- ctsem:::.ctScoreSelect(ptab, NULL, 'heterogeneity')
+  hd <- ctsem:::.ctScoreHetDirections(fc, est, ptab, het)
+  u <- hd$U[, ptab$name[het] == 'cint']
+  A <- suppressMessages(ctsem:::ctBackendParMatrices(fc, raw = est))$DRIFT[1, 1]
+  slope <- setNames(ptab$slope, ptab$name)
+  expect_equal(unname(u[ptab$name == 't0m']), -slope[['cint']] / A / slope[['t0m']],
+    tolerance = 1e-8)
+  # Its pieces against differences of the subjects' log likelihoods along u:
+  # the score, the statistic before projection, and the projection's
+  # derivative D in the drift (the third derivative, along u twice).
+  pieces <- ctsem:::.ctScorePieces(fc, est, rows = integer(), second = integer(),
+    hetdirs = cbind(cint = u), cores = 1)
+  it <- ctsem:::.ctScoreHetItems(pieces, which(ptab$name == 'cint'), cbind(cint = u))[[1]]
+  ll <- function(theta) as.numeric(ctsem:::.ctBackendKalmanRaw(fc, theta,
+    subjectmatrices = FALSE, fields = 'subject_loglik')$subject_loglik)
+  along <- function(theta, h = 1e-3) {
+    lp <- ll(theta + h * u); l0 <- ll(theta); lm <- ll(theta - h * u)
+    list(s = (lp - lm) / (2 * h), H = (lp - 2 * l0 + lm) / h^2)
+  }
+  a0 <- along(est)
+  expect_equal(it$s, a0$s, tolerance = 1e-5)
+  expect_equal(sum(it$s^2 + it$uHu), sum(a0$s^2 + a0$H), tolerance = 1e-3)
+  k <- which(ptab$name == 'drift_eta1')
+  stat <- function(theta) { a <- along(theta); 0.5 * sum(a$s^2 + a$H) }
+  g <- 1e-3
+  Dk <- (stat(replace(est, k, est[k] + g)) - stat(replace(est, k, est[k] - g))) / (2 * g)
+  expect_equal(sum(it$s * it$Hu[, k]) + 0.5 * sum(it$D2u[, k]), Dk, tolerance = 1e-4)
+  # The same direction as a random manifest mean: per subject, the score along
+  # it is the manifest mean's, scaled by the level a raw unit of the intercept
+  # moves to. The two z differ, each projected in its own model's
+  # coordinates, which agree only under the model.
+  fm <- fit_cached('scoretest null mm level', fit(model(MANIFESTMEANS = matrix('mm||FALSE'),
+    CINT = matrix(0), T0MEANS = matrix('t0m||FALSE'))))
+  expect_equal(fm$estimate$loglik, fc$estimate$loglik, tolerance = 1e-6)
+  pm <- ctsem:::.ctScoreParameterTable(fm)
+  smm <- ctsem:::.ctBackendScoreMatrix(fm, fm$estimate$raw)[, pm$name == 'mm']
+  kappa <- -slope[['cint']] / A / pm$slope[pm$name == 'mm']
+  expect_equal(it$s, kappa * smm, tolerance = 0.02)
+  # With the initial mean fixed it cannot follow, and the intercept is tested
+  # alone.
+  fs <- fit_cached('scoretest null cint fixed t0', fit(model(MANIFESTMEANS = matrix(0),
+    CINT = matrix('cint||FALSE'), T0MEANS = matrix(0))))
+  ps <- ctsem:::.ctScoreParameterTable(fs)
+  hs <- ctsem:::.ctScoreHetDirections(fs, fs$estimate$raw, ps,
+    ctsem:::.ctScoreSelect(ps, NULL, 'heterogeneity'))
+  expect_identical(hs$initial[colnames(hs$U) == 'cint'], 'shared')
+  expect_equal(sum(hs$U[, 'cint'] != 0), 1)
+})
+
 test_that("a drift that depends on the state is found by the extended model", {
   # A strong dependence (the drift moves by 0.4 across the state's range). On
   # such data the fitted model's curvature at the null can be indefinite in the
