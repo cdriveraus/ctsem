@@ -79,45 +79,6 @@ test_that("the start moves with the data where the fixed default cannot", {
   expect_gt(large[["MANIFESTVAR[1,1]"]] / small[["MANIFESTVAR[1,1]"]], 100)
 })
 
-# A free Gaussian intercept starts at its indicator's mean, read on its own
-# transform; raw zero put it at zero whatever the data's location, and with the
-# transform metric making such intercepts the slow coordinates, the ctsem book's
-# RI-CLPM and FE-DPM settled in worse basins from nearly every start.
-.datastart_means <- function(d, m) {
-  spec <- ctsem:::.ctJuliaPrepare(d, m, priors = FALSE, intoverpop = "augmented")
-  pt <- spec$parameter_table
-  raw <- ctsem:::.ctDataStart(d, m, spec, max(pt$parnumber, na.rm = TRUE))
-  rows <- pt[pt$matrix %in% "MANIFESTMEANS" & !is.na(pt$parnumber), , drop = FALSE]
-  vapply(seq_len(nrow(rows)), function(i) {
-    p <- raw[rows$parnumber[i]]
-    if (!is.finite(p)) return(NA_real_)
-    eval(parse(text = gsub("param[[][0-9]+[]]", "param", rows$transform[i])),
-      list(param = p))
-  }, numeric(1))
-}
-
-test_that("a free Gaussian intercept starts at its indicator's mean", {
-  d <- .datastart_gen(1)
-  d$y1 <- d$y1 + 3; d$y2 <- d$y2 + 2.5; d$y3 <- d$y3 - 1
-  mm <- function(T0MEANS = matrix(0), manifesttype = c(0L, 0L, 0L)) {
-    m <- suppressWarnings(suppressMessages(ctModel(type = "ct", n.latent = 1,
-      n.manifest = 3, manifestNames = c("y1", "y2", "y3"), latentNames = "eta1",
-      LAMBDA = matrix(c(1, "lambda_y2", "lambda_y3"), 3, 1), CINT = matrix(0),
-      T0MEANS = T0MEANS, MANIFESTMEANS = matrix(c("mm1", "mm2", "mm3"), 3, 1),
-      manifesttype = manifesttype)))
-    m$pars$indvarying <- FALSE
-    m
-  }
-  expect_equal(.datastart_means(d, mm()),
-    c(mean(d$y1, na.rm = TRUE), mean(d$y2, na.rm = TRUE), mean(d$y3, na.rm = TRUE)),
-    tolerance = 1e-6)
-  # A free initial mean starts at zero too.
-  expect_equal(.datastart_means(d, mm(T0MEANS = matrix("t0m")))[1],
-    mean(d$y1, na.rm = TRUE), tolerance = 1e-6)
-  # A process held away from zero: its indicators keep the default.
-  expect_true(all(is.na(.datastart_means(d, mm(T0MEANS = matrix(2))))))
-})
-
 test_that("nothing derived escapes the clamps", {
   # A deliberately absurd scale: the answer must be bounded, not enormous.
   v <- .datastart_values(.datastart_gen(1e6), .datastart_model())
@@ -242,10 +203,11 @@ test_that("a derived start the optimiser cannot take gives way to the default", 
   fallen <- run(FALSE)
   expect_length(fallen$start, npar)
   # The default start is the jitter around raw zero (sd 0.01); the derived
-  # start is not. Not every derived cell is away from zero: an intercept
-  # starts at its indicator's mean, which here is near zero for y1.
+  # cells are well away from it.
   expect_lt(max(abs(fallen$start)), 0.1)
-  expect_true(any(abs(kept$start - fallen$start) > 0.1))
+  derived <- abs(kept$start - fallen$start) > 1e-12
+  expect_true(any(derived))
+  expect_gt(min(abs(kept$start[derived])), 0.1)
   expect_true(any(grepl("cannot be evaluated at the starting values derived",
     fallen$said)))
   expect_false(any(grepl("cannot be evaluated", kept$said)))
