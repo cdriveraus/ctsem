@@ -234,6 +234,77 @@ test_that("a reported value that is not a number is blanked and explained", {
   expect_silent(ctsem:::.ctBackendMarkNotFinite(ordinary[0, , drop = FALSE]))
 })
 
+test_that("a matrix whose first cell is not a number keeps its rows, and the rest stay put", {
+  # An asymptote a latent without an equilibrium does not have is NaN. Such a
+  # matrix was skipped whole when its first cell was the NaN, leaving rows with
+  # no matrix, row or col; summary() fills each column by a call of its own,
+  # so a column whose matrix was not skipped also put every later value on the
+  # wrong cell.
+  means <- list(asymCINT = matrix(c(NaN, 1.5), 2, 1),
+    DRIFT = matrix(c(-1, 0.2, 0, -2), 2))
+  u <- ctsem:::ctModelUnlist(means, names(means))
+  expect_equal(u$matrix, rep(c("asymCINT", "DRIFT"), c(2, 4)))
+  expect_equal(u$row, c(1L, 2L, 1L, 1L, 2L, 2L))
+  expect_equal(u$col, c(1L, 1L, 1L, 2L, 1L, 2L))
+  expect_true(is.nan(u$value[1]))
+  expect_equal(u$value[-1], c(1.5, as.vector(t(means$DRIFT))))
+  expect_true(all(is.na(u$param)))
+  sds <- list(asymCINT = matrix(c(0.1, 0.2), 2, 1),
+    DRIFT = matrix(c(0, 0.05, 0, 0.1), 2))
+  s <- ctsem:::ctModelUnlist(sds, names(sds))
+  expect_equal(s[c("matrix", "row", "col")], u[c("matrix", "row", "col")])
+  expect_equal(s$value, c(0.1, 0.2, as.vector(t(sds$DRIFT))))
+  # Text cells name their parameter; a number, or an NA, names none.
+  cells <- ctsem:::ctModelUnlist(list(DRIFT = matrix(c("a", "0", NA, "b"), 2)), "DRIFT")
+  expect_equal(cells$param, c("a", NA, NA, "b"))
+  expect_equal(cells$value, c(NA, NA, 0, NA))
+  # A matrix with no cells lists nothing, and no blank row stands in for it.
+  none <- ctsem:::ctModelUnlist(list(TDPREDEFFECT = matrix(0, 2, 0), DRIFT = diag(1)),
+    c("TDPREDEFFECT", "DRIFT"))
+  expect_equal(nrow(none), 1L)
+  expect_false(anyNA(none$matrix))
+})
+
+test_that("summary of a julia fit whose first latent is a trend labels every row", {
+  skip_without_julia()
+  # The trend has no equilibrium, so its asymptotic intercept is NaN, and it
+  # is the first cell of asymCINT.
+  model <- suppressWarnings(ctModel(type = "ct", manifestNames = c("Y1", "Y2"),
+    latentNames = c("trend", "eta"), LAMBDA = diag(2),
+    DRIFT = matrix(c(0, 0, 0, "auto"), 2, 2),
+    DIFFUSION = matrix(c(0, 0, 0, "diff"), 2, 2),
+    T0VAR = matrix(c(0, 0, 0, "t0v"), 2, 2),
+    CINT = matrix(c("slope||FALSE", 0), 2, 1),
+    T0MEANS = matrix(c("start||FALSE", 0), 2, 1),
+    MANIFESTMEANS = matrix(0, 2, 1),
+    MANIFESTVAR = matrix(c("e1", 0, 0, "e2"), 2, 2)))
+  set.seed(3)
+  data <- do.call(rbind, lapply(1:10, function(i) {
+    eta <- numeric(8)
+    for (k in 2:8) eta[k] <- 0.6 * eta[k - 1] + stats::rnorm(1, 0, 0.5)
+    data.frame(id = i, time = 0:7, Y1 = 1 + 0.3 * (0:7) + stats::rnorm(8, 0, 0.2),
+      Y2 = eta + stats::rnorm(8, 0, 0.2))
+  }))
+  fit <- suppressWarnings(suppressMessages(ctFit(data, model, backend = "julia",
+    cores = 1, verbose = 0)))
+  pm <- summary(fit)$parmatrices
+  expect_false(anyNA(pm$matrix))
+  expect_false(anyNA(pm$row))
+  expect_false(anyNA(pm$col))
+  asym <- pm[pm$matrix %in% "asymCINT", ]
+  expect_equal(asym$row, 1:2)
+  expect_true(is.na(asym$Mean[1]))
+  expect_true(is.finite(asym$Mean[2]))
+  # The columns filled after it are on their own cells: the fixed auto effect
+  # of 0 has no spread.
+  drift <- pm[pm$matrix %in% "DRIFT", ]
+  expect_equal(nrow(drift), 4L)
+  fixed <- drift$row == 1 & drift$col == 1
+  expect_equal(drift$Mean[fixed], 0)
+  if (!is.null(drift$sd)) expect_equal(drift$sd[fixed], 0)
+  expect_true(drift$Mean[drift$row == 2 & drift$col == 2] < 0)
+})
+
 test_that("ctTIpredEffects reports a julia fit's own TI predictor effect (parmatrices=TRUE)", {
   skip_without_julia()
   # .summary_model() gives 'group' (TIpred 1) an effect on B1 only, and B1 is
