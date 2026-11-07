@@ -450,7 +450,7 @@
 .ctJuliaEnsureInstalled <- function() {
   .ctJuliaRequire()
   if (is.null(.ctJuliaBin()) && !isTRUE(.ctJuliaOfferJulia())) {
-    stop("Julia was not found, and backend='julia' needs it (", .ct_julia_minimum,
+    stop("Julia was not found, and backend='julia' (the default) needs it (", .ct_julia_minimum,
       " or newer).\n", .ctJuliaDeclined(), call. = FALSE)
   }
   invisible(TRUE)

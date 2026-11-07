@@ -253,7 +253,7 @@
 #' @keywords internal
 .ctJuliaConnectoRNeeded <- function(installed = .ctJuliaConnectoRVersion()) {
   if (is.null(installed)) {
-    return(paste0("backend='julia' needs the JuliaConnectoR package, which is ",
+    return(paste0("backend='julia' (the default) needs the JuliaConnectoR package, which is ",
       "not installed.\n", .ctJuliaDeclined()))
   }
   paste0("backend='julia' needs JuliaConnectoR ", .ct_juliaconnector_min,
@@ -366,7 +366,7 @@
       isTRUE(.ctJuliaStartable())) {
     return(invisible(TRUE))
   }
-  stop("Julia was not found, and backend='julia' needs it (", .ct_julia_minimum, " or newer).\n",
+  stop("Julia was not found, and backend='julia' (the default) needs it (", .ct_julia_minimum, " or newer).\n",
     .ctJuliaDeclined(), "\n",
     "  ctJuliaInstall() downloads the official build into ", .ctJuliaInstallRoot(), ".\n",
     "  To use a Julia you already have, set JULIA_BINDIR, e.g.\n",
@@ -1521,7 +1521,7 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
   if (length(dots)) failures <- c(failures, paste0("the extra argument",
     if (length(dots) > 1L) "s" else "", " ", paste(dots, collapse = ", "),
     ", which only backend='stan' passes on (to rstan::stan())"))
-  if (length(failures)) stop("backend='julia' does not support ",
+  if (length(failures)) stop("backend='julia' (the default) does not support ",
     paste(failures, collapse = "; "), ".", call. = FALSE)
 }
 
