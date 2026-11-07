@@ -431,6 +431,41 @@ print.ctDiscretePars <- function(x, ...) {
   invisible(x)
 }
 
+# expm(D t) at every t in `times`, or D^t for a discrete time model, as an
+# array [time, row, col]: from one eigendecomposition, V exp(L t) V^-1. Where
+# the eigenvectors are ill-conditioned -- D defective or nearly so -- that
+# loses accuracy in proportion, so each t then takes its own expm() (or matrix
+# power), as every t once did.
+.ctExpmTimes <- function(D, times, discrete = FALSE) {
+  nl <- nrow(D)
+  nt <- length(times)
+  out <- array(NA_real_, c(nt, nl, nl))
+  e <- if (all(is.finite(D))) tryCatch(eigen(D), error = function(err) NULL)
+  ok <- !is.null(e) && all(is.finite(e$values)) && all(is.finite(e$vectors))
+  if (ok) {
+    sv <- svd(e$vectors, 0, 0)$d
+    ok <- min(sv) > 0 && max(sv) / min(sv) < 1e6
+  }
+  if (ok) {
+    V <- e$vectors
+    Vi <- solve(V)
+    lam <- as.complex(e$values)
+    p <- if (discrete) outer(times, lam, function(t, l) l^t) else exp(outer(times, lam))
+    acc <- array(0, c(nt, nl, nl))
+    for (k in seq_len(nl)) acc <- acc + outer(p[, k], outer(V[, k], Vi[k, ]))
+    out[] <- Re(acc)
+    return(out)
+  }
+  for (ti in seq_len(nt)) {
+    out[ti, , ] <- if (!discrete) expm::expm(D * times[ti]) else {
+      m <- diag(1, nl)
+      for (n in seq_len(times[ti])) m <- m %*% D
+      m
+    }
+  }
+  out
+}
+
 ctDiscreteParsDrift<-function(ctpars,times, impulseType,  standardise,cov=FALSE,
   types='dtDRIFT',discreteInput=FALSE, quiet=FALSE){
 
@@ -452,63 +487,59 @@ ctDiscreteParsDrift<-function(ctpars,times, impulseType,  standardise,cov=FALSE,
   companionType <- .ctCompanionType(impulseType)
 
   if('dtDRIFT' %in% types){
-    ctpars$dtDRIFT <- array(NA, dim=c(dim(ctpars$DRIFT)[1],max(unlist(nsubs)),length(times),dim(ctpars$DRIFT)[3:4]))
+    nt <- length(times)
+    dt <- array(NA_real_, dim=c(dim(ctpars$DRIFT)[1],max(unlist(nsubs)),nt,dim(ctpars$DRIFT)[3:4]))
 
-    mpow <- function(m,n){
-      if(n==0) return(diag(1,nrow(m))) else{
-        if(n>1){
-          mo <-m
-          for(i in 2:n){
-            m <- m %*% mo
-          }
-        }
-        return(m)
-      }}
-
+    # Every lag of a draw at once: E[t, , ] for all t, then the companion and
+    # the standardisation, each built once for the draw and applied to every
+    # lag. A loop over lags as well, with an expm() each, took 20 minutes for
+    # 10,000 draws of three subjects at 361 lags.
     for(i in 1:dim(ctpars$DRIFT)[1]){
       for(j in 1:dim(ctpars$DRIFT)[2]){
-        for(ti in 1:length(times)){
-          if(!discreteInput) ctpars$dtDRIFT[i,j,ti,,] <- expm::expm(as.matrix(ctpars$DRIFT[i,min(j,nsubs$DRIFT),,] * times[ti]))
-          if(discreteInput) ctpars$dtDRIFT[i,j,ti,,] <- mpow(as.matrix(ctpars$DRIFT[i,min(j,nsubs$DRIFT),,]),times[ti])
-          if(!identical(companionType,'unit')){
-            # Every variant is dtDRIFT %*% C; only the companion matrix C
-            # differs. See R/ctCompanionShock.R for what each one means.
-            C <- .ctCompanionMatrix(companionType,
-              matrix(ctpars$DIFFUSIONcov[i,min(j,nsubs$DIFFUSIONcov),,],nl,nl),
-              matrix(ctpars$asymDIFFUSIONcov[i,min(j,nsubs$asymDIFFUSIONcov),,],nl,nl),
-              nl)
-            if(is.null(C)){
-              nonstationary <- nonstationary + 1L
-              ctpars$dtDRIFT[i,j,ti,,] <- NaN
-              next
-            }
-            ctpars$dtDRIFT[i,j,ti,,] <- ctpars$dtDRIFT[i,j,ti,,] %*% C
+        E <- .ctExpmTimes(matrix(ctpars$DRIFT[i,min(j,nsubs$DRIFT),,],nl,nl), times, discreteInput)
+        if(!identical(companionType,'unit')){
+          # Every variant is dtDRIFT %*% C; only the companion matrix C
+          # differs. See R/ctCompanionShock.R for what each one means.
+          C <- .ctCompanionMatrix(companionType,
+            matrix(ctpars$DIFFUSIONcov[i,min(j,nsubs$DIFFUSIONcov),,],nl,nl),
+            matrix(ctpars$asymDIFFUSIONcov[i,min(j,nsubs$asymDIFFUSIONcov),,],nl,nl),
+            nl)
+          if(is.null(C)){
+            nonstationary <- nonstationary + nt
+            dt[i,j,,,] <- NaN
+            next
           }
-
-          if(standardise) {
-            # Response of r per one sd_c change in c, in sd_r units: S^-1 M S,
-            # with the sds of the processes themselves (asymDIFFUSION). Applied
-            # after the companion step so the two compose.
-            #
-            # A frozen DRIFT can be non-stationary at the point it was frozen at
-            # while the nonlinear system it came from is perfectly well behaved
-            # -- often the point of the nonlinearity -- so this reports NaN for
-            # the affected draw and names the likely cause rather than aborting
-            # and blaming the model, as julia's _ctsem_asymptotics already does.
-            asym <- matrix(ctpars$asymDIFFUSIONcov[i,min(j,nsubs$asymDIFFUSIONcov),,],nl,nl)
-            if(any(diag(asym) < 0)){
-              nonstationary <- nonstationary + 1L
-              ctpars$dtDRIFT[i,j,ti,,] <- NaN
-              next
-            }
-            sdv <- sqrt(diag(asym) + 1e-10)
-            ctpars$dtDRIFT[i,j,ti,,] <- ctpars$dtDRIFT[i,j,ti,,] *
-              matrix(rep(sdv,each=nl) / rep(sdv,times=nl),nl)
-          }
-          if(cov) ctpars$dtDRIFT[i,j,ti,,]  <- tcrossprod(ctpars$dtDRIFT[i,j,ti,,] )
+          E[] <- matrix(E, nt*nl, nl) %*% C # E[t, , ] %*% C at every t
         }
+
+        if(standardise) {
+          # Response of r per one sd_c change in c, in sd_r units: S^-1 M S,
+          # with the sds of the processes themselves (asymDIFFUSION). Applied
+          # after the companion step so the two compose.
+          #
+          # A frozen DRIFT can be non-stationary at the point it was frozen at
+          # while the nonlinear system it came from is perfectly well behaved
+          # -- often the point of the nonlinearity -- so this reports NaN for
+          # the affected draw and names the likely cause rather than aborting
+          # and blaming the model, as julia's _ctsem_asymptotics already does.
+          asym <- matrix(ctpars$asymDIFFUSIONcov[i,min(j,nsubs$asymDIFFUSIONcov),,],nl,nl)
+          if(any(diag(asym) < 0)){
+            nonstationary <- nonstationary + nt
+            dt[i,j,,,] <- NaN
+            next
+          }
+          sdv <- sqrt(diag(asym) + 1e-10)
+          E <- E * rep(matrix(rep(sdv,each=nl) / rep(sdv,times=nl),nl), each = nt)
+        }
+        if(cov) {
+          Ec <- E
+          for(r in 1:nl) for(s in 1:nl) Ec[,r,s] <- rowSums(E[,r,,drop=FALSE] * E[,s,,drop=FALSE])
+          E <- Ec
+        }
+        dt[i,j,,,] <- E
       }
     }
+    ctpars$dtDRIFT <- dt
   } #end dtdrift
 
   if(nonstationary > 0 && !quiet) message(
@@ -546,7 +577,8 @@ ctDiscreteParsDrift<-function(ctpars,times, impulseType,  standardise,cov=FALSE,
 #'@param colour Character string denoting how colour varies. 'Effect' or 'Subject'.
 #'@param title Character string. 'auto' generates automatically, NULL can be used to disable title.
 #'@param splitSubjects if TRUE, subjects are plotted separately, if FALSE they are combined.
-#'@param ggcode if TRUE, returns a list containing the data.table to plot, and a character string that can be
+#'@param ggcode if TRUE, returns a list containing the data.table to plot (for each curve and time interval,
+#'the three \code{quantiles} of the draws, as \code{ymin}, \code{value} and \code{ymax}), and a character string that can be
 #'evaluated (with the necessary arguments such as ylab etc filled in). For modifying plots.
 #'@return A ggplot2 object. This can be modified by the various ggplot2 functions, or displayed using print(x).
 #'@examples
@@ -627,42 +659,46 @@ ctDiscreteParsPlot<- function(x,indices='all',
   }
 
 
-  ym <- as.data.table(x)
-  ym$row <- factor(ym$row)
-  ym$col <- factor(ym$col)
-  ym$`Time interval` <- as.numeric(ym$`Time interval`)
-
+  # One row per curve and time interval, holding the quantiles of the draws
+  # there: what the plot draws. The draws themselves were once its data, and
+  # every print summarised them again -- 10.8 million rows for 10,000 draws of
+  # three subjects at 361 intervals. Non-finite draws are left out, as ggplot
+  # left them out of the summary it made.
+  levs <- levels(factor(latentNames))
+  times <- as.numeric(dimnames(x)$`Time interval`)
+  subjects <- if(splitSubjects) as.character(dimnames(x)$Subject) else '1'
+  pairs <- unique(matrix(indices[, 1:2], ncol = 2))
+  ym <- rbindlist(lapply(seq_len(nrow(pairs)), function(k) {
+    v <- x[, , , pairs[k, 1], pairs[k, 2], drop = FALSE]
+    dim(v) <- dim(v)[1:3] # sample, subject, time
+    if(!splitSubjects) dim(v) <- c(dim(v)[1] * dim(v)[2], 1L, dim(v)[3])
+    q <- apply(v, c(2, 3), function(z) {
+      z <- z[is.finite(z)]
+      if(length(z)) stats::quantile(z, quantiles[1:3], names = FALSE) else rep(NA_real_, 3)
+    })
+    data.table(Subject = rep(subjects, times = length(times)),
+      `Time interval` = rep(times, each = length(subjects)),
+      row = latentNames[pairs[k, 1]], col = latentNames[pairs[k, 2]],
+      ymin = c(q[1, , ]), value = c(q[2, , ]), ymax = c(q[3, , ]))
+  }))
+  ym$row <- factor(ym$row, levels = levs)
+  ym$col <- factor(ym$col, levels = levs)
   ym$Effect <- interaction(ym$row,ym$col)
   ym$Subject <- factor(ym$Subject)
-  if(!splitSubjects) ym$Subject <- factor(1)
-  ym$Sample <- factor(ym$Sample)
 
-
-  #remove rows not in indices
-  ym <- ym[paste0(row,'_',col) %in% apply(indices,1,function(x) paste0(latentNames[x],collapse='_'))]
-
-  # title <- paste0('Temporal ', ifelse(cov,'covariance','regressions'),' | ',
-  #   ifelse(cov,'correlated','uncorrelated'), 'shock of 1.0')
-
-  g<-paste0('ggplot2::ggplot(data = ym,mapping=aes(y=value,x=`Time interval`,
+  # The interval first and the median line second: code that adjusts the
+  # layers by position, as the ctsem book does, relies on that order.
+  g<-paste0('ggplot2::ggplot(data = ym,mapping=aes(x=`Time interval`,
     colour=Effect,group=interaction(Effect, Subject),
     fill=Effect))+
     theme_bw()+
     ylab("',ylab,'")+
     xlab("',xlab,'")+
     ggplot2::labs(title = "',title,'")+
-    stat_summary( #ribbon
-      fun.data = function(x) list(
-        y=quantile(x,',quantiles[2],'),
-        ymin=quantile(x,',quantiles[1],'),
-        ymax=quantile(x,',quantiles[3],')
-      ),
-      geom = "ribbon",
+    geom_ribbon(aes(ymin = ymin, ymax = ymax),
       alpha= ',polygonalpha,',
       linetype=3)+
-    stat_summary( #center line
-      fun.data = function(x) list(y=quantile(x,',quantiles[2],')),
-      geom = "line")')
+    geom_line(aes(y = value))')
 
   #needs data input as well...
   # if(rug) g <- paste0(g,'+ geom_rug(data= as.data.table(hist(data.table(ym)[order(Subject,`Time interval`),][,.(timeDiff=c(diff(`Time interval`))),by=Subject]$timeDiff,plot=F)[2:4])[counts > 0,],
