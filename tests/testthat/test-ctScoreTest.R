@@ -161,6 +161,18 @@ test_that("a varying intercept is tested with its covariance with the initial st
   expect_lt(hm$p, 0.01)
   expect_null(sc$info$errors)
   expect_output(print(sc), 'Covariances with: t0m')
+  # ctModelImprove's edits: the intercept varies with the initial mean, and
+  # the fixed indicator mean becomes a parameter varying about its value.
+  base <- ctsem:::.ctFitBaseModel(fc)
+  props <- ctsem:::.ctImproveProposals(sc, base, alpha = 0.05)
+  keys <- vapply(props, `[[`, '', 'key')
+  ec <- props[[match('het:cint', keys)]]$edit(base, x$data, NULL)
+  expect_true(all(as.logical(ec$model$pars$indvarying[ec$model$pars$param %in% c('cint', 't0m')])))
+  em <- props[[match('het:MANIFESTMEANS[Y1]', keys)]]$edit(base, x$data, NULL)
+  expect_equal(em$model$fixedpopmeans, c(mm_Y1 = 0))
+  expect_true(all(as.logical(em$model$pars$indvarying[em$model$pars$param %in% c('mm_Y1', 't0m')])))
+  expect_no_error(suppressWarnings(suppressMessages(ctFit(x$data[, c('id', 'time', 'Y1')],
+    em$model, backend = 'julia', fit = FALSE, cores = 1, verbose = 0))))
   # The covariance's per-subject contribution, s_j s_r + H_jr, and the
   # derivative its projection needs, against differences of the subjects' log
   # likelihoods.
