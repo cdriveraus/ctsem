@@ -46,6 +46,7 @@ A major release: ctsem gains a second estimation engine, written in Julia, which
 - Fixed: `ctACF()` and `ctACFresiduals()` dropped lag 0 from cross correlations.
 - Fixed: `ctACF()` and `ctACFresiduals()` counted pairs of observations at the wrong time lags unless every time fell on the time step's grid, which could show large spurious correlations; `ctDiscretiseData()` left such times off its grid, and shifted every time by an offset.
 - Fixed: `ctDiscretePars()` given subjects out of ascending order labelled each subject's results with another's id.
+- Fixed: `ctPredictTIP()`'s dynamics panels gave curves each other's labels when two or more moderator values were negative, as for a centred moderator, and with several predictors could show another predictor's curves.
 - Fixed: data values that do not read as numbers were treated as missing; `ctFit()` now stops and names them.
 - Fixed: in a nonlinear model, a cell using `min()` or `max()` of a state was linearised as if it did not depend on that state.
 - Fixed: `ctGenerate()` stopped with an error for a model with a DRIFT diagonal of 0, such as a linear trend.
