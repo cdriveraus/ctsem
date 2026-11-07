@@ -46,10 +46,11 @@
 # agreeing with the truth is an artefact of four categories, not signal.
 #
 # Deliberately modest in scope: diagonals only, of the four matrices whose
-# defaults are scale guesses, by inverting each cell's own transform
-# numerically so nothing here needs to know the transform's shape. Everything
-# is clamped, and any cell that cannot be solved keeps the old default rather
-# than getting an invented value.
+# defaults are scale guesses, and the free intercepts of Gaussian indicators,
+# whose default is a guess about location (in `.ctDataStart()`), by inverting
+# each cell's own transform numerically so nothing here needs to know the
+# transform's shape. Everything is clamped, and any cell that cannot be solved
+# keeps the old default rather than getting an invented value.
 #
 # And the start as a whole is kept only where the optimiser can start from it
 # (`.ctDataStartUsable()`). A start at the data's scale can be one the objective
@@ -308,6 +309,51 @@
       set(row$parnumber, latentsd[i] * sqrt(1 - exp(2 * a)))
       free <- rbind(free, row[, names(free), drop = FALSE])
     }
+  }
+
+  # A free Gaussian indicator's intercept starts at the indicator's mean, where
+  # every process it loads on starts at mean zero (its T0MEANS and CINT free,
+  # or fixed at zero). Raw zero puts the intercept at zero, a guess about the
+  # data's location as the variance family's default is about its scale, and
+  # the transform metric (`.ctJuliaParameterScale`) makes a `10 * param`
+  # intercept the slow coordinate early on: the variances, correlations and
+  # drift adapted around intercepts still far from the data, and fits settled
+  # in a worse basin. On the ctsem book's measurement models, 700 people with
+  # indicators near 3, the RI-CLPM's Laplace route ended 660 -2LL short from
+  # every start (6 of 6) and the FE-DPM with phantom CINT processes reached its
+  # maximum from 1 start in 6; started at the indicators' means, 4 of 4 and 6
+  # of 6 reached them, in a tenth of the time. Only the cell's own MANIFESTMEANS
+  # row: the augmented route's carrier for a random intercept holds it raw with
+  # its scaling elsewhere, so inverting that row's `param[k]` would start it at
+  # the wrong scale.
+  location <- function(matrix, i) {
+    cell <- pt[pt$matrix %in% matrix & pt$row == i & pt$col == 1, , drop = FALSE]
+    if (!nrow(cell)) return(0)
+    p <- suppressWarnings(as.integer(cell$parnumber[1L]))
+    if (is.na(p) || p < 1L) return(suppressWarnings(as.numeric(cell$value[1L])))
+    # Free: where its transform puts raw zero, the start's own neighbourhood.
+    tryCatch({
+      env <- new.env(parent = asNamespace("ctsem"))
+      env$param <- 0
+      as.numeric(eval(parse(text = gsub("param\\s*\\[\\s*\\d+\\s*\\]", "param",
+        as.character(cell$transform[1L])))[[1L]], envir = env))
+    }, error = function(e) NA_real_)
+  }
+  means <- pt[pt$matrix %in% "MANIFESTMEANS" & !is.na(pt$parnumber) &
+    pt$parnumber >= 1L & pt$parnumber <= npar & !is.na(pt$transform) &
+    !is.na(pt$row) & pt$row <= nmanifest, , drop = FALSE]
+  means <- means[!duplicated(means$parnumber), , drop = FALSE]
+  for (k in seq_len(nrow(means))) {
+    j <- as.integer(means$row[k])
+    if (mtype[j] != 0L || !mnames[j] %in% names(datalong)) next
+    loads <- which(lambda[j, ] != 0)
+    at <- vapply(loads, function(i) c(location("T0MEANS", i), location("CINT", i)),
+      numeric(2))
+    if (!length(at) || !all(is.finite(at)) || any(abs(at) > 1e-8)) next
+    y <- suppressWarnings(as.numeric(datalong[[mnames[j]]]))
+    if (sum(is.finite(y)) < 2L) next
+    set(means$parnumber[k], mean(y, na.rm = TRUE))
+    free <- rbind(free, means[k, names(free), drop = FALSE])
   }
 
   if (!any(is.finite(target))) return(NULL)
