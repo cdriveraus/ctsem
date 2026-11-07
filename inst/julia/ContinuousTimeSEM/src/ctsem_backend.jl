@@ -3142,12 +3142,18 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
             _ctsem_prior_objective(objective), length(start_values)),
             length(start_values))
     batching() = batcher !== nothing && !_ctsem_batch_full(batcher)
-    # The last iteration a coreset stage was in force: the stall watch judges
-    # only windows of full iterations after it. A window holding a stage's
+    # The last iteration whose value was not the full objective's -- a batch
+    # still growing, or a coreset stage in force: the stall watch judges only
+    # windows of full iterations after it. A window holding a stage's
     # iterations measures the coreset's path, and one holding a stage that was
     # sent back reads as no progress near the optimum: that ended fits as
-    # stalled and ran the stall escape's refits there, on the full sum.
-    coreset_last = Ref(typemin(Int) >> 1)
+    # stalled and ran the stall escape's refits there, on the full sum. A
+    # window reaching back into the batch compared the full objective with the
+    # batch's value scaled up to every unit, which read as a loss of 80 nats
+    # over the window on the book's quadratic trend model and stopped its
+    # first stage four iterations after a window was first possible, for a
+    # pullback worth 6e-4.
+    subset_last = Ref(typemin(Int) >> 1)
     # Coreset stages (`_ctsem_coreset_plan`): stretches of the L-BFGS stage on
     # a weighted few of the units, each checked by a full gradient. `nothing`
     # on an objective that is no sum over units, with too few units, off, or on a
@@ -3338,10 +3344,9 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
         coreseter === nothing || (coreseter.gap_tol = _ctsem_gap_floor(gap_tol, directional))
         # Neither rule while a batch is still growing: its objective is not the
         # fit's, and a batch that has gone quiet is a batch about to grow.
-        batching() && return false
         # Nor in a coreset stage, whose model and value are the coreset's.
-        if _ctsem_coreset_live(coreseter)
-            coreset_last[] = Int(latest.iteration)
+        if batching() || _ctsem_coreset_live(coreseter)
+            subset_last[] = Int(latest.iteration)
             return false
         end
         if handover[] > 0
@@ -3357,7 +3362,7 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
         # half is a stopping rule on its own -- see `_ctsem_stall_verdict!` for
         # why, and for the cooldown that keeps a merely slow fit from being
         # asked over and over.
-        if latest.iteration - coreset_last[] > stall.window &&
+        if latest.iteration - subset_last[] > stall.window &&
                 _ctsem_stall_verdict!(stall, trace, latest.iteration, objective,
                 _ctsem_params(objective), current_x,
                 _ctsem_saturation_range(objective, current_x), stall_ratio;
@@ -3934,10 +3939,16 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
     converged_enough = verdict.converged_enough
     overshoot = verdict.overshoot
     overshot = verdict.overshot
+    # The progress the stall test read, earlier stages' included: a resumed
+    # stage's own was printed alone, and a stage stopped for gaining 6.7 of
+    # its own 6.7 read as stopped while making all its progress.
     verbose && stopped_by_stall[] && println(_console(), label, ": the last ",
         stall.window, " iterations gained ",
-        _ctsem_window_gain(trace, stall.window), " against ",
-        _ctsem_trace_progress(trace), " gained over the run, and raw ",
+        _ctsem_window_gain(trace, stall.window), ", under ", stall.fraction,
+        " of the ", _ctsem_trace_progress(trace) + stall.carried,
+        " the fit has gained",
+        stall.carried > 0 ? string(" (", stall.carried, " of it before this stage)") : "",
+        ", and raw ",
         "parameter(s) ", stall.flat, " have lost all but ", stall_ratio,
         " of what their transform does when live, and pulling them back gains ",
         stall.gain, " -- so the fit has stopped getting anywhere, this is why, ",
