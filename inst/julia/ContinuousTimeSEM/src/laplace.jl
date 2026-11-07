@@ -9176,6 +9176,17 @@ function ctsem_kalman(laplace::CTSEMLaplaceObjective, values::AbstractVector;
         subject_matrices=subject_matrices, fields=fields, compact=compact)
 end
 
+# One draw of `ctsem_kalman_subject_matrices` on the Laplace route.
+function _kalman_draw_subject_matrices(laplace::CTSEMLaplaceObjective,
+    draws::AbstractMatrix, d::Integer, subject_values, from_level::Integer)
+    values = Vector{Float64}(view(draws, d, :))
+    rows = subject_values === nothing ? nothing :
+        Matrix{Float64}(view(subject_values, d, :, :))
+    return ctsem_kalman(laplace, values; from_level=from_level,
+        subject_matrices=true, fields=["subject_loglik"],
+        subject_values=rows).subject_matrices
+end
+
 """
     _laplace_primal_curvature(laplace, theta, Ls)
 

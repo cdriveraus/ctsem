@@ -44,7 +44,7 @@ using LinearAlgebra, Random
 #   * a TD impulse maps the covariance through Jtd and so belongs in the
 #     interval transition the smoother uses. Stan saves only the exponential.
 
-export CTSEMKalmanTrace, ctsem_kalman
+export CTSEMKalmanTrace, ctsem_kalman, ctsem_kalman_subject_matrices
 
 const _CTSEM_KALMAN_PRIOR = 1
 const _CTSEM_KALMAN_UPD = 2
@@ -785,6 +785,53 @@ function ctsem_kalman(objective::CTSEMObjective, values::AbstractVecOrMat;
     subject_matrices || return result
     return merge(result, (subject_matrices=_ctsem_subject_matrices(objective, trace),))
 end
+
+"""
+    ctsem_kalman_subject_matrices(objective, draws; subject_values=nothing, from_level=1)
+
+`ctsem_kalman`'s `subject_matrices` at every row of `draws`, in one call: a
+named tuple of `subject_matrices`, an `ndraws`-by-`size`-by-`nsubjects` array
+(NaN for a draw that failed), `failed`, a `Bool` per draw, and `first_error`,
+the message of the first failure ("" if none).
+
+On the Laplace route `subject_values` is an `ndraws`-by-`nsubjects`-by-`npar`
+array, each draw's per-subject vectors before TI-predictor effects, as
+`ctsem_kalman`'s `subject_values` takes one draw's; `from_level` is as there.
+`ctExtract(subjectMatrices = TRUE)` made one bridge call a draw, and a
+round trip and a matrix sent each time were most of its cost: 10,000 draws
+were 10,000 calls.
+"""
+function ctsem_kalman_subject_matrices(objective, draws::AbstractMatrix;
+    subject_values::Union{Nothing,AbstractArray}=nothing, from_level::Integer=1)
+    ndraws = size(draws, 1)
+    out = Array{Float64,3}(undef, 0, 0, 0)
+    failed = fill(false, ndraws)
+    first_error = ""
+    for d in 1:ndraws
+        _ctsem_interrupt_check()
+        mats = try
+            _kalman_draw_subject_matrices(objective, draws, d, subject_values, from_level)
+        catch err
+            err isa InterruptException && rethrow()
+            isempty(first_error) && (first_error = sprint(showerror, err))
+            nothing
+        end
+        if mats === nothing
+            failed[d] = true
+            continue
+        end
+        if isempty(out)
+            out = fill(NaN, ndraws, size(mats, 1), size(mats, 2))
+        end
+        @views out[d, :, :] .= mats
+    end
+    return (subject_matrices=out, failed=failed, first_error=first_error)
+end
+
+_kalman_draw_subject_matrices(objective::CTSEMObjective, draws::AbstractMatrix,
+    d::Integer, ::Nothing, from_level::Integer) =
+    ctsem_kalman(objective, Vector{Float64}(view(draws, d, :));
+        subject_matrices=true, fields=["subject_loglik"]).subject_matrices
 
 """
     _ctsem_subject_matrices(objective, trace)

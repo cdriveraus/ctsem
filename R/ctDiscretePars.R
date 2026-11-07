@@ -661,6 +661,7 @@ ctDiscreteParsPlot<- function(x,indices='all',
 
   if(is.data.frame(indices)) indices <- as.matrix(indices)
 
+  impulseLabel <- NULL
   if(!is.null(title)){
     if(title %in% 'auto'){
       # Whether the curves are in standard deviations or in the processes' own
@@ -674,10 +675,13 @@ ctDiscreteParsPlot<- function(x,indices='all',
       # An object old enough to carry neither is the default, which is what it
       # would have been computed with.
       if(is.null(impulse)) impulse <- 'unit'
+      # The impulse goes in the subtitle: in the title with the scale, the
+      # longest ('observed change of 1 in one process, others follow') was
+      # cut off at the 480-pixel width of a default png().
       title= paste0('Temporal ',ifelse(attributes(x)$cov,'covariance','regressions'),
-        ' | ', .ctCompanionLabel(impulse, std),
         if(isTRUE(std)) ', standardised' else
           if(isFALSE(std)) ', unstandardised' else '')
+      impulseLabel <- .ctCompanionLabel(impulse, std)
     }
   }else title=title
 
@@ -767,10 +771,10 @@ ctDiscreteParsPlot<- function(x,indices='all',
 
   if(!is.na(ylim)) g <- paste0(g,' + ylim(ylim)')
 
-  # Appended rather than folded into the labs() above, so a linear model's plot
-  # is the object it was before this existed.
-  if(!is.null(subtitle) && !is.null(title)) g <- paste0(g,
-    '+ ggplot2::labs(subtitle = "', subtitle, '")')
+  # The impulse, and under it any evaluation point.
+  subtitle <- c(impulseLabel, subtitle)
+  if(length(subtitle) && !is.null(title)) g <- paste0(g,
+    '+ ggplot2::labs(subtitle = "', paste(subtitle, collapse = '\\n'), '")')
 
   if(!ggcode) g <- eval(parse(text=g)) else g <- list(dt=ym,ggcode=g)
 

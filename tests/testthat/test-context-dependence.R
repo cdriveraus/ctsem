@@ -488,11 +488,12 @@ test_that('the scale and the impulse are recorded, and the title states them', {
   # argument is actually reaching the computation.
   expect_false(isTRUE(all.equal(std[, , 2, , ], raw[, , 2, , ])))
 
+  # The scale in the title, the impulse in the subtitle.
   titled <- ctDiscreteParsPlot(std, indices = 'AR')
-  expect_match(titled$labels$title, 'impulse of 1 SD to one process')
+  expect_match(titled$labels$subtitle, 'impulse of 1 SD to one process')
   expect_match(titled$labels$title, 'standardised')
   untitled <- ctDiscreteParsPlot(raw, indices = 'AR')
-  expect_match(untitled$labels$title, 'impulse of 1 to one process')
+  expect_match(untitled$labels$subtitle, 'impulse of 1 to one process')
   expect_match(untitled$labels$title, 'unstandardised')
 })
 
