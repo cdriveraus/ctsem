@@ -460,6 +460,14 @@ ctScoreTest <- function(fit, covariates = NULL,
     hd <- if (length(het)) .ctScoreHetDirections(fit, est, ptab, het) else NULL
     multi <- if (length(het)) colSums(hd$U != 0) > 1L else logical()
     hetdirs <- if (any(multi)) hd$U[, multi, drop = FALSE] else NULL
+    # Beside each, its initial means' part alone, for the guard against a test
+    # the fit determines (.ctScoreHetItems).
+    if (any(multi)) {
+      t0part <- hetdirs
+      t0part[!ptab$matrix %in% 'T0MEANS', ] <- 0
+      colnames(t0part) <- paste0(colnames(hetdirs), '|initial')
+      hetdirs <- cbind(hetdirs, t0part)
+    }
     rows <- union(het[!multi], cov)
     say("Score contributions: ", 2L * (length(rows) + NCOL(dirs) + NCOL(hetdirs)) + 1L,
       " per-subject gradient passes")
@@ -695,7 +703,13 @@ ctScoreTest <- function(fit, covariates = NULL,
 }
 
 # Each heterogeneity test's direction with its pieces: the score along it,
-# H_i u and u' H_i u, and the second difference of every score along it.
+# H_i u and u' H_i u, and the second difference of every score along it. For a
+# CINT test with the initial means following, `carried` is each subject's
+# statistic along the initial means' part of the direction alone: T0VAR
+# carries it, so the guard against a test the fit determines leaves it out of
+# its reference. Where the drift is slow that part is most of the spread --
+# the book's FI-CLPM on its first data left 0.5 and 0.9 per cent after
+# projection, under the guard's 1, where the tests read z 3.2 and 4.4.
 .ctScoreHetItems <- function(pieces, het, U) {
   n <- nrow(pieces$S)
   lapply(seq_along(het), function(a) {
@@ -711,8 +725,15 @@ ctScoreTest <- function(fit, covariates = NULL,
     }
     if (is.null(dim(Hu))) Hu <- matrix(Hu, nrow = n)
     if (is.null(dim(D2u))) D2u <- matrix(D2u, nrow = n)
+    e <- match(paste0(colnames(U)[a], '|initial'), colnames(pieces$hetdirs))
+    carried <- if (is.na(e)) 0 else {
+      w <- pieces$hetdirs[, e]
+      Hw <- pieces$Hhet[, e, , drop = TRUE]
+      if (is.null(dim(Hw))) Hw <- matrix(Hw, nrow = n)
+      0.5 * (as.numeric(pieces$S %*% w)^2 + as.numeric(Hw %*% w))
+    }
     list(j = j, u = u, s = as.numeric(pieces$S %*% u), Hu = Hu,
-      uHu = as.numeric(Hu %*% u), D2u = D2u)
+      uHu = as.numeric(Hu %*% u), D2u = D2u, carried = carried)
   })
 }
 
@@ -837,7 +858,7 @@ ctScoreTest <- function(fit, covariates = NULL,
     information <- sum(0.5 * it$uHu^2) - sum(D * w)
     V <- if (variance == 'robust') .ctScoreSpread(matrix(contribution))[1, 1] else
       information
-    determined <- .ctScoreDetermined(contribution, 0.5 * (s^2 + it$uHu))
+    determined <- .ctScoreDetermined(contribution, 0.5 * (s^2 + it$uHu) - it$carried)
     z <- if (V > 0 && !determined) stat / sqrt(V) else NA_real_
     p <- if (determined) NA_real_ else if (variance == 'robust')
       .ctScoreBoot(matrix(contribution), nboot, onesided = TRUE) else
@@ -887,7 +908,7 @@ ctScoreTest <- function(fit, covariates = NULL,
   live <- vapply(items, function(it) {
     raw <- 0.5 * (it$s^2 + it$uHu)
     D <- colSums(it$s * it$Hu) + 0.5 * colSums(it$D2u)
-    !.ctScoreDetermined(raw + as.numeric(S %*% (Iinv %*% D)), raw)
+    !.ctScoreDetermined(raw + as.numeric(S %*% (Iinv %*% D)), raw - it$carried)
   }, logical(1))
   items <- items[live]
   K <- length(items)
