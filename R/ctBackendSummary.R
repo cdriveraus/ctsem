@@ -2162,8 +2162,8 @@ ctBackendParMatrices <- function(fit, raw = NULL, tipreds = NULL, state = NULL,
     model <- .ctBackendModel(object)
     arrays <- .ctBackendPopArraysFromFlat(flat, layout, .ctBackendSpec(object),
       .ctBackendT0MeansCached(object, constrained))
-    collapse <- function(calcfunc, calcfuncargs) {
-      .ctSummaryMatricesFromArrays(arrays, continuoustime = model$continuoustime,
+    collapse <- function(calcfunc, calcfuncargs, from = arrays) {
+      .ctSummaryMatricesFromArrays(from, continuoustime = model$continuoustime,
         latentNames = model$latentNames, manifestNames = model$manifestNames,
         TDpredNames = model$TDpredNames, calcfunc = calcfunc,
         calcfuncargs = calcfuncargs, timeinterval = timeinterval)
@@ -2176,6 +2176,13 @@ ctBackendParMatrices <- function(fit, raw = NULL, tipreds = NULL, state = NULL,
           collapse(stats::quantile, list(probs = probability))
       }
       names(collapsed) <- c("Mean", "sd", "2.5%", "50%", "97.5%")
+    }
+    # The matrices at the estimate, as the other tables' `mode` columns. A
+    # covariance built from the population tables' modes is this table's mode;
+    # built from their means it is no column here, nor any summary of the draws.
+    if (!is.null(atmode)) {
+      collapsed$mode <- collapse(mean, list(), from = .ctBackendPopArraysFromFlat(
+        atmode$flat, layout, .ctBackendSpec(object), atmode$t0population))
     }
     d <- data.frame(ctModelUnlist(collapsed$Mean, matnames = names(collapsed$Mean)))
     colnames(d)[colnames(d) %in% "value"] <- "Mean"
@@ -2191,7 +2198,7 @@ ctBackendParMatrices <- function(fit, raw = NULL, tipreds = NULL, state = NULL,
     parsrows <- d$matrix %in% "PARS"
     if (any(parsrows)) {
       values <- as.matrix(d[parsrows, intersect(names(d),
-        c("Mean", "sd", "2.5%", "50%", "97.5%")), drop = FALSE])
+        c("Mean", "sd", "2.5%", "50%", "97.5%", "mode")), drop = FALSE])
       if (all(!is.finite(values) | values == 0)) d <- d[!parsrows, , drop = FALSE]
     }
     out$parmatrices <- d

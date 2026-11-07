@@ -350,9 +350,9 @@ getparnames <- function(fit,reonly=FALSE, subjvariationonly=FALSE, popstatesonly
 #' @param ... Additional arguments to pass to \code{priorcheckreport}, such as \code{meanlim}, or \code{sdlim}.
 #' @return List containing summary items, with a \code{print} method for readable console and knitr output.
 #'   On an optimised \code{backend = 'julia'} fit with uncertainty draws, the
-#'   parameter tables carry a \code{mode} column beside the draws' mean, sd and
-#'   quantiles: the fit's estimate on the same scale, the point a likelihood
-#'   ratio or an information criterion refers to.
+#'   parameter tables and \code{parmatrices} carry a \code{mode} column beside
+#'   the draws' mean, sd and quantiles: the fit's estimate on the same scale,
+#'   the point a likelihood ratio or an information criterion refers to.
 #' @examples
 #' summary(ctstantestfit)
 #' @method summary ctStanFit
