@@ -631,7 +631,8 @@ ctDiscreteParsDrift<-function(ctpars,times, impulseType,  standardise,cov=FALSE,
 #'the fill.
 #'@param ylab y label.
 #'@param xlab x label.
-#'@param ylim Custom ylim.
+#'@param ylim Two values, the lower and upper limits of the y axis. The plot
+#'zooms to them; intervals reaching past them are drawn to the edge.
 #'@param facets May be 'Subject' or 'Effect'.
 #'@param colour Character string denoting how colour varies. 'Effect' or 'Subject'.
 #'@param title Character string. 'auto' generates automatically, NULL can be used to disable title.
@@ -767,9 +768,12 @@ ctDiscreteParsPlot<- function(x,indices='all',
   # if(rug) g <- paste0(g,'+ geom_rug(data= as.data.table(hist(data.table(ym)[order(Subject,`Time interval`),][,.(timeDiff=c(diff(`Time interval`))),by=Subject]$timeDiff,plot=F)[2:4])[counts > 0,],
   #  aes(x = mids,alpha=density,size=density/max(density)),inherit.aes=F,linetype=1,show.legend = FALSE)')
 
-  if(!is.na(facets)) g <- paste0(g,'+ facet_wrap(facets)')
+  # Each a vector: a test of `!is.na()` on one stopped every call that gave
+  # two limits. The limits zoom (`coord_cartesian`) rather than set the scale
+  # (`ylim()`), which drops every interval that leaves them and so cut the band.
+  if(!all(is.na(facets))) g <- paste0(g,'+ facet_wrap(facets)')
 
-  if(!is.na(ylim)) g <- paste0(g,' + ylim(ylim)')
+  if(!all(is.na(ylim))) g <- paste0(g,' + ggplot2::coord_cartesian(ylim = ylim)')
 
   # The impulse, and under it any evaluation point.
   subtitle <- c(impulseLabel, subtitle)

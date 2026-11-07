@@ -40,7 +40,8 @@ The default plots 95\% credible intervals and the posterior median at 50\%.}
 
 \item{xlab}{x label.}
 
-\item{ylim}{Custom ylim.}
+\item{ylim}{Two values, the lower and upper limits of the y axis. The plot
+zooms to them; intervals reaching past them are drawn to the edge.}
 
 \item{facets}{May be 'Subject' or 'Effect'.}
 
