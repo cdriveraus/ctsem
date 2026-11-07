@@ -28,14 +28,14 @@ datalong <- cbind(id, time, sunspots)
  
  # ssmodel$covmattransform='cholesky'
 
-ssfit1 <- ctFit(datalong, ssmodel,cores=1,verbose=0)
+ssfit1 <- ctFit(datalong, ssmodel,cores=1,verbose=0, backend = 'stan')
 # ssfit <- ctFit(datalong, ssmodel,cores=1,verbose=0,optimcontrol = list(hessianType='stochastic', stochasticHessianEpsilon=1e-1))
-ssfit2 <- ctFit(datalong, ssmodel,cores=2,verbose=0)
-ssfit3 <- ctFit(datalong, ssmodel,cores=1,nlcontrol=list(maxtimestep=.3))
+ssfit2 <- ctFit(datalong, ssmodel,cores=2,verbose=0, backend = 'stan')
+ssfit3 <- ctFit(datalong, ssmodel,cores=1,nlcontrol=list(maxtimestep=.3), backend = 'stan')
 ssfit4 <- ctFit(datalong, ssmodel,chains=2,cores=2,iter=300,optimize=F,priors=F,
   sampleControl=list(max_treedepth=8),verbose=0,  
   inits='optimize',
-  intoverpop = T)
+  intoverpop = T, backend = 'stan')
 
 for(i in 2:4){
   test_isclose(get(paste0('ssfit',i))$stanfit$transformedparsfull$ll,

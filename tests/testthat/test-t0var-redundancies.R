@@ -132,7 +132,7 @@ test_that("T0cov takes the main latents from T0VAR and the population block from
   data <- .t0varred_popdata()
 
   prep <- suppressMessages(suppressWarnings(
-    ctFit(data, model, fit = FALSE, cores = 1L, verbose = 0L)))
+    ctFit(data, model, fit = FALSE, cores = 1L, verbose = 0L, backend = 'stan')))
   sdat <- prep$standata
   popidx <- as.integer(sdat$intoverpopindvaryingindex)
   # eta1 is a varying T0MEANS, so the population block starts at state 1

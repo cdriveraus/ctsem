@@ -241,7 +241,7 @@ skip_if(.Platform$OS.type == "windows" && R.version$major %in% 4 &&
     m1$pars$sdscale[!grepl('drift',m1$pars$param)] <- 10
     
     # fit ---------------------------------------------------------------------
-    f <- ctFit(datalong = ltsData, model= m1,cores=cores,saveComplexPars = T,fit=T)#,optimcontrol=list(stochastic=F,carefulfit=F),init=rep(0,30)
+    f <- ctFit(datalong = ltsData, model= m1,cores=cores,saveComplexPars = T,fit=T, backend = 'stan')#,optimcontrol=list(stochastic=F,carefulfit=F),init=rep(0,30)
 
     testthat::expect_s3_class(f, 'ctStanFit')
     # ...and then something about the fit. `expect_s3_class` on its own is

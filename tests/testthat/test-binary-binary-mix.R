@@ -123,7 +123,7 @@ skip_on_32bit()
     skip_if_not(.ctsem_test_stan(), "CTSEM_TEST_STAN is not set.")
     gen <- .bbmix_gen(1234)
     f <- ctFit(datalong = gen$d, model = .bbmix_model(gen$nind), cores = 2,
-      plot = 10)
+      plot = 10, backend = 'stan')
     .bbmix_expect_recovery(f, gen$gmn, 'stan')
   })
 

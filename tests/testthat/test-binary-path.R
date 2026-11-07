@@ -40,7 +40,7 @@
 test_that("a binary model recovers what generated it", {
   skip_on_cran()
   fit <- suppressWarnings(suppressMessages(
-    ctFit(.binary_data(), .binary_model(), cores = 1, verbose = 0)))
+    ctFit(.binary_data(), .binary_model(), cores = 1, verbose = 0, backend = 'stan')))
   est <- summary(fit)$popmeans
   # Intervals rather than point estimates: three binary indicators carry much
   # less information than one continuous one, so the point estimate is allowed
@@ -75,7 +75,7 @@ test_that("a fixed non-zero measurement variance on a binary indicator warns", {
   # Bernoulli link already supplies the randomness.
   expect_warning(
     suppressMessages(ctFit(.binary_data(nsubjects = 5, nobs = 4),
-      .binary_model(manifestvar = 0.5), cores = 1, fit = FALSE)),
+      .binary_model(manifestvar = 0.5), cores = 1, fit = FALSE, backend = 'stan')),
     "measurement link")
 })
 
@@ -92,7 +92,7 @@ test_that("the deprecated binomial argument no longer disables the filter", {
   m$pars$indvarying <- FALSE
   warnings <- character()
   prepared <- withCallingHandlers(
-    suppressMessages(ctFit(d, m, binomial = TRUE, cores = 1, fit = FALSE)),
+    suppressMessages(ctFit(d, m, binomial = TRUE, cores = 1, fit = FALSE, backend = 'stan')),
     warning = function(w) {
       warnings <<- c(warnings, conditionMessage(w))
       invokeRestart("muffleWarning")
@@ -109,7 +109,7 @@ test_that("the deprecated binomial argument no longer disables the filter", {
 test_that("post-fit functions work on a binary fit", {
   skip_on_cran()
   fit <- suppressWarnings(suppressMessages(
-    ctFit(.binary_data(), .binary_model(), cores = 1, verbose = 0)))
+    ctFit(.binary_data(), .binary_model(), cores = 1, verbose = 0, backend = 'stan')))
   works <- function(expr) {
     result <- try(suppressWarnings(suppressMessages(expr)), silent = TRUE)
     !inherits(result, "try-error")
@@ -128,7 +128,7 @@ test_that("ctTIpredEffects explains itself when there are no predictors", {
   # found here, and "subscript out of bounds" names an internal rather than the
   # problem.
   fit <- suppressWarnings(suppressMessages(
-    ctFit(.binary_data(), .binary_model(), cores = 1, verbose = 0)))
+    ctFit(.binary_data(), .binary_model(), cores = 1, verbose = 0, backend = 'stan')))
   expect_error(suppressMessages(ctTIpredEffects(fit)),
     "no time independent predictors")
 })

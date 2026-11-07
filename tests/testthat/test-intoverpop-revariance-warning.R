@@ -41,7 +41,7 @@ test_that("indvarying DIFFUSION warns under every spelling of augmented", {
   # 'auto' resolves to augmented when optimising with free indvarying pars,
   # TRUE means augmented, and 'augmented' says so. All three must warn.
   for (iop in list("auto", TRUE, "augmented")) {
-    w <- .revar_warnings(m, intoverpop = iop)
+    w <- .revar_warnings(m, intoverpop = iop, backend = "stan")
     expect_length(w, 1)                       # once per fit, not once per par
     expect_match(w, "DIFFUSION or MANIFESTVAR")
     expect_match(w, "intoverpop='laplace'")
@@ -54,7 +54,7 @@ test_that("indvarying MANIFESTVAR warns under augmented", {
   m <- .revar_model()
   m$pars$indvarying[m$pars$matrix %in% "MANIFESTVAR" &
       is.na(m$pars$value)] <- TRUE
-  w <- .revar_warnings(m, intoverpop = "augmented")
+  w <- .revar_warnings(m, intoverpop = "augmented", backend = "stan")
   expect_length(w, 1)
   expect_match(w, "mvary1")
   expect_match(w, "mvary2")
@@ -88,13 +88,13 @@ test_that("mean-affecting indvarying parameters are silent under augmented", {
   m$pars$indvarying[m$pars$matrix %in%
       c("MANIFESTMEANS", "CINT", "T0MEANS") & is.na(m$pars$value)] <- TRUE
   expect_true(any(m$pars$indvarying))
-  expect_length(.revar_warnings(m, intoverpop = "augmented"), 0)
+  expect_length(.revar_warnings(m, intoverpop = "augmented", backend = "stan"), 0)
 })
 
 test_that("no indvarying parameters is silent", {
   m <- .revar_model()
   m$pars$indvarying <- FALSE
-  expect_length(.revar_warnings(m, intoverpop = "auto"), 0)
+  expect_length(.revar_warnings(m, intoverpop = "auto", backend = "stan"), 0)
 })
 
 test_that("indvarying MANIFESTVAR on a binary indicator is silent", {

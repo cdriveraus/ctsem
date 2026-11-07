@@ -59,7 +59,7 @@ skip_on_32bit()
 
     for(m in c('cm','dm')){
         # m = 'cm'
-        f = ctFit(datalong = dat,model= get(m))
+        f = ctFit(datalong = dat,model= get(m), backend = 'stan')
       
         if(length(s)==0) s[[1]] = list()
         s[[1]][[m]] <- summary(f,parmatrices=TRUE)
@@ -138,7 +138,7 @@ skip_on_32bit()
         
         
         for(argi in names(argslist)){
-          f = ctFit(datalong = dat,model= get(m))
+          f = ctFit(datalong = dat,model= get(m), backend = 'stan')
           if(is.null(s[[argi]])) s[[argi]] = list()
           s[[argi]][[m]] <- summary(f,parmatrices=TRUE)
         }

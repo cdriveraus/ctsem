@@ -30,9 +30,11 @@ and the raw parameter vector for each backend.
     m1 <- ctModel(type='dt', LAMBDA=diag(1),MANIFESTVAR=0)
     m2 <- ctModel(type='dt', LAMBDA=diag(1),MANIFESTVAR=0,DRIFT = .9)
 
-    f1 <- ctFit(df,m1,cores=1)
-    f2 <- ctFit(df,m2,cores=1)
+    if (isTRUE(ctJuliaStatus()$available)) {
+      f1 <- ctFit(df,m1,cores=1)
+      f2 <- ctFit(df,m2,cores=1)
 
-    ctChisqTest(f1,f2)
+      ctChisqTest(f1,f2)
+    }
 }
 }

@@ -512,6 +512,10 @@ ctStanFitUpdate <- ctFitUpdate
   # use it, before the `...` overrides, so a rank passed here still counts as
   # asked for.
   if(!isTRUE(args$poprankexplicit)) args$poprank <- NULL
+  # A fit made before julia was the default -- every 3.11.1 fit, which has no
+  # `backend` at all -- was a stan fit, and replayed without one it would be
+  # rebuilt on julia.
+  if(is.null(args$backend)) args$backend <- if(.ctFitIsJulia(oldfit)) 'julia' else 'stan'
   # `priors` is captured after ctFit() has reduced it to a logical, so
   # 'randomCorr' reads TRUE there -- and TRUE replayed is a prior on every
   # coordinate, a different estimator. `priorscope` beside it still says
@@ -844,14 +848,15 @@ T0VARredundancies <- function(ctm) {
 #' for more runs at what it has and says so: \code{ctJuliaSetup(threads = n,
 #' force = TRUE)} restarts it wider, and
 #' \code{options(ctsem.julia.restart = TRUE)} has a fit do so itself.
-#' @param backend Either 'stan' (the default) or 'julia'. The julia backend is a
-#' separate engine with the same model definitions and the same summaries. It
+#' @param backend Either 'julia' (the default) or 'stan'. The two take the same
+#' model definitions and give the same summaries. The julia backend
 #' optimises and samples (\code{optimize=FALSE}), and adds
 #' \code{intoverpop='laplace'}, grouping levels above the subject, and
 #' ordinal, count and censored indicators, and it integrates a binary one rather
-#' than linearising it. It
-#' needs a working Julia -- see
-#' \code{\link{ctJuliaSetup}} and \code{\link{ctJuliaInstall}}.
+#' than linearising it. It needs a working Julia, which
+#' \code{\link{ctJuliaInstall}} sets up once; see also
+#' \code{\link{ctJuliaSetup}}. 'stan' was the default up to ctsem 3.11 and
+#' needs no external toolchain; it is to be deprecated.
 #' @param sampleControl Used when \code{optimize=FALSE}: a list of sampler
 #' settings. \code{chains} (4 on julia, 2 on stan); \code{iter} (1000, warmup
 #' and sampling together); \code{warmup} (200, or half of \code{iter} if that
@@ -999,11 +1004,14 @@ T0VARredundancies <- function(ctm) {
 #'   TIpredNames=c('TI1','TI2','TI3'),
 #'   LAMBDA=diag(2))
 #'
-#' fit<-ctFit(ctstantestdat, model,priors=TRUE)
+#' # The default backend is julia; ctJuliaInstall() sets it up.
+#' if (isTRUE(ctJuliaStatus()$available)) {
+#'   fit<-ctFit(ctstantestdat, model,priors=TRUE)
 #'
-#' summary(fit)
+#'   summary(fit)
 #'
-#' plot(fit,wait=FALSE)
+#'   plot(fit,wait=FALSE)
+#' }
 #'
 #' #### extended examples
 #'
@@ -1083,7 +1091,7 @@ T0VARredundancies <- function(ctm) {
 #'
 #' m1 <- ctModel(type = 'ct',
 #'   manifestNames = c('Y1'), latentNames=c('eta1'),
-#'   DRIFT=matrix(-.0001,nrow=1,ncol=1),
+#'   DRIFT=matrix(0,nrow=1,ncol=1),
 #'   DIFFUSION=matrix(0,nrow=1,ncol=1),
 #'   T0VAR=matrix(0,nrow=1,ncol=1),
 #'   CINT=matrix(c('cint1'),ncol=1),
@@ -1095,17 +1103,19 @@ T0VARredundancies <- function(ctm) {
 #' ctModelLatex(m1)
 #'
 #' #fit
-#' f1 <- ctFit(datalong = dat2, model = m1, optimize=TRUE, priors=FALSE)
+#' if (isTRUE(ctJuliaStatus()$available)) {
+#'   f1 <- ctFit(datalong = dat2, model = m1, optimize=TRUE, priors=FALSE)
 #'
-#' summary(f1)
+#'   summary(f1)
 #'
-#' #plots of individual subject models v data
-#' ctPredict(f1,plot=TRUE,subjects=1,kalmanvec=c('y','yprior'),timestep=.01)
-#' ctPredict(f1,plot=TRUE,subjects=1:3,kalmanvec=c('y','ysmooth'),timestep=.01,errorvec=NA)
+#'   #plots of individual subject models v data
+#'   ctPredict(f1,plot=TRUE,subjects=1,kalmanvec=c('y','yprior'),timestep=.01)
+#'   ctPredict(f1,plot=TRUE,subjects=1:3,kalmanvec=c('y','ysmooth'),timestep=.01,errorvec=NA)
 #'
-#' #compare randomly generated data from the posterior to the observed data,
-#' #including the lagged covariance structure and the mean trajectory over time
-#' ctPostPredict(f1, wait=FALSE)
+#'   #compare randomly generated data from the posterior to the observed data,
+#'   #including the lagged covariance structure and the mean trajectory over time
+#'   ctPostPredict(f1, wait=FALSE)
+#' }
 #'
 #'  ### Further example models
 #'
@@ -1228,7 +1238,7 @@ T0VARredundancies <- function(ctm) {
 ctFit<-function(datalong, model, stanmodeltext=NA, iter=1000, intoverstates=TRUE, binomial=FALSE,
   fit=TRUE, intoverpop='auto', poprank='auto', sameInitialTimes=FALSE, stationary=FALSE,plot=FALSE,  derrind=NA,
   optimize=TRUE,  optimcontrol=list(),
-  backend=c('stan','julia'),
+  backend=c('julia','stan'),
   nlcontrol = list(), nopriors=NA, priors=FALSE, chains=2,
   cores=getOption("mc.cores", 2L),
   inits=NULL,

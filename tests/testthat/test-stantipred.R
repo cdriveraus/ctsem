@@ -58,20 +58,20 @@ skip_on_32bit()
     
     tfit1<-ctFit(tdat,checkm,optimize=TRUE,
       optimcontrol=list(uncertainty='is',carefulfit=F),
-      priors=TRUE,verbose=0)
+      priors=TRUE,verbose=0, backend = 'stan')
     s1=summary(tfit1)
     
     test_isclose(s1$tipreds[2,'mean'],5,tol=.2)
     test_isclose(s1$popsd[2,'50%'],.6,tol=.2)
     
-    tfit2<-ctFit(tdat,checkm,optimize=TRUE,cores=2,verbose=0,priors=TRUE)
+    tfit2<-ctFit(tdat,checkm,optimize=TRUE,cores=2,verbose=0,priors=TRUE, backend = 'stan')
     s2=summary(tfit2)
     
     test_isclose(s2$tipreds[2,'mean'],5,tol=.2)
     test_isclose(s2$popsd[2,'50%'],.6,tol=.2)
     
     tfit3<-suppressWarnings(ctFit(tdat,checkm,iter=300,chains=2,optimize=FALSE,
-      sampleControl=list(adapt_delta=.8,max_treedepth=6),plot=FALSE))
+      sampleControl=list(adapt_delta=.8,max_treedepth=6),plot=FALSE, backend = 'stan'))
     s3=summary(tfit3)
     
     test_isclose(s3$tipreds[2,'mean'],5,tol=.5)

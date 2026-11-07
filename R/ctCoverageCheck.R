@@ -2,8 +2,8 @@
 #'
 #' Performs a coverage check analysis by generating data from a model, fitting it multiple times
 #' with different fit arguments, and plotting the results. Works with \code{fitArgs}/
-#' \code{fittingModel} combinations that fit with either \code{backend='stan'} (the
-#' \code{\link{ctFit}} default) or \code{backend='julia'}.
+#' \code{fittingModel} combinations that fit with either \code{backend='julia'} (the
+#' \code{\link{ctFit}} default) or \code{backend='stan'}.
 #'
 #' @param initialData An initial dataset to fit to determine 'true' parameters for further generation. 
 #' @param fittingModel A ctModel object used for fitting the data
@@ -89,7 +89,7 @@ ctCoverageCheck <- function(initialData, fittingModel, niter, fitArgs,
   # .ctFitRawEstimate()/.ctFitRawPosterior()/.ctFitRawParNames() (R/ctBackendSummary.R)
   # read `$stanfit$...` or `$estimate$...` depending on which backend produced
   # the fit, so this works whether fittingModel/fitArgs select backend='stan'
-  # (the default) or backend='julia'.
+  # or backend='julia' (the default).
   truepars <- .ctFitRawEstimate(initial_fit)
   
   # CRITICAL STEP: Generate new data samples from the fitted model

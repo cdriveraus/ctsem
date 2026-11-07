@@ -129,10 +129,10 @@ skip_on_32bit()
       MANIFESTMEANS='state[3]')
     m2$pars$indvarying=F
     
-    f <- ctFit(datalong = dat,model= m,cores=cores)
+    f <- ctFit(datalong = dat,model= m,cores=cores, backend = 'stan')
     s=summary(f)
 
-    f2 <- ctFit(datalong = dat,model= m2,cores=cores)
+    f2 <- ctFit(datalong = dat,model= m2,cores=cores, backend = 'stan')
     s2=summary(f2)
 
     # checks: C1 equivalence -------------------------------------------------
@@ -216,10 +216,10 @@ skip_on_32bit()
       MANIFESTMEANS='state[3]')
     m2$pars$indvarying=F
     
-    f <- ctFit(datalong = dat,model= m,cores=cores)
+    f <- ctFit(datalong = dat,model= m,cores=cores, backend = 'stan')
     s=summary(f)
 
-    f2 <- ctFit(datalong = dat,model= m2,cores=cores)
+    f2 <- ctFit(datalong = dat,model= m2,cores=cores, backend = 'stan')
     s2=summary(f2)
 
     # checks: C1 equivalence -------------------------------------------------
@@ -305,12 +305,12 @@ skip_on_32bit()
       CINT=c('state[3]',0,0),MANIFESTMEANS=0)
     m2$pars$indvarying=F
     
-    f <- ctFit(datalong = dat,model= m,cores=cores)
+    f <- ctFit(datalong = dat,model= m,cores=cores, backend = 'stan')
     s=summary(f)
     #s
     subjpars=ctSubjectPars(f)[1,,c('T0m_eta1','drift','cint')] #calculate subject specific parameter estimates
     
-    f2 <- ctFit(datalong = dat,model= m2,cores=cores)
+    f2 <- ctFit(datalong = dat,model= m2,cores=cores, backend = 'stan')
     s2=summary(f2)
     #s2
     cp2=ctSummaryMatrices(f2)
@@ -524,10 +524,10 @@ skip_on_32bit()
       MANIFESTMEANS=0)
     m2$pars$indvarying=F
     
-    f <- ctFit(datalong = dat,model= m,cores=cores)
+    f <- ctFit(datalong = dat,model= m,cores=cores, backend = 'stan')
     s=summary(f)
 
-    f2 <- ctFit(datalong = dat,model= m2,cores=cores)
+    f2 <- ctFit(datalong = dat,model= m2,cores=cores, backend = 'stan')
     s2=summary(f2)
 
     # checks: C1, loglik half only (see the comment above the block) ---------

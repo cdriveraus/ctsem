@@ -102,9 +102,11 @@ through \code{\link{ctFitUncertainty}} with \code{uncertainty = 'sample'}).
 }
 \examples{
 \donttest{
-model <- ctModel(type='ct', manifestNames='Y1', LAMBDA=matrix(1))
-eb <- ctEmpiricalBayesFit(ctstantestdat, model, cores=2,
-  subjectFitArgs=list(optimcontrol=list(finishsamples=20)))
-summary(eb)
+if (isTRUE(ctJuliaStatus()$available)) {
+  model <- ctModel(type='ct', manifestNames='Y1', LAMBDA=matrix(1))
+  eb <- ctEmpiricalBayesFit(ctstantestdat, model, cores=2,
+    subjectFitArgs=list(optimcontrol=list(finishsamples=20)))
+  summary(eb)
+}
 }
 }

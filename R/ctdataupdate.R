@@ -91,7 +91,7 @@ ctdataupdate <- function(what = c("data", "fit"), confirm = TRUE, forcerecompile
         CINT=matrix(c('cint1||||TI1','cint2||||TI1'),ncol=1),
         LAMBDA=diag(2),tipredDefault=FALSE)
 
-      ctstantestfit<-ctFit(ctstantestdat,checkm,cores=1,inits=0,
+      ctstantestfit<-ctFit(ctstantestdat,checkm,cores=1,inits=0,backend='stan',
         optimize = TRUE,optimcontrol=list(finishsamples=20,stochastic=T,tol=1e-5),priors=TRUE)
 
       ctstantestfit <- ctGenerateFromFit(ctstantestfit,nsamples = 20,fullposterior = TRUE,cores=1)
