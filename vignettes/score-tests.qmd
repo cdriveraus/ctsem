@@ -110,9 +110,15 @@ st1 <- ctScoreTest(fit1, tests = "heterogeneity")
 st1
 ```
 
-Each row tests whether that parameter's variance over subjects is zero; the
-test is one sided, since a variance cannot be negative. The drift of `eta1` is
-flagged, and so is its diffusion. That is expected rather than a second
+Each row tests whether that parameter varies over subjects, as `ctFit()`
+would fit it if it were made individually varying: its variance together with
+its covariances with what already varies, here each subject's initial state and
+measurement intercepts (the line under the table names them). A variance cannot
+be negative, so that part is one sided; `LM` is referred to an equal mixture of
+chi-squares on `df - 1` and `df`. The covariances matter most for an intercept:
+one that varies independently of where each subject starts makes subjects
+drift apart from a common start, whereas the same intercept correlated with the
+initial state is a random intercept. The drift of `eta1` is flagged, and so is its diffusion. That is expected rather than a second
 finding: a subject whose process regulates more slowly also varies more, so
 the subjects disagree about the diffusion too. The test says that the subjects
 differ, and roughly where; it cannot always say which of two related
@@ -458,8 +464,11 @@ where every small misfit would otherwise be significant.
   subject's score in that parameter -- any number of covariates costs a few
   matrix products after one set of per-subject scores and Hessians.
 * A random effect's variance has, at zero, the score
-  $\frac{1}{2}\sum_i (s_{ij}^2 + H_{i,jj})$: the information matrix test in that
-  parameter, which is the score test for neglected heterogeneity.
+  $\frac{1}{2}\sum_i (s_{ij}^2 + H_{i,jj})$, and its covariance with an effect
+  already there $\sum_i (s_{ij} s_{ir} + H_{i,jr})$: the information matrix
+  test in those parameters, which is the score test for neglected
+  heterogeneity. Every subject already has one such effect, their initial
+  state, so the covariances are tested even in a model with no random effects.
 * State dependence is tested on the fitted model extended with the drift terms
   at zero, which reproduces the fit exactly there.
 * The fitted model's curvature projects the fitted parameters out of each test

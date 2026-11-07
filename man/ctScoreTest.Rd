@@ -71,7 +71,8 @@ tables). \code{Inf} corrects every term.}
 }
 \value{
 An object of class \code{ctScoreTest}: a list with
-  \code{heterogeneity} (a data frame, one row per parameter),
+  \code{heterogeneity} (a data frame, one row per parameter or fixed
+  \code{MANIFESTMEANS} cell),
   \code{dimension} (the largest eigenvalue, its p-value and the direction,
   when two or more parameters are tested),
   \code{covariates} (one element per covariate, each a list of its
@@ -102,57 +103,70 @@ before interpreting their sizes.
 \section{Heterogeneity}{
  For each parameter that is free, does not already
   vary over subjects, and is not an initial condition (T0MEANS and T0VAR,
-  whose variation T0VAR already carries), the score test that its variance
-  over subjects is zero. A variance cannot be negative, so the test is one
-  sided: \code{z} large and positive says the subjects disagree about the
-  parameter more than one shared value allows. The statistic is the
-  information matrix test in that parameter, which is the score test for
-  neglected heterogeneity (Chesher, 1984). It responds to any failure of
-  the information equality in that coordinate, of which subject differences
-  are the usual cause but not the only one: a subject-varying drift also
-  moves the diffusion's test, because both change how much a subject
-  varies, and a missing nonlinearity moves several. \code{sd} is the
-  one-step estimate of the subjects' standard deviation on the raw scale,
-  and \code{sd_natural} approximately on the parameter's own. To act on a
-  result, set \code{indvarying = TRUE} for the parameter, refit, and test
-  again.
+  whose variation T0VAR already carries), the score test of letting it vary
+  as \code{ctFit} would fit it: its variance over subjects together with
+  its covariances with what already varies -- each subject's initial state
+  (the free \code{T0MEANS} parameters) and the parameters with random
+  effects, named in \code{with}. Every subject has an initial state, so
+  even a model without random effects has those covariances to test. They
+  matter: an intercept in \code{CINT} that varies while the initial means
+  are shared makes subjects drift apart from a common start, which data
+  whose subjects differ stably from the first occasion reject, whereas the
+  same intercept correlated with where each subject starts is a random
+  intercept. The covariances are tested as ordinary score tests and the
+  variance, given them, one sided (Stram & Lee, 1994): \code{LM} is
+  referred to an equal mixture of chi-square on \code{df - 1} and
+  \code{df}. Where the new effect is independent of what varies, those
+  covariances only cost power, so \code{p} is the stronger of that test
+  and of the variance alone (\code{z}, one sided, its covariances held at
+  zero), by their smaller p-value, calibrated by resampling subjects. A
+  negative \code{z} beside a large \code{LM} says the parameter varies only
+  together with what already varies, as an intercept does with where each
+  subject starts. Nothing is assumed about how the initial states relate
+  to the dynamics: neither that subjects start at their own equilibrium
+  nor that they share a start. The statistic is the information matrix
+  test in those coordinates, which is the score test for neglected
+  heterogeneity (Chesher, 1984). It responds to any failure of the
+  information equality there, of which subject differences are the usual
+  cause but not the only one: a subject-varying drift also moves the
+  diffusion's test, because both change how much a subject varies, and a
+  missing nonlinearity moves several. \code{sd} is the one-step estimate of
+  the subjects' standard deviation on the raw scale, with the covariances
+  estimated beside it, and \code{sd_natural} approximately on the
+  parameter's own; \code{NA} where the covariances carry the test and the
+  variance given them reads zero, which happens for an intercept, and
+  which only a refit can size. To act on a result, set \code{indvarying = TRUE} for the
+  parameter and the \code{T0MEANS} parameters, refit, and test again;
+  \code{\link{ctModelImprove}} does that.
 
-  An intercept in \code{CINT} is tested with each subject's initial means
-  following it: a subject whose intercept is higher by \code{d} starts
-  \code{-DRIFT^-1 d} higher, at their own equilibrium, so their whole
-  latent trajectory is shifted -- a random intercept (with \code{LAMBDA =
-  I}, the same model as a random manifest intercept). A subject-specific
-  intercept with the initial means shared would instead make subjects drift
-  apart from a common start, which data with stable differences from the
-  first occasion reject. \code{initial} says which was tested:
-  \code{'equilibrium'} (\code{with} naming the \code{T0MEANS} parameters
-  that move), or \code{'shared'} where an initial mean the shift needs is
-  fixed (or not a parameter of its own) and so cannot follow. What an
-  intercept moves that the drift cannot balance -- a trend through a drift
-  fixed at zero -- has no equilibrium, and moves alone. The shift is taken
-  at the estimate's drift (where the drift depends on the state, as the fit
-  reports it). To act on an \code{'equilibrium'} result, let the
-  \code{CINT} parameter and those in \code{with} vary, so their random
-  effects are estimated with their correlation; \code{\link{ctModelImprove}}
-  does that.
+  Each \code{MANIFESTMEANS} cell the model fixes is tested too, as a
+  random intercept on that indicator about its fixed value (rows named
+  \code{MANIFESTMEANS[...]}), from the model with those cells written as
+  parameters. With one indicator per latent such an intercept is a
+  direction the \code{CINT} rows' covariances also reach; with more
+  indicators it is the indicator's own; for a latent with no free
+  intercept at all it is the only test of its level. To act on it, give
+  the cell a parameter with the fixed value as its stated mean
+  (\code{ctPar(mean=)}) and \code{indvarying = TRUE}.
 
   On a reduced-rank level (\code{poprank}), a parameter that varies
   only through the shared dimensions, without a variance of its own, is
-  tested too: for variation outside those dimensions. A parameter whose
-  test the fitted model already determines -- under one per cent of its
-  spread left once estimation is taken out, as for an intercept that loads
-  on the shared dimensions -- is not tested (\code{NA}) and is left out of
-  \code{dimension}.
+  tested too: for variation outside those dimensions. There the shared
+  dimensions carry the covariances, and each test is of the variance
+  alone. A parameter whose test the fitted model already determines --
+  under one per cent of its spread left once estimation is taken out, as
+  for an intercept that loads on the shared dimensions -- is not tested
+  (\code{NA}) and is left out of \code{dimension}.
 
   \code{dimension} tests every direction at once: whether subjects vary
-  along some combination of the tested parameters (each \code{CINT}
-  parameter along the same shift as its own row), a new dimension of
-  person variation. It is not computed on a reduced-rank level, where in
+  along some combination of the tested parameters, a new dimension of
+  person variation, its covariances with what already varies held at
+  zero. It is not computed on a reduced-rank level, where in
   simulation it found a dimension the rank lacked 10 per cent of the time
   and the per-parameter tests of variation outside the shared dimensions 58
   per cent; those are the test there. Adding
   variance along a direction \code{u} changes a subject's log likelihood,
-  at zero, by \code{(u's_i)^2/2 + u'H_iu/2}, so the per-parameter tests are
+  at zero, by \code{(u's_i)^2/2 + u'H_iu/2}, so the variances are
   the diagonal of one score matrix; its largest eigenvalue, scaled by each
   diagonal's spread, is the statistic, against a bootstrap over subjects,
   and its eigenvector is the direction, read as relative loadings (raw
@@ -344,6 +358,13 @@ Boos, D. D. (1992). On generalized score tests. The American
 
   Chesher, A. (1984). Testing for neglected heterogeneity. Econometrica, 52,
   865-872.
+
+  Stram, D. O., & Lee, J. W. (1994). Variance components testing in the
+  longitudinal mixed effects model. Biometrics, 50, 1171-1177.
+
+  Self, S. G., & Liang, K.-Y. (1987). Asymptotic properties of maximum
+  likelihood estimators and likelihood ratio tests under nonstandard
+  conditions. Journal of the American Statistical Association, 82, 605-610.
 
   Hothorn, T., & Lausen, B. (2003). On the exact distribution of maximally
   selected rank statistics. Computational Statistics & Data Analysis, 43,

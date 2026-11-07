@@ -37,9 +37,10 @@
 #'
 #' The relaxations, in the language of the model:
 #' \describe{
-#'   \item{heterogeneity}{\code{indvarying = TRUE} for a parameter, and for a
-#'     \code{CINT} parameter the \code{T0MEANS} parameters its test moved with
-#'     it (\code{with} in \code{\link{ctScoreTest}}).}
+#'   \item{heterogeneity}{\code{indvarying = TRUE} for a parameter and the
+#'     \code{T0MEANS} parameters, whose covariances with it the test took in;
+#'     for a fixed \code{MANIFESTMEANS} cell, a parameter there varying about
+#'     the fixed value as its stated mean.}
 #'   \item{covariates}{a covariate added as a time independent predictor, with
 #'     effects on the parameters its tests single out.}
 #'   \item{statedependence}{a term \code{d * eta_k * eta_m} in a latent's
@@ -909,27 +910,58 @@ print.ctModelProposals <- function(x, digits = 3, ...) {
   # a reduced-rank level rather than the model.
   replay <- if (is.null(current)) list() else .ctFitReplayArgs(current)
   h <- st$heterogeneity
-  # A CINT test made with the initial means following the intercept names
-  # them in `with`: they vary with it, or the refit is the model whose
-  # subjects drift apart from a shared start, which the test did not ask
-  # about (.ctScoreHetDirections).
-  withpars <- function(pars) if (is.null(h) || is.null(h$with)) character() else
-    unique(unlist(strsplit(stats::na.omit(h$with[h$parameter %in% pars]), ', ', fixed = TRUE)))
+  # A heterogeneity test is of the parameter varying with its covariances with
+  # each subject's initial state and the effects already varying (`with`).
+  # The initial means vary with it, or the refit cannot take the covariance
+  # the test found: a CINT that varies from a shared start makes subjects
+  # drift apart, which is not what a random intercept is.
+  t0pars <- unique(stats::na.omit(model$pars$param[model$pars$matrix %in% 'T0MEANS']))
+  withpars <- function(r) if (is.null(h$with) || is.na(h$with[r])) character() else
+    intersect(strsplit(h$with[r], ', ', fixed = TRUE)[[1]], t0pars)
+  rankp <- function(r) if (!is.null(h$LM)) .ctScoreMixtureP(h$LM[r], h$df[r] - 1L) else
+    stats::pnorm(h$z[r], lower.tail = FALSE)
   if (!is.null(h)) for (r in which(h$p_adj < alpha)) {
     par <- h$parameter[r]
+    with <- withpars(r)
+    # A MANIFESTMEANS cell the model fixes: a parameter there, varying about
+    # the fixed value as its stated mean.
+    if (identical(h$matrix[r], 'MANIFESTMEANS') && !par %in% model$pars$param) {
+      row <- h$row[r]
+      name <- paste0('mm_', model$manifestNames[row])
+      while (name %in% model$pars$param) name <- paste0(name, '_')
+      out[[length(out) + 1L]] <- list(key = paste0('het:', par), family = 'heterogeneity',
+        label = paste0(par, ' individually varying about its fixed value',
+          if (length(with)) paste0(', with ', paste(with, collapse = ', '))),
+        p = h$p[r], rank = rankp(r), class = h$class[r],
+        start = .ctImprovePopsdStart(model, name, h$sd[r]),
+        edit = local({ row <- row; name <- name; with <- with
+          function(model, data, covs, args = list()) {
+            pars <- model$pars
+            k <- which(pars$matrix %in% 'MANIFESTMEANS' & pars$row %in% row &
+              (is.na(pars$param) | !nzchar(pars$param)))
+            if (length(k) != 1L) stop('that MANIFESTMEANS cell is no longer fixed')
+            value <- as.numeric(pars$value[k])
+            pars <- .ctScoreFreeCell(pars, k, name, .ctModelDefaultFreePar('MANIFESTMEANS',
+              row, 1L, isTRUE(model$continuoustime))$transform)
+            pars$indvarying[pars$param %in% c(name, with)] <- TRUE
+            model$pars <- pars
+            model$fixedpopmeans <- c(model$fixedpopmeans, stats::setNames(value, name))
+            list(model = model, data = data)
+          } }))
+      next
+    }
     varying <- par %in% model$pars$param[as.logical(model$pars$indvarying) %in% TRUE]
-    with <- withpars(par)
     out[[length(out) + 1L]] <- if (!varying) list(key = paste0('het:', par),
       family = 'heterogeneity', label = paste0(par, ' individually varying',
-        if (length(with)) paste0(' with ', paste(with, collapse = ', '))), p = h$p[r],
-      rank = stats::pnorm(h$z[r], lower.tail = FALSE), class = h$class[r],
+        if (length(with)) paste0(', with ', paste(with, collapse = ', '))), p = h$p[r],
+      rank = rankp(r), class = h$class[r],
       start = .ctImprovePopsdStart(model, par, h$sd[r]),
       edit = local({ pars <- c(par, with); function(model, data, covs, args = list()) {
         model$pars$indvarying[model$pars$param %in% pars] <- TRUE
         list(model = model, data = data)
       } })) else list(key = paste0('own:', par), family = 'heterogeneity',
       label = paste0(par, ' given a variance of its own'), p = h$p[r],
-      rank = stats::pnorm(h$z[r], lower.tail = FALSE), class = h$class[r],
+      rank = rankp(r), class = h$class[r],
       edit = local({ par <- par; pu <- replay$popunique; function(model, data, covs, args = list()) {
         old <- if (!is.null(args$popunique)) args$popunique else pu
         if (isTRUE(old)) stop('every parameter already has a variance of its own')
@@ -961,7 +993,6 @@ print.ctModelProposals <- function(x, digits = 3, ...) {
   if (!is.null(d) && isTRUE(d$p < alpha)) {
     pars <- names(d$direction)[abs(d$direction) >= 0.5]
     pars <- setdiff(pars, model$pars$param[as.logical(model$pars$indvarying) %in% TRUE])
-    if (length(pars) > 1L) pars <- c(pars, setdiff(withpars(pars), pars))
     if (length(pars) > 1L) out[[length(out) + 1L]] <- list(
       key = paste0('dim:', paste(sort(pars), collapse = ',')), family = 'dimension',
       label = paste0(paste(pars, collapse = ', '), ' individually varying together'),
