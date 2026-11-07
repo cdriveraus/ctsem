@@ -53,24 +53,32 @@ test_that("summary() reads a fit's curves, and the array still prints and plots"
   expect_s3_class(suppressMessages(ctDiscreteParsPlot(dp)), 'ggplot')
 })
 
-test_that("every lag of a draw comes from one decomposition, and agrees with expm", {
-  # .ctExpmTimes takes expm(D t) at all t from D's eigendecomposition, and
-  # falls back to expm() at each t where the eigenvectors are ill-conditioned.
-  times <- c(0, .1, 1, 3.7, 20)
-  each <- function(D, discrete = FALSE) aperm(sapply(times, function(t)
-    if (discrete) { m <- diag(nrow(D)); for (n in seq_len(t)) m <- m %*% D; m }
-    else expm::expm(D * t), simplify = 'array'), c(3, 1, 2))
+test_that("the regressions of every draw at once agree with expm at each draw and lag", {
+  # ctDiscreteParsDrift works on all draws together, each lag the last times
+  # the step's expm; the reference is expm() of each draw at each lag. The
+  # drifts include complex, defective, near-defective, zero and explosive ones,
+  # and the lags are unsorted, uneven and repeated.
   drifts <- list(
-    real = matrix(c(-.4, .2, .1, -.7), 2),
-    complex = matrix(c(-.1, -.8, .8, -.1), 2),
-    defective = matrix(c(-.5, 1, 0, -.5), 2),
-    neardefective = matrix(c(-.5, 1, 0, -.5000001), 2),
-    zero = matrix(0, 2, 2))
-  for (nm in names(drifts)) expect_equal(ctsem:::.ctExpmTimes(drifts[[nm]], times),
-    each(drifts[[nm]]), tolerance = 1e-10, label = nm)
-  D <- diag(2) + .5 * drifts$complex
-  expect_equal(ctsem:::.ctExpmTimes(D, 0:6, discrete = TRUE),
-    { times <- 0:6; each(D, discrete = TRUE) }, tolerance = 1e-10)
+    matrix(c(-.4, .2, .1, -.7), 2), matrix(c(-.1, -.8, .8, -.1), 2),
+    matrix(c(-.5, 1, 0, -.5), 2), matrix(c(-.5, 1, 0, -.5000001), 2),
+    matrix(0, 2, 2), matrix(c(.3, .1, 0, -2), 2))
+  D <- array(NA_real_, c(length(drifts), 2, 2, 2))
+  for (s in seq_along(drifts)) for (j in 1:2) D[s, j, , ] <- drifts[[s]] * j
+  times <- c(3.7, 0, .1, 20, 1, .1)
+  out <- ctsem:::ctDiscreteParsDrift(list(DRIFT = D), times, 'unit', FALSE, quiet = TRUE)
+  for (s in seq_along(drifts)) for (j in 1:2) for (k in seq_along(times))
+    expect_equal(out[s, j, k, , ], expm::expm(D[s, j, , ] * times[k]),
+      tolerance = 1e-10, label = paste('draw', s, 'subject', j, 'lag', times[k]))
+  # Discrete time: powers of the drift matrix.
+  P <- D
+  for (s in seq_along(drifts)) for (j in 1:2) P[s, j, , ] <- diag(2) + .4 * D[s, j, , ]
+  out <- ctsem:::ctDiscreteParsDrift(list(DRIFT = P), c(0, 3, 1, 6), 'unit', FALSE,
+    discreteInput = TRUE, quiet = TRUE)
+  for (s in seq_along(drifts)) for (k in seq_along(c(0, 3, 1, 6))) {
+    m <- diag(2)
+    for (n in seq_len(c(0, 3, 1, 6)[k])) m <- m %*% P[s, 1, , ]
+    expect_equal(out[s, 1, k, , ], m, tolerance = 1e-10)
+  }
 })
 
 test_that("the plot's data are the quantiles of the draws at each lag", {

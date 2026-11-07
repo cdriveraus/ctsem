@@ -431,37 +431,55 @@ print.ctDiscretePars <- function(x, ...) {
   invisible(x)
 }
 
-# expm(D t) at every t in `times`, or D^t for a discrete time model, as an
-# array [time, row, col]: from one eigendecomposition, V exp(L t) V^-1. Where
-# the eigenvectors are ill-conditioned -- D defective or nearly so -- that
-# loses accuracy in proportion, so each t then takes its own expm() (or matrix
-# power), as every t once did.
-.ctExpmTimes <- function(D, times, discrete = FALSE) {
-  nl <- nrow(D)
-  nt <- length(times)
-  out <- array(NA_real_, c(nt, nl, nl))
-  e <- if (all(is.finite(D))) tryCatch(eigen(D), error = function(err) NULL)
-  ok <- !is.null(e) && all(is.finite(e$values)) && all(is.finite(e$vectors))
-  if (ok) {
-    sv <- svd(e$vectors, 0, 0)$d
-    ok <- min(sv) > 0 && max(sv) / min(sv) < 1e6
+# Matrices batched over their first dimension: an array [n, row, col] holds n
+# matrices, and these act on all of them at once, so ctDiscreteParsDrift()
+# loops over lags and the matrices' own few rows and columns, never over draws.
+.ctBatchMul <- function(A, B) {
+  nl <- dim(A)[2]
+  out <- array(0, dim(A))
+  for (i in seq_len(nl)) for (j in seq_len(nl)) {
+    s <- A[, i, 1] * B[, 1, j]
+    if (nl > 1) for (k in 2:nl) s <- s + A[, i, k] * B[, k, j]
+    out[, i, j] <- s
   }
-  if (ok) {
-    V <- e$vectors
-    Vi <- solve(V)
-    lam <- as.complex(e$values)
-    p <- if (discrete) outer(times, lam, function(t, l) l^t) else exp(outer(times, lam))
-    acc <- array(0, c(nt, nl, nl))
-    for (k in seq_len(nl)) acc <- acc + outer(p[, k], outer(V[, k], Vi[k, ]))
-    out[] <- Re(acc)
-    return(out)
+  out
+}
+
+.ctBatchIdentity <- function(n, nl) {
+  out <- array(0, c(n, nl, nl))
+  for (i in seq_len(nl)) out[, i, i] <- 1
+  out
+}
+
+# expm() of every matrix: scaled by a power of two until every 1-norm is under
+# one half, a Taylor series of order 16 (remainder under 1e-19 there), then
+# squared back.
+.ctBatchExpm <- function(A) {
+  n <- dim(A)[1]
+  nl <- dim(A)[2]
+  norm <- numeric(n)
+  for (j in seq_len(nl)) {
+    s <- 0
+    for (i in seq_len(nl)) s <- s + abs(A[, i, j])
+    norm <- pmax(norm, s)
   }
-  for (ti in seq_len(nt)) {
-    out[ti, , ] <- if (!discrete) expm::expm(D * times[ti]) else {
-      m <- diag(1, nl)
-      for (n in seq_len(times[ti])) m <- m %*% D
-      m
-    }
+  biggest <- max(c(0, norm[is.finite(norm)]))
+  squarings <- if (biggest > 0.5) ceiling(log2(biggest / 0.5)) else 0
+  A <- A / 2^squarings
+  I <- .ctBatchIdentity(n, nl)
+  X <- I
+  for (k in 16:1) X <- I + .ctBatchMul(A, X) / k
+  for (q in seq_len(squarings)) X <- .ctBatchMul(X, X)
+  X
+}
+
+# The p-th power of every matrix, p a whole number, by repeated squaring.
+.ctBatchPower <- function(A, p) {
+  out <- .ctBatchIdentity(dim(A)[1], dim(A)[2])
+  while (p > 0) {
+    if (p %% 2 == 1) out <- .ctBatchMul(out, A)
+    p <- p %/% 2
+    if (p > 0) A <- .ctBatchMul(A, A)
   }
   out
 }
@@ -488,56 +506,97 @@ ctDiscreteParsDrift<-function(ctpars,times, impulseType,  standardise,cov=FALSE,
 
   if('dtDRIFT' %in% types){
     nt <- length(times)
-    dt <- array(NA_real_, dim=c(dim(ctpars$DRIFT)[1],max(unlist(nsubs)),nt,dim(ctpars$DRIFT)[3:4]))
+    S <- dim(ctpars$DRIFT)[1]
+    J <- max(unlist(nsubs))
+    N <- S * J
+    dt <- array(NA_real_, dim=c(S, J, nt, nl, nl))
+    # Every draw of every subject at once, as [draw x subject, row, col], a
+    # subject past a matrix's own taking its last, as before. A loop over
+    # draw, subject and lag with an expm() each took 20 minutes for 10,000
+    # draws of three subjects at 361 lags.
+    flat <- function(m) array(m[, pmin(seq_len(J), dim(m)[2]), , , drop = FALSE], c(N, nl, nl))
+    D <- flat(ctpars$DRIFT)
+    bad <- logical(N)
 
-    # Every lag of a draw at once: E[t, , ] for all t, then the companion and
-    # the standardisation, each built once for the draw and applied to every
-    # lag. A loop over lags as well, with an expm() each, took 20 minutes for
-    # 10,000 draws of three subjects at 361 lags.
-    for(i in 1:dim(ctpars$DRIFT)[1]){
-      for(j in 1:dim(ctpars$DRIFT)[2]){
-        E <- .ctExpmTimes(matrix(ctpars$DRIFT[i,min(j,nsubs$DRIFT),,],nl,nl), times, discreteInput)
-        if(!identical(companionType,'unit')){
-          # Every variant is dtDRIFT %*% C; only the companion matrix C
-          # differs. See R/ctCompanionShock.R for what each one means.
-          C <- .ctCompanionMatrix(companionType,
-            matrix(ctpars$DIFFUSIONcov[i,min(j,nsubs$DIFFUSIONcov),,],nl,nl),
-            matrix(ctpars$asymDIFFUSIONcov[i,min(j,nsubs$asymDIFFUSIONcov),,],nl,nl),
-            nl)
-          if(is.null(C)){
-            nonstationary <- nonstationary + nt
-            dt[i,j,,,] <- NaN
-            next
-          }
-          E[] <- matrix(E, nt*nl, nl) %*% C # E[t, , ] %*% C at every t
+    C <- NULL
+    if(!identical(companionType,'unit')){
+      # Every variant is dtDRIFT %*% C; only the companion matrix C
+      # differs. See R/ctCompanionShock.R for what each one means.
+      Q <- flat(ctpars$DIFFUSIONcov)
+      A <- flat(ctpars$asymDIFFUSIONcov)
+      if(companionType %in% c('observed', 'shock')){
+        # .ctCovarianceRegression() of every draw at once: each column of the
+        # covariance over its variance, 0 where that is not a positive number,
+        # ones on the diagonal; 'observed' refuses a draw whose stationary
+        # variances are not all finite and non-negative, as .ctCompanionMatrix()
+        # does.
+        M <- if(companionType == 'observed') A else Q
+        variances <- matrix(NA_real_, N, nl)
+        for(r in seq_len(nl)) variances[, r] <- M[, r, r]
+        if(companionType == 'observed')
+          bad <- bad | apply(!is.finite(variances) | variances < 0, 1, any)
+        inverse <- 1 / variances
+        inverse[!is.finite(variances) | variances <= 0] <- 0
+        C <- M
+        for(cc in seq_len(nl)) C[, , cc] <- M[, , cc] * inverse[, cc]
+        C[!is.finite(C)] <- 0
+        for(r in seq_len(nl)) C[, r, r] <- 1
+      } else {
+        C <- array(NaN, c(N, nl, nl))
+        for(n in seq_len(N)){
+          Cn <- .ctCompanionMatrix(companionType, matrix(Q[n,,],nl,nl), matrix(A[n,,],nl,nl), nl)
+          if(is.null(Cn)) bad[n] <- TRUE else C[n,,] <- Cn
         }
-
-        if(standardise) {
-          # Response of r per one sd_c change in c, in sd_r units: S^-1 M S,
-          # with the sds of the processes themselves (asymDIFFUSION). Applied
-          # after the companion step so the two compose.
-          #
-          # A frozen DRIFT can be non-stationary at the point it was frozen at
-          # while the nonlinear system it came from is perfectly well behaved
-          # -- often the point of the nonlinearity -- so this reports NaN for
-          # the affected draw and names the likely cause rather than aborting
-          # and blaming the model, as julia's _ctsem_asymptotics already does.
-          asym <- matrix(ctpars$asymDIFFUSIONcov[i,min(j,nsubs$asymDIFFUSIONcov),,],nl,nl)
-          if(any(diag(asym) < 0)){
-            nonstationary <- nonstationary + nt
-            dt[i,j,,,] <- NaN
-            next
-          }
-          sdv <- sqrt(diag(asym) + 1e-10)
-          E <- E * rep(matrix(rep(sdv,each=nl) / rep(sdv,times=nl),nl), each = nt)
-        }
-        if(cov) {
-          Ec <- E
-          for(r in 1:nl) for(s in 1:nl) Ec[,r,s] <- rowSums(E[,r,,drop=FALSE] * E[,s,,drop=FALSE])
-          E <- Ec
-        }
-        dt[i,j,,,] <- E
       }
+    }
+
+    if(standardise) {
+      # Response of r per one sd_c change in c, in sd_r units: S^-1 M S,
+      # with the sds of the processes themselves (asymDIFFUSION). Applied
+      # after the companion step so the two compose.
+      #
+      # A frozen DRIFT can be non-stationary at the point it was frozen at
+      # while the nonlinear system it came from is perfectly well behaved
+      # -- often the point of the nonlinearity -- so this reports NaN for
+      # the affected draw and names the likely cause rather than aborting
+      # and blaming the model, as julia's _ctsem_asymptotics already does.
+      A <- flat(ctpars$asymDIFFUSIONcov)
+      variances <- matrix(NA_real_, N, nl)
+      for(r in seq_len(nl)) variances[, r] <- A[, r, r]
+      bad <- bad | apply(variances < 0, 1, function(z) isTRUE(any(z)))
+      sdv <- suppressWarnings(sqrt(variances + 1e-10))
+      scale <- array(NA_real_, c(N, nl, nl))
+      for(r in seq_len(nl)) for(cc in seq_len(nl)) scale[, r, cc] <- sdv[, cc] / sdv[, r]
+    }
+    nonstationary <- nonstationary + nt * sum(bad)
+
+    # The lags in increasing order, each the last times expm(DRIFT * step),
+    # or DRIFT to the step's power in discrete time. A step of the same length
+    # as one before, to 13 figures, reuses it: an evenly spaced grid computes
+    # one or two.
+    E <- .ctBatchIdentity(N, nl)
+    last <- 0
+    steps <- list()
+    for(ti in order(times)){
+      step <- times[ti] - last
+      key <- format(signif(step, 13), digits = 15)
+      X <- steps[[key]]
+      if(is.null(X)){
+        X <- if(discreteInput) .ctBatchPower(D, round(step)) else .ctBatchExpm(D * step)
+        if(length(steps) < 8) steps[[key]] <- X
+      }
+      E <- .ctBatchMul(E, X)
+      last <- times[ti]
+      Et <- E
+      if(!is.null(C)) Et <- .ctBatchMul(Et, C)
+      if(standardise) Et <- Et * scale
+      if(cov) {
+        Ec <- Et
+        for(r in seq_len(nl)) for(q in seq_len(nl)) Ec[, r, q] <- rowSums(Et[, r, , drop=FALSE] * Et[, q, , drop=FALSE])
+        Et <- Ec
+      }
+      Et[bad, , ] <- NaN
+      dt[, , ti, , ] <- Et
     }
     ctpars$dtDRIFT <- dt
   } #end dtdrift
