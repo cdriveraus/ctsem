@@ -38,7 +38,12 @@ test_that("coreset stages reach the full objective's optimum in fewer full gradi
   # The finish and its Hessian are the full objective's either way.
   expect_true(isTRUE(on$uncertainty$certification$certified))
   expect_true(isTRUE(off$uncertainty$certification$certified))
-  expect_equal(on$estimate$logposterior, off$estimate$logposterior, tolerance = 1e-8)
+  # Each is certified within its gap tolerance of the maximum, so together they
+  # are within the sum: what certification guarantees, and no closer. A
+  # relative 1e-8 (1.7e-5 here) passed by where the two runs happened to stop,
+  # and failed at 4.4e-5 once intercepts started at the data's means.
+  expect_lt(abs(on$estimate$logposterior - off$estimate$logposterior),
+    on$uncertainty$certification$tolerance + off$uncertainty$certification$tolerance)
   H <- off$uncertainty$hessian
   se <- sqrt(diag(solve(-H)))
   expect_equal(as.numeric(on$estimate$raw) / se, as.numeric(off$estimate$raw) / se,

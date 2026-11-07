@@ -242,11 +242,10 @@ test_that("a derived start the optimiser cannot take gives way to the default", 
   fallen <- run(FALSE)
   expect_length(fallen$start, npar)
   # The default start is the jitter around raw zero (sd 0.01); the derived
-  # cells are well away from it.
+  # start is not. Not every derived cell is away from zero: an intercept
+  # starts at its indicator's mean, which here is near zero for y1.
   expect_lt(max(abs(fallen$start)), 0.1)
-  derived <- abs(kept$start - fallen$start) > 1e-12
-  expect_true(any(derived))
-  expect_gt(min(abs(kept$start[derived])), 0.1)
+  expect_true(any(abs(kept$start - fallen$start) > 0.1))
   expect_true(any(grepl("cannot be evaluated at the starting values derived",
     fallen$said)))
   expect_false(any(grepl("cannot be evaluated", kept$said)))
