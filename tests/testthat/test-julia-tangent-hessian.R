@@ -41,7 +41,12 @@
 # What the filter integrates, whether the hand route serves the objective and
 # takes the point, and the largest difference from the dual's Hessian relative
 # to its largest entry.
-.th_compare <- function(fit) {
+# At a fixed, moderate raw point rather than where the `estonly` fit stopped:
+# with no finish such a fit ends wherever L-BFGS stops, which on this fixture
+# was at times past raw 1e5, where the dual oracle itself is not finite.
+.th_point <- function(fit) 0.3 * sin(seq_along(fit$estimate$raw))
+
+.th_compare <- function(fit, at = .th_point(fit)) {
   .th_oracles()
   f <- ctsem:::.ctJuliaEval(paste(
     "function (lap, x)",
@@ -60,7 +65,7 @@
     "    err = maximum(abs.(H1 .- H0)) / maximum(abs.(H0)))",
     "end", sep = "\n"))
   f(ctsem:::.ctJuliaObjective(fit, hybrid = TRUE),
-    ctsem:::.ctJuliaNumericVector(as.numeric(fit$estimate$raw)))
+    ctsem:::.ctJuliaNumericVector(as.numeric(at)))
 }
 
 # The unit curvature by the hand-coded sweeps (`tangent_laplace.jl`) against the
