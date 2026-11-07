@@ -197,24 +197,63 @@ function _ctsem_settling_states(A::AbstractMatrix, continuous_time::Bool)
 end
 
 """
+    _ctsem_noise_reach(A, Q, candidates)
+
+The states among `candidates` the diffusion reaches: those with noise of their
+own (`Q[i, i] != 0`) and every state they drive, directly or through others
+(`A[i, j] != 0` for `j` driving `i`). Sorted. Closed under driving within the
+set, so the noise-driven part of the process restricted to it is a system of
+its own: every other state carries none of the noise.
+"""
+function _ctsem_noise_reach(A::AbstractMatrix, Q::AbstractMatrix, candidates::Vector{Int})
+    k = size(A, 1)
+    allowed = fill(false, k)
+    allowed[candidates] .= true
+    reach = fill(false, k)
+    stack = Int[]
+    for i in candidates
+        if Q[i, i] != 0
+            reach[i] = true
+            push!(stack, i)
+        end
+    end
+    while !isempty(stack)
+        r = pop!(stack)
+        for i in 1:k
+            if allowed[i] && !reach[i] && A[i, r] != 0
+                reach[i] = true
+                push!(stack, i)
+            end
+        end
+    end
+    return findall(reach)
+end
+
+"""
     _ctsem_asymptotics(DRIFT, DIFFUSIONcov, CINT, dyn, nlatent, continuous_time, naff)
 
 Asymptotic diffusion covariance and asymptotic intercept: the mean and the
 diffusion's covariance each latent settles to whatever its start.
 
-The intercept is solved over the latents of genuine dynamics (`1:naff`; the
-carrier states of augmented random effects past them stay zero), the covariance
-over the diffusion states `dyn`, zero for any other latent, which no noise
-reaches. Each only over the states that settle (`_ctsem_settling_states`), and
-`NaN` for the rest of its span: a latent with a fixed auto effect of zero, or
-an unstable drift, has no equilibrium, and solving with it anyway gives a
+Both are over the latents of genuine dynamics (`1:naff`; the carrier states of
+augmented random effects past them stay zero). The intercept is solved over
+the latents that settle (`_ctsem_settling_states`) and is `NaN` for the rest:
+a latent with a fixed auto effect of zero, or an unstable drift, or one driven
+by such a latent, has no equilibrium mean, and solving with it anyway gives a
 number -- a singular solve's error, or `CINT / 1e-6` once that zero is moved
-off -- where there is none. That is a property of the parameter value, not an
-error in the caller, so it comes back as `NaN` rather than thrown: one
-non-stationary posterior sample should not abort the summary of the other 199.
-A settling state's closure is closed under driving and within `dyn` where the
-state is, so the solves over the settling states are the stable subsystems'
-own.
+off -- where there is none.
+
+The covariance is zero wherever the diffusion does not reach
+(`_ctsem_noise_reach`, within the diffusion states `dyn`), whatever the drift
+there. Among the states it reaches it is solved where the reached states
+driving each one are stable, and is `NaN` for the others. So a stable process
+driven by a deterministic trend has a covariance though its mean has no
+equilibrium, and the trend's covariance is zero; a random walk's is `NaN`.
+
+Each solve is over a set closed under driving, so it is the subsystem's own.
+A missing equilibrium is a property of the parameter value, not an error in the
+caller, so it comes back as `NaN` rather than thrown: one non-stationary
+posterior sample should not abort the summary of the other 199.
 """
 function _ctsem_asymptotics(DRIFT, DIFFUSIONcov, CINT, dyn, nlatent,
     continuous_time::Bool=true, naff::Int=nlatent)
@@ -241,8 +280,15 @@ function _ctsem_asymptotics(DRIFT, DIFFUSIONcov, CINT, dyn, nlatent,
     end
 
     isempty(dyn) && return (asym_diffusion, asym_cint)
-    asym_diffusion[dyn, dyn] .= NaN
-    K = [i for i in dyn if i <= naff && settles[i]]
+    # The noise reaches the latents it enters and those they drive, and no
+    # others: there the diffusion's covariance is zero whatever the drift.
+    noisy = _ctsem_noise_reach(A, DIFFUSIONcov, [i for i in dyn if i <= naff])
+    isempty(noisy) && return (asym_diffusion, asym_cint)
+    asym_diffusion[noisy, noisy] .= NaN
+    # Within that set, closed under driving, a latent's covariance settles
+    # where the noisy states driving it are stable: a trend that no noise
+    # reaches moves the mean of what it drives and adds nothing to its spread.
+    K = noisy[_ctsem_settling_states(A[noisy, noisy], continuous_time)]
     isempty(K) && return (asym_diffusion, asym_cint)
     AK = Matrix{Float64}(DRIFT[K, K])
     Q = Matrix{Float64}(DIFFUSIONcov[K, K])

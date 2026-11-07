@@ -21,7 +21,7 @@ ctFit(
   derrind = NA,
   optimize = TRUE,
   optimcontrol = list(),
-  backend = c("stan", "julia"),
+  backend = c("julia", "stan"),
   nlcontrol = list(),
   nopriors = NA,
   priors = FALSE,
@@ -207,14 +207,15 @@ optional phases such as \code{stochastic} and, under
 \code{\link{ctOptimControl}} lists every name with its backend and default.
 A misspelled name, or one the chosen backend cannot honour, is an error.}
 
-\item{backend}{Either 'stan' (the default) or 'julia'. The julia backend is a
-separate engine with the same model definitions and the same summaries. It
+\item{backend}{Either 'julia' (the default) or 'stan'. The two take the same
+model definitions and give the same summaries. The julia backend
 optimises and samples (\code{optimize=FALSE}), and adds
 \code{intoverpop='laplace'}, grouping levels above the subject, and
 ordinal, count and censored indicators, and it integrates a binary one rather
-than linearising it. It
-needs a working Julia -- see
-\code{\link{ctJuliaSetup}} and \code{\link{ctJuliaInstall}}.}
+than linearising it. It needs a working Julia, which
+\code{\link{ctJuliaInstall}} sets up once; see also
+\code{\link{ctJuliaSetup}}. 'stan' was the default up to ctsem 3.11 and
+needs no external toolchain; it is to be deprecated.}
 
 \item{nlcontrol}{List of non-linear control parameters.
 \code{maxtimestep} must be a positive numeric,  specifying the largest time
@@ -452,11 +453,14 @@ model<-ctModel(type='ct',
   TIpredNames=c('TI1','TI2','TI3'),
   LAMBDA=diag(2))
 
-fit<-ctFit(ctstantestdat, model,priors=TRUE)
+# The default backend is julia; ctJuliaInstall() sets it up.
+if (isTRUE(ctJuliaStatus()$available)) {
+  fit<-ctFit(ctstantestdat, model,priors=TRUE)
 
-summary(fit)
+  summary(fit)
 
-plot(fit,wait=FALSE)
+  plot(fit,wait=FALSE)
+}
 
 #### extended examples
 
@@ -536,7 +540,7 @@ ctModelLatex(m)
 
 m1 <- ctModel(type = 'ct',
   manifestNames = c('Y1'), latentNames=c('eta1'),
-  DRIFT=matrix(-.0001,nrow=1,ncol=1),
+  DRIFT=matrix(0,nrow=1,ncol=1),
   DIFFUSION=matrix(0,nrow=1,ncol=1),
   T0VAR=matrix(0,nrow=1,ncol=1),
   CINT=matrix(c('cint1'),ncol=1),
@@ -548,17 +552,19 @@ m1 <- ctModel(type = 'ct',
 ctModelLatex(m1)
 
 #fit
-f1 <- ctFit(datalong = dat2, model = m1, optimize=TRUE, priors=FALSE)
+if (isTRUE(ctJuliaStatus()$available)) {
+  f1 <- ctFit(datalong = dat2, model = m1, optimize=TRUE, priors=FALSE)
 
-summary(f1)
+  summary(f1)
 
-#plots of individual subject models v data
-ctPredict(f1,plot=TRUE,subjects=1,kalmanvec=c('y','yprior'),timestep=.01)
-ctPredict(f1,plot=TRUE,subjects=1:3,kalmanvec=c('y','ysmooth'),timestep=.01,errorvec=NA)
+  #plots of individual subject models v data
+  ctPredict(f1,plot=TRUE,subjects=1,kalmanvec=c('y','yprior'),timestep=.01)
+  ctPredict(f1,plot=TRUE,subjects=1:3,kalmanvec=c('y','ysmooth'),timestep=.01,errorvec=NA)
 
-#compare randomly generated data from the posterior to the observed data,
-#including the lagged covariance structure and the mean trajectory over time
-ctPostPredict(f1, wait=FALSE)
+  #compare randomly generated data from the posterior to the observed data,
+  #including the lagged covariance structure and the mean trajectory over time
+  ctPostPredict(f1, wait=FALSE)
+}
 
  ### Further example models
 

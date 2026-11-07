@@ -19,8 +19,8 @@ test_that("ctChisqTest compares two nested stan fits", {
   dat <- .chisq_stan_data()
   m1 <- ctModel(type = "dt", LAMBDA = diag(1), MANIFESTVAR = 0)
   m2 <- ctModel(type = "dt", LAMBDA = diag(1), MANIFESTVAR = 0, DRIFT = .9)
-  f1 <- suppressMessages(ctFit(dat, m1, cores = 1, verbose = 0))
-  f2 <- suppressMessages(ctFit(dat, m2, cores = 1, verbose = 0))
+  f1 <- suppressMessages(ctFit(dat, m1, cores = 1, verbose = 0, backend = 'stan'))
+  f2 <- suppressMessages(ctFit(dat, m2, cores = 1, verbose = 0, backend = 'stan'))
 
   p <- ctChisqTest(f1, f2)
   expect_true(is.numeric(p))
@@ -83,7 +83,7 @@ test_that("ctChisqTest compares two nested julia fits, and a julia fit against a
   # close, since both are maximum-likelihood fits of the same model to the
   # same data, and ctChisqTest() should not error just because the two fits
   # came from different backends.
-  f_free_stan <- suppressMessages(ctFit(dat, .chisq_julia_model(), cores = 1, verbose = 0))
+  f_free_stan <- suppressMessages(ctFit(dat, .chisq_julia_model(), cores = 1, verbose = 0, backend = 'stan'))
   p_cross <- ctChisqTest(f_fixed, f_free_stan)
   expect_true(is.numeric(p_cross))
   expect_true(!is.na(p_cross))
@@ -99,9 +99,9 @@ test_that("ctChisqTest() refuses a sampled stan fit instead of an opaque row-cou
   # review/J7-sampled-fit-support.md.
   dat <- .chisq_stan_data()
   m1 <- ctModel(type = "dt", LAMBDA = diag(1), MANIFESTVAR = 0)
-  f_opt <- suppressMessages(ctFit(dat, m1, cores = 1, verbose = 0))
+  f_opt <- suppressMessages(ctFit(dat, m1, cores = 1, verbose = 0, backend = 'stan'))
   f_samp <- suppressWarnings(suppressMessages(ctFit(dat, m1, cores = 1, verbose = 0,
-    optimize = FALSE, chains = 1, iter = 60)))
+    optimize = FALSE, chains = 1, iter = 60, backend = 'stan')))
   expect_gt(length(f_samp$stanfit$stanfit@sim), 0)  # genuinely sampled
 
   err <- tryCatch({

@@ -37,7 +37,7 @@ skip_on_32bit()
 .conv_fit <- function(...) {
   set.seed(1)
   suppressWarnings(suppressMessages(ctFit(.conv_data(), .conv_model(),
-    cores = 1, verbose = 0, savescores = FALSE, ...)))
+    cores = 1, verbose = 0, savescores = FALSE, ..., backend = 'stan')))
 }
 
 test_that("a stan fit reports a gradient that is actually at an optimum", {

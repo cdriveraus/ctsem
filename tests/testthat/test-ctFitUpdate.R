@@ -34,7 +34,7 @@ suppressWarnings(suppressPackageStartupMessages(library(ctsem)))
 # fit was made with (R/ctdataupdate.R), not the stored fit's own `$standata`,
 # whose layout is whatever the format was when the fixture was last saved.
 .stan_rebuilt <- function() .quietly(ctFit(ctstantestdat,
-  ctstantestfit$ctstanmodelbase, priors = TRUE, fit = FALSE))
+  ctstantestfit$ctstanmodelbase, priors = TRUE, fit = FALSE, backend = 'stan'))
 
 test_that("a stan fit updates without refitting, unchanged and without warnings", {
   .local_fresh_sample_deprecation()
@@ -80,7 +80,8 @@ test_that("an update keeps the subject ids the fit was given", {
 test_that("a fit saved by ctsem 3.11.1 is updated with its own arguments", {
   # 3.11.1 kept the call in `$args` itself rather than in `$args$input`, and
   # had no `backend`, `poprank` or `sampleControl`. It did have `vb`, which
-  # every fit it made carries and ctFit() now refuses by name.
+  # every fit it made carries and ctFit() now refuses by name. With no
+  # `backend` it is replayed on stan, which made it, not on today's default.
   v3111 <- c("stanmodeltext", "iter", "intoverstates", "binomial", "fit",
     "intoverpop", "sameInitialTimes", "stationary", "plot", "derrind",
     "optimize", "optimcontrol", "nlcontrol", "nopriors", "priors", "chains",

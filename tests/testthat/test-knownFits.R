@@ -33,7 +33,7 @@ test_that("anomauth", {
   # oscillator block below for what that cost.
   set.seed(1)
   sf=ctFit(ctDeintervalise(ctWideToLong(AnomAuth,Tpoints = AnomAuthmodel$Tpoints,n.manifest = 2)),
-    model= sm1, optimize=TRUE,verbose=0,savescores = FALSE,cores=cores)
+    model= sm1, optimize=TRUE,verbose=0,savescores = FALSE,cores=cores, backend = 'stan')
   # sink()
   print(Sys.time()-a)
   # PROVENANCE: 23415.929 is the OpenMx -2LL for this model, i.e. what the
@@ -127,7 +127,7 @@ oscillatingm <- ctModel(type='omx', n.latent = 2, n.manifest = 1, Tpoints = 11,
   sf=ctFit(ctDeintervalise(ctWideToLong(Oscillating,Tpoints = oscillatingm$Tpoints,n.manifest = 1)),
     cores=2,verbose=0,
     # optimcontrol=list(carefulfit=T),
-    model= sm, optimize=TRUE,savescores = FALSE,priors=FALSE)
+    model= sm, optimize=TRUE,savescores = FALSE,priors=FALSE, backend = 'stan')
   # PROVENANCE: -3461.936 is the OpenMx -2LL for the damped-oscillator example,
   # asserted against `oscillatingf$mxobj$output$Minus2LogLikelihood` in ctsem
   # 3cd210cc (Nov 2016) and still carried, commented out, in ctsemOMX's

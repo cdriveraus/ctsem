@@ -44,7 +44,7 @@ ssmodel <- ctModel(type='ct', n.latent=2, n.manifest=1,
 
 #fit
 ssfit <- ctFit(datalong, ssmodel, optimize=FALSE, priors=TRUE,
-  sampleControl=list(iter=2, chains=1))
+  sampleControl=list(iter=2, chains=1), backend='stan')
 ctRawParnames(ssfit,substrings=c('pop_','popsd'))
 }
 

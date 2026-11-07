@@ -179,7 +179,7 @@ if (requireNamespace('testthat', quietly = TRUE)) {
     # it: transform code 3 on an off-diagonal of matrix 4, 5 or 8. Columns are
     # positional -- 1 row, 2 col, 4 transform, 7 matrix.
     p <- suppressWarnings(suppressMessages(ctFit(datalong = covmat_data(),
-      model = m, fit = FALSE, cores = 1L, verbose = 0L)))
+      model = m, fit = FALSE, cores = 1L, verbose = 0L, backend = 'stan')))
     sdat <- p$standata
     ms <- sdat$matsetup
     soff <- ms[, 7] %in% c(4, 5, 8) & ms[, 1] != ms[, 2] & ms[, 3] > 0

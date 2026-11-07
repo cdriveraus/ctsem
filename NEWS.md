@@ -5,7 +5,7 @@
 ## 14/10/2026
 ### 4.0.0
 
-A major release: ctsem gains a second estimation engine, written in Julia, which most of what is new below needs. `backend='stan'` remains the default and fits as before.
+A major release: ctsem gains a second estimation engine, written in Julia, which most of what is new below needs. It is now `ctFit()`'s default; use `backend='stan'` for the previous behaviour.
 
 - New `backend='julia'` for `ctFit()`: an extended Kalman filter engine with an exact gradient and Hessian, threaded over subjects. `ctJuliaInstall()` sets up whatever is missing, asking before it downloads anything, and `ctJuliaStatus()`, `ctJuliaSetup()`, `ctJuliaProcesses()` and `ctJuliaKill()` manage its sessions.
 - Random effects on any parameter -- variances, nonlinear dynamics and non-Gaussian indicators included -- are integrated by a Laplace approximation (`intoverpop='laplace'`, the default when optimising), exactly where they shift a mean in a linear Gaussian model, and corrected by adaptive quadrature when fitted. Julia backend only.
@@ -14,8 +14,8 @@ A major release: ctsem gains a second estimation engine, written in Julia, which
 - Posterior sampling with `ctFit(backend='julia', optimize=FALSE)`, or after an optimised fit with `ctFitUncertainty(fit, 'sample')`, running until target effective sample sizes and R-hat are reached.
 - Smooth effects of time independent predictors, `ctModel(TIpredNames = ~ s(age) + sex)`, with their smoothness estimated from the data; `ctTIpredEffects(fit, whichTIpreds = 'age')` draws them with each person's own values. Julia backend only.
 - Sampling weights, one per subject, with `ctFit(weights=)`: a weighted pseudo-likelihood with robust standard errors, described in the new sampling weights vignette. Julia backend only.
-- `ctFitUncertainty()` is the new name of `ctOptimUncertainty()`, which remains, and adds `'sample'`, `'stored'` to redraw from the covariance a fit carries, and importance sampling against the quadrature or particle filter likelihood (`control$likelihood`).
-- New `uncertainty='checked'`, the default for julia fits and for `ctFitUncertainty()`: the Hessian's normal approximation, checked, and importance sampled where it is wrong. `uncertainty='surrogate'` is removed; use `'checked'`.
+- `ctFitUncertainty()` is the new name of `ctOptimUncertainty()`, which remains, and adds `'sample'`, `'stored'` to redraw from the covariance a fit carries, and importance sampling against the quadrature or particle filter likelihood (`intoverpop='quadrature'`, `filter='particle'`).
+- New `uncertainty='checked'`: the Hessian's normal approximation, checked, and importance sampled where it is wrong. `uncertainty='surrogate'` is removed; use `'checked'`.
 - On the julia backend, missing values of time independent predictors are imputed when optimising and sampled when sampling, and `nlcontrol$nsubsteps='auto'` sets a nonlinear model's integration steps from its own error.
 - `ctFit(stationary=TRUE)` works again, with `backend='julia'`.
 - Model matrix cells accept a named form, `'mm, indvarying=TRUE, sdscale=0.5'`, as well as `'mm||TRUE|0.5'`; `ctPar()` builds either, and `ctCov()` writes a covariance matrix as cells.

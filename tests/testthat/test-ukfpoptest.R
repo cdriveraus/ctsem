@@ -76,14 +76,14 @@ skip_on_32bit()
     #fit 1
     sm1 <- m1
     sm1$pars$indvarying <- FALSE
-    sf1 <- ctFit(cd,sm1,cores=cores,verbose=0)
+    sf1 <- ctFit(cd,sm1,cores=cores,verbose=0, backend = 'stan')
     sf1d=sf1$stanfit$transformedparsfull$pop_DRIFT[1,1:2,1:2]
     sf1ll=sf1$stanfit$optimfit$value
     
     #fit 2
     sm2 <- m2
     sm2$pars$sdscale <- .2
-    sf2 <- ctFit(cd,sm2,cores=cores)
+    sf2 <- ctFit(cd,sm2,cores=cores, backend = 'stan')
     sf2d=sf2$stanfit$transformedparsfull$pop_DRIFT[1,1:2,1:2]
     sf2ll=sf2$stanfit$optimfit$value
     
@@ -130,7 +130,7 @@ skip_on_32bit()
     dtm$pars$indvarying[dtm$pars$matrix %in% 'DRIFT'] <- TRUE
     
     dtf = ctFit(datalong = dat,model= dtm,optimize=TRUE,
-      verbose=0,optimcontrol=list(estonly=F),savescores = F)
+      verbose=0,optimcontrol=list(estonly=F),savescores = F, backend = 'stan')
     s1=summary(dtf,parmatrices = F,priorcheck = F,residualcov = F)
     
     dtm2 <- ctModel(LAMBDA=matrix(c(1,0),1,2), type='ct',
@@ -140,7 +140,7 @@ skip_on_32bit()
       MANIFESTMEANS = matrix(0))
     
     dtm2$pars$indvarying <- FALSE
-    dtf2=ctFit(datalong = dat,model= dtm2,optimize = TRUE)
+    dtf2=ctFit(datalong = dat,model= dtm2,optimize = TRUE, backend = 'stan')
     s2=summary(dtf2,parmatrices = F,priorcheck = F,residualcov = F)
     
     test_isclose(s1$loglik,s2$loglik,tol=1e-3)

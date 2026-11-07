@@ -234,7 +234,7 @@ end
 @testset "asymptotics only for the latents that settle" begin
     # X and Y a stable pair, W stable and driving X, a trend with an auto
     # effect of 0, and Z stable but driven by the trend. X, Y and W settle
-    # whatever the trend does; the trend and Z have no equilibrium.
+    # whatever the trend does; the trend and Z have no equilibrium mean.
     A = [-0.4  0.15 0.0 0.0  0.2;
           0.28 -0.28 0.0 0.0  0.0;
           0.0  0.0  0.0 0.0  0.0;
@@ -252,8 +252,19 @@ end
     K = [1, 2, 5]
     @test A[K, K] * m[K, 1] ≈ -c[K, 1] rtol = 1e-12
     @test all(isnan, m[3:4, 1])
-    @test maximum(abs, A[K, K] * D[K, K] + D[K, K] * A[K, K]' + Q[K, K]) < 1e-12
-    @test all(isnan, D[3:4, :]) && all(isnan, D[:, 3:4])
+    # No noise reaches the trend, so it adds nothing to Z's spread: Z, stable
+    # given the trend, has a covariance though its mean has no equilibrium,
+    # and the trend's is zero.
+    KD = [1, 2, 4, 5]
+    @test maximum(abs, A[KD, KD] * D[KD, KD] + D[KD, KD] * A[KD, KD]' + Q[KD, KD]) < 1e-12
+    @test D[4, 4] ≈ 0.5 rtol = 1e-12
+    @test all(iszero, D[3, :]) && all(iszero, D[:, 3])
+    # Noise into the trend makes it a random walk: no covariance for it, nor
+    # for Z, which it drives; X, Y and W keep theirs.
+    Qw = copy(Q); Qw[3, 3] = 0.2
+    Dw, _ = ContinuousTimeSEM._ctsem_asymptotics(A, Qw, c, collect(1:5), 5, true, 5)
+    @test all(isnan, Dw[3:4, :]) && all(isnan, Dw[:, 3:4])
+    @test maximum(abs, A[K, K] * Dw[K, K] + Dw[K, K] * A[K, K]' + Qw[K, K]) < 1e-12
     # Outside the diffusion states no noise arrives: zero, not NaN.
     D2, _ = ContinuousTimeSEM._ctsem_asymptotics(A, Q, c, [1, 2, 5], 5, true, 5)
     @test all(iszero, D2[3:4, :]) && all(iszero, D2[:, 3:4])

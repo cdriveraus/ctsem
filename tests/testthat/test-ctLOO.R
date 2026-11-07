@@ -34,9 +34,9 @@ skip_on_32bit()
     sm$pars$indvarying<- FALSE
     
     sf=ctFit(aa,
-      model= sm, optimize=TRUE,verbose=0,savescores = FALSE,cores=cores)
+      model= sm, optimize=TRUE,verbose=0,savescores = FALSE,cores=cores, backend = 'stan')
     sfboot <- ctFit(aa,
-      model= sm, optimize=TRUE,verbose=0,savescores = FALSE,cores=cores,optimcontrol=list(uncertainty='bootstrap'))
+      model= sm, optimize=TRUE,verbose=0,savescores = FALSE,cores=cores,optimcontrol=list(uncertainty='bootstrap'), backend = 'stan')
     
     sdat <- sf$standata
     sdat$dokalmanrows[sdat$subject==1] <- 0L #remove 1 subject

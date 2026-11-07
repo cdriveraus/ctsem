@@ -450,7 +450,7 @@
 .ctJuliaEnsureInstalled <- function() {
   .ctJuliaRequire()
   if (is.null(.ctJuliaBin()) && !isTRUE(.ctJuliaOfferJulia())) {
-    stop("Julia was not found, and backend='julia' needs it (", .ct_julia_minimum,
+    stop("Julia was not found, and backend='julia' (the default) needs it (", .ct_julia_minimum,
       " or newer).\n", .ctJuliaDeclined(), call. = FALSE)
   }
   invisible(TRUE)
@@ -541,7 +541,7 @@ ctJuliaInstall <- function(threads = NULL, version = NULL, agree = NULL, force =
   }
   if (!quiet) {
     if (length(done)) message("Installed: ", paste(done, collapse = ", "), ".")
-    message("The julia backend is ready. Use ctFit(..., backend = 'julia').")
+    message("The julia backend is ready; ctFit() uses it by default.")
   }
   invisible(status)
 }

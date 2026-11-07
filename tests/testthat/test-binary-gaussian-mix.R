@@ -63,7 +63,7 @@ skip_on_32bit()
     # this test fails again, read the fit messages first -- a restart that did
     # not happen, or one that landed on the other stationary point at raw ~11,
     # looks the same from here.
-    f <- ctFit( datalong = d, model= m,cores=cores,plot=10)
+    f <- ctFit( datalong = d, model= m,cores=cores,plot=10, backend = 'stan')
   
     #test if the estimated model pars 95% confidence intervals contain true pars
     lowmats <- ctSummaryMatrices(f,calcfuncargs = list(probs=.025))

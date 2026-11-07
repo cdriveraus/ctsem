@@ -34,7 +34,7 @@ skip_on_32bit()
       # MANIFESTMEANS = 0,
       MANIFESTVAR = 0)
     
-    f <- ctFit(datalong = d,model= m,priors=T,verbose=0,cores=cores)
+    f <- ctFit(datalong = d,model= m,priors=T,verbose=0,cores=cores, backend = 'stan')
     
     p <- ctSummaryMatrices(f)
     
@@ -100,7 +100,7 @@ skip_on_32bit()
       MANIFESTMEANS=0,
       MANIFESTVAR = 0)
     
-    f <- ctFit(datalong = d,model= m,priors=TRUE,cores=cores,verbose=0)
+    f <- ctFit(datalong = d,model= m,priors=TRUE,cores=cores,verbose=0, backend = 'stan')
     
     p <- ctSummaryMatrices(f)
     

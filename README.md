@@ -288,14 +288,15 @@ parameterisation.
 
 ## The Julia backend
 
-Alongside the default Stan based fitting, ctsem can fit with a Julia
-backend. It is under active development, is generally faster, and
-supports non-Gaussian indicators – binary, ordinal, count and censored –
-which the Stan path does not.
+`ctFit()` fits with a Julia backend by default. It is under active
+development, is generally faster than the Stan based fitting it replaces
+as the default, and supports non-Gaussian indicators – binary, ordinal,
+count and censored – which the Stan path does not. `backend = 'stan'`
+fits as before and needs no external toolchain.
 
 ``` r
 ctJuliaInstall()
-fit <- ctFit(data, model, backend = 'julia')
+fit <- ctFit(data, model)
 ```
 
 `ctJuliaInstall()` installs whatever is missing – Julia itself, the
