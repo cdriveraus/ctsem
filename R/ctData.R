@@ -22,6 +22,29 @@ expmGetSubsets <- function(m){
   return(subsets)
 }
 
+# ctFit(sameInitialTimes = TRUE): an empty row at the data's earliest time for
+# every subject without one, so every subject's initial state is at that time.
+# ctFit() adds them to the data itself, which both backends and the fit read:
+# added to stan's prepared data alone, they left the julia preparation, which
+# reads the data rows, with a different count. An added row is the subject's
+# first row (its TI predictors and any other column), with no manifest value
+# and the TD predictors at zero, no input.
+.ctSameInitialTimes <- function(datalong, ctm) {
+  id <- ctm$subjectIDname
+  tm <- ctm$timeName
+  t0 <- min(datalong[[tm]])
+  present <- unique(datalong[[id]][datalong[[tm]] == t0])
+  added <- datalong[!duplicated(datalong[[id]]) & !datalong[[id]] %in% present, , drop = FALSE]
+  if (!nrow(added)) return(datalong)
+  added[[tm]] <- t0
+  added[, ctm$manifestNames] <- NA
+  if (length(ctm$TDpredNames)) added[, ctm$TDpredNames] <- 0
+  out <- rbind(datalong, added)
+  out <- out[order(out[[id]], out[[tm]]), , drop = FALSE]
+  rownames(out) <- NULL
+  out
+}
+
 # Builds the prepared data list (historically "standata"). Shared: ctFit runs it
 # before backend dispatch and passes the result to the julia engine as
 # prepared_data. Do not delete with stan.
@@ -29,7 +52,7 @@ expmGetSubsets <- function(m){
 # the other variables), 'sample' (stan's 99999 sentinel, a parameter of the
 # model) or 'leave' (the sentinel, silently: the julia backend reads the
 # missing cells from the data and handles them itself).
-.ctPrepareData <- function(ctm, datalong,optimize,sameInitialTimes=FALSE,
+.ctPrepareData <- function(ctm, datalong,optimize,
   tipredMissing = if (optimize) 'impute' else 'sample'){
   
   
@@ -145,13 +168,6 @@ expmGetSubsets <- function(m){
         }
       }
     }
-  }
-  
-  if(sameInitialTimes){
-    datanew <- datalong[!duplicated(datalong[[ctm$subjectIDname]]),]
-    datanew[[ctm$timeName]] <- min(datanew[[ctm$timeName]])
-    datalong <- merge.data.frame(x = datalong,y = datanew[,c(ctm$subjectIDname,ctm$timeName)],
-      by = c(ctm$subjectIDname,ctm$timeName),all = TRUE)
   }
   
   datalong[,ctm$manifestNames][is.na(datalong[,ctm$manifestNames])]<-99999 #missing data

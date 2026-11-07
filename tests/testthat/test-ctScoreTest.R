@@ -131,17 +131,21 @@ test_that("a parameter that varies over subjects is found", {
     verbose = FALSE))
   h <- st$heterogeneity
   expect_setequal(h$parameter, c('drift_eta1', 'diff_eta1', 'mvarY1'))
-  expect_lt(h$p[h$parameter == 'drift_eta1'], 0.01)
+  # The drift varies independently of the initial state and the intercept, so
+  # the variance alone carries it; p, the stronger of that and the test with
+  # the covariances, pays for taking the two (.0115 here).
+  expect_gt(h$z[h$parameter == 'drift_eta1'], stats::qnorm(0.99))
+  expect_lt(h$p[h$parameter == 'drift_eta1'], 0.05)
   expect_gt(h$sd_natural[h$parameter == 'drift_eta1'], 0)
 })
 
-test_that("an intercept in CINT is tested as a random intercept, the initial mean following", {
+test_that("a varying intercept is tested with its covariance with the initial state", {
   # 'null' data have a random manifest mean (sd 1). Fitted with the level in
-  # CINT and no random effects, a subject-specific CINT from a shared initial
-  # mean would drift subjects apart; the test moves T0MEANS to each subject's
-  # equilibrium, which shifts the whole trajectory: with LAMBDA = 1 the
-  # direction of a random manifest mean in the same model written with the
-  # level there.
+  # CINT and no random effects, CINT varying alone is subjects drifting apart
+  # from a shared start; with its covariance with the initial mean it takes in
+  # a random intercept, which is what the data hold. The fixed MANIFESTMEANS is
+  # tested as a random intercept on the indicator, from the model with the
+  # cell free.
   x <- .score_fit('null')
   model <- function(...) suppressMessages(ctModel(type = 'ct', manifestNames = 'Y1',
     latentNames = 'eta1', LAMBDA = matrix(1), ...))
@@ -151,61 +155,76 @@ test_that("an intercept in CINT is tested as a random intercept, the initial mea
     CINT = matrix('cint||FALSE'), T0MEANS = matrix('t0m||FALSE'))))
   sc <- suppressMessages(ctScoreTest(fc, tests = 'heterogeneity', cores = 1,
     verbose = FALSE, nboot = 199))
-  hc <- sc$heterogeneity[sc$heterogeneity$parameter == 'cint', ]
-  expect_identical(hc$initial, 'equilibrium')
+  h <- sc$heterogeneity
+  hc <- h[h$parameter == 'cint', ]
   expect_identical(hc$with, 't0m')
-  expect_gt(hc$z, 3)
-  expect_output(print(sc), "initial 'equilibrium'")
-  # The direction: T0MEANS moves by -DRIFT^-1 times the intercept's move.
+  expect_equal(hc$df, 2L)
+  expect_lt(hc$p, 0.01)
+  hm <- h[h$parameter == 'MANIFESTMEANS[Y1]', ]
+  expect_equal(nrow(hm), 1L)
+  expect_lt(hm$p, 0.01)
+  expect_null(sc$info$errors)
+  expect_output(print(sc), 'Covariances with: t0m')
+  # ctModelImprove's edits: the intercept varies with the initial mean, and
+  # the fixed indicator mean becomes a parameter varying about its value.
+  base <- ctsem:::.ctFitBaseModel(fc)
+  props <- ctsem:::.ctImproveProposals(sc, base, alpha = 0.05)
+  keys <- vapply(props, `[[`, '', 'key')
+  ec <- props[[match('het:cint', keys)]]$edit(base, x$data, NULL)
+  expect_true(all(as.logical(ec$model$pars$indvarying[ec$model$pars$param %in% c('cint', 't0m')])))
+  em <- props[[match('het:MANIFESTMEANS[Y1]', keys)]]$edit(base, x$data, NULL)
+  expect_equal(em$model$fixedpopmeans, c(mm_Y1 = 0))
+  expect_true(all(as.logical(em$model$pars$indvarying[em$model$pars$param %in% c('mm_Y1', 't0m')])))
+  expect_no_error(suppressWarnings(suppressMessages(ctFit(x$data[, c('id', 'time', 'Y1')],
+    em$model, backend = 'julia', fit = FALSE, cores = 1, verbose = 0))))
+  # The covariance's per-subject contribution, s_j s_r + H_jr, and the
+  # derivative its projection needs, against differences of the subjects' log
+  # likelihoods.
   est <- fc$estimate$raw
   ptab <- ctsem:::.ctScoreParameterTable(fc)
-  het <- ctsem:::.ctScoreSelect(ptab, NULL, 'heterogeneity')
-  hd <- ctsem:::.ctScoreHetDirections(fc, est, ptab, het)
-  u <- hd$U[, ptab$name[het] == 'cint']
-  A <- suppressMessages(ctsem:::ctBackendParMatrices(fc, raw = est))$DRIFT[1, 1]
-  slope <- setNames(ptab$slope, ptab$name)
-  expect_equal(unname(u[ptab$name == 't0m']), -slope[['cint']] / A / slope[['t0m']],
-    tolerance = 1e-8)
-  # Its pieces against differences of the subjects' log likelihoods along u:
-  # the score, the statistic before projection, and the projection's
-  # derivative D in the drift (the third derivative, along u twice).
-  pieces <- ctsem:::.ctScorePieces(fc, est, rows = integer(), second = integer(),
-    hetdirs = cbind(cint = u), cores = 1)
-  it <- ctsem:::.ctScoreHetItems(pieces, which(ptab$name == 'cint'), cbind(cint = u))[[1]]
+  j <- which(ptab$name == 'cint')
+  r <- which(ptab$name == 't0m')
+  pieces <- ctsem:::.ctScorePieces(fc, est, rows = c(j, r), second = c(j, r),
+    pairs = cbind(j, r), cores = 1)
+  it <- ctsem:::.ctScoreHetItem(pieces, ptab, j, r)
   ll <- function(theta) as.numeric(ctsem:::.ctBackendKalmanRaw(fc, theta,
     subjectmatrices = FALSE, fields = 'subject_loglik')$subject_loglik)
-  along <- function(theta, h = 1e-3) {
-    lp <- ll(theta + h * u); l0 <- ll(theta); lm <- ll(theta - h * u)
-    list(s = (lp - lm) / (2 * h), H = (lp - 2 * l0 + lm) / h^2)
+  covariance <- function(theta, h = 1e-3) {
+    ej <- replace(numeric(length(theta)), j, h)
+    er <- replace(numeric(length(theta)), r, h)
+    l <- function(d) ll(theta + d)
+    (l(ej) - l(-ej)) / (2 * h) * (l(er) - l(-er)) / (2 * h) +
+      (l(ej + er) - l(ej - er) - l(er - ej) + l(-ej - er)) / (4 * h^2)
   }
-  a0 <- along(est)
-  expect_equal(it$s, a0$s, tolerance = 1e-5)
-  expect_equal(sum(it$s^2 + it$uHu), sum(a0$s^2 + a0$H), tolerance = 1e-3)
+  expect_equal(it$s * pieces$S[, r] + it$H[, r], covariance(est), tolerance = 1e-4)
   k <- which(ptab$name == 'drift_eta1')
-  stat <- function(theta) { a <- along(theta); 0.5 * sum(a$s^2 + a$H) }
   g <- 1e-3
-  Dk <- (stat(replace(est, k, est[k] + g)) - stat(replace(est, k, est[k] - g))) / (2 * g)
-  expect_equal(sum(it$s * it$Hu[, k]) + 0.5 * sum(it$D2u[, k]), Dk, tolerance = 1e-4)
-  # The same direction as a random manifest mean: per subject, the score along
-  # it is the manifest mean's, scaled by the level a raw unit of the intercept
-  # moves to. The two z differ, each projected in its own model's
-  # coordinates, which agree only under the model.
-  fm <- fit_cached('scoretest null mm level', fit(model(MANIFESTMEANS = matrix('mm||FALSE'),
-    CINT = matrix(0), T0MEANS = matrix('t0m||FALSE'))))
-  expect_equal(fm$estimate$loglik, fc$estimate$loglik, tolerance = 1e-6)
-  pm <- ctsem:::.ctScoreParameterTable(fm)
-  smm <- ctsem:::.ctBackendScoreMatrix(fm, fm$estimate$raw)[, pm$name == 'mm']
-  kappa <- -slope[['cint']] / A / pm$slope[pm$name == 'mm']
-  expect_equal(it$s, kappa * smm, tolerance = 0.02)
-  # With the initial mean fixed it cannot follow, and the intercept is tested
-  # alone.
+  Dk <- (sum(covariance(replace(est, k, est[k] + g))) -
+    sum(covariance(replace(est, k, est[k] - g)))) / (2 * g)
+  expect_equal(sum(it$H[, k] * pieces$S[, r]) +
+    sum(it$s * ctsem:::.ctScoreHrow(pieces, r)[, k]) + it$Tmix[k, 1], Dk, tolerance = 1e-3)
+  # With the initial mean fixed there is nothing to covary with: the variance
+  # alone, as for any parameter of a model with no random effects and no free
+  # initial mean.
   fs <- fit_cached('scoretest null cint fixed t0', fit(model(MANIFESTMEANS = matrix(0),
     CINT = matrix('cint||FALSE'), T0MEANS = matrix(0))))
-  ps <- ctsem:::.ctScoreParameterTable(fs)
-  hs <- ctsem:::.ctScoreHetDirections(fs, fs$estimate$raw, ps,
-    ctsem:::.ctScoreSelect(ps, NULL, 'heterogeneity'))
-  expect_identical(hs$initial[colnames(hs$U) == 'cint'], 'shared')
-  expect_equal(sum(hs$U[, 'cint'] != 0), 1)
+  ss <- suppressMessages(ctScoreTest(fs, tests = 'heterogeneity', cores = 1,
+    verbose = FALSE, nboot = 199))
+  expect_equal(ss$heterogeneity$df[ss$heterogeneity$parameter == 'cint'], 1L)
+})
+
+test_that("a measurement error covariance is offered only between errors with a variance", {
+  # With the error variances fixed at zero (the book's FI-CLPM) a covariance
+  # between the errors has no direction, and printed as an empty row.
+  m <- function(MANIFESTVAR) suppressMessages(ctModel(type = 'ct',
+    manifestNames = c('Y1', 'Y2'), latentNames = c('eta1', 'eta2'),
+    LAMBDA = diag(2), MANIFESTVAR = MANIFESTVAR))
+  cells <- function(model) ctsem:::.ctScoreFixedModel(model)$terms$cell
+  expect_false(any(grepl('^MANIFESTVAR', cells(m(matrix(0, 2, 2))))))
+  expect_true('MANIFESTVAR[Y2,Y1]' %in%
+    cells(m(matrix(c('mvar1', 0, 0, 'mvar2'), 2, 2, byrow = TRUE))))
+  expect_false('MANIFESTVAR[Y2,Y1]' %in%
+    cells(m(matrix(c('mvar1', 0, 0, 0), 2, 2, byrow = TRUE))))
 })
 
 test_that("a drift that depends on the state is found by the extended model", {
@@ -320,7 +339,7 @@ test_that("joint heterogeneity: a dimension test beside the per-parameter ones",
   expect_true(d$p > 0 && d$p <= 1)
   expect_setequal(names(d$direction), st$heterogeneity$parameter)
   # The largest eigenvalue of the standardised score matrix is at least its
-  # largest diagonal, the per-parameter z.
+  # largest diagonal, each variance's own z.
   expect_gte(d$lambda, max(st$heterogeneity$z, na.rm = TRUE) - 1e-8)
   expect_true('class' %in% names(st$heterogeneity))
   expect_output(print(st), 'new dimension')
