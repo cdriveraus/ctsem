@@ -128,7 +128,9 @@ before interpreting their sizes.
   missing nonlinearity moves several. \code{sd} is the one-step estimate of
   the subjects' standard deviation on the raw scale, with the covariances
   estimated beside it, and \code{sd_natural} approximately on the
-  parameter's own. To act on a result, set \code{indvarying = TRUE} for the
+  parameter's own; \code{NA} where the covariances carry the test and the
+  variance given them reads zero, which happens for an intercept, and
+  which only a refit can size. To act on a result, set \code{indvarying = TRUE} for the
   parameter and the \code{T0MEANS} parameters, refit, and test again;
   \code{\link{ctModelImprove}} does that.
 
