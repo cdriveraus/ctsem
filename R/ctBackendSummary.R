@@ -538,8 +538,10 @@ ctBackendParMatrices <- function(fit, raw = NULL, tipreds = NULL, state = NULL,
   # quadratic trend model, seeds 5 and 6).
   usable <- apply(is.finite(covariance), 1L, all) & apply(is.finite(full), 1L, all)
   if (!any(usable)) return(array(NA_real_, c(ndraws, nlatent, nlatent)))
-  full[!usable, ] <- matrix(full[which(usable)[1L], ], sum(!usable), ncol(full),
-    byrow = TRUE)
+  # Only where there is a draw to replace: matrix() of no rows from a
+  # non-empty vector warns, and every julia fit with random T0MEANS warned so.
+  if (any(!usable)) full[!usable, ] <- matrix(full[which(usable)[1L], ],
+    sum(!usable), ncol(full), byrow = TRUE)
   roots <- array(0, c(ndraws, m, m))
   for (draw in which(usable)) {
     roots[draw, , ] <- .ctSymRoot(matrix(covariance[draw, , ], m, m))
