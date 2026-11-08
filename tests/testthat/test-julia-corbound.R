@@ -10,6 +10,10 @@
 # the adjoint gradient must agree with forward mode. One fit, on data whose
 # maximum-likelihood population covariance is singular (rank 2 of 4), must end
 # on the bound, say so, and give every correlation a width.
+#
+# The model's own covariance matrices (T0VAR, DIFFUSION, MANIFESTVAR) are held
+# by the same wall since 2026-11-08: one more block per matrix with a free
+# correlation, after the population's.
 
 .cb_model <- function() ctModel(type = "ct", latentNames = c("eta1", "eta2"),
   manifestNames = c("Y1", "Y2"), MANIFESTVAR = diag(.1, 2),
@@ -35,10 +39,16 @@ test_that("the bound is the same wall on both routes, and its gradient is right"
   skip_without_julia()
   specs <- list(augmented = .cb_spec("augmented"), laplace = .cb_spec("laplace"))
   blocks <- lapply(specs, ctsem:::.ctCorBoundSpec)
-  expect_length(blocks$augmented, 1L)
-  expect_identical(blocks$augmented[[1]][c("k", "code", "index")],
-    blocks$laplace[[1]][c("k", "code", "index")])
+  # The population's block, then DIFFUSION's: T0VAR's correlation is fixed
+  # where T0MEANS vary, and MANIFESTVAR is diagonal here.
+  expect_length(blocks$augmented, 2L)
+  expect_null(blocks$augmented[[1]]$matrix)
+  expect_identical(blocks$augmented[[2]]$matrix, "DIFFUSION")
+  for (i in 1:2) expect_identical(blocks$augmented[[i]][c("k", "code", "index")],
+    blocks$laplace[[i]][c("k", "code", "index")])
   block <- blocks$laplace[[1]]
+  diffusion <- blocks$laplace[[2]]
+  expect_equal(diffusion$k, 2L)
   names <- lapply(specs, function(s) as.character(ctsem:::.ctBackendRawParameterNames(
     list(model_spec = s), ctsem:::.ctBackendNpar(s))))
   set.seed(4)
@@ -57,20 +67,34 @@ test_that("the bound is the same wall on both routes, and its gradient is right"
   }
   value <- function(s, x, route) ctJuliaEvaluate(s, unname(x[names[[route]]]),
     gradient = FALSE, cores = 1)$value
-  for (x in list(inside, past)) {
+  # And DIFFUSION's correlation past its bound too: its own wall adds.
+  pastdiff <- past
+  for (v in seq(2, 8, by = 0.1)) {
+    pastdiff[diffusion$index] <- v
+    if (.cb_wall(diffusion, unname(pastdiff[names$laplace])) < -1) break
+  }
+  expect_lt(.cb_wall(diffusion, unname(pastdiff[names$laplace])), -1)
+  for (x in list(inside, past, pastdiff)) {
     with_bound <- vapply(names(specs), function(r) value(specs[[r]], x, r), numeric(1))
     # The routes' likelihoods are the same function here (linear effects), to
     # the Laplace inner solve's tolerance at a point this far from any optimum.
-    expect_equal(with_bound[["augmented"]], with_bound[["laplace"]], tolerance = 1e-6)
-    without <- sum(ctJuliaEvaluate(specs$laplace, unname(x[names$laplace]),
-      gradient = FALSE, contributions = TRUE, cores = 1)$subject_loglik)
-    expect_equal(with_bound[["laplace"]] - without, .cb_wall(block, unname(x[names$laplace])),
-      tolerance = 1e-8)
+    # Not where the diffusion is all but singular: there they differ by 0.02,
+    # so each route's wall is checked against the one computed here instead.
+    if (!identical(x, pastdiff)) {
+      expect_equal(with_bound[["augmented"]], with_bound[["laplace"]], tolerance = 1e-6)
+    }
+    wall <- .cb_wall(block, unname(x[names$laplace])) +
+      .cb_wall(diffusion, unname(x[names$laplace]))
+    for (r in names(specs)) {
+      without <- sum(ctJuliaEvaluate(specs[[r]], unname(x[names[[r]]]),
+        gradient = FALSE, contributions = TRUE, cores = 1)$subject_loglik)
+      expect_equal(with_bound[[r]] - without, wall, tolerance = 1e-8)
+    }
   }
   expect_lt(.cb_wall(block, unname(past[names$laplace])), -1)
   expect_equal(.cb_wall(block, unname(inside[names$laplace])), 0)
-  for (r in names(specs)) {
-    x <- unname(past[names[[r]]])
+  for (r in names(specs)) for (x in list(unname(past[names[[r]]]),
+      unname(pastdiff[names[[r]]]))) {
     a <- ctJuliaEvaluate(specs[[r]], x, gradient = TRUE, cores = 1)$gradient
     f <- ctJuliaEvaluate(specs[[r]], x, gradient = TRUE, gradient_method = "forward",
       cores = 1)$gradient
@@ -104,4 +128,40 @@ test_that("a fit whose covariance the data put on the singular boundary ends on 
   expect_lt(max(abs(raw[block$index])), 4)
   s <- summary(fit)
   expect_true(all(is.finite(s$rawpopcorr$sd)))
+})
+
+test_that("a fit whose processes share one noise source ends on DIFFUSION's bound", {
+  skip_without_julia()
+  # Two processes with the same drift driven by the same shocks: the
+  # maximum-likelihood diffusion has correlation one.
+  set.seed(11)
+  a <- exp(-0.25)
+  shock <- sqrt(1 - a^2)
+  dat <- do.call(rbind, lapply(1:30, function(i) {
+    e <- stats::rnorm(12, 0, shock)
+    x <- y <- numeric(12)
+    x[1] <- stats::rnorm(1); y[1] <- stats::rnorm(1)
+    for (t in 2:12) {
+      x[t] <- a * x[t - 1] + e[t]
+      y[t] <- a * y[t - 1] + e[t]
+    }
+    data.frame(id = i, time = (0:11) / 2, X = x + stats::rnorm(12, 0, sqrt(.1)),
+      Y = y + stats::rnorm(12, 0, sqrt(.1)))
+  }))
+  m <- ctModel(type = "ct", latentNames = c("x", "y"), manifestNames = c("X", "Y"),
+    LAMBDA = diag(2), CINT = matrix(0, 2, 1), MANIFESTMEANS = matrix(0, 2, 1),
+    T0MEANS = matrix(0, 2, 1), silent = TRUE)
+  warnings <- character()
+  fit <- withCallingHandlers(suppressMessages(ctFit(dat, m, backend = "julia",
+    cores = 1, verbose = 0)), warning = function(w) {
+      warnings <<- c(warnings, conditionMessage(w))
+      invokeRestart("muffleWarning")
+    })
+  expect_true(isTRUE(fit$optim$converged))
+  expect_true(any(grepl("^DIFFUSION correlations at their bound", warnings)))
+  expect_false(any(grepl("Random-effect correlations", warnings)))
+  diff <- fit$corbound[fit$corbound$matrix == "DIFFUSION", ]
+  expect_true(all(diff$at_bound))
+  expect_equal(diff$rank[1], 1)
+  expect_false(any(fit$corbound$at_bound[fit$corbound$matrix == "T0VAR"]))
 })
