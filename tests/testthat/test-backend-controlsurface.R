@@ -141,12 +141,11 @@ test_that("stallretries is the cap on the julia escape loop", {
   expect_equal(escapes(3L), c(offered = 3L, recorded = 3L))
 })
 
-test_that("the prior warm-up runs by default only with a non-Gaussian indicator, and the fit says what ran", {
+test_that("the prior warm-up runs by default to its own convergence, and the fit says what ran", {
   skip_without_julia()
-  # On by default only when some indicator is not Gaussian (2026-09-27): the
-  # measured benefits were on binary, ordinal and mixed measurement models,
-  # and on a Gaussian one (AnomAuth) it cost the fit its best maximum. TRUE or
-  # FALSE forces it either way.
+  # On by default for every model since 2026-11-08, run to L-BFGS's own stop
+  # under the priors and capped at `.ctJuliaWarmCap`; FALSE turns it off and a
+  # number sets the cap.
   #
   # And it runs whatever the fit's own priors, which is what the second half
   # is for. The warm-up used to borrow the fit's prior scope, so it was skipped
@@ -165,25 +164,23 @@ test_that("the prior warm-up runs by default only with a non-Gaussian indicator,
     suppressWarnings(suppressMessages(ctFit(data, model, backend = 'julia',
       cores = 1, verbose = 0, ...)))
   }
-  # Every indicator Gaussian: off unless asked for, and the fit says why.
-  default <- fitwith(optimcontrol = list(estonly = TRUE))
-  expect_false(default$optim$carefulfit)
-  expect_equal(default$optim$carefulfit_iterations, 0L)
-  expect_match(default$optim$carefulfit_skipped, 'every indicator is Gaussian')
-  on <- fitwith(optimcontrol = list(estonly = TRUE, carefulfit = TRUE))
+  # Every indicator Gaussian, and it runs, stopping by its own rule before
+  # the cap on a model this small.
+  on <- fitwith(optimcontrol = list(estonly = TRUE))
   expect_true(on$optim$carefulfit)
   expect_true(is.na(on$optim$carefulfit_skipped))
   expect_gte(on$optim$carefulfit_iterations, 1L)
-  # Ten iterations of L-BFGS and no more: the Newton finish would carry the
-  # pass on to the prior mode, which is what the cap is for preventing.
-  expect_lte(on$optim$carefulfit_iterations, 10L)
-  # And it moved the start: the same seed without the warm-up begins elsewhere.
-  expect_false(isTRUE(all.equal(on$optim$trace$objective[1],
-    default$optim$trace$objective[1])))
+  expect_lt(on$optim$carefulfit_iterations, ctsem:::.ctJuliaWarmCap)
+  expect_identical(fitwith(optimcontrol = list(estonly = TRUE,
+    carefulfit = TRUE))$optim$carefulfit_iterations,
+    on$optim$carefulfit_iterations)
   off <- fitwith(optimcontrol = list(estonly = TRUE, carefulfit = FALSE))
   expect_false(off$optim$carefulfit)
   expect_equal(off$optim$carefulfit_iterations, 0L)
   expect_match(off$optim$carefulfit_skipped, 'switched off')
+  # And it moved the start: the same seed without the warm-up begins elsewhere.
+  expect_false(isTRUE(all.equal(on$optim$trace$objective[1],
+    off$optim$trace$objective[1])))
 
   # A binary indicator: on by default, and FALSE switches it off.
   set.seed(2)
@@ -207,8 +204,7 @@ test_that("the prior warm-up runs by default only with a non-Gaussian indicator,
   expect_match(binaryoff$optim$carefulfit_skipped, 'switched off')
 
   # Skipped, and saying why, where the pass has nothing to add or is not
-  # wanted. Asked for by name, because on this Gaussian model it is off by
-  # default and these are the reasons that override a request.
+  # wanted, even when asked for by name.
   map <- fitwith(priors = TRUE, optimcontrol = list(estonly = TRUE,
     carefulfit = TRUE))
   expect_false(map$optim$carefulfit)

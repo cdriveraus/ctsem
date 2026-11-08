@@ -6700,6 +6700,12 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
   (walked + t(walked)) / 2
 }
 
+# The most iterations the prior warm-up (`optimcontrol$carefulfit`) takes by
+# default; it stops by L-BFGS's own rule before that on most models (median 30
+# on the bench, at most 115 on the ctsem book's trend models). Why it runs to
+# convergence is beside `careful` in `.ctJuliaOptimiseFit()`.
+.ctJuliaWarmCap <- 200L
+
 # The optimising route's whole pipeline, from the starting values through the
 # certified estimate, its Hessian and the Laplace correction -- everything
 # `ctFit(backend = 'julia', optimize = TRUE)` does after `model_spec` is
@@ -6820,92 +6826,49 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
     spec
   }
   # `carefulfit`, the same argument `stanoptimis` takes and with the same
-  # meaning: a rough first pass with the priors on, to get starting values,
-  # when priors are otherwise off. Stan's version caps that pass at 50
-  # iterations and loosens its tolerance; this one caps it at 10, which the
-  # measurements below settled, and lets the cap do the work rather than also
-  # loosening the tolerance.
+  # meaning: a first pass with the priors on, to get starting values, when
+  # priors are otherwise off. It runs on every model by default, to the prior
+  # objective's own convergence, capped at `.ctJuliaWarmCap` (200)
+  # iterations; a number sets the cap, FALSE turns it off.
   #
-  # It costs nothing, and with a short first step it pays. Measured over
-  # 800 fits across both engine routes and four measurement types, back when
-  # the first step was a full unit alpha, total iterations against a plain fit
-  # came to 0.91-1.14 at ten prior iterations, 1.09-1.50 at twenty and
-  # 1.47-1.64 at forty: the second stage converged in fewer iterations but not
-  # by enough to pay for the first. Repeated with the diagonal preconditioner
-  # and `initial_alpha = 0.1` over 240 paired fits -- same data and cell either
-  # way, `dev/simstudies/simstudy-carefulfit.R` on dev1 at 16 workers -- the
-  # second stage now takes about half the iterations, median 49 against 88 and
-  # 20 against 41, and median wall time is lower with the warm-up in five of
-  # the eight cells. A short first step is what a warm start compensates for,
-  # so the two changes are complementary rather than alternatives.
+  # What it buys is where the fit lands: the prior holds every coordinate near
+  # the middle of its transform while the rest of the vector finds its place,
+  # so the likelihood starts from a point no boundary has captured -- a
+  # correlation at one, an sd at zero, a drift at white noise. Its history:
   #
-  # What it buys is where the fit lands. Over those 800 fits the warmed start
-  # was never worse in any cell, and three cells were better: an ordinal
-  # Laplace fit that failed at -2498.24 and warmed reaches -2207.06; two binary
-  # fits by about two log units; and a mixed-indicator model that *converged*
-  # at -1922.81 unwarmed and at -1833.42 warmed. That last one is the case this
-  # is for -- it reports success while returning a random-effect SD of 7.23
-  # against a truth of 0.5, and it was the single replication inflating that
-  # condition's RMSE to 0.88 in the recorded study. Warmed, the same data give
-  # 0.544.
+  # - Until 2026-11-08 the cap was 10 and the warm-up ran only where an
+  #   indicator was not Gaussian (Charles, 2026-09-27). Ten was set when the
+  #   first step was a full unit alpha and the transform metric was on, on a
+  #   simulation study where a cap of 20 left a mixed-indicator model at a
+  #   random-effect sd of 8 (truth 0.5) that 10 removed. That study at today's
+  #   optimiser (dev/simstudies/simstudy-carefulfit.R with caps 0, 10 and 200:
+  #   one latent, random CINT, 60 subjects x 10 occasions, four indicator
+  #   kinds, both routes, 720 fits, dev4 2026-11-08) no longer shows it: 200
+  #   was never below no warm-up, and above it twice (13.4 and 1.9 nats, fits
+  #   that did not converge without); against 10 it rescued three fits that 10
+  #   left unconverged 2.3-10.2 nats short, and lost 0.34-0.45 nats on one
+  #   ordinal data set, on both routes, where 10 reached a second maximum at
+  #   sd 0. The warm-up's own iterations there were at most 38.
+  # - The ctsem book's full-rank quadratic trend model reached 1787.6-1824.5
+  #   (-2LL) from eight seeds with no warm-up and 1785.13 from all eight with
+  #   it run to convergence (70-115 iterations); its FE-DPM with the transform
+  #   metric reached the best maximum from 6 of 6 seeds only so.
+  # - On the bench's 70 default cells (review/bench/2026-11-08-warmup.md) the
+  #   objective each fit maximises was higher in four cells (AnomAuth S1 and
+  #   S2 by 25.2 and 24.3, gB8 by 0.2 and 0.02) and lower in one (gA14 s3,
+  #   0.36); every cell converged and certified either way. The exact log
+  #   likelihood moved the other way on AnomAuth, 4.7 and 4.8 nats down: the
+  #   point the warmed fit reaches is where Laplace over-credits a random
+  #   drift's sd, and the fit's random-effects check reports the gap there.
+  #   The warm-up was 61% of the warmed cells' gradients, the fit after it
+  #   needed 0.80 of the cold fit's, 1.49 times the gradients in all.
   #
-  # A longer pass is not a safer one, and the cap is 10 rather than 20 or 50
-  # because of it. Over 720 fits of three measurement types on both routes,
-  # judged on the random-effect SD against a truth of 0.5 rather than on the
-  # log likelihood -- a higher likelihood in the wrong basin is still the wrong
-  # answer:
-  #
-  #   cap 10   240/240 converged, RMSE 0.190, worst error 0.547
-  #   cap 20   240/240 converged, RMSE 0.550, worst error 7.991
-  #   off      236/240 converged, RMSE 0.478, worst error 6.732
-  #
-  # Both caps fix convergence and the two are identical to four decimals on
-  # every condition but one. All of the difference is the mixed-indicator model
-  # under state augmentation, where a cap of 20 is *worse than not warming up
-  # at all* -- it leaves the local optimum with the SD of 8.0 in place, where a
-  # cap of 10 removes it outright. Median wall time is the same either way: 20
-  # buys back its extra prior iterations in the second stage and no more.
-  #
-  # The prior pass pulls the start toward the prior mode, and past about ten
-  # iterations that is what it hands the likelihood.
-  #
-  # Neither the preconditioner nor the shorter first step removes the need for
-  # it, which is the obvious thing to check and has been checked. Over the same
-  # 240 paired fits the warm-up was better in three pairs and worse in none --
-  # the largest loss from having it on was 3e-11 log units, and the three it
-  # won were 5.76, 1.30 and 0.57, each one a fit that collapsed to a
-  # random-effect sd of exactly zero without it against a truth of 0.5. One of
-  # those three also failed to converge. Conditioning and basin selection are
-  # different problems and the preconditioner only addresses the first.
-  #
-  # Provenance of the cap of ten, since it is a measured constant and the
-  # measurements were on one family: a one-latent continuous-time model with a
-  # random CINT (population sd 0.5, DRIFT -0.3, DIFFUSION 0.8), 60 subjects x
-  # 10 occasions, Gaussian, binary, ordinal and mixed indicators, on both the
-  # augmented and the laplace route, fitted with `priors = FALSE`
-  # (dev/simstudies/simstudy-individual-differences.R and
-  # simstudy-carefulfit.R). On the bench's 70 default cells (2026-10-31: more
-  # than one random effect, effects on DRIFT, nested levels), off or at a cap
-  # of 5 or 20 on the 24 non-Gaussian cells differed from 10 by at most 0.52
-  # nats, both ways, and on the Gaussian ones it found better basins on gA14
-  # and gB8 and lost AnomAuth's 6.8 (`review/bench/2026-10-31-defaults-jf-f979c331.md`). A change to the cap
-  # is a bench run, not an edit.
-  #
-  # On by default only when some indicator is not Gaussian (binary, ordinal,
-  # count or censored), Charles's decision of 2026-09-27. The benefits measured
-  # were on binary, ordinal and mixed measurement models -- on the simulation
-  # study, binary laplace fits were rescued in 18 of 30 data sets while the
-  # Gaussian, mixed and ordinal cells were unchanged -- and the one measured
-  # loss is Gaussian: on AnomAuth (random CINT and DRIFT, 800 subjects) the
-  # warmed start leads to a worse basin, 0.73 and 2.26 exact nats short on the
-  # bench's S1 and S2, where the unwarmed fit reaches the best known point
-  # (review/OPTIM-next-2026-09-27.md). TRUE or FALSE forces it either way.
+  # Neither the transform metric (off by default since 2026-11-07) nor the
+  # short first step replaces it: conditioning and basin selection are
+  # different problems.
   careful <- optimcontrol$carefulfit
-  defaultcareful <- is.null(careful)
-  if (defaultcareful) {
-    careful <- any(as.integer(model_spec$manifesttype) != 0L)
-  }
-  warmiter <- if (isTRUE(careful)) 10L else
+  if (is.null(careful)) careful <- TRUE
+  warmiter <- if (isTRUE(careful)) .ctJuliaWarmCap else
     if (is.numeric(careful) && length(careful) == 1L && careful >= 1)
       as.integer(careful) else 0L
   # What the warm-up did, recorded from what executed rather than from what was
@@ -6919,8 +6882,7 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
   fitscope <- if (identical(priorscope, "randomCorr")) "randomCorr" else
     if (isTRUE(priors)) "all" else "none"
   if (warmiter < 1L) {
-    warmskip <- if (defaultcareful) "off by default: every indicator is Gaussian" else
-      "switched off by optimcontrol$carefulfit"
+    warmskip <- "switched off by optimcontrol$carefulfit"
   } else if (!is.null(inits) && !identical(inits, "random")) {
     # `stanoptimis` turns `carefulfit` off when starting values were supplied,
     # since the point of the pass is to produce some. Overriding a starting
@@ -6963,24 +6925,22 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
         # is about a fifth of a stage, so paying it for a verdict nobody reads
         # doubled what the probe costs a default fit.
         #
-        # Nor the Newton finish, nor batching, so that the stage is the one the
-        # cap was measured on: ten iterations of L-BFGS over all the data. Both
-        # arrived with the engine's own optimiser (f2ab4796), after every
-        # measurement above. The finish runs whenever L-BFGS stops by the gap
-        # rule, and runs on to the prior mode -- 6 L-BFGS iterations and then 18
-        # Newton steps on the ten-subject fixture in
-        # test-backend-controlsurface.R -- which is the long prior pass the cap
-        # exists to prevent. A batch would make the pass a warm start from a
-        # subset of the subjects, which measured worse than no warm-up at all
-        # (116 of 120 converged against 117, and a random-effect sd of 2.3 for a
-        # truth of 0.5).
+        # Nor the Newton finish, nor batching: L-BFGS over all the data, to its
+        # own stopping rule, which is the stage every measurement above ran.
+        # The finish would polish the prior mode with Hessians -- 18 Newton
+        # steps after 6 L-BFGS iterations on the ten-subject fixture in
+        # test-backend-controlsurface.R -- precision a starting value has no
+        # use for. A batch would make the pass a warm start from a subset of
+        # the subjects, which measured worse than no warm-up at all (116 of 120
+        # converged against 117, and a random-effect sd of 2.3 for a truth of
+        # 0.5).
         optimcontrol = utils::modifyList(optimcontrol,
           list(overshoot = "off", newton = FALSE, batch = FALSE)),
         maxiter = as.integer(warmiter),
         gradient = gradient, cores = cores, verbose = verbose,
         callback = NULL, progress_label = "prior warm-up",
-        # This stage runs its cap and stops; the cap is the plan, not a limit
-        # it is trying to stay under, so its counter keeps a denominator.
+        # A stage with a budget: its counter keeps the cap as denominator, and
+        # no sgd or SAEM phase runs in it.
         progress_budget = TRUE), silent = TRUE)
       # A warm start is only a starting value: if it produced numbers the fit
       # can use, use them, and otherwise start where we would have anyway.
