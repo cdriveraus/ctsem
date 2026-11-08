@@ -62,19 +62,24 @@
 #' }
 #' @export
 anova.ctJuliaFit <- function(object, ...) {
-  .ctAnova(list(object, ...), .ctAnovaNames(match.call(), 1L + ...length()))
+  # Every fit named, as in anova(RI = fitRI, FI = fitFI), leaves `object`
+  # missing and all of them in the dots.
+  fits <- if (missing(object)) list(...) else list(object, ...)
+  .ctAnova(fits, .ctAnovaNames(match.call(), length(fits)))
 }
 
 #' @rdname anova.ctJuliaFit
 #' @export
 anova.ctStanFit <- function(object, ...) {
-  .ctAnova(list(object, ...), .ctAnovaNames(match.call(), 1L + ...length()))
+  fits <- if (missing(object)) list(...) else list(object, ...)
+  .ctAnova(fits, .ctAnovaNames(match.call(), length(fits)))
 }
 
 # The rows' names: each argument as written (`anova(fitRI, fitFI)`), or its
 # name where one is given (`anova(RI = fitRI, FI = fitFI)`), else fit1, fit2,
-# ... A fit handed over by value, as do.call() hands it, is never deparsed:
-# that would print the whole object.
+# ... match.call() lists `object` first and then the dots, the order the fits
+# are listed in. A fit handed over by value, as do.call() hands it, is never
+# deparsed: that would print the whole object.
 .ctAnovaNames <- function(call, n) {
   args <- as.list(call)[-1L]
   given <- names(args)
