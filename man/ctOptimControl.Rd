@@ -61,10 +61,11 @@ default.
  \code{normal(0,1)} raw priors on every coordinate, for starting values; the
  fit's own objective is then maximised from there. Skipped with
  \code{priors = TRUE}, which already has those priors, and when \code{inits}
- are supplied. Default TRUE on stan; on julia TRUE when any indicator is not
- Gaussian and FALSE otherwise, capped at 10 iterations, and a number sets the
- cap. A longer pass is not a safer one: it pulls the start toward the prior
- mode. \code{fit$optim$carefulfit} records whether it ran.}
+ are supplied. Default TRUE on both backends. On julia it runs to its own
+ convergence, at most 200 iterations, and a number sets that cap; it keeps
+ the fit from starting where a boundary (a correlation at one, a variance at
+ zero) has already captured it. \code{fit$optim$carefulfit} records whether
+ it ran.}
 }
 }
 
