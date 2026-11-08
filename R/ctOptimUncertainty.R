@@ -1116,6 +1116,8 @@ ctOptimSafeCov <- function(cov, ridge=1e-8){
 #     eigenvalue rule missed -- it names what the likelihood confirms, see
 #     `.ctBackendIdentifiability()` -- and that such a direction leaves the
 #     covariance as the rest do.
+#     The engine's Newton finish walks the same candidates for a way off them
+#     (`_CTSEM_FLAT_CANDIDATE_RTOL`), so change the two together.
 #   * with no candidate it returns `NULL` before evaluating anything, so a fit
 #     with no flat direction -- the usual fit -- pays nothing and is unchanged.
 #

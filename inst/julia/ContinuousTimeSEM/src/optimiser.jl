@@ -2070,6 +2070,24 @@ fit passes in, so the certification, the intervals and the probe share one rule.
 const _CTSEM_FLAT_RTOL = 1e-12
 
 """
+The relative curvature at or below which the Newton finish's flat ladder
+(`_ctsem_flat_ladder`) walks a direction: the candidates R's
+`.ctOptimFlatDirectionScreen()` walks after the fit (its `rtol`), so the finish
+looks for a way off every direction the certification would ask about.
+
+Not `_CTSEM_FLAT_RTOL`: along a flat ray the curvature decays with where the
+optimiser stopped, so a ray stopped short reads well above 1e-12 of the
+sharpest direction. On test-julia-count.R's Poisson model, a white-noise
+maximum 41 nats below the best, whose drift trades with its diffusion along a
+ridge, read 9e-10 at one stopping point and under 1e-12 at another a hair
+away: from the second the ladder followed the ridge out and the fit reached
+the best maximum, from the first it was never tried and the fit was
+certified 41 nats short (2026-11-08; which point the finish reached moved with
+L-BFGS's first two steps, so dropping the transform metric showed it).
+"""
+const _CTSEM_FLAT_CANDIDATE_RTOL = 1e-7
+
+"""
 How negative a direction's curvature has to be, relative to the largest, for
 the point to count as a saddle: the `negative` of R's
 `.ctBackendInformationSplit()`.
@@ -2292,12 +2310,23 @@ higher, lies further up the same ridge. The probe the certification reads
 (`_ctsem_flat_probe`) steps straight, so it could not see this, and certified
 the plateau.
 
+Past the last of `lengths`, a side is walked on at twice the length while its
+last rung stayed flat -- within `_CTSEM_FLAT_LADDER_BAR` of `f` -- up to
+`_CTSEM_FLAT_LADDER_REACH` raw units: a direction the data do not determine is
+followed until it stops being flat, not to a fixed length. On
+test-julia-count.R's Poisson model the white-noise maximum's ridge is flat to
+5e-5 over eight raw units of drift and rises only inside raw -3, so a fit that
+stopped at raw -6.3 found the rise four units out and one that stopped at -8.0
+did not; walked on, the rung at eight units gained 19.2 nats and the fit
+reached the best maximum, 41 higher (2026-11-08).
+
 With no gradient at all outside the trusted directions, the flattest direction.
 `fg!` is the optimiser's trial path: an unusable point comes back as the
 sentinel value, which no correction improves and no comparison accepts.
 """
 function _ctsem_flat_ladder(fg!, x::AbstractVector, f::Real, G::AbstractVector,
-        split; lengths=_CTSEM_FLAT_PROBE_LENGTHS, corrections::Integer=3)
+        split; lengths=_CTSEM_FLAT_PROBE_LENGTHS, corrections::Integer=3,
+        reach::Real=_CTSEM_FLAT_LADDER_REACH, bar::Real=_CTSEM_FLAT_LADDER_BAR)
     flat = findall(.!split.trusted)
     isempty(flat) && return (best=nothing, fcalls=0, gcalls=0)
     r = _ctsem_flat_residual(split, -G)
@@ -2308,41 +2337,68 @@ function _ctsem_flat_ladder(fg!, x::AbstractVector, f::Real, G::AbstractVector,
     V = split.vectors[:, split.trusted]
     curvature = split.values[split.trusted]
     best = nothing; fcalls = 0; gcalls = 0
-    for side in (1.0, -1.0), len in lengths
-        y = x .+ (side * len) .* u
-        g = similar(G)
-        fy = fg!(0.0, g, y); fcalls += 1; gcalls += 1
-        isfinite(fy) || continue
-        for _ in 1:corrections
-            d = -(V * ((transpose(V) * g) ./ curvature))
-            slope = dot(d, g)
-            slope < 0 || break
-            z = y .+ d
-            gz = similar(G)
-            fz = fg!(0.0, gz, z); fcalls += 1; gcalls += 1
-            # The secant of the slope along `d` between its ends: the step's
-            # length where the slope vanishes, exact on a quadratic along it.
-            ends = isfinite(fz) ? dot(d, gz) : NaN
-            if isfinite(ends) && ends > slope
-                t = slope / (slope - ends)
-                if 0 < t <= 10 && abs(t - 1) > 0.05
-                    zt = y .+ t .* d
-                    gt = similar(G)
-                    ft = fg!(0.0, gt, zt); fcalls += 1; gcalls += 1
-                    if isfinite(ft) && !(isfinite(fz) && fz <= ft)
-                        z = zt; fz = ft; gz = gt
+    for side in (1.0, -1.0)
+        rungs = collect(Float64, lengths)
+        k = 0
+        while k < length(rungs)
+            k += 1
+            len = rungs[k]
+            y = x .+ (side * len) .* u
+            g = similar(G)
+            fy = fg!(0.0, g, y); fcalls += 1; gcalls += 1
+            isfinite(fy) || continue
+            for _ in 1:corrections
+                d = -(V * ((transpose(V) * g) ./ curvature))
+                slope = dot(d, g)
+                slope < 0 || break
+                z = y .+ d
+                gz = similar(G)
+                fz = fg!(0.0, gz, z); fcalls += 1; gcalls += 1
+                # The secant of the slope along `d` between its ends: the step's
+                # length where the slope vanishes, exact on a quadratic along it.
+                ends = isfinite(fz) ? dot(d, gz) : NaN
+                if isfinite(ends) && ends > slope
+                    t = slope / (slope - ends)
+                    if 0 < t <= 10 && abs(t - 1) > 0.05
+                        zt = y .+ t .* d
+                        gt = similar(G)
+                        ft = fg!(0.0, gt, zt); fcalls += 1; gcalls += 1
+                        if isfinite(ft) && !(isfinite(fz) && fz <= ft)
+                            z = zt; fz = ft; gz = gt
+                        end
                     end
                 end
+                (isfinite(fz) && fz < fy) || break
+                y = z; fy = fz; g = gz
             end
-            (isfinite(fz) && fz < fy) || break
-            y = z; fy = fz; g = gz
-        end
-        if fy < f && (best === nothing || fy < best.f)
-            best = (point=y, f=fy, G=g, length=side * len)
+            if fy < f && (best === nothing || fy < best.f)
+                best = (point=y, f=fy, G=g, length=side * len)
+            end
+            # Still flat at the last rung: walk on.
+            if k == length(rungs) && fy - f < bar && 2 * len <= reach
+                push!(rungs, 2 * len)
+            end
         end
     end
     (best=best, fcalls=fcalls, gcalls=gcalls)
 end
+
+"""
+How far the flat ladder (`_ctsem_flat_ladder`) follows a direction that stays
+flat, in raw units: past where any of ctsem's transforms is anything but
+asymptotic, so a ridge that is still flat there runs to a limit, not to
+another maximum.
+"""
+const _CTSEM_FLAT_LADDER_REACH = 64.0
+
+"""
+How far a rung of the flat ladder may fall below the point it started from and
+still count as flat, so that the side is walked on: R's
+`.ctOptimFlatDirectionScreen()` bar, `qchisq(0.95, 1) / 2`, the change along a
+direction under which the certification calls it one the data do not
+determine.
+"""
+const _CTSEM_FLAT_LADDER_BAR = 1.920729410347062
 
 """
     _ctsem_sr1(H, s, y)
@@ -3966,8 +4022,14 @@ function _ctsem_newton_finish(objective, x0, f0, G0, fg!; tol::Real=1e-8,
         # does not trust may still have somewhere better along it, which neither
         # the Newton step (no gradient there) nor the certification's straight
         # probe can see -- `_ctsem_flat_ladder`, where the route allows it.
+        # Along the directions the certification's flat screen would walk
+        # (`_CTSEM_FLAT_CANDIDATE_RTOL`), not only those the step distrusts.
         (flat_escape && escapes < max_escapes) || break
-        walked = _ctsem_flat_ladder(fg!, x, f, G, split; lengths=probe_lengths)
+        ladder_split = _ctsem_information_split(H; rtol=max(flat_rtol,
+            _CTSEM_FLAT_CANDIDATE_RTOL), negative=negative)
+        ladder_split === nothing && break
+        walked = _ctsem_flat_ladder(fg!, x, f, G, ladder_split;
+            lengths=probe_lengths)
         fcalls[] += walked.fcalls; gcalls += walked.gcalls
         (walked.best !== nothing && f - walked.best.f > certify_now() &&
             flat_allowed(x, walked.best.point)) || break
